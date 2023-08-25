@@ -2,17 +2,17 @@ import ds/treeutils;
 import tools/flowc/statements/fs_transform;
 
 export {
-	fsStatPerceus(s: FsStat, debug: bool) -> FsStat;
+	fsStatPerceus2(s: FsStat, debug: bool) -> FsStat;
 }
 
-fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
+fsStatPerceus2(s: FsStat, debug: bool) -> FsStat {
 	id_counter = ref 0;
 	new_id = \-> {
 		id = ^id_counter;
 		id_counter := ^id_counter + 1;
 		id;
 	}
-	s1 = cast(fsMap(s, fsIds(new_id), false): FsAll -> FsStat);
+	s1 = cast(fsMap(s, fsIds2(new_id), false): FsAll -> FsStat);
 	if (debug) {
 		println("s1 with ids:\n" +
 			//"s:\n" + fs2s(s) + "\n" +
@@ -20,29 +20,13 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 			//"s RAW:\n" + toStringFormatted(s1) + "\n"
 		);
 	}
-	add_var = \x, acc, v -> {
-		switch (lookupTree(acc, v.name)) {
-			Some(w): fail(
-				"Duplicate variable: " + v.name + " of type: " + pretFiType(v.type) + ", already is of type: " + pretFiType(w.type) + " in:\n" + 
-				fs2s(x) + "\n" +
-				"IN:\n" + fs2s(s1)
-			);
-			None(): { }
-		}
-		setTree(acc, v.name, v);
-	}
-	varName2type = fsFold(s1, makeTree(), \acc, x -> switch (x) {
-		FsLet(v,__,__,__,__): add_var(x, acc, v);
-		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
-		default: acc;
-	}, true);
-	id2vars_pre = fsId2varsPre(s1, debug);
-	id2vars_post = fsId2varsPost(s1, debug);
-	id2vars_last: Tree<int, Set<string>> = fsId2varsLast(s1, id2vars_pre, id2vars_post, debug);
+	id2vars_pre = fsId2varsPre2(s1, debug);
+	id2vars_post = fsId2varsPost2(s1, debug);
+	id2vars_last: Tree<int, Set<FsVar>> = fsId2varsLast2(s1, id2vars_pre, id2vars_post, debug);
 	if (debug) {
 		set_tree2s = \st -> {
 			superglue(tree2pairs(st), \p ->
-				i2s(p.first) + ": " + "[" + strGlue(set2array(p.second), ", ") + "]", "\n"
+				i2s(p.first) + ": " + "[" + superglue(set2array(p.second), \v -> v.name, ", ") + "]", "\n"
 			);
 		}
 		println(
@@ -54,61 +38,56 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 	}
 	cast(fsMap(s1, \x -> switch (x) {
 		FsIf(cond,__, pos, neg, id):  {
-			memops = fsGetMemops(cond, id2vars_last, debug);
-			fsAddIncs(memops,
+			memops = fsGetMemops22(cond, id2vars_last, debug);
+			fsAddIncs2(memops,
 				FsIf(x with
-					s1 = fsDecUnused(pos.id, fsAddDecs2(memops, pos, id), id2vars_last, varName2type, debug),
-					s2 = fsDecUnused(neg.id, fsAddDecs2(memops, neg, id), id2vars_last, varName2type, debug)
+					s1 = fsDecUnused2(pos.id, fsAddDecs222(memops, pos, id), id2vars_last, debug),
+					s2 = fsDecUnused2(neg.id, fsAddDecs222(memops, neg, id), id2vars_last, debug)
 				), id
 			);
 		};
 		FsSwitch(v,__,__, cs, id): {
-			memops = fsGetMemops(v, id2vars_last, debug);
-			fsAddIncs(memops,
+			memops = fsGetMemops22(v, id2vars_last, debug);
+			fsAddIncs2(memops,
 				FsSwitch(x with
 					cases = map(cs, \c ->
 						FsCase(c with
-							body = fsDecUnused(c.body.id, fsAddDecs2(memops, c.body, id), id2vars_last, varName2type, debug)
+							body = fsDecUnused2(c.body.id, fsAddDecs222(memops, c.body, id), id2vars_last, debug)
 						)
 					)
 				), id
 			);
 		}
 		FsRet(e,__,id): {
-			memops = fsGetMemops(e, id2vars_last, debug);
-			fsAddDecs1(memops, fsAddIncs(memops, x, id), id);
+			memops = fsGetMemops22(e, id2vars_last, debug);
+			fsAddDecs221(memops, fsAddIncs2(memops, x, id), id);
 		}
 		FsWrapExp(e,__,id): {
-			memops = fsGetMemops(e, id2vars_last, debug);
+			memops = fsGetMemops22(e, id2vars_last, debug);
 			x1 = if (fiTypeIsScalar(fsType(e))) x else {
 				FsDecRc(e, -1);
 			}
-			fsAddIncs(memops, fsAddDecs(memops, x1, id), id);
+			fsAddIncs2(memops, fsAddDecs22(memops, x1, id), id);
 		}
 		FsLet(__,e,__,s2, id): {
-			memops = fsGetMemops(e, id2vars_last, debug);
-			fsAddIncs(memops, FsLet(x with s = fsAddDecs2(memops, s2, s2.id)), id);
+			memops = fsGetMemops22(e, id2vars_last, debug);
+			fsAddIncs2(memops, FsLet(x with s = fsAddDecs222(memops, s2, s2.id)), id);
 		}
 		FsAssign(to, what,__,id): {
-			memops = fsGetMemops2(to, what, id2vars_last, debug);
-			fsAddIncs(memops, fsAddDecs(memops, x, id), id);
+			memops = fsGetMemops222(to, what, id2vars_last, debug);
+			fsAddIncs2(memops, fsAddDecs22(memops, x, id), id);
 		}
 		FsIncRc(__,__,__): fail0("FsIncRc met during memory operations markup");
 		FsDecRc(__,__): fail0("FsDecRc met during memory operations markup");
 		FsLambda(__,__, body,__,id): {
-			FsLambda(x with body = fsDecUnused(id, body, id2vars_last, varName2type, debug));
+			FsLambda(x with body = fsDecUnused2(id, body, id2vars_last, debug));
 		}
 		default: x;
 	}, true): FsAll -> FsStat);
 }
 
-fsDecUnused(id: int, x: FsStat, id2vars_last: Tree<int, Set<string>>, varName2type: Tree<string, FsVar>, debug: bool) -> FsStat {
-	unused = map(set2array(lookupTreeDef(id2vars_last, id, makeSet())), \v_name ->
-		switch (lookupTree(varName2type, v_name)) {
-			Some(v): v;
-			None(): fail0("Unknown variable: " + v_name);
-		}
-	);
+fsDecUnused2(id: int, x: FsStat, id2vars_last: Tree<int, Set<FsVar>>, debug: bool) -> FsStat {
+	unused = set2array(lookupTreeDef(id2vars_last, id, makeSet()));
 	if (debug) {
 		println("to dec <" + i2s(id) + "> unused: [" + superglue(unused, \v -> v.name, ", ") + "]");
 	}
@@ -120,8 +99,8 @@ fsDecUnused(id: int, x: FsStat, id2vars_last: Tree<int, Set<string>>, varName2ty
 	}
 }
 
-fsGetMemops(e: FsExp, id2vars_last: Tree<int, Set<string>>, debug: bool) -> [Pair<FsVar, FsMemOps>] {
-	memops = tree2pairs(fsExpVarIncs(e, makeTree(), id2vars_last, -1, FsOrPrim()));
+fsGetMemops22(e: FsExp, id2vars_last: Tree<int, Set<FsVar>>, debug: bool) -> [Pair<FsVar, FsMemOps>] {
+	memops = tree2pairs(fsExpVarIncs2(e, makeTree(), id2vars_last, -1, FsOrPrim()));
 	if (debug) {
 		memops_str = superglue(memops, \p -> p.first.name + "=inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) ", dec" else "", ", ");
 		println("memops for <" + i2s(e.id) + ">: [" + memops_str + "]");
@@ -129,9 +108,9 @@ fsGetMemops(e: FsExp, id2vars_last: Tree<int, Set<string>>, debug: bool) -> [Pai
 	memops;
 }
 
-fsGetMemops2(e1: FsExp, e2: FsExp, id2vars_last: Tree<int, Set<string>>, debug: bool) -> [Pair<FsVar, FsMemOps>] {
-	memops = tree2pairs(fsExpVarIncs(e2, 
-		fsExpVarIncs(e1, makeTree(), id2vars_last, -1, FsOrPrim()), 
+fsGetMemops222(e1: FsExp, e2: FsExp, id2vars_last: Tree<int, Set<FsVar>>, debug: bool) -> [Pair<FsVar, FsMemOps>] {
+	memops = tree2pairs(fsExpVarIncs2(e2, 
+		fsExpVarIncs2(e1, makeTree(), id2vars_last, -1, FsOrPrim()), 
 		id2vars_last, -1, FsOrPrim()
 	));
 	if (debug) {
@@ -141,7 +120,7 @@ fsGetMemops2(e1: FsExp, e2: FsExp, id2vars_last: Tree<int, Set<string>>, debug: 
 	memops;
 }
 
-fsAddIncs(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
+fsAddIncs2(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 	incs = filtermap(memops, \p ->
 		if (p.second.incs > 0) {
 			Some(FsIncRc(p.second.incs, FsVarUse(p.first, FsVarLocal(), false, -1), -1));
@@ -154,7 +133,7 @@ fsAddIncs(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 	}
 }
 
-fsAddDecs(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
+fsAddDecs22(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 	decs = filtermap(memops, \p ->
 		if (p.second.dec) {
 			Some(FsDecRc(FsVarUse(p.first, FsVarLocal(), false, -1), -1));
@@ -168,7 +147,7 @@ fsAddDecs(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 }
 
 
-fsAddDecs1(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
+fsAddDecs221(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 	decs = filtermap(memops, \p ->
 		if (p.second.dec) Some(FsDecRc(FsVarUse(p.first, FsVarLocal(), false, -1), -1)) else None()
 	);
@@ -194,7 +173,7 @@ fsAddDecs1(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 	}
 }
 
-fsAddDecs2(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
+fsAddDecs222(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 	decs = filtermap(memops, \p ->
 		if (p.second.dec) {
 			Some(FsDecRc(FsVarUse(p.first, FsVarLocal(), false, -1), -1));
@@ -207,33 +186,33 @@ fsAddDecs2(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 	}
 }
 
-fsExpVarIncs(e: FsExp, acc: Tree<FsVar, FsMemOps>, last: Tree<int, Set<string>>, ind: int, op: FsPrim) -> Tree<FsVar, FsMemOps> {
+fsExpVarIncs2(e: FsExp, acc: Tree<FsVar, FsMemOps>, last: Tree<int, Set<FsVar>>, ind: int, op: FsPrim) -> Tree<FsVar, FsMemOps> {
 	switch (e) {
 		FsClosure(closure, __,__): {
-			fold(closure, acc, \ac, x -> fsExpVarIncs(x, ac, last, -1, FsOrPrim()));
+			fold(closure, acc, \ac, x -> fsExpVarIncs2(x, ac, last, -1, FsOrPrim()));
 		}
 		FsCall(f, args,__,__): {
-			fold(args, fsExpVarIncs(f, acc, last, -1, FsOrPrim()), \ac, x ->
-				fsExpVarIncs(x, ac, last, -1, FsOrPrim())
+			fold(args, fsExpVarIncs2(f, acc, last, -1, FsOrPrim()), \ac, x ->
+				fsExpVarIncs2(x, ac, last, -1, FsOrPrim())
 			);
 		}
 		FsCallPrim(o, es,__,__): {
-			foldi(es, acc, \i, ac, x -> fsExpVarIncs(x, ac, last, i, o));
+			foldi(es, acc, \i, ac, x -> fsExpVarIncs2(x, ac, last, i, o));
 		}
 		FsTailCall(args, vals, type, id): {
-			fold(vals, acc, \ac, x -> fsExpVarIncs(x, ac, last, -1, FsOrPrim()));
+			fold(vals, acc, \ac, x -> fsExpVarIncs2(x, ac, last, -1, FsOrPrim()));
 		}
 		FsCast(e1,__,__,__): {
-			fsExpVarIncs(e1, acc, last, -1, FsOrPrim());
+			fsExpVarIncs2(e1, acc, last, -1, FsOrPrim());
 		}
 		FsVarUse(x, kind, last1, id): {
-			call_case = \-> if (containsSet(lookupTreeDef(last, id, makeSet()), x.name)) acc else {
+			call_case = \-> if (containsSet(lookupTreeDef(last, id, makeSet()), x)) acc else {
 				switch (lookupTree(acc, x)) {
 					Some(p): setTree(acc, x, FsMemOps(p with incs = p.incs + 1));
 					None(): setTree(acc, x, FsMemOps(x, 1, false));
 				}
 			}
-			prim_case = \-> if (!containsSet(lookupTreeDef(last, id, makeSet()), x.name)) acc else {
+			prim_case = \-> if (!containsSet(lookupTreeDef(last, id, makeSet()), x)) acc else {
 				switch (lookupTree(acc, x)) {
 					Some(p): setTree(acc, x, FsMemOps(p with dec = true));
 					None(): setTree(acc, x, FsMemOps(x, 0, true));
@@ -264,17 +243,17 @@ fsExpVarIncs(e: FsExp, acc: Tree<FsVar, FsMemOps>, last: Tree<int, Set<string>>,
 	}
 }
 
-FsPerceusAcc(
-	id2vars: Tree<int, Set<string>>,
-	vars: Set<string>
+FsPerceusAcc2(
+	id2vars: Tree<int, Set<FsVar>>,
+	vars: Set<FsVar>
 );
 
-fsMergeStacks(l1: List<Set<string>>, l2: List<Set<string>>) -> List<Set<string>> {
+fsMergeStacks2(l1: List<Set<FsVar>>, l2: List<Set<FsVar>>) -> List<Set<FsVar>> {
 	switch (l1) {
 		Cons(s1, t1): {
 			switch (l2) {
 				Cons(s2, t2): {
-					Cons(mergeSets(s1, s2), fsMergeStacks(t1, t2));
+					Cons(mergeSets(s1, s2), fsMergeStacks2(t1, t2));
 				}
 				EmptyList(): l1;
 			}
@@ -284,28 +263,28 @@ fsMergeStacks(l1: List<Set<string>>, l2: List<Set<string>>) -> List<Set<string>>
 }
 
 
-fsMergeVars(p1: FsPerceusAcc, p2: FsPerceusAcc) -> FsPerceusAcc {
-	FsPerceusAcc(
+fsMergeVars2(p1: FsPerceusAcc2, p2: FsPerceusAcc2) -> FsPerceusAcc2 {
+	FsPerceusAcc2(
 		mergeTreeCustom(p1.id2vars, p2.id2vars, \id, x1, x2 -> mergeSets(x1, x2)),
 		mergeSets(p1.vars, p2.vars)
 	);
 }
 
-fsId2varsPre(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
-	fsFold2(s1, Pair(FsPerceusAcc(makeTree(), makeSet()), makeList()),
+fsId2varsPre2(s1: FsStat, debug: bool) -> Tree<int, Set<FsVar>> {
+	fsFold2(s1, Pair(FsPerceusAcc2(makeTree(), makeSet()), makeList()),
 		\acc, x: FsAll -> {
-			add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v.name);
+			add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v);
 			switch (x) {
 				FsLambda(closure, args,__,__,__): {
 					new_vars = fold(args, fold(closure, makeSet(), \ac, v -> add_v(ac, v)), \ac, v -> add_v(ac, v));
-					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, new_vars), new_vars), Cons(acc.first.vars, acc.second));
+					Pair(FsPerceusAcc2(setTree(acc.first.id2vars, x.id, new_vars), new_vars), Cons(acc.first.vars, acc.second));
 				}
 				FsLet(v, __,__,__,id): {
 					new_vars = add_v(acc.first.vars, v);
-					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), acc.second);
+					Pair(FsPerceusAcc2(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), acc.second);
 				}
 				default: {
-					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, acc.first.vars), acc.first.vars), acc.second);
+					Pair(FsPerceusAcc2(setTree(acc.first.id2vars, x.id, acc.first.vars), acc.first.vars), acc.second);
 				}
 			}
 		},
@@ -316,10 +295,10 @@ fsId2varsPre(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 						Cons(pop_vars, pop_stack): {
 							if (debug) {
 								println("(A) id=" + i2s(id) + " poping stack: " +
-									"[" + strGlue(set2array(pop_vars), ", ") + "]"
+									"[" + superglue(set2array(pop_vars), \v -> v.name, ", ") + "]"
 								);
 							}
-							Pair(FsPerceusAcc(acc.first.id2vars, pop_vars), pop_stack);
+							Pair(FsPerceusAcc2(acc.first.id2vars, pop_vars), pop_stack);
 						}
 						default: acc;
 					}
@@ -328,13 +307,13 @@ fsId2varsPre(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 			}
 		},
 		\args -> args,
-		\p1, p2 -> Pair(fsMergeVars(p1.first, p2.first), fsMergeStacks(p1.second, p2.second))
+		\p1, p2 -> Pair(fsMergeVars2(p1.first, p2.first), fsMergeStacks2(p1.second, p2.second))
 	).first.id2vars;
 }
 
-fsId2varsPost(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
-	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
-	fsFold2(s1, Pair(FsPerceusAcc(makeTree(), makeSet()), makeList()),
+fsId2varsPost2(s1: FsStat, debug: bool) -> Tree<int, Set<FsVar>> {
+	show_vars = \vs -> "[" + superglue(set2array(vs), \v -> v.name, ", ") + "]";
+	fsFold2(s1, Pair(FsPerceusAcc2(makeTree(), makeSet()), makeList()),
 		\acc, x -> {
 			switch (x) {
 				FsLambda(__,__,__,__,id): {
@@ -349,7 +328,7 @@ fsId2varsPost(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 						);
 					}
 					Pair(
-						FsPerceusAcc(setTree(acc.first.id2vars, x.id, makeSet()), makeSet()), 
+						FsPerceusAcc2(setTree(acc.first.id2vars, x.id, makeSet()), makeSet()), 
 						Cons(acc.first.vars, acc.second)
 					);
 				}
@@ -357,7 +336,7 @@ fsId2varsPost(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 			}
 		},
 		\acc, x: FsAll -> {
-			add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v.name);
+			add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v);
 			switch (x) {
 				FsLambda(__,__,__,__,__): {
 					switch (acc.second) {
@@ -365,7 +344,7 @@ fsId2varsPost(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 							if (debug) {
 								println("(B) id=" + i2s(x.id) + " poping stack: " + show_vars(new_vars));
 							}
-							Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), new_stack);
+							Pair(FsPerceusAcc2(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), new_stack);
 						}
 						default: fail0("empty stack pop");
 					}
@@ -375,21 +354,21 @@ fsId2varsPost(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 						FsVarLocal(): add_v(acc.first.vars, v);
 						default: acc.first.vars;
 					}
-					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), acc.second);
+					Pair(FsPerceusAcc2(setTree(acc.first.id2vars, x.id, acc.first.vars), new_vars), acc.second);
 				}
 				default: {
-					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, acc.first.vars), acc.first.vars), acc.second);
+					Pair(FsPerceusAcc2(setTree(acc.first.id2vars, x.id, acc.first.vars), acc.first.vars), acc.second);
 				}
 			}
 		},
 		\args -> reverseA(args),
-		\p1, p2 -> Pair(fsMergeVars(p1.first, p2.first), fsMergeStacks(p1.second, p2.second))
+		\p1, p2 -> Pair(fsMergeVars2(p1.first, p2.first), fsMergeStacks2(p1.second, p2.second))
 	).first.id2vars;
 }
 
-fsId2varsLast(s1: FsStat, id2vars_pre: Tree<int, Set<string>>, id2vars_post: Tree<int, Set<string>>, debug: bool) -> Tree<int, Set<string>> {
-	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
-	fsFold2(s1, Pair(FsPerceusAcc(makeTree(), makeSet()), makeList()),
+fsId2varsLast2(s1: FsStat, id2vars_pre: Tree<int, Set<FsVar>>, id2vars_post: Tree<int, Set<FsVar>>, debug: bool) -> Tree<int, Set<FsVar>> {
+	show_vars = \vs -> "[" + superglue(set2array(vs), \v -> v.name, ", ") + "]";
+	fsFold2(s1, Pair(FsPerceusAcc2(makeTree(), makeSet()), makeList()),
 		\acc, x: FsAll -> {
 			pre_vars = lookupTreeDef(id2vars_pre, x.id, makeSet());
 			post_vars = lookupTreeDef(id2vars_post, x.id, makeSet());
@@ -412,10 +391,10 @@ fsId2varsLast(s1: FsStat, id2vars_pre: Tree<int, Set<string>>, id2vars_post: Tre
 					if (debug) {
 						println("(C) id=" + i2s(id) + " pushing stack: " + show_vars(acc.first.vars));
 					}
-					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, diff), makeSet()), Cons(acc.first.vars, acc.second));
+					Pair(FsPerceusAcc2(setTree(acc.first.id2vars, x.id, diff), makeSet()), Cons(acc.first.vars, acc.second));
 				}
 				default: {
-					Pair(FsPerceusAcc(setTree(acc.first.id2vars, x.id, diff), mergeSets(acc.first.vars, diff1)), acc.second);
+					Pair(FsPerceusAcc2(setTree(acc.first.id2vars, x.id, diff), mergeSets(acc.first.vars, diff1)), acc.second);
 				}
 			}
 		},
@@ -427,7 +406,7 @@ fsId2varsLast(s1: FsStat, id2vars_pre: Tree<int, Set<string>>, id2vars_post: Tre
 							if (debug) {
 								println("(C) id=" + i2s(id) + " poping stack: " + show_vars(vars));
 							}
-							Pair(FsPerceusAcc(acc.first.id2vars, vars), t);
+							Pair(FsPerceusAcc2(acc.first.id2vars, vars), t);
 						}
 						default: acc;
 					}
@@ -436,11 +415,11 @@ fsId2varsLast(s1: FsStat, id2vars_pre: Tree<int, Set<string>>, id2vars_post: Tre
 			}
 		},
 		\args -> args,
-		\p1, p2 -> Pair(fsMergeVars(p1.first, p2.first), fsMergeStacks(p1.second, p2.second))
+		\p1, p2 -> Pair(fsMergeVars2(p1.first, p2.first), fsMergeStacks2(p1.second, p2.second))
 	).first.id2vars;
 }
 
-fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
+fsIds2(new_id: () -> int) -> (FsAll) -> FsAll {
 	\s -> switch(s) {
 		FsIf(__,__,__,__,__):     FsIf(s with id = new_id());
 		FsSwitch(__,__,__,__,__): FsSwitch(s with id = new_id());
