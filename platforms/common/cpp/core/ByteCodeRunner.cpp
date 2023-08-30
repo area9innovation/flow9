@@ -1264,7 +1264,7 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
     }
     else
     {
-        size_t length = size/FLOW_CHAR_SIZE;
+        size_t length = size/FLOW_CHAR_SIZE+size%FLOW_CHAR_SIZE;
         size_t bytes = length * FLOW_CHAR_SIZE;
 
 #ifdef FLOW_MMAP_HEAP
