@@ -375,6 +375,12 @@ public class HttpSupport extends NativeHost {
 			String value = (String) heads[1];
 			connection.setRequestProperty(key, value);
 		}
+
+		String userInfo = connection.getURL().getUserInfo();
+		if (userInfo != null) {
+			String authorization = new String(Base64.getEncoder().encode(userInfo.getBytes()));
+			connection.setRequestProperty("Authorization", "Basic " + authorization);
+		}
 	}
 
 	public static final Object sendHttpRequestWithAttachments(String url, Object[] headers, Object[] params,
