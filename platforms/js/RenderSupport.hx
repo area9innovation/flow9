@@ -3045,6 +3045,12 @@ class RenderSupport {
 
 			clip.on(event, parentFn);
 			return function() { clip.off(event, parentFn); }
+		} if (event == "textwidthchanged") {
+			var widthFn = function(width : Float) {
+				fn([width]);
+			};
+			clip.on(event, widthFn);
+			return function() { clip.off(event, widthFn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};

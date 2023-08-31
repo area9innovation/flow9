@@ -232,20 +232,27 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 		make([])
 	);
 
-	view := MGetManager(\manager -> MConstruct(
-		[
-			\-> addBrowserUrlHashListener(manager, controller),
-			controller.setViewFn.subscribers
-		],
-		MComponentGroupMutable(
-			viewBoxB,
-			[
-				controller.setViewFn.monitorBehaviour,
-				IScriptBehaviour("pebble_stack", controller.pebbleStackB, ISPebbleEvent()),
-				IScriptBehaviour("current_pebble", controller.currentPebbleB, ISPebbleEvent())
-			]
+	view := MGetManager(\manager -> {
+		MConstruct(
+			concat(
+				[	\ -> addBrowserUrlHashListener(manager, controller),
+					controller.setViewFn.subscribers,
+				],
+				if (debugPebbles()) [
+					makeSubscribe(pebbleStackB, \__ -> printPebbleControllerState(controller, "new stack")),
+					makeSubscribe(currentPebbleB, \__ -> printPebbleControllerState(controller, "new current")),
+				] else []
+			),
+			MComponentGroupMutable(
+				viewBoxB,
+				[
+					controller.setViewFn.monitorBehaviour,
+					IScriptBehaviour("pebble_stack", controller.pebbleStackB, ISPebbleEvent()),
+					IScriptBehaviour("current_pebble", controller.currentPebbleB, ISPebbleEvent())
+				]
+			)
 		)
-	));
+	});
 
 	controller
 }
@@ -405,7 +412,7 @@ setViewFromPebbleIfRequired(controller : PebbleController, current : Pebble, peb
 // Add subscriber which will create Pebbles from urlHash and call appropriate Fns, if it exists
 addBrowserUrlHashListener(manager : MaterialManager, controller : PebbleController) -> () -> void {
 	if (js) {
-		addUrlHashListener(\__ -> {
+		addUrlHashListener(\hash0 -> {
 			if (!contains(^ignoreHash, getUrlHash()) && getValue(manager.pebblesEnabled)) {
 				currentPebble = getCurrentPebble(controller);
 				// build pebble based on current URL hash
@@ -420,8 +427,10 @@ addBrowserUrlHashListener(manager : MaterialManager, controller : PebbleControll
 						prevPebble = pebbleStack[length(pebbleStack) - 2];
 						if (equalPebbles(urlHashPebble, prevPebble)) {
 							//println("URL handler 2: " + pebble2UrlHash(urlHashPebble) +
-							//	", prev="  + pebble2UrlHash(prevPebble) +
-							//	", curr=" + pebble2UrlHash(currentPebble));
+							//	"\nprev: "  + pebble2UrlHash(prevPebble) +
+							//	"\ncurr: " + pebble2UrlHash(currentPebble) +
+							//	"\nevent: " + hash0
+							//);
 							// back button was probably clicked
 							confirmPebbleSwitch(controller, currentPebble, prevPebble, \-> {
 								// onApproved
@@ -543,18 +552,27 @@ pushPebble2(pebbleStackB : DynamicBehaviour<[Pebble]>, currentPebbleB : DynamicB
 	npebble = normalizePebble(pebble);
 
 	if (!equalPebbles(npebble, lastPebble2(pebbleStackB, makeEmptyPebble()))) {
-
 		//println("pushPebble:" + pebble2UrlHash(npebble) + (if (recordHistory) " recordHistory" else ""));
+
+		// first update stack because it does not have subscribers
 		dynArrayPush(pebbleStackB, npebble);
+
+		// next update currentPebbleB
+		currentHash = getUrlHash();
 		next(currentPebbleB, npebble);
 
+		// finally update URL hash if required and it was not changed outside during updating currentPebbleB
 		if (updateHashUrl) {
-			if (js) {
-				pushPebble2UrlHash(npebble);
-			}
-			if (lastPebbleOn() && pebbleMode() != LAST_PEBBLE_MODE_NEVER) {
-				setKeyValue(getLastPebbleKey(), pebble2UrlHash(npebble));
-				{}
+			if (currentHash == getUrlHash()) {
+				if (js) {
+					pushPebble2UrlHash(npebble);
+				}
+				if (lastPebbleOn() && pebbleMode() != LAST_PEBBLE_MODE_NEVER) {
+					setKeyValue(getLastPebbleKey(), pebble2UrlHash(npebble));
+					{}
+				}
+			} else {
+				devtrace("pebbles: pushing pebble (" + pebble2UrlHash(npebble) + ") to URL was interrupted by another pushing or other action");
 			}
 		}
 	}
@@ -762,7 +780,7 @@ printPebbleControllerState(controller : PebbleController, msg : string) -> void 
 			"Current pebble: " + pebble2UrlHash(getValue(controller.currentPebbleB)),
 			"Stack size: " + i2s(stackLen) + ", last items:",
 		],
-		map(subrange(stack, stackLen - 3, 2), \p -> "\t" + pebble2UrlHash(p)),
+		generate(max(stackLen - 3, 0), stackLen, \i -> "\t" + i2s(i + 1) + ": " + pebble2UrlHash(stack[i])),
 	]);
 	println(strGlue(lines, "\n\t"));
 }

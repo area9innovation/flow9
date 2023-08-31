@@ -53,6 +53,8 @@ import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.concurrent.ConcurrentHashMap;
 import com.sun.management.OperatingSystemMXBean;
+import java.time.format.FormatStyle;
+import java.time.ZonedDateTime;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
@@ -955,6 +957,35 @@ public class Native extends NativeHost {
 
 	public static final double timestamp() {
 		return System.currentTimeMillis();
+	}
+
+	public static final String getLocalTimezoneId() {
+		return ZoneId.systemDefault().getId();
+	}
+
+	public static final String getTimezoneTimeString(double utcStamp, String timezoneId, String language) {
+		long utcMillis = Double.valueOf(utcStamp).longValue();
+		Instant instant = Instant.ofEpochMilli(utcMillis);
+
+		if (timezoneId.equals("")) {
+			timezoneId = "UTC";
+		}
+
+		ZoneId zoneId = ZoneId.of(timezoneId);
+		ZonedDateTime date = ZonedDateTime.ofInstant(instant, zoneId);
+
+		DateTimeFormatter dtf = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT, FormatStyle.LONG).withLocale(Locale.forLanguageTag(language));
+
+		return date.format(dtf);
+	}
+
+	public static final double getTimezoneOffset(double utcStamp, String timezoneId) {
+		if (timezoneId.equals("")) {
+			return 0;
+		}
+		long utcMillis = Double.valueOf(utcStamp).longValue();
+		TimeZone tz = TimeZone.getTimeZone(timezoneId);
+		return tz.getOffset(new Date(utcMillis).getTime());
 	}
 
 	public static Object[][] getAllUrlParameters() {

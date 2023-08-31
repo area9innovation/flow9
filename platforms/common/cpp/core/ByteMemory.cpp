@@ -4,16 +4,16 @@
 #include <errno.h>
 
 #ifdef FLOW_EMBEDDED
-unsigned int MIN_HEAP_SIZE = (32 * 1048576);
+unsigned int MIN_HEAP_SIZE = (256 * 1048576);
 #else
 unsigned int MIN_HEAP_SIZE = (256 * 1048576);
 #endif
 
 
 #ifdef FLOW_EMBEDDED
-unsigned int MAX_HEAP_SIZE = (128 * 1048576);
+unsigned int MAX_HEAP_SIZE = (1024 * 1048576);
 #else
-unsigned int MAX_HEAP_SIZE = (512 * 1048576);
+unsigned int MAX_HEAP_SIZE = (1024 * 1048576);
 #endif
 
 #define START_SHIFT alloc_step_size()
