@@ -180,12 +180,12 @@ void AbstractHttpSupport::deliverError(int id, const void * buffer, size_t count
 
 void AbstractHttpSupport::deliverStatus(int id, int status)
 {
-
+    RUNNER_VAR = getFlowRunner();
+    WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+    
     HttpRequest *rq = getRequestById(id);
 
     if (rq && !rq->status_cb.IsVoid()) {
-        RUNNER_VAR = getFlowRunner();
-        WITH_RUNNER_LOCK_DEFERRED(RUNNER);
         RUNNER->EvalFunction(rq->status_cb, 1, StackSlot::MakeInt(status));
     }
 
@@ -195,6 +195,8 @@ void AbstractHttpSupport::deliverStatus(int id, int status)
 void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers)
 {
     RUNNER_VAR = getFlowRunner();
+    WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+    
     HttpRequest *rq = getRequestById(id);
 
     if (rq && !rq->response_cb.IsVoid()) {
@@ -237,7 +239,6 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
             RUNNER->SetArraySlot(headersArray, i++, headerPair);
         }
 
-        WITH_RUNNER_LOCK_DEFERRED(RUNNER);
         RUNNER->EvalFunction(rq->response_cb, 3, StackSlot::MakeInt(status), data, headersArray);
     }
 }
