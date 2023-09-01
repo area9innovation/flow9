@@ -36,22 +36,7 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
 		default: acc;
 	}, true);
-	id2vars_pre = fsId2varsPre(s1, debug);
-	id2vars_post = fsId2varsPost(s1, debug);
-	id2vars_last: Tree<int, Set<string>> = fsId2varsLast(s1, id2vars_pre, id2vars_post, debug);
-	if (debug) {
-		set_tree2s = \st -> {
-			superglue(tree2pairs(st), \p ->
-				i2s(p.first) + ": " + "[" + strGlue(set2array(p.second), ", ") + "]", "\n"
-			);
-		}
-		println(
-			"id2vars_pre:\n" + set_tree2s(id2vars_pre) + "\n" +
-			"id2vars_post:\n" + set_tree2s(id2vars_post) + "\n" +
-			"id2vars_last:\n" + set_tree2s(id2vars_last) + "\n" +
-			""
-		);
-	}
+	id2vars_last = fsFindLast(s1, debug);
 	cast(fsMap(s1, \x -> switch (x) {
 		FsIf(cond,__, pos, neg, id):  {
 			memops = fsGetMemops(cond, id2vars_last, debug);
@@ -102,8 +87,41 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 	}, true): FsAll -> FsStat);
 }
 
+fsFindLast(s: FsStat, debug: bool) -> Tree<int, Set<string>> {
+	id2vars_pre = fsId2varsPre(s, debug);
+	id2vars_post = fsId2varsPost(s, debug);
+	id2vars_last: Tree<int, Set<string>> = fsId2varsLast(s, id2vars_pre, id2vars_post, debug);
+	if (debug) {
+		set_tree2s = \st -> {
+			superglue(tree2pairs(st), \p ->
+				i2s(p.first) + ": " + "[" + strGlue(set2array(p.second), ", ") + "]", "\n"
+			);
+		}
+		println(
+			"id2vars_pre:\n" + set_tree2s(id2vars_pre) + "\n" +
+			"id2vars_post:\n" + set_tree2s(id2vars_post) + "\n" +
+			"id2vars_last:\n" + set_tree2s(id2vars_last) + "\n" +
+			""
+		);
+	}
+	id2vars_last;
+}
+
+fsLookupLast(x: FsAll, last: Tree<int, Set<string>>, id: int) -> Set<string> {
+	if (id == -1) {
+		makeSet();
+	} else {
+		switch (lookupTree(last, id)) {
+			Some(s): s;
+			None(): fail0("must be id: " + i2s(id) + " of:\n" +
+				fs2s(x)
+			);
+		}
+	}
+}
+
 fsDecUnused(id: int, x: FsStat, id2vars_last: Tree<int, Set<string>>, varName2type: Tree<string, FsVar>, debug: bool) -> FsStat {
-	unused = map(set2array(lookupTreeDef(id2vars_last, id, makeSet())), \v_name ->
+	unused = map(set2array(fsLookupLast(x, id2vars_last, id)), \v_name ->
 		switch (lookupTree(varName2type, v_name)) {
 			Some(v): v;
 			None(): fail0("Unknown variable: " + v_name);
@@ -227,13 +245,13 @@ fsExpVarIncs(e: FsExp, acc: Tree<FsVar, FsMemOps>, last: Tree<int, Set<string>>,
 			fsExpVarIncs(e1, acc, last, -1, FsOrPrim());
 		}
 		FsVarUse(x, kind, last1, id): {
-			call_case = \-> if (containsSet(lookupTreeDef(last, id, makeSet()), x.name)) acc else {
+			call_case = \-> if (containsSet(fsLookupLast(e, last, id), x.name)) acc else {
 				switch (lookupTree(acc, x)) {
 					Some(p): setTree(acc, x, FsMemOps(p with incs = p.incs + 1));
 					None(): setTree(acc, x, FsMemOps(x, 1, false));
 				}
 			}
-			prim_case = \-> if (!containsSet(lookupTreeDef(last, id, makeSet()), x.name)) acc else {
+			prim_case = \-> if (!containsSet(fsLookupLast(e, last, id), x.name)) acc else {
 				switch (lookupTree(acc, x)) {
 					Some(p): setTree(acc, x, FsMemOps(p with dec = true));
 					None(): setTree(acc, x, FsMemOps(x, 0, true));
@@ -264,7 +282,7 @@ fsExpVarIncs(e: FsExp, acc: Tree<FsVar, FsMemOps>, last: Tree<int, Set<string>>,
 	}
 }
 
-fsId2varsPre(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
+/*fsId2varsPre(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 	id2vars = ref makeTree();
 	fsFold2(s1, Cons(makeSet(), EmptyList()),
 		\acc, x: FsAll -> {
@@ -298,9 +316,73 @@ fsId2varsPre(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
 	);
 	^id2vars;
+}*/
+
+fsId2varsPre(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
+	id2vars = ref makeTree();
+	fsFold2(s1, Cons(makeSet(), EmptyList()),
+		\acc, x: FsAll -> {
+			add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v.name);
+			switch (x) {
+				FsLambda(closure, args,__,__,id): {
+					new_vars = fold(args, fold(closure, makeSet(), \ac, v -> add_v(ac, v)), \ac, v -> add_v(ac, v));
+					id2vars := insertMultipleMultimap(^id2vars, id, new_vars);
+					Cons(new_vars, acc);
+				}
+				FsLet(v, __,__,__,id): {
+					new_vars = add_v(acc.head, v);
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					Cons(new_vars, acc.tail);
+				}
+				FsIf(__,__,__,__, id):  {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsSwitch(__,__,__,__, id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsSeq(__, id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsRet(__,__,id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsWrapExp(__,__,id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsAssign(__,__,__,id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsVarUse(v, kind, last, id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				default: {
+					//id2vars := insertMultipleMultimap(^id2vars, x.id, acc.head);
+					acc;
+				}
+			}
+		},
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					cast(acc.tail: List<Set<string>> -> Cons<Set<string>>);
+				}
+				default: acc;
+			}
+		},
+		\args -> args,
+		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
+	);
+	^id2vars;
 }
 
-fsId2varsPost(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
+/*fsId2varsPost(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
 	id2vars = ref makeTree();
 	fsFold2(s1, Cons(makeSet(), EmptyList()),
@@ -347,9 +429,90 @@ fsId2varsPost(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
 		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
 	);
 	^id2vars;
+}*/
+
+
+fsId2varsPost(s1: FsStat, debug: bool) -> Tree<int, Set<string>> {
+	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
+	id2vars = ref makeTree();
+	fsFold2(s1, Cons(makeSet(), EmptyList()),
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					if (debug) {
+						st = switch (acc) {
+							Cons(vars,__): show_vars(vars);
+							EmptyList(): ""
+						}
+						println(
+							"(B) id=" + i2s(id) + " pushing stack: [" + show_vars(acc.head) + "]\n" +
+							"\tacc.second: [" + st + "]\n"
+						);
+					}
+					id2vars := insertMultipleMultimap(^id2vars, x.id, makeSet());
+					Cons(makeSet(), acc);
+				}
+				default: acc;
+			}
+		},
+		\acc, x: FsAll -> {
+			//id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					cast(acc.tail: List<Set<string>> -> Cons<Set<string>>);
+				}
+				FsVarUse(v, kind, last, id): {
+					new_vars = switch (kind) {
+						FsVarLocal(): {
+							if (fiTypeIsScalar(v.type)) acc.head else insertSet(acc.head, v.name);
+						}
+						default: acc.head;
+					}
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					Cons(new_vars, acc.tail);
+				}
+				FsIf(__,__,__,__, id):  {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsLet(__,__,__,__,id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsSwitch(__,__,__,__, id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsSeq(__, id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsRet(__,__,id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsWrapExp(__,__,id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				FsAssign(__,__,__,id): {
+					id2vars := insertMultipleMultimap(^id2vars, id, acc.head);
+					acc;
+				}
+				default: {
+					//id2vars := insertMultipleMultimap(^id2vars, x.id, acc.head);
+					acc;
+				}
+			}
+		},
+		\args -> reverseA(args),
+		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
+	);
+	^id2vars;
 }
 
-fsId2varsLast(s1: FsStat, id2vars_pre: Tree<int, Set<string>>, id2vars_post: Tree<int, Set<string>>, debug: bool) -> Tree<int, Set<string>> {
+/*fsId2varsLast(s1: FsStat, id2vars_pre: Tree<int, Set<string>>, id2vars_post: Tree<int, Set<string>>, debug: bool) -> Tree<int, Set<string>> {
 	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
 	id2vars = ref makeTree();
 	fsFold2(s1, Cons(makeSet(), makeList()),
@@ -395,6 +558,109 @@ fsId2varsLast(s1: FsStat, id2vars_pre: Tree<int, Set<string>>, id2vars_post: Tre
 		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
 	);
 	^id2vars;
+}*/
+
+fsId2varsLast(s1: FsStat, id2vars_pre: Tree<int, Set<string>>, id2vars_post: Tree<int, Set<string>>, debug: bool) -> Tree<int, Set<string>> {
+	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
+	id2vars = ref makeTree();
+	fsFold2(s1, Cons(makeSet(), makeList()),
+		\acc: Cons<Set<string>>, x: FsAll -> {
+			do_diff = \ -> {
+				pre_vars = fsLookupLast(x, id2vars_pre, x.id);
+				post_vars = fsLookupLast(x, id2vars_post, x.id);
+				diff1 = differenceSets(pre_vars, post_vars);
+				diff = differenceSets(diff1, acc.head);
+				if (debug) {
+					println(
+						"(C) x.id: " + i2s(x.id) + "\n" +
+						strIndent(
+							"pre_vars: " + show_vars(pre_vars) + "\n" +
+							"post_vars: " + show_vars(post_vars) + "\n" +
+							"acc.head: " + show_vars(acc.head) + "\n" +
+							"diff1: " + show_vars(diff1) + "\n" +
+							"diff: " + show_vars(diff)
+						)
+					);
+				}
+				Pair(diff, diff1);
+			}
+			//id2vars := insertMultipleMultimap(^id2vars, x.id, diff);
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					if (debug) {
+						println("(C) id=" + i2s(id) + " pushing stack: " + show_vars(acc.head));
+					}
+					p = do_diff();
+					id2vars := insertMultipleMultimap(^id2vars, id, p.first);
+					Cons(makeSet(), acc);
+				}
+				FsIf(__,__,__,__, id):  {
+					p = do_diff();
+					id2vars := insertMultipleMultimap(^id2vars, id, p.first);
+					//acc;
+					Cons(mergeSets(acc.head, p.second), acc.tail);
+				}
+				FsLet(__,__,__,__,id): {
+					p = do_diff();
+					id2vars := insertMultipleMultimap(^id2vars, id, p.first);
+					//acc;
+					Cons(mergeSets(acc.head, p.second), acc.tail);
+				}
+				FsSwitch(__,__,__,__, id): {
+					p = do_diff();
+					id2vars := insertMultipleMultimap(^id2vars, id, p.first);
+					//acc;
+					Cons(mergeSets(acc.head, p.second), acc.tail);
+				}
+				FsSeq(__, id): {
+					p = do_diff();
+					id2vars := insertMultipleMultimap(^id2vars, id, p.first);
+					//acc;
+					Cons(mergeSets(acc.head, p.second), acc.tail);
+				}
+				FsRet(__,__,id): {
+					p = do_diff();
+					id2vars := insertMultipleMultimap(^id2vars, id, p.first);
+					//acc;
+					Cons(mergeSets(acc.head, p.second), acc.tail);
+				}
+				FsWrapExp(__,__,id): {
+					p = do_diff();
+					id2vars := insertMultipleMultimap(^id2vars, id, p.first);
+					//acc;
+					Cons(mergeSets(acc.head, p.second), acc.tail);
+				}
+				FsAssign(__,__,__,id): {
+					p = do_diff();
+					id2vars := insertMultipleMultimap(^id2vars, id, p.first);
+					//acc;
+					Cons(mergeSets(acc.head, p.second), acc.tail);
+				}
+				FsVarUse(__,__,__,id): {
+					p = do_diff();
+					id2vars := insertMultipleMultimap(^id2vars, id, p.first);
+					//acc;
+					Cons(mergeSets(acc.head, p.second), acc.tail);
+				}
+				default: {
+					//p = do_diff();
+					//Cons(mergeSets(acc.head, p.second), acc.tail);
+					acc;
+				}
+			}
+		},
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					cast(acc.tail: List<Set<string>> -> Cons<Set<string>>);
+				}
+				default: acc;
+			}
+		},
+		\args -> args,
+		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
+	);
+	^id2vars;
 }
 
 fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
@@ -405,16 +671,17 @@ fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
 		FsWrapExp(__,__,__):      FsWrapExp(s with id = new_id());
 		FsRet(__,__,__):          FsRet(s with id = new_id());
 		FsAssign(__,__,__,__):    FsAssign(s with id = new_id());
-		FsIncRc(__,__,__):        FsIncRc(s with id = new_id());
-		FsDecRc(__,__):           FsDecRc(s with id = new_id());
+		//FsIncRc(__,__,__):        FsIncRc(s with id = new_id());
+		//FsDecRc(__,__):           FsDecRc(s with id = new_id());
 		FsLet(__,__,__,__,__):    FsLet(s with id = new_id());
-		FsClosure(__,__,__):      FsClosure(s with id = new_id());
+		//FsClosure(__,__,__):      FsClosure(s with id = new_id());
 		FsLambda(__,__,__,__,__): FsLambda(s with id = new_id());
-		FsCall(__,__,__,__):      FsCall(s with id = new_id());
-		FsCallPrim(__,__,__,__):  FsCallPrim(s with id = new_id());
-		FsCast(__,__,__,__):      FsCast(s with id = new_id());
-		FsConst(__,__):           FsConst(s with id = new_id());
-		FsTailCall(__,__,__,__):  FsTailCall(s with id = new_id());
+		//FsCall(__,__,__,__):      FsCall(s with id = new_id());
+		//FsCallPrim(__,__,__,__):  FsCallPrim(s with id = new_id());
+		//FsCast(__,__,__,__):      FsCast(s with id = new_id());
+		//FsConst(__,__):           FsConst(s with id = new_id());
+		//FsTailCall(__,__,__,__):  FsTailCall(s with id = new_id());
 		FsVarUse(__,__,__,__):    FsVarUse(s with id = new_id());
+		default: s;
 	}
 }

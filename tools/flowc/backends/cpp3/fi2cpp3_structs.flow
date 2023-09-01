@@ -1,0 +1,84 @@
+import tools/flowc/backends/cpp3/fi2cpp3_runtime;
+import tools/flowc/backends/cpp3/fi2cpp3_types;
+import tools/flowc/statements/fs_tailcall;
+import tools/flowc/statements/fs_module;
+
+export {
+	fiStructs2cpp3(structs : [FiTypeStruct], gctx: Cpp3GlobalContext) -> [Cpp3CompiledDeclaration];
+}
+
+fiStructs2cpp3(structs : [FiTypeStruct], gctx: Cpp3GlobalContext) -> [Cpp3CompiledDeclaration] {
+	ordered = fiOrderStructs(structs, fail);
+	fold(ordered,
+		Pair([], buildSet(map(structs, \s -> s.name))),
+		\acc, s -> {
+			decl = Cpp3CompiledDeclaration(s.name, true, fiStruct2cpp3(s, gctx, acc.second), "");
+			Pair(arrayPush(acc.first, decl), removeSet(acc.second, s.name));
+		}
+	).first;
+}
+
+fiOrderStructs(structs: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
+	fiDoOrderStructs(structs, [], \str ->
+		err(str + "\nstructs: " + superglue(structs, \s -> s.name, ", "))
+	);
+}
+
+fiStructDependencies(s: FiTypeStruct) -> [string] {
+	set2array(fold(s.args, makeSet(), \acc, arg ->
+		extractTypeNames(acc, arg.type)
+	));
+}
+
+fiDoOrderStructs(left: [FiTypeStruct], ordered: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
+	if (length(left) == 0) ordered else {
+		do_job = \ready -> {
+			new_left = filter(left, \s1 -> forall(ready, \s2 -> s1.name != s2.name));
+			new_ordered = concat(ordered, ready);
+			fiDoOrderStructs(new_left, new_ordered, err);
+		}
+		ready = filter(left, \s1 -> forall(fiStructDependencies(s1), \n ->
+			n == s1.name || forall(left, \s2 -> n != s2.name))
+		);
+		if (length(ready) == 0) {
+			// Approximate the order by finding the struct with least number of dependencies
+			least = fold(tail(left),
+				Pair(left[0], buildSet(fiStructDependencies(left[0]))),
+				\acc, x -> {
+					deps = buildSet(fiStructDependencies(x));
+					if (sizeSet(deps) >= sizeSet(acc.second)) acc else {
+						Pair(x, deps);
+					}
+				}
+			).first;
+			do_job([least]);
+		} else {
+			do_job(ready);
+		}
+	}
+}
+
+fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, not_ready: Set<string>) -> string {
+	gctx = Cpp3GlobalContext(
+		gctx0 with currentToplevel = Some(struct),
+		toplevelTypars = fold(struct.typars, makeSet(), \acc, tp -> fiCollectTypars(tp, acc))
+	);
+	struct_name = fi2cpp3typename2cpp(struct.name);
+	template_header = fiDeclTypars2cpp3(struct.typars, gctx);
+	template_header + "using " + struct_name + " = " + fiStructDef2cpp3(struct, gctx, not_ready) + ";\n\n";
+}
+
+fiStructDef2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext, not_ready: Set<string>) -> string {
+	struct_name = fi2cpp3typename2cpp(struct.name);
+	struct_id = eitherMap(lookupTree(gctx.structs2cpp, struct.name), \str -> i2s(str.id), "");
+	str_params = concat([struct_id], map(struct.args, \arg -> switch (arg.type) {
+		FiTypeName(arg_s,__): {
+			if (!containsSet(not_ready, arg_s)) fiType2cpp3(arg.type, gctx) else {
+				arg_struct = lookupTreeDef(gctx.program.names.structs, arg_s, FiTypeStruct("", [], [], 0));
+				fiStructDef2cpp3(arg_struct, gctx, not_ready);
+			}
+		}
+		default: fiType2cpp3(arg.type, gctx);
+	}));
+	"Str<" + strGlue(str_params, ", ") + ">";
+}
