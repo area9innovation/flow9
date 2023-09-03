@@ -137,6 +137,8 @@ fiTypeEmptyArrays(e: FiExp) -> FiExp;
 
 fiLabelAnonymLambdaArgs(e: FiExp) -> FiExp;
 
+fiCorrectCastCaseVarType(e: FiExp, sw: Tree<string, Pair<string, FiType>>) -> FiExp;
+
 }
 
 fiTransEliminateUnionFields(expr : FiExp, names: FiGlobalNames) -> FiExp {
@@ -876,15 +878,17 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 fiNormalizeCasts(e: FiExp) -> FiExp {
 	mapFiExp(e, \x -> switch (x) {
 		FiCast(y, x_from, x_to, x_type, start): {
-			switch (y) {
-				FiCast(z, y_from, y_to, y_type, __): {
-					if (!fiEqualTypes(y_to, x_from)) {
-						fail("inconsistent cast sequence callee type " + prettyFiType(dummyPretty, y_to, makeSet()) + " differs from the caller type " + prettyFiType(dummyPretty, x_from, makeSet()));
+			if (fiEqualTypes(x_from, x_to)) y else {
+				switch (y) {
+					FiCast(z, y_from, y_to, y_type, __): {
+						if (!fiEqualTypes(y_to, x_from)) {
+							fail("inconsistent cast sequence callee type " + prettyFiType(dummyPretty, y_to, makeSet()) + " differs from the caller type " + prettyFiType(dummyPretty, x_from, makeSet()));
+						}
+						if (fiEqualTypes(y_from, x_to)) z else
+						FiCast(z, y_from, x_to, x_type, start);
 					}
-					if (fiEqualTypes(y_from, x_to)) z else
-					FiCast(z, y_from, x_to, x_type, start);
+					default: x;
 				}
-				default: x;
 			}
 		}
 		default: x;
@@ -1574,27 +1578,27 @@ fiUnfoldCasts(e: FiExp, from: FiType, to: FiType, s: int, names: FiGlobalNames, 
 											FiSwitch(tmp, tmp.type,
 												map(union_from.typenames,
 													\tn_from -> {
+														struct_from = fiTypeName2Struct(tn_from, names);
 														switch (find(union_to.typenames, \x -> x.name == tn_from.name)) {
 															Some(tn_to): {
-																struct_from = fiTypeName2Struct(tn_from, names);
 																struct_to = fiTypeName2Struct(tn_to, names);
 																from_tn = FiTypeName(struct_from.name, struct_from.typars);
 																to_tn = FiTypeName(struct_to.name, struct_to.typars);
 																FiCase(tn_from.name, map(struct_from.args, \__-> "__"),
-																	FiCast(
+																	fiNormalizeCasts(FiCast(
 																		cast_struct(
 																			FiCast(e, from, from_tn, from_tn, s),
 																			struct_from, struct_to
 																		),
 																		to_tn, to, to, s
-																	), 
+																	)), 
 																	s
 																);
 															}
 															None(): {
 																// Such a cast will cause a runtime error
-																FiCase(tn_from.name, [],
-																	FiCast(e, tn_from, to, to, s), 
+																FiCase(tn_from.name, map(struct_from.args, \__-> "__"),
+																	fiNormalizeCasts(FiCast(e, from, to, to, s)), 
 																	s
 																);
 															}
@@ -1780,4 +1784,100 @@ fiLabelAnonymLambdaArgs(e: FiExp) -> FiExp {
 		}
 		default: x;
 	});
+}
+
+fiCorrectCastCaseVarType(e: FiExp, sw: Tree<string, Pair<string, FiType>>) -> FiExp {
+	switch (e) {
+		FiLambda(args, body, type, start): {
+			FiLambda(e with body = fiCorrectCastCaseVarType(body, sw));
+		}
+		FiCall(f, args, __, __): {
+			FiCall(e with
+				f = fiCorrectCastCaseVarType(f, sw),
+				args = map(args, \arg -> fiCorrectCastCaseVarType(arg, sw))
+			);
+		}
+		FiVar(x, __, __): e;
+		FiLet(x, t, e1, e2, __, __): {
+			sw1 = switch (e1) {
+				FiCallPrim(op, es, tp, __): {
+					switch (op) {
+						FcFieldPrim(field): {
+							switch (es[0]) {
+								FiVar(v,__,__): setTree(sw, field, Pair(v, t));
+								default: sw;
+							}
+						}
+						default: sw;
+					}
+				}
+				default: sw;
+			}
+			FiLet(e with
+				e1 = fiCorrectCastCaseVarType(e1, sw),
+				e2 = fiCorrectCastCaseVarType(e2, sw1)
+			);
+		}
+		FiIf(e1, e2, e3, __, __): {
+			FiIf(e with
+				e1 = fiCorrectCastCaseVarType(e1, sw),
+				e2 = fiCorrectCastCaseVarType(e2, sw),
+				e3 = fiCorrectCastCaseVarType(e3, sw)
+			);
+		}
+		FiSwitch(x, typ, cs, __, __): {
+			FiSwitch(e with 
+				cases = map(cs, \c -> FiCase(c with body = fiCorrectCastCaseVarType(c.body, sw)))
+			);
+		}
+		FiCast(e0, tFrom, tTo, __, __): {
+			FiCast(e with e = fiCorrectCastCaseVarType(e0, sw));
+		}
+		FiSeq(es, __, __): {
+			FiSeq(e with es = map(es, \x -> fiCorrectCastCaseVarType(x, sw)));
+		}
+		FiCallPrim(op, es, t, __): {
+			switch (op) {
+				FcFieldPrim(field): {
+					switch (es[0]) {
+						FiVar(v,__,__): {
+							switch (lookupTree(sw, field)) {
+								Some(p): {
+									if (p.first == v) {
+										// Correct type!
+										FiCallPrim(e with
+											es = map(es, \x -> fiCorrectCastCaseVarType(x, sw)),
+											type = p.second
+										);
+									} else {
+										FiCallPrim(e with es = map(es, \x -> fiCorrectCastCaseVarType(x, sw)));
+									}
+								}
+								None(): {
+									FiCallPrim(e with es = map(es, \x -> fiCorrectCastCaseVarType(x, sw)));
+								}
+							}
+						}
+						default: {
+							FiCallPrim(e with es = map(es, \x -> fiCorrectCastCaseVarType(x, sw)));
+						}
+					}
+				}
+				default: {
+					FiCallPrim(e with es = map(es, \x -> fiCorrectCastCaseVarType(x, sw)));
+				}
+			}
+		}
+		FiRequire(flowfile2, e2, __, __): {
+			FiRequire(e with e = fiCorrectCastCaseVarType(e2, sw));
+		}
+		FiUnsafe(name, fallback, __, __): {
+			FiUnsafe(e with fallback = fiCorrectCastCaseVarType(fallback, sw));
+		}
+		FiString(s, __): e;
+		FiBool(b, __): e;
+		FiDouble(d, __): e;
+		FiVoid(__): e;
+		FiInt(i, __): e;
+	}
 }

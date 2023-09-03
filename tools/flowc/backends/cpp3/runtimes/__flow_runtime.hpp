@@ -387,7 +387,8 @@ struct Str : public Flow {
 	Str& operator = (Str&& r) = delete;
 	Str& operator = (const Str& r) = delete;
 
-	static Str* make(Fs... fs) { return new Str(fs...); }
+	//template<typename T>
+	//static std::remove_pointer_t<T>* make(Fs... fs) { return static_cast<std::remove_pointer_t<T>*>(new Str(fs...)); }
 
 	// general interface
 	TypeId typeId() const override { return TYPE; }
@@ -1103,7 +1104,7 @@ inline Int compare(T v1, T v2) {
 		}
 	}
 	else if constexpr (is_type_v<TypeFx::REF, T>) {
-		return compare<typename T::RefType>(v1->get(), v2->get());
+		return compare<typename std::remove_pointer<T>::type::RefType>(v1->get(), v2->get());
 	}
 	else if constexpr (is_type_v<TypeFx::FUNC, T> || is_type_v<TypeFx::NATIVE, T>) {
 		return compare<void*>(v1, v2);

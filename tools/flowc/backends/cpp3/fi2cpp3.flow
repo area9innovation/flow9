@@ -216,10 +216,11 @@ cpp3StructDefs(gctx: Cpp3GlobalContext) -> string {
 		check_arity = "if (args->size() != " + i2s(length(s.args)) + ") {\n" +
 		"\tfail(\"Struct " + s.name + " arity mismatch: expected " + i2s(length(s.args)) + " arguments, " +
 		"got: \" + string2std(int2string(args->size())) + \"  \");\n}";
+		struct_type = FiTypeName(s.name, s.typars);
 		"[](Vec<Flow*>* args){\n" + strIndent(
 			check_arity + "\n" +
-			"Flow* ret = static_cast<Flow*>(" +
-			fiStructName2cpp3(FiTypeName(s.name, s.typars), gctx) + "::make(\n" +
+			"Flow* ret = static_cast<Flow*>(new " +
+			fiStructName2cpp3(struct_type, gctx) + "(\n" +
 				strIndent(strGlue(mapi(s.args, make_arg), ",\n")) +
 			"\n));\n" +
 			"decRc(args);\n" +
@@ -243,19 +244,28 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 		\inc -> "#inc" + "lude " + inc, 
 		"\n"
 	);
-	forward_decls = map(module.decls, \decl -> decl.forward);
-	header_defs = filtermap(module.decls, \decl -> if (decl.headerOnly) Some(decl.definition) else None());
+	forwards = map(module.decls, \decl -> decl.forward);
+	traits = map(module.decls, \decl -> decl.traits);
+	decls = map(module.decls, \decl -> decl.declaration);
+	defs = filtermap(module.decls, \decl -> if (decl.headerOnly) Some(decl.definition) else None());
+	decl_defs = concat(decls, defs);
+
+	wrap_with_namespace = \ns, using, contents -> {
+		"namespace " + ns + " {\n" +
+			concatStrings(map(using, \us -> "using namespace " + us + ";\n")) +
+			strIndent(trim2(contents, "\n")) + "\n" +
+		"}\n"
+	}
 	"#pragma once\n" +
 	(if (includes == "") "" else includes + "\n") +
 	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
 	"// Module " + module.name + "\n\n" + 
-	(if (gctx.config.monolith) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
-	"namespace " + gctx.config.namespace + " {\n" +
-	"using namespace std::string_literals;\n" +
-	"using namespace flow;\n\n" + 
-	concatStrings(forward_decls) + "\n" + 
-	concatStrings(header_defs) + "\n" + 
-	"}\n";
+	(if (gctx.config.monolith || length(module.imports) == 0) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
+	(if (length(forwards) == 0) "" else wrap_with_namespace(gctx.config.namespace, [], concatStrings(forwards)) + "\n") + 
+	(if (length(traits) == 0) "" else wrap_with_namespace("flow::traits", [], concatStrings(traits)) + "\n") +
+	(if (length(decl_defs) == 0) "\n" else 
+		wrap_with_namespace(gctx.config.namespace, ["std::string_literals", "flow"], concatStrings(decl_defs))  + "\n"
+	);
 }
 
 fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> [string] {
