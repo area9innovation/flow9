@@ -139,6 +139,10 @@ fiLabelAnonymLambdaArgs(e: FiExp) -> FiExp;
 
 fiCorrectCastCaseVarType(e: FiExp, sw: Tree<string, Pair<string, FiType>>) -> FiExp;
 
+fiCorrectStructFieldTypes(e: FiExp, names: FiGlobalNames) -> FiExp;
+
+fiRemoveRedundantVoids(e: FiExp) -> FiExp;
+
 }
 
 fiTransEliminateUnionFields(expr : FiExp, names: FiGlobalNames) -> FiExp {
@@ -1880,4 +1884,59 @@ fiCorrectCastCaseVarType(e: FiExp, sw: Tree<string, Pair<string, FiType>>) -> Fi
 		FiVoid(__): e;
 		FiInt(i, __): e;
 	}
+}
+
+fiCorrectStructFieldTypes(e: FiExp, names: FiGlobalNames) -> FiExp {
+	mapFiExp(e, \x -> switch (x) {
+		FiCallPrim(op, es, type,__): {
+			switch (op) {
+				FcFieldPrim(field): {
+					tp = fiExpType(es[0]);
+					switch (tp) {
+						FiTypeName(tp_name, typars): {
+							switch (lookupTree(names.structs, tp_name)) {
+								Some(s): {
+									spec = fiSpecializeStruct(tp, s);
+									switch (find(spec.args, \arg -> arg.name == field)) {
+										Some(arg): {
+											if (fiEqualTypes(arg.type, type)) x else {
+												FiCallPrim(x with type = arg.type);
+											}
+										}
+										None(): fail0("unknown field: " + field + " of struct: " + tp_name);
+									}
+								}
+								None(): x;
+							}
+						}
+						default: x;
+					}
+				}
+				default: x;
+			}
+		}
+		default: x;
+	});
+}
+
+fiRemoveRedundantVoids(e: FiExp) -> FiExp {
+	mapFiExp(e, \x -> switch (x) {
+		FiSeq(es, type, s): {
+			if (length(es) <=1) x else {
+				non_last = take(es, length(es) - 1);
+				filtered = filter(non_last, \y -> switch (y) {
+					FiVoid(__): false;
+					FiSeq(es1,__,__): length(es1) > 0;
+					default: true;
+				});
+				last = es[length(es) - 1];
+				if (length(filtered) > 0) {
+					FiSeq(x with es = arrayPush(filtered, last));
+				} else {
+					last;
+				}
+			}
+		}
+		default: x;
+	});
 }
