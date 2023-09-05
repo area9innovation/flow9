@@ -349,7 +349,7 @@ Int flowCompare(Flow* v1, Flow* v2) {
 					} else {
 						Int size = v1->size();
 						for (Int i = 0; i < size; ++ i) {
-							Int c2 = flowCompareComponents(v1, v2, 0);
+							Int c2 = flowCompareComponents(v1, v2, i);
 							if (c2 != 0) {
 								return c2;
 							}
