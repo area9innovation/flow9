@@ -159,7 +159,9 @@ fsGetMemops(e: FsExp, id2vars_last: [Set<string>], debug: bool) -> [Pair<FsVar, 
 	memops = tree2pairs(fsExpVarIncs(e, makeTree(), id2vars_last, -1, FsOrPrim()));
 	if (debug) {
 		memops_str = superglue(memops, \p -> p.first.name + "=inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) ", dec" else "", ", ");
-		println("memops for <" + i2s(e.id) + ">: [" + memops_str + "]");
+		println("memops for <" + i2s(e.id) + ">: [" + memops_str + "]" +
+			if (e.id != -1) "" else "EXP:\n" + strIndent(fs2s(e))
+		);
 	}
 	memops;
 }
@@ -171,7 +173,11 @@ fsGetMemops2(e1: FsExp, e2: FsExp, id2vars_last: [Set<string>], debug: bool) -> 
 	));
 	if (debug) {
 		memops_str = superglue(memops, \p -> p.first.name + "=inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) ", dec" else "", ", ");
-		println("memops for <" + i2s(e1.id) + ", " + i2s(e2.id) + ">: [" + memops_str + "]");
+		println("memops for <" + i2s(e1.id) + ", " + i2s(e2.id) + ">: [" + memops_str + "]" +
+			if (e1.id != -1 && e2.id != 1) "" else
+				"EXP 1:\n" + strIndent(fs2s(e1)) + "\n" +
+				"EXP 2:\n" + strIndent(fs2s(e2)) + "\n"
+		);
 	}
 	memops;
 }
@@ -318,35 +324,10 @@ fsId2varsPre(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 					fsMergeSets(id2vars, id, acc.head);
 					Cons(new_vars, acc.tail);
 				}
-				FsIf(__,__,__,__, id):  {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsSwitch(__,__,__,__, id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsSeq(__, id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsRet(__,__,id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsWrapExp(__,__,id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsAssign(__,__,__,id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsVarUse(v, kind, last, id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
 				default: {
+					if (x.id != -1) {
+						fsMergeSets(id2vars, x.id, acc.head);
+					}
 					acc;
 				}
 			}
@@ -365,36 +346,50 @@ fsId2varsPre(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 	map(id2vars, \x -> ^x);
 }
 
+fsPerceusShowStack(stack: List<Set<string>>) -> string {
+	"[" + strGlue(fsPerceusDoShowStack(stack, []), ", ") + "]";
+}
+
+fsPerceusDoShowStack(stack: List<Set<string>>, acc: [string]) -> [string] {
+	switch (stack) {
+		Cons(s, t): {
+			fsPerceusDoShowStack(t, arrayPush(acc, "{" +  strGlue(set2array(s), ", ") + "}"));
+		}
+		EmptyList(): acc;
+	}
+}
+
 fsId2varsPost(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
 	id2vars = generate(0, num, \__ -> ref makeSet());
 	fsFold2(s1, Cons(makeSet(), EmptyList()),
 		\acc, x -> {
-			switch (x) {
+			ret = switch (x) {
 				FsLambda(__,__,__,__,id): {
-					if (debug) {
-						st = switch (acc) {
-							Cons(vars,__): show_vars(vars);
-							EmptyList(): ""
-						}
-						println(
-							"(B) id=" + i2s(id) + " pushing stack: [" + show_vars(acc.head) + "]\n" +
-							"\tacc.second: [" + st + "]\n"
-						);
-					}
 					fsMergeSets(id2vars, id, makeSet());
 					Cons(makeSet(), acc);
 				}
 				default: acc;
 			}
+			if (debug) {
+				println(
+					"(B) PRE id=" + i2s(x.id) + "\n" +
+						"\tacc stack: " + fsPerceusShowStack(acc) + "\n" +
+						"\tret stack: " + fsPerceusShowStack(ret) + "\n"
+				);
+			}
+			ret;
 		},
 		\acc, x: FsAll -> {
-			switch (x) {
+			ret = switch (x) {
 				FsLambda(__,__,__,__,id): {
 					fsMergeSets(id2vars, id, acc.head);
 					cast(acc.tail: List<Set<string>> -> Cons<Set<string>>);
 				}
 				FsVarUse(v, kind, last, id): {
+					if (debug) {
+						println("\t(B) id=" + i2s(id) + " var: " + toString(x) + "\n");
+					}
 					new_vars = switch (kind) {
 						FsVarLocal(): {
 							if (fiTypeIsScalar(v.type)) acc.head else insertSet(acc.head, v.name);
@@ -404,38 +399,21 @@ fsId2varsPost(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 					fsMergeSets(id2vars, id, acc.head);
 					Cons(new_vars, acc.tail);
 				}
-				FsIf(__,__,__,__, id):  {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsLet(__,__,__,__,id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsSwitch(__,__,__,__, id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsSeq(__, id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsRet(__,__,id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsWrapExp(__,__,id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
-				FsAssign(__,__,__,id): {
-					fsMergeSets(id2vars, id, acc.head);
-					acc;
-				}
 				default: {
+					if (x.id != -1) {
+						fsMergeSets(id2vars, x.id, acc.head);
+					}
 					acc;
 				}
 			}
+			if (debug) {
+				println(
+					"(B) POST id=" + i2s(x.id) + "\n" +
+						"\tacc stack: " + fsPerceusShowStack(acc) + "\n" +
+						"\tret stack: " + fsPerceusShowStack(ret) + "\n"
+				);
+			}
+			ret;
 		},
 		\args -> reverseA(args),
 		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
@@ -476,48 +454,12 @@ fsId2varsLast(s1: FsStat, num: int, id2vars_pre: [Set<string>], id2vars_post: [S
 					fsMergeSets(id2vars, id, p.first);
 					Cons(makeSet(), acc);
 				}
-				FsIf(__,__,__,__, id):  {
-					p = do_diff();
-					fsMergeSets(id2vars, id, p.first);
-					Cons(mergeSets(acc.head, p.second), acc.tail);
-				}
-				FsLet(__,__,__,__,id): {
-					p = do_diff();
-					fsMergeSets(id2vars, id, p.first);
-					Cons(mergeSets(acc.head, p.second), acc.tail);
-				}
-				FsSwitch(__,__,__,__, id): {
-					p = do_diff();
-					fsMergeSets(id2vars, id, p.first);
-					Cons(mergeSets(acc.head, p.second), acc.tail);
-				}
-				FsSeq(__, id): {
-					p = do_diff();
-					fsMergeSets(id2vars, id, p.first);
-					Cons(mergeSets(acc.head, p.second), acc.tail);
-				}
-				FsRet(__,__,id): {
-					p = do_diff();
-					fsMergeSets(id2vars, id, p.first);
-					Cons(mergeSets(acc.head, p.second), acc.tail);
-				}
-				FsWrapExp(__,__,id): {
-					p = do_diff();
-					fsMergeSets(id2vars, id, p.first);
-					Cons(mergeSets(acc.head, p.second), acc.tail);
-				}
-				FsAssign(__,__,__,id): {
-					p = do_diff();
-					fsMergeSets(id2vars, id, p.first);
-					Cons(mergeSets(acc.head, p.second), acc.tail);
-				}
-				FsVarUse(__,__,__,id): {
-					p = do_diff();
-					fsMergeSets(id2vars, id, p.first);
-					Cons(mergeSets(acc.head, p.second), acc.tail);
-				}
 				default: {
-					acc;
+					if (x.id == -1) acc else {
+						p = do_diff();
+						fsMergeSets(id2vars, x.id, p.first);
+						Cons(mergeSets(acc.head, p.second), acc.tail);
+					}
 				}
 			}
 		},
@@ -537,15 +479,49 @@ fsId2varsLast(s1: FsStat, num: int, id2vars_pre: [Set<string>], id2vars_post: [S
 
 fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
 	\s -> switch(s) {
-		FsIf(__,__,__,__,__):     FsIf(s with id = new_id());
+		FsIf(c,__,__,__,__):      FsIf(s with id = new_id(), cond = fsExpSetId(c, new_id()));
 		FsSwitch(__,__,__,__,__): FsSwitch(s with id = new_id());
 		FsSeq(__, __):            FsSeq(s with id = new_id());
-		FsWrapExp(__,__,__):      FsWrapExp(s with id = new_id());
-		FsRet(__,__,__):          FsRet(s with id = new_id());
-		FsAssign(__,__,__,__):    FsAssign(s with id = new_id());
-		FsLet(__,__,__,__,__):    FsLet(s with id = new_id());
+		FsWrapExp(e,__,__):       FsWrapExp(s with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsRet(e,__,__):           FsRet(s with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsAssign(e1, e2,__,__):   FsAssign(s with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
+		FsLet(__,e,__,__,__):     FsLet(s with id = new_id(), e = fsExpSetId(e, new_id()));
 		FsLambda(__,__,__,__,__): FsLambda(s with id = new_id());
 		FsVarUse(__,__,__,__):    FsVarUse(s with id = new_id());
 		default: s;
+	}
+}
+
+fsSetId(s: FsAll, x: int) -> FsAll {
+	switch(s) {
+		FsStat():  fsStatSetId(s, x);
+		FsExp():   fsExpSetId(s, x);
+		FsLambda(__,__,__,__,__): FsLambda(s with id = x);
+	}
+}
+
+fsStatSetId(s: FsStat, x: int) -> FsStat {
+	switch(s) {
+		FsIf(__,__,__,__,__):     FsIf(s with id = x);
+		FsSwitch(__,__,__,__,__): FsSwitch(s with id = x);
+		FsSeq(__, __):            FsSeq(s with id = x);
+		FsWrapExp(__,__,__):      FsWrapExp(s with id = x);
+		FsRet(__,__,__):          FsRet(s with id = x);
+		FsAssign(__,__,__,__):    FsAssign(s with id = x);
+		FsLet(__,__,__,__,__):    FsLet(s with id = x);
+		FsIncRc(__,__,__):        FsIncRc(s with id = x);
+		FsDecRc(__,__):           FsDecRc(s with id = x);
+	}
+}
+
+fsExpSetId(e: FsExp, x: int) -> FsExp {
+	switch(e) {
+		FsVarUse(__,__,__,__):    FsVarUse(e with id = x);
+		FsClosure(__,__,__):      FsClosure(e with id = x);
+		FsCall(__,__,__,__):      FsCall(e with id = x);
+		FsCallPrim(__,__,__,__):  FsCallPrim(e with id = x);
+		FsTailCall(__,__,__,__):  FsTailCall(e with id = x);
+		FsCast(__,__,__,__):      FsCast(e with id = x);
+		FsConst(__,__):           FsConst(e with id = x);
 	}
 }
