@@ -1013,8 +1013,6 @@ class RenderSupport {
 	}
 
 	public static function setStatusBarColor(color : Int) {
-		trace(color);
-		trace(RenderSupport.makeCSSColor(color, 1.0));
 		var head = Browser.document.getElementsByTagName('head')[0];
 
 		var oldThemeMeta = Browser.document.querySelector('meta[name="theme-color"]');
