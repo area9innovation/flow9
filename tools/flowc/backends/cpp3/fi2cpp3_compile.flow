@@ -3,6 +3,7 @@ import tools/flowc/backends/cpp3/fi2cpp3_types;
 import tools/flowc/backends/cpp3/fi2cpp3_structs;
 import tools/flowc/statements/fs_tailcall;
 import tools/flowc/statements/fs_module;
+import tools/flowc/statements/fs_memory;
 
 export {
 	fiModule2cpp3(module : FsModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule;
@@ -34,54 +35,7 @@ fiModule2cpp3(module : FsModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule
 		fiModuleNatives2cpp3(module, gctx)
 	);
 }
-/*
-fiOrderStructs(structs: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
-	fiDoOrderStructs(structs, [], \str -> 
-		err(str + "\nstructs: " + superglue(structs, \s -> s.name, ", "))
-	);
-}
 
-fiStructDependencies(s: FiTypeStruct) -> [string] {
-	set2array(fold(s.args, makeSet(), \acc, arg ->
-		extractTypeNames(acc, arg.type)
-	));
-}
-
-fiDoOrderStructs(left: [FiTypeStruct], ordered: [FiTypeStruct], err: (string) -> void) -> [FiTypeStruct] {
-	if (length(left) == 0) ordered else {
-		ready = filter(left, \s1 -> forall(fiStructDependencies(s1), \n ->
-			n == s1.name || forall(left, \s2 -> n != s2.name))
-		);
-		if (length(ready) == 0) {
-			err("cyclic dependency in structs:\n" +
-				"ordered:\n" + strIndent(superglue(ordered, pretFiStructOrUnion, "\n")) + "\n" +
-				"left:\n" + strIndent(superglue(left, pretFiStructOrUnion, "\n")) + "\n"
-			);
-			ordered;
-		} else {
-			new_left = filter(left, \s1 -> forall(ready, \s2 -> s1.name != s2.name));
-			new_ordered = concat(ordered, ready);
-			fiDoOrderStructs(new_left, new_ordered, err);
-		}
-	}
-}
-
-fiStruct2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext, only_decl: bool) -> string {
-	gctx = Cpp3GlobalContext(
-		gctx0 with currentToplevel = Some(struct),
-		toplevelTypars = fold(struct.typars, makeSet(), \acc, tp -> fiCollectTypars(tp, acc))
-	);
-	struct_name = fi2cpp3typename2cpp(struct.name);
-	template_header = fiDeclTypars2cpp3(struct.typars, gctx);
-	if (only_decl) {
-		template_header + "struct " + struct_name + ";\n";
-	} else {
-		struct_id = eitherMap(lookupTree(gctx.structs2cpp, struct.name), \str -> i2s(str.id), "");
-		str_params = concat([struct_id], map(struct.args, \arg -> fiType2cpp3(arg.type, gctx)));
-		template_header + "using " + struct_name + " = Str<" + strGlue(str_params, ", ") + ">;\n\n";
-	}
-}
-*/
 fiModuleNatives2cpp3(module: FsModule, gctx: Cpp3GlobalContext) -> [Cpp3Native] {
 	missing_natives = ref [];
 	natives = filtermap(module.natives, \nat -> {
@@ -284,7 +238,7 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 						FsCallPrim(op, as,__,__): {
 							switch (op) {
 								FsFieldPrim(field, field_ind): {
-									fsExp2cpp3(as[0], gctx) + "->setRc1<" + i2s(field_ind) + ">(" + fsExp2cpp3(what, gctx) + ");";
+									fsExp2cpp3(as[0], gctx) + "->setRc" + (if (fs_fast_prim_ops) "1" else "") + "<" + i2s(field_ind) + ">(" + fsExp2cpp3(what, gctx) + ");";
 								}
 								default: {
 									fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
@@ -506,12 +460,12 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		FsAndPrim(): "(" + e2k(e.es[0]) + " && " + e2k(e.es[1]) + ")";
 		FsNotPrim(): "!" + e2k(e.es[0]);
 
-		FsEqPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") == 0)";
-		FsNePrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") != 0)";
-		FsLePrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") <= 0)";
-		FsGePrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") >= 0)";
-		FsLtPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") < 0)";
-		FsGtPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") > 0)";
+		FsEqPrim():  "(compare" + (if (fs_fast_prim_ops) "" else "Rc") + "<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") == 0)";
+		FsNePrim():  "(compare" + (if (fs_fast_prim_ops) "" else "Rc") + "<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") != 0)";
+		FsLePrim():  "(compare" + (if (fs_fast_prim_ops) "" else "Rc") + "<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") <= 0)";
+		FsGePrim():  "(compare" + (if (fs_fast_prim_ops) "" else "Rc") + "<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") >= 0)";
+		FsLtPrim():  "(compare" + (if (fs_fast_prim_ops) "" else "Rc") + "<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") < 0)";
+		FsGtPrim():  "(compare" + (if (fs_fast_prim_ops) "" else "Rc") + "<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") > 0)";
 
 		FsPlusPrim():  {
 			plus_args = fsCallPrimPlus2cpp3(e.es, gctx, []);
@@ -554,19 +508,19 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		FsIndexPrim(): {
 			switch (arg_type) {
 				FiTypeFlow(): {
-					e2k(e.es[0]) + "->getFlowRc1(" + e2k(e.es[1]) + ")";
+					e2k(e.es[0]) + "->getFlowRc" + (if (fs_fast_prim_ops) "1" else "") + "(" + e2k(e.es[1]) + ")";
 				}
 				default:
-					e2k(e.es[0]) + "->getRc1(" + e2k(e.es[1]) + ")";
+					e2k(e.es[0]) + "->getRc" + (if (fs_fast_prim_ops) "1" else "") + "(" + e2k(e.es[1]) + ")";
 			}
 		}
 		FsDerefPrim(): {
 			switch (arg_type) {
 				FiTypeFlow(): {
-					e2k(e.es[0]) + "->getFlowRc1(0)";
+					e2k(e.es[0]) + "->getFlowRc" + (if (fs_fast_prim_ops) "1" else "") + "(0)";
 				}
 				default: {
-					e2k(e.es[0]) + "->getRc1()";
+					e2k(e.es[0]) + "->getRc" + (if (fs_fast_prim_ops) "1" else "") + "()";
 				}
 			}
 		}
@@ -597,10 +551,10 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 			} else {
 				switch (arg_type) {
 					FiTypeFlow(): {
-						e2k(e.es[0]) + "->getFlowRc1(String::make(\"" + field_name + "\"))";
+						e2k(e.es[0]) + "->getFlowRc" + (if (fs_fast_prim_ops) "1" else "") + "(String::make(\"" + field_name + "\"))";
 					}
 					FiTypeName(struct_name,__): {
-						e2k(e.es[0]) + "->template getRc1<" + i2s(field_ind) + ">()";
+						e2k(e.es[0]) + "->template getRc" + (if (fs_fast_prim_ops) "1" else "") + "<" + i2s(field_ind) + ">()";
 					}
 					default: {
 						fail0("accees to field '" + field_name + "' of non-struct: " + fs2s(e.es[0]) + " of type: " + prettyFiType(dummyPretty, arg_type, makeSet()));

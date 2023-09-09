@@ -2,18 +2,20 @@ import ds/treeutils;
 import tools/flowc/statements/fs_transform;
 
 export {
-	fsStatPerceus(s: FsStat, debug: bool) -> FsStat;
+	fs_fast_prim_ops = false;
+	fsStatPerceus(s: FsStat, debug: bool, name: string) -> FsStat;
 }
 
-fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
+fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 	id_counter = ref 0;
 	new_id = \-> {
 		id = ^id_counter;
 		id_counter := ^id_counter + 1;
 		id;
 	}
+	debug = ref debug0;
 	s1 = cast(fsMap(s, fsIds(new_id), false): FsAll -> FsStat);
-	if (debug) {
+	if (^debug) {
 		println("s1 with ids:\n" +
 			//"s:\n" + fs2s(s) + "\n" +
 			"s1:\n" + fs2s(s1) + "\n"
@@ -36,55 +38,151 @@ fsStatPerceus(s: FsStat, debug: bool) -> FsStat {
 		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
 		default: acc;
 	}, true);
-	id2vars_last = fsFindLast(s1, ^id_counter, debug);
-	cast(fsMap(s1, \x -> switch (x) {
+
+	num_paths = ref makeTree();
+	fsNumControlFlowPaths(s1, num_paths);
+	total_paths = foldTree(^num_paths, 0.0, \__,n, acc -> acc + n);
+	//println("\tnum paths:\n" + 
+	//	superglue(tree2pairs(^num_paths), \p -> "\t\tid: " + i2s(p.first) + ", num paths: " + d2s(p.second), "\n")
+	//);
+	println("\tstat perceus: " + name + ", ids: " + i2s(^id_counter) + ", num paths: " + d2s(total_paths));
+
+	id2vars_last = fsFindLast(s1, ^id_counter, ^debug);
+
+	id2node = generate(0, ^id_counter, \__ -> ref FsConst(FiVoid(-1), -1));
+	fsIter(s1, \x -> if (x.id != -1) id2node[x.id] := x, true);
+
+	crash = ref false;
+
+	if (total_paths < 1000000.0) {
+		println("\t\tverifying Paths...");
+		cmp_last_sets = \all_vars: Set<string>, last_vars: Set<string> -> if (sizeSet(all_vars) == sizeSet(last_vars)) true else {
+			println(name + ": sizeSet(all_vars) != sizeSet(last_vars):\n" +
+				i2s(sizeSet(all_vars)) + " != " + i2s(sizeSet(last_vars)) + "\n" +
+				"all_vars: {" + strGlue(set2array(all_vars), ", ") + "}\n" +
+				"last_vars: {" + strGlue(set2array(last_vars), ", ") + "}\n" +
+				"missing: [" + strGlue(set2array(differenceSets(all_vars, last_vars)), ", ") + "]\n"
+			);
+			crash := true;
+			debug := true;
+			false;
+		}
+		cf_paths: ref Tree<int, [[int]]> = ref makeTree();
+		fsControlFlowPaths(s1, cf_paths);
+		traverseInOrder(^cf_paths, \id, paths -> {
+			num = lookupTreeDef(^num_paths, id, -1.0);
+			if (i2d(length(paths)) != num) {
+				println(name + ": length(paths) != num: " + i2s(length(paths)) + " != " + d2s(num));
+				crash := true;
+				debug := true;
+			}
+			lambda = cast(^(id2node[id]): FsAll -> FsLambda);
+			if (^debug) {
+				println("Lambda: " + i2s(id) + "\n" + 
+					"CF paths:\n" + superglue(paths, \path -> "\t[" + superglue(path, i2s, ", ") + "]" , "\n") + "\n"
+				)
+			}
+			iter(paths, \path -> {
+				vars1 = fold(lambda.args, 
+					fold(lambda.closure, 
+						makeSet(), 
+						\ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v.name)
+					), 
+					\ac, arg -> if (fiTypeIsScalar(arg.type)) ac else insertSet(ac, arg.name)
+				);
+				vars = fold(path, vars1, \acc, i -> switch (^(id2node[i])) {
+					FsLet(v,__,__,__,__): if (fiTypeIsScalar(v.type)) acc else insertSet(acc, v.name);
+					default: acc;
+				});
+				last = fold(path, makeSet(), \acc, i -> if (i == -1) acc else mergeSets(acc, id2vars_last[i]));
+				if (!cmp_last_sets(vars, last)) {
+					println(
+						"id: " + i2s(id) + "\n" +
+						"path: [" + superglue(path, i2s, ", ") + "]\n" + 
+						"vars: {" + strGlue(set2array(vars), ", ") + "}\n" +
+						"lasts: [\n" +
+							superglue(path, \i -> "\t" +  i2s(i) + ": {" + strGlue(set2array(id2vars_last[i]), ", ") + "}", "\n") +
+						"\n]\n" +
+						"lambda:\n" + strIndent(fs2s(^(id2node[id])))
+					);
+				}
+			});
+		});
+		println("\t\t... verified " + d2s(total_paths) + " paths");
+	}
+
+	ret = cast(fsMap(s1, \x -> switch (x) {
 		FsIf(cond,__, pos, neg, id):  {
-			memops = fsGetMemops(cond, id2vars_last, debug);
-			fsAddIncs(memops,
-				FsIf(x with
-					s1 = fsDecUnused(pos.id, fsAddDecs2(memops, pos, id), id2vars_last, varName2type, debug),
-					s2 = fsDecUnused(neg.id, fsAddDecs2(memops, neg, id), id2vars_last, varName2type, debug)
-				), id
+			memops = fsGetMemops(cond, id2vars_last, ^debug);
+			fsDecUnused(id,
+				fsAddIncs(memops,
+					FsIf(x with
+						s1 = fsDecUnused(pos.id, fsAddDecs2(memops, pos, id), id2vars_last, varName2type, ^debug),
+						s2 = fsDecUnused(neg.id, fsAddDecs2(memops, neg, id), id2vars_last, varName2type, ^debug)
+						//s1 = fsAddDecs2(memops, pos, id),
+						//s2 = fsAddDecs2(memops, neg, id)
+					), id
+				), id2vars_last, varName2type, ^debug
 			);
 		};
 		FsSwitch(v,__,__, cs, id): {
-			memops = fsGetMemops(v, id2vars_last, debug);
-			fsAddIncs(memops,
-				FsSwitch(x with
-					cases = map(cs, \c ->
-						FsCase(c with
-							body = fsDecUnused(c.body.id, fsAddDecs2(memops, c.body, id), id2vars_last, varName2type, debug)
+			memops = fsGetMemops(v, id2vars_last, ^debug);
+			fsDecUnused(id,
+				fsAddIncs(memops,
+					FsSwitch(x with
+						cases = map(cs, \c ->
+							FsCase(c with
+								body = fsDecUnused(c.body.id, fsAddDecs2(memops, c.body, id), id2vars_last, varName2type, ^debug)
+								//body = fsAddDecs2(memops, c.body, id)
+							)
 						)
-					)
-				), id
+					), id
+				), id2vars_last, varName2type, ^debug
 			);
 		}
 		FsRet(e,__,id): {
-			memops = fsGetMemops(e, id2vars_last, debug);
-			fsDecUnused(id, fsAddDecs1(memops, fsAddIncs(memops, x, id), id), id2vars_last, varName2type, debug);
+			memops = fsGetMemops(e, id2vars_last, ^debug);
+			fsDecUnused(id, fsAddDecs1(memops, fsAddIncs(memops, x, id), id), id2vars_last, varName2type, ^debug);
 		}
 		FsWrapExp(e,__,id): {
-			memops = fsGetMemops(e, id2vars_last, debug);
+			memops = fsGetMemops(e, id2vars_last, ^debug);
 			x1 = if (fiTypeIsScalar(fsType(e))) x else {
 				FsDecRc(e, -1);
 			}
-			fsAddIncs(memops, fsAddDecs(memops, x1, id), id);
+			fsDecUnused(id, fsAddIncs(memops, fsAddDecs(memops, x1, id), id), id2vars_last, varName2type, ^debug);
 		}
 		FsLet(__,e,__,s2, id): {
-			memops = fsGetMemops(e, id2vars_last, debug);
-			fsAddIncs(memops, FsLet(x with s = fsAddDecs2(memops, s2, s2.id)), id);
+			memops = fsGetMemops(e, id2vars_last, ^debug);
+			fsDecUnused(id,
+				fsAddIncs(memops, FsLet(x with s = fsAddDecs2(memops, s2, s2.id)), id),
+				id2vars_last, varName2type, ^debug
+			);
 		}
 		FsAssign(to, what,__,id): {
-			memops = fsGetMemops2(to, what, id2vars_last, debug);
-			fsAddIncs(memops, fsAddDecs(memops, x, id), id);
+			memops = fsGetMemops2(to, what, id2vars_last, ^debug);
+			fsDecUnused(id,
+				fsAddIncs(memops, fsAddDecs(memops, x, id), id),
+				id2vars_last, varName2type, ^debug
+			);
 		}
 		FsIncRc(__,__,__): fail0("FsIncRc met during memory operations markup");
 		FsDecRc(__,__): fail0("FsDecRc met during memory operations markup");
 		FsLambda(__,__, body,__,id): {
-			FsLambda(x with body = fsDecUnused(id, body, id2vars_last, varName2type, debug));
+			//FsLambda(x with body = fsDecUnused(id, body, id2vars_last, varName2type, ^debug));
+			x;
 		}
 		default: x;
 	}, true): FsAll -> FsStat);
+	if (^crash) {
+		println("s1 with ids:\n" +
+			//"s:\n" + fs2s(s) + "\n" +
+			"s1:\n" + fs2s(s1) + "\n"
+			//"s RAW:\n" + toStringFormatted(s1) + "\n"
+		);
+		 fsFindLast(s1, ^id_counter, ^debug);
+		fail("CRAHS");
+	}
+	ret;
 }
 
 fsFindLast(s: FsStat, num: int, debug: bool) -> [Set<string>] {
@@ -289,17 +387,21 @@ fsExpVarIncs(e: FsExp, acc: Tree<FsVar, FsMemOps>, last: [Set<string>], ind: int
 					FsVarGlobalFunc(): acc;
 					FsVarUninit(): acc;
 					default: {
-						switch (op) {
-							FsGePrim(): prim_case();
-							FsLePrim(): prim_case();
-							FsGtPrim(): prim_case();
-							FsLtPrim(): prim_case();
-							FsEqPrim(): prim_case();
-							FsNePrim(): prim_case();
-							FsFieldPrim(__,__): prim_case();
-							FsIndexPrim(): prim_case();
-							FsDerefPrim(): prim_case();
-							default: call_case();
+						if (fs_fast_prim_ops) {
+							switch (op) {
+								FsGePrim(): prim_case();
+								FsLePrim(): prim_case();
+								FsGtPrim(): prim_case();
+								FsLtPrim(): prim_case();
+								FsEqPrim(): prim_case();
+								FsNePrim(): prim_case();
+								FsFieldPrim(__,__): prim_case();
+								FsIndexPrim(): prim_case();
+								FsDerefPrim(): prim_case();
+								default: call_case();
+							}
+						} else {
+							call_case();
 						}
 					}
 				}
@@ -528,5 +630,184 @@ fsExpSetId(e: FsExp, x: int) -> FsExp {
 		FsTailCall(__,__,__,__):  FsTailCall(e with id = x);
 		FsCast(__,__,__,__):      FsCast(e with id = x);
 		FsConst(__,__):           FsConst(e with id = x);
+	}
+}
+
+
+fsControlFlowPaths(s: FsAll, acc: ref Tree<int, [[int]]>) -> [[int]] {
+	check_single_branch = \branches -> {
+		if (length(branches) > 1) {
+			fail0("multy branches in:\n" + fs2s(s) + "\n" +
+				"branches:\n" + superglue(branches, \branch -> "\t[" + superglue(branch, i2s, ", ") + "]", "\n")
+			);
+		} else if (length(branches) == 0) {
+			fail0("no branches in:\n" + fs2s(s));
+		} else {
+			branches[0] 
+		}
+	}
+	id_path = \id -> if (id == -1) [] else [id];
+	switch (s) {
+		FsIf(cond,__, s1, s2, id): {
+			cond_cf = fsControlFlowPaths(cond, acc);
+			s1_cf = fsControlFlowPaths(s1, acc);
+			s2_cf = fsControlFlowPaths(s2, acc);
+			mapConcat(cond_cf, \cond_path ->
+				map(concat(s1_cf, s2_cf), \s_path ->
+					concat3(id_path(id), cond_path, s_path),
+				)
+			);
+		}
+		FsSwitch(x,__,__, cs,id): {
+			x_cf = fsControlFlowPaths(x, acc);
+			forking = concatA(map(cs, \c ->
+				map(fsControlFlowPaths(c.body, acc), \c_path ->
+					concat(id_path(c.id), c_path)
+				)
+			));
+			mapConcat(x_cf, \x_path ->
+				map(forking, \c_path ->
+					concat3(id_path(id), x_path, c_path)
+				)
+			);
+		}
+		FsSeq(ss, id): {
+			fold(ss, [id_path(id)], \ac, x -> {
+				x_cf = fsControlFlowPaths(x, acc);
+				mapConcat(ac, \ac_path ->
+					map(x_cf, \x_path ->
+						concat(ac_path, x_path)
+					)
+				);
+			});
+		}
+		FsLet(__, e1,__, s1, id): {
+			e1_cf = fsControlFlowPaths(e1, acc);
+			s1_cf = fsControlFlowPaths(s1, acc);
+			mapConcat(e1_cf, \e1_path -> 
+				map(s1_cf, \s1_path -> concat3(id_path(id), e1_path, s1_path))
+			);
+		}
+		FsWrapExp(e1,__,id): {
+			e1_cf = fsControlFlowPaths(e1, acc);
+			map(e1_cf, \e1_path -> concat(id_path(id), e1_path));
+		}
+		FsRet(e1,__,id): {
+			e1_cf = fsControlFlowPaths(e1, acc);
+			map(e1_cf, \e1_path -> concat(id_path(id), e1_path));
+		}
+		FsAssign(to, what,__,id): {
+			to_cf = fsControlFlowPaths(to, acc);
+			what_cf = fsControlFlowPaths(what, acc);
+			mapConcat(to_cf, \to_path -> 
+				map(what_cf, \what_path -> concat3(id_path(id), to_path, what_path))
+			);
+		}
+		FsIncRc(__,e1,id): {
+			e1_cf = fsControlFlowPaths(e1, acc);
+			map(e1_cf, \e1_path -> concat(id_path(id), e1_path));
+		}
+		FsDecRc(e1, id): {
+			e1_cf = fsControlFlowPaths(e1, acc);
+			map(e1_cf, \e1_path -> concat(id_path(id), e1_path));
+		}
+		FsClosure(vs, lam, id): {
+			vs_cf = map(vs, \v ->
+				check_single_branch(fsControlFlowPaths(v, acc))
+			);
+			fsControlFlowPaths(lam, acc);
+			[concatA(concat([id_path(id)], vs_cf))];
+		}
+		FsLambda(__,__,e1,__,id): {
+			e1_cf = fsControlFlowPaths(e1, acc);
+			acc := setTree(^acc, id, e1_cf);
+			[id_path(id)];
+		}
+		FsCall(fn, args, __,id): {
+			fn_cf = check_single_branch(fsControlFlowPaths(fn, acc));
+			args_cf = map(args, \arg ->
+				check_single_branch(fsControlFlowPaths(arg, acc))
+			);
+			[concatA(concat([id_path(id), fn_cf], args_cf))];
+		}
+		FsCallPrim(__,es,__,id): {
+			es_cf = map(es, \x ->
+				check_single_branch(fsControlFlowPaths(x, acc))
+			);
+			[concatA(concat([id_path(id)], es_cf))];
+		}
+		FsTailCall(__,vs,__,id): {
+			vs_cf = map(vs, \x ->
+				check_single_branch(fsControlFlowPaths(x, acc))
+			);
+			[concatA(concat([id_path(id)], vs_cf))];
+		}
+		FsCast(e1,__,__,id): {
+			e1_cf = fsControlFlowPaths(e1, acc);
+			map(e1_cf, \e1_path -> concat(id_path(id), e1_path));
+		}
+		FsVarUse(__,__,__,id): [id_path(id)];
+		FsConst(__,id): [id_path(id)];
+	}
+}
+
+fsNumControlFlowPaths(s: FsAll, acc: ref Tree<int, double>) -> double {
+	switch (s) {
+		FsIf(cond,__, s1, s2, id): {
+			fsNumControlFlowPaths(cond, acc) * (fsNumControlFlowPaths(s1, acc) + fsNumControlFlowPaths(s2, acc));
+		}
+		FsSwitch(x,__,__, cs,id): {
+			fsNumControlFlowPaths(x, acc) * fold(cs, 0.0, \ac, c -> ac + fsNumControlFlowPaths(c.body, acc));
+		}
+		FsSeq(ss, id): {
+			fold(ss, 1.0, \ac, x -> ac * fsNumControlFlowPaths(x, acc));
+		}
+		FsLet(__, e1,__, s1, id): {
+			fsNumControlFlowPaths(e1, acc) * fsNumControlFlowPaths(s1, acc);
+		}
+		FsWrapExp(e1,__,id): {
+			fsNumControlFlowPaths(e1, acc);
+		}
+		FsRet(e1,__,id): {
+			fsNumControlFlowPaths(e1, acc);
+		}
+		FsAssign(to, what,__,id): {
+			fsNumControlFlowPaths(to, acc) * fsNumControlFlowPaths(what, acc);
+		}
+		FsIncRc(__,e1,id): {
+			fsNumControlFlowPaths(e1, acc);
+		}
+		FsDecRc(e1, id): {
+			fsNumControlFlowPaths(e1, acc);
+		}
+		FsClosure(vs, lam, id): {
+			fsNumControlFlowPaths(lam, acc);
+			1.0;
+		}
+		FsLambda(__,__,e1,__,id): {
+			e1_num = fsNumControlFlowPaths(e1, acc);
+			acc := setTree(^acc, id, e1_num);
+			1.0;
+		}
+		FsCall(fn, args, __,id): {
+			fold(args, fsNumControlFlowPaths(fn, acc), \ac, arg ->
+				ac * fsNumControlFlowPaths(arg, acc)
+			);
+		}
+		FsCallPrim(__,es,__,id): {
+			fold(es, 1.0, \ac, x ->
+				ac * fsNumControlFlowPaths(x, acc)
+			);
+		}
+		FsTailCall(__,vs,__,id): {
+			fold(vs, 1.0, \ac, x ->
+				ac * fsNumControlFlowPaths(x, acc)
+			);
+		}
+		FsCast(e1,__,__,id): {
+			fsNumControlFlowPaths(e1, acc);
+		}
+		FsVarUse(__,__,__,id): 1.0;
+		FsConst(__,id): 1.0;
 	}
 }
