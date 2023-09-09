@@ -34,7 +34,7 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 		setTree(acc, v.name, v);
 	}
 	varName2type = fsFold(s1, makeTree(), \acc, x -> switch (x) {
-		FsLet(v,__,__,__,__): add_var(x, acc, v);
+		FsLet(v,__,__,__): add_var(x, acc, v);
 		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
 		default: acc;
 	}, true);
@@ -91,7 +91,7 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 					\ac, arg -> if (fiTypeIsScalar(arg.type)) ac else insertSet(ac, arg.name)
 				);
 				vars = fold(path, vars1, \acc, i -> switch (^(id2node[i])) {
-					FsLet(v,__,__,__,__): if (fiTypeIsScalar(v.type)) acc else insertSet(acc, v.name);
+					FsLet(v,__,__,__): if (fiTypeIsScalar(v.type)) acc else insertSet(acc, v.name);
 					default: acc;
 				});
 				last = fold(path, makeSet(), \acc, i -> if (i == -1) acc else mergeSets(acc, id2vars_last[i]));
@@ -112,7 +112,7 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 	}
 
 	ret = cast(fsMap(s1, \x -> switch (x) {
-		FsIf(cond,__, pos, neg, id):  {
+		FsIf(cond, pos, neg, id):  {
 			memops = fsGetMemops(cond, id2vars_last, ^debug);
 			fsDecUnused(id,
 				fsAddIncs(memops,
@@ -125,7 +125,7 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 				), id2vars_last, varName2type, ^debug
 			);
 		};
-		FsSwitch(v,__,__, cs, id): {
+		FsSwitch(v,__, cs, id): {
 			memops = fsGetMemops(v, id2vars_last, ^debug);
 			fsDecUnused(id,
 				fsAddIncs(memops,
@@ -140,25 +140,25 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 				), id2vars_last, varName2type, ^debug
 			);
 		}
-		FsRet(e,__,id): {
+		FsRet(e, id): {
 			memops = fsGetMemops(e, id2vars_last, ^debug);
 			fsDecUnused(id, fsAddDecs1(memops, fsAddIncs(memops, x, id), id), id2vars_last, varName2type, ^debug);
 		}
-		FsWrapExp(e,__,id): {
+		FsWrapExp(e, id): {
 			memops = fsGetMemops(e, id2vars_last, ^debug);
 			x1 = if (fiTypeIsScalar(fsType(e))) x else {
 				FsDecRc(e, -1);
 			}
 			fsDecUnused(id, fsAddIncs(memops, fsAddDecs(memops, x1, id), id), id2vars_last, varName2type, ^debug);
 		}
-		FsLet(__,e,__,s2, id): {
+		FsLet(__,e, s2, id): {
 			memops = fsGetMemops(e, id2vars_last, ^debug);
 			fsDecUnused(id,
 				fsAddIncs(memops, FsLet(x with s = fsAddDecs2(memops, s2, s2.id)), id),
 				id2vars_last, varName2type, ^debug
 			);
 		}
-		FsAssign(to, what,__,id): {
+		FsAssign(to, what, id): {
 			memops = fsGetMemops2(to, what, id2vars_last, ^debug);
 			fsDecUnused(id,
 				fsAddIncs(memops, fsAddDecs(memops, x, id), id),
@@ -258,6 +258,12 @@ fsDecUnused(id: int, x: FsStat, id2vars_last: [Set<string>], varName2type: Tree<
 	}
 }
 
+FsMemOps(
+	var: FsVar,
+	incs: int,  // How much we need to increment a RC of a var before evaluation of an expression
+	dec: bool,  // Should we drop the var in the end of evaluation of an expression explicitly
+);
+
 fsGetMemops(e: FsExp, id2vars_last: [Set<string>], debug: bool) -> [Pair<FsVar, FsMemOps>] {
 	memops = tree2pairs(fsExpVarIncs(e, makeTree(), id2vars_last, -1, FsOrPrim()));
 	if (debug) {
@@ -326,8 +332,8 @@ fsAddDecs1(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 				ret_var = FsVar("tmp_return_var", fsType(ret));
 				FsSeq(
 					arrayPush(tail(seq1),
-						FsLet(ret_var, ret.e, [],
-							FsSeq(arrayPush(decs, FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), [], -1)), id),
+						FsLet(ret_var, ret.e,
+							FsSeq(arrayPush(decs, FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), -1)), id),
 							-1
 						)
 					), -1
@@ -426,7 +432,7 @@ fsId2varsPre(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 					fsMergeSets(id2vars, id, new_vars);
 					Cons(new_vars, acc);
 				}
-				FsLet(v, __,__,__,id): {
+				FsLet(v, __,__,id): {
 					new_vars = add_v(acc.head, v);
 					fsMergeSets(id2vars, id, acc.head);
 					Cons(new_vars, acc.tail);
@@ -586,13 +592,13 @@ fsId2varsLast(s1: FsStat, num: int, id2vars_pre: [Set<string>], id2vars_post: [S
 
 fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
 	\s -> switch(s) {
-		FsIf(c,__,__,__,__):      FsIf(s with id = new_id(), cond = fsExpSetId(c, new_id()));
-		FsSwitch(__,__,__,__,__): FsSwitch(s with id = new_id());
+		FsIf(c,__,__,__):         FsIf(s with id = new_id(), cond = fsExpSetId(c, new_id()));
+		FsSwitch(__,__,__,__):    FsSwitch(s with id = new_id());
 		FsSeq(__, __):            FsSeq(s with id = new_id());
-		FsWrapExp(e,__,__):       FsWrapExp(s with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsRet(e,__,__):           FsRet(s with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsAssign(e1, e2,__,__):   FsAssign(s with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
-		FsLet(__,e,__,__,__):     FsLet(s with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsWrapExp(e,__):          FsWrapExp(s with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsRet(e,__):              FsRet(s with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsAssign(e1, e2,__):      FsAssign(s with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
+		FsLet(__,e,__,__):        FsLet(s with id = new_id(), e = fsExpSetId(e, new_id()));
 		FsLambda(__,__,__,__,__): FsLambda(s with id = new_id());
 		FsVarUse(__,__,__,__):    FsVarUse(s with id = new_id());
 		default: s;
@@ -609,15 +615,15 @@ fsSetId(s: FsAll, x: int) -> FsAll {
 
 fsStatSetId(s: FsStat, x: int) -> FsStat {
 	switch(s) {
-		FsIf(__,__,__,__,__):     FsIf(s with id = x);
-		FsSwitch(__,__,__,__,__): FsSwitch(s with id = x);
-		FsSeq(__, __):            FsSeq(s with id = x);
-		FsWrapExp(__,__,__):      FsWrapExp(s with id = x);
-		FsRet(__,__,__):          FsRet(s with id = x);
-		FsAssign(__,__,__,__):    FsAssign(s with id = x);
-		FsLet(__,__,__,__,__):    FsLet(s with id = x);
-		FsIncRc(__,__,__):        FsIncRc(s with id = x);
-		FsDecRc(__,__):           FsDecRc(s with id = x);
+		FsIf(__,__,__,__):     FsIf(s with id = x);
+		FsSwitch(__,__,__,__): FsSwitch(s with id = x);
+		FsSeq(__, __):         FsSeq(s with id = x);
+		FsWrapExp(__,__):      FsWrapExp(s with id = x);
+		FsRet(__,__):          FsRet(s with id = x);
+		FsAssign(__,__,__):    FsAssign(s with id = x);
+		FsLet(__,__,__,__):    FsLet(s with id = x);
+		FsIncRc(__,__,__):     FsIncRc(s with id = x);
+		FsDecRc(__,__):        FsDecRc(s with id = x);
 	}
 }
 
@@ -648,7 +654,7 @@ fsControlFlowPaths(s: FsAll, acc: ref Tree<int, [[int]]>) -> [[int]] {
 	}
 	id_path = \id -> if (id == -1) [] else [id];
 	switch (s) {
-		FsIf(cond,__, s1, s2, id): {
+		FsIf(cond, s1, s2, id): {
 			cond_cf = fsControlFlowPaths(cond, acc);
 			s1_cf = fsControlFlowPaths(s1, acc);
 			s2_cf = fsControlFlowPaths(s2, acc);
@@ -658,7 +664,7 @@ fsControlFlowPaths(s: FsAll, acc: ref Tree<int, [[int]]>) -> [[int]] {
 				)
 			);
 		}
-		FsSwitch(x,__,__, cs,id): {
+		FsSwitch(x,__, cs,id): {
 			x_cf = fsControlFlowPaths(x, acc);
 			forking = concatA(map(cs, \c ->
 				map(fsControlFlowPaths(c.body, acc), \c_path ->
@@ -681,22 +687,22 @@ fsControlFlowPaths(s: FsAll, acc: ref Tree<int, [[int]]>) -> [[int]] {
 				);
 			});
 		}
-		FsLet(__, e1,__, s1, id): {
+		FsLet(__, e1, s1, id): {
 			e1_cf = fsControlFlowPaths(e1, acc);
 			s1_cf = fsControlFlowPaths(s1, acc);
 			mapConcat(e1_cf, \e1_path -> 
 				map(s1_cf, \s1_path -> concat3(id_path(id), e1_path, s1_path))
 			);
 		}
-		FsWrapExp(e1,__,id): {
+		FsWrapExp(e1, id): {
 			e1_cf = fsControlFlowPaths(e1, acc);
 			map(e1_cf, \e1_path -> concat(id_path(id), e1_path));
 		}
-		FsRet(e1,__,id): {
+		FsRet(e1, id): {
 			e1_cf = fsControlFlowPaths(e1, acc);
 			map(e1_cf, \e1_path -> concat(id_path(id), e1_path));
 		}
-		FsAssign(to, what,__,id): {
+		FsAssign(to, what, id): {
 			to_cf = fsControlFlowPaths(to, acc);
 			what_cf = fsControlFlowPaths(what, acc);
 			mapConcat(to_cf, \to_path -> 
@@ -753,25 +759,25 @@ fsControlFlowPaths(s: FsAll, acc: ref Tree<int, [[int]]>) -> [[int]] {
 
 fsNumControlFlowPaths(s: FsAll, acc: ref Tree<int, double>) -> double {
 	switch (s) {
-		FsIf(cond,__, s1, s2, id): {
+		FsIf(cond, s1, s2, id): {
 			fsNumControlFlowPaths(cond, acc) * (fsNumControlFlowPaths(s1, acc) + fsNumControlFlowPaths(s2, acc));
 		}
-		FsSwitch(x,__,__, cs,id): {
+		FsSwitch(x,__, cs,id): {
 			fsNumControlFlowPaths(x, acc) * fold(cs, 0.0, \ac, c -> ac + fsNumControlFlowPaths(c.body, acc));
 		}
 		FsSeq(ss, id): {
 			fold(ss, 1.0, \ac, x -> ac * fsNumControlFlowPaths(x, acc));
 		}
-		FsLet(__, e1,__, s1, id): {
+		FsLet(__, e1, s1, id): {
 			fsNumControlFlowPaths(e1, acc) * fsNumControlFlowPaths(s1, acc);
 		}
-		FsWrapExp(e1,__,id): {
+		FsWrapExp(e1, id): {
 			fsNumControlFlowPaths(e1, acc);
 		}
-		FsRet(e1,__,id): {
+		FsRet(e1, id): {
 			fsNumControlFlowPaths(e1, acc);
 		}
-		FsAssign(to, what,__,id): {
+		FsAssign(to, what, id): {
 			fsNumControlFlowPaths(to, acc) * fsNumControlFlowPaths(what, acc);
 		}
 		FsIncRc(__,e1,id): {
