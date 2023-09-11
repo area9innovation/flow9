@@ -748,10 +748,10 @@ struct Ref : public Flow {
 	}
 
 	// specific methods
-	T getRc() {
+	inline T getRc() {
 		return decRcRet(this, getRc1());
 	}
-	void setRc(T v) {
+	inline void setRc(T v) {
 		setRc1(v);
 		decRc(this);
 	}
@@ -765,10 +765,9 @@ struct Ref : public Flow {
 		return val;
 	}
 	inline void set(T v) {
-		if (val != v) {
-			decRc(val);
-			val = v;
-		}
+		T old_val = val;
+		val = v;
+		decRc(old_val);
 	}
 private:
 	T val;
