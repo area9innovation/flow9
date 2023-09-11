@@ -3,14 +3,19 @@ import string_utils;
 import sys/process;
 
 export {
-	fi2cpp3Build(cfg: FiCpp3Config, main_name: string, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void;
+	fi2cpp3Build(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void;
 }
 
-fi2cpp3Build(cfg: FiCpp3Config, main_name: string, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
+fi2cpp3Build(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
 	if (length(qt_deps) == 0) {
 		if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") == "1") {
-			fi2cpp3BuildDirectly(cfg, main_name, sources, callback);
+			fi2cpp3BuildDirectly(cfg, sources, callback);
 		} else {
+			invocation = fi2cpp3BuildInvocation(cfg, sources);
+			fcPrintln(
+				"Build with the command line command:\n" + invocation.first + " " + strGlue(invocation.second, " "),
+				cfg.config.threadId
+			);
 			callback(0);
 		}
 	} else {
@@ -18,16 +23,21 @@ fi2cpp3Build(cfg: FiCpp3Config, main_name: string, sources: [string], qt_deps: [
 	}
 }
 
-fi2cpp3BuildDirectly(cfg: FiCpp3Config, main_name: string, sources: [string], callback : (int) -> void) -> void {
+fi2cpp3BuildInvocation(cfg: FiCpp3Config, sources: [string]) -> Pair<string, [string]> {
 	cpp_sources = filter(sources, \path -> endsWith(path, ".cpp"));
 	opts = concat(fi2cpp3BuildOpts(cfg), ["-std=c++20"]);
 	final_exe = changeFileExt(cfg.outfile, "");
 	args = concat3(map(cpp_sources, \src -> pathCombine(cfg.outputdir, src)), opts, ["-o", final_exe]);
 	cpp_compiler = lookupTreeDef(cfg.config.config, "cpp-compiler", "g++");
+	Pair(cpp_compiler, args);
+}
+
+fi2cpp3BuildDirectly(cfg: FiCpp3Config, sources: [string], callback : (int) -> void) -> void {
+	invocation = fi2cpp3BuildInvocation(cfg, sources);
 	if (cfg.config.verbose > 0) {
-		fcPrintln("Compiling: '" + cpp_compiler + " " + strGlue(args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
+		fcPrintln("Compiling: '" + invocation.first + " " + strGlue(invocation.second, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
 	}
-	result_exit_code = execSystemProcess(cpp_compiler, args, ".",
+	result_exit_code = execSystemProcess(invocation.first, invocation.second, ".",
 		\out -> if (cfg.config.verbose > 0 && !isSpace(out)) {
 			fcPrintln(out, cfg.config.threadId);
 		},
