@@ -5,6 +5,7 @@ import string_utils;
 export {
 	fsType(e: FsAll) -> FiType;
 	fs2s(s: FsAll) -> string;
+	fs2string(s: FsAll, depth: int) -> string;
 	fsEqualExprs(x: FsAll, y: FsAll) -> bool;
 
 	fsHasTailCall(s: FsStat) -> bool;
@@ -46,91 +47,83 @@ fsType(x: FsAll) -> FiType {
 }
 
 fs2s(s: FsAll) -> string {
-	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
-	add_line = \x, y -> if (x == "") y else if (y == "") x else x + "\n" + y;
-	body = switch (s) {
-		FsIf(e, s1, s2,__): {
-			"if (" + fs2s(e) + "){\n" +
-				strIndent(fs2s(s1)) +
-			"\n} else {\n" +
-				strIndent(fs2s(s2)) +
-			"\n}";
+	fs2string(s, -1);
+}
+
+fs2string(s: FsAll, depth: int) -> string {
+	if (depth == 0) "..." else {
+		t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+		x2s = \x -> fs2string(x, depth - 1);
+		wrap_long = \x -> if (!strContains(x, "\n") && strlen(x) < 64) x else {
+			"\n" + strIndent(x) + "\n"
 		}
-		FsSwitch(v, __, cases,__): {
-			"switch (" + fs2s(v) + ") {\n" +
-				superglue(cases, \c -> {
-					body_s = fs2s(c.body);
-					body_s1 = if (strContains(body_s, "\n") || startsWith(body_s, "{")) body_s else body_s + ";";
-					c.struct + "(" + superglue(c.args, \arg -> arg.name, ", ") + "): " + body_s1;
-				}, "\n") +
-			"\n}";
-		}
-		FsSeq(ss,__): {
-			if (length(ss) == 0) "{0[]}" else
-			if (length(ss) == 1) {
-				ss_str = fs2s(ss[0]);
-				if (strlen(ss_str) < 64 && !strContains(ss_str, "\n")) {
-					"{1[" + ss_str + "]}";
-				} else {
-					"{1[\n" + strIndent(ss_str) + "\n]}";
+		body = switch (s) {
+			FsIf(e, s1, s2,__): {
+				"if (" + x2s(e) + "){" + wrap_long(x2s(s1)) + "} else {" + wrap_long(x2s(s2)) + "}";
+			}
+			FsSwitch(v, __, cases,__): {
+				"switch (" + x2s(v) + ") {\n" +
+					superglue(cases, \c -> {
+						c.struct + "(" + superglue(c.args, \arg -> arg.name, ", ") + "): " + wrap_long(x2s(c.body));
+					}, "\n") +
+				"\n}";
+			}
+			FsSeq(ss,__): {
+				"{" + i2s(length(ss)) + "[" + wrap_long(superglue(ss, x2s, ",\n")) + "]}";
+			}
+			FsLet(var, e, stat,__): {
+				"let1 " + var.name + " : " + t2s(var.type) + " = " + x2s(e) + ";\n" +
+					strIndent(x2s(stat));
+			}
+			FsWrapExp(e,__): {
+				x2s(e) + ";";
+			}
+			FsRet(e,__): {
+				"return " + x2s(e) + ";";
+			}
+			FsAssign(to, what,__): {
+				x2s(to) + " := " +  x2s(what) + ";";
+			}
+			FsIncRc(delta, e,__): {
+				"incRc(" + x2s(e) + (if (delta == 1) "" else ", " + i2s(delta)) + ");";
+			}
+			FsDecRc(e,__): {
+				"decRc(" + x2s(e) + ");";
+			}
+			FsClosure(vars, lambda, id): {
+				"[" + superglue(vars, \v -> x2s(v), ", ") + "]" + x2s(lambda);
+			}
+			FsLambda(__,args, body,__, id): {
+				"\\" + superglue(args, \arg -> arg.name + ":" + t2s(arg.type), ", ") + " -> " +
+				"{" + wrap_long(x2s(body)) + "}";
+			}
+			FsCall(f, args,__, id): {
+				x2s(f) + "(" + superglue(args, x2s, ", ") + ")";
+			}
+			FsCallPrim(op, es, type, id): {
+				fsPrim2s(op, map(es, x2s), type);
+			}
+			FsTailCall(args, vals, type, id): {
+				"tailcall(" + supergluei(args, \i, a -> a.name + " = " + x2s(vals[i]), ", ") + ");";
+			}
+			FsCast(e1, from, to, id): {
+				"cast(" + x2s(e1) + " : " + t2s(from) + " -> " + t2s(to) + ")";
+			}
+			FsVarUse(v,__,last,__): {
+				v.name + if (last) "[LAST]" else "";
+			}
+			FsConst(c, id): {
+				switch (c) {
+					FiVoid(__):      "{}";
+					FiDouble(d, __): d2s(d);
+					FiInt(i, __):    i2s(i)
+					FiString(st, __): "\"" + escapeStr(st) + "\"";
+					FiBool(b, __):   b2s(b);
 				}
-			} else {
-				"{" + i2s(length(ss)) + "[\n" + strIndent(superglue(ss, fs2s, "\n")) + "\n]}";
 			}
 		}
-		FsLet(var, e, stat,__): {
-			"let1 " + var.name + " : " + t2s(var.type) + " = " + fs2s(e) + ";\n" +
-				strIndent(fs2s(stat));
-		}
-		FsWrapExp(e,__): {
-			fs2s(e) + ";";
-		}
-		FsRet(e,__): {
-			"return " + fs2s(e) + ";";
-		}
-		FsAssign(to, what,__): {
-			fs2s(to) + " := " +  fs2s(what) + ";";
-		}
-		FsIncRc(delta, e,__): {
-			"incRc(" + fs2s(e) + (if (delta == 1) "" else ", " + i2s(delta)) + ");";
-		}
-		FsDecRc(e,__): {
-			"decRc(" + fs2s(e) + ");";
-		}
-		FsClosure(vars, lambda, id): {
-			"[" + superglue(vars, \v -> fs2s(v), ", ") + "]" + fs2s(lambda);
-		}
-		FsLambda(__,args, body,__, id): {
-			body_s = fs2s(body);
-			header = "\\" + superglue(args, \arg -> arg.name + ":" + t2s(arg.type), ", ") + " -> ";
-			if (!strContains(body_s, "\n") || startsWith(trim2(body_s, " \n\r"), "{")) header + body_s else header + "{\n" + strIndent(body_s) + "\n}";
-		}
-		FsCall(f, args,__, id): {
-			fs2s(f) + "(" + superglue(args, fs2s, ", ") + ")";
-		}
-		FsCallPrim(op, es, type, id): {
-			fsPrim2s(op, map(es, fs2s), type);
-		}
-		FsTailCall(args, vals, type, id): {
-			"tailcall(" + supergluei(args, \i, a -> a.name + " = " + fs2s(vals[i]), ", ") + ");";
-		}
-		FsCast(e1, from, to, id): {
-			"cast(" + fs2s(e1) + " : " + t2s(from) + " -> " + t2s(to) + ")";
-		}
-		FsVarUse(v,__,last,__): {
-			v.name + if (last) "[LAST]" else "";
-		}
-		FsConst(c, id): {
-			switch (c) {
-				FiVoid(__):      "{}";
-				FiDouble(d, __): d2s(d);
-				FiInt(i, __):    i2s(i)
-				FiString(st, __): "\"" + escapeStr(st) + "\"";
-				FiBool(b, __):   b2s(b);
-			}
-		}
+		"<id=" + i2s(s.id) + ">" + body;
 	}
-	"<id=" + i2s(s.id) + ">" + body;
 }
 
 fsEqualExprs(x: FsAll, y: FsAll) -> bool {
