@@ -1,8 +1,6 @@
 import tools/flowc/backends/cpp3/fi2cpp3_runtime;
 import tools/flowc/statements/fs_tailcall;
 import tools/flowc/statements/fs_memory;
-//import tools/flowc/statements/fs_memory1;
-//import tools/flowc/statements/fs_memory2;
 import tools/flowc/statements/fi2fs;
 import tools/flowc/statements/fs_module;
 import tools/flowc/manipulation/pull_statements2;
@@ -20,9 +18,19 @@ fi2cpp3TransformModule(module : FiModule, gctx0: Cpp3GlobalContext) -> FsModule 
 		module.structs,
 		module.unions,
 		filtermap(module.functions, \fn ->
-			if (fiCpp3IsNative(fn.name, gctx)) None() else Some(fiTransformFunc2cpp3(fn, gctx))
+			if (fiCpp3IsNative(fn.name, gctx)) None() else {
+				start = fi2cpp3StartOperationMessage(gctx.config, 2, "transforming", fn.name);
+				ret = Some(fiTransformFunc2cpp3(fn, gctx));
+				fi2cpp3EndOperationMessage(gctx.config, 2, "transformation of", fn.name, start);
+				ret;
+			}
 		),
-		map(module.globalVars, \gv -> fiTransformGlobalVar2cpp3(gv, gctx)),
+		map(module.globalVars, \gv -> {
+			start = fi2cpp3StartOperationMessage(gctx.config, 2, "transforming", gv.name);
+			ret = fiTransformGlobalVar2cpp3(gv, gctx);
+			fi2cpp3EndOperationMessage(gctx.config, 2, "transformation of", gv.name, start);
+			ret;
+		}),
 		filtermap(module.natives, \nat ->
 			if (!fiCpp3IsNative(nat.name, gctx)) None() else
 			Some(FsNativeDec(nat.name, nat.io, nat.type, nat.nativeName, nat.declStart, nat.defiStart))
@@ -32,9 +40,6 @@ fi2cpp3TransformModule(module : FiModule, gctx0: Cpp3GlobalContext) -> FsModule 
 }
 
 fiTransformGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> FsGlobalVar {
-	if (gctx0.config.verbose > 1) {
-		fcPrintln("\tgoing to transform global var: " + globalVar.name, gctx0.config.threadId);
-	}
 	names = gctx0.program.names;
 	name = globalVar.name;
 	type = globalVar.type;
@@ -45,14 +50,10 @@ fiTransformGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> 
 	);
 	value1 = fi2cpp3TransformFiExp(globalVar.value, type, gctx, name);
 	value2 = fi2cpp3Transform2FsStat(value1, gctx, name);
-	//value3 = fsStatUnwrapLastReturnLetVar(value2);
 	FsGlobalVar(name, value2, type, globalVar.declStart, globalVar.defiStart);
 }
 
 fiTransformFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> FsFunctionDec {
-	if (gctx0.config.verbose > 1) {
-		fcPrintln("\tgoing to transform function: " + fun.name, gctx0.config.threadId);
-	}
 	name = fun.name;
 	fn_type = fun.type;
 	gctx = Cpp3GlobalContext(
@@ -106,6 +107,7 @@ fi2cpp3TransformFiExp(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: str
 	if (debug) {
 		println(name + " - EXPRR:\n" + toStringFormatted(e));
 	}
+	start = fi2cpp3StartOperationMessage(gctx.config, 3, "transforming expression", name);
 	ret = e
 	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
 	|> maybe_show(\x -> fiInlineHostCalls(x, names), "fiInlineHostCalls")
@@ -128,6 +130,7 @@ fi2cpp3TransformFiExp(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: str
 	|> maybe_show(fiPullStatementsUp2, "fiPullStatementsUp2")
 	|> maybe_show(fiRemoveRedundantVoids, "fiRemoveRedundantVoids")
 	;
+	fi2cpp3EndOperationMessage(gctx.config, 3, "transformation of expression", name, start);
 	if (debug_cpp3 == "show-transform-names") {
 		println("\tfinished: " + name);
 	}
@@ -163,8 +166,10 @@ fi2cpp3Transform2FsStat(e: FiExp, gctx: Cpp3GlobalContext, name: string) -> FsSt
 	if (debug) {
 		println("TAICALLED:\n" + fs2s(s2));
 	}
+	start = fi2cpp3StartOperationMessage(gctx.config, 3, "inserting memory operations (Perceus)", name);
 	// Memory: ref-counting operations are inserted
 	s3 = fsStatPerceus(s2, debug, name);
+	fi2cpp3EndOperationMessage(gctx.config, 3, "insertion of memory operations (Perceus)", name, start);
 	if (debug) {
 		println("MEM RAW:\n" + fs2s(s3));
 	}
