@@ -24,6 +24,8 @@
 
 // C++ runtime for flow
 
+//#define CONCURRENCY_ON
+
 namespace flow {
 
 inline void fail(const std::string& msg) { throw std::runtime_error(msg); }
