@@ -6,13 +6,13 @@ First, download and install haXe and neko:
 
 	http://haxe.org/download/
 
-Haxe 3.4.* and 4.* should work.
+Our build servers use haxe 4.2.5 and neko 2.3.0.
 
 Now install the "format" and "pixijs" haxe libraries:
 
 	haxelib install format 3.3.0
 	haxelib install pixijs 4.8.4
-	(format 3.5.0 is not supported on Haxe 3.4.*, pixijs version 5 is not supported at all)
+	(pixijs version 5 is not supported)
 
 Now check that you can compile the compiler:
 
