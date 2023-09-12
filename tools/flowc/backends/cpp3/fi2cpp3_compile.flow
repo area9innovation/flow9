@@ -12,9 +12,6 @@ export {
 fiModule2cpp3(module : FsModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule {
 	gctx = Cpp3GlobalContext(gctx0 with currentModule = module.fileinfo.flowfile);
 	names = gctx.program.names;
-	/*compiled_structs = map(fiOrderStructs(module.structs, fail), \struct ->
-		Cpp3CompiledDeclaration(struct.name, true, fiStruct2cpp3(struct, gctx, false), "")
-	);*/
 	compiled_structs = fiStructs2cpp3(module.structs, gctx);
 	decls = concat(
 		module.natives,
@@ -222,11 +219,22 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 			}
 		}
 		FsAssign(to, what, __): {
-			switch (fsType(to)) {
+			to_type = fsType(to);
+			make_assignment = \-> switch (to) {
+				FsVarUse(v, kind,__,__): {
+					switch (kind) {
+						FsVarUninit(): fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
+						default: "assignRc<" + fiType2cpp3(to_type, gctx) + " >(" + fsExp2cpp3(to, gctx) + ", " + fsExp2cpp3(what, gctx) + ");";
+					}
+				}
+				default:  fail0("assignment to non-var:\n" + fs2s(to));
+			}
+			switch (to_type) {
 				FiTypeRef(__): {
 					switch (fsType(what)) {
-						FiTypeRef(__):
-							fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
+						FiTypeRef(__): {
+							make_assignment();
+						}
 						FiTypeFlow():
 							fsExp2cpp3(to, gctx) + "->setFlowRc(0, " + fsExp2cpp3(what, gctx) + ");";
 						default:
@@ -241,12 +249,12 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 									fsExp2cpp3(as[0], gctx) + "->setRc" + (if (fs_fast_prim_ops) "1" else "") + "<" + i2s(field_ind) + ">(" + fsExp2cpp3(what, gctx) + ");";
 								}
 								default: {
-									fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
+									fail0("assignment to non-var:\n" + fs2s(to));
 								}
 							}
 						}
 						default: {
-							fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
+							make_assignment();
 						}
 					}
 				}
@@ -530,7 +538,6 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		}
 		FsStructPrim(__): {
 			struct_type = cast(e.type : FiType -> FiTypeName);
-			//fiStructName2cpp3(struct_type, gctx) + "::template make<" + fiType2cpp3(struct_type, gctx) + ">(" + strGlue(map(e.es, e2k), ", ") + ")";
 			"new " + fiStructName2cpp3(struct_type, gctx) + "(" + strGlue(map(e.es, e2k), ", ") + ")";
 		}
 		FsFieldPrim(field_name, field_ind): {

@@ -217,6 +217,7 @@ template<typename T> inline String* toString(T v);
 template<typename T> inline void toStringRc(T v, string& str);
 template<typename T> inline void toString(T v, string& str);
 template<typename T> inline T makeDefVal();
+template<typename T> inline void assignRc(T& to, T what) { T old = to; to = what; decRc(old); }
 
 // Dynamic wrapper for all values 
 
@@ -387,9 +388,6 @@ struct Str : public Flow {
 	Str& operator = (Str&& r) = delete;
 	Str& operator = (const Str& r) = delete;
 
-	//template<typename T>
-	//static std::remove_pointer_t<T>* make(Fs... fs) { return static_cast<std::remove_pointer_t<T>*>(new Str(fs...)); }
-
 	// general interface
 	TypeId typeId() const override { return TYPE; }
 	Int size() const override { return sizeof...(Fs); }
@@ -466,10 +464,7 @@ struct Str : public Flow {
 	}
 	template<Int i>
 	inline void set(typename std::tuple_element_t<i, Fields> v) {
-		if (std::get<i>(fields) != v) {
-			decRc(std::get<i>(fields));
-			std::get<i>(fields) = v;
-		}
+		assignRc<typename std::tuple_element_t<i, Fields>>(std::get<i>(fields), v);
 	}
 
 	Int compareRc(Str* s) {
@@ -692,10 +687,11 @@ struct Vec : public Flow {
 		return vect.at(i);
 	}
 	inline void set(Int i, ElType x) {
-		if (x != vect[i]) {
-			decRc(vect[i]);
-			vect[i] = x;
-		}
+		//
+		//assignRc<T>(vect[i], x);
+		T old = vect[i];
+		vect[i] = x;
+		decRc(old);
 	}
 	void shrink() {
 		vect.shrink_to_fit();
@@ -765,9 +761,7 @@ struct Ref : public Flow {
 		return val;
 	}
 	inline void set(T v) {
-		T old_val = val;
-		val = v;
-		decRc(old_val);
+		assignRc<T>(val, v);
 	}
 private:
 	T val;

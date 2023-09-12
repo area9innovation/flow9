@@ -39,86 +39,19 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 		default: acc;
 	}, true);
 
-	//num_paths = ref makeTree();
-	//fsNumControlFlowPaths(s1, num_paths);
-	//total_paths = foldTree(^num_paths, 0.0, \__,n, acc -> acc + n);
-	//println("\tnum paths:\n" + 
-	//	superglue(tree2pairs(^num_paths), \p -> "\t\tid: " + i2s(p.first) + ", num paths: " + d2s(p.second), "\n")
-	//);
-	//println("\tstat perceus: " + name + ", ids: " + i2s(^id_counter) + ", num paths: " + d2s(total_paths));
-
 	id2vars_last = fsFindLast(s1, ^id_counter, ^debug);
 	crash = ref false;
-/*
-	id2node = generate(0, ^id_counter, \__ -> ref FsConst(FiVoid(-1), -1));
-	fsIter(s1, \x -> if (x.id != -1) id2node[x.id] := x, true);
 
-
-	if (false && total_paths < 1000000.0) {
-		println("\t\tverifying Paths...");
-		cmp_last_sets = \all_vars: Set<string>, last_vars: Set<string> -> if (sizeSet(all_vars) == sizeSet(last_vars)) true else {
-			println(name + ": sizeSet(all_vars) != sizeSet(last_vars):\n" +
-				i2s(sizeSet(all_vars)) + " != " + i2s(sizeSet(last_vars)) + "\n" +
-				"all_vars: {" + strGlue(set2array(all_vars), ", ") + "}\n" +
-				"last_vars: {" + strGlue(set2array(last_vars), ", ") + "}\n" +
-				"missing: [" + strGlue(set2array(differenceSets(all_vars, last_vars)), ", ") + "]\n"
-			);
-			crash := true;
-			debug := true;
-			false;
-		}
-		cf_paths: ref Tree<int, [[int]]> = ref makeTree();
-		fsControlFlowPaths(s1, cf_paths);
-		traverseInOrder(^cf_paths, \id, paths -> {
-			num = lookupTreeDef(^num_paths, id, -1.0);
-			if (i2d(length(paths)) != num) {
-				println(name + ": length(paths) != num: " + i2s(length(paths)) + " != " + d2s(num));
-				crash := true;
-				debug := true;
-			}
-			lambda = cast(^(id2node[id]): FsAll -> FsLambda);
-			if (^debug) {
-				println("Lambda: " + i2s(id) + "\n" + 
-					"CF paths:\n" + superglue(paths, \path -> "\t[" + superglue(path, i2s, ", ") + "]" , "\n") + "\n"
-				)
-			}
-			iter(paths, \path -> {
-				vars1 = fold(lambda.args, 
-					fold(lambda.closure, 
-						makeSet(), 
-						\ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v.name)
-					), 
-					\ac, arg -> if (fiTypeIsScalar(arg.type)) ac else insertSet(ac, arg.name)
-				);
-				vars = fold(path, vars1, \acc, i -> switch (^(id2node[i])) {
-					FsLet(v,__,__,__): if (fiTypeIsScalar(v.type)) acc else insertSet(acc, v.name);
-					default: acc;
-				});
-				last = fold(path, makeSet(), \acc, i -> if (i == -1) acc else mergeSets(acc, id2vars_last[i]));
-				if (!cmp_last_sets(vars, last)) {
-					println(
-						"id: " + i2s(id) + "\n" +
-						"path: [" + superglue(path, i2s, ", ") + "]\n" + 
-						"vars: {" + strGlue(set2array(vars), ", ") + "}\n" +
-						"lasts: [\n" +
-							superglue(path, \i -> "\t" +  i2s(i) + ": {" + strGlue(set2array(id2vars_last[i]), ", ") + "}", "\n") +
-						"\n]\n" +
-						"lambda:\n" + strIndent(fs2s(^(id2node[id])))
-					);
-				}
-			});
-		});
-		println("\t\t... verified " + d2s(total_paths) + " paths");
+	if (false) {
+		fsVerifyControlFlowPaths(s1, ^id_counter, id2vars_last, name, debug, crash);
 	}
-*/
+
 	ret = cast(fsMap(s1, \x -> switch (x) {
 		FsIf(cond, pos, neg, id):  {
 			memops = fsGetMemops(cond, id2vars_last, ^debug);
 			fsDecUnused(id,
 				fsAddIncs(memops,
 					FsIf(x with
-						//s1 = fsDecUnused(pos.id, fsAddDecs2(memops, pos, id), id2vars_last, varName2type, ^debug),
-						//s2 = fsDecUnused(neg.id, fsAddDecs2(memops, neg, id), id2vars_last, varName2type, ^debug)
 						s1 = fsAddDecs2(memops, pos, id),
 						s2 = fsAddDecs2(memops, neg, id)
 					), id
@@ -132,7 +65,6 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 					FsSwitch(x with
 						cases = map(cs, \c ->
 							FsCase(c with
-								//body = fsDecUnused(c.body.id, fsAddDecs2(memops, c.body, id), id2vars_last, varName2type, ^debug)
 								body = fsAddDecs2(memops, c.body, id)
 							)
 						)
@@ -170,10 +102,6 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 		}
 		FsIncRc(__,__,__): fail0("FsIncRc met during memory operations markup");
 		FsDecRc(__,__): fail0("FsDecRc met during memory operations markup");
-		FsLambda(__,__, body,__,id): {
-			//FsLambda(x with body = fsDecUnused(id, body, id2vars_last, varName2type, ^debug));
-			x;
-		}
 		default: x;
 	}, true): FsAll -> FsStat);
 	if (^crash) {
@@ -642,6 +570,77 @@ fsExpSetId(e: FsExp, x: int) -> FsExp {
 	}
 }
 
+
+fsVerifyControlFlowPaths(s: FsAll, num_nodes: int, id2vars_last: [Set<string>], name: string, debug: ref bool, crash: ref bool) -> void {
+	num_paths = ref makeTree();
+	fsNumControlFlowPaths(s, num_paths);
+	total_paths = foldTree(^num_paths, 0.0, \__,n, acc -> acc + n);
+	//println("\tnum paths:\n" + 
+	//	superglue(tree2pairs(^num_paths), \p -> "\t\tid: " + i2s(p.first) + ", num paths: " + d2s(p.second), "\n")
+	//);
+	println("\tstat perceus: " + name + ", ids: " + i2s(num_nodes) + ", num paths: " + d2s(total_paths));
+
+	id2node = generate(0, num_nodes, \__ -> ref FsConst(FiVoid(-1), -1));
+	fsIter(s, \x -> if (x.id != -1) id2node[x.id] := x, true);
+
+
+	if (total_paths < 1000000.0) {
+		println("\t\tverifying Paths...");
+		cmp_last_sets = \all_vars: Set<string>, last_vars: Set<string> -> if (sizeSet(all_vars) == sizeSet(last_vars)) true else {
+			println(name + ": sizeSet(all_vars) != sizeSet(last_vars):\n" +
+				i2s(sizeSet(all_vars)) + " != " + i2s(sizeSet(last_vars)) + "\n" +
+				"all_vars: {" + strGlue(set2array(all_vars), ", ") + "}\n" +
+				"last_vars: {" + strGlue(set2array(last_vars), ", ") + "}\n" +
+				"missing: [" + strGlue(set2array(differenceSets(all_vars, last_vars)), ", ") + "]\n"
+			);
+			crash := true;
+			debug := true;
+			false;
+		}
+		cf_paths: ref Tree<int, [[int]]> = ref makeTree();
+		fsControlFlowPaths(s, cf_paths);
+		traverseInOrder(^cf_paths, \id, paths -> {
+			num = lookupTreeDef(^num_paths, id, -1.0);
+			if (i2d(length(paths)) != num) {
+				println(name + ": length(paths) != num: " + i2s(length(paths)) + " != " + d2s(num));
+				crash := true;
+				debug := true;
+			}
+			lambda = cast(^(id2node[id]): FsAll -> FsLambda);
+			if (^debug) {
+				println("Lambda: " + i2s(id) + "\n" + 
+					"CF paths:\n" + superglue(paths, \path -> "\t[" + superglue(path, i2s, ", ") + "]" , "\n") + "\n"
+				)
+			}
+			iter(paths, \path -> {
+				vars1 = fold(lambda.args, 
+					fold(lambda.closure, 
+						makeSet(), 
+						\ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v.name)
+					), 
+					\ac, arg -> if (fiTypeIsScalar(arg.type)) ac else insertSet(ac, arg.name)
+				);
+				vars = fold(path, vars1, \acc, i -> switch (^(id2node[i])) {
+					FsLet(v,__,__,__): if (fiTypeIsScalar(v.type)) acc else insertSet(acc, v.name);
+					default: acc;
+				});
+				last = fold(path, makeSet(), \acc, i -> if (i == -1) acc else mergeSets(acc, id2vars_last[i]));
+				if (!cmp_last_sets(vars, last)) {
+					println(
+						"id: " + i2s(id) + "\n" +
+						"path: [" + superglue(path, i2s, ", ") + "]\n" + 
+						"vars: {" + strGlue(set2array(vars), ", ") + "}\n" +
+						"lasts: [\n" +
+							superglue(path, \i -> "\t" +  i2s(i) + ": {" + strGlue(set2array(id2vars_last[i]), ", ") + "}", "\n") +
+						"\n]\n" +
+						"lambda:\n" + strIndent(fs2s(^(id2node[id])))
+					);
+				}
+			});
+		});
+		println("\t\t... verified " + d2s(total_paths) + " paths");
+	}
+}
 
 fsControlFlowPaths(s: FsAll, acc: ref Tree<int, [[int]]>) -> [[int]] {
 	check_single_branch = \branches -> {
