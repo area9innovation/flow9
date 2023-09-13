@@ -1110,11 +1110,6 @@ StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
  * Perform allocation of a big object, or when the fast heap runs out.
  */
 FlowPtr ByteCodeRunner::AllocateInner(unsigned size) {
-    if (unlikely(unsigned(size) >= MIN_HEAP_SIZE / 2)) {
-        ReportError(InvalidArgument, "Allocation size too large: %d bytes.", size);
-        return HeapEnd;
-    }
-
     if (unsigned(size) > MAX_EPHEMERAL_ALLOC)
     {
         if (unsigned(size) > unsigned(hp_big_pos - hp_ref_end))
@@ -1264,7 +1259,7 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
     }
     else
     {
-        size_t length = size/FLOW_CHAR_SIZE;
+        size_t length = size/FLOW_CHAR_SIZE+size%FLOW_CHAR_SIZE;
         size_t bytes = length * FLOW_CHAR_SIZE;
 
 #ifdef FLOW_MMAP_HEAP
