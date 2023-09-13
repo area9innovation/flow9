@@ -156,15 +156,15 @@ fsShowTiming(msg: string, start: double) -> void {
 }
 
 fsShowTiming1(msg: string, delta: double) -> void {
-	t = delta / 1000.0;
+	/*t = delta / 1000.0;
 	if (t > 0.1) {
 		println("\nAAAA " + msg + " took " + d2st(t, 2) + "s.");
-	}
+	}*/
 }
 
 fsFindLast(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
 	s1 = timestamp();
-	pre = fsId2varsPre(s, num, debug);
+	pre = fsId2varsPreHash(s, num, debug);
 	fsShowTiming(name + ": fsId2varsPre(s, num, debug)", s1);
 
 	s2 = timestamp();
@@ -172,7 +172,7 @@ fsFindLast(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
 	fsShowTiming(name + ": fsId2varsPost(s, num, debug)", s2);
 
 	s3 = timestamp();
-	id2vars_last = fsId2varsLast(s, num, pre, post, debug);
+	id2vars_last = fsId2varsLastHash(s, num, pre, post, debug);
 	fsShowTiming(name + ": fsId2varsLast(s, num, debug)", s2);
 
 	if (debug) {
@@ -186,8 +186,13 @@ fsFindLast(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
 				i2s(i) + ": " + "[" + strGlue(set2array(p), ", ") + "]", "\n"
 			);
 		}
+		hashset_tree2s1 = \st -> {
+			supergluei(st, \i, p ->
+				i2s(i) + ": " + "[" + strGlue(hashSet2array(p), ", ") + "]", "\n"
+			);
+		}
 		println(
-			"pre:\n" + set_tree2s1(pre) + "\n" +
+			"pre:\n" + hashset_tree2s1(pre) + "\n" +
 			"post:\n" + set_tree2s1(post) + "\n" +
 			"id2vars_last:\n" + set_tree2s1(id2vars_last) + "\n" +
 			""
@@ -406,8 +411,8 @@ fsId2varsPre(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 					Cons(new_vars, acc);
 				}
 				FsLet(v, __,__,id): {
-					new_vars = add_v(acc.head, v);
 					id2vars[id] := acc.head;
+					new_vars = add_v(acc.head, v);
 					Cons(new_vars, acc.tail);
 				}
 				default: {
@@ -428,6 +433,47 @@ fsId2varsPre(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 		},
 		\args -> args,
 		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
+	);
+	map(id2vars, \x -> ^x);
+}
+
+fsId2varsPreHash(s1: FsStat, num: int, debug: bool) -> [HashSet<string>] {
+	id2vars = generate(0, num, \__ -> ref makeHashSet(fastHashString));
+	fsFold2(s1, Cons(makeHashSet(fastHashString), EmptyList()),
+		\acc, x: FsAll -> {
+			add_v = \ac, v -> if (!fiTypeIsScalar(v.type)) insertHashSet(ac, v.name);
+			switch (x) {
+				FsLambda(closure, args,__,__,id): {
+					new_vars = makeHashSet(fastHashString);
+					iter(closure, \v -> add_v(new_vars, v));
+					iter(args, \v -> add_v(new_vars, v));
+					id2vars[id] := new_vars;
+					Cons(new_vars, acc);
+				}
+				FsLet(v, __,__,id): {
+					id2vars[id] := acc.head;
+					new_vars = copyHashSet(acc.head);
+					add_v(new_vars, v);
+					Cons(new_vars, acc.tail);
+				}
+				default: {
+					if (x.id != -1) {
+						id2vars[x.id] := acc.head;
+					}
+					acc;
+				}
+			}
+		},
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					cast(acc.tail: List<HashSet<string>> -> Cons<HashSet<string>>);
+				}
+				default: acc;
+			}
+		},
+		\args -> args,
+		\p1, p2 -> Cons(mergeHashSets(p1.head, p2.head), p1.tail)
 	);
 	map(id2vars, \x -> ^x);
 }
@@ -543,6 +589,90 @@ fsId2varsLast(s: FsStat, num: int, pre: [Set<string>], post: [Set<string>], debu
 						"(C) x.id: " + i2s(x.id) + "\n" +
 						strIndent(
 							"pre_vars: " + show_set_vars(pre[x.id]) + "\n" +
+							"post_vars: " + show_set_vars(post[x.id]) + "\n" +
+							"acc.head: " + show_hash_vars(acc.head) + "\n" //+
+							"diff: " + show_hash_vars(diff) + "\n"
+						)
+					);
+				}
+				diff;
+			}
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					if (debug) {
+						println("(C) id=" + i2s(id) + " pushing stack: " + show_hash_vars(acc.head));
+					}
+					do_diff();
+					Cons(makeHashSet(fastHashString), acc);
+				}
+				default: {
+					if (x.id == -1) acc else {
+						diff = do_diff();
+						s3 = timestamp();
+						new_head = mergeHashSets(acc.head, diff);
+						t3 := ^t3 + timestamp() - s3;
+						Cons(new_head, acc.tail);
+					}
+				}
+			}
+		},
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					cast(acc.tail: List<HashSet<string>> -> Cons<HashSet<string>>);
+				}
+				default: acc;
+			}
+		},
+		\args -> args,
+		\p1, p2 -> {
+			s4 = timestamp();
+			new_head = mergeHashSets(p1.head, p2.head);
+			t4 := ^t4 + timestamp() - s4;
+			Cons(new_head, p1.tail)
+		}
+	);
+	fsShowTiming1("BBB: t0: ", ^t0);
+	fsShowTiming1("BBB: t1: ", ^t1);
+	fsShowTiming1("BBB: t2: ", ^t2);
+	fsShowTiming1("BBB: t3: ", ^t3);
+	fsShowTiming1("BBB: t4: ", ^t4);
+	fsShowTiming1("BBB: t5: ", ^t5);
+	map(id2vars, \x -> ^x);
+}
+
+fsId2varsLastHash(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string>], debug: bool) -> [Set<string>] {
+	show_hash_vars = \vs -> "[" + strGlue(hashSet2array(vs), ", ") + "]";
+	show_set_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
+	id2vars = generate(0, num, \__ -> ref makeSet());
+	t0 = ref 0.0;
+	t1 = ref 0.0;
+	t2 = ref 0.0;
+	t3 = ref 0.0;
+	t4 = ref 0.0;
+	t5 = ref 0.0;
+	hash2set = \x -> foldHashSet(x, makeSet(), \acc, v -> insertSet(acc, v));
+	fsFold2(s, Cons(makeHashSet(fastHashString), makeList()),
+		\acc: Cons<HashSet<string>>, x: FsAll -> {
+			do_diff = \ -> {
+				s0 = timestamp();
+				diff = copyHashSet(pre[x.id]);
+				t0 := ^t0 + timestamp() - s0;
+
+				s1 = timestamp();
+				iterSet(post[x.id], \v -> removeHashSet(diff, v));
+				t1 := ^t1 + timestamp() - s1;
+
+				s2 = timestamp();
+				iterHashSet(acc.head, \v -> removeHashSet(diff, v));
+				t2 := ^t2 + timestamp() - s2;
+				
+				id2vars[x.id] := hash2set(diff);
+				if (debug) {
+					println(
+						"(C) x.id: " + i2s(x.id) + "\n" +
+						strIndent(
+							"pre_vars: " + show_hash_vars(pre[x.id]) + "\n" +
 							"post_vars: " + show_set_vars(post[x.id]) + "\n" +
 							"acc.head: " + show_hash_vars(acc.head) + "\n" //+
 							"diff: " + show_hash_vars(diff) + "\n"
