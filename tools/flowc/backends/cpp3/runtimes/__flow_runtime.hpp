@@ -1047,7 +1047,7 @@ inline T2 castRc(T1 x) {
 			using V2_Fields = typename V2::Fields;
 			T2 ret = [x]<std::size_t... I>(std::index_sequence<I...>) constexpr { 
 				return new V2(
-					castRc<Flow*, std::tuple_element_t<I, V2_Fields>>(x->getFlowRc(I))...
+					castRc<Flow*, std::tuple_element_t<I, V2_Fields>>(x->getFlowRc1(I))...
 				);
 			}
 			(std::make_index_sequence<V2::SIZE>{});
