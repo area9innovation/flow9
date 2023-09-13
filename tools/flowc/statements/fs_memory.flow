@@ -290,22 +290,15 @@ fsAddDecs1(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 		seq1 = fsUnwrapSeq(x);
 		ret = cast(seq1[length(seq1) - 1]: FsStat -> FsRet);
 		non_ret = take(seq1, length(seq1) - 1);
-		switch (ret.e) {
-			FsTailCall(__,__,__,__): {
-				FsSeq(concat3(non_ret, decs, [ret]), id);
-			}
-			default: {
-				ret_var = FsVar("tmp_return_var", fsType(ret));
-				FsSeq(
-					arrayPush(non_ret,
-						FsLet(ret_var, ret.e,
-							FsSeq(arrayPush(decs, FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), -1)), id),
-							-1
-						)
-					), -1
-				);
-			}
-		}
+		ret_var = FsVar("tmp_return_var", fsType(ret));
+		FsSeq(
+			arrayPush(non_ret,
+				FsLet(ret_var, ret.e,
+					FsSeq(arrayPush(decs, FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), -1)), id),
+					-1
+				)
+			), -1
+		);
 	}
 }
 
@@ -321,9 +314,6 @@ fsExpVarIncs(e: FsExp, acc: Tree<FsVar, FsMemOps>, last: [Set<string>], ind: int
 		}
 		FsCallPrim(o, es,__,__): {
 			foldi(es, acc, \i, ac, x -> fsExpVarIncs(x, ac, last, i, o));
-		}
-		FsTailCall(args, vals, type, id): {
-			fold(vals, acc, \ac, x -> fsExpVarIncs(x, ac, last, -1, FsOrPrim()));
 		}
 		FsCast(e1,__,__,__): {
 			fsExpVarIncs(e1, acc, last, -1, FsOrPrim());
@@ -589,6 +579,7 @@ fsStatSetId(s: FsStat, x: int) -> FsStat {
 		FsSeq(__, __):         FsSeq(s with id = x);
 		FsWrapExp(__,__):      FsWrapExp(s with id = x);
 		FsRet(__,__):          FsRet(s with id = x);
+		FsTailCall(__):        FsTailCall(e with id = x);
 		FsAssign(__,__,__):    FsAssign(s with id = x);
 		FsLet(__,__,__,__):    FsLet(s with id = x);
 		FsIncRc(__,__,__):     FsIncRc(s with id = x);
@@ -602,7 +593,6 @@ fsExpSetId(e: FsExp, x: int) -> FsExp {
 		FsClosure(__,__,__):      FsClosure(e with id = x);
 		FsCall(__,__,__,__):      FsCall(e with id = x);
 		FsCallPrim(__,__,__,__):  FsCallPrim(e with id = x);
-		FsTailCall(__,__,__,__):  FsTailCall(e with id = x);
 		FsCast(__,__,__,__):      FsCast(e with id = x);
 		FsConst(__,__):           FsConst(e with id = x);
 	}
@@ -742,6 +732,7 @@ fsControlFlowPaths(s: FsAll, acc: ref Tree<int, [[int]]>) -> [[int]] {
 			e1_cf = fsControlFlowPaths(e1, acc);
 			map(e1_cf, \e1_path -> concat(id_path(id), e1_path));
 		}
+		FsTailCall(id): [id_path(id)];
 		FsAssign(to, what, id): {
 			to_cf = fsControlFlowPaths(to, acc);
 			what_cf = fsControlFlowPaths(what, acc);
@@ -782,12 +773,6 @@ fsControlFlowPaths(s: FsAll, acc: ref Tree<int, [[int]]>) -> [[int]] {
 			);
 			[concatA(concat([id_path(id)], es_cf))];
 		}
-		FsTailCall(__,vs,__,id): {
-			vs_cf = map(vs, \x ->
-				check_single_branch(fsControlFlowPaths(x, acc))
-			);
-			[concatA(concat([id_path(id)], vs_cf))];
-		}
 		FsCast(e1,__,__,id): {
 			e1_cf = fsControlFlowPaths(e1, acc);
 			map(e1_cf, \e1_path -> concat(id_path(id), e1_path));
@@ -817,6 +802,9 @@ fsNumControlFlowPaths(s: FsAll, acc: ref Tree<int, double>) -> double {
 		FsRet(e1, id): {
 			fsNumControlFlowPaths(e1, acc);
 		}
+		FsTailCall(id): {
+			1.0;
+		}
 		FsAssign(to, what, id): {
 			fsNumControlFlowPaths(to, acc) * fsNumControlFlowPaths(what, acc);
 		}
@@ -842,11 +830,6 @@ fsNumControlFlowPaths(s: FsAll, acc: ref Tree<int, double>) -> double {
 		}
 		FsCallPrim(__,es,__,id): {
 			fold(es, 1.0, \ac, x ->
-				ac * fsNumControlFlowPaths(x, acc)
-			);
-		}
-		FsTailCall(__,vs,__,id): {
-			fold(vs, 1.0, \ac, x ->
 				ac * fsNumControlFlowPaths(x, acc)
 			);
 		}

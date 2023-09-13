@@ -3,26 +3,31 @@ import tools/flowc/manipulation/tail_call;
 
 export {
 	fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat;
-	fsTailCallExpansion(c: FsTailCall) -> FsStat;
 }
 
-fsTailCallExpansion(c: FsTailCall) -> FsStat {
-	tmp_vars = map(c.args, \arg ->
-		FsVar(arg.name + "__tailcall__", arg.type)
+fsTailCallExpansion(args: [FsVar], vals: [FsExp], new_id: () -> string) -> FsStat {
+	tmp_vars = map(args, \arg ->
+		FsVar(arg.name + "__tailcall__" + new_id(), arg.type)
 	);
-	assign_func_vars = mapi(c.args, \i, arg ->
+	assign_func_vars = mapi(args, \i, arg ->
 		FsAssign(
 			FsVarUse(arg, FsVarUninit(), false, -1),
 			FsVarUse(tmp_vars[i], FsVarLocal(), false, -1), -1
 		)
 	);
-	foldi(c.args, FsSeq(assign_func_vars, -1), \i, acc, arg ->
-		FsLet(tmp_vars[i], c.vals[i], acc, -1)
+	foldi(args, FsSeq(arrayPush(assign_func_vars, FsTailCall(-1)), -1), \i, acc, arg ->
+		FsLet(tmp_vars[i], vals[i], acc, -1)
 	);
 }
 
 fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat {
 	if (!fcDetectTailCall(fn)) s else {
+		id_counter = ref 0;
+		new_id = \ -> {
+			id = ^id_counter;
+			id_counter := id + 1;
+			i2s(id);
+		}
 		cast(fsMap(s, \x -> switch (x) {
 			FsRet(ex,__): {
 				switch (ex) {
@@ -42,18 +47,18 @@ fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat {
 											default: false;
 										}
 									}
-									tailcall_args = filtermapi(args, \i, arg ->
+									tc_args = filtermapi(args, \i, arg ->
 										if (remove_arg(arg, fn.lambda.args[i])) None() else {
 											fn_arg = fn.lambda.args[i];
 											Some(FsVar(fn_arg.name, fn_arg.type))
 										}
 									);
-									tailcall_vals = filtermapi(args, \i, arg ->
+									tc_vals = filtermapi(args, \i, arg ->
 										if (remove_arg(arg, fn.lambda.args[i])) None() else {
 											Some(arg)
 										}
 									);
-									FsRet(FsTailCall(tailcall_args, tailcall_vals, type, -1), -1);
+									fsTailCallExpansion(tc_args, tc_vals, new_id);
 								}
 							}
 							default: x;
