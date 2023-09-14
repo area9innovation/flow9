@@ -78,7 +78,7 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 		cpp_natives,
 		fiCpp3InitRuntimeParts(cfg),
 		buildSet(map(volatile_vars, \v -> v.name)),
-		ref [], ref [], "", None(), makeSet(), ""
+		ref [], "", None(), makeSet(), ""
 	);
 	fi2cpp3Translate(gctx);
 }
@@ -91,47 +91,40 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 	fi2cpp3SaveFile(src_path("__flow_runtime", ".hpp"), fiCpp3RuntimeHeader(gctx, runtime_parts), gctx.config);
 	fi2cpp3SaveFile(src_path("__flow_runtime", ".cpp"), fiCpp3RuntimeSource(gctx, runtime_parts), gctx.config);
 
-	compiled0 = fold(gctx.program.traversal, makeTree(), \acc, name -> {
+	compiled0 = map(gctx.program.traversal, \name -> {
 		start = fi2cpp3StartOperationMessage(gctx.config, 1, "compiling", name);
 		module = lookupTreeDef(gctx.program.modules, name, dummyFiModule);
 		fs_module = fi2cpp3TransformModule(module, gctx);
 		cpp_module = fiModule2cpp3(fs_module, gctx);
 		fi2cpp3EndOperationMessage(gctx.config, 1, "compiling", name, start);
-		setTree(acc, name, cpp_module);
+		cpp_module
 	});
-	main_name = either(findInOrder(compiled0, \__, module -> if (module.isMain) Some(module.name) else None()), "");
-	compiled = if (!gctx.config.monolith) compiled0 else fi2cpp3Monolith(main_name, compiled0, gctx);
-	sources = list2array(fold(gctx.program.traversal, 
+	init_strings = list2array(fold(compiled0, makeList(), \acc, module ->
+		fold(module.decls, acc, \ac, decl -> if (decl.init == "") ac else Cons(decl.init, ac))
+	));
+	main_name = eitherMap(find(compiled0, \module -> module.isMain), \module -> module.name, "");
+	compiled = if (!gctx.config.monolith) compiled0 else [fi2cpp3Monolith(main_name, compiled0, gctx)];
+	sources = list2array(fold(compiled0, 
 		array2list([
 			changeFileExt("__flow_includes", ".hpp"),
 			changeFileExt("__flow_runtime", ".hpp"),
 			changeFileExt("__flow_runtime", ".cpp")
 		]), 
-		\srcs, module_name -> {
-			switch (lookupTree(compiled, module_name)) {
-				Some(module): {
-					name = module.name;
-					mod_gctx = Cpp3GlobalContext(gctx with currentModule = name);
-					header = fiCompiledModule2cpp3header(module, mod_gctx, runtime_parts);
-					header_path = src_path(name, ".hpp");
-					fi2cpp3SaveFile(header_path, header, mod_gctx.config);
-					srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
-					sources = fiCompiledModule2cpp3sources(module, mod_gctx, runtime_parts);
-					if (length(sources) == 0) srcs1 else {
-						foldi(sources, srcs, \i, acc, source -> {
-							src_name = if (i == 0) name else name + "_" + i2s(i);
-							source_path = src_path(src_name, ".cpp");
-							fi2cpp3SaveFile(source_path, source, mod_gctx.config);
-							Cons(changeFileExt(src_name, ".cpp"), acc);
-						});
-					}
-				}
-				None(): {
-					println("module: " + module_name + " is not found among compiled, compiled:\n" +
-						strGlue(getTreeKeys(compiled), ", ")
-					);
-					srcs;
-				}
+		\srcs, module -> {
+			name = module.name;
+			mod_gctx = Cpp3GlobalContext(gctx with currentModule = name);
+			header = fiCompiledModule2cpp3header(module, mod_gctx, runtime_parts);
+			header_path = src_path(name, ".hpp");
+			fi2cpp3SaveFile(header_path, header, mod_gctx.config);
+			srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
+			sources = fiCompiledModule2cpp3sources(module, mod_gctx, init_strings, runtime_parts);
+			if (length(sources) == 0) srcs1 else {
+				foldi(sources, srcs, \i, acc, source -> {
+					src_name = if (i == 0) name else name + "_" + i2s(i);
+					source_path = src_path(src_name, ".cpp");
+					fi2cpp3SaveFile(source_path, source, mod_gctx.config);
+					Cons(changeFileExt(src_name, ".cpp"), acc);
+				});
 			}
 		}
 	));
@@ -144,8 +137,9 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 	);
 }
 
-cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
-	init = strGlue(^(gctx.volatileInit), "\n");
+cpp3MainFunc(gctx: Cpp3GlobalContext, init_strings: [string], runtime_parts: [Cpp3RuntimePart]) -> string {
+	//init = strGlue(^(gctx.volatileInit), "\n");
+	init = strGlue(init_strings, "\n");
 	non_scalar_vars = filtermap(getTreeValues(gctx.program.names.toplevel), \decl ->
 		switch (decl) {
 			FiGlobalVar(__,__,type,__,__): if (fiTypeIsScalar(type)) None() else Some(decl);
@@ -267,7 +261,7 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 	);
 }
 
-fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> [string] {
+fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, init: [string], runtime_parts: [Cpp3RuntimePart]) -> [string] {
 	all_source_defs = filtermap(module.decls, \decl -> if (!decl.headerOnly) Some(decl.definition) else None());
 	max_cpp_source = s2i(lookupTreeDef(gctx.program.config.config, "cpp-max-source", "100000"));
 	// Cut all definition into parts, not exceeding max-cpp-source kb
@@ -287,7 +281,7 @@ fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext
 		"namespace " + gctx.config.namespace + " {\n" +
 		"using namespace std::string_literals;\n" +
 		"using namespace flow;\n\n" +
-		"}\n" + cpp3MainFunc(gctx, runtime_parts)];
+		"}\n" + cpp3MainFunc(gctx, init, runtime_parts)];
 	} else {
 		mapi(source_defs_cut, \i, source_defs ->
 			if (length(source_defs) == 0 && !module.isMain) "" else {
@@ -297,33 +291,24 @@ fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext
 				"using namespace flow;\n\n" + 
 				concatStrings(source_defs) + "\n" +
 				"}\n" +
-				if (i == 0 && module.isMain) cpp3MainFunc(gctx, runtime_parts) else "";
+				if (i == 0 && module.isMain) cpp3MainFunc(gctx, init, runtime_parts) else "";
 			}
 		);
 	}
 }
 
-fi2cpp3Monolith(main_name: string, compiled: Tree<string, Cpp3CompiledModule>, gctx: Cpp3GlobalContext) -> Tree<string, Cpp3CompiledModule> {
-	all_decls = concatA(list2array(fold(gctx.program.traversal, makeList(), \acc, module_name -> 
-		switch (lookupTree(compiled, module_name)) {
-			Some(module): Cons(module.decls, acc);
-			None(): acc;
-		}
+fi2cpp3Monolith(main_name: string, compiled: [Cpp3CompiledModule], gctx: Cpp3GlobalContext) -> Cpp3CompiledModule {
+	all_decls = concatA(list2array(fold(compiled, makeList(), \acc, module -> 
+		Cons(module.decls, acc)
 	)));
-	all_natives = concatA(list2array(fold(gctx.program.traversal, makeList(), \acc, module_name ->
-		switch (lookupTree(compiled, module_name)) {
-			Some(module): Cons(module.natives, acc);
-			None(): acc;
-		}
+	all_natives = concatA(list2array(fold(compiled, makeList(), \acc, module ->
+		Cons(module.natives, acc)
 	)));
-	makeTree1(
-		main_name, 
-		Cpp3CompiledModule(main_name, true, all_decls, [], all_natives)
-	);
+	Cpp3CompiledModule(main_name, true, all_decls, [], all_natives);
 }
 
-fi2cpp3QtDeps(modules: Tree<string, Cpp3CompiledModule>, gctx: Cpp3GlobalContext) -> [Cpp3Qt] {
-	list2array(foldTree(modules, makeList(), \__,m, acc -> 
+fi2cpp3QtDeps(modules: [Cpp3CompiledModule], gctx: Cpp3GlobalContext) -> [Cpp3Qt] {
+	list2array(fold(modules, makeList(), \acc, m -> 
 		fold(m.natives, acc, \ac, nat -> {
 			runtime_deps = fold(nat.runtimeParts, [], \a, part_name -> 
 				switch (lookupTree(gctx.runtimeParts, part_name)) {
