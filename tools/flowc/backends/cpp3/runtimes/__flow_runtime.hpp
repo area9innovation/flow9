@@ -202,12 +202,17 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::DOUBLE, T>;
 
 template<typename T> inline T incRc(T x, Int d = 1) {
+#ifdef CONCURRENCY_ON
+	// std::atomic_fetch_add
+	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { std::atomic_fetch_add(&x->rc_, d); } } return x;
+#else
 	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { x->rc_ += d; } } return x;
+#endif
 }
 
 template<typename T> inline void decRc(T x, Int d = 1) {
-	// std::atomic_fetch_add
 #ifdef CONCURRENCY_ON
+	// std::atomic_fetch_sub
 	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { delete x; } } }
 #else
 	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } } }
@@ -270,14 +275,15 @@ struct Flow {
 	template<typename T> inline T get() { return dynamic_cast<T>(this); }
 	template<typename T> inline T getRc1() { return incRc(dynamic_cast<T>(this)); }
 	template<typename T> inline T getRc() { return dynamic_cast<T>(this); }
-	//mutable std::atomic<Int> rc_;
-	//mutable std::atomic_int_fast32_t rc_;
-	//mutable std::atomic_signed_lock_free rc_;
-	//mutable Int rc_;
+
+#ifdef CONCURRENCY_ON
 #ifdef REF_COUNTER_TYPE
 	mutable REF_COUNTER_TYPE rc_;
 #else
 	mutable std::atomic<Int> rc_;
+#endif
+#else
+	mutable Int rc_;
 #endif
 };
 
