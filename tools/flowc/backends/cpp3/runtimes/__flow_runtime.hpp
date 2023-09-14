@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <atomic>
+#include <stdatomic.h>
 #include <thread>
 #include <tuple>
 #include <any>
@@ -24,7 +25,17 @@
 
 // C++ runtime for flow
 
-//#define CONCURRENCY_ON
+#define CONCURRENCY_ON
+
+#ifdef CONCURRENCY_ON
+	#define REF_COUNTER_TYPE std::atomic_int_fast32_t
+	//#define REF_COUNTER_TYPE std::atomic_signed_lock_free
+	//#define REF_COUNTER_TYPE std::int32_t
+	//#define REF_COUNTER_TYPE atomic_int_fast32_t
+	//#define REF_COUNTER_TYPE _Atomic int_fast32_t
+#else
+	#define REF_COUNTER_TYPE int32_t
+#endif
 
 namespace flow {
 
@@ -195,7 +206,12 @@ template<typename T> inline T incRc(T x, Int d = 1) {
 }
 
 template<typename T> inline void decRc(T x, Int d = 1) {
+	// std::atomic_fetch_add
+#ifdef CONCURRENCY_ON
+	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { delete x; } } }
+#else
 	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } } }
+#endif
 }
 
 template<typename T, typename R> inline R decRcRet(T x, R ret, Int d = 1) {
@@ -257,7 +273,12 @@ struct Flow {
 	//mutable std::atomic<Int> rc_;
 	//mutable std::atomic_int_fast32_t rc_;
 	//mutable std::atomic_signed_lock_free rc_;
-	mutable Int rc_;
+	//mutable Int rc_;
+#ifdef REF_COUNTER_TYPE
+	mutable REF_COUNTER_TYPE rc_;
+#else
+	mutable std::atomic<Int> rc_;
+#endif
 };
 
 struct FVoid : public Flow { TypeId typeId() const override { return TypeFx::VOID; } };
