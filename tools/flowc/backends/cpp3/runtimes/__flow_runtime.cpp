@@ -22,7 +22,7 @@ string double2string(Double x, bool persistent_dot) {
 		bool trailing_zeroes = true;
 		for (std::size_t i = point_pos + 1; i < str.length() && trailing_zeroes; ++ i) {
 			char ch = str.at(i);
-			trailing_zeroes = !('1' < ch && ch < '9');
+			trailing_zeroes = !('1' <= ch && ch <= '9');
 		}
 		if (trailing_zeroes) {
 			str = str.substr(0, point_pos);
