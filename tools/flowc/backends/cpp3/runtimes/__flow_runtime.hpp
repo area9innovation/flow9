@@ -414,6 +414,8 @@ struct Str : public Flow {
 	Str(Fs... fs): fields(fs...) { }
 	~Str() override { decRcFields<0>(); }
 
+	static Str* make(Fs... fs) { return new Str(fs...); }
+
 	Str& operator = (Str&& r) = delete;
 	Str& operator = (const Str& r) = delete;
 
