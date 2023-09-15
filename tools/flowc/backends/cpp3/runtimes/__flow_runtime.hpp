@@ -219,6 +219,15 @@ template<typename T> inline void decRc(T x, Int d = 1) {
 #endif
 }
 
+template<typename T> inline T decRcReuse(T x, Int d = 1) {
+#ifdef CONCURRENCY_ON
+	// std::atomic_fetch_sub
+	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { return x; } else { return nullptr; } } }
+#else
+	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { return x; } else { return nullptr; } } }
+#endif
+}
+
 template<typename T, typename R> inline R decRcRet(T x, R ret, Int d = 1) {
 	decRc(x, d); return ret;
 }
@@ -414,7 +423,17 @@ struct Str : public Flow {
 	Str(Fs... fs): fields(fs...) { }
 	~Str() override { decRcFields<0>(); }
 
-	static Str* make(Fs... fs) { return new Str(fs...); }
+	template<typename S>
+	static S make(Fs... fs) { return static_cast<S>(new Str(fs...)); }
+	template<typename S>
+	static S make(S s, Fs... fs) {
+		if (s == nullptr) {
+			return static_cast<S>(new Str(fs...));
+		} else {
+			s->fields = std::tie(fs...);
+			return s;
+		}
+	}
 
 	Str& operator = (Str&& r) = delete;
 	Str& operator = (const Str& r) = delete;
