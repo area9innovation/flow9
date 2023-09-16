@@ -18,13 +18,13 @@ export {
 
 fsType(x: FsAll) -> FiType {
 	switch (x) {
-		FsIf(__, s1,__,__):          fsType(s1);
-		FsSwitch(__,__,cs,__):       if (length(cs) == 0) FiTypeVoid() else fsType(cs[0].body);
+		FsIf(__,__,s1,__,__):        fsType(s1);
+		FsSwitch(__,__,__,cs,__):    if (length(cs) == 0) FiTypeVoid() else fsType(cs[0].body);
 		FsSeq(ss,__):                if (length(ss) == 0) FiTypeVoid() else fsType(ss[length(ss) - 1]);
-		FsWrapExp(e,__):             FiTypeVoid();
-		FsRet(e,__):                 fsType(e);
-		FsLet(__,__, s,__):          fsType(s);
-		FsAssign(__,__,__):          FiTypeVoid();
+		FsWrapExp(e,__,__):          FiTypeVoid();
+		FsRet(e,__,__):              fsType(e);
+		FsLet(__,__,__,s,__):        fsType(s);
+		FsAssign(__,__,__,__):       FiTypeVoid();
 		FsIncRc(__,__,__):           FiTypeVoid();
 		FsDecRc(__,__,__):           FiTypeVoid();
 		FsClosure(__,lambda,__):     lambda.type;
@@ -57,12 +57,16 @@ fs2string(s: FsAll, depth: int) -> string {
 		wrap_long = \x -> if (!strContains(x, "\n") && strlen(x) < 64) x else {
 			"\n" + strIndent(x) + "\n"
 		}
+		rc2s = \msg, t -> if (isEmptyTree(t)) "" else {
+			msg + "[" + superglue(tree2pairs(t), \p -> p.first.name + ": " + i2s(p.second), ", ") + "]";
+		}
+		mem2s = \mem: FsMem, x: string -> rc2s("inc", mem.inc) + "[" + x + "]" + rc2s("dec", mem.dec);
 		body = switch (s) {
-			FsIf(e, s1, s2,__): {
-				"if (" + x2s(e) + "){" + wrap_long(x2s(s1)) + "} else {" + wrap_long(x2s(s2)) + "}";
+			FsIf(e, m, s1, s2,__): {
+				"if (" + mem2s(m, x2s(e)) + "){" + wrap_long(x2s(s1)) + "} else {" + wrap_long(x2s(s2)) + "}";
 			}
-			FsSwitch(v, __, cases,__): {
-				"switch (" + x2s(v) + ") {\n" +
+			FsSwitch(v, m,__, cases,__): {
+				"switch (" + mem2s(m, x2s(v)) + ") {\n" +
 					superglue(cases, \c -> {
 						c.struct + "(" + superglue(c.args, \arg -> arg.name, ", ") + "): " + wrap_long(x2s(c.body));
 					}, "\n") +
@@ -71,18 +75,18 @@ fs2string(s: FsAll, depth: int) -> string {
 			FsSeq(ss,__): {
 				"{" + i2s(length(ss)) + "[" + wrap_long(superglue(ss, x2s, ",\n")) + "]}";
 			}
-			FsLet(var, e, stat,__): {
-				"let1 " + var.name + " : " + t2s(var.type) + " = " + x2s(e) + ";\n" +
+			FsLet(var, e, m, stat,__): {
+				"let1 " + var.name + " : " + t2s(var.type) + " = " + mem2s(m, x2s(e)) + ";\n" +
 					strIndent(x2s(stat));
 			}
-			FsWrapExp(e,__): {
-				x2s(e) + ";";
+			FsWrapExp(e, m,__): {
+				mem2s(m, x2s(e)) + ";";
 			}
-			FsRet(e,__): {
-				"return " + x2s(e) + ";";
+			FsRet(e, m,__): {
+				"return " + mem2s(m, x2s(e)) + ";";
 			}
-			FsAssign(to, what,__): {
-				x2s(to) + " := " +  x2s(what) + ";";
+			FsAssign(to, what, m,__): {
+				mem2s(m, x2s(to) + " := " +  x2s(what)) + ";";
 			}
 			FsIncRc(delta, e,__): {
 				"incRc(" + x2s(e) + (if (delta == 1) "" else ", " + i2s(delta)) + ");";
@@ -133,14 +137,14 @@ fs2string(s: FsAll, depth: int) -> string {
 
 fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 	switch (x) {
-		FsIf(e1, s11, s12,__): switch (y) {
-			FsIf(e2, s21, s22,__): {
+		FsIf(e1, __, s11, s12,__): switch (y) {
+			FsIf(e2, __, s21, s22,__): {
 				fsEqualExprs(e1, e2) && fsEqualExprs(s11, s21) && fsEqualExprs(s12, s22);
 			}
 			default: false;
 		}
-		FsSwitch(v1, __, cs1,__): switch (y) {
-			FsSwitch(v2, __, cs2,__): {
+		FsSwitch(v1, __, __, cs1,__): switch (y) {
+			FsSwitch(v2, __, __, cs2,__): {
 				fsEqualExprs(v1, v2) && (length(cs1) == length(cs2)) &&
 				all(mapi(cs1, \i, c1 -> fsEqualExprs(c1.body, cs2[i].body)));
 			}
@@ -153,20 +157,20 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 			}
 			default: false;
 		}
-		FsLet(v1, e1, s1,__): switch (y) {
-			FsLet(v2, e2, s2,__): v1.name == v2.name && fsEqualExprs(e1, e2) && fsEqualExprs(s1, s2);
+		FsLet(v1, e1, __, s1,__): switch (y) {
+			FsLet(v2, e2, __, s2,__): v1.name == v2.name && fsEqualExprs(e1, e2) && fsEqualExprs(s1, s2);
 			default: false;
 		}
-		FsWrapExp(e1, __): switch (y) {
-			FsWrapExp(e2, __): fsEqualExprs(e1, e2);
+		FsWrapExp(e1,__,__): switch (y) {
+			FsWrapExp(e2,__,__): fsEqualExprs(e1, e2);
 			default: false;
 		}
-		FsRet(e1, __): switch (y) {
-			FsRet(e2, __): fsEqualExprs(e1, e2);
+		FsRet(e1,__,__): switch (y) {
+			FsRet(e2,__,__): fsEqualExprs(e1, e2);
 			default: false;
 		}
-		FsAssign(to1, what1, __): switch (y) {
-			FsAssign(to2, what2, __): fsEqualExprs(to1, to2) && fsEqualExprs(what1, what2);
+		FsAssign(to1, what1, __, __): switch (y) {
+			FsAssign(to2, what2, __, __): fsEqualExprs(to1, to2) && fsEqualExprs(what1, what2);
 			default: false;
 		}
 		FsIncRc(d1, e1,__): switch (y) {
@@ -273,18 +277,18 @@ fsPrim2s(op: FsPrim, es: [string], type: FiType) -> string {
 
 fsHasTailCall(s: FsStat) -> bool {
 	switch (s) {
-		FsIf(e, s1, s2,__): {
+		FsIf(e,__, s1, s2,__): {
 			fsHasTailCall(s1) || fsHasTailCall(s2);
 		}
-		FsSwitch(v,__, cases,__): {
+		FsSwitch(v,__,__, cases,__): {
 			exists(cases, \c -> fsHasTailCall(c.body));
 		}
 		FsSeq(ss,__): {
 			if (length(ss) == 0) false else fsHasTailCall(ss[length(ss) - 1]);
 		}
-		FsRet(e,__): false;
+		FsRet(e,__,__): false;
 		FsTailCall(__): true;
-		FsLet(__,__, s1,__): {
+		FsLet(__,__,__, s1,__): {
 			fsHasTailCall(s1);
 		}
 		default: false;
@@ -297,7 +301,7 @@ fsWrapSeq(stats: [FsStat]) -> FsStat {
 		// Filter out intermediate const values
 		stats1 = filter(stats, \s ->
 			switch (s) {
-				FsWrapExp(e,__): {
+				FsWrapExp(e,__,__): {
 					switch (e) {
 						FsConst(__,__): false;
 						default: true;
@@ -319,22 +323,22 @@ fsUnwrapSeq(stat: FsStat) -> [FsStat] {
 
 fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVarUse) -> FsStat {
 	switch (s) {
-		FsRet(e, id): {
-			FsAssign(v, e, -1);
+		FsRet(me,__,id): {
+			FsAssign(v, me, FsMem(makeTree(), makeTree()), -1);
 		}
 		FsSeq(ss,__): {
 			FsSeq(s with ss = map(ss, \s1 -> fsStatReplaceReturnOntoAssign(s1, v)));
 		}
-		FsSwitch(__,__,cs,__): {
+		FsSwitch(__,__,__,cs,__): {
 			FsSwitch(s with cases = map(cs, \c -> FsCase(c with body = fsStatReplaceReturnOntoAssign(c.body, v))));
 		}
-		FsIf(__,s1, s2,__): {
+		FsIf(__,__, s1, s2,__): {
 			FsIf(s with 
 				s1 = fsStatReplaceReturnOntoAssign(s1, v),
 				s2 = fsStatReplaceReturnOntoAssign(s2, v)
 			);
 		}
-		FsLet(__,__, s1,__): {
+		FsLet(__,__,__, s1,__): {
 			FsLet(s with s =  fsStatReplaceReturnOntoAssign(s1, v));
 		}
 		default: s;
