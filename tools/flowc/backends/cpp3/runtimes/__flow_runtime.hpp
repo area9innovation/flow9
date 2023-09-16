@@ -423,12 +423,12 @@ struct Str : public Flow {
 	Str(Fs... fs): fields(fs...) { }
 	~Str() override { decRcFields<0>(); }
 
-	template<typename S>
-	static S make(Fs... fs) { return static_cast<S>(new Str(fs...)); }
+	//template<typename S>
+	//static S make(Fs... fs) { return static_cast<S>(new Str(fs...)); }
 	template<typename S>
 	static S make(S s, Fs... fs) {
 		if (s == nullptr) {
-			return static_cast<S>(new Str(fs...));
+			return new std::remove_pointer_t<S>(fs...);
 		} else {
 			s->fields = std::tie(fs...);
 			return s;
