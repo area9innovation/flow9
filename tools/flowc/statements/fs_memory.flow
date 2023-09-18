@@ -15,10 +15,10 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 		id;
 	}
 	debug = ref debug0;
-	num_ids = fsFold(s, 0, \acc, x -> acc + fsCountId(x), true);
+	/*num_ids1 = fsFold(s, 0, \acc, x -> acc + fsCountId(x), true);
 	if (^debug) {
-		println("going to markup with ids, num ids: " + i2s(num_ids) + "  ... ");
-	}
+		println("going to markup with ids, num ids: " + i2s(num_ids1) + "  ... ");
+	}*/
 	markup_id = fsIds(new_id);
 	s1 = cast(fsMap(s, \x -> {
 		if (^debug) {
@@ -30,13 +30,14 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 		}
 		ret;
 	}, false): FsAll -> FsStat);
-	if (num_ids != ^id_counter) {
-		/*println("num_ids != ^id_counter: " + i2s(num_ids) + " != " + i2s(^id_counter) + "\n" + 
+	num_ids = ^id_counter;
+	/*if (num_ids != num_ids1) {
+		println("num_ids (^id_counter) != num_ids1: " + i2s(num_ids) + " != " + i2s(num_ids1) + "\n" + 
 			"s:\n" + strIndent(fs2s(s)) + "\n"
 			"s1 WITH ids:\n" + strIndent(fs2s(s1)) + "\n" + 
 			"increments:\n" + strGlue(fsFold(s, [], \acc, x -> arrayPush(acc, "\t" + fs2string(x, 1) + " => " + i2s(fsCountId(x))), true), "\n")
-		);*/
-	}
+		);
+	}*/
 	if (^debug) {
 		println("s1 with ids:\n" +
 			//"s:\n" + fs2s(s) + "\n" +
@@ -55,8 +56,8 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 		}
 		setTree(acc, v.name, v);
 	}
-	varName2type = fsFold(s1, makeTree(), \acc, x -> switch (x) {
-		FsLet(v,__,__,__,__): add_var(x, acc, v);
+	name2var = fsFold(s1, makeTree(), \acc, x -> switch (x) {
+		FsLet(v,__,__,__): add_var(x, acc, v);
 		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
 		default: acc;
 	}, true);
@@ -69,73 +70,71 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 
 */
 	t1 = timestamp();
-	id2vars_last = fsFindLast(s1, ^id_counter, ^debug, name);
+	last = fsFindLast(s1, ^id_counter, ^debug, name);
 	fsShowTiming(name + ": fsFindLast(s1, ^id_counter, ^debug, name)", t1);
+
+	if (^debug) {
+		println("Last:\n" + supergluei(last, \i, x -> "\t" + i2s(i) + ": {" + strGlue(set2array(x), "\n") + "}", "\n"))
+	}
 
 	crash = ref false;
 
 	//if (false) {
-	//	fsVerifyControlFlowPaths(s1, ^id_counter, id2vars_last, name, debug, crash);
+	//	fsVerifyControlFlowPaths(s1, ^id_counter, last, name, debug, crash);
 	//}
 
 	t2 = timestamp();
-	ret = cast(fsMap(s1, \x -> switch (x) {
-		FsIf(cond,__, pos, neg, id):  {
-			memops = fsGetMemops(cond, id2vars_last, ^debug);
+	/*ret = cast(fsMap(s1, \x -> switch (x) {
+		FsIf(cond, pos, neg, id):  {
+			memops = fsGetMemops(cond, last, ^debug);
 			fsDecUnused(id,
 				fsAddIncs(memops,
 					FsIf(x with
-						rc = fsMemOps2Mem(memops),
 						s1 = fsAddDecs2(memops, pos, id),
 						s2 = fsAddDecs2(memops, neg, id)
 					), id
-				), id2vars_last, varName2type, ^debug
+				), last, name2var, ^debug
 			);
 		};
-		FsSwitch(v,__,__, cs, id): {
-			memops = fsGetMemops(v, id2vars_last, ^debug);
+		FsSwitch(v,__, cs, id): {
+			memops = fsGetMemops(v, last, ^debug);
 			fsDecUnused(id,
 				fsAddIncs(memops,
 					FsSwitch(x with
-						rc = fsMemOps2Mem(memops),
 						cases = map(cs, \c ->
 							FsCase(c with
 								body = fsAddDecs2(memops, c.body, id)
 							)
 						)
 					), id
-				), id2vars_last, varName2type, ^debug
+				), last, name2var, ^debug
 			);
 		}
 		FsSeq(ss, id): {
-			fsDecUnused(id, x, id2vars_last, varName2type, ^debug);
+			fsDecUnused(id, x, last, name2var, ^debug);
 		}
-		FsRet(e, __,id): {
-			memops = fsGetMemops(e, id2vars_last, ^debug);
-			x1 = FsRet(x with rc = fsMemOps2Mem(memops));
-			fsDecUnused(id, fsAddDecs1(memops, fsAddIncs(memops, x1, id), id), id2vars_last, varName2type, ^debug);
+		FsRet(e, id): {
+			memops = fsGetMemops(e, last, ^debug);
+			fsDecUnused(id, fsAddDecs1(memops, fsAddIncs(memops, x, id), id), last, name2var, ^debug);
 		}
-		FsWrapExp(e, __,id): {
-			memops = fsGetMemops(e, id2vars_last, ^debug);
-			x1 = FsWrapExp(x with rc = fsMemOps2Mem(memops));
-			fsDecUnused(id, fsAddIncs(memops, fsAddDecs(memops, x1, id), id), id2vars_last, varName2type, ^debug);
+		FsWrapExp(e, id): {
+			memops = fsGetMemops(e, last, ^debug);
+			fsDecUnused(id, fsAddIncs(memops, fsAddDecs(memops, x, id), id), last, name2var, ^debug);
 		}
-		FsLet(__,e,__,s2, id): {
-			memops = fsGetMemops(e, id2vars_last, ^debug);
+		FsLet(__, e, s2, id): {
+			memops = fsGetMemops(e, last, ^debug);
 			fsDecUnused(id,
 				fsAddIncs(memops, FsLet(x with
-					rc = fsMemOps2Mem(memops),
 					s = fsAddDecs2(memops, s2, s2.id)
 				), id),
-				id2vars_last, varName2type, ^debug
+				last, name2var, ^debug
 			);
 		}
-		FsAssign(to, what, __, id): {
-			memops = fsGetMemops2(to, what, id2vars_last, ^debug);
-			x1 = FsAssign(x with rc = fsMemOps2Mem(memops));
+		FsAssign(to, what, id): {
+			memops = fsGetMemops2(to, what, last, ^debug);
 			fsDecUnused(id,
-				fsAddIncs(memops, fsAddDecs(memops, x1, id), id),
-				id2vars_last, varName2type, ^debug
+				fsAddIncs(memops, fsAddDecs(memops, x, id), id),
+				last, name2var, ^debug
 			);
 		}
 		FsIncRc(__,__,__): fail0("FsIncRc met during memory operations markup");
@@ -143,6 +142,24 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 		default: x;
 	}, true): FsAll -> FsStat);
 	fsShowTiming(name + ": ret = cast(fsMap(s1, \\x -> switch (x) {...", t2);
+	*/
+
+	t3 = timestamp();
+	id2mem = fsId2Mem(s1, num_ids, last, name2var);
+	ret1 = fsExpandMemOps(s1, id2mem);
+	fsShowTiming(name + ": fsExpandMemOps(s1, fsId2Mem(s1, num_ids, last, name2var))", t3);
+	
+	/*if (!fsEqualExprs(ret, ret1)) {
+		println("!fsEqualExprs(ret, ret1)\n" +
+			"num_ids: " + i2s(num_ids) + "\n" +
+			"diff:\n" + strIndent(superglue(fsDiffExprs(ret, ret1, []), \p -> 
+				"NOT EQUAL:\n" + strIndent(fs2string(p.first, 2)) + "\n!=\n" + strIndent(fs2string(p.second, 2)) + "\n", "\n"
+			)) + "\n" +
+			"ret:\n" + strIndent(fs2string(ret, -1)) + "\n" +
+			"ret1:\n" + strIndent(fs2string(ret1, -1)) + "\n"
+		);
+		crash := true;
+	}*/
 
 	if (^crash) {
 		println("s1 with ids:\n" +
@@ -153,8 +170,123 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 		 fsFindLast(s1, ^id_counter, ^debug, name);
 		fail("CRAHS");
 	}
-	ret;
+	ret1;
 }
+
+fsExpandIncs(m: FsMem) -> [FsStat] {
+	map(tree2pairs(m.incs), \p ->
+		FsIncRc(p.second, FsVarUse(p.first, FsVarLocal(), false, -1), -1)
+	);
+}
+
+fsExpandDecs(m: FsMem) -> [FsStat] {
+	map(set2array(m.decs), \v ->
+		FsDecRc(FsVarUse(v, FsVarLocal(), false, -1), "", -1)
+	);
+}
+
+fsExpandUnused(m: FsMem) -> [FsStat] {
+	map(set2array(m.unused), \v ->
+		FsDecRc(FsVarUse(v, FsVarLocal(), false, -1), "", -1)
+	);
+}
+
+// fsStatSetId
+
+fsAppendFirst(ops: [FsStat], x: FsStat) -> FsStat {
+	fsWrapSeq(concat(ops, fsUnwrapSeq(x)));
+}
+
+fsAppendLast(x: FsStat, ops: [FsStat]) -> FsStat {
+	fsWrapSeq(concat(fsUnwrapSeq(x), ops));
+}
+
+fsAppendReturn(x: FsRet, ops: [FsStat]) -> FsStat {
+	if (length(ops) == 0) x else {
+		ret_var = FsVar("tmp_return_var", fsType(x.e));
+		FsLet(ret_var, x.e,
+			FsSeq(arrayPush(ops, FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), -1)), -1),
+			-1
+		);
+	}
+}
+
+fsExpandMemOps(s: FsStat, id2mem: [FsMem]) -> FsStat {
+	cast(fsMap(s, \x -> switch (x) {
+		FsIf(cond, pos, neg, id):  {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					FsIf(x with
+						s1 = fsAppendFirst(fsExpandDecs(id2mem[id]), pos),
+						s2 = fsAppendFirst(fsExpandDecs(id2mem[id]), neg)
+					)
+				)
+			);
+		};
+		FsSwitch(v, __, cs, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					FsSwitch(x with
+						cases = map(cs, \c -> 
+							FsCase(c with
+								body = fsAppendFirst(fsExpandDecs(id2mem[id]), c.body)
+							)
+						)
+					)
+				)
+			);
+		}
+		FsSeq(ss, id): {
+			fsAppendFirst(fsExpandUnused(id2mem[id]), x);
+		}
+		FsRet(e, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					fsAppendReturn(x, fsExpandDecs(id2mem[id]))
+				)
+			);
+		}
+		FsWrapExp(e, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					fsAppendLast(x, fsExpandDecs(id2mem[id]))
+				)
+			);
+		}
+		FsLet(__,e, s1, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					FsLet(x with
+						s = fsAppendFirst(fsExpandDecs(id2mem[id]), s1)
+					)
+				)
+			);
+		}
+		FsAssign(to, what, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					fsAppendLast(x, fsExpandDecs(id2mem[id]))
+				)
+			);
+		}
+		FsIncRc(__,__,__): fail0("FsIncRc met during memory operations markup");
+		FsDecRc(__,__,__): fail0("FsDecRc met during memory operations markup");
+		default: x;
+	}, true): FsAll -> FsStat);
+}
+
 
 fsShowTiming(msg: string, start: double) -> void {
 	fsShowTiming1(msg, timestamp() - start);
@@ -167,6 +299,59 @@ fsShowTiming1(msg: string, delta: double) -> void {
 	}*/
 }
 
+fsId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string, FsVar>) -> [FsMem] {
+	make_mem = \ -> FsMem(makeTree(), makeSet(), makeSet());
+	id2mem = generate(0, num, \__ -> ref make_mem());
+	fsIter(s, \x -> switch (x) {
+		FsIf(cond, pos, neg, id):  {
+			id2mem[id] := fsAddUnused2Mem(
+				fsAddExp2Mem(make_mem(), cond, last, None()),
+				id, last, name2var
+			);
+		};
+		FsSwitch(v,__, cs, id): {
+			id2mem[id] := fsAddUnused2Mem(
+				fsAddExp2Mem(make_mem(), v, last, None()),
+				id, last, name2var
+			);
+		}
+		FsSeq(ss, id): {
+			id2mem[id] := fsAddUnused2Mem(make_mem(), id, last, name2var);
+		}
+		FsRet(e, id): {
+			id2mem[id] := fsAddUnused2Mem(
+				fsAddExp2Mem(make_mem(), e, last, None()),
+				id, last, name2var
+			);
+		}
+		FsWrapExp(e, id): {
+			id2mem[id] := fsAddUnused2Mem(
+				fsAddExp2Mem(make_mem(), e, last, None()),
+				id, last, name2var
+			);
+		}
+		FsLet(__,e, __, id): {
+			id2mem[id] := fsAddUnused2Mem(
+				fsAddExp2Mem(make_mem(), e, last, None()),
+				id, last, name2var
+			);
+		}
+		FsAssign(to, what, id): {
+			id2mem[id] := fsAddUnused2Mem(
+				fsAddExp2Mem(
+					fsAddExp2Mem(make_mem(), to, last, None()),
+					what, last, None()
+				),
+				id, last, name2var
+			);
+		}
+		FsIncRc(__,__,__): fail("FsIncRc met during memory operations markup");
+		FsDecRc(__,__,__): fail("FsDecRc met during memory operations markup");
+		default: {}
+	}, true);
+	map(id2mem, \m -> ^m);
+}
+
 fsFindLast(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
 	s1 = timestamp();
 	pre = fsId2varsPreHash(s, num, debug);
@@ -177,7 +362,7 @@ fsFindLast(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
 	fsShowTiming(name + ": fsId2varsPost(s, num, debug)", s2);
 
 	s3 = timestamp();
-	id2vars_last = fsId2varsLastHash(s, num, pre, post, debug);
+	last = fsId2varsLastHash(s, num, pre, post, debug);
 	fsShowTiming(name + ": fsId2varsLast(s, num, debug)", s2);
 
 	if (debug) {
@@ -199,20 +384,20 @@ fsFindLast(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
 		println(
 			"pre:\n" + hashset_tree2s1(pre) + "\n" +
 			"post:\n" + set_tree2s1(post) + "\n" +
-			"id2vars_last:\n" + set_tree2s1(id2vars_last) + "\n" +
+			"last:\n" + set_tree2s1(last) + "\n" +
 			""
 		);
 	}
-	id2vars_last;
+	last;
 }
 
-fsLookupLast(x: FsAll, last: [Set<string>], id: int) -> Set<string> {
+/*fsLookupLast(last: [Set<string>], id: int) -> Set<string> {
 	if (id == -1) {
 		makeSet();
 	} else {
 		last[id];
 	}
-}
+}*/
 
 fsContainsLast(x: FsAll, last: [Set<string>], id: int, var: string) -> bool {
 	if (id == -1) {
@@ -231,15 +416,15 @@ fsIsEmptyLast(x: FsAll, last: [Set<string>], id: int) -> bool {
 }
 
 
-fsDecUnused(id: int, x: FsStat, id2vars_last: [Set<string>], varName2type: Tree<string, FsVar>, debug: bool) -> FsStat {
-	if (fsIsEmptyLast(x, id2vars_last, id)) {
+fsDecUnused(id: int, x: FsStat, last: [Set<string>], name2var: Tree<string, FsVar>, debug: bool) -> FsStat {
+	if (fsIsEmptyLast(x, last, id)) {
 		if (debug) {
 			println("to dec <" + i2s(id) + "> unused: []");
 		}
 		x;
 	} else {
-		unused = map(set2array(fsLookupLast(x, id2vars_last, id)), \v_name ->
-			switch (lookupTree(varName2type, v_name)) {
+		unused = map(set2array(last[id]), \v_name ->
+			switch (lookupTree(name2var, v_name)) {
 				Some(v): v;
 				None(): fail0("Unknown variable: " + v_name);
 			}
@@ -260,15 +445,8 @@ FsMemOps(
 	dec: bool,  // Should we drop the var in the end of evaluation of an expression explicitly
 );
 
-fsMemOps2Mem(ops: [Pair<FsVar, FsMemOps>]) -> FsMem {
-	FsMem(
-		fold(ops, makeTree(), \acc, op -> if (op.second.incs > 0) setTree(acc, op.first, op.second.incs) else acc),
-		fold(ops, makeTree(), \acc, op -> if (op.second.dec) setTree(acc, op.first, 1) else acc)
-	);
-}
-
-fsGetMemops(e: FsExp, id2vars_last: [Set<string>], debug: bool) -> [Pair<FsVar, FsMemOps>] {
-	memops = tree2pairs(fsExpVarIncs(e, makeTree(), id2vars_last, -1, FsOrPrim()));
+fsGetMemops(e: FsExp, last: [Set<string>], debug: bool) -> [Pair<FsVar, FsMemOps>] {
+	memops = tree2pairs(fsExpVarIncs(e, makeTree(), last, -1, FsOrPrim()));
 	if (debug) {
 		memops_str = superglue(memops, \p -> p.first.name + "=inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) ", dec" else "", ", ");
 		println("memops for <" + i2s(e.id) + ">: [" + memops_str + "]" +
@@ -278,10 +456,10 @@ fsGetMemops(e: FsExp, id2vars_last: [Set<string>], debug: bool) -> [Pair<FsVar, 
 	memops;
 }
 
-fsGetMemops2(e1: FsExp, e2: FsExp, id2vars_last: [Set<string>], debug: bool) -> [Pair<FsVar, FsMemOps>] {
+fsGetMemops2(e1: FsExp, e2: FsExp, last: [Set<string>], debug: bool) -> [Pair<FsVar, FsMemOps>] {
 	memops = tree2pairs(fsExpVarIncs(e2, 
-		fsExpVarIncs(e1, makeTree(), id2vars_last, -1, FsOrPrim()), 
-		id2vars_last, -1, FsOrPrim()
+		fsExpVarIncs(e1, makeTree(), last, -1, FsOrPrim()), 
+		last, -1, FsOrPrim()
 	));
 	if (debug) {
 		memops_str = superglue(memops, \p -> p.first.name + "=inc(" + i2s(p.second.incs) + ")" + if (p.second.dec) ", dec" else "", ", ");
@@ -303,7 +481,8 @@ fsAddIncs(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 		}
 	);
 	if (length(incs) == 0) x else {
-		FsSeq(concat(incs, fsUnwrapSeq(x)), id);
+		//FsSeq(concat(incs, fsUnwrapSeq(x)), id);
+		FsSeq(concat(incs, fsUnwrapSeq(x)), -1);
 	}
 }
 
@@ -316,7 +495,8 @@ fsAddDecs(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 		}
 	);
 	if (length(decs) == 0) x else {
-		FsSeq(concat(fsUnwrapSeq(x), decs), id);
+		//FsSeq(concat(fsUnwrapSeq(x), decs), id);
+		FsSeq(concat(fsUnwrapSeq(x), decs), -1);
 	}
 }
 
@@ -329,7 +509,8 @@ fsAddDecs2(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 		}
 	);
 	if (length(decs) == 0) x else {
-		FsSeq(concat(decs, fsUnwrapSeq(x)), id);
+		//FsSeq(concat(decs, fsUnwrapSeq(x)), id);
+		FsSeq(concat(decs, fsUnwrapSeq(x)), -1);
 	}
 }
 
@@ -342,13 +523,14 @@ fsAddDecs1(memops: [Pair<FsVar, FsMemOps>], x: FsStat, id: int) -> FsStat {
 		ret = cast(seq1[length(seq1) - 1]: FsStat -> FsRet);
 		non_ret = take(seq1, length(seq1) - 1);
 		ret_var = FsVar("tmp_return_var", fsType(ret));
-		FsSeq(
+		fsWrapSeq(
 			arrayPush(non_ret,
-				FsLet(ret_var, ret.e, FsMem(makeTree(), makeTree()),
-					FsSeq(arrayPush(decs, FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), FsMem(makeTree(), makeTree()), -1)), id),
+				FsLet(ret_var, ret.e,
+					//FsSeq(arrayPush(decs, FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), -1)), id),
+					FsSeq(arrayPush(decs, FsRet(FsVarUse(ret_var, FsVarLocal(), false, -1), -1)), -1),
 					-1
 				)
-			), -1
+			)
 		);
 	}
 }
@@ -411,6 +593,71 @@ fsExpVarIncs(e: FsExp, acc: Tree<FsVar, FsMemOps>, last: [Set<string>], ind: int
 	}
 }
 
+fsAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], op: Maybe<FsPrim>) -> FsMem {
+	switch (e) {
+		FsClosure(closure, __,__): {
+			fold(closure, acc, \ac, x -> fsAddExp2Mem(ac, x, last, None()));
+		}
+		FsCall(f, args,__,__): {
+			fold(args, fsAddExp2Mem(acc, f, last, None()), \ac, x ->
+				fsAddExp2Mem(ac, x, last, None())
+			);
+		}
+		FsCallPrim(o, es,__,__): {
+			fold(es, acc, \ac, x -> fsAddExp2Mem(ac, x, last, Some(o)));
+		}
+		FsCast(e1,__,__,__): {
+			fsAddExp2Mem(acc, e1, last, None());
+		}
+		FsVarUse(x, kind, last1, id): {
+			call_case = \-> if (fsContainsLast(e, last, id, x.name)) acc else {
+				FsMem(acc with
+					incs = setTree(acc.incs, x, lookupTreeDef(acc.incs, x, 0) + 1)
+				);
+			}
+			prim_case = \-> if (!fsContainsLast(e, last, id, x.name)) acc else {
+				FsMem(acc with decs = insertSet(acc.decs, x));
+			}
+			if (fiTypeIsScalar(x.type)) acc else {
+				switch (kind) {
+					FsVarGlobalFunc(): acc;
+					FsVarUninit(): acc;
+					default: {
+						if (fs_fast_prim_ops) {
+							switch (op) {
+								Some(oper): {
+									switch (oper) {
+										FsGePrim(): prim_case();
+										FsLePrim(): prim_case();
+										FsGtPrim(): prim_case();
+										FsLtPrim(): prim_case();
+										FsEqPrim(): prim_case();
+										FsNePrim(): prim_case();
+										FsFieldPrim(__,__): prim_case();
+										FsIndexPrim(): prim_case();
+										FsDerefPrim(): prim_case();
+										default: call_case();
+									}
+								}
+								None(): call_case();
+							}
+						} else {
+							call_case();
+						}
+					}
+				}
+			}
+		}
+		FsConst(c, id): acc;
+	}
+}
+
+fsAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<string, FsVar>) -> FsMem {
+	foldSet(last[id], mem, \acc, x ->
+		FsMem(acc with unused = insertSet(acc.unused, lookupTreeDef(name2var, x, FsVar(x, FiTypeVoid()))))
+	);
+}
+
 fsId2varsPre(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 	id2vars = generate(0, num, \__ -> ref makeSet());
 	fsFold2(s1, Cons(makeSet(), EmptyList()),
@@ -422,7 +669,7 @@ fsId2varsPre(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 					id2vars[id] := new_vars;
 					Cons(new_vars, acc);
 				}
-				FsLet(v, __,__,__,id): {
+				FsLet(v,__,__,id): {
 					id2vars[id] := acc.head;
 					new_vars = add_v(acc.head, v);
 					Cons(new_vars, acc.tail);
@@ -462,7 +709,7 @@ fsId2varsPreHash(s1: FsStat, num: int, debug: bool) -> [HashSet<string>] {
 					id2vars[id] := new_vars;
 					Cons(new_vars, acc);
 				}
-				FsLet(v, __,__,__,id): {
+				FsLet(v,__,__,id): {
 					id2vars[id] := acc.head;
 					new_vars = copyHashSet(acc.head);
 					add_v(new_vars, v);
@@ -739,13 +986,13 @@ fsId2varsLastHash(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string
 
 fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
 	\s -> switch(s) {
-		FsIf(c,__,__,__,__):      FsIf(s with id = new_id(), cond = fsExpSetId(c, new_id()));
-		FsSwitch(__,__,__,__,__): FsSwitch(s with id = new_id());
+		FsIf(c,__,__,__):         FsIf(s with id = new_id(), cond = fsExpSetId(c, new_id()));
+		FsSwitch(__,__,__,__):    FsSwitch(s with id = new_id());
 		FsSeq(__, __):            FsSeq(s with id = new_id());
-		FsWrapExp(e,__,__):       FsWrapExp(s with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsRet(e,__,__):           FsRet(s with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsAssign(e1, e2,__,__):   FsAssign(s with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
-		FsLet(__,e,__,__,__):     FsLet(s with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsWrapExp(e,__):          FsWrapExp(s with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsRet(e,__):              FsRet(s with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsAssign(e1, e2,__):      FsAssign(s with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
+		FsLet(__,e,__,__):        FsLet(s with id = new_id(), e = fsExpSetId(e, new_id()));
 		FsLambda(__,__,__,__,__): FsLambda(s with id = new_id());
 		FsVarUse(__,__,__,__):    FsVarUse(s with id = new_id());
 		default: s;
@@ -754,16 +1001,16 @@ fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
 
 fsCountId(s: FsAll) -> int {
 	switch(s) {
-		FsIf(c,__,__,__,__):      2;
-		FsSwitch(__,__,__,__,__): 1;
+		FsIf(c,__,__,__):         2;
+		FsSwitch(__,__,__,__):    1;
 		FsSeq(__, __):            1;
-		FsWrapExp(e,__,__):       2;
-		FsRet(e,__,__):           2;
-		FsAssign(e1, e2,__,__):   3;
-		FsLet(__,e,__,__,__):     2;
+		FsWrapExp(e,__):          2;
+		FsRet(e,__):              2;
+		FsAssign(e1, e2,__):      3;
+		FsLet(__,e,__,__):        2;
 		FsLambda(__,__,__,__,__): 1;
 		FsVarUse(__,__,__,__):    1;
-		default: 0;
+		default:                  0;
 	}
 }
 
@@ -778,16 +1025,16 @@ fsSetId(s: FsAll, x: int) -> FsAll {
 
 fsStatSetId(s: FsStat, x: int) -> FsStat {
 	switch(s) {
-		FsIf(__,__,__,__,__):     FsIf(s with id = x);
-		FsSwitch(__,__,__,__,__): FsSwitch(s with id = x);
-		FsSeq(__, __):            FsSeq(s with id = x);
-		FsWrapExp(__,__,__):      FsWrapExp(s with id = x);
-		FsRet(__,__,__):          FsRet(s with id = x);
-		FsTailCall(__):           FsTailCall(e with id = x);
-		FsAssign(__,__,__,__):    FsAssign(s with id = x);
-		FsLet(__,__,__,__,__):    FsLet(s with id = x);
-		FsIncRc(__,__,__):        FsIncRc(s with id = x);
-		FsDecRc(__,__,__):        FsDecRc(s with id = x);
+		FsIf(__,__,__,__):     FsIf(s with id = x);
+		FsSwitch(__,__,__,__): FsSwitch(s with id = x);
+		FsSeq(__, __):         FsSeq(s with id = x);
+		FsWrapExp(__,__):      FsWrapExp(s with id = x);
+		FsRet(__,__):          FsRet(s with id = x);
+		FsTailCall(__):        FsTailCall(e with id = x);
+		FsAssign(__,__,__):    FsAssign(s with id = x);
+		FsLet(__,__,__,__):    FsLet(s with id = x);
+		FsIncRc(__,__,__):     FsIncRc(s with id = x);
+		FsDecRc(__,__,__):     FsDecRc(s with id = x);
 	}
 }
 
@@ -803,7 +1050,7 @@ fsExpSetId(e: FsExp, x: int) -> FsExp {
 }
 
 /*
-fsVerifyControlFlowPaths(s: FsAll, num_nodes: int, id2vars_last: [Set<string>], name: string, debug: ref bool, crash: ref bool) -> void {
+fsVerifyControlFlowPaths(s: FsAll, num_nodes: int, last: [Set<string>], name: string, debug: ref bool, crash: ref bool) -> void {
 	num_paths = ref makeTree();
 	fsNumControlFlowPaths(s, num_paths);
 	total_paths = foldTree(^num_paths, 0.0, \__,n, acc -> acc + n);
@@ -856,14 +1103,14 @@ fsVerifyControlFlowPaths(s: FsAll, num_nodes: int, id2vars_last: [Set<string>], 
 					FsLet(v,__,__,__,__): if (fiTypeIsScalar(v.type)) acc else insertSet(acc, v.name);
 					default: acc;
 				});
-				last = fold(path, makeSet(), \acc, i -> if (i == -1) acc else mergeSets(acc, id2vars_last[i]));
+				last = fold(path, makeSet(), \acc, i -> if (i == -1) acc else mergeSets(acc, last[i]));
 				if (!cmp_last_sets(vars, last)) {
 					println(
 						"id: " + i2s(id) + "\n" +
 						"path: [" + superglue(path, i2s, ", ") + "]\n" + 
 						"vars: {" + strGlue(set2array(vars), ", ") + "}\n" +
 						"lasts: [\n" +
-							superglue(path, \i -> "\t" +  i2s(i) + ": {" + strGlue(set2array(id2vars_last[i]), ", ") + "}", "\n") +
+							superglue(path, \i -> "\t" +  i2s(i) + ": {" + strGlue(set2array(last[i]), ", ") + "}", "\n") +
 						"\n]\n" +
 						"lambda:\n" + strIndent(fs2s(^(id2node[id])))
 					);

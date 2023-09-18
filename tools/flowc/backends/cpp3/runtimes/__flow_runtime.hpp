@@ -204,27 +204,27 @@ template<typename T> constexpr bool is_scalar_v =
 template<typename T> inline T incRc(T x, Int d = 1) {
 #ifdef CONCURRENCY_ON
 	// std::atomic_fetch_add
-	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { std::atomic_fetch_add(&x->rc_, d); } } return x;
+	if constexpr (is_flow_ancestor_v<T>) { if (x) { std::atomic_fetch_add(&x->rc_, d); } } return x;
 #else
-	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { x->rc_ += d; } } return x;
+	if constexpr (is_flow_ancestor_v<T>) { if (x) { x->rc_ += d; } } return x;
 #endif
 }
 
 template<typename T> inline void decRc(T x, Int d = 1) {
 #ifdef CONCURRENCY_ON
 	// std::atomic_fetch_sub
-	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { delete x; } } }
+	if constexpr (is_flow_ancestor_v<T>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { delete x; } } }
 #else
-	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } } }
+	if constexpr (is_flow_ancestor_v<T>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } } }
 #endif
 }
 
 template<typename T> inline T decRcReuse(T x, Int d = 1) {
 #ifdef CONCURRENCY_ON
 	// std::atomic_fetch_sub
-	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { return x; } else { return nullptr; } } }
+	if constexpr (is_flow_ancestor_v<T>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { return x; } else { return nullptr; } } }
 #else
-	if constexpr (std::is_pointer_v<T> && !std::is_same_v<T, void*>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { return x; } else { return nullptr; } } }
+	if constexpr (is_flow_ancestor_v<T>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { return x; } else { return nullptr; } } }
 #endif
 }
 
@@ -932,7 +932,7 @@ inline T2 castRc(T1 x) {
 					return x;
 				}
 			}
-			else if constexpr (std::is_pointer_v<T1>) {
+			else if constexpr (is_flow_ancestor_v<T1>) {
 				return x; 
 			}
 	} 
