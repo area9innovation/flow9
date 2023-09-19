@@ -2,49 +2,52 @@ import ds/hashset;
 import tools/flowc/statements/fs_transform;
 
 export {
-	fsStatPerceus(s: FsStat, debug: bool, name: string) -> FsStat;
+	// Markups the AST nodes, which are used in Perceus, with unique ids
+	fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int>;
+
+	// Maps the node indexes to the set of ref-counter operations 
+	fsPerceusCore(s: FsStat, num_ids: int, debug: bool, name: string) -> [FsMem];
+
+	// Expands the AST with corresponding ref-counter operations
+	fsPerceusExpand(s: FsStat, id2mem: [FsMem]) -> FsStat;
 }
 
-fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
+fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int> {
 	id_counter = ref 0;
 	new_id = \-> {
 		id = ^id_counter;
 		id_counter := ^id_counter + 1;
 		id;
 	}
-	debug = ref debug0;
 	markup_id = fsIds(new_id);
 	s1 = cast(fsMap(s, \x -> markup_id(x), false): FsAll -> FsStat);
-	num_ids = ^id_counter;
-	if (^debug) {
-		println("s1 with ids:\n" +
-			//"s:\n" + fs2s(s) + "\n" +
-			"s1:\n" + fs2s(s1) + "\n"
-			//"s RAW:\n" + toStringFormatted(s1) + "\n"
-		);
-	}
+	Pair(s1, ^id_counter);
+}
+
+fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
+	debug = ref debug0;
 	add_var = \x, acc, v -> {
 		switch (lookupTree(acc, v.name)) {
 			Some(w): fail(
 				"Duplicate variable: " + v.name + " of type: " + pretFiType(v.type) + ", already is of type: " + pretFiType(w.type) + " in:\n" + 
 				fs2s(x) + "\n" +
-				"IN:\n" + fs2s(s1)
+				"IN:\n" + fs2s(s)
 			);
 			None(): { }
 		}
 		setTree(acc, v.name, v);
 	}
-	name2var = fsFold(s1, makeTree(), \acc, x -> switch (x) {
+	name2var = fsFold(s, makeTree(), \acc, x -> switch (x) {
 		FsLet(v,__,__,__): add_var(x, acc, v);
 		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
 		default: acc;
 	}, true);
 	t1 = timestamp();
-	last = fsFindLast(s1, ^id_counter, ^debug, name);
+	last = fsFindLast(s, num_ids, ^debug, name);
 	fsShowTiming(name + ": fsFindLast(s1, ^id_counter, ^debug, name)", t1);
 	crash = ref false;
 	t2 = timestamp();
-	id2mem = fsId2Mem(s1, num_ids, last, name2var);
+	id2mem = fsId2Mem(s, num_ids, last, name2var);
 	if (^debug) {
 		println("id2mem:\n" +
 			supergluei(
@@ -56,19 +59,17 @@ fsStatPerceus(s: FsStat, debug0: bool, name: string) -> FsStat {
 			) 
 		);
 	}
-	ret1 = fsExpandMemOps(s1, id2mem);
-	fsShowTiming(name + ": fsExpandMemOps(s1, fsId2Mem(s1, num_ids, last, name2var))", t2);
+	fsShowTiming(name + ": fsId2Mem(s1, num_ids, last, name2var)", t2);
 
 	if (^crash) {
-		println("s1 with ids:\n" +
-			//"s:\n" + fs2s(s) + "\n" +
-			"s1:\n" + fs2s(s1) + "\n"
+		println("s with ids:\n" +
+			fs2s(s) + "\n"
 			//"s RAW:\n" + toStringFormatted(s1) + "\n"
 		);
-		 fsFindLast(s1, ^id_counter, ^debug, name);
+		fsFindLast(s, num_ids, true, name);
 		fail("CRAHS");
 	}
-	ret1;
+	id2mem;
 }
 
 fsExpandIncs(m: FsMem) -> [FsStat] {
@@ -88,8 +89,6 @@ fsExpandUnused(m: FsMem) -> [FsStat] {
 		FsDecRc(FsVarUse(v, FsVarLocal(), false, -1), "", -1)
 	);
 }
-
-// fsStatSetId
 
 fsAppendFirst(ops: [FsStat], x: FsStat) -> FsStat {
 	fsWrapSeq(concat(ops, fsUnwrapSeq(x)));
@@ -118,7 +117,7 @@ fsMem2string(m: FsMem) -> string {
 	strGlue(components, "\n");
 }
 
-fsExpandMemOps(s: FsStat, id2mem: [FsMem]) -> FsStat {
+fsPerceusExpand(s: FsStat, id2mem: [FsMem]) -> FsStat {
 	cast(fsMap(s, \x -> switch (x) {
 		FsIf(cond, pos, neg, id):  {
 			fsAppendFirst(
@@ -259,6 +258,12 @@ fsId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string, FsVar>
 	map(id2mem, \m -> ^m);
 }
 
+fsAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<string, FsVar>) -> FsMem {
+	foldSet(last[id], mem, \acc, x ->
+		FsMem(acc with unused = insertSet(acc.unused, lookupTreeDef(name2var, x, FsVar(x, FiTypeVoid()))))
+	);
+}
+
 fsFindLast(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
 	s1 = timestamp();
 	pre = fsId2varsPreHash(s, num, debug);
@@ -348,12 +353,6 @@ fsAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], op: Maybe<FsPrim>) -> Fs
 		}
 		FsConst(c, id): acc;
 	}
-}
-
-fsAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<string, FsVar>) -> FsMem {
-	foldSet(last[id], mem, \acc, x ->
-		FsMem(acc with unused = insertSet(acc.unused, lookupTreeDef(name2var, x, FsVar(x, FiTypeVoid()))))
-	);
 }
 
 fsId2varsPreHash(s1: FsStat, num: int, debug: bool) -> [HashSet<string>] {
@@ -501,7 +500,7 @@ fsId2varsLastHash(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string
 				s2 = timestamp();
 				iterHashSet(acc.head, \v -> removeHashSet(diff, v));
 				t2 := ^t2 + timestamp() - s2;
-				
+
 				id2vars[x.id] := hash2set(diff);
 				/*if (debug) {
 					println(
