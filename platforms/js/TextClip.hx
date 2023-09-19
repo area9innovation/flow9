@@ -1154,6 +1154,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.onblur = onBlur;
 
 		nativeWidget.addEventListener('input', onInput);
+		nativeWidget.addEventListener('compositionend', function() { emit("compositionend"); });
 		nativeWidget.addEventListener('scroll', onScroll);
 		nativeWidget.addEventListener('keydown', onKeyDown);
 		nativeWidget.addEventListener('keyup', onKeyUp);
