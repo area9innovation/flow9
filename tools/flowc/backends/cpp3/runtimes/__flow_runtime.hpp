@@ -222,9 +222,18 @@ template<typename T> inline void decRc(T x, Int d = 1) {
 template<typename T> inline T decRcReuse(T x, Int d = 1) {
 #ifdef CONCURRENCY_ON
 	// std::atomic_fetch_sub
-	if constexpr (is_flow_ancestor_v<T>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { return x; } else { return nullptr; } } }
+	if constexpr (is_flow_ancestor_v<T>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { x->decRcChildren(); return x; } else { return nullptr; } } else { return nullptr; } }
 #else
 	if constexpr (is_flow_ancestor_v<T>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { return x; } else { return nullptr; } } }
+#endif
+}
+
+template<typename T> inline void decRcFinish(T x) {
+#ifdef CONCURRENCY_ON
+	// std::atomic_fetch_sub
+	if constexpr (is_flow_ancestor_v<T>) { if (x && x->_rc == 0) { delete x; } }
+#else
+	if constexpr (is_flow_ancestor_v<T>) { if (x && x->_rc == 0) { delete x; } }
 #endif
 }
 
@@ -259,6 +268,7 @@ struct Flow {
 	virtual TypeId typeId() const = 0;
 	virtual Int size() const { return 0; }
 	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
+	virtual void decRcChildren() { }
 	TypeId typeIdRc() const { return decRcRet(this, typeId()); }
 	Int sizeRc() const { return decRcRet(this, size()); }
 	
@@ -433,6 +443,7 @@ struct Str : public Flow {
 			return new std::remove_pointer_t<S>(fs...);
 		} else {
 			s->fields = std::tie(fs...);
+			s->rc_ = 1;
 			return s;
 		}
 	}
@@ -446,6 +457,7 @@ struct Str : public Flow {
 	TypeId componentTypeId(Int i) override {
 		return componentTypeId_<0>(i);
 	}
+	void decRcChildren() override { decRcFields<0>(); }
 
 	Flow* getFlowRc(Int i) override {
 		return decRcRet(this, getFlowRc1(i));
@@ -694,6 +706,7 @@ struct Vec : public Flow {
 	TypeId componentTypeId(Int i) override {
 		return get_type_id_v<T>;
 	}
+	void decRcChildren() override { for (T x : vect) decRc(x);  }
 	Flow* getFlowRc(Int i) override { 
 		return castRc<T, Flow*>(getRc(i));
 	}
@@ -774,6 +787,9 @@ struct Ref : public Flow {
 	Int size() const override { return 1; }
 	TypeId componentTypeId(Int i) override {
 		return get_type_id_v<T>;
+	}
+	void decRcChildren() override {
+		decRc(val);
 	}
 	Flow* getFlowRc(Int i) override { 
 		return castRc<RefType, Flow*>(getRc()); 
@@ -860,6 +876,9 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	// general interface
 	TypeId typeId() const override { return TYPE; }
 	Int size() const override { return static_cast<Int>(closure.size()); }
+	void decRcChildren() override {
+		for (Flow* x: closure) decRc(x);
+	}
 	Flow* callFlowRc(std::vector<Flow*> as) override { 
 		if (ARITY == as.size()) {
 			return [this, as]<std::size_t... I>(std::index_sequence<I...>) { 
