@@ -1,0 +1,205 @@
+import tools/flowc/statements/fs_transform;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	// Try to reuse a freshly freed structs
+	fsReuse(s : FsStat, id2mem: [FsMem], names: FiGlobalNames, debug: bool) -> FsStat;
+}
+
+fsReuse1(s : FsStat, id2mem: [FsMem], names: FiGlobalNames, debug: bool) -> FsStat {
+	fsFold2(s, Cons(makeSet(), EmptyList()),
+		\acc, x: FsAll -> {
+			add_v = \ac, v -> if (fiTypeIsScalar(v.type)) ac else insertSet(ac, v.name);
+			switch (x) {
+				FsLambda(closure, args,__,__,id): {
+					Cons(makeSet(), acc);
+				}
+				FsLet(v, e,__,id): {
+					Cons(add_v(acc.head, v), acc.tail);
+				}
+				FsAssign(to, what, id): {
+					acc;
+				}
+				//FsDecRc()
+				default: {
+					if (x.id != -1) {
+						//
+					}
+					acc;
+				}
+			}
+		},
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					cast(acc.tail: List<Set<string>> -> Cons<Set<string>>);
+				}
+				default: acc;
+			}
+		},
+		\args -> args,
+		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
+	);
+	s;
+}
+
+fsReuse(s : FsStat, id2mem: [FsMem], names: FiGlobalNames, debug: bool) -> FsStat {
+	cast(fsMap(s, \x -> switch (x) {
+		FsSwitch(v, tp, cases,__): {
+			if (v.kind != FsVarLocal() || tp.name == "") x else {
+				FsSwitch(x with cases = map(cases, \c ->
+					if (c.struct == "default") c else {
+						switch (lookupTree(names.structs, c.struct)) {
+							Some(struct): {
+								typars_instances = fiMatchTyparsOrdered(FiTypeName(struct.name, struct.typars), tp);
+								case_type = FiTypeName(struct.name, typars_instances);
+								if (debug) {
+									println("Trying to reuse: " + v.var.name + " ... in:\n" +
+										strIndent(fs2s(c.body))
+									);
+								}
+								switch (fsTryToReuseInStat(v.var, case_type, c.body, id2mem, false, debug)) {
+									Some(b): {
+										if (debug) {
+											println("Variable: " + v.var.name + " WAS reused:\n" + 
+												strIndent(fs2s(b))
+											);
+										}
+										FsCase(c with body = b);
+									}
+									None(): {
+										if (debug) {
+											println("Variable: " + v.var.name + " was NOT reused");
+										}
+										c;
+									}
+								}
+							}
+							None(): {
+								fail0("all switch cases must be structs, met: " + toStringFormatted(c));
+							}
+						}
+					}
+				));
+			}
+		}
+		default: x;
+	}, true): FsAll -> FsStat);
+}
+
+fsTryToReuseInStat(to_reuse: FsVar, reuse_tp: FiTypeName, s: FsStat, id2mem: [FsMem], freed: bool, debug: bool) -> Maybe<FsStat> {
+	new_freed = freed || containsSet(id2mem[s.id].decs, to_reuse) || containsSet(id2mem[s.id].unused, to_reuse);
+	switch (s) {
+		FsIf(__, s1, s2,__): {
+			xs = map([s1, s2], \x ->
+				fsTryToReuseInStat(to_reuse, reuse_tp, x, id2mem, new_freed, debug)
+			);
+			if (forall(xs, isNone)) None() else {
+				Some(FsIf(s with
+					s1 = either(xs[0], s1),
+					s2 = either(xs[1], s2)
+				))
+			}
+		}
+		FsSwitch(__,__, cs,__): {
+			xcs = map(cs, \c ->
+				fsTryToReuseInStat(to_reuse, reuse_tp, c.body, id2mem, new_freed, debug)
+			);
+			if (forall(xcs, isNone)) None() else {
+				Some(FsSwitch(s with cases = mapi(cs, \i, c ->
+					eitherMap(xcs[i], \b -> FsCase(c with body = b), c)
+				)));
+			}
+		}
+		FsSeq(ss, id): {
+			was_used = ref false;
+			xcs = map(ss, \x -> if (^was_used) None() else {
+				ret = fsTryToReuseInStat(to_reuse, reuse_tp, x, id2mem, new_freed, debug);
+				was_used := isSome(ret);
+				ret;
+			});
+			if (forall(xcs, isNone)) None() else {
+				Some(FsSeq(s with ss = mapi(ss, \i, x ->
+					either(xcs[i], x)
+				)));
+			}
+		}
+		FsLet(var, e, s1, id): {
+			switch (fsTryToReuseInExp(to_reuse.name, reuse_tp, e, debug)) {
+				Some(re1): {
+					Some(FsLet(s with e = re1));
+				}
+				None(): maybeMap(
+					fsTryToReuseInStat(to_reuse, reuse_tp, s1, id2mem, new_freed, debug),
+					\rs1 -> FsLet(s with s = rs1)
+				);
+			}
+		}
+		FsWrapExp(e, id): {
+			None();
+		}
+		FsRet(e, id): {
+			None();
+		}
+		FsTailCall(id): {
+			None();
+		}
+		FsAssign(to, what, id): {
+			maybeMap(
+				fsTryToReuseInExp(to_reuse.name, reuse_tp, what, debug),
+				\rs1 -> FsAssign(s with what = rs1)
+			);
+		}
+		FsIncRc(__,__,__): fail0("FsIncRc met during reuse");
+		FsDecRc(__,__,__): fail0("FsDecRc met during reuse");
+	}
+}
+
+fsTryToReuseInExp(to_reuse: string, reuse_tp: FiTypeName, e: FsExp, debug: bool) -> Maybe<FsExp> {
+	if (debug) {
+		println("fsTryToReuseInExp:\n" + 
+			strIndent(fs2s(e))
+		);
+	}
+	switch (e) {
+		FsCallPrim(op, es, type,__): {
+			switch (op) {
+				FsStructPrim(struct, reuse): {
+					if (fiEqualTypes(reuse_tp, type)) {
+						if (debug) {
+							println("fsTryToReuseInExp RESULT:\n" + 
+								strIndent(fs2s(FsCallPrim(e with op = FsStructPrim(struct, to_reuse))))
+							);
+						}
+						Some(FsCallPrim(e with op = FsStructPrim(struct, to_reuse)));
+					} else {
+						if (debug) {
+							println("fsTryToReuseInExp RESULT - NONE, types are not eq:\n" + 
+								pretFiType(reuse_tp) + " != " + pretFiType(type)
+							);
+						}
+						None();
+					}
+				}
+				default: {
+					if (debug) {
+						println("fsTryToReuseInExp RESULT - NONE, op: " + toString(op));
+					}
+					None();
+				}
+			}
+		}
+		/*FsCast(e1,__,__,__): {
+			maybeMap(
+				fsTryToReuseInExp(to_reuse, reuse_tp, e1, debug),
+				\re1 -> FsCast(e with e = re1)
+			);
+		}*/
+		default: {
+			if (debug) {
+				println("fsTryToReuseInExp RESULT - NONE, exp - is not call prim or cast");
+			}
+			None();
+		}
+	}
+}
