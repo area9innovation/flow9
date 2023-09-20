@@ -17,6 +17,8 @@ export {
 	fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVarUse) -> FsStat;
 
 	fsExpSetId(e: FsExp, x: int) -> FsExp;
+	fsStatSetId(s: FsStat, x: int) -> FsStat;
+	fsSetId(s: FsAll, x: int) -> FsAll;
 
 	fsMem2string(m: FsMem) -> string;
 	fsMemArray2string(ms: [FsMem]) -> string;
@@ -66,13 +68,6 @@ fs2string(s: FsAll, depth: int) -> string {
 		wrap_long = \x -> if (!strContains(x, "\n") && strlen(x) < 64) x else {
 			"\n" + strIndent(x) + "\n"
 		}
-		/*incs2s = \t -> if (isEmptyTree(t)) "" else {
-			"inc[" + superglue(tree2pairs(t), \p -> p.first.name + ": " + i2s(p.second), ", ") + "]";
-		}
-		decs2s = \x -> if (isEmptySet(x)) "" else {
-			"dec[" + superglue(set2array(x), \v -> v.name, ", ") + "]";
-		}
-		mem2s = \mem: FsMem, x: string -> incs2s(mem.incs) + "{" + x + "}" + decs2s(mem.decs);*/
 		body = switch (s) {
 			FsIf(e, s1, s2,__): {
 				"if (" + x2s(e) + "){" + wrap_long(x2s(s1)) + "} else {" + wrap_long(x2s(s2)) + "}";
@@ -141,8 +136,8 @@ fs2string(s: FsAll, depth: int) -> string {
 					FiBool(b, __):   b2s(b);
 				}
 			}
-		}
-		"<id=" + i2s(s.id) + ">" + body;
+		};
+		(if (s.id == -1) "" else "<id=" + i2s(s.id) + ">") + body;
 	}
 }
 
@@ -527,6 +522,29 @@ fsExpSetId(e: FsExp, x: int) -> FsExp {
 	}
 }
 
+fsStatSetId(s: FsStat, x: int) -> FsStat {
+	switch(s) {
+		FsIf(__,__,__,__):     FsIf(s with id = x);
+		FsSwitch(__,__,__,__): FsSwitch(s with id = x);
+		FsSeq(__, __):         FsSeq(s with id = x);
+		FsWrapExp(__,__):      FsWrapExp(s with id = x);
+		FsRet(__,__):          FsRet(s with id = x);
+		FsTailCall(__):        FsTailCall(e with id = x);
+		FsAssign(__,__,__):    FsAssign(s with id = x);
+		FsLet(__,__,__,__):    FsLet(s with id = x);
+		FsIncRc(__,__,__):     FsIncRc(s with id = x);
+		FsDecRc(__,__,__):     FsDecRc(s with id = x);
+	}
+}
+
+fsSetId(s: FsAll, x: int) -> FsAll {
+	switch(s) {
+		FsStat():  fsStatSetId(s, x);
+		FsExp():   fsExpSetId(s, x);
+		FsLambda(__,__,__,__,__): FsLambda(s with id = x);
+	}
+}
+
 fsMem2string(m: FsMem) -> string {
 	components = filter([
 		if (isEmptyTree(m.incs)) "" else "incs: {" + superglue(tree2pairs(m.incs), \p -> p.first.name + " -> " + i2s(p.second), ", ") + "}",
@@ -538,10 +556,16 @@ fsMem2string(m: FsMem) -> string {
 
 fsMemArray2string(ms: [FsMem]) -> string {
 	supergluei(
-		filter(ms, \mem -> sizeTree(mem.incs) > 0 || sizeSet(mem.decs) > 0 || sizeTree(mem.unused) > 0),
-		\i, mem -> {
-			mem_s = fsMem2string(mem);
-			"\t" + i2s(i) + ": " + if (strContains(mem_s, "\n")) strIndent(strIndent(mem_s)) else mem_s;
+		filtermapi(ms, \i, mem ->
+			if (sizeTree(mem.incs) > 0 || sizeSet(mem.decs) > 0 || sizeTree(mem.unused) > 0) {
+				Some(Pair(i, mem))
+			} else {
+				None();
+			}
+		),
+		\i, p -> {
+			mem_s = fsMem2string(p.second);
+			"\t" + i2s(p.first) + ": " + if (strContains(mem_s, "\n")) strIndent(strIndent(mem_s)) else mem_s;
 		}, "\n"
 	);
 }
