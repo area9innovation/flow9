@@ -81,8 +81,7 @@ fsReuseAdd(s : FsStat, debug: bool) -> void {
 	));
 }
 
-fsReuseImplicitDecs(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
-	debug = ref debug0;
+fsReuseImplicitDecs(s: FsStat, num_ids: int, debug: bool, name: string) -> [FsMem] {
 	add_var = \x, acc, v -> {
 		switch (lookupTree(acc, v.name)) {
 			Some(w): fail(
@@ -95,53 +94,43 @@ fsReuseImplicitDecs(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsM
 		setTree(acc, v.name, v);
 	}
 	name2var = fsFold(s, makeTree(), \acc, x -> switch (x) {
-		FsLet(v,__,__,__): add_var(x, acc, v);
-		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
+		FsDecRc(v,__,__): add_var(x, acc, v);
 		default: acc;
 	}, true);
 	t1 = timestamp();
-	last = fsReuseLast(s, num_ids, ^debug, name);
+	last = fsReuseLast(s, num_ids, debug, name);
 	fsShowTiming(name + ": fsReuseLast(s1, num_ids, ^debug, name)", t1);
 	t2 = timestamp();
 	id2mem = fsReuseId2Mem(s, num_ids, last, name2var);
-	if (^debug) {
-		println("id2mem:\n" +
-			supergluei(
-				filter(id2mem, \mem -> sizeTree(mem.incs) > 0 || sizeSet(mem.decs) > 0 || sizeSet(mem.unused) > 0),
-				\i, mem -> {
-					mem_s = fsMem2string(mem);
-					"\t" + i2s(i) + ": " + if (strContains(mem_s, "\n")) strIndent(strIndent(mem_s)) else mem_s;
-				}, "\n"
-			) 
-		);
+	if (debug) {
+		println("reuse: id2mem:\n" + fsMemArray2string(id2mem));
 	}
-	fsShowTiming(name + ": fsId2Mem(s1, num_ids, last, name2var)", t2);
+	fsShowTiming(name + ": fsReuseId2Mem(s1, num_ids, last, name2var)", t2);
 	id2mem;
 }
 
 fsReuseId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string, FsVar>) -> [FsMem] {
-	make_mem = \ -> FsMem(makeTree(), makeSet(), makeSet());
-	id2mem = generate(0, num, \__ -> ref make_mem());
+	id2mem = generate(0, num, \__ -> ref FsMem(makeTree(), makeSet(), makeTree()));
 	fsIter(s, \x -> switch (x) {
-		FsIf(cond, pos, neg, id):  {
+		FsIf(__,__,__, id):  {
 			id2mem[id] := fsReuseAddUnused2Mem(^(id2mem[id]), id, last, name2var);
 		};
-		FsSwitch(v,__, cs, id): {
+		FsSwitch(__,__,__, id): {
 			id2mem[id] := fsReuseAddUnused2Mem(^(id2mem[id]), id, last, name2var);
 		}
-		FsSeq(ss, id): {
+		FsSeq(__, id): {
 			id2mem[id] := fsReuseAddUnused2Mem(^(id2mem[id]), id, last, name2var);
 		}
-		FsRet(e, id): {
+		FsRet(__, id): {
 			id2mem[id] := fsReuseAddUnused2Mem(^(id2mem[id]), id, last, name2var);
 		}
-		FsWrapExp(e, id): {
+		FsWrapExp(__, id): {
 			id2mem[id] := fsReuseAddUnused2Mem(^(id2mem[id]), id, last, name2var);
 		}
-		FsLet(__,e, __, id): {
+		FsLet(__,__,__, id): {
 			id2mem[id] := fsReuseAddUnused2Mem(^(id2mem[id]), id, last, name2var);
 		}
-		FsAssign(to, what, id): {
+		FsAssign(t__,__, id): {
 			id2mem[id] := fsReuseAddUnused2Mem(^(id2mem[id]), id, last, name2var);
 		}
 		FsIncRc(__,__,__): fail("FsIncRc met during memory operations markup");
@@ -153,7 +142,13 @@ fsReuseId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string, F
 
 fsReuseAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<string, FsVar>) -> FsMem {
 	foldSet(last[id], mem, \acc, x ->
-		FsMem(acc with unused = insertSet(acc.unused, lookupTreeDef(name2var, x, FsVar(x, FiTypeVoid()))))
+		FsMem(acc with
+			unused = setTree(
+				acc.unused,
+				lookupTreeDef(name2var, x, FsVar(x, FiTypeVoid())),
+				FsDecFinish()
+			)
+		)
 	);
 }
 
