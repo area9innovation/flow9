@@ -1,0 +1,118 @@
+import tools/flowc/statements/fs_transform;
+
+export {
+	// Expands the AST with corresponding ref-counter operations
+	fsExpandMem(s: FsStat, id2mem: [FsMem]) -> FsStat;
+}
+
+fsExpandMem(s: FsStat, id2mem: [FsMem]) -> FsStat {
+	cast(fsMap(s, \x -> switch (x) {
+		FsIf(cond, pos, neg, id):  {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					FsIf(x with
+						s1 = fsAppendFirst(fsExpandDecs(id2mem[id]), pos),
+						s2 = fsAppendFirst(fsExpandDecs(id2mem[id]), neg)
+					)
+				)
+			);
+		};
+		FsSwitch(v, __, cs, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					FsSwitch(x with
+						cases = map(cs, \c -> 
+							FsCase(c with
+								body = fsAppendFirst(fsExpandDecs(id2mem[id]), c.body)
+							)
+						)
+					)
+				)
+			);
+		}
+		FsSeq(ss, id): {
+			fsAppendFirst(fsExpandUnused(id2mem[id]), x);
+		}
+		FsRet(e, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					fsAppendReturn(x, fsExpandDecs(id2mem[id]))
+				)
+			);
+		}
+		FsWrapExp(e, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					fsAppendLast(x, fsExpandDecs(id2mem[id]))
+				)
+			);
+		}
+		FsLet(__,e, s1, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					FsLet(x with
+						s = fsAppendFirst(fsExpandDecs(id2mem[id]), s1)
+					)
+				)
+			);
+		}
+		FsAssign(to, what, id): {
+			fsAppendFirst(
+				fsExpandUnused(id2mem[id]),
+				fsAppendFirst(
+					fsExpandIncs(id2mem[id]),
+					fsAppendLast(x, fsExpandDecs(id2mem[id]))
+				)
+			);
+		}
+		FsIncRc(__,__,__): fail0("FsIncRc met during memory operations markup");
+		FsDecRc(__,__,__): fail0("FsDecRc met during memory operations markup");
+		default: x;
+	}, true): FsAll -> FsStat);
+}
+
+fsExpandIncs(m: FsMem) -> [FsStat] {
+	map(tree2pairs(m.incs), \p ->
+		FsIncRc(p.first, p.second, -1)
+	);
+}
+
+fsExpandDecs(m: FsMem) -> [FsStat] {
+	map(set2array(m.decs), \v ->
+		FsDecRc(v, FsDecDirect(), -1)
+	);
+}
+
+fsExpandUnused(m: FsMem) -> [FsStat] {
+	map(set2array(m.unused), \v ->
+		FsDecRc(v, FsDecDirect(), -1)
+	);
+}
+
+fsAppendFirst(ops: [FsStat], x: FsStat) -> FsStat {
+	fsWrapSeq(concat(ops, fsUnwrapSeq(x)));
+}
+
+fsAppendLast(x: FsStat, ops: [FsStat]) -> FsStat {
+	fsWrapSeq(concat(fsUnwrapSeq(x), ops));
+}
+
+fsAppendReturn(x: FsRet, ops: [FsStat]) -> FsStat {
+	if (length(ops) == 0) x else {
+		ret_var = FsVar("tmp_return_var", fsType(x.e));
+		FsLet(ret_var, x.e,
+			FsSeq(arrayPush(ops, FsRet(FsVarUse(ret_var, FsVarLocal(), -1), -1)), -1),
+			-1
+		);
+	}
+}
