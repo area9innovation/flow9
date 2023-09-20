@@ -15,6 +15,16 @@ export {
 	fsUnwrapSeq(stat: FsStat) -> [FsStat];
 
 	fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVarUse) -> FsStat;
+
+	fsExpSetId(e: FsExp, x: int) -> FsExp;
+
+	fsExpandIncs(m: FsMem) -> [FsStat];
+	fsExpandDecs(m: FsMem) -> [FsStat];
+	fsExpandUnused(m: FsMem) -> [FsStat];
+	fsAppendFirst(ops: [FsStat], x: FsStat) -> FsStat;
+	fsAppendLast(x: FsStat, ops: [FsStat]) -> FsStat;
+	fsAppendReturn(x: FsRet, ops: [FsStat]) -> FsStat;
+	fsMem2string(m: FsMem) -> string;
 }
 
 fsType(x: FsAll) -> FiType {
@@ -506,4 +516,60 @@ fsDiffExprs(x: FsAll, y: FsAll, acc: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAll
 			default: arrayPush(acc, Pair(x, y));
 		}
 	}
+}
+
+fsExpSetId(e: FsExp, x: int) -> FsExp {
+	switch(e) {
+		FsVarUse(__,__,__):       FsVarUse(e with id = x);
+		FsClosure(__,__,__):      FsClosure(e with id = x);
+		FsCall(__,__,__,__):      FsCall(e with id = x);
+		FsCallPrim(__,__,__,__):  FsCallPrim(e with id = x);
+		FsCast(__,__,__,__):      FsCast(e with id = x);
+		FsConst(__,__):           FsConst(e with id = x);
+	}
+}
+
+fsExpandIncs(m: FsMem) -> [FsStat] {
+	map(tree2pairs(m.incs), \p ->
+		FsIncRc(p.first, p.second, -1)
+	);
+}
+
+fsExpandDecs(m: FsMem) -> [FsStat] {
+	map(set2array(m.decs), \v ->
+		FsDecRc(v, FsDecDirect(), -1)
+	);
+}
+
+fsExpandUnused(m: FsMem) -> [FsStat] {
+	map(set2array(m.unused), \v ->
+		FsDecRc(v, FsDecDirect(), -1)
+	);
+}
+
+fsAppendFirst(ops: [FsStat], x: FsStat) -> FsStat {
+	fsWrapSeq(concat(ops, fsUnwrapSeq(x)));
+}
+
+fsAppendLast(x: FsStat, ops: [FsStat]) -> FsStat {
+	fsWrapSeq(concat(fsUnwrapSeq(x), ops));
+}
+
+fsAppendReturn(x: FsRet, ops: [FsStat]) -> FsStat {
+	if (length(ops) == 0) x else {
+		ret_var = FsVar("tmp_return_var", fsType(x.e));
+		FsLet(ret_var, x.e,
+			FsSeq(arrayPush(ops, FsRet(FsVarUse(ret_var, FsVarLocal(), -1), -1)), -1),
+			-1
+		);
+	}
+}
+
+fsMem2string(m: FsMem) -> string {
+	components = filter([
+		if (isEmptyTree(m.incs)) "" else "incs: {" + superglue(tree2pairs(m.incs), \p -> p.first.name + " -> " + i2s(p.second), ", ") + "}",
+		if (isEmptySet(m.decs)) "" else "decs: {" + superglue(set2array(m.decs), \v -> v.name, ", ") + "}",
+		if (isEmptySet(m.unused)) "" else "unused: {" + superglue(set2array(m.unused), \v -> v.name, ", ") + "}"
+	], isNotSpace);
+	strGlue(components, "\n");
 }

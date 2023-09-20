@@ -19,8 +19,18 @@ fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int> {
 		id_counter := ^id_counter + 1;
 		id;
 	}
-	markup_id = fsIds(new_id);
-	s1 = cast(fsMap(s, \x -> markup_id(x), false): FsAll -> FsStat);
+	s1 = cast(fsMap(s, \x -> switch(x) {
+		FsIf(c,__,__,__):         FsIf(x with id = new_id(), cond = fsExpSetId(c, new_id()));
+		FsSwitch(__,__,__,__):    FsSwitch(x with id = new_id());
+		FsSeq(__, __):            FsSeq(x with id = new_id());
+		FsWrapExp(e,__):          FsWrapExp(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsRet(e,__):              FsRet(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsAssign(e1, e2,__):      FsAssign(x with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
+		FsLet(__,e,__,__):        FsLet(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsLambda(__,__,__,__,__): FsLambda(x with id = new_id());
+		FsVarUse(__,__,__):       FsVarUse(x with id = new_id());
+		default: x;
+	}, false): FsAll -> FsStat);
 	Pair(s1, ^id_counter);
 }
 
@@ -44,7 +54,7 @@ fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
 	}, true);
 	t1 = timestamp();
 	last = fsFindLast(s, num_ids, ^debug, name);
-	fsShowTiming(name + ": fsFindLast(s1, ^id_counter, ^debug, name)", t1);
+	fsShowTiming(name + ": fsFindLast(s1, num_ids, ^debug, name)", t1);
 	crash = ref false;
 	t2 = timestamp();
 	id2mem = fsId2Mem(s, num_ids, last, name2var);
@@ -70,51 +80,6 @@ fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
 		fail("CRAHS");
 	}
 	id2mem;
-}
-
-fsExpandIncs(m: FsMem) -> [FsStat] {
-	map(tree2pairs(m.incs), \p ->
-		FsIncRc(p.first, p.second, -1)
-	);
-}
-
-fsExpandDecs(m: FsMem) -> [FsStat] {
-	map(set2array(m.decs), \v ->
-		FsDecRc(v, FsDecDirect(), -1)
-	);
-}
-
-fsExpandUnused(m: FsMem) -> [FsStat] {
-	map(set2array(m.unused), \v ->
-		FsDecRc(v, FsDecDirect(), -1)
-	);
-}
-
-fsAppendFirst(ops: [FsStat], x: FsStat) -> FsStat {
-	fsWrapSeq(concat(ops, fsUnwrapSeq(x)));
-}
-
-fsAppendLast(x: FsStat, ops: [FsStat]) -> FsStat {
-	fsWrapSeq(concat(fsUnwrapSeq(x), ops));
-}
-
-fsAppendReturn(x: FsRet, ops: [FsStat]) -> FsStat {
-	if (length(ops) == 0) x else {
-		ret_var = FsVar("tmp_return_var", fsType(x.e));
-		FsLet(ret_var, x.e,
-			FsSeq(arrayPush(ops, FsRet(FsVarUse(ret_var, FsVarLocal(), -1), -1)), -1),
-			-1
-		);
-	}
-}
-
-fsMem2string(m: FsMem) -> string {
-	components = filter([
-		if (isEmptyTree(m.incs)) "" else "incs: {" + superglue(tree2pairs(m.incs), \p -> p.first.name + " -> " + i2s(p.second), ", ") + "}",
-		if (isEmptySet(m.decs)) "" else "decs: {" + superglue(set2array(m.decs), \v -> v.name, ", ") + "}",
-		if (isEmptySet(m.unused)) "" else "unused: {" + superglue(set2array(m.unused), \v -> v.name, ", ") + "}"
-	], isNotSpace);
-	strGlue(components, "\n");
 }
 
 fsPerceusExpand(s: FsStat, id2mem: [FsMem]) -> FsStat {
@@ -264,42 +229,6 @@ fsAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<string,
 	);
 }
 
-fsFindLast(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
-	s1 = timestamp();
-	pre = fsId2varsPreHash(s, num, debug);
-	fsShowTiming(name + ": fsId2varsPre(s, num, debug)", s1);
-
-	s2 = timestamp();
-	post = fsId2varsPost(s, num, debug);
-	fsShowTiming(name + ": fsId2varsPost(s, num, debug)", s2);
-
-	s3 = timestamp();
-	last = fsId2varsLastHash(s, num, pre, post, debug);
-	fsShowTiming(name + ": fsId2varsLast(s, num, debug)", s2);
-
-	if (debug) {
-		set_tree2s1 = \st -> {
-			superglue(
-				filtermapi(st, \i, x -> if (isEmptySet(x)) None() else Some(Pair(i, x))), 
-				\p -> "\t" + i2s(p.first) + ": " + "[" + strGlue(set2array(p.second), ", ") + "]", "\n"
-			);
-		}
-		hashset_tree2s1 = \st -> {
-			superglue(
-				filtermapi(st, \i, x -> if (isEmptyHashSet(x)) None() else Some(Pair(i, x))),
-				\p -> "\t" + i2s(p.first) + ": " + "[" + strGlue(hashSet2array(p.second), ", ") + "]", "\n"
-			);
-		}
-		println(
-			//"pre:\n" + hashset_tree2s1(pre) + "\n" +
-			//"post:\n" + set_tree2s1(post) + "\n" +
-			"last:\n" + set_tree2s1(last) + "\n" +
-			""
-		);
-	}
-	last;
-}
-
 fsAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], op: Maybe<FsPrim>) -> FsMem {
 	switch (e) {
 		FsClosure(closure, __,__): {
@@ -355,9 +284,45 @@ fsAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], op: Maybe<FsPrim>) -> Fs
 	}
 }
 
-fsId2varsPreHash(s1: FsStat, num: int, debug: bool) -> [HashSet<string>] {
+fsFindLast(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
+	s1 = timestamp();
+	pre = fsId2varsPre(s, num, debug);
+	fsShowTiming(name + ": fsId2varsPre(s, num, debug)", s1);
+
+	s2 = timestamp();
+	post = fsId2varsPost(s, num, debug);
+	fsShowTiming(name + ": fsId2varsPost(s, num, debug)", s2);
+
+	s3 = timestamp();
+	last = fsId2varsLast(s, num, pre, post, debug);
+	fsShowTiming(name + ": fsId2varsLast(s, num, debug)", s2);
+
+	if (debug) {
+		set_tree2s1 = \st -> {
+			superglue(
+				filtermapi(st, \i, x -> if (isEmptySet(x)) None() else Some(Pair(i, x))), 
+				\p -> "\t" + i2s(p.first) + ": " + "[" + strGlue(set2array(p.second), ", ") + "]", "\n"
+			);
+		}
+		hashset_tree2s1 = \st -> {
+			superglue(
+				filtermapi(st, \i, x -> if (isEmptyHashSet(x)) None() else Some(Pair(i, x))),
+				\p -> "\t" + i2s(p.first) + ": " + "[" + strGlue(hashSet2array(p.second), ", ") + "]", "\n"
+			);
+		}
+		println(
+			//"pre:\n" + hashset_tree2s1(pre) + "\n" +
+			//"post:\n" + set_tree2s1(post) + "\n" +
+			"last:\n" + set_tree2s1(last) + "\n" +
+			""
+		);
+	}
+	last;
+}
+
+fsId2varsPre(s: FsStat, num: int, debug: bool) -> [HashSet<string>] {
 	id2vars = generate(0, num, \__ -> ref makeHashSet(fastHashString));
-	fsFold2(s1, Cons(makeHashSet(fastHashString), EmptyList()),
+	fsFold2(s, Cons(makeHashSet(fastHashString), EmptyList()),
 		\acc, x: FsAll -> {
 			add_v = \ac, v -> if (!fiTypeIsScalar(v.type)) insertHashSet(ac, v.name);
 			switch (x) {
@@ -382,13 +347,11 @@ fsId2varsPreHash(s1: FsStat, num: int, debug: bool) -> [HashSet<string>] {
 				}
 			}
 		},
-		\acc, x -> {
-			switch (x) {
-				FsLambda(__,__,__,__,id): {
-					cast(acc.tail: List<HashSet<string>> -> Cons<HashSet<string>>);
-				}
-				default: acc;
+		\acc, x -> switch (x) {
+			FsLambda(__,__,__,__,id): {
+				cast(acc.tail: List<HashSet<string>> -> Cons<HashSet<string>>);
 			}
+			default: acc;
 		},
 		\args -> args,
 		\p1, p2 -> Cons(mergeHashSets(p1.head, p2.head), p1.tail)
@@ -396,78 +359,40 @@ fsId2varsPreHash(s1: FsStat, num: int, debug: bool) -> [HashSet<string>] {
 	map(id2vars, \x -> ^x);
 }
 
-fsPerceusShowStack(stack: List<Set<string>>) -> string {
-	"[" + strGlue(fsPerceusDoShowStack(stack, []), ", ") + "]";
-}
-
-fsPerceusDoShowStack(stack: List<Set<string>>, acc: [string]) -> [string] {
-	switch (stack) {
-		Cons(s, t): {
-			fsPerceusDoShowStack(t, arrayPush(acc, "{" +  strGlue(set2array(s), ", ") + "}"));
-		}
-		EmptyList(): acc;
-	}
-}
-
-
-fsMergeSets(arr: [ref Set<string>], id: int, s: Set<string>) -> void {
-	arr[id] := mergeSets(^(arr[id]), s);
-}
-
-fsId2varsPost(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
+fsId2varsPost(s: FsStat, num: int, debug: bool) -> [Set<string>] {
 	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
 	id2vars = generate(0, num, \__ -> ref makeSet());
-	fsFold2(s1, Cons(makeSet(), EmptyList()),
-		\acc, x -> {
-			ret = switch (x) {
-				FsLambda(__,__,__,__,id): {
-					Cons(makeSet(), acc);
-				}
-				default: acc;
+	merge_sets = \id, x -> id2vars[id] := mergeSets(^(id2vars[id]), x);
+	fsFold2(s, Cons(makeSet(), EmptyList()),
+		\acc, x -> switch (x) {
+			FsLambda(__,__,__,__,id): {
+				Cons(makeSet(), acc);
 			}
-			/*if (debug) {
-				println(
-					"(B) PRE id=" + i2s(x.id) + "\n" +
-						"\tacc stack: " + fsPerceusShowStack(acc) + "\n" +
-						"\tret stack: " + fsPerceusShowStack(ret) + "\n"
-				);
-			}*/
-			ret;
+			default: acc;
 		},
 		\acc, x: FsAll -> {
-			ret = switch (x) {
+			switch (x) {
 				FsLambda(__,__,__,__,id): {
-					fsMergeSets(id2vars, id, acc.head);
+					merge_sets(id, acc.head);
 					cast(acc.tail: List<Set<string>> -> Cons<Set<string>>);
 				}
 				FsVarUse(v, kind, id): {
-					/*if (debug) {
-						println("\t(B) id=" + i2s(id) + " var: " + toString(x) + "\n");
-					}*/
 					new_vars = switch (kind) {
 						FsVarLocal(): {
 							if (fiTypeIsScalar(v.type)) acc.head else insertSet(acc.head, v.name);
 						}
 						default: acc.head;
 					}
-					fsMergeSets(id2vars, id, acc.head);
+					merge_sets(id, acc.head);
 					Cons(new_vars, acc.tail);
 				}
 				default: {
 					if (x.id != -1) {
-						fsMergeSets(id2vars, x.id, acc.head);
+						merge_sets(x.id, acc.head);
 					}
 					acc;
 				}
 			}
-			/*if (debug) {
-				println(
-					"(B) POST id=" + i2s(x.id) + "\n" +
-						"\tacc stack: " + fsPerceusShowStack(acc) + "\n" +
-						"\tret stack: " + fsPerceusShowStack(ret) + "\n"
-				);
-			}*/
-			ret;
 		},
 		\args -> reverseA(args),
 		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
@@ -475,7 +400,7 @@ fsId2varsPost(s1: FsStat, num: int, debug: bool) -> [Set<string>] {
 	map(id2vars, \x -> ^x);
 }
 
-fsId2varsLastHash(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string>], debug: bool) -> [Set<string>] {
+fsId2varsLast(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string>], debug: bool) -> [Set<string>] {
 	show_hash_vars = \vs -> "[" + strGlue(hashSet2array(vs), ", ") + "]";
 	show_set_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
 	id2vars = generate(0, num, \__ -> ref makeSet());
@@ -502,24 +427,10 @@ fsId2varsLastHash(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string
 				t2 := ^t2 + timestamp() - s2;
 
 				id2vars[x.id] := hash2set(diff);
-				/*if (debug) {
-					println(
-						"(C) x.id: " + i2s(x.id) + "\n" +
-						strIndent(
-							"pre_vars: " + show_hash_vars(pre[x.id]) + "\n" +
-							"post_vars: " + show_set_vars(post[x.id]) + "\n" +
-							"acc.head: " + show_hash_vars(acc.head) + "\n" //+
-							"diff: " + show_hash_vars(diff) + "\n"
-						)
-					);
-				}*/
 				diff;
 			}
 			switch (x) {
 				FsLambda(__,__,__,__,id): {
-					/*if (debug) {
-						println("(C) id=" + i2s(id) + " pushing stack: " + show_hash_vars(acc.head));
-					}*/
 					do_diff();
 					Cons(makeHashSet(fastHashString), acc);
 				}
@@ -557,30 +468,4 @@ fsId2varsLastHash(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string
 	fsShowTiming1("BBB: t4: ", ^t4);
 	fsShowTiming1("BBB: t5: ", ^t5);
 	map(id2vars, \x -> ^x);
-}
-
-fsIds(new_id: () -> int) -> (FsAll) -> FsAll {
-	\s -> switch(s) {
-		FsIf(c,__,__,__):         FsIf(s with id = new_id(), cond = fsExpSetId(c, new_id()));
-		FsSwitch(__,__,__,__):    FsSwitch(s with id = new_id());
-		FsSeq(__, __):            FsSeq(s with id = new_id());
-		FsWrapExp(e,__):          FsWrapExp(s with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsRet(e,__):              FsRet(s with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsAssign(e1, e2,__):      FsAssign(s with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
-		FsLet(__,e,__,__):        FsLet(s with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsLambda(__,__,__,__,__): FsLambda(s with id = new_id());
-		FsVarUse(__,__,__):       FsVarUse(s with id = new_id());
-		default: s;
-	}
-}
-
-fsExpSetId(e: FsExp, x: int) -> FsExp {
-	switch(e) {
-		FsVarUse(__,__,__):       FsVarUse(e with id = x);
-		FsClosure(__,__,__):      FsClosure(e with id = x);
-		FsCall(__,__,__,__):      FsCall(e with id = x);
-		FsCallPrim(__,__,__,__):  FsCallPrim(e with id = x);
-		FsCast(__,__,__,__):      FsCast(e with id = x);
-		FsConst(__,__):           FsConst(e with id = x);
-	}
 }
