@@ -214,6 +214,24 @@ fsPerceusLastUse(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>
 
 	s2 = timestamp();
 	post = fsPerceusId2varsPost(s, num, debug);
+	post1 = fsPerceusId2varsPost1(s, num, debug);
+	if (any(mapi(post, \i, p -> !equalSet(p, post1[i])))) {
+		set2s = \hs -> "{" + strGlue(set2array(hs), ", ") + "}";
+		fail(name + ": num=" + i2s(num) + ", post and post1 Differs:\n" +
+			strGlue(filtermapi(post, \i, p ->
+				if (equalSet(p, post1[i])) None() else 
+				Some("\tpost["+ i2s(i) + "]: " + set2s(p) + " != " + set2s(post1[i]) + ", diff: " +
+					set2s(
+						mergeSets(
+							differenceSets(p, post1[i]),
+							differenceSets(post1[i], p)
+						)
+					)
+				)
+			), "\n") + "\n" +
+			"s:\n" + strIndent(fs2s(s)) + "\n"
+		);
+	}
 	fsShowTiming(name + ": fsPerceusId2varsPost(s, num, debug)", s2);
 
 	s3 = timestamp();
@@ -354,6 +372,51 @@ fsPerceusId2varsPost(s: FsStat, num: int, debug: bool) -> [Set<string>] {
 	);
 	map(id2vars, \x -> ^x);
 }
+
+/*
+fsFold3(s: FsAll, v: ?, 
+	fn: (?, FsAll) -> ?, 
+	merge_branches: (?, ?) -> ?,
+	init: () -> ?,
+	copy: (?) -> ?,
+	args_first: bool, backwards: bool
+) -> ?
+*/
+
+fsPerceusId2varsPost1(s: FsStat, num: int, debug: bool) -> [Set<string>] {
+	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
+	id2vars = generate(0, num, \__ -> ref makeSet());
+	merge_sets = \id, x -> id2vars[id] := mergeSets(^(id2vars[id]), x);
+	fsFold3(s, makeSet(),
+		\acc, x: FsAll -> {
+			switch (x) {
+				FsVarUse(v, kind, id): {
+					new_vars = switch (kind) {
+						FsVarLocal(): {
+							if (fiTypeIsScalar(v.type)) acc else insertSet(acc, v.name);
+						}
+						default: acc;
+					}
+					merge_sets(id, acc);
+					new_vars;
+				}
+				default: {
+					if (x.id != -1) {
+						merge_sets(x.id, acc);
+					}
+					acc;
+				}
+			}
+		},
+		mergeSets,
+		\ -> makeSet(),
+		idfn, 
+		true,
+		true,
+	);
+	map(id2vars, \x -> ^x);
+}
+
 
 fsPerceusId2varsLast(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string>], debug: bool) -> [Set<string>] {
 	show_hash_vars = \vs -> "[" + strGlue(hashSet2array(vs), ", ") + "]";
