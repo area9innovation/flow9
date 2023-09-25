@@ -19,12 +19,16 @@ fsReuse(s: FsStat, debug: bool, name: string) -> FsStat {
 	if (debug) {
 		println("REUSE MARKUP:\n" + fs2s(p.first));
 	}
+	types = fsReuseTypes(s, debug);
+/*
 	fsReuseAdd(p.first, debug);
 	if (debug) {
 		println("REUSE ADDED:\n" + fs2s(p.first));
 	}
 	mem = fsReuseImplicitDecs(p.first, p.second, debug, name);
 	fsExpandMem(p.first, mem);
+*/
+	s;
 }
 
 fsReuseMarkup(s: FsStat) -> Pair<FsStat, int> {
@@ -49,12 +53,134 @@ fsReuseMarkup(s: FsStat) -> Pair<FsStat, int> {
 	Pair(s1, ^id_counter);
 }
 
+// fsFold1(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll]) -> ? {
+//	post(fold(order(fsArgs(s)), pre(v0, s), \acc, x -> fsFold1(x, acc, pre, post, order)), s);
+//}
+
+fsReuseTypes(s : FsStat, debug: bool) -> [FiType] {
+	dec_types = fsFold(s, makeSet(), \acc, x -> switch (x) {
+		FsDecRc(v,__, id): 
+			if (fiTypeIsScalar(v.type)) acc else {
+				insertSet(acc, v.type);
+			}
+		default: acc;
+	}, true);
+	create_types = fsFold(s, makeSet(), \acc, x -> switch (x) {
+		FsCallPrim(op, es, t, id): {
+			switch (op) {
+				FsStructPrim(struct, reuse): {
+					insertSet(acc, t);
+				}
+				default: acc;
+			}
+		}
+		default: acc;
+	}, true);
+	ret = set2array(intersectSets(dec_types, create_types));
+	if (debug) {
+		println("Potentially reusable types:\n" + 
+			concatStrings(map(ret, \t -> "\t" + pretFiType(t) + "\n"))
+		);
+	}
+	ret;
+}
+
+FsReuseIgnore(
+	reused:  [FsAll],
+	ignored: [FsAll]
+);
+
+FsReuseCase(
+	released: FsAll,
+	reused:   [FsAll],
+	ignored:  [FsAll]
+);
+
+FsReuseAcc(
+	reuses:   [FsReuseCase],
+	variants: [FsReuseIgnore] // Variants are indexed by types!
+);
+
+fsMergeReuseIgnore(s: FsStat, ups: [FsReuseIgnore]) -> FsReuseIgnore {
+	if (forall(ups, \up -> length(up.reused) == 0 && length(up.reused) == 0)) {
+		FsReuseIgnore([], [s]);
+	} else {
+		FsReuseIgnore(
+			concatA(map(ups, \up -> up.reused)),
+			concatA(map(ups, \up -> up.ignored))
+		);
+	}
+}
+/*
+fsMergeReuseAcc(s: FsStat, accs: [FsReuseAcc]) -> FsReuseAcc {
+	FsReuseAcc(
+		concatA(map(accs, \acc -> reuses)),
+		fold(accs, makeTree(), \acc, t ->
+			mergeTreeCustom(acc, t, \tp, )
+		)
+	)
+}
+/*
+fsFold3(
+	s: FsAll, v0: ?, 
+	pre: (?, FsAll) -> ?, 
+	post: (?, FsAll) -> ?, 
+	order: ([FsAll]) -> [FsAll], 
+	merge: (FsAll, [?]) -> ?
+) -> ?;
+
+fsReuseId2varsPost2(s: FsStat, types: [FiType], debug: bool) -> [FsReuseCase] {
+	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
+	//id2upwards = generate(0, num, \__ -> ref FsReuseUpwards([], []));
+	//merge_sets = \id, x -> id2reused[id] := mergeSets(^(id2reused[id]), x);
+	make_acc = \-> 
+	fsFold3(s, Cons(FsReuseAcc([], map(types, \__ -> FsReuseIgnore([], []))), EmptyList()),
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,__): {
+					Cons(makeSet(), acc);
+				}
+				default: acc;
+			}
+		},
+		\acc, x: FsAll -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					merge_sets(id, acc.head);
+					cast(acc.tail: List<Set<string>> -> Cons<Set<string>>);
+				}
+				FsCallPrim(op, es, t,__): {
+					new_reuse = switch (op) {
+						FsStructPrim(__, reuse): {
+							if (reuse != "") insertSet(acc.head, reuse) else acc.head;
+						}
+						default: acc.head;
+					}
+					Cons(new_reuse, acc.tail);
+				}
+				default: {
+					if (x.id != -1) {
+						merge_sets(x.id, acc.head);
+					}
+					acc;
+				}
+			}
+		},
+		\args -> reverseA(args),
+		\x, accs -> {
+			new_head = 
+			Cons(fsMergeReuseAcc(p1.head, p2.head), p1.tail)
+		}
+	).reuses;
+}
+*/
+
 fsReuseAdd(s : FsStat, debug: bool) -> void {
 	id_counter = ref 0;
 	new_id = \-> {
 		id = ^id_counter;
-		id_counter := id + 1;
-		"__reused_" + i2s(id);
+		id_counter := ^id_counter + 1;
+		i2s(id);
 	}
 	ignore(fsFold2(s, Cons(makeTree(), EmptyList()),
 		\acc: Cons<Tree<FiType, [FsDecRc]>>, x: FsAll -> {
@@ -64,11 +190,10 @@ fsReuseAdd(s : FsStat, debug: bool) -> void {
 				}
 				FsDecRc(v,__, id): {
 					if (fiTypeIsScalar(v.type)) acc else {
-						type = fiPurifyType(v.type);
 						Cons(
 							setTree(acc.head,
-								type, 
-								arrayPush(lookupTreeDef(acc.head, type, []), x)
+								v.type, 
+								arrayPush(lookupTreeDef(acc.head, v.type, []), x)
 							),
 							acc.tail
 						);

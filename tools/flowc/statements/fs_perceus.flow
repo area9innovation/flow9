@@ -191,6 +191,25 @@ fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], op: Maybe<FsPrim>
 fsPerceusLastUse(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
 	s1 = timestamp();
 	pre = fsPerceusId2varsPre(s, num, debug);
+	pre1 = fsPerceusId2varsPre1(s, num, debug);
+	if (any(mapi(pre, \i, p -> !equalHashSet(p, pre1[i])))) {
+		hashset2s = \hs -> "{" + strGlue(hashSet2array(hs), ", ") + "}";
+		fail(name + ": num=" + i2s(num) + ", pre and pre1 Differs:\n" +
+			strGlue(filtermapi(pre, \i, p ->
+				if (equalHashSet(p, pre1[i])) None() else 
+				Some("\tpre["+ i2s(i) + "]: " + hashset2s(p) + " != " + hashset2s(pre1[i]) + ", diff: " +
+					hashset2s(
+						mergeHashSets(
+							differenceHashSets(p, pre1[i]),
+							differenceHashSets(pre1[i], p)
+						)
+					)
+				)
+			), "\n") + "\n" +
+			"s:\n" + strIndent(fs2s(s)) + "\n"
+		);
+	}
+
 	fsShowTiming(name + ": fsPerceusId2varsPre(s, num, debug)", s1);
 
 	s2 = timestamp();
@@ -198,7 +217,7 @@ fsPerceusLastUse(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>
 	fsShowTiming(name + ": fsPerceusId2varsPost(s, num, debug)", s2);
 
 	s3 = timestamp();
-	last = fsPerceusId2varsLast(s, num, pre, post, debug);
+	last = fsPerceusId2varsLast(s, num, pre1, post, debug);
 	fsShowTiming(name + ": fsPerceusId2varsLast(s, num, debug)", s2);
 
 	if (debug) {
@@ -259,6 +278,38 @@ fsPerceusId2varsPre(s: FsStat, num: int, debug: bool) -> [HashSet<string>] {
 		},
 		\args -> args,
 		\p1, p2 -> Cons(mergeHashSets(p1.head, p2.head), p1.tail)
+	);
+	map(id2vars, \x -> ^x);
+}
+
+fsPerceusId2varsPre1(s: FsStat, num: int, debug: bool) -> [HashSet<string>] {
+	id2vars = generate(0, num, \__ -> ref makeHashSet(fastHashString));
+	fsFold3(s, makeHashSet(fastHashString),
+		\acc, x: FsAll -> {
+			add_v = \v -> if (!fiTypeIsScalar(v.type)) insertHashSet(acc, v.name);
+			switch (x) {
+				FsLambda(closure, args,__,__,id): {
+					iter(closure, add_v);
+					iter(args, add_v);
+					id2vars[id] := copyHashSet(acc);
+				}
+				FsLet(v,__,__,id): {
+					id2vars[id] := copyHashSet(acc);
+					add_v(v);
+				}
+				default: {
+					if (x.id != -1) {
+						id2vars[x.id] := copyHashSet(acc);
+					}
+				}
+			}
+			acc;
+		},
+		\s1, s2 -> {iterHashSet(s1, \x -> insertHashSet(s2, x)); s2 },
+		\ -> makeHashSet(fastHashString),
+		copyHashSet,
+		false, // args_first
+		false  // backwards
 	);
 	map(id2vars, \x -> ^x);
 }
