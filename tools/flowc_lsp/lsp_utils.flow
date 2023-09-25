@@ -198,14 +198,26 @@ lspConf2ConsoleArgs(conf : Tree<string, string>) -> [string] {
 	});
 }
 
+// This boolean flag prevents launching many flowc instances at once.
+// Not more then one instance may run at any moment of time.
+lsp_flowc_instance_is_running = ref false;
+
 lspRunConf(trim_out : bool, conf : CompilerConfig, on_exit : (int, string, string) -> void) -> void {
 	on_exit_1 = \code, out, err -> {
 		out1 = if (trim_out) trimFlowcHeaderFromOutput(out) else out;
 		on_exit(code, out1, err);
 	}
 	run_locally = \-> {
-		flowc = if (windows()) "flowc1.bat" else "flowc1";
-		startProcess(flowc, lspConf2ConsoleArgs(lspCompilerConfigToCommandArgs(conf)), ".", "", on_exit_1);
+		if (!^lsp_flowc_instance_is_running) {
+			lsp_flowc_instance_is_running := true;
+			flowc = if (windows()) "flowc1.bat" else "flowc1";
+			startProcess(flowc, lspConf2ConsoleArgs(lspCompilerConfigToCommandArgs(conf)), ".", "", \code, out, err -> {
+				lsp_flowc_instance_is_running := false;
+				on_exit_1(code, out, err);
+			});
+		} else {
+			on_exit(1, "", "Flowc instance is busy.");
+		}
 	}
 	if (containsKeyTree(conf.config, "server-kill")) {
 		// Executing 'server-kill=1' on server makes no sense - must be executed on a distinguished process.
