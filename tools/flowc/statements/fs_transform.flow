@@ -12,6 +12,13 @@ export {
 	fsFold2(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll], merge: (?, ?) -> ?) -> ?;
 
 	fsFold3(s: FsAll, v: ?, fn: (?, FsAll) -> ?, merge_branches: (?, ?) -> ?, init: () -> ?, copy: (?) -> ?, args_first: bool, backwards: bool) -> ?;
+	fsFold4(s: FsAll, v: ?, 
+		fn: (?, FsAll) -> ?, 
+		merge_branches: (FsAll, [?]) -> ?,
+		init: () -> ?,
+		copy: (?) -> ?,
+		args_first: bool, backwards: bool
+	) -> ?;
 }
 
 fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
@@ -208,16 +215,7 @@ fsFold2(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([F
 	}
 	post(v2, s);
 }
-/*
-fsFold3(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll], merge: (FsAll, [?]) -> ?) -> ? {
-	v1 = pre(v0, s);
-	args = fsArgs2(s);
-	v2 = merge(s, map(args, \as ->
-		fold(order(as), v1, \ac, x -> fsFold3(x, ac, pre, post, order, merge))
-	));
-	post(v2, s);
-}
-*/
+
 fsArgs2(s: FsAll) -> [[FsAll]] {
 	switch (s) {
 		FsIf(cond, s1, s2,__):    [[cond, s1], [cond, s2]];
@@ -278,3 +276,40 @@ fsFold3(s: FsAll, v: ?,
 	}
 }
 
+fsFold4(s: FsAll, v: ?, 
+	fn: (?, FsAll) -> ?, 
+	merge_branches: (FsAll, [?]) -> ?,
+	init: () -> ?,
+	copy: (?) -> ?,
+	args_first: bool, backwards: bool
+) -> ? {
+	args = fsArgs2(s);
+	// Fold alongside a sequential execution
+	do_seq = \v1, as -> fold(
+		if (backwards) reverseA(as) else as, v1, 
+		\ac, x -> fsFold4(x, ac, fn, merge_branches, init, copy, args_first, backwards)
+	);
+	// Fold alongside a forking of executions - branching.
+	do_choice = if (length(args) == 1) {
+		\v1 -> do_seq(v1, args[0]);
+	} else {
+		\v1 -> merge_branches(s,
+			map(args, \as -> do_seq(copy(v1), as))
+		);
+	}
+	do_job = \v1 -> if (args_first) {
+		fn(do_choice(v1), s);
+	} else {
+		do_choice(fn(v1, s));
+	}
+	// In Lambda case a new acc is created.
+	switch (s) {
+		FsLambda(__,__,__,__,__): {
+			do_job(init());
+			v;
+		}
+		default: {
+			do_job(v);
+		} 
+	}
+}

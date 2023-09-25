@@ -20,6 +20,22 @@ fsReuse(s: FsStat, debug: bool, name: string) -> FsStat {
 		println("REUSE MARKUP:\n" + fs2s(p.first));
 	}
 	types = fsReuseTypes(s, debug);
+	reuse_cases = fsReuseId2varsPost2(s, types, debug);
+	/*
+
+FsReuseCase(
+	released: FsAll,
+	reused:   [FsAll],
+	ignored:  [FsAll]
+);
+	*/
+	ids2s = \ids -> "[" + superglue(ids, \x -> i2s(x.id), ", ") + "]";
+	case2s = \rc -> {
+		"released=" + i2s(rc.released.id) + ", reused=" + ids2s(rc.reused) + ", ignored=" + ids2s(rc.ignored) 
+	}
+	println("reuse_cases:" + if (length(reuse_cases) == 0) "[]" else 
+		"\n" + superglue(reuse_cases, \c -> "\t" + case2s(c), "\n")
+	);
 /*
 	fsReuseAdd(p.first, debug);
 	if (debug) {
@@ -56,6 +72,16 @@ fsReuseMarkup(s: FsStat) -> Pair<FsStat, int> {
 // fsFold1(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll]) -> ? {
 //	post(fold(order(fsArgs(s)), pre(v0, s), \acc, x -> fsFold1(x, acc, pre, post, order)), s);
 //}
+
+/*
+fsFold3(s: FsAll, v: ?, 
+	fn: (?, FsAll) -> ?, 
+	merge_branches: (?, ?) -> ?,
+	init: () -> ?,
+	copy: (?) -> ?,
+	args_first: bool, backwards: bool
+) -> ?;
+*/
 
 fsReuseTypes(s : FsStat, debug: bool) -> [FiType] {
 	dec_types = fsFold(s, makeSet(), \acc, x -> switch (x) {
@@ -98,10 +124,10 @@ FsReuseCase(
 
 FsReuseAcc(
 	reuses:   [FsReuseCase],
-	variants: [FsReuseIgnore] // Variants are indexed by types!
+	variants: Tree<FiType, FsReuseIgnore> // Variants are indexed by types!
 );
 
-fsMergeReuseIgnore(s: FsStat, ups: [FsReuseIgnore]) -> FsReuseIgnore {
+fsMergeReuseIgnore(s: FsAll, ups: [FsReuseIgnore]) -> FsReuseIgnore {
 	if (forall(ups, \up -> length(up.reused) == 0 && length(up.reused) == 0)) {
 		FsReuseIgnore([], [s]);
 	} else {
@@ -111,69 +137,72 @@ fsMergeReuseIgnore(s: FsStat, ups: [FsReuseIgnore]) -> FsReuseIgnore {
 		);
 	}
 }
-/*
-fsMergeReuseAcc(s: FsStat, accs: [FsReuseAcc]) -> FsReuseAcc {
+
+fsMergeReuseAcc(s: FsAll, accs: [FsReuseAcc], types: [FiType]) -> FsReuseAcc {
 	FsReuseAcc(
-		concatA(map(accs, \acc -> reuses)),
-		fold(accs, makeTree(), \acc, t ->
-			mergeTreeCustom(acc, t, \tp, )
+		concatA(map(accs, \acc -> acc.reuses)),
+		fold(types, makeTree(), \acc, type -> 
+			setTree(acc, type, 
+				fsMergeReuseIgnore(s, map(accs,
+					\ac -> lookupTreeDef(ac.variants, type, FsReuseIgnore([], []))
+				))
+			)
 		)
 	)
 }
+
 /*
-fsFold3(
-	s: FsAll, v0: ?, 
-	pre: (?, FsAll) -> ?, 
-	post: (?, FsAll) -> ?, 
-	order: ([FsAll]) -> [FsAll], 
-	merge: (FsAll, [?]) -> ?
+fsFold4(s: FsAll, v: ?, 
+	fn: (?, FsAll) -> ?, 
+	merge_branches: (FsAll, [?]) -> ?,
+	init: () -> ?,
+	copy: (?) -> ?,
+	args_first: bool, backwards: bool
 ) -> ?;
+*/
 
 fsReuseId2varsPost2(s: FsStat, types: [FiType], debug: bool) -> [FsReuseCase] {
 	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
-	//id2upwards = generate(0, num, \__ -> ref FsReuseUpwards([], []));
-	//merge_sets = \id, x -> id2reused[id] := mergeSets(^(id2reused[id]), x);
-	make_acc = \-> 
-	fsFold3(s, Cons(FsReuseAcc([], map(types, \__ -> FsReuseIgnore([], []))), EmptyList()),
-		\acc, x -> {
-			switch (x) {
-				FsLambda(__,__,__,__,__): {
-					Cons(makeSet(), acc);
-				}
-				default: acc;
-			}
-		},
+	make_acc = \-> FsReuseAcc([], makeTree());
+	fsFold4(s, make_acc(),
 		\acc, x: FsAll -> {
 			switch (x) {
-				FsLambda(__,__,__,__,id): {
-					merge_sets(id, acc.head);
-					cast(acc.tail: List<Set<string>> -> Cons<Set<string>>);
-				}
-				FsCallPrim(op, es, t,__): {
-					new_reuse = switch (op) {
-						FsStructPrim(__, reuse): {
-							if (reuse != "") insertSet(acc.head, reuse) else acc.head;
+				FsCallPrim(op, es, type,__): {
+					switch (op) {
+						FsStructPrim(__,__): {
+							ri = lookupTreeDef(acc.variants, type, FsReuseIgnore([], []));
+							FsReuseAcc(acc with
+								variants = setTree(acc.variants, type,
+									FsReuseIgnore(ri with reused = arrayPush(ri.reused, x))
+								)
+							);
 						}
-						default: acc.head;
+						default: acc;
 					}
-					Cons(new_reuse, acc.tail);
+				}
+				FsDecRc(v, mode,__): {
+					switch (lookupTree(acc.variants, v.type)) {
+						Some(ri): {
+							new_reuses = map(ri.reused, \y -> FsReuseCase(y, ri.reused, ri.ignored));
+							FsReuseAcc(acc with
+								reuses = concat(acc.reuses, new_reuses)
+							);
+						}
+						None(): acc;
+					}
 				}
 				default: {
-					if (x.id != -1) {
-						merge_sets(x.id, acc.head);
-					}
 					acc;
 				}
 			}
 		},
-		\args -> reverseA(args),
-		\x, accs -> {
-			new_head = 
-			Cons(fsMergeReuseAcc(p1.head, p2.head), p1.tail)
-		}
+		\x, accs -> fsMergeReuseAcc(x, accs, types), // merge_branches
+		make_acc, // init
+		idfn,  // copy
+		true,  // args_first
+		false, // backwards
 	).reuses;
 }
-*/
 
 fsReuseAdd(s : FsStat, debug: bool) -> void {
 	id_counter = ref 0;
