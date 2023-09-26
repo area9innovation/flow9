@@ -231,9 +231,9 @@ template<typename T> inline T decRcReuse(T x, Int d = 1) {
 template<typename T> inline void decRcFinish(T x) {
 #ifdef CONCURRENCY_ON
 	// std::atomic_fetch_sub
-	if constexpr (is_flow_ancestor_v<T>) { if (x && x->_rc == 0) { delete x; } }
+	if constexpr (is_flow_ancestor_v<T>) { if (x && x->rc_ == 0) { delete x; } }
 #else
-	if constexpr (is_flow_ancestor_v<T>) { if (x && x->_rc == 0) { delete x; } }
+	if constexpr (is_flow_ancestor_v<T>) { if (x && x->rc_ == 0) { delete x; } }
 #endif
 }
 
