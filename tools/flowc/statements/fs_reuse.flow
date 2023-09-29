@@ -1,5 +1,6 @@
 import ds/hashset;
 import tools/flowc/statements/fs_expand;
+//import tools/flowc/statements/fs2_utils;
 
 export {
 	fsReuse(s: FsStat, debug: bool, name: string) -> FsStat;
@@ -39,7 +40,25 @@ fsReuse(s0: FsStat, debug: bool, name: string) -> FsStat {
 		if (debug) {
 			println(name + " reuse applied:\n" + fs2s(s1));
 		}
-		//s1; 
+		//fsStat2fs2Stat(x: FsStat) -> Fs2Stat;
+		//fs2Stat2fsStat(x: Fs2Stat, acc: [FsStat]) -> FsStat;
+		/*x = fsStat2fs2Stat(s);
+		println("Fs2Stat:\n" + fs22s(x));
+		s2: FsStat = fs2Stat2fsStat(x, []);
+		if (!fsEqualExprs(s, s2)) {
+			fail0(
+				"!fsEqualExprs(s, s2):\n" +
+				"diff:\n" + strIndent(superglue(fsDiffExprs(s, s2, []), \q -> 
+					"diff:\n" + strIndent(fs2s(q.first)) + "\n != \n" + strIndent(fs2s(q.second)) + "\n", "\n"
+				)) + "\n" +
+				"s:\n" + strIndent(fs2s(s)) + "\n" +
+				"s2:\n" + strIndent(fs2s(s2)) + "\n"
+			);
+		}
+		s2;
+		*/
+
+		//s1;
 		s;
 	}
 }
@@ -52,29 +71,29 @@ fsReuseMarkup(s: FsStat) -> Pair<FsStat, int> {
 		id;
 	}
 	s1 = cast(fsMap(s, \x -> switch(x) {
-		FsIf(c,__,__,__):         FsIf(x with id = new_id());
-		FsSwitch(__,__,__,__):    FsSwitch(x with id = new_id());
-		FsSeq(__, __):            FsSeq(x with id = new_id());
-		FsWrapExp(e,__):          FsWrapExp(x with id = new_id());
-		FsRet(e,__):              FsRet(x with id = new_id());
-		FsAssign(e1, e2,__):      FsAssign(x with id = new_id());
-		FsLet(__,e,__,__):        FsLet(x with id = new_id());
-		FsDecRc(__,__,__):        FsDecRc(x with id = new_id());
+		FsIf(c,__,__,__,__):      FsIf(x with id = new_id());
+		FsSwitch(__,__,__,__,__): FsSwitch(x with id = new_id());
+		FsWrapExp(__,__,__):      FsWrapExp(x with id = new_id());
+		FsRet(__,__,__):          FsRet(x with id = new_id());
+		FsAssign(__,__,__,__):    FsAssign(x with id = new_id());
+		FsLet(__,__,__,__,__):    FsLet(x with id = new_id());
+		FsDecRc(__,__,__,__):     FsDecRc(x with id = new_id());
+		FsIncRc(__,__,__,__):     FsIncRc(x with id = new_id());
+		FsTailCall(__,__):        FsTailCall(x with id = new_id());
+		FsCallPrim(__,__,__,__):  FsCallPrim(x with id = new_id());
+		FsClosure(__,__,__):      FsClosure(x with id = new_id());
 		FsLambda(__,__,__,__,__): FsLambda(x with id = new_id());
-		FsCallPrim(op, __,__,__): {
-			switch (op) {
-				FsStructPrim(__,__): FsCallPrim(x with id = new_id());
-				default: fsSetId(x, -1);
-			}
-		}
-		default: fsSetId(x, -1);
+		FsCall(__,__,__,__):      FsCall(x with id = new_id());
+		FsCast(__,__,__,__):      FsCast(x with id = new_id());
+		FsVarUse(__,__,__):       FsVarUse(x with id = new_id());
+		FsConst(__,__):           FsConst(x with id = new_id());
 	}, false): FsAll -> FsStat);
 	Pair(s1, ^id_counter);
 }
 
 fsReuseTypes(s : FsStat, debug: bool, name: string) -> [FiType] {
 	dec_types = fsFold(s, makeSet(), \acc, x -> switch (x) {
-		FsDecRc(v,__, id): 
+		FsDecRc(v,__, id,__): 
 			if (fiTypeIsScalar(v.type)) acc else {
 				insertSet(acc, v.type);
 			}
@@ -184,7 +203,7 @@ fsFindReuseVariants(s: FsStat, types: [FiType], debug: bool) -> [FsReuseVariant]
 						default: acc;
 					}
 				}
-				FsDecRc(v, mode,__): {
+				FsDecRc(v, mode,__,__): {
 					switch (lookupTree(acc, v.type)) {
 						Some(ri): {
 							new_reuse = FsReuseVariant(x, ri.reused, ri.ignored);
@@ -218,6 +237,31 @@ fsFindReuseVariants(s: FsStat, types: [FiType], debug: bool) -> [FsReuseVariant]
 	);
 	^reuses;
 }
+/*
+fsFindReuseVariants1(s: FsStat, acc: [FsReuseVariant], debug: bool) -> [FsReuseVariant] {
+	switch (s) {
+		FsIf(__, s1, s2,__): {
+			fsFindReuseVariants1(s1, fsFindReuseVariants1(s2, acc, debug), debug);
+		}
+		FsSwitch(__,__, cs,__): {
+			fold(cs, acc, \ac, c -> fsFindReuseVariants1(c.body, ac, debug));
+		}
+		FsSeq(ss,__): {
+			fold(ss, acc, \ac, x -> fsFindReuseVariants1(x, ac, debug));
+		}
+		FsLet(__,__, s1,__): {
+			fsFindReuseVariants1(s1, ac, debug);
+		}
+		FsWrapExp(__,__): acc;
+		FsRet(__,__): acc;
+		FsAssign(__,__,__): acc;
+		FsIncRc(__,__,__): acc;
+		FsDecRc(v,__,__): {
+			potential_reuses = fsFindReuseVariants1()
+		}
+	}
+}
+*/
 
 fsReuseChooseVariant(cases: [FsReuseVariant]) -> [FsReuseVariant] /*Tree<int, FsReuseVariant>*/ {
 	vs = values2arrayTree(cases, \v -> v.released);
@@ -254,7 +298,7 @@ fsReuseApplyCases(s: FsStat, cases: [FsReuseVariant]) -> FsStat {
 		});
 		fold(c.ignored, acc2, \ac, x -> {
 			x1 = switch (x) {
-				FsStat(): FsSeq([FsDecRc(c.released with mode = FsDecFinish(reuse_id), id = -1), x], -1);
+				FsStat(): FsDecRc(c.released with mode = FsDecFinish(reuse_id), id = -1, next = Some(x));
 				default: fail0(fs2s(x) + " must be FsStat");
 			}
 			setTree(ac, x.id, x1);
@@ -262,6 +306,70 @@ fsReuseApplyCases(s: FsStat, cases: [FsReuseVariant]) -> FsStat {
 	});
 	cast(fsMap(s, \x: FsAll -> lookupTreeDef(updates, x.id, x), true): FsAll -> FsStat);
 }
+
+/*fsReuseAdd(s : FsStat, debug: bool) -> void {
+ 	id_counter = ref 0;
+ 	new_id = \-> {
+ 		id = ^id_counter;
+ 		id_counter := ^id_counter + 1;
+		i2s(id);
+ 	}
+	ignore(fsFold2(s, Cons(makeTree(), EmptyList()),
+		\acc: Cons<Tree<FiType, [FsDecRc]>>, x: FsAll -> {
+			switch (x) {
+				FsLambda(__,__,__,__,__): {
+					Cons(makeTree(), acc);
+				}
+				FsDecRc(v,__, id): {
+					if (fiTypeIsScalar(v.type)) acc else {
+						Cons(
+							setTree(acc.head,
+								v.type, 
+								arrayPush(lookupTreeDef(acc.head, v.type, []), x)
+							),
+							acc.tail
+						);
+					}
+				}
+				FsCallPrim(op, es, t, id): {
+ 					switch (op) {
+						FsStructPrim(struct, reuse): {
+							type = fiPurifyType(t);
+							switch (lookupTree(acc.head, type)) {
+								Some(decs): {
+									if (length(decs) == 0) acc else {
+										reuse_id = new_id();
+										dec = decs[0];
+										//dec.mode ::= FsDecReuse(reuse_id);
+										//op.reuse ::= reuse_id;
+										Cons(
+											setTree(acc.head, type, tail(decs)),
+											acc.tail
+										);
+									}
+								}
+								None(): acc;
+							}
+ 						}
+						default: acc;
+ 					}
+ 				}
+				default: acc;
+ 			}
+		},
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,__): {
+					cast(acc.tail: List<Tree<FiType, [FsDecRc]>> -> Cons<Tree<FiType, [FsDecRc]>>);
+				}
+				default: acc;
+ 			}
+		},
+		\args -> args,
+		\p1, p2 -> Cons(mergeTree(p1.head, p2.head), p1.tail)
+	));
+}
+*/
 
 /*
 fsReuseId2Mem(s: FsStat, num: int, last: [Set<string>], dec2var: Tree<string, FsVar>) -> [FsMem] {

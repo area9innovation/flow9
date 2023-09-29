@@ -7,78 +7,74 @@ export {
 
 fsExpandMem(s: FsStat, id2mem: [FsMem]) -> FsStat {
 	cast(fsMap(s, \x -> switch (x) {
-		FsIf(cond, pos, neg, id):  {
+		FsIf(cond, pos, neg, id,__):  {
 			if (id == -1) x else 
-			fsAppendFirst(
+			fsAppendBefore(
 				fsExpandUnused(id2mem[id]),
-				fsAppendFirst(
+				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
 					FsIf(x with
-						s1 = fsAppendFirst(fsExpandDecs(id2mem[id]), pos),
-						s2 = fsAppendFirst(fsExpandDecs(id2mem[id]), neg)
+						s1 = fsAppendBefore(fsExpandDecs(id2mem[id]), pos),
+						s2 = fsAppendBefore(fsExpandDecs(id2mem[id]), neg)
 					)
 				)
 			);
 		};
-		FsSwitch(v, __, cs, id): {
+		FsSwitch(v, __, cs, id,__): {
 			if (id == -1) x else 
-			fsAppendFirst(
+			fsAppendBefore(
 				fsExpandUnused(id2mem[id]),
-				fsAppendFirst(
+				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
 					FsSwitch(x with
 						cases = map(cs, \c -> 
 							FsCase(c with
-								body = fsAppendFirst(fsExpandDecs(id2mem[id]), c.body)
+								body = fsAppendBefore(fsExpandDecs(id2mem[id]), c.body)
 							)
 						)
 					)
 				)
 			);
 		}
-		FsSeq(ss, id): {
+		FsRet(e, id,__): {
 			if (id == -1) x else 
-			fsAppendFirst(fsExpandUnused(id2mem[id]), x);
-		}
-		FsRet(e, id): {
-			if (id == -1) x else 
-			fsAppendFirst(
+			fsAppendBefore(
 				fsExpandUnused(id2mem[id]),
-				fsAppendFirst(
+				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
 					fsAppendReturn(x, fsExpandDecs(id2mem[id]))
 				)
 			);
 		}
-		FsWrapExp(e, id): {
+		FsWrapExp(e, id,__): {
 			if (id == -1) x else 
-			fsAppendFirst(
+			fsAppendBefore(
 				fsExpandUnused(id2mem[id]),
-				fsAppendFirst(
+				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
-					fsAppendLast(x, fsExpandDecs(id2mem[id]))
+					fsAppendAfter(x, fsExpandDecs(id2mem[id]))
 				)
 			);
 		}
-		FsLet(__,e, s1, id): {
+		FsLet(__,e, s1, id,__): {
 			if (id == -1) x else 
-			fsAppendFirst(
+			fsAppendBefore(
 				fsExpandUnused(id2mem[id]),
-				fsAppendFirst(
+				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
 					FsLet(x with
-						s = fsAppendFirst(fsExpandDecs(id2mem[id]), s1)
+						s = fsAppendBefore(fsExpandDecs(id2mem[id]), s1)
 					)
 				)
 			);
 		}
-		FsAssign(to, what, id): {
+		FsAssign(to, what, id,__): {
 			if (id == -1) x else 
-			fsAppendFirst(
+			fsAppendBefore(
 				fsExpandUnused(id2mem[id]),
-				fsAppendFirst(
+				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
-					fsAppendLast(x, fsExpandDecs(id2mem[id]))
+					fsAppendAfter(x, fsExpandDecs(id2mem[id]))
 				)
 			);
 		}
@@ -86,38 +82,40 @@ fsExpandMem(s: FsStat, id2mem: [FsMem]) -> FsStat {
 	}, true): FsAll -> FsStat);
 }
 
-fsExpandIncs(m: FsMem) -> [FsStat] {
-	map(tree2pairs(m.incs), \p ->
-		FsIncRc(p.first, p.second, -1)
+fsExpandIncs(m: FsMem) -> Maybe<FsStat> {
+	fold(tree2pairs(m.incs), None(), \acc, p ->
+		Some(FsIncRc(p.first, p.second, -1, acc))
 	);
 }
 
-fsExpandDecs(m: FsMem) -> [FsStat] {
-	map(set2array(m.decs), \v ->
-		FsDecRc(v, FsDecDirect(), -1)
+fsExpandDecs(m: FsMem) -> Maybe<FsStat> {
+	fold(set2array(m.decs), None(), \acc, v ->
+		Some(FsDecRc(v, FsDecDirect(), -1, acc))
 	);
 }
 
-fsExpandUnused(m: FsMem) -> [FsStat] {
-	map(tree2pairs(m.unused), \p ->
-		FsDecRc(p.first, p.second, -1)
+fsExpandUnused(m: FsMem) -> Maybe<FsStat> {
+	fold(tree2pairs(m.unused), None(), \acc, p ->
+		Some(FsDecRc(p.first, p.second, -1, acc))
 	);
 }
 
-fsAppendFirst(ops: [FsStat], x: FsStat) -> FsStat {
-	fsWrapSeq(concat(ops, fsUnwrapSeq(x)));
+fsAppendBefore(mops: Maybe<FsStat>, x: FsStat) -> FsStat {
+	eitherMap(mops, \ops -> fsAppendLast(ops, x), x);
 }
 
-fsAppendLast(x: FsStat, ops: [FsStat]) -> FsStat {
-	fsWrapSeq(concat(fsUnwrapSeq(x), ops));
+fsAppendAfter(x: FsStat, mops: Maybe<FsStat>) -> FsStat {
+	eitherMap(mops, \ops -> fsSetNext(x, 
+		eitherMap(x.next, \n -> fsAppendLast(ops, n), ops)), x
+	);
 }
 
-fsAppendReturn(x: FsRet, ops: [FsStat]) -> FsStat {
-	if (length(ops) == 0) x else {
+fsAppendReturn(x: FsRet, mops: Maybe<FsStat>) -> FsStat {
+	eitherMap(mops, \ops -> {
 		ret_var = FsVar("tmp_return_var", fsType(x.e));
 		FsLet(ret_var, x.e,
-			FsSeq(arrayPush(ops, FsRet(FsVarUse(ret_var, FsVarLocal(), -1), -1)), -1),
-			-1
+			fsAppendBefore(mops, FsRet(FsVarUse(ret_var, FsVarLocal(), -1), -1, None())),
+			-1, None()
 		);
-	}
+	}, x);
 }

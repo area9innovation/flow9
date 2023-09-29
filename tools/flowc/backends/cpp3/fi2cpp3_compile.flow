@@ -22,9 +22,9 @@ fiModule2cpp3(module : FsModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule
 		})
 	);
 	compiled_decls = filtermap(decls, \decl -> {
-		start = fi2cpp3StartOperationMessage(gctx.config, 2, "compiling", decl.name);
+		start = fi2cpp3StartOperationMessage(gctx.config, 2, "compiling declaration", decl.name);
 		ret = fsDeclaration2cpp3(decl, gctx);
-		fi2cpp3EndOperationMessage(gctx.config, 2, "compilation of", decl.name, start);
+		fi2cpp3EndOperationMessage(gctx.config, 2, "compilation of declaration", decl.name, start);
 		ret;
 	});
 	is_main = exists(module.functions, \fn -> fn.name == "main");
@@ -91,7 +91,7 @@ fiGlobalVar2cpp3(globalVar : FsGlobalVar, gctx0: Cpp3GlobalContext) -> Cpp3Compi
 		currentToplevelName = name
 	);
 	init = switch (globalVar.value) {
-		FsRet(e,__): {
+		FsRet(e,__,__): {
 			fi2cpp3varname2cpp(name) + " = " + fsExp2cpp3(e, gctx) + ";";
 		}
 		default: {
@@ -151,8 +151,8 @@ fsAppendDecs2cpp3(s: string, mem: FsMem, gctx: Cpp3GlobalContext) -> string {
 }
 
 fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
-	switch (stat) {
-		FsIf(cond, pos, neg,__): {
+	cpp = switch (stat) {
+		FsIf(cond, pos, neg,__,__): {
 			cond_cpp = fsExp2cpp3(cond, gctx);
 			pos_cpp = fsStat2cpp3(pos, gctx);
 			neg_cpp = fsStat2cpp3(neg, gctx);
@@ -175,16 +175,10 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 				}
 			}
 		}
-		FsSwitch(x, sw_type, cases,__): {
+		FsSwitch(x, sw_type, cases,__,__): {
 			fsSwitch2cpp3(stat, fsExp2cpp3(x, gctx) + "->typeIdRc()/*" + fiType2cpp3(fsType(x), gctx) + "*/", gctx);
 		}
-		FsSeq(es,__): {
-			if (length(es) == 0) "" else
-			if (length(es) == 1) fsStat2cpp3(es[0], gctx) else {
-				strGlue(filter(map(es, \x -> fsStat2cpp3(x, gctx)), \s -> s != ""), "\n");
-			}
-		}
-		FsLet(v, e, s,__): {
+		FsLet(v, e, s,__,__): {
 			if (v.name == "__") {
 				fail0("definition of anonymous variable");
 			} else {
@@ -210,15 +204,7 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 				fsStat2cpp3(s, gctx);
 			}
 		}
-		FsAtomic(): {
-			fsAtomic2cpp3(stat, gctx);
-		}
-	}
-}
-
-fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
-	switch (a) {
-		FsWrapExp(e, __): {
+		FsWrapExp(e, __,__): {
 			e_cpp = fsExp2cpp3(e, gctx);
 			if (e_cpp == "") "" else {
 				tp = fsType(e);
@@ -229,13 +215,13 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 				}
 			}
 		}
-		FsRet(e,__): {
+		FsRet(e,__,__): {
 			"return " + fsExp2cpp3(e, gctx) + ";"
 		}
-		FsTailCall(id): {
+		FsTailCall(id,__): {
 			"continue;";
 		}
-		FsAssign(to, what,__): {
+		FsAssign(to, what,__,__): {
 			to_type = fsType(to);
 			make_assignment = \-> switch (to) {
 				FsVarUse(v, kind,__): {
@@ -277,12 +263,12 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 				}
 			}
 		}
-		FsIncRc(v, delta,__): {
+		FsIncRc(v, delta,__,__): {
 			if (delta == 0) "" else {
 				"incRc<" + fiType2cpp3(v.type, gctx) + ">(" + fi2cpp3varname2cpp(v.name) + (if (delta == 1) "" else ", " + i2s(delta)) + ");";
 			}
 		}
-		FsDecRc(v, mode,__): {
+		FsDecRc(v, mode,__,__): {
 			switch (mode) {
 				FsDecDirect(): {
 					"decRc<" + fiType2cpp3(v.type, gctx) + ">(" + fi2cpp3varname2cpp(v.name) + ");";
@@ -295,6 +281,10 @@ fsAtomic2cpp3(a : FsAtomic, gctx: Cpp3GlobalContext) -> string {
 				}
 			}
 		}
+	}
+	cpp + switch (stat.next) {
+		Some(n): "\n" + fsStat2cpp3(n, gctx);
+		None(): "";
 	}
 }
 

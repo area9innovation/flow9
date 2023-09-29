@@ -5,11 +5,10 @@ import tools/flowc/manipulation/common;
 export {
 	fsArgs(s: FsAll) -> [FsAll];
 	fsMap(s: FsAll, fn: (FsAll) -> FsAll, args_first: bool) -> FsAll;
-	fsMap2(s: FsAll, locals: Tree<string, FsVar>, fn: (FsAll, Tree<string, FsVar>) -> FsAll, args_first: bool) -> FsAll;
 	fsIter(s: FsAll, fn: (FsAll) -> void, args_first: bool) -> void;
 	fsFold(s: FsAll, v: ?, fn: (?, FsAll) -> ?, args_first: bool) ->?;
 	fsFold1(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll]) -> ?;
-	fsFold2(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll], merge: (?, ?) -> ?) -> ?;
+	fsFold2(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, backwards: bool, merge: (?, ?) -> ?) -> ?;
 
 	fsFold3(s: FsAll, v: ?, fn: (?, FsAll) -> ?, merge_branches: (?, ?) -> ?, init: () -> ?, copy: (?) -> ?, args_first: bool, backwards: bool) -> ?;
 	fsFold4(s: FsAll, v: ?, 
@@ -26,26 +25,50 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 	map_stat = \x -> cast(fsMap(x, f, args_first): FsAll -> FsStat);
 	map_var = \x -> cast(fsMap(x, f, args_first): FsAll -> FsVarUse);
 	do_args = \s -> switch (s) {
-		FsIf(cond, s1, s2,__):
-			FsIf(s with cond = map_exp(cond), s1 = map_stat(s1), s2 = map_stat(s2));
-		FsSwitch(x, sw_type, cases,__):
+		FsIf(cond, s1, s2,__, n):
+			FsIf(s with
+				cond = map_exp(cond),
+				s1 = map_stat(s1),
+				s2 = map_stat(s2),
+				next = maybeMap(n, map_stat)
+			);
+		FsSwitch(x, sw_type, cases,__, n):
 			FsSwitch(s with 
 				x = map_var(x),
-				cases = map(cases, \c -> FsCase(c with body = map_stat(c.body)))
+				cases = map(cases, \c -> FsCase(c with body = map_stat(c.body))),
+				next = maybeMap(n, map_stat)
 			);
-		FsSeq(ss,__):
-			FsSeq(s with ss = mapConcat(ss, \x -> fsUnwrapSeq(map_stat(x))));
-		FsLet(__, e1, s1,__):
-			FsLet(s with e = map_exp(e1), s = map_stat(s1));
-		FsWrapExp(e,__):
-			FsWrapExp(s with e = map_exp(e));
-		FsRet(e,__):
-			FsRet(s with e = map_exp(e));
-		FsTailCall(__): s;
-		FsAssign(to, what,__):
-			FsAssign(s with to = map_exp(to), what = map_exp(what));
-		FsIncRc(__,__,__): s;
-		FsDecRc(__,__,__): s;
+		FsLet(__, e1, s1,__, n):
+			FsLet(s with
+				e = map_exp(e1),
+				s = map_stat(s1),
+				next = maybeMap(n, map_stat)
+			);
+		FsWrapExp(e,__, n):
+			FsWrapExp(s with
+				e = map_exp(e),
+				next = maybeMap(n, map_stat)
+			);
+		FsRet(e,__, n):
+			FsRet(s with
+				e = map_exp(e),
+				next = maybeMap(n, map_stat)
+			);
+		FsTailCall(__, n): {
+			FsTailCall(s with next = maybeMap(n, map_stat));
+		}
+		FsAssign(to, what,__, n):
+			FsAssign(s with
+				to = map_exp(to),
+				what = map_exp(what),
+				next = maybeMap(n, map_stat)
+			);
+		FsIncRc(__,__,__, n): {
+			FsIncRc(s with next = maybeMap(n, map_stat));
+		}
+		FsDecRc(__,__,__, n): {
+			FsDecRc(s with next = maybeMap(n, map_stat));
+		}
 		FsClosure(vars, lambda,__):
 			FsClosure(s with
 				vars = map(vars, map_var),
@@ -65,87 +88,47 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 	if (args_first) f(do_args(a)) else do_args(f(a));
 }
 
-fsMap2(a: FsAll, locals: Tree<string, FsVar>, f: (FsAll, Tree<string, FsVar>) -> FsAll, args_first: bool) -> FsAll {
-	map_exp = \x -> cast(fsMap2(x, locals, f, args_first): FsAll -> FsExp);
-	map_stat = \x -> cast(fsMap2(x, locals, f, args_first): FsAll -> FsStat);
-	map_var = \x -> cast(fsMap2(x, locals, f, args_first): FsAll -> FsVarUse);
-	do_args = \s -> switch (s) {
-		FsIf(cond, s1, s2,__):
-			FsIf(s with cond = map_exp(cond), s1 = map_stat(s1), s2 = map_stat(s2));
-		FsSwitch(x, sw_type, cases,__):
-			FsSwitch(s with x = map_var(x), cases = map(cases, \c -> FsCase(c with body = map_stat(c.body))));
-		FsSeq(ss,__):
-			FsSeq(s with ss = mapConcat(ss, \x -> fsUnwrapSeq(map_stat(x))));
-		FsLet(v, e1, s1,__): {
-			FsLet(s with 
-				e = cast(fsMap2(e1, locals, f, args_first): FsAll -> FsExp),
-				s = cast(fsMap2(s1, setTree(locals, v.name, v), f, args_first): FsAll -> FsStat),
-			);
-		}
-		FsWrapExp(e,__):
-			FsWrapExp(s with e = map_exp(e));
-		FsRet(e,__):
-			FsRet(s with e = map_exp(e));
-		FsTailCall(__): s;
-		FsAssign(to, what,__):
-			FsAssign(s with to = map_exp(to), what = map_exp(what));
-		FsIncRc(__,__,__): s;
-		FsDecRc(__,__,__): s;
-		FsClosure(vars, lambda,__): {
-			closure_locals = fold(vars, makeTree(), \acc, arg -> setTree(acc, arg.var.name, arg.var));
-			FsClosure(s with 
-				vars = map(vars, map_var),
-				lambda = cast(fsMap2(lambda, closure_locals, f, args_first): FsAll -> FsLambda)
-			);
-		}
-		FsLambda(__,args, body, __,__): {
-			lambda_locals = fold(args, locals, \acc, arg -> setTree(acc, arg.name, arg));
-			FsLambda(s with
-				body = cast(fsMap2(body, lambda_locals, f, args_first): FsAll -> FsStat)
-			);
-		}
-		FsCall(fn, args, __,__):
-			FsCall(s with f = map_exp(fn), args = map(args, \x -> map_exp(x)));
-		FsCallPrim(__, es, __,__):
-			FsCallPrim(s with es = map(es, \x -> map_exp(x)));
-		FsCast(e, from, type,__):
-			FsCast(s with e = map_exp(e));
-		FsVarUse(__,__,__): s;
-		FsConst(__,__): s;
-	}
-	if (args_first) f(do_args(a), locals) else do_args(f(a, locals));
-}
-
 fsIter(a: FsAll, f: (FsAll) -> void, args_first: bool) -> void {
 	do_x = \x -> fsIter(x, f, args_first);
 	do_args = \s -> switch (s) {
-		FsIf(cond, s1, s2,__): {
+		FsIf(cond, s1, s2,__, n): {
 			do_x(cond);
 			do_x(s1);
 			do_x(s2);
+			maybeApply(n, do_x);
 		}
-		FsSwitch(x, sw_type, cases,__): {
+		FsSwitch(x, sw_type, cases,__, n): {
 			do_x(x);
 			iter(cases, \c -> do_x(c.body));
+			maybeApply(n, do_x);
 		}
-		FsSeq(ss,__):
-			iter(ss, do_x);
-		FsLet(__, e1, s1,__): {
+		FsLet(__, e1, s1,__, n): {
 			do_x(e1);
 			do_x(s1);
+			maybeApply(n, do_x);
 		}
-		FsWrapExp(e,__):
+		FsWrapExp(e,__, n): {
 			do_x(e);
-		FsRet(e,__):
-			do_x(e);
-		FsTailCall(__): {
+			maybeApply(n, do_x);
 		}
-		FsAssign(to, what,__): {
+		FsRet(e,__,n): {
+			do_x(e);
+			maybeApply(n, do_x);
+		}
+		FsTailCall(__,n): {
+			maybeApply(n, do_x);
+		}
+		FsAssign(to, what,__, n): {
 			do_x(to);
 			do_x(what);
+			maybeApply(n, do_x);
 		}
-		FsIncRc(__,e,__): {}
-		FsDecRc(e,__,__): {}
+		FsIncRc(__,e,__, n): {
+			maybeApply(n, do_x);
+		}
+		FsDecRc(e,__,__, n): {
+			maybeApply(n, do_x);
+		}
 		FsClosure(vars, lambda,__): {
 			iter(vars, do_x);
 			do_x(lambda);
@@ -182,17 +165,16 @@ fsFold1(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([F
 }
 
 fsArgs(s: FsAll) -> [FsAll] {
-	switch (s) {
-		FsIf(cond, s1, s2,__):    [cond, s1, s2];
-		FsSwitch(x,__,cs,__):     map(cs, \c -> c.body);
-		FsSeq(ss,__):             ss;
-		FsLet(__, e1, s1,__):     [e1, s1];
-		FsWrapExp(e1,__):         [e1];
-		FsRet(e1,__):             [e1];
-		FsTailCall(__):           [];
-		FsAssign(to, what,__):    [to, what];
-		FsIncRc(__,e1,__):        [];
-		FsDecRc(e1,__,__):        [];
+	as = switch (s) {
+		FsIf(cond, s1, s2,__,__):    [cond, s1, s2];
+		FsSwitch(x,__,cs,__,__):     map(cs, \c -> c.body);
+		FsLet(__, e1, s1,__,__):     [e1, s1];
+		FsWrapExp(e1,__,__):         [e1];
+		FsRet(e1,__,__):             [e1];
+		FsTailCall(__,__):           [];
+		FsAssign(to, what,__,__):    [to, what];
+		FsIncRc(__,e1,__,__):        [];
+		FsDecRc(e1,__,__,__):        [];
 		FsClosure(vs,lam,__):     arrayPush(vs, lam);
 		FsLambda(__,__,e1,__,__): [e1];
 		FsCall(fn, args, __,__):  concat([fn], args);
@@ -201,33 +183,49 @@ fsArgs(s: FsAll) -> [FsAll] {
 		FsVarUse(__,__,__):       [];
 		FsConst(__,__):           [];
 	}
+	switch (s) {
+		FsStat(): eitherMap(s.next, \n -> arrayPush(as, n), as);
+		default: as;
+	}
 }
 
-fsFold2(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll], merge: (?, ?) -> ?) -> ? {
+fsFold2(s: FsAll, v: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, backwards: bool, merge: (?, ?) -> ?) -> ? {
+	v0 = if (!backwards) v else {
+		switch (s) {
+			FsStat(): eitherMap(s.next, \n -> fsFold2(n, v, pre, post, backwards, merge), v);
+			default: v;
+		}
+	}
 	v1 = pre(v0, s);
+	order = \as -> if (backwards) reverseA(as) else as;
 	args = fsArgs2(s);
 	v2 = if (length(args) == 1) {
-		fold(order(args[0]), v1, \ac, x -> fsFold2(x, ac, pre, post, order, merge));
+		fold(order(args[0]), v1, \ac, x -> fsFold2(x, ac, pre, post, backwards, merge));
 	} else {
 		fold(args, v1,
-			\acc, as -> merge(acc, fold(order(as), v1, \ac, x -> fsFold2(x, ac, pre, post, order, merge)))
+			\acc, as -> merge(acc, fold(order(as), v1, \ac, x -> fsFold2(x, ac, pre, post, backwards, merge)))
 		);
 	}
-	post(v2, s);
+	v3 = post(v2, s);
+	if (backwards) v3 else {
+		switch (s) {
+			FsStat(): eitherMap(s.next, \n -> fsFold2(n, v3, pre, post, backwards, merge), v3);
+			default: v3;
+		}
+	}
 }
 
 fsArgs2(s: FsAll) -> [[FsAll]] {
 	switch (s) {
-		FsIf(cond, s1, s2,__):    [[cond, s1], [cond, s2]];
-		FsSwitch(x,__,cs,__):     map(cs, \c -> [x, c.body]);
-		FsSeq(ss,__):             [ss];
-		FsLet(__, e1, s1,__):     [[e1, s1]];
-		FsWrapExp(e1,__):         [[e1]];
-		FsRet(e1,__):             [[e1]];
-		FsTailCall(__):           [[]];
-		FsAssign(to, what,__):    [[to, what]];
-		FsIncRc(__,e1,__):        [[]];
-		FsDecRc(e1,__,__):        [[]];
+		FsIf(cond, s1, s2,__,__): [[cond, s1], [cond, s2]];
+		FsSwitch(x,__,cs,__,__):  map(cs, \c -> [x, c.body]);
+		FsLet(__, e1, s1,__,__):  [[e1, s1]];
+		FsWrapExp(e1,__,__):      [[e1]];
+		FsRet(e1,__,__):          [[e1]];
+		FsTailCall(__,__):        [[]];
+		FsAssign(to, what,__,__): [[to, what]];
+		FsIncRc(__,e1,__,__):     [[]];
+		FsDecRc(e1,__,__,__):     [[]];
 		FsClosure(vs,lam,__):     [concat(vs, [lam])];
 		FsLambda(__,__,e1,__,__): [[e1]];
 		FsCall(fn, args, __,__):  [concat([fn], args)];

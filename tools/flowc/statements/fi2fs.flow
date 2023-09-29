@@ -10,15 +10,32 @@ export {
 }
 
 fiExp2FsStat2(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<string, Pair<FiVar, bool>>) -> FsStat {
-	wrap = \x -> if (returns) FsRet(x, -1) else FsWrapExp(x, -1);
+	wrap = \x -> if (returns) FsRet(x, -1, None()) else FsWrapExp(x, -1, None());
 	switch (e) {
 		FiSeq(es, __, start): {
-			fsWrapSeq(concatA(mapi(es, \i, x -> 
-				fsUnwrapSeq(
+			//if (length(es) == 0) {
+			//	wrap(FsConst(FiVoid(0), -1));
+			//} else {
+				ss1 = mapi(es, \i, x ->
 					if (i + 1 == length(es)) fiExp2FsStat2(x, names, returns, locals)
 					else fiExp2FsStat2(x, names, false, locals)
-				)
-			)));
+				);
+				foldri(ss1, wrap(FsConst(FiVoid(0), -1)), \i, acc, y ->
+					if (i + 1 == length(ss1)) y else {
+						fsSetNext(y, acc);
+					}
+				);
+				// ss2 was reversed! Thus here we take the last
+				//ss2[length(ss2) - 1];
+
+				/*ss2 = foldi(reverseA(ss1), [], \i, acc, y ->
+					if (i == 0) arrayPush(acc, y) else {
+						arrayPush(acc, fsSetNext(y, acc[length(acc) - 1]));
+					}
+				);
+				// ss2 was reversed! Thus here we take the last
+				ss2[length(ss2) - 1];*/
+			//}
 		}
 		FiSwitch(v, vtype, cs, type, start): {
 			FsSwitch(
@@ -29,7 +46,7 @@ fiExp2FsStat2(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<strin
 				},
 				map(cs, \c ->
 					FsCase(c.struct, fsCaseStructArgs(c, names), fiExp2FsStat2(c.body, names, returns, locals), -1)
-				), -1
+				), -1, None()
 			);
 		}
 		FiLet(name, vtype, e1, e2, type, start): {
@@ -41,38 +58,33 @@ fiExp2FsStat2(e : FiExp, names: FiGlobalNames, returns: bool, locals: Tree<strin
 			FsLet(FsVar(name, vtype),
 				fiExp2FsExp2(e1, names, locals),
 				fiExp2FsStat2(e2, names, returns, setTree(locals, name, Pair(FiVar(name, vtype, start), var_is_initialized))),
-				-1
+				-1, None()
 			);
 		}
 		FiIf(e1, e2, e3, type, start): {
 			FsIf(
 				fiExp2FsExp2(e1, names, locals),
 				fiExp2FsStat2(e2, names, returns, locals), 
-				fiExp2FsStat2(e3, names, returns, locals), -1
+				fiExp2FsStat2(e3, names, returns, locals), -1, None()
 			);
 		}
 		FiCallPrim(op, es, type, start): {
 			switch (op) {
 				FcAssignPrim(): {
-					s = FsAssign(
+					FsAssign(
 						fiExp2FsExp2(es[0], names, locals),
-						fiExp2FsExp2(es[1], names, locals),
-						-1
+						fiExp2FsExp2(es[1], names, locals), -1,
+						if (!returns) None() else Some(FsRet(FsConst(FiVoid(start), -1), -1, None()))
 					);
-					if (!returns) s else {
-						FsSeq([s, FsRet(FsConst(FiVoid(start), -1), -1)], -1);
-					}
+					
 				}
 				FcSetMutablePrim(field_name): {
 					ind = fiFieldInd(es[0], field_name, names);
-					s = FsAssign(
+					FsAssign(
 						FsCallPrim(FsFieldPrim(field_name, ind), [fiExp2FsExp2(es[0], names, locals)], fiExpType(es[1]), -1), 
-						fiExp2FsExp2(es[1], names, locals), 
-						1
+						fiExp2FsExp2(es[1], names, locals), 1,
+						if (!returns) None() else Some(FsRet(FsConst(FiVoid(start), -1), -1, None()))
 					);
-					if (!returns) s else {
-						FsSeq([s, FsRet(FsConst(FiVoid(start), -1), -1)], -1);
-					}
 				}
 				default: {
 					wrap(fiExp2FsExp2(e, names, locals));
