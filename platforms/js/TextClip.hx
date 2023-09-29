@@ -1706,11 +1706,13 @@ class TextClip extends NativeWidgetClip {
 			try {
 				if (Browser.document.fonts.status == LOADING) {
 					Browser.document.fonts.addEventListener('loadingdone', function() {
-						updateTextWidth();
-						if (style.wordWrap) {
-							updateTextMetrics();
-							this.emitEvent('textwidthchanged', metrics.width);
-						}
+						RenderSupport.defer(function() {
+							updateTextWidth();
+							if (style.wordWrap) {
+								updateTextMetrics();
+								this.emitEvent('textwidthchanged', metrics.width);
+							}
+						}, 600);
 					});
 				}
 			} catch (e : Dynamic) {}
