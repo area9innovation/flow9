@@ -677,7 +677,7 @@ struct Vec : public Flow {
 	Vec(Vec&& a): vect(std::move(a.vect)) { }
 	Vec(const Vec& a): vect(a.vect) { incRcVec(); }
 	Vec(std::vector<T>&& v): vect(std::move(v)) { }
-	Vec(const std::vector<T>& v): vect(v) { incRcVec(); }
+	//Vec(const std::vector<T>& v): vect(v) { incRcVec(); }
 
 	~Vec() override { decRcVec(); }
 	inline void incRcVec() { for (T x : vect) incRc(x); }
@@ -687,7 +687,7 @@ struct Vec : public Flow {
 	Vec& operator = (const Vec& r) = delete;
 
 	template<typename... As>
-	static Vec* make(As... as) { return new Vec(as...); }
+	static Vec* make(As... as) { return new Vec(std::move(as)...); }
 	static Vec* make(std::initializer_list<T>&& il) { return new Vec(std::move(il)); }
 
 	void reserve(std::size_t s) { vect.reserve(s); }
