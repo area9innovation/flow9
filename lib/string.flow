@@ -248,11 +248,11 @@ export {
 
 
 	// Split a string at the given separator. If the string starts or ends with the separator
-	// (or multiple separators occur after each other), empty strings result.
-	// has issues on the edges:
-	// strSplit("abaaca", "a") -> ["", "b", "", "c", ""] instead of ["b", "c"]
+	// (or multiple separator occur after each other), empty strings result.
+	// has issues on the edges: strSplit("aba", "a") -> ["", "b", ""] instead of ["b"].
 	strSplit(a : string, sep : string) -> [string];
-	// Separators are included in resulting array
+	// Separators are included in resulting array, no issues from strSplit
+	// FIXME: hangs when empty separator given
 	strSplitLeave(s : string, sep : string) -> [string];
 
 	// separators in some sub-pieces are ignored.
@@ -816,29 +816,22 @@ fromDigit(c) {
 	elemIndex(map(enumFromTo(0, 9), i2s), c, -1)
 }
 
-doStrSplit(s: string, sep: string, start : int, acc: List<string>, keepSeparator : bool) -> List<string> {
+doStrSplit(s: string, sep: string, start : int, acc: List<string>) -> List<string> {
 	l = strlen(s);
 	i = strRangeIndexOf(s, sep, start, l);
 	if (i < 0) {
-		part = substring(s, start, l);
-		if (part == "" && keepSeparator) acc else Cons(part, acc)
+		Cons(substring(s, start, l), acc);
 	} else {
-		part = substring(s, start, i-start);
-		sepLen = strlen(sep);
-		list = if (keepSeparator) {
-			acc0 = if (part == "") acc else Cons(part, acc);
-			Cons(sep, acc0)
-		} else {
-			Cons(part, acc)
-		}
-		doStrSplit(s, sep, i + sepLen, list, keepSeparator)
+			part = substring(s, start, i-start);
+			sepLen = strlen(sep);
+			doStrSplit(s, sep, i + sepLen, Cons(part, acc));
 	}
 }
 
 native strSplit : (string, string) -> [string] = Native.strSplit;
 strSplit(s : string, sep : string) -> [string] {
 	if (sep == "") [s]
-	else list2array(doStrSplit(s, sep, 0, makeList(), false));
+	else list2array(doStrSplit(s, sep, 0, makeList()));
 }
 
 strSplitContextFilter(s : string, sep : string, emptyEdges : bool, updateContext : (string) -> bool) -> [string] {
@@ -910,14 +903,33 @@ strSplitIterateDeferred(s : string, sep : string, fn : (string) -> void, chunkSi
 	strSplitIterateDeferredStep(s, sep, fn, chunkSize, 0, onFinish);
 }
 
-strSplitLeave(s : string, sep : string) -> [string] {
-	if (sep == "") [s] else list2array(doStrSplit(s, sep, 0, makeList(), true));
+doStrSplit2(s : string, sep : string, acc : [string], keepSeparator : bool) -> [string] {
+	l = strlen(s);
+	i = strIndexOf(s, sep);
+	if (i < 0) {
+		if (l > 0) arrayPush(acc, s) else acc;
+	} else {
+		part = concat(
+			if (i > 0) [substring(s, 0, i)] else [],
+			if (keepSeparator) [sep] else []
+		);
+		if (i < l) {
+			sepLen = strlen(sep);
+			doStrSplit2(substring(s, i + sepLen, l - i - sepLen), sep, concat(acc, part), keepSeparator);
+		} else {
+			concat(acc, part);
+		}
+	}
+}
+
+strSplitLeave(s : string, sep : string) {
+	doStrSplit2(s, sep, [], true);
 }
 
 // splits string by all of separators, don't leaving them in resulting array
 strSplit2WithoutLeave(s : string, separators : [string]) -> [string] {
 	fold(separators, [s], \stringParts, sep ->
-		fold(stringParts, [], \acc, stringPart -> concat(acc, strSplit(stringPart, sep)))
+		fold(stringParts, [], \acc, stringPart -> concat(acc, doStrSplit2(stringPart, sep, [], false)))
 	);
 }
 
