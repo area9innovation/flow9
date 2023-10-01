@@ -204,36 +204,77 @@ template<typename T> constexpr bool is_scalar_v =
 template<typename T> inline T incRc(T x, Int d = 1) {
 #ifdef CONCURRENCY_ON
 	// std::atomic_fetch_add
-	if constexpr (is_flow_ancestor_v<T>) { if (x) { std::atomic_fetch_add(&x->rc_, d); } } return x;
+	if constexpr (is_flow_ancestor_v<T>) {
+		if (x) { std::atomic_fetch_add(&x->rc_, d); } 
+	}
+	return x;
 #else
-	if constexpr (is_flow_ancestor_v<T>) { if (x) { x->rc_ += d; } } return x;
+	if constexpr (is_flow_ancestor_v<T>) {
+		if (x) { x->rc_ += d; }
+	}
+	return x;
 #endif
 }
 
 template<typename T> inline void decRc(T x, Int d = 1) {
 #ifdef CONCURRENCY_ON
 	// std::atomic_fetch_sub
-	if constexpr (is_flow_ancestor_v<T>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { delete x; } } }
+	if constexpr (is_flow_ancestor_v<T>) {
+		if (x) {
+			if (std::atomic_fetch_sub(&x->rc_, d) == 1) {
+				delete x; 
+			} 
+		} 
+	}
 #else
-	if constexpr (is_flow_ancestor_v<T>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { delete x; } } }
+	if constexpr (is_flow_ancestor_v<T>) {
+		if (x) {
+			x->rc_ -= d;
+			if (x->rc_ == 0) { delete x; } 
+		} 
+	}
 #endif
 }
 
 template<typename T> inline T decRcReuse(T x, Int d = 1) {
 #ifdef CONCURRENCY_ON
 	// std::atomic_fetch_sub
-	if constexpr (is_flow_ancestor_v<T>) { if (x) { if (std::atomic_fetch_sub(&x->rc_, d) == 1) { x->decRcChildren(); return x; } else { return nullptr; } } else { return nullptr; } }
+	if constexpr (is_flow_ancestor_v<T>) {
+		if (!x) { return nullptr; }
+		if (std::atomic_fetch_sub(&x->rc_, d) == 1) {
+			x->unbindChildren();
+			return x;
+		} else {
+			return nullptr; 
+		}
+	}
 #else
-	if constexpr (is_flow_ancestor_v<T>) { if (x) { x->rc_ -= d; if (x->rc_ == 0) { return x; } else { return nullptr; } } }
+	if constexpr (is_flow_ancestor_v<T>) {
+		if (x) {
+			x->rc_ -= d;
+			if (x->rc_ == 0) {
+				x->unbindChildren();
+				return x;
+			} else {
+				return nullptr;
+			}
+		}
+	}
 #endif
 }
 
 template<typename T> inline void decRcFinish(T x) {
 #ifdef CONCURRENCY_ON
 	// std::atomic_fetch_sub
-	if constexpr (is_flow_ancestor_v<T>) { if (x && x->rc_ == 0) { delete x; } }
+	if constexpr (is_flow_ancestor_v<T>) {
+		if (x && x->rc_ == 0) {
+			delete x;
+		}
+	}
 #else
-	if constexpr (is_flow_ancestor_v<T>) { if (x && x->rc_ == 0) { delete x; } }
+	if constexpr (is_flow_ancestor_v<T>) {
+		if (x && x->rc_ == 0) { delete x; }
+	}
 #endif
 }
 
@@ -268,7 +309,7 @@ struct Flow {
 	virtual TypeId typeId() const = 0;
 	virtual Int size() const { return 0; }
 	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
-	virtual void decRcChildren() { }
+	virtual void unbindChildren() { }
 	TypeId typeIdRc() const { return decRcRet(this, typeId()); }
 	Int sizeRc() const { return decRcRet(this, size()); }
 	
@@ -457,7 +498,10 @@ struct Str : public Flow {
 	TypeId componentTypeId(Int i) override {
 		return componentTypeId_<0>(i);
 	}
-	void decRcChildren() override { decRcFields<0>(); }
+	void unbindChildren() override { 
+		decRcFields<0>();
+		resetFields<0>();
+	}
 
 	Flow* getFlowRc(Int i) override {
 		return decRcRet(this, getFlowRc1(i));
@@ -566,6 +610,15 @@ private:
 		if constexpr(i < SIZE) {
 			decRc(std::get<i>(fields));
 			decRcFields<i + 1>();
+		}
+	}
+	template<Int i>
+	void resetFields() {
+		if constexpr(i < SIZE) {
+			if constexpr (is_flow_ancestor_v<std::tuple_element_t<i, Fields>>) {
+				std::get<i>(fields) = nullptr;
+			}
+			resetFields<i + 1>();
 		}
 	}
 	template<Int i>
@@ -680,8 +733,16 @@ struct Vec : public Flow {
 	//Vec(const std::vector<T>& v): vect(v) { incRcVec(); }
 
 	~Vec() override { decRcVec(); }
-	inline void incRcVec() { for (T x : vect) incRc(x); }
-	inline void decRcVec() { for (T x : vect) decRc(x); }
+	inline void incRcVec() {
+		if constexpr (is_flow_ancestor_v<T>) {
+			for (T x : vect) incRc(x); 
+		}
+	}
+	inline void decRcVec() {
+		if constexpr (is_flow_ancestor_v<T>) {
+			for (T x : vect) decRc(x); 
+		}
+	}
 
 	Vec& operator = (Vec&& r) = delete;
 	Vec& operator = (const Vec& r) = delete;
@@ -706,7 +767,14 @@ struct Vec : public Flow {
 	TypeId componentTypeId(Int i) override {
 		return get_type_id_v<T>;
 	}
-	void decRcChildren() override { for (T x : vect) decRc(x);  }
+	void unbindChildren() override {
+		if constexpr (is_flow_ancestor_v<T>) {
+			for (T& x : vect) {
+				decRc(x);
+				x = nullptr;
+			}
+		}
+	}
 	Flow* getFlowRc(Int i) override { 
 		return castRc<T, Flow*>(getRc(i));
 	}
@@ -788,8 +856,11 @@ struct Ref : public Flow {
 	TypeId componentTypeId(Int i) override {
 		return get_type_id_v<T>;
 	}
-	void decRcChildren() override {
-		decRc(val);
+	void unbindChildren() override {
+		if constexpr (is_flow_ancestor_v<T>) {
+			decRc(val);
+			val = nullptr;
+		}
 	}
 	Flow* getFlowRc(Int i) override { 
 		return castRc<RefType, Flow*>(getRc()); 
@@ -876,8 +947,11 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	// general interface
 	TypeId typeId() const override { return TYPE; }
 	Int size() const override { return static_cast<Int>(closure.size()); }
-	void decRcChildren() override {
-		for (Flow* x: closure) decRc(x);
+	void unbindChildren() override {
+		for (Flow*& x: closure) {
+			decRc(x);
+			x = nullptr;
+		}
 	}
 	Flow* callFlowRc(std::vector<Flow*> as) override { 
 		if (ARITY == as.size()) {
