@@ -41,18 +41,18 @@ fsType(x: FsAll) -> FiType {
 		FsIncRc(__,__,__,__):        FiTypeVoid();
 		FsDecRc(__,__,__,__):        FiTypeVoid();
 		FsTailCall(__,__):           FiTypeVoid();
-		FsClosure(__,lambda,__):     lambda.type;
+		FsClosure(__,lambda,__,__):  lambda.type;
 		FsLambda(__,__,__, type,__): type;
 		FsCall(__,__, type,__):      type;
 		FsVarUse(v,__,__):           v.type;
 		FsCallPrim(__,__,type,__):   type;
 		FsCast(__,__,type,__):       type;
+		FsString(__,__,__):          FiTypeString();
 		FsConst(c,__): {
 			switch (c) {
 				FiVoid(__):       FiTypeVoid();
 				FiDouble(__, __): FiTypeDouble();
 				FiInt(__, __):    FiTypeInt();
-				FiString(__, __): FiTypeString();
 				FiBool(__, __):   FiTypeBool();
 			}
 		}
@@ -67,6 +67,7 @@ fs2string(s: FsAll, depth: int) -> string {
 	if (depth == 0) "..." else {
 		t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
 		x2s = \x -> fs2string(x, depth - 1);
+		r2s = \reuse -> eitherMap(reuse, \v -> "<<" + v.name + ">>" , "");
 		wrap_long = \x -> if (!strContains(x, "\n") && strlen(x) < 64) x else {
 			"\n" + strIndent(x) + "\n"
 		}
@@ -110,8 +111,8 @@ fs2string(s: FsAll, depth: int) -> string {
 					FsDecFinish(): "decRcFinish(" + v.name + ");";
 				}
 			}
-			FsClosure(vars, lambda, id): {
-				"[" + superglue(vars, \v -> x2s(v), ", ") + "]" + x2s(lambda);
+			FsClosure(vars, lambda, reuse, id): {
+				r2s(reuse) + "[" + superglue(vars, \v -> x2s(v), ", ") + "]" + x2s(lambda);
 			}
 			FsLambda(__,args, body,__, id): {
 				"\\" + superglue(args, \arg -> arg.name + ":" + t2s(arg.type), ", ") + " -> " +
@@ -129,12 +130,14 @@ fs2string(s: FsAll, depth: int) -> string {
 			FsVarUse(v,__,__): {
 				v.name;
 			}
+			FsString(s1, reuse,__): {
+				r2s(reuse) + "\"" + escapeStr(s1) + "\"";
+			}
 			FsConst(c, id): {
 				switch (c) {
 					FiVoid(__):      "{}";
 					FiDouble(d, __): d2s(d);
-					FiInt(i, __):    i2s(i)
-					FiString(st, __): "\"" + escapeStr(st) + "\"";
+					FiInt(i, __):    i2s(i);
 					FiBool(b, __):   b2s(b);
 				}
 			}
@@ -209,8 +212,8 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 			FsTailCall(__,__): true;
 			default: false;
 		}
-		FsClosure(vars1, lambda1,__): switch (y) {
-			FsClosure(vars2, lambda2,__): {
+		FsClosure(vars1, lambda1,__,__): switch (y) {
+			FsClosure(vars2, lambda2,__,__): {
 				length(vars1) == length(vars2) &&
 				all(mapi(vars1, \i, v1 -> fsEqualExprs(v1, vars2[i]))) &&
 				fsEqualExprs(lambda1, lambda2);
@@ -258,6 +261,12 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 			}
 			default: false;
 		}
+		FsString(s1,__,__): switch (y) {
+			FsString(s2,__,__): {
+				s1 == s2;
+			}
+			default: false;
+		}
 		FsConst(c1,__): switch (y) {
 			FsConst(c2, __): {
 				c1 == c2;
@@ -276,6 +285,7 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 
 fsPrim2s(op: FsPrim, es: [string], type: FiType) -> string {
 	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	r2s = \reuse -> eitherMap(reuse, \v -> "<<" + v.name + ">>" , "");
 	switch (op) {
 		FcOrPrim():  "(" + es[0] + " || " + es[1] + ")";
 		FcAndPrim(): "(" + es[0] + " && " + es[1] + ")";
@@ -292,16 +302,15 @@ fsPrim2s(op: FsPrim, es: [string], type: FiType) -> string {
 		FcDivPrim():   "(" + es[0] + " / " + es[1] + ")";
 		FcModPrim():   "(" + es[0] + " % " + es[1] + ")";
 		FcNegPrim():   "-" + es[0];
-		FsArrayPrim():   "[" + strGlue(es,  ", ") + "]";
-		FcIndexPrim():   es[0] + "[" + es[1] + "]";
-		FcDerefPrim():   "(*" +es[0] + ")";
-		FsRefPrim():     "ref " + es[0];
+		FsArrayPrim(reuse): r2s(reuse) + "[" + strGlue(es,  ", ") + "]";
+		FcIndexPrim():      es[0] + "[" + es[1] + "]";
+		FcDerefPrim():      "(*" +es[0] + ")";
+		FsRefPrim(reuse):   r2s(reuse) + "ref " + es[0];
 		FsStructPrim(name, reuse): {
 			struct_type = cast(type : FiType -> FiTypeName);
-			reuse_s = eitherMap(reuse, \v -> "[" + v.name + "]" , "");
 			typars = if (struct_type.typeparameters == []) "" else 
 				"<" + superglue(struct_type.typeparameters, \tp -> t2s(tp), ", ") + ">";
-			name + typars + reuse_s + "(" + strGlue(es, ", ") + ")";
+			name + typars + r2s(reuse) + "(" + strGlue(es, ", ") + ")";
 		}
 		FsFieldPrim(name, ind): es[0] + "." + name + "/*" + i2s(ind) + "*/";
 	}
@@ -463,8 +472,8 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 			FsTailCall(__,__): acc;
 			default: arrayPush(acc, Pair(x, y));
 		}
-		FsClosure(vs1, l1,__): switch (y) {
-			FsClosure(vs2, l2,__): {
+		FsClosure(vs1, l1,__,__): switch (y) {
+			FsClosure(vs2, l2,__,__): {
 				foldi(vs1, fsDiffExprs(l1, l2, acc), \i, ac, v1 ->
 					if (i >= length(vs2)) {
 						arrayPush(ac, Pair(FsConst(FiVoid(-1), -1), v1));
@@ -542,6 +551,12 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 			}
 			default: arrayPush(acc, Pair(x, y));
 		}
+		FsString(s1,__,__): switch (y) {
+			FsString(s2, __,__): {
+				if (s1 == s2) acc else arrayPush(acc, Pair(x, y));
+			}
+			default: arrayPush(acc, Pair(x, y));
+		}
 		FsConst(c1,__): switch (y) {
 			FsConst(c2, __): {
 				if (c1 == c2) acc else arrayPush(acc, Pair(x, y));
@@ -554,10 +569,11 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 fsExpSetId(e: FsExp, x: int) -> FsExp {
 	switch(e) {
 		FsVarUse(__,__,__):       FsVarUse(e with id = x);
-		FsClosure(__,__,__):      FsClosure(e with id = x);
+		FsClosure(__,__,__,__):   FsClosure(e with id = x);
 		FsCall(__,__,__,__):      FsCall(e with id = x);
 		FsCallPrim(__,__,__,__):  FsCallPrim(e with id = x);
 		FsCast(__,__,__,__):      FsCast(e with id = x);
+		FsString(__,__,__):       FsString(e with id = x);
 		FsConst(__,__):           FsConst(e with id = x);
 	}
 }

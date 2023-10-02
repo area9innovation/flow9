@@ -342,25 +342,33 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 					s = d2s(d);
 					if (strContains(s, ".") || strContains(s, "e")) s else s + ".0";
 				}
-				FiString(s, __): {
-					if (s == "") "String::make()" else {
-						codes = s2a(s);
-						if (exists(codes, \code -> 0xD800 <= code && code <= 0xDFFF)) {
-							"String::make(std::vector<char16_t>{" + superglue(codes, i2s, ", ") + "})";
-						} else {
-							s1 = concatStrings(mapi(codes, \i, code ->
-								if (code == 0x09) "\\t" else
-								if (code == 0x0a) "\\n" else
-								if (code == 0x0d) "\\r" else
-								if (code == 0x22) "\\\"" else
-								if (code == 0x5c) "\\\\" else
-								if (0 < code && code < 0x80) fromCharCode(code) else
-								"\\u" + lpad(formatHex(code), "0", 4)
-							));
-							"String::make(\"" + s1 + "\"s)";
-						}
-					}
+			}
+		}
+		FsString(s, reuse,__): {
+			args1 = switch (reuse) {
+				Some(v): [fi2cpp3varname2cpp(v.name)];
+				None(): []
+			}
+			args2 = if (s == "") args1 else {
+				codes = s2a(s);
+				if (exists(codes, \code -> 0xD800 <= code && code <= 0xDFFF)) {
+					arrayPush(args1, "std::vector<char16_t>{" + superglue(codes, i2s, ", ") + "}");
+				} else {
+					s1 = concatStrings(mapi(codes, \i, code ->
+						if (code == 0x09) "\\t" else
+						if (code == 0x0a) "\\n" else
+						if (code == 0x0d) "\\r" else
+						if (code == 0x22) "\\\"" else
+						if (code == 0x5c) "\\\\" else
+						if (0 < code && code < 0x80) fromCharCode(code) else
+						"\\u" + lpad(formatHex(code), "0", 4)
+					));
+					arrayPush(args1, "\"" + s1 + "\"s");
 				}
+			}
+			switch (reuse) {
+				Some(__): "String::makeOrReuse" + "(" + strGlue(args2, ", ") + ")";
+				None():   "String::make"        + "(" + strGlue(args2, ", ") + ")";
 			}
 		}
 		FsCall(f, args, type,__): {
@@ -417,15 +425,26 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				}
 			};
 		}
-		FsClosure(closure, lambda,__): {
+		FsClosure(closure, lambda, reuse,__): {
+			fun_type = "Fun<" + fiType2cpp3(lambda.type.returnType, gctx) + concatStrings(map(lambda.type.args, \arg -> ", " + fiType2cpp3(arg.type, gctx))) + ">";
 			ref_counted_closure = filter(closure, \v -> !fiTypeIsScalar(v.var.type));
 			closure_vars_1 = "[" + superglue(closure, \v -> fi2cpp3varname2cpp(v.var.name), ", ") + "]";
-			closure_vars_2 = superglue(ref_counted_closure, \v -> fi2cpp3varname2cpp(v.var.name), ", ");
-			"Fun<" + fiType2cpp3(lambda.type.returnType, gctx) + concatStrings(map(lambda.type.args, \arg -> ", " + fiType2cpp3(arg.type, gctx))) + ">::make" +
-			"(" + closure_vars_1 + " " + fsArgs2cpp(lambda.args, gctx) +
-			" " + fiWrapWithBraces(fsStat2cpp3(lambda.body, gctx), gctx.config) +
+			//closure_vars_2 = superglue(ref_counted_closure, \v -> fi2cpp3varname2cpp(v.var.name), ", ");
+			lambda_cpp = closure_vars_1 + " " + fsArgs2cpp(lambda.args, gctx) +
+			" " + fiWrapWithBraces(fsStat2cpp3(lambda.body, gctx), gctx.config);
+			args1 = switch (reuse) {
+				Some(v): [fi2cpp3varname2cpp(v.name), lambda_cpp];
+				None(): [lambda_cpp];
+			}
+			args2 = concat(args1, map(ref_counted_closure, \v -> fi2cpp3varname2cpp(v.var.name)));
+			/*fun_type + "::make" +
+			"(" + closure_vars_2 +
 				(if (closure_vars_2 == "") "" else ", " + closure_vars_2) +
-			")";
+			")";*/
+			switch (reuse) {
+				Some(v): fun_type + "::makeOrReuse(" + strGlue(args2, ", ") + ")";
+				None():  fun_type + "::make(" + strGlue(args2, ", ") + ")";
+			}
 		}
 		FsCallPrim(op, es, type,__): {
 			fsCallPrim2cpp3(e, gctx);
@@ -511,18 +530,24 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 			}
 		}
 		FcNegPrim():   "-" + e2k(e.es[0]);
-		FsArrayPrim(): {
-			arr_type = fiDearrayType(e.type);
-			if (length(e.es) == 0) {
-				"Vec<" + fiType2cpp3(arr_type, gctx) + ">::make()";
-			} else {
+		FsArrayPrim(reuse): {
+			args1 = switch (reuse) {
+				Some(v): [fi2cpp3varname2cpp(v.name)];
+				None(): []
+			}
+			vec_type = "Vec<" + fiType2cpp3(fiDearrayType(e.type), gctx) + ">";
+			args2 = if (length(e.es) == 0) args1 else {
 				arr_s = map(e.es, e2k);
 				s1 = strGlue(arr_s, ", ");
 				if (!gctx.config.debug && strlen(s1) < 64 && !strContains(s1, "\n")) {
-					"Vec<" + fiType2cpp3(arr_type, gctx) + ">::make({" + s1 + "})";
+					arrayPush(args1, "{" + s1 + "}");
 				} else {
-					"Vec<" + fiType2cpp3(arr_type, gctx) + ">::make({\n" + strIndent(strGlue(arr_s, ",\n")) + "\n})";
+					arrayPush(args1, "{\n" + strIndent(strGlue(arr_s, ",\n")) + "\n}");
 				}
+			}
+			switch (reuse) {
+				Some(__): vec_type + "::makeOrReuse" + "(" + strGlue(args2, ", ") + ")";
+				None():   vec_type + "::make"        + "(" + strGlue(args2, ", ") + ")";
 			}
 		}
 		FcIndexPrim(): {
@@ -544,9 +569,12 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 				}
 			}
 		}
-		FsRefPrim(): {
-			ref_type = fiDerefType(e.type);
-			"Ref<" + fiType2cpp3(ref_type, gctx) + ">::make(" + e2k(e.es[0]) + ")";
+		FsRefPrim(reuse): {
+			ref_type = "Ref<" + fiType2cpp3(fiDerefType(e.type), gctx) + ">";
+			switch (reuse) {
+				Some(v): ref_type + "::makeOrReuse" + "(" + fi2cpp3varname2cpp(v.name) + ", " + e2k(e.es[0]) + ")";
+				None():  ref_type + "::make"        + "(" + e2k(e.es[0]) + ")";
+			}
 		}
 		FsStructPrim(__, reuse): {
 			struct_type = cast(e.type : FiType -> FiTypeName);

@@ -403,6 +403,17 @@ struct String : public Flow {
 	template<typename... As>
 	static String* make(As... as) { return new String(as...); }
 
+	template<typename A>
+	static String* makeOrReuse(String* s, A a) {
+		if (s == nullptr) {
+			return new String(std::move(a));
+		} else {
+			s->str = a;
+			s->rc_ = 1;
+			return s;
+		}
+	}
+
 	TypeId typeId() const override { return TypeFx::STRING; }
 	std::string toStd() const { return string2std(str); }
 
@@ -751,6 +762,21 @@ struct Vec : public Flow {
 	static Vec* make(As... as) { return new Vec(std::move(as)...); }
 	static Vec* make(std::initializer_list<T>&& il) { return new Vec(std::move(il)); }
 
+	static Vec* makeOrReuse(Vec* v, std::initializer_list<T>&& il) {
+		if (v == nullptr) {
+			return new Vec(std::move(il));
+		} else {
+			v->vect = il;
+			/*v->vect.clear();
+			v->vect.reserve(il.size);
+			for (T x: il) {
+				v->vect.push_back(x);
+			}*/
+			v->rc_ = 1;
+			return v;
+		}
+	}
+
 	void reserve(std::size_t s) { vect.reserve(s); }
 
 	// std::vector interface
@@ -848,7 +874,17 @@ struct Ref : public Flow {
 	Ref& operator = (const Ref& r) = delete;
 
 	template<typename... As>
-	static Ref* make(As... as) { return new Ref(as...); }
+	static Ref* make(As... as) { return new Ref(std::move(as)...); }
+	template<typename A>
+	static Ref* makeOrReuse(Ref* r, A a) {
+		if (r == nullptr) {
+			return new Ref(std::move(a));
+		} else {
+			r->val = a;
+			r->rc_ = 1;
+			return r;
+		}
+	}
 
 	// general interface
 	TypeId typeId() const override { return TypeFx::REF; }
@@ -943,6 +979,17 @@ struct Fun : public Flow, public std::function<R(As...)> {
 
 	template<typename... As1>
 	static Fun* make(As1... as) { return new Fun(std::move(as)...); }
+	template<typename F, typename... Cs>
+	static Fun* makeOrReuse(Fun* f, F fn, Cs... cl) {
+		if (f == nullptr) {
+			return new Fun(fn, cl...);
+		} else {
+			f = fn;
+			initClosure<Cs...>(cl...);
+			f->rc_ = 1;
+			return f;
+		}
+	}
 
 	// general interface
 	TypeId typeId() const override { return TYPE; }
