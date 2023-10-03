@@ -147,18 +147,19 @@ fsFindReuseVariants2(d: FsDecRc, s: FsStat, debug: bool) -> Maybe<FsReuseVariant
 			);
 		}
 		ignored = fold(non_leafs, [], \acc, y: FsStat -> {
-			switch (y.next) {
-				Some(__): acc;
-				None(): {
-					args: [FsStat] = switch (y) {
-						FsIf(__, s1, s2,__,__): [s1, s2];
-						FsSwitch(__,__,cs,__,__):  map(cs, \c -> c.body);
-						default: [];
-					}
-					fold(args, acc, \ac, x -> 
-						if (containsSet(all_nodes, x)) ac else arrayPush(ac, x)
-					)
+			do_ignored = \-> {
+				args: [FsStat] = switch (y) {
+					FsIf(__, s1, s2,__,__): [s1, s2];
+					FsSwitch(__,__,cs,__,__):  map(cs, \c -> c.body);
+					default: [];
 				}
+				fold(args, acc, \ac, x -> 
+					if (containsSet(all_nodes, x)) ac else arrayPush(ac, x)
+				)
+			}
+			switch (y.next) {
+				Some(n): if (containsSet(all_nodes, n)) acc else do_ignored();
+				None(): do_ignored();
 			}
 		});
 		Some(FsReuseVariant(d, map(uses, \x -> x.second), ignored));
@@ -175,13 +176,21 @@ fsFindReuseVariants3(path: List<FsStat>, d: FsDecRc, s: FsStat, acc: [Pair<List<
 				}
 				None(): {
 					acc1 = fsFindReuseVariants3(p, d, s1, fsFindReuseVariants3(p, d, s2, acc, debug), debug);
-					eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc1, debug), acc1);
+					if (length(acc1) == 0) {
+						eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc1, debug), acc1);
+					} else {
+						acc1;
+					}
 				}
 			}
 		}
 		FsSwitch(__,__, cs,__, nx): {
 			acc1 = fold(cs, acc, \ac, c -> fsFindReuseVariants3(p, d, c.body, ac, debug));
-			eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc1, debug), acc1);
+			if (length(acc1) == 0) {
+				eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc1, debug), acc1);
+			} else {
+				acc1;
+			}
 		}
 		FsLet(__, e, s1,__, nx): {
 			switch (fsFindReuseExp(e, d, debug)) {
@@ -190,7 +199,11 @@ fsFindReuseVariants3(path: List<FsStat>, d: FsDecRc, s: FsStat, acc: [Pair<List<
 				}
 				None(): {
 					acc1 = fsFindReuseVariants3(p, d, s1, acc, debug);
-					eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc1, debug), acc1);
+					if (length(acc1) == 0) {
+						eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc1, debug), acc1);
+					} else {
+						acc1;
+					}
 				}
 			}
 		}
@@ -246,7 +259,7 @@ fsFindReuseVariants3(path: List<FsStat>, d: FsDecRc, s: FsStat, acc: [Pair<List<
 fsFindReuseExp(e: FsExp, d: FsDecRc, debug: bool) -> Maybe<FsAll> {
 	switch (e) {
 		FsClosure(vars__,lambda,__,__): {
-			None();
+			if (fiEqualTypes(lambda.type, d.v.type)) Some(e) else None();
 		}
 		FsCall(f, args,__,__): {
 			switch (fsFindReuseExp(f, d, debug)) {
@@ -259,17 +272,19 @@ fsFindReuseExp(e: FsExp, d: FsDecRc, debug: bool) -> Maybe<FsAll> {
 			}
 		}
 		FsCallPrim(op, es, type,__): {
+			do_check_es = \-> fold(es, None(), \acc, x ->
+				if (isSome(acc)) acc else fsFindReuseExp(x, d, debug)
+			);
+			do_check_type = \-> if (fiEqualTypes(type, d.v.type)) {
+				Some(e);
+			} else {
+				do_check_es();
+			}
 			switch (op) {
-				FsStructPrim(struct, reuse): {
-					if (type == d.v.type) {
-						Some(e);
-					} else {
-						fold(es, None(), \acc, x ->
-							if (isSome(acc)) acc else fsFindReuseExp(x, d, debug)
-						);
-					}
-				}
-				default: None();
+				FsStructPrim(__,__): do_check_type();
+				FsArrayPrim(__): do_check_type();
+				FsRefPrim(__): do_check_type();
+				default: do_check_es();
 			}
 		}
 		FsCast(x, __,__,__): {
@@ -279,7 +294,7 @@ fsFindReuseExp(e: FsExp, d: FsDecRc, debug: bool) -> Maybe<FsAll> {
 			None();
 		}
 		FsString(s,__,__): {
-			None();
+			if (d.v.type == FiTypeString()) Some(e) else None();
 		}
 		FsConst(c,__): {
 			None();
@@ -412,28 +427,28 @@ fsReuseApplyCasesToStat(s: FsStat, updates: Tree<int, FsReuseKind>, debug: bool)
 fsReuseApplyCasesToExp(e: FsExp, updates: Tree<int, FsReuseKind>, debug: bool) -> FsExp {
 	do_stat = \x -> fsReuseApplyCasesToStat(x, updates, debug);
 	do_exp = \x -> fsReuseApplyCasesToExp(x, updates, debug);
+	check_reuse = \id -> maybeBind(lookupTree(updates, id), \upd -> switch (upd) {
+		FsReuseReuse(v): Some(v);
+		default: None();
+	});
 	switch (e) {
-		FsClosure(vars__,lambda,__,__): {
-			FsClosure(e with lambda = FsLambda(lambda with body = do_stat(lambda.body)));
+		FsClosure(vars__,lambda,__, id): {
+			e1 = eitherMap(check_reuse(id), \v -> FsClosure(e with reuse = Some(v)), e);
+			FsClosure(e1 with lambda = FsLambda(lambda with body = do_stat(lambda.body)));
 		}
 		FsCall(f, args,__,__): {
 			FsCall(e with f = do_exp(f), args = map(args, do_exp));
 		}
 		FsCallPrim(op, es, __, id): {
 			e1 = switch (op) {
-				FsStructPrim(struct, reuse): {
-					switch (lookupTree(updates, id)) {
-						Some(upd): {
-							switch (upd) {
-								FsReuseReuse(v):
-									FsCallPrim(e with
-										op = FsStructPrim(op with reuse = Some(v))
-									);
-								default: e;
-							}
-						}
-						None(): e;
-					}
+				FsStructPrim(struct,__): {
+					eitherMap(check_reuse(id), \v -> FsCallPrim(e with op = FsStructPrim(op with reuse = Some(v))), e);
+				}
+				FsArrayPrim(reuse): {
+					eitherMap(check_reuse(id), \v -> FsCallPrim(e with op = FsArrayPrim(op with reuse = Some(v))), e);
+				}
+				FsRefPrim(reuse): {
+					eitherMap(check_reuse(id), \v -> FsCallPrim(e with op = FsRefPrim(op with reuse = Some(v))), e);
 				}
 				default: e;
 			}
@@ -441,6 +456,9 @@ fsReuseApplyCasesToExp(e: FsExp, updates: Tree<int, FsReuseKind>, debug: bool) -
 		}
 		FsCast(x, __,__,__): {
 			FsCast(e with e = do_exp(x));
+		}
+		FsString(s,__,id): {
+			eitherMap(check_reuse(id), \v -> FsString(e with reuse = Some(v)), e);
 		}
 		default: e;
 	}

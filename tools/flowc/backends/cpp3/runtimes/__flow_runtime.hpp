@@ -61,8 +61,10 @@ using string = std::u16string;
 
 // String conversions
 
-std::string string2std(const string& str);
-string std2string(const std::string& s);
+void copyString2std(std::string& ret, const string& str);
+void copyStd2string(string& str, const std::string& s);
+inline std::string string2std(const string& s) { std::string str; copyString2std(str, s); return str; }
+inline string std2string(const std::string& s) { string str; copyStd2string(str, s); return str; }
 
 // Basic types
 
@@ -384,15 +386,7 @@ struct String : public Flow {
 	String(const char16_t* s): str(s) { }
 	String(const char16_t* s, Int len): str(s, len) { }
 	String(char16_t c): str(1, c) { }
-	String(Int c) { 
-		if (c <= 0xFFFF) {
-			str.append(1, static_cast<char16_t>(c));
-		} else {
-			c -= UNI_HALF_BASE;
-			str.append(1, static_cast<char16_t>((c >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
-      		str.append(1, static_cast<char16_t>((c & UNI_HALF_MASK) + UNI_SUR_LOW_START));
-		}
-	}
+	String(Int c) { append(c); }
 	String(const std::vector<char16_t>& codes): str(codes.data(), codes.size()) { }
 
 	String(const String& s): str(s.str) { }
@@ -403,12 +397,34 @@ struct String : public Flow {
 	template<typename... As>
 	static String* make(As... as) { return new String(as...); }
 
-	template<typename A>
-	static String* makeOrReuse(String* s, A a) {
+	static String* makeOrReuse(String* s) {
 		if (s == nullptr) {
-			return new String(std::move(a));
+			return new String();
 		} else {
-			s->str = a;
+			s->str.clear();
+			s->rc_ = 1;
+			return s;
+		}
+	}
+	static String* makeOrReuse(String* s, const std::string& x) {
+		if (s == nullptr) {
+			return new String(x);
+		} else {
+			s->str.clear();
+			copyStd2string(s->str, x);
+			s->rc_ = 1;
+			return s;
+		}
+	}
+	static String* makeOrReuse(String* s, const std::vector<char16_t>& codes) {
+		if (s == nullptr) {
+			return new String(codes);
+		} else {
+			s->str.clear();
+			s->str.reserve(codes.size());
+			for (char16_t c: codes) {
+				s->str += c;
+			}
 			s->rc_ = 1;
 			return s;
 		}
@@ -416,6 +432,15 @@ struct String : public Flow {
 
 	TypeId typeId() const override { return TypeFx::STRING; }
 	std::string toStd() const { return string2std(str); }
+	void append(Int c) {
+		if (c <= 0xFFFF) {
+			str.append(1, static_cast<char16_t>(c));
+		} else {
+			c -= UNI_HALF_BASE;
+			str.append(1, static_cast<char16_t>((c >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
+      		str.append(1, static_cast<char16_t>((c & UNI_HALF_MASK) + UNI_SUR_LOW_START));
+		}
+	}
 
 	string str;
 };
@@ -762,13 +787,20 @@ struct Vec : public Flow {
 	static Vec* make(As... as) { return new Vec(std::move(as)...); }
 	static Vec* make(std::initializer_list<T>&& il) { return new Vec(std::move(il)); }
 
+	static Vec* makeOrReuse(Vec* v) {
+		if (v == nullptr) {
+			return new Vec();
+		} else {
+			v->rc_ = 1;
+			return v;
+		}
+	}
 	static Vec* makeOrReuse(Vec* v, std::initializer_list<T>&& il) {
 		if (v == nullptr) {
 			return new Vec(std::move(il));
 		} else {
 			v->vect = il;
-			/*v->vect.clear();
-			v->vect.reserve(il.size);
+			/*v->vect.reserve(il.size());
 			for (T x: il) {
 				v->vect.push_back(x);
 			}*/
@@ -799,6 +831,7 @@ struct Vec : public Flow {
 				decRc(x);
 				x = nullptr;
 			}
+			vect.clear();
 		}
 	}
 	Flow* getFlowRc(Int i) override { 
@@ -943,7 +976,7 @@ private:
 };
 
 template<typename R, typename... As> 
-struct Fun : public Flow, public std::function<R(As...)> {
+struct Fun : public Flow {
 	enum { TYPE = TypeFx::FUNC, ARITY = sizeof...(As) };
 	using RetType = R;
 	using Args = std::tuple<As...>;
@@ -951,12 +984,12 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	using Fn1 = std::function<R(Args)>;
 
 	Fun() {}
-	Fun(Fn&& f): Fn(std::move(f)) { }
-	Fun(const Fn& f): Fn(f) { }
-	Fun(const Fn1& f): Fn(f) { }
+	Fun(Fn&& f): fn(std::move(f)) { }
+	Fun(const Fn& f): fn(f) { }
+	Fun(const Fn1& f): fn(f) { }
 
 	template<typename... Cs>
-	Fun(Fn&& f, Cs... cl): Fn(std::move(f)) {
+	Fun(Fn&& f, Cs... cl): fn(std::move(f)) {
 		initClosure<Cs...>(cl...);
 	}
 	template<typename C1, typename... Cs>
@@ -971,8 +1004,8 @@ struct Fun : public Flow, public std::function<R(As...)> {
 
 	~Fun() { for (Flow* x: closure) decRc(x); }
 
-	Fun(const Fun& f): Fn(f), closure(f.closure) { }
-	Fun(Fun&& f): Fn(std::move(f)), closure(std::move(f.closure)) { }
+	Fun(const Fun& f): fn(f), closure(f.closure) { }
+	Fun(Fun&& f): fn(std::move(f)), closure(std::move(f.closure)) { }
 
 	Fun& operator = (Fun&& r) = delete;
 	Fun& operator = (const Fun& r) = delete;
@@ -982,10 +1015,10 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	template<typename F, typename... Cs>
 	static Fun* makeOrReuse(Fun* f, F fn, Cs... cl) {
 		if (f == nullptr) {
-			return new Fun(fn, cl...);
+			return new Fun(std::move(fn), std::move(cl)...);
 		} else {
-			f = fn;
-			initClosure<Cs...>(cl...);
+			f->fn = std::move(fn);
+			f->initClosure<Cs...>(std::move(cl)...);
 			f->rc_ = 1;
 			return f;
 		}
@@ -999,6 +1032,7 @@ struct Fun : public Flow, public std::function<R(As...)> {
 			decRc(x);
 			x = nullptr;
 		}
+		closure.clear();
 	}
 	Flow* callFlowRc(std::vector<Flow*> as) override { 
 		if (ARITY == as.size()) {
@@ -1036,10 +1070,11 @@ struct Fun : public Flow, public std::function<R(As...)> {
 	}
 	inline R call(As... as) { 
 		for (Flow* x: closure) incRc(x);
-		return Fn::operator()(as...); 
+		return fn(as...); 
 	}
 
 private:
+	Fn fn;
 	std::vector<Flow*> closure;
 };
 

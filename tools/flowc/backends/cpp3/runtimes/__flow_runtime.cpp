@@ -34,7 +34,7 @@ string double2string(Double x, bool persistent_dot) {
 	return std2string(str);
 }
 
-std::string string2std(const string& str) {
+void copyString2std(std::string& ret, const string& str) {
 	std::size_t len = 0;
 	for (std::size_t i = 0; i < str.size(); ++i) {
 		char16_t ch = str.at(i);
@@ -52,7 +52,6 @@ std::string string2std(const string& str) {
 		if (x < 0x10000) len += 3; else
 		if (x < 0x10FFFF) len += 4; else len += 5;
 	}
-	std::string ret;
 	ret.reserve(len);
 	for (std::size_t i = 0; i < str.size(); ++i) {
 		char16_t ch = str.at(i);
@@ -87,10 +86,9 @@ std::string string2std(const string& str) {
 			ret += (0x80 | (x & 0x3F));
 		}
 	}
-	return ret; 
 }
 
-string std2string(const std::string& s) {
+void copyStd2string(string& str, const std::string& s) {
 	std::size_t len = 0;
 	for (std::size_t i = 0; i < s.length(); ++i) {
 		uint8_t ch = s.at(i);
@@ -106,7 +104,6 @@ string std2string(const std::string& s) {
 			len += 1;
 		}
 	}
-	string str;
 	str.reserve(len);
 	for (std::size_t i = 0; i < s.length(); ++i) {
 		uint8_t b1 = s.at(i);
@@ -173,7 +170,6 @@ string std2string(const std::string& s) {
 			str.push_back(h);
 		}
 	}
-	return str;
 }
 
 bool isSameObjRc(Flow* f1, Flow* f2) {
