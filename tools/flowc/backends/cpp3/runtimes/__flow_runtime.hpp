@@ -15,7 +15,6 @@
 #include <unordered_map>
 #include <mutex>
 #include <atomic>
-#include <stdatomic.h>
 #include <thread>
 #include <tuple>
 #include <any>
@@ -203,47 +202,39 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::BOOL, T> ||
 	is_type_v<TypeFx::DOUBLE, T>;
 
-template<typename T> inline T incRc(T x, Int d = 1) {
+template<typename T> inline void incRc(T x, Int d = 1) {
 #ifdef CONCURRENCY_ON
-	// std::atomic_fetch_add
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (x) { std::atomic_fetch_add(&x->rc_, d); } 
+		atomic_fetch_add(&x->rc_, d);
 	}
-	return x;
 #else
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (x) { x->rc_ += d; }
+		x->rc_ += d;
 	}
-	return x;
 #endif
 }
 
-template<typename T> inline void decRc(T x, Int d = 1) {
+template<typename T> inline void decRc(T x) {
 #ifdef CONCURRENCY_ON
-	// std::atomic_fetch_sub
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (x) {
-			if (std::atomic_fetch_sub(&x->rc_, d) == 1) {
-				delete x; 
-			} 
-		} 
+		if (atomic_fetch_sub(&x->rc_, 1) == 1) {
+			delete x; 
+		}
 	}
 #else
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (x) {
-			x->rc_ -= d;
-			if (x->rc_ == 0) { delete x; } 
+		x->rc_ -= d;
+		if (x->rc_ == 0) {
+			delete x; 
 		} 
 	}
 #endif
 }
 
-template<typename T> inline T decRcReuse(T x, Int d = 1) {
+template<typename T> inline T decRcReuse(T x) {
 #ifdef CONCURRENCY_ON
-	// std::atomic_fetch_sub
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (!x) { return nullptr; }
-		if (std::atomic_fetch_sub(&x->rc_, d) == 1) {
+		if (atomic_fetch_sub(&x->rc_, 1) == 1) {
 			x->unbindChildren();
 			return x;
 		} else {
@@ -252,37 +243,26 @@ template<typename T> inline T decRcReuse(T x, Int d = 1) {
 	}
 #else
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (x) {
-			x->rc_ -= d;
-			if (x->rc_ == 0) {
-				x->unbindChildren();
-				return x;
-			} else {
-				return nullptr;
-			}
+		x->rc_ -= d;
+		if (x->rc_ == 0) {
+			x->unbindChildren();
+			return x;
+		} else {
+			return nullptr;
 		}
 	}
 #endif
 }
 
 template<typename T> inline void decRcFinish(T x) {
-#ifdef CONCURRENCY_ON
-	// std::atomic_fetch_sub
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (x && x->rc_ == 0) {
-			delete x;
-		}
+		delete x;
 	}
-#else
-	if constexpr (is_flow_ancestor_v<T>) {
-		if (x && x->rc_ == 0) { delete x; }
-	}
-#endif
 }
 
-template<typename T, typename R> inline R decRcRet(T x, R ret, Int d = 1) {
-	decRc(x, d); return ret;
-}
+template<typename T, typename R> inline R decRcRet(T x, R ret) { decRc(x); return ret; }
+
+template<typename T> inline T incRcRet(T x) { incRc(x); return x; }
 
 /* 
 	All access methods are divided into three groups:
@@ -301,7 +281,17 @@ template<typename T> inline String* toString(T v);
 template<typename T> inline void toStringRc(T v, string& str);
 template<typename T> inline void toString(T v, string& str);
 template<typename T> inline T makeDefVal();
-template<typename T> inline void assignRc(T& to, T what) { T old = to; to = what; decRc(old); }
+template<typename T> inline void assignRc(T& to, T what) {
+	if constexpr (is_flow_ancestor_v<T>) {
+		T old = to;
+		to = what;
+		if (old) {
+			decRc(old);
+		} 
+	} else {
+		to = what;
+	}
+}
 
 // Dynamic wrapper for all values 
 
@@ -335,7 +325,7 @@ struct Flow {
 	virtual Flow* getFlow(const string& f) { fail("invalid flow value getter"); return nullptr; }
 
 	template<typename T> inline T get() { return dynamic_cast<T>(this); }
-	template<typename T> inline T getRc1() { return incRc(dynamic_cast<T>(this)); }
+	template<typename T> inline T getRc1() { return incRcRet(dynamic_cast<T>(this)); }
 	template<typename T> inline T getRc() { return dynamic_cast<T>(this); }
 
 #ifdef CONCURRENCY_ON
@@ -488,7 +478,7 @@ struct Native : public Flow {
 		}
 	}
 	template<typename T> inline T getRc() { return decRcRet(this, getRc1<T>()); }
-	template<typename T> inline T getRc1() { return incRc(get<T>()); }
+	template<typename T> inline T getRc1() { return incRcRet(get<T>()); }
 	template<typename T> inline T get() {
 		try {
 			return std::any_cast<T>(val);
@@ -596,7 +586,7 @@ struct Str : public Flow {
 	}
 	template<Int i>
 	inline typename std::tuple_element_t<i, Fields> getRc1() {
-		return incRc(get<i>());
+		return incRcRet(get<i>());
 	}
 	template<Int i>
 	inline void setRc1(typename std::tuple_element_t<i, Fields> v) {
@@ -644,7 +634,11 @@ private:
 	template<Int i>
 	void decRcFields() {
 		if constexpr(i < SIZE) {
-			decRc(std::get<i>(fields));
+			if constexpr (is_flow_ancestor_v<std::tuple_element_t<i, Fields>>) {
+				if (std::tuple_element_t<i, Fields> v = std::get<i>(fields)) {
+					decRc(v);
+				}
+			}
 			decRcFields<i + 1>();
 		}
 	}
@@ -766,17 +760,20 @@ struct Vec : public Flow {
 	Vec(Vec&& a): vect(std::move(a.vect)) { }
 	Vec(const Vec& a): vect(a.vect) { incRcVec(); }
 	Vec(std::vector<T>&& v): vect(std::move(v)) { }
-	//Vec(const std::vector<T>& v): vect(v) { incRcVec(); }
 
 	~Vec() override { decRcVec(); }
 	inline void incRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
-			for (T x : vect) incRc(x); 
+			for (T x : vect) {
+				incRc(x);
+			}
 		}
 	}
 	inline void decRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
-			for (T x : vect) decRc(x); 
+			for (T x : vect) {
+				decRc(x);
+			}
 		}
 	}
 
@@ -826,13 +823,7 @@ struct Vec : public Flow {
 		return get_type_id_v<T>;
 	}
 	void unbindChildren() override {
-		if constexpr (is_flow_ancestor_v<T>) {
-			for (T& x : vect) {
-				decRc(x);
-				x = nullptr;
-			}
-			vect.clear();
-		}
+		vect.clear();
 	}
 	Flow* getFlowRc(Int i) override { 
 		return castRc<T, Flow*>(getRc(i));
@@ -870,7 +861,7 @@ struct Vec : public Flow {
 		decRc(this);
 	}
 	inline T getRc1(Int i) {
-		return incRc(vect.at(i));
+		return incRcRet(vect.at(i));
 	}
 	inline void setRc1(Int i, T x) {
 		set(i, x);
@@ -901,7 +892,13 @@ struct Ref : public Flow {
 	Ref(T r): val(r) { }
 	Ref(const Ref& r): val(r.val) { incRc(val); }
 	Ref(Ref&& r): val(std::move(r.val)) { }
-	~Ref() override { decRc(val); }
+	~Ref() override { 
+		if constexpr (is_flow_ancestor_v<T>) {
+			if (val) {
+				decRc(val);
+			}
+		}
+	}
 
 	Ref& operator = (Ref&& r) = delete;
 	Ref& operator = (const Ref& r) = delete;
@@ -960,7 +957,7 @@ struct Ref : public Flow {
 		decRc(this);
 	}
 	inline T getRc1() {
-		return incRc(get());
+		return incRcRet(get());
 	}
 	inline void setRc1(T v) {
 		set(v);
@@ -1002,7 +999,11 @@ struct Fun : public Flow {
 	}
 	template<typename... Cs> constexpr void initClosure(Cs...) { }
 
-	~Fun() { for (Flow* x: closure) decRc(x); }
+	~Fun() {
+		for (Flow* x: closure) {
+			decRc(x);
+		}
+	}
 
 	Fun(const Fun& f): fn(f), closure(f.closure) { }
 	Fun(Fun&& f): fn(std::move(f)), closure(std::move(f.closure)) { }
@@ -1027,13 +1028,7 @@ struct Fun : public Flow {
 	// general interface
 	TypeId typeId() const override { return TYPE; }
 	Int size() const override { return static_cast<Int>(closure.size()); }
-	void unbindChildren() override {
-		for (Flow*& x: closure) {
-			decRc(x);
-			x = nullptr;
-		}
-		closure.clear();
-	}
+	void unbindChildren() override { closure.clear(); }
 	Flow* callFlowRc(std::vector<Flow*> as) override { 
 		if (ARITY == as.size()) {
 			return [this, as]<std::size_t... I>(std::index_sequence<I...>) { 
