@@ -75,39 +75,39 @@ fsPerceusId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string,
 	fsIter(s, \x -> switch (x) {
 		FsIf(cond, pos, neg, id,__):  {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), cond, last, None()),
+				fsPerceusAddExp2Mem(make_mem(), cond, last, false),
 				id, last, name2var
 			);
 		}
 		FsSwitch(v,__, cs, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), v, last, None()),
+				fsPerceusAddExp2Mem(make_mem(), v, last, false),
 				id, last, name2var
 			);
 		}
 		FsRet(e, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), e, last, None()),
+				fsPerceusAddExp2Mem(make_mem(), e, last, false),
 				id, last, name2var
 			);
 		}
 		FsWrapExp(e, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), e, last, None()),
+				fsPerceusAddExp2Mem(make_mem(), e, last, false),
 				id, last, name2var
 			);
 		}
 		FsLet(__,e, __, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), e, last, None()),
+				fsPerceusAddExp2Mem(make_mem(), e, last, false),
 				id, last, name2var
 			);
 		}
 		FsAssign(to, what, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
 				fsPerceusAddExp2Mem(
-					fsPerceusAddExp2Mem(make_mem(), to, last, None()),
-					what, last, None()
+					fsPerceusAddExp2Mem(make_mem(), to, last, false),
+					what, last, false
 				),
 				id, last, name2var
 			);
@@ -130,52 +130,53 @@ fsPerceusAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<
 	);
 }
 
-fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], op: Maybe<FsPrim>) -> FsMem {
+fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool) -> FsMem {
 	switch (e) {
 		FsClosure(closure,__,__,__): {
-			fold(closure, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, None()));
+			fold(closure, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, false));
 		}
 		FsCall(f, args,__,__): {
-			fold(args, fsPerceusAddExp2Mem(acc, f, last, None()), \ac, x ->
-				fsPerceusAddExp2Mem(ac, x, last, None())
+			fold(args, fsPerceusAddExp2Mem(acc, f, last, false), \ac, x ->
+				fsPerceusAddExp2Mem(ac, x, last, false)
 			);
 		}
-		FsCallPrim(o, es,__,__): {
-			fold(es, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, Some(o)));
+		FsCallPrim(op, es,__,__): {
+			op_inline = switch (op) {
+				FcGePrim(): true;
+				FcLePrim(): true;
+				FcGtPrim(): true;
+				FcLtPrim(): true;
+				FcEqPrim(): true;
+				FcNePrim(): true;
+				FsFieldPrim(__,__): true;
+				FcIndexPrim(): true;
+				FcDerefPrim(): true;
+				default: false;
+			}
+			fold(es, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, op_inline));
+		}
+		FsInline(__,__,es,__,__): {
+			fold(es, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, true));
 		}
 		FsCast(e1,__,__,__): {
-			fsPerceusAddExp2Mem(acc, e1, last, None());
+			fsPerceusAddExp2Mem(acc, e1, last, false);
 		}
 		FsVarUse(x, kind, id): {
-			call_case = \-> if (id == -1 || containsSet(last[id], x.name)) acc else {
-				FsMem(acc with
-					incs = setTree(acc.incs, x, lookupTreeDef(acc.incs, x, 0) + 1)
-				);
-			}
-			prim_case = \-> if (id != -1 && !containsSet(last[id], x.name)) acc else {
-				FsMem(acc with decs = insertSet(acc.decs, x));
-			}
 			if (fiTypeIsScalar(x.type)) acc else {
 				switch (kind) {
 					FsVarGlobalFunc(): acc;
 					FsVarUninit(): acc;
 					default: {
-						switch (op) {
-							Some(oper): {
-								switch (oper) {
-									FcGePrim(): prim_case();
-									FcLePrim(): prim_case();
-									FcGtPrim(): prim_case();
-									FcLtPrim(): prim_case();
-									FcEqPrim(): prim_case();
-									FcNePrim(): prim_case();
-									FsFieldPrim(__,__): prim_case();
-									FcIndexPrim(): prim_case();
-									FcDerefPrim(): prim_case();
-									default: call_case();
-								}
+						if (inline) {
+							if (id != -1 && !containsSet(last[id], x.name)) acc else {
+								FsMem(acc with decs = insertSet(acc.decs, x));
 							}
-							None(): call_case();
+						} else {
+							if (id == -1 || containsSet(last[id], x.name)) acc else {
+								FsMem(acc with
+									incs = setTree(acc.incs, x, lookupTreeDef(acc.incs, x, 0) + 1)
+								);
+							}
 						}
 					}
 				}

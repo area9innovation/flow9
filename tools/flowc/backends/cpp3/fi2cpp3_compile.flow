@@ -372,15 +372,6 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 			}
 		}
 		FsCall(f, args, type,__): {
-			f_raw_type = fsType(f);
-			f_type = switch (f_raw_type) {
-				FiTypeFunction(__,__): f_raw_type;
-				default: fail0("call first argument must have a functional type, got: \n" + 
-					pretFiType(f_raw_type) + "\n" +
-					"while compiling: " + gctx.currentToplevelName + "\n" +
-					"expression:\n" + fs2s(e)
-				);
-			}
 			s_args = map(args, \arg -> fsExp2cpp3(arg, gctx));
 			s_args_len = fold(s_args, 0, \acc, s_arg -> acc + strlen(s_arg) + 2);
 			s_args_all = if (gctx.config.debug || length(args) > 7 || s_args_len > 64 || exists(s_args, \s_arg -> strContains(s_arg, "\n"))) {
@@ -394,6 +385,15 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, v.name);
 					typars = switch (toplevel) {
 						Some(fn): {
+							f_raw_type = fsType(f);
+							f_type = switch (f_raw_type) {
+								FiTypeFunction(__,__): f_raw_type;
+								default: fail0("call first argument must have a functional type, got: \n" + 
+									pretFiType(f_raw_type) + "\n" +
+									"while compiling: " + gctx.currentToplevelName + "\n" +
+									"expression:\n" + fs2s(e)
+								);
+							}
 							typars_instances = fiMatchTyparsOrdered(fn.type, f_type);
 							if (length(typars_instances) == 0) "" else {
 								"<" + superglue(typars_instances, \tp -> fiType2cpp3(tp, gctx), ", ") + ">";
@@ -401,22 +401,12 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 						}
 						None(): "";
 					}
-					switch (lookupTree(gctx.natives, v.name)) {
-						Some(nat): {
-							switch (nat.inline) {
-								Some(inline): inline.def(s_args);
-								None(): fi2cpp3varname2cpp(v.name) + typars + call_args;
-							}
+					switch (kind) {
+						FsVarGlobalFunc(): {
+							fi2cpp3varname2cpp(v.name) + typars + call_args;
 						}
-						None(): {
-							switch (kind) {
-								FsVarGlobalFunc(): {
-									fi2cpp3varname2cpp(v.name) + typars + call_args;
-								}
-								default: {
-									fi2cpp3varname2cpp(v.name) + typars + "->callRc" + call_args;
-								}
-							}
+						default: {
+							fi2cpp3varname2cpp(v.name) + typars + "->callRc" + call_args;
 						}
 					}
 				}
@@ -424,6 +414,9 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 					fsExp2cpp3(f, gctx) + "->callRc" + call_args;
 				}
 			};
+		}
+		FsInline(__,f, args,__,__): {
+			f(map(args, \arg -> fsExp2cpp3(arg, gctx)));
 		}
 		FsClosure(closure, lambda, reuse,__): {
 			fun_type = "Fun<" + fiType2cpp3(lambda.type.returnType, gctx) + concatStrings(map(lambda.type.args, \arg -> ", " + fiType2cpp3(arg.type, gctx))) + ">";
