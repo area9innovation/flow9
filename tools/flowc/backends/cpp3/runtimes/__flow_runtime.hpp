@@ -26,16 +26,6 @@
 
 #define CONCURRENCY_ON
 
-#ifdef CONCURRENCY_ON
-	#define REF_COUNTER_TYPE std::atomic_int_fast32_t
-	//#define REF_COUNTER_TYPE std::atomic_signed_lock_free
-	//#define REF_COUNTER_TYPE std::int32_t
-	//#define REF_COUNTER_TYPE atomic_int_fast32_t
-	//#define REF_COUNTER_TYPE _Atomic int_fast32_t
-#else
-	#define REF_COUNTER_TYPE int32_t
-#endif
-
 namespace flow {
 
 inline void fail(const std::string& msg) { throw std::runtime_error(msg); }
@@ -205,7 +195,7 @@ template<typename T> constexpr bool is_scalar_v =
 template<typename T> inline void incRc(T x, Int d = 1) {
 #ifdef CONCURRENCY_ON
 	if constexpr (is_flow_ancestor_v<T>) {
-		atomic_fetch_add(&x->rc_, d);
+		std::atomic_ref<long>(x->rc_).fetch_add(d);
 	}
 #else
 	if constexpr (is_flow_ancestor_v<T>) {
@@ -217,7 +207,7 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 template<typename T> inline void decRc(T x) {
 #ifdef CONCURRENCY_ON
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (atomic_fetch_sub(&x->rc_, 1) == 1) {
+		if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
 			delete x; 
 		}
 	}
@@ -234,7 +224,7 @@ template<typename T> inline void decRc(T x) {
 template<typename T> inline T decRcReuse(T x) {
 #ifdef CONCURRENCY_ON
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (atomic_fetch_sub(&x->rc_, 1) == 1) {
+		if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
 			x->unbindChildren();
 			return x;
 		} else {
@@ -328,15 +318,7 @@ struct Flow {
 	template<typename T> inline T getRc1() { return incRcRet(dynamic_cast<T>(this)); }
 	template<typename T> inline T getRc() { return dynamic_cast<T>(this); }
 
-#ifdef CONCURRENCY_ON
-#ifdef REF_COUNTER_TYPE
-	mutable REF_COUNTER_TYPE rc_;
-#else
-	mutable std::atomic<Int> rc_;
-#endif
-#else
-	mutable Int rc_;
-#endif
+	mutable long rc_;
 };
 
 struct FVoid : public Flow { TypeId typeId() const override { return TypeFx::VOID; } };
