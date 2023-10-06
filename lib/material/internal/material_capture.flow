@@ -1,16 +1,15 @@
 import material/iscript/material_iscript_screenshot;
 import form/form;
-import formats/uri3/uri3;
-import sys/history;
-import material/material_snackbar;
 
 export {
 	captureKeysMaterial(
-			manager : MaterialManager,
-			closedDialogue : DynamicBehaviour<bool>,
-			saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
-			showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void
-		) -> Tropic;
+		manager : MaterialManager,
+		closedDialogue : DynamicBehaviour<bool>,
+		saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
+		showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void,
+		customKeyDownHandlerFnM : Maybe<(manager : MaterialManager, handled : bool, keyEvent : KeyEvent) -> bool>,
+		customKeyUpHandlerFnM : Maybe<(manager : MaterialManager, handled : bool, keyEvent : KeyEvent) -> bool>
+	)  -> Tropic;
 
 	captureMouseMaterial(manager : MaterialManager) -> Tropic;
 
@@ -27,7 +26,9 @@ export {
 captureKeysMaterial(
 	manager : MaterialManager, closedDialogue : DynamicBehaviour<bool>,
 	saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
-	showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void
+	showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void,
+	customKeyDownHandlerFnM : Maybe<(manager : MaterialManager, handled : bool, keyEvent : KeyEvent) -> bool>,
+	customKeyUpHandlerFnM : Maybe<(manager : MaterialManager, handled : bool, keyEvent : KeyEvent) -> bool>
 ) -> Tropic {
 	focusEnabled = extractStruct(manager.style, MFocusEnabled(const(true))).enabled;
 	themeChangerEnabled = extractStruct(manager.style, MThemeChangerEnabled(const(true))).enabled;
@@ -41,13 +42,11 @@ captureKeysMaterial(
 				if (!isMTextInput(manager))
 					captureIScriptKeyEvent(manager, h, k, "canvas", "keydown") |> ignore;
 				
-				if (k.keycode == KEY_C && k.ctrl && k.shift) {
-					k.preventDefault();
-					saveClearedUrlToClipboard(manager);
-					
+				eitherMap(
+					customKeyDownHandlerFnM,
+					\handleFn -> handleFn(manager, h, k),
 					h
-				}
-				else h
+				)
 
 			}),
 			KeyUp2(\handled, k ->
@@ -109,12 +108,15 @@ captureKeysMaterial(
 					} else if (k.keycode == KEY_ESCAPE) {
 						maybeApply(getCurrentFocusedItem(manager), \fi -> next(fi.focused, false));
 						true
-					} else
+					} else eitherMap(
+						customKeyUpHandlerFnM,
+						\handleFn -> handleFn(manager, handled, k),
 						handled
+					)
 				} else
 					handled
 			)
-		],
+		],	
 		TSelect(manager.forceRender, \__ -> TRectangle([MThemeFill(manager, MBackgroundColor())], TFillXY()))
 	)
 }
@@ -209,25 +211,4 @@ isMTextInput(manager : MaterialManager) -> bool {
 		}) > 0;
 		EmptyPopResult() : false;
 	}
-}
-
-saveClearedUrlToClipboard(manager : MaterialManager) -> void {
-	paramsToFilter = ["sso", "plus", "new", "filter_users", "lazy_users"];
-	pebbleParamsToFilter = ["login"];
-
-	currentUri3 = uri3(getBrowserURL());
-	setClipboard(
-		uri3GetHref(
-			Uri3(
-				currentUri3 with 
-					search = filter(currentUri3.search, \kv -> !contains(paramsToFilter, kv.key)),
-					hash = filter(currentUri3.hash, \kv -> !contains(pebbleParamsToFilter, kv.key))
-			)
-		)
-	);
-	showMSnackbar(
-		manager,
-		_("Cleared URL copied to clipboard"),
-		[MSnackbarAutoDisappearTime(3000)]
-	);
 }
