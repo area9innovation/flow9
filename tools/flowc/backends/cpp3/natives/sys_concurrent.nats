@@ -11,19 +11,56 @@ Cpp3NativePlain("setThreadPoolSize", true,
 "inline Void $F_1(setThreadPoolSize)(Int threads) {
 	thread_pool.setMaxThreadCount(threads);
 	return void_value;
-}\n", "", [], ["concurrent"]),
+}\n", "", [], []),
+
+Cpp3NativePlain("getThreadId", true,
+"inline String* $F_1(getThreadId)();\n",
+"inline String* $F_1(getThreadId)() {
+	static std::unordered_map<std::thread::id, Int> thread_ids;
+	static std::atomic<Int> counter = 0;
+	auto p = thread_ids.find(std::this_thread::get_id());
+	if (p == thread_ids.end()) {
+		Int thread_id = counter;
+		thread_ids[std::this_thread::get_id()] = counter++;
+		return String::make(int2string(thread_id));
+	} else {
+		return String::make(int2string(p->second));
+	}
+}\n", "", [Cpp3Std(["<thread>"], [])], []),
 
 Cpp3NativePlain("concurrent", true,
 "template<typename T> Vec<T>* $F_1(concurrent)(Bool fine, Vec<Fun<T>*>* tasks);\n",
 "template<typename T> Vec<T>* $F_1(concurrent)(Bool fine, Vec<Fun<T>*>* tasks) {
 #ifdef CONCURRENCY_ON
-	std::vector<T> ret = QtConcurrent::blockingMapped<
-		std::vector<T>,
-		std::vector<Fun<T>*>,
-		std::function<T(Fun<T>*)>
-	>(tasks->getVect(), [](Fun<T>* task) { return task->callRc1(); });
-	decRc(tasks);
-	return Vec<T>::make(std::move(ret));
+	if (tasks->size() == 0) {
+		return Vec<T>::make();
+	} else if (tasks->size() == 1) {
+		Vec<T>* ret = Vec<T>::make();
+		ret->reserve(tasks->size());
+		for (auto& f : *tasks) {
+			ret->pushBack(f->callRc1());
+		}
+		decRc(tasks);
+		return ret;
+	} else {
+#ifdef CONCURRENCY_ON
+#ifndef ATOMIC_RC
+		tasks->makeShared();
+#endif
+#endif
+		std::vector<T> ret = QtConcurrent::blockingMapped<
+			std::vector<T>,
+			std::vector<Fun<T>*>,
+			std::function<T(Fun<T>*)>
+		>(
+			tasks->getVect(),
+			[](Fun<T>* task) {
+				return task->callRc1();
+			}
+		);
+		decRc(tasks);
+		return Vec<T>::make(std::move(ret));
+	}
 #else
 	Vec<T>* ret = Vec<T>::make();
 	ret->reserve(tasks->size());
@@ -36,12 +73,18 @@ Cpp3NativePlain("concurrent", true,
 }\n", "", 
 [], ["concurrent"]),
 
+Cpp3NativePlain("atomicRefIntAddition", true,
+"inline Int $F_1(atomicRefIntAddition)(Ref<Int>* v, Int delta);\n",
+"inline Int $F_1(atomicRefIntAddition)(Ref<Int>* v, Int delta) {
+	return std::atomic_ref<Int>(v->getVal()).fetch_add(delta);
+}\n", "",
+[], []),
+
 Cpp3NativePlain("synchronizedConstFn", true,
 "template<typename T> Fun<T>* $F_1(synchronizedConstFn)(Flow* lock, Fun<T>* fn);\n",
 "template<typename T> Fun<T>* $F_1(synchronizedConstFn)(Flow* lock, Fun<T>* fn) {
-	return Fun<T>::make([fn]() mutable {
-		static std::mutex mx;
-		const std::lock_guard<std::mutex> l(mx);
+	return Fun<T>::make([fn, lock]() mutable {
+		const std::lock_guard<std::mutex> l(mutex_map[lock]);
 		return fn->callRc();
 	}, fn);
 }\n", "", 
@@ -50,31 +93,28 @@ Cpp3NativePlain("synchronizedConstFn", true,
 Cpp3NativePlain("synchronizedUnaryFn", true,
 "template<typename A, typename T> Fun<T, A>* $F_1(synchronizedUnaryFn)(Flow* lock, Fun<T, A>* fn);\n",
 "template<typename A, typename T> Fun<T, A>* $F_1(synchronizedUnaryFn)(Flow* lock, Fun<T, A>* fn) {
-	return Fun<T, A>::make([fn](A a) {
-		static std::mutex mx;
-		const std::lock_guard<std::mutex> l(mx);
+	return Fun<T, A>::make([fn, lock](A a) {
+		const std::lock_guard<std::mutex> l(mutex_map[lock]);
 		return fn->callRc(a);
 	}, fn);
 }\n", "", 
 [], ["concurrent"]),
 
 Cpp3NativePlain("synchronizedBinaryFn", true,
-"template<typename A1, typenama A2, typename T> Fun<T, A1, A2>* $F_1(synchronizedBinaryFn)(Flow* lock, Fun<T, A1, A2>* fn);\n",
+"template<typename A1, typename A2, typename T> Fun<T, A1, A2>* $F_1(synchronizedBinaryFn)(Flow* lock, Fun<T, A1, A2>* fn);\n",
 "template<typename A1, typename A2, typename T> Fun<T, A1, A2>* $F_1(synchronizedBinaryFn)(Flow* lock, Fun<T, A1, A2>* fn) {
-	return Fun<T, A1, A2>::make([fn](A1 a1, A2 a2) mutable {
-		static std::mutex mx;
-		const std::lock_guard<std::mutex> l(mx);
+	return Fun<T, A1, A2>::make([fn, lock](A1 a1, A2 a2) mutable {
+		const std::lock_guard<std::mutex> l(mutex_map[lock]);
 		return fn->callRc(a1, a2);
 	}, fn);
 }\n", "", 
 [], ["concurrent"]),
 
 Cpp3NativePlain("synchronizedTernaryFn", true,
-"template<typename A1, typenama A2, typename A3, typename T> Fun<T, A1, A2, A3>* $F_1(synchronizedTernaryFn)(Flow* lock, Fun<T, A1, A2, A3>* fn);\n",
+"template<typename A1, typename A2, typename A3, typename T> Fun<T, A1, A2, A3>* $F_1(synchronizedTernaryFn)(Flow* lock, Fun<T, A1, A2, A3>* fn);\n",
 "template<typename A1, typename A2, typename A3, typename T> Fun<T, A1, A2, A3>* $F_1(synchronizedTernaryFn)(Flow* lock, Fun<T, A1, A2, A3>* fn) {
-	return Fun<T, A1, A2, A3>::make([fn](A1 a1, A2 a2, A3 a3) mutable {
-		static std::mutex mx;
-		const std::lock_guard<std::mutex> l(mx);
+	return Fun<T, A1, A2, A3>::make([fn, lock](A1 a1, A2 a2, A3 a3) mutable {
+		const std::lock_guard<std::mutex> l(mutex_map[lock]);
 		return fn->callRc(a1, a2, a3);
 	}, fn);
 }\n", "", 

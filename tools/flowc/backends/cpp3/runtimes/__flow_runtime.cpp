@@ -11,8 +11,10 @@ const string RTTI::type_names[] = {
 
 std::unordered_map<string, int32_t> RTTI::struct_name_to_id;
 
+std::mutex tmp_out_mutex;
+
 string double2string(Double x, bool persistent_dot) {
-	static std::stringstream os;
+	std::stringstream os;
 	os << std::setprecision(15) << x;
 	std::string str = os.str();
 	os.str("");

@@ -24,7 +24,8 @@
 
 // C++ runtime for flow
 
-#define CONCURRENCY_ON
+//#define CONCURRENCY_ON
+//#define ATOMIC_RC
 
 namespace flow {
 
@@ -192,47 +193,107 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::BOOL, T> ||
 	is_type_v<TypeFx::DOUBLE, T>;
 
+extern std::mutex tmp_out_mutex;
+
 template<typename T> inline void incRc(T x, Int d = 1) {
+	if constexpr (is_flow_ancestor_v<T>) {
 #ifdef CONCURRENCY_ON
-	if constexpr (is_flow_ancestor_v<T>) {
+	#ifdef ATOMIC_RC
 		std::atomic_ref<long>(x->rc_).fetch_add(d);
-	}
+	#else
+		if (x->rc_ < 0) {
+			/*long pre = x->rc_;
+			long post = std::atomic_ref<long>(x->rc_).fetch_sub(d);
+			tmp_out_mutex.lock();
+			std::cout << "(incRc) x->rc_: " << pre << " => " << post << std::endl;
+			tmp_out_mutex.unlock();*/
+			std::atomic_ref<long>(x->rc_).fetch_sub(d);
+		} else {
+			x->rc_ += d;
+		}
+	#endif
 #else
-	if constexpr (is_flow_ancestor_v<T>) {
 		x->rc_ += d;
-	}
 #endif
+	}
 }
 
 template<typename T> inline void decRc(T x) {
+	if constexpr (is_flow_ancestor_v<T>) {
 #ifdef CONCURRENCY_ON
-	if constexpr (is_flow_ancestor_v<T>) {
+	#ifdef ATOMIC_RC
 		if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
-			delete x; 
+			delete x;
 		}
-	}
+	#else
+		if (x->rc_ < 0) {
+			/*long pre = x->rc_;
+			long post = std::atomic_ref<long>(x->rc_).fetch_add(1);
+			tmp_out_mutex.lock();
+			std::cout << "(decRc) x->rc_: " << pre << " => " << post << std::endl;
+			tmp_out_mutex.unlock();
+			if (post == -1) {
+				delete x;
+			}*/
+			if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
+				delete x;
+			}
+		} else {
+			x->rc_ -= 1;
+			if (x->rc_ == 0) {
+				delete x;
+			}
+		}
+	#endif
 #else
-	if constexpr (is_flow_ancestor_v<T>) {
-		x->rc_ -= d;
+		x->rc_ -= 1;
 		if (x->rc_ == 0) {
-			delete x; 
+			delete x;
 		} 
-	}
 #endif
+	}
 }
 
 template<typename T> inline T decRcReuse(T x) {
-#ifdef CONCURRENCY_ON
 	if constexpr (is_flow_ancestor_v<T>) {
+#ifdef CONCURRENCY_ON
+	#ifdef ATOMIC_RC
 		if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
 			x->unbindChildren();
 			return x;
 		} else {
-			return nullptr; 
+			return nullptr;
 		}
-	}
+	#else
+		if (x->rc_ < 0) {
+			/*long pre = x->rc_;
+			long post = std::atomic_ref<long>(x->rc_).fetch_add(1);
+			tmp_out_mutex.lock();
+			std::cout << "(decRcReuse) x->rc_: " << pre << " => " << post << std::endl;
+			tmp_out_mutex.unlock();
+			if (post == -1) {
+				x->unbindChildren();
+				return x;
+			} else {
+				return nullptr;
+			}*/
+			if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
+				x->unbindChildren();
+				return x;
+			} else {
+				return nullptr;
+			}
+		} else {
+			x->rc_ -= 1;
+			if (x->rc_ == 0) {
+				x->unbindChildren();
+				return x;
+			} else {
+				return nullptr;
+			}
+		}
+	#endif
 #else
-	if constexpr (is_flow_ancestor_v<T>) {
 		x->rc_ -= d;
 		if (x->rc_ == 0) {
 			x->unbindChildren();
@@ -240,14 +301,18 @@ template<typename T> inline T decRcReuse(T x) {
 		} else {
 			return nullptr;
 		}
-	}
 #endif
+	}
 }
 
 template<typename T> inline void decRcFinish(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
 		delete x;
 	}
+}
+
+template<typename T> inline bool unitRc(T x) {
+	return x->rc_ == 1 /*|| x->rc_ == -1*/;
 }
 
 template<typename T, typename R> inline R decRcRet(T x, R ret) { decRc(x); return ret; }
@@ -292,6 +357,8 @@ struct Flow {
 	virtual Int size() const { return 0; }
 	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
 	virtual void unbindChildren() { }
+	virtual void makeShared() { rc_ = -rc_; }
+	inline bool isShared() { return (rc_ < 0); }
 	TypeId typeIdRc() const { return decRcRet(this, typeId()); }
 	Int sizeRc() const { return decRcRet(this, size()); }
 	
@@ -418,7 +485,7 @@ struct String : public Flow {
 };
 
 inline String* concatStringsRc(String* s1, String* s2) {
-	if (s1->rc_ == 1) {
+	if (unitRc(s1)) {
 		s1->str += s2->str;
 		decRc(s2);
 		return s1;
@@ -436,26 +503,41 @@ struct Native : public Flow {
 	enum { TYPE = TypeFx::NATIVE };
 	enum Kind { SCALAR = 0, FLOW_PTR = 1, FOREIGN_PTR = 2 };
 	template<typename T>
-	Native(T v): cleanup([](std::any x){}), val(v) {
+	Native(T v): cleanup([](){}), share([](){ }), val(v) {
 		if constexpr (is_flow_ancestor_v<T>) {
-			cleanup = [](std::any x){ decRc(std::any_cast<Flow*>(x)); };
+			cleanup = [v]() { decRc(std::any_cast<Flow*>(v)); };
+			share   = [v]() { std::any_cast<Flow*>(v)->makeShared(); };
 		} else if constexpr (std::is_pointer_v<T>) {
-			cleanup = [](std::any x){ delete std::any_cast<T>(x); };
+			cleanup = [v]() { delete std::any_cast<T>(v); };
+		}
+	}
+	template<typename T>
+	Native(T v, std::function<void()>&& s): cleanup([](){}), share(std::move(s)), val(v) {
+		if constexpr (is_flow_ancestor_v<T>) {
+			cleanup = [v](){ decRc(std::any_cast<Flow*>(v)); };
+		} else if constexpr (std::is_pointer_v<T>) {
+			cleanup = [v](){ delete std::any_cast<T>(v); };
 		}
 	}
 	~Native() override {
-		cleanup(val);
+		cleanup();
 	}
 	Native& operator = (Native&& r) = delete;
 	Native& operator = (const Native& r) = delete;
 
 	TypeId typeId() const override { return TypeFx::NATIVE; }
-	template<typename T> static Native* make(T v) { return new Native(v); } 
+	void makeShared() override {
+		if (!isShared()) {
+			Flow::makeShared();
+		}
+		share();
+	}
+	template<typename... As> static Native* make(As... as) { return new Native(as...); }
 	template<typename T> bool castsTo() {
 		try {
 			std::any_cast<T>(val);
 			return true;
-		} catch(const std::bad_any_cast& e) { 
+		} catch(const std::bad_any_cast& e) {
 			return false;
 		}
 	}
@@ -469,7 +551,8 @@ struct Native : public Flow {
 		}
 	}
 private:
-	std::function<void(std::any)> cleanup;
+	std::function<void()> cleanup;
+	std::function<void()> share;
 	std::any val;
 };
 
@@ -509,6 +592,12 @@ struct Str : public Flow {
 	void unbindChildren() override { 
 		decRcFields<0>();
 		resetFields<0>();
+	}
+	void makeShared() override {
+		if (!isShared()) {
+			Flow::makeShared();
+			makeSharedFields<0>();
+		}
 	}
 
 	Flow* getFlowRc(Int i) override {
@@ -631,6 +720,15 @@ private:
 				std::get<i>(fields) = nullptr;
 			}
 			resetFields<i + 1>();
+		}
+	}
+	template<Int i>
+	void makeSharedFields() {
+		if constexpr(i < SIZE) {
+			if constexpr (is_flow_ancestor_v<std::tuple_element_t<i, Fields>>) {
+				std::get<i>(fields)->makeShared();
+			}
+			makeSharedFields<i + 1>();
 		}
 	}
 	template<Int i>
@@ -807,6 +905,17 @@ struct Vec : public Flow {
 	void unbindChildren() override {
 		vect.clear();
 	}
+	void makeShared() override {
+		if (!isShared()) {
+			Flow::makeShared();
+			if constexpr (is_flow_ancestor_v<T>) {
+				for (T x : vect) {
+					x->makeShared();
+				}
+			}
+		}
+	}
+
 	Flow* getFlowRc(Int i) override { 
 		return castRc<T, Flow*>(getRc(i));
 	}
@@ -910,6 +1019,15 @@ struct Ref : public Flow {
 			val = nullptr;
 		}
 	}
+	void makeShared() override {
+		if (!isShared()) {
+			Flow::makeShared();
+			if constexpr (is_flow_ancestor_v<T>) {
+				val->makeShared();
+			}
+		}
+	}
+
 	Flow* getFlowRc(Int i) override { 
 		return castRc<RefType, Flow*>(getRc()); 
 	}
@@ -949,6 +1067,9 @@ struct Ref : public Flow {
 	}
 	inline void set(T v) {
 		assignRc<T>(val, v);
+	}
+	inline T& getVal() {
+		return val;
 	}
 private:
 	T val;
@@ -1009,14 +1130,27 @@ struct Fun : public Flow {
 
 	// general interface
 	TypeId typeId() const override { return TYPE; }
-	Int size() const override { return static_cast<Int>(closure.size()); }
-	void unbindChildren() override { closure.clear(); }
-	Flow* callFlowRc(std::vector<Flow*> as) override { 
+	Int size() const override {
+		return static_cast<Int>(closure.size());
+	}
+	void unbindChildren() override {
+		closure.clear();
+	}
+	void makeShared() override {
+		if (!isShared()) {
+			Flow::makeShared();
+			for (Flow* x: closure) {
+				x->makeShared();
+			}
+		}
+	}
+
+	Flow* callFlowRc(std::vector<Flow*> as) override {
 		if (ARITY == as.size()) {
-			return [this, as]<std::size_t... I>(std::index_sequence<I...>) { 
+			return [this, as]<std::size_t... I>(std::index_sequence<I...>) {
 				return castRc<R, Flow*>(callRc(
 					castRc<Flow*, std::tuple_element_t<I, Args>>(as.at(I))...
-				)); 
+				));
 			}
 			(std::make_index_sequence<ARITY>{});
 		} else {
@@ -1029,7 +1163,7 @@ struct Fun : public Flow {
 			return [this, as]<std::size_t... I>(std::index_sequence<I...>) { 
 				return castRc<R, Flow*>(callRc1(
 					castRc<Flow*, std::tuple_element_t<I, Args>>(as.at(I))...
-				)); 
+				));
 			}
 			(std::make_index_sequence<ARITY>{});
 		} else {
@@ -1042,12 +1176,14 @@ struct Fun : public Flow {
 	inline R callRc(As... as) {
 		return decRcRet(this, callRc1(as...));
 	}
-	inline R callRc1(As... as) { 
-		return call(as...); 
+	inline R callRc1(As... as) {
+		return call(as...);
 	}
-	inline R call(As... as) { 
-		for (Flow* x: closure) incRc(x);
-		return fn(as...); 
+	virtual R call(As... as) {
+		for (Flow* x: closure) {
+			incRc(x);
+		}
+		return fn(as...);
 	}
 
 private:
