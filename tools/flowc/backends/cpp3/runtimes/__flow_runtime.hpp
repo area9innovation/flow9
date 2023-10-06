@@ -426,15 +426,20 @@ struct String : public Flow {
 	String(const char16_t* s, Int len): str(s, len) { }
 	String(char16_t c): str(1, c) { }
 	String(Int c) { append(c); }
-	String(const std::vector<char16_t>& codes): str(codes.data(), codes.size()) { }
+	//String(const std::vector<char16_t>& codes): str(codes.data(), codes.size()) { }
+	//String(const std::initializer_list<char16_t>& codes): str(codes) { }
+	String(std::initializer_list<char16_t>&& codes): str(std::move(codes)) { }
 
-	String(const String& s): str(s.str) { }
-	String(String&& s): str(std::move(s.str)) { }
+
+	//String(const String& s): str(s.str) { }
+	//String(String&& s): str(std::move(s.str)) { }
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
 
 	template<typename... As>
-	static String* make(As... as) { return new String(as...); }
+	static String* make(As... as) { return new String(std::move(as)...); }
+	//static String* make(const std::initializer_list<char16_t>& codes) { return new String(codes); }
+	static String* make(std::initializer_list<char16_t>&& codes) { return new String(std::move(codes)); }
 
 	static String* makeOrReuse(String* s) {
 		if (s == nullptr) {
@@ -455,6 +460,21 @@ struct String : public Flow {
 			return s;
 		}
 	}
+	static String* makeOrReuse(String* s, std::initializer_list<char16_t>&& codes) {
+		if (s == nullptr) {
+			return new String(std::move(codes));
+		} else {
+			/*s->str.clear();
+			s->str.reserve(codes.size());
+			for (char16_t c: codes) {
+				s->str += c;
+			}*/
+			s->str = codes; 
+			s->rc_ = 1;
+			return s;
+		}
+	}
+	/*
 	static String* makeOrReuse(String* s, const std::vector<char16_t>& codes) {
 		if (s == nullptr) {
 			return new String(codes);
@@ -468,6 +488,7 @@ struct String : public Flow {
 			return s;
 		}
 	}
+	*/
 
 	TypeId typeId() const override { return TypeFx::STRING; }
 	std::string toStd() const { return string2std(str); }
@@ -495,7 +516,7 @@ inline String* concatStringsRc(String* s1, String* s2) {
 		ret += s1->str;
 		ret += s2->str;
 		decRc(s1); decRc(s2);
-		return String::make(ret);
+		return new String(std::move(ret));
 	}
 }
 
@@ -567,12 +588,12 @@ struct Str : public Flow {
 
 	template<typename S>
 	static S make(Fs... fs) {
-		return new std::remove_pointer_t<S>(fs...);
+		return new std::remove_pointer_t<S>(std::move(fs)...);
 	}
 	template<typename S>
 	static S makeOrReuse(S s, Fs... fs) {
 		if (s == nullptr) {
-			return new std::remove_pointer_t<S>(fs...);
+			return new std::remove_pointer_t<S>(std::move(fs)...);
 		} else {
 			s->fields = std::tie(fs...);
 			s->rc_ = 1;
