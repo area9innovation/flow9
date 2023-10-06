@@ -51,10 +51,12 @@ using string = std::u16string;
 
 // String conversions
 
-void copyString2std(std::string& ret, const string& str);
-void copyStd2string(string& str, const std::string& s);
-inline std::string string2std(const string& s) { std::string str; copyString2std(str, s); return str; }
-inline string std2string(const std::string& s) { string str; copyStd2string(str, s); return str; }
+void copyString2std(const string& str, std::string& s);
+void copyStd2string(const std::string& str, string& s);
+void string2ostream(const string& str, std::ostream& os);
+void istream2string(std::istream& is, string& str);
+inline std::string string2std(const string& str) { std::string s; copyString2std(str, s); return s; }
+inline string std2string(const std::string& str) { string s; copyStd2string(str, s); return s; }
 
 // Basic types
 
@@ -71,7 +73,7 @@ using Double = double;
 
 inline Double int2double(Int x) { return x; }
 inline Bool int2bool(Int x) { return x != 0; }
-inline string int2string(Int x) { return std2string(std::to_string(x)); }
+string int2string(Int x) noexcept;
 
 inline Int double2int(Double x) { return (x >= 0.0) ? static_cast<Int>(x + 0.5) : static_cast<Int>(x - 0.5); }
 inline Bool double2bool(Double x) { return x != 0.0; }
@@ -202,11 +204,6 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 		std::atomic_ref<long>(x->rc_).fetch_add(d);
 	#else
 		if (x->rc_ < 0) {
-			/*long pre = x->rc_;
-			long post = std::atomic_ref<long>(x->rc_).fetch_sub(d);
-			tmp_out_mutex.lock();
-			std::cout << "(incRc) x->rc_: " << pre << " => " << post << std::endl;
-			tmp_out_mutex.unlock();*/
 			std::atomic_ref<long>(x->rc_).fetch_sub(d);
 		} else {
 			x->rc_ += d;
@@ -227,14 +224,6 @@ template<typename T> inline void decRc(T x) {
 		}
 	#else
 		if (x->rc_ < 0) {
-			/*long pre = x->rc_;
-			long post = std::atomic_ref<long>(x->rc_).fetch_add(1);
-			tmp_out_mutex.lock();
-			std::cout << "(decRc) x->rc_: " << pre << " => " << post << std::endl;
-			tmp_out_mutex.unlock();
-			if (post == -1) {
-				delete x;
-			}*/
 			if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
 				delete x;
 			}
@@ -266,17 +255,6 @@ template<typename T> inline T decRcReuse(T x) {
 		}
 	#else
 		if (x->rc_ < 0) {
-			/*long pre = x->rc_;
-			long post = std::atomic_ref<long>(x->rc_).fetch_add(1);
-			tmp_out_mutex.lock();
-			std::cout << "(decRcReuse) x->rc_: " << pre << " => " << post << std::endl;
-			tmp_out_mutex.unlock();
-			if (post == -1) {
-				x->unbindChildren();
-				return x;
-			} else {
-				return nullptr;
-			}*/
 			if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
 				x->unbindChildren();
 				return x;
@@ -312,7 +290,7 @@ template<typename T> inline void decRcFinish(T x) {
 }
 
 template<typename T> inline bool unitRc(T x) {
-	return x->rc_ == 1 /*|| x->rc_ == -1*/;
+	return x->rc_ == 1;
 }
 
 template<typename T, typename R> inline R decRcRet(T x, R ret) { decRc(x); return ret; }
@@ -426,19 +404,13 @@ struct String : public Flow {
 	String(const char16_t* s, Int len): str(s, len) { }
 	String(char16_t c): str(1, c) { }
 	String(Int c) { append(c); }
-	//String(const std::vector<char16_t>& codes): str(codes.data(), codes.size()) { }
-	//String(const std::initializer_list<char16_t>& codes): str(codes) { }
 	String(std::initializer_list<char16_t>&& codes): str(std::move(codes)) { }
 
-
-	//String(const String& s): str(s.str) { }
-	//String(String&& s): str(std::move(s.str)) { }
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
 
 	template<typename... As>
 	static String* make(As... as) { return new String(std::move(as)...); }
-	//static String* make(const std::initializer_list<char16_t>& codes) { return new String(codes); }
 	static String* make(std::initializer_list<char16_t>&& codes) { return new String(std::move(codes)); }
 
 	static String* makeOrReuse(String* s) {
@@ -455,7 +427,7 @@ struct String : public Flow {
 			return new String(x);
 		} else {
 			s->str.clear();
-			copyStd2string(s->str, x);
+			copyStd2string(x, s->str);
 			s->rc_ = 1;
 			return s;
 		}
@@ -464,31 +436,11 @@ struct String : public Flow {
 		if (s == nullptr) {
 			return new String(std::move(codes));
 		} else {
-			/*s->str.clear();
-			s->str.reserve(codes.size());
-			for (char16_t c: codes) {
-				s->str += c;
-			}*/
 			s->str = codes; 
 			s->rc_ = 1;
 			return s;
 		}
 	}
-	/*
-	static String* makeOrReuse(String* s, const std::vector<char16_t>& codes) {
-		if (s == nullptr) {
-			return new String(codes);
-		} else {
-			s->str.clear();
-			s->str.reserve(codes.size());
-			for (char16_t c: codes) {
-				s->str += c;
-			}
-			s->rc_ = 1;
-			return s;
-		}
-	}
-	*/
 
 	TypeId typeId() const override { return TypeFx::STRING; }
 	std::string toStd() const { return string2std(str); }
