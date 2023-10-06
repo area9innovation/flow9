@@ -1,6 +1,6 @@
 import ds/concur_hashmap;
-import net/url_parameter;
 import sys/system;
+import sys/concurrent;
 
 export {
 	// In server mode this function transfers argument to the http
@@ -28,8 +28,13 @@ export {
 	fcSetSkipBuffering(id : int, val : bool) -> void;
 }
 
-fcOutputBuffer : ConcurHashMap<int, ref [string]> = makeConcurHashMap(idfn);
-fcBinaryBuffer : ConcurHashMap<int, ref [string]> = makeConcurHashMap(idfn);
+FcSyncBuffer(
+	buff: ref [string],
+	push: (string) -> void
+);
+
+fcOutputBuffer : ConcurHashMap<int, FcSyncBuffer> = makeConcurHashMap(idfn);
+fcBinaryBuffer : ConcurHashMap<int, FcSyncBuffer> = makeConcurHashMap(idfn);
 fcSkipPrinting : ConcurHashMap<int, bool> = makeConcurHashMap(idfn);
 fcSkipBuffering : ConcurHashMap<int, bool> = makeConcurHashMap(idfn);
 
@@ -42,7 +47,7 @@ fcSetSkipBuffering(id : int, val : bool) -> void {
 }
 
 fcGetSkipBuffering(id : int) -> bool {
-	getConcurHashMap(fcSkipBuffering, id, false);
+	getConcurHashMap(fcSkipBuffering, id, true);
 }
 
 fcSetSkipPrinting(id : int, val : bool) -> void {
@@ -52,9 +57,9 @@ fcSetSkipPrinting(id : int, val : bool) -> void {
 fcPrintln(str : string, id : int) -> void {
 	if (!fcGetSkipBuffering(id)) {
 		if (!containsKeyConcurHashMap(fcOutputBuffer, id)) {
-			setConcurHashMap(fcOutputBuffer, id, emptyRefStrings());
+			setConcurHashMap(fcOutputBuffer, id, emptyFcSyncBuffer());
 		}
-		refArrayPush(getConcurHashMap(fcOutputBuffer, id, emptyRefStrings()), str);
+		getConcurHashMap(fcOutputBuffer, id, emptyFcSyncBuffer()).push(str);
 	}
 	if (!fcGetSkipPrinting(id)) {
 		println(str);
@@ -64,37 +69,41 @@ fcPrintln(str : string, id : int) -> void {
 fcPrint(str : string, id : int) -> void {
 	if (!fcGetSkipBuffering(id)) {
 		if (!containsKeyConcurHashMap(fcOutputBuffer, id)) {
-			setConcurHashMap(fcOutputBuffer, id, emptyRefStrings());
+			setConcurHashMap(fcOutputBuffer, id, emptyFcSyncBuffer());
 		}
-		refArrayPush(getConcurHashMap(fcOutputBuffer, id, emptyRefStrings()), str);
+		getConcurHashMap(fcOutputBuffer, id, emptyFcSyncBuffer()).push(str);
 	}
 	if (!fcGetSkipPrinting(id)) {
 		print(str);
 	}
 }
 
-emptyRefStrings() -> ref [string] {
-	ref [];
+emptyFcSyncBuffer() -> FcSyncBuffer {
+	buff = ref [];
+	FcSyncBuffer(
+		buff,
+		synchronizedUnaryFn(buff, \s -> refArrayPush(buff, s))
+	);
 }
 
 fcPrintBinary(str : string, id : int) -> void {
 	if (!containsKeyConcurHashMap(fcBinaryBuffer, id)) {
-		setConcurHashMap(fcBinaryBuffer, id, emptyRefStrings());
+		setConcurHashMap(fcBinaryBuffer, id, emptyFcSyncBuffer());
 	}
-	refArrayPush(getConcurHashMap(fcBinaryBuffer, id, emptyRefStrings()), str);
+	getConcurHashMap(fcBinaryBuffer, id, emptyFcSyncBuffer()).push(str);
 }
 
 fcOutput(id : int) -> string {
 	if (!containsKeyConcurHashMap(fcOutputBuffer, id)) "" else
-	strGlue(^(getConcurHashMap(fcOutputBuffer, id, emptyRefStrings())), "\n")
+	strGlue(^(getConcurHashMap(fcOutputBuffer, id, emptyFcSyncBuffer()).buff), "\n")
 }
 
 fcBinary(id : int) -> string {
 	if (!containsKeyConcurHashMap(fcBinaryBuffer, id)) "" else
-	strGlue(^(getConcurHashMap(fcBinaryBuffer, id, emptyRefStrings())), "\n")
+	strGlue(^(getConcurHashMap(fcBinaryBuffer, id, emptyFcSyncBuffer()).buff), "\n")
 }
 
 clearFcOutput(id : int) -> void {
-	setConcurHashMap(fcOutputBuffer, id, emptyRefStrings());
-	setConcurHashMap(fcBinaryBuffer, id, emptyRefStrings());
+	setConcurHashMap(fcOutputBuffer, id, emptyFcSyncBuffer());
+	setConcurHashMap(fcBinaryBuffer, id, emptyFcSyncBuffer());
 }
