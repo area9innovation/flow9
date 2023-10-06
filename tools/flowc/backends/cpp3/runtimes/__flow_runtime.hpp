@@ -195,73 +195,89 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::BOOL, T> ||
 	is_type_v<TypeFx::DOUBLE, T>;
 
-extern std::mutex tmp_out_mutex;
+// Object with such a reference counter stay forever (must be a global variables)
+const long constant_object_rc = -1;
 
 template<typename T> inline void incRc(T x, Int d = 1) {
 	if constexpr (is_flow_ancestor_v<T>) {
-#ifdef CONCURRENCY_ON
-	#ifdef ATOMIC_RC
-		std::atomic_ref<long>(x->rc_).fetch_add(d);
+		if (x->rc_ != constant_object_rc) {
+	#ifdef CONCURRENCY_ON
+		#ifdef ATOMIC_RC
+			std::atomic_ref<long>(x->rc_).fetch_add(d);
+		#else
+			if (x->rc_ < 0) {
+				std::atomic_ref<long>(x->rc_).fetch_sub(d);
+			} else {
+				x->rc_ += d;
+			}
+		#endif
 	#else
-		if (x->rc_ < 0) {
-			std::atomic_ref<long>(x->rc_).fetch_sub(d);
-		} else {
 			x->rc_ += d;
-		}
 	#endif
-#else
-		x->rc_ += d;
-#endif
+		}
 	}
 }
 
 template<typename T> inline void decRc(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-#ifdef CONCURRENCY_ON
-	#ifdef ATOMIC_RC
-		if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
-			delete x;
-		}
-	#else
-		if (x->rc_ < 0) {
-			if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
+		if (x->rc_ != constant_object_rc) {
+	#ifdef CONCURRENCY_ON
+		#ifdef ATOMIC_RC
+			if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
 				delete x;
 			}
-		} else {
+		#else
+			if (x->rc_ < 0) {
+				if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
+					delete x;
+				}
+			} else {
+				x->rc_ -= 1;
+				if (x->rc_ == 0) {
+					delete x;
+				}
+			}
+		#endif
+	#else
 			x->rc_ -= 1;
 			if (x->rc_ == 0) {
 				delete x;
-			}
-		}
+			} 
 	#endif
-#else
-		x->rc_ -= 1;
-		if (x->rc_ == 0) {
-			delete x;
-		} 
-#endif
+		}
 	}
 }
 
 template<typename T> inline T decRcReuse(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-#ifdef CONCURRENCY_ON
-	#ifdef ATOMIC_RC
-		if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
-			x->unbindChildren();
-			return x;
-		} else {
-			return nullptr;
-		}
-	#else
-		if (x->rc_ < 0) {
-			if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
+		if (x->rc_ != constant_object_rc) {
+	#ifdef CONCURRENCY_ON
+		#ifdef ATOMIC_RC
+			if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
 				x->unbindChildren();
 				return x;
 			} else {
 				return nullptr;
 			}
-		} else {
+		#else
+			if (x->rc_ < 0) {
+				if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
+					x->unbindChildren();
+					return x;
+				} else {
+					return nullptr;
+				}
+			} else {
+				x->rc_ -= 1;
+				if (x->rc_ == 0) {
+					x->unbindChildren();
+					return x;
+				} else {
+					return nullptr;
+				}
+			}
+		#endif
+	#else
 			x->rc_ -= 1;
 			if (x->rc_ == 0) {
 				x->unbindChildren();
@@ -269,23 +285,18 @@ template<typename T> inline T decRcReuse(T x) {
 			} else {
 				return nullptr;
 			}
-		}
 	#endif
-#else
-		x->rc_ -= d;
-		if (x->rc_ == 0) {
-			x->unbindChildren();
-			return x;
 		} else {
 			return nullptr;
 		}
-#endif
 	}
 }
 
 template<typename T> inline void decRcFinish(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		delete x;
+		//if (x->rc_ != constant_object_rc) {
+			delete x;
+		//}
 	}
 }
 
@@ -329,8 +340,8 @@ template<typename T> inline void assignRc(T& to, T what) {
 // Dynamic wrapper for all values 
 
 struct Flow {
-	Flow(): rc_(1) {}
-	virtual ~Flow() {}
+	Flow(): rc_(1) { }
+	virtual ~Flow() { }
 	virtual TypeId typeId() const = 0;
 	virtual Int size() const { return 0; }
 	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
@@ -396,7 +407,6 @@ const Int UNI_SUR_LOW_END = 0xDFFF;
 
 struct String : public Flow {
 	enum { TYPE = TypeFx::STRING };
-	String(): str() { }
 	String(const std::string& s): str(std2string(s)) { }
 	String(const string& s): str(s) { }
 	String(string&& s): str(std::move(s)) { }
@@ -409,34 +419,30 @@ struct String : public Flow {
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
 
+	// There must be only one instance of empty string
+	static String* make() { static String es; return &es; }
 	template<typename... As>
 	static String* make(As... as) { return new String(std::move(as)...); }
 	static String* make(std::initializer_list<char16_t>&& codes) { return new String(std::move(codes)); }
 
-	static String* makeOrReuse(String* s) {
+	static String* makeOrReuse(String* s, string&& x) {
 		if (s == nullptr) {
-			return new String();
+			return make(x);
 		} else {
 			s->str.clear();
+			s->str.reserve(x.size());
+			for (char16_t c: x) s->str += c;
 			s->rc_ = 1;
 			return s;
 		}
 	}
-	static String* makeOrReuse(String* s, const std::string& x) {
+	static String* makeOrReuse(String* s, std::initializer_list<char16_t>&& x) {
 		if (s == nullptr) {
-			return new String(x);
+			return make(std::move(x));
 		} else {
 			s->str.clear();
-			copyStd2string(x, s->str);
-			s->rc_ = 1;
-			return s;
-		}
-	}
-	static String* makeOrReuse(String* s, std::initializer_list<char16_t>&& codes) {
-		if (s == nullptr) {
-			return new String(std::move(codes));
-		} else {
-			s->str = codes; 
+			s->str.reserve(x.size());
+			for (char16_t c: x) s->str += c;
 			s->rc_ = 1;
 			return s;
 		}
@@ -453,24 +459,14 @@ struct String : public Flow {
       		str.append(1, static_cast<char16_t>((c & UNI_HALF_MASK) + UNI_SUR_LOW_START));
 		}
 	}
-
 	string str;
+private:
+	// Beware! This default constructor is used to create a singleton !!!
+	// To create a non-singleton empty string use `String(u"")`
+	String(): str() { Flow::rc_ = constant_object_rc; }
 };
 
-inline String* concatStringsRc(String* s1, String* s2) {
-	if (unitRc(s1)) {
-		s1->str += s2->str;
-		decRc(s2);
-		return s1;
-	} else {
-		string ret;
-		ret.reserve(s1->str.size() + s2->str.size());
-		ret += s1->str;
-		ret += s2->str;
-		decRc(s1); decRc(s2);
-		return new String(std::move(ret));
-	}
-}
+String* concatStringsRc(String* s1, String* s2);
 
 struct Native : public Flow {
 	enum { TYPE = TypeFx::NATIVE };
@@ -849,11 +845,9 @@ struct Vec : public Flow {
 		if (v == nullptr) {
 			return new Vec(std::move(il));
 		} else {
-			v->vect = il;
-			/*v->vect.reserve(il.size());
-			for (T x: il) {
-				v->vect.push_back(x);
-			}*/
+			v->vect.clear();
+			v->vect.reserve(il.size());
+			for (T x: il) v->vect.push_back(x);
 			v->rc_ = 1;
 			return v;
 		}
@@ -934,11 +928,10 @@ struct Vec : public Flow {
 		return vect.at(i);
 	}
 	inline void set(Int i, ElType x) {
-		//
-		//assignRc<T>(vect[i], x);
-		T old = vect[i];
+		assignRc<T>(vect[i], x);
+		/*T old = vect[i];
 		vect[i] = x;
-		decRc(old);
+		decRc(old);*/
 	}
 	void shrink() {
 		vect.shrink_to_fit();
@@ -1437,7 +1430,7 @@ inline String* flow2stringRc(Flow* f) {
 	string os; 
 	flow2string(f, os);
 	decRc(f);
-	return new String(os); 
+	return String::make(std::move(os));
 }
 
 template<typename T>
@@ -1445,14 +1438,14 @@ inline String* toStringRc(T v) {
 	string str;
 	toString(v, str);
 	decRc(v);
-	return String::make(str);
+	return String::make(std::move(str));
 }
 
 template<typename T>
 inline String* toString(T v) {
 	string str;
 	toString(v, str);
-	return String::make(str);
+	return String::make(std::move(str));
 }
 
 void appendEscaped(string& str, const string& x);

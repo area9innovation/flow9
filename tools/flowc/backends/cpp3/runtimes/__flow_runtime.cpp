@@ -314,6 +314,51 @@ void istream2string(std::istream& is, string& str) {
 	}
 }
 
+String* concatStringsRc(String* s1, String* s2) {
+	if (s2->str.length() == 0) {
+		decRc(s2);
+		return s1;
+		/*if (s2->str.length() == 0) {
+			decRc(s2);
+			return s1;
+		} else {
+			decRc(s1);
+			if (unitRc(s2)) {
+				return s2;
+			} else {
+				String* ret = String::make(s2->str);
+				decRc(s2);
+				return ret;
+			}
+		}*/
+	} else {
+		if (s1->str.length() == 0) {
+			decRc(s1);
+			return s2;
+			/*if (unitRc(s1)) {
+				return s1;
+			} else {
+				String* ret = String::make(s1->str);
+				decRc(s1);
+				return ret;
+			}*/
+		} else {
+			if (unitRc(s1)) {
+				s1->str += s2->str;
+				decRc(s2);
+				return s1;
+			} else {
+				string ret;
+				ret.reserve(s1->str.size() + s2->str.size());
+				ret += s1->str;
+				ret += s2->str;
+				decRc(s1); decRc(s2);
+				return String::make(std::move(ret));
+			}
+		}
+	}
+}
+
 bool isSameObjRc(Flow* f1, Flow* f2) {
 	if (f1->typeId() == f2->typeId()) {
 		switch (f1->typeId()) {
