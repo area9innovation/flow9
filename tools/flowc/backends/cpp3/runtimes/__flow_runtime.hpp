@@ -24,9 +24,6 @@
 
 // C++ runtime for flow
 
-//#define CONCURRENCY_ON
-//#define ATOMIC_RC
-
 namespace flow {
 
 inline void fail(const std::string& msg) { throw std::runtime_error(msg); }
@@ -154,7 +151,6 @@ private:
 	static std::unordered_map<string, int32_t> struct_name_to_id;
 };
 
-
 // Forward declaration of all types
 
 struct Flow;
@@ -195,118 +191,134 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::BOOL, T> ||
 	is_type_v<TypeFx::DOUBLE, T>;
 
-// Object with such a reference counter stay forever (must be a global variables)
-const long constant_object_rc = -1;
+constexpr long CONSTANT_OBJECT_RC = -1;
+
+template<typename T>
+inline bool isConstatntObj(T x) {
+	if constexpr (CONST_SINGLETONS) {
+		if constexpr (is_flow_ancestor_v<T>) {
+			return x->rc_ == CONSTANT_OBJECT_RC;
+		} else {
+			return false;
+		}
+	} else {
+		return false;
+	}
+}
 
 template<typename T> inline void incRc(T x, Int d = 1) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (x->rc_ != constant_object_rc) {
-	#ifdef CONCURRENCY_ON
-		#ifdef ATOMIC_RC
-			std::atomic_ref<long>(x->rc_).fetch_add(d);
-		#else
-			if (x->rc_ < 0) {
-				std::atomic_ref<long>(x->rc_).fetch_sub(d);
-			} else {
-				x->rc_ += d;
+		if constexpr (CONCURRENCY_ON) {
+			if (!isConstatntObj<T>(x)) {
+				if constexpr (!ATOMIC_RC_SMART) {
+					std::atomic_ref<long>(x->rc_).fetch_add(d);
+				} else {
+					if (x->rc_ < 0) {
+						std::atomic_ref<long>(x->rc_).fetch_sub(d);
+					} else {
+						x->rc_ += d;
+					}
+				}
 			}
-		#endif
-	#else
+		} else {
 			x->rc_ += d;
-	#endif
 		}
 	}
 }
 
 template<typename T> inline void decRc(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (x->rc_ != constant_object_rc) {
-	#ifdef CONCURRENCY_ON
-		#ifdef ATOMIC_RC
-			if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
-				delete x;
-			}
-		#else
-			if (x->rc_ < 0) {
-				if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
-					delete x;
+		if constexpr (CONCURRENCY_ON) {
+			if (!isConstatntObj<T>(x)) {
+				if constexpr (!ATOMIC_RC_SMART) {
+					if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
+						delete x;
+					}
+				} else {
+					if (x->rc_ < 0) {
+						if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -2) {
+							delete x;
+						}
+					} else {
+						x->rc_ -= 1;
+						if (x->rc_ == 0) {
+							delete x;
+						}
+					}
 				}
-			} else {
-				x->rc_ -= 1;
-				if (x->rc_ == 0) {
-					delete x;
-				}
 			}
-		#endif
-	#else
+		} else {
 			x->rc_ -= 1;
 			if (x->rc_ == 0) {
 				delete x;
-			} 
-	#endif
+			}
 		}
 	}
 }
 
 template<typename T> inline T decRcReuse(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		if (x->rc_ != constant_object_rc) {
-	#ifdef CONCURRENCY_ON
-		#ifdef ATOMIC_RC
-			if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
-				x->unbindChildren();
-				return x;
+		if constexpr (CONCURRENCY_ON) {
+			if (!isConstatntObj<T>(x)) {
+				if constexpr (!ATOMIC_RC_SMART) {
+					if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
+						return x;
+					} else {
+						return nullptr;
+					}
+				} else {
+					if (x->rc_ < 0) {
+						if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -2) {
+							return x;
+						} else {
+							return nullptr;
+						}
+					} else {
+						x->rc_ -= 1;
+						if (x->rc_ == 0) {
+							return x;
+						} else {
+							return nullptr;
+						}
+					}
+				}
 			} else {
 				return nullptr;
 			}
-		#else
-			if (x->rc_ < 0) {
-				if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -1) {
-					x->unbindChildren();
-					return x;
-				} else {
-					return nullptr;
-				}
-			} else {
-				x->rc_ -= 1;
-				if (x->rc_ == 0) {
-					x->unbindChildren();
-					return x;
-				} else {
-					return nullptr;
-				}
-			}
-		#endif
-	#else
+		} else {
 			x->rc_ -= 1;
 			if (x->rc_ == 0) {
-				x->unbindChildren();
 				return x;
 			} else {
 				return nullptr;
 			}
-	#endif
-		} else {
-			return nullptr;
 		}
 	}
 }
 
 template<typename T> inline void decRcFinish(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		//if (x->rc_ != constant_object_rc) {
-			delete x;
-		//}
+		delete x;
 	}
 }
 
-template<typename T> inline bool unitRc(T x) {
-	return x->rc_ == 1;
-}
+template<typename T> inline bool unitRc(T x) { return x->rc_ == 1; }
 
 template<typename T, typename R> inline R decRcRet(T x, R ret) { decRc(x); return ret; }
 
 template<typename T> inline T incRcRet(T x) { incRc(x); return x; }
+
+template<typename T> inline void assignRc(T& to, T what) {
+	if constexpr (is_flow_ancestor_v<T>) {
+		T old = to;
+		to = what;
+		if (old) {
+			decRc(old);
+		}
+	} else {
+		to = what;
+	}
+}
 
 /* 
 	All access methods are divided into three groups:
@@ -325,17 +337,6 @@ template<typename T> inline String* toString(T v);
 template<typename T> inline void toStringRc(T v, string& str);
 template<typename T> inline void toString(T v, string& str);
 template<typename T> inline T makeDefVal();
-template<typename T> inline void assignRc(T& to, T what) {
-	if constexpr (is_flow_ancestor_v<T>) {
-		T old = to;
-		to = what;
-		if (old) {
-			decRc(old);
-		} 
-	} else {
-		to = what;
-	}
-}
 
 // Dynamic wrapper for all values 
 
@@ -345,8 +346,8 @@ struct Flow {
 	virtual TypeId typeId() const = 0;
 	virtual Int size() const { return 0; }
 	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
-	virtual void unbindChildren() { }
-	virtual void makeShared() { rc_ = -rc_; }
+	//virtual void unbindChildren() { }
+	virtual void makeShared() { rc_ = -(rc_ + 1); }
 	inline bool isShared() { return (rc_ < 0); }
 	TypeId typeIdRc() const { return decRcRet(this, typeId()); }
 	Int sizeRc() const { return decRcRet(this, size()); }
@@ -407,6 +408,7 @@ const Int UNI_SUR_LOW_END = 0xDFFF;
 
 struct String : public Flow {
 	enum { TYPE = TypeFx::STRING };
+	String(): str() { }
 	String(const std::string& s): str(std2string(s)) { }
 	String(const string& s): str(s) { }
 	String(string&& s): str(std::move(s)) { }
@@ -419,30 +421,52 @@ struct String : public Flow {
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
 
+	static String* makeSingleton() { static String es; es.rc_ = CONSTANT_OBJECT_RC; return &es; }
+
 	// There must be only one instance of empty string
-	static String* make() { static String es; return &es; }
+	static String* make() {
+		if constexpr (CONST_SINGLETONS) {
+			static String* es = makeSingleton();
+			return es;
+		} else {
+			return new String();
+		}
+	}
 	template<typename... As>
 	static String* make(As... as) { return new String(std::move(as)...); }
 	static String* make(std::initializer_list<char16_t>&& codes) { return new String(std::move(codes)); }
 
+	static String* makeOrReuse(String* s) {
+		if (s == nullptr || isConstatntObj(s)) {
+			return make();
+		} else {
+			s->str.clear();
+			s->rc_ = 1;
+			return s;
+		}
+	}
 	static String* makeOrReuse(String* s, string&& x) {
-		if (s == nullptr) {
-			return make(x);
+		if (s == nullptr || isConstatntObj(s)) {
+			return make(std::move(x));
 		} else {
 			s->str.clear();
 			s->str.reserve(x.size());
-			for (char16_t c: x) s->str += c;
+			for (char16_t c: x) {
+				s->str += c;
+			}
 			s->rc_ = 1;
 			return s;
 		}
 	}
 	static String* makeOrReuse(String* s, std::initializer_list<char16_t>&& x) {
-		if (s == nullptr) {
+		if (s == nullptr || isConstatntObj(s)) {
 			return make(std::move(x));
 		} else {
 			s->str.clear();
 			s->str.reserve(x.size());
-			for (char16_t c: x) s->str += c;
+			for (char16_t c: x) {
+				s->str += c;
+			}
 			s->rc_ = 1;
 			return s;
 		}
@@ -459,14 +483,9 @@ struct String : public Flow {
       		str.append(1, static_cast<char16_t>((c & UNI_HALF_MASK) + UNI_SUR_LOW_START));
 		}
 	}
+	static String* concatRc(String* s1, String* s2);
 	string str;
-private:
-	// Beware! This default constructor is used to create a singleton !!!
-	// To create a non-singleton empty string use `String(u"")`
-	String(): str() { Flow::rc_ = constant_object_rc; }
 };
-
-String* concatStringsRc(String* s1, String* s2);
 
 struct Native : public Flow {
 	enum { TYPE = TypeFx::NATIVE };
@@ -535,14 +554,28 @@ struct Str : public Flow {
 	~Str() override { decRcFields<0>(); }
 
 	template<typename S>
+	static S makeSingleton() {
+		if constexpr (CONST_SINGLETONS && sizeof...(Fs) == 0) {
+			static std::remove_pointer_t<S> x; x.rc_ = CONSTANT_OBJECT_RC; return &x;
+		} else {
+			return nullptr;
+		}
+	}
+	template<typename S>
 	static S make(Fs... fs) {
-		return new std::remove_pointer_t<S>(std::move(fs)...);
+		if constexpr (CONST_SINGLETONS && sizeof...(Fs) == 0) {
+			static S singleton = makeSingleton<S>();
+			return singleton;
+		} else {
+			return new std::remove_pointer_t<S>(std::move(fs)...);
+		}
 	}
 	template<typename S>
 	static S makeOrReuse(S s, Fs... fs) {
-		if (s == nullptr) {
+		if (s == nullptr || isConstatntObj(s)) {
 			return new std::remove_pointer_t<S>(std::move(fs)...);
 		} else {
+			s->template decRcFields<0>();
 			s->fields = std::tie(fs...);
 			s->rc_ = 1;
 			return s;
@@ -557,10 +590,6 @@ struct Str : public Flow {
 	Int size() const override { return sizeof...(Fs); }
 	TypeId componentTypeId(Int i) override {
 		return componentTypeId_<0>(i);
-	}
-	void unbindChildren() override { 
-		decRcFields<0>();
-		resetFields<0>();
 	}
 	void makeShared() override {
 		if (!isShared()) {
@@ -804,6 +833,7 @@ struct Vec : public Flow {
 	using iterator = typename std::vector<T>::iterator;
 
 	Vec(): vect() { }
+	Vec(Int s): vect() { vect.reserve(s); }
 	Vec(std::initializer_list<T>&& il): vect(std::move(il)) { }
 	Vec(const std::initializer_list<T>& il): vect(il) { }
 	Vec(Vec&& a): vect(std::move(a.vect)) { }
@@ -829,25 +859,41 @@ struct Vec : public Flow {
 	Vec& operator = (Vec&& r) = delete;
 	Vec& operator = (const Vec& r) = delete;
 
-	template<typename... As>
-	static Vec* make(As... as) { return new Vec(std::move(as)...); }
+	static Vec* makeSingleton() { static Vec x; x.rc_ = CONSTANT_OBJECT_RC; return &x; }
+
+	// There must be only one instance of empty vector
+	static Vec* make() {
+		if constexpr (CONST_SINGLETONS) {
+			static Vec* x = makeSingleton();
+			return x;
+		} else {
+			return new Vec();
+		}
+	}
+	template<typename A>
+	static Vec* make(A a) { return new Vec(std::move(a)); }
 	static Vec* make(std::initializer_list<T>&& il) { return new Vec(std::move(il)); }
 
 	static Vec* makeOrReuse(Vec* v) {
-		if (v == nullptr) {
-			return new Vec();
+		if (v == nullptr || isConstatntObj(v)) {
+			return make();
 		} else {
+			v->decRcVec();
+			v->vect.clear();
 			v->rc_ = 1;
 			return v;
 		}
 	}
 	static Vec* makeOrReuse(Vec* v, std::initializer_list<T>&& il) {
-		if (v == nullptr) {
-			return new Vec(std::move(il));
+		if (v == nullptr || isConstatntObj(v)) {
+			return make(std::move(il));
 		} else {
+			v->decRcVec();
 			v->vect.clear();
 			v->vect.reserve(il.size());
-			for (T x: il) v->vect.push_back(x);
+			for (T x: il) {
+				v->vect.push_back(x);
+			}
 			v->rc_ = 1;
 			return v;
 		}
@@ -868,9 +914,6 @@ struct Vec : public Flow {
 	}
 	TypeId componentTypeId(Int i) override {
 		return get_type_id_v<T>;
-	}
-	void unbindChildren() override {
-		vect.clear();
 	}
 	void makeShared() override {
 		if (!isShared()) {
@@ -905,6 +948,9 @@ struct Vec : public Flow {
 
 	// specific methods
 	void pushBack(T x) {
+		if (isConstatntObj(this)) {
+			fail(std::string("pushing into constant object!: ") + toString(x)->toStd());
+		}
 		vect.push_back(x);
 	}
 	void pushBackRc(T x) {
@@ -928,16 +974,43 @@ struct Vec : public Flow {
 		return vect.at(i);
 	}
 	inline void set(Int i, ElType x) {
-		assignRc<T>(vect[i], x);
-		/*T old = vect[i];
-		vect[i] = x;
-		decRc(old);*/
+		if constexpr (std::is_same_v<T, bool>) {
+			T old = vect[i];
+			vect[i] = x;
+			decRc(old);
+		} else {
+			assignRc<T>(vect[i], x);
+		}
 	}
-	void shrink() {
-		vect.shrink_to_fit();
+
+	static Vec* concatRc(Vec* v1, Vec* v2) {
+		if (v1->vect.size() == 0) {
+			decRc(v1);
+			return v2;
+		} else if (v2->vect.size() == 0) {
+			decRc(v2);
+			return v1;
+		} else if (unitRc(v1)) {
+			for(T x : *v2) {
+				incRc(x);
+				v1->pushBack(x);
+			}
+			decRc(v2);
+			return v1;
+		} else {
+			Vec* ret = make(v1->vect.size() + v2->vect.size());
+			for(T x : *v1) {
+				incRc(x);
+				ret->pushBack(x);
+			}
+			for(T x : *v2) {
+				incRc(x);
+				ret->pushBack(x);
+			}
+			decRc(v1); decRc(v2);
+			return ret;
+		}
 	}
-	std::vector<T>& getVect() { return vect; }
-private:
 	std::vector<T> vect;
 };
 
@@ -947,7 +1020,7 @@ struct Ref : public Flow {
 	using RefType = T;
 	Ref() { }
 	Ref(T r): val(r) { }
-	Ref(const Ref& r): val(r.val) { incRc(val); }
+	Ref(const Ref& r): val(r.val) { }
 	Ref(Ref&& r): val(std::move(r.val)) { }
 	~Ref() override { 
 		if constexpr (is_flow_ancestor_v<T>) {
@@ -967,6 +1040,7 @@ struct Ref : public Flow {
 		if (r == nullptr) {
 			return new Ref(std::move(a));
 		} else {
+			decRc(r->val);
 			r->val = a;
 			r->rc_ = 1;
 			return r;
@@ -978,12 +1052,6 @@ struct Ref : public Flow {
 	Int size() const override { return 1; }
 	TypeId componentTypeId(Int i) override {
 		return get_type_id_v<T>;
-	}
-	void unbindChildren() override {
-		if constexpr (is_flow_ancestor_v<T>) {
-			decRc(val);
-			val = nullptr;
-		}
 	}
 	void makeShared() override {
 		if (!isShared()) {
@@ -1034,10 +1102,6 @@ struct Ref : public Flow {
 	inline void set(T v) {
 		assignRc<T>(val, v);
 	}
-	inline T& getVal() {
-		return val;
-	}
-private:
 	T val;
 };
 
@@ -1087,6 +1151,10 @@ struct Fun : public Flow {
 		if (f == nullptr) {
 			return new Fun(std::move(fn), std::move(cl)...);
 		} else {
+			for (Flow* x: f->closure) {
+				decRc(x);
+			}
+			f->closure.clear();
 			f->fn = std::move(fn);
 			f->initClosure<Cs...>(std::move(cl)...);
 			f->rc_ = 1;
@@ -1098,9 +1166,6 @@ struct Fun : public Flow {
 	TypeId typeId() const override { return TYPE; }
 	Int size() const override {
 		return static_cast<Int>(closure.size());
-	}
-	void unbindChildren() override {
-		closure.clear();
 	}
 	void makeShared() override {
 		if (!isShared()) {
@@ -1190,6 +1255,12 @@ inline T2 castRc(T1 x) {
 			}
 			else if constexpr (is_flow_ancestor_v<T1>) {
 				return x; 
+			} else {
+				fail(
+					std::string("invalid conversion to flow of type: ") +
+					string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
+					std::string("of value:\n") + toStdString(x)
+				);
 			}
 	} 
 	else if constexpr (std::is_same_v<T2, Int>) {
@@ -1202,11 +1273,21 @@ inline T2 castRc(T1 x) {
 				case TypeFx::BOOL:   return bool2int(x->template getRc<Bool>());
 				case TypeFx::DOUBLE: return double2int(x->template getRc<Double>());
 				case TypeFx::STRING: { Int ret = string2int(x->template get<String*>()->str); decRc(x); return ret; }
-				default:             fail("invalid conversion to int");
+				default: fail(
+					std::string("invalid conversion to int of type: ") +
+					string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
+					std::string("of value:\n") + toStdString(x)
+				);
 			}
 		}
 		else if constexpr (std::is_same_v<T1, Native*>) {
 			return x->template getRc<Int>();
+		} else {
+			fail(
+				std::string("invalid conversion to int of type: ") +
+				string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
+				std::string("of value:\n") + toStdString(x)
+			);
 		}
 	}
 	else if constexpr (std::is_same_v<T2, Bool>) {
@@ -1219,11 +1300,21 @@ inline T2 castRc(T1 x) {
 				case TypeFx::BOOL:   return x->template getRc<Bool>();
 				case TypeFx::DOUBLE: return double2bool(x->template getRc<Double>());
 				case TypeFx::STRING: { Bool ret = string2bool(x->template get<String*>()->str); decRc(x); return ret; }
-				default:             fail("invalid conversion to bool");
+				default: fail(
+					std::string("invalid conversion to bool of type: ") +
+					string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
+					std::string("of value:\n") + toStdString(x)
+				);
 			}
 		}
 		else if constexpr (std::is_same_v<T1, Native*>) {
 			return x->template getRc<Bool>();
+		} else {
+			fail(
+				std::string("invalid conversion to bool of type: ") +
+				string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
+				std::string("of value:\n") + toStdString(x)
+			);
 		}
 	}
 	else if constexpr (std::is_same_v<T2, Double>) {
@@ -1236,11 +1327,21 @@ inline T2 castRc(T1 x) {
 				case TypeFx::BOOL:   return bool2double(x->template getRc<Bool>());
 				case TypeFx::DOUBLE: return x->template getRc<Double>();
 				case TypeFx::STRING: { Double ret = string2double(x->template get<String*>()->str); decRc(x); return ret; }
-				default:             fail("invalid conversion to double");
+				default: fail(
+					std::string("invalid conversion to double") +
+					string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
+					std::string("of value:\n") + toStdString(x)
+				);
 			}
 		}
 		else if constexpr (std::is_same_v<T1, Native*>) {
 			return x->template getRc<Double>();
+		} else {
+			fail(
+				std::string("invalid conversion to double of type: ") +
+				string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
+				std::string("of value:\n") + toStdString(x)
+			);
 		}
 	}
 	else if constexpr (std::is_same_v<T2, String*>) {
@@ -1263,8 +1364,7 @@ inline T2 castRc(T1 x) {
 	else if constexpr (is_type_v<TypeFx::ARRAY, T2>) {
 		using V2 = std::remove_pointer<T2>::type;
 		if constexpr (is_type_v<TypeFx::ARRAY, T1>) {
-			T2 ret = V2::make();
-			ret->reserve(x->size());
+			T2 ret = V2::make(x->size());
 			using V1 = std::remove_pointer<T1>::type;
 			for (auto e : *x) {
 				incRc(e);
@@ -1275,8 +1375,7 @@ inline T2 castRc(T1 x) {
 		} else if (T2 f = dynamic_cast<T2>(x)) {
 			return f;
 		} else {
-			T2 ret = V2::make();
-			ret->reserve(x->size());
+			T2 ret = V2::make(x->size());
 			for (Int i = 0; i < x->size(); ++ i) {
 				Flow* e = x->getFlowRc1(i);
 				ret->pushBack(castRc<Flow*, typename V2::ElType>(e));

@@ -298,14 +298,20 @@ export {
 	);
 
 	FiCpp3Config(
-		outfile : string,      // name of an pitput file. If not explicitly set, is a flowfile name
-		outputdir : string,    // directory for the translated sources
-		namespace : string,    // namespace, enclosing the generated code
-		monolith : bool,       // build a single source file
-		volatile : [string],   // variables, which must be initialized inside main function
+		outfile : string,       // name of an pitput file. If not explicitly set, is a flowfile name
+		outputdir : string,     // directory for the translated sources
+		namespace : string,     // namespace, enclosing the generated code
+		monolith : bool,        // build a single source file
+		volatile : [string],    // variables, which must be initialized inside main function
 		backendDirs : [string], // directories, containing native runtime function definition
-		qtOpts: [string],      // options for Qt build
-		debug : bool,          // produce code with more debugging facilities
+		qtOpts: [string],       // options for Qt build
+		debug : bool,           // produce code with more debugging facilities
+		concurrencyOn: bool,    // enable concurrency
+
+		// optimization flags
+		atomicRcSmart: bool,
+		constSingletons: bool,
+
 		config: CompilerConfig,
 		verbose: int,
 		threadId : int,
@@ -790,35 +796,6 @@ getFcBackendConfigs(config : CompilerConfig) {
 				)
 			) else None();
 
-	cpp3param = getConfigParameter(config.config, "cpp3");
-	cpp3volatile = getConfigParameter(config.config, "cpp-volatile");
-	cpp3qtOpts = getConfigParameter(config.config, "cpp-qt-opts");
-	cpp3config =
-		if (cpp3param != "") {
-			plain_flowfile = strReplace(config.flowfile, "/", "_");
-			outfile = if (cpp3param == "1") changeFileExt(config.flowfile, "") else cpp3param;
-			outfile_dir = dirName(outfile);
-			dst_dir = if (outfile_dir == outfile) resolveRelativePath(".") else outfile_dir;
-			gen_dir = pathCombine(dst_dir, "cpp3gen");
-			ensureDirectoryExists(gen_dir);
-			Some(FiCpp3Config(
-				outfile,
-				gen_dir,
-				getConfigParameterDef(config.config, "cpp-namespace", plain_flowfile),
-				getConfigParameterDef(config.config, "cpp-mono", "0") == "1",
-				concat(["allUrlParameters"], if (cpp3volatile == "") [] else strSplit(cpp3volatile, ",")),
-				concat(
-					[pathCombineMany([getFlowDir(), "tools", "flowc", "backends", "cpp3"])],
-					filter(strSplit(getConfigParameter(config.config, "cpp-natives"), ","), isNotSpace)
-				),
-				if (cpp3qtOpts == "") [] else strSplit(cpp3qtOpts, ";"),
-				getConfigParameterDef(config.config, "cpp-debug", "0") == "1",
-				config,
-				s2i(getConfigParameterDef(config.config, "cpp-verbose", i2s(config.verbose))),
-				config.threadId,
-			));
-		} else None();
-
 	FcBackendConfigs(
 		jsconfig,
 		es6config,
@@ -841,7 +818,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 		tsdconfig,
 		cpp2config,
 		wiseconfig,
-		cpp3config,
+		fcMakeCpp3Config(config, outdir),
 	)
 }
 
@@ -995,6 +972,49 @@ fcMakeJavaConfig(config : CompilerConfig, outdir : string) -> Maybe<FiJavaConfig
 	}
 }
 
+fcMakeCpp3Config(config : CompilerConfig, outdir : string) -> Maybe<FiCpp3Config> {
+	if (!(isConfigParameterSet(config.config, "cpp3"))) {
+		None();
+	} else {
+		cpp3param = getConfigParameter(config.config, "cpp3");
+		cpp3volatile = getConfigParameter(config.config, "cpp-volatile");
+		cpp3qtOpts = getConfigParameter(config.config, "cpp-qt-opts");
+		
+		plain_flowfile = strReplace(config.flowfile, "/", "_");
+		outfile = if (cpp3param == "1") changeFileExt(config.flowfile, "") else cpp3param;
+		outfile_dir = dirName(outfile);
+		dst_dir = if (outfile_dir == outfile) resolveRelativePath(".") else outfile_dir;
+		gen_dir = pathCombine(dst_dir, "cpp3gen");
+
+		concurrency_on = isParameterTrue(getConfigParameterDef(config.config, "cpp-concurrent", "1"));
+		atomic_rc_smart = concurrency_on && isParameterTrue(getConfigParameterDef(config.config, "cpp-rc-smart", "0"));
+		const_singletons = isParameterTrue(getConfigParameterDef(config.config, "cpp-singletons", "1"));
+
+		ensureDirectoryExists(gen_dir);
+		Some(FiCpp3Config(
+			outfile,
+			gen_dir,
+			getConfigParameterDef(config.config, "cpp-namespace", plain_flowfile),
+			getConfigParameterDef(config.config, "cpp-mono", "0") == "1",
+			concat(["allUrlParameters"], if (cpp3volatile == "") [] else strSplit(cpp3volatile, ",")),
+			concat(
+				[pathCombineMany([getFlowDir(), "tools", "flowc", "backends", "cpp3"])],
+				filter(strSplit(getConfigParameter(config.config, "cpp-natives"), ","), isNotSpace)
+			),
+			if (cpp3qtOpts == "") [] else strSplit(cpp3qtOpts, ";"),
+			getConfigParameterDef(config.config, "cpp-debug", "0") == "1",
+
+			concurrency_on,
+			atomic_rc_smart,
+			const_singletons,
+
+			config,
+			s2i(getConfigParameterDef(config.config, "cpp-verbose", i2s(config.verbose))),
+			config.threadId,
+		));
+	}
+}
+
 reservedJavaNames = buildSet([
 	// keywords
 	"abstract", "continue", "for", "new", "switch", "assert", "default", "if", "package", "synchronized", "boolean", "do", "goto", "private", "this", "break", "double", "implements", "protected", "throw", "byte", "else", "import", "public", "throws", "case", "enum", "instanceof", "return", "transient", "catch", "extends", "int", "short", "try", "char", "final", "interface", "static", "void", "class", "finally", "long", "strictfp", "volatile", "const", "float", "native", "super", "while",
@@ -1003,6 +1023,7 @@ reservedJavaNames = buildSet([
 	// null
 	"null",
 ]);
+
 escapeJavaReservedName(name : string) -> string {
 	if (containsSet(reservedJavaNames, name)) {
 		name + "_";

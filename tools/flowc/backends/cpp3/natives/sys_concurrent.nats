@@ -31,52 +31,48 @@ Cpp3NativePlain("getThreadId", true,
 Cpp3NativePlain("concurrent", true,
 "template<typename T> Vec<T>* $F_1(concurrent)(Bool fine, Vec<Fun<T>*>* tasks);\n",
 "template<typename T> Vec<T>* $F_1(concurrent)(Bool fine, Vec<Fun<T>*>* tasks) {
-#ifdef CONCURRENCY_ON
-	if (tasks->size() == 0) {
-		return Vec<T>::make();
-	} else if (tasks->size() == 1) {
-		Vec<T>* ret = Vec<T>::make();
-		ret->reserve(tasks->size());
+	if constexpr (CONCURRENCY_ON) {
+		if (tasks->size() == 0) {
+			return Vec<T>::make();
+		} else if (tasks->size() == 1) {
+			Vec<T>* ret = Vec<T>::make(tasks->size());
+			for (auto& f : *tasks) {
+				ret->pushBack(f->callRc1());
+			}
+			decRc(tasks);
+			return ret;
+		} else {
+			if constexpr (ATOMIC_RC_SMART) {
+				tasks->makeShared();
+			}
+			std::vector<T> ret = QtConcurrent::blockingMapped<
+				std::vector<T>,
+				std::vector<Fun<T>*>,
+				std::function<T(Fun<T>*)>
+			>(
+				tasks->vect,
+				[](Fun<T>* task) {
+					return task->callRc1();
+				}
+			);
+			decRc(tasks);
+			return Vec<T>::make(std::move(ret));
+		}
+	} else {
+		Vec<T>* ret = Vec<T>::make(tasks->size());
 		for (auto& f : *tasks) {
 			ret->pushBack(f->callRc1());
 		}
 		decRc(tasks);
 		return ret;
-	} else {
-#ifdef CONCURRENCY_ON
-#ifndef ATOMIC_RC
-		tasks->makeShared();
-#endif
-#endif
-		std::vector<T> ret = QtConcurrent::blockingMapped<
-			std::vector<T>,
-			std::vector<Fun<T>*>,
-			std::function<T(Fun<T>*)>
-		>(
-			tasks->getVect(),
-			[](Fun<T>* task) {
-				return task->callRc1();
-			}
-		);
-		decRc(tasks);
-		return Vec<T>::make(std::move(ret));
 	}
-#else
-	Vec<T>* ret = Vec<T>::make();
-	ret->reserve(tasks->size());
-	for (auto& f : *tasks) {
-		ret->pushBack(f->callRc1());
-	}
-	decRc(tasks);
-	return ret;
-#endif
 }\n", "", 
 [], ["concurrent"]),
 
 Cpp3NativePlain("atomicRefIntAddition", true,
 "inline Int $F_1(atomicRefIntAddition)(Ref<Int>* v, Int delta);\n",
 "inline Int $F_1(atomicRefIntAddition)(Ref<Int>* v, Int delta) {
-	return std::atomic_ref<Int>(v->getVal()).fetch_add(delta);
+	return std::atomic_ref<Int>(v->val).fetch_add(delta);
 }\n", "",
 [], []),
 
