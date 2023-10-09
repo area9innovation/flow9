@@ -417,15 +417,15 @@ const Int UNI_SUR_LOW_END = 0xDFFF;
 
 struct String : public Flow {
 	enum { TYPE = TypeFx::STRING };
-	String(): str() { }
-	String(const std::string& s): str(std2string(s)) { }
-	String(const string& s): str(s) { }
-	String(string&& s): str(std::move(s)) { }
-	String(const char16_t* s): str(s) { }
-	String(const char16_t* s, Int len): str(s, len) { }
-	String(char16_t c): str(1, c) { }
+	String(): str_() { }
+	String(const std::string& s): str_(std2string(s)) { }
+	String(const string& s): str_(s) { }
+	String(string&& s): str_(std::move(s)) { }
+	String(const char16_t* s): str_(s) { }
+	String(const char16_t* s, Int len): str_(s, len) { }
+	String(char16_t c): str_(1, c) { }
 	String(Int c) { append(c); }
-	String(std::initializer_list<char16_t>&& codes): str(std::move(codes)) { }
+	String(std::initializer_list<char16_t>&& codes): str_(std::move(codes)) { }
 
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
@@ -449,8 +449,8 @@ struct String : public Flow {
 		if (s == nullptr || isConstatntObj(s)) {
 			return make();
 		} else {
-			s->str.clear();
-			s->makeUnitRc(); //rc_ = 1;
+			s->str_.clear();
+			s->makeUnitRc();
 			return s;
 		}
 	}
@@ -458,12 +458,12 @@ struct String : public Flow {
 		if (s == nullptr || isConstatntObj(s)) {
 			return make(std::move(x));
 		} else {
-			s->str.clear();
-			s->str.reserve(x.size());
+			s->str_.clear();
+			s->str_.reserve(x.size());
 			for (char16_t c: x) {
-				s->str += c;
+				s->str_ += c;
 			}
-			s->makeUnitRc(); //rc_ = 1;
+			s->makeUnitRc();
 			return s;
 		}
 	}
@@ -471,29 +471,42 @@ struct String : public Flow {
 		if (s == nullptr || isConstatntObj(s)) {
 			return make(std::move(x));
 		} else {
-			s->str.clear();
-			s->str.reserve(x.size());
+			s->str_.clear();
+			s->str_.reserve(x.size());
 			for (char16_t c: x) {
-				s->str += c;
+				s->str_ += c;
 			}
-			s->makeUnitRc(); //rc_ = 1;
+			s->makeUnitRc();
 			return s;
 		}
 	}
 
 	TypeId typeId() const override { return TypeFx::STRING; }
-	std::string toStd() const { return string2std(str); }
+	std::string toStd() const { return string2std(str_); }
 	void append(Int c) {
 		if (c <= 0xFFFF) {
-			str.append(1, static_cast<char16_t>(c));
+			str_.append(1, static_cast<char16_t>(c));
 		} else {
 			c -= UNI_HALF_BASE;
-			str.append(1, static_cast<char16_t>((c >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
-      		str.append(1, static_cast<char16_t>((c & UNI_HALF_MASK) + UNI_SUR_LOW_START));
+			str_.append(1, static_cast<char16_t>((c >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
+      		str_.append(1, static_cast<char16_t>((c & UNI_HALF_MASK) + UNI_SUR_LOW_START));
 		}
 	}
+	inline Int size() const { return static_cast<Int>(str_.size()); }
+	inline char16_t getChar(Int i) const { return str_.at(i); }
+	inline Int getInt(Int i) const {
+		if (i < 0 || i >= static_cast<Int>(str_.size())) {
+			return -1;
+		} else {
+			return static_cast<Int>(str_.at(i));
+		}
+	}
+	inline const string& str() const { return str_; }
+	inline string& strRef() { return str_; }
 	static String* concatRc(String* s1, String* s2);
-	string str;
+
+private:
+	string str_;
 };
 
 struct Native : public Flow {
@@ -615,12 +628,12 @@ struct Str : public Flow {
 		decRc(this);
 	}
 	Flow* getFlowRc(String* f) override {
-		int field_idx = RTTI::structField(Id, f->str);
+		int field_idx = RTTI::structField(Id, f->str());
 		decRc(f);
 		return getFlowRc(field_idx);
 	}
 	void setFlowRc(String* f, Flow* v) override {
-		int field_idx = RTTI::structField(Id, f->str);
+		int field_idx = RTTI::structField(Id, f->str());
 		decRc(f);
 		setFlowRc(field_idx, v);
 	}
@@ -632,12 +645,12 @@ struct Str : public Flow {
 		setFlowRc1_<0>(i, v);
 	}
 	Flow* getFlowRc1(String* f) override {
-		int field_idx = RTTI::structField(Id, f->str);
+		int field_idx = RTTI::structField(Id, f->str());
 		decRc(f);
 		return getFlowRc1(field_idx); 
 	}
 	void setFlowRc1(String* f, Flow* v) override {
-		int field_idx = RTTI::structField(Id, f->str);
+		int field_idx = RTTI::structField(Id, f->str());
 		decRc(f);
 		setFlowRc1(field_idx, v);
 	}
@@ -1284,7 +1297,7 @@ inline T2 castRc(T1 x) {
 				case TypeFx::INT:    return x->template getRc<Int>();
 				case TypeFx::BOOL:   return bool2int(x->template getRc<Bool>());
 				case TypeFx::DOUBLE: return double2int(x->template getRc<Double>());
-				case TypeFx::STRING: { Int ret = string2int(x->template get<String*>()->str); decRc(x); return ret; }
+				case TypeFx::STRING: { Int ret = string2int(x->template get<String*>()->str()); decRc(x); return ret; }
 				default: fail(
 					std::string("invalid conversion to int of type: ") +
 					string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
@@ -1311,7 +1324,7 @@ inline T2 castRc(T1 x) {
 				case TypeFx::INT:    return int2bool(x->template getRc<Int>());
 				case TypeFx::BOOL:   return x->template getRc<Bool>();
 				case TypeFx::DOUBLE: return double2bool(x->template getRc<Double>());
-				case TypeFx::STRING: { Bool ret = string2bool(x->template get<String*>()->str); decRc(x); return ret; }
+				case TypeFx::STRING: { Bool ret = string2bool(x->template get<String*>()->str()); decRc(x); return ret; }
 				default: fail(
 					std::string("invalid conversion to bool of type: ") +
 					string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
@@ -1338,7 +1351,7 @@ inline T2 castRc(T1 x) {
 				case TypeFx::INT:    return int2double(x->template getRc<Int>());
 				case TypeFx::BOOL:   return bool2double(x->template getRc<Bool>());
 				case TypeFx::DOUBLE: return x->template getRc<Double>();
-				case TypeFx::STRING: { Double ret = string2double(x->template get<String*>()->str); decRc(x); return ret; }
+				case TypeFx::STRING: { Double ret = string2double(x->template get<String*>()->str()); decRc(x); return ret; }
 				default: fail(
 					std::string("invalid conversion to double") +
 					string2std(RTTI::typeName(x->typeId())) + std::string(", ") +
@@ -1497,7 +1510,7 @@ inline Int compare(T v1, T v2) {
 	else if constexpr (std::is_same_v<T, Bool>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
 	else if constexpr (std::is_same_v<T, Double>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
 	else if constexpr (std::is_same_v<T, Flow*>) { return flowCompare(v1, v2); }
-	else if constexpr (std::is_same_v<T, String*>) { return v1->str.compare(v2->str); }
+	else if constexpr (std::is_same_v<T, String*>) { return v1->str().compare(v2->str()); }
 	else if constexpr (std::is_same_v<T, Native*>) { return compare<void*>(v1, v2); }
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
 		Int c1 = compare<Int>(v1->size(), v2->size());
@@ -1568,7 +1581,7 @@ inline void toString(T v, string& str) {
 	else if constexpr (std::is_same_v<T, Bool>) { str.append(bool2string(v)); }
 	else if constexpr (std::is_same_v<T, Double>) { str.append(double2string(v, true)); }
 	else if constexpr (std::is_same_v<T, String*>) {
-		str.append(u"\""); appendEscaped(str, v->str); str.append(u"\"");
+		str.append(u"\""); appendEscaped(str, v->str()); str.append(u"\"");
 	}
 	else if constexpr (std::is_same_v<T, Flow*>) { flow2string(v, str); }
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {

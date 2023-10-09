@@ -315,21 +315,21 @@ void istream2string(std::istream& is, string& str) {
 }
 
 String* String::concatRc(String* s1, String* s2) {
-	if (s2->str.length() == 0) {
+	if (s2->str_.size() == 0) {
 		decRc(s2);
 		return s1;
-	} else if (s1->str.length() == 0) {
+	} else if (s1->str_.size() == 0) {
 		decRc(s1);
 		return s2;
 	} else if (isUnitRc(s1)) {
-		s1->str += s2->str;
+		s1->str_ += s2->str_;
 		decRc(s2);
 		return s1;
 	} else {
 		string ret;
-		ret.reserve(s1->str.size() + s2->str.size());
-		ret += s1->str;
-		ret += s2->str;
+		ret.reserve(s1->str_.size() + s2->str_.size());
+		ret += s1->str_;
+		ret += s2->str_;
 		decRc(s1); decRc(s2);
 		return String::make(std::move(ret));
 	}
@@ -352,7 +352,7 @@ bool isSameObjRc(Flow* f1, Flow* f2) {
 void appendEscaped(string& str, const string& x) {
 	for (char16_t c : x) {
 		switch (c) {
-			case '"': str.append(u"\\\"");  break;
+			case '"':  str.append(u"\\\""); break;
 			case '\\': str.append(u"\\\\"); break;
 			case '\n': str.append(u"\\n");  break;
 			case '\t': str.append(u"\\t");  break;
@@ -386,7 +386,7 @@ void flow2string(Flow* v, string& str) {
 		case TypeFx::BOOL:   str.append(bool2string(v->get<Bool>())); break;
 		case TypeFx::DOUBLE: str.append(double2string(v->get<Double>(), true)); break;
 		case TypeFx::STRING: {
-			str.append(u"\""); appendEscaped(str, v->get<String*>()->str); str.append(u"\"");
+			str.append(u"\""); appendEscaped(str, v->get<String*>()->str()); str.append(u"\"");
 			break;
 		}
 		case TypeFx::ARRAY: {
