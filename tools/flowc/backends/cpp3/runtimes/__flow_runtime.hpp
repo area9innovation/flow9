@@ -1048,13 +1048,13 @@ struct Ref : public Flow {
 	enum { TYPE = TypeFx::REF };
 	using RefType = T;
 	Ref() { }
-	Ref(T r): val(r) { }
-	Ref(const Ref& r): val(r.val) { }
-	Ref(Ref&& r): val(std::move(r.val)) { }
+	Ref(T r): val_(r) { }
+	Ref(const Ref& r): val_(r.val_) { }
+	Ref(Ref&& r): val_(std::move(r.val_)) { }
 	~Ref() override { 
 		if constexpr (is_flow_ancestor_v<T>) {
-			if (val) {
-				decRc(val);
+			if (val_) {
+				decRc(val_);
 			}
 		}
 	}
@@ -1069,9 +1069,9 @@ struct Ref : public Flow {
 		if (r == nullptr) {
 			return new Ref(std::move(a));
 		} else {
-			decRc(r->val);
-			r->val = a;
-			r->makeUnitRc(); // rc_ = 1;
+			decRc(r->val_);
+			r->val_ = a;
+			r->makeUnitRc();
 			return r;
 		}
 	}
@@ -1086,7 +1086,7 @@ struct Ref : public Flow {
 		if (!isShared()) {
 			Flow::makeShared();
 			if constexpr (is_flow_ancestor_v<T>) {
-				val->makeShared();
+				val_->makeShared();
 			}
 		}
 	}
@@ -1105,7 +1105,7 @@ struct Ref : public Flow {
 	}
 	Flow* getFlow(Int i) override {
 		if constexpr (is_flow_ancestor_v<T>) {
-			return val;
+			return val_;
 		} else {
 			fail("only flow ancestor components may be accessed directly as Flow");
 		}
@@ -1126,12 +1126,17 @@ struct Ref : public Flow {
 		set(v);
 	}
 	inline T get() {
-		return val;
+		return val_;
 	}
 	inline void set(T v) {
-		assignRc<T>(val, v);
+		assignRc<T>(val_, v);
 	}
-	T val;
+	inline T& getRef() {
+		return val_;
+	}
+
+private:
+	T val_;
 };
 
 template<typename R, typename... As> 
