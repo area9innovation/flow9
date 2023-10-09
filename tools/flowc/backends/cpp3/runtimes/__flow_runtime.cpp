@@ -391,7 +391,7 @@ void flow2string(Flow* v, string& str) {
 		}
 		case TypeFx::ARRAY: {
 			str.append(u"[");
-			Int size = v->size();
+			Int size = v->componentSize();
 			for (Int i = 0; i < size; ++i) {
 				flow2stringComponents(v, str, i);
 			}
@@ -414,7 +414,7 @@ void flow2string(Flow* v, string& str) {
 		default: {
 			str.append(RTTI::typeName(v->typeId()));
 			str.append(u"(");
-			Int size = v->size();
+			Int size = v->componentSize();
 			for (Int i = 0; i < size; ++ i) {
 				flow2stringComponents(v, str, i);
 			}
@@ -477,11 +477,11 @@ Int flowCompare(Flow* v1, Flow* v2) {
 			case TypeFx::DOUBLE: return compare<Double>(v1->get<Double>(), v2->get<Double>());
 			case TypeFx::STRING: return compare<String*>(v1->get<String*>(), v2->get<String*>());
 			case TypeFx::ARRAY: {
-				Int c1 = compare<Int>(v1->size(), v2->size());
+				Int c1 = compare<Int>(v1->componentSize(), v2->componentSize());
 				if (c1 != 0) {
 					return c1;
 				} else {
-					Int size = v1->size();
+					Int size = v1->componentSize();
 					for (Int i = 0; i < size; ++ i) {
 						Int c2 = flowCompareComponents(v1, v2, i);
 						if (c2 != 0) {
@@ -506,7 +506,7 @@ Int flowCompare(Flow* v1, Flow* v2) {
 					if (c1 != 0) {
 						return c1;
 					} else {
-						Int size = v1->size();
+						Int size = v1->componentSize();
 						for (Int i = 0; i < size; ++ i) {
 							Int c2 = flowCompareComponents(v1, v2, i);
 							if (c2 != 0) {

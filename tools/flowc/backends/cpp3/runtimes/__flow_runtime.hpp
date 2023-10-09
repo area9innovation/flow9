@@ -344,13 +344,13 @@ struct Flow {
 	Flow(): rc_(1) { }
 	virtual ~Flow() { }
 	virtual TypeId typeId() const = 0;
-	virtual Int size() const { return 0; }
+	virtual Int componentSize() const { return 0; }
 	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
 	//virtual void unbindChildren() { }
 	virtual void makeShared() { rc_ = -(rc_ + 1); }
 	inline bool isShared() { return (rc_ < 0); }
-	TypeId typeIdRc() const { return decRcRet(this, typeId()); }
-	Int sizeRc() const { return decRcRet(this, size()); }
+	TypeId typeIdRc() { return decRcRet(this, typeId()); }
+	Int componentSizeRc() { return decRcRet(this, componentSize()); }
 	
 	// these methods decrement `this` RC
 	virtual Flow* getFlowRc(Int i) { fail("invalid flow value getter"); return nullptr; }
@@ -375,7 +375,7 @@ struct Flow {
 	template<typename T> inline T getRc1() { return incRcRet(dynamic_cast<T>(this)); }
 	template<typename T> inline T getRc() { return dynamic_cast<T>(this); }
 
-	mutable long rc_;
+	long rc_;
 };
 
 struct FVoid : public Flow { TypeId typeId() const override { return TypeFx::VOID; } };
@@ -587,7 +587,7 @@ struct Str : public Flow {
 
 	// general interface
 	TypeId typeId() const override { return TYPE; }
-	Int size() const override { return sizeof...(Fs); }
+	Int componentSize() const override { return sizeof...(Fs); }
 	TypeId componentTypeId(Int i) override {
 		return componentTypeId_<0>(i);
 	}
@@ -909,7 +909,7 @@ struct Vec : public Flow {
 
 	// general interface
 	TypeId typeId() const override { return TYPE; }
-	Int size() const override { 
+	Int componentSize() const override { 
 		return static_cast<Int>(vect.size()); 
 	}
 	TypeId componentTypeId(Int i) override {
@@ -947,6 +947,9 @@ struct Vec : public Flow {
 	}
 
 	// specific methods
+	inline Int size() const { 
+		return static_cast<Int>(vect.size()); 
+	}
 	void pushBack(T x) {
 		if (isConstatntObj(this)) {
 			fail(std::string("pushing into constant object!: ") + toString(x)->toStd());
@@ -1049,7 +1052,7 @@ struct Ref : public Flow {
 
 	// general interface
 	TypeId typeId() const override { return TypeFx::REF; }
-	Int size() const override { return 1; }
+	Int componentSize() const override { return 1; }
 	TypeId componentTypeId(Int i) override {
 		return get_type_id_v<T>;
 	}
@@ -1164,7 +1167,7 @@ struct Fun : public Flow {
 
 	// general interface
 	TypeId typeId() const override { return TYPE; }
-	Int size() const override {
+	Int componentSize() const override {
 		return static_cast<Int>(closure.size());
 	}
 	void makeShared() override {
@@ -1375,8 +1378,8 @@ inline T2 castRc(T1 x) {
 		} else if (T2 f = dynamic_cast<T2>(x)) {
 			return f;
 		} else {
-			T2 ret = V2::make(x->size());
-			for (Int i = 0; i < x->size(); ++ i) {
+			T2 ret = V2::make(x->componentSize());
+			for (Int i = 0; i < x->componentSize(); ++ i) {
 				Flow* e = x->getFlowRc1(i);
 				ret->pushBack(castRc<Flow*, typename V2::ElType>(e));
 			}
