@@ -560,6 +560,7 @@ struct Native : public Flow {
 			fail("incorrect type in native");
 		}
 	}
+
 private:
 	std::function<void()> cleanup;
 	std::function<void()> share;
@@ -854,25 +855,25 @@ struct Vec : public Flow {
 	using const_iterator = typename std::vector<T>::const_iterator;
 	using iterator = typename std::vector<T>::iterator;
 
-	Vec(): vect() { }
-	Vec(Int s): vect() { vect.reserve(s); }
-	Vec(std::initializer_list<T>&& il): vect(std::move(il)) { }
-	Vec(const std::initializer_list<T>& il): vect(il) { }
-	Vec(Vec&& a): vect(std::move(a.vect)) { }
-	Vec(const Vec& a): vect(a.vect) { incRcVec(); }
-	Vec(std::vector<T>&& v): vect(std::move(v)) { }
+	Vec(): vec_() { }
+	Vec(Int s): vec_() { vec_.reserve(s); }
+	Vec(std::initializer_list<T>&& il): vec_(std::move(il)) { }
+	Vec(const std::initializer_list<T>& il): vec_(il) { }
+	Vec(Vec&& a): vec_(std::move(a.vec_)) { }
+	Vec(const Vec& a): vec_(a.vec_) { incRcVec(); }
+	Vec(std::vector<T>&& v): vec_(std::move(v)) { }
 
 	~Vec() override { decRcVec(); }
 	inline void incRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
-			for (T x : vect) {
+			for (T x : vec_) {
 				incRc(x);
 			}
 		}
 	}
 	inline void decRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
-			for (T x : vect) {
+			for (T x : vec_) {
 				decRc(x);
 			}
 		}
@@ -901,8 +902,8 @@ struct Vec : public Flow {
 			return make();
 		} else {
 			v->decRcVec();
-			v->vect.clear();
-			v->makeUnitRc(); // rc_ = 1;
+			v->vec_.clear();
+			v->makeUnitRc();
 			return v;
 		}
 	}
@@ -911,28 +912,28 @@ struct Vec : public Flow {
 			return make(std::move(il));
 		} else {
 			v->decRcVec();
-			v->vect.clear();
-			v->vect.reserve(il.size());
+			v->vec_.clear();
+			v->vec_.reserve(il.size());
 			for (T x: il) {
-				v->vect.push_back(x);
+				v->vec_.push_back(x);
 			}
-			v->makeUnitRc(); // rc_ = 1;
+			v->makeUnitRc();
 			return v;
 		}
 	}
 
-	void reserve(std::size_t s) { vect.reserve(s); }
+	void reserve(std::size_t s) { vec_.reserve(s); }
 
 	// std::vector interface
-	const_iterator begin() const { return vect.begin(); }
-	const_iterator end() const { return vect.end(); }
-	iterator begin() { return vect.begin(); }
-	iterator end(){ return vect.end(); }
+	const_iterator begin() const { return vec_.begin(); }
+	const_iterator end() const { return vec_.end(); }
+	iterator begin() { return vec_.begin(); }
+	iterator end(){ return vec_.end(); }
 
 	// general interface
 	TypeId typeId() const override { return TYPE; }
 	Int componentSize() const override { 
-		return static_cast<Int>(vect.size()); 
+		return static_cast<Int>(vec_.size()); 
 	}
 	TypeId componentTypeId(Int i) override {
 		return get_type_id_v<T>;
@@ -941,7 +942,7 @@ struct Vec : public Flow {
 		if (!isShared()) {
 			Flow::makeShared();
 			if constexpr (is_flow_ancestor_v<T>) {
-				for (T x : vect) {
+				for (T x : vec_) {
 					x->makeShared();
 				}
 			}
@@ -962,7 +963,7 @@ struct Vec : public Flow {
 	}
 	Flow* getFlow(Int i) override {
 		if constexpr (is_flow_ancestor_v<T>) {
-			return vect[i];
+			return vec_[i];
 		} else {
 			fail("only flow ancestor components may be accessed directly as Flow");
 		}
@@ -970,19 +971,19 @@ struct Vec : public Flow {
 
 	// specific methods
 	inline Int size() const { 
-		return static_cast<Int>(vect.size()); 
+		return static_cast<Int>(vec_.size()); 
 	}
-	void pushBack(T x) {
+	inline void pushBack(T x) {
 		if (isConstatntObj(this)) {
 			fail(std::string("pushing into constant object!: ") + toString(x)->toStd());
 		}
-		vect.push_back(x);
+		vec_.push_back(x);
 	}
-	void pushBackRc(T x) {
+	inline void pushBackRc(T x) {
 		pushBack(x);
 		decRc(this);
 	}
-	T getRc(Int i) {
+	inline T getRc(Int i) {
 		return decRcRet(this, getRc1(i));
 	}
 	void setRc(Int i, T x) {
@@ -990,29 +991,27 @@ struct Vec : public Flow {
 		decRc(this);
 	}
 	inline T getRc1(Int i) {
-		return incRcRet(vect.at(i));
+		return incRcRet(get(i));
 	}
 	inline void setRc1(Int i, T x) {
 		set(i, x);
 	}
 	inline T get(Int i) {
-		return vect.at(i);
+		return vec_.at(i);
 	}
 	inline void set(Int i, ElType x) {
-		if constexpr (std::is_same_v<T, bool>) {
-			T old = vect[i];
-			vect[i] = x;
-			decRc(old);
+		if constexpr (is_scalar_v<T>) {
+			vec_[i] = x;
 		} else {
-			assignRc<T>(vect[i], x);
+			assignRc<T>(vec_[i], x);
 		}
 	}
 
 	static Vec* concatRc(Vec* v1, Vec* v2) {
-		if (v1->vect.size() == 0) {
+		if (v1->vec_.size() == 0) {
 			decRc(v1);
 			return v2;
-		} else if (v2->vect.size() == 0) {
+		} else if (v2->vec_.size() == 0) {
 			decRc(v2);
 			return v1;
 		} else if (isUnitRc(v1)) {
@@ -1023,7 +1022,7 @@ struct Vec : public Flow {
 			decRc(v2);
 			return v1;
 		} else {
-			Vec* ret = make(v1->vect.size() + v2->vect.size());
+			Vec* ret = make(v1->vec_.size() + v2->vec_.size());
 			for(T x : *v1) {
 				incRc(x);
 				ret->pushBack(x);
@@ -1036,7 +1035,12 @@ struct Vec : public Flow {
 			return ret;
 		}
 	}
-	std::vector<T> vect;
+
+	inline const std::vector<T>& vec() { return vec_; }
+	//inline std::vector<T>& vecRef() { return vec_; }
+
+private:
+	std::vector<T> vec_;
 };
 
 template<typename T> 
