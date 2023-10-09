@@ -302,7 +302,7 @@ template<typename T> inline void decRcFinish(T x) {
 	}
 }
 
-template<typename T> inline bool unitRc(T x) { return x->rc_ == 1; }
+template<typename T> inline bool isUnitRc(T x) { return x->rc_ == 1; }
 
 template<typename T, typename R> inline R decRcRet(T x, R ret) { decRc(x); return ret; }
 
@@ -375,6 +375,15 @@ struct Flow {
 	template<typename T> inline T getRc1() { return incRcRet(dynamic_cast<T>(this)); }
 	template<typename T> inline T getRc() { return dynamic_cast<T>(this); }
 
+	void makeUnitRc() { rc_ = 1; }
+	void makeConstantRc() { rc_ = CONSTANT_OBJECT_RC; }
+
+private:
+	template<typename T> friend inline bool isConstatntObj(T x);
+	template<typename T> friend inline void incRc(T x, Int d);
+	template<typename T> friend inline void decRc(T x);
+	template<typename T> friend inline T decRcReuse(T x);
+	template<typename T> friend inline bool isUnitRc(T x);
 	long rc_;
 };
 
@@ -421,7 +430,7 @@ struct String : public Flow {
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
 
-	static String* makeSingleton() { static String es; es.rc_ = CONSTANT_OBJECT_RC; return &es; }
+	static String* makeSingleton() { static String es; es.makeConstantRc(); return &es; }
 
 	// There must be only one instance of empty string
 	static String* make() {
@@ -441,7 +450,7 @@ struct String : public Flow {
 			return make();
 		} else {
 			s->str.clear();
-			s->rc_ = 1;
+			s->makeUnitRc(); //rc_ = 1;
 			return s;
 		}
 	}
@@ -454,7 +463,7 @@ struct String : public Flow {
 			for (char16_t c: x) {
 				s->str += c;
 			}
-			s->rc_ = 1;
+			s->makeUnitRc(); //rc_ = 1;
 			return s;
 		}
 	}
@@ -467,7 +476,7 @@ struct String : public Flow {
 			for (char16_t c: x) {
 				s->str += c;
 			}
-			s->rc_ = 1;
+			s->makeUnitRc(); //rc_ = 1;
 			return s;
 		}
 	}
@@ -556,7 +565,7 @@ struct Str : public Flow {
 	template<typename S>
 	static S makeSingleton() {
 		if constexpr (CONST_SINGLETONS && sizeof...(Fs) == 0) {
-			static std::remove_pointer_t<S> x; x.rc_ = CONSTANT_OBJECT_RC; return &x;
+			static std::remove_pointer_t<S> x; x.makeConstantRc(); return &x;
 		} else {
 			return nullptr;
 		}
@@ -577,7 +586,7 @@ struct Str : public Flow {
 		} else {
 			s->template decRcFields<0>();
 			s->fields = std::tie(fs...);
-			s->rc_ = 1;
+			s->makeUnitRc(); // rc_ = 1;
 			return s;
 		}
 	}
@@ -859,7 +868,7 @@ struct Vec : public Flow {
 	Vec& operator = (Vec&& r) = delete;
 	Vec& operator = (const Vec& r) = delete;
 
-	static Vec* makeSingleton() { static Vec x; x.rc_ = CONSTANT_OBJECT_RC; return &x; }
+	static Vec* makeSingleton() { static Vec x; x.makeConstantRc(); return &x; }
 
 	// There must be only one instance of empty vector
 	static Vec* make() {
@@ -880,7 +889,7 @@ struct Vec : public Flow {
 		} else {
 			v->decRcVec();
 			v->vect.clear();
-			v->rc_ = 1;
+			v->makeUnitRc(); // rc_ = 1;
 			return v;
 		}
 	}
@@ -894,7 +903,7 @@ struct Vec : public Flow {
 			for (T x: il) {
 				v->vect.push_back(x);
 			}
-			v->rc_ = 1;
+			v->makeUnitRc(); // rc_ = 1;
 			return v;
 		}
 	}
@@ -993,7 +1002,7 @@ struct Vec : public Flow {
 		} else if (v2->vect.size() == 0) {
 			decRc(v2);
 			return v1;
-		} else if (unitRc(v1)) {
+		} else if (isUnitRc(v1)) {
 			for(T x : *v2) {
 				incRc(x);
 				v1->pushBack(x);
@@ -1045,7 +1054,7 @@ struct Ref : public Flow {
 		} else {
 			decRc(r->val);
 			r->val = a;
-			r->rc_ = 1;
+			r->makeUnitRc(); // rc_ = 1;
 			return r;
 		}
 	}
@@ -1160,7 +1169,7 @@ struct Fun : public Flow {
 			f->closure.clear();
 			f->fn = std::move(fn);
 			f->initClosure<Cs...>(std::move(cl)...);
-			f->rc_ = 1;
+			f->makeUnitRc(); // rc_ = 1;
 			return f;
 		}
 	}
