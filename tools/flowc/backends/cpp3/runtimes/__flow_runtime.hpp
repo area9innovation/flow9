@@ -1148,32 +1148,29 @@ struct Fun : public Flow {
 	using Fn1 = std::function<R(Args)>;
 
 	Fun() {}
-	Fun(Fn&& f): fn(std::move(f)) { }
-	Fun(const Fn& f): fn(f) { }
-	Fun(const Fn1& f): fn(f) { }
+	Fun(Fn&& f): fn_(std::move(f)) { }
+	Fun(const Fn& f): fn_(f) { }
+	Fun(const Fn1& f): fn_(f) { }
 
 	template<typename... Cs>
-	Fun(Fn&& f, Cs... cl): fn(std::move(f)) {
+	Fun(Fn&& f, Cs... cl): fn_(std::move(f)) {
 		initClosure<Cs...>(cl...);
 	}
-	template<typename C1, typename... Cs>
-	constexpr void initClosure(C1 c1, Cs... cl) {
-		static_assert(is_flow_ancestor_v<C1> || is_scalar_v<C1>, "illegal type in closure");
-		if constexpr (is_flow_ancestor_v<C1>) {
-			closure.push_back(c1);
-		}
-		initClosure<Cs...>(cl...);
-	}
-	template<typename... Cs> constexpr void initClosure(Cs...) { }
-
 	~Fun() {
-		for (Flow* x: closure) {
+		for (Flow* x: closure_) {
 			decRc(x);
 		}
 	}
 
-	Fun(const Fun& f): fn(f), closure(f.closure) { }
-	Fun(Fun&& f): fn(std::move(f)), closure(std::move(f.closure)) { }
+	template<typename C1, typename... Cs>
+	constexpr void initClosure(C1 c1, Cs... cl) {
+		static_assert(is_flow_ancestor_v<C1> || is_scalar_v<C1>, "illegal type in closure");
+		if constexpr (is_flow_ancestor_v<C1>) {
+			closure_.push_back(c1);
+		}
+		initClosure<Cs...>(cl...);
+	}
+	template<typename... Cs> constexpr void initClosure(Cs...) { }
 
 	Fun& operator = (Fun&& r) = delete;
 	Fun& operator = (const Fun& r) = delete;
@@ -1185,13 +1182,13 @@ struct Fun : public Flow {
 		if (f == nullptr) {
 			return new Fun(std::move(fn), std::move(cl)...);
 		} else {
-			for (Flow* x: f->closure) {
+			for (Flow* x: f->closure_) {
 				decRc(x);
 			}
-			f->closure.clear();
-			f->fn = std::move(fn);
+			f->closure_.clear();
+			f->fn_ = std::move(fn);
 			f->initClosure<Cs...>(std::move(cl)...);
-			f->makeUnitRc(); // rc_ = 1;
+			f->makeUnitRc();
 			return f;
 		}
 	}
@@ -1199,12 +1196,12 @@ struct Fun : public Flow {
 	// general interface
 	TypeId typeId() const override { return TYPE; }
 	Int componentSize() const override {
-		return static_cast<Int>(closure.size());
+		return static_cast<Int>(closure_.size());
 	}
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
-			for (Flow* x: closure) {
+			for (Flow* x: closure_) {
 				x->makeShared();
 			}
 		}
@@ -1245,15 +1242,15 @@ struct Fun : public Flow {
 		return call(as...);
 	}
 	virtual R call(As... as) {
-		for (Flow* x: closure) {
+		for (Flow* x: closure_) {
 			incRc(x);
 		}
-		return fn(as...);
+		return fn_(as...);
 	}
 
 private:
-	Fn fn;
-	std::vector<Flow*> closure;
+	Fn fn_;
+	std::vector<Flow*> closure_;
 };
 
 // This function is for debugging purposes only! Doesn't cleanp v!

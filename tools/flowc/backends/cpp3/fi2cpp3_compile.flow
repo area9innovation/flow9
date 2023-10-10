@@ -473,27 +473,14 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 	}
 }
 
-fsCallPrimPlus2cpp3(es : [FsExp], gctx : Cpp3GlobalContext, acc: [FsExp]) -> [FsExp] {
+fsCallPrimMulty2cpp3(op: FsPrim, es : [FsExp], gctx : Cpp3GlobalContext, acc: [FsExp]) -> [FsExp] {
 	fold(es, acc, \ac, e -> {
 		switch (e) {
-			FsCallPrim(op, es1, __,__): {
-				switch (e.op) {
-					FcPlusPrim(): fsCallPrimPlus2cpp3(es1, gctx, ac);
-					default: concat(ac, [e]);
-				}
-			}
-			default: concat(ac, [e]);
-		}
-	});
-}
-
-fsCallPrimMult2cpp3(es : [FsExp], gctx : Cpp3GlobalContext, acc: [FsExp]) -> [FsExp] {
-	fold(es, acc, \ac, e -> {
-		switch (e) {
-			FsCallPrim(op, es1, __,__): {
-				switch (e.op) {
-					FcMulPrim(): fsCallPrimMult2cpp3(es1, gctx, ac);
-					default: concat(ac, [e]);
+			FsCallPrim(o, es1, __,__): {
+				if (o == op) {
+					fsCallPrimMulty2cpp3(op, es1, gctx, ac);
+				} else {
+					concat(ac, [e]);
 				}
 			}
 			default: concat(ac, [e]);
@@ -505,8 +492,14 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 	e2k = \x -> fsExp2cpp3(x, gctx);
 	arg_type = if (length(e.es) > 0) fsType(e.es[0]) else FiTypeVoid();
 	switch (e.op) {
-		FcOrPrim():  "(" + e2k(e.es[0]) + " || " + e2k(e.es[1]) + ")";
-		FcAndPrim(): "(" + e2k(e.es[0]) + " && " + e2k(e.es[1]) + ")";
+		FcOrPrim(): {
+			mult_args = fsCallPrimMulty2cpp3(FcOrPrim(), e.es, gctx, []);
+			"(" + superglue(mult_args, e2k, " || ") + ")";
+		}
+		FcAndPrim(): {
+			mult_args = fsCallPrimMulty2cpp3(FcAndPrim(), e.es, gctx, []);
+			"(" + superglue(mult_args, e2k, " && ") + ")";
+		}
 		FcNotPrim(): "!" + e2k(e.es[0]);
 
 		FcEqPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") == 0)";
@@ -517,7 +510,7 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		FcGtPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") > 0)";
 
 		FcPlusPrim():  {
-			plus_args = fsCallPrimPlus2cpp3(e.es, gctx, []);
+			plus_args = fsCallPrimMulty2cpp3(FcPlusPrim(), e.es, gctx, []);
 			if (e.type == FiTypeString()) {
 				fold(tail(plus_args), e2k(plus_args[0]), \acc, arg ->
 					"String::concatRc(" + acc + ", " + e2k(arg) + ")"
@@ -528,7 +521,7 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		}
 		FcMinusPrim(): "(" + e2k(e.es[0]) + " - " + e2k(e.es[1]) + ")"; 
 		FcMulPrim(): {
-			mult_args = fsCallPrimMult2cpp3(e.es, gctx, []);
+			mult_args = fsCallPrimMulty2cpp3(FcMulPrim(), e.es, gctx, []);
 			"(" + superglue(mult_args, e2k, " * ") + ")";
 		}
 		FcDivPrim():   "(" + e2k(e.es[0]) + " / " + e2k(e.es[1]) + ")";
@@ -564,6 +557,9 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 			switch (arg_type) {
 				FiTypeFlow(): {
 					e2k(e.es[0]) + "->getFlowRc1(" + e2k(e.es[1]) + ")";
+				}
+				FiTypeString(): {
+					e2k(e.es[0]) + "->getChar(" + e2k(e.es[1]) + ")";
 				}
 				default:
 					e2k(e.es[0]) + "->getRc1(" + e2k(e.es[1]) + ")";

@@ -145,6 +145,8 @@ fiRemoveRedundantVoids(e: FiExp) -> FiExp;
 
 fiPurifyTypesInExp(e: FiExp) -> FiExp;
 
+fiComparisonWithConst(e: FiExp, const_cmp_max_size: int) -> FiExp;
+
 }
 
 fiTransEliminateUnionFields(expr : FiExp, names: FiGlobalNames) -> FiExp {
@@ -1343,14 +1345,59 @@ fiExpShortcutTrivialSwitch(x: FiExp, names: FiGlobalNames) -> FiExp {
 	});
 }
 
+fiIsSimpleForIfExp(x: FiExp) -> bool {
+	switch (x) {
+		FiBool(__,__): true;
+		FiInt(__,__): true;
+		FiDouble(__,__): true;
+		FiString(__,__): true;
+		FiCallPrim(op, es,__,__): {
+			switch (op) {
+				FcAndPrim(): true;
+				FcOrPrim(): true;
+				FcNotPrim(): true;
+
+				FcPlusPrim(): true;
+				FcMinusPrim(): true;
+				FcMulPrim(): true;
+				FcDivPrim(): true;
+				FcModPrim(): true;
+				FcNegPrim(): true;
+
+				FcEqPrim(): true;
+				FcNePrim(): true;
+				FcGtPrim(): true;
+				FcLtPrim(): true;
+				FcGePrim(): true;
+				FcLePrim(): true;
+
+				FcFieldPrim(__): true;
+				FcIndexPrim(): true;
+
+				default: false;
+			} && forall(es, fiIsSimpleForIfExp);
+		}
+		FiVar(__,__,__): true;
+		FiCall(f, as,__,__): {
+			switch(f) {
+				FiVar(fn,__,__): (fn == "strlen" || fn == "length") && forall(as, fiIsSimpleForIfExp);
+				default: false;
+			}
+		}
+		default: false;
+	}
+}
+
 fiExpChangeAndOr2If(x: FiExp) -> FiExp {
 	mapFiExp(x, \e -> switch (e) {
 		FiCallPrim(op, es, type, start): {
 			switch (op) {
 				FcAndPrim(): {
+					if (fiIsSimpleForIfExp(es[0]) && fiIsSimpleForIfExp(es[1])) e else
 					FiIf(es[0], es[1], FiBool(false, start), type, start);
 				}
 				FcOrPrim(): {
+					if (fiIsSimpleForIfExp(es[0]) && fiIsSimpleForIfExp(es[1])) e else
 					FiIf(es[0], FiBool(true, start), es[1], type, start);
 				}
 				default: {
@@ -1965,4 +2012,229 @@ fiPurifyTypesInExp(e: FiExp) -> FiExp {
 			fiSetExpType(x, fiPurifyType(t));
 		}
 	});
+}
+
+fiComparisonWithConst(e: FiExp, const_cmp_max_size: int) -> FiExp {
+	wrap_log_op = \op, as -> if (length(as) == 0) FiBool(true, -1) else
+	if (length(as) == 1) as[0] else {
+		ras = reverseA(as);
+		fold(tail(ras), ras[0], \acc, x ->
+			FiCallPrim(op, [x, acc], FiTypeBool(), -1)
+		);
+	}
+	make_cmp_strs = \op1, op2, s_const, s_exp -> wrap_log_op(op1,
+		concat(
+			[FiCallPrim(op2,
+				[
+					FiCall(
+						FiVar("strlen", FiTypeFunction([FiFunArg("", FiTypeString())], FiTypeInt()), -1),
+						[s_exp], FiTypeInt(), -1
+					),
+					FiInt(strlen(s_const), -1)
+				],
+				FiTypeBool(), -1
+			)],
+			mapi(s2a(s_const), \i, c -> FiCallPrim(op2,
+				[
+					FiCallPrim(FcIndexPrim(),
+						[s_exp, FiInt(i, -1)], FiTypeInt(), -1
+					),
+					FiInt(getCharCodeAt(s_const, i), -1)
+				],
+				FiTypeBool(), -1
+			)),
+		)
+	);
+	make_cmp_arrs1 = \arr_tp, op1, op2, a_const, a_exp -> wrap_log_op(op1,
+		concat(
+			[FiCallPrim(op2,
+				[
+					FiCall(
+						FiVar("length", FiTypeFunction([FiFunArg("", FiTypeArray(arr_tp))], FiTypeInt()), -1),
+						[a_exp], FiTypeInt(), -1
+					),
+					FiInt(length(a_const), -1)
+				],
+				FiTypeBool(), -1
+			)],
+			mapi(a_const, \i, x -> FiCallPrim(op2,
+				[
+					FiCallPrim(FcIndexPrim(),
+						[a_exp, FiInt(i, -1)], arr_tp, -1
+					),
+					x
+				],
+				FiTypeBool(), -1
+			)),
+		)
+	);
+	make_cmp_arrs2 = \arr_tp, op1, op2, a1_const, a2_const -> wrap_log_op(op1,
+		mapi(a1_const, \i, x -> FiCallPrim(op2, [a2_const[i], x],
+			FiTypeBool(), -1
+		))
+	);
+	fiMapExp(e, \x, __ -> switch (x) {
+		FiCallPrim(op, es, tp, s): {
+			switch (op) {
+				FcEqPrim(): {
+					switch (fiExpType(es[0])) {
+						FiTypeString(): {
+							switch (es[0]) {
+								FiString(s0,__): {
+									switch (es[1]) {
+										FiString(s1,__): {
+											FiBool(s0 == s1, s);
+										}
+										default: {
+											if (strlen(s0) > const_cmp_max_size) x else {
+												make_cmp_strs(FcAndPrim(), FcEqPrim(), s0, es[1]);
+											}
+										}
+									}
+								}
+								default: {
+									switch (es[1]) {
+										FiString(s1,__): {
+											if (strlen(s1) > const_cmp_max_size) x else {
+												make_cmp_strs(FcAndPrim(), FcEqPrim(), s1, es[0]);
+											}
+										}
+										default: x;
+									}
+								}
+							}
+						}
+						FiTypeArray(arr_tp): {
+							switch (es[0]) {
+								FiCallPrim(op0, c_arr0, __,__): {
+									switch (op0) {
+										FcArrayPrim(): {
+											switch (es[1]) {
+												FiCallPrim(op1, c_arr1,__,__): {
+													switch (op1) {
+														FcArrayPrim(): {
+															if (length(c_arr0) != length(c_arr1)) {
+																FiBool(false, s);
+															} else {
+																make_cmp_arrs2(arr_tp, FcAndPrim(), FcEqPrim(), c_arr0, c_arr1);
+															}
+														}
+														default: {
+															if (length(c_arr0) > const_cmp_max_size) x else {
+																make_cmp_arrs1(arr_tp, FcAndPrim(), FcEqPrim(), c_arr0, es[1]);
+															}
+														}
+													}
+												}
+												default: {
+													if (length(c_arr0) > const_cmp_max_size) x else {
+														make_cmp_arrs1(arr_tp, FcAndPrim(), FcEqPrim(), c_arr0, es[1]);
+													}
+												}
+											}
+										}
+										default: x;
+									}
+								}
+								default: {
+									switch (es[1]) {
+										FiCallPrim(op1, c_arr1,__,__): {
+											switch (op1) {
+												FcArrayPrim(): {
+													make_cmp_arrs1(arr_tp, FcAndPrim(), FcEqPrim(), c_arr1, es[0]);
+												}
+												default: x;
+											}
+										}
+										default: x;
+									}
+								}
+							}
+						}
+						default: x;
+					}
+				}
+				FcNePrim(): {
+					switch (fiExpType(es[0])) {
+						FiTypeString(): {
+							switch (es[0]) {
+								FiString(s0,__): {
+									switch (es[1]) {
+										FiString(s1,__): {
+											FiBool(s0 != s1, s);
+										}
+										default: {
+											if (strlen(s0) > const_cmp_max_size) x else {
+												make_cmp_strs(FcOrPrim(), FcNePrim(), s0, es[1]);
+											}
+										}
+									}
+								}
+								default: {
+									switch (es[1]) {
+										FiString(s1,__): {
+											if (strlen(s1) > const_cmp_max_size) x else {
+												make_cmp_strs(FcOrPrim(), FcNePrim(), s1, es[0]);
+											}
+										}
+										default: x;
+									}
+								}
+							}
+						}
+						FiTypeArray(arr_tp): {
+							switch (es[0]) {
+								FiCallPrim(op0, c_arr0, __,__): {
+									switch (op0) {
+										FcArrayPrim(): {
+											switch (es[1]) {
+												FiCallPrim(op1, c_arr1,__,__): {
+													switch (op1) {
+														FcArrayPrim(): {
+															if (length(c_arr0) != length(c_arr1)) {
+																FiBool(true, s);
+															} else {
+																make_cmp_arrs2(arr_tp, FcOrPrim(), FcNePrim(), c_arr0, c_arr1);
+															}
+														}
+														default: {
+															if (length(c_arr0) > const_cmp_max_size) x else {
+																make_cmp_arrs1(arr_tp, FcOrPrim(), FcNePrim(), c_arr0, es[1]);
+															}
+														}
+													}
+												}
+												default: {
+													if (length(c_arr0) > const_cmp_max_size) x else {
+														make_cmp_arrs1(arr_tp, FcOrPrim(), FcNePrim(), c_arr0, es[1]);
+													}
+												}
+											}
+										}
+										default: x;
+									}
+								}
+								default: {
+									switch (es[1]) {
+										FiCallPrim(op1, c_arr1,__,__): {
+											switch (op1) {
+												FcArrayPrim(): {
+													make_cmp_arrs1(arr_tp, FcOrPrim(), FcNePrim(), c_arr1, es[0]);
+												}
+												default: x;
+											}
+										}
+										default: x;
+									}
+								}
+							}
+						}
+						default: x;
+					}
+				}
+				default: x;
+			}
+		}
+		default: x;
+	}, true);
 }
