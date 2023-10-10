@@ -48,59 +48,124 @@ Cpp3NativePlain("map", true,
 "template<typename T, typename V> Vec<V>* $F_1(map)(Vec<T>* a, Fun<V, T>* fn);\n",
 "template<typename T, typename V>
 Vec<V>* $F_1(map)(Vec<T>* a, Fun<V, T>* fn) {
-	Vec<V>* ret = Vec<V>::make(a->size());
-	for (T x : *a) {
-		incRc(x);
-		ret->pushBack(fn->callRc1(x));
+	if constexpr (std::is_same_v<V, T>) {
+		if (isUnitRc(a)) {
+			for (Int i = 0; i < a->size(); ++i) {
+				a->setRc1(i, fn->callRc1(a->getRc1(i)));
+			}
+			decRc(fn);
+			return a;
+		} else {
+			Vec<V>* ret = Vec<V>::make(a->size());
+			for (T x : *a) {
+				incRc(x);
+				ret->pushBack(fn->callRc1(x));
+			}
+			decRc(fn);
+			decRc(a);
+			return ret;
+		}
+	} else {
+		Vec<V>* ret = Vec<V>::make(a->size());
+		for (T x : *a) {
+			incRc(x);
+			ret->pushBack(fn->callRc1(x));
+		}
+		decRc(fn);
+		decRc(a);
+		return ret;
 	}
-	decRc(fn);
-	decRc(a);
-	return ret;
 }\n", "", [], []),
 
 Cpp3NativePlain("mapi", true,
 "template<typename T, typename V> Vec<V>* $F_1(mapi)(Vec<T>* a, Fun<V, Int, T>* fn);\n",
 "template<typename T, typename V>
 Vec<V>* $F_1(mapi)(Vec<T>* a, Fun<V, Int, T>* fn) {
-	Vec<V>* ret = Vec<V>::make(a->size());
-	Int i = 0;
-	for (T x : *a) {
-		incRc(x);
-		ret->pushBack(fn->callRc1(i++, x));
+	if constexpr (std::is_same_v<V, T>) {
+		if (isUnitRc(a)) {
+			for (Int i = 0; i < a->size(); ++i) {
+				a->setRc1(i, fn->callRc1(i, a->getRc1(i)));
+			}
+			decRc(fn);
+			return a;
+		} else {
+			Vec<V>* ret = Vec<V>::make(a->size());
+			Int i = 0;
+			for (T x : *a) {
+				incRc(x);
+				ret->pushBack(fn->callRc1(i++, x));
+			}
+			decRc(fn);
+			decRc(a);
+			return ret;
+		}
+	} else {
+		Vec<V>* ret = Vec<V>::make(a->size());
+		Int i = 0;
+		for (T x : *a) {
+			incRc(x);
+			ret->pushBack(fn->callRc1(i++, x));
+		}
+		decRc(fn);
+		decRc(a);
+		return ret;
 	}
-	decRc(fn);
-	decRc(a);
-	return ret;
 }\n", "", [], []),
 
 Cpp3NativePlain("filter", true,
 "template<typename T> Vec<T>* $F_1(filter)(Vec<T>* a, Fun<Bool, T>* fn);\n",
 "template<typename T>
 Vec<T>* $F_1(filter)(Vec<T>* a, Fun<Bool, T>* fn) {
-	Vec<T>* ret = Vec<T>::make(a->size());
-	for (T x : *a) {
-		incRc(x);
-		if (fn->callRc1(x)) {
-			incRc(x);
-			ret->pushBack(x);
+	if (isUnitRc(a)) {
+		std::vector<T>& vec = a->vecRef();
+		Int j = 0;
+		for (Int i = 0; i < a->size(); ++ i) {
+			T x = a->getRc1(i);
+			if (fn->callRc1(x)) {
+				if (i != j) {
+					vec[j] = vec[i];
+				}
+				j += 1;
+			} else {
+				decRc(x);
+			}
 		}
+		vec.resize(j);
+		decRc(fn);
+		return a;
+	} else {
+		Vec<T>* ret = Vec<T>::make(a->size());
+		for (T x : *a) {
+			incRc(x);
+			if (fn->callRc1(x)) {
+				incRc(x);
+				ret->pushBack(x);
+			}
+		}
+		decRc(fn);
+		decRc(a);
+		//ret->vecRef().shrink_to_fit();
+		return ret;
 	}
-	decRc(fn);
-	decRc(a);
-	//ret->vecRef().shrink_to_fit();
-	return ret;
 }\n", "", [], []),
 
 Cpp3NativePlain("replace", true,
 "template<typename T> Vec<T>* $F_1(replace)(Vec<T>* a, Int i, T v);\n",
 "template<typename T>
 Vec<T>* $F_1(replace)(Vec<T>* a, Int i, T v) {
-	Vec<T>* ret = Vec<T>::make(*a);
-	decRc(a);
-	if (i < ret->size()) {
+	Vec<T>* ret = nullptr;
+	if (isUnitRc(a)) {
+		ret = a;
+	} else {
+		ret = Vec<T>::make(*a);
+		decRc(a);
+	}
+	if (0 <= i && i < ret->size()) {
 		ret->setRc1(i, v);
 	} else if (i == ret->size()) {
 		ret->pushBack(v);
+	} else {
+		decRc(v);
 	}
 	return ret;
 }\n", "", [], []),
@@ -118,14 +183,27 @@ Vec<T>* $F_1(subrange)(Vec<T>* a, Int i, Int len) {
 		if (end > size || end < 0) {
 			len = size - i;
 		}
-		Vec<T>* ret = Vec<T>::make(len);
-		for (Int j = 0; j < len; ++ j) {
-			T x = a->get(i + j);
-			incRc(x);
-			ret->pushBack(x);
+		if (isUnitRc(a)) {
+			std::vector<T>& vec = a->vecRef();
+			for (Int k = 0; k < size; ++ k) {
+				if (k < i || k >= i + len) {
+					decRc(vec[k]);
+				} else {
+					vec[k - i] = vec[k];
+				}
+			}
+			vec.resize(len);
+			return a;
+		} else {
+			Vec<T>* ret = Vec<T>::make(len);
+			for (Int j = 0; j < len; ++ j) {
+				T x = a->get(i + j);
+				incRc(x);
+				ret->pushBack(x);
+			}
+			decRc(a);
+			return ret;
 		}
-		decRc(a);
-		return ret;
 	}
 }\n", "", [], []),
 

@@ -1037,7 +1037,7 @@ struct Vec : public Flow {
 	}
 
 	inline const std::vector<T>& vec() { return vec_; }
-	//inline std::vector<T>& vecRef() { return vec_; }
+	inline std::vector<T>& vecRef() { return vec_; }
 
 private:
 	std::vector<T> vec_;
