@@ -211,8 +211,8 @@ inline bool isConstatntObj(T x) {
 
 template<typename T> inline void incRc(T x, Int d = 1) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		if constexpr (CONCURRENCY_ON) {
-			if (!isConstatntObj<T>(x)) {
+		if (!isConstatntObj<T>(x)) {
+			if constexpr (CONCURRENCY_ON) {
 				if constexpr (!ATOMIC_RC_SMART) {
 					std::atomic_ref<RcCounter>(x->rc_).fetch_add(d);
 				} else {
@@ -222,17 +222,17 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 						x->rc_ += d;
 					}
 				}
+			} else {
+				x->rc_ += d;
 			}
-		} else {
-			x->rc_ += d;
 		}
 	}
 }
 
 template<typename T> inline void decRc(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		if constexpr (CONCURRENCY_ON) {
-			if (!isConstatntObj<T>(x)) {
+		if (!isConstatntObj<T>(x)) {
+			if constexpr (CONCURRENCY_ON) {
 				if constexpr (!ATOMIC_RC_SMART) {
 					if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
 						delete x;
@@ -249,11 +249,11 @@ template<typename T> inline void decRc(T x) {
 						}
 					}
 				}
-			}
-		} else {
-			x->rc_ -= 1;
-			if (x->rc_ == 0) {
-				delete x;
+			} else {
+				x->rc_ -= 1;
+				if (x->rc_ == 0) {
+					delete x;
+				}
 			}
 		}
 	}
@@ -261,8 +261,8 @@ template<typename T> inline void decRc(T x) {
 
 template<typename T> inline T decRcReuse(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		if constexpr (CONCURRENCY_ON) {
-			if (!isConstatntObj<T>(x)) {
+		if (!isConstatntObj<T>(x)) {
+			if constexpr (CONCURRENCY_ON) {
 				if constexpr (!ATOMIC_RC_SMART) {
 					if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
 						return x;
@@ -286,14 +286,12 @@ template<typename T> inline T decRcReuse(T x) {
 					}
 				}
 			} else {
-				return nullptr;
-			}
-		} else {
-			x->rc_ -= 1;
-			if (x->rc_ == 0) {
-				return x;
-			} else {
-				return nullptr;
+				x->rc_ -= 1;
+				if (x->rc_ == 0) {
+					return x;
+				} else {
+					return nullptr;
+				}
 			}
 		}
 	}
