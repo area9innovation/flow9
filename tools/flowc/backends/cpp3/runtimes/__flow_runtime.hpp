@@ -311,10 +311,19 @@ template<typename T, typename R> inline R decRcRet(T x, R ret) { decRc(x); retur
 
 template<typename T> inline T incRcRet(T x) { incRc(x); return x; }
 
+template<typename T1, typename T2> inline void inheritShare(T1 parent, T2 child) {
+	if constexpr (ATOMIC_RC_SMART && is_flow_ancestor_v<T1> && is_flow_ancestor_v<T2>) {
+		if (parent && parent->isShared() && !child->isShared()) {
+			child->makeShared();
+		}
+	}
+}
+
 template<typename T> inline void assignRc(T& to, T what) {
 	if constexpr (is_flow_ancestor_v<T>) {
 		T old = to;
 		to = what;
+		inheritShare(old, what);
 		if (old) {
 			decRc(old);
 		}
@@ -519,7 +528,12 @@ struct Native : public Flow {
 	Native(T v): cleanup([](){}), share([](){ }), val(v) {
 		if constexpr (is_flow_ancestor_v<T>) {
 			cleanup = [v]() { decRc(std::any_cast<Flow*>(v)); };
-			share   = [v]() { std::any_cast<Flow*>(v)->makeShared(); };
+			share   = [v]() {
+				Flow* f = std::any_cast<Flow*>(v);
+				if (!f->isShared()) {
+					f->makeShared();
+				}
+			};
 		} else if constexpr (std::is_pointer_v<T>) {
 			cleanup = [v]() { delete std::any_cast<T>(v); };
 		}
@@ -542,8 +556,8 @@ struct Native : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
+			share();
 		}
-		share();
 	}
 	template<typename... As> static Native* make(As... as) { return new Native(as...); }
 	template<typename T> bool castsTo() {
@@ -620,8 +634,8 @@ struct Str : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
+			makeSharedFields<0>();
 		}
-		makeSharedFields<0>();
 	}
 
 	Flow* getFlowRc(Int i) override {
@@ -944,10 +958,10 @@ struct Vec : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
-		}
-		if constexpr (is_flow_ancestor_v<T>) {
-			for (T x : vec_) {
-				x->makeShared();
+			if constexpr (is_flow_ancestor_v<T>) {
+				for (T x : vec_) {
+					x->makeShared();
+				}
 			}
 		}
 	}
@@ -1020,6 +1034,7 @@ struct Vec : public Flow {
 		} else if (isUnitRc(v1)) {
 			for(T x : *v2) {
 				incRc(x);
+				inheritShare(v1, x);
 				v1->pushBack(x);
 			}
 			decRc(v2);
@@ -1088,9 +1103,9 @@ struct Ref : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
-		}
-		if constexpr (is_flow_ancestor_v<T>) {
-			val_->makeShared();
+			if constexpr (is_flow_ancestor_v<T>) {
+				val_->makeShared();
+			}
 		}
 	}
 
@@ -1204,9 +1219,9 @@ struct Fun : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
-		}
-		for (Flow* x: closure_) {
-			x->makeShared();
+			for (Flow* x: closure_) {
+				x->makeShared();
+			}
 		}
 	}
 
