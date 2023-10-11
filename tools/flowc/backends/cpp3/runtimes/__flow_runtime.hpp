@@ -191,7 +191,10 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::BOOL, T> ||
 	is_type_v<TypeFx::DOUBLE, T>;
 
-constexpr long CONSTANT_OBJECT_RC = -1;
+#define RcCounter long
+//#define RcCounter int32_t
+
+constexpr RcCounter CONSTANT_OBJECT_RC = -1;
 
 template<typename T>
 inline bool isConstatntObj(T x) {
@@ -211,10 +214,10 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 		if constexpr (CONCURRENCY_ON) {
 			if (!isConstatntObj<T>(x)) {
 				if constexpr (!ATOMIC_RC_SMART) {
-					std::atomic_ref<long>(x->rc_).fetch_add(d);
+					std::atomic_ref<RcCounter>(x->rc_).fetch_add(d);
 				} else {
 					if (x->rc_ < 0) {
-						std::atomic_ref<long>(x->rc_).fetch_sub(d);
+						std::atomic_ref<RcCounter>(x->rc_).fetch_sub(d);
 					} else {
 						x->rc_ += d;
 					}
@@ -231,12 +234,12 @@ template<typename T> inline void decRc(T x) {
 		if constexpr (CONCURRENCY_ON) {
 			if (!isConstatntObj<T>(x)) {
 				if constexpr (!ATOMIC_RC_SMART) {
-					if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
+					if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
 						delete x;
 					}
 				} else {
 					if (x->rc_ < 0) {
-						if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -2) {
+						if (std::atomic_ref<RcCounter>(x->rc_).fetch_add(1) == -2) {
 							delete x;
 						}
 					} else {
@@ -261,14 +264,14 @@ template<typename T> inline T decRcReuse(T x) {
 		if constexpr (CONCURRENCY_ON) {
 			if (!isConstatntObj<T>(x)) {
 				if constexpr (!ATOMIC_RC_SMART) {
-					if (std::atomic_ref<long>(x->rc_).fetch_sub(1) == 1) {
+					if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
 						return x;
 					} else {
 						return nullptr;
 					}
 				} else {
 					if (x->rc_ < 0) {
-						if (std::atomic_ref<long>(x->rc_).fetch_add(1) == -2) {
+						if (std::atomic_ref<RcCounter>(x->rc_).fetch_add(1) == -2) {
 							return x;
 						} else {
 							return nullptr;
@@ -347,7 +350,7 @@ struct Flow {
 	virtual Int componentSize() const { return 0; }
 	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
 	//virtual void unbindChildren() { }
-	virtual void makeShared() { rc_ = -(rc_ + 1); }
+	virtual void makeShared() { if (rc_ > 0) rc_ = -(rc_ + 1); }
 	inline bool isShared() { return (rc_ < 0); }
 	TypeId typeIdRc() { return decRcRet(this, typeId()); }
 	Int componentSizeRc() { return decRcRet(this, componentSize()); }
@@ -384,7 +387,7 @@ private:
 	template<typename T> friend inline void decRc(T x);
 	template<typename T> friend inline T decRcReuse(T x);
 	template<typename T> friend inline bool isUnitRc(T x);
-	long rc_;
+	RcCounter rc_;
 };
 
 struct FVoid : public Flow { TypeId typeId() const override { return TypeFx::VOID; } };
@@ -617,8 +620,8 @@ struct Str : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
-			makeSharedFields<0>();
 		}
+		makeSharedFields<0>();
 	}
 
 	Flow* getFlowRc(Int i) override {
@@ -941,10 +944,10 @@ struct Vec : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
-			if constexpr (is_flow_ancestor_v<T>) {
-				for (T x : vec_) {
-					x->makeShared();
-				}
+		}
+		if constexpr (is_flow_ancestor_v<T>) {
+			for (T x : vec_) {
+				x->makeShared();
 			}
 		}
 	}
@@ -1085,9 +1088,9 @@ struct Ref : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
-			if constexpr (is_flow_ancestor_v<T>) {
-				val_->makeShared();
-			}
+		}
+		if constexpr (is_flow_ancestor_v<T>) {
+			val_->makeShared();
 		}
 	}
 
@@ -1201,9 +1204,9 @@ struct Fun : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
-			for (Flow* x: closure_) {
-				x->makeShared();
-			}
+		}
+		for (Flow* x: closure_) {
+			x->makeShared();
 		}
 	}
 
