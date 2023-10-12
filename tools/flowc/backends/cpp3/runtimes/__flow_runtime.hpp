@@ -1560,7 +1560,6 @@ inline Int compare(T v1, T v2) {
 	else if constexpr (std::is_same_v<T, Int>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
 	else if constexpr (std::is_same_v<T, Bool>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
 	else if constexpr (std::is_same_v<T, Double>) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-	else if constexpr (std::is_same_v<T, Flow*>) { return flowCompare(v1, v2); }
 	else if constexpr (std::is_same_v<T, String*>) { return v1->str().compare(v2->str()); }
 	else if constexpr (std::is_same_v<T, Native*>) { return compare<void*>(v1, v2); }
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
@@ -1591,6 +1590,8 @@ inline Int compare(T v1, T v2) {
 		} else {
 			return v1->compare(v2);
 		}
+	} else if constexpr (std::is_same_v<T, Flow*>) {
+		return flowCompare(v1, v2);
 	} else {
 		fail("illegal compare type");
 		return false;
@@ -1633,9 +1634,7 @@ inline void toString(T v, string& str) {
 	else if constexpr (std::is_same_v<T, Double>) { str.append(double2string(v, true)); }
 	else if constexpr (std::is_same_v<T, String*>) {
 		str.append(u"\""); appendEscaped(str, v->str()); str.append(u"\"");
-	}
-	else if constexpr (std::is_same_v<T, Flow*>) { flow2string(v, str); }
-	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
+	} else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
 		str.append(u"[");
 		Int size = v->size();
 		for (Int i = 0; i < size; ++i) {
@@ -1645,21 +1644,21 @@ inline void toString(T v, string& str) {
 			toString(v->get(i), str);
 		}
 		str.append(u"]");
-	}
-	else if constexpr (is_type_v<TypeFx::REF, T>) {
+	} else if constexpr (is_type_v<TypeFx::REF, T>) {
 		str.append(u"ref ");
 		toString(v->get(), str);
-	}
-	else if constexpr (is_type_v<TypeFx::FUNC, T>) {
+	} else if constexpr (is_type_v<TypeFx::FUNC, T>) {
 		decRc(v);
 		str.append(u"<function>");
-	}
-	else if constexpr (is_type_v<TypeFx::NATIVE, T>) {
+	} else if constexpr (is_type_v<TypeFx::NATIVE, T>) {
 		decRc(v);
 		str.append(u"<native>");
-	}
-	else if constexpr (is_struct_v<T>) {
+	} else if constexpr (is_struct_v<T>) {
 		v->toStringStr(str);
+	} else if constexpr (std::is_same_v<T, Flow*>) {
+		flow2string(v, str);
+	} else {
+		fail("illegal toString type");
 	}
 }
 
