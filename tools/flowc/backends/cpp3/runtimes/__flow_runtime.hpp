@@ -395,9 +395,9 @@ struct Flow {
 	virtual Flow* getFlow(Int i) { fail("invalid flow value getter"); return nullptr; }
 	virtual Flow* getFlow(const string& f) { fail("invalid flow value getter"); return nullptr; }
 
-	template<typename T> inline T get() { return dynamic_cast<T>(this); }
-	template<typename T> inline T getRc1() { return incRcRet(dynamic_cast<T>(this)); }
-	template<typename T> inline T getRc() { return dynamic_cast<T>(this); }
+	template<typename T> inline T get() { return static_cast<T>(this); }
+	template<typename T> inline T getRc1() { return incRcRet(static_cast<T>(this)); }
+	template<typename T> inline T getRc() { return static_cast<T>(this); }
 
 	void makeUnitRc() { rc_ = 1; }
 	void makeConstantRc() { rc_ = CONSTANT_OBJECT_RC; }
@@ -417,19 +417,19 @@ struct FBool : public Flow { FBool(Bool v): val(v) {} TypeId typeId() const over
 struct FDouble : public Flow { FDouble(Double v): val(v) {} TypeId typeId() const override { return TypeFx::DOUBLE; } Double val; };
 
 template<> inline Void Flow::getRc<Void>() { return decRcRet(this, void_value); }
-template<> inline Int Flow::getRc<Int>() { return decRcRet(this, dynamic_cast<FInt*>(this)->val); }
-template<> inline Bool Flow::getRc<Bool>() { return decRcRet(this, dynamic_cast<FBool*>(this)->val); }
-template<> inline Double Flow::getRc<Double>() { return decRcRet(this, dynamic_cast<FDouble*>(this)->val); }
+template<> inline Int Flow::getRc<Int>() { return decRcRet(this, static_cast<FInt*>(this)->val); }
+template<> inline Bool Flow::getRc<Bool>() { return decRcRet(this, static_cast<FBool*>(this)->val); }
+template<> inline Double Flow::getRc<Double>() { return decRcRet(this, static_cast<FDouble*>(this)->val); }
 
 template<> inline Void Flow::getRc1<Void>() { return void_value; }
-template<> inline Int Flow::getRc1<Int>() { return dynamic_cast<FInt*>(this)->val; }
-template<> inline Bool Flow::getRc1<Bool>() { return dynamic_cast<FBool*>(this)->val; }
-template<> inline Double Flow::getRc1<Double>() { return dynamic_cast<FDouble*>(this)->val; }
+template<> inline Int Flow::getRc1<Int>() { return static_cast<FInt*>(this)->val; }
+template<> inline Bool Flow::getRc1<Bool>() { return static_cast<FBool*>(this)->val; }
+template<> inline Double Flow::getRc1<Double>() { return static_cast<FDouble*>(this)->val; }
 
 template<> inline Void Flow::get<Void>() { return void_value; }
-template<> inline Int Flow::get<Int>() { return dynamic_cast<FInt*>(this)->val; }
-template<> inline Bool Flow::get<Bool>() { return dynamic_cast<FBool*>(this)->val; }
-template<> inline Double Flow::get<Double>() { return dynamic_cast<FDouble*>(this)->val; }
+template<> inline Int Flow::get<Int>() { return static_cast<FInt*>(this)->val; }
+template<> inline Bool Flow::get<Bool>() { return static_cast<FBool*>(this)->val; }
+template<> inline Double Flow::get<Double>() { return static_cast<FDouble*>(this)->val; }
 
 constexpr Int UNI_HALF_BASE = 0x10000;
 constexpr Int UNI_HALF_SHIFT = 10;

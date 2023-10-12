@@ -335,20 +335,6 @@ String* String::concatRc(String* s1, String* s2) {
 	}
 }
 
-bool isSameObjRc(Flow* f1, Flow* f2) {
-	if (f1->typeId() == f2->typeId()) {
-		switch (f1->typeId()) {
-			case TypeFx::VOID:   decRc(f1); decRc(f2); return true;
-			case TypeFx::INT:    return equalRc<Int>(f1->getRc<Int>(), f2->getRc<Int>());
-			case TypeFx::BOOL:   return equalRc<Bool>(f1->getRc<Bool>(), f2->getRc<Bool>());
-			case TypeFx::DOUBLE: return equalRc<Double>(f1->getRc<Double>(), f2->getRc<Double>());
-			case TypeFx::STRING: return equalRc<String*>(f1->getRc<String*>(), f2->getRc<String*>());
-			case TypeFx::NATIVE: decRc(f1); decRc(f2); return (f1 == f2);
-			default:             decRc(f1); decRc(f2); return (f1 == f2);
-		}
-	}
-}
-
 void appendEscaped(string& str, const string& x) {
 	for (char16_t c : x) {
 		switch (c) {
