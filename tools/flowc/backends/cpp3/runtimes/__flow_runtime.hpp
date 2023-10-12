@@ -223,6 +223,7 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 					}
 				}
 			} else {
+				//std::atomic_ref<RcCounter>(x->rc_).fetch_add(d);
 				x->rc_ += d;
 			}
 		}
@@ -250,6 +251,9 @@ template<typename T> inline void decRc(T x) {
 					}
 				}
 			} else {
+				/*if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
+					delete x;
+				}*/
 				x->rc_ -= 1;
 				if (x->rc_ == 0) {
 					delete x;
@@ -286,6 +290,11 @@ template<typename T> inline T decRcReuse(T x) {
 					}
 				}
 			} else {
+				/*if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
+					return x;
+				} else {
+					return nullptr;
+				}*/
 				x->rc_ -= 1;
 				if (x->rc_ == 0) {
 					return x;
@@ -347,6 +356,11 @@ template<typename T> inline String* toString(T v);
 template<typename T> inline void toStringRc(T v, string& str);
 template<typename T> inline void toString(T v, string& str);
 template<typename T> inline T makeDefVal();
+template<typename S, typename T> inline S hashRc(T v);
+template<typename S, typename T> inline S hash(T v);
+
+template<typename S, typename T> struct Hash;
+template<typename T> struct Equal { bool operator() (T v1, T v2) const { return equal(v1, v2); } };
 
 // Dynamic wrapper for all values 
 
@@ -356,7 +370,7 @@ struct Flow {
 	virtual TypeId typeId() const = 0;
 	virtual Int componentSize() const { return 0; }
 	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
-	//virtual void unbindChildren() { }
+
 	virtual void makeShared() { if (rc_ > 0) rc_ = -(rc_ + 1); }
 	inline bool isShared() { return (rc_ < 0); }
 	TypeId typeIdRc() { return decRcRet(this, typeId()); }
@@ -417,13 +431,13 @@ template<> inline Int Flow::get<Int>() { return dynamic_cast<FInt*>(this)->val; 
 template<> inline Bool Flow::get<Bool>() { return dynamic_cast<FBool*>(this)->val; }
 template<> inline Double Flow::get<Double>() { return dynamic_cast<FDouble*>(this)->val; }
 
-const Int UNI_HALF_BASE = 0x10000;
-const Int UNI_HALF_SHIFT = 10;
-const Int UNI_HALF_MASK = 0x3FF;
-const Int UNI_SUR_HIGH_START = 0xD800;
-const Int UNI_SUR_HIGH_END = 0xDBFF;
-const Int UNI_SUR_LOW_START = 0xDC00;
-const Int UNI_SUR_LOW_END = 0xDFFF;
+constexpr Int UNI_HALF_BASE = 0x10000;
+constexpr Int UNI_HALF_SHIFT = 10;
+constexpr Int UNI_HALF_MASK = 0x3FF;
+constexpr Int UNI_SUR_HIGH_START = 0xD800;
+constexpr Int UNI_SUR_HIGH_END = 0xDBFF;
+constexpr Int UNI_SUR_LOW_START = 0xDC00;
+constexpr Int UNI_SUR_LOW_END = 0xDFFF;
 
 struct String : public Flow {
 	enum { TYPE = TypeFx::STRING };
@@ -523,29 +537,29 @@ struct Native : public Flow {
 	enum { TYPE = TypeFx::NATIVE };
 	enum Kind { SCALAR = 0, FLOW_PTR = 1, FOREIGN_PTR = 2 };
 	template<typename T>
-	Native(T v): cleanup([](){}), share([](){ }), val(v) {
+	Native(T v): cleanup_([](){}), share_([](){ }), val_(v) {
 		if constexpr (is_flow_ancestor_v<T>) {
-			cleanup = [v]() { decRc(std::any_cast<Flow*>(v)); };
-			share   = [v]() {
+			cleanup_ = [v]() { decRc(std::any_cast<Flow*>(v)); };
+			share_   = [v]() {
 				Flow* f = std::any_cast<Flow*>(v);
 				if (!f->isShared()) {
 					f->makeShared();
 				}
 			};
 		} else if constexpr (std::is_pointer_v<T>) {
-			cleanup = [v]() { delete std::any_cast<T>(v); };
+			cleanup_ = [v]() { delete std::any_cast<T>(v); };
 		}
 	}
 	template<typename T>
-	Native(T v, std::function<void()>&& s): cleanup([](){}), share(std::move(s)), val(v) {
+	Native(T v, std::function<void()>&& s): cleanup_([](){}), share_(std::move(s)), val_(v) {
 		if constexpr (is_flow_ancestor_v<T>) {
-			cleanup = [v](){ decRc(std::any_cast<Flow*>(v)); };
+			cleanup_ = [v](){ decRc(std::any_cast<Flow*>(v)); };
 		} else if constexpr (std::is_pointer_v<T>) {
-			cleanup = [v](){ delete std::any_cast<T>(v); };
+			cleanup_ = [v](){ delete std::any_cast<T>(v); };
 		}
 	}
 	~Native() override {
-		cleanup();
+		cleanup_();
 	}
 	Native& operator = (Native&& r) = delete;
 	Native& operator = (const Native& r) = delete;
@@ -554,13 +568,13 @@ struct Native : public Flow {
 	void makeShared() override {
 		if (!isShared()) {
 			Flow::makeShared();
-			share();
+			share_();
 		}
 	}
 	template<typename... As> static Native* make(As... as) { return new Native(as...); }
 	template<typename T> bool castsTo() {
 		try {
-			std::any_cast<T>(val);
+			std::any_cast<T>(val_);
 			return true;
 		} catch(const std::bad_any_cast& e) {
 			return false;
@@ -570,16 +584,19 @@ struct Native : public Flow {
 	template<typename T> inline T getRc1() { return incRcRet(get<T>()); }
 	template<typename T> inline T get() {
 		try {
-			return std::any_cast<T>(val);
+			return std::any_cast<T>(val_);
 		} catch(const std::bad_any_cast& e) { 
 			fail("incorrect type in native");
 		}
 	}
 
+	const std::any& val() { return val_; }
+	std::any& valRef() { return val_; }
+
 private:
-	std::function<void()> cleanup;
-	std::function<void()> share;
-	std::any val;
+	std::function<void()> cleanup_;
+	std::function<void()> share_;
+	std::any val_;
 };
 
 // Any particular struct
@@ -729,6 +746,11 @@ struct Str : public Flow {
 		toStringArgs<0>(str);
 		str.append(u")");
 	}
+	template<typename S>
+	void hashCalc(S& h) {
+		Hash<S, TypeId>::calc(h, TYPE);
+		hashCalcArgs<0>(h);
+	}
 
 private:
 	template<Int i>
@@ -858,6 +880,13 @@ private:
 			}
 			toString(get<i>(), str);
 			toStringArgs<i + 1>(str);
+		}
+	}
+	template<typename S, Int i>
+	void hashCalcArgs(S& h) {
+		if constexpr(i < SIZE) {
+			Hash<S, std::tuple_element_t<i, Fields>>::calc(h, get<i>());
+			hashCalcArgs<i + 1>(h);
 		}
 	}
 	Fields fields;
@@ -1670,6 +1699,120 @@ inline T makeDefInit() {
 	else if constexpr (std::is_same_v<T, Bool>) return false;
 	else if constexpr (std::is_same_v<T, Double>) return 0.0;
 	else return nullptr;
+}
+
+template<typename S> struct FNV;
+template<> struct FNV<uint32_t> { enum { prime = 0x01000193, offset = 0x811C9DC5 }; };
+template<> struct FNV<uint64_t> { enum { prime = 0x00000100000001B3, offset = 0xcbf29ce484222325 }; };
+
+template<typename S, typename T> struct Hash {
+	inline S operator() (T n) const {
+		S h = FNV<S>::offset;
+		calc(h, n);
+		return h;
+	}
+	inline static S hash(T n) {
+		S h = FNV<S>::offset;
+		calc(h, n);
+		return h;
+	}
+	inline static void calc(S& h, T v) {
+		if constexpr (std::is_same_v<T, uint8_t>) {
+			h = (h ^ v) * FNV<S>::prime;
+		} else if constexpr (std::is_same_v<T, int8_t>) {
+			Hash<S, uint8_t>::calc(h, static_cast<uint8_t>(v));
+		} else if constexpr (std::is_same_v<T, uint16_t>) {
+			h = (h ^ ( v       & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 8) & 0xFF)) * FNV<S>::prime;
+		} else if constexpr (std::is_same_v<T, int16_t>) {
+			Hash<S, uint16_t>::calc(h, static_cast<uint16_t>(v));
+		} else if constexpr (std::is_same_v<T, uint32_t>) {
+			h = (h ^ ( v        & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 8)  & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 16) & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 24) & 0xFF)) * FNV<S>::prime;
+		} else if constexpr (std::is_same_v<T, int32_t>) {
+			Hash<S, uint32_t>::calc(h, static_cast<uint32_t>(v));
+		} else if constexpr (std::is_same_v<T, uint64_t>) {
+			h = (h ^ ( v        & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 8)  & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 16) & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 24) & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 32) & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 40) & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 48) & 0xFF)) * FNV<S>::prime;
+			h = (h ^ ((v >> 56) & 0xFF)) * FNV<S>::prime;
+		} else if constexpr (std::is_same_v<T, int64_t>) {
+			Hash<S, uint64_t>::calc(h, static_cast<uint64_t>(v));
+		} else if constexpr (std::is_same_v<T, float>) {
+			Hash<S, uint32_t>::calc(h, static_cast<uint32_t>(v));
+		} else if constexpr (std::is_same_v<T, double>) {
+			Hash<S, uint64_t>::calc(h, static_cast<uint64_t>(v));
+		} else if constexpr (std::is_same_v<T, String*>) {
+			for (char16_t c : v->str()) {
+				Hash<S, uint16_t>::calc(h, static_cast<uint16_t>(c));
+			}
+		} else if constexpr (std::is_same_v<T, Native*>) {
+			Hash<S, ptrdiff_t>::calc(h, reinterpret_cast<ptrdiff_t>(v));
+		} else if constexpr (std::is_same_v<T, Flow*>) {
+			switch (v->typeId()) {
+				case TypeFx::INT:    Hash<S, Int>::calc(h, v->template get<Int>()); break;
+				case TypeFx::BOOL:   Hash<S, Bool>::calc(h, v->template get<Bool>()); break;
+				case TypeFx::DOUBLE: Hash<S, Double>::calc(h, v->template get<Double>()); break;
+				case TypeFx::STRING: Hash<S, String*>::calc(h, v->template get<String*>()); break;
+				case TypeFx::ARRAY: {
+					for (Int i = 0; i < v->size(); ++i) {
+						Flow* x = v->getFlowRc1(i);
+						Hash<S, Flow*>::calc(h, x);
+						decRc(x);
+					}
+					break;
+				}
+				case TypeFx::REF:
+					Flow* x = v->getFlowRc(0);
+					Hash<S, Flow*>::calc(h, x);
+					decRc(x);
+					break;
+				case TypeFx::FUNC:
+					Hash<S, ptrdiff_t>::calc(h, reinterpret_cast<ptrdiff_t>(v));
+					break;
+				case TypeFx::NATIVE:
+					Hash<S, Native*>::calc(h, v->template get<Native*>());
+					break;
+				default: {
+					Hash<S, TypeId>::calc(h, v->typeId());
+					for (Int i = 0; i < v->size(); ++ i) {
+						Flow* x = v->getFlowRc1(i);
+						Hash<S, Flow*>::calc(h, x);
+						decRc(x);
+					}
+					break;
+				}
+			}
+		} else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
+			for (typename T::ElType c : *v) {
+				Hash<S, typename T::ElType>::calc(h, c);
+			}
+		} else if constexpr (is_type_v<TypeFx::REF, T>) {
+			Hash<S, ptrdiff_t>::calc(h, reinterpret_cast<ptrdiff_t>(v));
+			Hash<S, typename T::RefType>::calc(h, v->val());
+		}
+		else if constexpr (is_type_v<TypeFx::FUNC, T>) {
+			Hash<S, ptrdiff_t>::calc(h, reinterpret_cast<ptrdiff_t>(v));
+		}
+		else if constexpr (is_struct_v<T>) {
+			v->template hashCalc<S>(h);
+		}
+	}
+};
+
+template<typename S, typename T> inline S hashRc(T v) {
+	S ret = Hash<S, T>::hash(v);
+	decRc(v);
+	return ret;
+}
+template<typename S, typename T> inline S hash(T v) {
+	return Hash<S, T>::hash(v);
 }
 
 void cleanupAtExit();
