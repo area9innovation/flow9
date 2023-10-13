@@ -493,7 +493,7 @@ class TextClip extends NativeWidgetClip {
 			}
 		} else {
 			if (escapeHTML) {
-				if (Platform.isIE && style.fontFamily == "Material Icons") {
+				if (Platform.isIE && isMaterialIconFont()) {
 					nativeWidget.textContent = this.contentGlyphs.modified;
 				} else {
 					var textContent = calculateTextContent();
@@ -547,7 +547,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.background = bg;
 		}
 		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
+		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(!isMaterialIconFont() || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -567,7 +567,7 @@ class TextClip extends NativeWidgetClip {
 
 	public inline function updateBaselineWidget() : Void {
 		if (this.isHTMLRenderer() && isNativeWidget && needBaseline) {
-			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
+			if (!isInput && nativeWidget.firstChild != null && !isMaterialIconFont()) {
 				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 				// For some fonts italic form has a smaller height, so baseline becomes occasionally unsynchronised with normal-style glyphs on different zoom levels
 				if (style.fontStyle == 'italic') {
@@ -895,7 +895,7 @@ class TextClip extends NativeWidgetClip {
 
 			textClip.setClipX(anchorX * Math.max(0, this.getWidgetWidth() - getClipWidth()));
 
-			if (style.fontFamily == "Material Icons") {
+			if (isMaterialIconFont()) {
 				if (style.fontProperties == null) {
 					measureFont();
 				}
@@ -993,7 +993,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
+		style.wordWrapWidth = widgetWidth > 0 ? isMaterialIconFont() ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -1719,7 +1719,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 
-		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
+		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && !isMaterialIconFont()) {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
@@ -1912,6 +1912,10 @@ class TextClip extends NativeWidgetClip {
 				style.fontProperties.descent
 			];
 		}
+	}
+
+	private function isMaterialIconFont() : Bool {
+		return style.fontFamily.startsWith('Material Icons');
 	}
 
 	private override function createNativeWidget(?tagName : String = "p") : Void {
