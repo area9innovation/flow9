@@ -487,20 +487,18 @@ Int flowCompare(Flow* v1, Flow* v2) {
 				return compare<void*>(v1, v2);
 			}
 			default: {
-				case TypeFx::STRUCT: {
-					Int c1 = RTTI::typeName(v1->typeId()).compare(RTTI::typeName(v2->typeId()));
-					if (c1 != 0) {
-						return c1;
-					} else {
-						Int size = v1->componentSize();
-						for (Int i = 0; i < size; ++ i) {
-							Int c2 = flowCompareComponents(v1, v2, i);
-							if (c2 != 0) {
-								return c2;
-							}
+				Int c1 = RTTI::typeName(v1->typeId()).compare(RTTI::typeName(v2->typeId()));
+				if (c1 != 0) {
+					return c1;
+				} else {
+					Int size = v1->componentSize();
+					for (Int i = 0; i < size; ++ i) {
+						Int c2 = flowCompareComponents(v1, v2, i);
+						if (c2 != 0) {
+							return c2;
 						}
-						return 0;
 					}
+					return 0;
 				}
 			}
 		}
