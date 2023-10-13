@@ -238,6 +238,7 @@ inline bool isConstatntObj(T x) {
 	if constexpr (CONST_SINGLETONS) {
 		if constexpr (is_flow_ancestor_v<T>) {
 			return x->rc_ == CONSTANT_OBJECT_RC;
+			//return x->isConstantObj();
 		} else {
 			return false;
 		}
@@ -248,6 +249,7 @@ inline bool isConstatntObj(T x) {
 
 template<typename T> inline void incRc(T x, Int d = 1) {
 	if constexpr (is_flow_ancestor_v<T>) {
+		//x->incRc(d);
 		if (!isConstatntObj<T>(x)) {
 			if constexpr (CONCURRENCY_ON) {
 				if constexpr (!ATOMIC_RC_SMART) {
@@ -260,7 +262,6 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 					}
 				}
 			} else {
-				//std::atomic_ref<RcCounter>(x->rc_).fetch_add(d);
 				x->rc_ += d;
 			}
 		}
@@ -269,6 +270,7 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 
 template<typename T> inline void decRc(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
+		//x->decRc();
 		if (!isConstatntObj<T>(x)) {
 			if constexpr (CONCURRENCY_ON) {
 				if constexpr (!ATOMIC_RC_SMART) {
@@ -288,9 +290,6 @@ template<typename T> inline void decRc(T x) {
 					}
 				}
 			} else {
-				/*if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
-					delete x;
-				}*/
 				x->rc_ -= 1;
 				if (x->rc_ == 0) {
 					delete x;
@@ -302,6 +301,7 @@ template<typename T> inline void decRc(T x) {
 
 template<typename T> inline T decRcReuse(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
+		//return x->decRcReuse();
 		if (isConstatntObj<T>(x)) {
 			return nullptr;
 		} else {
@@ -329,11 +329,6 @@ template<typename T> inline T decRcReuse(T x) {
 					}
 				}
 			} else {
-				/*if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
-					return x;
-				} else {
-					return nullptr;
-				}*/
 				x->rc_ -= 1;
 				if (x->rc_ == 0) {
 					return x;
@@ -408,24 +403,116 @@ template<typename T> struct Equal { bool operator() (T v1, T v2) const { return 
 struct Flow {
 	Flow(): rc_(1) { }
 	virtual ~Flow() { }
+/*
+	template<typename R> inline R decRcRet(R ret) { decRc(); return ret; }
+	inline bool isConstatntObj() const {
+		if constexpr (CONST_SINGLETONS) {
+			return rc_ == CONSTANT_OBJECT_RC;
+		} else {
+			return false;
+		}
+	}
+	inline void incRc(Int d) {
+		if (!isConstatntObj()) {
+			if constexpr (CONCURRENCY_ON) {
+				if constexpr (!ATOMIC_RC_SMART) {
+					std::atomic_ref<RcCounter>(rc_).fetch_add(d);
+				} else {
+					if (rc_ < 0) {
+						std::atomic_ref<RcCounter>(rc_).fetch_sub(d);
+					} else {
+						rc_ += d;
+					}
+				}
+			} else {
+				rc_ += d;
+			}
+		}
+	}
+	inline void decRc() {
+		if (!isConstatntObj()) {
+			if constexpr (CONCURRENCY_ON) {
+				if constexpr (!ATOMIC_RC_SMART) {
+					if (std::atomic_ref<RcCounter>(rc_).fetch_sub(1) == 1) {
+						delete this;
+					}
+				} else {
+					if (rc_ < 0) {
+						if (std::atomic_ref<RcCounter>(rc_).fetch_add(1) == -2) {
+							delete this;
+						}
+					} else {
+						rc_ -= 1;
+						if (rc_ == 0) {
+							delete this;
+						}
+					}
+				}
+			} else {
+				rc_ -= 1;
+				if (rc_ == 0) {
+					delete this;
+				}
+			}
+		}
+	}
+	template<typename T>
+	inline T decRcReuse() {
+		if (isConstatntObj()) {
+			return nullptr;
+		} else {
+			if constexpr (CONCURRENCY_ON) {
+				if constexpr (!ATOMIC_RC_SMART) {
+					if (std::atomic_ref<RcCounter>(rc_).fetch_sub(1) == 1) {
+						return static_cast<T>(this);
+					} else {
+						return nullptr;
+					}
+				} else {
+					if (rc_ < 0) {
+						if (std::atomic_ref<RcCounter>(rc_).fetch_add(1) == -2) {
+							return static_cast<T>(this);
+						} else {
+							return nullptr;
+						}
+					} else {
+						rc_ -= 1;
+						if (rc_ == 0) {
+							return static_cast<T>(this);
+						} else {
+							return nullptr;
+						}
+					}
+				}
+			} else {
+				rc_ -= 1;
+				if (rc_ == 0) {
+					return static_cast<T>(this);
+				} else {
+					return nullptr;
+				}
+			}
+		}
+	}
+*/
 	virtual TypeId typeId() const = 0;
 	virtual Int componentSize() const { return 0; }
 	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
 
 	virtual void makeShared() { if (rc_ > 0) rc_ = -(rc_ + 1); }
 	inline bool isShared() { return (rc_ < 0); }
-	TypeId typeIdRc() { return decRcRet(this, typeId()); }
-	Int componentSizeRc() { return decRcRet(this, componentSize()); }
+	inline TypeId typeIdRc() { return decRcRet(this, typeId()); }
+	inline Int componentSizeRc() { return decRcRet(this, componentSize()); }
 	
 	// these methods decrement `this` RC
-	virtual Flow* getFlowRc(Int i) { fail("invalid flow value getter"); return nullptr; }
-	Bool getBoolRc(Int i) { Bool ret = getBoolRc1(i); decRc(this); return ret; }
-	Int getIntRc(Int i) { Int ret = getIntRc1(i); decRc(this); return ret;  }
-	Double getDoubleRc(Int i) { Double ret = getDoubleRc1(i); decRc(this); return ret; }
-	virtual void setFlowRc(Int i, Flow* v) { fail("invalid flow value setter"); }
-	virtual Flow* getFlowRc(String* f) { fail("invalid flow value getter"); return nullptr; }
-	virtual void setFlowRc(String* f, Flow* v) { fail("invalid flow value setter"); }
-	virtual Flow* callFlowRc(std::vector<Flow*>) { fail("invalid flow value getter"); return nullptr; }
+	inline Flow* getFlowRc(Int i) { return decRcRet(this, getFlowRc1(i)); }
+	inline Bool getBoolRc(Int i) { return decRcRet(this, getBoolRc1(i)); }
+	inline Int getIntRc(Int i) { return decRcRet(this, getIntRc1(i));  }
+	inline Double getDoubleRc(Int i) { return decRcRet(this, getDoubleRc1(i)); }
+	inline void setFlowRc(Int i, Flow* v) { setFlowRc1(i, v); decRc(this); }
+	inline Flow* getFlowRc(String* f) { return decRcRet(this, getFlowRc1(f)); }
+	inline void setFlowRc(String* f, Flow* v) { setFlowRc1(f, v); decRc(this); }
+	inline Flow* callFlowRc(const std::vector<Flow*>& as) { return decRcRet(this, callFlowRc1(as)); }
 
 	// these methods do not affect `this` RC, but return results RC is incremented
 	virtual Flow* getFlowRc1(Int i) { fail("invalid flow value getter"); return nullptr; }
@@ -435,7 +522,7 @@ struct Flow {
 	virtual void setFlowRc1(Int i, Flow* v) { fail("invalid flow value setter"); }
 	virtual Flow* getFlowRc1(String* f) { fail("invalid flow value getter"); return nullptr; }
 	virtual void setFlowRc1(String* f, Flow* v) { fail("invalid flow value setter"); }
-	virtual Flow* callFlowRc1(std::vector<Flow*>) { fail("invalid flow value getter"); return nullptr; }
+	virtual Flow* callFlowRc1(const std::vector<Flow*>&) { fail("invalid flow value getter"); return nullptr; }
 
 	// these methods do not change any RCs. NODE: only non-scalar components may be accessed this way,
 	// attempt to apply this method to a scalar component will cause runtime error
@@ -706,24 +793,6 @@ struct Str : public Union {
 		}
 	}
 
-	Flow* getFlowRc(Int i) override {
-		return decRcRet(this, getFlowRc1(i));
-	}
-	void setFlowRc(Int i, Flow* v) override {
-		setFlowRc1(i, v);
-		decRc(this);
-	}
-	Flow* getFlowRc(String* f) override {
-		int field_idx = RTTI::structField(Id, f->str());
-		decRc(f);
-		return getFlowRc(field_idx);
-	}
-	void setFlowRc(String* f, Flow* v) override {
-		int field_idx = RTTI::structField(Id, f->str());
-		decRc(f);
-		setFlowRc(field_idx, v);
-	}
-
 	Flow* getFlowRc1(Int i) override {
 		return getFlowRc1_<Flow*, 0>(i);
 	}
@@ -788,22 +857,10 @@ struct Str : public Union {
 		assignRc<typename std::tuple_element_t<i, Fields>>(std::get<i>(fields), v);
 	}
 
-	Int compareRc(Str* s) {
-		Int c = compareRc<0>(s);
-		decRc(s);
-		decRc(this);
-		return c;
-	}
 	Int compare(Str* s) {
 		return compare<0>(s);
 	}
-	void toStringStrRc(string& str) {
-		str.append(RTTI::typeName(TYPE));
-		str.append(u"(");
-		toStringArgsRc<0>(str);
-		str.append(u")");
-	}
-	void toStringStr(string& str) {
+	void toString(string& str) {
 		str.append(RTTI::typeName(TYPE));
 		str.append(u"(");
 		toStringArgs<0>(str);
@@ -904,16 +961,6 @@ private:
 		}
 	}
 	template<Int i>
-	Int compareRc(Str* s) {
-		if constexpr(i == SIZE) return 0; else {
-			Int c = flow::compareRc<std::tuple_element_t<i, Fields>>(
-				getRc1<i>(), s->getRc1<i>()
-			);
-			if (c != 0) return c;
-			return compareRc<i + 1>(s);
-		}
-	}
-	template<Int i>
 	Int compare(Str* s) {
 		if constexpr(i == SIZE) return 0; else {
 			Int c = flow::compare<std::tuple_element_t<i, Fields>>(
@@ -924,24 +971,12 @@ private:
 		}
 	}
 	template<Int i>
-	void toStringArgsRc(string& str) {
-		if constexpr(i < SIZE) {
-			if constexpr (i > 0) {
-				str.append(u", ");
-			}
-			toStringRc(getRc1<i>(), str);
-			toStringArgsRc<i + 1>(str);
-		} else {
-			decRc(this);
-		}
-	}
-	template<Int i>
 	void toStringArgs(string& str) {
 		if constexpr(i < SIZE) {
 			if constexpr (i > 0) {
 				str.append(u", ");
 			}
-			toString(get<i>(), str);
+			flow::toString(get<i>(), str);
 			toStringArgs<i + 1>(str);
 		}
 	}
@@ -1029,7 +1064,7 @@ struct Vec : public Flow {
 		}
 	}
 
-	void reserve(std::size_t s) { vec_.reserve(s); }
+	//void reserve(std::size_t s) { vec_.reserve(s); }
 
 	// std::vector interface
 	const_iterator begin() const { return vec_.begin(); }
@@ -1056,12 +1091,6 @@ struct Vec : public Flow {
 		}
 	}
 
-	Flow* getFlowRc(Int i) override { 
-		return castRc<T, Flow*>(getRc(i));
-	}
-	void setFlowRc(Int i, Flow* v) override {
-		setRc(i, castRc<Flow*, T>(v));
-	}
 	Flow* getFlowRc1(Int i) override { 
 		return castRc<T, Flow*>(getRc1(i)); 
 	}
@@ -1090,9 +1119,6 @@ struct Vec : public Flow {
 		return static_cast<Int>(vec_.size()); 
 	}
 	inline void pushBack(T x) {
-		if (isConstatntObj(this)) {
-			fail("pushing into constant object!: " + toString(x)->toStd());
-		}
 		vec_.push_back(x);
 	}
 	inline void pushBackRc(T x) {
@@ -1208,12 +1234,6 @@ struct Ref : public Flow {
 		}
 	}
 
-	Flow* getFlowRc(Int i) override { 
-		return castRc<RefType, Flow*>(getRc()); 
-	}
-	void setFlowRc(Int i, Flow* v) override {
-		setRc(castRc<Flow*, RefType>(v));
-	}
 	Flow* getFlowRc1(Int i) override { 
 		return castRc<RefType, Flow*>(getRc1());
 	}
@@ -1333,22 +1353,9 @@ struct Fun : public Flow {
 		}
 	}
 
-	Flow* callFlowRc(std::vector<Flow*> as) override {
+	Flow* callFlowRc1(const std::vector<Flow*>& as) override { 
 		if (ARITY == as.size()) {
-			return [this, as]<std::size_t... I>(std::index_sequence<I...>) {
-				return castRc<R, Flow*>(callRc(
-					castRc<Flow*, std::tuple_element_t<I, Args>>(as.at(I))...
-				));
-			}
-			(std::make_index_sequence<ARITY>{});
-		} else {
-			fail("wrong function arity");
-			return void_value;
-		}
-	}
-	Flow* callFlowRc1(std::vector<Flow*> as) override { 
-		if (ARITY == as.size()) {
-			return [this, as]<std::size_t... I>(std::index_sequence<I...>) { 
+			return [this, &as]<std::size_t... I>(std::index_sequence<I...>) { 
 				return castRc<R, Flow*>(callRc1(
 					castRc<Flow*, std::tuple_element_t<I, Args>>(as.at(I))...
 				));
@@ -1714,7 +1721,7 @@ inline void toString(T v, string& str) {
 		decRc(v);
 		str.append(u"<native>");
 	} else if constexpr (is_struct_v<T>) {
-		v->toStringStr(str);
+		v->toString(str);
 	} else if constexpr (is_flow_ancestor_v<T>) {
 		flow2string(v, str);
 	} else {
@@ -1852,7 +1859,7 @@ template<typename S, typename T> struct Hash {
 			case TypeFx::INT:    Hash<S, Int>::calc(h, v->getIntRc1(i)); break;
 			case TypeFx::BOOL:   Hash<S, Bool>::calc(h, v->getBoolRc1(i)); break;
 			case TypeFx::DOUBLE: Hash<S, Double>::calc(h, v->getDoubleRc1(i)); break;
-			default:             Hash<S, Flow*>::calc(h, v->getFlowRc1(i)); break;
+			default:             Hash<S, Flow*>::calc(h, v->getFlow(i)); break;
 		}
 	}
 };
