@@ -85,8 +85,33 @@ inline Int string2int(const string& s) { if (s.size() == 0) { return 0; } else {
 inline Double string2double(const string& s) { if (s.size() == 0) { return 0.0; } else { try { return std::stod(string2std(s)); } catch (std::exception& e) { return 0.0; } } }
 inline Bool string2bool(const string& s) { return s != u"false"; }
 
+template<typename T>
+inline T makeDefInit() {
+	if constexpr (std::is_same_v<T, Void>) return void_value;
+	else if constexpr (std::is_same_v<T, Int>) return 0;
+	else if constexpr (std::is_same_v<T, Bool>) return false;
+	else if constexpr (std::is_same_v<T, Double>) return 0.0;
+	else return nullptr;
+}
+
 // Runtime type information: structs
 
+template<typename T>
+inline string type2string() {
+	int status = -1;
+	char* name = abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status);
+	string ret(name);
+	delete name;
+	return ret;
+}
+template<typename T>
+inline std::string type2StdString() {
+	int status = -1;
+	char* name = abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status);
+	std::string ret(name);
+	delete name;
+	return ret;
+}
 struct FieldDef {
 	string name;
 	TypeId type;
@@ -104,14 +129,6 @@ struct StructDef {
 };
 
 struct RTTI {
-	template<typename T>
-	static std::string type2string() {
-		int status = -1;
-		char* name = abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status);
-		std::string ret(name);
-		delete name;
-		return ret;
-	}
 	static const string& typeName(TypeId id) {
 		if (id < 0) return type_names[0]; else
 		if (id < structTypeIdOffset) return type_names[id + 1]; else
@@ -120,6 +137,9 @@ struct RTTI {
 		} else {
 			return type_names[0];
 		}
+	}
+	static std::string typeNameStd(TypeId id) {
+		return string2std(typeName(id));
 	}
 	static inline bool structExists(TypeId id) {
 		return
@@ -176,6 +196,7 @@ struct Native;
 using Union = Flow;
 
 template<TypeId Id, typename... Fs> struct Str;
+//template<typename... Ss> struct Union;
 template<typename T> struct Vec;
 template<typename T> struct Ref;
 template<typename R, typename... As> struct Fun;
@@ -322,7 +343,7 @@ template<typename T> inline T decRcReuse(T x) {
 			}
 		}
 	} else {
-		fail("trying to decRcReuse of type: " + RTTI::type2string<T>());
+		fail("trying to decRcReuse of type: " + type2StdString<T>());
 	}
 }
 
@@ -398,6 +419,9 @@ struct Flow {
 	
 	// these methods decrement `this` RC
 	virtual Flow* getFlowRc(Int i) { fail("invalid flow value getter"); return nullptr; }
+	Bool getBoolRc(Int i) { Bool ret = getBoolRc1(i); decRc(this); return ret; }
+	Int getIntRc(Int i) { Int ret = getIntRc1(i); decRc(this); return ret;  }
+	Double getDoubleRc(Int i) { Double ret = getDoubleRc1(i); decRc(this); return ret; }
 	virtual void setFlowRc(Int i, Flow* v) { fail("invalid flow value setter"); }
 	virtual Flow* getFlowRc(String* f) { fail("invalid flow value getter"); return nullptr; }
 	virtual void setFlowRc(String* f, Flow* v) { fail("invalid flow value setter"); }
@@ -405,6 +429,9 @@ struct Flow {
 
 	// these methods do not affect `this` RC, but return results RC is incremented
 	virtual Flow* getFlowRc1(Int i) { fail("invalid flow value getter"); return nullptr; }
+	virtual Bool getBoolRc1(Int i) { fail("invalid flow value getter"); return false; }
+	virtual Int getIntRc1(Int i) { fail("invalid flow value getter"); return 0; }
+	virtual Double getDoubleRc1(Int i) { fail("invalid flow value getter"); return 0.0; }
 	virtual void setFlowRc1(Int i, Flow* v) { fail("invalid flow value setter"); }
 	virtual Flow* getFlowRc1(String* f) { fail("invalid flow value getter"); return nullptr; }
 	virtual void setFlowRc1(String* f, Flow* v) { fail("invalid flow value setter"); }
@@ -608,7 +635,7 @@ struct Native : public Flow {
 		try {
 			return std::any_cast<T>(val_);
 		} catch(const std::bad_any_cast& e) { 
-			fail("incorrect type in native: " + RTTI::type2string<T>());
+			fail("incorrect type in native: " + type2StdString<T>());
 		}
 	}
 
@@ -620,6 +647,10 @@ private:
 	std::function<void()> share_;
 	std::any val_;
 };
+
+//template<typename... Ss> struct Union : public Flow {
+//	std::variant<Ss...> str_;
+//};
 
 // Any particular struct
 
@@ -694,8 +725,18 @@ struct Str : public Union {
 	}
 
 	Flow* getFlowRc1(Int i) override {
-		return getFlowRc1_<0>(i);
+		return getFlowRc1_<Flow*, 0>(i);
 	}
+	Bool getBoolRc1(Int i) override {
+		return getFlowRc1_<Bool, 0>(i);
+	}
+	Int getIntRc1(Int i) override {
+		return getFlowRc1_<Int, 0>(i);
+	}
+	Double getDoubleRc1(Int i) override {
+		return getFlowRc1_<Double, 0>(i);
+	}
+
 	void setFlowRc1(Int i, Flow* v) override {
 		setFlowRc1_<0>(i, v);
 	}
@@ -811,23 +852,23 @@ private:
 			makeSharedFields<i + 1>();
 		}
 	}
-	template<Int i>
-	Flow* getFlowRc1_(Int j) {
+	template<typename X, Int i>
+	X getFlowRc1_(Int j) {
 		if constexpr(i == SIZE) {
-			fail("illegal access of field by index");
-			return nullptr;
+			fail("illegal access of field by index: " + string2std(int2string(i)) + ", size: " + string2std(int2string(SIZE)));
+			return makeDefInit<X>();
 		} else {
 			if (i == j) {
-				return castRc<std::tuple_element_t<i, Fields>, Flow*>(getRc1<i>()); 
+				return castRc<std::tuple_element_t<i, Fields>, X>(getRc1<i>()); 
 			} else {
-				return getFlowRc1_<i + 1>(j);
+				return getFlowRc1_<X, i + 1>(j);
 			}
 		}
 	}
 	template<Int i>
 	void setFlowRc1_(Int j, Flow* v) {
 		if constexpr(i == SIZE) {
-			fail("illegal access of field by index");
+			fail("illegal access of field by index: " + string2std(int2string(i)) + ", size: " + string2std(int2string(SIZE)));
 		} else {
 			if (i == j) {
 				setRc1<i>(castRc<Flow*, std::tuple_element_t<i, Fields>>(v));
@@ -839,7 +880,7 @@ private:
 	template<Int i>
 	Flow* getFlow_(Int j) {
 		if constexpr(i == SIZE) {
-			fail("illegal access of field by index");
+			fail("illegal access of field by index: " + string2std(int2string(i)) + ", size: " + string2std(int2string(SIZE)));
 			return nullptr;
 		} else {
 			if (i == j) {
@@ -1024,6 +1065,15 @@ struct Vec : public Flow {
 	Flow* getFlowRc1(Int i) override { 
 		return castRc<T, Flow*>(getRc1(i)); 
 	}
+	Bool getBoolRc1(Int i) override {
+		return castRc<T, Bool>(getRc1(i));
+	}
+	Int getIntRc1(Int i) override {
+		return castRc<T, Int>(getRc1(i));
+	}
+	Double getDoubleRc1(Int i) override {
+		return castRc<T, Double>(getRc1(i));
+	}
 	void setFlowRc1(Int i, Flow* v) override { 
 		setRc1(i, castRc<Flow*, T>(v));
 	}
@@ -1165,7 +1215,16 @@ struct Ref : public Flow {
 		setRc(castRc<Flow*, RefType>(v));
 	}
 	Flow* getFlowRc1(Int i) override { 
-		return castRc<RefType, Flow*>(getRc1()); 
+		return castRc<RefType, Flow*>(getRc1());
+	}
+	Bool getBoolRc1(Int i) override {
+		return castRc<RefType, Bool>(getRc1());
+	}
+	Int getIntRc1(Int i) override {
+		return castRc<RefType, Int>(getRc1());
+	}
+	Double getDoubleRc1(Int i) override {
+		return castRc<RefType, Double>(getRc1());
 	}
 	void setFlowRc1(Int i, Flow* v) override {
 		setRc1(castRc<Flow*, RefType>(v));
@@ -1174,7 +1233,7 @@ struct Ref : public Flow {
 		if constexpr (is_flow_ancestor_v<T>) {
 			return val_;
 		} else {
-			fail("only flow ancestor components may be accessed directly as Flow, here is: " + RTTI::type2string<T>());
+			fail("only flow ancestor components may be accessed directly as Flow, here is: " + type2StdString<T>());
 		}
 	}
 
@@ -1332,7 +1391,7 @@ inline std::string toStdString(T v) {
 
 template<typename T1, typename T2>
 inline T2 errorCast(T1 x) {
-	fail("invalid conversion from type: '" + RTTI::type2string<T1>() + "' to type: '" + RTTI::type2string<T1>() + "' " + "of value:\n" + toStdString(x));
+	fail("invalid conversion from type: '" + type2StdString<T1>() + "' to type: '" + type2StdString<T1>() + "' " + "of value:\n" + toStdString(x));
 }
 
 template<typename T1, typename T2>
@@ -1365,7 +1424,7 @@ inline T2 castRc(T1 x) {
 	else if constexpr (std::is_same_v<T2, Int>) {
 		if constexpr (std::is_same_v<T1, Bool>) { return bool2int(x); }
 		else if constexpr (std::is_same_v<T1, Double>) { return double2int(x); }
-		else if constexpr (std::is_same_v<T1, String*>) { return string2int(x); }
+		else if constexpr (std::is_same_v<T1, String*>) { return string2int(x->str()); }
 		else if constexpr (std::is_same_v<T1, Flow*>) {
 			switch (x->typeId()) {
 				case TypeFx::INT:    return x->template getRc<Int>();
@@ -1384,7 +1443,7 @@ inline T2 castRc(T1 x) {
 	else if constexpr (std::is_same_v<T2, Bool>) {
 		if constexpr (std::is_same_v<T1, Int>) { return int2bool(x); }
 		else if constexpr (std::is_same_v<T1, Double>) { return double2bool(x); }
-		else if constexpr (std::is_same_v<T1, String*>) { return string2bool(x); }
+		else if constexpr (std::is_same_v<T1, String*>) { return string2bool(x->str()); }
 		else if constexpr (std::is_same_v<T1, Flow*>) {
 			switch (x->typeId()) {
 				case TypeFx::INT:    return int2bool(x->template getRc<Int>());
@@ -1403,7 +1462,7 @@ inline T2 castRc(T1 x) {
 	else if constexpr (std::is_same_v<T2, Double>) {
 		if constexpr (std::is_same_v<T1, Int>) { return int2double(x); }
 		else if constexpr (std::is_same_v<T1, Bool>) { return bool2double(x); }
-		else if constexpr (std::is_same_v<T1, String*>) { return string2double(x); }
+		else if constexpr (std::is_same_v<T1, String*>) { return string2double(x->str()); }
 		else if constexpr (std::is_same_v<T1, Flow*>) {
 			switch (x->typeId()) {
 				case TypeFx::INT:    return int2double(x->template getRc<Int>());
@@ -1420,9 +1479,9 @@ inline T2 castRc(T1 x) {
 		}
 	}
 	else if constexpr (std::is_same_v<T2, String*>) {
-		if constexpr (std::is_same_v<T1, Int>) { return String::make(int2string(x)); }
-		else if constexpr (std::is_same_v<T1, Bool>) { return String::make(bool2string(x)); }
-		else if constexpr (std::is_same_v<T1, Double>) { return String::make(double2string(x)); }
+		if constexpr (std::is_same_v<T1, Int>) { return String::make(std::move(int2string(x))); }
+		else if constexpr (std::is_same_v<T1, Bool>) { return String::make(std::move(bool2string(x))); }
+		else if constexpr (std::is_same_v<T1, Double>) { return String::make(std::move(double2string(x))); }
 		else if constexpr (std::is_same_v<T1, Flow*>) {
 			if (x->typeId() == TypeFx::STRING) {
 				return x->template getRc<String*>();
@@ -1437,10 +1496,10 @@ inline T2 castRc(T1 x) {
 		return Native::make(x);
 	}
 	else if constexpr (is_type_v<TypeFx::ARRAY, T2>) {
-		using V2 = std::remove_pointer<T2>::type;
+		using V2 = std::remove_pointer_t<T2>;
 		if constexpr (is_type_v<TypeFx::ARRAY, T1>) {
 			T2 ret = V2::make(x->size());
-			using V1 = std::remove_pointer<T1>::type;
+			using V1 = std::remove_pointer_t<T1>;
 			for (auto e : *x) {
 				incRc(e);
 				ret->pushBack(castRc<typename V1::ElType, typename V2::ElType>(e));
@@ -1460,9 +1519,9 @@ inline T2 castRc(T1 x) {
 		}
 	}
 	else if constexpr (is_type_v<TypeFx::REF, T2>) {
-		using V2 = std::remove_pointer<T2>::type;
+		using V2 = std::remove_pointer_t<T2>;
 		if constexpr (is_type_v<TypeFx::REF, T1>) {
-			using V1 = std::remove_pointer<T1>::type;
+			using V1 = std::remove_pointer_t<T1>;
 			return new V2(castRc<typename V1::RefType, typename V2::RefType>(x->getRc()));
 		} else if (T2 f = dynamic_cast<T2>(x)) {
 			return f;
@@ -1471,9 +1530,9 @@ inline T2 castRc(T1 x) {
 		}
 	}
 	else if constexpr (is_type_v<TypeFx::FUNC, T2>) {
-		using V2 = std::remove_pointer<T2>::type;
+		using V2 = std::remove_pointer_t<T2>;
 		if constexpr (is_type_v<TypeFx::FUNC, T1>) {
-			using V1 = std::remove_pointer<T1>::type;
+			using V1 = std::remove_pointer_t<T1>;
 			T2 ret = [x]<std::size_t... I>(std::index_sequence<I...>) constexpr { 
 				return new V2([x](std::tuple_element_t<I, typename V2::Args>... as) mutable {
 					return castRc<typename V1::RetType, typename V2::RetType>(x->callFlowRc(
@@ -1512,9 +1571,9 @@ inline T2 castRc(T1 x) {
 		}
 	}
 	else if constexpr (is_struct_v<T2>) {
-		using V2 = std::remove_pointer<T2>::type;
+		using V2 = std::remove_pointer_t<T2>;
 		if constexpr (is_struct_v<T1>) {
-			using V1 = std::remove_pointer<T1>::type;
+			using V1 = std::remove_pointer_t<T1>;
 			using V1_Fields = typename V1::Fields;
 			using V2_Fields = typename V2::Fields;
 			T2 ret = [x]<std::size_t... I>(std::index_sequence<I...>) constexpr { 
@@ -1578,7 +1637,7 @@ inline Int compare(T v1, T v2) {
 			return c1;
 		} else {
 			for (Int i = 0; i < v1->size(); ++ i) {
-				Int c2 = compare<typename std::remove_pointer<T>::type::ElType>(v1->get(i), v2->get(i));
+				Int c2 = compare<typename std::remove_pointer_t<T>::ElType>(v1->get(i), v2->get(i));
 				if (c2 != 0) {
 					return c2;
 				}
@@ -1586,7 +1645,7 @@ inline Int compare(T v1, T v2) {
 			return 0;
 		}
 	} else if constexpr (is_type_v<TypeFx::REF, T>) {
-		return compare<typename std::remove_pointer<T>::type::RefType>(v1->get(), v2->get());
+		return compare<typename std::remove_pointer_t<T>::RefType>(v1->get(), v2->get());
 	} else if constexpr (is_type_v<TypeFx::FUNC, T> || is_type_v<TypeFx::NATIVE, T>) {
 		return compare<void*>(v1, v2);
 	} else if constexpr (is_struct_v<T>) {
@@ -1594,7 +1653,7 @@ inline Int compare(T v1, T v2) {
 	} else if constexpr (is_flow_ancestor_v<T>) {
 		return flowCompare(v1, v2);
 	} else {
-		fail("illegal compare type: " + RTTI::type2string<T>());
+		fail("illegal compare type: " + type2StdString<T>());
 		return 0;
 	}
 }
@@ -1659,7 +1718,7 @@ inline void toString(T v, string& str) {
 	} else if constexpr (is_flow_ancestor_v<T>) {
 		flow2string(v, str);
 	} else {
-		fail("illegal toString type" + RTTI::type2string<T>());
+		fail("illegal toString type" + type2StdString<T>());
 	}
 }
 
@@ -1690,16 +1749,7 @@ inline T makeDefVal() {
 		(std::make_index_sequence<S::SIZE>{});
 	}
 	else if constexpr (is_flow_ancestor_v<T>) return String::make();
-	else fail("illegal makeDefVal type" + RTTI::type2string<T>());
-}
-
-template<typename T>
-inline T makeDefInit() {
-	if constexpr (std::is_same_v<T, Void>) return void_value;
-	else if constexpr (std::is_same_v<T, Int>) return 0;
-	else if constexpr (std::is_same_v<T, Bool>) return false;
-	else if constexpr (std::is_same_v<T, Double>) return 0.0;
-	else return nullptr;
+	else fail("illegal makeDefVal type" + type2StdString<T>());
 }
 
 template<typename S> struct FNV;
@@ -1774,16 +1824,12 @@ template<typename S, typename T> struct Hash {
 				case TypeFx::STRING: Hash<S, String*>::calc(h, v->template get<String*>()); break;
 				case TypeFx::ARRAY: {
 					for (Int i = 0; i < v->size(); ++i) {
-						Flow* x = v->getFlowRc1(i);
-						Hash<S, Flow*>::calc(h, x);
-						decRc(x);
+						calcComponent(h, v, i);
 					}
 					break;
 				}
 				case TypeFx::REF:
-					Flow* x = v->getFlowRc(0);
-					Hash<S, Flow*>::calc(h, x);
-					decRc(x);
+					calcComponent(h, v, 0);
 					break;
 				case TypeFx::FUNC:
 					Hash<S, ptrdiff_t>::calc(h, reinterpret_cast<ptrdiff_t>(v));
@@ -1794,14 +1840,20 @@ template<typename S, typename T> struct Hash {
 				default: {
 					Hash<S, TypeId>::calc(h, v->typeId());
 					for (Int i = 0; i < v->size(); ++ i) {
-						Flow* x = v->getFlowRc1(i);
-						Hash<S, Flow*>::calc(h, x);
-						decRc(x);
+						calcComponent(h, v, i);
 					}
 					break;
 				}
 			}
-		} else fail("illegal hash type" + RTTI::type2string<T>());
+		} else fail("illegal hash type" + type2StdString<T>());
+	}
+	inline static void calcComponent(S& h, Flow* v, Int i) {
+		switch (v->componentTypeId(i)) {
+			case TypeFx::INT:    Hash<S, Int>::calc(h, v->getIntRc1(i)); break;
+			case TypeFx::BOOL:   Hash<S, Bool>::calc(h, v->getBoolRc1(i)); break;
+			case TypeFx::DOUBLE: Hash<S, Double>::calc(h, v->getDoubleRc1(i)); break;
+			default:             Hash<S, Flow*>::calc(h, v->getFlowRc1(i)); break;
+		}
 	}
 };
 

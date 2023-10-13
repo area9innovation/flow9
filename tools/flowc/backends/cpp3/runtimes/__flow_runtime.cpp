@@ -348,20 +348,15 @@ void appendEscaped(string& str, const string& x) {
 	}
 }
 
-void flow2stringComponents(Flow* v, string& str, Int i) {
+inline void flow2stringComponents(Flow* v, string& str, Int i) {
 	if (i > 0) {
 		str.append(u", ");
 	}
 	switch (v->componentTypeId(i)) {
-		case TypeFx::INT:
-		case TypeFx::BOOL:
-		case TypeFx::DOUBLE: {
-			Flow* component = v->getFlowRc1(i);
-			flow2string(component, str);
-			decRc(component);
-			break;
-		}
-		default: flow2string(v->getFlow(i), str);
+		case TypeFx::INT:    str.append(int2string(v->getIntRc1(i))); break;
+		case TypeFx::BOOL:   str.append(bool2string(v->getBoolRc1(i))); break;
+		case TypeFx::DOUBLE: str.append(double2string(v->getDoubleRc1(i))); break;
+		default:             flow2string(v->getFlow(i), str);
 	}
 }
 
@@ -410,53 +405,32 @@ void flow2string(Flow* v, string& str) {
 	}
 }
 
-Int flowCompareComponents(Flow* v1, Flow* v2, Int i) {
-	Int c = 0;
-	switch (v1->componentTypeId(i)) {
-		case TypeFx::INT:
-		case TypeFx::BOOL:
-		case TypeFx::DOUBLE: {
-			Flow* component1 = v1->getFlowRc1(i);
-			switch (v2->componentTypeId(i)) {
-				case TypeFx::INT:
-				case TypeFx::BOOL:
-				case TypeFx::DOUBLE: {
-					Flow* component2 = v2->getFlowRc1(i);
-					c = flowCompare(component1, component2);
-					decRc(component2);
-					break;
-				}
-				default: {
-					c = flowCompare(component1, v2->getFlow(i));
-				}
-			}
-			decRc(component1);
-			break;
+inline Int flowCompareComponents(Flow* v1, Flow* v2, Int i) {
+	TypeId type_id1 = v1->componentTypeId(i);
+	TypeId type_id2 = v2->componentTypeId(i);
+	if (type_id1 == type_id2) {
+		switch (type_id1) {
+			case TypeFx::INT:    return compare<Int>(v1->getIntRc1(i), v2->getIntRc1(i));
+			case TypeFx::BOOL:   return compare<Bool>(v1->getBoolRc1(i), v2->getBoolRc1(i));
+			case TypeFx::DOUBLE: return compare<Double>(v1->getDoubleRc1(i), v2->getDoubleRc1(i));
+			default:             return flowCompare(v1->getFlow(i), v2->getFlow(i));
 		}
-		default: {
-			switch (v2->componentTypeId(i)) {
-				case TypeFx::INT:
-				case TypeFx::BOOL:
-				case TypeFx::DOUBLE: {
-					Flow* component2 = v2->getFlowRc1(i);
-					c = flowCompare(v1->getFlow(i), component2);
-					decRc(component2);
-					break;
-				}
-				default: {
-					c = flowCompare(v1->getFlow(i), v2->getFlow(i));
-				}
-			}
+	} else {
+		if (type_id1 != TypeFx::FLOW && type_id2 != TypeFx::FLOW) {
+			return compare<TypeId>(type_id1, type_id2);
+		} else {
+			return flowCompare(v1->getFlow(i), v2->getFlow(i));
 		}
 	}
-	return c;
 }
 
 Int flowCompare(Flow* v1, Flow* v2) {
-	if (v1->typeId() != v2->typeId()) {
-		return compare<Int>(v1->typeId(), v2->typeId());
+	TypeId type_id1 = v1->typeId();
+	TypeId type_id2 = v2->typeId();
+	if (type_id1 != type_id2) {
+		return compare<Int>(type_id1, type_id2);
 	} else {
-		switch (v1->typeId()) {
+		switch (type_id1) {
 			case TypeFx::VOID:   return 0;
 			case TypeFx::INT:    return compare<Int>(v1->get<Int>(), v2->get<Int>());
 			case TypeFx::BOOL:   return compare<Bool>(v1->get<Bool>(), v2->get<Bool>());
@@ -487,19 +461,14 @@ Int flowCompare(Flow* v1, Flow* v2) {
 				return compare<void*>(v1, v2);
 			}
 			default: {
-				Int c1 = RTTI::typeName(v1->typeId()).compare(RTTI::typeName(v2->typeId()));
-				if (c1 != 0) {
-					return c1;
-				} else {
-					Int size = v1->componentSize();
-					for (Int i = 0; i < size; ++ i) {
-						Int c2 = flowCompareComponents(v1, v2, i);
-						if (c2 != 0) {
-							return c2;
-						}
+				Int size = v1->componentSize();
+				for (Int i = 0; i < size; ++ i) {
+					Int c = flowCompareComponents(v1, v2, i);
+					if (c != 0) {
+						return c;
 					}
-					return 0;
 				}
+				return 0;
 			}
 		}
 	}
