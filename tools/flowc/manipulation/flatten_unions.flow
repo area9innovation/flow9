@@ -20,8 +20,8 @@ export {
 	fiSetImplicitStructTypars(program : FiProgram, implicit: FiType) -> FiProgram;
 
 	// If a native is implemented - remove a fallback, otherwise remove a native.
-	// In case a native is not implemented and 
-	fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -> FiProgram;
+	// The second component of return is missing natives - those which have no fallback
+	fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> bool) -> Pair<FiProgram, [string]>;
 
 	// For any struct, which is contained in several unions, add a super union, which
 	// is a set-theoretical union of all these unions, i.e. is a single supertype for all.
@@ -459,34 +459,65 @@ fiTransformImplicitStructTyparsFromFiType(
 	}
 }
 
-fiResolveNatives(program : FiProgram, native_is_implemented: (string) -> bool) -> FiProgram {
+fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> bool) -> Pair<FiProgram, [string]> {
+	// Convert a function into native. Used to make implicit natives.
+	func2nat = \func -> FiNativeDec(func.name, false, func.type, func.name, FiVoid(0), 0, 0);
 	// for each function name decide: if it is a true native or should use a fallback
 	native_resolver = foldTree(program.modules, makeTree(), \__, module, acc: Tree<string, FiDeclaration> ->
 		fold(module.natives,
 			fold(module.functions, acc, 
-				\ac, func -> if (native_is_implemented(func.name)) ac else setTree(ac, func.name, func)
+				\ac, func -> setTree(ac, func.name, 
+					if (has_native_implementation(func.name)) func2nat(func) else func
+				)
 			),
-			\ac, nat: FiNativeDec -> if (!native_is_implemented(nat.name)) ac else {
+			\ac, nat: FiNativeDec -> if (!has_native_implementation(nat.name)) ac else {
 				setTree(ac, nat.name, FiNativeDec(nat with fallbackLambda = FiVoid(0)))
 			}
 		)
 	);
-	FiProgram(program with
-		modules = mapTree(program.modules, \module ->
-			FiModule(module with
-				// Filter out fallbacks for non-true natives
-				functions = filter(module.functions, \func -> !native_is_implemented(func.name)),
-				// Filter out true natives
-				natives = filtermap(module.natives, \nat -> if (!native_is_implemented(nat.name)) None() else
+	missing_nats = ref [];
+	resolved = FiProgram(program with
+		modules = mapTree(program.modules, \module -> {
+			// Filter out fallbacks for non-true natives
+			funcs = filter(module.functions, \func -> !has_native_implementation(func.name));
+			// Those function, which have a native implementation although are not declared as natives
+			implicit_natives = filtermap(module.functions, \func -> 
+				if (has_native_implementation(func.name) && !containsKeyTree(program.names.native2module, func.name)) {
+					Some(func2nat(func));
+				} else {
+					None();
+				}
+			);
+			func_names = map(funcs, \fn -> fn.name);
+			func_names_set = buildSet(func_names);
+			// Filter out true natives
+			nats = concat(
+				implicit_natives,
+				filtermap(module.natives, \nat -> if (!has_native_implementation(nat.name)) None() else
 					Some(FiNativeDec(nat with fallbackLambda = FiVoid(0)))
-				),
+				)
+			);
+			iter(module.natives, \nat -> 
+				if (!has_native_implementation(nat.name) && !containsKeyTree(program.names.function2module, nat.name)) {
+				// This native is missing - has no fallback
+				refArrayPush(missing_nats, nat.name);
+			});
+			nat_names = map(nats, \nat -> nat.name);			
+			func_nat_names = buildSet(concat(func_names, nat_names));
+			// Filter out variables from initOrder
+			vars_names = filter(module.initOrder, \n -> !containsSet(func_nat_names, n));
+			FiModule(module with
+				functions = funcs,
+				natives = nats,
+				initOrder = concat3(nat_names, func_names, vars_names)
 			)
-		),
+		}),
 		names = FiGlobalNames(program.names with
 			// update toplevel declarations with proper ones
 			toplevel = mapTree2(program.names.toplevel, \name, decl -> lookupTreeDef(native_resolver, name, decl))
 		)
 	);
+	Pair(resolved, ^missing_nats);
 }
 
 fiAddSuperUnions(program : FiProgram) -> FiProgram {

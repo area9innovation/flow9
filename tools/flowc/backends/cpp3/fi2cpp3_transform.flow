@@ -13,19 +13,21 @@ export {
 
 fi2cpp3TransformModule(module : FiModule, gctx0: Cpp3GlobalContext) -> FsModule {
 	gctx = Cpp3GlobalContext(gctx0 with currentModule = module.fileinfo.flowfile);
+	global_var_names = buildSet(map(module.globalVars, \v -> v.name));
 	FsModule(
 		module.fileinfo,
 		module.imports,
 		module.exports,
 		module.structs,
 		module.unions,
-		filtermap(module.functions, \fn ->
-			if (fiCpp3IsNative(fn.name, gctx)) None() else {
+		concat(
+			map(module.natives, \nat -> FsFunctionDec(nat.name, None(), cast(nat.type: FiType -> FiTypeFunction))),
+			map(module.functions, \fn -> {
 				start = fi2cpp3StartOperationMessage(gctx.config, 2, "transforming function", fn.name);
-				ret = Some(fiTransformFunc2cpp3(fn, gctx));
+				ret = fiTransformFunc2cpp3(fn, gctx);
 				fi2cpp3EndOperationMessage(gctx.config, 2, "transformation of function", fn.name, start);
 				ret;
-			}
+			})
 		),
 		map(module.globalVars, \gv -> {
 			start = fi2cpp3StartOperationMessage(gctx.config, 2, "transforming global variable", gv.name);
@@ -33,11 +35,7 @@ fi2cpp3TransformModule(module : FiModule, gctx0: Cpp3GlobalContext) -> FsModule 
 			fi2cpp3EndOperationMessage(gctx.config, 2, "transformation of global variable", gv.name, start);
 			ret;
 		}),
-		filtermap(module.natives, \nat ->
-			if (!fiCpp3IsNative(nat.name, gctx)) None() else
-			Some(FsNativeDec(nat.name, nat.type))
-		),
-		module.initOrder
+		filter(module.initOrder, \n -> containsSet(global_var_names, n))
 	);
 }
 
@@ -80,7 +78,7 @@ fiTransformFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> FsFunction
 		}
 		default: fail0("must be lambda or cast to lambda");
 	}
-	FsFunctionDec(name, stat_lambda, fn_type);
+	FsFunctionDec(name, Some(stat_lambda), fn_type);
 }
 
 fi2cpp3TransformFiExp(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: string) -> FiExp {
