@@ -1012,6 +1012,20 @@ class RenderSupport {
 		}
 	}
 
+	public static function setStatusBarColor(color : Int) {
+		var head = Browser.document.getElementsByTagName('head')[0];
+
+		var oldThemeMeta = Browser.document.querySelector('meta[name="theme-color"]');
+		if (oldThemeMeta != null) {
+			head.removeChild(oldThemeMeta);
+		}
+
+		var node = Browser.document.createElement('meta');
+		node.setAttribute("name", "theme-color");
+		node.setAttribute("content", RenderSupport.makeCSSColor(color, 1.0));
+		head.appendChild(node);
+	}
+
 	public static function setApplicationLanguage(languageCode : String) {
 		Browser.document.documentElement.setAttribute("lang", languageCode);
 		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
@@ -3009,7 +3023,7 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged" || event == "selectionchange" || event == "selectall") {
+		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged" || event == "selectionchange" || event == "selectall" || event == "compositionend") {
 			clip.on(event, fn);
 			return function() { clip.off(event, fn); }
 		} else {

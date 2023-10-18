@@ -348,6 +348,18 @@ class ProgressiveWebTools {
 		#end
 	}
 
+	public static function pdfViewerEnabled(onOK : Bool -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			onOK(untyped navigator && untyped navigator.pdfViewerEnabled);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
 	public static function addRequestSkipFilterN(
 		skipIfUrlMatch : String,
 		skipIfMethodMatch : String,

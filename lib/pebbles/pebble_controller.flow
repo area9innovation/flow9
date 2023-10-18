@@ -103,10 +103,12 @@ export {
 	isUpButtonEnabled : (controller : PebbleController, topPebble : Pebble) -> Transform<bool>;
 	onUpButtonClick : (controller : PebbleController, topPebble : Pebble) -> void;
 
-	// Check for "debug_pebbles=true" URL flag
+	// Check for "debug_pebbles=1" URL flag
 	debugPebbles() -> bool;
+	// For more verbose debug, f.e. "debug_pebbles=2"
+	debugPebblesLevel() -> int;
 
-	// dispatcher builds the correspondent view
+	// dispatcher builds the correspondant view
 	// handler is called just before dispatcher
 	// required will be added to pebble before it will be set (useful for tabs e.g.)
 	PebbleDispatcher(dispatcher : () -> Material, handler : Maybe<(Pebble) -> void>, required : [KeyValue]);
@@ -205,7 +207,7 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 							foundPebble,
 							getLastPathPartParametersDefs(foundPebble, dispatcher.required)
 						);
-						pushPebble2(pebbleStackB, currentPebbleB, pebbleAndUpdateHashUrl.second, pebble2Push);
+						pushPebble2(pebbleStackB, pebbleAndUpdateHashUrl.second, pebble2Push);
 						switch (dispatcher.handler) {
 							Some(handler): handler(pebble2Push);
 							None(): {}
@@ -232,27 +234,32 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 		make([])
 	);
 
-	view := MGetManager(\manager -> {
-		MConstruct(
-			concat(
-				[	\ -> addBrowserUrlHashListener(manager, controller),
-					controller.setViewFn.subscribers,
-				],
-				if (debugPebbles()) [
-					makeSubscribe(pebbleStackB, \__ -> printPebbleControllerState(controller, "new stack")),
-					makeSubscribe(currentPebbleB, \__ -> printPebbleControllerState(controller, "new current")),
-				] else []
-			),
-			MComponentGroupMutable(
-				viewBoxB,
-				[
-					controller.setViewFn.monitorBehaviour,
-					IScriptBehaviour("pebble_stack", controller.pebbleStackB, ISPebbleEvent()),
-					IScriptBehaviour("current_pebble", controller.currentPebbleB, ISPebbleEvent())
-				]
-			)
+	view := MGetManager(\manager -> MConstruct(
+		concat(
+			[
+				\-> addBrowserUrlHashListener(manager, controller),
+				makeSubscribe(controller.pebbleStackB, \pebbleStack -> {
+				//	println("pebbleStack is updated: " + superglue(pebbleStack, pebble2UrlHash, " - "));
+					if (getValue(manager.pebblesEnabled)) {
+						next(controller.currentPebbleB, lastPebble(controller, getCurrentPebble(controller)));
+					}
+				}),
+				controller.setViewFn.subscribers
+			],
+			if (debugPebbles()) [
+				makeSubscribe(pebbleStackB, \__ -> printPebbleControllerState(controller, "new stack")),
+				makeSubscribe(currentPebbleB, \__ -> printPebbleControllerState(controller, "new current")),
+			] else []
+		),
+		MComponentGroupMutable(
+			viewBoxB,
+			[
+				controller.setViewFn.monitorBehaviour,
+				IScriptBehaviour("pebble_stack", controller.pebbleStackB, ISPebbleEvent()),
+				IScriptBehaviour("current_pebble", controller.currentPebbleB, ISPebbleEvent())
+			]
 		)
-	});
+	));
 
 	controller
 }
@@ -545,10 +552,10 @@ validateCurrentPebbleAndInitView(controller : PebbleController, manager : Materi
 }
 
 pushPebble(controller : PebbleController, pebble : Pebble) -> void {
-	pushPebble2(controller.pebbleStackB, controller.currentPebbleB, !controller.dummy, pebble)
+	pushPebble2(controller.pebbleStackB, !controller.dummy, pebble)
 }
 
-pushPebble2(pebbleStackB : DynamicBehaviour<[Pebble]>, currentPebbleB : DynamicBehaviour<Pebble>, updateHashUrl : bool, pebble : Pebble) -> void {
+pushPebble2(pebbleStackB : DynamicBehaviour<[Pebble]>, updateHashUrl : bool, pebble : Pebble) -> void {
 	npebble = normalizePebble(pebble);
 
 	if (!equalPebbles(npebble, lastPebble2(pebbleStackB, makeEmptyPebble()))) {
@@ -556,10 +563,7 @@ pushPebble2(pebbleStackB : DynamicBehaviour<[Pebble]>, currentPebbleB : DynamicB
 
 		// first update stack because it does not have subscribers
 		dynArrayPush(pebbleStackB, npebble);
-
-		// next update currentPebbleB
 		currentHash = getUrlHash();
-		next(currentPebbleB, npebble);
 
 		// finally update URL hash if required and it was not changed outside during updating currentPebbleB
 		if (updateHashUrl) {
@@ -582,8 +586,7 @@ popPebble(controller : PebbleController, i : int) -> void {
 	//println("popPebble");
 	pebbleStack = getValue(controller.pebbleStackB);
 	leave = length(pebbleStack) - i;
-	nextDistinct(controller.pebbleStackB, take(pebbleStack, leave));
-	nextDistinct(controller.currentPebbleB, elementAt(pebbleStack, leave - 1, makeEmptyPebble()));
+	nextDistinct(controller.pebbleStackB, subrange(pebbleStack, 0, if (leave < 0) 0 else leave))
 }
 
 lastPebble(controller : PebbleController, def : Pebble) -> Pebble {
@@ -769,6 +772,15 @@ initialPebbleDialog(manager : MaterialManager, controller : PebbleController, on
 
 debugPebbles() -> bool {
 	isUrlParameterTrue("debug_pebbles")
+}
+
+debugPebblesLevel() -> int {
+	if (debugPebbles()) {
+		v = s2i(getUrlParameter("debug_pebbles"));
+		if (v <= 0) 1 else v;
+	} else {
+		0;
+	}
 }
 
 printPebbleControllerState(controller : PebbleController, msg : string) -> void {

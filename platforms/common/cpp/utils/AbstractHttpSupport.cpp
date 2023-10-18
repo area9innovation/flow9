@@ -62,13 +62,6 @@ void AbstractHttpSupport::deliverData(int id, const unicode_char *data, unsigned
         msg = RUNNER->AllocateString(data, count);
         RUNNER->EvalFunction(rq->data_cb, 1, msg);
     }
-
-    if (rq && !rq->done_cb.IsVoid()) {
-        getFlowRunner()->EvalFunction(rq->done_cb, 0);
-
-        active_requests.erase(id);
-        getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
-    }
 }
 
 void AbstractHttpSupport::deliverPartialData(int id, const void *buffer, unsigned count, bool last)
@@ -180,12 +173,12 @@ void AbstractHttpSupport::deliverError(int id, const void * buffer, size_t count
 
 void AbstractHttpSupport::deliverStatus(int id, int status)
 {
-
+    RUNNER_VAR = getFlowRunner();
+    WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+    
     HttpRequest *rq = getRequestById(id);
 
     if (rq && !rq->status_cb.IsVoid()) {
-        RUNNER_VAR = getFlowRunner();
-        WITH_RUNNER_LOCK_DEFERRED(RUNNER);
         RUNNER->EvalFunction(rq->status_cb, 1, StackSlot::MakeInt(status));
     }
 
@@ -195,7 +188,33 @@ void AbstractHttpSupport::deliverStatus(int id, int status)
 void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers)
 {
     RUNNER_VAR = getFlowRunner();
+    WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+    
     HttpRequest *rq = getRequestById(id);
+
+    if (rq && rq->result_filename != "") {
+        std::vector<char> tmp_buffer;
+
+        if (rq->tmp_filename != "") {
+            FILE* tmp_file = fopen(rq->tmp_filename.c_str(), "rb");
+
+            fseek(tmp_file, 0, SEEK_END);
+            tmp_buffer.resize(ftell(tmp_file));
+            rewind(tmp_file);
+
+            fread(tmp_buffer.data(), 1, tmp_buffer.size(), tmp_file);
+            fclose(tmp_file);
+        } else {
+            tmp_buffer = rq->tmp_buffer;
+        }
+
+        FILE* result_file = fopen(rq->result_filename.c_str(), "wb");
+
+        fwrite(tmp_buffer.data(), 1, tmp_buffer.size(), result_file);
+
+        fclose(result_file);
+        tmp_buffer.clear();
+    }
 
     if (rq && !rq->response_cb.IsVoid()) {
         RUNNER_DefSlots1(data);
@@ -237,8 +256,14 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
             RUNNER->SetArraySlot(headersArray, i++, headerPair);
         }
 
-        WITH_RUNNER_LOCK_DEFERRED(RUNNER);
         RUNNER->EvalFunction(rq->response_cb, 3, StackSlot::MakeInt(status), data, headersArray);
+    }
+
+    if (rq && !rq->done_cb.IsVoid()) {
+        getFlowRunner()->EvalFunction(rq->done_cb, 0);
+
+        active_requests.erase(id);
+        getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
     }
 }
 
@@ -291,6 +316,7 @@ NativeFunction *AbstractHttpSupport::MakeNativeFunction(const char *name, int nu
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, preloadMediaUrl, 3);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, uploadNativeFile, 8);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, downloadFile, 4);
+    TRY_USE_NATIVE_METHOD(AbstractHttpSupport, downloadFileBinary, 4);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, removeUrlFromCache, 1);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, clearUrlCache, 0);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, getAvailableCacheSpaceMb, 0);
@@ -544,6 +570,30 @@ StackSlot AbstractHttpSupport::downloadFile(RUNNER_ARGS)
     processRequest(rq);
     doRequest(rq);
 	
+    RETVOID;
+}
+
+
+
+StackSlot AbstractHttpSupport::downloadFileBinary(RUNNER_ARGS)
+{
+    RUNNER_PopArgs4(url, pathToSave, onDone, onError);
+    RUNNER_CheckTag2(TString, url, pathToSave);
+
+    int id = next_http_request++;
+
+    HttpRequest &rq = active_requests[id];
+    rq.req_id = id;
+    rq.method = parseUtf8("GET");
+    rq.response_enc = ResponseEncodingByte;
+    rq.url = RUNNER->GetString(url);
+    rq.result_filename = encodeUtf8(RUNNER->GetString(pathToSave));
+    rq.done_cb = onDone;
+    rq.error_cb = onError;
+
+    processRequest(rq);
+    doRequest(rq);
+
     RETVOID;
 }
 

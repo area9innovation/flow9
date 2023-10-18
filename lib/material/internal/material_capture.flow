@@ -3,11 +3,13 @@ import form/form;
 
 export {
 	captureKeysMaterial(
-			manager : MaterialManager,
-			closedDialogue : DynamicBehaviour<bool>,
-			saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
-			showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void
-		) -> Tropic;
+		manager : MaterialManager,
+		closedDialogue : DynamicBehaviour<bool>,
+		saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
+		showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void,
+		customKeyDownHandlerFnM : Maybe<(manager : MaterialManager, handled : bool, keyEvent : KeyEvent) -> bool>,
+		customKeyUpHandlerFnM : Maybe<(manager : MaterialManager, handled : bool, keyEvent : KeyEvent) -> bool>
+	)  -> Tropic;
 
 	captureMouseMaterial(manager : MaterialManager) -> Tropic;
 
@@ -24,7 +26,9 @@ export {
 captureKeysMaterial(
 	manager : MaterialManager, closedDialogue : DynamicBehaviour<bool>,
 	saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
-	showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void
+	showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void,
+	customKeyDownHandlerFnM : Maybe<(manager : MaterialManager, handled : bool, keyEvent : KeyEvent) -> bool>,
+	customKeyUpHandlerFnM : Maybe<(manager : MaterialManager, handled : bool, keyEvent : KeyEvent) -> bool>
 ) -> Tropic {
 	focusEnabled = extractStruct(manager.style, MFocusEnabled(const(true))).enabled;
 	themeChangerEnabled = extractStruct(manager.style, MThemeChangerEnabled(const(true))).enabled;
@@ -35,9 +39,16 @@ captureKeysMaterial(
 		[
 			KeyDown2(\h, k -> {
 				downKey := if (!h) k else emptyKeyEvent;
-				if (!isMTextInput(manager))
-					captureIScriptKeyEvent(manager, h, k, "canvas", "keydown")
+				handledByDefault = if (!isMTextInput(manager))
+					captureIScriptKeyEvent(manager, h, k, "canvas", "keydown") 
 				else false;
+
+				eitherMap(
+					customKeyDownHandlerFnM,
+					\handleFn -> handleFn(manager, handledByDefault, k),
+					handledByDefault
+				)
+
 			}),
 			KeyUp2(\handled, k ->
 				if (!handled && ^downKey.keycode == k.keycode && ^downKey.utf == k.utf && ^downKey.ctrl == k.ctrl &&
@@ -46,7 +57,7 @@ captureKeysMaterial(
 					if (!isMTextInput(manager))
 						captureIScriptKeyEvent(manager, handled, k, "canvas", "keyup") |> ignore;
 
-					if (!^fAccessibilityEnabled && !js && (k.keycode == KEY_TAB || k.keycode == 16777218) && !k.alt && !k.ctrl && fgetValue(focusEnabled)) {
+					handledByDefault = if (!^fAccessibilityEnabled && !js && (k.keycode == KEY_TAB || k.keycode == 16777218) && !k.alt && !k.ctrl && fgetValue(focusEnabled)) {
 						yieldFocus(manager, !k.shift);
 						true
 					// } else if ((k.keycode == KEY_LEFT || k.keycode == KEY_RIGHT || k.keycode == KEY_UP || k.keycode == KEY_DOWN) &&
@@ -98,8 +109,13 @@ captureKeysMaterial(
 					} else if (k.keycode == KEY_ESCAPE) {
 						maybeApply(getCurrentFocusedItem(manager), \fi -> next(fi.focused, false));
 						true
-					} else
-						handled
+					} else handled;
+
+					eitherMap(
+						customKeyUpHandlerFnM,
+						\handleFn -> handleFn(manager, handledByDefault, k),
+						handledByDefault
+					)
 				} else
 					handled
 			)

@@ -615,6 +615,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             ResourceCache.Resolver cb = new ResourceCache.Resolver() {
                 public void resolveFile(String fn) {
                     deliverHttpData(id, new byte[]{}, true);
+                    deliverHttpResponse(id, 200, new HashMap());
                 }
                 public void resolveError(String message) {
                     deliverHttpError(id, message.getBytes());

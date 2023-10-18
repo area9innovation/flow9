@@ -130,7 +130,7 @@ class DisplayObjectHelper {
 			invalidateParentTransform(clip);
 		}
 
-		invalidateWorldTransform(clip, true, DebugUpdate ? from + ' ->\ninvalidateTransform' : null, force);
+		invalidateWorldTransform(clip, true, DebugUpdate ? from + ' ->\ninvalidateTransform' : null, null, force);
 	}
 
 	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool, ?from : String, ?parentClip : DisplayObject, ?force : Bool = false) : Void {
@@ -209,8 +209,8 @@ class DisplayObjectHelper {
 
 	public static function invalidateVisible(clip : DisplayObject, ?updateAccess : Bool = true, ?parentClip : DisplayObject) : Void {
 		var clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
-		var visible = untyped clip.parent != null && (getClipRenderable(clip.parent) || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)
-			&& (clip.isMask || (clipVisible && (clip.renderable || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)));
+		var visible = (untyped clip.parent != null && (getClipRenderable(clip.parent) || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)
+			&& (clip.isMask || (clipVisible && (clip.renderable || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)))) == true; // check to true to prevent undefined
 
 		if (untyped !parentClip) {
 			parentClip = untyped clip.parentClip != null ? clip.parentClip : findParentClip(clip);
