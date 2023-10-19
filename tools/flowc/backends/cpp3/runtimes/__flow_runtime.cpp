@@ -322,6 +322,7 @@ String* String::concatRc(String* s1, String* s2) {
 		decRc(s1);
 		return s2;
 	} else if (isUnitRc(s1)) {
+		s1->strRef().reserve(s1->str_.size() + s2->str_.size());
 		s1->str_ += s2->str_;
 		decRc(s2);
 		return s1;
