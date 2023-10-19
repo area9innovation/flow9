@@ -191,12 +191,9 @@ private:
 struct Flow;
 struct String;
 struct Native;
-
-//struct Union;
-using Union = Flow;
+struct Union;
 
 template<TypeId Id, typename... Fs> struct Str;
-//template<typename... Ss> struct Union;
 template<typename T> struct Vec;
 template<typename T> struct Ref;
 template<typename R, typename... As> struct Fun;
@@ -220,6 +217,7 @@ namespace traits {
 template<typename T> constexpr TypeId get_type_id_v = traits::get_type_id<std::remove_pointer_t<T>>::result;
 template<TypeId Id, typename T> constexpr bool is_type_v = get_type_id_v<T> == Id;
 template<typename T> constexpr bool is_struct_v = get_type_id_v<T> >= TypeFx::STRUCT_TYPE_ID_OFFSET;
+template<typename T> constexpr bool is_union_v = std::is_same_v<std::remove_pointer_t<T>, Union>;
 template<typename T> constexpr bool is_struct_or_union_v = is_struct_v<T> || std::is_same_v<Union, std::remove_pointer_t<T>>;
 template<typename T> constexpr bool is_flow_ancestor_v = std::is_base_of_v<Flow, std::remove_pointer_t<T>>;
 template<typename T> constexpr bool is_scalar_v =
@@ -529,6 +527,8 @@ struct Flow {
 	virtual Flow* getFlow(Int i) { fail("invalid flow value getter"); return nullptr; }
 	virtual Flow* getFlow(const string& f) { fail("invalid flow value getter"); return nullptr; }
 
+	virtual Int compareWithFlow(Flow* v) { fail("invalid compareWithFlow"); return 0;  }
+
 	template<typename T> inline T get() { return static_cast<T>(this); }
 	template<typename T> inline T getRc1() { return incRcRet(static_cast<T>(this)); }
 	template<typename T> inline T getRc() { return static_cast<T>(this); }
@@ -545,7 +545,7 @@ private:
 	RcCounter rc_;
 };
 
-//struct Union : public Flow { };
+struct Union : public Flow { };
 
 struct FVoid : public Flow { TypeId typeId() const override { return TypeFx::VOID; } };
 struct FInt : public Flow { FInt(Int v): val(v) {} TypeId typeId() const override { return TypeFx::INT; } Int val; };
@@ -735,10 +735,6 @@ private:
 	std::any val_;
 };
 
-//template<typename... Ss> struct Union : public Flow {
-//	std::variant<Ss...> str_;
-//};
-
 // Any particular struct
 
 template<TypeId Id, typename... Fs>
@@ -826,6 +822,15 @@ struct Str : public Union {
 	Flow* getFlow(const string& f) override {
 		int field_idx = RTTI::structField(Id, f);
 		return getFlow(field_idx); 
+	}
+
+	Int compareWithFlow(Flow* v) override {
+		Int c = flow::compare<TypeId>(TYPE, v->typeId());
+		if (c != 0) {
+			return c;
+		} else {
+			return compare(static_cast<Str*>(v));
+		}
 	}
 
 	// specific methods
@@ -1386,6 +1391,56 @@ private:
 	std::vector<Flow*> closure_;
 };
 
+/*
+template<typename R, typename... As> 
+struct Fun1 : public Flow {
+	enum { TYPE = TypeFx::FUNC, ARITY = sizeof...(As) };
+	using RetType = R;
+	using Args = std::tuple<As...>;
+
+	template<typename... Cl>
+	struct Closure : public Flow {
+		enum { SIZE = sizeof...(Cl) };
+		using Clos = std::tuple<Cl...>;
+		using Fn = R (*)(As..., Cl...);
+		Closure(Cl... cl): closure_(cl...) { }
+		~Closure() { changeRc<0, -1>(); }
+
+		// specific methods
+		inline R callRc(As... as) {
+			return decRcRet(this, callRc1(as...));
+		}
+		inline R callRc1(As... as) {
+			return call(as...);
+		}
+		inline R call(As... as) {
+			changeRc<0, +1>();
+			return (*fn_)(as..., closure_...);
+		}
+		// general interface
+		TypeId typeId() const override { return TYPE; }
+		Int componentSize() const override {
+			return static_cast<Int>(SIZE);
+		}
+
+	private:
+		template<int i, int delta>
+		void changeRc() {
+			if (i != SIZE) {
+				if constexpr (delta == -1) {
+					decRc(std::get<i>(closure_));
+				} else {
+					incRc(std::get<i>(closure_), delta);
+				}
+				changeRc<i + 1, delta>()
+			}
+		}
+		Fn fn_;
+		Clos closure_;
+	};
+};
+*/
+
 // This function is for debugging purposes only! Doesn't cleanp v!
 template<typename T>
 inline std::string toStdString(T v) {
@@ -1657,6 +1712,8 @@ inline Int compare(T v1, T v2) {
 		return compare<void*>(v1, v2);
 	} else if constexpr (is_struct_v<T>) {
 		return v1->compare(v2);
+	} else if constexpr (is_union_v<T>) {
+		return v1->compareWithFlow(v2);
 	} else if constexpr (is_flow_ancestor_v<T>) {
 		return flowCompare(v1, v2);
 	} else {
