@@ -569,16 +569,7 @@ class TextClip extends NativeWidgetClip {
 		if (this.isHTMLRenderer() && isNativeWidget && needBaseline) {
 			if (!isInput && nativeWidget.firstChild != null && !isMaterialIconFont()) {
 				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
-				// For some fonts italic form has a smaller height, so baseline becomes occasionally unsynchronised with normal-style glyphs on different zoom levels
-				if (style.fontStyle == 'italic') {
-					var transform = DisplayObjectHelper.getNativeWidgetTransform(this);
-					var top = DisplayObjectHelper.round(transform.ty);
-					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + lineHeightGap + top)}px';
-					nativeWidget.style.top = 0;
-				} else {
-					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + lineHeightGap)}px';
-				}
-				
+				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
 				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 				makeBaselineWidgetAmiriItalicBugWorkaround();
