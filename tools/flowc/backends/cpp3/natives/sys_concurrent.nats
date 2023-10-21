@@ -9,9 +9,9 @@ Cpp3NativePlain("availableProcessors", true,
 Cpp3NativePlain("setThreadPoolSize", true,
 "inline Void $F_1(setThreadPoolSize)(Int threads);\n",
 "inline Void $F_1(setThreadPoolSize)(Int threads) {
-	thread_pool.setMaxThreadCount(threads);
+	thread_pool = std::make_unique<ThreadPool>(threads);
 	return void_value;
-}\n", "", [], []),
+}\n", "", [], ["concurrent"]),
 
 Cpp3NativePlain("getThreadId", true,
 "inline String* $F_1(getThreadId)();\n",
@@ -42,16 +42,21 @@ Cpp3NativePlain("concurrent", true,
 			decRc(tasks);
 			return ret;
 		} else {
-			std::vector<T> ret = QtConcurrent::blockingMapped<
-				std::vector<T>,
-				std::vector<Fun<T>*>,
-				std::function<T(Fun<T>*)>
-			>(
-				tasks->vec(),
-				[](Fun<T>* task) {
-					return task->callRc1();
-				}
-			);
+			std::size_t size = tasks->vec().size();
+			std::vector<T> ret;
+			ret.resize(size);
+			std::vector<std::future<void>> task_jobs;
+			for (std::size_t i = 0; i < size; ++i) {
+				Fun<T>* fn = tasks->get(static_cast<Int>(i));
+				task_jobs.push_back(
+					thread_pool->push<void>(ThreadPool::Shutdown::Block, [i, fn, &ret]() {
+						ret[i] = fn->callRc1();
+					})
+				);
+			}
+			for (std::size_t i = 0; i < size; ++i) {
+				task_jobs.at(i).get();
+			}
 			decRc(tasks);
 			return Vec<T>::make(std::move(ret));
 		}

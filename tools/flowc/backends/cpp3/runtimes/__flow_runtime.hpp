@@ -118,7 +118,6 @@ struct FieldDef {
 };
 
 struct Flow;
-//struct Union;
 template<typename T>  struct Vec;
 
 struct StructDef {
