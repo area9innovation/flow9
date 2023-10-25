@@ -134,6 +134,7 @@ void iosHttpSupport::doRequest(HttpRequest &rq)
         
         void (^on_success)(NSData * data) = ^(NSData * data) {
             deliverPartialData(rq.req_id, "", 0, true);
+            deliverResponse(rq.req_id, 200, AbstractHttpSupport::HeadersMap());
         };
         
         void (^on_error)(void) = ^(void) {
@@ -150,6 +151,7 @@ void iosHttpSupport::doRequest(HttpRequest &rq)
 #else
         LogI(@"Ignore media preload %@", url_string);
         deliverPartialData(rq.req_id, "", 0, true);
+        deliverResponse(rq.req_id, 200, AbstractHttpSupport::HeadersMap());
 #endif
         return;
     }
