@@ -463,7 +463,8 @@ TRenderParagraph(
 LineHeadingsAcc(
 	groupedWords : List<Tropic>,
 	currentGroup: List<TParaWord>,
-	currentTag : string
+	currentTag : string,
+	containsDynamicElement : bool
 );
 
 // This function groups all words by heading level and lines.
@@ -478,16 +479,25 @@ groupAndPositionWords(
 ) -> [Tropic] {
 	groupResult = fold(
 		words,
-		LineHeadingsAcc(makeList(), makeList(), ""),
-		\acc, word -> appendWordToLine(
-			acc,
-			word,
-			genIndent,
-			reflowHappened,
-			joinedWordsConstructors,
-			rtl,
-			ignoreLetterSpacing
-		)
+		LineHeadingsAcc(makeList(), makeList(), "", false),
+		\acc, word -> {
+			containsDynamicElement = acc.containsDynamicElement || switch (word.word : GeneralWrapElement) {
+				NonTextElement(__, __) : true;
+				GeneralDynamicText(__) : true;
+				EmptyLineElement() : true;
+				GeneralLinePart(__, __, __, __) : true;
+				default : false
+			};
+			appendWordToLine(
+				LineHeadingsAcc(acc with containsDynamicElement = containsDynamicElement),
+				word,
+				genIndent,
+				reflowHappened,
+				joinedWordsConstructors,
+				rtl,
+				ignoreLetterSpacing
+			)
+		}
 	);
 
 	withLastGroup = if (groupResult.currentGroup == EmptyList()) groupResult.groupedWords else Cons(
@@ -498,7 +508,8 @@ groupAndPositionWords(
 			reflowHappened,
 			joinedWordsConstructors,
 			rtl,
-			ignoreLetterSpacing
+			ignoreLetterSpacing,
+			groupResult.containsDynamicElement
 		),
 		groupResult.groupedWords
 	);
@@ -529,13 +540,17 @@ appendWordToLine(
 				reflowHappened,
 				joinedWordsConstructors,
 				rtl,
-				ignoreLetterSpacing
+				ignoreLetterSpacing,
+				acc.containsDynamicElement
 			),
 			acc.groupedWords
 		);
 		newCurrentGroup = makeList1(word);
 
-		LineHeadingsAcc(newGroupedWords, newCurrentGroup, tag)
+		LineHeadingsAcc(acc with 
+			groupedWords = newGroupedWords,
+			currentGroup = newCurrentGroup,
+			currentTag = tag)
 	}
 }
 
@@ -546,14 +561,15 @@ makeHeadingGroup(
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	rtl : bool,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	containsDynamicElement : bool
 ) -> Tropic {
 
 	joinedWords = if (isUrlParameterFalse("join_words")) positionInteractiveWords(
 		words,
 		genIndent,
 		joinedWordsConstructors
-	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing);
+	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing, containsDynamicElement);
 
 	if (tag == "" || isUrlParameterTrue("new")) TGroup(joinedWords) else TAccess(
 		[
@@ -584,6 +600,8 @@ positionInteractiveWords(
 	)
 }
 
+wordGroupId = ref 0;
+
 // Groups words by id
 // same id refers to the same wigi text that means that words with same id have the same style and behaviour, so they can be joined.
 // After grouping we do joining of words that are on the same line
@@ -593,13 +611,16 @@ joinGroupedWords(
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	containsDynamicElement : bool
 ) -> [Tropic] {
 
 	isSameGroup = \currentGroup : List<TParaWord>, word : TParaWord -> switch (currentGroup) {
 		Cons(firstWord, __) : getValue(firstWord.id) == getValue(word.id) && getValue(firstWord.rtl) == getValue(word.rtl);
 		EmptyList() : false
 	};
+
+	makeGroupId = \id : int -> "tGroup_" + i2s(id);
 
 	appendJoinedWordsView = \acc : [Tropic], wordsList : List<TParaWord> -> {
 		switch (wordsList) {
@@ -616,7 +637,15 @@ joinGroupedWords(
 						firstWord.wordsViewConstructor
 					),
 					ignoreLetterSpacing
-				)
+				) |> (\tropic -> {
+					if (containsDynamicElement) {
+						wordGroupId := ^wordGroupId + 1;
+						TAccess(
+							[FAccessAttribute("id", const(makeGroupId(^wordGroupId)))],
+							tropic
+						)
+					} else tropic
+				})
 			)
 		}
 	}
@@ -626,6 +655,12 @@ joinGroupedWords(
 			arrayPush(
 				appendJoinedWordsView(acc, currentGroup),
 				translateWord(word, genIndent)
+				|> (\tropic -> {
+					TAccess(
+						[FAccessAttribute("nextWidgetId", const(makeGroupId(^wordGroupId + 1)))],
+						tropic
+					)
+				})
 			),
 			EmptyList()
 		);
