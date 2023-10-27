@@ -225,8 +225,8 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::BOOL, T> ||
 	is_type_v<TypeFx::DOUBLE, T>;
 
-//#define RcCounter long
-#define RcCounter int32_t
+//using RcCounter = long;
+using RcCounter = int32_t;
 
 constexpr RcCounter CONSTANT_OBJECT_RC = -1;
 
