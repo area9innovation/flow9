@@ -181,7 +181,13 @@ generalEmptyLineInspectElement(id : int) -> GeneralInspectElement {
 }
 
 general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> NonInteractiveWrapElement {
-	generateText = \txt, st -> Text(txt, st |> makeSkipOrderCheck) |> wordDecorator;
+	generateText = \txt, st ->
+		Text(txt, st |> makeSkipOrderCheck)
+		|> (\t -> if (isSafariBrowser()) {
+			// fix for https://trello.com/c/G6ZiBfBc/22452-disappearing-questions-in-mcq-probes
+			Inspect([Width(make(0.))], t)
+		} else t )
+		|> wordDecorator;
 	switch (elem) {
 		GeneralText(txt) : generateText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
 		GeneralDynamicText(txt) : generateText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
@@ -1709,17 +1715,19 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 				lastWord = i == wordsCount;
 				firstWord = i == 0;
 				defValue = \ -> Pair(acc.first, acc.second + fgetValue(w.metrics).width);
+				spaceIncValue = \inc -> Pair(acc.first + inc, acc.second + fgetValue(w.metrics).width);
 				switch (w.form : GhostForm) {
 					Text(text, __) : {
 						if (text == " " || text == nonBreakableSpace) {
 							if (lastWord || firstWord) acc
-							else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
-						} else defValue()
+							else spaceIncValue(1)
+						} else if (strContains(text, nonBreakableSpace)) spaceIncValue(strCountOf(text, nonBreakableSpace))
+						else defValue()
 					};
 					default: defValue()
 				};
 			});
-			if (spacesAndWordsWidth.first > 0) {
+			if (spacesAndWordsWidth.first > 0 && width > spacesAndWordsWidth.second) {
 				(width - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
 			} else 0.0
 		} else 0.0;
@@ -1756,6 +1764,12 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 								}
 							} else metricsWithoutLS
 						};
+						Text(text, __) : {
+							if (newJustifyEnabled && alignment == Justify() && strContains(text, nonBreakableSpace)) {
+								metricsV = fgetValue(metrics);
+								FormMetrics(metricsV with width = metricsV.width + (wordSpacing * i2d(strCountOf(text, nonBreakableSpace)))) |> const;
+							} else metrics;
+						};
 						default: metrics;
 					};
 					Cons(OptimizedLineElement(f, formMetrics, intIdM, nextWidgetId, word.isFillerFn), acc)
@@ -1778,11 +1792,13 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 										joinText(t1, s1_withCorrectLS, t2, s2_withCorrectLS);
 									}
 
-									additionalWidth = if (newJustifyEnabled && alignment == Justify() && !lastWord) {
+									additionalWidth = if (newJustifyEnabled && alignment == Justify()) {
 										switch (f) {
 											Text(text, __) : {
-												if (text == " " || text == nonBreakableSpace) {
+												if ((text == " " || text == nonBreakableSpace) && !lastWord) {
 													wordSpacing;
+												} else if(strContains(text, nonBreakableSpace)) {
+													wordSpacing * i2d(strCountOf(text, nonBreakableSpace))
 												} else 0.0
 											};
 											default: 0.0

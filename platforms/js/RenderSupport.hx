@@ -4292,6 +4292,10 @@ class RenderSupport {
 		}
 		return null;
 	}
+
+	public static function getHadUserInteracted() : Bool {
+		return hadUserInteracted;
+	}
 }
 
 class FlowInstance {
