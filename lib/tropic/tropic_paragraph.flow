@@ -463,7 +463,8 @@ TRenderParagraph(
 LineHeadingsAcc(
 	groupedWords : List<Tropic>,
 	currentGroup: List<TParaWord>,
-	currentTag : string
+	currentTag : string,
+	containsDynamicElement : bool
 );
 
 // This function groups all words by heading level and lines.
@@ -478,16 +479,25 @@ groupAndPositionWords(
 ) -> [Tropic] {
 	groupResult = fold(
 		words,
-		LineHeadingsAcc(makeList(), makeList(), ""),
-		\acc, word -> appendWordToLine(
-			acc,
-			word,
-			genIndent,
-			reflowHappened,
-			joinedWordsConstructors,
-			rtl,
-			ignoreLetterSpacing
-		)
+		LineHeadingsAcc(makeList(), makeList(), "", false),
+		\acc, word -> {
+			containsDynamicElement = acc.containsDynamicElement || switch (word.word : GeneralWrapElement) {
+				NonTextElement(__, __) : true;
+				GeneralDynamicText(__) : true;
+				EmptyLineElement() : true;
+				GeneralLinePart(__, __, __, __) : true;
+				default : false
+			};
+			appendWordToLine(
+				LineHeadingsAcc(acc with containsDynamicElement = containsDynamicElement),
+				word,
+				genIndent,
+				reflowHappened,
+				joinedWordsConstructors,
+				rtl,
+				ignoreLetterSpacing
+			)
+		}
 	);
 
 	withLastGroup = if (groupResult.currentGroup == EmptyList()) groupResult.groupedWords else Cons(
@@ -498,7 +508,8 @@ groupAndPositionWords(
 			reflowHappened,
 			joinedWordsConstructors,
 			rtl,
-			ignoreLetterSpacing
+			ignoreLetterSpacing,
+			groupResult.containsDynamicElement
 		),
 		groupResult.groupedWords
 	);
@@ -529,13 +540,17 @@ appendWordToLine(
 				reflowHappened,
 				joinedWordsConstructors,
 				rtl,
-				ignoreLetterSpacing
+				ignoreLetterSpacing,
+				acc.containsDynamicElement
 			),
 			acc.groupedWords
 		);
 		newCurrentGroup = makeList1(word);
 
-		LineHeadingsAcc(newGroupedWords, newCurrentGroup, tag)
+		LineHeadingsAcc(acc with 
+			groupedWords = newGroupedWords,
+			currentGroup = newCurrentGroup,
+			currentTag = tag)
 	}
 }
 
@@ -546,14 +561,15 @@ makeHeadingGroup(
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	rtl : bool,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	containsDynamicElement : bool
 ) -> Tropic {
 
 	joinedWords = if (isUrlParameterFalse("join_words")) positionInteractiveWords(
 		words,
 		genIndent,
 		joinedWordsConstructors
-	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing);
+	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing, containsDynamicElement);
 
 	if (tag == "" || isUrlParameterTrue("new")) TGroup(joinedWords) else TAccess(
 		[
@@ -593,13 +609,17 @@ joinGroupedWords(
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	containsDynamicElement : bool
 ) -> [Tropic] {
 
 	isSameGroup = \currentGroup : List<TParaWord>, word : TParaWord -> switch (currentGroup) {
 		Cons(firstWord, __) : getValue(firstWord.id) == getValue(word.id) && getValue(firstWord.rtl) == getValue(word.rtl);
 		EmptyList() : false
 	};
+	wordGroupId = ref 0;
+	wordGroupPrefix = "tGroup_" + i2s(floor(random() * 10000.0)) + "_";
+	makeGroupId = \id : int -> wordGroupPrefix + i2s(id);
 
 	appendJoinedWordsView = \acc : [Tropic], wordsList : List<TParaWord> -> {
 		switch (wordsList) {
@@ -616,7 +636,15 @@ joinGroupedWords(
 						firstWord.wordsViewConstructor
 					),
 					ignoreLetterSpacing
-				)
+				) |> (\tropic -> {
+					if (containsDynamicElement) {
+						wordGroupId := ^wordGroupId + 1;
+						TAccess(
+							[FAccessAttribute("id", const(makeGroupId(^wordGroupId)))],
+							tropic
+						)
+					} else tropic
+				})
 			)
 		}
 	}
@@ -626,6 +654,12 @@ joinGroupedWords(
 			arrayPush(
 				appendJoinedWordsView(acc, currentGroup),
 				translateWord(word, genIndent)
+				|> (\tropic -> {
+					TAccess(
+						[FAccessAttribute("nextWidgetId", const(makeGroupId(^wordGroupId + 1)))],
+						tropic
+					)
+				})
 			),
 			EmptyList()
 		);
@@ -684,7 +718,6 @@ joinTextWords(
 					acc,
 					word,
 					genIndent,
-					reflowHappened,
 					wordsViewConstructor,
 					ignoreLetterSpacing
 				)
@@ -713,7 +746,6 @@ appendOrJoinWord(
 	acc : JoinTextAcc,
 	word : TParaWord,
 	genIndent : double,
-	reflowHappened : DynamicBehaviour<bool>,
 	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
 	ignoreLetterSpacing : bool
 ) -> JoinTextAcc {
@@ -850,7 +882,7 @@ inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : d
 		tr;
 	} else {
 		if (letterSpacing > 0.0) {
-			sizeB = make(getValue(inspector.size));
+			sizeB = make(zeroWH);
 			uns = subscribe2(sizeB, \v -> {
 				nextDistinct(inspector.size, WidthHeight(v.width + letterSpacing, v.height));
 			});
@@ -1461,7 +1493,6 @@ TRenderLine(
 		firstWord = i == 0;
 		isSpace = (!firstWord && !lastWord || alignment != Justify()) && isSpaceWord(words[i]);
 
-		word = words[i];
 		elemWidth = getValue(inspector.size).width;
 		elemHeight = getValue(inspector.size).height;
 		elemBaseline = getValue(inspector.baseline);
