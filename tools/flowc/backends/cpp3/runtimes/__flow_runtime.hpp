@@ -1217,7 +1217,7 @@ inline T2 castRc(T1 x) {
 	else if constexpr (std::is_same_v<T2, Int>) {
 		if constexpr (std::is_same_v<T1, Bool>) { return bool2int(x); }
 		else if constexpr (std::is_same_v<T1, Double>) { return double2int(x); }
-		else if constexpr (std::is_same_v<T1, String*>) { return string2int(x->str()); }
+		else if constexpr (std::is_same_v<T1, String*>) { Int ret = string2int(x->str()); decRc(x); return ret; }
 		else if constexpr (std::is_same_v<T1, Flow*>) {
 			switch (x->typeId()) {
 				case TypeFx::INT:    return x->template getRc<Int>();
@@ -1236,7 +1236,7 @@ inline T2 castRc(T1 x) {
 	else if constexpr (std::is_same_v<T2, Bool>) {
 		if constexpr (std::is_same_v<T1, Int>) { return int2bool(x); }
 		else if constexpr (std::is_same_v<T1, Double>) { return double2bool(x); }
-		else if constexpr (std::is_same_v<T1, String*>) { return string2bool(x->str()); }
+		else if constexpr (std::is_same_v<T1, String*>) { Bool ret = string2bool(x->str()); decRc(x); return ret; }
 		else if constexpr (std::is_same_v<T1, Flow*>) {
 			switch (x->typeId()) {
 				case TypeFx::INT:    return int2bool(x->template getRc<Int>());
@@ -1255,7 +1255,7 @@ inline T2 castRc(T1 x) {
 	else if constexpr (std::is_same_v<T2, Double>) {
 		if constexpr (std::is_same_v<T1, Int>) { return int2double(x); }
 		else if constexpr (std::is_same_v<T1, Bool>) { return bool2double(x); }
-		else if constexpr (std::is_same_v<T1, String*>) { return string2double(x->str()); }
+		else if constexpr (std::is_same_v<T1, String*>) { Double ret = string2double(x->str()); decRc(x); return ret; }
 		else if constexpr (std::is_same_v<T1, Flow*>) {
 			switch (x->typeId()) {
 				case TypeFx::INT:    return int2double(x->template getRc<Int>());
