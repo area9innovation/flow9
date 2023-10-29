@@ -429,21 +429,8 @@ constexpr Int UNI_SUR_LOW_END = 0xDFFF;
 
 struct String : public Flow {
 	enum { TYPE = TypeFx::STRING };
-	String(): str_() { }
-	String(const std::string& s): str_(std2string(s)) { }
-	String(const string& s): str_(s) { }
-	String(string&& s): str_(std::move(s)) { }
-	String(const char16_t* s): str_(s) { }
-	String(const char16_t* s, Int len): str_(s, len) { }
-	String(char16_t c): str_(1, c) { }
-	String(Int c) { append(c); }
-	String(std::initializer_list<char16_t>&& codes): str_(std::move(codes)) { }
-
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
-
-	static String* makeSingleton() { static String es; es.makeConstantRc(); return &es; }
-
 	// There must be only one instance of empty string
 	static String* make() {
 		static String* es = makeSingleton();
@@ -514,20 +501,22 @@ struct String : public Flow {
 	static String* concatRc(String* s1, String* s2);
 
 private:
+	String(): str_() { }
+	String(const std::string& s): str_(std2string(s)) { }
+	String(const string& s): str_(s) { }
+	String(string&& s): str_(std::move(s)) { }
+	String(const char16_t* s): str_(s) { }
+	String(const char16_t* s, Int len): str_(s, len) { }
+	String(char16_t c): str_(1, c) { }
+	String(Int c) { append(c); }
+	String(std::initializer_list<char16_t>&& codes): str_(std::move(codes)) { }
+	static String* makeSingleton() { static String es; es.makeConstantRc(); return &es; }
 	string str_;
 };
 
 struct Native : public Flow {
 	enum { TYPE = TypeFx::NATIVE };
 	enum Kind { SCALAR = 0, FLOW_PTR = 1, FOREIGN_PTR = 2 };
-	template<typename T>
-	Native(T v): cleanup_([](){}), val_(v) {
-		if constexpr (is_flow_ancestor_v<T>) {
-			cleanup_ = [v]() { decRc(std::any_cast<Flow*>(v)); };
-		} else if constexpr (std::is_pointer_v<T>) {
-			cleanup_ = [v]() { delete std::any_cast<T>(v); };
-		}
-	}
 	~Native() override {
 		cleanup_();
 	}
@@ -559,6 +548,14 @@ struct Native : public Flow {
 	std::any& valRef() { return val_; }
 
 private:
+	template<typename T>
+	Native(T v): cleanup_([](){}), val_(v) {
+		if constexpr (is_flow_ancestor_v<T>) {
+			cleanup_ = [v]() { decRc(std::any_cast<Flow*>(v)); };
+		} else if constexpr (std::is_pointer_v<T>) {
+			cleanup_ = [v]() { delete std::any_cast<T>(v); };
+		}
+	}
 	std::function<void()> cleanup_;
 	std::any val_;
 };
@@ -569,17 +566,8 @@ template<TypeId Id, typename... Fs>
 struct Str : public Union {
 	enum { TYPE = Id, SIZE = sizeof...(Fs) };
 	using Fields = std::tuple<Fs...>;
-	Str(Fs... fs): fields(fs...) { }
 	~Str() override { decRcFields<0>(); }
 
-	template<typename S>
-	static S makeSingleton() {
-		if constexpr (sizeof...(Fs) == 0) {
-			static std::remove_pointer_t<S> x; x.makeConstantRc(); return &x;
-		} else {
-			return nullptr;
-		}
-	}
 	template<typename S>
 	static S make(Fs... fs) {
 		if constexpr (sizeof...(Fs) == 0) {
@@ -699,7 +687,17 @@ struct Str : public Union {
 		hashCalcArgs<0>(h);
 	}
 
+protected:
+	Str(Fs... fs): fields(fs...) { }
 private:
+	template<typename S>
+	static S makeSingleton() {
+		if constexpr (sizeof...(Fs) == 0) {
+			static std::remove_pointer_t<S> x; x.makeConstantRc(); return &x;
+		} else {
+			return nullptr;
+		}
+	}
 	template<Int i>
 	void incRcFields() {
 		if constexpr(i < SIZE) {
@@ -815,14 +813,6 @@ struct Vec : public Flow {
 	using const_iterator = typename std::vector<T>::const_iterator;
 	using iterator = typename std::vector<T>::iterator;
 
-	Vec(): vec_() { }
-	Vec(Int s): vec_() { vec_.reserve(s); }
-	Vec(std::initializer_list<T>&& il): vec_(std::move(il)) { }
-	Vec(const std::initializer_list<T>& il): vec_(il) { }
-	Vec(Vec&& a): vec_(std::move(a.vec_)) { }
-	Vec(const Vec& a): vec_(a.vec_) { incRcVec(); }
-	Vec(std::vector<T>&& v): vec_(std::move(v)) { }
-
 	~Vec() override { decRcVec(); }
 	inline void incRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
@@ -831,18 +821,9 @@ struct Vec : public Flow {
 			}
 		}
 	}
-	inline void decRcVec() {
-		if constexpr (is_flow_ancestor_v<T>) {
-			for (T x : vec_) {
-				decRc(x);
-			}
-		}
-	}
 
 	Vec& operator = (Vec&& r) = delete;
 	Vec& operator = (const Vec& r) = delete;
-
-	static Vec* makeSingleton() { static Vec x; x.makeConstantRc(); return &x; }
 
 	// There must be only one instance of empty vector
 	static Vec* make() {
@@ -985,6 +966,22 @@ struct Vec : public Flow {
 	inline std::vector<T>& vecRef() { return vec_; }
 
 private:
+	Vec(): vec_() { }
+	Vec(Int s): vec_() { vec_.reserve(s); }
+	Vec(std::initializer_list<T>&& il): vec_(std::move(il)) { }
+	Vec(const std::initializer_list<T>& il): vec_(il) { }
+	Vec(Vec* a): vec_(a->vec_) { incRcVec(); }
+	Vec(Vec&& a): vec_(std::move(a.vec_)) { }
+	Vec(const Vec& a): vec_(a.vec_) { incRcVec(); }
+	Vec(std::vector<T>&& v): vec_(std::move(v)) { }
+	inline void decRcVec() {
+		if constexpr (is_flow_ancestor_v<T>) {
+			for (T x : vec_) {
+				decRc(x);
+			}
+		}
+	}
+	static Vec* makeSingleton() { static Vec x; x.makeConstantRc(); return &x; }
 	std::vector<T> vec_;
 };
 
@@ -992,10 +989,6 @@ template<typename T>
 struct Ref : public Flow {
 	enum { TYPE = TypeFx::REF };
 	using RefType = T;
-	Ref() { }
-	Ref(T r): val_(r) { }
-	Ref(const Ref& r): val_(r.val_) { }
-	Ref(Ref&& r): val_(std::move(r.val_)) { }
 	~Ref() override { 
 		if constexpr (is_flow_ancestor_v<T>) {
 			if (val_) {
@@ -1003,7 +996,6 @@ struct Ref : public Flow {
 			}
 		}
 	}
-
 	Ref& operator = (Ref&& r) = delete;
 	Ref& operator = (const Ref& r) = delete;
 
@@ -1076,6 +1068,10 @@ struct Ref : public Flow {
 	}
 
 private:
+	Ref() { }
+	Ref(T r): val_(r) { }
+	Ref(const Ref& r): val_(r.val_) { }
+	Ref(Ref&& r): val_(std::move(r.val_)) { }
 	T val_;
 };
 
@@ -1087,30 +1083,11 @@ struct Fun : public Flow {
 	using Fn = std::function<R(As...)>;
 	using Fn1 = std::function<R(Args)>;
 
-	Fun() {}
-	Fun(Fn&& f): fn_(std::move(f)) { }
-	Fun(const Fn& f): fn_(f) { }
-	Fun(const Fn1& f): fn_(f) { }
-
-	template<typename... Cs>
-	Fun(Fn&& f, Cs... cl): fn_(std::move(f)) {
-		initClosure<Cs...>(cl...);
-	}
 	~Fun() {
 		for (Flow* x: closure_) {
 			decRc(x);
 		}
 	}
-
-	template<typename C1, typename... Cs>
-	constexpr void initClosure(C1 c1, Cs... cl) {
-		static_assert(is_flow_ancestor_v<C1> || is_scalar_v<C1>, "illegal type in closure");
-		if constexpr (is_flow_ancestor_v<C1>) {
-			closure_.push_back(c1);
-		}
-		initClosure<Cs...>(cl...);
-	}
-	template<typename... Cs> constexpr void initClosure(Cs...) { }
 
 	Fun& operator = (Fun&& r) = delete;
 	Fun& operator = (const Fun& r) = delete;
@@ -1168,6 +1145,24 @@ struct Fun : public Flow {
 	}
 
 private:
+	Fun() {}
+	Fun(Fn&& f): fn_(std::move(f)) { }
+	Fun(const Fn& f): fn_(f) { }
+	Fun(const Fn1& f): fn_(f) { }
+
+	template<typename... Cs>
+	Fun(Fn&& f, Cs... cl): fn_(std::move(f)) {
+		initClosure<Cs...>(cl...);
+	}
+	template<typename C1, typename... Cs>
+	constexpr void initClosure(C1 c1, Cs... cl) {
+		static_assert(is_flow_ancestor_v<C1> || is_scalar_v<C1>, "illegal type in closure");
+		if constexpr (is_flow_ancestor_v<C1>) {
+			closure_.push_back(c1);
+		}
+		initClosure<Cs...>(cl...);
+	}
+	template<typename... Cs> constexpr void initClosure(Cs...) { }
 	Fn fn_;
 	std::vector<Flow*> closure_;
 };
@@ -1315,11 +1310,11 @@ inline T2 castRc(T1 x) {
 		using V2 = std::remove_pointer_t<T2>;
 		if constexpr (is_type_v<TypeFx::REF, T1>) {
 			using V1 = std::remove_pointer_t<T1>;
-			return new V2(castRc<typename V1::RefType, typename V2::RefType>(x->getRc()));
+			return V2::make(castRc<typename V1::RefType, typename V2::RefType>(x->getRc()));
 		} else if (T2 f = dynamic_cast<T2>(x)) {
 			return f;
 		} else {
-			return new V2(castRc<Flow*, typename V2::RefType>(x->getFlowRc(0)));
+			return V2::make(castRc<Flow*, typename V2::RefType>(x->getFlowRc(0)));
 		}
 	}
 	else if constexpr (is_type_v<TypeFx::FUNC, T2>) {
@@ -1327,7 +1322,7 @@ inline T2 castRc(T1 x) {
 		if constexpr (is_type_v<TypeFx::FUNC, T1>) {
 			using V1 = std::remove_pointer_t<T1>;
 			T2 ret = [x]<std::size_t... I>(std::index_sequence<I...>) constexpr { 
-				return new V2([x](std::tuple_element_t<I, typename V2::Args>... as) mutable {
+				return V2::make([x](std::tuple_element_t<I, typename V2::Args>... as) mutable {
 					return castRc<typename V1::RetType, typename V2::RetType>(x->callFlowRc(
 						castRc<
 							std::tuple_element_t<I, typename V2::Args>, 
@@ -1344,7 +1339,7 @@ inline T2 castRc(T1 x) {
 			return f;
 		} else {
 			T2 ret = [x]<std::size_t... I>(std::index_sequence<I...>) constexpr { 
-				return new V2([x](std::tuple_element_t<I, typename V2::Args>... as) mutable {
+				return V2::make([x](std::tuple_element_t<I, typename V2::Args>... as) mutable {
 					std::vector<Flow*> as_vect {castRc<std::tuple_element_t<I, typename V2::Args>, Flow*>(as)...};
 					return castRc<Flow*, typename V2::RetType>(x->callFlowRc(as_vect));
 				}, x);
@@ -1370,7 +1365,7 @@ inline T2 castRc(T1 x) {
 			using V1_Fields = typename V1::Fields;
 			using V2_Fields = typename V2::Fields;
 			T2 ret = [x]<std::size_t... I>(std::index_sequence<I...>) constexpr { 
-				return new V2(
+				return V2::template make<T2>(
 					castRc<
 						std::tuple_element_t<I, V1_Fields>, 
 						std::tuple_element_t<I, V2_Fields>
@@ -1385,7 +1380,7 @@ inline T2 castRc(T1 x) {
 		} else {
 			using V2_Fields = typename V2::Fields;
 			T2 ret = [x]<std::size_t... I>(std::index_sequence<I...>) constexpr { 
-				return new V2(
+				return V2::template make<T2>(
 					castRc<Flow*, std::tuple_element_t<I, V2_Fields>>(x->getFlowRc1(I))...
 				);
 			}
