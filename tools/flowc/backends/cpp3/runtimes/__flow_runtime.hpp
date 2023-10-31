@@ -1,6 +1,5 @@
 // Common includes, which are used by runtime
 
-#ifndef FLOW_RUNTIME_HEADER
 #include <string>
 #include <vector>
 #include <functional>
@@ -25,7 +24,6 @@
 #include <typeindex>
 #include <typeinfo>
 #include <cxxabi.h>
-#endif
 
 // C++ runtime for flow
 
@@ -230,7 +228,7 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::DOUBLE, T>;
 
 constexpr bool use_memory_pool = true;
-constexpr bool use_memory_chunk = true;
+constexpr bool use_memory_chunk = false;
 
 struct MemoryPool {
 	enum { MAX_SIZE = 128 };
