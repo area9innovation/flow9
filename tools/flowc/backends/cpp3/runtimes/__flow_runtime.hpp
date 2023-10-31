@@ -18,6 +18,10 @@
 #include <thread>
 #include <tuple>
 #include <any>
+#include <stack>
+#include <condition_variable>
+#include <deque>
+#include <future>
 #include <typeindex>
 #include <typeinfo>
 #include <cxxabi.h>
@@ -225,8 +229,194 @@ template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::BOOL, T> ||
 	is_type_v<TypeFx::DOUBLE, T>;
 
-//using RcCounter = long;
-using RcCounter = int32_t;
+constexpr bool use_memory_pool = true;
+constexpr bool use_memory_chunk = true;
+
+struct MemoryPool {
+	enum { MAX_SIZE = 128 };
+	MemoryPool(std::size_t max_size): max_size_ (max_size) { }
+	static void init(std::size_t max_size = MAX_SIZE) {
+		instance_ = std::make_unique<MemoryPool>(max_size);
+	}
+	static void addThread(std::thread::id thread_id, bool main) {
+		instance_->threads_.emplace(std::pair(thread_id, std::move(PerThread(instance_->max_size_, main))));
+	}
+	static void removeThread(std::thread::id thread_id) {
+		auto p = instance_->threads_.find(thread_id);
+		if (p != instance_->threads_.end()) {
+			instance_->threads_.erase(p);
+		}
+	}
+	inline static void* alloc(std::size_t size) {
+		if constexpr (use_memory_pool) {
+			return instance_->threads_.at(std::this_thread::get_id()).alloc(size);	
+		} else {
+			return std::malloc(size);
+		}
+	}
+	template<typename T>
+	inline static void* alloc() {
+		if constexpr (use_memory_pool) {
+			return instance_->threads_.at(std::this_thread::get_id()).alloc(sizeof(std::remove_pointer_t<T>));
+		} else {
+			return std::malloc(sizeof(std::remove_pointer_t<T>));
+		}
+	}
+	inline static void free(void* p, std::size_t size) {
+		if constexpr (use_memory_pool) {
+			instance_->threads_.at(std::this_thread::get_id()).free(p, size);
+		} else {
+			std::free(p);
+		}
+	}
+	template<typename T>
+	inline static void free(void* p) {
+		if constexpr (use_memory_pool) {
+			instance_->threads_.at(std::this_thread::get_id()).free(p, sizeof(std::remove_pointer_t<T>));
+		} else {
+			std::free(p);
+		}
+	}
+	static void clear() {
+		for (auto& p: instance_->threads_) {
+			p.second.clear();
+		}
+	}
+	struct PerSize {
+		enum { CACHED_NUM = 16000 };
+		PerSize(std::size_t s, bool in_main): size_(s), in_main_thread_(in_main), cached_(nullptr), used_(0) { 
+			if constexpr (use_memory_chunk) {
+				if (in_main_thread_ && size_ == 40) {
+					cached_ = (uint8_t*)std::malloc(size_ * CACHED_NUM);
+				}
+			}
+		}
+		~PerSize() {
+			//if (in_main_thread_ && size_ == 40) {
+			//	std::free(cached_);
+			//}
+			clear();
+		}
+		inline void* alloc() {
+			//return std::malloc(size_);
+			if (pool_.empty()) {
+				if constexpr (use_memory_chunk) {
+					if (in_main_thread_ && size_ == 40 && used_ < CACHED_NUM) {
+						return cached_ + (used_ ++) * size_;
+					} else {
+						return std::malloc(size_);
+					}
+				} else {
+					return std::malloc(size_);
+				}
+			} else {
+				void* x = pool_.top();
+				pool_.pop();
+				return x;
+			}
+		}
+		inline void free(void* p) {
+			//std::free(p);
+			if (p) {
+				pool_.push(p);
+			} else {
+				fail("empty pointer free!");
+			}
+		}
+		void clear() {
+			while (!pool_.empty()) {
+				std::free(pool_.top());
+				pool_.pop();
+			}
+		}
+		inline std::size_t size() const {
+			return pool_.size(); 
+		}
+		inline std::size_t mem() const {
+			return size_ * pool_.size(); 
+		}
+	private:
+		const std::size_t size_;
+		const bool in_main_thread_;
+		std::stack<void*> pool_;
+		uint8_t* cached_;
+		std::size_t used_;
+	};
+	struct PerThread {
+		PerThread(std::size_t ms, bool is_main): max_size_(ms), in_main_thread_(is_main) {
+			for (std::size_t size = 16; size <= max_size_; size += 8) {
+				shards_.emplace_back(size, in_main_thread_);
+			}
+		}
+		PerThread(const PerThread& pt) = default;
+		PerThread(PerThread&& pt) = default;
+		inline void* alloc(std::size_t size) {
+			if (size < 16 || size > max_size_) {
+				return std::malloc(size);
+			} else {
+				return shards_.at(size2ind(size)).alloc();
+			}
+		}
+		inline void free(void* p, std::size_t size) {
+			if (size < 16 || size > max_size_) {
+				std::free(p);
+			} else {
+				shards_.at(size2ind(size)).free(p);
+			}
+		}
+		void clear() {
+			for (PerSize& shard : shards_) {
+				shard.clear();
+			}
+		}
+		std::size_t mem() const {
+			std::size_t m = 0;
+			for (const PerSize& shard : shards_) {
+				m += shard.mem() + sizeof(std::vector<PerSize>);
+			}
+			return m;
+		}
+		Int getShardsSize() const {
+			return static_cast<Int>(shards_.size());
+		}
+		const PerSize& getSizePool(std::size_t size) const {
+			return shards_.at(size2ind(size));
+		}
+	private:
+		static inline std::size_t size2ind(std::size_t size) {
+			return (size - 16) / 8;
+		}
+		const std::size_t max_size_;
+		const bool in_main_thread_;
+		std::vector<PerSize> shards_;
+	};
+	// Auxiliary functions
+	static std::size_t mem() {
+		std::size_t m = 0;
+		for (auto& p : instance_->threads_) {
+			m += p.second.mem() + sizeof(std::vector<PerThread>);
+		}
+		return m;
+	}
+	static std::size_t numThreads() {
+		return static_cast<Int>(instance_->threads_.size());
+	}
+	static const PerThread& getThreadPool(Int i) {
+		auto p = instance_->threads_.begin();
+		while (i-- > 0) ++p;
+		return p->second;
+	}
+	static std::size_t maxSize() {
+		return instance_->max_size_;
+	}
+private:
+	std::mutex m;
+	std::size_t max_size_;
+	std::unordered_map<std::thread::id, PerThread> threads_;
+	static std::unique_ptr<MemoryPool> instance_;
+};
+
+using RcCounter = int32_t; // long?
 
 constexpr RcCounter CONSTANT_OBJECT_RC = -1;
 
@@ -257,12 +447,14 @@ template<typename T> inline void decRc(T x) {
 		if (!isConstatntObj<T>(x)) {
 			if constexpr (CONCURRENCY_ON) {
 				if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
-					delete x;
+					//delete x;
+					x->destroy();
 				}
 			} else {
 				x->rc_ -= 1;
 				if (x->rc_ == 0) {
-					delete x;
+					//delete x;
+					x->destroy();
 				}
 			}
 		}
@@ -297,7 +489,10 @@ template<typename T> inline T decRcReuse(T x) {
 
 template<typename T> inline void decRcFinish(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		delete x;
+		//delete x;
+		if (x) {
+			x->destroy();
+		}
 	}
 }
 
@@ -347,6 +542,7 @@ template<typename T> struct Equal { bool operator() (T v1, T v2) const { return 
 struct Flow {
 	Flow(): rc_(1) { }
 	virtual ~Flow() { }
+	virtual void destroy() = 0;
 
 	virtual TypeId typeId() const = 0;
 	virtual Int componentSize() const { return 0; }
@@ -399,10 +595,32 @@ private:
 
 struct Union : public Flow { };
 
-struct FVoid : public Flow { TypeId typeId() const override { return TypeFx::VOID; } };
-struct FInt : public Flow { FInt(Int v): val(v) {} TypeId typeId() const override { return TypeFx::INT; } Int val; };
-struct FBool : public Flow { FBool(Bool v): val(v) {} TypeId typeId() const override { return TypeFx::BOOL; } Bool val; };
-struct FDouble : public Flow { FDouble(Double v): val(v) {} TypeId typeId() const override { return TypeFx::DOUBLE; } Double val; };
+struct FVoid : public Flow {
+	void destroy() override { this->~FVoid(); MemoryPool::free<FVoid>(this); }
+	static FVoid* make() { return new(MemoryPool::alloc<FVoid>()) FVoid(); }
+	TypeId typeId() const override { return TypeFx::VOID; }
+};
+struct FInt : public Flow {
+	FInt(Int v): val(v) {}
+	void destroy() override { this->~FInt(); MemoryPool::free<FInt>(this); }
+	static FInt* make(Int v) { return new(MemoryPool::alloc<FInt>()) FInt(v); }
+	TypeId typeId() const override { return TypeFx::INT; }
+	Int val;
+};
+struct FBool : public Flow {
+	FBool(Bool v): val(v) {}
+	void destroy() override { this->~FBool(); MemoryPool::free<FBool>(this); }
+	static FBool* make(Bool v) { return new(MemoryPool::alloc<FBool>()) FBool(v); }
+	TypeId typeId() const override { return TypeFx::BOOL; }
+	Bool val;
+};
+struct FDouble : public Flow {
+	FDouble(Double v): val(v) {}
+	void destroy() override { this->~FDouble(); MemoryPool::free<FDouble>(this); }
+	static FDouble* make(Double v) { return new(MemoryPool::alloc<FDouble>()) FDouble(v); }
+	TypeId typeId() const override { return TypeFx::DOUBLE; }
+	Double val;
+};
 
 template<> inline Void Flow::getRc<Void>() { return decRcRet(this, void_value); }
 template<> inline Int Flow::getRc<Int>() { return decRcRet(this, static_cast<FInt*>(this)->val); }
@@ -431,14 +649,23 @@ struct String : public Flow {
 	enum { TYPE = TypeFx::STRING };
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
+	~String() = default;
+	void destroy() override {
+		this->~String();
+		MemoryPool::free<String>(this);
+	}
 	// There must be only one instance of empty string
 	static String* make() {
 		static String* es = makeSingleton();
 		return es;
 	}
 	template<typename... As>
-	static String* make(As... as) { return new String(std::move(as)...); }
-	static String* make(std::initializer_list<char16_t>&& codes) { return new String(std::move(codes)); }
+	static String* make(As... as) {
+		return new(MemoryPool::alloc<String>()) String(std::move(as)...);
+	}
+	static String* make(std::initializer_list<char16_t>&& codes) {
+		return new(MemoryPool::alloc<String>()) String(std::move(codes));
+	}
 
 	static String* makeOrReuse(String* s) {
 		if (s == nullptr || isConstatntObj(s)) {
@@ -520,12 +747,18 @@ struct Native : public Flow {
 	~Native() override {
 		cleanup_();
 	}
+	void destroy() override {
+		this->~Native();
+		MemoryPool::free<String>(this);
+	}
 	Native& operator = (Native&& r) = delete;
 	Native& operator = (const Native& r) = delete;
 
 	TypeId typeId() const override { return TypeFx::NATIVE; }
 
-	template<typename... As> static Native* make(As... as) { return new Native(as...); }
+	template<typename... As> static Native* make(As... as) {
+		return new(MemoryPool::alloc<Native>()) Native(as...);
+	}
 	template<typename T> bool castsTo() {
 		try {
 			std::any_cast<T>(val_);
@@ -566,7 +799,13 @@ template<TypeId Id, typename... Fs>
 struct Str : public Union {
 	enum { TYPE = Id, SIZE = sizeof...(Fs) };
 	using Fields = std::tuple<Fs...>;
-	~Str() override { decRcFields<0>(); }
+	~Str() override {
+		decRcFields<0>();
+	}
+	void destroy() override {
+		this->~Str();
+		MemoryPool::free<Str>(this);
+	}
 
 	template<typename S>
 	static S make(Fs... fs) {
@@ -574,13 +813,14 @@ struct Str : public Union {
 			static S singleton = makeSingleton<S>();
 			return singleton;
 		} else {
-			return new std::remove_pointer_t<S>(std::move(fs)...);
+			return new(MemoryPool::alloc<S>()) std::remove_pointer_t<S>(std::move(fs)...);
 		}
 	}
 	template<typename S>
 	static S makeOrReuse(S s, Fs... fs) {
 		if (s == nullptr || isConstatntObj(s)) {
-			return new std::remove_pointer_t<S>(std::move(fs)...);
+			//return new(MemoryPool::alloc<S>()) std::remove_pointer_t<S>(std::move(fs)...);
+			return make<S>(std::move(fs)...);
 		} else {
 			s->template decRcFields<0>();
 			s->fields = std::tie(fs...);
@@ -806,14 +1046,49 @@ private:
 	Fields fields;
 };
 
+
+struct VecStats {
+	enum { STATS_LEN = 2048 };
+	static void registerLen(Int l) {
+		/*if (max_len < l) {
+			max_len = l;
+		}
+		std::size_t len = static_cast<Int>(l);
+		std::lock_guard<std::mutex> lock(m);
+		if (len >= len_distrib.size()) {
+			Int x = len - len_distrib.size() + 1;
+			while (x-- > 0) {
+				len_distrib.push_back(0);
+			}
+		}
+		len_distrib[len] += 1;*/
+	}
+	static Int lenUses(Int l) {
+		std::size_t len = static_cast<Int>(l);
+		if (len < len_distrib.size()) {
+			return len_distrib.at(len);
+		} else {
+			return -1;
+		}
+	}
+	static Int max_len;
+	static std::mutex m;
+	static std::vector<Int> len_distrib;
+};
+
 template<typename T> 
 struct Vec : public Flow {
 	enum { TYPE = TypeFx::ARRAY };
 	using ElType = T;
 	using const_iterator = typename std::vector<T>::const_iterator;
 	using iterator = typename std::vector<T>::iterator;
-
-	~Vec() override { decRcVec(); }
+	~Vec() override {
+		decRcVec();
+	}
+	void destroy() override {
+		this->~Vec();
+		MemoryPool::free<Vec>(this);
+	}
 	inline void incRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
 			for (T x : vec_) {
@@ -831,8 +1106,12 @@ struct Vec : public Flow {
 		return x;
 	}
 	template<typename A>
-	static Vec* make(A a) { return new Vec(std::move(a)); }
-	static Vec* make(std::initializer_list<T>&& il) { return new Vec(std::move(il)); }
+	static Vec* make(A a) {
+		return new(MemoryPool::alloc<Vec>()) Vec(std::move(a));
+	}
+	static Vec* make(std::initializer_list<T>&& il) {
+		return new(MemoryPool::alloc<Vec>()) Vec(std::move(il));
+	}
 
 	static Vec* makeOrReuse(Vec* v) {
 		if (v == nullptr || isConstatntObj(v)) {
@@ -967,12 +1246,12 @@ struct Vec : public Flow {
 
 private:
 	Vec(): vec_() { }
-	Vec(Int s): vec_() { vec_.reserve(s); }
-	Vec(std::initializer_list<T>&& il): vec_(std::move(il)) { }
-	Vec(const std::initializer_list<T>& il): vec_(il) { }
-	Vec(Vec* a): vec_(a->vec_) { incRcVec(); }
+	Vec(Int s): vec_() { VecStats::registerLen(s); vec_.reserve(s); }
+	Vec(std::initializer_list<T>&& il): vec_(std::move(il)) { VecStats::registerLen(il.size()); }
+	Vec(const std::initializer_list<T>& il): vec_(il) { VecStats::registerLen(il.size()); }
+	Vec(Vec* a): vec_(a->vec_) { incRcVec(); VecStats::registerLen(size()); }
 	Vec(Vec&& a): vec_(std::move(a.vec_)) { }
-	Vec(const Vec& a): vec_(a.vec_) { incRcVec(); }
+	Vec(const Vec& a): vec_(a.vec_) { incRcVec(); VecStats::registerLen(size()); }
 	Vec(std::vector<T>&& v): vec_(std::move(v)) { }
 	inline void decRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
@@ -996,15 +1275,21 @@ struct Ref : public Flow {
 			}
 		}
 	}
+	void destroy() override { 
+		this->~Ref();
+		MemoryPool::free<Ref>(this);
+	}
 	Ref& operator = (Ref&& r) = delete;
 	Ref& operator = (const Ref& r) = delete;
 
 	template<typename... As>
-	static Ref* make(As... as) { return new Ref(std::move(as)...); }
+	static Ref* make(As... as) {
+		return new(MemoryPool::alloc<Ref>()) Ref(std::move(as)...);
+	}
 	template<typename A>
 	static Ref* makeOrReuse(Ref* r, A a) {
 		if (r == nullptr) {
-			return new Ref(std::move(a));
+			return make(std::move(a));
 		} else {
 			decRc(r->val_);
 			r->val_ = a;
@@ -1088,16 +1373,21 @@ struct Fun : public Flow {
 			decRc(x);
 		}
 	}
-
+	void destroy() override {
+		this->~Fun();
+		MemoryPool::free<Fun>(this);
+	}
 	Fun& operator = (Fun&& r) = delete;
 	Fun& operator = (const Fun& r) = delete;
 
 	template<typename... As1>
-	static Fun* make(As1... as) { return new Fun(std::move(as)...); }
+	static Fun* make(As1... as) {
+		return new(MemoryPool::alloc<Fun>()) Fun(std::move(as)...);
+	}
 	template<typename F, typename... Cs>
 	static Fun* makeOrReuse(Fun* f, F fn, Cs... cl) {
 		if (f == nullptr) {
-			return new Fun(std::move(fn), std::move(cl)...);
+			return make(std::move(fn), std::move(cl)...);
 		} else {
 			for (Flow* x: f->closure_) {
 				decRc(x);
@@ -1192,10 +1482,10 @@ inline T2 castRc(T1 x) {
 		else { decRc(x); return void_value; }
 	} 
 	else if constexpr (std::is_same_v<T2, Flow*>) {
-		if constexpr (std::is_same_v<T1, Bool>) { return new FBool(x); }
-			else if constexpr (std::is_same_v<T1, Int>) { return new FInt(x); }
-			else if constexpr (std::is_same_v<T1, Double>) { return new FDouble(x); }
-			else if constexpr (std::is_same_v<T1, Void>) { return new FVoid(); }
+		if constexpr (std::is_same_v<T1, Bool>) { return FBool::make(x); }
+			else if constexpr (std::is_same_v<T1, Int>) { return FInt::make(x); }
+			else if constexpr (std::is_same_v<T1, Double>) { return FDouble::make(x); }
+			else if constexpr (std::is_same_v<T1, Void>) { return FVoid::make(); }
 			else if constexpr (std::is_same_v<T1, Native*>) {
 				if (x->template castsTo<Flow*>()) {
 					return x->template getRc<Flow*>();
@@ -1655,6 +1945,125 @@ template<typename S, typename T> inline S hashRc(T v) {
 template<typename S, typename T> inline S hash(T v) {
 	return Hash<S, T>::hash(v);
 }
+
+class ThreadPool {
+public:
+	ThreadPool(size_t num) : running_(true), thread_joiner_(threads_) {
+		main_thread_id_ = std::this_thread::get_id();
+		MemoryPool::addThread(main_thread_id_, true);
+		threads_.reserve(num);
+		for (size_t i = 0; i < num; ++i) {
+			threads_.emplace_back(std::bind(&ThreadPool::run, this));
+			MemoryPool::addThread(threads_.back().get_id(), false);
+		}
+	}
+	~ThreadPool() {{
+			std::lock_guard<std::mutex> lock(pool_mutex_);
+			for (const auto& th: threads_) {
+				MemoryPool::removeThread(th.get_id());
+			}
+			MemoryPool::removeThread(main_thread_id_);
+			running_ = false;
+		}
+		not_empty_.notify_all();
+	}
+	enum class Shutdown { Block, Skip };
+	static void init(Int numThreads) {
+		instance_ = std::make_unique<ThreadPool>(numThreads);
+	}
+	template<typename R>
+    static std::future<R> push(Shutdown behavior, std::function<R()> fn) {
+        return instance_->pushTask(behavior, std::move(fn));
+    }
+	static const std::vector<std::thread>& threads() {
+		return instance_->threads_;
+	}
+	static Int size() {
+		return instance_->threads_.size();
+	}
+	static const std::thread& thread(Int i) {
+		auto p = instance_->threads_.begin();
+		while (i-- > 0) ++p;
+		return *p;
+	}
+	static Int currentThread() {
+		if (std::this_thread::get_id() == instance_->main_thread_id_) {
+			return 0;
+		} else {
+			Int i = 1;
+			for (auto& th: instance_->threads_) {
+				if (th.get_id() == std::this_thread::get_id()) {
+					return i;
+				} else {
+					++i;
+				}
+			}
+			return -1;
+		}
+	}
+private:
+	using Task = std::pair<std::function<void()>, Shutdown>;
+	template<typename R>
+    std::future<R> pushTask(Shutdown behavior, std::function<R()> fn) {
+        // We have to manage the packaged_task with shared_ptr, because std::function<>
+        // requires being copy-constructible and copy-assignable.
+        auto task_fn = std::make_shared<std::packaged_task<R()>>(fn);
+        auto future = task_fn->get_future();
+        Task task([task_fn=std::move(task_fn)] { (*task_fn)(); }, behavior); {
+            std::lock_guard<std::mutex> lock(pool_mutex_);
+            task_queue_.push_back(std::move(task));
+        }
+        not_empty_.notify_one();
+        return future;
+    }
+    void run() {
+		while (true) {
+			Task task(retrieve());
+			// The pool is going to shutdown.
+			if (!task.first) {
+				return;
+			}
+			task.first();
+		}
+	}
+
+    Task retrieve() {
+		Task task;
+		std::unique_lock<std::mutex> lock(pool_mutex_);
+		not_empty_.wait(lock, [this] { return !running_ || !task_queue_.empty(); });
+		while (!task_queue_.empty()) {
+			if (!running_ && task_queue_.front().second == Shutdown::Skip) {
+				task_queue_.pop_front();
+				continue;
+			}
+			task = std::move(task_queue_.front());
+			task_queue_.pop_front();
+			break;
+		}
+		return task;
+	}
+
+	class ThreadsJoiner {
+		public:
+			explicit ThreadsJoiner(std::vector<std::thread>& threads) noexcept: threads_(threads) {}
+			~ThreadsJoiner() {
+				for (auto& th : threads_) {
+					th.join();
+				}
+			}
+		private:
+			std::vector<std::thread>& threads_;
+	};
+	std::thread::id main_thread_id_;
+    std::mutex pool_mutex_;
+    std::condition_variable not_empty_;
+    std::deque<Task> task_queue_;
+    bool running_;
+    std::vector<std::thread> threads_;
+    ThreadsJoiner thread_joiner_;
+	static std::unique_ptr<ThreadPool> instance_;
+};
+
 
 void cleanupAtExit();
 

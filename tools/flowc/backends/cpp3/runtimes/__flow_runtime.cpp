@@ -475,4 +475,11 @@ Int flowCompare(Flow* v1, Flow* v2) {
 	}
 }
 
+std::unique_ptr<MemoryPool> MemoryPool::instance_;
+std::unique_ptr<ThreadPool> ThreadPool::instance_;
+
+Int VecStats::max_len = 0;
+std::mutex VecStats::m;
+std::vector<Int> VecStats::len_distrib(2048, 0);
+
 }

@@ -2,94 +2,7 @@
 
 Cpp3RuntimePart("concurrent", 
 "
-class ThreadPool {
-public:
-	ThreadPool(size_t num) : running_(true), thread_joiner_(threads_) {
-		threads_.reserve(num);
-		for (size_t i = 0; i < num; ++i) {
-			threads_.emplace_back(std::bind(&ThreadPool::run, this));
-		}
-	}
-
-	~ThreadPool() {{
-			std::lock_guard<std::mutex> lock(pool_mutex_);
-			running_ = false;
-		}
-		not_empty_.notify_all();
-	}
-
-	enum class Shutdown {
-		Block,
-		Skip
-	};
-	using Task = std::pair<std::function<void()>, Shutdown>;
-
-	template<typename R>
-    std::future<R> push(Shutdown behavior, std::function<R()> fn) {
-        // We have to manage the packaged_task with shared_ptr, because std::function<>
-        // requires being copy-constructible and copy-assignable.
-        auto task_fn = std::make_shared<std::packaged_task<R()>>(fn);
-        auto future = task_fn->get_future();
-        Task task([task_fn=std::move(task_fn)] { (*task_fn)(); }, behavior); {
-            std::lock_guard<std::mutex> lock(pool_mutex_);
-            task_queue_.push_back(std::move(task));
-        }
-        not_empty_.notify_one();
-        return future;
-    }
-	std::size_t size() const { return threads_.size(); }
-
-private:
-    void run() {
-		while (true) {
-			Task task(retrieve());
-			// The pool is going to shutdown.
-			if (!task.first) {
-				return;
-			}
-			task.first();
-		}
-	}
-
-    Task retrieve() {
-		Task task;
-		std::unique_lock<std::mutex> lock(pool_mutex_);
-		not_empty_.wait(lock, [this] { return !running_ || !task_queue_.empty(); });
-		while (!task_queue_.empty()) {
-			if (!running_ && task_queue_.front().second == Shutdown::Skip) {
-				task_queue_.pop_front();
-				continue;
-			}
-			task = std::move(task_queue_.front());
-			task_queue_.pop_front();
-			break;
-		}
-		return task;
-	}
-
-	class ThreadsJoiner {
-		public:
-			explicit ThreadsJoiner(std::vector<std::thread>& threads) noexcept: threads_(threads) {}
-			~ThreadsJoiner() {
-				for (auto& th : threads_) {
-					th.join();
-				}
-			}
-		private:
-			std::vector<std::thread>& threads_;
-	};
-    std::mutex pool_mutex_;
-    std::condition_variable not_empty_;
-    std::deque<Task> task_queue_;
-    bool running_;
-    std::vector<std::thread> threads_;
-    ThreadsJoiner thread_joiner_;
-};
-
-extern std::unique_ptr<ThreadPool> thread_pool;
-
 std::mutex& aquireMutex(const Flow* obj);
-
 ",
 "
 
@@ -103,7 +16,7 @@ std::mutex& aquireMutex(const Flow* obj) {
 }
 
 ",
-"thread_pool = std::make_unique<ThreadPool>(std::thread::hardware_concurrency());", "",
+"", "",
 [Cpp3Std(["<thread>", "<unordered_map>", "<mutex>", "<condition_variable>", "<deque>", "<future>"], [])], false
 )
 
