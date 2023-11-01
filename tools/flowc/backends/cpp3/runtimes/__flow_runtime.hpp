@@ -237,42 +237,47 @@ struct MemoryPool {
 		instance_ = std::make_unique<MemoryPool>(max_size);
 	}
 	static void addThread(std::thread::id thread_id, bool main) {
-		instance_->threads_.emplace(std::pair(thread_id, std::move(PerThread(instance_->max_size_, main))));
+		instance_->threads_.emplace(std::pair<std::thread::id, PerThread>(
+			std::piecewise_construct, std::tuple(thread_id), std::tuple(instance_->max_size_, main)
+			//thread_id, std::make_unique<PerThread>(instance_->max_size_, main)
+		));
 	}
 	static void removeThread(std::thread::id thread_id) {
-		auto p = instance_->threads_.find(thread_id);
-		if (p != instance_->threads_.end()) {
-			instance_->threads_.erase(p);
+		if (instance_) {
+			auto p = instance_->threads_.find(thread_id);
+			if (p != instance_->threads_.end()) {
+				instance_->threads_.erase(p);
+			}
 		}
 	}
-	inline static void* alloc(std::size_t size) {
+	inline static void* allocSize(std::size_t size) {
 		if constexpr (use_memory_pool) {
-			return instance_->threads_.at(std::this_thread::get_id()).alloc(size);	
+			return instance_->threads_.at(std::this_thread::get_id()).allocSize(size);
 		} else {
-			return std::malloc(size);
-		}
-	}
-	template<typename T>
-	inline static void* alloc() {
-		if constexpr (use_memory_pool) {
-			return instance_->threads_.at(std::this_thread::get_id()).alloc(sizeof(std::remove_pointer_t<T>));
-		} else {
-			return std::malloc(sizeof(std::remove_pointer_t<T>));
-		}
-	}
-	inline static void free(void* p, std::size_t size) {
-		if constexpr (use_memory_pool) {
-			instance_->threads_.at(std::this_thread::get_id()).free(p, size);
-		} else {
-			std::free(p);
+			return operator new(size);
 		}
 	}
 	template<typename T>
-	inline static void free(void* p) {
+	inline static void* allocSize() {
 		if constexpr (use_memory_pool) {
-			instance_->threads_.at(std::this_thread::get_id()).free(p, sizeof(std::remove_pointer_t<T>));
+			return instance_->threads_.at(std::this_thread::get_id()).allocSize(sizeof(std::remove_pointer_t<T>));
 		} else {
-			std::free(p);
+			return operator new(sizeof(std::remove_pointer_t<T>));
+		}
+	}
+	inline static void freeSize(void* p, std::size_t size) {
+		if constexpr (use_memory_pool) {
+			instance_->threads_.at(std::this_thread::get_id()).freeSize(p, size);
+		} else {
+			operator delete(p);
+		}
+	}
+	template<typename T>
+	inline static void freeSize(void* p) {
+		if constexpr (use_memory_pool) {
+			instance_->threads_.at(std::this_thread::get_id()).freeSize(p, sizeof(std::remove_pointer_t<T>));
+		} else {
+			operator delete(p);
 		}
 	}
 	static void clear() {
@@ -285,27 +290,27 @@ struct MemoryPool {
 		PerSize(std::size_t s, bool in_main): size_(s), in_main_thread_(in_main), cached_(nullptr), used_(0) { 
 			if constexpr (use_memory_chunk) {
 				if (in_main_thread_ && size_ == 40) {
-					cached_ = (uint8_t*)std::malloc(size_ * CACHED_NUM);
+					cached_ = (u_int8_t*)operator new(size_ * CACHED_NUM);
 				}
 			}
 		}
 		~PerSize() {
 			//if (in_main_thread_ && size_ == 40) {
-			//	std::free(cached_);
+			//	operator delete(cached_);
 			//}
 			clear();
 		}
-		inline void* alloc() {
-			//return std::malloc(size_);
+		inline void* allocSize() {
+			//return operator new(size_);
 			if (pool_.empty()) {
 				if constexpr (use_memory_chunk) {
 					if (in_main_thread_ && size_ == 40 && used_ < CACHED_NUM) {
 						return cached_ + (used_ ++) * size_;
 					} else {
-						return std::malloc(size_);
+						return operator new(size_);
 					}
 				} else {
-					return std::malloc(size_);
+					return operator new(size_);
 				}
 			} else {
 				void* x = pool_.top();
@@ -313,8 +318,8 @@ struct MemoryPool {
 				return x;
 			}
 		}
-		inline void free(void* p) {
-			//std::free(p);
+		inline void freeSize(void* p) {
+			//operator delete(p);
 			if (p) {
 				pool_.push(p);
 			} else {
@@ -323,7 +328,7 @@ struct MemoryPool {
 		}
 		void clear() {
 			while (!pool_.empty()) {
-				std::free(pool_.top());
+				operator delete(pool_.top());
 				pool_.pop();
 			}
 		}
@@ -348,18 +353,19 @@ struct MemoryPool {
 		}
 		PerThread(const PerThread& pt) = default;
 		PerThread(PerThread&& pt) = default;
-		inline void* alloc(std::size_t size) {
+		~PerThread() { clear(); }
+		inline void* allocSize(std::size_t size) {
 			if (size < 16 || size > max_size_) {
-				return std::malloc(size);
+				return operator new(size);
 			} else {
-				return shards_.at(size2ind(size)).alloc();
+				return shards_.at(size2ind(size)).allocSize();
 			}
 		}
-		inline void free(void* p, std::size_t size) {
+		inline void freeSize(void* p, std::size_t size) {
 			if (size < 16 || size > max_size_) {
-				std::free(p);
+				operator delete(p);
 			} else {
-				shards_.at(size2ind(size)).free(p);
+				shards_.at(size2ind(size)).freeSize(p);
 			}
 		}
 		void clear() {
@@ -594,28 +600,28 @@ private:
 struct Union : public Flow { };
 
 struct FVoid : public Flow {
-	void destroy() override { this->~FVoid(); MemoryPool::free<FVoid>(this); }
-	static FVoid* make() { return new(MemoryPool::alloc<FVoid>()) FVoid(); }
+	void destroy() override { this->~FVoid(); MemoryPool::freeSize<FVoid>(this); }
+	static FVoid* make() { return new(MemoryPool::allocSize<FVoid>()) FVoid(); }
 	TypeId typeId() const override { return TypeFx::VOID; }
 };
 struct FInt : public Flow {
 	FInt(Int v): val(v) {}
-	void destroy() override { this->~FInt(); MemoryPool::free<FInt>(this); }
-	static FInt* make(Int v) { return new(MemoryPool::alloc<FInt>()) FInt(v); }
+	void destroy() override { this->~FInt(); MemoryPool::freeSize<FInt>(this); }
+	static FInt* make(Int v) { return new(MemoryPool::allocSize<FInt>()) FInt(v); }
 	TypeId typeId() const override { return TypeFx::INT; }
 	Int val;
 };
 struct FBool : public Flow {
 	FBool(Bool v): val(v) {}
-	void destroy() override { this->~FBool(); MemoryPool::free<FBool>(this); }
-	static FBool* make(Bool v) { return new(MemoryPool::alloc<FBool>()) FBool(v); }
+	void destroy() override { this->~FBool(); MemoryPool::freeSize<FBool>(this); }
+	static FBool* make(Bool v) { return new(MemoryPool::allocSize<FBool>()) FBool(v); }
 	TypeId typeId() const override { return TypeFx::BOOL; }
 	Bool val;
 };
 struct FDouble : public Flow {
 	FDouble(Double v): val(v) {}
-	void destroy() override { this->~FDouble(); MemoryPool::free<FDouble>(this); }
-	static FDouble* make(Double v) { return new(MemoryPool::alloc<FDouble>()) FDouble(v); }
+	void destroy() override { this->~FDouble(); MemoryPool::freeSize<FDouble>(this); }
+	static FDouble* make(Double v) { return new(MemoryPool::allocSize<FDouble>()) FDouble(v); }
 	TypeId typeId() const override { return TypeFx::DOUBLE; }
 	Double val;
 };
@@ -650,7 +656,7 @@ struct String : public Flow {
 	~String() = default;
 	void destroy() override {
 		this->~String();
-		MemoryPool::free<String>(this);
+		MemoryPool::freeSize<String>(this);
 	}
 	// There must be only one instance of empty string
 	static String* make() {
@@ -659,10 +665,10 @@ struct String : public Flow {
 	}
 	template<typename... As>
 	static String* make(As... as) {
-		return new(MemoryPool::alloc<String>()) String(std::move(as)...);
+		return new(MemoryPool::allocSize<String>()) String(std::move(as)...);
 	}
 	static String* make(std::initializer_list<char16_t>&& codes) {
-		return new(MemoryPool::alloc<String>()) String(std::move(codes));
+		return new(MemoryPool::allocSize<String>()) String(std::move(codes));
 	}
 
 	static String* makeOrReuse(String* s) {
@@ -747,7 +753,7 @@ struct Native : public Flow {
 	}
 	void destroy() override {
 		this->~Native();
-		MemoryPool::free<String>(this);
+		MemoryPool::freeSize<String>(this);
 	}
 	Native& operator = (Native&& r) = delete;
 	Native& operator = (const Native& r) = delete;
@@ -755,7 +761,7 @@ struct Native : public Flow {
 	TypeId typeId() const override { return TypeFx::NATIVE; }
 
 	template<typename... As> static Native* make(As... as) {
-		return new(MemoryPool::alloc<Native>()) Native(as...);
+		return new(MemoryPool::allocSize<Native>()) Native(as...);
 	}
 	template<typename T> bool castsTo() {
 		try {
@@ -802,7 +808,7 @@ struct Str : public Union {
 	}
 	void destroy() override {
 		this->~Str();
-		MemoryPool::free<Str>(this);
+		MemoryPool::freeSize<Str>(this);
 	}
 
 	template<typename S>
@@ -811,13 +817,13 @@ struct Str : public Union {
 			static S singleton = makeSingleton<S>();
 			return singleton;
 		} else {
-			return new(MemoryPool::alloc<S>()) std::remove_pointer_t<S>(std::move(fs)...);
+			return new(MemoryPool::allocSize<S>()) std::remove_pointer_t<S>(std::move(fs)...);
 		}
 	}
 	template<typename S>
 	static S makeOrReuse(S s, Fs... fs) {
 		if (s == nullptr || isConstatntObj(s)) {
-			//return new(MemoryPool::alloc<S>()) std::remove_pointer_t<S>(std::move(fs)...);
+			//return new(MemoryPool::allocSize<S>()) std::remove_pointer_t<S>(std::move(fs)...);
 			return make<S>(std::move(fs)...);
 		} else {
 			s->template decRcFields<0>();
@@ -1085,7 +1091,7 @@ struct Vec : public Flow {
 	}
 	void destroy() override {
 		this->~Vec();
-		MemoryPool::free<Vec>(this);
+		MemoryPool::freeSize<Vec>(this);
 	}
 	inline void incRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
@@ -1105,10 +1111,10 @@ struct Vec : public Flow {
 	}
 	template<typename A>
 	static Vec* make(A a) {
-		return new(MemoryPool::alloc<Vec>()) Vec(std::move(a));
+		return new(MemoryPool::allocSize<Vec>()) Vec(std::move(a));
 	}
 	static Vec* make(std::initializer_list<T>&& il) {
-		return new(MemoryPool::alloc<Vec>()) Vec(std::move(il));
+		return new(MemoryPool::allocSize<Vec>()) Vec(std::move(il));
 	}
 
 	static Vec* makeOrReuse(Vec* v) {
@@ -1275,14 +1281,14 @@ struct Ref : public Flow {
 	}
 	void destroy() override { 
 		this->~Ref();
-		MemoryPool::free<Ref>(this);
+		MemoryPool::freeSize<Ref>(this);
 	}
 	Ref& operator = (Ref&& r) = delete;
 	Ref& operator = (const Ref& r) = delete;
 
 	template<typename... As>
 	static Ref* make(As... as) {
-		return new(MemoryPool::alloc<Ref>()) Ref(std::move(as)...);
+		return new(MemoryPool::allocSize<Ref>()) Ref(std::move(as)...);
 	}
 	template<typename A>
 	static Ref* makeOrReuse(Ref* r, A a) {
@@ -1373,14 +1379,14 @@ struct Fun : public Flow {
 	}
 	void destroy() override {
 		this->~Fun();
-		MemoryPool::free<Fun>(this);
+		MemoryPool::freeSize<Fun>(this);
 	}
 	Fun& operator = (Fun&& r) = delete;
 	Fun& operator = (const Fun& r) = delete;
 
 	template<typename... As1>
 	static Fun* make(As1... as) {
-		return new(MemoryPool::alloc<Fun>()) Fun(std::move(as)...);
+		return new(MemoryPool::allocSize<Fun>()) Fun(std::move(as)...);
 	}
 	template<typename F, typename... Cs>
 	static Fun* makeOrReuse(Fun* f, F fn, Cs... cl) {

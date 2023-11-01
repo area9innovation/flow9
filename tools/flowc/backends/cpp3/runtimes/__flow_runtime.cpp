@@ -356,7 +356,7 @@ inline void flow2stringComponents(Flow* v, string& str, Int i) {
 	switch (v->componentTypeId(i)) {
 		case TypeFx::INT:    str.append(int2string(v->getIntRc1(i))); break;
 		case TypeFx::BOOL:   str.append(bool2string(v->getBoolRc1(i))); break;
-		case TypeFx::DOUBLE: str.append(double2string(v->getDoubleRc1(i))); break;
+		case TypeFx::DOUBLE: str.append(double2string(v->getDoubleRc1(i), true)); break;
 		default:             flow2string(v->getFlow(i), str);
 	}
 }

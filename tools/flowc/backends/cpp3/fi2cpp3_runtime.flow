@@ -9,26 +9,36 @@ export {
 
 	fiCpp3IsNative(name : string, gctx: Cpp3GlobalContext) -> bool;
 	fiCpp3InitNativeFuncs(cfg: FiCpp3Config) -> Tree<string, Cpp3Native>;
+	fiCpp3BaseRuntimeFiles(cfg: FiCpp3Config, extension: string) -> [string];
 	fiCpp3InitRuntimeParts(cfg: FiCpp3Config) -> Tree<string, Cpp3RuntimePart>;
 	fiCpp3DependenciesIncludes(depsA: [[Cpp3Dependency]]) -> [string];
 }
 
 fiCpp3RuntimeHeader(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
-	base_runtime = fiCpp3BaseRuntimeParts(gctx.config, ".hpp");
-	all_includes = fiCpp3DependenciesIncludes(map(runtime_parts, \part -> part.dependencies));
-	includes = superglue(all_includes, \inc -> "#inc""lude " + inc, "\n");
+	switch (find(fiCpp3BaseRuntimeFiles(gctx.config, ".hpp"), \f -> endsWith(f, "__flow_runtime.hpp"))) {
+		Some(base_runtime_file): {
+			base_runtime = getFileContent(base_runtime_file);
+			all_includes = fiCpp3DependenciesIncludes(map(runtime_parts, \part -> part.dependencies));
+			includes = superglue(all_includes, \inc -> "#inc""lude " + inc, "\n");
 
-	constexpr_consts = "namespace flow {\n" +
-		"\tconstexpr bool CONCURRENCY_ON   = " + b2s(gctx.config.concurrencyOn) + ";\n" +
-	"}\n";
+			constexpr_consts = "namespace flow {\n" +
+				"\tconstexpr bool CONCURRENCY_ON   = " + b2s(gctx.config.concurrencyOn) + ";\n" +
+			"}\n";
 
-	"#pragma once\n" +
-	(if (includes == "") "" else includes + "\n") +
-	constexpr_consts + "\n" +
-	concatStrings(base_runtime) + "\n" +
-	"namespace flow {\n" +
-		concatStrings(map(runtime_parts, \part -> "// Runtime part: " + part.name + "\n" + part.header + "\n\n")) +
-	"}\n";
+			"#pragma once\n" +
+			(if (includes == "") "" else includes + "\n") +
+			constexpr_consts + "\n" +
+			base_runtime + "\n" +
+			"namespace flow {\n" +
+				concatStrings(map(runtime_parts, \part -> "// Runtime part: " + part.name + "\n" + part.header + "\n\n")) +
+			"}\n";
+		}
+		None(): {
+			gctx.success := false;
+			fcPrintln("common runtime header `__flow_runtime.hpp` is not found.", gctx.config.threadId);
+			"";
+		}
+	}
 }
 
 fiCpp3RuntimeSource(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
@@ -41,14 +51,18 @@ fiCpp3RuntimeSource(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -
 	"}\n";
 }
 
-fiCpp3BaseRuntimeParts(cfg: FiCpp3Config, extension: string) -> [string] {
+fiCpp3BaseRuntimeFiles(cfg: FiCpp3Config, extension: string) -> [string] {
 	fold(cfg.backendDirs, [], \acc, dir -> 
 		fold(readDirectory(pathCombine(dir, "runtimes")), acc, \ac, file ->
 			if (!endsWith(file, extension)) ac else {
-				concat(ac, [getFileContent(pathCombineMany([dir, "runtimes", file]))]);
+				arrayPush(ac, pathCombineMany([dir, "runtimes", file]));
 			}
 		)
 	);
+}
+
+fiCpp3BaseRuntimeParts(cfg: FiCpp3Config, extension: string) -> [string] {
+	map(fiCpp3BaseRuntimeFiles(cfg, extension), getFileContent);
 }
 
 fiCpp3IsNative(name : string, gctx: Cpp3GlobalContext) -> bool {
