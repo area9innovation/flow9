@@ -202,4 +202,9 @@ struct Memory {
 	}
 };
 
+/// The amount of memory currently being used by this process, in bytes.
+/// By default, returns the full virtual arena, but if resident=true,
+/// it will report just the resident set in RAM (if supported on that OS).
+std::size_t memory_used (bool resident = false);
+
 }
