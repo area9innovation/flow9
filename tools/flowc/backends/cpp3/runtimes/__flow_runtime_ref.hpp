@@ -15,16 +15,12 @@ struct Ref : public Flow {
 			}
 		}
 	}
-	void destroy() override { 
-		this->~Ref();
-		MemoryPool::freeSize<Ref>(this);
-	}
 	Ref& operator = (Ref&& r) = delete;
 	Ref& operator = (const Ref& r) = delete;
 
 	template<typename... As>
 	static Ref* make(As... as) {
-		return new(MemoryPool::allocSize<Ref>()) Ref(std::move(as)...);
+		return new(Memory::alloc<Ref>()) Ref(std::move(as)...);
 	}
 	template<typename A>
 	static Ref* makeOrReuse(Ref* r, A a) {

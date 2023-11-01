@@ -13,10 +13,6 @@ struct Str : public Union {
 	~Str() override {
 		decRcFields<0>();
 	}
-	void destroy() override {
-		this->~Str();
-		MemoryPool::freeSize<Str>(this);
-	}
 
 	template<typename S>
 	static S make(Fs... fs) {
@@ -24,7 +20,7 @@ struct Str : public Union {
 			static S singleton = makeSingleton<S>();
 			return singleton;
 		} else {
-			return new(MemoryPool::allocSize<S>()) std::remove_pointer_t<S>(std::move(fs)...);
+			return new(Memory::alloc<S>()) std::remove_pointer_t<S>(std::move(fs)...);
 		}
 	}
 	template<typename S>

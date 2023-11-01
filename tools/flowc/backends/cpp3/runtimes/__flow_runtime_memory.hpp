@@ -11,7 +11,6 @@
 
 namespace flow {
 
-constexpr bool use_memory_pool = true;
 constexpr bool use_memory_chunk = false;
 
 struct MemoryPool {
@@ -26,7 +25,6 @@ struct MemoryPool {
 	static void addThread(std::thread::id thread_id, bool main) {
 		instance_->threads_.emplace(std::pair<std::thread::id, PerThread>(
 			std::piecewise_construct, std::tuple(thread_id), std::tuple(instance_->max_size_, main)
-			//thread_id, std::make_unique<PerThread>(instance_->max_size_, main)
 		));
 	}
 	static void removeThread(std::thread::id thread_id) {
@@ -37,35 +35,13 @@ struct MemoryPool {
 			}
 		}
 	}
-	inline static void* allocSize(std::size_t size) {
-		if constexpr (use_memory_pool) {
-			return instance_->threads_.at(std::this_thread::get_id()).allocSize(size);
-		} else {
-			return operator new(size);
-		}
+	template<typename T>
+	inline static void* alloc() {
+		return instance_->threads_.at(std::this_thread::get_id()).alloc(sizeof(T));
 	}
 	template<typename T>
-	inline static void* allocSize() {
-		if constexpr (use_memory_pool) {
-			return instance_->threads_.at(std::this_thread::get_id()).allocSize(sizeof(std::remove_pointer_t<T>));
-		} else {
-			return operator new(sizeof(std::remove_pointer_t<T>));
-		}
-	}
-	inline static void freeSize(void* p, std::size_t size) {
-		if constexpr (use_memory_pool) {
-			instance_->threads_.at(std::this_thread::get_id()).freeSize(p, size);
-		} else {
-			operator delete(p);
-		}
-	}
-	template<typename T>
-	inline static void freeSize(void* p) {
-		if constexpr (use_memory_pool) {
-			instance_->threads_.at(std::this_thread::get_id()).freeSize(p, sizeof(std::remove_pointer_t<T>));
-		} else {
-			operator delete(p);
-		}
+	inline static void free(T* p) {
+		instance_->threads_.at(std::this_thread::get_id()).free(p, sizeof(T));
 	}
 	static void clear() {
 		for (auto& p: instance_->threads_) {
@@ -82,13 +58,9 @@ struct MemoryPool {
 			}
 		}
 		~PerSize() {
-			//if (in_main_thread_ && size_ == 40) {
-			//	operator delete(cached_);
-			//}
 			clear();
 		}
-		inline void* allocSize() {
-			//return operator new(size_);
+		inline void* alloc() {
 			if (pool_.empty()) {
 				if constexpr (use_memory_chunk) {
 					if (in_main_thread_ && size_ == 40 && used_ < CACHED_NUM) {
@@ -105,8 +77,7 @@ struct MemoryPool {
 				return x;
 			}
 		}
-		inline void freeSize(void* p) {
-			//operator delete(p);
+		inline void free(void* p) {
 			if (p) {
 				pool_.push(p);
 			} else {
@@ -141,18 +112,18 @@ struct MemoryPool {
 		PerThread(const PerThread& pt) = default;
 		PerThread(PerThread&& pt) = default;
 		~PerThread() { clear(); }
-		inline void* allocSize(std::size_t size) {
+		inline void* alloc(std::size_t size) {
 			if (size < 16 || size > max_size_) {
 				return operator new(size);
 			} else {
-				return shards_.at(size2ind(size)).allocSize();
+				return shards_.at(size2ind(size)).alloc();
 			}
 		}
-		inline void freeSize(void* p, std::size_t size) {
+		inline void free(void* p, std::size_t size) {
 			if (size < 16 || size > max_size_) {
 				operator delete(p);
 			} else {
-				shards_.at(size2ind(size)).freeSize(p);
+				shards_.at(size2ind(size)).free(p);
 			}
 		}
 		void clear() {
@@ -205,6 +176,30 @@ private:
 	std::size_t max_size_;
 	std::unordered_map<std::thread::id, PerThread> threads_;
 	static std::unique_ptr<MemoryPool> instance_;
+};
+
+constexpr bool use_memory_pool = true;
+
+struct Memory {
+	template<typename T>
+	inline static void* alloc() {
+		using V = std::remove_pointer_t<T>;
+		if constexpr (use_memory_pool) {
+			return MemoryPool::alloc<V>();
+		} else {
+			return operator new(sizeof(V));
+		}
+	}
+	template<typename T>
+	inline static void destroy(T p) {
+		using V = std::remove_pointer_t<T>;
+		if constexpr (use_memory_pool) {
+			p->~V();
+			MemoryPool::free<V>(p);
+		} else {
+			operator delete(p);
+		}
+	}
 };
 
 }

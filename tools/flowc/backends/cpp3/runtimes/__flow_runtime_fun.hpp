@@ -17,16 +17,12 @@ struct Fun : public Flow {
 			decRc(x);
 		}
 	}
-	void destroy() override {
-		this->~Fun();
-		MemoryPool::freeSize<Fun>(this);
-	}
 	Fun& operator = (Fun&& r) = delete;
 	Fun& operator = (const Fun& r) = delete;
 
 	template<typename... As1>
 	static Fun* make(As1... as) {
-		return new(MemoryPool::allocSize<Fun>()) Fun(std::move(as)...);
+		return new(Memory::alloc<Fun>()) Fun(std::move(as)...);
 	}
 	template<typename F, typename... Cs>
 	static Fun* makeOrReuse(Fun* f, F fn, Cs... cl) {

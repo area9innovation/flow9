@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include "__flow_runtime_rtti.hpp"
+#include "__flow_runtime_memory.hpp"
 
 namespace flow {
 
@@ -28,11 +29,9 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 
 template<typename T> inline void decRc(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		//x->decRc();
 		if (!isConstatntObj<T>(x)) {
 			if (std::atomic_ref<RcCounter>(x->rc_).fetch_sub(1) == 1) {
-				//delete x;
-				x->destroy();
+				Memory::destroy<T>(x);
 			}
 		}
 	}
@@ -40,7 +39,6 @@ template<typename T> inline void decRc(T x) {
 
 template<typename T> inline T decRcReuse(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		//return x->decRcReuse();
 		if (isConstatntObj<T>(x)) {
 			return nullptr;
 		} else {
@@ -57,9 +55,8 @@ template<typename T> inline T decRcReuse(T x) {
 
 template<typename T> inline void decRcFinish(T x) {
 	if constexpr (is_flow_ancestor_v<T>) {
-		//delete x;
 		if (x) {
-			x->destroy();
+			Memory::destroy<T>(x);
 		}
 	}
 }

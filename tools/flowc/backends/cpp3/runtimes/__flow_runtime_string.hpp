@@ -17,10 +17,6 @@ struct String : public Flow {
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
 	~String() = default;
-	void destroy() override {
-		this->~String();
-		MemoryPool::freeSize<String>(this);
-	}
 	// There must be only one instance of empty string
 	static String* make() {
 		static String* es = makeSingleton();
@@ -28,10 +24,10 @@ struct String : public Flow {
 	}
 	template<typename... As>
 	static String* make(As... as) {
-		return new(MemoryPool::allocSize<String>()) String(std::move(as)...);
+		return new(Memory::alloc<String>()) String(std::move(as)...);
 	}
 	static String* make(std::initializer_list<char16_t>&& codes) {
-		return new(MemoryPool::allocSize<String>()) String(std::move(codes));
+		return new(Memory::alloc<String>()) String(std::move(codes));
 	}
 
 	static String* makeOrReuse(String* s) {
@@ -107,6 +103,5 @@ private:
 	static String* makeSingleton() { static String es; es.makeConstantRc(); return &es; }
 	string str_;
 };
-
 
 }

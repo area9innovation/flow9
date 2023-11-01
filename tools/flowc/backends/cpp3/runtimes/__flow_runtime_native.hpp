@@ -13,17 +13,13 @@ struct Native : public Flow {
 	~Native() override {
 		cleanup_();
 	}
-	void destroy() override {
-		this->~Native();
-		MemoryPool::freeSize<String>(this);
-	}
 	Native& operator = (Native&& r) = delete;
 	Native& operator = (const Native& r) = delete;
 
 	TypeId typeId() const override { return TypeFx::NATIVE; }
 
 	template<typename... As> static Native* make(As... as) {
-		return new(MemoryPool::allocSize<Native>()) Native(as...);
+		return new(Memory::alloc<Native>()) Native(as...);
 	}
 	template<typename T> bool castsTo() {
 		try {

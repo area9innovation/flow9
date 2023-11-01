@@ -42,10 +42,6 @@ struct Vec : public Flow {
 	~Vec() override {
 		decRcVec();
 	}
-	void destroy() override {
-		this->~Vec();
-		MemoryPool::freeSize<Vec>(this);
-	}
 	inline void incRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
 			for (T x : vec_) {
@@ -64,10 +60,10 @@ struct Vec : public Flow {
 	}
 	template<typename A>
 	static Vec* make(A a) {
-		return new(MemoryPool::allocSize<Vec>()) Vec(std::move(a));
+		return new(Memory::alloc<Vec>()) Vec(std::move(a));
 	}
 	static Vec* make(std::initializer_list<T>&& il) {
-		return new(MemoryPool::allocSize<Vec>()) Vec(std::move(il));
+		return new(Memory::alloc<Vec>()) Vec(std::move(il));
 	}
 
 	static Vec* makeOrReuse(Vec* v) {
