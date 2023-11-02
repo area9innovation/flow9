@@ -568,16 +568,16 @@ class TextClip extends NativeWidgetClip {
 	public inline function updateBaselineWidget() : Void {
 		if (this.isHTMLRenderer() && isNativeWidget && needBaseline) {
 			if (!isInput && nativeWidget.firstChild != null && !isMaterialIconFont()) {
-				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 				// For some fonts italic form has a smaller height, so baseline becomes occasionally unsynchronised with normal-style glyphs on different zoom levels
 				if (style.fontStyle == 'italic') {
+					var lineHeightGap = getLineHeightGap();
 					var transform = DisplayObjectHelper.getNativeWidgetTransform(this);
 					var top = DisplayObjectHelper.round(transform.ty);
 					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + lineHeightGap + top)}px';
 					textBackgroundWidget.style.top = '${Math.round(getTextMargin() + lineHeightGap + top)}px';
 					nativeWidget.style.top = 0;
 				} else {
-					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + lineHeightGap)}px';
+					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + getLineHeightGap())}px';
 				}
 				
 				baselineWidget.style.direction = textDirection;
@@ -595,12 +595,18 @@ class TextClip extends NativeWidgetClip {
 		// For some reason, in most browsers Amiri italic text, which starts from digit doesn't render italic, when baselineWidget is present.
 		// Looks like a browser bug, so we need this workaround
 		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic' && nativeWidget.textContent[0] != '' && untyped !isNaN(nativeWidget.textContent[0])) {
+			var transform = DisplayObjectHelper.getNativeWidgetTransform(this);
+			var top = DisplayObjectHelper.round(transform.ty);
+			
 			baselineWidget.style.display = "none";
 			nativeWidget.style.marginTop = '0px';
+			nativeWidget.style.top = '${Math.round(getLineHeightGap() + top)}px';
+
 			Native.timer(0, function() {
 				baselineWidget.style.display = null;
 				if (this.parent != null) {
 					nativeWidget.style.marginTop = '${-getTextMargin()}px';
+					nativeWidget.style.top = '0px';
 				}
 			});
 		}
@@ -615,6 +621,10 @@ class TextClip extends NativeWidgetClip {
 
 	public function getTextMargin() : Float {
 		return DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d);
+	}
+
+	public function getLineHeightGap() : Float {
+		return (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 	}
 
 	public function calculateTextContent() : String {
