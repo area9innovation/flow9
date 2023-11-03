@@ -118,6 +118,7 @@ template<typename T> constexpr bool is_struct_v = get_type_id_v<T> >= TypeFx::ST
 template<typename T> constexpr bool is_union_v = std::is_same_v<std::remove_pointer_t<T>, Union>;
 template<typename T> constexpr bool is_struct_or_union_v = is_struct_v<T> || std::is_same_v<Union, std::remove_pointer_t<T>>;
 template<typename T> constexpr bool is_flow_ancestor_v = std::is_base_of_v<Flow, std::remove_pointer_t<T>>;
+template<typename T> constexpr bool is_rcbase_ancestor_v = std::is_base_of_v<RcBase, std::remove_pointer_t<T>>;
 template<typename T> constexpr bool is_scalar_v =
 	is_type_v<TypeFx::VOID, T> ||
 	is_type_v<TypeFx::INT, T> ||

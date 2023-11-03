@@ -51,10 +51,12 @@ template<typename T> struct Equal { bool operator() (T v1, T v2) const { return 
 
 // Dynamic wrapper for all values 
 
-struct Flow {
-	Flow(): rc_(1) { }
+struct Flow: public RcBase {
 	virtual ~Flow() { }
-	virtual void destroy() = 0;
+	//virtual void destroy() = 0;
+
+	//virtual String* toString() = 0;
+	//virtual Int compare() = 0;
 
 	virtual TypeId typeId() const = 0;
 	virtual Int componentSize() const { return 0; }
@@ -92,27 +94,16 @@ struct Flow {
 	template<typename T> inline T get() { return static_cast<T>(this); }
 	template<typename T> inline T getRc1() { return incRcRet(static_cast<T>(this)); }
 	template<typename T> inline T getRc() { return static_cast<T>(this); }
-
-	void makeUnitRc() { rc_ = 1; }
-	void makeConstantRc() { rc_ = CONSTANT_OBJECT_RC; }
-
-private:
-	template<typename T> friend inline bool isConstatntObj(T x);
-	template<typename T> friend inline void incRc(T x, Int d);
-	template<typename T> friend inline void decRc(T x);
-	template<typename T> friend inline T decRcReuse(T x);
-	template<typename T> friend inline bool isUnitRc(T x);
-	RcCounter rc_;
 };
 
-struct Union : public Flow { };
-
 struct FVoid : public Flow {
+	enum { TYPE = TypeFx::VOID };
 	void destroy() override { this->~FVoid(); }
 	static FVoid* make() { return new(Memory::alloc<FVoid>()) FVoid(); }
 	TypeId typeId() const override { return TypeFx::VOID; }
 };
 struct FInt : public Flow {
+	enum { TYPE = TypeFx::INT };
 	FInt(Int v): val(v) {}
 	void destroy() override { this->~FInt(); }
 	static FInt* make(Int v) { return new(Memory::alloc<FInt>()) FInt(v); }
@@ -120,6 +111,7 @@ struct FInt : public Flow {
 	Int val;
 };
 struct FBool : public Flow {
+	enum { TYPE = TypeFx::BOOL };
 	FBool(Bool v): val(v) {}
 	void destroy() override { this->~FBool(); }
 	static FBool* make(Bool v) { return new(Memory::alloc<FBool>()) FBool(v); }
@@ -127,6 +119,7 @@ struct FBool : public Flow {
 	Bool val;
 };
 struct FDouble : public Flow {
+	enum { TYPE = TypeFx::DOUBLE };
 	FDouble(Double v): val(v) {}
 	void destroy() override { this->~FDouble(); }
 	static FDouble* make(Double v) { return new(Memory::alloc<FDouble>()) FDouble(v); }

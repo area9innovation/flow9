@@ -66,8 +66,8 @@ struct String : public Flow {
 			return s;
 		}
 	}
-
 	TypeId typeId() const override { return TypeFx::STRING; }
+	
 	std::string toStd() const { return string2std(str_); }
 	void append(Int c) {
 		if (c <= 0xFFFF) {
@@ -90,6 +90,21 @@ struct String : public Flow {
 	inline const string& str() const { return str_; }
 	inline string& strRef() { return str_; }
 	static String* concatRc(String* s1, String* s2);
+
+	struct FString : public Flow {
+		enum { TYPE = TypeFx::STRING };
+		FString(String* v): val_(v) { }
+		~FString() { decRc(val_); }
+		void destroy() override { this->~FString(); }
+		static FString* make(String* v) { return new(Memory::alloc<FString>()) FString(v); }
+		TypeId typeId() const override { return TypeFx::STRING; }
+		String* val() { return val_; }
+
+	private:
+		String* val_;
+	};
+
+	inline Flow* toFlow() { return FString::make(this); }
 
 private:
 	String(): str_() { }

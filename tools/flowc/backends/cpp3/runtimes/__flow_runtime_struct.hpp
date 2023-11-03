@@ -1,6 +1,6 @@
 #pragma once
 
-#include "__flow_runtime_flow.hpp"
+#include "__flow_runtime_union.hpp"
 
 namespace flow {
 
@@ -133,7 +133,65 @@ struct Str : public Union {
 		Hash<S, TypeId>::calc(h, TYPE);
 		hashCalcArgs<0>(h);
 	}
+/*
+	template<class S>
+	struct FStr : public Flow {
+		FStr(Str* v): val_(static_cast<S>(v)) { }
+		~FStr() { decRc(val_); }
+		void destroy() override { this->~FStr(); }
+		TypeId typeId() const override { return Str::TYPE; }
+		Int componentSize() const override { return sizeof...(Fs); }
+		TypeId componentTypeId(Int i) override {
+			return componentTypeId_<0>(i);
+		}
 
+		Flow* getFlowRc1(Int i) override {
+			return getFlowRc1_<Flow*, 0>(i);
+		}
+		Bool getBoolRc1(Int i) override {
+			return getFlowRc1_<Bool, 0>(i);
+		}
+		Int getIntRc1(Int i) override {
+			return getFlowRc1_<Int, 0>(i);
+		}
+		Double getDoubleRc1(Int i) override {
+			return getFlowRc1_<Double, 0>(i);
+		}
+		void setFlowRc1(Int i, Flow* v) override {
+			setFlowRc1_<0>(i, v);
+		}
+		Flow* getFlowRc1(String* f) override {
+			int field_idx = RTTI::structField(Id, f->str());
+			decRc(f);
+			return getFlowRc1(field_idx); 
+		}
+		void setFlowRc1(String* f, Flow* v) override {
+			int field_idx = RTTI::structField(Id, f->str());
+			decRc(f);
+			setFlowRc1(field_idx, v);
+		}
+
+		Flow* getFlow(Int i) override {
+			return getFlow_<0>(i);
+		}
+		Flow* getFlow(const string& f) override {
+			int field_idx = RTTI::structField(Id, f);
+			return getFlow(field_idx); 
+		}
+
+		Int compareWithFlow(Flow* v) override {
+			Int c = flow::compare<TypeId>(TYPE, v->typeId());
+			if (c != 0) {
+				return c;
+			} else {
+				return compare(static_cast<Str*>(v));
+			}
+		}
+		S* val_;
+	};
+	template<class S>
+	inline Flow* toFlow() { return FStr::make<S>(this); }
+*/
 protected:
 	Str(Fs... fs): fields(fs...) { }
 private:

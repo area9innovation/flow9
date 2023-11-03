@@ -74,9 +74,11 @@ inline T makeDefInit() {
 	else return nullptr;
 }
 
-// Forward declaration of all types
-
+struct RcBase;
 struct Flow;
+
+// Forward declaration of all principal non-scalar types
+
 struct String;
 struct Native;
 struct Union;
