@@ -13,7 +13,7 @@ struct Str : public Union {
 	~Str() override {
 		decRcFields<0>();
 	}
-
+	void destroy() override { this->~Str(); }
 	template<typename S>
 	static S make(Fs... fs) {
 		if constexpr (sizeof...(Fs) == 0) {

@@ -38,7 +38,7 @@ inline string std2string(const std::string& str) { string s; copyStd2string(str,
 
 // Basic types
 
-using Void = nullptr_t;
+using Void = std::nullptr_t;
 const Void void_value = nullptr;
 
 // Scalar types

@@ -42,6 +42,7 @@ struct Vec : public Flow {
 	~Vec() override {
 		decRcVec();
 	}
+	void destroy() override { this->~Vec(); }
 	inline void incRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
 			for (T x : vec_) {

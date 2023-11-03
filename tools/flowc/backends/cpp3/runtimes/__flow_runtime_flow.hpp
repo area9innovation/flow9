@@ -54,6 +54,7 @@ template<typename T> struct Equal { bool operator() (T v1, T v2) const { return 
 struct Flow {
 	Flow(): rc_(1) { }
 	virtual ~Flow() { }
+	virtual void destroy() = 0;
 
 	virtual TypeId typeId() const = 0;
 	virtual Int componentSize() const { return 0; }
@@ -107,23 +108,27 @@ private:
 struct Union : public Flow { };
 
 struct FVoid : public Flow {
+	void destroy() override { this->~FVoid(); }
 	static FVoid* make() { return new(Memory::alloc<FVoid>()) FVoid(); }
 	TypeId typeId() const override { return TypeFx::VOID; }
 };
 struct FInt : public Flow {
 	FInt(Int v): val(v) {}
+	void destroy() override { this->~FInt(); }
 	static FInt* make(Int v) { return new(Memory::alloc<FInt>()) FInt(v); }
 	TypeId typeId() const override { return TypeFx::INT; }
 	Int val;
 };
 struct FBool : public Flow {
 	FBool(Bool v): val(v) {}
+	void destroy() override { this->~FBool(); }
 	static FBool* make(Bool v) { return new(Memory::alloc<FBool>()) FBool(v); }
 	TypeId typeId() const override { return TypeFx::BOOL; }
 	Bool val;
 };
 struct FDouble : public Flow {
 	FDouble(Double v): val(v) {}
+	void destroy() override { this->~FDouble(); }
 	static FDouble* make(Double v) { return new(Memory::alloc<FDouble>()) FDouble(v); }
 	TypeId typeId() const override { return TypeFx::DOUBLE; }
 	Double val;

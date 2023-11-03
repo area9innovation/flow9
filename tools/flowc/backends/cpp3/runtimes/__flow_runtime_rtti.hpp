@@ -14,9 +14,9 @@ template<typename T>
 inline string type2string() {
 	int status = -1;
 	char* name = abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status);
-	string ret(name);
+	std::string ret(name);
 	delete name;
-	return ret;
+	return std2string(ret);
 }
 template<typename T>
 inline std::string type2StdString() {

@@ -11,7 +11,7 @@ struct Fun : public Flow {
 	using Args = std::tuple<As...>;
 	using Fn = std::function<R(As...)>;
 	using Fn1 = std::function<R(Args)>;
-
+	void destroy() override { this->~Fun(); }
 	~Fun() {
 		for (Flow* x: closure_) {
 			decRc(x);

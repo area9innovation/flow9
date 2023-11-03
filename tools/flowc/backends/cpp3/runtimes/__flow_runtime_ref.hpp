@@ -15,6 +15,7 @@ struct Ref : public Flow {
 			}
 		}
 	}
+	void destroy() override { this->~Ref(); }
 	Ref& operator = (Ref&& r) = delete;
 	Ref& operator = (const Ref& r) = delete;
 

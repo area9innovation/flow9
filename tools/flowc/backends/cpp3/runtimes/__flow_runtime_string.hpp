@@ -17,6 +17,7 @@ struct String : public Flow {
 	String& operator = (String&& r) = delete;
 	String& operator = (const String& r) = delete;
 	~String() = default;
+	void destroy() override { this->~String(); }
 	// There must be only one instance of empty string
 	static String* make() {
 		static String* es = makeSingleton();

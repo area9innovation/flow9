@@ -11,10 +11,8 @@
 
 namespace flow {
 
-constexpr bool use_memory_chunk = false;
-
 struct MemoryPool {
-	enum { MAX_SIZE = 128 };
+	enum { MAX_SIZE = 1024 };
 	MemoryPool(std::size_t max_size): max_size_ (max_size) { }
 	static void init(std::size_t max_size = MAX_SIZE) {
 		instance_ = std::make_unique<MemoryPool>(max_size);
@@ -48,63 +46,96 @@ struct MemoryPool {
 			p.second.clear();
 		}
 	}
-	struct PerSize {
-		enum { CACHED_NUM = 16000 };
-		PerSize(std::size_t s, bool in_main): size_(s), in_main_thread_(in_main), cached_(nullptr), used_(0) { 
-			if constexpr (use_memory_chunk) {
-				if (in_main_thread_ && size_ == 40) {
-					cached_ = (u_int8_t*)operator new(size_ * CACHED_NUM);
-				}
-			}
+	struct PerSizeFixed {
+		enum { MEM_CAPACITY = 64 * 1024 * 1024};
+		PerSizeFixed(std::size_t s, bool in_main):
+			size_(s),
+			in_main_thread_(in_main),
+			capacity_ (MEM_CAPACITY / size_),
+			top_(0) {
+				pool_ = new void* [capacity_];
 		}
-		~PerSize() {
+		~PerSizeFixed() {
 			clear();
+			delete[] pool_;
 		}
 		inline void* alloc() {
-			if (pool_.empty()) {
-				if constexpr (use_memory_chunk) {
-					if (in_main_thread_ && size_ == 40 && used_ < CACHED_NUM) {
-						return cached_ + (used_ ++) * size_;
-					} else {
-						return operator new(size_);
-					}
-				} else {
-					return operator new(size_);
-				}
+			if (top_ == 0) {
+				return operator new(size_);
 			} else {
-				void* x = pool_.top();
-				pool_.pop();
-				return x;
+				return pool_[--top_];
 			}
 		}
 		inline void free(void* p) {
-			if (p) {
-				pool_.push(p);
+			if (top_ >= capacity_) {
+				operator delete(p);
 			} else {
-				fail("empty pointer free!");
+				pool_[top_++] = p;
 			}
 		}
 		void clear() {
-			while (!pool_.empty()) {
-				operator delete(pool_.top());
-				pool_.pop();
+			while (top_ > 0) {
+				operator delete(pool_[--top_]);
 			}
 		}
 		inline std::size_t size() const {
-			return pool_.size(); 
+			return top_; 
 		}
 		inline std::size_t mem() const {
-			return size_ * pool_.size(); 
+			return size_ * top_; 
 		}
 	private:
 		const std::size_t size_;
 		const bool in_main_thread_;
-		std::stack<void*> pool_;
-		uint8_t* cached_;
-		std::size_t used_;
+		std::size_t capacity_;
+		std::size_t top_;
+		void** pool_;
 	};
+	struct PerSize {
+		enum { MEM_CAPACITY = 64 * 1024 * 1024};
+		PerSize(std::size_t s, bool in_main):
+			size_(s), capacity_(MEM_CAPACITY / size_), in_main_thread_(in_main) { 
+ 		}
+		~PerSize() {
+ 			clear();
+ 		}
+ 		inline void* alloc() {
+			if (pool_.empty()) {
+				return operator new(size_);
+ 			} else {
+				void* x = pool_.top();
+				pool_.pop();
+				return x;
+ 			}
+ 		}
+ 		inline void free(void* p) {
+			if (pool_.size() < capacity_) {
+				pool_.push(p);
+			} else {
+				operator delete(p);
+			}
+ 		}
+ 		void clear() {
+			while (!pool_.empty()) {
+				operator delete(pool_.top());
+				pool_.pop();
+ 			}
+ 		}
+ 		inline std::size_t size() const {
+			return pool_.size();
+ 		}
+ 		inline std::size_t mem() const {
+			return size_ * pool_.size(); 
+ 		}
+ 	private:
+ 		const std::size_t size_;
+		const std::size_t capacity_;
+ 		const bool in_main_thread_;
+		std::stack<void*> pool_;
+ 	};
 	struct PerThread {
 		PerThread(std::size_t ms, bool is_main): max_size_(ms), in_main_thread_(is_main) {
+			shards_.reserve(max_size_);
 			for (std::size_t size = 16; size <= max_size_; size += 8) {
 				shards_.emplace_back(size, in_main_thread_);
 			}
@@ -113,18 +144,18 @@ struct MemoryPool {
 		PerThread(PerThread&& pt) = default;
 		~PerThread() { clear(); }
 		inline void* alloc(std::size_t size) {
-			if (size < 16 || size > max_size_) {
-				return operator new(size);
-			} else {
+			//if (size < 16 || size > max_size_) {
+			//	return operator new(size);
+			//} else {
 				return shards_.at(size2ind(size)).alloc();
-			}
+			//}
 		}
 		inline void free(void* p, std::size_t size) {
-			if (size < 16 || size > max_size_) {
-				operator delete(p);
-			} else {
+			//if (size < 16 || size > max_size_) {
+			//	operator delete(p);
+			//} else {
 				shards_.at(size2ind(size)).free(p);
-			}
+			//}
 		}
 		void clear() {
 			for (PerSize& shard : shards_) {
@@ -178,7 +209,7 @@ private:
 	static std::unique_ptr<MemoryPool> instance_;
 };
 
-constexpr bool use_memory_pool = true;
+constexpr bool use_memory_pool = false;
 
 struct Memory {
 	template<typename T>
@@ -192,11 +223,12 @@ struct Memory {
 	}
 	template<typename T>
 	inline static void destroy(T p) {
-		using V = std::remove_pointer_t<T>;
 		if constexpr (use_memory_pool) {
-			p->~V();
+			using V = std::remove_pointer_t<T>;
+			p->destroy();
 			MemoryPool::free<V>(p);
 		} else {
+			p->destroy();
 			operator delete(p);
 		}
 	}
@@ -205,6 +237,6 @@ struct Memory {
 /// The amount of memory currently being used by this process, in bytes.
 /// By default, returns the full virtual arena, but if resident=true,
 /// it will report just the resident set in RAM (if supported on that OS).
-std::size_t memory_used (bool resident = false);
+std::size_t memory_used(bool resident = false);
 
 }

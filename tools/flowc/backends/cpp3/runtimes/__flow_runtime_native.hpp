@@ -13,6 +13,7 @@ struct Native : public Flow {
 	~Native() override {
 		cleanup_();
 	}
+	void destroy() override { this->~Native(); }
 	Native& operator = (Native&& r) = delete;
 	Native& operator = (const Native& r) = delete;
 
