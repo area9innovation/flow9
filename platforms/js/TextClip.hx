@@ -1383,6 +1383,9 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onInput(e : Dynamic) {
+		if (Util.getParameter("debug_email_autofill") == '1') {
+			untyped console.log('onInput', e, e.data, nativeWidget.value);
+		}
 		// On iOS in numeric mode you can still input non-number characters. They will be shown visually but wrong characters will clear 'value'.
 		// Here we are resetting visual representation to be consistent
 		if (Platform.isIOS && type == 'number' && nativeWidget.value == '') {
