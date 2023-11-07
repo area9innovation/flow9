@@ -1,33 +1,14 @@
-
-import maybe;
 import net/url_parameter; // isUrlParameterTrue
-import string;
-import ds/arrayutils;
+import lingo/flow/fail;
 
 export {
-
-	/* Once here was a bunch of functions. 
-	 * However almost all of them are greenland specific and were quite useless in general appliance.
-	 * So most of them are moved to greenland/greenlandutils.flow
-	 */
-
-
 	// checks for URL parameter &test=true
 	isTest() -> bool;
 
-	// No idea where to put it otherwise. This function is used in evey datawarp-generated file.
-	// Fill free to move it some better place, but don't forget to update generated imports in flowwarp.flow
-	// For value == Some(v) it returns [KeyValue(key, toStringNoExtraQuotes(v))]
-	// For value == None it returns []
-	// For other values it returns [KeyValue(toStringNoExtraQuotes(value))]
-	buildKeyValueForPhp(key : string, value : ?) -> [KeyValue];
-	
-	// For x == Some(v) it returns fn(v)
-	// For x == None(x) it returns alternative
-	// For other values it returns fn(x)
-	eitherMapAnyType(x : flow, fn : (?) -> ??, alternative : ??) -> ??;
-
-	encodeRequestIdsForPhp(values : [int]) -> string;
+	// Convert ids to compact string representation
+	integers2compactString(ids : [int], removeDuplicates : bool) -> string;
+	// And back
+	compactString2integers(s : string) -> Fail<[int]>;
 }
 
 isTestRef : ref Maybe<bool> = ref None();
@@ -37,39 +18,82 @@ isTest() -> bool {
 	})
 }
 
-eitherMapAnyType(x : flow, fn : (?) -> ??, alternative : ??) -> ?? {
-	if (isSameStructType(x, None()) || isSameStructType(x, Some(0))) {
-		eitherMap(x, fn, alternative);
+integers2compactString(ids : [int], removeDuplicates : bool) -> string {
+	len = length(ids);
+	if (len == 0) {
+		"";
+	} else if (len == 1) {
+		i2s(ids[0]);
 	} else {
-		fn(x)
+		sorted = sort(ids);
+		lastIndex = len - 2;
+		foldi(tail(sorted), Triple("", sorted[0], 1), \i, acc, value -> {
+			isLast = i == lastIndex;
+			oldDelta = acc.second;
+			delta = value - sorted[i];
+			if (delta == 0 && !isLast && removeDuplicates) {
+				acc;
+			} else if (delta != oldDelta || isLast) {
+				mult = acc.third + b2i(isLast && delta == oldDelta);
+				newString = if (delta == 0 && removeDuplicates) {
+					deltaString = if (mult > 1 && oldDelta > 0) {
+						"*" + i2s(mult);
+					} else {
+						"";
+					}
+					if (acc.first == "") {
+						i2s(oldDelta) + deltaString;
+					} else {
+						acc.first + "." + i2s(oldDelta) + deltaString;
+					}
+				} else {
+					deltaString = (if (mult > 1) "*" + i2s(mult) else "") + (if (isLast && delta != oldDelta) "." + i2s(delta) else "");
+					(if (acc.first == "") "" else acc.first + ".") + i2s(oldDelta) + deltaString;
+				}
+				Triple(newString, delta, 1);
+			} else {
+				Triple(acc.first, oldDelta, acc.third + 1);
+			}
+		}).first;
 	}
 }
 
-buildKeyValueForPhp(key : string, value : ?) -> [KeyValue] {
-	eitherMapAnyType(value, \v -> [KeyValue(key, toStringNoExtraQuotes(v))], []);
-}
-
-encodeRequestIdsForPhp(ids : [int]) -> string {
-	len = length(ids);
-	if (len > 1 && !isUrlParameterFalse("delta_encoding")) {
-		sorted = sort(ids);
-		prefix = "DE:";
-		lastIndex = len - 2;
-		"\"" + foldi(tail(sorted), Triple(prefix, sorted[0], 1), \i, acc, value -> {
-			isLast = i == lastIndex;
-			delta = value - sorted[i];
-			if (delta == 0 && !isLast) {
-				acc;
-			} else if (delta != acc.second || isLast) {
-				mult = acc.third + b2i(isLast && delta == acc.second);
-				deltaString = (if (mult > 1) "*" + i2s(mult) else "") + (if (isLast && delta != acc.second) "." + i2s(delta) else "");
-				newString = (if (acc.first == prefix) prefix else acc.first + ".") + i2s(acc.second) + deltaString;
-				Triple(newString, delta, 1);
-			} else {
-				Triple(acc.first, acc.second, acc.third + 1);
-			}
-		}).first + "\"";
+compactString2integers(s : string) -> Fail<[int]> {
+	if (s == "") {
+		Some([]);
 	} else {
-		toStringNoExtraQuotes(ids);
+		res = fold(
+			strSplit(s, "."),
+			Triple(EmptyList(), 0, ""),
+			\acc, s2 -> {
+				untriple(acc, \list, value, error -> {
+					if (error != "") {
+						acc;
+					} else {
+						parts = strSplit(s2, "*");
+						l = length(parts);
+						if (l > 2) {
+							Triple(list, value, "Too many '*'");
+						} else {
+							delta = s2i(parts[0]);
+							mult = if (l == 2) {
+								s2i(parts[1]);
+							} else {
+								1;
+							}
+							newValues = generate(1, mult + 1, \j -> value + j * delta);
+							Triple(Cons(newValues, list), value + mult * delta, "");
+						}
+					}
+				});
+			}
+		);
+		untriple(res, \list, __, err -> {
+			if (err == "") {
+				Some(concatA(list2array(list)));
+			} else {
+				Failed(err);
+			}
+		});
 	}
 }

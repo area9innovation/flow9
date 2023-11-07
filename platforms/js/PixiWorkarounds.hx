@@ -973,7 +973,7 @@ class PixiWorkarounds {
 						for (var i = 0, j = this.children.length; i < j; ++i) {
 							const child = this.children[i];
 
-							if (child.transformChanged) {
+							if (child.transformChanged || child.keepNativeWidgetChildren) {
 								child.updateTransform();
 							}
 						}
@@ -988,7 +988,7 @@ class PixiWorkarounds {
 					} else for (var i = 0, j = this.children.length; i < j; ++i) {
 						const child = this.children[i];
 
-						if (child.transformChanged) {
+						if (child.transformChanged || child.keepNativeWidgetChildren) {
 							child.updateTransform();
 						}
 					}
@@ -1057,7 +1057,7 @@ class PixiWorkarounds {
 						}
 					}
 
-					if ((RenderSupport.RendererType == 'html' || this.isHTML) && this.localTransformChanged) {
+					if ((RenderSupport.RendererType == 'html' || this.isHTML) && (this.localTransformChanged || this.keepNativeWidgetChildren)) {
 						this.localTransformChanged = false;
 
 						if (this.isNativeWidget && this.parentClip) {

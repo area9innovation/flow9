@@ -400,9 +400,11 @@ TRenderParagraph(
 			w.inspector.baseline,
 			\size, ba -> {
 				// we can't use deferred here - it leads to flickering
-				traceApi.traceAndNest(\-> "dynMetricsSubscription START size = " + toString(size) + ", baseline = " + toString(ba));
-				executeReflow();
-				traceApi.unnestAndTrace(\-> "dynMetricsSubscription END  size = " + toString(size) + ", baseline = " + toString(ba));
+				if (size.width != 0.0 && size.height != 0.0 && ba != 0.0) {
+					traceApi.traceAndNest(\-> "dynMetricsSubscription START size = " + toString(size) + ", baseline = " + toString(ba));
+					executeReflow();
+					traceApi.unnestAndTrace(\-> "dynMetricsSubscription END  size = " + toString(size) + ", baseline = " + toString(ba));
+				}
 			}
 		))
 	}
@@ -463,7 +465,8 @@ TRenderParagraph(
 LineHeadingsAcc(
 	groupedWords : List<Tropic>,
 	currentGroup: List<TParaWord>,
-	currentTag : string
+	currentTag : string,
+	containsDynamicElement : bool
 );
 
 // This function groups all words by heading level and lines.
@@ -478,16 +481,25 @@ groupAndPositionWords(
 ) -> [Tropic] {
 	groupResult = fold(
 		words,
-		LineHeadingsAcc(makeList(), makeList(), ""),
-		\acc, word -> appendWordToLine(
-			acc,
-			word,
-			genIndent,
-			reflowHappened,
-			joinedWordsConstructors,
-			rtl,
-			ignoreLetterSpacing
-		)
+		LineHeadingsAcc(makeList(), makeList(), "", false),
+		\acc, word -> {
+			containsDynamicElement = acc.containsDynamicElement || switch (word.word : GeneralWrapElement) {
+				NonTextElement(__, __) : true;
+				GeneralDynamicText(__) : true;
+				EmptyLineElement() : true;
+				GeneralLinePart(__, __, __, __) : true;
+				default : false
+			};
+			appendWordToLine(
+				LineHeadingsAcc(acc with containsDynamicElement = containsDynamicElement),
+				word,
+				genIndent,
+				reflowHappened,
+				joinedWordsConstructors,
+				rtl,
+				ignoreLetterSpacing
+			)
+		}
 	);
 
 	withLastGroup = if (groupResult.currentGroup == EmptyList()) groupResult.groupedWords else Cons(
@@ -498,7 +510,8 @@ groupAndPositionWords(
 			reflowHappened,
 			joinedWordsConstructors,
 			rtl,
-			ignoreLetterSpacing
+			ignoreLetterSpacing,
+			groupResult.containsDynamicElement
 		),
 		groupResult.groupedWords
 	);
@@ -516,7 +529,7 @@ appendWordToLine(
 	ignoreLetterSpacing : bool
 ) -> LineHeadingsAcc {
 	tag = either(getHeadingTagFromFontSize(extractStruct(word.style, FontSize(0.0)).size), "");
-	if (acc.currentTag == tag && isUrlParameterTrue("new") && !isUrlParameterFalse("tparawordglue")) {
+	if (acc.currentTag == tag && !isUrlParameterFalse("tparawordglue")) {
 		LineHeadingsAcc(acc with
 			currentGroup = Cons(word, acc.currentGroup)
 		);
@@ -529,13 +542,17 @@ appendWordToLine(
 				reflowHappened,
 				joinedWordsConstructors,
 				rtl,
-				ignoreLetterSpacing
+				ignoreLetterSpacing,
+				acc.containsDynamicElement
 			),
 			acc.groupedWords
 		);
 		newCurrentGroup = makeList1(word);
 
-		LineHeadingsAcc(newGroupedWords, newCurrentGroup, tag)
+		LineHeadingsAcc(acc with
+			groupedWords = newGroupedWords,
+			currentGroup = newCurrentGroup,
+			currentTag = tag)
 	}
 }
 
@@ -546,14 +563,15 @@ makeHeadingGroup(
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	rtl : bool,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	containsDynamicElement : bool
 ) -> Tropic {
 
 	joinedWords = if (isUrlParameterFalse("join_words")) positionInteractiveWords(
 		words,
 		genIndent,
 		joinedWordsConstructors
-	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing);
+	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing, containsDynamicElement);
 
 	if (tag == "" || isUrlParameterTrue("new")) TGroup(joinedWords) else TAccess(
 		[
@@ -593,13 +611,17 @@ joinGroupedWords(
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	containsDynamicElement : bool
 ) -> [Tropic] {
 
 	isSameGroup = \currentGroup : List<TParaWord>, word : TParaWord -> switch (currentGroup) {
 		Cons(firstWord, __) : getValue(firstWord.id) == getValue(word.id) && getValue(firstWord.rtl) == getValue(word.rtl);
 		EmptyList() : false
 	};
+	wordGroupId = ref 0;
+	wordGroupPrefix = "tGroup_" + i2s(floor(random() * 10000.0)) + "_";
+	makeGroupId = \id : int -> wordGroupPrefix + i2s(id);
 
 	appendJoinedWordsView = \acc : [Tropic], wordsList : List<TParaWord> -> {
 		switch (wordsList) {
@@ -616,7 +638,15 @@ joinGroupedWords(
 						firstWord.wordsViewConstructor
 					),
 					ignoreLetterSpacing
-				)
+				) |> (\tropic -> {
+					if (containsDynamicElement) {
+						wordGroupId := ^wordGroupId + 1;
+						TAccess(
+							[FAccessAttribute("id", const(makeGroupId(^wordGroupId)))],
+							tropic
+						)
+					} else tropic
+				})
 			)
 		}
 	}
@@ -626,6 +656,12 @@ joinGroupedWords(
 			arrayPush(
 				appendJoinedWordsView(acc, currentGroup),
 				translateWord(word, genIndent)
+				|> (\tropic -> {
+					TAccess(
+						[FAccessAttribute("nextWidgetId", const(makeGroupId(^wordGroupId + 1)))],
+						tropic
+					)
+				})
 			),
 			EmptyList()
 		);
@@ -684,7 +720,6 @@ joinTextWords(
 					acc,
 					word,
 					genIndent,
-					reflowHappened,
 					wordsViewConstructor,
 					ignoreLetterSpacing
 				)
@@ -713,7 +748,6 @@ appendOrJoinWord(
 	acc : JoinTextAcc,
 	word : TParaWord,
 	genIndent : double,
-	reflowHappened : DynamicBehaviour<bool>,
 	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
 	ignoreLetterSpacing : bool
 ) -> JoinTextAcc {
@@ -819,7 +853,7 @@ commonWordConstructor(
 	inspectFn = \t -> inspectWordView(t, inspector, if (isLastChild) 0.0 else extractStruct(style, zeroLetterSpacing).spacing);
 
 	ghostView = inspectFn(tr);
-	if (isUrlParameterTrue("new") && !isUrlParameterFalse("wigi921") && isSome(inspectorM) && getValue(inspector.size) == zeroWH) {
+	if ((isUrlParameterTrue("new") || isUrlParameterTrue("collins")) && !isUrlParameterFalse("wigi921") && isSome(inspectorM) && getValue(inspector.size) == zeroWH) {
 		generateText = \txt -> TText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
 		switch (w) {
 			GeneralText(txt): inspectFn(generateText(txt)) |> ignore;
@@ -850,7 +884,7 @@ inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : d
 		tr;
 	} else {
 		if (letterSpacing > 0.0) {
-			sizeB = make(getValue(inspector.size));
+			sizeB = make(zeroWH);
 			uns = subscribe2(sizeB, \v -> {
 				nextDistinct(inspector.size, WidthHeight(v.width + letterSpacing, v.height));
 			});
@@ -1221,7 +1255,7 @@ reflowTParaWordsRec(
 					width := getWordWidth(word);
 					1;
 				};
-				if (^width <= remaining || currentWords == []) {
+				if (^width == 0.0 || ^width <= remaining || currentWords == []) {
 					_words = take(words, wordsCount);
 					_rest = tailFrom(words, wordsCount);
 
@@ -1426,6 +1460,7 @@ TRenderLine(
 				firstWord = i == 0;
 				wordWidth = getValue(w.inspector.size).width;
 				defValue = Pair(acc.first, acc.second + wordWidth);
+				incSpaceValue = \inc -> Pair(acc.first + inc, acc.second + wordWidth);
 				switch (w.word : GeneralWrapElement) {
 					GeneralSpace(__, __, __): if (lastWord || firstWord) {
 						acc
@@ -1436,15 +1471,17 @@ TRenderLine(
 						if (lastWord || firstWord) {
 							acc
 						} else {
-							Pair(acc.first + 1, acc.second + wordWidth)
+							incSpaceValue(1)
 						}
+					} else if (strContains(text, nonBreakableSpace)) {
+						incSpaceValue(strCountOf(text, nonBreakableSpace))
 					} else {
 						defValue
 					}
 					default: defValue;
 				}
 			});
-			if (spacesAndWordsWidth.first > 0) {
+			if (spacesAndWordsWidth.first > 0 && alignWidth > spacesAndWordsWidth.second) {
 				(alignWidth - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
 			} else 0.0
 		} else {
@@ -1458,7 +1495,6 @@ TRenderLine(
 		firstWord = i == 0;
 		isSpace = (!firstWord && !lastWord || alignment != Justify()) && isSpaceWord(words[i]);
 
-		word = words[i];
 		elemWidth = getValue(inspector.size).width;
 		elemHeight = getValue(inspector.size).height;
 		elemBaseline = getValue(inspector.baseline);

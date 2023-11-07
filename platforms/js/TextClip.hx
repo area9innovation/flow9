@@ -157,6 +157,8 @@ class TextClip extends NativeWidgetClip {
 	private var background : FlowGraphics = null;
 
 	private var metrics : Dynamic;
+	private static var measureElement : Dynamic;
+	private static var measureRange : Dynamic;
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
@@ -491,20 +493,10 @@ class TextClip extends NativeWidgetClip {
 			}
 		} else {
 			if (escapeHTML) {
-				if (Platform.isIE && style.fontFamily == "Material Icons") {
+				if (Platform.isIE && isMaterialIconFont()) {
 					nativeWidget.textContent = this.contentGlyphs.modified;
 				} else {
-					var textContent = "";
-
-					var textLines : Array<String> = metrics.lines;
-					for (line in textLines) {
-						textContent = textContent + line + "\n";
-					}
-
-					if (textLines.length > 0) {
-						textContent = textContent.substring(0, textContent.length - 1);
-					}
-
+					var textContent = calculateTextContent();
 					nativeWidget.textContent = textContent;
 					if (textBackgroundWidget != null) {
 						textBackgroundWidget.textContent = textContent;
@@ -555,7 +547,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.background = bg;
 		}
 		nativeWidget.wrap = style.wordWrap ? 'soft' : 'off';
-		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(style.fontFamily != "Material Icons" || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
+		nativeWidget.style.lineHeight = '${DisplayObjectHelper.round(!isMaterialIconFont() || metrics == null ? style.lineHeight + style.leading : metrics.height)}px';
 
 		nativeWidget.style.textAlign = switch (autoAlign) {
 			case 'AutoAlignLeft' : null;
@@ -569,22 +561,23 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.whiteSpace = "normal";
 		}
 
-		updateBaselineWidget();
 		updateTextBackgroundWidget();
+		updateBaselineWidget();
 	}
 
 	public inline function updateBaselineWidget() : Void {
 		if (this.isHTMLRenderer() && isNativeWidget && needBaseline) {
-			if (!isInput && nativeWidget.firstChild != null && style.fontFamily != "Material Icons") {
-				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
+			if (!isInput && nativeWidget.firstChild != null && !isMaterialIconFont()) {
 				// For some fonts italic form has a smaller height, so baseline becomes occasionally unsynchronised with normal-style glyphs on different zoom levels
 				if (style.fontStyle == 'italic') {
+					var lineHeightGap = getLineHeightGap();
 					var transform = DisplayObjectHelper.getNativeWidgetTransform(this);
 					var top = DisplayObjectHelper.round(transform.ty);
 					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + lineHeightGap + top)}px';
+					textBackgroundWidget.style.top = '${Math.round(getTextMargin() + lineHeightGap + top)}px';
 					nativeWidget.style.top = 0;
 				} else {
-					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + lineHeightGap)}px';
+					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + getLineHeightGap())}px';
 				}
 				
 				baselineWidget.style.direction = textDirection;
@@ -601,13 +594,19 @@ class TextClip extends NativeWidgetClip {
 	private function makeBaselineWidgetAmiriItalicBugWorkaround() {
 		// For some reason, in most browsers Amiri italic text, which starts from digit doesn't render italic, when baselineWidget is present.
 		// Looks like a browser bug, so we need this workaround
-		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic') {
+		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic' && nativeWidget.textContent[0] != '' && untyped !isNaN(nativeWidget.textContent[0])) {
+			var transform = DisplayObjectHelper.getNativeWidgetTransform(this);
+			var top = DisplayObjectHelper.round(transform.ty);
+			
 			baselineWidget.style.display = "none";
 			nativeWidget.style.marginTop = '0px';
+			nativeWidget.style.top = '${Math.round(getLineHeightGap() + top)}px';
+
 			Native.timer(0, function() {
 				baselineWidget.style.display = null;
 				if (this.parent != null) {
 					nativeWidget.style.marginTop = '${-getTextMargin()}px';
+					nativeWidget.style.top = '0px';
 				}
 			});
 		}
@@ -622,6 +621,24 @@ class TextClip extends NativeWidgetClip {
 
 	public function getTextMargin() : Float {
 		return DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d);
+	}
+
+	public function getLineHeightGap() : Float {
+		return (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
+	}
+
+	public function calculateTextContent() : String {
+		var textContent = "";
+
+		var textLines : Array<String> = metrics.lines;
+		for (line in textLines) {
+			textContent = textContent + line + "\n";
+		}
+
+		if (textLines.length > 0) {
+			textContent = textContent.substring(0, textContent.length - 1);
+		}
+		return textContent;
 	}
 
 	public static function bidiDecorate(text : String, dir : String) : String {
@@ -688,6 +705,17 @@ class TextClip extends NativeWidgetClip {
 
 	public static function isJapaneseFont(st) : Bool {
 		return st.fontFamily == "Meiryo" || st.fontFamily == "MeiryoBold";
+	}
+
+	public static var isMeiryoAvailable = false;
+	public static function useHTMLMeasurementJapaneseFont(st) : Bool {
+		if (isMeiryoAvailable) return false;
+		var checkMeyrioFont = function() {
+			var res = Browser.document.fonts.check("10px Meiryo");
+			if (res) isMeiryoAvailable = true;
+			return res;
+		}
+		return isJapaneseFont(st) && !checkMeyrioFont();
 	}
 
 	private static var ffMap : Dynamic;
@@ -785,8 +813,8 @@ class TextClip extends NativeWidgetClip {
 	public function setTextWordSpacing(spacing : Float) : Void {
 		if (this.style.wordSpacing != spacing) {
 			this.style.wordSpacing = spacing;
-			invalidateMetrics();
-			this.emitEvent('textwidthchanged');
+			updateTextMetrics();
+			this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
 		}
 	}
 
@@ -878,7 +906,7 @@ class TextClip extends NativeWidgetClip {
 
 			textClip.setClipX(anchorX * Math.max(0, this.getWidgetWidth() - getClipWidth()));
 
-			if (style.fontFamily == "Material Icons") {
+			if (isMaterialIconFont()) {
 				if (style.fontProperties == null) {
 					measureFont();
 				}
@@ -976,7 +1004,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? style.fontFamily == "Material Icons" ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
+		style.wordWrapWidth = widgetWidth > 0 ? isMaterialIconFont() ? widgetWidth : Math.ceil(widgetWidth) : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -1137,6 +1165,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.onblur = onBlur;
 
 		nativeWidget.addEventListener('input', onInput);
+		nativeWidget.addEventListener('compositionend', function() { emit("compositionend"); });
 		nativeWidget.addEventListener('scroll', onScroll);
 		nativeWidget.addEventListener('keydown', onKeyDown);
 		nativeWidget.addEventListener('keyup', onKeyUp);
@@ -1354,6 +1383,9 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function onInput(e : Dynamic) {
+		if (Util.getParameter("debug_email_autofill") == '1') {
+			untyped console.log('onInput', e, e.data, nativeWidget.value);
+		}
 		// On iOS in numeric mode you can still input non-number characters. They will be shown visually but wrong characters will clear 'value'.
 		// Here we are resetting visual representation to be consistent
 		if (Platform.isIOS && type == 'number' && nativeWidget.value == '') {
@@ -1665,8 +1697,8 @@ class TextClip extends NativeWidgetClip {
 				}
 			} else {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
-				if (isJapaneseFont(style) && this.isHTMLRenderer()) {
-					measureHTMLWidth();
+				if (this.isHTMLRenderer() && useHTMLMeasurementJapaneseFont(style)) {
+					measureHTMLSize();
 				}
 			}
 
@@ -1688,18 +1720,20 @@ class TextClip extends NativeWidgetClip {
 			try {
 				if (Browser.document.fonts.status == LOADING) {
 					Browser.document.fonts.addEventListener('loadingdone', function() {
-						updateTextWidth();
-						if (style.wordWrap) {
-							invalidateMetrics();
-							this.emitEvent('textwidthchanged');
-						}
+						RenderSupport.defer(function() {
+							updateTextWidth();
+							if (style.wordWrap) {
+								updateTextMetrics();
+								this.emitEvent('textwidthchanged', metrics.width);
+							}
+						}, 600);
 					});
 				}
 			} catch (e : Dynamic) {}
 		}
 
 
-		if (isJapaneseFont(style) || Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && style.fontFamily != "Material Icons") {
+		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && !isMaterialIconFont()) {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
@@ -1720,10 +1754,86 @@ class TextClip extends NativeWidgetClip {
 						: textNodeWidth;
 				if (textWidth > 0 && textWidth != metrics.width) {
 					metrics.width = textWidth;
-					this.emitEvent('textwidthchanged');
+					this.emitEvent('textwidthchanged', textWidth);
 				}
 			}
 		}
+	}
+
+	private static var metricsCache = new Map();
+	private function measureHTMLSize() : Void {
+		if (Browser.document.createRange == null && nativeWidget == null) return;
+
+		if (TextClip.measureElement == null) {
+			TextClip.measureElement = Browser.document.createElement('p');
+			TextClip.measureElement.id = 'measureTextElement';
+			TextClip.measureElement.classList.add('nativeWidget');
+			TextClip.measureElement.classList.add('textWidget');
+			TextClip.measureElement.setAttribute('aria-hidden', 'true');
+			Browser.document.body.appendChild(TextClip.measureElement);
+		}
+
+		if (TextClip.measureRange == null) {
+			TextClip.measureRange = Browser.document.createRange();
+		}
+
+		var measureElement = TextClip.measureElement;
+		var measureRange = TextClip.measureRange;
+
+		updateNativeWidgetStyle();
+
+		var cacheKey = nativeWidget.textContent + '\n${nativeWidget.style.fontSize}\n${nativeWidget.style.fontWeight}';
+		var cachedMetrics = metricsCache.get(cacheKey);
+		if (cachedMetrics != null) {
+			metrics.width = cachedMetrics.width;
+			metrics.height = cachedMetrics.height;
+			return;
+		}
+
+		measureElement.style.fontFamily = nativeWidget.style.fontFamily;
+		measureElement.style.fontSize = nativeWidget.style.fontSize;
+		measureElement.style.fontWeight = nativeWidget.style.fontWeight;
+		measureElement.style.wrap = nativeWidget.style.wrap;
+		measureElement.style.whiteSpace = nativeWidget.style.whiteSpace;
+		measureElement.style.display = nativeWidget.style.display;
+
+		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
+		if (wordWrap) {
+			measureElement.style.width = '${style.wordWrapWidth}px';
+		} else {
+			measureElement.style.width = 'max-content';
+		}
+
+		measureElement.textContent = nativeWidget.textContent;
+
+		measureRange.selectNodeContents(measureElement);
+		if (measureRange.getBoundingClientRect != null) {
+			var rect = measureRange.getBoundingClientRect();
+			if (rect != null) {
+				var viewportScale = RenderSupport.getViewportScale();
+				var textNodeWidth = (rect.right - rect.left) * viewportScale;
+				var textNodeHeight = (rect.bottom - rect.top) * viewportScale;
+
+				if (textNodeWidth >= 0.) {
+					metrics.width = textNodeWidth;
+				}
+
+				if (textNodeHeight >= 0. && metrics.lineHeight > 0) {
+					var textNodeLines = Math.round(textNodeHeight / metrics.lineHeight);
+					var currentLines = Math.round(metrics.height / metrics.lineHeight);
+
+					if (currentLines > 0 && textNodeLines != currentLines) {
+						metrics.height = metrics.height * textNodeLines / currentLines;
+					}
+				}
+
+				if (textNodeWidth >= 0. && textNodeHeight >= 0.) {
+					metricsCache.set(cacheKey, {width : textNodeWidth, height : textNodeHeight});
+				}
+			}
+		}
+
+		measureElement.style.display = 'none';
 	}
 
 	private function measureHTMLWidth() : Void {
@@ -1816,6 +1926,10 @@ class TextClip extends NativeWidgetClip {
 				style.fontProperties.descent
 			];
 		}
+	}
+
+	private function isMaterialIconFont() : Bool {
+		return style.fontFamily.startsWith('Material Icons');
 	}
 
 	private override function createNativeWidget(?tagName : String = "p") : Void {

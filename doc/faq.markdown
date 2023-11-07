@@ -506,8 +506,7 @@ Antipatterns
 #### In the beginning was the Subscribe
 
 Don't make code more complicated than it could be. We have a core function to
-react on some behaviours changes, it's `subscribe` at [behaviour.flow](https:/
-/github.com/area9innovation/flow9/blob/master/lib/behaviour.flow). Then
+react on some behaviours changes, it's `subscribe` at [behaviour.flow](https://github.com/area9innovation/flow9/blob/master/lib/behaviour.flow). Then
 Material was invented. And there is a MConstruct with such syntax
 `MConstruct(constructors : [() -> () -> void], m : Material);`. So writing
 like this doesn't look good:

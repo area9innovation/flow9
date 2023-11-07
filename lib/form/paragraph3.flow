@@ -67,7 +67,8 @@ export {
 		unnestAndTrace : (() -> string) -> void,
 		nest : () -> void,
 		unnest : () -> void,
-		makeRenderingId : () -> string
+		makeRenderingId : () -> string,
+		traceId : string
 	);
 
 	makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string);
@@ -180,7 +181,13 @@ generalEmptyLineInspectElement(id : int) -> GeneralInspectElement {
 }
 
 general2WrapElement(elem : GeneralWrapElement, style : [CharacterStyle], wordDecorator : (Form) -> Form) -> NonInteractiveWrapElement {
-	generateText = \txt, st -> Text(txt, st |> makeSkipOrderCheck) |> wordDecorator;
+	generateText = \txt, st ->
+		Text(txt, st |> makeSkipOrderCheck)
+		|> (\t -> if (isSafariBrowser()) {
+			// fix for https://trello.com/c/G6ZiBfBc/22452-disappearing-questions-in-mcq-probes
+			Inspect([Width(make(0.))], t)
+		} else t )
+		|> wordDecorator;
 	switch (elem) {
 		GeneralText(txt) : generateText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
 		GeneralDynamicText(txt) : generateText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
@@ -658,6 +665,8 @@ renderParagraphEx(
 			f
 		}
 	})
+	// fix for https://trello.com/c/QFMrOR14/22929-line-breaks-in-wigi-even-though-there-is-enough-space
+	|> (\f -> Inspect([Width(make(0.))], f))
 }
 
 isSpaceForm(spaceForm : GhostForm) -> bool {
@@ -1230,7 +1239,11 @@ reflowParaWords2(
 		isNewLine = switch (word.word : ParaAtomic) {
 			NewLine() : true;
 			default : {
-				if (max(getParaWordWidthValue(^(group.width), textScale), groupWidth) > remaining && (isSpc || currentWordGroups != [])) {
+				allowBreakAfter = switch (word.word : ParaAtomic) {
+					LinePart(__, __, __, allow): allow;
+					default: true;
+				}
+				if (allowBreakAfter && max(getParaWordWidthValue(^(group.width), textScale), groupWidth) > remaining && (isSpc || currentWordGroups != [])) {
 					// we should check if the groupd ends with spaces that are not count into width if they are in the end of the line
 					if (wigiRtrimSpace) {
 						getParaWordWidthValue(^(rtrimParaWordGroup(group).width), textScale) > remaining
@@ -1702,17 +1715,19 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 				lastWord = i == wordsCount;
 				firstWord = i == 0;
 				defValue = \ -> Pair(acc.first, acc.second + fgetValue(w.metrics).width);
+				spaceIncValue = \inc -> Pair(acc.first + inc, acc.second + fgetValue(w.metrics).width);
 				switch (w.form : GhostForm) {
 					Text(text, __) : {
 						if (text == " " || text == nonBreakableSpace) {
 							if (lastWord || firstWord) acc
-							else Pair(acc.first + 1, acc.second + fgetValue(w.metrics).width)
-						} else defValue()
+							else spaceIncValue(1)
+						} else if (strContains(text, nonBreakableSpace)) spaceIncValue(strCountOf(text, nonBreakableSpace))
+						else defValue()
 					};
 					default: defValue()
 				};
 			});
-			if (spacesAndWordsWidth.first > 0) {
+			if (spacesAndWordsWidth.first > 0 && width > spacesAndWordsWidth.second) {
 				(width - spacesAndWordsWidth.second) / i2d(spacesAndWordsWidth.first);
 			} else 0.0
 		} else 0.0;
@@ -1749,6 +1764,12 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 								}
 							} else metricsWithoutLS
 						};
+						Text(text, __) : {
+							if (newJustifyEnabled && alignment == Justify() && strContains(text, nonBreakableSpace)) {
+								metricsV = fgetValue(metrics);
+								FormMetrics(metricsV with width = metricsV.width + (wordSpacing * i2d(strCountOf(text, nonBreakableSpace)))) |> const;
+							} else metrics;
+						};
 						default: metrics;
 					};
 					Cons(OptimizedLineElement(f, formMetrics, intIdM, nextWidgetId, word.isFillerFn), acc)
@@ -1771,11 +1792,13 @@ optimizeLine(words : [ParaWord], alignment: ParaLineAlignment, availableWidth : 
 										joinText(t1, s1_withCorrectLS, t2, s2_withCorrectLS);
 									}
 
-									additionalWidth = if (newJustifyEnabled && alignment == Justify() && !lastWord) {
+									additionalWidth = if (newJustifyEnabled && alignment == Justify()) {
 										switch (f) {
 											Text(text, __) : {
-												if (text == " " || text == nonBreakableSpace) {
+												if ((text == " " || text == nonBreakableSpace) && !lastWord) {
 													wordSpacing;
+												} else if(strContains(text, nonBreakableSpace)) {
+													wordSpacing * i2d(strCountOf(text, nonBreakableSpace))
 												} else 0.0
 											};
 											default: 0.0
@@ -2028,7 +2051,7 @@ paragraphElement2string(e : ParagraphElementWithInfo) -> string {
 
 wigiTraceLevel : ref int = ref 0;
 
-dummyWigiTraceApi = WigiTraceApi(nop1, nop1, nop1, nop1, nop, nop, \->"");
+dummyWigiTraceApi = WigiTraceApi(nop1, nop1, nop1, nop1, nop, nop, \->"", "");
 
 makeWigiTraceIdFn(words : (() -> [?]), word2string : (?) -> string) -> (() -> string) {
 	\-> fold(words(), "", \acc, w -> acc + word2string(w))
@@ -2053,7 +2076,8 @@ makeWigiTraceGeneric(functionName : string, idFn : () -> string) -> WigiTraceApi
 			\ -> {
 				wigiTraceRenderingId := ^wigiTraceRenderingId + 1;
 				toString(^wigiTraceRenderingId);
-			 }
+			},
+			traceId
 		)
 	} else {
 		dummyWigiTraceApi

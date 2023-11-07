@@ -70,8 +70,6 @@ export {
 	// Arabic(RTL) versions. T*Dir are intended to use into Material. Generally, T*A versions are preferable.
 	TColsDir(t : [Tropic], isRTL : bool) -> Tropic;
 	TCols2Dir(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic;
-	TColsDirInvertedZorder(c : [Tropic], isRTL : bool) -> Tropic;
-	TCols2DirInvertedZorder(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic;
 	TColsA(t : [Tropic]) -> Tropic;
 	TCols2A(t1 : Tropic, t2 : Tropic) -> Tropic;
 
@@ -419,7 +417,7 @@ export {
 
 	// Helper to move already rendered clip from one spot to another
 	// Automatically dettaches and reattaches to original clip if tropic passed to 'fn' is rendered anywhere
-	TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic;
+	TMoveClip(t : Tropic, customPosScale : Maybe<Transform<PositionScale>>, fn : (Tropic) -> void) -> Tropic;
 
 	// Draws content with 'canvas' renderer
 	// Works only in js with 'html' renderer, for other targets identical to regular clip
@@ -624,23 +622,6 @@ TColsDir(t : [Tropic], isRTL : bool) -> Tropic {
 
 TCols2Dir(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic {
 	TColsDir([t1, t2], isRTL)
-}
-
-TColsDirInvertedZorder(c : [Tropic], isRTL : bool) -> Tropic {
-	len = length(c);
-	if (len == 0) TEmpty()
-	else if (len == 1) c[0]
-	else if (len == 2) TCols2DirInvertedZorder(c[0], c[1], isRTL)
-	else TCols2DirInvertedZorder(
-		TColsDirInvertedZorder(subrange(c, 0, len / 2), isRTL),
-		TColsDirInvertedZorder(subrange(c, len / 2, len - (len / 2)), isRTL),
-		isRTL
-	);
-}
-
-TCols2DirInvertedZorder(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic {
-	if (isRTL) TCopySize2(t2, \sz, c -> TGroup2(TCols2(sz, t1), t2))
-	else TCols2(t1, t2)
 }
 
 TColsA(t : [Tropic]) -> Tropic {
@@ -3020,9 +3001,16 @@ THTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> 
 	)
 }
 
-TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
-	TransformTAcc2(\t2a -> {
-		b = t2a(t);
+TMoveClip(t : Tropic, customPosScale : Maybe<Transform<PositionScale>>, fn : (Tropic) -> void) -> Tropic {
+	TransformTAcc(\t2a, pi0, st, mo -> {
+		useCustomTransformMatrix = make(false);
+		pi = eitherMap(customPosScale,
+			\cps -> TParentInfo(pi0 with transformMatrix =
+				fif(useCustomTransformMatrix, fselectLift(cps, positionScale2TransformMatrix), pi0.transformMatrix)
+			),
+			pi0
+		);
+		b = t2a(t, pi, st, mo);
 
 		TAcc(b with
 			form = FNativeForm(
@@ -3047,11 +3035,13 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 									alive := true;
 									iter(rr.clips, \c -> addChild(parent, c));
 									nextDistinct(zorder, z2);
+									nextDistinct(useCustomTransformMatrix, true);
 
 									NativeRenderResult(
 										[parent],
 										\ -> {
 											nextDistinct(zorder, z);
+											nextDistinct(useCustomTransformMatrix, false);
 
 											if (^alive) {
 												iter(rr.clips, \c -> addChild(originalParent, c));

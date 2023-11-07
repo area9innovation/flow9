@@ -332,7 +332,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	useNativeInput = iScriptBehaviours.useNativeInput;
 	label = iScriptBehaviours.label;
 	dynamicSize = iScriptBehaviours.dynamicSize;
-	hasFloatingLabel = contains(style, MFloatingLabel()) && label != "";
+	flAlwaysOnTop = contains(style, MFloatingLabelAlwaysOnTop());
+	hasFloatingLabel = (contains(style, MFloatingLabel()) || flAlwaysOnTop) && label != "";
 	linesCount = extractStruct(style, MMaxLines(1)).lines;
 	showUnderline = extractStruct(style, MShowUnderline(true)).show;
 	multiline = extractStruct(style, Multiline(false)).multiline;
@@ -355,19 +356,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	preventContextMenu = contains(state, MInputPreventContextMenu());
 	scrollStyle = extractStruct(style, MTextInputScrollStyle([])).style;
 	allowEmojis = extractStruct(style, MTextInputAllowEmojis(false)).allowEmojis;
-	// For testing purposes
-	defaultSkin =
-		if (getUrlParameter("inputSkin") == "filled" && !smallEdit) MFilled()
-		else if (getUrlParameter("inputSkin") == "outlined" && !smallEdit) MOutlined()
-		else MTextInputPlain();
-	skin =
-		fold(style, defaultSkin, \acc, st ->
-			switch (st) {
-				MFilled(): st;
-				MOutlined(): st;
-				default: acc;
-			}
-		);
+	skin = calculateMTextInputSkin(style);
 
 	customTextStyle : [MParagraphStyle] = extractStruct(style, MCustomTextStyle([])).style;
 
@@ -401,22 +390,24 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				12.;
 			}
 		}
+	inputBordersTopDef = 
+		switch (skin : MTextInputSkin) {
+			MTextInputPlain(): {
+				if (hasFloatingLabel) (if (condensed) 20. else 28.) else if (condensed) 12. else 16.;
+			}
+			MFilled(): {
+				if (hasFloatingLabel) 25.else if (condensed) 11. else 18.;
+			}
+			MOutlined(): {
+				if (!hasFloatingLabel && condensed) 11. else 17.;
+			}
+		}
 	inputBorders =
 		extractStruct(
 			style,
 			MInputBorders(
 				sideBorder,
-				switch (skin : MTextInputSkin) {
-					MTextInputPlain(): {
-						if (hasFloatingLabel) (if (condensed) 20. else 28.) else if (condensed) 12. else 16.;
-					}
-					MFilled(): {
-						if (hasFloatingLabel) 25.else if (condensed) 11. else 18.;
-					}
-					MOutlined(): {
-						if (!hasFloatingLabel && condensed) 11. else 17.;
-					}
-				},
+				inputBordersTopDef,
 				sideBorder,
 				switch (skin : MTextInputSkin) {
 					MTextInputPlain(): {
@@ -577,26 +568,26 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		if (hasFloatingLabel) {
 			defFSize = if (condensed) 13. else 16.;
 			fSize = eitherMap(floatingLabelStyle, \fls -> extractStruct(fls, FontSize(defFSize)).size, defFSize);
-			fSizeFocused = forceRange(labelSize, 0., inputBorders.top);
+			fSizeFocused = max(0., labelSize);
 			betweenFLabels =
 				switch (skin : MTextInputSkin) {
 					MTextInputPlain(): if (condensed) 4.0 else 8.0;
-					MFilled(): -2.0;
-					MOutlined(): if (!hasFloatingLabel && condensed) 8.0 else 13.0;
+					MFilled(): -2.0 + (1. - inputBorders.top/inputBordersTopDef) * 8.;
+					MOutlined(): (if (!hasFloatingLabel && condensed) 8.0 else 13.0) + (inputBorders.top - inputBordersTopDef);
 				}
-			aFlabel =
+			aboveFLabel =
 				switch (skin : MTextInputSkin) {
 					MTextInputPlain(): inputBorders.top - fSizeFocused - betweenFLabels;
-					MFilled(): 8.0;
+					MFilled(): 8.0 + (inputBorders.top - inputBordersTopDef);
 					MOutlined(): inputBorders.top - fSizeFocused - betweenFLabels;
 				}
-			showFLabel = fgetValue(mfocus.focused) || getValue(content) != "";
+			showFLabel = flAlwaysOnTop || fgetValue(mfocus.focused) || getValue(content) != "";
 
 			Some(
 				MInputFloatingLabelState(
 					fSize,
 					fSizeFocused,
-					aFlabel,
+					aboveFLabel,
 					betweenFLabels,
 					make(showFLabel),
 					make(0.),
@@ -837,7 +828,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	updateFocusContent = \c : string, foc : bool, mtch : [Pair<int, SentenceMatcher>] -> {
 		dispUnsM(showMoreHandlerUns);
 		maybeApply(editIcon, \ei -> nextDistinct(ei, !foc));
-		maybeApply(floatingLabel, \fl -> nextDistinct(fl.showFloatingLabel, foc || c != ""));
+		maybeApply(floatingLabel, \fl -> nextDistinct(fl.showFloatingLabel, flAlwaysOnTop || foc || c != ""));
 
 		maybeApply(
 			autocomplete,
@@ -2779,6 +2770,12 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 				if (condensed) 12. else 16.
 			)
 		);
+	skin = calculateMTextInputSkin(style);
+	defLeftIconPadding = switch (skin) {
+		MTextInputPlain(): 72.;
+		MOutlined(): 36.;
+		MFilled(): 36.;
+	}
 
 	lineHeight = completionLineHeight(tTextMetrics, inputBorders);
 
@@ -2803,7 +2800,7 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 						fsum(concat3(
 							[const(inputBorders.start)],
 							if (leftButton && isTextInputInPopup) [custLeftButton.inputIndent] else [],
-							if (leftIcon) [const(72.)] else []
+							if (leftIcon) [const(defLeftIconPadding)] else []
 						)),
 						zero,
 						const(inputBorders.end),
@@ -2868,4 +2865,23 @@ makeAutocompleteMatcher(minChars : int) ->
 		if (strlen(input) < minChars) []
 		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, position);
 	}
+}
+
+calculateMTextInputSkin(style : [MAutoCompleteStyle]) -> MTextInputSkin {
+	// For testing purposes
+	urlSkin = getUrlParameter("inputSkin");
+	smallEdit = contains(style, MEditDialog());
+
+	defaultSkin =
+		if (urlSkin == "filled" && !smallEdit) MFilled()
+		else if (urlSkin == "outlined" && !smallEdit) MOutlined()
+		else MTextInputPlain();
+	
+	fold(style, defaultSkin, \acc, st ->
+		switch (st) {
+			MFilled(): st;
+			MOutlined(): st;
+			default: acc;
+		}
+	);
 }

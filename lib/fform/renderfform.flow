@@ -142,7 +142,7 @@ isFullScreenTarget(clip : native) -> bool {
 removeFullScreenTarget(clip : native) -> void {
 	if (isSome(^fullScreenTarget)) {
 		if (isFullScreenTarget(clip)) {
-			setFullScreenTargetFlow(clip);
+			fullScreenTarget := None();
 		}
 	}
 	resetFullScreenTarget();
@@ -690,6 +690,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			resize = ref nop;
 			container = makeClip();
 			rootId = getRenderRoot();
+			listenerUns = initUnsM();
+			innerFW = make(false);
 
 			setResize = \fw -> {
 				^resize();
@@ -705,8 +707,17 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			setFullWindow = \fw -> {
 				setFullWindowTarget(container);
 				toggleFullWindow(fw);
-				if (!fw) resetFullWindowTarget()
+				if (fw) {
+					setUnsM(listenerUns,
+						onFullWindow(\fw2 -> nextDistinct(innerFW, fw2))
+					);
+				} else {
+					dispUnsM(listenerUns);
+					resetFullWindowTarget();
+				}
 			};
+
+			connectUns = fconnect(fullwindow, innerFW);
 
 			if (getValue(fullwindow)) {
 				deferred(\ -> {
@@ -715,7 +726,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				})
 			};
 
-			uns = subscribe2(fullwindow, \fw -> {
+			uns = subscribe2(innerFW, \fw -> {
 				setResize(fw);
 				setFullWindow(fw);
 			});
@@ -728,6 +739,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				arrayPush(
 					d.disposers,
 					\ -> {
+						connectUns();
 						uns();
 						^resize();
 						if (getValue(fullwindow)) {
@@ -741,31 +753,59 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		}
 		FFullScreen2(fullscreen, wh, form, appendToMainStage): {
 			resizeUns = initUnsM();
+			listenerUns = initUnsM();
+
 			attachFChildAndCapability(
 				rform,
 				renderFForm(if (appendToMainStage) FFullWindow(fullscreen, wh, form) else form, zorder),
 				[],
 				\clip -> {
 					changeFullscreen = \fsc -> {
-						if (fsc) {
-							setFullScreenTargetFlow(clip);
-						} else {
-							removeFullScreenTarget(clip);
+						enableFullscreen = \ -> {
+							if (appendToMainStage) {
+								toggleFullScreen(fsc);
+							} else {
+								if (fsc) {
+									rootId = getRenderRoot();
+									nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
+									setUnsM(resizeUns, monitorFResize(wh, rootId));
+									requestFullScreen(clip)
+								}
+								else {
+									dispUnsM(resizeUns);
+									exitFullScreen(clip);
+								}
+							}
 						}
 
-						if (appendToMainStage) {
-							toggleFullScreen(fsc);
+						if (fsc) {
+							openFS = \ -> {
+								setFullScreenTargetFlow(clip);
+								setUnsM(listenerUns, onFullScreen(\change -> {
+									if (!change || isFullScreenTarget(clip)) {
+										nextDistinct(fullscreen, change);
+										if (!change) dispUnsM(listenerUns);
+									}
+								}));
+								enableFullscreen();
+							}
+
+							eitherFn(^fullScreenTarget,
+								\fst -> {
+									tempListenerUns = initUnsM();
+									setUnsM(tempListenerUns, onFullScreen(\fs -> {
+										if (!fs) {
+											openFS();
+											dispUnsM(tempListenerUns);
+										}
+									}));
+									removeFullScreenTarget(fst);
+								},
+								openFS
+							)
 						} else {
-							if (fsc) {
-								rootId = getRenderRoot();
-								nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
-								setUnsM(resizeUns, monitorFResize(wh, rootId));
-								requestFullScreen(clip)
-							}
-							else {
-								dispUnsM(resizeUns);
-								exitFullScreen(clip);
-							}
+							removeFullScreenTarget(clip);
+							enableFullscreen();
 						}
 					}
 
@@ -777,12 +817,6 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						}
 					}
 
-					ofsd = onFullScreen(\change -> {
-						if (isFullScreenTarget(clip) || !change) {
-							nextDistinct(fullscreen, change);
-						}
-					});
-
 					cfsd = subscribe2(fullscreen, changeFullscreen);
 
 					\ -> {
@@ -790,7 +824,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							toggleFullScreen(false);
 						}
 
-						ofsd();
+						dispUnsM(listenerUns);
 						cfsd();
 					}
 				}
@@ -1597,6 +1631,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			filterFn = tryExtractStruct(style, FInputFilter(idfn));
 			eventFilterFn = tryExtractStruct(style, dummyFInputEventFilter);
 			onCopyFn = tryExtractStruct(style, FInputOnCopy(\ -> None()));
+			onCompositionEndFn = tryExtractStruct(style, FInputOnCompositionEnd(nop));
 
 			keyFilterFn = tryExtractStruct(style, FInputKeyFilter(\__, __ -> true));
 			cursorColor = extractStruct(style, FCursorColor(fselect(characterStyle, FLift(\cs -> extractStruct(cs, Fill(0)).color)))).color;
@@ -1681,6 +1716,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						addEventListener(textfield, "change", \ -> {
 							textInputResponse := true;
 							nextDistinct(content, getContent(textfield));
+							if (isUrlParameterTrue("debug_email_autofill")) {
+								println("FTextInput content on change : " + fgetValue(content));
+							}
 							pos = getCursorPosition(textfield);
 							sel = getSelectionEnd(textfield);
 							nextDistinct(position, pos);
@@ -1796,6 +1834,14 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							],
 						[]
 					),
+					eitherMap(
+						onCompositionEndFn,
+						\onCompositionEnd ->
+							[
+								addEventListener(textfield, "compositionend", \ -> onCompositionEnd.fn())
+							],
+						[]
+					)
 				]);
 
 			FRenderResult(

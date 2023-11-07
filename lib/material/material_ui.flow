@@ -36,12 +36,13 @@ export {
 	) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>>;
 
 	MArrowNavigationStyle ::= MArrowNavigationDirection, MArrowNavigationSupportHomeEnd, MArrowNavigationCheckFocusability,
-							MArrowNavigationSelectItem, MArrowNavigationResetSelection;
+							MArrowNavigationSelectItem, MArrowNavigationResetSelection, MArrowNavigationCustomOnArrow;
 		MArrowNavigationDirection(vertical : bool); // true by default
 		MArrowNavigationSupportHomeEnd(support : bool); // true by default
 		MArrowNavigationCheckFocusability(fn : (int) -> bool);
-		MArrowNavigationSelectItem(fn : () -> void);
+		MArrowNavigationSelectItem(fn : () -> void, auto : bool);
 		MArrowNavigationResetSelection(fn : () -> bool);
+		MArrowNavigationCustomOnArrow(fn : (forw : bool) -> void, enabled : () -> bool);
 
 	// Help to create common patterns, when you need to place smth at the top
 	// of another material
@@ -104,12 +105,14 @@ export {
 
 	// FVideoTimeRange style disabled
 	MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Material;
-		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist, MMultiAudioLength;
+		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist, MMultiAudioLength, MMultiAudioTimerange;
 
 		// to switch files (samples) in multiplayer
 		IndexInPlaylist(index : DynamicBehaviour<int>);
 		// Length of each audio.
 		MMultiAudioLength(lengths : [FVideoLength]);
+		// Timeranges for each audio
+		MMultiAudioTimerange(timeranges : [Maybe<FVideoTimeRange>]);
 
 	// use to place material on top of placeholder over other elements
 	MInlinePopup(
@@ -290,7 +293,7 @@ MRadiosExtended(
 			focusEnabledIdx,
 			\ -> max(0, fgetValue(index)),
 			[
-				MArrowNavigationSelectItem(\ -> nextDistinct(index, i)),
+				MArrowNavigationSelectItem(\ -> nextDistinct(index, i), true),
 				MArrowNavigationResetSelection(\ -> {nextDistinct(index, -1); true}),
 				MArrowNavigationDirection(!isColsCombiner)
 			]
@@ -324,7 +327,8 @@ MArrowNavigationExt(
 	vertical = extractStruct(style, MArrowNavigationDirection(true)).vertical;
 	supportHomeEnd = extractStruct(style, MArrowNavigationSupportHomeEnd(true)).support;
 	checkFocusability = extractStruct(style, MArrowNavigationCheckFocusability(\__ -> true)).fn;
-	selectItem = extractStruct(style, MArrowNavigationSelectItem(nop)).fn;
+	customOnArrow = tryExtractStruct(style, MArrowNavigationCustomOnArrow(nop1, \ -> false));
+	selectItem = tryExtractStruct(style, MArrowNavigationSelectItem(nop, false));
 	resetSelection = extractStruct(style, MArrowNavigationResetSelection(\ -> false)).fn;
 	mainKeys = if (vertical) Pair(KEY_UP, KEY_DOWN) else Pair(KEY_LEFT, KEY_RIGHT);
 
@@ -337,20 +341,30 @@ MArrowNavigationExt(
 			if (!handled && fgetValue(focused)) {
 				idx = getValue(focusedIdx);
 				updateFocusedAnswer = \newIdx -> if (checkFocusability(newIdx)) nextDistinct(focusedIdx, newIdx);
+				onArrow = \forw, newIdx ->
+					eitherFn(customOnArrow,
+						\coa ->
+							if (coa.enabled()) coa.fn(forw)
+							else updateFocusedAnswer(newIdx),
+						\ -> updateFocusedAnswer(newIdx)
+					);
 				if (ke.keycode == mainKeys.first) { // backwards
-					updateFocusedAnswer(if (idx == 0) listLen - 1 else idx - 1);
+					onArrow(false, if (idx == 0) listLen - 1 else idx - 1);
 					true
 				} else if (ke.keycode == mainKeys.second) { // forward
-					updateFocusedAnswer(if (idx == listLen - 1) 0 else idx + 1);
+					onArrow(true, if (idx == listLen - 1) 0 else idx + 1);
 					true
 				} else if (supportHomeEnd && ke.keycode == KEY_HOME) {
-					updateFocusedAnswer(0);
+					onArrow(false, 0);
 					true
 				} else if (supportHomeEnd && ke.keycode == KEY_END) {
-					updateFocusedAnswer(listLen - 1);
+					onArrow(true, listLen - 1);
 					true
 				} else if (ke.keycode == KEY_ESCAPE) {
 					resetSelection()
+				} else if (eitherMap(selectItem, \si -> !si.auto, false) && ke.keycode == KEY_SPACE) {
+					maybeApply(selectItem, \si -> si.fn());
+					true
 				} else {
 					false
 				}
@@ -362,7 +376,7 @@ MArrowNavigationExt(
 				if (focIdx == i) deferUntilNextFrameRendered(\ -> {
 					nextDistinct(focusEnabledIdx, i);
 					nextDistinct(focused, true);
-					selectItem()
+					maybeApply(selectItem, \si -> if (si.auto) si.fn())
 				}) else {
 					nextDistinct(focused, false);
 				}
@@ -483,6 +497,7 @@ MTopMost(content : Material, style : [MTopMostStyle]) -> Material {
 				),
 				[MZorder(manager.manager.zorder)]
 			),
+			None(),
 			\el -> elementClip := el
 		)
 		|> (\m -> MConstruct([
@@ -755,7 +770,9 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 
 SampleStates(
 	length : [DynamicBehaviour<double>],
+	realLength : [DynamicBehaviour<double>],
 	position : [DynamicBehaviour<double>],
+	realPosition : [DynamicBehaviour<double>],
 	isPlay : [DynamicBehaviour<bool>],
 	isReady : [DynamicBehaviour<bool>]
 );
@@ -777,16 +794,20 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 	loopEx = extractStruct(fvStyle, FVideoLoop(make(false))).loop;
 	 	synchrocallEx = extractStruct(fvStyle, SynchroCalls(nop, nop));
 		unstoppable = contains(fvStyle, MAudioUnstoppable());
+		timeranges = extractStruct(mStyle, MMultiAudioTimerange([])).timeranges;
+		hasTimeRanges = exists(timeranges, isSome);
 
 	  	// MMultiAudioPlayerStyle properties
 	 	currIndexB = extractStruct(mStyle, IndexInPlaylist(make(0))).index;
 
 	  	// init properties for each audio
 	 	states = SampleStates(
-	 		map(filenames, \__ -> make(0.0)),
-	 		map(filenames, \__ -> make(0.0)),
-	 		map(filenames, \__ -> make(false)),
-	 		map(filenames, \__ -> make(false)),
+			map(filenames, \__ -> make(0.0)),
+			map(filenames, \__ -> make(0.0)),
+			map(filenames, \__ -> make(0.0)),
+			map(filenames, \__ -> make(0.0)),
+			map(filenames, \__ -> make(false)),
+			map(filenames, \__ -> make(false)),
 	 	);
 
 	  	synchrocalls = mapi(filenames, \i, __ ->
@@ -811,21 +832,50 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 		)
 	 	);
 
-	  	players = mapi(filenames, \i, url ->
-	 		TVideo(
-	 			url,
-	 			make(WidthHeight(-1., -1.)),		// not to draw
-	 			replaceStructMany(fvStyle,
-	 				[
-	 					FVideoLength(states.length[i]),
-	 					FVideoPosition(states.position[i]),
-	 					FVideoPlay(states.isPlay[i]),
-	 					synchrocalls[i],
-	 					FAudio()
-	 				]
-	 			)
-	 		)
-	 	);
+		players = mapi(filenames, \i, url -> eitherFn(
+			elementAt(timeranges, i, None()),
+			\timerange : FVideoTimeRange -> {
+				start = fgetValue(timerange.start);
+				timeRangeLength = fgetValue(timerange.end) - start;
+				MConstruct(
+					[
+						\-> fconnectSelect(states.realLength[i], states.length[i],
+							\realLength -> if (realLength > 0.0) timeRangeLength else 0.0),
+						\-> bidirectionalLink(states.realPosition[i], states.position[i],
+							\realPosition -> realPosition - start,
+							\position -> position + start
+						),
+					],
+					TVideo(
+						url,
+						make(WidthHeight(-1., -1.)),		// not to draw
+						replaceStructMany(fvStyle,
+							[
+								FVideoLength(states.realLength[i]),
+								FVideoPosition(states.realPosition[i]),
+								FVideoPlay(states.isPlay[i]),
+								synchrocalls[i],
+								FAudio(),
+								timerange,
+							]
+						)
+					)
+				)
+			},
+			\-> TVideo(
+				url,
+				make(WidthHeight(-1., -1.)),		// not to draw
+				replaceStructMany(fvStyle,
+					[
+						FVideoLength(states.length[i]),
+						FVideoPosition(states.position[i]),
+						FVideoPlay(states.isPlay[i]),
+						synchrocalls[i],
+						FAudio(),
+					]
+				)
+			)
+		));
 
 	  	changeAudioPlaying = \index, isPlay -> {
 	 		nextDistinct(states.isPlay[index], isPlay);
@@ -864,6 +914,13 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 			nextDistinct(states.position[newIndex], pos - lastEnd.second);
 	 		}
 	 	}
+		calculateAudioLengthWithTimeRanges = \audioLengths -> {
+			dsum(mapi(timeranges, \index, timerange -> eitherMap(
+				timerange,
+				\t -> fgetValue(t.end) - fgetValue(t.start),
+				elementAt(audioLengths, index, 0.0)
+			)))
+		}
 
 		// rendering (empty)
 		MConstruct(
@@ -876,10 +933,9 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 					),
 					// sum all audio lengths. but refresh total length only after all data is got (all lengths > 0)
 					\-> fconnectSelect(fmerge(states.length), lenEx, \lens -> {
-							if (all(map(lens, \l -> l > 0.0)))
-								dsum(lens)
-							else
-								0.0
+							if (hasTimeRanges) calculateAudioLengthWithTimeRanges(lens) 
+							else if (all(map(lens, \l -> l > 0.0))) dsum(lens)
+							else 0.0
 						}),
 					// set possition
 					\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
