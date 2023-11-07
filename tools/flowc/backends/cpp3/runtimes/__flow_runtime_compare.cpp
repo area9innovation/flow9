@@ -2,7 +2,7 @@
 #include "__flow_runtime_compare.hpp"
 
 namespace flow {
-
+/*
 inline Int flowCompareComponents(Flow* v1, Flow* v2, Int i) {
 	TypeId type_id1 = v1->componentTypeId(i);
 	TypeId type_id2 = v2->componentTypeId(i);
@@ -71,5 +71,5 @@ Int flowCompare(Flow* v1, Flow* v2) {
 		}
 	}
 }
-
+*/
 }

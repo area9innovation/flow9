@@ -108,10 +108,10 @@ inline T2 castRc(T1 x) {
 			if (x->typeId() == TypeFx::STRING) {
 				return x->template getRc<String*>();
 			} else {
-				return flow2stringRc(x);
+				return toStringRc(x);
 			}
 		} else {
-			return flow2stringRc(x);
+			return toStringRc(x);
 		}
 	}
 	else if constexpr (std::is_same_v<T2, Native*>) {

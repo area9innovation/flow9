@@ -46,7 +46,6 @@ using Int = int32_t;
 using Bool = bool;
 using Double = double;
 
-
 // Basic scalar type conversions
 
 inline Double int2double(Int x) { return x; }
@@ -65,6 +64,16 @@ inline Int string2int(const string& s) { if (s.size() == 0) { return 0; } else {
 inline Double string2double(const string& s) { if (s.size() == 0) { return 0.0; } else { try { return std::stod(string2std(s)); } catch (std::exception& e) { return 0.0; } } }
 inline Bool string2bool(const string& s) { return s != u"false"; }
 
+// append2string scalar types
+
+void appendEscaped(string& s, const string& x);
+
+template<typename T> void append2string(string& s, T v) { v->append2string(s); }
+template<> inline void append2string<Void>(string& s, Void v) { s.append(u"{}"); }
+template<> inline void append2string<Int>(string& s, Int v) { s.append(int2string(v)); }
+template<> inline void append2string<Bool>(string& s, Bool v) { s.append(bool2string(v)); }
+template<> inline void append2string<Double>(string& s, Double v) { s.append(double2string(v, true)); }
+
 template<typename T>
 inline T makeDefInit() {
 	if constexpr (std::is_same_v<T, Void>) return void_value;
@@ -74,6 +83,14 @@ inline T makeDefInit() {
 	else return nullptr;
 }
 
+// compare scalar types
+/*
+template<typename T> Int compare(T v1, T v2);
+template<> inline Int compare<Void>(Void v1, Void v2) { return true; }
+template<> inline Int compare<Bool>(Bool v1, Bool v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+template<> inline Int compare<Int>(Int v1, Int v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+template<> inline Int compare<Double>(Double v1, Double v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+*/
 struct RcBase;
 struct Flow;
 

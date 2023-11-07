@@ -39,6 +39,11 @@ struct StructDef {
 };
 
 struct RTTI {
+	/*template<int T, typename... As>
+	constexpr TypeId structIdx() {
+
+	}*/
+
 	static const string& typeName(TypeId id) {
 		if (id < 0) return type_names[0]; else
 		if (id < structTypeIdOffset) return type_names[id + 1]; else

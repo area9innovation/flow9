@@ -17,6 +17,9 @@ struct Native : public Flow {
 	Native& operator = (Native&& r) = delete;
 	Native& operator = (const Native& r) = delete;
 
+	void append2string(string& s) override {
+		s.append(u"<native>");
+	}
 	TypeId typeId() const override { return TypeFx::NATIVE; }
 
 	template<typename... As> static Native* make(As... as) {
@@ -55,5 +58,7 @@ private:
 	std::function<void()> cleanup_;
 	std::any val_;
 };
+
+//template<> inline Int compare<Native*>(Native* v1, Native* v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
 
 }

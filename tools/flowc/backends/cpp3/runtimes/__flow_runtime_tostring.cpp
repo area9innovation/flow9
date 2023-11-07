@@ -2,7 +2,7 @@
 
 namespace flow {
 
-void appendEscaped(string& str, const string& x) {
+/*void appendEscaped(string& str, const string& x) {
 	for (char16_t c : x) {
 		switch (c) {
 			case '"':  str.append(u"\\\""); break;
@@ -13,8 +13,9 @@ void appendEscaped(string& str, const string& x) {
 			default: str += c; break;
 		}
 	}
-}
+}*/
 
+/*
 inline void flow2stringComponents(Flow* v, string& str, Int i) {
 	if (i > 0) {
 		str.append(u", ");
@@ -71,5 +72,5 @@ void flow2string(Flow* v, string& str) {
 		}
 	}
 }
-
+*/
 }

@@ -41,6 +41,9 @@ struct Fun : public Flow {
 	}
 
 	// general interface
+	void append2string(string& s) override {
+		s.append(u"<function>");
+	}
 	TypeId typeId() const override { return TYPE; }
 	Int componentSize() const override {
 		return static_cast<Int>(closure_.size());
@@ -96,5 +99,10 @@ private:
 	Fn fn_;
 	std::vector<Flow*> closure_;
 };
+
+//template<typename R, typename... As>
+//inline Int compare<Fun<R, As...>*>(Fun<R, As...>* v1, Fun<R, As...>* v2) {
+//	return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0);
+//}
 
 }

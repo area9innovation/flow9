@@ -75,4 +75,27 @@ string int2string(Int __val) noexcept {
     return __str;
 }
 
+void appendEscaped(string& s, const string& x) {
+	for (char16_t c : x) {
+		switch (c) {
+			case '"':  s.append(u"\\\""); break;
+			case '\\': s.append(u"\\\\"); break;
+			case '\n': s.append(u"\\n");  break;
+			case '\t': s.append(u"\\t");  break;
+			case '\r': s.append(u"\\r");  break;
+			default: s += c; break;
+		}
+	}
+}
+/*
+template<> void append2string<Void>(string& s, Void v) { s.append(u"{}"); }
+template<> void append2string<Int>(string& s, Int v) { s.append(int2string(v)); }
+template<> void append2string<Bool>(string& s, Bool v) { s.append(bool2string(v)); }
+template<> void append2string<Double>(string& s, Double v) { s.append(double2string(v)); }
+
+template<> Int compare<Void>(Void v1, Void v2) { return true; }
+template<> Int compare<Bool>(Bool v1, Bool v2)  { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+template<> Int compare<Int>(Int v1, Int v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+template<> Int compare<Double>(Double v1, Double v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
+*/
 }

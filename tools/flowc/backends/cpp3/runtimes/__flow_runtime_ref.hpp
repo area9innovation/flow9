@@ -36,6 +36,10 @@ struct Ref : public Flow {
 	}
 
 	// general interface
+	void append2string(string& s) override {
+		s.append(u"ref ");
+		flow::append2string<T>(s, val_);
+	}
 	TypeId typeId() const override { return TypeFx::REF; }
 	Int componentSize() const override { return 1; }
 	TypeId componentTypeId(Int i) override {
@@ -96,5 +100,10 @@ private:
 	Ref(Ref&& r): val_(std::move(r.val_)) { }
 	T val_;
 };
+
+//template<typename T>
+//inline Int compare<Ref<T>*>(Ref<T>* v1, Ref<T>* v2) {
+//	return compare<T>(v1->get(), v2->get());
+//}
 
 }

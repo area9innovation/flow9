@@ -1,9 +1,6 @@
 #pragma once
 
 #include "__flow_runtime_refcounter.hpp"
-#include "__flow_runtime_memory.hpp"
-
-// C++ runtime for flow
 
 namespace flow {
 
@@ -15,17 +12,17 @@ namespace flow {
 */
 
 template<typename T1, typename T2> T2 castRc(T1 x);
-template<typename T> Int compareRc(T v1, T v2);
+
 template<typename T> Int compare(T v1, T v2);
+template<typename T> Int compareRc(T v1, T v2) { Int ret = compare(v1, v2); decRc(v1); decRc(v2); return ret; }
 template<typename T> inline Bool equalRc(T v1, T v2) { Int c = compareRc(v1, v2); return c == 0; }
 template<typename T> inline Bool equal(T v1, T v2) { Int c = compare(v1, v2); return c == 0; }
-template<typename T> inline String* toStringRc(T v);
-template<typename T> inline String* toString(T v);
-template<typename T> inline void toStringRc(T v, string& str);
-template<typename T> inline void toString(T v, string& str);
-template<typename T> inline T makeDefVal();
-template<typename S, typename T> inline S hashRc(T v);
+
+template<typename T> inline void toStringRc(T v, string& s) { append2string(s, v); decRc(v); }
+template<typename T> inline void toString(T v, string& s) { append2string(s, v); }
+
 template<typename S, typename T> inline S hash(T v);
+template<typename S, typename T> inline S hashRc(T v) { S ret = hash(v); decRc(v); return ret; }
 template<typename T> inline void assignRc(T& to, T what) {
 	if constexpr (is_flow_ancestor_v<T>) {
 		T old = to;
@@ -41,9 +38,9 @@ template<typename T> inline void assignRc(T& to, T what) {
 // This function is for debugging purposes only! Doesn't cleanp v!
 template<typename T>
 inline std::string toStdString(T v) {
-	string str;
-	toString(v, str);
-	return string2std(str);
+	string s;
+	append2string(s, v);
+	return string2std(s);
 }
 
 template<typename S, typename T> struct Hash;
@@ -55,8 +52,8 @@ struct Flow: public RcBase {
 	virtual ~Flow() { }
 	//virtual void destroy() = 0;
 
-	//virtual String* toString() = 0;
-	//virtual Int compare() = 0;
+	virtual void append2string(string&) = 0;
+	//virtual Int compare(Flow*) = 0;
 
 	virtual TypeId typeId() const = 0;
 	virtual Int componentSize() const { return 0; }
@@ -99,6 +96,7 @@ struct Flow: public RcBase {
 struct FVoid : public Flow {
 	enum { TYPE = TypeFx::VOID };
 	void destroy() override { this->~FVoid(); }
+	void append2string(string& s) override { flow::append2string<Void>(s, void_value); }
 	static FVoid* make() { return new(Memory::alloc<FVoid>()) FVoid(); }
 	TypeId typeId() const override { return TypeFx::VOID; }
 };
@@ -106,6 +104,7 @@ struct FInt : public Flow {
 	enum { TYPE = TypeFx::INT };
 	FInt(Int v): val(v) {}
 	void destroy() override { this->~FInt(); }
+	void append2string(string& s) override { flow::append2string<Int>(s, val); }
 	static FInt* make(Int v) { return new(Memory::alloc<FInt>()) FInt(v); }
 	TypeId typeId() const override { return TypeFx::INT; }
 	Int val;
@@ -114,6 +113,7 @@ struct FBool : public Flow {
 	enum { TYPE = TypeFx::BOOL };
 	FBool(Bool v): val(v) {}
 	void destroy() override { this->~FBool(); }
+	void append2string(string& s) override { flow::append2string<Bool>(s, val); }
 	static FBool* make(Bool v) { return new(Memory::alloc<FBool>()) FBool(v); }
 	TypeId typeId() const override { return TypeFx::BOOL; }
 	Bool val;
@@ -122,6 +122,7 @@ struct FDouble : public Flow {
 	enum { TYPE = TypeFx::DOUBLE };
 	FDouble(Double v): val(v) {}
 	void destroy() override { this->~FDouble(); }
+	void append2string(string& s) override { flow::append2string<Double>(s, val); }
 	static FDouble* make(Double v) { return new(Memory::alloc<FDouble>()) FDouble(v); }
 	TypeId typeId() const override { return TypeFx::DOUBLE; }
 	Double val;

@@ -99,6 +99,16 @@ struct Vec : public Flow {
 	iterator end(){ return vec_.end(); }
 
 	// general interface
+	void append2string(string& s) override {
+		s.append(u"[");
+		for (Int i = 0; i < size(); ++i) {
+			if (i > 0) {
+				s.append(u", ");
+			}
+			flow::append2string(s, get(i));
+		}
+		s.append(u"]");
+	}
 	TypeId typeId() const override { return TYPE; }
 	Int componentSize() const override { 
 		return static_cast<Int>(vec_.size()); 
@@ -217,5 +227,21 @@ private:
 	static Vec* makeSingleton() { static Vec x; x.makeConstantRc(); return &x; }
 	std::vector<T> vec_;
 };
-
+/*
+template<typename T>
+inline Int compare<Vec<T>*>(Vec<T>* v1, Vec<T>* v2) {
+	Int c1 = compare<Int>(v1->size(), v2->size());
+	if (c1 != 0) {
+		return c1;
+	} else {
+		for (Int i = 0; i < v1->size(); ++ i) {
+			Int c2 = compare<T>(v1->get(i), v2->get(i));
+			if (c2 != 0) {
+				return c2;
+			}
+		}
+		return 0;
+	}
+}
+*/
 }

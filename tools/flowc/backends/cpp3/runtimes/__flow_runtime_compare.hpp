@@ -5,7 +5,7 @@
 namespace flow {
 
 // General comparison functions
-
+/*
 Int flowCompare(Flow* v1, Flow* v2);
 
 inline Int flowCompareRc(Flow* v1, Flow* v2) {
@@ -13,13 +13,15 @@ inline Int flowCompareRc(Flow* v1, Flow* v2) {
 	decRc(v1); decRc(v2);
 	return c;
 }
-
+*/
+/*
 template<typename T>
 inline Int compareRc(T v1, T v2) {
 	Int ret = compare(v1, v2);
 	decRc(v1); decRc(v2);
 	return ret;
 }
+*/
 
 template<typename T>
 inline Int compare(T v1, T v2) {
@@ -52,7 +54,7 @@ inline Int compare(T v1, T v2) {
 	} else if constexpr (is_union_v<T>) {
 		return v1->compareWithFlow(v2);
 	} else if constexpr (is_flow_ancestor_v<T>) {
-		return flowCompare(v1, v2);
+		return compare<void*>(v1, v2);
 	} else {
 		fail("illegal compare type: " + type2StdString<T>());
 		return 0;

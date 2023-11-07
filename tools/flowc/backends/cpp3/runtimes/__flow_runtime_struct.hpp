@@ -40,6 +40,12 @@ struct Str : public Union {
 	Str& operator = (const Str& r) = delete;
 
 	// general interface
+	void append2string(string& s) override {
+		s.append(RTTI::typeName(TYPE));
+		s.append(u"(");
+		append2stringArgs<0>(s);
+		s.append(u")");
+	}
 	TypeId typeId() const override { return TYPE; }
 	Int componentSize() const override { return sizeof...(Fs); }
 	TypeId componentTypeId(Int i) override {
@@ -301,6 +307,16 @@ private:
 			toStringArgs<i + 1>(str);
 		}
 	}
+	template<Int i>
+	void append2stringArgs(string& str) {
+		if constexpr(i < SIZE) {
+			if constexpr (i > 0) {
+				str.append(u", ");
+			}
+			flow::append2string(str, get<i>());
+			append2stringArgs<i + 1>(str);
+		}
+	}
 	template<typename S, Int i>
 	void hashCalcArgs(S& h) {
 		if constexpr(i < SIZE) {
@@ -310,5 +326,10 @@ private:
 	}
 	Fields fields;
 };
+
+//template<TypeId Id, typename... Fs>
+//inline Int compare(Str<Id, Fs...>* v1, Str<Id, Fs...>* v2) {
+//	return v1->compare(v2);
+//}
 
 }

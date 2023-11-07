@@ -6,13 +6,23 @@ namespace flow {
 
 // Convert any value to string
 
-void flow2string(Flow* v, string& str);
-
+//void flow2string(Flow* v, string& str);
+/*
 inline String* flow2stringRc(Flow* f) {
 	string os; 
-	flow2string(f, os);
+	//flow2string(f, os);
+	append2string(os, f);
 	decRc(f);
 	return String::make(std::move(os));
+}
+*/
+/*
+template<typename T>
+inline String* toString(T v) {
+	string s;
+	//toString(v, str);
+	append2string(s, v);
+	return String::make(std::move(s));
 }
 
 template<typename T>
@@ -22,16 +32,9 @@ inline String* toStringRc(T v) {
 	decRc(v);
 	return String::make(std::move(str));
 }
-
-template<typename T>
-inline String* toString(T v) {
-	string str;
-	toString(v, str);
-	return String::make(std::move(str));
-}
-
-void appendEscaped(string& str, const string& x);
-
+*/
+//void appendEscaped(string& str, const string& x);
+/*
 template<typename T>
 inline void toString(T v, string& str) {
 	if constexpr (std::is_same_v<T, Void>) { str.append(u"{}"); }
@@ -67,5 +70,5 @@ inline void toString(T v, string& str) {
 		fail("illegal toString type" + type2StdString<T>());
 	}
 }
-
+*/
 }

@@ -109,11 +109,6 @@ template<typename S, typename T> struct Hash {
 	}
 };
 
-template<typename S, typename T> inline S hashRc(T v) {
-	S ret = Hash<S, T>::hash(v);
-	decRc(v);
-	return ret;
-}
 template<typename S, typename T> inline S hash(T v) {
 	return Hash<S, T>::hash(v);
 }

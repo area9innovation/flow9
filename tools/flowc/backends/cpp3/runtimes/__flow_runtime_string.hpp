@@ -66,6 +66,11 @@ struct String : public Flow {
 			return s;
 		}
 	}
+	void append2string(string& s) override {
+		s.append(u"\"");
+		appendEscaped(s, str_);
+		s.append(u"\"");
+	}
 	TypeId typeId() const override { return TypeFx::STRING; }
 	
 	std::string toStd() const { return string2std(str_); }
@@ -96,6 +101,7 @@ struct String : public Flow {
 		FString(String* v): val_(v) { }
 		~FString() { decRc(val_); }
 		void destroy() override { this->~FString(); }
+		void append2string(string& s) override { val_->append2string(s); }
 		static FString* make(String* v) { return new(Memory::alloc<FString>()) FString(v); }
 		TypeId typeId() const override { return TypeFx::STRING; }
 		String* val() { return val_; }
@@ -119,5 +125,9 @@ private:
 	static String* makeSingleton() { static String es; es.makeConstantRc(); return &es; }
 	string str_;
 };
+
+template<typename T> inline String* toStringRc(T v) { string s; append2string(s, v); decRc(v); return String::make(std::move(s)); }
+template<typename T> inline String* toString(T v) { string s; append2string(s, v); return String::make(std::move(s)); }
+//template<> inline Int compare<String*>(String* v1, String* v2) { return v1->str().compare(v2->str()); }
 
 }
