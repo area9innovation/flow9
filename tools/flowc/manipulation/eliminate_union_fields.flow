@@ -4,9 +4,6 @@ import string_utils;
 
 export {
 
-// Make explicit cast of a switch variable to all particular cases.
-fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp;
-
 // Expand calls of common field of a struct in some unions to switch with individual 
 // structs.
 fiEliminateUnionFields(expr : FiExp, names: FiGlobalNames, local: int) -> FiExp;
@@ -231,98 +228,6 @@ fiEliminateUnionFields(e : FiExp, names: FiGlobalNames, local: int) -> FiExp {
 			FiUnsafe(e with fallback = elim(ex));
 		}
 		FiVar(__,__, __): e;
-		FiVoid(__):       e;
-		FiDouble(__,__):  e;
-		FiInt(__,__):     e;
-		FiString(__,__):  e;
-		FiBool(__,__):    e;
-	}
-}
-
-fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
-	ex_cast = \x -> fiExplicitCastInSwitch(x, names);
-	switch (e) {
-		FiLambda(__, body,__, __): {
-			FiLambda(e with body = ex_cast(body));
-		}
-		FiCall(fn, args,__,__): {
-			FiCall(e with
-				f = ex_cast(fn),
-				args = map(args, ex_cast)
-			);
-		}
-		FiLet(__, __,e1, e2,__, __): {
-			FiLet(e with
-				e1 = ex_cast(e1),
-				e2 = ex_cast(e2)
-			);
-		}
-		FiIf(e1, e2, e3,__, __): {
-			FiIf(e with
-				e1 = ex_cast(e1),
-				e2 = ex_cast(e2),
-				e3 = ex_cast(e3)
-			);
-		}
-		FiSwitch(var, vtype, cases, type, start): {
-			do_switch = \ -> {
-				FiSwitch(e with 
-					cases = map(cases, \c -> {
-						if (c.struct == "default") {
-							FiCase(c with body = ex_cast(c.body));
-						} else {
-							switch (lookupTree(names.structs, c.struct)) {
-								Some(struct): {
-									typars_instances = fiMatchTyparsOrdered(FiTypeName(struct.name, struct.typars), vtype);
-									case_type = FiTypeName(struct.name, typars_instances);
-									FiCase(c with body = 
-										fiReplaceVar(ex_cast(c.body), var.name, FiCast(var, vtype, case_type, case_type, start))
-									);
-								}
-								None(): {
-									fail0("all switch cases must be structs, met: " + toStringFormatted(c));
-								}
-							}
-						}
-					})
-				);
-			}
-			switch (vtype) {
-				FiTypeName(typename, __): {
-					if (containsKeyTree(names.unions, typename)) {
-						do_switch();
-					} else {
-						switch (find(cases, \c -> c.struct == typename)) {
-							Some(c): {
-								ex_cast(c.body);
-							}
-							None(): {
-								fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
-							}
-						}
-					}
-				}
-				default: {
-					do_switch();
-				}
-			}
-		}
-		FiCast(ex, __, __, __, __): {
-			FiCast(e with e = ex_cast(ex));
-		}
-		FiSeq(es,__,__): {
-			FiSeq(e with es = map(es, ex_cast));
-		}
-		FiCallPrim(__, es,__,__): {
-			FiCallPrim(e with es = map(es, ex_cast));
-		}
-		FiRequire(__, ex,__,__): {
-			FiRequire(e with e = ex_cast(ex));
-		}
-		FiUnsafe(__, ex,__,__): {
-			FiUnsafe(e with fallback = ex_cast(ex));
-		}
-		FiVar(name,__, __): e;
 		FiVoid(__):       e;
 		FiDouble(__,__):  e;
 		FiInt(__,__):     e;

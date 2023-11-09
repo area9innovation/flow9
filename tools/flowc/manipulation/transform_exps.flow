@@ -45,7 +45,7 @@ will expand to
 fiRemoveUnusedVars(e : FiExp, effects : FiEffects) -> FiExp;
 
 // Make explicit cast of a switch variable to all particular cases.
-fiExplicitCastInSwitch1(e : FiExp, names: FiGlobalNames) -> FiExp;
+fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp;
 
 // Rename enclosed same var name in recurring FiLet.
 /* Example: here rettype is recurring, i.e. needs renaming in the inner scope
@@ -268,51 +268,75 @@ fiRemoveUnusedVars(e : FiExp, effects : FiEffects) -> FiExp {
 	);
 }
 
-fiExplicitCastInSwitch1(e : FiExp, names: FiGlobalNames) -> FiExp {
+fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
 	mapFiExp(e, \x -> 
 		switch (x) {
 			FiSwitch(var, vtype, cases, type, start): {
-				do_switch = \ -> {
-					FiSwitch(x with 
+				do_switch = \struct_resolver -> {
+					FiSwitch(x with
 						cases = map(cases, \c -> {
 							if (c.struct == "default") c else {
-								switch (lookupTree(names.structs, c.struct)) {
-									Some(struct): {
-										is_var = \y, nm -> switch (y) {
-											FiVar(z,__,__): if (z == nm) Some(y) else None();
-											default: None();
-										}
-										spec_var = var.name + "__spec";
-										if (isNone(fiFindInExpr(c.body, \y -> is_var(y, var.name)))) {
-											// No variable in the body at all
-											c;
-										} else if (isSome(fiFindInExpr(c.body, \y -> is_var(y, spec_var)))) {
-											// Cast is already done
-											c;
-										} else { 
-											typars_instances = fiMatchTyparsOrdered(FiTypeName(struct.name, struct.typars), vtype);
-											case_type = FiTypeName(struct.name, typars_instances);
-											FiCase(c with body = 
-												FiLet(spec_var, case_type, 
-													FiCast(var, vtype, case_type, case_type, start),
-													fiReplaceVar(c.body, var.name, FiVar(spec_var, case_type, 0)),
-													fiExpType(c.body), c.body.start
-												)
-											);
-										}
-									}
-									None(): {
-										fail0("all switch cases must be structs, met: " + toStringFormatted(c));
-									}
+								is_var = \y, nm -> switch (y) {
+									FiVar(z,__,__): if (z == nm) Some(y) else None();
+									default: None();
+								}
+								spec_var = var.name + "__spec";
+								if (isNone(fiFindInExpr(c.body, \y -> is_var(y, var.name)))) {
+									// No variable in the body at all
+									c;
+								} else if (isSome(fiFindInExpr(c.body, \y -> is_var(y, spec_var)))) {
+									// Cast is already done
+									c;
+								} else {
+									case_type = struct_resolver(c.struct);
+									FiCase(c with body = 
+										FiLet(spec_var, case_type, 
+											FiCast(var, vtype, case_type, case_type, start),
+											fiReplaceVar(c.body, var.name, FiVar(spec_var, case_type, 0)),
+											fiExpType(c.body), c.body.start
+										)
+									);
 								}
 							}
 						})
 					);
 				}
 				switch (vtype) {
-					FiTypeName(typename, __): {
+					FiTypeName(typename, typars): {
 						if (containsKeyTree(names.unions, typename)) {
-							do_switch();
+							union = lookupTreeDef(names.unions, typename, FiTypeUnion("", [], [], 0));
+							if (length(union.typeparameters) != length(typars)) {
+								fail("Union " + typename + " type parameters number mismatch: must be " + i2s(length(union.typeparameters)) + 
+									" while actual is: " + i2s(length(union.typeparameters))
+								);
+							}
+							/*
+								Un<?, ??, ???> ::= ... Str<??, string> ...
+								Str(a: ?, b: ??);
+
+								switch (Un<??, int, ?>) {
+									Str():
+								}
+
+								union  typars:[FiTypeParameter("??"), FiTypeInt(), FiTypeParameter("?")]
+								sub:
+									? => ??
+									?? => int
+									??? =? ?
+								struct typars:[FiTypeParameter("??"), FiTypeString()]
+								sub(struct typars): struct[FiTypeInt(), FiTypeString()]
+
+									RESULT: struct[FiTypeInt(), FiTypeString()]
+							*/
+							union_types = values2tree(union.typenames, \tn -> tn.name);
+							sub = foldi(union.typeparameters, makeTree(), \i, acc, tp -> switch (tp) {
+								FiTypeParameter(n): setTree(acc, n, typars[i]);
+								default: acc;
+							});
+							do_switch(\struct_name -> {
+								struct = lookupTreeDef(union_types, struct_name, FiTypeName("", []));
+								fiSubstituteTypars(struct, sub);
+							});
 						} else {
 							switch (find(cases, \c -> c.struct == typename)) {
 								Some(c): {
@@ -325,7 +349,14 @@ fiExplicitCastInSwitch1(e : FiExp, names: FiGlobalNames) -> FiExp {
 						}
 					}
 					default: {
-						do_switch();
+						do_switch(\struct_name -> eitherMap(
+							lookupTree(names.structs, struct_name),
+							\struct -> {
+								typars_instances = fiMatchTyparsOrdered(FiTypeName(struct.name, struct.typars), vtype);
+								FiTypeName(struct_name, typars_instances);
+							},
+							FiTypeName("", [])
+						));
 					}
 				}
 			}
@@ -686,7 +717,7 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 			);
 			fiMakeCast(x1, type, t);
 		}
-		FiCallPrim(op, es, type,__): {
+		FiCallPrim(op, es, type, s): {
 			def_case = \ -> fiMakeCast(
 				FiCallPrim(x with es = map(es, \y -> fiExpMakeCastsExplicit(y, fiExpType(y), names))), 
 				type, t
@@ -698,19 +729,23 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 						es = map(es, \y -> fiExpMakeCastsExplicit(y, tp, names)),
 						type = t
 					);
+					mtyped_case = \mtp, defval -> switch (mtp) {
+						Some(tp): typed_case(tp);
+						None(): defval();
+					}
 					switch (op) {
 						FcOrPrim():  def_case();
 						FcAndPrim(): def_case();
 						FcNotPrim(): def_case();
 
-						FcEqPrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-						FcNePrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-						FcLePrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-						FcGePrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-						FcLtPrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
-						FcGtPrim():  typed_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
+						FcEqPrim():  mtyped_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names), \-> FiBool(false, s));
+						FcNePrim():  mtyped_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names), \-> FiBool(true, s));
+						FcLePrim():  mtyped_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names), \-> FiBool(false, s));
+						FcGePrim():  mtyped_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names), \-> FiBool(false, s));
+						FcLtPrim():  mtyped_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names), \-> FiBool(false, s));
+						FcGtPrim():  mtyped_case(fiTypeUpperBoundary(fiExpType(es[0]), fiExpType(es[1]), names), \-> FiBool(false, s));
 
-						FcPlusPrim():  typed_case(fiTypeLowerBoundary(fiExpType(es[0]), fiExpType(es[1]), names));
+						FcPlusPrim():  mtyped_case(fiTypeLowerBoundary(fiExpType(es[0]), fiExpType(es[1]), names), \-> fail0("+ operatos must have same type"));
 						FcMinusPrim(): def_case();
 						FcMulPrim():   def_case();
 						FcDivPrim():   def_case();
@@ -1960,6 +1995,12 @@ fiCorrectStructFieldTypes(e: FiExp, names: FiGlobalNames) -> FiExp {
 						FiTypeName(tp_name, typars): {
 							switch (lookupTree(names.structs, tp_name)) {
 								Some(s): {
+									if (length(tp.typeparameters) != length(s.typars)) {
+										fail("length of struct typeparameters mismatch with length of typename typeparameters: " + i2s(length(s.typars)) + " != " + i2s(length(tp.typeparameters)) + " (length(tn.typeparameters))\n" +
+											"struct: " + pretFiStructOrUnion(s) + ", typename: " + pretFiType(tp) + "\n" +
+											"expr\n" + pretFiExp(x)
+ 										);
+									}
 									spec = fiSpecializeStruct(tp, s);
 									switch (find(spec.args, \arg -> arg.name == field)) {
 										Some(arg): {
@@ -2238,48 +2279,3 @@ fiComparisonWithConst(e: FiExp, const_cmp_max_size: int) -> FiExp {
 		default: x;
 	}, true);
 }
-/*
-fiExpLiftLambdas(e: FiExp, fn: string) -> Pair<FiExp, [Pair<FiFunctionDec, FiTypeStruct>]> {
-	//fiMapExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp;
-	lambdas = ref [];
-	Pair(fiMapExp(e, \x, env -> switch (x) {
-		FiLambda(args, body, type, s): {
-			free_vars = fifreevars(x);
-			local_vars = buildSet(getTreeKeys(env.locals));
-			closure = map(set2array(intersectSets(free_vars, local_vars)), \v -> 
-				switch (lookupTree(env.locals, v)) {
-					Some(var): FiFunArg(v, var.type);
-					None(): {
-						fail0("variable " + v + " is missing from locals: [" + strGlue(getTreeKeys(env.locals), ", ") +"]");
-					}
-				}
-			);
-			closure_type = FiTypeFunction(type with args = concat(type.args, closure));
-			closure_name = fn + "_lambda_" + i2s(length(^lambdas));
-			refArrayPush(lambdas,
-				Pair(
-					FiFunctionDec(closure_name,
-						if (length(closure) == 0) x else FiLambda(concat(args, closure), body, closure_type, s),
-						closure_type,
-						s, s
-					),
-					FiTypeStruct()
-				)
-			);
-			if (length(closure) == 0) {
-				FiVar(closure_name, type, s);
-			} else {
-				FiCallPrim(
-					FcStructPrim("__Closure_" + i2s(length(closure))),
-					concat([FiString(closure_name, s)], map(closure, \d -> FiVar(d.name, d.type, s))),
-					type, s
-				);
-			}
-		}
-		FiCall(fn, args, type, s): {
-
-		}
-		default: x;
-	}, true), ^lambdas);
-}
-*/

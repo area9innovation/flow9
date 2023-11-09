@@ -26,12 +26,11 @@ struct Str : public Union {
 	template<typename S>
 	static S makeOrReuse(S s, Fs... fs) {
 		if (s == nullptr || isConstatntObj(s)) {
-			//return new(MemoryPool::allocSize<S>()) std::remove_pointer_t<S>(std::move(fs)...);
 			return make<S>(std::move(fs)...);
 		} else {
 			s->template decRcFields<0>();
 			s->fields = std::tie(fs...);
-			s->makeUnitRc(); // rc_ = 1;
+			s->makeUnitRc();
 			return s;
 		}
 	}
