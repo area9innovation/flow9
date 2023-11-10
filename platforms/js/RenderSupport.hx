@@ -4098,7 +4098,7 @@ class RenderSupport {
 	}
 
 	public static function setWebClipDisabled(clip : WebClip, disabled : Bool) : Void {
-		clip.setDisableOverlay(disabled);
+		clip.setDisabled(disabled);
 	}
 
 	public static function setWebClipNoScroll(clip : WebClip) : Void {
@@ -4291,6 +4291,10 @@ class RenderSupport {
 			return getClipPixiStage(untyped clip.parentClip);
 		}
 		return null;
+	}
+
+	public static function getHadUserInteracted() : Bool {
+		return hadUserInteracted;
 	}
 }
 
