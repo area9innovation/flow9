@@ -23,7 +23,11 @@ struct Native : public Flow {
 	TypeId typeId() const override { return TypeFx::NATIVE; }
 
 	template<typename... As> static Native* make(As... as) {
-		return new(Memory::alloc<Native>()) Native(as...);
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<Native>()) Native(as...);
+		} else {
+			return new Native(as...);
+		}
 	}
 	template<typename T> bool castsTo() {
 		try {

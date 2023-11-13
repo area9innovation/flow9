@@ -82,7 +82,8 @@ void appendEscaped(string& s, const string& x) {
 			case '\\': s.append(u"\\\\"); break;
 			case '\n': s.append(u"\\n");  break;
 			case '\t': s.append(u"\\t");  break;
-			case '\r': s.append(u"\\r");  break;
+			//case '\r': s.append(u"\\r");  break;
+			case '\r': s.append(u"\\u000d");  break;
 			default: s += c; break;
 		}
 	}

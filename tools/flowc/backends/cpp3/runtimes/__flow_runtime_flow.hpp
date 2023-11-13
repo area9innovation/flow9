@@ -97,7 +97,13 @@ struct FVoid : public Flow {
 	enum { TYPE = TypeFx::VOID };
 	void destroy() override { this->~FVoid(); }
 	void append2string(string& s) override { flow::append2string<Void>(s, void_value); }
-	static FVoid* make() { return new(Memory::alloc<FVoid>()) FVoid(); }
+	static FVoid* make() {
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<FVoid>()) FVoid();
+		} else {
+			return new FVoid();
+		}
+	}
 	TypeId typeId() const override { return TypeFx::VOID; }
 };
 struct FInt : public Flow {
@@ -105,7 +111,13 @@ struct FInt : public Flow {
 	FInt(Int v): val(v) {}
 	void destroy() override { this->~FInt(); }
 	void append2string(string& s) override { flow::append2string<Int>(s, val); }
-	static FInt* make(Int v) { return new(Memory::alloc<FInt>()) FInt(v); }
+	static FInt* make(Int v) {
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<FInt>()) FInt(v);
+		} else {
+			return new FInt(v);
+		}
+	}
 	TypeId typeId() const override { return TypeFx::INT; }
 	Int val;
 };
@@ -114,7 +126,13 @@ struct FBool : public Flow {
 	FBool(Bool v): val(v) {}
 	void destroy() override { this->~FBool(); }
 	void append2string(string& s) override { flow::append2string<Bool>(s, val); }
-	static FBool* make(Bool v) { return new(Memory::alloc<FBool>()) FBool(v); }
+	static FBool* make(Bool v) {
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<FBool>()) FBool(v);
+		} else {
+			return new FBool(v);
+		}
+	}
 	TypeId typeId() const override { return TypeFx::BOOL; }
 	Bool val;
 };
@@ -123,7 +141,13 @@ struct FDouble : public Flow {
 	FDouble(Double v): val(v) {}
 	void destroy() override { this->~FDouble(); }
 	void append2string(string& s) override { flow::append2string<Double>(s, val); }
-	static FDouble* make(Double v) { return new(Memory::alloc<FDouble>()) FDouble(v); }
+	static FDouble* make(Double v) {
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<FDouble>()) FDouble(v);
+		} else {
+			return new FDouble(v);
+		}
+	}
 	TypeId typeId() const override { return TypeFx::DOUBLE; }
 	Double val;
 };

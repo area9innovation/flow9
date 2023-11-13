@@ -61,10 +61,18 @@ struct Vec : public Flow {
 	}
 	template<typename A>
 	static Vec* make(A a) {
-		return new(Memory::alloc<Vec>()) Vec(std::move(a));
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<Vec>()) Vec(std::move(a));
+		} else {
+			return new Vec(std::move(a));
+		}
 	}
 	static Vec* make(std::initializer_list<T>&& il) {
-		return new(Memory::alloc<Vec>()) Vec(std::move(il));
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<Vec>()) Vec(std::move(il));
+		} else {
+			return new Vec(std::move(il));
+		}
 	}
 
 	static Vec* makeOrReuse(Vec* v) {

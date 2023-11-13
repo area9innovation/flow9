@@ -34,6 +34,7 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 			|> fiFlattenUnions
 			|> fiRemoveImplicitStructTypars
 			//|> (\p -> fiSetImplicitStructTypars(p, FiTypeString()))
+			//|> fiTurnPolymorphicGlobalVars2ConstFuncs
 			|> fiWasmWrapFuncArgs
 			|> fiProgramAddPolymorphicStructsCasts
 			|> fiRemoveSigletonSeqences
@@ -170,10 +171,10 @@ cpp3MainFunc(gctx: Cpp3GlobalContext, init_strings: [string], runtime_parts: [Cp
 	struct_defs = cpp3StructDefs(gctx);
 	cleanup = "void flow::cleanupAtExit() {" + ("\t" + if (dec_vars == "") " " else "\n" + strIndent(dec_vars) + "\n") + "}\n\n";
 
-"
-using namespace flow;
-using namespace std::string_literals;
-using namespace " + gctx.config.namespace + ";\n\n" +
+fiMakeUsingStatement("flow") +
+fiMakeUsingStatement("std::string_literals") +
+fiMakeUsingStatement(gctx.config.namespace) +
+"\n" +
 (if (sources == "") "" else sources + "\n") +
 struct_defs +
 cleanup + 
@@ -258,12 +259,9 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 	defs = filtermap(module.decls, \decl -> if (decl.headerOnly && decl.definition != "") Some(decl.definition) else None());
 	decl_defs = concat(decls, defs);
 
-	wrap_with_namespace = \ns, using, contents -> {
-		"namespace " + ns + " {\n" +
-			concatStrings(map(using, \us -> "using namespace " + us + ";\n")) +
-			strIndent(trim2(contents, "\n")) + "\n" +
-		"}\n"
-	}
+	wrap_with_namespace = \ns, using, contents -> fiWrapWithNamespace(ns,
+		concatStrings(map(using, fiMakeUsingStatement)) + strIndent(trim2(contents, "\n")), 
+	);
 	"#pragma once\n" +
 	(if (includes == "") "" else includes + "\n") +
 	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
@@ -293,19 +291,18 @@ fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext
 	if (length(source_defs_cut) == 0) {
 		if (!module.isMain) [] else 
 		["#inc" + "lude \"" + module.name + ".hpp\"\n" +
-		"namespace " + gctx.config.namespace + " {\n" +
-		"using namespace std::string_literals;\n" +
-		"using namespace flow;\n\n" +
-		"}\n" + cpp3MainFunc(gctx, init, runtime_parts)];
+		fiMakeUsingStatement("std::string_literals") +
+		fiMakeUsingStatement("flow") + "\n" +
+		cpp3MainFunc(gctx, init, runtime_parts)];
 	} else {
 		mapi(source_defs_cut, \i, source_defs ->
 			if (length(source_defs) == 0 && !module.isMain) "" else {
 				"#inc" + "lude \"" + module.name + ".hpp\"\n" +
-				"namespace " + gctx.config.namespace + " {\n" +
-				"using namespace std::string_literals;\n" +
-				"using namespace flow;\n\n" + 
-				concatStrings(source_defs) + "\n" +
-				"}\n" +
+				fiWrapWithNamespace(gctx.config.namespace,
+					fiMakeUsingStatement("std::string_literals") +
+					fiMakeUsingStatement("flow") + "\n" +
+					concatStrings(source_defs)
+				) + "\n" +
 				if (i == 0 && module.isMain) cpp3MainFunc(gctx, init, runtime_parts) else "";
 			}
 		);

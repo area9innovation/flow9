@@ -20,7 +20,11 @@ struct Str : public Union {
 			static S singleton = makeSingleton<S>();
 			return singleton;
 		} else {
-			return new(Memory::alloc<S>()) std::remove_pointer_t<S>(std::move(fs)...);
+			if constexpr (use_memory_manager) {
+				return new(Memory::alloc<S>()) std::remove_pointer_t<S>(std::move(fs)...);
+			} else {
+				return new std::remove_pointer_t<S>(std::move(fs)...);
+			}
 		}
 	}
 	template<typename S>

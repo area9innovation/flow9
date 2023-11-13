@@ -10,6 +10,7 @@ struct RcBase {
 	enum { CONSTANT_OBJECT_RC = -1, UNIT_OBJECT_RC = 1};
 	using RcCounter = int32_t; // long ?
 	RcBase(): rc_(1) { }
+	virtual ~RcBase() { }
 	virtual void destroy() = 0;
 	void makeUnitRc() { rc_ = 1; }
 	void makeConstantRc() { rc_ = CONSTANT_OBJECT_RC; }
@@ -24,7 +25,11 @@ struct RcBase {
 	inline void decrementRc() {
 		if (!isConstant()) {
 			if (std::atomic_ref<RcCounter>(rc_).fetch_sub(1) == 1) {
-				Memory::destroy<T>(static_cast<T>(this));
+				if constexpr (use_memory_manager) {
+					Memory::destroy<T>(static_cast<T>(this));
+				} else {
+					delete this;
+				}
 			}
 		}
 	}
@@ -42,7 +47,11 @@ struct RcBase {
 	}
 	template<typename T>
 	inline void decrementRcFinish() {
-		Memory::destroy<T>(static_cast<T>(this));
+		if constexpr (use_memory_manager) {
+			Memory::destroy<T>(static_cast<T>(this));
+		} else {
+			delete this;
+		}
 	}
 private:
 	RcCounter rc_;

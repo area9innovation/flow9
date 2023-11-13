@@ -210,6 +210,7 @@ private:
 };
 
 constexpr bool use_memory_pool = false;
+constexpr bool use_memory_manager = false;
 
 struct Memory {
 	template<typename T>

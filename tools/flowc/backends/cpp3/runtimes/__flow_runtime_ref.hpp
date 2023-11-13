@@ -21,7 +21,11 @@ struct Ref : public Flow {
 
 	template<typename... As>
 	static Ref* make(As... as) {
-		return new(Memory::alloc<Ref>()) Ref(std::move(as)...);
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<Ref>()) Ref(std::move(as)...);
+		} else {
+			return new Ref(std::move(as)...);
+		}
 	}
 	template<typename A>
 	static Ref* makeOrReuse(Ref* r, A a) {

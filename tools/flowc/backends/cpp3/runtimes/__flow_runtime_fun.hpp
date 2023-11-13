@@ -22,7 +22,11 @@ struct Fun : public Flow {
 
 	template<typename... As1>
 	static Fun* make(As1... as) {
-		return new(Memory::alloc<Fun>()) Fun(std::move(as)...);
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<Fun>()) Fun(std::move(as)...);
+		} else {
+			return new Fun(std::move(as)...);
+		}
 	}
 	template<typename F, typename... Cs>
 	static Fun* makeOrReuse(Fun* f, F fn, Cs... cl) {

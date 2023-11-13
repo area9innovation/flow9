@@ -25,10 +25,18 @@ struct String : public Flow {
 	}
 	template<typename... As>
 	static String* make(As... as) {
-		return new(Memory::alloc<String>()) String(std::move(as)...);
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<String>()) String(std::move(as)...);
+		} else {
+			return new String(std::move(as)...);
+		}
 	}
 	static String* make(std::initializer_list<char16_t>&& codes) {
-		return new(Memory::alloc<String>()) String(std::move(codes));
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<String>()) String(std::move(codes));
+		} else {
+			return new String(std::move(codes));
+		}
 	}
 
 	static String* makeOrReuse(String* s) {
