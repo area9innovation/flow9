@@ -1174,6 +1174,9 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.addEventListener('select', onSelect);
 		}
 
+		if (Util.getParameter("debug_email_autofill") == '1') {
+			nativeWidget.oninput = function(e : Dynamic) { untyped console.log('oninput'); onInput(e); };
+		}
 		invalidateStyle();
 	}
 
@@ -1200,6 +1203,9 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		if (hasChanges) {
+			if (Util.getParameter("debug_email_autofill") == '1') {
+				untyped console.log('SOURCE 2');
+			}
 			emit('input');
 		}
 	}
@@ -1384,13 +1390,21 @@ class TextClip extends NativeWidgetClip {
 
 	private function onInput(e : Dynamic) {
 		if (Util.getParameter("debug_email_autofill") == '1') {
-			untyped console.log('onInput', e, e.data, nativeWidget.value);
+			untyped console.log('onInput', e, e.data, nativeWidget.value, this.text);
 		}
 		// On iOS in numeric mode you can still input non-number characters. They will be shown visually but wrong characters will clear 'value'.
 		// Here we are resetting visual representation to be consistent
 		if (Platform.isIOS && type == 'number' && nativeWidget.value == '') {
 			nativeWidget.value = '';
 		}
+		if (Util.getParameter("debug_email_autofill") == '1') {	
+			// Nothing changed, prevent from double handling
+			if (nativeWidget.value == this.text) {
+				untyped console.log('CHKPNT A');
+				return;
+			}
+		}
+
 		// Some browsers tend to return nativeWidget.value without decimal separator at the end, but still visually display it
 		var decimalSeparatorFix = type == 'number' && (e.data == '.' || e.data == ',');
 		var nativeWidgetValue = decimalSeparatorFix ? nativeWidget.value + e.data : nativeWidget.value;
@@ -1440,6 +1454,9 @@ class TextClip extends NativeWidgetClip {
 		this.text = newValue;
 		this.contentGlyphs = applyTextMappedModification(adaptWhitespaces(this.text));
 		this.contentGlyphsDirection = getStringDirection(this.contentGlyphs.text, this.textDirection);
+		if (Util.getParameter("debug_email_autofill") == '1') {
+			untyped console.log('SOURCE 1');
+		}
 		emit('input', newValue);
 
 		if (Platform.isAndroid) {
