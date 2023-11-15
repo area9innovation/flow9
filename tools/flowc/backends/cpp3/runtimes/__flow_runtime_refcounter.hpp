@@ -12,10 +12,11 @@ struct RcBase {
 	RcBase(): rc_(1) { }
 	virtual ~RcBase() { }
 	virtual void destroy() = 0;
-	void makeUnitRc() { rc_ = 1; }
-	void makeConstantRc() { rc_ = CONSTANT_OBJECT_RC; }
+	inline void makeUnitRc() { rc_ = 1; }
+	inline void makeConstantRc() { rc_ = CONSTANT_OBJECT_RC; }
 	inline bool isConstant() { return rc_ == CONSTANT_OBJECT_RC; }
 	inline bool isUnit() { return rc_ == UNIT_OBJECT_RC; }
+	inline RcCounter getRcVal() { return rc_; }
 	inline void incrementRc(Int d) {
 		if (!isConstant()) {
 			std::atomic_ref<RcCounter>(rc_).fetch_add(d);
