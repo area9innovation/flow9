@@ -45,7 +45,6 @@ import java.io.OutputStream;
 import java.io.InputStream;
 import java.math.BigInteger;
 import java.security.*;
-import java.text.DecimalFormat;
 import java.time.format.DateTimeFormatter;
 import java.time.LocalDateTime;
 import java.time.Instant;
@@ -2674,14 +2673,6 @@ public class Native extends NativeHost {
 		}
 		buf.append('"');
 		return buf.toString();
-	}
-
-	public static final String i2s(int value) {
-		return String.valueOf(String.valueOf(value));
-	}
-	static DecimalFormat df = new DecimalFormat("#.###############");
-	public static final String d2s(double value) {
-		return df.format(value);
 	}
 }
 
