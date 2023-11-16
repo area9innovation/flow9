@@ -1,133 +1,286 @@
 import tools/flowc/backends/cpp3/fi2cpp3_compile;
 import tools/flowc/backends/cpp3/fi2cpp3_build;
-import tools/flowc/manipulation/tail_call;
-import tools/flowc/manipulation/flatten_unions;
+import tools/flowc/backends/cpp3/fi2cpp3_transform;
+import tools/flowc/manipulation/wrap_funcs_as_args;
+
+import tools/common/stats;
 
 export {
-	fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void;
+	fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, callback : (int) -> void) -> void;
 }
 
-fi2cpp3(program : FiProgram, cfg : FiCpp3Config, callback : (int) -> void) -> void {
+fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, callback : (int) -> void) -> void {
 	if (cfg.config.verbose > 0) {
-		fcPrintln("Building a cpp3 '" + cfg.outfile + "' application ...", cfg.config.threadId);
+		fcPrintln("Building a cpp3 '" + cfg.outfile + "' application in directory '" + cfg.outputdir + "'", cfg.config.threadId);
 	}
-	compiled = fi2cpp3Compile(program, cfg);
-	if (length(compiled.errors) > 0) {
-		fcPrintln(strGlue(compiled.errors, "\n"), cfg.config.threadId);
-		callback(5);
+	compiled = fi2cpp3Compile(program, globEnv, cfg);
+	if (compiled.success) {
+		fi2cpp3Build(cfg, compiled.sources, compiled.qtDeps, callback);
 	} else {
-		fi2cpp3Build(cfg, compiled.name, compiled.sources, compiled.qtDeps, callback);
+		callback(5);
 	}
 }
 
-fi2cpp3Compile(program0 : FiProgram, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
-	natives = fiCpp3InitNativeFuncs(cfg);
-	setImplicitTypars = \prog -> fiSetImplicitStructTypars(prog, FiTypeFlow());
-	resolveNatives = \prog -> fiResolveNatives(prog, \name -> containsKeyTree(natives, name));
-	program = program0
-		|> resolveNatives
-		|> fiFlattenUnions
-		|> fiCompleteStructTypars
-		|> setImplicitTypars
-	;
-	ensureDirectoryExists(cfg.outputdir);
-	structs2ids = foldi(getTreeValues(program.names.structs), makeTree(), \i, acc, struct -> setTree(acc, struct.name, i + 8));
-	vars = filtermap(getTreeValues(program.names.toplevel), \decl -> 
-		switch (decl) {
-			FiGlobalVar(__,__,__,__,__): Some(decl);
-			default: None();
-		}
-	);
-	var_deps = varsDependencies(program);
-	volatile_vars = filter(vars, \v -> 
-		exists(cfg.volatile, \name -> v.name == name || containsSet(lookupTreeDef(var_deps, v.name, makeSet()), name))
-	);
-	gctx0 = Cpp3GlobalContext(cfg, program, 
+fi2cpp3Compile(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
+	gctx = fi2cpp3initGctx(program, globEnv, cfg);
+	cpp_natives = fiCpp3InitNativeFuncs(cfg);
+	resolved = fiResolveNatives(program, \name -> containsKeyTree(cpp_natives, name));
+	if (resolved.second != []) {
+		fcPrintln("Missing cpp3 natives: " + strGlue(resolved.second, ", "), cfg.config.threadId);
+		Cpp3CompiledProgram(program.config.flowfile, [], [], false);
+	} else {
+		program1 = resolved.first
+			|> (\p -> fiAddMandatoryNatives(p, cpp3MandatoryNatives))
+			|> fiFuncGlobalVar2Func
+			|> fiFlattenUnions
+			|> fiRemoveImplicitStructTypars
+			|> fiWasmWrapFuncArgs
+			|> fiProgramAddPolymorphicStructsCasts
+			|> fiRemoveSigletonSeqences
+		;
+		gctx1 = fi2cpp3updateGctx(program1, gctx);
+		program2 = program1
+			|> (\ p -> fi2cpp3TransformProgramExps(p, gctx1))
+			//|> fiAddThreadIdAsLastArg
+		;
+		gctx2 = fi2cpp3updateGctx(program2, gctx);
+		fi2cpp3Translate(gctx2);
+		/*program = resolved.first
+			|> (\p -> fiAddMandatoryNatives(p, cpp3MandatoryNatives))
+			|> fiFuncGlobalVar2Func
+			|> fiFlattenUnions
+			|> fiRemoveImplicitStructTypars
+			|> fiWasmWrapFuncArgs
+			|> fiProgramAddPolymorphicStructsCasts
+			|> fiRemoveSigletonSeqences
+		;
+		ensureDirectoryExists(cfg.outputdir);
+		structs = getTreeValues(program.names.structs);
+		structs2cpp = foldi(structs, makeTree(), \i, acc, struct -> 
+			setTree(acc, struct.name, 
+				Cpp3Struct(i + 9, struct, 
+					foldi(struct.args, makeTree(), \j, ac, arg -> 
+						setTree(ac, arg.name, Cpp3StructArg(j, arg.type))
+					)
+				)
+			)
+		);
+		gctx = Cpp3GlobalContext(globEnv, cfg, program, 
+			collectFiEffects(program),
+			structs,
+			structs2cpp,
+			\name -> eitherMap(lookupTree(structs2cpp, name), \str -> i2s(str.id), ""),
+			cpp_natives,
+			fiCpp3InitRuntimeParts(cfg),
+			ref true, "", None(), makeSet(), ""
+		);
+		fi2cpp3Translate(gctx);*/
+	}
+}
+
+fi2cpp3initGctx(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3GlobalContext {
+	Cpp3GlobalContext(globEnv, cfg, program,
 		collectFiEffects(program),
-		\flowfile -> strReplace(flowfile, "/", "_"),
-		structs2ids,
-		\t -> "T" + i2s(strlen(t.n)),
-		\name -> "F_" + name,
-		\name -> "f_" + name,
-		natives,
+		[],
+		makeTree(),
+		\name -> "",
+		fiCpp3InitNativeFuncs(cfg),
 		fiCpp3InitRuntimeParts(cfg),
-		buildSet(map(volatile_vars, \v -> v.name)),
-		ref [], ref [], None(), makeSet()
+		ref true, "", None(), makeSet(), ""
 	);
-	gctx = Cpp3GlobalContext(gctx0 with 
-		runtimeParts = setTree(gctx0.runtimeParts, "struct_defs", cpp3StructDefsRuntimePart(gctx0))
+}
+
+fi2cpp3updateGctx(program: FiProgram, gctx: Cpp3GlobalContext) -> Cpp3GlobalContext {
+	structs = getTreeValues(program.names.structs);
+	structs2cpp = foldi(structs, makeTree(), \i, acc, struct ->
+		setTree(acc, struct.name,
+			Cpp3Struct(i + 9, struct,
+				foldi(struct.args, makeTree(), \j, ac, arg ->
+					setTree(ac, arg.name, Cpp3StructArg(j, arg.type))
+				)
+			)
+		)
 	);
-	fi2cpp3Translate(gctx);
+	Cpp3GlobalContext(gctx with
+		program = program,
+		effects = collectFiEffects(program),
+		structs = structs,
+		structs2cpp = structs2cpp,
+		structid2cpp = \name -> eitherMap(lookupTree(structs2cpp, name), \str -> i2s(str.id), "")
+	);
 }
 
 fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
-	// The runtime fragents, which are used in a program
+	// The runtime fragments, which are used in a program
 	runtime_parts = fi2cpp3RuntimeParts(gctx);
-	fi2cpp3SaveFile("__flow_includes.hpp", fiCpp3RuntimeIncludes(gctx, runtime_parts), gctx.config);
-	fi2cpp3SaveFile("__flow_runtime.hpp", fiCpp3RuntimeHeader(gctx, runtime_parts), gctx.config);
-	fi2cpp3SaveFile("__flow_runtime.cpp", fiCpp3RuntimeSource(gctx, runtime_parts), gctx.config);
+	src_path = \name, ext -> pathCombine(gctx.config.outputdir, changeFileExt(name, ext));
+	runtime_headers = fiCpp3BaseRuntimeFiles(gctx.config, ".hpp");
+	runtime_sources = fiCpp3BaseRuntimeFiles(gctx.config, ".cpp");
+	iter(runtime_headers, \header ->
+		fi2cpp3SaveFile(
+			src_path(fileNameOnly(header), ".hpp"),
+			getFileContent(header), gctx.config
+		)
+	);
+	iter(runtime_sources, \source ->
+		fi2cpp3SaveFile(
+			src_path(fileNameOnly(source), ".cpp"),
+			getFileContent(source), gctx.config
+		)
+	);
+	fi2cpp3SaveFile(src_path("__flow_runtime", ".hpp"), fiCpp3RuntimeHeader(gctx, runtime_parts), gctx.config);
+	fi2cpp3SaveFile(src_path("__flow_runtime", ".cpp"), fiCpp3RuntimeSource(gctx, runtime_parts), gctx.config);
 
-	compiled0 = fold(gctx.program.traversal, makeTree(), \acc, name -> {
-		if (gctx.config.config.verbose > 0) {
-			fcPrintln("Compiling to cpp3: " + name, gctx.config.config.threadId);
-		}
+	do_compile_modules =  map(gctx.program.traversal, \name -> { 
 		module = lookupTreeDef(gctx.program.modules, name, dummyFiModule);
-		cpp_module = fiModule2cpp3(module, gctx);
-		setTree(acc, name, cpp_module);
+		\ -> {
+			start = fi2cpp3StartOperationMessage(gctx.config, 1, "compiling module", name);
+			fs_module = fi2cpp3TransformModule(module, gctx);
+			cpp_module = fiModule2cpp3(fs_module, gctx);
+			fi2cpp3EndOperationMessage(gctx.config, 1, "compiling module", name, start);
+			cpp_module
+		}
 	});
-	main_name = either(findInOrder(compiled0, \__, module -> if (module.isMain) Some(module.name) else None()), "");
-	compiled = if (!gctx.config.monolith) compiled0 else fi2cpp3Monolith(main_name, compiled0, gctx);
-
-	sources = list2array(fold(gctx.program.traversal, 
-		array2list(["__flow_includes.hpp", "__flow_runtime.hpp", "__flow_runtime.cpp"]), 
-		\srcs, module_name -> {
-			switch (lookupTree(compiled, module_name)) {
-				Some(module): {
-					name = module.name;
-					header = fiCompiledModule2cpp3header(module, gctx, runtime_parts);
-					fi2cpp3SaveFile(changeFileExt(name, ".hpp"), header, gctx.config);
-					srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
-					sources = fiCompiledModule2cpp3sources(module, gctx, runtime_parts);
-					if (length(sources) == 0) srcs1 else {
-						foldi(sources, srcs, \i, acc, source -> {
-							src_name = if (i == 0) name else name + "_" + i2s(i);
-							fi2cpp3SaveFile(changeFileExt(src_name, ".cpp"), source, gctx.config);
-							Cons(changeFileExt(src_name, ".cpp"), acc);
-						});
-					}
-				}
-				None(): srcs;
+	compiled0 = if (isConfigParameterFalse(gctx.program.config.config, "parallel")) {
+		sequential(true, do_compile_modules);
+	} else {
+		concurrent(true, do_compile_modules);
+	}
+	init_strings = list2array(fold(compiled0, makeList(), \acc, module ->
+		fold(module.decls, acc, \ac, decl -> if (decl.init == "") ac else Cons(decl.init, ac))
+	));
+	main_name = eitherMap(find(compiled0, \module -> module.isMain), \module -> module.name, "");
+	compiled = if (!gctx.config.monolith) compiled0 else [fi2cpp3Monolith(main_name, compiled0, gctx)];
+	sources = list2array(fold(compiled0, 
+		array2list(
+			concat3(
+				["__flow_runtime.hpp", "__flow_runtime.cpp"],
+				map(runtime_headers, \header -> fileNameOnly(header)),
+				map(runtime_sources, \source -> fileNameOnly(source)),
+			)
+		), 
+		\srcs, module -> {
+			name = module.name;
+			mod_gctx = Cpp3GlobalContext(gctx with currentModule = name);
+			header = fiCompiledModule2cpp3header(module, mod_gctx, runtime_parts);
+			header_path = src_path(name, ".hpp");
+			fi2cpp3SaveFile(header_path, header, mod_gctx.config);
+			srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
+			sources = fiCompiledModule2cpp3sources(module, mod_gctx, init_strings, runtime_parts);
+			if (length(sources) == 0) srcs1 else {
+				foldi(sources, srcs, \i, acc, source -> {
+					src_name = if (i == 0) name else name + "_" + i2s(i);
+					source_path = src_path(src_name, ".cpp");
+					fi2cpp3SaveFile(source_path, source, mod_gctx.config);
+					Cons(changeFileExt(src_name, ".cpp"), acc);
+				});
 			}
 		}
 	));
-	fi2cpp3SaveFile(gctx.config.outfile + "_sources", concatStrings(map(sources, \src -> src + "\n")), gctx.config);
+	fi2cpp3SaveFile(src_path(fileNameOnly(gctx.config.outfile) + "_sources", ""), concatStrings(map(sources, \src -> src + "\n")), gctx.config);
 	Cpp3CompiledProgram(
 		main_name,
 		sources, 
 		fi2cpp3QtDeps(compiled, gctx),
-		^(gctx.errors)
+		^(gctx.success)
 	);
 }
 
-cpp3MainFunc(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
-	init = strGlue(^(gctx.volatileInit), "\n");
+cpp3MainFunc(gctx: Cpp3GlobalContext, init_strings: [string], runtime_parts: [Cpp3RuntimePart]) -> string {
+	init = strGlue(init_strings, "\n");
+	non_scalar_vars = filtermap(getTreeValues(gctx.program.names.toplevel), \decl ->
+		switch (decl) {
+			FiGlobalVar(__,__,type,__,__): if (fiTypeIsScalar(type)) None() else Some(decl);
+			default: None();
+		}
+	);
+	show_vars = \header -> superglue(non_scalar_vars, \var -> 
+		"std::cout << \"" + header + " " + var.name + "->rc_ = \" << " + fi2cpp3varname2cpp(var.name) + "->rc_ << std::endl;",
+		"\n"
+	);
+	inc_vars = superglue(non_scalar_vars, \var -> "incRc(" + fi2cpp3varname2cpp(var.name) + ");", "\n");
 	mainInits = superglue(runtime_parts, \part -> part.mainInit, "\n");
 	mainTerms = superglue(runtime_parts, \part -> part.mainTerm, "\n");
+	dec_vars = superglue(non_scalar_vars, \var -> "decRc(" + fi2cpp3varname2cpp(var.name) + ");", "\n");
 	sources = superglue(filter(runtime_parts, \part -> part.staysInMain), \part -> part.source, "\n");
-"
-using namespace flow;
-using namespace std::string_literals;
-using namespace " + gctx.config.namespace + ";\n\n" +
+
+	struct_defs = cpp3StructDefs(gctx);
+	cleanup = "void flow::cleanupAtExit() {" + ("\t" + if (dec_vars == "") " " else "\n" + strIndent(dec_vars) + "\n") + "}\n\n";
+
+fiMakeUsingStatement("flow") +
+fiMakeUsingStatement("std::string_literals") +
+fiMakeUsingStatement(gctx.config.namespace) +
+"\n" +
 (if (sources == "") "" else sources + "\n") +
+struct_defs +
+cleanup + 
 "int main(int argc, const char* argv[]) {\n" +
-//"\talloc_stats = new AllocStats();\n" + 
-"\tinitMaxHeapSize(argc, argv);\n" +
+"\tRTTI::initStructMap();\n" + 
+"\tMemoryPool::init();\n" +
+"\tThreadPool::init(std::thread::hardware_concurrency());\n" +
 (if (mainInits == "") "" else strIndent(mainInits) + "\n") +
 (if (init == "") "" else strIndent(init) + "\n") +
-"\t" + gctx.varname2cpp("main") + "();\n" +
+"\t" + fi2cpp3varname2cpp("main") + "();\n" +
 (if (mainTerms == "") "" else strIndent(mainTerms) + "\n") +
-//"\talloc_stats->print();\n" + 
+"\tcleanupAtExit();\n" +
+"\tThreadPool::release();\n" +
+"\tMemoryPool::release();\n" +
 "\treturn 0;\n}\n";
+}
+
+cpp3StructDefs(gctx: Cpp3GlobalContext) -> string {
+	type2id = \tp -> {
+		switch (tp) {
+			FiTypeVoid(): 0;
+			FiTypeInt(): 1;
+			FiTypeBool(): 2;
+			FiTypeDouble(): 3;
+			FiTypeString(): 4;
+			FiTypeNative(): 5;
+			FiTypeArray(__): 6;
+			FiTypeRef(__): 7;
+			FiTypeFunction(__,__): 8;
+			FiTypeName(name,__): {
+				eitherMap(lookupTree(gctx.structs2cpp, name), \str -> str.id, -1);
+			}
+			FiTypeFlow(): -2;
+			FiTypeParameter(__): -3;
+		}
+	}
+	struct_arg = \arg -> "FieldDef{u\"" + arg.name + "\", " + i2s(type2id(arg.type)) + "}";
+	struct_fields = \s -> "{" + superglue(s.args, struct_arg, ", ") + "}";
+	struct_constructor = \s -> {
+		make_arg = \i, arg: FiStructArg -> {
+			getter = "args->getRc1(" + i2s(i) + ")";
+			if (arg.type == FiTypeFlow()) {
+				getter;
+			} else {
+				"castRc<Flow*, " + fiType2cpp3(arg.type, gctx) + ">(" + getter + ")";
+			};
+		}
+		check_arity = "if (args->size() != " + i2s(length(s.args)) + ") {\n" +
+		"\tfail(\"Struct " + s.name + " arity mismatch: expected " + i2s(length(s.args)) + " arguments, " +
+		"got: \" + string2std(int2string(args->size())) + \"  \");\n}";
+		struct_type = FiTypeName(s.name, s.typars);
+		"[](Vec<Flow*>* args){\n" + strIndent(
+			check_arity + "\n" +
+			"Flow* ret = static_cast<Flow*>(new " +
+			fiStructName2cpp3(struct_type, gctx) + "(\n" +
+				strIndent(strGlue(mapi(s.args, make_arg), ",\n")) +
+			"\n));\n" +
+			"decRc(args);\n" +
+			"return ret;"
+		) + "\n}";
+	}
+	"std::vector<StructDef> RTTI::struct_defs = {\n" +
+		strIndent(strGlue(mapi(gctx.structs, \i, s ->
+			"StructDef{\n" + strIndent(
+				"u\"" + s.name + "\", " + i2s(i + 9) + ",\n" +
+				struct_fields(s) + ",\n" +
+				struct_constructor(s)
+			 ) + "\n}"
+		), ",\n")) +
+	"\n};\n\n";
 }
 
 fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
@@ -136,22 +289,28 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 		\inc -> "#inc" + "lude " + inc, 
 		"\n"
 	);
-	forward_decls = map(module.decls, \decl -> decl.forward);
-	header_defs = filtermap(module.decls, \decl -> if (decl.headerOnly) Some(decl.definition) else None());
+	forwards = filtermap(module.decls, \decl -> if (decl.forward == "") None() else Some(decl.forward));
+	traits = filtermap(module.decls, \decl -> if (decl.traits == "") None() else Some(decl.traits));
+	decls = filtermap(module.decls, \decl -> if (decl.declaration == "") None() else Some(decl.declaration));
+	defs = filtermap(module.decls, \decl -> if (decl.headerOnly && decl.definition != "") Some(decl.definition) else None());
+	decl_defs = concat(decls, defs);
+
+	wrap_with_namespace = \ns, using, contents -> fiWrapWithNamespace(ns,
+		concatStrings(map(using, fiMakeUsingStatement)) + strIndent(trim2(contents, "\n")), 
+	);
 	"#pragma once\n" +
 	(if (includes == "") "" else includes + "\n") +
 	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
 	"// Module " + module.name + "\n\n" + 
-	(if (gctx.config.monolith) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
-	"namespace " + gctx.config.namespace + " {\n" +
-	"using namespace std::string_literals;\n" +
-	"using namespace flow;\n\n" + 
-	concatStrings(forward_decls) + "\n" + 
-	concatStrings(header_defs) + "\n" + 
-	"}\n";
+	(if (gctx.config.monolith || length(module.imports) == 0) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
+	(if (length(forwards) == 0) "" else wrap_with_namespace(gctx.config.namespace, [], concatStrings(forwards)) + "\n") + 
+	(if (length(traits) == 0) "" else wrap_with_namespace("flow::traits", [], concatStrings(traits)) + "\n") +
+	(if (length(decl_defs) == 0) "\n" else 
+		wrap_with_namespace(gctx.config.namespace, ["std::string_literals", "flow"], concatStrings(decl_defs))  + "\n"
+	);
 }
 
-fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> [string] {
+fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, init: [string], runtime_parts: [Cpp3RuntimePart]) -> [string] {
 	all_source_defs = filtermap(module.decls, \decl -> if (!decl.headerOnly) Some(decl.definition) else None());
 	max_cpp_source = s2i(lookupTreeDef(gctx.program.config.config, "cpp-max-source", "100000"));
 	// Cut all definition into parts, not exceeding max-cpp-source kb
@@ -165,67 +324,39 @@ fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext
 			Pair(Cons([def], acc.first), strlen(def));
 		}
 	).first);
-
-	mapi(source_defs_cut, \i, source_defs ->
-		if (length(source_defs) == 0 && !module.isMain) "" else {
-			"#inc" + "lude \"" + module.name + ".hpp\"\n" +
-			"namespace " + gctx.config.namespace + " {\n" +
-			"using namespace std::string_literals;\n" +
-			"using namespace flow;\n\n" + 
-			concatStrings(source_defs) + "\n" +
-			"}\n" +
-			if (i == 0 && module.isMain) cpp3MainFunc(gctx, runtime_parts) else "";
-		}
-	);
+	if (length(source_defs_cut) == 0) {
+		if (!module.isMain) [] else 
+		["#inc" + "lude \"" + module.name + ".hpp\"\n" +
+		fiMakeUsingStatement("std::string_literals") +
+		fiMakeUsingStatement("flow") + "\n" +
+		cpp3MainFunc(gctx, init, runtime_parts)];
+	} else {
+		mapi(source_defs_cut, \i, source_defs ->
+			if (length(source_defs) == 0 && !module.isMain) "" else {
+				"#inc" + "lude \"" + module.name + ".hpp\"\n" +
+				fiWrapWithNamespace(gctx.config.namespace,
+					fiMakeUsingStatement("std::string_literals") +
+					fiMakeUsingStatement("flow") + "\n" +
+					concatStrings(source_defs)
+				) + "\n" +
+				if (i == 0 && module.isMain) cpp3MainFunc(gctx, init, runtime_parts) else "";
+			}
+		);
+	}
 }
 
-cpp3StructDefsRuntimePart(gctx: Cpp3GlobalContext) -> Cpp3RuntimePart {
-Cpp3RuntimePart("struct_defs", 
-"struct StructDefs {
-	static void init();
-	static std::map<string, StructDef> defs;
-};
-", 
-fiCpp3StructDefs(gctx), 
-"StructDefs::init();", "", 
-[Cpp3Std(["<map>"], [])], true
-);
-}
-
-fiCpp3StructDefs(gctx : Cpp3GlobalContext) -> string {
-	struct_defs = map(getTreeValues(gctx.program.names.structs), \struct -> {
-		typars = if (struct.typars == []) "" else "<" + superglue(struct.typars, \__ -> "Flow", ", ") + ">";
-		"\tdefs[u\"" + struct.name + "\"] = " + gctx.typename2cpp(struct.name) + typars + "::def();\n"
-	});
-"
-std::map<string, StructDef> StructDefs::defs;
-void StructDefs::init() {\n" + 
-	concatStrings(struct_defs) + 
-"\n}\n";
-
-}
-
-fi2cpp3Monolith(main_name: string, compiled: Tree<string, Cpp3CompiledModule>, gctx: Cpp3GlobalContext) -> Tree<string, Cpp3CompiledModule> {
-	all_decls = concatA(list2array(fold(gctx.program.traversal, makeList(), \acc, module_name -> 
-		switch (lookupTree(compiled, module_name)) {
-			Some(module): Cons(module.decls, acc);
-			None(): acc;
-		}
+fi2cpp3Monolith(main_name: string, compiled: [Cpp3CompiledModule], gctx: Cpp3GlobalContext) -> Cpp3CompiledModule {
+	all_decls = concatA(list2array(fold(compiled, makeList(), \acc, module -> 
+		Cons(module.decls, acc)
 	)));
-	all_natives = concatA(list2array(fold(gctx.program.traversal, makeList(), \acc, module_name ->
-		switch (lookupTree(compiled, module_name)) {
-			Some(module): Cons(module.natives, acc);
-			None(): acc;
-		}
+	all_natives = concatA(list2array(fold(compiled, makeList(), \acc, module ->
+		Cons(module.natives, acc)
 	)));
-	makeTree1(
-		main_name, 
-		Cpp3CompiledModule(main_name, true, all_decls, [], all_natives)
-	);
+	Cpp3CompiledModule(main_name, true, all_decls, [], all_natives);
 }
 
-fi2cpp3QtDeps(modules: Tree<string, Cpp3CompiledModule>, gctx: Cpp3GlobalContext) -> [Cpp3Qt] {
-	list2array(foldTree(modules, makeList(), \__,m, acc -> 
+fi2cpp3QtDeps(modules: [Cpp3CompiledModule], gctx: Cpp3GlobalContext) -> [Cpp3Qt] {
+	list2array(fold(modules, makeList(), \acc, m -> 
 		fold(m.natives, acc, \ac, nat -> {
 			runtime_deps = fold(nat.runtimeParts, [], \a, part_name -> 
 				switch (lookupTree(gctx.runtimeParts, part_name)) {
@@ -233,14 +364,15 @@ fi2cpp3QtDeps(modules: Tree<string, Cpp3CompiledModule>, gctx: Cpp3GlobalContext
 						concat(a, part.dependencies);
 					}
 					None(): {
-						refArrayPush(gctx.errors, "unkonwn runtime part: " + part_name);
+						gctx.success := false;
+						fcPrintln("unkonwn runtime part: " + part_name, gctx.config.threadId);
 						a;
 					}
 				}
 			);
 			fold(concat(nat.dependencies, runtime_deps), ac, \a, dep ->
 				switch (dep) {
-					Cpp3Qt(__,__): Cons(dep, a);
+					Cpp3Qt(__,__,__): Cons(dep, a);
 					default: a;
 				}
 			)
@@ -261,7 +393,8 @@ fi2cpp3RuntimeParts(gctx: Cpp3GlobalContext) -> [Cpp3RuntimePart] {
 				Some(part);
 			}
 			None(): {
-				refArrayPush(gctx.errors, "unknown runtime part: " + p);
+				gctx.success := false;
+				fcPrintln("unkonwn runtime part: " + p, gctx.config.threadId);
 				None();
 			}
 		}

@@ -53,6 +53,8 @@ fcProcessRequest(serverConf : CompilerConfig, globEnv : FcTypeEnvGlobal, req : s
 						fcServerLog("Request: " + escapeStr(nonDefaultCompilerConfigToString(config)), serverConf);
 					}
 					start_time = timestamp();
+					// Keep output of fcPrintln in a buffer - to pass it to client
+					fcSetSkipBuffering(conf.threadId, false);
 					runConfigLocally(conf, globEnv, \code -> {
 						pair.second();
 						bin_out = isConfigParameterTrue(conf.config, "dump-program") || isConfigParameterSet(conf.config, "compile-expression");
@@ -84,38 +86,43 @@ fcProcessRequest(serverConf : CompilerConfig, globEnv : FcTypeEnvGlobal, req : s
 }
 
 fcHttpServer(config : CompilerConfig) -> void {
-	port = s2i(getConfigParameter(config.config, "server-port"));
-	globEnv = initFcTypeEnvGlobal();
-	server = ref nop;
-	server := createHttpServer(port,
-		\-> {
-			fcServerLog("Http server started in: " + resolveRelativePath(".") + " directory", config);
-			fcPrintln("Http server started.", config.threadId)
-		},
-		\request, response -> {
-			if (request.body == "ping") {
-				HttpResponse(200, "Flow http server is online", []) |> response
-			} else {
-				fcProcessRequest(config, globEnv, request.body,
-					\code, output -> {
-						if (code == 0) {
-							// No errors
-							HttpResponse(200, output, [])
-						} else {
-							// Some errors occur
-							HttpResponse(201, output, [])
+	// This variable may be overriden by `false` in environment,
+	// passed to compiler with `env+=fc_use_http_server=false` option
+	fc_use_http_server = true;
+	if (fc_use_http_server) {
+		port = s2i(getConfigParameter(config.config, "server-port"));
+		globEnv = initFcTypeEnvGlobal();
+		server = ref nop;
+		server := createHttpServer(port,
+			\-> {
+				fcServerLog("Http server started in: " + resolveRelativePath(".") + " directory", config);
+				fcPrintln("Http server started.", config.threadId)
+			},
+			\request, response -> {
+				if (request.body == "ping") {
+					HttpResponse(200, "Flow http server is online", []) |> response
+				} else {
+					fcProcessRequest(config, globEnv, request.body,
+						\code, output -> {
+							if (code == 0) {
+								// No errors
+								HttpResponse(200, output, [])
+							} else {
+								// Some errors occur
+								HttpResponse(201, output, [])
+							}
+						} |> response,
+						nop,
+						\-> {
+							fcPrintln("Http server stopped.", config.threadId);
+							fcServerLog("Http server stopped.", config);
+							HttpResponse(200, fcOutput(config.threadId), []) |> response;
+							^server();
+							quit(0);
 						}
-			 		} |> response,
-					nop,
-					\-> {
-						fcPrintln("Http server stopped.", config.threadId);
-						fcServerLog("Http server stopped.", config);
-						HttpResponse(200, fcOutput(config.threadId), []) |> response;
-						^server();
-						quit(0);
-					}
-				);
+					);
+				}
 			}
-		}
-	);
+		);
+	}
 }

@@ -1,0 +1,74 @@
+import tools/flowc/statements/fs_transform;
+import tools/flowc/manipulation/tail_call;
+
+export {
+	fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat;
+}
+
+fsTailCallExpansion(args: [FsVar], vals: [FsExp], new_id: () -> string) -> FsStat {
+	tmp_vars = map(args, \arg ->
+		FsVar(arg.name + "__tailcall__" + new_id(), arg.type)
+	);
+	assign_func_vars = foldi(args, FsTailCall(-1, None()), \i, acc, arg ->
+		FsAssign(
+			FsVarUse(arg, FsVarInfo(FsVarUninit(), true, false), -1),
+			FsVarUse(tmp_vars[i], FsVarInfo(FsVarLocal(), true, false), -1),
+			-1, Some(acc)
+		)
+	);
+	foldi(args, assign_func_vars, \i, acc, arg ->
+		FsLet(tmp_vars[i], vals[i], acc, -1, None())
+	);
+}
+
+fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat {
+	if (!fcDetectTailCall(fn)) s else {
+		id_counter = ref 0;
+		new_id = \ -> {
+			id = ^id_counter;
+			id_counter := id + 1;
+			i2s(id);
+		}
+		cast(fsMap(s, \x -> switch (x) {
+			FsRet(ex,__,__): {
+				switch (ex) {
+					FsCall(f, args, type,__): {
+						switch (f) {
+							FsVarUse(v,__,__): {
+								if (v.name != fn.name) x else {
+									remove_arg = \arg, fn_arg -> {
+										switch (arg) {
+											FsVarUse(w, info,__): {
+												non_local = switch (info.kind) {
+													FsVarLocal(): false;
+													default: true;
+												}
+												w.name == fn_arg.name && (fiTypeIsScalar(fn_arg.type) || non_local);
+											}
+											default: false;
+										}
+									}
+									tc_args = filtermapi(args, \i, arg ->
+										if (remove_arg(arg, fn.lambda.args[i])) None() else {
+											fn_arg = fn.lambda.args[i];
+											Some(FsVar(fn_arg.name, fn_arg.type))
+										}
+									);
+									tc_vals = filtermapi(args, \i, arg ->
+										if (remove_arg(arg, fn.lambda.args[i])) None() else {
+											Some(arg)
+										}
+									);
+									fsTailCallExpansion(tc_args, tc_vals, new_id);
+								}
+							}
+							default: x;
+						}
+					}
+					default: x;
+				}
+			}
+			default: x;
+		}, true): FsAll -> FsStat);
+	}
+}

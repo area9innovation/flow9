@@ -4,72 +4,56 @@ import tools/flowc/backends/cpp3/fi2cpp3_util;
 import tools/flowc/backends/cpp3/fi2cpp3_defines;
 
 export {
-	fiCpp3RuntimeIncludes(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
 	fiCpp3RuntimeHeader(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
 	fiCpp3RuntimeSource(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
 
 	fiCpp3IsNative(name : string, gctx: Cpp3GlobalContext) -> bool;
 	fiCpp3InitNativeFuncs(cfg: FiCpp3Config) -> Tree<string, Cpp3Native>;
+	fiCpp3BaseRuntimeFiles(cfg: FiCpp3Config, extension: string) -> [string];
 	fiCpp3InitRuntimeParts(cfg: FiCpp3Config) -> Tree<string, Cpp3RuntimePart>;
 	fiCpp3DependenciesIncludes(depsA: [[Cpp3Dependency]]) -> [string];
 }
 
-fiCpp3RuntimeIncludes(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
-	all_includes = fiCpp3DependenciesIncludes(map(runtime_parts, \part -> part.dependencies));
-	includes = superglue(all_includes, \inc -> "#inc" + "lude " + inc, "\n");
-"
-#pragma once
-
-// Remove ??...s
-#include <map>
-#include <typeinfo>
-#include <mutex>
-#include <atomic>
-#include <thread>
-
-#include <string>
-#include <vector>
-#include <functional>
-#include <algorithm>
-#include <sstream>
-#include <memory>
-#include <variant>
-#include <iostream>
-#include <iomanip>
-#include <type_traits>\n\n" + 
-(if (includes == "") "" else includes + "\n");
-}
-
 fiCpp3RuntimeHeader(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
-	base_runtime = fiCpp3BaseRuntimeParts(gctx.config, ".hpp");
-	"#pragma once\n" +
-	"#define FLOW_RUNTIME_HEADER\n" + 
-	"#inc" + "lude \"__flow_includes.hpp\"\n" + 
-	concatStrings(base_runtime) + "\n" +
-	"namespace flow {\n" +
-		concatStrings(map(runtime_parts, \part -> "// Runtime part: " + part.name + "\n" + part.header + "\n\n")) +
-	"}\n";
+	headers = superglue(
+		fiCpp3BaseRuntimeFiles(gctx.config, ".hpp"),
+		\header -> "#inc""lude \"" + fileNameOnly(header) + "\"", "\n"
+	);
+	includes = superglue(
+		fiCpp3DependenciesIncludes(map(runtime_parts, \part -> part.dependencies)),
+		\inc -> "#inc""lude " + inc, "\n"
+	);
+	"#pragma once\n\n" +
+	"#inc""lude <iostream>\n\n" +
+	headers + "\n" +
+	(if (includes == "") "" else includes + "\n") +
+	fiWrapWithNamespace("flow",
+		concatStrings(map(runtime_parts, \part -> "// Runtime part: " + part.name + "\n" + part.header + "\n\n")) + "\n" +
+		"void cleanupAtExit();"
+	);
 }
 
 fiCpp3RuntimeSource(gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
-	base_runtime = fiCpp3BaseRuntimeParts(gctx.config, ".cpp");
-	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
-	concatStrings(base_runtime) + "\n\n" +
-	"namespace flow {\n" +
+	"#inc""lude \"__flow_runtime.hpp\"\n\n" +
+	fiWrapWithNamespace("flow",
 		concatStrings(filtermap(runtime_parts, \part -> 
 			if (part.staysInMain) None() else Some("// Runtime part: " + part.name + "\n" + part.source + "\n\n")
-		)) +
-	"}\n";
+		))
+	);
 }
 
-fiCpp3BaseRuntimeParts(cfg: FiCpp3Config, extension: string) -> [string] {
+fiCpp3BaseRuntimeFiles(cfg: FiCpp3Config, extension: string) -> [string] {
 	fold(cfg.backendDirs, [], \acc, dir -> 
 		fold(readDirectory(pathCombine(dir, "runtimes")), acc, \ac, file ->
 			if (!endsWith(file, extension)) ac else {
-				concat(ac, [getFileContent(pathCombineMany([dir, "runtimes", file]))]);
+				arrayPush(ac, pathCombineMany([dir, "runtimes", file]));
 			}
 		)
 	);
+}
+
+fiCpp3BaseRuntimeParts(cfg: FiCpp3Config, extension: string) -> [string] {
+	map(fiCpp3BaseRuntimeFiles(cfg, extension), getFileContent);
 }
 
 fiCpp3IsNative(name : string, gctx: Cpp3GlobalContext) -> bool {
@@ -103,10 +87,10 @@ fiCpp3InitRuntimeParts(cfg: FiCpp3Config) -> Tree<string, Cpp3RuntimePart> {
 cppNativePlain2Cpp3Native(n: Cpp3NativePlain) -> Cpp3Native {
 	Cpp3Native(
 		n.name,
-		\type2cpp, var2cpp -> Cpp3CompiledDeclaration(n.name,
-			n.headerOnly,
-			strApplyFns(n.forward)([type2cpp, var2cpp]),
-			strApplyFns(n.definition)([type2cpp, var2cpp]),
+		\type2cpp, var2cpp, structid2cpp -> Cpp3CompiledDeclaration(n.name,
+			n.headerOnly, "", "",
+			strApplyFns(n.declaration)([type2cpp, var2cpp, structid2cpp]),
+			strApplyFns(n.definition)([type2cpp, var2cpp, structid2cpp]), ""
 		),
 		if (n.inline == "") None() else Some(Cpp3Inline(
 			\as -> strSubstituteArgs(n.inline)(as)
@@ -145,7 +129,7 @@ fiCpp3DependenciesIncludes(depsA: [[Cpp3Dependency]]) -> [string] {
 		fold(deps, acc, \ac, dep ->
 			switch (dep) {
 				Cpp3Std(incs, __): fold(incs, ac, \a, inc: string -> insertSet(a, inc));
-				Cpp3Qt(incs,__): fold(incs, ac, \a, inc: string -> insertSet(a, inc));
+				Cpp3Qt(__,incs,__): fold(incs, ac, \a, inc: string -> insertSet(a, inc));
 			}
 		)
 	));
