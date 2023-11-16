@@ -356,18 +356,25 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 			TLines2Dir(t, MTextInputCompletionBox(inputState, inputState.parent, ac, None(), const(false), m2t), inputState.parent.rtl)
 		else t
 	}, t))
-	|> (\t -> if (inputState.width > 0.) {
-			availWidth = either(
-				maybeBind(inputState.popup, \ps ->
-					maybeMap(
-						ps.customMetrics.width,
-						\wd -> fif(ps.openMenu.opened, wd, const(inputState.width))
-					)
-				),
-				const(inputState.width)
-			);
-			TAvailableWidth(t, availWidth);
-		} else t)
+	|> (\t -> {
+		defValue = if (inputState.width > 0.) Some(inputState.width) else None();
+
+		eitherMap(
+			maybeBind(inputState.popup, \ps ->
+				maybeMap(
+					ps.customMetrics.width,
+					\wd -> fif(ps.openMenu.opened, fselectLift(wd, \v -> Some(v)), const(defValue))
+				)
+			),
+			\availT -> {
+				availableW = make(0.);
+
+				TAvailableWidth(t, fsubselect(availT, FLift(\av -> eitherMap(av, \v -> const(v), availableW))))
+				|> (\t2 -> TAttachAvailableWidth(t2, availableW))
+			},
+			eitherMap(defValue, \av -> TAvailableWidth(t, const(av)), t)
+		);
+	})
 	|> (\f -> TConstruct(inputState.subs, f))
 }
 
@@ -1024,9 +1031,13 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, tex
 		);
 
 	textInputClip = ref TEmpty();
+	textInputWidth = make(0.);
+	textInputWidthCached = make(0.);
+	stalledTextInputWidth = fstall(textInputWidth, 0);
 
 	content =
-		TMoveClip(textInput, None(), \ti -> textInputClip := ti)
+		TMoveClip(TAttachWidth(textInput, textInputWidth), None(), \ti -> textInputClip := ti)
+		|> TFixWidth(TSizedWidth(fif(popupState.openMenu.opened, textInputWidthCached, textInputWidth), 0.))
 		|> (\t -> TAttachHeight(t, inputHgt))
 		|> addMTextInputBackground(onTop, false)
 		|> addErrorText;
@@ -1052,6 +1063,9 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, tex
 
 	TConstruct(
 		[
+			makeSubscribe(stalledTextInputWidth, \tiwc -> {
+				// Just to keep subscription alive
+			}),
 			makeSubscribe2(onTop, \__ ->
 				if (fgetValue(popupState.openMenu.opened)) {
 					nextDistinct(popupState.openMenu.opened, false);
@@ -1060,6 +1074,7 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, tex
 			}),
 			make2Subscribe(popupState.openMenu.opened, showPopup, \op, show ->
 				if (op && show) {
+					nextDistinct(textInputWidthCached, fgetValue(stalledTextInputWidth));
 					ontop = fgetValue(onTop);
 					RenderMPopup(
 						inputState.manager,
