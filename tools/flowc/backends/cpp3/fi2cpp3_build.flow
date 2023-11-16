@@ -57,40 +57,51 @@ fi2cpp3BuildWithCmake(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], c
 		cmake_minimum_required(VERSION 3.19.1)
 		project(%outfile%)
 		set(CMAKE_CXX_STANDARD 20)
+		set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+		set(CMAKE_AUTOMOC ON)
+		set(CMAKE_AUTORCC ON)
+		set(CMAKE_AUTOUIC ON)
+
+		if(CMAKE_VERSION VERSION_LESS \"3.7.0\")
+			set(CMAKE_INCLUDE_CURRENT_DIR ON)
+		endif()
+
 		set(CMAKE_CXX_FLAGS \"${CMAKE_CXX_FLAGS} %supress_warnings%\")
-		#set(CMAKE_PREFIX_PATH ${QTLIBDIR} \":\" ${CMAKE_PREFIX_PATH})
 		find_package(Qt5 COMPONENTS %qt_modules% REQUIRED)
+
+		include_directories(%qt_module_includes%)
+
 		set(sources
 			%sources%
 		)
 		add_executable(%outfile% ${sources})
+		target_compile_options(%outfile% PRIVATE -fPIC)
+		target_link_libraries(%outfile% %qt_module_libs%)
 	", [
 		"project", fileNameOnly(cfg.outfile),
 		"outfile", fileNameOnly(cfg.outfile),
 		"supress_warnings", strGlue(fi2cpp3BuildCxxSupressWarningsFlags(), " "),
 		"qt_modules", strGlue(qt_modules, " "),
+		"qt_module_includes", superglue(qt_modules, \m -> "${Qt5" + m + "_INCLUDE_DIRS}", " "),
+		"qt_module_libs", superglue(qt_modules, \m -> "Qt5::" + m, " "),
 		"sources", superglue(cpp_sorces, \src -> fileNameOnly(src), "\n"),
 	]);
 	setFileContent(pathCombine(cfg.outputdir, "CMakeLists.txt"), cmakelists);
-	if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") == "0") {
-		fcPrintln("Build with the command line command:\ncd build\ncmake\nmake", cfg.config.threadId);
-		callback(0);
-	} else {
-		ensureDirectoryExists(pathCombine(cfg.outputdir, "build"));
-		qt_args = if (qt_modules == []) [] else {
-			["-DCMAKE_PREFIX_PATH=${QTLIBDIR}\":\"${CMAKE_PREFIX_PATH})"]
+	ensureDirectoryExists(pathCombine(cfg.outputdir, "build"));
+	qt_args = if (qt_modules == []) [] else {
+		["-DCMAKE_PREFIX_PATH=${QTLIBDIR}\":\"${CMAKE_PREFIX_PATH})"]
+	}
+	cmake_exit_code = execSystemProcess("cmake", concat(qt_args, [".."]), pathCombine(cfg.outputdir, "build"),
+		\out -> if (cfg.verbose > 0 && !isSpace(out)) {
+			fcPrintln(out, cfg.config.threadId);
+		},
+		\err -> if (!isSpace(err)) {
+			fcPrintln(err, cfg.config.threadId);
 		}
-		cmake_exit_code = execSystemProcess("cmake", concat(qt_args, [".."]), pathCombine(cfg.outputdir, "build"),
-			\out -> if (cfg.verbose > 0 && !isSpace(out)) {
-				fcPrintln(out, cfg.config.threadId);
-			},
-			\err -> if (!isSpace(err)) {
-				fcPrintln(err, cfg.config.threadId);
-			}
-		);
-		if (cmake_exit_code != 0) callback(5) else {
-			fi2cpp3Make(cfg, "build", callback);
-		}
+	);
+	if (cmake_exit_code != 0) callback(5) else {
+		fi2cpp3Make(cfg, pathCombine(cfg.outputdir, "build"), callback);
 	}
 }
 
@@ -128,17 +139,22 @@ fi2cpp3BuildWithQmake(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], c
 }
 
 fi2cpp3Make(cfg: FiCpp3Config, builddir: string, callback : (int) -> void) -> void {
-	if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") != "1") callback(0) else {
+	if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") != "1") {
+		callback(0);
+	} else {
 		build_concurrency = getConfigParameterDef(
 			cfg.config.config, 
 			"cpp-build-jobs", 
 			i2s(availableProcessors())
 		);
-		make_args = ["-j" + build_concurrency, "-C", cfg.outputdir];
+		make_args = [
+			"-j" + build_concurrency,  // Building concurrency level
+			"-C", builddir // The actual build directory. Make changes to it.
+		];
 		if (cfg.verbose > 0) {
-			fcPrintln("Building Makefile with cpp3: 'make " + strGlue(make_args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
+			fcPrintln("Building Makefile with cpp3: 'make " + strGlue(make_args, " ") + "'", cfg.config.threadId);
 		}
-		make_exit_code = execSystemProcess("make", make_args, builddir,
+		make_exit_code = execSystemProcess("make", make_args, ".",
 			\out -> if (cfg.verbose > 0 && !isSpace(out)) {
 				fcPrintln(out, cfg.config.threadId);
 			},
