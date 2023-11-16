@@ -2,7 +2,7 @@
 #include "__flow_runtime_compare.hpp"
 
 namespace flow {
-/*
+
 inline Int flowCompareComponents(Flow* v1, Flow* v2, Int i) {
 	TypeId type_id1 = v1->componentTypeId(i);
 	TypeId type_id2 = v2->componentTypeId(i);
@@ -49,15 +49,9 @@ Int flowCompare(Flow* v1, Flow* v2) {
 					return 0;
 				}
 			}
-			case TypeFx::REF: {
-				return flowCompareComponents(v1, v2, 0);
-			}
-			case TypeFx::FUNC: {
-				return compare<void*>(v1, v2);
-			}
-			case TypeFx::NATIVE: {
-				return compare<void*>(v1, v2);
-			}
+			case TypeFx::REF: return flowCompareComponents(v1, v2, 0);
+			case TypeFx::FUNC: return compare<void*>(v1, v2);
+			case TypeFx::NATIVE: return compare<void*>(v1, v2);
 			default: {
 				Int size = v1->componentSize();
 				for (Int i = 0; i < size; ++ i) {
@@ -71,5 +65,5 @@ Int flowCompare(Flow* v1, Flow* v2) {
 		}
 	}
 }
-*/
+
 }

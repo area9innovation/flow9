@@ -21,20 +21,35 @@ fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, call
 	}
 }
 
-fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
+fi2cpp3Compile(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
+	gctx = fi2cpp3initGctx(program, globEnv, cfg);
 	cpp_natives = fiCpp3InitNativeFuncs(cfg);
-	resolved = fiResolveNatives(program0, \name -> containsKeyTree(cpp_natives, name));
+	resolved = fiResolveNatives(program, \name -> containsKeyTree(cpp_natives, name));
 	if (resolved.second != []) {
 		fcPrintln("Missing cpp3 natives: " + strGlue(resolved.second, ", "), cfg.config.threadId);
-		Cpp3CompiledProgram(program0.config.flowfile, [], [], false);
+		Cpp3CompiledProgram(program.config.flowfile, [], [], false);
 	} else {
-		program = resolved.first
+		program1 = resolved.first
 			|> (\p -> fiAddMandatoryNatives(p, cpp3MandatoryNatives))
 			|> fiFuncGlobalVar2Func
 			|> fiFlattenUnions
 			|> fiRemoveImplicitStructTypars
-			//|> (\p -> fiSetImplicitStructTypars(p, FiTypeString()))
-			//|> fiTurnPolymorphicGlobalVars2ConstFuncs
+			|> fiWasmWrapFuncArgs
+			|> fiProgramAddPolymorphicStructsCasts
+			|> fiRemoveSigletonSeqences
+		;
+		gctx1 = fi2cpp3updateGctx(program1, gctx);
+		program2 = program1
+			|> (\ p -> fi2cpp3TransformProgramExps(p, gctx1))
+			//|> fiAddThreadIdAsLastArg
+		;
+		gctx2 = fi2cpp3updateGctx(program2, gctx);
+		fi2cpp3Translate(gctx2);
+		/*program = resolved.first
+			|> (\p -> fiAddMandatoryNatives(p, cpp3MandatoryNatives))
+			|> fiFuncGlobalVar2Func
+			|> fiFlattenUnions
+			|> fiRemoveImplicitStructTypars
 			|> fiWasmWrapFuncArgs
 			|> fiProgramAddPolymorphicStructsCasts
 			|> fiRemoveSigletonSeqences
@@ -50,16 +65,6 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 				)
 			)
 		);
-		vars = filtermap(getTreeValues(program.names.toplevel), \decl -> 
-			switch (decl) {
-				FiGlobalVar(__,__,__,__,__): Some(decl);
-				default: None();
-			}
-		);
-		var_deps = varsDependencies(program);
-		volatile_vars = filter(vars, \v -> 
-			exists(cfg.volatile, \name -> v.name == name || containsSet(lookupTreeDef(var_deps, v.name, makeSet()), name))
-		);
 		gctx = Cpp3GlobalContext(globEnv, cfg, program, 
 			collectFiEffects(program),
 			structs,
@@ -67,11 +72,42 @@ fi2cpp3Compile(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 			\name -> eitherMap(lookupTree(structs2cpp, name), \str -> i2s(str.id), ""),
 			cpp_natives,
 			fiCpp3InitRuntimeParts(cfg),
-			buildSet(map(volatile_vars, \v -> v.name)),
 			ref true, "", None(), makeSet(), ""
 		);
-		fi2cpp3Translate(gctx);
+		fi2cpp3Translate(gctx);*/
 	}
+}
+
+fi2cpp3initGctx(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3GlobalContext {
+	Cpp3GlobalContext(globEnv, cfg, program,
+		collectFiEffects(program),
+		[],
+		makeTree(),
+		\name -> "",
+		fiCpp3InitNativeFuncs(cfg),
+		fiCpp3InitRuntimeParts(cfg),
+		ref true, "", None(), makeSet(), ""
+	);
+}
+
+fi2cpp3updateGctx(program: FiProgram, gctx: Cpp3GlobalContext) -> Cpp3GlobalContext {
+	structs = getTreeValues(program.names.structs);
+	structs2cpp = foldi(structs, makeTree(), \i, acc, struct ->
+		setTree(acc, struct.name,
+			Cpp3Struct(i + 9, struct,
+				foldi(struct.args, makeTree(), \j, ac, arg ->
+					setTree(ac, arg.name, Cpp3StructArg(j, arg.type))
+				)
+			)
+		)
+	);
+	Cpp3GlobalContext(gctx with
+		program = program,
+		effects = collectFiEffects(program),
+		structs = structs,
+		structs2cpp = structs2cpp,
+		structid2cpp = \name -> eitherMap(lookupTree(structs2cpp, name), \str -> i2s(str.id), "")
+	);
 }
 
 fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {

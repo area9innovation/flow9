@@ -13,6 +13,7 @@ namespace flow {
 
 template<typename T1, typename T2> T2 castRc(T1 x);
 
+Int flowCompare(Flow* v1, Flow* v2);
 template<typename T> Int compare(T v1, T v2);
 template<typename T> Int compareRc(T v1, T v2) { Int ret = compare(v1, v2); decRc(v1); decRc(v2); return ret; }
 template<typename T> inline Bool equalRc(T v1, T v2) { Int c = compareRc(v1, v2); return c == 0; }
