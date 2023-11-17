@@ -8,89 +8,79 @@ export {
 }
 
 fi2cpp3Build(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
-	builder = if (length(qt_deps) > 0 && !isConfigParameterSet(cfg.config.config, "cpp-builder")) "qmake" else {
-		getConfigParameterDef(cfg.config.config, "cpp-builder", "raw");
-	}
-	if (cfg.verbose > 0) {
-		fcPrintln("Using: '" + builder + "' build system to make '" + cfg.outfile + "'", cfg.config.threadId);
-	}
-	if (builder == "qmake") fi2cpp3BuildWithQmake(cfg, sources, qt_deps, callback) else 
-	if (builder == "cmake") fi2cpp3BuildWithCmake(cfg, sources, qt_deps, callback) else
-	if (builder == "raw") fi2cpp3BuildDirectly(cfg, sources, callback) else {
-		fcPrintln("Unknown build system: " + builder, cfg.config.threadId);
-		callback(5);
-	}
-}
-
-fi2cpp3BuildDirectly(cfg: FiCpp3Config, sources: [string], callback : (int) -> void) -> void {
-	cpp_sources = filter(sources, \path -> endsWith(path, ".cpp"));
-	opts = concat(fi2cpp3BuildOpts(cfg), ["-std=c++20"]);
-	final_exe = changeFileExt(cfg.outfile, "");
-	args = concat3(map(cpp_sources, \src -> pathCombine(cfg.outputdir, src)), opts, ["-o", final_exe]);
-	cpp_compiler = lookupTreeDef(cfg.config.config, "cpp-compiler", "g++");
-	if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") == "1") {
-		if (cfg.verbose > 0) {
-			fcPrintln("Building: '" + cpp_compiler + " " + strGlue(args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
-		}
-		result_exit_code = execSystemProcess(cpp_compiler, args, ".",
-			\out -> if (cfg.verbose > 0 && !isSpace(out)) {
-				fcPrintln(out, cfg.config.threadId);
-			},
-			\err -> if (!isSpace(err)) {
-				fcPrintln(err, cfg.config.threadId);
-			}
-		);
-		if (result_exit_code == 0) callback(0) else callback(5);
-	} else {
-		fcPrintln(
-			"Build with the command line command:\n" + cpp_compiler + " " + strGlue(args, " "),
-			cfg.config.threadId
-		);
-		callback(0);
-	}
-}
-
-fi2cpp3BuildWithCmake(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
 	cpp_sorces = filter(sources, \src -> !endsWith(src, ".hpp"));
 	qt_modules = uniq(concatA(map(qt_deps, \dep -> dep.modules)));
 	cmakelists = blueprint("
 		cmake_minimum_required(VERSION 3.19.1)
-		project(%outfile%)
+		project(%target%)
 		set(CMAKE_CXX_STANDARD 20)
+		set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+		set(CMAKE_AUTOMOC ON)
+		set(CMAKE_AUTORCC ON)
+		set(CMAKE_AUTOUIC ON)
+
+		if(CMAKE_VERSION VERSION_LESS \"3.7.0\")
+			set(CMAKE_INCLUDE_CURRENT_DIR ON)
+		endif()
+
 		set(CMAKE_CXX_FLAGS \"${CMAKE_CXX_FLAGS} %supress_warnings%\")
-		#set(CMAKE_PREFIX_PATH ${QTLIBDIR} \":\" ${CMAKE_PREFIX_PATH})
+		message(\"Output directory: `%outdir%`\")
+		set(CMAKE_RUNTIME_OUTPUT_DIRECTORY %outdir%)
+
+		%gprof%
+
 		find_package(Qt5 COMPONENTS %qt_modules% REQUIRED)
+		find_package(mimalloc 2.1 REQUIRED)
+
+		include_directories(%qt_module_includes%)
+
 		set(sources
 			%sources%
 		)
-		add_executable(%outfile% ${sources})
+		add_executable(%target% ${sources})
+		set_target_properties(%target% PROPERTIES OUTPUT_NAME %outfile%)
+		target_compile_options(%target% PRIVATE -fPIC)
+		target_link_libraries(%target% %qt_module_libs%)
+		target_link_libraries(%target% mimalloc-static)
+
 	", [
-		"project", fileNameOnly(cfg.outfile),
-		"outfile", fileNameOnly(cfg.outfile),
+		"target", fileNameOnly(cfg.outputfile),
+		"outfile", fileNameOnly(cfg.outputfile),
+		"outdir", resolveRelativePath(cfg.outputdir),
 		"supress_warnings", strGlue(fi2cpp3BuildCxxSupressWarningsFlags(), " "),
+		"gprof", if (lookupTreeDef(cfg.config.config, "cpp-gprof", "") != "1") "# No profiling" else
+			"SET(CMAKE_CXX_FLAGS \"${CMAKE_CXX_FLAGS} -pg\")\n" +
+			"SET(CMAKE_EXE_LINKER_FLAGS \"${CMAKE_EXE_LINKER_FLAGS} -pg\")\n"
+			"SET(CMAKE_SHARED_LINKER_FLAGS \"${CMAKE_SHARED_LINKER_FLAGS} -pg\")",
 		"qt_modules", strGlue(qt_modules, " "),
+		"qt_module_includes", superglue(qt_modules, \m -> "${Qt5" + m + "_INCLUDE_DIRS}", " "),
+		"qt_module_libs", superglue(qt_modules, \m -> "Qt5::" + m, " "),
 		"sources", superglue(cpp_sorces, \src -> fileNameOnly(src), "\n"),
 	]);
-	setFileContent(pathCombine(cfg.outputdir, "CMakeLists.txt"), cmakelists);
-	if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") == "0") {
-		fcPrintln("Build with the command line command:\ncd build\ncmake\nmake", cfg.config.threadId);
-		callback(0);
+	gen_dir = pathCombine(cfg.outputdir, "cpp3gen");
+	build_dir = pathCombine(gen_dir, "build");
+	ensureDirectoryExists(build_dir) |> \err -> if (err != "") fcPrintln(err, cfg.threadId);
+	fi2cpp3SaveFile(pathCombine(gen_dir, "CMakeLists.txt"), cmakelists, cfg);
+	qt_args = if (qt_modules == []) [] else {
+		["-DCMAKE_PREFIX_PATH=${QTLIBDIR}\":\"${CMAKE_PREFIX_PATH})"]
+	}
+	debug_or_release = "-DCMAKE_BUILD_TYPE=" +
+	if (getConfigParameter(cfg.config.config, "cpp-debug") == "1") {
+		"Debug"
 	} else {
-		ensureDirectoryExists(pathCombine(cfg.outputdir, "build"));
-		qt_args = if (qt_modules == []) [] else {
-			["-DCMAKE_PREFIX_PATH=${QTLIBDIR}\":\"${CMAKE_PREFIX_PATH})"]
+		"Release"
+	}
+	cmake_exit_code = execSystemProcess("cmake", concat(qt_args, ["..", debug_or_release]), build_dir,
+		\out -> if (cfg.verbose > 0 && !isSpace(out)) {
+			fcPrintln(out, cfg.config.threadId);
+		},
+		\err -> if (!isSpace(err)) {
+			fcPrintln(err, cfg.config.threadId);
 		}
-		cmake_exit_code = execSystemProcess("cmake", concat(qt_args, [".."]), pathCombine(cfg.outputdir, "build"),
-			\out -> if (cfg.verbose > 0 && !isSpace(out)) {
-				fcPrintln(out, cfg.config.threadId);
-			},
-			\err -> if (!isSpace(err)) {
-				fcPrintln(err, cfg.config.threadId);
-			}
-		);
-		if (cmake_exit_code != 0) callback(5) else {
-			fi2cpp3Make(cfg, "build", callback);
-		}
+	);
+	if (cmake_exit_code != 0) callback(5) else {
+		fi2cpp3Make(cfg, build_dir, callback);
 	}
 }
 
@@ -109,36 +99,23 @@ fi2cpp3BuildOpts(cfg: FiCpp3Config) -> [string] {
 	concatA([debug_opts, optimize_opts, include, fi2cpp3BuildCxxSupressWarningsFlags()]);
 }
 
-fi2cpp3BuildWithQmake(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
-	qt_conf = fi2cpp3QmakeConf(qt_deps, sources, cfg);
-	src_path = \name, ext -> pathCombine(cfg.outputdir, changeFileExt(name, ext));
-	qt_conf_file = src_path(fi2cpp3flowfile2cpp(cfg.outfile), ".pro");
-	fi2cpp3SaveFile(qt_conf_file, qt_conf, cfg);
-	qmake_args = ["-o", src_path("Makefile", ""), qt_conf_file];
-	if (cfg.verbose > 0) {
-		fcPrintln("Preparing Makefile with cpp3: 'qmake " + strGlue(qmake_args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
-	}
-	qmake_result = execSystemProcessOutput("qmake", qmake_args, ".");
-	if (cfg.verbose > 0 || qmake_result.exitCode != 0) {
-		if (!isSpace(qmake_result.stdall)) {
-			fcPrintln(qmake_result.stdall, cfg.config.threadId);
-		}
-	}
-	if (qmake_result.exitCode != 0) callback(5) else fi2cpp3Make(cfg, ".", callback);
-}
-
 fi2cpp3Make(cfg: FiCpp3Config, builddir: string, callback : (int) -> void) -> void {
-	if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") != "1") callback(0) else {
+	if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") != "1") {
+		callback(0);
+	} else {
 		build_concurrency = getConfigParameterDef(
 			cfg.config.config, 
 			"cpp-build-jobs", 
 			i2s(availableProcessors())
 		);
-		make_args = ["-j" + build_concurrency, "-C", cfg.outputdir];
+		make_args = [
+			"-j" + build_concurrency,  // Building concurrency level
+			"-C", builddir // The actual build directory. Make changes to it.
+		];
 		if (cfg.verbose > 0) {
-			fcPrintln("Building Makefile with cpp3: 'make " + strGlue(make_args, " ") + "', dir: " + cfg.outputdir + "...", cfg.config.threadId);
+			fcPrintln("Building Makefile with cpp3: 'make " + strGlue(make_args, " ") + "'", cfg.config.threadId);
 		}
-		make_exit_code = execSystemProcess("make", make_args, builddir,
+		make_exit_code = execSystemProcess("make", make_args, ".",
 			\out -> if (cfg.verbose > 0 && !isSpace(out)) {
 				fcPrintln(out, cfg.config.threadId);
 			},
@@ -148,73 +125,4 @@ fi2cpp3Make(cfg: FiCpp3Config, builddir: string, callback : (int) -> void) -> vo
 		);
 		if (make_exit_code != 0) callback(5) else callback(0);
 	}
-}
-
-fi2cpp3QmakeConf(qt_deps: [Cpp3Qt], sources: [string], cfg: FiCpp3Config) -> string {
-	qt_opts = uniq(concatA(map(qt_deps, \dep -> dep.opts)));
-	qt_modules = uniq(concatA(map(qt_deps, \dep -> map(dep.modules, toLowerCase))));
-	unconditional = fold(qt_opts, makeTree(), \acc, opt -> 
-		if (opt.condition != "") acc else 
-		setTree(acc, opt.name, concat(lookupTreeDef(acc, opt.name, []), [opt]))
-	);
-	folded = fold(qt_opts, makeTree(), \acc, opt -> {
-		opt_cond = lookupTreeDef(acc, opt.condition, makeTree());
-		opt_name = lookupTreeDef(opt_cond, opt.name, makeTree());
-		opt_sign = lookupTreeDef(opt_name, opt.sign, []);
-		setTree(acc, opt.condition, 
-			setTree(opt_cond, opt.name, 
-				setTree(opt_name, opt.sign, 
-					concat(opt_sign, opt.value)
-				)
-			)
-		)
-	});
-	opts2qt = \opts -> {
-		foldTree(opts, "", \name, opt, acc ->
-			foldTree(opt, acc, \sign, vals, ac ->
-				name + " " + sign + " " + strGlue(vals, " ") + "\n"
-			)
-		)
-	}
-	cpp_compiler = lookupTreeDef(cfg.config.config, "cpp-compiler", "");
-	cpp_sources = filter(sources, \path -> endsWith(path, ".cpp"));
-	hpp_sources = filter(sources, \path -> endsWith(path, ".hpp"));
-	cxx_opts = superglue(concat(["-std=c++20"], fi2cpp3BuildOpts(cfg)), \opt -> "QMAKE_CXXFLAGS += " + opt, "\n");
-	conf_opts = strGlue(cfg.qtOpts, "\n");
-	opt_param = getConfigParameterDef(cfg.config.config, "cpp-optimize", "");
-	final_exe = resolveRelativePath(changeFileExt(cfg.outfile, ""));
-
-	(if (qt_modules == []) "" else superglue(qt_modules, \m -> "QT += " + m, "\n") + "\n") +
-	(if (opt_param == "") "" else "QMAKE_CXXFLAGS_RELEASE += -O" + opt_param + "\n") +
-	"CONFIG += -std=c++20\n" +
-	(if (cpp_compiler == "") "" else "QMAKE_CXX = " + cpp_compiler + "\n") +
-	"QMAKE_CXXFLAGS += -Wno-unused-value -Wno-unused-parameter -Wno-unused-variable -Wno-return-type -Wno-unused-but-set-variable -Wno-trigraphs\n" +
-	(if (lookupTreeDef(cfg.config.config, "cpp-gprof", "") != "1") "" else 
-		"QMAKE_CXXFLAGS += -pg\n" +
-		"QMAKE_LFLAGS += -pg\n"
-	) +
-	(if (cfg.debug) "CONFIG+=debug\n" else "") +
-	(if (isConfigParameterTrue(cfg.config.config, "cpp-optimize")) "CONFIG+=release\n" else "") +
-	cxx_opts + "\n" +
-	(if (conf_opts == "") "" else conf_opts + "\n") +
-	foldTree(folded, "", \cond, opts, acc ->
-		if (cond != "") {
-			cond + " {\n" + strIndent(opts2qt(opts)) + "\n}\n";
-		} else {
-			opts2qt(opts)
-		}
-	) + "\n" +
-	"OUT_PWD  = " + cfg.outputdir + "/gen\n" +
-	"OBJECTS_DIR = " + cfg.outputdir + "/obj\n" + 
-	"MOC_DIR = " + cfg.outputdir + "/moc\n" +
-	"RCC_DIR = " + cfg.outputdir + "/qrc\n" +
-	"UI_DIR = " + cfg.outputdir + "/ui\n" +
-	"\n" +
-	concatStrings(map(hpp_sources, \hpp -> 
-		"HEADERS += " + hpp + "\n"
-	)) + "\n" +
-	concatStrings(map(cpp_sources, \cpp ->
-		"SOURCES += " + cpp + "\n"
-	)) + "\n" +
-	"TARGET = " + final_exe + "\n";
 }
