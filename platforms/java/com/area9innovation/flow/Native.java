@@ -2601,30 +2601,6 @@ public class Native extends NativeHost {
 		}
 	}
 
-	public static final String runtimeValueType(Object value) {
-		if (value == null) {
-			return "void";
-		} else if (value instanceof Integer) {
-			return "int";
-		} else if (value instanceof Double) {
-			return "double";
-		} else if (value instanceof Boolean) {
-			return "bool";
-		} else if (value instanceof String) {
-			return "string";
-		} else if (value instanceof Struct) {
-			return ((Struct)value).getTypeName();
-		} else if (value instanceof Function) {
-			return "function";
-		} else if (value instanceof Object[]) {
-			return "array";
-		} else if (value instanceof Reference) {
-			return "ref";
-		} else {
-			return "undef";
-		}
-	}
-
 	public static final String toStringForJson(String value) {
 		String sv = value;
 		// Make room for some escape
