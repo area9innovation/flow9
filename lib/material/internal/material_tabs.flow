@@ -1,5 +1,6 @@
 import material/internal/material_toolbar;
 import material/internal/material_grid;
+import material/internal/material_util;
 import material/internal/tropic_size_util;
 
 export {
@@ -66,6 +67,9 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	tabWidth = tryExtractStruct(m.style, MWidth(0.0));
 	tabsWidths : DynamicBehaviour<[double]> = make(generate(0, length(fgetValue(m.tabs)), \i -> getValue(tabsMinWidth)[i]));
 	panelButtonW = make(0.);
+
+	focusedIdx = make(-1);
+	focusEnabledIdx = make(0);
 
 	oldTabs : ref [MTab] = ref fgetValue(m.tabs);
 
@@ -138,7 +142,14 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 						}));
 					tabPanelId = fif(feq(m.selected, i), const(makeTabpanelId(tabsId, i)), const(""));
 					focusState = replaceStructMany(tb.style, 
-						[onClick, AccessRole("tab"), FAccessAttribute("aria-controls", tabPanelId), MRippleType(const(MRippleFill()))]
+						[
+							onClick,
+							AccessRole("tab"),
+							FAccessAttribute("aria-controls", tabPanelId),
+							FAccessAttribute("aria-selected", fselectLift(feq(m.selected, i), b2s)),
+							MRippleType(const(MRippleFill())),
+							extractStruct(tb.style, MButtonTitle(tb.text))
+						]
 					);
 					tabIcon = tryExtractStruct(tb.style, MTabIcon(TEmpty()));
 					
@@ -153,7 +164,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 					dynArrayPush(iconsVisible, isIconVisible);
 					colorT = fselectLift(fand(const(!isKeepTabColor), feq(m.selected, i)), \selected -> if (selected) Some(indicatorColor) else itemsColor);
 
-					TSelect2(tb.text, colorT, \txt, color ->
+					(\externalState -> TSelect2(tb.text, colorT, \txt, color ->
 						if (txt != "") {
 							MTabsText(manager, p2, txt, capitalizeTitle, centerTitle, rescaleEnabled, showTooltip, maxLines, tabsFontStyle, color, fullWidth, widthByContent, m2t)
 							|> TBorderTopBottom(2.)
@@ -193,7 +204,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 									manager,
 									p2,
 									"MTabsButton",
-									focusState,
+									concat(focusState, externalState),
 									\focus ->
 										TCopySize(
 											eitherMap(addAction, \addAct -> m2t(MCols2A(sz, addAct.action(i)), p2), sz),
@@ -276,7 +287,19 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 							)
 						], t)
 						else t
+					))
+					|> (\makeTab ->
+						MArrowNavigation(
+							i,
+							tbsLength,
+							makeTab,
+							focusedIdx,
+							focusEnabledIdx,
+							\ -> max(0, fgetValue(m.selected)),
+							[MArrowNavigationDirection(false)]
+						)
 					)
+					|> (\t -> m2t(t, p2))
 				}
 
 				mapi(tbs, tabHeader2T)
@@ -373,6 +396,8 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 							newWidths = distributeSizesEvenly(widths.first, widths.second, sw);
 							next(tabsWidths, newWidths);
 						}),
+
+						makeSubscribe(focusedIdx, \focIdx -> if (focIdx >= 0) nextDistinct(m.selected, focIdx)),
 
 						\ -> fconnectSelect(isAnyIcon, tabsHeight, \b ->
 							max(getValue(tabsHeight), if (b && !oneLineTitle) tabsPanelHeightWithIcons else tabsPanelHeight)

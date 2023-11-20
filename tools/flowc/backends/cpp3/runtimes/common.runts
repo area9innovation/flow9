@@ -4,6 +4,7 @@ Cpp3RuntimePart("command_args",
 "
 struct CommandArgs {
 	static void init(int argc, const char* argv[]);
+	static void dispose() { args.clear(); }
 	static std::map<string, string> args;
 };
 ",
@@ -14,16 +15,16 @@ void CommandArgs::init(int argc, const char* argv[]) {
 		std::string arg(argv[i]);
 		std::size_t eq_ind = arg.find(\"=\");
 		if (eq_ind == std::string::npos) {
-			CommandArgs::args[fromStdString(arg)] = fromStdString(\"\");
+			CommandArgs::args[std2string(arg)] = u\"\";
 		} else {
 			std::string key = arg.substr(0, eq_ind);
 			std::string val = arg.substr(eq_ind + 1, arg.size() - eq_ind - 1);
-			CommandArgs::args[fromStdString(key)] = fromStdString(val);
+			CommandArgs::args[std2string(key)] = std2string(val);
 		}
 	}
 }
 ",
-"CommandArgs::init(argc, argv);", "",
+"CommandArgs::init(argc, argv);", "CommandArgs::dispose();",
 [Cpp3Std(["<map>"], [])], false
 ),
 
@@ -31,10 +32,9 @@ Cpp3RuntimePart("date_time_format",
 "const std::string date_time_format(\"%Y-%m-%d %H:%M:%S\");",
 "", "", "", [], false),
 
-Cpp3RuntimePart("void_value", 
-"struct RuntimeVoid { };
-const Flow void_value(makePtr<RuntimeVoid>());
-","", "", "", [], false),
+Cpp3RuntimePart("std_output_mutex",
+"extern std::mutex std_output_mutex;",
+"std::mutex std_output_mutex;", "", "", [], false),
 
 Cpp3RuntimePart("to_binary", 
 "
@@ -67,72 +67,64 @@ union DoubleOrChars {
 	DoubleOrChars(char16_t i0, char16_t i1, char16_t i2, char16_t i3): chars(i0, i1, i2, i3) { }
 };
 
-inline Void appendCharValue(Int c, String s) {
-	s->push_back(c & 0xffff);
+inline void appendCharValue(Int c, string& s) {
+	s.push_back(c & 0xffff);
 }
-inline Void appendBinaryInt32(Int value, String s) {
-	IntOrChars i(value);
+inline void appendBinaryInt32(Int v, string& s) {
+	IntOrChars i(v);
 	appendCharValue(i.chars.c0, s);
 	appendCharValue(i.chars.c1, s);
 }
-inline Void appendIntValue(Int value, String s) {
-	if ((value & 0xFFFF8000) != 0) {
-		appendCharValue(0xFFF5, s);
-		appendBinaryInt32(value, s);
-	} else {
-		appendCharValue(value, s);
-	}
-}
-inline Void appendBooleanValue(Bool value, String s) {
-	appendCharValue(value ? 0xFFFE : 0xFFFD, s);
-}
-Void appendDoubleValue(Double value, String s);
-Void appendStringValue(String value, String s);
-Void appendBinaryValue(Flow value, String s, std::unordered_map<string, Int>& structIdxs, std::vector<Ptr<AStruct>>& structDefs);
+void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<Int>& structDefs);
 ",
 "
-Void appendDoubleValue(Double value, String s) {
-	appendCharValue(0xFFFC, s);
-	DoubleOrChars d(value);
-	appendCharValue(d.chars.c0, s);
-	appendCharValue(d.chars.c1, s);
-	appendCharValue(d.chars.c2, s);
-	appendCharValue(d.chars.c3, s);
-}
-Void appendStringValue(String value, String s) {
-	Int str_len = value->size();
-	if (str_len > 65535) {
-		appendCharValue(0xFFFB, s);
-		appendBinaryInt32(str_len, s);
-	} else {
-		appendCharValue(0xFFFA, s);
-		appendCharValue(str_len, s);
-	}
-	for (auto c : *value) {
-		appendCharValue(c, s);
-	}
-}
-Void appendBinaryValue(Flow value, String s, std::unordered_map<string, Int>& structIdxs, std::vector<Ptr<AStruct>>& structDefs) {
-	switch (value.type()) {
-		case Type::STRING: {
-			appendStringValue(value.toString(), s);
+void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<Int>& structDefs) {
+	switch (v->typeId()) {
+		case TypeFx::VOID: {
+			// void values shouldn't be serialized
 			break;
 		}
-		case Type::DOUBLE: {
-			appendDoubleValue(value.toDouble(), s);
+		case TypeFx::INT: {
+			Int val = v->get<Int>();
+			if ((val & 0xFFFF8000) != 0) {
+				appendCharValue(0xFFF5, s);
+				appendBinaryInt32(val, s);
+			} else {
+				appendCharValue(val, s);
+			}
 			break;
 		}
-		case Type::INT: {
-			appendIntValue(value.toInt(), s);
+		case TypeFx::STRING: {
+			const string& val = v->get<String*>()->str();
+			Int str_len = val.size();
+			if (str_len > 65535) {
+				appendCharValue(0xFFFB, s);
+				appendBinaryInt32(str_len, s);
+			} else {
+				appendCharValue(0xFFFA, s);
+				appendCharValue(str_len, s);
+			}
+			for (auto c : val) {
+				appendCharValue(c, s);
+			}
 			break;
 		}
-		case Type::BOOL: {
-			appendBooleanValue(value.toBool(), s);
+		case TypeFx::DOUBLE: {
+			Double val = v->get<Double>();
+			appendCharValue(0xFFFC, s);
+			DoubleOrChars d(val);
+			appendCharValue(d.chars.c0, s);
+			appendCharValue(d.chars.c1, s);
+			appendCharValue(d.chars.c2, s);
+			appendCharValue(d.chars.c3, s);
 			break;
 		}
-		case Type::ARRAY: {
-			Ptr<AArray> a = value.val.dynamicCast<AArray>();
-			Int l = a->size();
+		case TypeFx::BOOL: {
+			appendCharValue(v->get<Bool>() ? 0xFFFE : 0xFFFD, s);
+			break;
+		}
+		case TypeFx::ARRAY: {
+			Int l = v->componentSize();
 			if (l == 0) {
 				appendCharValue(0xFFF7, s);
 			} else {
@@ -143,30 +135,29 @@ Void appendBinaryValue(Flow value, String s, std::unordered_map<string, Int>& st
 					appendCharValue(0xFFF8, s);
 					appendCharValue(l, s);
 				}
-				Arr<Flow> elements = a->elements();
-				for (Flow v : elements->vect) {
-					appendBinaryValue(v, s, structIdxs, structDefs);
+				for (Int i = 0; i < v->componentSize(); ++i) {
+					incRc(v);
+					appendBinaryValue(v->getFlowRc(i), s, structIdxs, structDefs);
 				}
 			}
 			break;
 		}
 		default: {
-			Ptr<AStruct> str = value.val.dynamicCast<AStruct>();
-			String struct_id = str->name();
-			if (structIdxs.find(*struct_id) == structIdxs.end()) {
-				structIdxs[*struct_id] = structDefs.size();
-				structDefs.push_back(str);
+			if (structIdxs.find(v->typeId()) == structIdxs.end()) {
+				structIdxs[v->typeId()] = structDefs.size();
+				structDefs.push_back(v->typeId());
 			}
-			Int struct_idx = structIdxs.at(*struct_id);
+			Int struct_idx = structIdxs.at(v->typeId());
 			appendCharValue(0xFFF4, s);
 			appendCharValue(struct_idx, s);
-			Arr<Flow> fields = str->fields();
-			for (Flow w : fields->vect)  {
-				appendBinaryValue(w, s, structIdxs, structDefs);
+			for (Int i = 0; i < v->componentSize(); ++ i)  {
+				incRc(v);
+				appendBinaryValue(v->getFlowRc(i), s, structIdxs, structDefs);
 			}
 			break;
 		}
 	}
+	decRc(v);
 }
 ", "", "",
 [Cpp3Std(["<unordered_map>"], [])], false

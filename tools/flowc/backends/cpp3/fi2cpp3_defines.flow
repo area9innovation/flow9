@@ -4,40 +4,37 @@ import tools/flowc/backends/common;
 export {
 
 Cpp3GlobalContext(
+	globEnv : FcTypeEnvGlobal,
 	config: FiCpp3Config,
 	program: FiProgram,
 	effects: FiEffects,
-	// Transform a flow file name into a cpp3 file name
-	flowfile2cpp: (string) -> string,
+	// Array of all structs
+	structs: [FiTypeStruct],
 	// Index of all structs
-	structs2id: Tree<string, int>,
-	// type parameter representation in c++ source
-	typar2cpp: (FiTypeParameter) -> string,
-	// type name representation in c++ source
-	typename2cpp: (string) -> string,
-	// global name (function or variable) representation in c++ source
-	varname2cpp: (string) -> string,
+	structs2cpp: Tree<string, Cpp3Struct>,
+	// struct name to struct id
+	structid2cpp: (string) -> string,
 	// Native functions definition and other information
 	natives: Tree<string, Cpp3Native>,
 	// Parts of a shared runtime code
 	runtimeParts: Tree<string, Cpp3RuntimePart>,
-	// Variables, which initialization happens in main function (i.e. cannot be static)
-	volatileVars: Set<string>,
-	// Code of volatile variables initialization
-	volatileInit: ref [string],
-	// Error. Just error messages. Supposed to be empty.
-	errors: ref [string],
+	// Indicator of successfull compilation
+	success: ref bool,
+	// Currently translated module. Used for debugging
+	currentModule: string,
 	// Currently translated funciton/global variable. Used for debugging
 	currentToplevel: Maybe<FiToplevel>,
 	// Type parameters of a current toplevel. Used to replace implicit (dummy) typars
-	toplevelTypars: Set<string>
+	toplevelTypars: Set<string>,
+	// Name of a current toplevel
+	currentToplevelName: string
 );
 
 Cpp3CompiledProgram(
 	name: string, // main module name
 	sources: [string], // names of all generated files
 	qtDeps:  [Cpp3Qt], // Qt dependencies, used in program
-	errors:  [string]
+	success: bool
 );
 
 Cpp3CompiledModule(
@@ -45,21 +42,35 @@ Cpp3CompiledModule(
 	isMain: bool,      // indicates the module with main funciton
 	decls: [Cpp3CompiledDeclaration], // the main contents of a compiled module
 	imports: [string], // imports from flow module
-	natives: [Cpp3Native] // natives, occured in module. Used to build and link with external dependencies
+	natives: [Cpp3Native], // natives, occured in module. Used to build and link with external dependencies
+);
+
+Cpp3StructArg(ind: int, type: FiType);
+
+Cpp3Struct(
+	id: int,
+	struct: FiTypeStruct,
+	argInds: Tree<string, Cpp3StructArg>
 );
 
 Cpp3CompiledDeclaration(
 	name: string,
-	headerOnly : bool, // whether this definition should be placed in *.hpp or in *.cpp
-	forward: string,   // forward declaration
-	definition: string // main contents - c++ code of definition
+	headerOnly : bool,   // whether this definition should be placed in *.hpp or in *.cpp
+	forward: string,     // forward declaration
+	traits: string,      // type traits, which must be places in ::flow::traits namespace
+	declaration: string, // real declaration
+	definition: string,  // main contents - c++ code of definition
+	init: string         // initialization code 
 );
 
 Cpp3Native(
 	name: string,
 	// Definition of native - it's c++ function implementation.
-	// Arguments: first - type encoding (typename2cpp), second - var encoding (varname2cpp)
-	declaration: ((string) -> string, (string) -> string) -> Cpp3CompiledDeclaration,
+	// Arguments: 
+	//      first - type encoding (typename2cpp), 
+	//      second - var encoding (varname2cpp),
+	//      third - type ID encoding (structid2cpp)
+	declaration: ((string) -> string, (string) -> string, (string) -> string) -> Cpp3CompiledDeclaration,
 	// Possible inlining
 	inline: Maybe<Cpp3Inline>,
 	// External dependencies like <cmath>, which should be included like #include <cmath>
@@ -95,8 +106,8 @@ Cpp3NativePlain(
 	name: string,
 	// whether this definition should be placed in *.hpp or in *.cpp
 	headerOnly : bool,
-	// forward declaration
-	forward: string,
+	// Declaration
+	declaration: string,
 	// Definition of native - it's c++ function implementation.
 	// Arguments: first - type encoding (typename2cpp), second - var encoding (varname2cpp)
 	definition: string,
@@ -116,7 +127,8 @@ Cpp3Dependency ::= Cpp3Std, Cpp3Qt;
 	);
 	// Dependency on some Qt entity
 	Cpp3Qt(
-		includes: [string], // like <QProcess>
+		modules: [string],   // like `core`, `concurrent`, `gui`,...
+		includes: [string],  // like <QProcess>
 		opts: [Cpp3QtOpt]
 	);
 	// Example of Qt option:
@@ -130,4 +142,18 @@ Cpp3Dependency ::= Cpp3Std, Cpp3Qt;
 		sign: string,      // Like +=, -=, =, etc.
 		value: [string]    // Like use_jit
 	);
+
+	// Functions, which must be in any compiled program.
+	cpp3MandatoryNatives = [
+		// is used in cast unrolling
+		Pair("ds/array", FiNativeDec("map", false,
+			FiTypeFunction([
+					FiFunArg("", FiTypeArray(FiTypeParameter("?"))),
+					FiFunArg("", FiTypeFunction([FiFunArg("", FiTypeParameter("?"))], FiTypeParameter("??")))
+				],
+				FiTypeArray(FiTypeParameter("??")),
+			),
+			"Native.map", FiVoid(0), 0, 0
+		))
+	];
 }

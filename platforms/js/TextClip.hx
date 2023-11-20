@@ -561,15 +561,25 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.whiteSpace = "normal";
 		}
 
-		updateBaselineWidget();
 		updateTextBackgroundWidget();
+		updateBaselineWidget();
 	}
 
 	public inline function updateBaselineWidget() : Void {
 		if (this.isHTMLRenderer() && isNativeWidget && needBaseline) {
 			if (!isInput && nativeWidget.firstChild != null && !isMaterialIconFont()) {
-				var lineHeightGap = (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
-				baselineWidget.style.height = '${DisplayObjectHelper.round(style.fontProperties.fontSize + lineHeightGap)}px';
+				// For some fonts italic form has a smaller height, so baseline becomes occasionally unsynchronised with normal-style glyphs on different zoom levels
+				if (style.fontStyle == 'italic') {
+					var lineHeightGap = getLineHeightGap();
+					var transform = DisplayObjectHelper.getNativeWidgetTransform(this);
+					var top = DisplayObjectHelper.round(transform.ty);
+					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + lineHeightGap + top)}px';
+					textBackgroundWidget.style.top = '${Math.round(getTextMargin() + lineHeightGap + top)}px';
+					nativeWidget.style.top = 0;
+				} else {
+					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + getLineHeightGap())}px';
+				}
+				
 				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 				makeBaselineWidgetAmiriItalicBugWorkaround();
@@ -585,12 +595,18 @@ class TextClip extends NativeWidgetClip {
 		// For some reason, in most browsers Amiri italic text, which starts from digit doesn't render italic, when baselineWidget is present.
 		// Looks like a browser bug, so we need this workaround
 		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic' && nativeWidget.textContent[0] != '' && untyped !isNaN(nativeWidget.textContent[0])) {
+			var transform = DisplayObjectHelper.getNativeWidgetTransform(this);
+			var top = DisplayObjectHelper.round(transform.ty);
+			
 			baselineWidget.style.display = "none";
 			nativeWidget.style.marginTop = '0px';
+			nativeWidget.style.top = '${Math.round(getLineHeightGap() + top)}px';
+
 			Native.timer(0, function() {
 				baselineWidget.style.display = null;
 				if (this.parent != null) {
 					nativeWidget.style.marginTop = '${-getTextMargin()}px';
+					nativeWidget.style.top = '0px';
 				}
 			});
 		}
@@ -605,6 +621,10 @@ class TextClip extends NativeWidgetClip {
 
 	public function getTextMargin() : Float {
 		return DisplayObjectHelper.round(style.fontProperties.descent * this.getNativeWidgetTransform().d);
+	}
+
+	public function getLineHeightGap() : Float {
+		return (style.lineHeight - Math.ceil(style.fontSize * 1.15)) / 2.0;
 	}
 
 	public function calculateTextContent() : String {
@@ -1145,6 +1165,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.onblur = onBlur;
 
 		nativeWidget.addEventListener('input', onInput);
+		nativeWidget.oninput = onInput;
 		nativeWidget.addEventListener('compositionend', function() { emit("compositionend"); });
 		nativeWidget.addEventListener('scroll', onScroll);
 		nativeWidget.addEventListener('keydown', onKeyDown);
@@ -1368,6 +1389,11 @@ class TextClip extends NativeWidgetClip {
 		if (Platform.isIOS && type == 'number' && nativeWidget.value == '') {
 			nativeWidget.value = '';
 		}
+		// Nothing changed, prevent from double handling
+		if (nativeWidget.value == this.text) {
+			return;
+		}
+
 		// Some browsers tend to return nativeWidget.value without decimal separator at the end, but still visually display it
 		var decimalSeparatorFix = type == 'number' && (e.data == '.' || e.data == ',');
 		var nativeWidgetValue = decimalSeparatorFix ? nativeWidget.value + e.data : nativeWidget.value;
