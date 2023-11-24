@@ -609,4 +609,16 @@ if (a === b) return true;
 			return untyped __strict_eq__(v1, v2);
 		#end
 	}
+
+	// Getter with bounds check
+	static public inline function getArray<T>(a : Array<T>, i : Int) : T {
+		if (i < 0 || i >= a.length) {
+			if (a.length == 0) {
+				throw "array index " + i + " is out of bounds: array is empty";
+			} else {
+				throw "array index " + i + " is out of bounds: 0 <= i < " + a.length;
+			}
+		}
+		return a[i];
+	}
 }
