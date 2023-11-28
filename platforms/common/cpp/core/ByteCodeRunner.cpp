@@ -2883,7 +2883,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CField:
             {
-                int i = Code.ReadInt31_8();
+                int i = Code.ReadInt31_16();
                 DoField(i);
                 break;
             }

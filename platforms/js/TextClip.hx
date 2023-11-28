@@ -176,7 +176,7 @@ class TextClip extends NativeWidgetClip {
 
 	private var textBackgroundWidget : Dynamic;
 	private static var useTextBackgroundWidget : Bool = false;
-
+	private var amiriItalicWorkaroundWidget : Dynamic;
 	private var baselineWidget : Dynamic;
 	private var needBaseline : Bool = true;
 
@@ -582,34 +582,35 @@ class TextClip extends NativeWidgetClip {
 				
 				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
-				makeBaselineWidgetAmiriItalicBugWorkaround();
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
+				updateAmiriItalicWorkaroundWidget();
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
 		}
-
 	}
 
-	private function makeBaselineWidgetAmiriItalicBugWorkaround() {
-		// For some reason, in most browsers Amiri italic text, which starts from digit doesn't render italic, when baselineWidget is present.
+	private function updateAmiriItalicWorkaroundWidget() : Void {
+		// For some reason, in most browsers Amiri italic text, which starts from digit/special symbol doesn't render italic, when baselineWidget is present.
 		// Looks like a browser bug, so we need this workaround
-		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic' && nativeWidget.textContent[0] != '' && untyped !isNaN(nativeWidget.textContent[0])) {
-			var transform = DisplayObjectHelper.getNativeWidgetTransform(this);
-			var top = DisplayObjectHelper.round(transform.ty);
-			
-			baselineWidget.style.display = "none";
-			nativeWidget.style.marginTop = '0px';
-			nativeWidget.style.top = '${Math.round(getLineHeightGap() + top)}px';
-
-			Native.timer(0, function() {
-				baselineWidget.style.display = null;
-				if (this.parent != null) {
-					nativeWidget.style.marginTop = '${-getTextMargin()}px';
-					nativeWidget.style.top = '0px';
-				}
-			});
+		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic'
+			&& nativeWidget.textContent[0] != '' && !isCharLetter(nativeWidget.textContent[0])
+		) {
+			if (amiriItalicWorkaroundWidget == null) {
+				var txt = 't';
+				var charMetrics = TextMetrics.measureText(txt, style);
+				amiriItalicWorkaroundWidget = Browser.document.createElement('span');
+				amiriItalicWorkaroundWidget.style.position = 'relative';
+				amiriItalicWorkaroundWidget.style.marginRight = '${-charMetrics.width}px';
+				amiriItalicWorkaroundWidget.style.opacity = '0';
+				amiriItalicWorkaroundWidget.textContent = txt;
+				nativeWidget.insertBefore(amiriItalicWorkaroundWidget, nativeWidget.firstChild);
+			}
 		}
+	}
+
+	private function isCharLetter(char : String) : Bool {
+		return char.toLowerCase() != char.toUpperCase();
 	}
 
 	public inline function updateTextBackgroundWidget() : Void {

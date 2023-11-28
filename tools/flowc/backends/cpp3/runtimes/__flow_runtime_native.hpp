@@ -29,20 +29,15 @@ struct Native : public Flow {
 			return new Native(as...);
 		}
 	}
-	template<typename T> bool castsTo() {
-		try {
-			std::any_cast<T>(val_);
-			return true;
-		} catch(const std::bad_any_cast& e) {
-			return false;
-		}
+	template<typename T> inline bool castsTo() {
+		return val_.type() == typeid(T);
 	}
 	template<typename T> inline T getRc() { return decRcRet(this, getRc1<T>()); }
 	template<typename T> inline T getRc1() { return incRcRet(get<T>()); }
 	template<typename T> inline T get() {
-		try {
+		if (castsTo<T>()) {
 			return std::any_cast<T>(val_);
-		} catch(const std::bad_any_cast& e) { 
+		} else {
 			fail("incorrect type in native: " + type2StdString<T>());
 		}
 	}
