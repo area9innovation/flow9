@@ -202,7 +202,7 @@ struct Str : public Union {
 	inline Flow* toFlow() { return FStr::make<S>(this); }
 */
 protected:
-	Str(Fs... fs): fields(fs...) { }
+	Str(Fs... fs): Union(Id), fields(fs...) { }
 private:
 	template<typename S>
 	static S makeSingleton() {
