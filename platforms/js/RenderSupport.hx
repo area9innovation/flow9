@@ -57,7 +57,7 @@ class RenderSupport {
 	// Better option is to use <meta name="viewport" content="initial-scale=1.0,maximum-scale=1.0"/> inside top window.
 	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0" && isViewportScaleWorkaroundEnabled();
 	// Don't wait for fonts to load
-	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") == "1";
+	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
@@ -556,7 +556,7 @@ class RenderSupport {
 
 		if (Util.getParameter("oldjs") != "1") {
 			initPixiRenderer();
-			if (mainNoDelay || Native.isNew) {
+			if (mainNoDelay) {
 				defer(StartFlowMainWithTimeCheck);
 			}
 		} else {
@@ -850,7 +850,7 @@ class RenderSupport {
 		initFullScreenEventListeners();
 
 		webFontsLoadingStartAt = NativeTime.timestamp();
-		WebFontsConfig = FontLoader.loadWebFonts(if (mainNoDelay || Native.isNew) function() {} else StartFlowMainWithTimeCheck);
+		WebFontsConfig = FontLoader.loadWebFonts(if (mainNoDelay) function() {} else StartFlowMainWithTimeCheck);
 
 		initClipboardListeners();
 		initCanvasStackInteractions();
