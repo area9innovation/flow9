@@ -117,7 +117,7 @@ struct Str : public Union {
 	}
 	template<Int i>
 	inline void setRc1(typename std::tuple_element_t<i, Fields> v) {
-		set<i>(v);
+		assignRc<typename std::tuple_element_t<i, Fields>>(std::get<i>(fields), v);
 	}
 	template<Int i>
 	inline typename std::tuple_element_t<i, Fields> get() {
@@ -125,7 +125,7 @@ struct Str : public Union {
 	}
 	template<Int i>
 	inline void set(typename std::tuple_element_t<i, Fields> v) {
-		assignRc<typename std::tuple_element_t<i, Fields>>(std::get<i>(fields), v);
+		std::get<i>(fields) = v;
 	}
 
 	Int compare(Str* s) {
