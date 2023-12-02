@@ -36,6 +36,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.lang.Runtime;
 import java.lang.ClassCastException;
 import java.lang.reflect.InvocationTargetException;
@@ -44,7 +45,6 @@ import java.io.OutputStream;
 import java.io.InputStream;
 import java.math.BigInteger;
 import java.security.*;
-import java.util.Arrays;
 import java.time.format.DateTimeFormatter;
 import java.time.LocalDateTime;
 import java.time.Instant;
@@ -2598,30 +2598,6 @@ public class Native extends NativeHost {
 			} catch (java.lang.IllegalArgumentException ex) {
 				System.err.println("While adding a function: " + name + "\n" + ex.getMessage());
 			}
-		}
-	}
-
-	public static final String runtimeValueType(Object value) {
-		if (value == null) {
-			return "void";
-		} else if (value instanceof Integer) {
-			return "int";
-		} else if (value instanceof Double) {
-			return "double";
-		} else if (value instanceof Boolean) {
-			return "bool";
-		} else if (value instanceof String) {
-			return "string";
-		} else if (value instanceof Struct) {
-			return ((Struct)value).getTypeName();
-		} else if (value instanceof Function) {
-			return "function";
-		} else if (value instanceof Object[]) {
-			return "array";
-		} else if (value instanceof Reference) {
-			return "ref";
-		} else {
-			return "undef";
 		}
 	}
 

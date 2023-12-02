@@ -14,35 +14,6 @@ export {
 	MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material];
 	MRadiosCombined(index : DynamicBehaviour<int>, style : [MCheckableStyle], params : [MRadioParams], colsCombiner : bool) -> Material;
 		MRadioParams(caption : Material, title : Maybe<string>);
-	// Helper to navigate list like in radio-group
-	MArrowNavigation(
-		i : int,
-		listLen : int,
-		makeListItem : ([MButtonState]) -> Material,
-		focusedIdx : DynamicBehaviour<int>,
-		focusEnabledIdx : DynamicBehaviour<int>,
-		getDefFocusableItem : () -> int,
-		style : [MArrowNavigationStyle]
-	) -> Material;
-
-	MArrowNavigationExt(
-		i : int,
-		listLen : int,
-		makeListItem : ([MButtonState]) -> Material,
-		focusedIdx : DynamicBehaviour<int>,
-		focusEnabledIdx : DynamicBehaviour<int>,
-		getDefFocusableItem : () -> int,
-		style : [MArrowNavigationStyle]
-	) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>>;
-
-	MArrowNavigationStyle ::= MArrowNavigationDirection, MArrowNavigationSupportHomeEnd, MArrowNavigationCheckFocusability,
-							MArrowNavigationSelectItem, MArrowNavigationResetSelection, MArrowNavigationCustomOnArrow;
-		MArrowNavigationDirection(vertical : bool); // true by default
-		MArrowNavigationSupportHomeEnd(support : bool); // true by default
-		MArrowNavigationCheckFocusability(fn : (int) -> bool);
-		MArrowNavigationSelectItem(fn : () -> void, auto : bool);
-		MArrowNavigationResetSelection(fn : () -> bool);
-		MArrowNavigationCustomOnArrow(fn : (forw : bool) -> void, enabled : () -> bool);
 
 	// Help to create common patterns, when you need to place smth at the top
 	// of another material
@@ -259,6 +230,9 @@ export {
 	MFullScreenNoReattachments(fs : DynamicBehaviour<bool>, m : Material) -> Material;
 
 	MPositionScaleEnabled(positionScale : DynamicBehaviour<PositionScale>, content : Material, enabled : Transform<bool>) -> Material;
+	// Becomes visually highlighted and focused once at the start if something (except input/editor) was in focus just before construction
+	// Used for notifying screenreader about changes on the screen
+	MInitiallyFocused(mat : Material, buttonTitle : Transform<string>) -> Material;
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -299,95 +273,6 @@ MRadiosExtended(
 			]
 		)
 	})
-}
-
-// Navigate through list by arrows, not by tab. Wrap each item of list into this.
-MArrowNavigation(
-	i : int,
-	listLen : int,
-	makeListItem : ([MButtonState]) -> Material,
-	focusedIdx : DynamicBehaviour<int>,
-	focusEnabledIdx : DynamicBehaviour<int>,
-	getDefFocusableItem : () -> int,
-	style : [MArrowNavigationStyle]
-) -> Material {
-	MArrowNavigationExt(i, listLen, makeListItem, focusedIdx, focusEnabledIdx, getDefFocusableItem, style).first;
-}
-
-MArrowNavigationExt(
-	i : int,
-	listLen : int,
-	makeListItem : ([MButtonState]) -> Material,
-	focusedIdx : DynamicBehaviour<int>,
-	focusEnabledIdx : DynamicBehaviour<int>,
-	getDefFocusableItem : () -> int,
-	style : [MArrowNavigationStyle]
-) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>> {
-
-	vertical = extractStruct(style, MArrowNavigationDirection(true)).vertical;
-	supportHomeEnd = extractStruct(style, MArrowNavigationSupportHomeEnd(true)).support;
-	checkFocusability = extractStruct(style, MArrowNavigationCheckFocusability(\__ -> true)).fn;
-	customOnArrow = tryExtractStruct(style, MArrowNavigationCustomOnArrow(nop1, \ -> false));
-	selectItem = tryExtractStruct(style, MArrowNavigationSelectItem(nop, false));
-	resetSelection = extractStruct(style, MArrowNavigationResetSelection(\ -> false)).fn;
-	mainKeys = if (vertical) Pair(KEY_UP, KEY_DOWN) else Pair(KEY_LEFT, KEY_RIGHT);
-
-	focused = make(false);
-	focusEnabled = feq(focusEnabledIdx, i);
-
-	makeListItem([MFocused(focused), MFocusEnabled(focusEnabled)])
-	|> (\m -> MInteractive([
-		KeyUp2(\handled, ke -> {
-			if (!handled && fgetValue(focused)) {
-				idx = getValue(focusedIdx);
-				updateFocusedAnswer = \newIdx -> if (checkFocusability(newIdx)) nextDistinct(focusedIdx, newIdx);
-				onArrow = \forw, newIdx ->
-					eitherFn(customOnArrow,
-						\coa ->
-							if (coa.enabled()) coa.fn(forw)
-							else updateFocusedAnswer(newIdx),
-						\ -> updateFocusedAnswer(newIdx)
-					);
-				if (ke.keycode == mainKeys.first) { // backwards
-					onArrow(false, if (idx == 0) listLen - 1 else idx - 1);
-					true
-				} else if (ke.keycode == mainKeys.second) { // forward
-					onArrow(true, if (idx == listLen - 1) 0 else idx + 1);
-					true
-				} else if (supportHomeEnd && ke.keycode == KEY_HOME) {
-					onArrow(false, 0);
-					true
-				} else if (supportHomeEnd && ke.keycode == KEY_END) {
-					onArrow(true, listLen - 1);
-					true
-				} else if (ke.keycode == KEY_ESCAPE) {
-					resetSelection()
-				} else if (eitherMap(selectItem, \si -> !si.auto, false) && ke.keycode == KEY_SPACE) {
-					maybeApply(selectItem, \si -> si.fn());
-					true
-				} else {
-					false
-				}
-			} else handled
-		})
-	], m))
-	|> (\m -> MConstruct([
-			makeSubscribe(focusedIdx, \focIdx ->
-				if (focIdx == i) deferUntilNextFrameRendered(\ -> {
-					nextDistinct(focusEnabledIdx, i);
-					nextDistinct(focused, true);
-					maybeApply(selectItem, \si -> if (si.auto) si.fn())
-				}) else {
-					nextDistinct(focused, false);
-				}
-			),
-			makeSubscribe(focused, \foc -> if (foc) {
-				deferUntilNextFrameRendered(\ -> nextDistinct(focusedIdx, i))
-			} else {
-				nextDistinct(focusEnabledIdx, getDefFocusableItem());
-			})
-		], m))
-	|> (\m -> Triple(m, focused, focusEnabled))
 }
 
 MRightShift(m : Material) -> Material {
@@ -1468,7 +1353,7 @@ MAutoCompleteMultiSelectionBase(
 						cm = map(getValue(currentMatches), \m -> m.first);
 						nextDistinct(selected,
 							if (sel) uniq(concat(fgetValue(selected), cm))
-							else filter(fgetValue(selected), \it -> !contains(cm, it))
+							else subtractA(fgetValue(selected), cm)
 						)
 					}
 				)
@@ -1554,6 +1439,7 @@ MFlippingCard(
 	percent = extractStruct(state, FAnimationPercent(make(0.0))).percent;
 	triggerType = extractStruct(state, MTrigger(MTriggerHover())).type;
 	isHoverTrigger = isSameStructType(triggerType, MTriggerHover());
+	buttonTitle = extractStruct(state, MButtonTitle(const(""))).title;
 	isBackSide = make(false);
 	flipped = make(false);
 
@@ -1569,7 +1455,7 @@ MFlippingCard(
 
 	MComponent([
 		MHighlightOnFocus(const(true)),
-		MButtonTitle(fselectLift(isBackSide, \isBack -> "Flipping card (" + (if (isBack) "back" else "front") + " side)")),
+		MButtonTitle(fselect2Lift(buttonTitle, isBackSide, \ttl, isBack -> ttl + ". Flipping card (" + (if (isBack) "back" else "front") + " side)")),
 		MOnClick(\ -> {
 			reverseBehaviour(flipped);
 			maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click());
@@ -1942,4 +1828,25 @@ MFullScreenNoReattachments(fs : DynamicBehaviour<bool>, m : Material) -> Materia
 
 MPositionScaleEnabled(positionScale : DynamicBehaviour<PositionScale>, content : Material, enabled : Transform<bool>) -> Material {
 	MCopySize(content, \tr -> MShowLazy(enabled, \ -> MPositionScale(positionScale, tr)), true)
+}
+
+MInitiallyFocused(mat : Material, buttonTitle : Transform<string>) -> Material {
+	focused = make(false);
+	framePadding = 2.;
+	MComponent([
+		MFocused(focused),
+		MButtonTitle(buttonTitle),
+		AccessRole("none"),
+		TagName("div"),
+		ClassName("flow_focusable"),
+		MHighlightOnFocus(const(true)),
+		MCursorShape(const(DefaultCursor()))
+	], \__ -> MBorder4(framePadding, MAccess([FAccessHidden()], mat)))
+	|> (\m -> MBorder4(-framePadding, m))
+	|> (\m -> MGetManager(\manager -> MConstruct([\ -> {
+			if (eitherMap(fgetValue(manager.latelyFocused), \lf -> !contains(["MTextInput", "MWEditor", "RhapsodeTemporarilyFocused"], lf.name), false)) {
+				deferUntilNextFrameRendered(\ -> nextDistinct(focused, true));
+			}
+			nop
+		}], m)))
 }

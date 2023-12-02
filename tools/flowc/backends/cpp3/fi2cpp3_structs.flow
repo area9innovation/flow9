@@ -1,0 +1,122 @@
+import tools/flowc/backends/cpp3/fi2cpp3_runtime;
+import tools/flowc/backends/cpp3/fi2cpp3_types;
+import tools/flowc/statements/fs_tailcall;
+import tools/flowc/statements/fs_module;
+
+export {
+	fiStructs2cpp3(structs : [FiTypeStruct], gctx: Cpp3GlobalContext) -> [Cpp3CompiledDeclaration];
+	cpp3StructDefs(gctx: Cpp3GlobalContext) -> string;
+}
+
+fiStructs2cpp3(structs : [FiTypeStruct], gctx: Cpp3GlobalContext) -> [Cpp3CompiledDeclaration] {
+	map(structs, \s -> {
+		start = fi2cpp3StartOperationMessage(gctx.config, 2, "compiling struct", s.name);
+		decl = Cpp3CompiledDeclaration(s.name, true,
+			fiStructForward2cpp3(s, gctx),
+			fiStructTraits2cpp3(s, gctx),
+			fiStructDecl2cpp3(s, gctx), "", ""
+		);
+		fi2cpp3EndOperationMessage(gctx.config, 2, "compilation of struct", s.name, start);
+		decl;
+	});
+}
+
+fiStructTraits2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext) -> string {
+	struct_name = fi2cpp3typename2cpp(struct.name);
+	struct_id = eitherMap(lookupTree(gctx.structs2cpp, struct.name), \str -> i2s(str.id), "");
+	if (length(struct.typars) == 0) {
+		"template<> struct get_type_id<" + struct_name + "> { enum { result = " + struct_id + " }; };\n";
+	} else {
+		template_header = fiDeclTypars2cpp3(struct.typars, gctx);
+		struct_typars = superglue(struct.typars, \tp -> switch (tp) {
+				FiTypeParameter(__): fi2cpp3typar2cpp(tp);
+				default: fail0("must be a type parameter, got: " + pretFiType(tp));
+			}, 
+			", "
+		);
+		struct_type = struct_name + "<" + struct_typars + ">";
+		template_header + "struct get_type_id<" + struct_type + "> { enum { result = " + struct_id + " }; };\n";
+	}
+}
+
+fiStructDecl2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext) -> string {
+	gctx = Cpp3GlobalContext(
+		gctx0 with currentToplevel = Some(struct),
+		toplevelTypars = fold(struct.typars, makeSet(), \acc, tp -> fiCollectTypars(tp, acc))
+	);
+	struct_name = fi2cpp3typename2cpp(struct.name);
+	template_header = fiDeclTypars2cpp3(struct.typars, gctx);
+	struct_id = eitherMap(lookupTree(gctx.structs2cpp, struct.name), \str -> i2s(str.id), "");
+	str_params = concat([struct_id], map(struct.args, \arg -> fiType2cpp3(arg.type, gctx)));
+	struct_type = "Str<" + strGlue(str_params, ", ") + ">";
+	constructor = struct_name + "(" + 
+		supergluei(struct.args, \i, arg -> fiType2cpp3(arg.type, gctx) + " a_" + i2s(i), ", ") + 
+	"): " +
+	struct_type + "(" +
+		supergluei(struct.args, \i, arg -> "a_" + i2s(i), ", ") +
+	") { }";
+	template_header + "struct " + struct_name + ": public " + struct_type + " {\n" + 
+		"\t" + constructor +
+	"\n};\n";
+}
+
+fiStructForward2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext) -> string {
+	struct_name = fi2cpp3typename2cpp(struct.name);
+	template_header = fiDeclTypars2cpp3(struct.typars, gctx);
+	template_header + "struct " + struct_name + ";\n";
+}
+
+cpp3StructDefs(gctx: Cpp3GlobalContext) -> string {
+	type2id = \tp -> {
+		switch (tp) {
+			FiTypeVoid(): 0;
+			FiTypeInt(): 1;
+			FiTypeBool(): 2;
+			FiTypeDouble(): 3;
+			FiTypeString(): 4;
+			FiTypeNative(): 5;
+			FiTypeArray(__): 6;
+			FiTypeRef(__): 7;
+			FiTypeFunction(__,__): 8;
+			FiTypeName(name,__): {
+				eitherMap(lookupTree(gctx.structs2cpp, name), \str -> str.id, -1);
+			}
+			FiTypeFlow(): -2;
+			FiTypeParameter(__): -3;
+		}
+	}
+	struct_arg = \arg -> "FieldDef{u\"" + arg.name + "\", " + i2s(type2id(arg.type)) + "}";
+	struct_fields = \s -> "{" + superglue(s.args, struct_arg, ", ") + "}";
+	struct_constructor = \s -> {
+		make_arg = \i, arg: FiStructArg -> {
+			getter = "args->getRc1(" + i2s(i) + ")";
+			if (arg.type == FiTypeFlow()) {
+				getter;
+			} else {
+				"castRc<Flow*, " + fiType2cpp3(arg.type, gctx) + ">(" + getter + ")";
+			};
+		}
+		check_arity = "if (args->size() != " + i2s(length(s.args)) + ") {\n" +
+		"\tfail(\"Struct " + s.name + " arity mismatch: expected " + i2s(length(s.args)) + " arguments, " +
+		"got: \" + string2std(int2string(args->size())) + \"  \");\n}";
+		struct_type = FiTypeName(s.name, s.typars);
+		"[](Vec<Flow*>* args){\n" + strIndent(
+			check_arity + "\n" +
+			"Flow* ret = static_cast<Flow*>(new " +
+			fiStructName2cpp3(struct_type, gctx) + "(\n" +
+				strIndent(strGlue(mapi(s.args, make_arg), ",\n")) +
+			"\n));\n" +
+			"decRc(args);\n" +
+			"return ret;"
+		) + "\n}";
+	}
+	"std::vector<StructDef> RTTI::struct_defs = {\n" +
+		strIndent(strGlue(mapi(gctx.structs, \i, s ->
+			"StructDef{\n" + strIndent(
+				"u\"" + s.name + "\", " + i2s(i + 9) + ",\n" +
+				struct_fields(s) + ",\n" +
+				struct_constructor(s)
+			 ) + "\n}"
+		), ",\n")) +
+	"\n};\n\n";
+}

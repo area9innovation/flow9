@@ -303,6 +303,20 @@ cd $FLOW/platforms/qt
 ```
 New QtByteRunner binary will appear in $FLOW/platforms/qt/bin/linux folder
 
+If you get the following messages
+```
+Project ERROR: Cannot run compiler 'g++'. Output:
+===================
+sh: 1: g++: not found
+===================
+Maybe you forgot to setup the environment?
+```
+then the following solution works
+```bash
+sudo apt update
+sudo apt install build-essential
+```
+
 Now you can run hello.flow using flowcpp:
 ```
 cd ~/area9/flow9/

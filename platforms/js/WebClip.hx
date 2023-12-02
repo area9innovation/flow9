@@ -5,7 +5,6 @@ using DisplayObjectHelper;
 
 class WebClip extends NativeWidgetClip {
 	private var iframe : Dynamic = null;
-	private var disableOverlay : Dynamic = null;
 	private var htmlPageWidth : Dynamic = null;
 	private var htmlPageHeight : Dynamic = null;
 	private var shrinkToFit : Dynamic = null;
@@ -252,11 +251,6 @@ class WebClip extends NativeWidgetClip {
 			} else {
 				applyNativeWidgetSize();
 			}
-
-			if (disableOverlay && disableOverlay.style.display == "block") {
-				disableOverlay.style.width = nativeWidget.style.width;
-				disableOverlay.style.height = nativeWidget.style.height;
-			}
 		}
 	}
 
@@ -274,20 +268,8 @@ class WebClip extends NativeWidgetClip {
 		return "";
 	}
 
-	public function setDisableOverlay(disable : Bool) : Void {
-		if (disableOverlay && !disable) {
-			nativeWidget.removeChild(disableOverlay);
-			iframe.style.pointerEvents = 'auto';
-		} else if (disable) {
-			if (!disableOverlay) {
-				disableOverlay = Browser.document.createElement("div");
-				disableOverlay.style.cssText= "z-index: 100; background-color: rgba(0, 0, 0, 0.15);";
-			}
-
-			disableOverlay.style.display = "block";
-			nativeWidget.appendChild(disableOverlay);
-			iframe.style.pointerEvents = 'none';
-		}
+	public function setDisabled(disable : Bool) : Void {
+		iframe.style.pointerEvents = disable ? 'none' : 'auto';
 	}
 
 	public function setNoScroll() : Void {

@@ -49,6 +49,9 @@ export {
 	// Returns the values of matched typars, ordered by typars string lengths (number of ???s)
 	fiMatchTyparsOrdered(type : FiType, pattern : FiType) -> [FiType];
 
+	// Substitute type parameters with corresponding mapping
+	fiSubstituteTypars(type : FiType, typars : Tree<string, FiType>) -> FiType;
+
 	fiDeclarationArgNames(decl : FiDeclaration) -> [string];
 
 	// whether type has no parameters
@@ -80,6 +83,10 @@ export {
 
 	// Checks whether type is scalar (i.e. void, bool, int or double)
 	fiTypeIsScalar(t : FiType) -> bool;
+
+	// Check if all components of an expression have scalar type and
+	// only: FiVar, FiCall, FiCallPrim and FiCast are allowed
+	fiExpIsScalar(e : FiExp) -> bool;
 
 	// All FiModule declarations in one array;
 	fiModuleDecls(m : FiModule) -> [FiDeclaration];
@@ -114,20 +121,26 @@ export {
 	fiDerefType(tp: FiType) -> FiType;
 
 	// In case types t1 and t2 are comparable by relation of generality
-	// returns the bigger one, otherwise may return any of t1 and t2
-	fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType;
+	// returns the bigger one, otherwise returns None()
+	fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType>;
 
 	// In case types t1 and t2 are comparable by relation of generality
-	// returns the lesser one, otherwise may return any of t1 and t2
-	fiTypeLowerBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType;
+	// returns the lesser one, otherwise returns None()
+	fiTypeLowerBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType>;
 
 	fiSetExpType(e : FiExp, t: FiType) -> FiExp;
 
 	// Remove argument names from functional types
 	fiPurifyType(t: FiType) -> FiType;
 
+	// Check that function type args have no argument names
+	fiTypeIsPure(t: FiType) -> bool;
+
 	// If 'e' is FiSeq - return its contents, otherwise return an array of single 'e'
 	unFiSeq(e: FiExp) -> [FiExp];
+
+	// Unwrap the expression from 'FiCast'
+	unFiCast(e: FiExp) -> FiExp;
 
 	// wrap `e` with FiSeq in case of more then 1 element in array
 	wrapFiSeq(e: [FiExp]) -> FiExp;
@@ -464,6 +477,20 @@ fiMatchTyparsOrdered(type : FiType, pattern : FiType) -> [FiType] {
 	}
 }
 
+fiSubstituteTypars(type : FiType, typars : Tree<string, FiType>) -> FiType {
+	if (isEmptyTree(typars)) type else {
+		rec = \t -> fiSubstituteTypars(t, typars);
+		switch (type) {
+			FiTypeArray(t)               : FiTypeArray(rec(t));
+			FiTypeFunction(args, rt)     : FiTypeFunction(map(args, \a -> FiFunArg(a.name, rec(a.type))), rec(rt));
+			FiTypeRef(t)                 : FiTypeRef(rec(t));
+			FiTypeName(n, params)        : FiTypeName(n, map(params, rec));
+			FiTypeParameter(n)           : either(lookupTree(typars, n), type);
+			default						 : type;
+		}
+	}
+}
+
 getFiFileInfo(file : string, config : CompilerConfig) -> FiFileInfo {
 	workingDir = getConfigParameterDef(config.config, "working-dir", "");
 	realfile = findFlowPath(file, true, config.includes, workingDir);
@@ -634,6 +661,33 @@ fiTypeIsScalar(t : FiType) -> bool {
 		FiTypeInt():    true;
 		FiTypeDouble(): true;
 		default:        false;
+	}
+}
+
+fiExpIsScalar(e : FiExp) -> bool {
+	switch (e) {
+		FiVoid(__):      true
+		FiBool(__, __):  true;
+		FiInt(__,__):    true;
+		FiDouble(__,__): true;
+		FiVar(__,type,__): {
+			fiTypeIsScalar(type);
+		}
+		FiCast(e1, __,__,type,__): {
+			fiTypeIsScalar(type) && fiExpIsScalar(e1);
+		}
+		FiCall(f, args, type, __): {
+			switch (f) {
+				FiVar(__,__,__): {
+					fiTypeIsScalar(type) && forall(args, fiExpIsScalar);
+				}
+				default: false;
+			}
+		}
+		FiCallPrim(__, es, type, __): {
+			fiTypeIsScalar(type) && forall(es, fiExpIsScalar);
+		}
+		default: false;
 	}
 }
 
@@ -868,30 +922,41 @@ fiDerefType(tp: FiType) -> FiType {
 	}
 }
 
-fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType {
-	if (t1 == t2) t1 else {
+fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType> {
+	if (t1 == t2) Some(t1) else {
 		t0 = switch (t2) {
-			FiTypeFlow(): t2;
-			FiTypeNative(): t2;
-			default: t1;
+			FiTypeFlow(): Some(t2);
+			FiTypeNative(): Some(t2);
+			default: None();
 		}
 		switch (t1) {
-			FiTypeFlow(): t1;
-			FiTypeNative(): t1;
+			FiTypeFlow(): Some(t1);
+			FiTypeNative(): Some(t1);
 			FiTypeName(n1, __): {
 				switch (t2) {
-					FiTypeFlow(): t2;
-					FiTypeNative(): t2;
+					FiTypeFlow(): Some(t2);
+					FiTypeNative(): Some(t2);
 					FiTypeName(n2, __): {
 						switch (lookupTree(names.structs, n1)) {
-							Some(__): t2;
+							Some(__): {
+								switch (lookupTree(names.structs, n2)) {
+									Some(__): None();
+									None(): Some(t2);
+								}
+							}
 							None(): {
 								switch (lookupTree(names.structs, n2)) {
-									Some(__): t1;
+									Some(__): Some(t1);
 									None(): {
-										u1 = lookupTreeDef(names.unions, n1, FiTypeUnion("", [], [], 0));
-										u2 = lookupTreeDef(names.unions, n2, FiTypeUnion("", [], [], 0));
-										if (isEmptySet(differenceSets(buildSet(u1.typenames), buildSet(u2.typenames)))) t2 else t1;
+										u1 = buildSet(lookupTreeDef(names.unions, n1, FiTypeUnion("", [], [], 0)).typenames);
+										u2 = buildSet(lookupTreeDef(names.unions, n2, FiTypeUnion("", [], [], 0)).typenames);
+										if (isEmptySet(differenceSets(u1, u2))) {
+											Some(t2);
+										} else if (isEmptySet(differenceSets(u2, u1))) {
+											Some(t1);
+										} else {
+											None();
+										}
 									}
 								}
 							}
@@ -900,35 +965,78 @@ fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType {
 					default: t0;
 				}
 			} 
+			FiTypeArray(at1): {
+				switch (t2) {
+					FiTypeArray(at2): maybeMap(fiTypeUpperBoundary(at1, at2, names), \ut -> FiTypeArray(ut));
+					default: None();
+				}
+			}
+			FiTypeRef(rt1): {
+				switch (t2) {
+					FiTypeRef(rt2): maybeMap(fiTypeUpperBoundary(rt1, rt2, names), \ut -> FiTypeRef(ut));
+					default: None();
+				}
+			}
+			FiTypeFunction(as1, rt1): {
+				switch (t2) {
+					FiTypeFunction(as2, rt2): {
+						if (length(as1) != length(as2)) None() else {
+							maybeBind(fiTypeUpperBoundary(rt1, rt2, names), \urt -> {
+								las = foldi(as1, [], \i, acc, a1 ->
+									switch (fiTypeLowerBoundary(a1.type, as2[i].type, names)) {
+										Some(la): arrayPush(acc, FiFunArg(a1.name, la));
+										None(): acc;
+									}
+								);
+								if (length(las) != length(as1)) None() else {
+									Some(FiTypeFunction(las, urt));
+								}
+							});
+						}
+					}
+					default: None();
+				}
+			}
 			default: t0;
 		}
 	}
 }
 
-fiTypeLowerBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType {
-	if (t1 == t2) t1 else {
+fiTypeLowerBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType> {
+	if (t1 == t2) Some(t1) else {
 		t0 = switch (t2) {
-			FiTypeFlow(): t1;
-			FiTypeNative(): t1;
-			default: t2;
+			FiTypeFlow(): Some(t1);
+			FiTypeNative(): Some(t1);
+			default: None();
 		}
 		switch (t1) {
-			FiTypeFlow(): t2;
-			FiTypeNative(): t2;
+			FiTypeFlow(): Some(t2);
+			FiTypeNative(): Some(t2);
 			FiTypeName(n1, __): {
 				switch (t2) {
-					FiTypeFlow(): t1;
-					FiTypeNative(): t1;
+					FiTypeFlow(): Some(t1);
+					FiTypeNative(): Some(t1);
 					FiTypeName(n2, __): {
 						switch (lookupTree(names.structs, n1)) {
-							Some(__): t1;
+							Some(__): {
+								switch (lookupTree(names.structs, n2)) {
+									Some(__): None();
+									None(): Some(t1);
+								}
+							}
 							None(): {
 								switch (lookupTree(names.structs, n2)) {
-									Some(__): t2;
+									Some(__): Some(t2);
 									None(): {
-										u1 = lookupTreeDef(names.unions, n1, FiTypeUnion("", [], [], 0));
-										u2 = lookupTreeDef(names.unions, n2, FiTypeUnion("", [], [], 0));
-										if (isEmptySet(differenceSets(buildSet(u1.typenames), buildSet(u2.typenames)))) t1 else t2;
+										u1 = buildSet(lookupTreeDef(names.unions, n1, FiTypeUnion("", [], [], 0)).typenames);
+										u2 = buildSet(lookupTreeDef(names.unions, n2, FiTypeUnion("", [], [], 0)).typenames);
+										if (isEmptySet(differenceSets(u1, u2))) {
+											Some(t1);
+										} else if (isEmptySet(differenceSets(u2, u1))) {
+											Some(t2);
+										} else {
+											None();
+										}
 									}
 								}
 							}
@@ -936,7 +1044,39 @@ fiTypeLowerBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> FiType {
 					}
 					default: t0;
 				}
-			} 
+			}
+			FiTypeArray(at1): {
+				switch (t2) {
+					FiTypeArray(at2): maybeMap(fiTypeLowerBoundary(at1, at2, names), \lt -> FiTypeArray(lt));
+					default: None();
+				}
+			}
+			FiTypeRef(rt1): {
+				switch (t2) {
+					FiTypeRef(rt2): maybeMap(fiTypeLowerBoundary(rt1, rt2, names), \lt -> FiTypeRef(lt));
+					default: None();
+				}
+			}
+			FiTypeFunction(as1, rt1): {
+				switch (t2) {
+					FiTypeFunction(as2, rt2): {
+						if (length(as1) != length(as2)) None() else {
+							maybeBind(fiTypeLowerBoundary(rt1, rt2, names), \lrt -> {
+								uas = foldi(as1, [], \i, acc, a1 ->
+									switch (fiTypeUpperBoundary(a1.type, as2[i].type, names)) {
+										Some(ua): arrayPush(acc, FiFunArg(a1.name, ua));
+										None(): acc;
+									}
+								);
+								if (length(uas) != length(as1)) None() else {
+									Some(FiTypeFunction(uas, lrt));
+								}
+							});
+						}
+					}
+					default: None();
+				}
+			}
 			default: t0;
 		}
 	}
@@ -984,12 +1124,32 @@ fiPurifyType(t: FiType) -> FiType {
 		}
 		FiTypeFunction(args, rt): {
 			FiTypeFunction(
-				map(args, \arg -> FiFunArg("", arg.type)), 
+				map(args, \arg -> FiFunArg("", fiPurifyType(arg.type))), 
 				fiPurifyType(rt)
 			);
 		}
 		FiTypeParameter(n): t;
 		default: t;
+	}
+}
+
+fiTypeIsPure(t: FiType) -> bool {
+	switch (t) {
+		FiTypeRef(rt): {
+			fiTypeIsPure(rt);
+		}
+		FiTypeArray(at): {
+			fiTypeIsPure(at);
+		}
+		FiTypeName(__, ts): {
+			forall(ts, fiTypeIsPure);
+		}
+		FiTypeFunction(args, rt): {
+			fiTypeIsPure(rt) && forall(args, \arg ->
+				arg.name == "" && fiTypeIsPure(arg.type)
+			);
+		}
+		default: true;
 	}
 }
 
@@ -1018,6 +1178,13 @@ unFiSeq(e: FiExp) -> [FiExp] {
 	switch (e) {
 		FiSeq(es,__,__): es;
 		default: [e];
+	}
+}
+
+unFiCast(e: FiExp) -> FiExp {
+	switch (e) {
+		FiCast(x, __,__,__,__): unFiCast(x);
+		default: e;
 	}
 }
 

@@ -1,0 +1,104 @@
+import tools/flowc/backends/cpp3/fi2cpp3_structs;
+
+export {
+	fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
+	fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, init: [string], runtime_parts: [Cpp3RuntimePart]) -> [string];
+}
+
+fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
+	includes = superglue(
+		fiCpp3DependenciesIncludes(map(module.natives, \nat -> nat.dependencies)),
+		\inc -> "#inc" + "lude " + inc,
+		"\n"
+	);
+	forwards = filtermap(module.decls, \decl -> if (decl.forward == "") None() else Some(decl.forward));
+	traits = filtermap(module.decls, \decl -> if (decl.traits == "") None() else Some(decl.traits));
+	decls = filtermap(module.decls, \decl -> if (decl.declaration == "") None() else Some(decl.declaration));
+	defs = filtermap(module.decls, \decl -> if (decl.headerOnly && decl.definition != "") Some(decl.definition) else None());
+	decl_defs = concat(decls, defs);
+
+	"#pragma once\n" +
+	(if (includes == "") "" else includes + "\n") +
+	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
+	"// Module " + module.name + "\n\n" +
+	(if (length(module.imports) == 0) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
+	(if (length(forwards) == 0) "" else concatStrings(forwards) + "\n") +
+	(if (length(traits) == 0) "" else fiWrapWithNamespace("flow::traits", concatStrings(traits)) + "\n") +
+	(if (length(decl_defs) == 0) "\n" else
+		superglue(["std::string_literals", "flow"], fiMakeUsingStatement, "\n") + "\n" + concatStrings(decl_defs) + "\n"
+	);
+}
+
+fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, init: [string], runtime_parts: [Cpp3RuntimePart]) -> [string] {
+	all_source_defs = filtermap(module.decls, \decl -> if (!decl.headerOnly) Some(decl.definition) else None());
+	max_cpp_source = s2i(lookupTreeDef(gctx.program.config.config, "cpp-max-source", "100000"));
+	// Cut all definition into parts, not exceeding max-cpp-source kb
+	source_defs_cut = list2array(fold(all_source_defs, Pair(makeList(), 0), \acc, def ->
+		if (acc.second + strlen(def) < max_cpp_source) {
+			switch (acc.first) {
+				Cons(arr, tail_): Pair(Cons(concat(arr, [def]), tail_), acc.second + strlen(def));
+				EmptyList(): Pair(makeList1([def]), strlen(def));
+			}
+		} else {
+			Pair(Cons([def], acc.first), strlen(def));
+		}
+	).first);
+	if (length(source_defs_cut) == 0) {
+		if (!module.isMain) [] else
+		["#inc" + "lude \"" + module.name + ".hpp\"\n" +
+		fiMakeUsingStatement("std::string_literals") +
+		fiMakeUsingStatement("flow") + "\n" +
+		cpp3MainFunc(gctx, init, runtime_parts)];
+	} else {
+		mapi(source_defs_cut, \i, source_defs ->
+			if (length(source_defs) == 0 && !module.isMain) "" else {
+				"#inc" + "lude \"" + module.name + ".hpp\"\n" +
+				fiMakeUsingStatement("std::string_literals") +
+				fiMakeUsingStatement("flow") + "\n" +
+				concatStrings(source_defs) + "\n" +
+				if (i == 0 && module.isMain) cpp3MainFunc(gctx, init, runtime_parts) else "";
+			}
+		);
+	}
+}
+
+cpp3MainFunc(gctx: Cpp3GlobalContext, init_strings: [string], runtime_parts: [Cpp3RuntimePart]) -> string {
+	init = strGlue(init_strings, "\n");
+	non_scalar_vars = filtermap(getTreeValues(gctx.program.names.toplevel), \decl ->
+		switch (decl) {
+			FiGlobalVar(__,__,type,__,__): if (fiTypeIsScalar(type)) None() else Some(decl);
+			default: None();
+		}
+	);
+	show_vars = \header -> superglue(non_scalar_vars, \var ->
+		"std::cout << \"" + header + " " + var.name + "->rc_ = \" << " + fi2cpp3varname2cpp(var.name) + "->rc_ << std::endl;",
+		"\n"
+	);
+	inc_vars = superglue(non_scalar_vars, \var -> "incRc(" + fi2cpp3varname2cpp(var.name) + ");", "\n");
+	mainInits = superglue(runtime_parts, \part -> part.mainInit, "\n");
+	mainTerms = superglue(runtime_parts, \part -> part.mainTerm, "\n");
+	dec_vars = superglue(non_scalar_vars, \var -> "decRc(" + fi2cpp3varname2cpp(var.name) + ");", "\n");
+	sources = superglue(filter(runtime_parts, \part -> part.staysInMain), \part -> part.source, "\n");
+
+	struct_defs = cpp3StructDefs(gctx);
+	cleanup = "void flow::cleanupAtExit() {" + ("\t" + if (dec_vars == "") " " else "\n" + strIndent(dec_vars) + "\n") + "}\n\n";
+
+fiMakeUsingStatement("flow") +
+fiMakeUsingStatement("std::string_literals") +
+"\n" +
+(if (sources == "") "" else sources + "\n") +
+struct_defs +
+cleanup +
+"int main(int argc, const char* argv[]) {\n" +
+"\tRTTI::initStructMap();\n" +
+"\tMemoryPool::init();\n" +
+"\tThreadPool::init(std::thread::hardware_concurrency());\n" +
+(if (mainInits == "") "" else strIndent(mainInits) + "\n") +
+(if (init == "") "" else strIndent(init) + "\n") +
+"\t" + fi2cpp3varname2cpp("main") + "();\n" +
+(if (mainTerms == "") "" else strIndent(mainTerms) + "\n") +
+"\tcleanupAtExit();\n" +
+"\tThreadPool::release();\n" +
+"\tMemoryPool::release();\n" +
+"\treturn 0;\n}\n";
+}

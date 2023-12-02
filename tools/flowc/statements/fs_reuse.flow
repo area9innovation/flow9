@@ -1,0 +1,485 @@
+import tools/flowc/statements/fs_transform;
+
+export {
+	// Makes a reuse (functional-in-place) analysis
+	fsReuse(s: FsStat, debug: bool, name: string) -> FsStat;
+
+	// Markups the AST nodes, which are used in reuse analysis, with unique ids
+	fsReuseMarkup(s: FsStat) -> Pair<FsStat, int>;
+}
+
+fsReuse(s0: FsStat, debug: bool, name: string) -> FsStat {
+	p = fsReuseMarkup(s0);
+	if (debug) {
+		println("REUSE MARKUP:\n" + fs2s(p.first));
+	}
+	s = p.first;
+	lambda_bodys = fsFold(s, [], \acc, x -> switch (x) {
+		FsLambda(__,__,body, __,__): arrayPush(acc, body);
+		default: acc;
+	}, true);
+	reuses = fold(lambda_bodys, [], \acc, x -> fsFindReuseVariants1(x, acc, debug));
+	if (debug) {
+		println(name + " reuses:\n" + fsReuseVariantArray2s(reuses) + "\n\n");
+	}
+	s1: FsStat = fsReuseApplyCases(s, reuses, debug);
+	if (debug) {
+		println(name + " reuse applied:\n" + fs2s(s1));
+	}
+	s1;
+}
+
+fsReuseMarkup(s: FsStat) -> Pair<FsStat, int> {
+	id_counter = ref 0;
+	new_id = \-> {
+		id = ^id_counter;
+		id_counter := ^id_counter + 1;
+		id;
+	}
+	s1 = cast(fsMap(s, \x -> switch(x) {
+		FsIf(c,__,__,__,__):      FsIf(x with id = new_id());
+		FsSwitch(__,__,__,__,__): FsSwitch(x with id = new_id());
+		FsWrapExp(__,__,__):      FsWrapExp(x with id = new_id());
+		FsRet(__,__,__):          FsRet(x with id = new_id());
+		FsAssign(__,__,__,__):    FsAssign(x with id = new_id());
+		FsLet(__,__,__,__,__):    FsLet(x with id = new_id());
+		FsDecRc(__,__,__,__):     FsDecRc(x with id = new_id());
+		FsIncRc(__,__,__,__):     FsIncRc(x with id = new_id());
+		FsTailCall(__,__):        FsTailCall(x with id = new_id());
+		FsCall(__,__,__,__):      FsCall(x with id = new_id());
+		FsInline(__,__,__,__,__): FsInline(x with id = new_id());
+		FsCallPrim(__,__,__,__):  FsCallPrim(x with id = new_id());
+		FsClosure(__,__,__,__):   FsClosure(x with id = new_id());
+		FsLambda(__,__,__,__,__): FsLambda(x with id = new_id());
+		FsCast(__,__,__,__):      FsCast(x with id = new_id());
+		FsVarUse(__,__,__):       FsVarUse(x with id = new_id());
+		FsString(__,__,__):       FsString(x with id = new_id());
+		FsConst(__,__):           FsConst(x with id = new_id());
+	}, false): FsAll -> FsStat);
+	Pair(s1, ^id_counter);
+}
+
+FsReuseVariant(
+	released: FsDecRc,
+	reused:   [FsAll],
+	ignored:  [FsAll]
+);
+
+fsFindReuseVariants1(s: FsStat, acc: [FsReuseVariant], debug: bool) -> [FsReuseVariant] {
+	switch (s) {
+		FsIf(__, s1, s2,__, nx): {
+			acc1 = fsFindReuseVariants1(s1, fsFindReuseVariants1(s2, acc, debug), debug);
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc1, debug), acc1);
+		}
+		FsSwitch(__,__, cs,__, nx): {
+			acc1 = fold(cs, acc, \ac, c -> fsFindReuseVariants1(c.body, ac, debug));
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc1, debug), acc1);
+		}
+		FsLet(__,__, s1,__, nx): {
+			acc1 = fsFindReuseVariants1(s1, acc, debug);
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc1, debug), acc1);
+		}
+		FsWrapExp(__,__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
+		}
+		FsRet(__,__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
+		}
+		FsAssign(__,__,__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
+		}
+		FsIncRc(__,__,__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
+		}
+		FsDecRc(v,__,__, nx): {
+			eitherMap(nx,
+				\n -> switch (fsFindReuseVariants2(s, n, debug)) {
+					Some(w): {
+						if (debug) {
+							println("Some variants are found for: " + fs2string(s, 1) + "\n" + 
+								fsReuseVariant2s(w)
+							);
+						}
+						fold(
+							filtermap(concat(w.reused, w.ignored), \x -> switch (x) {
+								FsStat(): x.next;
+								default: None();
+							}),
+							arrayPush(acc, w),
+							\ac, x -> fsFindReuseVariants1(x, ac, debug)
+						);
+					}
+					None(): {
+						eitherMap(nx, \m-> fsFindReuseVariants1(m, acc, debug), acc);
+					}
+				}, 
+				acc
+			);
+		}
+		FsTailCall(__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
+		}
+	}
+}
+
+fsFindReuseVariants2(d: FsDecRc, s: FsStat, debug: bool) -> Maybe<FsReuseVariant> {
+	uses = fsFindReuseVariants3(makeList(), d, s, [], debug);
+	if (length(uses) == 0) None() else {
+		reused = map(uses, \x -> x.second);
+		if (debug) {
+			println("Found reuses paths with released: " + d.v.name + " (id = " + i2s(d.id) +")\n" +
+				superglue(uses, \p ->
+					"\t" + fs2string(p.second, 1) + " in [" + superglue(list2array(p.first), \n -> i2s(n.id), ", ") + "]", "\n"
+				)
+			);
+		}
+		all_nodes = fold(uses, makeSet(), \acc, p -> 
+			foldList(p.first, acc, \ac, x -> insertSet(ac, x))
+		);
+		non_leafs: [FsStat] = fold(uses, [], \acc, p -> 
+			foldList(tailList(p.first), acc, \ac, x -> arrayPush(ac, x))
+		);
+		if (debug) {
+			println("all_nodes: [" +
+				superglue(set2array(all_nodes), \n -> i2s(n.id), ", ") + "]"
+			);
+			println("non_leafs: [" +
+				superglue(non_leafs, \n -> i2s(n.id), ", ") + "]"
+			);
+		}
+		ignored = fold(non_leafs, [], \acc, y: FsStat -> {
+			do_ignored = \-> {
+				args: [FsStat] = switch (y) {
+					FsIf(__, s1, s2,__,__): [s1, s2];
+					FsSwitch(__,__,cs,__,__):  map(cs, \c -> c.body);
+					default: [];
+				}
+				fold(args, acc, \ac, x -> 
+					if (containsSet(all_nodes, x)) ac else arrayPush(ac, x)
+				)
+			}
+			switch (y.next) {
+				Some(n): if (containsSet(all_nodes, n)) acc else do_ignored();
+				None(): do_ignored();
+			}
+		});
+		Some(FsReuseVariant(d, map(uses, \x -> x.second), ignored));
+	}
+}
+
+fsFindReuseVariants3(path: List<FsStat>, d: FsDecRc, s: FsStat, acc: [Pair<List<FsStat>, FsAll>], debug: bool) -> [Pair<List<FsStat>, FsAll>] {
+	p = Cons(s, path);
+	switch (s) {
+		FsIf(c, s1, s2,__, nx): {
+			switch (fsFindReuseExp(c, d, debug)) {
+				Some(x): {
+					arrayPush(acc, Pair(p, x));
+				}
+				None(): {
+					acc1 = fsFindReuseVariants3(p, d, s1, fsFindReuseVariants3(p, d, s2, acc, debug), debug);
+					if (length(acc1) == 0) {
+						eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc1, debug), acc1);
+					} else {
+						acc1;
+					}
+				}
+			}
+		}
+		FsSwitch(__,__, cs,__, nx): {
+			acc1 = fold(cs, acc, \ac, c -> fsFindReuseVariants3(p, d, c.body, ac, debug));
+			if (length(acc1) == 0) {
+				eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc1, debug), acc1);
+			} else {
+				acc1;
+			}
+		}
+		FsLet(__, e, s1,__, nx): {
+			switch (fsFindReuseExp(e, d, debug)) {
+				Some(x): {
+					arrayPush(acc, Pair(p, x));
+				}
+				None(): {
+					acc1 = fsFindReuseVariants3(p, d, s1, acc, debug);
+					if (length(acc1) == 0) {
+						eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc1, debug), acc1);
+					} else {
+						acc1;
+					}
+				}
+			}
+		}
+		FsWrapExp(e,__, nx): {
+			switch (fsFindReuseExp(e, d, debug)) {
+				Some(x): {
+					arrayPush(acc, Pair(p, x));
+				}
+				None(): {
+					eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
+				}
+			}
+		}
+		FsRet(e,__, nx): {
+			switch (fsFindReuseExp(e, d, debug)) {
+				Some(x): {
+					arrayPush(acc, Pair(p, x));
+				}
+				None(): {
+					eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
+				}
+			}
+		}
+		FsAssign(to, what,__, nx): {
+			switch (fsFindReuseExp(to, d, debug)) {
+				Some(x): {
+					arrayPush(acc, Pair(p, x));
+				}
+				None(): {
+					switch (fsFindReuseExp(what, d, debug)) {
+						Some(x): {
+							arrayPush(acc, Pair(p, x));
+						}
+						None(): {
+							eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
+						}
+					}
+				}
+			}
+		}
+		FsIncRc(__,__,__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
+		}
+		FsDecRc(__,__,__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
+		}
+		FsTailCall(__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
+		}
+	}
+}
+
+fsFindReuseExp(e: FsExp, d: FsDecRc, debug: bool) -> Maybe<FsAll> {
+	switch (e) {
+		FsClosure(vars__,lambda,__,__): {
+			if (fiEqualTypes(lambda.type, d.v.type)) Some(e) else None();
+		}
+		FsCall(f, args,__,__): {
+			switch (fsFindReuseExp(f, d, debug)) {
+				Some(x): Some(x);
+				None(): {
+					fold(args, None(), \acc, arg ->
+						if (isSome(acc)) acc else fsFindReuseExp(arg, d, debug)
+					);
+				}
+			}
+		}
+		FsInline(__,__,args,__,__): {
+			fold(args, None(), \acc, arg ->
+				if (isSome(acc)) acc else fsFindReuseExp(arg, d, debug)
+			);
+		}
+		FsCallPrim(op, es, type,__): {
+			do_check_es = \-> fold(es, None(), \acc, x ->
+				if (isSome(acc)) acc else fsFindReuseExp(x, d, debug)
+			);
+			do_check_type = \-> if (fiEqualTypes(type, d.v.type)) {
+				Some(e);
+			} else {
+				do_check_es();
+			}
+			switch (op) {
+				FsStructPrim(__,__): do_check_type();
+				FsArrayPrim(__): do_check_type();
+				FsRefPrim(__): do_check_type();
+				default: do_check_es();
+			}
+		}
+		FsCast(x, __,__,__): {
+			fsFindReuseExp(x, d, debug);
+		}
+		FsVarUse(v, __,__): {
+			None();
+		}
+		FsString(s,__,__): {
+			if (d.v.type == FiTypeString()) Some(e) else None();
+		}
+		FsConst(c,__): {
+			None();
+		}
+	}
+}
+
+FsReuseKind ::= FsReuseRelease, FsReuseReuse, FsReuseFinish;
+	FsReuseRelease(v: FsVar);
+	FsReuseReuse(v: FsVar);
+	FsReuseFinish(v: FsVar);
+
+fsReuseKind2s(k: FsReuseKind) -> string {
+	switch (k) {
+		FsReuseRelease(v): "release<" + v.name + ">";
+		FsReuseReuse(v):   "reuse<" + v.name + ">";
+		FsReuseFinish(v):  "finish<" + v.name + ">";
+	}
+}
+
+fsReuseApplyCases(s: FsStat, cases: [FsReuseVariant], debug: bool) -> FsStat {
+	id_counter = ref 0;
+	new_id = \-> {
+		id = ^id_counter;
+		id_counter := ^id_counter + 1;
+		"___reuse_" + i2s(id);
+	}
+	updates = fold(cases, makeTree(), \acc, c -> {
+		v = FsVar(new_id(), c.released.v.type);
+		fold(c.ignored,
+			fold(c.reused,
+				setTree(acc, c.released.id, FsReuseRelease(v)),
+				\ac, x -> setTree(ac, x.id, FsReuseReuse(v))
+			),
+			\ac, x -> setTree(ac, x.id, FsReuseFinish(v))
+		);
+	});
+	if (debug) {
+		println("updates:\n" + 
+			superglue(tree2pairs(updates), \p ->
+				"\t" + i2s(p.first) + " => " + fsReuseKind2s(p.second),
+				"\n"
+			)
+		);
+	}
+	fsReuseApplyCasesToStat(s, updates, debug);
+}
+
+fsReuseApplyCasesToStat(s: FsStat, updates: Tree<int, FsReuseKind>, debug: bool) -> FsStat {
+	do_stat = \x -> fsReuseApplyCasesToStat(x, updates, debug);
+	do_exp = \x -> fsReuseApplyCasesToExp(x, updates, debug);
+	s1 = switch (s) {
+		FsIf(c, x1, x2, id, nx): {
+			FsIf(s with
+				cond = do_exp(c),
+				s1 = do_stat(x1),
+				s2 = do_stat(x2),
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+		FsSwitch(__,__, cs,__, nx): {
+			FsSwitch(s with
+				cases = map(cs, \c -> FsCase(c with body = do_stat(c.body))),
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+		FsLet(__, e, x1,__, nx): {
+			FsLet(s with
+				e = do_exp(e),
+				s = do_stat(x1),
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+		FsWrapExp(e,__, nx): {
+			FsWrapExp(s with
+				e = do_exp(e),
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+		FsRet(e,__, nx): {
+			FsRet(s with
+				e = do_exp(e),
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+		FsAssign(to, what,__, nx): {
+			FsAssign(s with
+				to = do_exp(to),
+				what = do_exp(what),
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+		FsIncRc(__,__,__, nx): {
+			FsIncRc(s with
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+		FsDecRc(__,__,__, nx): {
+			FsDecRc(s with
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+		FsTailCall(__, nx): {
+			FsTailCall(s with
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+	}
+	switch (lookupTree(updates, s1.id)) {
+		Some(reuse): {
+			switch (reuse) {
+				FsReuseRelease(v): {
+					switch (s1) {
+						FsDecRc(w,__,__,id): FsDecRc(s1 with mode = FsDecReuse(v));
+						default: fail0("must be FsDecRc, got: " + fs2string(s1, 2));
+					}
+				}
+				FsReuseReuse(v): {
+					fail0("must be a FsExp, got: " + fs2string(s1, 2));
+				}
+				FsReuseFinish(v): {
+					FsDecRc(v, FsDecFinish(), -1, Some(s1));
+				}
+			}
+		}
+		None(): s1;
+	}
+}
+
+fsReuseApplyCasesToExp(e: FsExp, updates: Tree<int, FsReuseKind>, debug: bool) -> FsExp {
+	do_stat = \x -> fsReuseApplyCasesToStat(x, updates, debug);
+	do_exp = \x -> fsReuseApplyCasesToExp(x, updates, debug);
+	check_reuse = \id -> maybeBind(lookupTree(updates, id), \upd -> switch (upd) {
+		FsReuseReuse(v): Some(v);
+		default: None();
+	});
+	add_reuse = \info, v -> FsMetaInfo(info with reuse = Some(v));
+	switch (e) {
+		FsClosure(vars__,lambda, info, id): {
+			e1 = eitherMap(check_reuse(id), \v -> FsClosure(e with info = add_reuse(info, v)), e);
+			FsClosure(e1 with lambda = FsLambda(lambda with body = do_stat(lambda.body)));
+		}
+		FsCall(f, args,__,__): {
+			FsCall(e with args = map(args, do_exp));
+		}
+		FsCallPrim(op, es, __, id): {
+			e1 = switch (op) {
+				FsStructPrim(struct, info): {
+					eitherMap(check_reuse(id), \v -> FsCallPrim(e with op = FsStructPrim(op with info = add_reuse(info, v))), e);
+				}
+				FsArrayPrim(info): {
+					eitherMap(check_reuse(id), \v -> FsCallPrim(e with op = FsArrayPrim(op with info = add_reuse(info, v))), e);
+				}
+				FsRefPrim(info): {
+					eitherMap(check_reuse(id), \v -> FsCallPrim(e with op = FsRefPrim(op with info = add_reuse(info, v))), e);
+				}
+				default: e;
+			}
+			FsCallPrim(e1 with es = map(es, do_exp));
+		}
+		FsCast(x, __,__,__): {
+			FsCast(e with e = do_exp(x));
+		}
+		FsString(s, info, id): {
+			eitherMap(check_reuse(id), \v -> FsString(e with info = add_reuse(info, v)), e);
+		}
+		default: e;
+	}
+}
+
+fsIds2s(xs: [FsAll]) -> string {
+	"[" + superglue(xs, \x -> i2s(x.id), ", ") + "]";
+}
+
+fsReuseVariant2s(rc: FsReuseVariant) -> string {
+	"released=" + i2s(rc.released.id) + ", reused=" + fsIds2s(rc.reused) + ", ignored=" + fsIds2s(rc.ignored) 
+}
+
+fsReuseVariantArray2s(reuses: [FsReuseVariant]) -> string {
+	if (length(reuses) == 0) "[]" else 
+	superglue(reuses, \c -> "\t" + fsReuseVariant2s(c), "\n")
+}
