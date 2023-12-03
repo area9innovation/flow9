@@ -49,23 +49,6 @@ struct Fun : public Flow {
 		s.append(u"<function>");
 	}
 	TypeId typeId() const override { return TYPE; }
-	//Int componentSize() const override {
-	//	return static_cast<Int>(closure_.size());
-	//}
-
-	/*Flow* callFlowRc1(const std::vector<Flow*>& as) override { 
-		if (ARITY == as.size()) {
-			return [this, &as]<std::size_t... I>(std::index_sequence<I...>) { 
-				return castRc<R, Flow*>(callRc1(
-					castRc<Flow*, std::tuple_element_t<I, Args>>(as.at(I))...
-				));
-			}
-			(std::make_index_sequence<ARITY>{});
-		} else {
-			fail("wrong function arity");
-			return void_value;
-		}
-	}*/
 
 	// specific methods
 	inline R callRc(As... as) {

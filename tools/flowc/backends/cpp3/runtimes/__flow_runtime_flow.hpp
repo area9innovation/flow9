@@ -24,6 +24,9 @@ template<typename T> inline void toString(T v, string& s) { append2string(s, v);
 
 template<typename S, typename T> inline S hash(T v);
 template<typename S, typename T> inline S hashRc(T v) { S ret = hash(v); decRc(v); return ret; }
+
+template<typename T> T clone(T v);
+
 template<typename T> inline void assignRc(T& to, T what) {
 	if constexpr (is_flow_ancestor_v<T>) {
 		T old = to;
@@ -51,7 +54,6 @@ template<typename T> struct Equal { bool operator() (T v1, T v2) const { return 
 
 struct Flow: public RcBase {
 	virtual ~Flow() { }
-	//virtual void destroy() = 0;
 
 	virtual void append2string(string&) = 0;
 	//virtual Int compare(Flow*) = 0;
@@ -86,8 +88,6 @@ struct Flow: public RcBase {
 	// attempt to apply this method to a scalar component will cause runtime error
 	virtual Flow* getFlow(Int i) { fail("invalid flow value getter"); return nullptr; }
 	virtual Flow* getFlow(const string& f) { fail("invalid flow value getter"); return nullptr; }
-
-	virtual Int compareWithFlow(Flow* v) { fail("invalid compareWithFlow"); return 0;  }
 
 	template<typename T> inline T get() { return static_cast<T>(this); }
 	template<typename T> inline T getRc1() { return incRcRet(static_cast<T>(this)); }

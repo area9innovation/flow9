@@ -90,13 +90,17 @@ struct Str : public Union {
 		return getFlow(field_idx); 
 	}
 
-	Int compareWithFlow(Flow* v) override {
-		Int c = flow::compare<TypeId>(TYPE, v->typeId());
+	// Union virtual methods
+	Int compare(Union* u) override {
+		Int c = flow::compare<TypeId>(TYPE, u->structId());
 		if (c != 0) {
 			return c;
 		} else {
-			return compare(static_cast<Str*>(v));
+			return compare<0>(static_cast<Str*>(u));
 		}
+	}
+	Union* clone() override {
+		return flow::clone<Str*>(this);
 	}
 
 	// specific methods
@@ -128,7 +132,7 @@ struct Str : public Union {
 		std::get<i>(fields) = v;
 	}
 
-	Int compare(Str* s) {
+	inline Int compare(Str* s) {
 		return compare<0>(s);
 	}
 	void toString(string& str) {
