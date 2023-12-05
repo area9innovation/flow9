@@ -317,7 +317,7 @@ class FlowSprite extends Sprite {
 		texture = Texture.fromImage(url, Util.determineCrossOrigin(url) != '');
 		pushTextureToCache(texture);
 
-		if (texture.baseTexture == null) {
+		if (texture.baseTexture == null || texture.baseTexture == untyped __js__("undefined")) {
 			onError();
 		} else {
 			if (texture.baseTexture.hasLoaded) {

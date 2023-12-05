@@ -41,6 +41,7 @@ export {
 	registerDispatcher : (controller : PebbleController, mask : string, dispatcher : () -> Material) -> void;
 	registerDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void;
 	overwriteDispatcher(controller : PebbleController, mask : string, dispatcher : () -> Material) -> void;
+	overwriteDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void;
 	// Call corresponding dispatcher or onError if no dispatcher found to update the view
 	// If mask of the pebble is the same as the current one, just pushes pebble to the stack without calling dispatcher
 	// 	then the view update will be handled by MLinkPebbleParameters
@@ -120,7 +121,7 @@ export {
 	// TODO: remove from export section as soon as we migrate to flowc
 	PebbleController(
 		// Dispatcher registered based on pebble mask
-		dispatchers : ref Tree<string, PebbleDispatcher>,
+		dispatchers : DynamicBehaviour<Tree<string, PebbleDispatcher>>,
 		// Global view
 		view : ref Material,
 		// Set view based on pebble function wrapped with IScript magic
@@ -143,6 +144,7 @@ export {
 	unPinParameter(parameter : string) -> void;
 	getPinnedParametersTree() -> DynamicBehaviour<Tree<string, Pair<string, (Pebble) -> bool>>>;
 	updatePinnedParameter(parameter : string, value : string) -> void;
+	isDispatcherRegistered(dispatchers : Transform<Tree<string, PebbleDispatcher>>, mask : string) -> Transform<bool>;
 }
 
 isControllerCreatedRef : ref bool = ref false;
@@ -191,14 +193,14 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 		println("Something is wrong. Pebble controller should be created only once per application");
 	}
 	isControllerCreatedRef := true;
-	dispatchers : ref Tree<string, PebbleDispatcher> = ref makeTree();
+	dispatchers = make(makeTree());
 
 	pebbleStackB = make([]);
 	currentPebbleB = make(urlHash2Pebble2(takeAfter(getUrlHash(), "#", initialPebbleHash()), makeEmptyPebble()));
 
 	setViewFn = fn2IScriptBehaviourDisposable1(
 		\pebbleAndUpdateHashUrl : Pair<Pebble, bool> -> {
-			switch(getPebbleDispatcher2(^dispatchers, pebbleAndUpdateHashUrl.first)) {
+			switch(getPebbleDispatcher2(getValue(dispatchers), pebbleAndUpdateHashUrl.first)) {
 				Some(pebbleAndDispatcher): {
 					unpair(pebbleAndDispatcher, \foundPebble, dispatcher -> {
 						next(viewBoxB, MEmpty());
@@ -272,7 +274,7 @@ makePebbleController2(manager : MaterialManager) -> PebbleController {
 
 makeDummyPebbleController() -> PebbleController {
 	PebbleController(
-		ref makeTree(),
+		make(makeTree()),
 		ref MEmpty(),
 		IScriptBehaviourDisposable1(
 			nop1,
@@ -287,7 +289,7 @@ makeDummyPebbleController() -> PebbleController {
 }
 
 clearPebbleController(controller : PebbleController) -> void {
-	controller.dispatchers := makeTree();
+	next(controller.dispatchers, makeTree());
 	next(viewBoxB, MEmpty());
 	next(controller.pebbleStackB, []);
 	next(controller.confirmations, []);
@@ -307,12 +309,12 @@ registerDispatcher(controller : PebbleController, mask : string, dispatcher : ()
 
 registerDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void {
 	eitherFn(
-		lookupTree(^(controller.dispatchers), mask),
+		lookupTree(getValue(controller.dispatchers), mask),
 		\__ -> {
 			println(formatString("Mask (%1) already in use, view won't be registered", [mask]));
 			println("In case you are doing it on purpose use overwriteDispatcher function");
 		},
-		\-> controller.dispatchers := setTree(^(controller.dispatchers), mask, dispatcher)
+		\-> overwriteDispatcher2(controller, mask, dispatcher)
 	)
 }
 
@@ -321,12 +323,12 @@ overwriteDispatcher(controller : PebbleController, mask : string, dispatcher : (
 }
 
 overwriteDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void {
-	controller.dispatchers := setTree(^(controller.dispatchers), mask, dispatcher);
+	updateBehaviourDistinct(controller.dispatchers, \dTree -> setTree(dTree, mask, dispatcher));
 }
 
 // Recursively find a function for a given pebble. If it's not found try parent
 getPebbleDispatcher(controller : PebbleController, pebble : Pebble) -> Maybe<Pair<Pebble, PebbleDispatcher>> {
-	getPebbleDispatcher2(^(controller.dispatchers), pebble)
+	getPebbleDispatcher2(getValue(controller.dispatchers), pebble)
 }
 
 getPebbleDispatcher2(dispatchers : Tree<string, PebbleDispatcher>, pebble : Pebble) -> Maybe<Pair<Pebble, PebbleDispatcher>> {
@@ -794,4 +796,8 @@ printPebbleControllerState(controller : PebbleController, msg : string) -> void 
 		generate(max(stackLen - 3, 0), stackLen, \i -> "\t" + i2s(i + 1) + ": " + pebble2UrlHash(stack[i])),
 	]);
 	println(strGlue(lines, "\n\t"));
+}
+
+isDispatcherRegistered(dispatchers : Transform<Tree<string, PebbleDispatcher>>, mask : string) -> Transform<bool> {
+	fselect(dispatchers, FLift(\dTree -> contains(getTreeKeys(dTree), mask)))
 }
