@@ -87,9 +87,4 @@ private:
 	std::vector<Flow*> closure_;
 };
 
-//template<typename R, typename... As>
-//inline Int compare<Fun<R, As...>*>(Fun<R, As...>* v1, Fun<R, As...>* v2) {
-//	return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0);
-//}
-
 }
