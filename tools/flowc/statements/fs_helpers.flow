@@ -29,23 +29,24 @@ export {
 
 fsType(x: FsAll) -> FiType {
 	switch (x) {
-		FsIf(__, s1,__,__,__):       fsType(s1);
-		FsSwitch(__,__, cs,__,__):   if (length(cs) == 0) FiTypeVoid() else fsType(cs[0].body);
-		FsWrapExp(e,__,__):          FiTypeVoid();
-		FsRet(e,__,__):              fsType(e);
-		FsLet(__,__,s,__,__):        fsType(s);
-		FsAssign(__,__,__,__):       FiTypeVoid();
-		FsIncRc(__,__,__,__):        FiTypeVoid();
-		FsDecRc(__,__,__,__):        FiTypeVoid();
-		FsTailCall(__,__):           FiTypeVoid();
-		FsClosure(__,lambda,__,__):  lambda.type;
-		FsLambda(__,__,__, type,__): type;
-		FsCall(__,__, type,__):      type;
-		FsVarUse(v,__,__):           v.type;
-		FsCallPrim(__,__,type,__):   type;
-		FsInline(__,__,__,type,__):  type;
-		FsCast(__,__,type,__):       type;
-		FsString(__,__,__):          FiTypeString();
+		FsIf(__, s1,__,__,__):           fsType(s1);
+		FsSwitch(__,__, cs,__,__):       if (length(cs) == 0) FiTypeVoid() else fsType(cs[0].body);
+		FsWrapExp(e,__,__):              FiTypeVoid();
+		FsRet(e,__,__):                  fsType(e);
+		FsLet(__,__,s,__,__):            fsType(s);
+		FsInlineStat(__,__,__,__,__,__): FiTypeVoid();
+		FsAssign(__,__,__,__):           FiTypeVoid();
+		FsIncRc(__,__,__,__):            FiTypeVoid();
+		FsDecRc(__,__,__,__):            FiTypeVoid();
+		FsTailCall(__,__):               FiTypeVoid();
+		FsClosure(__,lambda,__,__):      lambda.type;
+		FsLambda(__,__,__, type,__):     type;
+		FsCall(__,__, type,__):          type;
+		FsVarUse(v,__,__):               v.type;
+		FsCallPrim(__,__,type,__):       type;
+		FsInlineExp(__,__,__,type,__):   type;
+		FsCast(__,__,type,__):           type;
+		FsString(__,__,__):              FiTypeString();
 		FsConst(c,__): {
 			switch (c) {
 				FiVoid(__):       FiTypeVoid();
@@ -90,6 +91,9 @@ fs2string(s: FsAll, depth: int) -> string {
 				"let1 " + var.name + " : " + t2s(var.type) + " = " + x2s(e) + ";\n" +
 					strIndent(x2s(stat));
 			}
+			FsInlineStat(f,__, args, ret, id,__): {
+				"inline statement " + f + "(" + superglue(args, x2s, ", ") + ", return: " + ret.name + ")";
+			}
 			FsWrapExp(e,__,__): {
 				x2s(e) + ";";
 			}
@@ -122,7 +126,7 @@ fs2string(s: FsAll, depth: int) -> string {
 			FsCall(f, args,__, id): {
 				x2s(f) + "(" + superglue(args, x2s, ", ") + ")";
 			}
-			FsInline(f,__, args,__, id): {
+			FsInlineExp(f,__, args,__, id): {
 				"inline " + f + "(" + superglue(args, x2s, ", ") + ")";
 			}
 			FsCallPrim(op, es, type, id): {
@@ -192,6 +196,14 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 			FsLet(v2, e2, s2,__,__): v1.name == v2.name && fsEqualExprs(e1, e2) && fsEqualExprs(s1, s2);
 			default: false;
 		}
+		FsInlineStat(n1,__, args1,__,__,__): switch (y) {
+			FsInlineStat(n2,__, args2,__,__,__): {
+				n1 == n2 &&
+				length(args1) == length(args2) &&
+				all(mapi(args1, \i, a1 -> fsEqualExprs(a1, args2[i])));
+			}
+			default: false;
+		}
 		FsWrapExp(e1,__,__): switch (y) {
 			FsWrapExp(e2,__,__): fsEqualExprs(e1, e2);
 			default: false;
@@ -242,8 +254,8 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 			}
 			default: false;
 		}
-		FsInline(n1,__, args1,__,__): switch (y) {
-			FsInline(n2,__, args2,__,__): {
+		FsInlineExp(n1,__, args1,__,__): switch (y) {
+			FsInlineExp(n2,__, args2,__,__): {
 				n1 == n2 &&
 				length(args1) == length(args2) &&
 				all(mapi(args1, \i, a1 -> fsEqualExprs(a1, args2[i])));
@@ -434,6 +446,22 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 			}
 			default: arrayPush(acc, Pair(x, y));
 		}
+		FsInlineStat(n1, __, as1,__,__,__): switch (y) {
+			FsInlineStat(n2,__, as2,__,__,__): {
+				if (n1 != n2) {
+					arrayPush(acc, Pair(x, y));
+				} else {
+					foldi(as1, acc, \i, ac, a1 ->
+						if (i >= length(as2)) {
+							arrayPush(ac, Pair(FsConst(FiVoid(-1), -1), a1));
+						} else {
+							fsDiffExprs(a1, as2[i], acc);
+						}
+					);
+				}
+			}
+			default: arrayPush(acc, Pair(x, y));
+		}
 		FsWrapExp(e1,__,__): switch (y) {
 			FsWrapExp(e2,__,__): fsDiffExprs(e1, e2, acc);
 			default: arrayPush(acc, Pair(x, y));
@@ -507,8 +535,8 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 			}
 			default: arrayPush(acc, Pair(x, y));
 		}
-		FsInline(n1, __, as1,__,__): switch (y) {
-			FsInline(n2,__, as2,__,__): {
+		FsInlineExp(n1, __, as1,__,__): switch (y) {
+			FsInlineExp(n2,__, as2,__,__): {
 				if (n1 != n2) {
 					arrayPush(acc, Pair(x, y));
 				} else {
@@ -576,28 +604,29 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 
 fsExpSetId(e: FsExp, x: int) -> FsExp {
 	switch(e) {
-		FsVarUse(__,__,__):       FsVarUse(e with id = x);
-		FsClosure(__,__,__,__):   FsClosure(e with id = x);
-		FsCall(__,__,__,__):      FsCall(e with id = x);
-		FsCallPrim(__,__,__,__):  FsCallPrim(e with id = x);
-		FsInline(__,__,__,__,__): FsInline(e with id = x);
-		FsCast(__,__,__,__):      FsCast(e with id = x);
-		FsString(__,__,__):       FsString(e with id = x);
-		FsConst(__,__):           FsConst(e with id = x);
+		FsVarUse(__,__,__):          FsVarUse(e with id = x);
+		FsClosure(__,__,__,__):      FsClosure(e with id = x);
+		FsCall(__,__,__,__):         FsCall(e with id = x);
+		FsCallPrim(__,__,__,__)   :  FsCallPrim(e with id = x);
+		FsInlineExp(__,__,__,__,__): FsInlineExp(e with id = x);
+		FsCast(__,__,__,__):         FsCast(e with id = x);
+		FsString(__,__,__):          FsString(e with id = x);
+		FsConst(__,__):              FsConst(e with id = x);
 	}
 }
 
 fsStatSetId(s: FsStat, x: int) -> FsStat {
 	switch(s) {
-		FsIf(__,__,__,__,__):     FsIf(s with id = x);
-		FsSwitch(__,__,__,__,__): FsSwitch(s with id = x);
-		FsWrapExp(__,__,__):      FsWrapExp(s with id = x);
-		FsRet(__,__,__):          FsRet(s with id = x);
-		FsTailCall(__,__):        FsTailCall(s with id = x);
-		FsAssign(__,__,__,__):    FsAssign(s with id = x);
-		FsLet(__,__,__,__,__):    FsLet(s with id = x);
-		FsIncRc(__,__,__,__):     FsIncRc(s with id = x);
-		FsDecRc(__,__,__,__):     FsDecRc(s with id = x);
+		FsIf(__,__,__,__,__):            FsIf(s with id = x);
+		FsSwitch(__,__,__,__,__):        FsSwitch(s with id = x);
+		FsInlineStat(__,__,__,__,__,__): FsInlineStat(s with id = x);
+		FsWrapExp(__,__,__):             FsWrapExp(s with id = x);
+		FsRet(__,__,__):                 FsRet(s with id = x);
+		FsTailCall(__,__):               FsTailCall(s with id = x);
+		FsAssign(__,__,__,__):           FsAssign(s with id = x);
+		FsLet(__,__,__,__,__):           FsLet(s with id = x);
+		FsIncRc(__,__,__,__):            FsIncRc(s with id = x);
+		FsDecRc(__,__,__,__):            FsDecRc(s with id = x);
 	}
 }
 
@@ -649,15 +678,16 @@ fsShowTiming1(msg: string, delta: double) -> void {
 
 fsSetNext(x: FsStat, n: FsStat) -> FsStat {
 	switch (x) {
-		FsIf(__,__,__,__,__):     FsIf(x with next = Some(n));
-		FsSwitch(__,__,__,__,__): FsSwitch(x with next = Some(n));
-		FsLet(__,__,__,__,__):    FsLet(x with next = Some(n));
-		FsWrapExp(__,__,__):      FsWrapExp(x with next = Some(n));
-		FsAssign(__,__,__,__):    FsAssign(x with next = Some(n));
-		FsIncRc(__,__,__,__):     FsIncRc(x with next = Some(n));
-		FsDecRc(__,__,__,__):     FsDecRc(x with next = Some(n));
-		FsRet(__,__,__):          FsRet(x with next = Some(n));
-		FsTailCall(__,__):        FsTailCall(x with next = Some(n));
+		FsIf(__,__,__,__,__):            FsIf(x with next = Some(n));
+		FsSwitch(__,__,__,__,__):        FsSwitch(x with next = Some(n));
+		FsLet(__,__,__,__,__):           FsLet(x with next = Some(n));
+		FsInlineStat(__,__,__,__,__,__): FsInlineStat(x with next = Some(n));
+		FsWrapExp(__,__,__):             FsWrapExp(x with next = Some(n));
+		FsAssign(__,__,__,__):           FsAssign(x with next = Some(n));
+		FsIncRc(__,__,__,__):            FsIncRc(x with next = Some(n));
+		FsDecRc(__,__,__,__):            FsDecRc(x with next = Some(n));
+		FsRet(__,__,__):                 FsRet(x with next = Some(n));
+		FsTailCall(__,__):               FsTailCall(x with next = Some(n));
 	}
 }
 
