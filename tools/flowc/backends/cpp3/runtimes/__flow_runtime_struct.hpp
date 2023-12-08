@@ -334,9 +334,4 @@ private:
 	Fields fields;
 };
 
-//template<TypeId Id, typename... Fs>
-//inline Int compare(Str<Id, Fs...>* v1, Str<Id, Fs...>* v2) {
-//	return v1->compare(v2);
-//}
-
 }

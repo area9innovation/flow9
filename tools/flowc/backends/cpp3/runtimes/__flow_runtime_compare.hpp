@@ -5,23 +5,6 @@
 namespace flow {
 
 // General comparison functions
-/*
-Int flowCompare(Flow* v1, Flow* v2);
-
-inline Int flowCompareRc(Flow* v1, Flow* v2) {
-	Int c = flowCompare(v1, v2);
-	decRc(v1); decRc(v2);
-	return c;
-}
-*/
-/*
-template<typename T>
-inline Int compareRc(T v1, T v2) {
-	Int ret = compare(v1, v2);
-	decRc(v1); decRc(v2);
-	return ret;
-}
-*/
 
 template<typename T>
 inline Int compare(T v1, T v2) {

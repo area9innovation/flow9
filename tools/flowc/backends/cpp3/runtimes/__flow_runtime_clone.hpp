@@ -19,8 +19,8 @@ inline T clone(T v) {
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
 		using E = std::remove_pointer_t<T>::ElType;
 		Vec<E>* ret = Vec<E>::make(v->size());
-		for (Int i = 0; i < v->size(); ++ i) {
-			ret->pushBack(clone(v->get(i)));
+		for (E x : *v) {
+			ret->pushBack(clone(x));
 		}
 		return ret;
 	} else if constexpr (is_type_v<TypeFx::REF, T>) {
