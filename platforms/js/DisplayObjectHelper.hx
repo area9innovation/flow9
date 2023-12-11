@@ -1921,7 +1921,11 @@ class DisplayObjectHelper {
 					untyped clip.onStage = true;
 
 					if (!Platform.isIE) {
-						untyped clip.nativeWidget.style.display = null;
+						if (untyped clip.display_save == null && untyped clip.nativeWidget.style.display != null) {
+							untyped clip.display_save = clip.nativeWidget.style.display;
+						} else {
+							untyped clip.nativeWidget.style.display = clip.display_save;
+						}
 					}
 
 					addNativeWidget(clip);
@@ -1930,6 +1934,9 @@ class DisplayObjectHelper {
 				untyped clip.onStage = false;
 
 				if (!Platform.isIE) {
+					if (untyped clip.display_save == null && untyped clip.nativeWidget.style.display != null) {
+						untyped clip.display_save = clip.nativeWidget.style.display;
+					}
 					untyped clip.nativeWidget.style.display = 'none';
 				}
 
