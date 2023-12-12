@@ -21,7 +21,7 @@ enum TypeFx {
 // Types with id values < 9 are from TypeFx, others are structs. 
 
 using TypeId = int32_t;
-const TypeId structTypeIdOffset = TypeFx::STRUCT_TYPE_ID_OFFSET;
+inline constexpr TypeId structTypeIdOffset = TypeFx::STRUCT_TYPE_ID_OFFSET;
 
 // Flow internally uses utf-16 string format
 
@@ -39,7 +39,7 @@ inline string std2string(const std::string& str) { string s; copyStd2string(str,
 // Basic types
 
 using Void = std::nullptr_t;
-const Void void_value = nullptr;
+inline constexpr Void void_value = nullptr;
 
 // Scalar types
 using Int = int32_t;
