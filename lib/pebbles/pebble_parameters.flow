@@ -238,9 +238,9 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 		map(handlers, \handler -> handler.parameter),
 		\parameters : [Pair<string, DynamicBehaviour<string>>] -> {
 			MGetManager(\manager -> {
-				MConstruct(concatA(
-					mapi(handlers, \i, handler -> {
-						if (handler.action == DoNotRecord() || controller.dummy) {
+				MConstruct(
+					concatA(mapi(handlers, \i, handler -> {
+						if (handler.action == DoNotRecord() || controller.dummy || handler.parameter == "") {
 							[
 								// call onChange on every valueB update if user don't care about pebbles
 								callOnChangeOnParameterChange(manager, controller, handler, callstack)
@@ -256,13 +256,43 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 										});
 									}
 								}),
-								setViewOnParameterChange(controller, handler)
-							]
+								setViewOnParameterChange(controller, handler),
+								\ -> {
+									updateBehaviour(controller.handledParametersB, \tree -> {
+										cnt = lookupTreeDef(tree, handler.parameter, 0);
+										setTree(tree, handler.parameter, cnt + 1);
+									});
+									\ -> {
+										updateBehaviour(controller.handledParametersB, \tree -> {
+											cnt = lookupTreeDef(tree, handler.parameter, 0);
+											if (cnt == 1) {
+												removeFromTree(tree, handler.parameter);
+											} else {
+												setTree(tree, handler.parameter, cnt - 1);
+											}
+										});
+									}
+								},
+							];
 						}
 					})),
 					// We need to make sure that all subscribers are created before showing the content
 					MIfLazy(fands(constructedFlags, true), \constructed -> {
-						if (constructed) m else MEmpty();
+						if (constructed) {
+							// Some destructors may still be executed, so counts are not correct immediately.
+							// For example, it happens when switching to previous tab.
+							deferred(\ -> traversePreOrder(
+								getValue(controller.handledParametersB),
+								\parameter, cnt -> {
+									if (cnt > 1) {
+										println("WARNING: Current view is handling pebble parameter `" + parameter + "` multiple times? it's wrong");
+									}
+								}
+							));
+							m;
+						} else {
+							MEmpty();
+						}
 					})
 				)
 			})

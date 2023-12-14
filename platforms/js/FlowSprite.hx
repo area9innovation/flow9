@@ -215,7 +215,7 @@ class FlowSprite extends Sprite {
 	}
 
 	private function enableSprites() : Void {
-		if (untyped this.destroyed || parent == null || nativeWidget == null || (RenderSupport.printMode && Util.determineCrossOrigin(url) == "anonymous")) {
+		if (untyped this.destroyed || parent == null || nativeWidget == null || nativeWidget.baseTexture == null || (RenderSupport.printMode && Util.determineCrossOrigin(url) == "anonymous")) {
 			return;
 		}
 
