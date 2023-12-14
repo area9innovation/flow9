@@ -1,16 +1,20 @@
 #pragma once
 
+#include "__flow_runtime_stats.hpp"
 #include "__flow_runtime_flow.hpp"
 
 namespace flow {
 
-constexpr Int UNI_HALF_BASE = 0x10000;
-constexpr Int UNI_HALF_SHIFT = 10;
-constexpr Int UNI_HALF_MASK = 0x3FF;
-constexpr Int UNI_SUR_HIGH_START = 0xD800;
-constexpr Int UNI_SUR_HIGH_END = 0xDBFF;
-constexpr Int UNI_SUR_LOW_START = 0xDC00;
-constexpr Int UNI_SUR_LOW_END = 0xDFFF;
+inline constexpr Int UNI_HALF_BASE = 0x10000;
+inline constexpr Int UNI_HALF_SHIFT = 10;
+inline constexpr Int UNI_HALF_MASK = 0x3FF;
+inline constexpr Int UNI_SUR_HIGH_START = 0xD800;
+inline constexpr Int UNI_SUR_HIGH_END = 0xDBFF;
+inline constexpr Int UNI_SUR_LOW_START = 0xDC00;
+inline constexpr Int UNI_SUR_LOW_END = 0xDFFF;
+
+// String length statistics
+extern IntStats string_leng_stats;
 
 struct String : public Flow {
 	enum { TYPE = TypeFx::STRING };
@@ -121,21 +125,35 @@ struct String : public Flow {
 	inline Flow* toFlow() { return FString::make(this); }
 
 private:
+	inline void registerLen(Int len) {
+		if constexpr (gather_string_leng_stats) {
+			string_leng_stats.registerVal(len);
+		}
+	}
 	String(): str_() { }
-	String(const std::string& s): str_(std2string(s)) { }
-	String(const string& s): str_(s) { }
+	String(const std::string& s): str_(std2string(s)) { registerLen(s.size()); }
+	String(const string& s): str_(s) { registerLen(s.size()); }
 	String(string&& s): str_(std::move(s)) { }
-	String(const char16_t* s): str_(s) { }
-	String(const char16_t* s, Int len): str_(s, len) { }
-	String(char16_t c): str_(1, c) { }
-	String(Int c) { append(c); }
-	String(std::initializer_list<char16_t>&& codes): str_(std::move(codes)) { }
+	String(const char16_t* s): str_(s) { std::char_traits<char16_t>::length(s); }
+	String(const char16_t* s, Int len): str_(s, len) { registerLen(len); }
+	String(char16_t c): str_(1, c) { registerLen(1); }
+	String(Int c) {
+		if (c <= 0xFFFF) {
+			str_.append(1, static_cast<char16_t>(c));
+			registerLen(1);
+		} else {
+			c -= UNI_HALF_BASE;
+			str_.append(1, static_cast<char16_t>((c >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
+      		str_.append(1, static_cast<char16_t>((c & UNI_HALF_MASK) + UNI_SUR_LOW_START));
+			registerLen(2);
+		}
+	}
+	String(std::initializer_list<char16_t>&& codes): str_(std::move(codes)) { registerLen(codes.size()); }
 	static String* makeSingleton() { static String es; es.makeConstantRc(); return &es; }
 	string str_;
 };
 
 template<typename T> inline String* toStringRc(T v) { string s; append2string(s, v); decRc(v); return String::make(std::move(s)); }
 template<typename T> inline String* toString(T v) { string s; append2string(s, v); return String::make(std::move(s)); }
-//template<> inline Int compare<String*>(String* v1, String* v2) { return v1->str().compare(v2->str()); }
 
 }

@@ -2,8 +2,6 @@
 
 namespace flow {
 
-Int VecStats::max_len = 0;
-std::mutex VecStats::m;
-std::vector<Int> VecStats::len_distrib(2048, 0);
+IntStats vec_leng_stats;
 
 }

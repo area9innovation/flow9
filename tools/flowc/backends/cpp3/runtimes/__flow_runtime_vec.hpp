@@ -1,38 +1,12 @@
 #pragma once
 
+#include "__flow_runtime_stats.hpp"
 #include "__flow_runtime_flow.hpp"
 
 namespace flow {
 
-struct VecStats {
-	enum { STATS_LEN = 2048 };
-	static void registerLen(Int l) {
-		/*if (max_len < l) {
-			max_len = l;
-		}
-		std::size_t len = static_cast<Int>(l);
-		std::lock_guard<std::mutex> lock(m);
-		if (len >= len_distrib.size()) {
-			Int x = len - len_distrib.size() + 1;
-			while (x-- > 0) {
-				len_distrib.push_back(0);
-			}
-		}
-		len_distrib[len] += 1;*/
-	}
-	static Int lenUses(Int l) {
-		std::size_t len = static_cast<Int>(l);
-		if (len < len_distrib.size()) {
-			return len_distrib.at(len);
-		} else {
-			return -1;
-		}
-	}
-	static Int max_len;
-	static std::mutex m;
-	static std::vector<Int> len_distrib;
-};
-
+// Vector length statistics
+extern IntStats vec_leng_stats;
 template<typename T> 
 struct Vec : public Flow {
 	enum { TYPE = TypeFx::ARRAY };
@@ -217,13 +191,18 @@ struct Vec : public Flow {
 	inline std::vector<T>& vecRef() { return vec_; }
 
 private:
+	inline void registerLen(Int len) {
+		if constexpr (gather_vector_leng_stats) {
+			vec_leng_stats.registerVal(len);
+		}
+	}
 	Vec(): vec_() { }
-	Vec(Int s): vec_() { VecStats::registerLen(s); vec_.reserve(s); }
-	Vec(std::initializer_list<T>&& il): vec_(std::move(il)) { VecStats::registerLen(il.size()); }
-	Vec(const std::initializer_list<T>& il): vec_(il) { VecStats::registerLen(il.size()); }
-	Vec(Vec* a): vec_(a->vec_) { incRcVec(); VecStats::registerLen(size()); }
+	Vec(Int s): vec_() { registerLen(s); vec_.reserve(s); }
+	Vec(std::initializer_list<T>&& il): vec_(std::move(il)) { registerLen(il.size()); }
+	Vec(const std::initializer_list<T>& il): vec_(il) { registerLen(il.size()); }
+	Vec(Vec* a): vec_(a->vec_) { incRcVec(); registerLen(size()); }
 	Vec(Vec&& a): vec_(std::move(a.vec_)) { }
-	Vec(const Vec& a): vec_(a.vec_) { incRcVec(); VecStats::registerLen(size()); }
+	Vec(const Vec& a): vec_(a.vec_) { incRcVec(); registerLen(size()); }
 	Vec(std::vector<T>&& v): vec_(std::move(v)) { }
 	inline void decRcVec() {
 		if constexpr (is_flow_ancestor_v<T>) {
