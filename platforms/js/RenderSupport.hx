@@ -59,6 +59,7 @@ class RenderSupport {
 	// Don't wait for fonts to load
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
+	public static var UsePinchToScale : Bool = Util.getParameter("use_pinch_to_scale") == "1";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -972,6 +973,19 @@ class RenderSupport {
 			on("fullscreen", function(isFullScreen) {
 				var size = isFullScreen ? getScreenSize() : {width: Browser.window.innerWidth, height: Browser.window.innerHeight};
 				onBrowserWindowResize({target: {innerWidth: size.width, innerHeight: size.height}});
+			});
+		}
+
+		var accessibilityZoomOnPinchStart = 1.;
+
+		if (Platform.isMobile && UsePinchToScale) {
+			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
+				if (state == 0) {
+					// On pinch started
+					accessibilityZoomOnPinchStart = getAccessibilityZoom();
+				};
+				setAccessibilityZoom(Math.min(Math.max(0.25, accessibilityZoomOnPinchStart * scale), 5.0));
+				return false;
 			});
 		}
 	}
