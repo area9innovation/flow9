@@ -101,7 +101,7 @@ template<typename R, typename... As> struct Fun;
 
 // Statistics gathering facilities: constants which enable such gathering
 
-inline constexpr bool gather_vector_leng_stats = true;
-inline constexpr bool gather_string_leng_stats = true;
+inline constexpr bool gather_vector_leng_stats = false;
+inline constexpr bool gather_string_leng_stats = false;
 
 }
