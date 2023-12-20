@@ -499,7 +499,7 @@ class RenderSupport {
 			forceRender();
 			PixiStage.onImagesLoaded(function () {
 				if (forceOnAfterprint) {
-					// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI. 
+					// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI.
 					PixiStage.once("drawframe", function() {
 						emit("afterprint");
 					});
@@ -1233,7 +1233,7 @@ class RenderSupport {
 			} else if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
 				calculateMobileTopHeight();
 
-				// Call viewport metrics recalculation only in case of rotation or screen keyboard hide/show event, not on zoom. 
+				// Call viewport metrics recalculation only in case of rotation or screen keyboard hide/show event, not on zoom.
 				if (oldBrowserZoom == browserZoom) {
 					// Still send whole window size - without reducing by screen kbd
 					// for flow does not resize the stage. The stage will be
@@ -2062,6 +2062,17 @@ class RenderSupport {
 			clip.initNativeWidget();
 		} else {
 			untyped clip.nativeWidget.classList.add(className);
+		}
+	}
+
+	public static function replaceClipClassName(clip : DisplayObject, className : String, classNameNew : String) : Void {
+		untyped clip.className = className;
+
+		if (untyped clip.nativeWidget == null) {
+			clip.initNativeWidget();
+		} else {
+			untyped clip.nativeWidget.classList.remove(className);
+			untyped clip.nativeWidget.classList.add(classNameNew);
 		}
 	}
 
