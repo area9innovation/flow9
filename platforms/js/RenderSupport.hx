@@ -59,7 +59,6 @@ class RenderSupport {
 	// Don't wait for fonts to load
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
-	public static var UsePinchToScale : Bool = Util.getParameter("use_pinch_to_scale") == "1";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -979,7 +978,7 @@ class RenderSupport {
 
 		var accessibilityZoomOnPinchStart = 1.;
 
-		if (Platform.isMobile && UsePinchToScale) {
+		if (Platform.isMobile && Native.isNew) {
 			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
 				if (state == 0) {
 					// On pinch started
