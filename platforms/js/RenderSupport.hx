@@ -934,6 +934,7 @@ class RenderSupport {
 	private static var printMode = false;
 	private static var forceOnAfterprint = Platform.isChrome;
 	private static var prevInvalidateRenderable = false;
+	private static var zoomFnUns = function() {};
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView || (Platform.isIOS && ProgressiveWebTools.isRunningPWA()) ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
@@ -972,6 +973,27 @@ class RenderSupport {
 			on("fullscreen", function(isFullScreen) {
 				var size = isFullScreen ? getScreenSize() : {width: Browser.window.innerWidth, height: Browser.window.innerHeight};
 				onBrowserWindowResize({target: {innerWidth: size.width, innerHeight: size.height}});
+			});
+		}
+
+		var accessibilityZoomOnPinchStart = 1.;
+
+		if (Platform.isMobile && Native.isNew) {
+			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
+				if (state == 0) {
+					// On pinch started
+					accessibilityZoomOnPinchStart = getAccessibilityZoom();
+				};
+				var updateZoom = function() {
+					setAccessibilityZoom(Math.min(Math.max(0.25, accessibilityZoomOnPinchStart * scale), 5.0));
+				};
+				if (state == 0 || state == 2) {
+					updateZoom();
+				} else if (state == 1) {
+					zoomFnUns();
+					zoomFnUns = interruptibleDeferUntilRender(updateZoom);
+				}
+				return false;
 			});
 		}
 	}

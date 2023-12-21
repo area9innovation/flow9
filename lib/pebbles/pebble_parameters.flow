@@ -2,12 +2,19 @@ import pebbles/pebble_controller;
 import sys/leavewarning;
 
 export {
-	// Wrap the part of the screen which dependent on the current pebble parameters with this Material block.
+	// Wrap the part of the screen which dependent on the current pebble parameters
+	// with MLinkPebbleParameters or MSelectPebble*Parameter.
+	// MSelectPebble*Parameter functions can be used only to read the current value of the parameter,
+	// and MLinkPebbleParameters can be used for full control of the parameters.
+
+	// ** MLinkPebbleParameters **
 	// You can set up a separate handler for each parameter you want to track:
 	// - update parameter by changing corresponding behaviour (valueB)
 	// - receive updates of the parameter value from outside using onChange callback
-
 	// Simply speaking `MLinkPebbleParameters` is MConstruct wrapper, `PebbleParameterLink` is `subscribe` wrapper
+
+	// NOTE: View should not create multiple MLinkPebbleParameters for the same parameter.
+	// In other words, each parameter mush has only one MLinkPebbleParameters.
 
 	// NOTE: This mechanism is only to track parameters of the last path part while the pebble path itself stays the same
 	// (i.e. pebble mask). Pebble path changes are handled by PebbleController (see pebble_controller.flow).
@@ -85,6 +92,30 @@ export {
 	RecordURLRestoreOrChangeParameters(shared : [string]) -> RecordURLRestoreOrChangeParametersControlled;
 
 	makeDummyPebbleParameterLink() -> PebbleParameterLink;
+
+	// Use this helpers if you do not need a full PebbleParameterLink,
+	// if you need just selecting parameter value without modifying it.
+	MSelectPebbleStringParameter(
+		controller : PebbleController,
+		parameterName : string,
+		fn : (Transform<string>) -> Material
+	) -> Material;
+	MSelectPebbleIntParameter(
+		controller : PebbleController,
+		parameterName : string,
+		fn : (Transform<int>) -> Material
+	) -> Material;
+	MSelectPebbleBoolParameter(
+		controller : PebbleController,
+		parameterName : string,
+		fn : (Transform<bool>) -> Material
+	) -> Material;
+	// Select multiple parameters as strings
+	MSelectPebbleParameters(
+		controller : PebbleController,
+		parametersNames : [string],
+		display : (parameterName2beh : (string) -> Behaviour<string>) -> Material
+	) -> Material;
 
 	// Bunch of helpers to simplify PebbleParameterLink creation in case they are used as triggers of some event.
 	// Event is triggered when value is non-empty, disposer sets value back to empty.
@@ -237,7 +268,7 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 	MSelectPebbleParameters(
 		controller,
 		handlerParameters,
-		\parameters : [Pair<string, DynamicBehaviour<string>>] -> {
+		\parameter2beh -> {
 			MGetManager(\manager -> {
 				MConstruct(
 					concatA(mapi(handlers, \i, handler -> {
@@ -249,7 +280,7 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 						} else {
 							nextDistinct(constructedFlags[i], false);
 							[
-								makeSubscribe(getDynamicPebbleParameter(parameters, handler.parameter), \value -> {
+								makeSubscribe(parameter2beh(handler.parameter), \value -> {
 									nextDistinct(constructedFlags[i], true);
 									if (fgetValue(manager.pebblesEnabled)) {
 										changeParameterValue(handler, value, callstack, \ -> {
@@ -287,7 +318,7 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 								iter(handlerParameters, \parameter -> {
 									cnt = lookupTreeDef(handledParameters, parameter, 0);
 									if (cnt > 1) {
-										println("WARNING: Current view is handling pebble parameter `" + parameter + "` multiple times? it's wrong");
+										println("WARNING: Current view is handling pebble parameter `" + parameter + "` multiple times, it's wrong");
 									}
 								});
 							});
@@ -305,26 +336,61 @@ MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameter
 MSelectPebbleParameters(
 	controller : PebbleController,
 	parametersNames : [string],
-	display : (parameters : [Pair<string, DynamicBehaviour<string>>]) -> Material
+	display : (parameterName2beh : (string) -> Behaviour<string>) -> Material
 ) -> Material {
-
-	parameters : [Pair<string, DynamicBehaviour<string>>] = map(parametersNames, \key -> Pair(key, make("")));
-
+	parametersTree = keys2tree(parametersNames, \key -> make(""));
+	if (sizeTree(parametersTree) < length(parametersNames)) {
+		notUnique = getTreeKeys(filterTree(values2arrayTree(parametersNames, idfn), \__, values -> length(values) > 1));
+		println("ERROR in MSelectPebbleParameters: Some parameters are not unique: " + toString(notUnique));
+	}
 	MConstruct(
-		map(parametersNames, \key -> {
+		convertTreeToArray(parametersTree, \key, valueB -> {
 			makeCurrentPebbleLastParameterSubscribe(controller, key, \value -> {
 				//println("MSelectPebbleParameters, key=" + key + ", value=" + value);
-				switch(find(parameters, \x -> x.first == key)) {
-					Some(parameter): nextDistinct(parameter.second, urlDecode(value));
-					None(): {}
-				}
-			})
+				nextDistinct(valueB, urlDecode(value));
+			});
 		}),
-		MComponentGroup(
-			display(parameters),
-			[]
-		)
-	)
+		display(\name -> lookupTreeDef(parametersTree, name, const("")))
+	);
+}
+
+MSelectPebbleStringParameter(
+	controller : PebbleController,
+	parameterName : string,
+	fn : (Transform<string>) -> Material
+) -> Material {
+	MSelectPebbleAnyParameter(controller, parameterName, idfn, fn);
+}
+
+MSelectPebbleIntParameter(
+	controller : PebbleController,
+	parameterName : string,
+	fn : (Transform<int>) -> Material
+) -> Material {
+	MSelectPebbleAnyParameter(controller, parameterName, s2i, fn);
+}
+
+MSelectPebbleBoolParameter(
+	controller : PebbleController,
+	parameterName : string,
+	fn : (Transform<bool>) -> Material
+) -> Material {
+	MSelectPebbleAnyParameter(controller, parameterName, s2b, fn);
+}
+
+MSelectPebbleAnyParameter(
+	controller : PebbleController,
+	parameterName : string,
+	string2value : (string) -> ?,
+	fn : (Transform<?>) -> Material
+) -> Material {
+	valueB = make("");
+	MConstruct(
+		[makeCurrentPebbleLastParameterSubscribe(controller, parameterName, \value -> {
+			nextDistinct(valueB, urlDecode(value));
+		})],
+		fn(fselectLift(valueB, string2value))
+	);
 }
 
 RecordURLRestoreOrChange() -> RecordURLRestoreOrChangeParametersControlled {
@@ -337,17 +403,6 @@ RecordURLRestoreOrChangeParameters(shared : [string]) -> RecordURLRestoreOrChang
 
 makeDummyPebbleParameterLink() -> PebbleParameterLink {
 	PebbleStringLink("", make(""), nop1, DoNotRecord())
-}
-
-getDynamicPebbleParameter(parameters : [Pair<string, DynamicBehaviour<string>>], key : string) -> Behaviour<string> {
-	eitherFn(
-		find(parameters, \a -> a.first == key),
-		secondOfPair,
-		\ -> {
-			devtrace("Warning: Unknown pebble parameter: " + key);
-			const("");
-		}
-	);
 }
 
 // Process new value from current pebble parameter
