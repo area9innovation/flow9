@@ -1609,8 +1609,8 @@ MMenuLines2Material(
 						MOnClick(onClick),
 						extractStruct(_style, AccessRole(if (popupRole == "menu") "button" else "option")),
 						MRippleType(const(MRippleFill())),
-						MHighlightOnFocus(const(true)),
-						MHighlightOnHover(const(true)),
+						extractStruct(style, MHighlightOnFocus(const(true))),
+						extractStruct(style, MHighlightOnHover(const(true))),
 						MFocusOnDown(ref true),
 						FAccessAttribute("aria-selected", const(if (popupRole == "menu") "" else b2s(selected))),
 						extractStruct(_style, MRippleOutlineEnabled(const(false))),
@@ -2012,14 +2012,48 @@ MMenuLines2MPopup(
 			t
 		);
 
+	itemsWithFocuses = map(items0, MMenuLineAttachToFocused);
+	items1 = map(itemsWithFocuses, firstOfPair);
+
+	popupWasClicked = make(false);
+
+	// Used for closing popup, when click happens inside iframe
+	addFocusInspector = \arr -> {
+		focused = make(false);
+		focusEnabled = make(true);
+		itemFocuses = map(itemsWithFocuses, secondOfPair);
+		isAnyFocused = fstall(fOrs(concat(itemFocuses, [focused, popupWasClicked]), false), 0);
+
+		concat([[
+			MComponent(
+				[MFocused(focused), MFocusEnabled(focusEnabled)],
+				\__ -> TFixed(1., 1.)
+			)
+			|> (\m -> MConstruct([
+					\ -> {
+						timer(500, \ -> {
+							if (isNone(fgetValue(getCurrentFocusedItemBehaviour(manager)))) nextDistinct(focused, true)
+							else nextDistinct(focusEnabled, false);
+						});
+						nop;
+					},
+					makeSubscribe2(focused, \f -> if (!f) nextDistinct(focusEnabled, false)),
+					makeSubscribe2(isAnyFocused, \f -> if (!f) {
+						if (!getValue(popupWasClicked)) nextDistinct(openMenu.opened, false);
+					})
+				], m))
+			|> (\m -> MFixSize(m, TEmpty()))
+		]], arr)
+	}
+
 	menuLinesState = MMenuLinesState(manager, m2t, lineHeight, elevation, nearTitle, popupId, activeDescendantId, makeTitle, singleSelectionToggle);
 
-	items = MMenuLines2Material(items0, style0, lineBorders, closeBelow, focusedItem, menuLinesState);
+	items = MMenuLines2Material(items1, style0, lineBorders, closeBelow, focusedItem, menuLinesState);
 
 	newItems =
 		(if (indexShift && selectedId >= 0 && !nonspecAlwaysOnTop) {
-			if (selectedId > 0 && selectedId < length(items0) - 1 &&
-				items0[selectedId - 1].structname == "MMenuGroupLine" && items0[selectedId + 1].structname == "MMenuGroupLine") {
+			if (selectedId > 0 && selectedId < length(items1) - 1 &&
+				items1[selectedId - 1].structname == "MMenuGroupLine" && items1[selectedId + 1].structname == "MMenuGroupLine") {
 				selIt = items[selectedId + 1];
 
 				concat(
@@ -2037,7 +2071,8 @@ MMenuLines2MPopup(
 		} else
 			items
 		)
-		|> addLabel;
+		|> addLabel
+		|> addFocusInspector;
 
 	labelIdx = b2i(isSome(mLabel));
 	itemsLen = length(newItems);
@@ -2064,7 +2099,11 @@ MMenuLines2MPopup(
 			),
 			FAccessAttribute("aria-activedescendant", activeDescendantId),
 			FAccessAttribute("id", const(popupId)),
-			extractStruct(style0, MFocusOnPrevious(true))
+			extractStruct(style0, MFocusOnPrevious(true)),
+			RMOnClick(\ -> {
+				nextDistinct(popupWasClicked, true);
+				timer(500, \ -> nextDistinct(popupWasClicked, false));
+			})
 		]
 		|> (\arr : [MPopupStyle] -> maybeArrayPush(arr, tryExtractStruct(menuScrollStyle, TScrollPersistent(const(true)))))
 		|> (\arr -> maybeArrayPush(arr, tryExtractStruct(menuScrollStyle, MScrollWidthHeight(makeWH(), makeWH()))))
@@ -2193,5 +2232,35 @@ reopenMenu(openMenu : MOpenMenu) -> void {
 	if (fgetValue(openMenu.opened)) {
 		next(openMenu.opened, false);
 		next(openMenu.opened, true)
+	}
+}
+
+MMenuLineAttachToFocused(line : MMenuLine) -> Pair<MMenuLine, DynamicBehaviour<bool>> {
+	switch(line) {
+		MSeparatorLine() : Pair(line, make(false));
+		MMenuSingleLine(__, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MMenuSingleLine(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MMenuCustomLine(__, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MMenuCustomLine(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MMenuGroupLine(__, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MMenuGroupLine(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MSubMenu(__, __, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MSubMenu(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MSubMenuDynamic(__, __, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MSubMenuDynamic(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MSubMenuCustom(__, __, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MSubMenuCustom(line with style = replaceStruct(style, focused)), focused.focused);
+		};
 	}
 }
