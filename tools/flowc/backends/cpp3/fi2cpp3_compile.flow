@@ -195,8 +195,25 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 				fsStat2cpp3(s, gctx);
 			}
 		}
-		FsInlineStat(__,fn, args,__,__,__): {
-			fail0("TODO: fsStat2cpp3 for FsInlineExp");
+		FsFor(v, arr, s,__,__): {
+			"for (" + fiType2cpp3(v.type, gctx) + " " + fi2cpp3varname2cpp(v.name) + ": *" + fsExp2cpp3(arr, gctx) + ") {\n" +
+				strIndent(fsStat2cpp3(s, gctx)) +
+			"\n}";
+		}
+		FsInlineStat(fn_name, fn, args,__,__,__): {
+			/*toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, fn_name);
+			fn_type = FiTypeFunction(map(args, \arg -> FiFunArg("", fsType(arg))), type);
+			typars = switch (toplevel) {
+				Some(fn): {
+					map(fiMatchTyparsOrdered(fn.type, fn_type), \tp -> fiType2cpp3(tp, gctx));
+				}
+				None(): [];
+			}
+			strSubstituteArgsGroup(
+				strSubstituteArgs(fn_body, map(args, \arg -> fsExp2cpp3(arg, gctx))),
+				typars, "T"
+			);*/
+			fail0("FsInlineStat is not implemented");
 		}
 		FsWrapExp(e, __,__): {
 			switch (e) {
@@ -220,43 +237,48 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 		FsTailCall(id,__): {
 			"continue;";
 		}
-		FsAssign(to, what,__,__): {
-			to_type = fsType(to);
-			make_assignment = \-> switch (to) {
-				FsVarUse(v, info,__): {
-					switch (info.kind) {
-						FsVarUninit(): fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
-						default: "assignRc<" + fiType2cpp3(to_type, gctx) + " >(" + fsExp2cpp3(to, gctx) + ", " + fsExp2cpp3(what, gctx) + ");";
-					}
-				}
-				default:  fail0("assignment to non-var:\n" + fs2s(to));
-			}
-			switch (to_type) {
-				FiTypeRef(__): {
-					switch (fsType(what)) {
-						FiTypeRef(__): {
-							make_assignment();
+		FsAssign(to, what, direct,__,__): {
+			if (direct) {
+				// Direct assignment - is used in native inlinings like `fold`
+				fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
+			} else {
+				to_type = fsType(to);
+				make_assignment = \-> switch (to) {
+					FsVarUse(v, info,__): {
+						switch (info.kind) {
+							FsVarUninit(): fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
+							default: "assignRc<" + fiType2cpp3(to_type, gctx) + " >(" + fsExp2cpp3(to, gctx) + ", " + fsExp2cpp3(what, gctx) + ");";
 						}
-						FiTypeFlow():
-							fsExp2cpp3(to, gctx) + "->setFlowRc(0, " + fsExp2cpp3(what, gctx) + ");";
-						default:
-							fsExp2cpp3(to, gctx) + "->setRc(" + fsExp2cpp3(what, gctx) + ");";
 					}
+					default:  fail0("assignment to non-var:\n" + fs2s(to));
 				}
-				default: {
-					switch (to) {
-						FsCallPrim(op, as,__,__): {
-							switch (op) {
-								FsFieldPrim(field, field_ind): {
-									fsExp2cpp3(as[0], gctx) + "->setRc1<" + i2s(field_ind) + ">(" + fsExp2cpp3(what, gctx) + ");";
-								}
-								default: {
-									fail0("assignment to non-var:\n" + fs2s(to));
+				switch (to_type) {
+					FiTypeRef(__): {
+						switch (fsType(what)) {
+							FiTypeRef(__): {
+								make_assignment();
+							}
+							FiTypeFlow():
+								fsExp2cpp3(to, gctx) + "->setFlowRc(0, " + fsExp2cpp3(what, gctx) + ");";
+							default:
+								fsExp2cpp3(to, gctx) + "->setRc(" + fsExp2cpp3(what, gctx) + ");";
+						}
+					}
+					default: {
+						switch (to) {
+							FsCallPrim(op, as,__,__): {
+								switch (op) {
+									FsFieldPrim(field, field_ind): {
+										fsExp2cpp3(as[0], gctx) + "->setRc1<" + i2s(field_ind) + ">(" + fsExp2cpp3(what, gctx) + ");";
+									}
+									default: {
+										fail0("assignment to non-var:\n" + fs2s(to));
+									}
 								}
 							}
-						}
-						default: {
-							make_assignment();
+							default: {
+								make_assignment();
+							}
 						}
 					}
 				}
@@ -626,6 +648,11 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 					}
 				}
 			}
+		}
+		FsIsUnit(): "isUnitRc(" + e2k(e.es[0]) + ")";
+		FsArrayPush(): e2k(e.es[0]) + "->pushBack(" + e2k(e.es[0]) + ")";
+		FsArrayReserve(): {
+			"Vec<" + fiType2cpp3(fiDearrayType(e.type), gctx) + ">::make(" + e2k(e.es[0]) + ")";
 		}
 	}
 }

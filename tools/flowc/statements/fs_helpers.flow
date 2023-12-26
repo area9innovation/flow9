@@ -34,8 +34,9 @@ fsType(x: FsAll) -> FiType {
 		FsWrapExp(e,__,__):              FiTypeVoid();
 		FsRet(e,__,__):                  fsType(e);
 		FsLet(__,__,s,__,__):            fsType(s);
+		FsFor(__,__,s,__,__):            FiTypeVoid();
 		FsInlineStat(__,__,__,__,__,__): FiTypeVoid();
-		FsAssign(__,__,__,__):           FiTypeVoid();
+		FsAssign(__,__,__,__,__):        FiTypeVoid();
 		FsIncRc(__,__,__,__):            FiTypeVoid();
 		FsDecRc(__,__,__,__):            FiTypeVoid();
 		FsTailCall(__,__):               FiTypeVoid();
@@ -88,7 +89,11 @@ fs2string(s: FsAll, depth: int) -> string {
 				"\n}";
 			}
 			FsLet(var, e, stat,__,__): {
-				"let1 " + var.name + " : " + t2s(var.type) + " = " + x2s(e) + ";\n" +
+				"let " + var.name + " : " + t2s(var.type) + " = " + x2s(e) + ";\n" +
+					strIndent(x2s(stat));
+			}
+			FsFor(var, e, stat,__,__): {
+				"for " + var.name + " : " + t2s(var.type) + " in " + x2s(e) + " do\n" +
 					strIndent(x2s(stat));
 			}
 			FsInlineStat(f,__, args, ret, id,__): {
@@ -103,8 +108,12 @@ fs2string(s: FsAll, depth: int) -> string {
 			FsTailCall(id,__): {
 				"tailcall;";
 			}
-			FsAssign(to, what,__,__): {
-				x2s(to) + " := " + x2s(what) + ";";
+			FsAssign(to, what, direct, __,__): {
+				if (direct) {
+					x2s(to) + " := " + x2s(what) + ";";
+				} else {
+					"assignRc(" + x2s(to) + " := " + x2s(what) + ");";
+				}
 			}
 			FsIncRc(v, delta,__,__): {
 				"incRc(" + v.name + (if (delta == 1) "" else ", " + i2s(delta)) + ");";
@@ -196,6 +205,10 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 			FsLet(v2, e2, s2,__,__): v1.name == v2.name && fsEqualExprs(e1, e2) && fsEqualExprs(s1, s2);
 			default: false;
 		}
+		FsFor(v1, e1, s1,__,__): switch (y) {
+			FsFor(v2, e2, s2,__,__): v1.name == v2.name && fsEqualExprs(e1, e2) && fsEqualExprs(s1, s2);
+			default: false;
+		}
 		FsInlineStat(n1,__, args1,__,__,__): switch (y) {
 			FsInlineStat(n2,__, args2,__,__,__): {
 				n1 == n2 &&
@@ -212,8 +225,8 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 			FsRet(e2,__,__): fsEqualExprs(e1, e2);
 			default: false;
 		}
-		FsAssign(to1, what1, __,__): switch (y) {
-			FsAssign(to2, what2, __,__): fsEqualExprs(to1, to2) && fsEqualExprs(what1, what2);
+		FsAssign(to1, what1, direct1,__,__): switch (y) {
+			FsAssign(to2, what2, direct2,__,__): direct1 == direct2 && fsEqualExprs(to1, to2) && fsEqualExprs(what1, what2);
 			default: false;
 		}
 		FsIncRc(v1, d1, __,__): switch (y) {
@@ -343,6 +356,10 @@ fsPrim2s(op: FsPrim, es: [string], type: FiType) -> string {
 			name + typars + m2s(info) + "(" + strGlue(es, ", ") + ")";
 		}
 		FsFieldPrim(name, ind): es[0] + "." + name + "/*" + i2s(ind) + "*/";
+
+		FsIsUnit(): "isUnit(" + es[0] + ")";
+		FsArrayPush(): "arrayPush(" + es[0] + ", " + es[1] + ")";
+		FsArrayReserve(): "new [] of length(" + es[0] + ")";
 	}
 }
 
@@ -371,7 +388,7 @@ fsHasTailCall(s: FsStat) -> bool {
 fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVarUse) -> FsStat {
 	s1 = switch (s) {
 		FsRet(e, id,__): {
-			FsAssign(v, e, -1, None());
+			FsAssign(v, e, false, -1, None());
 		}
 		FsSwitch(__,__, cs,__,__): {
 			FsSwitch(s with
@@ -446,6 +463,16 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 			}
 			default: arrayPush(acc, Pair(x, y));
 		}
+		FsFor(v1, e1, s1,__,__): switch (y) {
+			FsFor(v2, e2, s2,__,__): {
+				if (v1.name != v2.name) {
+					arrayPush(acc, Pair(x, y));
+				} else {
+					fsDiffExprs(e1, e2, fsDiffExprs(s1, s2, acc));
+				}
+			}
+			default: arrayPush(acc, Pair(x, y));
+		}
 		FsInlineStat(n1, __, as1,__,__,__): switch (y) {
 			FsInlineStat(n2,__, as2,__,__,__): {
 				if (n1 != n2) {
@@ -470,8 +497,14 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 			FsRet(e2,__,__): fsDiffExprs(e1, e2, acc);
 			default: arrayPush(acc, Pair(x, y));
 		}
-		FsAssign(to1, what1, __,__): switch (y) {
-			FsAssign(to2, what2, __,__): fsDiffExprs(to1, to2, fsDiffExprs(what1, what2, acc));
+		FsAssign(to1, what1, direct1, __,__): switch (y) {
+			FsAssign(to2, what2, direct2,__,__): {
+				if (direct1 != direct2) {
+					arrayPush(acc, Pair(x, y));
+				} else {
+					fsDiffExprs(to1, to2, fsDiffExprs(what1, what2, acc));
+				}
+			}
 			default: arrayPush(acc, Pair(x, y));
 		}
 		FsIncRc(v1, d1, __,__): switch (y) {
@@ -623,8 +656,9 @@ fsStatSetId(s: FsStat, x: int) -> FsStat {
 		FsWrapExp(__,__,__):             FsWrapExp(s with id = x);
 		FsRet(__,__,__):                 FsRet(s with id = x);
 		FsTailCall(__,__):               FsTailCall(s with id = x);
-		FsAssign(__,__,__,__):           FsAssign(s with id = x);
+		FsAssign(__,__,__,__,__):        FsAssign(s with id = x);
 		FsLet(__,__,__,__,__):           FsLet(s with id = x);
+		FsFor(__,__,__,__,__):           FsFor(s with id = x);
 		FsIncRc(__,__,__,__):            FsIncRc(s with id = x);
 		FsDecRc(__,__,__,__):            FsDecRc(s with id = x);
 	}
@@ -681,9 +715,10 @@ fsSetNext(x: FsStat, n: FsStat) -> FsStat {
 		FsIf(__,__,__,__,__):            FsIf(x with next = Some(n));
 		FsSwitch(__,__,__,__,__):        FsSwitch(x with next = Some(n));
 		FsLet(__,__,__,__,__):           FsLet(x with next = Some(n));
+		FsFor(__,__,__,__,__):           FsFor(x with next = Some(n));
 		FsInlineStat(__,__,__,__,__,__): FsInlineStat(x with next = Some(n));
 		FsWrapExp(__,__,__):             FsWrapExp(x with next = Some(n));
-		FsAssign(__,__,__,__):           FsAssign(x with next = Some(n));
+		FsAssign(__,__,__,__,__):        FsAssign(x with next = Some(n));
 		FsIncRc(__,__,__,__):            FsIncRc(x with next = Some(n));
 		FsDecRc(__,__,__,__):            FsDecRc(x with next = Some(n));
 		FsRet(__,__,__):                 FsRet(x with next = Some(n));

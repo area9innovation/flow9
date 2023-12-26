@@ -126,7 +126,7 @@ template<typename T> inline bool isUnitRc(T x) {
 	if constexpr (is_rcbase_ancestor_v<T>) {
 		return x->isUnit(); 
 	} else {
-		fail("trying to isUnitRc of type: " + type2StdString<T>());
+		return false;
 	}
 }
 

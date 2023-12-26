@@ -1,5 +1,7 @@
 #pragma once
 
+#include <iostream>
+#include <stacktrace>
 #include "__flow_runtime_stats.hpp"
 #include "__flow_runtime_flow.hpp"
 
@@ -192,6 +194,14 @@ struct Vec : public Flow {
 
 private:
 	inline void registerLen(Int len) {
+		/*if (len == 1973) {
+			#ifdef _GLIBCXX_HAVE_STACKTRACE
+				std::cout << std::stacktrace::current() << std::endl;
+			#else
+				std::cout << "printCallstack is not available" << std::endl;
+			#endif
+			fail("len == 1973");
+		}*/
 		if constexpr (gather_vector_leng_stats) {
 			vec_leng_stats.registerVal(len);
 		}

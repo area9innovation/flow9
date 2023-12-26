@@ -41,14 +41,15 @@ fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int> {
 		id;
 	}
 	s1 = cast(fsMap(s, \x -> switch(x) {
-		FsIf(c,__,__,__,__):      FsIf(x with id = new_id(), cond = fsExpSetId(c, new_id()));
-		FsSwitch(__,__,__,__,__): FsSwitch(x with id = new_id());
-		FsWrapExp(e,__,__):       FsWrapExp(x with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsRet(e,__,__):           FsRet(x with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsAssign(e1, e2,__,__):   FsAssign(x with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
-		FsLet(__,e,__,__,__):     FsLet(x with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsLambda(__,__,__,__,__): FsLambda(x with id = new_id());
-		FsVarUse(__,__,__):       FsVarUse(x with id = new_id());
+		FsIf(c,__,__,__,__):       FsIf(x with id = new_id(), cond = fsExpSetId(c, new_id()));
+		FsSwitch(__,__,__,__,__):  FsSwitch(x with id = new_id());
+		FsWrapExp(e,__,__):        FsWrapExp(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsRet(e,__,__):            FsRet(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsAssign(e1, e2,__,__,__): FsAssign(x with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
+		FsLet(__,e,__,__,__):      FsLet(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsFor(__,e,__,__,__):      FsFor(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsLambda(__,__,__,__,__):  FsLambda(x with id = new_id());
+		FsVarUse(__,__,__):        FsVarUse(x with id = new_id());
 		default: x;
 	}, false): FsAll -> FsStat);
 	Pair(s1, ^id_counter);
@@ -90,48 +91,60 @@ fsPerceusId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string,
 	fsIter(s, \x -> switch (x) {
 		FsIf(cond, pos, neg, id,__):  {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), cond, last, false),
+				fsPerceusAddExp2Mem(make_mem(), cond, last, false, false),
 				id, last, name2var
 			);
 		}
 		FsSwitch(v,__, cs, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), v, last, true),
+				fsPerceusAddExp2Mem(make_mem(), v, last, true, false),
 				id, last, name2var
 			);
 		}
 		FsRet(e, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), e, last, false),
+				fsPerceusAddExp2Mem(make_mem(), e, last, false, false),
 				id, last, name2var
 			);
 		}
 		FsWrapExp(e, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), e, last, false),
+				fsPerceusAddExp2Mem(make_mem(), e, last, false, false),
 				id, last, name2var
 			);
 		}
 		FsLet(__,e, __, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), e, last, false),
+				fsPerceusAddExp2Mem(make_mem(), e, last, false, false),
 				id, last, name2var
 			);
 		}
-		FsAssign(to, what, id,__): {
+		FsFor(__,e, __, id,__): {
 			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(
-					fsPerceusAddExp2Mem(make_mem(), to, last, false),
-					what, last, false
-				),
+				fsPerceusAddExp2Mem(make_mem(), e, last, true, false),
 				id, last, name2var
 			);
 		}
-		FsIncRc(__,__,__,__): fail("FsIncRc met during perceus memory operations markup");
-		FsDecRc(__,__,__,__): fail("FsDecRc met during perceus memory operations markup");
+		FsAssign(to, what, direct, id,__): {
+			if (!direct) {
+				id2mem[id] := fsPerceusAddUnused2Mem(
+					fsPerceusAddExp2Mem(
+						fsPerceusAddExp2Mem(make_mem(), to, last, false, false),
+						what, last, false, false
+					),
+					id, last, name2var
+				);
+			}
+		}
+		FsIncRc(__,__,__,__): {
+			//fail("FsIncRc met during perceus memory operations markup");
+		}
+		FsDecRc(__,__,__,__): {
+			//fail("FsDecRc met during perceus memory operations markup");
+		}
 		default: {}
 	}, true);
-	map(id2mem, \m -> fsReduceMem(^m));
+	map(id2mem, \m -> ^m /*fsReduceMem(^m)*/);
 }
 
 fsReduceMem(mem: FsMem) -> FsMem {
@@ -152,14 +165,14 @@ fsPerceusAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<
 	);
 }
 
-fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool) -> FsMem {
+fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool, intrinsic: bool) -> FsMem {
 	switch (e) {
 		FsClosure(closure,__,__,__): {
-			fold(closure, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, false));
+			fold(closure, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, false, false));
 		}
 		FsCall(f, args,__,__): {
-			fold(args, fsPerceusAddExp2Mem(acc, f, last, false), \ac, x ->
-				fsPerceusAddExp2Mem(ac, x, last, false)
+			fold(args, fsPerceusAddExp2Mem(acc, f, last, false, false), \ac, x ->
+				fsPerceusAddExp2Mem(ac, x, last, false, false)
 			);
 		}
 		FsCallPrim(op, es,__,__): {
@@ -175,16 +188,20 @@ fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool) -> 
 				FcDerefPrim(): true;
 				default: false;
 			}
-			fold(es, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, op_inline));
+			op_intrinsic = switch (op) {
+				FsPrimIntrinsic(): true;
+				default: false;
+			}
+			fold(es, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, op_inline, op_intrinsic));
 		}
 		FsInlineExp(__,__,es,__,__): {
-			fold(es, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, true));
+			fold(es, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, true, false));
 		}
 		FsCast(e1,__,__,__): {
-			fsPerceusAddExp2Mem(acc, e1, last, false);
+			fsPerceusAddExp2Mem(acc, e1, last, false, false);
 		}
 		FsVarUse(x, info, id): {
-			if (fiTypeIsScalar(x.type)) acc else {
+			if (fiTypeIsScalar(x.type) || intrinsic) acc else {
 				switch (info.kind) {
 					FsVarGlobalFunc(): acc;
 					FsVarUninit(): acc;
