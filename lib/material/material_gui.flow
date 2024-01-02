@@ -1,4 +1,5 @@
 import material/material;
+import material/internal/tropic_size_util;
 
 export {
 	// Bunch of helpers to inspect sizes. Consider using MInspect also.
@@ -18,8 +19,21 @@ export {
 	MAttachWidth2(m : Material, width : DynamicBehaviour<double>, content : Material) -> Material;
 	MAttachHeight2(m : Material, height : DynamicBehaviour<double>, content : Material) -> Material;
 
-	// Use the metrics from the first to set available for the second, ignoring the size of the second
+	// Helpers to inspect metrics from the corresponding item (dominant) and set available for the different one (subdominant)
+	// It also prevents affecting dominant item by subdominant one
+	// Visit test_first_second_helpers.flow testcase for more info
 	MAttachToFirst(first : Material, second : Material) -> Material;
+	MAttachToSecond(first : Material, second : Material) -> Material;
+	
+	MLinesWidthByFirst(first : Material, second : Material) -> Material;
+	MLinesAWidthByFirst(first : Material, second : Material) -> Material;
+	MLinesWidthBySecond(first : Material, second : Material) -> Material;
+	MLinesAWidthBySecond(first : Material, second : Material) -> Material;
+
+	MColsHeightByFirst(first : Material, second : Material) -> Material;
+	MColsAHeightByFirst(first : Material, second : Material) -> Material;
+	MColsHeightBySecond(first : Material, second : Material) -> Material;
+	MColsAHeightBySecond(first : Material, second : Material) -> Material;
 
 	// Special cases to inspect
 	MAttachBoxThrottle(m : Material, box : DynamicBehaviour<WidthHeight>, maxDelta : int) -> Material;
@@ -113,7 +127,7 @@ export {
 	// Useful inside complicated components with lots of layers, metrics of which aren't used
 	MGroupWithoutMetrics(g : [Material]) -> Material;
 	MGroup2WithoutMetrics(g1 : Material, g2 : Material) -> Material {MGroupWithoutMetrics([g1, g2])};
-	// MGroup that has metrics of the first Material
+	// MGroup that has metrics of the first Material. Doesn't affect visual representation.
 	MGroupSameMetrics(g : [Material]) -> Material;
 	MGroup2SameMetrics(g1 : Material, g2 : Material) -> Material {MGroupSameMetrics([g1, g2])};
 
@@ -228,9 +242,6 @@ export {
 
 	// Show text and progressbar below
  	MLoading(text : string) -> Material;
-
-	// Simplified version of MTransformTAcc
-	MTransformTAcc2(fn : ((Material) -> TAcc) -> TAcc) -> Material;
 
 	// Similar to MConstruct, but constructing/disposing are triggered by changing the rendered state of the corresponding clip.
 	// So, for example, it reacts to changes into MVisible or to fullwindow dialog opening, while MConstruct ignores it.
@@ -405,10 +416,6 @@ MCopySize2(content : Material, copyFn : (Tropic, Material) -> Material) -> Mater
 	MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t ->  TCopySize2(m2t(content, p), \sz, tr -> m2t(copyFn(sz, tr), p))))
 }
 
-MTransformTAcc2(fn : ((Material) -> TAcc) -> TAcc) -> Material {
-	MTransformTAcc(\t2a, p, s, mo -> fn(\mat -> t2a(mat, p, s, mo)))
-}
-
 MAttachBox(m : Material, box : DynamicBehaviour<WidthHeight>) -> Material {
 	Material2Tropic(m, \tr -> TAttachBox(tr, box));
 }
@@ -454,14 +461,103 @@ MAttachHeight2(m : Material, height : DynamicBehaviour<double>, c : Material) ->
 }
 
 MAttachToFirst(first : Material, second : Material) -> Material {
-	wh = make(WidthHeight(0.0, 0.0));
+	wh = makeWH();
 	MGroup2(
 		MAttachBox(first, wh),
-		MAvailable(
-			MFixSize(second, MFixed(0.0, 0.0)),
-			TSized(wh)
-		)
+		MAvailable(second, TSized(wh))
 	)
+}
+
+MAttachToSecond(first : Material, second : Material) -> Material {
+	wh = makeWH();
+	MGroup2(
+		MAvailable(first, TSized(wh)),
+		MAttachBox(second, wh)
+	)
+}
+
+MLinesWidthByFirst(first : Material, second : Material) -> Material {
+	MLinesWidthByFirstCommon(first, second, false)
+}
+
+MLinesAWidthByFirst(first : Material, second : Material) -> Material {
+	MLinesWidthByFirstCommon(first, second, true)
+}
+
+MLinesWidthByFirstCommon(first : Material, second : Material, supportRTL : bool) -> Material {
+	firstWidth = make(0.);
+	avWidth = make(0.);
+
+	fn = if (supportRTL) MLines2A else \v1, v2 -> MLines2(v1, v2);
+
+	fn(
+		MAvailableWidthPreventFillers(MAttachWidth(first, firstWidth), avWidth),
+		MAvailableWidthPreventFillers(second, firstWidth)
+	)
+	|> (\m -> MAttachAvailableWidth(m, avWidth))
+}
+
+MLinesWidthBySecond(first : Material, second : Material) -> Material {
+	MLinesWidthBySecondCommon(first, second, false)
+}
+
+MLinesAWidthBySecond(first : Material, second : Material) -> Material {
+	MLinesWidthBySecondCommon(first, second, true)
+}
+
+MLinesWidthBySecondCommon(first : Material, second : Material, supportRTL : bool) -> Material {
+	secondWidth = make(0.);
+	avWidth = make(0.);
+
+	fn = if (supportRTL) MLines2A else \v1, v2 -> MLines2(v1, v2);
+
+	fn(
+		MAvailableWidthPreventFillers(first, secondWidth),
+		MAvailableWidthPreventFillers(MAttachWidth(second, secondWidth), avWidth)
+	)
+	|> (\m -> MAttachAvailableWidth(m, avWidth))
+}
+
+MColsHeightByFirst(first : Material, second : Material) -> Material {
+	MColsHeightByFirstCommon(first, second, false);
+}
+
+MColsAHeightByFirst(first : Material, second : Material) -> Material {
+	MColsHeightByFirstCommon(first, second, true);
+}
+
+MColsHeightByFirstCommon(first : Material, second : Material, supportRTL : bool) -> Material {
+	firstHeight = make(0.);
+	avHeight = make(0.);
+
+	fn = if (supportRTL) MCols2A else \v1, v2 -> MCols2(v1, v2);
+
+	fn(
+		MAvailableHeightPreventFillers(MAttachHeight(first, firstHeight), avHeight),
+		MAvailableHeightPreventFillers(second, firstHeight)
+	)
+	|> (\m -> MAttachAvailableHeight(m, avHeight))
+}
+
+MColsHeightBySecond(first : Material, second : Material) -> Material {
+	MColsHeightBySecondCommon(first, second, false);
+}
+
+MColsAHeightBySecond(first : Material, second : Material) -> Material {
+	MColsHeightBySecondCommon(first, second, true);
+}
+
+MColsHeightBySecondCommon(first : Material, second : Material, supportRTL : bool) -> Material {
+	secondHeight = make(0.);
+	avHeight = make(0.);
+
+	fn = if (supportRTL) MCols2A else \v1, v2 -> MCols2(v1, v2);
+
+	fn(
+		MAvailableHeightPreventFillers(first, secondHeight),
+		MAvailableHeightPreventFillers(MAttachHeight(second, secondHeight), avHeight)
+	)
+	|> (\m -> MAttachAvailableHeight(m, avHeight))
 }
 
 MAttachBoxThrottle(m : Material, box : DynamicBehaviour<WidthHeight>, maxDelta : int) -> Material {
