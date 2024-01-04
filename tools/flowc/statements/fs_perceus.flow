@@ -50,7 +50,7 @@ fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int> {
 		FsRet(e,__,__):            FsRet(x with id = new_id(), e = fsExpSetId(e, new_id()));
 		FsAssign(e1, e2,__,__,__): FsAssign(x with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
 		FsLet(__,e,__,__,__):      FsLet(x with id = new_id(), e = fsExpSetId(e, new_id()));
-		FsFor(__,e,__,__,__):      FsFor(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsFor(__,e,__,__,__,__):   FsFor(x with id = new_id(), e = fsExpSetId(e, new_id()));
 		FsLambda(__,__,__,__,__):  FsLambda(x with id = new_id());
 		FsVarUse(__,__,__):        FsVarUse(x with id = new_id());
 		default: x;
@@ -73,7 +73,7 @@ fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
 	}
 	name2var = fsFold(s, makeTree(), \acc, x -> switch (x) {
 		FsLet(v,__,__,__,__): add_var(x, acc, v);
-		FsFor(v,__,__,__,__): add_var(x, acc, v);
+		FsFor(v,__,__,__,__,__): add_var(x, acc, v);
 		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
 		default: acc;
 	}, true);
@@ -90,7 +90,7 @@ fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
 }
 
 fsPerceusId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string, FsVar>) -> [FsMem] {
-	make_mem = \ -> FsMem(makeTree(), makeTree());
+	make_mem = \ -> FsMem(makeTree());
 	id2mem = generate(0, num, \__ -> ref make_mem());
 	fsIter(s, \x -> switch (x) {
 		FsIf(cond, pos, neg, id,__):  {
@@ -123,9 +123,42 @@ fsPerceusId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string,
 				id, last, name2var
 			);
 		}
-		FsFor(__,e, __, id,__): {
-			id2mem[id] := fsPerceusAddUnused2Mem(
+		FsFor(__,e, s1, free_vars, id,__): {
+			/*println("FOR CYCLE w memops:\n" +
+				fs2s(fsExpandMem(s1, map(id2mem, \y -> ^y))) + "\n" +
+				"FOR CYCLE w/o memops:\n" +
+				fs2s(s1)
+			);
+			e_mem = fsPerceusAddUnused2Mem(
 				fsPerceusAddExp2Mem(make_mem(), e, last, true, false),
+				id, last, name2var
+			);
+			id2mem[s1.id] := fold(free_vars, ^(id2mem[s1.id]),
+				\acc, v -> {
+					inlined = ref false;
+					single = ref true;
+					fsIter(s1, \y -> if (y.id != -1) {
+						mem = ^(id2mem[y.id]);
+						if (containsKeyTree(mem.incs, v)) single := false;
+						switch (lookupTree(mem.decs, v)) {
+							Some(p): if (p.second == FsDecPost()) inlined := true;
+							None(): { }
+						}
+					}, true);
+					if (^inlined && ^single) acc else
+					FsMem(acc with
+						incs = setTree(acc.incs, v, 1)
+					);
+				}
+			);
+			id2mem[id] := fold(free_vars, e_mem,
+				\acc, v -> FsMem(acc with
+					decs = setTree(acc.decs, v, Pair(FsDecDirect(), FsDecPost()))
+				)
+			);*/
+
+			id2mem[id] := fsPerceusAddUnused2Mem(
+				fsPerceusAddExp2Mem(make_mem(), e, last, false, false),
 				id, last, name2var
 			);
 		}
@@ -133,7 +166,8 @@ fsPerceusId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string,
 			what_mem = fsPerceusAddExp2Mem(make_mem(), what, last, false, false);
 			id2mem[id] := fsPerceusAddUnused2Mem(
 				fsPerceusAddExp2Mem(
-					if (!direct) what_mem else {
+					what_mem
+					/*if (!direct) what_mem else {
 						switch (to) {
 							FsVarUse(v,__,__): {
 								if (fiTypeIsScalar(v.type)) what_mem else {
@@ -153,7 +187,7 @@ fsPerceusId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string,
 							}
 							default: what_mem;
 						}
-					},
+					}*/,
 					to, last, false, false
 				),
 				id, last, name2var
@@ -171,21 +205,21 @@ fsPerceusId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string,
 }
 
 fsReduceMem(mem: FsMem) -> FsMem {
-	FsMem(mem with
-		incs = filterTree(mem.incs, \v, incs -> incs != 1 || !containsKeyTree(mem.decs, v)),
-		decs = filterTree(mem.decs, \v, p -> p.second == FsDecPost() && lookupTreeDef(mem.incs, v, 0) != 1)
+	FsMem(
+		filterTree(mem.ops, \v, ops -> !(ops.inc == 1 && ops.dec == Some(FsDecPost())))
 	);
 }
 
 fsPerceusAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<string, FsVar>) -> FsMem {
-	foldSet(last[id], mem, \acc, x ->
-		FsMem(acc with
-			decs = setTree(acc.decs,
-				lookupTreeDef(name2var, x, FsVar(x, FiTypeVoid())),
-				Pair(FsDecDirect(), FsDecPre())
+	foldSet(last[id], mem, \acc, x -> {
+		v = lookupTreeDef(name2var, x, FsVar(x, FiTypeVoid()));
+		FsMem(setTree(acc.ops, v,
+			FsVarMem(
+				eitherMap(lookupTree(acc.ops, v), \ops -> ops.inc, 0),
+				Some(FsDecPre())
 			)
-		)
-	);
+		));
+	});
 }
 
 fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool, intrinsic: bool) -> FsMem {
@@ -231,13 +265,21 @@ fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool, int
 					default: {
 						if (inline) {
 							if (id != -1 && !containsSet(last[id], x.name)) acc else {
-								FsMem(acc with decs = setTree(acc.decs, x, Pair(FsDecDirect(), FsDecPost())));
+								FsMem(setTree(acc.ops, x,
+									FsVarMem(
+										eitherMap(lookupTree(acc.ops, x), \ops -> ops.inc, 0),
+										Some(FsDecPost())
+									)
+								));
 							}
 						} else {
 							if (id == -1 || containsSet(last[id], x.name)) acc else {
-								FsMem(acc with
-									incs = setTree(acc.incs, x, lookupTreeDef(acc.incs, x, 0) + 1)
-								);
+								FsMem(setTree(acc.ops, x,
+									FsVarMem(
+										eitherMap(lookupTree(acc.ops, x), \ops -> ops.inc, 0) + 1,
+										eitherMap(lookupTree(acc.ops, x), \ops -> ops.dec, None())
+									)
+								));
 							}
 						}
 					}
@@ -347,8 +389,8 @@ fsPerceusLastUse(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>
 			);
 		}
 		println(
-			//"pre:\n" + hashset_tree2s1(pre) + "\n" +
-			//"post:\n" + set_tree2s1(post) + "\n" +
+			//"pre:\n" + hashset_tree2s1(pre1) + "\n" +
+			//"post:\n" + set_tree2s1(post1) + "\n" +
 			//"last:\n" + set_tree2s1(last) + "\n" +
 			"last1:\n" + set_tree2s1(last1) + "\n" +
 			""
@@ -372,6 +414,12 @@ fsPerceusId2varsPre(s: FsStat, num: int, debug: bool) -> [HashSet<string>] {
 					Cons(new_vars, acc);
 				}
 				FsLet(v,__,__,id,__): {
+					id2vars[id] := acc.head;
+					new_vars = copyHashSet(acc.head);
+					add_v(new_vars, v);
+					Cons(new_vars, acc.tail);
+				}
+				FsFor(v,__,__,__,id,__): {
 					id2vars[id] := acc.head;
 					new_vars = copyHashSet(acc.head);
 					add_v(new_vars, v);
@@ -412,6 +460,12 @@ fsPerceusId2varsPre1(s: FsStat, num: int, debug: bool) -> [HashSet<string>] {
 					acc;
 				}
 				FsLet(v,__,__,id,__): {
+					id2vars[id] := acc;
+					acc1 = copyHashSet(acc);
+					add_v(acc1, v);
+					acc1;
+				}
+				FsFor(v,__,__,__,id,__): {
 					id2vars[id] := acc;
 					acc1 = copyHashSet(acc);
 					add_v(acc1, v);
