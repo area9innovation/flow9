@@ -29,6 +29,9 @@ export {
 
 	fsStatFreeVars(s: FsStat, acc: Set<FsVar>, locals: Set<string>) -> Set<FsVar>;
 	fsExpFreeVars(e: FsExp, acc: Set<FsVar>, locals: Set<string>) -> Set<FsVar>;
+
+	fsVarIsUsedInStat(v: string, s: FsStat) -> bool;
+	fsVarIsUsedInExp(v: string, e: FsExp) -> bool;
 }
 
 fsType(x: FsAll) -> FiType {
@@ -704,7 +707,7 @@ fsMemArray2string(ms: [FsMem]) -> string {
 
 fsVarMem2string(m: FsVarMem) -> string {
 	inc = if (m.inc == 0) [] else ["inc: " + i2s(m.inc)];
-	dec = eitherMap(m.dec, \ord -> [switch (ord) {
+	dec = eitherMap(m.dec, \ord -> ["dec: " + switch (ord) {
 		FsDecPost(): "post";
 		FsDecPre(): "pre";
 	}], []);
@@ -795,5 +798,50 @@ fsExpFreeVars(x: FsExp, acc: Set<FsVar>, locals: Set<string>) -> Set<FsVar> {
 		FsCast(e,__,type,__): fsExpFreeVars(e, acc, locals);
 		FsString(__,__,__): acc;
 		FsConst(c,__): acc;
+	}
+}
+
+fsVarIsUsedInStat(v: string, s: FsStat) -> bool {
+	used = switch (s) {
+		FsIf(e, s1, s2,__,__):
+			fsVarIsUsedInExp(v, e) || fsVarIsUsedInStat(v, s1) || fsVarIsUsedInStat(v, s2);
+		FsSwitch(w,__, cs,__,__):
+			w.var.name == v || exists(cs, \c -> fsVarIsUsedInStat(v, c.body));
+		FsWrapExp(e,__,__):
+			fsVarIsUsedInExp(v, e);
+		FsRet(e,__,__):
+			fsVarIsUsedInExp(v, e);
+		FsLet(__, e, s1,__,__):
+			fsVarIsUsedInExp(v, e) || fsVarIsUsedInStat(v, s1);
+		FsFor(__, e, s1,__,__,__):
+			fsVarIsUsedInExp(v, e) || fsVarIsUsedInStat(v, s1);
+		FsAssign(to, what,__,__,__):
+			fsVarIsUsedInExp(v, to) || fsVarIsUsedInExp(v, what);
+		default: false;
+	}
+	if (used) used else {
+		switch (s.next) {
+			Some(s1): fsVarIsUsedInStat(v, s1);
+			None(): false;
+		}
+	}
+}
+
+fsVarIsUsedInExp(v: string, e: FsExp) -> bool {
+	switch (e) {
+		FsClosure(vars,__,__,__):
+			exists(vars, \w -> w.var.name == v);
+		FsCall(f, args, type,__):
+			f.var.name == v || exists(args, \arg -> fsVarIsUsedInExp(v, arg));
+		FsVarUse(w,__,__):
+			w.name == v;
+		FsCallPrim(__, args,__,__):
+			exists(args, \arg -> fsVarIsUsedInExp(v, arg));
+		FsInlineExp(__, args,__,__):
+			exists(args, \arg -> fsVarIsUsedInExp(v, arg));
+		FsCast(e1,__,__,__):
+			fsVarIsUsedInExp(v, e1);
+		FsString(__,__,__): false;
+		FsConst(__,__): false;
 	}
 }

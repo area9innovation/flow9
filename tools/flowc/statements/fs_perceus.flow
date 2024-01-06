@@ -62,11 +62,13 @@ fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
 	debug = ref debug0;
 	add_var = \x, acc, v -> {
 		switch (lookupTree(acc, v.name)) {
-			Some(w): fail(
-				"Duplicate variable: " + v.name + " of type: " + pretFiType(v.type) + ", already is of type: " + pretFiType(w.type) + " in:\n" + 
-				fs2s(x) + "\n" +
-				"IN:\n" + fs2s(s)
-			);
+			Some(w): if (w != v) {
+				fail(
+					"Duplicate variable: " + v.name + " of type: " + pretFiType(v.type) + ", already is of type: " + pretFiType(w.type) + " in:\n" +
+					fs2s(x) + "\n" +
+					"IN:\n" + fs2s(s)
+				);
+			}
 			None(): { }
 		}
 		setTree(acc, v.name, v);
@@ -123,81 +125,99 @@ fsPerceusId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string,
 				id, last, name2var
 			);
 		}
-		FsFor(__,e, s1, free_vars, id,__): {
-			/*println("FOR CYCLE w memops:\n" +
-				fs2s(fsExpandMem(s1, map(id2mem, \y -> ^y))) + "\n" +
-				"FOR CYCLE w/o memops:\n" +
-				fs2s(s1)
-			);
+		FsFor(w, e, s1, free_vars, id,__): {
 			e_mem = fsPerceusAddUnused2Mem(
 				fsPerceusAddExp2Mem(make_mem(), e, last, true, false),
 				id, last, name2var
 			);
-			id2mem[s1.id] := fold(free_vars, ^(id2mem[s1.id]),
-				\acc, v -> {
-					inlined = ref false;
-					single = ref true;
-					fsIter(s1, \y -> if (y.id != -1) {
-						mem = ^(id2mem[y.id]);
-						if (containsKeyTree(mem.incs, v)) single := false;
-						switch (lookupTree(mem.decs, v)) {
-							Some(p): if (p.second == FsDecPost()) inlined := true;
-							None(): { }
+			if (!fiTypeIsScalar(w.type)) {
+				s1_mem = ^(id2mem[s1.id]);
+				id2mem[s1.id] := FsMem(setTree(s1_mem.ops, w,
+					switch (lookupTree(s1_mem.ops, w)) {
+						Some(ops): FsVarMem(ops with inc = ops.inc + 1);
+						None(): FsVarMem(1, None(), 0, 0, false);
+					}
+				));
+			}
+			p = unzip(free_vars, \v -> {
+				called = fsFold(s1, 0, \ac, y -> if (y.id == -1) ac else {
+					mem = ^(id2mem[y.id]);
+					switch (lookupTree(mem.ops, v)) {
+						Some(ops): ac + ops.called;
+						None(): ac;
+					}
+				}, true);
+				(called > 0);
+			});
+			called_free = p.first;
+			inlined_free = p.second;
+			inlined_last = filter(inlined_free, \v ->
+				fsFold(s1, false, \ac, y -> if (ac || y.id == -1) ac else {
+					mem = ^(id2mem[y.id]);
+					switch (lookupTree(mem.ops, v)) {
+						Some(ops): {
+							// The decrement of a last inline is delayed until the end of the cycle
+							id2mem[y.id] := FsMem(setTree(mem.ops, v,
+								FsVarMem(ops with dec = None())
+							));
+							ops.last;
 						}
-					}, true);
-					if (^inlined && ^single) acc else
-					FsMem(acc with
-						incs = setTree(acc.incs, v, 1)
-					);
+						None(): false;
+					}
+				}, true)
+			);
+			id2mem[s1.id] := fold(called_free, ^(id2mem[s1.id]),
+				\acc, v -> {
+					FsMem(setTree(acc.ops, v,
+						switch (lookupTree(acc.ops, v)) {
+							Some(ops): FsVarMem(ops with inc = ops.inc + 1);
+							None(): FsVarMem(1, None(), 0, 0, false);
+						}
+					));
 				}
 			);
-			id2mem[id] := fold(free_vars, e_mem,
-				\acc, v -> FsMem(acc with
-					decs = setTree(acc.decs, v, Pair(FsDecDirect(), FsDecPost()))
-				)
-			);*/
-
-			id2mem[id] := fsPerceusAddUnused2Mem(
-				fsPerceusAddExp2Mem(make_mem(), e, last, false, false),
-				id, last, name2var
-			);
+			id2mem[id] := fold(concat(called_free, inlined_last), e_mem,
+				\acc, v -> FsMem(setTree(acc.ops, v, switch (lookupTree(acc.ops, v)) {
+					Some(ops): FsVarMem(ops with dec = Some(FsDecPost()));
+					None(): FsVarMem(0, Some(FsDecPost()), 0, 0, false);
+				}
+			)));
 		}
 		FsAssign(to, what, direct, id,__): {
 			what_mem = fsPerceusAddExp2Mem(make_mem(), what, last, false, false);
 			id2mem[id] := fsPerceusAddUnused2Mem(
 				fsPerceusAddExp2Mem(
-					what_mem
-					/*if (!direct) what_mem else {
+					if (!direct) what_mem else {
 						switch (to) {
 							FsVarUse(v,__,__): {
 								if (fiTypeIsScalar(v.type)) what_mem else {
-									switch (lookupTree(what_mem.incs, v)) {
-										Some(n): {
-											if (n == 1) {
-												FsMem(what_mem with incs = removeFromTree(what_mem.incs, v));
-											} else {
-												FsMem(what_mem with incs = setTree(what_mem.incs, v, n - 1));
-											}
+									switch (lookupTree(what_mem.ops, v)) {
+										Some(ops): {
+											FsMem(setTree(what_mem.ops, v, 
+												FsVarMem(ops with inc = ops.inc - 1)
+											));
 										}
 										None(): {
-											FsMem(what_mem with decs = setTree(what_mem.decs, v, Pair(FsDecDirect(), FsDecPre())));
+											FsMem(setTree(what_mem.ops, v,
+												FsVarMem(0, Some(FsDecPre()), 0, 0, false)
+											));
 										}
 									}
 								}
 							}
 							default: what_mem;
 						}
-					}*/,
+					},
 					to, last, false, false
 				),
 				id, last, name2var
 			);
 		}
 		FsIncRc(__,__,__,__): {
-			//fail("FsIncRc met during perceus memory operations markup");
+			// skip
 		}
 		FsDecRc(__,__,__,__): {
-			//fail("FsDecRc met during perceus memory operations markup");
+			// skip
 		}
 		default: {}
 	}, true);
@@ -214,10 +234,15 @@ fsPerceusAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<
 	foldSet(last[id], mem, \acc, x -> {
 		v = lookupTreeDef(name2var, x, FsVar(x, FiTypeVoid()));
 		FsMem(setTree(acc.ops, v,
-			FsVarMem(
-				eitherMap(lookupTree(acc.ops, v), \ops -> ops.inc, 0),
-				Some(FsDecPre())
-			)
+			switch (lookupTree(acc.ops, v)) {
+				Some(ops): 
+					FsVarMem(ops with
+						dec = Some(FsDecPre())
+					);
+				None(): {
+					FsVarMem(0, Some(FsDecPre()), 0, 0, false);
+				}
+			}
 		));
 	});
 }
@@ -263,22 +288,39 @@ fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool, int
 					FsVarGlobalFunc(): acc;
 					FsVarUninit(): acc;
 					default: {
-						if (inline) {
-							if (id != -1 && !containsSet(last[id], x.name)) acc else {
+						if (id == -1) acc else {
+							is_last = containsSet(last[id], x.name);
+							if (inline) {
+								add_dec = if (is_last) Some(FsDecPost()) else None();
 								FsMem(setTree(acc.ops, x,
-									FsVarMem(
-										eitherMap(lookupTree(acc.ops, x), \ops -> ops.inc, 0),
-										Some(FsDecPost())
-									)
+									switch (lookupTree(acc.ops, x)) {
+										Some(ops): {
+											FsVarMem(ops with
+												dec = add_dec,
+												last = ops.last || is_last,
+												inlined = ops.inlined + 1
+											);
+										}
+										None(): {
+											FsVarMem(0, add_dec, 1, 0, is_last);
+										}
+									}
 								));
-							}
-						} else {
-							if (id == -1 || containsSet(last[id], x.name)) acc else {
+							} else {
+								add_inc = if (is_last) 0 else 1;
 								FsMem(setTree(acc.ops, x,
-									FsVarMem(
-										eitherMap(lookupTree(acc.ops, x), \ops -> ops.inc, 0) + 1,
-										eitherMap(lookupTree(acc.ops, x), \ops -> ops.dec, None())
-									)
+									switch (lookupTree(acc.ops, x)) {
+										Some(ops): {
+											FsVarMem(ops with
+												inc = ops.inc + add_inc,
+												last = ops.last || is_last,
+												called = ops.called + 1
+											);
+										}
+										None(): {
+											FsVarMem(add_inc, None(), 0, 1, is_last);
+										}
+									}
 								));
 							}
 						}
