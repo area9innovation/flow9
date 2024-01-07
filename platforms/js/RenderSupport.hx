@@ -59,7 +59,6 @@ class RenderSupport {
 	// Don't wait for fonts to load
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
-	public static var UsePinchToScale : Bool = Util.getParameter("use_pinch_to_scale") == "1";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -935,6 +934,7 @@ class RenderSupport {
 	private static var printMode = false;
 	private static var forceOnAfterprint = Platform.isChrome;
 	private static var prevInvalidateRenderable = false;
+	private static var zoomFnUns = function() {};
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView || (Platform.isIOS && ProgressiveWebTools.isRunningPWA()) ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
@@ -978,13 +978,21 @@ class RenderSupport {
 
 		var accessibilityZoomOnPinchStart = 1.;
 
-		if (Platform.isMobile && UsePinchToScale) {
+		if (Platform.isMobile && Native.isNew) {
 			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
 				if (state == 0) {
 					// On pinch started
 					accessibilityZoomOnPinchStart = getAccessibilityZoom();
 				};
-				setAccessibilityZoom(Math.min(Math.max(0.25, accessibilityZoomOnPinchStart * scale), 5.0));
+				var updateZoom = function() {
+					setAccessibilityZoom(Math.min(Math.max(0.25, accessibilityZoomOnPinchStart * scale), 5.0));
+				};
+				if (state == 0 || state == 2) {
+					updateZoom();
+				} else if (state == 1) {
+					zoomFnUns();
+					zoomFnUns = interruptibleDeferUntilRender(updateZoom);
+				}
 				return false;
 			});
 		}
