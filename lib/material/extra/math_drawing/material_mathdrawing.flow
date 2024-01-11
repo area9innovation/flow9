@@ -18,6 +18,14 @@ export {
 		rightSign : bool,
 		colorB : Behaviour<int>
 	) -> Material;
+	definiteControl2material(
+		signType : DefiniteControlSignType,
+		to : Material,
+		from : Material,
+		body : Material,
+		color : Behaviour<int>,
+		size : double
+	) -> Material;
 }
 fraction2material(num : Material, denum : Material, colorB : Behaviour<int>, decreaseMargin : bool) -> Material {
 	offsetPoint = \offsetB -> fselect(offsetB, FLift(\offset -> Point(offset, 0.0)));
@@ -571,4 +579,193 @@ dotted2material(
 			)
 		)
 	})
+}
+
+definiteControl2material(
+	signType : DefiniteControlSignType,
+	to : Material,
+	from : Material,
+	body : Material,
+	color : Behaviour<int>,
+	size : double
+) -> Material {
+	calcOffsetX = \maxVal, val -> fselect2Lift(
+		maxVal,
+		val,
+		\m, v -> Point(max(0.0, m - v) * 0.5, 0.0)
+	);
+	calcOffsetY = \maxVal, val -> fselect2Lift(
+		maxVal,
+		val,
+		\m, v -> Point(0.0, max(0.0, m - v))
+	);
+	calcOffset = \maxVal, val -> fselect2Lift(maxVal, val, \m, v -> max(0.0, m - v));
+
+	sign = createMaterialSign(signType, color, size);
+	signWB = make(0.0);
+	signHB = make(0.0);
+
+	bodyBaselineB = make(0.0);
+
+	toWidthB = make(0.0);
+	toHeightB = make(0.0);
+	fromWidthB = make(0.0);
+
+	maxWidthB = arrayMax([toWidthB, fromWidthB, signWB]); // first column
+	toAndSignBaselineB = make(0.0);
+	maxHeightB = arrayMax([bodyBaselineB, toAndSignBaselineB]);
+
+	toMod = MTranslate(calcOffsetX(maxWidthB, toWidthB), MInspect([Width(toWidthB), Height(toHeightB)], to));
+	fromMod = MTranslate(calcOffsetX(maxWidthB, fromWidthB), MInspect([Width(fromWidthB)], from));
+	signMod = MTranslate(
+		calcOffsetX(maxWidthB, signWB),
+		MInspect([Width(signWB), Height(signHB)], sign)
+	);
+
+	bodyDyB = calcOffset(maxHeightB, bodyBaselineB);
+	leftPart = MTranslate(calcOffsetY(maxHeightB, toAndSignBaselineB), MLines([toMod, signMod, fromMod]));
+	bodyMod =  MTranslate(
+		fselectLift(bodyDyB, \bodyDy -> Point(0.0, bodyDy)),
+		MInspect([IBaseline(bodyBaselineB)], body)
+	);
+
+	result = MConstruct(
+		[\ -> fconnect2Select(
+			toHeightB,
+			signHB,
+			toAndSignBaselineB,
+			\hh, sh -> hh + 0.6 * sh)],
+		MCols2(leftPart, bodyMod)
+	);
+	
+	MBaseline(
+		fselect2Lift(bodyBaselineB, bodyDyB, \bodyBaseline, dy -> bodyBaseline + dy),
+		MBorder(1.0, 0.0, 1.0, 0.0, result)
+	)
+}
+
+
+createMaterialSign(
+	signType : DefiniteControlSignType,
+	colorB : Behaviour<int>,
+	fontSize : double
+)  -> Material {
+	addBorder = \m -> MBorder(2.0, 2.0, 2.0, 2.0, m);
+	switch(signType : DefiniteControlSignType) {
+		IntegralSign() : {
+			height = fontSize * 2.0; // 46
+			width = fontSize * 0.61; // 14
+
+			middleWidth = fontSize * 0.09; // 2
+			deltaLinkX = fontSize * 0.17; // 4
+			deltaLinkY = fontSize * 0.17; // 4
+			lcdx = fontSize * 0.04; // 1
+			lcdy = fontSize * 0.3; // 7
+			d = fontSize * 0.04; // 1
+			deltaMiddle = (middleWidth - d) / 2.0;
+			centerX = (width + d) / 2.0;
+			centerY = (height + d) / 2.0;
+			MSelect(colorB, \color -> {
+				MGraphics(
+					const(GPath([
+						MoveTo(d, height),
+						QuadraticBezierTo(deltaLinkX + d, height - deltaLinkY, deltaLinkX + d - lcdx, height - deltaLinkY + lcdy),
+						QuadraticBezierTo(centerX + deltaMiddle, centerY, centerX + deltaMiddle - lcdx, centerY + lcdy),
+						QuadraticBezierTo(width - deltaLinkX, deltaLinkY + d, centerX + deltaMiddle + lcdx, centerY - lcdy),
+						QuadraticBezierTo(width - middleWidth + d, d, width - deltaLinkX + lcdx, deltaLinkY + d - lcdy),
+						QuadraticBezierTo(width, d, width - deltaMiddle, d + deltaMiddle),
+						QuadraticBezierTo(width - deltaLinkX, deltaLinkY + d, width - deltaLinkX + lcdx, deltaLinkY + d - lcdy),
+						QuadraticBezierTo(centerX - deltaMiddle, centerY, centerX - deltaMiddle + lcdx, centerY - lcdy),
+						QuadraticBezierTo(deltaLinkX + d, height - deltaLinkY, centerX - deltaMiddle - lcdx, centerY + lcdy),
+						QuadraticBezierTo(middleWidth, height, deltaLinkX + d - lcdx, height - deltaLinkY + lcdy),
+						QuadraticBezierTo(d, height, d + deltaMiddle, height - deltaMiddle),
+						ClosePath()						
+					])),
+					const([Fill(color), Stroke(color), StrokeWidth(d)])
+				)
+			}) |> addBorder
+
+		}
+		OneCharSign(st) : {
+			sign2Material = \char ->	MSelect(colorB, \color -> MText(char, [MCustomFont(fontSize * 1.74, "Roboto", primaryTextOpacity), MCustomColor(color)]));
+			fixSignSize = \m -> MOffset(0.0, -10.0, MFixSize(m, MFixed(30.0, 35.0)));
+			switch(st) {
+				OrdinalInt() : "&#8747;" |> sign2Material;
+				DoubleInt() : "&#8748;" |> sign2Material;
+				TripleInt() : "&#8749;" |> sign2Material;
+				ContourInt() : "&#8750;" |> sign2Material;
+				SurfaceInt() : "&#8751;" |> sign2Material;
+				VolumeInt() : "&#8752;" |> sign2Material;
+				UnionSign() : "&#8746;"  |> sign2Material |> fixSignSize;
+				IntersectionSign() : "&#8745;" |> sign2Material |> fixSignSize;
+			}
+		}
+		SigmaSign() : {
+			width = fontSize * 1.13; // 26
+			height = fontSize * 1.74; // 40
+			serifHeight = fontSize * 0.26; // 6
+			serifWidth = fontSize * 0.09; // 2
+			d = fontSize * 0.04; // 1
+			y = fontSize * 0.09; // 2
+			MSelect(colorB, \color ->{
+				MGraphics(
+					const(GPath([
+						MoveTo(width, serifHeight),
+						LineTo(width, d),
+						LineTo(d, d),
+						LineTo(fontSize * 0.65, height * 0.5),
+						LineTo(d, height),
+						LineTo(width, height),
+						LineTo(width, height - serifHeight),
+						LineTo(width - serifWidth, height - y),
+						LineTo(d + y, height - y),
+						LineTo(fontSize * 0.72, height * 0.5 - fontSize * 0.06),
+						LineTo(fontSize * 0.15, d),
+						LineTo(width - serifWidth, d),
+						LineTo(width, serifHeight),
+						ClosePath()						
+					])),
+					const([Fill(color), Stroke(color), StrokeWidth(d)])
+				)
+			}) |> addBorder
+		}
+		ProductSign() : {
+			width = fontSize * 1.57; // 36
+			height = fontSize * 1.74; // 40
+			verticalLineWidth = fontSize * 0.22; // 5
+			bottomLineLength = fontSize * 0.65; // 15
+			horizontalLinesWidth = fontSize * 0.09; // 2
+			verticalLineDistanceToVerticalBorder = (bottomLineLength - verticalLineWidth) / 2.0; // 5
+			d = fontSize * 0.04; // 1
+			MSelect(colorB, \color ->{
+				MGraphics(
+					const(GPath([
+						MoveTo(d, d),
+						LineTo(width, d),
+						LineTo(width, horizontalLinesWidth),
+						LineTo(width - verticalLineDistanceToVerticalBorder, horizontalLinesWidth),
+						LineTo(width - verticalLineDistanceToVerticalBorder, height - horizontalLinesWidth + d),
+						LineTo(width, height - horizontalLinesWidth + d),
+						LineTo(width, height),
+						LineTo(width - bottomLineLength + d, height),
+						LineTo(width - bottomLineLength + d, height - horizontalLinesWidth + d),
+						LineTo(width - verticalLineDistanceToVerticalBorder - verticalLineWidth + d, height - horizontalLinesWidth + d),
+						LineTo(width - verticalLineDistanceToVerticalBorder - verticalLineWidth + d, horizontalLinesWidth),
+						LineTo(verticalLineDistanceToVerticalBorder + verticalLineWidth, horizontalLinesWidth),
+						LineTo(verticalLineDistanceToVerticalBorder + verticalLineWidth, height - horizontalLinesWidth + d),
+						LineTo(bottomLineLength, height - horizontalLinesWidth + d),
+						LineTo(bottomLineLength, height),
+						LineTo(d, height),
+						LineTo(d, height - horizontalLinesWidth + d),
+						LineTo(verticalLineDistanceToVerticalBorder + d, height - horizontalLinesWidth + d),
+						LineTo(verticalLineDistanceToVerticalBorder + d, horizontalLinesWidth),
+						LineTo(d, horizontalLinesWidth),
+						LineTo(d, d),
+						ClosePath()						
+					])),
+					const([Fill(color), Stroke(color), StrokeWidth(d)])
+				)
+			}) |> addBorder
+		}
+	}
 }
