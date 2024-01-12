@@ -947,6 +947,12 @@ class RenderSupport {
 			}
 		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+		Browser.window.addEventListener("focus", function () {
+			// When page is loaded while browser is minimized, window.outerWidth tend to stuck in wrong state. Have to trigger its recalculation.
+			Browser.window.resizeBy(-1, 0);
+			Browser.window.resizeBy(1, 0);
+			backingStoreRatio = getBackingStoreRatio();
+		});
 		Browser.window.addEventListener('beforeprint', function () {
 			if (!printMode) {
 				printMode = true;
