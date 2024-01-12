@@ -57,7 +57,7 @@ class RenderSupport {
 	// Better option is to use <meta name="viewport" content="initial-scale=1.0,maximum-scale=1.0"/> inside top window.
 	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0" && isViewportScaleWorkaroundEnabled();
 	// Don't wait for fonts to load
-	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") == "1";
+	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
@@ -556,7 +556,7 @@ class RenderSupport {
 
 		if (Util.getParameter("oldjs") != "1") {
 			initPixiRenderer();
-			if (mainNoDelay || Native.isNew) {
+			if (mainNoDelay) {
 				defer(StartFlowMainWithTimeCheck);
 			}
 		} else {
@@ -850,7 +850,7 @@ class RenderSupport {
 		initFullScreenEventListeners();
 
 		webFontsLoadingStartAt = NativeTime.timestamp();
-		WebFontsConfig = FontLoader.loadWebFonts(if (mainNoDelay || Native.isNew) function() {} else StartFlowMainWithTimeCheck);
+		WebFontsConfig = FontLoader.loadWebFonts(if (mainNoDelay) function() {} else StartFlowMainWithTimeCheck);
 
 		initClipboardListeners();
 		initCanvasStackInteractions();
@@ -934,6 +934,7 @@ class RenderSupport {
 	private static var printMode = false;
 	private static var forceOnAfterprint = Platform.isChrome;
 	private static var prevInvalidateRenderable = false;
+	private static var zoomFnUns = function() {};
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView || (Platform.isIOS && ProgressiveWebTools.isRunningPWA()) ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
@@ -972,6 +973,27 @@ class RenderSupport {
 			on("fullscreen", function(isFullScreen) {
 				var size = isFullScreen ? getScreenSize() : {width: Browser.window.innerWidth, height: Browser.window.innerHeight};
 				onBrowserWindowResize({target: {innerWidth: size.width, innerHeight: size.height}});
+			});
+		}
+
+		var accessibilityZoomOnPinchStart = 1.;
+
+		if (Platform.isMobile && Native.isNew) {
+			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
+				if (state == 0) {
+					// On pinch started
+					accessibilityZoomOnPinchStart = getAccessibilityZoom();
+				};
+				var updateZoom = function() {
+					setAccessibilityZoom(Math.min(Math.max(0.25, accessibilityZoomOnPinchStart * scale), 5.0));
+				};
+				if (state == 0 || state == 2) {
+					updateZoom();
+				} else if (state == 1) {
+					zoomFnUns();
+					zoomFnUns = interruptibleDeferUntilRender(updateZoom);
+				}
+				return false;
 			});
 		}
 	}

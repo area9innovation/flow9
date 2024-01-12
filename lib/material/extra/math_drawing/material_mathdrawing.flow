@@ -1,0 +1,771 @@
+import material/material;
+import material/material_gui;
+import form/mathdrawingstructs;
+import form/mathdrawing;
+import material/material_graphics;
+
+export {
+	fraction2material(num : Material, denum : Material, colorB : Behaviour<int>, decreaseMargin : bool) -> Material;
+	brackets2material(lb : WriteBracketType, rb : WriteBracketType,	body : Material, colorB : Behaviour<int>) -> Material;
+	longDivision2material(body : Material,	colorB : Behaviour<int>) -> Material;
+	dotted2material(
+		body : Material,
+		left : int,
+		top : int,
+		right : int,
+		bottom : int,
+		leftSign : bool,
+		rightSign : bool,
+		colorB : Behaviour<int>
+	) -> Material;
+	definiteControl2material(
+		signType : DefiniteControlSignType,
+		to : Material,
+		from : Material,
+		body : Material,
+		color : Behaviour<int>,
+		size : double
+	) -> Material;
+}
+fraction2material(num : Material, denum : Material, colorB : Behaviour<int>, decreaseMargin : bool) -> Material {
+	offsetPoint = \offsetB -> fselect(offsetB, FLift(\offset -> Point(offset, 0.0)));
+
+	numWhB = makeWH();
+	numBaselinB = make(0.0);
+	numOB = make(0.0);
+	numOWB = make(0.0);
+	numOffset = offsetPoint(numOB);
+	numFOffset = offsetPoint(numOWB);
+
+	numFiller = MSelect2(numWhB, numOB, \nWh, nO -> {
+		MFixed(nO, nWh.height)
+	});
+
+	denumWhB = makeWH();
+	denumBaselinB = make(0.0);
+	denumOB = make(0.0);
+	denumOWB = make(0.0);
+	denumOffset = offsetPoint(denumOB);
+	denumFOffset = offsetPoint(denumOWB);
+
+	denumFiller = MSelect2(denumWhB, denumOB, \dnWh, dnO -> {
+		MFixed(dnO, dnWh.height)
+	});
+
+	lineWB = make(0.0);
+	heightB = make(0.0);
+	baselineB = make(0.0);
+	
+	MConstruct(
+		[make4Subscribe(
+			numWhB,
+			denumWhB,
+			heightB,
+			fselect2(numBaselinB, denumBaselinB, FLift2(min)),
+			\numWH, denumWH, h, baseline -> {
+				margin = if (decreaseMargin) 0.0 else 4.0;
+				nextDistinct(lineWB, max(numWH.width, denumWH.width) + margin * 2.0);
+				numO = max((denumWH.width - numWH.width) * 0.5, 0.0) + margin;
+				denumO = max((numWH.width - denumWH.width) * 0.5, 0.0) + margin;
+				nextDistinct(numOB, numO);
+				nextDistinct(denumOB, denumO);
+				nextDistinct(numOWB, numO + numWH.width);
+				nextDistinct(denumOWB, denumO + denumWH.width);
+				nextDistinct(baselineB, numWH.height * 0.87  + baseline / 2.0); 
+			}
+		)],
+		MInspect(
+			[IHeight(heightB)],
+			MBaseline(
+				baselineB,
+				MLines([
+					MGroup([
+						numFiller,
+						MTranslate(numOffset,
+							MInspect([ISize(numWhB), IBaseline(numBaselinB)], MBorder(
+								0.0, 0.0, 0.0, 1.5,
+								num
+							))
+						),
+						MTranslate(numFOffset, numFiller)
+					]),
+					MGraphics(
+						fselect(lineWB, FLift(\lineW ->
+							GPath([
+								MoveTo(0.0, 0.0),
+								LineTo(lineW, 0.0),
+								ClosePath()
+							])
+						)),
+						fselect(colorB, FLift(\color ->
+							[MStroke(colorInt2MColor(color)), StrokeWidth(1.0)]
+						))
+					),
+					MGroup([
+						denumFiller,
+						MTranslate(denumOffset,
+							MInspect([ISize(denumWhB), IBaseline(denumBaselinB)], MBorder(
+								0.0, 2.0, 0.0, 0.0,
+								denum
+							)),
+						),
+						MTranslate(denumFOffset, denumFiller)
+					])
+				])
+			)
+		)
+	);
+}
+
+brackets2material(
+	lb : WriteBracketType,
+	rb : WriteBracketType,
+	body : Material,
+	colorB : Behaviour<int>
+) -> Material {
+	bracketsOffset = 5.0;
+	baselineB = make(0.0);
+	bodyHeightB = make(0.0);
+	bodyBaselineB = make(0.0);
+	isBracketOrAbsSign = lb == WriteLeftBracket() || lb == WriteAbsSign();
+	bodyMaterial = MInspect(
+		ifArrayPush([Height(bodyHeightB)], isBracketOrAbsSign, IBaseline(bodyBaselineB)),
+		body
+	);
+
+	MConstruct(
+		[
+			\ -> connectSelect2Distinctu(
+				bodyHeightB,
+				bodyBaselineB,
+				baselineB,
+				\bodyHeight, bodyBaseline -> {
+					if (isBracketOrAbsSign) {
+						bodyBaseline
+					} else {
+						bodyHeight / 2.0 + bracketsOffset
+					}
+				}
+			)
+		],
+		MBaseline(
+			baselineB,
+			MCols([
+				bracket2material(lb, bodyHeightB, colorB),
+				bodyMaterial,
+				bracket2material(rb, bodyHeightB, colorB),
+			])
+			
+		)
+	)
+};
+
+bracket2material(
+	type : WriteBracketType,
+	heightB : Behaviour<double>,
+	colorB : Behaviour<int>
+) -> Material {
+	if (type == WriteNoBracket()) {
+		MEmpty()
+	} else {
+		MSelect2(colorB, heightB, \color, height -> {
+			createMaterialBracket(type, height, color)
+		})
+	}
+};
+
+
+createMaterialBracket(
+	type : WriteBracketType,
+	bodyHeight : double,
+	color : int
+) -> Material {
+	isSmall = false;
+
+	height = bodyHeight;
+	deepness = sqrt(height) + 1.0;
+
+	h = 22.0;
+	yScale = height / h;
+
+	border = 2.0;
+
+	switch(type : WriteBracketType) {
+		WriteAbsSign() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(3.0, 0.0),
+						LineTo(3.0, height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(5.0, height)
+			)
+		}
+		WriteNormSign() : {
+			graphics = MGraphics(
+				const(GPath([
+					MoveTo(3.0, 0.0),
+					LineTo(3.0, height),
+				])),
+				const([MStroke(colorInt2MColor(color))])
+			);
+			MFixSize(
+				MCols2(graphics, graphics),
+				MFixed(10.0, height)
+			)
+		}
+		WriteLeftBrace() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(deepness, 0.0),
+						CubicBezierTo(deepness / 2.0, 4.0 * yScale, deepness / 2.0, 0.0 * yScale),
+						LineTo(deepness / 2.0, 7.0 * yScale),
+						CubicBezierTo(deepness / 10.0, height * 0.5, deepness / 2.0, 0.5 * height),
+						MoveTo(deepness, h * yScale),
+						CubicBezierTo(deepness / 2.0, 18.0 * yScale, deepness / 2.0, h * yScale),
+						LineTo(deepness / 2.0, 15.0 * yScale),
+						CubicBezierTo(deepness / 10.0, height * 0.5, deepness / 2.0, 0.5 * height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(deepness, height)
+			)
+		}
+		WriteRightBrace() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(0.0, 0.0),
+						CubicBezierTo(deepness / 2.0, 4.0 * yScale, deepness / 2.0, 0.0 * yScale),
+						LineTo(deepness / 2.0, 7.0 * yScale),
+						CubicBezierTo(deepness * 0.9, height * 0.5, deepness / 2.0, 0.5 * height),
+						MoveTo(0.0, h * yScale),
+						CubicBezierTo(deepness / 2.0, 18.0 * yScale, deepness / 2.0, h * yScale),
+						LineTo(deepness / 2.0, 15.0 * yScale),
+						CubicBezierTo(deepness * 0.9, height * 0.5, deepness / 2.0, 0.5 * height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(deepness, height)
+			)
+		}
+		WriteLeftBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath({
+						lx1 = - deepness;
+						lx2 = lx1 + sqrt(deepness);
+						[
+							MoveTo(deepness * 0.8 + border, 0.0),
+							CubicBezierTo(deepness * 0.8 + border, height, lx2 + border, height / 2.0),
+							CubicBezierTo(deepness * 0.8 + border, 0.0, lx1 + border, height / 2.0),
+							ClosePath()
+						];
+					})),
+					const([Fill(color)])
+				),
+				MFixed(deepness + border, height)
+			)
+		}
+		WriteRightBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath({
+						lx1 = 2.0 * deepness;
+						lx2 = lx1 - sqrt(deepness);
+						[
+							MoveTo(deepness * 0.2, 0.0),
+							CubicBezierTo(deepness * 0.2, height, lx1, height / 2.0),
+							CubicBezierTo(deepness * 0.2, 0.0, lx2, height / 2.0),
+							ClosePath()
+						];
+					})),
+					const([Fill(color)])
+				),
+				MFixed(deepness + border, height)
+			)
+		}
+		WriteLeftSquareBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(7.0, 0.0),
+						LineTo(3.0, 0.0),
+						LineTo(3.0, height),
+						LineTo(7.0, height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(8.0, height)
+			)
+		}
+		WriteRightSquareBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(1.0, 0.0),
+						LineTo(5.0, 0.0),
+						LineTo(5.0, height),
+						LineTo(1.0, height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(8.0, height)
+			)
+		}
+		WriteLeftFloorBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(3.0, 0.0),
+						LineTo(3.0, height),
+						LineTo(7.0, height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(8.0, height)
+			)
+		}
+		WriteRightFloorBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(5.0, 0.0),
+						LineTo(5.0, height),
+						LineTo(1.0, height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(8.0, height)
+			)
+		}
+		WriteLeftCeilBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(7.0, 0.0),
+						LineTo(3.0, 0.0),
+						LineTo(3.0, height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(8.0, height)
+			)
+		}
+		WriteRightCeilBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(1.0, 0.0),
+						LineTo(5.0, 0.0),
+						LineTo(5.0, height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(8.0, height)
+			)
+		}
+		WriteLeftDoubleSquareBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(10.0, 0.0),
+						LineTo(3.0, 0.0),
+						LineTo(3.0, height),
+						LineTo(10.0, height),
+						MoveTo(6.0, 0.0),
+						LineTo(6.0, height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(11.0, height)
+			)
+		}
+		WriteRightDoubleSquareBracket() : {
+			MFixSize(
+				MGraphics(
+					const(GPath([
+						MoveTo(1.0, 0.0),
+						LineTo(8.0, 0.0),
+						LineTo(8.0, height),
+						LineTo(1.0, height),
+						MoveTo(5.0, 0.0),
+						LineTo(5.0, height),
+					])),
+					const([MStroke(colorInt2MColor(color))])
+				),
+				MFixed(11.0, height)
+			)
+		}
+		WriteNoBracket() : {
+			MEmpty()
+		}
+	};
+}
+
+
+longDivision2material(
+	body : Material,
+	colorB : Behaviour<int>
+) -> Material {
+	radius = 5.0;
+	leftOffset = 7.0;
+	topOffset = 3.0;
+	rightLineLength = 3.0;
+
+	makeLongDivision = \width, height, fc -> {
+		path = [
+			MoveTo(0.0, height + topOffset),
+			CubicBezierTo(0.0, 0.0, 0.0 + radius, (topOffset + height) * 0.5),
+			LineTo(width + leftOffset + rightLineLength, 0.0)
+		];
+		MGraphics(
+			const(GPath(path)),
+			const([Stroke(fc), StrokeWidth(2.0)])
+		)
+	};
+
+	addBorder = \m -> MBorder(1.0 + leftOffset, topOffset, rightLineLength + 1.0, 0.0, m);
+	
+	bodyWHB = makeWH();
+	bodyBaselineB = make(0.0);
+	baselineB = make(0.0);
+
+	MConstruct(
+		[
+			\ -> connectSelectDistinctu(bodyBaselineB, baselineB, \bodyBaseline -> bodyBaseline + topOffset)
+		],
+		MBaseline(
+			baselineB,
+			MGroup2(
+				MSelect2(bodyWHB, colorB, \wh, color -> makeLongDivision(wh.width, wh.height, color)),
+				MInspect([ISize(bodyWHB), IBaseline(bodyBaselineB)], body) |> addBorder
+			)
+		)
+	)
+	
+}
+
+dotted2material(
+	body : Material,
+	left : int,
+	top : int,
+	right : int,
+	bottom : int,
+	leftSign : bool,
+	rightSign : bool,
+	colorB : Behaviour<int>
+) -> Material {
+	radiusB = const(1.5);
+	bodyWHB = makeWH();
+	bodyBaselineB = make(.0);
+
+	MSelect2(radiusB, colorB, \radius, dotsColor -> {
+		dmB = fselectLift(bodyWHB, \bodyWH -> calcDottedElementMetrics(radius, bodyWH.width, bodyWH.height, left, top, right, bottom, leftSign, rightSign));
+		
+		makeDotOffset = \i, space, isX -> {
+			translateVal = i2d(i) * (2.0 * radius + space);
+			const(Point(
+				if (isX) translateVal else radius,
+				if (isX) radius else translateVal)
+			)
+		};
+
+		topDots = generate(0, top, \i ->
+			MSelect(dmB, \dm ->	MTranslate(
+				makeDotOffset(i, dm.topSpace, true),
+				MCircle(
+					radius ,
+					[Fill(dotsColor)]
+				)
+			))
+		) |> MGroup;
+
+		topDotsOffsetB = fselectLift(dmB, \dm -> Point(
+			dm.leftWidth + max(0.0, dm.centerWidth - dm.topWidth) * 0.5,
+			.0
+		));
+
+		bottomDots = generate(0, bottom, \i ->
+			MSelect(dmB, \dm ->	MTranslate(
+				makeDotOffset(i, dm.bottomSpace, true),
+				MCircle(
+					radius ,
+					[Fill(dotsColor)]
+				)
+			))
+		) |> MGroup;
+
+		bottomDotsOffsetB = fselectLift(dmB, \dm -> Point(
+			dm.leftWidth + max(0.0, dm.centerWidth - dm.bottomWidth) * 0.5,
+			dm.topHeight + dm.centerHeight
+		));
+
+		leftDots = generate(0, left, \i ->
+			MSelect(dmB, \dm ->	MTranslate(
+				makeDotOffset(i, dm.leftSpace, false),
+				MCircle(
+					radius ,
+					[Fill(dotsColor)]
+				)
+			))
+		) |> MGroup;
+
+		leftDotsOffsetB = fselectLift(dmB, \dm -> Point(
+			.0,
+			dm.topHeight + max(dm.centerHeight - dm.leftHeight, 0.0) * 0.5 + radius
+		));
+
+		rightDots = generate(0, right, \i ->
+			MSelect(dmB, \dm ->	MTranslate(
+				makeDotOffset(i, dm.rightSpace, false),
+				MCircle(
+					radius ,
+					[Fill(dotsColor)]
+				)
+			))
+		) |> MGroup;
+
+		rightDotsOffsetB = fselectLift(dmB, \dm -> Point(
+			dm.leftWidth + dm.centerWidth,
+			dm.topHeight + max(dm.centerHeight - dm.rightHeight, 0.0) * 0.5 + radius
+		));
+
+		signf = MGraphics(
+			const(GPath([MoveTo(0.0, 4.0 * radius), LineTo(4.0 * radius, 4.0 * radius), ClosePath()])),
+			const([Stroke(dotsColor)])
+		);
+
+		rightSignOffsetB = fselectLift(dmB, \dm -> Point(
+			dm.leftWidth + dm.centerWidth,
+			.0
+		));
+		
+
+		bodyOffsetB = fselect2Lift(dmB, bodyWHB, \dm, bodyWH -> Point(
+			dm.leftWidth + if (top > 1 || bottom > 1) {max(0.0, dm.centerWidth - bodyWH.width) * 0.5} else 0.0,
+			dm.topHeight
+		));
+
+		baselineB = fselect2Lift(dmB, bodyBaselineB, \dm, bodyBaseline -> {
+			bodyBaseline + dm.topHeight
+		});
+
+
+		mSizeB = TSized(fselect2Lift(dmB, bodyWHB, \dm, bodyWH -> WidthHeight(
+			max3(bodyWH.width, dm.topWidth, dm.bottomWidth) + dm.leftWidth + dm.rightWidth,
+			max3(bodyWH.height, dm.leftHeight, dm.rightHeight) + dm.topHeight + dm.bottomHeight
+		)));
+
+		MBaseline(
+			baselineB,
+			MFixSize(
+				MGroup([
+					MTranslate(topDotsOffsetB, topDots),
+					if (left > 0) MTranslate(leftDotsOffsetB, leftDots) else MEmpty(),
+					MTranslate(
+						bodyOffsetB,
+						MInspect([ISize(bodyWHB), IBaseline(bodyBaselineB)], body)
+					),
+					if (right> 0) MTranslate(rightDotsOffsetB, rightDots) else MEmpty(),
+					MTranslate(bottomDotsOffsetB, bottomDots),
+					if (leftSign) signf else MEmpty(),
+					if (rightSign) MTranslate(rightSignOffsetB, signf) else MEmpty()
+				]),
+				mSizeB
+			)
+		)
+	})
+}
+
+definiteControl2material(
+	signType : DefiniteControlSignType,
+	to : Material,
+	from : Material,
+	body : Material,
+	color : Behaviour<int>,
+	size : double
+) -> Material {
+	calcOffsetX = \maxVal, val -> fselect2Lift(
+		maxVal,
+		val,
+		\m, v -> Point(max(0.0, m - v) * 0.5, 0.0)
+	);
+	calcOffsetY = \maxVal, val -> fselect2Lift(
+		maxVal,
+		val,
+		\m, v -> Point(0.0, max(0.0, m - v))
+	);
+	calcOffset = \maxVal, val -> fselect2Lift(maxVal, val, \m, v -> max(0.0, m - v));
+
+	sign = createMaterialSign(signType, color, size);
+	signWB = make(0.0);
+	signHB = make(0.0);
+
+	bodyBaselineB = make(0.0);
+
+	toWidthB = make(0.0);
+	toHeightB = make(0.0);
+	fromWidthB = make(0.0);
+
+	maxWidthB = arrayMax([toWidthB, fromWidthB, signWB]); // first column
+	toAndSignBaselineB = make(0.0);
+	maxHeightB = arrayMax([bodyBaselineB, toAndSignBaselineB]);
+
+	toMod = MTranslate(calcOffsetX(maxWidthB, toWidthB), MInspect([Width(toWidthB), Height(toHeightB)], to));
+	fromMod = MTranslate(calcOffsetX(maxWidthB, fromWidthB), MInspect([Width(fromWidthB)], from));
+	signMod = MTranslate(
+		calcOffsetX(maxWidthB, signWB),
+		MInspect([Width(signWB), Height(signHB)], sign)
+	);
+
+	bodyDyB = calcOffset(maxHeightB, bodyBaselineB);
+	leftPart = MTranslate(calcOffsetY(maxHeightB, toAndSignBaselineB), MLines([toMod, signMod, fromMod]));
+	bodyMod =  MTranslate(
+		fselectLift(bodyDyB, \bodyDy -> Point(0.0, bodyDy)),
+		MInspect([IBaseline(bodyBaselineB)], body)
+	);
+
+	result = MConstruct(
+		[\ -> fconnect2Select(
+			toHeightB,
+			signHB,
+			toAndSignBaselineB,
+			\hh, sh -> hh + 0.6 * sh)],
+		MCols2(leftPart, bodyMod)
+	);
+	
+	MBaseline(
+		fselect2Lift(bodyBaselineB, bodyDyB, \bodyBaseline, dy -> bodyBaseline + dy),
+		MBorder(1.0, 0.0, 1.0, 0.0, result)
+	)
+}
+
+
+createMaterialSign(
+	signType : DefiniteControlSignType,
+	colorB : Behaviour<int>,
+	fontSize : double
+)  -> Material {
+	addBorder = \m -> MBorder(2.0, 2.0, 2.0, 2.0, m);
+	switch(signType : DefiniteControlSignType) {
+		IntegralSign() : {
+			height = fontSize * 2.0; // 46
+			width = fontSize * 0.61; // 14
+
+			middleWidth = fontSize * 0.09; // 2
+			deltaLinkX = fontSize * 0.17; // 4
+			deltaLinkY = fontSize * 0.17; // 4
+			lcdx = fontSize * 0.04; // 1
+			lcdy = fontSize * 0.3; // 7
+			d = fontSize * 0.04; // 1
+			deltaMiddle = (middleWidth - d) / 2.0;
+			centerX = (width + d) / 2.0;
+			centerY = (height + d) / 2.0;
+			MSelect(colorB, \color -> {
+				MGraphics(
+					const(GPath([
+						MoveTo(d, height),
+						QuadraticBezierTo(deltaLinkX + d, height - deltaLinkY, deltaLinkX + d - lcdx, height - deltaLinkY + lcdy),
+						QuadraticBezierTo(centerX + deltaMiddle, centerY, centerX + deltaMiddle - lcdx, centerY + lcdy),
+						QuadraticBezierTo(width - deltaLinkX, deltaLinkY + d, centerX + deltaMiddle + lcdx, centerY - lcdy),
+						QuadraticBezierTo(width - middleWidth + d, d, width - deltaLinkX + lcdx, deltaLinkY + d - lcdy),
+						QuadraticBezierTo(width, d, width - deltaMiddle, d + deltaMiddle),
+						QuadraticBezierTo(width - deltaLinkX, deltaLinkY + d, width - deltaLinkX + lcdx, deltaLinkY + d - lcdy),
+						QuadraticBezierTo(centerX - deltaMiddle, centerY, centerX - deltaMiddle + lcdx, centerY - lcdy),
+						QuadraticBezierTo(deltaLinkX + d, height - deltaLinkY, centerX - deltaMiddle - lcdx, centerY + lcdy),
+						QuadraticBezierTo(middleWidth, height, deltaLinkX + d - lcdx, height - deltaLinkY + lcdy),
+						QuadraticBezierTo(d, height, d + deltaMiddle, height - deltaMiddle),
+						ClosePath()						
+					])),
+					const([Fill(color), Stroke(color), StrokeWidth(d)])
+				)
+			}) |> addBorder
+
+		}
+		OneCharSign(st) : {
+			sign2Material = \char ->	MSelect(colorB, \color -> MText(char, [MCustomFont(fontSize * 1.74, "Roboto", primaryTextOpacity), MCustomColor(color)]));
+			fixSignSize = \m -> MOffset(0.0, -10.0, MFixSize(m, MFixed(30.0, 35.0)));
+			switch(st) {
+				OrdinalInt() : "&#8747;" |> sign2Material;
+				DoubleInt() : "&#8748;" |> sign2Material;
+				TripleInt() : "&#8749;" |> sign2Material;
+				ContourInt() : "&#8750;" |> sign2Material;
+				SurfaceInt() : "&#8751;" |> sign2Material;
+				VolumeInt() : "&#8752;" |> sign2Material;
+				UnionSign() : "&#8746;"  |> sign2Material |> fixSignSize;
+				IntersectionSign() : "&#8745;" |> sign2Material |> fixSignSize;
+			}
+		}
+		SigmaSign() : {
+			width = fontSize * 1.13; // 26
+			height = fontSize * 1.74; // 40
+			serifHeight = fontSize * 0.26; // 6
+			serifWidth = fontSize * 0.09; // 2
+			d = fontSize * 0.04; // 1
+			y = fontSize * 0.09; // 2
+			MSelect(colorB, \color ->{
+				MGraphics(
+					const(GPath([
+						MoveTo(width, serifHeight),
+						LineTo(width, d),
+						LineTo(d, d),
+						LineTo(fontSize * 0.65, height * 0.5),
+						LineTo(d, height),
+						LineTo(width, height),
+						LineTo(width, height - serifHeight),
+						LineTo(width - serifWidth, height - y),
+						LineTo(d + y, height - y),
+						LineTo(fontSize * 0.72, height * 0.5 - fontSize * 0.06),
+						LineTo(fontSize * 0.15, d),
+						LineTo(width - serifWidth, d),
+						LineTo(width, serifHeight),
+						ClosePath()						
+					])),
+					const([Fill(color), Stroke(color), StrokeWidth(d)])
+				)
+			}) |> addBorder
+		}
+		ProductSign() : {
+			width = fontSize * 1.57; // 36
+			height = fontSize * 1.74; // 40
+			verticalLineWidth = fontSize * 0.22; // 5
+			bottomLineLength = fontSize * 0.65; // 15
+			horizontalLinesWidth = fontSize * 0.09; // 2
+			verticalLineDistanceToVerticalBorder = (bottomLineLength - verticalLineWidth) / 2.0; // 5
+			d = fontSize * 0.04; // 1
+			MSelect(colorB, \color ->{
+				MGraphics(
+					const(GPath([
+						MoveTo(d, d),
+						LineTo(width, d),
+						LineTo(width, horizontalLinesWidth),
+						LineTo(width - verticalLineDistanceToVerticalBorder, horizontalLinesWidth),
+						LineTo(width - verticalLineDistanceToVerticalBorder, height - horizontalLinesWidth + d),
+						LineTo(width, height - horizontalLinesWidth + d),
+						LineTo(width, height),
+						LineTo(width - bottomLineLength + d, height),
+						LineTo(width - bottomLineLength + d, height - horizontalLinesWidth + d),
+						LineTo(width - verticalLineDistanceToVerticalBorder - verticalLineWidth + d, height - horizontalLinesWidth + d),
+						LineTo(width - verticalLineDistanceToVerticalBorder - verticalLineWidth + d, horizontalLinesWidth),
+						LineTo(verticalLineDistanceToVerticalBorder + verticalLineWidth, horizontalLinesWidth),
+						LineTo(verticalLineDistanceToVerticalBorder + verticalLineWidth, height - horizontalLinesWidth + d),
+						LineTo(bottomLineLength, height - horizontalLinesWidth + d),
+						LineTo(bottomLineLength, height),
+						LineTo(d, height),
+						LineTo(d, height - horizontalLinesWidth + d),
+						LineTo(verticalLineDistanceToVerticalBorder + d, height - horizontalLinesWidth + d),
+						LineTo(verticalLineDistanceToVerticalBorder + d, horizontalLinesWidth),
+						LineTo(d, horizontalLinesWidth),
+						LineTo(d, d),
+						ClosePath()						
+					])),
+					const([Fill(color), Stroke(color), StrokeWidth(d)])
+				)
+			}) |> addBorder
+		}
+	}
+}

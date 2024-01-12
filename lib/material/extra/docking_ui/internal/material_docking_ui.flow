@@ -51,7 +51,17 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 		zorder = getValue(manager.manager.zorder);
 		isDragging = manager.manager.dragging;
 		isDraggingT = fselect(isDragging, FLift(\dr -> (dr >= 0) && (dr < length(panelsA)) && getValue(state.dock)[dr].areaId >= 0 && zorder >= getValue(manager.manager.zorder)));
+		
+		// Handle panel's enable from MDPanelVisible style and MDPanelEnabled
+		enabledPanelsT = 
+			fsubselect(state.panelStyle, FLift(\psA -> fmerge(map(psA, \ps -> 
+				fand(
+					extractStruct(ps, MDPanelEnabled(const(true))).enabled,
+					extractStruct(ps, MDPanelVisible(make(true))).visible
+				)
+			))));
 
+		// Update panel's positions
 		iteri(panelsA, \i, p -> {
 			next(localPositionA, replace(getValue(localPositionA), i , zeroPoint));
 		});
@@ -87,6 +97,8 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 						next(localPositionA, replace(getValue(localPositionA), d, zeroPoint));
 					}
 				}),
+				// Enable / Disable panels
+				makeSubscribe2(enabledPanelsT, \eA -> iteri(eA, \i, en -> nextDistinct(getValue(state.enabled)[i], en))),
 				// Update borwser cache
 				\ -> \ -> {
 					if (cacheEnabled) setMDockingStateKeyValue(state) |> ignore;
@@ -150,7 +162,7 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 		cachedArea = getJsonFieldValue(currentAreasA, areaName, JsonNull());
 
 		// Area Enable
-		areaEnableB = extractStruct(areaStyle, MDAreaEnable(make(true))).enable;
+		areaEnableB = extractStruct(areaStyle, MDAreaVisible(make(true))).visible;
 		cAreaEnab = getJsonBoolValue(getJsonFieldValueCustom(currentAreasA, areaName + ".enabled", JsonNull(), [JsonFieldTreatAsPath(".")]), getValue(areaEnableB));
 		aenab = if (cacheEnabled) cAreaEnab else getValue(areaEnableB);
 		next(state.areaEnabled, setTree(getValue(state.areaEnabled), areaId, aenab));
@@ -218,8 +230,8 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 		nextDistinct(contentA, replace(getValue(contentA), i , p.content));
 		nextDistinct(groupA, replace(getValue(groupA), i ,  extractStruct(p.style, MDPanelAllowedGroups([])).allowedGroups));
 		
-		// End Alignment
-		defPStyle = addMissingStruct(p.style, MDToolbarEndAlign(make(false)));
+		// Update state.panelStyle with mandatory styles
+		defPStyle = addMissingStructMany(p.style, [MDToolbarEndAlign(make(false)), MDPanelVisible(make(true)), MDPanelEnabled(const(true))]);
 		nextDistinct(state.panelStyle, replace(getValue(panelsStyleA), i , defPStyle));
 			
 		switch (p.content) {
@@ -272,9 +284,11 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 		nextDistinct(state.positions, replace(getValue(state.positions), i , posB));
 
 		// Enabled
-		enabledB = extractStruct(p.style, MDPanelEnabled(make(true))).enabled;
-		cEnabled = getJsonBoolValue(getJsonFieldValue(cachedPanel, "enabled", JsonNull()), getValue(enabledB));
-		enB = if (cacheEnabled) make(cEnabled) else enabledB;
+		enabledT = extractStruct(p.style, MDPanelEnabled(const(true))).enabled;
+		visibleB = extractStruct(p.style, MDPanelVisible(make(true))).visible;
+		cVisible = getJsonBoolValue(getJsonFieldValue(cachedPanel, "visible", JsonNull()), getValue(visibleB));
+		visible = if (cacheEnabled) cVisible else getValue(visibleB);
+		enB = make(fgetValue(enabledT) && visible);
 		nextDistinct(state.enabled, replace(getValue(state.enabled), i , enB));
 		// Undock disabled panels by default
 		// if (!getValue(enB)) undockPanel(state, i);

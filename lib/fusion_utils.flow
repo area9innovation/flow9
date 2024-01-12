@@ -176,7 +176,7 @@ fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
 					}
 				);
 			} else {
-				output := mapi(a0, \i, v -> 
+				output := mapi(a0, \i, v ->
 					if (i < length(^input) && ^input[i] == v) ^output[i]
 					else fn(v)
 				)
@@ -732,65 +732,7 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 }
 
 ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?> {
-	if (isFConst(a)) {
-		const(fold(fgetValue(a), def, fn));
-	} else {
-		nested = ref false;
-		input = ref [];
-		output : ref [Pair<?, ?>] = ref [];
-
-		fselect(a, FLift(\a0 -> {
-			if (!^nested) {
-				nested := true;
-
-				if (length(a0) == 0) {
-					output := [];
-				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) > 0 && length(^input) < ARRAY_DIFF_TRESHOLD) {
-					// Call disposers before initializers
-					iter(arrayDiff(^input, a0, true) |> reverseA, \op ->
-						switch (op : ArrayOperation) {
-							ArrayNop(x, y): {
-								acc = if (y > 0) (^output[y - 1]).second else def;
-								if (^output[y].first != acc) {
-									output := replace(^output, y, Pair(acc, fn(acc, a0[y])));
-								}
-							}
-							ArrayInsert(x, y, v): {
-								acc = if (y > 0) (^output[y - 1]).second else def;
-								output := insertArray(^output, y, Pair(acc, fn(acc, v)));
-							}
-							ArrayReplace(x, y, v): {
-								acc = if (y > 0) (^output[y - 1]).second else def;
-								output := replace(^output, y, Pair(acc, fn(acc, v)));
-							}
-							ArrayRemove(x, y): {
-								output := removeIndex(^output, y);
-							}
-						}
-					);
-				} else {
-					output :=
-						foldi(a0, Pair(def, []), \i : int, acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
-							if (i < length(^input) && ^input[i] == v && acc.first == ^output[i].first) {
-								Pair(^output[i].second, arrayPush(acc.second, ^output[i]))
-							} else {
-								newAcc = fn(acc.first, v);
-								Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
-							}
-						}).second;
-				}
-
-				input := a0;
-				nested := false;
-			}
-
-			if (length(^output) > 0) {
-				^output[length(^output) - 1].second;
-			} else {
-				def;
-			}
-		}))
-	}
+	ffoldi(a, def, \__, acc, el -> fn(acc, el));
 }
 
 ffoldi(a : Transform<[??]>, def : ?, fn : (int, ?, ??) -> ?) -> Transform<?> {
@@ -831,15 +773,19 @@ ffoldi(a : Transform<[??]>, def : ?, fn : (int, ?, ??) -> ?) -> Transform<?> {
 						}
 					);
 				} else {
-					output :=
-						foldi(a0, Pair(def, []), \i : int, acc : Pair<?, [Pair<?, ?>]>, v : ?? -> {
-							if (i < length(^input) && ^input[i] == v && acc.first == ^output[i].first) {
-								Pair(^output[i].second, arrayPush(acc.second, ^output[i]))
-							} else {
-								newAcc = fn(i, acc.first, v);
-								Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
-							}
-						}).second;
+					outputList = foldi(a0, Pair(def, makeList()), \i : int, acc : Pair<?, List<Pair<?, ?>>>, v : ?? -> {
+						newPair = if (i < length(^input) && ^input[i] == v && acc.first == ^output[i].first) {
+							^output[i];
+						} else {
+							newAcc = fn(i, acc.first, v);
+							Pair(acc.first, newAcc);
+						}
+						Pair(
+							newPair.second,
+							Cons(newPair, acc.second)
+						);
+					}).second;
+					output := list2array(outputList);
 				}
 
 				input := a0;

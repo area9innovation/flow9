@@ -383,10 +383,6 @@ class PixiWorkarounds {
 
 			PIXI.TextMetrics.wordWrap = function(text, style, canvas)
 			{
-				if (TextClip.isJapaneseFont(style)) {
-					return text;
-				}
-
 				if (canvas == null) {
 					canvas = PIXI.TextMetrics._canvas;
 				}

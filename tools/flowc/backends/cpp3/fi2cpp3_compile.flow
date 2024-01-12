@@ -35,14 +35,6 @@ fiModule2cpp3(module : FsModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule
 	);
 }
 
-cpp3InlineFunction(lambda: FsLambda, type: FiTypeFunction) -> bool {
-	if (!isEmptySet(fiCollectTypars(type, makeSet()))) true else {
-		if (!fsIsSimple(lambda.body)) false else {
-			fsAstNodesCount(lambda.body) < 9;
-		}
-	}
-}
-
 fsDeclaration2cpp3(decl: FsDeclaration, gctx: Cpp3GlobalContext) -> Maybe<Cpp3CompiledDeclaration> {
 	switch (decl) {
 		FsGlobalVar(name, value, type): {
@@ -108,7 +100,7 @@ fiFunc2cpp3(name: string, lambda: FsLambda, type: FiTypeFunction, gctx0: Cpp3Glo
 	);
 	fun_typars = map(set2array(fiCollectTypars(type, makeSet())), \n -> FiTypeParameter(n));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
-	headerOnly = cpp3InlineFunction(lambda, type);
+	headerOnly = cpp3InlineFunction(name, lambda, type);
 	fun_signature =
 		(if (headerOnly) "inline " else "") + fiType2cpp3(type.returnType, gctx) + " " + 
 		fi2cpp3varname2cpp(name) + fsArgs2cpp(lambda.args, gctx);
@@ -119,6 +111,14 @@ fiFunc2cpp3(name: string, lambda: FsLambda, type: FiTypeFunction, gctx0: Cpp3Glo
 	}
 	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(cpp_fun, gctx.config) + "\n\n";
 	Cpp3CompiledDeclaration(name, headerOnly, "", "", forward_decl, definition, "");
+}
+
+cpp3InlineFunction(name: string, lambda: FsLambda, type: FiTypeFunction) -> bool {
+	if (!isEmptySet(fiCollectTypars(type, makeSet()))) true else {
+		if (!fsIsSimple(lambda.body)) false else {
+			fsAstNodesCount(lambda.body) < 9;
+		}
+	}
 }
 
 fsArgs2cpp(args: [FsVar], gctx: Cpp3GlobalContext) -> string {
@@ -157,7 +157,12 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 			}
 		}
 		FsSwitch(x, sw_type, cases,__,__): {
-			fsSwitch2cpp3(stat, fsExp2cpp3(x, gctx) + "->typeId()/*" + fiType2cpp3(fsType(x), gctx) + "*/", gctx);
+			type_id = switch (x.var.type) {
+				FiTypeName(__,__): fsExp2cpp3(x, gctx) + "->structId()";
+				FiTypeFlow(): fsExp2cpp3(x, gctx) + "->typeId()";
+				default: fail0("switch on a wrong type: " + pretFiType(x.var.type));
+			}
+			fsSwitch2cpp3(stat, type_id + "/*" + fiType2cpp3(fsType(x), gctx) + "*/", gctx);
 		}
 		FsLet(v, e, s,__,__): {
 			if (v.name == "__") {
@@ -480,12 +485,12 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 		}
 		FcNotPrim(): "!" + e2k(e.es[0]);
 
-		FcEqPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") == 0)";
-		FcNePrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") != 0)";
-		FcLePrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") <= 0)";
-		FcGePrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") >= 0)";
-		FcLtPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") < 0)";
-		FcGtPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") > 0)";
+		FcEqPrim():  fsCompare2cpp3(e, gctx);
+		FcNePrim():  fsCompare2cpp3(e, gctx);
+		FcLePrim():  fsCompare2cpp3(e, gctx);
+		FcGePrim():  fsCompare2cpp3(e, gctx);
+		FcLtPrim():  fsCompare2cpp3(e, gctx);
+		FcGtPrim():  fsCompare2cpp3(e, gctx);
 
 		FcPlusPrim():  {
 			plus_args = fsCallPrimMulty2cpp3(FcPlusPrim(), e.es, gctx, []);
@@ -601,6 +606,36 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 						fail0("accees to field '" + field_name + "' of non-struct: " + fs2s(e.es[0]) + " of type: " + prettyFiType(dummyPretty, arg_type, makeSet()));
 					}
 				}
+			}
+		}
+	}
+}
+
+fsCompare2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
+	e2k = \x -> fsExp2cpp3(x, gctx);
+	arg_type = if (length(e.es) > 0) fsType(e.es[0]) else FiTypeVoid();
+	scalar_comparison = \ -> switch (e.op) {
+		FcEqPrim():  "(" + e2k(e.es[0]) + " == " + e2k(e.es[1]) + ")";
+		FcNePrim():  "(" + e2k(e.es[0]) + " != " + e2k(e.es[1]) + ")";
+		FcLePrim():  "(" + e2k(e.es[0]) + " <= " + e2k(e.es[1]) + ")";
+		FcGePrim():  "(" + e2k(e.es[0]) + " >= " + e2k(e.es[1]) + ")";
+		FcLtPrim():  "(" + e2k(e.es[0]) + " < "  + e2k(e.es[1]) + ")";
+		FcGtPrim():  "(" + e2k(e.es[0]) + " > "  + e2k(e.es[1]) + ")";
+		default: fail0("not comparison: " + toString(e.op));
+	}
+	switch (arg_type) {
+		FiTypeBool(): scalar_comparison();
+		FiTypeInt(): scalar_comparison();
+		FiTypeDouble(): scalar_comparison();
+		default: {
+			switch (e.op) {
+				FcEqPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") == 0)";
+				FcNePrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") != 0)";
+				FcLePrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") <= 0)";
+				FcGePrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") >= 0)";
+				FcLtPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") < 0)";
+				FcGtPrim():  "(compare<" + fiType2cpp3(arg_type, gctx) + ">(" + e2k(e.es[0]) + ", " + e2k(e.es[1]) + ") > 0)";
+				default: fail0("not comparison: " + toString(e.op));
 			}
 		}
 	}
