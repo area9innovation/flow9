@@ -32,6 +32,9 @@ export {
 
 	fsVarIsUsedInStat(v: string, s: FsStat) -> bool;
 	fsVarIsUsedInExp(v: string, e: FsExp) -> bool;
+
+	fsMergeFsMem(x: FsMem, y: FsMem) -> FsMem;
+	fsUpdateFsMem(x: FsMem, v: FsVar, m2: FsVarMem) -> FsMem;
 }
 
 fsType(x: FsAll) -> FiType {
@@ -46,7 +49,7 @@ fsType(x: FsAll) -> FiType {
 		FsAssign(__,__,__,__,__):        FiTypeVoid();
 		FsIncRc(__,__,__,__):            FiTypeVoid();
 		FsDecRc(__,__,__,__):            FiTypeVoid();
-		FsTailCall(__,__):               FiTypeVoid();
+		FsTailCall(__,__,__):            FiTypeVoid();
 		FsClosure(__,lambda,__,__):      lambda.type;
 		FsLambda(__,__,__, type,__):     type;
 		FsCall(__,__, type,__):          type;
@@ -112,8 +115,8 @@ fs2string(s: FsAll, depth: int) -> string {
 			FsRet(e,__,__): {
 				"return " + x2s(e) + ";";
 			}
-			FsTailCall(id,__): {
-				"tailcall;";
+			FsTailCall(args, id,__): {
+				"tailcall(" + superglue(args, x2s, ", ") + ");";
 			}
 			FsAssign(to, what, direct, __,__): {
 				if (direct) {
@@ -244,8 +247,8 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 			FsDecRc(v2,__,__,__): v1.name == v2.name;
 			default: false;
 		}
-		FsTailCall(__,__): switch (y) {
-			FsTailCall(__,__): true;
+		FsTailCall(__,__,__): switch (y) {
+			FsTailCall(__,__,__): true;
 			default: false;
 		}
 		FsClosure(vars1, lambda1,__,__): switch (y) {
@@ -382,7 +385,7 @@ fsHasTailCall(s: FsStat) -> bool {
 					exists(cases, \c -> fsHasTailCall(c.body));
 				}
 				FsRet(e,__,__): false;
-				FsTailCall(__,__): true;
+				FsTailCall(__,__,__): true;
 				FsLet(__,__, s1,__,__): {
 					fsHasTailCall(s1);
 				}
@@ -528,8 +531,8 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 			FsDecRc(v2,__,__,__): if (v1.name != v2.name) arrayPush(acc, Pair(x, y)) else acc;
 			default: arrayPush(acc, Pair(x, y));
 		}
-		FsTailCall(__,__): switch (y) {
-			FsTailCall(__,__): acc;
+		FsTailCall(__,__,__): switch (y) {
+			FsTailCall(__,__,__): acc;
 			default: arrayPush(acc, Pair(x, y));
 		}
 		FsClosure(vs1, l1,__,__): switch (y) {
@@ -662,7 +665,7 @@ fsStatSetId(s: FsStat, x: int) -> FsStat {
 		FsInlineStat(__,__,__,__,__): FsInlineStat(s with id = x);
 		FsWrapExp(__,__,__):          FsWrapExp(s with id = x);
 		FsRet(__,__,__):              FsRet(s with id = x);
-		FsTailCall(__,__):            FsTailCall(s with id = x);
+		FsTailCall(__,__,__):         FsTailCall(s with id = x);
 		FsAssign(__,__,__,__,__):     FsAssign(s with id = x);
 		FsLet(__,__,__,__,__):        FsLet(s with id = x);
 		FsFor(__,__,__,__,__,__):     FsFor(s with id = x);
@@ -739,7 +742,7 @@ fsSetNext(x: FsStat, n: FsStat) -> FsStat {
 		FsIncRc(__,__,__,__):         FsIncRc(x with next = Some(n));
 		FsDecRc(__,__,__,__):         FsDecRc(x with next = Some(n));
 		FsRet(__,__,__):              FsRet(x with next = Some(n));
-		FsTailCall(__,__):            FsTailCall(x with next = Some(n));
+		FsTailCall(__,__,__):         FsTailCall(x with next = Some(n));
 	}
 }
 
@@ -770,7 +773,7 @@ fsStatFreeVars(s: FsStat, acc: Set<FsVar>, locals: Set<string>) -> Set<FsVar> {
 			fsExpFreeVars(what, fsExpFreeVars(to, acc, locals), locals);
 		FsIncRc(__,__,__,__): acc;
 		FsDecRc(__,__,__,__): acc;
-		FsTailCall(__,__): acc;
+		FsTailCall(__,__,__): acc;
 		FsInlineStat(__,__,__,__,__): acc; // obsolete
 	}
 	switch (s.next) {
@@ -844,4 +847,31 @@ fsVarIsUsedInExp(v: string, e: FsExp) -> bool {
 		FsString(__,__,__): false;
 		FsConst(__,__): false;
 	}
+}
+
+fsMergeFsMem(x: FsMem, y: FsMem) -> FsMem {
+	FsMem(mergeTreeCustom(x.ops, y.ops, \v, m1, m2 ->
+		FsVarMem(
+			m1.inc + m2.inc,
+			eitherMap(m1.dec, \d -> Some(d), m2.dec),
+			m1.inlined + m2.inlined,
+			m1.called + m2.called,
+			m1.last || m2.last
+		)
+	));
+}
+
+fsUpdateFsMem(x: FsMem, v: FsVar, m2: FsVarMem) -> FsMem {
+	FsMem(setTree(x.ops, v, 
+		switch (lookupTree(x.ops, v)) {
+			Some(m1): FsVarMem(
+				m1.inc + m2.inc,
+				eitherMap(m1.dec, \d -> Some(d), m2.dec),
+				m1.inlined + m2.inlined,
+				m1.called + m2.called,
+				m1.last || m2.last
+			);
+			None(): m2;
+		}
+	));
 }
