@@ -14,6 +14,9 @@ fsInlineStat(s: FsStat, names: FiGlobalNames, stat_name: string, debug: bool) ->
 		id;
 	}
 	inlined = fsInlineStatInStat(s, names, new_id, makeTree(), debug);
+	if (debug) {
+		println("RAW INLINED:\n" + fs2s(inlined));
+	}
 	cast(fsRemoveUnusedVars(inlined): FsAll -> FsStat);
 }
 
@@ -21,7 +24,10 @@ fsRemoveUnusedVars(s: FsAll) -> FsAll {
 	fsMap(s, \x -> switch (x) {
 		FsLet(v, e, s1,__,nx): {
 			if (fsVarIsUsedInStat(v.name, s1)) x else {
-				s1
+				switch (nx) {
+					Some(n): fsAppendLast(s1, n);
+					None(): s1;
+				}
 			}
 		}
 		default: x;
@@ -48,7 +54,9 @@ fsInlineStatInStat(s: FsStat, names: FiGlobalNames, new_id: () -> string, locals
 			switch (e1) {
 				FsCall(fn, args, type,__): {
 					if (fn.var.name == "fold") {
-						fsInlineFold(v, args[0], args[1], args[2], s1.s, names, new_id, locals, debug);
+						fsInlineFoldi(s1, args[0], args[1], args[2], false, names, new_id, locals, debug);
+					} else if (fn.var.name == "foldi") {
+						fsInlineFoldi(s1, args[0], args[1], args[2], true, names, new_id, locals, debug);
 					} else s1;
 				}
 				default: s1;
@@ -92,7 +100,7 @@ fsInlineStatInStat(s: FsStat, names: FiGlobalNames, new_id: () -> string, locals
 		None(): s1;
 	}
 }
-
+/*
 fsInlineFold(out_var: FsVar, arr: FsExp, init: FsExp, fn: FsExp, s1: FsStat, names: FiGlobalNames, new_id: () -> string, locals: Tree<string, FsExp>, debug: bool) -> FsStat {
 	do_inlining = \fold_fn: FsClosure -> {
 		arr_var = cast(arr: FsExp -> FsVarUse);
@@ -129,6 +137,88 @@ fsInlineFold(out_var: FsVar, arr: FsExp, init: FsExp, fn: FsExp, s1: FsStat, nam
 			),
 			-1, None()
 		);
+	}
+	switch (fn) {
+		FsVarUse(fn_var,__,__): {
+			switch (lookupTree(locals, fn_var.name)) {
+				Some(fold_fn): {
+					switch (fold_fn) {
+						FsClosure(__,__,__,__): do_inlining(fold_fn);
+						default: s1;
+					}
+				}
+				None(): s1;
+			}
+		}
+		FsClosure(__,__,__,__): do_inlining(fn);
+		default: s1;
+	}
+}
+*/
+fsInlineFoldi(
+	s1: FsLet, arr: FsExp, init: FsExp, fn: FsExp, is_foldi: bool,
+	names: FiGlobalNames, new_id: () -> string, locals: Tree<string, FsExp>, debug: bool
+) -> FsStat {
+	do_inlining = \fold_fn: FsClosure -> {
+		arr_var = cast(arr: FsExp -> FsVarUse);
+		arr_type = fiDearrayType(fsType(arr_var));
+		fold_var_name = fiMakeNewVar("__fold", new_id(), makeTree(), names);
+		fold_var = FsVar(fold_var_name, arr_type);
+		index_var = FsVar(fold_var_name + "_i", FiTypeInt());
+		rename_var = if (is_foldi) {
+			\v: FsVar -> if (v.name == fold_fn.lambda.args[1].name) {
+				s1.var;
+			} else if (v.name == fold_fn.lambda.args[2].name) {
+				fold_var;
+			} else if (v.name == fold_fn.lambda.args[0].name) {
+				index_var;
+			} else {
+				v;
+			}
+		} else {
+			\v: FsVar -> if (v.name == fold_fn.lambda.args[0].name) {
+				s1.var;
+			} else if (v.name == fold_fn.lambda.args[1].name) {
+				fold_var;
+			} else {
+				v;
+			}
+		}
+		fn_inlined = cast(fsMap(fold_fn, \x -> switch (x) {
+			FsVarUse(v, info, id): {
+				// Rename acc and x vars from lambda body
+				FsVarUse(x with var = rename_var(v));
+			}
+			FsClosure(__,lambda,__,__): {
+				FsClosure(x with lambda = FsLambda(lambda with closure = map(lambda.closure, rename_var)));
+			}
+			default: x;
+		}, false): FsAll -> FsClosure);
+		cycle_body1 = fsStatReplaceReturnOntoAssign(fn_inlined.lambda.body,
+			FsVarUse(s1.var, FsVarInfo(FsVarIntrinsic(), false, false), -1), false
+		);
+		cycle_body2 = if (!is_foldi) cycle_body1 else {
+			index_var_use = FsVarUse(index_var, FsVarInfo(FsVarIntrinsic(), false, false), -1);
+			fsAppendLast(cycle_body1,
+				FsAssign(
+					index_var_use,
+					FsCallPrim(FcPlusPrim(), [index_var_use, FsConst(FiInt(1, -1), -1)], FiTypeInt(), -1),
+					true, -1, None()
+				)
+			);
+		}
+		for_cycle = FsFor(fold_var, arr_var, cycle_body2,
+			filtermap(fn_inlined.vars, \v ->
+				if (fiTypeIsScalar(v.var.type)) None() else Some(v.var)
+			),
+			-1, Some(s1.s)
+		);
+		out_var_stat = if (!is_foldi) for_cycle else
+			FsLet(index_var, FsConst(FiInt(0, -1), -1),
+				for_cycle,
+				-1, None()
+			);
+		FsLet(s1 with e = init, s = out_var_stat);
 	}
 	switch (fn) {
 		FsVarUse(fn_var,__,__): {
