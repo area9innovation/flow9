@@ -342,8 +342,20 @@ addMaterialFocusId(
 	defaultFocusId = make(-1);
 	focusId = if (importantFocus) const(0) else either(tabOrder, defaultFocusId);
 
+	isFocusWorkaround = !isUrlParameterFalse("material_focus_workaround");
+	
 	en = fand(parent.enabled, enabled);
-	focusEn = fand(en, fand(parent.zorderEnabled, focusEnabled));
+	focusEn0 = fands([en, parent.zorderEnabled, focusEnabled], true);
+	focusEn1 = if(isFocusWorkaround) {
+		ffuse(focusEn0)
+	} else {
+		Pair(const(false), [])
+	}
+	focusEn = if(isFocusWorkaround) {
+		focusEn1.first
+	} else {
+		fand(en, fand(parent.zorderEnabled, focusEnabled))
+	}
 	recEn = fand(parent.recordingEnabled, recordingEnabled);
 
 	focusedB = fand(focusEn, focused);
@@ -405,36 +417,39 @@ addMaterialFocusId(
 
 		content =
 			TConstruct(
-				[
-					\ -> {
-						if (isNone(tabOrder))
-							next(defaultFocusId, getNextFocusId(parent));
+				concat(
+					focusEn1.second,
+					[
+						\ -> {
+							if (isNone(tabOrder))
+								next(defaultFocusId, getNextFocusId(parent));
 
-						disps =
-							[
-								makeSubscribe(fselectWithLast(f.id, FIdentity2()), \id ->
-									changeMaterialFocusId(manager, parent, f, firstOfPair(id), secondOfPair(id)))(),
-								makeSubscribe2(focusedB, \foc -> updateParentFocusId(foc))(),
-								\ -> changeMaterialFocusId(manager, parent, f, fgetValue(f.id), -1)
-							]
-							|> (\disps ->
-								if (isIScriptRecording(manager))
-									arrayPush(disps, initIScriptRecording(manager, f, true))
-								else
-									disps
-							);
+							disps =
+								[
+									makeSubscribe(fselectWithLast(f.id, FIdentity2()), \id ->
+										changeMaterialFocusId(manager, parent, f, firstOfPair(id), secondOfPair(id)))(),
+									makeSubscribe2(focusedB, \foc -> updateParentFocusId(foc))(),
+									\ -> changeMaterialFocusId(manager, parent, f, fgetValue(f.id), -1)
+								]
+								|> (\disps ->
+									if (isIScriptRecording(manager))
+										arrayPush(disps, initIScriptRecording(manager, f, true))
+									else
+										disps
+								);
 
-						if (fgetValue(focusedB)) {
-							updateParentFocusId(true);
-						} else if (getValue(focused)) {
-							next(focused, false);
-						}
+							if (fgetValue(focusedB)) {
+								updateParentFocusId(true);
+							} else if (getValue(focused)) {
+								next(focused, false);
+							}
 
-						\ -> applyall(disps)
-					},
+							\ -> applyall(disps)
+						},
 
-					\ -> \ -> next(f.updateEnabled, false)
-				],
+						\ -> \ -> next(f.updateEnabled, false)
+					]
+				),
 				if (isMaterialLogLevelEnabled(MaterialInfo()) && fgetValue(f.parent.recordingEnabled))
 					TCopySize(
 						fn(f),
@@ -529,8 +544,8 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				eitherMap(iScriptId, \ui -> Some(strReplaces(ui, [" ", "_", "[", "_", "]", "_", ",", "_"])), None()),
 				strReplace(name, " ", "_"),
 				Some(parent),
-				eitherMap(parent.vertical, \v -> Some(if (v == manager.focus) parent else v), None()),
-				eitherMap(parent.horizontal, \h -> Some(if (h == manager.focus) parent else h), None()),
+				eitherMap(parent.vertical, \v -> Some(if (v == manager.focus.focusedId) parent.focusedId else v), None()),
+				eitherMap(parent.horizontal, \h -> Some(if (h == manager.focus.focusedId) parent.focusedId else h), None()),
 				focusedId,
 				make(-1),
 				getValue(focusedId),
@@ -556,8 +571,8 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				behavioursWithFocusedId,
 			);
 
-		maybeApply(vertical, \v -> f.vertical ::= if (v) Some(f) else None());
-		maybeApply(horizontal, \v -> f.horizontal ::= if (v) Some(f) else None());
+		maybeApply(vertical, \v -> f.vertical ::= if (v) Some(f.focusedId) else None());
+		maybeApply(horizontal, \v -> f.horizontal ::= if (v) Some(f.focusedId) else None());
 
 		content =
 			TConstruct(
@@ -720,8 +735,8 @@ nextFocus(manager : MaterialManager, parent : MFocusGroup, inOrder : bool) -> Ma
 			switchMaterialFocus(
 				focus,
 				\f : MFocus -> {
-					if (fgetValue(f.focusEnabled) && fid != currentFocusedId && ((eitherMap(f.parent.vertical, \v -> getValue(v.focusedId) == -1, true) &&
-						eitherMap(f.parent.horizontal, \h -> getValue(h.focusedId) == -1, true)) ||
+					if (fgetValue(f.focusEnabled) && fid != currentFocusedId && ((eitherMap(f.parent.vertical, \v -> getValue(v) == -1, true) &&
+						eitherMap(f.parent.horizontal, \h -> getValue(h) == -1, true)) ||
 						eitherMap(getCurrentFocusedItem(manager), \foc -> foc.name == "MSmallEditDialog" || foc.name == "MAutoComplete", false))) {
 						if (setMFocus(f, true))
 							Some(f)
@@ -1182,13 +1197,13 @@ MComponent2TAccessibilityTabindex(manager : MaterialManager, f : MFocus, accessP
 							eitherMap(
 								f.parent.horizontal,
 								\h ->
-									feq(h.focusedId, -1),
+									feq(h, -1),
 								const(true)
 							),
 							eitherMap(
 								f.parent.vertical,
 								\v ->
-									feq(v.focusedId, -1),
+									feq(v, -1),
 								const(true)
 							)
 						)

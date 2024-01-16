@@ -18,6 +18,7 @@ export {
 		thumbnailSize : Transform<double>,
 		contentViewIconsB : DynamicBehaviour<bool>,
 		onClickB : DynamicBehaviour<(Maybe<?>) -> void>, // None() - backButton, Some(?) - item clicked
+		onDblClickB : DynamicBehaviour<(?) -> void>, // used in FbMultiSelect() mode to open single item
 		onRightClickB : DynamicBehaviour<(itemCP : Maybe<FBContentPath<?>>, clickPos : Point, onUpdate : (Maybe<?>) -> void) -> void>,
 		contentSortTypeB : DynamicBehaviour<FBSortPropertyState<?>>,
 		getDefaultIcon : (isFolder : bool, item : string) -> Material,
@@ -96,6 +97,7 @@ makeFilebrowserState(item2name : (?) -> string, itemProperties : [FBItemProperty
 		const(16.0),
 		make(true),
 		make(nop1),
+		make(nop1),
 		make(nop3),
 		make(FBSortPropertyState(FBItemProperty("", \__, onOK, __ -> onOK(), \__, __ -> 0, \__ -> ""), true)),
 		if (extractStruct(styles, FbFileUseRegisteredIcons(false)).useRegistered)
@@ -144,7 +146,7 @@ prepareAndGetContentUI(
 	lastSlashIdx = strLastIndexOf(curPath, "/");
 	backButtonM = if (lastSlashIdx != -1 && addBackButton && (!endsWith(correctCurPath, state.limitDir))) {
 		contentM = MSelect(state.iconSizeB, \iconSize -> MIcon("reply", [MIconSize(iconSize), MGrey(300)]));
-		Some(fsCustomElement(state, contentM, "..", "", const(false), nop, \-> getValue(state.onClickB)(None()), nop1));
+		Some(fsCustomElement(state, contentM, "..", "", const(false), nop, \-> getValue(state.onClickB)(None()), \-> getValue(state.onClickB)(None()), nop1));
 	} else {
 		None();
 	}
@@ -300,6 +302,7 @@ createItemUI(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, chang
 
 	// We release item click if it is a folder or if the CTRL button is not down
 	onClick = \-> if (itemCP.isFolder || !getValue(either(state.maybeMultiselectB, make(false)))) getValue(state.onClickB)(Some(itemCP.item));
+	onDblClick = \-> if (itemCP.isFolder) getValue(state.onClickB)(Some(itemCP.item)) else getValue(state.onDblClickB)(itemCP.item);
 	onLongClick = \clickPos -> getValue(state.onRightClickB)(Some(itemCP), clickPos, changeItem);
 	onDown = if (itemCP.isFolder) {
 		// after calling onClick is called onDown, but onClick changed a current path and this element destoryed,
@@ -309,7 +312,7 @@ createItemUI(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, chang
 		\-> onDownElementFn(state, fullName);
 	}
 
-	item = 	fsCustomElement(state, fContent, itemCP.filename, tooltip, isSelectedB, onDown, onClick, onLongClick);
+	item = 	fsCustomElement(state, fContent, itemCP.filename, tooltip, isSelectedB, onDown, onClick, onDblClick, onLongClick);
 	
 	MConstruct(
 		[make2Subscribe(renderableB, state.contentViewIconsB, \renderable, showPreview -> {
@@ -330,13 +333,12 @@ fsCustomElement(
 	isSelectedB : Transform<bool>,
 	onDown : () -> void,
 	onClick : () -> void,
+	onDblClick : () -> void,
 	onRightClick : (Point) -> void
 ) -> Material {
-	downB = make(false);
-	hoverB = make(false);
 	onClickB = make(true);
+	onDblClickB = make(true);
 	clickForHoverB = make(false);
-	rightClickB = make(false);
 	positionScaleB = make(PositionScale(Point(1., 1.), Point(1., 1.)));
 	boxB = makeWH();
 
@@ -356,7 +358,6 @@ fsCustomElement(
 				if (^__dblClickCatch) {
 					//println("dblClickCatch released");
 					__dblClickCatch := false;
-
 				}
 			});
 		}
@@ -375,40 +376,51 @@ fsCustomElement(
 		next(clickForHoverB, true);
 	}
 
+	onDblClick2 = \-> {
+		onDblClick();
+		next(clickForHoverB, true);
+	}
+
 	onDown2 = \flag -> {
 		if (flag && !getValue(clickForHoverB)) onDown();
 		next(clickForHoverB, false);
 	}
 
-	MSelect(state.iconSizeB, \iconSize -> {
-		MSelect(state.contentViewIconsB, \contentViewIcons -> {
+	TEmpty()
+	|> (\tempty -> \hoverB -> MSelect2(state.iconSizeB, state.contentViewIconsB,
+		\iconSize, contentViewIcons -> {
 			// calculating of text length which size will be corresponds to the element icon width
 			// min text length is 4
 			maxTextLength = if (contentViewIcons) {
 				if (iconSize < 31.0) 4
 				else 3 + (trunc(iconSize) - 30) / 5;
-			} else 255;
-
-			(if (contentViewIcons) {
-				MLines2(
-					MZoomToFill(contentM, TFixed(iconSize, iconSize), true),
-					MFixSize(
-						MCenterXIn(
-							MSelect(hoverB, \ishovered ->
-								MText(ellipsis(text, maxTextLength), [if (ishovered) MPurple(500) else MBlack()]),
-							),
-							TFixed(iconSize, 23.0)
-						),
-						TFixed(iconSize, 23.0)
-					)
-				)
 			} else {
-				MColsYCenter([
-					MZoomToFill(contentM, TSizedWidthHeight(state.thumbnailSize, state.thumbnailSize), true),
-					TFixed(5.0, 0.0),
-					MSelect(hoverB, \ishovered -> MText(text, [if (ishovered) MPurple(500) else MBlack()])),
-				])
-			})
+				255;
+			}
+
+			TFixed(iconSize, 23.0)
+			|> (\fixed23 ->
+				if (contentViewIcons) {
+					MLines2(
+						MZoomToFill(contentM, TFixed(iconSize, iconSize), true),
+						MFixSize(
+							MCenterXIn(
+								MSelect(hoverB, \isHovered ->
+									MText(ellipsis(text, maxTextLength), [if (isHovered) MPurple(500) else MBlack()]),
+								),
+								fixed23
+							),
+							fixed23
+						)
+					)
+				} else {
+					MColsYCenter([
+						MZoomToFill(contentM, TSizedWidthHeight(state.thumbnailSize, state.thumbnailSize), true),
+						TFixed(5.0, 0.0),
+						MSelect(hoverB, \isHovered -> MText(text, [if (isHovered) MPurple(500) else MBlack()])),
+					])
+				}
+			)
 			|> (\m -> MBorder(6.0, 3.0, 6.0, 3.0, m))
 			|> (\content ->
 				MGroup([
@@ -418,7 +430,7 @@ fsCustomElement(
 							TRounded(4.0, 4.0, 4.0, 4.0, [Fill(lightBlue), FillOpacity(0.7)], TFillXY()),
 							MSizeOf(content)
 						),
-						TEmpty()
+						tempty
 					),
 					MIf(
 						hoverB,
@@ -426,7 +438,7 @@ fsCustomElement(
 							MFrame(0.0, 4.0, [Stroke(gray), StrokeWidth(0.5)], TFillXY()),
 							MSizeOf(content)
 						),
-						TEmpty()
+						tempty
 					),
 					content
 				])
@@ -444,21 +456,23 @@ fsCustomElement(
 						),
 						[]
 					)
-				} else m
+				} else {
+					m;
+				}
 			)
-		})
-	})
-	|> (\m -> MInteractive([TMouseRightDown(rightClickB), TMouseDownGhost(downB), TMouseInside(hoverB, true)], m))
-	|> (\m -> MClickable(m, getFolderFileClick(onClick2)))
-	|> (\m -> MConstruct(
-		[
-			// select an element if: the mouse down on element (not click)
-			\-> subscribe(downB, \isDown -> if (isDown) onDown2(true)),
-			\-> subscribe(rightClickB, \isDown -> if (isDown) { onDown2(true); getFolderFileClick(onRightClick2)(); }),
-			// if element hovered 766 msec - it is the same like onDown
-			\-> subscribe(hoverB, \hovered -> if (hovered) timer(766, \-> onDown2(getValue(hoverB))) else onDown2(false))
-		],
-		m
+	}))
+	|> (\getM : (DynamicBehaviour<bool>) -> Material -> MComponent(
+		[MOnClick(getFolderFileClick(onClick2)), MOnDoubleClick(onDblClick2)],
+		\focus -> MConstruct(
+			[
+				// select an element if: the mouse down on element (not click)
+				\-> subscribe(focus.down, \isDown -> if (isDown) onDown2(true)),
+				\-> subscribe(focus.rightDown, \isDown -> if (isDown) { onDown2(true); getFolderFileClick(onRightClick2)(); }),
+				// if element hovered 766 msec - it is the same like onDown
+				\-> subscribe(focus.hover, \hovered -> if (hovered) timer(766, \-> onDown2(getValue(focus.hover))) else onDown2(false))
+			],
+			getM(focus.hover)
+		)
 	))
 	//|> (\m -> MGroup2(m, MCheckBox(TEmpty(), make(false), [MIconButtonBorder(4.), MCircleBackground(MGrey(400), 32.)])))
 	|> (\m -> MSelect(state.contentViewIconsB, \contentViewIcons -> if (!contentViewIcons) MCols2(m, TFillX()) else m))

@@ -1,0 +1,92 @@
+import string;
+import ds/tree;
+import sys/concurrent;
+import math/stringmath;
+import ds/concur_hashmap;
+import net/url_parameter;
+
+TestConcurOp<?, ??> ::= TestConcurAdd<?, ??>, TestConcurRemove<?>, TestConcurLookup<?>;
+	TestConcurAdd(k: ?, v: ??); TestConcurRemove(k: ?); TestConcurLookup(k: ?);
+
+
+testConcurHashmap(m: ConcurHashMap<?, ??>, ops: [TestConcurOp], determ: bool) -> void {
+	concurrent(true, map(ops, \op -> \ ->
+		switch (op) {
+			TestConcurAdd(k, v): setConcurHashMap(m, k, v);
+			TestConcurRemove(k): removeConcurHashMap(m, k);
+			TestConcurLookup(k): if (!determ) println(lookupConcurHashMap(m, k));
+		}
+	));
+	{}
+}
+
+main() {
+	determ = isUrlParameterTrue("determ");
+	start1 = timestamp();
+	tree = pairs2tree(generate(0, 1000,\i -> Pair("a" + i2s(i), i * 2 + 1)));
+	println("tree is done in: " + d2st((timestamp() - start1) / 1000.0, 2) + " s.");
+	start2 = timestamp();
+	res = concurrent(true, generate(0, 1000, \i -> \-> {
+		//println("Result of: \"a\"" + i2s(i) + " = " + i2s(lookupTreeDef(tree, "a" + i2s(i), -1)));
+		//println("Result of: \"b\"" + i2s(i) + " = " + i2s(lookupTreeDef(tree, "b" + i2s(i), -1)));
+		th_id = getThreadId();
+		if (!determ) {
+			println("thread id: " + th_id + " => " + i2s(s2i(th_id)));
+		}
+		//setConcurrentHashMap(thread_ids, s2i())
+		lookupTreeDef(tree, "a" + i2s(i), -1);
+	}));
+	println("concurrent is done in: " + d2st((timestamp() - start2) / 1000.0, 2) + " s.");
+	show_ind = \i -> println("Result of: a" + i2s(i) + " = " + i2s(res[i]));
+	show_ind(0);
+	show_ind(100);
+	show_ind(999);
+	test_synctonized = \n -> {
+		println("Tesing sync counter for n=" + i2s(n) + "...");
+		counter = ref 0;
+		add_int = synchronizedUnaryFn(counter, \x -> { counter := ^counter + x; ^counter });
+		concurrent(true, generate(0, n, \__-> \-> add_int(1)));
+		println("Synchronized counter: " + i2s(^counter) + " (must be " + i2s(n) +")");
+		counter := 0;
+		concurrent(true, generate(0, n, \__-> \-> counter := ^counter + 1));
+		println("UN synchronized counter: " + (if (!determ) i2s(^counter) else "<..?..>") + " (may NOT be " + i2s(n) +")");
+	}
+	test_synctonized(100);
+	test_synctonized(1000);
+	test_synctonized(10000);
+	//test_synctonized(100000);
+
+	random_int = \m -> {
+		cast(random() * i2d(m) * 2.0 - i2d(m) : double -> int);
+	}
+	random_string = \ -> {
+		len = cast(random() * 20.0 : double -> int) + 1;
+		symbs = arrayRepeatDeferred(\ -> 
+			33 + cast(cast((126 - 33) : int -> double) * random() : double -> int),
+			len
+		);
+		fold(symbs, "", \acc, code -> acc + fromCharCode(code))
+	}
+	test_concur_hashmap = \n -> {
+		println("Tesing ConcurHashMap for n=" + i2s(n) + "...");
+		ops1 = generate(0, n, \i -> {
+			choice = random();
+			if (choice < 0.8) {
+				TestConcurAdd(random_int(n), random_int(n));
+			} else if (choice < 0.9) {
+				TestConcurRemove(random_int(n));
+			} else {
+				TestConcurLookup(random_int(n));
+			}
+		});
+		m1 = makeConcurHashMap(idfn);
+		testConcurHashmap(m1, ops1, determ);
+	}
+	test_concur_hashmap(100);
+	test_concur_hashmap(1000);
+	test_concur_hashmap(10000);
+	//test_concur_hashmap(100000);
+
+	println("TEST FINISHED");
+	quit(0);
+}

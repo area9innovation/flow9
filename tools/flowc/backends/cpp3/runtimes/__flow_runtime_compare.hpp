@@ -52,7 +52,7 @@ inline Int compare(T v1, T v2) {
 	} else if constexpr (is_struct_v<T>) {
 		return v1->compare(v2);
 	} else if constexpr (is_union_v<T>) {
-		return v1->compareWithFlow(v2);
+		return v1->compare(v2);
 	} else if constexpr (is_flow_ancestor_v<T>) {
 		return flowCompare(v1, v2);
 	} else {

@@ -90,13 +90,17 @@ struct Str : public Union {
 		return getFlow(field_idx); 
 	}
 
-	Int compareWithFlow(Flow* v) override {
-		Int c = flow::compare<TypeId>(TYPE, v->typeId());
+	// Union virtual methods
+	Int compare(Union* u) override {
+		Int c = flow::compare<TypeId>(TYPE, u->structId());
 		if (c != 0) {
 			return c;
 		} else {
-			return compare(static_cast<Str*>(v));
+			return compare<0>(static_cast<Str*>(u));
 		}
+	}
+	Union* clone() override {
+		return flow::clone<Str*>(this);
 	}
 
 	// specific methods
@@ -117,7 +121,7 @@ struct Str : public Union {
 	}
 	template<Int i>
 	inline void setRc1(typename std::tuple_element_t<i, Fields> v) {
-		set<i>(v);
+		assignRc<typename std::tuple_element_t<i, Fields>>(std::get<i>(fields), v);
 	}
 	template<Int i>
 	inline typename std::tuple_element_t<i, Fields> get() {
@@ -125,10 +129,10 @@ struct Str : public Union {
 	}
 	template<Int i>
 	inline void set(typename std::tuple_element_t<i, Fields> v) {
-		assignRc<typename std::tuple_element_t<i, Fields>>(std::get<i>(fields), v);
+		std::get<i>(fields) = v;
 	}
 
-	Int compare(Str* s) {
+	inline Int compare(Str* s) {
 		return compare<0>(s);
 	}
 	void toString(string& str) {
@@ -202,7 +206,7 @@ struct Str : public Union {
 	inline Flow* toFlow() { return FStr::make<S>(this); }
 */
 protected:
-	Str(Fs... fs): fields(fs...) { }
+	Str(Fs... fs): Union(Id), fields(fs...) { }
 private:
 	template<typename S>
 	static S makeSingleton() {
