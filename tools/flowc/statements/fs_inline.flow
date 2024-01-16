@@ -48,49 +48,7 @@ fsInlineStatInStat(s: FsStat, names: FiGlobalNames, new_id: () -> string, locals
 			switch (e1) {
 				FsCall(fn, args, type,__): {
 					if (fn.var.name == "fold") {
-						arg_2 = args[2];
-						switch (arg_2) {
-							FsVarUse(fn_var,__,__): {
-								switch (lookupTree(locals, fn_var.name)) {
-									Some(fold_fn): {
-										switch (fold_fn) {
-											FsClosure(__,__,__,__): {
-												fold_var = fiMakeNewVar("__fold", new_id(), makeTree(), names);
-												arr_type = fiDearrayType(fsType(args[0]));
-												arr_var = args[0];
-												switch (arr_var) {
-													FsVarUse(__,__,__): {
-														fsInlineFold(v,
-															FsVar(fold_var, arr_type),
-															arr_var, args[1], fold_fn, s1.s, debug
-														);
-													}
-													default: fail0("non-scalar argument must be a variable, got: " + fs2s(args[0]));
-												}
-											}
-											default: s1;
-										}
-									}
-									None(): s1;
-								}
-							}
-							FsClosure(__,__,__,__): {
-								fold_fn = arg_2;
-								fold_var = fiMakeNewVar("__fold", new_id(), makeTree(), names);
-								arr_type = fiDearrayType(fsType(args[0]));
-								arr_var = args[0];
-								switch (arr_var) {
-									FsVarUse(__,__,__): {
-										fsInlineFold(v,
-											FsVar(fold_var, arr_type),
-											arr_var, args[1], fold_fn, s1.s, debug
-										);
-									}
-									default: fail0("non-scalar argument must be a variable, got: " + fs2s(args[0]));
-								}
-							}
-							default: s1;
-						}
+						fsInlineFold(v, args[0], args[1], args[2], s1.s, names, new_id, locals, debug);
 					} else s1;
 				}
 				default: s1;
@@ -135,36 +93,56 @@ fsInlineStatInStat(s: FsStat, names: FiGlobalNames, new_id: () -> string, locals
 	}
 }
 
-fsInlineFold(out_var: FsVar, fold_var: FsVar, arr_var: FsVarUse, init: FsExp, fn: FsClosure, s1: FsStat, debug: bool) -> FsStat {
-	lambda_acc = fn.lambda.args[0].name;
-	lambda_iter = fn.lambda.args[1].name;
-	rename_var = \v -> if (v.name == lambda_acc) {
-		out_var;
-	} else if (v.name == lambda_iter) {
-		fold_var;
-	} else {
-		v;
+fsInlineFold(out_var: FsVar, arr: FsExp, init: FsExp, fn: FsExp, s1: FsStat, names: FiGlobalNames, new_id: () -> string, locals: Tree<string, FsExp>, debug: bool) -> FsStat {
+	do_inlining = \fold_fn: FsClosure -> {
+		arr_var = cast(arr: FsExp -> FsVarUse);
+		arr_type = fiDearrayType(fsType(arr_var));
+		fold_var = FsVar(fiMakeNewVar("__fold", new_id(), makeTree(), names), arr_type);
+		lambda_acc = fold_fn.lambda.args[0].name;
+		lambda_iter = fold_fn.lambda.args[1].name;
+		rename_var = \v: FsVar -> if (v.name == lambda_acc) {
+			out_var;
+		} else if (v.name == lambda_iter) {
+			fold_var;
+		} else {
+			v;
+		}
+		fn_inlined = cast(fsMap(fold_fn, \x -> switch (x) {
+			FsVarUse(v, info, id): {
+				// Rename acc and x vars from lambda body
+				FsVarUse(x with var = rename_var(v));
+			}
+			FsClosure(__,lambda,__,__): {
+				FsClosure(x with lambda = FsLambda(lambda with closure = map(lambda.closure, rename_var)));
+			}
+			default: x;
+		}, false): FsAll -> FsClosure);
+		FsLet(out_var, init,
+			FsFor(fold_var, arr_var,
+				fsStatReplaceReturnOntoAssign(fn_inlined.lambda.body,
+					FsVarUse(out_var, FsVarInfo(FsVarIntrinsic(), false, false), -1), false
+				),
+				filtermap(fn_inlined.vars, \v ->
+					if (fiTypeIsScalar(v.var.type)) None() else Some(v.var)
+				),
+				-1, Some(s1)
+			),
+			-1, None()
+		);
 	}
-	fn_inlined = cast(fsMap(fn, \x -> switch (x) {
-		FsVarUse(v, info, id): {
-			// Rename acc and x vars from lambda body
-			FsVarUse(x with var = rename_var(v));
+	switch (fn) {
+		FsVarUse(fn_var,__,__): {
+			switch (lookupTree(locals, fn_var.name)) {
+				Some(fold_fn): {
+					switch (fold_fn) {
+						FsClosure(__,__,__,__): do_inlining(fold_fn);
+						default: s1;
+					}
+				}
+				None(): s1;
+			}
 		}
-		FsClosure(__,lambda,__,__): {
-			FsClosure(x with lambda = FsLambda(lambda with closure = map(lambda.closure, rename_var)));
-		}
-		default: x;
-	}, false): FsAll -> FsClosure);
-	FsLet(out_var, init,
-		FsFor(fold_var, arr_var,
-			fsStatReplaceReturnOntoAssign(fn_inlined.lambda.body,
-				FsVarUse(out_var, FsVarInfo(FsVarIntrinsic(), false, false), -1), false
-			),
-			filtermap(fn_inlined.vars, \v ->
-				if (fiTypeIsScalar(v.var.type)) None() else Some(v.var)
-			),
-			-1, Some(s1)
-		),
-		-1, None()
-	);
+		FsClosure(__,__,__,__): do_inlining(fn);
+		default: s1;
+	}
 }
