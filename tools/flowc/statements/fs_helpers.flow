@@ -12,6 +12,7 @@ export {
 	fsHasTailCall(s: FsStat) -> bool;
 
 	fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVarUse, direct: bool) -> FsStat;
+	fsStatTransformReturn(s: FsStat, transform: (FsExp) -> FsStat) -> FsStat;
 
 	fsExpSetId(e: FsExp, x: int) -> FsExp;
 	fsStatSetId(s: FsStat, x: int) -> FsStat;
@@ -393,7 +394,8 @@ fsHasTailCall(s: FsStat) -> bool {
 }
 
 fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVarUse, direct: bool) -> FsStat {
-	s1 = switch (s) {
+	fsStatTransformReturn(s, \e -> FsAssign(v, e, direct, -1, None()));
+	/*s1 = switch (s) {
 		FsRet(e, id,__): {
 			FsAssign(v, e, direct, -1, None());
 		}
@@ -415,7 +417,33 @@ fsStatReplaceReturnOntoAssign(s: FsStat, v: FsVarUse, direct: bool) -> FsStat {
 		}
 		default: s;
 	}
-	eitherMap(s.next, \n -> fsSetNext(s1, fsStatReplaceReturnOntoAssign(n, v, direct)), s1);
+	eitherMap(s.next, \n -> fsSetNext(s1, fsStatReplaceReturnOntoAssign(n, v, direct)), s1);*/
+}
+
+fsStatTransformReturn(s: FsStat, transform: (FsExp) -> FsStat) -> FsStat {
+	s1 = switch (s) {
+		FsRet(e,__,__): {
+			transform(e);
+		}
+		FsSwitch(__,__, cs,__,__): {
+			FsSwitch(s with
+				cases = map(cs, \c -> FsCase(c with body = fsStatTransformReturn(c.body, transform)))
+			);
+		}
+		FsIf(__, s1, s2,__,__): {
+			FsIf(s with
+				s1 = fsStatTransformReturn(s1, transform),
+				s2 = fsStatTransformReturn(s2, transform)
+			);
+		}
+		FsLet(__,__, s1,__,__): {
+			FsLet(s with
+				s = fsStatTransformReturn(s1, transform)
+			);
+		}
+		default: s;
+	}
+	eitherMap(s.next, \n -> fsSetNext(s1, fsStatTransformReturn(n, transform)), s1);
 }
 
 fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAll>] {
