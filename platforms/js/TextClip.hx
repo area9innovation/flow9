@@ -515,7 +515,7 @@ class TextClip extends NativeWidgetClip {
 				if (textBackgroundWidget != null) {
 					textBackgroundWidget.innerHTML = this.contentGlyphs.modified;
 				}
-				nativeWidget.style.whiteSpace = "pre-wrap";
+				nativeWidget.style.whiteSpace = (Native.isNew && !style.wordWrap) ? "pre" : "pre-wrap";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
