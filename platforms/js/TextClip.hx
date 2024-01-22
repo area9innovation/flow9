@@ -1921,14 +1921,22 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			var textNode = checkTextNodeWidth ? nativeWidget.lastChild : nativeWidget;
 			if (checkTextNodeWidth) {
-				updateTextNodeWidth(textNode, textNodeMetrics);
+				updateTextNodesWidth(untyped nativeWidget.childNodes, textNodeMetrics);
 			}
 			updateTextNodeHeight(textNode, textNodeMetrics);
 		}
 		return textNodeMetrics;
 	}
 
-	private static function updateTextNodeWidth(textNode : js.html.Node, textNodeMetrics) {
+	private static function updateTextNodesWidth(children, textNodeMetrics) {
+		textNodeMetrics.width = 0;
+		textNodeMetrics.updateOffset = true;
+		for (i in 0 ... children.length) {
+			updateTextNodeWidth(children[i], textNodeMetrics);
+		}
+	}
+
+	private static function updateTextNodeWidth(textNode, textNodeMetrics) {
 		var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", "svg");
 		var textElement = Browser.document.createElementNS("http://www.w3.org/2000/svg", "text");
 
@@ -1938,7 +1946,7 @@ class TextClip extends NativeWidgetClip {
 		textElement.setAttribute('font-size', computedStyle.fontSize);
 		textElement.setAttribute('font-style', computedStyle.fontStyle);
 
-		textElement.textContent = textNode.nodeValue;
+		textElement.textContent = textNode.textContent;
 		svg.appendChild(textElement);
 		Browser.document.body.appendChild(svg);
 
@@ -1946,8 +1954,11 @@ class TextClip extends NativeWidgetClip {
 
 		Browser.document.body.removeChild(svg);
 
-		textNodeMetrics.width = bbox.width;
-		textNodeMetrics.x = bbox.x;
+		textNodeMetrics.width += bbox.width;
+		if (textNodeMetrics.updateOffset && (textNode.classList == null || !textNode.classList.contains('baselineWidget'))) {
+			textNodeMetrics.x = bbox.x;
+			textNodeMetrics.updateOffset = false;
+		}
 	}
 
 	private static function updateTextNodeHeight(textNode, textNodeMetrics) {
