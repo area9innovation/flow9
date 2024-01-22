@@ -191,6 +191,10 @@ fs_inlined_operators = pairs2tree([
 		\args -> cast(args[1]: FsExp -> FsVarUse),
 		fsInlineIndexedVoidOp(true, fsInlineIter)
 	)),
+	Pair("find", FsInlineOperator(
+		\args -> cast(args[1]: FsExp -> FsVarUse),
+		fsInlineIndexedLetOp(false, \s, args, closure, __, new_id -> fsInlineFind(s, args, closure, new_id))
+	)),
 ]);
 
 fsInlineIndexedLetOp(is_indexed: bool, inline_op: (FsLet, [FsExp], FsClosure, bool, () -> string) -> FsStat) -> (FsStat, [FsExp], FsClosure, () -> string) -> FsStat {
@@ -506,18 +510,14 @@ fsInlineExistsForall(let: FsLet, args: [FsExp], fn: FsClosure, exists: bool, new
 			Some(
 				FsIf(out_var_use,
 					if (exists) {
-						FsWrapExp(
-							FsCallPrim(FsIntrinsicPrim("break"), [], FiTypeVoid(), -1), -1, None()
-						);
+						FsIntrinsicStat("break", -1, None());
 					} else {
 						FsWrapExp(FsConst(FiVoid(-1), -1), -1, None());
 					},
 					if (exists) {
 						FsWrapExp(FsConst(FiVoid(-1), -1), -1, None());
 					} else {
-						FsWrapExp(
-							FsCallPrim(FsIntrinsicPrim("break"), [], FiTypeVoid(), -1), -1, None()
-						);
+						FsIntrinsicStat("break", -1, None());
 					}, -1, None()
 
 				)
@@ -532,6 +532,54 @@ fsInlineExistsForall(let: FsLet, args: [FsExp], fn: FsClosure, exists: bool, new
 	);
 	FsLet(let with
 		e = if (exists) FsConst(FiBool(false, -1), -1) else FsConst(FiBool(true, -1), -1),
+		s = for_cycle
+	);
+}
+
+fsInlineFind(let: FsLet, args: [FsExp], fn: FsClosure, new_id: () -> string) -> FsLet {
+	arr = args[0];
+	arr_var = cast(arr: FsExp -> FsVarUse);
+	arr_type = fiDearrayType(fsType(arr_var));
+	iter_var_name = new_id();
+	iter_var = FsVar(iter_var_name, arr_type);
+	// find : (a : [?], fn : (?) -> bool) -> Maybe<?>;
+	rename_var = \v -> if (v.name == fn.lambda.args[0].name) iter_var else v;
+	fn_inlined = cast(fsMap(fn, \x -> switch (x) {
+		FsVarUse(v, info, id): {
+			// Rename acc and x vars from lambda body
+			FsVarUse(x with var = rename_var(v));
+		}
+		FsClosure(__,lambda,__,__): {
+			FsClosure(x with lambda = FsLambda(lambda with closure = map(lambda.closure, rename_var)));
+		}
+		default: x;
+	}, false): FsAll -> FsClosure);
+	out_var_use = FsVarUse(let.var, FsVarInfo(FsVarIntrinsic(), false, false), -1);
+	cycle_body = fsStatTransformReturn(fn_inlined.lambda.body,
+		\e -> FsIf(e,
+			FsAssign(
+				out_var_use,
+				FsCallPrim(
+					FsStructPrim("Some", FsMetaInfo(None(), true)),
+					[FsVarUse(iter_var, FsVarInfo(FsVarLocal(), false, false), -1)],
+					FiTypeName("Some", [arr_type]),
+					-1
+				),
+				false, -1,
+				Some(FsIntrinsicStat("break", -1, None()))
+			),
+			FsWrapExp(FsConst(FiVoid(-1), -1), -1, None()),
+			-1, None()
+		)
+	);
+	for_cycle = FsFor(iter_var, arr_var, cycle_body,
+		filtermap(fn_inlined.vars, \v ->
+			if (fiTypeIsScalar(v.var.type)) None() else Some(v.var)
+		),
+		-1, Some(let.s)
+	);
+	FsLet(let with
+		e = FsCallPrim(FsStructPrim("None", FsMetaInfo(None(), true)), [], FiTypeName("None", []), -1),
 		s = for_cycle
 	);
 }
