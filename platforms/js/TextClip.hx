@@ -1919,8 +1919,10 @@ class TextClip extends NativeWidgetClip {
 			textNodeMetrics.height = 0;
 			textNodeMetrics.x = 0;
 		} else {
-			var textNode = nativeWidget.lastChild;
-			updateTextNodeWidth(textNode, textNodeMetrics);
+			var textNode = checkTextNodeWidth ? nativeWidget.lastChild : nativeWidget;
+			if (checkTextNodeWidth) {
+				updateTextNodeWidth(textNode, textNodeMetrics);
+			}
 			updateTextNodeHeight(textNode, textNodeMetrics);
 		}
 		return textNodeMetrics;
