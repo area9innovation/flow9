@@ -105,9 +105,4 @@ private:
 	T val_;
 };
 
-//template<typename T>
-//inline Int compare<Ref<T>*>(Ref<T>* v1, Ref<T>* v2) {
-//	return compare<T>(v1->get(), v2->get());
-//}
-
 }
