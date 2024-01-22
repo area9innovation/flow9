@@ -7,6 +7,12 @@ public final class FastCgiMessage {
     public static final int HEADER_LENGTH = 8;
     public static final int END_REQUEST_BODY_LENGTH = 8;
 
+    public static final byte BEGIN_REQUEST = 1;
+    public static final byte END_REQUEST = 3;
+    public static final int PARAMETERS = 4;
+    public static final byte STDIN = 5;
+    public static final byte STDOUT = 6;
+
     public byte type;
     public int requestId;
     public int contentLength;
@@ -82,7 +88,7 @@ public final class FastCgiMessage {
                 content = new byte[len];
                 System.arraycopy(buffer, offs, content, 0, len);
             }
-            FastCgiMessage message = new FastCgiMessage(FastCgi.STDOUT, requestId);
+            FastCgiMessage message = new FastCgiMessage(STDOUT, requestId);
             message.setContent(content);
             message.write(outputStream);
         }
