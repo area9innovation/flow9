@@ -161,29 +161,37 @@ fsInlineStatsDo(s: FsStat,
 fs_inlined_operators = pairs2tree([
 	Pair("fold", FsInlineOperator(
 		\args -> cast(args[2]: FsExp -> FsVarUse),
-		fsInlineIndexedLetOp(false, fsInlineFold2)
+		fsInlineIndexedLetOp(false, fsInlineFold)
 	)),
 	Pair("foldi", FsInlineOperator(
 		\args -> cast(args[2]: FsExp -> FsVarUse),
-		fsInlineIndexedLetOp(true, fsInlineFold2)
+		fsInlineIndexedLetOp(true, fsInlineFold)
 	)),
 	Pair("map", FsInlineOperator(
 		\args -> cast(args[1]: FsExp -> FsVarUse),
-		fsInlineIndexedLetOp(false, fsInlineMap2)
+		fsInlineIndexedLetOp(false, fsInlineMap)
 	)),
 	Pair("mapi", FsInlineOperator(
 		\args -> cast(args[1]: FsExp -> FsVarUse),
-		fsInlineIndexedLetOp(true, fsInlineMap2)
+		fsInlineIndexedLetOp(true, fsInlineMap)
+	)),
+	Pair("exists", FsInlineOperator(
+		\args -> cast(args[1]: FsExp -> FsVarUse),
+		fsInlineIndexedLetOp(true, fsInlineExistsForall)
+	)),
+	Pair("forall", FsInlineOperator(
+		\args -> cast(args[1]: FsExp -> FsVarUse),
+		fsInlineIndexedLetOp(false, fsInlineExistsForall)
 	)),
 	Pair("iter", FsInlineOperator(
 		\args -> cast(args[1]: FsExp -> FsVarUse),
-		fsInlineIndexedVoidOp(false, fsInlineIter2)
+		fsInlineIndexedVoidOp(false, fsInlineIter)
 	)),
 	Pair("iteri", FsInlineOperator(
 		\args -> cast(args[1]: FsExp -> FsVarUse),
-		fsInlineIndexedVoidOp(true, fsInlineIter2)
+		fsInlineIndexedVoidOp(true, fsInlineIter)
 	)),
-]); 
+]);
 
 fsInlineIndexedLetOp(is_indexed: bool, inline_op: (FsLet, [FsExp], FsClosure, bool, () -> string) -> FsStat) -> (FsStat, [FsExp], FsClosure, () -> string) -> FsStat {
 	\s, args, closure, new_id -> switch (s) {
@@ -232,7 +240,7 @@ fsInlineIndexedVoidOp(is_indexed: bool, inline_op: (FsStat, [FsExp], FsClosure, 
 	}
 }
 
-fsInlineFold2(let: FsLet, args: [FsExp], fold_fn: FsClosure, is_foldi: bool, new_id: () -> string) -> FsLet {
+fsInlineFold(let: FsLet, args: [FsExp], fold_fn: FsClosure, is_foldi: bool, new_id: () -> string) -> FsLet {
 	arr = args[0];
 	init = args[1];
 	arr_var = cast(arr: FsExp -> FsVarUse);
@@ -299,7 +307,7 @@ fsInlineFold2(let: FsLet, args: [FsExp], fold_fn: FsClosure, is_foldi: bool, new
 	FsLet(let with e = init, s = for_cycle2);
 }
 
-fsInlineMap2(let: FsLet, args: [FsExp], map_fn: FsClosure, is_mapi: bool, new_id: () -> string) -> FsStat {
+fsInlineMap(let: FsLet, args: [FsExp], map_fn: FsClosure, is_mapi: bool, new_id: () -> string) -> FsStat {
 	arr = args[0];
 	arr_var = cast(arr: FsExp -> FsVarUse);
 	arr_type = fiDearrayType(fsType(arr_var));
@@ -411,7 +419,7 @@ fsInlineMap2(let: FsLet, args: [FsExp], map_fn: FsClosure, is_mapi: bool, new_id
 	}
 }
 
-fsInlineIter2(host: FsStat, args: [FsExp], iter_fn: FsClosure, is_iteri: bool, new_id: () -> string) -> FsStat {
+fsInlineIter(host: FsStat, args: [FsExp], iter_fn: FsClosure, is_iteri: bool, new_id: () -> string) -> FsStat {
 	arr = args[0];
 	arr_var = cast(arr: FsExp -> FsVarUse);
 	arr_type = fiDearrayType(fsType(arr_var));
@@ -472,6 +480,60 @@ fsInlineIter2(host: FsStat, args: [FsExp], iter_fn: FsClosure, is_iteri: bool, n
 			-1, host.next
 		);
 	}
+}
+
+fsInlineExistsForall(let: FsLet, args: [FsExp], fn: FsClosure, exists: bool, new_id: () -> string) -> FsLet {
+	arr = args[0];
+	arr_var = cast(arr: FsExp -> FsVarUse);
+	arr_type = fiDearrayType(fsType(arr_var));
+	iter_var_name = new_id();
+	iter_var = FsVar(iter_var_name, arr_type);
+	// exists : (a : [?], fn : (?) -> bool) -> bool;
+	rename_var = \v -> if (v.name == fn.lambda.args[0].name) iter_var else v;
+	fn_inlined = cast(fsMap(fn, \x -> switch (x) {
+		FsVarUse(v, info, id): {
+			// Rename acc and x vars from lambda body
+			FsVarUse(x with var = rename_var(v));
+		}
+		FsClosure(__,lambda,__,__): {
+			FsClosure(x with lambda = FsLambda(lambda with closure = map(lambda.closure, rename_var)));
+		}
+		default: x;
+	}, false): FsAll -> FsClosure);
+	out_var_use = FsVarUse(let.var, FsVarInfo(FsVarIntrinsic(), false, false), -1);
+	cycle_body = fsStatTransformReturn(fn_inlined.lambda.body,
+		\e -> FsAssign(out_var_use, e, true, -1, 
+			Some(
+				FsIf(out_var_use,
+					if (exists) {
+						FsWrapExp(
+							FsCallPrim(FsIntrinsicPrim("break"), [], FiTypeVoid(), -1), -1, None()
+						);
+					} else {
+						FsWrapExp(FsConst(FiVoid(-1), -1), -1, None());
+					},
+					if (exists) {
+						FsWrapExp(FsConst(FiVoid(-1), -1), -1, None());
+					} else {
+						FsWrapExp(
+							FsCallPrim(FsIntrinsicPrim("break"), [], FiTypeVoid(), -1), -1, None()
+						);
+					}, -1, None()
+
+				)
+			)
+		)
+	);
+	for_cycle = FsFor(iter_var, arr_var, cycle_body,
+		filtermap(fn_inlined.vars, \v ->
+			if (fiTypeIsScalar(v.var.type)) None() else Some(v.var)
+		),
+		-1, Some(let.s)
+	);
+	FsLet(let with
+		e = if (exists) FsConst(FiBool(false, -1), -1) else FsConst(FiBool(true, -1), -1),
+		s = for_cycle
+	);
 }
 
 fsRemoveUnusedVars(s: FsAll, to_inline: Set<string>) -> FsAll {
