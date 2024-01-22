@@ -3,45 +3,95 @@ import tools/flowc/statements/fs_transform;
 import tools/flowc/incremental/fi_helpers2;
 
 export {
-	fsInlineStat(s: FsStat, decide_to_inline: (FsAll) -> bool, names: FiGlobalNames, stat_name: string, debug: bool) -> FsStat;
+	fsInlineStat(s: FsStat, worth_inlining: (FsAll) -> bool, names: FiGlobalNames, stat_name: string, debug: bool) -> FsStat;
 }
 
-fsInlineStat(s: FsStat, decide_to_inline: (FsAll) -> bool, names: FiGlobalNames, stat_name: string, debug: bool) -> FsStat {
+fsInlineStat(s0: FsStat, worth_inlining: (FsAll) -> bool, names: FiGlobalNames, stat_name: string, debug: bool) -> FsStat {
+	s = fsInlineMarkupLets(s0);
 	tmp_var_counter = ref 0;
 	new_id = \-> {
-		id = i2s(^tmp_var_counter);
 		tmp_var_counter := ^tmp_var_counter + 1;
-		id;
+		"tmp_var_" + i2s(^tmp_var_counter);
 	}
-	inlined = fsInlineStatInStat(s, decide_to_inline, names, new_id, makeTree(), debug);
+	if (debug) {
+		println("TO INLINE:\n" + fs2s(s));
+	}
+	inlined_names = ref makeSet();
+	inlined = fsInlineStatsDo(s, worth_inlining, makeTree(), inlined_names, new_id, debug);
+	if (debug) {
+		println("VARS TO INLINE: [" + strGlue(set2array(^inlined_names), ", ") + "]");
+	}
 	if (debug) {
 		println("RAW INLINED:\n" + fs2s(inlined));
 	}
-	cast(fsRemoveUnusedVars(inlined): FsAll -> FsStat);
+	cast(fsRemoveUnusedVars(inlined, ^inlined_names): FsAll -> FsStat);
 }
 
-fsRemoveUnusedVars(s: FsAll) -> FsAll {
-	fsMap(s, \x -> switch (x) {
-		FsLet(v, e, s1,__,nx): {
-			if (fsVarIsUsedInStat(v.name, s1)) x else {
-				switch (nx) {
-					Some(n): fsAppendLast(s1, n);
-					None(): s1;
+fsInlineMarkupLets(s: FsStat) -> FsStat {
+	id_counter = ref 0;
+	new_id = \-> {
+		id_counter := ^id_counter + 1;
+		^id_counter;
+	}
+	cast(fsMap(s, \x -> switch(x) {
+		FsLet(__,__,__,__,__): FsLet(x with id = new_id());
+		FsRet(__,__,id): FsRet(x with id = new_id());
+		FsWrapExp(__,__,id): FsWrapExp(x with id = new_id());
+		default: x;
+	}, false): FsAll -> FsStat);
+}
+
+fsIsReacheableByLetSeq(s1: FsStat, id: int) -> bool {
+	if (s1.id == id) true else
+	switch (s1) {
+		FsLet(__,__,s,__,__): fsIsReacheableByLetSeq(s, id);
+		default: false;
+	}
+}
+
+FsInlineOperator(
+	fnArg: ([FsExp]) -> FsVarUse,
+	inline: (FsStat, [FsExp], FsClosure, () -> string) -> FsStat
+);
+
+fsInlineStatsDo(s: FsStat,
+	worth_inlining: (FsAll) -> bool,
+	closure_lets: Tree<string, FsLet>,
+	inlined_names: ref Set<string>,
+	new_id: () -> string, debug: bool
+) -> FsStat {
+	try_exp = \x: FsStat, e: FsExp -> switch(e) {
+		FsCall(o, args, __,__): {
+			switch (lookupTree(fs_inlined_operators, o.var.name)) {
+				Some(op): {
+					fn = op.fnArg(args);
+					switch (lookupTree(closure_lets, fn.var.name)) {
+						Some(let): {
+							if (!fsIsReacheableByLetSeq(let, x.id)) {
+								if (debug) {
+									println(i2s(x.id) + " is not reacheable from " + i2s(let.id));
+								}
+								x
+							} else {
+								inlined_names := insertSet(^inlined_names, let.var.name);
+								op.inline(x, args, cast(let.e: FsExp -> FsClosure), new_id)
+							}
+						}
+						None(): x;
+					}
 				}
+				None(): x;
 			}
 		}
 		default: x;
-	}, false);
-}
-
-fsInlineStatInStat(s: FsStat, decide_to_inline: (FsAll) -> bool, names: FiGlobalNames, new_id: () -> string, locals: Tree<string, FsExp>, debug: bool) -> FsStat {
-	s1 = switch (s) {
-		FsLet(v, e, s0,__,__): {
+	}
+	s2 = switch (s) {
+		FsLet(v, e, s0, id,__): {
 			e1 = switch (e) {
-				FsClosure(__,lambda,__,__): {
+				FsClosure(vars, lambda,__,__): {
 					FsClosure(e with
 						lambda = FsLambda(lambda with
-							body = fsInlineStatInStat(lambda.body, decide_to_inline, names, new_id, makeTree(), debug)
+							body = fsInlineStatsDo(lambda.body, worth_inlining, makeTree(), inlined_names, new_id, debug)
 						)
 					);
 				}
@@ -49,149 +99,142 @@ fsInlineStatInStat(s: FsStat, decide_to_inline: (FsAll) -> bool, names: FiGlobal
 			}
 			s1 = FsLet(s with
 				e = e1,
-				s = fsInlineStatInStat(s0, decide_to_inline, names, new_id, setTree(locals, v.name, e1), debug)
+				s = fsInlineStatsDo(s0, worth_inlining,
+					switch (e) {
+						FsClosure(__,lambda,__,__): {
+							if (!worth_inlining(lambda.body)) {
+								if (debug) {
+									println("not worth ninining, id: " + i2s(id));
+								}
+								closure_lets
+							} else {
+								setTree(closure_lets, v.name, s);
+							}
+						}
+						default: closure_lets;
+					},
+					inlined_names, new_id, debug
+				)
 			);
-			switch (e1) {
-				FsCall(fn, args, type,__): {
-					if (fn.var.name == "fold") {
-						eitherMap(fsExtractClosure(args[2], locals, decide_to_inline),
-							\fold_fn -> {
-								if (debug) {
-									println("Decided to inline fold function:\n" + fs2s(fold_fn.lambda.body));
-								}
-								fsInlineFold(s1, args[0], args[1], fold_fn, false,
-								\ -> fiMakeNewVar("__fold", new_id(), makeTree(), names), debug
-							)},
-							s1
-						);
-					} else if (fn.var.name == "foldi") {
-						eitherMap(fsExtractClosure(args[2], locals, decide_to_inline),
-							\foldi_fn -> {
-								if (debug) {
-									println("Decided to inline foldi function:\n" + fs2s(foldi_fn.lambda.body));
-								}
-								fsInlineFold(s1, args[0], args[1], foldi_fn, true,
-								\ -> fiMakeNewVar("__fold", new_id(), makeTree(), names), debug
-							)},
-							s1
-						);
-					} else if (fn.var.name == "map") {
-						eitherMap(fsExtractClosure(args[1], locals, decide_to_inline),
-							\map_fn -> {
-								if (debug) {
-									println("Decided to inline map function:\n" + fs2s(map_fn.lambda.body));
-								}
-								fsInlineMap(s1, args[0], map_fn, false,
-								\ -> fiMakeNewVar("__map", new_id(), makeTree(), names), debug
-							)},
-							s1
-						);
-					} else if (fn.var.name == "mapi") {
-						eitherMap(fsExtractClosure(args[1], locals, decide_to_inline),
-							\mapi_fn -> {
-								if (debug) {
-									println("Decided to inline mapi function:\n" + fs2s(mapi_fn.lambda.body));
-								}
-								fsInlineMap(s1, args[0], mapi_fn, true,
-								\ -> fiMakeNewVar("__map", new_id(), makeTree(), names), debug
-							)},
-							s1
-						);
-					} else {
-						s1;
-					}
-				}
-				default: s1;
-			}
+			try_exp(s1, e1);
 		}
-		FsIf(cond, s1, s2,__,nx): {
+		FsIf(cond, s1, s2,__,__): {
 			FsIf(s with
-				s1 = fsInlineStatInStat(s1, decide_to_inline, names, new_id, locals, debug),
-				s2 = fsInlineStatInStat(s2, decide_to_inline, names, new_id, locals, debug),
+				s1 = fsInlineStatsDo(s1, worth_inlining, closure_lets, inlined_names, new_id, debug),
+				s2 = fsInlineStatsDo(s2, worth_inlining, closure_lets, inlined_names, new_id, debug),
 			);
 		}
 		FsSwitch(__,__,cs,__,nx): {
 			FsSwitch(s with
 				cases = map(cs, \c ->
-					FsCase(c with body = fsInlineStatInStat(c.body, decide_to_inline, names, new_id, locals, debug))
+					FsCase(c with body = fsInlineStatsDo(c.body, worth_inlining, closure_lets, inlined_names, new_id, debug))
 				),
 			);
 		}
 		FsFor(v, arr, s1,__,__,nx): {
 			FsFor(s with
-				s = fsInlineStatInStat(s1, decide_to_inline, names, new_id, locals, debug),
+				s = fsInlineStatsDo(s1, worth_inlining, closure_lets, inlined_names, new_id, debug),
 			);
 		}
 		FsRet(e,__,__): {
-			e1 = switch (e) {
+			switch (e) {
 				FsClosure(__,lambda,__,__): {
-					FsClosure(e with
+					e1 = FsClosure(e with
 						lambda = FsLambda(lambda with
-							body = fsInlineStatInStat(lambda.body, decide_to_inline, names, new_id, makeTree(), debug)
+							body = fsInlineStatsDo(lambda.body, worth_inlining, makeTree(), inlined_names, new_id, debug)
 						)
 					);
+					FsRet(s with e = e1);
 				}
-				default: e;
+				default: try_exp(s, e);
 			}
-			FsRet(s with e = e1);
 		}
-		FsWrapExp(e,__,__): {
-			switch(e) {
-				FsCall(fn, args,__,__): {
-					if (fn.var.name == "iter") {
-						eitherMap(fsExtractClosure(args[1], locals, decide_to_inline),
-							\iter_fn -> {
-								if (debug) {
-									println("Decided to inline iter function:\n" + fs2s(iter_fn.lambda.body));
-								}
-								fsInlineIter(s, args[0], iter_fn, false,
-								\ -> fiMakeNewVar("__iter", new_id(), makeTree(), names), debug
-							)},
-							s
-						);
-					} else if (fn.var.name == "iteri") {
-						eitherMap(fsExtractClosure(args[1], locals, decide_to_inline),
-							\iteri_fn -> {
-								if (debug) {
-									println("Decided to inline iteri function:\n" + fs2s(iteri_fn.lambda.body));
-								}
-								fsInlineIter(s, args[0], iteri_fn, true,
-								\ -> fiMakeNewVar("__iteri", new_id(), makeTree(), names), debug
-							)},
-							s
-						);
-					} else {
-						s;
-					}
-				}
-				default: s;
-			}
+		FsWrapExp(e,__,__): try_exp(s, e);
+		default: s;
+	}
+	switch (s2.next) {
+		Some(nx): fsSetNext(s2, fsInlineStatsDo(nx, worth_inlining, closure_lets, inlined_names, new_id, debug));
+		None(): s2;
+	}
+}
+
+fs_inlined_operators = pairs2tree([
+	Pair("fold", FsInlineOperator(
+		\args -> cast(args[2]: FsExp -> FsVarUse),
+		fsInlineIndexedLetOp(false, fsInlineFold2)
+	)),
+	Pair("foldi", FsInlineOperator(
+		\args -> cast(args[2]: FsExp -> FsVarUse),
+		fsInlineIndexedLetOp(true, fsInlineFold2)
+	)),
+	Pair("map", FsInlineOperator(
+		\args -> cast(args[1]: FsExp -> FsVarUse),
+		fsInlineIndexedLetOp(false, fsInlineMap2)
+	)),
+	Pair("mapi", FsInlineOperator(
+		\args -> cast(args[1]: FsExp -> FsVarUse),
+		fsInlineIndexedLetOp(true, fsInlineMap2)
+	)),
+	Pair("iter", FsInlineOperator(
+		\args -> cast(args[1]: FsExp -> FsVarUse),
+		fsInlineIndexedVoidOp(false, fsInlineIter2)
+	)),
+	Pair("iteri", FsInlineOperator(
+		\args -> cast(args[1]: FsExp -> FsVarUse),
+		fsInlineIndexedVoidOp(true, fsInlineIter2)
+	)),
+]); 
+
+fsInlineIndexedLetOp(is_indexed: bool, inline_op: (FsLet, [FsExp], FsClosure, bool, () -> string) -> FsStat) -> (FsStat, [FsExp], FsClosure, () -> string) -> FsStat {
+	\s, args, closure, new_id -> switch (s) {
+		FsLet(__,__,__,__,__): {
+			inline_op(s, args, closure, is_indexed, new_id);
+		}
+		FsRet(e,__,__): {
+			out_var = FsVar("__ret" + new_id(), fsType(e));
+			inline_op(
+				FsLet(out_var, e,
+					FsRet(FsVarUse(out_var, FsVarInfo(FsVarLocal(), false, false), -1), -1, None()),
+					-1, None()
+				),
+				args, closure, is_indexed, new_id
+			);
+		}
+		FsWrapExp(e,__,nx): {
+			out_var = FsVar("__dummy" + new_id(), fsType(e));
+			inline_op(
+				FsLet(out_var, e,
+					FsRet(FsVarUse(out_var, FsVarInfo(FsVarLocal(), false, false), -1), -1, None()),
+					-1, nx
+				),
+				args, closure, is_indexed, new_id
+			);
 		}
 		default: s;
 	}
-	switch (s1.next) {
-		Some(nx): fsSetNext(s1, fsInlineStatInStat(nx, decide_to_inline, names, new_id, locals, debug));
-		None(): s1;
-	}
 }
 
-fsExtractClosure(fn: FsExp, locals: Tree<string, FsExp>, decide_to_inline: (FsAll) -> bool) -> Maybe<FsClosure> {
-	mfn = switch (fn) {
-		FsVarUse(fn_var,__,__): {
-			maybeBind(lookupTree(locals, fn_var.name),
-				\fn1 -> switch (fn1) {
-					FsClosure(__,__,__,__): Some(fn1);
-					default: None();
-				}
+fsInlineIndexedVoidOp(is_indexed: bool, inline_op: (FsStat, [FsExp], FsClosure, bool, () -> string) -> FsStat) -> (FsStat, [FsExp], FsClosure, () -> string) -> FsStat {
+	\s, args, closure, new_id -> switch (s) {
+		FsLet(__,__,__,__,__): {
+			inline_op(s, args, closure, is_indexed, new_id);
+		}
+		FsRet(__,__,__): {
+			inline_op(
+				fsSetNext(s, FsRet(FsConst(FiVoid(-1), -1), -1, None())),
+				args, closure, is_indexed, new_id
 			);
 		}
-		FsClosure(__,__,__,__): Some(fn);
-		default: None();
+		FsWrapExp(__,__,__): {
+			inline_op(s, args, closure, is_indexed, new_id);
+		}
+		default: s;
 	}
-	maybeBind(mfn, \f -> if (!decide_to_inline(f.lambda.body)) None() else Some(f));
 }
 
-fsInlineFold(s1: FsLet, arr: FsExp, init: FsExp, fold_fn: FsClosure, is_foldi: bool, new_id: () -> string, debug: bool) -> FsStat {
+fsInlineFold2(let: FsLet, args: [FsExp], fold_fn: FsClosure, is_foldi: bool, new_id: () -> string) -> FsLet {
+	arr = args[0];
+	init = args[1];
 	arr_var = cast(arr: FsExp -> FsVarUse);
 	arr_type = fiDearrayType(fsType(arr_var));
 	fold_var_name = new_id();
@@ -200,7 +243,7 @@ fsInlineFold(s1: FsLet, arr: FsExp, init: FsExp, fold_fn: FsClosure, is_foldi: b
 	rename_var = if (is_foldi) {
 		// native foldi : (xs : [?], init : ??, fn : (int, ??, ?)->??) -> ?? = Native.foldi;
 		\v: FsVar -> if (v.name == fold_fn.lambda.args[1].name) {
-			s1.var;
+			let.var;
 		} else if (v.name == fold_fn.lambda.args[2].name) {
 			fold_var;
 		} else if (v.name == fold_fn.lambda.args[0].name) {
@@ -211,7 +254,7 @@ fsInlineFold(s1: FsLet, arr: FsExp, init: FsExp, fold_fn: FsClosure, is_foldi: b
 	} else {
 		// native fold : (xs : [?], init : ??, fn : (??, ?)->??) -> ?? = Native.fold;
 		\v: FsVar -> if (v.name == fold_fn.lambda.args[0].name) {
-			s1.var;
+			let.var;
 		} else if (v.name == fold_fn.lambda.args[1].name) {
 			fold_var;
 		} else {
@@ -228,7 +271,7 @@ fsInlineFold(s1: FsLet, arr: FsExp, init: FsExp, fold_fn: FsClosure, is_foldi: b
 		}
 		default: x;
 	}, false): FsAll -> FsClosure);
-	out_var = FsVarUse(s1.var, FsVarInfo(FsVarIntrinsic(), false, false), -1);
+	out_var = FsVarUse(let.var, FsVarInfo(FsVarIntrinsic(), false, false), -1);
 	cycle_body1 = fsStatTransformReturn(fn_inlined.lambda.body,
 		\e -> FsAssign(out_var, e, true, -1, None())
 	);
@@ -246,25 +289,32 @@ fsInlineFold(s1: FsLet, arr: FsExp, init: FsExp, fold_fn: FsClosure, is_foldi: b
 		filtermap(fn_inlined.vars, \v ->
 			if (fiTypeIsScalar(v.var.type)) None() else Some(v.var)
 		),
-		-1, Some(s1.s)
+		-1, Some(let.s)
 	);
 	for_cycle2 = if (!is_foldi) for_cycle1 else
 		FsLet(index_var, FsConst(FiInt(0, -1), -1),
 			for_cycle1,
 			-1, None()
 		);
-	FsLet(s1 with e = init, s = for_cycle2);
+	FsLet(let with e = init, s = for_cycle2);
 }
 
-fsInlineMap(s1: FsLet, arr: FsExp, map_fn: FsClosure, is_mapi: bool, new_id: () -> string, debug: bool) -> FsStat {
+fsInlineMap2(let: FsLet, args: [FsExp], map_fn: FsClosure, is_mapi: bool, new_id: () -> string) -> FsStat {
+	arr = args[0];
 	arr_var = cast(arr: FsExp -> FsVarUse);
 	arr_type = fiDearrayType(fsType(arr_var));
 	mapped_type = map_fn.lambda.type.returnType;
+	// Count the number of uses of array vatiable. If it's greater then 1,
+	// the special case of inlining make no sense (is erraneous).
+	arr_var_uses = fsFold(let, 0, \acc, x -> switch (x) {
+		FsVarUse(v,__,__): if (v.name == arr_var.var.name) acc + 1 else acc;
+		default: acc;
+	}, true);
 
 	map_var_name = new_id();
 	map_var = FsVar(map_var_name, arr_type);
 	mapped_var = FsVarUse(
-		s1.var,
+		let.var,
 		FsVarInfo(FsVarIntrinsic(), false, false), -1
 	);
 	index_var = FsVar(map_var_name + "_i", FiTypeInt());
@@ -311,14 +361,14 @@ fsInlineMap(s1: FsLet, arr: FsExp, map_fn: FsClosure, is_mapi: bool, new_id: () 
 		filtermap(fn_inlined.vars, \v ->
 			if (fiTypeIsScalar(v.var.type)) None() else Some(v.var)
 		),
-		-1, Some(s1.s)
+		-1, Some(let.s)
 	);
 	for_cycle_general2 = if (!is_mapi) for_cycle_general1 else
 		FsLet(index_var, FsConst(FiInt(0, -1), -1),
 			for_cycle_general1,
 			-1, None()
 		);
-	map_general = FsLet(s1 with
+	map_general = FsLet(let with
 		e = FsCallPrim(
 			FsIntrinsicPrim("vecReserve"),
 			[FsCallPrim(FsIntrinsicPrim("vecLen"), [arr], FiTypeInt(), -1)],
@@ -342,7 +392,7 @@ fsInlineMap(s1: FsLet, arr: FsExp, map_fn: FsClosure, is_mapi: bool, new_id: () 
 		filtermap(fn_inlined.vars, \v ->
 			if (fiTypeIsScalar(v.var.type)) None() else Some(v.var)
 		),
-		-1, Some(s1.s)
+		-1, Some(let.s)
 	);
 	for_cycle_special2 = FsLet(index_var, FsConst(FiInt(0, -1), -1),
 		for_cycle_special1,
@@ -350,18 +400,19 @@ fsInlineMap(s1: FsLet, arr: FsExp, map_fn: FsClosure, is_mapi: bool, new_id: () 
 	);
 	map_special = FsIf(
 		FsCallPrim(FsIntrinsicPrim("isUnitRc"), [arr_var], FiTypeBool(), -1),
-		FsLet(s1.var, arr_var, for_cycle_special2, -1, None()),
+		FsLet(let.var, arr_var, for_cycle_special2, -1, None()),
 		map_general, -1, None()
 	);
 
-	if (fiEqualTypes(arr_type, mapped_type)) {
+	if (fiEqualTypes(arr_type, mapped_type) && arr_var_uses == 1) {
 		map_special;
 	} else {
 		map_general;
 	}
 }
 
-fsInlineIter(s1: FsWrapExp, arr: FsExp, iter_fn: FsClosure, is_iteri: bool, new_id: () -> string, debug: bool) -> FsStat {
+fsInlineIter2(host: FsStat, args: [FsExp], iter_fn: FsClosure, is_iteri: bool, new_id: () -> string) -> FsStat {
+	arr = args[0];
 	arr_var = cast(arr: FsExp -> FsVarUse);
 	arr_type = fiDearrayType(fsType(arr_var));
 	iter_var_name = new_id();
@@ -378,7 +429,7 @@ fsInlineIter(s1: FsWrapExp, arr: FsExp, iter_fn: FsClosure, is_iteri: bool, new_
 		}
 	} else {
 		// native iter : (xs : [?], fn : (?) -> void) -> void = Native.iter;
-		\v: FsVar -> if (v.name == iter_fn.lambda.args[1].name) {
+		\v: FsVar -> if (v.name == iter_fn.lambda.args[0].name) {
 			iter_var;
 		} else {
 			v;
@@ -394,9 +445,12 @@ fsInlineIter(s1: FsWrapExp, arr: FsExp, iter_fn: FsClosure, is_iteri: bool, new_
 		}
 		default: x;
 	}, false): FsAll -> FsClosure);
-	cycle_body = if (!is_iteri) fn_inlined.lambda.body else {
+	cycle_body1 = fsStatTransformReturn(fn_inlined.lambda.body,
+		\e -> FsWrapExp(e, -1, None())
+	);
+	cycle_body2 = if (!is_iteri) cycle_body1 else {
 		index_var_use = FsVarUse(index_var, FsVarInfo(FsVarIntrinsic(), false, false), -1);
-		fsAppendLast(fn_inlined.lambda.body,
+		fsAppendLast(cycle_body1,
 			FsAssign(
 				index_var_use,
 				FsCallPrim(FcPlusPrim(), [index_var_use, FsConst(FiInt(1, -1), -1)], FiTypeInt(), -1),
@@ -404,18 +458,32 @@ fsInlineIter(s1: FsWrapExp, arr: FsExp, iter_fn: FsClosure, is_iteri: bool, new_
 			)
 		);
 	}
-	for_cycle1 = FsFor(iter_var, arr_var, cycle_body,
+	for_cycle1 = FsFor(iter_var, arr_var, cycle_body2,
 		filtermap(fn_inlined.vars, \v ->
 			if (fiTypeIsScalar(v.var.type)) None() else Some(v.var)
 		),
 		-1, None()
 	);
 	if (!is_iteri) {
-		FsFor(for_cycle1 with next = s1.next);
+		FsFor(for_cycle1 with next = host.next);
 	} else {
 		FsLet(index_var, FsConst(FiInt(0, -1), -1),
 			for_cycle1,
-			-1, s1.next
+			-1, host.next
 		);
 	}
+}
+
+fsRemoveUnusedVars(s: FsAll, to_inline: Set<string>) -> FsAll {
+	fsMap(s, \x -> switch (x) {
+		FsLet(v, e, s1,__,nx): {
+			if (fsVarIsUsedInStat(v.name, s1) || !containsSet(to_inline, v.name)) x else {
+				switch (nx) {
+					Some(n): fsAppendLast(s1, n);
+					None(): s1;
+				}
+			}
+		}
+		default: x;
+	}, false);
 }
