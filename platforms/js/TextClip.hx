@@ -713,7 +713,12 @@ class TextClip extends NativeWidgetClip {
 	public static function useHTMLMeasurementJapaneseFont(st) : Bool {
 		if (isMeiryoAvailable) return false;
 		var checkMeyrioFont = function() {
-			var res = Browser.document.fonts.check("10px Meiryo");
+			var res = false;
+			untyped __js__('document.fonts.forEach(v => {
+				if (!res) {
+					res = v.family == "Meiryo";
+				}
+			})');
 			if (res) isMeiryoAvailable = true;
 			return res;
 		}
