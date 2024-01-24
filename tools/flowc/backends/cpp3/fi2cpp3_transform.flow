@@ -5,6 +5,7 @@ import tools/flowc/statements/fs_reuse;
 import tools/flowc/statements/fs_expand;
 import tools/flowc/statements/fi2fs;
 import tools/flowc/statements/fs_module;
+import tools/flowc/statements/fs_inline;
 import tools/flowc/manipulation/pull_statements2;
 
 export {
@@ -125,7 +126,7 @@ fi2cpp3TransformFiExp(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: str
 	maybe_show2 = \fn, msg -> \x -> {
 		e1 = fn(x);
 		if (!debug) e1 else {
-			println(msg + ":\n" + toStringFormatted(e1));
+			println(msg + ":\n" + pretFiExp(e1) + "\nRAW:\n" + toStringFormatted(e1));
 			e1;
 		}
 	}
@@ -133,6 +134,7 @@ fi2cpp3TransformFiExp(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: str
 		println(name + " - EXPRR:\n" + toStringFormatted(e));
 	}
 	start = fi2cpp3StartOperationMessage(gctx.config, 3, "transforming expression", name);
+	inlined_functionals =  buildSet(["fold", "foldi", "map", "mapi", "iter", "iteri", "exists", "forall", "find"]);
 	ret = e
 	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
 	|> maybe_show(\x -> fiInlineHostCalls(x, names), "fiInlineHostCalls")
@@ -153,6 +155,7 @@ fi2cpp3TransformFiExp(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: str
 	|> maybe_show(\x -> fiExpMakeVarsUniqueCompletely(x, names), "fiExpMakeVarsUnique")
 	|> maybe_show(fiLabelAnonymLambdaArgs, "fiLabelAnonymLambdaArgs")
 	|> maybe_show(\x -> fiExtractCallNonScalarExp(x, names), "fiExtractCallNonScalarExp")
+	|> maybe_show(\x -> fiExtractParticularCalls(x, inlined_functionals, names), "fiExtractParticularCalls")
 	|> maybe_show(fiExpChangeAndOr2If, "fiExpChangeAndOr2If")
 	|> maybe_show(fiPullStatementsUp2, "fiPullStatementsUp2")
 	|> maybe_show(fiRemoveRedundantVoids, "fiRemoveRedundantVoids")
@@ -187,20 +190,22 @@ fi2cpp3Transform2FsStat(e: FiExp, gctx: Cpp3GlobalContext, name: string) -> FsSt
 	if (debug) {
 		println("TAICALLED:\n" + fs2s(s2));
 	}
-
-	s3 = fi2cpp3InsertInlines(s2, gctx);
-	if (debug) {
+	s2_1 = fi2cpp3InsertInlines(s2, gctx);
+	s3 = if (getUrlParameter("cpp-inline-stats") == "0") s2_1 else {
+		fsInlineStat(s2_1, fsIsSimple, names, name, debug);
+	}
+	if (debug && getUrlParameter("cpp-inline-stats") != "0") {
 		println("NATIVES INLINED:\n" + fs2s(s3));
 	}
 	start = fi2cpp3StartOperationMessage(gctx.config, 3, "inserting memory operations (Perceus)", name);
 	// Memory: ref-counting operations are inserted
 	s4 = fsPerceus(s3, debug, name);
 	if (debug) {
-		println("PERCEUS:\n" + fs2s(s3));
+		println("PERCEUS:\n" + fs2s(s4));
 	}
 	s5 = fsReuse(s4, debug, name);
 	if (debug) {
-		println("REUSED:\n" + fs2s(s4));
+		println("REUSED:\n" + fs2s(s5));
 	}
 	fi2cpp3EndOperationMessage(gctx.config, 3, "insertion of memory operations (Perceus)", name, start);
 	s5;
@@ -209,19 +214,17 @@ fi2cpp3Transform2FsStat(e: FiExp, gctx: Cpp3GlobalContext, name: string) -> FsSt
 fi2cpp3InsertInlines(e: FsStat, gctx: Cpp3GlobalContext) -> FsStat {
 	cast(fsMap(e, \x -> switch (x) {
 		FsCall(f, args, type, id): {
-			switch (f) {
-				FsVarUse(v,__,__): {
-					switch (lookupTree(gctx.natives, v.name)) {
-						Some(nat): {
-							switch (nat.inline) {
-								Some(inline): FsInline(v.name, inline.def, args, type, id);
-								None(): x;
-							}
+			switch (lookupTree(gctx.natives, f.var.name)) {
+				Some(nat): {
+					if (nat.inlining.def == "") x else {
+						if (nat.inlining.isExp) {
+							FsInlineExp(f.var.name, args, type, id);
+						} else {
+							x
 						}
-						None(): x;
 					}
 				}
-				default: x;
+				None(): x;
 			}
 		}
 		default: x;

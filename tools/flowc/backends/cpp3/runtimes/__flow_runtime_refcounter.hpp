@@ -74,30 +74,10 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 		x->incrementRc(d);
 	}
 }
-/*
-struct dec_rc_promise;
- 
-struct dec_rc_coroutine : std::coroutine_handle<dec_rc_promise> {
-    using promise_type = dec_rc_promise;
-};
- 
-struct dec_rc_promise : std::promise<void>{
-    dec_rc_coroutine get_return_object() { return {}; }
-    std::suspend_always initial_suspend() noexcept { return {}; }
-    std::suspend_always final_suspend() noexcept { return {}; }
-    void return_void() {}
-    void unhandled_exception() {}
-};
-*/ 
 
 template<typename T> inline void decRc(T x) {
 	if constexpr (is_rcbase_ancestor_v<T>) {
 		x->template decrementRc<T>();
-		/*dec_rc_coroutine cr = [](T x) -> dec_rc_coroutine {
-			x->template decrementRc<T>();
-        	co_return;
-    	}(x);
-		cr.resume();*/
 	}
 }
 
@@ -113,11 +93,6 @@ template<typename T> inline void decRcFinish(T x) {
 	if constexpr (is_rcbase_ancestor_v<T>) {
 		if (x) {
 			x->template decrementRcFinish<T>();
-			/*dec_rc_coroutine cr = [](T x) -> dec_rc_coroutine {
-				x->template decrementRcFinish<T>();
-        		co_return;
-    		}(x);
-			cr.resume();*/
 		}
 	}
 }
@@ -126,7 +101,7 @@ template<typename T> inline bool isUnitRc(T x) {
 	if constexpr (is_rcbase_ancestor_v<T>) {
 		return x->isUnit(); 
 	} else {
-		fail("trying to isUnitRc of type: " + type2StdString<T>());
+		return false;
 	}
 }
 

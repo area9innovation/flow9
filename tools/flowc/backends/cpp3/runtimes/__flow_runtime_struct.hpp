@@ -142,7 +142,7 @@ struct Str : public Union {
 		str.append(u")");
 	}
 	template<typename S>
-	void hashCalc(S& h) {
+	inline void hashCalc(S& h) {
 		Hash<S, TypeId>::calc(h, TYPE);
 		hashCalcArgs<0>(h);
 	}
@@ -209,7 +209,7 @@ protected:
 	Str(Fs... fs): Union(Id), fields(fs...) { }
 private:
 	template<typename S>
-	static S makeSingleton() {
+	inline static S makeSingleton() {
 		if constexpr (sizeof...(Fs) == 0) {
 			static std::remove_pointer_t<S> x; x.makeConstantRc(); return &x;
 		} else {
@@ -217,14 +217,14 @@ private:
 		}
 	}
 	template<Int i>
-	void incRcFields() {
+	inline void incRcFields() {
 		if constexpr(i < SIZE) {
 			incRc(std::get<i>(fields));
 			incRcFields<i + 1>();
 		}
 	}
 	template<Int i>
-	void decRcFields() {
+	inline void decRcFields() {
 		if constexpr(i < SIZE) {
 			if constexpr (is_flow_ancestor_v<std::tuple_element_t<i, Fields>>) {
 				if (std::tuple_element_t<i, Fields> v = std::get<i>(fields)) {
@@ -235,7 +235,7 @@ private:
 		}
 	}
 	template<Int i>
-	void resetFields() {
+	inline void resetFields() {
 		if constexpr(i < SIZE) {
 			if constexpr (is_flow_ancestor_v<std::tuple_element_t<i, Fields>>) {
 				std::get<i>(fields) = nullptr;
@@ -244,7 +244,7 @@ private:
 		}
 	}
 	template<typename X, Int i>
-	X getFlowRc1_(Int j) {
+	inline X getFlowRc1_(Int j) {
 		if constexpr(i == SIZE) {
 			fail("illegal access of field by index: " + string2std(int2string(i)) + ", size: " + string2std(int2string(SIZE)));
 			return makeDefInit<X>();
@@ -257,7 +257,7 @@ private:
 		}
 	}
 	template<Int i>
-	void setFlowRc1_(Int j, Flow* v) {
+	inline void setFlowRc1_(Int j, Flow* v) {
 		if constexpr(i == SIZE) {
 			fail("illegal access of field by index: " + string2std(int2string(i)) + ", size: " + string2std(int2string(SIZE)));
 		} else {
@@ -269,7 +269,7 @@ private:
 		}
 	}
 	template<Int i>
-	Flow* getFlow_(Int j) {
+	inline Flow* getFlow_(Int j) {
 		if constexpr(i == SIZE) {
 			fail("illegal access of field by index: " + string2std(int2string(i)) + ", size: " + string2std(int2string(SIZE)));
 			return nullptr;
@@ -286,7 +286,7 @@ private:
 		}
 	}
 	template<Int i>
-	TypeId componentTypeId_(Int j) {
+	inline TypeId componentTypeId_(Int j) {
 		if constexpr(i == SIZE) return TypeFx::UNKNOWN; else {
 			if (i == j) {
 				return get_type_id_v<std::tuple_element_t<i, Fields>>;
@@ -295,7 +295,7 @@ private:
 		}
 	}
 	template<Int i>
-	Int compare(Str* s) {
+	inline Int compare(Str* s) {
 		if constexpr(i == SIZE) return 0; else {
 			Int c = flow::compare<std::tuple_element_t<i, Fields>>(
 				get<i>(), s->get<i>()
@@ -305,7 +305,7 @@ private:
 		}
 	}
 	template<Int i>
-	void toStringArgs(string& str) {
+	inline void toStringArgs(string& str) {
 		if constexpr(i < SIZE) {
 			if constexpr (i > 0) {
 				str.append(u", ");
@@ -315,7 +315,7 @@ private:
 		}
 	}
 	template<Int i>
-	void append2stringArgs(string& str) {
+	inline void append2stringArgs(string& str) {
 		if constexpr(i < SIZE) {
 			if constexpr (i > 0) {
 				str.append(u", ");
@@ -325,7 +325,7 @@ private:
 		}
 	}
 	template<typename S, Int i>
-	void hashCalcArgs(S& h) {
+	inline void hashCalcArgs(S& h) {
 		if constexpr(i < SIZE) {
 			Hash<S, std::tuple_element_t<i, Fields>>::calc(h, get<i>());
 			hashCalcArgs<i + 1>(h);
@@ -333,10 +333,5 @@ private:
 	}
 	Fields fields;
 };
-
-//template<TypeId Id, typename... Fs>
-//inline Int compare(Str<Id, Fs...>* v1, Str<Id, Fs...>* v2) {
-//	return v1->compare(v2);
-//}
 
 }

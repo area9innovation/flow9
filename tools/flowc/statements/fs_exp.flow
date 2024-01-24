@@ -6,30 +6,32 @@ export {
 	FsAll ::= FsStat, FsExp, FsLambda;
 
 	// General control-flow statements
-	FsStat ::= FsIf, FsSwitch, FsLet, FsWrapExp, FsRet, FsTailCall, FsAssign, FsIncRc, FsDecRc;
+	FsStat ::= FsIf, FsSwitch, FsLet, FsFor, FsWrapExp, FsRet, FsTailCall, FsAssign, FsIncRc, FsDecRc, FsIntrinsicStat;
 
 		FsIf(cond: FsExp, s1: FsStat, s2: FsStat, id: int, next: Maybe<FsStat>);
 		FsSwitch(x: FsVarUse, type: FiTypeName, cases: [FsCase], id: int, next: Maybe<FsStat>);
 			FsCase(struct: string, args: [FsVar], body: FsStat, id: int);
 		FsLet(var: FsVar, e: FsExp, s: FsStat, id: int, next: Maybe<FsStat>);
+		FsFor(var: FsVar, e: FsExp, s: FsStat, free: [FsVar], id: int, next: Maybe<FsStat>); // The `for` cycle for arrays
 
 		FsWrapExp(e: FsExp, id: int, next: Maybe<FsStat>);
 		FsRet(e: FsExp, id: int, next: Maybe<FsStat>);
-		FsTailCall(id: int, next: Maybe<FsStat>);
-		FsAssign(to: FsExp, what: FsExp, id: int, next: Maybe<FsStat>);
+		FsTailCall(args: [FsExp], id: int, next: Maybe<FsStat>);
+		FsAssign(to: FsExp, what: FsExp, direct: bool, id: int, next: Maybe<FsStat>);
 
 		FsIncRc(v: FsVar, delta: int, id: int, next: Maybe<FsStat>);
 		FsDecRc(v: FsVar, mode: FsDecMode, id: int, next: Maybe<FsStat>);
-			FsDecMode ::= FsDecDirect, FsDecReuse, FsDecFinish;
-			FsDecDirect(); FsDecReuse(reuse: FsVar); FsDecFinish();
+
+		// Primitive control-flow directives, like `break`.
+		FsIntrinsicStat(name: string, id: int, next: Maybe<FsStat>);
 
 	// Expressions (returns value)
-	FsExp ::= FsClosure, FsCall, FsInline, FsCallPrim, FsCast, FsVarUse, FsString, FsConst;
+	FsExp ::= FsClosure, FsCall, FsInlineExp, FsCallPrim, FsCast, FsVarUse, FsString, FsConst;
 
 		FsClosure(vars: [FsVarUse], lambda: FsLambda, info: FsMetaInfo, id: int);
 			FsLambda(closure: [FsVar], args: [FsVar], body: FsStat, type: FiTypeFunction, id: int);
 		FsCall(f: FsVarUse, args: [FsExp], type: FiType, id: int);
-		FsInline(name: string, f: ([string]) -> string, args: [FsExp], type: FiType, id: int);
+		FsInlineExp(fn: string, args: [FsExp], type: FiType, id: int);
 		FsCallPrim(op: FsPrim, es: [FsExp], type: FiType, id: int);
 		FsCast(e: FsExp, from: FiType, type: FiType, id: int);
 		FsVarUse(var: FsVar, info: FsVarInfo, id: int);
@@ -38,8 +40,8 @@ export {
 				unique: bool,   // this variable is used only once
 				isNotShared: bool // reference counter of this variable is never > 1
 			);
-			FsVarKind ::= FsVarLocal, FsVarGlobalVar, FsVarGlobalFunc, FsVarUninit;
-			FsVarLocal(); FsVarGlobalVar(); FsVarGlobalFunc(); FsVarUninit();
+			FsVarKind ::= FsVarLocal, FsVarGlobalVar, FsVarGlobalFunc, FsVarUninit, FsVarIntrinsic;
+			FsVarLocal(); FsVarGlobalVar(); FsVarGlobalFunc(); FsVarUninit(); FsVarIntrinsic();
 		FsString(s: string, info: FsMetaInfo, id: int);
 		FsConst(c: FiScalar, id: int);
 			FiScalar ::= FiVoid, FiInt, FiBool, FiDouble;
@@ -57,16 +59,36 @@ export {
 		FcLePrim,    FcGePrim,    FcLtPrim,    FcGtPrim,  FcPlusPrim,
 		FcMinusPrim, FcMulPrim,   FcDivPrim,   FcModPrim, FcNegPrim,
 		FsArrayPrim, FcIndexPrim, FcDerefPrim, FsRefPrim, FsStructPrim,
-		FsFieldPrim;
+		FsFieldPrim, FsIntrinsicPrim;
 		
 		FsArrayPrim(info: FsMetaInfo); FsRefPrim(info: FsMetaInfo);
 		FsStructPrim(struct: string, info: FsMetaInfo);
 		FsFieldPrim(field: string, ind: int);
 
-	// Reference-counting operations, which correspond to an expression
+	// Primitive oprations which don't occur in original program code.
+	FsIntrinsicPrim(name: string);
+
+	// Reference-counting operations, which correspond to an expression:
+	// variables are mapped onto corresponding operations
 	FsMem(
-		incs: Tree<FsVar, int>,
-		decs: Set<FsVar>,
-		unused: Tree<FsVar, FsDecMode>,
+		ops: Tree<FsVar, FsVarMem>
 	);
+
+	// Reference-counting operations, which correspond to a variable in an expression
+	FsVarMem(
+		inc: int, // increment by this value
+		dec: Maybe<FsDecOrd>, // optionaly decrement: either pre or post.
+		inlined: int, // number of inlined uses
+		called: int, // number of call uses
+		last: bool, // is last use of a variable
+	);
+
+	// Position of a reference decrement operation: before or after an entity.
+	FsDecOrd ::= FsDecPre, FsDecPost;
+		FsDecPre(); FsDecPost();
+
+	FsDecMode ::= FsDecDirect, FsDecReuse, FsDecFinish;
+		FsDecDirect(); // Just decrement a reference counter
+		FsDecReuse(reuse: FsVar); // Try to reuse a value, if is going to be freed after decrement
+		FsDecFinish(); // Free a dangling value after unsuccessfull reusing (due to the wrong branch of execution)
 }

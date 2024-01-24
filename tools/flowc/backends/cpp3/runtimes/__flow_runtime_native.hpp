@@ -58,6 +58,4 @@ private:
 	std::any val_;
 };
 
-//template<> inline Int compare<Native*>(Native* v1, Native* v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-
 }

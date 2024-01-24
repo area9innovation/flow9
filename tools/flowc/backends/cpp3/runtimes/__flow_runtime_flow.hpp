@@ -56,7 +56,6 @@ struct Flow: public RcBase {
 	virtual ~Flow() { }
 
 	virtual void append2string(string&) = 0;
-	//virtual Int compare(Flow*) = 0;
 
 	virtual TypeId typeId() const = 0;
 	virtual Int componentSize() const { return 0; }

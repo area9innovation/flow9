@@ -64,6 +64,8 @@ struct Fun : public Flow {
 		return fn_(as...);
 	}
 
+	template<typename... Cs> struct Closure;
+
 private:
 	Fun() {}
 	Fun(Fn&& f): fn_(std::move(f)) { }
@@ -87,9 +89,47 @@ private:
 	std::vector<Flow*> closure_;
 };
 
-//template<typename R, typename... As>
-//inline Int compare<Fun<R, As...>*>(Fun<R, As...>* v1, Fun<R, As...>* v2) {
-//	return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0);
-//}
+template<typename R, typename... As> 
+template<typename... Cs>
+struct Fun<R, As...>::Closure : public Fun<R, As...> {
+	static inline const std::size_t SIZE = sizeof...(Cs);
+	using Fn = std::function<R(As..., Cs...)>;
+
+	static Fun* make(Fn&& fn, Cs... cl) {
+		if constexpr (use_memory_manager) {
+			return new(Memory::alloc<Fun>()) Closure(std::move(fn), std::move(cl)...);
+		} else {
+			return new Closure(std::move(fn), std::move(cl)...);
+		}
+	}
+
+	R call(As... as) override {
+		if constexpr (SIZE == 0) {
+			return fn_(as...);
+		} else {
+			changeRc<0, true>();
+			return [this, &as...]<std::size_t... I>(std::index_sequence<I...>) constexpr {
+				return fn_(as..., std::get<I>(closure_)...);
+			}
+			(std::make_index_sequence<SIZE>{});
+		}
+	}
+private:
+	Closure(Fn fn, Cs... cl): fn_(fn), closure_(cl...) { }
+	template<int i, bool inc>
+	void changeRc() {
+		if constexpr (i != SIZE) {
+			if constexpr (inc) {
+				incRc(std::get<i>(closure_));
+			} else {
+				decRc(std::get<i>(closure_));
+			}
+			changeRc<i + 1>();
+		}
+	}
+	Fn fn_;
+	std::tuple<Cs...> closure_;
+};
+
 
 }

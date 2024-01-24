@@ -105,6 +105,8 @@ fiExpReturnVars(e: FiExp) -> FiExp;
 
 fiExtractCallNonScalarExp(e: FiExp, names: FiGlobalNames) -> FiExp;
 
+fiExtractParticularCalls(e: FiExp, to_extract: Set<string>, names: FiGlobalNames) -> FiExp;
+
 // Remove casts from non-scalar types to flow - these casts are implicit
 fiRemoveImplicitCasts(e: FiExp) -> FiExp;
 
@@ -365,15 +367,6 @@ fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
 	);
 }
 
-fiMakeNewVar(pref: string, v: string, locals: Tree<string, FiVar>, names: FiGlobalNames) -> string {
-	fiDoMakeNewVar(pref, v, locals, names, 0);
-}
-
-fiDoMakeNewVar(pref: string, v: string, locals: Tree<string, FiVar>, names: FiGlobalNames, i: int) -> string {
-	w = pref + v + "_" + i2s(i);
-	if (!containsKeyTree(locals, w) && !containsKeyTree(names.toplevel, w)) w else fiDoMakeNewVar(pref, v, locals, names, i + 1);
-}
-
 fiExpRenameRecurringVars1(e: FiExp, names: FiGlobalNames) -> FiExp {
 	fiMapExp(e, \x, env ->
 		switch (x) {
@@ -528,7 +521,7 @@ fiExpMakeVarsUniqueCompletely(e: FiExp, names: FiGlobalNames) -> FiExp {
 				if (v == "__") x else {
 					switch (lookupTree(^vars_map, v)) {
 						Some(i): {
-							w = fiDoMakeNewVar("", v, env.locals, names, i);
+							w = fiMakeNewVari("", v, env.locals, names, i);
 							vars_map := setTree(^vars_map, v, i + 1);
 							FiLet(x with
 								name = w,
@@ -546,7 +539,7 @@ fiExpMakeVarsUniqueCompletely(e: FiExp, names: FiGlobalNames) -> FiExp {
 				p = fold(args, Pair([], body), \acc, arg ->
 					switch (lookupTree(^vars_map, arg.name)) {
 						Some(i): {
-							w = fiDoMakeNewVar("", arg.name, env.locals, names, i);
+							w = fiMakeNewVari("", arg.name, env.locals, names, i);
 							vars_map := setTree(^vars_map, arg.name, i + 1);
 							Pair(arrayPush(acc.first, FiFunArg(w, arg.type)), fiRenameVar(acc.second, arg.name, w));
 						}
@@ -1116,7 +1109,7 @@ fiExtractCallNonScalarExp(e: FiExp, names: FiGlobalNames) -> FiExp {
 				switch (parent.first) {
 					FiLet(v, v_type, e1, e2,__,__): x;
 					FiSeq(__,__,__): x;
-					FiSwitch(__,__,__,__,__): x; //if (parent.second != 0) x else try_call();
+					FiSwitch(__,__,__,__,__): x;
 					FiIf(__,__,__,__,__): x;
 					FiLambda(__,__,__,__): x;
 					FiCallPrim(op,__,__,__): {
@@ -1130,6 +1123,35 @@ fiExtractCallNonScalarExp(e: FiExp, names: FiGlobalNames) -> FiExp {
 			}
 		},
 		false
+	);
+}
+
+fiExtractParticularCalls(e: FiExp, to_extract: Set<string>, names: FiGlobalNames) -> FiExp {
+	tmp_var_counter = ref 0;
+	new_num = \-> {
+		num = i2s(^tmp_var_counter);
+		tmp_var_counter := ^tmp_var_counter + 1;
+		num;
+	}
+	fiMapExp(e,
+		\x, env -> switch (x) {
+			FiCall(fn,__,__,__): {
+				switch (fn) {
+					FiVar(fn_name,__,__): {
+						if (!containsSet(to_extract, fn_name)) x else {
+							type = fiExpType(x);
+							if (type == FiTypeVoid()) x else {
+								fn_var = fiMakeNewVar("wx", new_num(), env.locals, names);
+								FiLet(fn_var, type, x, FiVar(fn_var, type, 0), type, 0);
+							}
+						}
+					}
+					default: x;
+				}
+			}
+			default: x;
+		},
+		true
 	);
 }
 

@@ -49,9 +49,14 @@ fsDeclaration2cpp3(decl: FsDeclaration, gctx: Cpp3GlobalContext) -> Maybe<Cpp3Co
 					}
 				}
 				None(): {
+					fns = [fi2cpp3typename2cpp, fi2cpp3varname2cpp, gctx.structid2cpp];
 					// Native function
-					maybeMap(lookupTree(gctx.natives, name), \nat -> 
-						nat.declaration(fi2cpp3typename2cpp, fi2cpp3varname2cpp, gctx.structid2cpp)
+					maybeMap(lookupTree(gctx.natives, name), \nat ->
+						Cpp3CompiledDeclaration(nat.name,
+							nat.headerOnly, "", "",
+							strApplyFns(nat.declaration, fns),
+							strApplyFns(nat.definition, fns), ""
+						)
 					);
 				}
 			}
@@ -74,7 +79,10 @@ fiGlobalVar2cpp3(name: string, value: FsStat, type: FiType, gctx0: Cpp3GlobalCon
 			var_name + " = " + fsExp2cpp3(e, gctx) + ";";
 		}
 		default: {
-			value4 = fsStatReplaceReturnOntoAssign(value, FsVarUse(FsVar(name, type), FsVarInfo(FsVarGlobalVar(), true, false), -1));
+			value4 = fsStatReplaceReturnOntoAssign(value,
+				FsVarUse(FsVar(name, type), FsVarInfo(FsVarGlobalVar(), true, false), -1),
+				false
+			);
 			"{\n" + strIndent(fsStat2cpp3(value4, gctx)) + "\n}";
 		}
 	}
@@ -137,8 +145,8 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 			cond_cpp = fsExp2cpp3(cond, gctx);
 			pos_cpp = fsStat2cpp3(pos, gctx);
 			neg_cpp = fsStat2cpp3(neg, gctx);
-			if (pos_cpp != "") {
-				if (neg_cpp != "") {
+			if (pos_cpp != "" && pos_cpp != "void_value;") {
+				if (neg_cpp != "" && neg_cpp != "void_value;") {
 					"if " + fiWrapWithPars(cond_cpp, gctx.config) + " " + 
 						fiWrapWithBraces(pos_cpp, gctx.config) +
 					" else " + 
@@ -148,7 +156,7 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 						fiWrapWithBraces(pos_cpp, gctx.config);
 				}
 			} else {
-				if (neg_cpp != "") {
+				if (neg_cpp != "" && neg_cpp != "void_value;") {
 					"if (!" + cond_cpp + ") " + 
 						fiWrapWithBraces(neg_cpp, gctx.config);
 				} else {
@@ -190,65 +198,73 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 				fsStat2cpp3(s, gctx);
 			}
 		}
+		FsFor(v, arr, s, free,__,__): {
+			"for (" + fiType2cpp3(v.type, gctx) + " " + fi2cpp3varname2cpp(v.name) + ": *" + fsExp2cpp3(arr, gctx) + ") {\n" +
+				strIndent(fsStat2cpp3(s, gctx)) +
+			"\n}";
+		}
 		FsWrapExp(e, __,__): {
-			switch (e) {
-				FsVarUse(__,__,__): ""; // var expression has no effect as statement
-				default: {
-					e_cpp = fsExp2cpp3(e, gctx);
-					if (e_cpp == "") "" else {
-						tp = fsType(e);
-						if (fiTypeIsScalar(tp)) {
-							e_cpp + ";";
-						} else {
-							"decRc<" + fiType2cpp3(tp, gctx) + ">(" + e_cpp + ");";
-						}
-					}
+			e_cpp = fsExp2cpp3(e, gctx);
+			if (e_cpp == "") "" else {
+				tp = fsType(e);
+				if (fiTypeIsScalar(tp)) {
+					e_cpp + ";";
+				} else {
+					"decRc<" + fiType2cpp3(tp, gctx) + ">(" + e_cpp + ");";
 				}
 			}
 		}
 		FsRet(e,__,__): {
 			"return " + fsExp2cpp3(e, gctx) + ";"
 		}
-		FsTailCall(id,__): {
+		FsTailCall(args, id,__): {
 			"continue;";
 		}
-		FsAssign(to, what,__,__): {
-			to_type = fsType(to);
-			make_assignment = \-> switch (to) {
-				FsVarUse(v, info,__): {
-					switch (info.kind) {
-						FsVarUninit(): fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
-						default: "assignRc<" + fiType2cpp3(to_type, gctx) + " >(" + fsExp2cpp3(to, gctx) + ", " + fsExp2cpp3(what, gctx) + ");";
-					}
-				}
-				default:  fail0("assignment to non-var:\n" + fs2s(to));
-			}
-			switch (to_type) {
-				FiTypeRef(__): {
-					switch (fsType(what)) {
-						FiTypeRef(__): {
-							make_assignment();
+		FsIntrinsicStat(name, id,__): {
+			if (endsWith(name, ";")) name else name + ";";
+		}
+		FsAssign(to, what, direct,__,__): {
+			if (direct) {
+				// Direct assignment - is used in native inlinings like `fold`
+				fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
+			} else {
+				to_type = fsType(to);
+				make_assignment = \-> switch (to) {
+					FsVarUse(v, info,__): {
+						switch (info.kind) {
+							FsVarUninit(): fsExp2cpp3(to, gctx) + " = " + fsExp2cpp3(what, gctx) + ";";
+							default: "assignRc<" + fiType2cpp3(to_type, gctx) + " >(" + fsExp2cpp3(to, gctx) + ", " + fsExp2cpp3(what, gctx) + ");";
 						}
-						FiTypeFlow():
-							fsExp2cpp3(to, gctx) + "->setFlowRc(0, " + fsExp2cpp3(what, gctx) + ");";
-						default:
-							fsExp2cpp3(to, gctx) + "->setRc(" + fsExp2cpp3(what, gctx) + ");";
 					}
+					default:  fail0("assignment to non-var:\n" + fs2s(to));
 				}
-				default: {
-					switch (to) {
-						FsCallPrim(op, as,__,__): {
-							switch (op) {
-								FsFieldPrim(field, field_ind): {
-									fsExp2cpp3(as[0], gctx) + "->setRc1<" + i2s(field_ind) + ">(" + fsExp2cpp3(what, gctx) + ");";
-								}
-								default: {
-									fail0("assignment to non-var:\n" + fs2s(to));
+				switch (to_type) {
+					FiTypeRef(__): {
+						switch (fsType(what)) {
+							FiTypeRef(__): {
+								make_assignment();
+							}
+							FiTypeFlow():
+								fsExp2cpp3(to, gctx) + "->setFlowRc(0, " + fsExp2cpp3(what, gctx) + ");";
+							default:
+								fsExp2cpp3(to, gctx) + "->setRc(" + fsExp2cpp3(what, gctx) + ");";
+						}
+					}
+					default: {
+						switch (to) {
+							FsCallPrim(op, as,__,__): {
+								switch (op) {
+									FsFieldPrim(field, field_ind): {
+										fsExp2cpp3(as[0], gctx) + "->setRc1<" + i2s(field_ind) + ">(" + fsExp2cpp3(what, gctx) + ");";
+									}
+									default: {
+										fail0("assignment to non-var:\n" + fs2s(to));
+									}
 								}
 							}
-						}
-						default: {
-							make_assignment();
+							default: {
+								make_assignment();
+							}
 						}
 					}
 				}
@@ -405,8 +421,24 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				}
 			}
 		}
-		FsInline(__,f, args,__,__): {
-			f(map(args, \arg -> fsExp2cpp3(arg, gctx)));
+		FsInlineExp(fn_name, args, type,__): {
+			switch (lookupTree(gctx.natives, fn_name)) {
+				Some(nat): {
+					toplevel: Maybe<FiDeclaration> = lookupTree(gctx.program.names.toplevel, fn_name);
+					fn_type = FiTypeFunction(map(args, \arg -> FiFunArg("", fsType(arg))), type);
+					typars = switch (toplevel) {
+						Some(fn): {
+							map(fiMatchTyparsOrdered(fn.type, fn_type), \tp -> fiType2cpp3(tp, gctx));
+						}
+						None(): [];
+					}
+					strSubstituteArgsGroup(
+						strSubstituteArgs(nat.inlining.def, map(args, \arg -> fsExp2cpp3(arg, gctx))),
+						typars, "T"
+					);
+				}
+				None(): fail0("missing inlining of: " + fn_name);
+			}
 		}
 		FsClosure(closure, lambda, info,__): {
 			fun_type = "Fun<" + fiType2cpp3(lambda.type.returnType, gctx) + concatStrings(map(lambda.type.args, \arg -> ", " + fiType2cpp3(arg.type, gctx))) + ">";
@@ -606,6 +638,26 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 						fail0("accees to field '" + field_name + "' of non-struct: " + fs2s(e.es[0]) + " of type: " + prettyFiType(dummyPretty, arg_type, makeSet()));
 					}
 				}
+			}
+		}
+		FsIntrinsicPrim(name): {
+			if (name == "isUnitRc") {
+				"isUnitRc(" + e2k(e.es[0]) + ")";
+			} else if (name == "vecPush") {
+				e2k(e.es[0]) + "->pushBack(" + e2k(e.es[1]) + ")";
+			} else if (name == "vecReserve") {
+				"Vec<" + fiType2cpp3(fiDearrayType(e.type), gctx) + ">::make(" + e2k(e.es[0]) + ")";
+			} else if (name == "vecFill") {
+				arr_type = fiType2cpp3(fiDearrayType(e.type), gctx);
+				"Vec<" + arr_type + ">::make(" + 
+					"std::move(std::vector<" + arr_type + ">(" + e2k(e.es[0]) + ", " + "makeDefInit<" + arr_type + ">))" +
+				")";
+			} else if (name == "vecLen") {
+				e2k(e.es[0]) + "->size()";
+			} else if (name == "vecSet") {
+				e2k(e.es[0]) + "->setRc1(" + e2k(e.es[1]) + ", " + e2k(e.es[2]) + ")";
+			} else {
+				fail0("unsupported intrinsic primitive: '" + name + "'");
 			}
 		}
 	}

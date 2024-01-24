@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <ext/rope>
 #include <ostream>
 #include <type_traits>
 #include <stdexcept>
@@ -21,11 +22,12 @@ enum TypeFx {
 // Types with id values < 9 are from TypeFx, others are structs. 
 
 using TypeId = int32_t;
-const TypeId structTypeIdOffset = TypeFx::STRUCT_TYPE_ID_OFFSET;
+inline constexpr TypeId structTypeIdOffset = TypeFx::STRUCT_TYPE_ID_OFFSET;
 
 // Flow internally uses utf-16 string format
 
 using string = std::u16string;
+using rstring = __gnu_cxx::rope<char16_t>;
 
 // String conversions
 
@@ -39,7 +41,7 @@ inline string std2string(const std::string& str) { string s; copyStd2string(str,
 // Basic types
 
 using Void = std::nullptr_t;
-const Void void_value = nullptr;
+inline constexpr Void void_value = nullptr;
 
 // Scalar types
 using Int = int32_t;
@@ -64,7 +66,7 @@ inline Int string2int(const string& s) { if (s.size() == 0) { return 0; } else {
 inline Double string2double(const string& s) { if (s.size() == 0) { return 0.0; } else { try { return std::stod(string2std(s)); } catch (std::exception& e) { return 0.0; } } }
 inline Bool string2bool(const string& s) { return s != u"false"; }
 
-// append2string scalar types
+// append2string for scalar types
 
 void appendEscaped(string& s, const string& x);
 
@@ -83,16 +85,8 @@ inline T makeDefInit() {
 	else return nullptr;
 }
 
-// compare scalar types
-/*
-template<typename T> Int compare(T v1, T v2);
-template<> inline Int compare<Void>(Void v1, Void v2) { return true; }
-template<> inline Int compare<Bool>(Bool v1, Bool v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-template<> inline Int compare<Int>(Int v1, Int v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-template<> inline Int compare<Double>(Double v1, Double v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-*/
-struct RcBase;
-struct Flow;
+struct RcBase; // Base type for all non-scalar types - includes a reference counter
+struct Flow; // Flow dynamic type
 
 // Forward declaration of all principal non-scalar types
 
@@ -104,5 +98,10 @@ template<TypeId Id, typename... Fs> struct Str;
 template<typename T> struct Vec;
 template<typename T> struct Ref;
 template<typename R, typename... As> struct Fun;
+
+// Statistics gathering facilities: constants which enable such gathering
+
+inline constexpr bool gather_vector_leng_stats = false;
+inline constexpr bool gather_string_leng_stats = false;
 
 }

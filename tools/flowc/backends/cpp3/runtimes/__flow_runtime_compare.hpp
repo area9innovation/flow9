@@ -5,23 +5,6 @@
 namespace flow {
 
 // General comparison functions
-/*
-Int flowCompare(Flow* v1, Flow* v2);
-
-inline Int flowCompareRc(Flow* v1, Flow* v2) {
-	Int c = flowCompare(v1, v2);
-	decRc(v1); decRc(v2);
-	return c;
-}
-*/
-/*
-template<typename T>
-inline Int compareRc(T v1, T v2) {
-	Int ret = compare(v1, v2);
-	decRc(v1); decRc(v2);
-	return ret;
-}
-*/
 
 template<typename T>
 inline Int compare(T v1, T v2) {
@@ -37,8 +20,8 @@ inline Int compare(T v1, T v2) {
 		if (c1 != 0) {
 			return c1;
 		} else {
-			for (Int i = 0; i < v1->size(); ++ i) {
-				Int c2 = compare<typename std::remove_pointer_t<T>::ElType>(v1->get(i), v2->get(i));
+			for (auto it1 = v1->vec().begin(), it2 = v2->vec().begin(); it1 != v1->vec().end(); ++it1, ++it2) {
+				Int c2 = compare<typename std::remove_pointer_t<T>::ElType>(*it1, *it2);
 				if (c2 != 0) {
 					return c2;
 				}
