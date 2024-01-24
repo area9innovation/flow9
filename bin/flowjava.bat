@@ -17,12 +17,12 @@ goto endif
 :endif
 
 set JAVAC=%JAVA_HOME%\bin\javac
-set LIBS=%~dp0..\platforms\java\lib\java-websocket-1.5.1\*;%~dp0..\platforms\java\lib\jjwt-api-0.10.8\jjwt-api-0.10.8.jar
+set LIBS=%~dp0..\platforms\java\lib\java-websocket-1.5.1\*;%~dp0..\platforms\java\lib\java-jwt-4.4.0\java-jwt-4.4.0.jar
 set PATH_TO_FX=%~dp0..\platforms\java\lib\javafx-sdk-11.0.2\windows\lib
 
 :argLoopTop
 set FILE=%1
-if "%FILE%"=="" goto argLoopEnd 
+if "%FILE%"=="" goto argLoopEnd
 if not "%FILE:.flow=%"=="%FILE%" goto argLoopEnd
 shift
 goto argLoopTop
@@ -54,7 +54,7 @@ pushd %~dp0..
 rd /s /q javagen
 popd
 
-call %~dp0\flowc1 java=%~dp0\..\javagen %FILE%
+call %~dp0\flowc1 java-sub-host=RenderSupport=com.area9innovation.flow.javafx.FxRenderSupport,Native=com.area9innovation.flow.javafx.FxNative java=%~dp0\..\javagen %FILE%
 rem call %~dp0/flow --java %~dp0/../javagen %*
 
 pushd %~dp0..
