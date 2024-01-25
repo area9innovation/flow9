@@ -49,26 +49,26 @@ import javafx.scene.paint.RadialGradient;
 import javafx.scene.text.Font;
 
 public class FxRenderSupport extends RenderSupport {
-	private static Stage stage;
-	private static Scene scene;
-	private static Clip stage_clip;
-	private static int next_event_id = 0;
-	private static double mouse_x, mouse_y;
-	private static String cur_cursor = "";
-	private static Boolean isMouseDown = false;
+	private Stage stage;
+	private Scene scene;
+	private Clip stage_clip;
+	private int next_event_id = 0;
+	private double mouse_x, mouse_y;
+	private String cur_cursor = "";
+	private Boolean isMouseDown = false;
 
-	private static TreeMap<Integer, Func0<Object>> event_resize = new TreeMap<>();
-	private static TreeMap<Integer,Func0<Object>> event_mousemove = new TreeMap<>();
-	private static TreeMap<Integer,Func0<Object>> event_mousedown = new TreeMap<>();
-	private static TreeMap<Integer,Func0<Object>> event_mouseup = new TreeMap<>();
-	private static TreeMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> event_keydown = new TreeMap<>();
-	private static TreeMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> event_keyup = new TreeMap<>();
-	private static TreeMap<Integer,Func1<Object,Double>> event_mousewheel = new TreeMap<>();
-	private static TreeMap<Integer,Func2<Object,Double,Double>> event_finegrain_mousewheel = new TreeMap<>();
+	private TreeMap<Integer, Func0<Object>> event_resize = new TreeMap<>();
+	private TreeMap<Integer,Func0<Object>> event_mousemove = new TreeMap<>();
+	private TreeMap<Integer,Func0<Object>> event_mousedown = new TreeMap<>();
+	private TreeMap<Integer,Func0<Object>> event_mouseup = new TreeMap<>();
+	private TreeMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> event_keydown = new TreeMap<>();
+	private TreeMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> event_keyup = new TreeMap<>();
+	private TreeMap<Integer,Func1<Object,Double>> event_mousewheel = new TreeMap<>();
+	private TreeMap<Integer,Func2<Object,Double,Double>> event_finegrain_mousewheel = new TreeMap<>();
 
-	private static Func0<Object> no_op = () -> null;
+	private Func0<Object> no_op = () -> null;
 
-	private static <T> Func0<Object> addEvent(final TreeMap<Integer,T> map, T listener) {
+	private <T> Func0<Object> addEvent(final TreeMap<Integer,T> map, T listener) {
 		final int id = next_event_id++;
 		map.put(id, listener);
 		return () -> {
@@ -89,7 +89,7 @@ public class FxRenderSupport extends RenderSupport {
 		else return node.intersects(pos.getX(), pos.getY(), 1, 1);
 	}
 
-	private static class Clip {
+	private class Clip {
 		Group container, top;
 		Clip parent, mask, mask_owner;
 		List<Clip> children = new ArrayList<>();
@@ -180,6 +180,7 @@ public class FxRenderSupport extends RenderSupport {
 			return false;
 		}
 	}
+
 	@SuppressWarnings("unchecked")
 	private static Func0<Object>[] event_cb_arr = new Func0[0];
 
@@ -202,6 +203,7 @@ public class FxRenderSupport extends RenderSupport {
 		stage.heightProperty().addListener(resize_cb);
 
 		EventHandler<MouseEvent> move_cb = event -> {
+			//	System.out.print(".");
 			mouse_x = event.getSceneX();
 			mouse_y = event.getSceneY();
 			for (Func0<Object> cb : event_mousemove.values().toArray(event_cb_arr))
@@ -288,7 +290,7 @@ public class FxRenderSupport extends RenderSupport {
 			cb.invoke(text, isCtrl, isShift, isAlt, isMeta, code, no_op);
 	}
 
-	private static Integer parseKeyCode(KeyCode keyCode) {
+	private Integer parseKeyCode(KeyCode keyCode) {
 		Integer code;
 		switch(keyCode) {
 			case BACK_SPACE: code = 8; break;
@@ -394,150 +396,151 @@ public class FxRenderSupport extends RenderSupport {
 		return code;
 	}
 
-	public static Object getStage() {
+	@Override
+	public Object getStage() {
 		return stage_clip;
 	}
-
-	public static double getStageWidth() {
+	@Override
+	public double getStageWidth() {
 		return stage.getWidth();
 	}
-
-	public static double getStageHeight() {
+	@Override
+	public double getStageHeight() {
 		return stage.getHeight();
 	}
-
-	public static Object setHitboxRadius(double val) {
+	@Override
+	public Object setHitboxRadius(double val) {
 		return null;
 	}
-
-	public static Object setWindowTitle(String title) {
+	@Override
+	public Object setWindowTitle(String title) {
 		stage.setTitle(title);
 		return null;
 	}
-
-	public static Object setFavIcon(String url) {
+	@Override
+	public Object setFavIcon(String url) {
 		return null;
 	}
-
-	public static Object enableResize() {
+	@Override
+	public Object enableResize() {
 		// We always allow resizing, so let's just ignore this
 		// System.out.println("enableResize not implemented");
 		return null;
 	}
-
-	public static final Object makeClip() {
+	@Override
+	public Object makeClip() {
 		return new Clip();
 	}
-
-	public static Object makeGraphics() {
+	@Override
+	public Object makeGraphics() {
 		return new Clip();
 	}
-
-	public static Object currentClip() {
+	@Override
+	public Object currentClip() {
 		return stage_clip;
 	}
-
-	public static Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit) {
+	@Override
+	public Object makeWebClip(String url,String domain,Boolean useCache, Boolean reloadBlock, Func1<String,Object[]> cb, Func1<Object,String> ondone, Boolean shrinkToFit) {
 		System.out.println("makeWebClip not implemented");
 		return new Clip();
 	}
-
-	public static String webClipHostCall(Object clip,String fn,Object[] args) {
+	@Override
+	public String webClipHostCall(Object clip,String fn,Object[] args) {
 		System.out.println("webClipHostCall not implemented");
 		return null;
 	}
-
-	public static Object setWebClipZoomable(Object clip,Boolean zoomable) {
+	@Override
+	public Object setWebClipZoomable(Object clip,Boolean zoomable) {
 		System.out.println("setWebClipZoomable not implemented");
 		return null;
 	}
-
-	public static Object setWebClipDomains(Object clip,Object[] domains) {
+	@Override
+	public Object setWebClipDomains(Object clip,Object[] domains) {
 		return null;
 	}
-
-	public static Object addFilters(Object stg, Object[] filters) {
+	@Override
+	public Object addFilters(Object stg, Object[] filters) {
 		Clip cl = (Clip)stg;
 		for (Object filter : filters)
 			if (filter != null)
 				cl.getTop().setEffect((Effect) filter);
 		return null;
 	}
-
-	public static Object setAccessAttributes(Object stg, Object[] attrs) {
+	@Override
+	public Object setAccessAttributes(Object stg, Object[] attrs) {
 		// TODO: If we need to support Accessibility, then this needs to be implemented
 		// System.out.println("setAccessAttributes not implemented");
 		return null;
 	}
-
-	public static Object setAccessCallback(Object stg, Func0 fn) {
+	@Override
+	public Object setAccessCallback(Object stg, Func0 fn) {
 		// TODO: If we need to support Accessibility, then this needs to be implemented
 		// System.out.println("setAccessCallback not implemented");
 		return null;
 	}
-
-	public static Object addChild(Object stg, Object child) {
+	@Override
+	public Object addChild(Object stg, Object child) {
 		Clip cc = (Clip)child;
 		cc.setParent((Clip)stg);
 		return null;
 	}
-
-	public static Object addChildAt(Object stg, Object child, Integer at) {
+	@Override
+	public Object addChildAt(Object stg, Object child, Integer at) {
 		Clip cc = (Clip)child;
 		cc.setParentAt((Clip)stg, at);
 		return null;
 	}
-
-	public static Object removeChild(Object stg, Object child) {
+	@Override
+	public Object removeChild(Object stg, Object child) {
 		Clip cc = (Clip)child;
 		if (cc.parent == stg)
 			cc.setParent(null);
 		return null;
 	}
-
-	public static Object setClipMask(Object stg, Object mask) {
+	@Override
+	public Object setClipMask(Object stg, Object mask) {
 		((Clip)stg).setMask((Clip)mask);
 		return null;
 	}
-
-	public static Object setClipCallstack(Object stg, Object stack) {
+	@Override
+	public Object setClipCallstack(Object stg, Object stack) {
 		return null;
 	}
-
-	public static double getMouseX(Object stg) {
+	@Override
+	public double getMouseX(Object stg) {
 		Clip cl = (Clip) stg;
 		return cl.getMousePos(new Point2D(mouse_x, mouse_y)).getX();
 	}
-
-	public static double getMouseY(Object stg) {
+	@Override
+	public double getMouseY(Object stg) {
 		Clip cl = (Clip)stg;
 		return cl.getMousePos(new Point2D(mouse_x, mouse_y)).getY();
 	}
-
-	public static boolean getClipVisible(Object stg) {
+	@Override
+	public boolean getClipVisible(Object stg) {
 		Clip cl = (Clip)stg;
 		return cl.getTop().isVisible();
 	}
-
-	public static Object setClipVisible(Object stg, boolean on) {
+	@Override
+	public Object setClipVisible(Object stg, boolean on) {
 		Clip cl = (Clip)stg;
 		cl.getTop().setVisible(on);
 		return null;
 	}
-
-	public static Object setClipX(Object stg, double val) {
+	@Override
+	public Object setClipX(Object stg, double val) {
 		Clip cl = (Clip)stg;
 		cl.getTop().setLayoutX(cl.x = val);
 		return null;
 	}
-
-	public static Object setClipY(Object stg, double val) {
+	@Override
+	public Object setClipY(Object stg, double val) {
 		Clip cl = (Clip)stg;
 		cl.getTop().setLayoutY(cl.y = val);
 		return null;
 	}
-
-	public static Object setClipScaleX(Object stg, double val) {
+	@Override
+	public Object setClipScaleX(Object stg, double val) {
 		Clip cl = (Clip)stg;
 		if (cl.mask_owner != null)
 			return null;
@@ -551,8 +554,8 @@ public class FxRenderSupport extends RenderSupport {
 		}
 		return null;
 	}
-
-	public static Object setClipScaleY(Object stg, double val) {
+	@Override
+	public Object setClipScaleY(Object stg, double val) {
 		Clip cl = (Clip)stg;
 		if (cl.mask_owner != null)
 			return null;
@@ -566,14 +569,14 @@ public class FxRenderSupport extends RenderSupport {
 		}
 		return null;
 	}
-
-	public static Object setClipAlpha(Object stg, double val) {
+	@Override
+	public Object setClipAlpha(Object stg, double val) {
 		Clip cl = (Clip)stg;
 		cl.getTop().setOpacity(val);
 		return null;
 	}
-
-	public static Object setClipRotation(Object stg, double val) {
+	@Override
+	public Object setClipRotation(Object stg, double val) {
 		Clip cl = (Clip)stg;
 		if (cl.rotation == null) {
 			if (val == 0.0)
@@ -585,18 +588,18 @@ public class FxRenderSupport extends RenderSupport {
 		}
 		return null;
 	}
-
-	public static Object setScrollRect(Object stg, double x, double y, double w, double h) {
+	@Override
+	public Object setScrollRect(Object stg, double x, double y, double w, double h) {
 		Clip cl = (Clip)stg;
 		cl.setScrollRect(new BoundingBox(x, y, w, h));
 		return null;
 	}
-
-	public static String getCursor() {
+	@Override
+	public String getCursor() {
 		return cur_cursor;
 	}
-
-	public static Object setCursor(String val) {
+	@Override
+	public Object setCursor(String val) {
 		cur_cursor = val;
 		if ("finger".equals(val))
 			scene.setCursor(Cursor.HAND);
@@ -610,8 +613,8 @@ public class FxRenderSupport extends RenderSupport {
 			scene.setCursor(Cursor.DEFAULT);
 		return null;
 	}
-
-	public static Func0<Object> addEventListener(Object stg, String event, Func0<Object> fn) {
+	@Override
+	public Func0<Object> addEventListener(Object stg, String event, Func0<Object> fn) {
 		final Clip cl = (Clip)stg;
 		if ("resize".equals(event))
 			return addEvent(event_resize, fn);
@@ -659,8 +662,8 @@ public class FxRenderSupport extends RenderSupport {
 
 		return no_op;
 	}
-
-	public static Func0<Object> addKeyEventListener(Object stg, String event, Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>> fn) {
+	@Override
+	public Func0<Object> addKeyEventListener(Object stg, String event, Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>> fn) {
 		if ("keydown".equals(event)) {
 			return addEvent(event_keydown, fn);
 		} else if ("keyup".equals(event)) {
@@ -670,37 +673,40 @@ public class FxRenderSupport extends RenderSupport {
 			return no_op;
 		}
 	}
-
-	public static Object emitKeyEvent(Object stg, String name, String key, Boolean ctrl, Boolean shift, Boolean alt, Boolean meta, Integer code) {
+	@Override
+	public Object emitKeyEvent(Object stg, String name, String key, Boolean ctrl, Boolean shift, Boolean alt, Boolean meta, Integer code) {
 		System.out.println("emitKeyEvent not implemented");
 		return null;
 	}
-
-	public static Func0<Object> addMouseWheelEventListener(Object stg, Func1<Object,Double> cb) {
+	@Override
+	public Func0<Object> addMouseWheelEventListener(Object stg, Func1<Object,Double> cb) {
 		return addEvent(event_mousewheel, cb);
 	}
-
-	public static Func0<Object> addFinegrainMouseWheelEventListener(Object stg, Func2<Object,Double,Double> cb) {
+	@Override
+	public Func0<Object> addFinegrainMouseWheelEventListener(Object stg, Func2<Object,Double,Double> cb) {
 		return addEvent(event_finegrain_mousewheel, cb);
 	}
-
-	public static Func0<Object> addGestureListener(String name, Func5<Boolean,Integer,Double,Double,Double,Double> cb) {
+	@Override
+	public Func0<Object> addGestureListener(String name, Func5<Boolean,Integer,Double,Double,Double,Double> cb) {
 		System.out.println("addGestureListener not implemented");
 		return no_op;
 	}
-
-	public static boolean hittest(Object stg, double x, double y) {
+	@Override
+	public boolean hittest(Object stg, double x, double y) {
 		Clip cl = (Clip)stg;
 		return cl.hittestCliped(x, y) && cl.hittest(x, y);
 	}
 
-	private static class TextClip extends Clip {
+	private class TextClip extends Clip {
 		Text textClip;
 
 		StringProperty text = new StringPropertyBase("") {
+			@Override
 			public Object getBean() {
 				return null;
 			}
+
+			@Override
 			public String getName() {
 				return "text";
 			}
@@ -798,7 +804,7 @@ public class FxRenderSupport extends RenderSupport {
 		}
 	}
 
-	private static class TextInput extends TextClip {
+	private class TextInput extends TextClip {
 		TextInputControl textField;
 
 		private Boolean multiline, wordWrap, readOnly;
@@ -838,6 +844,7 @@ public class FxRenderSupport extends RenderSupport {
 			return "rtl".equals(direction) ? NodeOrientation.RIGHT_TO_LEFT : NodeOrientation.LEFT_TO_RIGHT;
 		}
 
+		@Override
 		protected String getCssStyle() {
 			String style = super.getCssStyle();
 			style += "-fx-text-fill: " + makeCssColor(fill, fillOpacity) + ";\n";
@@ -848,6 +855,7 @@ public class FxRenderSupport extends RenderSupport {
 			return style;
 		}
 
+		@Override
 		protected void updateWidgetTextStyle() {
 			if (textField == null) {
 				super.updateWidgetTextStyle();
@@ -872,6 +880,7 @@ public class FxRenderSupport extends RenderSupport {
 				setTextInput();
 		}
 
+		@Override
 		void setWidth(Double width) {
 			this.width = width;
 
@@ -882,6 +891,7 @@ public class FxRenderSupport extends RenderSupport {
 			}
 		}
 
+		@Override
 		void setHeight(Double height) {
 			this.height = height;
 
@@ -942,6 +952,7 @@ public class FxRenderSupport extends RenderSupport {
 			textField.setMouseTransparent(false);
 		}
 
+		@Override
 		public Double getWidth() {
 			if (textField != null)
 				return this.width;
@@ -949,6 +960,7 @@ public class FxRenderSupport extends RenderSupport {
 				return super.getWidth();
 		}
 
+		@Override
 		public Double getHeight() {
 			if (textField != null)
 				return this.height;
@@ -956,6 +968,7 @@ public class FxRenderSupport extends RenderSupport {
 				return super.getHeight();
 		}
 
+		@Override
 		Object[] getTextMetrics() {
 			textClip.setFont(new Font(this.font, this.size));
 
@@ -1015,50 +1028,51 @@ public class FxRenderSupport extends RenderSupport {
 		}
 	}
 
-	public static Object makeTextField(String fontfamily) {
+	@Override
+	public Object makeTextField(String fontfamily) {
 		return new TextInput();
 	}
-
-	public static Object setTextInput(Object stg) {
+	@Override
+	public Object setTextInput(Object stg) {
 		TextInput tf = (TextInput)stg;
 		tf.setTextInput();
 		return null;
 	}
-
-	public static double getTextFieldWidth(Object tf) {
+	@Override
+	public double getTextFieldWidth(Object tf) {
 		TextClip tc = (TextClip)tf;
 		return tc.getWidth();
 	}
-
-	public static double getTextFieldHeight(Object tf) {
+	@Override
+	public double getTextFieldHeight(Object tf) {
 		TextClip tc = (TextClip)tf;
 		return tc.getHeight();
 	}
-
-	public static Object setTextFieldWidth(Object stg, double val) {
+	@Override
+	public Object setTextFieldWidth(Object stg, double val) {
 		TextClip tc = (TextClip)stg;
 		tc.setWidth(val);
 		return null;
 	}
-
-	public static Object setTextFieldHeight(Object stg, double val) {
+	@Override
+	public Object setTextFieldHeight(Object stg, double val) {
 		TextClip tc = (TextClip)stg;
 		tc.setHeight(val);
 		return null;
 	}
-
-	public static Object setTextFieldCropWords(Object stg, boolean crop) {
+	@Override
+	public Object setTextFieldCropWords(Object stg, boolean crop) {
 		// Impossible for this target
 		return null;
 	}
-
-	public static Object setAdvancedText(Object stg,int a,int o,int e) {
+	@Override
+	public Object setAdvancedText(Object stg,int a,int o,int e) {
 		// Not required
 		// System.out.println("setAdvancedText not implemented");
 		return null;
 	}
-
-	public static Object setTextAndStyle(Object tf, String text, String font, double size, int weight,
+	@Override
+	public Object setTextAndStyle(Object tf, String text, String font, double size, int weight,
 								  String slope, int fill, double fillopacity, double letterspacing,
 								  int bgColor,double bgOpacity) {
 		TextClip tc = (TextClip)tf;
@@ -1098,28 +1112,28 @@ public class FxRenderSupport extends RenderSupport {
 		tc.setTextAndStyle(unicode.toString(), f, size, weight, slope, fill, fillopacity, letterspacing, bgColor, bgOpacity);
 		return null;
 	}
-
-	public static Object setTextDirection(Object stg, String val) {
+	@Override
+	public Object setTextDirection(Object stg, String val) {
 		TextInput ti = (TextInput)stg;
 		ti.setTextDirection(val);
 		return null;
 	}
-
-	public static int getNumLines(Object stg) {
+	@Override
+	public int getNumLines(Object stg) {
 		System.out.println("getNumLines not implemented");
 		return 0;
 	}
-
-	public static int getCursorPosition(Object stg) {
+	@Override
+	public int getCursorPosition(Object stg) {
 		TextInput ti = (TextInput)stg;
 		return ti.getCursorPosition();
 	}
-
-	public static boolean getFocus(Object stg) {
+	@Override
+	public boolean getFocus(Object stg) {
 		return ((TextInput)stg).isFocused();
 	}
-
-	public static Object setFocus(Object stg, boolean val) {
+	@Override
+	public Object setFocus(Object stg, boolean val) {
 		TextInput ti = (TextInput)stg;
 		if (val)
 			ti.requestFocus();
@@ -1127,223 +1141,223 @@ public class FxRenderSupport extends RenderSupport {
 			stage.requestFocus();
 		return null;
 	}
-
-	public static String getContent(Object stg) {
+	@Override
+	public String getContent(Object stg) {
 		return ((TextInput)stg).getText();
 	}
-
-	public static Object setMultiline(Object stg, boolean val) {
+	@Override
+	public Object setMultiline(Object stg, boolean val) {
 		TextInput tc = (TextInput)stg;
 		tc.setMultiline(val);
 		return null;
 	}
-
-	public static Object setTextFieldInterlineSpacing(Object stg, double val) {
+	@Override
+	public Object setTextFieldInterlineSpacing(Object stg, double val) {
 		TextInput ti = (TextInput)stg;
 		ti.setInterlineSpacing(val);
 		return null;
 	}
-
-	public static Object setWordWrap(Object stg, boolean val) {
+	@Override
+	public Object setWordWrap(Object stg, boolean val) {
 		TextInput tc = (TextInput)stg;
 		tc.setWordWrap(val);
 		return null;
 	}
-
-	public static Object setTextInputType(Object stg, String type) {
+	@Override
+	public Object setTextInputType(Object stg, String type) {
 		TextInput tc = (TextInput)stg;
 		tc.setTextInputType(type);
 		return null;
 	}
-
-	public static Object setReadOnly(Object stg, boolean val) {
+	@Override
+	public Object setReadOnly(Object stg, boolean val) {
 		TextInput tc = (TextInput)stg;
 		tc.setReadOnly(val);
 		return null;
 	}
-
-	public static Object setAutoAlign(Object stg, String val) {
+	@Override
+	public Object setAutoAlign(Object stg, String val) {
 		TextInput ti = (TextInput)stg;
 		ti.setAutoAlign(val);
 		return null;
 	}
-
-	public static Object setTabIndex(Object stg, int val) {
+	@Override
+	public Object setTabIndex(Object stg, int val) {
 		TextInput ti = (TextInput)stg;
 		ti.setTabIndex(val);
 		return null;
 	}
-
-	public static int getScrollV(Object stg) {
+	@Override
+	public int getScrollV(Object stg) {
 		System.out.println("getScrollV not implemented");
 		return 0;
 	}
-
-	public static int getBottomScrollV(Object stg) {
+	@Override
+	public int getBottomScrollV(Object stg) {
 		System.out.println("getBottomScrollV not implemented");
 		return 0;
 	}
-
-	public static Object setScrollV(Object stg, int val) {
+	@Override
+	public Object setScrollV(Object stg, int val) {
 		System.out.println("setScrollV not implemented");
 		return null;
 	}
-
-	public static Object setMaxChars(Object stg, int val) {
+	@Override
+	public Object setMaxChars(Object stg, int val) {
 		TextInput ti = (TextInput)stg;
 		ti.setMaxChars(val);
 		return null;
 	}
-
-	public static Object[] getTextMetrics(Object tf) {
+	@Override
+	public Object[] getTextMetrics(Object tf) {
 		TextInput ti = (TextInput)tf;
 		return ti.getTextMetrics();
 	}
-
-	public static int getSelectionStart(Object stg) {
+	@Override
+	public int getSelectionStart(Object stg) {
 		System.out.println("getSelectionStart not implemented");
 		return 0;
 	}
-
-	public static int getSelectionEnd(Object stg) {
+	@Override
+	public int getSelectionEnd(Object stg) {
 		System.out.println("getSelectionEnd not implemented");
 		return 0;
 	}
-
-	public static Object setSelection(Object stg, int start, int end) {
+	@Override
+	public Object setSelection(Object stg, int start, int end) {
 		System.out.println("setSelection not implemented");
 		return null;
 	}
-
-	public static Object makeVideo(Func2<Object,Double,Double> mfn, Func1<Object, Boolean> pfn, Func1<Object, Double> dfn, Func1<Object, Double> posfn) {
+	@Override
+	public Object makeVideo(Func2<Object,Double,Double> mfn, Func1<Object, Boolean> pfn, Func1<Object, Double> dfn, Func1<Object, Double> posfn) {
 		System.out.println("makeVideo not implemented");
 		return new Clip();
 	}
-
-	public static Object pauseVideo(Object stg) {
+	@Override
+	public Object pauseVideo(Object stg) {
 		System.out.println("pauseVideo not implemented");
 		return null;
 	}
-
-	public static Object resumeVideo(Object stg) {
+	@Override
+	public Object resumeVideo(Object stg) {
 		System.out.println("resumeVideo not implemented");
 		return null;
 	}
-
-	public static Object closeVideo(Object stg) {
+	@Override
+	public Object closeVideo(Object stg) {
 		System.out.println("closeVideo not implemented");
 		return null;
 	}
-
-	public static Object playVideo(Object obj, String name, boolean pause) {
+	@Override
+	public Object playVideo(Object obj, String name, boolean pause) {
 		System.out.println("playVideo not implemented");
 		return null;
 	}
-
-	public static double getVideoPosition(Object stg) {
+	@Override
+	public double getVideoPosition(Object stg) {
 		System.out.println("getVideoPosition not implemented");
 		return 0;
 	}
-
-	public static Object seekVideo(Object stg, double val) {
+	@Override
+	public Object seekVideo(Object stg, double val) {
 		System.out.println("seekVideo not implemented");
 		return null;
 	}
-
-	public static Object setVideoVolume(Object stg, double val) {
+	@Override
+	public Object setVideoVolume(Object stg, double val) {
 		System.out.println("setVideoVolume not implemented");
 		return null;
 	}
-
-	public static Object setVideoLooping(Object stg, boolean val) {
+	@Override
+	public Object setVideoLooping(Object stg, boolean val) {
 		System.out.println("setVideoLooping not implemented");
 		return null;
 	}
-
-	public static Object setVideoControls(Object stg, Object[] info) {
+	@Override
+	public Object setVideoControls(Object stg, Object[] info) {
 		System.out.println("setVideoControls not implemented");
 		return null;
 	}
-
-	public static Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+	@Override
+	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour, double backgroundOpacity, boolean alignBottom,
 								  double bottomBorder, boolean scaleMode, double scaleModeMin, double scaleModeMax, boolean escapeHTML) {
 		System.out.println("setVideoSubtitle not implemented");
 		return null;
 	}
-
-	public static Object setVideoPlaybackRate(Object tf, Double rate) {
+	@Override
+	public Object setVideoPlaybackRate(Object tf, Double rate) {
 		System.out.println("setVideoPlaybackRate not implemented");
 		return null;
 	}
-
-	public static Func0<Object> addStreamStatusListener(Object vid, Func1<Object,String> cb) {
+	@Override
+	public Func0<Object> addStreamStatusListener(Object vid, Func1<Object,String> cb) {
 		System.out.println("addStreamStatusListener not implemented");
 		return no_op;
 	}
-
-	public static boolean isFullScreen() {
+	@Override
+	public boolean isFullScreen() {
 		System.out.println("isFullScreen not implemented");
 		return false;
 	}
-
-	public static Object toggleFullScreen(Boolean fs) {
+	@Override
+	public Object toggleFullScreen(Boolean fs) {
 		System.out.println("toggleFullScreen not implemented");
 		return null;
 	}
-
-	public static Object toggleFullWindow(Boolean fs) {
+	@Override
+	public Object toggleFullWindow(Boolean fs) {
 		System.out.println("toggleFullWindow not implemented");
 		return null;
 	}
-
-	public static Func0<Object> onFullScreen(Func1<Object,Boolean> cb) {
+	@Override
+	public Func0<Object> onFullScreen(Func1<Object,Boolean> cb) {
 		System.out.println("onFullScreen not implemented");
 		return null;
 	}
-
-	public static Object setFullScreen(Boolean fs) {
+	@Override
+	public Object setFullScreen(Boolean fs) {
 		System.out.println("setFullScreen not implemented");
 		return null;
 	}
-
-	public static Object setFullWindowTarget(Object stg) {
+	@Override
+	public Object setFullWindowTarget(Object stg) {
 		System.out.println("setFullWindowTarget not implemented");
 		return null;
 	}
-
-	public static Object resetFullWindowTarget() {
+	@Override
+	public Object resetFullWindowTarget() {
 		System.out.println("resetFullWindowTarget not implemented");
 		return null;
 	}
-
-	public static Object setFullScreenRectangle(double x, double y, double w, double h) {
+	@Override
+	public Object setFullScreenRectangle(double x, double y, double w, double h) {
 		System.out.println("setFullScreenRectangle not implemented");
 		return null;
 	}
-
-	public static Object makeBevel(double a,double b,double c,double d,int e,double f,int g,double h,boolean i) {
+	@Override
+	public Object makeBevel(double a,double b,double c,double d,int e,double f,int g,double h,boolean i) {
 		System.out.println("makeBevel not implemented");
 		return null;
 	}
-
-	public static Object makeDropShadow(double angle,double distance,double radius,double spread,int color, double alpha,boolean inside) {
+	@Override
+	public Object makeDropShadow(double angle,double distance,double radius,double spread,int color, double alpha,boolean inside) {
 		double a = Math.PI * (90 - angle) / 180.0;
 		double dx = Math.cos(a) * distance, dy = Math.sin(a) * distance;
 		return new DropShadow(BlurType.GAUSSIAN, mkColor(color, alpha), radius * 2.5, 0.0, dx, dy);
 	}
-
-	public static Object makeBlur(double radius,double spread) {
+	@Override
+	public Object makeBlur(double radius,double spread) {
 		return new BoxBlur(radius, radius, (int)spread);
 	}
-
-	public static Object makeGlow(double a,double b,int c, double d,boolean e) {
+	@Override
+	public Object makeGlow(double a,double b,int c, double d,boolean e) {
 		System.out.println("makeGlow not implemented");
 		return null;
 	}
 
-	private static class CachedPicture {
+	private class CachedPicture {
 		Image image;
 		boolean loaded = false;
 		boolean failed = false;
@@ -1387,9 +1401,9 @@ public class FxRenderSupport extends RenderSupport {
 		}
 	}
 
-	private static Hashtable<String,CachedPicture> img_cache = new Hashtable<>();
+	private Hashtable<String,CachedPicture> img_cache = new Hashtable<>();
 
-	private static class PictureClip extends Clip {
+	private class PictureClip extends Clip {
 		ImageView view;
 		CachedPicture pic;
 
@@ -1405,7 +1419,8 @@ public class FxRenderSupport extends RenderSupport {
 		}
 	}
 
-	public static Object makePicture(String name,boolean cache,Func2<Object,Double,Double> metricsFn,Func1<Object,String> errorFn,boolean onlyDownload, String altText, Object[] headers) {
+	@Override
+	public Object makePicture(String name,boolean cache,Func2<Object,Double,Double> metricsFn,Func1<Object,String> errorFn,boolean onlyDownload, String altText) {
 		CachedPicture img = img_cache.get(name);
 
 		if (img == null) {
@@ -1426,24 +1441,24 @@ public class FxRenderSupport extends RenderSupport {
 
 		return new PictureClip(img);
 	}
-
-	public static Object[] makeCamera(String a,int o,int e,int u,double i,int d,int h,int t,Func1<Object,Object> n,Func1<Object,String> s) {
+	@Override
+	public Object[] makeCamera(String a,int o,int e,int u,double i,int d,int h,int t,Func1<Object,Object> n,Func1<Object,String> s) {
 		System.out.println("makeCamera not implemented");
 		Clip tmp = new Clip();
 		return new Object[] { tmp, tmp };
 	}
-
-	public static Object startRecord(Object cm,String a,String o) {
+	@Override
+	public Object startRecord(Object cm,String a,String o) {
 		System.out.println("startRecord not implemented");
 		return null;
 	}
-
-	public static Object stopRecord(Object cm) {
+	@Override
+	public Object stopRecord(Object cm) {
 		System.out.println("stopRecord not implemented");
 		return null;
 	}
 
-	private static class Graphics {
+	private class Graphics {
 		Clip owner;
 		Path path;
 
@@ -1459,33 +1474,33 @@ public class FxRenderSupport extends RenderSupport {
 		}
 	}
 
-	public static Object getGraphics(Object clip) {
+	@Override
+	public Object getGraphics(Object clip) {
 		Clip cl = (Clip)clip;
 		return cl.getGraphics();
 	}
-	private static Color mkColor(int color, double alpha) {
+	private Color mkColor(int color, double alpha) {
 		return Color.rgb((color>>16)&0xff,(color>>8)&0xff,color&0xff,alpha);
 	}
-
-	public static Object beginFill(Object gr,int color,double alpha) {
+	@Override
+	public Object beginFill(Object gr,int color,double alpha) {
 		Graphics g = (Graphics)gr;
 		g.path.setFill(mkColor(color, alpha));
 		g.owner.container.setMouseTransparent(alpha < 0.1);
 		return null;
 	}
-
-	public static Object setLineStyle(Object gr,double width,int color,double alpha) {
+	@Override
+	public Object setLineStyle(Object gr,double width,int color,double alpha) {
 		Graphics g = (Graphics)gr;
 		g.path.setStroke(mkColor(color, alpha));
 		g.path.setStrokeWidth(width);
 		return null;
 	}
-
-	public static Object makeMatrix(double width,double height,double rotation,double x,double y) {
+	@Override
+	public Object makeMatrix(double width,double height,double rotation,double x,double y) {
 		return new double[] { width, height, rotation, x, y };
 	}
-
-	private static Paint makeLinearGradient(Object[] color,Object[] alpha,Object[] offset,Object matrix) {
+	private Paint makeLinearGradient(Object[] color,Object[] alpha,Object[] offset,Object matrix) {
 		double[] mat = (double[])matrix;
 		double a = Math.PI * mat[2] / 180.0;
 		double dx = Math.cos(a) * mat[0], dy = Math.sin(a) * mat[0];
@@ -1496,8 +1511,7 @@ public class FxRenderSupport extends RenderSupport {
 			stops.add(new Stop((double)offset[i], mkColor((int)color[i], (double)alpha[i])));
 		return new LinearGradient(x1,y1,x2,y2,false,CycleMethod.NO_CYCLE,stops);
 	}
-
-	private static Paint makeRadialGradient(Object[] color,Object[] alpha,Object[] offset,Object matrix) {
+	private Paint makeRadialGradient(Object[] color,Object[] alpha,Object[] offset,Object matrix) {
 		double[] mat = (double[])matrix;
 		double x = mat[3] + mat[0] * 0.5, y = mat[4] + mat[1] * 0.5;
 		double r = Math.sqrt((mat[0]*mat[0]+mat[1]*mat[1])/8.0);
@@ -1506,8 +1520,8 @@ public class FxRenderSupport extends RenderSupport {
 			stops.add(new Stop((double)offset[i], mkColor((int)color[i], (double)alpha[i])));
 		return new RadialGradient(0,0,x,y,r,false,CycleMethod.NO_CYCLE,stops);
 	}
-
-	public static Object beginGradientFill(Object gr,Object[] color,Object[] alpha,Object[] offset,Object matrix,String type) {
+	@Override
+	public Object beginGradientFill(Object gr,Object[] color,Object[] alpha,Object[] offset,Object matrix,String type) {
 		Graphics g = (Graphics)gr;
 		Paint p;
 		if ("radial".equals(type))
@@ -1517,14 +1531,14 @@ public class FxRenderSupport extends RenderSupport {
 		g.path.setFill(p);
 		return null;
 	}
-
-	public static Object setLineGradientStroke(Object gr,Object[] color,Object[] alpha,Object[] offset,Object matrix) {
+	@Override
+	public Object setLineGradientStroke(Object gr,Object[] color,Object[] alpha,Object[] offset,Object matrix) {
 		Graphics g = (Graphics)gr;
 		g.path.setStroke(makeLinearGradient(color,alpha,offset,matrix));
 		return null;
 	}
-
-	public static Object moveTo(Object gr,double x,double y) {
+	@Override
+	public Object moveTo(Object gr,double x,double y) {
 		Graphics g = (Graphics)gr;
 		MoveTo moveTo = new MoveTo();
 		moveTo.setX(x);
@@ -1532,8 +1546,8 @@ public class FxRenderSupport extends RenderSupport {
 		g.path.getElements().add(moveTo);
 		return null;
 	}
-
-	public static Object lineTo(Object gr,double x,double y) {
+	@Override
+	public Object lineTo(Object gr,double x,double y) {
 		Graphics g = (Graphics)gr;
 		LineTo lineTo = new LineTo();
 		lineTo.setX(x);
@@ -1541,8 +1555,8 @@ public class FxRenderSupport extends RenderSupport {
 		g.path.getElements().add(lineTo);
 		return null;
 	}
-
-	public static Object curveTo(Object gr,double cx,double cy,double x, double y) {
+	@Override
+	public Object curveTo(Object gr,double cx,double cy,double x, double y) {
 		Graphics g = (Graphics)gr;
 		QuadCurveTo quadTo = new QuadCurveTo();
 		quadTo.setControlX(cx);
@@ -1552,26 +1566,27 @@ public class FxRenderSupport extends RenderSupport {
 		g.path.getElements().add(quadTo);
 		return null;
 	}
-
-	public static Object endFill(Object gr) {
+	@Override
+	public Object endFill(Object gr) {
 		return null;
 	}
 
-	private static AnimationTimer animation = new AnimationTimer() {
+	private AnimationTimer animation = new AnimationTimer() {
 		public void handle(long now) {
 			callbackDrawFrame(now / 1000000.0);
 		}
 	};
 
-	private static HashSet<Func1<Object,Double>> animationCallbacks = new HashSet<>();
+	private HashSet<Func1<Object,Double>> animationCallbacks = new HashSet<>();
 
-	private static void callbackDrawFrame(double now) {
+	private void callbackDrawFrame(double now) {
 		for (Func1<Object,Double> cb : animationCallbacks) {
 			cb.invoke(now);
 		}
 	}
 
-	public static Func0<Object> addDrawFrameEventListener(final Func1<Object,Double> cb) {
+	@Override
+	public Func0<Object> addDrawFrameEventListener(final Func1<Object,Double> cb) {
 		animationCallbacks.add(cb);
 		if (animationCallbacks.size() == 1)
 			animation.start();
