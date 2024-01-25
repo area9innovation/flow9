@@ -1405,7 +1405,7 @@ public class FxRenderSupport extends RenderSupport {
 		}
 	}
 
-	public static Object makePicture(String name,boolean cache,Func2<Object,Double,Double> metricsFn,Func1<Object,String> errorFn,boolean onlyDownload, String altText) {
+	public static Object makePicture(String name,boolean cache,Func2<Object,Double,Double> metricsFn,Func1<Object,String> errorFn,boolean onlyDownload, String altText, Object[] headers) {
 		CachedPicture img = img_cache.get(name);
 
 		if (img == null) {
