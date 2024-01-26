@@ -3,7 +3,6 @@ import tools/flowc/backends/cpp3/fi2cpp3_source;
 import tools/flowc/backends/cpp3/fi2cpp3_build;
 import tools/flowc/backends/cpp3/fi2cpp3_transform;
 import tools/flowc/manipulation/wrap_funcs_as_args;
-import tools/flowc/manipulation/lambda_lifting;
 
 import tools/common/stats;
 
@@ -26,13 +25,26 @@ fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, call
 fi2cpp3Compile(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3CompiledProgram {
 	gctx = fi2cpp3initGctx(program, globEnv, cfg);
 	cpp_natives = fiCpp3InitNativeFuncs(cfg);
-	resolved = fiResolveNatives(program, \name -> containsKeyTree(cpp_natives, name));
+	stub_missing_natives = isConfigParameterTrue(cfg.config.config, "cpp-stub-missing-natives");
+	resolved = fiResolveNatives(program,
+		\name -> containsKeyTree(cpp_natives, name),
+		\__ -> stub_missing_natives
+	);
 	if (resolved.second != []) {
-		fcPrintln("Missing cpp3 natives: " + strGlue(resolved.second, ", "), cfg.config.threadId);
+		missing_names = map(resolved.second, \nat -> nat.name);
+		missing_string = if (length(missing_names) <= 8) strGlue(missing_names, ", ") else {
+			strArrayWrap(missing_names, 128, false, ",");
+		}
+		fcPrintln(
+			(if (stub_missing_natives) "Warning" else "Error") +
+			": missing cpp3 natives:\n" + strIndent(missing_string), cfg.config.threadId);
+	}
+	if (resolved.second != [] && !stub_missing_natives) {
+		// Missing natives are not ignored
 		Cpp3CompiledProgram(program.config.flowfile, [], [], false);
 	} else {
 		program1 = resolved.first
-			|> (\p -> fiAddMandatoryNatives(p, cpp3MandatoryNatives))
+			|> (\p -> fiAddExternalNatives(p, cpp3MandatoryNatives))
 			|> fiFuncGlobalVar2Func
 			|> fiFlattenUnions
 			|> fiRemoveImplicitStructTypars
