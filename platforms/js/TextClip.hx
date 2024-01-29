@@ -185,6 +185,7 @@ class TextClip extends NativeWidgetClip {
 	private var preventSelectEvent : Bool = false;
 	private var preventMouseUpEvent : Bool = false;
 	private var preventEnsureCurrentInputVisible : Bool = false;
+	private var preventCheckTextNodeWidth : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -829,6 +830,12 @@ class TextClip extends NativeWidgetClip {
 		if (this.needBaseline != need) {
 			this.needBaseline = need;
 			updateBaselineWidget();
+		}
+	}
+
+	public function setPreventCheckTextNodeWidth(prevent : Bool) : Void {
+		if (this.preventCheckTextNodeWidth != prevent) {
+			this.preventCheckTextNodeWidth = prevent;
 		}
 	}
 
@@ -1711,7 +1718,7 @@ class TextClip extends NativeWidgetClip {
 					if (useHTMLMeasurementJapaneseFont(style)) {
 						measureHTMLSize();
 					} else {
-						if (checkTextNodeWidth && style.fontStyle == 'italic') measureHTMLWidth();
+						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic') measureHTMLWidth();
 					}
 				}
 			}
@@ -1754,7 +1761,8 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateTextWidth() : Void {
 		if (nativeWidget != null && metrics != null) {
-			var textNodeMetrics = getTextNodeMetrics(nativeWidget);
+			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth;
+			var textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck);
 			var textNodeWidth0 = textNodeMetrics.width;
 			var textNodeHeight = textNodeMetrics.height;
 			if (textNodeWidth0 != null && textNodeWidth0 > 0 && textNodeHeight != null && textNodeHeight > 0) {
@@ -1864,6 +1872,7 @@ class TextClip extends NativeWidgetClip {
 		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 		var parentNode : Dynamic = nativeWidget.parentNode;
 		var nextSibling : Dynamic = nativeWidget.nextSibling;
+		var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth;
 
 		updateNativeWidgetStyle();
 		var tempDisplay = nativeWidget.style.display;
@@ -1880,7 +1889,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		Browser.document.body.appendChild(nativeWidget);
-		textNodeMetrics = getTextNodeMetrics(nativeWidget);
+		textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck);
 
 		if (parentNode != null) {
 			if (nextSibling == null || nextSibling.parentNode != parentNode) {
@@ -1899,7 +1908,7 @@ class TextClip extends NativeWidgetClip {
 			metrics.width = textNodeWidth;
 		}
 
-		if (checkTextNodeWidth) {
+		if (useCheck) {
 			nativeWidget.style.paddingLeft = '${-textNodeMetrics.x}px';
 		}
 
@@ -1917,18 +1926,18 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private static function getTextNodeMetrics(nativeWidget) : Dynamic {
+	private static function getTextNodeMetrics(nativeWidget, useCheck) : Dynamic {
 		var textNodeMetrics : Dynamic = {};
 		if (nativeWidget == null || nativeWidget.lastChild == null) {
 			textNodeMetrics.width = 0;
 			textNodeMetrics.height = 0;
 			textNodeMetrics.x = 0;
 		} else {
-			var textNode = checkTextNodeWidth ? nativeWidget.lastChild : nativeWidget;
-			if (checkTextNodeWidth) {
+			var textNode = useCheck ? nativeWidget.lastChild : nativeWidget;
+			if (useCheck) {
 				updateTextNodesWidth(untyped nativeWidget.childNodes, textNodeMetrics);
 			}
-			updateTextNodeHeight(textNode, textNodeMetrics);
+			updateTextNodeHeight(textNode, textNodeMetrics, useCheck);
 		}
 		return textNodeMetrics;
 	}
@@ -1967,7 +1976,7 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private static function updateTextNodeHeight(textNode, textNodeMetrics) {
+	private static function updateTextNodeHeight(textNode, textNodeMetrics, useCheck) {
 		if (Browser.document.createRange != null) {
 			var range = Browser.document.createRange();
 			range.selectNodeContents(textNode);
@@ -1975,7 +1984,7 @@ class TextClip extends NativeWidgetClip {
 				var rect = range.getBoundingClientRect();
 				if (rect != null) {
 					var viewportScale = RenderSupport.getViewportScale();
-					if (!checkTextNodeWidth) {
+					if (!useCheck) {
 						textNodeMetrics.width = (rect.right - rect.left) * viewportScale;
 					}
 					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;

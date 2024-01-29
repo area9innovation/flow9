@@ -2201,6 +2201,10 @@ class RenderSupport {
 		clip.setNeedBaseline(needBaseline);
 	}
 
+	public static function setTextPreventCheckTextNodeWidth(clip : TextClip, prevent : Bool) : Void {
+		clip.setPreventCheckTextNodeWidth(prevent);
+	}
+
 	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
 		clip.setEscapeHTML(escapeHTML);
 	}
