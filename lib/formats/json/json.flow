@@ -97,6 +97,14 @@ export {
 	// The setter to the nested field, dual to getJsonNestedField
 	setJsonNestedField(json: Json, fields: [string], value : Json) -> Json;
 
+	// Access to a nested field like obj.f1.f2.f3, where fields = [f1, f2, f3] including JsonArray indexes
+	getJsonNestedObjectOrArrayField(json: Json, fields: [string]) -> Json;
+	// The setter to the nested field including JsonArray indexes, dual to getJsonNestedObjectOrArrayField
+	// If field is a string representing 0 or positive integer, it will be treated as JsonArray index,
+	// otherwise it's a JsonObject field
+	// If JsonArray index is out of array bounds, the value will be appended to the array
+	setJsonNestedObjectOrArrayField(json: Json, fields: [string], value : Json) -> Json;
+
 	// return the parsed json and the index of the first error. -1 if there are no errors.
 	parseJsonUntilError(json : string) -> Pair<Json, int>;
 }
@@ -631,6 +639,65 @@ setJsonNestedField(json: Json, fields: [string], value : Json) -> Json {
 				JsonObject([
 					Pair(field, setJsonNestedField(JsonNull(), tail(fields), value))
 				]);
+			}
+		}
+	}
+}
+
+getJsonNestedObjectOrArrayField(json: Json, fields: [string]) -> Json {
+	if (fields == []) json else {
+		getJsonNestedObjectOrArrayField(
+			either(
+				getJsonFieldValueM(json, fields[0]),
+				getValueFromJsonArray(json, s2i(fields[0]), JsonNull())
+			),
+			tail(fields)
+		);
+	}
+}
+
+setJsonNestedObjectOrArrayField(json: Json, fields: [string], value : Json) -> Json {
+	if (fields == []) value else {
+		field = fields[0];
+		index = s2i(field);
+
+		if (index >= 0 && i2s(index) == field) {
+			switch (json) {
+				JsonArray(vals): {
+					JsonArray(replace(vals, min(index, length(vals)), setJsonNestedObjectOrArrayField(
+						if (index < length(vals)) vals[index] else JsonNull(),
+						tail(fields),
+						value
+					)));
+				}
+				default: {
+					JsonArray([
+						setJsonNestedObjectOrArrayField(JsonNull(), tail(fields), value)
+					]);
+				}
+			}
+		} else {
+			switch (json) {
+				JsonObject(members): {
+					switch (findi(members, \memb -> memb.first == field)) {
+						Some(i): {
+							member = members[i].second;
+							JsonObject(replace(members, i,
+								Pair(field, setJsonNestedObjectOrArrayField(member, tail(fields), value))
+							));
+						}
+						None(): {
+							JsonObject(arrayPush(members,
+								Pair(field, setJsonNestedObjectOrArrayField(JsonNull(), tail(fields), value))
+							));
+						}
+					}
+				}
+				default: {
+					JsonObject([
+						Pair(field, setJsonNestedObjectOrArrayField(JsonNull(), tail(fields), value))
+					]);
+				}
 			}
 		}
 	}
