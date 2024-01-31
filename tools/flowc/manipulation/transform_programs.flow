@@ -12,6 +12,15 @@ export {
 	// Example: None() struct from Maybe<?> union implicitly inherits the ? type parameter
 	fiCompleteStructTypars(program : FiProgram) -> FiProgram;
 
+	// Add implicit typars to unions, which come from contained structs.
+	// Example:
+	//   DbResult ::= DbJsonResult, DbStructuresResult; //, DbStructuresAndRightsResult;
+	//     DbJsonResult(json : Json);
+	//     DbStructuresResult(items : [?]);
+	// Here DbResult don't inherit DbStructureResult typars:
+	//   FiTypeUnion("DbResult", [], [FiTypeName("DbJsonResult", []), FiTypeName("DbStructuresResult", [])], 2496)
+	fiCompleteImplicitUnionTypars(program : FiProgram) -> FiProgram;
+
 	// Remove implicit typars to structs, which come from embracing unions.
 	// Example: None() struct from Maybe<?> union implicitly inherits the ? type parameter
 	fiRemoveImplicitStructTypars(program : FiProgram) -> FiProgram;
@@ -150,6 +159,48 @@ fiStrcutFullTypars(struct : FiTypeStruct, struct2union: Tree<string, [FiTypeUnio
 	sort(uniq(fold(supertypes, filter_typars(struct.typars), \acc, union ->
 		concat(acc, filter_typars(union.typeparameters))
 	)));
+}
+
+fiCompleteImplicitUnionTypars(program : FiProgram) -> FiProgram {
+	unions2structs = fiUnions2Structs(program.names);
+	structs2unions = fiStucts2Unions(program.names, unions2structs);
+	completed_unions = mapTree(program.names.unions, \union -> {
+		all_typars = ref makeSet();
+		completed_typenames = map(union.typenames, \tn -> {
+			// We expect, that unions are already flattened, i.e. contain only structs.
+			struct = lookupTreeDef(program.names.structs, tn.name, FiTypeStruct("", [], [], 0));
+			completed_tn = if (tn.typeparameters == [] && struct.typars != []) {
+				// Case, when struct contains type parameters, but corresponding typename doesn't.
+				FiTypeName(tn with typeparameters = struct.typars);
+			} else {
+				tn;
+			}
+			iter(completed_tn.typeparameters, \tp -> switch (tp) {
+				FiTypeParameter(n): all_typars := insertSet(^all_typars, n);
+				default: {}
+			});
+			completed_tn;
+		});
+		completed_typars = if (sizeSet(^all_typars) == length(union.typeparameters)) {
+			// All type parameters are already accounted in union
+			union.typeparameters
+		} else {
+			// Some type parameters are missed in union
+			map(set2array(^all_typars), \n -> FiTypeParameter(n));
+		}
+		FiTypeUnion(union with
+			typeparameters = completed_typars,
+			typenames = completed_typenames
+		)
+	});
+	FiProgram(program with
+		names = FiGlobalNames(program.names with unions = completed_unions),
+		modules = mapTree(program.modules, \module ->
+			FiModule(module with
+				unions = map(module.unions, \u -> lookupTreeDef(completed_unions, u.name, u))
+			)
+		)
+	);
 }
 
 fiRemoveImplicitStructTypars(program : FiProgram) -> FiProgram {
