@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<style lang="css">
+			html, body, iframe {
+				display: block;
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				padding: 0;
+			}
+		</style>
+	</head>
+<body>
+	<div id="player"></div>
+
+	<script>
+		var tag = document.createElement('script'), firstScriptTag = document.getElementsByTagName('script')[0];
+		tag.src = "https://www.youtube.com/iframe_api";
+		firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+		var player, sender, apiReady = false;
+		function onYouTubeIframeAPIReady() {
+			apiReady = true;
+		}
+
+		function createYTPlayer(videoId, params = {}) {
+			if (apiReady) {
+				var autoplay = params.autoplay == 1;
+				params.enablejsapi = 1;
+
+				if (!('origin' in params)) params.origin = '';
+				if (autoplay) params.mute = '1';
+				if (!('start' in params)) params.start = 0;
+
+				player = new YT.Player('player', {
+					height: '100%',
+					width: '100%',
+					playerVars : params,
+					events: {
+						onReady: (e) => {
+							player.ready = true;
+							videoInfo = {videoId : videoId};
+							if (typeof params.start !== 'undefined' && params.start >= 0) videoInfo.startSeconds = params.start;
+							if (typeof params.end !== 'undefined') videoInfo.endSeconds = params.end;
+							if (autoplay) {
+								player.loadVideoById(videoInfo);
+							} else {
+								player.cueVideoById(videoInfo);
+							}
+							player.lastSended = {};
+							sender = setInterval(sendChanges, 33);
+						},
+						onStateChange: (e) => {
+							var currentState = e.data,
+								currentTime = player.getCurrentTime(),
+								duration = player.getDuration(),
+								end = (params.end > params.start && params.end < duration) ? params.end : duration;
+
+							if (params.loop == 1 && currentState === YT.PlayerState.ENDED) {
+								player.seekTo(params.start);
+								player.playVideo();
+							}
+							if (
+								player.lastState === YT.PlayerState.ENDED
+								&& currentState === YT.PlayerState.PLAYING
+								&& (Math.abs(end - currentTime) < 0.1 || currentTime < 0.1) // on rewind
+							) {
+								player.seekTo(params.start);
+							}
+							player.lastState = currentState;
+						}
+					}
+				});
+			} else {
+				setTimeout(createYTPlayer, 10, videoId, params)
+			}
+		}
+
+		function getPlayerState() {
+			state = player.getPlayerState();
+			switch (state) {
+				case YT.PlayerState.ENDED:
+					status = "ENDED";
+					break;
+				case YT.PlayerState.PLAYING:
+					status = "PLAYING";
+					break;
+				case YT.PlayerState.PAUSED:
+					status = "PAUSED";
+					break;
+				case YT.PlayerState.BUFFERING:
+					status = "BUFFERING";
+					break;
+				case YT.PlayerState.CUED:
+					status = "CUED";
+					break;
+				default:
+					status = "UNKNOWN";
+					break;
+			}
+			return {
+				status: status,
+				volume: player.getVolume(),
+				duration: player.getDuration(),
+				currentTime: player.getCurrentTime()
+			};
+		}
+		function sendChanges() {
+			if (player.ready) {
+				var currentState = getPlayerState(), changedState = {}, n = 0;
+				for (var field in currentState) {
+					if (!(field in player.lastSended) || currentState[field] !== player.lastSended[field]) {
+						changedState[field] = currentState[field];
+						n++;
+					}
+				}
+				if (n > 0) {
+					parent.postMessage(JSON.stringify({playerState : changedState}));
+					player.lastSended = currentState;
+				}
+			}
+		}
+		window.addEventListener("message", function (e) {
+			try {
+				var data = JSON.parse(e.data);
+
+				if ('loadVideo' in data) {
+					createYTPlayer(data.loadVideo.videoId, data.loadVideo.params);
+				}
+
+				if ('playerState' in data) {
+					clearInterval(sender);
+					var currentState = getPlayerState();
+
+					if ('status' in data.playerState && currentState.status !== data.playerState.status) {
+						switch (data.playerState.status) {
+							case "PLAYING":
+								player.playVideo();
+								break;
+							case "PAUSED":
+								player.pauseVideo();
+								break;
+							default:
+						}
+						player.lastSended.status = data.playerState.status;
+					}
+					if ('volume' in data.playerState && currentState.volume !== data.playerState.volume) {
+						player.setVolume(data.playerState.volume);
+						if (data.playerState.volume > 0) {
+							player.unMute();
+						}
+						player.lastSended.volume = data.playerState.volume;
+					}
+					if ('loop' in data.playerState) {
+						player.setLoop(data.playerState.loop);
+						player.lastSended.loop = data.playerState.loop;
+					}
+					if ('currentTime' in data.playerState && currentState.currentTime !== data.playerState.currentTime) {
+						player.seekTo(data.playerState.currentTime);
+						player.lastSended.currentTime = data.playerState.currentTime;
+					}
+					sender = setInterval(sendChanges, 33);
+				}
+
+			} catch (e) {}
+		});
+	</script>
+</body>
+</html>

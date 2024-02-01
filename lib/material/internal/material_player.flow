@@ -1,6 +1,7 @@
 import material/internal/material_menu;
 import material/internal/material_slider;
 import material/internal/material_progress;
+import net/appurl;
 
 export {
 	MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
@@ -16,7 +17,11 @@ export {
 MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	(\p -> eitherFn(
 		getExternalPlayerURL(m.filename),
-		\url -> MVideoPlayer2MRealHTML(url, p, m, m2t),
+		\url -> {
+			enableYoutubeJsApi = isSome(getYouTubeURL(m.filename)) && containsStruct(m.style, MPlayerYoutubeJsApi());
+			if (enableYoutubeJsApi) m2t(MVideoYoutubePlayer(m.filename, m.wh, m.style), p)
+			else MVideoPlayer2MRealHTML(url, p, m, m2t)
+		},
 		\ -> {
 			itemsColorM : Maybe<MColor> = maybeMap(tryExtractStruct(m.style, MItemsColor(MWhite())), \ic -> MThemeColor2MColor(p, ic.color));
 			color = extractMColor(p, m.style, MAccentColor());
@@ -878,6 +883,149 @@ MVideoPlayer2MRealHTML(url : string, parent : MFocusGroup, m : MVideoPlayer, m2t
 
 	m2t(MRealHTML(url, m.wh, style), parent)
 }
+
+MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
+	YT_PLAY = "PLAYING";
+	YT_BUFFERING = "BUFFERING";
+	YT_PAUSE = "PAUSED";
+
+	playB = extractStruct(style, FVideoPlay(make(false))).play;
+	lengthB = extractStruct(style, FVideoLength(make(0.0))).length;
+	positionB = extractStruct(style, FVideoPosition(make(0.0))).position;
+	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
+	volumeB = extractStruct(style, FVideoVolume(make(1.0))).volume;
+	disableKeyboard = contains(style, MPlayerDisableKeyboardShortcuts());
+	controls = extractStruct(style, MPlayerControls([FullScreenPlayer(), PlaybackRateControl(), VolumeControl()])).controls;
+	timeRangeM = tryExtractStruct(style, FVideoTimeRange(const(0.0), const(0.0)));
+
+	urlParams = strSplit(elementAt(strSplit(takeBefore(url, "#", url), "?"), 1, ""), "&");
+	videoId = if (strContains(url, "/embed")) {
+		takeBefore(takeAfter(url, "/embed/", ""), "?", "");
+	} else {
+		eitherMap(find(urlParams, \p -> startsWith(p, "v=")), \v -> takeAfter(v, "v=", v), "");
+	}
+	startParam = eitherFn(
+		find(urlParams, \p -> startsWith(p, "start=")),
+		\v -> takeAfter(v, "start=", ""),
+		\ -> eitherMap(timeRangeM, \tr -> d2st(fgetValue(tr.start), 2), "")
+	);
+	endParam = eitherFn(
+		find(urlParams, \p -> startsWith(p, "end=")),
+		\v -> takeAfter(v, "end=", ""),
+		\ -> eitherMap(timeRangeM, \tr -> d2st(fgetValue(tr.end), 2), "")
+	);
+	controlsParam = eitherFn(
+		find(urlParams, \p -> startsWith(p, "controls=")),
+		\v -> takeAfter(v, "controls=", "1"),
+		\ -> b2i(controls != []) |> i2s
+	);
+	muteParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "mute=")),
+		\v -> takeAfter(v, "mute=", "0"),
+		"0"
+	);
+	autoplayParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "autoplay=")),
+		\v -> takeAfter(v, "autoplay=", "0"),
+		"0"
+	);
+	relatedParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "rel=")),
+		\v -> takeAfter(v, "rel=", "0"),
+		"0"
+	);
+	loopParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "loop=")),
+		\v -> takeAfter(v, "loop=", "0"),
+		fgetValue(loopB) |> b2i |> i2s
+	);
+	fsParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "fs=")),
+		\v -> takeAfter(v, "fs=", "0"),
+		contains(controls, FullScreenPlayer()) |> b2i |> i2s
+	);
+
+	sendB = make("");
+	receiveB = make("");
+
+	sendState = \s -> next(sendB,
+		JsonObject([Pair("playerState", JsonObject(s))]) |> json2string
+	);
+	fselectFromStateM = \name -> fselectLift(receiveB, \r -> {
+		v = getJsonFieldValueCustom(parseJson(r), "playerState." + name, JsonNull(), [JsonFieldTreatAsPath(".")]);
+		if (v == JsonNull()) None() else Some(v)
+	});
+	onLoaded = \ -> next(sendB,
+		JsonObject([Pair("loadVideo", JsonObject([
+			Pair("videoId", JsonString(videoId)),
+			Pair("params", JsonObject(concatA([
+				if (startParam == "") [] else [Pair("start", JsonString(startParam))],
+				if (endParam == "") [] else [Pair("end", JsonString(endParam))],
+				if (disableKeyboard) [Pair("disablekb", JsonString("1"))] else [],
+				[
+					Pair("controls", JsonString(controlsParam)),
+					Pair("mute", JsonString(muteParam)),
+					Pair("autoplay", JsonString(autoplayParam)),
+					Pair("rel", JsonString(relatedParam)),
+					Pair("loop", JsonString(loopParam)),
+					Pair("fs", JsonString(fsParam)),
+					// for other params see https://developers.google.com/youtube/player_parameters#Parameters
+				]
+			]))),
+		]))]) |> json2string
+	);
+
+	sendToJS = ref nop1;
+	getHostCall = \hc -> {
+		sendToJS := \msg -> hc("postMessage", [msg, "*"]) |> ignore;
+	}
+	flowCallBack = \args -> {
+		if (length(args) == 2 && args[0] == "postMessage") next(receiveB, args[1]);
+		""
+	}
+
+	MConstruct(
+		[
+			makeSubscribe2(sendB, \s -> println("to YT -> " + s)),
+			makeSubscribe2(receiveB, \s -> println("from YT -> " + s)),
+
+			makeSubscribe(sendB, \m -> ^sendToJS(m)),
+			\ -> fBidirectionalLink(playB, fselectFromStateM("status"),
+				\external -> sendState([Pair("status", JsonString(if (external) YT_PLAY else YT_PAUSE))]),
+				\internalM -> maybeApply(internalM,
+					\internal -> {
+						v = getJsonStringValue(internal, "");
+						nextDistinct(playB, v == YT_PLAY || v == YT_BUFFERING)
+					}
+				)
+			),
+			\ -> fBidirectionalLink(positionB, fselectFromStateM("currentTime"),
+				\external -> sendState([Pair("currentTime", JsonDouble(external))]),
+				\internalM -> maybeApply(internalM,
+					\internal -> nextDistinct(positionB, getJsonDoubleValue(internal, 0.0))
+				)
+			),
+			\ -> fBidirectionalLink(volumeB, fselectFromStateM("volume"),
+				\external -> sendState([Pair("volume", JsonDouble(external * 100.0))]),
+				\internalM -> maybeApply(internalM,
+					\internal -> nextDistinct(volumeB, getJsonDoubleValue(internal, 0.0) * 0.01)
+				)
+			),
+			makeSubscribe2(fselectFromStateM("duration"),
+				\durationM -> maybeApply(durationM, \d -> nextDistinct(lengthB, getJsonDoubleValue(d, 0.0)))
+			),
+		],
+		MRealHTML(getAppUrl() + "yt_player.html", wh, [
+			FlowCallback(flowCallBack),
+			PageHostcallSetter(getHostCall),
+			UpdateCachedContent(true),
+			OnPageLoaded(onLoaded),
+			ZoomEnabled(const(false)),
+			NoScroll()
+		])
+	)
+}
+
 
 MPlayerControls2PlayerControls(mPlayerControls : [MPlayerControl]) -> [PlayerControl] {
 	filtermap(mPlayerControls, \cntr : MPlayerControl ->
