@@ -33,14 +33,14 @@ fsModule2cpp3(module : FsModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule
 	init_term_decls = filtermap([if (isSpace(init_body)) None() else
 		Some(Cpp3CompiledDeclaration(fi2cpp3flowfile2cpp(module.name) + "_init",
 			false, "", "",
-			"void init_" + fi2cpp3flowfile2cpp(module.name) + "();",
+			"void init_" + fi2cpp3flowfile2cpp(module.name) + "();\n",
 			"void init_" + fi2cpp3flowfile2cpp(module.name) + "() {\n" + init_body + "\n}\n\n",
 			"", ""
 		)),
 		if (isSpace(term_body)) None() else
 		Some(Cpp3CompiledDeclaration(fi2cpp3flowfile2cpp(module.name) + "_term",
 			false, "", "",
-			"void term_" + fi2cpp3flowfile2cpp(module.name) + "();",
+			"void term_" + fi2cpp3flowfile2cpp(module.name) + "();\n",
 			"void term_" + fi2cpp3flowfile2cpp(module.name) + "() {\n" + term_body + "\n}\n\n",
 			"", ""
 		))
@@ -82,8 +82,8 @@ fsDeclaration2cpp3(decl: FsDeclaration, gctx: Cpp3GlobalContext) -> Maybe<Cpp3Co
 							nat.headerOnly, "", "",
 							strApplyFns(nat.declaration, fns),
 							strApplyFns(nat.definition, fns),
-							if (has_complete_type) "Dyn::registerFun(std::move(" + fiFunction2DynFunc(name, type, gctx) + "));" else "",
-							if (has_complete_type) "Dyn::removeFun(u\"" + nat.name + "\");" else ""
+							"Dyn::registerFun(std::move(" + fiFunction2DynFunc(name, type, gctx) + "));",
+							"Dyn::removeFun(u\"" + nat.name + "\");"
 						)
 					);
 				}
@@ -93,13 +93,21 @@ fsDeclaration2cpp3(decl: FsDeclaration, gctx: Cpp3GlobalContext) -> Maybe<Cpp3Co
 }
 
 fiFunction2DynFunc(name: string, type: FiTypeFunction, gctx: Cpp3GlobalContext) -> string {
-	call1 = fi2cpp3varname2cpp(name) + "(" + supergluei(type.args, \i, arg ->
-			"castRc<Flow*, " + fiType2cpp3(arg.type, gctx) + ">(args->getRc1(" + i2s(i) + "))",  ",") +
-	")";
-	call2 = if (type.returnType == FiTypeVoid()) call1 else {
-		"castRc<" + fiType2cpp3(type.returnType, gctx) + ", Flow*>(" + call1 + ")";
+	typars = set2array(fiCollectTypars(type, makeSet()));
+	subst = fold(typars, makeTree(), \acc, tp -> setTree(acc, tp, FiTypeFlow()));
+	type1 = cast(fiSubstituteTypars(type, subst): FiType -> FiTypeFunction);
+	typars_str = if (length(typars) == 0) "" else  "<" + superglue(typars, \__ -> "Flow*", ", ") + ">";
+
+	call1 = fi2cpp3varname2cpp(name) + typars_str + "(" + supergluei(type1.args, \i, arg -> {
+		arg_val = "args->getRc1(" + i2s(i) + ")";
+			if (arg.type == FiTypeFlow()) arg_val else {
+				"castRc<Flow*, " + fiType2cpp3(arg.type, gctx) + ">(" + arg_val + ")"
+			}
+		},  ",") + ")";
+	call2 = if (type1.returnType == FiTypeVoid() || type1.returnType == FiTypeFlow()) call1 else {
+		"castRc<" + fiType2cpp3(type1.returnType, gctx) + ", Flow*>(" + call1 + ")";
 	}
-	body = if (type.returnType == FiTypeVoid()) {
+	body = if (type1.returnType == FiTypeVoid()) {
 		"\t" + call2 + ";\n" +
 		"\treturn FVoid::make();"
 	} else {
@@ -155,7 +163,6 @@ fiFunc2cpp3(name: string, lambda: FsLambda, type: FiTypeFunction, gctx0: Cpp3Glo
 	fun_typars = map(set2array(fiCollectTypars(type, makeSet())), \n -> FiTypeParameter(n));
 	decl_typars = fiDeclTypars2cpp3(fun_typars, gctx);
 	headerOnly = cpp3InlineFunction(name, lambda, type);
-	has_complete_type = fiIsCompleteType(type);
 	fun_signature =
 		(if (headerOnly) "inline " else "") + fiType2cpp3(type.returnType, gctx) + " " + 
 		fi2cpp3varname2cpp(name) + fsArgs2cpp(lambda.args, gctx);
@@ -164,12 +171,13 @@ fiFunc2cpp3(name: string, lambda: FsLambda, type: FiTypeFunction, gctx0: Cpp3Glo
 	cpp_fun = if (!fsHasTailCall(lambda.body)) cpp_body else {
 		"while (true) " + fiWrapWithBraces(cpp_body, gctx.config);
 	}
+	generated_func = startsWith(name, "__struct_cast_of_");
 	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(cpp_fun, gctx.config) + "\n\n";
 	Cpp3CompiledDeclaration(
 		name, headerOnly, "", "",
 		forward_decl, definition,
-		if (has_complete_type) "Dyn::registerFun(std::move(" + fiFunction2DynFunc(name, type, gctx) + "));" else "",
-		if (has_complete_type) "Dyn::removeFun(u\"" + name + "\");" else ""
+		if (generated_func) "" else "Dyn::registerFun(std::move(" + fiFunction2DynFunc(name, type, gctx) + "));",
+		if (generated_func) "" else "Dyn::removeFun(u\"" + name + "\");"
 	);
 }
 
