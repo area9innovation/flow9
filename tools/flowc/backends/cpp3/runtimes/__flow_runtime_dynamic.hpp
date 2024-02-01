@@ -5,10 +5,11 @@
 #include <unordered_map>
 #include <cxxabi.h>
 #include "__flow_runtime_types.hpp"
+#include <iostream>
 
 namespace flow {
 
-// Runtime type information: structs
+// Runtime dynamic features
 
 template<typename T>
 inline string type2string() {
@@ -38,32 +39,34 @@ struct StructDef {
 	std::function<Flow*(Vec<Flow*>*)> constructor;
 };
 
-struct RTTI {
-	/*template<int T, typename... As>
-	constexpr TypeId structIdx() {
+struct FunDef {
+	string name;
+	std::function<Flow*(Vec<Flow*>*)> fn;
+};
 
-	}*/
-
+struct Dyn {
+	// Types
 	static const string& typeName(TypeId id) {
 		if (id < 0) return type_names[0]; else
-		if (id < structTypeIdOffset) return type_names[id + 1]; else
-		if (id - structTypeIdOffset < static_cast<TypeId>(struct_defs.size())) {
-			return struct_defs.at(id - structTypeIdOffset).name;
-		} else {
-			return type_names[0];
+		if (id < structTypeIdOffset) return type_names[id + 1]; else {
+			auto p = struct_id_to_def.find(id);
+			return (p != struct_id_to_def.end()) ? p->second.name : type_names[0];
 		}
 	}
 	static std::string typeNameStd(TypeId id) {
 		return string2std(typeName(id));
 	}
+
+	// Structs
 	static inline bool structExists(TypeId id) {
 		return
 			structTypeIdOffset <= id &&
-			id - structTypeIdOffset < static_cast<TypeId>(struct_defs.size());
+			id - structTypeIdOffset < static_cast<TypeId>(struct_id_to_def.size());
 	}
 	static const StructDef& structDef(TypeId id) {
-		if (id - structTypeIdOffset < static_cast<TypeId>(struct_defs.size())) {
-			return struct_defs.at(id - structTypeIdOffset);
+		auto p = struct_id_to_def.find(id);
+		if (p != struct_id_to_def.end()) {
+			return p->second;
 		} else {
 			static StructDef undef;
 			fail("undefined struct with type id: " + string2std(int2string(id)));
@@ -80,25 +83,57 @@ struct RTTI {
 	}
 	static TypeId structId(const string& struct_name) {
 		auto x = struct_name_to_id.find(struct_name);
-		if (x == struct_name_to_id.end()) {
-			return -1;
+		TypeId id = (x == struct_name_to_id.end()) ? -1 : x->second;
+		return (x == struct_name_to_id.end()) ? -1 : x->second;
+	}
+	static void registerStruct(StructDef&& def) {
+		struct_name_to_id.insert({def.name, def.type});
+		struct_id_to_def.insert({def.type, std::move(def)});
+	}
+	static void removeStruct(TypeId id) {
+		auto p1 = struct_id_to_def.find(id);
+		if (p1 != struct_id_to_def.end()) {
+			auto p2 = struct_name_to_id.find(p1->second.name);
+			if (p2 != struct_name_to_id.end()) {
+				struct_name_to_id.erase(p2);
+			}
+			struct_id_to_def.erase(p1);
+		}
+	}
+
+	// Functions
+	static inline bool funExists(const string& fn_name) {
+		return fun_name_to_def.find(fn_name) != fun_name_to_def.end();
+	}
+	static const FunDef& funDef(const string& fn_name) {
+		auto p = fun_name_to_def.find(fn_name);
+		if (p != fun_name_to_def.end()) {
+			return p->second;
 		} else {
-			return x->second;
+			static FunDef undef;
+			fail("undefined function: " + string2std(fn_name));
+			return undef;
 		}
 	}
-	static void initStructMap() {
-		for (int i = structTypeIdOffset; i < static_cast<TypeId>(struct_defs.size()) + structTypeIdOffset; ++i) {
-			const StructDef& def = struct_defs.at(i - structTypeIdOffset);
-			struct_name_to_id[def.name] = i;
+	static void registerFun(FunDef&& def) {
+		fun_name_to_def.insert({def.name, std::move(def)});
+	}
+	static void removeFun(const string& fn_name) {
+		auto p = fun_name_to_def.find(fn_name);
+		if (p != fun_name_to_def.end()) {
+			fun_name_to_def.erase(p);
 		}
 	}
+
 private:
 	// List of names for the types in TypeFx
 	static const string type_names[];
-	// Sequence of all struct definitions
-	static std::vector<StructDef> struct_defs;
+	// Map of a struct id (its type) onto its definition
+	static std::unordered_map<int32_t, StructDef> struct_id_to_def;
 	// Maps a struct name to its id.
 	static std::unordered_map<string, int32_t> struct_name_to_id;
+	// Functions by name
+	static std::unordered_map<string, FunDef> fun_name_to_def;
 };
 
 // Predicate for compile-time type resolution

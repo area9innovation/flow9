@@ -104,4 +104,9 @@ template<typename R, typename... As> struct Fun;
 inline constexpr bool gather_vector_leng_stats = false;
 inline constexpr bool gather_string_leng_stats = false;
 
+// Initialization/terminalization module
+
+void init_all_modules();
+void term_all_modules();
+
 }
