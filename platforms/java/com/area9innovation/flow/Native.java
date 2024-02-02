@@ -54,7 +54,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import com.sun.management.OperatingSystemMXBean;
 import java.time.format.FormatStyle;
 import java.time.ZonedDateTime;
-import java.lang.instrument.Instrumentation;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
