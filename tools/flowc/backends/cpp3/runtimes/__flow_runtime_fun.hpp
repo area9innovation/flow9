@@ -4,9 +4,20 @@
 
 namespace flow {
 
+// Abstract function
+struct AFun : public Flow  {
+	enum { TYPE = TypeFx::FUNC };
+	// general interface
+	TypeId typeId() const override { return TYPE; }
+	void append2string(string& s) override {
+		s.append(u"<function>");
+	}
+	virtual Int arity() const = 0;
+};
+
 template<typename R, typename... As> 
-struct Fun : public Flow {
-	enum { TYPE = TypeFx::FUNC, ARITY = sizeof...(As) };
+struct Fun : public AFun {
+	enum { ARITY = sizeof...(As) };
 	using RetType = R;
 	using Args = std::tuple<As...>;
 	using Fn = std::function<R(As...)>;
@@ -44,11 +55,8 @@ struct Fun : public Flow {
 		}
 	}
 
-	// general interface
-	void append2string(string& s) override {
-		s.append(u"<function>");
-	}
-	TypeId typeId() const override { return TYPE; }
+	// AFun interface
+	Int arity() const override { return ARITY; }
 
 	// specific methods
 	inline R callRc(As... as) {
@@ -57,7 +65,7 @@ struct Fun : public Flow {
 	inline R callRc1(As... as) {
 		return call(as...);
 	}
-	virtual R call(As... as) {
+	inline R call(As... as) {
 		for (Flow* x: closure_) {
 			incRc(x);
 		}

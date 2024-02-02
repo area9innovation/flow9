@@ -35,12 +35,19 @@ struct FieldDef {
 struct StructDef {
 	string name;
 	TypeId type;
-	std::vector<FieldDef> args;
+	std::vector<FieldDef> fields;
 	std::function<Flow*(Vec<Flow*>*)> constructor;
+};
+
+struct ArgDef {
+	string name;
+	TypeId type;
 };
 
 struct FunDef {
 	string name;
+	TypeId returnType;
+	std::vector<ArgDef> args;
 	std::function<Flow*(Vec<Flow*>*)> fn;
 };
 
@@ -75,8 +82,8 @@ struct Dyn {
 	}
 	static int structField(TypeId id, const string& field) {
 		int i = 0;
-		for (auto& arg : structDef(id).args) {
-			if (arg.name == field) break;
+		for (auto& f : structDef(id).fields) {
+			if (f.name == field) break;
 			i += 1;
 		}
 		return i;
