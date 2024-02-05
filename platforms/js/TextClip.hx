@@ -836,6 +836,8 @@ class TextClip extends NativeWidgetClip {
 	public function setPreventCheckTextNodeWidth(prevent : Bool) : Void {
 		if (this.preventCheckTextNodeWidth != prevent) {
 			this.preventCheckTextNodeWidth = prevent;
+			updateTextMetrics();
+			this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
 		}
 	}
 
