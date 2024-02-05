@@ -235,6 +235,7 @@ TRenderDynamicParagraph(
 isSpaceWord(word : TParaWord) -> bool {
 	switch (word.word : GeneralWrapElement) {
 		GeneralSpace(spaceStr, __, __): isSpace(spaceStr);
+		GeneralDynamicSpace(spaceStr, __, __): isSpace(spaceStr);
 		GeneralText(text): text == nonBreakableSpace;
 		default: false;
 	}
@@ -596,6 +597,7 @@ positionInteractiveWords(
 			wordView = switch (word.word) {
 				GeneralText(str) : viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style));
 				GeneralSpace(str, alBef, alAft) : viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style));
+				GeneralDynamicSpace(str, alBef, alAft) : viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style));
 				default : word.ghostView;
 			};
 			translateWord(word, genIndent)
@@ -759,6 +761,7 @@ appendOrJoinWord(
 		wordString = switch (word.word) {
 			GeneralText(str) : str;
 			GeneralSpace(str, __, __) : str;
+			GeneralDynamicSpace(str, __, __) : str;
 			default : "";
 		};
 
@@ -870,6 +873,7 @@ commonWordConstructor(
 			GeneralText(txt): inspectFn(generateText(txt)) |> ignore;
 			GeneralDynamicText(txt): inspectFn(generateText(txt)) |> ignore;
 			GeneralSpace(txt, alBef, alAft): inspectFn(TText(txt, apply2AlphabetsScaling(alBef, alAft, style))) |> ignore;
+			GeneralDynamicSpace(txt, alBef, alAft): inspectFn(TText(txt, apply2AlphabetsScaling(alBef, alAft, style))) |> ignore;
 			default: {}
 		}
 	}
@@ -1069,11 +1073,13 @@ rtrimWords(words : [TParaWord]) -> [TParaWord] {
 	wordsCount = length(words);
 	rtrimmedWords = if (wordsCount > 0) {
 		lastWord = words[wordsCount - 1];
+		spaceCase = \ -> {
+			detachWord(lastWord, true);
+			take(words, wordsCount - 1)
+		};
 		switch (lastWord.word : GeneralWrapElement) {
-			GeneralSpace(__, __, __): {
-				detachWord(lastWord, true);
-				take(words, wordsCount - 1)
-			}
+			GeneralSpace(__, __, __) : spaceCase();
+			GeneralDynamicSpace(__, __, __) : spaceCase();
 			default: words
 		}
 	} else words
@@ -1124,6 +1130,40 @@ reflowTParaWordsRec(
 		nextWordIndex = currentWordIndex + 1;
 
 		getWordWidth = \word1 -> getValue(word1.inspector.size).width;
+
+		spaceCase = \ -> {
+			// LSTSBU-454
+			// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
+			width = getWordWidth(word);
+			if (width < remaining || !isSpaceWord(word)) {
+				reflowTParaWordsRec(
+					rest,
+					nextWordIndex,
+					availableWidth,
+					remaining - width,
+					arrayPush(currentWords, word),
+					result,
+					paraIndent,
+					false,
+					catchOverflow,
+					ignoreLetterSpacing
+				);
+			} else {
+				detachWord(word, true);
+				reflowTParaWordsRec(
+					rest,
+					nextWordIndex,
+					nextLineWidth,
+					nextLineWidth,
+					[],
+					addLine(currentWords, lineIndent),
+					paraIndent,
+					false,
+					catchOverflow,
+					ignoreLetterSpacing
+				);
+			}
+		};
 
 		switch (word.word : GeneralWrapElement) {
 			NewLine(): {
@@ -1198,39 +1238,8 @@ reflowTParaWordsRec(
 					}
 				}
 			}
-			GeneralSpace(spaceStr, __, __): {
-				// LSTSBU-454
-				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
-				width = getWordWidth(word);
-				if (width < remaining || !isSpaceWord(word)) {
-					reflowTParaWordsRec(
-						rest,
-						nextWordIndex,
-						availableWidth,
-						remaining - width,
-						arrayPush(currentWords, word),
-						result,
-						paraIndent,
-						false,
-						catchOverflow,
-						ignoreLetterSpacing
-					);
-				} else {
-					detachWord(word, true);
-					reflowTParaWordsRec(
-						rest,
-						nextWordIndex,
-						nextLineWidth,
-						nextLineWidth,
-						[],
-						addLine(currentWords, lineIndent),
-						paraIndent,
-						false,
-						catchOverflow,
-						ignoreLetterSpacing
-					);
-				}
-			}
+			GeneralSpace(__, __, __) : spaceCase();
+			GeneralDynamicSpace(__, __, __) : spaceCase();
 			default: {
 				width = ref 0.0;
 				getWordView = \w -> w.ghostView;
@@ -1243,6 +1252,7 @@ reflowTParaWordsRec(
 						switch (_word.word) {
 							NewLine(): true;
 							GeneralSpace(__, __, __): true;
+							GeneralDynamicSpace(__, __, __): true;
 							GeneralLinePart(__, __, __, allowBreakAfter): true;
 							default: {
 								f = getWordView(_word);
@@ -1472,12 +1482,16 @@ TRenderLine(
 				wordWidth = getValue(w.inspector.size).width;
 				defValue = Pair(acc.first, acc.second + wordWidth);
 				incSpaceValue = \inc -> Pair(acc.first + inc, acc.second + wordWidth);
-				switch (w.word : GeneralWrapElement) {
-					GeneralSpace(__, __, __): if (lastWord || firstWord) {
+				spaceCase = \ -> {
+					if (lastWord || firstWord) {
 						acc
 					} else {
 						Pair(acc.first + 1, acc.second + wordWidth);
 					}
+				};
+				switch (w.word : GeneralWrapElement) {
+					GeneralSpace(__, __, __) : spaceCase();
+					GeneralDynamicSpace(__, __, __) : spaceCase();
 					GeneralText(text): if (text == nonBreakableSpace) {
 						if (lastWord || firstWord) {
 							acc
@@ -1595,7 +1609,8 @@ tParaWordsTextSetter(ignoreLetterSpacing: bool) -> (TParaWord, string) -> TParaW
 generalWrapElement2string(e : GeneralWrapElement) -> string {
 	switch (e) {
 		GeneralText(txt): txt;
-		GeneralSpace(str, alphabetBefore, alphabetAfter): str;
+		GeneralSpace(str, __, __): str;
+		GeneralDynamicSpace(str, __, __): str;
 		NewLine(): "<NL>";
 		GeneralLinePart(first, mid, end, __): first + mid + end;
 		GeneralInspectElement(inspector, element): generalWrapElement2string(element);
@@ -1609,7 +1624,8 @@ tParaWord2string(w : TParaWord) -> string {
 	e = w.word;
 	switch (e) {
 		GeneralText(txt): txt;
-		GeneralSpace(str, alphabetBefore, alphabetAfter): str;
+		GeneralSpace(str, __, __): str;
+		GeneralDynamicSpace(str, __, __): str;
 		NewLine(): "<NL>";
 		GeneralLinePart(first, mid, end, __): first + mid + end;
 		GeneralInspectElement(inspector, element): generalWrapElement2string(element);
