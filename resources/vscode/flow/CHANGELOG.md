@@ -193,3 +193,6 @@
 	- Find definition and Hover for local variables
 	- Updated dependencies
 	- Improved verbose mode
+
+## 0.6.1
+ - Updated syntax highlighting for flow and sharekey
