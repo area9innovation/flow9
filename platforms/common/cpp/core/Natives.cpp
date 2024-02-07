@@ -752,6 +752,35 @@ StackSlot ByteCodeRunner::getKeysList(RUNNER_ARGS)
     RETVOID;
 }
 
+StackSlot ByteCodeRunner::generate(RUNNER_ARGS)
+{
+    RUNNER_PopArgs3(from_arg, to_arg, fn_arg);
+    RUNNER_CheckTag2(TInt, from_arg, to_arg);
+
+    int from = from_arg.GetInt();
+    int to   = to_arg.GetInt();
+    int len  = to - from;
+
+    if (len <= 0) {
+        return StackSlot::MakeEmptyArray();
+    }
+
+    RUNNER_DefSlotArray(fn_args, 2);
+    fn_args[0] = fn_arg;
+
+    RUNNER_DefSlots1(retarr);
+    retarr = RUNNER->AllocateArray(len);
+
+    for (int i = 0; i < len; ++i)
+    {
+        fn_args[1] = StackSlot::MakeInt(from + i);
+        fn_args[1] = RUNNER->FastEvalFunction(fn_args, 1);
+        RUNNER->SetArraySlot(retarr, i, fn_args[1]);
+    }
+
+    return retarr;
+}
+
 StackSlot ByteCodeRunner::enumFromTo(RUNNER_ARGS)
 {
     RUNNER_PopArgs2(from_arg, to_arg);
