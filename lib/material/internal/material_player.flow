@@ -470,7 +470,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					},
 					TEmpty()
 				)
-				
+
 			}
 
 			volumeControlButton = \p2 ->
@@ -767,7 +767,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					)
 					|> (\t -> TAttachBox(t, controlsWH))
 				)
-				|> (\f -> m2t(MShowAnimation(fOr(fand(showPanel, showPanelInner), fOr(fnot(playing), settingsMenuOpen)), MGetFocusGroup(f), []), p))
+				|> (\f -> m2t(MShowAnimation(fand(showPanel, fOr(showPanelInner, fOr(fnot(playing), settingsMenuOpen))), MGetFocusGroup(f), []), p))
 				|> TBorderTop(10.0)
 				|> (\t -> TInteractive([if (mobile) TMouseDown(panelHovered) else TMouseInside(panelHovered, false)], t)))
 				|> (\t -> TLines2(TFillY(), t));
@@ -798,11 +798,13 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 								faddition(fmultiply(sliderPosition, visibleDuration), visibleRange.start),
 								\pos -> if (pos <= fgetValue(duration)) nextDistinct(position, pos)
 							),
-							\ -> fconnect2Select(
+							make3Subscribe(
+								fwidth(m.wh),
 								eitherMap(fullscreen, \fs -> fif(fs, availableH, fheight(m.wh)), fheight(m.wh)),
 								controlsWH,
-								videoWH,
-								\vh, cwh -> WidthHeight(cwh.width, max(0., if (autoHide) vh else vh - cwh.height))
+								\vw, vh, cwh -> {
+									nextDistinct(videoWH, WidthHeight(max(vw, cwh.width), max(0., if (autoHide) vh else vh - cwh.height)))
+								}
 							),
 							\ -> bidirectionalLink(playbackRate, playbackRateSelected, playbackRate2selected, selected2playbackRate),
 						],
@@ -907,12 +909,12 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 	startParam = eitherFn(
 		find(urlParams, \p -> startsWith(p, "start=")),
 		\v -> takeAfter(v, "start=", ""),
-		\ -> eitherMap(timeRangeM, \tr -> d2st(fgetValue(tr.start), 2), "")
+		\ -> eitherMap(timeRangeM, \tr -> i2s(trunc(fgetValue(tr.start))), "")
 	);
 	endParam = eitherFn(
 		find(urlParams, \p -> startsWith(p, "end=")),
 		\v -> takeAfter(v, "end=", ""),
-		\ -> eitherMap(timeRangeM, \tr -> d2st(fgetValue(tr.end), 2), "")
+		\ -> eitherMap(timeRangeM, \tr -> i2s(trunc(fgetValue(tr.end))), "")
 	);
 	controlsParam = eitherFn(
 		find(urlParams, \p -> startsWith(p, "controls=")),
@@ -960,7 +962,7 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 			Pair("videoId", JsonString(videoId)),
 			Pair("params", JsonObject(concatA([
 				if (startParam == "") [] else [Pair("start", JsonString(startParam))],
-				if (endParam == "") [] else [Pair("end", JsonString(endParam))],
+				if (endParam == "" || s2i(startParam) >= s2i(endParam)) [] else [Pair("end", JsonString(endParam))],
 				if (disableKeyboard) [Pair("disablekb", JsonString("1"))] else [],
 				[
 					Pair("controls", JsonString(controlsParam)),
@@ -985,36 +987,39 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 	}
 
 	MConstruct(
-		[
-			makeSubscribe2(sendB, \s -> println("to YT -> " + s)),
-			makeSubscribe2(receiveB, \s -> println("from YT -> " + s)),
-
-			makeSubscribe(sendB, \m -> ^sendToJS(m)),
-			\ -> fBidirectionalLink(playB, fselectFromStateM("status"),
-				\external -> sendState([Pair("status", JsonString(if (external) YT_PLAY else YT_PAUSE))]),
-				\internalM -> maybeApply(internalM,
-					\internal -> {
-						v = getJsonStringValue(internal, "");
-						nextDistinct(playB, v == YT_PLAY || v == YT_BUFFERING)
-					}
-				)
-			),
-			\ -> fBidirectionalLink(positionB, fselectFromStateM("currentTime"),
-				\external -> sendState([Pair("currentTime", JsonDouble(external))]),
-				\internalM -> maybeApply(internalM,
-					\internal -> nextDistinct(positionB, getJsonDoubleValue(internal, 0.0))
-				)
-			),
-			\ -> fBidirectionalLink(volumeB, fselectFromStateM("volume"),
-				\external -> sendState([Pair("volume", JsonDouble(external * 100.0))]),
-				\internalM -> maybeApply(internalM,
-					\internal -> nextDistinct(volumeB, getJsonDoubleValue(internal, 0.0) * 0.01)
-				)
-			),
-			makeSubscribe2(fselectFromStateM("duration"),
-				\durationM -> maybeApply(durationM, \d -> nextDistinct(lengthB, getJsonDoubleValue(d, 0.0)))
-			),
-		],
+		concat(
+			if (isUrlParameterTrue("dev")) [
+				makeSubscribe2(sendB, \s -> println("to YT -> " + s)),
+				makeSubscribe2(receiveB, \s -> println("from YT -> " + s)),
+			] else [],
+			[
+				makeSubscribe(sendB, \m -> ^sendToJS(m)),
+				\ -> fBidirectionalLink(playB, fselectFromStateM("status"),
+					\external -> sendState([Pair("status", JsonString(if (external) YT_PLAY else YT_PAUSE))]),
+					\internalM -> maybeApply(internalM,
+						\internal -> {
+							v = getJsonStringValue(internal, "");
+							nextDistinct(playB, v == YT_PLAY || v == YT_BUFFERING)
+						}
+					)
+				),
+				\ -> fBidirectionalLink(positionB, fselectFromStateM("currentTime"),
+					\external -> sendState([Pair("currentTime", JsonDouble(external))]),
+					\internalM -> maybeApply(internalM,
+						\internal -> nextDistinct(positionB, getJsonDoubleValue(internal, 0.0))
+					)
+				),
+				\ -> fBidirectionalLink(volumeB, fselectFromStateM("volume"),
+					\external -> sendState([Pair("volume", JsonDouble(external * 100.0))]),
+					\internalM -> maybeApply(internalM,
+						\internal -> nextDistinct(volumeB, getJsonDoubleValue(internal, 0.0) * 0.01)
+					)
+				),
+				makeSubscribe2(fselectFromStateM("duration"),
+					\durationM -> maybeApply(durationM, \d -> nextDistinct(lengthB, getJsonDoubleValue(d, 0.0)))
+				),
+			]
+		),
 		MRealHTML(getAppUrl() + "yt_player.html", wh, [
 			FlowCallback(flowCallBack),
 			PageHostcallSetter(getHostCall),

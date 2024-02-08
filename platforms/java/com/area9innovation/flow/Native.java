@@ -944,9 +944,19 @@ public class Native extends NativeHost {
 		return Math.log(a);
 	}
 
+	public static final <T> Object[] generate(int from, int to, Func1<T, Integer> fn) {
+		int n = to - from;
+		if (n <= 0)
+			return new Object[0];
+		Object[] rv = new Object[n];
+		for (int i = 0; i < n; i++)
+			rv[i] = fn.invoke(from + i);
+		return rv;
+	}
+
 	public static final Object[] enumFromTo(int from, int to) {
 		int n = to - from + 1;
-		if (n < 0)
+		if (n <= 0)
 			return new Object[0];
 		Object[] rv = new Object[n];
 		for (int i = 0; i < n; i++)
@@ -2663,7 +2673,7 @@ public class Native extends NativeHost {
 		for (int i = 0; i < sv.length(); i++) {
 			char c = sv.charAt(i);
 			switch (c) {
-				// In JSON all control charters must be escaped. 
+				// In JSON all control charters must be escaped.
 				case 0x00: buf.append("\\u0000"); break;	// Do not allow 0 in strings
 				case 0x01: buf.append("\\u0001"); break;
 				case 0x02: buf.append("\\u0002"); break;
