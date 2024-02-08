@@ -58,6 +58,16 @@ struct Fun : public AFun {
 	// AFun interface
 	Int arity() const override { return ARITY; }
 
+	// Flow interface
+	Flow* callFlowRc1(const std::vector<Flow*>& args) override {
+		return [this, &args]<std::size_t... I>(std::index_sequence<I...>) constexpr {
+			return castRc<RetType, Flow*>(callRc1(
+				castRc<Flow*, std::tuple_element_t<I, Args>>(args.at(I))...
+			));
+		}
+		(std::make_index_sequence<ARITY>{});
+	}
+
 	// specific methods
 	inline R callRc(As... as) {
 		return decRcRet(this, callRc1(as...));
