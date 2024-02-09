@@ -5,10 +5,10 @@ import tools/flowc/statements/fs_tailcall;
 import tools/flowc/statements/fs_module;
 
 export {
-	fiModule2cpp3(module : FsModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule;
+	fsModule2cpp3(module : FsModule, gctx: Cpp3GlobalContext) -> Cpp3CompiledModule;
 }
 
-fiModule2cpp3(module : FsModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule {
+fsModule2cpp3(module : FsModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule {
 	gctx = Cpp3GlobalContext(gctx0 with currentModule = module.name);
 	names = gctx.program.names;
 	compiled_structs = fiStructs2cpp3(module.structs, gctx);
@@ -22,16 +22,41 @@ fiModule2cpp3(module : FsModule, gctx0: Cpp3GlobalContext) -> Cpp3CompiledModule
 		}
 	);
 	is_main = exists(module.functions, \fn -> fn.name == "main");
+	init_body = concatStrings(concat(
+		map(compiled_structs, \s -> strIndent(s.init) + "\n"),
+		filtermap(compiled_decls, \d -> if (d.init == "") None() else Some(strIndent(d.init) + "\n")),
+	));
+	term_body = concatStrings(concat(
+		map(compiled_structs, \s -> strIndent(s.term) + "\n"),
+		filtermap(compiled_decls, \d -> if (d.term == "") None() else Some(strIndent(d.term) + "\n")),
+	));
+	init_term_decls = filtermap([if (isSpace(init_body)) None() else
+		Some(Cpp3CompiledDeclaration(fi2cpp3flowfile2cpp(module.name) + "_init",
+			false, "", "",
+			"void init_" + fi2cpp3flowfile2cpp(module.name) + "();\n",
+			"void init_" + fi2cpp3flowfile2cpp(module.name) + "() {\n" + init_body + "\n}\n\n",
+			"", ""
+		)),
+		if (isSpace(term_body)) None() else
+		Some(Cpp3CompiledDeclaration(fi2cpp3flowfile2cpp(module.name) + "_term",
+			false, "", "",
+			"void term_" + fi2cpp3flowfile2cpp(module.name) + "();\n",
+			"void term_" + fi2cpp3flowfile2cpp(module.name) + "() {\n" + term_body + "\n}\n\n",
+			"", ""
+		))
+	], idfn);
 	Cpp3CompiledModule(
 		fi2cpp3flowfile2cpp(module.name),
 		is_main,
-		concat(compiled_structs, compiled_decls),
+		concat3(compiled_structs, compiled_decls, init_term_decls),
 		map(module.imports, \imp -> imp.flowfile),
 		filtermap(module.functions, \fn -> {
 			if (isSome(fn.lambda)) None() else {
 				lookupTree(gctx.natives, fn.name);
 			}
-		})
+		}),
+		isNotSpace(init_body),
+		isNotSpace(term_body),
 	);
 }
 
@@ -50,18 +75,55 @@ fsDeclaration2cpp3(decl: FsDeclaration, gctx: Cpp3GlobalContext) -> Maybe<Cpp3Co
 				}
 				None(): {
 					fns = [fi2cpp3typename2cpp, fi2cpp3varname2cpp, gctx.structid2cpp];
+					has_complete_type = fiIsCompleteType(type);
 					// Native function
 					maybeMap(lookupTree(gctx.natives, name), \nat ->
 						Cpp3CompiledDeclaration(nat.name,
 							nat.headerOnly, "", "",
 							strApplyFns(nat.declaration, fns),
-							strApplyFns(nat.definition, fns), ""
+							strApplyFns(nat.definition, fns),
+							"Dyn::registerFun(std::move(" + fiFunction2DynFunc(name, type, gctx) + "));",
+							"Dyn::removeFun(u\"" + nat.name + "\");"
 						)
 					);
 				}
 			}
 		}
 	}
+}
+
+fiFunction2DynFunc(name: string, type: FiTypeFunction, gctx: Cpp3GlobalContext) -> string {
+	typars = set2array(fiCollectTypars(type, makeSet()));
+	subst = fold(typars, makeTree(), \acc, tp -> setTree(acc, tp, FiTypeFlow()));
+	type1 = cast(fiSubstituteTypars(type, subst): FiType -> FiTypeFunction);
+
+	typars_str = if (length(typars) == 0) "" else  "<" + superglue(typars, \__ -> "Flow*", ", ") + ">";
+	call1 = fi2cpp3varname2cpp(name) + typars_str + "(" + supergluei(type1.args, \i, arg -> {
+		arg_val = "args->getRc1(" + i2s(i) + ")";
+			if (arg.type == FiTypeFlow()) arg_val else {
+				"castRc<Flow*, " + fiType2cpp3(arg.type, gctx) + ">(" + arg_val + ")"
+			}
+		},  ",") + ")";
+	call2 = if (type1.returnType == FiTypeVoid() || type1.returnType == FiTypeFlow()) call1 else {
+		"castRc<" + fiType2cpp3(type1.returnType, gctx) + ", Flow*>(" + call1 + ")";
+	}
+	body = if (type1.returnType == FiTypeVoid()) {
+		"\t" + call2 + ";\n" +
+		"\tdecRc(args);\n" +
+		"\treturn FVoid::make();"
+	} else {
+		"\tFlow* ret = " + call2 + ";\n" +
+		"\tdecRc(args);\n" +
+		"\treturn ret;\n"
+	}
+	"FunDef({" + strGlue([
+		"u\"" + name + "\"",
+		i2s(fiType2cpp3TypeId(type1.returnType, gctx)),
+		"{" + superglue(type1.args, \arg ->
+			"ArgDef{u\"" + arg.name + "\", " + i2s(fiType2cpp3TypeId(arg.type, gctx)) + "}", ", "
+		) + "}",
+		"[](Vec<Flow*>* args) {\n" + body + "\n}"
+	], ", ") + "})";
 }
 
 fiGlobalVar2cpp3(name: string, value: FsStat, type: FiType, gctx0: Cpp3GlobalContext) -> Cpp3CompiledDeclaration {
@@ -76,7 +138,7 @@ fiGlobalVar2cpp3(name: string, value: FsStat, type: FiType, gctx0: Cpp3GlobalCon
 	var_type = fiType2cpp3(type, gctx);
 	init = switch (value) {
 		FsRet(e,__,__): {
-			var_name + " = " + fsExp2cpp3(e, gctx) + ";";
+			"\t" + var_name + " = " + fsExp2cpp3(e, gctx) + ";";
 		}
 		default: {
 			value4 = fsStatReplaceReturnOntoAssign(value,
@@ -96,7 +158,8 @@ fiGlobalVar2cpp3(name: string, value: FsStat, type: FiType, gctx0: Cpp3GlobalCon
 	Cpp3CompiledDeclaration(name, false, "", "",
 		"extern " + var_decl + ";\n\n",
 		var_decl + " = " + def_val + ";\n\n",
-		init
+		init,
+		if (fiTypeIsScalar(type)) "" else "decRc<" + var_type + ">(" + var_name + ");"
 	);
 }
 
@@ -117,8 +180,14 @@ fiFunc2cpp3(name: string, lambda: FsLambda, type: FiTypeFunction, gctx0: Cpp3Glo
 	cpp_fun = if (!fsHasTailCall(lambda.body)) cpp_body else {
 		"while (true) " + fiWrapWithBraces(cpp_body, gctx.config);
 	}
+	generated_func = startsWith(name, "__struct_cast_of_");
 	definition = decl_typars + fun_signature + " " + fiWrapWithBraces(cpp_fun, gctx.config) + "\n\n";
-	Cpp3CompiledDeclaration(name, headerOnly, "", "", forward_decl, definition, "");
+	Cpp3CompiledDeclaration(
+		name, headerOnly, "", "",
+		forward_decl, definition,
+		if (generated_func) "" else "Dyn::registerFun(std::move(" + fiFunction2DynFunc(name, type, gctx) + "));",
+		if (generated_func) "" else "Dyn::removeFun(u\"" + name + "\");"
+	);
 }
 
 cpp3InlineFunction(name: string, lambda: FsLambda, type: FiTypeFunction) -> bool {
@@ -308,7 +377,7 @@ fsSwitch2cpp3(sw: FsSwitch, sw_cond: string, gctx: Cpp3GlobalContext) -> string 
 			src = fcFileSource(gctx.globEnv, path);
 			concat(nondef_cases, [
 				"default: " + fiWrapWithBraces(
-					"std::cerr << \"unexpected case: \" << " + sw_cond + " << \" of type \" << string2std(RTTI::typeName(" + sw_cond + ")) << \" = '" + sw_cond + "' in switch\" << std::endl;\n" +
+					"std::cerr << \"unexpected case: \" << " + sw_cond + " << \" of type \" << string2std(Dyn::typeName(" + sw_cond + ")) << \" = '" + sw_cond + "' in switch\" << std::endl;\n" +
 					"std::cerr << \"expected to have value of type '" + sw.type.name +  "' there\" << std::endl;\n" +
 					"exit(1);\n" +
 					"break;", gctx.config
@@ -433,7 +502,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 						None(): [];
 					}
 					strSubstituteArgsGroup(
-						strSubstituteArgs(nat.inlining.def, map(args, \arg -> fsExp2cpp3(arg, gctx))),
+						strSubstituteArgs(nat.inlining, map(args, \arg -> fsExp2cpp3(arg, gctx))),
 						typars, "T"
 					);
 				}
@@ -618,11 +687,11 @@ fsCallPrim2cpp3(e : FsCallPrim, gctx : Cpp3GlobalContext) -> string {
 						if (containsKeyTree(gctx.program.names.structs, struct_name)) {
 							"String::make(u\"" + struct_name + "\")";
 						} else {
-							"String::make(RTTI::typeName(" + e2k(e.es[0]) + "->typeId()))";
+							"String::make(Dyn::typeName(" + e2k(e.es[0]) + "->typeId()))";
 						}
 					}
 					FiTypeFlow(): {
-						"String::make(RTTI::typeName(" + e2k(e.es[0]) + "->typeId()))";
+						"String::make(Dyn::typeName(" + e2k(e.es[0]) + "->typeId()))";
 					}
 					default: fail0("accees to field '" + field_name + "' of non-struct: " + fs2s(e.es[0]) + " of type: " + prettyFiType(dummyPretty, arg_type, makeSet()));
 				}

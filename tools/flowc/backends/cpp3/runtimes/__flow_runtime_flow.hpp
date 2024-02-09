@@ -56,10 +56,11 @@ struct Flow: public RcBase {
 	virtual ~Flow() { }
 
 	virtual void append2string(string&) = 0;
+	inline std::string toStdString() { string s; toString(this, s); return string2std(s); }
 
 	virtual TypeId typeId() const = 0;
-	virtual Int componentSize() const { return 0; }
-	virtual TypeId componentTypeId(Int i) { fail("invalid flow value getter"); return TypeFx::UNKNOWN; }
+	virtual Int componentSize() const;
+	virtual TypeId componentTypeId(Int i);
 	inline TypeId typeIdRc() { return decRcRet(this, typeId()); }
 	inline Int componentSizeRc() { return decRcRet(this, componentSize()); }
 	
@@ -74,19 +75,19 @@ struct Flow: public RcBase {
 	inline Flow* callFlowRc(const std::vector<Flow*>& as) { return decRcRet(this, callFlowRc1(as)); }
 
 	// these methods do not affect `this` RC, but return results RC is incremented
-	virtual Flow* getFlowRc1(Int i) { fail("invalid flow value getter"); return nullptr; }
-	virtual Bool getBoolRc1(Int i) { fail("invalid flow value getter"); return false; }
-	virtual Int getIntRc1(Int i) { fail("invalid flow value getter"); return 0; }
-	virtual Double getDoubleRc1(Int i) { fail("invalid flow value getter"); return 0.0; }
-	virtual void setFlowRc1(Int i, Flow* v) { fail("invalid flow value setter"); }
-	virtual Flow* getFlowRc1(String* f) { fail("invalid flow value getter"); return nullptr; }
-	virtual void setFlowRc1(String* f, Flow* v) { fail("invalid flow value setter"); }
-	virtual Flow* callFlowRc1(const std::vector<Flow*>&) { fail("invalid flow value getter"); return nullptr; }
+	virtual Flow* getFlowRc1(Int i);
+	virtual Bool getBoolRc1(Int i);
+	virtual Int getIntRc1(Int i);
+	virtual Double getDoubleRc1(Int i);
+	virtual void setFlowRc1(Int i, Flow* v);
+	virtual Flow* getFlowRc1(String* f);
+	virtual void setFlowRc1(String* f, Flow* v);
+	virtual Flow* callFlowRc1(const std::vector<Flow*>&);
 
 	// these methods do not change any RCs. NODE: only non-scalar components may be accessed this way,
 	// attempt to apply this method to a scalar component will cause runtime error
-	virtual Flow* getFlow(Int i) { fail("invalid flow value getter"); return nullptr; }
-	virtual Flow* getFlow(const string& f) { fail("invalid flow value getter"); return nullptr; }
+	virtual Flow* getFlow(Int i);
+	virtual Flow* getFlow(const string& f);
 
 	template<typename T> inline T get() { return static_cast<T>(this); }
 	template<typename T> inline T getRc1() { return incRcRet(static_cast<T>(this)); }
@@ -98,11 +99,14 @@ struct FVoid : public Flow {
 	void destroy() override { this->~FVoid(); }
 	void append2string(string& s) override { flow::append2string<Void>(s, void_value); }
 	static FVoid* make() {
-		if constexpr (use_memory_manager) {
+		/*if constexpr (use_memory_manager) {
 			return new(Memory::alloc<FVoid>()) FVoid();
 		} else {
 			return new FVoid();
-		}
+		}*/
+		static FVoid x;
+		x.makeConstantRc();
+		return &x;
 	}
 	TypeId typeId() const override { return TypeFx::VOID; }
 };

@@ -79,7 +79,7 @@ fi2cpp3updateGctx(program: FiProgram, gctx: Cpp3GlobalContext) -> Cpp3GlobalCont
 	structs = getTreeValues(program.names.structs);
 	structs2cpp = foldi(structs, makeTree(), \i, acc, struct ->
 		setTree(acc, struct.name,
-			Cpp3Struct(i + 9, struct,
+			Cpp3Struct(i + fi2cpp3_struct_offset, struct,
 				foldi(struct.args, makeTree(), \j, ac, arg ->
 					setTree(ac, arg.name, Cpp3StructArg(j, arg.type))
 				)
@@ -123,7 +123,7 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 		\ -> {
 			start = fi2cpp3StartOperationMessage(gctx.config, 1, "compiling module", name);
 			fs_module = fi2cpp3TransformModule(module, gctx);
-			cpp_module = fiModule2cpp3(fs_module, gctx);
+			cpp_module = fsModule2cpp3(fs_module, gctx);
 			fi2cpp3EndOperationMessage(gctx.config, 1, "compiling module", name, start);
 			cpp_module
 		}
@@ -133,14 +133,15 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 	} else {
 		concurrent(true, do_compile_modules);
 	}
-	init_strings = list2array(fold(compiled, makeList(), \acc, module ->
-		fold(module.decls, acc, \ac, decl -> if (decl.init == "") ac else Cons(decl.init, ac))
-	));
+	fi2cpp3SaveFile(
+		src_path("__flow_runtime_init_term", ".cpp"),
+		fiInitTermModule2cpp3Source(compiled, runtime_parts, gctx), gctx.config
+	);
 	main_name = eitherMap(find(compiled, \module -> module.isMain), \module -> module.name, "");
 	sources = list2array(fold(compiled,
 		array2list(
 			concat3(
-				["__flow_runtime.hpp", "__flow_runtime.cpp"],
+				["__flow_runtime.hpp", "__flow_runtime.cpp", "__flow_runtime_init_term.cpp"],
 				map(runtime_headers, \header -> fileNameOnly(header)),
 				map(runtime_sources, \source -> fileNameOnly(source)),
 			)
@@ -148,11 +149,11 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 		\srcs, module -> {
 			name = module.name;
 			mod_gctx = Cpp3GlobalContext(gctx with currentModule = name);
-			header = fiCompiledModule2cpp3header(module, mod_gctx, runtime_parts);
+			header = fiCompiledModule2cpp3header(module, mod_gctx);
 			header_path = src_path(name, ".hpp");
 			fi2cpp3SaveFile(header_path, header, mod_gctx.config);
 			srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
-			sources = fiCompiledModule2cpp3sources(module, mod_gctx, init_strings, runtime_parts);
+			sources = fiCompiledModule2cpp3sources(module, runtime_parts, mod_gctx);
 			if (length(sources) == 0) srcs1 else {
 				foldi(sources, srcs, \i, acc, source -> {
 					src_name = if (i == 0) name else name + "_" + i2s(i);

@@ -3,7 +3,7 @@
 #include <atomic>
 #include <future>
 #include <coroutine>
-#include "__flow_runtime_rtti.hpp"
+#include "__flow_runtime_dynamic.hpp"
 #include "__flow_runtime_memory.hpp"
 
 namespace flow {

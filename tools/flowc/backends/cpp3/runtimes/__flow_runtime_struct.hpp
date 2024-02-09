@@ -44,7 +44,7 @@ struct Str : public Union {
 
 	// general interface
 	void append2string(string& s) override {
-		s.append(RTTI::typeName(TYPE));
+		s.append(Dyn::typeName(TYPE));
 		s.append(u"(");
 		append2stringArgs<0>(s);
 		s.append(u")");
@@ -72,12 +72,12 @@ struct Str : public Union {
 		setFlowRc1_<0>(i, v);
 	}
 	Flow* getFlowRc1(String* f) override {
-		int field_idx = RTTI::structField(Id, f->str());
+		int field_idx = Dyn::structField(Id, f->str());
 		decRc(f);
 		return getFlowRc1(field_idx); 
 	}
 	void setFlowRc1(String* f, Flow* v) override {
-		int field_idx = RTTI::structField(Id, f->str());
+		int field_idx = Dyn::structField(Id, f->str());
 		decRc(f);
 		setFlowRc1(field_idx, v);
 	}
@@ -86,7 +86,7 @@ struct Str : public Union {
 		return getFlow_<0>(i);
 	}
 	Flow* getFlow(const string& f) override {
-		int field_idx = RTTI::structField(Id, f);
+		int field_idx = Dyn::structField(Id, f);
 		return getFlow(field_idx); 
 	}
 
@@ -136,7 +136,7 @@ struct Str : public Union {
 		return compare<0>(s);
 	}
 	void toString(string& str) {
-		str.append(RTTI::typeName(TYPE));
+		str.append(Dyn::typeName(TYPE));
 		str.append(u"(");
 		toStringArgs<0>(str);
 		str.append(u")");
@@ -174,12 +174,12 @@ struct Str : public Union {
 			setFlowRc1_<0>(i, v);
 		}
 		Flow* getFlowRc1(String* f) override {
-			int field_idx = RTTI::structField(Id, f->str());
+			int field_idx = Dyn::structField(Id, f->str());
 			decRc(f);
 			return getFlowRc1(field_idx); 
 		}
 		void setFlowRc1(String* f, Flow* v) override {
-			int field_idx = RTTI::structField(Id, f->str());
+			int field_idx = Dyn::structField(Id, f->str());
 			decRc(f);
 			setFlowRc1(field_idx, v);
 		}
@@ -188,7 +188,7 @@ struct Str : public Union {
 			return getFlow_<0>(i);
 		}
 		Flow* getFlow(const string& f) override {
-			int field_idx = RTTI::structField(Id, f);
+			int field_idx = Dyn::structField(Id, f);
 			return getFlow(field_idx); 
 		}
 

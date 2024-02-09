@@ -61,7 +61,7 @@ void flow2string(Flow* v, string& str) {
 			break;
 		}
 		default: {
-			str.append(RTTI::typeName(v->typeId()));
+			str.append(Dyn::typeName(v->typeId()));
 			str.append(u"(");
 			Int size = v->componentSize();
 			for (Int i = 0; i < size; ++ i) {
