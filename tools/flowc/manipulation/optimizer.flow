@@ -10,11 +10,14 @@ import tools/flowc/manipulation/effects;
 import tools/flowc/manipulation/dupstrings;
 import tools/flowc/manipulation/livestructs;
 import tools/flowc/manipulation/dump;
+import tools/flowc/const_eval;
 
 export {
 	optimizeCode(prog : FiProgram, env : FcTypeEnvGlobal, file : string, overrides : Tree<string, FiExp>) -> FiProgram;
 
 	optimizeExp(expr : FiExp, envExp : OptEnvExp) -> FiExp;
+
+	evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram;
 
 	OptEnv(
 		// These variables are hardcoded to give the respective value, despite
@@ -102,6 +105,65 @@ makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> Op
 		)
 	)
 }
+
+evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
+	eval_env = fcInitConstEvalEnv(prog, on_err);
+	fiMapProgramExp(prog, \e, decl, m,__ -> {
+		m_on_err = \msg, ps -> on_err(FcError(msg, map(ps, \p -> FcPosition(m.fileinfo.flowfile, p, p))));
+		fiFoldMapExp(e, makeTree(), \x,__, consts -> switch (x) {
+			FiVar(__,__,__): Pair(x, consts);
+			FiLet(v,__, e1,__,__,__): {
+				eval_env.errors := [];
+				switch (fcConstEval(e1, consts, eval_env, m_on_err)) {
+					Some(c): {
+						if (c != x && length(^(eval_env.errors)) == 0) {
+							println("LET EXPR:\n" +
+								v + " = " + pretFiExp(e1) +
+								"\nEVALUATED TO:\n" +
+								pretFiExp(c) +
+								//toStringFormatted(c) +
+								"\n"
+							);
+						}
+						Pair(FiLet(x with e1 = c), setTree(consts, v, c));
+					}
+					None(): Pair(x, consts);
+				}
+			}
+			default: {
+				eval_env.errors := [];
+				switch (fcConstEval(x, consts, eval_env, m_on_err)) {
+					Some(c): {
+						if (c != x && length(^(eval_env.errors)) == 0) {
+							println("JUST EXPR:\n" +
+								pretFiExp(x) +
+								"\nEVALUATED TO:\n" +
+								pretFiExp(c) +
+								//toStringFormatted(c) +
+								"\n"
+							);
+						}
+						Pair(c, consts);
+					}
+					None(): Pair(x, consts);
+				}
+			}
+		}, AstTraverseOrder(true, true)).first
+	});
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 optimizeCodeLocal(prog : FiProgram, optEnv : OptEnv) -> FiProgram {
 	effects = collectFiEffects(prog);

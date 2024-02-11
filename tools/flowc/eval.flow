@@ -10,11 +10,11 @@ export {
 	);
 
 	// Setup the global variables and toplevel functions
-	fcInitEvalGlobals(program: FiProgram, onError : (string) -> void, env : FcTypeEnvGlobal) -> HashMap<string, FcEvalGlobal>;
+	fcInitEvalGlobals(program: FiProgram, onError : (FcError) -> void) -> HashMap<string, FcEvalGlobal>;
 
 	// Perform the evaluation of function 'name'.
-	// Returns the return value, if no errors occur, or 'flow()' as a return value for a runtime error.
-	fcCallFunctionByName(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow;
+	// Returns the `Some(value)`, if function with `name` presents, `None()` otherwise.
+	fcCallFunctionByName(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>, on_err: (FcError) -> void) -> flow;
 }
 
 // Struct, which are not used in flowc compiler are not present in runtime explicitly,
@@ -30,7 +30,7 @@ FcRuntimeField(
 	value : ref flow
 );
 
-fcInitEvalGlobals(prog: FiProgram, onErr : (string) -> void, env : FcTypeEnvGlobal) -> HashMap<string, FcEvalGlobal> {
+fcInitEvalGlobals(prog: FiProgram, onErr : (FcError) -> void) -> HashMap<string, FcEvalGlobal> {
 	structs = makeHashMap(fastHashString);
 	traverseInOrder(prog.names.structs, \name, struct ->
 		setHashMap(structs, name, struct)
@@ -39,13 +39,10 @@ fcInitEvalGlobals(prog: FiProgram, onErr : (string) -> void, env : FcTypeEnvGlob
 	iter(prog.traversal, \mod_name ->
 		switch (lookupTree(prog.modules, mod_name)) {
 			Some(module): {
-				onError = \message, pos -> {
-					where = makeLocation(prog.config, env, module.fileinfo, pos, -1);
-					onErr(where + " " + message);
-				}
+				onError = \msg, ps -> onErr(FcError(msg, map(ps, \p -> FcPosition(module.fileinfo.flowfile, p, p))));
 				iter(module.natives, \nat : FiNativeDec -> {
 					fn = if (nat.name == "makeStructValue") {
-						flow(\n, args, def -> fcMakeStruct(n, args, structs, \__ -> def));
+						flow(\n, args, def -> fcMakeStruct(n, args, def, structs, onError, -1));
 					} else if (hostCallExists(nat.nativeName)) {
 						fcMakeFnFromNative(nat, nat.nativeName, onError);
 					} else if (hostCallExists(nat.name)) {
@@ -57,7 +54,7 @@ fcInitEvalGlobals(prog: FiProgram, onErr : (string) -> void, env : FcTypeEnvGlob
 							}
 							default: {
 								err_message = "No native : " + nat.nativeName;
-								onError(err_message, nat.declStart);
+								onError(err_message, [nat.declStart]);
 								flow(err_message);
 							}
 						}
@@ -90,24 +87,28 @@ fcInitEvalGlobals(prog: FiProgram, onErr : (string) -> void, env : FcTypeEnvGlob
 	globals;
 }
 
-fcCallFunctionByName(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>) -> flow {
+fcCallFunctionByName(name : string, args : [flow], globals : HashMap<string, FcEvalGlobal>, on_err: (FcError) -> void) -> flow {
 	switch (lookupHashMap(globals, name)) {
-		Some(global): {
-			fcCallFunctionByValue(global.value, args);
+		Some(fn): {
+			on_err1 = \msg, ps -> on_err(FcError(msg, map(ps, \p -> FcPosition(fn.fileinfo.flowfile, p, p))));
+			fcCallFunctionByValue(fn.value, args, on_err1, -1);
 		}
 		None(): {
-			flow("function " + name + " is not found");
+			msg = "function " + name + " is not found";
+			on_err(FcError(msg, []));
+			flow(msg);
 		}
 	}
 }
 
-fcCallFunctionByValue(fv : flow, args : [flow]) -> flow {
+fcCallFunctionByValue(fv : flow, args : [flow], onError : (string, [int]) -> void, pos: int) -> flow {
+	make_err = \msg -> { onError(msg, if (pos < 0) [] else [pos]); flow(msg); }
 	if (getDataTagForValue(fv) != function_data_tag) {
-		flow("not a function is called: " + toString(fv));
+		make_err("not a function is called: " + toString(fv));
 	} else {
 		arity = extractFuncArity(fv);
 		if (length(args) != arity) {
-			flow("called function arity mismatch: " + i2s(arity) + " != " + i2s(length(args)));
+			make_err("called function arity mismatch: " + i2s(arity) + " != " + i2s(length(args)));
 		} else {
 			if (arity == 0) {
 				cast(fv : flow -> (() -> flow))();
@@ -137,7 +138,7 @@ fcCallFunctionByValue(fv : flow, args : [flow]) -> flow {
 				cast(fv : flow -> ((flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow, flow) -> flow))(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]);
 			} else {
 				// TODO: add more arities
-				flow("unsupported arity " + i2s(arity));
+				make_err("unsupported arity " + i2s(arity));
 			}
 		}
 	}
@@ -152,7 +153,7 @@ fcReplEval(
 	structs : HashMap<string, FiTypeStruct>,
 	globals : HashMap<string, FcEvalGlobal>,
 	locals : HashMap<string, FcEvalLocal>,
-	onError : (string, int) -> void
+	onError : (string, [int]) -> void
 ) -> flow {
 	make_err = \msg, pos -> {
 		onError(msg, pos);
@@ -174,12 +175,12 @@ fcReplEval(
 						hostCall(f_name, argsv);
 					} else {
 						fv = fcReplEval(f, structs, globals, locals, onError);
-						fcCallFunctionByValue(fv, argsv);
+						fcCallFunctionByValue(fv, argsv, onError, pos);
 					}
 				}
 				default: {
 					fv = fcReplEval(f, structs, globals, locals, onError);
-					fcCallFunctionByValue(fv, argsv);
+					fcCallFunctionByValue(fv, argsv, onError, pos);
 				}
 			}
 		}
@@ -193,7 +194,7 @@ fcReplEval(
 							if (hostCallExists(x)) {
 								fcMakeHostCallFunction(x, extractFuncArity(x), onError, pos);
 							} else {
-								make_err("variable '" + x + "' is not defined", pos);
+								make_err("variable '" + x + "' is not defined", [pos]);
 							}
 						}
 					}
@@ -233,7 +234,7 @@ fcReplEval(
 					fcReplEval(case.body, structs, globals, locals, onError);
 				}
 				None(): {
-					make_err("case " + name + " is not found in switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + toString(w), pos);
+					make_err("case " + name + " is not found in switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + toString(w), [pos]);
 				}
 			}
 		}
@@ -271,10 +272,10 @@ fcReplEval(
 		FiVoid(__):     voidValue();
 		FiInt(i,__):    flow(i);
 		FiRequire(flowfile, __,__,pos): {
-			make_err("FiRequire is not implemented yet", pos);
+			make_err("FiRequire is not implemented yet", [pos]);
 		}
 		FiUnsafe(name, __,__,pos): {
-			make_err("FiUnsafe is not implemented yet", pos);
+			make_err("FiUnsafe is not implemented yet", [pos]);
 		}
 	}
 }
@@ -284,10 +285,10 @@ fcReplEvalCallPrim(
 	structs : HashMap<string, FiTypeStruct>,
 	globals : HashMap<string, FcEvalGlobal>,
 	locals : HashMap<string, flow>,
-	onError : (string, int) -> void
+	onError : (string, [int]) -> void
 ) -> flow {
 	make_err = \msg -> {
-		onError(msg, call.start);
+		onError(msg, [call.start]);
 		flow(msg);
 	}
 	switch (call.op) {
@@ -456,7 +457,7 @@ fcReplEvalCallPrim(
 		}
 		FcStructPrim(name): {
 			args = map(es, \e -> fcReplEval(e, structs, globals, locals, onError));
-			fcMakeStruct(name, args, structs, make_err);
+			fcMakeStruct(name, args, IllegalStruct(), structs, onError, call.start);
 		}
 		FcFieldPrim(field): {
 			struct = fcReplEval(es[0], structs, globals, locals, onError);
@@ -517,11 +518,13 @@ fcReplEvalCallPrim(
 fcMakeStruct(
 	name : string,
 	args : [flow],
+	def: flow,
 	structs : HashMap<string, FiTypeStruct>,
-	onError : (string) -> flow
+	onError : (string, [int]) -> void,
+	pos: int
 ) -> flow {
 	if (isStructName(name)) {
-		makeStructValue(name, args, IllegalStruct());
+		makeStructValue(name, args, def);
 	} else {
 		switch (lookupHashMap(structs, name)) {
 			Some(struct): {
@@ -531,7 +534,8 @@ fcMakeStruct(
 				);
 			}
 			None(): {
-				onError("unknown struct " + name);
+				onError("unknown struct " + name, [pos]);
+				def;
 			}
 		}
 	}
@@ -542,7 +546,7 @@ fcMakeFnFromLambda(
 	structs : HashMap<string, FiTypeStruct>,
 	globals : HashMap<string, FcEvalGlobal>,
 	closure : Maybe<HashMap<string, FcEvalLocal>>,
-	onError : (string, int) -> void
+	onError : (string, [int]) -> void
 ) -> flow {
 	arity = length(lambda.args);
 	if (arity == 0) {
@@ -745,25 +749,25 @@ fcMakeFnFromLambda(
 		});
 	} else {
 		err_message = "unsupproted arity: " + i2s(arity) + " for lambda\n" + prettyFiExp(dummyPretty, lambda);
-		onError(err_message, lambda.start);
+		onError(err_message, [lambda.start]);
 		flow(err_message)
 	}
 }
 
-fcMakeFnFromNative(nat : FiNativeDec, name: string, onError : (string, int) -> void) -> flow {
+fcMakeFnFromNative(nat : FiNativeDec, name: string, onError : (string, [int]) -> void) -> flow {
 	switch (nat.type) {
 		FiTypeFunction(args,__): {
 			fcMakeHostCallFunction(name, length(args), onError, nat.declStart);
 		}
 		default: {
 			err_message = "native: " + name + " is not a function";
-			onError(err_message, nat.declStart);
+			onError(err_message, [nat.declStart]);
 			flow(err_message)
 		}
 	}
 }
 
-fcMakeHostCallFunction(name: string, arity: int, onError : (string, int) -> void, pos: int) -> flow {
+fcMakeHostCallFunction(name: string, arity: int, onError : (string, [int]) -> void, pos: int) -> flow {
 	if (arity == 0) {
 		flow(\ -> hostCall(name, []));
 	} else if (arity == 1) {
@@ -792,7 +796,7 @@ fcMakeHostCallFunction(name: string, arity: int, onError : (string, int) -> void
 		flow(\a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12 -> hostCall(name, [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12]));
 	} else {
 		err_message = "unsupproted arity: " + i2s(arity) + " for runtime function " + name;
-		onError(err_message, pos);
+		onError(err_message, [pos]);
 		flow(err_message);
 	}
 }
