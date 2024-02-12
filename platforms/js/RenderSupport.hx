@@ -1389,9 +1389,6 @@ class RenderSupport {
 	public static var PreventDefault : Bool = true;
 	public static function onpointerdown(e : Dynamic, stage : FlowContainer) {
 		try {
-			if (Util.getParameter("debug_click") == "1") {
-				untyped console.log('onpointerdown');
-			}
 			// In case of using VoiceOver when inside frame, Safari tends to return wrong pageY value. We have to create an workaround and pass event
 			// to button's onclick handler.
 			if (Platform.isIOS && isInsideFrame() && Browser.document.activeElement != null && Browser.document.activeElement.tagName.toLowerCase() == 'button') {
@@ -1444,9 +1441,6 @@ class RenderSupport {
 
 	public static function onpointerup(e : Dynamic, stage : FlowContainer) {
 		try {
-			if (Util.getParameter("debug_click") == "1") {
-				untyped console.log('onpointerup');
-			}
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
 

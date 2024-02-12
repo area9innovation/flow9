@@ -739,9 +739,6 @@ class AccessWidget extends EventEmitter {
 		// Sets events
 		if (accessRoleMap.get(role) == "button") {
 			element.onclick = function(e : Dynamic) {
-				if (Util.getParameter("debug_click") == "1") {
-					untyped console.log('button onclick');
-				}
 				if (e.target == element && (e.detail == 0 || e.detail == 1 && RenderSupport.IsFullScreen)) {
 					if (untyped clip.accessCallback != null) {
 						untyped clip.accessCallback();
@@ -752,9 +749,6 @@ class AccessWidget extends EventEmitter {
 			var stage = RenderSupport.PixiStage;
 
 			var onpointerdown = function(e : Dynamic) {
-				if (Util.getParameter("debug_click") == "1") {
-					untyped console.log('button onpointerdown');
-				}
 				// Prevent default drop focus on canvas
 				// Works incorrectly in Edge
 				e.preventDefault();
@@ -792,9 +786,6 @@ class AccessWidget extends EventEmitter {
 			};
 
 			var onpointerup = function(e : Dynamic) {
-				if (Util.getParameter("debug_click") == "1") {
-					untyped console.log('button onpointerup');
-				}
 				var rootPos = RenderSupport.getRenderRootPos(stage);
 				var mousePos = RenderSupport.getMouseEventPosition(e, rootPos);
 
