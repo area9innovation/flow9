@@ -2,6 +2,7 @@ import tools/flowc/eval;
 import tools/flowc/manipulation/common;
 import tools/flowc/manipulation/freevars;
 import tools/flowc/manipulation/effects;
+import tools/flowc/manipulation/tail_call;
 
 export {
 	// Setup the global variables and toplevel functions for the evaluation of compile time constants.
@@ -11,42 +12,54 @@ export {
 	fcConstEval(ex : FiExp, consts : Tree<string, FiExp>, env: FcConstEvalEnv, on_err: (string, [int]) -> void) -> Maybe<FiExp>;
 }
 
-fcExtractPureToplevels(prog: FiProgram) -> FiProgram {
+fcConstEvalPureToplevels(prog: FiProgram) -> FiProgram {
 	effects = collectFiEffectsPrecisely(prog);
-	fiMapProgramToplevel(prog, \toplevel, m, p -> switch (toplevel) {
-		FiStructOrUnion(): {
-			[toplevel];
+	exclude = getConfigParameter(prog.config.config, "do-not-const-eval");
+	exclude_set = if (exclude == "") makeSet() else buildSet(strSplit(exclude, ","));
+	fiMapProgramToplevel(prog, \toplevel, m, p ->
+		if (containsSet(exclude_set, toplevel.name)) [] else {
+			switch (toplevel) {
+				FiStructOrUnion(): {
+					[toplevel];
+				}
+				FiGlobalVar(name,__,__,__,__): {
+					if (containsSet(effects.hasEffects, name)) [] else [toplevel];
+				}
+				FiFunctionDec(name,__,__,__,__): {
+					if (containsSet(effects.hasEffects, name)) [] else [toplevel];
+				}
+				FiNativeDec(name, io,__,__,__,__,__): {
+					if (io) [] else [toplevel];
+				}
+			}
 		}
-		FiGlobalVar(name,__,__,__,__): {
-			if (containsSet(effects.hasEffects, name)) [] else [toplevel];
-		}
-		FiFunctionDec(name,__,__,__,__): {
-			if (containsSet(effects.hasEffects, name)) [] else [toplevel];
-		}
-		FiNativeDec(__,io,__,__,__,__,__): {
-			if (io) [] else [toplevel];
-		}
-	});
+	);
 }
 
 FcConstEvalEnv(
-	structs: Tree<string, FiTypeStruct>,
-	unions: Tree<string, FiTypeUnion>,
+	structs: HashMap<string, FiTypeStruct>,
+	unions: HashMap<string, FiTypeUnion>,
 	consts: Tree<string, FiExp>,
 	globals:  HashMap<string, FcEvalGlobal>,
 	errors: ref [FcError]
 );
 
 fcInitConstEvalEnv(prog0: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEnv {
-	prog = fcExtractPureToplevels(prog0);
-	pure_toplevels = list2array(fiFoldProgramToplevel(prog, makeList(), \top,__,__,acc -> switch (top) {
+	prog = fcOptimizeTailCalls(fcConstEvalPureToplevels(prog0));
+	/*pure_toplevels = list2array(fiFoldProgramToplevel(prog, makeList(), \top,__,__,acc -> switch (top) {
 		FiDeclaration(): Cons(top.name, acc);
 		default: acc;
 	}));
-	effects = collectFiEffects(prog0);
+	println("Pure toplevels:\n" + strIndent(strGlue(pure_toplevels, "\n")));*/
 	errors = ref [];
 	fold(prog.traversal, 
-		FcConstEvalEnv(prog.names.structs, prog.names.unions, makeTree(), fcInitEvalGlobals(prog, on_err), errors),
+		FcConstEvalEnv(
+			tree2hashMap(prog.names.structs, fastHashString),
+			tree2hashMap(prog.names.unions, fastHashString),
+			makeTree(),
+			fcInitEvalGlobals(prog, on_err),
+			errors
+		),
 		\acc, mod_name -> eitherMap(lookupTree(prog.modules, mod_name),
 			\m -> {
 				m_on_err = \msg, ps -> {
@@ -74,7 +87,7 @@ fcInitConstEvalEnv(prog0: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEn
 	);
 }
 
-fiComplexConstant2flow(ex : FiExp) -> Maybe<flow> {
+fiComplexConstant2flow(ex : FiExp, env: FcConstEvalEnv) -> Maybe<flow> {
 	switch (ex) {
 		FiVoid(__):       Some(flow(voidValue()));
 		FiBool(b1, __):   Some(flow(b1));
@@ -84,17 +97,22 @@ fiComplexConstant2flow(ex : FiExp) -> Maybe<flow> {
 		FiCallPrim(op, es,__,__): {
 			switch (op) {
 				FcArrayPrim(): {
-					arr = filtermap(es, fiComplexConstant2flow);
+					arr = filtermap(es, \x -> fiComplexConstant2flow(x, env));
 					if (length(arr) != length(es)) None() else Some(flow(arr));
 				}
 				FcStructPrim(name): {
-					fields = filtermap(es, fiComplexConstant2flow);
+					fields = filtermap(es, \x -> fiComplexConstant2flow(x, env));
 					if (length(fields) != length(es)) None() else {
 						Some(flow(makeStructValue(name, fields, IllegalStruct())));
 					}
 				}
 				default: None();
 			}
+		}
+		FiLambda(args, body,__,__): {
+			ok = ref true;
+			fn = fcMakeFnFromLambda(ex, env.structs, env.globals, None(), \__,__ -> ok := false);
+			if (^ok) Some(fn) else None();
 		}
 		default: None();
 	}
@@ -125,14 +143,14 @@ fiflow2ComplexConstant(v : flow) -> Maybe<FiExp> {
 	}
 }
 
-fiCompleteType(e: FiExp, t: FiType, structs: Tree<string, FiTypeStruct>, unions: Tree<string, FiTypeUnion>) -> Maybe<FiExp> {
+fiCompleteType(e: FiExp, t: FiType, env: FcConstEvalEnv) -> Maybe<FiExp> {
 	switch (e) {
 		FiCallPrim(op, as,__,s): {
 			switch (op) {
 				FcArrayPrim(): {
 					switch (t) {
 						FiTypeArray(at): {
-							es1 = filtermap(as, \a -> fiCompleteType(a, at, structs, unions));
+							es1 = filtermap(as, \a -> fiCompleteType(a, at, env));
 							if (length(es1) != length(as)) None() else {
 								Some(FiCallPrim(e with type = t, es = es1));
 							}
@@ -143,10 +161,10 @@ fiCompleteType(e: FiExp, t: FiType, structs: Tree<string, FiTypeStruct>, unions:
 				FcStructPrim(name): {
 					switch (t) {
 						FiTypeName(type_name, typars): {
-							do_struct = \tn -> maybeBind(lookupTree(structs, tn.name), \struct ->  {
+							do_struct = \tn -> maybeBind(lookupHashMap(env.structs, tn.name), \struct ->  {
 								sub = fiMatchTyparsArr(struct.typars, tn.typeparameters, makeTree());
 								es1 = filtermapi(as, \i, a ->
-									fiCompleteType(a, fiSubstituteTypars(struct.args[i].type, sub), structs, unions)
+									fiCompleteType(a, fiSubstituteTypars(struct.args[i].type, sub), env)
 								);
 								if (length(es1) != length(as)) {
 									None()
@@ -155,7 +173,7 @@ fiCompleteType(e: FiExp, t: FiType, structs: Tree<string, FiTypeStruct>, unions:
 								}
 							});
 							if (name == type_name) do_struct(t) else {
-								maybeBind(lookupTree(unions, type_name), \union -> {
+								maybeBind(lookupHashMap(env.unions, type_name), \union -> {
 									maybeBind(find(union.typenames, \tn -> tn.name == name), \tn -> {
 										sub = fiMatchTyparsArr(union.typeparameters, typars, makeTree());
 										tn_spec = FiTypeName(tn with typeparameters = map(tn.typeparameters, \tp ->
@@ -207,14 +225,14 @@ fcConstEval(ex : FiExp, consts : Tree<string, FiExp>, env: FcConstEvalEnv, on_er
 					switch (lookupTree(consts, x)) {
 						Some(__): do_call();
 						None(): {
-							f_args = filtermap(args, fiComplexConstant2flow);
+							f_args = filtermap(args, \arg -> fiComplexConstant2flow(arg, env));
 							if (length(f_args) != length(args)) None() else {
 								env.errors := [];
 								val = fcCallFunctionByName(x, f_args, env.globals, \err -> refArrayPush(env.errors, err));
 								if (length(^(env.errors)) == 0) {
 									// No errors - ok.
 									maybeBind(fiflow2ComplexConstant(val), \v ->
-										fiCompleteType(v, type, env.structs, env.unions)
+										fiCompleteType(v, type, env)
 									);
 								} else {
 									// Some errors - not ok.
@@ -562,7 +580,7 @@ fcConstEvalCallPrim(call : FiCallPrim, args : [FiExp], env : FcConstEvalEnv, on_
 							if (field == "structname") {
 								Some(FiString(name, call.start));
 							} else {
-								struct = lookupTreeDef(env.structs, name, FiTypeStruct("", [], [], 0));
+								struct = lookupHashMapDef(env.structs, name, FiTypeStruct("", [], [], 0));
 								i = findiDef(struct.args, \arg -> arg.name == field, -1);
 								if (i == -1) {
 									make_err("unknown field " + field + " in struct " + name, [call.start]);
