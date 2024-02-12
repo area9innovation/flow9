@@ -122,7 +122,7 @@ class TextClip extends NativeWidgetClip {
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
-	public static var checkTextNodeWidth = Util.getParameter("text_node_width") != "0";
+	public static var checkTextNodeWidth = Native.isNew && Util.getParameter("text_node_width") != "0";
 	public static var IosOnSelectWorkaroundEnabled = Platform.isIOS && Platform.isSafari && Platform.browserMajorVersion < 15;
 
 	public static inline var UPM : Float = 2048.0;  // Const.
