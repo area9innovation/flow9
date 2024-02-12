@@ -1541,7 +1541,7 @@ class RenderSupport {
 			updateNonPassiveEventListener(root, "mouseup", onpointerup);
 			updateNonPassiveEventListener(root, "mousemove", onpointermove);
 			updateNonPassiveEventListener(root, "mouseout", onpointerout);
-		} else if (Platform.isIE || Util.getParameter("debug_click_listener") == "1") {
+		} else if (Platform.isIE) {
 			var stage = PixiStage;
 			root.onpointerdown = function(e : Dynamic) {onpointerdown(e, stage);};
 			root.onpointerup = function(e : Dynamic) {onpointerup(e, stage);};
