@@ -4,19 +4,28 @@ import string_utils;
 import sys/process;
 
 export {
-	fi2cpp3Build(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void;
+	fi2cpp3Build(cfg: FiCpp3Config, sources: [string], deps: [Cpp3Dependency], callback : (int) -> void) -> void;
 }
 
-fi2cpp3Build(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback : (int) -> void) -> void {
+fi2cpp3Build(cfg: FiCpp3Config, sources: [string], deps: [Cpp3Dependency], callback : (int) -> void) -> void {
 	cpp_sorces = filter(sources, \src -> !endsWith(src, ".hpp"));
+	qt_deps = filtermap(deps, \dep -> switch (dep) {
+		Cpp3Qt(__,__,__): Some(dep);
+		default: None();
+	});
+	std_libs = uniq(concatA(filtermap(deps, \dep -> switch (dep) {
+		Cpp3Std(__,libs): Some(libs);
+		default: None();
+	})));
 	qt_modules = uniq(concatA(map(qt_deps, \dep -> dep.modules)));
 	use_qt = length(qt_modules) > 0;
 	target = fileNameOnly(cfg.outputfile);
-	use_mimalloc = lookupTreeDef(cfg.config.config, "cpp-mimalloc", "1") == "1";
+	use_mimalloc = lookupTreeDef(cfg.config.config, "cpp-mimalloc", "") == "1";
+	link_dirs = lookupTreeDef(cfg.config.config, "cpp-link-dirs", "");
 	cmakelists = blueprint("
 		cmake_minimum_required(VERSION 3.19.1)
 		project(%target%)
-		set(CMAKE_CXX_STANDARD 20)
+		set(CMAKE_CXX_STANDARD 23)
 		set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 		%auto%
@@ -25,8 +34,10 @@ fi2cpp3Build(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback :
 		endif()
 
 		set(CMAKE_CXX_FLAGS \"${CMAKE_CXX_FLAGS} %supress_warnings%\")
+		set(CMAKE_CXX_FLAGS_RELEASE \"-O3\")
 		#message(\"Output directory: `%outdir%`\")
 		set(CMAKE_RUNTIME_OUTPUT_DIRECTORY %outdir%)
+		%link_dirs%
 
 		%gprof%
 		%qt_packages%
@@ -41,12 +52,16 @@ fi2cpp3Build(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback :
 		target_compile_options(%target% PRIVATE -fPIC)
 		%qt_module_libs%
 		%mimalloc_lib%
-
+		%std_libs%
 	", [
 		"target", target,
 		"outfile", fileNameOnly(cfg.outputfile),
 		"outdir", resolveRelativePath(cfg.outputdir),
 		"supress_warnings", strGlue(fi2cpp3BuildCxxSupressWarningsFlags(), " "),
+		"link_dirs", if (link_dirs == "") "" else {
+			dirs = strSplit(link_dirs, ",");
+			"link_directories(" + strGlue(dirs, " ") + ")"
+		},
 		"gprof", if (lookupTreeDef(cfg.config.config, "cpp-gprof", "") != "1") "# No profiling" else
 			"SET(CMAKE_CXX_FLAGS \"${CMAKE_CXX_FLAGS} -pg\")\n" +
 			"SET(CMAKE_EXE_LINKER_FLAGS \"${CMAKE_EXE_LINKER_FLAGS} -pg\")\n"
@@ -61,6 +76,7 @@ fi2cpp3Build(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback :
 		"sources", superglue(cpp_sorces, \src -> fileNameOnly(src), "\n"),
 		"mimalloc_package", if (use_mimalloc) "find_package(mimalloc 2.1 REQUIRED)" else "",
 		"mimalloc_lib", if (use_mimalloc) "target_link_libraries(" + target + " mimalloc-static)" else "",
+		"std_libs", if (std_libs == []) "" else "target_link_libraries(" + target + " " + strGlue(std_libs, " ") + ")",
 	]);
 	gen_dir = pathCombine(cfg.outputdir, "cpp3gen");
 	build_dir = pathCombine(gen_dir, "build");
@@ -75,7 +91,16 @@ fi2cpp3Build(cfg: FiCpp3Config, sources: [string], qt_deps: [Cpp3Qt], callback :
 	} else {
 		"Release"
 	}
-	cmake_exit_code = execSystemProcess("cmake", concat(qt_args, ["..", debug_or_release]), build_dir,
+	cpp_compiler = lookupTreeDef(cfg.config.config, "cpp-compiler", "");
+	cmake_args = concatA([
+		qt_args,
+		if (cpp_compiler == "") [] else ["-D", "CMAKE_CXX_COMPILER=" + cpp_compiler],
+		["..", debug_or_release]
+	]);
+	if (cfg.verbose > 0) {
+		fcPrintln("cmake invokation: cmake " + strGlue(cmake_args, " "), cfg.config.threadId);
+	}
+	cmake_exit_code = execSystemProcess("cmake", cmake_args, build_dir,
 		\out -> if (cfg.verbose > 0 && !isSpace(out)) {
 			fcPrintln(out, cfg.config.threadId);
 		},

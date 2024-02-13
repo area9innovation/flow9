@@ -31,6 +31,7 @@ MDynamicDataTable2TInner(
 	lightweight : bool,
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> Tropic {
+	useMaxSizeFix = isUrlParameterTrue("new") && !isUrlParameterFalse("table_max_size_enabled");
 	rowsCountB = flength(data);
 
 	reorderList = if (lightweight) None() else tryExtractStruct(style, MListReorder(make([]), const(false)));
@@ -90,6 +91,8 @@ MDynamicDataTable2TInner(
 	footerHeight = if (noFooter) 0. else 56.;
 	footerMinWidth = make(0.);
 	tableHeight = make(0.);
+	tableMaxWidth = make(0.);
+	tableMaxHeight = make(0.);
 	headerActionsHeight = make(0.);
 
 	countRowHeight0 = \er : int, isHeader : bool ->
@@ -140,7 +143,7 @@ MDynamicDataTable2TInner(
 		t |> TBorderLeftRight(state.externalBorder)
 	);
 
-	yTranslation = fselect(page, FLift(\pg -> Point(0., max(0., i2d(pg.first)) * rowHeight)));
+	yTranslation = fselectLift(page, \pg -> max(0., i2d(pg.first)) * rowHeight);
 	totalRowsHeight = fselect2(rowsCountB, showFixedRow, FLift2(\rc, fr -> (i2d(rc) + b2d(fr)) * rowHeight));
 
 	// Header
@@ -192,6 +195,7 @@ MDynamicDataTable2TInner(
 		// Data rows
 		content =
 			if (lightweight) {
+				rowsBoxMaxWidth = make(0.);
 				rows : Transform<[Pair<Maybe<?>, int>]> =
 					fselect3(sorting.result, data, page, \sortRes, dat, pg ->
 						map(subrange(sortRes, pg.first, pg.second + 1), \i -> Pair(elementAtM(dat, i), i))
@@ -265,32 +269,34 @@ MDynamicDataTable2TInner(
 					|> (\t -> TAccess([TagName("tr"), AccessRole("row")], t))
 					|> (\t -> TDispose([\ -> dispUnsM(disp)], t));
 				})
-				|> (\t ->
+				|> (\t -> TInspect([IMaxWidth(rowsBoxMaxWidth)], t))
+				|> (\t -> {
+					scrollBox = if (useMaxSizeFix) TFillWYT(rowsBoxMaxWidth) else TFillXY();
 					TGroup2(
-						TSizedHeight(0., totalRowsHeight),
-						TTranslate(yTranslation, t)
-					)
-				)
-				|> (\t ->
-					MScroll2T(
-						manager,
-						p,
-						MScroll(
-							t,
-							TFillXY(),
-							concat3([
-									state.rowsBoxScrollPosition,
-									TScrollEnabled(state.scrollEnabled),
-									TScrollAxisEnabled(const(false), state.scrollEnabled),
-									MScrollBound(const(true), fselect(page, FLift(\pg -> pg.first <= 0)))
-								],
-								state.verticalScroll,
-								scrollStep
-							)
+						MScroll2T(
+							manager,
+							p,
+							MScroll(
+								TSizedHeight(1., totalRowsHeight),
+								scrollBox,
+								concat3([
+										state.rowsBoxScrollPosition,
+										TScrollEnabled(state.scrollEnabled),
+										TScrollAxisEnabled(const(false), state.scrollEnabled),
+										MScrollBound(const(true), fselect(page, FLift(\pg -> pg.first <= 0)))
+									],
+									state.verticalScroll,
+									scrollStep
+								)
+							),
+							m2t
 						),
-						m2t
+						TCropSize(
+							scrollBox,
+							TTranslate(fselect2Lift(yTranslation, state.rowsBoxScrollPosition.position, \yTr, pos -> Point(pos.x, yTr - pos.y)), t)
+						)
 					)
-				)
+				})
 			} else {
 				rows = fmap(data, rowsFn);
 				MSelect2T(manager, p, "MDynamicDataTableLines", [], expandRow, \er, p2 ->
@@ -547,15 +553,23 @@ MDynamicDataTable2TInner(
 					)
 				]);
 
+				isYFiller = paginationState.auto || (!paginationState.anyType && fgetValue(state.scrollEnabled));
+				innerMaxWidth = make(0.);
+				innerMaxHeight = make(0.);
+
 				scroll =
-					if (paginationState.auto || (!paginationState.anyType && fgetValue(state.scrollEnabled)))
-						MScroll(t, TFillMin(0., minTableHeight - footerHeight), arrayPush(scrollStyle, MScrollCropByContent()))
+					if (isYFiller)
+						MScroll(MInspect([IMaxWidth(innerMaxWidth), IMaxHeight(innerMaxHeight)], t), TFillMin(0., minTableHeight - footerHeight), arrayPush(scrollStyle, MScrollCropByContent()))
 					else {
 						contentHeight = make(0.);
-						MScroll(MAttachHeight(t, contentHeight), TFillXHT(contentHeight), scrollStyle)
+						MScroll(MInspect([IMaxWidth(innerMaxWidth), Height(contentHeight)], t), TFillXHT(contentHeight), scrollStyle)
 					}
 
 				MScroll2T(manager, p, scroll, m2t)
+				|> (\t2 ->
+					if (useMaxSizeFix) t2 |> TSetMaxWidth2(innerMaxWidth) |> (if (isYFiller) TSetMaxHeight2(innerMaxHeight) else idfn)
+					else t2
+				)
 			}, t))
 		|> MDTFirstColumn(state, p, headers, data, rowsFn, sorting, innerScrollState, expandRow, yTranslation,
 				rowBackgroundStyle, selectedBgStyle, totalRowsHeight, visibleRowsHeight, rowsAvailableHeight, page, lightweight)
@@ -587,11 +601,16 @@ MDynamicDataTable2TInner(
 				f
 			)
 		)
-		|> (\t -> TAvailableWidth(t, if (isInnerScroll) fmin(screenW, tableWidth(expandRow)) else tableWidth(expandRow)))
+		|> (\t -> {
+			tWidth = tableWidth(expandRow);
+			TAvailableWidth(t, if (isInnerScroll) fmin(screenW, tWidth) else tWidth)
+			|> (if (useMaxSizeFix) TSetMaxWidth2(tWidth) else idfn)
+		})
 		|> (\t -> if (state.fullWidthAdvanced) TTweak([TSnapSize(8., -1., false)], t, TEmpty()) else t)
 		|> (if (!paginationState.anyType && isFConst(data) && !fgetValue(state.scrollEnabled)) makeTropicConstantHeight(None()) else idfn)
 		|> (if (state.fullWidth || isAnyWidthByContent || isInnerScroll || !isDefExpandRow) idfn else makeTropicConstantWidth(None()))
 		|> (\t -> TAttachHeight(t, tableHeight))
+		|> (\t -> TInspect([IMaxWidth(tableMaxWidth), IMaxHeight(tableMaxHeight)], t))
 		|> (\t ->
 			if (state.fullWidth) {
 				box =
@@ -600,6 +619,10 @@ MDynamicDataTable2TInner(
 				MScroll2T(manager, p, MScroll(t, box, [MScrollCropByContent()]), m2t)
 			} else t)
 		|> TSetMinHeight2(fullMinTableHeight)
+		|> (\t ->
+			if (useMaxSizeFix) t |> TSetMaxWidth2(tableMaxWidth) |> TSetMaxHeight2(tableMaxHeight)
+			else t
+		)		
 	})
 	|> (\f ->
 		MComponentGroup2T(
@@ -615,8 +638,13 @@ MDynamicDataTable2TInner(
 		)
 	)
 	|> (\t ->
-		if (isInnerScroll || !isDefExpandRow) TAttachAvailableWidth(t, screenW)
-		else if (state.fullWidth) TAttachWidth2(TFillX(), screenW, t)
+		if (isInnerScroll || !isDefExpandRow) {
+			if (useMaxSizeFix) {
+				fullTableMaxWidth = make(0.);
+				TAttachAvailableWidth(TInspect([IMaxWidth(fullTableMaxWidth)], t), screenW)
+				|> TSetMaxWidth2(fullTableMaxWidth)
+			} else TAttachAvailableWidth(t, screenW)
+		} else if (state.fullWidth) TAttachWidth2(TFillX(), screenW, t)
 		else t
 	)
 }
@@ -1312,7 +1340,13 @@ makeMInnerScrollState(
 	externalBorder : double,
 	style : [MDataTableStyle]) -> Maybe<MInnerScrollState> {
 
-	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
+	innerScroll =
+		if (isUrlParameterTrue("new") && !isUrlParameterFalse("table_inner_scroll_enabled")) {
+			is = extractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
+			if (is.mode == MNoScroll()) None() else Some(is);
+		} else {
+			tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
+		}
 
 	maybeMap(innerScroll, \is -> {
 		lifted = is.mode == MLiftedFirstColumnMode();
@@ -1526,7 +1560,7 @@ MDTFirstColumn(
 	sorting : MSortingState,
 	innerScrollState : Maybe<MInnerScrollState>,
 	expandRow : Transform<int>,
-	yTranslation : Transform<Point>,
+	yTranslation : Transform<double>,
 	rowBackgroundStyle : Maybe<MRowBackgroundStyle>,
 	selectedBgStyle : Maybe<MSelectedBackgroundStyle>,
 	totalRowsHeight : Transform<double>,
@@ -1614,7 +1648,7 @@ MDTFirstColumn(
 					})
 					|> (\t -> TGroup2(
 							TSizedHeight(0., totalRowsHeight),
-							TTranslate(yTranslation, t)
+							TTranslate(fpoint(zero, yTranslation), t)
 						)
 					)
 					|> wrapIntoScroll

@@ -5,7 +5,6 @@ import tools/flowc/statements/fs_module;
 
 export {
 	fiStructs2cpp3(structs : [FiTypeStruct], gctx: Cpp3GlobalContext) -> [Cpp3CompiledDeclaration];
-	cpp3StructDefs(gctx: Cpp3GlobalContext) -> string;
 }
 
 fiStructs2cpp3(structs : [FiTypeStruct], gctx: Cpp3GlobalContext) -> [Cpp3CompiledDeclaration] {
@@ -14,7 +13,9 @@ fiStructs2cpp3(structs : [FiTypeStruct], gctx: Cpp3GlobalContext) -> [Cpp3Compil
 		decl = Cpp3CompiledDeclaration(s.name, true,
 			fiStructForward2cpp3(s, gctx),
 			fiStructTraits2cpp3(s, gctx),
-			fiStructDecl2cpp3(s, gctx), "", ""
+			fiStructDecl2cpp3(s, gctx), "",
+			"Dyn::registerStruct(std::move(" + fiStruct2cpp3StructDef(s, gctx) + "));",
+			"Dyn::removeStruct(" + i2s(fiStruct2cpp3TypeId(s.name, gctx)) + ");"
 		);
 		fi2cpp3EndOperationMessage(gctx.config, 2, "compilation of struct", s.name, start);
 		decl;
@@ -49,7 +50,7 @@ fiStructDecl2cpp3(struct: FiTypeStruct, gctx0: Cpp3GlobalContext) -> string {
 	struct_id = eitherMap(lookupTree(gctx.structs2cpp, struct.name), \str -> i2s(str.id), "");
 	str_params = concat([struct_id], map(struct.args, \arg -> fiType2cpp3(arg.type, gctx)));
 	struct_type = "Str<" + strGlue(str_params, ", ") + ">";
-	constructor = struct_name + "(" + 
+	constructor = struct_name + "(" +
 		supergluei(struct.args, \i, arg -> fiType2cpp3(arg.type, gctx) + " a_" + i2s(i), ", ") + 
 	"): " +
 	struct_type + "(" +
@@ -66,26 +67,8 @@ fiStructForward2cpp3(struct: FiTypeStruct, gctx: Cpp3GlobalContext) -> string {
 	template_header + "struct " + struct_name + ";\n";
 }
 
-cpp3StructDefs(gctx: Cpp3GlobalContext) -> string {
-	type2id = \tp -> {
-		switch (tp) {
-			FiTypeVoid(): 0;
-			FiTypeInt(): 1;
-			FiTypeBool(): 2;
-			FiTypeDouble(): 3;
-			FiTypeString(): 4;
-			FiTypeNative(): 5;
-			FiTypeArray(__): 6;
-			FiTypeRef(__): 7;
-			FiTypeFunction(__,__): 8;
-			FiTypeName(name,__): {
-				eitherMap(lookupTree(gctx.structs2cpp, name), \str -> str.id, -1);
-			}
-			FiTypeFlow(): -2;
-			FiTypeParameter(__): -3;
-		}
-	}
-	struct_arg = \arg -> "FieldDef{u\"" + arg.name + "\", " + i2s(type2id(arg.type)) + "}";
+fiStruct2cpp3StructDef(struct: FiTypeStruct, gctx: Cpp3GlobalContext) -> string {
+	struct_arg = \arg -> "FieldDef{u\"" + arg.name + "\", " + i2s(fiType2cpp3TypeId(arg.type, gctx)) + "}";
 	struct_fields = \s -> "{" + superglue(s.args, struct_arg, ", ") + "}";
 	struct_constructor = \s -> {
 		make_arg = \i, arg: FiStructArg -> {
@@ -110,13 +93,9 @@ cpp3StructDefs(gctx: Cpp3GlobalContext) -> string {
 			"return ret;"
 		) + "\n}";
 	}
-	"std::vector<StructDef> RTTI::struct_defs = {\n" +
-		strIndent(strGlue(mapi(gctx.structs, \i, s ->
-			"StructDef{\n" + strIndent(
-				"u\"" + s.name + "\", " + i2s(i + 9) + ",\n" +
-				struct_fields(s) + ",\n" +
-				struct_constructor(s)
-			 ) + "\n}"
-		), ",\n")) +
-	"\n};\n\n";
+	"StructDef{\n" + strIndent(
+		"u\"" + struct.name + "\", " + i2s(fiStruct2cpp3TypeId(struct.name, gctx)) + ",\n" +
+		struct_fields(struct) + ",\n" +
+		struct_constructor(struct)
+	) + "\n}";
 }

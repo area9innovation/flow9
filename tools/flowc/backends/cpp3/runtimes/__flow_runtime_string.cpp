@@ -4,6 +4,8 @@
 
 namespace flow {
 
+IntStats string_leng_stats;
+
 inline uint32_t getCodePoint(const string& str, std::size_t& i) {
 	char16_t ch = str.at(i);
 	uint32_t x = ch;

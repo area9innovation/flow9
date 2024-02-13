@@ -155,32 +155,26 @@ inline T2 castRc(T1 x) {
 		using V2 = std::remove_pointer_t<T2>;
 		if constexpr (is_type_v<TypeFx::FUNC, T1>) {
 			using V1 = std::remove_pointer_t<T1>;
-			T2 ret = [x]<std::size_t... I>(std::index_sequence<I...>) constexpr { 
+			return [x]<std::size_t... I>(std::index_sequence<I...>) constexpr {
 				return V2::make([x](std::tuple_element_t<I, typename V2::Args>... as) mutable {
-					return castRc<typename V1::RetType, typename V2::RetType>(x->callFlowRc(
+					return castRc<typename V1::RetType, typename V2::RetType>(x->call(
 						castRc<
 							std::tuple_element_t<I, typename V2::Args>, 
 							std::tuple_element_t<I, typename V1::Args>
 						>(std::get<I>(as))...
 					));
 				}, {});
-			}
-			(std::make_index_sequence<V2::ARITY>{});
-			decRc(x);
-			return ret;
+			}(std::make_index_sequence<V2::ARITY>{});
 		} 
 		else if (T2 f = dynamic_cast<T2>(x)) {
 			return f;
 		} else {
-			T2 ret = [x]<std::size_t... I>(std::index_sequence<I...>) constexpr { 
+			return [x]<std::size_t... I>(std::index_sequence<I...>) constexpr {
 				return V2::make([x](std::tuple_element_t<I, typename V2::Args>... as) mutable {
 					std::vector<Flow*> as_vect {castRc<std::tuple_element_t<I, typename V2::Args>, Flow*>(as)...};
 					return castRc<Flow*, typename V2::RetType>(x->callFlowRc(as_vect));
 				}, x);
-			}
-			(std::make_index_sequence<V2::ARITY>{});
-			decRc(x);
-			return ret;
+			}(std::make_index_sequence<V2::ARITY>{});
 		}
 	}
 	else if constexpr (std::is_same_v<T2, Union*>) {

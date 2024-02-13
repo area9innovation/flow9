@@ -215,8 +215,15 @@ class FlowSprite extends Sprite {
 	}
 
 	private function enableSprites() : Void {
-		if (untyped this.destroyed || parent == null || nativeWidget == null || nativeWidget.baseTexture == null || (RenderSupport.printMode && Util.determineCrossOrigin(url) == "anonymous")) {
+		if (untyped this.destroyed || parent == null || nativeWidget == null || (RenderSupport.printMode && Util.determineCrossOrigin(url) == "anonymous")) {
 			return;
+		}
+		if (nativeWidget.baseTexture == null) {
+			if (texture != null) {
+				nativeWidget.baseTexture = texture.baseTexture;
+			} else {
+				return;
+			}
 		}
 
 		texture = Texture.from(nativeWidget);

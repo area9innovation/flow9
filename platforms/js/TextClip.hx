@@ -122,6 +122,7 @@ class TextClip extends NativeWidgetClip {
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
+	public static var checkTextNodeWidth = Util.getParameter("text_node_width") != "0";
 	public static var IosOnSelectWorkaroundEnabled = Platform.isIOS && Platform.isSafari && Platform.browserMajorVersion < 15;
 
 	public static inline var UPM : Float = 2048.0;  // Const.
@@ -184,6 +185,7 @@ class TextClip extends NativeWidgetClip {
 	private var preventSelectEvent : Bool = false;
 	private var preventMouseUpEvent : Bool = false;
 	private var preventEnsureCurrentInputVisible : Bool = false;
+	private var preventCheckTextNodeWidth : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -271,7 +273,7 @@ class TextClip extends NativeWidgetClip {
 
 	private static function getBulletsString(t : String) : TextMappedModification {
 		// TODO analyze string for UTF-16 sequences to represent them with a single bullet instead of two.
- 		var bullet = String.fromCharCode(8226);
+		var bullet = String.fromCharCode(8226);
 		var i = 0;
 		var ret = "";
 		var positionsDiff : Array<Int> = [];
@@ -514,7 +516,7 @@ class TextClip extends NativeWidgetClip {
 				if (textBackgroundWidget != null) {
 					textBackgroundWidget.innerHTML = this.contentGlyphs.modified;
 				}
-				nativeWidget.style.whiteSpace = "pre-wrap";
+				nativeWidget.style.whiteSpace = style.wordWrap ? "pre-wrap" : "pre";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
@@ -712,7 +714,12 @@ class TextClip extends NativeWidgetClip {
 	public static function useHTMLMeasurementJapaneseFont(st) : Bool {
 		if (isMeiryoAvailable) return false;
 		var checkMeyrioFont = function() {
-			var res = Browser.document.fonts.check("10px Meiryo");
+			var res = false;
+			untyped __js__('document.fonts.forEach(v => {
+				if (!res) {
+					res = v.family == "Meiryo";
+				}
+			})');
 			if (res) isMeiryoAvailable = true;
 			return res;
 		}
@@ -823,6 +830,14 @@ class TextClip extends NativeWidgetClip {
 		if (this.needBaseline != need) {
 			this.needBaseline = need;
 			updateBaselineWidget();
+		}
+	}
+
+	public function setPreventCheckTextNodeWidth(prevent : Bool) : Void {
+		if (this.preventCheckTextNodeWidth != prevent) {
+			this.preventCheckTextNodeWidth = prevent;
+			updateTextMetrics();
+			this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
 		}
 	}
 
@@ -1697,12 +1712,16 @@ class TextClip extends NativeWidgetClip {
 				var contentGlyphsModified = untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')");
 				metrics = TextMetrics.measureText(contentGlyphsModified, style);
 				if (this.isHTMLRenderer()) {
-					measureHTMLWidth();
+					measureHTMLWidthAndHeight();
 				}
 			} else {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
-				if (this.isHTMLRenderer() && useHTMLMeasurementJapaneseFont(style)) {
-					measureHTMLSize();
+				if (this.isHTMLRenderer()) {
+					if (useHTMLMeasurementJapaneseFont(style)) {
+						measureHTMLSize();
+					} else {
+						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic') measureHTMLWidth();
+					}
 				}
 			}
 
@@ -1744,7 +1763,8 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateTextWidth() : Void {
 		if (nativeWidget != null && metrics != null) {
-			var textNodeMetrics = getTextNodeMetrics(nativeWidget);
+			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth;
+			var textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck);
 			var textNodeWidth0 = textNodeMetrics.width;
 			var textNodeHeight = textNodeMetrics.height;
 			if (textNodeWidth0 != null && textNodeWidth0 > 0 && textNodeHeight != null && textNodeHeight > 0) {
@@ -1841,6 +1861,10 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function measureHTMLWidth() : Void {
+		measureHTMLWidthAndHeight(false);
+	}
+
+	private function measureHTMLWidthAndHeight(?shouldUpdateHeight : Bool = true) : Void {
 		if (nativeWidget == null) {
 			isNativeWidget = true;
 			createNativeWidget(isInput ? (multiline ? 'textarea' : 'input') : 'p');
@@ -1850,6 +1874,7 @@ class TextClip extends NativeWidgetClip {
 		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 		var parentNode : Dynamic = nativeWidget.parentNode;
 		var nextSibling : Dynamic = nativeWidget.nextSibling;
+		var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth;
 
 		updateNativeWidgetStyle();
 		var tempDisplay = nativeWidget.style.display;
@@ -1866,7 +1891,7 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		Browser.document.body.appendChild(nativeWidget);
-		textNodeMetrics = getTextNodeMetrics(nativeWidget);
+		textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck);
 
 		if (parentNode != null) {
 			if (nextSibling == null || nextSibling.parentNode != parentNode) {
@@ -1885,7 +1910,11 @@ class TextClip extends NativeWidgetClip {
 			metrics.width = textNodeWidth;
 		}
 
-		if (textNodeMetrics.height != null && textNodeMetrics.height >= 0 && metrics.lineHeight > 0) {
+		if (useCheck) {
+			nativeWidget.style.paddingLeft = '${-textNodeMetrics.x}px';
+		}
+
+		if (shouldUpdateHeight && textNodeMetrics.height != null && textNodeMetrics.height >= 0 && metrics.lineHeight > 0) {
 			var textNodeLines = Math.round(textNodeMetrics.height / metrics.lineHeight);
 			var currentLines = Math.round(metrics.height / metrics.lineHeight);
 
@@ -1899,8 +1928,57 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private static function getTextNodeMetrics(textNode) : Dynamic {
+	private static function getTextNodeMetrics(nativeWidget, useCheck) : Dynamic {
 		var textNodeMetrics : Dynamic = {};
+		if (nativeWidget == null || nativeWidget.lastChild == null) {
+			textNodeMetrics.width = 0;
+			textNodeMetrics.height = 0;
+			textNodeMetrics.x = 0;
+		} else {
+			var textNode = useCheck ? nativeWidget.lastChild : nativeWidget;
+			if (useCheck) {
+				updateTextNodesWidth(untyped nativeWidget.childNodes, textNodeMetrics);
+			}
+			updateTextNodeHeight(textNode, textNodeMetrics, useCheck);
+		}
+		return textNodeMetrics;
+	}
+
+	private static function updateTextNodesWidth(children, textNodeMetrics) {
+		textNodeMetrics.width = 0;
+		textNodeMetrics.updateOffset = true;
+		for (i in 0 ... children.length) {
+			updateTextNodeWidth(children[i], textNodeMetrics);
+		}
+	}
+
+	private static function updateTextNodeWidth(textNode, textNodeMetrics) {
+		var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		var textElement = Browser.document.createElementNS("http://www.w3.org/2000/svg", "text");
+
+		// Set font properties
+		var computedStyle = Browser.window.getComputedStyle(untyped textNode.parentNode);
+		textElement.setAttribute('font-family', computedStyle.fontFamily);
+		textElement.setAttribute('font-size', computedStyle.fontSize);
+		textElement.setAttribute('font-style', computedStyle.fontStyle);
+		textElement.setAttribute('letter-spacing', computedStyle.letterSpacing);
+
+		textElement.textContent = textNode.textContent;
+		svg.appendChild(textElement);
+		Browser.document.body.appendChild(svg);
+
+		var bbox = untyped textElement.getBBox();
+
+		Browser.document.body.removeChild(svg);
+
+		textNodeMetrics.width += bbox.width;
+		if (textNodeMetrics.updateOffset && (textNode.classList == null || !textNode.classList.contains('baselineWidget'))) {
+			textNodeMetrics.x = bbox.x;
+			textNodeMetrics.updateOffset = false;
+		}
+	}
+
+	private static function updateTextNodeHeight(textNode, textNodeMetrics, useCheck) {
 		if (Browser.document.createRange != null) {
 			var range = Browser.document.createRange();
 			range.selectNodeContents(textNode);
@@ -1908,12 +1986,13 @@ class TextClip extends NativeWidgetClip {
 				var rect = range.getBoundingClientRect();
 				if (rect != null) {
 					var viewportScale = RenderSupport.getViewportScale();
-					textNodeMetrics.width = (rect.right - rect.left) * viewportScale;
+					if (!useCheck) {
+						textNodeMetrics.width = (rect.right - rect.left) * viewportScale;
+					}
 					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;
 				}
 			}
 		}
-		return textNodeMetrics;
 	}
 
 	public function getTextMetrics() : Array<Float> {

@@ -75,7 +75,7 @@ template<typename S, typename T> struct Hash {
 				case TypeFx::DOUBLE: Hash<S, Double>::calc(h, v->template get<Double>()); break;
 				case TypeFx::STRING: Hash<S, String*>::calc(h, v->template get<String*>()); break;
 				case TypeFx::ARRAY: {
-					for (Int i = 0; i < v->size(); ++i) {
+					for (Int i = 0; i < v->componentSize(); ++i) {
 						calcComponent(h, v, i);
 					}
 					break;
@@ -91,7 +91,7 @@ template<typename S, typename T> struct Hash {
 					break;
 				default: {
 					Hash<S, TypeId>::calc(h, v->typeId());
-					for (Int i = 0; i < v->size(); ++ i) {
+					for (Int i = 0; i < v->componentSize(); ++ i) {
 						calcComponent(h, v, i);
 					}
 					break;
