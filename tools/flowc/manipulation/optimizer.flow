@@ -10,6 +10,7 @@ import tools/flowc/manipulation/effects;
 import tools/flowc/manipulation/dupstrings;
 import tools/flowc/manipulation/livestructs;
 import tools/flowc/manipulation/dump;
+import tools/flowc/manipulation/transform_exps;
 import tools/flowc/const_eval;
 
 export {
@@ -107,51 +108,86 @@ makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> Op
 }
 
 evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
-	eval_env = fcInitConstEvalEnv(prog, on_err);
+	env = fcInitConstEvalEnv(prog, on_err);
 	fiMapProgramExp(prog, \e, decl, m,__ -> {
-		m_on_err = \msg, ps -> on_err(FcError(msg, map(ps, \p -> FcPosition(m.fileinfo.flowfile, p, p))));
-		try_eval = \x, consts -> {
-			eval_env.errors := [];
-			switch (fcConstEval(x, consts, eval_env, m_on_err)) {
-				Some(c): Pair(c, consts);
-				None(): Pair(x, consts);
-			}
-		}
-		fiFoldMapExp(e, eval_env.consts, \x,__, consts -> switch (x) {
-			FiVar(__,__,__): Pair(x, consts);
-			FiLet(v,__, e1,__,__,__): {
-				eval_env.errors := [];
-				switch (fcConstEval(e1, consts, eval_env, m_on_err)) {
-					Some(c): {
-						Pair(FiLet(x with e1 = c), setTree(consts, v, c));
-					}
-					None(): Pair(x, consts);
-				}
-			}
-			FiCall(f, args,__,__): {
-				switch (f) {
-					FiVar(fn_name,__,__): {
-						// Special compile-time output function, to indicate what value was evaluated at CT.
-						if (fn_name == "outputCt") {
-							p = try_eval(args[0], consts);
-							q = try_eval(args[1], consts);
-							msg = switch (p.first) {
-								FiString(msg,__): msg;
-								default: pretFiExp(p.first);
-							}
-							fcPrintln(msg + pretFiExp(q.first), prog.config.threadId);
-							q;
-						} else {
-							try_eval(x, consts);
-						}
-					}
-					default: try_eval(x, consts);
-				}
-			}
-			default: try_eval(x, consts);
-		}, AstTraverseOrder(true, true)).first
+		clearHashMap(env.cache);
+		evalExpConstExprs(fiExpMakeStartUnique(e), env,
+			\msg, ps -> on_err(FcError(msg, map(ps, \p -> FcPosition(m.fileinfo.flowfile, p, p)))),
+			\msg -> fcPrintln(msg, prog.config.threadId)
+		)
 	});
 }
+
+evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, on_err: (string, [int]) -> void, on_msg: (string) -> void) -> FiExp {
+	rec = \e -> evalExpConstExprs(e, env, on_err, on_msg);
+	switch (fcConstEval(x, env.consts, env, on_err, on_msg)) {
+		Some(c): {
+			switch (c) {
+				FiLambda(__,body,__,__): {
+					FiLambda(c with body = rec(body));
+				}
+				default: c;
+			}
+		}
+		None(): {
+			switch (x) {
+				FiVar(v,__,__): lookupTreeDef(env.consts, v, x);
+				FiLet(v,__, e1, e2,__,__): {
+					switch (fcConstEval(e1, env.consts, env, on_err, on_msg)) {
+						Some(c): {
+							FiLet(x with
+								e1 = c,
+								e2 = evalExpConstExprs(e2, 
+									FcConstEvalEnv(env with consts = setTree(env.consts, v, c)), on_err, on_msg
+								)
+							);
+						}
+						None(): {
+							FiLet(x with e1 = rec(e1), e2 = rec(e2));
+						}
+					}
+				}
+				FiCall(f, args,__,__): {
+					FiCall(x with f = rec(f), args = map(args, rec));
+				}
+				FiLambda(__, body,__,__): {
+					FiLambda(x with body = rec(body));
+				}
+				FiIf(e1, e2, e3,__,__): {
+					FiIf(x with e1 = rec(e1), e2 = rec(e2), e3 = rec(e3));
+				}
+				FiSwitch(v,__, cs,__,__): {
+					FiSwitch(x with cases = map(cs, \c -> FiCase(c with body = rec(c.body))));
+				}
+				FiCast(e,__,__,__,__): {
+					FiCast(x with e = rec(e));
+				}
+				FiSeq(es,__,__): {
+					FiSeq(x with es = map(es, rec));
+				}
+				FiCallPrim(__, es,__,__):{
+					FiCallPrim(x with es = map(es, rec));
+				}
+				FiRequire(__, e,__,__): {
+					FiRequire(x with e = rec(e));
+				}
+				FiUnsafe(__, fb,__,__): {
+					FiUnsafe(x with fallback = rec(fb));
+				}
+				FiConst(): x;
+			}
+		}
+	}
+}
+
+
+
+
+
+
+
+
+
 
 
 
