@@ -109,18 +109,18 @@ makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> Op
 
 evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
 	env = fcInitConstEvalEnv(prog, on_err);
-	fiMapProgramExp(prog, \e, decl, m,__ -> {
-		clearHashMap(env.cache);
-		evalExpConstExprs(fiExpMakeStartUnique(e), env,
+	fiMapProgramExp(prog, \e, decl, m,__ ->
+		evalExpConstExprs(fiExpMakeStartUnique(e), env, makeHashMap(idfn),
 			\msg, ps -> on_err(FcError(msg, map(ps, \p -> FcPosition(m.fileinfo.flowfile, p, p)))),
 			\msg -> fcPrintln(msg, prog.config.threadId)
-		)
-	});
+		),
+		fcParallelOn(prog.config)
+	);
 }
 
-evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, on_err: (string, [int]) -> void, on_msg: (string) -> void) -> FiExp {
-	rec = \e -> evalExpConstExprs(e, env, on_err, on_msg);
-	switch (fcConstEval(x, env.consts, env, on_err, on_msg)) {
+evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, cache: HashMap<int, Maybe<FiExp>>, on_err: (string, [int]) -> void, on_msg: (string) -> void) -> FiExp {
+	rec = \e -> evalExpConstExprs(e, env, cache, on_err, on_msg);
+	switch (fcConstEval(x, env.consts, env, cache, on_err, on_msg)) {
 		Some(c): {
 			switch (c) {
 				FiLambda(__,body,__,__): {
@@ -133,12 +133,12 @@ evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, on_err: (string, [int]) -> voi
 			switch (x) {
 				FiVar(v,__,__): lookupTreeDef(env.consts, v, x);
 				FiLet(v,__, e1, e2,__,__): {
-					switch (fcConstEval(e1, env.consts, env, on_err, on_msg)) {
+					switch (fcConstEval(e1, env.consts, env, cache, on_err, on_msg)) {
 						Some(c): {
 							FiLet(x with
 								e1 = c,
 								e2 = evalExpConstExprs(e2, 
-									FcConstEvalEnv(env with consts = setTree(env.consts, v, c)), on_err, on_msg
+									FcConstEvalEnv(env with consts = setTree(env.consts, v, c)), cache, on_err, on_msg
 								)
 							);
 						}
