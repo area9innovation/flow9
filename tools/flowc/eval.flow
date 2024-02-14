@@ -80,7 +80,7 @@ fcInitEvalGlobals(prog: FiProgram, onErr : (FcError) -> void) -> HashMap<string,
 						switch (decl) {
 							FiFunctionDec(__, lambda, type,__,__): {
 								fn = fcMakeFnFromLambda(lambda, structs, globals, None(), onError);
-								setHashMap(globals, name, FcEvalGlobal(fn, module.fileinfo));
+								maybeApply(fn, \f -> setHashMap(globals, name, FcEvalGlobal(f, module.fileinfo)));
 							}
 							FiGlobalVar(__, value, __,__,__): {
 								gv = fcReplEval(value, structs, globals, makeHashMap(fastHashString), onError);
@@ -176,10 +176,13 @@ fcReplEval(
 		flow(msg);
 	}
 	switch (ex) {
-		FiLambda(args, body,__,__): {
+		FiLambda(args, body,__,pos): {
 			arity = length(args);
 			closure = copyHashMap(locals);
-			fcMakeFnFromLambda(ex, structs, globals, Some(closure), onError);
+			switch (fcMakeFnFromLambda(ex, structs, globals, Some(closure), onError)) {
+				Some(fn): fn;
+				None(): make_err("failed to make a lambda function", [pos]);
+			}
 		}
 		FiCall(f, args,__,pos): {
 			arity = length(args);
@@ -473,7 +476,10 @@ fcReplEvalCallPrim(
 		}
 		FcStructPrim(name): {
 			args = map(es, \e -> fcReplEval(e, structs, globals, locals, onError));
-			fcEvalMakeStruct(name, args, IllegalStruct(), structs, onError, call.start);
+			switch (fcEvalMakeStruct(name, args, IllegalStruct(), structs, onError, call.start)) {
+				Some(s): s;
+				None(): make_err("couldn't make a struct " + name);
+			}
 		}
 		FcFieldPrim(field): {
 			struct = fcReplEval(es[0], structs, globals, locals, onError);
