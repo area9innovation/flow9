@@ -7,7 +7,8 @@ flowc1 \
 	compiler=flowc1 \
 	test=cpp3 \
 	valgrind=1 \
-	exclude=test_runner,test_concur,sizeof,test_clone,benchmark_inlining \
+	cpp3-flowc-opts=optimize \
+	exclude=test_runner,test_concur,sizeof,test_clone,benchmark \
 	test-opts=determ
 
 #cpp3-back-opts=cpp-debug
@@ -17,6 +18,7 @@ flowc1 \
 	compiler=flowc1 \
 	test=nim \
 	valgrind=1 \
+	cpp3-flowc-opts=optimize \
 	exclude=gc,http,test_local2utc,users_tree \
 	test-opts=determ #cpp3-back-opts=cpp-debug
 

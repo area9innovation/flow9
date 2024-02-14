@@ -110,7 +110,7 @@ makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> Op
 evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
 	env = fcInitConstEvalEnv(prog, on_err);
 	fiMapProgramExp(prog, \e, decl, m,__ ->
-		evalExpConstExprs(fiExpMakeStartUnique(e), env, makeHashMap(idfn),
+		evalExpConstExprs(fiExpMakeStartUnique(e), env, prog.names.unions, makeHashMap(idfn),
 			\msg, ps -> on_err(FcError(msg, map(ps, \p -> FcPosition(m.fileinfo.flowfile, p, p)))),
 			\msg -> fcPrintln(msg, prog.config.threadId)
 		),
@@ -118,8 +118,8 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram 
 	);
 }
 
-evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, cache: HashMap<int, Maybe<FiExp>>, on_err: (string, [int]) -> void, on_msg: (string) -> void) -> FiExp {
-	rec = \e -> evalExpConstExprs(e, env, cache, on_err, on_msg);
+evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, unions: Tree<string, FiTypeUnion>, cache: HashMap<int, Maybe<FiExp>>, on_err: (string, [int]) -> void, on_msg: (string) -> void) -> FiExp {
+	rec = \e -> evalExpConstExprs(e, env, unions, cache, on_err, on_msg);
 	switch (fcConstEval(x, env.consts, env, cache, on_err, on_msg)) {
 		Some(c): {
 			switch (c) {
@@ -133,17 +133,25 @@ evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, cache: HashMap<int, Maybe<FiEx
 			switch (x) {
 				FiVar(v,__,__): lookupTreeDef(env.consts, v, x);
 				FiLet(v,__, e1, e2,__,__): {
-					switch (fcConstEval(e1, env.consts, env, cache, on_err, on_msg)) {
-						Some(c): {
-							FiLet(x with
-								e1 = c,
-								e2 = evalExpConstExprs(e2, 
-									FcConstEvalEnv(env with consts = setTree(env.consts, v, c)), cache, on_err, on_msg
-								)
-							);
+					switch (e1) {
+						FiVar(__,__,__): {
+							// Do not touch this var.
+							FiLet(x with e2 = rec(e2));
 						}
-						None(): {
-							FiLet(x with e1 = rec(e1), e2 = rec(e2));
+						default: {
+							switch (fcConstEval(e1, env.consts, env, cache, on_err, on_msg)) {
+								Some(c): {
+									FiLet(x with
+										e1 = c,
+										e2 = evalExpConstExprs(e2,
+											FcConstEvalEnv(env with consts = setTree(env.consts, v, c)), unions, cache, on_err, on_msg
+										)
+									);
+								}
+								None(): {
+									FiLet(x with e1 = rec(e1), e2 = rec(e2));
+								}
+							}
 						}
 					}
 				}
@@ -154,16 +162,50 @@ evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, cache: HashMap<int, Maybe<FiEx
 					FiLambda(x with body = rec(body));
 				}
 				FiIf(e1, e2, e3,__,__): {
-					FiIf(x with e1 = rec(e1), e2 = rec(e2), e3 = rec(e3));
+					e1c = rec(e1);
+					switch (e1c) {
+						FiBool(b,__): if (b) rec(e2) else rec(e3);
+						default: FiIf(x with e1 = rec(e1), e2 = rec(e2), e3 = rec(e3));
+					}
 				}
 				FiSwitch(v,__, cs,__,__): {
-					FiSwitch(x with cases = map(cs, \c -> FiCase(c with body = rec(c.body))));
+					vc = rec(v);
+					switch (vc) {
+						FiCallPrim(op, as,__,__): {
+							switch (op) {
+								FcStructPrim(name): {
+									switch (find(cs, \c -> fiStructMatchesSwitchCase(c.struct, name, unions))) {
+										Some(c): rec(c.body);
+										None(): {
+											switch (find(cs, \c -> c.struct == "default")) {
+												Some(c): rec(c.body);
+												None(): fail0("switch var constant struct " + name + " doesn't fit any switch variant");
+											}
+										}
+									}
+								}
+								default: fail0("switch var constant must be a struct");
+							}
+						}
+						default: {
+							FiSwitch(x with cases = map(cs, \c -> FiCase(c with body = rec(c.body))));
+						}
+					}
 				}
 				FiCast(e,__,__,__,__): {
 					FiCast(x with e = rec(e));
 				}
 				FiSeq(es,__,__): {
-					FiSeq(x with es = map(es, rec));
+					if (length(es) == 0) x else {
+						esc = map(es, rec);
+						FiSeq(x with es = filtermapi(esc, \i, y ->
+							if (i + 1 == length(es)) Some(y) else
+							switch (fcConstEval(y, env.consts, env, cache, on_err, on_msg)) {
+								Some(__): None();
+								None(): Some(y);
+							}
+						));
+					}
 				}
 				FiCallPrim(__, es,__,__):{
 					FiCallPrim(x with es = map(es, rec));

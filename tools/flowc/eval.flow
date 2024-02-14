@@ -24,6 +24,12 @@ export {
 		closure : Maybe<HashMap<string, FcEvalLocal>>,
 		onError : (string, [int]) -> void
 	) -> flow;
+
+	// Is used in `fcContEval`
+	fcEvalMakeStruct(name : string, args : [flow], def: flow, structs : HashMap<string, FiTypeStruct>, onError : (string, [int]) -> void, pos: int) -> flow;
+
+	// Is used in `fcContEval`
+	fcEvalDecomposeStruct(struct: flow) -> Pair<string, [flow]>;
 }
 
 // Struct, which are not used in flowc compiler are not present in runtime explicitly,
@@ -51,7 +57,7 @@ fcInitEvalGlobals(prog: FiProgram, onErr : (FcError) -> void) -> HashMap<string,
 				onError = \msg, ps -> onErr(FcError(msg, map(ps, \p -> FcPosition(module.fileinfo.flowfile, p, p))));
 				iter(module.natives, \nat : FiNativeDec -> {
 					fn = if (nat.name == "makeStructValue") {
-						flow(\n, args, def -> fcMakeStruct(n, args, def, structs, onError, -1));
+						flow(\n, args, def -> fcEvalMakeStruct(n, args, def, structs, onError, -1));
 					} else if (hostCallExists(nat.nativeName)) {
 						fcMakeFnFromNative(nat, nat.nativeName, onError);
 					} else if (hostCallExists(nat.name)) {
@@ -179,7 +185,7 @@ fcReplEval(
 			argsv = map(args, \a -> fcReplEval(a, structs, globals, locals, onError));
 			switch (f) {
 				FiVar(f_name,__,__): {
-					if (hostCallExists(f_name)) {
+					if (f_name != "makeStructValue" && hostCallExists(f_name)) {
 						// Try to use a runtime function directly, without interpretation
 						hostCall(f_name, argsv);
 					} else {
@@ -466,18 +472,30 @@ fcReplEvalCallPrim(
 		}
 		FcStructPrim(name): {
 			args = map(es, \e -> fcReplEval(e, structs, globals, locals, onError));
-			fcMakeStruct(name, args, IllegalStruct(), structs, onError, call.start);
+			fcEvalMakeStruct(name, args, IllegalStruct(), structs, onError, call.start);
 		}
 		FcFieldPrim(field): {
 			struct = fcReplEval(es[0], structs, globals, locals, onError);
-			name = extractStructName(struct);
+			fcEvalGetField(field, struct, onError, call.start);
+			/*name = extractStructName(struct);
 			if (field == "structname") {
 				name;
 			} else if (name != "FcRuntimeStruct") {
 				fields = structFieldNames(name);
 				i = elemIndex(fields, field, -1);
-				struct_args = extractStructArguments(struct);
-				struct_args[i];
+				if (i == -1) {
+					make_err("unknown field " + field + " in struct " + name + ", legal fields are: [" + strGlue(fields, ", ") + "]");
+				} else {
+					struct_args = extractStructArguments(struct);
+					if (length(struct_args) <= i) {
+						make_err(
+							"runtime error with extraction of field " + field + " in struct " + name + ", " +
+							"got " + i2s(length(struct_args)) + " struct args, while index of field is: " + i2s(i)
+						);
+					} else {
+						struct_args[i];
+					}
+				}
 			} else {
 				runtime_struct = cast(struct : flow -> FcRuntimeStruct);
 				switch (find(runtime_struct.fields, \f -> f.name == field)) {
@@ -486,7 +504,7 @@ fcReplEvalCallPrim(
 						make_err("unknown field " + field + " in struct " + runtime_struct.name);
 					}
 				}
-			}
+			}*/
 		}
 		FcSetMutablePrim(field): {
 			struct = fcReplEval(es[0], structs, globals, locals, onError);
@@ -524,7 +542,7 @@ fcReplEvalCallPrim(
 	}
 }
 
-fcMakeStruct(
+fcEvalMakeStruct(
 	name : string,
 	args : [flow],
 	def: flow,
@@ -547,6 +565,48 @@ fcMakeStruct(
 				def;
 			}
 		}
+	}
+}
+
+fcEvalGetField(field: string, struct: flow, on_err: (string, [int]) -> void, pos: int) -> flow {
+	make_err = \msg -> { on_err(msg, [pos]); flow(msg); }
+	name = extractStructName(struct);
+	if (field == "structname") {
+		name;
+	} else if (name != "FcRuntimeStruct") {
+		fields = structFieldNames(name);
+		i = elemIndex(fields, field, -1);
+		if (i == -1) {
+			make_err("unknown field " + field + " in struct " + name + ", legal fields are: [" + strGlue(fields, ", ") + "]");
+		} else {
+			struct_args = extractStructArguments(struct);
+			if (length(struct_args) <= i) {
+				make_err(
+					"runtime error with extraction of field " + field + " in struct " + name + ", " +
+					"got " + i2s(length(struct_args)) + " struct args, while index of field is: " + i2s(i)
+				);
+			} else {
+				struct_args[i];
+			}
+		}
+	} else {
+		runtime_struct = cast(struct : flow -> FcRuntimeStruct);
+		switch (find(runtime_struct.fields, \f -> f.name == field)) {
+			Some(f): ^(f.value);
+			None(): {
+				make_err("unknown field " + field + " in struct " + runtime_struct.name);
+			}
+		}
+	}
+}
+
+fcEvalDecomposeStruct(struct: flow) -> Pair<string, [flow]> {
+	name = extractStructName(struct);
+	if (name != "FcRuntimeStruct") {
+		Pair(name, extractStructArguments(struct));
+	} else {
+		runtime_struct = cast(struct : flow -> FcRuntimeStruct);
+		Pair(runtime_struct.name, map(runtime_struct.fields, \f -> ^(f.value)));
 	}
 }
 
