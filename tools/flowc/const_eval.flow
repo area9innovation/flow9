@@ -30,7 +30,10 @@ fcConstEvalPureToplevels(prog: FiProgram) -> FiProgram {
 	fiMapProgramToplevel(prog, \toplevel, m, p ->
 		if (toplevel.name == "main" || containsSet(exclude_set, toplevel.name)) [] else {
 			switch (toplevel) {
-				FiStructOrUnion(): {
+				FiTypeStruct(name,__,fields,__): {
+					if (exists(fields, \f -> f.ismutable)) [] else [toplevel];
+				}
+				FiTypeUnion(__,__,__,__): {
 					[toplevel];
 				}
 				FiGlobalVar(name,__,__,__,__): {
@@ -125,7 +128,7 @@ fiComplexConstant2flow(ex : FiExp, env: FcConstEvalEnv, on_err: (string, [int]) 
 				FcStructPrim(name): {
 					fields = filtermap(es, \x -> fiComplexConstant2flow(x, env, on_err));
 					if (length(fields) != length(es)) None() else {
-						Some(fcEvalMakeStruct(name, fields, IllegalStruct(), env.structs, on_err, s));
+						fcEvalMakeStruct(name, fields, IllegalStruct(), env.structs, on_err, s);
 					}
 				}
 				default: None();
@@ -154,15 +157,16 @@ fiflow2ComplexConstant(v : flow) -> Maybe<FiExp> {
 		}
 	} else 
 	if (getDataTagForValue(v) == struct_data_tag) {
-		p = fcEvalDecomposeStruct(v);
-		name = p.first;
-		if (name == "") None() else {
-			fields_f = p.second;
-			fields = filtermap(fields_f, fiflow2ComplexConstant);
-			if (length(fields_f) != length(fields)) None() else {
-				Some(FiCallPrim(FcStructPrim(name), fields, FiTypeVoid(), -1));
+		maybeBind(fcEvalDecomposeStruct(v), \p -> {
+			name = p.first;
+			if (name == "") None() else {
+				fields_f = p.second;
+				fields = filtermap(fields_f, fiflow2ComplexConstant);
+				if (length(fields_f) != length(fields)) None() else {
+					Some(FiCallPrim(FcStructPrim(name), fields, FiTypeVoid(), -1));
+				}
 			}
-		}
+		});
 	} else {
 		None();
 	}
@@ -229,6 +233,7 @@ fcConstEval(ex : FiExp, consts : Tree<string, FiExp>, env: FcConstEvalEnv, cache
 		}
 	}
 }
+
 fcDoConstEval(ex : FiExp, consts : Tree<string, FiExp>, env: FcConstEvalEnv, cache: HashMap<int, Maybe<FiExp>>, on_err: (string, [int]) -> void, on_msg: (string) -> void) -> Maybe<FiExp> {
 	rec = \x -> fcConstEval(x, consts, env, cache, on_err, on_msg);
 	switch (ex) {
@@ -293,16 +298,18 @@ fcDoConstEval(ex : FiExp, consts : Tree<string, FiExp>, env: FcConstEvalEnv, cac
 										f_args = filtermap(c_args, \arg -> fiComplexConstant2flow(arg, env, on_err));
 										if (length(f_args) != length(args)) None() else {
 											env.errors := [];
-											val = fcCallFunctionByName(x, f_args, env.globals, \err -> refArrayPush(env.errors, err));
-											if (length(^(env.errors)) == 0) {
-												// No errors - ok.
-												maybeBind(fiflow2ComplexConstant(val), \v ->
-													fiCompleteType(v, type, env)
-												);
-											} else {
-												// Some errors - not ok.
-												None();
-											}
+											maybeBind(
+												fcCallFunctionByName(x, f_args, env.globals, \err -> refArrayPush(env.errors, err)),
+												\val -> if (length(^(env.errors)) == 0) {
+													// No errors - ok.
+													maybeBind(fiflow2ComplexConstant(val), \v ->
+														fiCompleteType(v, type, env)
+													);
+												} else {
+													// Some errors - not ok.
+													None();
+												}
+											)
 										}
 									}
 								}
