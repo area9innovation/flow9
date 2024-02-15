@@ -168,24 +168,32 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 			}
 			FcTypeStruct(s1.name, set2array(ntp), s1.args, s1.info);
 		}
-
+		check_uniqueness = \new : FcTypeStruct -> maybeApply(lookupTree(acc, new.name), \old ->
+			if (!fcTypesAreEqual(new, old)) {
+				refArrayPush(errors, FcError("Struct " + new.name + " is already declared differently", [
+					FcPosition(fileinfo.flowfile, old.info.start, old.info.end),
+					FcPosition(fileinfo.flowfile, t.start, t.end),
+				]))
+			}
+		);
 		if (t.rule == st_structdecl) {
 			id = grab(get_flow_id(t));
 			funargs = get_flow_funargs_s(t);
 			types = if (funargs == []) [] else desugarStructArgs(dacc0, errors, id, funargs[0]);
-
 			s1 = FcTypeStruct(id, [], types, FcInfo2(t.start, t.end));
 			s2 = structWithCount(s1);
+			check_uniqueness(s2);
 			setTree(acc, id, s2);
 		} else if (t.rule == st_function) {
+			id = grab(get_flow_id(t));
 			fargs = get_flow_function_args(t);
 			// Functions without a return type nor code is a struct
 			if (fargs.choice == 0 && get_flow_returnType_s(fargs) == []) {
-				id = grab(get_flow_id(t));
 				funargs = get_flow_funargs2_s(fargs);
 				args = if (funargs == []) [] else desugarStructArgs2(dacc0, errors, id, funargs);
 				s1 = FcTypeStruct(id, [], args, FcInfo2(t.start, t.end));
 				s2 = structWithCount(s1);
+				check_uniqueness(s2);
 				setTree(acc, id, s2);
 			} else acc
 		} else acc
@@ -242,7 +250,16 @@ desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, 
 			fcstructs = desugarTypenames(dacc1, tnames);
 
 			polytypes = if (typelist == []) [] else desugarTypes(dacc1, get_flow_types(typelist[0]));
-			setTree(acc, id, FcTypeUnion(id, polytypes, fcstructs, FcInfo2(t.start, t.end)));
+			union = FcTypeUnion(id, polytypes, fcstructs, FcInfo2(t.start, t.end));
+			maybeApply(lookupTree(acc, id), \old ->
+				if (!fcTypesAreEqual(union, old)) {
+					refArrayPush(errors, FcError("Union " + id + " is already declared differently", [
+						FcPosition(fileinfo.flowfile, old.info.start, old.info.end),
+						FcPosition(fileinfo.flowfile, t.start, t.end),
+					]));
+				}
+			);
+			setTree(acc, id, union);
 		} else acc;
 	});
 

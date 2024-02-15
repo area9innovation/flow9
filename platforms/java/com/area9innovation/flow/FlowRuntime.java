@@ -23,6 +23,12 @@ public abstract class FlowRuntime {
         }
     };
 
+	public synchronized void start() {
+		main();
+	}
+
+	protected abstract void main();
+
 	@SuppressWarnings("unchecked")
 	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
 		T host = (T)hosts.get(cls);
@@ -42,7 +48,8 @@ public abstract class FlowRuntime {
 			}
 		}
 	}
-	@SuppressWarnings("unchecked")
+
+	//@SuppressWarnings("unchecked")
 	protected static final <T extends NativeHost> void registerNativeHost(Class<T> cls) {
 		try {
 			T host = cls.getDeclaredConstructor().newInstance();
@@ -55,6 +62,7 @@ public abstract class FlowRuntime {
 			throw new RuntimeException("Could not instantiate native method host " + cls.getName(), e);
 		}
 	}
+
 	public static boolean compareEqual(Object a, Object b) {
 		if (a == b) return true;
 		// void values (null in java backend) may also be compared in the interpreter, so we check this case

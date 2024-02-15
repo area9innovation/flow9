@@ -6,12 +6,13 @@ export {
 	fsArgs(s: FsAll) -> [FsAll];
 	fsMap(s: FsAll, fn: (FsAll) -> FsAll, args_first: bool) -> FsAll;
 	fsIter(s: FsAll, fn: (FsAll) -> void, args_first: bool) -> void;
-	fsFold(s: FsAll, v: ?, fn: (?, FsAll) -> ?, args_first: bool) ->?;
+	fsFold(s: FsAll, v: ?, fn: (?, FsAll) -> ?, args_first: bool) -> ?;
 	fsFold1(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll]) -> ?;
 	fsFold2(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, backwards: bool, merge: (?, ?) -> ?) -> ?;
 	fsFold3(s: FsAll, v: ?, fn: (?, FsAll) -> ?, merge_branches: (?, ?) -> ?, init: () -> ?, copy: (?) -> ?, args_first: bool, backwards: bool) -> ?;
 
-	fsFold4(s: FsAll, parent: Maybe<FsAll>, v: ?, fn: (?, FsAll, Maybe<FsAll>) -> ?, args_first: bool) ->?;
+	fsFold4(s: FsAll, parent: Maybe<FsAll>, v: ?, fn: (?, FsAll, Maybe<FsAll>) -> ?, args_first: bool) -> ?;
+	fsFold5(s: FsAll, v: ?, fn: (?, FsAll) -> ?, args_first: bool) -> ?;
 }
 
 fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
@@ -38,6 +39,12 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 				s = map_stat(s1),
 				next = maybeMap(n, map_stat)
 			);
+		FsFor(__, e1, s1,__,__, n):
+			FsFor(s with
+				e = map_exp(e1),
+				s = map_stat(s1),
+				next = maybeMap(n, map_stat)
+			);
 		FsWrapExp(e,__, n):
 			FsWrapExp(s with
 				e = map_exp(e),
@@ -48,10 +55,13 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 				e = map_exp(e),
 				next = maybeMap(n, map_stat)
 			);
-		FsTailCall(__, n): {
-			FsTailCall(s with next = maybeMap(n, map_stat));
+		FsTailCall(args,__, n): {
+			FsTailCall(s with
+				args = map(args, map_exp),
+				next = maybeMap(n, map_stat)
+			);
 		}
-		FsAssign(to, what,__, n):
+		FsAssign(to, what, __,__, n):
 			FsAssign(s with
 				to = map_exp(to),
 				what = map_exp(what),
@@ -63,6 +73,9 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 		FsDecRc(__,__,__, n): {
 			FsDecRc(s with next = maybeMap(n, map_stat));
 		}
+		FsIntrinsicStat(__,__, n): {
+			FsIntrinsicStat(s with next = maybeMap(n, map_stat));
+		}
 		FsClosure(vars, lambda,__,__):
 			FsClosure(s with
 				vars = map(vars, map_var),
@@ -72,8 +85,8 @@ fsMap(a: FsAll, f: (FsAll) -> FsAll, args_first: bool) -> FsAll {
 			FsLambda(s with body = map_stat(body));
 		FsCall(fn, args, __,__):
 			FsCall(s with f = map_var(fn), args = map(args, \x -> map_exp(x)));
-		FsInline(__,__,args, __,__):
-			FsInline(s with args = map(args, \x -> map_exp(x)));
+		FsInlineExp(__,args, __,__):
+			FsInlineExp(s with args = map(args, \x -> map_exp(x)));
 		FsCallPrim(__, es, __,__):
 			FsCallPrim(s with es = map(es, \x -> map_exp(x)));
 		FsCast(e, from, type,__):
@@ -104,6 +117,11 @@ fsIter(a: FsAll, f: (FsAll) -> void, args_first: bool) -> void {
 			do_x(s1);
 			maybeApply(n, do_x);
 		}
+		FsFor(__, e1, s1,__,__, n): {
+			do_x(e1);
+			do_x(s1);
+			maybeApply(n, do_x);
+		}
 		FsWrapExp(e,__, n): {
 			do_x(e);
 			maybeApply(n, do_x);
@@ -112,10 +130,11 @@ fsIter(a: FsAll, f: (FsAll) -> void, args_first: bool) -> void {
 			do_x(e);
 			maybeApply(n, do_x);
 		}
-		FsTailCall(__,n): {
+		FsTailCall(args,__,n): {
+			iter(args, \x -> do_x(x));
 			maybeApply(n, do_x);
 		}
-		FsAssign(to, what,__, n): {
+		FsAssign(to, what,__,__, n): {
 			do_x(to);
 			do_x(what);
 			maybeApply(n, do_x);
@@ -124,6 +143,9 @@ fsIter(a: FsAll, f: (FsAll) -> void, args_first: bool) -> void {
 			maybeApply(n, do_x);
 		}
 		FsDecRc(e,__,__, n): {
+			maybeApply(n, do_x);
+		}
+		FsIntrinsicStat(__,__,n): {
 			maybeApply(n, do_x);
 		}
 		FsClosure(vars, lambda,__,__): {
@@ -136,7 +158,7 @@ fsIter(a: FsAll, f: (FsAll) -> void, args_first: bool) -> void {
 			do_x(fn);
 			iter(args, \x -> do_x(x));
 		}
-		FsInline(__,__,args, __,__): {
+		FsInlineExp(__,args, __,__): {
 			iter(args, \x -> do_x(x));
 		}
 		FsCallPrim(__, es, __,__):
@@ -168,6 +190,13 @@ fsFold4(s: FsAll, parent: Maybe<FsAll>, v0: ?, f: (?, FsAll, Maybe<FsAll>) -> ?,
 	if (args_first) f(do_args(v0), s, parent) else do_args(f(v0, s, parent));
 }
 
+fsFold5(s: FsAll, v0: ?, f: (?, FsAll) -> ?, args_first: bool) -> ? {
+	do_args = \w -> fold(fsArgs1(s), w,
+		\acc, x -> fsFold5(x, acc, f, args_first),
+	);
+	if (args_first) f(do_args(v0), s) else do_args(f(v0, s));
+}
+
 fsFold1(s: FsAll, v0: ?, pre: (?, FsAll) -> ?, post: (?, FsAll) -> ?, order: ([FsAll]) -> [FsAll]) -> ? {
 	post(fold(order(fsArgs(s)), pre(v0, s), \acc, x -> fsFold1(x, acc, pre, post, order)), s);
 }
@@ -177,17 +206,48 @@ fsArgs(s: FsAll) -> [FsAll] {
 		FsIf(cond, s1, s2,__,__): [cond, s1, s2];
 		FsSwitch(x,__,cs,__,__):  map(cs, \c -> c.body);
 		FsLet(__, e1, s1,__,__):  [e1, s1];
+		FsFor(__,e1,s1,__,__,__): [e1, s1];
 		FsWrapExp(e1,__,__):      [e1];
 		FsRet(e1,__,__):          [e1];
-		FsTailCall(__,__):        [];
-		FsAssign(to, what,__,__): [to, what];
+		FsTailCall(args,__,__):   args;
+		FsIntrinsicStat(__,__,__):[];
+		FsAssign(e, e1,__,__,__): [e, e1];
 		FsIncRc(__,e1,__,__):     [];
 		FsDecRc(e1,__,__,__):     [];
 		FsClosure(vs,lam,__,__):  arrayPush(vs, lam);
 		FsLambda(__,__,e1,__,__): [e1];
 		FsCall(fn, args, __,__):  concat([fn], args);
 		FsCallPrim(__,es,__,__):  es;
-		FsInline(__,__,es,__,__): es;
+		FsInlineExp(__,es,__,__): es;
+		FsCast(e1,__,__,__):      [e1];
+		FsVarUse(__,__,__):       [];
+		FsString(__,__,__):       [];
+		FsConst(__,__):           [];
+	}
+	switch (s) {
+		FsStat(): eitherMap(s.next, \n -> arrayPush(as, n), as);
+		default: as;
+	}
+}
+
+fsArgs1(s: FsAll) -> [FsAll] {
+	as = switch (s) {
+		FsIf(cond, s1, s2,__,__): [cond, s1, s2];
+		FsSwitch(x,__,cs,__,__):  map(cs, \c -> c.body);
+		FsLet(__, e1, s1,__,__):  [e1, s1];
+		FsFor(__,e1,s1,__,__,__): [e1, s1];
+		FsWrapExp(e1,__,__):      [e1];
+		FsRet(e1,__,__):          [e1];
+		FsTailCall(args,__,__):   args;
+		FsIntrinsicStat(__,__,__):[];
+		FsAssign(e, e1,__,__,__): [e, e1];
+		FsIncRc(__,e1,__,__):     [];
+		FsDecRc(e1,__,__,__):     [];
+		FsClosure(vs,__,__,__):   vs;
+		FsLambda(__,__,e1,__,__): [e1];
+		FsCall(fn, args, __,__):  concat([fn], args);
+		FsCallPrim(__,es,__,__):  es;
+		FsInlineExp(__,es,__,__): es;
 		FsCast(e1,__,__,__):      [e1];
 		FsVarUse(__,__,__):       [];
 		FsString(__,__,__):       [];
@@ -230,16 +290,18 @@ fsArgs2(s: FsAll) -> [[FsAll]] {
 		FsIf(cond, s1, s2,__,__): [[cond, s1], [cond, s2]];
 		FsSwitch(x,__,cs,__,__):  map(cs, \c -> [x, c.body]);
 		FsLet(__, e1, s1,__,__):  [[e1, s1]];
+		FsFor(__,e1,s1,__,__,__): [[e1, s1]];
 		FsWrapExp(e1,__,__):      [[e1]];
 		FsRet(e1,__,__):          [[e1]];
-		FsTailCall(__,__):        [[]];
-		FsAssign(to, what,__,__): [[to, what]];
+		FsTailCall(args,__,__):   [args];
+		FsIntrinsicStat(__,__,__):[];
+		FsAssign(e, e1,__,__,__): [[e, e1]];
 		FsIncRc(__,e1,__,__):     [[]];
 		FsDecRc(e1,__,__,__):     [[]];
 		FsClosure(vs,lam,__,__):  [concat(vs, [lam])];
 		FsLambda(__,__,e1,__,__): [[e1]];
 		FsCall(fn, args, __,__):  [concat([fn], args)];
-		FsInline(__,__,as,__,__): [as];
+		FsInlineExp(__,as,__,__): [as];
 		FsCallPrim(__,es,__,__):  [es];
 		FsCast(e1,__,__,__):      [[e1]];
 		FsVarUse(__,__,__):       [[]];

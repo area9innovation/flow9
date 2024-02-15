@@ -1,26 +1,34 @@
 [
 
-Cpp3NativePlain("toString", true,
+Cpp3Native("toString", true,
 "template<typename T> String* $F_1(toString)(T x);\n",
 "template<typename T> inline String* $F_1(toString)(T x) {
-	if constexpr (std::is_same_v<T, String*>) { 
-		return x;
+	if constexpr (std::is_same_v<T, String*>) {
+		string s = u\"\\\"\";
+		s += x->str();
+		decRc(x);
+		s += u\"\\\"\";
+		return String::make(std::move(s));
 	} else {
 		return toStringRc(x);
 	}
 }\n", "toString($A_0)", [], []),
 
-Cpp3NativePlain("toString2", true,
+Cpp3Native("toString2", true,
 "String* $F_1(toString2)(Flow* x);\n",
 "inline String* $F_1(toString2)(Flow* x) {
 	if (x->typeId() == TypeFx::STRING) {
-		return x->getRc<String*>();
+		string s = u\"\\\"\";
+		s += static_cast<String*>(x)->str();
+		decRc(x);
+		s += u\"\\\"\";
+		return String::make(std::move(s));
 	} else {
 		return toStringRc(x);
 	}
 }\n", "toString($A_0)", [], []),
 
-Cpp3NativePlain("isSameStructType", true,
+Cpp3Native("isSameStructType", true,
 "template<typename T1, typename T2> Bool $F_1(isSameStructType)(T1 x, T2 y);\n",
 "template<typename T1, typename T2> Bool $F_1(isSameStructType)(T1 x, T2 y) {
 	if constexpr (is_struct_or_union_v<T1> && is_struct_or_union_v<T2>) {
@@ -32,23 +40,23 @@ Cpp3NativePlain("isSameStructType", true,
 }
 \n", "", [], []),
 
-Cpp3NativePlain("makeStructValue", false,
+Cpp3Native("makeStructValue", false,
 "Flow* $F_1(makeStructValue)(String* name, Vec<Flow*>* args, Flow* defval);\n",
 "Flow* $F_1(makeStructValue)(String* name, Vec<Flow*>* args, Flow* defval) {
-	TypeId struct_id = RTTI::structId(name->str());
+	TypeId struct_id = Dyn::structId(name->str());
 	if (struct_id == -1) {
 		decRc(args);
 		decRc(name);
 		return defval;
 	} else {
-		Flow* str = RTTI::structDef(struct_id).constructor(args);
+		Flow* str = Dyn::structDef(struct_id).constructor(args);
 		decRc(name);
 		decRc(defval);
 		return str;
 	}
 }\n", "", [], []),
 
-Cpp3NativePlain("isSameObj", true,
+Cpp3Native("isSameObj", true,
 "template<typename T> Bool $F_1(isSameObj)(T x, T y);\n",
 "template<typename T> inline Bool $F_1(isSameObj)(T x, T y) {
 	Bool ret = false;
@@ -64,29 +72,29 @@ Cpp3NativePlain("isSameObj", true,
 \n", 
 "", [], []),
 
-Cpp3NativePlain("isStructName", true,
+Cpp3Native("isStructName", true,
 "inline Bool $F_1(isStructName)(String* name);\n",
 "inline Bool $F_1(isStructName)(String* name) {
-	Bool ret = RTTI::structId(name->str()) >= structTypeIdOffset;
+	Bool ret = Dyn::structId(name->str()) >= structTypeIdOffset;
 	decRc(name);
 	return ret;
 }\n", "", [], []),
 
-Cpp3NativePlain("voidValue", true,
+Cpp3Native("voidValue", true,
 "inline Flow* $F_1(voidValue)();\n",
 "inline Flow* $F_1(voidValue)() {
-	return void_value;
-}\n", "", [], []),
+	return FVoid::make();
+}\n", "FVoid::make()", [], []),
 
-Cpp3NativePlain("isArray", true,
+Cpp3Native("isArray", true,
 "Bool $F_1(isArray)(Flow* f);\n",
 "inline Bool $F_1(isArray)(Flow* f) {
 	return f->typeIdRc() == TypeFx::ARRAY;
 }\n", "", [], []),
 
-Cpp3NativePlain("extractStructArguments", true,
+Cpp3Native("extractStructArguments", false,
 "Vec<Flow*>* $F_1(extractStructArguments)(Flow* f);\n",
-"inline Vec<Flow*>* $F_1(extractStructArguments)(Flow* f) {
+"Vec<Flow*>* $F_1(extractStructArguments)(Flow* f) {
 	Vec<Flow*>* ret = nullptr;
 	if (f->typeId() >= structTypeIdOffset) {
 		ret = Vec<Flow*>::make(f->componentSize());
@@ -100,12 +108,12 @@ Cpp3NativePlain("extractStructArguments", true,
 	return ret;
 }\n", "", [], []),
 
-Cpp3NativePlain("extractStructName", true,
+Cpp3Native("extractStructName", false,
 "String* $F_1(extractStructName)(Flow* f);\n",
-"inline String* $F_1(extractStructName)(Flow* f) {
+"String* $F_1(extractStructName)(Flow* f) {
 	TypeId struct_id = f->typeIdRc();
 	if (struct_id >= structTypeIdOffset) {
-		String* name = String::make(RTTI::structDef(struct_id).name);
+		String* name = String::make(Dyn::structDef(struct_id).name);
 		return name;
 	} else {
 		decRc(f);
@@ -113,16 +121,41 @@ Cpp3NativePlain("extractStructName", true,
 	}
 }\n", "", [], []),
 
-Cpp3NativePlain("structFieldNames", false,
+Cpp3Native("extractFuncArity", false,
+"Int $F_1(extractFuncArity)(Flow* f);\n",
+"Int $F_1(extractFuncArity)(Flow* f) {
+	TypeId struct_id = f->typeId();
+	if (f->typeId() == TypeFx::FUNC) {
+		AFun* fn = static_cast<AFun*>(f);
+		Int arity = fn->arity();
+		decRc(f);
+		return arity;
+	} else if (f->typeId() == TypeFx::STRING) {
+		String* name = static_cast<String*>(f);
+		if (Dyn::funExists(name->str())) {
+			const FunDef& def = Dyn::funDef(name->str());
+			decRc(name);
+			return def.args.size();
+		} else {
+			decRc(name);
+			return -1;
+		}
+	} else {
+		decRc(f);
+		return -1;
+	}
+}\n", "", [], []),
+
+Cpp3Native("structFieldNames", false,
 "Vec<String*>* $F_1(structFieldNames)(String* name);\n",
 "Vec<String*>* $F_1(structFieldNames)(String* name) {
-	TypeId type_id = RTTI::structId(name->str());
+	TypeId type_id = Dyn::structId(name->str());
 	decRc(name);
 	Vec<String*>* ret = nullptr;
 	if (type_id != -1) {
-		const StructDef& def = RTTI::structDef(type_id);
-		ret = Vec<String*>::make(def.args.size());
-		for (const FieldDef& field : def.args) {
+		const StructDef& def = Dyn::structDef(type_id);
+		ret = Vec<String*>::make(def.fields.size());
+		for (const FieldDef& field : def.fields) {
 			ret->pushBack(String::make(field.name));
 		}
 	} else {
@@ -131,15 +164,15 @@ Cpp3NativePlain("structFieldNames", false,
 	return ret;
 }\n", "", [], []),
 
-Cpp3NativePlain("runtimeValueType", true,
+Cpp3Native("runtimeValueType", true,
 "String* $F_1(runtimeValueType)(Flow* f);\n",
 "inline String* $F_1(runtimeValueType)(Flow* f) {
-	return String::make(RTTI::typeName(f->typeIdRc()));
+	return String::make(Dyn::typeName(f->typeIdRc()));
 }\n", "", [], []),
 
-Cpp3NativePlain("getDataTagForValue", true,
+Cpp3Native("getDataTagForValue", false,
 "Int $F_1(getDataTagForValue)(Flow* f);\n",
-"inline Int $F_1(getDataTagForValue)(Flow* f) {
+"Int $F_1(getDataTagForValue)(Flow* f) {
 	switch (f->typeIdRc()) {
 		case TypeFx::INT:    return 2;
 		case TypeFx::BOOL:   return 1;

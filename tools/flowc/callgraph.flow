@@ -104,7 +104,12 @@ symbolUses(prog : FiProgram) -> Tree<string, Set<string>> {
 				setTree(a, free, insertSet(lookupTreeDef(a, free, makeSet()), fn.name))
 			)
 		);
-		fold(module.natives, acc1, \ac, nat ->
+		acc2 = fold(module.globalVars, acc1, \ac, var ->
+			foldSet(fifreevars(var.value), ac, \a, free ->
+				setTree(a, free, insertSet(lookupTreeDef(a, free, makeSet()), var.name))
+			)
+		);
+		fold(module.natives, acc2, \ac, nat ->
 			switch (nat.fallbackLambda) {
 				FiLambda(__, __, __, __): {
 					foldSet(fifreevars(nat.fallbackLambda), ac, \a, free ->
@@ -184,13 +189,32 @@ pathInCallGraph(func_from : string, func_to : string, max_num : int, exclude : S
 	uses = foldTree(symbolUses(prog), makeTree(), \id, uses, acc ->
 		if (containsSet(exclude, id)) acc else setTree(acc, id, differenceSets(uses, exclude))
 	);
-	paths = findAllPathsToMain(mapTree(uses, set2array), [[func_from]], [], func_to, max_num);
-	fcPrintln(
-		"Call paths from '" + func_from + "' to '" + func_to + "':\n" + 
-		concatStrings(map(paths, \path -> "\t" + strGlue(path, " -> ") + "\n")) +
-		(if (length(paths) > max_num) "\n  ... \n" else ""), 
-		prog.config.threadId
-	);
+	goals = if (func_to != "") [func_to] else {
+		list2array(foldTree(prog.names.toplevel, makeList1("main"), \name, decl, acc -> switch (decl) {
+			FiGlobalVar(__,__,__,__,__): Cons(name, acc);
+			default: acc;
+		}));
+	}
+	found_paths = filtermap(goals, \goal -> {
+		paths = findAllPathsToMain(mapTree(uses, set2array), [[func_from]], [], goal, max_num);
+		if (paths == []) None() else Some(Pair(goal, paths));
+	});
+	wrap_str = \s -> "'" + s + "'";
+	if (found_paths == []) {
+		goals_str = if (length(goals) == 1) wrap_str(goals[0]) else {
+			"[" + superglue(goals, \goal -> wrap_str(goal), ", ") + "]";
+		}
+		fcPrintln("No paths from " + func_from + " to " + goals_str + " are found", prog.config.threadId);
+	} else {
+		iter(found_paths, \p ->
+			fcPrintln(
+				"Call paths from " + wrap_str(func_from) + " to " + wrap_str(p.first) + "':\n" +
+				concatStrings(map(p.second, \path -> "\t" + strGlue(path, " -> ") + "\n")) +
+				(if (length(p.second) > max_num) "\n  ... \n" else ""),
+				prog.config.threadId
+			)
+		);
+	}
 }
 
 findAllPathsToMain(uses : Tree<string, [string]>, paths : [[string]], acc : [[string]], func_to : string, max_num : int) -> [[string]] {

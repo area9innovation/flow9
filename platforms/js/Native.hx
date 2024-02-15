@@ -955,6 +955,18 @@ class Native {
 		return Math.log(a);
 	}
 
+	public static function generate<T>(from : Int, to : Int, fn : Int -> T) : Array<T> {
+		var n = to - from;
+		if (n <= 0) {
+			return untyped Array(0);
+		}
+		var result = untyped Array(n);
+		for (i in 0...n) {
+			result[i] = fn(i + from);
+		}
+		return result;
+	}
+
 	public static function enumFromTo(from : Int, to : Int) : Array<Int> {
 		var n = to - from + 1;
 		if (n <= 0) {
