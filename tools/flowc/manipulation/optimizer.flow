@@ -117,17 +117,20 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram 
 			}
 			start = timestamp();
 			m_opt = fiMapModuleExp(p, m, \e, decl,__,__ -> {
-				e_opt = evalExpConstExprs(fiExpMakeStartUnique(e), env, prog.names.unions, makeHashMap(idfn),
+				consts = makeHashMap(idfn);
+				e_opt1 = evalExpConstExprs(fiExpMakeStartUnique(e), env, prog.names.unions, makeHashMap(idfn), consts,
 					\msg, ps -> on_err(FcError(msg, map(ps, \pos -> FcPosition(m.fileinfo.flowfile, pos, pos)))),
 					\msg -> fcPrintln(msg, prog.config.threadId)
 				);
+				//e_opt2 = extractCommonConstants(e_opt1, consts, decl.name == optimzie_debug);
+				e_opt2 = e_opt1;
 				if (decl.name == optimzie_debug) {
 					fcPrintln(
-						"Optimization of:\n" + pretFiExp(e) + "\nended up with:\n" + pretFiExp(e_opt),
+						"Optimization of:\n" + pretFiExp(e) + "\nended up with:\n" + pretFiExp(e_opt2),
 						prog.config.threadId
 					);
 				}
-				e_opt;
+				e_opt2;
 			});
 			if (prog.config.verbose > 0) {
 				fcPrintln("comile-time constants are evaluated in " + m.fileinfo.flowfile + " in " + d2st((timestamp() - start) / 1000.0, 3) + " s.", prog.config.threadId);
@@ -138,15 +141,57 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram 
 	);
 }
 
-evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, unions: Tree<string, FiTypeUnion>, cache: HashMap<int, Maybe<FiExp>>, on_err: (string, [int]) -> void, on_msg: (string) -> void) -> FiExp {
-	rec = \e -> evalExpConstExprs(e, env, unions, cache, on_err, on_msg);
+extractCommonConstants(e: FiExp, consts: HashMap<int, FiExp>, debug: bool) -> FiExp {
+	switch (e) {
+		FiLambda(__,body,__,__): {
+			FiLambda(e with body = extractCommonConstants(body, consts, debug));
+		}
+		default: {
+			// Inverse cache for computed constats
+			const2pos: Tree<FiExp, [int]> = foldHashMap(consts, makeTree(), \pos, x, acc -> {
+				x1 = fiExpEraseStart(x);
+				setTree(acc, x1, arrayPush(lookupTreeDef(acc, x1, []), pos))
+			});
+			// Find constants, which occur more then once
+			mylty_const_unordered: [Triple<FiVar, FiExp, [int]>] = mapi(
+				tree2pairs(filterTree(const2pos, \__, ps -> length(ps) > 1)),
+				\i, p -> Triple(FiVar("__common_const_" + i2s(i), fiExpType(p.first), -1), p.first, p.second)
+			);
+			is_subexpr = \e1, e2 -> isSome(fiFindInExpr(e2, \x -> if (x == e1) Some(x) else None()));
+			mylty_const = mergeSort(mylty_const_unordered,
+				\t1, t2 -> if (is_subexpr(t1.second, t2.second)) -1 else if (is_subexpr(t2.second, t1.second)) 1 else 0
+			);
+			if (debug) {
+				println("mylty_const:\n" + toStringFormatted(mylty_const));
+			}
+			// Common const replacements 
+			sub: Tree<int, FiVar> = fold(mylty_const, makeTree(), \acc, t ->
+				fold(t.third, acc, \ac, pos -> setTree(ac, pos, t.first))
+			);
+			e1 = fiMapExp(e, \x,__ -> lookupTreeDef(sub, x.start, x), false);
+			e_type = fiExpType(e1);
+			// Add vars for common constants
+			fold(mylty_const, e1, \acc, t ->
+				FiLet(t.first.name, t.first.type, t.second, acc, e_type, -1)
+			);
+		}
+	}
+}
+
+evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, unions: Tree<string, FiTypeUnion>, cache: HashMap<int, Maybe<FiExp>>, consts: HashMap<int, FiExp>, on_err: (string, [int]) -> void, on_msg: (string) -> void) -> FiExp {
+	rec = \e -> evalExpConstExprs(e, env, unions, cache, consts, on_err, on_msg);
 	switch (fcConstEval(x, env.consts, env, cache, on_err, on_msg)) {
 		Some(c): {
 			switch (c) {
 				FiLambda(__,body,__,__): {
 					FiLambda(c with body = rec(body));
 				}
-				default: c;
+				default: {
+					if (!fiTypeIsScalar(fiExpType(x))) {
+						setHashMap(consts, c.start, c);
+					}
+					c;
+				}
 			}
 		}
 		None(): {
@@ -164,7 +209,10 @@ evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, unions: Tree<string, FiTypeUni
 									FiLet(x with
 										e1 = c,
 										e2 = evalExpConstExprs(e2,
-											FcConstEvalEnv(env with consts = setTree(env.consts, v, c)), unions, cache, on_err, on_msg
+											FcConstEvalEnv(env with
+												consts = setTree(env.consts, v, c)
+											), 
+											unions, cache, consts, on_err, on_msg
 										)
 									);
 								}

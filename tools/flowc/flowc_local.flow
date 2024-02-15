@@ -168,33 +168,33 @@ doFiProgramAnalysis(env : FcTypeEnvGlobal, prog : FiProgram, onError : (FcError)
 		performFiProgramDCE(prog, onError, getConfigParameterDef(config, "dce-types", "") == "1");
 	}
 
-	prog_cse = if (isConfigParameterTrue(config, "cse") || isConfigParameterTrue(config, "cse-global")) {
+	prog_opt = if (!isConfigParameterTrue(config, "optimize")) prog_dce else {
 		t = timestamp();
-		if (prog.config.verbose >= 1) fcPrintln("Common subexpression elimination...", prog.config.threadId);
-		cse_result = if (isConfigParameterTrue(config, "cse-global")) {
-			csegFiProgram(prog_dce, env);
-		} else {
-			cseFiProgram(prog_dce);
-		}
-		incrementTimePhase(getTimePhases(prog.config.threadId).cse, t);
-		cse_result
-	} else prog_dce;
-
-	prog_opt = if (!isConfigParameterTrue(config, "optimize")) prog_cse else {
-		t = timestamp();
-		optimized = evalProgramConstExprs(prog_cse, onError);
+		optimized = evalProgramConstExprs(prog_dce, onError);
 		incrementTimePhase(getTimePhases(prog.config.threadId).optimize, t);
 		// Perform DCE once more - some more functions may go away
 		performFiProgramDCE(optimized, onError, true);
 	}
 
+	prog_cse = if (isConfigParameterTrue(config, "cse") || isConfigParameterTrue(config, "cse-global") || isConfigParameterTrue(config, "optimize")) {
+		t = timestamp();
+		if (prog.config.verbose >= 1) fcPrintln("Common subexpression elimination...", prog.config.threadId);
+		cse_result = if (isConfigParameterTrue(config, "cse-global")) {
+			csegFiProgram(prog_opt, env);
+		} else {
+			cseFiProgram(prog_opt);
+		}
+		incrementTimePhase(getTimePhases(prog.config.threadId).cse, t);
+		cse_result
+	} else prog_opt;
+
 	// Extract translation data from program
 	if (isConfigParameterTrue(config, "xliff")) {
-		saveXliffData(prog_opt, changeFileExt(fileNameOnly(file), ".xlf"), getConfigParameter(config, "xliff-filter"));
+		saveXliffData(prog_cse, changeFileExt(fileNameOnly(file), ".xlf"), getConfigParameter(config, "xliff-filter"));
 	}
 
 	// Remove any compile-time IO operations (like outputing messages about compile-time constant evaluation)
-	fcEliminateCompileTimeFns(prog_opt);
+	fcEliminateCompileTimeFns(prog_cse);
 }
 
 performFiProgramDCE(prog : FiProgram, onError : (FcError) -> void, dce_types: bool) -> FiProgram {
