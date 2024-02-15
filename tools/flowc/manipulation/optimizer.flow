@@ -110,18 +110,29 @@ makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> Op
 evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
 	env = fcInitConstEvalEnv(prog, on_err);
 	optimzie_debug = getConfigParameter(prog.config.config, "optimize-debug");
-	fiMapProgramExp(prog, \e, decl, m,__ -> {
-			optimized = evalExpConstExprs(fiExpMakeStartUnique(e), env, prog.names.unions, makeHashMap(idfn),
-				\msg, ps -> on_err(FcError(msg, map(ps, \p -> FcPosition(m.fileinfo.flowfile, p, p)))),
-				\msg -> fcPrintln(msg, prog.config.threadId)
-			);
-			if (decl.name == optimzie_debug) {
-				fcPrintln(
-					"Optimization of:\n" + pretFiExp(e) + "\nended up with:\n" + pretFiExp(optimized),
-					prog.config.threadId
-				);
+	fiMapProgramModule(prog,
+		\m, p -> {
+			if (prog.config.verbose > 1) {
+				fcPrintln("going to evaluate comile-time constants in " + m.fileinfo.flowfile, prog.config.threadId);
 			}
-			optimized;
+			start = timestamp();
+			m_opt = fiMapModuleExp(p, m, \e, decl,__,__ -> {
+				e_opt = evalExpConstExprs(fiExpMakeStartUnique(e), env, prog.names.unions, makeHashMap(idfn),
+					\msg, ps -> on_err(FcError(msg, map(ps, \pos -> FcPosition(m.fileinfo.flowfile, pos, pos)))),
+					\msg -> fcPrintln(msg, prog.config.threadId)
+				);
+				if (decl.name == optimzie_debug) {
+					fcPrintln(
+						"Optimization of:\n" + pretFiExp(e) + "\nended up with:\n" + pretFiExp(e_opt),
+						prog.config.threadId
+					);
+				}
+				e_opt;
+			});
+			if (prog.config.verbose > 0) {
+				fcPrintln("comile-time constants are evaluated in " + m.fileinfo.flowfile + " in " + d2st((timestamp() - start) / 1000.0, 3) + " s.", prog.config.threadId);
+			}
+			m_opt;
 		},
 		fcParallelOn(prog.config)
 	);

@@ -33,6 +33,12 @@ export {
 		lets: Tree<string, FiVar>
 	);
 
+	// Performs a module transformation
+	fiMapModule(prog: FiProgram, module: FiModule, fn: (FiToplevel, FiModule, FiProgram) -> [FiToplevel]) -> FiModule;
+
+	// Performs a module transformation on the expression level
+	fiMapModuleExp(prog: FiProgram, module: FiModule, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiModule;
+
 	// General form of expression transformation
 	fiMapExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> FiExp, argsFirst: bool) -> FiExp;
 
@@ -46,18 +52,6 @@ export {
 
 	// Find anything in AST
 	fiFindInExpr(e : FiExp, pred: (FiExp) -> Maybe<?>) -> Maybe<?>;
-
-	// Try to find a named constant from config and pass it to AST. 
-	// In case no such a value is found, the default value  is used.
-	// Format of a compile-time variable:
-	//    __compiletime__somevar_true
-	//    __compiletime__anothervar_42
-	// After a __compiletime__ header, a name of the variable without underscore follows, after it - the
-	// default fallback value, which should be used, in case no proper variable is defined in config.
-	// Two types of compile-time constants are supported: boolean and integer. The type is deduced from the
-	// default value.
-	//fcCompileTimeType(id: string, conf: CompilerConfig, on_err: (string) -> void) -> FcType;
-	//fiCompileTime(var: FiVar, conf: CompilerConfig, on_err: (string) -> void) -> FiExp;
 
 	fcSplitCompileTimeVar(id: string) -> Pair<string, string>;
 
@@ -446,9 +440,49 @@ fiModuleToplevels(module: FiModule) -> [FiToplevel] {
 	]);
 }
 
+fiMapModuleExp(prog: FiProgram, module: FiModule, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> FiModule {
+	fiMapModule(prog, module, \toplevel, m, p ->
+		fiMapToplevelExp(toplevel, m, p, fn)
+	);
+}
+
+fiMapToplevelExp(toplevel: FiToplevel, module: FiModule, prog: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp) -> [FiToplevel] {
+	switch (toplevel) {
+		FiTypeStruct(__,__,__,__): [toplevel];
+		FiTypeUnion(__,__,__,__): [toplevel];
+		FiFunctionDec(__,lambda,__,__,__): {
+			mapped = fn(lambda, toplevel, module, prog);
+			if (isSameObj(lambda, mapped)) [toplevel] else {
+				switch (mapped) {
+					FiLambda(__,__,__,__): [FiFunctionDec(toplevel with lambda = mapped)];
+					default: fail0("During declaration mapping of function expected lambda, got:\n" + prettyFiExp(dummyPretty, mapped));
+				}
+			}
+		}
+		FiGlobalVar(__,value,__,__,__): {
+			mapped = fn(value, toplevel, module, prog);
+			if (isSameObj(value, mapped)) [toplevel] else {
+				[FiGlobalVar(toplevel with value = mapped)];
+			}
+		}
+		FiNativeDec(__,__,__,__,fallback,__,__): {
+			switch (fallback) {
+				FiVoid(__): [toplevel];
+				default: {
+					mapped = fn(fallback, toplevel, module, prog);
+					if (isSameObj(fallback, mapped)) [toplevel] else {
+						[FiNativeDec(toplevel with fallbackLambda = mapped)];
+					}
+				}
+			}
+		}
+	}
+}
+
 fiMapProgramExp(program: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgram) -> FiExp, concurrnetly: bool) -> FiProgram {
-	fiMapProgramToplevel(program, \toplevel, module, prog -> 
-		switch (toplevel) {
+	fiMapProgramToplevel(program, \toplevel, module, prog ->
+		fiMapToplevelExp(toplevel, module, prog, fn)
+		/*switch (toplevel) {
 			FiTypeStruct(__,__,__,__): [toplevel];
 			FiTypeUnion(__,__,__,__): [toplevel];
 			FiFunctionDec(__,lambda,__,__,__): {
@@ -477,7 +511,7 @@ fiMapProgramExp(program: FiProgram, fn: (FiExp, FiDeclaration, FiModule, FiProgr
 					}
 				}
 			}
-		}, concurrnetly
+		}*/, concurrnetly
 	);
 }
 
