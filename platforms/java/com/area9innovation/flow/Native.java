@@ -1241,7 +1241,6 @@ public class Native extends NativeHost {
 					setter.invoke(struct, value);
 				} else {
 					System.out.println("Failed to set a field " + field + " in struct " + struct.getTypeName());
-					System.exit(255);
 				}
 			}
 		} catch (IllegalAccessException ex) {
