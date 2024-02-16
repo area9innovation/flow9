@@ -221,12 +221,15 @@ class FlowSprite extends Sprite {
 		if (nativeWidget.baseTexture == null) {
 			if (texture != null) {
 				nativeWidget.baseTexture = texture.baseTexture;
+				if (Util.getParameter("sprite_crash_1") == "1") {
+					nativeWidget.baseTexture.hasLoaded = true;
+				}
 			} else {
 				return;
 			}
 		}
 
-		texture = Texture.from(nativeWidget);
+		texture = Texture.from(Util.getParameter("sprite_crash_2") == "1" ? nativeWidget.baseTexture : nativeWidget);
 		RenderSupport.on("disable_sprites", disableSprites);
 	}
 
