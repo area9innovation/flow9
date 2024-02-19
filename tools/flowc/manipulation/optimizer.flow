@@ -116,11 +116,12 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram 
 				fcPrintln("going to evaluate comile-time constants in " + m.fileinfo.flowfile, prog.config.threadId);
 			}
 			start = timestamp();
-			m_opt = fiMapModuleExp(p, m, \e, decl,__,__ -> {
+			m_opt = fiMapModuleExp(p, m, \e0, decl,__,__ -> {
+				e = fiExpMakeStartUnique(e0);
 				consts = makeHashMap(idfn);
-				e_opt1 = evalExpConstExprs(fiExpMakeStartUnique(e), env, prog.names.unions, makeHashMap(idfn), consts,
+				e_opt1 = evalExpConstExprs(e, env, prog.names.unions, makeHashMap(idfn), consts,
 					\msg, ps -> on_err(FcError(msg, map(ps, \pos -> FcPosition(m.fileinfo.flowfile, pos, pos)))),
-					\msg -> fcPrintln(msg, prog.config.threadId)
+					\msg -> fcPrintln(msg, prog.config.threadId), decl.name == optimzie_debug
 				);
 				//e_opt2 = extractCommonConstants(e_opt1, consts, decl.name == optimzie_debug);
 				e_opt2 = e_opt1;
@@ -178,9 +179,17 @@ extractCommonConstants(e: FiExp, consts: HashMap<int, FiExp>, debug: bool) -> Fi
 	}
 }
 
-evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, unions: Tree<string, FiTypeUnion>, cache: HashMap<int, Maybe<FiExp>>, consts: HashMap<int, FiExp>, on_err: (string, [int]) -> void, on_msg: (string) -> void) -> FiExp {
-	rec = \e -> evalExpConstExprs(e, env, unions, cache, consts, on_err, on_msg);
-	switch (fcConstEval(x, env.consts, env, cache, on_err, on_msg)) {
+evalExpConstExprs(
+	x : FiExp, env: FcConstEvalEnv,
+	unions: Tree<string, FiTypeUnion>,
+	cache: HashMap<int, Maybe<FiExp>>,
+	consts: HashMap<int, FiExp>,
+	on_err: (string, [int]) -> void,
+	on_msg: (string) -> void,
+	debug: bool
+) -> FiExp {
+	rec = \e -> evalExpConstExprs(e, env, unions, cache, consts, on_err, on_msg, debug);
+	switch (fcConstEval(x, env, cache, on_err, on_msg, debug)) {
 		Some(c): {
 			switch (c) {
 				FiLambda(__,body,__,__): {
@@ -199,12 +208,23 @@ evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, unions: Tree<string, FiTypeUni
 				FiVar(v,__,__): x;
 				FiLet(v,__, e1, e2,__,__): {
 					switch (e1) {
-						FiVar(__,__,__): {
+						FiVar(w,__,__): {
 							// Do not touch this var.
-							FiLet(x with e2 = rec(e2));
+							FiLet(x with
+								e2 = evalExpConstExprs(e2,
+									FcConstEvalEnv(env with
+										consts = eitherMap(
+											lookupTree(env.consts, w),
+											\c -> setTree(env.consts, w, c),
+											env.consts
+										)
+									),
+									unions, cache, consts, on_err, on_msg, debug
+								)
+							);
 						}
 						default: {
-							switch (fcConstEval(e1, env.consts, env, cache, on_err, on_msg)) {
+							switch (fcConstEval(e1, env, cache, on_err, on_msg, debug)) {
 								Some(c): {
 									FiLet(x with
 										e1 = c,
@@ -212,7 +232,7 @@ evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, unions: Tree<string, FiTypeUni
 											FcConstEvalEnv(env with
 												consts = setTree(env.consts, v, c)
 											), 
-											unions, cache, consts, on_err, on_msg
+											unions, cache, consts, on_err, on_msg, debug
 										)
 									);
 								}
@@ -268,7 +288,7 @@ evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, unions: Tree<string, FiTypeUni
 						esc = map(es, rec);
 						FiSeq(x with es = filtermapi(esc, \i, y ->
 							if (i + 1 == length(es)) Some(y) else
-							switch (fcConstEval(y, env.consts, env, cache, on_err, on_msg)) {
+							switch (fcConstEval(y, env, cache, on_err, on_msg, debug)) {
 								Some(__): None();
 								None(): Some(y);
 							}
