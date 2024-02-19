@@ -77,13 +77,16 @@ fcEliminateCompileTimeFns(prog: FiProgram) -> FiProgram {
 fcInitConstEvalEnv(prog0: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEnv {
 	effects = collectFiEffectsPrecisely(prog0);
 	prog = fcOptimizeTailCalls(fcConstEvalPureToplevels(prog0, effects));
-	/*pure_toplevels = list2array(fiFoldProgramToplevel(prog, makeList(), \top,__,__,acc -> switch (top) {
-		FiDeclaration(): Cons(top.name, acc);
-		default: acc;
-	}));
-	println("Pure toplevels:\n" + strIndent(strGlue(pure_toplevels, "\n")));*/
+	if (isConfigParameterTrue(prog.config.config, "show-pure-toplevels")) {
+		pure_toplevels = list2array(fiFoldProgramToplevel(prog, makeList(), \top,__,__,acc -> switch (top) {
+			FiDeclaration(): Cons(top.name, acc);
+			default: acc;
+		}));
+		println("Pure toplevels:\n" + strIndent(strGlue(pure_toplevels, "\n")));
+	}
 	errors = ref [];
 	on_msg = \msg -> fcPrintln(msg, prog.config.threadId);
+	optimzie_debug = getConfigParameter(prog.config.config, "optimize-debug");
 	fold(prog.traversal, 
 		FcConstEvalEnv(
 			tree2hashMap(prog.names.structs, fastHashString),
@@ -102,8 +105,14 @@ fcInitConstEvalEnv(prog0: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEn
 					\ac, name -> eitherMap(lookupTree(prog.names.toplevel, name), \decl ->
 						switch (decl) {
 							FiGlobalVar(__, value, type,__,__): {
-								switch (fcConstEval(value, ac, makeHashMap(idfn), m_on_err, on_msg, false)) {
+								switch (fcConstEval(value, ac, makeHashMap(idfn), m_on_err, on_msg, decl.name == optimzie_debug)) {
 									Some(cv): {
+										if (decl.name == optimzie_debug) {
+											fcPrintln(
+												"Optimization of global variable:\n" + pretFiExp(value) + "\nended up with:\n" + pretFiExp(cv),
+												prog.config.threadId
+											);
+										}
 										FcConstEvalEnv(ac with consts = setTree(ac.consts, name, cv));
 									}
 									None(): ac
@@ -326,7 +335,7 @@ fcDoConstEval(ex : FiExp,
 					}
 					None();
 				} else {
-					do_call = \-> maybeBind(rec(f), \cf -> switch (cf) {
+					do_call = \fn -> maybeBind(fn, \cf -> switch (cf) {
 						FiLambda(cf_args, cf_body,__,__): {
 							fcConstEval(
 								cf_body,
@@ -349,7 +358,7 @@ fcDoConstEval(ex : FiExp,
 								Some(c_args[1]);
 							} else {
 								switch (lookupTree(env.consts, x)) {
-									Some(__): do_call();
+									Some(fn): do_call(Some(fn));
 									None(): {
 										f_args = filtermap(c_args, \arg -> fiComplexConstant2flow(arg, env, on_err));
 										if (length(f_args) != length(args)) None() else {
@@ -371,7 +380,7 @@ fcDoConstEval(ex : FiExp,
 								}
 							}
 						}
-						default: do_call();
+						default: do_call(rec(f));
 					}
 				}
 			}
@@ -387,7 +396,12 @@ fcDoConstEval(ex : FiExp,
 				default: do_job();
 			}
 		}
-		FiVar(x, type, pos): lookupTree(env.consts, x);
+		FiVar(x, type, pos): {
+			switch (type) {
+				FiTypeFunction(__,__): None();
+				default: lookupTree(env.consts, x);
+			}
+		}
 		FiLet(x, __, e1, e2,__,__): {
 			maybeBind(rec(e1), \ce1 ->
 				fcConstEval(e2, FcConstEvalEnv(env with consts = setTree(env.consts, x, ce1)), cache, on_err, on_msg, debug)
