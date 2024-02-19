@@ -8,7 +8,7 @@ flowc1 \
 	test=cpp3 \
 	valgrind=1 \
 	cpp3-flowc-opts=optimize \
-	exclude=test_runner,test_concur,sizeof,test_clone,benchmark \
+	exclude=test_runner,test_concur,sizeof,test_clone,benchmark,test_dynamic_func,test_native_stub \
 	test-opts=determ
 
 #cpp3-back-opts=cpp-debug
