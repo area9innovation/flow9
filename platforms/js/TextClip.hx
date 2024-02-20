@@ -1962,6 +1962,7 @@ class TextClip extends NativeWidgetClip {
 		textElement.setAttribute('font-size', computedStyle.fontSize);
 		textElement.setAttribute('font-style', computedStyle.fontStyle);
 		textElement.setAttribute('letter-spacing', computedStyle.letterSpacing);
+		textElement.setAttribute('white-space', computedStyle.whiteSpace);
 
 		textElement.textContent = textNode.textContent;
 		svg.appendChild(textElement);
