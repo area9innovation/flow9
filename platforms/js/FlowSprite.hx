@@ -221,7 +221,9 @@ class FlowSprite extends Sprite {
 		if (nativeWidget.baseTexture == null) {
 			if (texture != null) {
 				nativeWidget.baseTexture = texture.baseTexture;
-				nativeWidget.baseTexture.hasLoaded = true;
+				if (Util.getParameter("has_loaded_fix") != "0") {
+					nativeWidget.baseTexture.hasLoaded = true;
+				}
 			} else {
 				return;
 			}
