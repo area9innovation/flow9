@@ -74,27 +74,27 @@ fcEliminateCompileTimeFns(prog: FiProgram) -> FiProgram {
 	), fcParallelOn(prog.config));
 }
 
-fcInitConstEvalEnv(prog0: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEnv {
-	effects = collectFiEffectsPrecisely(prog0);
-	prog = fcOptimizeTailCalls(fcConstEvalPureToplevels(prog0, effects));
-	if (isConfigParameterTrue(prog.config.config, "show-pure-toplevels")) {
-		pure_toplevels = list2array(fiFoldProgramToplevel(prog, makeList(), \top,__,__,acc -> switch (top) {
+fcInitConstEvalEnv(prog: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEnv {
+	effects = collectFiEffectsPrecisely(prog);
+	const_prog = fcOptimizeTailCalls(fcConstEvalPureToplevels(prog, effects));
+	if (isConfigParameterTrue(const_prog.config.config, "show-pure-toplevels")) {
+		pure_toplevels = list2array(fiFoldProgramToplevel(const_prog, makeList(), \top,__,__,acc -> switch (top) {
 			FiDeclaration(): Cons(top.name, acc);
 			default: acc;
 		}));
-		fcPrintln("Pure toplevels:\n" + strIndent(strGlue(pure_toplevels, "\n")), prog.config.threadId);
+		fcPrintln("Pure toplevels:\n" + strIndent(strGlue(pure_toplevels, "\n")), const_prog.config.threadId);
 	}
 	errors = ref [];
-	on_msg = \msg -> fcPrintln(msg, prog.config.threadId);
-	optimzie_debug = getConfigParameter(prog.config.config, "optimize-debug");
-	fold(prog.traversal, 
+	on_msg = \msg -> fcPrintln(msg, const_prog.config.threadId);
+	optimzie_debug = getConfigParameter(const_prog.config.config, "optimize-debug");
+	fold(const_prog.traversal,
 		FcConstEvalEnv(
-			tree2hashMap(prog.names.structs, fastHashString),
-			tree2hashMap(prog.names.unions, fastHashString),
-			makeTree(), fcInitEvalGlobals(prog, on_err), effects,
+			tree2hashMap(const_prog.names.structs, fastHashString),
+			tree2hashMap(const_prog.names.unions, fastHashString),
+			makeTree(), fcInitEvalGlobals(const_prog, Some(prog), on_err), effects,
 			errors
 		),
-		\acc, mod_name -> eitherMap(lookupTree(prog.modules, mod_name),
+		\acc, mod_name -> eitherMap(lookupTree(const_prog.modules, mod_name),
 			\m -> {
 				m_on_err = \msg, ps -> {
 					err = FcError(msg, map(ps, \p -> FcPosition(m.fileinfo.flowfile, p, p)));
@@ -102,7 +102,7 @@ fcInitConstEvalEnv(prog0: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEn
 					on_err(err);
 				}
 				fold(m.initOrder, acc,
-					\ac, name -> eitherMap(lookupTree(prog.names.toplevel, name), \decl ->
+					\ac, name -> eitherMap(lookupTree(const_prog.names.toplevel, name), \decl ->
 						switch (decl) {
 							FiGlobalVar(__, value, type,__,__): {
 								switch (fcConstEval(value, ac, makeHashMap(idfn), m_on_err, on_msg, decl.name == optimzie_debug)) {
@@ -110,7 +110,7 @@ fcInitConstEvalEnv(prog0: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEn
 										if (decl.name == optimzie_debug) {
 											fcPrintln(
 												"Optimization of global variable:\n" + pretFiExp(value) + "\nended up with:\n" + pretFiExp(cv),
-												prog.config.threadId
+												const_prog.config.threadId
 											);
 										}
 										FcConstEvalEnv(ac with consts = setTree(ac.consts, name, cv));

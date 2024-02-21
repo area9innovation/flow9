@@ -10,7 +10,7 @@ export {
 	);
 
 	// Setup the global variables and toplevel functions
-	fcInitEvalGlobals(program: FiProgram, onError : (FcError) -> void) -> HashMap<string, FcEvalGlobal>;
+	fcInitEvalGlobals(prog: FiProgram, orig: Maybe<FiProgram>, onError : (FcError) -> void) -> HashMap<string, FcEvalGlobal>;
 
 	// Perform the evaluation of function 'name'.
 	// Returns the `Some(value)`, if function with `name` presents, `None()` otherwise.
@@ -56,10 +56,12 @@ fc_eval_runtimes = buildSet([
 	"extractStructName",
 	"extractStructArguments",
 	"structFieldNames",
-	"setMutableField"
+	"setMutableField",
+	"hostCallExists",
+	"extractFuncArity"
 ]);
 
-fcInitEvalGlobals(prog: FiProgram, onErr : (FcError) -> void) -> HashMap<string, FcEvalGlobal> {
+fcInitEvalGlobals(prog: FiProgram, orig: Maybe<FiProgram>, onErr : (FcError) -> void) -> HashMap<string, FcEvalGlobal> {
 	structs = tree2hashMap(prog.names.structs, fastHashString);
 	globals = makeHashMap(fastHashString);
 	make_runtime = \name ->
@@ -73,6 +75,8 @@ fcInitEvalGlobals(prog: FiProgram, onErr : (FcError) -> void) -> HashMap<string,
 		if (name == "setMutableField") Some(flow(fcEvalSetMutableField)) else
 		if (name == "println") Some(flow(fcEvalPrintln)) else
 		if (name == "println2") Some(flow(fcEvalPrintln)) else
+		if (name == "hostCallExists") Some(flow(\n -> fcEvalHostCallExists(n, either(orig, prog)))) else
+		if (name == "extractFuncArity") Some(flow(\fn -> fcEvalExtractFuncArity(fn, either(orig, prog)))) else
 		None();
 	iter(prog.traversal, \mod_name ->
 		switch (lookupTree(prog.modules, mod_name)) {
@@ -1012,6 +1016,44 @@ fcEvalSetMutableField(struct: flow, field: string, v: flow) -> void {
 			Some(f): f.value ::= v;
 			None(): {
 				println("Failed to set a field " + field + " in struct " + fcEvalExtractStructName(struct));
+			}
+		}
+	}
+}
+
+fcEvalHostCallExists(name: string, prog: FiProgram) -> bool {
+	hostCallExists(name) || eitherMap(
+		lookupTree(prog.names.toplevel, name),
+		\decl -> switch (decl) {
+			FiFunctionDec(__,__,__,__,__): true;
+			FiNativeDec(__,__,__,__,__,__,__): true;
+			default: false;
+		},
+		false
+	);
+}
+
+fcEvalExtractFuncArity(fn: flow, prog: FiProgram) -> int {
+	fn_tag = getDataTagForValue(fn);
+	if (fn_tag == function_data_tag) {
+		extractFuncArity(fn);
+	} else {
+		arity = extractFuncArity(fn);
+		if (arity >= 0) arity else {
+			if (fn_tag == string_data_tag) {
+				name = cast(fn: flow -> string);
+				eitherMap(lookupTree(prog.names.toplevel, name), \decl -> switch (decl) {
+					FiFunctionDec(__,__,type,__,__): length(type.args);
+					FiNativeDec(__,__,type,__,__,__,__): {
+						switch (type) {
+							FiTypeFunction(args,__): length(args);
+							default: -1;
+						}
+					}
+					default: -1;
+				}, -1);
+			} else {
+				-1;
 			}
 		}
 	}
