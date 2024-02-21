@@ -1,5 +1,5 @@
 
-# See: 
+# See:
 # https://github.com/devcontainers/images/tree/main/src/base-ubuntu
 # https://containers.dev/guide/dockerfile
 
@@ -24,11 +24,11 @@ ENV HAXELIB_PATH=$HAXEPATH/lib
 RUN add-apt-repository ppa:haxe/releases -y \
 	&& apt-get update \
 	&& apt-get install -y haxe
-	
+
 # Installing haxelib in a share folder
 RUN haxelib setup $HAXELIB_PATH \
 	&& haxelib install format 3.4.2 \
 	&& haxelib install pixijs 4.8.4 \
-	&& haxelib install threejs
+	&& haxelib install threejs 91.0.1
 
 RUN echo "\necho \"Welcome to Flow9 DevContainer. See the doc/devcontainer.md for more information.\"" >> /home/vscode/.bashrc

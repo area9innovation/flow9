@@ -30,7 +30,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			backgroundOpacity = extractStruct(m.style, MPlayerBackgroundOpacity(const(1.0))).opacity;
 			customBarM = tryExtractStruct(m.style, MCustomBar(\__, __, __ -> MEmpty()));
 			dynColorM = tryExtractStruct(m.style, MDynamicColor(const(color)));
-			poster = extractStruct(m.style, MVideoPoster(TEmpty())).poster;
+			poster = tryExtractStruct(m.style, MVideoPoster(MEmpty()));
 
 			addBackground = \vt : Tropic -> {
 				TFrameT(zero, zero, fselect2Lift(backgroundColor, backgroundOpacity, \bgc, bgo -> [MFill(MThemeColor2MColor(p, bgc)), FillOpacity(bgo)]), vt)
@@ -965,6 +965,7 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 				if (endParam == "" || s2i(startParam) >= s2i(endParam)) [] else [Pair("end", JsonString(endParam))],
 				if (disableKeyboard) [Pair("disablekb", JsonString("1"))] else [],
 				[
+					Pair("nocookie", JsonBool(true)),
 					Pair("controls", JsonString(controlsParam)),
 					Pair("mute", JsonString(muteParam)),
 					Pair("autoplay", JsonString(autoplayParam)),
@@ -1052,7 +1053,7 @@ MVideoWithAnimatedSubtitles(
 			manager,
 			parent,
 			TVideo(filename, wh, style),
-			TEmpty(),
+			None(),
 			Some(Pair(subtitles, const(true))),
 			m2t
 		)
@@ -1063,20 +1064,33 @@ TVideoWithAnimatedSubtitles(
 	manager : MaterialManager,
 	parent : MFocusGroup,
 	video : TVideo,
-	poster : Tropic,
+	poster : Maybe<MVideoPoster>,
 	subtitles : Maybe<Pair<MAnimatedSubtitles, Transform<bool>>>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
 	videoAreaMetrics = extractStruct(video.style, FInspectVideoArea(make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.), Factor(1., 1.))))).metrics;
-	style = eitherMap(subtitles, \__ -> replaceStruct(video.style, FInspectVideoArea(videoAreaMetrics)), video.style);
+	playing = extractStruct(video.style, FVideoPlay(make(false))).play;
+	showPoster = make(isSome(poster));
+	style = replaceStructMany(video.style, concatA([
+			[FVideoPlay(playing)],
+			eitherMap(subtitles, \__ -> [FInspectVideoArea(videoAreaMetrics)], [])
+		]));
+
 
 	applyRange = \scMode, value ->
 		if (scMode.max == -1.) max(scMode.min, value)
 		else forceRange(value, scMode.min, scMode.max);
 
 	TGroupSameMetrics([
-		TVideo(video.filename, video.wh, style),
-		poster,
+		TVisible(fnot(showPoster), TVideo(video.filename, video.wh, style)),
+		eitherMap(poster, \post ->
+			MZoomToFit(post.poster, TSized(video.wh))
+			|> (\t -> m2t(t, parent))
+			|> (\t -> TCenterIn(t, TSized(video.wh)))
+			|> (\t -> TShow(showPoster, t))
+			|> (\t -> TConstruct([\ -> fwhen(playing, \ -> nextDistinct(showPoster, false))], t)),
+			TEmpty()
+		),
 		eitherMap(subtitles,
 			\sbtl -> {
 				areaBox = TSized(fselect(videoAreaMetrics, FLift(\vam -> vam.wh)));

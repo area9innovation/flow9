@@ -507,11 +507,7 @@ class RenderSupport {
 			});
 		};
 
-		if (Native.isNew) {
-			PixiStage.once("drawframe", openPrintDialog);
-		} else {
-			Native.timer(10, openPrintDialog);
-		}
+		PixiStage.once("drawframe", openPrintDialog);
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -990,7 +986,7 @@ class RenderSupport {
 
 		var accessibilityZoomOnPinchStart = 1.;
 
-		if (Platform.isMobile && Native.isNew) {
+		if (Platform.isMobile) {
 			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
 				if (state == 0) {
 					// On pinch started
@@ -1542,10 +1538,18 @@ class RenderSupport {
 			root.onpointermove = function(e : Dynamic) {onpointermove(e, stage);};
 			root.onpointerout = function(e : Dynamic) {onpointerout(e, stage);};
 		} else {
-			updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
-			updateNonPassiveEventListener(root, "pointerup", onpointerup);
-			updateNonPassiveEventListener(root, "pointermove", onpointermove);
-			updateNonPassiveEventListener(root, "pointerout", onpointerout);
+			// updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
+			// updateNonPassiveEventListener(root, "pointerup", onpointerup);
+			// updateNonPassiveEventListener(root, "pointermove", onpointermove);
+			// updateNonPassiveEventListener(root, "pointerout", onpointerout);
+
+			// Workaround for using with Dashlane plugin.
+			// Consider to revert for 'updateNonPassiveEventListener' implementation after Dashlane is fixed.
+			var stage = PixiStage;
+			root.onpointerdown = function(e : Dynamic) {onpointerdown(e, stage);};
+			root.onpointerup = function(e : Dynamic) {onpointerup(e, stage);};
+			root.onpointermove = function(e : Dynamic) {onpointermove(e, stage);};
+			root.onpointerout = function(e : Dynamic) {onpointerout(e, stage);};
 
 			// Just in case app is switched to mobile mode in dev tools
 			updateNonPassiveEventListener(root, "touchstart", blockEvent);

@@ -1657,7 +1657,7 @@ public class Native extends NativeHost {
 		ProcessRunner ps = new ProcessRunner(cmd, currentWorkingDirectory, stdin, onExit);
 		Future future = threadpool.submit(ps);
 	} catch (Exception ex) {
-		onExit.invoke(-200, "", "while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+		onExit.invoke(-200, "", "while starting:\n" + command + "\noccurred:\n" + exceptionStackTrace(ex));
 	}
 	return null;
 	}
@@ -1843,7 +1843,7 @@ public class Native extends NativeHost {
 
 			return runner;
 		} catch (Exception ex) {
-			onErr.invoke("while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+			onErr.invoke("while starting:\n" + command + "\noccurred:\n" + exceptionStackTrace(ex));
 			onExit.invoke(-200);
 			return null;
 		}
@@ -1866,7 +1866,7 @@ public class Native extends NativeHost {
 			runner.run();
 			return runner.waitFor();
 		} catch (Exception ex) {
-			onErr.invoke("while execution of:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+			onErr.invoke("while execution of:\n" + command + "\noccurred:\n" + exceptionStackTrace(ex));
 			return 1;
 		}
 	}
