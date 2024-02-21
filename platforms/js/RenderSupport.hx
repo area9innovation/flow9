@@ -507,11 +507,7 @@ class RenderSupport {
 			});
 		};
 
-		if (Native.isNew) {
-			PixiStage.once("drawframe", openPrintDialog);
-		} else {
-			Native.timer(10, openPrintDialog);
-		}
+		PixiStage.once("drawframe", openPrintDialog);
 	}
 
 	private static function getBackingStoreRatio() : Float {
