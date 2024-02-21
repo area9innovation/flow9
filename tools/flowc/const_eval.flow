@@ -7,9 +7,9 @@ import tools/flowc/manipulation/tail_call;
 export {
 	FcConstEvalEnv(
 		structs: HashMap<string, FiTypeStruct>,
-		unions: HashMap<string, FiTypeUnion>,
-		consts: Tree<string, FiExp>,
-		globals:  HashMap<string, FcEvalGlobal>,
+		unions:  HashMap<string, FiTypeUnion>,
+		consts:  Tree<string, FiExp>,
+		globals: HashMap<string, FcEvalGlobal>,
 		effects: FiEffects,
 		errors: ref [FcError]
 	);
@@ -82,7 +82,7 @@ fcInitConstEvalEnv(prog0: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEn
 			FiDeclaration(): Cons(top.name, acc);
 			default: acc;
 		}));
-		println("Pure toplevels:\n" + strIndent(strGlue(pure_toplevels, "\n")));
+		fcPrintln("Pure toplevels:\n" + strIndent(strGlue(pure_toplevels, "\n")), prog.config.threadId);
 	}
 	errors = ref [];
 	on_msg = \msg -> fcPrintln(msg, prog.config.threadId);
@@ -115,7 +115,7 @@ fcInitConstEvalEnv(prog0: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEn
 										}
 										FcConstEvalEnv(ac with consts = setTree(ac.consts, name, cv));
 									}
-									None(): ac
+									None(): ac;
 								}
 							}
 							default: ac;
@@ -289,6 +289,7 @@ fcConstEval(ex : FiExp,
 	}
 }
 
+
 fcDoConstEval(ex : FiExp,
 	env: FcConstEvalEnv,
 	cache: HashMap<int, Maybe<FiExp>>,
@@ -301,9 +302,11 @@ fcDoConstEval(ex : FiExp,
 		FiLambda(args, body,__,__): {
 			free = filter(set2array(fifreevars(ex)), \v -> !containsKeyHashMap(env.globals, v));
 			const_closure = filtermap(free, \v -> lookupTree(env.consts, v));
-			if (length(const_closure) != length(free) || hasFiSideEffects(env.effects, body)) None() else {
+			if (length(const_closure) != length(free) /*|| hasFiSideEffects(env.effects, body)*/) None() else {
 				Some(FiLambda(ex with
-					body = foldi(free, body, \i, acc, x -> fiReplaceVar(acc, x, const_closure[i]))
+					body = foldi(free, body, \i, acc, x ->
+						if (fiTypeIsFunction(fiExpType(const_closure[i]))) acc else
+						fiReplaceVar(acc, x, const_closure[i]))
 				));
 			}
 		}
@@ -357,26 +360,25 @@ fcDoConstEval(ex : FiExp,
 								on_msg(msg + pretFiExp(c_args[1]));
 								Some(c_args[1]);
 							} else {
-								switch (lookupTree(env.consts, x)) {
-									Some(fn): do_call(Some(fn));
-									None(): {
-										f_args = filtermap(c_args, \arg -> fiComplexConstant2flow(arg, env, on_err));
-										if (length(f_args) != length(args)) None() else {
-											env.errors := [];
-											maybeBind(
-												fcCallFunctionByName(x, f_args, env.globals, \err -> refArrayPush(env.errors, err)),
-												\val -> if (length(^(env.errors)) == 0) {
-													// No errors - ok.
-													maybeBind(fiflow2ComplexConstant(val, env), \v ->
-														fiCompleteType(v, Some(type), env)
-													);
-												} else {
-													// Some errors - not ok.
-													None();
-												}
-											)
-										}
+								if (containsKeyHashMap(env.globals, x)) {
+									f_args = filtermap(c_args, \arg -> fiComplexConstant2flow(arg, env, on_err));
+									if (length(f_args) != length(args)) None() else {
+										env.errors := [];
+										maybeBind(
+											fcCallFunctionByName(x, f_args, env.globals, \err -> refArrayPush(env.errors, err)),
+											\val -> if (length(^(env.errors)) == 0) {
+												// No errors - ok.
+												maybeBind(fiflow2ComplexConstant(val, env), \v ->
+													fiCompleteType(v, Some(type), env)
+												);
+											} else {
+												// Some errors - not ok.
+												None();
+											}
+										);
 									}
+								} else {
+									do_call(lookupTree(env.consts, x));
 								}
 							}
 						}
@@ -519,15 +521,6 @@ fcConstEvalCast(ce: FiExp, from: FiType, to: FiType) -> Maybe<FiExp> {
 						FiTypeName(name1, typars1): Some(ce);
 						default: None();
 					}
-				}
-				default: None();
-			}
-		}
-		FiLambda(args, body, type, s): {
-			switch (to) {
-				FiTypeFunction(toArgs, toRet): {
-					println("TODO: const eval cast of functions");
-					None();
 				}
 				default: None();
 			}
