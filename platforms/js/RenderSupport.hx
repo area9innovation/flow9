@@ -990,7 +990,7 @@ class RenderSupport {
 
 		var accessibilityZoomOnPinchStart = 1.;
 
-		if (Platform.isMobile && Native.isNew) {
+		if (Platform.isMobile) {
 			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
 				if (state == 0) {
 					// On pinch started
