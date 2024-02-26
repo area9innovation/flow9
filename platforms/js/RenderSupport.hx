@@ -947,6 +947,18 @@ class RenderSupport {
 			}
 		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+		Browser.window.addEventListener("focus", function () {
+			// When page is loaded while browser is minimized, window.outerWidth tend to stuck in wrong state. Have to trigger its recalculation.
+			var oldBrowserZoom = browserZoom;
+			Browser.window.resizeBy(-1, 0);
+			Browser.window.resizeBy(1, 0);
+			backingStoreRatio = getBackingStoreRatio();
+
+			if (oldBrowserZoom != browserZoom) {
+				onBrowserWindowResize({target: {innerWidth: Browser.window.innerWidth - 1, innerHeight: Browser.window.innerHeight}});
+				onBrowserWindowResize({target: {innerWidth: Browser.window.innerWidth, innerHeight: Browser.window.innerHeight}});
+			}
+		});
 		Browser.window.addEventListener('beforeprint', function () {
 			if (!printMode) {
 				printMode = true;
@@ -1530,10 +1542,18 @@ class RenderSupport {
 			root.onpointermove = function(e : Dynamic) {onpointermove(e, stage);};
 			root.onpointerout = function(e : Dynamic) {onpointerout(e, stage);};
 		} else {
-			updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
-			updateNonPassiveEventListener(root, "pointerup", onpointerup);
-			updateNonPassiveEventListener(root, "pointermove", onpointermove);
-			updateNonPassiveEventListener(root, "pointerout", onpointerout);
+			// updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
+			// updateNonPassiveEventListener(root, "pointerup", onpointerup);
+			// updateNonPassiveEventListener(root, "pointermove", onpointermove);
+			// updateNonPassiveEventListener(root, "pointerout", onpointerout);
+
+			// Workaround for using with Dashlane plugin.
+			// Consider to revert for 'updateNonPassiveEventListener' implementation after Dashlane is fixed.
+			var stage = PixiStage;
+			root.onpointerdown = function(e : Dynamic) {onpointerdown(e, stage);};
+			root.onpointerup = function(e : Dynamic) {onpointerup(e, stage);};
+			root.onpointermove = function(e : Dynamic) {onpointermove(e, stage);};
+			root.onpointerout = function(e : Dynamic) {onpointerout(e, stage);};
 
 			// Just in case app is switched to mobile mode in dev tools
 			updateNonPassiveEventListener(root, "touchstart", blockEvent);
@@ -2187,6 +2207,10 @@ class RenderSupport {
 
 	public static function setTextNeedBaseline(clip : TextClip, needBaseline : Bool) : Void {
 		clip.setNeedBaseline(needBaseline);
+	}
+
+	public static function setTextPreventCheckTextNodeWidth(clip : TextClip, prevent : Bool) : Void {
+		clip.setPreventCheckTextNodeWidth(prevent);
 	}
 
 	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {

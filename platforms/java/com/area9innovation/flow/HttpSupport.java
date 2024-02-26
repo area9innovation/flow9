@@ -286,6 +286,12 @@ public class HttpSupport extends NativeHost {
 				URL obj = new URL(urlWithParams);
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
+				// Workaround for the `PATCH` method which does not supported in the `HttpURLConnection`.
+				// https://trello.com/c/OPRchLv4/4399-cron-fails-with-invalid-http-method-patch
+				if (method == "PATCH") {
+					con.setRequestProperty("X-HTTP-Method-Override", "PATCH");
+					method = method == "PATCH" ? "POST" : method;
+				}
 				con.setRequestMethod(method);
 				con.setDoOutput(true);
 			}

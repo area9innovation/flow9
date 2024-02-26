@@ -476,7 +476,7 @@ class FlowSprite extends Sprite {
 			nativeWidget.classList.add(this.className);
 		}
 		nativeWidget.style.visibility = 'hidden';
-		nativeWidget.alt = altText;
+		nativeWidget.alt = altText != '' ? altText : 'Unlabeled';
 
 		isNativeWidget = true;
 	}
@@ -491,7 +491,7 @@ class FlowSprite extends Sprite {
 	}
 
 	public function setPictureReferrerPolicy(referrerpolicy) : Void {
-		if (nativeWidget != null) {
+		if (nativeWidget != null && referrerpolicy != '') {
 			nativeWidget.referrerPolicy = referrerpolicy;
 		}
 	}

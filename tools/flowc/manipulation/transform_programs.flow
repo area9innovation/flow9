@@ -12,6 +12,15 @@ export {
 	// Example: None() struct from Maybe<?> union implicitly inherits the ? type parameter
 	fiCompleteStructTypars(program : FiProgram) -> FiProgram;
 
+	// Add implicit typars to unions, which come from contained structs.
+	// Example:
+	//   DbResult ::= DbJsonResult, DbStructuresResult; //, DbStructuresAndRightsResult;
+	//     DbJsonResult(json : Json);
+	//     DbStructuresResult(items : [?]);
+	// Here DbResult don't inherit DbStructureResult typars:
+	//   FiTypeUnion("DbResult", [], [FiTypeName("DbJsonResult", []), FiTypeName("DbStructuresResult", [])], 2496)
+	fiCompleteImplicitUnionTypars(program : FiProgram) -> FiProgram;
+
 	// Remove implicit typars to structs, which come from embracing unions.
 	// Example: None() struct from Maybe<?> union implicitly inherits the ? type parameter
 	fiRemoveImplicitStructTypars(program : FiProgram) -> FiProgram;
@@ -21,7 +30,7 @@ export {
 
 	// If a native is implemented - remove a fallback, otherwise remove a native.
 	// The second component of return is missing natives - those which have no fallback
-	fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> bool) -> Pair<FiProgram, [string]>;
+	fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> bool, stub_missing: (string) -> bool) -> Pair<FiProgram, [FiNativeDec]>;
 
 	// For any struct, which is contained in several unions, add a super union, which
 	// is a set-theoretical union of all these unions, i.e. is a single supertype for all.
@@ -43,7 +52,7 @@ export {
 	fiStructCastWrapperName(name: string) -> string;
 
 	// Add natives, which must be in any program (i.e. `map`).
-	fiAddMandatoryNatives(program : FiProgram, mandatory: [Pair<string, FiNativeDec>]) -> FiProgram;
+	fiAddExternalNatives(program : FiProgram, mandatory: [Pair<string, FiNativeDec>]) -> FiProgram;
 
 	// Convert all global variables of functional type to global functions
 	fiFuncGlobalVar2Func(program: FiProgram) -> FiProgram;
@@ -150,6 +159,48 @@ fiStrcutFullTypars(struct : FiTypeStruct, struct2union: Tree<string, [FiTypeUnio
 	sort(uniq(fold(supertypes, filter_typars(struct.typars), \acc, union ->
 		concat(acc, filter_typars(union.typeparameters))
 	)));
+}
+
+fiCompleteImplicitUnionTypars(program : FiProgram) -> FiProgram {
+	unions2structs = fiUnions2Structs(program.names);
+	structs2unions = fiStucts2Unions(program.names, unions2structs);
+	completed_unions = mapTree(program.names.unions, \union -> {
+		all_typars = ref makeSet();
+		completed_typenames = map(union.typenames, \tn -> {
+			// We expect, that unions are already flattened, i.e. contain only structs.
+			struct = lookupTreeDef(program.names.structs, tn.name, FiTypeStruct("", [], [], 0));
+			completed_tn = if (tn.typeparameters == [] && struct.typars != []) {
+				// Case, when struct contains type parameters, but corresponding typename doesn't.
+				FiTypeName(tn with typeparameters = struct.typars);
+			} else {
+				tn;
+			}
+			iter(completed_tn.typeparameters, \tp -> switch (tp) {
+				FiTypeParameter(n): all_typars := insertSet(^all_typars, n);
+				default: {}
+			});
+			completed_tn;
+		});
+		completed_typars = if (sizeSet(^all_typars) == length(union.typeparameters)) {
+			// All type parameters are already accounted in union
+			union.typeparameters
+		} else {
+			// Some type parameters are missed in union
+			map(set2array(^all_typars), \n -> FiTypeParameter(n));
+		}
+		FiTypeUnion(union with
+			typeparameters = completed_typars,
+			typenames = completed_typenames
+		)
+	});
+	FiProgram(program with
+		names = FiGlobalNames(program.names with unions = completed_unions),
+		modules = mapTree(program.modules, \module ->
+			FiModule(module with
+				unions = map(module.unions, \u -> lookupTreeDef(completed_unions, u.name, u))
+			)
+		)
+	);
 }
 
 fiRemoveImplicitStructTypars(program : FiProgram) -> FiProgram {
@@ -535,9 +586,26 @@ fiCorrectVarTypes(e: FiExp) -> FiExp {
 	}, true);
 }
 
-fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> bool) -> Pair<FiProgram, [string]> {
+fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> bool, stub_missing: (string) -> bool) -> Pair<FiProgram, [FiNativeDec]> {
 	// Convert a function into native. Used to make implicit natives.
 	func2nat = \func -> FiNativeDec(func.name, false, func.type, func.name, FiVoid(0), 0, 0);
+	// Convert a native to a stub, which causes a runtime error.
+	nat2func = \nat: FiNativeDec, type -> FiFunctionDec(nat.name,
+		FiLambda(type.args,
+			// Crash when called.
+			FiCall(
+				FiVar("fail0",
+					FiTypeFunction([FiFunArg("arg1", FiTypeString())], type.returnType),
+					nat.declStart
+				),
+				[FiString("Native '" + nat.name + "' is not implemented, but called. Execution of program aborted.", nat.declStart)],
+				type.returnType,
+				nat.declStart
+			),
+			type, nat.declStart
+		),
+		nat.type, 0, 0
+	);
 	// for each function name decide: if it is a true native or should use a fallback
 	native_resolver = foldTree(program.modules, makeTree(), \__, module, acc: Tree<string, FiDeclaration> ->
 		fold(module.natives,
@@ -546,7 +614,23 @@ fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> boo
 					if (has_native_implementation(func.name)) func2nat(func) else func
 				)
 			),
-			\ac, nat: FiNativeDec -> if (!has_native_implementation(nat.name)) ac else {
+			\ac, nat: FiNativeDec -> if (!has_native_implementation(nat.name)) {
+				if (containsKeyTree(program.names.function2module, nat.name)) ac else {
+					if (!stub_missing(nat.name)) ac else {
+						type = nat.type;
+						switch (type) {
+							FiTypeFunction(__,__): {
+								// make a stub
+								setTree(ac, nat.name, nat2func(nat, type));
+							}
+							default: {
+								// Native is not a function (?...)
+								ac;
+							}
+						}
+					}
+				}
+			} else {
 				setTree(ac, nat.name, FiNativeDec(nat with fallbackLambda = FiVoid(0)))
 			}
 		)
@@ -555,7 +639,7 @@ fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> boo
 	resolved = FiProgram(program with
 		modules = mapTree(program.modules, \module -> {
 			// Filter out fallbacks for non-true natives
-			funcs = filter(module.functions, \func -> !has_native_implementation(func.name));
+			real_funcs = filter(module.functions, \func -> !has_native_implementation(func.name));
 			// Those function, which have a native implementation although are not declared as natives
 			implicit_natives = filtermap(module.functions, \func -> 
 				if (has_native_implementation(func.name) && !containsKeyTree(program.names.native2module, func.name)) {
@@ -564,7 +648,7 @@ fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> boo
 					None();
 				}
 			);
-			func_names = map(funcs, \fn -> fn.name);
+			func_names = map(real_funcs, \fn -> fn.name);
 			func_names_set = buildSet(func_names);
 			// Filter out true natives
 			nats = concat(
@@ -573,17 +657,38 @@ fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> boo
 					Some(FiNativeDec(nat with fallbackLambda = FiVoid(0)))
 				)
 			);
-			iter(module.natives, \nat -> 
+			// Those natives, which are not implemented, but may be stubbed as functions, which crash immediately when called.
+			native_stubs = filtermap(module.natives, \nat ->
 				if (!has_native_implementation(nat.name) && !containsKeyTree(program.names.function2module, nat.name)) {
-				// This native is missing - has no fallback
-				refArrayPush(missing_nats, nat.name);
-			});
+					// This native is missing - has no fallback
+					refArrayPush(missing_nats, nat);
+					if (stub_missing(nat.name)) {
+						type = nat.type;
+						switch (type) {
+							FiTypeFunction(__,__): {
+								// Make a stub.
+								Some(nat2func(nat, type));
+							}
+							default: {
+								// We can't stub non-function natives.
+								None();
+							}
+						}
+					} else {
+						// Leave as is.
+						None();
+					}
+				} else {
+					// Native is either implemented or has a fallback
+					None();
+				}
+			);
 			nat_names = map(nats, \nat -> nat.name);			
 			func_nat_names = buildSet(concat(func_names, nat_names));
 			// Filter out variables from initOrder
 			vars_names = filter(module.initOrder, \n -> !containsSet(func_nat_names, n));
 			FiModule(module with
-				functions = funcs,
+				functions = concat(real_funcs, native_stubs),
 				natives = nats,
 				initOrder = concat3(nat_names, func_names, vars_names)
 			)
@@ -839,7 +944,7 @@ fiStructCastWrapperFunction(s: FiTypeStruct, names: FiGlobalNames) -> FiFunction
 	);
 }
 
-fiAddMandatoryNatives(program : FiProgram, mandatory: [Pair<string, FiNativeDec>]) -> FiProgram {
+fiAddExternalNatives(program : FiProgram, mandatory: [Pair<string, FiNativeDec>]) -> FiProgram {
 	fold(mandatory, program, \acc, p -> {
 		module_name = p.first;
 		decl = p.second;

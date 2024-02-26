@@ -1,11 +1,13 @@
 import tools/flowc/backends/cpp3/fi2cpp3_structs;
 
 export {
-	fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string;
-	fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, init: [string], runtime_parts: [Cpp3RuntimePart]) -> [string];
+	fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext) -> string;
+	fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, runtime_parts: [Cpp3RuntimePart], gctx: Cpp3GlobalContext) -> [string];
+
+	fiInitTermModule2cpp3Source(compiled: [Cpp3CompiledModule], runtime_parts: [Cpp3RuntimePart], gctx: Cpp3GlobalContext) -> string;
 }
 
-fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, runtime_parts: [Cpp3RuntimePart]) -> string {
+fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext) -> string {
 	includes = superglue(
 		fiCpp3DependenciesIncludes(map(module.natives, \nat -> nat.dependencies)),
 		\inc -> "#inc" + "lude " + inc,
@@ -29,7 +31,7 @@ fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext,
 	);
 }
 
-fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext, init: [string], runtime_parts: [Cpp3RuntimePart]) -> [string] {
+fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, runtime_parts: [Cpp3RuntimePart], gctx: Cpp3GlobalContext) -> [string] {
 	all_source_defs = filtermap(module.decls, \decl -> if (!decl.headerOnly) Some(decl.definition) else None());
 	max_cpp_source = s2i(lookupTreeDef(gctx.program.config.config, "cpp-max-source", "100000"));
 	// Cut all definition into parts, not exceeding max-cpp-source kb
@@ -48,7 +50,7 @@ fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext
 		["#inc" + "lude \"" + module.name + ".hpp\"\n" +
 		fiMakeUsingStatement("std::string_literals") +
 		fiMakeUsingStatement("flow") + "\n" +
-		cpp3MainFunc(gctx, init, runtime_parts)];
+		cpp3MainFunc(gctx)];
 	} else {
 		mapi(source_defs_cut, \i, source_defs ->
 			if (length(source_defs) == 0 && !module.isMain) "" else {
@@ -56,49 +58,43 @@ fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext
 				fiMakeUsingStatement("std::string_literals") +
 				fiMakeUsingStatement("flow") + "\n" +
 				concatStrings(source_defs) + "\n" +
-				if (i == 0 && module.isMain) cpp3MainFunc(gctx, init, runtime_parts) else "";
+				(if (i == 0 && module.isMain) cpp3MainFunc(gctx) else "");
 			}
 		);
 	}
 }
 
-cpp3MainFunc(gctx: Cpp3GlobalContext, init_strings: [string], runtime_parts: [Cpp3RuntimePart]) -> string {
-	init = strGlue(init_strings, "\n");
-	non_scalar_vars = filtermap(getTreeValues(gctx.program.names.toplevel), \decl ->
-		switch (decl) {
-			FiGlobalVar(__,__,type,__,__): if (fiTypeIsScalar(type)) None() else Some(decl);
-			default: None();
-		}
-	);
-	show_vars = \header -> superglue(non_scalar_vars, \var ->
-		"std::cout << \"" + header + " " + var.name + "->rc_ = \" << " + fi2cpp3varname2cpp(var.name) + "->rc_ << std::endl;",
-		"\n"
-	);
-	inc_vars = superglue(non_scalar_vars, \var -> "incRc(" + fi2cpp3varname2cpp(var.name) + ");", "\n");
-	mainInits = superglue(runtime_parts, \part -> part.mainInit, "\n");
-	mainTerms = superglue(runtime_parts, \part -> part.mainTerm, "\n");
-	dec_vars = superglue(non_scalar_vars, \var -> "decRc(" + fi2cpp3varname2cpp(var.name) + ");", "\n");
-	sources = superglue(filter(runtime_parts, \part -> part.staysInMain), \part -> part.source, "\n");
+cpp3MainFunc(gctx: Cpp3GlobalContext) -> string {
+	fiMakeUsingStatement("flow") +
+	fiMakeUsingStatement("std::string_literals") +
+	"\n" +
+	"int main(int argc, const char* argv[]) {\n" +
+		"\tCommandArgs::init(argc, argv);\n" +
+		"\tinit_all_modules();\n" +
+		"\t" + fi2cpp3varname2cpp("main") + "();\n" +
+		"\tterm_all_modules();\n" +
+		"\treturn 0;\n" +
+	"}\n\n";
+}
 
-	struct_defs = cpp3StructDefs(gctx);
-	cleanup = "void flow::cleanupAtExit() {" + ("\t" + if (dec_vars == "") " " else "\n" + strIndent(dec_vars) + "\n") + "}\n\n";
-
-fiMakeUsingStatement("flow") +
-fiMakeUsingStatement("std::string_literals") +
-"\n" +
-(if (sources == "") "" else sources + "\n") +
-struct_defs +
-cleanup +
-"int main(int argc, const char* argv[]) {\n" +
-"\tRTTI::initStructMap();\n" +
-"\tMemoryPool::init();\n" +
-"\tThreadPool::init(std::thread::hardware_concurrency());\n" +
-(if (mainInits == "") "" else strIndent(mainInits) + "\n") +
-(if (init == "") "" else strIndent(init) + "\n") +
-"\t" + fi2cpp3varname2cpp("main") + "();\n" +
-(if (mainTerms == "") "" else strIndent(mainTerms) + "\n") +
-"\tcleanupAtExit();\n" +
-"\tThreadPool::release();\n" +
-"\tMemoryPool::release();\n" +
-"\treturn 0;\n}\n";
+fiInitTermModule2cpp3Source(compiled: [Cpp3CompiledModule], runtime_parts: [Cpp3RuntimePart], gctx: Cpp3GlobalContext) -> string {
+	has_init_term = filter(compiled, \m -> m.hasInit || m.hasTerm);
+	runtime_sources = superglue(filter(runtime_parts, \part -> part.staysInMain), \part -> part.source, "\n");
+	superglue(has_init_term, \m -> "#inc" + "lude \"" + m.name + ".hpp\"", "\n") + "\n" +
+	"// Initialization/terminalization module\n\n" +
+	"namespace flow {\n" +
+	"void init_all_modules(){\n" +
+		"\tMemoryPool::init();\n" +
+		"\tThreadPool::init(std::thread::hardware_concurrency());\n" +
+		superglue(filter(has_init_term, \m -> m.hasInit), \m -> "\tinit_" + m.name + "();", "\n") +
+		superglue(runtime_parts, \part -> "\t" + part.mainInit, "\n") +
+	"\n}\n\n" +
+	"void term_all_modules(){\n" +
+		superglue(filter(has_init_term, \m -> m.hasTerm), \m -> "\tterm_" + m.name + "();", "\n") +
+		superglue(runtime_parts, \part -> "\t" + part.mainTerm, "\n") +
+		"\tThreadPool::release();\n" +
+		"\tMemoryPool::release();\n" +
+	"\n}\n\n" +
+	(if (runtime_sources != "") runtime_sources + "\n\n" else "") + "\n" +
+	"}\n\n";
 }

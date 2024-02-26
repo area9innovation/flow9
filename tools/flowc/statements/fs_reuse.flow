@@ -41,13 +41,15 @@ fsReuseMarkup(s: FsStat) -> Pair<FsStat, int> {
 		FsSwitch(__,__,__,__,__): FsSwitch(x with id = new_id());
 		FsWrapExp(__,__,__):      FsWrapExp(x with id = new_id());
 		FsRet(__,__,__):          FsRet(x with id = new_id());
-		FsAssign(__,__,__,__):    FsAssign(x with id = new_id());
+		FsAssign(__,__,__,__,__): FsAssign(x with id = new_id());
 		FsLet(__,__,__,__,__):    FsLet(x with id = new_id());
+		FsFor(__,__,__,__,__,__): FsFor(x with id = new_id());
 		FsDecRc(__,__,__,__):     FsDecRc(x with id = new_id());
 		FsIncRc(__,__,__,__):     FsIncRc(x with id = new_id());
-		FsTailCall(__,__):        FsTailCall(x with id = new_id());
+		FsTailCall(__,__,__):     FsTailCall(x with id = new_id());
+		FsIntrinsicStat(__,__,__): FsIntrinsicStat(x with id = new_id());
 		FsCall(__,__,__,__):      FsCall(x with id = new_id());
-		FsInline(__,__,__,__,__): FsInline(x with id = new_id());
+		FsInlineExp(__,__,__,__): FsInlineExp(x with id = new_id());
 		FsCallPrim(__,__,__,__):  FsCallPrim(x with id = new_id());
 		FsClosure(__,__,__,__):   FsClosure(x with id = new_id());
 		FsLambda(__,__,__,__,__): FsLambda(x with id = new_id());
@@ -79,13 +81,17 @@ fsFindReuseVariants1(s: FsStat, acc: [FsReuseVariant], debug: bool) -> [FsReuseV
 			acc1 = fsFindReuseVariants1(s1, acc, debug);
 			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc1, debug), acc1);
 		}
+		FsFor(__,__, s1,__,__, nx): {
+			// We can't reuse a value in cycle body!
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
+		}
 		FsWrapExp(__,__, nx): {
 			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
 		}
 		FsRet(__,__, nx): {
 			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
 		}
-		FsAssign(__,__,__, nx): {
+		FsAssign(__,__,__,__, nx): {
 			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
 		}
 		FsIncRc(__,__,__, nx): {
@@ -116,7 +122,10 @@ fsFindReuseVariants1(s: FsStat, acc: [FsReuseVariant], debug: bool) -> [FsReuseV
 				acc
 			);
 		}
-		FsTailCall(__, nx): {
+		FsTailCall(__,__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
+		}
+		FsIntrinsicStat(__,__, nx): {
 			eitherMap(nx, \n-> fsFindReuseVariants1(n, acc, debug), acc);
 		}
 	}
@@ -208,6 +217,17 @@ fsFindReuseVariants3(path: List<FsStat>, d: FsDecRc, s: FsStat, acc: [Pair<List<
 				}
 			}
 		}
+		FsFor(__, e, s1,__,__, nx): {
+			switch (fsFindReuseExp(e, d, debug)) {
+				Some(x): {
+					arrayPush(acc, Pair(p, x));
+				}
+				None(): {
+					// We can't reuse a value in cycle!
+					eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
+				}
+			}
+		}
 		FsWrapExp(e,__, nx): {
 			switch (fsFindReuseExp(e, d, debug)) {
 				Some(x): {
@@ -228,7 +248,7 @@ fsFindReuseVariants3(path: List<FsStat>, d: FsDecRc, s: FsStat, acc: [Pair<List<
 				}
 			}
 		}
-		FsAssign(to, what,__, nx): {
+		FsAssign(to, what,__,__, nx): {
 			switch (fsFindReuseExp(to, d, debug)) {
 				Some(x): {
 					arrayPush(acc, Pair(p, x));
@@ -251,7 +271,10 @@ fsFindReuseVariants3(path: List<FsStat>, d: FsDecRc, s: FsStat, acc: [Pair<List<
 		FsDecRc(__,__,__, nx): {
 			eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
 		}
-		FsTailCall(__, nx): {
+		FsTailCall(__,__, nx): {
+			eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
+		}
+		FsIntrinsicStat(__,__,nx): {
 			eitherMap(nx, \n-> fsFindReuseVariants3(p, d, n, acc, debug), acc);
 		}
 	}
@@ -272,7 +295,7 @@ fsFindReuseExp(e: FsExp, d: FsDecRc, debug: bool) -> Maybe<FsAll> {
 				}
 			}
 		}
-		FsInline(__,__,args,__,__): {
+		FsInlineExp(__,args,__,__): {
 			fold(args, None(), \acc, arg ->
 				if (isSome(acc)) acc else fsFindReuseExp(arg, d, debug)
 			);
@@ -374,6 +397,13 @@ fsReuseApplyCasesToStat(s: FsStat, updates: Tree<int, FsReuseKind>, debug: bool)
 				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
 			);
 		}
+		FsFor(__, e, x1,__,__, nx): {
+			FsFor(s with
+				e = do_exp(e),
+				s = do_stat(x1),
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
 		FsWrapExp(e,__, nx): {
 			FsWrapExp(s with
 				e = do_exp(e),
@@ -386,7 +416,7 @@ fsReuseApplyCasesToStat(s: FsStat, updates: Tree<int, FsReuseKind>, debug: bool)
 				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
 			);
 		}
-		FsAssign(to, what,__, nx): {
+		FsAssign(to, what,__,__, nx): {
 			FsAssign(s with
 				to = do_exp(to),
 				what = do_exp(what),
@@ -403,8 +433,13 @@ fsReuseApplyCasesToStat(s: FsStat, updates: Tree<int, FsReuseKind>, debug: bool)
 				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
 			);
 		}
-		FsTailCall(__, nx): {
+		FsTailCall(__,__, nx): {
 			FsTailCall(s with
+				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
+			);
+		}
+		FsIntrinsicStat(__,__, nx): {
+			FsIntrinsicStat(s with
 				next = maybeMap(nx, \n -> fsReuseApplyCasesToStat(n, updates, debug))
 			);
 		}

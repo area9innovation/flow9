@@ -10,12 +10,12 @@ fsExpandMem(s: FsStat, id2mem: [FsMem]) -> FsStat {
 		FsIf(cond, pos, neg, id,__):  {
 			if (id == -1) x else 
 			fsAppendBefore(
-				fsExpandUnused(id2mem[id]),
+				fsExpandDecs(id2mem[id], FsDecPre()),
 				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
 					FsIf(x with
-						s1 = fsAppendBefore(fsExpandDecs(id2mem[id]), pos),
-						s2 = fsAppendBefore(fsExpandDecs(id2mem[id]), neg)
+						s1 = fsAppendBefore(fsExpandDecs(id2mem[id], FsDecPost()), pos),
+						s2 = fsAppendBefore(fsExpandDecs(id2mem[id], FsDecPost()), neg)
 					)
 				)
 			);
@@ -23,13 +23,13 @@ fsExpandMem(s: FsStat, id2mem: [FsMem]) -> FsStat {
 		FsSwitch(v, __, cs, id,__): {
 			if (id == -1) x else 
 			fsAppendBefore(
-				fsExpandUnused(id2mem[id]),
+				fsExpandDecs(id2mem[id], FsDecPre()),
 				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
 					FsSwitch(x with
 						cases = map(cs, \c -> 
 							FsCase(c with
-								body = fsAppendBefore(fsExpandDecs(id2mem[id]), c.body)
+								body = fsAppendBefore(fsExpandDecs(id2mem[id], FsDecPost()), c.body)
 							)
 						)
 					)
@@ -39,42 +39,62 @@ fsExpandMem(s: FsStat, id2mem: [FsMem]) -> FsStat {
 		FsRet(e, id,__): {
 			if (id == -1) x else 
 			fsAppendBefore(
-				fsExpandUnused(id2mem[id]),
+				fsExpandDecs(id2mem[id], FsDecPre()),
 				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
-					fsAppendReturn(x, fsExpandDecs(id2mem[id]))
+					fsAppendReturn(x, fsExpandDecs(id2mem[id], FsDecPost()))
 				)
 			);
 		}
 		FsWrapExp(e, id,__): {
 			if (id == -1) x else 
 			fsAppendBefore(
-				fsExpandUnused(id2mem[id]),
+				fsExpandDecs(id2mem[id], FsDecPre()),
 				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
-					fsAppendAfter(x, fsExpandDecs(id2mem[id]))
+					fsAppendAfter(x, fsExpandDecs(id2mem[id], FsDecPost()))
 				)
 			);
 		}
 		FsLet(__,e, s1, id,__): {
-			if (id == -1) x else 
+			if (id == -1) x else
 			fsAppendBefore(
-				fsExpandUnused(id2mem[id]),
+				fsExpandDecs(id2mem[id], FsDecPre()),
 				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
 					FsLet(x with
-						s = fsAppendBefore(fsExpandDecs(id2mem[id]), s1)
+						s = fsAppendBefore(fsExpandDecs(id2mem[id], FsDecPost()), s1)
 					)
 				)
 			);
 		}
-		FsAssign(to, what, id,__): {
-			if (id == -1) x else 
+		FsFor(__,e, s1,__, id,__): {
+			if (id == -1) x else
 			fsAppendBefore(
-				fsExpandUnused(id2mem[id]),
+				fsExpandDecs(id2mem[id], FsDecPre()),
 				fsAppendBefore(
 					fsExpandIncs(id2mem[id]),
-					fsAppendAfter(x, fsExpandDecs(id2mem[id]))
+					fsAppendAfter(x, fsExpandDecs(id2mem[id], FsDecPost()))
+				)
+			);
+		}
+		FsAssign(to, what,__, id,__): {
+			if (id == -1) x else 
+			fsAppendBefore(
+				fsExpandDecs(id2mem[id], FsDecPre()),
+				fsAppendBefore(
+					fsExpandIncs(id2mem[id]),
+					fsAppendAfter(x, fsExpandDecs(id2mem[id], FsDecPost()))
+				)
+			);
+		}
+		FsTailCall(__,id,__): {
+			if (id == -1) x else
+			fsAppendBefore(
+				fsExpandDecs(id2mem[id], FsDecPre()),
+				fsAppendBefore(
+					fsExpandIncs(id2mem[id]),
+					fsAppendBefore(fsExpandDecs(id2mem[id], FsDecPost()), x)
 				)
 			);
 		}
@@ -83,20 +103,17 @@ fsExpandMem(s: FsStat, id2mem: [FsMem]) -> FsStat {
 }
 
 fsExpandIncs(m: FsMem) -> Maybe<FsStat> {
-	fold(tree2pairs(m.incs), None(), \acc, p ->
-		Some(FsIncRc(p.first, p.second, -1, acc))
+	foldTree(m.ops, None(), \v, ops, acc ->
+		if (ops.inc == 0) acc else Some(FsIncRc(v, ops.inc, -1, acc))
 	);
 }
 
-fsExpandDecs(m: FsMem) -> Maybe<FsStat> {
-	fold(set2array(m.decs), None(), \acc, v ->
-		Some(FsDecRc(v, FsDecDirect(), -1, acc))
-	);
-}
-
-fsExpandUnused(m: FsMem) -> Maybe<FsStat> {
-	fold(tree2pairs(m.unused), None(), \acc, p ->
-		Some(FsDecRc(p.first, p.second, -1, acc))
+fsExpandDecs(m: FsMem, ord: FsDecOrd) -> Maybe<FsStat> {
+	foldTree(m.ops, None(), \v, ops, acc -> 
+		switch (ops.dec) {
+			Some(o): if (o != ord) acc else Some(FsDecRc(v, FsDecDirect(), -1, acc));
+			None(): acc;
+		}
 	);
 }
 
