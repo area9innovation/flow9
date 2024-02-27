@@ -59,6 +59,7 @@ class RenderSupport {
 	// Don't wait for fonts to load
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
+	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -3253,8 +3254,15 @@ class RenderSupport {
 			}
 
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
-			var clipWidth = untyped clip.getWidth();
-			var clipHeight = untyped clip.getHeight();
+			var clipWidth = 0;
+			var clipHeight = 0;
+			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip)) {
+				clipWidth = untyped clip.getClipWidth(false);
+				clipHeight = untyped clip.getClipHeight(false);
+			} else {
+				clipWidth = untyped clip.getWidth();
+				clipHeight = untyped clip.getHeight();
+			}
 			if (checkAlpha != null && untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
 				try {
 					var tempCanvas = Browser.document.createElement('canvas');
