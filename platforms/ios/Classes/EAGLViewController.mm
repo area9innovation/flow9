@@ -83,13 +83,11 @@
         return;
     }
     
-    if (UIDeviceOrientationIsPortrait(UIDevice.currentDevice.orientation) and statusBarVisible) {
-        [[UIApplication sharedApplication].keyWindow addSubview: statusBar];
-    } else {
-        [statusBar removeFromSuperview];
+    if (@available(iOS 13.0, *)) {
+        CGRect frame = [UIApplication sharedApplication].keyWindow.windowScene.statusBarManager.statusBarFrame;
+        [statusBar setFrame: frame];
     }
 }
-
 
 - (void) keyboardDidShow: (NSNotification*) aNotification {
     if (!RenderSupport)
