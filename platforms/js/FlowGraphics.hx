@@ -434,6 +434,8 @@ class FlowGraphics extends Graphics {
 				svg.style.position = 'absolute';
 				svg.style.left = "0";
 				svg.style.top = "0";
+				svg.style.width = '${Math.ceil(graphicsBounds.maxX)}';
+				svg.style.height = '${Math.ceil(graphicsBounds.maxY)}';
 
 				if (graphicsData.length == 1) {
 					for (child in svg.childNodes) {
