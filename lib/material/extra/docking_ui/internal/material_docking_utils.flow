@@ -33,9 +33,11 @@ export {
 	makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool) -> Material;
 	makeMDockingResizeHandleMobile(state : MDockingState, resizePressed : DynamicBehaviour<bool>, style : [MDockingStyle]) -> Material;
 	makeMDockingLinedHandle(isColumn : bool, docked : bool, state : MDockingState, color : MColor, panelId : int, colA : [int], enableHover : bool, dontShow : bool, light : bool) -> Material;
-	makeMDockingDottedHandle(state : MDockingState, color : MColor) -> Material;
+	makeMDockingDottedHandle(state : MDockingState, color : MColor, isActive : bool) -> Material;
 	makeSideExpanderBtn(isColumn : bool, state : MDockingState,  areaId : int, colA : [int], light : bool, isEdge : bool, style : [MDockingStyle]) -> Material;
 	makeMDIconToggleButton(boolB : DynamicBehaviour<bool>, iconOn : string, iconOff : string, tooltipOn : string, tooltipOff : string, iconSize: double, clickFn : () -> void, iconColor : MColor, fillOp : double) -> Material;
+	makeDraggableToolbar(state : MDockingState, panelId : int) -> (Material) -> Material;
+	activeHoverLayer(state : MDockingState,) -> Material;
 
 	// Utils
 	showIf(cond : bool) -> (Material) -> Material;
@@ -255,11 +257,46 @@ makeMDIconToggleButton(
 	iconColor : MColor, 
 	fillOp : double
 ) -> Material {
-		addTooltip = \label : string, m : Material -> MTooltip(m , MText(label, [MTooltipDesktop()]), []);
-		MSelect(boolB,\b -> if (b) MIconButton(iconOn, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fillOp), MIconButtonBorder(1.0)], []) |> (\m -> addTooltip(tooltipOn, m))
-			else MIconButton(iconOff, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fillOp), MIconButtonBorder(1.0)], []) |> (\m -> addTooltip(tooltipOff, m))
-		) |> MCenterY
+	addTooltip = \label : string, m : Material -> MTooltip(m , MText(label, [MTooltipDesktop()]), []);
+	MSelect(boolB,\b -> if (b) MIconButton(iconOn, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fillOp), MIconButtonBorder(1.0)], []) |> (\m -> addTooltip(tooltipOn, m))
+		else MIconButton(iconOff, clickFn, [MIconSize(iconSize), iconColor, FillOpacity(fillOp), MIconButtonBorder(1.0)], []) |> (\m -> addTooltip(tooltipOff, m))
+	) |> MCenterY
+}
+
+makeDraggableToolbar(state : MDockingState, panelId : int) -> (Material) -> Material {
+	pstyle = getValue(state.panelStyle)[panelId];
+	dontMove = contains(pstyle, MDPanelDontMove());
+	dRadius = getDockingRadius(state.style);
+
+	isToolbar = isDockingToolbar(state, panelId);
+	isVerticalToolbarMobile = !contains(pstyle, MDToolbarVerticalWhenMobile());
+	topBarH = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel;
+	hideTopbar = contains(pstyle, MDPanelHideTopbar());
+	containsDockingBarHeightPanel = if (hideTopbar) 0.0 else topBarH;
+
+	\m : Material -> {
+		if (dontMove) m else {
+			MSelect(state.mobileSize, \ms -> {
+				draggingShape = 
+					TRounded(dRadius, dRadius, dRadius, dRadius, [MFill(dockingPrimaryColor), FillOpacity(dockingMobileOpacity)],
+						TFixed(
+							ms[panelId].width, 
+							if (getValue(getValue(state.expanded)[panelId])) {
+									ms[panelId].height + if (isToolbar) containsDockingBarHeightPanel else 0.0
+								} else dockingBarHeightPanel
+						)
+					);
+				dsRotated = draggingShape |> (\ds -> if (isToolbar && isVerticalToolbarMobile) TRotate90(ds) else ds);	
+				positionCorrection = if (isToolbar) zeroPoint else Point(-(ms[panelId].width / 2.0) + dockingTopBarHandleWidth, 0.0);
+				// Draggable handle
+				MDraggable(panelId, m, [
+					TDragShape(TTranslate(const(positionCorrection), dsRotated)),
+					TCursorShape(GrabCursor())
+				])
+			})
+		}
 	}
+}
 
 makeSeparatorBar(isColumn : bool, isToolbar : bool, state : MDockingState, panelId : int, light : bool) -> Material {
 	dockingSeparatorSize = getDSeparatorSize(isColumn, state.style);
@@ -469,32 +506,39 @@ makeMDockingResizeHandleMobile(state : MDockingState, resizePressed : DynamicBeh
 	|> (\m -> MGetFocusGroup(\p -> if (p.rtl) MAlignStart(m) /*m*/ else MAlignEndFill(m)))
 };
 
-makeMDockingDottedHandle(state : MDockingState, color : MColor) -> Material {
-	dot = TRounded(1.0, 1.0, 1.0, 1.0, [MFill(color)], TFixed(1.0, 1.0));
+makeMDockingDottedHandle(state : MDockingState, color : MColor, isActive : bool) -> Material {
+	dot = TRounded(1.0, 1.0, 1.0, 1.0, [MFill(color), FillOpacity(if (isActive) 1.0 else 0.15)], TFixed(2.0, 2.0));
 	gapW = TFixed(2.0, 0.0);
 	gapH = TFixed(0.0, 2.0);
 	helperSize = TFixed(24.0, dockingBarHeightPanel );
-	addTooltip = \label : string, m : Material -> MTooltip(m , MText(label, [MTooltipDesktop()]), [MTooltipAlignment(MTryTopFirst())]);
-	MCursor(
-		GrabCursor(),
-		MGroup2(
-			TRectangle([MFill(mobileResizeHelperColor), FillOpacity(mobileResizeHelperOpacity)], helperSize),
-			MAvailable(
-				MLinesA([
-					MColsA([dot, gapW, dot]),
-					gapH,
-					MColsA([dot, gapW, dot]),
-					gapH,
-					MColsA([dot, gapW, dot]),
-				]) 
-				|> MBorderStart(6.0)
-				|> MCenterY,
-				helperSize
-			)
+	MGroup2(
+		TRectangle([MFill(mobileResizeHelperColor), FillOpacity(mobileResizeHelperOpacity)], helperSize),
+		MAvailable(
+			MLinesA([
+				MColsA([dot, gapW, dot]),
+				gapH,
+				MColsA([dot, gapW, dot]),
+				gapH,
+				MColsA([dot, gapW, dot]),
+			]) 
+			|> MBorderStart(10.0)
+			|> MCenterY,
+			helperSize
 		)
-		|> (\m -> addTooltip(_("Drag to Undock"), m))
 	)
 };
+
+				
+activeHoverLayer(state : MDockingState,) -> Material {
+	dRadius = getDockingRadius(state.style);
+	MBorder4(1.0, 
+		TRounded(dRadius, dRadius, dRadius, dRadius, [
+				MFill(dockingPrimaryColor), FillOpacity(dockingMobileOpacity / 2.0), 
+				StrokeWidth(2.0), MStroke(dockingActiveColor)
+			], TFillXY()
+		)
+	)
+} 
 
 alignEndPanels(state : MDockingState, colA : [int]) -> Pair<[int], [int]> {
 	fold(colA, Pair([],[]), \acc, pId -> {
