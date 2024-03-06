@@ -172,7 +172,7 @@ makeDockedPanelA(
 	zorder = getValue(manager.manager.zorder);
 	groupA = state.group;
 	contentA = getValue(state.content);
-	dockingRadius = getDockingRadius(state.style);
+	dRadius = getDockingRadius(state.style);
 
 	startA = colAlignedA.first;
 	endA = colAlignedA.second;
@@ -300,7 +300,7 @@ makeDockedPanelA(
 
 				MConstruct([
 						// Fill correction
-						// makeFillPanelSubscriber(isColumn, rowId, panelId, state, maxAreaSizeB, panelHB, colA_, style),   // CHECK SIZES
+						// makeFillPanelSubscriber(isColumn, rowId, panelId, state, maxAreaSizeB, panelHB, colA_, areaStyle),   // CHECK SIZES
 					],
 					makeDockedPanel(isColumn, colAEnabled, state, areaId, colId, panelId) // CHECK: colAEnabled instead of colA
 				)
@@ -314,7 +314,7 @@ makeDockedPanelA(
 		})
 	}
 
-
+	// Calculate size of docked panels
 	MConstruct(
 		[
 			makeSubscribe(expandedColT , \exA -> {
@@ -352,14 +352,8 @@ makeDockedPanelA(
 			})
 		],
 		MFrame(0.0, 0.0, [MFill(editorBgColorFn(areaTheme, state.style))],
-			MGroup2(
-				if (isColumn) {
-					TFillY() |> (\f -> MAttachHeight(f, maxAreaSizeB))  // Get max column height
-				} else {
-					TFillX() |> (\f -> MAttachWidth(f, maxAreaSizeB))  // Get max row width
-				},
-				// Docked panels
-				if (!containsToolbar) makeDockedResizablePanels(colA, 0, false) else {
+			// Docked panels
+			if (!containsToolbar) makeDockedResizablePanels(colA, 0, false) else {
 					if (containsToolbarFillSize) makeDockedResizablePanels(colA, 0, false) else {
 						[
 							makeDockedResizablePanels(startA, 0, false),
@@ -368,8 +362,18 @@ makeDockedPanelA(
 						]|> (\f -> if (isColumn) MLinesA(f) else MColsA(f))
 					}
 				}
-				|> (\f -> MFrame(0.0, if (isColumn) dockingRadius else 0.0, [MFill(panelBgColorFn(areaTheme, state.style))], f))
-			)
+			|> (\f -> MFrame(0.0, if (isColumn) dRadius else 0.0, [MFill(panelBgColorFn(areaTheme, state.style))], f))
+			// Uncomment when fill correction will be used
+			// |> (\f ->
+			// 	MGroup2(
+			// 		if (isColumn) {
+			// 			TFillY() |> (\f -> MAttachHeight(f, maxAreaSizeB))  // Get max column height
+			// 		} else {
+			// 			TFillX() |> (\f -> MAttachWidth(f, maxAreaSizeB))  // Get max row width
+			// 		},
+			// 		f
+			// 	)
+			// )
 		)
 	) |> (\f -> {
 		// Wrapper with drop area and resize handle for a col
@@ -403,6 +407,7 @@ resizePanelH(
 	panelDockedSize = getValue(state.dockedSize)[panelId];
 	pWidth = panelDockedSize.width;
 	pHeight = panelDockedSize.height;
+	dRadius = getDockingRadius(state.style);
 
 	// Container size
 	tempWH = make(WidthHeight(pWidth, pHeight));
@@ -425,6 +430,9 @@ resizePanelH(
 	isToolbar = isDockingToolbar(state, panelId);
 	isToolbarFillSize = isToolbar && isPanelFullSize(state, panelId);
 
+	// Accordion menu
+	isAccordion = isSome(tryExtractStruct(areaStyle, MDAreaAccordion(make(true), None())));
+
 	containsToolbarButtons = containsDockingToolbarButtons(state, colA);
 	dontMove  = contains(pstyle, MDPanelDontMove());
 	hideTopbar = contains(pstyle, MDPanelHideTopbar());
@@ -432,6 +440,7 @@ resizePanelH(
 	topBarCorrection = if (isColumn) topBarH else {
 		if (isToolbar) dockingBarHeightToolbar else 0.0;
 	}
+	topBarSize = makeHSize(topBarH, isColumn || !isToolbar);
 
 	dontResizeAll = fold(colA, true, \acc, p -> acc || contains(getValue(state.panelStyle)[p], MDPanelDontResize()));
 	dontResize = isLastPanel;
@@ -515,7 +524,13 @@ resizePanelH(
 			if (isLastPanel) TEmpty() else makeSeparatorBar(!isColumn, isToolbar, state, panelId, areaTheme)    // bottom/dx
 		] |> (\r -> if (isColumn) MLines(r) else MCols(r));
 
-	addDragAndDropHelperGroup = \ f : Material ->  MGroup2(f, rowsWithHandles);
+	addDragAndDropHelperGroup = \f : Material ->  MGroup2(f, rowsWithHandles);
+
+	addLastPanelClosure =\ex :bool ->  \f ->  {
+		if (isLastPanel && !ex && !isAccordion) {
+			TRounded(0.0, 0.0, dRadius, dRadius, [MFill(topBarColorFn(areaTheme, pstyle))], TFillXY()) |> (\lpc -> MLines2(f, lpc))
+		} else f
+	}
 
 	MConstruct([
 		makeSubscribe2(isResizing, \rs -> { 
@@ -544,15 +559,27 @@ resizePanelH(
 	MInteractive([
 		TMouseXY(mouseXyLocal)
 		],
-		box |> (\m -> if (isToolbarFillSize) MCropSize(TFillXY(), m) else { 
-			MAvailable(	
-				m,
-				TSelect(sizeB, \s -> makeHSize(s, isColumn)) 
-				|> (\f -> if (!isToolbar && isLastPanel) TGroup2(TFillXY(), f) else f)
-			)
-		})
+		MSelect(expanded, \ex -> {
+			box |> (\m -> if (isToolbarFillSize) MCropSize(TFillXY(), m) else { 
+				MAvailable(	
+					m,
+					TSelect(sizeB, \s -> makeHSize(s, isColumn))
+					// Last panel/accordion filler
+					|> (\f -> 
+						if (isAccordion) {
+							if (ex || length(colA) == 1) TGroup2(TFillXY(), f) else f
+						} else {
+							if (!isToolbar && isLastPanel) {
+								if (ex || length(colA) == 1) TGroup2(TFillXY(), f) else topBarSize
+							} else f
+						}
+					)
+				) 
+			})
 		// Keep separator and topbar sizes out of MAvailable
 		|> addRowSeparators
+		|> addLastPanelClosure(ex)
+		})
 		|> (\t -> 
 			MCopySize(t, \sz -> 	
 				MAvailable(
@@ -738,7 +765,7 @@ resizeAreaW(
 				next(isResizing, true);
 				// Resize should not go over the content size
 				next(contentWidth, getValue(state.stageWH).width);
-				next(contentHeight, getValue(state.stageWH).height);				
+				next(contentHeight, getValue(state.stageWH).height);
 			} else {
 				if (getValue(isResizing)) next(isResizing, false);
 			}
