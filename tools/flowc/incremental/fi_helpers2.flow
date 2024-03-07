@@ -1,5 +1,6 @@
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/incremental/fi_type_unify;
+import tools/flowc/manipulation/common;
 
 export {
 	// Use type parameters of type name in struct s (substitute into arguments)
@@ -43,6 +44,15 @@ export {
 
 	// Check if a struct belongs to switch case, recursively examining all union-cases.
 	fiStructMatchesSwitchCase(struct: string, case: string, unions: Tree<string, FiTypeUnion>) -> bool;
+
+	// In case `e` may be obtained from `pattern` by substitution of vars to some expressions, this substituion is returned.
+	fiMatchExps(pattern: FiExp, e: FiExp, acc: Tree<string, FiExp>) -> Maybe<Tree<string, FiExp>>;
+
+	// Simple expression complexity measure
+	fiCountAstNodes(e: FiExp) -> int;
+
+	// Equality up to AST structure. Such fields as `start` or `type` may differ.
+	fiEqualExps(e1: FiExp, e2: FiExp) -> bool;
 }
 
 fiSpecializeStruct(tn: FiTypeName, s: FiTypeStruct) -> FiTypeStruct {
@@ -243,5 +253,276 @@ fiStructMatchesSwitchCase(struct: string, case: string, unions: Tree<string, FiT
 			exists(union.typenames, \tn -> fiStructMatchesSwitchCase(struct, tn.name, unions));
 		}
 		None(): false;
+	}
+}
+
+fiMatchExps(pattern: FiExp, e: FiExp, acc: Tree<string, FiExp>) -> Maybe<Tree<string, FiExp>> {
+	match_es = \p_es, e_es -> if (length(p_es) != length(e_es)) None() else {
+		foldi(p_es, Some(acc), \i, ac, p_e -> maybeBind(ac, \s -> fiMatchExps(p_e, e_es[i], s)));
+	}
+	switch (pattern) {
+		FiLambda(p_args, p_body,__, __): {
+			switch (e) {
+				FiLambda(e_args, e_body,__,__):
+					if (p_args != e_args) None() else fiMatchExps(p_body, e_body, acc);
+				default: None();
+			}
+		}
+		FiCall(p_f,p_args,__,__): {
+			switch (e) {
+				FiCall(e_f,e_args,__,__): 
+					match_es(
+						arrayPush(p_args, p_f),
+						arrayPush(e_args, e_f)
+					);
+				default: None();
+			}
+		}
+		FiLet(p_v,__,p_e1, p_e2,__,__): {
+			switch (e) {
+				FiLet(e_v,__,e_e1, e_e2,__,__):
+					if (p_v != e_v) None() else {
+						match_es(
+							[p_e1, p_e2],
+							[e_e1, e_e2]
+						);
+					}
+				default: None();
+			}
+		}
+		FiIf(p_e1, p_e2, p_e3,__, __): {
+			switch (e) {
+				FiIf(e_e1, e_e2, e_e3,__, __):
+					match_es(
+						[p_e1, p_e2, p_e3],
+						[e_e1, e_e2, e_e3]
+					);
+				default: None();
+			}
+		}
+		FiSwitch(p_v,__,p_cs,__,__): {
+			switch (e) {
+				FiSwitch(e_v,__,e_cs,__,__):
+					match_es(
+						arrayPush(map(p_cs, \c -> c.body), p_v),
+						arrayPush(map(e_cs, \c -> c.body), e_v)
+					);
+				default: None();
+			}
+		}
+		FiCast(p_e, p_from, p_to,__,__): {
+			switch (e) {
+				FiCast(e_e, e_from, e_to,__,__):
+					if (!(fiEqualTypes(p_from, e_from) && fiEqualTypes(p_to, e_to))) None() else
+					fiMatchExps(p_e, e_e, acc);
+				default: None();
+			}
+		}
+		FiSeq(p_es,__,__): {
+			switch (e) {
+				FiSeq(e_es,__,__):
+					match_es(p_es, e_es);
+				default: None();
+			}
+		}
+		FiCallPrim(p_op, p_es,__,__): {
+			switch (e) {
+				FiCallPrim(e_op, e_es,__,__):
+					if (p_op != e_op) None() else match_es(p_es, e_es);
+				default: None();
+			}
+		}
+		FiRequire(p_file, p_e,__,__): {
+			switch (e) {
+				FiRequire(e_file, e_e,__,__):
+					if (p_file != e_file) None() else fiMatchExps(p_e, e_e, acc);
+				default: None();
+			}
+		}
+		FiUnsafe(p_name, p_e,__,__): {
+			switch (e) {
+				FiUnsafe(e_name, e_e,__,__):
+					if (p_name != e_name) None() else fiMatchExps(p_e, e_e, acc);
+				default: None();
+			}
+		}
+		FiVoid(__): {
+			switch (e) {
+				FiVoid(__): Some(acc);
+				default: None();
+			}
+		}
+		FiDouble(p_v,__): {
+			switch (e) {
+				FiDouble(e_v,__): if (p_v == e_v) Some(acc) else None();
+				default: None();
+			}
+		}
+		FiInt(p_v,__): {
+			switch (e) {
+				FiInt(e_v,__): if (p_v == e_v) Some(acc) else None();
+				default: None();
+			}
+		}
+		FiString(p_v,__): {
+			switch (e) {
+				FiString(e_v,__): if (p_v == e_v) Some(acc) else None();
+				default: None();
+			}
+		}
+		FiBool(p_v,__): {
+			switch (e) {
+				FiBool(e_v,__): if (p_v == e_v) Some(acc) else None();
+				default: None();
+			}
+		}
+		FiVar(v,__,__): {
+			Some(setTree(acc, v, e));
+		}
+	}
+}
+
+fiCountAstNodes(e: FiExp) -> int {
+	fiFoldExp(e, 0, \x,__,acc -> switch (x) {
+		FiVar(__,__,__): acc;
+		default: acc + 1;
+	}, AstTraverseOrder(true, true));
+}
+
+fiEqualExps(p: FiExp, e: FiExp) -> bool {
+	eq_es = \p_es, e_es -> (length(p_es) == length(e_es)) && forall(
+		zipWith(p_es, e_es, \x, y -> Pair(x, y)),
+		\q -> fiEqualExps(q.first, q.second)
+	);
+	do_job = \-> switch (p) {
+		FiLambda(p_args, p_body,__, __): {
+			switch (e) {
+				FiLambda(e_args, e_body,__,__):
+					(length(p_args) == length(e_args)) && fiEqualExps(p_body, e_body);
+				default: false;
+			}
+		}
+		FiCall(p_f,p_args,__,__): {
+			switch (e) {
+				FiCall(e_f,e_args,__,__): 
+					eq_es(
+						arrayPush(p_args, p_f),
+						arrayPush(e_args, e_f)
+					);
+				default: false;
+			}
+		}
+		FiLet(p_v,__,p_e1, p_e2,__,__): {
+			switch (e) {
+				FiLet(e_v,__,e_e1, e_e2,__,__):
+					(p_v == e_v) && eq_es(
+						[p_e1, p_e2],
+						[e_e1, e_e2]
+					);
+				default: false;
+			}
+		}
+		FiIf(p_e1, p_e2, p_e3,__, __): {
+			switch (e) {
+				FiIf(e_e1, e_e2, e_e3,__, __):
+					eq_es(
+						[p_e1, p_e2, p_e3],
+						[e_e1, e_e2, e_e3]
+					);
+				default: false;
+			}
+		}
+		FiSwitch(p_v,__,p_cs,__,__): {
+			switch (e) {
+				FiSwitch(e_v,__,e_cs,__,__):
+					eq_es(
+						arrayPush(map(p_cs, \c -> c.body), p_v),
+						arrayPush(map(e_cs, \c -> c.body), e_v)
+					);
+				default: false;
+			}
+		}
+		FiCast(p_e, p_from, p_to,__,__): {
+			switch (e) {
+				FiCast(e_e, e_from, e_to,__,__):
+					fiEqualTypes(p_from, e_from) && fiEqualTypes(p_to, e_to) &&
+					fiEqualExps(p_e, e_e);
+				default: false;
+			}
+		}
+		FiSeq(p_es,__,__): {
+			switch (e) {
+				FiSeq(e_es,__,__):
+					eq_es(p_es, e_es);
+				default: {
+					if (length(p_es) != 1) false else {
+						fiEqualExps(p_es[0], e);
+					}
+				}
+			}
+		}
+		FiCallPrim(p_op, p_es,__,__): {
+			switch (e) {
+				FiCallPrim(e_op, e_es,__,__):
+					(p_op == e_op) && eq_es(p_es, e_es);
+				default: false;
+			}
+		}
+		FiRequire(p_file, p_e,__,__): {
+			switch (e) {
+				FiRequire(e_file, e_e,__,__):
+					(p_file == e_file) && fiEqualExps(p_e, e_e);
+				default: false;
+			}
+		}
+		FiUnsafe(p_name, p_e,__,__): {
+			switch (e) {
+				FiUnsafe(e_name, e_e,__,__):
+					(p_name == e_name) && fiEqualExps(p_e, e_e);
+				default: false;
+			}
+		}
+		FiVoid(__): {
+			switch (e) {
+				FiVoid(__): true;
+				default: false;
+			}
+		}
+		FiDouble(p_v,__): {
+			switch (e) {
+				FiDouble(e_v,__): (p_v == e_v);
+				default: false;
+			}
+		}
+		FiInt(p_v,__): {
+			switch (e) {
+				FiInt(e_v,__): (p_v == e_v);
+				default: false;
+			}
+		}
+		FiString(p_v,__): {
+			switch (e) {
+				FiString(e_v,__): (p_v == e_v);
+				default: false;
+			}
+		}
+		FiBool(p_v,__): {
+			switch (e) {
+				FiBool(e_v,__): (p_v == e_v);
+				default: false;
+			}
+		}
+		FiVar(p_v,__,__): {
+			switch (e) {
+				FiVar(e_v,__,__): (p_v == e_v);
+				default: false;
+			}
+		}
+	}
+	switch (e) {
+		FiSeq(e_es,__,__): {
+			do_job() || (length(e_es) == 1 && fiEqualExps(p, e_es[0]));
+		}
+		default: do_job();
 	}
 }
