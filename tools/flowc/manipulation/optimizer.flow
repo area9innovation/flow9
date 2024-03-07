@@ -111,7 +111,7 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (stri
 	env = fcInitConstEvalEnv(prog, on_err, on_msg);
 	optimzie_debug = getConfigParameter(prog.config.config, "optimize-debug");
 	verb = s2i(getConfigParameterDef(prog.config.config, "optimize-verbose", "0"));
-	threshold = s2i(getConfigParameterDef(prog.config.config, "const-eval-threshold", "3"));
+	threshold = s2i(getConfigParameterDef(prog.config.config, "const-eval-threshold", "0"));
 	fiMapProgramModule(prog,
 		\m, p -> {
 			start = timestamp();
@@ -164,13 +164,13 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (stri
 	);
 }
 
-decideToUseConst(x: FiExp, c: FiExp, threshold: int, debug: bool) -> bool {
+decideToUseConst(x: FiExp, c: FiExp, threshold: int, pc: int, debug: bool) -> bool {
 	switch (x) {
 		FiVar(__,__,__): false;
 		default: {
-			ret = fiCountAstNodes(x) - fiCountAstNodes(c) > threshold;
+			ret = fiCountAstNodes(x) - fiCountAstNodes(c) > threshold - pc;
 			if (ret && debug) {
-				println("fiCountAstNodes(x) - fiCountAstNodes(c) > threshold: " + i2s(fiCountAstNodes(x)) + " - " + i2s(fiCountAstNodes(c)) + " > " + i2s(threshold) + " == " + b2s(ret) + "\n" +
+				println("pc: " + i2s(pc) + ", fiCountAstNodes(x) - fiCountAstNodes(c) > threshold: " + i2s(fiCountAstNodes(x)) + " - " + i2s(fiCountAstNodes(c)) + " > " + i2s(threshold) + " == " + b2s(ret) + "\n" +
 					"x:\n" + strIndent(pretFiExp(x)) + "\n" +
 					"c:\n" + strIndent(pretFiExp(c)) + "\n"
 				)
@@ -192,9 +192,16 @@ fiStructMatchesSwitchCase(struct: string, case: string, unions: HashMap<string, 
 evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, locals: Set<string>, threshold: int, debug: bool) -> FiExp {
 	rec = \e -> evalExpConstExprs(e, env, locals, threshold, debug);
 	rec_locals = \e, new_locals -> evalExpConstExprs(e, env, new_locals, threshold, debug);
-	const_eval = \e -> maybeBind(fcConstEval(x, env, locals, debug), \c -> 
-		if (!c.plain && !fiEqualExps(x, c.exp) && decideToUseConst(e, c.exp, threshold, debug)) Some(c) else None()
-	);
+	const_eval = \e -> {
+		env.evalEnv.pc := 0;
+		maybeBind(fcConstEval(x, env, locals, debug), \c ->
+			if (!c.plain && !fiEqualExps(x, c.exp) && decideToUseConst(e, c.exp, threshold, ^(env.evalEnv.pc), debug)) {
+				Some(c);
+			} else {
+				None()
+			}
+		)
+	};
 	switch (const_eval(x)) {
 		Some(c): {
 			c_exp = c.exp;

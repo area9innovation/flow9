@@ -14,7 +14,8 @@ export {
 		globals : HashMap<string, FcEvalGlobal>,
 		onError : (string, string, [int]) -> void,
 		file    : string,
-		errors  : ref [FcEvalError]
+		errors  : ref [FcEvalError],
+		pc      : ref int
 	);
 
 	// Setup the global variables and toplevel functions
@@ -23,6 +24,10 @@ export {
 	// Perform the evaluation of function 'name'.
 	// Returns the `Some(value)`, if function with `name` presents, `None()` otherwise.
 	fcCallFunctionByName(name : string, args : [flow], env: FcEvalEnv) -> Maybe<flow>;
+
+	// A wrapper for local variable value. It is necessary since interpreted functions may return void value,
+	// which in java backend is just null and may lead to 'variable 'ret' is not defined' in case ret has a void value.
+	FcEvalLocal(val: flow);
 
 	// `fcConstEval` uses this function to create functions, usable in runtime
 	fcMakeFnFromLambda(lambda : FiLambda, closure : Maybe<HashMap<string, FcEvalLocal>>, env: FcEvalEnv) -> Maybe<flow>;
@@ -93,7 +98,7 @@ fcInitEvalEnv(prog: FiProgram, orig: Maybe<FiProgram>, on_error : (FcError) -> v
 		refArrayPush(errors, FcEvalError(file, msg, ps));
 		on_error(FcError(msg, map(ps, \p -> FcPosition(file, p, p))));
 	}
-	env = FcEvalEnv(structs, globals, error, prog.config.flowfile, errors);
+	env = FcEvalEnv(structs, globals, error, prog.config.flowfile, errors, ref 0);
 	iter(prog.traversal, \mod_name ->
 		switch (lookupTree(prog.modules, mod_name)) {
 			Some(module): {
@@ -216,15 +221,12 @@ fcCallFunctionByValue(fv : flow, args : [flow], returnType: FiType, env: FcEvalE
 	}
 }
 
-// A wrapper for local variable value. It is necessary since interpreted functions may return void value,
-// which in java backend is just null and may lead to 'variable 'ret' is not defined' in case ret has a void value.
-FcEvalLocal(val: flow);
-
 fcReplEval(ex : FiExp, env: FcEvalEnv, locals : HashMap<string, FcEvalLocal>) -> flow {
 	make_err = \msg, pos -> {
 		env.onError(env.file, msg, pos);
 		fcEvalMakeDefVal(fiExpType(ex), env.structs);
 	}
+	env.pc := ^(env.pc) + 1;
 	switch (ex) {
 		FiLambda(args, body,__,pos): {
 			arity = length(args);

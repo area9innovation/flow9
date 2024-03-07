@@ -15,7 +15,7 @@ export {
 		evalEnv: FcEvalEnv,
 		unions:  HashMap<string, FiTypeUnion>,
 		consts:  Tree<string, FcConstEvalVal>,
-		cache: HashMap<int, Maybe<FcConstEvalVal>>,
+		cache: HashMap<int, Maybe<Pair<FcConstEvalVal, int>>>,
 		effects: FiEffects,
 		onMessage : (string) -> void,
 	);
@@ -282,11 +282,17 @@ fiCompleteType(e: FiExp, hint: Maybe<FiType>, env: FcConstEvalEnv) -> Maybe<FiEx
 
 fcConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool) -> Maybe<FcConstEvalVal> {
 	switch (lookupHashMap(env.cache, ex.start)) {
-		Some(x): x;
+		Some(x): {
+			maybeMap(x, \p -> {
+				env.evalEnv.pc := ^(env.evalEnv.pc) + p.second;
+				p.first;
+			});
+		}
 		None(): {
+			pc = ^(env.evalEnv.pc);
 			ret = fcDoConstEval(ex, env, locals, debug);
 			if (ex.start >= 0) {
-				setHashMap(env.cache, ex.start, ret);
+				setHashMap(env.cache, ex.start, maybeMap(ret, \x -> Pair(x, ^(env.evalEnv.pc) - pc)));
 			}
 			ret;
 		}
@@ -308,6 +314,7 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 		const_eval_debug_counter := ^const_eval_debug_counter + 1;
 	}
 	rec = \x -> fcConstEval(x, env, locals, debug);
+	env.evalEnv.pc := ^(env.evalEnv.pc) + 1;
 	ret = switch (ex) {
 		FiLambda(args, body,__,__): {
 			free = filter(set2array(fifreevars(ex)), \v -> !containsKeyHashMap(env.evalEnv.globals, v));
