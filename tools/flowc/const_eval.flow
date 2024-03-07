@@ -12,26 +12,19 @@ export {
 	);
 
 	FcConstEvalEnv(
-		structs: HashMap<string, FiTypeStruct>,
+		evalEnv: FcEvalEnv,
 		unions:  HashMap<string, FiTypeUnion>,
 		consts:  Tree<string, FcConstEvalVal>,
-		globals: HashMap<string, FcEvalGlobal>,
+		cache: HashMap<int, Maybe<FcConstEvalVal>>,
 		effects: FiEffects,
-		errors: ref [Pair<string, [int]>]
+		onMessage : (string) -> void,
 	);
 
 	// Setup the global variables and toplevel functions for the evaluation of compile time constants.
-	fcInitConstEvalEnv(program: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEnv;
+	fcInitConstEvalEnv(program: FiProgram, on_err: (FcError) -> void, on_msg: (string) -> void) -> FcConstEvalEnv;
 
 	// Try to compute a compile-time value of an expression.
-	fcConstEval(ex : FiExp,
-		env: FcConstEvalEnv,
-		cache: HashMap<int, Maybe<FcConstEvalVal>>,
-		locals: Set<string>,
-		on_err: (string, [int]) -> void,
-		on_msg: (string) -> void,
-		debug: bool
-	) -> Maybe<FcConstEvalVal>;
+	fcConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool) -> Maybe<FcConstEvalVal>;
 
 	// Remove all speculative compile-time function wrappers: `outputCompileTimeEval`,`forbidCompileTimeEval` and `forceCompileTimeEval`.
 	fcEliminateCompileTimeFns(prog: FiProgram) -> FiProgram;
@@ -81,7 +74,7 @@ fcEliminateCompileTimeFns(prog: FiProgram) -> FiProgram {
 	), fcParallelOn(prog.config));
 }
 
-fcInitConstEvalEnv(prog: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEnv {
+fcInitConstEvalEnv(prog: FiProgram, on_err: (FcError) -> void, on_msg: (string) -> void) -> FcConstEvalEnv {
 	effects = collectFiEffectsPrecisely(prog);
 	const_prog = fcOptimizeTailCalls(fcConstEvalPureToplevels(prog, effects));
 	if (isConfigParameterTrue(const_prog.config.config, "dump-pure-toplevels")) {
@@ -98,28 +91,21 @@ fcInitConstEvalEnv(prog: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEnv
 		}));
 		fcPrintln("Pure natives:\n" + strIndent(strGlue(pure_natives, "\n")), const_prog.config.threadId);
 	}
-	errors = ref [];
-	on_msg = \msg -> fcPrintln(msg, const_prog.config.threadId);
 	optimzie_debug = getConfigParameter(const_prog.config.config, "optimize-debug");
 	fold(const_prog.traversal,
 		FcConstEvalEnv(
-			tree2hashMap(const_prog.names.structs, fastHashString),
+			fcInitEvalEnv(const_prog, Some(prog), nop1),
 			tree2hashMap(const_prog.names.unions, fastHashString),
-			makeTree(), fcInitEvalGlobals(const_prog, Some(prog), nop1), effects,
-			errors
+			makeTree(), makeHashMap(idfn), effects, on_msg
 		),
 		\acc, mod_name -> eitherMap(lookupTree(const_prog.modules, mod_name),
 			\m -> {
-				m_on_err = \msg, ps -> {
-					err = FcError(msg, map(ps, \p -> FcPosition(m.fileinfo.flowfile, p, p)));
-					refArrayPush(errors, Pair(msg, ps));
-					on_err(err);
-				}
 				fold(m.initOrder, acc,
 					\ac, name -> eitherMap(lookupTree(const_prog.names.toplevel, name), \decl ->
 						switch (decl) {
 							FiGlobalVar(__, value, type,__,pos): {
-								switch (fcConstEval(value, ac, makeHashMap(idfn), makeSet(), m_on_err, on_msg, decl.name == optimzie_debug)) {
+								env = FcConstEvalEnv(ac with cache = makeHashMap(idfn));
+								switch (fcConstEval(value, env, makeSet(), decl.name == optimzie_debug)) {
 									Some(cv): {
 										if (decl.name == optimzie_debug) {
 											fcPrintln(
@@ -149,7 +135,7 @@ fcInitConstEvalEnv(prog: FiProgram, on_err: (FcError) -> void) -> FcConstEvalEnv
 	);
 }
 
-fiComplexConstant2flow(ex : FiExp, env: FcConstEvalEnv, on_err: (string, [int]) -> void) -> Maybe<flow> {
+fiComplexConstant2flow(ex : FiExp, env: FcConstEvalEnv) -> Maybe<flow> {
 	switch (ex) {
 		FiVoid(__):       Some(flow(voidValue()));
 		FiBool(b1, __):   Some(flow(b1));
@@ -159,20 +145,20 @@ fiComplexConstant2flow(ex : FiExp, env: FcConstEvalEnv, on_err: (string, [int]) 
 		FiCallPrim(op, es,__,s): {
 			switch (op) {
 				FcArrayPrim(): {
-					arr = filtermap(es, \x -> fiComplexConstant2flow(x, env, on_err));
+					arr = filtermap(es, \x -> fiComplexConstant2flow(x, env));
 					if (length(arr) != length(es)) None() else Some(flow(arr));
 				}
 				FcStructPrim(name): {
-					fields = filtermap(es, \x -> fiComplexConstant2flow(x, env, on_err));
-					if (length(fields) != length(es) || !containsKeyHashMap(env.structs, name)) None() else {
-						fcEvalMakeStruct(name, fields, IllegalStruct(), env.structs);
+					fields = filtermap(es, \x -> fiComplexConstant2flow(x, env));
+					if (length(fields) != length(es) || !containsKeyHashMap(env.evalEnv.structs, name)) None() else {
+						fcEvalMakeStruct(name, fields, IllegalStruct(), env.evalEnv.structs);
 					}
 				}
 				default: None();
 			}
 		}
 		FiLambda(args, body,__,__): {
-			fcMakeFnFromLambda(ex, env.structs, env.globals, None(), on_err);
+			fcMakeFnFromLambda(ex, None(), env.evalEnv);
 		}
 		default: None();
 	}
@@ -195,7 +181,7 @@ fiflow2ComplexConstant(v : flow, env: FcConstEvalEnv) -> Maybe<FiExp> {
 	if (v_tag == struct_data_tag) {
 		maybeBind(fcEvalDecomposeStruct(v), \p -> {
 			name = p.first;
-			if (name == "" || !containsKeyHashMap(env.structs, name)) None() else {
+			if (name == "" || !containsKeyHashMap(env.evalEnv.structs, name)) None() else {
 				fields_f = p.second;
 				fields = filtermap(fields_f, \x -> fiflow2ComplexConstant(x, env));
 				if (length(fields_f) != length(fields)) None() else {
@@ -240,7 +226,7 @@ fiCompleteType(e: FiExp, hint: Maybe<FiType>, env: FcConstEvalEnv) -> Maybe<FiEx
 				}
 				FcStructPrim(name): {
 					do_flow = \ -> {
-						maybeBind(lookupHashMap(env.structs, name), \struct -> {
+						maybeBind(lookupHashMap(env.evalEnv.structs, name), \struct -> {
 							as1 = filtermap(as, \a -> fiCompleteType(a, None(), env));
 							if (length(as1) != length(struct.args)) None() else {
 								sub = foldi(struct.args, makeTree(), \i, acc, arg ->
@@ -259,7 +245,7 @@ fiCompleteType(e: FiExp, hint: Maybe<FiType>, env: FcConstEvalEnv) -> Maybe<FiEx
 						Some(t): {
 							switch (t) {
 								FiTypeName(type_name, typars): {
-									do_struct = \tn -> maybeBind(lookupHashMap(env.structs, tn.name), \struct ->  {
+									do_struct = \tn -> maybeBind(lookupHashMap(env.evalEnv.structs, tn.name), \struct ->  {
 										sub = fiMatchTyparsArr(struct.typars, tn.typeparameters, makeTree());
 										es1 = filtermapi(as, \i, a ->
 											fiCompleteType(a, Some(fiSubstituteTypars(struct.args[i].type, sub)), env)
@@ -294,20 +280,13 @@ fiCompleteType(e: FiExp, hint: Maybe<FiType>, env: FcConstEvalEnv) -> Maybe<FiEx
 	}
 }
 
-fcConstEval(ex : FiExp,
-	env: FcConstEvalEnv,
-	cache: HashMap<int, Maybe<FcConstEvalVal>>,
-	locals: Set<string>,
-	on_err: (string, [int]) -> void,
-	on_msg: (string) -> void,
-	debug: bool
-) -> Maybe<FcConstEvalVal> {
-	switch (lookupHashMap(cache, ex.start)) {
+fcConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool) -> Maybe<FcConstEvalVal> {
+	switch (lookupHashMap(env.cache, ex.start)) {
 		Some(x): x;
 		None(): {
-			ret = fcDoConstEval(ex, env, cache, locals, on_err, on_msg, debug);
+			ret = fcDoConstEval(ex, env, locals, debug);
 			if (ex.start >= 0) {
-				setHashMap(cache, ex.start, ret);
+				setHashMap(env.cache, ex.start, ret);
 			}
 			ret;
 		}
@@ -324,21 +303,14 @@ fcConstEvalUnwrapLambda(x: FiExp) -> Maybe<FiLambda> {
 	}
 }
 
-fcDoConstEval(ex : FiExp,
-	env: FcConstEvalEnv,
-	cache: HashMap<int, Maybe<FcConstEvalVal>>,
-	locals: Set<string>,
-	on_err: (string, [int]) -> void,
-	on_msg: (string) -> void,
-	debug: bool
-) -> Maybe<FcConstEvalVal> {
+fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool) -> Maybe<FcConstEvalVal> {
 	if (debug) {
 		const_eval_debug_counter := ^const_eval_debug_counter + 1;
 	}
-	rec = \x -> fcConstEval(x, env, cache, locals, on_err, on_msg, debug);
+	rec = \x -> fcConstEval(x, env, locals, debug);
 	ret = switch (ex) {
 		FiLambda(args, body,__,__): {
-			free = filter(set2array(fifreevars(ex)), \v -> !containsKeyHashMap(env.globals, v));
+			free = filter(set2array(fifreevars(ex)), \v -> !containsKeyHashMap(env.evalEnv.globals, v));
 			const_closure = filtermap(free, \v ->
 				maybeBind(lookupTree(env.consts, v), \c ->
 					fiflow2ComplexConstant(c.val, env)
@@ -348,9 +320,10 @@ fcDoConstEval(ex : FiExp,
 				ex_c = FiLambda(ex with
 					body = foldi(free, body, \i, acc, x ->
 						if (fiTypeIsFunction(fiExpType(const_closure[i]))) acc else
-						fiReplaceVar(acc, x, const_closure[i]))
+						fiReplaceVar(acc, x, const_closure[i])
+					)
 				);
-				maybeMap(fcMakeFnFromLambda(ex_c, env.structs, env.globals, None(), on_err),
+				maybeMap(fcMakeFnFromLambda(ex_c, None(), env.evalEnv),
 					\fn -> FcConstEvalVal(fn, ex_c, false)
 				);
 			}
@@ -372,10 +345,10 @@ fcDoConstEval(ex : FiExp,
 									\arg -> either(fiflow2ComplexConstant(arg.val, env), arg.exp),
 									args[1]
 								);
-								on_msg(msg + pretFiExp(val));
+								env.onMessage(msg + pretFiExp(val));
 							} else if (x == "forceCompileTimeEval") {
 								// raise an error
-								on_err(
+								env.evalEnv.onError(env.evalEnv.file,
 									"Expression was not computed at compile-time:\n" + pretFiExp(args[0]),
 									//+ "\nconsts:\n" + strIndent(superglue(tree2pairs(env.consts), \p -> p.first + " => " + pretFiExp(p.second.exp) + " == " + toString(p.second.val), "\n")),
 									[pos]
@@ -391,11 +364,11 @@ fcDoConstEval(ex : FiExp,
 							fcConstEval(
 								lambda.body,
 								FcConstEvalEnv(env with
-									consts = foldi(c_args, env.consts, \i, acc, x -> setTree(acc, lambda.args[i].name, x))
+									consts = foldi(c_args, env.consts, \i, acc, x -> setTree(acc, lambda.args[i].name, x)),
+									cache = makeHashMap(idfn)
 								),
-								makeHashMap(idfn),
 								fold(lambda.args, locals, \acc, arg -> insertSet(acc, arg.name)),
-								on_err, on_msg, debug
+								debug
 							)
 						)
 					);
@@ -407,17 +380,15 @@ fcDoConstEval(ex : FiExp,
 									default: pretFiExp(c_args[0].exp);
 								}
 								val = either(fiflow2ComplexConstant(c_args[1].val, env), c_args[1].exp);
-								on_msg(msg + pretFiExp(val));
+								env.onMessage(msg + pretFiExp(val));
 								Some(c_args[1]);
 							} else {
-								if (containsKeyHashMap(env.globals, x) && !containsSet(locals, x)) {
-									env.errors := [];
+								if (containsKeyHashMap(env.evalEnv.globals, x) && !containsSet(locals, x)) {
+									env.evalEnv.errors := [];
 									f_args = map(c_args, \arg -> arg.val);
 									maybeBind(
-										fcCallFunctionByName(x, f_args, env.structs, env.globals, \err, ps -> 
-											refArrayPush(env.errors, Pair(err, arrayPush(ps, pos)))
-										),
-										\val -> if (length(^(env.errors)) == 0) {
+										fcCallFunctionByName(x, f_args, env.evalEnv),
+										\val -> if (length(^(env.evalEnv.errors)) == 0) {
 											// No errors - ok.
 											maybeBind(fiflow2ComplexConstant(val, env), \v ->
 												maybeMap(
@@ -427,7 +398,6 @@ fcDoConstEval(ex : FiExp,
 											);
 										} else {
 											// Some errors - not ok.
-											//iter(^(env.errors), \p -> on_err("AAA: " + p.first, p.second));
 											None();
 										}
 									);
@@ -444,7 +414,7 @@ fcDoConstEval(ex : FiExp,
 				FiVar(x,__,__): {
 					if (x == "forbidCompileTimeEval") {
 						if (args[0].start >= 0) {
-							setHashMap(cache, args[0].start, None());
+							setHashMap(env.cache, args[0].start, None());
 						}
 						None();
 					} else {
@@ -470,9 +440,7 @@ fcDoConstEval(ex : FiExp,
 								FcConstEvalVal(ce1 with exp = FiVar(x, type, pos), plain = true)
 							)
 						),
-						cache,
-						insertSet(locals, x),
-						on_err, on_msg, debug
+						insertSet(locals, x), debug
 					),
 					\ce2 -> FcConstEvalVal(ce2 with exp = FiLet(ex with e1 = ce1.exp, e2 = ce2.exp))
 				)
@@ -497,9 +465,7 @@ fcDoConstEval(ex : FiExp,
 												if (arg != "__") setTree(acc, arg, FcConstEvalVal(field_vals[i], fields_exps[i], false)) else acc
 											)
 										),
-										cache,
-										fold(case.argNames, locals, \acc, arg -> insertSet(acc, arg)),
-										on_err, on_msg, debug
+										fold(case.argNames, locals, \acc, arg -> insertSet(acc, arg)), debug
 									);
 								}
 								None(): {
@@ -528,7 +494,7 @@ fcDoConstEval(ex : FiExp,
 		FiCallPrim(op, es, __,__): {
 			args = filtermap(es, rec);
 			if (length(args) != length(es)) None() else {
-				fcConstEvalCallPrim(ex, args, env, on_err, cache);
+				fcConstEvalCallPrim(ex, args, env);
 			}
 		}
 		FiBool(v,__): Some(FcConstEvalVal(v, ex, true));
@@ -649,9 +615,9 @@ fcConstEvalCast(ce: FcConstEvalVal, from: FiType, to: FiType) -> Maybe<FcConstEv
 	}
 }
 
-fcConstEvalCallPrim(call : FiCallPrim, args : [FcConstEvalVal], env : FcConstEvalEnv, on_err: (string, [int]) -> void, cache: HashMap<int, Maybe<FcConstEvalVal>>) -> Maybe<FcConstEvalVal> {
+fcConstEvalCallPrim(call : FiCallPrim, args : [FcConstEvalVal], env : FcConstEvalEnv) -> Maybe<FcConstEvalVal> {
 	make_err = \msg -> {
-		on_err(msg, map(args, \arg -> arg.exp.start));
+		env.evalEnv.onError(env.evalEnv.file, msg, map(args, \arg -> arg.exp.start));
 		None(); 
 	}
 	start = call.start;
@@ -847,8 +813,8 @@ fcConstEvalCallPrim(call : FiCallPrim, args : [FcConstEvalVal], env : FcConstEva
 			}
 		}
 		FcStructPrim(name): {
-			if (containsKeyHashMap(env.structs, name)) {
-				maybeMap(fcEvalMakeStruct(name, map(args, \arg -> arg.val), IllegalStruct(), env.structs),
+			if (containsKeyHashMap(env.evalEnv.structs, name)) {
+				maybeMap(fcEvalMakeStruct(name, map(args, \arg -> arg.val), IllegalStruct(), env.evalEnv.structs),
 					\v -> FcConstEvalVal(v,
 						FiCallPrim(FcStructPrim(name), map(args, \arg -> arg.exp), call.type, call.start),
 						forall(args, \arg -> arg.plain)
@@ -869,7 +835,7 @@ fcConstEvalCallPrim(call : FiCallPrim, args : [FcConstEvalVal], env : FcConstEva
 								if (field == "structname") {
 									Some(FcConstEvalVal(flow(name), FiString(name, start), false))
 								} else {
-									struct = lookupHashMapDef(env.structs, name, FiTypeStruct("", [], [], 0));
+									struct = lookupHashMapDef(env.evalEnv.structs, name, FiTypeStruct("", [], [], 0));
 									i = findiDef(struct.args, \arg -> arg.name == field, -1);
 									if (i == -1) {
 										make_err("unknown field " + field + " in struct " + name);
@@ -910,90 +876,3 @@ fiConstExpTypeId(e: FiExp) -> int {
 		default: -1;
 	}
 }
-
-fiConstExpCompare(e1: FiExp, e2: FiExp) -> int {
-	switch (e1) {
-		FiCallPrim(op1, es1,__,__): {
-			switch (e2) {
-				FiCallPrim(op2, es2,__,__): {
-					switch (op1) {
-						FcArrayPrim(): {
-							switch (op2) {
-								FcArrayPrim(): {
-									if (length(es1) != length(es1)) {
-										length(es1) - length(es1);
-									} else {
-										fold(
-											zipWith(es1, es2, \x, y -> Pair(x, y)), 0,
-											\acc, p -> {
-												if (acc != 0) acc else fiConstExpCompare(p.first, p.second)
-											}
-										);
-									}
-								}
-								default: fiConstExpTypeId(e1) - fiConstExpTypeId(e2);
-							}
-						}
-						FcStructPrim(name1): {
-							switch (op2) {
-								FcStructPrim(name2): {
-									if (name1 != name2) {
-										genericCompare(name1, name2);
-									} else if (length(es1) != length(es1)) {
-										length(es1) - length(es1);
-									} else {
-										fold(
-											zipWith(es1, es2, \x, y -> Pair(x, y)), 0,
-											\acc, p -> {
-												if (acc != 0) acc else fiConstExpCompare(p.first, p.second)
-											}
-										);
-									}
-								}
-								default: fiConstExpTypeId(e1) - fiConstExpTypeId(e2);
-							}
-						}
-						default: -1;
-					}
-				}
-				default: fiConstExpTypeId(e1) - fiConstExpTypeId(e2);
-			}
-		}
-		FiVoid(__): {
-			switch (e2) {
-				FiVoid(__): 0;
-				default: fiConstExpTypeId(e1) - fiConstExpTypeId(e2);
-			}
-		}
-		FiBool(b1,__): {
-			switch (e2) {
-				FiBool(b2,__): b2i(b1) - b2i(b2);
-				default: fiConstExpTypeId(e1) - fiConstExpTypeId(e2);
-			}
-		}
-		FiInt(i1,__): {
-			switch (e2) {
-				FiInt(i2,__): i1 - i2;
-				default: fiConstExpTypeId(e1) - fiConstExpTypeId(e2);
-			}
-		}
-		FiDouble(d1,__): {
-			switch (e2) {
-				FiDouble(d2,__): if (d1 < d2) -1 else if (d1 > d2) 1 else 0;
-				default: fiConstExpTypeId(e1) - fiConstExpTypeId(e2);
-			}
-		}
-		FiString(s1,__): {
-			switch (e2) {
-				FiString(s2,__): genericCompare(s1, s2);
-				default: fiConstExpTypeId(e1) - fiConstExpTypeId(e2);
-			}
-		}
-		FiLambda(__,__,__,__): {
-			// All compile-time lambdas are considered non-equal
-			-1;
-		}
-		default: -1;
-	}
-}
-

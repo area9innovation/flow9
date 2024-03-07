@@ -18,7 +18,7 @@ export {
 
 	optimizeExp(expr : FiExp, envExp : OptEnvExp) -> FiExp;
 
-	evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram;
+	evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (string) -> void) -> FiProgram;
 
 	OptEnv(
 		// These variables are hardcoded to give the respective value, despite
@@ -107,33 +107,31 @@ makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> Op
 	)
 }
 
-evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
-	env = fcInitConstEvalEnv(prog, on_err);
+evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (string) -> void) -> FiProgram {
+	env = fcInitConstEvalEnv(prog, on_err, on_msg);
 	optimzie_debug = getConfigParameter(prog.config.config, "optimize-debug");
 	verb = s2i(getConfigParameterDef(prog.config.config, "optimize-verbose", "0"));
 	threshold = s2i(getConfigParameterDef(prog.config.config, "const-eval-threshold", "3"));
-	///println("const-eval-threshold: " + i2s(threshold));
 	fiMapProgramModule(prog,
 		\m, p -> {
 			start = timestamp();
 			m_opt = fiMapModuleExp(p, m, \e0, decl,__,__ -> {
-				e = fiExpMakeStartUnique(e0);
-				consts = makeHashMap(idfn);
-				e_opt1 = evalExpConstExprs(e, env, prog.names.unions, makeHashMap(idfn), consts, makeSet(),
-					\msg, ps -> on_err(FcError(msg, map(ps, \pos -> FcPosition(m.fileinfo.flowfile, pos, pos)))),
-					\msg -> fcPrintln(msg, prog.config.threadId), threshold, decl.name == optimzie_debug
+				e1 = fiExpMakeStartUnique(e0);
+				e2 = evalExpConstExprs(e1, 
+					FcConstEvalEnv(env with cache = makeHashMap(idfn)), 
+					makeSet(), threshold, decl.name == optimzie_debug
 				);
-				//e_opt2 = extractCommonConstants(e_opt1, consts, decl.name == optimzie_debug);
-				//e_opt2 = fiRemoveUnusedVars(e_opt1, env.effects);
-				e_opt2 = e_opt1;
 				if (decl.name == optimzie_debug || verb > 0) {
-					if (fiEqualExps(e, e_opt2)) {
+					if (fiEqualExps(e1, e2)) {
 						if (verb > 1) {
 							fcPrintln("No compile-time consts in " + decl.name, prog.config.threadId);
 						}
 						if (decl.name == optimzie_debug) {
 							fcPrintln(
-								strIndent("Nothing changed: Compile-time consts of " + decl.name + ":\n" + pretFiExp(e) + "\nended up with:\n" + pretFiExp(e_opt2)),
+								strIndent("Nothing changed: Compile-time consts of " + decl.name + ":" +
+									"\n" + strIndent(pretFiExp(e1)) + "\n" +
+									"ended up with:\n" + strIndent(pretFiExp(e2))
+								),
 								prog.config.threadId
 							);
 						}
@@ -141,9 +139,8 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram 
 						fcPrintln(
 							strIndent(
 								"Something changed: Compile-time consts of " + decl.name + ":" +
-								"\n" + strIndent(pretFiExp(e)) + "\n" +
-								"ended up with:\n" +
-								strIndent(pretFiExp(e_opt2))
+								"\n" + strIndent(pretFiExp(e1)) + "\n" +
+								"ended up with:\n" + strIndent(pretFiExp(e2))
 								// + "\nraw expr:\n" + strIndent(toStringFormatted(e)) + "\n"
 								// + "\nraw opt:\n" + strIndent(toStringFormatted(e_opt2)) + "\n"
 							),
@@ -151,12 +148,12 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram 
 						);
 					}
 				}
-				if (verb > 1 && sizeHashMap(consts) > 0) {
+				/*if (verb > 1) {
 					fcPrintln(strIndent("compile-time constants in " + decl.name + ":\n" +
 						strIndent(superglue(hashMapValues(consts), \x: Pair<FiExp, FiExp> -> pretFiExp(x.first) + " => " + pretFiExp(x.second), "\n"))), prog.config.threadId
 					);
-				}
-				e_opt2;
+				}*/
+				e2;
 			});
 			if (prog.config.verbose > 0) {
 				fcPrintln("compile-time constants are evaluated in " + m.fileinfo.flowfile + " in " + d2st((timestamp() - start) / 1000.0, 3) + " s.", prog.config.threadId);
@@ -165,43 +162,6 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram 
 		},
 		fcParallelOn(prog.config)
 	);
-}
-
-extractCommonConstants(e: FiExp, consts: HashMap<int, Pair<FiExp, FiExp>>, debug: bool) -> FiExp {
-	switch (e) {
-		FiLambda(__,body,__,__): {
-			FiLambda(e with body = extractCommonConstants(body, consts, debug));
-		}
-		default: {
-			// Inverse cache for computed constats
-			const2pos: Tree<FiExp, [int]> = foldHashMap(consts, makeTree(), \pos, p, acc -> {
-				x1 = fiExpEraseStart(p.second);
-				setTree(acc, x1, arrayPush(lookupTreeDef(acc, x1, []), pos))
-			});
-			// Find constants, which occur more then once
-			mylty_const_unordered: [Triple<FiVar, FiExp, [int]>] = mapi(
-				tree2pairs(filterTree(const2pos, \__, ps -> length(ps) > 1)),
-				\i, p -> Triple(FiVar("__common_const_" + i2s(i), fiExpType(p.first), -1), p.first, p.second)
-			);
-			is_subexpr = \e1, e2 -> isSome(fiFindInExpr(e2, \x -> if (x == e1) Some(x) else None()));
-			mylty_const = mergeSort(mylty_const_unordered,
-				\t1, t2 -> if (is_subexpr(t1.second, t2.second)) -1 else if (is_subexpr(t2.second, t1.second)) 1 else 0
-			);
-			if (debug) {
-				println("mylty_const:\n" + toStringFormatted(mylty_const));
-			}
-			// Common const replacements 
-			sub: Tree<int, FiVar> = fold(mylty_const, makeTree(), \acc, t ->
-				fold(t.third, acc, \ac, pos -> setTree(ac, pos, t.first))
-			);
-			e1 = fiMapExp(e, \x,__ -> lookupTreeDef(sub, x.start, x), false);
-			e_type = fiExpType(e1);
-			// Add vars for common constants
-			fold(mylty_const, e1, \acc, t ->
-				FiLet(t.first.name, t.first.type, t.second, acc, e_type, -1)
-			);
-		}
-	}
 }
 
 decideToUseConst(x: FiExp, c: FiExp, threshold: int, debug: bool) -> bool {
@@ -220,20 +180,19 @@ decideToUseConst(x: FiExp, c: FiExp, threshold: int, debug: bool) -> bool {
  	}
 }
 
-evalExpConstExprs(
-	x : FiExp, env: FcConstEvalEnv,
-	unions: Tree<string, FiTypeUnion>,
-	cache: HashMap<int, Maybe<FcConstEvalVal>>,
-	consts: HashMap<int, Pair<FiExp, FiExp>>,
-	locals: Set<string>,
-	on_err: (string, [int]) -> void,
-	on_msg: (string) -> void,
-	threshold: int,
-	debug: bool
-) -> FiExp {
-	rec = \e -> evalExpConstExprs(e, env, unions, cache, consts, locals, on_err, on_msg, threshold, debug);
-	rec_locals = \e, new_locals -> evalExpConstExprs(e, env, unions, cache, consts, new_locals, on_err, on_msg, threshold, debug);
-	const_eval = \e -> maybeBind(fcConstEval(x, env, cache, locals, on_err, on_msg, debug), \c -> 
+fiStructMatchesSwitchCase(struct: string, case: string, unions: HashMap<string, FiTypeUnion>) -> bool {
+	(struct == case) || switch (lookupHashMap(unions, case)) {
+		Some(union): {
+			exists(union.typenames, \tn -> fiStructMatchesSwitchCase(struct, tn.name, unions));
+		}
+		None(): false;
+	}
+}
+
+evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, locals: Set<string>, threshold: int, debug: bool) -> FiExp {
+	rec = \e -> evalExpConstExprs(e, env, locals, threshold, debug);
+	rec_locals = \e, new_locals -> evalExpConstExprs(e, env, new_locals, threshold, debug);
+	const_eval = \e -> maybeBind(fcConstEval(x, env, locals, debug), \c -> 
 		if (!c.plain && !fiEqualExps(x, c.exp) && decideToUseConst(e, c.exp, threshold, debug)) Some(c) else None()
 	);
 	switch (const_eval(x)) {
@@ -243,13 +202,7 @@ evalExpConstExprs(
 				FiLambda(__,body,__,__): {
 					FiLambda(c_exp with body = rec(body));
 				}
-				//FiVar(__,__,__): x;
-				default: {
-					if (!fiTypeIsScalar(fiExpType(x))) {
-						setHashMap(consts, c_exp.start, Pair(x, c_exp));
-					}
-					c_exp;
-				}
+				default: c_exp;
 			}
 		}
 		None(): {
@@ -269,7 +222,7 @@ evalExpConstExprs(
 											env.consts
 										)
 									),
-									unions, cache, consts, new_locals, on_err, on_msg, threshold, debug
+									new_locals, threshold, debug
 								)
 							);
 						}
@@ -282,7 +235,7 @@ evalExpConstExprs(
 											FcConstEvalEnv(env with
 												consts = setTree(env.consts, v, c)
 											), 
-											unions, cache, consts, new_locals, on_err, on_msg, threshold, debug
+											new_locals, threshold, debug
 										)
 									);
 								}
@@ -293,7 +246,7 @@ evalExpConstExprs(
 											FcConstEvalEnv(env with
 												consts = removeFromTree(env.consts, v)
 											), 
-											unions, cache, consts, new_locals, on_err, on_msg, threshold, debug
+											new_locals, threshold, debug
 										)
 									);
 								}
@@ -324,7 +277,7 @@ evalExpConstExprs(
 								FiCallPrim(op, as,__,__): {
 									switch (op) {
 										FcStructPrim(name): {
-											switch (find(cs, \c -> fiStructMatchesSwitchCase(c.struct, name, unions))) {
+											switch (find(cs, \c -> fiStructMatchesSwitchCase(c.struct, name, env.unions))) {
 												Some(c): {
 													do_case_body(c);
 												}
