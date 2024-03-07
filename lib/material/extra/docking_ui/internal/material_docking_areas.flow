@@ -49,6 +49,8 @@ makeMDockingArea(isColumn : bool, state : MDockingState, areaId : int) -> Materi
 	areaStyle = lookupTreeDef(getValue(state.areaStyle), areaId, []);
 	areaEnable = fsubselect(state.areaEnabled, FLift(\ae -> make(lookupTreeDef(ae, areaId, true))));
 	accordionEnable = fsubselect(state.areaAccordion, FLift(\aa -> make(lookupTreeDef(aa, areaId, false))));
+	accordionA = eitherMap(tryExtractStruct(areaStyle, MDAreaAccordion(make(false), None())), \some -> [some], []);
+	accordion = firstElement(accordionA, MDAreaAccordion(make(true), None()));
 
 	MShowLazy(fand(fselectLift(state.size, \sz -> sz != []), areaEnable),
 		\ -> {
@@ -124,24 +126,39 @@ makeMDockingArea(isColumn : bool, state : MDockingState, areaId : int) -> Materi
 						else if (isAreaLight) const(true)
 						else manager.white;
 
-					MSelect2(
-						areaTheme,
-						fmerge(map(colA, \c -> getValue(state.enabled)[c])),
-						\lg, __ -> {	
-							makeDockedPanelA(
-								isColumn,
-								dropInfo,
-								state,
-								length(colWithEnabledpanelsA),
-								colAlignedA,
-								colId,
-								enAcc,
-								lg,
-								areaStyle		
-							)
-							|> (\m -> MShowLazy(atLeastOneEnabledT, \ -> m))
-							|> (\m -> MShowLazy(atLeastOneEnabledInColT, \ -> m))
-						}
+					MConstruct([
+						// Default expanded panels for accordion areas
+						makeSubscribe(accordionEnable, \accEn -> {
+							if (accEn) {
+								iter(colA, \pID -> {
+									eitherFn(
+										accordion.openPanelName, 
+										\apn -> nextDistinct(getValue(state.expanded)[pID], apn == getValue(state.title)[pID]),
+										\ -> nextDistinct(getValue(state.expanded)[pID],  pID == firstElement(colA, pID))
+									)
+								})
+							}
+						})
+					],
+						MSelect2(
+							areaTheme,
+							fmerge(map(colA, \c -> getValue(state.enabled)[c])),
+							\lg, __ -> {	
+								makeDockedPanelA(
+									isColumn,
+									dropInfo,
+									state,
+									length(colWithEnabledpanelsA),
+									colAlignedA,
+									colId,
+									enAcc,
+									lg,
+									areaStyle		
+								)
+								|> (\m -> MShowLazy(atLeastOneEnabledT, \ -> m))
+								|> (\m -> MShowLazy(atLeastOneEnabledInColT, \ -> m))
+							}
+						)
 					)
 				}) |> (\f -> if (isColumn) MColsA(f) else MLines(f))
 
@@ -526,10 +543,20 @@ resizePanelH(
 
 	addDragAndDropHelperGroup = \f : Material ->  MGroup2(f, rowsWithHandles);
 
+	addLastFiller = \f -> {
+		MLines2(
+			f,
+			// TRounded(0.0, 0.0, dRadius, dRadius, [MFill(MYellow(200))], TFillXY())
+			TRounded(0.0, 0.0, dRadius, dRadius, [MFill(topBarColorFn(areaTheme, pstyle))], TFillXY())
+		)
+	}
+
 	addLastPanelClosure =\ex :bool ->  \f ->  {
-		if (isLastPanel && !ex && !isAccordion) {
-			TRounded(0.0, 0.0, dRadius, dRadius, [MFill(topBarColorFn(areaTheme, pstyle))], TFillXY()) |> (\lpc -> MLines2(f, lpc))
-		} else f
+			if (isAccordion) {
+				if (length(colA) == 1 && isLastPanel && !isToolbar && !ex) f |> addLastFiller else f
+			} else {
+				if (isLastPanel && !isToolbar && !ex ) f |> addLastFiller else f
+			}
 	}
 
 	MConstruct([
@@ -561,20 +588,20 @@ resizePanelH(
 		],
 		MSelect(expanded, \ex -> {
 			box |> (\m -> if (isToolbarFillSize) MCropSize(TFillXY(), m) else { 
-				MAvailable(	
+				MAvailable(
 					m,
 					TSelect(sizeB, \s -> makeHSize(s, isColumn))
-					// Last panel/accordion filler
-					|> (\f -> 
-						if (isAccordion) {
-							if (ex || length(colA) == 1) TGroup2(TFillXY(), f) else f
-						} else {
-							if (!isToolbar && isLastPanel) {
-								if (ex || length(colA) == 1) TGroup2(TFillXY(), f) else topBarSize
-							} else f
-						}
-					)
-				) 
+						// Last panel/accordion filler
+						|> (\f -> 
+							if (isAccordion) {
+								if (ex) TGroup2(TFillXY(), f) else f
+							} else {
+								if (!isToolbar && isLastPanel) {
+									if (ex) TGroup2(TFillXY(), f) else topBarSize
+								} else f
+							}
+						)
+				)
 			})
 		// Keep separator and topbar sizes out of MAvailable
 		|> addRowSeparators
