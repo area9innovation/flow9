@@ -585,20 +585,20 @@ class TextClip extends NativeWidgetClip {
 				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				updateAmiriItalicWorkaroundWidget();
+				updateAmiriWorkaroundWidget();
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
 		}
 	}
 
-	private function updateAmiriItalicWorkaroundWidget() : Void {
-		// For some reason, in most browsers Amiri italic text, which starts from digit/special symbol doesn't render italic, when baselineWidget is present.
-		// Looks like a browser bug, so we need this workaround
-		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic'
+	private function updateAmiriWorkaroundWidget() : Void {
+		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri'
 			&& nativeWidget.textContent[0] != '' && !isCharLetter(nativeWidget.textContent[0])
 		) {
-			if (amiriItalicWorkaroundWidget == null) {
+			// For some reason, in most browsers Amiri italic text, which starts from digit/special symbol doesn't render italic, when baselineWidget is present.
+			// Looks like a browser bug, so we need this workaround
+			if (amiriItalicWorkaroundWidget == null && style.fontStyle == 'italic') {
 				var txt = 't';
 				var charMetrics = TextMetrics.measureText(txt, style);
 				amiriItalicWorkaroundWidget = Browser.document.createElement('span');
@@ -608,6 +608,12 @@ class TextClip extends NativeWidgetClip {
 				amiriItalicWorkaroundWidget.textContent = txt;
 				nativeWidget.insertBefore(amiriItalicWorkaroundWidget, nativeWidget.firstChild);
 			}
+
+			// Amiri which starts from digit/special symbol renders brackets, using different glyphs, when 'display: inline-block' is present
+			baselineWidget.style.display = 'none';
+			Native.timer(0, function () {
+				baselineWidget.style.display = null;
+			});
 		}
 	}
 
