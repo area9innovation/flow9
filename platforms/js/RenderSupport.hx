@@ -928,7 +928,6 @@ class RenderSupport {
 	//
 
 	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
-	private static var lastKeyEvent : Dynamic = null;
 	private static var printMode = false;
 	private static var forceOnAfterprint = Platform.isChrome;
 	private static var prevInvalidateRenderable = false;
@@ -1378,8 +1377,7 @@ class RenderSupport {
 
 	private static function emitKey(stage : FlowContainer, eventName : String, ke : Dynamic) : Void {
 		if (stage.nativeWidget == Browser.document.body) {
-			lastKeyEvent = parseKeyEvent(ke);
-			emitForAll(eventName, lastKeyEvent);
+			emitForAll(eventName, parseKeyEvent(ke));
 		} else {
 			stage.emit(eventName, parseKeyEvent(ke));
 		}
@@ -1387,10 +1385,13 @@ class RenderSupport {
 
 	private static function preventStuckModifierKeys(e : Dynamic, stage : FlowContainer) : Void {
 		try {
-			if (lastKeyEvent != null && stage.nativeWidget == Browser.document.body) {
+			if (keysPending.keys().hasNext()) {
 				var ke = parseKeyEvent(e);
-				if (lastKeyEvent.ctrl != ke.ctrl || lastKeyEvent.alt != ke.alt || lastKeyEvent.shift != ke.shift || lastKeyEvent.meta != ke.meta) {
-					emitKey(stage, "keyup", ke);
+				for (key in keysPending) {
+					if ((key.key == "ctrl" && !ke.ctrl) || (key.key == "alt" && !ke.alt) || (key.key == "meta" && !ke.meta) || (key.key == "shift" && !ke.shift)) {
+						key.preventDefault = function() {};
+						emit("keyup", key);
+					}
 				}
 			}
 		} catch (e : Dynamic) {
