@@ -928,6 +928,7 @@ class RenderSupport {
 	//
 
 	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
+	private static var lastKeyEvent : Dynamic = null;
 	private static var printMode = false;
 	private static var forceOnAfterprint = Platform.isChrome;
 	private static var prevInvalidateRenderable = false;
@@ -1377,9 +1378,24 @@ class RenderSupport {
 
 	private static function emitKey(stage : FlowContainer, eventName : String, ke : Dynamic) : Void {
 		if (stage.nativeWidget == Browser.document.body) {
-			emitForAll(eventName, parseKeyEvent(ke));
+			lastKeyEvent = parseKeyEvent(ke);
+			emitForAll(eventName, lastKeyEvent);
 		} else {
 			stage.emit(eventName, parseKeyEvent(ke));
+		}
+	}
+
+	private static function preventStuckModifierKeys(e : Dynamic, stage : FlowContainer) : Void {
+		try {
+			if (lastKeyEvent != null && stage.nativeWidget == Browser.document.body) {
+				var ke = parseKeyEvent(e);
+				if (lastKeyEvent.ctrl != ke.ctrl || lastKeyEvent.alt != ke.alt || lastKeyEvent.shift != ke.shift || lastKeyEvent.meta != ke.meta) {
+					emitKey(stage, "keyup", ke);
+				}
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("preventStuckModifierKeys error : ");
+			untyped console.log(e);
 		}
 	}
 
@@ -1400,6 +1416,8 @@ class RenderSupport {
 				// To fix iOS + Chrome input/wigi editor focusability
 				&& (!(Platform.isIOS && Platform.isChrome) || e.pointerType != 'touch')
 			) e.preventDefault();
+
+			preventStuckModifierKeys(e, stage);
 
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
