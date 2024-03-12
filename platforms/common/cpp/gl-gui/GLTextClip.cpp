@@ -95,10 +95,8 @@ void GLTextClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, const
         }
 
         // Render the text
-#ifndef FLOW_DFIELD_FONTS
         float pixel_size = global_transform.getScaleRev();
         float pixel_div = global_transform.getScale();
-#endif
 
         for (unsigned l = scroll_v; l < text_lines.size(); l++) {
             Line &line = text_lines[l];
@@ -106,23 +104,15 @@ void GLTextClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, const
             if (line.baseline_y-line.ascender > ui_size.y+y_base)
                 break;
 
-#ifndef FLOW_DFIELD_FONTS
             vec2 base_origin(0.0f, line.baseline_y-y_base);
             vec2 base_adj_origin = roundToGrid(global_transform, base_origin);
             float base_x = line.justify_x - base_adj_origin.x;
-#endif
 
             for (unsigned i = 0; i < line.extents.size(); i++) {
                 Extent::Ptr extent = line.extents[i];
-
-#ifndef FLOW_DFIELD_FONTS
-                vec2 origin(base_x + extent->x_offset, base_origin.y-y_base);
-                vec2 adj_origin = base_adj_origin;
-                adj_origin.x += pixel_size*roundf((base_x + extent->x_offset)*pixel_div);
-#else
+                
                 vec2 origin(line.justify_x + extent->x_offset, line.baseline_y-y_base);
                 vec2 adj_origin = origin;
-#endif
 
                 extent->layout->render(renderer, global_transform, origin, adj_origin,
                                        extent->format.color, global_alpha, extent->format.underline);
