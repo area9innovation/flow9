@@ -1383,6 +1383,25 @@ class RenderSupport {
 		}
 	}
 
+	private static function preventStuckModifierKeys(e : Dynamic, stage : FlowContainer) : Void {
+		try {
+			if (keysPending.keys().hasNext() && e.ctrlKey != null && e.altKey != null && e.metaKey != null && e.shiftKey != null) {
+				// Parsing pointer event as key event to check for active modifier keys
+				// parseKeyEvent is used to correctly detect modifiers state and swap ctrl with meta in case it's Mac
+				var ke = parseKeyEvent(e);
+				for (key in keysPending) {
+					if ((key.key == "ctrl" && !ke.ctrl) || (key.key == "alt" && !ke.alt) || (key.key == "meta" && !ke.meta) || (key.key == "shift" && !ke.shift)) {
+						key.preventDefault = function() {};
+						emit("keyup", key);
+					}
+				}
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("preventStuckModifierKeys error : ");
+			untyped console.log(e);
+		}
+	}
+
 	public static var PreventDefault : Bool = true;
 	public static function onpointerdown(e : Dynamic, stage : FlowContainer) {
 		try {
@@ -1400,6 +1419,8 @@ class RenderSupport {
 				// To fix iOS + Chrome input/wigi editor focusability
 				&& (!(Platform.isIOS && Platform.isChrome) || e.pointerType != 'touch')
 			) e.preventDefault();
+
+			preventStuckModifierKeys(e, stage);
 
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
