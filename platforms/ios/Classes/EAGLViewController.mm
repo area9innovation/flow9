@@ -84,8 +84,11 @@
     }
     
     if (@available(iOS 13.0, *)) {
-        CGRect frame = [UIApplication sharedApplication].keyWindow.windowScene.statusBarManager.statusBarFrame;
-        [statusBar setFrame: frame];
+        if (size.width > size.height) {
+            [statusBar removeFromSuperview];
+        } else if (statusBarVisible) {
+            [[UIApplication sharedApplication].keyWindow addSubview: statusBar];
+        }
     }
 }
 
@@ -263,6 +266,10 @@ static bool gestureBeingHandledByFlow = false;
 }
 
 - (void) setStatusBarVisible: (BOOL)visible {
+    if (statusBarVisible == visible) {
+        return;
+    }
+    
     statusBarVisible = visible;
     if (statusBar != nil) {
         if (visible) {
