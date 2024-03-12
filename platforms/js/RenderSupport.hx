@@ -1385,7 +1385,9 @@ class RenderSupport {
 
 	private static function preventStuckModifierKeys(e : Dynamic, stage : FlowContainer) : Void {
 		try {
-			if (keysPending.keys().hasNext()) {
+			if (keysPending.keys().hasNext() && e.ctrlKey != null && e.altKey != null && e.metaKey != null && e.shiftKey != null) {
+				// Parsing pointer event as key event to check for active modifier keys
+				// parseKeyEvent is used to correctly detect modifiers state and swap ctrl with meta in case it's Mac
 				var ke = parseKeyEvent(e);
 				for (key in keysPending) {
 					if ((key.key == "ctrl" && !ke.ctrl) || (key.key == "alt" && !ke.alt) || (key.key == "meta" && !ke.meta) || (key.key == "shift" && !ke.shift)) {
