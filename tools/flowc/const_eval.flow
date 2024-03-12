@@ -15,7 +15,7 @@ export {
 		evalEnv: FcEvalEnv,
 		unions:  HashMap<string, FiTypeUnion>,
 		consts:  Tree<string, FcConstEvalVal>,
-		cache: HashMap<int, Maybe<Pair<FcConstEvalVal, int>>>,
+		cache: HashMap<int, Maybe<FcConstEvalVal>>,
 		effects: FiEffects,
 		onMessage : (string) -> void,
 	);
@@ -282,17 +282,11 @@ fiCompleteType(e: FiExp, hint: Maybe<FiType>, env: FcConstEvalEnv) -> Maybe<FiEx
 
 fcConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool) -> Maybe<FcConstEvalVal> {
 	switch (lookupHashMap(env.cache, ex.start)) {
-		Some(x): {
-			maybeMap(x, \p -> {
-				env.evalEnv.pc := ^(env.evalEnv.pc) + p.second;
-				p.first;
-			});
-		}
+		Some(x): x;
 		None(): {
-			pc = ^(env.evalEnv.pc);
 			ret = fcDoConstEval(ex, env, locals, debug);
 			if (ex.start >= 0) {
-				setHashMap(env.cache, ex.start, maybeMap(ret, \x -> Pair(x, ^(env.evalEnv.pc) - pc)));
+				setHashMap(env.cache, ex.start, ret);
 			}
 			ret;
 		}
@@ -309,15 +303,12 @@ fcConstEvalUnwrapLambda(x: FiExp) -> Maybe<FiLambda> {
 	}
 }
 
-//const_eval_debug_flag = ref false;
-
 fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool) -> Maybe<FcConstEvalVal> {
 	if (debug) {
 		const_eval_debug_counter := ^const_eval_debug_counter + 1;
 	}
 	rec = \x -> fcConstEval(x, env, locals, debug);
-	env.evalEnv.pc := ^(env.evalEnv.pc) + 1;
-	ret = switch (ex) {
+	switch (ex) {
 		FiLambda(args, body,__,__): {
 			free = filter(set2array(fifreevars(ex)), \v -> containsSet(locals, v));
 			const_closure = filtermap(free, \v ->
@@ -325,34 +316,15 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 					fiflow2ComplexConstant(c.val, env)
 				)
 			);
-			if (length(const_closure) != length(free) /*|| hasFiSideEffects(env.effects, body)*/) None() else {
+			if (length(const_closure) != length(free)) None() else {
 				ex_c = FiLambda(ex with
 					body = foldi(free, body, \i, acc, x ->
 						if (fiTypeIsFunction(fiExpType(const_closure[i]))) acc else
 						fiReplaceVar(acc, x, const_closure[i])
 					)
 				);
-				/*if (length(free) > 0) {
-					println(
-						"free:\n" + strIndent(toStringFormatted(free)) + "\n" +
-						"const closure:\n" + strIndent(toStringFormatted(const_closure)) + "\n" +
-						"ex_c:\n" + strIndent(pretFiExp(ex_c)) + "\n" +
-						"-------\n"
-					);
-				}*/
 				maybeMap(fcMakeFnFromLambda(ex_c, None(), env.evalEnv),
-					\fn -> {
-						/*if (length(free) > 0) {
-							println(
-								"(!) free:\n" + strIndent(toStringFormatted(free)) + "\n" +
-								"const closure:\n" + strIndent(toStringFormatted(const_closure)) + "\n" +
-								"ex_c:\n" + strIndent(pretFiExp(ex_c)) + "\n" +
-								"FN: " + toString(fn) + "\n" +
-								"-------\n"
-							);
-						}*/
-						FcConstEvalVal(fn, ex_c, false)
-					}
+					\fn -> FcConstEvalVal(fn, ex_c, false)
 				);
 			}
 		}
@@ -389,10 +361,6 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 				} else {
 					do_call = \fn, is_var_call -> maybeBind(fn, \cf -> 
 						maybeBind(fcConstEvalUnwrapLambda(cf.exp), \lambda : FiLambda -> {
-							//if (^const_eval_debug_flag) {
-							//	println("fcConstEvalUnwrapLambda(cf.exp):\n" + strIndent(pretFiExp(lambda)));
-								//const_eval_debug_flag := false;
-							//}
 							val = fcConstEval(
 								lambda.body,
 								FcConstEvalEnv(env with
@@ -445,17 +413,11 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 										}
 									);
 								} else {
-									/*if (^const_eval_debug_flag) {
-										println("do_call(lookupTree(env.consts, x)):\n" + strIndent(toStringFormatted(lookupTree(env.consts, x))));
-									}*/
 									do_call(lookupTree(env.consts, x), true);
 								}
 							}
 						}
 						default: {
-							/*if (^const_eval_debug_flag) {
-								println("do_call(rec(f)), rec(f):\n" + strIndent(toStringFormatted(rec(f))));
-							}*/
 							do_call(rec(f), false);
 						}
 					}
@@ -476,13 +438,6 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 			}
 		}
 		FiVar(x, type, pos): {
-			/*if (x == "M") {
-				const_eval_debug_flag := true;
-				println(
-					"M: var\n" + strIndent(toStringFormatted(ex)) + "\n" + 
-					"value:\n" + strIndent(toStringFormatted(lookupTree(env.consts, x))) + "\n"
-				);
-			}*/
 			switch (type) {
 				FiTypeFunction(__,__): None();
 				default: lookupTree(env.consts, x);
@@ -495,13 +450,6 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 						FcConstEvalEnv(env with
 							consts = setTree(env.consts, x,
 								if (fiTypeIsFunction(type)) ce1 else {
-									/*if (x == "M") {
-										println(
-											"M: ce1\n" + strIndent(toStringFormatted(ce1)) + "\n" +
-											"ce2:\n" + strIndent(toStringFormatted(FcConstEvalVal(ce1 with exp = FiVar(x, type, pos), plain = true))) + "\n"
-											//"e2:\n" + strIndent(toStringFormatted(e2)) + "\n"
-										);
-									}*/
 									FcConstEvalVal(ce1 with exp = FiVar(x, type, pos), plain = true)
 								}
 							)
@@ -569,12 +517,6 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 		FiString(v,__): Some(FcConstEvalVal(v, ex, true));
 		default: None();
 	}
-	/*if (debug) {
-		println(i2s(^const_eval_debug_counter) + ") const-eval of:\n" + strIndent(pretFiExp(ex)) + "\n" +
-			"ended with:\n" + strIndent(eitherMap(ret, \r -> pretFiExp(r.exp), "NONE")) + "\n"
-		);
-	}*/
-	ret;
 }
 
 fcConstEvalCast(ce: FcConstEvalVal, from: FiType, to: FiType) -> Maybe<FcConstEvalVal> {

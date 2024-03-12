@@ -18,7 +18,9 @@ export {
 
 	optimizeExp(expr : FiExp, envExp : OptEnvExp) -> FiExp;
 
-	evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (string) -> void) -> FiProgram;
+	autoEvalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (string) -> void) -> FiProgram;
+
+	//manualEvalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (string) -> void) -> FiProgram;
 
 	OptEnv(
 		// These variables are hardcoded to give the respective value, despite
@@ -107,7 +109,7 @@ makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> Op
 	)
 }
 
-evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (string) -> void) -> FiProgram {
+autoEvalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (string) -> void) -> FiProgram {
 	env = fcInitConstEvalEnv(prog, on_err, on_msg);
 	optimzie_debug = getConfigParameter(prog.config.config, "optimize-debug");
 	verb = s2i(getConfigParameterDef(prog.config.config, "optimize-verbose", "0"));
@@ -141,8 +143,6 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (stri
 								"Something changed: Compile-time consts of " + decl.name + ":" +
 								"\n" + strIndent(pretFiExp(e1)) + "\n" +
 								"ended up with:\n" + strIndent(pretFiExp(e2))
-								// + "\nraw expr:\n" + strIndent(toStringFormatted(e)) + "\n"
-								// + "\nraw opt:\n" + strIndent(toStringFormatted(e_opt2)) + "\n"
 							),
 							prog.config.threadId
 						);
@@ -164,18 +164,11 @@ evalProgramConstExprs(prog : FiProgram, on_err: (FcError) -> void, on_msg: (stri
 	);
 }
 
-decideToUseConst(x: FiExp, c: FiExp, threshold: int, pc: int, debug: bool) -> bool {
+decideToUseConst(x: FiExp, c: FiExp, threshold: int, debug: bool) -> bool {
 	switch (x) {
 		FiVar(__,__,__): false;
 		default: {
-			ret = fiCountAstNodes(x) - fiCountAstNodes(c) > threshold - pc;
-			if (ret && debug) {
-				println("pc: " + i2s(pc) + ", fiCountAstNodes(x) - fiCountAstNodes(c) > threshold: " + i2s(fiCountAstNodes(x)) + " - " + i2s(fiCountAstNodes(c)) + " > " + i2s(threshold) + " == " + b2s(ret) + "\n" +
-					"x:\n" + strIndent(pretFiExp(x)) + "\n" +
-					"c:\n" + strIndent(pretFiExp(c)) + "\n"
-				)
-			}
-			ret;
+			fiCountAstNodes(x) - fiCountAstNodes(c) > threshold;
 		}
  	}
 }
@@ -193,9 +186,8 @@ evalExpConstExprs(x : FiExp, env: FcConstEvalEnv, locals: Set<string>, threshold
 	rec = \e -> evalExpConstExprs(e, env, locals, threshold, debug);
 	rec_locals = \e, new_locals -> evalExpConstExprs(e, env, new_locals, threshold, debug);
 	const_eval = \e -> {
-		env.evalEnv.pc := 0;
 		maybeBind(fcConstEval(x, env, locals, debug), \c ->
-			if (!c.plain && !fiEqualExps(x, c.exp) && decideToUseConst(e, c.exp, threshold, ^(env.evalEnv.pc), debug)) {
+			if (!c.plain && !fiEqualExps(x, c.exp) && decideToUseConst(e, c.exp, threshold, debug)) {
 				Some(c);
 			} else {
 				None()
