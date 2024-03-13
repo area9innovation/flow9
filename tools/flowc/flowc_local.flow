@@ -168,9 +168,17 @@ doFiProgramAnalysis(env : FcTypeEnvGlobal, prog : FiProgram, onError : (FcError)
 		performFiProgramDCE(prog, onError, getConfigParameterDef(config, "dce-types", "") == "1");
 	}
 
-	prog_opt = if (!isConfigParameterTrue(config, "optimize")) prog_dce else {
+	prog_const_eval = if (isConfigParameterFalse(config, "const-eval")) prog_dce else {
 		t = timestamp();
-		optimized = autoEvalProgramConstExprs(prog_dce, onError, \msg -> fcPrintln(msg, prog.config.threadId));
+		const_evaled = evalProgramConstExprs(prog_dce, isConfigParameterTrue(config, "const-eval-auto"), onError, \msg -> fcPrintln(msg, prog.config.threadId));
+		incrementTimePhase(getTimePhases(prog.config.threadId).optimize, t);
+		// Perform DCE once more - some more functions may go away
+		performFiProgramDCE(const_evaled, onError, true);
+	}
+
+	prog_opt = if (!isConfigParameterTrue(config, "optimize")) prog_const_eval else {
+		t = timestamp();
+		optimized = optimizeCode(prog_const_eval, env, prog.config.flowfile, makeTree());
 		incrementTimePhase(getTimePhases(prog.config.threadId).optimize, t);
 		// Perform DCE once more - some more functions may go away
 		performFiProgramDCE(optimized, onError, true);

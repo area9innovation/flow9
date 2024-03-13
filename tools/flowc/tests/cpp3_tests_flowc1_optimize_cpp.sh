@@ -7,7 +7,7 @@ flowc1 \
 	compiler=flowc1 \
 	test=cpp3 \
 	valgrind=1 \
-	cpp3-flowc-opts=optimize \
+	cpp3-flowc-opts=const-eval-auto \
 	exclude=test_runner,test_concur,sizeof,test_clone,benchmark,test_dynamic_func,test_native_stub \
 	test-opts=determ
 
@@ -18,7 +18,7 @@ flowc1 \
 	compiler=flowc1 \
 	test=nim \
 	valgrind=1 \
-	cpp3-flowc-opts=optimize \
+	cpp3-flowc-opts=const-eval-auto \
 	exclude=gc,http,test_local2utc,users_tree \
 	test-opts=determ #cpp3-back-opts=cpp-debug
 
