@@ -70,7 +70,7 @@ CONFIG(use_gui) {
     INCLUDEPATH += /usr/include/freetype2
     INCLUDEPATH += /usr/local/include/freetype2
 
-    LIBS += -ljpeg -lpng lfreetype
+    LIBS += -ljpeg -lpng -lfreetype
 } else {
     QT -= gui opengl
 }
