@@ -632,12 +632,6 @@ int main(int argc, char *argv[])
         pRenderer->SetResourceBase(media_path);
         pRenderer->SetFlowBase(flow_path);
 
-#ifndef FLOW_DFIELD_FONTS
-        pRenderer->LoadFont("Book", media_path+"resources/FRABK.TTF");
-        pRenderer->LoadFont("Italic", media_path+"resources/FRABKIT.TTF");
-        pRenderer->LoadFont("Medium", media_path+"resources/framd.ttf");
-        pRenderer->LoadFont("DejaVuSans", media_path+"resources/DejaVuSans.ttf");
-#else
         // Scan the font folder for the fonts to load
         loadFonts(pRenderer, QDir(media_path + "resources/dfont/"));
         loadFonts(pRenderer, QDir(flow_path + "resources/dfont/"));
@@ -645,7 +639,6 @@ int main(int argc, char *argv[])
         if (fallback_font.compare("") != 0 && !pRenderer->setFallbackFont(qt2unicode(fallback_font))) {
             cerr << "Error: Failed to set FallbackFont '" << fallback_font.toStdString() << "'" << endl;
         }
-#endif
     }
 #else // no-gui:
     QtHttpSupport HttpManager(&FlowRunner);
