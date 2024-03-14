@@ -20,6 +20,8 @@ export {
 
 	evalProgramConstExprs(prog : FiProgram, auto: bool, on_err: (FcError) -> void, on_msg: (string) -> void) -> FiProgram;
 
+	evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram;
+
 	OptEnv(
 		// These variables are hardcoded to give the respective value, despite
 		// what code otherwise might think
@@ -107,48 +109,147 @@ makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> Op
 	)
 }
 
+evalExpValue(e: FiExp, trav_env: FiExpTraverseEnv, eval_env: FcEvalEnv, locals : HashMap<string, FcEvalLocal>) -> Maybe<flow> {
+	free_vars = filterSet(fifreevars(e), \x -> containsKeyTree(trav_env.locals, x));
+	ok = ref true;
+	iterSet(free_vars, \x -> if (!containsKeyHashMap(locals, x)) {
+		switch (lookupTree(trav_env.lets, x)) {
+			Some(let): {
+				switch (evalExpValue(let.e1, trav_env, eval_env, locals)) {
+					Some(v): setHashMap(locals, let.name, FcEvalLocal(v));
+					None(): ok := false;
+				}
+			}
+			None(): ok := false;
+		}
+	});
+	if (!^ok) None() else {
+		err_no = length(^(eval_env.errors));
+		val = fcReplEval(e, eval_env, locals);
+		if (length(^(eval_env.errors)) == err_no) Some(val) else None();
+	}
+}
+
+evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
+	eval_env = fcInitEvalEnv(fcOptimizeTailCalls(prog), None(), on_err);
+	verb = s2i(getConfigParameterDef(prog.config.config, "compile-time-verbose", "0"));
+	fiMapProgramModule(prog,
+		\m, p -> fiMapModuleExp(p, m, \e0, decl,__,__ ->
+			fiMapExp(e0, \x, trav_env -> switch (x) {
+				FiCall(f, args, type,__): switch (f) {
+					FiVar(f_name,__,__): {
+						if (f_name == "compileTime") {
+							ex = args[0];
+							ex_c = eitherMap(
+								evalExpValue(ex, trav_env, eval_env, makeHashMap(fastHashString)),
+								\v -> switch(fiflow2Constant(v, Some(type), eval_env)) {
+									Some(ex_c): ex_c;
+									None(): {
+										on_err(FcError(
+											"Failed to type a constant.\n" +
+											"Type: " + pretFiType(type) + "\n" +
+											"Constant:\n" + toStringFormatted(v),
+											[]
+										));
+										ex;
+									}
+								},
+								ex
+							);
+							if (verb > 0) {
+								fcPrintln(
+									"Evaled during compile-time:\n" +
+										strIndent(pretFiExp(ex)) + "\n" +
+									"value is:\n" +
+										strIndent(if (fiEqualExps(ex, ex_c)) "the same" else pretFiExp(ex_c)),
+									prog.config.threadId
+								);
+							}
+							ex_c;
+						} else if (f_name == "compileTimeDef") {
+							ex = args[0];
+							def = args[1];
+							ex_c = eitherMap(
+								evalExpValue(ex, trav_env,
+									FcEvalEnv(eval_env with onError = nop3),
+									makeHashMap(fastHashString)
+								),
+								\v -> either(fiflow2Constant(v, Some(type), eval_env), def),
+								def
+							);
+							if (verb > 0 && !fiEqualExps(ex, ex_c)) {
+								fcPrintln(
+									"Evaled during compile-time:\n" +
+										strIndent(pretFiExp(ex)) + "\n" +
+									"value is:\n" +
+										strIndent(if (fiEqualExps(ex, ex_c)) "the same" else pretFiExp(ex_c)),
+									prog.config.threadId
+								);
+							}
+							ex_c;
+						} else {
+							x;
+						}
+					}
+					default: x;
+				}
+				default: x;
+			}, true)
+		),
+		fcParallelOn(prog.config)
+	);
+}
+
 evalProgramConstExprs(prog : FiProgram, auto: bool, on_err: (FcError) -> void, on_msg: (string) -> void) -> FiProgram {
 	env = fcInitConstEvalEnv(prog, on_err, on_msg);
 	optimzie_debug = getConfigParameter(prog.config.config, "const-eval-debug");
 	verb = s2i(getConfigParameterDef(prog.config.config, "const-eval-verbose", "0"));
 	threshold = s2i(getConfigParameterDef(prog.config.config, "const-eval-threshold", "0"));
-	//println("evalProgramConstExprs: auto = " + b2s(auto));
+	check_compile_time = \e: FiExp -> isSome(fiFindInExpr(e, \x -> switch (x) {
+		FiCall(f,__,__,__): switch (f) {
+			FiVar(f_name,__,__): if (f_name == "compileTime" || f_name == "compileTimeDef") Some(x) else None();
+			default: None();
+		}
+		default: None();
+	}));
 	fiMapProgramModule(prog,
 		\m, p -> {
 			start = timestamp();
 			m_opt = fiMapModuleExp(p, m, \e0, decl,__,__ -> {
-				e1 = fiExpMakeStartUnique(e0);
-				e2 = evalExpConstExprs(e1, auto,
-					FcConstEvalEnv(env with cache = makeHashMap(idfn)), 
-					makeSet(), threshold, decl.name == optimzie_debug
-				);
-				if (decl.name == optimzie_debug || verb > 0) {
-					if (fiEqualExps(e1, e2)) {
-						if (verb > 1) {
-							fcPrintln("No compile-time consts in " + decl.name, prog.config.threadId);
-						}
-						if (decl.name == optimzie_debug) {
+				if (!(auto || check_compile_time(e0))) e0 else {
+					e1 = fiExpMakeStartUnique(e0);
+					e2 = evalExpConstExprs(e1, auto,
+						FcConstEvalEnv(env with cache = makeHashMap(idfn)), 
+						makeSet(), threshold, decl.name == optimzie_debug
+					);
+					if (decl.name == optimzie_debug || verb > 0) {
+						if (fiEqualExps(e1, e2)) {
+							if (verb > 1) {
+								fcPrintln("No compile-time consts in " + decl.name, prog.config.threadId);
+							}
+							if (decl.name == optimzie_debug) {
+								fcPrintln(
+									strIndent("Nothing changed: Compile-time consts of " + decl.name + ":" +
+										"\n" + strIndent(pretFiExp(e1)) + "\n" +
+										"ended up with:\n" + strIndent(pretFiExp(e2))
+									),
+									prog.config.threadId
+								);
+							}
+						} else {
 							fcPrintln(
-								strIndent("Nothing changed: Compile-time consts of " + decl.name + ":" +
+								strIndent(
+									"Something changed: Compile-time consts of " + decl.name + ":" +
 									"\n" + strIndent(pretFiExp(e1)) + "\n" +
-									"ended up with:\n" + strIndent(pretFiExp(e2))
+									"ended up with:\n" + strIndent(pretFiExp(e2)) + "\n" +
+									"raw\n" + strIndent(toStringFormatted(e2)) + "\n"
 								),
 								prog.config.threadId
 							);
 						}
-					} else {
-						fcPrintln(
-							strIndent(
-								"Something changed: Compile-time consts of " + decl.name + ":" +
-								"\n" + strIndent(pretFiExp(e1)) + "\n" +
-								"ended up with:\n" + strIndent(pretFiExp(e2)) + "\n" +
-								"raw\n" + strIndent(toStringFormatted(e2)) + "\n"
-							),
-							prog.config.threadId
-						);
 					}
+					e2;
 				}
-				e2;
 			});
 			if (prog.config.verbose > 0) {
 				fcPrintln("compile-time constants are evaluated in " + m.fileinfo.flowfile + " in " + d2st((timestamp() - start) / 1000.0, 3) + " s.", prog.config.threadId);
@@ -194,8 +295,12 @@ evalExpConstExprs(x : FiExp, auto: bool, env: FcConstEvalEnv, locals: Set<string
 				FiCall(f, args,__,__): {
 					switch (f) {
 						FiVar(f_name,__,__): {
-							if (f_name != "compileTime") None() else {
+							if (f_name == "compileTime") {
 								fcConstEval(e, env, locals, debug)
+							} else if (f_name == "compileTimeDef") {
+								fcConstEval(e, env, locals, debug)
+							} else {
+								None();
 							}
 						}
 						default: None();
