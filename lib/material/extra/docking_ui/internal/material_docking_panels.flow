@@ -19,7 +19,7 @@ export {
 		style : [MDockingPanelStyle]
 	);
 
-	makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : DynamicBehaviour<[Point]>, style : [MDockingStyle]) -> Material;
+	makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : DynamicBehaviour<[Point]>, active : bool, style : [MDockingStyle]) -> Material;
 	makeDockedPanel(isColumn : bool, colA : [int], state : MDockingState, areaId : int, colId : int, panelId : int) -> Material;
 }
 
@@ -74,6 +74,25 @@ makeDockingPanelContent(state : MDockingState, panelId : int, mobilePanel : bool
 	|> (\m -> if (isToolbar) m else MCropSize(TFillXY(), m))
 	|> (\m -> (MExplicitTheme(m, theme, [])));
 }
+
+
+	// Dragging panel utils
+	makeMobileDraggingShape(state : MDockingState, panelId : int, color : MColor, isPanel : bool) -> Material {
+		expanded = getValue(state.expanded)[panelId];
+		dRadius = getDockingRadius(state.style);
+
+		MSelect2(state.mobileSize, expanded, \ms, e -> {
+		panelSize = if (e) ms[panelId].height else dockingBarHeightPanel;
+				// TRounded(dRadius, dRadius, dRadius, dRadius, [MFill(dockingPrimaryColor), FillOpacity(dockingMobileOpacity)],
+				// TRounded(dRadius, dRadius, dRadius, dRadius, [MFill(color), FillOpacity(dockingMobileOpacity)],
+				TRounded(dRadius, dRadius, dRadius, dRadius, [MFill(color), FillOpacity(0.8)],
+					TFixed(
+						ms[panelId].width, 
+						if (isPanel) panelSize else dockingBarHeightPanel
+					)
+				);
+		})
+	} 
 
 makePanelTopBar(docked : bool, panelId: int, areaId : int, colId : int, colA : [int], state : MDockingState, isColumn: bool, pTheme : bool) -> Material {
 	manager = state.manager;
@@ -249,9 +268,18 @@ makePanelTopBar(docked : bool, panelId: int, areaId : int, colId : int, colA : [
 					else panelTopBarContent
 				]),
 				TFillXH(topBarH)
-			);
+			)
+			// Overlay for z-order background (disabled)
+			|> (\mp -> if (isToolbar) mp else
+				MSelect(state.zorderTop, \zordId -> {
+				if (zordId == panelId) mp else 
+					MGroup2(
+						mp,
+						makeMobileDraggingShape(state, panelId, barColorFn, false)
+					);
+				})
+			)
 		}
-
 
 	MSelect(getValue(state.sideExpanded)[panelId], \se -> {
 		if (se) {
@@ -263,7 +291,7 @@ makePanelTopBar(docked : bool, panelId: int, areaId : int, colId : int, colA : [
 	|> (\r -> (MExplicitTheme(r, const(pTheme), [])))
 }
 
-makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : DynamicBehaviour<[Point]>, style : [MDockingStyle]) -> Material {
+makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : DynamicBehaviour<[Point]>, active: bool, style : [MDockingStyle]) -> Material {
 	manager = state.manager;
 	itemId = makeTropicTag(manager);
 	dockA = state.dock;
@@ -296,14 +324,16 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	minHeight = minPanelSize.height;
 
 	msize = getValue(state.mobileSize)[panelId];
-	width = msize.width;
-	height = msize.height;
+	mwidth = msize.width;
+	mheight = msize.height;
 
 	disableButton = contains(pstyle, MDPanelShowCloseBtn());
 
 	mouseXyLocal = make(zeroPoint);
 	dragPressed = make(false);
-	tempWH = make(WidthHeight(width, height));
+	// tempWH = make(WidthHeight(mwidth, mheight));
+
+	tempWH = fselectLift(state.mobileSize, \ms ->ms[panelId]);
 
 	resizablePanel = \c : Material, lg : bool -> {
 		addShadow = \m : Material -> {
@@ -322,25 +352,15 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 				MGroup2(
 					m,
 					// Drag handle for mobile panels
-					MSelect2(state.mobileSize, expanded, \ms, e -> {
-						draggingShape = 
-							TRounded(dRadius, dRadius, dRadius, dRadius, [MFill(dockingPrimaryColor), FillOpacity(dockingMobileOpacity)],
-								TFixed(
-									ms[panelId].width, 
-									if (e) ms[panelId].height else dockingBarHeightPanel
-								)
-							);
-							MDraggable(panelId,
-								makeMDockingDottedHandle(state, smallDragHandleColorFn(lg, state.style), !isToolbar)
-									|> addMTooltip(_("Drag and Drop into a Dockable Area")),
-								[
-									TDragShape(draggingShape),
-									TCursorShape(GrabCursor())
-								]
-							)
-							|> highlightActiveHoverLayer(activeHover)
-
-					})
+						MDraggable(panelId,
+							makeMDockingDottedHandle(state, smallDragHandleColorFn(lg, state.style), !isToolbar)
+								|> addMTooltip(_("Drag and Drop into a Dockable Area")),
+							[
+								MDragShape(makeMobileDraggingShape(state, panelId, dockingPrimaryColor, true)),
+								TCursorShape(GrabCursor())
+							]
+						)
+						|> highlightActiveHoverLayer(activeHover)
 				)
 			);
 		}
@@ -349,13 +369,13 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 				makeSubscribe2(isResizing, \rs -> {
 					if (!rs) {
 					// update mobile size
-					nextDistinct(state.mobileSize, replace(getValue(state.mobileSize), panelId , getValue(tempWH)));
+					nextDistinct(state.mobileSize, replace(getValue(state.mobileSize), panelId , fgetValue(tempWH)));
 				}
 			})
 		],
 		MInteractive([TMouseXY(mouseXyLocal)],
 			if (isToolbar) {
-				toolbarSize = TFixed(width, size.height + topBarH) |> (\m -> if (!isVerticalToolbarMobile) m else TRotate90(m));
+				toolbarSize = TFixed(mwidth, size.height + topBarH) |> (\m -> if (!isVerticalToolbarMobile) m else TRotate90(m));
 					[
 						panelTopBar,
 						c
@@ -391,6 +411,13 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 			|> (\m-> {
 				MMovable(
 					m,
+					// 
+					// |> (\mp -> if (active) mp else 
+					// 	MGroup2(
+					// 		mp,
+					// 		makeMobileDraggingShape(state, panelId, panelBgColorFn(lg, pstyle), true)
+					// 	)
+					// ),
 					TFillXY(),
 					[
 						MMovableCustomCursor(MoveCursor()),
@@ -404,13 +431,6 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	}
 
 	MConstruct([
-		makeSubscribe2(isResizing, \rs -> { 
-			if (!rs) {
-				// Update mobile size only (do not affect dockedSize)
-				updateH(state.mobileSize, panelId,  getValue(tempWH).height);
-				updateW(state.mobileSize, panelId,  getValue(tempWH).width);
-			}
-		}),
 		makeSubscribe2(resizePressed, \p -> {
 			if (p) {
 				addMInteractionItemId(manager, itemId);
@@ -420,21 +440,21 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 			}
 		}),
 		makeSubscribe(mouseXyLocal, \mxy -> {
+			// Update mobile size only (do not affect dockedSize)
 			if (isCurrentMInteractionItemId(manager, itemId) && getValue(isResizing)) {
 				rtlCorrection = if (getDefaultRtl()) 1.0 else 1.0;
 				blockOtherMInteractionItemIds(manager, itemId);
-
 				// Update while resizing, but do not exceed the editor size
-				nextDistinct(tempWH, 
-					WidthHeight(
-						min(
-							max(minWidth, rtlCorrection * mxy.x),
-							getValue(state.editorWH).width - dockingSafeResizeGap
-						),
-						min(
-							max(minHeight, mxy.y),
-							getValue(state.editorWH).height - getValue(position).y - dockingSafeResizeGap // do not grow in vertical while resizing
-						)
+				updateH(state.mobileSize, panelId,
+					min(
+						max(minHeight, mxy.y),
+						getValue(state.editorWH).height - getValue(position).y - dockingSafeResizeGap // do not grow in vertical while resizing
+					)
+				);
+				updateW(state.mobileSize, panelId,  
+					min(
+						max(minWidth, rtlCorrection * mxy.x),
+						getValue(state.editorWH).width - dockingSafeResizeGap
 					)
 				);
 			}
