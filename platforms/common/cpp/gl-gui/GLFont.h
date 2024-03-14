@@ -186,11 +186,11 @@ class GLFontLibrary
         switch (code) {
         case 0: break;
         case FT_Err_Unknown_File_Format:
-            cerr << "Unknown font file format." << endl;
+            cerr << "Unknown font file format." << std::endl;
             break;
 
         default:
-            cerr << "FreeType error " << code << endl;
+            cerr << "FreeType error " << code << std::endl;
         }
     }
 
