@@ -1,11 +1,11 @@
 /****************************************************************************
  *
- * ftlzw.h
+ * ftbzip2.h
  *
- *   LZW-compressed stream support.
+ *   Bzip2-compressed stream support.
  *
- * Copyright (C) 2004-2023 by
- * David Turner, Robert Wilhelm, and Werner Lemberg.
+ * Copyright (C) 2010-2023 by
+ * Joel Klinghed.
  *
  * This file is part of the FreeType project, and may only be used,
  * modified, and distributed under the terms of the FreeType project
@@ -16,8 +16,8 @@
  */
 
 
-#ifndef FTLZW_H_
-#define FTLZW_H_
+#ifndef FTBZIP2_H_
+#define FTBZIP2_H_
 
 #include <freetype/freetype.h>
 
@@ -33,37 +33,39 @@ FT_BEGIN_HEADER
   /**************************************************************************
    *
    * @section:
-   *   lzw
+   *   bzip2
    *
    * @title:
-   *   LZW Streams
+   *   BZIP2 Streams
    *
    * @abstract:
-   *   Using LZW-compressed font files.
+   *   Using bzip2-compressed font files.
    *
    * @description:
-   *   In certain builds of the library, LZW compression recognition is
+   *   In certain builds of the library, bzip2 compression recognition is
    *   automatically handled when calling @FT_New_Face or @FT_Open_Face.
    *   This means that if no font driver is capable of handling the raw
-   *   compressed file, the library will try to open a LZW stream from it and
-   *   re-open the face with it.
+   *   compressed file, the library will try to open a bzip2 compressed
+   *   stream from it and re-open the face with it.
    *
    *   The stream implementation is very basic and resets the decompression
    *   process each time seeking backwards is needed within the stream,
    *   which significantly undermines the performance.
    *
-   *   This section contains the declaration of LZW-specific functions.
+   *   This section contains the declaration of Bzip2-specific functions.
    *
    */
+
 
   /**************************************************************************
    *
    * @function:
-   *   FT_Stream_OpenLZW
+   *   FT_Stream_OpenBzip2
    *
    * @description:
-   *   Open a new stream to parse LZW-compressed font files.  This is mainly
-   *   used to support the compressed `*.pcf.Z` fonts that come with XFree86.
+   *   Open a new stream to parse bzip2-compressed font files.  This is
+   *   mainly used to support the compressed `*.pcf.bz2` fonts that come with
+   *   XFree86.
    *
    * @input:
    *   stream ::
@@ -83,18 +85,18 @@ FT_BEGIN_HEADER
    *   stream objects will be released to the heap.
    *
    *   This function may return `FT_Err_Unimplemented_Feature` if your build
-   *   of FreeType was not compiled with LZW support.
+   *   of FreeType was not compiled with bzip2 support.
    */
   FT_EXPORT( FT_Error )
-  FT_Stream_OpenLZW( FT_Stream  stream,
-                     FT_Stream  source );
+  FT_Stream_OpenBzip2( FT_Stream  stream,
+                       FT_Stream  source );
 
   /* */
 
 
 FT_END_HEADER
 
-#endif /* FTLZW_H_ */
+#endif /* FTBZIP2_H_ */
 
 
 /* END */
