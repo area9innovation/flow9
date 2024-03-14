@@ -1,6 +1,8 @@
 import tools/flowc/incremental/fiprettyprint;
 import tools/flowc/manipulation/common;
 import tools/flowc/flowc_helpers;
+import tools/flowc/const_eval;
+import tools/flowc/incremental/fi_helpers2;
 
 export {
 	// Try to find a named constant from config and pass it to AST.
@@ -21,6 +23,9 @@ export {
 	//  - booleans are of the form: 1, 0, true, false, TRUE, FALSE
 	//
 	substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram;
+
+	// Try to eval expressions in `compileTime` and `compileTimeDef` functions.
+	evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram;
 }
 
 substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram {
@@ -65,4 +70,95 @@ compileTimeValue(val: string, type: FiType, start: int, on_err: (string, int) ->
 			None();
 		}
 	}
+}
+
+evalExpValue(e: FiExp, trav_env: FiExpTraverseEnv, eval_env: FcEvalEnv, locals : HashMap<string, FcEvalLocal>) -> Maybe<flow> {
+	free_vars = filterSet(fifreevars(e), \x -> containsKeyTree(trav_env.locals, x));
+	ok = ref true;
+	iterSet(free_vars, \x -> if (!containsKeyHashMap(locals, x)) {
+		switch (lookupTree(trav_env.lets, x)) {
+			Some(let): {
+				switch (evalExpValue(let.e1, trav_env, eval_env, locals)) {
+					Some(v): setHashMap(locals, let.name, FcEvalLocal(v));
+					None(): ok := false;
+				}
+			}
+			None(): ok := false;
+		}
+	});
+	if (!^ok) None() else {
+		err_no = length(^(eval_env.errors));
+		val = fcReplEval(e, eval_env, locals);
+		if (length(^(eval_env.errors)) == err_no) Some(val) else None();
+	}
+}
+
+evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
+	eval_env = fcInitEvalEnv(fcOptimizeTailCalls(prog), None(), on_err);
+	verb = s2i(getConfigParameterDef(prog.config.config, "compile-time-verbose", "0"));
+	fiMapProgramModule(prog,
+		\m, p -> fiMapModuleExp(p, m, \e0, decl,__,__ ->
+			fiMapExp(e0, \x, trav_env -> switch (x) {
+				FiCall(f, args, type,__): switch (f) {
+					FiVar(f_name,__,__): {
+						if (f_name == "compileTime") {
+							ex = args[0];
+							ex_c = eitherMap(
+								evalExpValue(ex, trav_env, eval_env, makeHashMap(fastHashString)),
+								\v -> switch(fiflow2Constant(v, Some(type), eval_env)) {
+									Some(ex_c): ex_c;
+									None(): {
+										on_err(FcError(
+											"Failed to type a constant.\n" +
+											"Type: " + pretFiType(type) + "\n" +
+											"Constant:\n" + toStringFormatted(v),
+											[]
+										));
+										ex;
+									}
+								},
+								ex
+							);
+							if (verb > 0) {
+								fcPrintln(
+									"Evaled during compile-time:\n" +
+										strIndent(pretFiExp(ex)) + "\n" +
+									"value is:\n" +
+										strIndent(if (fiEqualExps(ex, ex_c)) "the same" else pretFiExp(ex_c)),
+									prog.config.threadId
+								);
+							}
+							ex_c;
+						} else if (f_name == "compileTimeDef") {
+							ex = args[0];
+							def = args[1];
+							ex_c = eitherMap(
+								evalExpValue(ex, trav_env,
+									FcEvalEnv(eval_env with onError = nop3),
+									makeHashMap(fastHashString)
+								),
+								\v -> either(fiflow2Constant(v, Some(type), eval_env), def),
+								def
+							);
+							if (verb > 0 && !fiEqualExps(ex, ex_c)) {
+								fcPrintln(
+									"Evaled during compile-time:\n" +
+										strIndent(pretFiExp(ex)) + "\n" +
+									"value is:\n" +
+										strIndent(if (fiEqualExps(ex, ex_c)) "the same" else pretFiExp(ex_c)),
+									prog.config.threadId
+								);
+							}
+							ex_c;
+						} else {
+							x;
+						}
+					}
+					default: x;
+				}
+				default: x;
+			}, true)
+		),
+		fcParallelOn(prog.config)
+	);
 }
