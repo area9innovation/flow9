@@ -337,6 +337,8 @@ GLFont::GLFont(GLFontLibrary::Ptr library, FT_Face face) :
     library(library), face(face)
 {
     is_freetype = true;
+    is_system = false;
+    is_fallback = false;
     
     FontHeader* header = new FontHeader();
     
@@ -438,7 +440,9 @@ GLFont::~GLFont()
 
     sizes.clear();
 
-    FT_Done_Face(face);
+    if (is_freetype) {
+        FT_Done_Face(face);
+    }
 }
 
 GLFont::Size::Size(GLFont *font, int sz, FT_Size face_size) :
