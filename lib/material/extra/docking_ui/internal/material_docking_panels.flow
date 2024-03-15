@@ -76,24 +76,6 @@ makeDockingPanelContent(state : MDockingState, panelId : int, mobilePanel : bool
 }
 
 
-	// Dragging panel utils
-	makeMobileDraggingShape(state : MDockingState, panelId : int, color : MColor, isPanel : bool) -> Material {
-		expanded = getValue(state.expanded)[panelId];
-		dRadius = getDockingRadius(state.style);
-
-		MSelect2(state.mobileSize, expanded, \ms, e -> {
-		panelSize = if (e) ms[panelId].height else dockingBarHeightPanel;
-				// TRounded(dRadius, dRadius, dRadius, dRadius, [MFill(dockingPrimaryColor), FillOpacity(dockingMobileOpacity)],
-				// TRounded(dRadius, dRadius, dRadius, dRadius, [MFill(color), FillOpacity(dockingMobileOpacity)],
-				TRounded(dRadius, dRadius, dRadius, dRadius, [MFill(color), FillOpacity(0.8)],
-					TFixed(
-						ms[panelId].width, 
-						if (isPanel) panelSize else dockingBarHeightPanel
-					)
-				);
-		})
-	} 
-
 makePanelTopBar(docked : bool, panelId: int, areaId : int, colId : int, colA : [int], state : MDockingState, isColumn: bool, pTheme : bool) -> Material {
 	manager = state.manager;
 	pstyle = getValue(state.panelStyle)[panelId];
@@ -269,16 +251,6 @@ makePanelTopBar(docked : bool, panelId: int, areaId : int, colId : int, colA : [
 				]),
 				TFillXH(topBarH)
 			)
-			// Overlay for z-order background (disabled)
-			|> (\mp -> if (isToolbar) mp else
-				MSelect(state.zorderTop, \zordId -> {
-				if (zordId == panelId) mp else 
-					MGroup2(
-						mp,
-						makeMobileDraggingShape(state, panelId, barColorFn, false)
-					);
-				})
-			)
 		}
 
 	MSelect(getValue(state.sideExpanded)[panelId], \se -> {
@@ -331,7 +303,7 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 
 	mouseXyLocal = make(zeroPoint);
 	dragPressed = make(false);
-	// tempWH = make(WidthHeight(mwidth, mheight));
+	activePressed = make(false);
 
 	tempWH = fselectLift(state.mobileSize, \ms ->ms[panelId]);
 
@@ -356,12 +328,22 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 							makeMDockingDottedHandle(state, smallDragHandleColorFn(lg, state.style), !isToolbar)
 								|> addMTooltip(_("Drag and Drop into a Dockable Area")),
 							[
-								MDragShape(makeMobileDraggingShape(state, panelId, dockingPrimaryColor, true)),
+								MDragShape(makeMobileDraggingShape(state, panelId, dockingPrimaryColor, dockingMobileOpacity, true)),
 								TCursorShape(GrabCursor())
 							]
 						)
 						|> highlightActiveHoverLayer(activeHover)
 				)
+			)
+			// Overlay for z-order background (disabled)
+			|> (\mp -> if (isToolbar) mp else
+				MSelect(state.zorderTop, \zordId -> {
+				if (zordId == panelId) mp else 
+					MGroup2(
+						mp,
+						makeMobileDraggingShape(state, panelId, topBarColorFn(lg, state.style), activeOverlayPanelOpacity, false)
+					);
+				})
 			);
 		}
 		 
@@ -402,22 +384,19 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 
 	movablePanel = \lg -> {
 		MConstruct([
-			makeSubscribe2(dragPressed, \p -> {
+			makeSubscribe2(activePressed, \p -> {
 				if (p) nextDistinct(state.zorderTop, panelId); // set z-order top panel
-				if (p) next(cursorPositionA, replace(getValue(cursorPositionA), panelId, getValue(mouseXyLocal)));
+			}),
+			makeSubscribe2(dragPressed, \p -> {
+				if (p) next(cursorPositionA, replace(getValue(cursorPositionA), panelId, getValue(mouseXyLocal)))
 			})],
 			resizablePanel(dContent, lg)
-			|> (\m-> MInteractive([TMouseDownGhost(dragPressed)], m))
+			|> (\m-> MSelect(state.zorderTop, \activePanel ->  
+				MInteractive(if (activePanel == panelId) [TMouseDownGhost(dragPressed)] else [TMouseDown(activePressed)], m) // fix z-order interactivity problem
+			))
 			|> (\m-> {
 				MMovable(
 					m,
-					// 
-					// |> (\mp -> if (active) mp else 
-					// 	MGroup2(
-					// 		mp,
-					// 		makeMobileDraggingShape(state, panelId, panelBgColorFn(lg, pstyle), true)
-					// 	)
-					// ),
 					TFillXY(),
 					[
 						MMovableCustomCursor(MoveCursor()),
