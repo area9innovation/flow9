@@ -13,7 +13,6 @@ export {
 
 	FcConstEvalEnv(
 		evalEnv: FcEvalEnv,
-		unions:  HashMap<string, FiTypeUnion>,
 		consts:  Tree<string, FcConstEvalVal>,
 		cache: HashMap<int, Maybe<FcConstEvalVal>>,
 		effects: FiEffects,
@@ -26,8 +25,8 @@ export {
 	// Try to compute a compile-time value of an expression.
 	fcConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool) -> Maybe<FcConstEvalVal>;
 
-	// Remove all speculative compile-time function wrappers: `messageCompileTime`,`forbidCompileTime` and `compileTime`.
-	fcEliminateCompileTimeFns(prog: FiProgram) -> FiProgram;
+	// Remove all speculative compile-time function wrappers: `messageConstEval`,`forbidConstEval` and `forceConstEval`.
+	fcEliminateConstEvalFns(prog: FiProgram) -> FiProgram;
 
 	// Try to make constant from flow value
 	fiflow2Constant(v : flow, hint: Maybe<FiType>, env: FcEvalEnv) -> Maybe<FiExp>;
@@ -57,15 +56,15 @@ fcConstEvalPureToplevels(prog: FiProgram, effects: FiEffects) -> FiProgram {
 	);
 }
 
-fcEliminateCompileTimeFns(prog: FiProgram) -> FiProgram {
+fcEliminateConstEvalFns(prog: FiProgram) -> FiProgram {
 	fiMapProgramExp(prog, \x, __,__,__ ->
 		mapFiExp(x, \e -> switch (e) {
 			FiCall(f, args,__,__): {
 				switch (f) {
 					FiVar(fn_name,__,__): {
-						if (fn_name == "messageCompileTime" || fn_name == "compileTimeDef") args[1] else
-						if (fn_name == "printlnCompileTime") FiVoid(0) else
-						if (fn_name == "forbidCompileTime" || fn_name == "compileTime") args[0] else
+						if (fn_name == "messageConstEval") args[1] else
+						if (fn_name == "printlnConstEval") FiVoid(0) else
+						if (fn_name == "forbidConstEval" || fn_name == "forceConstEval") args[0] else
 						e;
 					}
 					default: e;
@@ -97,7 +96,6 @@ fcInitConstEvalEnv(prog: FiProgram, on_err: (FcError) -> void, on_msg: (string) 
 	fold(const_prog.traversal,
 		FcConstEvalEnv(
 			fcInitEvalEnv(const_prog, Some(prog), nop1),
-			tree2hashMap(const_prog.names.unions, fastHashString),
 			makeTree(), makeHashMap(idfn), effects, on_msg
 		),
 		\acc, mod_name -> eitherMap(lookupTree(const_prog.modules, mod_name),
@@ -341,7 +339,7 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 				if (length(c_args) != length(args)) {
 					switch (f) {
 						FiVar(x,__,__): {
-							if (x == "messageCompileTime") {
+							if (x == "messageConstEval") {
 								// Output the result of non-successfull compile-time computation
 								msg = eitherMap(r_args[0], \arg -> switch (arg.exp) {
 									FiString(msg,__): msg;
@@ -353,7 +351,7 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 								);
 								env.onMessage(msg + pretFiExp(val));
 								None();
-							} else if (x == "printlnCompileTime") {
+							} else if (x == "printlnConstEval") {
 								// Output the result of non-successfull compile-time computation
 								msg = eitherMap(r_args[0], \arg -> switch (arg.exp) {
 									FiString(msg,__): msg;
@@ -361,9 +359,7 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 								}, pretFiExp(args[0]));
 								env.onMessage(msg);
 								None();
-							} else if (x == "compileTimeDef") {
-								r_args[1];
-							} else if (x == "compileTime") {
+							} else if (x == "forceConstEval") {
 								// raise an error
 								env.evalEnv.onError(env.evalEnv.file,
 									"Expression was not computed at compile-time:\n" + pretFiExp(args[0]),
@@ -389,7 +385,7 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 								fold(lambda.args, locals, \acc, arg -> insertSet(acc, arg.name)),
 								debug
 							);
-							/*switch (val) {
+							switch (val) {
 								Some(v): Some(v);
 								None(): if (is_var_call) None() else {
 									maybeMap(
@@ -403,13 +399,12 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 										)
 									)
 								}
-							}*/
-							val;
+							}
 						})
 					);
 					switch (f) {
 						FiVar(x,__,__): {
-							if (x == "messageCompileTime") {
+							if (x == "messageConstEval") {
 								msg = switch (c_args[0].exp) {
 									FiString(m,__): m;
 									default: pretFiExp(c_args[0].exp);
@@ -417,15 +412,13 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 								val = either(fiflow2Constant(c_args[1].val, Some(type), env.evalEnv), c_args[1].exp);
 								env.onMessage(msg + pretFiExp(val));
 								Some(c_args[1]);
-							} else if (x == "printlnCompileTime") {
+							} else if (x == "printlnConstEval") {
 								msg = switch (c_args[0].exp) {
 									FiString(m,__): m;
 									default: pretFiExp(c_args[0].exp);
 								}
 								env.onMessage(msg);
 								None();
-							} else if (x == "compileTimeDef") {
-								r_args[0];
 							} else {
 								if (containsKeyHashMap(env.evalEnv.globals, x) && !containsSet(locals, x)) {
 									env.evalEnv.errors := [];
@@ -455,7 +448,7 @@ fcDoConstEval(ex : FiExp, env: FcConstEvalEnv, locals: Set<string>, debug: bool)
 			}
 			switch (f) {
 				FiVar(x,__,__): {
-					if (x == "forbidCompileTime") {
+					if (x == "forbidConstEval") {
 						if (args[0].start >= 0) {
 							setHashMap(env.cache, args[0].start, None());
 						}
