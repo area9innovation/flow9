@@ -1769,7 +1769,8 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateTextWidth() : Void {
 		if (nativeWidget != null && metrics != null) {
-			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth;
+			var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
+			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && !wordWrap;
 			var textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck);
 			var textNodeWidth0 = textNodeMetrics.width;
 			var textNodeHeight = textNodeMetrics.height;
