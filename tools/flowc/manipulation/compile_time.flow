@@ -72,6 +72,19 @@ compileTimeValue(val: string, type: FiType, start: int, on_err: (string, int) ->
 	}
 }
 
+collectGlobalDependencies(e: FiExp, trav_env: FiExpTraverseEnv, acc: Set<string>) -> Set<string> {
+	free = fifreevars(e);
+	globals = filterSet(free, \v -> !containsKeyTree(trav_env.locals, v));
+	foldSet(
+		differenceSets(free, acc),
+		mergeSets(globals, acc), 
+		\ac, v -> switch (lookupTree(trav_env.lets, v)) {
+			Some(x): collectGlobalDependencies(x.e1, trav_env, ac);
+			None(): ac;
+		}
+	);
+}
+
 evalExpValue(e: FiExp, trav_env: FiExpTraverseEnv, eval_env: FcEvalEnv, locals : HashMap<string, FcEvalLocal>) -> Maybe<flow> {
 	free_vars = filterSet(fifreevars(e), \x -> containsKeyTree(trav_env.locals, x));
 	ok = ref true;
@@ -94,8 +107,37 @@ evalExpValue(e: FiExp, trav_env: FiExpTraverseEnv, eval_env: FcEvalEnv, locals :
 }
 
 evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
-	eval_env = fcInitEvalEnv(fcOptimizeTailCalls(prog), None(), on_err);
+	detect_compile_time = \x -> switch (x) {
+		FiCall(f, args,__,__): switch (f) {
+			FiVar(f_name,__,__): {
+				if (f_name == "compileTime") {
+					Some(args[0]);
+				} else if (f_name == "compileTimeDef") {
+					Some(args[0]);
+				} else {
+					None();
+				}
+			}
+			default: None();
+		}
+		default: None();
+	}
+	used_globals = foldTree(prog.names.toplevel, makeSet(), \__, decl, acc -> {
+		e = switch (decl) {
+			FiFunctionDec(__,lambda,__,__,__): lambda;
+			FiGlobalVar(__,value,__,__,__): value;
+			FiNativeDec(__,__,__,__,fallback,__,__): fallback;
+		}
+		fiFoldExp(e, acc,
+			\x, trav_env, ac -> eitherMap(detect_compile_time(x),
+				\y -> collectGlobalDependencies(y, trav_env, ac), ac
+			),
+			AstTraverseOrder(true, true
+		));
+	});
+	eval_env = fcInitEvalEnv(fcOptimizeTailCalls(prog), None(), Some(used_globals), on_err);
 	verb = s2i(getConfigParameterDef(prog.config.config, "compile-time-verbose", "0"));
+
 	fiMapProgramModule(prog,
 		\m, p -> fiMapModuleExp(p, m, \e0, decl,__,__ ->
 			fiMapExp(e0, \x, trav_env -> switch (x) {
