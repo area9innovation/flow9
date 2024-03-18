@@ -27,7 +27,9 @@
   /* coverage.                                                     */
   /*                                                               */
   /* Note that styles using `AF_COVERAGE_DEFAULT' should always    */
-  /* come after styles with other coverages.                       */
+  /* come after styles with other coverages.  Also note that       */
+  /* fallback scripts only use `AF_COVERAGE_DEFAULT' for its       */
+  /* style.                                                        */
   /*                                                               */
   /* Example:                                                      */
   /*                                                               */
@@ -90,6 +92,13 @@
 
   META_STYLE_LATIN( cyrl, CYRL, "Cyrillic" )
 
+  STYLE( deva_dflt, DEVA_DFLT,
+         "Devanagari default style",
+         AF_WRITING_SYSTEM_LATIN,
+         AF_SCRIPT_DEVA,
+         AF_BLUE_STRINGSET_DEVA,
+         AF_COVERAGE_DEFAULT )
+
   META_STYLE_LATIN( grek, GREK, "Greek" )
 
   STYLE( hebr_dflt, HEBR_DFLT,
@@ -98,13 +107,42 @@
          AF_SCRIPT_HEBR,
          AF_BLUE_STRINGSET_HEBR,
          AF_COVERAGE_DEFAULT )
+
+  STYLE( khmr_dflt, KHMR_DFLT,
+         "Khmer default style",
+         AF_WRITING_SYSTEM_LATIN,
+         AF_SCRIPT_KHMR,
+         AF_BLUE_STRINGSET_KHMR,
+         AF_COVERAGE_DEFAULT )
+
+  STYLE( khms_dflt, KHMS_DFLT,
+         "Khmer Symbols default style",
+         AF_WRITING_SYSTEM_LATIN,
+         AF_SCRIPT_KHMS,
+         AF_BLUE_STRINGSET_KHMS,
+         AF_COVERAGE_DEFAULT )
+
+  STYLE( lao_dflt, LAO_DFLT,
+         "Lao default style",
+         AF_WRITING_SYSTEM_LATIN,
+         AF_SCRIPT_LAO,
+         AF_BLUE_STRINGSET_LAO,
+         AF_COVERAGE_DEFAULT )
+
   META_STYLE_LATIN( latn, LATN, "Latin" )
 
-  STYLE( deva_dflt, DEVA_DFLT,
-         "Devanagari default style",
+  STYLE( latb_dflt, LATB_DFLT,
+         "Latin subscript fallback default style",
          AF_WRITING_SYSTEM_LATIN,
-         AF_SCRIPT_DEVA,
-         AF_BLUE_STRINGSET_DEVA,
+         AF_SCRIPT_LATB,
+         AF_BLUE_STRINGSET_LATB,
+         AF_COVERAGE_DEFAULT )
+
+  STYLE( latp_dflt, LATP_DFLT,
+         "Latin superscript fallback default style",
+         AF_WRITING_SYSTEM_LATIN,
+         AF_SCRIPT_LATP,
+         AF_BLUE_STRINGSET_LATP,
          AF_COVERAGE_DEFAULT )
 
 #ifdef FT_OPTION_AUTOFIT2
@@ -115,6 +153,13 @@
          AF_BLUE_STRINGSET_LATN,
          AF_COVERAGE_DEFAULT )
 #endif
+
+  STYLE( mymr_dflt, MYMR_DFLT,
+         "Myanmar default style",
+         AF_WRITING_SYSTEM_LATIN,
+         AF_SCRIPT_MYMR,
+         AF_BLUE_STRINGSET_MYMR,
+         AF_COVERAGE_DEFAULT )
 
   STYLE( none_dflt, NONE_DFLT,
          "no style",

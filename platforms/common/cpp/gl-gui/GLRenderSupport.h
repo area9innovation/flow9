@@ -331,6 +331,7 @@ protected:
     void paintGLContext(unsigned ad_hoc_fb = 0);
 
     void loadFont(std::string filename, std::vector<unicode_string> aliases, bool set_default = false);
+    void loadNativeFont(std::string filename, std::string familyname, std::vector<unicode_string> aliases, bool set_default = false);
 
     bool NoHoverMouse, DrawMouseRect;
     float MouseRadius; // Degree of confidence radius
@@ -454,6 +455,8 @@ private:
 
     DECLARE_NATIVE_METHOD(getPixelsPerCm)
     DECLARE_NATIVE_METHOD(setHitboxRadius)
+    
+    DECLARE_NATIVE_METHOD(loadFSFont)
 
     DECLARE_NATIVE_METHOD(makeClip)
     DECLARE_NATIVE_METHOD(makeTextField)
