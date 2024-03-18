@@ -284,7 +284,7 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	isResizing = make(false);
 	isHovering = make(false);
 	activeHover = make(false);
-	dContent = makeDockingPanelContent(state, panelId, true, isVerticalToolbarMobile, resizePressed, isHovering, pstyle);
+	resizableContent = makeDockingPanelContent(state, panelId, true, isVerticalToolbarMobile, resizePressed, isHovering, pstyle);
 
 	isToolbar = isDockingToolbar(state, panelId);
 	topBarH = if (isToolbar) dockingBarHeightToolbar else dockingBarHeightPanel;
@@ -306,6 +306,17 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	activePressed = make(false);
 
 	tempWH = fselectLift(state.mobileSize, \ms ->ms[panelId]);
+
+	// Resize mobile panel bars
+	resizeBPressed = make(false);
+	isResizingB = make(false);
+	resizeB = 
+		MInteractive(
+			[TMouseDown(resizeBPressed)],
+			MCursor(NSResizeCursor(), 
+				TRectangle([MFill(mobileResizeHelperColor), FillOpacity(mobileResizeHelperOpacity)], TSelect(tempWH, \wh ->  TFixed(wh.width, 16.0)))
+			)
+		);
 
 	resizablePanel = \c : Material, lg : bool -> {
 		addShadow = \m : Material -> {
@@ -350,6 +361,13 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 		}
 		 
 		MConstruct([
+			
+				makeSubscribe2(isResizingB, \rs -> {
+					if (!rs) {
+						// update mobile size
+						updateH(state.mobileSize,  panelId, fgetValue(tempWH).height);
+					}
+				}),
 				makeSubscribe2(isResizing, \rs -> {
 					if (!rs) {
 					// update mobile size
@@ -379,7 +397,10 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 						|> addShadow,
 						if (e) TSized(tempWH) else TSelect(tempWH, \wh ->  TFixed(wh.width, dockingBarHeightPanel)),
 					)
-				})	
+				})
+				|> (\mp -> {
+					MLines2(mp, resizeB)
+				})
 			}
 		))
 	}
@@ -392,7 +413,7 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 			makeSubscribe2(dragPressed, \p -> {
 				if (p) next(cursorPositionA, replace(getValue(cursorPositionA), panelId, getValue(mouseXyLocal)))
 			})],
-			resizablePanel(dContent, lg)
+			resizablePanel(resizableContent, lg)
 			|> (\m-> MSelect(state.activePanel, \activePanel ->  
 				MInteractive(if (activePanel == panelId) [TMouseDownGhost(dragPressed)] else [TMouseDown(activePressed)], m) // fix z-order interactivity problem
 			))
@@ -404,7 +425,7 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 						MMovableCustomCursor(MoveCursor()),
 						MMovableDontPassClicks(),
 						MMovablePosition(position),
-						MMovableLimits(Some(const(dockingSafeResizeGap)), Some(const(dockingSafeResizeGap)), Some(const(-dockingSafeResizeGap)),Some(const(-dockingSafeResizeGap)))
+						MMovableLimits(Some(const(dockingSafeResizeGap)), Some(const(dockingSafeResizeGap)), Some(const(-dockingSafeResizeGap)), Some(const(-dockingSafeResizeGap)))
 					]
 				)
 			})
@@ -420,9 +441,17 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 				if (getValue(isResizing)) next(isResizing, false);
 			}
 		}),
+		makeSubscribe2(resizeBPressed, \p -> {
+			if (p) {
+				addMInteractionItemId(manager, itemId);
+				next(isResizingB, true);
+			} else {
+				if (getValue(isResizingB)) next(isResizingB, false);
+			}
+		}),
 		makeSubscribe(mouseXyLocal, \mxy -> {
 			// Update mobile size only (do not affect dockedSize)
-			if (isCurrentMInteractionItemId(manager, itemId) && getValue(isResizing)) {
+			if (isCurrentMInteractionItemId(manager, itemId) && (getValue(isResizing) || getValue(isResizingB))) {
 				rtlCorrection = if (getDefaultRtl()) 1.0 else 1.0;
 				blockOtherMInteractionItemIds(manager, itemId);
 				// Update while resizing, but do not exceed the editor size
