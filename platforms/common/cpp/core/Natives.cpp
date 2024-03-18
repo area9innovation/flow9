@@ -1758,7 +1758,7 @@ StackSlot ByteCodeRunner::getAllUrlParameters(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
 
-    int i = 0;
+    int i = RUNNER->UrlParameters.size();
 
     RUNNER_DefSlots1(array);
     array = RUNNER->AllocateArray(RUNNER->UrlParameters.size());
@@ -1768,8 +1768,7 @@ StackSlot ByteCodeRunner::getAllUrlParameters(RUNNER_ARGS)
         RUNNER->SetArraySlot(keyvalue, 0, RUNNER->AllocateString((*it).first));
         RUNNER->SetArraySlot(keyvalue, 1, RUNNER->AllocateString((*it).second));
 
-        RUNNER->SetArraySlot(array, i, keyvalue);
-        i++;
+        RUNNER->SetArraySlot(array, --i, keyvalue);
     }
 
     return array;
