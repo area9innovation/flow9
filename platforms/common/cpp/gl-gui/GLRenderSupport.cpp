@@ -117,6 +117,31 @@ bool GLRenderSupport::setFallbackFont(unicode_string name) {
     return DefaultFont && FallbackFont != DefaultFont;
 }
 
+void GLRenderSupport::loadNativeFont(std::string filename, std::string familyname, std::vector<unicode_string> aliases, bool set_default)
+{
+    if (!FontLibrary) return;
+
+    // Check if file url, then normalize to file path
+    int is_file_url = filename.compare(0, 7, "file://");
+    if (is_file_url == 0) {
+        filename = filename.substr(7);
+    }
+    
+    TextFont textFont = TextFont::makeWithFamily(familyname);
+    GLFont::Ptr font = FontLibrary->loadNativeFont(filename);
+    if (font) {
+        if (!DefaultFont || set_default)
+            DefaultFont = font;
+
+        Fonts[textFont] = font;
+
+        for (unsigned i = 0; i < aliases.size(); i++)
+            Fonts[TextFont::makeWithFamily(encodeUtf8(aliases[i]))] = font;
+    } else {
+         cerr << "Cannot load font : " << filename << std::endl;
+    }
+}
+
 void GLRenderSupport::loadFont(std::string filename, std::vector<unicode_string> aliases, bool set_default)
 {
     if (!FontLibrary) return;
@@ -993,6 +1018,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
 
     TRY_USE_NATIVE_METHOD(GLRenderSupport, getPixelsPerCm, 0);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, setHitboxRadius, 1);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, loadFSFont, 2);
 
     // Camera API
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeCamera, 10);
@@ -1212,6 +1238,16 @@ StackSlot GLRenderSupport::setHitboxRadius(RUNNER_ARGS)
     RUNNER_CheckTag(TDouble, radius);
     MouseRadius = (float)radius.GetDouble();
     return StackSlot::MakeBool(true);
+}
+
+StackSlot GLRenderSupport::loadFSFont(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(fontname, url);
+    RUNNER_CheckTag2(TString, fontname, url);
+    
+    this->loadNativeFont(encodeUtf8(RUNNER->GetString(url)), encodeUtf8(RUNNER->GetString(fontname)), std::vector<unicode_string>());
+    
+    RETVOID;
 }
 
 StackSlot GLRenderSupport::makeClip(RUNNER_ARGS)

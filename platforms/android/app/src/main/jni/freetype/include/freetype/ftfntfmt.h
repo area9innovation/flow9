@@ -1,10 +1,10 @@
 /***************************************************************************/
 /*                                                                         */
-/*  ftxf86.h                                                               */
+/*  ftfntfmt.h                                                             */
 /*                                                                         */
-/*    Support functions for X11.                                           */
+/*    Support functions for font formats.                                  */
 /*                                                                         */
-/*  Copyright 2002, 2003, 2004, 2006, 2007 by                              */
+/*  Copyright 2002-2015 by                                                 */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -16,8 +16,8 @@
 /***************************************************************************/
 
 
-#ifndef __FTXF86_H__
-#define __FTXF86_H__
+#ifndef __FTFNTFMT_H__
+#define __FTFNTFMT_H__
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -55,13 +55,14 @@ FT_BEGIN_HEADER
   /*************************************************************************/
   /*                                                                       */
   /* <Function>                                                            */
-  /*   FT_Get_X11_Font_Format                                              */
+  /*   FT_Get_Font_Format                                                  */
   /*                                                                       */
   /* <Description>                                                         */
-  /*   Return a string describing the format of a given face, using values */
-  /*   which can be used as an X11 FONT_PROPERTY.  Possible values are     */
-  /*   `TrueType', `Type 1', `BDF', `PCF', `Type 42', `CID Type 1', `CFF', */
-  /*   `PFR', and `Windows FNT'.                                           */
+  /*   Return a string describing the format of a given face.  Possible    */
+  /*   values are `TrueType', `Type~1', `BDF', `PCF', `Type~42',           */
+  /*   `CID~Type~1', `CFF', `PFR', and `Windows~FNT'.                      */
+  /*                                                                       */
+  /*   The return value is suitable to be used as an X11 FONT_PROPERTY.    */
   /*                                                                       */
   /* <Input>                                                               */
   /*   face ::                                                             */
@@ -70,11 +71,22 @@ FT_BEGIN_HEADER
   /* <Return>                                                              */
   /*   Font format string.  NULL in case of error.                         */
   /*                                                                       */
+  /* <Note>                                                                */
+  /*   A deprecated name for the same function is                          */
+  /*   `FT_Get_X11_Font_Format'.                                           */
+  /*                                                                       */
+  FT_EXPORT( const char* )
+  FT_Get_Font_Format( FT_Face  face );
+
+
+  /* deprecated */
   FT_EXPORT( const char* )
   FT_Get_X11_Font_Format( FT_Face  face );
 
- /* */
+
+  /* */
+
 
 FT_END_HEADER
 
-#endif /* __FTXF86_H__ */
+#endif /* __FTFNTFMT_H__ */

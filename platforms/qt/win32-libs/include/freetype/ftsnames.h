@@ -7,7 +7,7 @@
 /*                                                                         */
 /*    This is _not_ used to retrieve glyph names!                          */
 /*                                                                         */
-/*  Copyright 1996-2001, 2002, 2003, 2006 by                               */
+/*  Copyright 1996-2016 by                                                 */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -19,8 +19,8 @@
 /***************************************************************************/
 
 
-#ifndef __FT_SFNT_NAMES_H__
-#define __FT_SFNT_NAMES_H__
+#ifndef FTSNAMES_H_
+#define FTSNAMES_H_
 
 
 #include <ft2build.h>
@@ -48,7 +48,7 @@ FT_BEGIN_HEADER
   /*    Access the names embedded in TrueType and OpenType files.          */
   /*                                                                       */
   /* <Description>                                                         */
-  /*    The TrueType and OpenType specification allow the inclusion of     */
+  /*    The TrueType and OpenType specifications allow the inclusion of    */
   /*    a special `names table' in font files.  This table contains        */
   /*    textual (and internationalized) information regarding the font,    */
   /*    like family name, copyright, version, etc.                         */
@@ -114,7 +114,7 @@ FT_BEGIN_HEADER
   /*    FT_Get_Sfnt_Name_Count                                             */
   /*                                                                       */
   /* <Description>                                                         */
-  /*    Retrieves the number of name strings in the SFNT `name' table.     */
+  /*    Retrieve the number of name strings in the SFNT `name' table.      */
   /*                                                                       */
   /* <Input>                                                               */
   /*    face :: A handle to the source face.                               */
@@ -132,7 +132,7 @@ FT_BEGIN_HEADER
   /*    FT_Get_Sfnt_Name                                                   */
   /*                                                                       */
   /* <Description>                                                         */
-  /*    Retrieves a string of the SFNT `name' table for a given index.     */
+  /*    Retrieve a string of the SFNT `name' table for a given index.      */
   /*                                                                       */
   /* <Input>                                                               */
   /*    face  :: A handle to the source face.                              */
@@ -143,11 +143,12 @@ FT_BEGIN_HEADER
   /*    aname :: The indexed @FT_SfntName structure.                       */
   /*                                                                       */
   /* <Return>                                                              */
-  /*    FreeType error code.  0 means success.                             */
+  /*    FreeType error code.  0~means success.                             */
   /*                                                                       */
   /* <Note>                                                                */
   /*    The `string' array returned in the `aname' structure is not        */
-  /*    null-terminated.                                                   */
+  /*    null-terminated.  The application should deallocate it if it is no */
+  /*    longer in use.                                                     */
   /*                                                                       */
   /*    Use @FT_Get_Sfnt_Name_Count to get the total number of available   */
   /*    `name' table entries, then do a loop until you get the right       */
@@ -159,12 +160,41 @@ FT_BEGIN_HEADER
                     FT_SfntName  *aname );
 
 
+  /***************************************************************************
+   *
+   * @constant:
+   *   FT_PARAM_TAG_IGNORE_PREFERRED_FAMILY
+   *
+   * @description:
+   *   A constant used as the tag of @FT_Parameter structures to make
+   *   FT_Open_Face() ignore preferred family subfamily names in `name'
+   *   table since OpenType version 1.4.  For backwards compatibility with
+   *   legacy systems that have a 4-face-per-family restriction.
+   *
+   */
+#define FT_PARAM_TAG_IGNORE_PREFERRED_FAMILY  FT_MAKE_TAG( 'i', 'g', 'p', 'f' )
+
+
+  /***************************************************************************
+   *
+   * @constant:
+   *   FT_PARAM_TAG_IGNORE_PREFERRED_SUBFAMILY
+   *
+   * @description:
+   *   A constant used as the tag of @FT_Parameter structures to make
+   *   FT_Open_Face() ignore preferred subfamily names in `name' table since
+   *   OpenType version 1.4.  For backwards compatibility with legacy
+   *   systems that have a 4-face-per-family restriction.
+   *
+   */
+#define FT_PARAM_TAG_IGNORE_PREFERRED_SUBFAMILY  FT_MAKE_TAG( 'i', 'g', 'p', 's' )
+
   /* */
 
 
 FT_END_HEADER
 
-#endif /* __FT_SFNT_NAMES_H__ */
+#endif /* FTSNAMES_H_ */
 
 
 /* END */

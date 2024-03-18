@@ -4,7 +4,7 @@
 /*                                                                         */
 /*    Additional Mac-specific API.                                         */
 /*                                                                         */
-/*  Copyright 1996-2001, 2004, 2006, 2007 by                               */
+/*  Copyright 1996-2016 by                                                 */
 /*  Just van Rossum, David Turner, Robert Wilhelm, and Werner Lemberg.     */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -18,15 +18,15 @@
 
 /***************************************************************************/
 /*                                                                         */
-/* NOTE: Include this file after <freetype/freetype.h> and after the       */
-/*       Mac-specific <Types.h> header (or any other Mac header that       */
-/*       includes <Types.h>); we use Handle type.                          */
+/* NOTE: Include this file after FT_FREETYPE_H and after any               */
+/*       Mac-specific headers (because this header uses Mac types such as  */
+/*       Handle, FSSpec, FSRef, etc.)                                      */
 /*                                                                         */
 /***************************************************************************/
 
 
-#ifndef __FTMAC_H__
-#define __FTMAC_H__
+#ifndef FTMAC_H_
+#define FTMAC_H_
 
 
 #include <ft2build.h>
@@ -85,7 +85,7 @@ FT_BEGIN_HEADER
   /*    aface      :: A handle to a new face object.                       */
   /*                                                                       */
   /* <Return>                                                              */
-  /*    FreeType error code.  0 means success.                             */
+  /*    FreeType error code.  0~means success.                             */
   /*                                                                       */
   /* <Notes>                                                               */
   /*    This function can be used to create @FT_Face objects from fonts    */
@@ -100,7 +100,8 @@ FT_BEGIN_HEADER
   FT_New_Face_From_FOND( FT_Library  library,
                          Handle      fond,
                          FT_Long     face_index,
-                         FT_Face    *aface );
+                         FT_Face    *aface )
+                       FT_DEPRECATED_ATTRIBUTE;
 
 
   /*************************************************************************/
@@ -123,7 +124,7 @@ FT_BEGIN_HEADER
   /*                  @FT_New_Face_From_FSSpec.                            */
   /*                                                                       */
   /* <Return>                                                              */
-  /*    FreeType error code.  0 means success.                             */
+  /*    FreeType error code.  0~means success.                             */
   /*                                                                       */
   FT_EXPORT( FT_Error )
   FT_GetFile_From_Mac_Name( const char*  fontName,
@@ -151,7 +152,7 @@ FT_BEGIN_HEADER
   /*                  @FT_New_Face_From_FSSpec.                            */
   /*                                                                       */
   /* <Return>                                                              */
-  /*    FreeType error code.  0 means success.                             */
+  /*    FreeType error code.  0~means success.                             */
   /*                                                                       */
   FT_EXPORT( FT_Error )
   FT_GetFile_From_Mac_ATS_Name( const char*  fontName,
@@ -167,7 +168,7 @@ FT_BEGIN_HEADER
   /*                                                                       */
   /* <Description>                                                         */
   /*    Return a pathname of the disk file and face index for given font   */
-  /*    name which is handled by ATS framework.                            */
+  /*    name that is handled by ATS framework.                             */
   /*                                                                       */
   /* <Input>                                                               */
   /*    fontName    :: Mac OS name of the font in ATS framework.           */
@@ -182,13 +183,14 @@ FT_BEGIN_HEADER
   /*    face_index  :: Index of the face.  For passing to @FT_New_Face.    */
   /*                                                                       */
   /* <Return>                                                              */
-  /*    FreeType error code.  0 means success.                             */
+  /*    FreeType error code.  0~means success.                             */
   /*                                                                       */
   FT_EXPORT( FT_Error )
   FT_GetFilePath_From_Mac_ATS_Name( const char*  fontName,
                                     UInt8*       path,
                                     UInt32       maxPathSize,
-                                    FT_Long*     face_index );
+                                    FT_Long*     face_index )
+                                  FT_DEPRECATED_ATTRIBUTE;
 
 
   /*************************************************************************/
@@ -207,12 +209,12 @@ FT_BEGIN_HEADER
   /*    spec       :: FSSpec to the font file.                             */
   /*                                                                       */
   /*    face_index :: The index of the face within the resource.  The      */
-  /*                  first face has index 0.                              */
+  /*                  first face has index~0.                              */
   /* <Output>                                                              */
   /*    aface      :: A handle to a new face object.                       */
   /*                                                                       */
   /* <Return>                                                              */
-  /*    FreeType error code.  0 means success.                             */
+  /*    FreeType error code.  0~means success.                             */
   /*                                                                       */
   /* <Note>                                                                */
   /*    @FT_New_Face_From_FSSpec is identical to @FT_New_Face except       */
@@ -242,12 +244,12 @@ FT_BEGIN_HEADER
   /*    spec       :: FSRef to the font file.                              */
   /*                                                                       */
   /*    face_index :: The index of the face within the resource.  The      */
-  /*                  first face has index 0.                              */
+  /*                  first face has index~0.                              */
   /* <Output>                                                              */
   /*    aface      :: A handle to a new face object.                       */
   /*                                                                       */
   /* <Return>                                                              */
-  /*    FreeType error code.  0 means success.                             */
+  /*    FreeType error code.  0~means success.                             */
   /*                                                                       */
   /* <Note>                                                                */
   /*    @FT_New_Face_From_FSRef is identical to @FT_New_Face except        */
@@ -266,7 +268,7 @@ FT_BEGIN_HEADER
 FT_END_HEADER
 
 
-#endif /* __FTMAC_H__ */
+#endif /* FTMAC_H_ */
 
 
 /* END */

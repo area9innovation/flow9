@@ -5,7 +5,7 @@
 /*    Basic SFNT/TrueType tables definitions and interface                 */
 /*    (specification only).                                                */
 /*                                                                         */
-/*  Copyright 1996-2001, 2002, 2003, 2004, 2005 by                         */
+/*  Copyright 1996-2016 by                                                 */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -17,8 +17,8 @@
 /***************************************************************************/
 
 
-#ifndef __TTTABLES_H__
-#define __TTTABLES_H__
+#ifndef TTTABLES_H_
+#define TTTABLES_H_
 
 
 #include <ft2build.h>
@@ -47,6 +47,25 @@ FT_BEGIN_HEADER
   /* <Description>                                                         */
   /*    This section contains the definition of TrueType-specific tables   */
   /*    as well as some routines used to access and process them.          */
+  /*                                                                       */
+  /* <Order>                                                               */
+  /*    TT_Header                                                          */
+  /*    TT_HoriHeader                                                      */
+  /*    TT_VertHeader                                                      */
+  /*    TT_OS2                                                             */
+  /*    TT_Postscript                                                      */
+  /*    TT_PCLT                                                            */
+  /*    TT_MaxProfile                                                      */
+  /*                                                                       */
+  /*    FT_Sfnt_Tag                                                        */
+  /*    FT_Get_Sfnt_Table                                                  */
+  /*    FT_Load_Sfnt_Table                                                 */
+  /*    FT_Sfnt_Table_Info                                                 */
+  /*                                                                       */
+  /*    FT_Get_CMap_Language_ID                                            */
+  /*    FT_Get_CMap_Format                                                 */
+  /*                                                                       */
+  /*    FT_PARAM_TAG_UNPATENTED_HINTING                                    */
   /*                                                                       */
   /*************************************************************************/
 
@@ -156,9 +175,9 @@ FT_BEGIN_HEADER
   /*    caret_Slope_Run        :: The run coefficient of the cursor's      */
   /*                              slope.                                   */
   /*                                                                       */
-  /*    Reserved               :: 10 reserved bytes.                       */
+  /*    Reserved               :: 8~reserved bytes.                        */
   /*                                                                       */
-  /*    metric_Data_Format     :: Always 0.                                */
+  /*    metric_Data_Format     :: Always~0.                                */
   /*                                                                       */
   /*    number_Of_HMetrics     :: Number of HMetrics entries in the `hmtx' */
   /*                              table -- this value can be smaller than  */
@@ -170,8 +189,8 @@ FT_BEGIN_HEADER
   /*                                                                       */
   /* <Note>                                                                */
   /*    IMPORTANT: The TT_HoriHeader and TT_VertHeader structures should   */
-  /*               be identical except for the names of their fields which */
-  /*               are different.                                          */
+  /*               be identical except for the names of their fields,      */
+  /*               which are different.                                    */
   /*                                                                       */
   /*               This ensures that a single function in the `ttload'     */
   /*               module is able to read both the horizontal and vertical */
@@ -281,9 +300,9 @@ FT_BEGIN_HEADER
   /*                               This value is `reserved' in vmtx        */
   /*                               version 1.0.                            */
   /*                                                                       */
-  /*    Reserved                :: 8 reserved bytes.                       */
+  /*    Reserved                :: 8~reserved bytes.                       */
   /*                                                                       */
-  /*    metric_Data_Format      :: Always 0.                               */
+  /*    metric_Data_Format      :: Always~0.                               */
   /*                                                                       */
   /*    number_Of_HMetrics      :: Number of VMetrics entries in the       */
   /*                               `vmtx' table -- this value can be       */
@@ -296,8 +315,8 @@ FT_BEGIN_HEADER
   /*                                                                       */
   /* <Note>                                                                */
   /*    IMPORTANT: The TT_HoriHeader and TT_VertHeader structures should   */
-  /*               be identical except for the names of their fields which */
-  /*               are different.                                          */
+  /*               be identical except for the names of their fields,      */
+  /*               which are different.                                    */
   /*                                                                       */
   /*               This ensures that a single function in the `ttload'     */
   /*               module is able to read both the horizontal and vertical */
@@ -340,12 +359,11 @@ FT_BEGIN_HEADER
   /*    TT_OS2                                                             */
   /*                                                                       */
   /* <Description>                                                         */
-  /*    A structure used to model a TrueType OS/2 table. This is the long  */
-  /*    table version.  All fields comply to the TrueType specification.   */
+  /*    A structure used to model a TrueType OS/2 table.  All fields       */
+  /*    comply to the OpenType specification.                              */
   /*                                                                       */
-  /*    Note that we now support old Mac fonts which do not include an     */
-  /*    OS/2 table.  In this case, the `version' field is always set to    */
-  /*    0xFFFF.                                                            */
+  /*    Note that we now support old Mac fonts that do not include an OS/2 */
+  /*    table.  In this case, the `version' field is always set to 0xFFFF. */
   /*                                                                       */
   typedef struct  TT_OS2_
   {
@@ -353,7 +371,7 @@ FT_BEGIN_HEADER
     FT_Short   xAvgCharWidth;
     FT_UShort  usWeightClass;
     FT_UShort  usWidthClass;
-    FT_Short   fsType;
+    FT_UShort  fsType;
     FT_Short   ySubscriptXSize;
     FT_Short   ySubscriptYSize;
     FT_Short   ySubscriptXOffset;
@@ -384,18 +402,23 @@ FT_BEGIN_HEADER
     FT_UShort  usWinAscent;
     FT_UShort  usWinDescent;
 
-    /* only version 1 tables: */
+    /* only version 1 and higher: */
 
     FT_ULong   ulCodePageRange1;       /* Bits 0-31   */
     FT_ULong   ulCodePageRange2;       /* Bits 32-63  */
 
-    /* only version 2 tables: */
+    /* only version 2 and higher: */
 
     FT_Short   sxHeight;
     FT_Short   sCapHeight;
     FT_UShort  usDefaultChar;
     FT_UShort  usBreakChar;
     FT_UShort  usMaxContext;
+
+    /* only version 5 and higher: */
+
+    FT_UShort  usLowerOpticalPointSize;       /* in twips (1/20th points) */
+    FT_UShort  usUpperOpticalPointSize;       /* in twips (1/20th points) */
 
   } TT_OS2;
 
@@ -406,9 +429,9 @@ FT_BEGIN_HEADER
   /*    TT_Postscript                                                      */
   /*                                                                       */
   /* <Description>                                                         */
-  /*    A structure used to model a TrueType Postscript table.  All fields */
+  /*    A structure used to model a TrueType PostScript table.  All fields */
   /*    comply to the TrueType specification.  This structure does not     */
-  /*    reference the Postscript glyph names, which can be nevertheless    */
+  /*    reference the PostScript glyph names, which can be nevertheless    */
   /*    accessed with the `ttpost' module.                                 */
   /*                                                                       */
   typedef struct  TT_Postscript_
@@ -465,7 +488,7 @@ FT_BEGIN_HEADER
   /*    TT_MaxProfile                                                      */
   /*                                                                       */
   /* <Description>                                                         */
-  /*    The maximum profile is a table containing many max values which    */
+  /*    The maximum profile is a table containing many max values, which   */
   /*    can be used to pre-allocate arrays.  This ensures that no memory   */
   /*    allocation occurs during a glyph load.                             */
   /*                                                                       */
@@ -555,21 +578,44 @@ FT_BEGIN_HEADER
   /*    An enumeration used to specify the index of an SFNT table.         */
   /*    Used in the @FT_Get_Sfnt_Table API function.                       */
   /*                                                                       */
-  typedef enum
+  /* <Values>                                                              */
+  /*    FT_SFNT_HEAD :: To access the font's @TT_Header structure.         */
+  /*                                                                       */
+  /*    FT_SFNT_MAXP :: To access the font's @TT_MaxProfile structure.     */
+  /*                                                                       */
+  /*    FT_SFNT_OS2  :: To access the font's @TT_OS2 structure.            */
+  /*                                                                       */
+  /*    FT_SFNT_HHEA :: To access the font's @TT_HoriHeader structure.     */
+  /*                                                                       */
+  /*    FT_SFNT_VHEA :: To access the font's @TT_VertHeader structure.     */
+  /*                                                                       */
+  /*    FT_SFNT_POST :: To access the font's @TT_Postscript structure.     */
+  /*                                                                       */
+  /*    FT_SFNT_PCLT :: To access the font's @TT_PCLT structure.           */
+  /*                                                                       */
+  typedef enum  FT_Sfnt_Tag_
   {
-    ft_sfnt_head = 0,
-    ft_sfnt_maxp = 1,
-    ft_sfnt_os2  = 2,
-    ft_sfnt_hhea = 3,
-    ft_sfnt_vhea = 4,
-    ft_sfnt_post = 5,
-    ft_sfnt_pclt = 6,
+    FT_SFNT_HEAD,
+    FT_SFNT_MAXP,
+    FT_SFNT_OS2,
+    FT_SFNT_HHEA,
+    FT_SFNT_VHEA,
+    FT_SFNT_POST,
+    FT_SFNT_PCLT,
 
-    sfnt_max   /* internal end mark */
+    FT_SFNT_MAX
 
   } FT_Sfnt_Tag;
 
-  /* */
+  /* these constants are deprecated; use the corresponding `FT_Sfnt_Tag' */
+  /* values instead                                                      */
+#define ft_sfnt_head  FT_SFNT_HEAD
+#define ft_sfnt_maxp  FT_SFNT_MAXP
+#define ft_sfnt_os2   FT_SFNT_OS2
+#define ft_sfnt_hhea  FT_SFNT_HHEA
+#define ft_sfnt_vhea  FT_SFNT_VHEA
+#define ft_sfnt_post  FT_SFNT_POST
+#define ft_sfnt_pclt  FT_SFNT_PCLT
 
 
   /*************************************************************************/
@@ -578,7 +624,7 @@ FT_BEGIN_HEADER
   /*    FT_Get_Sfnt_Table                                                  */
   /*                                                                       */
   /* <Description>                                                         */
-  /*    Returns a pointer to a given SFNT table within a face.             */
+  /*    Return a pointer to a given SFNT table within a face.              */
   /*                                                                       */
   /* <Input>                                                               */
   /*    face :: A handle to the source.                                    */
@@ -586,9 +632,12 @@ FT_BEGIN_HEADER
   /*    tag  :: The index of the SFNT table.                               */
   /*                                                                       */
   /* <Return>                                                              */
-  /*    A type-less pointer to the table.  This will be 0 in case of       */
+  /*    A type-less pointer to the table.  This will be~0 in case of       */
   /*    error, or if the corresponding table was not found *OR* loaded     */
   /*    from the file.                                                     */
+  /*                                                                       */
+  /*    Use a typecast according to `tag' to access the structure          */
+  /*    elements.                                                          */
   /*                                                                       */
   /* <Note>                                                                */
   /*    The table is owned by the face object and disappears with it.      */
@@ -596,6 +645,16 @@ FT_BEGIN_HEADER
   /*    This function is only useful to access SFNT tables that are loaded */
   /*    by the sfnt, truetype, and opentype drivers.  See @FT_Sfnt_Tag for */
   /*    a list.                                                            */
+  /*                                                                       */
+  /*    Here an example how to access the `vhea' table:                    */
+  /*                                                                       */
+  /*    {                                                                  */
+  /*      TT_VertHeader*  vert_header;                                     */
+  /*                                                                       */
+  /*                                                                       */
+  /*      vert_header =                                                    */
+  /*        (TT_VertHeader*)FT_Get_Sfnt_Table( face, FT_SFNT_VHEA );       */
+  /*    }                                                                  */
   /*                                                                       */
   FT_EXPORT( void* )
   FT_Get_Sfnt_Table( FT_Face      face,
@@ -608,14 +667,14 @@ FT_BEGIN_HEADER
   *   FT_Load_Sfnt_Table
   *
   * @description:
-  *   Loads any font table into client memory.
+  *   Load any font table into client memory.
   *
   * @input:
   *   face ::
   *     A handle to the source face.
   *
   *   tag ::
-  *     The four-byte tag of the table to load.  Use the value 0 if you want
+  *     The four-byte tag of the table to load.  Use the value~0 if you want
   *     to access the whole font file.  Otherwise, you can use one of the
   *     definitions found in the @FT_TRUETYPE_TAGS_H file, or forge a new
   *     one with @FT_MAKE_TAG.
@@ -633,18 +692,18 @@ FT_BEGIN_HEADER
   *     If the `length' parameter is NULL, then try to load the whole table.
   *     Return an error code if it fails.
   *
-  *     Else, if `*length' is 0, exit immediately while returning the
+  *     Else, if `*length' is~0, exit immediately while returning the
   *     table's (or file) full size in it.
   *
   *     Else the number of bytes to read from the table or file, from the
   *     starting offset.
   *
   * @return:
-  *   FreeType error code.  0 means success.
+  *   FreeType error code.  0~means success.
   *
   * @note:
   *   If you need to determine the table's length you should first call this
-  *   function with `*length' set to 0, as in the following example:
+  *   function with `*length' set to~0, as in the following example:
   *
   *     {
   *       FT_ULong  length = 0;
@@ -659,6 +718,12 @@ FT_BEGIN_HEADER
   *       error = FT_Load_Sfnt_Table( face, tag, 0, buffer, &length );
   *       if ( error ) { ... could not load table ... }
   *     }
+  *
+  *   Note that structures like @TT_Header or @TT_OS2 can't be used with
+  *   this function; they are limited to @FT_Get_Sfnt_Table.  Reason is that
+  *   those structures depend on the processor architecture, with varying
+  *   size (e.g. 32bit vs. 64bit) or order (big endian vs. little endian).
+  *
   */
   FT_EXPORT( FT_Error )
   FT_Load_Sfnt_Table( FT_Face    face,
@@ -674,7 +739,7 @@ FT_BEGIN_HEADER
   *   FT_Sfnt_Table_Info
   *
   * @description:
-  *   Returns information on an SFNT table.
+  *   Return information on an SFNT table.
   *
   * @input:
   *   face ::
@@ -684,18 +749,23 @@ FT_BEGIN_HEADER
   *     The index of an SFNT table.  The function returns
   *     FT_Err_Table_Missing for an invalid value.
   *
-  * @output:
+  * @inout:
   *   tag ::
-  *     The name tag of the SFNT table.
+  *     The name tag of the SFNT table.  If the value is NULL, `table_index'
+  *     is ignored, and `length' returns the number of SFNT tables in the
+  *     font.
   *
+  * @output:
   *   length ::
-  *     The length of the SFNT table.
+  *     The length of the SFNT table (or the number of SFNT tables, depending
+  *     on `tag').
   *
   * @return:
-  *   FreeType error code.  0 means success.
+  *   FreeType error code.  0~means success.
   *
   * @note:
-  *   SFNT tables with length zero are treated as missing by Windows.
+  *   While parsing fonts, FreeType handles SFNT tables with length zero as
+  *   missing.
   *
   */
   FT_EXPORT( FT_Error )
@@ -712,7 +782,7 @@ FT_BEGIN_HEADER
   /*                                                                       */
   /* <Description>                                                         */
   /*    Return TrueType/sfnt specific cmap language ID.  Definitions of    */
-  /*    language ID values are in `freetype/ttnameid.h'.                   */
+  /*    language ID values are in `ttnameid.h'.                            */
   /*                                                                       */
   /* <Input>                                                               */
   /*    charmap ::                                                         */
@@ -720,7 +790,10 @@ FT_BEGIN_HEADER
   /*                                                                       */
   /* <Return>                                                              */
   /*    The language ID of `charmap'.  If `charmap' doesn't belong to a    */
-  /*    TrueType/sfnt face, just return 0 as the default value.            */
+  /*    TrueType/sfnt face, just return~0 as the default value.            */
+  /*                                                                       */
+  /*    For a format~14 cmap (to access Unicode IVS), the return value is  */
+  /*    0xFFFFFFFF.                                                        */
   /*                                                                       */
   FT_EXPORT( FT_ULong )
   FT_Get_CMap_Language_ID( FT_CharMap  charmap );
@@ -750,7 +823,7 @@ FT_BEGIN_HEADER
 
 FT_END_HEADER
 
-#endif /* __TTTABLES_H__ */
+#endif /* TTTABLES_H_ */
 
 
 /* END */
