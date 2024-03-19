@@ -228,12 +228,6 @@ private:
 
     DECLARE_NATIVE_METHOD(addFileDropListener)
 
-    DECLARE_NATIVE_METHOD(setCurrentDirectory)
-    DECLARE_NATIVE_METHOD(getCurrentDirectory)
-
-    DECLARE_NATIVE_METHOD(getApplicationPath)
-    DECLARE_NATIVE_METHOD(getApplicationArguments)
-
     DECLARE_NATIVE_METHOD(toggleFullScreen)
     DECLARE_NATIVE_METHOD(onFullScreen)
     DECLARE_NATIVE_METHOD(isFullScreen)

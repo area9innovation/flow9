@@ -1631,14 +1631,10 @@ NativeFunction *QGLRenderSupport::MakeNativeFunction(const char *name, int num_a
 #undef NATIVE_NAME_PREFIX
 #define NATIVE_NAME_PREFIX "Native."
 
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getApplicationPath, 0)
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getApplicationArguments, 0)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, setClipboard, 1)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboard, 0)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboardToCB, 1)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, getClipboardFormat, 1)
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, setCurrentDirectory, 1)
-    TRY_USE_NATIVE_METHOD(QGLRenderSupport, getCurrentDirectory, 0)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, quit, 1)
     TRY_USE_NATIVE_METHOD(QGLRenderSupport, onQuit, 1)
 
@@ -1811,31 +1807,6 @@ StackSlot QGLRenderSupport::emitKeyEvent(RUNNER_ARGS)
     RETVOID;
 }
 
-StackSlot QGLRenderSupport::getApplicationPath(RUNNER_ARGS)
-{
-    IGNORE_RUNNER_ARGS;
-
-    return RUNNER->AllocateString(QCoreApplication::applicationFilePath());
-}
-
-StackSlot QGLRenderSupport::getApplicationArguments(RUNNER_ARGS)
-{
-    IGNORE_RUNNER_ARGS;
-
-    QStringList args = QCoreApplication::arguments().mid(3);
-
-    RUNNER_DefSlots1(array);
-    array = RUNNER->AllocateArray(args.size());
-    for (QStringList::iterator it = args.begin(); it != args.end(); ++it) {
-        RUNNER_DefSlots1(value);
-        value = RUNNER->AllocateString(qt2unicode(*it));
-
-        RUNNER->SetArraySlot(array, it - args.begin(), value);
-    }
-
-    return array;
-}
-
 StackSlot QGLRenderSupport::setClipboard(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(string);
@@ -1910,26 +1881,6 @@ StackSlot QGLRenderSupport::getClipboardFormat(RUNNER_ARGS)
     }
 
     return RUNNER->AllocateString(unicode, n);
-}
-
-StackSlot QGLRenderSupport::setCurrentDirectory(RUNNER_ARGS)
-{
-    RUNNER_PopArgs1(_path);
-    RUNNER_CheckTag1(TString, _path);
-
-    QString path = unicode2qt(RUNNER->GetString(_path));
-    QDir::setCurrent(path);
-
-    RETVOID;
-}
-
-StackSlot QGLRenderSupport::getCurrentDirectory(RUNNER_ARGS)
-{
-    IGNORE_RUNNER_ARGS;
-
-    QString path = QDir::currentPath();
-
-    return RUNNER->AllocateString(path);
 }
 
 StackSlot QGLRenderSupport::setWindowTitleNative(RUNNER_ARGS)
