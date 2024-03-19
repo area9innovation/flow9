@@ -232,6 +232,7 @@ private:
     DECLARE_NATIVE_METHOD(getCurrentDirectory)
 
     DECLARE_NATIVE_METHOD(getApplicationPath)
+    DECLARE_NATIVE_METHOD(getApplicationArguments)
 
     DECLARE_NATIVE_METHOD(toggleFullScreen)
     DECLARE_NATIVE_METHOD(onFullScreen)

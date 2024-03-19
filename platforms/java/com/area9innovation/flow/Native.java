@@ -160,6 +160,10 @@ public class Native extends NativeHost {
 		return currentJavaJarFilePath;
 	}
 
+	public static final String[] getApplicationArguments() {
+		return FlowRuntime.program_args;
+	}
+
 	public static final String toString(Object value) {
 		return FlowRuntime.toString(value);
 	}
