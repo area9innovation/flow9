@@ -74,6 +74,10 @@ namespace Area9Innovation.Flow
 			return "";
 		}
 
+		public object[] getApplicationArguments() {
+			return empty_arr;
+		}
+
 		public String toString(Object value) {
 			return FlowRuntime.toString(value);
 		}

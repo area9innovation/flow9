@@ -361,6 +361,10 @@ class Native {
 		return "";
 	}
 
+	public static function getApplicationArguments() : Array<String> {
+		return new Array();
+	}
+
 	public static inline function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
 		return HaxeRuntime.toString(value, keepStringEscapes);
 	}
