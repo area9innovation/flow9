@@ -305,16 +305,51 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 	dragPressed = make(false);
 	activePressed = make(false);
 
-	tempWH = fselectLift(state.mobileSize, \ms ->ms[panelId]);
+	mobileWHT = fselectLift(state.mobileSize, \ms -> ms[panelId]);
+	tempWH = make(zeroWH);
+	tempXY = makePoint();
 
 	// Resize mobile panel bars
 	resizeBPressed = make(false);
+	resizeTPressed = make(false);
+	resizeRPressed = make(false);
+	resizeLPressed = make(false);
+	
 	isResizingB = make(false);
-	resizeB = 
+	isResizingT = make(false);
+	isResizingR = make(false);
+	isResizingL = make(false);
+
+	resizeHandleB = 
 		MInteractive(
 			[TMouseDown(resizeBPressed)],
 			MCursor(NSResizeCursor(), 
-				TRectangle([MFill(mobileResizeHelperColor), FillOpacity(mobileResizeHelperOpacity)], TSelect(tempWH, \wh ->  TFixed(wh.width, 16.0)))
+				TRectangle([MFill(mobileResizeHelperColor), FillOpacity(mobileResizeHelperOpacity)], TSelect(mobileWHT, \wh ->  TFixed(wh.width, mobileHelperResize)))
+			)
+		);
+
+	resizeHandleT = 
+		MInteractive(
+			[TMouseDown(resizeTPressed)],
+			MCursor(NSResizeCursor(), 
+				TRectangle([MFill(mobileResizeHelperColor), FillOpacity(mobileResizeHelperOpacity)], TSelect(mobileWHT, \wh ->  TFixed(wh.width, mobileHelperResize)))
+			)
+		);
+
+	resizeHandleR = 
+		MInteractive(
+			[TMouseDown(resizeRPressed)],
+			MCursor(EWResizeCursor(), 
+				TRectangle([MFill(mobileResizeHelperColor), FillOpacity(mobileResizeHelperOpacity)], TSelect(mobileWHT, \wh ->  TFixed(mobileHelperResize, wh.height)))
+			)
+		);
+
+
+	resizeHandleL = 
+		MInteractive(
+			[TMouseDown(resizeLPressed)],
+			MCursor(EWResizeCursor(), 
+				TRectangle([MFill(mobileResizeHelperColor), FillOpacity(mobileResizeHelperOpacity)], TSelect(mobileWHT, \wh ->  TFixed(mobileHelperResize, wh.height)))
 			)
 		);
 
@@ -359,22 +394,7 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 				})
 			);
 		}
-		 
-		MConstruct([
-			
-				makeSubscribe2(isResizingB, \rs -> {
-					if (!rs) {
-						// update mobile size
-						updateH(state.mobileSize,  panelId, fgetValue(tempWH).height);
-					}
-				}),
-				makeSubscribe2(isResizing, \rs -> {
-					if (!rs) {
-					// update mobile size
-					nextDistinct(state.mobileSize, replace(getValue(state.mobileSize), panelId , fgetValue(tempWH)));
-				}
-			})
-		],
+		
 		MInteractive([TMouseXY(mouseXyLocal)],
 			if (isToolbar) {
 				toolbarSize = TFixed(mwidth, size.height + topBarH) |> (\m -> if (!isVerticalToolbarMobile) m else TRotate90(m));
@@ -395,14 +415,18 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 						)
 						|> (\m -> MGroup2(m, MShowLazy(activeHover, \ -> activeHoverLayer(state))))
 						|> addShadow,
-						if (e) TSized(tempWH) else TSelect(tempWH, \wh ->  TFixed(wh.width, dockingBarHeightPanel)),
+						if (e) TSized(mobileWHT) else TSelect(mobileWHT, \wh ->  TFixed(wh.width, dockingBarHeightPanel)),
 					)
-				})
-				|> (\mp -> {
-					MLines2(mp, resizeB)
+					|> (\mp -> {
+						MCols([
+							resizeHandleL,
+							MLines([resizeHandleT, mp, resizeHandleB]),
+							resizeHandleR
+						])
+					})
 				})
 			}
-		))
+		)
 	}
 
 	movablePanel = \lg -> {
@@ -425,7 +449,6 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 						MMovableCustomCursor(MoveCursor()),
 						MMovableDontPassClicks(),
 						MMovablePosition(position),
-						MMovableLimits(Some(const(dockingSafeResizeGap)), Some(const(dockingSafeResizeGap)), Some(const(-dockingSafeResizeGap)), Some(const(-dockingSafeResizeGap)))
 					]
 				)
 			})
@@ -449,24 +472,97 @@ makeMovablePanel(state : MDockingState, panelId : int, cursorPositionA : Dynamic
 				if (getValue(isResizingB)) next(isResizingB, false);
 			}
 		}),
+		makeSubscribe2(resizeRPressed, \p -> {
+			if (p) {
+				addMInteractionItemId(manager, itemId);
+				next(isResizingR, true);
+			} else {
+				if (getValue(isResizingR)) next(isResizingR, false);
+			}
+		}),
+		makeSubscribe2(resizeLPressed, \p -> {
+			if (p) {
+				addMInteractionItemId(manager, itemId);
+				next(isResizingL, true);
+
+				nextDistinct(tempXY, getValue(position));
+				nextDistinct(tempWH, fgetValue(mobileWHT));
+
+			} else {
+				if (getValue(isResizingL)) next(isResizingL, false);
+			}
+		}),
+		makeSubscribe2(resizeTPressed, \p -> {
+			if (p) {
+				addMInteractionItemId(manager, itemId);
+				next(isResizingT, true);
+
+				nextDistinct(tempXY, getValue(position));
+				nextDistinct(tempWH, fgetValue(mobileWHT));
+
+			} else {
+				if (getValue(isResizingT)) next(isResizingT, false);
+			}
+		}),
+		// Translate while resizing
+		makeSubscribe(state.mobileSize, \msA -> {
+			ms = msA[panelId];
+			if (getValue(isResizingT) && ms.height > (minHeight + mobileHelperResize)) {
+				next(position, Point(getValue(position).x, getValue(state.mouseXy).y));
+			}
+			if (getValue(isResizingL) && ms.width > (minWidth - mobileHelperResize)) {
+				next(position, Point(getValue(state.mouseXy).x, getValue(position).y));
+			}
+		}),
 		makeSubscribe(mouseXyLocal, \mxy -> {
 			// Update mobile size only (do not affect dockedSize)
-			if (isCurrentMInteractionItemId(manager, itemId) && (getValue(isResizing) || getValue(isResizingB))) {
+			if (isCurrentMInteractionItemId(manager, itemId) && (getValue(isResizing) || getValue(isResizingB) || getValue(isResizingT) || getValue(isResizingR) || getValue(isResizingL))) {
 				rtlCorrection = if (getDefaultRtl()) 1.0 else 1.0;
 				blockOtherMInteractionItemIds(manager, itemId);
-				// Update while resizing, but do not exceed the editor size
-				updateH(state.mobileSize, panelId,
-					min(
-						max(minHeight, mxy.y),
-						getValue(state.editorWH).height - getValue(position).y - dockingSafeResizeGap // do not grow in vertical while resizing
-					)
-				);
-				updateW(state.mobileSize, panelId,  
-					min(
-						max(minWidth, rtlCorrection * mxy.x),
-						getValue(state.editorWH).width - dockingSafeResizeGap
-					)
-				);
+
+				safeLimit = getValue(tempXY).y - (mobileHelperResize);
+				deltaH = getValue(tempXY).y - max(0.0, getValue(state.mouseXy).y);
+				deltaW = getValue(tempXY).x - max(0.0, getValue(state.mouseXy).x);
+
+				if (getValue(isResizingT)) {
+					updateH(state.mobileSize, panelId,
+						max(minHeight, getValue(tempWH).height + deltaH)
+					);
+				} else if (getValue(isResizingL)) {
+					updateW(state.mobileSize, panelId,
+						max(minWidth, getValue(tempWH).width + deltaW)
+					);
+				} else if (getValue(isResizingB)) {
+					// Update while resizing, but do not exceed the editor size
+					updateH(state.mobileSize, panelId,
+						min(
+							max(minHeight, mxy.y),
+							getValue(state.editorWH).height - getValue(position).y - (mobileHelperResize * 2.0) // do not grow in vertical while resizing
+						)
+					);
+
+				} else if (getValue(isResizingR)) {
+					updateW(state.mobileSize, panelId,  
+						min(
+							max(minWidth, rtlCorrection * mxy.x),
+							getValue(state.editorWH).width - mobileHelperResize
+						)
+					);
+				} else {
+					// Update while resizing, but do not exceed the editor size
+					updateH(state.mobileSize, panelId,
+						min(
+							max(minHeight, mxy.y),
+							getValue(state.editorWH).height - getValue(position).y - (mobileHelperResize * 2.0) // do not grow in vertical while resizing
+						)
+					);
+					updateW(state.mobileSize, panelId,  
+						min(
+							max(minWidth, rtlCorrection * mxy.x),
+							getValue(state.editorWH).width - mobileHelperResize
+						)
+					);
+				}
 			}
 		})
 	],	
