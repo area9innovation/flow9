@@ -24,7 +24,7 @@ export {
 	//
 	substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram;
 
-	// Try to eval expressions in `compileTime` and `compileTimeDef` functions.
+	// Try to eval argument of `compileTime` function.
 	evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram;
 }
 
@@ -127,10 +127,7 @@ evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiPr
 			FiVar(f_name,__,__): {
 				if (f_name == "compileTime") {
 					has_compile_time := true;
-					Some(Pair(f_name, x));
-				} else if (f_name == "compileTimeDef") {
-					has_compile_time := true;
-					Some(Pair(f_name, x));
+					Some(x);
 				} else {
 					None();
 				}
@@ -142,7 +139,7 @@ evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiPr
 	used_globals = foldTree(prog.names.toplevel, makeSet(), \__, decl, acc ->
 		fiFoldExp(fiDeclExp(decl), acc,
 			\x, trav_env, ac -> eitherMap(detect_compile_time(x),
-				\p -> collectGlobalDependencies(p.second.args[0], trav_env, prog.names, ac), ac
+				\call -> collectGlobalDependencies(call.args[0], trav_env, prog.names, ac), ac
 			),
 			AstTraverseOrder(true, true)
 		)
@@ -152,32 +149,37 @@ evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiPr
 		fiMapProgramModule(prog,
 			\m, pr -> fiMapModuleExp(pr, m, \e0, decl,__,__ ->
 				fiMapExp(e0, \x, trav_env ->
-					eitherMap(detect_compile_time(x), \p -> {
-						ex = p.second.args[0];
-						eitherMap(
-							evalExpValue(ex, trav_env, eval_env, makeHashMap(fastHashString)),
-							\v -> switch(fiflow2Constant(v, Some(p.second.type), eval_env)) {
-								Some(ex_c): ex_c;
-								None(): {
-									if (p.first == "compileTime") {
-										on_err(FcError(
-											"Failed to type a constant.\n" +
-											"Type: " + pretFiType(p.second.type) + "\n" +
-											"Constant:\n" + toStringFormatted(v),
-											[]
-										));
-										ex;
-									} else {
-										p.second.args[1]
+					eitherMap(
+						detect_compile_time(x),
+						\call -> {
+							ex = call.args[0];
+							switch (evalExpValue(ex, trav_env, eval_env, makeHashMap(fastHashString))) {
+								Some(v): {
+									switch(fiflow2Constant(v, Some(call.type), eval_env)) {
+										Some(const): const;
+										None(): {
+											on_err(FcError(
+												"Failed to assign the type " + pretFiType(call.type) + " to a constant:\n" +
+												strIndent(toStringFormatted(v)), []
+											));
+											ex;
+										}
 									}
 								}
-							},
-							if (p.first == "compileTime") ex else p.second.args[1]
-						);
-					}, x),
-				true)
+								None(): {
+									on_err(FcError(
+										"Failed to eval a compile-time constant from the expression:\n" +
+										strIndent(pretFiExp(ex)), []
+									));
+									ex;
+								}
+							}
+						},
+						x
+					), true
+				)
 			),
 			fcParallelOn(prog.config)
-		);
+		)
 	}
 }
