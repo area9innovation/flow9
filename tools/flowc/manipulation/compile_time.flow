@@ -72,15 +72,29 @@ compileTimeValue(val: string, type: FiType, start: int, on_err: (string, int) ->
 	}
 }
 
-collectGlobalDependencies(e: FiExp, trav_env: FiExpTraverseEnv, acc: Set<string>) -> Set<string> {
+collectGlobalDependencies(e: FiExp, trav_env: FiExpTraverseEnv, names: FiGlobalNames, acc: Set<string>) -> Set<string> {
 	free = fifreevars(e);
 	globals = filterSet(free, \v -> !containsKeyTree(trav_env.locals, v));
 	foldSet(
 		differenceSets(free, acc),
 		mergeSets(globals, acc), 
 		\ac, v -> switch (lookupTree(trav_env.lets, v)) {
-			Some(x): collectGlobalDependencies(x.e1, trav_env, ac);
-			None(): ac;
+			Some(x): collectGlobalDependencies(x.e1, trav_env, names, ac);
+			None(): eitherMap(lookupTree(names.toplevel, v),
+				\decl -> collectGlobalDependencies(
+					fiDeclExp(decl),
+					FiExpTraverseEnv(trav_env with
+						lets = makeTree(),
+						locals = switch (fiDeclExp(decl)) {
+							FiLambda(args,__,__,__): {
+								pairs2tree(map(args, \arg -> Pair(arg.name, FiVar(arg.name, arg.type, -1))));
+							}
+							default: makeTree();
+						}
+					),
+					names, ac
+				), ac
+			);
 		}
 	);
 }
@@ -107,13 +121,16 @@ evalExpValue(e: FiExp, trav_env: FiExpTraverseEnv, eval_env: FcEvalEnv, locals :
 }
 
 evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
+	has_compile_time = ref false;
 	detect_compile_time = \x -> switch (x) {
 		FiCall(f, args,__,__): switch (f) {
 			FiVar(f_name,__,__): {
 				if (f_name == "compileTime") {
-					Some(args[0]);
+					has_compile_time := true;
+					Some(Pair(f_name, x));
 				} else if (f_name == "compileTimeDef") {
-					Some(args[0]);
+					has_compile_time := true;
+					Some(Pair(f_name, x));
 				} else {
 					None();
 				}
@@ -122,85 +139,45 @@ evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiPr
 		}
 		default: None();
 	}
-	used_globals = foldTree(prog.names.toplevel, makeSet(), \__, decl, acc -> {
-		e = switch (decl) {
-			FiFunctionDec(__,lambda,__,__,__): lambda;
-			FiGlobalVar(__,value,__,__,__): value;
-			FiNativeDec(__,__,__,__,fallback,__,__): fallback;
-		}
-		fiFoldExp(e, acc,
+	used_globals = foldTree(prog.names.toplevel, makeSet(), \__, decl, acc ->
+		fiFoldExp(fiDeclExp(decl), acc,
 			\x, trav_env, ac -> eitherMap(detect_compile_time(x),
-				\y -> collectGlobalDependencies(y, trav_env, ac), ac
+				\p -> collectGlobalDependencies(p.second.args[0], trav_env, prog.names, ac), ac
 			),
-			AstTraverseOrder(true, true
-		));
-	});
-	eval_env = fcInitEvalEnv(fcOptimizeTailCalls(prog), None(), Some(used_globals), nop1);
-	verb = s2i(getConfigParameterDef(prog.config.config, "compile-time-verbose", "0"));
-
-	fiMapProgramModule(prog,
-		\m, p -> fiMapModuleExp(p, m, \e0, decl,__,__ ->
-			fiMapExp(e0, \x, trav_env -> switch (x) {
-				FiCall(f, args, type,__): switch (f) {
-					FiVar(f_name,__,__): {
-						if (f_name == "compileTime") {
-							ex = args[0];
-							ex_c = eitherMap(
-								evalExpValue(ex, trav_env, eval_env, makeHashMap(fastHashString)),
-								\v -> switch(fiflow2Constant(v, Some(type), eval_env)) {
-									Some(ex_c): ex_c;
-									None(): {
+			AstTraverseOrder(true, true)
+		)
+	);
+	if (!^has_compile_time) prog else {
+		eval_env = fcInitEvalEnv(fcOptimizeTailCalls(prog), None(), Some(used_globals), nop1);
+		fiMapProgramModule(prog,
+			\m, pr -> fiMapModuleExp(pr, m, \e0, decl,__,__ ->
+				fiMapExp(e0, \x, trav_env ->
+					eitherMap(detect_compile_time(x), \p -> {
+						ex = p.second.args[0];
+						eitherMap(
+							evalExpValue(ex, trav_env, eval_env, makeHashMap(fastHashString)),
+							\v -> switch(fiflow2Constant(v, Some(p.second.type), eval_env)) {
+								Some(ex_c): ex_c;
+								None(): {
+									if (p.first == "compileTime") {
 										on_err(FcError(
 											"Failed to type a constant.\n" +
-											"Type: " + pretFiType(type) + "\n" +
+											"Type: " + pretFiType(p.second.type) + "\n" +
 											"Constant:\n" + toStringFormatted(v),
 											[]
 										));
 										ex;
+									} else {
+										p.second.args[1]
 									}
-								},
-								ex
-							);
-							if (verb > 0) {
-								fcPrintln(
-									"Evaled during compile-time:\n" +
-										strIndent(pretFiExp(ex)) + "\n" +
-									"value is:\n" +
-										strIndent(if (fiEqualExps(ex, ex_c)) "the same" else pretFiExp(ex_c)),
-									prog.config.threadId
-								);
-							}
-							ex_c;
-						} else if (f_name == "compileTimeDef") {
-							ex = args[0];
-							def = args[1];
-							ex_c = eitherMap(
-								evalExpValue(ex, trav_env,
-									FcEvalEnv(eval_env with onError = nop3),
-									makeHashMap(fastHashString)
-								),
-								\v -> either(fiflow2Constant(v, Some(type), eval_env), def),
-								def
-							);
-							if (verb > 0 && !fiEqualExps(ex, ex_c)) {
-								fcPrintln(
-									"Evaled during compile-time:\n" +
-										strIndent(pretFiExp(ex)) + "\n" +
-									"value is:\n" +
-										strIndent(if (fiEqualExps(ex, ex_c)) "the same" else pretFiExp(ex_c)),
-									prog.config.threadId
-								);
-							}
-							ex_c;
-						} else {
-							x;
-						}
-					}
-					default: x;
-				}
-				default: x;
-			}, true)
-		),
-		fcParallelOn(prog.config)
-	);
+								}
+							},
+							if (p.first == "compileTime") ex else p.second.args[1]
+						);
+					}, x),
+				true)
+			),
+			fcParallelOn(prog.config)
+		);
+	}
 }

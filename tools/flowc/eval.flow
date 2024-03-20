@@ -103,6 +103,10 @@ fcInitEvalEnv(prog: FiProgram, orig: Maybe<FiProgram>, to_include: Maybe<Set<str
 		on_error(FcError(msg, map(ps, \p -> FcPosition(file, p, p))));
 	}
 	env = FcEvalEnv(structs, unions, globals, error, prog.config.flowfile, errors);
+	consider_global = \name -> switch (to_include) {
+		Some(gs): containsSet(gs, name);
+		None(): true;
+	}
 	iter(prog.traversal, \mod_name ->
 		switch (lookupTree(prog.modules, mod_name)) {
 			Some(module): {
@@ -129,37 +133,29 @@ fcInitEvalEnv(prog: FiProgram, orig: Maybe<FiProgram>, to_include: Maybe<Set<str
 				});
 				iter(module.initOrder, \name ->
 					maybeApply(lookupTree(prog.names.toplevel, name), \decl ->
-						switch (decl) {
-							FiFunctionDec(__, lambda, type,__,__): {
-								if (!containsKeyHashMap(globals, name)) {
-									fn = if (containsSet(fc_eval_runtimes, name)) {
-										make_runtime(name);
-									} else if (hostCallExists(name)) {
-										fcMakeFnFromLambda(lambda, None(), m_env);
-									} else {
-										// Make lambda nevertheless. This choice is needed to call `hostCallExists(name)` in
-										// order to load corresponding function to the hash map of dynamically called funcs.
-										fcMakeFnFromLambda(lambda, None(), m_env);
-									}
-									maybeApply(fn, \f -> setHashMap(globals, name, FcEvalGlobal(f, type)));
-								}
-							}
-							FiGlobalVar(__, value, type,__,__): {
-								switch (to_include) {
-									Some(gs): {
-										if (containsSet(gs, name)) {
-											gv = fcReplEval(value, m_env, makeHashMap(fastHashString));
-											setHashMap(globals, name, FcEvalGlobal(gv, type));
+						if (consider_global(decl.name)) {
+							switch (decl) {
+								FiFunctionDec(__, lambda, type,__,__): {
+									if (!containsKeyHashMap(globals, name)) {
+										fn = if (containsSet(fc_eval_runtimes, name)) {
+											make_runtime(name);
+										} else if (hostCallExists(name)) {
+											fcMakeFnFromLambda(lambda, None(), m_env);
+										} else {
+											// Make lambda nevertheless. This choice is needed to call `hostCallExists(name)` in
+											// order to load corresponding function to the hash map of dynamically called funcs.
+											fcMakeFnFromLambda(lambda, None(), m_env);
 										}
-									}
-									None(): {
-										gv = fcReplEval(value, m_env, makeHashMap(fastHashString));
-										setHashMap(globals, name, FcEvalGlobal(gv, type));
+										maybeApply(fn, \f -> setHashMap(globals, name, FcEvalGlobal(f, type)));
 									}
 								}
-							}
-							FiNativeDec(__,__,__, nativeName, fallback, __,__): {
-								// are already added
+								FiGlobalVar(__, value, type,__,__): {
+									gv = fcReplEval(value, m_env, makeHashMap(fastHashString));
+									setHashMap(globals, name, FcEvalGlobal(gv, type));
+								}
+								FiNativeDec(__,__,__, nativeName, fallback, __,__): {
+									// are already added
+								}
 							}
 						}
 					)
