@@ -1723,7 +1723,7 @@ class TextClip extends NativeWidgetClip {
 			} else {
 				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
 				if (this.isHTMLRenderer()) {
-					if (useHTMLMeasurementJapaneseFont(style) || style.fontFamily == "Amiri") {
+					if (useHTMLMeasurementJapaneseFont(style)) {
 						measureHTMLSize();
 					} else {
 						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic') measureHTMLWidth();
