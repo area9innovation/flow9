@@ -995,8 +995,13 @@ void GLTextLayout::renderPasses(GLRenderer *renderer, const T_passes &passes, ve
             renderer->beginDrawFancy(vec4(0,0,0,0), true, true);
             glVertexAttrib4f(GLRenderer::AttrVertexColor, alpha, alpha, alpha, alpha);
         } else {
-            renderer->beginDrawFont(radius);
-            glVertexAttrib4fv(GLRenderer::AttrVertexColor, glm::value_ptr(color * alpha));
+            if (font->is_freetype) {
+                renderer->beginDrawFancy(vec4(alpha), true);
+                glVertexAttrib4fv(GLRenderer::AttrVertexColor, glm::value_ptr(color));
+            } else {
+                renderer->beginDrawFont(radius);
+                glVertexAttrib4fv(GLRenderer::AttrVertexColor, glm::value_ptr(color * alpha));
+            }
         }
 
         pit->first->bindTo(renderer);
