@@ -51,9 +51,10 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.concurrent.ConcurrentHashMap;
-import com.sun.management.OperatingSystemMXBean;
 import java.time.format.FormatStyle;
 import java.time.ZonedDateTime;
+import com.google.gson.*;
+import com.sun.management.OperatingSystemMXBean;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
@@ -2718,5 +2719,63 @@ public class Native extends NativeHost {
 		buf.append('"');
 		return buf.toString();
 	}
-}
 
+	private static Struct jsonNull_struct = null;
+	private static int jsonObject_struct_id = -1;
+	private static int jsonArray_struct_id = -1;
+	private static int jsonString_struct_id = -1;
+	private static int jsonDouble_struct_id = -1;
+	private static int jsonBool_struct_id = -1;
+	private static int pair_struct_id = -1;
+
+	public static final Struct json2Struct(JsonElement json) {
+		if (json instanceof JsonPrimitive) {
+			JsonPrimitive prim = json.getAsJsonPrimitive();
+			if (prim.isBoolean()) {
+				return FlowRuntime.makeStructValue(jsonBool_struct_id, new Object[] {prim.getAsBoolean()}, null);
+			} else if (prim.isNumber()) {
+				return FlowRuntime.makeStructValue(jsonDouble_struct_id, new Object[] {prim.getAsDouble()}, null);
+			} else {
+				return FlowRuntime.makeStructValue(jsonString_struct_id, new Object[] {prim.getAsString()}, null);
+			}
+		} else if (json instanceof JsonNull) {
+			return jsonNull_struct;
+		} else if (json instanceof JsonArray) {
+			JsonArray arr = json.getAsJsonArray();
+			Struct[] elements =  new Struct[arr.size()];
+			for (int i = 0; i < arr.size(); i++) {
+				elements[i] = json2Struct(arr.get(i));
+			}
+			return FlowRuntime.makeStructValue(jsonArray_struct_id, new Object[] {elements}, null);
+		} else {
+			JsonObject obj = json.getAsJsonObject();
+			Struct[] members =  new Struct[obj.size()];
+			int i = 0;
+			for (Map.Entry<String,JsonElement> entry : obj.entrySet()) {
+				String key = entry.getKey();
+				JsonElement value = entry.getValue();
+				members[i] = FlowRuntime.makeStructValue(pair_struct_id, new Object[] {key, json2Struct(value)}, null);
+				i++;
+			}
+			return FlowRuntime.makeStructValue(jsonObject_struct_id, new Object[] {members}, null);
+		}
+	}
+
+	public static final Struct parseJson(String string) {
+		if (jsonNull_struct == null) {
+			jsonObject_struct_id = FlowRuntime.struct_ids.get("JsonObject");
+			jsonArray_struct_id = FlowRuntime.struct_ids.get("JsonArray");
+			jsonString_struct_id = FlowRuntime.struct_ids.get("JsonString");
+			jsonDouble_struct_id = FlowRuntime.struct_ids.get("JsonDouble");
+			jsonBool_struct_id = FlowRuntime.struct_ids.get("JsonBool");
+			pair_struct_id = FlowRuntime.struct_ids.get("Pair");
+			jsonNull_struct = FlowRuntime.makeStructValue("JsonNull", new Object[0], null);
+		}
+		try {
+			JsonElement json = new JsonParser().parseString(string);
+			return json2Struct(json);
+		} catch (Exception e) {
+			return FlowRuntime.makeStructValue("JsonDouble", new Object[] {0.0}, null);
+		}
+	}
+}
