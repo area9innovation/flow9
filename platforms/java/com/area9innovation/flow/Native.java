@@ -1940,7 +1940,7 @@ public class Native extends NativeHost {
 			// For some reason it does not help catching exception (e.g. ClassCastException)
 			//setUncaughtExceptionHandler(thread, onFail);
 			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
-			String threadId = Long.toString(thread.threadId());
+			String threadId = Long.toString(thread.getId());
 			try {
 				task.invoke(threadId, (res) -> {
 					// thread #2
@@ -1973,7 +1973,7 @@ public class Native extends NativeHost {
 		.exceptionally(ex -> {
 			ex.printStackTrace();
 			Thread thread = Thread.currentThread();
-			String threadId = Long.toString(thread.threadId());
+			String threadId = Long.toString(thread.getId());
 			return onFail.invoke("Thread #" + threadId + " failed: " + ex.getMessage());
 		})
 		.thenApply(result -> {
@@ -1999,7 +1999,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final String getThreadId() {
-		return Long.toString(Thread.currentThread().threadId());
+		return Long.toString(Thread.currentThread().getId());
 	}
 
 	public static final Object initConcurrentHashMap() {
