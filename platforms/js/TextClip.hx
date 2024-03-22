@@ -120,6 +120,7 @@ class UnicodeTranslation {
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
+	public static var AmiriHTMLMeasurement = Util.getParameter("amiri_html_measurement") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
 	public static var checkTextNodeWidth = Native.isNew && Util.getParameter("text_node_width") != "0";
@@ -1726,7 +1727,11 @@ class TextClip extends NativeWidgetClip {
 					if (useHTMLMeasurementJapaneseFont(style)) {
 						measureHTMLSize();
 					} else {
-						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic') measureHTMLWidth();
+						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic'
+							|| (AmiriHTMLMeasurement && style.fontFamily == "Amiri")
+						) {
+							measureHTMLWidth();
+						}
 					}
 				}
 			}
@@ -1824,6 +1829,7 @@ class TextClip extends NativeWidgetClip {
 		measureElement.style.fontFamily = nativeWidget.style.fontFamily;
 		measureElement.style.fontSize = nativeWidget.style.fontSize;
 		measureElement.style.fontWeight = nativeWidget.style.fontWeight;
+		measureElement.style.letterSpacing = nativeWidget.style.letterSpacing;
 		measureElement.style.wrap = nativeWidget.style.wrap;
 		measureElement.style.whiteSpace = nativeWidget.style.whiteSpace;
 		measureElement.style.display = nativeWidget.style.display;
