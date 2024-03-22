@@ -43,6 +43,7 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : (int) -> void) -> vo
 		}
 
 		if (length(gcontext.errors) > 0) {
+			iter(gcontext.errors, \err -> fcPrintln(err, cfg.threadId));
 			callback(5);
 		} else {
 			sources_list_file = pathCombine(package_path, "sources");
@@ -101,10 +102,9 @@ fi2javaTranslate(program : FiProgram, cfg : FiJavaConfig, package_path : string)
 	gcontext = JavaGlobalContext(
 		cfg, program, package_path,
 		cmodules_info.first, cmodules_info.second, cstructs_collisions.first,
-		fi2javaRuntime(cfg), // runtime
+		fi2javaRuntime(program, cfg), // runtime
 		makeTree(), // globals
 		makeTree(), // globalFuncs
-		makeSet(), // missing_natives
 		fold(enumFromTo(0,5), makeTree(), \a,i -> setTree(a,i,true)), // has_func_def
 		makeTree(), // has_field_accessor
 		makeSet(), // uses_host
@@ -118,68 +118,70 @@ fi2javaTranslate(program : FiProgram, cfg : FiJavaConfig, package_path : string)
 	);
 
 	indexJavaGlobals(gcontext);
-	generateJavaModules(gcontext, package_path);
-	generateJavaStructDefs(gcontext, package_path);
-	generateJavaMainClass(gcontext);
-	generateJavaSingletonStructs(gcontext);
-	generateJavaStructs(gcontext);
-	generateJavaWrappers(gcontext);
+	if (length(gcontext.errors) == 0) {
+		generateJavaModules(gcontext, package_path);
+		generateJavaStructDefs(gcontext, package_path);
+		generateJavaMainClass(gcontext);
+		generateJavaSingletonStructs(gcontext);
+		generateJavaStructs(gcontext);
+		generateJavaWrappers(gcontext);
 
-	traverseInOrder(gcontext.has_field_accessor, \name, has -> {
-		if (has) {
-			field_fname = pathCombine(package_path, "Field_" + name + ".java");
-			if (fileExists(field_fname)) {
-				if (gcontext.program.config.verbose > 1) {
-					fcPrintln("Java field module '" + field_fname + "' is already generated - keeping it", cfg.threadId);
+		traverseInOrder(gcontext.has_field_accessor, \name, has -> {
+			if (has) {
+				field_fname = pathCombine(package_path, "Field_" + name + ".java");
+				if (fileExists(field_fname)) {
+					if (gcontext.program.config.verbose > 1) {
+						fcPrintln("Java field module '" + field_fname + "' is already generated - keeping it", cfg.threadId);
+					}
+					class_path = pathCombine(package_path, "Field_" + name + ".class");
+					if (!fileExists(class_path)) {
+						rlistPush(gcontext.to_compile, field_fname + "\n");
+					}
+				} else {
+					if (gcontext.program.config.verbose > 1) {
+						fcPrintln("Creating java field module '" + field_fname + "'", cfg.threadId);
+					}
+					ftext = gcontext.header_generator(timestamp());
+					text = "interface Field_" + name + "<T> {\n" +
+						"\tT get_" + name + "();\n" +
+						"\tvoid set_" + name + "(T value);\n" +
+					"}\n";
+					rlistPush(ftext, text);
+					writeJavaSource(gcontext, field_fname, javaList2String(ftext, ""));
 				}
-				class_path = pathCombine(package_path, "Field_" + name + ".class");
-				if (!fileExists(class_path)) {
-					rlistPush(gcontext.to_compile, field_fname + "\n");
-				}
-			} else {
-				if (gcontext.program.config.verbose > 1) {
-					fcPrintln("Creating java field module '" + field_fname + "'", cfg.threadId);
-				}
-				ftext = gcontext.header_generator(timestamp());
-				text = "interface Field_" + name + "<T> {\n" +
-					"\tT get_" + name + "();\n" +
-					"\tvoid set_" + name + "(T value);\n" +
-				"}\n";
-				rlistPush(ftext, text);
-				writeJavaSource(gcontext, field_fname, javaList2String(ftext, ""));
 			}
-		}
-	});
+		});
 
-	traverseInOrder(gcontext.has_func_def, \nargs, has -> {
-		if (nargs > 11 && has) {
-			func_fname = pathCombine(package_path, "Func" + i2s(nargs) + ".java");
-			if (fileExists(func_fname)) {
-				if (gcontext.program.config.verbose > 1) {
-					fcPrintln("Java struct module '" + func_fname + "' is already generated - keeping it", cfg.threadId);
+		traverseInOrder(gcontext.has_func_def, \nargs, has -> {
+			if (nargs > 11 && has) {
+				func_fname = pathCombine(package_path, "Func" + i2s(nargs) + ".java");
+				if (fileExists(func_fname)) {
+					if (gcontext.program.config.verbose > 1) {
+						fcPrintln("Java struct module '" + func_fname + "' is already generated - keeping it", cfg.threadId);
+					}
+					class_path = pathCombine(package_path, "Func" + i2s(nargs) + ".class");
+					if (!fileExists(class_path)) {
+						rlistPush(gcontext.to_compile, func_fname + "\n");
+					}
+				} else {
+					if (gcontext.program.config.verbose > 1) {
+						fcPrintln("Creating java struct module '" + func_fname + "'", cfg.threadId);
+					}
+					ftext = gcontext.header_generator(timestamp());
+					rlistPush(ftext,
+						"interface Func" + i2s(nargs) + "<RT," +
+						strGlue(map(enumFromTo(0, nargs - 1), \i -> "A" + i2s(i)), ", ") + "> {\n"
+					);
+					rlistPush(ftext,
+						"\tRT invoke(" +
+						strGlue(map(enumFromTo(0,nargs - 1), \i -> "A" + i2s(i) + " a" + i2s(i)), ", ") +
+						");\n"
+					);
+					writeJavaSource(gcontext, func_fname, javaList2String(ftext, "}\n"));
 				}
-				class_path = pathCombine(package_path, "Func" + i2s(nargs) + ".class");
-				if (!fileExists(class_path)) {
-					rlistPush(gcontext.to_compile, func_fname + "\n");
-				}
-			} else {
-				if (gcontext.program.config.verbose > 1) {
-					fcPrintln("Creating java struct module '" + func_fname + "'", cfg.threadId);
-				}
-				ftext = gcontext.header_generator(timestamp());
-				rlistPush(ftext,
-					"interface Func" + i2s(nargs) + "<RT," +
-					strGlue(map(enumFromTo(0, nargs - 1), \i -> "A" + i2s(i)), ", ") + "> {\n"
-				);
-				rlistPush(ftext,
-					"\tRT invoke(" +
-					strGlue(map(enumFromTo(0,nargs - 1), \i -> "A" + i2s(i) + " a" + i2s(i)), ", ") +
-					");\n"
-				);
-				writeJavaSource(gcontext, func_fname, javaList2String(ftext, "}\n"));
 			}
-		}
-	});
+		});
+	}
 	gcontext;
 }
 

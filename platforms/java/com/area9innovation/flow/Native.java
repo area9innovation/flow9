@@ -1246,7 +1246,6 @@ public class Native extends NativeHost {
 					setter.invoke(struct, value);
 				} else {
 					System.out.println("Failed to set a field " + field + " in struct " + struct.getTypeName());
-					System.exit(255);
 				}
 			}
 		} catch (IllegalAccessException ex) {
@@ -2364,7 +2363,6 @@ public class Native extends NativeHost {
 			try {
 				return Class.forName("com.area9innovation.flow." + class_path);
 			} catch (ClassNotFoundException e2) {
-				System.out.println("Class: " + class_path + " was not found");
 				return null;
 			}
 		}
@@ -2443,7 +2441,7 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2456,8 +2454,8 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2470,9 +2468,9 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2485,10 +2483,10 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2501,11 +2499,11 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2518,12 +2516,12 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2536,13 +2534,13 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2555,14 +2553,14 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2575,15 +2573,15 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2596,16 +2594,16 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
-								"arg 10: " + a10 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
+								"arg 10: " + FlowRuntime.toString(a10) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2618,17 +2616,17 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
-								"arg 10: " + a10 + "\n" +
-								"arg 11: " + a11 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
+								"arg 10: " + FlowRuntime.toString(a10) + "\n" +
+								"arg 11: " + FlowRuntime.toString(a11) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2641,18 +2639,18 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
-								"arg 10: " + a10 + "\n" +
-								"arg 11: " + a11 + "\n" +
-								"arg 12: " + a12 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
+								"arg 10: " + FlowRuntime.toString(a10) + "\n" +
+								"arg 11: " + FlowRuntime.toString(a11) + "\n" +
+								"arg 12: " + FlowRuntime.toString(a12) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;

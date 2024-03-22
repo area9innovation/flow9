@@ -7,6 +7,9 @@ export {
 	fcfreevars(e : FcExp) -> Set<string>;
 	// Find what constructors are called, and what types we switch on
 	fifreetypes(e : FiExp) -> Set<string>;
+
+	// Extract names from `hostCall(<name>, [<args>])`
+	fiHostCalls(e : FiExp) -> Set<string>;
 }
 
 fifreevars(e : FiExp) -> Set<string> {
@@ -82,7 +85,43 @@ fifreetypesFree(expr : FiExp, ofree : Set<string>) -> Set<string> {
 	}
 }
 
+fiHostCalls(e : FiExp) -> Set<string> {
+	fiDoHostCalls(e, makeSet());
+}
 
+fiDoHostCalls(ex : FiExp, hostcalls : Set<string>) -> Set<string> {
+	do_es = \es -> fold(es, hostcalls, \ac, e -> fiDoHostCalls(e, ac));
+	switch (ex) {
+		FiCall(f, es,__,__): {
+			switch (f) {
+				FiVar(x,__,__): {
+					if (x == "hostCall") {
+						switch (es[0]) {
+							FiString(name,__): {
+								insertSet(do_es(es), name);
+							}
+							default: do_es(es);
+						}
+					}  else {
+						do_es(es);
+					}
+				}
+				default: do_es(arrayPush(es, f));
+			}
+		}
+		FiLambda(__,e,__,__):        fiDoHostCalls(e, hostcalls);
+		FiLet(__,__, e1, e2,__,__):  do_es([e1, e2]);
+		FiIf(e1, e2, e3, __, __):    do_es([e1, e2, e3]);
+		FiSwitch(e, __, cs, __, __): do_es(map(cs, \c -> c.body));
+		FiCast(e, __, __, __, __):   fiDoHostCalls(e, hostcalls);
+		FiSeq(es, __, __):           do_es(es);
+		FiCallPrim(__, es, __, __):  do_es(es);
+		FiRequire(__, e, __, __):    fiDoHostCalls(e, hostcalls);
+		FiUnsafe(__, fb, __, __):    fiDoHostCalls(fb, hostcalls);
+		FiVar(__,__,__): hostcalls;
+		FiConst():       hostcalls;
+	}
+}
 
 fcfreevars(e : FcExp) -> Set<string> {
 	fcfreevarsBoundFree(e, makeSet(), makeSet());
