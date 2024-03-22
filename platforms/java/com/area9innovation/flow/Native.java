@@ -1941,7 +1941,7 @@ public class Native extends NativeHost {
 			// For some reason it does not help catching exception (e.g. ClassCastException)
 			//setUncaughtExceptionHandler(thread, onFail);
 			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
-			String threadId = Long.toString(thread.getId());
+			String threadId = Long.toString(thread.threadId());
 			try {
 				task.invoke(threadId, (res) -> {
 					// thread #2
@@ -1974,7 +1974,7 @@ public class Native extends NativeHost {
 		.exceptionally(ex -> {
 			ex.printStackTrace();
 			Thread thread = Thread.currentThread();
-			String threadId = Long.toString(thread.getId());
+			String threadId = Long.toString(thread.threadId());
 			return onFail.invoke("Thread #" + threadId + " failed: " + ex.getMessage());
 		})
 		.thenApply(result -> {
@@ -2000,7 +2000,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final String getThreadId() {
-		return Long.toString(Thread.currentThread().getId());
+		return Long.toString(Thread.currentThread().threadId());
 	}
 
 	public static final Object initConcurrentHashMap() {
@@ -2772,7 +2772,7 @@ public class Native extends NativeHost {
 			jsonNull_struct = FlowRuntime.makeStructValue("JsonNull", new Object[0], null);
 		}
 		try {
-			JsonElement json = new JsonParser().parseString(string);
+			JsonElement json = JsonParser.parseString(string);
 			return json2Struct(json);
 		} catch (Exception e) {
 			return FlowRuntime.makeStructValue("JsonDouble", new Object[] {0.0}, null);
