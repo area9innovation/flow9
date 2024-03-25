@@ -60,6 +60,9 @@ export {
 
 	// Remove sequences with exactly one element
 	fiRemoveSigletonSeqences(p: FiProgram) -> FiProgram;
+
+	// Remove single element structs, which are not in unions
+	fiRemoveSigleElementStructs(p: FiProgram) -> FiProgram;
 }
 
 fiFlattenUnions(program : FiProgram) -> FiProgram {
@@ -1017,4 +1020,116 @@ fiRemoveSigletonSeqences(p: FiProgram) -> FiProgram{
 			}
 		), fcParallelOn(p.config)
 	);
+}
+
+fiRemoveSigleElementStructs(p: FiProgram) -> FiProgram {
+	preserve_names = fold(
+		strSplit(getConfigParameterDef(p.config.config, "single-structs-preserved-names", ""), ","), makeSet(), \acc, v ->
+		if (v != "") insertSet(acc, v) else acc
+	);
+	preserve_names_1 = fiFoldProgramToplevel(p, preserve_names, \decl,__,__, acc ->
+		switch (decl) {
+			FiDeclaration(): {
+				fiFoldExp(fiDeclExp(decl), acc, \x,__, ac ->
+					eitherMap(fiDetectCall(x, "makeStructValue"), \e -> switch (e.args[0]) {
+						FiString(s,__): insertSet(ac, s);
+						default: ac;
+					}, ac),
+					AstTraverseOrder(true, true)
+				)
+			}
+			FiTypeUnion(__,__,tns,__): {
+				fold(tns, acc, \ac, tn -> insertSet(ac, tn.name));
+			}
+			default: acc;
+		}
+	);
+	single_element_structs = foldTree(p.names.structs, makeTree(), \__,s, acc ->
+		if (length(s.args) != 1 || containsSet(preserve_names_1, s.name) || s.args[0].ismutable) acc else {
+			setTree(acc, s.name, s)
+		}
+	);
+	if (isConfigParameterTrue(p.config.config, "dump-single-element-structs")) {
+		fcPrintln("Single element structs, which are not contained by unions (are eliminated):\n" +
+			strIndent(strArrayWrap(getTreeKeys(single_element_structs), 128, true, " ")), p.config.threadId
+		);
+	}
+	do_t = \t -> fiMapType(t, \x -> switch (x) {
+		FiTypeName(name, typars): switch (lookupTree(single_element_structs, name)) {
+			Some(struct): {
+				// Take the type of a first argument
+				fiSpecializeStruct(x, struct).args[0].type;
+			}
+			None(): x;
+		}
+		default: x;
+	}, true);
+	do_e = \e -> {
+		e1 = fiMapExp(e, \x,__ -> {
+			switch (x) {
+				FiCallPrim(op, es, type,__): {
+					switch (op) {
+						FcStructPrim(name): {
+							switch (lookupTree(single_element_structs, name)) {
+								Some(__): es[0];
+								None(): x;
+							}
+						}
+						FcFieldPrim(field): {
+							switch (fiExpType(es[0])) {
+								FiTypeName(name, typars): {
+									switch (lookupTree(single_element_structs, name)) {
+										Some(__): es[0];
+										None(): x;
+									}
+								}
+								default: x;
+							}
+						}
+						default: x;
+					}
+				}
+				FiLet(__,type,__,__,__,__): {
+					FiLet(x with type = do_t(type));
+				}
+				FiCast(__,from, to,__,__): {
+					FiCast(x with tFrom = do_t(from), tTo = do_t(to));
+				}
+				FiSwitch(__,sw_type,__,__,__): {
+					FiSwitch(x with switchType = do_t(sw_type));
+				}
+				FiLambda(args,__,__,__): {
+					FiLambda(x with args = map(args, \arg -> FiFunArg(arg with type = do_t(arg.type))));
+				}
+				default: x;
+			}
+		}, true);
+		fiMapExp(e1, \x,__ -> fiSetExpType(x, do_t(fiExpType(x))), true);
+	}
+	fiMapProgramToplevel(p, \x,__,__ -> switch (x) {
+		FiTypeUnion(__,__,__,__): [x];
+		FiTypeStruct(name, typars, args,__): {
+			if (containsKeyTree(single_element_structs, name)) [] else [
+				FiTypeStruct(x with args = map(args, \arg -> FiStructArg(arg with type = do_t(arg.type))))
+			];
+		}
+		FiFunctionDec(__,lambda, type,__,__): {
+			[FiFunctionDec(x with
+				lambda = cast(do_e(lambda): FiExp -> FiLambda),
+				type = cast(do_t(type): FiType -> FiTypeFunction)
+			)]
+		}
+		FiGlobalVar(__,value, type,__,__): {
+			[FiGlobalVar(x with
+				value = do_e(value),
+				type = do_t(type)
+			)]
+		}
+		FiNativeDec(__,__,type,__, fallback,__,__): {
+			[FiNativeDec(x with
+				fallbackLambda = do_e(fallback),
+				type = do_t(type)
+			)]
+		}
+	}, fcParallelOn(p.config));
 }
