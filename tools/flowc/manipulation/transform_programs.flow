@@ -1044,11 +1044,26 @@ fiRemoveSigleElementStructs(p: FiProgram) -> FiProgram {
 			default: acc;
 		}
 	);
-	to_remove = foldTree(p.names.structs, makeTree(), \__,s, acc ->
-		if (length(s.args) != 1 || containsSet(preserve_names_1, s.name) || s.args[0].ismutable) acc else {
-			setTree(acc, s.name, s)
-		}
-	);
+	to_remove_param = getConfigParameter(p.config.config, "remove-single-structs");
+	is_single_field = \s -> length(s.args) != 1 || containsSet(preserve_names_1, s.name) || s.args[0].ismutable;
+	to_remove = if (to_remove_param == "1") {
+		// Consider all potential structs with a single non-mutable field
+		foldTree(p.names.structs, makeTree(), \__,s, acc ->
+			if (is_single_field(s)) acc else {
+				setTree(acc, s.name, s)
+			}
+		);
+	} else {
+		// Consider only structs listed in `remove-single-structs`
+		fold(
+			filtermap(strSplit(to_remove_param, ","), \name -> if (name == "") None() else Some(name)),
+			makeTree(),
+			\acc, name -> switch (lookupTree(p.names.structs, name)) {
+				Some(s): if (is_single_field(s)) setTree(acc, name, s) else acc;
+				None(): acc;
+			}
+		);
+	}
 	if (isConfigParameterTrue(p.config.config, "dump-single-element-structs")) {
 		fcPrintln("Single element structs, which are not contained by unions (are eliminated):\n" +
 			strIndent(strArrayWrap(getTreeKeys(to_remove), 128, true, " ")), p.config.threadId
@@ -1093,17 +1108,13 @@ fiRemoveStructsFromType(x: FiType, structs: Tree<string, FiTypeStruct>) -> FiTyp
 			FiTypeArray(x with t = fiRemoveStructsFromType(at, structs));
 		}
 		FiTypeName(name, ts): {
+			x1 = FiTypeName(name, map(ts, \y -> fiRemoveStructsFromType(y, structs)));
 			switch (lookupTree(structs, name)) {
 				Some(struct): {
 					// Take the type of a first argument
-					fiSpecializeStruct(
-						FiTypeName(x with
-							typeparameters = map(ts, \y -> fiRemoveStructsFromType(y, structs))
-						),
-						struct
-					).args[0].type;
+					fiRemoveStructsFromType(fiSpecializeStruct(x1, struct).args[0].type, structs);
 				}
-				None(): x;
+				None(): x1;
 			}
 		}
 		FiTypeFunction(args, rt): {
