@@ -1044,92 +1044,175 @@ fiRemoveSigleElementStructs(p: FiProgram) -> FiProgram {
 			default: acc;
 		}
 	);
-	single_element_structs = foldTree(p.names.structs, makeTree(), \__,s, acc ->
+	to_remove = foldTree(p.names.structs, makeTree(), \__,s, acc ->
 		if (length(s.args) != 1 || containsSet(preserve_names_1, s.name) || s.args[0].ismutable) acc else {
 			setTree(acc, s.name, s)
 		}
 	);
 	if (isConfigParameterTrue(p.config.config, "dump-single-element-structs")) {
 		fcPrintln("Single element structs, which are not contained by unions (are eliminated):\n" +
-			strIndent(strArrayWrap(getTreeKeys(single_element_structs), 128, true, " ")), p.config.threadId
+			strIndent(strArrayWrap(getTreeKeys(to_remove), 128, true, " ")), p.config.threadId
 		);
-	}
-	do_t = \t -> fiMapType(t, \x -> switch (x) {
-		FiTypeName(name, typars): switch (lookupTree(single_element_structs, name)) {
-			Some(struct): {
-				// Take the type of a first argument
-				fiSpecializeStruct(x, struct).args[0].type;
-			}
-			None(): x;
-		}
-		default: x;
-	}, true);
-	do_e = \e -> {
-		e1 = fiMapExp(e, \x,__ -> {
-			switch (x) {
-				FiCallPrim(op, es, type,__): {
-					switch (op) {
-						FcStructPrim(name): {
-							switch (lookupTree(single_element_structs, name)) {
-								Some(__): es[0];
-								None(): x;
-							}
-						}
-						FcFieldPrim(field): {
-							switch (fiExpType(es[0])) {
-								FiTypeName(name, typars): {
-									switch (lookupTree(single_element_structs, name)) {
-										Some(__): es[0];
-										None(): x;
-									}
-								}
-								default: x;
-							}
-						}
-						default: x;
-					}
-				}
-				FiLet(__,type,__,__,__,__): {
-					FiLet(x with type = do_t(type));
-				}
-				FiCast(__,from, to,__,__): {
-					FiCast(x with tFrom = do_t(from), tTo = do_t(to));
-				}
-				FiSwitch(__,sw_type,__,__,__): {
-					FiSwitch(x with switchType = do_t(sw_type));
-				}
-				FiLambda(args,__,__,__): {
-					FiLambda(x with args = map(args, \arg -> FiFunArg(arg with type = do_t(arg.type))));
-				}
-				default: x;
-			}
-		}, true);
-		fiMapExp(e1, \x,__ -> fiSetExpType(x, do_t(fiExpType(x))), true);
 	}
 	fiMapProgramToplevel(p, \x,__,__ -> switch (x) {
 		FiTypeUnion(__,__,__,__): [x];
 		FiTypeStruct(name, typars, args,__): {
-			if (containsKeyTree(single_element_structs, name)) [] else [
-				FiTypeStruct(x with args = map(args, \arg -> FiStructArg(arg with type = do_t(arg.type))))
+			if (containsKeyTree(to_remove, name)) [] else [
+				FiTypeStruct(x with
+					args = map(args, \arg -> FiStructArg(arg with type = fiRemoveStructsFromType(arg.type, to_remove)))
+				)
 			];
 		}
 		FiFunctionDec(__,lambda, type,__,__): {
 			[FiFunctionDec(x with
-				lambda = cast(do_e(lambda): FiExp -> FiLambda),
-				type = cast(do_t(type): FiType -> FiTypeFunction)
+				lambda = cast(fiRemoveStructsFromExp(lambda, to_remove): FiExp -> FiLambda),
+				type = cast(fiRemoveStructsFromType(type, to_remove): FiType -> FiTypeFunction)
 			)]
 		}
 		FiGlobalVar(__,value, type,__,__): {
 			[FiGlobalVar(x with
-				value = do_e(value),
-				type = do_t(type)
+				value = fiRemoveStructsFromExp(value, to_remove),
+				type = fiRemoveStructsFromType(type, to_remove)
 			)]
 		}
 		FiNativeDec(__,__,type,__, fallback,__,__): {
 			[FiNativeDec(x with
-				fallbackLambda = do_e(fallback),
-				type = do_t(type)
+				fallbackLambda = fiRemoveStructsFromExp(fallback, to_remove),
+				type = fiRemoveStructsFromType(type, to_remove)
 			)]
 		}
 	}, fcParallelOn(p.config));
+}
+
+fiRemoveStructsFromType(x: FiType, structs: Tree<string, FiTypeStruct>) -> FiType {
+	switch (x) {
+		FiTypeRef(rt): {
+			FiTypeRef(x with t = fiRemoveStructsFromType(rt, structs));
+		}
+		FiTypeArray(at): {
+			FiTypeArray(x with t = fiRemoveStructsFromType(at, structs));
+		}
+		FiTypeName(name, ts): {
+			switch (lookupTree(structs, name)) {
+				Some(struct): {
+					// Take the type of a first argument
+					fiSpecializeStruct(
+						FiTypeName(x with
+							typeparameters = map(ts, \y -> fiRemoveStructsFromType(y, structs))
+						),
+						struct
+					).args[0].type;
+				}
+				None(): x;
+			}
+		}
+		FiTypeFunction(args, rt): {
+			FiTypeFunction(
+				map(args, \arg -> FiFunArg(arg with type = fiRemoveStructsFromType(arg.type, structs))),
+				fiRemoveStructsFromType(rt, structs)
+			);
+		}
+		default: x;
+	}
+}
+
+fiRemoveStructsFromExp(x: FiExp, structs: Tree<string, FiTypeStruct>) -> FiExp {
+	do_t = \t -> fiRemoveStructsFromType(t, structs);
+	do_e = \y -> fiRemoveStructsFromExp(y, structs);
+	switch (x) {
+		FiCallPrim(op, es, type,__): {
+			es1 = map(es, do_e);
+			switch (op) {
+				FcStructPrim(name): {
+					switch (lookupTree(structs, name)) {
+						Some(__): es1[0];
+						None(): FiCallPrim(x with es = es1, type = do_t(type));
+					}
+				}
+				FcFieldPrim(field): {
+					switch (fiExpType(es[0])) {
+						FiTypeName(name, typars): {
+							switch (lookupTree(structs, name)) {
+								Some(__): es1[0];
+								None(): FiCallPrim(x with es = es1, type = do_t(type));
+							}
+						}
+						default: FiCallPrim(x with es = es1, type = do_t(type));
+					}
+				}
+				default: FiCallPrim(x with es = es1, type = do_t(type));
+			}
+		}
+		FiLet(__,type, e1, e2, type2,__): {
+			FiLet(x with
+				type = do_t(type),
+				e1 = do_e(e1),
+				e2 = do_e(e2),
+				type2 = do_t(type2)
+			);
+		}
+		FiCast(e, from, to, type,__): {
+			FiCast(x with
+				e = do_e(e),
+				tFrom = do_t(from),
+				tTo = do_t(to),
+				type = do_t(type)
+			);
+		}
+		FiSwitch(v, sw_type, cs, type,__): {
+			FiSwitch(x with
+				x = FiVar(v with type = do_t(v.type)),
+				switchType = do_t(sw_type),
+				cases = map(cs, \c -> FiCase(c with body = do_e(c.body))),
+				type = do_t(type)
+			);
+		}
+		FiLambda(args, body, type,__): {
+			FiLambda(x with
+				args = map(args, \arg -> FiFunArg(arg with type = do_t(arg.type))),
+				body = do_e(body),
+				type = FiTypeFunction(
+					map(type.args, \arg -> FiFunArg(arg with type = do_t(arg.type))),
+					do_t(type.returnType)
+				)
+			);
+		}
+		FiCall(f, args, type,__): {
+			FiCall(x with
+				f = do_e(f),
+				args = map(args, do_e),
+				type = do_t(type)
+			);
+		}
+		FiUnsafe(__,fallback, type,__): {
+			FiUnsafe(x with
+				fallback = do_e(fallback),
+				type = do_t(type)
+			);
+		}
+		FiRequire(__,e, type,__): {
+			FiRequire(x with
+				e = do_e(e),
+				type = do_t(type)
+			);
+		}
+		FiIf(e1, e2, e3, type,__): {
+			FiIf(x with
+				e1 = do_e(e1),
+				e2 = do_e(e2),
+				e3 = do_e(e3),
+				type = do_t(type)
+			);
+		}
+		FiSeq(es, type,__): {
+			FiSeq(x with
+				es = map(es, do_e),
+				type = do_t(type)
+			);
+		}
+		FiVar(__,type,__): {
+			FiVar(x with type = do_t(type));
+		}
+		FiConst(): x;
+	}
 }
