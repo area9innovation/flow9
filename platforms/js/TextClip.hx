@@ -612,8 +612,10 @@ class TextClip extends NativeWidgetClip {
 
 			// Amiri which starts from digit/special symbol renders brackets, using different glyphs, when 'display: inline-block' is present
 			baselineWidget.style.display = 'none';
+			nativeWidget.style.marginTop = '0px';
 			Native.timer(0, function () {
 				baselineWidget.style.display = null;
+				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 			});
 		}
 	}
