@@ -160,77 +160,85 @@ doFiProgramAnalysis(env : FcTypeEnvGlobal, prog : FiProgram, onError : (FcError)
 		findUnusedExports(prog, findUnusedExportsParam == "2", lint_file, onError)
 	}
 
-	prog_elim =
-		if (isParameterFalse(getConfigParameter(config, "dce"))
-			|| isConfigParameterTrue(config, "readable")
-			|| getConfigParameterDef(config, "inca", "") != "") {
-			prog
-		} else {
-			t = timestamp();
-			if (prog.config.verbose >= 1) fcPrintln("Dead code elimination...", prog.config.threadId);
-			// 'map' function should be kept in certain backends (is used in cast unrolling)
-			autoPreservedNames = if (!isConfigParameterSet(config, "nim")) makeSet() else {
-				buildSet(map(nimPredefinedNatives, \nat -> nat.name))
-			}
-			preservedNames = fold(strSplit(getConfigParameterDef(config, "dce-preserved-names", ""), ","), autoPreservedNames, \accPn, v ->
-				if (v != "") insertSet(accPn, v) else accPn
-			);
-			dceRemoveMain = isConfigParameterTrue(config, "dce-remove-main");
-			// don't include globals (even if they have side-effects) to the initial used names set at DCE
-			removeGlobals = isConfigParameterTrue(config, "dce-force-remove-globals");
-			// forcefully eliminate names from the given file at DCE
-			// file should contain names line-by-line; everything after '//' is skipped
-			eliminateNamesFile = getConfigParameterDef(config, "dce-force-eliminate-names-file", "");
-			eliminateNames = if (eliminateNamesFile == "") {
-				makeSet();
-			} else {
-				workingDir = getConfigParameterDef(config, "working-dir", "");
-				eliminateNamesFileResolved = if (workingDir == "") eliminateNamesFile else {
-					workingDir + "/" + eliminateNamesFile
-				};
-				eliminateNamesFileContent = getFileContent(eliminateNamesFileResolved);
-				if (eliminateNamesFileContent == "") {
-					onError(FcError("dce-force-eliminate-names-file: file not fount or empty", []));
-					makeSet();
-				} else {
-					fold(strSplit(eliminateNamesFileContent, "\n"), makeSet(), \acc, v -> {
-						v1 = trim(takeBefore(v, "//", v));
-						if (v1 != "") insertSet(acc, v1) else acc
-					});
-				}
-			}
-			// TODO: use common effects for dead code and optimizations
-			dead_code_eliminated = deadFiCode(prog, collectFiEffects(prog), preservedNames, eliminateNames, dceRemoveMain, removeGlobals, prog.config.verbose);
-			dead_types_eliminated = if (getConfigParameterDef(config, "dce-types", "") != "1") {
-				dead_code_eliminated;
-			} else {
-				deadFiTypes(dead_code_eliminated, preservedNames, eliminateNames, prog.config.verbose);
-			}
-			incrementTimePhase(getTimePhases(prog.config.threadId).dce, t);
-			dead_types_eliminated;
-		};
+	prog_dce = if (isParameterFalse(getConfigParameter(config, "dce"))
+		|| isConfigParameterTrue(config, "readable")
+		|| getConfigParameterDef(config, "inca", "") != "") {
+		prog
+	} else {
+		performFiProgramDCE(prog, onError, getConfigParameterDef(config, "dce-types", "") == "1");
+	}
 
-	cse = if (isConfigParameterTrue(config, "cse") || isConfigParameterTrue(config, "cse-global")) {
+	prog_compile_time = evalProgramCompileTimeExprs(prog_dce, onError);
+
+	prog_opt = if (!isConfigParameterTrue(config, "optimize")) prog_compile_time else {
+		t = timestamp();
+		optimized = optimizeCode(prog_compile_time, env, prog.config.flowfile, makeTree());
+		incrementTimePhase(getTimePhases(prog.config.threadId).optimize, t);
+		// Perform DCE once more - some more functions may go away
+		performFiProgramDCE(optimized, onError, true);
+	}
+
+	prog_cse = if (isConfigParameterTrue(config, "cse") || isConfigParameterTrue(config, "cse-global")) {
 		t = timestamp();
 		if (prog.config.verbose >= 1) fcPrintln("Common subexpression elimination...", prog.config.threadId);
 		cse_result = if (isConfigParameterTrue(config, "cse-global")) {
-			csegFiProgram(prog_elim, env);
+			csegFiProgram(prog_opt, env);
 		} else {
-			cseFiProgram(prog_elim);
+			cseFiProgram(prog_opt);
 		}
 		incrementTimePhase(getTimePhases(prog.config.threadId).cse, t);
 		cse_result
-	} else prog_elim;
-
-	t = timestamp();
-	prog_optimized = optimizeCode(cse, env, file, makeTree());
-	incrementTimePhase(getTimePhases(prog.config.threadId).optimize, t);
+	} else prog_opt;
 
 	// Extract translation data from program
 	if (isConfigParameterTrue(config, "xliff")) {
-		saveXliffData(prog_optimized, changeFileExt(fileNameOnly(file), ".xlf"), getConfigParameter(config, "xliff-filter"));
+		saveXliffData(prog_cse, changeFileExt(fileNameOnly(file), ".xlf"), getConfigParameter(config, "xliff-filter"));
 	}
-	prog_optimized
+	prog_cse;
+}
+
+performFiProgramDCE(prog : FiProgram, onError : (FcError) -> void, dce_types: bool) -> FiProgram {
+	config = prog.config.config;
+	t = timestamp();
+	if (prog.config.verbose >= 1) fcPrintln("Dead code elimination...", prog.config.threadId);
+	// 'map' function should be kept in certain backends (is used in cast unrolling)
+	autoPreservedNames = if (!isConfigParameterSet(config, "nim")) makeSet() else {
+		buildSet(map(nimPredefinedNatives, \nat -> nat.name))
+	}
+	preservedNames = fold(strSplit(getConfigParameterDef(config, "dce-preserved-names", ""), ","), autoPreservedNames, \accPn, v ->
+		if (v != "") insertSet(accPn, v) else accPn
+	);
+	dceRemoveMain = isConfigParameterTrue(config, "dce-remove-main");
+	// don't include globals (even if they have side-effects) to the initial used names set at DCE
+	removeGlobals = isConfigParameterTrue(config, "dce-force-remove-globals");
+	// forcefully eliminate names from the given file at DCE
+	// file should contain names line-by-line; everything after '//' is skipped
+	eliminateNamesFile = getConfigParameterDef(config, "dce-force-eliminate-names-file", "");
+	eliminateNames = if (eliminateNamesFile == "") {
+		makeSet();
+	} else {
+		workingDir = getConfigParameterDef(config, "working-dir", "");
+		eliminateNamesFileResolved = if (workingDir == "") eliminateNamesFile else {
+			workingDir + "/" + eliminateNamesFile
+		};
+		eliminateNamesFileContent = getFileContent(eliminateNamesFileResolved);
+		if (eliminateNamesFileContent == "") {
+			onError(FcError("dce-force-eliminate-names-file: file not fount or empty", []));
+			makeSet();
+		} else {
+			fold(strSplit(eliminateNamesFileContent, "\n"), makeSet(), \acc, v -> {
+				v1 = trim(takeBefore(v, "//", v));
+				if (v1 != "") insertSet(acc, v1) else acc
+			});
+		}
+	}
+	// TODO: use common effects for dead code and optimizations
+	dead_code_eliminated = deadFiCode(prog, collectFiEffects(prog), preservedNames, eliminateNames, dceRemoveMain, removeGlobals, prog.config.verbose);
+	dead_types_eliminated = if (!dce_types) dead_code_eliminated else {
+		deadFiTypes(dead_code_eliminated, preservedNames, eliminateNames, prog.config.verbose);
+	}
+	incrementTimePhase(getTimePhases(prog.config.threadId).dce, t);
+	dead_types_eliminated;
 }
 
 runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {

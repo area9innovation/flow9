@@ -130,7 +130,7 @@ libglu1-mesa libjpeg8 libnspr4 libnss3 libpng12-0 libpulse0 libxcomposite1
 libxcursor1 libxi6 libxml2 libxrender1 libxslt1.1 libxtst6 zlib1g
 
 To compile it you will also need
-libglu1-mesa-dev libjpeg8-dev libpng12-dev zlib1g-dev
+libglu1-mesa-dev libjpeg8-dev libpng12-dev zlib1g-dev libfreetype-dev
 
 Those names are for Ubuntu 16.04, names in other distros may vary. If in doubt,
 just ldd committed version and look up the packages.

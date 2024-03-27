@@ -31,7 +31,7 @@ MDynamicDataTable2TInner(
 	lightweight : bool,
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> Tropic {
-	useMaxSizeFix = isUrlParameterTrue("new") && !isUrlParameterFalse("table_max_size_enabled");
+	useMaxSizeFix = !isUrlParameterFalse("table_max_size_enabled");
 	rowsCountB = flength(data);
 
 	reorderList = if (lightweight) None() else tryExtractStruct(style, MListReorder(make([]), const(false)));
@@ -77,9 +77,10 @@ MDynamicDataTable2TInner(
 
 	minWidthsSum = if (isAnyWidthByContent) tableWidth(const(1)) else fsum(state.minWidths);
 
-	innerScrollState = makeMInnerScrollState(state.fullWidth, screenW, minWidthsSum, state.externalBorder, style);
+	innerScrollHotfix = contains(manager.style, MDataTableDefaultInnerScrollHotfix());
+	innerScrollState = makeMInnerScrollState(state.fullWidth, screenW, minWidthsSum, state.externalBorder, style, innerScrollHotfix);
 	isInnerScroll = isSome(innerScrollState);
-	glued = eitherMap(innerScrollState, \is -> is.glued, false);
+	glued = eitherMap(innerScrollState, \is -> either(is.glued, false), false);
 
 	expandRow = initExpandRow(expandRowEnabled, screenW, minWidthsSum, state.externalBorder);
 
@@ -132,14 +133,20 @@ MDynamicDataTable2TInner(
 	wrapItemsForFirstColumnMode = \p -> \items ->
 		eitherMap(innerScrollState, \is ->
 			if (is.lifted) colsTail(state,items)
-			else if (is.glued) concat([TShow(fnot(is.visible), TColsDir(colsHead(state, items), p.rtl))], colsTail(state, items))
-			else items,
+			else eitherMap(is.glued, \gl ->
+				if (gl) concat([TShow(fnot(is.visible), TColsDir(colsHead(state, items), p.rtl))], colsTail(state, items))
+				else concat(colsBeforeLastColumns(state, items), [TShow(fnot(is.visible), TColsDir(colsLastColumns(state, items), p.rtl))]),
+				items
+			),
 			items
 		);
 
 	wrapIntoBorders = \p -> \t -> eitherMap(innerScrollState, \is ->
-		if (is.glued) TBorderTDir(fif(is.visible, zero, const(state.externalBorder)), zero, const(state.externalBorder), zero, t, p.rtl)
-		else t |> TBorderLeftRight(state.externalBorder),
+		eitherMap(is.glued, \gl ->
+			if (gl) TBorderTDir(fif(is.visible, zero, const(state.externalBorder)), zero, const(state.externalBorder), zero, t, p.rtl)
+			else TBorderTDir(const(state.externalBorder), zero, fif(is.visible, zero, const(state.externalBorder)), zero, t, p.rtl),
+			t |> TBorderLeftRight(state.externalBorder)
+		),
 		t |> TBorderLeftRight(state.externalBorder)
 	);
 
@@ -571,7 +578,7 @@ MDynamicDataTable2TInner(
 					else t2
 				)
 			}, t))
-		|> MDTFirstColumn(state, p, headers, data, rowsFn, sorting, innerScrollState, expandRow, yTranslation,
+		|> MDTSideColumns(state, p, headers, data, rowsFn, sorting, innerScrollState, expandRow, yTranslation,
 				rowBackgroundStyle, selectedBgStyle, totalRowsHeight, visibleRowsHeight, rowsAvailableHeight, page, lightweight)
 		|> (\t -> TAccess([TagName("tbody")], t))
 		|> (\t -> TAccess([TagName("table"), AccessRole("table")], t))
@@ -767,11 +774,12 @@ makeMDataTableState(
 		eitherMap(
 			tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), [])),
 			\is -> switch (is.mode) {
-				MGluedFirstColumnMode(gluedStyle) : extractStruct(gluedStyle, MGluedColumns(1)).columns;
-				default : 1
+				MGluedFirstColumnMode(gluedStyle) : extractStruct(gluedStyle, MGluedColumns(1)).columns + specialColumnsCount;
+				MGluedLastColumnMode(gluedStyle) : extractStruct(gluedStyle, MGluedColumns(1)).columns;
+				default : 1 + specialColumnsCount
 			},
-			1
-		) + specialColumnsCount;
+			1 + specialColumnsCount
+		);
 
 	columns = columns0
 		|> (\arr -> map(arr, \col ->
@@ -1324,8 +1332,8 @@ makeMSortingState(data : Transform<[?]>, rowsFn : (?) -> [MCell], style : [MData
 
 MInnerScrollState(
 	lifted : bool,
-	glued : bool,
-	gluedStyle : Maybe<[MGluedFirstColumnModeStyle]>,
+	glued : Maybe<bool>,
+	gluedStyle : Maybe<[MGluedColumnModeStyle]>,
 	enabled : Transform<bool>,
 	visibilityInspector : DynamicBehaviour<bool>,
 	visible : Transform<bool>,
@@ -1338,23 +1346,30 @@ makeMInnerScrollState(
 	screenW : Transform<double>,
 	minWidthsSum : Transform<double>,
 	externalBorder : double,
-	style : [MDataTableStyle]) -> Maybe<MInnerScrollState> {
+	style : [MDataTableStyle],
+	innerScrollHotfix : bool) -> Maybe<MInnerScrollState> {
 
 	innerScroll =
-		if (isUrlParameterTrue("new") && !isUrlParameterFalse("table_inner_scroll_enabled")) {
+		if (!isUrlParameterFalse("table_inner_scroll_enabled") && !innerScrollHotfix) {
 			is = extractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
 			if (is.mode == MNoScroll()) None() else Some(is);
 		} else {
-			tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), []));
+			is = extractStruct(style, MDataTableInnerScroll(MNoScroll(), []));
+			if (is.mode == MNoScroll()) None() else Some(is);
 		}
 
 	maybeMap(innerScroll, \is -> {
 		lifted = is.mode == MLiftedFirstColumnMode();
 		gluedStyle = switch (is.mode) {
 			MGluedFirstColumnMode(gstyle) : Some(gstyle);
+			MGluedLastColumnMode(gstyle) : Some(gstyle);
 			default : None()
 		};
-		glued = isSome(gluedStyle);
+		glued = switch (is.mode) {
+			MGluedFirstColumnMode(__) : Some(true);
+			MGluedLastColumnMode(__) : Some(false);
+			default : None()
+		};
 		enabled = if (fullWidth) fless(screenW, faddition(minWidthsSum, const(2. * externalBorder))) else const(true);
 		visibilityInspector = make(false);
 		visible = fstall(fand(enabled, visibilityInspector), 0);
@@ -1551,7 +1566,7 @@ MDTTitles(
 	});
 }
 
-MDTFirstColumn(
+MDTSideColumns(
 	state : MDTState,
 	parent : MFocusGroup,
 	headers : [Tropic],
@@ -1570,25 +1585,31 @@ MDTFirstColumn(
 	lightweight : bool
 ) -> (Tropic) -> Tropic {
 	\table ->
-		eitherMap(innerScrollState, \is -> if (is.glued || is.lifted) {
+		eitherMap(innerScrollState, \is -> if (isSome(is.glued) || is.lifted) {
+			isGlued = isSome(is.glued);
+			isStart = either(is.glued, false) || is.lifted;
+
+			getSideFn = \arr : [flow] -> if (isStart) colsHead(state, arr) else colsLastColumns(state, arr);
 
 			implementExpandRow = \isHeader ->
 				\t -> TBorderT(zero, zero, zero, fselect(expandRow, FLift(\er -> state.lineHeight(isHeader) * (i2d(er - 1)))), t);
 
-			firstColumnWidth = arrayPush(colsHead(state, state.columnWidths), const(state.externalBorder)) |> fsum;
+			wrapLineInBorder = \t -> TBorderDir(state.externalBorder, 0., 0., 0., t, parent.rtl == isStart);
 
-			firstColumnHeader =
+			columnsWidth = arrayPush(getSideFn(state.columnWidths), const(state.externalBorder)) |> fsum;
+
+			columnsHeader =
 				(
 					if (is.lifted) TFixed(0., state.lineHeight(true))
-					else colsHead(state, headers)
+					else getSideFn(headers)
 						|> (\t -> TColsDir(t, parent.rtl))
-						|> (\t -> TBorderDir(state.externalBorder, 0., 0., 0., t, parent.rtl))
+						|> wrapLineInBorder
 				)
 				|> implementExpandRow(true);
 
 			materializeRow = \row, j -> {
 				TSelect(state.makeCells(parent, j, row, true, None()),
-					\cells -> TColsDir(colsHead(state, cells), parent.rtl)
+					\cells -> TColsDir(getSideFn(cells), parent.rtl)
 				)
 				|> (\t ->
 					if (is.lifted)
@@ -1597,8 +1618,8 @@ MDTFirstColumn(
 					else t
 				)
 				|> implementExpandRow(false)
-				|> (\t -> TBorderDir(state.externalBorder, 0., 0., 0., t, parent.rtl))
-				|> (\t -> if (is.glued) {
+				|> wrapLineInBorder
+				|> (\t -> if (isGlued) {
 						if (j == -1) t
 						else
 							TIfLazy2(
@@ -1611,8 +1632,8 @@ MDTFirstColumn(
 							)
 					} else t
 				)
-				|> (\t -> if (state.separators && is.glued) addSeparator(state.manager, parent, t, false) else t)
-				|> (\t -> if (is.glued)
+				|> (\t -> if (state.separators && isGlued) addSeparator(state.manager, parent, t, false) else t)
+				|> (\t -> if (isGlued)
 					MComponent2T(state.manager, parent, "MDataTableLine" + i2s(j), [
 						MOnClick(\ -> MListOnClickHandler(state.selection, state.selectionEnabled, state.onClick)(j)),
 						MRippleType(const(MRippleFill())),
@@ -1679,13 +1700,13 @@ MDTFirstColumn(
 						}, t));
 				}
 
-			firstColumn =
+			sideColumns =
 				rows
 				|> (\t -> TAlpha(fif(parent.enabled, const(1.), const(if (getLightBackground(parent)) 0.26 else 0.3)), t))
 				|> (\t -> TAvailableHeightPreventFillers(t, rowsAvailableHeight))
-				|> (\t -> if (state.separators && is.glued) addSeparator(state.manager, parent, t, true) else t)
-				|> (\t -> TAvailableWidth(t, firstColumnWidth))
-				|> (\t -> TLines2Dir(firstColumnHeader, t, parent.rtl))
+				|> (\t -> if (state.separators && isGlued) addSeparator(state.manager, parent, t, true) else t)
+				|> (\t -> TAvailableWidth(t, columnsWidth))
+				|> (\t -> TLines2Dir(columnsHeader, t, parent.rtl))
 				|> (\t ->
 						eitherMap(is.gluedStyle, \gStyle ->
 							TGroup2(
@@ -1697,16 +1718,17 @@ MDTFirstColumn(
 										faddition(visibleRowsHeight, fselect(expandRow, FLift(\er -> state.lineHeight(true) * i2d(er))))
 									)
 								)
-								|> (\sep -> TBorderTDir(firstColumnWidth, zero, zero, zero, sep, parent.rtl))
+								|> (\sep -> TBorderTDir(columnsWidth, zero, zero, zero, sep, parent.rtl == isStart))
 							),
 							t
 						)
 				)
-				|> (\sep -> TAlignStartDir(sep, parent.rtl));
+				|> (\t -> if (isStart) TAlignStartDir(t, parent.rtl) else TAlignEndDir(t, parent.rtl));
 
 			TGroup2(
-				if (is.glued) TBorderTDir(fif(is.visible, firstColumnWidth, zero), zero, zero, zero, table, parent.rtl) else table,
-				firstColumn
+				if (isGlued) TBorderTDir(fif(is.visible, columnsWidth, zero), zero, zero, zero, table, parent.rtl == isStart)
+				else table,
+				sideColumns
 			)
 		} else table, table)
 }
@@ -2022,6 +2044,14 @@ colsHead(state : MDTState, arr : [?]) -> [?] {
 
 colsTail(state : MDTState, arr : [?]) -> [?] {
 	tailFrom(arr, state.headCount)
+}
+
+colsLastColumns(state : MDTState, arr : [?]) -> [?] {
+	tailFrom(arr, length(arr) - state.headCount)
+}
+
+colsBeforeLastColumns(state : MDTState, arr : [?]) -> [?] {
+	take(arr, length(arr) - state.headCount)
 }
 
 isWidthByContent(col : MColumnDynamic) -> bool {

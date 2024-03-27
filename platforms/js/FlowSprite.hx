@@ -221,6 +221,9 @@ class FlowSprite extends Sprite {
 		if (nativeWidget.baseTexture == null) {
 			if (texture != null) {
 				nativeWidget.baseTexture = texture.baseTexture;
+				if (Util.getParameter("has_loaded_fix") != "0") {
+					nativeWidget.baseTexture.hasLoaded = true;
+				}
 			} else {
 				return;
 			}
@@ -476,7 +479,7 @@ class FlowSprite extends Sprite {
 			nativeWidget.classList.add(this.className);
 		}
 		nativeWidget.style.visibility = 'hidden';
-		nativeWidget.alt = altText != '' ? altText : 'Unlabeled';
+		nativeWidget.alt = altText;
 
 		isNativeWidget = true;
 	}
@@ -491,7 +494,7 @@ class FlowSprite extends Sprite {
 	}
 
 	public function setPictureReferrerPolicy(referrerpolicy) : Void {
-		if (nativeWidget != null && referrerpolicy != '') {
+		if (nativeWidget != null) {
 			nativeWidget.referrerPolicy = referrerpolicy;
 		}
 	}

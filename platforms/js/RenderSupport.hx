@@ -59,6 +59,7 @@ class RenderSupport {
 	// Don't wait for fonts to load
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
+	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -507,11 +508,7 @@ class RenderSupport {
 			});
 		};
 
-		if (Native.isNew) {
-			PixiStage.once("drawframe", openPrintDialog);
-		} else {
-			Native.timer(10, openPrintDialog);
-		}
+		PixiStage.once("drawframe", openPrintDialog);
 	}
 
 	private static function getBackingStoreRatio() : Float {
@@ -990,7 +987,7 @@ class RenderSupport {
 
 		var accessibilityZoomOnPinchStart = 1.;
 
-		if (Platform.isMobile && Native.isNew) {
+		if (Platform.isMobile) {
 			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
 				if (state == 0) {
 					// On pinch started
@@ -1386,6 +1383,25 @@ class RenderSupport {
 		}
 	}
 
+	private static function preventStuckModifierKeys(e : Dynamic, stage : FlowContainer) : Void {
+		try {
+			if (keysPending.keys().hasNext() && e.ctrlKey != null && e.altKey != null && e.metaKey != null && e.shiftKey != null) {
+				// Parsing pointer event as key event to check for active modifier keys
+				// parseKeyEvent is used to correctly detect modifiers state and swap ctrl with meta in case it's Mac
+				var ke = parseKeyEvent(e);
+				for (key in keysPending) {
+					if ((key.key == "ctrl" && !ke.ctrl) || (key.key == "alt" && !ke.alt) || (key.key == "meta" && !ke.meta) || (key.key == "shift" && !ke.shift)) {
+						key.preventDefault = function() {};
+						emit("keyup", key);
+					}
+				}
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("preventStuckModifierKeys error : ");
+			untyped console.log(e);
+		}
+	}
+
 	public static var PreventDefault : Bool = true;
 	public static function onpointerdown(e : Dynamic, stage : FlowContainer) {
 		try {
@@ -1403,6 +1419,8 @@ class RenderSupport {
 				// To fix iOS + Chrome input/wigi editor focusability
 				&& (!(Platform.isIOS && Platform.isChrome) || e.pointerType != 'touch')
 			) e.preventDefault();
+
+			preventStuckModifierKeys(e, stage);
 
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
@@ -3257,8 +3275,15 @@ class RenderSupport {
 			}
 
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
-			var clipWidth = untyped clip.getWidth();
-			var clipHeight = untyped clip.getHeight();
+			var clipWidth = 0;
+			var clipHeight = 0;
+			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip)) {
+				clipWidth = untyped clip.getClipWidth(false);
+				clipHeight = untyped clip.getClipHeight(false);
+			} else {
+				clipWidth = untyped clip.getWidth();
+				clipHeight = untyped clip.getHeight();
+			}
 			if (checkAlpha != null && untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
 				try {
 					var tempCanvas = Browser.document.createElement('canvas');

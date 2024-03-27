@@ -86,10 +86,9 @@ LOCAL_SRC_FILES += \
 
 LOCAL_STATIC_LIBRARIES := librunnercore $(MY_PROF_LIB) $(MY_GEN_LIB)
 
-#LOCAL_STATIC_LIBRARIES += libft2 
 LOCAL_CFLAGS += -DFLOW_DFIELD_FONTS
 
-LOCAL_STATIC_LIBRARIES += libpng libjpeg
+LOCAL_STATIC_LIBRARIES += libpng libjpeg libft2
 
 include $(BUILD_SHARED_LIBRARY)
 
@@ -97,6 +96,6 @@ include $(BUILD_SHARED_LIBRARY)
 MY_PATH := $(LOCAL_PATH)
 BUILD_HOST_STATIC_LIBRARY := $(CLEAR_VARS)
 
-#include $(MY_PATH)/freetype/Android.mk
 include $(MY_PATH)/libpng/Android.mk
 include $(MY_PATH)/jpeg.mk
+include $(MY_PATH)/freetype/Android.mk

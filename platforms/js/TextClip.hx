@@ -120,6 +120,7 @@ class UnicodeTranslation {
 class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
+	public static var AmiriHTMLMeasurement = Util.getParameter("amiri_html_measurement") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
 	public static var checkTextNodeWidth = Native.isNew && Util.getParameter("text_node_width") != "0";
@@ -585,20 +586,20 @@ class TextClip extends NativeWidgetClip {
 				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
-				updateAmiriItalicWorkaroundWidget();
+				updateAmiriWorkaroundWidget();
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
 			}
 		}
 	}
 
-	private function updateAmiriItalicWorkaroundWidget() : Void {
-		// For some reason, in most browsers Amiri italic text, which starts from digit/special symbol doesn't render italic, when baselineWidget is present.
-		// Looks like a browser bug, so we need this workaround
-		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri' && style.fontStyle == 'italic'
+	private function updateAmiriWorkaroundWidget() : Void {
+		if ((Platform.isChrome || Platform.isEdge) && style.fontFamily == 'Amiri'
 			&& nativeWidget.textContent[0] != '' && !isCharLetter(nativeWidget.textContent[0])
 		) {
-			if (amiriItalicWorkaroundWidget == null) {
+			// For some reason, in most browsers Amiri italic text, which starts from digit/special symbol doesn't render italic, when baselineWidget is present.
+			// Looks like a browser bug, so we need this workaround
+			if (amiriItalicWorkaroundWidget == null && style.fontStyle == 'italic') {
 				var txt = 't';
 				var charMetrics = TextMetrics.measureText(txt, style);
 				amiriItalicWorkaroundWidget = Browser.document.createElement('span');
@@ -608,6 +609,14 @@ class TextClip extends NativeWidgetClip {
 				amiriItalicWorkaroundWidget.textContent = txt;
 				nativeWidget.insertBefore(amiriItalicWorkaroundWidget, nativeWidget.firstChild);
 			}
+
+			// Amiri which starts from digit/special symbol renders brackets, using different glyphs, when 'display: inline-block' is present
+			baselineWidget.style.display = 'none';
+			nativeWidget.style.marginTop = '0px';
+			Native.timer(0, function () {
+				baselineWidget.style.display = null;
+				nativeWidget.style.marginTop = '${-getTextMargin()}px';
+			});
 		}
 	}
 
@@ -1573,13 +1582,13 @@ class TextClip extends NativeWidgetClip {
 		return widgetHeight > 0 ? widgetHeight : getClipHeight();
 	}
 
-	private function getClipWidth() : Float {
-		updateTextMetrics();
+	private function getClipWidth(?useUpdate : Bool = true) : Float {
+		if (useUpdate) updateTextMetrics();
 		return metrics != null ? (untyped Platform.isSafari && !isInput && !escapeHTML ? Math.ceil(metrics.width) : metrics.width) : 0;
 	}
 
-	private function getClipHeight() : Float {
-		updateTextMetrics();
+	private function getClipHeight(?useUpdate : Bool = true) : Float {
+		if (useUpdate) updateTextMetrics();
 		return metrics != null ? untyped metrics.height : 0;
 	}
 
@@ -1720,7 +1729,11 @@ class TextClip extends NativeWidgetClip {
 					if (useHTMLMeasurementJapaneseFont(style)) {
 						measureHTMLSize();
 					} else {
-						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic') measureHTMLWidth();
+						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic'
+							|| (AmiriHTMLMeasurement && style.fontFamily == "Amiri")
+						) {
+							measureHTMLWidth();
+						}
 					}
 				}
 			}
@@ -1763,7 +1776,8 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateTextWidth() : Void {
 		if (nativeWidget != null && metrics != null) {
-			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth;
+			var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
+			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && !wordWrap;
 			var textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck);
 			var textNodeWidth0 = textNodeMetrics.width;
 			var textNodeHeight = textNodeMetrics.height;
@@ -1817,6 +1831,7 @@ class TextClip extends NativeWidgetClip {
 		measureElement.style.fontFamily = nativeWidget.style.fontFamily;
 		measureElement.style.fontSize = nativeWidget.style.fontSize;
 		measureElement.style.fontWeight = nativeWidget.style.fontWeight;
+		measureElement.style.letterSpacing = nativeWidget.style.letterSpacing;
 		measureElement.style.wrap = nativeWidget.style.wrap;
 		measureElement.style.whiteSpace = nativeWidget.style.whiteSpace;
 		measureElement.style.display = nativeWidget.style.display;
@@ -1962,6 +1977,7 @@ class TextClip extends NativeWidgetClip {
 		textElement.setAttribute('font-size', computedStyle.fontSize);
 		textElement.setAttribute('font-style', computedStyle.fontStyle);
 		textElement.setAttribute('letter-spacing', computedStyle.letterSpacing);
+		textElement.setAttribute('white-space', computedStyle.whiteSpace);
 
 		textElement.textContent = textNode.textContent;
 		svg.appendChild(textElement);

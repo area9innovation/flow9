@@ -45,15 +45,6 @@
 #define FT_COMPONENT  trace_ttinterp
 
 
-  /*************************************************************************/
-  /*                                                                       */
-  /* In order to detect infinite loops in the code, we set up a counter    */
-  /* within the run loop.  A single stroke of interpretation is now        */
-  /* limited to a maximum number of opcodes defined below.                 */
-  /*                                                                       */
-#define MAX_RUNNABLE_OPCODES  1000000L
-
-
 #define SUBPIXEL_HINTING                                                     \
           ( ((TT_Driver)FT_FACE_DRIVER( exc->face ))->interpreter_version == \
             TT_INTERPRETER_VERSION_38 )
@@ -86,13 +77,6 @@
   /*                                                                       */
 #define BOUNDS( x, n )   ( (FT_UInt)(x)  >= (FT_UInt)(n)  )
 #define BOUNDSL( x, n )  ( (FT_ULong)(x) >= (FT_ULong)(n) )
-
-
-  /*************************************************************************/
-  /*                                                                       */
-  /* This macro computes (a*2^14)/b and complements TT_MulFix14.           */
-  /*                                                                       */
-#define TT_DivFix14( a, b )  FT_DivFix( a, (b) << 2 )
 
 
 #undef  SUCCESS
@@ -2580,26 +2564,23 @@
              FT_F26Dot6      Vy,
              FT_UnitVector*  R )
   {
-    FT_F26Dot6  W;
+    FT_Vector V;
 
 
-    if ( FT_ABS( Vx ) < 0x4000L && FT_ABS( Vy ) < 0x4000L )
+    if ( Vx == 0 && Vy == 0 )
     {
-      if ( Vx == 0 && Vy == 0 )
-      {
-        /* XXX: UNDOCUMENTED! It seems that it is possible to try   */
-        /*      to normalize the vector (0,0).  Return immediately. */
-        return SUCCESS;
-      }
-
-      Vx *= 0x4000;
-      Vy *= 0x4000;
+      /* XXX: UNDOCUMENTED! It seems that it is possible to try   */
+      /*      to normalize the vector (0,0).  Return immediately. */
+      return SUCCESS;
     }
 
-    W = FT_Hypot( Vx, Vy );
+    V.x = Vx;
+    V.y = Vy;
 
-    R->x = (FT_F2Dot14)TT_DivFix14( Vx, W );
-    R->y = (FT_F2Dot14)TT_DivFix14( Vy, W );
+    FT_Vector_NormLen( &V );
+
+    R->x = (FT_F2Dot14)( V.x / 4 );
+    R->y = (FT_F2Dot14)( V.y / 4 );
 
     return SUCCESS;
   }
@@ -5157,11 +5138,11 @@
   Ins_INSTCTRL( TT_ExecContext  exc,
                 FT_Long*        args )
   {
-    FT_Long  K, L, Kf;
+    FT_ULong  K, L, Kf;
 
 
-    K = args[1];
-    L = args[0];
+    K = (FT_ULong)args[1];
+    L = (FT_ULong)args[0];
 
     /* selector values cannot be `OR'ed;                 */
     /* they are indices starting with index 1, not flags */
@@ -6505,8 +6486,6 @@
     dx = exc->zp0.cur[b0].x - exc->zp1.cur[a0].x;
     dy = exc->zp0.cur[b0].y - exc->zp1.cur[a0].y;
 
-    exc->zp2.tags[point] |= FT_CURVE_TAG_TOUCH_BOTH;
-
     discriminant = FT_MulDiv( dax, -dby, 0x40 ) +
                    FT_MulDiv( day, dbx, 0x40 );
     dotproduct   = FT_MulDiv( dax, dbx, 0x40 ) +
@@ -6543,6 +6522,8 @@
                                 exc->zp0.cur[b0].y +
                                 exc->zp0.cur[b1].y ) / 4;
     }
+
+    exc->zp2.tags[point] |= FT_CURVE_TAG_TOUCH_BOTH;
   }
 
 
@@ -7575,7 +7556,7 @@
                               ? 2
                               : 12 - ( *opcode_name[exc->opcode] - '0' ),
                               "#" ));
-        for ( n = 0; n < cnt; n++ )
+        for ( n = 1; n <= cnt; n++ )
           FT_TRACE7(( " %d", exc->stack[exc->top - n] ));
         FT_TRACE6(( "\n" ));
       }
@@ -8240,7 +8221,7 @@
 
       /* increment instruction counter and check if we didn't */
       /* run this program for too long (e.g. infinite loops). */
-      if ( ++ins_counter > MAX_RUNNABLE_OPCODES )
+      if ( ++ins_counter > TT_CONFIG_OPTION_MAX_RUNNABLE_OPCODES )
         return FT_THROW( Execution_Too_Long );
 
     LSuiteLabel_:

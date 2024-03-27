@@ -4,7 +4,7 @@
 /*                                                                         */
 /*    FreeType API for validating TrueTypeGX/AAT tables (specification).   */
 /*                                                                         */
-/*  Copyright 2004, 2005, 2006 by                                          */
+/*  Copyright 2004-2016 by                                                 */
 /*  Masatake YAMATO, Redhat K.K,                                           */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
@@ -25,8 +25,8 @@
 /***************************************************************************/
 
 
-#ifndef __FTGXVAL_H__
-#define __FTGXVAL_H__
+#ifndef FTGXVAL_H_
+#define FTGXVAL_H_
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -57,8 +57,18 @@ FT_BEGIN_HEADER
   /*    some TrueTypeGX tables (feat, mort, morx, bsln, just, kern, opbd,  */
   /*    trak, prop, lcar).                                                 */
   /*                                                                       */
+  /* <Order>                                                               */
+  /*    FT_TrueTypeGX_Validate                                             */
+  /*    FT_TrueTypeGX_Free                                                 */
+  /*                                                                       */
+  /*    FT_ClassicKern_Validate                                            */
+  /*    FT_ClassicKern_Free                                                */
+  /*                                                                       */
+  /*    FT_VALIDATE_GX_LENGTH                                              */
+  /*    FT_VALIDATE_GXXXX                                                  */
+  /*    FT_VALIDATE_CKERNXXX                                               */
+  /*                                                                       */
   /*************************************************************************/
-
 
   /*************************************************************************/
   /*                                                                       */
@@ -171,8 +181,6 @@ FT_BEGIN_HEADER
                           FT_VALIDATE_lcar )
 
 
-  /* */
-
  /**********************************************************************
   *
   * @function:
@@ -180,7 +188,7 @@ FT_BEGIN_HEADER
   *
   * @description:
   *    Validate various TrueTypeGX tables to assure that all offsets and
-  *    indices are valid.  The idea is that a higher-level library which
+  *    indices are valid.  The idea is that a higher-level library that
   *    actually does the text layout can access those tables without
   *    error checking (which can be quite time consuming).
   *
@@ -189,7 +197,7 @@ FT_BEGIN_HEADER
   *       A handle to the input face.
   *
   *    validation_flags ::
-  *       A bit field which specifies the tables to be validated.  See
+  *       A bit field that specifies the tables to be validated.  See
   *       @FT_VALIDATE_GXXXX for possible values.
   *
   *    table_length ::
@@ -202,7 +210,7 @@ FT_BEGIN_HEADER
   *       The array itself must be allocated by a client.
   *
   * @return:
-  *   FreeType error code.  0 means success.
+  *   FreeType error code.  0~means success.
   *
   * @note:
   *   This function only works with TrueTypeGX fonts, returning an error
@@ -220,8 +228,6 @@ FT_BEGIN_HEADER
                           FT_Bytes  tables[FT_VALIDATE_GX_LENGTH],
                           FT_UInt   table_length );
 
-
-  /* */
 
  /**********************************************************************
   *
@@ -247,8 +253,6 @@ FT_BEGIN_HEADER
   FT_TrueTypeGX_Free( FT_Face   face,
                       FT_Bytes  table );
 
-
-  /* */
 
  /**********************************************************************
   *
@@ -277,29 +281,27 @@ FT_BEGIN_HEADER
 #define FT_VALIDATE_CKERN  ( FT_VALIDATE_MS | FT_VALIDATE_APPLE )
 
 
-  /* */
-
  /**********************************************************************
   *
   * @function:
   *    FT_ClassicKern_Validate
   *
   * @description:
-  *    Validate classic (16bit format) kern table to assure that the offsets
-  *    and indices are valid.  The idea is that a higher-level library which
+  *    Validate classic (16-bit format) kern table to assure that the offsets
+  *    and indices are valid.  The idea is that a higher-level library that
   *    actually does the text layout can access those tables without error
   *    checking (which can be quite time consuming).
   *
   *    The `kern' table validator in @FT_TrueTypeGX_Validate deals with both
-  *    the new 32bit format and the classic 16bit format, while
-  *    FT_ClassicKern_Validate only supports the classic 16bit format.
+  *    the new 32-bit format and the classic 16-bit format, while
+  *    FT_ClassicKern_Validate only supports the classic 16-bit format.
   *
   * @input:
   *    face ::
   *       A handle to the input face.
   *
   *    validation_flags ::
-  *       A bit field which specifies the dialect to be validated.  See
+  *       A bit field that specifies the dialect to be validated.  See
   *       @FT_VALIDATE_CKERNXXX for possible values.
   *
   * @output:
@@ -307,7 +309,7 @@ FT_BEGIN_HEADER
   *       A pointer to the kern table.
   *
   * @return:
-  *   FreeType error code.  0 means success.
+  *   FreeType error code.  0~means success.
   *
   * @note:
   *   After use, the application should deallocate the buffers pointed to by
@@ -319,8 +321,6 @@ FT_BEGIN_HEADER
                            FT_UInt    validation_flags,
                            FT_Bytes  *ckern_table );
 
-
-  /* */
 
  /**********************************************************************
   *
@@ -346,13 +346,12 @@ FT_BEGIN_HEADER
   FT_ClassicKern_Free( FT_Face   face,
                        FT_Bytes  table );
 
-
- /* */
+  /* */
 
 
 FT_END_HEADER
 
-#endif /* __FTGXVAL_H__ */
+#endif /* FTGXVAL_H_ */
 
 
 /* END */

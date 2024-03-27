@@ -64,7 +64,11 @@ private:
     DECLARE_NATIVE_METHOD(writeProcessStdin);
     DECLARE_NATIVE_METHOD(killProcess);
     DECLARE_NATIVE_METHOD(startDetachedProcess);
+
     DECLARE_NATIVE_METHOD(getApplicationPath);
+    DECLARE_NATIVE_METHOD(getApplicationArguments);
+    DECLARE_NATIVE_METHOD(setCurrentDirectory)
+    DECLARE_NATIVE_METHOD(getCurrentDirectory)
 
 private slots:
     void processReadyWrite();
