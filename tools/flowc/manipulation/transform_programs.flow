@@ -1023,11 +1023,7 @@ fiRemoveSigletonSeqences(p: FiProgram) -> FiProgram{
 }
 
 fiRemoveSingleElementStructs(p: FiProgram) -> FiProgram {
-	preserve_names = fold(
-		strSplit(getConfigParameterDef(p.config.config, "single-structs-preserved-names", ""), ","), makeSet(), \acc, v ->
-		if (v != "") insertSet(acc, v) else acc
-	);
-	preserve_names_1 = fiFoldProgramToplevel(p, preserve_names, \decl,__,__, acc ->
+	preserve_names = fiFoldProgramToplevel(p, makeSet(), \decl,__,__, acc ->
 		switch (decl) {
 			FiDeclaration(): {
 				fiFoldExp(fiDeclExp(decl), acc, \x,__, ac ->
@@ -1044,18 +1040,20 @@ fiRemoveSingleElementStructs(p: FiProgram) -> FiProgram {
 			default: acc;
 		}
 	);
-	to_remove_param = getConfigParameter(p.config.config, "remove-single-structs");
-	is_single_field = \s -> length(s.args) != 1 || containsSet(preserve_names_1, s.name) || s.args[0].ismutable;
-	to_remove = if (to_remove_param == "1") {
-		// Consider all potential structs with a single non-mutable field
-		foldTree(p.names.structs, makeTree(), \__,s, acc ->
+	is_single_field = \s -> length(s.args) != 1 || containsSet(preserve_names, s.name) || s.args[0].ismutable;
+	if (isConfigParameterTrue(p.config.config, "dump-single-element-structs")) {
+		single_element_structs = foldTree(p.names.structs, makeSet(), \__,s, acc ->
 			if (is_single_field(s)) acc else {
-				setTree(acc, s.name, s)
+				insertSet(acc, s.name)
 			}
 		);
+		fcPrintln("Single element structs, which are not contained by unions (are eliminated):\n" +
+			strIndent(strArrayWrap(set2array(single_element_structs), 128, true, " ")), p.config.threadId
+		);
+		p;
 	} else {
-		// Consider only structs listed in `remove-single-structs`
-		fold(
+		to_remove_param = getConfigParameter(p.config.config, "remove-single-structs");
+		to_remove = fold(
 			filtermap(strSplit(to_remove_param, ","), \name -> if (name == "") None() else Some(name)),
 			makeTree(),
 			\acc, name -> switch (lookupTree(p.names.structs, name)) {
@@ -1063,40 +1061,35 @@ fiRemoveSingleElementStructs(p: FiProgram) -> FiProgram {
 				None(): acc;
 			}
 		);
+		fiMapProgramToplevel(p, \x,__,__ -> switch (x) {
+			FiTypeUnion(__,__,__,__): [x];
+			FiTypeStruct(name, typars, args,__): {
+				if (containsKeyTree(to_remove, name)) [] else [
+					FiTypeStruct(x with
+						args = map(args, \arg -> FiStructArg(arg with type = fiRemoveStructsFromType(arg.type, to_remove)))
+					)
+				];
+			}
+			FiFunctionDec(__,lambda, type,__,__): {
+				[FiFunctionDec(x with
+					lambda = cast(fiRemoveStructsFromExp(lambda, to_remove): FiExp -> FiLambda),
+					type = cast(fiRemoveStructsFromType(type, to_remove): FiType -> FiTypeFunction)
+				)]
+			}
+			FiGlobalVar(__,value, type,__,__): {
+				[FiGlobalVar(x with
+					value = fiRemoveStructsFromExp(value, to_remove),
+					type = fiRemoveStructsFromType(type, to_remove)
+				)]
+			}
+			FiNativeDec(__,__,type,__, fallback,__,__): {
+				[FiNativeDec(x with
+					fallbackLambda = fiRemoveStructsFromExp(fallback, to_remove),
+					type = fiRemoveStructsFromType(type, to_remove)
+				)]
+			}
+		}, fcParallelOn(p.config));
 	}
-	if (isConfigParameterTrue(p.config.config, "dump-single-element-structs")) {
-		fcPrintln("Single element structs, which are not contained by unions (are eliminated):\n" +
-			strIndent(strArrayWrap(getTreeKeys(to_remove), 128, true, " ")), p.config.threadId
-		);
-	}
-	fiMapProgramToplevel(p, \x,__,__ -> switch (x) {
-		FiTypeUnion(__,__,__,__): [x];
-		FiTypeStruct(name, typars, args,__): {
-			if (containsKeyTree(to_remove, name)) [] else [
-				FiTypeStruct(x with
-					args = map(args, \arg -> FiStructArg(arg with type = fiRemoveStructsFromType(arg.type, to_remove)))
-				)
-			];
-		}
-		FiFunctionDec(__,lambda, type,__,__): {
-			[FiFunctionDec(x with
-				lambda = cast(fiRemoveStructsFromExp(lambda, to_remove): FiExp -> FiLambda),
-				type = cast(fiRemoveStructsFromType(type, to_remove): FiType -> FiTypeFunction)
-			)]
-		}
-		FiGlobalVar(__,value, type,__,__): {
-			[FiGlobalVar(x with
-				value = fiRemoveStructsFromExp(value, to_remove),
-				type = fiRemoveStructsFromType(type, to_remove)
-			)]
-		}
-		FiNativeDec(__,__,type,__, fallback,__,__): {
-			[FiNativeDec(x with
-				fallbackLambda = fiRemoveStructsFromExp(fallback, to_remove),
-				type = fiRemoveStructsFromType(type, to_remove)
-			)]
-		}
-	}, fcParallelOn(p.config));
 }
 
 fiRemoveStructsFromType(x: FiType, structs: Tree<string, FiTypeStruct>) -> FiType {
