@@ -51,9 +51,10 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.concurrent.ConcurrentHashMap;
-import com.sun.management.OperatingSystemMXBean;
 import java.time.format.FormatStyle;
 import java.time.ZonedDateTime;
+import com.google.gson.*;
+import com.sun.management.OperatingSystemMXBean;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
@@ -158,6 +159,10 @@ public class Native extends NativeHost {
 		File currentJavaJarFile = new File(Native.class.getProtectionDomain().getCodeSource().getLocation().getPath());
 		String currentJavaJarFilePath = currentJavaJarFile.getAbsolutePath();
 		return currentJavaJarFilePath;
+	}
+
+	public static final String[] getApplicationArguments() {
+		return FlowRuntime.program_args;
 	}
 
 	public static final String toString(Object value) {
@@ -1241,7 +1246,6 @@ public class Native extends NativeHost {
 					setter.invoke(struct, value);
 				} else {
 					System.out.println("Failed to set a field " + field + " in struct " + struct.getTypeName());
-					System.exit(255);
 				}
 			}
 		} catch (IllegalAccessException ex) {
@@ -1658,7 +1662,7 @@ public class Native extends NativeHost {
 		ProcessRunner ps = new ProcessRunner(cmd, currentWorkingDirectory, stdin, onExit);
 		Future future = threadpool.submit(ps);
 	} catch (Exception ex) {
-		onExit.invoke(-200, "", "while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+		onExit.invoke(-200, "", "while starting:\n" + command + "\noccurred:\n" + exceptionStackTrace(ex));
 	}
 	return null;
 	}
@@ -1844,7 +1848,7 @@ public class Native extends NativeHost {
 
 			return runner;
 		} catch (Exception ex) {
-			onErr.invoke("while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+			onErr.invoke("while starting:\n" + command + "\noccurred:\n" + exceptionStackTrace(ex));
 			onExit.invoke(-200);
 			return null;
 		}
@@ -1867,7 +1871,7 @@ public class Native extends NativeHost {
 			runner.run();
 			return runner.waitFor();
 		} catch (Exception ex) {
-			onErr.invoke("while execution of:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+			onErr.invoke("while execution of:\n" + command + "\noccurred:\n" + exceptionStackTrace(ex));
 			return 1;
 		}
 	}
@@ -2359,7 +2363,6 @@ public class Native extends NativeHost {
 			try {
 				return Class.forName("com.area9innovation.flow." + class_path);
 			} catch (ClassNotFoundException e2) {
-				System.out.println("Class: " + class_path + " was not found");
 				return null;
 			}
 		}
@@ -2438,7 +2441,7 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2451,8 +2454,8 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2465,9 +2468,9 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2480,10 +2483,10 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2496,11 +2499,11 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2513,12 +2516,12 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2531,13 +2534,13 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2550,14 +2553,14 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2570,15 +2573,15 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2591,16 +2594,16 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
-								"arg 10: " + a10 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
+								"arg 10: " + FlowRuntime.toString(a10) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2613,17 +2616,17 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
-								"arg 10: " + a10 + "\n" +
-								"arg 11: " + a11 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
+								"arg 10: " + FlowRuntime.toString(a10) + "\n" +
+								"arg 11: " + FlowRuntime.toString(a11) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2636,18 +2639,18 @@ public class Native extends NativeHost {
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
-								"arg 10: " + a10 + "\n" +
-								"arg 11: " + a11 + "\n" +
-								"arg 12: " + a12 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
+								"arg 10: " + FlowRuntime.toString(a10) + "\n" +
+								"arg 11: " + FlowRuntime.toString(a11) + "\n" +
+								"arg 12: " + FlowRuntime.toString(a12) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2714,5 +2717,63 @@ public class Native extends NativeHost {
 		buf.append('"');
 		return buf.toString();
 	}
-}
 
+	private static Struct jsonNull_struct = null;
+	private static int jsonObject_struct_id = -1;
+	private static int jsonArray_struct_id = -1;
+	private static int jsonString_struct_id = -1;
+	private static int jsonDouble_struct_id = -1;
+	private static int jsonBool_struct_id = -1;
+	private static int pair_struct_id = -1;
+
+	public static final Struct json2Struct(JsonElement json) {
+		if (json instanceof JsonPrimitive) {
+			JsonPrimitive prim = json.getAsJsonPrimitive();
+			if (prim.isBoolean()) {
+				return FlowRuntime.makeStructValue(jsonBool_struct_id, new Object[] {prim.getAsBoolean()}, null);
+			} else if (prim.isNumber()) {
+				return FlowRuntime.makeStructValue(jsonDouble_struct_id, new Object[] {prim.getAsDouble()}, null);
+			} else {
+				return FlowRuntime.makeStructValue(jsonString_struct_id, new Object[] {prim.getAsString()}, null);
+			}
+		} else if (json instanceof JsonNull) {
+			return jsonNull_struct;
+		} else if (json instanceof JsonArray) {
+			JsonArray arr = json.getAsJsonArray();
+			Struct[] elements =  new Struct[arr.size()];
+			for (int i = 0; i < arr.size(); i++) {
+				elements[i] = json2Struct(arr.get(i));
+			}
+			return FlowRuntime.makeStructValue(jsonArray_struct_id, new Object[] {elements}, null);
+		} else {
+			JsonObject obj = json.getAsJsonObject();
+			Struct[] members =  new Struct[obj.size()];
+			int i = 0;
+			for (Map.Entry<String,JsonElement> entry : obj.entrySet()) {
+				String key = entry.getKey();
+				JsonElement value = entry.getValue();
+				members[i] = FlowRuntime.makeStructValue(pair_struct_id, new Object[] {key, json2Struct(value)}, null);
+				i++;
+			}
+			return FlowRuntime.makeStructValue(jsonObject_struct_id, new Object[] {members}, null);
+		}
+	}
+
+	public static final Struct parseJson(String string) {
+		if (jsonNull_struct == null) {
+			jsonObject_struct_id = FlowRuntime.struct_ids.get("JsonObject");
+			jsonArray_struct_id = FlowRuntime.struct_ids.get("JsonArray");
+			jsonString_struct_id = FlowRuntime.struct_ids.get("JsonString");
+			jsonDouble_struct_id = FlowRuntime.struct_ids.get("JsonDouble");
+			jsonBool_struct_id = FlowRuntime.struct_ids.get("JsonBool");
+			pair_struct_id = FlowRuntime.struct_ids.get("Pair");
+			jsonNull_struct = FlowRuntime.makeStructValue("JsonNull", new Object[0], null);
+		}
+		try {
+			JsonElement json = JsonParser.parseString(string);
+			return json2Struct(json);
+		} catch (Exception e) {
+			return FlowRuntime.makeStructValue("JsonDouble", new Object[] {0.0}, null);
+		}
+	}
+}

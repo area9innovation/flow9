@@ -1,5 +1,6 @@
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/common;
+import tools/flowc/flowc_helpers;
 import string_utils;
 
 export {
@@ -9,7 +10,44 @@ export {
 
 deadFiTypes(prog: FiProgram, preserveNames: Set<string>, eliminateNames: Set<string>, verbose: int) -> FiProgram {
 	// Grab all type names, used in expression
-	used_in_exp = \e, acc -> fiFoldExp(e, acc, \x,__,ac -> usedFiTypesAddTypeFlat(fiExpType(x), ac), AstTraverseOrder(true, true));
+	make_struct_types = ref makeSet();
+	used_in_exp = \e, acc -> fiFoldExp(e, acc,
+		\x,__,ac -> {
+			ac1 = usedFiTypesAddTypeFlat(fiExpType(x), ac);
+			switch (x) {
+				FiCall(f, args,__,__): {
+					switch (f) {
+						FiVar(n,__,__):{
+							if (n != "makeStructValue") ac1 else {
+								switch (args[0]) {
+									FiString(s,__): {
+										make_struct_types := insertSet(^make_struct_types, s);
+										switch (lookupTree(prog.names.structs, s)) {
+											Some(struct): usedFiTypesAddTypeFlat(FiTypeName(s, struct.typars), ac1);
+											None(): usedFiTypesAddTypeFlat(FiTypeName(s, []), ac1);
+										}
+									}
+									default: ac1;
+								}
+							}
+						}
+						default: ac1;
+					}
+				}
+				FiLet(__,type,__,__,__,__): {
+					usedFiTypesAddTypeFlat(type, ac1);
+				}
+				FiCast(__,from, to,__,__): {
+					usedFiTypesAddTypeFlat(from, usedFiTypesAddTypeFlat(to, ac1));
+				}
+				FiSwitch(__,type,__,__,__): {
+					usedFiTypesAddTypeFlat(type, ac1);
+				}
+				default: ac1;
+			}
+		},
+		AstTraverseOrder(true, true)
+	);
 	// Collect all type names, used in toplevel funcs/vars of a program
 	used_in_code = foldTree(prog.names.toplevel, makeSet(), \__,decl, acc ->
 		switch (decl) {
@@ -25,7 +63,7 @@ deadFiTypes(prog: FiProgram, preserveNames: Set<string>, eliminateNames: Set<str
 		}
 	);
 	used = foldSet(used_in_code, used_in_code, \acc, nm ->
-		usedFiTypesAddName(nm, acc, prog.names)
+		usedFiTypesAddName(nm, acc, prog.names, ^make_struct_types)
 	);
 	dead = ref makeList();
 	remove_dead = \nm -> {
@@ -44,32 +82,33 @@ deadFiTypes(prog: FiProgram, preserveNames: Set<string>, eliminateNames: Set<str
 				if (containsSet(used, nm) || containsSet(preserveNames, nm)) [toplevel] else remove_dead(nm);
 			}
 			default: [toplevel];
-		}
+		},
+		fcParallelOn(prog.config)
 	);
 
 	// Show list of dead items only on verbose=2
-	if (verbose > 1) {
+	if (verbose > 1 || isConfigParameterTrue(prog.config.config, "dump-dead-types")) {
 		all_dead = splitByNumber(list2array(^dead), 16);
-		//all_used = splitByNumber(set2array(used), 16);
 		show = \arr -> strGlue(map(arr, \x -> strGlue(x, ", ")), ",\n");
 		fcPrintln("Dead types:\n" + show(all_dead) + "\n\n", prog.config.threadId);
-		//fcPrintln("Used types: " + show(all_used) + "\n\n", prog.config.threadId);
 	}
 	optimized;
 }
 
-usedFiTypesAddName(nm: string, used: Set<string>, names: FiGlobalNames) -> Set<string> {
+usedFiTypesAddName(nm: string, used: Set<string>, names: FiGlobalNames, make_struct: Set<string>) -> Set<string> {
 	switch (lookupTree(names.structs, nm)) {
 		Some(struct): {
-			fold(struct.args, used, \acc, arg -> usedFiTypesAddTypeDeep(arg.type, acc, names));
+			fold(struct.args, used, \acc, arg -> usedFiTypesAddTypeDeep(arg.type, acc, names, make_struct));
 		}
 		None(): {
 			switch (lookupTree(names.unions, nm)) {
 				Some(union): {
-					fold(union.typenames, used, \acc, tn -> usedFiTypesAddTypeDeep(tn, acc, names));
+					fold(union.typenames, used, \acc, tn -> usedFiTypesAddTypeDeep(tn, acc, names, make_struct));
 				}
 				None(): {
-					fail0("type " + nm + " is not found");
+					if (containsSet(make_struct, nm)) used else {
+						fail0("type " + nm + " is not found");
+					}
 				}
 			}
 		}
@@ -85,12 +124,12 @@ usedFiTypesAddTypeFlat(tp: FiType, used: Set<string>) -> Set<string> {
 	)
 }
 
-usedFiTypesAddTypeDeep(tp: FiType, used: Set<string>, names: FiGlobalNames) -> Set<string> {
+usedFiTypesAddTypeDeep(tp: FiType, used: Set<string>, names: FiGlobalNames, make_struct: Set<string>) -> Set<string> {
 	fiFoldType(tp, used, \acc, t ->
 		switch (t) {
 			FiTypeName(nm,__): {
 				if (containsSet(acc, nm)) acc else {
-					usedFiTypesAddName(nm, insertSet(acc, nm), names);
+					usedFiTypesAddName(nm, insertSet(acc, nm), names, make_struct);
 				}
 			}
 			default: acc;

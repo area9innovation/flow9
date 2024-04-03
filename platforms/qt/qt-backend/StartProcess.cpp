@@ -3,6 +3,7 @@
 
 #include <QProcess>
 #include <QCoreApplication>
+#include <QDir>
 
 #include <sstream>
 
@@ -44,6 +45,9 @@ NativeFunction *StartProcess::MakeNativeFunction(const char *name, int num_args)
     TRY_USE_NATIVE_METHOD(StartProcess, killProcess, 1);
     TRY_USE_NATIVE_METHOD(StartProcess, startDetachedProcess, 3);
     TRY_USE_NATIVE_METHOD(StartProcess, getApplicationPath, 0);
+    TRY_USE_NATIVE_METHOD(StartProcess, getApplicationArguments, 0);
+    TRY_USE_NATIVE_METHOD(StartProcess, setCurrentDirectory, 1)
+    TRY_USE_NATIVE_METHOD(StartProcess, getCurrentDirectory, 0)
     return NULL;
 }
 
@@ -408,4 +412,41 @@ void StartProcess::FlowProcess::flowGCObject(GarbageCollectorFn gc)
 StackSlot StartProcess::getApplicationPath(RUNNER_ARGS) {
     IGNORE_RUNNER_ARGS;
     return RUNNER->AllocateString(QCoreApplication::applicationFilePath());
+}
+
+StackSlot StartProcess::getApplicationArguments(RUNNER_ARGS) {
+    IGNORE_RUNNER_ARGS;
+
+    QStringList args = QCoreApplication::arguments().mid(3);
+
+    RUNNER_DefSlots1(array);
+    array = RUNNER->AllocateArray(args.size());
+    for (QStringList::iterator it = args.begin(); it != args.end(); ++it) {
+        RUNNER_DefSlots1(value);
+        value = RUNNER->AllocateString(qt2unicode(*it));
+
+        RUNNER->SetArraySlot(array, it - args.begin(), value);
+    }
+
+    return array;
+}
+
+StackSlot StartProcess::setCurrentDirectory(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(_path);
+    RUNNER_CheckTag1(TString, _path);
+
+    QString path = unicode2qt(RUNNER->GetString(_path));
+    QDir::setCurrent(path);
+
+    RETVOID;
+}
+
+StackSlot StartProcess::getCurrentDirectory(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
+
+    QString path = QDir::currentPath();
+
+    return RUNNER->AllocateString(path);
 }

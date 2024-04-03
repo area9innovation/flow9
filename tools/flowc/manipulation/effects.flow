@@ -5,6 +5,9 @@ export {
 	// Collect a set of names of functions with and without side-effects
 	collectFiEffects(program : FiProgram) -> FiEffects;
 
+	// Resolve cases of mutually-recursive pure functions
+	collectFiEffectsPrecisely(program : FiProgram) -> FiEffects;
+
 	FiEffects(names : FiGlobalNames, hasEffects : Set<string>, effectFree : Set<string>, config : CompilerConfig);
 
 	// Checks if this name has any side-effects
@@ -17,6 +20,12 @@ collectFiEffects(program : FiProgram) -> FiEffects {
 	)
 }
 
+collectFiEffectsPrecisely(program : FiProgram) -> FiEffects {
+	fold(program.traversal, FiEffects(program.names, makeSet(), makeSet(), program.config), \acc, name ->
+		collectFiModuleEffectsPrecisely(acc, lookupTreeDef(program.modules, name, dummyFiModule))
+	)
+}
+
 collectFiModuleEffects(acc : FiEffects, module : FiModule) -> FiEffects {
 	e1 = fold(module.natives, acc, \acc2 : FiEffects, nat : FiNativeDec -> {
 		if (nat.io) {
@@ -26,22 +35,30 @@ collectFiModuleEffects(acc : FiEffects, module : FiModule) -> FiEffects {
 		}
 	});
 	e2 = fold(module.globalVars, e1, \acc2 : FiEffects, init : FiGlobalVar -> {
-		if (hasFiSideEffects(acc2, init.value)) {
+		acc2_test = FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, init.name));
+		if (hasFiSideEffects(acc2_test, init.value)) {
 			FiEffects(acc2 with hasEffects = insertSet(acc2.hasEffects, init.name))
 		} else {
-			FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, init.name))
+			acc2_test;
 		}
 	});
 	fold(module.functions, e2, \acc2 : FiEffects, fn : FiFunctionDec -> {
-		if (hasFiSideEffects(acc2, fn.lambda)) {
-			FiEffects(acc2 with hasEffects = insertSet(acc2.hasEffects, fn.name))
+		// If a native with that name is marked `io`, we assume it for sure has effects.
+		if (containsSet(acc2.hasEffects, fn.name)) {
+			acc2
 		} else {
-			FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, fn.name))
+			acc2_test = FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, fn.name));
+			if (hasFiSideEffects(acc2_test, fn.lambda)) {
+				FiEffects(acc2 with hasEffects = insertSet(acc2.hasEffects, fn.name))
+			} else {
+				acc2_test;
+			}
 		}
 	});
 }
 
 hasFiSideEffects(effects : FiEffects, expr : FiExp) -> bool {
+	do_exps = \es -> exists(es, \e -> hasFiSideEffects(effects, e));
 	switch (expr) {
 		FiVoid(__): false;
 		FiBool(b, __): false;
@@ -49,17 +66,23 @@ hasFiSideEffects(effects : FiEffects, expr : FiExp) -> bool {
 		FiDouble(d, __): false;
 		FiString(s, __): false;
 		FiVar(x, __, __): containsSet(effects.hasEffects, x);
-		FiIf(e1, e2, e3, __, __): haveFiSideEffects(effects, [e1, e2, e3]);
-		FiSeq(es, __, __): haveFiSideEffects(effects, es);
+		FiIf(e1, e2, e3, __, __): do_exps([e1, e2, e3]);
+		FiSeq(es, __, __): do_exps(es);
 		FiCall(fn, args, __, __): {
 			fneffect = switch (fn) {
 				FiVar(id, __, __): {
 					!containsSet(effects.effectFree, id); // If it is a call to something we know does not have an effect, we are good
 				}
-				FiLambda(__, b, __, __): hasFiSideEffects(effects, b);
+				FiLambda(xs, b, __, __): {
+					// Add all variable names to effect-free
+					lambda_es = fold(xs, effects, \acc, x ->
+						FiEffects(acc with effectFree = insertSet(acc.effectFree, x.name))
+					);
+					hasFiSideEffects(lambda_es, b);
+				}
 				default: true; // Something we do not know what is, so we have to assume this has an effect
 			}
-			t = haveFiSideEffects(effects, args);
+			t = do_exps(args);
 			fneffect || t;
 		}
 		FiCallPrim(op, args, __, __): {
@@ -95,29 +118,36 @@ hasFiSideEffects(effects : FiEffects, expr : FiExp) -> bool {
 				FcQuote(): false;
 				FcUnquote(): false;
 			}
-			t || haveFiSideEffects(effects, args);
+			t || do_exps(args);
 		}
 		FiCast(ex, __, __, __, __): hasFiSideEffects(effects, ex);
 		FiLet(x, __, e1, e2, __, __): {
 			ef1 = hasFiSideEffects(effects, e1);
-			if (ef1) {
-				true;
-			} else {
+			ef1 || {
 				// Let us do name tracking here so more vars are known to be effect free
 				ne = FiEffects(effects with effectFree = insertSet(effects.effectFree, x));
 				hasFiSideEffects(ne, e2);
 			}
 		}
-		//FiForeign(p, es, __): haveFiSideEffects(effects, es);
-		FiLambda(xs, b, __, __): hasFiSideEffects(effects, b);
-		FiSwitch(x, __, cases, __, __): haveFiSideEffects(effects, map(cases, \c -> c.body));
+		FiLambda(xs, b, __, __): {
+			// Add all variable names to effect-free
+			lambda_es = fold(xs, effects, \acc, x ->
+				FiEffects(acc with effectFree = insertSet(acc.effectFree, x.name))
+			);
+			hasFiSideEffects(lambda_es, b);
+		}
+		FiSwitch(__,__, cases, __, __): {
+			exists(cases, \c -> {
+				// Add all variables from case to effect-free
+				case_es = fold(c.argNames, effects, \acc, x ->
+					FiEffects(acc with effectFree = insertSet(acc.effectFree, x))
+				);
+				hasFiSideEffects(case_es, c.body);
+			});
+		}
 		FiRequire(__, e, __, __): hasFiSideEffects(effects, e);
 		FiUnsafe(__, __, __, __): true;
 	}
-}
-
-haveFiSideEffects(effects : FiEffects, es : [FiExp]) -> bool {
-	fold(es, false, \acc, e -> {t = hasFiSideEffects(effects, e); acc || t})
 }
 
 isFiTypenameFieldMutable(names : FiGlobalNames, type : FiType, field : string, conf : CompilerConfig) -> bool {
@@ -138,5 +168,167 @@ isFiTypenameFieldMutable(names : FiGlobalNames, type : FiType, field : string, c
 				)
 			}
 		}
+	}
+}
+
+collectFiModuleEffectsPrecisely(acc : FiEffects, module : FiModule) -> FiEffects {
+	e1 = fold(module.natives, acc, \acc2 : FiEffects, nat : FiNativeDec -> {
+		if (nat.io) {
+			FiEffects(acc2 with hasEffects = insertSet(acc2.hasEffects, nat.name))
+		} else {
+			FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, nat.name))
+		}
+	});
+	module_names = buildSet(concat(
+		map(module.functions, \f -> f.name),
+		map(module.globalVars, \v -> v.name),
+	));
+	doCollectFiModulePreciseEffects(e1, module, module_names);
+}
+
+doCollectFiModulePreciseEffects(e1 : FiEffects, module : FiModule, unresolved: Set<string>) -> FiEffects {
+	new_unresolved = ref makeSet();
+	e2 = fold(module.globalVars, e1, \acc2 : FiEffects, init : FiGlobalVar -> {
+		acc2_test = FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, init.name));
+		switch (checkHasFiSideEffects(acc2_test, init.value)) {
+			Some(has_effects): {
+				if (has_effects) {
+					FiEffects(acc2 with hasEffects = insertSet(acc2.hasEffects, init.name))
+				} else {
+					acc2_test;
+				}
+			}
+			None(): {
+				new_unresolved := insertSet(^new_unresolved, init.name);
+				acc2;
+			}
+		}
+	});
+	e3 = fold(module.functions, e2, \acc2 : FiEffects, fn : FiFunctionDec -> {
+		// If a native with that name is marked `io`, we assume it for sure has effects.
+		if (containsSet(acc2.hasEffects, fn.name)) acc2 else {
+			acc2_test = FiEffects(acc2 with effectFree = insertSet(acc2.effectFree, fn.name));
+			switch (checkHasFiSideEffects(acc2_test, fn.lambda)) {
+				Some(has_effects): {
+					if (has_effects) {
+						FiEffects(acc2 with hasEffects = insertSet(acc2.hasEffects, fn.name))
+					} else {
+						acc2_test;
+					}
+				}
+				None(): {
+					new_unresolved := insertSet(^new_unresolved, fn.name);
+					acc2;
+				}
+			}
+		}
+	});
+	if (isEmptySet(^new_unresolved)) e3 else {
+		if (equalSet(unresolved, ^new_unresolved)) {
+			// Only mutually-recursive fnctions are left. We may assume that all of them are pure.
+			foldSet(unresolved, e3, \acc, x ->
+				FiEffects(acc with effectFree = insertSet(acc.effectFree, x))
+			);
+		} else {
+			doCollectFiModulePreciseEffects(e3, module, ^new_unresolved);
+		}
+	}
+}
+
+checkHasFiSideEffects(effects : FiEffects, expr : FiExp) -> Maybe<bool> {
+	maybe_or = \a, b -> maybeBind(a, \av -> if (av) Some(av) else b);
+	do_exps = \es -> fold(es, Some(false), \acc, e -> 
+		maybe_or(acc, checkHasFiSideEffects(effects, e))
+	);
+	do_id = \x -> {
+		if (containsSet(effects.hasEffects, x)) Some(true) else
+		if (containsSet(effects.effectFree, x)) Some(false) else None();
+	}
+	switch (expr) {
+		FiVoid(__): Some(false);
+		FiBool(b, __): Some(false);
+		FiInt(i, __): Some(false);
+		FiDouble(d, __): Some(false);
+		FiString(s, __): Some(false);
+		FiVar(x, __, __): do_id(x);
+		FiIf(e1, e2, e3, __, __): do_exps([e1, e2, e3]);
+		FiSeq(es, __, __): do_exps(es);
+		FiCall(fn, args, __, __): {
+			fn_effect = switch (fn) {
+				FiVar(x, __, __): do_id(x);
+				FiLambda(xs, b, __, __): {
+					// Add all variable names to effect-free
+					lambda_es = fold(xs, effects, \acc, x ->
+						FiEffects(acc with effectFree = insertSet(acc.effectFree, x.name))
+					);
+					checkHasFiSideEffects(lambda_es, b);
+				}
+				default: Some(true); // Something we do not know what is, so we have to assume this has an effect
+			}
+			maybe_or(fn_effect, do_exps(args));
+		}
+		FiCallPrim(op, args, __, __): {
+			t = Some(switch (op) {
+				FcOrPrim(): false;
+				FcAndPrim(): false;
+				FcNotPrim(): false;
+				FcEqPrim(): false;
+				FcNePrim(): false;
+				FcLePrim(): false;
+				FcGePrim(): false;
+				FcLtPrim(): false;
+				FcGtPrim(): false;
+				FcPlusPrim(): false;
+				FcMinusPrim(): false;
+				FcMulPrim(): false;
+				FcDivPrim(): false;
+				FcModPrim(): false;
+				FcNegPrim(): false;
+				FcArrayPrim(): false;
+				FcIndexPrim(): false;
+				FcDerefPrim(): true;
+				FcAssignPrim(): true;
+				FcRefPrim(): true;
+				FcStructPrim(structname): false;
+				FcFieldPrim(name): {
+					// If this is a mutable field of a struct, we have a problem
+					// so find the name of the type
+					isFiTypenameFieldMutable(effects.names, fiExpType(args[0]), name, effects.config);
+				}
+				FcSetMutablePrim(name): true;
+				FcCreateClosurePrim(sName, fName) : false;
+				FcQuote(): false;
+				FcUnquote(): false;
+			});
+			maybe_or(t, do_exps(args));
+		}
+		FiCast(ex, __, __, __, __): checkHasFiSideEffects(effects, ex);
+		FiLet(x, __, e1, e2, __, __): {
+			maybe_or(
+				checkHasFiSideEffects(effects, e1),
+				checkHasFiSideEffects(
+					FiEffects(effects with effectFree = insertSet(effects.effectFree, x)),
+					e2
+				)
+			);
+		}
+		FiLambda(xs, b, __, __): {
+			// Add all variable names to effect-free
+			lambda_es = fold(xs, effects, \acc, x ->
+				FiEffects(acc with effectFree = insertSet(acc.effectFree, x.name))
+			);
+			checkHasFiSideEffects(lambda_es, b);
+		}
+		FiSwitch(__,__, cases, __, __): {
+			fold(cases, Some(false), \acc, c -> {
+				// Add all variables from case to effect-free
+				case_es = fold(c.argNames, effects, \ac, x ->
+					FiEffects(ac with effectFree = insertSet(ac.effectFree, x))
+				);
+				maybe_or(acc, checkHasFiSideEffects(case_es, c.body));
+			});
+		}
+		FiRequire(__, e, __, __): checkHasFiSideEffects(effects, e);
+		FiUnsafe(__, __, __, __): Some(true);
 	}
 }

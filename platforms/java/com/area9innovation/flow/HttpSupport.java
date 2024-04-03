@@ -3,10 +3,7 @@ package com.area9innovation.flow;
 import java.util.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.net.URL;
-import java.net.URLConnection;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
+import java.net.*;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
@@ -50,7 +47,7 @@ public class HttpSupport extends NativeHost {
 				// POST
 				byte[] postData = urlParameters.getBytes(StandardCharsets.UTF_8);
 				int postDataLength = postData.length;
-				URL obj = new URL(url);
+				URL obj = new URI(url).toURL();
 
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
@@ -73,7 +70,7 @@ public class HttpSupport extends NativeHost {
 						urlWithParams += "?" + urlParameters;
 					}
 				}
-				URL obj = new URL(urlWithParams);
+				URL obj = new URI(urlWithParams).toURL();
 				// GET
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
@@ -95,7 +92,7 @@ public class HttpSupport extends NativeHost {
 			} else {
 				onError.invoke("");
 			}
-		} catch (MalformedURLException e) {
+		} catch (MalformedURLException|URISyntaxException e) {
 			onError.invoke("Malformed url " + url + " " + e.getMessage());
 		} catch (IOException e) {
 			onError.invoke("IO exception " + url + " " + e.getMessage());
@@ -255,7 +252,7 @@ public class HttpSupport extends NativeHost {
 			HttpURLConnection con = null;
 			byte[] postData = null;
 			if (method == "POST") {
-				URL obj = new URL(url);
+				URL obj = new URI(url).toURL();
 				con = (HttpURLConnection) obj.openConnection();
 				if (data != null & data != "") {
 					postData = data.getBytes(StandardCharsets.UTF_8);
@@ -283,7 +280,7 @@ public class HttpSupport extends NativeHost {
 						urlWithParams += "?" + urlParameters;
 					}
 				}
-				URL obj = new URL(urlWithParams);
+				URL obj = new URI(urlWithParams).toURL();
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
 				// Workaround for the `PATCH` method which does not supported in the `HttpURLConnection`.
@@ -331,7 +328,7 @@ public class HttpSupport extends NativeHost {
 			String response = stream2string(getResultStreamPair(con).stream, responseEncoding);
 			onResponse.invoke(responseCode, response, responseHeaders.toArray());
 
-		} catch (MalformedURLException e) {
+		} catch (MalformedURLException|URISyntaxException e) {
 			onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
 		} catch (IOException e) {
 			onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
@@ -441,8 +438,8 @@ public class HttpSupport extends NativeHost {
 		HttpURLConnection con = null;
 		URL urlObj = null;
 		try {
-			urlObj = new URL(url);
-		} catch (MalformedURLException e) {
+			urlObj = new URI(url).toURL();
+		} catch (MalformedURLException|URISyntaxException e) {
 			onError.invoke("Malformed url " + url + " " + e.getMessage());
 		}
 

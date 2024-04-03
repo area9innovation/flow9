@@ -49,6 +49,7 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 		start = make(false);
 		positionScale = make(zeroPositionScale);
 		zorder = getValue(manager.manager.zorder);
+		dRadius = getDockingRadius(state.style);
 		isDragging = manager.manager.dragging;
 		isDraggingT = fselect(isDragging, FLift(\dr -> (dr >= 0) && (dr < length(panelsA)) && getValue(state.dock)[dr].areaId >= 0 && zorder >= getValue(manager.manager.zorder)));
 		
@@ -74,7 +75,6 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 					// if redraw is false resets to default values, else takes panels from cache
 					updateMDockingState(state, panelsA, cacheEnabled && getValue(state.redraw), uiStyle);
 				}),
-				// makeSubscribe(state.dock, \d -> {println(d)}),
 				makeSubscribe(onDrop, \d -> {
 					if (d >= 0) {
 						posCorrection =
@@ -93,12 +93,33 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 
 						nextDistinct(getValue(state.enabled)[d], true);
 						nextDistinct(getValue(state.expanded)[d], true); // Alwaus open when undocking a panel to mobile
+						
+						// Set undocked panel as active
+						next(state.activePanel, d);
+
 						if (getValue(dockA)[d].areaId >= 0) undockPanel(state, d); //undock panel
 						next(localPositionA, replace(getValue(localPositionA), d, zeroPoint));
 					}
 				}),
 				// Enable / Disable panels
 				makeSubscribe2(enabledPanelsT, \eA -> iteri(eA, \i, en -> nextDistinct(getValue(state.enabled)[i], en))),
+				// Update active panel on enable/disable 
+				makeSubscribeWithLast(enabledPanelsT, \old, new -> {
+					arrayOps = arrayDiff(old, new, false);
+					iter(arrayOps, \op -> {
+						switch(op : ArrayOperation) {
+							ArrayReplace(oldindex, newindex, value) : {
+								if (value) {
+									nextDistinct(state.activePanel, newindex);
+								} else {
+									movableAndEnabledIdA = filtermapi(getValue(state.dock), \pid, md -> if ((md.areaId < 0) && (new[pid])) Some(pid) else None());
+									nextDistinct(state.activePanel, lastElement(movableAndEnabledIdA, -1));
+								}
+							}
+							default: {}
+						}
+					})
+				}),
 				// Update borwser cache
 				\ -> \ -> {
 					if (cacheEnabled) setMDockingStateKeyValue(state) |> ignore;
@@ -108,7 +129,32 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 				MDropSpot2(make(-1), onDrop, TRectangle(interactiveRectangleStyle, TFillXY()), false)
 			));
 
-		movablePanelsLayer = mapi(panelsA, \i, p -> makeMovablePanel(state, i, localPositionA, style));
+		// Movable layers
+		makeMovableLayer = \movableIds : [int], showMovable : bool -> {
+			showFnT = \id -> feq(state.activePanel, id);
+			conditionFnT = \id -> if (showMovable) showFnT(id) else fnot(showFnT(id));
+			MGroup(map(movableIds, \pId ->
+				MShowLazy(conditionFnT(pId), \ -> {
+
+					makeMovablePanel(state, pId, localPositionA, showMovable, style)
+
+				})
+			))
+		}
+
+		movablePanelsLayer = 
+			MSelect(
+				fselect2Lift(state.dock, enabledPanelsT, \d, enA -> filtermapi(d, \pid, md -> if ((md.areaId < 0) && enA[pid]) Some(pid) else None())), 
+				\movableAndEnabledIdA -> {
+
+
+				if (movableAndEnabledIdA != []) {
+					MGroup2(
+						makeMovableLayer(movableAndEnabledIdA, false),	// background layer
+						makeMovableLayer(movableAndEnabledIdA, true)	// z-order layer on the top (only one panel here)
+					)
+				} else MEmpty()
+			});
 
 		layoutBoxed = layout 
 			|> (\m -> { 
@@ -122,17 +168,16 @@ MDockingUI(state : MDockingState, panelsA : [MDockingPanel], layout : Material, 
 			});
 
 		MInteractive([TMouseXY(state.mouseXy)],
-			MGroup(concatA([
-				// [makeMDockingDebugPrints(state)],        // Uncomment for debug prints
-				[TPositionScale(positionScale, TRectangle([MFill(MGrey(100))], TFillXY()))],
-				[MScroll(layoutBoxed, TFillXY(), [])],
+			MGroup([
+				// makeMDockingDebugPrints(state)],        // Uncomment for debug prints
+				TPositionScale(positionScale, TRectangle([MFill(MGrey(100))], TFillXY())),
+				MScroll(layoutBoxed, TFillXY(), []),
 				movablePanelsLayer,
-				[movableDropArea]
-			]))
+				movableDropArea
+			])
 		)
 	})
 }
-
 
 
 // Update MDockingState collecting data from panels and areas
@@ -153,6 +198,7 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 
 	currentAreasA = getJsonFieldValueCustom(parseJson(savedString), "Current.DockingAreas", JsonNull(), [JsonFieldTreatAsPath(".")]);
 	currentPanelsA = getJsonFieldValueCustom(parseJson(savedString), "Current.Panels", JsonNull(), [JsonFieldTreatAsPath(".")]);
+	currentActivePanel = getJsonFieldValueCustom(parseJson(savedString), "Current.ActivePanel", JsonNull(), [JsonFieldTreatAsPath(".")]);
 
 	// Docking Areas
 	iter(reverseA(getTreeKeys(getValue(state.dockingAreas))),\areaName -> {
@@ -257,8 +303,7 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 		accordionA = eitherMap(tryExtractStruct(areaStyle, MDAreaAccordion(make(true), None())), \some -> [some], []);
 		accordion = firstElement(accordionA, MDAreaAccordion(make(true), None()));
 		isAccordion = accordionA != [];
-		isAccordionOpen = (isAccordion && either(accordion.openPanelName, "all_accordion_panel_closed") == p.title);
-		expandendDef = if (isAccordion) isAccordionOpen else true;
+		expandendDef = !isAccordion;
 		
 		// Expanded
 		expandedB = extractStruct(p.style, MDPanelExpanded(make(expandendDef))).expanded;
@@ -293,6 +338,18 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 		// Undock disabled panels by default
 		// if (!getValue(enB)) undockPanel(state, i);
 	});
+
+	// Active Mobile Panel
+	cActivePanel = getJsonIntValue(currentActivePanel, -1);
+	movableAndEnabledIdA = filtermapi(getValue(state.dock), \pid, md -> if ((md.areaId < 0) && getValue(getValue(state.enabled)[pid])) Some(pid) else None());
+	if ((cActivePanel != -1) &&  contains(movableAndEnabledIdA, cActivePanel)) { 
+		nextDistinct(state.activePanel, cActivePanel);
+	} else {
+		// If not present set an active movable panel
+		if ((movableAndEnabledIdA != []) && (getValue(state.activePanel) != lastElement(movableAndEnabledIdA, -1))) {
+			next(state.activePanel, lastElement(movableAndEnabledIdA, -1));
+		}
+	}
 
 	next(state.redraw, true);
 }

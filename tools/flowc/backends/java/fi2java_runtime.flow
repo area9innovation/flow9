@@ -9,10 +9,10 @@ export {
 	// Organize runtime files for a current program:
 	// - Parse all java files with classes derived from 'NativeHost' from config and find all their public methods.
 	// - Gather all other files, which form a runtime
-	fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime;
+	fi2javaRuntime(prog: FiProgram, cfg : FiJavaConfig) -> JavaRuntime;
 }
 
-fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime {
+fi2javaRuntime(prog: FiProgram, cfg : FiJavaConfig) -> JavaRuntime {
 	flow_dir = getFlowDir();
 	lib_natives = pathCombineMany([flow_dir, "platforms", "java", "com", "area9innovation", "flow"]);
 	extern_native_dirs = filtermap(cfg.externNatives, \nat -> {
@@ -25,7 +25,7 @@ fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime {
 		}
 	});
 	native_dirs = concat([lib_natives], extern_native_dirs);
-	fold(native_dirs, JavaRuntime(makeTree(), makeSet()), \acc, native_dir ->
+	runtime = fold(native_dirs, JavaRuntime(makeTree(), makeSet(), makeTree()), \acc, native_dir ->
 		fold(readDirectoryRecursively(native_dir), acc, \ac, file ->
 			if (!endsWith(file, ".java")) ac else {
 				code = getFileContent(file);
@@ -35,7 +35,7 @@ fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime {
 				} else {
 					name = changeFileExt(fileNameOnly(file), "");
 					if (name == "NativeHost" || name == "FlowRuntime" || !strContains(code, "NativeHost")) {
-						JavaRuntime(ac.natives, insertSet(ac.classes, name));
+						JavaRuntime(ac with classes = insertSet(ac.classes, name));
 					} else {
 						res = parse_Compilation(code);
 						ast = res.first;
@@ -50,7 +50,7 @@ fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime {
 						} else {
 							natives = fi2javaNativesFromAst(ast, code);
 							if (length(natives) == 0) ac else {
-								JavaRuntime(setTree(ac.natives, name, buildSet(natives)), ac.classes);
+								JavaRuntime(ac with nativeHosts = setTree(ac.nativeHosts, name, buildSet(natives)));
 							}
 						}
 					}
@@ -58,6 +58,19 @@ fi2javaRuntime(cfg : FiJavaConfig) -> JavaRuntime {
 			}
 		)
 	);
+	func2nativeName = foldTree(prog.names.toplevel, makeTree(), \__, decl, acc -> switch (decl) {
+		FiNativeDec(name,__,__,nativeName,__,__,__): {
+			p = fiSplitNativeName(nativeName);
+			native_host = p.first;
+			native_name = p.second;
+			eitherMap(lookupTree(runtime.nativeHosts, native_host), \nats -> 
+				if (containsSet(nats, native_name)) setTree(acc, name, p) else acc,
+				acc
+			);
+		}
+		default: acc;
+	});
+	JavaRuntime(runtime with natives = func2nativeName);
 }
 
 fi2javaShowPos(code : string, pos : int) -> string {

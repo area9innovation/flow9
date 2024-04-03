@@ -114,7 +114,7 @@ attachFChildrenAt(clip : native, children : [native], disposers : [() -> void], 
 
 attachFChildAndCapability(form : FForm, d : FRenderResult, cap : [FClipCapability], fn : (native) -> () -> void) -> FRenderResult {
 	if (length(d.clips) > 0) {
-		if (length(d.clips) == 1 && !exists(cap, \c -> contains(d.capabilities, c)) && !contains(cap, FClipRotate())) {
+		if (length(d.clips) == 1 && !contains(cap, FClipRotate()) && !exists(d.capabilities, \c -> contains(cap, c))) {
 			FRenderResult(d.clips, concat(map(d.clips, fn), d.disposers), uniq(concat(d.capabilities, cap)));
 		} else {
 			c = makeClip();
@@ -737,6 +737,20 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				setFullWindow(fw);
 			});
 
+			innerFWDelayed = fuse(fdelay(innerFW, 100));
+			wasFWbeforePrint = make(false);
+			beforePrintUns = addEventListener(getStage(), "beforeprint", \ ->
+				nextDistinct(wasFWbeforePrint, fgetValue(innerFWDelayed.first))
+			);
+			afterPrintUns = addEventListener(getStage(), "afterprint", \ ->
+				if (fgetValue(wasFWbeforePrint)) {
+					deferUntilNextFrameRendered(\ -> {
+						nextDistinct(innerFW, true);
+						nextDistinct(wasFWbeforePrint, false);
+					})
+				}
+			);
+
 			d = renderFForm(form, zorder);
 
 			attachFChildren(
@@ -745,8 +759,11 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				arrayPush(
 					d.disposers,
 					\ -> {
+						beforePrintUns();
+						afterPrintUns();
 						connectUns();
 						uns();
+						applyall(innerFWDelayed.second);
 						^resize();
 						if (getValue(fullwindow)) {
 							setFullWindow(false);
@@ -1690,17 +1707,33 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							nextDistinct(selection, ps.selection);
 							textInputResponse := false;
 						})(),
-						makeSubscribe(inputType, \t -> setTextInputType(textfield,
-							switch (t : InputType) {
-								EmailType(): "email";
-								TelType(): "tel";
-								UrlType(): "url";
-								TextType(): "text";
-								NumericType(): "number";
-								SearchType(): "search";
-								PasswordType(): "password";
+						makeSubscribe(inputType, \t -> {
+							type =
+								switch (t : InputType) {
+									EmailType(): "email";
+									TelType(): "tel";
+									UrlType(): "url";
+									TextType(): "text";
+									NumericType(): "number";
+									SearchType(): "search";
+									PasswordType(): "password";
+									DateType(__, __): "date";
+								};
+							setTextInputType(textfield, type);
+							if (type == "date") {
+								switch(t : InputType) {
+									DateType(minDate, maxDate): {
+										maybeApply(minDate, \dt -> {
+											setAccessAttributes(textfield, [["min", date2string(dt)]]);
+										})
+										maybeApply(maxDate, \dt -> {
+											setAccessAttributes(textfield, [["max", date2string(dt)]]);
+										})
+									};
+									default : {}
+								}
 							}
-						))(),
+						})(),
 						makeSubscribe(autoAlign, \aa -> setAutoAlign(textfield,
 							switch (aa : AutoAlignType) {
 								AutoAlignLeft(): "AutoAlignLeft";

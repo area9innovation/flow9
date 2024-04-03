@@ -5,7 +5,7 @@ Git-lfs is needed to use flow9. So make sure, that you install it
 
 	sudo pacman -S git-lfs
 	git lfs install
-	git clone <flow9-repo> 
+	git clone <flow9-repo>
 
 If you pulled repository without git-lfs, then to fix it use:
 
@@ -53,7 +53,7 @@ Install needed libraries:
 
 	haxelib install format 3.4.2
 	haxelib install pixijs 4.8.4
-	haxelib install threejs
+	haxelib install threejs 91.0.1
 
 ## Build Byterunner for flowcpp
 	pacman -S qt5-base qt5-websockets qt5-webengine qt5-multimedia
@@ -62,4 +62,4 @@ Install needed libraries:
 	cd asmjit
 	git checkout next
 	cd $FLOW/platforms/qt
-	./build.sh 
+	./build.sh

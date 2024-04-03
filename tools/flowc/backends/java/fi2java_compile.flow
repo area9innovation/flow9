@@ -185,10 +185,7 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 				FiNativeDec(name, io, type, nname, fallback, __, s): {
 					switch (type) {
 						FiTypeFunction(__, __): {
-							parts = strSplit(nname, ".");
-							if (length(parts) != 2) {
-								fail("Invalid native identifier: " + nname);
-							}
+							parts = fiSplitNativeName(nname);
 							cast = switch (type) {
 								FiTypeFunction(ats, rt): {
 									switch (rt) {
@@ -205,8 +202,8 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 								}
 								default: "";
 							}
-							native_host = parts[0];
-							native_name = parts[1];
+							native_host = parts.first;
+							native_name = parts.second;
 							gctx.uses_host ::= insertSet(gctx.uses_host, native_host);
 							if (checkJavaNativeExists(gctx, native_host, native_name)) {
 								nativeHost2 = lookupTreeDef(gctx.config.hostSubstitutions, native_host, native_host);
@@ -220,7 +217,7 @@ indexJavaGlobals(gctx : JavaGlobalContext) -> void {
 									}
 									default: {
 										// no fallback neither native.
-										gctx.missing_natives ::= insertSet(gctx.missing_natives, name);
+										gctx.errors ::= arrayPush(gctx.errors, "Native '" + name + "' is not implemented and has no fallback");
 									}
 								}
 							}
@@ -289,7 +286,10 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 			iter(csm.decl_order, \decl -> {
 				switch (decl : FiDeclaration) {
 					FiFunctionDec(name, lambda, type, __, __): {
-						code = emitJavaFunction(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
+						code = switch (lookupTree(gctx.runtime.natives, name)) {
+							Some(p): emitJavaNativeWrapper(gctx, csm, name, "f_" + name, p.first, p.second, "\t", type);
+							None(): emitJavaFunction(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
+						}
 						lines = strCountOf(code, "\n");
 						size = strlen(code);
 						if (lines > ^max_code_lines) {
@@ -472,7 +472,25 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 	});
 }
 
-emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, name : string, tree : FiLambda, parent : Maybe<JavaScopeContext>, indent0 : string, type : FiTypeFunction) -> string {
+emitJavaNativeWrapper(gctx : JavaGlobalContext, csm : JavaModule, global : string, name : string, native_host: string, native_name: string, indent : string, type : FiTypeFunction) -> string {
+	local_counter = ref 0;
+	arg_locals = mapi(type.args, \i, arg -> {
+		aname2 = "a" + (if (arg.name == "__" || arg.name == "") javaNewLocalName(local_counter, i2s(i)) else arg.name);
+		atypestr = type2javaObjType(gctx, arg.type, true, false, false);
+		JavaLocalInfo(arg.name, aname2, atypestr, false, false);
+	});
+
+	prefix = "public static final " + type2javaObjType(gctx, type.returnType, true, false, false) + " " + name;
+	native_full = native_host + "." + native_name;
+	concatStrings([
+		indent + "// The wrapper to a native: " + native_full + "\n",
+		indent + prefix + "(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") {\n",
+		indent + "\treturn " + native_full + "(" + superglue(arg_locals, \loc -> loc.id, ", ") + ");\n",
+		indent + "}\n"
+	]);
+}
+
+emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, name : string, tree : FiLambda, parent : Maybe<JavaScopeContext>, indent : string, type : FiTypeFunction) -> string {
 	is_closure = (parent != None());
 	atypes = map(tree.args, \arg -> arg.type);
 	rtype = type.returnType;
@@ -504,8 +522,6 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 		arg_locals
 	);
 
-	indent = if (is_closure) indent0 else indent0 + "\t";
-
 	ctx = JavaScopeContext(
 		fctx, indent + "\t",
 		fold(arg_locals, makeTree(), \t, l -> setTree(t, l.name, l))
@@ -515,9 +531,9 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 	emitJavaStatement(ctx, tree.body, JavaReturnStmt(rtypestr));
 
 	prefix = if (is_closure)
-		indent0 + "public final " + rtypestr + " invoke"
+		indent + "public final " + rtypestr + " invoke"
 	else
-		indent0 + "public static final " + rtypestr + " " + name;
+		indent + "public static final " + rtypestr + " " + name;
 
 	arg_text = map(arg_locals, \loc -> {
 		(if (is_closure) "final " else "") + loc.type + " " + loc.id
@@ -530,13 +546,12 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 	if (is_closure) {
 		func_type = "Func" + i2s(length(arg_locals)) + "<" + rtypestr + concatStrings(map(arg_locals, \loc -> ", " + loc.type)) + ">";
 		rlistPush(reslist, "(" + func_type + ")(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") -> {\n");
-		//rlistPush(reslist, "(" + superglue(arg_locals, \loc -> loc.type + " " + loc.id, ", ") + ") -> {\n");
 	} else {
 		rlistPush(reslist, prefix + "(" + strGlue(arg_text, ", ") + ") {\n");
 	}
 
 	if (fctx.has_tail_call) {
-		rlistPush(reslist, indent + "TAIL_CALL: for(;;) {\n");
+		rlistPush(reslist, indent + "\tTAIL_CALL: for(;;) {\n");
 		rlistPush(reslist, body);
 		rlistPush(reslist, indent + "}\n");
 	} else {
@@ -544,7 +559,7 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 	}
 
 	if (is_closure) {
-		rlistPush(reslist, indent0 + "}");
+		rlistPush(reslist, indent + "}");
 	} else {
 		rlistPush(reslist, indent + "}\n");
 	}
@@ -860,11 +875,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 									wrapJavaCast("Wrappers." + id, wrapper_type, rtype);
 								}
 								None(): {
-									if (containsSet(gctx.missing_natives, name)) {
-										fail0("native: '" + name + "' is not implemented and has no fallback");
-									} else {
-										fail0("unknown var: '" + name + "'");
-									}
+									fail0("unknown var: '" + name + "'");
 								}
 							}
 					}
@@ -1474,7 +1485,7 @@ javaStatementPullContext(local_counter : ref int) {
 }
 
 checkJavaNativeExists(gctx : JavaGlobalContext, native_host : string, native_name : string) -> bool {
-	host_natives = lookupTreeDef(gctx.runtime.natives, native_host, makeSet());
+	host_natives = lookupTreeDef(gctx.runtime.nativeHosts, native_host, makeSet());
 	containsSet(host_natives, native_name);
 }
 
