@@ -80,6 +80,7 @@ class Platform {
 	}
 
 	private static function getIsWindows() { return isWindows; }
+	private static function getIsAndroid() { return isAndroid; }
 #end
 }
 
