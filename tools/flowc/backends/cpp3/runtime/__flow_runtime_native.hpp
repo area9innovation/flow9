@@ -41,6 +41,13 @@ struct Native : public Flow {
 			fail("incorrect type in native: " + type2StdString<T>());
 		}
 	}
+	template<typename T> inline T* getPtr() {
+		if (castsTo<T>()) {
+			return std::any_cast<T*>(&val_);
+		} else {
+			fail("incorrect type in native: " + type2StdString<T>());
+		}
+	}
 
 	const std::any& val() { return val_; }
 	std::any& valRef() { return val_; }
