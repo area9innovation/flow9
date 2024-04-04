@@ -1,30 +1,35 @@
 //#include <iostream>
 #include <iomanip>
+#include <cmath>
 #include "__flow_runtime.hpp"
 
 namespace flow {
 
 string double2string(Double x, bool persistent_dot) {
-	std::stringstream os;
-	os << std::setprecision(15) << x;
-	std::string str = os.str();
-	os.str("");
-	os.clear();
-	std::size_t point_pos = str.find('.');
-	if (point_pos != std::string::npos) {
-		bool trailing_zeroes = true;
-		for (std::size_t i = point_pos + 1; i < str.length() && trailing_zeroes; ++ i) {
-			char ch = str.at(i);
-			trailing_zeroes = !('1' <= ch && ch <= '9');
+	if (std::isnan(x)) {
+		return u"NaN";
+	} else {
+		std::stringstream os;
+		os << std::setprecision(15) << x;
+		std::string str = os.str();
+		os.str("");
+		os.clear();
+		std::size_t point_pos = str.find('.');
+		if (point_pos != std::string::npos) {
+			bool trailing_zeroes = true;
+			for (std::size_t i = point_pos + 1; i < str.length() && trailing_zeroes; ++ i) {
+				char ch = str.at(i);
+				trailing_zeroes = !('1' <= ch && ch <= '9');
+			}
+			if (trailing_zeroes) {
+				str = str.substr(0, point_pos);
+			}
 		}
-		if (trailing_zeroes) {
-			str = str.substr(0, point_pos);
+		if (persistent_dot && str.find('.') == std::string::npos) {
+			str.append(".0");
 		}
+		return std2string(str);
 	}
-	if (persistent_dot && str.find('.') == std::string::npos) {
-		str.append(".0");
-	}
-	return std2string(str);
 }
 
 unsigned int2stringLen(unsigned __value, int __base = 10) noexcept {
