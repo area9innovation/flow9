@@ -868,7 +868,7 @@ public class Native extends NativeHost {
 		cb.run();
 	}
 
-	public static final Timer scheduleTimerTask(int ms, final Func0<Object> cb) {
+	public static final Timer scheduleTimerTask(int ms, final Func0<Object> cb, boolean repeat) {
 		Timer timer = new Timer(true);
 		TimerTask task = new TimerTask() {
 			public void run() {
@@ -885,13 +885,28 @@ public class Native extends NativeHost {
 				});
 			}
 		};
-		timer.schedule(task, ms);
+		if (repeat) {
+			timer.scheduleAtFixedRate(task, ms, ms);
+		} else {
+			timer.schedule(task, ms);
+		}
 		return timer;
 	}
 
 	public static final Object timer(int ms, final Func0<Object> cb) {
-		scheduleTimerTask(ms, cb);
+		scheduleTimerTask(ms, cb, false);
 		return null;
+	}
+
+	public static final Func0<Object> setInterval(int ms, final Func0<Object> cb) {
+		Timer timer = scheduleTimerTask(ms, cb, true);
+
+		return new Func0<Object>() {
+			public Object invoke() {
+				cancelTimer(timer);
+				return null;
+			}
+		};
 	}
 
 	public static final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
@@ -911,7 +926,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
-		Timer timer = scheduleTimerTask(ms, cb);
+		Timer timer = scheduleTimerTask(ms, cb, false);
 
 		return new Func0<Object>() {
 			public Object invoke() {
