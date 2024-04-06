@@ -109,4 +109,6 @@ inline constexpr bool gather_string_leng_stats = false;
 void init_all_modules();
 void term_all_modules();
 
+extern bool modules_are_initialized;
+
 }
