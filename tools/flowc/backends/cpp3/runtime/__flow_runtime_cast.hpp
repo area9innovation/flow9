@@ -141,15 +141,8 @@ inline T2 castRc(T1 x) {
 		}
 	}
 	else if constexpr (is_type_v<TypeFx::REF, T2>) {
-		using V2 = std::remove_pointer_t<T2>;
-		if constexpr (is_type_v<TypeFx::REF, T1>) {
-			using V1 = std::remove_pointer_t<T1>;
-			return V2::make(castRc<typename V1::RefType, typename V2::RefType>(x->getRc()));
-		} else if (T2 f = dynamic_cast<T2>(x)) {
-			return f;
-		} else {
-			return V2::make(castRc<Flow*, typename V2::RefType>(x->getFlowRc(0)));
-		}
+		// Unsafe, but for refs it's a necessity.
+		return static_cast<T2>(x);
 	}
 	else if constexpr (is_type_v<TypeFx::FUNC, T2>) {
 		using V2 = std::remove_pointer_t<T2>;
