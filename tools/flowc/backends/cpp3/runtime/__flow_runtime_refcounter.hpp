@@ -25,6 +25,25 @@ struct RcBase {
 		}
 	}
 	template<typename T>
+	inline RcCounter justDecrementRc() {
+		if (!isConstant()) {
+			return std::atomic_ref<RcCounter>(rc_).fetch_sub(1);
+		} else {
+			return 2;
+		}
+	}
+	template<typename T>
+	inline void justDestroy() {
+		if (!isConstant()) {
+			if constexpr (use_memory_manager) {
+				Memory::destroy<T>(static_cast<T>(this));
+			} else {
+				delete this;
+			}
+		}
+	}
+
+	template<typename T>
 	inline void decrementRc() {
 		if (!isConstant()) {
 			if (std::atomic_ref<RcCounter>(rc_).fetch_sub(1) == 1) {
@@ -66,6 +85,14 @@ inline bool isConstatntObj(T x) {
 		return x->isConstant();
 	} else {
 		return false;
+	}
+}
+
+template<typename T> inline RcBase::RcCounter getRcVal(T x) {
+	if constexpr (is_rcbase_ancestor_v<T>) {
+		return x->getRcVal();
+	} else {
+		return 0;
 	}
 }
 
