@@ -604,8 +604,9 @@ class TextClip extends NativeWidgetClip {
 				var txt = 't';
 				var charMetrics = TextMetrics.measureText(txt, style);
 				amiriItalicWorkaroundWidget = Browser.document.createElement('span');
+				amiriItalicWorkaroundWidget.classList.add('amiriItalicWorkaroundWidget');
 				amiriItalicWorkaroundWidget.style.position = 'relative';
-				amiriItalicWorkaroundWidget.style.marginRight = '${-charMetrics.width}px';
+				amiriItalicWorkaroundWidget.style.marginRight = '${-charMetrics.width - style.letterSpacing}px';
 				amiriItalicWorkaroundWidget.style.opacity = '0';
 				amiriItalicWorkaroundWidget.textContent = txt;
 				nativeWidget.insertBefore(amiriItalicWorkaroundWidget, nativeWidget.firstChild);
@@ -1961,6 +1962,13 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private static function updateTextNodeWidth(textNode, textNodeMetrics) {
+		if (textNode.classList != null && (
+			textNode.classList.contains("textBackgroundWidget")
+			|| textNode.classList.contains("baselineWidget")
+			|| textNode.classList.contains("amiriItalicWorkaroundWidget")
+		)) {
+			return;
+		}
 		var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", "svg");
 		var textElement = Browser.document.createElementNS("http://www.w3.org/2000/svg", "text");
 
@@ -1980,7 +1988,8 @@ class TextClip extends NativeWidgetClip {
 
 		Browser.document.body.removeChild(svg);
 
-		textNodeMetrics.width += bbox.width;
+		var letSp = Std.parseFloat(computedStyle.letterSpacing);
+		textNodeMetrics.width += bbox.width - (Math.isNaN(letSp) ? 0 : letSp);	
 		if (textNodeMetrics.updateOffset && (textNode.classList == null || !textNode.classList.contains('baselineWidget'))) {
 			textNodeMetrics.x = bbox.x;
 			textNodeMetrics.updateOffset = false;
@@ -1996,7 +2005,9 @@ class TextClip extends NativeWidgetClip {
 				if (rect != null) {
 					var viewportScale = RenderSupport.getViewportScale();
 					if (!useCheck) {
-						textNodeMetrics.width = (rect.right - rect.left) * viewportScale;
+						var computedStyle = Browser.window.getComputedStyle(untyped textNode);
+						var letSp = Std.parseFloat(computedStyle.letterSpacing);
+						textNodeMetrics.width = (rect.right - rect.left - (Math.isNaN(letSp) ? 0 : letSp)) * viewportScale;
 					}
 					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;
 				}
