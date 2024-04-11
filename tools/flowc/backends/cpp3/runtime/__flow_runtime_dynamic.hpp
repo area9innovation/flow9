@@ -16,7 +16,7 @@ inline string type2string() {
 	int status = -1;
 	char* name = abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status);
 	std::string ret(name);
-	delete name;
+	free(name);
 	return std2string(ret);
 }
 template<typename T>
@@ -24,7 +24,7 @@ inline std::string type2StdString() {
 	int status = -1;
 	char* name = abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status);
 	std::string ret(name);
-	delete name;
+	free(name);
 	return ret;
 }
 struct FieldDef {

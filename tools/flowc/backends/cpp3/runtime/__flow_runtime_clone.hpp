@@ -15,7 +15,7 @@ inline T clone(T v) {
 	else if constexpr (std::is_same_v<T, Bool>) { return v; }
 	else if constexpr (std::is_same_v<T, Double>) { return v; }
 	else if constexpr (std::is_same_v<T, String*>) { return String::make(v->str()); }
-	else if constexpr (std::is_same_v<T, Native*>) { return Native::make(v->val()); }
+	else if constexpr (std::is_same_v<T, Native*>) { fail("cloning of native objects is not yet implemented"); return v; }
 	else if constexpr (is_type_v<TypeFx::ARRAY, T>) {
 		using E = std::remove_pointer_t<T>::ElType;
 		Vec<E>* ret = Vec<E>::make(v->size());

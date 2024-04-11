@@ -31,7 +31,7 @@ inline T2 castRc(T1 x) {
 			else if constexpr (std::is_same_v<T1, Double>) { return FDouble::make(x); }
 			else if constexpr (std::is_same_v<T1, Void>) { return FVoid::make(); }
 			else if constexpr (std::is_same_v<T1, Native*>) {
-				if (x->template castsTo<Flow*>()) {
+				if (x->convertsToFlow()) {
 					return x->template getRc<Flow*>();
 				} else {
 					return x;

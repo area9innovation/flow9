@@ -21,6 +21,7 @@ struct Native : public Flow {
 		s.append(u"<native>");
 	}
 	TypeId typeId() const override { return TypeFx::NATIVE; }
+	bool convertsToFlow() const { return converts_to_flow_; }
 
 	template<typename... As> static Native* make(As... as) {
 		if constexpr (use_memory_manager) {
@@ -29,24 +30,16 @@ struct Native : public Flow {
 			return new Native(as...);
 		}
 	}
-	template<typename T> inline bool castsTo() {
+	template<typename T> inline bool hasType() {
 		return val_.type() == typeid(T);
 	}
 	template<typename T> inline T getRc() { return decRcRet(this, getRc1<T>()); }
 	template<typename T> inline T getRc1() { return incRcRet(get<T>()); }
 	template<typename T> inline T get() {
-		if (castsTo<T>()) {
-			return std::any_cast<T>(val_);
-		} else {
-			fail("incorrect type in native: " + type2StdString<T>());
-		}
+		return std::any_cast<T>(val_);
 	}
 	template<typename T> inline T* getPtr() {
-		if (castsTo<T>()) {
-			return std::any_cast<T*>(&val_);
-		} else {
-			fail("incorrect type in native: " + type2StdString<T>());
-		}
+		return std::any_cast<T*>(&val_);
 	}
 
 	const std::any& val() { return val_; }
@@ -54,13 +47,15 @@ struct Native : public Flow {
 
 private:
 	template<typename T>
-	Native(T v): cleanup_([](){}), val_(v) {
-		if constexpr (is_flow_ancestor_v<T>) {
-			cleanup_ = [v]() { decRc(std::any_cast<Flow*>(v)); };
-		} else if constexpr (std::is_pointer_v<T>) {
-			cleanup_ = [v]() { delete std::any_cast<T>(v); };
-		}
+	Native(T v): converts_to_flow_(is_rcbase_ancestor_v<T>), cleanup_([](){}), val_(v) {
+		static_assert(is_rcbase_ancestor_v<T>, "Native has no explicit destructor");
+		cleanup_ = [this]() { decRc(std::any_cast<T>(val_)); };
 	}
+	template<typename T>
+	Native(T v, std::function<void()>&& c):
+		converts_to_flow_(is_rcbase_ancestor_v<T>), cleanup_(std::move(c)), val_(v) {
+	}
+	const bool converts_to_flow_;
 	std::function<void()> cleanup_;
 	std::any val_;
 };

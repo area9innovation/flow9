@@ -158,6 +158,10 @@ struct Vec : public Flow {
 			assignRc<T>(vec_[i], x);
 		}
 	}
+	inline void remove(Int i) {
+		decRc(vec_.at(i));
+		vec_.erase(vec_.begin() + i);
+	}
 
 	static Vec* concatRc(Vec* v1, Vec* v2) {
 		if (v1->vec_.size() == 0) {
