@@ -5,7 +5,7 @@
 
 namespace flow {
 
-bool modules_are_initialized = false;
+bool runtime_is_ready = false;
 
 string double2string(Double x, bool persistent_dot) {
 	if (std::isnan(x)) {
