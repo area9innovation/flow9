@@ -211,7 +211,12 @@ private:
 		}
 	}
 	Vec(): vec_() { }
-	Vec(Int s): vec_() { registerLen(s); vec_.reserve(s); }
+	Vec(Int s): vec_() {
+		registerLen(s);
+		if constexpr (!std::is_same_v<T, bool>) {
+			vec_.reserve(s);
+		}
+	}
 	Vec(std::initializer_list<T>&& il): vec_(std::move(il)) { registerLen(il.size()); }
 	Vec(const std::initializer_list<T>& il): vec_(il) { registerLen(il.size()); }
 	Vec(Vec* a): vec_(a->vec_) { incRcVec(); registerLen(size()); }
