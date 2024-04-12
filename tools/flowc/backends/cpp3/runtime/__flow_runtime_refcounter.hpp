@@ -10,8 +10,8 @@ namespace flow {
 
 struct RcBase {
 	enum { CONSTANT_OBJECT_RC = -1, UNIT_OBJECT_RC = 1};
-	using RcCounter = int32_t; // long ?
-	RcBase(): rc_(1) { }
+	using RcCounter = int32_t;
+	RcBase(): rc_(1), aux_(0) { }
 	virtual ~RcBase() { }
 	virtual void destroy() = 0;
 	inline void makeUnitRc() { rc_ = 1; }
@@ -77,6 +77,8 @@ struct RcBase {
 	}
 private:
 	RcCounter rc_;
+protected:
+	int32_t aux_;
 };
 
 template<typename T>
