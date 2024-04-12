@@ -28,10 +28,10 @@
 
 namespace spp
 {
-    uint64_t GetSystemMemory();
-    uint64_t GetTotalMemoryUsed();
-    uint64_t GetProcessMemoryUsed();
-    uint64_t GetPhysicalMemory();
+    inline uint64_t GetSystemMemory();
+    inline uint64_t GetTotalMemoryUsed();
+    inline uint64_t GetProcessMemoryUsed();
+    inline uint64_t GetPhysicalMemory();
 
     uint64_t GetSystemMemory()
     {
