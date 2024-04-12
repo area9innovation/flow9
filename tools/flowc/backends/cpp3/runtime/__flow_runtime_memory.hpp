@@ -7,6 +7,7 @@
 #include <thread>
 #include <tuple>
 #include <stack>
+#include <meminfo.h>
 #include "__flow_runtime_types.hpp"
 
 namespace flow {
@@ -235,9 +236,12 @@ struct Memory {
 	}
 };
 
-/// The amount of memory currently being used by this process, in bytes.
-/// By default, returns the full virtual arena, but if resident=true,
-/// it will report just the resident set in RAM (if supported on that OS).
-std::size_t memory_used(bool resident = false);
+inline std::size_t memory_used_by_process() { return spp::GetProcessMemoryUsed(); }
+inline std::size_t memory_total_used() { return spp::GetTotalMemoryUsed(); }
+inline std::size_t memory_total_physical() { return spp::GetPhysicalMemory(); }
+inline std::size_t memory_system() { return spp::GetSystemMemory();; }
+inline std::size_t memory_free() { return static_cast<std::ptrdiff_t>(memory_total_physical()) - memory_total_used(); }
+inline std::size_t memory_total() { return memory_free() + memory_used_by_process(); }
+std::size_t memory_used(bool resident);
 
 }

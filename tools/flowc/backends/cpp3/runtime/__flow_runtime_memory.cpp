@@ -21,7 +21,7 @@ std::unique_ptr<MemoryPool> MemoryPool::instance_;
 /// The amount of memory currently being used by this process, in bytes.
 /// By default, returns the full virtual arena, but if resident=true,
 /// it will report just the resident set in RAM (if supported on that OS).
-std::size_t memory_used (bool resident) {
+std::size_t memory_used(bool resident) {
 #if defined(__linux__)
 	// Ugh, getrusage doesn't work well on Linux.  Try grabbing info
 	// directly from the /proc pseudo-filesystem.  Reading from
@@ -33,12 +33,21 @@ std::size_t memory_used (bool resident) {
 	FILE *file = fopen("/proc/self/statm", "r");
 	if (file) {
 		unsigned long vm = 0;
-		// Just need the first num: vm size
+		unsigned long rss = 0;
+		// The first num: vm size
 		if (fscanf(file, "%lu", &vm) != 1) {
 			vm = 0;
 		}
+		// The second num: rss size
+		if (fscanf(file, "%lu", &rss) != 1) {
+			rss = 0;
+		}
 		fclose(file);
-		size = static_cast<std::size_t>(vm) * getpagesize();
+		if (resident) {
+			size = static_cast<std::size_t>(rss) * getpagesize();
+		} else {
+			size = static_cast<std::size_t>(vm) * getpagesize();
+		}
 	}
 	return size;
 
