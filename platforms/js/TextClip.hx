@@ -123,7 +123,7 @@ class TextClip extends NativeWidgetClip {
 	public static var AmiriHTMLMeasurement = Util.getParameter("amiri_html_measurement") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
-	public static var checkTextNodeWidth = Native.isNew && Util.getParameter("text_node_width") != "0";
+	public static var checkTextNodeWidth = Util.getParameter("text_node_width") != "0";
 	public static var IosOnSelectWorkaroundEnabled = Platform.isIOS && Platform.isSafari && Platform.browserMajorVersion < 15;
 
 	public static inline var UPM : Float = 2048.0;  // Const.
@@ -517,7 +517,7 @@ class TextClip extends NativeWidgetClip {
 				if (textBackgroundWidget != null) {
 					textBackgroundWidget.innerHTML = this.contentGlyphs.modified;
 				}
-				nativeWidget.style.whiteSpace = (Native.isNew && !style.wordWrap) ? "pre" : "pre-wrap";
+				nativeWidget.style.whiteSpace = style.wordWrap ? "pre-wrap" : "pre";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
