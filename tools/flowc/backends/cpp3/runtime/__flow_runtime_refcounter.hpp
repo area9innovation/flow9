@@ -104,6 +104,14 @@ template<typename T> inline void incRc(T x, Int d = 1) {
 	}
 }
 
+
+template<typename T> inline T incRcPass(T x, Int d = 1) {
+	if constexpr (is_rcbase_ancestor_v<T>) {
+		x->incrementRc(d);
+	}
+	return x;
+}
+
 template<typename T> inline void decRc(T x) {
 	if constexpr (is_rcbase_ancestor_v<T>) {
 		x->template decrementRc<T>();
