@@ -151,29 +151,29 @@ inline T2 castRc(T1 x) {
 					case TypeFx::DOUBLE: fail("Illegal cast of flow double to reference of type: " + type2StdString<V2>()); return x;
 					case TypeFx::ARRAY: {
 						if constexpr (is_type_v<TypeFx::ARRAY, typename V2::RefType>) {
-							return static_cast<T2>(x);
+							return reinterpret_cast<T2>(x);
 						} else {
 							fail("Illegal cast of reference to flow array to reference of type: " + type2StdString<V2>()); return x;
 						}
 					}
 					case TypeFx::FUNC: {
 						if constexpr (is_type_v<TypeFx::FUNC, typename V2::RefType>) {
-							return static_cast<T2>(x);
+							return reinterpret_cast<T2>(x);
 						} else {
 							fail("Illegal cast of reference to flow function to reference of type: " + type2StdString<V2>()); return x;
 						}
 					}
-					default: return static_cast<T2>(x);
+					default: return reinterpret_cast<T2>(x);
 				}
 			} else if constexpr (is_type_v<TypeFx::FLOW, typename V2::RefType>) {
 				if constexpr (is_scalar_v<typename V1::RefType>) {
 					static_assert(false, "Illegal cast of reference to scalar type to reference to flow");
 					return x;
 				} else {
-					return static_cast<T2>(x);
+					return reinterpret_cast<T2>(x);
 				}
 			} else if constexpr (is_struct_or_union_v<typename V2::RefType> && is_struct_or_union_v<typename V2::RefType>) {
-				return static_cast<T2>(x);
+				return reinterpret_cast<T2>(x);
 			} else {
 				static_assert(false, "Illegal cast to reference");
 			}
