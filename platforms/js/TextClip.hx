@@ -123,7 +123,7 @@ class TextClip extends NativeWidgetClip {
 	public static var AmiriHTMLMeasurement = Util.getParameter("amiri_html_measurement") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") != "0";
 	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
-	public static var checkTextNodeWidth = Native.isNew && Util.getParameter("text_node_width") != "0";
+	public static var checkTextNodeWidth = Util.getParameter("text_node_width") != "0";
 	public static var IosOnSelectWorkaroundEnabled = Platform.isIOS && Platform.isSafari && Platform.browserMajorVersion < 15;
 
 	public static inline var UPM : Float = 2048.0;  // Const.
@@ -517,7 +517,7 @@ class TextClip extends NativeWidgetClip {
 				if (textBackgroundWidget != null) {
 					textBackgroundWidget.innerHTML = this.contentGlyphs.modified;
 				}
-				nativeWidget.style.whiteSpace = (Native.isNew && !style.wordWrap) ? "pre" : "pre-wrap";
+				nativeWidget.style.whiteSpace = style.wordWrap ? "pre-wrap" : "pre";
 
 				var children : Array<Dynamic> = nativeWidget.getElementsByTagName("*");
 				for (child in children) {
@@ -598,25 +598,19 @@ class TextClip extends NativeWidgetClip {
 			&& nativeWidget.textContent[0] != '' && !isCharLetter(nativeWidget.textContent[0])
 		) {
 			// For some reason, in most browsers Amiri italic text, which starts from digit/special symbol doesn't render italic, when baselineWidget is present.
+			// Also, Amiri which starts from digit/special symbol renders brackets, using different glyphs, when 'display: inline-block' is present
 			// Looks like a browser bug, so we need this workaround
-			if (amiriItalicWorkaroundWidget == null && style.fontStyle == 'italic') {
+			if (amiriItalicWorkaroundWidget == null) {
 				var txt = 't';
 				var charMetrics = TextMetrics.measureText(txt, style);
 				amiriItalicWorkaroundWidget = Browser.document.createElement('span');
+				amiriItalicWorkaroundWidget.classList.add('amiriItalicWorkaroundWidget');
 				amiriItalicWorkaroundWidget.style.position = 'relative';
-				amiriItalicWorkaroundWidget.style.marginRight = '${-charMetrics.width}px';
+				amiriItalicWorkaroundWidget.style.marginRight = '${-charMetrics.width - style.letterSpacing}px';
 				amiriItalicWorkaroundWidget.style.opacity = '0';
 				amiriItalicWorkaroundWidget.textContent = txt;
 				nativeWidget.insertBefore(amiriItalicWorkaroundWidget, nativeWidget.firstChild);
 			}
-
-			// Amiri which starts from digit/special symbol renders brackets, using different glyphs, when 'display: inline-block' is present
-			baselineWidget.style.display = 'none';
-			nativeWidget.style.marginTop = '0px';
-			Native.timer(0, function () {
-				baselineWidget.style.display = null;
-				nativeWidget.style.marginTop = '${-getTextMargin()}px';
-			});
 		}
 	}
 
@@ -1968,6 +1962,13 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private static function updateTextNodeWidth(textNode, textNodeMetrics) {
+		if (textNode.classList != null && (
+			textNode.classList.contains("textBackgroundWidget")
+			|| textNode.classList.contains("baselineWidget")
+			|| textNode.classList.contains("amiriItalicWorkaroundWidget")
+		)) {
+			return;
+		}
 		var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", "svg");
 		var textElement = Browser.document.createElementNS("http://www.w3.org/2000/svg", "text");
 
@@ -1987,7 +1988,8 @@ class TextClip extends NativeWidgetClip {
 
 		Browser.document.body.removeChild(svg);
 
-		textNodeMetrics.width += bbox.width;
+		var letSp = Std.parseFloat(computedStyle.letterSpacing);
+		textNodeMetrics.width += bbox.width - (Math.isNaN(letSp) ? 0 : letSp);	
 		if (textNodeMetrics.updateOffset && (textNode.classList == null || !textNode.classList.contains('baselineWidget'))) {
 			textNodeMetrics.x = bbox.x;
 			textNodeMetrics.updateOffset = false;
@@ -2003,7 +2005,9 @@ class TextClip extends NativeWidgetClip {
 				if (rect != null) {
 					var viewportScale = RenderSupport.getViewportScale();
 					if (!useCheck) {
-						textNodeMetrics.width = (rect.right - rect.left) * viewportScale;
+						var computedStyle = Browser.window.getComputedStyle(untyped textNode);
+						var letSp = Std.parseFloat(computedStyle.letterSpacing);
+						textNodeMetrics.width = (rect.right - rect.left - (Math.isNaN(letSp) ? 0 : letSp)) * viewportScale;
 					}
 					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;
 				}
