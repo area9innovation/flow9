@@ -22,6 +22,12 @@ fi2cpp3Build(cfg: FiCpp3Config, sources: [string], deps: [Cpp3Dependency], callb
 	target = fileNameOnly(cfg.outputfile);
 	use_mimalloc = lookupTreeDef(cfg.config.config, "cpp-mimalloc", "") == "1";
 	link_dirs = lookupTreeDef(cfg.config.config, "cpp-link-dirs", "");
+
+	flowdir = findFlowDir();
+	cpp3_dir = pathCombineMany([flowdir, "tools", "flowc", "backends", "cpp3"]);
+	libs_dir = pathCombine(cpp3_dir, "libs");
+	lib_dirs = readDirectory(libs_dir);
+
 	cmakelists = blueprint("
 		cmake_minimum_required(VERSION 3.19.1)
 		project(%target%)
@@ -42,6 +48,7 @@ fi2cpp3Build(cfg: FiCpp3Config, sources: [string], deps: [Cpp3Dependency], callb
 		%gprof%
 		%qt_packages%
 		%mimalloc_package%
+		%flowc_includes%
 		%qt_module_includes%
 
 		set(sources
@@ -71,7 +78,8 @@ fi2cpp3Build(cfg: FiCpp3Config, sources: [string], deps: [Cpp3Dependency], callb
 			"set(CMAKE_AUTORCC ON)\n" +
 			"set(CMAKE_AUTOUIC ON)\n",
 		"qt_packages", if (use_qt) "find_package(Qt5 COMPONENTS " + strGlue(qt_modules, " ") + " REQUIRED)" else "",
-		"qt_module_includes", if (use_qt) "include_directories(" + superglue(qt_modules, \m -> "${Qt5" + m + "_INCLUDE_DIRS}", " ") + ")" else "",
+		"qt_module_includes", if (flowdir != "") "include_directories(" + superglue(qt_modules, \m -> "${Qt5" + m + "_INCLUDE_DIRS}", " ") + ")" else "",
+		"flowc_includes", if (length(lib_dirs) > 0) "include_directories(" + superglue(lib_dirs, \dir -> pathCombine(libs_dir, dir), " ") + ")" else "",
 		"qt_module_libs", if (use_qt) "target_link_libraries(" + target + " " + superglue(qt_modules, \m -> "Qt5::" + m, " ") + " )" else "",
 		"sources", superglue(cpp_sorces, \src -> fileNameOnly(src), "\n"),
 		"mimalloc_package", if (use_mimalloc) "find_package(mimalloc 2.1 REQUIRED)" else "",
@@ -119,14 +127,6 @@ fi2cpp3BuildCxxSupressWarningsFlags() -> [string] {[
 	"-Wno-unused-but-set-variable", "-Wno-trigraphs",
 	"-Wno-use-after-free"
 ]}
-
-fi2cpp3BuildOpts(cfg: FiCpp3Config) -> [string] {
-	debug_opts = if (cfg.debug) ["-O0", "-ggdb3"] else [];
-	opt_param = getConfigParameterDef(cfg.config.config, "cpp-optimize", "3");
-	optimize_opts = if (opt_param == "" || cfg.debug) [] else ["-O" + opt_param];
-	include = ["-I", pathCombine(".", cfg.outputdir)];
-	concatA([debug_opts, optimize_opts, include, fi2cpp3BuildCxxSupressWarningsFlags()]);
-}
 
 fi2cpp3Make(cfg: FiCpp3Config, builddir: string, callback : (int) -> void) -> void {
 	if (getConfigParameterDef(cfg.config.config, "cpp-build", "1") != "1") {

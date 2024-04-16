@@ -2204,8 +2204,8 @@ public class Native extends NativeHost {
 	}
 
 	// Vector natives:
-	public static final Object makeVector(Integer capacity) {
-		return new ArrayList(capacity);
+	public static final Object makeVector(Integer capacity, Object[] __) {
+		return new ArrayList(capacity >= 0 ? capacity : 0);
 	}
 	public static final Object getVector(Object v, Integer i) {
 		ArrayList vector = (ArrayList)v;
@@ -2223,29 +2223,26 @@ public class Native extends NativeHost {
 		vector.add(x);
 		return null;
 	}
-	public static final Object removeVector(Object v, Integer i) {
+	public static final Object removeVector(Object v, Integer i, Object[] __) {
 		ArrayList vector = (ArrayList)v;
 		vector.remove(i.intValue());
 		return null;
 	}
-	public static final int sizeVector(Object v) {
+	public static final int sizeVector(Object v, Object[] __) {
 		ArrayList vector = (ArrayList)v;
 		return vector.size();
 	}
-	public static final Object clearVector(Object v) {
+	public static final Object clearVector(Object v, Object[] __) {
 		ArrayList vector = (ArrayList)v;
 		vector.clear();
 		return null;
 	}
-	public static final Object shrinkVector(Object v, Integer size) {
+	public static final Object trimToSizeVector(Object v, Object[] __) {
 		ArrayList vector = (ArrayList)v;
-		int i = vector.size();
-		while (i > size) {
-			vector.remove(--i);
-		}
+		vector.trimToSize();
 		return null;
 	}
-	public static final Object subVector(Object v, Integer index, Integer len) {
+	public static final Object subVector(Object v, Integer index, Integer len, Object[] __) {
 		@SuppressWarnings("unchecked")
 		ArrayList<Object> vector = (ArrayList<Object>)v;
 		ArrayList<Object> sub = new ArrayList<Object>(len);
