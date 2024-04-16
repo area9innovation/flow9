@@ -1,0 +1,235 @@
+import material/material2tropic;
+import material/material_dialog;
+import material/material_ui;
+
+GlobalSearchFoundLine(id : int, title : string, type : string);
+smallIconSize = MIconSize(18.);
+managerPrimaryColor = MCustomColor(0x0b2a4a);
+
+main() {
+	manager = makeMaterialManager([/*MDataTableDefaultInnerScrollHotfix()*/]);
+	setRendererType("html");
+
+	lines = generate(0, 5, \i ->
+		GlobalSearchFoundLine(i, "title_" + i2s(i), "type_" + i2s(i))
+	);
+
+	content =
+		GroveXGlobalSearchForm(manager, lines);
+	
+	mrender(manager, true, content);
+}
+
+GroveXGlobalSearchForm(manager : MaterialManager, foundLines : [GlobalSearchFoundLine]) -> Material {
+
+    selectedIdxB = make(-1);
+    sortingParamB = make(MSortingParam(-1, false));
+    scrollPositionB = make(Point(0., 0.));
+
+    showFilterB = make(true);
+    fTypeB = make("");
+    fTitleB = make("");
+    fTypeFocusedB = make(false);
+    fTitleFocusedB = make(false);
+
+    filteredLinesB = make(foundLines);
+
+    applyFilter = \fType, fTitle -> {
+        setFocusWithDelayArr([fTypeFocusedB, fTitleFocusedB]);
+
+        newFilteredList = filter(foundLines, \line -> {
+                (strlen(fType) == 0 || strContains(toLowerCase(line.type), toLowerCase(fType))) &&
+                (strlen(fTitle) == 0 || strContains(toLowerCase(line.title), toLowerCase(fTitle)))
+        });
+        nextDistinct(filteredLinesB, newFilteredList);
+    };
+
+    clearFilterButton =
+        getClearFilterButton(
+            \-> {
+                nextDistinct(fTypeB, "");
+                nextDistinct(fTitleB, "");
+
+                nextDistinct(scrollPositionB, Point(0., 0.));
+
+            }, [smallIconSize, MIconButtonBorder(8.)]
+        ) |> (\m -> MBorder(48., 0., 0., 0., m));
+
+    filterRow = [
+        MEmpty(),
+        getFilterInput(fTypeB, "Type", false, false, fTypeFocusedB, getPrimaryColor(manager)),
+        getFilterInput(fTitleB, "Title", false, false, fTitleFocusedB, getPrimaryColor(manager)),
+        clearFilterButton
+    ];
+
+    cols = \lines -> [
+        MColumn("ID", "", 40, [MMaxWidth(40)]),
+        MColumn("Type", "", 16,  [MMaxWidth(128),  MSort(\i1, i2 -> genericCompare(lines[i1].type, lines[i2].type))]),
+        MColumn("Title", "", 16,  [MSort(\i1, i2 -> genericCompare(lines[i1].title, lines[i2].title))]),
+        MColumn("", "", 56,  [MMaxWidth(56)]),
+    ];
+
+    MSelect(filteredLinesB, \filteredLines -> {
+        // setSessionKeyValue("posList", strGlue(uniq(filtermap(filteredLines, \line ->
+        //     if (line.type == "Purchase Order") Some(i2s(line.id)) else None()
+        // )), ","));
+        // setSessionKeyValue("ordersList", strGlue(uniq(filtermap(filteredLines, \line ->
+        //     if (line.type == "Order") Some(i2s(line.id)) else None()
+        // )), ","));
+        // setSessionKeyValue("customersList", strGlue(uniq(filtermap(filteredLines, \line ->
+        //     if (line.type == "Customer") Some(i2s(line.id)) else None()
+        // )), ","));
+        MConstruct(
+            [
+                make2Subscribe2(fTypeB, fTitleB, \fType, fTitle ->
+                    applyDeferredFilter(
+                        [fTypeB, fTitleB],
+                        \ -> {
+                            applyFilter(fType, fTitle);
+                            next(scrollPositionB, Point(0., 0.));
+                        }
+                    )
+                ),
+            ],
+            if (length(filteredLines) > 0) {
+                MDataTable(
+                    cols(foundLines),
+                    map(foundLines, \line -> [
+                        MText(i2s(line.id), [MDataRow()]),
+                        MText(line.type, [MDataRow()]),
+                        MText(line.title, [MDataRow()]),
+                    ]),
+                    [
+                        MSingleSelection(selectedIdxB),
+                        MInCard(),
+                        MFullWidth(),
+                        getGMHeaderStyle(getPrimaryColor(manager)),
+                        MFixedRow(showFilterB, filterRow, [MFill(MGrey(100))]),  // overlaps first row
+                        // MFixedRow(const(true), filterRow, [MFill(MGrey(100))]),  // overlaps first row
+                        MSortingDefault(sortingParamB),
+                        // TScrollEnabled(make(true)),
+                        MGoToIndex(selectedIdxB),
+                        MScrollPosition(scrollPositionB),
+                        MNoFooter(),
+                        // MOnListClick(const(true), \sRow -> if (existsIndex(filteredLines, sRow)) {
+                            // GroveXChangePebbleView(state, Pebble(filteredLines[sRow].path));
+                        // })
+                        // MDataTableInnerScroll(MNoScroll(), [])
+                    ]
+                )
+                |> (\m -> addFilterButtonToTable(m, showFilterB, getPrimaryColor(manager), true))  // fixed row overlaps first row - disabled
+                // |> (\m -> MCols2(m, MCheckBox(TEmpty(), showFilterB, [])))
+            } else {
+                MText("Nothing was found by your request", [MCustomFont(32.0, "Roboto", 0.87), MBlack()]) |> MCenter
+            }
+        )}
+    )
+}
+
+addFilterButtonToTable(mTable : Material, showFilterB : DynamicBehaviour<bool>, buttonFilterColor : MColor, isWriteFont : bool) -> Material {
+    addFilterButtonOffsetToTable(mTable, showFilterB, buttonFilterColor, isWriteFont, 0.)
+}
+
+addFilterButtonOffsetToTable(mTable : Material, showFilterB : DynamicBehaviour<bool>, buttonFilterColor : MColor, isWriteFont : bool, offsetTop : double) -> Material {
+    MLet(
+        "SomeTable",
+        mTable,
+        MGroup2(
+            TDisplay("SomeTable"),
+            MAvailable(
+                MCols([
+                    MFillX(),
+                    MSelect(showFilterB, \isFilter ->
+                        MIconButton("filter_list", \ -> next(showFilterB, !isFilter),
+                            if (isFilter) [buttonFilterColor, FillOpacity(1.)]
+                            else if (isWriteFont) [MWhite()]
+                            else [],
+                        [MTooltipText(const(if (isFilter) "Hide filter row" else "Show filter row"))]) |> MBorderTop(offsetTop)
+                    ),
+                    TFixed(8., 0.)
+                ]),
+                TWidth(TGhost("SomeTable"))
+            )
+        )
+    );
+}
+
+setFocusWithDelay = \focusB ->  timer(700, \-> next(focusB, true));
+setFocusWithDelayArr(behaviours) {
+    iteriUntil(behaviours, \i, behaviuor -> {
+        if (getValue(behaviuor)) {
+            setFocusWithDelay(behaviuor);
+            true
+        } else {
+            false
+        }
+    })
+    |> ignore;
+}
+
+getClearFilterButton(onClick : () -> void, style : [MIconButtonStyle]) -> Material {
+    MIconButton("close", onClick, style,  [MTooltipText(const("Clear filter"))]);
+}
+
+getFilterInput(valueB : DynamicBehaviour<string>, label : string, isNumeric : bool, isRightAlign : bool, focusedB : DynamicBehaviour<bool>, primaryColor : MColor) -> Material {
+    getFilterInputUppercase(valueB, label, isNumeric, isRightAlign, false, focusedB, primaryColor);
+}
+
+getFilterInputUppercase(valueB : DynamicBehaviour<string>, label : string, isNumeric : bool, isRightAlign : bool, isUppercase : bool, focusedB : DynamicBehaviour<bool>, primaryColor : MColor) -> Material {
+    style = [MWidth(-1.), MLabel(label), primaryColor, MCustomTextStyle([MDataRow()])];
+    MTextInput(valueB, concat3(
+            style,
+            if (isNumeric) [TextInputType(NumericType())] else [],
+            if (isRightAlign) [AutoAlign(AutoAlignRight())] else []
+        ), concat([TTextInputFocus(focusedB)], if (isUppercase) [MInputFilter(\str, foc -> if (foc) toUpperCase(str) else str)] else [])
+    );
+}
+
+applyDeferredFilter(behaviours, applyFilter) {
+    pairs = map(behaviours, \behaviour -> Pair(getValue(behaviour), behaviour));
+    timer(1600, \-> {
+        start = fold(pairs, true, \acc, pair ->
+            if (pair.first == getValue(pair.second)) acc && true
+            else false
+        );
+        if (start) applyFilter() else nop();
+    })
+}
+
+getGMHeaderStyle(primaryColor : MColor) -> MHeaderStyle {
+    MHeaderStyle([MFill(managerPrimaryColor)], [MWhite(), MCaptionSolid()], [MBody()]);
+}
+
+GroveXGlobalSearchForm2(manager : MaterialManager, foundLines : [GlobalSearchFoundLine]) -> Material {
+	showFilterB = make(false);
+	// showFilterB = const(true);
+    // fTypeB = make("");
+    // fTitleB = make("");
+    // fTypeFocusedB = make(false);
+    // fTitleFocusedB = make(false);
+
+	filterRow = [
+        // MEmpty(),
+        // getFilterInput(fTypeB, "Type", false, false, fTypeFocusedB, getPrimaryColor(manager)),
+        // getFilterInput(fTitleB, "Title", false, false, fTitleFocusedB, getPrimaryColor(manager)),
+        // clearFilterButton
+    ];
+	MDataTable(
+        [
+	        MColumn("ID", "", 40, [MMaxWidth(40)]),
+	        MColumn("Type", "", 16,  [MMaxWidth(128)]),
+	        MColumn("Title", "", 16,  []),
+	    ],
+        map(foundLines, \line -> [
+            MText(i2s(line.id), [MDataRow()]),
+            MText(line.type, [MDataRow()]),
+            MText(line.title, [MDataRow()]),
+        ]),
+        [
+            MFixedRow(showFilterB, filterRow, [MFill(MGrey(100))]),
+            // MFixedRow(const(true), filterRow, [MFill(MGrey(100))]),
+			// MDataTableInnerScroll(MNoScroll(), [])
+        ]
+    )
+    |> (\m -> MCols2(m, MCheckBox(TEmpty(), showFilterB, [])))
+}
