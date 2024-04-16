@@ -1778,7 +1778,7 @@ class TextClip extends NativeWidgetClip {
 			if (textNodeWidth0 != null && textNodeWidth0 > 0 && textNodeHeight != null && textNodeHeight > 0) {
 				var textNodeWidth = useLetterSpacingFix ? (textNodeWidth0 - style.letterSpacing) : textNodeWidth0;
 				var textWidth =
-					untyped this.transform
+					untyped this.transform && !useCheck
 						? (
 							(textNodeWidth * (1 - Math.pow(untyped this.transform.worldTransform.c, 2)) / untyped this.transform.worldTransform.a)
 							+ Math.abs(textNodeHeight * untyped this.transform.worldTransform.c)
