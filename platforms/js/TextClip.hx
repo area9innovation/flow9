@@ -1772,18 +1772,11 @@ class TextClip extends NativeWidgetClip {
 		if (nativeWidget != null && metrics != null) {
 			var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && !wordWrap;
-			var textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck);
+			var textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck, untyped this.transform);
 			var textNodeWidth0 = textNodeMetrics.width;
 			var textNodeHeight = textNodeMetrics.height;
 			if (textNodeWidth0 != null && textNodeWidth0 > 0 && textNodeHeight != null && textNodeHeight > 0) {
-				var textNodeWidth = useLetterSpacingFix ? (textNodeWidth0 - style.letterSpacing) : textNodeWidth0;
-				var textWidth =
-					untyped this.transform
-						? (
-							(textNodeWidth * (1 - Math.pow(untyped this.transform.worldTransform.c, 2)) / untyped this.transform.worldTransform.a)
-							+ Math.abs(textNodeHeight * untyped this.transform.worldTransform.c)
-						)
-						: textNodeWidth;
+				var textWidth = useLetterSpacingFix ? (textNodeWidth0 - style.letterSpacing) : textNodeWidth0;
 				if (textWidth > 0 && textWidth != metrics.width) {
 					metrics.width = textWidth;
 					this.emitEvent('textwidthchanged', textWidth);
@@ -1937,7 +1930,7 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private static function getTextNodeMetrics(nativeWidget, useCheck) : Dynamic {
+	private static function getTextNodeMetrics(nativeWidget, useCheck, ?transform = null) : Dynamic {
 		var textNodeMetrics : Dynamic = {};
 		if (nativeWidget == null || nativeWidget.lastChild == null) {
 			textNodeMetrics.width = 0;
@@ -1948,7 +1941,7 @@ class TextClip extends NativeWidgetClip {
 			if (useCheck) {
 				updateTextNodesWidth(untyped nativeWidget.childNodes, textNodeMetrics);
 			}
-			updateTextNodeHeight(textNode, textNodeMetrics, useCheck);
+			updateTextNodeHeight(textNode, textNodeMetrics, useCheck, transform);
 		}
 		return textNodeMetrics;
 	}
@@ -1996,7 +1989,7 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private static function updateTextNodeHeight(textNode, textNodeMetrics, useCheck) {
+	private static function updateTextNodeHeight(textNode, textNodeMetrics, useCheck, transform) {
 		if (Browser.document.createRange != null) {
 			var range = Browser.document.createRange();
 			range.selectNodeContents(textNode);
@@ -2004,12 +1997,20 @@ class TextClip extends NativeWidgetClip {
 				var rect = range.getBoundingClientRect();
 				if (rect != null) {
 					var viewportScale = RenderSupport.getViewportScale();
+					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;
 					if (!useCheck) {
 						var computedStyle = Browser.window.getComputedStyle(untyped textNode);
 						var letSp = Std.parseFloat(computedStyle.letterSpacing);
-						textNodeMetrics.width = (rect.right - rect.left - (Math.isNaN(letSp) ? 0 : letSp)) * viewportScale;
+						var wd0 = rect.right - rect.left;
+						var wd1 = untyped transform && transform.worldTransform
+							? (
+								(wd0 * (1 - Math.pow(untyped transform.worldTransform.c, 2)) / untyped transform.worldTransform.a)
+								+ Math.abs(textNodeMetrics.height * untyped transform.worldTransform.c)
+							)
+							: wd0;
+						var wd2 = (wd1 - (Math.isNaN(letSp) ? 0 : letSp)) * viewportScale;
+						textNodeMetrics.width = wd2;
 					}
-					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;
 				}
 			}
 		}
