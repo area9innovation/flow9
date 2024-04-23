@@ -494,6 +494,13 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.opacity = (RenderSupport.RendererType != "canvas" || isFocused) ? alpha : 0;
 				nativeWidget.style.color = style.fill;
 			}
+
+			var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+			if (bg && nativeWidget) {
+				// These variables are used in the flowjspixi.css file for input:-webkit-autofill workaround
+				nativeWidget.style.setProperty('--background-color', bg);
+				nativeWidget.style.setProperty('--text-color', nativeWidget.style.color);
+			}
 		} else {
 			if (escapeHTML) {
 				if (Platform.isIE && isMaterialIconFont()) {

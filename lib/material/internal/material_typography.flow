@@ -187,27 +187,31 @@ MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], de
 	|> (\bundle : MFontStyleBundle -> {
 		intColor = MThemeColor2int(parent, bundle.color);
 		font = MFontStyle2MFont(parent, bundle.fontStyle);
+		backgroundFill = tryExtractStruct(style, BackgroundFill(0));
 		wrappedFont = eitherMap(
 			parent.theme.fontWrapper,
 			\wrapper -> fgetValue(wrapper).wrapper(font, intColor, bundle.enabled),
 			font
 		);
-		arrayPush(
-			MFont2CharacterStyle(wrappedFont, intColor == black)
-			|> (\characterStyle ->
-				if (bundle.enabled)
-					arrayPushMaybe(characterStyle, tryExtractStruct(style, FillOpacity(1.0)))
-				else
-					replaceStruct(characterStyle, extractStruct(style, FillOpacity(getDisabledTextOpacity(intColor == black))))
+		arrayPushMaybe(
+			arrayPush(
+				MFont2CharacterStyle(wrappedFont, intColor == black)
+				|> (\characterStyle ->
+					if (bundle.enabled)
+						arrayPushMaybe(characterStyle, tryExtractStruct(style, FillOpacity(1.0)))
+					else
+						replaceStruct(characterStyle, extractStruct(style, FillOpacity(getDisabledTextOpacity(intColor == black))))
+				),
+				Fill(
+					if (bundle.enabled)
+						intColor
+					else if (rgb2cielab(int2rgb(intColor)).l < 50.)
+						black
+					else
+						white
+				)
 			),
-			Fill(
-				if (bundle.enabled)
-					intColor
-				else if (rgb2cielab(int2rgb(intColor)).l < 50.)
-					black
-				else
-					white
-			)
+			backgroundFill
 		)
 	})
 	|> (\characterStyle ->
@@ -255,18 +259,23 @@ MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle] {
 	fontSize = ref 14.0;
 	fill = ref black;
 	fillOpacity = ref primaryTextOpacityDark;
+	backgroundFill = ref None();
 
 	iter(style, \s ->
 		switch (s) {
 			FontFamily(name) : fontFamily := name;
 			FontSize(size) : fontSize := size;
 			Fill(col) : fill := col;
+			BackgroundFill(col) : backgroundFill := Some(BackgroundFill(col));
 			FillOpacity(op) : fillOpacity := op;
 			default : {}
 		}
 	);
 
-	[MCustomColor(^fill), MCustomFont(^fontSize, ^fontFamily, ^fillOpacity)]
+	arrayPushMaybe(
+		[MCustomColor(^fill), MCustomFont(^fontSize, ^fontFamily, ^fillOpacity)],
+		^backgroundFill
+	)
 }
 
 MFontStyle2MFont(parent : MFocusGroup, style : MFontStyle) -> MFont {
