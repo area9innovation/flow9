@@ -80,7 +80,10 @@ class Platform {
 	}
 
 	private static function getIsWindows() { return isWindows; }
+	private static function getIsMacOS() { return isMacintosh; }
+	private static function getIsLinux() { return isLinux; }
 	private static function getIsAndroid() { return isAndroid; }
+	private static function getIsIos() { return isIOS; }
 #end
 }
 
