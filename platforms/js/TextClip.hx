@@ -449,6 +449,8 @@ class TextClip extends NativeWidgetClip {
 		super.updateNativeWidgetStyle();
 		var alpha = this.getNativeWidgetAlpha();
 
+		var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
+
 		if (isInput) {
 			nativeWidget.setAttribute("inputMode", type == 'number' ? 'numeric' : type);
 			if (!multiline) {
@@ -485,8 +487,9 @@ class TextClip extends NativeWidgetClip {
 				default : null;
 			}
 
+			var slicedColor : Array<String> = style.fill.split(",");
+
 			if (Platform.isEdge || Platform.isIE) {
-				var slicedColor : Array<String> = style.fill.split(",");
 				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? alpha : 0) + ")";
 
 				nativeWidget.style.color = newColor;
@@ -495,11 +498,11 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.color = style.fill;
 			}
 
-			var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
-			if (bg && nativeWidget) {
+			if (bg) {
+				var colorWithOpacity = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * alpha + ")";
 				// These variables are used in the flowjspixi.css file for input:-webkit-autofill workaround
 				nativeWidget.style.setProperty('--background-color', bg);
-				nativeWidget.style.setProperty('--text-color', nativeWidget.style.color);
+				nativeWidget.style.setProperty('--text-color', colorWithOpacity);
 			}
 		} else {
 			if (escapeHTML) {
@@ -550,7 +553,6 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = !this.isHTMLRenderer() || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = !this.isHTMLRenderer() || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize = '${style.fontSize}px';
-		var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		if (textBackgroundWidget != null) {
 			textBackgroundWidget.style.background = bg;
 		} else {
