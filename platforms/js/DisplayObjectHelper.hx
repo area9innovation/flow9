@@ -1320,13 +1320,15 @@ class DisplayObjectHelper {
 		var alpha = getNativeWidgetAlpha(clip);
 
 		if (untyped clip.isInput) {
+			var showInput = untyped RenderSupport.RendererType != "canvas" || clip.isFocused || clip.multiline || clip.autocomplete != '';
+
 			if (Platform.isEdge || Platform.isIE) {
 				var slicedColor : Array<String> = untyped clip.style.fill.split(",");
-				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (untyped clip.isFocused ? alpha : 0) + ")";
+				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (showInput ? alpha : 0) + ")";
 
 				nativeWidget.style.color = newColor;
 			} else {
-				nativeWidget.style.opacity = untyped clip.isFocused || clip.multiline || clip.autocomplete != '' ? alpha : 0;
+				nativeWidget.style.opacity = showInput ? alpha : 0;
 			}
 		} else {
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;

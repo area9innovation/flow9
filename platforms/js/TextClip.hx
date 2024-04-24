@@ -485,15 +485,11 @@ class TextClip extends NativeWidgetClip {
 				default : null;
 			}
 
-			if (Platform.isEdge || Platform.isIE) {
-				var slicedColor : Array<String> = style.fill.split(",");
-				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? alpha : 0) + ")";
-
-				nativeWidget.style.color = newColor;
-			} else {
-				nativeWidget.style.opacity = (RenderSupport.RendererType != "canvas" || isFocused) ? alpha : 0;
+			if (!(Platform.isEdge || Platform.isIE)) {
 				nativeWidget.style.color = style.fill;
 			}
+
+			this.updateNativeWidgetOpacity();
 		} else {
 			if (escapeHTML) {
 				if (Platform.isIE && isMaterialIconFont()) {
