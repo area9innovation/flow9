@@ -39,9 +39,7 @@ public:
 		instance_ = std::make_unique<ThreadPool>(numThreads);
 	}
 	static inline void release() {
-		std::cout << "going to release ThreadPool..." << std::endl;
 		instance_.reset();
-		std::cout << "ThreadPool is RELEASED" << std::endl;
 	}
 	template<typename R>
     static std::future<R> push(Shutdown behavior, std::function<R()> fn) {

@@ -35,9 +35,7 @@ public:
 		}
 		m_main_ioctx->run ();
 		for (size_t i = 0; i < _threads.size (); ++i) {
-			std::cout << "IoCtxPool -_threads [" << i << "]->join (); ............" << std::endl;
 			_threads [i]->join ();
-			std::cout << "IoCtxPool -_threads [" << i << "]->join (); - DONE" << std::endl;
 		}
 	}
 
@@ -48,7 +46,6 @@ public:
 		for (size_t i = 0; i < m_ioctxs.size (); ++i) {
 			m_ioctxs [i]->stop ();
 		}
-		std::cout << "IoCtxPool - IS STOPPED" << std::endl;
 	}
 
 	size_t NumWorks() {
