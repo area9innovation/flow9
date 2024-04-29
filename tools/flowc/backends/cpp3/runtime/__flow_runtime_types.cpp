@@ -5,7 +5,14 @@
 
 namespace flow {
 
-bool runtime_is_ready = false;
+bool RuntimeStatus::isReady() { return is_ready_; }
+void RuntimeStatus::setReady(bool ready) {
+	//std::cout << "RuntimeStatus::setReady(" << std::to_string(ready) << ")" << std::endl;
+	is_ready_ = ready;
+}
+bool RuntimeStatus::is_ready_ = false;
+int RuntimeStatus::exit_code_ = 0;
+std::thread RuntimeStatus::quit_thread_;
 
 string double2string(Double x, bool persistent_dot) {
 	if (std::isnan(x)) {

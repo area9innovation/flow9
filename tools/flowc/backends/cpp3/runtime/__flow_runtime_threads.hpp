@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <deque>
 #include <future>
+#include <iostream>
 #include "__flow_runtime_memory.hpp"
 
 namespace flow {
@@ -38,7 +39,9 @@ public:
 		instance_ = std::make_unique<ThreadPool>(numThreads);
 	}
 	static inline void release() {
+		std::cout << "going to release ThreadPool..." << std::endl;
 		instance_.reset();
+		std::cout << "ThreadPool is RELEASED" << std::endl;
 	}
 	template<typename R>
     static std::future<R> push(Shutdown behavior, std::function<R()> fn) {
@@ -69,6 +72,9 @@ public:
 			}
 			return -1;
 		}
+	}
+	static void join() {
+		instance_->thread_joiner_.join();
 	}
 private:
 	using Task = std::pair<std::function<void()>, Shutdown>;
@@ -116,6 +122,9 @@ private:
 		public:
 			explicit ThreadsJoiner(std::vector<std::thread>& threads) noexcept: threads_(threads) {}
 			~ThreadsJoiner() {
+				join();
+			}
+			void join() {
 				for (auto& th : threads_) {
 					th.join();
 				}
