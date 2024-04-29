@@ -2521,6 +2521,10 @@ class RenderSupport {
 		clip.setMaxChars(maxChars);
 	}
 
+	public static function setAutofillBackgroundColor(clip : TextClip, autofillBackgroundColor : Int) : Void {
+		clip.setAutofillBackgroundColor(autofillBackgroundColor);
+	}
+
 	public static function addTextInputFilter(clip : TextClip, filter : String -> String) : Void -> Void {
 		return clip.addTextInputFilter(filter);
 	}

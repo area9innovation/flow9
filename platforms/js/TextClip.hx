@@ -134,6 +134,7 @@ class TextClip extends NativeWidgetClip {
 	private var contentGlyphsDirection : String = '';
 	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
+	private var autofillBackgroundColor : Int = null;
 	private var backgroundOpacity : Float = 0.0;
 	private var cursorColor : Int = -1;
 	private var cursorOpacity : Float = -1.0;
@@ -449,8 +450,6 @@ class TextClip extends NativeWidgetClip {
 		super.updateNativeWidgetStyle();
 		var alpha = this.getNativeWidgetAlpha();
 
-		var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
-
 		if (isInput) {
 			nativeWidget.setAttribute("inputMode", type == 'number' ? 'numeric' : type);
 			if (!multiline) {
@@ -498,10 +497,10 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.color = style.fill;
 			}
 
-			if (bg) {
+			if (autofillBackgroundColor != null) {
 				var colorWithOpacity = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * alpha + ")";
 				// These variables are used in the flowjspixi.css file for input:-webkit-autofill workaround
-				nativeWidget.style.setProperty('--background-color', bg);
+				nativeWidget.style.setProperty('--background-color', RenderSupport.makeCSSColor(autofillBackgroundColor, 1));
 				nativeWidget.style.setProperty('--text-color', colorWithOpacity);
 			}
 		} else {
@@ -553,6 +552,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = !this.isHTMLRenderer() || style.fontWeight != 400 ? style.fontWeight : null;
 		nativeWidget.style.fontStyle = !this.isHTMLRenderer() || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize = '${style.fontSize}px';
+		var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
 		if (textBackgroundWidget != null) {
 			textBackgroundWidget.style.background = bg;
 		} else {
@@ -1146,6 +1146,14 @@ class TextClip extends NativeWidgetClip {
 	public function setMaxChars(maxChars : Int) {
 		if (this.maxChars != maxChars) {
 			this.maxChars = maxChars;
+
+			invalidateStyle();
+		}
+	}
+
+	public function setAutofillBackgroundColor(autofillBackgroundColor : Int) {
+		if (this.autofillBackgroundColor != autofillBackgroundColor) {
+			this.autofillBackgroundColor = autofillBackgroundColor;
 
 			invalidateStyle();
 		}
