@@ -60,6 +60,7 @@ class RenderSupport {
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
 	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
+	public static var PinchToScaleEnabled : Bool = true;
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -989,6 +990,9 @@ class RenderSupport {
 
 		if (Platform.isMobile) {
 			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
+				if (!PinchToScaleEnabled) {
+					return false;
+				};
 				if (state == 0) {
 					// On pinch started
 					accessibilityZoomOnPinchStart = getAccessibilityZoom();
@@ -1060,6 +1064,10 @@ class RenderSupport {
 	public static function setApplicationLanguage(languageCode : String) {
 		Browser.document.documentElement.setAttribute("lang", languageCode);
 		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
+	}
+
+	public static function setPinchToScaleEnabled(enabled : Bool) {
+		PinchToScaleEnabled = enabled;
 	}
 
 	public static function getSafeArea() : Array<Float> {
