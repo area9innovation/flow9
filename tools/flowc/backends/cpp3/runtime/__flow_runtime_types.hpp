@@ -112,8 +112,6 @@ void term_all_modules();
 void join_all_modules();
 
 struct RuntimeStatus {
-	//static bool isReady() { return is_ready_; }
-	//static void setReady(bool ready) { is_ready_ = ready; }
 	static bool isReady();
 	static void setReady(bool ready);
 	static std::thread& quitThread() { return quit_thread_; }

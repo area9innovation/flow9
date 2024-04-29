@@ -62,32 +62,22 @@ struct TcpServer {
 		try {
 			int c = 0;
 			for (; IsRun.load ();) {
-				std::cout << "TcpServer cycle " << c++ << " ..." << std::endl;
 				std::shared_ptr<IConn2> _conn = std::shared_ptr<IConn2> ((IConn2 *) new TcpConn2 (co_await Acceptor->async_accept (UseAwaitable)));
 				Tasks::RunAsync ([this, _conn] () -> Task<void> {
 					co_await OnConnect (_conn);
 				});
-				std::cout << "TcpServer cycle " << c << " IS OVER " << std::endl;
 			}
-			std::cout << "TcpServer for quited... " << std::endl;
 		} catch (std::exception e) {
-			std::cout << "TcpServer EXCEPTION: " << e.what() << std::endl;
 		}
-		std::cout << "TcpServer::Run quited... " << std::endl;
 		co_return;
 	}
 	Task<void> Run (uint16_t _port) {
 		co_await Run ("0.0.0.0", _port);
-		std::cout << "TcpServer::Run quited (0)... " << std::endl;
 	}
 	void Stop () {
-		std::cout << "TcpServer going to: IsRun.store (false);" << std::endl;
 		IsRun.store (false);
-		std::cout << "TcpServer is stopped" << std::endl;
 		if (Acceptor) {
-			std::cout << "TcpServer is doing: Acceptor->cancel ()" << std::endl;
 			Acceptor->cancel ();
-			std::cout << "TcpServer: Acceptor->cancel () is done" << std::endl;
 		}
 	}
 
@@ -122,23 +112,24 @@ struct HttpServer {
 						continue;
 					}
 				}
-				auto proc1 = [this, &_req, &_conn](Response& _res1) -> Task<void> {
-					if (_res1.HttpCode == -1) {
-						try {
-							_res1 = co_await m_unhandled_proc (_req);
-						} catch (...) {
-						}
-					}
-					if (_res1.HttpCode == -1)
-						_res1 = Response::FromNotFound ();
-					if (m_after)
-						co_await m_after (_req, _res1);
-					std::string _str_res = _res1.Serilize ();
-					co_await _conn->Send (_str_res.data (), _str_res.size ());
-				};
 				if (m_map_proc1.contains (_req.UrlPath)) {
 					try {
-						co_await m_map_proc1 [_req.UrlPath] (_req, proc1);
+						co_await m_map_proc1 [_req.UrlPath] (_req,
+							[this, &_req, &_conn](Response& _res1) -> Task<void> {
+								if (_res1.HttpCode == -1) {
+									try {
+										_res1 = co_await m_unhandled_proc (_req);
+									} catch (...) {
+									}
+								}
+								if (_res1.HttpCode == -1)
+									_res1 = Response::FromNotFound ();
+								if (m_after)
+									co_await m_after (_req, _res1);
+								std::string _str_res = _res1.Serilize ();
+								co_await _conn->Send (_str_res.data (), _str_res.size ());
+							}
+						);
 					} catch (...) {
 					}
 				} else {
@@ -167,13 +158,10 @@ struct HttpServer {
 			}
 		});
 		co_await m_tcpserver.Run (_port);
-		std::cout << "HttpServer::Run quited (0)... " << std::endl;
 	}
 
 	void Stop () {
-		std::cout << "HttpServer going to: m_tcpserver.Stop ();" << std::endl;
 		m_tcpserver.Stop (); 
-		std::cout << "HttpServer m_tcpserver.Stop (); IS DONE" << std::endl;
 	}
 
 private:
