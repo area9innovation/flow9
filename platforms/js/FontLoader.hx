@@ -6,10 +6,41 @@ import Platform;
 class FontLoader {
 	private static var FontLoadingTimeout = 30000; //ms
 
+	// Parse css rules from a stylesheet and preload fonts
+	private static function loadFontsFromStylesheet(name: String) {
+		var fontFamilies = [];
+		untyped Array.from(Browser.document.styleSheets).forEach(function(sheet) {
+			try {
+				if (sheet.href != null && sheet.href.includes(name)) {
+					var rules = sheet.cssRules || sheet.rules; // cssRules for standard browsers, rules for IE
+					untyped Array.from(rules).forEach(function(rule) {
+						var regex = ~/font-family:\s*(['"]?)([^'";]+)\1;/g;
+						var match;
+						var cssText = rule.cssText;
+
+						while (regex.match(cssText)) {
+							cssText = regex.matchedRight();
+							var family = regex.matched(2);
+							if (fontFamilies.indexOf(family) < 0) {
+								fontFamilies.push(family);
+								addStyledTexts(family, null, null);
+							}
+						}
+					});
+				}
+			} catch (e) {
+				untyped console.error("Could not access CSS rules from a stylesheet.", e);
+			}
+		});
+		return fontFamilies;
+	}
+
 	public static function loadPreconfiguredWebFonts(names : Array<String>, onDone : Void -> Void) {
 		var config : Dynamic = haxe.Json.parse(haxe.Resource.getString("webfontconfig"));
 		var fontFields = ["google", "custom"];
-		for (i in 0...names.length) untyped loadCSSFileInternal("fonts/"+names[i]+"/def.css");
+		for (i in 0...names.length) untyped loadCSSFileInternal("fonts/"+names[i]+"/def.css", function() {
+			loadFontsFromStylesheet("fonts/"+names[i]+"/def.css");
+		});
 
 		for (i in 0...fontFields.length) {
 			var fontFieldsConfig = Reflect.field(config, fontFields[i]);

@@ -126,19 +126,21 @@ function loadJSFileInternal(url) {
 	return loadJSFile(url);
 }
 
-function loadCSSFile(url) {
+function loadCSSFile(url, onload = null, onerror = null) {
 	var head = document.getElementsByTagName('head')[0];
 	var node = document.createElement("link");
+	node.onload = onload;
+	node.onerror = onerror;
 	node.setAttribute("rel", "stylesheet");
 	node.setAttribute("type", "text/css");
 	node.setAttribute("href", url);
 	head.appendChild(node);
 }
 
-function loadCSSFileInternal(url) {
+function loadCSSFileInternal(url, onload = null, onerror = null) {
 	var urlObj = parseUrl(url);
 	if (urlObj.origin) throw new PermissionDeniedError("External style loading is not allowed.");
-	return loadCSSFile(url);
+	return loadCSSFile(url, onload, onerror);
 }
 
 function loadFavicon(url) {
