@@ -25,6 +25,10 @@ template<> inline void _OptionApply (Request &_r, content_type &_ct) { _r.Header
 template<> inline void _OptionApply (Request &_r, referer &_re) { _r.Headers [_re.m_key] = _re.m_value; }
 template<> inline void _OptionApply (Request &_r, user_agent &_ua) { _r.Headers [_ua.m_key] = _ua.m_value; }
 template<> inline void _OptionApply (Request &_r, url_kv &_pd) { _r.QueryItems.push_back (_pd); }
+template<> inline void _OptionApply (Request &_r, url_kvs &_body) {
+	for (auto &[_k, _v] : _body.Kvs)
+		_r.QueryItems.push_back (url_kv { _k, _v });
+}
 template<> inline void _OptionApply (Request &_r, body_kv &_pd) { _r.ContentItems.push_back (_pd); }
 template<> inline void _OptionApply (Request &_r, body_file &_pf) { _r.ContentItems.push_back (_pf); }
 template<> inline void _OptionApply (Request &_r, body_kvs &_body) {
