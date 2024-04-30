@@ -19,6 +19,10 @@ inline void _OptionApply (Request &_r, _Op1 &_op) { throw Exception ("Unsupporte
 template<> inline void _OptionApply (Request &_r, timeout &_t) { _r.Timeout = _t.m_exp; }
 template<> inline void _OptionApply (Request &_r, server &_s) { _r.Server = _s.m_ip; }
 template<> inline void _OptionApply (Request &_r, header &_hh) { _r.Headers [_hh.m_key] = _hh.m_value; }
+template<> inline void _OptionApply (Request &_r, headers &_hs) {
+	for (auto &[_k, _v] : _hs.Kvs)
+		_r.Headers [_k] = _v;
+}
 template<> inline void _OptionApply (Request &_r, authorization &_auth) { _r.Headers [_auth.m_key] = _auth.m_value; }
 template<> inline void _OptionApply (Request &_r, connection &_co) { _r.Headers [_co.m_key] = _co.m_value; }
 template<> inline void _OptionApply (Request &_r, content_type &_ct) { _r.Headers [_ct.m_key] = _ct.m_value; }

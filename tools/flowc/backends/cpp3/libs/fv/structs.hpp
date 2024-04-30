@@ -42,6 +42,11 @@ struct header {
 	std::string m_key, m_value;
 	header (std::string _key, std::string _value): m_key (_key), m_value (_value) {}
 };
+
+struct headers {
+	std::map<std::string, std::string> Kvs;
+	headers (std::map<std::string, std::string> _kvs): Kvs (std::move (_kvs)) {}
+};
 struct authorization: public header {
 	authorization (std::string _auth): header ("Authorization", _auth) {}
 	authorization (std::string _uid, std::string _pwd): header ("Authorization", fmt::format ("Basic {}", base64_encode (fmt::format ("{}:{}", _uid, _pwd)))) {}
@@ -82,13 +87,13 @@ template<typename T>
 concept TOption = std::is_same<T, timeout>::value || std::is_same<T, server>::value ||
 std::is_same<T, header>::value || std::is_same<T, authorization>::value || std::is_same<T, connection>::value ||
 std::is_same<T, content_type>::value || std::is_same<T, referer>::value || std::is_same<T, user_agent>::value ||
-std::is_same<T, url_kv>::value || std::is_same<T, url_kvs>::value;
+std::is_same<T, url_kv>::value || std::is_same<T, url_kvs>::value || std::is_same<T, headers>::value;
 template<typename T>
 concept TFormOption = std::is_same<T, timeout>::value || std::is_same<T, server>::value ||
 std::is_same<T, header>::value || std::is_same<T, authorization>::value || std::is_same<T, connection>::value ||
 std::is_same<T, content_type>::value || std::is_same<T, referer>::value || std::is_same<T, user_agent>::value ||
 std::is_same<T, url_kv>::value || std::is_same<T, body_kv>::value || std::is_same<T, body_file>::value ||
-std::is_same<T, body_kvs>::value || std::is_same<T, url_kvs>::value;
+std::is_same<T, body_kvs>::value || std::is_same<T, url_kvs>::value || std::is_same<T, headers>::value;
 template<typename T>
 concept TBodyOption = std::is_same<T, body_json>::value || std::is_same<T, body_raw>::value;
 }
