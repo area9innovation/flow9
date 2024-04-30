@@ -1,13 +1,15 @@
 [
 
-Cpp3Native("createHttpServer", false,
-"Fun<Void>* $F_1(createHttpServer)(
+Cpp3Native("createHttpServer111", false,
+"
+// This is a direct implementation of createHttpServer, bypassing createHttpServerNative
+Fun<Void>* $F_1(createHttpServer111)(
 	Int port,
 	Fun<Void>* onOpen,
 	Fun<Void, $F_0(HttpRequest)*, Fun<Void, $F_0(HttpResponse)*>*>* onMessage
 );
 ",
-"Fun<Void>* $F_1(createHttpServer)(
+"Fun<Void>* $F_1(createHttpServer111)(
 	Int port,
 	Fun<Void>* onOpen,
 	Fun<Void, $F_0(HttpRequest)*, Fun<Void, $F_0(HttpResponse)*>*>* onMessage
@@ -27,6 +29,10 @@ Cpp3Native("createHttpServer", false,
 					fv::Response response;
 					response.HttpCode = resp->get<0>();
 					response.Content = resp->get<1>()->toStd();
+					for ($F_0(KeyValue)* kv: *resp->get<2>()) {
+						response.Headers[kv->get<0>()->toStd()] = kv->get<1>()->toStd();
+					}
+					//response.Headers = HttpSupport::pairs2map<HttpSupport::MapCI>(resp->get<2>());
 					decRc(resp);
 					asio::io_context ctx;
 					asio::co_spawn(
@@ -59,13 +65,13 @@ Cpp3Native("createHttpServerNative", false,
 	Fun<Void>* onOpen,
 	Fun<
 		Void,
-		String*,
-		String*,
-		String*,
-		Vec<Vec<String*>*>*,
-		Fun<Void, String*>*,
-		Fun<Void, String*, Vec<String*>*>*,
-		Fun<Void, Int>*
+		String*, // url
+		String*, // body
+		String*, // method
+		Vec<Vec<String*>*>*, // headers
+		Fun<Void, String*>*, // endResponse
+		Fun<Void, String*, Vec<String*>*>*, // setHeaders
+		Fun<Void, Int>* // setStatus
 	>* onMessage
 );\n",
 "Native* $F_1(createHttpServerNative)(
@@ -76,30 +82,86 @@ Cpp3Native("createHttpServerNative", false,
 	Fun<Void>* onOpen,
 	Fun<
 		Void,
-		String*,
-		String*,
-		String*,
-		Vec<Vec<String*>*>*,
-		Fun<Void, String*>*,
-		Fun<Void, String*, Vec<String*>*>*,
-		Fun<Void, Int>*
+		String*, // url
+		String*, // body
+		String*, // method
+		Vec<Vec<String*>*>*, // headers
+		Fun<Void, String*>*, // endResponse
+		Fun<Void, String*, Vec<String*>*>*, // setHeaders
+		Fun<Void, Int>* // setStatus
 	>* onMessage
 ) {
 	// TODO: fill in the stub
+	if (pfxPath->size() > 0 || pfxPassword->size() > 0) {
+		fail(\"createHttpServerNative: ssl mode is not implemented\");
+	}
+	if (isHttps) {
+		fail(\"createHttpServerNative: https mode is not implemented\");
+	}
 	decRc(pfxPath);
 	decRc(pfxPassword);
-	decRc(onOpen);
-	decRc(onMessage);
-	fail(\"createHttpServerNative is not implemented - use createHttpServer directly\");
-	return Native::make(0, [](){});
+
+	fv::HttpServer* server = new fv::HttpServer();
+	HttpSupport::registerServer(server);
+	fv::Tasks::RunAsync([server, port, onOpen, onMessage]() -> Task<void> {
+		server->SetHttpHandler1 (\"/\", [onMessage] (fv::Request& req, std::function<Task<void>(fv::Response&)> on_resp) -> Task<void> {
+			Int code = 200;
+			HttpSupport::MapCI headers;
+			onMessage->callRc1(
+				String::make(req.Url),
+				String::make(req.Content),
+				HttpSupport::methodType2s(req.Method),
+				HttpSupport::map2pairs(req.Headers),
+				Fun<Void, String*>::make([on_resp, code, &headers](String* body) -> Void {
+					fv::Response response;
+					response.HttpCode = code;
+					response.Content = body->toStd();
+					response.Headers = headers;
+					decRc(body);
+					asio::io_context ctx;
+					asio::co_spawn(
+						ctx.get_executor(),
+						on_resp(response),
+						[](std::exception_ptr ptr) { if (ptr) std::rethrow_exception(ptr); }
+					);
+					ctx.run();
+					return void_value;
+				}),
+				Fun<Void, String*, Vec<String*>*>::make([&headers](String* key, Vec<String*>* vals) {
+					std::string vals_str;
+					bool first = true;
+					for (String* val: *vals) {
+						vals_str += first ? val->toStd() : \", \" + val->toStd();
+						first = false;
+					}
+					headers[key->toStd()] = vals_str;
+					decRc(key);
+					decRc(vals);
+					return void_value;
+				}),
+				Fun<Void, Int>::make([&code](Int c) {
+					code = c;
+					return void_value;
+				})
+			);
+			co_return;
+		});
+		onOpen->callRc();
+		co_await server->Run(port);
+	});
+	Fun<Void>* close = Fun<Void>::make([server, onMessage]() -> Void {
+		server->Stop();
+		decRc(onMessage);
+		return void_value;
+	});
+	return Native::make(close, [close](){ decRc(close); });
 }\n", "", [], []),
 
 Cpp3Native("closeHttpServerNative", false,
-"Void $F_1(closeHttpServerNative)(Native* server);\n",
-"Void $F_1(closeHttpServerNative)(Native* server) {
-	// TODO: fill in the stub
-	decRc(server);
-	fail(\"closeHttpServerNative is not implemented - use createHttpServer directly\");
+"Void $F_1(closeHttpServerNative)(Native* close);\n",
+"Void $F_1(closeHttpServerNative)(Native* close) {
+	close->get<Fun<Void>*>()->callRc1();
+	decRc(close);
 	return void_value;
 }\n", "", [], [])
 

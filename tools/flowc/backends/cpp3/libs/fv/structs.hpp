@@ -54,6 +54,10 @@ struct url_kv {
 	std::string Name, Value;
 	url_kv (std::string _name, std::string _value): Name (_name), Value (_value) {}
 };
+struct url_kvs {
+	std::map<std::string, std::string> Kvs;
+	url_kvs (std::map<std::string, std::string> _kvs): Kvs (std::move (_kvs)) {}
+};
 struct body_kv {
 	std::string Name, Value;
 	body_kv (std::string _name, std::string _value): Name (_name), Value (_value) {}
@@ -78,13 +82,13 @@ template<typename T>
 concept TOption = std::is_same<T, timeout>::value || std::is_same<T, server>::value ||
 std::is_same<T, header>::value || std::is_same<T, authorization>::value || std::is_same<T, connection>::value ||
 std::is_same<T, content_type>::value || std::is_same<T, referer>::value || std::is_same<T, user_agent>::value ||
-std::is_same<T, url_kv>::value;
+std::is_same<T, url_kv>::value || std::is_same<T, url_kvs>::value;
 template<typename T>
 concept TFormOption = std::is_same<T, timeout>::value || std::is_same<T, server>::value ||
 std::is_same<T, header>::value || std::is_same<T, authorization>::value || std::is_same<T, connection>::value ||
 std::is_same<T, content_type>::value || std::is_same<T, referer>::value || std::is_same<T, user_agent>::value ||
 std::is_same<T, url_kv>::value || std::is_same<T, body_kv>::value || std::is_same<T, body_file>::value ||
-std::is_same<T, body_kvs>::value;
+std::is_same<T, body_kvs>::value || std::is_same<T, url_kvs>::value;
 template<typename T>
 concept TBodyOption = std::is_same<T, body_json>::value || std::is_same<T, body_raw>::value;
 }
