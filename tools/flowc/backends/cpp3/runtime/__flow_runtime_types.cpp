@@ -1,4 +1,3 @@
-//#include <iostream>
 #include <iomanip>
 #include <cmath>
 #include "__flow_runtime.hpp"
@@ -7,7 +6,6 @@ namespace flow {
 
 bool RuntimeStatus::isReady() { return is_ready_; }
 void RuntimeStatus::setReady(bool ready) {
-	//std::cout << "RuntimeStatus::setReady(" << std::to_string(ready) << ")" << std::endl;
 	is_ready_ = ready;
 }
 bool RuntimeStatus::is_ready_ = false;
