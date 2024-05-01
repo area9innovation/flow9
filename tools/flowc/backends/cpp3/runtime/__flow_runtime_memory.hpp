@@ -7,7 +7,7 @@
 #include <thread>
 #include <tuple>
 #include <stack>
-#include <meminfo.h>
+#include "parallel_hashmap/meminfo.h"
 #include "__flow_runtime_types.hpp"
 
 namespace flow {

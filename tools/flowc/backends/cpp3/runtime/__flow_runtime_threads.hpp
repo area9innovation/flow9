@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <deque>
 #include <future>
+#include <iostream>
 #include "__flow_runtime_memory.hpp"
 
 namespace flow {
@@ -70,6 +71,9 @@ public:
 			return -1;
 		}
 	}
+	static void join() {
+		instance_->thread_joiner_.join();
+	}
 private:
 	using Task = std::pair<std::function<void()>, Shutdown>;
 	template<typename R>
@@ -116,6 +120,9 @@ private:
 		public:
 			explicit ThreadsJoiner(std::vector<std::thread>& threads) noexcept: threads_(threads) {}
 			~ThreadsJoiner() {
+				join();
+			}
+			void join() {
 				for (auto& th : threads_) {
 					th.join();
 				}
