@@ -5,6 +5,7 @@
 #include <ostream>
 #include <type_traits>
 #include <stdexcept>
+#include <thread>
 
 namespace flow {
 
@@ -108,7 +109,18 @@ inline constexpr bool gather_string_leng_stats = false;
 
 void init_all_modules();
 void term_all_modules();
+void join_all_modules();
 
-extern bool runtime_is_ready;
+struct RuntimeStatus {
+	static bool isReady();
+	static void setReady(bool ready);
+	static std::thread& quitThread() { return quit_thread_; }
+	static void setExitCode(int code) { exit_code_ = code; }
+	static int getExitCode() { return exit_code_; }
+private:
+	static bool is_ready_;
+	static int exit_code_;
+	static std::thread quit_thread_;
+};
 
 }

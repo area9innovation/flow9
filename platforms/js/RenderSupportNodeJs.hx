@@ -149,6 +149,8 @@ class RenderSupport {
 
 	public static function setMaxChars(textfield : Dynamic, maxChars : Int) : Void {}
 
+	public static function setAutofillBackgroundColor(textfield : Dynamic, autofillBackgroundColor : Int) : Void {}
+
 	// native addChild : (parent : native, child : native) -> void
 	public static function addChild(parent : Dynamic, child : Dynamic) : Void {}
 
