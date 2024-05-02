@@ -170,6 +170,7 @@ function startHttpServer() {
 		serverChannel.show(true);
 		httpServer = tools.launchFlowcHttpServer(
 			getFlowRoot(),
+			getFlowCompiler(),
 			showHttpServerOnline,
 			showHttpServerOffline,
 			(msg : any) => serverChannel.appendLine(msg)
@@ -219,8 +220,7 @@ async function startLspClient() {
 			protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
 		},
 		markdown: {
-			isTrusted: true,
-			supportHtml: true
+			isTrusted: true
 		}
 	}
 
