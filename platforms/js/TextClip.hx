@@ -1,5 +1,6 @@
 import js.Browser;
 import js.html.Event;
+import js.lib.Set;
 import pixi.core.text.Text in PixiCoreText;
 import pixi.core.text.TextMetrics;
 import pixi.core.text.TextStyle;
@@ -188,6 +189,10 @@ class TextClip extends NativeWidgetClip {
 	private var preventMouseUpEvent : Bool = false;
 	private var preventEnsureCurrentInputVisible : Bool = false;
 	private var preventCheckTextNodeWidth : Bool = false;
+	
+	private var scheduledForceUpdate : Bool = false;  
+	private static var onFontLoadedListenerInitialized : Bool = false;  
+	private static var scheduledForceUpdateTree : Map<String, Set<TextClip>> = new Map();  
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -1765,24 +1770,54 @@ class TextClip extends NativeWidgetClip {
 
 		if (useForcedUpdateTextWidth) {
 			try {
-				if (Browser.document.fonts.status == LOADING) {
-					Browser.document.fonts.addEventListener('loadingdone', function() {
-						RenderSupport.defer(function() {
-							updateTextWidth();
-							if (style.wordWrap) {
-								updateTextMetrics();
-								this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
-							}
-						}, 600);
-					});
-				}
-			} catch (e : Dynamic) {}
+				scheduleForceUpdateTextWidth();
+			} catch (e : Dynamic) {
+				untyped console.log(e);
+			}
 		}
-
 
 		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && !isMaterialIconFont()) {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
+	}
+
+	private function scheduleForceUpdateTextWidth() {
+		if (Browser.document.fonts.status == LOADING && !scheduledForceUpdate) {
+			if (!TextClip.onFontLoadedListenerInitialized) {
+				Browser.document.fonts.addEventListener('loadingdone', function(event : Dynamic) {
+					event.fontfaces.forEach(function(fontface, key, set) {
+						var fontFamilySet = TextClip.scheduledForceUpdateTree.get(fontface.family);
+						if (fontFamilySet != null) {
+							fontFamilySet.forEach(function(clip : TextClip, key, set) {
+								clip.forceUpdateTextWidth();
+							});
+							TextClip.scheduledForceUpdateTree.remove(fontface.family);
+						}
+					});
+				});
+				TextClip.onFontLoadedListenerInitialized = true;
+			}
+
+			var fontFamilySet = TextClip.scheduledForceUpdateTree.get(this.style.fontFamily);
+			if (fontFamilySet == null) {
+				fontFamilySet = new Set();
+				TextClip.scheduledForceUpdateTree.set(this.style.fontFamily, fontFamilySet);
+			}
+			fontFamilySet.add(this);
+
+			scheduledForceUpdate = true;
+		}
+	}
+	
+	private function forceUpdateTextWidth() {
+		RenderSupport.defer(function() {
+			scheduledForceUpdate = false;
+			updateTextWidth();
+			if (style.wordWrap) {
+				updateTextMetrics();
+				this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
+			}
+		}, 600);
 	}
 
 	private function updateTextWidth() : Void {
