@@ -145,6 +145,13 @@ struct Session {
 		_OptionApplys (_r, _ops...);
 		co_return co_await DoMethod (_r);
 	}
+	template<TBodyOption _Body, TOption ..._Ops>
+	Task<Response> Get (std::string _url, _Body _body, _Ops ..._ops) {
+		Request _r { _url, MethodType::Get };
+		_OptionApplyBody (_r, _body);
+		_OptionApplys (_r, _ops...);
+		co_return co_await DoMethod (_r);
+	}
 
 	template<TFormOption ..._Ops>
 	Task<Response> Post (std::string _url, _Ops ..._ops) {
@@ -280,6 +287,13 @@ template<TOption ..._Ops>
 inline Task<Response> Get (std::string _url, _Ops ..._ops) {
 	Session _sess = SessionPool::GetSession (_url);
 	Response _ret = co_await _sess.Get (_url, std::forward<_Ops> (_ops)...);
+	SessionPool::FreeSession (_sess);
+	co_return _ret;
+}
+template<TBodyOption _Body, TOption ..._Ops>
+inline Task<Response> Get (std::string _url, _Body _body, _Ops ..._ops) {
+	Session _sess = SessionPool::GetSession (_url);
+	Response _ret = co_await _sess.Get (_url, std::forward<_Body> (_body), std::forward<_Ops> (_ops)...);
 	SessionPool::FreeSession (_sess);
 	co_return _ret;
 }
