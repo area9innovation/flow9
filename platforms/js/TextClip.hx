@@ -1989,11 +1989,10 @@ class TextClip extends NativeWidgetClip {
 			textNodeMetrics.height = 0;
 			textNodeMetrics.x = 0;
 		} else {
-			var textNode = useCheck ? nativeWidget.lastChild : nativeWidget;
 			if (useCheck) {
 				updateTextNodesWidth(untyped nativeWidget.childNodes, textNodeMetrics);
 			}
-			updateTextNodeHeight(textNode, textNodeMetrics, useCheck, transform);
+			updateTextNodesHeight(nativeWidget, textNodeMetrics, useCheck, transform);
 		}
 		return textNodeMetrics;
 	}
@@ -2041,7 +2040,27 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private static function updateTextNodeHeight(textNode, textNodeMetrics, useCheck, transform) {
+	private static function updateTextNodesHeight(nativeWidget, textNodeMetrics, useCheck, transform) {
+		if (useCheck) {
+			textNodeMetrics.height = 0.0;
+			var children = untyped nativeWidget.childNodes;
+			for (i in 0 ... children.length) {
+				updateTextNodeHeight(children[i], textNodeMetrics, useCheck, transform);
+			}
+		} else {
+			updateTextNodeHeight(nativeWidget, textNodeMetrics, useCheck, transform);
+		}
+	}
+
+	private static function updateTextNodeHeight(textNode : js.html.Node, textNodeMetrics, useCheck, transform) {
+		if (untyped textNode.classList != null && (
+			textNode.classList.contains("textBackgroundWidget")
+			|| textNode.classList.contains("baselineWidget")
+			|| textNode.classList.contains("amiriItalicWorkaroundWidget")
+		)) {
+			return;
+		}
+
 		if (Browser.document.createRange != null) {
 			var range = Browser.document.createRange();
 			range.selectNodeContents(textNode);
@@ -2049,7 +2068,7 @@ class TextClip extends NativeWidgetClip {
 				var rect = range.getBoundingClientRect();
 				if (rect != null) {
 					var viewportScale = RenderSupport.getViewportScale();
-					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;
+					textNodeMetrics.height += (rect.bottom - rect.top) * viewportScale;
 					if (!useCheck) {
 						var computedStyle = Browser.window.getComputedStyle(untyped textNode);
 						var letSp = Std.parseFloat(computedStyle.letterSpacing);
