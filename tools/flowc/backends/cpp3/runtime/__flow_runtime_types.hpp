@@ -36,6 +36,7 @@ void copyString2std(const string& str, std::string& s);
 void copyStd2string(const std::string& str, string& s);
 void string2ostream(const string& str, std::ostream& os);
 void istream2string(std::istream& is, string& str);
+void charArray2string(const char* s, std::size_t len, string& str);
 inline std::string string2std(const string& str) { std::string s; copyString2std(str, s); return s; }
 inline string std2string(const std::string& str) { string s; copyStd2string(str, s); return s; }
 
@@ -114,9 +115,16 @@ void join_all_modules();
 struct RuntimeStatus {
 	static bool isReady();
 	static void setReady(bool ready);
-	static std::thread& quitThread() { return quit_thread_; }
 	static void setExitCode(int code) { exit_code_ = code; }
 	static int getExitCode() { return exit_code_; }
+	static void initQuit(std::function<void()>&& q) {
+		quit_thread_ = std::move(std::thread(std::move(q)));
+	}
+	static void waitForQuit() {
+		if (quit_thread_.joinable()) {
+			quit_thread_.join();
+		}
+	}
 private:
 	static bool is_ready_;
 	static int exit_code_;

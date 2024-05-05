@@ -84,7 +84,9 @@ void string2ostream(const string& str, std::ostream& os) {
 }
 
 void copyStd2string(const std::string& s, string& str) {
-	std::size_t len = 0;
+	str.reserve(str.size() + s.size());
+	charArray2string(s.data(), s.size(), str);
+	/*std::size_t len = 0;
 	for (std::size_t i = 0; i < s.length(); ++i) {
 		uint8_t ch = s.at(i);
 		if ((ch & 0xFC) == 0xF8 && i < len - 4) {
@@ -164,76 +166,119 @@ void copyStd2string(const std::string& s, string& str) {
 			char16_t h = b1 & 0xff;
 			str.push_back(h);
 		}
-	}
+	}*/
 }
 
 void istream2string(std::istream& is, string& str) {
 	std::size_t len = is.tellg();
 	is.seekg(0);
 	str.reserve(str.length() + len);
-	for (std::size_t i = 0; i < len; ++ i) {
-		uint8_t b1 = is.get();
-
-		if ((b1 & 0xFC) == 0xF8 && i < len - 4) {
-			uint8_t b2 = is.get();
-			uint8_t b3 = is.get();
-			uint8_t b4 = is.get();
-			uint8_t b5 = is.get();
-			i += 4;
-
-			uint32_t h1 = (b1 & 0x3)  << 24;
-			uint32_t h2 = (b2 & 0x3F) << 18;
-			uint32_t h3 = (b3 & 0x3F) << 12;
-			uint32_t h4 = (b4 & 0x3F) << 6;
-			uint32_t h5 = 0x3F & b5;
-
-			uint32_t h = h1 | h2 | h3 | h4 | h5;
-
-			// Surrogate pair
-			h = h - UNI_HALF_BASE;
-			str.push_back((char16_t) ((h >> UNI_HALF_SHIFT)   + UNI_SUR_HIGH_START));
-			str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
-		} else if ((b1 & 0xF8) == 0xF0 && i < len - 3) {
-			uint8_t b2 = is.get();
-			uint8_t b3 = is.get();
-			uint8_t b4 = is.get();
-			i += 3;
-
-			uint32_t h1 = (b1 & 0x7)  << 18;
-			uint32_t h2 = (b2 & 0x3F) << 12;
-			uint32_t h3 = (b3 & 0x3F) << 6;
-			uint32_t h4 = 0x3F & b4;
-
-			uint32_t h = h1 | h2 | h3 | h4;
-
-			// Surrogate pair
-			h = h - UNI_HALF_BASE;
-			str.push_back((char16_t) ((h >> UNI_HALF_SHIFT)   + UNI_SUR_HIGH_START));
-			str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
-		} else if ((b1 & 0xF0) == 0xE0 && i < len - 2) {
-			uint8_t b2 = is.get();
-			uint8_t b3 = is.get();
-			i += 2;
-
-			char16_t h1 = (b1 & 0xF)  << 12;
-			char16_t h2 = (b2 & 0x3F) << 6;
-			char16_t h3 = 0x3F & b3;
-
-			char16_t h = h1 | h2 | h3;
-
-			str.push_back(h);
-		} else if ((b1 & 0xE0) == 0xC0 && i < len - 1) {
-			uint8_t b2 = is.get();
-			i += 1;
-
-			char16_t h1 = (b1 & 0x1F) << 6;
-			char16_t h2 = 0x3F & b2;
-			char16_t h = h1 | h2;
-
-			str.push_back(h);
+	std::unique_ptr<char[]> data = std::make_unique<char[]>(len);
+	char* s = data.get();
+	is.read(s, len);
+	charArray2string(s, len, str);
+}
+/*
+void charArray2stringImpl2(const char* s, const char* end, string& str) {
+	while (s < end) {
+		uint8_t b1 = *(s++);
+		if (b1 <= 0x7F) {
+			str.push_back(b1);
 		} else {
-			char16_t h = b1 & 0xff;
-			str.push_back(h);
+			uint8_t b2 = *(s++);
+			if ((b1 & 0xE0) == 0xC0) {
+				char16_t h1 = (b1 & 0x1F) << 6;
+				char16_t h2 = 0x3F & b2;
+				char16_t h = h1 | h2;
+				str.push_back(h);
+			} else {
+				uint8_t b3 = *(s++);
+				if ((b1 & 0xF0) == 0xE0) {
+					char16_t h1 = (b1 & 0xF)  << 12;
+					char16_t h2 = (b2 & 0x3F) << 6;
+					char16_t h3 = 0x3F & b3;
+					char16_t h = h1 | h2 | h3;
+					str.push_back(h);
+				} else {
+					uint8_t b4 = *(s++);
+					if ((b1 & 0xF8) == 0xF0) {
+						uint32_t h1 = (b1 & 0x7)  << 18;
+						uint32_t h2 = (b2 & 0x3F) << 12;
+						uint32_t h3 = (b3 & 0x3F) << 6;
+						uint32_t h4 = 0x3F & b4;
+						uint32_t h = h1 | h2 | h3 | h4;
+						// Surrogate pair
+						h = h - UNI_HALF_BASE;
+						str.push_back((char16_t) ((h >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
+						str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
+					} else {
+						uint8_t b5 = *(s++);
+						uint32_t h1 = (b1 & 0x3)  << 24;
+						uint32_t h2 = (b2 & 0x3F) << 18;
+						uint32_t h3 = (b3 & 0x3F) << 12;
+						uint32_t h4 = (b4 & 0x3F) << 6;
+						uint32_t h5 = 0x3F & b5;
+						uint32_t h = h1 | h2 | h3 | h4 | h5;
+						// Surrogate pair
+						h = h - UNI_HALF_BASE;
+						str.push_back((char16_t) ((h >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
+						str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
+					}
+				}
+			}
+		}
+	}
+}
+*/
+void charArray2string(const char* s, std::size_t len, string& str) {
+	str.reserve(str.length() + len);
+	const char* end = s + len;
+	while (s < end) {
+		uint8_t b1 = *(s++);
+		if (b1 <= 0x7F) {
+			str.push_back(b1);
+		} else {
+			uint8_t b2 = *(s++);
+			if ((b1 & 0xE0) == 0xC0) {
+				char16_t h1 = (b1 & 0x1F) << 6;
+				char16_t h2 = 0x3F & b2;
+				char16_t h = h1 | h2;
+				str.push_back(h);
+			} else {
+				uint8_t b3 = *(s++);
+				if ((b1 & 0xF0) == 0xE0) {
+					char16_t h1 = (b1 & 0xF)  << 12;
+					char16_t h2 = (b2 & 0x3F) << 6;
+					char16_t h3 = 0x3F & b3;
+					char16_t h = h1 | h2 | h3;
+					str.push_back(h);
+				} else {
+					uint8_t b4 = *(s++);
+					if ((b1 & 0xF8) == 0xF0) {
+						uint32_t h1 = (b1 & 0x7)  << 18;
+						uint32_t h2 = (b2 & 0x3F) << 12;
+						uint32_t h3 = (b3 & 0x3F) << 6;
+						uint32_t h4 = 0x3F & b4;
+						uint32_t h = h1 | h2 | h3 | h4;
+						// Surrogate pair
+						h = h - UNI_HALF_BASE;
+						str.push_back((char16_t) ((h >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
+						str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
+					} else {
+						uint8_t b5 = *(s++);
+						uint32_t h1 = (b1 & 0x3)  << 24;
+						uint32_t h2 = (b2 & 0x3F) << 18;
+						uint32_t h3 = (b3 & 0x3F) << 12;
+						uint32_t h4 = (b4 & 0x3F) << 6;
+						uint32_t h5 = 0x3F & b5;
+						uint32_t h = h1 | h2 | h3 | h4 | h5;
+						// Surrogate pair
+						h = h - UNI_HALF_BASE;
+						str.push_back((char16_t) ((h >> UNI_HALF_SHIFT) + UNI_SUR_HIGH_START));
+						str.push_back((char16_t) ((h & UNI_HALF_MASK) + UNI_SUR_LOW_START));
+					}
+				}
+			}
 		}
 	}
 }

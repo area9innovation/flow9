@@ -48,6 +48,11 @@ inline void appendBinaryInt32(Int v, string& s) {
 	appendCharValue(i.chars.c1, s);
 }
 void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<Int>& structDefs);
+
+void decodeBinaryArray(const char16_t*& s, const char16_t* end, Flow* default_, Vec<Vec<Flow*>*>* structDefs, Int n, Vec<Flow*>* arr);
+
+Flow* decodeBinary(const char16_t*& s, const char16_t* end, Flow* default_, Vec<Vec<Flow*>*>* structDefs);
+
 ",
 "
 void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<Int>& structDefs) {
@@ -131,6 +136,121 @@ void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structI
 	}
 	decRc(v);
 }
+
+Flow* decodeBinary(const char16_t*& s, const char16_t* end, Flow* default_, Vec<Vec<Flow*>*>* structDefs) {
+	if (s >= end) {
+		return default_;
+	} else {
+		char16_t word = *(s++);
+		switch (word) {
+			case 0xFFF4: {
+				// struct
+				Int struct_ind = *(s++);
+				if (struct_ind < structDefs->size()) {
+					Vec<Flow*>* def = structDefs->get(struct_ind);
+					Int nargs = dynamic_cast<FInt*>(def->get(0))->val;
+					String* name = dynamic_cast<String*>(def->get(1));
+					Vec<Flow*>* args = Vec<Flow*>::make(nargs);
+					while (nargs-- > 0) {
+						args->pushBack(decodeBinary(s, end, default_, structDefs));
+					}
+					TypeId struct_id = Dyn::structId(name->str());
+					if (struct_id == -1) {
+						return default_;
+					} else {
+						return Dyn::structDef(struct_id).constructor(args);
+					}
+				} else {
+					return default_;
+				}
+			}
+			case 0xFFF6: {
+				// ref
+				return Ref<Flow*>::make(decodeBinary(s, end, default_, structDefs));
+			}
+			case 0xFFFA: {
+				// string, < 65536 length
+				Int len = *(s++);
+				string str(s, len);
+				s += len;
+				return String::make(std::move(str));
+			}
+			case 0xFFFC: {
+				// double
+				char16_t d1 = *(s++);
+				char16_t d2 = *(s++);
+				char16_t d3 = *(s++);
+				char16_t d4 = *(s++);
+				DoubleOrChars dorchars(d1, d2, d3, d4);
+				return FDouble::make(dorchars.double_);
+			}
+			case 0xFFF5: {
+				// int, long
+				char16_t i1 = *(s++); char16_t i2 = *(s++); 
+				IntOrChars iorchars(i1, i2);
+				return FInt::make(iorchars.int_);
+			}
+			case 0xFFF3: {
+				// special case for ints in range to avoid issues with UCS-2/UTF16 encoding in JS
+				// they are stored as two long integers: value & 0xF0F0F0F0 and value & 0x0F0F0F0F
+				char16_t i1 = *(s++); char16_t i2 = *(s++);
+				char16_t i3 = *(s++); char16_t i4 = *(s++);
+				IntOrChars iorchars1(i1, i2);
+				IntOrChars iorchars2(i3, i4);
+				return FInt::make(iorchars1.int_ | iorchars2.int_);
+			}
+			case 0xFFFD: {
+				// false
+				return FBool::make(false);
+			}
+			case 0xFFFE: {
+				// true
+				return FBool::make(true);
+			}
+			case 0xFFF8: {
+				// array, < 65536 length
+				Int len = *(s++);
+				Vec<Flow*>* arr = Vec<Flow*>::make(len);
+				while (len-- > 0) {
+					arr->pushBack(decodeBinary(s, end, default_, structDefs));
+				}
+				return arr;
+			}
+			case 0xFFF7: {
+				// empty array
+				return Vec<Flow*>::make();
+			}
+			case 0xFFFB: {
+				// string, >= 65536 length
+				char16_t i1 = *(s++);
+				char16_t i2 = *(s++);
+				IntOrChars iorchars(i1, i2);
+				string str(s, iorchars.int_);
+				s += iorchars.int_;
+				return String::make(std::move(str));
+			}
+			case 0xFFF9: {
+				// array, >= 65536 length
+				char16_t i1 = *(s++);
+				char16_t i2 = *(s++);
+				IntOrChars iorchars(i1, i2);
+				Int len = iorchars.int_;
+				Vec<Flow*>* arr = Vec<Flow*>::make(len);
+				while (len-- > 0) {
+					arr->pushBack(decodeBinary(s, end, default_, structDefs));
+				}
+				return arr;
+			}
+			case 0xFFFF: {
+				return FVoid::make();
+			}
+			default: {
+				return FInt::make(word);
+			}
+		}
+	}
+}
+
 ", "", "", "", [], false
 )
 
