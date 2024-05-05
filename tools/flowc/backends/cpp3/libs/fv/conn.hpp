@@ -20,7 +20,7 @@ struct IConn2 {
 	IConn2 () = default;
 	virtual ~IConn2 () = default;
 	virtual bool IsConnect () = 0;
-	virtual Task<void> Send (char *_data, size_t _size) = 0;
+	virtual Task<std::string> Send (char *_data, size_t _size) = 0;
 	virtual void Cancel () = 0;
 
 	Task<char> ReadChar ();
@@ -37,8 +37,9 @@ protected:
 
 
 struct IConn: public IConn2 {
-	virtual Task<void> Connect (std::string _host, std::string _port) = 0;
-	virtual Task<void> Reconnect () = 0;
+	// Returns error message. Empty string means success.
+	virtual Task<std::string> Connect (std::string _host, std::string _port) = 0;
+	virtual Task<std::string> Reconnect () = 0;
 };
 
 
@@ -47,10 +48,10 @@ struct TcpConn: public IConn {
 	std::shared_ptr<Tcp::socket> Socket;
 
 	virtual ~TcpConn () { Cancel (); }
-	Task<void> Connect (std::string _host, std::string _port) override;
-	Task<void> Reconnect () override;
+	Task<std::string> Connect (std::string _host, std::string _port) override;
+	Task<std::string> Reconnect () override;
 	bool IsConnect () override { return Socket->is_open (); }
-	Task<void> Send (char *_data, size_t _size) override;
+	Task<std::string> Send (char *_data, size_t _size) override;
 	void Cancel () override;
 
 protected:
@@ -67,7 +68,7 @@ struct TcpConn2: public IConn2 {
 
 	virtual ~TcpConn2 () { Cancel (); }
 	bool IsConnect () override { return Socket.is_open (); }
-	Task<void> Send (char *_data, size_t _size) override;
+	Task<std::string> Send (char *_data, size_t _size) override;
 	void Cancel () override;
 
 protected:
@@ -81,10 +82,10 @@ struct SslConn: public IConn {
 	std::shared_ptr<Ssl::stream<Tcp::socket>> SslSocket;
 
 	virtual ~SslConn () { Cancel (); }
-	Task<void> Connect (std::string _host, std::string _port) override;
-	Task<void> Reconnect () override;
+	Task<std::string> Connect (std::string _host, std::string _port) override;
+	Task<std::string> Reconnect () override;
 	bool IsConnect () override { return SslSocket && SslSocket->next_layer ().is_open (); }
-	Task<void> Send (char *_data, size_t _size) override;
+	Task<std::string> Send (char *_data, size_t _size) override;
 	void Cancel () override;
 
 protected:
@@ -101,7 +102,7 @@ struct SslConn2: public IConn2 {
 
 	virtual ~SslConn2 () { Cancel (); }
 	bool IsConnect () override { return SslSocket.next_layer ().is_open (); }
-	Task<void> Send (char *_data, size_t _size) override;
+	Task<std::string> Send (char *_data, size_t _size) override;
 	void Cancel () override;
 
 protected:
