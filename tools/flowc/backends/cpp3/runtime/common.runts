@@ -52,13 +52,15 @@ void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structI
 void decodeBinaryArray(const char16_t*& s, const char16_t* end, Flow* default_, Vec<Vec<Flow*>*>* structDefs, Int n, Vec<Flow*>* arr);
 
 Flow* decodeBinary(const char16_t*& s, const char16_t* end, Flow* default_, Vec<Vec<Flow*>*>* structDefs);
+Flow* decodeBinaryFast(const char16_t*& s, const char16_t* end, Flow* default_, Vec<Vec<Flow*>*>* structDefs);
 
 ",
 "
 void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<Int>& structDefs) {
 	switch (v->typeId()) {
 		case TypeFx::VOID: {
-			// void values shouldn't be serialized
+			// void values shouldn't be serialized, but still...
+			appendCharValue(0xFFFF, s);
 			break;
 		}
 		case TypeFx::INT: {
@@ -135,6 +137,164 @@ void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structI
 		}
 	}
 	decRc(v);
+}
+
+Flow* decodeBinaryFast(const char16_t*& s, const char16_t* end, Flow* default_, Vec<Vec<Flow*>*>* structDefs) {
+	std::stack<Flow*> stack;
+	struct Deferred { Int counter; Int len; Int struct_id; };
+	std::stack<Deferred> deferred;
+	bool err = false;
+	while (s < end && !err) {
+		if (!deferred.empty()) {
+			++deferred.top().counter;
+		}
+		char16_t word = *(s++);
+		switch (word) {
+			case 0xFFF4: {
+				// struct
+				Int struct_ind = *(s++);
+				Vec<Flow*>* def = structDefs->get(struct_ind);
+				Int nargs = dynamic_cast<FInt*>(def->get(0))->val;
+				String* name = dynamic_cast<String*>(def->get(1));
+				TypeId struct_id = Dyn::structId(name->str());
+				if (struct_id == -1) {
+					err = true;
+				} else {
+					if (nargs > 0) {
+						deferred.push(Deferred{0, nargs, struct_id});
+					} else {
+						stack.push(Dyn::structDef(struct_id).constructor(Vec<Flow*>::make()));
+					}
+				}
+				break;
+			}
+			case 0xFFF6: {
+				// ref
+				Flow* v = stack.top();
+				stack.pop();
+				stack.push(Ref<Flow*>::make(v));
+				break;
+			}
+			case 0xFFFA: {
+				// string, < 65536 length
+				Int len = *(s++);
+				string str(s, len);
+				s += len;
+				stack.push(String::make(std::move(str)));
+				break;
+			}
+			case 0xFFFC: {
+				// double
+				char16_t d1 = *(s++);
+				char16_t d2 = *(s++);
+				char16_t d3 = *(s++);
+				char16_t d4 = *(s++);
+				DoubleOrChars dorchars(d1, d2, d3, d4);
+				stack.push(FDouble::make(dorchars.double_));
+				break;
+			}
+			case 0xFFF5: {
+				// int, long
+				char16_t i1 = *(s++); char16_t i2 = *(s++);
+				IntOrChars iorchars(i1, i2);
+				stack.push(FInt::make(iorchars.int_));
+				break;
+			}
+			case 0xFFF3: {
+				// special case for ints in range to avoid issues with UCS-2/UTF16 encoding in JS
+				// they are stored as two long integers: value & 0xF0F0F0F0 and value & 0x0F0F0F0F
+				char16_t i1 = *(s++); char16_t i2 = *(s++);
+				char16_t i3 = *(s++); char16_t i4 = *(s++);
+				IntOrChars iorchars1(i1, i2);
+				IntOrChars iorchars2(i3, i4);
+				stack.push(FInt::make(iorchars1.int_ | iorchars2.int_));
+				break;
+			}
+			case 0xFFFD: {
+				// false
+				stack.push(FBool::make(false));
+				break;
+			}
+			case 0xFFFE: {
+				// true
+				stack.push(FBool::make(true));
+				break;
+			}
+			case 0xFFF8: {
+				// array, < 65536 length
+				Int len = *(s++);
+				if (len == 0) {
+					stack.push(Vec<Flow*>::make());
+				} else {
+					deferred.push(Deferred{0, len, 0});
+				}
+				break;
+			}
+			case 0xFFF7: {
+				// empty array
+				stack.push(Vec<Flow*>::make());
+				break;
+			}
+			case 0xFFFB: {
+				// string, >= 65536 length
+				char16_t i1 = *(s++);
+				char16_t i2 = *(s++);
+				IntOrChars iorchars(i1, i2);
+				string str(s, iorchars.int_);
+				s += iorchars.int_;
+				stack.push(String::make(std::move(str)));
+				break;
+			}
+			case 0xFFF9: {
+				// array, >= 65536 length
+				char16_t i1 = *(s++);
+				char16_t i2 = *(s++);
+				IntOrChars iorchars(i1, i2);
+				Int len = iorchars.int_;
+				if (len == 0) {
+					stack.push(Vec<Flow*>::make());
+				} else {
+					deferred.push(Deferred{0, len, 0});
+				}
+				break;
+			}
+			case 0xFFFF: {
+				stack.push(FVoid::make());
+				break;
+			}
+			default: {
+				stack.push(FInt::make(word));
+				break;
+			}
+		}
+		if (!deferred.empty()) {
+			while (!deferred.empty() && deferred.top().counter == deferred.top().len) {
+				Int len = deferred.top().len;
+				Vec<Flow*>* arr = Vec<Flow*>::makeFilled(len);
+				while (len-- > 0) {
+					Flow* v = stack.top();
+					stack.pop();
+					arr->vecRef()[len] = v;
+				}
+				if (deferred.top().struct_id > 0) {
+					stack.push(Dyn::structDef(deferred.top().struct_id).constructor(arr));
+				} else {
+					stack.push(arr);
+				}
+				deferred.pop();
+			}
+		}
+	}
+	if (err || stack.size() != 1) {
+		while (!stack.empty()) {
+			decRc(stack.top());
+			stack.pop();
+		}
+		return default_;
+	} else {
+		decRc(default_);
+		return stack.top();
+	}
 }
 
 Flow* decodeBinary(const char16_t*& s, const char16_t* end, Flow* default_, Vec<Vec<Flow*>*>* structDefs) {
@@ -250,6 +410,7 @@ Flow* decodeBinary(const char16_t*& s, const char16_t* end, Flow* default_, Vec<
 		}
 	}
 }
+
 
 ", "", "", "", [], false
 )

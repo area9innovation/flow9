@@ -5,7 +5,8 @@
 #include <unordered_map>
 #include <cxxabi.h>
 #include "__flow_runtime_types.hpp"
-#include <iostream>
+//#include <iostream>
+#include <parallel_hashmap/phmap.h>
 
 namespace flow {
 
@@ -134,13 +135,16 @@ struct Dyn {
 
 private:
 	// List of names for the types in TypeFx
-	static const string type_names[];
+	static inline const string type_names[] = {
+		u"unknown", u"void",   u"int",   u"bool", u"double",
+		u"string",  u"native", u"array", u"ref",  u"function"
+	};
 	// Map of a struct id (its type) onto its definition
-	static std::unordered_map<int32_t, StructDef> struct_id_to_def;
+	static inline phmap::flat_hash_map<int32_t, StructDef> struct_id_to_def;
 	// Maps a struct name to its id.
-	static std::unordered_map<string, int32_t> struct_name_to_id;
+	static inline phmap::flat_hash_map<string, int32_t> struct_name_to_id;
 	// Functions by name
-	static std::unordered_map<string, FunDef> fun_name_to_def;
+	static inline phmap::flat_hash_map<string, FunDef> fun_name_to_def;
 };
 
 // Predicate for compile-time type resolution

@@ -1,7 +1,8 @@
 #pragma once
 
 #include <string>
-#include <ext/rope>
+#include <map>
+#include <vector>
 #include <ostream>
 #include <type_traits>
 #include <stdexcept>
@@ -9,7 +10,7 @@
 
 namespace flow {
 
-inline void fail(const std::string& msg) { throw std::runtime_error(msg); }
+void fail(const std::string& msg);
 
 enum TypeFx {
 	VOID = 0, // special void type - technically it is nullptr_t
@@ -28,7 +29,6 @@ inline constexpr TypeId structTypeIdOffset = TypeFx::STRUCT_TYPE_ID_OFFSET;
 // Flow internally uses utf-16 string format
 
 using string = std::u16string;
-using rstring = __gnu_cxx::rope<char16_t>;
 
 // String conversions
 
@@ -112,23 +112,19 @@ void init_all_modules();
 void term_all_modules();
 void join_all_modules();
 
-struct RuntimeStatus {
-	static bool isReady();
-	static void setReady(bool ready);
-	static void setExitCode(int code) { exit_code_ = code; }
-	static int getExitCode() { return exit_code_; }
-	static void initQuit(std::function<void()>&& q) {
-		quit_thread_ = std::move(std::thread(std::move(q)));
-	}
-	static void waitForQuit() {
-		if (quit_thread_.joinable()) {
-			quit_thread_.join();
-		}
-	}
+struct RuntimeState {
+	static bool isReady() { return is_ready_; }
+	static void init(int argc, const char* argv[]);
+	static void quit(Int code);
+	static int exit();
+	static const std::vector<string>& argsVec() { return args_vec_; }
+	static const std::map<string, string>& argsMap() { return args_map_; }
 private:
-	static bool is_ready_;
-	static int exit_code_;
-	static std::thread quit_thread_;
+	static inline bool is_ready_ = false;
+	static inline int exit_code_ = 0;
+	static inline std::jthread quit_thread_;
+	static inline std::vector<string> args_vec_;
+	static inline std::map<string, string> args_map_;
 };
 
 }
