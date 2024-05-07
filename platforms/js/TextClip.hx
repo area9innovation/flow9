@@ -1,5 +1,6 @@
 import js.Browser;
 import js.html.Event;
+import js.lib.Set;
 import pixi.core.text.Text in PixiCoreText;
 import pixi.core.text.TextMetrics;
 import pixi.core.text.TextStyle;
@@ -122,7 +123,7 @@ class TextClip extends NativeWidgetClip {
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
 	public static var AmiriHTMLMeasurement = Util.getParameter("amiri_html_measurement") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") == "1";
-	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") == "1";
+	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
 	public static var checkTextNodeWidth = Util.getParameter("text_node_width") != "0";
 	public static var IosOnSelectWorkaroundEnabled = Platform.isIOS && Platform.isSafari && Platform.browserMajorVersion < 15;
 
@@ -188,6 +189,10 @@ class TextClip extends NativeWidgetClip {
 	private var preventMouseUpEvent : Bool = false;
 	private var preventEnsureCurrentInputVisible : Bool = false;
 	private var preventCheckTextNodeWidth : Bool = false;
+	
+	private var scheduledForceUpdate : Bool = false;  
+	private static var onFontLoadedListenerInitialized : Bool = false;  
+	private static var scheduledForceUpdateTree : Map<String, Set<TextClip>> = new Map();  
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -1765,24 +1770,54 @@ class TextClip extends NativeWidgetClip {
 
 		if (useForcedUpdateTextWidth) {
 			try {
-				if (Browser.document.fonts.status == LOADING) {
-					Browser.document.fonts.addEventListener('loadingdone', function() {
-						RenderSupport.defer(function() {
-							updateTextWidth();
-							if (style.wordWrap) {
-								updateTextMetrics();
-								this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
-							}
-						}, 600);
-					});
-				}
-			} catch (e : Dynamic) {}
+				scheduleForceUpdateTextWidth();
+			} catch (e : Dynamic) {
+				untyped console.log(e);
+			}
 		}
-
 
 		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && !isMaterialIconFont()) {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
+	}
+
+	private function scheduleForceUpdateTextWidth() {
+		if (Browser.document.fonts.status == LOADING && !scheduledForceUpdate) {
+			if (!TextClip.onFontLoadedListenerInitialized) {
+				Browser.document.fonts.addEventListener('loadingdone', function(event : Dynamic) {
+					event.fontfaces.forEach(function(fontface, key, set) {
+						var fontFamilySet = TextClip.scheduledForceUpdateTree.get(fontface.family);
+						if (fontFamilySet != null) {
+							fontFamilySet.forEach(function(clip : TextClip, key, set) {
+								clip.forceUpdateTextWidth();
+							});
+							TextClip.scheduledForceUpdateTree.remove(fontface.family);
+						}
+					});
+				});
+				TextClip.onFontLoadedListenerInitialized = true;
+			}
+
+			var fontFamilySet = TextClip.scheduledForceUpdateTree.get(this.style.fontFamily);
+			if (fontFamilySet == null) {
+				fontFamilySet = new Set();
+				TextClip.scheduledForceUpdateTree.set(this.style.fontFamily, fontFamilySet);
+			}
+			fontFamilySet.add(this);
+
+			scheduledForceUpdate = true;
+		}
+	}
+	
+	private function forceUpdateTextWidth() {
+		RenderSupport.defer(function() {
+			scheduledForceUpdate = false;
+			updateTextWidth();
+			if (style.wordWrap) {
+				updateTextMetrics();
+				this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
+			}
+		}, 600);
 	}
 
 	private function updateTextWidth() : Void {
@@ -1954,11 +1989,10 @@ class TextClip extends NativeWidgetClip {
 			textNodeMetrics.height = 0;
 			textNodeMetrics.x = 0;
 		} else {
-			var textNode = useCheck ? nativeWidget.lastChild : nativeWidget;
 			if (useCheck) {
 				updateTextNodesWidth(untyped nativeWidget.childNodes, textNodeMetrics);
 			}
-			updateTextNodeHeight(textNode, textNodeMetrics, useCheck, transform);
+			updateTextNodesHeight(nativeWidget, textNodeMetrics, useCheck, transform);
 		}
 		return textNodeMetrics;
 	}
@@ -2006,7 +2040,27 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private static function updateTextNodeHeight(textNode, textNodeMetrics, useCheck, transform) {
+	private static function updateTextNodesHeight(nativeWidget, textNodeMetrics, useCheck, transform) {
+		if (useCheck) {
+			textNodeMetrics.height = 0.0;
+			var children = untyped nativeWidget.childNodes;
+			for (i in 0 ... children.length) {
+				updateTextNodeHeight(children[i], textNodeMetrics, useCheck, transform);
+			}
+		} else {
+			updateTextNodeHeight(nativeWidget, textNodeMetrics, useCheck, transform);
+		}
+	}
+
+	private static function updateTextNodeHeight(textNode : js.html.Node, textNodeMetrics, useCheck, transform) {
+		if (untyped textNode.classList != null && (
+			textNode.classList.contains("textBackgroundWidget")
+			|| textNode.classList.contains("baselineWidget")
+			|| textNode.classList.contains("amiriItalicWorkaroundWidget")
+		)) {
+			return;
+		}
+
 		if (Browser.document.createRange != null) {
 			var range = Browser.document.createRange();
 			range.selectNodeContents(textNode);
@@ -2014,7 +2068,7 @@ class TextClip extends NativeWidgetClip {
 				var rect = range.getBoundingClientRect();
 				if (rect != null) {
 					var viewportScale = RenderSupport.getViewportScale();
-					textNodeMetrics.height = (rect.bottom - rect.top) * viewportScale;
+					textNodeMetrics.height += (rect.bottom - rect.top) * viewportScale;
 					if (!useCheck) {
 						var computedStyle = Browser.window.getComputedStyle(untyped textNode);
 						var letSp = Std.parseFloat(computedStyle.letterSpacing);
