@@ -47,7 +47,7 @@ inline void appendBinaryInt32(Int v, string& s) {
 	appendCharValue(i.chars.c0, s);
 	appendCharValue(i.chars.c1, s);
 }
-void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<Int>& structDefs);
+void appendBinaryValue(Flow* v, string& s, phmap::parallel_flat_hash_map<Int, Int>& structIdxs, std::vector<Int>& structDefs);
 
 void decodeBinaryArray(const char16_t*& s, const char16_t* end, Flow* default_, Vec<Vec<Flow*>*>* structDefs, Int n, Vec<Flow*>* arr);
 
@@ -56,7 +56,7 @@ Flow* decodeBinaryFast(const char16_t*& s, const char16_t* end, Flow* default_, 
 
 ",
 "
-void appendBinaryValue(Flow* v, string& s, std::unordered_map<Int, Int>& structIdxs, std::vector<Int>& structDefs) {
+void appendBinaryValue(Flow* v, string& s, phmap::parallel_flat_hash_map<Int, Int>& structIdxs, std::vector<Int>& structDefs) {
 	switch (v->typeId()) {
 		case TypeFx::VOID: {
 			// void values shouldn't be serialized, but still...
@@ -154,8 +154,8 @@ Flow* decodeBinaryFast(const char16_t*& s, const char16_t* end, Flow* default_, 
 				// struct
 				Int struct_ind = *(s++);
 				Vec<Flow*>* def = structDefs->get(struct_ind);
-				Int nargs = dynamic_cast<FInt*>(def->get(0))->val;
-				String* name = dynamic_cast<String*>(def->get(1));
+				Int nargs = reinterpret_cast<FInt*>(def->get(0))->val;
+				String* name = reinterpret_cast<String*>(def->get(1));
 				TypeId struct_id = Dyn::structId(name->str());
 				if (struct_id == -1) {
 					err = true;
@@ -170,9 +170,7 @@ Flow* decodeBinaryFast(const char16_t*& s, const char16_t* end, Flow* default_, 
 			}
 			case 0xFFF6: {
 				// ref
-				Flow* v = stack.top();
-				stack.pop();
-				stack.push(Ref<Flow*>::make(v));
+				deferred.push(Deferred{0, 1, 1});
 				break;
 			}
 			case 0xFFFA: {
@@ -269,17 +267,23 @@ Flow* decodeBinaryFast(const char16_t*& s, const char16_t* end, Flow* default_, 
 		}
 		if (!deferred.empty()) {
 			while (!deferred.empty() && deferred.top().counter == deferred.top().len) {
-				Int len = deferred.top().len;
-				Vec<Flow*>* arr = Vec<Flow*>::makeFilled(len);
-				while (len-- > 0) {
+				if (deferred.top().struct_id == 1) {
 					Flow* v = stack.top();
 					stack.pop();
-					arr->vecRef()[len] = v;
-				}
-				if (deferred.top().struct_id > 0) {
-					stack.push(Dyn::structDef(deferred.top().struct_id).constructor(arr));
+					stack.push(Ref<Flow*>::make(v));
 				} else {
-					stack.push(arr);
+					Int len = deferred.top().len;
+					Vec<Flow*>* arr = Vec<Flow*>::makeFilled(len);
+					while (len-- > 0) {
+						Flow* v = stack.top();
+						stack.pop();
+						arr->vecRef()[len] = v;
+					}
+					if (deferred.top().struct_id > 1) {
+						stack.push(Dyn::structDef(deferred.top().struct_id).constructor(arr));
+					} else {
+						stack.push(arr);
+					}
 				}
 				deferred.pop();
 			}

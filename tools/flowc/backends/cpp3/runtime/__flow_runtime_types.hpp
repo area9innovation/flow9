@@ -64,7 +64,7 @@ inline Int bool2int(Bool x) { return x ? 1 : 0; }
 inline Double bool2double(Bool x) { return x ? 1.0 : 0.0; }
 inline string bool2string(Bool x) { return x ? u"true" : u"false"; }
 
-inline Int string2int(const string& s) { if (s.size() == 0) { return 0; } else { try { return std::stoi(string2std(s)); } catch (std::exception& e) { return 0; } } }
+Int string2int(const string& s); // { if (s.size() == 0) { return 0; } else { try { return std::stoi(string2std(s)); } catch (std::exception& e) { return 0; } } }
 inline Double string2double(const string& s) { if (s.size() == 0) { return 0.0; } else { try { return std::stod(string2std(s)); } catch (std::exception& e) { return 0.0; } } }
 inline Bool string2bool(const string& s) { return s != u"false"; }
 

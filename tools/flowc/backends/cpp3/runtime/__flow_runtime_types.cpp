@@ -4,6 +4,30 @@
 
 namespace flow {
 
+Int string2int(const string& s) {
+	Int len = s.size();
+	const char16_t* beg = s.data();
+	bool sign = true;
+	if (*beg == char16_t('-')) {
+		sign = false;
+		++beg;
+		--len;
+	}
+	Int i = 0;
+	Int ret = 0;
+	static int deg10[] = {1, 10, 100, 1000, 10'000, 100'000, 1000'000, 10'000'000, 100'000'000, 1000'000'000};
+	for (const char16_t* x = beg + len - 1; x >= beg && i < 10; --x, ++i) {
+		char16_t ch = *x;
+		if (char16_t('0') <= ch && ch <= char16_t('9')) {
+			ret += (ch - char16_t('0')) * deg10[i];
+		} else {
+			ret = 0;
+			break;
+		}
+	}
+	return sign ? ret : -ret;
+}
+
 string double2string(Double x, bool persistent_dot) {
 	if (std::isnan(x)) {
 		return u"NaN";
