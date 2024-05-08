@@ -1823,7 +1823,7 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextWidth() : Void {
 		if (nativeWidget != null && metrics != null) {
 			var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
-			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && !wordWrap;
+			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && !wordWrap && escapeHTML;
 			var textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck, untyped this.transform);
 			var textNodeWidth0 = textNodeMetrics.width;
 			var textNodeHeight = textNodeMetrics.height;
@@ -1928,7 +1928,7 @@ class TextClip extends NativeWidgetClip {
 		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 		var parentNode : Dynamic = nativeWidget.parentNode;
 		var nextSibling : Dynamic = nativeWidget.nextSibling;
-		var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth;
+		var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && escapeHTML;
 
 		updateNativeWidgetStyle();
 		var tempDisplay = nativeWidget.style.display;
