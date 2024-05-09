@@ -119,6 +119,7 @@ export {
 	registerMappedFontFamilies(families : [[string]]) -> void;
 
 	getMappedFontFamilyFaces(family : string) -> [string];
+	getMappedFontFamilyFacesExt(family : string) -> [Pair<string, Maybe<int>>];
 	getFontFaceStyle(fontFace : string, style : FontFamilyStyle) -> bool;
 	canFontFaceStyleBeSwitched(fontFace : string, style : FontFamilyStyle) -> bool;
 	switchFontFaceStyle(fontFace : string, style : FontFamilyStyle, turnOn : Maybe<bool>) -> string;
@@ -755,7 +756,7 @@ getMappedFontFamily(family) {
 }
 
 // 0=Regular, 1=Italic, 2=Bold, 3=BoldItalic
-FontSwitchingStateMachine(/*family: string, */faces: [string]);
+FontSwitchingStateMachine(faces: [Pair<string, Maybe<int>>]);
 FontSwitchingStateMachines(
 	machines : [FontSwitchingStateMachine],
 	family2machine : Tree<string, Pair<ref FontSwitchingStateMachine, int>>
@@ -766,18 +767,18 @@ Face(family : string, weight : int, slope : bool, name : string, group : string)
 
 registerMappedFontFamilies(families : [[string]]) -> void {
 	getMappedFontFamilyFaces("");  // Initializing
-	newMachines = map(families, \family -> FontSwitchingStateMachine(family));
+	newMachines = map(families, \family -> FontSwitchingStateMachine(map(family, \f -> Pair(f, None()))));
 	existingMachines = either(^fontSwitchingStateMachine, FontSwitchingStateMachines([], makeTree()));
 	fontSwitchingStateMachine := Some(FontSwitchingStateMachines(
 		concat(existingMachines.machines, newMachines),
 		fold(
 			newMachines, existingMachines.family2machine,
-			\acc, machine -> setTreeValues(acc, mapi(machine.faces, \i, face -> Pair(face, Pair(ref machine, i))))
+			\acc, machine -> setTreeValues(acc, mapi(machine.faces, \i, face -> Pair(face.first, Pair(ref machine, i))))
 		)
 	));
 }
 
-mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool, change : (italic : bool, bold : bool) -> string) -> ?, def : ?) -> ? {
+mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool, change : (italic : bool, bold : bool) -> Pair<string, /*weight*/ Maybe<int> > ) -> ?, def : ?) -> ? {
 	indexedStateMachines = onlyOnce(fontSwitchingStateMachine, \-> {
 		// Accessing styles branch of fontconfig.json
 		// (may be overridden via compiler, and state machine will fail)
@@ -787,16 +788,11 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 			JsonObject(faces): map(faces, unpairC(\faceName, faceDescr -> {
 				family = getJsonStringField(faceDescr, "family", faceName);
 
-				// HACK to be removed when no style mixins in family and family stays similar for all faces inside.
-				// (maybe after Aug. 15 / 2022)
-				familyNonsenseEndings = ["Regular", "Bold", "Black", "Italic", "ExtraLight", "Light", "SemiBold"];
-				correctedFamily = strGlue(subtractA(strSplit(family, " "), familyNonsenseEndings), " ");
-
 				// TODO add string weight values conversion.
 				weight = getJsonIntField(faceDescr, "weight", 400);
 				slope = "normal" != getJsonStringField(faceDescr, "style", "normal");
-				group = getJsonStringField(faceDescr, "group", correctedFamily);
-				Face(correctedFamily, weight, slope, faceName, group);
+				group = getJsonStringField(faceDescr, "group", family);
+				Face(family, weight, slope, faceName, group);
 			}));
 			default: {
 				devtrace("fontmapping: Error parsing font config.");
@@ -826,9 +822,17 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 				// We do not search around 400 and 700 for regular and bold respectively
 				// because we have RobotoMedium instead of RobotoBold in our content.
 				regularI = min(length(paired) - 2, foldi(paired, 0, \i, acc, p -> if (p.first <= 400) i else acc));
+				generatePair = \idx, itl -> {
+					face = paired[idx];
+					Pair(if (itl) face.third else face.second, Some(face.first));
+				};
 				[FontSwitchingStateMachine(
-					/*normal[0].family, */
-					[paired[max(regularI, 0)].second, paired[max(regularI, 0)].third, paired[regularI + 1].second, paired[regularI + 1].third]
+					[
+						generatePair(max(regularI, 0), false),
+						generatePair(max(regularI, 0), true),
+						generatePair(regularI + 1, false),
+						generatePair(regularI + 1, true)
+					]
 				)]
 			} else {
 				familyM = fold(matrix, ^(matrix[0][0]), \acc, f -> eitherMap(
@@ -845,21 +849,23 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 			}
 		});
 
+		makeDefaultFSSM = \faces -> FontSwitchingStateMachine(map(faces, \f -> Pair(f, None())));
+
 		// Initial state machines
 		stateMachines = concat(
 			[
-				FontSwitchingStateMachine(/*"", */["Book", "Italic", "Medium", "MediumItalic"]),
-				FontSwitchingStateMachine(/*"DejaVuSans", */["DejaVuSans", "DejaVuSansOblique", "DejaVuSansBold", "DejaVuSansBoldOblique"]),
-				FontSwitchingStateMachine(/*"Minion", */["Minion", "MinionItalics", "Minion", "MinionItalics"]),
+				makeDefaultFSSM(/*"", */["Book", "Italic", "Medium", "MediumItalic"]),
+				makeDefaultFSSM(/*"DejaVuSans", */["DejaVuSans", "DejaVuSansOblique", "DejaVuSansBold", "DejaVuSansBoldOblique"]),
+				makeDefaultFSSM(/*"Minion", */["Minion", "MinionItalics", "Minion", "MinionItalics"])
 			],
 			validatedStateMachines
 		);
 
 		FontSwitchingStateMachines(
 			stateMachines,
-			setTreeValues(makeTree(), concatA(mapi(stateMachines,
-				\i, machine -> mapi(machine.faces,
-					\j, face -> Pair(face, Pair(ref stateMachines[i], j))
+			setTreeValues(makeTree(), concatA(map(stateMachines,
+				\machine -> mapi(machine.faces,
+					\j, face -> Pair(face.first, Pair(ref machine, j))
 				)
 			)))
 		);
@@ -871,24 +877,15 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 		\italic, bold -> ^refMachine.faces[b2i(italic) + b2i(bold)*2]
 	));
 
-	eitherMap(
-		lookupTree(indexedStateMachines.family2machine, fontFace),
-		// HACK for cases some product has invalid default face name,
-		// i.e. Cairo Regular instead Cairo, or some other font suffixed with «Book».
-		// To remove this (inner eitherMap to be replaced with def),
-		// after hack above removed and Book/Italic/Medium/MediumItalic
-		// faces out of use.
-		analyzeState, eitherMap(
-			lookupTree(indexedStateMachines.family2machine, fontFace + "Regular"),
-			analyzeState, eitherMap(
-				lookupTree(indexedStateMachines.family2machine, fontFace + "Book"),
-				analyzeState, def
-			)
-		)
-	)
+	indexedStateMachine = lookupTree(indexedStateMachines.family2machine, fontFace);
+	eitherMap(indexedStateMachine, analyzeState, def);
 }
 
 getMappedFontFamilyFaces(family : string) -> [string] {
+	map(getMappedFontFamilyFacesExt(family), \f -> f.first) 
+}
+
+getMappedFontFamilyFacesExt(family : string) -> [Pair<string, Maybe<int>>] {
 	mapFontSwitchingStateMachine(family, \__, __, change -> {
 		[change(false, false), change(false, true), change(true, false), change(true, true)]
 	}, [])
@@ -910,17 +907,17 @@ canFontFaceStyleBeSwitched(fontFace : string, style : FontFamilyStyle) -> bool {
 switchFontFaceStyle(fontFace : string, style : FontFamilyStyle, turnOn : Maybe<bool>) -> string {
 	mapFontSwitchingStateMachine(fontFace, \italic, bold, change -> {
 		switch (style : FontFamilyStyle) {
-			SBold(): change(italic, eitherMap(turnOn, idfn, !bold));
-			SItalic(): change(eitherMap(turnOn, idfn, !italic), bold);
+			SBold(): change(italic, eitherMap(turnOn, idfn, !bold)).first;
+			SItalic(): change(eitherMap(turnOn, idfn, !italic), bold).first;
 		};
 	}, fontFace)
 }
 
 replaceFontFamily(srcFace : string, familyChange : (string) -> string) -> string {
 	mapFontSwitchingStateMachine(srcFace, \italic, bold, source -> {
-		dstFamily = familyChange(source(false, false));
+		dstFamily = familyChange(source(false, false).first);
 		mapFontSwitchingStateMachine(dstFamily, \__, __, change -> {
-			change(italic, bold)
+			change(italic, bold).first
 		}, dstFamily)
 	}, srcFace)
 }
