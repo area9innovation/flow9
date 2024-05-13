@@ -633,7 +633,7 @@ var createRequestTimingsVar = function() {
 }
 
 function toBase64(num) {
-  const base64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const base64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._';
   let result = '';
   if (num < 0) {
     num = -1 * num;
@@ -1456,18 +1456,21 @@ self.addEventListener('fetch', function(event) {
             var cacheFilter = findCacheFilter(urlAndBody.urlNewFull, request.method, false);
             var fixedUrlToCache = urlAndBody.urlNewFull;
             var usedCacheName = CACHE_NAME;
+            var ignoreKeys = []
 
             if (!isEmpty(cacheFilter)) {
               if (cacheFilter.isSimple) {
-                fixedUrlToCache = filterUrlParameters(fixedUrlToCache, cacheFilter.ignoreKeys, true);
                 usedCacheName = CACHE_NAME_DYNAMIC;
+                ignoreKeys = cacheFilter.ignoreKeys;
               } else {
                 if (!isEmpty(cacheFilter.onNewUrlString))
                   fixedUrlToCache = cacheFilter.onNewUrlString(request, fixedUrlToCache);
-                fixedUrlToCache = filterUrlParameters(fixedUrlToCache, cacheFilter.ignoreKeys, true);
                 usedCacheName = "flow-" + cacheFilter.name + "-cache";
+                ignoreKeys = cacheFilter.ignoreKeys;
               }
             }
+
+            fixedUrlToCache = filterUrlParameters(fixedUrlToCache, ignoreKeys, true);
 
             return {
               urlNewFull: urlAndBody.urlNewFull,
