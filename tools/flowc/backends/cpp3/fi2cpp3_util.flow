@@ -35,6 +35,7 @@ export {
 	// Only calls, primitive operators and constant values
 	fiExpIsSimple(e: FiExp) -> bool;
 	fsIsSimple(e: FsAll) -> bool;
+	fsIsAlmostSimple(x: FsAll, deg: int) -> bool;
 
 	// Count the number of nodes in AST
 	fiExpAstNodesCount(e: FiExp) -> int;
@@ -175,25 +176,25 @@ varsDependencies(prog : FiProgram) -> Tree<string, Set<string>> {
 }
 
 fi2cpp3SaveFile(file: string, content: string, cfg: FiCpp3Config) -> void {
-	do_save = \-> {
-		if (!setFileContent(file, content)) {
+	if (!isConfigParameterSet(cfg.config.config, "cpp3-debug")) {
+		do_save = \-> if (!setFileContent(file, content)) {
 			fcPrintln("Failed to save " + file, cfg.config.threadId);
 		}
-	}
-	if (!fileExists(file)) {
-		if (cfg.verbose > 0) {
-			fcPrintln("Saving file: " + file, cfg.config.threadId);
-		}
-		do_save();
-	} else {
-		if (getFileContent(file) != content) {
+		if (!fileExists(file)) {
 			if (cfg.verbose > 0) {
-				fcPrintln("Replacing file: " + file, cfg.config.threadId);
+				fcPrintln("Saving file: " + file, cfg.config.threadId);
 			}
 			do_save();
 		} else {
-			if (cfg.verbose > 0) {
-				fcPrintln("Keeping file: " + file, cfg.config.threadId);
+			if (getFileContent(file) != content) {
+				if (cfg.verbose > 0) {
+					fcPrintln("Replacing file: " + file, cfg.config.threadId);
+				}
+				do_save();
+			} else {
+				if (cfg.verbose > 0) {
+					fcPrintln("Keeping file: " + file, cfg.config.threadId);
+				}
 			}
 		}
 	}
@@ -285,6 +286,40 @@ fsIsSimple(x: FsAll) -> bool {
 		FsConst(c,__):               true;
 	}
 }
+
+fsIsAlmostSimple(x: FsAll, deg: int) -> bool {
+	if (deg <= 0) {
+		fsIsSimple(x);
+	} else {
+		fsIsSimple(x) || switch(x) {
+			FsIf(e, s1, s2,__,__):       fsIsSimple(e) && fsIsAlmostSimple(s1, deg - 1) && fsIsAlmostSimple(s2, deg - 1);
+			FsSwitch(__,__,cs,__,__):    forall(cs, \c -> fsIsAlmostSimple(c.body, deg - 1));
+			FsWrapExp(e,__,__):          fsIsSimple(e);
+			FsRet(e,__,__):              fsIsSimple(e);
+			FsTailCall(__,__,__):        true;
+			FsLet(__,e, s,__,__):        fsIsSimple(e) && fsIsAlmostSimple(s, deg - 1);
+			FsFor(__,__,__,__,__,__):    false;
+			FsAssign(to, what,__,__,__): fsIsSimple(to) && fsIsSimple(what);
+			FsIncRc(__,__,__,__):        true;
+			FsDecRc(__,__,__,__):        true;
+			FsIntrinsicStat(__,__,__):   false;
+			FsClosure(__,lambda,__,__):  false;
+			FsLambda(__,__,__,__,__):    false;
+			FsCall(fn, args,__,__):
+				switch (fn) {
+					FsVarUse(__,__,__):  forall(args, fsIsSimple);
+					default:             false;
+				}
+			FsInlineExp(__,args,__,__):  forall(args, fsIsSimple);
+			FsVarUse(__,__,__):          true;
+			FsCallPrim(__,es,__,__):     forall(es, fsIsSimple);
+			FsCast(e,__,__,__):          fsIsSimple(e);
+			FsString(c,__,__):           true;
+			FsConst(c,__):               true;
+		}
+	}
+}
+
 
 fsAstNodesCount(e: FsAll) -> int {
 	fsFold(e, 0, \acc,__ -> acc + 1, true);
