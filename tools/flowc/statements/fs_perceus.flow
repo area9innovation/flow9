@@ -3,21 +3,21 @@ import tools/flowc/statements/fs_expand;
 import tools/common/stats;
 
 export {
-	fsPerceus(s: FsStat, debug: bool, name: string) -> FsStat;
+	fsPerceus(s: FsStat, transparent: bool, name: string, debug: bool) -> FsStat;
 
 	// Markups the AST nodes, which are used in Perceus, with unique ids
-	fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int>;
+	//fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int>;
 
 	// Maps the node indexes to the set of ref-counter operations 
-	fsPerceusCore(s: FsStat, num_ids: int, debug: bool, name: string) -> [FsMem];
+	//fsPerceusCore(s: FsStat, num_ids: int, transparent: bool, debug: bool, name: string) -> [FsMem];
 }
 
-fsPerceus(s: FsStat, debug: bool, name: string) -> FsStat {
+fsPerceus(s: FsStat, transparent: bool, name: string, debug: bool) -> FsStat {
 	p = fsPerceusMarkup(s);
 	if (debug) {
 		println("MARKUPED:\n" + fs2s(p.first));
 	}
-	mem = fsPerceusCore(p.first, p.second, debug, name);
+	mem = fsPerceusCore(p.first, p.second, transparent, debug, name);
 	s1 = fsExpandMem(p.first, mem);
 	cast(fsMarkupUniqueVars(s1): FsAll -> FsStat);
 }
@@ -59,7 +59,7 @@ fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int> {
 	Pair(s1, ^id_counter);
 }
 
-fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
+fsPerceusCore(s: FsStat, num_ids: int, transparent: bool, debug0: bool, name: string) -> [FsMem] {
 	debug = ref debug0;
 	add_var = \x, acc, v -> {
 		switch (lookupTree(acc, v.name)) {
@@ -81,7 +81,11 @@ fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
 		default: acc;
 	}, true);
 	t1 = timestamp();
-	last = fsPerceusLastUse(s, num_ids, ^debug, name);
+	last = if (transparent) {
+		generate(0, num_ids, \__ -> makeSet());
+	} else {
+		fsPerceusLastUse(s, num_ids, ^debug, name);
+	}
 	fsShowTiming(name + ": fsPerceusLastUse(s1, num_ids, ^debug, name)", t1);
 	t2 = timestamp();
 	id2mem = fsPerceusId2Mem(s, num_ids, last, name2var, ^debug);
@@ -278,9 +282,21 @@ fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool, int
 			fold(closure, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, false, false, debug));
 		}
 		FsCall(f, args,__,__): {
-			fold(args, fsPerceusAddExp2Mem(acc, f, last, false, false, debug), \ac, x ->
-				fsPerceusAddExp2Mem(ac, x, last, false, false, debug)
-			);
+			do_job = \args_inline, args_intrinsic -> {
+				fold(args, fsPerceusAddExp2Mem(acc, f, last, false, false, debug), \ac, x ->
+					fsPerceusAddExp2Mem(ac, x, last, args_inline, args_intrinsic, debug)
+				);
+			}
+			switch (f.info.kind) {
+				FsVarGlobalFunc(k): {
+					switch (k) {
+						FsFunCall(): do_job(false, false);
+						FsRecCallHost(): do_job(true, false);
+						FsRecCallRec(): do_job(false, true);
+					}
+				}
+				default: do_job(false, false);
+			}
 		}
 		FsCallPrim(op, es,__,__): {
 			op_inline = switch (op) {
@@ -310,7 +326,7 @@ fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool, int
 		FsVarUse(x, info, id): {
 			if (fiTypeIsScalar(x.type) || intrinsic) acc else {
 				switch (info.kind) {
-					FsVarGlobalFunc(): acc;
+					FsVarGlobalFunc(__): acc;
 					FsVarUninit(): acc;
 					FsVarIntrinsic(): acc;
 					default: {
