@@ -1,4 +1,4 @@
-var SERVICE_WORKER_VERSION = 27;
+var SERVICE_WORKER_VERSION = 28;
 var INDEXED_DB_NAME = "serviceWorkerDb";
 var INDEXED_DB_VERSION = 1;
 var CACHE_NAME = 'flow-cache';
@@ -474,17 +474,33 @@ var extractUrlParameters = function(url) {
 }
 
 // Removing ignoreParameters from the request url
-var filterUrlParameters = function(url, ignoreParameters) {
+var filterUrlParameters = function(url, ignoreParameters, hashLongString) {
   var urlParameters = extractUrlParameters(url);
   if (urlParameters.parameters.length == 0) {
     return url;
   } else {
-    return urlParameters.baseUrl + "?" + urlParameters.parameters.filter(function(p) {
-      p = p.toLowerCase();
-      var index = p.indexOf('=');
-      if (index !== -1) p = p.substr(0, index);
-      return !ignoreParameters.includes(p);
-    }).join("&");
+    return urlParameters.baseUrl + "?" + urlParameters.parameters
+      .filter(function(p) {
+        p = p.toLowerCase();
+        var index = p.indexOf('=');
+        if (index !== -1) p = p.substr(0, index);
+        return !ignoreParameters.includes(p);
+      })
+      .map(function(p) {
+        var index = p.indexOf('=');
+        if (index !== -1) {
+          if (hashLongString) {
+            k = p.substr(0, index);
+            v = longStr2HashCode(p.substr(index + 1));
+            return k + '=' + v;
+          } else {
+            return p;
+          }
+        } else {
+          return p;
+        }
+      })
+      .join("&");
   }
 };
 
@@ -616,6 +632,48 @@ var createRequestTimingsVar = function() {
   };
 }
 
+function toBase64(num) {
+  const base64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._';
+  let result = '';
+  if (num < 0) {
+    num = -1 * num;
+  }
+  do {
+    result = base64Chars.charAt(num % 64) + result;
+    num = Math.floor(num / 64);
+  } while (num > 0);
+  return result;
+}
+
+function longStr2HashCode(str) {
+  let hash = 5381;
+  if (str.length < 50) {
+    return str;
+  }
+
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) + hash) + char;
+  }
+
+  // To reduce the number of collisions, we use two algorithms
+  return toBase64(hash).concat(mixHash(str));
+}
+
+function mixHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash += (hash << 10);
+    hash ^= (hash >> 6);
+  }
+  hash += (hash << 3);
+  hash ^= (hash >> 11);
+  hash += (hash << 15);
+
+  return toBase64(hash);
+}
+
 self.addEventListener('install', function(event) {
   self.skipWaiting();
 
@@ -741,17 +799,17 @@ self.addEventListener('fetch', function(event) {
 
       if (!isEmpty(cacheFilter)) {
         if (cacheFilter.isSimple) {
-          fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys);
+          fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys, true);
           usedCacheName = CACHE_NAME_DYNAMIC;
         } else {
           if (!isEmpty(cacheFilter.onNewUrlString))
             fixedUrl = cacheFilter.onNewUrlString(request, fixedUrl);
-          fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys);
+          fixedUrlToCache = filterUrlParameters(fixedUrl, cacheFilter.ignoreKeys, true);
           usedCacheName = "flow-" + cacheFilter.name + "-cache";
         }
       } else {
         // Skipping the "special_case_key" parameter for the static resources
-        if (isStaticCaching) fixedUrlToCache = filterUrlParameters(fixedUrlToCache, ["special_case_key", "single_parameter_key"]);
+        if (isStaticCaching) fixedUrlToCache = filterUrlParameters(fixedUrlToCache, ["special_case_key", "single_parameter_key"], true);
       }
 
       return {
@@ -1398,18 +1456,21 @@ self.addEventListener('fetch', function(event) {
             var cacheFilter = findCacheFilter(urlAndBody.urlNewFull, request.method, false);
             var fixedUrlToCache = urlAndBody.urlNewFull;
             var usedCacheName = CACHE_NAME;
+            var ignoreKeys = []
 
             if (!isEmpty(cacheFilter)) {
               if (cacheFilter.isSimple) {
-                fixedUrlToCache = filterUrlParameters(fixedUrlToCache, cacheFilter.ignoreKeys);
                 usedCacheName = CACHE_NAME_DYNAMIC;
+                ignoreKeys = cacheFilter.ignoreKeys;
               } else {
                 if (!isEmpty(cacheFilter.onNewUrlString))
                   fixedUrlToCache = cacheFilter.onNewUrlString(request, fixedUrlToCache);
-                fixedUrlToCache = filterUrlParameters(fixedUrlToCache, cacheFilter.ignoreKeys);
                 usedCacheName = "flow-" + cacheFilter.name + "-cache";
+                ignoreKeys = cacheFilter.ignoreKeys;
               }
             }
+
+            fixedUrlToCache = filterUrlParameters(fixedUrlToCache, ignoreKeys, true);
 
             return {
               urlNewFull: urlAndBody.urlNewFull,
@@ -1522,7 +1583,7 @@ self.addEventListener('message', function(event) {
     return moveJwtToHeaders(request).then(function(request) { return fetch(request); }).then(function(response) {
       // Automatically cache uncached resources
       if (response.status == 200 && response.type == "basic") {
-        var requestToCache = new Request(filterUrlParameters(request.url, ignoreParameters.map(function(p) { return p.toLowerCase(); })));
+        var requestToCache = new Request(filterUrlParameters(request.url, ignoreParameters.map(function(p) { return p.toLowerCase(); }), true));
         caches.open(CACHE_NAME_DYNAMIC).then(function(cache) {
           cache.put(requestToCache, response.clone());
 

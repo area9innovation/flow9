@@ -1,3 +1,4 @@
+import ds/treeutils;
 import material/material;
 import material/material_dialog;
 import material/material_snackbar;
@@ -17,6 +18,11 @@ export {
 	resetMDWorkspace(state : MDockingState) -> void;
 	makeMDWorkspaceMenuBtn(state : MDockingState) -> Material;
 	applySelectedWSOnStartup(state : MDockingState,) -> void;
+
+	// Utils for panels
+	makeMDPanelEnableDynamicMenuItem(state : MDockingState, filterPanelsA : [string], textStyleA : [MTextStyle], iconStyleA : [MIconStyle]) -> Transform<[MMenuLine]>;
+	makeMDAreaEnableDynamicMenuItem(state : MDockingState, textStyleA : [MTextStyle], iconStyleA : [MIconStyle]) -> Transform<[MMenuLine]>;
+	makeMDClearWorksoacesDynamicMenuItem(state : MDockingState, textStyleA : [MTextStyle]) -> Transform<[MMenuLine]>;
 }
 
 hasWorkspaceFlag() -> bool {
@@ -184,7 +190,6 @@ makeItemMenuLinesA(state : MDockingState, itemsA: [Pair<string, Json>], selected
 		)
 	})
 }
-
 
 makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
     updateMenu = make(true);
@@ -464,4 +469,77 @@ confirmDeleteDialogFn(manager : MaterialManager, title : string, deleteLabel : s
             ]),
         ], MEmpty()
     );
+}
+
+// NOTE: A panel can be enabled with MDPanelEnabled style, this value is not stored in the browser's cache, but could be changed ouside the application (e.g. access rights)
+// When a panel is enabled it could be visible or not: visibility this could be changed by the user with MDPanelVisible style. The value is stored in the cache and can be stored in a workspace
+// DO NOT ACCESS DIRECTLY THE DOCKIG STATE to change a panel's visibility, but use MDPanelVisible style
+makeMDPanelEnableDynamicMenuItem(state : MDockingState, filterPanelsA : [string], textStyleA : [MTextStyle], iconStyleA : [MIconStyle]) -> Transform<[MMenuLine]> {
+	enabledT = fsubselect(state.panelStyle, FLift(\psA -> fmerge(map(psA, \ps -> extractStruct(ps, MDPanelEnabled(const(true))).enabled))));
+	ffiltermapi(fselect2Lift(enabledT, state.enabled, \enableA, visibleA -> zip(enableA, visibleA)),\i, pair ->  unpair(pair, \enabled, enabledB -> {
+		title = elementAt(getValue(state.title), i, "Title not found");
+		pstyle = elementAt(getValue(state.panelStyle), i, []);
+		visibleB = extractStruct(pstyle, MDPanelVisible(make(true))).visible;
+		if (!contains(filterPanelsA, title) && enabled) {
+			Some(
+				MMenuCustomLine(
+					MBaselineCols2A(
+						MVisible(enabledB, MIcon("done", iconStyleA)),
+						MText(formatString(_("Show %1 Panel"), [title]), textStyleA) |> MBorderStart(12.0)
+					),
+				[
+					MOnClick(\ -> reverseBehaviour(visibleB))
+				]
+			))
+		} else None()
+	}))
+}
+
+makeMDAreaEnableDynamicMenuItem(state : MDockingState, textStyleA : [MTextStyle], iconStyleA : [MIconStyle]) -> Transform<[MMenuLine]> {
+	areaIdsT = fselect(state.areaStyle, FLift(\as -> getTreeKeys(as)));
+	ffiltermapi(areaIdsT, \i, aId -> {
+		as = getValue(state.areaStyle);
+		areaStyleA = lookupTreeDef(as, aId, []);
+		if (!isSome(tryExtractStruct(areaStyleA, MDAreaVisible(make(true))))) None() else {
+			areaEnable = fsubselect(state.areaEnabled, FLift(\ae -> make(lookupTreeDef(ae, aId, true))));
+			areaName = lookupTreeDef(reverseTree(getValue(state.dockingAreas)), aId, "") + " Docking Area";
+			Some(
+				MMenuCustomLine(
+					MBaselineCols2A(
+						MVisible(areaEnable, MIcon("done", iconStyleA)),
+						MText(formatString(_("Show %1"), [areaName]), textStyleA) |> MBorderStart(12.0)
+					),
+					[
+						MOnClick(\ -> {
+							nextDistinct(state.areaEnabled, setTree(getValue(state.areaEnabled), aId, !fgetValue(areaEnable)));
+						})
+					]
+				)
+			)
+		}
+	})
+}
+
+makeMDClearWorksoacesDynamicMenuItem(state : MDockingState, textStyleA : [MTextStyle]) -> Transform<[MMenuLine]> {
+	keyGroupName = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).keyGroupName;
+	savedString = getKeyValue(keyGroupName |> addDockingSuffix, "");
+	gapSW = 32.0;
+	const([
+		MMenuCustomLine(
+			MText(_("Clear Workspaces"), textStyleA) |> MBorderStart(gapSW),
+			// "Reset Layout", 
+			[
+				MOnClick(
+					confirmDeleteDialogFn(state.manager, _("All saved workspaces will be deleted, are you sure?"), _("DELETE"),
+						\ -> {
+							removeKeyValue(keyGroupName |> addDockingSuffix);
+							reverseBehaviour(state.loadWorkspace);
+							showMSnackbar(state.manager, _("Browser Cache Cleared"), []);
+						}
+					)
+				),
+				MEnabled(fselectLift(state.enabled, \enA -> savedString != ""))
+			]
+		)
+	])
 }
