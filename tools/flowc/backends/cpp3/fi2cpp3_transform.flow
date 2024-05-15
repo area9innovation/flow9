@@ -174,6 +174,35 @@ fi2cpp3Transform2FsStat(e: FiExp, gctx: Cpp3GlobalContext, name: string) -> FsSt
 		println("preparing stat: " + name);
 	}
 	names = gctx.program.names;
+	// Vars, which (are / are used as) arguments of 'transparent' functions - those, which do not consume their args.
+	transparent = switch (lookupTree(gctx.recursive, name)) {
+		Some(r): {
+			foldFiExp(e,
+				switch (e) {
+					FiLambda(args,__,__,__): buildSet(map(args, \arg -> arg.name));
+					default: makeSet();
+				},
+				\acc, x -> switch (x) {
+					FiCall(f, args,__,__): {
+						switch (f) {
+							FiVar(f_name,__,__): {
+								if (!containsSet(r.rec, f_name)) acc else {
+									fold(args, acc, \ac, arg -> switch (arg) {
+										FiVar(arg_name,__,__): insertSet(ac, arg_name);
+										default: ac;
+									});
+								} 
+							}
+							default: acc;
+						}
+					}
+					default: acc;
+				}
+			);
+		}
+		None(): makeSet();
+	}
+
 	s0: FsStat = fiExp2FsStat2(e, names, true, makeTree());
 	s1: FsStat = cast(fsMap(s0, \x -> switch (x) {
 		FsVarUse(var, info, id): {
@@ -186,6 +215,9 @@ fi2cpp3Transform2FsStat(e: FiExp, gctx: Cpp3GlobalContext, name: string) -> FsSt
 						}
 						None(): x;
 					}
+				}
+				FsVarLocal(__): {
+					FsVarUse(x with info = FsVarInfo(info with kind = FsVarLocal(containsSet(transparent, var.name))));
 				}
 				default: x;
 			}
