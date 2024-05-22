@@ -159,7 +159,7 @@ fiGlobalVar2cpp3(name: string, value: FsStat, type: FiType, gctx0: Cpp3GlobalCon
 		"extern " + var_decl + ";\n\n",
 		var_decl + " = " + def_val + ";\n\n",
 		init,
-		if (fiTypeIsScalar(type)) "" else "decRc<" + var_type + ">(" + var_name + ");"
+		if (fiTypeIsScalar(type)) "" else fsDecRc2cpp3(var_name, type, gctx)
 	);
 }
 
@@ -239,9 +239,9 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 				FiTypeFlow(): fsExp2cpp3(x, gctx) + "->typeId()";
 				default: fail0("switch on a wrong type: " + pretFiType(x.var.type));
 			}
-			fsSwitch2cpp3(stat, type_id + "/*" + fiType2cpp3(fsType(x), gctx) + "*/", gctx);
+			fsSwitch2cpp3(stat, type_id + "/*" + pretFiType(fsType(x)) + "*/", gctx);
 		}
-		FsLet(v, e, s,__,__): {
+		FsLet(v,__, e, s,__,__): {
 			if (v.name == "__") {
 				fail0("definition of anonymous variable");
 			} else {
@@ -279,7 +279,7 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 				if (fiTypeIsScalar(tp)) {
 					e_cpp + ";";
 				} else {
-					"decRc<" + fiType2cpp3(tp, gctx) + ">(" + e_cpp + ");";
+					fsDecRc2cpp3(e_cpp, tp, gctx);
 				}
 			}
 		}
@@ -347,15 +347,7 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 		FsDecRc(v, mode,__,__): {
 			switch (mode) {
 				FsDecDirect(): {
-					ordinary = "decRc<" + fiType2cpp3(v.type, gctx) + ">(" + fi2cpp3varname2cpp(v.name) + ");";
-					switch (v.type) {
-						FiTypeName(name, typars): {
-							if (name != "List") ordinary else {
-								fi2cpp3varname2cpp("decRcList") + "<" + fiType2cpp3(typars[0], gctx) + ">(" + fi2cpp3varname2cpp(v.name) + ");";
-							}
-						}
-						default: ordinary;
-					}
+					fsDecRc2cpp3(fi2cpp3varname2cpp(v.name), v.type, gctx);
 				}
 				FsDecReuse(w): {
 					fiType2cpp3(v.type, gctx) + " " + fi2cpp3varname2cpp(w.name) + " = decRcReuse<" + fiType2cpp3(v.type, gctx) + ">(" + fi2cpp3varname2cpp(v.name) + ");";
@@ -369,6 +361,22 @@ fsStat2cpp3(stat : FsStat, gctx: Cpp3GlobalContext) -> string {
 	cpp + switch (stat.next) {
 		Some(n): "\n" + fsStat2cpp3(n, gctx);
 		None(): "";
+	}
+}
+
+fsDecRc2cpp3(what: string, type: FiType, gctx: Cpp3GlobalContext, ) -> string {
+	ordinary = "decRc<" + fiType2cpp3(type, gctx) + ">(" + what + ");";
+	switch (type) {
+		FiTypeName(name, typars): {
+			if (name == "List") {
+				fi2cpp3varname2cpp("decRcList") + "<" + fiType2cpp3(typars[0], gctx) + ">(" + what + ");";
+			} else if (name == "Tree") {
+				fi2cpp3varname2cpp("decRcTree") + "<" + fiType2cpp3(typars[0], gctx) + ", " + fiType2cpp3(typars[1], gctx) + ">(" + what + ");";
+			} else {
+				ordinary;
+			}
+		}
+		default: ordinary;
 	}
 }
 
@@ -490,7 +498,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				None(): "";
 			}
 			switch (f.info.kind) {
-				FsVarGlobalFunc(): {
+				FsVarGlobalFunc(__): {
 					fi2cpp3varname2cpp(f.var.name) + typars + call_args;
 				}
 				default: {
@@ -548,7 +556,7 @@ fsExp2cpp3(e : FsExp, gctx: Cpp3GlobalContext) -> string {
 				switch (from) {
 					FiTypeName(from_name, __): {
 						switch (to) {
-							FiTypeName(__,__): {
+							FiTypeName(to_name,__): {
 								// The cast from union to struct - fast branch (static_cast)
 								"static_cast<" + to_cpp + ">(" + e1_cpp + ")";
 							}

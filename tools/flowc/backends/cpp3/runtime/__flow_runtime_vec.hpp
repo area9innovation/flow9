@@ -52,6 +52,9 @@ struct Vec : public Flow {
 		static Vec* x = makeSingleton();
 		return x;
 	}
+	static Vec* makeFilled(Int size) {
+		return new Vec(std::move(std::vector<T>(size, makeDefInit<T>())));
+	}
 	template<typename A>
 	static Vec* make(A a) {
 		if constexpr (use_memory_manager) {

@@ -75,46 +75,59 @@ inline Task<std::string> IConn2::ReadSome () {
 
 
 
-inline Task<void> TcpConn::Connect (std::string _host, std::string _port) {
+inline Task<std::string> TcpConn::Connect (std::string _host, std::string _port) {
 	m_host = _host;
 	m_port = _port;
-	co_await Reconnect ();
+	co_return co_await Reconnect ();
 }
 
-inline Task<void> TcpConn::Reconnect () {
+inline Task<std::string> TcpConn::Reconnect () {
 	Socket = nullptr;
 	TmpData = "";
 	std::regex _rgx { "(\\d+\\.){3}\\d+" };
 	std::string _ip = m_host;
-	if (!std::regex_match (m_host, _rgx)) {
-		_ip = co_await Config::DnsResolve (m_host);
-		if (_ip == "")
-			_ip = m_host;
+	try {
+		if (!std::regex_match (m_host, _rgx)) {
+			_ip = co_await Config::DnsResolve (m_host);
+			if (_ip == "")
+				_ip = m_host;
+		}
+		uint16_t _sport = (uint16_t) std::stoi (m_port);
+		if (Config::BindClientIP) {
+			Tcp::endpoint _ep (asio::ip::address::from_string (co_await Config::BindClientIP ()), 0);
+			Socket = std::make_shared<Tcp::socket> (Tasks::GetContext (), _ep);
+		} else {
+			Socket = std::make_shared<Tcp::socket> (Tasks::GetContext ());
+		}
+		co_await Socket->async_connect (Tcp::endpoint { asio::ip::address::from_string (_ip), _sport }, UseAwaitable);
+		if (!Socket->is_open ()) {
+			co_return fmt::format ("Cannot connect to server {}:{}", m_host, m_port);
+		}
+		if (Config::NoDelay) {
+			Socket->set_option (Tcp::no_delay { true });
+		}
+		// No errors
+		co_return "";
+	} catch (std::exception& ex) {
+		co_return fmt::format ("Cannot connect to server {}:{}, error {}", m_host, m_port, ex.what());
 	}
-	uint16_t _sport = (uint16_t) std::stoi (m_port);
-	if (Config::BindClientIP) {
-		Tcp::endpoint _ep (asio::ip::address::from_string (co_await Config::BindClientIP ()), 0);
-		Socket = std::make_shared<Tcp::socket> (Tasks::GetContext (), _ep);
-	} else {
-		Socket = std::make_shared<Tcp::socket> (Tasks::GetContext ());
-	}
-	co_await Socket->async_connect (Tcp::endpoint { asio::ip::address::from_string (_ip), _sport }, UseAwaitable);
-	if (!Socket->is_open ())
-		throw Exception (fmt::format ("Cannot connect to server {}", m_host));
-	if (Config::NoDelay)
-		Socket->set_option (Tcp::no_delay { true });
 }
 
-inline Task<void> TcpConn::Send (char *_data, size_t _size) {
-	if (!Socket->is_open ())
-		throw Exception ("Cannot send data to a closed connection.");
+inline Task<std::string> TcpConn::Send (char *_data, size_t _size) {
+	if (!Socket->is_open ()) {
+		//throw Exception ("Cannot send data to a closed connection.");
+		co_return fmt::format ("Cannot send data to a closed connection.");
+	}
 	size_t _sended = 0;
 	while (_sended < _size) {
 		size_t _tmp_send = co_await Socket->async_send (asio::buffer (&_data [_sended], _size - _sended), UseAwaitable);
-		if (_tmp_send == 0)
-			throw Exception ("Connection temp closed.");
+		if (_tmp_send == 0) {
+			//throw Exception ("Connection temp closed.");
+			co_return fmt::format ("Connection temp closed.");
+		}
 		_sended += _tmp_send;
 	}
+	co_return "";
 }
 
 inline Task<size_t> TcpConn::RecvImpl (char *_data, size_t _size) {
@@ -126,8 +139,9 @@ inline Task<size_t> TcpConn::RecvImpl (char *_data, size_t _size) {
 
 inline void TcpConn::Cancel () {
 	try {
-		if (Socket)
+		if (Socket) {
 			Socket->cancel ();
+		}
 	} catch (...) {
 	}
 	Socket = nullptr;
@@ -136,20 +150,26 @@ inline void TcpConn::Cancel () {
 
 
 inline TcpConn2::TcpConn2 (Tcp::socket _sock): Socket (std::move (_sock)) {
-	if (Config::NoDelay)
+	if (Config::NoDelay) {
 		Socket.set_option (Tcp::no_delay { true });
+	}
 }
 
-inline Task<void> TcpConn2::Send (char *_data, size_t _size) {
-	if (!Socket.is_open ())
-		throw Exception ("Cannot send data to a closed connection.");
+inline Task<std::string> TcpConn2::Send (char *_data, size_t _size) {
+	if (!Socket.is_open ()) {
+		//throw Exception ("Cannot send data to a closed connection.");
+		co_return fmt::format ("Cannot send data to a closed connection.");
+	}
 	size_t _sended = 0;
 	while (_sended < _size) {
 		size_t _tmp_send = co_await Socket.async_send (asio::buffer (&_data [_sended], _size - _sended), UseAwaitable);
-		if (_tmp_send == 0)
-			throw Exception ("Connection temp closed.");
+		if (_tmp_send == 0) {
+			//throw Exception ("Connection temp closed.");
+			co_return fmt::format ("Connection temp closed.");
+		}
 		_sended += _tmp_send;
 	}
+	co_return "";
 }
 
 inline void TcpConn2::Cancel () {
@@ -169,13 +189,13 @@ inline Task<size_t> TcpConn2::RecvImpl (char *_data, size_t _size) {
 
 
 
-inline Task<void> SslConn::Connect (std::string _host, std::string _port) {
+inline Task<std::string> SslConn::Connect (std::string _host, std::string _port) {
 	m_host = _host;
 	m_port = _port;
-	co_await Reconnect ();
+	co_return co_await Reconnect ();
 }
 
-inline Task<void> SslConn::Reconnect () {
+inline Task<std::string> SslConn::Reconnect () {
 	SslSocket = nullptr;
 	TmpData = "";
 	std::regex _rgx { "(\\d+\\.){3}\\d+" };
@@ -192,28 +212,38 @@ inline Task<void> SslConn::Reconnect () {
 	} else {
 		SslSocket = std::make_shared<Ssl::stream<Tcp::socket>> (Tasks::GetContext (), SslCtx);
 	}
-	if (!::SSL_set_tlsext_host_name (SslSocket->native_handle (), m_host.data ()))
-		throw Exception (fmt::format ("Cannot set connect sni: {}", m_host));
+	if (!::SSL_set_tlsext_host_name (SslSocket->native_handle (), m_host.data ())) {
+		//throw Exception (fmt::format ("Cannot set connect sni: {}", m_host));
+		co_return fmt::format ("Cannot set connect sni: {}", m_host);
+	}
 	SslSocket->set_verify_mode (Ssl::verify_peer);
 	SslSocket->set_verify_callback (Config::SslVerifyFunc);
 	co_await SslSocket->next_layer ().async_connect (Tcp::endpoint { asio::ip::address::from_string (_ip), _sport }, UseAwaitable);
-	if (!SslSocket->next_layer ().is_open ())
-		throw Exception (fmt::format ("Cannot connect to server {}", m_host));
+	if (!SslSocket->next_layer ().is_open ()) {
+		//throw Exception (fmt::format ("Cannot connect to server {}", m_host));
+		co_return fmt::format ("Cannot connect to server {}", m_host);
+	}
 	if (Config::NoDelay)
 		SslSocket->next_layer ().set_option (Tcp::no_delay { true });
 	co_await SslSocket->async_handshake (Ssl::stream_base::client, UseAwaitable);
+	co_return "";
 }
 
-inline Task<void> SslConn::Send (char *_data, size_t _size) {
-	if (!SslSocket->next_layer ().is_open ())
-		throw Exception ("Cannot send data to a closed connection.");
+inline Task<std::string> SslConn::Send (char *_data, size_t _size) {
+	if (!SslSocket->next_layer ().is_open ()) {
+		//throw Exception ("Cannot send data to a closed connection.");
+		co_return fmt::format ("Cannot send data to a closed connection.");
+	}
 	size_t _sended = 0;
 	while (_sended < _size) {
 		size_t _tmp_send = co_await SslSocket->async_write_some (asio::buffer (&_data [_sended], _size - _sended), UseAwaitable);
-		if (_tmp_send == 0)
-			throw Exception ("Connection temp closed.");
+		if (_tmp_send == 0) {
+			//throw Exception ("Connection temp closed.");
+			co_return fmt::format ("Connection temp closed.");
+		}
 		_sended += _tmp_send;
 	}
+	co_return "";
 }
 
 inline Task<size_t> SslConn::RecvImpl (char *_data, size_t _size) {
@@ -222,8 +252,9 @@ inline Task<size_t> SslConn::RecvImpl (char *_data, size_t _size) {
 
 inline void SslConn::Cancel () {
 	try {
-		if (SslSocket)
+		if (SslSocket) {
 			SslSocket->next_layer ().cancel ();
+		}
 	} catch (...) {
 	}
 	SslSocket = nullptr;
@@ -236,16 +267,21 @@ inline SslConn2::SslConn2 (Ssl::stream<Tcp::socket> _sock): SslSocket (std::move
 		SslSocket.next_layer ().set_option (Tcp::no_delay { true });
 }
 
-inline Task<void> SslConn2::Send (char *_data, size_t _size) {
-	if (!SslSocket.next_layer ().is_open ())
-		throw Exception ("Cannot send data to a closed connection.");
+inline Task<std::string> SslConn2::Send (char *_data, size_t _size) {
+	if (!SslSocket.next_layer ().is_open ()) {
+		//throw Exception ("Cannot send data to a closed connection.");
+		co_return fmt::format ("Cannot send data to a closed connection.");
+	}
 	size_t _sended = 0;
 	while (_sended < _size) {
 		size_t _tmp_send = co_await SslSocket.async_write_some (asio::buffer (&_data [_sended], _size - _sended), UseAwaitable);
-		if (_tmp_send == 0)
-			throw Exception ("Connection temp closed.");
+		if (_tmp_send == 0) {
+			//throw Exception ("Connection temp closed.");
+			co_return fmt::format ("Connection temp closed.");
+		}
 		_sended += _tmp_send;
 	}
+	co_return "";
 }
 
 inline void SslConn2::Cancel () {

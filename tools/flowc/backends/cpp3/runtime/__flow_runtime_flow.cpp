@@ -63,7 +63,7 @@ Flow* Flow::getFlow(Int i) {
 	return nullptr;
 }
 
-Flow* Flow::getFlow(const string& f) {
-	fail("invalid flow: getFlow(\"" + string2std(f) + "\") of\n" + toStdString());
+Flow* Flow::getFlow(String* f) {
+	fail("invalid flow: getFlow(\"" + f->toStd() + "\") of\n" + toStdString());
 	return nullptr;
 }

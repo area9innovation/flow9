@@ -87,7 +87,7 @@ struct Flow: public RcBase {
 	// these methods do not change any RCs. NODE: only non-scalar components may be accessed this way,
 	// attempt to apply this method to a scalar component will cause runtime error
 	virtual Flow* getFlow(Int i);
-	virtual Flow* getFlow(const string& f);
+	virtual Flow* getFlow(String* f);
 
 	template<typename T> inline T get() { return static_cast<T>(this); }
 	template<typename T> inline T getRc1() { return incRcRet(static_cast<T>(this)); }
