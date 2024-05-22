@@ -163,6 +163,7 @@ class TextClip extends NativeWidgetClip {
 	private var metrics : Dynamic;
 	private static var measureElement : Dynamic;
 	private static var measureRange : Dynamic;
+	private static var measureSVGTextElement : Dynamic;
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
@@ -2013,24 +2014,27 @@ class TextClip extends NativeWidgetClip {
 		)) {
 			return;
 		}
-		var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", "svg");
-		var textElement = Browser.document.createElementNS("http://www.w3.org/2000/svg", "text");
+		if (TextClip.measureSVGTextElement == null) {
+			var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", "svg");
+			svg.setAttribute('id', 'svgTextMeasureElement');
+			TextClip.measureSVGTextElement = Browser.document.createElementNS("http://www.w3.org/2000/svg", "text");
+			svg.appendChild(TextClip.measureSVGTextElement);
+			Browser.document.body.appendChild(svg);
+		}
 
 		// Set font properties
 		var computedStyle = Browser.window.getComputedStyle(untyped textNode.parentNode);
-		textElement.setAttribute('font-family', computedStyle.fontFamily);
-		textElement.setAttribute('font-size', computedStyle.fontSize);
-		textElement.setAttribute('font-style', computedStyle.fontStyle);
-		textElement.setAttribute('letter-spacing', computedStyle.letterSpacing);
-		textElement.setAttribute('white-space', computedStyle.whiteSpace);
+		TextClip.measureSVGTextElement.setAttribute('font-family', computedStyle.fontFamily);
+		TextClip.measureSVGTextElement.setAttribute('font-size', computedStyle.fontSize);
+		TextClip.measureSVGTextElement.setAttribute('font-style', computedStyle.fontStyle);
+		TextClip.measureSVGTextElement.setAttribute('letter-spacing', computedStyle.letterSpacing);
+		TextClip.measureSVGTextElement.setAttribute('white-space', computedStyle.whiteSpace);
 
-		textElement.textContent = textNode.textContent;
-		svg.appendChild(textElement);
-		Browser.document.body.appendChild(svg);
+		TextClip.measureSVGTextElement.textContent = textNode.textContent;
 
-		var bbox = untyped textElement.getBBox();
+		var bbox = untyped TextClip.measureSVGTextElement.getBBox();
 
-		Browser.document.body.removeChild(svg);
+		TextClip.measureSVGTextElement.textContent = '';
 
 		var letSp = Std.parseFloat(computedStyle.letterSpacing);
 		textNodeMetrics.width += bbox.width - (Math.isNaN(letSp) ? 0 : letSp);	

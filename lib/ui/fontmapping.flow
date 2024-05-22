@@ -788,11 +788,16 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 			JsonObject(faces): map(faces, unpairC(\faceName, faceDescr -> {
 				family = getJsonStringField(faceDescr, "family", faceName);
 
+				// HACK to be removed when no style mixins in family and family stays similar for all faces inside.
+				// (maybe after Aug. 15 / 2022)
+				familyNonsenseEndings = ["Regular", "Bold", "Black", "Italic", "ExtraLight", "Light", "SemiBold"];
+				correctedFamily = strGlue(subtractA(strSplit(family, " "), familyNonsenseEndings), " ");
+
 				// TODO add string weight values conversion.
 				weight = getJsonIntField(faceDescr, "weight", 400);
 				slope = "normal" != getJsonStringField(faceDescr, "style", "normal");
-				group = getJsonStringField(faceDescr, "group", family);
-				Face(family, weight, slope, faceName, group);
+				group = getJsonStringField(faceDescr, "group", correctedFamily);
+				Face(correctedFamily, weight, slope, faceName, group);
 			}));
 			default: {
 				devtrace("fontmapping: Error parsing font config.");
@@ -878,7 +883,21 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 	));
 
 	indexedStateMachine = lookupTree(indexedStateMachines.family2machine, fontFace);
-	eitherMap(indexedStateMachine, analyzeState, def);
+	eitherMap(
+		indexedStateMachine,
+		// HACK for cases some product has invalid default face name,
+		// i.e. Cairo Regular instead Cairo, or some other font suffixed with «Book».
+		// To remove this (inner eitherMap to be replaced with def),
+		// after hack above removed and Book/Italic/Medium/MediumItalic
+		// faces out of use.
+		analyzeState, eitherMap(
+			lookupTree(indexedStateMachines.family2machine, fontFace + "Regular"),
+			analyzeState, eitherMap(
+				lookupTree(indexedStateMachines.family2machine, fontFace + "Book"),
+				analyzeState, def
+			)
+		)
+	)
 }
 
 getMappedFontFamilyFaces(family : string) -> [string] {

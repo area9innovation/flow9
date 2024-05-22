@@ -1,0 +1,115 @@
+import string;
+import tools/poppy/penv;
+import tools/mango/line;
+
+export {
+	MoParseAcc(
+		input : string,
+		// This has the output stack
+		env : PEnv,
+		mutable i : int,
+		mutable stack : List<MCheckpoint>,
+		// The last checkpoint for match string
+		mutable starti : int,
+		// The longest we have matched
+		mutable maxi : int,
+	);
+
+	MCheckpoint(i : int, poppyStack : List<flow>);
+
+	pushMCheckpoint(acc : MoParseAcc) -> void;
+	discardMCheckpoint(acc : MoParseAcc) -> bool;
+	restoreMCheckpoint(acc : MoParseAcc) -> bool;
+
+	mparseStar(acc : MoParseAcc, matcher : () -> bool) -> bool;
+	matchString(acc : MoParseAcc, s : string) -> bool;
+	matchRange(acc : MoParseAcc, l : int, u : int) -> bool;
+	moconstruct(acc : MoParseAcc, uid : string, arity : int) -> bool;
+
+	// Driver to parse a compiled mango file
+	parseCompiledMango(content : string, parseFn : (MoParseAcc) -> bool, def : ?) -> Pair<?, string>;
+}
+
+pushMCheckpoint(acc : MoParseAcc) -> void {
+	acc.stack ::= Cons(MCheckpoint(acc.i, ^(acc.env.stack)), acc.stack);
+}
+
+discardMCheckpoint(acc : MoParseAcc) -> bool {
+	switch (acc.stack) {
+		EmptyList(): false;
+		Cons(head, tail_): {
+			acc.stack ::= tail_;
+			true;
+		}
+	}
+}
+
+restoreMCheckpoint(acc : MoParseAcc) -> bool {
+	switch (acc.stack) {
+		EmptyList(): false;
+		Cons(head, tail_): {
+			acc.i ::= head.i;
+			acc.env.stack := head.poppyStack;
+			acc.stack ::= tail_;
+			false;
+		}
+	}
+}
+
+mparseStar(acc : MoParseAcc, matcher : () -> bool) -> bool {
+	pushMCheckpoint(acc);
+	if (matcher()) {
+		discardMCheckpoint(acc);
+		mparseStar(acc, matcher)
+	} else {
+		restoreMCheckpoint(acc);
+		true;
+	};
+}
+
+matchString(acc : MoParseAcc, s : string) -> bool {
+	if (strContainsAt(acc.input, acc.i, s)) {
+		acc.i ::= acc.i + strlen(s);
+		if (acc.i > acc.maxi) acc.maxi ::= acc.i;
+		// println("Matched " + s);
+		true;
+	} else false;
+}
+
+matchRange(acc : MoParseAcc, l : int, u : int) -> bool {
+	code = getCharCodeAt(acc.input, acc.i);
+	if (acc.i < strlen(acc.input) && l <= code && code <= u) {
+		acc.i ::= acc.i + 1;
+		if (acc.i > acc.maxi) acc.maxi ::= acc.i;
+		// println("Matched range " +  "0x" + formatHex(l) + "-" + formatHex(u) + " as  " + fromCharCode(code));
+		true;
+	} else false;
+}
+
+moconstruct(acc : MoParseAcc, uid : string, arity : int) -> bool {
+	args = generate(0, arity, \__ -> {
+		popPEnv(acc.env)
+	});
+	struct = makeStructValue(uid, reverseA(args), IllegalStruct());
+	if (struct != IllegalStruct()) {
+		pushPEnv(acc.env, struct);
+		true;
+	} else {
+		println("ERROR: Could not construct " + uid + " with args " + toString(args));
+		false;
+	}
+}
+
+parseCompiledMango(content : string, parseFn : (MoParseAcc) -> bool, def : ?) -> Pair<?, string> {
+	macc = MoParseAcc(content, PEnv(ref makeList()), 0, makeList(), 0, 0);
+	ok = parseFn(macc);
+
+	value = getSinglePEnv(macc.env, def);
+
+	// If we failed the parse, or did not parse everything, print an error 
+	if (!ok || macc.i < strlen(content)) {
+		Pair(value, "Failed parsing at pos " + i2s(macc.maxi) + ", line " + getLinePos(content, macc.maxi, 1, 0));
+	} else {
+		Pair(value, "");
+	}
+}
