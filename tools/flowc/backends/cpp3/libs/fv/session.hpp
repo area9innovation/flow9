@@ -72,6 +72,7 @@ struct Session {
 		LastUseTime = std::chrono::steady_clock::now ();
 		auto [_schema, _host, _port, _path] = _parse_url (_r.Url);
 		std::string _conn_flag = fmt::format ("{}://{}:{}", _schema, _host, _port);
+		std::string err;
 		if (!Conn || ConnFlag != _conn_flag) {
 			ConnFlag = _conn_flag;
 			if (_schema == "https") {
@@ -79,41 +80,32 @@ struct Session {
 			} else {
 				Conn = std::shared_ptr<IConn> (new TcpConn {});
 			}
-			co_await Conn->Connect (_host, _port);
+			err = co_await Conn->Connect (_host, _port);
+			if (err != "") {
+				co_return Response{500, err, {}};
+			}
 		}
 
 		_r.Schema = _schema;
 		_r.UrlPath = _path;
 
-		//// cancel
-		//AsyncTimer _timer {};
-		//if (std::chrono::duration_cast<std::chrono::nanoseconds> (_r.Timeout).count () > 0) {
-		//	_timer.WaitCallback (_r.Timeout, [_tconn = std::weak_ptr (Conn)] ()->Task<void> {
-		//		auto _conn = _tconn.lock ();
-		//		if (_conn)
-		//			_conn->Cancel ();
-		//	});
-		//}
-
 		// generate data
 		std::string _data = _r.Serilize (_host, _port, _path);
 
 		// try once
-		bool _suc = true;
-		try {
-			co_await Conn->Send (_data.data (), _data.size ());
-		} catch (...) {
-			_suc = false;
-		}
-		if (_suc) {
+		err = co_await Conn->Send (_data.data (), _data.size ());
+		if (err == "") {
 			co_return co_await Response::GetFromConn (Conn);
 		}
-
-		// try second
 		co_await Conn->Reconnect ();
-		co_await Conn->Send (_data.data (), _data.size ());
-		co_return co_await Response::GetFromConn (Conn);
-		//_timer.Cancel ();
+		// try second time
+		err = co_await Conn->Send (_data.data (), _data.size ());
+		if (err == "") {
+			co_return co_await Response::GetFromConn (Conn);
+		} else {
+			// Connection error
+			co_return Response{500, err, {}};
+		}
 	}
 
 	Task<Response> Head (std::string _url) {

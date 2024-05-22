@@ -3,21 +3,21 @@ import tools/flowc/statements/fs_expand;
 import tools/common/stats;
 
 export {
-	fsPerceus(s: FsStat, debug: bool, name: string) -> FsStat;
+	fsPerceus(s: FsStat, transparent: bool, name: string, debug: bool) -> FsStat;
 
 	// Markups the AST nodes, which are used in Perceus, with unique ids
-	fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int>;
+	//fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int>;
 
 	// Maps the node indexes to the set of ref-counter operations 
-	fsPerceusCore(s: FsStat, num_ids: int, debug: bool, name: string) -> [FsMem];
+	//fsPerceusCore(s: FsStat, num_ids: int, transparent: bool, debug: bool, name: string) -> [FsMem];
 }
 
-fsPerceus(s: FsStat, debug: bool, name: string) -> FsStat {
+fsPerceus(s: FsStat, transparent: bool, name: string, debug: bool) -> FsStat {
 	p = fsPerceusMarkup(s);
 	if (debug) {
 		println("MARKUPED:\n" + fs2s(p.first));
 	}
-	mem = fsPerceusCore(p.first, p.second, debug, name);
+	mem = fsPerceusCore(p.first, p.second, transparent, debug, name);
 	s1 = fsExpandMem(p.first, mem);
 	cast(fsMarkupUniqueVars(s1): FsAll -> FsStat);
 }
@@ -49,7 +49,7 @@ fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int> {
 		FsWrapExp(e,__,__):        FsWrapExp(x with id = new_id(), e = fsExpSetId(e, new_id()));
 		FsRet(e,__,__):            FsRet(x with id = new_id(), e = fsExpSetId(e, new_id()));
 		FsAssign(e1, e2,__,__,__): FsAssign(x with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
-		FsLet(__,e,__,__,__):      FsLet(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsLet(__,__,e,__,__,__):   FsLet(x with id = new_id(), e = fsExpSetId(e, new_id()));
 		FsFor(__,e,__,__,__,__):   FsFor(x with id = new_id(), e = fsExpSetId(e, new_id()));
 		FsLambda(__,__,__,__,__):  FsLambda(x with id = new_id());
 		FsVarUse(__,__,__):        FsVarUse(x with id = new_id());
@@ -59,7 +59,7 @@ fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int> {
 	Pair(s1, ^id_counter);
 }
 
-fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
+fsPerceusCore(s: FsStat, num_ids: int, transparent: bool, debug0: bool, name: string) -> [FsMem] {
 	debug = ref debug0;
 	add_var = \x, acc, v -> {
 		switch (lookupTree(acc, v.name)) {
@@ -75,13 +75,17 @@ fsPerceusCore(s: FsStat, num_ids: int, debug0: bool, name: string) -> [FsMem] {
 		setTree(acc, v.name, v);
 	}
 	name2var = fsFold(s, makeTree(), \acc, x -> switch (x) {
-		FsLet(v,__,__,__,__): add_var(x, acc, v);
+		FsLet(v,__,__,__,__,__): add_var(x, acc, v);
 		FsFor(v,__,__,__,__,__): add_var(x, acc, v);
 		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
 		default: acc;
 	}, true);
 	t1 = timestamp();
-	last = fsPerceusLastUse(s, num_ids, ^debug, name);
+	last = if (transparent) {
+		generate(0, num_ids, \__ -> makeSet());
+	} else {
+		fsPerceusLastUse(s, num_ids, ^debug, name);
+	}
 	fsShowTiming(name + ": fsPerceusLastUse(s1, num_ids, ^debug, name)", t1);
 	t2 = timestamp();
 	id2mem = fsPerceusId2Mem(s, num_ids, last, name2var, ^debug);
@@ -117,7 +121,7 @@ fsPerceusStatId2Mem(x: FsStat, id2mem: [ref FsMem], last: [Set<string>], name2va
 			fsPerceusStatId2Mem(pos, id2mem, last, name2var, debug);
 			fsPerceusStatId2Mem(neg, id2mem, last, name2var, debug);
 		}
-		FsLet(__,e, s1, id,__): {
+		FsLet(v, __, e, s1, id,__): {
 			fsPerceusExpId2Mem(e, id2mem, last, name2var, debug);
 			id2mem[id] := fsPerceusAddUnused2Mem(
 				fsPerceusAddExp2Mem(make_mem(), e, last, false, false, debug),
@@ -278,9 +282,21 @@ fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool, int
 			fold(closure, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, false, false, debug));
 		}
 		FsCall(f, args,__,__): {
-			fold(args, fsPerceusAddExp2Mem(acc, f, last, false, false, debug), \ac, x ->
-				fsPerceusAddExp2Mem(ac, x, last, false, false, debug)
-			);
+			do_job = \args_inline, args_intrinsic -> {
+				fold(args, fsPerceusAddExp2Mem(acc, f, last, false, false, debug), \ac, x ->
+					fsPerceusAddExp2Mem(ac, x, last, args_inline, args_intrinsic, debug)
+				);
+			}
+			switch (f.info.kind) {
+				FsVarGlobalFunc(k): {
+					switch (k) {
+						FsFunCall(): do_job(false, false);
+						FsRecCallHost(): do_job(true, false);
+						FsRecCallRec(): do_job(false, true);
+					}
+				}
+				default: do_job(false, false);
+			}
 		}
 		FsCallPrim(op, es,__,__): {
 			op_inline = switch (op) {
@@ -310,45 +326,12 @@ fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool, int
 		FsVarUse(x, info, id): {
 			if (fiTypeIsScalar(x.type) || intrinsic) acc else {
 				switch (info.kind) {
-					FsVarGlobalFunc(): acc;
+					FsVarGlobalFunc(__): acc;
 					FsVarUninit(): acc;
 					FsVarIntrinsic(): acc;
 					default: {
 						if (id == -1) acc else {
 							is_last = containsSet(last[id], x.name);
-							acc1 = if (inline) {
-								add_dec = if (is_last) Some(FsDecPost()) else None();
-								FsMem(setTree(acc.ops, x,
-									switch (lookupTree(acc.ops, x)) {
-										Some(ops): {
-											FsVarMem(ops with
-												dec = add_dec,
-												last = ops.last || is_last,
-												inlined = ops.inlined + 1
-											);
-										}
-										None(): {
-											FsVarMem(0, add_dec, 1, 0, is_last);
-										}
-									}
-								));
-							} else {
-								add_inc = if (is_last) 0 else 1;
-								FsMem(setTree(acc.ops, x,
-									switch (lookupTree(acc.ops, x)) {
-										Some(ops): {
-											FsVarMem(ops with
-												inc = ops.inc + add_inc,
-												last = ops.last || is_last,
-												called = ops.called + 1
-											);
-										}
-										None(): {
-											FsVarMem(add_inc, None(), 0, 1, is_last);
-										}
-									}
-								));
-							}
 							fsUpdateFsMem(acc, x, FsVarMem(
 								if (is_last || inline) 0 else 1,
 								if (is_last && inline) Some(FsDecPost()) else None(),
@@ -488,7 +471,7 @@ fsPerceusId2varsPre(s: FsStat, num: int, debug: bool) -> [HashSet<string>] {
 					id2vars[id] := new_vars;
 					Cons(new_vars, acc);
 				}
-				FsLet(v,__,__,id,__): {
+				FsLet(v,__,__,__,id,__): {
 					id2vars[id] := acc.head;
 					new_vars = copyHashSet(acc.head);
 					add_v(new_vars, v);
@@ -534,7 +517,7 @@ fsPerceusId2varsPre1(s: FsStat, num: int, debug: bool) -> [HashSet<string>] {
 					id2vars[id] := acc;
 					acc;
 				}
-				FsLet(v,__,__,id,__): {
+				FsLet(v,__,__,__,id,__): {
 					id2vars[id] := acc;
 					acc1 = copyHashSet(acc);
 					add_v(acc1, v);
@@ -582,8 +565,8 @@ fsPerceusId2varsPost(s: FsStat, num: int, debug: bool) -> [Set<string>] {
 				}
 				FsVarUse(v, info, id): {
 					new_vars = switch (info.kind) {
-						FsVarLocal(): {
-							if (fiTypeIsScalar(v.type)) acc.head else insertSet(acc.head, v.name);
+						FsVarLocal(transparent): {
+							if (fiTypeIsScalar(v.type) || transparent) acc.head else insertSet(acc.head, v.name);
 						}
 						default: acc.head;
 					}
@@ -613,8 +596,8 @@ fsPerceusId2varsPost1(s: FsStat, num: int, debug: bool) -> [Set<string>] {
 			switch (x) {
 				FsVarUse(v, info, id): {
 					new_vars = switch (info.kind) {
-						FsVarLocal(): {
-							if (fiTypeIsScalar(v.type)) acc else insertSet(acc, v.name);
+						FsVarLocal(transparent): {
+							if (fiTypeIsScalar(v.type) || transparent) acc else insertSet(acc, v.name);
 						}
 						default: acc;
 					}

@@ -85,8 +85,8 @@ struct Str : public Union {
 	Flow* getFlow(Int i) override {
 		return getFlow_<0>(i);
 	}
-	Flow* getFlow(const string& f) override {
-		int field_idx = Dyn::structField(Id, f);
+	Flow* getFlow(String* f) override {
+		int field_idx = Dyn::structField(Id, f->str());
 		return getFlow(field_idx); 
 	}
 

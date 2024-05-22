@@ -4,13 +4,29 @@
 
 namespace flow {
 
-bool RuntimeStatus::isReady() { return is_ready_; }
-void RuntimeStatus::setReady(bool ready) {
-	is_ready_ = ready;
+Int string2int(const string& s) {
+	Int len = s.size();
+	const char16_t* beg = s.data();
+	bool sign = true;
+	if (*beg == char16_t('-')) {
+		sign = false;
+		++beg;
+		--len;
+	}
+	Int i = 0;
+	Int ret = 0;
+	static int deg10[] = {1, 10, 100, 1000, 10'000, 100'000, 1000'000, 10'000'000, 100'000'000, 1000'000'000};
+	for (const char16_t* x = beg + len - 1; x >= beg && i < 10; --x, ++i) {
+		char16_t ch = *x;
+		if (char16_t('0') <= ch && ch <= char16_t('9')) {
+			ret += (ch - char16_t('0')) * deg10[i];
+		} else {
+			ret = 0;
+			break;
+		}
+	}
+	return sign ? ret : -ret;
 }
-bool RuntimeStatus::is_ready_ = false;
-int RuntimeStatus::exit_code_ = 0;
-std::thread RuntimeStatus::quit_thread_;
 
 string double2string(Double x, bool persistent_dot) {
 	if (std::isnan(x)) {
@@ -100,15 +116,43 @@ void appendEscaped(string& s, const string& x) {
 		}
 	}
 }
-/*
-template<> void append2string<Void>(string& s, Void v) { s.append(u"{}"); }
-template<> void append2string<Int>(string& s, Int v) { s.append(int2string(v)); }
-template<> void append2string<Bool>(string& s, Bool v) { s.append(bool2string(v)); }
-template<> void append2string<Double>(string& s, Double v) { s.append(double2string(v)); }
 
-template<> Int compare<Void>(Void v1, Void v2) { return true; }
-template<> Int compare<Bool>(Bool v1, Bool v2)  { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-template<> Int compare<Int>(Int v1, Int v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-template<> Int compare<Double>(Double v1, Double v2) { return (v1 < v2) ? -1 : ((v1 > v2) ? 1 : 0); }
-*/
+void RuntimeState::init(int argc, const char* argv[]) {
+	for (int i = 1; i < argc; ++ i) {
+		std::string arg(argv[i]);
+		args_vec_.push_back(std2string(arg));
+		std::size_t eq_ind = arg.find("=");
+		if (eq_ind == std::string::npos) {
+			args_map_[std2string(arg)] = u"";
+		} else {
+			std::string key = arg.substr(0, eq_ind);
+			std::string val = arg.substr(eq_ind + 1, arg.size() - eq_ind - 1);
+			args_map_[std2string(key)] = std2string(val);
+		}
+	}
+	init_all_modules();
+	is_ready_ = true;
+}
+void RuntimeState::quit(int code) {
+	is_ready_ = false;
+	exit_code_ = code;
+	quit_thread_ = std::move(std::jthread([]() {
+		term_all_modules();
+		ThreadPool::release();
+		MemoryPool::release();
+	}));
+}
+int RuntimeState::exit() {
+	join_all_modules();
+	if (quit_thread_.joinable()) {
+		quit_thread_.join();
+	}
+	return exit_code_;
+}
+
+void fail(const std::string& msg) {
+	std::cout << msg << std::endl;
+	RuntimeState::quit(1);
+}
+
 }
