@@ -167,7 +167,7 @@ inline T2 castRc(T1 x) {
 				}
 			} else if constexpr (is_type_v<TypeFx::FLOW, typename V2::RefType>) {
 				if constexpr (is_scalar_v<typename V1::RefType>) {
-					static_assert(false, "Illegal cast of reference to scalar type to reference to flow");
+					fail("Illegal cast of reference to scalar type to reference to flow");
 					return x;
 				} else {
 					return reinterpret_cast<T2>(x);
@@ -175,12 +175,12 @@ inline T2 castRc(T1 x) {
 			} else if constexpr (is_struct_or_union_v<typename V2::RefType> && is_struct_or_union_v<typename V2::RefType>) {
 				return reinterpret_cast<T2>(x);
 			} else {
-				static_assert(false, "Illegal cast to reference");
+				fail("Illegal cast to reference");
 			}
 		} else if constexpr (is_type_v<TypeFx::FLOW, T1>) {
 			return static_cast<T2>(x);
 		} else {
-			static_assert(false, "Cast to reference may be made from another reference or flow");
+			fail("Cast to reference may be made from another reference or flow");
 		}
 	}
 	else if constexpr (is_type_v<TypeFx::FUNC, T2>) {
