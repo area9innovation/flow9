@@ -1436,9 +1436,7 @@ class TextClip extends NativeWidgetClip {
 			return;
 		}
 
-		// Some browsers tend to return nativeWidget.value without decimal separator at the end, but still visually display it
-		var decimalSeparatorFix = type == 'number' && (e.data == '.' || e.data == ',');
-		var nativeWidgetValue = decimalSeparatorFix ? nativeWidget.value + e.data : nativeWidget.value;
+		var nativeWidgetValue = nativeWidget.value;
 		var newValue : String = nativeWidgetValue;
 
 		if (maxChars > 0) {
@@ -1461,9 +1459,6 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		var setNewValue = function(val) {
-			if ((Platform.isChrome || Platform.isEdge) && decimalSeparatorFix) {
-				nativeWidget.value = '';
-			}
 			nativeWidget.value = val;
 		}
 
