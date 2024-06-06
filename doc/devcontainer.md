@@ -32,7 +32,7 @@ When VS Code starts, it will ask if you if you want to open the DevContainer. Se
 
 When the DevContainer is active, the lower right corner of VS Code will display a green text "Dev Container: Flow9". 
 
-In the DevContainer you now have an environment with your git checkout and the required java, haxe and haxelib installed. 
+In the DevContainer you now have an environment with your git checkout and the required java, qt, haxe and haxelib installed. 
 
 If you open a terminal in VS Code you should have a prompt that looks something like this: 
 
@@ -81,7 +81,30 @@ In the host open the created graph.html file in a browser. In WSL it might be so
 
 	file://wsl.localhost/Ubuntu/home/ub/prg/flow9/sandbox/graph.html
 
-Verify the flow9 Plugin. TODO
+Flow also have an QT target. To verify that it is working, do:
+
+	cd ~/prg/flow9
+	flowcpp --batch sandbox/hello_console.flow
+
+This should display "Hello console".
+
+If your dev container supports UI applications, then try:
+
+	cd ~/prg/flow9
+	flowcpp sandbox/graph.flow
+
+This should open a new GUI Window and show an automatic graph layout.
+
+## Flow9 VSCode Language Server
+
+To verify that the Flow9 VSCode Language Server Plugin is working, open the "sandbox/graph.flow" file and press F7. It should open an Output window, and something like display: 
+
+	Processing '/workspaces/flow9/sandbox/graph.flow' on http server
+	done in 0.19s
+
+Also try to add an syntax error, and press F7. It should then display an error message in the Output window. A "flow http server" message should also be visible in the lower right corner of vscode. 
+
+Press Shift F7 to run the graph application. It should open in a new window. 
 
 ## Trouble shooting VS Code image builds. 
 

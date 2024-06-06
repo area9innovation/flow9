@@ -15,6 +15,14 @@ RUN apt-get install -y \
 	default-jdk \
 	maven
 
+# Add support for QT and flowcpp
+RUN apt-get install -y \
+	libqt5webenginewidgets5 \
+	libqt5multimedia5 \
+	libqt5websockets5 \
+	libqt5sql5-mysql \
+	libglu1-mesa
+
 # Configure some haxe paths in the share folder.
 ENV HAXEPATH=/usr/share/haxe
 ENV HAXE_STD_PATH=$HAXEPATH/std
