@@ -55,7 +55,7 @@ export {
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacities, CalendarCustomHeader, CalendarHideContentFrame,
 		CalendarScrollStyle, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs, CalendarHideWeekends,
 		CalendarHideTimeInDayView, CalendarHideTimelineInDayView, CalendarReadOnlyEventDialog, CalendarCombinedEventsView,
-		CalendarWeekAdaptiveWidth, CalendarDisableHorizontalBorder, ShowHoursGridForWeekView;
+		CalendarWeekAdaptiveWidth, CalendarDisableHorizontalBorder, HoursGridForWeekView;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -153,7 +153,7 @@ export {
 		// visibleWeekdays - visible weekday columns count (default is 5.4)
 		CalendarWeekAdaptiveWidth(minAvailableWidth : double, visibleWeekdays : double);
 		CalendarDisableHorizontalBorder();
-		ShowHoursGridForWeekView(cellSize : double);
+		HoursGridForWeekView(cellSize : double, startHour : int, endHour : int);
 
 		CalendarReadOnlyEventDialog(open : (int) -> void);
 		CalendarCombinedEventsView(getCombinedEvents : (CalendarTab, [CalendarEvent]) -> [CalendarEvent], getView : (CalendarTab, [CalendarEvent], ([CalendarEvent]) -> void) -> Material);
@@ -1856,8 +1856,8 @@ RangeView(
 	scrollStyle = extractStruct(styles, CalendarScrollStyle(\__ -> [])).getStyle(Some(tab));
 	hideWeekends = contains(styles, CalendarHideWeekends());
 	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
-	hourGridCellSize = extractStruct(styles, ShowHoursGridForWeekView(-1.0)).cellSize;
-	showHoursGrid = hourGridCellSize > 0.0 && tab == WeekTab() && !fgetValue(isMobileViewB);
+	hoursGridStyle = extractStruct(styles, HoursGridForWeekView(-1.0, 0, 24));
+	showHoursGrid = hoursGridStyle.cellSize > 0.0 && tab == WeekTab() && !fgetValue(isMobileViewB);
 
 	getWeekDay = extractStruct(styles, CalendarWeekDayView(\dayName, __ -> {
 		MCenterX(MText(dayName, [MCaptionColumn(), MGrey(500)])) |> MBorderTopBottom(6.0)
@@ -1967,7 +1967,7 @@ RangeView(
 		map(sortCustom(
 			tree2pairs(fold(
 				sortCustom(rangeEvents, \event -> event.startDate, true),
-				keys2tree(generate(0, 6, \days -> addDaysToDate(startDate, days)), \__ -> []),
+				keys2tree(generate(0, if (hideWeekends) 4 else 6, \days -> addDaysToDate(startDate, days)), \__ -> []),
 				\res, event : CalendarEvent -> treePushToArrayValue(res, time2date(event.startDate), event)
 			)),
 			firstOfPair,
@@ -2110,11 +2110,17 @@ RangeView(
 			TFillXH(0.0)
 		} else {
 			map(eventsColumn, \event -> {
-				blankLength = i2d(event.startDate.hour) * (hourGridCellSize + gridWidth) + gridWidth + i2d(event.startDate.min) * hourGridCellSize / 60.0;
-				eventLength = (event.endDate.hour - event.startDate.hour) * 60 + event.endDate.min - event.startDate.min;
-				eventHours = eventLength / 60;
-				eventHeight = i2d(eventLength) * hourGridCellSize / 60.0 + i2d(eventHours);
-				EventCellForColumn(blankLength, eventHeight, event)
+				eventStartDate = max(event.startDate, Time(event.startDate with hour = hoursGridStyle.startHour, min = 0, sec = 0));
+				eventEndDate = min(event.endDate, Time(event.endDate with hour = hoursGridStyle.endHour, min = 0, sec = 0));
+				if (eventStartDate >= event.endDate || eventEndDate <= event.startDate) {
+					MEmpty();
+				} else {
+					blankLength = i2d(eventStartDate.hour - hoursGridStyle.startHour) * (hoursGridStyle.cellSize + gridWidth) + gridWidth + i2d(eventStartDate.min) * hoursGridStyle.cellSize / 60.0;
+					eventLength = (eventEndDate.hour - eventStartDate.hour) * 60 + eventEndDate.min - eventStartDate.min;
+					eventHours = eventLength / 60;
+					eventHeight = i2d(eventLength) * hoursGridStyle.cellSize / 60.0 + i2d(eventHours);
+					EventCellForColumn(blankLength, eventHeight, event);
+				}
 			}) |> MGroup;
 		}
 	});
@@ -2151,13 +2157,13 @@ RangeView(
 	horizontalLine = TRectangle(gridLinesStyle, TFillXH(gridWidth));
 
 	hoursGrid = {
-		verticalGridLine = TRectangle(gridLinesStyle, TFixed(gridWidth, (hourGridCellSize + gridWidth) * 24.0 + gridWidth));
+		verticalGridLine = TRectangle(gridLinesStyle, TFixed(gridWidth, (hoursGridStyle.cellSize + gridWidth) * i2d(hoursGridStyle.endHour - hoursGridStyle.startHour) + gridWidth));
 		MGroup2(
 			MColsA(arrayPush(concatA(generate(0, columnsCountInRange, \__ -> [verticalGridLine, TFillX()])), verticalGridLine)),
-			MLinesA(concatA(generate(0, 25, \i -> {
-				timeM = MText((if (i < 10) "0" else "") + i2s(i) + ":00 ", [MOverline()])|> \m -> MFixSize(m, MFixed(hourGridCellSize, 0.0)) |> MBorderTop(-5.0) |> MBorderLeft(-25.0);
+			MLinesA(concatA(generate(hoursGridStyle.startHour, hoursGridStyle.endHour + 1, \i -> {
+				timeM = MText((if (i < 10) "0" else "") + i2s(i) + ":00 ", [MOverline()])|> \m -> MFixSize(m, MFixed(hoursGridStyle.cellSize, 0.0)) |> MBorderTop(-5.0) |> MBorderLeft(-25.0);
 				line = MGroup2(timeM, horizontalLine);
-				if (i == 0) [line] else [TFillXH(hourGridCellSize), line]
+				if (i == hoursGridStyle.startHour) [line] else [TFillXH(hoursGridStyle.cellSize), line]
 			}))),
 		);
 	}
