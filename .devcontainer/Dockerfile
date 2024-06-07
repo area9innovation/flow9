@@ -23,6 +23,9 @@ RUN apt-get install -y \
 	libqt5sql5-mysql \
 	libglu1-mesa
 
+# Add applications for testing the GUI setup (For example xeyes)
+RUN apt-get install -y x11-apps
+
 # Configure some haxe paths in the share folder.
 ENV HAXEPATH=/usr/share/haxe
 ENV HAXE_STD_PATH=$HAXEPATH/std

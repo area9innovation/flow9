@@ -30,7 +30,7 @@ Start VS Code:
 
 When VS Code starts, it will ask if you if you want to open the DevContainer. Select yes to this. The first time it will need to build the Docker image, this will take between 1 and 10 minutes.
 
-When the DevContainer is active, the lower right corner of VS Code will display a green text "Dev Container: Flow9". 
+When the DevContainer is active, the lower right corner of VS Code will display a blue text "Dev Container: Flow9". 
 
 In the DevContainer you now have an environment with your git checkout and the required java, qt, haxe and haxelib installed. 
 
@@ -88,13 +88,18 @@ Flow also have an QT target. To verify that it is working, do:
 
 This should display "Hello console".
 
-If your dev container supports UI applications, then try:
+Verify that the GUI is working in the DevContainer by running a test application:
+
+	xeyes
+
+This should open a new window with two eyes. (If it does not work, then it sometimes helps to run the VS Code command "DevContainer: Rebuild Container")
+
+If GUI applications works, then try:
 
 	cd ~/prg/flow9
 	flowcpp sandbox/graph.flow
 
 This should open a new GUI Window and show an automatic graph layout.
-
 ## Flow9 VSCode Language Server
 
 To verify that the Flow9 VSCode Language Server Plugin is working, open the "sandbox/graph.flow" file and press F7. It should open an Output window, and something like display: 
@@ -105,8 +110,23 @@ To verify that the Flow9 VSCode Language Server Plugin is working, open the "san
 Also try to add an syntax error, and press F7. It should then display an error message in the Output window. A "flow http server" message should also be visible in the lower right corner of vscode. 
 
 Press Shift F7 to run the graph application. It should open in a new window. 
+Place the cursor on a name, and press F12 to jump to the definition of the name. 
 
-## Trouble shooting VS Code image builds. 
+## Flow Debugger
+
+The Flow debugger need a ".vscode/launch.json" configuration to work. The flow9 repository have a default configuration that uses the flow file in the current active editor. It is called "Debug Active Flow Editor". If you have multiple launch.json configurations then open the Debugger Tab and select the "Debug Active Flow Editor" configuration.
+
+Open the sandbox/graph.flow file, and add a breakpoint in the Add function. (This is currently line 39, starting with "nl = addNewDataPoint.."). You can add break points by clicking to the right of the line number. Then press "F5" to build, run and debug the flow application. 
+
+If it works, the Graph window should open. When you click the "Add" button in the Graph application, VS Code should break the program and show the stack trace and the local variables. See here for more information: https://code.visualstudio.com/docs/editor/debugging
+
+## Trouble shooting
+
+### Trouble shooting GUI apps. 
+
+If the GUI applications does not work (xeyes or xclock), then rebuilding the container sometimes works. Select the VS Code command "DevContainers: Rebuild Container" or "DevContainers: Rebuild Container without cache"
+
+### Trouble shooting VS Code image builds. 
 
 If VS Code fails to create the dev-container it might be needed to remove the bad images and container. Do that by listing all the containers and remove the flow9 containers:  
 
@@ -117,3 +137,4 @@ If VS Code fails to create the dev-container it might be needed to remove the ba
 	docker image prune
 
 Where xyz is the id of the vsc-flow9-* containers
+
