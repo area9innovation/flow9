@@ -1093,8 +1093,6 @@ reflowTParaWordsRec(
 	catchOverflow : bool,
 	ignoreLetterSpacing : bool
 ) -> TReflowResultAcc {
-	traceApi = makeWigiTrace_Tropic("reflowTParaWordsRec", words);
-	traceApi.trace(\-> "remaining: " + toString(remaining));
 	addLine = \cw, indent -> switch (result) {
 		TReflowedLinesAndChanges(lines, changes) : TReflowedLinesAndChanges(
 			ifArrayPush(lines, cw != [], TParaLine(cw, indent)),
@@ -1266,64 +1264,37 @@ reflowTParaWordsRec(
 				getWordView = \w -> w.ghostView;
 
 				form = getWordView(word);
-				if (remaining == 31.) {
-					println("");
-				}
+
 				// Number of words that should be on the same line
-				wordsCount = iteriUntil(words, \i, _word : TParaWord -> {
-					addWidth = \-> width := ^width + getWordWidth(_word);
-
-					spaceCase = \str -> if(isSpace(str)) {
-						true
-					} else {
-						addWidth();
-						false;
-					};
-
-					switch (_word.word) {
-						NewLine(): true;
-						GeneralSpace(str, __, __): spaceCase(str);
-						GeneralDynamicSpace(str, __, __): spaceCase(str);
-						GeneralLinePart(first, mid, end, allowBreakAfter): {
-							isLast = i == length(words) - 1;
-							nextWordWidth = if (isLast) 0.0 else getWordWidth(words[i + 1]);
-							if (currentWords == []) {
-								nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineFirst());
-							} else if (isLast) {
-								nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineEnd());
-							} else {
-								nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineMiddle());
-								if (getWordWidth(_word) + nextWordWidth >= remaining && (allowBreakAfter || isLast)) {
-									nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineEnd());
+				wordsCount = if (keepWordsTogether(form, word, dummyTParaWord)) {
+					iteriUntil(words, \i, _word : TParaWord -> {
+						switch (_word.word) {
+							NewLine(): true;
+							GeneralSpace(__, __, __): true;
+							GeneralDynamicSpace(__, __, __): true;
+							GeneralLinePart(__, __, __, allowBreakAfter): true;
+							default: {
+								f = getWordView(_word);
+								// it is no use to make line with zero-width content, so we continue counting if the width is 0
+								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
+								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
+								if (
+									(isMarked && i <= 1) ||
+									keepWordsTogether(f, _word, if (i < 1) dummyTParaWord else words[i - 1]) ||
+									^width == 0.0
+								) {
+									width := ^width + getWordWidth(_word);
+									false;
+								} else {
+									true
 								}
-							}
-							if (allowBreakAfter) {
-								addWidth();
-								true;
-							} else {
-								addWidth();
-								false
-							}
-						}
-						default: {
-							f = getWordView(_word);
-							// it is no use to make line with zero-width content, so we continue counting if the width is 0
-							// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
-							// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-							if (
-								(isMarked && i <= 1) ||
-								keepWordsTogether(f, _word, if (i < 1) dummyTParaWord else words[i - 1]) ||
-								^width == 0.0
-							) {
-								addWidth();
-								false;
-							} else {
-								true
-							}
+							};
 						};
-					};
-				});
-
+					});
+				} else {
+					width := getWordWidth(word);
+					1;
+				};
 				if (^width == 0.0 || ^width <= remaining || currentWords == []) {
 					_words = take(words, wordsCount);
 					_rest = tailFrom(words, wordsCount);
@@ -1386,7 +1357,7 @@ keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord
 keepWordsTogetherRec(tr : Tropic) -> bool {
 	switch (tr) {
 		TEmpty(): true;
-		TText(t, s): false;
+		TText(t, s): true;
 		TCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineLines2(top, bottom): keepWordsTogetherRec(top) && keepWordsTogetherRec(bottom);
