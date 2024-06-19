@@ -43,6 +43,8 @@ Meet flow
 Installation
 ------------
 
+The easiest way to get started is to use VS Code with Dev Containers. See: [VS Code dev containers](doc/devcontainer.md). It can also be installed via the following steps: 
+
 1. Make sure you have [Git LFS](https://git-lfs.github.com) installed.
 
 2.  Check out this repository with something like
