@@ -193,8 +193,8 @@ class HttpSupport {
 
 		if (isBinflow(url) && Util.getParameter("arraybuffer") != "0") {
 			var query = Lambda.fold(params, function(kv, query) {
-    			return query + "&" + kv[0] + "=" + kv[1];
-    		}, "");
+				return query + "&" + kv[0] + "=" + kv[1];
+			}, "");
 
 			if (url.indexOf("?") < 0) query = "?" + query;
 			else query = "&" + query;
@@ -413,8 +413,8 @@ class HttpSupport {
 
 		if (isBinflow(url) && Util.getParameter("arraybuffer") != "0") {
 			var query = Lambda.fold(params, function(kv, query) {
-    			return query + "&" + kv[0] + "=" + kv[1];
-    		}, "");
+				return query + "&" + kv[0] + "=" + kv[1];
+			}, "");
 
 			if (url.indexOf("?") < 0) query = "?" + query;
 			else query = "&" + query;
@@ -677,17 +677,174 @@ class HttpSupport {
 		return cancelFn;
 	}
 
+	public static function uploadNativeFiles(
+			files: Array<Dynamic>,
+			url: String,
+			params: Array<Array<String>>,
+			headers: Array<Array<String>>,
+			onOpenFn: Void -> Void,
+			onDataFn: String -> Void,
+			onErrorFn: String -> Void,
+			onProgressFn: Float -> Float -> Void,
+			onCancelFn: Void -> Void
+		): Void -> Void {
+
+		var cancelFn = function() {};
+
+		#if flash
+
+		var completedFiles = 0;
+		var totalFiles = files.length;
+
+		for (file in files) {
+			file.addEventListener(flash.events.IOErrorEvent.IO_ERROR, function(e) {
+				onErrorFn(e);
+			});
+
+			file.addEventListener(flash.events.Event.OPEN, function(e) {
+				onOpenFn();
+			});
+
+			file.addEventListener(flash.events.DataEvent.UPLOAD_COMPLETE_DATA, function(e: flash.events.DataEvent) {
+				completedFiles++;
+				if (completedFiles == totalFiles) {
+					onDataFn(e.data);
+				}
+			});
+
+			file.addEventListener(flash.events.ProgressEvent.PROGRESS, function(e: flash.events.ProgressEvent) {
+				onProgressFn(e.bytesLoaded, e.bytesTotal);
+			});
+
+			file.addEventListener(flash.events.Event.CANCEL, function(e) {
+				onCancelFn();
+			});
+
+			var request = new flash.net.URLRequest(url);
+			request.method = flash.net.URLRequestMethod.POST;
+			var vars = new flash.net.URLVariables();
+
+			var payloadName = "";
+
+			for (param in params) {
+				var key = param[0];
+				var value = param[1];
+				if (key != "uploadDataFieldName") {
+					Reflect.setField(vars, key, value);
+				} else {
+					payloadName = value;
+				}
+			}
+
+			request.data = vars;
+
+			if (payloadName == "") {
+				file.upload(request);
+			} else {
+				file.upload(request, payloadName);
+			}
+		}
+
+		#elseif (js && !flow_nodejs)
+
+		var xhr: Dynamic = untyped __js__ ("new XMLHttpRequest()");
+
+		xhr.open("POST", url, true);
+		onOpenFn();
+
+		xhr.onload = xhr.onerror = function() {
+			if (xhr.status != 200) {
+				onErrorFn("" + xhr.status);
+			} else {
+				onDataFn(xhr.responseText);
+			}
+		};
+
+		xhr.upload.onprogress = function(event) {
+			onProgressFn(event.loaded, event.total);
+		};
+
+		var form_data: Dynamic = untyped __js__ ("new FormData()");
+		
+		var payloadName = "Filedata";
+		for (p in params) {
+			form_data.append(p[0], p[1]);
+		};
+
+		for (file in files) {
+			form_data.append(file.name, file, file.name);
+		}
+
+		for (header in headers) {
+			xhr.setRequestHeader(header[0], header[1]);
+		}
+
+		cancelFn = function() {
+			xhr.abort();
+		}
+
+		xhr.send(form_data);
+
+		#end
+
+		return cancelFn;
+	}
+
 	public static function removeUrlFromCache(url: String) : Void {
 		// NOP
+		Native.println("removeUrlFromCache not implemented");
 	}
 
 	public static function clearUrlCache() : Void  {
 		// NOP
+		Native.println("clearUrlCache not implemented");
 	}
 
 	public static function sendHttpRequestWithAttachments(url : String, headers : Array<Array<String>>, params : Array<Array<String>>,
 			attachments : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void) : Void {
-		// NOP
+		#if js
+
+		var xhr: Dynamic = untyped __js__("new XMLHttpRequest()");
+
+		xhr.open("POST", url, true);
+
+		xhr.onload = function() {
+			if (xhr.status != 200) {
+				onErrorFn("" + xhr.status);
+			} else {
+				onDataFn(xhr.responseText);
+			}
+		};
+
+		xhr.onerror = function() {
+			onErrorFn("" + xhr.status);
+		};
+
+		var form_data: Dynamic = untyped __js__("new FormData()");
+
+		// Adding parameters to the form_data
+		for (param in params) {
+			form_data.append(param[0], param[1]);
+		}
+
+		// Adding files to the form_data
+		for (attachment in attachments) {
+			var file = untyped __js__("new File([{}], '{}')", attachment[1], attachment[1]);
+			form_data.append(attachment[0], file);
+		}
+
+		// Set headers
+		for (header in headers) {
+			xhr.setRequestHeader(header[0], header[1]);
+		}
+
+		xhr.send(form_data);
+
+		#else
+
+		trace("sendHttpRequestWithAttachments not implemented for JavaScript.");
+
+		#end
 	}
 
 	public static function setDefaultResponseEncoding (responseEncoding : String) : Void {
