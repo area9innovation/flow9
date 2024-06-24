@@ -24,7 +24,9 @@ fi2cpp3TransformProgramExps(program: FiProgram, gctx: Cpp3GlobalContext) -> FiPr
 			}
 			FiFunctionDec(name, lambda, type,__,__): {
 				[FiFunctionDec(x with
-					lambda = cast(fi2cpp3TransformFiExp(lambda, type, gctx, name): FiExp -> FiLambda)
+					lambda = cast(
+						fi2cpp3TransformFiExp(FiLambda(lambda with type = type), type, gctx, name): FiExp -> FiLambda
+					)
 				)];
 			}
 			default: [x];
@@ -116,6 +118,7 @@ fi2cpp3TransformFiExp(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: str
 		println("preparing exp: " + name);
 	}
 	debug = (name == debug_cpp3);
+	fi_debug_transform_exps := debug;
 	maybe_show = \fn, msg -> \x -> {
 		e1 = fn(x);
 		if (!debug) e1 else {
@@ -131,13 +134,44 @@ fi2cpp3TransformFiExp(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: str
 		}
 	}
 	if (debug) {
-		println(name + " - EXPRR:\n" + toStringFormatted(e));
+		e_str = if (isConfigParameterTrue(gctx.program.config.config, "cpp-debug-raw")) {
+			toStringFormatted(e);
+		} else {
+			pretFiExp(e);
+		}
+		println("Before transformation " + name + ":\n" + strIndent(e_str));
 	}
 	start = fi2cpp3StartOperationMessage(gctx.config, 3, "transforming expression", name);
 	inlined_functionals =  buildSet(["fold", "foldi", "map", "mapi", "iter", "iteri", "exists", "forall", "find"]);
 	ret = e
-	|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
+	//|> maybe_show(fiFixVarInSameStructType1, "fiFixVarInSameStructType1")
+	|> maybe_show(fiRemoveEmptyLets, "fiRemoveEmptyLets")
+	/*|> maybe_show(\x -> fiSpecifyLetTypes(x, names), "fiSpecifyLetTypes")
+	|> maybe_show(\x -> fiMapExp(x, \y, env -> switch (y) {
+		FiVar(v, t,__): {
+			switch (lookupTree(env.locals, v)) {
+				Some(w): {
+					if (!fiEqualTypes(t, w.type)) {
+						println("DIFFERENT VAR TYPING: '" + v + "' type is: " + pretFiType(t) + ", while at definition was: " + pretFiType(w.type));
+					} else {
+						if (debug) {
+							println("OK VAR TYPING: '" + v + "' type is: " + pretFiType(t) + ", while at definition was: " + pretFiType(w.type));
+						}
+					}
+					y;
+				}
+				None(): {
+					if (!containsKeyTree(names.toplevel, v)) {
+						fail("Variable " + v + " is not found!");
+					}
+					y;
+				}
+			}
+		}
+		default: y;
+	}, false), "fiFixVarTypes")*/
 	|> maybe_show(\x -> fiInlineHostCalls(x, names), "fiInlineHostCalls")
+	|> maybe_show(\x -> fiWrapGlobalFuncs(x, names), "fiWrapGlobalFuncs")
 	|> maybe_show(\x -> fiComparisonWithConst(x, 3), "fiComparisonWithConst")
 	|> maybe_show(\y -> fiExplicitCastInSwitch(y, names), "fiExplicitCastInSwitch")
 	|> maybe_show(\x -> fiTransEliminateUnionFields(x, names), "fiTransEliminateUnionFields")

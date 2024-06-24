@@ -153,6 +153,14 @@ fiExpMakeStartUnique(e: FiExp) -> FiExp;
 
 fiExpEraseStart(e: FiExp) -> FiExp;
 
+fiRemoveEmptyLets(e: FiExp) -> FiExp;
+
+fiWrapGlobalFuncs(e: FiExp, names: FiGlobalNames) -> FiExp;
+
+fiSpecifyLetTypes(e: FiExp, names: FiGlobalNames) -> FiExp;
+
+fi_debug_transform_exps: ref bool = ref false;
+
 }
 
 fiTransEliminateUnionFields(expr : FiExp, names: FiGlobalNames) -> FiExp {
@@ -275,10 +283,10 @@ fiRemoveUnusedVars(e : FiExp, effects : FiEffects) -> FiExp {
 }
 
 fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
-	mapFiExp(e, \x -> 
+	fiMapExp(e, \x,__ -> 
 		switch (x) {
 			FiSwitch(var, vtype, cases, type, start): {
-				do_switch = \struct_resolver -> {
+				do_switch = \case_resolver -> {
 					FiSwitch(x with
 						cases = map(cases, \c -> {
 							if (c.struct == "default") c else {
@@ -294,7 +302,7 @@ fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
 									// Cast is already done
 									c;
 								} else {
-									case_type = struct_resolver(c.struct);
+									case_type = case_resolver(c.struct);
 									FiCase(c with body = 
 										FiLet(spec_var, case_type, 
 											FiCast(var, vtype, case_type, case_type, start),
@@ -307,67 +315,84 @@ fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
 						})
 					);
 				}
-				switch (vtype) {
+				switch (var.type) {
 					FiTypeName(typename, typars): {
-						if (containsKeyTree(names.unions, typename)) {
-							union = lookupTreeDef(names.unions, typename, FiTypeUnion("", [], [], 0));
-							if (length(union.typeparameters) != length(typars)) {
-								fail("Union " + typename + " type parameters number mismatch: must be " + i2s(length(union.typeparameters)) + 
-									" while actual is: " + i2s(length(union.typeparameters))
-								);
+						switch (lookupTree(names.unions, typename)) {
+							Some(union): {
+								if (length(union.typeparameters) != length(typars)) {
+									fail("Union " + typename + " type parameters number mismatch: must be " + i2s(length(union.typeparameters)) + 
+										" while actual is: " + i2s(length(union.typeparameters))
+									);
+								}
+								/*
+									Un<?, ??, ???> ::= ... Str<??, string> ...
+									Str(a: ?, b: ??);
+
+									switch (Un<??, int, ?>) {
+										Str():
+									}
+
+									union  typars:[FiTypeParameter("??"), FiTypeInt(), FiTypeParameter("?")]
+									sub:
+										? => ??
+										?? => int
+										??? =? ?
+									struct typars:[FiTypeParameter("??"), FiTypeString()]
+									sub(struct typars): struct[FiTypeInt(), FiTypeString()]
+
+										RESULT: struct[FiTypeInt(), FiTypeString()]
+								*/
+								union_types = values2tree(union.typenames, \tn -> tn.name);
+								sub = foldi(union.typeparameters, makeTree(), \i, acc, tp -> switch (tp) {
+									FiTypeParameter(n): setTree(acc, n, typars[i]);
+									default: acc;
+								});
+								do_switch(\struct_name -> {
+									switch (lookupTree(union_types, struct_name)) {
+										Some(struct): {
+											lookupTreeDef(union_types, struct_name, FiTypeName("", []));
+											fiSubstituteTypars(struct, sub);
+										}
+										None(): {
+											fail0("struct type '" + struct_name + "' is missing in union '" + typename + "' variants: " + toString(map(union.typenames, \tn -> tn.name)));
+										}
+									}
+								});
 							}
-							/*
-								Un<?, ??, ???> ::= ... Str<??, string> ...
-								Str(a: ?, b: ??);
-
-								switch (Un<??, int, ?>) {
-									Str():
-								}
-
-								union  typars:[FiTypeParameter("??"), FiTypeInt(), FiTypeParameter("?")]
-								sub:
-									? => ??
-									?? => int
-									??? =? ?
-								struct typars:[FiTypeParameter("??"), FiTypeString()]
-								sub(struct typars): struct[FiTypeInt(), FiTypeString()]
-
-									RESULT: struct[FiTypeInt(), FiTypeString()]
-							*/
-							union_types = values2tree(union.typenames, \tn -> tn.name);
-							sub = foldi(union.typeparameters, makeTree(), \i, acc, tp -> switch (tp) {
-								FiTypeParameter(n): setTree(acc, n, typars[i]);
-								default: acc;
-							});
-							do_switch(\struct_name -> {
-								struct = lookupTreeDef(union_types, struct_name, FiTypeName("", []));
-								fiSubstituteTypars(struct, sub);
-							});
-						} else {
-							switch (find(cases, \c -> c.struct == typename)) {
-								Some(c): {
-									c.body;
-								}
-								None(): {
-									fail0("unmatched struct type '" + typename + "' in switch:\n" + prettyFiExp(dummyPretty, e));
+							None(): {
+								switch (find(cases, \c -> c.struct == typename)) {
+									Some(c): {
+										c.body;
+									}
+									None(): {
+										switch (find(cases, \c -> c.struct == "default")) {
+											Some(c): {
+												c.body;
+											}
+											None(): {
+												fail0("unmatched struct type '" + typename + "', cases: " + toString(map(cases, \c -> c.struct)) + " in switch:\n" + prettyFiExp(dummyPretty, e));
+											}
+										}
+									}
 								}
 							}
 						}
 					}
 					default: {
-						do_switch(\struct_name -> eitherMap(
-							lookupTree(names.structs, struct_name),
-							\struct -> {
+						do_switch(\struct_name -> switch(lookupTree(names.structs, struct_name)) {
+							Some(struct): {
 								typars_instances = fiMatchTyparsOrdered(FiTypeName(struct.name, struct.typars), vtype);
 								FiTypeName(struct_name, typars_instances);
-							},
-							FiTypeName("", [])
-						));
+							}
+							None(): {
+								fail0("unknown struct type '" + struct_name + "' in switch:\n" + prettyFiExp(dummyPretty, e));
+							}
+						});
 					}
 				}
 			}
 			default: x;
-		}
+		}, false
 	);
 }
 
@@ -781,57 +806,35 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 							default: def_case();
 						}
 						FcStructPrim(name): {
-							struct = lookupTreeDef(names.structs, name, FiTypeStruct("", [], [], 0));
 							switch (type) {
-								FiTypeName(__,typars): {
-									if (length(struct.typars) != length(typars)) {
-										fail("struct " + name + " typars length mismatch with typename typars length:\n" +
-											"struct typars: [" + superglue(struct.typars, pretFiType, ", ") + "]\n" + 
-											"typename typars: [" + superglue(typars, pretFiType, ", ") + "]\n"
-										);
-									}
-									typar_subst = foldi(struct.typars, makeTree(), \i, acc, tp ->
-										switch (tp) {
-											FiTypeParameter(nm): setTree(acc, nm, typars[i]);
-											default: acc;
-										}
-									);
-									if (length(struct.args) != length(es)) {
-										fail("struct " + name + " arguments length mismatch with call arguments length:\n" +
-											"struct args: [" + superglue(struct.args, \y -> pretFiType(y.type), ", ") + "]\n" + 
-											"call args: [" + superglue(es, \y -> pretFiType(fiExpType(y)), ", ") + "]\n"
-										);
-									}
+								FiTypeName(__,__): {
+									struct = fiTypeName2Struct(type, names);
 									x1 = FiCallPrim(x with es = mapi(es, \i, y ->
-										fiExpMakeCastsExplicit(y, fiApplyTypeSubstitution(typar_subst, struct.args[i].type), names)
+										fiExpMakeCastsExplicit(y, struct.args[i].type, names)
 									));
 									fiMakeCast(x1, type, t);
 								}
 								default: {
-									fail("struct type must be FiTypeName, got: " + toString(type));
-									def_case();
+									fail0("struct type must be FiTypeName, got: " + toString(type));
 								}
 							}
 						}
 						FcFieldPrim(name): {
 							if (name == "structname") def_case() else {
-								switch (fiExpType(es[0])) {
-									FiTypeName(struct_name, typars): {
-										switch (lookupTree(names.structs, struct_name)) {
-											Some(struct): {
-												switch (find(struct.args, \arg -> arg.name == name)) {
-													Some(arg): {
-														fiMakeCast(def_case(), arg.type, type);
-													}
-													None(): {
-														fail("field '" + name + "' of struct '" + struct_name + "' is not found in expression: " + pretFiExp(x)
-															+ "\n" + strIndent(toStringFormatted(x))
-														);
-														def_case();
-													}
-												}
+								struct_type = fiExpType(es[0]);
+								switch (struct_type) {
+									FiTypeName(__,__): {
+										struct = fiTypeName2Struct(struct_type, names);
+										switch (find(struct.args, \arg -> arg.name == name)) {
+											Some(arg): {
+												fiMakeCast(def_case(), arg.type, type);
 											}
-											None(): def_case();
+											None(): {
+												fail("field '" + name + "' of struct '" + struct.name + "' is not found in expression: " + pretFiExp(x)
+													+ "\n" + strIndent(toStringFormatted(x))
+												);
+												def_case();
+											}
 										}
 									}
 									default: def_case();
@@ -871,31 +874,26 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 							struct_type = fiExpType(es[0]);
 							switch (struct_type) {
 								FiTypeName(struct_name, typars): {
-									switch (lookupTree(names.structs, struct_name)) {
-										Some(struct): {
-											spec = fiSpecializeStruct(struct_type, struct);
-											switch (find(spec.args, \arg -> arg.name == name)) {
-												Some(arg): {
-													if (length(es) != 2) {
-														fail("FcSetMutablePrim must have exactly 2 arguments, but is:\n" + 
-															//pretFiExp(x) + "\n" + 
-															"raw format:\n" + toStringFormatted(x)
-														);
-													}
-													FiCallPrim(x with es = [
-														fiExpMakeCastsExplicit(es[0], struct_type, names), 
-														fiExpMakeCastsExplicit(es[1], arg.type, names)
-													]);
-												}
-												None(): {
-													fail("field '" + name + "' of struct '" + struct_name + "' is not found in expression: " + pretFiExp(x)
-														+ "\n" + strIndent(toStringFormatted(x))
-													);
-													def_case();
-												}
+									spec = fiTypeName2Struct(struct_type, names);
+									switch (find(spec.args, \arg -> arg.name == name)) {
+										Some(arg): {
+											if (length(es) != 2) {
+												fail("FcSetMutablePrim must have exactly 2 arguments, but is:\n" + 
+													//pretFiExp(x) + "\n" + 
+													"raw format:\n" + toStringFormatted(x)
+												);
 											}
+											FiCallPrim(x with es = [
+												fiExpMakeCastsExplicit(es[0], struct_type, names), 
+												fiExpMakeCastsExplicit(es[1], arg.type, names)
+											]);
 										}
-										None(): def_case();
+										None(): {
+											fail("field '" + name + "' of struct '" + struct_name + "' is not found in expression: " + pretFiExp(x)
+												+ "\n" + strIndent(toStringFormatted(x))
+											);
+											def_case();
+										}
 									}
 								}
 								default: def_case();
@@ -921,6 +919,9 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 			fiMakeCast(x1, type, t);
 		}
 		FiVar(name, type, __): {
+			if (name == "fracres") {
+				println("fracres var: " + toString(x));
+			}
 			fiMakeCast(x, type, t);
 		}
 		FiVoid(__):      fiMakeCast(x, FiTypeVoid(), t);
@@ -2073,31 +2074,33 @@ fiCorrectStructFieldTypes(e: FiExp, names: FiGlobalNames) -> FiExp {
 		FiCallPrim(op, es, type,__): {
 			switch (op) {
 				FcFieldPrim(field): {
-					tp = fiExpType(es[0]);
-					switch (tp) {
-						FiTypeName(tp_name, typars): {
-							switch (lookupTree(names.structs, tp_name)) {
-								Some(s): {
-									if (length(tp.typeparameters) != length(s.typars)) {
-										fail("length of struct typeparameters mismatch with length of typename typeparameters: " + i2s(length(s.typars)) + " != " + i2s(length(tp.typeparameters)) + " (length(tn.typeparameters))\n" +
-											"struct: " + pretFiStructOrUnion(s) + ", typename: " + pretFiType(tp) + "\n" +
-											"expr\n" + pretFiExp(x)
- 										);
-									}
-									spec = fiSpecializeStruct(tp, s);
-									switch (find(spec.args, \arg -> arg.name == field)) {
-										Some(arg): {
-											if (fiEqualTypes(arg.type, type)) x else {
-												FiCallPrim(x with type = arg.type);
-											}
+					if (field == "structname") x else {
+						tp = fiExpType(es[0]);
+						switch (tp) {
+							FiTypeName(tp_name, typars): {
+								switch (lookupTree(names.structs, tp_name)) {
+									Some(s): {
+										if (length(tp.typeparameters) != length(s.typars)) {
+											fail("length of struct typeparameters mismatch with length of typename typeparameters: " + i2s(length(s.typars)) + " != " + i2s(length(tp.typeparameters)) + " (length(tn.typeparameters))\n" +
+												"struct: " + pretFiStructOrUnion(s) + ", typename: " + pretFiType(tp) + "\n" +
+												"expr\n" + pretFiExp(x)
+											);
 										}
-										None(): fail0("unknown field: " + field + " of struct: " + tp_name);
+										spec = fiSpecializeStruct(tp, s);
+										switch (find(spec.args, \arg -> arg.name == field)) {
+											Some(arg): {
+												if (fiEqualTypes(arg.type, type)) x else {
+													FiCallPrim(x with type = arg.type);
+												}
+											}
+											None(): fail0("unknown field: " + field + " of struct: " + tp_name);
+										}
 									}
+									None(): x;
 								}
-								None(): x;
 							}
+							default: x;
 						}
-						default: x;
 					}
 				}
 				default: x;
@@ -2384,4 +2387,70 @@ fiExpMakeStartUnique(e: FiExp) -> FiExp {
 
 fiExpEraseStart(e: FiExp) -> FiExp {
 	mapFiExp(e, \x -> fiSetExpStart(x, 0));
+}
+
+fiRemoveEmptyLets(e: FiExp) -> FiExp {
+	mapFiExp(e, \x -> switch(x) {
+		FiLet(v,__,__, e2,__,__): if (v == "__") e2 else x;
+		FiSwitch(v, v_type,__,__,__): if (fiEqualTypes(v.type, v_type)) x else FiSwitch(x with switchType = v.type);
+		default: x;
+	});
+}
+
+fiWrapGlobalFuncs(e: FiExp, names: FiGlobalNames) -> FiExp {
+	fiMapExp(e, \x, env -> switch (x) {
+		FiVar(name, type, start): {
+			do_wrap = \ -> {
+				ftype = cast (type : FiType -> FiTypeFunction);
+				fargs = mapi(ftype.args, \i, a -> {
+					FiFunArg("__" + name + "__arg__" + i2s(i) + "__" + a.name, a.type);
+				}); 
+				args = map(fargs, \a -> {
+					FiVar(a.name, a.type, 0);
+				});
+				FiLambda(
+					fargs,
+					FiCall(x, args, ftype.returnType, start),
+					FiTypeFunction(fargs, ftype.returnType),
+					start
+				);
+			}
+			if (!(fiTypeIsFunction(type) && containsKeyTree(names.toplevel, name))) x else {
+				switch (env.parents) {
+					Cons(p,__): {
+						switch (p.first) {
+							FiCall(__,__,__,__): {
+								if (p.second == 0) x else do_wrap();
+							}
+							default: do_wrap();
+						}
+
+					}
+					EmptyList(): do_wrap();
+				}
+			}
+		}
+		default: x;
+	}, true);
+}
+
+fiSpecifyLetTypes(e: FiExp, names: FiGlobalNames) -> FiExp {
+	mapFiExp(e, \x -> switch (x) {
+		FiLet(v, t, e1, e2,__,__): {
+			t1 = fiExpType(e1);
+			if (fiEqualTypes(t, t1)) x else {
+				switch (fiLowerFlowTypes(t, t1, names)) {
+					Some(t2): {
+						println("Most specific type for: " + pretFiType(t) + " and " + pretFiType(t1) + " is: " + pretFiType(t2));
+						FiLet(x with type = t2);
+					}
+					None(): {
+						println("Couldn't find most specific type for: " + pretFiType(t) + " and " + pretFiType(t1));
+						x;
+					}
+				}
+			}
+		}
+		default: x;
+	});
 }
