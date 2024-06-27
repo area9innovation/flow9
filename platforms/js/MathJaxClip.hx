@@ -1,16 +1,4 @@
-import js.html.URL;
 import js.Browser;
-import js.html.Event;
-import js.lib.Set;
-import pixi.core.text.Text in PixiCoreText;
-import pixi.core.text.TextMetrics;
-import pixi.core.text.TextStyle;
-import pixi.core.math.shapes.Rectangle;
-import pixi.core.math.Point;
-
-import FlowFontStyle;
-
-using DisplayObjectHelper;
 
 class MathJaxClip extends NativeWidgetClip {
 
