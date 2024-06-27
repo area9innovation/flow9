@@ -1080,6 +1080,8 @@ rtrimWords(words : [TParaWord]) -> [TParaWord] {
 	else rtrimWords(rtrimmedWords)
 }
 
+tryToBreakLongEquations = !isUrlParameterFalse("break_long_equations");
+
 // here availableWidth is an amount of width for current line
 reflowTParaWordsRec(
 	words : [TParaWord],
@@ -1273,14 +1275,12 @@ reflowTParaWordsRec(
 			};
 			default: {
 				width = ref 0.0;
+				widthWithBreakEquation = ref 0.0;
+				wordsCountWithBreakEquation = ref 0;
 				getWordView = \w -> w.ghostView;
 
-				form = getWordView(word);
-				if (remaining == 31.) {
-					println("");
-				}
 				// Number of words that should be on the same line
-				wordsCount = iteriUntil(words, \i, _word : TParaWord -> {
+				wordsCount0 = iteriUntil(words, \i, _word : TParaWord -> {
 					addWidth = \-> width := ^width + getWordWidth(_word);
 
 					spaceCase = \str -> if(isSpace(str)) {
@@ -1304,11 +1304,24 @@ reflowTParaWordsRec(
 							// it is no use to make line with zero-width content, so we continue counting if the width is 0
 							// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 							// such construction becomes [Empty, form, Empty] and we should keep them on the same line
+							previousWord = elementAt(words, i - 1, dummyTParaWord);
+							keepTogether = keepWordsTogether(f, _word, previousWord);
 							if (
 								(isMarked && i <= 1) ||
-								keepWordsTogether(f, _word, if (i < 1) dummyTParaWord else words[i - 1]) ||
+								keepTogether ||
 								^width == 0.0
 							) {
+								// Trying to split the expression by the equal sign only if it cannot be placed on a new line
+								// and the part before the sign occupies at least a quarter of the available width.
+								if (
+									tryToBreakLongEquations &&
+									currentWords == [] && keepTogether && 
+									^width > remaining / 4.0 && (^widthWithBreakEquation == 0.0 || ^width <= remaining) &&
+									isItBreakableEquation(_word, previousWord)
+								) {
+									widthWithBreakEquation := ^width;
+									wordsCountWithBreakEquation := i;
+								}
 								addWidth();
 								false;
 							} else {
@@ -1319,6 +1332,13 @@ reflowTParaWordsRec(
 				});
 
 				if (^width == 0.0 || ^width <= remaining || currentWords == []) {
+					wordsCount =
+						if (^width > remaining && ^widthWithBreakEquation != 0.0) {
+							width := ^widthWithBreakEquation;
+							^wordsCountWithBreakEquation
+						} else {
+							wordsCount0;
+						};
 					_words = take(words, wordsCount);
 					_rest = tailFrom(words, wordsCount);
 
@@ -1355,6 +1375,19 @@ reflowTParaWordsRec(
 					);
 				}
 			}
+		}
+	}
+}
+
+isItBreakableEquation(currentWord : TParaWord, previousWord : TParaWord) -> bool {
+	firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
+	firstChr == "=" && switch (previousWord.word) {
+		NonTextElement(__, isFillerFn) : isFillerFn();
+		GeneralSpace(txt, __, __) : ! isWordJoiner(txt);
+		GeneralDynamicSpace(txt, __, __) : ! isWordJoiner(txt);
+		default : {
+			lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
+			! isWordJoiner(lastChr) 
 		}
 	}
 }
