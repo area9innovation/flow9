@@ -4379,6 +4379,10 @@ class RenderSupport {
 	public static function getHadUserInteracted() : Bool {
 		return hadUserInteracted;
 	}
+
+	public static function createMathJaxClip(latex: String) : Dynamic {
+		return new MathJaxClip(latex);
+	};
 }
 
 class FlowInstance {
