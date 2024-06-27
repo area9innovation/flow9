@@ -38,7 +38,7 @@ export {
 		ignoreLetterSpacing : bool,
 		wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
 	) -> TParaWord;
-	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double) -> Tropic;
+	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double, preventNodeCalculation : bool) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
 
 	isSpaceWord(word : TParaWord) -> bool;
@@ -251,7 +251,7 @@ fixAvailableWidthForIndent(awB : Transform<double>, indent : double) -> (Tropic)
 	}
 }
 
-tparagraphMaxHeightFix = isUrlParameterTrue("new") && !isUrlParameterFalse("tparagraph_max_height_fix");
+tparagraphMaxHeightFix = !isUrlParameterFalse("tparagraph_max_height_fix");
 
 TRenderParagraph(
 	words : [TParaWord],
@@ -404,7 +404,7 @@ TRenderParagraph(
 			w.inspector.baseline,
 			\size, ba -> {
 				// we can't use deferred here - it leads to flickering
-				if (size.width != 0.0 && size.height != 0.0 && ba != 0.0) {
+				if ((size.width != 0.0 && size.height != 0.0 && ba != 0.0) || (size.width == 0.0 && size.height == 0.0)) {
 					traceApi.traceAndNest(\-> "dynMetricsSubscription START size = " + toString(size) + ", baseline = " + toString(ba));
 					executeReflow();
 					traceApi.unnestAndTrace(\-> "dynMetricsSubscription END  size = " + toString(size) + ", baseline = " + toString(ba));
@@ -848,7 +848,7 @@ commonWordConstructor(
 ) -> TParaWord {
 	inspector = eitherFn(inspectorM, idfn, dummyInspectorFn);
 
-	inspectFn = \t -> inspectWordView(t, inspector, if (isLastChild) 0.0 else extractStruct(style, zeroLetterSpacing).spacing);
+	inspectFn = \t -> inspectWordView(t, inspector, if (isLastChild) 0.0 else extractStruct(style, zeroLetterSpacing).spacing, !isLastChild);
 
 	ghostView = switch(w) {
 		GeneralSpace(__, __, __): TVisible(fnot(inspector.detached), inspectFn(tr));
@@ -878,11 +878,10 @@ commonWordConstructor(
 	);
 }
 
-inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double) -> Tropic {
+inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> Tropic {
 	addLetterSpacing = \width -> width + if(width > 0.0) letterSpacing else 0.0;
 	if (isConstantSizeTropic(tr)) {
-
-		tr2 = if (!isUrlParameterFalse("wigi_width_inspection_fix"))
+		tr2 = if (preventNodeCalculation && !isUrlParameterFalse("wigi_width_inspection_fix"))
 			switch(tr) {
 				TText(txt, style0): TText(txt, arrayPush(style0, PreventTextNodeWidthCalculation()));
 				default : tr;
@@ -1094,6 +1093,8 @@ reflowTParaWordsRec(
 	catchOverflow : bool,
 	ignoreLetterSpacing : bool
 ) -> TReflowResultAcc {
+	traceApi = makeWigiTrace_Tropic("reflowTParaWordsRec", words);
+	traceApi.trace(\-> "remaining: " + toString(remaining));
 	addLine = \cw, indent -> switch (result) {
 		TReflowedLinesAndChanges(lines, changes) : TReflowedLinesAndChanges(
 			ifArrayPush(lines, cw != [], TParaLine(cw, indent)),
@@ -1125,6 +1126,26 @@ reflowTParaWordsRec(
 
 		getWordWidth = \word1 -> getValue(word1.inspector.size).width;
 
+		evaluatePositionForGeneralLinePart = \i, _word : TParaWord,  -> {
+			switch (_word.word) {
+				GeneralLinePart(__, __, __, allowBreakAfter): {
+					isLast = i == (length(words) - 1);
+					nextWordWidth = if (isLast) 0.0 else getWordWidth(words[i + 1]);
+					if (currentWords == []) {
+						nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineFirst());
+					} else if (isLast) {
+						nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineEnd());
+					} else {
+						nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineMiddle());
+						if (getWordWidth(_word) + nextWordWidth >= remaining && (allowBreakAfter || isLast)) {
+							nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineEnd());
+						}
+					}
+				}
+				default: {}
+			}
+		}
+
 		switch (word.word : GeneralWrapElement) {
 			NewLine(): {
 				reflowTParaWordsRec(
@@ -1141,33 +1162,10 @@ reflowTParaWordsRec(
 				);
 			}
 			GeneralLinePart(first, mid, end, allowBreakAfter): {
-
-				// maybe we should investigate next word width depending on it's position in the line too
-				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
-
-				if (currentWords == []) {
-					// If it is the first item on the line
-					nextDistinct(word.inspector.wordPositionInLine, WordPositionInLineFirst());
-					width = getWordWidth(word);
-					reflowTParaWordsRec(
-						rest,
-						nextWordIndex,
-						availableWidth,
-						remaining - width,
-						arrayPush(currentWords, word),
-						result,
-						paraIndent,
-						false,
-						catchOverflow,
-						ignoreLetterSpacing
-					);
-				} else {
-					// we have to check the width of the element in case it is inline
-					nextDistinct(word.inspector.wordPositionInLine, WordPositionInLineMiddle());
-					width = getWordWidth(word);
-
-					if (width + nextWordWidth < remaining) {
-						// If it is the middle item on the line
+				evaluatePositionForGeneralLinePart(0, word);
+				width = getWordWidth(word);
+				switch (getValue(word.inspector.wordPositionInLine)) {
+					WordPositionInLineFirst(): {
 						reflowTParaWordsRec(
 							rest,
 							nextWordIndex,
@@ -1180,9 +1178,22 @@ reflowTParaWordsRec(
 							catchOverflow,
 							ignoreLetterSpacing
 						);
-					} else {
-						// If it is the last item on the line
-						nextDistinct(word.inspector.wordPositionInLine, WordPositionInLineEnd());
+					}
+					WordPositionInLineMiddle(): {
+						reflowTParaWordsRec(
+							rest,
+							nextWordIndex,
+							availableWidth,
+							remaining - width,
+							arrayPush(currentWords, word),
+							result,
+							paraIndent,
+							false,
+							catchOverflow,
+							ignoreLetterSpacing
+						);
+					}
+					WordPositionInLineEnd(): {
 						reflowTParaWordsRec(
 							rest,
 							nextWordIndex,
@@ -1265,37 +1276,48 @@ reflowTParaWordsRec(
 				getWordView = \w -> w.ghostView;
 
 				form = getWordView(word);
-
+				if (remaining == 31.) {
+					println("");
+				}
 				// Number of words that should be on the same line
-				wordsCount = if (keepWordsTogether(form, word, dummyTParaWord)) {
-					iteriUntil(words, \i, _word : TParaWord -> {
-						switch (_word.word) {
-							NewLine(): true;
-							GeneralSpace(__, __, __): true;
-							GeneralDynamicSpace(__, __, __): true;
-							GeneralLinePart(__, __, __, allowBreakAfter): true;
-							default: {
-								f = getWordView(_word);
-								// it is no use to make line with zero-width content, so we continue counting if the width is 0
-								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
-								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
-								if (
-									(isMarked && i <= 1) ||
-									keepWordsTogether(f, _word, if (i < 1) dummyTParaWord else words[i - 1]) ||
-									^width == 0.0
-								) {
-									width := ^width + getWordWidth(_word);
-									false;
-								} else {
-									true
-								}
-							};
+				wordsCount = iteriUntil(words, \i, _word : TParaWord -> {
+					addWidth = \-> width := ^width + getWordWidth(_word);
+
+					spaceCase = \str -> if(isSpace(str)) {
+						true
+					} else {
+						addWidth();
+						false;
+					};
+
+					switch (_word.word) {
+						NewLine(): true;
+						GeneralSpace(str, __, __): spaceCase(str);
+						GeneralDynamicSpace(str, __, __): spaceCase(str);
+						GeneralLinePart(first, mid, end, allowBreakAfter): {
+							evaluatePositionForGeneralLinePart(i, _word);
+							addWidth();
+							allowBreakAfter;
+						}
+						default: {
+							f = getWordView(_word);
+							// it is no use to make line with zero-width content, so we continue counting if the width is 0
+							// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
+							// such construction becomes [Empty, form, Empty] and we should keep them on the same line
+							if (
+								(isMarked && i <= 1) ||
+								keepWordsTogether(f, _word, if (i < 1) dummyTParaWord else words[i - 1]) ||
+								^width == 0.0
+							) {
+								addWidth();
+								false;
+							} else {
+								true
+							}
 						};
-					});
-				} else {
-					width := getWordWidth(word);
-					1;
-				};
+					};
+				});
+
 				if (^width == 0.0 || ^width <= remaining || currentWords == []) {
 					_words = take(words, wordsCount);
 					_rest = tailFrom(words, wordsCount);
@@ -1344,10 +1366,14 @@ keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord
 	isWordJoiner(lastChr) ||
 	switch (previousWord.word) {
 		NonTextElement(__, isFillerFn): !isFillerFn();
+		GeneralSpace(txt, __, __): isWordJoiner(txt);
+		GeneralDynamicSpace(txt, __, __): isWordJoiner(txt);
 		default: true
 	} &&
 	switch (currentWord.word) {
 		NonTextElement(keep, __): keep;
+		GeneralSpace(txt, __, __): isWordJoiner(txt);
+		GeneralDynamicSpace(txt, __, __): isWordJoiner(txt);
 		default: {
 			firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
 			isWordJoiner(firstChr) || keepWordsTogetherRec(tr);
@@ -1358,7 +1384,7 @@ keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord
 keepWordsTogetherRec(tr : Tropic) -> bool {
 	switch (tr) {
 		TEmpty(): true;
-		TText(t, s): true;
+		TText(t, s): true; // we should not return false here because math depends on the glue default behaviour for sequential texts
 		TCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineLines2(top, bottom): keepWordsTogetherRec(top) && keepWordsTogetherRec(bottom);
@@ -1610,7 +1636,8 @@ inspectedTWord(t: string, w: TParaWord, ignoreLetterSpacing: bool) -> TParaWord 
 	TParaWord(w with ghostView = inspectWordView(
 		TSelect(w.rtl, \rtl -> TText(t, applyAlphabetStyles(detectAlphabet(t), replaceStruct(w.style, SetRTL(rtl)) |> makeSkipOrderCheck))),
 		w.inspector,
-		if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
+		if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing,
+		false
 	))
 }
 

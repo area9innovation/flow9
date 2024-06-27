@@ -1112,7 +1112,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object printCallstack() {
-		Thread.dumpStack();
+		new Throwable().printStackTrace(System.out);
 		return null;
 	}
 

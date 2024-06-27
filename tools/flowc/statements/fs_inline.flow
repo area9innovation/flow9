@@ -51,7 +51,7 @@ fsIsReacheableByLetSeq(s1: FsStat, id: int) -> bool {
 
 FsInlineOperator(
 	fnArg: ([FsExp]) -> FsVarUse,
-	inline: (FsStat, [FsExp], FsClosure, () -> string) -> FsStat
+	inline: (FsStat, [FsExp], FsClosure, () -> string, bool) -> FsStat
 );
 
 fsInlineStatsDo(s: FsStat,
@@ -67,14 +67,9 @@ fsInlineStatsDo(s: FsStat,
 					fn = op.fnArg(args);
 					switch (lookupTree(closure_lets, fn.var.name)) {
 						Some(let): {
-							if (!fsIsReacheableByLetSeq(let, x.id)) {
-								if (debug) {
-									println(i2s(x.id) + " is not reacheable from " + i2s(let.id));
-								}
-								x
-							} else {
+							if (!fsIsReacheableByLetSeq(let, x.id)) x else {
 								inlined_names := insertSet(^inlined_names, let.var.name);
-								op.inline(x, args, cast(let.e: FsExp -> FsClosure), new_id)
+								op.inline(x, args, cast(let.e: FsExp -> FsClosure), new_id, debug)
 							}
 						}
 						None(): x;
@@ -195,14 +190,14 @@ fs_inlined_operators = pairs2tree([
 	)),
 	Pair("find", FsInlineOperator(
 		\args -> cast(args[1]: FsExp -> FsVarUse),
-		fsInlineIndexedLetOp(false, \s, args, closure, __, new_id -> fsInlineFind(s, args, closure, new_id))
+		fsInlineIndexedLetOp(false, \s, args, closure, __, new_id, debug -> fsInlineFind(s, args, closure, new_id, debug))
 	)),
 ]);
 
-fsInlineIndexedLetOp(is_indexed: bool, inline_op: (FsLet, [FsExp], FsClosure, bool, () -> string) -> FsStat) -> (FsStat, [FsExp], FsClosure, () -> string) -> FsStat {
-	\s, args, closure, new_id -> switch (s) {
+fsInlineIndexedLetOp(is_indexed: bool, inline_op: (FsLet, [FsExp], FsClosure, bool, () -> string, bool) -> FsStat) -> (FsStat, [FsExp], FsClosure, () -> string, bool) -> FsStat {
+	\s, args, closure, new_id, debug -> switch (s) {
 		FsLet(__,__,__,__,__,__): {
-			inline_op(s, args, closure, is_indexed, new_id);
+			inline_op(s, args, closure, is_indexed, new_id, debug);
 		}
 		FsRet(e,__,__): {
 			out_var = FsVar("__ret" + new_id(), fsType(e));
@@ -211,7 +206,7 @@ fsInlineIndexedLetOp(is_indexed: bool, inline_op: (FsLet, [FsExp], FsClosure, bo
 					FsRet(FsVarUse(out_var, FsVarInfo(FsVarLocal(false), false, false), -1), -1, None()),
 					-1, None()
 				),
-				args, closure, is_indexed, new_id
+				args, closure, is_indexed, new_id, debug
 			);
 		}
 		FsWrapExp(e,__,nx): {
@@ -221,32 +216,32 @@ fsInlineIndexedLetOp(is_indexed: bool, inline_op: (FsLet, [FsExp], FsClosure, bo
 					FsWrapExp(FsVarUse(out_var, FsVarInfo(FsVarLocal(false), false, false), -1), -1, None()),
 					-1, nx
 				),
-				args, closure, is_indexed, new_id
+				args, closure, is_indexed, new_id, debug
 			);
 		}
 		default: s;
 	}
 }
 
-fsInlineIndexedVoidOp(is_indexed: bool, inline_op: (FsStat, [FsExp], FsClosure, bool, () -> string) -> FsStat) -> (FsStat, [FsExp], FsClosure, () -> string) -> FsStat {
-	\s, args, closure, new_id -> switch (s) {
+fsInlineIndexedVoidOp(is_indexed: bool, inline_op: (FsStat, [FsExp], FsClosure, bool, () -> string, bool) -> FsStat) -> (FsStat, [FsExp], FsClosure, () -> string, bool) -> FsStat {
+	\s, args, closure, new_id, debug -> switch (s) {
 		FsLet(__,__,__,__,__,__): {
-			inline_op(s, args, closure, is_indexed, new_id);
+			inline_op(s, args, closure, is_indexed, new_id, debug);
 		}
 		FsRet(__,__,__): {
 			inline_op(
 				fsSetNext(s, FsRet(FsConst(FiVoid(-1), -1), -1, None())),
-				args, closure, is_indexed, new_id
+				args, closure, is_indexed, new_id, debug
 			);
 		}
 		FsWrapExp(__,__,__): {
-			inline_op(s, args, closure, is_indexed, new_id);
+			inline_op(s, args, closure, is_indexed, new_id, debug);
 		}
 		default: s;
 	}
 }
 
-fsInlineFold(let: FsLet, args: [FsExp], fold_fn: FsClosure, is_foldi: bool, new_id: () -> string) -> FsLet {
+fsInlineFold(let: FsLet, args: [FsExp], fold_fn: FsClosure, is_foldi: bool, new_id: () -> string, debug: bool) -> FsLet {
 	arr = args[0];
 	init = args[1];
 	arr_var = cast(arr: FsExp -> FsVarUse);
@@ -313,7 +308,7 @@ fsInlineFold(let: FsLet, args: [FsExp], fold_fn: FsClosure, is_foldi: bool, new_
 	FsLet(let with e = init, s = for_cycle2);
 }
 
-fsInlineMap(let: FsLet, args: [FsExp], map_fn: FsClosure, is_mapi: bool, new_id: () -> string) -> FsStat {
+fsInlineMap(let: FsLet, args: [FsExp], map_fn: FsClosure, is_mapi: bool, new_id: () -> string, debug: bool) -> FsStat {
 	arr = args[0];
 	switch (arr) {
 		FsVarUse(__,__,__): {}
@@ -422,7 +417,7 @@ fsInlineMap(let: FsLet, args: [FsExp], map_fn: FsClosure, is_mapi: bool, new_id:
 	map_special = FsIf(
 		FsCallPrim(FsIntrinsicPrim("isUnitRc"), [arr_var], FiTypeBool(), -1),
 		FsLet(let.var, fsVarUseIsTransparent(arr_var), arr_var, for_cycle_special2, -1, None()),
-		map_general, -1, None()
+		FsLet(map_general with next = None()), -1, let.next
 	);
 
 	if (fiEqualTypes(arr_type, mapped_type) && arr_var_uses == 1 && forall(map_fn.vars, \v -> v != arr_var)) {
@@ -432,7 +427,7 @@ fsInlineMap(let: FsLet, args: [FsExp], map_fn: FsClosure, is_mapi: bool, new_id:
 	}
 }
 
-fsInlineIter(host: FsStat, args: [FsExp], iter_fn: FsClosure, is_iteri: bool, new_id: () -> string) -> FsStat {
+fsInlineIter(host: FsStat, args: [FsExp], iter_fn: FsClosure, is_iteri: bool, new_id: () -> string, debug: bool) -> FsStat {
 	arr = args[0];
 	arr_var = cast(arr: FsExp -> FsVarUse);
 	arr_type = fiDearrayType(fsType(arr_var));
@@ -495,7 +490,7 @@ fsInlineIter(host: FsStat, args: [FsExp], iter_fn: FsClosure, is_iteri: bool, ne
 	}
 }
 
-fsInlineExistsForall(let: FsLet, args: [FsExp], fn: FsClosure, exists: bool, new_id: () -> string) -> FsLet {
+fsInlineExistsForall(let: FsLet, args: [FsExp], fn: FsClosure, exists: bool, new_id: () -> string, debug: bool) -> FsLet {
 	arr = args[0];
 	arr_var = cast(arr: FsExp -> FsVarUse);
 	arr_type = fiDearrayType(fsType(arr_var));
@@ -545,7 +540,7 @@ fsInlineExistsForall(let: FsLet, args: [FsExp], fn: FsClosure, exists: bool, new
 	);
 }
 
-fsInlineFind(let: FsLet, args: [FsExp], fn: FsClosure, new_id: () -> string) -> FsLet {
+fsInlineFind(let: FsLet, args: [FsExp], fn: FsClosure, new_id: () -> string, debug: bool) -> FsLet {
 	arr = args[0];
 	arr_var = cast(arr: FsExp -> FsVarUse);
 	arr_type = fiDearrayType(fsType(arr_var));

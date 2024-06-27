@@ -1,7 +1,6 @@
 #pragma once
 
 #include <iostream>
-#include <stacktrace>
 #include "__flow_runtime_stats.hpp"
 #include "__flow_runtime_flow.hpp"
 

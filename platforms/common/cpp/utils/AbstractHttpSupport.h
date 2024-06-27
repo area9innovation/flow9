@@ -133,6 +133,7 @@ private:
     DECLARE_NATIVE_METHOD(uploadNativeFile)
     DECLARE_NATIVE_METHOD(downloadFile)
     DECLARE_NATIVE_METHOD(downloadFileBinary)
+    DECLARE_NATIVE_METHOD(downloadFileBinaryWithHeaders)
     DECLARE_NATIVE_METHOD(removeUrlFromCache)
     DECLARE_NATIVE_METHOD(clearUrlCache)
     DECLARE_NATIVE_METHOD(getAvailableCacheSpaceMb)

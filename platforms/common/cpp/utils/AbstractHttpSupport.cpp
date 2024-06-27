@@ -317,6 +317,7 @@ NativeFunction *AbstractHttpSupport::MakeNativeFunction(const char *name, int nu
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, uploadNativeFile, 8);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, downloadFile, 4);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, downloadFileBinary, 4);
+    TRY_USE_NATIVE_METHOD(AbstractHttpSupport, downloadFileBinaryWithHeaders, 5);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, removeUrlFromCache, 1);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, clearUrlCache, 0);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, getAvailableCacheSpaceMb, 0);
@@ -590,6 +591,33 @@ StackSlot AbstractHttpSupport::downloadFileBinary(RUNNER_ARGS)
     rq.result_filename = encodeUtf8(RUNNER->GetString(pathToSave));
     rq.done_cb = onDone;
     rq.error_cb = onError;
+
+    processRequest(rq);
+    doRequest(rq);
+
+    RETVOID;
+}
+
+
+
+StackSlot AbstractHttpSupport::downloadFileBinaryWithHeaders(RUNNER_ARGS)
+{
+    RUNNER_PopArgs5(url, headers, pathToSave, onDone, onError);
+    RUNNER_CheckTag2(TString, url, pathToSave);
+	RUNNER_CheckTag(TArray, headers);
+
+    int id = next_http_request++;
+
+    HttpRequest &rq = active_requests[id];
+    rq.req_id = id;
+    rq.method = parseUtf8("GET");
+    rq.response_enc = ResponseEncodingByte;
+    rq.url = RUNNER->GetString(url);
+    rq.result_filename = encodeUtf8(RUNNER->GetString(pathToSave));
+    rq.done_cb = onDone;
+    rq.error_cb = onError;
+	
+    decodeMap(RUNNER, &rq.headers, headers);
 
     processRequest(rq);
     doRequest(rq);

@@ -984,14 +984,14 @@ StackSlot ByteCodeRunner::NativeTimestamp(RUNNER_ARGS)
 StackSlot ByteCodeRunner::random(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
-    return StackSlot::MakeDouble(FlowDouble(rand()) / (FlowDouble(RAND_MAX) + 1));
+    return StackSlot::MakeDouble(FlowDouble(random_dist(random_gen)));
 }
 
 StackSlot ByteCodeRunner::NativeSrand(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(a1);
     RUNNER_CheckTag1(TInt, a1);
-    srand(a1.GetInt());
+    random_gen = std::mt19937(a1.GetInt());
     RETVOID;
 }
 
