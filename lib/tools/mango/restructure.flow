@@ -1,0 +1,141 @@
+import tools/mango/mango_types;
+import runtime;
+import tools/mango/mango2string;
+import tools/mango/util;
+import ds/tree;
+
+export {
+	// This resolves let-bindings with epsilons, as well as rewritings of the same terms
+	// by collecting all rule bindings
+	restructureMango(t : Term) -> Term;
+}
+
+Restructure(
+	rules : Tree<string, Term>,
+	free : Term
+);
+
+restructureMango(t : Term) -> Term {
+	r = collectAndCombine(Restructure(makeTree(), String("")), t);
+	foldTree(r.rules, r.free, \id, term, acc -> {
+		Rule(id, term, acc)
+	});
+}
+
+collectAndCombine(env : Restructure, t : Term) -> Restructure {
+	free = \ -> Restructure(env with free = t);
+	switch (t) {
+		Choice(term1, term2): {
+			r1 = collectAndCombine(env, term1);
+			r2 = collectAndCombine(r1, term2);
+			Restructure(r2 with free = Choice(r1.free, r2.free));
+		}
+		Construct(uid, int1): free();
+		Error(term): {
+			r = collectAndCombine(env, term);
+			Restructure(r with free = Error(r.free));
+		}
+		GrammarCall(id, term): {
+			r = collectAndCombine(env, term);
+			Restructure(r with free = GrammarCall(id, r.free));
+		}
+		GrammarFn(id, term1, term2, term3): {
+			r1 = collectAndCombine(env, term1);
+			r2 = collectAndCombine(r1, term2);
+			r3 = collectAndCombine(r2, term3);
+			Restructure(r3 with free = GrammarFn(id, r1.free, r2.free, r3.free));
+		}
+		Lower(term): {
+			r = collectAndCombine(env, term);
+			Restructure(r with free = Lower(r.free));
+		}
+		Negate(term): {
+			r = collectAndCombine(env, term);
+			Restructure(r with free = Negate(r.free));
+		}
+		Optional(term): {
+			r = collectAndCombine(env, term);
+			Restructure(r with free = Optional(r.free));
+		}
+		Plus(term): {
+			r = collectAndCombine(env, term);
+			Restructure(r with free = Plus(r.free));
+		}
+		Precedence(term1, term2): {
+			r1 = collectAndCombine(env, term1);
+			r2 = collectAndCombine(r1, term2);
+			Restructure(r2 with free = Precedence(r1.free, r2.free));
+		}
+		PushMatch(term): free();
+		Range(char1, char2): free();
+		Rule(id, term1, term2): {
+			r1 = collectAndCombine(env, term1);
+			r2 = collectAndCombine(r1, term2);
+			mexisting = lookupTree(r2.rules, id);
+			mexisting ?? {
+				// OK, we have to merge
+				if (mexisting == r1.free) {
+					Restructure(r2 with free = r2.free);
+				} else {
+					// println("Merging " + term2string(r1.free) + " and " + term2string(mexisting) + " into " + id);
+					// Allow both orders
+					or1 = instantiateLonelyVar(false, id, r1.free, mexisting);
+					or = if (or1 != mexisting) {
+						or1
+					} else {
+						or2 = instantiateLonelyVar(false, id, mexisting, r1.free);
+						if (or2 != r1.free) {
+							or2
+						} else {
+							println("Error: Redefinition of " + id + " that can not be resolved");
+							println("  " + term2string(r1.free));
+							println("  " + term2string(mexisting));
+							or2;
+						}
+					}
+					// println("Gives " + term2string(or));
+					Restructure(r2 with rules = setTree(r2.rules, id, or), free = r2.free);
+				}
+			} : {
+				Restructure(r2 with rules = setTree(r2.rules, id, r1.free), free = r2.free);
+			}
+		}
+		Sequence(term1, term2): {
+			r1 = collectAndCombine(env, term1);
+			r2 = collectAndCombine(r1, term2);
+			Restructure(r2 with free = makeSequence(r1.free, r2.free));
+		}
+		StackOp(id): free();
+		Star(term): {
+			r = collectAndCombine(env, term);
+			Restructure(r with free = Star(r.free));
+		}
+		String(string1): free();
+		Variable(id): free();
+	}
+}
+
+// Replaces "Var(var)" with the value if outside of a sequence
+instantiateLonelyVar(inSequence : bool, var : string, value : Term, body : Term) -> Term {
+	rec = \tt -> instantiateLonelyVar(false, var, value, tt);
+	switch (body) {
+		Choice(term1, term2): Choice(rec(term1), rec(term2));
+		Construct(uid, int1): body;
+		Error(term): Error(rec(term));
+		GrammarCall(id, term): GrammarCall(id, rec(term));
+		GrammarFn(id, term1, term2, term3): GrammarFn(id, rec(term1), rec(term2), rec(term3));
+		Lower(term): Lower(rec(term));
+		Negate(term): Negate(rec(term));
+		Optional(term): Optional(rec(term));
+		Plus(term): Plus(rec(term));
+		Precedence(term1, term2): Precedence(rec(term1), rec(term2));
+		PushMatch(term): PushMatch(rec(term));
+		Range(char1, char2): body;
+		Rule(id, term1, term2): Rule(id, rec(term1), rec(term2));
+		Sequence(term1, term2): Sequence(instantiateLonelyVar(true, var, value, term1), instantiateLonelyVar(true, var, value, term2));
+		StackOp(id): body;
+		Star(term): Star(rec(term));
+		String(string1): body;
+		Variable(id): if (!inSequence && id == var) value else body;
+	}
+}

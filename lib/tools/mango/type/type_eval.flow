@@ -1,0 +1,386 @@
+import tools/poppy/poppy_grammar;
+import tools/mango/mango_interpreter;
+
+import tools/mango/mango_types;
+import tools/mango/mango2string;
+import tools/mango/type/types;
+import tools/mango/rules;
+import algorithms;
+
+export {
+	MTypeEnv(
+		// What do each rule map to?
+		rules : Tree<string, Term>,
+		// What are the types of rules discovered so far?
+		env : Tree<string, [MType]>,
+		// What rule are we currently evaluating?
+		rule : string,
+		// What are the types in the stack so far?
+		stack : [MType]
+	);
+	// Does a type evaluation of the grammar to find the first cut at types
+	mangoType(t : Term) -> MTypeEnv;
+
+	joinMTypes(left : MType, right : MType) -> MType;
+}
+
+mangoType(t : Term) -> MTypeEnv {
+	rules = findRules(makeTree(), t);
+	env = MTypeEnv(rules, makeTree(), "", []);
+	mangoTypeEval(env, t);
+}
+
+mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
+	switch (t) {
+		Choice(term1, term2): {
+			ltype = mangoTypeEval(env, term1);
+			rtype = mangoTypeEval(env, term2);
+			joinMTypeEnvs(env, ltype, rtype, term1, term2);
+		}
+		Precedence(term1, term2): {
+			ltype = mangoTypeEval(env, term1);
+			rtype = mangoTypeEval(env, term2);
+			joinMTypeEnvs(env, ltype, rtype, term1, term2);
+		}
+		Construct(uid, int_0): {
+			arity = s2i(int_0);
+			depth = length(env.stack);
+			type = MTypeConstructor(uid, tailFrom(env.stack, depth - arity));
+			MTypeEnv(env with stack = arrayPush(subrange(env.stack, 0, depth - arity), type));
+		}
+		Error(term): {
+			type = mangoTypeEval(MTypeEnv(env with stack = []), term);
+			if (type.stack != []) {
+				println("Error can not produce anything");
+				println(type.stack);
+			}
+			env;
+		}
+		GrammarCall(id, term): {
+			println("Error: Unknown type eval of " + toString(t));
+			env;
+		}
+		GrammarFn(id, term1, term2, term3): {
+			println("Did not expect grammar fn here: " + id);
+			mangoTypeEval(MTypeEnv(env with stack = []), term3);
+		}
+		Lower(term): mangoTypeEval(env, term);
+		Negate(term): {
+			type = mangoTypeEval(MTypeEnv(env with stack = []), term);
+			if (type.stack != []) {
+				println("Negate can not produce anything");
+				println(type.stack);
+			}
+			env;
+		}
+		Optional(term): handleMultiMType(env, term);
+		Plus(term): handleMultiMType(env, term);
+		PushMatch(term): {
+			MTypeEnv(env with stack = arrayPush(env.stack, MTypeString()));
+		}
+		Range(char1, char2): env;
+		Rule(id, term1, term2): {
+			if (containsKeyTree(env.env, id)) {
+				// Maybe we should unify with what is there already?
+				println("TODO: Unify with " + toString(lookupTree(env.env, id)));
+				// Already typed, so just do the body
+				mangoTypeEval(env, term2);
+			} else {
+				type = mangoTypeEval(MTypeEnv(env with stack = [], rule = id), term1);
+				// println(id + " has type " + toString(type.stack));
+				nenv = MTypeEnv(env with env = setTree(env.env, id, type.stack));
+				mangoTypeEval(nenv, term2);
+			}
+		}
+		Sequence(term1, term2): {
+			ltype = mangoTypeEval(env, term1);
+			mangoTypeEval(ltype, term2);
+		}
+		StackOp(id): {
+			fromTo = \from, to -> {
+				elm : Pair<MTypeEnv, MType> = popMTypeStack(env);
+				switch (elm.second) {
+					MTypeResult(__): {}
+					default: {
+						if (elm.second != from) {
+							println("Error: @" + id + " expects " + toString(from) + ", not " + toString(elm.second));
+						}
+					}
+				}
+				MTypeEnv(env with stack = arrayPush(elm.first.stack, to));
+			}
+			if (id == "nil") {
+				MTypeEnv(env with stack = arrayPush(env.stack, MTypeNil()));
+			} else if (id == "cons") {
+				elm : Pair<MTypeEnv, MType> = popMTypeStack(env);
+				list : Pair<MTypeEnv, MType> = popMTypeStack(elm.first);
+				listtype = list.second;
+				// Add a star element
+				res = switch (listtype) {
+					MTypeStar(le): joinMTypes(listtype, MTypeStar(elm.second));
+					MTypeNil(): MTypeStar(elm.second);
+					default: joinMTypes(listtype, MTypeStar(elm.second));
+				}
+				// println("  Cons gives: " + toString(res));
+				MTypeEnv(list.first with stack = arrayPush(list.first.stack, res));
+			} else if (id == "true" || id == "false") {
+				MTypeEnv(env with stack = arrayPush(env.stack, MTypeBool()));
+			} else if (id == "s2i" || id == "parsehex" || id == "s2d" || id == "unescape") {
+				elm : Pair<MTypeEnv, MType> = popMTypeStack(env);
+				switch (elm.second) {
+					MTypeResult(__): {}
+					MTypeString(): {}
+					default: {
+						println("Error: @" + id + " expects string, not " + toString(elm.second));
+					}
+				}
+				mtype = if (id == "s2d") MTypeDouble() else if (id == "unescape") MTypeString() else MTypeInt();
+				MTypeEnv(env with stack = arrayPush(elm.first.stack, mtype));
+			} else if (id == "b2i") {
+				fromTo(MTypeBool(), MTypeInt());
+			} else if (id == "i2b") {
+				fromTo(MTypeInt(), MTypeBool());
+			} else if (id == "i2s") {
+				fromTo(MTypeInt(), MTypeString());
+			} else if (id == "drop") {
+				elm : Pair<MTypeEnv, MType> = popMTypeStack(env);
+				elm.first;
+			} else if (id == "pos") {
+				MTypeEnv(env with stack = arrayPush(env.stack, MTypeField("pos", MTypeInt())));
+			} else if (id == "swap") {
+				elm1 : Pair<MTypeEnv, MType> = popMTypeStack(env);
+				elm2 : Pair<MTypeEnv, MType> = popMTypeStack(elm1.first);
+				nstack = concat(elm2.first.stack, [elm1.second, elm2.second]);
+				MTypeEnv(elm2.first with stack = nstack);
+			} else if (id == "switch") {
+				elm : Pair<MTypeEnv, MType> = popMTypeStack(env);
+				// TODO: We could check it is a string
+				// The result is some type
+				MTypeEnv(env with stack = arrayPush(elm.first.stack, MTypeResult(env.rule)))
+			} else {
+				poppy : Poppy = mangoParse(poppyGrammar(), id, PoppyNil(), 0);
+				switch (poppy) {
+					PoppyInt(int1): MTypeEnv(env with stack = arrayPush(env.stack, MTypeInt()));
+					PoppyString(__): MTypeEnv(env with stack = arrayPush(env.stack, MTypeString()));
+					PoppyBool(__): MTypeEnv(env with stack = arrayPush(env.stack, MTypeBool()));
+					default: {
+						if (id == "print") env
+						else if (id == "list2array") {
+							// In this context, MTypeStar(?) is both array and List somehow
+							env;
+						} else if (id == "dump") { env
+						} else {
+							// TODO: We could parse it as Forth here, and see
+							println("TODO: Type eval @" + id);
+							println(poppy);
+							MTypeEnv(env with stack = arrayPush(env.stack, MTypeInt()));
+						}
+					}
+				}
+			}
+		}
+		Star(term): handleMultiMType(env, term);
+		String(stringq): env;
+		Variable(id): {
+			mres = lookupTree(env.env, id);
+			mres ?? {
+				if (mres == []) {
+					// It does nothing, so just keep it like that
+					env;
+				} else {
+					// OK, just push the resulting name instead of the expanded thing
+					MTypeEnv(
+						env with stack = concat(env.stack, [MTypeResult(id)])
+					);
+				}
+			} : {
+				if (!containsKeyTree(env.rules, id)) {
+					println("ERROR: Unknown rule: " + id);
+				}
+				code = lookupTreeDef(env.rules, id, t);
+				// OK, set up recursive results
+				nenv = MTypeEnv(env with env = setTree(env.env, id, [MTypeResult(id)]), stack = []);
+				// Find out what this rule does
+				type = mangoTypeEval(nenv, code);
+				result = type.stack;
+				if (length(result) > 1) {
+					println("ERROR: " + id + " produces more than one result");
+				}
+				if (result == []) {
+					MTypeEnv(type with env = setTree(nenv.env, id, result), stack = env.stack);
+				} else {
+					// Then update the type, and push the result on the stack
+					MTypeEnv(type with env = setTree(nenv.env, id, result), stack = arrayPush(env.stack, MTypeResult(id)));
+				}
+			}
+		}
+	}
+}
+
+handleMultiMType(env : MTypeEnv, term : Term) -> MTypeEnv {
+	prod = mangoTypeEval(env, term);
+	// Revert the stack
+	nenv = MTypeEnv(prod with stack = env.stack);
+	if (prod.stack == env.stack) {
+		// Takes nothing, and produces nothing
+		nenv;
+	} else {
+		// OK, does it transform or produce?
+		if (length(prod.stack) - length(env.stack) == 1) {
+			// It produces one element
+			prod;
+		} else if (length(prod.stack) == length(env.stack)) {
+			// It transforms
+			product = lastElement(prod.stack, MTypeResult("EMPTY STACK"));
+			// println("  The star transforms to " + toString(product));
+			replaceLastMType(nenv, product);
+		} else {
+			println("Strange stack discipline of star is not supported");
+			nenv;
+		}
+	}
+}
+
+replaceLastMType(e : MTypeEnv, type : MType) -> MTypeEnv {
+	if (e.stack == []) {
+		println("  Error: Expected at least one value");
+		e;
+	} else {
+		MTypeEnv(e with stack = replace(e.stack, length(e.stack) - 1, type));
+	}
+}
+
+joinMTypeEnvs(orig : MTypeEnv, left : MTypeEnv, right : MTypeEnv, l : Term, r : Term) -> MTypeEnv {
+	if (length(left.stack) != length(right.stack)) {
+		println("ERROR: Choices in " + orig.rule + " do not have same stack discipline");
+		println("Left side " + term2string(l) + " has ");
+		println(left.stack);
+		println("Right side " + term2string(r) + " has ");
+		println(right.stack);
+		orig;
+	} else if (orig.stack == left.stack && orig.stack == right.stack) {
+		orig;
+	} else if (left.stack == []) {
+		left;
+	} else {
+		llast = lastElement(left.stack, MTypeResult("EMPTY STACK"));
+		rlast = lastElement(right.stack, MTypeResult("EMPTY STACK"));
+		j = joinMTypes(llast, rlast);
+		MTypeEnv(left with stack = replace(left.stack, length(left.stack) - 1, j));
+	}
+}
+
+joinMTypes(left : MType, right : MType) -> MType {
+	add = \ -> {
+		switch (right) {
+			MTypeUnion(rname, rtypes): makeMTypeUnion(arrayPush(rtypes, left));
+			default: makeMTypeUnion([left, right]);
+		}
+	}
+	switch (left) {
+		MTypeResult(r): add();
+		MTypeNil(): if (left == right) left else joinMTypes(right, left);
+		MTypeBool(): add();
+		MTypeInt(): add();
+		MTypeDouble(): add();
+		MTypeString(): add();
+		MTypeConstructor(lname, largs): {
+			switch (right) {
+				MTypeConstructor(rname, rargs): {
+					if (lname == rname) {
+						if (length(largs) != length(rargs)) {
+							println("Error: " + lname + " has different arity in type join");
+							add();
+						} else {
+							MTypeConstructor(lname, mapi(largs, \i, larg -> {
+								joinMTypes(larg, rargs[i])
+							}))
+						}
+					} else add();
+				}
+				default: add();
+			}
+		}
+		MTypeStar(ltype): {
+			switch (right) {
+				MTypeStar(rtype): MTypeStar(joinMTypes(ltype, rtype));
+				MTypeNil(): left;
+				default: {
+					add();
+				}
+			}
+		}
+		MTypeUnion(lname, ltypes): {
+			switch (right) {
+				MTypeUnion(rname, rtypes): {
+					if (lname != "" && rname != "" && lname != rname) {
+						println("Can not merge unions of different names " + lname + " and " + rname);
+					}
+					uname = if (lname == "") rname else lname;
+					res = makeMTypeUnion(concat(ltypes, rtypes));
+					switch (res) {
+						MTypeUnion(__, t): MTypeUnion(uname, t);
+						default: res;
+					};
+					res;
+				}
+				default: makeMTypeUnion(arrayPush(ltypes, right));
+			}
+		}
+		MTypeName(lname): {
+			switch (right) {
+				MTypeName(rname): {
+					if (lname == rname) {
+						left
+					} else add();
+				}
+				default: add();
+			}
+		}
+		MTypeField(lname, ltype): {
+			switch (right) {
+				MTypeField(rname, rtype): {
+					MTypeField(min(lname, rname), joinMTypes(ltype, rtype));
+				}
+				default: MTypeField(lname, joinMTypes(ltype, right));
+			}
+		}
+	}
+}
+
+makeMTypeUnion(types : [MType]) -> MType {
+	so = sortUnique(types);
+
+	// OK, check if there are multiple of the same constructor
+	constructors = fold(so, makeTree(), \acc : Tree<string, [MType]>, t : MType -> {
+		switch (t) {
+			MTypeConstructor(name, args): treePushToArrayValue(acc, name, t);
+			default: treePushToArrayUnique(acc, "__", t);
+		}
+	});
+	unified : Tree<string, [MType]> = mapTree2(constructors, \r, ts -> {
+		if (r == "__") ts
+		else {
+			[fold(tail(ts), ts[0], \acc, t -> {
+				joinMTypes(acc, t)
+			})]
+		}
+	});
+	result = foldTree(unified, [], \__, ts, acc -> {
+		concat(acc, ts)
+	});
+
+	if (length(result) == 1) result[0]
+	else MTypeUnion("", result);
+}
+
+popMTypeStack(e : MTypeEnv) -> Pair<MTypeEnv, MType> {
+	if (e.stack == []) {
+		println("  Stack is empty when popping");
+		// println(set2array(^(e.typing)));
+		Pair(e, MTypeResult("EMPTY STACK"))
+	} else {
+		nenv = MTypeEnv(e with stack = subrange(e.stack, 0, length(e.stack) - 1));
+		Pair(nenv, lastElement(e.stack, MTypeResult("EMPTY STACK")));
+	}
+}

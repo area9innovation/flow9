@@ -1,0 +1,360 @@
+import tools/mango/vscode/tmlanguage_compile;
+import tools/mango/vscode/mango2regexp;
+import tools/mango/mango_rewrite;
+import tools/mango/inline;
+import tools/mango/rules;
+import tools/mango/util;
+
+export {
+	// Annotate the grammar with these macros:
+
+	// @highlight<rule "class"> 	defines the class for the given rule
+	// Order matters. Specific should be before general rules
+	// The classes come from
+	// https://macromates.com/manual/en/language_grammars#naming_conventions
+
+	// @linecomment<"//">			defines the line comment
+	// @blockcomment<"/*" "*/">		defines the block comment syntax
+	// @bracket<"[" "]">			defines a set of brackets
+
+	// TODO: Extract punctuation from general terms
+	// TODO: Use vsce to package and publish extensions
+	// https://code.visualstudio.com/api/working-with-extensions/publishing-extension
+	term2tmlanguage(name : string, orig : Term, t : Term) -> TmLanguage;
+
+
+/*
+TODO:
+Construct a tasks.json file with compile and check commands:
+https://code.visualstudio.com/docs/editor/tasks#_defining-a-problem-matcher
+
+Add @problemmatcher<regexp> to match errors.
+
+*/
+
+}
+
+term2tmlanguage(name : string, orig : Term, t : Term) -> TmLanguage {
+	classes = extractSyntaxClasses(SyntaxClasses([], "", Pair("", ""), [], []), orig);
+
+	rules = findRules(makeTree(), t);
+
+	// Remove all terms that should not be inlined - all our rules that have a class
+	withoutCommentClasses = fold(classes.classes, rules, \acc2, p -> {
+		if (startsWith(p.second, "comment.")) {
+			removeFromTree(acc2, p.first);
+		} else acc2
+	});
+
+	lineComment = classes.lineComment;
+	blockComment = classes.blockComment;
+	brackets = classes.brackets;
+
+	patterns = fold(classes.classes, [], \acc : [TmPattern], p -> {
+		rule = p.first;
+		class = p.second;
+		if (startsWith(class, "comment.")) {
+			acc1 = if (lineComment != "") {
+				arrayPush(acc, 
+					TmMatch("linecomment", "comment.line", 
+						// A grammar for line comments
+						Sequence(
+							String(lineComment), 
+							Sequence(
+								Star(
+									Sequence(Negate(String("\\n")), Range("\u0000", "\uffff"))
+								), 
+								Optional(String("\\n"))
+							)
+						),
+						term2oniguruma(String(lineComment)) + ".*$\n?"
+					)
+				)
+			} else acc;
+			if (blockComment.first != "") {
+				arrayPush(acc1,
+					TmNested("blockcomment", "comment.block", false, 
+						term2oniguruma(String(blockComment.first)), 
+						term2oniguruma(String(blockComment.second)), 
+					"")
+				);
+			} else acc1
+		} else {
+			tt = lookupTreeDef(rules, rule, String(""));
+
+			// Inline everything except recursion
+			withoutClasses = removeFromTree(withoutCommentClasses, rule);
+			inlined = inlineAll(withoutClasses, tt);
+
+			if (startsWith(class, "storage.") || startsWith(class, "keyword.")) {
+				// OK, we have something which needs keywords
+				kw = extractStrings(makeSet(), inlined);
+				keywords = filterSet(kw, \s -> {
+					strlen(s) > 1 && isLetter(strLeft(s, 1));
+				});
+				mterm = foldSet(keywords, None(), \acc2, kew -> {
+					acc2 ?? {
+						Some(Choice(String(kew), acc2))
+					} : Some(String(kew))
+				});
+				regexp = "\\b(" + strGlue(set2array(keywords), "|")+ ")\\b";
+				pattern = TmMatch(rule, class, mterm ?? mterm : String(""), regexp);
+				arrayPush(acc, pattern);
+			} else {
+				simplified = transitiveRewriteTerm(mango2regexp(inlined));
+				// println("Simplified: " + term2string(simplified));
+
+				// Is this something surrounded by strings?
+				bracketed = bracketedTerm(simplified);
+				bracketed ?? {
+					begin = term2oniguruma(bracketed.first);
+					end = term2oniguruma(bracketed.third);
+					// Can we represent the middle part? If not, just omit it
+					middle = if (isOniguruma(bracketed.second)) term2oniguruma(bracketed.second) else "";
+					pattern = TmNested(rule, class, false, begin, end, middle);
+					arrayPush(acc, pattern);
+				} : {
+					regexp = term2oniguruma(simplified);
+					arrayPush(acc, TmMatch(rule, class, simplified, regexp));
+				}
+			}
+		}
+	});
+
+	language = TmLanguage(
+		name,
+		// TODO: Where does the version come from?
+		"1.0.0",
+		name, // Description
+		["." + name],
+		brackets,
+		lineComment,
+		blockComment,
+		["\""],
+		patterns,
+		classes.commands
+	);
+	language
+}
+
+SyntaxClasses(
+	classes : [Pair<string, string>],
+	lineComment : string,
+	blockComment : Pair<string, string>,
+	brackets : [TmBracket],
+	commands : [VsCommand],
+);
+
+extractSyntaxClasses(classes : SyntaxClasses, t : Term) -> SyntaxClasses {
+	switch (t) {
+		Choice(term1, term2): extractSyntaxClasses(extractSyntaxClasses(classes, term1), term2);
+		Construct(uid, int_0): classes;
+		Error(term): extractSyntaxClasses(classes, term);
+		GrammarFn(id, term1, term2, term3): {
+			extractSyntaxClasses(classes, term3);
+		}
+		GrammarCall(id, term): {
+			seq = getSequence(term);
+			if (id == "highlight") {
+				rule = getVariableName(seq[0]);
+				class = getString(seq[1]);
+				SyntaxClasses(
+					classes with classes = arrayPush(classes.classes, Pair(rule, class))
+				)
+			} else if (id == "linecomment") {
+				char = getString(seq[0]);
+				SyntaxClasses(
+					classes with lineComment = char
+				);
+			} else if (id == "blockcomment") {
+				begin = getString(seq[0]);
+				end = getString(seq[1]);
+				SyntaxClasses(
+					classes with blockComment = Pair(begin, end)
+				);
+			} else if (id == "bracket") {
+				begin = getString(seq[0]);
+				end = getString(seq[1]);
+				SyntaxClasses(
+					classes with brackets = arrayPush(classes.brackets, TmBracket(begin, end, []))
+				);
+			} else if (id == "vscommand") {
+				name = getString(seq[0]);
+				command = getString(seq[1]);
+				keybinding = getString(elementAt(seq, 2, String("")));
+				SyntaxClasses(
+					classes with commands = arrayPush(classes.commands, VsCommand(name, command, keybinding))
+				);
+
+			} else classes;
+		}
+		Lower(term): extractSyntaxClasses(classes, term);
+		Negate(term): extractSyntaxClasses(classes, term);
+		Optional(term): extractSyntaxClasses(classes, term);
+		Plus(term): extractSyntaxClasses(classes, term);
+		Precedence(term1, term2): extractSyntaxClasses(extractSyntaxClasses(classes, term1), term2);
+		PushMatch(term): extractSyntaxClasses(classes, term);
+		Range(char1, char2): classes;
+		Rule(id, term1, term2): extractSyntaxClasses(extractSyntaxClasses(classes, term1), term2);
+		Sequence(term1, term2): extractSyntaxClasses(extractSyntaxClasses(classes, term1), term2);
+		StackOp(id): classes;
+		Star(term): extractSyntaxClasses(classes, term);
+		String(stringq): classes;
+		Variable(id): classes;
+	}
+}
+
+// Is this term constructed from "string term string"?
+bracketedTerm(t : Term) -> Maybe<Triple<Term, Term, Term>> {
+	nested = getSequence(t);
+	if (length(nested) >= 3 && isString(nested[0]) && isString(lastElement(nested, String("")))) {
+		begin = nested[0];
+		end = lastElement(nested, String(""));
+		middle = subrange(nested, 1, length(nested) - 2);
+		mid = fold(tail(middle), middle[0], \acc, m -> Sequence(acc, m));
+		Some(Triple(begin, mid, end));
+	} else None();
+}
+
+inlineAll(inlines : Tree<string, Term>, t : Term) -> Term {
+	in = inlineTerms(inlines, t);
+	if (in != t) {
+		inlineAll(inlines, in)
+	} else in;
+}
+
+// Is this expressible as an exact regexp?
+isOniguruma(t : Term) -> bool {
+	switch (t) {
+		Choice(term1, term2): false;
+		Construct(uid, int_0): false;
+		Error(term): false;
+		GrammarFn(id, term1, term2, term3): isOniguruma(term3);
+		GrammarCall(id, term): false;
+		Lower(term): false;
+		Negate(term): false;
+		Optional(term): isOniguruma(term);
+		Plus(term): isOniguruma(term);
+		Precedence(term1, term2): false;
+		PushMatch(term): isOniguruma(term);
+		Range(char1, char2): true;
+		Rule(id, term1, term2): false;
+		Sequence(term1, term2): isOniguruma(term1) && isOniguruma(term2);
+		StackOp(id): false;
+		Star(term): isOniguruma(term);
+		String(stringq): true;
+		Variable(id): false;
+	}
+}
+
+// Produce a regexp in Oniguruma syntax (https://macromates.com/manual/en/regular_expressions)
+term2oniguruma(t : Term) -> string {
+	error = \ -> {
+		println("Does not support " + term2string(t) + " in regexp");
+		"";
+	}
+	todo = \ -> {
+		println("TODO: Convert " + term2string(t) + " to regexp");
+		"";
+	}
+	wrap = \tt -> {
+		needPars = switch (tt) {
+			Sequence(__, __): true;
+			default: false;
+		};
+		(if (needPars) "(" else "")
+		+ term2oniguruma(tt)
+		+ (if (needPars) ")" else "")
+	};
+	switch (t) {
+		Choice(term1, term2): {
+			t1 = term2oniguruma(term1);
+			t2 = term2oniguruma(term2);
+			if (rangeOrStringsOnly(term1) && rangeOrStringsOnly(term2)) {
+				"[" + trim2(t1, "[]") + trim2(t2, "[]") + "]";
+			} else {
+				"(" + t1 + ")|(" + t2 + ")"
+			}
+		}
+		Construct(uid, int_0): todo();
+		Error(term): todo();
+		GrammarFn(id, term1, term2, term3): todo();
+		GrammarCall(id, term): todo();
+		Lower(term): todo();
+		Negate(term): {
+			"[^" + term2oniguruma(term) + "]";
+		}
+		Optional(term): wrap(term) + "?";
+		Plus(term): wrap(term) + "+";
+		Precedence(term1, term2): todo();
+		PushMatch(term): todo();
+		Range(char1, char2): {
+			ch = \c -> {
+				if (startsWith(c, "0x")) {
+					code = parseHex(c);
+					term2oniguruma(String(fromCharCode(code)));
+				} else {
+					term2oniguruma(String(c))
+				}
+			}
+			if (char1 == "0" && char2 == "9") "\\d"
+			else "[" + ch(char1) + "-" + ch(char2) + "]";
+		}
+		Rule(id, term1, term2): todo();
+		Sequence(term1, term2): term2oniguruma(term1) + term2oniguruma(term2);
+		StackOp(id): todo();
+		Star(term): wrap(term) + "*";
+		String(stringq): {
+			escapes = "\\|)[.?*+{^$-&";
+			escaped = stringCharsFold(escapes, stringq, \acc, escape -> {
+				strReplace(acc, escape, "\\" + escape)
+			});
+			escaped2 = stringFold(escaped, "", \acc, code -> {
+				if (code < 0x20) {
+					acc + "\\x" + lpad(formatHex(code), "0", 2)
+				} else if (code >= 0x100) {
+					// Hex codes above 0xff becomes \x{hex}
+					acc + "\\x{" + lpad(formatHex(code), "0", 8) + "}"
+				} else {
+					acc + fromCharCode(code)
+				}
+			});
+			escaped2;
+		}
+		Variable(id): error();
+	}
+}
+
+rangeOrStringsOnly(t : Term) -> bool {
+	switch (t) {
+		Choice(t1, t2): rangeOrStringsOnly(t1) && rangeOrStringsOnly(t2);
+		String(__): true;
+		Range(__, __): true;
+		default: false;
+	}
+}
+
+extractStrings(acc : Set<string>, t : Term) -> Set<string> {
+	switch (t) {
+		Choice(term1, term2): extractStrings(extractStrings(acc, term1), term2);
+		Construct(uid, int_0): acc;
+		Error(term): extractStrings(acc, term);
+		GrammarFn(id, term1, term2, term3): {
+			extractStrings(acc, term3);
+		}
+		GrammarCall(id, term): acc;
+		Lower(term): extractStrings(acc, term);
+		Negate(term): acc;
+		Optional(term): extractStrings(acc, term);
+		Plus(term): extractStrings(acc, term);
+		Precedence(term1, term2): extractStrings(extractStrings(acc, term1), term2);
+		PushMatch(term): extractStrings(acc, term);
+		Range(char1, char2): acc;
+		Rule(id, term1, term2): extractStrings(extractStrings(acc, term1), term2);
+		Sequence(term1, term2): extractStrings(extractStrings(acc, term1), term2);
+		StackOp(id): acc;
+		Star(term): extractStrings(acc, term);
+		String(stringq): insertSet(acc, stringq);
+		Variable(__): acc;
+	}
+}

@@ -1,0 +1,118 @@
+import tools/poppy/poppy_grammar;
+import tools/mango/mango_interpreter;
+import tools/mango/mango_types;
+import tools/mango/compiler/mopcode;
+import tools/mango/mango2string;
+import tools/mango/util;
+import math/math;
+
+export {
+	mango2opcode(t : Term) -> MOpCode;
+}
+
+mango2opcode(t : Term) -> MOpCode {
+	todo = \ -> {
+		println("ERROR: Implement mango2opcode for " + t.structname + " :" + term2string(t));
+		MoMatchString("TODO");
+	}
+	switch (t) {
+		Choice(term1, term2): {
+			choices = getChoices(t);
+			MoSequence(
+				[
+					MoPushCheckpoint(),
+					fold(reverseA(choices), MoRestoreCheckpoint(), \acc, s -> {
+						MoIf(mango2opcode(s), MoDiscardCheckpoint(), acc);
+					})
+				]
+			);
+		}
+		Construct(uid, string1): MoConstruct(uid, s2i(string1));
+		Error(term): todo();
+		GrammarCall(id, term): todo();
+		GrammarFn(id, term1, term2, term3): todo();
+		Lower(term): todo();
+		Negate(term): {
+			MoSequence([
+				MoPushCheckpoint(),
+				MoIf(
+					mango2opcode(term),
+					MoRestoreCheckpoint(),	// Basically false
+					MoSequence([
+						MoRestoreCheckpoint(),
+						MoBool(true)
+					]),
+				)
+			])
+		}
+		Optional(term): {
+			MoSequence([
+				MoPushCheckpoint(),
+				MoIf(
+					mango2opcode(term),
+					MoDiscardCheckpoint(),
+					MoRestoreCheckpoint(),
+				),
+				MoBool(true)
+			])
+		}
+		Plus(term): {
+			mango2opcode(
+				Sequence(term, Star(term))
+			);
+		}
+		Precedence(term1, term2): todo();
+		PushMatch(term): {
+			MoSequence([
+				MoCaptureI(),
+				MoIf(
+					mango2opcode(term),
+					MoSequence([
+						MoMatched(),
+						MoBool(true),
+					]),
+					MoBool(false),
+				)
+			])
+		}
+		Range(llower, uupper): {
+			lower = if (strlen(llower) != 1) parseHex(strRight(llower, 2)) else getCharCodeAt(llower, 0);
+			upper = if (strlen(uupper) != 1) parseHex(strRight(uupper, 2)) else getCharCodeAt(uupper, 0);
+			MoMatchRange(lower, upper);
+		}
+		Rule(id, term1, term2): {
+			MoFunction(id, mango2opcode(term1), mango2opcode(term2));
+		}
+		Sequence(term1, term2): {
+			seq = getSequence(t);
+			MoSequence(
+				[
+					MoPushCheckpoint(),
+					fold(reverseA(seq), MoDiscardCheckpoint(), \acc, s -> {
+						MoIf(mango2opcode(s), acc, MoRestoreCheckpoint());
+					})
+				]
+			);
+		}
+		StackOp(id): {
+			if (id == "pos") {
+				MoPushPosition();
+			} else if (id == "switch") {
+				MoBool(true)
+			} else {
+				pop = mangoParse(poppyGrammar(), id, PoppyNil(), 0);
+				MoEvalPoppy(pop);
+			}
+		}
+		Star(term): MoParseStar(mango2opcode(term));
+		String(ttext): {
+			text = if (ttext == "\\n") "\n" 
+				else if (ttext == "\\r") "\x0d"
+				else if (ttext == "\\t") "\t"
+				else ttext;
+			if (text == "") MoBool(true)
+			else MoMatchString(text);
+		}
+		Variable(id): MoCall(id);
+	}
+}

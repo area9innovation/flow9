@@ -1,0 +1,208 @@
+import formats/json/json;
+import tools/mango/compiler/compile;
+import tools/mango/compiler/linter;
+import tools/mango/mango_types;
+import tools/mango/type_driver;
+import tools/mango/type_inference;
+import tools/mango/description;
+import tools/mango/restructure;
+import tools/mango/mango_grammar;
+import tools/mango/mango_rewrite;
+import tools/mango/mango_interpreter;
+import tools/mango/precedence;
+import tools/mango/evaluate_functions;
+import net/url_parameter;
+import fs/filesystem;
+import text/blueprint;
+import tools/mango/type/infer_types;
+
+forbid seed/env;
+forbid melon/env;
+
+// import seed/runtime;
+
+import tools/mango/vscode/term2tmlanguage;
+import tools/mango/mango2dot;
+
+import tools/mango/mango2gterm;
+import tools/gringo/gringo_pretty;
+
+main() {
+	print = false;
+	test = "";
+	grammarName = getUrlParameterDef("grammar", test);
+	if (grammarName == "") {
+		println("Usage: ");
+		println("mango grammar=<language.mango>");
+		println("  compile=1                 generates a parser in flow. Use parseCompiledMango");
+		println("     main=<name>            define the name of the parser function");
+		println("     prefix=<text>          preprends parser function names with prefix");
+		println("     linter=1               make a linter program as well");
+		println("  savegrammar=<file.flow>   generates the parser AST in flow for interpreter");
+		println("  savemelon=<file.melon>    generates the parser AST in Melon for interpreter");
+		println("  types=1                   generate inferred Melon types");
+		println("  types=2                   generate inferred flow types");
+		println("    typeprefix=Mc           prepends this to all types");
+		println("    poppy=1                 use the new type inference");
+		println("  vscode=1                  generate a vscode extension");
+		println("    extension=<name>        override the filename extension");
+		println("  input=<file>              parses the contents of the file using the grammar");
+		println("    output=<file.json>]     saves the AST as JSON from the parse");
+		println("  savereduced=<file.mango>  saves the grammar after processing to a file");
+		println("  descriptions=1            generates text descriptions. Alpha quality");
+		println("  verbose=1                 debug information");
+		quit(1);
+	} else {
+		// This was used for bootstrapping
+		// mangoGrammar : Term = getMangoGrammar();
+		// mangoGrammar : Term = mango_gringo_reducedGrammar();
+		mangoGrammar = mangoGrammar();
+		
+		grammar = getFileContent(grammarName);
+		fullGrammarAst = mangoParse(mangoGrammar, grammar, String(""), 0);
+
+		if (fullGrammarAst == String("")) {
+			quit(1);			
+		} else {
+			// Should we pretty print it?
+			prettyout = getUrlParameter("prettyprint");
+			if (prettyout != "") {
+				setFileContent(prettyout, term2string(fullGrammarAst));
+				println("Saved " + prettyout);
+				{}
+			}
+
+			descriptions = getUrlParameter("descriptions");
+			if (descriptions != "") {
+				println(getDescription(if (descriptions == "1") "" else descriptions, fullGrammarAst));
+			}
+
+			// Process imports
+			typePrefix = getUrlParameter("typeprefix");
+			// This allows us to use @slice and other seed features
+			runCore = getRunCore();  /*makeSeedEnv("mango").runCore;*/
+			macros1 = evaluateMangoFunctions(makeMangoEvalEnv(runCore, typePrefix), fullGrammarAst);
+			functions = restructureMango(macros1);
+			if (print || isUrlParameterTrue("verbose")) {
+				println("After functions:");
+				// println(term2string(functions));
+			}
+
+			if (isUrlParameterTrue("poppy")) {
+				types = mangoTypeInference(grammarName, functions);
+			}
+
+			// Infer the types of the grammar
+			types : Tree<string, MType> = if (!isUrlParameterTrue("poppy") && (!isUrlParameterFalse("types") || isUrlParameterTrue("prettyeval"))) {
+				produceTypes(grammarName, functions);
+			} else makeTree();
+
+			prec = expandPrecedence(functions);
+
+			// Bootstrapped, hand written rewrites:
+			// grammarAst = rewriteTerm(prec);
+			grammarAst = transitiveRewriteTerm(prec);
+
+			if (isUrlParameterTrue("compile")) {
+				code = compileMango(grammarName, grammarAst);
+				output = changeFileExt(grammarName, "_compiled_parser.flow");
+				setFileContent(output, code);
+				println("Saved '" + output + "'");
+
+
+				if (isUrlParameterTrue("linter")) {
+					linter = makeLinterCode(grammarName);
+					output2 = changeFileExt(grammarName, "_linter.flow");
+					setFileContent(output2, linter);
+					println("Saved '" + output2 + "'");
+				}
+				{}
+			}
+
+			if (false) {
+				println("Before rewriting, after precedence:");
+				println(term2string(prec));
+
+				println("After Basil rewriting:");
+				println(term2string(transitiveRewriteTerm(prec)));
+
+				println("After hardcoded rewrite:");
+				println(term2string(grammarAst));
+			}
+
+			gringo = getUrlParameter("gringo");
+			if (gringo != "") {
+				gterm = term2gterm(grammarAst);
+				setFileContent(gringo, gterm2string(gterm));
+				println("Saved " + gringo);
+			}
+
+			reduced = getUrlParameter("savereduced");
+			if (reduced != "") {
+				setFileContent(reduced, term2string(grammarAst));
+				println("Saved " + reduced);
+			}
+
+			name = trim2(changeFileExt(fileNameOnly(grammarName), ""), ".");
+
+			grammarSave = getUrlParameter("savegrammar");
+			if (grammarSave != "") {
+				setFileContent(grammarSave, blueprint("
+					import tools/mango/mango_types;
+
+					export {
+						%name%Grammar() -> Term;
+					}
+
+					%name%Grammar() -> Term {
+						%ast%;
+					}
+				", [
+					"name", name,
+					"ast", toString(grammarAst)
+				]));
+				println("Saved " + grammarSave);
+				{}
+			}
+
+			melonSave = getUrlParameter("savemelon");
+			if (melonSave != "") {
+				setFileContent(melonSave, blueprint("
+					import tools/mango/mango_types;
+
+					%name%Grammar() -> Term {
+						%ast%;
+					}
+				", [
+					"name", name,
+					"ast", toString(grammarAst)
+				]));
+				println("Saved " + melonSave);
+				{}
+			}
+
+			if (isUrlParameterTrue("dot")) {
+				file = changeFileExt(grammarName, ".dot");
+				setFileContent(file, mango2dot(fullGrammarAst));
+				println("Saved " + file);
+			}
+
+			if (isUrlParameterTrue("vscode")) {
+				lang = term2tmlanguage(name, fullGrammarAst, functions);
+				saveTmLanguage(lang);
+			}
+
+			inputFile = getUrlParameter("input");
+			if (inputFile != "") {
+				input = getFileContent(inputFile);
+				output : flow = mangoParse(grammarAst, input, false, 0);
+				outputfile = getUrlParameter("output");
+				if (outputfile != "") {
+					setFileContent(outputfile, toString(output));
+					println("Saved " + outputfile);
+				}
+				quit(if (output.fail) 1 else 0);
+			} else quit(0);
+		}
+	}
+}

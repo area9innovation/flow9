@@ -1,0 +1,168 @@
+import tools/poppy/type/compose;
+import tools/poppy/type/unify;
+
+/*
+TODO Mango:
+
+- melon: Implicit unions missed. Exp has self-reference. Rettype is superfluous.
+  addPTypeStruct should extract implicit unions, but if we do that always, somehow
+  we loose field names, so extractImplicitUnions probably needs to be smarter.
+
+- Unions include themselves, due to eclasses are probably not resolved until the end
+
+- flowcpp melon/melon.flow -- seed/examples/mango.melon >out.flow
+  Make real type definitions in RunCore
+
+
+
+- We should change structs.flow to "merge" struct types and build a new, biggest struct instead of picking left/right
+
+General Poppy:
+- onechar.poppy from mango/mango.flow -- verbose=2 poppy=1 >out.flow  gives problems, due to nops
+
+- ifte needs check of resolved fn in compose as TODO says
+- Improve error messages to include the original poppy code
+- Should we rework typenames to have args separate from typars?
+
+We have a problem that unification with existing value can not be done in the union find map itself
+when eclasses are merged. Should we implement merging manually then? What test case can show this?
+*/
+
+export {
+	elaboratePType(env : PTypeEnv, recursive : Set<int>, seen : ref Set<int>, pt : PType) -> PType;
+
+	consolidateByName(env : PTypeEnv, types : [PType]) -> [PType];
+
+	mergePTypes(env : PTypeEnv, left : PType, right : PType) -> PType;
+}
+
+elaboratePType(env : PTypeEnv, recursive : Set<int>, seen : ref Set<int>, pt : PType) -> PType {
+	indent = ^(env.indent);
+	if (env.verbose > 1) {
+		println(indent + "Elaborating: " + prettyPType(env, pt) + " with seen " + toString(set2array(^seen)));
+		env.indent := indent + "  ";
+	}
+	rec = \tt -> elaboratePType(env, recursive, seen, tt);
+	res = switch (pt) {
+		PTypeName(name, typars): {
+			children = map(typars, rec);
+			PTypeName(name, children);
+		}
+		PTypeEClass(eclass0): {
+			eclass = findUnionMapRoot(env.unionFindMap, eclass0);
+			wasSeen = containsSet(^seen, eclass);
+			seen := insertSet(^seen, eclass);
+			types = getUnionMapValue(env.unionFindMap, eclass);
+			if (types == []) pt
+			else {
+				rtypes = sortUnique(consolidateByName(env, filtermap(types, \tt -> {
+					disco = if (wasSeen) tt else rec(tt);
+					eclasses = eclassesInPType(env, makeSet(), disco);
+					if (!isEmptySet(intersectSets(eclasses, recursive))) {
+						if (env.verbose > 1) {
+							println(^(env.indent) + "Filtering out recursive eclass: " + prettyPType(env, disco));
+						}
+						None()
+					} else {
+						Some(disco);
+					}
+				})));
+				if (false && length(rtypes) == 1) {
+					// If after elaboration, there are still eclasses, we have lost
+					if (hasEClassesInside(env, rtypes[0])) pt 
+					else rtypes[0]
+				} else {
+					pt;
+				}
+			}
+		}
+		PTypeWord(inputs, outputs): {
+			einputs = map(inputs, rec);
+			eoutputs = map(outputs, rec);
+			if (inputs == [] && length(outputs) == 1 && getPTypeName(env, outputs[0], "") != "") {
+				// ( -> Named)   ==   Named
+				outputs[0];
+			} else {
+				PTypeWord(einputs, eoutputs);
+			}
+		}
+		PTypeOverload(overloads): PTypeOverload(map(overloads, rec));
+		PTypeEval(): pt;
+		PTypeCompose(left, right): {
+			l = rec(left);
+			r = rec(right);
+			mcom = composeIfFeasible(env, l, r);
+			mcom ?? {
+				if (mcom != pt) {
+					rec(mcom)
+				} else mcom;
+			} : makePTypeCompose(l, r);
+		}
+	}
+	if (env.verbose > 1) {
+		env.indent := indent;
+		println(indent + "End elaborating: " + prettyPType(env, res));
+	}
+	res;
+}
+
+// This one also merge the structs that are similar
+consolidateByName(env : PTypeEnv, types : [PType]) -> [PType] {
+	fold(types, [], \acc, t -> {
+		mexist = find(acc, \tt -> getPTypeName(env, tt, "1") == getPTypeName(env, t, "2"));
+		mexist ?? {
+			if (mexist != t) {
+				merged = mergePTypes(env, mexist, t);
+				arrayPush(removeFirst(acc, mexist), merged);
+			} else acc;
+		} : arrayPush(acc, t);
+	});
+}
+
+
+mergePTypes(env : PTypeEnv, left : PType, right : PType) -> PType {
+	todo = \ -> {
+		println("TODO: Merge " + prettyPType(env, left) + " with " + prettyPType(env, right));
+		left;
+	};
+	error = \ -> {
+		perror("Error: Could not merge " + prettyPType(env, left) + " with " + prettyPType(env, right));
+	};
+	if (left == right) left
+	else switch (left) {
+		PTypeName(lname, ltypars): {
+			switch (right) {
+				PTypeName(rname, rtypars): {
+					if (lname == rname) {
+						PTypeName(lname, mapi(ltypars, \i, l -> mergePTypes(env, l, rtypars[i])));
+					} else {
+						// OK, we have to set up an implicit union
+						println("TODO: What is the best name of " + lname + " and " + rname);
+						eclass = makePTypeEClass(env, rname);
+						setUnionMapValue(env.unionFindMap, eclass.eclass, [left, right]);
+						eclass;
+					}
+				}
+				PTypeEClass(eclass): {
+					if (unifyPType(env, false, left, right)) {
+						left
+					} else {
+						error();
+					}
+				}
+				default: error();
+			}
+		}
+		PTypeEClass(eclass): {
+			if (unifyPType(env, false, left, right)) {
+				left
+			} else {
+				error();
+			}
+		}
+		PTypeWord(inputs, outputs): todo();
+		PTypeOverload(overloads): todo();
+		PTypeEval(): todo();
+		PTypeCompose(l, r): todo();
+	}
+}

@@ -1,0 +1,63 @@
+import runtime;
+import ds/rvalue_api;
+import tools/basil/lib/matchvalue;
+
+export {
+	MatchResult : (
+		// We capture bindings here in lexicographic order
+		bindings : [MatchValue<?>],
+		// Whether the matching failed or not
+		fail: bool,
+		// The term we are matching, and the result of rewrites
+		term : ?,
+	);
+
+	rewriteRules(
+		matches : [(MatchResult<?>) -> MatchResult<?>],
+		rewrites : [(bindings : [MatchValue<?>], t : ?) -> ?],
+		term : ?
+	) -> MatchResult<?>;
+
+	transitiveRewriting(
+		recapi : RecApi<?>,
+		matches : [(MatchResult<?>) -> MatchResult<?>],
+		rewrites : [(bindings : [MatchValue<?>], t : ?) -> ?],
+		term : ?
+	) -> ?;
+}
+
+rewriteRules(
+		matches : [(MatchResult<?>) -> MatchResult<?>],
+		rewrites : [(bindings : [MatchValue<?>], t : ?) -> ?],
+		t : ?
+	) -> MatchResult<?> {
+	acc = MatchResult([], true, t);
+	foldi(matches, acc, \i, acc2, rule -> {
+		if (acc2.fail) {
+			match = rule(MatchResult([], false, t));
+			if (match.fail) acc2
+			else {
+				// OK, we have a match. Do the rewrite
+				MatchResult([], false, rewrites[i](match.bindings, t));
+			}
+		} else acc2;
+	});
+}
+
+transitiveRewriting(
+		recapi : RecApi<?>,
+		matches : [(MatchResult<?>) -> MatchResult<?>],
+		rewrites : [(bindings : [MatchValue<?>], t : ?) -> ?],
+		term : ?
+	) -> ? {
+	ch : [?] = map(recapi.getChildren(term), 
+		\tt -> transitiveRewriting(recapi, matches, rewrites, tt)
+	);
+	step1 = recapi.combine(term, ch);
+	match1 = rewriteRules(matches, rewrites, step1);
+	if (match1.fail) step1
+	else if (match1.term != term) {
+		// Loop
+		transitiveRewriting(recapi, matches, rewrites, match1.term)
+	} else term
+}

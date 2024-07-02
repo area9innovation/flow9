@@ -1,0 +1,100 @@
+import tools/poppy/poppy_types;
+import tools/poppy/pretty;
+import tools/runcore/core_lib;
+
+export {
+	makePoppyEnv() -> PoppyEnv<?>;
+	PoppyEnv(
+		stack : List<PoppyStackValue<?>>,
+		words : Tree<string, Poppy>,
+		runCore : RunCore,
+	);
+
+	pushPoppy(env : PoppyEnv<?>, value : PoppyStackValue<?>) -> PoppyEnv<?>;
+	popPoppy(env : PoppyEnv<?>, def : ?) -> Pair<PoppyEnv<?>, ?>;
+
+	poppyStackValue2string(p : PoppyStackValue<?>) -> string;
+
+	PoppyStackValue<?> ::= Poppy, PoppyArray<?>, ExtValue<?>;
+		ExtValue(value : ?);
+		PoppyArray(value : [PoppyStackValue<?>]);
+
+	poppy2value(p : PoppyStackValue<?>) -> CoreValue;
+	// TODO: Add onError on this one
+	value2poppy(v : CoreValue) -> PoppyStackValue<?>;
+
+	popNStack(stack : List<?>, arity : int) -> Pair<List<?>, [?]>;
+}
+
+makePoppyEnv() -> PoppyEnv<?> {
+	PoppyEnv(makeList(), makeTree(), getRunCore())
+}
+
+pushPoppy(env : PoppyEnv<?>, value : PoppyStackValue<?>) -> PoppyEnv<?> {
+	PoppyEnv(env with stack = Cons(value, env.stack));
+}
+
+popPoppy(env : PoppyEnv<?>, def : ?) -> Pair<PoppyEnv<?>, ?> {
+	val = popNStack(env.stack, 1);
+	if (val.second == []) {
+		env.runCore.onError("ERROR: Stack underflow");
+		Pair(env, def);
+	} else {
+		Pair(PoppyEnv(env with stack = val.first), value2flow(poppy2value(val.second[0]), env.runCore.onError));
+	}
+}
+
+
+
+popNStack(stack : List<?>, arity : int) -> Pair<List<?>, [?]> {
+	if (arity == 0) {
+		Pair(stack, [])
+	} else {
+		switch (stack) {
+			Cons(h, t): {
+				rest = popNStack(t, arity - 1);
+				Pair(rest.first, arrayPush(rest.second, h))
+			}
+			EmptyList(): {
+				println("Expected " + i2s(arity) + " elements on the stack");
+				Pair(stack, []);
+			}
+		}
+	}
+}
+
+poppy2value(p : PoppyStackValue<?>) -> CoreValue {
+	switch (p) {
+		PoppyBool(b): CoreBool(b);
+		PoppyInt(i): CoreInt(i);
+		PoppyDouble(d): CoreDouble(d);
+		PoppyString(s): CoreString(s);
+		PoppyArray(a): CoreArray(map(a, poppy2value));
+		PoppyConstructor(uid, values): CoreConstructor(uid, map(values, poppy2value));
+		ExtValue(v): flow2value(v);
+		default: {
+			println("ERROR: Expected value in Poppy, not " + poppyStackValue2string(p));
+			CoreString("");
+		}
+	}
+}
+
+value2poppy(v : CoreValue) -> PoppyStackValue<?> {
+	switch (v) {
+		CoreBool(bool1): PoppyBool(bool1);
+		CoreInt(int1): PoppyInt(int1);
+		CoreDouble(double1): PoppyDouble(double1);
+		CoreString(string1): PoppyString(string1);
+		CoreArray(values): PoppyArray(map(values, value2poppy));
+		CoreConstructor(uid, values): ExtValue(value2flow(v, println));
+	}
+}
+
+poppyStackValue2string(p : PoppyStackValue<?>) -> string {
+	switch (p) {
+		Poppy(): prettyPoppy(p);
+		PoppyArray(value): "[" + superglue(value, poppyStackValue2string, " ") + "]";
+		ExtValue(value): toString(p);
+	}	
+}
+

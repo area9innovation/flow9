@@ -1,0 +1,156 @@
+import tools/runcore/core_fns;
+import ds/tree;
+import net/url_parameter;
+
+export {
+	emptyRunCore() -> RunCore;
+	getRunCore() -> RunCore;
+
+	RunCore(
+		constants : Tree<string, CoreValue>,
+		// N-ary
+		nary : Tree<string, CoreFunction>,
+		// Error handler
+		onError : (string) -> void,
+		// Verbose
+		debug : int,
+		// Debug indentation
+		indent : string,
+	);
+	CoreFunction ::= CoreFn, CoreEnvFn;
+	// Simple functions
+	CoreFn(
+		arity : int,
+		fn : ([CoreValue]) -> CoreValue
+	);
+	// Functions that can get the environment
+	CoreEnvFn(
+		arity : int,
+		fn : (RunCore, [CoreValue]) -> CoreValue
+	);
+
+	// Is this name defined in the core lib?
+	isCoreDefined(runCore : RunCore, id : string) -> bool;
+
+	// What is the arity of this function, if known? 0 if not
+	getCoreArity(runCore : RunCore, id : string) -> int;
+
+	// Run this function from the core library
+	evalCoreFn(runCore : RunCore, id : string, args : [CoreValue]) -> Maybe<CoreValue>;
+
+	debugCoreLib(runCore : RunCore) -> void;
+}
+
+emptyRunCore() -> RunCore {
+	RunCore(makeTree(), makeTree(), println, 0, "");
+}
+
+getRunCore() -> RunCore {
+	unary = \fns : [Pair<string, (CoreValue) -> CoreValue>] -> {
+		map(fns, \p -> Pair(p.first, CoreFn(1, \args -> p.second(args[0]))));
+	};
+	binary = \fns : [Pair<string, (CoreValue, CoreValue) -> CoreValue>] -> {
+		map(fns, \p -> Pair(p.first, CoreFn(2, \args -> p.second(args[0], args[1]))));
+	};
+	ternary = \fns : [Pair<string, (CoreValue, CoreValue, CoreValue) -> CoreValue>] -> {
+		map(fns, \p -> Pair(p.first, CoreFn(3, \args -> p.second(args[0], args[1], args[2]))));
+	};
+	RunCore(
+		makeTree(),
+		pairs2tree(
+			concatA([
+				unary([
+					Pair("not", notValue),
+					Pair("i2s", int2string),
+					Pair("d2s", double2string),
+					Pair("i2b", int2bool),
+					Pair("b2i", bool2int),
+					Pair("s2i", string2int),
+					Pair("s2d", string2double),
+					Pair("parsehex", coreParsehex),
+					Pair("unescape", coreUnescape),
+					Pair("escape", coreEscape),
+					Pair("string2ints", string2ints),
+					Pair("ints2string", ints2string),
+					Pair("strlen", stringLength),
+					Pair("length", arrayLength),
+					Pair("reverse", arrayReverse),
+					Pair("isBool", coreIsBool),
+					Pair("isInt", coreIsInt),
+					Pair("isDouble", coreIsDouble),
+					Pair("isString", coreIsString),
+					Pair("isArray", coreIsArray),
+					Pair("isConstructor", coreIsConstructor),
+					Pair("getConstructor", coreGetConstructor),
+					Pair("println", corePrintln),
+					Pair("capitalize", coreCapitalize),
+					Pair("decapitalize", coreDecapitalize),
+					Pair("list2array", coreList2Array),
+				]),
+				binary([
+					Pair("&&", andValue),
+					Pair("||", orValue),
+					Pair("+", addValue),
+					Pair("-", minusValue),
+					Pair("*", mulValue),
+					Pair("/", divideValue),
+					Pair("%", modValue),
+					Pair("<=>", compareValue),
+					Pair("==", eqValue),
+					Pair("!=", neqValue),
+					Pair("<", ltValue),
+					Pair("<=", leValue),
+					Pair(">", gtValue),
+					Pair(">=", geValue),
+					Pair("getField", coreGetField),
+					Pair("strGlue", coreStrGlue),
+					Pair("strIndex", stringIndex),
+					Pair("index", arrayIndex),
+				]),
+				ternary([
+					Pair("substring", valueSubstring),
+					Pair("subrange", arraySubrange),
+					Pair("setField", coreSetField),
+					Pair("strContainsAt", coreStringContainsAt),
+				])
+			])
+		),
+		println,
+		s2i(getUrlParameterDef("debug", "0")),
+		""
+	)
+}
+
+isCoreDefined(runCore : RunCore, id : string) -> bool {
+	containsKeyTree(runCore.constants, id) 
+	|| containsKeyTree(runCore.nary, id) 
+}
+
+getCoreArity(runCore : RunCore, id : string) -> int {
+	lookupTreeDef(runCore.nary, id, CoreFn(0, \args -> CoreInt(0))).arity;
+}
+
+evalCoreFn(runCore : RunCore, id : string, args : [CoreValue]) -> Maybe<CoreValue> {
+	mnary : Maybe<CoreFunction> = lookupTree(runCore.nary, id);
+	switch (mnary) {
+		Some(nary): {
+			if (length(args) == nary.arity) {
+				switch (nary) {
+					CoreFn(arity, fn): Some(fn(args));
+					CoreEnvFn(arity, fn): {
+						Some(fn(runCore, args))
+					}
+				}
+			} else {
+				println("Expected " + id + " to get " + i2s(nary.arity) + " args, but got " + i2s(length(args)) + " args.");
+				None();
+			}
+		}
+		None(): None();
+	}
+}
+
+debugCoreLib(runCore : RunCore) -> void {
+	println("  Constants: " + toString(getTreeKeys(runCore.constants)));
+	println("  Fns: " + toString(getTreeKeys(runCore.nary)));
+}
