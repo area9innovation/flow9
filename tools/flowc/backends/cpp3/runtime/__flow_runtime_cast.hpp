@@ -13,7 +13,7 @@ namespace flow {
 
 template<typename T1, typename T2>
 inline T2 errorCast(T1 x) {
-	fail("invalid conversion from type: '" + type2StdString<T1>() + "' to type: '" + type2StdString<T1>() + "' " + "of value:\n" + toStdString(x));
+	fail("invalid conversion from type: '" + type2StdString<T1>() + "' to type: '" + type2StdString<T2>() + "' " + "of value:\n" + toStdString(x));
 }
 
 template<typename T1, typename T2>
@@ -212,7 +212,7 @@ inline T2 castRc(T1 x) {
 	else if constexpr (std::is_same_v<T2, Union*>) {
 		if constexpr (is_struct_v<T1>) {
 			return x;
-		} else if constexpr (std::is_same_v<T2, Union*>) {
+		} else if constexpr (std::is_same_v<T1, Flow*>) {
 			return static_cast<Union*>(x);
 		} else {
 			errorCast<T1, T2>(x);
