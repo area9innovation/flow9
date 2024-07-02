@@ -1,0 +1,220 @@
+import tools/poppy/poppy_types;
+import tools/poppy/utils;
+import tools/poppy/poppy_env;
+import ds/list;
+import ds/array;
+import runtime;
+import text/deserialize_string;
+import text/blueprint;
+
+export {
+	evalPoppy(env : PoppyEnv<?>, program : Poppy) -> PoppyEnv<?>;
+}
+
+evalPoppy(env : PoppyEnv<?>, ins : Poppy) -> PoppyEnv<?> {
+	push = \v : PoppyStackValue<?> -> pushPoppy(env, v);
+	popn = \n : int -> popNStack(env.stack, n);
+	monop = \fn : (CoreValue) -> CoreValue -> {
+		elms = popn(1);
+		res = fn(poppy2value(elms.second[0]));
+		PoppyEnv(env with stack = Cons(value2poppy(res), elms.first));
+	};
+	binop = \fn : (CoreValue, CoreValue) -> CoreValue -> {
+		elms = popn(2);
+		res = fn(poppy2value(elms.second[0]), poppy2value(elms.second[1]));
+		PoppyEnv(env with stack = Cons(value2poppy(res), elms.first));
+	};
+	triop = \fn : (CoreValue, CoreValue, CoreValue) -> CoreValue -> {
+		elms = popn(3);
+		res = fn(poppy2value(elms.second[0]), poppy2value(elms.second[1]), poppy2value(elms.second[2]));
+		PoppyEnv(env with stack = Cons(value2poppy(res), elms.first));
+	};
+	switch (ins : Poppy) {
+		PoppySequence(poppy1, poppy2): evalPoppy(evalPoppy(env, poppy1), poppy2);
+		PoppyBool(bool1): push(ins);
+		PoppyInt(int1): push(ins);
+		PoppyDouble(double1): push(ins);
+		PoppyString(string1): push(ins);
+		PoppyConstructor(uid, __): push(ins);
+		PoppyNop(): env;
+
+		PoppyConstructArity(uid, int1): {
+			args = popn(int1);
+			fargs = map(args.second, \p -> value2flow(poppy2value(p), env.runCore.onError));
+			// TODO: When we are ready, we should avoid the ExtValue case
+			value = if (true) {
+				struct = makeStructValue(uid, fargs, IllegalStruct());
+				if (struct == IllegalStruct()) {
+					env.runCore.onError("ERROR: Could not make " + uid + "/" + i2s(int1));
+					PoppyConstructor(uid, flow(args.second));
+				} else ExtValue(struct);
+			} else {
+				PoppyConstructor(uid, flow(args.second));
+			};
+			PoppyEnv(env with stack = Cons(value, args.first));
+		}
+		PoppyDefine(id, poppy): {
+			mexisting = lookupTree(env.words, id);
+			mexisting ?? {
+				if (mexisting != poppy) {
+					env.runCore.onError("ERROR: Redefinition of " + id + " from " + prettyPoppy(mexisting) + " to " + prettyPoppy(poppy));
+				}
+			} : {}
+			PoppyEnv(env with words = setTree(env.words, id, poppy));
+		}
+		PoppyWord(id): {
+			mvalue = lookupTree(env.words, id);
+			mvalue ?? {
+				// Now we evaluate the definition
+				evalPoppy(env, mvalue)
+			} : {
+				// OK, look in the general environment
+				mconstant = lookupTree(env.runCore.constants, id);
+				switch (mconstant) {
+					None(): {
+						arity = getCoreArity(env.runCore, id);
+						args = popn(arity);
+						mres = evalCoreFn(env.runCore, id, map(args.second, poppy2value));
+						switch (mres) {
+							Some(res): PoppyEnv(env with stack = Cons(value2poppy(res), args.first));
+							None(): {
+								env.runCore.onError("ERROR: Could not eval id in Poppy: " + id + "/" + i2s(arity));
+								env
+							}
+						}
+					}
+					Some(c): {
+						push(value2poppy(c));
+					}
+				}
+			}
+		}
+		PoppySet(word): {
+			elms = popn(1);
+			newValue = elms.second[0];
+			nenv = PoppyEnv(env with stack = elms.first);
+
+			switch (newValue) {
+				Poppy(): PoppyEnv(nenv with words = setTree(env.words, word, newValue));
+				PoppyArray(__): {
+					env.runCore.onError("ERROR: Could not set word to array in Poppy: " + word);
+					nenv;
+				}
+				ExtValue(__): {
+					env.runCore.onError("ERROR: Could not set word to ext in Poppy: " + word);
+					nenv;
+				}
+			}
+			
+		}
+		PoppyIfte(): {
+			code = popn(3);
+			branch = if (poppy2value(code.second[0]) == CoreBool(true)) {
+				code.second[1];
+			} else {
+				code.second[2];
+			}
+			nenv = PoppyEnv(env with stack = Cons(branch, code.first));
+			evalPoppy(nenv, PoppyEval());
+		}
+		PoppyWhile(): {
+			// We start with [cond] [body]
+			popped = popn(2);
+			cond = popped.second[0];
+			body = popped.second[1];
+
+			// Now, we want [cond] only
+			cenv = PoppyEnv(env with stack = Cons(cond, popped.first));
+
+			// OK, evaluate the condition to get true/false
+			condEval = evalPoppy(cenv, PoppyEval());
+
+			// Now we have true/false
+			condValue = popNStack(condEval.stack, 1);
+			condition = condValue.second[0];
+
+			if (poppy2value(condition) == CoreBool(true)) {
+				// OK, we want <result> [cond] [body]
+				emptyStack = condValue.first;
+				benv = PoppyEnv(env with stack = Cons(body, emptyStack));
+				// OK, evaluate the body
+				next = evalPoppy(benv, PoppyEval());
+				// Now the stack is <result>
+				// We want <result> [cond] [body]
+				fenv = PoppyEnv(next with stack = Cons(body, Cons(cond, next.stack)));
+				evalPoppy(fenv, PoppyWhile());
+			} else {
+				PoppyEnv(env with stack = popped.first);
+			}
+		}
+		// Commands
+		PoppyNil(): push(PoppyArray([]));
+		PoppyCons(): {
+			elms = popn(2);
+			a = getPoppyArray(elms.second[0]);
+			res = PoppyArray(arrayPush(a, elms.second[1]));
+			PoppyEnv(env with stack = Cons(res, elms.first));
+		}
+		PoppyMakeList(poppy): {
+			poppies : [Poppy] = poppySeq2Array([], poppy);
+			push(PoppyArray(cast(poppies : [Poppy] -> [PoppyStackValue<?>])));
+		}
+		PoppyDrop(): {
+			ignore = popn(1);
+			PoppyEnv(env with stack = ignore.first);
+		}
+		PoppyDup(): {
+			elms = popn(1);
+			push(elms.second[0])
+		}
+		PoppyEval(): {
+			cmds = popn(1);
+			code = cmds.second[0];
+			instr = switch (code) {
+				PoppyArray(words): words;
+				default : [code];
+			};
+			fold(instr, PoppyEnv(env with stack = cmds.first), \acc, i -> {
+				switch (i) {
+					Poppy(): evalPoppy(acc, i);
+					PoppyArray(value): PoppyEnv(acc with stack = Cons(i, acc.stack));
+					ExtValue(value): PoppyEnv(acc with stack = Cons(i, acc.stack));
+				}
+			});
+		}
+		PoppyPrint(): {
+			elms = popn(1);
+			println(poppyStackValue2string(elms.second[0]));
+			if (true) {
+				env
+			} else {
+				PoppyEnv(env with stack = elms.first);
+			}
+		}
+		PoppySwap(): {
+			elms = popn(2);
+			nrest = Cons(elms.second[0], Cons(elms.second[1], elms.first));
+			PoppyEnv(env with stack = nrest);
+		}
+		PoppyDump(): {
+			dumpStack(env);
+			env;
+		}
+	}
+}
+
+dumpStack(env : PoppyEnv<?>) -> void {
+	println("\nDump of Poppy stack:");
+	iter(list2array(env.stack), \p -> {
+		t = poppyStackValue2string(p);
+		println(t)
+	});
+}
+
+getPoppyArray(p : PoppyStackValue<?>) -> [PoppyStackValue<?>] {
+	switch (p) {
+		PoppyArray(value): value;
+		default: [];
+	}
+}
+

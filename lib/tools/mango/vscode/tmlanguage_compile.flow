@@ -1,0 +1,338 @@
+import tools/mango/vscode/tmlanguage_types;
+import runtime;
+import fs/filesystem;
+import text/blueprint;
+
+export {
+	// This constructs the files for a VS code extension
+	saveTmLanguage(t : TmLanguage) -> void;
+}
+
+nativePath(p : string) -> string {
+	if (windows()) {
+		strReplace(p, "/", "\\")
+	} else p;
+}
+
+saveTmLanguage(t : TmLanguage) -> void {
+	dir1 = pathCombine("extensions" , "area9." + t.name + "-" + t.version);
+	ensureDirectoryExists(dir1);
+	dir = nativePath(dir1);
+
+	emulate = blueprint("yo code %dir% -t=language -q -n=%name%", [
+			"dir", dir,
+			"name", t.name,
+			"desc", t.description,
+		]);
+	println("We are emulating:\n" + emulate);
+
+	// What commands do we contribute?
+	commandContributes = if (t.commands != []) {
+		ext = makeExtensionJs(t);
+		saveMyFile(pathCombine(dir, "extension.js"), ext);
+
+		blueprint(<<
+			, 
+			"commands": [
+				%commands%
+			],
+			"keybindings": [
+				%keybindings%
+			]
+		>>, [
+			"commands", superglue(t.commands, \command -> {
+				cmdName = getCommandName(t, command);
+				blueprint(<<
+					{
+						"title": "%name%",
+						"command": "%cmdname%"
+					}
+				>>, [
+					"name", command.name,
+					"cmdname", cmdName,
+				])
+			}, ",\n"),
+			"keybindings", superglue(t.commands, \command -> {
+				if (command.keybinding != "") {
+					cmdName = getCommandName(t, command);
+					blueprint(<<
+						{
+							"command": "%command%",
+							"key": "%keybinding%",
+							"when" : "editorLangId == '%name%'"
+						}
+					>>, [
+						"name", t.name,
+						"command", cmdName,
+						"keybinding", command.keybinding
+					])
+				} else "";
+			}, ",\n")
+		]);
+	} else "";
+
+	extension = getUrlParameterDef("extension", t.name); 
+
+	// Make name/package.json
+	package = blueprint(<<
+		{
+			"name": "%name%",
+			"displayName": "%Name%",
+			"description": "",
+			"version": "%version%",
+			"engines": {
+				"vscode": "^1.73.0"
+			},
+			"categories": [
+				"Programming Languages"
+			],%cmd%
+			"contributes": {
+				"languages": [{
+					"id": "%name%",
+					"aliases": ["%Name%", "%name%"],
+					"extensions": [".%extension%"],
+					"configuration": "./language-configuration.json"
+				}],
+				"grammars": [{
+					"language": "%name%",
+					"scopeName": "source.%name%",
+					"path": "./syntaxes/%name%.tmLanguage.json"
+				}]%commands%
+			}
+		}
+	>>, [
+		"name", t.name,
+		"Name", toCapitalization(t.name),
+		"extension", extension,
+		"version", t.version,
+		"cmd", if (t.commands != []) {
+			blueprint(<<
+				"activationEvents": [
+					"onLanguage:%name%"
+				],
+				"main": "./extension.js",>>,
+				[
+					"name", t.name
+				]
+			);
+		} else "",
+		"commands", commandContributes
+	]);
+	saveMyFile(pathCombine(dir, "package.json"), package);
+
+	combine = \l, r -> {
+		l + (if (l != "" && r != "") ", " else "") + r
+	}
+
+	// name/language.configuration.json
+	brackets = superglue(t.brackets, \b : TmBracket -> {
+		if (b.notIn != []) {
+			println("TODO: Add not in support for brackets");
+		};
+		"[" + combine(toString(b.open), toString(b.close)) + "]"
+	}, ",");
+	config = blueprint(<<
+		{
+			"comments": {
+				"lineComment": "%linecomment%",
+				"blockComment": [ "%block1%", "%block2%" ]
+			},
+			"brackets": [
+				%brackets%
+			],
+			"autoClosingPairs": [
+				%pairs%
+			],
+			"surroundingPairs": [
+				%pairs%
+			]
+		}
+	>>, [
+		"linecomment", t.lineComment,
+		"block1", t.blockComment.first,
+		"block2", t.blockComment.second,
+		"brackets", brackets,
+		"pairs", combine(brackets, superglue(t.strings, \s -> "[" + toString(s) + "," + toString(s) + "]", ", "))
+	]);
+	saveMyFile(pathCombine(dir, "language-configuration.json"), config);
+
+	// Save syntaxes/melon.tmLanguage.json
+	json = blueprint(<<
+		{
+			"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+			"name": "%Name%",
+			"patterns": [
+				%patterns%
+			],
+			"repository": {
+				%repository%
+			},
+			"scopeName": "source.%name%"
+		}
+>>, [
+		"name", t.name,
+		"Name", toCapitalization(t.name),
+		"patterns", superglue(t.patterns, \p -> {
+			"{ \"include\": \"#" + p.id + "\" }"
+		}, ",\n"),
+		"repository", superglue(t.patterns, \p -> {
+			switch (p) {
+				TmMatch(id, name, term, regexp): {
+					blueprint(<<
+					"%id%": {
+						"patterns": [{
+							"name": "%name%",
+							"match": %regexp%
+						}]
+					}>>, [
+						"id", p.id,
+						"name", p.name,
+						"regexp", toString(p.regexp)
+					]);
+				}
+				TmNested(id, name, onlyInside, begin, end, insidePatternId): {
+					blueprint(
+						<<
+						"%id%": {
+							"name": "%name%",
+							"begin": %begin%,
+							"end": %end%
+							%inside%
+						}
+						>>,
+						[
+							"id", p.id,
+							"name", p.name,
+							"begin", toString(p.begin),
+							"end", toString(p.end),
+							"inside", if (p.insidePattern != "") {
+								blueprint(<<
+									,
+									"patterns": [ { "match": %pattern% } ]
+								>>, ["pattern", toString(p.insidePattern)])
+							} else "",
+						]
+					)
+				}
+			}
+		}, ",\n")
+	]);
+	syntaxes = pathCombine(dir, "syntaxes");
+	ensureDirectoryExists(syntaxes);
+	saveMyFile(pathCombine(syntaxes, t.name + ".tmLanguage.json"), json);
+
+
+	ignore = <<node_modules
+.vscode
+*.log
+*.tmp
+*lock.json
+>>;
+	saveMyFile(pathCombine(syntaxes, ".vscodeignore"), ignore);
+
+	launch = <<
+// A launch configuration that launches the extension inside a new window
+// Use IntelliSense to learn about possible attributes.
+// Hover to view descriptions of existing attributes.
+// For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+{
+	"version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Extension",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}"
+            ]
+        }
+    ]
+}>>;
+	vscodeDir = pathCombine(dir, ".vscode");
+	ensureDirectoryExists(vscodeDir);
+	saveMyFile(pathCombine(vscodeDir, "launch.json"), launch);
+
+	println("Test by running this, and then use F5 to launch a new VS code editor with the syntax");
+	println("code " + dir);
+	println("Make a .vsix file using vsce (npm -g install @vscode/vsce):");
+	println("cd " + dir);
+	println("vsce package");
+	println("and install with code --install-extension " + t.name + ".vsix")
+}
+
+makeExtensionJs(t : TmLanguage) -> string {
+	blueprint(<<
+		// The module 'vscode' contains the VS Code extensibility API
+		const vscode = require('vscode');
+		const { exec } = require('node:child_process');
+
+		/**
+		* @param {vscode.ExtensionContext} context
+		*/
+		function activate(context) {
+			%name%Channel = vscode.window.createOutputChannel("%Name% output");
+			%name%Channel.show(true);
+			%commands%
+		}
+
+		// This method is called when your extension is deactivated
+		function deactivate() {}
+
+		module.exports = {
+			activate,
+			deactivate
+		}
+	>>, [
+		"name", t.name,
+		"Name", toCapitalization(t.name),
+		"commands", superglue(t.commands, \command -> {
+			cmdName = getCommandName(t, command);
+			// TODO: Figure out how to resolve filename, path name & current working directory
+			blueprint(<<
+				context.subscriptions.push(vscode.commands.registerCommand('%cmdname%', async function () {
+					%name%Channel.clear();
+					%name%Channel.show(true);
+					const document = vscode.window.activeTextEditor.document;
+					document.save().then(() => {
+						var folder;
+						if (vscode.workspace.workspaceFolders != null && vscode.workspace.workspaceFolders.length > 0) {
+							folder = vscode.workspace.workspaceFolders[0].uri.fsPath;
+						} else {
+							folder = ".";
+						}
+						const relativeFile = document.uri.fsPath;
+						%name%Channel.appendLine("Running '" + %command% + "' in " + folder);
+						exec(%command%, {cwd: folder}, (err, stdout, stderr) => {
+							%name%Channel.show(true);
+							if (err) {
+								%name%Channel.append(err);
+							}
+							if (stdout != "") {
+								%name%Channel.append(stdout);
+							}
+							if (stderr != "") {
+								%name%Channel.append(stderr);
+							}
+						});
+					});
+				}));
+			>>, [
+				"name", t.name,
+				"cmdname", cmdName,
+				"command", strReplace(toString(command.command), "\"", "`"),
+			])
+		}, "\n")
+	]);
+}
+
+getCommandName(t : TmLanguage, command : VsCommand) -> string {
+	t.name + "." + strReplace(command.name, " ", "_");
+}
+
+saveMyFile(name : string, content : string) -> void {
+	if (setFileContent(name, content)) {
+		println("Saved " + name);
+	} else {
+		println("ERROR: Could not save " + name);
+	}
+}

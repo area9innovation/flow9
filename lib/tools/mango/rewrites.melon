@@ -1,0 +1,155 @@
+import mango/mango_types;
+
+rewriteTerm(t : Term) -> Term {
+	switch (t) {
+		Choice(term1, term2): {
+			// TODO:
+			// e | ""	-> e?
+
+			t1 = rewriteTerm(term1);
+			t2 = rewriteTerm(term2);
+			if (t1 == t2) {
+				// t | t	-> t
+				t1;
+			} else switch (t1) {
+				Sequence(t1a, t1b): {
+					if (t1a == t2) {
+						// (pre post) | pre   -> pre post?
+						rewriteTerm(Sequence(t1a, Optional(t1b)));
+					} else {
+						switch (t2) {
+							Sequence(t2a, t2b): {
+								if (t1a == t2a) {
+									// (pre t1) | (pre t2)   	-> pre (t1 | t2)
+									rewriteTerm(Sequence(t1a, Choice(t1b, t2b)))
+								} else Choice(t1, t2)
+							}
+							Choice(t2a, t2b): {
+								// (pre post) | (pre | c)  -> (pre post?) | c
+								if (t1a == t2a) {
+									rewriteTerm(Choice(Sequence(t1a, Optional(t1b)), t2b))
+								} else {
+									switch (t2a) {
+										Sequence(t2aa, t2ab): {
+											if (t1a == t2aa) {
+												// (pre post1) | ((pre post2) | c) 	-> pre (post1 | post2) | c
+												rewriteTerm(Choice(Sequence(t1a, Choice(t1b, t2ab)), t2b))
+											} else Choice(t1, t2)
+										}
+										default: Choice(t1, t2)
+									}
+								}
+							}
+							default: Choice(t1, t2);
+						}
+					}
+				}
+				String(s1): {
+					// "" | e 	-> e?
+					if (s1 == "") Optional(t2)
+					else Choice(t1, t2)
+				}
+				Choice(t1a, t1b): {
+					// (a | b) | c			-> a | (b | c)
+					rewriteTerm(Choice(t1a, Choice(t1b, t2)))
+				}
+				default: Choice(t1, t2);
+			}
+		}
+		Construct(uid, int_0): t;
+		Error(term): Error(rewriteTerm(term));
+		GrammarMacro(id, term): t;
+		Lower(term): Lower(rewriteTerm(term));
+		Negate(term): Negate(rewriteTerm(term));
+		Optional(term): {
+			ot = rewriteTerm(term);
+			// t??  -> t?
+			// t+?  -> t*
+			// t*?  -> t*
+			switch (ot) {
+				Optional(t2): ot;
+				Plus(t2): Star(t2);
+				Star(t2): ot;
+				default: Optional(ot);
+			}
+		}
+		Plus(term): {
+			ot = rewriteTerm(term);
+			// t2++  -> t2+
+			// t2?+  -> t2*
+			// t2*+  -> t2*
+			switch (ot) {
+				Plus(t2): ot;
+				Optional(t2): Star(t2);
+				Star(t2): t2;
+				default: Plus(ot);
+			}
+		}
+		Precedence(term1, term2): {
+			Precedence(rewriteTerm(term1), rewriteTerm(term2));
+		}
+		PushMatch(term): PushMatch(rewriteTerm(term));
+		Range(char1, char2): {
+			// 'a'-'a'			-> "a"
+			if (false && char1 == char2) String(char1)
+			else t
+		}
+		Rule(id, term1, term2): {
+			// TODO:
+			// e = e tail | rest	->	e = rest tail*
+			Rule(id, rewriteTerm(term1), rewriteTerm(term2));
+		}
+		Sequence(term1, term2): {
+			t1 = rewriteTerm(term1);
+			t2 = rewriteTerm(term2);
+			switch (t1) {
+				String(s1): {
+					// "" t	    -> t
+					if (s1 == "") t2
+					else {
+						switch (t2) {
+							// "str" "ing" 	-> "string"
+							String(s2): String(s1 + s2);
+							default: {
+								Sequence(t1, t2);
+							}
+						}
+
+					}
+				}
+				Sequence(t1a, t1b): {
+					// (a b) c				-> a (b c)
+					Sequence(t1a, Sequence(t1b, t2));
+				}
+				default: {
+					switch (t2) {
+						String(s2): {
+							// t ""			-> t
+							if (s2 == "") t1
+							else Sequence(t1, t2);
+						}
+						default: {
+							Sequence(t1, t2);
+						}
+					}
+				}
+			}
+
+		}
+		StackOp(id): t;
+		Star(t1): {
+			ot = rewriteTerm(t1);
+			// t2**  -> t2*
+			// t2?*  -> t2*
+			// t2+*  -> t2*
+			switch (ot) {
+				Star(t2): t2;
+				Optional(t2): t2;
+				Plus(t2): t2;
+				default: Star(ot);
+			}
+		}
+		String(stringq): t;
+		Variable(id): t; // I guess we could inline
+	}
+}

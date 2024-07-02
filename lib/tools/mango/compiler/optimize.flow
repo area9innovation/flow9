@@ -1,0 +1,403 @@
+import tools/mango/compiler/mopcode;
+import runtime;
+
+export {
+	optimizeMOpCode(m : MOpCode) -> MOpCode;
+}
+
+optimizeMOpCode(m : MOpCode) -> MOpCode {
+	todo = \ -> {
+		println("TODO: Optimize " + toString(m));
+		m;
+	}
+	switch (m) {
+		MoFunction(name, code, body): MoFunction(name, optimizeMOpCode(code), optimizeMOpCode(body));
+		MoMatchString(s): m;
+		MoMatchRange(lower, upper): m;
+		MoIf(cond, then, else_): {
+			// Split any prefix in the condition out in front
+			oc = optimizeMOpCode(cond);
+			split = splitMSequence(oc);
+
+			ot = optimizeMOpCode(then);
+			oe = optimizeMOpCode(else_);
+			seq = concat(split.first,
+					if (isMOpCodeTrue(split.second)) {
+						[ot]
+					} else if (split.second == MoBool(false)) {
+						[oe];
+					} else if (ot == MoBool(true) && oe == MoBool(false)) {
+						[split.second]
+					} else if (isMOpCodeAlwaysTrue(split.second)) {
+						// No need for the else, but we keep the condition for side-effect
+						[split.second, ot]
+					} else {
+						[optimizeNestedMIfForOr(optimizeNestedMIfForAnd(MoIf(split.second, ot, oe)))]
+					}
+				);
+			if (length(seq) == 1) seq[0]
+			else optimizeMOpCode(MoSequence(seq))
+		}
+		MoParseStar(term): MoParseStar(optimizeMOpCode(term));
+		MoCall(id): m;
+		MoCaptureI(): m;
+		MoMatched(): m;
+		MoBool(b): m;
+		MoEvalPoppy(poppy): m;
+		MoPushPosition(): m;
+		MoPushCheckpoint(): m;
+		MoDiscardCheckpoint(): m;
+		MoRestoreCheckpoint(): m;
+		MoSequence(exps): {
+			seq = concatA(filtermapi(exps, \i, e -> {
+				co = optimizeMOpCode(e);
+				islast = i == length(exps) - 1;
+				if (!islast && (co == MoSequence([]) || co == MoBool(true) || co == MoBool(false))) {
+					None();
+				} else {
+					Some(switch (co) {
+						MoSequence(ns): ns;
+						default: [co];
+					})
+				}
+			}));
+			nseq = optimizeMMatchString(seq, 0, []);
+			if (nseq == [MoMatched(), MoBool(true)]) {
+				MoMatched();
+			} else {
+				r = optimizeMPushDiscardSequence(nseq);
+				if (r != m) {
+					optimizeMOpCode(r);
+				} else r
+			}
+		}
+		MoConstruct(uid, arity): m;
+		MoAnd(left, right): MoAnd(optimizeMOpCode(left), optimizeMOpCode(right));
+		MoOr(left, right): MoOr(optimizeMOpCode(left), optimizeMOpCode(right));
+	}
+}
+
+
+
+/*
+	if (<cond1>) {
+		if (<cond2>) {
+			<something>
+		} else {
+			<else>
+		}
+	} else {
+		<else>
+	}
+
+can be rewritten to be
+
+	if (<cond1> && <cond2>) {
+		<something>
+	} else {
+		<else>
+	}
+
+*/
+optimizeNestedMIfForAnd(d : MoIf) -> MoIf {
+	switch (d.then) {
+		MoIf(cond, then, else_): {
+			if (existsMOpCode(d.cond, isMNotAndable)
+				|| existsMOpCode(cond, isMNotAndable)) {
+				d;
+			} else if (else_ == d.else_) {
+				// OK, we can rewrite to use an and
+				MoIf(MoAnd(d.cond, cond), then, else_)
+			} else {
+				d;
+			}
+		}
+		default: d;
+	}
+}
+
+/*
+Also,
+
+	if (<cond1>) {
+		<then>
+	} else {
+		if (<cond2>) {
+			<then>
+		} else {
+			<else>
+		}
+	}
+
+can be rewritten to be
+
+	if (<cond1> || <cond2>) {
+		<then>
+	} else {
+		<else>
+	}
+
+*/
+optimizeNestedMIfForOr(d : MoIf) -> MoIf {
+	switch (d.else_) {
+		MoIf(cond, then, else_): {
+			if (existsMOpCode(d.cond, isMNotAndable)
+				|| existsMOpCode(cond, isMNotAndable)) {
+				d;
+			} else if (then == d.then) {
+				// OK, we can rewrite to use an or
+				MoIf(MoOr(d.cond, cond), then, else_)
+			} else {
+				d;
+			}
+		}
+		default: d;
+	}
+}
+
+
+
+// If this is a sequence, split into the head and the tail
+splitMSequence(f : MOpCode) -> Pair<[MOpCode], MOpCode> {
+	switch (f) {
+		MoSequence(exprs): {
+			n = length(exprs);
+			if (n == 0) Pair([], f)
+			else Pair(subrange(exprs, 0, n - 1), exprs[n-1]);
+		}
+		default: Pair([], f);
+	}
+}
+
+
+// Does this always return true?
+isMOpCodeTrue(d : MOpCode) -> bool {
+	switch (d) {
+		MoBool(b): b;
+		default: false;
+	}
+}
+
+
+/*
+	DSequence([
+		...,
+		DPushCheckpoint(),
+		DIf(
+			DMatchString(<string>) or DMatchRange or sequence of and|or of these,
+			<exp>,
+			DRestoreCheckpoint()
+		),
+		...
+	])
+
+	can become
+
+		DIf(
+			DMatchString(<string>) or DMatchRange,
+			<exp>,
+			DFalse()
+		),
+
+*/
+optimizeMMatchString(seq : [MOpCode], i : int, acc : [MOpCode]) -> [MOpCode] {
+	rest = \ -> {
+		optimizeMMatchString(seq, i + 1, arrayPush(acc, seq[i]));
+	}
+	if (i + 1 < length(seq)) {
+		if (seq[i] == MoPushCheckpoint()) {
+			// OK, see if we have an DIf
+			after = seq[i + 1];
+			switch (after) {
+				MoIf(cond, then, else_): {
+					if (else_ == MoRestoreCheckpoint()) {
+						if (isMOpCodeMatch(cond) && !existsMOpCode(then, isMPushCheckPoint)) {
+							// OK, we have something of the given pattern.
+							/*
+							DIf(
+								DMatchString(<string>) or DMatchRange,
+								<exp>,
+								DFalse()
+							),
+							where <exp> should not have a DPushCheckpoint,
+							and we replace all discardDCheckpoint with True
+							and restoreDCheckpoint with False
+							*/
+							nthen = replaceMCheckpoints(then);
+							con = if (nthen == MoBool(true)) cond else MoIf(cond, nthen, MoBool(false));
+							optimizeMMatchString(seq, i + 2, arrayPush(acc, con));
+						} else {
+							rest();
+						}
+					} else rest();
+				}
+				default: rest();
+			}
+		} else {
+			rest();
+		}
+	} else {
+		if (i < length(seq)) {
+			rest();
+		} else acc
+	}
+}
+
+isMOpCodeMatch(d : MOpCode) -> bool {
+	switch (d) {
+		MoMatchString(__): true;
+		MoMatchRange(__, __): true;
+		MoAnd(left, right): isMOpCodeMatch(left) && isMOpCodeMatch(right);
+		MoOr(left, right): isMOpCodeMatch(left) && isMOpCodeMatch(right);
+		MoParseStar(t): isMOpCodeMatch(t);
+		MoCall(__): false; // This is not trivial if there is prefix overlap
+		MoBool(p): true;
+		default: false;
+	}
+}
+
+
+existsMOpCode(d : MOpCode, fn : (MOpCode) -> bool) -> bool {
+	fn(d) || switch (d) {
+		MoFunction(name, code, body): existsMOpCode(body, fn);
+		MoMatchString(s): false;
+		MoMatchRange(lower, upper): false;
+		MoIf(cond, then, else_): existsMOpCodes([cond, then, else_], fn);
+		MoParseStar(term): existsMOpCode(term, fn);
+		MoCall(id): false;
+		MoCaptureI(): false;
+		MoMatched(): false;
+		MoBool(poppy): false;
+		MoEvalPoppy(poppy): false;
+		MoPushPosition(): false;
+		MoPushCheckpoint(): false;
+		MoDiscardCheckpoint(): false;
+		MoRestoreCheckpoint(): false;
+		MoSequence(exps): existsMOpCodes(exps, fn);
+		MoConstruct(uid, arity): false;
+		MoAnd(left, right): existsMOpCodes([left, right], fn);
+		MoOr(left, right): existsMOpCodes([left, right], fn);
+	}
+}
+
+existsMOpCodes(d : [MOpCode], fn : (MOpCode) -> bool) -> bool {
+	fold(d, false, \acc, dd -> acc || existsMOpCode(dd, fn))
+}
+
+
+replaceMCheckpoints(d : MOpCode) -> MOpCode {
+	switch (d) {
+		MoFunction(name, code, body): MoFunction(name, code, replaceMCheckpoints(body));
+		MoIf(cond, then, else_): {
+			tcond = replaceMCheckpoints(cond);
+			tthen = replaceMCheckpoints(then);
+			telse = replaceMCheckpoints(else_);
+			if (tthen == MoBool(true) && telse == MoBool(false)) tcond
+			else MoIf(tcond, tthen, telse);
+		}
+		MoSequence(exps): MoSequence(map(exps, replaceMCheckpoints));
+		MoPushCheckpoint(): d;
+		MoDiscardCheckpoint(): MoBool(true);
+		MoRestoreCheckpoint(): MoBool(false);
+		MoParseStar(term): MoParseStar(replaceMCheckpoints(term));
+		//DAddError(error): d;
+		MoCaptureI(): d;
+		MoMatched(): d;
+		MoPushPosition(): d;
+		MoMatchString(text): d;
+		MoMatchRange(lower, upper): d;
+		MoCall(id): d;
+		MoBool(b): d;
+		MoAnd(left, right): MoAnd(replaceMCheckpoints(left), replaceMCheckpoints(right));
+		MoOr(left, right): MoOr(replaceMCheckpoints(left), replaceMCheckpoints(right));
+		MoEvalPoppy(p): d;
+		MoConstruct(uid, arity): d;
+	}
+}
+
+
+isMPushCheckPoint(d : MOpCode) -> bool {
+	switch (d) {
+		MoPushCheckpoint(): true;
+		MoCall(id): true;
+		default: false;
+	}
+}
+
+
+// Should this be avoided inside an && construct?
+isMNotAndable(d : MOpCode) -> bool {
+	switch (d) {
+		MoCaptureI(): true;
+		MoPushPosition(): true;
+		default: false;
+	}
+}
+
+
+/*
+	{
+		pushDCheckpoint(acc);
+		if ((matchRange(acc, 48, 57) && parseStar(acc, \ -> {
+			matchRange(acc, 48, 57)
+		}))) {
+			discardDCheckpoint(acc)
+		} else {
+			restoreDCheckpoint(acc)
+		}
+	}
+
+	can be optimized to just
+
+	((matchRange(acc, 48, 57) && parseStar(acc, \ -> {
+		matchRange(acc, 48, 57)
+	})))
+*/
+optimizeMPushDiscardSequence(d : [MOpCode]) -> MOpCode {
+	n = length(d);
+	if (n >= 2) {
+		if (d[n - 2] == MoPushCheckpoint()) {
+			switch (d[n - 1]) {
+				MoIf(cond, then, else_): {
+					if (!isMOpCodeMatch(cond)) {
+						MoSequence(d);
+					} else if (then == MoDiscardCheckpoint()
+						&& else_ == MoRestoreCheckpoint()) {
+						pre = subrange(d, 0, n - 2);
+						MoSequence(arrayPush(pre, cond));
+					} else MoSequence(d);
+				}
+				default: MoSequence(d);
+			}
+		} else MoSequence(d);
+	} else if (n == 1) {
+		d[0]
+	} else {
+		MoSequence(d);
+	}
+}
+
+
+// Does this opcode always succeed (it might have side effects)
+isMOpCodeAlwaysTrue(o : MOpCode) -> bool {
+	switch (o) {
+		MoFunction(name, code, body): false;
+		MoMatchString(s): false;
+		MoMatchRange(lower, upper): false;
+		MoIf(cond, then, else_): false;
+		MoParseStar(term): true; // This is maybe surprising, but it always succeeds
+		MoCall(id): false;
+		MoCaptureI(): false;
+		MoMatched(): true;
+		MoBool(b): b;
+		MoEvalPoppy(p): false;
+		MoPushPosition(): false;
+		MoPushCheckpoint(): false;
+		MoDiscardCheckpoint(): false;
+		MoRestoreCheckpoint(): false;
+		MoSequence(exps): false;
+		MoConstruct(uid, arity): true;
+		MoAnd(left, right): false;
+		MoOr(left, right): isMOpCodeAlwaysTrue(left) || isMOpCodeAlwaysTrue(right);
+	}
+}

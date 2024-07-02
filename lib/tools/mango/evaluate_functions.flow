@@ -1,0 +1,145 @@
+import tools/mango/mango_types;
+import tools/mango/value;
+import runtime;
+import ds/tree;
+import tools/mango/util;
+import fs/filesystem;
+import tools/mango/mango_grammar;
+import tools/mango/mango_interpreter;
+import tools/mango/restructure;
+
+export {
+	// TODO: Check that we don't have any name clashes between grammar fns and rules
+
+	// Construct an evaluation environment for mango functions & @include, type prefix expansion on Constructors
+	makeMangoEvalEnv(runCore : RunCore, typePrefix : string) -> MangoEvalEnv;
+
+	// Handles grammar functions, @include and expansion of constructors with type prefixes
+	evaluateMangoFunctions(env : MangoEvalEnv, t : Term) -> Term;
+
+	MangoEvalEnv(
+		runCore : RunCore,
+		// Add this prefix to all constructors
+		typePrefix : ref string,
+		// The functions we have defined so far
+		defines : ref Tree<string, MangoFunction>,
+	);
+
+	MangoFunction(args : [string], body : Term);
+}
+
+makeMangoEvalEnv(runCore : RunCore, typePrefix : string) -> MangoEvalEnv {
+	MangoEvalEnv(runCore, ref typePrefix, ref makeTree());
+}
+
+evaluateMangoFunctions(env : MangoEvalEnv, t : Term) -> Term {
+	rec = \tt -> evaluateMangoFunctions(env, tt);
+	switch (t) {
+		Choice(term1, term2): Choice(rec(term1), rec(term2));
+		Construct(uid, int_0): Construct(^(env.typePrefix) + uid, int_0);
+		Error(term): Error(rec(term));
+		GrammarFn(id, term1, term2, term3): {
+			args = map(getSequence(term1), getVariableName);
+			env.defines := setTree(^(env.defines), id, MangoFunction(args, term2));
+			rec(term3);
+		}
+		GrammarCall(id, term): {
+			if (id == "include") {
+				path = getVariableName(term);
+				filepath = resolveMangoPath(path);
+				grammar = getFileContent(filepath);
+				include = mangoParse(mangoGrammar(), grammar, String(""), 0);
+				// Process this to grab any defines it might have
+				fileEnv = MangoEvalEnv(env with runCore = RunCore(env.runCore with onError = \s : string -> env.runCore.onError(filepath + ": " + s)));
+				e = evaluateMangoFunctions(fileEnv, include);
+				restructureMango(e);
+			} else if (id == "typeprefix") {
+				eterm = evaluateMangoFunctions(env, term);
+				type = getString(eterm);
+				env.typePrefix := type;
+				// println("Setting type prefix to " + type);
+				String("");
+			} else {
+				eterm = evaluateMangoFunctions(env, term);
+				function = lookupTreeDef(^(env.defines), id, MangoFunction([], eterm));
+				oargs = getSequence(eterm);
+				eargs = if (length(function.args) == 1 && length(oargs) > 1) {
+					// OK, special case. Keep as Sequence instead of multiple arguments
+					// println("Is this special case worth it?");
+					// println(id + ": " + term2string(eterm));
+					[eterm]
+				} else oargs;
+				if (containsKeyTree(^(env.defines), id)) {
+					if (length(eargs) != length(function.args)) {
+						println("Wrong number of args for @" + id + ". Expected " + i2s(length(function.args)) + ", got " + term2string(eterm));
+					}
+					ndefines = foldi(eargs, ^(env.defines), \i, acc, arg -> {
+						if (i < length(function.args)) {
+							setTree(acc, function.args[i], MangoFunction([], arg))
+						} else {
+							println("Wrong args for " + id + ". Got " + term2string(term));
+							acc;
+						}
+					});
+					env.defines := ndefines;
+					r = evaluateMangoFunctions(env, function.body);
+					// println("Evaluating body of " + id);
+					// println(term2string(function.body));
+					// println(term2string(r));
+					r;
+				} else {
+					// OK, look up in runcore
+					arity = getCoreArity(env.runCore, id);
+					first = take(eargs, arity - 1);
+					last = tailFrom(eargs, arity - 1);
+
+					nargs = if (last != []) {
+						lastAsOne = fold(tail(last), last[0], \acc, tt -> makeSequence(acc, tt));
+						arrayPush(first, lastAsOne);
+					} else first;
+					// println("Evaluating " + id + " in runcore");
+					coreEval = evalCoreFn(env.runCore, id, map(nargs, \a -> mango2value(a)));
+					coreEval ?? {
+						value2mango(coreEval, println);
+					} : {
+						println("Error: Mango: Could not evaluate function " + id);
+						eterm;
+					}
+				}
+			}
+		}
+		Lower(term): Lower(rec(term));
+		Negate(term): Negate(rec(term));
+		Optional(term): Optional(rec(term));
+		Plus(term): Plus(rec(term));
+		Precedence(term1, term2): Precedence(rec(term1), rec(term2));
+		PushMatch(term): PushMatch(rec(term));
+		Range(char1, char2): t;
+		Rule(id, term1, term2): Rule(id, rec(term1), rec(term2))
+		Sequence(term1, term2): Sequence(rec(term1), rec(term2));
+		StackOp(id): t;
+		Star(term): Star(rec(term));
+		String(stringq): t;
+		Variable(id): {
+			if (containsKeyTree(^(env.defines), id)) {
+				function = lookupTreeDef(^(env.defines), id, MangoFunction([], t));
+				function.body;
+			} else {
+				t;
+			}
+		}
+	}
+}
+
+resolveMangoPath(p0 : string) -> string {
+	p = p0 + ".mango";
+	if (fileExists(p)) p
+	else if (fileExists("mango/lib/" + p)) "mango/lib/" + p
+	else if (fileExists("seed/" + p)) "seed/" + p
+	else if (fileExists("runcore/" + p)) "runcore/" + p
+	else if (fileExists(p0 + "/" + p)) p0 + "/" + p
+	else {
+		println("Can not find mango @include<" + p +">");
+		p;
+	}
+}
