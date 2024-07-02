@@ -1,0 +1,95 @@
+import tools/mango/mango_types;
+import tools/mango/rules;
+import ds/simplegraph;
+
+export {
+	// Gives a topological order to visit rules
+	topoRules(t : Term) -> [string];
+}
+
+topoRules(t : Term) -> [string] {
+	rules = findRules(makeTree(), t);
+	graph0 = dependencyGraph(rules);
+	source = mainRule(t);
+	// OK, we get a loop-free graph
+	graph = simpleLoopFree(graph0, source);
+
+	if (false) {
+		dot = simpleGraph2dot(graph, source, [], \n -> [DotLabel(n)], \e -> []);
+		setFileContent("graph.dot", dot);
+		{}
+	}
+
+	all = reverseA(topoSortSimpleGraph(graph));
+	// OK, some loops are omitted, so add all to make sure we have them
+	allRules = getTreeKeys(rules);
+	uniq(concat(all, allRules))
+}
+
+// Given these rules, what dependencies do each have?
+dependencyGraph(rules : Tree<string, Term>) -> SimpleGraph<string, bool> {
+	foldTree(rules, makeSimpleGraph(), \rule, term, acc -> {
+		deps = ruleDependencies(makeSet(), term);
+		foldSet(deps, acc, \acc2, dep -> {
+			if (rule != dep) {
+				addSimpleEdge(acc2, rule, dep, true, 0);
+			} else acc2;
+		})
+	});
+}
+
+ruleDependencies(acc : Set<string>, g : Term) -> Set<string> {
+	switch (g) {
+		Construct(uid, int_0): acc;
+		GrammarFn(id, term1, term2, term3): {
+			println("Not expected");
+			acc;
+		}
+		GrammarCall(id, term): ruleDependencies(acc, term);
+		PushMatch(term): ruleDependencies(acc, term);
+		Rule(id, term1, term2): {
+			println("Not expected");
+			acc;
+		}
+		StackOp(id): acc;
+		Precedence(left, right): ruleDependencies(ruleDependencies(acc, left), right);
+		Choice(left, right): ruleDependencies(ruleDependencies(acc, left), right);
+		Sequence(left, right): ruleDependencies(ruleDependencies(acc, left), right);
+		Star(term): ruleDependencies(acc, term);
+		Plus(term): ruleDependencies(acc, term);
+		Optional(term): ruleDependencies(acc, term);
+		Negate(term): ruleDependencies(acc, term);
+		Error(term): ruleDependencies(acc, term);
+		Lower(term): ruleDependencies(acc, term);
+		String(text): acc;
+		Range(lower, upper): acc;
+		Variable(id): insertSet(acc, id);
+	}
+}
+
+mainRule(g : Term) -> string {
+	switch (g) {
+		Choice(term1, term2): mainRule(term2);
+		Construct(uid, int_0): "";
+		Error(term): mainRule(term);
+		GrammarFn(id, term1, term2, term3): mainRule(term3);
+		GrammarCall(id, term): "";
+		Lower(term): mainRule(term);
+		Negate(term): mainRule(term);
+		Optional(term): mainRule(term);
+		Plus(term): mainRule(term);
+		Precedence(term1, term2): mainRule(term2);
+		PushMatch(term): mainRule(term);
+		Range(char1, char2): "";
+		Rule(id, term1, term2): mainRule(term2);
+		Sequence(term1, term2): {
+			mr = mainRule(term2);
+			if (mr == "" ) mainRule(term1)
+			else mr;
+		}
+		StackOp(id): "";
+		Star(term): mainRule(term);
+		String(stringq): "";
+		Variable(id): id;
+	}
+}

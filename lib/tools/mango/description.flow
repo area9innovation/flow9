@@ -1,0 +1,110 @@
+import tools/mango/rules;
+import tools/mango/mango2string;
+import text/blueprint;
+import tools/mango/util;
+
+export {
+	getDescription(prefix : string, t : Term) -> string;
+}
+
+getDescription(prefix : string, t : Term) -> string {
+	env = DescriptionEnv(prefix, findRules(makeTree(), t), 0, [], false);
+	nenv = collectDescriptions(env, t);
+	superglue(nenv.descriptions, term2string, "\n")
+}
+
+DescriptionEnv(
+	prefix : string,
+	rules : Tree<string, Term>,
+	i : int,
+	descriptions : [Term],
+	fail : bool
+);
+
+collectDescriptions(env : DescriptionEnv, t : Term) -> DescriptionEnv {
+//	println("Collecting descriptions for " + term2string(t));
+	fail = \ -> {
+		DescriptionEnv(env with fail = true);
+	};
+	switch (t) {
+		Choice(term1, term2): {
+			env1 = collectDescriptions(DescriptionEnv(env with descriptions = []), term1);
+			env2 = collectDescriptions(DescriptionEnv(env with descriptions = []), term2);
+
+			e1desc = if (env1.fail) [] else env1.descriptions;
+			e2desc = if (env2.fail) [] else env2.descriptions;
+			DescriptionEnv(env with descriptions = concat3(env.descriptions, e1desc, e2desc),
+				fail = env1.fail && env2.fail);
+		}
+		Construct(uid, int1): env;
+		Error(term): env;
+		GrammarCall(id, term): {
+			if (id == "description") {
+				seq = getSequence(term);
+				works = collectDescriptions(env, seq[0]);
+				if (!works.fail) {
+					DescriptionEnv(works with descriptions = arrayPush(env.descriptions, seq[1]));
+				} else fail();
+			} else if (id == "import") {
+				env;
+			} else {
+				collectDescriptions(env, term)
+			}
+		}
+		GrammarFn(id, term1, term2, term3): collectDescriptions(env, term3);
+		Lower(term): collectDescriptions(env, term);
+		Negate(term): env;
+		Optional(term): {
+			nenv = collectDescriptions(env, term);
+			DescriptionEnv(nenv with fail = false);
+		}
+		Plus(term): collectDescriptions(env, term);
+		Precedence(term1, term2): collectDescriptions(env, Choice(term1, term2));
+		PushMatch(term): collectDescriptions(env, term);
+		Range(llower, uupper): {
+			lower = if (strlen(llower) != 1) fromCharCode(parseHex(strRight(llower, 2))) else llower;
+			upper = if (strlen(uupper) != 1) fromCharCode(parseHex(strRight(uupper, 2))) else uupper;
+			if (env.i < strlen(env.prefix)) {
+				code = getCharAt(env.prefix, env.i);
+				if (lower <= code && code <= upper) {
+					ni = env.i + 1;
+					DescriptionEnv(env with i = ni)
+				} else fail();
+			} else {
+				env;
+			}
+		}
+		Rule(id, term1, term2): collectDescriptions(env, term2);
+		Sequence(term1, term2): {
+			env1 = collectDescriptions(env, term1);
+			if (!env1.fail) {
+				collectDescriptions(env1, term2);
+			} else {
+				env
+			}
+		}
+		StackOp(id): env;
+		Star(term): {
+			nenv = collectDescriptions(env, term);
+			DescriptionEnv(nenv with fail = false);
+		}
+		String(string1): {
+			if (string1 == "") {
+				env;
+			} else {
+				beforePrefix = strLeft(string1, max(0, strlen(env.prefix) - env.i));
+				if (strContainsAt(env.prefix, env.i, beforePrefix)) {
+					DescriptionEnv(env with i = env.i + strlen(string1));
+				} else {
+					// println("Could not match "+ string1);
+					fail();
+				}
+			}
+		}
+		Variable(id): {
+			rule = lookupTreeDef(env.rules, id, String(""));
+			markDone = DescriptionEnv(env with rules = removeFromTree(env.rules, id));
+			collectDescriptions(markDone, rule);
+		}
+	}
+}

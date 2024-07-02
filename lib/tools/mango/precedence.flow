@@ -1,0 +1,172 @@
+import tools/mango/mango_types;
+import runtime;
+import math/math;
+import tools/mango/mango2string;
+
+export {
+	expandPrecedence(t : Term) -> Term;
+}
+
+expandPrecedence(t : Term) -> Term {
+	switch (t) {
+		Choice(term1, term2): Choice(expandPrecedence(term1), expandPrecedence(term2));
+		Construct(uid, int_0): t;
+		Error(term): Error(expandPrecedence(term));
+		GrammarFn(id, term1, term2, term3): {
+			println("Did not expect grammar fn here: " + id);
+			t;
+		}
+		GrammarCall(id, term): t;
+		Lower(term): {
+			println("ERROR: Did not expect < outside rule");
+			expandPrecedence(term);
+		}
+		Negate(term): Negate(expandPrecedence(term));
+		Optional(term): Optional(expandPrecedence(term));
+		Plus(term): Plus(expandPrecedence(term));
+		Precedence(term1, term2): {
+			println("ERROR: Do not expect precedence outside rule");
+			Choice(expandPrecedence(term1), expandPrecedence(term2));
+		}
+		PushMatch(term): PushMatch(expandPrecedence(term));
+		Range(char1, char2): t;
+		Rule(id, term1, term2): {
+			// Precedence expansion is only defined inside rules
+			expandPrecedenceInRule(id, term1, expandPrecedence(term2), 0)
+		}
+		Sequence(term1, term2): Sequence(expandPrecedence(term1), expandPrecedence(term2));
+		StackOp(id): t;
+		Star(term): Star(expandPrecedence(term));
+		String(stringq): t;
+		Variable(id): t;
+	}
+}
+
+expandPrecedenceInRule(id : string, term : Term, body : Term, level : int) -> Rule {
+	newid = getRuleLevelId(id, level);
+	switch (term) {
+		Precedence(left, right): {
+			// Replace recursive calls with the nest level, except mid-recursion
+			nleft = replaceRecursion(id, level, false, false, left);
+			// Construct a new right hand side
+			nright = Variable(getRuleLevelId(id, level + 1));
+			// Construct the final rule at this level
+			rewritten = switch (nleft) {
+				Sequence(t1, t2): {
+					if (t1 == nright) {
+						Sequence(t1, Optional(t2))
+					} else {
+						Choice(nleft, nright);
+					}
+				}
+				default: Choice(nleft, nright);
+			}
+			Rule(newid, 
+				rewritten,
+				expandPrecedenceInRule(id, right, body, level + 1)
+			)
+		}
+		default: {
+			// No precedence in this rule, so expand any other nested rules
+			// and reconstruct the rule with the new name
+			nterm = expandPrecedence(term);
+			Rule(newid, nterm, body)
+		}
+	}
+}
+
+getRuleLevelId(id : string, level : int) -> string {
+	id + (if (level == 0) "" else i2s(level));
+}
+
+// Replace left and right recursion with the id at the given level
+replaceRecursion(recid : string, level : int, somethingBefore : bool, somethingAfter : bool, t : Term) -> Term {
+	todo = \ -> {
+		println("TODO: Replace recursion in " + recid + " at level " + i2s(level) + " in context with " + b2s(somethingBefore) + " before and " + b2s(somethingAfter) + " after");
+		println(summarizeTerm(t));
+		t;
+	}
+	rec = \tt -> {
+		replaceRecursion(recid, level, somethingBefore, somethingAfter, tt)
+	}
+	switch (t) {
+		Choice(term1, term2): {
+			Choice(rec(term1), rec(term2));
+		}
+		Construct(uid, int_0): t;
+		Error(term): Error(rec(term));
+		GrammarFn(id, term1, term2, term3): {
+			println("Did not expect grammar fn here: " + id);
+			t;
+		}
+		GrammarCall(id, term): t;
+		Lower(term): {
+			if (somethingBefore && somethingAfter) {
+				replaceRecursion(recid, level, false, false, term);
+			} else {
+				replaceRecursion(recid, level - 1, somethingBefore, somethingAfter, term);
+			}
+		}
+		Negate(term): Negate(rec(term));
+		Optional(term): Optional(rec(term));
+		Plus(term): Plus(rec(term));
+		Precedence(term1, term2): todo();
+		PushMatch(term): PushMatch(rec(term));
+		Range(char1, char2): t
+		Rule(id, term1, term2): todo();
+		Sequence(term1, term2): {
+			left = replaceRecursion(recid, level, somethingBefore, canBeMatched(term2) || somethingAfter, term1);
+			right = replaceRecursion(recid, level, somethingBefore || canBeMatched(left), somethingAfter, term2);
+			Sequence(left, right);
+		}
+		StackOp(id): t;
+		Star(term): Star(rec(term));
+		String(stringq): t;
+		Variable(id): {
+			if (id == recid) {
+				if (!somethingBefore || !somethingAfter) {
+					newid = getRuleLevelId(id, level + 1);
+					Variable(newid);
+				} else {
+					// Middle-recursion, we keep as is
+					t;
+				}
+			} else t;
+		}
+	}
+}
+
+// Could this term match something concrete?
+canBeMatched(t : Term) -> bool {
+	switch (t) {
+		Choice(term1, term2): canBeMatched(term1) || canBeMatched(term2);
+		Construct(uid, int_0): false;
+		Error(term): switch (term) {
+			Negate(nterm): false;
+			default: {
+				canBeMatched(term);
+			}
+		}
+		GrammarFn(id, term1, term2, term3): {
+			println("Did not expect grammar fn here: " + id);
+			false;
+		}
+		GrammarCall(id, term): {
+			println("Did not expect grammar call here: " + id);
+			false;
+		}
+		Lower(term): canBeMatched(term);
+		Negate(term): false;
+		Optional(term): canBeMatched(term);
+		Plus(term): canBeMatched(term);
+		Precedence(term1, term2): canBeMatched(term1) || canBeMatched(term2);
+		PushMatch(term): canBeMatched(term);
+		Range(char1, char2): true;
+		Rule(id, term1, term2): canBeMatched(term2);
+		Sequence(term1, term2): canBeMatched(term1) || canBeMatched(term2);
+		StackOp(id): false;
+		Star(term): canBeMatched(term);
+		String(stringq): true;
+		Variable(id): true; // We assume all rules are something, not epsilon
+	}
+}

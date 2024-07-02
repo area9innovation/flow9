@@ -1,0 +1,143 @@
+import tools/poppy/type/env;
+import tools/poppy/type/name;
+import tools/poppy/type/pretty;
+import tools/poppy/type/elaborate;
+
+export {
+	// Find any unions inside the type of this rule, and convert into named type if so
+	extractImplicitUnions(env : PTypeEnv, seen : ref Set<int>, id : string, type : PType) -> PType;
+
+	unionize(env : PTypeEnv, seen : ref Set<int>, eclass : int, types : [PType]) -> PType;
+
+	removePrefix(name : string, prefix : string) -> string;
+	pickBestName(env : PTypeEnv, capital : bool, names : [string]) -> string;
+
+	bestUnionName(tenv : PTypeEnv, root : int) -> string;
+}
+
+extractImplicitUnions(env : PTypeEnv, seen : ref Set<int>, id : string, type : PType) -> PType {
+	// println("extractImplicitUnions: " + id);
+	rec = \tt -> {
+		extractImplicitUnions(env, seen, id + "_Sub", tt);
+	}
+	switch (type) {
+		PTypeName(name, typars): PTypeName(name, map(typars, \tp -> {
+			extractImplicitUnions(env, seen, name, tp)
+		}));
+		PTypeEClass(eclass0): {
+			eclass = findUnionMapRoot(env.unionFindMap, eclass0);
+			if (containsSet(^seen, eclass)) type
+			else {
+				seen := insertSet(^seen, eclass);
+				types = getUnionMapValue(env.unionFindMap, eclass);
+//				println(name);
+				unionize(env, seen, eclass, types);
+			}
+		}
+		PTypeWord(inputs, outputs): PTypeWord(map(inputs, rec), map(outputs, rec));
+		PTypeOverload(overloads): PTypeOverload(map(overloads, rec));
+		PTypeEval(): type;
+		PTypeCompose(left, right): PTypeCompose(rec(left), rec(right));
+	}
+}
+
+// OK, see if these types end up as a union. If so, pick any existing ones
+unionize(env : PTypeEnv, seen : ref Set<int>, eclass : int, types : [PType]) -> PType {
+	id = bestUnionName(env, eclass);
+
+	name = makeUniqueName(env, addTypePrefix(capitalize(id)));
+
+	processed = consolidateByName(env, map(types, \tt -> {
+		// Extract any nested unions we can also use in the case union
+		newName = getPTypeName(env, tt, name);
+		if (true) tt else extractImplicitUnions(env, seen, newName, tt);
+	}));
+
+	// We do not want self-references
+	withoutSelf = filter(processed, \t -> {
+		tname = getPTypeName(env, t, "");
+		if (tname == name) {
+			false
+		} else {
+			true;
+		}
+	});
+	ordered = sort(withoutSelf);
+
+	n = length(ordered);
+	if (n == 0) {
+		// We can not resolve this yet
+		PTypeEClass(eclass);
+	} else if (n == 1) {
+		ordered[0];
+	} else {
+		noTop = filter(ordered, \o -> getPTypeName(env, o, "") != "Top");
+		names = map(noTop, \t -> getPTypeName(env, t, ""));
+
+		// Collect all existing unions for this set of types
+		existing = foldTree(^(env.unions), [], \un, utypes, acc -> {
+			unames = map(utypes, \t -> getPTypeName(env, t, ""));
+			if (isSubArray(removeFirst(names, un), unames)) {
+				arrayPush(acc, Pair(length(utypes), un));
+			} else acc;
+		});
+
+		// println("existing: " + prettyPTypes(env, ordered) + " " + toString(existing));
+
+		// Sort by the smallest available ones
+		shortest = sort(existing);
+		if (shortest == []) {
+			// We need a new union
+			union = PTypeName(name, []);
+			setUnionMapValue(env.unionFindMap, eclass, [union]);
+
+			env.unions := setTree(^(env.unions), name, noTop);
+			if (env.verbose > 0) {
+				println(name + " is lifted to union   " + prettyPTypes(env, noTop) + "   from   " + prettyPTypes(env, types));
+			}
+			union;
+		} else {
+			// We can reuse the smallest existing one
+			if (env.verbose > 1) {
+				println(id + " : " + name + " is reusing " + shortest[0].second + " for " + prettyPTypes(env, noTop));
+			}
+			PTypeName(shortest[0].second, []);
+		}
+	}
+}
+
+// Find a good name for this eclass
+bestUnionName(tenv : PTypeEnv, root : int) -> string {
+	// OK, find out what potential names this eclass has
+	idToParent : Tree<int, [int]> = getUnionMapEClasses(tenv.unionFindMap);
+	children = getTreeArrayValue(idToParent, root);
+	eclasses = arrayPush(children, root);
+	names = filtermap(eclasses, \ec -> lookupTree(^(tenv.eclassNames), ec));
+	prenames = map(names, \n -> getUrlParameter("typeprefix") + capitalize(n));
+	bestName = pickBestName(tenv, true, prenames);
+	removePrefix(bestName, getUrlParameter("typeprefix"));
+}
+
+pickBestName(env : PTypeEnv, capital : bool, names : [string]) -> string {
+	if (names == []) {
+		"Unknown"
+	} else {
+		scores = map(names, \n -> {
+			hn = if (capital) capitalize(n) else humpCase(n, false);
+			capPenalty = if (hn == n) 0 else 100;
+			existPen = if (containsSet(^(env.structs), hn) || containsKeyTree(^(env.unions), hn)) 20 else 0;
+			Pair(strlen(n) + capPenalty + existPen, hn);
+		});
+		// println(scores);
+		sort(scores)[0].second;
+	}
+}
+
+removePrefix(name : string, prefix : string) -> string {
+	if (startsWith(name, prefix)) {
+		strRight(name, strlen(prefix));
+	} else {
+		name;
+	}
+}
+

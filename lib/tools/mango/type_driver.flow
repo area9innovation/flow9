@@ -1,0 +1,284 @@
+import tools/mango/type_inference;
+import tools/mango/gringo_ops;
+import tools/poppy/type/simplify;
+import tools/poppy/type/structs;
+import fs/filesystem;
+
+export {
+	mangoTypeInference(mangoFile : string, grammar : Term) -> MangoTypeResult;
+
+	MangoTypeResult(
+		words : Tree<string, PType>,
+		structs : Tree<string, PTypeName>,
+		unions : Tree<string, [PType]>,
+	);
+}
+
+mangoTypeInference(mangoFile : string, grammar : Term) -> MangoTypeResult {
+	tenv = makePTypeEnv();
+	etypes = inferMangoTypes(mangoFile, tenv, grammar);
+
+	if (tenv.verbose > 0) {
+		println("\nAll rules typed. Starting to extract structs\n");
+	}
+
+	// OK, find all structs
+	structs = collectPTypeStructs(tenv);
+
+	// OK, find the names of rules in the definition order
+	rules = findRules(makeTree(), grammar);
+	if (true) {
+		// OK, extract unions from all rules
+		order2 = topoRules(grammar);
+		iter(order2, \rule -> {
+			mtype = lookupTree(^(tenv.words), rule);
+			mtype ?? {
+				// println("Looking for unions in " + rule);
+				it = extractImplicitUnions(tenv, ref makeSet(), rule, mtype);
+//				println(prettyPType(tenv, it));
+			} : {
+				println("ERROR: Type of " + rule + " not found")
+			}
+		});
+	} 
+
+	if (true) {
+		// OK, now we have all implicit unions in eclasses
+		// From any eclass to the parent
+		idToParent : Tree<int, [int]> = getUnionMapEClasses(tenv.unionFindMap);
+		if (tenv.verbose > 0) {
+			println("\nDone with structs. Going for unions now");
+		}
+
+		tenv.structs := buildSet(getTreeKeys(structs));
+
+		// TODO: We should probably do these eclasses in size order to keep smaller ones?
+		iterUnionMap(tenv.unionFindMap, \root, types -> {
+			if (length(types) > 1) {
+				// Now, unionize these guys
+				un = unionize(tenv, ref makeSet(), root, types);
+				if (true || tenv.verbose > 0) {
+					println("Made union " + prettyPType(tenv, PTypeEClass(root)) + "   from   " + prettyPTypes(tenv, types));
+				}
+			} else {
+				// println(prettyPType(tenv, PTypeEClass(root)));
+			}
+		});
+	}
+
+	if (false) {
+		traverseInOrder(structs, \struct, type -> {
+			it = extractImplicitUnions(tenv, ref makeSet(), "", type);
+		});
+	}
+
+	if (tenv.verbose > 0) {
+		println("Done with unions");
+	}
+
+	if (tenv.verbose > 0) {
+		println("Grammar Type: " + prettyPTypes(tenv, etypes));
+	};
+
+	if (false) {
+		// OK, simplify all unions and extract implicit unions inside
+		tenv.unions := foldTree(^(tenv.unions), ^(tenv.unions), \name, types, acc -> {
+			ut = filtermap(types, \t -> {
+				it = if (false) extractImplicitUnions(tenv, ref makeSet(), name + "_Final", t) else t;
+				et = if (false) it else elaboratePType(tenv, makeSet(), ref makeSet(), it);
+				// Filter out self-references
+				if (getPTypeName(tenv, et, "") == name) None()
+				else Some(et);
+			});
+			setTree(^(tenv.unions), name, ut);
+		});
+		//	debugPTypeEnv(tenv);
+	}
+
+	simplifyPUnions(tenv);
+
+	if (tenv.verbose > 0) {
+		traverseInOrder(structs, \struct, type -> {
+			println(prettyPType(tenv, type));
+		});
+		debugPTypeEnv(tenv);
+	}
+	types = getUrlParameter("types");
+	if (types == "1" || types == "2") {
+		result = makeTypes(tenv, types == "2", ^(tenv.unions), structs);
+		filename = if (types == "1") {
+			changeFileExt(mangoFile, "_types.melon");
+		} else if (types == "2") {
+			changeFileExt(mangoFile, "_types.flow");
+		} else types;
+		setFileContent(filename, result);
+		println("Saved '" + filename + "'");
+	}
+
+	if (isUrlParameterTrue("gringoops")) {
+		ops = exportGringoOps2(tenv, fileNameOnly(changeFileExt(mangoFile, "")), structs);
+		filename = changeFileExt(mangoFile, "_ops.flow");
+		setFileContent(filename, ops);
+		println("Saved '" + filename + "'");
+	}
+
+	MangoTypeResult(^(tenv.words), structs, ^(tenv.unions));
+}
+
+makeTypes(env : PTypeEnv, flowFormat : bool, unions : Tree<string, [PType]>, structs : Tree<string, PTypeName>) -> string {
+	header0 = "// Automatically generated from Mango grammar\n";
+	header = if (flowFormat) header0 + "export {\n" else header0;
+
+	flowIndent = if (flowFormat) "\t" else "";
+
+	us = foldTree(unions, header, \name, types, acc -> {
+		unionMembers = sortUnique(map(types, \t -> {
+			sname = getPTypeName(env, t, "");
+			if (flowFormat) {
+				sname
+			} else {
+				mstruct = lookupTree(structs, sname);
+				switch (mstruct) {
+					None(): {
+						makeStructArgType(env, name, t);
+					}
+					Some(struct): makeStructDef(env, "", struct);
+				}
+			}
+		}));
+
+		acc + flowIndent + name + " ::=" + (if (flowFormat) " " else "\n\t") + strGlue(unionMembers, if (flowFormat) ", " else ",\n\t") + ";\n\n";
+	});
+
+	structsInUnions = foldTree(unions, makeSet(), \name, types, acc -> {
+		fold(types, acc, \acc2, t -> {
+			insertSet(acc2, getPTypeName(env, t, ""))
+		})
+	});
+
+	file = foldTree(structs, us, \name, struct, acc -> {
+		if (flowFormat || !containsSet(structsInUnions, name)) {
+			acc + flowIndent + makeStructDef(env, if (flowFormat) "" else " : ", struct) + ";\n";
+		} else {
+			acc
+		}
+	});
+	if (flowFormat) file + "}\n" else file
+}
+
+makeStructDef(env : PTypeEnv, colon : string, struct : PTypeName) -> string {
+	pars = superglue(struct.typars, \t -> makeStructArgType(env, struct.name, t), ", ");
+	if (struct.name == "array") {
+		"[" + pars + "]"
+	} else {
+		struct.name + colon + "(" + makeStructArgs(env, struct) + ")";
+	}
+}
+
+// Write the arguments field names and types
+makeStructArgType(env : PTypeEnv, structName : string, t : PType) -> string {
+	error = \ -> {
+		println("ERROR: Could not get struct '" + structName +"' arg type of " + prettyPType(env, t));
+		"ERROR"
+	}
+	switch (t) {
+		PTypeName(name, typars): {
+			if (name == "array") {
+				"[" + superglue(typars, \tt -> makeStructArgType(env, structName, tt), ", ") + "]" 
+			} else {
+				name;
+			}
+		};
+		PTypeEClass(eclass): {
+			types = getUnionMapValue(env.unionFindMap, eclass);
+			if (length(types) == 1) makeStructArgType(env, structName, types[0]) 
+			else {
+				ut = unionize(env, ref makeSet(), eclass, types);
+				if (ut != t) {
+					makeStructArgType(env, structName, ut);
+				} else {
+					error();
+				}
+			}
+		}
+		PTypeWord(inputs, outputs): if (inputs == [] && length(outputs) == 1) makeStructArgType(env, structName, outputs[0]) else error();
+		PTypeOverload(overloads): error();
+		PTypeEval(): error();
+		PTypeCompose(left, right): error();
+	}
+}
+
+makeStructArgs(env : PTypeEnv, s : PTypeName) -> string {
+	eclasses = getUnionMapEClasses(env.unionFindMap);
+	keywords = fold(["bool", "int", "double", "string", "array", "exp"], makeTree(), \acc, k -> setTree(acc, k, 1));
+	nameCounts = fold(s.typars, keywords, \acc, st -> {
+		fname = pfieldName(env, eclasses, st);
+		count = lookupTreeDef(acc, fname, 0);
+		setTree(acc, fname, count + 1)
+	});
+	counts = ref makeTree();
+	superglue(s.typars, \st -> {
+		fname = pfieldName(env, eclasses, st);
+		suffix = if (lookupTreeDef(nameCounts, fname, 0) > 1) {
+			count = 1 + lookupTreeDef(^counts, fname, 0);
+			counts := setTree(^counts, fname, count);
+			i2s(count);
+		} else "";
+		fname + suffix + " : " + makeStructArgType(env, fname, st);
+	}, ", ");
+}
+
+pfieldName(env : PTypeEnv, eclasses : Tree<int, [int]>, tt : PType) -> string {
+	switch (tt) {
+		PTypeName(name, typars): {
+			withoutPrefix = removePrefix(name, getUrlParameter("typeprefix"));
+			if (name == "array" || name == "list") {
+				pluralize(pfieldName(env, eclasses, typars[0]));
+			} else {
+				humpCase(withoutPrefix, false);
+			}
+		}
+		PTypeEClass(eclass): {
+			names = set2array(collectEclassFieldNames(env, eclasses, eclass, makeSet(), makeSet()));
+			if (names == []) {
+				// OK, we have to resolve this
+				et = elaboratePType(env, makeSet(), ref makeSet(), tt);
+				if (et != tt) {
+					pfieldName(env, eclasses, et);
+				} else {
+					types = getUnionMapValue(env.unionFindMap, eclass);
+					if (types == []) {
+						"ERROR HERE";
+					} else {
+						pfieldName(env, eclasses, types[0]);
+					}
+				}
+			} else {
+				pickBestName(env, false, names);
+			}
+		}
+		PTypeWord(inputs, outputs): "ERROR1";
+		PTypeOverload(overloads): "ERROR2";
+		PTypeEval(): "ERROR3";
+		PTypeCompose(left, right): "ERROR4";
+	}
+}
+
+collectEclassFieldNames(env : PTypeEnv, eclasses : Tree<int, [int]>, eclass : int, seen : Set<int>, acc : Set<string>) -> Set<string> {
+	if (containsSet(seen, eclass)) acc
+	else {
+		es1 = getTreeArrayValue(eclasses, eclass);
+		root = findUnionMapRoot(env.unionFindMap, eclass);
+		es = arrayPush(es1, root);
+
+		names = filtermap(es, \ec -> lookupTree(^(env.eclassNames), ec));
+		nacc = fold(names, acc, \acc2, n -> insertSet(acc2, n));
+
+		newSeen = insertSet(seen, eclass);
+
+		fold(es, nacc, \acc2, ec -> {
+			collectEclassFieldNames(env, eclasses, ec, newSeen, acc2)
+		});
+	}
+}
+

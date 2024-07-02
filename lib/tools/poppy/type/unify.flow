@@ -1,0 +1,213 @@
+import tools/poppy/type/pretty;
+import tools/poppy/type/utils;
+
+export {
+	// Unify these types. If check only is true, we do not update the eclasses, but only check if they can be unified
+	// Returns true if they can be unified, false otherwise
+	unifyPType(env : PTypeEnv, checkOnly : bool, a : PType, b : PType) -> bool;
+}
+
+unifyPType(env : PTypeEnv, checkOnly : bool, a : PType, b : PType) -> bool {
+	todo = \ -> {
+		println("TODO: Unify " + prettyPType(env, a) + "   and   " + prettyPType(env, b));
+		false;
+	}
+
+	error = \m -> {
+		if (!checkOnly) {
+			println("Can not unify " + prettyPType(env, a) + " and " + prettyPType(env, b) + ": " + m);
+		}
+		false;
+	}
+
+	if (env.verbose > 2) {
+		if (env.verbose > 3 || !checkOnly) {
+			println(^(env.indent) + "  Unifying "+ prettyPType(env, a) + " and " + prettyPType(env, b) + ":" + (if (checkOnly) " (check only)" else ""));
+		}
+	}
+
+	bind = \eclass, type -> {
+		if (checkOnly) {
+			types = getUnionMapValue(env.unionFindMap, eclass);
+			forall(types, \t -> {
+				unifyPType(env, checkOnly, t, type)
+			})
+		} else {
+			if (env.verbose > 2) {
+				println(^(env.indent) + "  End Unifying "+ prettyPType(env, a) + " and " + prettyPType(env, b) + " with ε" + i2s(eclass) + " += " + prettyPType(env, type));
+			}
+			types = getUnionMapValue(env.unionFindMap, eclass);
+			canUnify = map(types, \t -> {
+				pos = unifyPType(env, true, t, type);
+				if (pos) {
+					unifyPType(env, false, t, type);
+					{}
+				}
+				pos;
+			});
+			ntypes = sortUnique(arrayPush(types, type));
+			setUnionMapValue(env.unionFindMap, eclass, ntypes);
+			true;
+		}
+	}
+
+	switch (a) {
+		PTypeName(name1, typars1): {
+			switch (b) {
+				PTypeName(name2, typars2): {
+					if (name1 != name2) {
+						// We allow unification of upper case names, not lowercase
+						isUpperLetter(strLeft(a.name, 1)) && isUpperLetter(strLeft(b.name, 1))
+					} else if (length(typars1) != length(typars2)) {
+						error("Different number of type parameters");
+					} else {
+						ok = mapi(typars1, \i, tp1 -> {
+							unifyPType(env, false, tp1, typars2[i])
+						});
+						forall(ok, idfn);
+					}
+				}
+				PTypeEClass(eclass): bind(eclass, a);
+				PTypeWord(inputs, outputs): {
+					if (inputs == [] && length(outputs) == 1) {
+						unifyPType(env, false, a, outputs[0])
+					} else error("Can not unify a word with a type name");
+				}
+				PTypeOverload(overloads): unifyPOverload(env, checkOnly, b, a);
+				PTypeEval(): todo();
+				PTypeCompose(l, r): todo();
+			}
+		}
+		PTypeEClass(eclass1): {
+			switch (b) {
+				PTypeName(name, typars): bind(eclass1, b);
+				PTypeEClass(eclass2): {
+					if (checkOnly) {
+						types1 = getUnionMapValue(env.unionFindMap, eclass1);
+						types2 = getUnionMapValue(env.unionFindMap, eclass2);
+						forall(types1, \t1 -> {
+							// TODO: This is excessive. We only need to do half
+							forall(types2, \t2 -> {
+								unifyPType(env, false, t1, t2)
+							})
+						});
+					} else {
+						if (env.verbose > 2) {
+							println(^(env.indent) + "  Joining ε"+ i2s(eclass1) + " and ε" + i2s(eclass2));
+						}
+						root = unionUnionMap(env.unionFindMap, eclass1, eclass2);
+						true;
+					}
+				}
+				PTypeWord(inputs, outputs): bind(eclass1, b);
+				PTypeOverload(overloads): bind(eclass1, b);
+				PTypeEval(): bind(eclass1, b);
+				PTypeCompose(__, __): bind(eclass1, b);
+			}
+		}
+		PTypeWord(inputs1, outputs1): {
+			switch (b) {
+				PTypeWord(inputs2, outputs2): {
+					unifyPTypes(env, checkOnly, inputs1, inputs2) && unifyPTypes(env, checkOnly, outputs1, outputs2);
+				}
+				PTypeName(name, typars): {
+					if (inputs1 == [] && length(outputs1) == 1) {
+						unifyPType(env, false, b, outputs1[0])
+					} else error("Can not unify a word with a type name");
+				}
+				PTypeEClass(eclass): bind(eclass, a);
+				PTypeOverload(overloads): unifyPOverload(env, checkOnly, b, a);
+				PTypeEval(): todo();
+				PTypeCompose(left, right): {
+					leftCheck = \ -> {
+						switch (left) {
+							PTypeWord(inputs2, outputs2): {
+								// (inputs1 -> outputs1)   =    (inputs2 -> outputs2) ◦ x
+								// then we should unify inputs1 = inputs2
+								unifyPTypes(env, checkOnly, inputs1, inputs2);
+							}
+							default: todo();
+						}
+					};
+
+					switch (right) {
+						PTypeWord(inputs3, outputs3): {
+							// (inputs1 -> outputs1)   =    x ◦ (inputs3 -> outputs3)
+							// then we should unify outputs1 = outputs3
+							leftCheck() && unifyPTypes(env, checkOnly, outputs1, outputs3);
+						}
+						PTypeEClass(eclass): {
+							switch (left) {
+								PTypeWord(inputs2, outputs2): {
+									// (inputs1 -> outputs1)   =    (inputs2 -> outputs2) ◦ ε
+									// Then we should bind ε to (<ε as outputs2> -> <ε as outputs1>)
+									eleft = map(outputs2, \__ -> makePTypeEClass(env, ""));
+									eright = map(outputs1, \__ -> makePTypeEClass(env, ""));
+									leftCheck() && bind(eclass, PTypeWord(eleft, eright));
+								}
+								default: leftCheck() && todo();
+							}
+						}
+						PTypeEval(): {
+							// (inputs1 -> outputs1)   =    x ◦ eval
+							println("TODO: (inputs1 -> outputs1)   =    x ◦ eval");
+							todo();
+						}
+						default: todo();
+					}
+				}
+			}
+		}
+		PTypeOverload(overloads1): {
+			switch (b) {
+				PTypeName(name, typars): unifyPType(env, checkOnly, b, a);
+				PTypeEClass(eclass): bind(eclass, a);
+				PTypeWord(inputs, outputs): unifyPType(env, checkOnly, b, a);
+				PTypeOverload(overloads2): todo();
+				PTypeEval(): todo();
+				PTypeCompose(left, right): todo();
+			}
+		}
+		PTypeEval(): todo();
+		PTypeCompose(l1, r1): {
+			switch (b) {
+				PTypeName(name, typars): unifyPType(env, checkOnly, b, a);
+				PTypeEClass(eclass): bind(eclass, a);
+				PTypeWord(inputs, outputs): unifyPType(env, checkOnly, b, a);
+				PTypeOverload(overloads): todo();
+				PTypeEval(): todo();
+				PTypeCompose(left, right): todo();
+			}
+		}
+	}
+}
+
+unifyPTypes(env : PTypeEnv, checkOnly : bool, a : [PType], b : [PType]) -> bool {
+	as = filterNops(env, a);
+	bs = filterNops(env, b);
+	if (length(as) != length(bs)) false
+	else {
+		ok = mapi(as, \i, aa -> {
+			unifyPType(env, checkOnly, aa, bs[i])
+		});
+		forall(ok, idfn);
+	}
+}
+
+unifyPOverload(env : PTypeEnv, checkOnly : bool, ol : PTypeOverload, t : PType) -> bool {
+	ok = filtermap(ol.overloads, \overload -> {
+		o = unifyPType(env, true, t, overload);
+		if (o) Some(overload) else None();
+	});
+	// For those that work, let us go and do it for real then
+	ok2 = filtermap(ok, \overload -> {
+		o = unifyPType(env, false, t, overload);
+		if (o) Some(overload) else None();
+	});
+	if (length(ok2) == 0) {
+		if (!checkOnly) {
+			println("Can not unify " + prettyPType(env, ol) + " and " + prettyPType(env, t) + ": No overloads match");
+		}
+		false;
+	} else true
+}

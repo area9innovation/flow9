@@ -1,0 +1,80 @@
+import tools/poppy/type/pretty;
+import tools/poppy/type/utils;
+import tools/poppy/type/elaborate;
+import tools/runcore/runcoretypes;
+import tools/poppy/type/unions;
+
+export {
+	// OK, find all structs in the environment. Use before we have named unions!
+	collectPTypeStructs(env : PTypeEnv) -> Tree<string, PTypeName>;
+}
+
+collectPTypeStructs(env : PTypeEnv) -> Tree<string, PTypeName> {
+	runCore = getRunCoreTypes();
+
+	if (!isEmptyTree(^(env.unions))) {
+		println("ERROR: We can not extract structs when unions are already defined");
+	}
+
+	// Visit all words
+	s1 = foldTree(^(env.words), makeTree(), \id, type, acc -> {
+		// No need to extract structs from the runcore, since they are well known
+		if (containsKeyTree(runCore, id)) acc
+		else extractPTypeStruct(env, acc, type);
+	});
+	// Visit all eclasses
+	foldUnionMap(env.unionFindMap, s1, \acc, types -> {
+		fold(types, acc, \acc2, type -> {
+			extractPTypeStruct(env, acc2, type);
+		})
+	});
+}
+
+extractPTypeStructs(env : PTypeEnv, structs : Tree<string, PTypeName>, ps : [PType]) -> Tree<string, PTypeName> {
+	fold(ps, structs, \acc, p -> {
+		extractPTypeStruct(env, acc, p);
+	});
+}
+
+extractPTypeStruct(env : PTypeEnv, structs : Tree<string, PTypeName>, p : PType) -> Tree<string, PTypeName> {
+	switch (p) {
+		PTypeName(name, typars): {
+			if (name == "Top") structs
+			else {
+				existing = containsKeyTree(structs, name);
+				nacc = addPTypeStruct(env, structs, name, p);
+				if (existing) nacc else extractPTypeStructs(env, nacc, typars);
+			}
+		}
+		PTypeEClass(eclass): {
+			values = getUnionMapValue(env.unionFindMap, eclass);
+			extractPTypeStructs(env, structs, values);
+		}
+		PTypeWord(inputs, outputs): {
+			acc = extractPTypeStructs(env, structs, inputs);
+			extractPTypeStructs(env, acc, outputs);
+		}
+		PTypeOverload(overloads): extractPTypeStructs(env, structs, overloads);
+		PTypeEval(): structs;
+		PTypeCompose(left, right): {
+			extractPTypeStruct(env, extractPTypeStruct(env, structs, left), right);
+		}
+	}
+}
+
+// OK, we have some potential struct. 
+addPTypeStruct(env : PTypeEnv, structs : Tree<string, PTypeName>, name : string, struct : PTypeName) -> Tree<string, PTypeName> {
+	if (!isUpperLetter(getCharAt(name, 0))) structs
+	else {
+		// println("Adding struct " + prettyPType(env, struct));
+		mexisting = lookupTree(structs, name);
+		mexisting ?? {
+			if (mexisting == struct) structs
+			else {
+				// Merge the definitions
+				merged = PTypeName(name, mapi(struct.typars, \i, l -> mergePTypes(env, l, mexisting.typars[i])));
+				setTree(structs, name, merged);
+			}
+		} : setTree(structs, name, struct);
+	}
+}
