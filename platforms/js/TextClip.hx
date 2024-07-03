@@ -2022,6 +2022,7 @@ class TextClip extends NativeWidgetClip {
 		TextClip.measureSVGTextElement.setAttribute('font-family', computedStyle.fontFamily);
 		TextClip.measureSVGTextElement.setAttribute('font-size', computedStyle.fontSize);
 		TextClip.measureSVGTextElement.setAttribute('font-style', computedStyle.fontStyle);
+		TextClip.measureSVGTextElement.setAttribute('font-weight', computedStyle.fontWeight);
 		TextClip.measureSVGTextElement.setAttribute('letter-spacing', computedStyle.letterSpacing);
 		TextClip.measureSVGTextElement.setAttribute('white-space', computedStyle.whiteSpace);
 
