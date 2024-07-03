@@ -14,11 +14,9 @@ public class RenderSupport extends NativeHost {
 		return null;
 	}
 	public static double getStageWidth() {
-		System.out.println("Warning: Empty getStageWidth called");
 		return 0;
 	}
 	public static double getStageHeight() {
-		System.out.println("Warning: Empty getStageHeight called");
 		return 0;
 	}
 	public static Object setHitboxRadius(double val) {
@@ -246,7 +244,6 @@ public class RenderSupport extends NativeHost {
 		return null;
 	}
 	public static Func0<Object> addGestureListener(String name, Func5<Boolean,Integer,Double,Double,Double,Double> cb) {
-		System.out.println("Warning: Empty addGestureListener called");
 		return null;
 	}
 	public static boolean hittest(Object stg, double x, double y) {
