@@ -53,6 +53,10 @@ export {
 
 	// A helper function, used to find cases of `<fn>(....)`
 	fiDetectCall(e: FiExp, fn: string) -> Maybe<FiCall>;
+
+	// This function tries to lower flow types to particular and if succeeds, outputs the unified result
+	// E.g.: from `S1<flow, ??>` and `S1<S2<?>, flow>` it will return `S1<S2<?>, ??>`,
+	fiLowerFlowTypes(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType>;
 }
 
 fiSpecializeStruct(tn: FiTypeName, s: FiTypeStruct) -> FiTypeStruct {
@@ -77,7 +81,17 @@ fiSpecializeStruct(tn: FiTypeName, s: FiTypeStruct) -> FiTypeStruct {
 fiSpecializeUnion(tn: FiTypeName, u: FiTypeUnion) -> FiTypeUnion {
 	typars_subst = foldi(u.typeparameters, makeTree(), \i, acc, tp -> 
 		switch (tp) {
-			FiTypeParameter(nm): setTree(acc, nm, tn.typeparameters[i]);
+			FiTypeParameter(nm): {
+				if (i < length(tn.typeparameters)) {
+					setTree(acc, nm, tn.typeparameters[i]);
+				} else {
+					/*fail(
+						"Invalid index of type parameter: " + i2s(i) + ", type: " + pretFiType(tn) + "\n" +
+						"union: " + pretFiStructOrUnion(u)
+					);*/
+					acc;
+				}
+			}
 			default: fail0("must be FiTypeParameter, got: " + toString(tp) + ", union: " + u.name);
 		}
 	);
@@ -531,5 +545,164 @@ fiDetectCall(e: FiExp, name: string) -> Maybe<FiCall> {
 			default: None();
 		}
 		default: None();
+	}
+}
+
+fiLowerFlowTypes(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType> {
+	maybeMap(fiDoLowerFlowTypes(t1, t2, makeTree(), names), \p -> p.first);
+}
+
+fiDoLowerFlowTypes(t1: FiType, t2: FiType, sub: Tree<string, FiType>, names: FiGlobalNames) -> Maybe<Pair<FiType, Tree<string, FiType>>> {
+	flow_param = \-> switch (t2) {
+		FiTypeFlow(): {
+			Some(Pair(t1, sub));
+		}
+		FiTypeParameter(n): {
+			switch (lookupTree(sub, n)) {
+				Some(t3): {
+					if (!fiEqualTypes(t3, t1) || fiTypeContainsTypar(t1, n)) None() else {
+						Some(Pair(t1, sub));
+					}
+				}
+				None(): {
+					Some(Pair(t1, setTree(sub, n, t1)));
+				}
+			}
+		}
+		default: None();
+	}
+	eq_tp = \-> if (fiEqualTypes(t1, t2)) Some(Pair(t1, sub)) else flow_param();
+	switch (t1) {
+		FiTypeRef(rt1): {
+			switch (t2) {
+				FiTypeRef(rt2): {
+					maybeMap(fiDoLowerFlowTypes(rt1, rt2, sub, names), \p -> Pair(FiTypeRef(p.first), p.second));
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeArray(at1): {
+			switch (t2) {
+				FiTypeArray(at2): {
+					maybeMap(fiDoLowerFlowTypes(at1, at2, sub, names), \p -> Pair(FiTypeArray(p.first), p.second));
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeName(id1, tps1): {
+			switch (t2) {
+				FiTypeName(id2, tps2): {
+					if (id1 == id2) {
+						if (length(tps1) != length(tps2)) None() else {
+							maybeMap(
+								foldi(tps1, Some(Pair([], sub)), \i, acc, tp1 ->
+									maybeBind(acc, \p ->
+										maybeMap(fiDoLowerFlowTypes(tp1, tps2[i], p.second, names), \q ->
+											Pair(arrayPush(p.first, q.first), q.second)
+										)
+									)
+								),
+								\p -> Pair(FiTypeName(id1, p.first), p.second)
+							)
+						}
+					} else {
+						switch (lookupTree(names.unions, id1)) {
+							Some(un1): {
+								switch (lookupTree(names.unions, id2)) {
+									Some(un2): {
+										un1_names = buildSet(map(un1.typenames, \tn -> tn.name));
+										un2_names = buildSet(map(un1.typenames, \tn -> tn.name));
+										if (isEmptySet(differenceSets(un2_names, un1_names))) {
+											Some(Pair(t1, sub));
+										} else if (isEmptySet(differenceSets(un1_names, un2_names))) {
+											Some(Pair(t2, sub));
+										} else {
+											println("Typenames are incomparable: '" + id1 + "' and '" + id2 + "'\n" + 
+												"un1.typenames: [" + superglue(un1.typenames, \tn -> tn.name, ", ") + "]\n" +
+												"un2.typenames: [" + superglue(un2.typenames, \tn -> tn.name, ", ") + "]\n"
+											);
+											None();
+										}
+									}
+									None(): Some(Pair(t1, sub));
+								}
+							}
+							None(): {
+								switch (lookupTree(names.unions, id2)) {
+									Some(un2): Some(Pair(t2, sub));
+									None(): None();
+								}
+							}
+						}
+					}
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeFunction(as1, rt1): {
+			switch (t2) {
+				FiTypeFunction(as2, rt2): {
+					if (length(as1) != length(as2)) None() else {
+						maybeBind(fiDoLowerFlowTypes(rt1, rt2, sub, names), \p ->
+							maybeMap(
+								foldi(as1, Some(Pair([], p.second)), \i, acc, a1 ->
+									maybeBind(acc, \q ->
+										maybeMap(fiDoLowerFlowTypes(a1.type, as2[i].type, q.second, names), \r ->
+											Pair(
+												arrayPush(q.first,
+													FiFunArg(if (a1.name != "" && a1.name != "__") a1.name else as2[i].name, r.first)
+												),
+												r.second
+											)
+										)
+									)
+								),
+								\t -> Pair(FiTypeFunction(t.first, p.first), t.second)
+							)
+						);
+					}
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeParameter(n1): {
+			switch (t2) {
+				FiTypeParameter(n2): {
+					if (n1 == n2) Some(Pair(t1, sub)) else { 
+						switch (lookupTree(sub, n1)) {
+							Some(nt1): {
+								switch (lookupTree(sub, n2)) {
+									Some(nt2): {
+										if (!fiEqualTypes(nt1, nt2) || fiTypeContainsTypar(nt1, n2) || fiTypeContainsTypar(nt2, n1)) None() else {
+											Some(Pair(nt1, sub));
+										}
+									}
+									None(): {
+										if (fiTypeContainsTypar(nt1, n2)) None() else {
+											Some(Pair(nt1, setTree(sub, n2, nt1)));
+										}
+									}
+								}
+							}
+							None(): {
+								switch (lookupTree(sub, n2)) {
+									Some(nt2): {
+										if (fiTypeContainsTypar(nt2, n1)) None() else {
+											Some(Pair(nt2, setTree(sub, n1, nt2)));
+										}
+									}
+									None(): {
+										Some(Pair(t1, setTree(sub, n2, t1)));
+									}
+								}
+							}
+						}
+					}
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeFlow(): Some(Pair(t2, sub));
+		default: eq_tp();
 	}
 }
