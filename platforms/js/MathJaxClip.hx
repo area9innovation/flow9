@@ -36,9 +36,25 @@ class MathJaxClip extends NativeWidgetClip {
 				output.appendChild(node);
 				window['MathJax'].startup.document.clear();
 				window['MathJax'].startup.document.updateDocument();
+				setTimeout(function() {
+					clip.updateMathJaxSize();
+				}, 0);
 			})");
 			output.classList.add("mathJax-nativeWidget");
 		}
 	};
 
+	public function updateMathJaxSize() : Void {
+		var bbox = nativeWidget.getBoundingClientRect();
+		setWidth(bbox.width);
+		setHeight(bbox.height);
+		DisplayObjectHelper.emitEvent(
+			this,
+			'mathexprresize',
+			{
+				width  : DisplayObjectHelper.getWidth(this),
+				height : DisplayObjectHelper.getHeight(this)
+			}
+		);
+	}
 }
