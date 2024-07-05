@@ -19,8 +19,8 @@ The code for Mango resides in a separate repository. Ask Asger for access.
 
 TODO: Document how to use Mango in daily life.
 
-[Mango: Parsing language](mango/mango.md)
-[Bootstrapping Mango](mango/mango2.md)
-[Poppy: A mini-Forth](poppy/poppy.md)
-[Type Inference of Poppy & Mango](poppy/poppy2.md)
-[Ripe Mango: Optimizing, compiling](mango/mango3.md)
+[Mango: Parsing language](tools/mango/mango.md)
+[Bootstrapping Mango](tools/mango/mango2.md)
+[Poppy: A mini-Forth](tools/poppy/poppy.md)
+[Type Inference of Poppy & Mango](tools/poppy/poppy2.md)
+[Ripe Mango: Optimizing, compiling](tools/mango/mango3.md)
