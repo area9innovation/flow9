@@ -3135,12 +3135,18 @@ class RenderSupport {
 
 			clip.on(event, parentFn);
 			return function() { clip.off(event, parentFn); }
-		} if (event == "textwidthchanged") {
+		} else if (event == "textwidthchanged") {
 			var widthFn = function(width : Float) {
 				fn([width]);
 			};
 			clip.on(event, widthFn);
 			return function() { clip.off(event, widthFn); }
+		} else if (event == "mathexprresize") {
+			var sizeFn = function(size) {
+				fn([size.width, size.height]);
+			};
+			clip.on(event, sizeFn);
+			return function() { clip.off(event, sizeFn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};

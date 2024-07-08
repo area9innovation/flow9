@@ -1,0 +1,97 @@
+import tools/poppy/type/env;
+
+export {
+	prettyPType(env : PTypeEnv, pt : PType) -> string;
+	prettyPTypes(env : PTypeEnv, ts : [PType]) -> string;
+	printPTypeEnv(env : PTypeEnv) -> void;
+	debugPTypeEnv(env : PTypeEnv) -> void;
+	hasEClassesInside(env : PTypeEnv, p : PType) -> bool;
+	eclassesInPType(env : PTypeEnv, seen : Set<int>, pt : PType) -> Set<int>;
+}
+
+prettyPType(env : PTypeEnv, pt : PType) -> string {
+	doPrettyPType(env, false, ref makeSet(), pt)
+}
+
+doPrettyPType(env : PTypeEnv, superficial : bool, seen : ref Set<PType>, pt : PType) -> string {
+	wasSeen = containsSet(^seen, pt);
+	seen := insertSet(^seen, pt);
+	switch (pt) {
+		PTypeEClass(eclass): {
+			name = lookupTreeDef(^(env.eclassNames), eclass, "");
+			root = findUnionMapRoot(env.unionFindMap, eclass);
+			types : [PType] = getUnionMapValue(env.unionFindMap, root);
+			if (superficial || types == []) {
+				"ε" + i2s(root); 
+			} else {
+				wasRootSeen = containsSet(^seen, PTypeEClass(root));
+				seen := insertSet(^seen, PTypeEClass(root));
+				if (length(types) == 1) {
+					"ε" + i2s(root) + doPrettyPType(env, wasRootSeen, seen, types[0]);
+				} else {
+					"ε" + i2s(root) + "{" + superglue(types, \tt -> {
+						doPrettyPType(env, wasRootSeen, seen, tt)
+					}, ", ") + "}"
+				}
+			} + "~" + name + "."
+		}
+		PTypeName(name, typars): {
+			union = getTreeArrayValue(^(env.unions), name);
+			name + if (wasSeen) "" 
+			else {
+				(if (typars == []) "" else ("<" + superglue(typars, \tp -> doPrettyPType(env, superficial, seen, tp), ", ") + ">"))
+				// + (if (union == []) "" else "(::= " + superglue(union, \t -> doPrettyPType(env, superficial, seen, t), " | ") + ")")
+			}
+		}
+		PTypeWord(inputs, outputs): "(" + superglue(inputs, \tp -> doPrettyPType(env, superficial, seen, tp), " ") + " -> " + superglue(outputs, \tp -> doPrettyPType(env, superficial, seen, tp), " ") + ")";
+		PTypeOverload(overloads): "overload(" + superglue(overloads, \tp -> doPrettyPType(env, superficial, seen, tp), ", ") + ")";
+		PTypeEval(): "eval";
+		PTypeCompose(left, right): doPrettyPType(env, superficial, seen, left) + " ◦ " + doPrettyPType(env, superficial, seen, right);
+	}
+}
+
+prettyPTypes(env : PTypeEnv, ts : [PType]) -> string {
+	superglue(ts, \t -> prettyPType(env, t), " ");
+}
+
+printPTypeEnv(env : PTypeEnv) -> void {
+	traverseInOrder(^(env.words), \word, type -> {
+		println(word + ": " + prettyPType(env, type));
+	});
+}
+
+hasEClassesInside(env : PTypeEnv, p : PType) -> bool {
+	!isEmptySet(eclassesInPType(env, makeSet(), p));
+}
+
+eclassesInPType(env : PTypeEnv, seen : Set<int>, pt : PType) -> Set<int> {
+	switch (pt) {
+		PTypeName(name, typars): fold(typars, seen, \acc, tp -> eclassesInPType(env, acc, tp));
+		PTypeEClass(eclass): insertSet(seen, eclass);
+		PTypeWord(inputs, outputs): {
+			in = fold(inputs, seen, \acc, tp -> eclassesInPType(env, acc, tp));
+			fold(outputs, in, \acc, tp -> eclassesInPType(env, acc, tp));
+		}
+		PTypeOverload(overloads): fold(overloads, seen, \acc, tp -> eclassesInPType(env, acc, tp));
+		PTypeEval(): seen;
+		PTypeCompose(left, right): {
+			acc = eclassesInPType(env, seen, left);
+			eclassesInPType(env, acc, right);
+		}
+	}
+}
+
+debugPTypeEnv(env : PTypeEnv) -> void {
+	traverseInOrder(^(env.unions), \u, types -> {
+		println(u + " ::= " + superglue(types, \t -> prettyPType(env, t), ", "));
+	});
+	if (env.verbose > 1) {
+		debugUnionMap(env.unionFindMap, \eclasses, types -> {
+			if (length(types) > 1) {
+				"{ " + superglue(types, \t -> prettyPType(env, t), ", ") + " }";
+			} else {
+				superglue(types, \t -> prettyPType(env, t), ", ");
+			} + "  =  " + superglue(eclasses, \ec -> lookupTreeDef(^(env.eclassNames), ec, ""), ", ");
+		});
+	}
+}

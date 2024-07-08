@@ -52,6 +52,9 @@ export {
 	// Substitute type parameters with corresponding mapping
 	fiSubstituteTypars(type : FiType, typars : Tree<string, FiType>) -> FiType;
 
+	// Checks if a type contains `name` type parameter
+	fiTypeContainsTypar(tp : FiType, name : string) -> bool;
+
 	fiDeclarationArgNames(decl : FiDeclaration) -> [string];
 
 	// whether type has no parameters
@@ -117,8 +120,11 @@ export {
 	// Unwrap the array type from FiTypeArray
 	fiDearrayType(tp: FiType) -> FiType;
 
-	// Unwrap the reference type from FiTypeRef
+	// Unwrap single time the reference type from FiTypeRef. Other types cause fail.
 	fiDerefType(tp: FiType) -> FiType;
+
+	// Unwrap recursively the reference type FiTypeRef wrapped overFiTypeFunction. 
+	fiDerefFuncType(tp: FiType) -> FiTypeFunction;
 
 	// In case types t1 and t2 are comparable by relation of generality
 	// returns the bigger one, otherwise returns None()
@@ -494,6 +500,24 @@ fiSubstituteTypars(type : FiType, typars : Tree<string, FiType>) -> FiType {
 	}
 }
 
+fiTypeContainsTypar(tp : FiType, name : string) -> bool {
+	switch (tp) {
+		FiTypeVoid():       false;
+		FiTypeBool():       false;
+		FiTypeInt():        false;
+		FiTypeDouble():     false;
+		FiTypeString():     false;
+		FiTypeFlow():       false;
+		FiTypeNative():     false;
+		FiTypeParameter(n): n == name;
+		FiTypeRef(rt):      fiTypeContainsTypar(rt, name);
+		FiTypeArray(at):    fiTypeContainsTypar(at, name);
+		FiTypeName(__, ts):  exists(ts, \t -> fiTypeContainsTypar(t, name));
+		FiTypeFunction(args, rt):
+			fiTypeContainsTypar(rt, name) || exists(args, \arg -> fiTypeContainsTypar(arg.type, name));
+	}
+}
+
 getFiFileInfo(file : string, config : CompilerConfig) -> FiFileInfo {
 	workingDir = getConfigParameterDef(config.config, "working-dir", "");
 	realfile = findFlowPath(file, true, config.includes, workingDir);
@@ -846,10 +870,16 @@ fiReplaceVar(e : FiExp, var: string, new: FiExp) -> FiExp {
 			);
 		}
 		FiSwitch(v, __,cases,__, __): {
-			FiSwitch(e with 
-				//x = if (v.name != var) v else FiVar(v with name = new),
-				cases = map(cases, \c -> FiCase(c with body = ren(c.body)))
-			);
+			sw1 = FiSwitch(e with cases = map(cases, \c -> FiCase(c with body = ren(c.body))));
+			switch (new) {
+				FiVar(__, new_t,__): if (v.name != var) sw1 else {
+					FiSwitch(sw1 with
+						x = new,
+						switchType = new_t
+					);
+				}
+				default: sw1;
+			}
 		}
 		FiCast(ex, __, __, __, __): {
 			FiCast(e with e = ren(ex));
@@ -925,8 +955,16 @@ fiDerefType(tp: FiType) -> FiType {
 	}
 }
 
+fiDerefFuncType(x: FiType) -> FiTypeFunction {
+	switch (x) {
+		FiTypeFunction(__,__): x;
+		FiTypeRef(rt): fiDerefFuncType(rt);
+		default: fail0("must be reference or functional type");
+	}
+}
+
 fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType> {
-	if (t1 == t2) Some(t1) else {
+	if (fiEqualTypes(t1, t2)) Some(t1) else {
 		t0 = switch (t2) {
 			FiTypeFlow(): Some(t2);
 			FiTypeNative(): Some(t2);
@@ -1006,7 +1044,7 @@ fiTypeUpperBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiTyp
 }
 
 fiTypeLowerBoundary(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType> {
-	if (t1 == t2) Some(t1) else {
+	if (fiEqualTypes(t1, t2)) Some(t1) else {
 		t0 = switch (t2) {
 			FiTypeFlow(): Some(t1);
 			FiTypeNative(): Some(t1);

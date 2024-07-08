@@ -1,0 +1,308 @@
+import tools/mango/type/types;
+import ds/tree;
+import tools/poppy/poppy_types;
+import tools/poppy/pretty;
+import tools/poppy/type/env;
+import tools/poppy/type/unify;
+import tools/poppy/type/instantiate;
+import tools/poppy/utils;
+
+export {
+	composeIfFeasible(env : PTypeEnv, a : PType, b : PType) -> Maybe<PType>;
+}
+
+// If a and b can be composed, do that as much as possible
+composeIfFeasible(env : PTypeEnv, a : PType, b : PType) -> Maybe<PType> {
+	indent = ^(env.indent);
+	if (env.verbose > 2) {
+		println(indent + "  Compose     "+ prettyPType(env, a) + "   ◦   " + prettyPType(env, b) + ":");
+		env.indent := indent + "  ";
+	}
+	ra = a;
+	rb = b;
+
+	todo = \ -> {
+		println(indent + "    TODO: Compose " + prettyPType(env, a) + " ◦ " + prettyPType(env, b));
+		None();
+	}
+
+	liftA = \ -> {
+		composeIfFeasible(env, PTypeWord([], [a]), b);
+	}
+
+	res = switch (ra) {
+		PTypeName(name, typars): {
+			switch (rb) {
+				PTypeName(name2, typars2): Some(PTypeWord([], [a, b]));
+				PTypeEClass(eclass): {
+					composeWithEClass(env, a, eclass);
+//					Some(makePTypeCompose(a, b));
+					// Some(PTypeWord([], [a, b]));
+				}
+				PTypeWord(inputs, outputs): liftA();
+				PTypeOverload(overloads): composeRightOverload(env, a, rb);
+				PTypeEval(): None();
+				PTypeCompose(left, right): {
+					// a ◦ (left ◦ right) = (a ◦ left) ◦ right
+					mfirst = composeIfFeasible(env, ra, left);
+					mfirst ?? {
+						composeIfFeasible(env, mfirst, right);
+					} : None();
+				}
+			}
+		}
+		PTypeEClass(eclass): {
+			switch (rb) {
+				PTypeName(name, typars): {
+					// e1   ◦   a    = (-> e1 a)
+					Some(PTypeWord([], [a, b]));
+				}
+				PTypeWord(inputs, outputs): {
+					if (inputs != []) {
+						// e1  ◦ (inputs... a  -> outputs)   ==   unify(e1, a)  && (inputs... -> outputs)
+						liftA();
+					} else if (outputs == []) {
+						// e1  ◦ ( -> )   ==   e1
+						Some(a);
+					} else {
+						// e1  ◦ (  -> outputs)
+						Some(PTypeWord([], [a, b]));
+					}
+				}
+				PTypeOverload(overloads): todo();
+				PTypeEval(): todo();
+				PTypeCompose(left, right): Some(makePTypeCompose(a, b));
+				PTypeEClass(eclass2): Some(makePTypeCompose(a, b));
+			}
+		}
+		PTypeWord(inputs1, outputs1): {
+			switch (rb) {
+				PTypeName(name, typars): composeIfFeasible(env, a, PTypeWord([], [b]));
+				PTypeEClass(eclass): {
+					if (outputs1 != []) {
+						// OK, so we have some outputs
+						// Let us peel one off and make that an input to eclass
+						// (i1... → o1... b) ◦ eclass = (i1... → o1... ) ◦ (b... → eclass2)
+						println("TODO: The outputs of " + prettyPTypes(env, outputs1) + " could be inputs to " + prettyPType(env, b));
+					}
+					Some(makePTypeCompose(a, b));
+				}
+				PTypeWord(inputs2, outputs2): composeWords(env, ra, rb);
+				PTypeOverload(overloads): composeRightOverload(env, a, rb);
+				PTypeEval(): composeEval(env, inputs1, outputs1);
+				PTypeCompose(left, right): {
+					// a ◦ (left ◦ right) = (a ◦ left) ◦ right
+					mfirst = composeIfFeasible(env, ra, left);
+					mfirst ?? {
+						composeIfFeasible(env, mfirst, right);
+					} : None();
+				}
+			}
+		}
+		PTypeOverload(overloads): {
+			ok = filtermap(overloads, \o -> composeIfFeasible(env, o, b));
+			if (length(ok) == 0) {
+				None();
+			} else if (length(ok) == 1) {
+				// We have managed to simplify the overload!
+				Some(ok[0]);
+			} else {
+				// Keep those that are still compatible
+				Some(PTypeOverload(ok));
+			}
+		}
+		PTypeCompose(left1, right1): {
+			assoc = \ -> {
+				// (left1 ◦ right1) ◦ b = left1 ◦ (right1 ◦ b)
+				mfirst = composeIfFeasible(env, right1, b);
+				mfirst ?? {
+					if (isPTypeCompose(mfirst)) {
+						Some(makePTypeCompose(ra, b));
+					} else {
+						composeIfFeasible(env, left1, mfirst);
+					}
+				} : None();
+			}
+			switch (rb) {
+				PTypeName(name, typars): assoc();
+				PTypeEClass(eclass): Some(makePTypeCompose(a, b));
+				PTypeWord(inputs, outputs): assoc();
+				PTypeOverload(overloads): assoc();
+				PTypeEval(): Some(makePTypeCompose(a, b));
+				PTypeCompose(left2, right2): {
+					// (left1 ◦ right1) ◦ (left2 ◦ right2) = left1 ◦ (right1 ◦ left2) ◦ right2
+					middle = composeIfFeasible(env, right1, left2);
+					middle ?? {
+						mthree = composeIfFeasible(env, left1, middle);
+						switch (mthree) {
+							None(): None();
+							Some(three): composeIfFeasible(env, three, right2);
+						}
+					} : None();
+				}
+			}
+		}
+		PTypeEval(): Some(makePTypeCompose(a, b));
+	}
+	if (env.verbose > 2) {
+		env.indent := indent;
+		switch (res) {
+			None(): println(indent + "  End compose "+ prettyPType(env, a) + " ◦ " + prettyPType(env, b) + "     IMPOSSIBLE");
+			Some(r): println(indent + "  End compose "+ prettyPType(env, a) + " ◦ " + prettyPType(env, b) + "     got   " + prettyPType(env, r));
+		}
+	}
+	res;
+}
+
+lastArg(ts : [PType]) -> PType {
+	if (ts == []) {
+		perror("lastArg: Empty list")
+	} else {
+		ts[length(ts) - 1]
+	}
+}
+
+isPTypeCompose(p : PType) -> bool {
+	switch (p) {
+		PTypeCompose(__, __): true;
+		default: false;
+	}
+}
+
+composeWords(env : PTypeEnv, a : PTypeWord, b : PTypeWord) -> Maybe<PType> {
+	if (a.outputs == []) {
+		// (i1... → ) ◦ (i2... → o2...) = (i2... i1... → o2...)
+		Some(makePTypeWord(concat(b.inputs, a.inputs), b.outputs));
+	} else if (b.inputs == []) {
+		// (i1... → o1...) ◦ ( → o2...) = (i1... → o1... o2...)
+		Some(makePTypeWord(a.inputs, concat(a.outputs, b.outputs)));
+	} else {
+		// (i1... → o1... b1) ◦ (i2... b2 → o2...) = (i1... → o1...) ◦ (i2... → o2...) 
+		l1 = length(a.outputs);
+		b1 = a.outputs[l1 - 1]; // The last output
+		o1 = take(a.outputs, l1 -1);
+
+		l2 = length(b.inputs);
+		b2 = b.inputs[l2 - 1]; // The last input
+		i2 = take(b.inputs, l2 - 1);
+
+		// TODO: If one of these has a field name, let us grab that
+
+		// Are those types unifyable?
+		if (!unifyPType(env, true, b1, b2)) {
+			// No, we can not compose then
+			if (env.verbose > 2) {
+				println(^(env.indent) + "  Unification between " + prettyPType(env, b1) + " and " + prettyPType(env, b2) + " failed when composing   " + prettyPType(env, a) + "   ◦   " + prettyPType(env, b));
+			}
+			None();
+		} else {
+			// OK, then do unification for real
+			unifyPType(env, false, b1, b2);
+			composeIfFeasible(env, PTypeWord(a.inputs, o1), PTypeWord(i2, b.outputs));
+		}
+	}
+}
+
+makePTypeWord(inputs : [PType], outputs : [PType]) -> PType {
+	if (inputs == [] && length(outputs) == 1) {
+		outputs[0]
+	} else {
+		PTypeWord(inputs, outputs)
+	}
+}
+
+composeEval(env : PTypeEnv, inputs1 : [PType], outputs1 : [PType]) -> Maybe<PType> {
+	a = PTypeWord(inputs1, outputs1);
+	error = \ -> {
+		println("    Impossible to compose " + prettyPType(env, a) + " ◦ eval");
+		None();
+	}
+	delay = \ -> {
+		Some(makePTypeCompose(a, PTypeEval()))
+	};
+	todo = \ -> {
+		println("    TODO: Check if we compose " + prettyPType(env, a) + " ◦ eval");
+		delay();
+	}
+
+	l1 = length(outputs1);
+	fn = outputs1[l1 - 1]; // The last output is the fn
+	inputs = take(outputs1, l1 - 1); // potential inputs values to the function
+	switch (fn) {
+		PTypeWord(fninputs, fnoutputs): {
+			// OK, this is the setup:
+			// ( -> inputs (fninputs -> fnoutputs)) ◦ eval
+			if (fninputs == []) {
+				// (b (-> a)) ◦ eval = b a
+				Some(PTypeWord(inputs1, concat(inputs, fnoutputs)));
+			} else if (inputs == []) {
+				// ( -> (fninputs -> fnoutputs)) ◦ eval   ==  fninputs -> fnoutputs
+				None();
+			} else {
+				// ( -> inputs (fninputs -> fnoutputs)) ◦ eval
+				firstInput = lastArg(inputs);
+				firstArg = lastArg(fninputs);
+				if (unifyPType(env, true, firstInput, firstArg)) {
+					// OK, they are compatible. Unify for real, and then compose
+					unifyPType(env, false, firstInput, firstArg);
+					restInput = take(inputs, length(inputs) - 1);
+					restArgs = take(fninputs, length(fninputs) - 1);
+
+					// OK, we have unified the first argument. Now build the curries fn with the remaining args
+					// ( -> restInput (restArgs -> fnoutputs)) ◦ eval
+					remaining = PTypeWord(inputs1, arrayPush(restInput, PTypeWord(restArgs, fnoutputs)));
+					composeIfFeasible(env, remaining, PTypeEval());
+				} else {
+					None();
+				}
+			}
+		}
+		// ( -> a) ◦ eval   ->  a
+		PTypeName(name, typars): {
+			if (inputs1 == []) Some(a) else delay();
+		}
+		PTypeEClass(eclass): {
+			values = getUnionMapValue(env.unionFindMap, eclass);
+			if (length(values) == 1) {
+				// TODO: We should have a resolve check
+				resFn = PTypeWord(inputs1, replace(outputs1, l1 - 1, values[0]));
+				println("TODO: We should do resolved check of " + prettyPType(env, values[0]) + " and do compose with this directly " + prettyPType(env, resFn));
+				composeIfFeasible(env, resFn, PTypeEval());
+			} else delay();
+		}
+		PTypeOverload(overloads): todo();
+		PTypeEval(): todo();
+		PTypeCompose(left, right): todo();
+	}
+}
+
+composeRightOverload(env : PTypeEnv, a : PType, b : PTypeOverload) -> Maybe<PType> {
+	ok = filtermap(b.overloads, \o -> composeIfFeasible(env, a, o));
+	if (length(ok) == 0) {
+		None();
+	} else if (length(ok) == 1) {
+		Some(ok[0]);
+	} else {
+		Some(PTypeOverload(ok));
+	}
+}
+
+composeWithEClass(env : PTypeEnv, a : PType, eclass : int) -> Maybe<PType> {
+	values = getUnionMapValue(env.unionFindMap, eclass);
+	if (values == []) {
+		Some(makePTypeCompose(a, PTypeEClass(eclass)))
+	} else {
+		// OK, at least we can compose with what we have so far
+		compat = filtermap(values, \v -> composeIfFeasible(env, a, v));
+		// println("Composed to get " + superglue(compat, \mc -> prettyPType(env, mc), ","));
+		if (length(compat) == 0) {
+			None();
+		} else if (length(compat) == 1) {
+			Some(compat[0]);
+		} else {
+			newClass = makePTypeEClass(env, "");
+			setUnionMapValue(env.unionFindMap, newClass.eclass, compat);
+			Some(newClass);
+		}
+	}
+}

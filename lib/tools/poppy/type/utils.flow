@@ -1,0 +1,131 @@
+import tools/poppy/type/env;
+
+export {
+	makePTypeEClass(env : PTypeEnv, name : string) -> PTypeEClass;
+	plistType(e : PType) -> PTypeName;
+	pstringType() -> PTypeName;
+	makePTypeCompose(a : PType, b : PType) -> PType;
+	filterNops(env : PTypeEnv, ts : [PType]) -> [PType];
+	isPTypeNop(env : PTypeEnv, t : PType) -> bool;
+	isPTypeEClass(t : PType) -> bool;
+	getPTypeEClass(t : PType) -> int;
+	isUnboundPTypeEClass(env : PTypeEnv, t : PType) -> bool;
+	isPTypeUnion(env : PTypeEnv, name : string) -> bool;
+	getPTypeName(env : PTypeEnv, t : PType, def : string) -> string;
+	// Expand any unions to their structs - structs end up with the empty array
+	expandPUnions(env : PTypeEnv, expanded : ref Set<string>, p : string) -> [string];
+	pluralize(s : string) -> string;
+}
+
+makePTypeEClass(env : PTypeEnv, name : string) -> PTypeEClass {
+	unique = ^(env.unique);
+	env.unique := unique + 1;
+	if (name != "") {
+		env.eclassNames := setTree(^(env.eclassNames), unique, name);
+	}
+	PTypeEClass(unique)
+}
+
+plistType(e : PType) -> PTypeName {
+	PTypeName("list", [e])
+}
+
+pstringType() -> PTypeName {
+	PTypeName("string", [])
+}
+
+makePTypeCompose(a : PType, b : PType) -> PType {
+	if (a == PTypeWord([], [])) {
+		b
+	} else if (b == PTypeWord([], [])) {
+		a
+	} else {
+		PTypeCompose(a, b)
+	}
+}
+
+filterNops(env : PTypeEnv, ts : [PType]) -> [PType] {
+	filter(ts, \tt -> !isPTypeNop(env, tt))
+}
+
+isPTypeNop(env : PTypeEnv, t : PType) -> bool {
+	switch (t) {
+		PTypeName(name, typars): false;
+		PTypeEClass(eclass): {
+			classes = getUnionMapValue(env.unionFindMap, eclass);
+			forall(classes, \cc -> isPTypeNop(env, cc));
+		}
+		PTypeWord(inputs, outputs): inputs == [] && outputs == [];
+		PTypeOverload(overloads): forall(overloads, \overload -> isPTypeNop(env, overload));
+		PTypeEval(): false;
+		PTypeCompose(left, right): isPTypeNop(env, left) && isPTypeNop(env, right);
+	}
+}
+
+isPTypeEClass(t : PType) -> bool {
+	switch (t) {
+		PTypeEClass(eclass): true;
+		default: false;
+	}
+}
+
+getPTypeEClass(t : PType) -> int {
+	switch (t) {
+		PTypeEClass(eclass): eclass;
+		default: -1;
+	}
+}
+
+
+isUnboundPTypeEClass(env : PTypeEnv, t : PType) -> bool {
+	switch (t) {
+		PTypeEClass(eclass): {
+			classes = getUnionMapValue(env.unionFindMap, eclass);
+			length(classes) == 0
+		}
+		default: false;
+	}
+}
+
+getPTypeName(env : PTypeEnv, t : PType, def : string) -> string {
+	switch (t) {
+		PTypeName(n, __): n;
+		PTypeEClass(eclass): {
+			classes = getUnionMapValue(env.unionFindMap, eclass);
+			if (classes == []) def
+			else {
+				fold(classes, def, \acc, c -> getPTypeName(env, c, acc))
+			}
+		}
+		default: def;
+	}
+}
+
+isPTypeUnion(env : PTypeEnv, name : string) -> bool {
+	containsKeyTree(^(env.unions), name)
+}
+
+// Expand a unions to their structs. If p is not a union, we give []
+expandPUnions(env : PTypeEnv, expanded : ref Set<string>, p : string) -> [string] {
+	types = getTreeArrayValue(^(env.unions), p);
+	// println(p + " -> " + prettyPTypes(env, types));
+	sortUnique(concatA(map(types, \t -> {
+		name = getPTypeName(env, t, "");
+		if (containsSet(^expanded, name)) []
+		else {
+			expanded := insertSet(^expanded, name);
+			// println("  " + name + " -> " + prettyPTypes(env, [t]
+			if (isPTypeUnion(env, name)) {
+				expandPUnions(env, expanded, name)
+			} else [name]
+		}
+	})))
+}
+
+pluralize(s : string) -> string {
+	if (endsWith(s, "ry")) strsubsmart(s, 0, -1) + "ies"
+	else if (endsWith(s, "y")) s + "s"
+	else if (endsWith(s, "s") || endsWith(s, "x") || endsWith(s, "z") || endsWith(s, "ch") || endsWith(s, "sh")) s + "es"
+	else s + "s"
+}
+
