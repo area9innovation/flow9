@@ -3143,7 +3143,7 @@ class RenderSupport {
 			return function() { clip.off(event, widthFn); }
 		} else if (event == "mathexprresize") {
 			var sizeFn = function(size) {
-				fn([size.width, size.height]);
+				fn([size.width, size.height, size.baseline]);
 			};
 			clip.on(event, sizeFn);
 			return function() { clip.off(event, sizeFn); }

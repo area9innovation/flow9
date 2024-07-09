@@ -20,7 +20,8 @@ class MathJaxClip extends NativeWidgetClip {
 			});
 			var mathjaxStyle : Dynamic = Browser.document.createElement('style');
 			mathjaxStyle.type = 'text/css';
-			var css = '.mathJax-nativeWidget * {position: unset;}';
+			var css = '.mathJax-nativeWidget * {position: unset;} ' +
+				'mjx-container[display="true"] {margin: 0 ! important} ';
 			mathjaxStyle.appendChild(Browser.document.createTextNode(css));
 			Browser.document.head.appendChild(mathjaxStyle);
 		};
@@ -45,16 +46,28 @@ class MathJaxClip extends NativeWidgetClip {
 	};
 
 	public function updateMathJaxSize() : Void {
+		var fs0 = Browser.document.createElement('span');
+		fs0.appendChild(Browser.document.createTextNode('X'));
+		fs0.style.fontSize = '0';
+		fs0.style.visibility = 'hidden';
+		nativeWidget.style.display = 'flex';
+		nativeWidget.style.alignItems = 'baseline';
+		nativeWidget.appendChild(fs0);
 		var bbox = nativeWidget.getBoundingClientRect();
 		setWidth(bbox.width);
 		setHeight(bbox.height);
+		var baseLine = fs0.getBoundingClientRect().top - bbox.top;
+		//nativeWidget.style.display = null;
+		//fs0.remove();
+
 		DisplayObjectHelper.emitEvent(
 			this,
 			'mathexprresize',
 			{
 				width  : DisplayObjectHelper.getWidth(this),
-				height : DisplayObjectHelper.getHeight(this)
+				height : DisplayObjectHelper.getHeight(this),
+				baseline : baseLine
 			}
 		);
-	}
+	};
 }
