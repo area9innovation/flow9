@@ -2104,7 +2104,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function isMaterialIconFont() : Bool {
-		return style.fontFamily.startsWith('Material Icons');
+		return style.fontFamily.startsWith('Material Icons') || style.fontFamily.startsWith('Material Symbols');
 	}
 
 	private override function createNativeWidget(?tagName : String = "p") : Void {
