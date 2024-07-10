@@ -1,6 +1,11 @@
 import js.Browser;
+import js.lib.Set;
 
 class MathJaxClip extends NativeWidgetClip {
+
+	private static var IsLoading = false;
+	private static var scheduledForceUpdate : Set<MathJaxClip> = new Set();
+	private var laTeX : String = '';
 
 	public function new(laTeX : String) {
 		super();
@@ -8,15 +13,24 @@ class MathJaxClip extends NativeWidgetClip {
 			isNativeWidget = true;
 			createNativeWidget();
 		}
-		loadMathJax(function () {
-			MathJaxClip.updateMathJaxClip(this, laTeX);
-		});		
+		this.laTeX = laTeX;
+		loadMathJax(
+			function () {
+				MathJaxClip.updateMathJaxClip(this, laTeX);
+			},
+			this
+		);		
 	} 
 
-	public static function loadMathJax(cb : Void -> Void) {
-		if (untyped __js__("typeof window['MathJax'] === 'undefined'")) {
+	public static function loadMathJax(cb : Void -> Void, clip: MathJaxClip) {
+		if (untyped __js__("typeof window['MathJax'] === 'undefined'") && !IsLoading) {
+			IsLoading = true;
 			Util.loadJS('https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js', 'MathJax-script').then(function (d) {
 				cb();
+				IsLoading = false;
+				scheduledForceUpdate.forEach(function(clip : MathJaxClip, key, set) {
+					MathJaxClip.updateMathJaxClip(clip, clip.laTeX);
+				});
 			});
 			var mathjaxStyle : Dynamic = Browser.document.createElement('style');
 			mathjaxStyle.type = 'text/css';
@@ -24,6 +38,8 @@ class MathJaxClip extends NativeWidgetClip {
 				'mjx-container[display="true"] {margin: 0 ! important} ';
 			mathjaxStyle.appendChild(Browser.document.createTextNode(css));
 			Browser.document.head.appendChild(mathjaxStyle);
+		} else if (IsLoading) {
+			scheduledForceUpdate.add(clip);
 		};
 	}
 
