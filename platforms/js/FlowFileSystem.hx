@@ -212,6 +212,22 @@ class FlowFileSystem {
 		return d;
 	}
 
+	public static function checkFilesReady(jsFileInput : Dynamic, maxFiles : Int, callback : Array<Dynamic> -> Void, nAttempt : Int) : Void {
+		var files : js.html.FileList = jsFileInput.files;
+		if (files.length == 0 && nAttempt <= 10) {
+			haxe.Timer.delay(function() {
+				checkFilesReady(jsFileInput, maxFiles, callback, nAttempt + 1);
+			}, 100);
+		} else {
+			var fls : Array<js.html.File> = [];
+			for (idx in 0...Math.floor(Math.min(files.length, maxFiles))) {
+				fls.push(files[idx]);
+			}
+			callback(fls);
+			js.Browser.document.body.removeChild(jsFileInput);
+		}
+	}
+
 	public static function openFileDialog(maxFiles : Int, fileTypes : Array<String>, callback : Array<Dynamic> -> Void) : Void {
 		#if flash
 
@@ -255,16 +271,7 @@ class FlowFileSystem {
 
 		jsFileInput.onchange = function(e : Dynamic) {
 			jsFileInput.onchange = null;
-
-			var files : js.html.FileList = jsFileInput.files;
-
-			var fls : Array<js.html.File> = [];
-			for (idx in 0...Math.floor(Math.min(files.length, maxFiles))) {
-				fls.push(files[idx]);
-			}
-
-			callback(fls);
-			js.Browser.document.body.removeChild(jsFileInput);
+			checkFilesReady(jsFileInput, maxFiles, callback, 0);
 		};
 
 		// workaround for case when cancel was pressed and onchange isn't fired
