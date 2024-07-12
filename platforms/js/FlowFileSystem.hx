@@ -214,7 +214,7 @@ class FlowFileSystem {
 
 	public static function checkFilesReady(jsFileInput : Dynamic, maxFiles : Int, callback : Array<Dynamic> -> Void, nAttempt : Int) : Void {
 		var files : js.html.FileList = jsFileInput.files;
-		if (files.length == 0 || nAttempt > 10) {
+		if (files.length == 0 && nAttempt <= 10) {
 			haxe.Timer.delay(function() {
 				checkFilesReady(jsFileInput, maxFiles, callback, nAttempt + 1);
 			}, 100);
