@@ -1296,6 +1296,11 @@ class DisplayObjectHelper {
 				'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : (Platform.isIE ? "none" : null);
 		}
 
+		// Force GPU rasterization in case clip has filter
+		if (untyped clip.filters != null && untyped clip.filters.length > 0) {
+			nativeWidget.style.transform += ' translateZ(0)';
+		}
+
 		if (transform.a == 0 || transform.d == 0) {
 			invalidateTransform(clip, "updateNativeWidgetTransformMatrix", true);
 		}
