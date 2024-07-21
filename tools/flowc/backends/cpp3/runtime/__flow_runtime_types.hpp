@@ -35,7 +35,7 @@ using string = std::u16string;
 void copyString2std(const string& str, std::string& s);
 void copyStd2string(const std::string& str, string& s);
 void string2ostream(const string& str, std::ostream& os);
-void istream2string(std::istream& is, string& str);
+void istream2string(std::istream& is, string& str, bool bytewise = false);
 void charArray2string(const char* s, std::size_t len, string& str);
 inline std::string string2std(const string& str) { std::string s; copyString2std(str, s); return s; }
 inline string std2string(const std::string& str) { string s; copyStd2string(str, s); return s; }
