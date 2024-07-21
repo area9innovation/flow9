@@ -88,14 +88,21 @@ void copyStd2string(const std::string& s, string& str) {
 	charArray2string(s.data(), s.size(), str);
 }
 
-void istream2string(std::istream& is, string& str) {
+void istream2string(std::istream& is, string& str, bool bytewise) {
 	std::size_t len = is.tellg();
 	is.seekg(0);
 	str.reserve(str.length() + len);
 	std::unique_ptr<char[]> data = std::make_unique<char[]>(len);
 	char* s = data.get();
 	is.read(s, len);
-	charArray2string(s, len, str);
+	if (bytewise) {
+		for (char* x = s; x < s + len; ++ x) {
+			// One byte per symbol
+			str += static_cast<unsigned char>(*x);
+		}
+	} else {
+		charArray2string(s, len, str);
+	}
 }
 
 void charArray2string(const char* s, std::size_t len, string& str) {
