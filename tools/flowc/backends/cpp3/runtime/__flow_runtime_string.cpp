@@ -98,7 +98,7 @@ void istream2string(std::istream& is, string& str, bool bytewise) {
 	if (bytewise) {
 		for (char* x = s; x < s + len; ++ x) {
 			// One byte per symbol
-			str += (unsigned char)*x;
+			str += static_cast<unsigned char>(*x);
 		}
 	} else {
 		charArray2string(s, len, str);
