@@ -12,6 +12,7 @@ export {
 	getJsonObjectValue(json : Json, def : [Pair<string, Json>]) -> [Pair<string, Json>];
 	getJsonFieldValue(json : Json, field : string, def : Json) -> Json;
 	getJsonFieldValueM(json : Json, field : string) -> Maybe<Json>;
+	getJsonFieldValueMCustom(json : Json, field : string, options : [JsonFieldOptions]) -> Maybe<Json>;
 	getJsonFieldValueCustom(json : Json, field : string, def : Json, options : [JsonFieldOptions]) -> Json;
 	getJsonArrayValue(json : Json, def : [Json]) -> [Json];
 	getJsonBoolValue(json : Json, def : bool) -> bool;
@@ -30,13 +31,17 @@ export {
 	getJsonStringField(json: Json, field: string, def: string) -> string;
 	getJsonStringFieldCustom(json : Json, field: string, def : string, options : [JsonFieldOptions]) -> string;
 	getJsonDoubleField(json: Json, field: string, def: double) -> double;
+	getJsonDoubleFieldCustom(json: Json, field: string, def: double, options : [JsonFieldOptions]) -> double;
 	getJsonIntField(json: Json, field: string, def: int) -> int;
+	getJsonIntFieldCustom(json: Json, field: string, def: int, options : [JsonFieldOptions]) -> int;
 	getJsonBoolField(json: Json, field: string, def: bool) -> bool;
 	getJsonBoolFieldCustom(json : Json, field: string, def : bool, options : [JsonFieldOptions]) -> bool;
 	// defaults to [] if field not found
 	getJsonArrayField(json: Json, field: string) -> [Json];
+	getJsonArrayFieldCustom(json: Json, field: string, options : [JsonFieldOptions]) -> [Json];
 	// If a field is an object, this dude retrieves it. defaults to JsonObject([])
 	getJsonObjectField(json: Json, field: string) -> JsonObject;
+	getJsonObjectFieldCustom(json: Json, field: string, options : [JsonFieldOptions]) -> JsonObject;
 
 	getJsonMaybeField(json : Json, getJsonValueFn : (Json, ?) -> ?, field: string, def : ?) -> Maybe<?>;
 	getJsonMaybeValue(value : Json, getJsonValueFn : (Json, ?) -> ?, def : ?) -> Maybe<?>;
@@ -93,6 +98,7 @@ export {
 
 	// Returns true if json is an object and has appropriate member.
 	jsonObjectHasField(json : Json, member : string) -> bool;
+	jsonObjectHasFieldCustom(json : Json, member : string, options : [JsonFieldOptions]) -> bool;
 	// Access to a nested field like obj.f1.f2.f3, where fields = [f1, f2, f3]
 	getJsonNestedField(json: Json, fields: [string]) -> Json;
 	// The setter to the nested field, dual to getJsonNestedField
@@ -639,4 +645,57 @@ setJsonNestedField(json: Json, fields: [string], value : Json) -> Json {
 			}
 		}
 	}
+}
+
+getJsonFieldValueMCustom(json : Json, field : string, options : [JsonFieldOptions]) -> Maybe<Json> {
+	treatAsPath = extractStruct(options, JsonFieldTreatAsPath("")).pathDelimiter;
+	pth = if (treatAsPath != "") strSplit(field, treatAsPath) else [field];
+	if (length(pth) > 1) {
+		switch (getJsonFieldValueMCustom(json, pth[0], options)) {
+			None(): None();
+			Some(child): getJsonFieldValueMCustom(child, strGlue(tail(pth), treatAsPath), options);
+		}
+	} else {
+		members = getJsonObjectValue(json, []);
+		ignoreCase = containsStruct(options, JsonFieldIgnoreCase());
+		fieldName = if (ignoreCase) toLowerCase(field) else field;
+		maybeMap(
+			find(members, \member -> (if (ignoreCase) toLowerCase(member.first) else member.first) == fieldName),
+			secondOfPair
+		);
+	}
+}
+
+jsonObjectHasFieldCustom(json : Json, member : string, options : [JsonFieldOptions]) -> bool {
+	treatAsPath = extractStruct(options, JsonFieldTreatAsPath("")).pathDelimiter;
+	pth = if (treatAsPath != "") strCountOf(member, treatAsPath) else 0;
+	if (pth > 0) {
+		isSome(getJsonFieldValueMCustom(json, member, options));
+	} else {
+		switch (json) {
+			JsonObject(members): {
+				ignoreCase = containsStruct(options, JsonFieldIgnoreCase());
+				fieldName = if (ignoreCase) toLowerCase(member) else member;
+				exists(members, \p -> (if (ignoreCase) toLowerCase(p.first) else p.first) == fieldName);
+			}
+			default: false;
+		}
+	}
+}
+
+getJsonArrayFieldCustom(json: Json, field: string, options : [JsonFieldOptions]) -> [Json] {
+	fieldValue = getJsonFieldValueMCustom(json, field, options);
+	fieldValue ?? getJsonArrayValue(fieldValue, []) : [];
+}
+
+getJsonDoubleFieldCustom(json: Json, field: string, def: double, options : [JsonFieldOptions]) -> double {
+	getJsonDoubleValue(getJsonFieldValueCustom(json, field, JsonDouble(def), options), def);
+}
+
+getJsonIntFieldCustom(json: Json, field: string, def: int, options : [JsonFieldOptions]) -> int {
+	trunc(getJsonDoubleFieldCustom(json, field, i2d(def), options));
+}
+
+getJsonObjectFieldCustom(json: Json, field: string, options : [JsonFieldOptions]) -> JsonObject {
+	JsonObject(getJsonObjectValue(getJsonFieldValueCustom(json, field, JsonObject([]), options), []));
 }
