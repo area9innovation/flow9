@@ -1,0 +1,195 @@
+import tools/mango/pretty/inverse;
+import text/blueprint;
+import tools/mango/pretty/pretty;
+import tools/mango/pretty/active;
+import tools/mango/type/types;
+
+export {
+	// TODO: This requires a lot of work to make it work, so drop it
+	inferPretty(mangoFile : string, types : Tree<string, MType>, t : Term) -> void;
+}
+
+/*
+TODO:
+Go from the reversed grammar to code
+*/
+
+inferPretty(mangoFile : string, types : Tree<string, MType>, t : Term) -> void {
+	active2 = keepOnlyActive(t);
+	inverted = invertTerm(active2);
+	rules = findRules(makeTree(), inverted);
+	traverseInOrder(rules, \rule, term -> {
+		type = mtype2flow(lookupTreeDef(types, rule, MTypeNil()));
+		code = prettyEval(PrettyEval(["t"], [], ""), term);
+		println(blueprint("
+			/*
+			%t%
+			*/
+			%rule%2string(t : %type%) -> string {
+				%term%
+			}
+		", [
+			"t", term2string(term),
+			"rule", rule,
+			"type", type,
+			"term", strGlue(code.code, " + ")
+		]))
+	})
+}
+
+PrettyEval(
+	stack : [string],
+	code : [string],
+	condition : string
+);
+
+popPrettyStack(eval : PrettyEval) -> Pair<PrettyEval, string> {
+	if (eval.stack == []) {
+		println("Expected element on stack");
+		Pair(eval, "")
+	} else {
+		i = length(eval.stack) - 1;
+		Pair(
+			PrettyEval(eval with stack = take(eval.stack, i)),
+			eval.stack[i]
+		)
+	}
+}
+
+pushPrettyStack(eval : PrettyEval, code : string) -> PrettyEval {
+	PrettyEval(eval with stack = arrayPush(eval.stack, code));
+}
+
+pushPrettyCode(eval : PrettyEval, code : string) -> PrettyEval {
+	PrettyEval(eval with code = arrayPush(eval.code, code));
+}
+
+prettyEval(eval : PrettyEval, t : Term) -> PrettyEval {
+	todo = \ -> {
+		code = term2string(t);
+		println("TODO: " + code);
+		pushPrettyCode(eval, code)
+	}
+	switch (t) {
+		PushMatch(term): {
+			p = popPrettyStack(eval);
+			pushPrettyCode(p.first, p.second);
+		}
+		Choice(term1, term2): todo();
+		Construct(uid, int_0): {
+			p = popPrettyStack(eval);
+			nargs = s2i(int_0);
+			neval = foldRange(0, nargs - 1, p.first, \acc, i -> {
+				pushPrettyStack(acc, p.second + ".field" + i2s(i))
+			});
+			pushPrettyCode(neval, "/* " + uid + " */ \"\"");
+		}
+		Error(term): todo();
+		GrammarFn(id, term1, term2, term3): todo();
+		GrammarCall(id, term): todo();
+		Lower(term): todo();
+		Negate(term): todo();
+		Optional(term): todo();
+		Plus(term): todo();
+		Precedence(term1, term2): todo();
+		Range(char1, char2): todo();
+		Rule(id, term1, term2): todo();
+		Sequence(term1, term2): {
+			prettyEval(prettyEval(eval, term1), term2)
+		}
+		StackOp(id): todo();
+		Star(term): {
+			cond = prettyCondition(eval, term);
+
+			tt = prettyEval(PrettyEval(cond with code = []), term);
+			body = strGlue(tt.code, " + ");
+
+			code = blueprint("
+				while (%cond%) {
+					%body%
+				}
+			", [
+				"cond", cond.condition,
+				"body", body
+			]);
+			PrettyEval(tt with code = arrayPush(eval.code, code));
+		}
+		String(stringq): pushPrettyCode(eval, toString(stringq));
+		Variable(id): {
+			p = popPrettyStack(eval);
+			call = id + "2string(" + p.second + ")";
+			pushPrettyCode(p.first, call)
+		}
+	}
+}
+
+mtype2flow(t : MType) -> string {
+	switch (t) {
+		MTypeResult(rule): "`" + rule + "`";
+		MTypeNil(): "nil";
+		MTypeBool(): "bool";
+		MTypeInt(): "int";
+		MTypeDouble(): "double";
+		MTypeString(): "string";
+		MTypeConstructor(name, args): name;
+		MTypeStar(type): "[" + mtype2flow(type) + "]";
+		MTypeUnion(n, types): n;
+		MTypeName(n): n;
+		MTypeField(n, type): mtype2flow(type);
+	}
+}
+
+prettyCondition(eval : PrettyEval, t : Term) -> PrettyEval {
+	todo = \ -> {
+		println("TODO: Make condition for " + term2string(t));
+		PrettyEval(eval with condition = "");
+	}
+	switch (t) {
+		Choice(term1, term2): {
+			cond1 = prettyCondition(eval, term1);
+			cond2 = prettyCondition(cond1, term1);
+			PrettyEval(
+				cond2 with condition = cond1.condition + " || " + cond2.condition
+			);
+		}
+		Construct(uid, int_0): {
+			p = popPrettyStack(eval);
+			cond = p.second + ".structname == " + uid;
+			PrettyEval(p.first with condition = cond);
+		}
+		Error(term): todo();
+		GrammarFn(id, term1, term2, term3): todo();
+		GrammarCall(id, term): todo();
+		Lower(term): todo();
+		Negate(term): todo();
+		Optional(term): todo();
+		Plus(term): todo();
+		Precedence(term1, term2): todo();
+		PushMatch(term): todo();
+		Range(char1, char2): todo();
+		Rule(id, term1, term2): todo();
+		Sequence(term1, term2): {
+			cond1 = prettyCondition(eval, term1);
+			if (cond1.condition != "") {
+				PrettyEval(
+					cond1 with condition = cond1.condition
+				);
+			} else {
+				cond2 = prettyCondition(cond1, term1);
+				PrettyEval(
+					cond2 with condition = cond2.condition
+				);
+			}
+		}
+		StackOp(id): {
+			if (id == "cons") {
+				p = popPrettyStack(eval);
+				cond = p.second + " != []";
+				PrettyEval(p.first with condition = cond);
+			} else todo();
+		}
+		Star(term): todo();
+		String(stringq): todo();
+		Variable(id): todo();
+	}
+}

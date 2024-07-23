@@ -1,0 +1,153 @@
+import tools/mango/mango_types;
+import tools/mango/rules;
+import tools/mango/mango2string;
+import ds/easygraph;
+
+export {
+	mango2dot(m : Term) -> string;
+}
+
+/*
+TODO: 
+Rework this to have a compositional graph data structure instead so we can have graphs within graphs.
+*/
+
+mango2dot(m : Term) -> string {
+	rules = findRules(makeTree(), m);
+	graph = foldTree(rules, Graph(makeEasyGraph(), -1, -1), \rule, term, acc -> {
+		term2graph(acc, Sequence(Variable(rule), term));
+	});
+
+	easyGraph2dot(graph.graph, graph.source, [], \node : GNode<Term> -> {
+		term = node.data;
+		if (term == String("")) {
+			[DotShape("diamond"), DotLabel("")]
+		} else {
+			label = term2string(term);
+			escaped = toString(label);
+			trim = strsubsmart(escaped, 1, -1);
+			[DotLabel(i2s(node.id) + ": " + trim)]
+		}
+	}, \edge -> []);
+}
+
+Graph(
+	graph : EasyGraph<Term, string>,
+	source : int,
+	sink : int
+);
+
+term2graph(acc : Graph, t : Term) -> Graph {
+	println("Term " + i2s(acc.source) + " -> " + term2string(t) + " -> " + i2s(acc.sink));
+	todo = \ -> {
+//		println("TODO: Lower " + term2string(t) + " to graphviz");
+		node = addEGNodeData(acc.graph, t);
+		Graph(node.first, node.second.id, node.second.id)
+	}
+	addEdge = \g : Graph, from : int, to : int -> {
+		ng = addEGEdge(g.graph, 
+			GEdge(from, to, "", 0)
+		);
+		Graph(g with graph = ng);
+	}
+	addEpsilon = \g -> {
+		term2graph(g, String(""));		
+	}
+	epsilonBefore = \g : Graph, source : int -> {
+		println("Is node " + i2s(source) + " a before epsilon?");
+		msink = lookupTree(g.graph.nodes, source);
+		msink ?? {
+			if (msink.data == String("")) {
+				println("We reuse epsilon");
+				Graph(g with source = source, sink = source)
+			} else {
+				addEpsilon(g)
+			}
+		} : addEpsilon(g)
+	};
+	epsilonAfter = \g : Graph, sink : int -> {
+		println("Is node " + i2s(sink) + " a after epsilon?");
+		msource = lookupTree(g.graph.nodes, sink);
+		msource ?? {
+			if (msource.data == String("")) {
+				println("We reuse epsilon");
+				Graph(g with source = sink, sink = sink)
+			} else {
+				addEpsilon(g)
+			}
+		} : addEpsilon(g)
+	};
+	switch (t) {
+		Choice(term1, term2): {
+			node1 = term2graph(acc, term1);
+			node2 = term2graph(node1, term2);
+
+			println("Doing choice:");
+			println("  " + i2s(node1.source) + "->" + term2string(term1) + "->" + i2s(node1.sink));
+			println("  " + i2s(node2.source) + "->" + term2string(term2) + "->" + i2s(node2.sink));
+
+			before = epsilonBefore(node2, acc.sink);
+			after = epsilonAfter(before, acc.source);
+
+			e1 = addEdge(after, before.sink, node1.source);
+			e2 = addEdge(e1, before.sink, node2.source);
+
+			e3 = addEdge(e2, node1.sink, after.source);
+			e4 = addEdge(e3, node2.sink, after.source);
+
+			Graph(e4.graph, before.source, after.sink);
+		}
+		Construct(uid, int_0): todo();
+		Error(term): todo();
+		GrammarFn(id, term1, term2, term3): todo();
+		GrammarCall(id, term): todo();
+		Lower(term): todo();
+		Negate(term): todo();
+		Optional(term): todo();
+		Plus(term): todo();
+		Precedence(term1, term2): todo();
+		PushMatch(term): todo();
+		Range(char1, char2): todo();
+		Rule(id, term1, term2): todo();
+		Sequence(term1, term2): {
+			node1 = term2graph(Graph(acc with sink = -1), term1);
+			node2 = term2graph(Graph(node1 with sink = -1), term2);
+			edge = addEdge(node2, node1.sink, node2.source);
+			Graph(edge.graph, node1.source, node2.sink)
+		}
+		StackOp(id): todo();
+		Star(term): todo();
+		String(stringq): todo();
+		Variable(id): todo();
+	}
+}
+
+/*
+
+double = int '.' int? | '.' int;
+int = '0'-'9'+;
+
+digraph grammar {
+    // Define nodes
+    double [label="double"];
+    int [label="int"];
+    dot [label=".", shape=none];
+    opt_int [label="int?", shape=box];
+
+    // Edges for the double rule
+    double -> int [label="1st Option"];
+    double -> dot [label="1st Option"];
+    double -> opt_int [label="1st Option"];
+    double -> dot [label="2nd Option"];
+    double -> int [label="2nd Option"];
+
+    // Edge for optional int
+    opt_int -> int [label="optional", style=dashed];
+
+    // Edges for the int rule
+    int -> digits [label="+"];
+
+    // Define terminal
+    digits [label="'0'-'9'", shape=none];
+}
+*/

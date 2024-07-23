@@ -1,0 +1,140 @@
+import tools/mango/mango_types;
+import tools/mango/pretty/active;
+import string;
+import melon/interpret;
+
+export {
+	makePrettyPrinter(file : string, t : Term) -> string;
+}
+
+makePrettyPrinter(file : string, t : Term) -> string {
+	active = keepOnlyActive(t);
+	env = evalMelonFile(makeEnv(makeBasicSeedEnv("melon")), changeFileExt(file, "_types.melon"), true);
+	acc = term2pretty(PrettyAcc(fileNameOnly(file) + "2string", env.structDefs, 0, [], makeTree()), active);
+	foldTree(acc.rewrites, "", \r, rule, acc2 -> {
+		acc2 + rule + ";\n"
+	})
+}
+
+PrettyAcc(
+	name : string,
+	structDefs : Tree<string, [StructArg]>,
+	precedence : int,
+	seq : [Term],
+	// What is the rewrite rule for each constructor 
+	rewrites : Tree<string, string>,
+);
+
+term2pretty(acc : PrettyAcc, t : Term) -> PrettyAcc {
+	todo = \ -> {
+		println("TODO: " + i2s(acc.precedence) + " Make pretty printer for " + toString(t));
+		acc;
+	}
+	flush = \ -> {
+		PrettyAcc(acc with seq = []);
+	}
+	push = \txt -> {
+		PrettyAcc(acc with seq = arrayPush(acc.seq, String(txt)));
+	}
+	switch (t) {
+		Choice(term1, term2): {
+			acc1 = term2pretty(acc, term1);
+			term2pretty(PrettyAcc(acc1 with seq = acc.seq), term2);
+		}
+		Construct(uid, int_0): {
+			if (containsKeyTree(acc.rewrites, uid)) acc
+			else {
+				rule = bindPrettyRule(acc, uid);
+				PrettyAcc(acc with rewrites = setTree(acc.rewrites, uid, rule), seq = []);
+			}
+		}
+		Error(term): term2pretty(acc, term);
+		GrammarFn(id, term1, term2, term3): {
+			todo();
+		}
+		GrammarCall(id, term): {
+			if (id == "list") {
+				ss = getSequence2(term);
+				acc1 = PrettyAcc(acc with seq = arrayPush(acc.seq, String("@superglue(" + term2string(elementAt(ss, 0, term)))));
+				acc2 = acc1;
+				converter = acc.name;
+				acc3 = PrettyAcc(acc2 with seq = arrayPush(acc2.seq, String(", " + converter + ", \"")));
+				acc4 = term2pretty(acc3, elementAt(ss, 1, term));
+				PrettyAcc(acc4 with seq = arrayPush(acc4.seq, String("\")@")))
+			} else todo();
+		}
+		Lower(term): term2pretty(acc, term); // TODO: Not sure if we should adjust precedence here somehow
+		Negate(term): acc;
+		Optional(term): term2pretty(acc, term);
+		Plus(term): term2pretty(acc, term);
+		Precedence(term1, term2): {
+			acc1 = term2pretty(acc, term1);
+			term2pretty(PrettyAcc(acc1 with precedence = acc1.precedence + 1), term2);
+		}
+		PushMatch(term): {
+			term2pretty(acc, Variable(""));
+		}
+		Range(char1, char2): {
+			ch = \cc -> {
+				code = getCharCodeAt(cc, 0);
+				if (code < 0x20 || code > 0xff) formatHex(code)
+				else cc;
+			}
+			push("'" + ch(char1) + "'-'" + ch(char2) + "'");
+		}
+		Rule(id, term1, term2): {
+			acc1 = flush();
+			acc2 = term2pretty(PrettyAcc(acc1 with precedence = 0), term1);
+			term2pretty(PrettyAcc(acc2 with precedence = 0), term2);
+		}
+		Sequence(term1, term2): {
+			acc1 = term2pretty(acc, term1);
+			term2pretty(acc1, term2);
+		}
+		StackOp(id): acc;
+		Star(term): term2pretty(acc, term);
+		String(stringq): {
+			if (stringq == "@") {
+				push("@\"\\x40\"@");
+			} else if (stringq == "$") {
+				push("@\"\\x24\"@");
+			} else push(toString(stringq));
+		}
+		Variable(id): {
+			PrettyAcc(acc with seq = arrayPush(acc.seq, t))
+		}
+	}
+}
+
+getSequence2(t : Term) -> [Term] {
+	switch (t) {
+		Sequence(term1, term2): [term1, term2];
+		default: [t];
+	}
+}
+
+bindPrettyRule(acc : PrettyAcc, uid : string) -> string {
+	structArgs = getTreeArrayValue(acc.structDefs, uid);
+	arg = ref 0;
+	uid + "(" + strGlue(map(structArgs, \a -> a.id), ", ") + ") => `" 
+	+ supergluei(acc.seq, \i, s : Term -> {
+		switch (s) {
+			String(tt): tt;
+			Variable(id): {
+				structArg = elementAt(structArgs, ^arg, StructArg("", StringType()));
+				// println(id + ": " + toString(type));
+				arg := ^arg + 1;
+				switch (structArg.type) {
+					BoolType(): "$b2s(" + structArg.id + ")";
+					IntType(): "$i2s(" + structArg.id + ")";
+					DoubleType(): "$d2s(" + structArg.id + ")";
+					default: if (structArg.id == "") "" else "$" + structArg.id;
+				}
+			}
+			default: {
+				println("TODO: How to handle this: " + term2string(s));
+				toString(s);
+			}
+		}
+	}, "") + "` /* /" + i2s(acc.precedence) + " */";
+}

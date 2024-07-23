@@ -1,0 +1,73 @@
+import tools/poppy/type/env;
+import tools/poppy/type/utils;
+import tools/poppy/type/pretty;
+
+export {
+	// We have unions like IdTypes ::= AutoType, Type;
+	// which can be simplified to just Type, since AutoType is part of Type.
+	// This does that in the entire environment
+	simplifyPUnions(env : PTypeEnv) -> void;
+}
+
+simplifyPUnions(env : PTypeEnv) -> void {
+	redo = foldTree(^(env.unions), makeTree(), \u, types, acc -> {
+		// Expanding any unions to the structs inside that union.
+		// Notice, this is not all structs
+		structsInUnions = sortUnique(concatA(map(types, \t -> {
+			expandPUnions(env, ref makeSet(), getPTypeName(env, t, ""))
+		})));
+
+		// What are the bare structs not covered by unions?
+		nonCovered = filter(types, \t -> {
+			name = getPTypeName(env, t, "");
+			if (isPTypeUnion(env, name)) true
+			else !contains(structsInUnions, name)
+		});
+
+		// println(u + " : " + toString(nonCovered) + " from " + prettyPTypes(env, types) + " expanding to " + toString(structsInUnions));
+		if (length(nonCovered) == 1) {
+			if (getPTypeName(env, nonCovered[0], u) == u) {
+				acc;
+			} else {
+				env.unions := removeFromTree(^(env.unions), u);
+				setTree(acc, u, nonCovered[0])
+			}
+		} else if (nonCovered != []) {
+			env.unions := setTree(^(env.unions), u, nonCovered);
+			acc
+		} else acc;
+	});
+	if (renamePTypes(env, redo)) simplifyPUnions(env)
+}
+
+renamePTypes(env : PTypeEnv, renames : Tree<string, PType>) -> bool {
+	if (env.verbose > 1) {
+		println("Replacing these types from simplification:");
+		traverseInOrder(renames, \n, t -> {
+			println(n + " -> " + prettyPType(env, t))
+		})
+	}
+	origWords = ^(env.words);
+	origUnions = ^(env.unions);
+	env.words := mapTree(^(env.words), \w -> replacePTypes(renames, w));
+	env.unions := mapTree(^(env.unions), \us -> uniq(map(us, \u -> replacePTypes(renames, u))));
+	origWords != ^(env.words) || origUnions != ^(env.unions);
+}
+
+replacePTypes(renames : Tree<string, PType>, t : PType) -> PType {
+	rec = \tt -> replacePTypes(renames, tt);
+	switch (t) {
+		PTypeName(name, typars): {
+			lookupTreeDef(renames, name, PTypeName(name, map(typars, rec)));
+		}
+		PTypeEClass(eclass): {
+			// println("ERROR: Did not expect eclass ε" + i2s(eclass) + " when simplying!");
+			t;
+		}
+		PTypeWord(inputs, outputs): PTypeWord(map(inputs, rec), map(outputs, rec));
+		PTypeOverload(overloads): PTypeOverload(map(overloads, rec));
+		PTypeEval(): t;
+		PTypeCompose(left, right): PTypeCompose(rec(left), rec(right));
+	}
+}
+

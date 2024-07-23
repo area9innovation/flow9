@@ -11,9 +11,12 @@ export {
 	MProgressCircleDeterm2T(manager : MaterialManager, parent : MFocusGroup, m : MProgressCircleDeterm) -> Tropic;
 
 	ProgressCircleWithArrow(parent : MFocusGroup, from : Transform<double>, to : Transform<double>, stroke : double, radius : double,
-		triangleScale : Transform<double>, col : int, opacity : double, background : bool, lengthMultiplier : double, rotationMultiplier : double) -> Tropic;
+		triangleScale : Transform<double>, col : int, opacity : double, background : bool, lengthMultiplier : double, rotationMultiplier : double,
+		duration : Maybe<double>, useNativeAnimation : bool) -> Tropic;
 
 	mProgressEnabled = ref !isUrlParameterFalse("materialProgress");
+
+	nativeAnimation = !isUrlParameterFalse("nativeAnimation");
 }
 
 MProgressBarDeterm2T(manager : MaterialManager, parent : MFocusGroup, m : MProgressBarDeterm) -> Tropic {
@@ -136,7 +139,7 @@ MProgressCircleDeterm2T(manager : MaterialManager, parent : MFocusGroup, m : MPr
 	noRotation = contains(style, MNoRotation());
 
 	ProgressCircleWithArrow(parent, fselect(percent, FLift(\p -> min(1.0, max(0.0, p)) * 360.)), make(0.), circleSize.stroke, circleSize.radius, arrowScale,
-		extractStruct(style, MFill(color)).color, extractStruct(style, FillOpacity(1.0)).opacity, false, 1., if (noRotation) 1. else 2.)
+		extractStruct(style, MFill(color)).color, extractStruct(style, FillOpacity(1.0)).opacity, false, 1., if (noRotation) 1. else 2., None(), false)
 	|> (\f -> TTranslate(const(Point(size / 2., size / 2.)), f))
 	|> makeTropicConstant2(size, size)
 }
@@ -174,11 +177,38 @@ MProgressCircle2T(manager : MaterialManager, parent : MFocusGroup, m : MProgress
 		}
 	}
 
-	ProgressCircleWithArrow(parent, to, from, circleSize.stroke, circleSize.radius, arrowScale, extractStruct(style, MFill(color)).color,
-		extractStruct(style, FillOpacity(1.0)).opacity, false, if (noRotation) 1. else 0.75, if (noRotation) 0. else 1.)
+	ProgressCircleWithArrow(parent, from, to, circleSize.stroke, circleSize.radius, arrowScale, extractStruct(style, MFill(color)).color,
+		extractStruct(style, FillOpacity(1.0)).opacity, false, if (noRotation) 1. else 0.75, if (noRotation) 0. else 1., Some(duration), nativeAnimation)
 	|> (\progressCircle -> TTranslate(const(Point(size / 2., size / 2.)), progressCircle))
 	|> (\progressCircle ->
-		if (^mProgressEnabled)
+		if (^mProgressEnabled) {
+			if (nativeAnimation) {
+				animationPercent = make(0.);
+				animationDirection = make(true);
+				currentFrom = ref 0.;
+
+				TAnimation(progressCircle, const([
+					FAnimationKeyframe([FAlphaValue(1.)]),
+					FAnimationKeyframe([FAlphaValue(0.99)]),
+				]), [
+					FAnimationPercent(animationPercent),
+					FAnimationAlternate(),
+					FAnimationIterations(const(intMax)),
+					FAnimationEasing(const(easingStandartCurve)),
+					FAnimationDuration(const(duration))
+				])
+				|> (\t -> TConstruct([
+						makeSubscribe2(animationPercent, \prc -> {
+							if (prc == 1.0 || prc == 0.0) reverseBehaviour(animationDirection);
+							if (prc == 0.0) currentFrom := getValue(from);
+							if (getValue(animationDirection))
+								nextDistinct(to, ^currentFrom + arcMax * prc)
+							else
+								nextDistinct(from, ^currentFrom + arcMax * (1. - prc))
+						}
+						)
+					], t))
+			} else
 			MEasingAnimation(manager, parent, const(duration), const(easingStandartCurve), tick,
 				\tr -> {
 					beforeFn(tr);
@@ -210,14 +240,15 @@ MProgressCircle2T(manager : MaterialManager, parent : MFocusGroup, m : MProgress
 					)
 				)
 			)
-		else
+		} else
 			progressCircle
 	)
 	|> makeTropicConstant2(size, size)
 }
 
 ProgressCircleWithArrow(parent : MFocusGroup, from : Transform<double>, to : Transform<double>, stroke : double, radius : double,
-	triangleScale : Transform<double>, col : int, opacity : double, background : bool, lengthMultiplier : double, rotationMultiplier : double) -> Tropic {
+	triangleScale : Transform<double>, col : int, opacity : double, background : bool, lengthMultiplier : double, rotationMultiplier : double,
+	duration : Maybe<double>, useNativeAnimation : bool) -> Tropic {
 
 	innerR = radius /*10.0*/;
 	outterR = 2.0 * radius /*20.0*/;
@@ -235,31 +266,48 @@ ProgressCircleWithArrow(parent : MFocusGroup, from : Transform<double>, to : Tra
 		|> (\m -> TShadowShape(parent, shadow, m, RoundShape()))
 		|> (\m -> TTranslate(const(Point(-outterR, -outterR)), m));
 
-	TRotate(
+	TDynamicGraphics(
 		fselect2(from, to, FLift2(\f, t ->
-			if (t > f)
-				f * rotationMultiplier
-			else
-				f * rotationMultiplier + (t - f) * lengthMultiplier
+			CustomSector2(
+				0.,
+				0.,
+				radius,
+				0.0,
+				abs(t - f) * lengthMultiplier,
+				false,
+				[]
+			).path
 		)),
-		TDynamicGraphics(
-			fselect2(from, to, FLift2(\f, t ->
-				CustomSector2(
-					0.,
-					0.,
-					radius,
-					0.0,
-					abs(t - f) * lengthMultiplier,
-					false,
-					[]
-				).path
-			)),
-			const([
-				Stroke(col),
-				StrokeWidth(stroke),
-				StrokeOpacity(opacity),
-			])
-		)
+		const([
+			Stroke(col),
+			StrokeWidth(stroke),
+			StrokeOpacity(opacity),
+		])
+	)
+	|> (\tr ->
+		if (useNativeAnimation) {
+			TAnimation(
+				TRotate(fmultiply(from, const(lengthMultiplier)), tr),
+				const([
+					FAnimationKeyframe([FRotateValue(0.)]),
+					FAnimationKeyframe([FRotateValue(360.)]),
+				]),
+				[
+					FAnimationIterations(const(intMax)),
+					FAnimationDuration(const(2. * either(duration, 0.))),
+				]
+			)
+		} else {
+			TRotate(
+				fselect2(from, to, FLift2(\f, t ->
+					if (t > f)
+						f * rotationMultiplier
+					else
+						f * rotationMultiplier + (t - f) * lengthMultiplier
+				)),
+				tr
+			)
+		}
 	)
 	|> (\f -> TGroup2(f, triangle))
 	|> (\f -> if (!background) f else TGroup2(outterCircle(), f))

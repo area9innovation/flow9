@@ -1,0 +1,243 @@
+import mango/mango_types;
+import ds/tree;
+import string;
+import ds/list;
+import ds/tuples;
+import ds/array;
+
+//import math/math;
+//import text/deserialize_string;
+
+MEnv : (
+	// The string we are parsing
+	input : string,
+	// The rules
+	names : Tree<string, Term>,
+	// The result stack used for semantic actions
+	result : List<?>,
+	// The position in the input
+	i : int,
+	// Did parsing fail?
+	fail : bool,
+	// What is the longest we have parsed?
+	maxi : int,
+	// What errors did we get?
+	errors : Tree<int, string>,
+
+	// How to construct a value						
+	construct : (name : string, args : [?]) -> ?, 	
+);
+
+parseMango(
+	grammar : Term, 
+	input : string,
+	construct : (name : string, args : [?]) -> ?, 
+) -> MEnv<?> {
+	env = MEnv(
+		input,
+		makeTree(),
+		Nil(),
+		0,
+		false,
+		0,
+		makeTree(),
+		construct,
+	);
+	parse(env, grammar);
+}
+
+parse(env : MEnv<?>, t : Term) -> MEnv<?> {
+	todo = \ -> {
+		println("TODO: Implement " + toString(t) + " in Mango");
+		MEnv(env with fail = true);
+	};
+	debug = \ ->
+		if (false) {
+			eol = strRangeIndexOf(env.input, "\n", env.i, strlen(env.input));
+			println(i2s(env.i) + " with " + summarizeTerm(t) + ": " + substring(env.input, env.i, 5));
+		};
+	switch (t) {
+		String(ttext): {
+			if (ttext == "") {
+				env;
+			} else {
+				text = if (ttext == "\\n") "\n" 
+					else if (ttext == "\\r") "\x0d"
+					else if (ttext == "\\t") "\t"
+					else ttext;
+				if (strContainsAt(env.input, env.i, text)) {
+					debug();
+					ni = env.i + strlen(text);
+					MEnv(env with i = ni, maxi = max(env.maxi, ni))
+				} else {
+					MEnv(env with fail = true)
+				}
+			}
+		}
+		Range(llower, uupper): {
+			lower = if (strlen(llower) != 1) fromCharCode(parseHex(strRight(llower, 2))) else llower;
+			upper = if (strlen(uupper) != 1) fromCharCode(parseHex(strRight(uupper, 2))) else uupper;
+			code = getCharAt(env.input, env.i);
+			if (lower <= code && code <= upper) {
+				debug();
+				ni = env.i + 1;
+				MEnv(env with i = ni, maxi = max(env.maxi, ni))
+			} else {
+				MEnv(env with fail = true)
+			}
+		}
+		Sequence(left, right): {
+			lenv = parse(env, left);
+			if (lenv.fail) lenv else parse(lenv, right);
+		}
+		Choice(left, right): {
+			lenv = parse(env, left);
+			if (lenv.fail) parse(maxPos(env, lenv), right) else lenv
+		}
+		Star(term): {
+			senv = parse(env, term);
+			if (senv.fail) maxPos(env, senv) else parse(senv, t)
+		}
+		Optional(term): {
+			senv = parse(env, term);
+			if (senv.fail) maxPos(env, senv) else senv
+		}
+		Plus(term): {
+			senv = parse(env, term);
+			if (senv.fail) senv else parse(senv, Star(term))
+		}
+		Negate(term): {
+			senv = parse(env, term);
+			if (senv.fail) env else MEnv(env with fail = true)
+		}
+		Rule(id, term1, term2): {
+			nenv = MEnv(env with names = setTree(env.names, id, term1));
+			parse(nenv, term2);
+		}
+		Variable(id): {
+			term = lookupTreeDef(env.names, id, t);
+			if (term != t) {
+				parse(env, term);
+			} else {
+				println("Unknown name: " + id);
+				MEnv(env with fail = true);
+			}
+		}
+		PushMatch(term): {
+			starti = env.i;
+			rec = parse(env, term);
+			if (rec.fail) {
+				rec;
+			} else {
+				matched = substring(env.input, starti, rec.i - starti);
+				MEnv(rec with result = Cons(matched, rec.result))
+			}
+		}
+		Construct(uid, arity): {
+			envArgs : Pair<List<?>, [?]> = popNStack(env.result, s2i(arity));
+			out = env.construct(uid, envArgs.second);
+			MEnv(env with result = Cons(out, envArgs.first))
+		}
+		Error(term): {
+			switch (term) {
+				Negate(nterm): {
+					senv = parse(env, nterm);
+					if (senv.fail) {
+						MEnv(senv with fail = false);
+					} else {
+						error = "Superfluous " + summarizeTerm(nterm);
+						MEnv(senv with errors = setTree(env.errors, env.i, error));
+					}
+				}
+				default: {
+					senv = parse(env, term);
+					if (senv.fail) {
+						error = "Expected " + summarizeTerm(term);
+						MEnv(senv with fail = false, errors = setTree(env.errors, env.i, error));
+					} else {
+						senv;
+					}
+				}
+			}
+		}
+		Lower(term): {
+			println("INTERNAL ERROR: Use expandPrecedence before interpreting");
+			MEnv(env with fail = true);
+		}
+		Precedence(term1, term2): {
+			println("INTERNAL ERROR: Use expandPrecedence before interpreting");
+			MEnv(env with fail = true);
+		}
+		GrammarMacro(id, term): {
+			println("INTERNAL ERROR: Use expandMangoMacros before interpreting");
+			MEnv(env with fail = true);
+		}
+		StackOp(id): {
+			if (id == "nil") {
+				MEnv(env with result = Cons(makeList(), env.result));
+			} else if (id == "cons") {
+				elms = popNStack(env.result, 2);
+				nlist = Cons(elms.second[1], elms.second[0]);
+				MEnv(env with result = Cons(nlist, elms.first));
+			} else if (id == "drop") {
+				ignore = popNStack(env.result, 1);
+				MEnv(env with result = ignore.first);
+			} else if (id == "swap") {
+				elms = popNStack(env.result, 2);
+				nrest = Cons(elms.second[0], Cons(elms.second[1], elms.first));
+				MEnv(env with result = nrest);
+			} else if (id == "true") {
+				MEnv(env with result = Cons(true, env.result));
+			} else if (id == "false") {
+				MEnv(env with result = Cons(false, env.result));
+			} else if (id == "s2i") {
+				elms = popNStack(env.result, 1);
+				i = s2i(elms.second[0]);
+				MEnv(env with result = Cons(i, elms.first));
+			} else if (id == "s2d") {
+				elms = popNStack(env.result, 1);
+				d = s2d(elms.second[0]);
+				MEnv(env with result = Cons(d, elms.first));
+			} else if (id == "parsehex") {
+				elms = popNStack(env.result, 1);
+				i = parseHex(elms.second[0]);
+				MEnv(env with result = Cons(i, elms.first));
+			} else if (id == "unescape") {
+				elms = popNStack(env.result, 1);
+				println("TODO: Implement unescape of " + elms.second[0]);
+				res = elms.second[0];
+				MEnv(env with result = Cons(res, elms.first));
+			// todo: reverse
+			// todo: pos
+			} else if (id == "dump") {
+				println("Dump at:" + substring(env.input, env.i, 20));
+				println(list2array(env.result));
+				env;
+			// todo: make_node
+			} else {
+				todo();
+			}
+		}
+	}
+}
+
+popNStack(stack : List<?>, arity : int) -> Pair<List<?>, [?]> {
+	if (arity == 0) {
+		Pair(stack, [])
+	} else {
+		switch (stack) {
+			Cons(h, t): {
+				rest = popNStack(t, arity - 1);
+				Pair(rest.first, arrayPush(rest.second, h))
+			}
+			Nil(): {
+				println("Expected " + i2s(arity) + " elements on the stack");
+				Pair(stack, []);
+			}
+		}
+	}
+}
+
+maxPos(e : MEnv<?>, o : MEnv<?>) -> MEnv<?> {
+	MEnv(e with maxi = max(e.maxi, o.maxi));
+}

@@ -1080,6 +1080,8 @@ rtrimWords(words : [TParaWord]) -> [TParaWord] {
 	else rtrimWords(rtrimmedWords)
 }
 
+tryToBreakLongEquations = !isUrlParameterFalse("break_long_equations");
+
 // here availableWidth is an amount of width for current line
 reflowTParaWordsRec(
 	words : [TParaWord],
@@ -1273,14 +1275,12 @@ reflowTParaWordsRec(
 			};
 			default: {
 				width = ref 0.0;
+				widthWithBreakEquation = ref 0.0;
+				wordsCountWithBreakEquation = ref 0;
 				getWordView = \w -> w.ghostView;
 
-				form = getWordView(word);
-				if (remaining == 31.) {
-					println("");
-				}
 				// Number of words that should be on the same line
-				wordsCount = iteriUntil(words, \i, _word : TParaWord -> {
+				wordsCount0 = iteriUntil(words, \i, _word : TParaWord -> {
 					addWidth = \-> width := ^width + getWordWidth(_word);
 
 					spaceCase = \str -> if(isSpace(str)) {
@@ -1304,11 +1304,24 @@ reflowTParaWordsRec(
 							// it is no use to make line with zero-width content, so we continue counting if the width is 0
 							// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
 							// such construction becomes [Empty, form, Empty] and we should keep them on the same line
+							previousWord = elementAt(words, i - 1, dummyTParaWord);
+							keepTogether = keepWordsTogether(f, _word, previousWord);
 							if (
 								(isMarked && i <= 1) ||
-								keepWordsTogether(f, _word, if (i < 1) dummyTParaWord else words[i - 1]) ||
+								keepTogether ||
 								^width == 0.0
 							) {
+								// Trying to split the expression by the equal sign only if it cannot be placed on a new line
+								// and the part before the sign occupies at least a quarter of the available width.
+								if (
+									tryToBreakLongEquations &&
+									currentWords == [] && keepTogether &&
+									^width > remaining / 4.0 && (^widthWithBreakEquation == 0.0 || ^width <= remaining) &&
+									isItBreakableEquation(_word, previousWord)
+								) {
+									widthWithBreakEquation := ^width;
+									wordsCountWithBreakEquation := i;
+								}
 								addWidth();
 								false;
 							} else {
@@ -1319,14 +1332,17 @@ reflowTParaWordsRec(
 				});
 
 				if (^width == 0.0 || ^width <= remaining || currentWords == []) {
+					wordsCount =
+						if (^width > remaining && ^widthWithBreakEquation != 0.0) {
+							width := ^widthWithBreakEquation;
+							^wordsCountWithBreakEquation
+						} else {
+							wordsCount0;
+						};
 					_words = take(words, wordsCount);
 					_rest = tailFrom(words, wordsCount);
 
 					newCurrentWords = concat(currentWords, _words);
-					isText = switch(word.word) {
-						NonTextElement(__, __) : false;
-						default : true;
-					}
 
 					reflowTParaWordsRec(
 						_rest,
@@ -1334,7 +1350,7 @@ reflowTParaWordsRec(
 						availableWidth,
 						remaining - ^width,
 						newCurrentWords,
-						if (isText && catchOverflow && ^width > remaining + lineIndent) addOverflow(^width) else result,
+						if (isTextElement(word.word) && catchOverflow && ^width > remaining + lineIndent) addOverflow(^width) else result,
 						paraIndent,
 						false,
 						catchOverflow,
@@ -1359,17 +1375,61 @@ reflowTParaWordsRec(
 	}
 }
 
+isTextElement(word : GeneralWrapElement) -> bool {
+	switch(word) {
+		GeneralText(__): true;
+		GeneralSpace(__, __, __): true;
+		GeneralLinePart(__, __, __, __): true;
+		GeneralDynamicText(__): true;
+		GeneralDynamicSpace(__, __, __): true;
+
+		NonTextElement(__, __) : false;
+		EmptyLineElement(): false;
+		NewLine(): false;
+		GeneralInspectElement(__, element): isTextElement(element);
+	}
+}
+
+isItBreakableEquation(currentWord : TParaWord, previousWord : TParaWord) -> bool {
+	firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
+	firstChr == "=" && switch (previousWord.word) {
+		NonTextElement(__, isFillerFn) : isFillerFn();
+		GeneralSpace(txt, __, __) : ! isWordJoiner(txt);
+		GeneralDynamicSpace(txt, __, __) : ! isWordJoiner(txt);
+		default : {
+			lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
+			! isWordJoiner(lastChr)
+		}
+	}
+}
+
+keepTextTogeteher = !isUrlParameterFalse("keep_text_togeteher");
+
 // This function gets the form and decides, should the next form kept together in the same line or should it be placed on the next line
 keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord) -> bool {
 	lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
 
+	chekPreviousWord = \ -> {
+		switch (previousWord.word) {
+			GeneralText(__) : keepTextTogeteher;
+			GeneralDynamicText(__) : keepTextTogeteher;
+			default: false
+		}
+	}
+
 	isWordJoiner(lastChr) ||
 	switch (previousWord.word) {
 		NonTextElement(__, isFillerFn): !isFillerFn();
+		GeneralSpace(txt, __, __): isWordJoiner(txt);
+		GeneralDynamicSpace(txt, __, __): isWordJoiner(txt);
 		default: true
 	} &&
 	switch (currentWord.word) {
 		NonTextElement(keep, __): keep;
+		GeneralSpace(txt, __, __): isWordJoiner(txt);
+		GeneralDynamicSpace(txt, __, __): isWordJoiner(txt);
+		GeneralText(__) : chekPreviousWord();
+		GeneralDynamicText(__) : chekPreviousWord();
 		default: {
 			firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
 			isWordJoiner(firstChr) || keepWordsTogetherRec(tr);
@@ -1380,7 +1440,7 @@ keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord
 keepWordsTogetherRec(tr : Tropic) -> bool {
 	switch (tr) {
 		TEmpty(): true;
-		TText(t, s): false;
+		TText(t, s): true; // we should not return false here because math depends on the glue default behaviour for sequential texts
 		TCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineLines2(top, bottom): keepWordsTogetherRec(top) && keepWordsTogetherRec(bottom);

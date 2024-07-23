@@ -1,0 +1,209 @@
+import tools/mango/env;
+import tools/mango/line;
+import string;
+import string_utils;
+import math/math;
+import tools/mango/mango2string;
+import text/deserialize_string;
+import tools/poppy/poppy_interpreter;
+import tools/poppy/poppy_grammar;
+
+export {
+	mangoParse(path : string, grammar : Term, content : string, def : ?, seedEnv : ??) -> ?;
+	parseMango(path : string, grammar : Term, input : string, seedEnv : ??) -> MEnv<?, ??>;
+
+	parse(env : MEnv<?, ??>, t : Term) -> MEnv<?, ??>;
+}
+
+mangoParse(path : string, grammar : Term, content : string, def : ?, seedEnv : ??) -> ? {
+	env = parseMango(path, grammar, content, seedEnv);
+
+	if (env.fail || env.i < strlen(content)) {
+		println(getLinePos(path, content, "Failed parsing", env.maxi, 1, 0));
+		def;
+	} else {
+		traverseInOrder(env.errors, \pos, error -> {
+			println(getLinePos(path, content, error, pos, 1, 0));
+		});
+		poppy = headList(env.poppy.stack, ExtValue(def));
+		value2flow(poppy2value(poppy), println);
+	}
+}
+
+parseMango(
+	path : string,
+	grammar : Term, 
+	input : string,
+	seedEnv : ??,
+) -> MEnv<?, ??> {
+	parse(makeMEnv(path, input, \env -> {
+		println(path + ": Error: Switching grammar not implemented in this environment.");
+		MEnv(env with fail=true)
+	}, seedEnv), grammar);
+}
+
+parse(env : MEnv<?, ??>, t : Term) -> MEnv<?, ??> {
+	debug = \ ->
+		if (false) {
+			eol = strRangeIndexOf(env.input, "\n", env.i, strlen(env.input));
+			println(i2s(env.i) + " with " + summarizeTerm(t) + ": " + substring(env.input, env.i, 5));
+		};
+	switch (t) {
+		String(ttext): {
+			if (ttext == "") {
+				env;
+			} else {
+				text = if (ttext == "\\n") "\n" 
+					else if (ttext == "\\r") "\x0d"
+					else if (ttext == "\\t") "\t"
+					else ttext;
+
+				if (strlen(text) > 1 && strContains(ttext, "\\")) {
+					println("ERROR: Can only escape single char texts");
+				}
+				if (strContainsAt(env.input, env.i, text)) {
+					debug();
+					ni = env.i + strlen(text);
+					MEnv(env with i = ni, maxi = max(env.maxi, ni))
+				} else {
+					MEnv(env with fail = true)
+				}
+			}
+		}
+		Range(llower, uupper): {
+			lower = if (strlen(llower) != 1) fromCharCode(parseHex(strRight(llower, 2))) else llower;
+			upper = if (strlen(uupper) != 1) fromCharCode(parseHex(strRight(uupper, 2))) else uupper;
+			code = getCharAt(env.input, env.i);
+			if (lower <= code && code <= upper) {
+				debug();
+				ni = env.i + 1;
+				MEnv(env with i = ni, maxi = max(env.maxi, ni))
+			} else {
+				MEnv(env with fail = true)
+			}
+		}
+		Sequence(left, right): {
+			lenv = parse(env, left);
+			if (lenv.fail) lenv else parse(lenv, right);
+		}
+		Choice(left, right): {
+			lenv = parse(env, left);
+			if (lenv.fail) parse(maxPos(env, lenv), right) else lenv
+		}
+		Star(term): {
+			senv = parse(env, term);
+			if (senv.fail) maxPos(env, senv) else parse(senv, t)
+		}
+		Optional(term): {
+			senv = parse(env, term);
+			if (senv.fail) maxPos(env, senv) else senv
+		}
+		Plus(term): {
+			senv = parse(env, term);
+			if (senv.fail) senv else parse(senv, Star(term))
+		}
+		Negate(term): {
+			senv = parse(env, term);
+			if (senv.fail) env else MEnv(env with fail = true)
+		}
+		Rule(id, term1, term2): {
+			nenv = MEnv(env with names = setTree(env.names, id, term1));
+			parse(nenv, term2);
+		}
+		Variable(id): {
+			mterm = lookupTree(env.names, id);
+			mterm ?? {
+				parse(env, mterm);
+			} : {
+				println("Unknown name: " + id);
+				MEnv(env with fail = true);
+			}
+		}
+		PushMatch(term): {
+			starti = env.i;
+			rec = parse(env, term);
+			if (rec.fail) {
+				rec;
+			} else {
+				matched = substring(env.input, starti, rec.i - starti);
+				MEnv(rec with 
+					poppy = pushPoppy(env.poppy, PoppyString(matched))
+				)
+			}
+		}
+		Construct(uid, arity): {
+			cenv = evalPoppy(env.poppy, PoppyConstructArity(uid, s2i(arity)));
+			MEnv(env with poppy = cenv)
+		}
+		Error(term): {
+			switch (term) {
+				Negate(nterm): {
+					senv = parse(env, nterm);
+					if (senv.fail) {
+						MEnv(senv with fail = false);
+					} else {
+						error = "Superfluous " + summarizeTerm(nterm);
+						MEnv(
+							senv with errors = setTree(env.errors, env.i, error)
+						);
+					}
+				}
+				default: {
+					senv = parse(env, term);
+					if (senv.fail) {
+						error = "Expected " + summarizeTerm(term);
+						MEnv(
+							senv with fail = false, errors = setTree(env.errors, env.i, error)
+						);
+					} else {
+						senv;
+					}
+				}
+			}
+		}
+		Lower(term): {
+			println("INTERNAL ERROR: Use expandPrecedence before interpreting");
+			MEnv(env with fail = true);
+		}
+		Precedence(term1, term2): {
+			println("INTERNAL ERROR: Use expandPrecedence before interpreting");
+			MEnv(env with fail = true);
+		}
+		GrammarFn(id, term1, term2, term3): {
+			println("INTERNAL ERROR: Use evaluateMangoFunctions before interpreting " + id);
+			MEnv(env with fail = true);
+		}
+		GrammarCall(id, term): {
+			println("INTERNAL ERROR: Use evaluateMangoFunctions before interpreting " + id);
+			MEnv(env with fail = true);
+		}
+		StackOp(id): {
+			if (id == "pos") {
+				MEnv(env with poppy = pushPoppy(env.poppy, PoppyInt(env.i)));
+			} else if (id == "switch") {
+				// println("Switching");
+				env.switchGrammar(env);
+			} else {
+				// Parse the op as Poppy and evaluate
+				MEnv(env with poppy = evalPoppyProgram(env.poppy, env.path, id, env.seedEnv));
+			}
+		}
+	};
+}
+
+evalPoppyProgram(env : PoppyEnv<?>, path : string, program : string, seedEnv : ??) -> PoppyEnv<?> {
+	// Since Poppy uses these itself, we have to bootstrap ourselves out
+	poppy : Poppy = if (program == "false") PoppyBool(false)
+		else if (program == "true") PoppyBool(true)
+		else if (program == "s2i") PoppyWord("s2i")
+		else if (program == "s2d") PoppyWord("s2d")
+		else if (program == "unescape") PoppyWord("unescape")
+		else mangoParse(path, poppyGrammar(), program, PoppyNil(), seedEnv);
+	
+	evalPoppy(env, poppy);
+}
+
+maxPos(e : MEnv<?, ??>, o : MEnv<?, ??>) -> MEnv<?, ??> {
+	MEnv(e with maxi = max(e.maxi, o.maxi));
+}
+
