@@ -5,6 +5,7 @@ import Platform;
 
 class FontLoader {
 	private static var FontLoadingTimeout = 30000; //ms
+	private static var loadedFonts = [];
 
 	// Parse css rules from a stylesheet and preload fonts
 	private static function loadFontsFromStylesheet(name: String) {
@@ -161,5 +162,17 @@ class FontLoader {
 		var style = Browser.document.createElement('style');
 		style.appendChild(Browser.document.createTextNode(css));
 		Browser.document.head.appendChild(style);
+	}
+
+	public static function onFontsLoadingDone(event : Dynamic) {
+		if (event.fontfaces != null) {
+			FontLoader.loadedFonts = FontLoader.loadedFonts.concat(event.fontfaces.map(function(font) {
+				return font.family;
+			}));
+		}
+	}
+
+	public static function isFontLoaded(fontname : String) : Bool {
+		return FontLoader.loadedFonts.contains(fontname);
 	}
 }

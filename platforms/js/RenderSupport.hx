@@ -978,6 +978,8 @@ class RenderSupport {
 			}
 		}, false);
 
+		Browser.document.fonts.addEventListener('loadingdone', FontLoader.onFontsLoadingDone);
+
 		// Make additional resize for mobile fullscreen mode
 		if (Platform.isMobile) {
 			on("fullscreen", function(isFullScreen) {

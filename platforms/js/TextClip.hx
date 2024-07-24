@@ -1778,7 +1778,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function scheduleForceUpdateTextWidth() {
-		if (Browser.document.fonts.status == LOADING && !scheduledForceUpdate) {
+		if ((Browser.document.fonts.status == LOADING || !FontLoader.isFontLoaded(this.style.fontFamily)) && !scheduledForceUpdate) {
 			if (!TextClip.onFontLoadedListenerInitialized) {
 				Browser.document.fonts.addEventListener('loadingdone', function(event : Dynamic) {
 					event.fontfaces.forEach(function(fontface, key, set) {
@@ -1806,14 +1806,18 @@ class TextClip extends NativeWidgetClip {
 	}
 	
 	private function forceUpdateTextWidth() {
-		RenderSupport.defer(function() {
+		if (style.wordWrap) {
 			scheduledForceUpdate = false;
-			updateTextWidth();
-			if (style.wordWrap) {
-				updateTextMetrics();
-				this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
-			}
-		}, 600);
+			invalidateMetrics();
+			updateTextMetrics();
+			updateNativeWidgetStyle(); // To update word wrapping
+			this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
+		} else {
+			RenderSupport.defer(function() {
+				scheduledForceUpdate = false;
+				updateTextWidth();
+			}, 600);
+		}
 	}
 
 	private function updateTextWidth() : Void {
