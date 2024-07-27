@@ -39,7 +39,7 @@ Cpp3Native("connectExceptionDb", false,
 Cpp3Native("hasNextResultDb", false,
 "Bool $F_1(hasNextResultDb)(Native* nat);\n",
 "Bool $F_1(hasNextResultDb)(Native* nat) {
-	Bool ret = !nat->get<MysqlDbRes*>()->result.eof();
+	Bool ret = nat->get<MysqlDbRes*>()->hasNext();
 	decRc(nat);
 	return ret;
 }\n\n",
@@ -48,23 +48,15 @@ Cpp3Native("hasNextResultDb", false,
 Cpp3Native("nextResultDb", false,
 "
 Vec<Union*>* $F_1(nextResultDb)(Native* nat);
-Union* makeMysqlDbField(
-	const daotk::mysql::field& field,
-	daotk::mysql::result& res, int i,
-	const std::string& date_time_format,
-	std::set<std::string>& int_overflow_fields
-);
+Union* makeMysqlDbField(const daotk::mysql::field&, const std::string&, const std::string&, std::set<std::string>&);
 ",
 "
+
 Union* makeMysqlDbField(
-	const daotk::mysql::field& field,
-	daotk::mysql::result& res, int i,
+	const daotk::mysql::field& field, const std::string& val,
 	const std::string& date_time_format,
 	std::set<std::string>& int_overflow_fields
 ) {
-	if (res.eof()) {
-		return $F_0(DbNullField)::make<$F_0(DbNullField)*>(String::make(field.name));
-	}
 	switch (field.type) {
 		case MYSQL_TYPE_NULL: {
 			return $F_0(DbNullField)::make<$F_0(DbNullField)*>(String::make(field.name));
@@ -73,8 +65,7 @@ Union* makeMysqlDbField(
 		case MYSQL_TYPE_TINY:
 		case MYSQL_TYPE_INT24: {
 			try {
-				int val = std::stoi(res.get_field(i));
-				return $F_0(DbIntField)::make<$F_0(DbIntField)*>(String::make(field.name), val);
+				return $F_0(DbIntField)::make<$F_0(DbIntField)*>(String::make(field.name), std::stoi(val));
 			} catch (std::exception& e) {
 				return $F_0(DbNullField)::make<$F_0(DbNullField)*>(String::make(field.name));
 			}
@@ -83,27 +74,19 @@ Union* makeMysqlDbField(
 		case MYSQL_TYPE_DECIMAL:
 		case MYSQL_TYPE_FLOAT: {
 			try {
-				double val = std::stod(res.get_field(i));
-				return $F_0(DbDoubleField)::make<$F_0(DbDoubleField)*>(
-					String::make(field.name),
-					std::stod(res.get_field(i))
-				);
+				return $F_0(DbDoubleField)::make<$F_0(DbDoubleField)*>(String::make(field.name), std::stod(val));
 			} catch (std::exception& e) {
 				return $F_0(DbNullField)::make<$F_0(DbNullField)*>(String::make(field.name));
 			}
 		}
 		case MYSQL_TYPE_TIMESTAMP: {
 			try {
-				long t = std::stol(res.get_field(i));
-				const std::time_put<char>& time_put = std::use_facet <std::time_put<char>>(std::locale());
-				std::time_t timestamp = t / 1000.0;
+				const std::time_put<char>& time_put = std::use_facet<std::time_put<char>>(std::locale());
+				std::time_t timestamp = std::stol(val) / 1000.0;
 				std::tm* time = std::localtime(&timestamp);
 				std::ostringstream out;
 				time_put.put(out, out, ' ', time, date_time_format.data(), date_time_format.data() + date_time_format.length());
-				return $F_0(DbStringField)::make<$F_0(DbStringField)*>(
-					String::make(field.name),
-					String::make(out.str())
-				);
+				return $F_0(DbStringField)::make<$F_0(DbStringField)*>(String::make(field.name), String::make(out.str()));
 			} catch (std::exception& e) {
 				return $F_0(DbNullField)::make<$F_0(DbNullField)*>(String::make(field.name));
 			}
@@ -111,9 +94,9 @@ Union* makeMysqlDbField(
 		case MYSQL_TYPE_LONG:
 		case MYSQL_TYPE_LONGLONG: {
 			try {
-				long l_val = std::stol(res.get_field(i));
+				long l_val = std::stol(val);
 				int i_val = static_cast<int>(l_val);
-				if ((long)i_val == l_val) {
+				if (l_val == static_cast<long>(i_val)) {
 					// use int type if the value fits in 32 bit integer
 					return $F_0(DbIntField)::make<$F_0(DbIntField)*>(String::make(field.name), i_val);
 				} else {
@@ -123,17 +106,13 @@ Union* makeMysqlDbField(
 						// in double 52 bits are used for the mantissa (15-16 decimal digits)
 						// We support 48 bit non-negative integers as double (14 decimal digits)
 						try {
-							double val = std::stod(res.get_field(i));
-							return $F_0(DbDoubleField)::make<$F_0(DbDoubleField)*>(String::make(field.name), val);
+							return $F_0(DbDoubleField)::make<$F_0(DbDoubleField)*>(String::make(field.name), std::stod(val));
 						} catch (std::exception& e) {
 							return $F_0(DbNullField)::make<$F_0(DbNullField)*>(String::make(field.name));
 						}
 					} else {
 						// otherwise use string
-						return $F_0(DbStringField)::make<$F_0(DbStringField)*>(
-							String::make(field.name),
-							String::make(res.get_field(i))
-						);
+						return $F_0(DbStringField)::make<$F_0(DbStringField)*>(String::make(field.name), String::make(val));
 					}
 				}
 			} catch (std::exception& e) {
@@ -141,27 +120,14 @@ Union* makeMysqlDbField(
 			}
 		}
 		default: {
-			return $F_0(DbStringField)::make<$F_0(DbStringField)*>(
-				String::make(field.name),
-				String::make(res.get_field(i))
-			);
+			return $F_0(DbStringField)::make<$F_0(DbStringField)*>(String::make(field.name), String::make(val));
 		}
 	}
 }
 
 Vec<Union*>* $F_1(nextResultDb)(Native* nat) {
 	MysqlDbRes* r = nat->get<MysqlDbRes*>();
-	const std::vector<daotk::mysql::field>& fields = r->result.fields();
-	Vec<Union*>* ret = Vec<Union*>::make(fields.size());
-	for (Int i = 0; i < fields.size(); ++ i) {
-		daotk::mysql::field field = fields.at(i);
-		ret->pushBack(makeMysqlDbField(
-			field, r->result, i,
-			r->db()->date_time_format,
-			r->db()->int_overflow_fields
-		));
-	}
-	r->result.next();
+	Vec<Union*>* ret = r->nextResult(makeMysqlDbField);
 	decRc(nat);
 	return ret;
 }\n\n",
@@ -170,9 +136,9 @@ Vec<Union*>* $F_1(nextResultDb)(Native* nat) {
 Cpp3Native("requestDb", false,
 "Native* $F_1(requestDb)(Native* nat, String* query);\n",
 "Native* $F_1(requestDb)(Native* nat, String* query) {
-	MysqlDbRes* res = new MysqlDbRes(nat, query->toStd());
+	MysqlDbResDirect* res = new MysqlDbResDirect(nat, query->toStd());
 	decRc(query);
-	return Native::make(res, [res]() { delete res; });
+	return Native::make<MysqlDbRes*>(res, [res]() { delete res; });
 }\n\n",
 "", [], ["mysql"]),
 
@@ -209,7 +175,7 @@ Cpp3Native("requestDbMulti", false,
 			for (Int i = 0; i < fields.size(); ++ i) {
 				daotk::mysql::field field = fields.at(i);
 				row->pushBack(makeMysqlDbField(
-					field, res, i,
+					fields.at(i), res.get_field(i),
 					c->date_time_format,
 					c->int_overflow_fields
 				));
@@ -219,25 +185,31 @@ Cpp3Native("requestDbMulti", false,
 		}
 		ret->pushBack(table);
 	}
+	c->checkIntOverflow();
 	decRc(nat);
 	return ret;
 }\n\n",
 "", [], ["mysql"]),
 
 Cpp3Native("requestDbWithQueryParams", false,
-"Native* $F_1(requestDbWithQueryParams)(Native* database, String* query, Vec<String*>* string_params);\n",
-"Native* $F_1(requestDbWithQueryParams)(Native* database, String* query, Vec<String*>* string_params) {
-	/*daotk::mysql::connection* conn = database->get<daotk::mysql::connection*>();
+"Native* $F_1(requestDbWithQueryParams)(Native* nat, String* q, Vec<String*>* ps);\n",
+"Native* $F_1(requestDbWithQueryParams)(Native* nat, String* q, Vec<String*>* ps) {
+	MysqlDbCon* db = nat->get<MysqlDbCon*>();
+	std::string query = q->toStd();
+	decRc(q);
 	std::vector<std::string> params;
-	params.reserve(string_params->size());
-	for (String* s : *string_params) {
+	params.reserve(ps->size());
+	for (String* s : *ps) {
 		params.push_back(s->toStd());
 	}
-	daotk::mysql::connection::prepared_stmt* stmt = new daotk::mysql::connection::prepared_stmt(conn, query->toStd(), params);
-	stmt->execute();
-	return Native::make(stmt, [stmt]() { delete stmt; });*/
-	fail(\"requestDbWithQueryParams is not implemented yet\");
-	return nullptr;
+	decRc(ps);
+	try {
+		MysqlDbResPrep* res = new MysqlDbResPrep(nat, query, params);
+		return Native::make<MysqlDbRes*>(res, [res]() { delete res; });
+	} catch (std::exception& e) {
+		std::cout << e.what() << std::endl;
+		fail(e.what());
+	}
 }\n\n",
 "", [], ["mysql"])
 

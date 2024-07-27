@@ -432,7 +432,6 @@ namespace daotk {
 							rowdata.push_back(std::string(_row[i], fetch_lengths[i]));
 						}
 						rows.push_back(rowdata);
-						// MYSQL_FIELD *STDCALL mysql_fetch_field(MYSQL_RES *result);
 					}
 
 					current_row_itr = rows.begin();
@@ -1110,7 +1109,8 @@ namespace daotk {
 					memset(bind, 0x00, sizeof(MYSQL_BIND));
 					bind->buffer_type = MYSQL_TYPE_STRING;
 					// libmysql debug build breaks if buffer_length is 0
-					data->resize(1);
+					// This buffer is enougth to store all doubles as strings
+					data->resize(128);
 					bind->buffer = (void*)data->data();
 					bind->buffer_length = data->size();
 					bind->is_null_value = false;
@@ -1259,9 +1259,9 @@ namespace daotk {
 					bind_variables_impl(0, args...);
 				}
 				template<typename T>
-				void bind_variables(const std::vector<T>& args) {
+				void bind_variables(std::vector<T>& args) {
 					for (auto i = 0; i < args.size(); ++ i) {
-						set_variable(i, args.at(i));
+						set_variable<T>(i, args[i]);
 					}
 				}
 
@@ -1280,6 +1280,8 @@ namespace daotk {
 
 			mysql_bind_set param_binds;
 			mysql_bind_set result_binds;
+
+			std::vector<field> fields_;
 
 		public:
 			prepared_stmt(connection& pcon, const std::string& query)
@@ -1302,6 +1304,14 @@ namespace daotk {
 					// Not all queries produce a result set
 					auto result_count = mysql_num_fields(meta.get());
 					result_binds = mysql_bind_set(result_count);
+					auto num_fields = mysql_num_fields(meta.get());
+					MYSQL_FIELD* fs = mysql_fetch_field(meta.get());
+					for (auto i = 0; i < num_fields; ++ i) {
+						fields_.emplace_back(
+							std::move(std::string(fs[i].name, fs[i].name_length)),
+							fs[i].type
+						);
+					}
 				}
 			}
 
@@ -1327,18 +1337,24 @@ namespace daotk {
 				return true;
 			}
 
+			const std::vector<field>& fields() { return fields_; }
+
 			template<typename... Args>
 			void bind_param(const Args &... args) {
 				param_binds.bind_variables(args...);
 			}
 			template<typename T>
-			void bind_param(const std::vector<T>& args) {
+			void bind_param(std::vector<T>& args) {
 				param_binds.bind_variables(args);
 			}
 
 			template<typename... Args>
 			void bind_result(Args &... args) {
 				result_binds.bind_variables(args...);
+			}
+			template<typename T>
+			void bind_result(std::vector<T>& args) {
+				result_binds.bind_variables(args);
 			}
 
 			bool fetch() {
