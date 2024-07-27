@@ -413,32 +413,33 @@ namespace daotk {
 				if (fetched) throw mysqlpp_exception(mysqlpp_exception::result_already_fetched);
 				MYSQL_RES* _res = mysql_store_result(my_conn);
 
-				auto num_fields = mysql_num_fields(_res);
-				MYSQL_FIELD* fs = mysql_fetch_field(_res);
-				for (auto i = 0; i < num_fields; ++ i) {
-					fields_.emplace_back(
-						std::move(std::string(fs[i].name, fs[i].name_length)),
-						fs[i].type
-					);
-				}
-
-				if (num_fields > 0) {
-					while (MYSQL_ROW _row = mysql_fetch_row(_res)) {
-						auto fetch_lengths = mysql_fetch_lengths(_res);
-						if (fetch_lengths == nullptr) throw mysql_exception{ my_conn };
-
-						std::vector<std::string> rowdata;
-						for (unsigned int i = 0; i < num_fields; i++) {
-							rowdata.push_back(std::string(_row[i], fetch_lengths[i]));
-						}
-						rows.push_back(rowdata);
+				if (_res) {
+					auto num_fields = mysql_num_fields(_res);
+					MYSQL_FIELD* fs = mysql_fetch_field(_res);
+					for (auto i = 0; i < num_fields; ++ i) {
+						fields_.emplace_back(
+							std::move(std::string(fs[i].name, fs[i].name_length)),
+							fs[i].type
+						);
 					}
 
-					current_row_itr = rows.begin();
+					if (num_fields > 0) {
+						while (MYSQL_ROW _row = mysql_fetch_row(_res)) {
+							auto fetch_lengths = mysql_fetch_lengths(_res);
+							if (fetch_lengths == nullptr) throw mysql_exception{ my_conn };
+
+							std::vector<std::string> rowdata;
+							for (unsigned int i = 0; i < num_fields; i++) {
+								rowdata.push_back(std::string(_row[i], fetch_lengths[i]));
+							}
+							rows.push_back(rowdata);
+						}
+
+						current_row_itr = rows.begin();
+					}
+
+					mysql_free_result(_res);
 				}
-
-				mysql_free_result(_res);
-
 				fetched = true;
 			}
 
