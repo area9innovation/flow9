@@ -9,6 +9,7 @@ import algorithms;
 
 export {
 	MTypeEnv(
+		file : string,
 		// What do each rule map to?
 		rules : Tree<string, Term>,
 		// What are the types of rules discovered so far?
@@ -19,28 +20,31 @@ export {
 		stack : [MType]
 	);
 	// Does a type evaluation of the grammar to find the first cut at types
-	mangoType(t : Term) -> MTypeEnv;
+	mangoType(file : string, t : Term) -> MTypeEnv;
 
-	joinMTypes(left : MType, right : MType) -> MType;
+	joinMTypes(error : (string) -> void, left : MType, right : MType) -> MType;
 }
 
-mangoType(t : Term) -> MTypeEnv {
+mangoType(file : string, t : Term) -> MTypeEnv {
 	rules = findRules(makeTree(), t);
-	env = MTypeEnv(rules, makeTree(), "", []);
+	env = MTypeEnv(file, rules, makeTree(), "", []);
 	mangoTypeEval(env, t);
 }
 
 mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
+	error = \e -> {
+		println(env.file + ": Error: " + e);
+	}
 	switch (t) {
 		Choice(term1, term2): {
 			ltype = mangoTypeEval(env, term1);
 			rtype = mangoTypeEval(env, term2);
-			joinMTypeEnvs(env, ltype, rtype, term1, term2);
+			joinMTypeEnvs(env, error, ltype, rtype, term1, term2);
 		}
 		Precedence(term1, term2): {
 			ltype = mangoTypeEval(env, term1);
 			rtype = mangoTypeEval(env, term2);
-			joinMTypeEnvs(env, ltype, rtype, term1, term2);
+			joinMTypeEnvs(env, error, ltype, rtype, term1, term2);
 		}
 		Construct(uid, int_0): {
 			arity = s2i(int_0);
@@ -51,30 +55,30 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 		Error(term): {
 			type = mangoTypeEval(MTypeEnv(env with stack = []), term);
 			if (type.stack != []) {
-				println("Error can not produce anything");
+				error("Error can not produce anything");
 				println(type.stack);
 			}
 			env;
 		}
 		GrammarCall(id, term): {
-			println("Error: Unknown type eval of " + toString(t));
+			error("Unknown type eval of call " + toString(t));
 			env;
 		}
 		GrammarFn(id, term1, term2, term3): {
-			println("Did not expect grammar fn here: " + id);
+			error("Did not expect grammar fn here: " + id);
 			mangoTypeEval(MTypeEnv(env with stack = []), term3);
 		}
 		Lower(term): mangoTypeEval(env, term);
 		Negate(term): {
 			type = mangoTypeEval(MTypeEnv(env with stack = []), term);
 			if (type.stack != []) {
-				println("Negate can not produce anything");
+				error("Negate can not produce anything");
 				println(type.stack);
 			}
 			env;
 		}
-		Optional(term): handleMultiMType(env, term);
-		Plus(term): handleMultiMType(env, term);
+		Optional(term): handleMultiMType(env, error, term);
+		Plus(term): handleMultiMType(env, error, term);
 		PushMatch(term): {
 			MTypeEnv(env with stack = arrayPush(env.stack, MTypeString()));
 		}
@@ -82,7 +86,7 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 		Rule(id, term1, term2): {
 			if (containsKeyTree(env.env, id)) {
 				// Maybe we should unify with what is there already?
-				println("TODO: Unify with " + toString(lookupTree(env.env, id)));
+				error("TODO: Unify with " + toString(lookupTree(env.env, id)));
 				// Already typed, so just do the body
 				mangoTypeEval(env, term2);
 			} else {
@@ -103,7 +107,7 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 					MTypeResult(__): {}
 					default: {
 						if (elm.second != from) {
-							println("Error: @" + id + " expects " + toString(from) + ", not " + toString(elm.second));
+							error("@" + id + " expects " + toString(from) + ", not " + toString(elm.second));
 						}
 					}
 				}
@@ -117,9 +121,9 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 				listtype = list.second;
 				// Add a star element
 				res = switch (listtype) {
-					MTypeStar(le): joinMTypes(listtype, MTypeStar(elm.second));
+					MTypeStar(le): joinMTypes(error, listtype, MTypeStar(elm.second));
 					MTypeNil(): MTypeStar(elm.second);
-					default: joinMTypes(listtype, MTypeStar(elm.second));
+					default: joinMTypes(error, listtype, MTypeStar(elm.second));
 				}
 				// println("  Cons gives: " + toString(res));
 				MTypeEnv(list.first with stack = arrayPush(list.first.stack, res));
@@ -131,7 +135,7 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 					MTypeResult(__): {}
 					MTypeString(): {}
 					default: {
-						println("Error: @" + id + " expects string, not " + toString(elm.second));
+						error("@" + id + " expects string, not " + toString(elm.second));
 					}
 				}
 				mtype = if (id == "s2d") MTypeDouble() else if (id == "unescape") MTypeString() else MTypeInt();
@@ -171,7 +175,7 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 						} else if (id == "dump") { env
 						} else {
 							// TODO: We could parse it as Forth here, and see
-							println("TODO: Type eval @" + id);
+							error("TODO: Type eval @" + id);
 							println(poppy);
 							MTypeEnv(env with stack = arrayPush(env.stack, MTypeInt()));
 						}
@@ -179,7 +183,7 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 				}
 			}
 		}
-		Star(term): handleMultiMType(env, term);
+		Star(term): handleMultiMType(env, error, term);
 		String(stringq): env;
 		Variable(id): {
 			mres = lookupTree(env.env, id);
@@ -195,7 +199,7 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 				}
 			} : {
 				if (!containsKeyTree(env.rules, id)) {
-					println("ERROR: Unknown rule: " + id);
+					error("Unknown rule: " + id);
 				}
 				code = lookupTreeDef(env.rules, id, t);
 				// OK, set up recursive results
@@ -204,7 +208,7 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 				type = mangoTypeEval(nenv, code);
 				result = type.stack;
 				if (length(result) > 1) {
-					println("ERROR: " + id + " produces more than one result");
+					error(id + " produces more than one result");
 				}
 				if (result == []) {
 					MTypeEnv(type with env = setTree(nenv.env, id, result), stack = env.stack);
@@ -217,7 +221,7 @@ mangoTypeEval(env : MTypeEnv, t : Term) -> MTypeEnv {
 	}
 }
 
-handleMultiMType(env : MTypeEnv, term : Term) -> MTypeEnv {
+handleMultiMType(env : MTypeEnv, error : (string) -> void, term : Term) -> MTypeEnv {
 	prod = mangoTypeEval(env, term);
 	// Revert the stack
 	nenv = MTypeEnv(prod with stack = env.stack);
@@ -233,26 +237,26 @@ handleMultiMType(env : MTypeEnv, term : Term) -> MTypeEnv {
 			// It transforms
 			product = lastElement(prod.stack, MTypeResult("EMPTY STACK"));
 			// println("  The star transforms to " + toString(product));
-			replaceLastMType(nenv, product);
+			replaceLastMType(nenv, error, product);
 		} else {
-			println("Strange stack discipline of star is not supported");
+			error("Strange stack discipline of star is not supported");
 			nenv;
 		}
 	}
 }
 
-replaceLastMType(e : MTypeEnv, type : MType) -> MTypeEnv {
+replaceLastMType(e : MTypeEnv, error : (string) -> void, type : MType) -> MTypeEnv {
 	if (e.stack == []) {
-		println("  Error: Expected at least one value");
+		error("Expected at least one value");
 		e;
 	} else {
 		MTypeEnv(e with stack = replace(e.stack, length(e.stack) - 1, type));
 	}
 }
 
-joinMTypeEnvs(orig : MTypeEnv, left : MTypeEnv, right : MTypeEnv, l : Term, r : Term) -> MTypeEnv {
+joinMTypeEnvs(orig : MTypeEnv, error : (string) -> void, left : MTypeEnv, right : MTypeEnv, l : Term, r : Term) -> MTypeEnv {
 	if (length(left.stack) != length(right.stack)) {
-		println("ERROR: Choices in " + orig.rule + " do not have same stack discipline");
+		error("Choices in " + orig.rule + " do not have same stack discipline");
 		println("Left side " + term2string(l) + " has ");
 		println(left.stack);
 		println("Right side " + term2string(r) + " has ");
@@ -265,21 +269,21 @@ joinMTypeEnvs(orig : MTypeEnv, left : MTypeEnv, right : MTypeEnv, l : Term, r : 
 	} else {
 		llast = lastElement(left.stack, MTypeResult("EMPTY STACK"));
 		rlast = lastElement(right.stack, MTypeResult("EMPTY STACK"));
-		j = joinMTypes(llast, rlast);
+		j = joinMTypes(error, llast, rlast);
 		MTypeEnv(left with stack = replace(left.stack, length(left.stack) - 1, j));
 	}
 }
 
-joinMTypes(left : MType, right : MType) -> MType {
+joinMTypes(error : (string) -> void, left : MType, right : MType) -> MType {
 	add = \ -> {
 		switch (right) {
-			MTypeUnion(rname, rtypes): makeMTypeUnion(arrayPush(rtypes, left));
-			default: makeMTypeUnion([left, right]);
+			MTypeUnion(rname, rtypes): makeMTypeUnion(error, arrayPush(rtypes, left));
+			default: makeMTypeUnion(error, [left, right]);
 		}
 	}
 	switch (left) {
 		MTypeResult(r): add();
-		MTypeNil(): if (left == right) left else joinMTypes(right, left);
+		MTypeNil(): if (left == right) left else joinMTypes(error, right, left);
 		MTypeBool(): add();
 		MTypeInt(): add();
 		MTypeDouble(): add();
@@ -289,11 +293,11 @@ joinMTypes(left : MType, right : MType) -> MType {
 				MTypeConstructor(rname, rargs): {
 					if (lname == rname) {
 						if (length(largs) != length(rargs)) {
-							println("Error: " + lname + " has different arity in type join");
+							error(lname + " has different arity in type join");
 							add();
 						} else {
 							MTypeConstructor(lname, mapi(largs, \i, larg -> {
-								joinMTypes(larg, rargs[i])
+								joinMTypes(error, larg, rargs[i])
 							}))
 						}
 					} else add();
@@ -303,7 +307,7 @@ joinMTypes(left : MType, right : MType) -> MType {
 		}
 		MTypeStar(ltype): {
 			switch (right) {
-				MTypeStar(rtype): MTypeStar(joinMTypes(ltype, rtype));
+				MTypeStar(rtype): MTypeStar(joinMTypes(error, ltype, rtype));
 				MTypeNil(): left;
 				default: {
 					add();
@@ -314,17 +318,17 @@ joinMTypes(left : MType, right : MType) -> MType {
 			switch (right) {
 				MTypeUnion(rname, rtypes): {
 					if (lname != "" && rname != "" && lname != rname) {
-						println("Can not merge unions of different names " + lname + " and " + rname);
+						error("Can not merge unions of different names " + lname + " and " + rname);
 					}
 					uname = if (lname == "") rname else lname;
-					res = makeMTypeUnion(concat(ltypes, rtypes));
+					res = makeMTypeUnion(error, concat(ltypes, rtypes));
 					switch (res) {
 						MTypeUnion(__, t): MTypeUnion(uname, t);
 						default: res;
 					};
 					res;
 				}
-				default: makeMTypeUnion(arrayPush(ltypes, right));
+				default: makeMTypeUnion(error, arrayPush(ltypes, right));
 			}
 		}
 		MTypeName(lname): {
@@ -340,15 +344,15 @@ joinMTypes(left : MType, right : MType) -> MType {
 		MTypeField(lname, ltype): {
 			switch (right) {
 				MTypeField(rname, rtype): {
-					MTypeField(min(lname, rname), joinMTypes(ltype, rtype));
+					MTypeField(min(lname, rname), joinMTypes(error, ltype, rtype));
 				}
-				default: MTypeField(lname, joinMTypes(ltype, right));
+				default: MTypeField(lname, joinMTypes(error, ltype, right));
 			}
 		}
 	}
 }
 
-makeMTypeUnion(types : [MType]) -> MType {
+makeMTypeUnion(error : (string) -> void, types : [MType]) -> MType {
 	so = sortUnique(types);
 
 	// OK, check if there are multiple of the same constructor
@@ -362,7 +366,7 @@ makeMTypeUnion(types : [MType]) -> MType {
 		if (r == "__") ts
 		else {
 			[fold(tail(ts), ts[0], \acc, t -> {
-				joinMTypes(acc, t)
+				joinMTypes(error, acc, t)
 			})]
 		}
 	});
