@@ -292,13 +292,28 @@ TRenderParagraph(
 
 	rtl = isParagraphRtl(s);
 	reflowHappenedB = make(false);
+
+	// joing words is expensive (like double rendering, triggered by reflowHappenedB)
+	// so we will not trigger it for small paragraphs and for paragraphs with mixed content
+	join_words = !isUrlParameterFalse("join_words") && length(words) > 10 && fold(words, Pair(true, []), \acc, w -> {
+		if (acc.first && (acc.second == [] || acc.second == w.style)) {
+			switch (w.word) {
+				GeneralText(__): Pair(true, w.style);
+				GeneralSpace(__, __, __): Pair(true, w.style);
+
+				default: Pair(false, []);
+			}
+		} else acc;
+	}).first;
+
 	groupedWords = groupAndPositionWords(
 		words,
 		if (rtl) 0.0 else genIndent,
 		reflowHappenedB,
 		joinedWordsConstructors,
 		rtl,
-		ignoreLetterSpacing
+		ignoreLetterSpacing,
+		join_words
 	);
 
 	paragraphWHB = makeWH();
@@ -481,7 +496,8 @@ groupAndPositionWords(
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	rtl : bool,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	join_words : bool
 ) -> [Tropic] {
 	groupResult = fold(
 		words,
@@ -501,7 +517,8 @@ groupAndPositionWords(
 				reflowHappened,
 				joinedWordsConstructors,
 				rtl,
-				ignoreLetterSpacing
+				ignoreLetterSpacing,
+				join_words
 			)
 		}
 	);
@@ -515,7 +532,8 @@ groupAndPositionWords(
 			joinedWordsConstructors,
 			rtl,
 			ignoreLetterSpacing,
-			groupResult.containsDynamicElement
+			groupResult.containsDynamicElement,
+			join_words
 		),
 		groupResult.groupedWords
 	);
@@ -530,7 +548,8 @@ appendWordToLine(
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	rtl : bool,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	join_words : bool
 ) -> LineHeadingsAcc {
 	tag = either(getHeadingTagFromFontSize(extractStruct(word.style, FontSize(0.0)).size, ""), "");
 	if (acc.currentTag == tag && !isUrlParameterFalse("tparawordglue")) {
@@ -547,7 +566,8 @@ appendWordToLine(
 				joinedWordsConstructors,
 				rtl,
 				ignoreLetterSpacing,
-				acc.containsDynamicElement
+				acc.containsDynamicElement,
+				join_words
 			),
 			acc.groupedWords
 		);
@@ -568,14 +588,19 @@ makeHeadingGroup(
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	rtl : bool,
 	ignoreLetterSpacing : bool,
-	containsDynamicElement : bool
+	containsDynamicElement : bool,
+	join_words : bool
 ) -> Tropic {
 
-	joinedWords = if (isUrlParameterFalse("join_words")) positionInteractiveWords(
-		words,
-		genIndent,
-		joinedWordsConstructors
-	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing, containsDynamicElement);
+	joinedWords = if (join_words) {
+		joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing, containsDynamicElement)
+	} else {
+		positionInteractiveWords(
+			words,
+			genIndent,
+			joinedWordsConstructors
+		)
+	}
 
 	TGroup(joinedWords)
 }
@@ -703,7 +728,7 @@ joinTextWords(
 				EmptyList(): const(zeroPoint);
 				Cons(head, __): fpoint(head.inspector.x, head.inspector.y);
 			};
-		joinResult = foldList(
+			joinResult = foldList(
 				words,
 				JoinTextAcc("", "", [], None(), -1, point, EmptyList()),
 				\acc, word -> appendOrJoinWord(
