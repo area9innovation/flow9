@@ -225,7 +225,7 @@ if (typeof htmlBundle == "undefined") {
 		if (this.readyState == 4 && this.status == 200) {
 			var newTimestamp = this.responseText;
 			var oldTimestamp = localStorage.getItem(filename);
-			if (oldTimestamp != newTimestamp) {
+			if (newTimestamp != "0" && oldTimestamp != newTimestamp) {
 				localStorage.setItem(filename, newTimestamp);
 				window.location.reload(true);
 			}
