@@ -1807,11 +1807,13 @@ class TextClip extends NativeWidgetClip {
 	
 	private function forceUpdateTextWidth() {
 		if (style.wordWrap) {
-			scheduledForceUpdate = false;
-			invalidateMetrics();
-			updateTextMetrics();
-			updateNativeWidgetStyle(); // To update word wrapping
-			this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
+			if (nativeWidget != null) {
+				scheduledForceUpdate = false;
+				invalidateMetrics();
+				updateTextMetrics();
+				updateNativeWidgetStyle(); // To update word wrapping
+				this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
+			}
 		} else {
 			RenderSupport.defer(function() {
 				scheduledForceUpdate = false;
