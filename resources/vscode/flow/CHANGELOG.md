@@ -197,5 +197,8 @@
 ## 0.6.1
  - Updated syntax highlighting for flow and sharekey
 
-## 0.6.1
+## 0.6.2
  - Highlight SQL and flow code inside <<>> strings
+
+## 0.6.3
+ - Fixed a bug with starting LSP server on Windows
