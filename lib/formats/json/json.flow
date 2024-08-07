@@ -66,7 +66,7 @@ export {
 	// returns `json` if it's not JsonObject
 	removeJsonField(json : Json, field : string) -> Json;
 
-	ParsingAcc(data : ?, start : int, finish : int);
+	ParsingAcc(data : ?, start : int, finish : int, processed : int);
 
 	Json ::= JsonObject, JsonArray, JsonNull, JsonBool, JsonString, JsonDouble;
 		JsonObject(members : [Pair<string, Json>]);
@@ -104,18 +104,23 @@ export {
 	// The setter to the nested field, dual to getJsonNestedField
 	setJsonNestedField(json: Json, fields: [string], value : Json) -> Json;
 
-	// return the parsed json and the index of the first error. -1 if there are no errors.
-	parseJsonUntilError(json : string) -> Pair<Json, int>;
+	parseJsonUntilError(json : string) -> JsonParseResult;
+		JsonParseResult(
+			value : Json,
+			errorPosition : int, // -1 if there are no errors
+			lastProcessedPosition: int,
+		);
 }
 
 parseJson(json : string) -> Json {
 	parseJsonSafe(json)
 }
 
-parseJsonUntilError(json : string) -> Pair<Json, int> {
+parseJsonUntilError(json : string) -> JsonParseResult {
 	len = strlen(json);
 	v = doParseJson(json, len, 0);
-	Pair(v.data, if (v.start == v.finish || v.finish != len) v.finish else -1);
+	success = v.start != v.finish && v.finish == len;
+	JsonParseResult(v.data, if (success) -1 else v.finish, if (success) -1 else v.processed);
 }
 
 parseJsonSafe(json : string) -> Json {
@@ -236,16 +241,16 @@ doParseJson(json : string, jsonLength : int, start : int) -> ParsingAcc<Json> {
 			parseJsonObject2(json, jsonLength, start + 1, makeList());
 		} else if (charCode == 34) {		// "\""
 			v = deserializeRestOfString2(json, start + 1);
-			ParsingAcc(JsonString(v.first), start + 1, v.second);
+			ParsingAcc(JsonString(v.first), start + 1, v.second, v.second);
 		} else if (charCode == 110 /* "n" */ && substring(json,start, 4) == "null") {
-			ParsingAcc(JsonNull(), start, start + 4);
+			ParsingAcc(JsonNull(), start, start + 4, start + 4);
 		} else if (charCode == 116 /* "t" */ && substring(json,start, 4) == "true") {
-			ParsingAcc(JsonBool(true), start, start + 4);
+			ParsingAcc(JsonBool(true), start, start + 4, start + 4);
 		} else if (charCode == 102 /* "f" */ && substring(json,start, 5) == "false") {
-			ParsingAcc(JsonBool(false), start, start + 5);
+			ParsingAcc(JsonBool(false), start, start + 5, start + 5);
 		} else {
 			v = parseJsonDouble2(json, jsonLength, start);
-			ParsingAcc(v.first, start, v.second)
+			ParsingAcc(v.first, start, v.second, v.second);
 		}
 	}
 }
@@ -262,10 +267,10 @@ parseJsonObject2(json : string, jsonLength : int, start : int, acc : List<Pair<s
 	};
 	charCode = getCharCodeAt(json, head.second);
 	if (getCharCodeAt(json, fin) == 125) // "}"
-		ParsingAcc(JsonObject(list2array(acc)), start, fin + 1)
+		ParsingAcc(JsonObject(list2array(acc)), start, fin + 1, fin + 1)
 	else if (head.second >= jsonLength || head.first < 0) {
 		// No comma nor brace - just give what we have so far, to allow partial parsing
-		ParsingAcc(JsonObject(list2array(acc)), start, start)
+		ParsingAcc(JsonObject(list2array(acc)), start, start, fin)
 	} else {
 		key =
 			if (charCode == 34) {// "\""
@@ -279,7 +284,7 @@ parseJsonObject2(json : string, jsonLength : int, start : int, acc : List<Pair<s
 		nacc = Cons(Pair(key.first, value.data), acc);
 		if (key.second == head.second + 1 || afterColon.first < 0 || value.start == value.finish) {
 			// Some problem - just give what we have so far, to allow partial parsing
-			ParsingAcc(JsonObject(list2array(nacc)), start, start)
+			ParsingAcc(JsonObject(list2array(nacc)), start, start, value.finish)
 		} else {
 			parseJsonObject2(json, jsonLength, value.finish, nacc);
 		}
@@ -317,15 +322,15 @@ parseJsonArray2(json : string, jsonLength : int, start : int, acc : List<Json>) 
 		Cons(__, __): skipJson2(json, jsonLength, start, ",");
 	};
 	if (getCharCodeAt(json, fin) == 93 || getCharCodeAt(json, head.second) == 93) // "]" or ,]
-		ParsingAcc(JsonArray(list2array(acc)), start, fin + 1)
+		ParsingAcc(JsonArray(list2array(acc)), start, fin + 1, fin + 1)
 	else if (head.second >= jsonLength || head.first < 0) {
  		// No comma nor bracket - just give what we have so far, to allow partial parsing
-		ParsingAcc(JsonArray(list2array(acc)), start, start)
+		ParsingAcc(JsonArray(list2array(acc)), start, start, fin)
 	} else {
 		value = doParseJson(json, jsonLength, head.second);
 		if (value.start == value.finish) {
 			// No progress, so we have some problem - just give what we have so far, to allow partial parsing
-			ParsingAcc(JsonArray(list2array(acc)), start, start)
+			ParsingAcc(JsonArray(list2array(acc)), start, start, value.finish)
 		} else {
 			parseJsonArray2(json, jsonLength, value.finish, Cons(value.data, acc));
 		}
