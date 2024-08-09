@@ -4,7 +4,6 @@ import material/internal/material_progress;
 import net/appurl;
 
 export {
-	pauseMVideoPlayer() -> void;
 	MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 
 	MVideoWithAnimatedSubtitles(
@@ -15,18 +14,20 @@ export {
 	) -> Material;
 }
 
-pauseAllVideosB = make(false);
-pauseMVideoPlayer() -> void {
-	reverseBehaviour(pauseAllVideosB);
-}
-
 MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	(\p -> eitherFn(
 		getExternalPlayerURL(m.filename),
 		\url -> {
 			enableYoutubeJsApi = isSome(getYouTubeURL(m.filename)) && containsStruct(m.style, MPlayerYoutubeJsApi());
-			if (enableYoutubeJsApi) m2t(MVideoYoutubePlayer(m.filename, m.wh, m.style), p)
-			else MVideoPlayer2MRealHTML(url, p, m, m2t)
+			playing = extractStruct(m.style, FVideoPlay(make(false))).play;
+			TConstruct(
+				[
+					makeSubscribe2(manager.videoRunning, \videoRunning -> if (!videoRunning) next(playing, false)),
+					makeSubscribe(playing, \play -> if (play) next(manager.videoRunning, true)),
+				],
+				if (enableYoutubeJsApi) m2t(MVideoYoutubePlayer(m.filename, m.wh, m.style), p)
+				else MVideoPlayer2MRealHTML(url, p, m, m2t)
+			)
 		},
 		\ -> {
 			itemsColorM : Maybe<MColor> = maybeMap(tryExtractStruct(m.style, MItemsColor(MWhite())), \ic -> MThemeColor2MColor(p, ic.color));
@@ -799,7 +800,8 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				TConstruct(
 					concat(
 						[
-							makeSubscribe2(pauseAllVideosB, \__ -> next(playing, false)),
+							makeSubscribe2(manager.videoRunning, \videoRunning -> if (!videoRunning) next(playing, false)),
+							makeSubscribe(playing, \play -> if (play) next(manager.videoRunning, true)),
 							\ -> fconnect(fdivide(visiblePosition, visibleDuration), sliderPosition),
 							makeSubscribe(
 								faddition(fmultiply(sliderPosition, visibleDuration), visibleRange.start),
@@ -1001,7 +1003,6 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 				makeSubscribe2(receiveB, \s -> println("from YT -> " + s)),
 			] else [],
 			[
-				makeSubscribe2(pauseAllVideosB, \__ -> next(playB, false)),
 				makeSubscribe(sendB, \m -> ^sendToJS(m)),
 				\ -> fBidirectionalLink(playB, fselectFromStateM("status"),
 					\external -> sendState([Pair("status", JsonString(if (external) YT_PLAY else YT_PAUSE))]),
