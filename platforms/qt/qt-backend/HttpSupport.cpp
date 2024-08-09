@@ -40,7 +40,10 @@ void QtHttpSupport::doRequest(HttpRequest &rq)
     // Indicates whether the Network Access API should automatically follow a HTTP redirect response or not.
     // Currently redirects that are insecure, that is redirecting from "https" to "http" protocol, are not allowed.
     // In QT 6 this attribute is removed.
-    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+	//
+	// In case something goes wrong, replace `QNetworkRequest::RedirectPolicyAttribute` (up to date in Qt 5.15)
+	// with deprecated `QNetworkRequest::FollowRedirectsAttribute` (ok in Qt 5.12, but causes warnings in Qt 5.15)
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, true);
 
     if (getFlowRunner()->NotifyStubs)
         getFlowRunner()->flow_err << "Requesting URL: " << url.toString().toUtf8().data() << std::endl;
