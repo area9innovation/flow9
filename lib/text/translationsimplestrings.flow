@@ -5,6 +5,9 @@ import net/http;
 export {
 	// Initialize translation api functions with simple strings support only
 	setTranslationSimpleStringsApi() -> void;
+	setTranslationSimpleStringsCachedApi() -> void;
+	setCachedSimpleStringsTranslations(filePath : string, data : string) -> void;
+	getCachedSimpleStringsTranslations(filePath : string) -> Maybe<string>;
 
 	doSimpleStringTranslation(s : string) -> string;
 	loadSimpleStringsTranslations(
@@ -28,6 +31,18 @@ setTranslationSimpleStringsApi() {
 	setTexts2XliffContentWithLang(simpleTexts2XliffContentWithLang);
 	setTexts2XliffContentDeferred(simpleText2XliffContentDeffered);
 	setLoadTranslations(loadSimpleStringsTranslations);
+	setExtractTranslations(extractSimpleStringsTranslations);
+	setFindTranslated(findSimpleStringTranslation);
+}
+
+setTranslationSimpleStringsCachedApi() {
+	devtrace("translation simple string with cache api");
+	fakeTranslationSupport(doSimpleStringTranslation);
+
+	setTexts2XliffContent(simpleTexts2XliffContent);
+	setTexts2XliffContentWithLang(simpleTexts2XliffContentWithLang);
+	setTexts2XliffContentDeferred(simpleText2XliffContentDeffered);
+	setLoadTranslations(loadAndCacheSimpleStringsTranslations);
 	setExtractTranslations(extractSimpleStringsTranslations);
 	setFindTranslated(findSimpleStringTranslation);
 }
@@ -87,6 +102,62 @@ loadSimpleStringsTranslations(
 	}
 
 	httpRequest(used_file, false, ^translationHttpHeaders, [], onLoaded, onError, nop1);
+}
+
+cachedSimpleStringsTranslations : ref Tree<string, string> = ref TreeEmpty();
+setCachedSimpleStringsTranslations(filePath : string, data : string) -> void {
+	cachedSimpleStringsTranslations := setTree(^cachedSimpleStringsTranslations, filePath, data)
+}
+getCachedSimpleStringsTranslations(filePath : string) -> Maybe<string> {
+	lookupTree(^cachedSimpleStringsTranslations, filePath)
+}
+
+loadAndCacheSimpleStringsTranslations(
+	filePath : string,
+	translationTree : ref Tree<string, string>,
+	maybeVOTree : Maybe<ref Tree<string, string>>,
+	maybeExtractionTime : Maybe<ref string>,
+	maybeAttributesTree : Maybe<ref Tree<string, [KeyValue]>>,
+	onSuccess : () -> void, onFail : () -> void
+) -> void {
+	begin_time = timestamp();
+	translationsDebugTrace("Loading " + filePath);
+
+	used_file = if (strContains(filePath, "nocache=")) {
+		filePath
+	} else {
+		filePath + (if (strContains(filePath, "?")) "&" else "?") + "nocache=" + d2st(timestamp(), 8)
+	}
+
+	onError = \e -> {
+		if (isUrlParameterTrue("dev")) println("Error: Cannot get dictionary " + filePath + ": " + e);
+		onFail();
+	}
+
+	onLoaded = \data -> {
+		if (data == "") {
+			// we treat empty dictionary files as not existing
+			onError("file is empty");
+		} else {
+			translationsDebugTrace("Loaded " + used_file + "; size=" + i2s(strlen(data)) + "; loading time=" + toString((timestamp() - begin_time) / 1000.0) + " sec");
+
+			extractTranslations(data, translationTree, maybeVOTree, maybeAttributesTree, \ -> {
+				translationsDebugTrace("Translations extracted from " + used_file + "; total initialization time: " + toString((timestamp() - begin_time) / 1000.0) + " sec");
+				onSuccess();
+			})
+		}
+	}
+
+	onLoaded2 = \data -> {
+		setCachedSimpleStringsTranslations(filePath, data);
+		onLoaded(data);
+	}
+
+	eitherFn(
+		getCachedSimpleStringsTranslations(filePath),
+		onLoaded,
+		\-> httpRequest(used_file, false, ^translationHttpHeaders, [], onLoaded2, onError, nop1)
+	)
 }
 
 extractSimpleStringsTranslations(content : string, translationTree : ref Tree<string, string>, maybeVOTree : Maybe<ref Tree<string, string>>, maybeAttributesTree : Maybe<ref Tree<string, [KeyValue]>>, onDone : ()->void) -> void {
