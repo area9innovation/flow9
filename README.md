@@ -138,3 +138,4 @@ History
 - November 2016: JIT for x64 was added
 - May 2018: Self-hosted compiler written in flow itself
 - April 2019: Initial open source release
+- ~10000 improvements since then
