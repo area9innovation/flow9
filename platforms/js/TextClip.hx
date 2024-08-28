@@ -1007,6 +1007,12 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
+	public function openDatePicker() : Void -> Void {
+		return function () {
+			if (this.type == "date") nativeWidget.showPicker();
+		}
+	}
+
 	public function setTextInputAutoCompleteType(type : String) : Void {
 		if (this.autocomplete != type) {
 			this.autocomplete = type;
@@ -1804,7 +1810,7 @@ class TextClip extends NativeWidgetClip {
 			scheduledForceUpdate = true;
 		}
 	}
-	
+
 	private function forceUpdateTextWidth() {
 		if (style.wordWrap) {
 			if (nativeWidget != null) {
