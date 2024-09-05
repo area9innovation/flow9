@@ -39,6 +39,7 @@ export {
 	stopAllSoundVideoPlayback : () -> void;
 
 	loadCaptionsFile(captionsFile:string, captionsAvailable: DynamicBehaviour<bool>, curPlayedTime: Behaviour<double>, loadingError : DynamicBehaviour<bool>) -> Behaviour<VideoSubtitle>;
+	loadCaptionsFileExt(captionsFile: string, captionsAvailable: DynamicBehaviour<bool>, curPlayedTime: Behaviour<double>, loadingError : DynamicBehaviour<bool>) -> Pair<Behaviour<VideoSubtitle>, Transform<Maybe<CommonAlignment>>>;
 }
 
 globalPlaybackTrigger = make(false); //All soundPlayer forms stop playback when value is changed
@@ -87,12 +88,12 @@ getXmlNodeBeginEndAttributes(node : XmlNode) -> Maybe<Pair<int, int>> {
 	}
 }
 
-parseXmlCC(n, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity) {
+parseXmlCC(n, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity, textAlignB) {
 	switch(n : XmlNode) {
 		XmlElement(tag, __, __) : {
 			_tag = toLowerCase(tag);
 			if (_tag == "tt") {
-				parseTTML1(n, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity);
+				parseTTML1(n, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity, textAlignB);
 			} else if (_tag == "transcript") {
 				parseTRANSCRIPT(n, ccsref);
 			}
@@ -131,7 +132,7 @@ parseWebVTTContent(content : string, ccsref : ref [ClosedCaption]) -> void {
 // This is "Timed Text Markup Language 1 (TTML1)"
 // Reference: http://www.w3.org/TR/ttml1/
 // parse Xml file with Close Captions (subtitles). parsing ex.: <p begin="00:00:00.10" dur="00:00:01.08">Author's Tone</p>
-parseTTML1(xn, ccsref : ref [ClosedCaption], fontSize : ref double, fontFamily : ref string, color : ref int, opacity : ref double, bgColor : ref int, bgOpacity : ref double) {
+parseTTML1(xn, ccsref : ref [ClosedCaption], fontSize : ref double, fontFamily : ref string, color : ref int, opacity : ref double, bgColor : ref int, bgOpacity : ref double, textAlignB : DynamicBehaviour<Maybe<CommonAlignment>>) {
 	switch (xn : XmlNode) {
 		XmlElement(tag, attributes, children) : {
 			tagNormalized = toLowerCase(tag);
@@ -208,8 +209,16 @@ parseTTML1(xn, ccsref : ref [ClosedCaption], fontSize : ref double, fontFamily :
 				if (bgOp != "" && isDouble(bgOp)) {
 					bgOpacity := s2d(bgOp)
 				}
+
+				ta = getXmlAttribute(attributes, "tts:textAlign", "");
+				nextDistinct(textAlignB, if (ta == "left") Some(LeftAlign())
+				else if (ta == "center") Some(CenterAlign())
+				else if (ta == "right") Some(RightAlign())
+				else if (ta == "start") Some(StartAlign())
+				else if (ta == "end") Some(EndAlign())
+				else None());
 			}
-			iter(children, \cxn -> parseTTML1(cxn, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity) );
+			iter(children, \cxn -> parseTTML1(cxn, ccsref, fontSize, fontFamily, color, opacity, bgColor, bgOpacity, textAlignB) );
 		}
 		XmlText(__):{}
 	}
@@ -269,6 +278,16 @@ loadCaptionsFile(
 	curPlayedTime: Behaviour<double>,
 	loadingError : DynamicBehaviour<bool>
 ) -> Behaviour<VideoSubtitle> {
+	println("loadCaptionsFile captionsFile = " + toString(captionsFile));
+	loadCaptionsFileExt(captionsFile, captionsAvailable, curPlayedTime, loadingError).first
+}
+
+loadCaptionsFileExt(
+	captionsFile: string,
+	captionsAvailable: DynamicBehaviour<bool>,
+	curPlayedTime: Behaviour<double>,
+	loadingError : DynamicBehaviour<bool>
+) -> Pair<Behaviour<VideoSubtitle>, Transform<Maybe<CommonAlignment>>> {
 
 	closedCaptions = ref [];
 	fontSize = ref 24.0;
@@ -278,6 +297,7 @@ loadCaptionsFile(
 	bgColor = ref black;
 	bgOpacity = ref 1.;
 	currentCC : DynamicBehaviour<ClosedCaption> = make(dummyCC);
+	textAlignB : DynamicBehaviour<Maybe<CommonAlignment>> = make(None());
 	isSupportedFormat = make(true);
 
 	findCurrentCC = \cpt -> {
@@ -308,7 +328,7 @@ loadCaptionsFile(
 		}
 	});
 
-	if (captionsFile != "") {
+	Pair(if (captionsFile != "") {
 		httpRequest(addServerPathIfRelative(captionsFile), false, [], [],
 			\c -> if (isWebVTT(c)) {
 				parseWebVTTContent(c, closedCaptions);
@@ -321,7 +341,7 @@ loadCaptionsFile(
 					XmlElement(tag, __, __) : {
 						_tag = toLowerCase(tag);
 						if (_tag == "tt" || _tag == "transcript") {
-							parseXmlCC(parsed, closedCaptions, fontSize, fontFamily, color, opacity, bgColor, bgOpacity);
+							parseXmlCC(parsed, closedCaptions, fontSize, fontFamily, color, opacity, bgColor, bgOpacity, textAlignB);
 							startSubs();
 							nextDistinct(currentCC, findCurrentCC(trunc(getValue(curPlayedTime) * 1000.0)));
 							next(loadingError, false);
@@ -362,7 +382,7 @@ loadCaptionsFile(
 		})
 	} else {
 		const(VideoSubtitle("", []))
-	};
+	}, textAlignB)
 }
 
 makeCaptionsForm(width: Behaviour<double>, height: Behaviour<double>,
