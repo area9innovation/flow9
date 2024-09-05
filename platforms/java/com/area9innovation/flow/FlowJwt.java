@@ -4,8 +4,12 @@ import java.util.*;
 import java.text.*;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import java.math.BigInteger;
 import java.security.*;
 import java.security.interfaces.*;
+import java.security.spec.RSAPublicKeySpec;
+import org.json.simple.*;
+import org.json.simple.parser.*;
 
 import com.auth0.jwt.JWTVerifier.*;
 import com.auth0.jwt.interfaces.*;
@@ -147,7 +151,7 @@ public class FlowJwt extends NativeHost {
 		return builder.sign(algorithm);
 	}
 
-	public static RSAPublicKey getPublicKeyFromString(String publicKeyPEM) throws NoSuchAlgorithmException, java.security.spec.InvalidKeySpecException {
+	public static RSAPublicKey getRSAPublicKeyFromString(String publicKeyPEM) throws NoSuchAlgorithmException, java.security.spec.InvalidKeySpecException {
 		publicKeyPEM = publicKeyPEM.replace("-----BEGIN PUBLIC KEY-----", "");
 		publicKeyPEM = publicKeyPEM.replace("-----END PUBLIC KEY-----", "");
 		publicKeyPEM = publicKeyPEM.replaceAll("\\s","");
@@ -158,15 +162,44 @@ public class FlowJwt extends NativeHost {
 		return pubKey;
 	}
 
-	public static String verifyJwtWithPublicKey(String jwtStr, String publicKeyStr) {
-		try {
-			RSAPublicKey publicKey = getPublicKeyFromString(publicKeyStr);
-			DecodedJWT jwt = JWT.decode(jwtStr);
-			Algorithm algorithm = Algorithm.RSA256(publicKey, null);
-			algorithm.verify(jwt);
-			return "OK";
-		} catch (Exception e) {
-			return e.getMessage();
+	public static RSAPublicKey getRSAPublicKeyFromJsonString(String jsonStr) throws Exception{
+		JSONObject json = (JSONObject) new JSONParser().parse(jsonStr);
+		String n = (String)json.get("n");
+		String e = (String)json.get("e");
+		BigInteger n2 = new BigInteger(1, Base64.getUrlDecoder().decode(n));
+		BigInteger e2 = new BigInteger(1, Base64.getUrlDecoder().decode(e));
+		RSAPublicKeySpec spec = new RSAPublicKeySpec(n2, e2);
+		KeyFactory kf = KeyFactory.getInstance("RSA");
+		RSAPublicKey pubKey = (RSAPublicKey) kf.generatePublic(spec);
+		return pubKey;
+	}
+
+	public static String verifyJwtWithPublicKey(String jwtStr, String keyStr, String algorithmStr) {
+		if (algorithmStr.equals("RS256") || algorithmStr.equals("RS384") || algorithmStr.equals("RS512")) {
+			try {
+				RSAPublicKey publicKey = null;
+				if (keyStr.startsWith("{")) {
+					publicKey = getRSAPublicKeyFromJsonString(keyStr);
+				} else {
+					publicKey = getRSAPublicKeyFromString(keyStr);
+				}
+				DecodedJWT jwt = JWT.decode(jwtStr);
+				Algorithm algorithm = null;
+				if (algorithmStr.equals("RS256")) {
+					algorithm = Algorithm.RSA256(publicKey, null);
+				} else if (algorithmStr.equals("RS384")) {
+					algorithm = Algorithm.RSA384(publicKey, null);
+				} else {
+					algorithm = Algorithm.RSA512(publicKey, null);
+				}
+				algorithm.verify(jwt);
+				return "OK";
+			} catch (Exception e) {
+				//e.printStackTrace();
+				return e.getMessage();
+			}
+		} else {
+			return "Algorithm not supported";
 		}
 	}
 }
