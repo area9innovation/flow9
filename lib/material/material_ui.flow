@@ -233,6 +233,10 @@ export {
 	// Becomes visually highlighted and focused once at the start if something (except input/editor) was in focus just before construction
 	// Used for notifying screenreader about changes on the screen
 	MInitiallyFocused(mat : Material, buttonTitle : Transform<string>) -> Material;
+	MInitiallyFocused2(mat : Material, buttonTitle : Transform<string>, previousFocus: Transform<Maybe<MFocus>>) -> Material;
+
+	// Is used to announce some text by screenreader and move focus to the specific place on screen
+	MTemporarilyFocused(mat : Material, buttonTitle : Transform<string>, trigger : Transform<bool>) -> Material;
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -672,6 +676,8 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 				default : None()
 			}
 		);
+		isSafari = isSafariBrowser();
+		allFragmentsInitiated = ref false;
 
 	  	// FVideoStyle properties
 	 	lenEx = extractStruct(fvStyle, FVideoLength(make(0.))).length;
@@ -683,6 +689,10 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 		timeranges = extractStruct(mStyle, MMultiAudioTimerange([])).timeranges;
 		hasTimeRanges = exists(timeranges, isSome);
 
+		volumeEx = extractStruct(fvStyle, FVideoVolume(make(1.0))).volume;
+		volumeValue = getValue(volumeEx);
+		if (isSafari) next(volumeEx, 0.01);
+
 	  	// MMultiAudioPlayerStyle properties
 	 	currIndexB = extractStruct(mStyle, IndexInPlaylist(make(0))).index;
 
@@ -692,14 +702,22 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 			map(filenames, \__ -> make(0.0)),
 			map(filenames, \__ -> make(0.0)),
 			map(filenames, \__ -> make(0.0)),
-			map(filenames, \__ -> make(false)),
+			map(filenames, \__ -> make(isSafari)),
 			map(filenames, \__ -> make(false)),
 	 	);
+		allIsReady = fands(states.isReady, false);
 
-	  	synchrocalls = mapi(filenames, \i, __ ->
-	 		SynchroCalls(
-	 			// set ready
-	 			\-> nextDistinct(states.isReady[i], true),
+		synchrocalls = mapi(filenames, \i, __ ->
+			SynchroCalls(
+				// set ready
+				\-> if (isSafari) {
+					deferUntilRender(\-> {
+						next(states.isPlay[i], false);
+						nextDistinct(states.isReady[i], true);
+					});
+				} else {
+					nextDistinct(states.isReady[i], true)
+				},
 	 			// play next or stop in the end
 	 			\-> {
 	 				// reset position (for js)
@@ -743,6 +761,7 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 								synchrocalls[i],
 								FAudio(),
 								timerange,
+								FVideoVolume(volumeEx),
 							]
 						)
 					)
@@ -758,6 +777,7 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 						FVideoPlay(states.isPlay[i]),
 						synchrocalls[i],
 						FAudio(),
+						FVideoVolume(volumeEx),
 					]
 				)
 			)
@@ -814,12 +834,22 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 				[
 					\-> \-> next(currIndexB, 0),
 					// when all audios ready
-					makeSubscribe(fands(states.isReady, false), \isReady ->
-						if (isReady) synchrocallEx.onStart()
+					makeSubscribe(allIsReady, \isReady ->
+						if (isReady) {
+							synchrocallEx.onStart();
+							if (isSafari) {
+								next(volumeEx, volumeValue);
+								deferUntilRender(\-> {
+									changeAudioPlaying(getValue(currIndexB), getValue(playEx));
+									allFragmentsInitiated := true;
+								});
+							}
+						}
 					),
 					// sum all audio lengths. but refresh total length only after all data is got (all lengths > 0)
-					\-> fconnectSelect(fmerge(states.length), lenEx, \lens -> {
-							if (hasTimeRanges) calculateAudioLengthWithTimeRanges(lens) 
+					\-> fconnect2Select(fmerge(states.length), allIsReady, lenEx, \lens, ready -> {
+							if (isSafari && !ready) 0.0
+							else if (hasTimeRanges) calculateAudioLengthWithTimeRanges(lens)
 							else if (all(map(lens, \l -> l > 0.0))) dsum(lens)
 							else 0.0
 						}),
@@ -836,7 +866,9 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 							changeAudioPlaying(newIndex, getValue(playEx));
 
 							[
-								fconnect(fdelayUntilNextFrameRendered(states.isPlay[newIndex]), playEx)
+								fconnectSelect(fdelayUntilNextFrameRendered(states.isPlay[newIndex]), playEx, \isPlay -> {
+									if (!isSafari || ^allFragmentsInitiated) isPlay else getValue(playEx)
+								})
 							]
 						})
 					),
@@ -1840,6 +1872,10 @@ MPositionScaleEnabled(positionScale : DynamicBehaviour<PositionScale>, content :
 }
 
 MInitiallyFocused(mat : Material, buttonTitle : Transform<string>) -> Material {
+	MGetManager(\manager -> MInitiallyFocused2(mat, buttonTitle, manager.latelyFocused))
+}
+
+MInitiallyFocused2(mat : Material, buttonTitle : Transform<string>, previousFocus: Transform<Maybe<MFocus>>) -> Material {
 	focused = make(false);
 	framePadding = 2.;
 	MComponent([
@@ -1852,10 +1888,36 @@ MInitiallyFocused(mat : Material, buttonTitle : Transform<string>) -> Material {
 		MCursorShape(const(DefaultCursor()))
 	], \__ -> MBorder4(framePadding, MAccess([FAccessHidden()], mat)))
 	|> (\m -> MBorder4(-framePadding, m))
-	|> (\m -> MGetManager(\manager -> MConstruct([\ -> {
-			if (eitherMap(fgetValue(manager.latelyFocused), \lf -> !contains(["MTextInput", "MAutoComplete", "MWEditor", "RhapsodeTemporarilyFocused"], lf.name), false)) {
-				deferUntilNextFrameRendered(\ -> nextDistinct(focused, true));
-			}
-			nop
-		}], m)))
+	|> (\m -> MConstruct([\ -> {
+		if (eitherMap(fgetValue(previousFocus), \lf -> !contains(["MTextInput", "MAutoComplete", "MWEditor", "MTemporarilyFocused"], lf.name), false)) {
+			deferUntilNextFrameRendered(\ -> nextDistinct(focused, true));
+		}
+		nop
+	}], m))
+}
+
+MTemporarilyFocused(mat : Material, buttonTitle : Transform<string>, trigger : Transform<bool>) -> Material {
+	focusedElementEnabled = make(false);
+	focused = make(false);
+	MSelect(focusedElementEnabled, \en ->
+		if (en) {
+			timer(0, \ -> {
+				nextDistinct(focused, true);
+			});
+			MComponent([
+				MCursorShape(const(DefaultCursor())),
+				MFocused(focused),
+				MButtonTitle(buttonTitle),
+				AccessRole("none"),
+				TagName("div"),
+				ClassName("flow_focusable"),
+				MFocusName("MTemporarilyFocused")
+			], \__ -> mat)
+		} else mat
+	)
+	|> (\m -> MConstruct([
+			// trigger is 'pressed'
+			makeSubscribe2(trigger, \tr -> if (!tr) nextDistinct(focusedElementEnabled, true)),
+			makeSubscribe2(focused, \foc -> if (!foc) nextDistinct(focusedElementEnabled, false))
+	], m))
 }

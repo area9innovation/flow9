@@ -4388,6 +4388,10 @@ class RenderSupport {
 		return hadUserInteracted;
 	}
 
+	public static function openDatePicker(clip : TextClip) : Void -> Void {
+		return clip.openDatePicker();
+	}
+
 	public static function createMathJaxClip(latex: String) : Dynamic {
 		return new MathJaxClip(latex);
 	};

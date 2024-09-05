@@ -83,7 +83,7 @@ In the host open the created graph.html file in a browser. In WSL it might be so
 
 Flow also have an QT target. To verify that it is working, do:
 
-	cd ~/prg/flow9
+	cd /workspaces/flow9
 	flowcpp --batch sandbox/hello_console.flow
 
 This should display "Hello console".
@@ -96,7 +96,7 @@ This should open a new window with two eyes. (If it does not work, then it somet
 
 If GUI applications works, then try:
 
-	cd ~/prg/flow9
+	cd /workspaces/flow9
 	flowcpp sandbox/graph.flow
 
 This should open a new GUI Window and show an automatic graph layout.
