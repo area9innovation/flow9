@@ -4,6 +4,8 @@ import java.util.*;
 import java.text.*;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import java.security.*;
+import java.security.interfaces.*;
 
 import com.auth0.jwt.JWTVerifier.*;
 import com.auth0.jwt.interfaces.*;
@@ -143,5 +145,28 @@ public class FlowJwt extends NativeHost {
 			}
 		}
 		return builder.sign(algorithm);
+	}
+
+	public static RSAPublicKey getPublicKeyFromString(String publicKeyPEM) throws NoSuchAlgorithmException, java.security.spec.InvalidKeySpecException {
+		publicKeyPEM = publicKeyPEM.replace("-----BEGIN PUBLIC KEY-----", "");
+		publicKeyPEM = publicKeyPEM.replace("-----END PUBLIC KEY-----", "");
+		publicKeyPEM = publicKeyPEM.replaceAll("\\s","");
+		byte[] decodedPublicKey = Base64.getDecoder().decode(publicKeyPEM);
+
+		KeyFactory kf = KeyFactory.getInstance("RSA");
+		RSAPublicKey pubKey = (RSAPublicKey) kf.generatePublic(new java.security.spec.X509EncodedKeySpec(decodedPublicKey));
+		return pubKey;
+	}
+
+	public static String verifyJwtWithPublicKey(String jwtStr, String publicKeyStr) {
+		try {
+			RSAPublicKey publicKey = getPublicKeyFromString(publicKeyStr);
+			DecodedJWT jwt = JWT.decode(jwtStr);
+			Algorithm algorithm = Algorithm.RSA256(publicKey, null);
+			algorithm.verify(jwt);
+			return "OK";
+		} catch (Exception e) {
+			return e.getMessage();
+		}
 	}
 }
