@@ -1156,6 +1156,7 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 	oldLineSize = makeWH();
 	newLineSize = makeWH();
 
+	avW = make(0.);
 	boxSize = fselect2(oldLineSize, newLineSize, FLift2(\old, new -> WidthHeight(max(old.width, new.width), old.height + new.height)));
 
 	backgroundColor = make(0);
@@ -1194,11 +1195,17 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 		|> TBorderBottom(dSize)
 		|> TBorderTop(frame.border)
 		|> (\t -> TTranslate(translatePoint, t))
-		|> (\t -> TConstruct([\ -> \ -> nextDistinct(size, zeroWH)], t))
-		|> (\t -> TAvailableWidth(t, fwidth(boxSize)))
-	;
+		|> (\t -> TConstruct([\ -> \ -> nextDistinct(size, zeroWH)], t));
 
-	TMutable(fselectWith2Last(subtitles.subtitles, \old2, old, new -> {
+	dummySubtitle = VideoSubtitle("", []);
+
+	meaningfulSubtiles = ftransistor(
+		fselectLift(subtitles.subtitles, \sbt -> sbt.text != dummySubtitle.text),
+		subtitles.subtitles
+	);
+
+	TMutable(fselectWith2Last(meaningfulSubtiles, \old2, old, new -> {
+		boxWidth = make(0.);
 		innerPercent = make(0.);
 		antiInnerPercent = fsubtract(const(1.), innerPercent);
 		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height - frame.border))), antiInnerPercent);
@@ -1213,8 +1220,12 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 			makeSubtitleLine(old, oldLineSize, oldLineTranslatePoint, 0.),
 			makeSubtitleLine(old2, old2LineSize, old2LineTranslatePoint, 0.) |> (\t -> TAlpha(antiInnerPercent, t))
 		])
+		|> (\t -> TAvailableWidthPreventFillers(t, fsubselect(boxWidth, FLift(\wd -> 
+			if (wd == 0.) avW else fmin(const(wd), avW)
+		))))
 		|> (\t -> TConstruct([
 			\ -> fconnectSelect(percent, innerPercent, \perc -> max(getValue(innerPercent), perc)),
+			\ -> fconnect(fstall(fwidth(boxSize), 0), boxWidth),
 			\ -> {
 				color = extractStruct(new.style, BackgroundFill(0)).color;
 				opacity =
@@ -1226,18 +1237,18 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 				nop;
 			}
 		], t))
-	}, VideoSubtitle("", [])))
-	|> (\t -> TGroup2(
-		TDisplay("TAnimatedSubtitlesBackground") |> TCenterX,
-		TCropSize(TGhost("TAnimatedSubtitlesBackground"), t |> TBorderLeftRight(frame.border)) |> TCenterX
-	))
+	}, dummySubtitle))
+	|> TBorderLeftRight(frame.border)
+	|> (\t -> TGroup2(TDisplay("TAnimatedSubtitlesBackground"), TCropSize(TGhost("TAnimatedSubtitlesBackground"), t)))
+	|> TCenterX
 	|> (\t -> TLet("TAnimatedSubtitlesBackground", background, t))
+	|> (\t -> TAttachAvailableWidth(t, avW))
 	|> TBorderBottom(8.)
 }
 
 fselectWith2Last(b : Transform<??>, fn : (??, ??, ??) -> ?, def : ??) -> Transform<?> {
 	lastV : ref Maybe<Pair<??, ??>> = ref None();
-	fselect(ftransistor(fneq(b, def), b), FLift(\v ->
+	fselectLift(b, \v ->
 		switch (^lastV) {
 			Some(prevV): {
 				r = fn(prevV.first, prevV.second, v);
@@ -1249,5 +1260,5 @@ fselectWith2Last(b : Transform<??>, fn : (??, ??, ??) -> ?, def : ??) -> Transfo
 				fn(def, def, v);
 			}
 		}
-	))
+	)
 }
