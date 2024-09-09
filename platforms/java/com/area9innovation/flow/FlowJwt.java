@@ -12,7 +12,6 @@ import java.security.spec.*;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.json.simple.*;
 import org.json.simple.parser.*;
-import org.apache.commons.codec.binary.StringUtils;
 
 import com.auth0.jwt.JWTVerifier.*;
 import com.auth0.jwt.interfaces.*;
@@ -197,7 +196,7 @@ public class FlowJwt extends NativeHost {
 	public static String getJwtAlgHeader(String jwtStr) {
 		try {
 			DecodedJWT jwt = JWT.decode(jwtStr);
-			String header = StringUtils.newStringUtf8(Base64.getDecoder().decode(jwt.getHeader()));
+			String header = new String(Base64.getDecoder().decode(jwt.getHeader()), "UTF-8");
 			JSONObject json = (JSONObject) new JSONParser().parse(header);
 			return (String)json.get("alg");
 		} catch (Exception e) {
