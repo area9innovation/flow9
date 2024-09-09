@@ -11,7 +11,7 @@ export {
 		FlexibleGridAlignment ::= RelativeAlignment, CenterAlign, TightWidth;
 		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows, FlexibleGridAlignment,
 			TAnimationTimer, TOrder, TLockWidth, TEnabled, TSetRTL, TSameSize, TFlexibleGridContentSizeInspector, TFlexibleGridMaxContentWidthInspector,
-			TBaselineAlign, TFillersSupport, TAvailableMinMax, TArrayThreshold, TFlexibleGridLazyRenderingMode;
+			TBaselineAlign, TFillersSupport, TAvailableMinMax, TArrayThreshold, TFlexibleGridLazyRenderingMode, TSpacing;
 
 			TWrapNewRow(wrap : bool); // New row should be below all the elements in the previous one (true by default for horizontal grid)
 			TWrapNewColumn(wrap : bool); // New column should be to the right of all the elements in the previous one (true by default for vertical grid)
@@ -26,6 +26,7 @@ export {
 			TCenterSupport() -> TFlexibleGridStyle { TFillersSupport(); };
 			TAvailableMinMax(min : Transform<double>, max : Transform<double>);
 			TArrayThreshold(threshold : Transform<int>); // Fine efficiency tuning : what algorithm to use depending on array size
+			TSpacing(x : Transform<double>, y : Transform<double>); // Spacing between items
 
 			// Size of the box, which content occupies inside the grid. Less or equal to outer grid box size
 			TFlexibleGridContentSizeInspector(wh : DynamicBehaviour<WidthHeight>);
@@ -89,6 +90,8 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	alignBaselines = contains(style, TBaselineAlign());
 	fillersSupport = contains(style, TFillersSupport()) || alignBaselines;
 	arrayThreshold = extractStruct(style, TArrayThreshold(const(ARRAY_DIFF_TRESHOLD))).threshold;
+	spacing = extractStruct(style, TSpacing(zero, zero));
+	spacingB = if (lockWidth) spacing.x else spacing.y;
 
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
 	isSameSize = contains(style, TSameSize());
@@ -105,7 +108,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 
 			TFlexibleGridItem(
 				^flexibleGridItemId,
-				it,
+				TBorderTDir(zero, zero, spacing.x, spacing.y, it, isRTL),
 				make(const(zeroPoint)),
 				if (isSameSize) sameSizeWH else make(zeroWH),
 				if (isSameSize) sameSizeBaseline else make(0.0),
@@ -120,25 +123,27 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 
 	contentBaseline = fsubselect(felementAt(itemsB, const(0), const(emptyTFlexibleGridItem)), FLift(\e : TFlexibleGridItem -> e.baseline));
 	contentSize0 =
-		fselect(
+		fselect3(
 			fsubmap(itemsB, \it : TFlexibleGridItem -> fpair(fsubselect(it.tr, idfn |> FLift), it.wh)),
-			FLift(\pairs : [Pair<Point, WidthHeight>]-> {
+			spacing.x,
+			spacing.y,
+			\pairs : [Pair<Point, WidthHeight>], spacingX, spacingY-> {
 				fold(pairs, Triple(zeroWH, doubleMax, 0.), \acc, v ->
 					Triple(
 						WidthHeight(
-							max(acc.first.width, v.second.width + v.first.x),
-							max(acc.first.height, v.second.height + v.first.y)
+							max(acc.first.width, dfloor(v.second.width + v.first.x - spacingX)),
+							max(acc.first.height, dfloor(v.second.height + v.first.y - spacingY))
 						),
 						min(acc.second, v.first.x),
-						acc.third + v.second.width
+						acc.third + dfloor(v.second.width - spacingX)
 					)
 				)
-			})
+			}
 		);
 
 	contentSize = fFirstOfTriple(contentSize0);
 
-	contentMinSize = fselect(fsubmap(itemsB, \it -> if (lockWidth) fwidth(it.minWH) else fheight(it.minWH)), FLift(\v -> either(maxA(v), 0.0)));
+	contentMinSize = fselect2(fsubmap(itemsB, \it -> if (lockWidth) fwidth(it.minWH) else fheight(it.minWH)), spacingB, FLift2(\v, sp -> either(maxA(v), sp) - sp));
 
 	parameters =
 		BFParameters(
@@ -277,7 +282,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 						make3Subscribe2(
 							fdelayUntilNextFrameRendered(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB)),
 							sameSizeMinWH,
-							fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(availableMinMax.min, availableMinMax.max))),
+							fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(faddition(availableMinMax.min, spacingB), faddition(availableMinMax.max, spacingB)))),
 							\itms, __, stageSize ->
 								fitTFlexibleGrid(itms, stageSize.first, stageSize.second, verticalGrid, alignment, alignBaselines, maxRows, isRTL)
 						)
@@ -287,7 +292,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 								fdelayUntilNextFrameRendered(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB)),
 								\it -> fpair(const(it), fpair(it.minWH, it.maxWH))
 							),
-							fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(availableMinMax.min, availableMinMax.max))),
+							fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(faddition(availableMinMax.min, spacingB), faddition(availableMinMax.max, spacingB)))),
 							\itms, stageSize ->
 								fitTFlexibleGrid(map(itms, firstOfPair), stageSize.first, stageSize.second, verticalGrid, alignment, alignBaselines, maxRows, isRTL)
 						)
@@ -298,7 +303,7 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 			itemTranslations =
 				fselect2(
 					fsubmap(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB), \it -> it.wh),
-					ftransistor(gridEnabled, availableMinMax.min),
+					ftransistor(gridEnabled, faddition(availableMinMax.min, spacingB)),
 					FLift2(\itemsSizes, stageSize -> {
 						blocks = map(itemsSizes, \wh -> BFBlock(wh.width, wh.height));
 						bfFit(stageSize, blocks, parameters);
@@ -559,7 +564,7 @@ mergeTFlexibleGridConstantItemsVertical(t1 : TFlexibleGridConstantItem, t2 : TFl
 	uns = ref nop;
 	uns := subscribe2(tr, \__ -> {
 		next(t1.av, fwh(fwidth(t1.minWH), da.first));
-		next(t2.av, fwh(fwidth(t1.minWH), da.second));
+		next(t2.av, fwh(fwidth(t2.minWH), da.second));
 
 		next(t1.tr, fsubselect(tr, idfn |> FLift));
 		next(t2.tr, fsubselect(tr, FLift(\p -> fpoint(fpointX(p), faddition(fpointY(p), da.first)))));
@@ -670,7 +675,7 @@ fitTFlexibleGrid(
 	}
 
 	iter(items, \it -> {
-		minSize = if (vertical) fheight(it.minWH) else fwidth(it.minWH); 
+		minSize = if (vertical) fheight(it.minWH) else fwidth(it.minWH);
 		doesFit = fgetValue(^currentCoord) + fgetValue(minSize) < sizeMax;
 
 		if (eitherMap(maxRows, \mr -> length(^currentLine) < mr, true) && (doesFit || length(^currentLine) == 0)) {
