@@ -210,7 +210,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					\foc ->
 						TVideoWithAnimatedSubtitles(
 							manager,
-							p,
+							MFocusGroup(p with rtl = parent.rtl),
 							TVideo(m.filename, videoWH, videoStyle),
 							poster,
 							maybeMap(animatedSubtitles, \sbtl -> Pair(sbtl, subtitlesVisible)),
@@ -1149,12 +1149,14 @@ TVideoWithAnimatedSubtitles(
 TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : MAnimatedSubtitles, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	duration = extractStruct(subtitles.style, MDuration(const(0.5)));
 	frame = extractStruct(subtitles.style, MSubtitlesFrame(4., 4.));
+	paragraphAlignment = extractStruct(subtitles.style, MSubtitlesAlignment(const(CenterAlign()))).alignment;
 
 	percent = make(0.);
 	old2LineSize = makeWH();
 	oldLineSize = makeWH();
 	newLineSize = makeWH();
 
+	avW = make(0.);
 	boxSize = fselect2(oldLineSize, newLineSize, FLift2(\old, new -> WidthHeight(max(old.width, new.width), old.height + new.height)));
 
 	backgroundColor = make(0);
@@ -1181,12 +1183,12 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 		|> (\sz -> TFrameT(const(frame.border), const(frame.radius), backgroundStyle, sz));
 
 	makeSubtitleLine = \sbtl, size, translatePoint, dSize ->
-		MDynamicParagraph2T(parent, const(sbtl.text), concat(
+		MDynamicParagraph2T(parent, const(trim(sbtl.text)), concat(
 			replaceStruct(MCharacterStyle2MTextStyle(sbtl.style), BackgroundFillOpacity(0.0)),
 			[
-				MSetRTL(false),
+				MSetRTL(parent.rtl),
 				extractStruct(sbtl.style, EscapeHTML(true)),
-				CenterAlign(),
+				fgetValue(paragraphAlignment),
 				ParagraphMetrics(\met -> nextDistinct(size, WidthHeight(met.width, met.height + dSize)))
 			])
 		)
@@ -1195,7 +1197,15 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 		|> (\t -> TTranslate(translatePoint, t))
 		|> (\t -> TConstruct([\ -> \ -> nextDistinct(size, zeroWH)], t));
 
-	TMutable(fselectWith2Last(subtitles.subtitles, \old2, old, new -> {
+	dummySubtitle = VideoSubtitle("", []);
+
+	meaningfulSubtiles = ftransistor(
+		fselectLift(subtitles.subtitles, \sbt -> sbt.text != dummySubtitle.text),
+		subtitles.subtitles
+	);
+
+	TMutable(fselectWith2Last(meaningfulSubtiles, \old2, old, new -> {
+		boxWidth = make(0.);
 		innerPercent = make(0.);
 		antiInnerPercent = fsubtract(const(1.), innerPercent);
 		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height - frame.border))), antiInnerPercent);
@@ -1210,8 +1220,12 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 			makeSubtitleLine(old, oldLineSize, oldLineTranslatePoint, 0.),
 			makeSubtitleLine(old2, old2LineSize, old2LineTranslatePoint, 0.) |> (\t -> TAlpha(antiInnerPercent, t))
 		])
+		|> (\t -> TAvailableWidthPreventFillers(t, fsubselect(boxWidth, FLift(\wd ->
+			if (wd == 0.) avW else fmin(const(wd), avW)
+		))))
 		|> (\t -> TConstruct([
 			\ -> fconnectSelect(percent, innerPercent, \perc -> max(getValue(innerPercent), perc)),
+			\ -> fconnect(fstall(fwidth(boxSize), 0), boxWidth),
 			\ -> {
 				color = extractStruct(new.style, BackgroundFill(0)).color;
 				opacity =
@@ -1223,18 +1237,18 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 				nop;
 			}
 		], t))
-	}, VideoSubtitle("", [])))
-	|> (\t -> TGroup2(
-		TDisplay("TAnimatedSubtitlesBackground") |> TCenterX,
-		TCropSize(TGroup2(TFillX(), TGhost("TAnimatedSubtitlesBackground")), t)
-	))
+	}, dummySubtitle))
+	|> TBorderLeftRight(frame.border)
+	|> (\t -> TGroup2(TDisplay("TAnimatedSubtitlesBackground"), TCropSize(TGhost("TAnimatedSubtitlesBackground"), t)))
+	|> TCenterX
 	|> (\t -> TLet("TAnimatedSubtitlesBackground", background, t))
+	|> (\t -> TAttachAvailableWidth(t, avW))
 	|> TBorderBottom(8.)
 }
 
 fselectWith2Last(b : Transform<??>, fn : (??, ??, ??) -> ?, def : ??) -> Transform<?> {
 	lastV : ref Maybe<Pair<??, ??>> = ref None();
-	fselect(ftransistor(fneq(b, def), b), FLift(\v ->
+	fselectLift(b, \v ->
 		switch (^lastV) {
 			Some(prevV): {
 				r = fn(prevV.first, prevV.second, v);
@@ -1246,5 +1260,5 @@ fselectWith2Last(b : Transform<??>, fn : (??, ??, ??) -> ?, def : ??) -> Transfo
 				fn(def, def, v);
 			}
 		}
-	))
+	)
 }
