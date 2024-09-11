@@ -3297,7 +3297,7 @@ class RenderSupport {
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var clipWidth = 0;
 			var clipHeight = 0;
-			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip)) {
+			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip) && !clip.isInput) {
 				clipWidth = untyped clip.getClipWidth(false);
 				clipHeight = untyped clip.getClipHeight(false);
 			} else {
