@@ -55,7 +55,7 @@ export {
 		CalendarYearHideEventsCount, CalendarCustomEventTitle, CalendarEventsOpacities, CalendarCustomHeader, CalendarHideContentFrame,
 		CalendarScrollStyle, CalendarPlannedHideDeleteButton, CalendarReadOnlyEvent, CalendarPebbles, CalendarHideTabs, CalendarHideWeekends,
 		CalendarHideTimeInDayView, CalendarHideTimelineInDayView, CalendarReadOnlyEventDialog, CalendarCombinedEventsView,
-		CalendarWeekAdaptiveWidth, CalendarDisableHorizontalBorder, HoursGridForWeekView, CalendarSelectedTab, CalendarShowWeekNumber;
+		CalendarWeekAdaptiveWidth, CalendarDisableHorizontalBorder, HoursGridForWeekView, CalendarSelectedTab, CalendarShowWeekNumber, CalendarGetHourOnEmptyCell;
 
 		ShowMonthViewSwitchMenu();
 		DefaultMonthView(byWeek : bool);
@@ -159,6 +159,7 @@ export {
 		CalendarCombinedEventsView(getCombinedEvents : (CalendarTab, [CalendarEvent]) -> [CalendarEvent], getView : (CalendarTab, [CalendarEvent], ([CalendarEvent]) -> void) -> Material);
 		CalendarSelectedTab(selectedTabB : DynamicBehaviour<CalendarTab>);
 		CalendarShowWeekNumber();
+		CalendarGetHourOnEmptyCell();
 
 	CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab, DayTab;
 		YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab(); DayTab();
@@ -904,7 +905,7 @@ eventDeletePopup(
 }
 
 dayEventsPopup(
-	curDate : Date,
+	curTime : Time,
 	dayEventsStatic : [CalendarEvent],
 	eventTypesB : DynamicBehaviour<[CalendarEventDecription]>,
 	manager : MaterialManager,
@@ -928,15 +929,16 @@ dayEventsPopup(
 	close = make(false);
 	dayEvents = make(dayEventsStatic);
 
-	curTime = stamp2time(timestamp());
-	dayNumber = curDate.day;
-	monthNumber = curDate.month;
+	curDate = time2date(curTime);
 
 	roundTime = \time -> {
-		roundInterval = 30;
-		roundedMinutes = (time.min / roundInterval + 1) * roundInterval;
-		flooredTime = Time(time with min = 0, sec = 0);
-		stamp2time(time2stamp(flooredTime) + min2ms(roundedMinutes));
+		if (i2b(curTime.hour) || i2b(curTime.min) || i2b(curTime.sec)) time
+		else {
+			roundInterval = 30;
+			roundedMinutes = (time.min / roundInterval + 1) * roundInterval;
+			flooredTime = Time(time with min = 0, sec = 0);
+			stamp2time(time2stamp(flooredTime) + min2ms(roundedMinutes));
+		}
 	}
 	dateForAdd = roundTime(Time(curDate.year, curDate.month, curDate.day, curTime.hour, curTime.min, curTime.sec));
 
@@ -981,7 +983,7 @@ dayEventsPopup(
 	titleText = if (rangeType == 0) {
 		MColsA([
 			MCenterYIn(
-				MText(i2s(dayNumber) + " " + monthString(curDate, true), [mediumFont, MGrey(800)]),
+				MText(i2s(curTime.day) + " " + monthString(curDate, true), [mediumFont, MGrey(800)]),
 				TFixed(100., titleHeight)
 			),
 			TFillX(),
@@ -1451,7 +1453,7 @@ MonthTable(
 	}
 
 	openDayEventsPopup = \date, isEnable, events : [CalendarEvent], isGroupOfEvents -> {
-		if (isEnable) dayEventsPopup(date, events, eventTypesB, manager, getValue(choosedFilters), 0, isGroupOfEvents, styles);
+		if (isEnable) dayEventsPopup(date2time(date), events, eventTypesB, manager, getValue(choosedFilters), 0, isGroupOfEvents, styles);
 	}
 
 	ifAttachHeight = \material, cond, heightB -> if (cond) MAttachHeight(material, heightB) else material;
@@ -1769,8 +1771,8 @@ MonthTable(
 			eventTypesB,
 			Date(curD.year, curD.month, 1),
 			lastMonthDayDate,
-			\date, events, isGroupOfEvents, rangeType -> {
-				dayEventsPopup(date, events, eventTypesB, manager, getValue(choosedFilters), rangeType, isGroupOfEvents, styles)
+			\time, events, isGroupOfEvents, rangeType -> {
+				dayEventsPopup(time, events, eventTypesB, manager, getValue(choosedFilters), rangeType, isGroupOfEvents, styles)
 			},
 			dateMin,
 			dateMax,
@@ -1865,7 +1867,7 @@ RangeView(
 	eventTypes : DynamicBehaviour<[CalendarEventDecription]>,
 	startDate : Date,
 	endDate : Date,
-	showDayEventsPopup : (date : Date, events : [CalendarEvent], isGroupOfEvents : bool, rangeType : int) -> void,
+	showDayEventsPopup : (time : Time, events : [CalendarEvent], isGroupOfEvents : bool, rangeType : int) -> void,
 	dateMin : Date,
 	dateMax : Date,
 	rangeType : int,
@@ -1885,6 +1887,7 @@ RangeView(
 	hoursGridStyle = extractStruct(styles, HoursGridForWeekView(-1.0, 0, 24));
 	showHoursGrid = hoursGridStyle.cellSize > 0.0 && tab == WeekTab() && !fgetValue(isMobileViewB);
 	showWeekNumber = contains(styles, CalendarShowWeekNumber()) && tab == WeekTab();
+	getHourOnClick = containsStruct(styles, CalendarGetHourOnEmptyCell()) && showHoursGrid;
 
 	getWeekDay = extractStruct(styles, CalendarWeekDayView(\dayName, __ -> {
 		MCenterX(MText(dayName, [MCaptionColumn(), MGrey(500)])) |> MBorderTopBottom(6.0)
@@ -2033,23 +2036,36 @@ RangeView(
 		} else m
 	);
 
+	eventsToShowFn = \date -> {
+		sectionStart = if (rangeType <= 1) date else Date(date.year, date.month, 1);
+		sectionEnd = if (rangeType == 0) date
+				else if (rangeType == 1) getWeekEndDate(sectionStart)
+				else Date(date.year, date.month, getNumberOfDaysPerMonthInTheYear(date.year)[date.month]);
+		filter(
+			rangeEvents,
+			\event -> max(sectionStart, startDate) <= time2date(event.endDate) && time2date(event.startDate) <= min(sectionEnd, endDate)
+		)
+	}
 	dayClickGrid = MColsA(generate(0, columnsCountInRange, \dateNum -> {
 		date = getNextDate(startDate, dateNum);
-		eventsToShow = {
-			sectionStart = if (rangeType <= 1) date else Date(date.year, date.month, 1);
-			sectionEnd = if (rangeType == 0) date
-					else if (rangeType == 1) getWeekEndDate(sectionStart)
-					else Date(date.year, date.month, getNumberOfDaysPerMonthInTheYear(date.year)[date.month]);
-			filter(
-				rangeEvents,
-				\event -> max(sectionStart, startDate) <= time2date(event.endDate) && time2date(event.startDate) <= min(sectionEnd, endDate)
-			)
-		}
 		onClick = \ -> {
-			if (isDateBetween(date, dateMin, dateMax)) showDayEventsPopup(date, eventsToShow, false, rangeType);
+			if (isDateBetween(date, dateMin, dateMax)) showDayEventsPopup(date2time(date), eventsToShowFn(date), false, rangeType);
 		}
 		MComponent([MOnClick(onClick), MEnabled(fnot(isReadOnlyB))], \__ -> MFillXY());
 	}));
+	emptyEventCells = if (getHourOnClick) {
+		MColsA(generate(0, columnsCountInRange, \dateNum -> {
+			date = getNextDate(startDate, dateNum);
+			onClick = \hour -> {
+				if (isDateBetween(date, dateMin, dateMax)) showDayEventsPopup(Time(date.year, date.month, date.day, hour, 0, 0), eventsToShowFn(date), false, rangeType);
+			}
+			MLinesA(generate(hoursGridStyle.startHour, hoursGridStyle.endHour, \hour ->
+				MComponent([MOnClick(\-> onClick(hour)), MEnabled(fnot(isReadOnlyB))],
+					\__ -> MFillXH(hoursGridStyle.cellSize + gridWidth)
+				)
+			))
+		}))
+	} else MEmpty();
 
 	getDefaultEventView = \event, eventCells, eventType -> {
 		text = if (showHoursGrid) {
@@ -2228,7 +2244,7 @@ RangeView(
 		);
 	});
 
-	openDayEventsPopup = \eventsToShow -> showDayEventsPopup(startDate, eventsToShow, true, 1);
+	openDayEventsPopup = \eventsToShow -> showDayEventsPopup(date2time(startDate), eventsToShow, true, 1);
 
 	combinedEventsViewHeightB = make(0.0);
 
@@ -2237,7 +2253,7 @@ RangeView(
 			addScroll = \m -> MScroll(m, TFillXY(), scrollStyle);
 			addGrid = \m -> if (isMobileView) MFrame(2.0, 0.0, [MStroke(MGrey(400))], m) else addTitleAndGrid(m);
 			eventsView = if (showHoursGrid) {
-				addScroll(MGroup2(MColsA(getEventColumns()), hoursGrid) |> MBorderTopBottom(5.0) |> MBorderLeft(25.0)) |> MBorderLeft(-25.0)
+				addScroll(MGroup2(MOnTop(emptyEventCells, MColsA(getEventColumns())), hoursGrid) |> MBorderTopBottom(5.0) |> MBorderLeft(25.0)) |> MBorderLeft(-25.0)
 			} else {
 				addScroll(MLinesA(if (isMobileView) getEventRowsMobile() else getEventRows()));
 			}
@@ -3045,7 +3061,7 @@ getCalendarDayView(
 		);
 	}
 
-	openDayEventsPopup = \events -> dayEventsPopup(date, events, make(dayEventTypes), manager, [], 0, true, styles);
+	openDayEventsPopup = \events -> dayEventsPopup(date2time(date), events, make(dayEventTypes), manager, [], 0, true, styles);
 
 	getEventsView = \ -> {
 		MLinesA([
@@ -3216,7 +3232,7 @@ CalendarForEvents(
 	//It creates an image for one month (as in DatePicker)
 	monthView = \monthNumber : int -> {
 		openPopupForDay = \date : Date, dayEvents : [CalendarEvent] -> {
-			dayEventsPopup(date, dayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, dayEvents != [], styles);
+			dayEventsPopup(date2time(date), dayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, dayEvents != [], styles);
 		}
 		// TODO: display combined events
 		combinedEventsView = extractStruct(styles, CalendarCombinedEventsView(\__, __ -> [], \__, __, __ -> MEmpty()));
@@ -3489,7 +3505,7 @@ CalendarForEvents(
 					curDate = getValue(currentDate);
 					date = if (curDate == currentStartDate) getCurrentDate() else curDate;
 					dateEvents = filter(getValue(filteredEvents), \item -> time2date(item.startDate) == date);
-					dayEventsPopup(date, dateEvents, currentEventTypes, manager, getValue(choosedFilters), 0, false, styles);
+					dayEventsPopup(date2time(date), dateEvents, currentEventTypes, manager, getValue(choosedFilters), 0, false, styles);
 				}, style, [MTooltipText(const(_("Add Event")))]));
 			}, MEmpty());
 		}
@@ -3719,8 +3735,8 @@ CalendarForEvents(
 					)
 				);
 
-				showDayEventsPopup = \date, dayEvents, isGroupOfEvents, rangeType -> {
-					dayEventsPopup(date, dayEvents, currentEventTypes, manager, getValue(choosedFilters), rangeType, isGroupOfEvents, styles);
+				showDayEventsPopup = \time, dayEvents, isGroupOfEvents, rangeType -> {
+					dayEventsPopup(time, dayEvents, currentEventTypes, manager, getValue(choosedFilters), rangeType, isGroupOfEvents, styles);
 				}
 
 				contentB = fselect4(startDate, endDate, rangeTypeB, filteredEvents, \start, end, rangeType, events -> {
@@ -3779,8 +3795,8 @@ CalendarForEvents(
 				contentB = fselect2(currentDate, filteredEvents, FLift2(\start, events -> {
 					RangeView(
 						manager, events, currentEventTypes, start, addDaysToDate(start, 6),
-						\date, dayEvents, isGroupOfEvents, rangeType -> {
-							dayEventsPopup(date, dayEvents, currentEventTypes, manager, getValue(choosedFilters), rangeType, isGroupOfEvents, styles)
+						\time, dayEvents, isGroupOfEvents, rangeType -> {
+							dayEventsPopup(time, dayEvents, currentEventTypes, manager, getValue(choosedFilters), rangeType, isGroupOfEvents, styles)
 						},
 						dateMin, dateMax, 0, false, isMobileViewB, isPrintingB, tab, styles
 					)
@@ -3884,7 +3900,7 @@ CalendarForEvents(
 				contentB = fselect3(currentDate, filteredEvents, currentEventTypes, \date, events, types -> {
 					dayEvents = filter(events, \event -> date >= time2date(event.startDate) && date <= time2date(event.endDate));
 					dayEventTypes = filter(types, \type -> exists(dayEvents, \event -> event.eventType == type.name));
-					addEvent = \ -> dayEventsPopup(date, dayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, false, styles);
+					addEvent = \ -> dayEventsPopup(date2time(date), dayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, false, styles);
 					nextDistinct(eventTypesForPrintingB, dayEventTypes);
 					nextDistinct(showFloatingButtonInDayTabB, date < getCurrentDate() || dayEvents != []);
 					getCalendarDayView(manager, date, dayEvents, dayEventTypes, addEvent, isPrintingB, styles);
@@ -3987,7 +4003,7 @@ CalendarForEvents(
 					[MOnClick(\-> {
 						today = stamp2date(timestamp());
 						todayEvents = filter(getValue(filteredEvents), \item -> time2date(item.startDate) == today);
-						dayEventsPopup(today, todayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, false, styles);
+						dayEventsPopup(date2time(today), todayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, false, styles);
 					})]
 				)
 			)
