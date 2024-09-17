@@ -37,8 +37,12 @@ export {
 
 	TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic;
 		TFlexAlignment ::= RelativeAlignment, CenterAlign, TAlign;
-		TFlexStyle ::= TVertical, TMaxRows, TFlexAlignment, TAnimationTimer, TOrder, TEnabled, TSetRTL, TSameSize,
+		TFlexStyle ::= TVertical, TWrap, TFlexAlignment, TAnimationTimer, TOrder, TEnabled, TSetRTL, TSameSize,
 			TBaselineAlign, TAvailableMinMax, TArrayThreshold, TFlexibleGridLazyRenderingMode, TSpacing;
+
+			 // Amount of elements in each row (Amount of elements in each column if TVertical is passed)
+			 // By default wrap is 0, which means that all elements are fitted by their size
+			TWrap(wrap : int);
 }
 
 TFlexibleGridItem(
@@ -1026,7 +1030,7 @@ TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic {
 	order = tryExtractStruct(style, TOrder(const([])));
 	gridEnabled = extractStruct(style, TEnabled(const(true))).enabled;
 	animation = tryExtractStruct(style, TAnimationTimer(LazyDeltaTimer(make(0.0), nop, nop)));
-	maxRows = maybeMap(tryExtractStruct(style, TMaxRows(0)), \mr -> mr.rows);
+	wrap = extractStruct(style, TWrap(0)).wrap;
 	stageSizeB = make(0.);
 	lazyRenderingMode = tryExtractStruct(style, TFlexibleGridLazyRenderingMode(makeWH(), makePoint()));
 	availableMinMax = extractStruct(style, TAvailableMinMax(stageSizeB, stageSizeB));
@@ -1173,12 +1177,13 @@ TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic {
 					fheight(contentSize),
 					contentBaseline
 				),
-				if (!verticalGrid) itemsMinSize else fwidth(contentMinSize),
-				if (verticalGrid) itemsMinSize else fheight(contentMinSize),
-				if (!verticalGrid) const(doubleMax) else fwidth(contentMaxSize),
-				if (verticalGrid) const(doubleMax) else fheight(contentMaxSize),
-				if (!verticalGrid) const(1.0) else fpointX(contentFillers),
-				if (verticalGrid) const(1.0) else fpointY(contentFillers),
+				// Use actual content size if wrapping ignores available size
+				if (!verticalGrid && wrap <= 0) itemsMinSize else fwidth(contentMinSize),
+				if (verticalGrid && wrap <= 0) itemsMinSize else fheight(contentMinSize),
+				if (!verticalGrid && wrap <= 0) const(doubleMax) else fwidth(contentMaxSize),
+				if (verticalGrid && wrap <= 0) const(doubleMax) else fheight(contentMaxSize),
+				if (!verticalGrid && wrap <= 0) const(1.0) else fpointX(contentFillers),
+				if (verticalGrid && wrap <= 0) const(1.0) else fpointY(contentFillers),
 				const(false),
 				false,
 				false,
@@ -1186,31 +1191,41 @@ TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic {
 			)
 		})
 	)
-	|> (\f ->
+	|> (\f -> {
+		itemsOrderedB = fdelayUntilNextFrameRendered(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB));
+		availableMinMaxB = fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(faddition(availableMinMax.min, spacingB), faddition(availableMinMax.max, spacingB))));
+
 		TConstruct(
 			[
-				if (isSameSize)
+				if (wrap > 0) {
+					make2Subscribe(
+						itemsOrderedB,
+						availableMinMaxB,
+						\itms, stageSize ->
+							next(topItem, fitTFlex(itms, stageSize.first, stageSize.second, faddition(availableB, spacingB), verticalGrid, alignment, alignBaselines, wrap, isRTL))
+					)
+				} else if (isSameSize)
 					make3Subscribe2(
-						fdelayUntilNextFrameRendered(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB)),
+						itemsOrderedB,
 						sameSizeMinWH,
-						fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(faddition(availableMinMax.min, spacingB), faddition(availableMinMax.max, spacingB)))),
+						availableMinMaxB,
 						\itms, __, stageSize ->
-							next(topItem, fitTFlex(itms, stageSize.first, stageSize.second, faddition(availableB, spacingB), verticalGrid, alignment, alignBaselines, maxRows, isRTL))
+							next(topItem, fitTFlex(itms, stageSize.first, stageSize.second, faddition(availableB, spacingB), verticalGrid, alignment, alignBaselines, wrap, isRTL))
 					)
 				else
 					make2Subscribe2(
 						fsubmap(
-							fdelayUntilNextFrameRendered(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB)),
+							itemsOrderedB,
 							\it -> fpair(const(it), fpair(it.minWH, it.maxWH))
 						),
-						fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(faddition(availableMinMax.min, spacingB), faddition(availableMinMax.max, spacingB)))),
+						availableMinMaxB,
 						\itms, stageSize ->
-							next(topItem, fitTFlex(map(itms, firstOfPair), stageSize.first, stageSize.second, faddition(availableB, spacingB), verticalGrid, alignment, alignBaselines, maxRows, isRTL))
+							next(topItem, fitTFlex(map(itms, firstOfPair), stageSize.first, stageSize.second, faddition(availableB, spacingB), verticalGrid, alignment, alignBaselines, wrap, isRTL))
 					)
 			],
 			f
 		)
-	)
+	})
 }
 
 mergeTFlexConstantItemsHorizontal(t1 : TFlexibleGridConstantItem, t2 : TFlexibleGridConstantItem, alignBaselines : bool) -> TFlexibleGridConstantItem {
@@ -1427,7 +1442,7 @@ fitTFlex(
 	vertical : bool,
 	alignment : TFlexAlignment,
 	alignBaselines : bool,
-	maxRows : Maybe<int>,
+	wrap : int,
 	isRTL : bool
 ) -> TFlexibleGridConstantItem {
 	currentCoord = ref const(0.);
@@ -1460,11 +1475,10 @@ fitTFlex(
 
 	iter(items, \it -> {
 		minSize = if (vertical) fheight(fif(feq(fpointY(it.fillers), 0.0), it.wh, it.minWH)) else fwidth(fif(feq(fpointX(it.fillers), 0.0), it.wh, it.minWH));
-		doesFit = fgetValue(^currentCoord) + fgetValue(minSize) < sizeMax;
+		doesFit = \ -> fgetValue(^currentCoord) + fgetValue(minSize) < sizeMax;
 
-		if (eitherMap(maxRows, \mr -> length(^currentLine) < mr, true) && (doesFit || length(^currentLine) == 0)) {
+		if (length(^currentLine) == 0 || (wrap <= 0 && doesFit()) || (wrap > 0 && length(^currentLine) < wrap)) {
 			currentLine := arrayPush(^currentLine, it);
-
 			currentCoord := faddition(^currentCoord, minSize);
 		} else {
 			addLineFn();
