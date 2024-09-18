@@ -1618,6 +1618,12 @@ class RenderSupport {
 		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
 
+		if (Platform.isMobile) {
+			// Collapse of PWA application requires gesture which initiates touchstart, but never receives touchend
+			// We need to reset MouseUpReceived when application is collapsed for success first click after an application is focused
+			Browser.window.addEventListener("blur", function (e) { MouseUpReceived = true; }); 
+		}
+
 		if (root != Browser.document.body) {
 			on("fullscreen", function () {
 				onBrowserWindowResize({target: Browser.window});
