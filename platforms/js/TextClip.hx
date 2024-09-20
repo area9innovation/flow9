@@ -143,6 +143,7 @@ class TextClip extends NativeWidgetClip {
 	private var textDirection : String = '';
 	private var escapeHTML : Bool = true;
 	private var skipOrderCheck : Bool = false;
+	private var preventXSS : Bool = false;
 	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
@@ -461,7 +462,7 @@ class TextClip extends NativeWidgetClip {
 			if (!multiline) {
 				nativeWidget.setAttribute("type", type);
 			}
-			nativeWidget.value = text;
+			nativeWidget.value = getSanitizedText(text);
 			nativeWidget.style.whiteSpace = "pre-wrap";
 			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 			nativeWidget.readOnly = readOnly;
@@ -814,7 +815,7 @@ class TextClip extends NativeWidgetClip {
 		if (nativeWidget != null && isInput) {
 			var selectionStartPrev = nativeWidget.selectionStart;
 			var selectionEndPrev = nativeWidget.selectionEnd;
-			nativeWidget.value = text;
+			nativeWidget.value = getSanitizedText(text);
 			setSelection(selectionStartPrev, selectionEndPrev);
 		}
 
@@ -1087,6 +1088,12 @@ class TextClip extends NativeWidgetClip {
 			style.leading = interlineSpacing;
 
 			invalidateMetrics();
+		}
+	}
+
+	public function setPreventXSS(enable : Bool) : Void {
+		if (this.preventXSS != enable) {
+			this.preventXSS = enable;
 		}
 	}
 
@@ -1463,6 +1470,8 @@ class TextClip extends NativeWidgetClip {
 		if (nativeWidget == null) {
 			return;
 		}
+
+		newValue = getSanitizedText(newValue);
 
 		var setNewValue = function(val) {
 			nativeWidget.value = val;
@@ -2117,6 +2126,13 @@ class TextClip extends NativeWidgetClip {
 
 	private function isMaterialIconFont() : Bool {
 		return style.fontFamily.startsWith('Material Icons') || style.fontFamily.startsWith('Material Symbols');
+	}
+
+	private function getSanitizedText(text : String) : String {
+		if (preventXSS) {
+			untyped __js__("text = DOMPurify.sanitize(text)");
+		}
+		return text;
 	}
 
 	private override function createNativeWidget(?tagName : String = "p") : Void {

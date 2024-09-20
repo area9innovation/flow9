@@ -2429,6 +2429,10 @@ class RenderSupport {
 		clip.setInterlineSpacing(spacing);
 	}
 
+	public static function setTextFieldPreventXSS(clip : TextClip, enable : Bool) : Void {
+		clip.setPreventXSS(enable);
+	}
+
 	public static function setTextDirection(clip : TextClip, direction : String) : Void {
 		clip.setTextDirection(direction);
 	}
