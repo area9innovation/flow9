@@ -1305,6 +1305,13 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object quit(int c) {
+		if (c == 0) {
+			try {
+				threadpool.awaitTermination(100, TimeUnit.MILLISECONDS);
+			} catch (InterruptedException ex) {
+				System.out.println(exceptionStackTrace(ex));
+			}
+		}
 		System.exit(c);
 		return null;
 	}
