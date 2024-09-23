@@ -1,26 +1,52 @@
 import tools/flowc/incremental/fiprogram;
+import tools/flowc/fctypeenv;
 import ds/set;
 import text/translationsimplestrings;
 
 export {
 	// Extract all () strings from program
-	saveXliffData(program : FiProgram, filename : string, xliffFilter : string) -> void;
+	saveXliffData(
+		program : FiProgram,
+		filename : string,
+		xliffFilter : string,
+		findBadTranslations : bool,
+		env : FcTypeEnvGlobal
+	) -> void;
 }
 
-prepareXLiffData(program : FiProgram) -> [string] {
-	res = foldTree(program.modules, makeSet(), \modname : string, mo : FiModule, acc -> {
-		nfns = fold(mo.functions, acc, \acc2, fun ->
-			fiextracttrstr0(fun.lambda, acc2, false)
-		);
+BadTranslation : (
+	expression : FiExp,
+	location : string,
+	position : LineColumn
+);
+currentModule : ref string = ref "";
+badTranslations : ref Set<BadTranslation> = ref makeSet();
 
-		fold(mo.globalVars, nfns, \acc2, gvar ->
-			fiextracttrstr0(gvar.value, acc2, false)
-		);
+prepareXLiffData(program : FiProgram, findBadTranslations : bool, env : FcTypeEnvGlobal) -> [string] {
+	res = foldTree(program.modules, makeSet(), \modname : string, mo : FiModule, acc -> {
+		src = fcFileSource(env, mo.fileinfo.fullpath);
+		resolver = makeLineResolver(src);
+
+		nfns = fold(mo.functions, acc, \acc2, fun -> {
+			if (findBadTranslations) {
+				// pos = findLine1(resolver, fun.defiStart, 1);
+				currentModule := modname; // + ":" + i2s(pos.lineno) + ":" + i2s(pos.column);
+			}
+			fiextracttrstr0(fun.lambda, acc2, false, findBadTranslations, resolver)
+		});
+
+		fold(mo.globalVars, nfns, \acc2, gvar -> {
+			if (findBadTranslations) {
+				// pos = findLine1(resolver, gvar.defiStart, 1);
+				currentModule := modname; // + ":" + i2s(pos.lineno) + ":" + i2s(pos.column);
+			}
+			fiextracttrstr0(gvar.value, acc2, false, findBadTranslations, resolver)
+		});
 	});
 	set2array(res)
 }
 
-saveXliffData(program : FiProgram, filename : string, xliffFilter : string) -> void {
+saveXliffData(program : FiProgram, filename : string, xliffFilter : string, findBadTranslations : bool, env : FcTypeEnvGlobal) -> void {
 	if (program.config.verbose >= 1) {
 		fcPrintln("Extracting XLiff data...", program.config.threadId);
 	} 
@@ -38,49 +64,63 @@ saveXliffData(program : FiProgram, filename : string, xliffFilter : string) -> v
 		program
 	}
 
-	data0 = prepareXLiffData(program0);
+	data0 = prepareXLiffData(program0, findBadTranslations, env);
 	data = mapi(data0, \ix, e -> {ContentUnit(ix, "_", e)});
 	setFileContent(filename, texts2XliffContent(data, changeFileExt(filename, "")));
+	if (findBadTranslations) {
+		badTranslationsSorted = sortCustom(set2array(^badTranslations), \bt -> Triple(bt.location, bt.position.lineno, bt.position.column), true);
+		badTranslationsLog = map(badTranslationsSorted, \bt -> {
+			bt.location + ":" + i2s(bt.position.lineno) + ":" + i2s(bt.position.column) + "\n" + toString(bt.expression);
+		});
+		badTranslationsFilename = changeFileExt(filename, ".bad.txt");
+		setFileContent(badTranslationsFilename, strGlue(badTranslationsLog, "\n")) |> ignore;
+	}
 	if (program.config.verbose >= 1) {
 		fcPrintln("XLiff file '" + filename + "' saved.", program.config.threadId);
 	} 
 	{}
 }
 
-fiextracttrstr0(expr : FiExp, acc : Set<string>, collect : bool) -> Set<string> {
+fiextracttrstr0(expr : FiExp, acc : Set<string>, collect : bool, findBadTranslations : bool, resolver : LineResolver) -> Set<string> {
 	switch (expr) {
-		FiLambda(__, body, __, __):     fiextracttrstr0(body, acc, collect);
-		FiCall(f, es, __, __): {
+		FiLambda(__, body, __, __): fiextracttrstr0(body, acc, collect, findBadTranslations, resolver);
+		FiCall(f, es, __, position): {
 			switch(f) {
-				FiVar(x, __, __) : {
+				FiVar(x, __, __): {
 					if (x == "_" || x == "getContentOrUITranslation") {
 						// es has exactly one element
 						switch(es[0]) {
 							FiString(a, __) : insertSet(acc, a);
-							default : fifoldextracttrstr0(es, fiextracttrstr0(f, acc, true), true);
+							default : {
+								if (findBadTranslations) {
+									badTranslations := insertSet(^badTranslations, BadTranslation(es[0], ^currentModule, findLine1(resolver, position, 1)));
+								}
+								acc
+								// fifoldextracttrstr0(es, fiextracttrstr0(f, acc, true, false), true, findBadTranslations, resolver);
+							}
 						}
-					} else fifoldextracttrstr0(es, fiextracttrstr0(f, acc, collect), collect);
+					} else fifoldextracttrstr0(es, fiextracttrstr0(f, acc, collect, findBadTranslations, resolver), collect, findBadTranslations, resolver);
 				}
-				default : fifoldextracttrstr0(es, fiextracttrstr0(f, acc, collect), collect);
+				default : fifoldextracttrstr0(es, fiextracttrstr0(f, acc, collect, findBadTranslations, resolver), collect, findBadTranslations, resolver);
 			}
 		}
 		FiVar(__, __, __): acc;
-		FiLet(__, __, e1, e2, __, __):  fiextracttrstr0(e2, fiextracttrstr0(e1, acc, collect), collect);
-		FiIf(e1, e2, e3, __, __):       fiextracttrstr0(e3, fiextracttrstr0(e2, fiextracttrstr0(e1, acc, collect), collect), collect);
-		FiSwitch(e, __, cs, __, __):    fold(cs, fiextracttrstr0(e, acc, collect), \acc0, c -> fiextracttrstr0(c.body, acc0, collect));
-		FiCast(e, __, __, __, __):      fiextracttrstr0(e, acc, collect);
-		FiSeq(es, __, __):              fifoldextracttrstr0(es, acc, collect);
-		FiCallPrim(__, es, __, __):     fifoldextracttrstr0(es, acc, collect);
+		FiLet(__, __, e1, e2, __, __):  fiextracttrstr0(e2, fiextracttrstr0(e1, acc, collect, findBadTranslations, resolver), collect, findBadTranslations, resolver);
+		FiIf(e1, e2, e3, __, __):       fiextracttrstr0(e3, fiextracttrstr0(e2, fiextracttrstr0(e1, acc, collect, findBadTranslations, resolver), collect, findBadTranslations, resolver), collect, findBadTranslations, resolver);
+		FiSwitch(e, __, cs, __, __):    fold(cs, fiextracttrstr0(e, acc, collect, findBadTranslations, resolver), \acc0, c -> fiextracttrstr0(c.body, acc0, collect, findBadTranslations, resolver));
+		FiCast(e, __, __, __, __):      fiextracttrstr0(e, acc, collect, findBadTranslations, resolver);
+		FiSeq(es, __, __):              fifoldextracttrstr0(es, acc, collect, findBadTranslations, resolver);
+		FiCallPrim(__, es, __, __):     fifoldextracttrstr0(es, acc, collect, findBadTranslations, resolver);
 		FiString(s, __):                if (collect) insertSet(acc, s) else acc;
 		FiBool(__, __):                 acc;
 		FiDouble(__, __):               acc;
 		FiVoid(__):                     acc;
 		FiInt(__, __):                  acc;
-		FiRequire(__, e, __, __):       fiextracttrstr0(e, acc, collect);
-		FiUnsafe(__, fallback, __, __): fiextracttrstr0(fallback, acc, collect);
+		FiRequire(__, e, __, __):       fiextracttrstr0(e, acc, collect, findBadTranslations, resolver);
+		FiUnsafe(__, fallback, __, __): fiextracttrstr0(fallback, acc, collect, findBadTranslations, resolver);
 	}
 }
 
-fifoldextracttrstr0(es : [FiExp], acc : Set<string>, collect : bool) -> Set<string> {
-	fold(es, acc, \acc1, e -> fiextracttrstr0(e, acc1, collect));
+fifoldextracttrstr0(es : [FiExp], acc : Set<string>, collect : bool, findBadTranslations : bool, resolver : LineResolver) -> Set<string> {
+	fold(es, acc, \acc1, e -> fiextracttrstr0(e, acc1, collect, findBadTranslations, resolver));
 }
