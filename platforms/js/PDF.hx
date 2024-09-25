@@ -1,6 +1,7 @@
 
 import js.Browser;
 import js.Promise;
+import js.lib.Object;
 
 class PDF {
 	private static var pdfjsLib : Dynamic = null;
@@ -24,8 +25,8 @@ class PDF {
 		}
 	}
 
-	public static function getPdfDocument(url : String, onOK : Dynamic -> Void, onError : String -> Void) {
-		var promise : Promise<Dynamic> = pdfjsLib.getDocument({ url: url, withCredentials: true }).promise;
+	public static function getPdfDocument(url : String, headers : Array<Array<String>>, onOK : Dynamic -> Void, onError : String -> Void) {
+		var promise : Promise<Dynamic> = pdfjsLib.getDocument({ url: url, httpHeaders: Object.fromEntries(headers), withCredentials: true }).promise;
 		promise.then(onOK).catchError(onError);
 	}
 

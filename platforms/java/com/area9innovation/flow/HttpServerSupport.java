@@ -17,6 +17,7 @@ public class HttpServerSupport extends NativeHost {
 		String pfxPath,
 		String pfxPassword,
 		Func0<Object> onOpen,
+		Func1<Object, String> onOpenError,
 		Func7<
 			Object,
 			String,
@@ -54,8 +55,7 @@ public class HttpServerSupport extends NativeHost {
 				return server;
 			}
 		} catch (Exception e) {
-			System.out.println(e);
-			System.out.println("Failed to create HTTPS server");
+			onOpenError.invoke("Failed to create HTTPS server: " + e.getMessage());
 			return null;
 		}
 	}
@@ -66,6 +66,7 @@ public class HttpServerSupport extends NativeHost {
 		String pfxPath,
 		String pfxPassword,
 		Func0<Object> onOpen,
+		Func1<Object, String> onOpenError,
 		Func8<
 			Object,
 			String,
@@ -106,8 +107,7 @@ public class HttpServerSupport extends NativeHost {
 				return server;
 			}
 		} catch (Exception e) {
-			System.out.println(e);
-			System.out.println("Failed to create HTTPS server");
+			onOpenError.invoke("Failed to create HTTPS server: " + e.getMessage());
 			return null;
 		}
 	}

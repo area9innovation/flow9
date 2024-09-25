@@ -1,9 +1,17 @@
 package com.area9innovation.flow;
 
+import java.io.*;
 import java.util.*;
 import java.text.*;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import java.math.BigInteger;
+import java.security.*;
+import java.security.interfaces.*;
+import java.security.spec.*;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.json.simple.*;
+import org.json.simple.parser.*;
 
 import com.auth0.jwt.JWTVerifier.*;
 import com.auth0.jwt.interfaces.*;
@@ -143,5 +151,104 @@ public class FlowJwt extends NativeHost {
 			}
 		}
 		return builder.sign(algorithm);
+	}
+
+	public static PublicKey getPemPublicKeyFromString(String publicKeyPEM, String keyType) throws Exception {
+		publicKeyPEM = publicKeyPEM.replace("-----BEGIN PUBLIC KEY-----", "");
+		publicKeyPEM = publicKeyPEM.replace("-----END PUBLIC KEY-----", "");
+		publicKeyPEM = publicKeyPEM.replaceAll("\\s", "");
+		byte[] decodedPublicKey = Base64.getDecoder().decode(publicKeyPEM);
+
+		KeyFactory kf = KeyFactory.getInstance(keyType);
+		return kf.generatePublic(new java.security.spec.X509EncodedKeySpec(decodedPublicKey));
+	}
+
+	public static RSAPublicKey getRSAPublicKeyFromJsonString(String jsonStr) throws Exception {
+		JSONObject json = (JSONObject) new JSONParser().parse(jsonStr);
+		String n = (String)json.get("n");
+		String e = (String)json.get("e");
+		BigInteger n2 = new BigInteger(1, Base64.getUrlDecoder().decode(n));
+		BigInteger e2 = new BigInteger(1, Base64.getUrlDecoder().decode(e));
+		RSAPublicKeySpec spec = new RSAPublicKeySpec(n2, e2);
+
+		KeyFactory kf = KeyFactory.getInstance("RSA");
+		RSAPublicKey pubKey = (RSAPublicKey) kf.generatePublic(spec);
+		return pubKey;
+	}
+
+	public static ECPublicKey getECPublicKeyFromJsonString(String jsonStr) throws Exception {
+		JSONObject json = (JSONObject) new JSONParser().parse(jsonStr);
+		String x = (String)json.get("x");
+		String y = (String)json.get("y");
+		BigInteger x2 = new BigInteger(1, Base64.getUrlDecoder().decode(x));
+		BigInteger y2 = new BigInteger(1, Base64.getUrlDecoder().decode(y));
+
+		AlgorithmParameters algoParameters = AlgorithmParameters.getInstance("EC", new BouncyCastleProvider());
+		algoParameters.init(new ECGenParameterSpec((String)json.get("crv")));
+		ECParameterSpec parameterSpec = algoParameters.getParameterSpec(ECParameterSpec.class);
+		ECPublicKeySpec spec = new ECPublicKeySpec(new ECPoint(x2, y2), parameterSpec);
+
+		KeyFactory kf = KeyFactory.getInstance("EC");
+		ECPublicKey pubKey = (ECPublicKey) kf.generatePublic(spec);
+		return pubKey;
+	}
+
+	public static String getJwtAlgHeader(String jwtStr) {
+		try {
+			DecodedJWT jwt = JWT.decode(jwtStr);
+			String header = new String(Base64.getDecoder().decode(jwt.getHeader()), "UTF-8");
+			JSONObject json = (JSONObject) new JSONParser().parse(header);
+			return (String)json.get("alg");
+		} catch (Exception e) {
+			return "";
+		}
+	}
+
+	public static String verifyJwtWithPublicKey(String jwtStr, String keyStr, String algorithmStr) {
+		try {
+			if (algorithmStr.equals("")) {
+				algorithmStr = getJwtAlgHeader(jwtStr);
+				if (algorithmStr.equals("")) {
+					return "Algorithm is not specified";
+				}
+			}
+			Algorithm algorithm = null;
+			if (algorithmStr.equals("RS256") || algorithmStr.equals("RS384") || algorithmStr.equals("RS512")) {
+				RSAPublicKey publicKey = null;
+				if (keyStr.startsWith("{")) {
+					publicKey = getRSAPublicKeyFromJsonString(keyStr);
+				} else {
+					publicKey = (RSAPublicKey)getPemPublicKeyFromString(keyStr, "RSA");
+				}
+				if (algorithmStr.equals("RS256")) {
+					algorithm = Algorithm.RSA256(publicKey, null);
+				} else if (algorithmStr.equals("RS384")) {
+					algorithm = Algorithm.RSA384(publicKey, null);
+				} else {
+					algorithm = Algorithm.RSA512(publicKey, null);
+				}
+			} else if (algorithmStr.equals("ES256") || algorithmStr.equals("ES384") || algorithmStr.equals("ES512")) {
+				ECPublicKey publicKey = null;
+				if (keyStr.startsWith("{")) {
+					publicKey = getECPublicKeyFromJsonString(keyStr);
+				} else {
+					publicKey = (ECPublicKey)getPemPublicKeyFromString(keyStr, "EC");
+				}
+				if (algorithmStr.equals("ES256")) {
+					algorithm = Algorithm.ECDSA256(publicKey, null);
+				} else if (algorithmStr.equals("ES384")) {
+					algorithm = Algorithm.ECDSA384(publicKey, null);
+				} else {
+					algorithm = Algorithm.ECDSA512(publicKey, null);
+				}
+			} else {
+				return "Algorithm not supported";
+			}
+			JWTVerifier verifier = JWT.require(algorithm).build();
+			verifier.verify(jwtStr);
+			return "OK";
+		} catch (Exception e) {
+			return e.getMessage();
+		}
 	}
 }
