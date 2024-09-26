@@ -38,7 +38,7 @@ public abstract class FlowRuntime {
 
 	public static boolean sleep() {
 		try {
-			Thread.sleep(10);
+			Thread.sleep(1);
 			return true;
 		} catch (InterruptedException e) {
 			quitCode = 1;
