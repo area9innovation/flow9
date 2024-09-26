@@ -1388,24 +1388,12 @@ mergeTFlexConstantItemsVertical(t1 : TFlexibleGridConstantItem, t2 : TFlexibleGr
 alignTFlexConstantItems(
 	t : TFlexibleGridConstantItem,
 	vertical : bool,
-	alignment0 : TFlexAlignment,
-	isRTL : bool
+	alignment : TFlexAlignment
 ) -> TFlexibleGridConstantItem {
-	alignment = if (vertical && isRTL) {
-		if (alignment0 == StartAlign())
-			EndAlign()
-		else if (alignment0 == EndAlign())
-			StartAlign()
-		else
-			alignment0
-	} else {
-		alignment0
-	};
-
 	if (alignment != StartAlign()) {
 		tr = make(const(zeroPoint));
 		trB = fsubselect(tr, idfn |> FLift);
-		avB = fsubselect2(t.av, t.alignWH, \av, alignWH -> fwh(fmax(fwidth(av), fwidth(alignWH)), fmax(fheight(av), fheight(alignWH))));
+		avB = fsubselect(t.alignWH, idfn |> FLift);
 
 		uns = ref nop;
 		uns := subscribe2(tr, \__ -> {
@@ -1460,7 +1448,7 @@ fitTFlex(
 	sizeMax : double,
 	availableB : Transform<double>,
 	vertical : bool,
-	alignment : TFlexAlignment,
+	alignment0 : TFlexAlignment,
 	alignBaselines : bool,
 	wrap : int,
 	isRTL : bool
@@ -1468,6 +1456,19 @@ fitTFlex(
 	currentCoord = ref 0.;
 	currentLine = ref [];
 	lines = ref [];
+	wdB = if (vertical) availableB else const(sizeMin);
+	hgtB = if (vertical) const(sizeMin) else availableB;
+
+	alignment = if (vertical && isRTL) {
+		if (alignment0 == StartAlign())
+			EndAlign()
+		else if (alignment0 == EndAlign())
+			StartAlign()
+		else
+			alignment0
+	} else {
+		alignment0
+	};
 
 	addLineFn = \ -> {
 		if (length(^currentLine) > 0) {
@@ -1475,7 +1476,7 @@ fitTFlex(
 				foldBinary(
 					map(map(^currentLine, TFlexibleGridItem2TFlexibleGridConstantItem), \l -> {
 						switch (alignment) {
-							TAlign(__, __): alignTFlexConstantItems(l, !vertical, alignment, isRTL);
+							TAlign(__, __): alignTFlexConstantItems(l, !vertical, alignment);
 							default: l;
 						}
 					}),
@@ -1513,7 +1514,8 @@ fitTFlex(
 	if (length(^lines) > 0) {
 		t =
 			foldBinary(
-				map(^lines, \l -> alignTFlexConstantItems(l, vertical, alignment, isRTL)),
+				// Adding emptyTFlexibleGridItem to enforce mergeTFlexConstantItems* to be called at least once to distribute the available space
+				arrayPush(map(^lines, \l -> alignTFlexConstantItems(l, vertical, alignment)), TFlexibleGridItem2TFlexibleGridConstantItem(emptyTFlexibleGridItem)),
 				\t1, t2 ->
 					if (vertical)
 						mergeTFlexConstantItemsHorizontal(t1, t2, false)
@@ -1521,13 +1523,31 @@ fitTFlex(
 						mergeTFlexConstantItemsVertical(t1, t2)
 			);
 
-		if (vertical) {
-			next(t.av, fwh(fmax(availableB, fwidth(t.minWH)), fmax(const(sizeMin), fheight(t.minWH))));
-		} else {
-			next(t.av, fwh(fmax(const(sizeMin), fwidth(t.minWH)), fmax(availableB, fheight(t.minWH))));
-		}
+		next(t.av, fwh(fmax(wdB, fwidth(t.minWH)), fmax(hgtB, fheight(t.minWH))));
 		next(t.alignWH, t.wh);
-		next(t.tr, fpoint(zero, zero));
+		next(
+			t.tr,
+			fpoint(
+				fmax(
+					switch (alignment) {
+						StartAlign(): zero;
+						CenterAlign(): if (vertical) zero else fdivide(fsubtract(wdB, fwidth(t.wh)), const(2.0));
+						EndAlign(): if (vertical) zero else fsubtract(wdB, fwidth(t.wh));
+						TAlign(xalign, __): fmultiply(fsubtract(wdB, fwidth(t.wh)), xalign);
+					},
+					zero
+				),
+				fmax(
+					switch (alignment) {
+						StartAlign(): zero;
+						CenterAlign(): if (vertical) fdivide(fsubtract(hgtB, fheight(t.wh)), const(2.0)) else zero;
+						EndAlign(): if (vertical) fsubtract(hgtB, fheight(t.wh)) else zero;
+						TAlign(__, yalign): fmultiply(fsubtract(hgtB, fheight(t.wh)), yalign);
+					},
+					zero
+				)
+			)
+		);
 
 		t;
 	} else {
