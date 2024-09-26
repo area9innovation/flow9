@@ -1,0 +1,207 @@
+import formats/html/html;
+import net/appurl;
+import string;
+import sys/target;
+
+
+export {
+	// Does the url contains `.php` substring?
+	isPhpUrl(url : string) -> bool;
+
+	// Determines if a given URL is considered a valid PHP URL (with additional checks).
+	isPhpUrlImproved(url : string) -> bool;
+	
+	// Splits a URL into its body and query parameters, returning them as a pair.
+	splitUrlToParams(url : string) -> Pair<string, [string]>;
+
+	// Extracts the local filename from a URL (if presented in the URL).
+	getLocalFileName(url : string) -> string;
+
+	// Removes a specified parameter from a URL, handling only PHP-style URLs.
+	removeTokenFromUrl(url : string) -> string;
+
+	// Removes a JWT token from a URL, handling only PHP-style URLs.
+	removeParameterFromUrl(url : string, key : string) -> string;
+
+	// Adds a JWT token from a URL, handling only PHP-style URLs.
+	addNewTokenToUrl(jwt : string, url : string) -> string;
+
+	// Adds or replaces a JWT token in a URL, handling only PHP-style URLs.
+	addOrReplaceTokenToUrl(jwt : string, url : string) -> string;
+
+	// Adds a query parameter `ignoreRangeHeaders=1` to the given URL
+	//  if the user is using a Safari browser and
+	//  the applicaeion runs with the parameter `TestSafari=true`.
+	addNoRangeForSafari(url : string) -> string;
+
+	// Extracts the value of a specific query parameter from a URL.
+	extractUrlParamValue(url : string, key : string) -> string;
+
+	// Replaces the value of a specific query parameter from a URL.
+	replaceUrlParamValue(url : string, key : string, value : string) -> string;
+
+	// Filters the query parameters of a URL, retaining only those that are relevant
+	//  for caching purposes within a PHP context.
+	cropUrlToCheckInCache(url : string) -> string;
+
+	// Temporary disable RequestHeaders processing.
+	// For instance to keep url in media src attribute instead of blob object.
+	setUnsetRequestHeadersLess() -> () -> void;
+
+	// Register a new converter to create a request header from a token in a URL.
+	setTokenToHeaderConverter(tokenName : string, converter : (string) -> KeyValue) -> void;
+
+	// Split URL string into a string without tokens and request headers with tokens.
+	splitOnUrlAndHeaders(url : string) -> Pair<string /*url*/, [KeyValue] /*headers*/>;
+
+	// The same as above but with callback implementation.
+	splitOnUrlAndHeadersWithCallback(mediaUrl : string, callback : (url : string, headers : [KeyValue]) -> ?) -> ?;
+}
+
+requestHeadersLessR = ref false;
+setUnsetRequestHeadersLess() -> () -> void {
+	requestHeadersLessR := true;
+	\-> requestHeadersLessR := false;
+}
+
+isPhpUrl(url : string) -> bool {
+	strContains(url, ".php?");
+}
+
+isPhpUrlImproved(url : string) -> bool {
+	isPhpUrl(url) || startsWith(url, "http://") || startsWith(url, "https://") || startsWith(url, getAppUrl())
+}
+
+splitUrlToParams(url : string) -> Pair<string /* path */, [string] /* parameters */> {
+	bodyWithParams = strSplitNext(url, "?");
+	splittedParams = strSplit(bodyWithParams.second, "&");
+	Pair(bodyWithParams.first, splittedParams);
+}
+
+getLocalFileName(url : string) -> string {
+	fileParam1 = "a1=";
+	fileParam2 = "filename=";
+	fileParam3 = "filepath=";
+
+	if (isPhpUrl(url)) {
+		splittedUrl = splitUrlToParams(url);
+		mbFilename =
+			findmap(splittedUrl.second, \p -> {
+				if (startsWith(p, fileParam1)) Some(strRight(p, strlen(fileParam1)))
+				else if (startsWith(p, fileParam2)) Some(strRight(p, strlen(fileParam2)))
+				else if (startsWith(p, fileParam3)) Some(strRight(p, strlen(fileParam3)))
+				else None()
+			});
+		either(mbFilename, "");
+	} else {
+		""
+	}
+}
+
+removeParameterFromUrl(url : string, key : string) -> string {
+	if (isPhpUrl(url)) {
+		key2 = key + "=";
+		splittedUrl = splitUrlToParams(url);
+		newParams = filter(splittedUrl.second, \p -> !startsWith(p, key2));
+		splittedUrl.first + "?" + strGlue(newParams, "&")
+	} else {
+		url
+	}
+}
+
+removeTokenFromUrl(url : string) -> string {
+	removeParameterFromUrl(url, "jwt");
+}
+
+addNewTokenToUrl(jwt : string, url : string) -> string {
+	if (isPhpUrl(url)) (url + (if (strContains(url, "?")) "&" else "?") + "jwt=" + jwt) else url;
+}
+
+addOrReplaceTokenToUrl(jwt : string, url : string) -> string {
+	addNewTokenToUrl(
+		jwt,
+		removeTokenFromUrl(url)
+	);
+}
+
+addNoRangeForSafari(url : string) -> string {
+	if (isSafariBrowser() && isUrlParameterTrue("TestSafari")) {
+		url + (if (strContains(url, "?")) "&" else "?") + "ignoreRangeHeaders=1";
+	} else {
+		url
+	}
+}
+
+extractUrlParamValue(url : string, key : string) -> string {
+	takeBefore(takeAfter(url, key + "=", ""), "&", "")
+}
+
+replaceUrlParamValue(url : string, key : string, value : string) -> string {
+	len = strlen(url);
+	eitherFn(
+		strIndexOfM(url, key + "="),
+		\ind -> {
+			start = strRangeIndexOf(url, "=", ind, len) + 1;
+			end0 = strRangeIndexOf(url, "&", start, len);
+			end = if (end0 != -1) end0 else len;
+			strLeft(url, start) + value + strRight(url, end);
+		},
+		\ -> url + (if (strContains(url, "?")) "&" else "?") + key + "=" + value
+	)
+}
+
+cropUrlToCheckInCache(url : string) -> string {
+	if (isPhpUrl(url)) {
+		allowedParams = ["operation", "file_id", "blob_id", "filename", "thumbnail", "partition_id", "filepath"];
+		splittedUrl = splitUrlToParams(url);
+		newParams = filter(splittedUrl.second, \p -> exists(allowedParams, \p2 -> startsWith(p, p2 + "=")));
+		splittedUrl.first + "?" + strGlue(newParams, "&")
+	} else {
+		url
+	}
+}
+
+tokenConvertersTreeR : ref Tree<string, (string) -> KeyValue> = ref makeTree();
+setTokenToHeaderConverter(tokenName : string, converter : (string) -> KeyValue) -> void {
+	tokenConvertersTreeR := setTree(^tokenConvertersTreeR, toLowerCase(tokenName), converter);
+}
+
+splitOnUrlAndHeaders(url : string) -> Pair<string /*url*/, [KeyValue] /*headers*/> {
+	if (!(^requestHeadersLessR) && isPhpUrl(url)) {
+		unpair(
+			splitUrlToParams(url),
+			\urlPath, urlParams -> {
+				paramsAndTokens = fold(urlParams, Pair([], []), \pair, p -> {
+					eitherFn(
+						strIndexOfM(p, "="),
+						\index -> {
+							name = strLeft(p, index);
+							value = urlDecode(strRight(p, index + 1));
+
+							eitherMap(
+								lookupTree(^tokenConvertersTreeR, toLowerCase(name)),
+								\fn -> Pair(pair.first, concat(pair.second, [fn(value)])),
+								Pair(concat(pair.first, [p]), pair.second)
+							)
+						},
+						\-> Pair(concat(pair.first, [p]), pair.second)
+					)
+				});
+
+				Pair(
+					urlPath + "?" + strGlue(paramsAndTokens.first, "&"),
+					paramsAndTokens.second
+				)
+			}
+		);
+	} else {
+		Pair(url, [])
+	}
+}
+
+splitOnUrlAndHeadersWithCallback(mediaUrl : string, callback : (url : string, headers : [KeyValue]) -> ?) -> ? {
+	unpair(
+		splitOnUrlAndHeaders(mediaUrl),
+		callback
+	);
+}
