@@ -53,6 +53,8 @@ public abstract class FlowRuntime {
 		}
 	}
 
+	// If runnable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),
+	// then it does not need event loop (call eventLoop()), otherwise it must call eventLoop() before finishing the thread.
 	public static Thread runParallel(Runnable runnable) {
 		Thread thread = new Thread(runnable);
 		thread.start();
@@ -60,6 +62,8 @@ public abstract class FlowRuntime {
 		return thread;
 	}
 
+	// If runnable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),
+	// then it does not need event loop (call eventLoop()), otherwise it must call eventLoop() before finishing the thread.
 	public static void runParallelAndWait(Runnable runnable) {
 		Thread thread = new Thread(runnable);
 		thread.start();

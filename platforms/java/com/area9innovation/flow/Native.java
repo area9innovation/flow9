@@ -1917,6 +1917,28 @@ public class Native extends NativeHost {
 		return resArr;
 	}
 
+	public static final Object concurrentAsyncOne2(
+		Func0<Object> task,
+		Func1<Object, Object> onDone,
+		Func1<Object, String> onError
+	) {
+		Callbacks callbacks = FlowRuntime.getCallbacks();
+		Callbacks.Callback callbackOnDone = callbacks.make(onDone);
+		Callbacks.Callback callbackOnError = callbacks.make(onError);
+		callbackOnDone.alternativeCallbackIds = new Integer[]{callbackOnError.id};
+		callbackOnError.alternativeCallbackIds = new Integer[]{callbackOnDone.id};
+		FlowRuntime.runParallel(() -> {
+			try {
+				Object result = task.invoke();
+				FlowRuntime.eventLoop();
+				callbackOnDone.setReady(result);
+			} catch (Exception e) {
+				callbackOnError.setReady(e.getMessage());
+			}
+		});
+		return null;
+	}
+
 	public static final Object concurrentAsyncCallback(
 		Func2<Object, String, Func1<Object, Object>> task,
 		Func1<Object, Object> onDone,
