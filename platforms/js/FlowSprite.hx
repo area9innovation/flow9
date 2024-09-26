@@ -11,6 +11,7 @@ import js.html.Uint8Array;
 import js.html.URL;
 
 using DisplayObjectHelper;
+using RequestQueue;
 
 class FlowSprite extends Sprite {
 	private var scrollRect : FlowGraphics;
@@ -390,9 +391,14 @@ class FlowSprite extends Sprite {
 		this.deleteNativeWidget();
 
 		if (forceSvg) {
-			nativeWidget = Browser.document.createElement("div");
-			this.updateClipID();
+			tagName = "div";
+		}
 
+		nativeWidget = Browser.document.createElement(tagName);
+		this.updateClipID();
+
+		// SVG specific download. Does not use cache strategy
+		if (forceSvg) {
 			var svgXhr = new js.html.XMLHttpRequest();
 			if (!Platform.isIE && !Platform.isEdge)
 				svgXhr.overrideMimeType('image/svg+xml');
@@ -435,44 +441,42 @@ class FlowSprite extends Sprite {
 
 			svgXhr.send();
 		} else if (this.headers.length == 0) {
+			if (useCrossOrigin) {
+				nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
+			}
 
-			nativeWidget = Browser.document.createElement(tagName);
-			this.updateClipID();
-
-			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
+			// Loads image natively, with browser functions
 			nativeWidget.onload = onLoaded;
 			nativeWidget.onerror = onError;
 			nativeWidget.src = url;
 		} else {
-			nativeWidget = Browser.document.createElement(tagName);
-			this.updateClipID();
-
-			if (useCrossOrigin) nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
-
-			var imgXhr = new js.html.XMLHttpRequest();
-			imgXhr.open("GET", url, true);
-			for (header in this.headers) {
-				imgXhr.setRequestHeader(header[0], header[1]);
+			if (useCrossOrigin) {
+				nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
 			}
-			
-			imgXhr.responseType = js.html.XMLHttpRequestResponseType.BLOB;
-			imgXhr.onload = function (oEvent) {
-				if (imgXhr.status == 200 && nativeWidget != null) {
-					var oURL = js.html.URL.createObjectURL(imgXhr.response);
-					nativeWidget.src = oURL;
+
+			nativeWidget.onerror = onError;
+
+			// New resources manager
+			var requestQueue = new RequestQueue();
+
+			// Downloads a file from/with a queue
+			var promise = requestQueue.request(url, this.headers);
+
+			// Handle the response
+			promise.then(function(blob) {
+				if (nativeWidget != null) {
+					// Everything is fine, let's show image
+					nativeWidget.src = blob;
 
 					Native.defer(function() {
-						js.html.URL.revokeObjectURL(oURL);
+						requestQueue.removeBlobUsage(url);
 					});
 
 					onLoaded();
-				} else if (imgXhr.status >= 400) {
-					onError();
 				}
-			};
-
-			imgXhr.onerror = onError;
-			imgXhr.send(null);
+			}).catchError(function(error) {
+				onError();
+			});
 		}
 
 		nativeWidget.className = 'nativeWidget';
