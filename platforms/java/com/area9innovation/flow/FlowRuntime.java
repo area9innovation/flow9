@@ -1,6 +1,6 @@
 package com.area9innovation.flow;
 
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.*;
 import java.util.Locale;
 
 import java.text.DecimalFormat;
@@ -62,14 +62,22 @@ public abstract class FlowRuntime {
 		return thread;
 	}
 
-	// If runnable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),
+	// If callable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),
 	// then it does not need event loop (call eventLoop()), otherwise it must call eventLoop() before finishing the thread.
-	public static void runParallelAndWait(Runnable runnable) {
-		Thread thread = new Thread(runnable);
+	public static <T> T runParallelAndWait(Callable<T> callable) {
+		FutureTask<T> future = new FutureTask<T>(callable);
+		Thread thread = new Thread(future);
 		thread.start();
 		while (thread.isAlive()) {
 			executeActions();
 			if (!sleep()) break;
+		}
+		try {
+			return future.get();
+		} catch (Exception e) {
+			System.out.println("runParallelAndWait exception: " + e.getMessage());
+			e.printStackTrace(System.out);
+			return null;
 		}
 	}
 

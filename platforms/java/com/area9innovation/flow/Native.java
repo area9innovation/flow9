@@ -2128,6 +2128,7 @@ public class Native extends NativeHost {
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
+			return null;
 		});
 		try {
 			return new String(input, "UTF-8");
@@ -2162,6 +2163,7 @@ public class Native extends NativeHost {
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
+			return null;
 		});
 		byte[] bytes = new byte[line.size()];
 		for (int i = 0; i < line.size(); ++ i) {
