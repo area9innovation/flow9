@@ -61,7 +61,7 @@ class RequestQueue {
 
 	public function removeBlobUsage(url: String) {
 		var cnt = blobUsage.get(url);
-		if (cnt == 1) {
+		if (cnt > 1) {
 			// Count usages of the blob
 			blobUsage.set(url, cnt - 1);
 		} else {
