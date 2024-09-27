@@ -81,6 +81,38 @@ public abstract class FlowRuntime {
 		}
 	}
 
+	// This executor prevents from creating new threads and from multiple executions.
+	// For example this is important for executing db queries -- if the previous execution is not finished, a new execution will fail.
+	public static class SingleExecutor extends ThreadPoolExecutor {
+		private static String description;
+
+		public SingleExecutor(String description) {
+			super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
+			this.description = description;
+		}
+
+		public <T> T runAndWait(Callable<T> callable) throws Exception {
+			Future<T> future = null;
+			try {
+				future = submit(callable);
+			} catch (RejectedExecutionException e) {
+				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong() + "; rejected: " + e.getMessage());
+				throw new Exception("Multiple access is not allowed! Resource: " + description);
+			}
+			while (!future.isDone()) {
+				executeActions();
+				if (!sleep()) break;
+			}
+			try {
+				return future.get();
+			} catch (Exception e) {
+				System.out.println("Exception in '" + description + "' executor: " + e.getMessage());
+				e.printStackTrace(System.out);
+				return null;
+			}
+		}
+	}
+
 	public static Timers getTimers() {
 		return timersByThreadId.get(getThreadIdLong());
 	}
