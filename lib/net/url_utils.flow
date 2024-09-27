@@ -8,8 +8,8 @@ export {
 	// Does the url contains `.php` substring?
 	isPhpUrl(url : string) -> bool;
 
-	// Determines if a given URL is considered a valid PHP URL (with additional checks).
-	isPhpUrlImproved(url : string) -> bool;
+	// Validates the URL as a valid PHP URL, considering various criteria.
+	isValidPhpUrl(url : string) -> bool;
 	
 	// Splits a URL into its body and query parameters, returning them as a pair.
 	splitUrlToParams(url : string) -> Pair<string, [string]>;
@@ -56,6 +56,16 @@ export {
 
 	// The same as above but with callback implementation.
 	splitOnUrlAndHeadersWithCallback(mediaUrl : string, callback : (url : string, headers : [KeyValue]) -> ?) -> ?;
+
+	// Extracts tokens from a media URL and creates a new Structure with a token-safe URL and headers with tokens.
+	moveJwtToHeaders(
+		mediaUrl : string,
+		style : [?],
+		skipIf : ?,
+		extractHeadersFn : (?) -> Maybe<[KeyValue]>,
+		updateStyleFn : (style : [?], headers : [KeyValue]) -> [?],
+		makeResultFn : (url : string, style : [?]) -> ??
+	) -> ??;
 }
 
 requestHeadersLessR = ref false;
@@ -68,7 +78,7 @@ isPhpUrl(url : string) -> bool {
 	strContains(url, ".php?");
 }
 
-isPhpUrlImproved(url : string) -> bool {
+isValidPhpUrl(url : string) -> bool {
 	isPhpUrl(url) || startsWith(url, "http://") || startsWith(url, "https://") || startsWith(url, getAppUrl())
 }
 
@@ -204,4 +214,41 @@ splitOnUrlAndHeadersWithCallback(mediaUrl : string, callback : (url : string, he
 		splitOnUrlAndHeaders(mediaUrl),
 		callback
 	);
+}
+
+moveJwtToHeaders(
+	mediaUrl : string,
+	style : [?],
+	skipIf : ?,
+	extractHeadersFn : (?) -> Maybe<[KeyValue]>,
+	updateStyleFn : (style : [?], headers : [KeyValue]) -> [?],
+	makeResultFn : (url : string, style : [?]) -> ??
+) -> ?? {
+	if (contains(style, skipIf)) {
+		makeResultFn(mediaUrl, style)
+	} else {
+		splitOnUrlAndHeadersWithCallback(
+			mediaUrl,
+			\url, headers -> {
+				if (headers == []) {
+					makeResultFn(mediaUrl, style);
+				} else {
+					unpair(
+						fold(style, Pair([], []), \acc : Pair<[?], [KeyValue]>, s : ? -> {
+							eitherFn(
+								extractHeadersFn(s),
+								\sHeaders -> Pair(acc.first, concat(acc.second, sHeaders)),
+								\-> Pair(concat(acc.first, [s]), acc.second)
+							)
+						}),
+						\style2 : [?], headers2 : [KeyValue] -> {
+							keys = map(headers2, \th -> th.key);
+							filteredHeaders = filter(headers, \kv -> !contains(keys, kv.key));
+							makeResultFn(url, updateStyleFn(style2, concat(headers2, filteredHeaders)));
+						}
+					);
+				}
+			}
+		);
+	}
 }
