@@ -258,8 +258,9 @@ export {
 	// Similar to TCrop*, but doesn't forceably increase metric if it is less than given width/height
 	TLimitWidth(content : Tropic, width : Tropic) -> Tropic;
 	TLimitHeight(content : Tropic, height : Tropic) -> Tropic;
-	TLimitWidth2(content : Tropic, width : Transform<double>) -> Tropic;
-	TLimitHeight2(content : Tropic, height : Transform<double>) -> Tropic;
+	TLimitWidth2(content : Tropic, width : Transform<double>, enabled : Transform<bool>) -> Tropic;
+	TLimitHeight2(content : Tropic, height : Transform<double>, enabled : Transform<bool>) -> Tropic;
+	TLimitWidthHeight(content : Tropic, wh: Transform<WidthHeight>, enabled : Transform<bool>) -> Tropic;
 
 	// For backward compatibility
 	TCropSizeX(content : Tropic, width : Tropic) -> Tropic { TCropWidth(content, width) };
@@ -429,7 +430,7 @@ export {
 	TCanvas(content : Tropic) -> Tropic;
 
 
-	loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) -> void;
+	loadTPdfDocument(url : string, headers : [KeyValue], onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) -> void;
 
 	TPdfDocumentStyle ::= OnError;
 
@@ -1802,22 +1803,34 @@ TCropByOneMetricTropic(content : Tropic, size : Tropic, cropByWidth : bool, forc
 }
 
 TCropWidth2(content : Tropic, width : Transform<double>) -> Tropic {
-	TCropByOneMetric(content, width, true, true)
+	TCropByOneMetric(content, width, true, true, const(true))
 };
 
 TCropHeight2(content : Tropic, height : Transform<double>) -> Tropic {
-	TCropByOneMetric(content, height, false, true)
+	TCropByOneMetric(content, height, false, true, const(true))
 };
 
-TLimitWidth2(content : Tropic, width : Transform<double>) -> Tropic {
-	TCropByOneMetric(content, width, true, false)
+TLimitWidth2(content : Tropic, width : Transform<double>, enabled : Transform<bool>) -> Tropic {
+	TCropByOneMetric(content, width, true, false, enabled)
 };
 
-TLimitHeight2(content : Tropic, height : Transform<double>) -> Tropic {
-	TCropByOneMetric(content, height, false, false)
+TLimitHeight2(content : Tropic, height : Transform<double>, enabled : Transform<bool>) -> Tropic {
+	TCropByOneMetric(content, height, false, false, enabled)
 };
 
-TCropByOneMetric(content : Tropic, size : Transform<double>, cropByWidth : bool, force : bool) -> Tropic {
+TLimitWidthHeight(content : Tropic, wh: Transform<WidthHeight>, enabled : Transform<bool>) -> Tropic {
+	TLimitHeight2(
+		TLimitWidth2(
+			content,
+			fwidth(wh),
+			enabled
+		),
+		fheight(wh),
+		enabled
+	)
+};
+
+TCropByOneMetric(content : Tropic, size : Transform<double>, cropByWidth : bool, force : bool, enabled : Transform<bool>) -> Tropic {
 	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
 		c = t2a(content, parent, sheet, metricsOnly);
 		forceSize = \mtr -> if (force) size else fmin(size, mtr);
@@ -1831,12 +1844,14 @@ TCropByOneMetric(content : Tropic, size : Transform<double>, cropByWidth : bool,
 			if (metricsOnly)
 				FEmpty()
 			else
-				FCrop(
+				FCrop2(
 					zero,
 					zero,
 					metrics.width,
 					metrics.height,
-					c.form
+					enabled,
+					c.form,
+					captureCallstack()
 				);
 
 		if (cropByWidth)
@@ -3116,7 +3131,7 @@ filterFPdfDocumentStyle(style : [TPdfDocumentStyle]) -> [FPdfDocumentStyle] {
 	)
 }
 
-loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) {
+loadTPdfDocument(url : string, headers : [KeyValue], onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) {
 	makeTViewFn = \document -> \page -> {
 		availableWH = makeWH();
 		metrics = make(FormMetrics(0.0, 0.0, 0.0, 0.0));
@@ -3139,6 +3154,7 @@ loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDoc
 
 	loadFPdfDocument(
 		url,
+		headers,
 		\fPdfDocument -> {
 			onLoad(
 				TPdfDocument(

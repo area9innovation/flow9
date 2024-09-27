@@ -1618,6 +1618,12 @@ class RenderSupport {
 		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
 
+		if (Platform.isMobile) {
+			// Collapse of PWA application requires gesture which initiates touchstart, but never receives touchend
+			// We need to reset MouseUpReceived when application is collapsed for success first click after an application is focused
+			Browser.window.addEventListener("blur", function (e) { MouseUpReceived = true; }); 
+		}
+
 		if (root != Browser.document.body) {
 			on("fullscreen", function () {
 				onBrowserWindowResize({target: Browser.window});
@@ -2421,6 +2427,10 @@ class RenderSupport {
 
 	public static function setTextFieldInterlineSpacing(clip : TextClip, spacing : Float) : Void {
 		clip.setInterlineSpacing(spacing);
+	}
+
+	public static function setTextFieldPreventXSS(clip : TextClip, enable : Bool) : Void {
+		clip.setPreventXSS(enable);
 	}
 
 	public static function setTextDirection(clip : TextClip, direction : String) : Void {
@@ -3297,7 +3307,7 @@ class RenderSupport {
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var clipWidth = 0;
 			var clipHeight = 0;
-			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip)) {
+			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip) && !clip.isInput) {
 				clipWidth = untyped clip.getClipWidth(false);
 				clipHeight = untyped clip.getClipHeight(false);
 			} else {

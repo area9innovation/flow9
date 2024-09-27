@@ -11,6 +11,9 @@ public abstract class FlowRuntime {
 	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
 	public static String[] program_args;
 	private static ConcurrentHashMap<Class, NativeHost> hosts = new ConcurrentHashMap<Class, NativeHost>();
+	public static Integer quitCode = null;
+	public static ConcurrentHashMap<Long, Timers> timersByThreadId = new ConcurrentHashMap<Long, Timers>();
+	private static ConcurrentHashMap<Long, Callbacks> callbacksByThreadId = new ConcurrentHashMap<Long, Callbacks>();
 
 	private static final ThreadLocal<DecimalFormat> decimalFormat = new ThreadLocal<DecimalFormat>(){
         @Override
@@ -23,11 +26,85 @@ public abstract class FlowRuntime {
         }
     };
 
+	protected abstract void main();
+
 	public synchronized void start() {
 		main();
+		while (quitCode == null) {
+			executeActions();
+			if (!sleep()) break;
+		}
 	}
 
-	protected abstract void main();
+	public static boolean sleep() {
+		try {
+			Thread.sleep(10);
+			return true;
+		} catch (InterruptedException e) {
+			quitCode = 1;
+			System.exit(1);
+			return false;
+		}
+	}
+
+	public static void eventLoop() {
+		while (quitCode == null && executeActions()) {
+			if (!sleep()) break;
+		}
+	}
+
+	public static Thread runParallel(Runnable runnable) {
+		Thread thread = new Thread(runnable);
+		thread.start();
+		executeActions();
+		return thread;
+	}
+
+	public static void runParallelAndWait(Runnable runnable) {
+		Thread thread = new Thread(runnable);
+		thread.start();
+		while (thread.isAlive()) {
+			executeActions();
+			if (!sleep()) break;
+		}
+	}
+
+	public static Timers getTimers() {
+		return timersByThreadId.get(getThreadIdLong());
+	}
+
+	public static Callbacks getCallbacks() {
+		Long threadId = getThreadIdLong();
+		Callbacks callbacks = callbacksByThreadId.get(threadId);
+		if (callbacks == null) {
+			callbacks = new Callbacks();
+			callbacksByThreadId.put(threadId, callbacks);
+		}
+		return callbacks;
+	}
+
+	public static final Long getThreadIdLong() {
+		return Thread.currentThread().getId();
+	}
+
+	public static boolean executeTimers() {
+		Timers timers = getTimers();
+		if (timers != null) {
+			timers.execute();
+		}
+		return timers != null && !timers.isEmpty();
+	}
+
+	public static boolean executeActions() {
+		boolean hasTimers = executeTimers();
+		Callbacks callbacks = callbacksByThreadId.get(getThreadIdLong());
+		if (callbacks != null) {
+			if (callbacks.execute()) {
+				hasTimers = executeTimers();
+			}
+		}
+		return hasTimers || (callbacks != null && !callbacks.isEmpty());
+	}
 
 	@SuppressWarnings("unchecked")
 	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
