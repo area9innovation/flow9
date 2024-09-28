@@ -2,6 +2,7 @@ package com.area9innovation.flow;
 
 import java.util.concurrent.*;
 import java.util.Locale;
+import java.util.Date;
 
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
@@ -85,6 +86,7 @@ public abstract class FlowRuntime {
 	// For example this is important for executing db queries -- if the previous execution is not finished, a new execution will fail.
 	public static class SingleExecutor extends ThreadPoolExecutor {
 		private static String description;
+		private String lastTaskDescription = null;
 
 		public SingleExecutor(String description) {
 			super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
@@ -92,12 +94,27 @@ public abstract class FlowRuntime {
 		}
 
 		public <T> T runAndWait(Callable<T> callable) throws Exception {
+			return runAndWait(null, callable);
+		}
+
+		public <T> T runAndWait(String taskDescription, Callable<T> callable) throws Exception {
 			Future<T> future = null;
+			String ld = lastTaskDescription;
+			if (taskDescription != null) {
+				taskDescription += "\n;Time: " + new Date().toString();
+			}
+			lastTaskDescription = taskDescription;
 			try {
 				future = submit(callable);
 			} catch (RejectedExecutionException e) {
 				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong() + "; rejected: " + e.getMessage());
-				throw new Exception("Multiple access is not allowed! Resource: " + description);
+				throw new Exception(
+					"Multiple access is not allowed! Resource: " + description
+					+ "\n	Prev. task: " + ld
+					+ "\n	Curr. task: " + taskDescription
+					+ "\n	Ex: " + e.getMessage(),
+					e
+				);
 			}
 			while (!future.isDone()) {
 				executeActions();
