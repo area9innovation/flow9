@@ -120,6 +120,9 @@ public abstract class FlowRuntime {
 				executeActions();
 				if (!sleep()) break;
 			}
+			if (getQueue().size() > 0) {
+				throw new Exception("BAD: queue is not empty but task is done! Contains: " + getQueue().contains(callable) + "; value: " + getQueue().poll(1, java.util.concurrent.TimeUnit.MILLISECONDS));
+			}
 			try {
 				return future.get();
 			} catch (Exception e) {
