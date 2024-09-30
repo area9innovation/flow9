@@ -87,7 +87,12 @@ public abstract class FlowRuntime {
 		private static String description;
 
 		public SingleExecutor(String description) {
-			super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
+			// For some reason single executor does not work correctly:
+			// Sometimes when previous task is done, queue does not accept a new task:
+			//   Task java.util.concurrent.FutureTask@3e6bdb53[Not completed, task = com.area9innovation.flow.DatabaseSValue$$Lambda$1400/0x0000000840647040@6ef980b8] rejected from com.area9innovation.flow.FlowRuntime$SingleExecutor@2b1aae93[Running, pool size = 1, active threads = 1, queued tasks = 0, completed tasks = 3524
+			//super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
+			// So try another queue for a while.
+			super(1, 1, 0L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(1));
 			this.description = description;
 		}
 
