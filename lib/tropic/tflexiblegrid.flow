@@ -38,11 +38,16 @@ export {
 	TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic;
 		TFlexAlignment ::= RelativeAlignment, CenterAlign, TAlign;
 		TFlexStyle ::= TVertical, TWrap, TFlexAlignment, TAnimationTimer, TOrder, TEnabled, TSetRTL, TSameSize,
-			TBaselineAlign, TAvailableMinMax, TArrayThreshold, TFlexibleGridLazyRenderingMode, TSpacing;
+			TBaselineAlign, TAvailableMinMax, TArrayThreshold, TFlexibleGridLazyRenderingMode, TSpacing, TBalanced;
 
 			 // Amount of elements in each row (Amount of elements in each column if TVertical is passed)
 			 // By default wrap is 0, which means that all elements are fitted by their size
 			TWrap(wrap : int);
+			// Spread amount of elements evenly in the columns (rows if TVertical is passed)
+			// Total amount of elements is divided by the available amount of rows (columns if TVertical is passed)
+			// which is calculated by dividing total size of elements by the available space
+			// Overwritten by TWrap if wrap > 0
+			TBalanced();
 }
 
 TFlexibleGridItem(
@@ -1050,6 +1055,7 @@ TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic {
 	spacing = extractStruct(style, TSpacing(zero, zero));
 	spacingB = if (!vertical) spacing.x else spacing.y;
 	availableB = make(0.);
+	balanced = contains(style, TBalanced());
 
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
 	isSameSize = contains(style, TSameSize());
@@ -1224,7 +1230,7 @@ TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic {
 					),
 					availableMinMaxB,
 					\itms, stageSize ->
-						next(topItem, fitTFlex(itms, stageSize.first, stageSize.second, faddition(availableB, spacingB), vertical, alignment, alignBaselines, wrap, isRTL))
+						next(topItem, fitTFlex(itms, stageSize.first, stageSize.second, faddition(availableB, spacingB), vertical, alignment, alignBaselines, wrap, isRTL, balanced))
 				)
 			],
 			f
@@ -1450,8 +1456,9 @@ fitTFlex(
 	vertical : bool,
 	alignment0 : TFlexAlignment,
 	alignBaselines : bool,
-	wrap : int,
-	isRTL : bool
+	wrap0 : int,
+	isRTL : bool,
+	balanced : bool
 ) -> TFlexibleGridConstantItem {
 	currentCoord = ref 0.;
 	currentLine = ref [];
@@ -1494,12 +1501,22 @@ fitTFlex(
 		}
 	}
 
+	wrap = if (wrap0 > 0) {
+		wrap0;
+	} else if (balanced) {
+		totalSize = dsum(map(items, \item -> item.second));
+		totalLines = dceil(totalSize / sizeMax);
+		round(i2d(length(items)) / totalLines);
+	} else {
+		0;
+	};
+
 	iter(items, \item -> {
 		it = item.first;
 		minSize = item.second;
 		doesFit = \ -> ^currentCoord + minSize < sizeMax;
 
-		if (length(^currentLine) == 0 || (wrap <= 0 && doesFit()) || (wrap > 0 && length(^currentLine) < wrap)) {
+		if (length(^currentLine) == 0 || (if (wrap > 0) length(^currentLine) < wrap else doesFit())) {
 			currentLine := arrayPush(^currentLine, it);
 			currentCoord := ^currentCoord + minSize;
 		} else {
