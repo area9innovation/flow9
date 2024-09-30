@@ -1,11 +1,8 @@
 package com.area9innovation.flow;
 
+import java.text.*;
 import java.util.concurrent.*;
-import java.util.Locale;
-import java.util.Date;
-
-import java.text.DecimalFormat;
-import java.text.DecimalFormatSymbols;
+import java.util.*;
 
 public abstract class FlowRuntime {
 	public static Struct[] struct_prototypes;
@@ -87,6 +84,12 @@ public abstract class FlowRuntime {
 	public static class SingleExecutor extends ThreadPoolExecutor {
 		private static String description;
 		private String lastTaskDescription = null;
+		private Boolean taskDone = false;
+
+		protected void afterExecute(Runnable r, Throwable t) {
+			super.afterExecute(r, t);
+			taskDone = true;
+		}
 
 		public SingleExecutor(String description) {
 			super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
@@ -101,28 +104,35 @@ public abstract class FlowRuntime {
 			Future<T> future = null;
 			String ld = lastTaskDescription;
 			if (taskDescription != null) {
-				taskDescription += "\n;Time: " + new Date().toString();
+				taskDescription += "\n;Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date());
 			}
 			lastTaskDescription = taskDescription;
+			//taskDone = false;
+			String beforeSubmit = "";
+			String afterSubmit = "";
 			try {
+				beforeSubmit = "!!! 1 QUEUE info before submit: #" + getThreadIdLong() + " Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date()) +" getActiveCount: " + getActiveCount() + " getCompletedTaskCount: " + getCompletedTaskCount();
 				future = submit(callable);
+				afterSubmit = "!!! 2 QUEUE info after submit: #" + getThreadIdLong() + " Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date()) + " getActiveCount: " + getActiveCount() + " getCompletedTaskCount: " + getCompletedTaskCount();
 			} catch (RejectedExecutionException e) {
 				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong() + "; rejected: " + e.getMessage());
 				throw new Exception(
 					"Multiple access is not allowed! Resource: " + description
 					+ "\n	Prev. task: " + ld
 					+ "\n	Curr. task: " + taskDescription
+					+ "\n	beforeSubmit: " + beforeSubmit
+					+ "\n	afterSubmit: " + afterSubmit
+					+ "\n	taskDone: " + taskDone
 					+ "\n	Ex: " + e.getMessage(),
 					e
 				);
 			}
+			//while (!future.isDone() && taskDone) {
 			while (!future.isDone()) {
 				executeActions();
 				if (!sleep()) break;
 			}
-			if (getQueue().size() > 0) {
-				throw new Exception("BAD: queue is not empty but task is done! Contains: " + getQueue().contains(callable) + "; value: " + getQueue().poll(1, java.util.concurrent.TimeUnit.MILLISECONDS));
-			}
+			taskDone = false;
 			try {
 				return future.get();
 			} catch (Exception e) {
