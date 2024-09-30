@@ -125,13 +125,6 @@ public abstract class FlowRuntime {
 				executeActions();
 				if (!sleep()) break;
 			}
-			if (activeTasks.size() != 0) {
-				throw new Exception(
-					"future.isDone but task is still active:"
-					+ "\nactive is : " + activeTasks.keySet().toArray()[0]
-					+ "\nmy task is: " + future
-				);
-			}
 			try {
 				return future.get();
 			} catch (Exception e) {
