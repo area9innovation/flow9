@@ -82,13 +82,20 @@ public abstract class FlowRuntime {
 	// This executor prevents from creating new threads and from multiple executions.
 	// For example this is important for executing db queries -- if the previous execution is not finished, a new execution will fail.
 	public static class SingleExecutor extends ThreadPoolExecutor {
-		private static String description;
+		private String description;
 		private String lastTaskDescription = null;
-		private Boolean taskDone = false;
+		private final ConcurrentHashMap<Runnable, Boolean> activeTasks = new ConcurrentHashMap<>();
 
+		@Override
+		protected void beforeExecute(Thread t, Runnable r) {
+			activeTasks.put(r, true);
+			super.beforeExecute(t, r);
+		}
+
+		@Override
 		protected void afterExecute(Runnable r, Throwable t) {
 			super.afterExecute(r, t);
-			taskDone = true;
+			activeTasks.remove(r);
 		}
 
 		public SingleExecutor(String description) {
@@ -103,36 +110,28 @@ public abstract class FlowRuntime {
 		public <T> T runAndWait(String taskDescription, Callable<T> callable) throws Exception {
 			Future<T> future = null;
 			String ld = lastTaskDescription;
-			if (taskDescription != null) {
-				taskDescription += "\n;Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date());
-			}
 			lastTaskDescription = taskDescription;
-			//taskDone = false;
-			String beforeSubmit = "";
-			String afterSubmit = "";
 			try {
-				beforeSubmit = "!!! 1 QUEUE info before submit: #" + getThreadIdLong() + " Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date()) +" getActiveCount: " + getActiveCount() + " getCompletedTaskCount: " + getCompletedTaskCount();
 				future = submit(callable);
-				afterSubmit = "!!! 2 QUEUE info after submit: #" + getThreadIdLong() + " Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date()) + " getActiveCount: " + getActiveCount() + " getCompletedTaskCount: " + getCompletedTaskCount();
 			} catch (RejectedExecutionException e) {
-				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong() + "; rejected: " + e.getMessage());
-				throw new Exception(
-					"Multiple access is not allowed! Resource: " + description
+				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong()
 					+ "\n	Prev. task: " + ld
 					+ "\n	Curr. task: " + taskDescription
-					+ "\n	beforeSubmit: " + beforeSubmit
-					+ "\n	afterSubmit: " + afterSubmit
-					+ "\n	taskDone: " + taskDone
-					+ "\n	Ex: " + e.getMessage(),
-					e
+					+ "\n	Exception: " + e.getMessage()
 				);
+				throw new Exception("Multiple access is not allowed! Resource: " + description);
 			}
-			//while (!future.isDone() && taskDone) {
-			while (!future.isDone()) {
+			while (!future.isDone() || activeTasks.containsKey(future)) {
 				executeActions();
 				if (!sleep()) break;
 			}
-			taskDone = false;
+			if (activeTasks.size() != 0) {
+				throw new Exception(
+					"future.isDone but task is still active:"
+					+ "\nactive is : " + activeTasks.keySet().toArray()[0]
+					+ "\nmy task is: " + future
+				);
+			}
 			try {
 				return future.get();
 			} catch (Exception e) {
