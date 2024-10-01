@@ -1,6 +1,6 @@
 package com.area9innovation.flow;
 
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.*;
 import java.util.Locale;
 
 import java.text.DecimalFormat;
@@ -38,7 +38,7 @@ public abstract class FlowRuntime {
 
 	public static boolean sleep() {
 		try {
-			Thread.sleep(10);
+			Thread.sleep(1);
 			return true;
 		} catch (InterruptedException e) {
 			quitCode = 1;
@@ -53,6 +53,8 @@ public abstract class FlowRuntime {
 		}
 	}
 
+	// If runnable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),
+	// then it does not need event loop (call eventLoop()), otherwise it must call eventLoop() before finishing the thread.
 	public static Thread runParallel(Runnable runnable) {
 		Thread thread = new Thread(runnable);
 		thread.start();
@@ -60,12 +62,59 @@ public abstract class FlowRuntime {
 		return thread;
 	}
 
-	public static void runParallelAndWait(Runnable runnable) {
-		Thread thread = new Thread(runnable);
+	// If callable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),
+	// then it does not need event loop (call eventLoop()), otherwise it must call eventLoop() before finishing the thread.
+	public static <T> T runParallelAndWait(Callable<T> callable) {
+		FutureTask<T> future = new FutureTask<T>(callable);
+		Thread thread = new Thread(future);
 		thread.start();
 		while (thread.isAlive()) {
 			executeActions();
 			if (!sleep()) break;
+		}
+		try {
+			return future.get();
+		} catch (Exception e) {
+			System.out.println("runParallelAndWait exception: " + e.getMessage());
+			e.printStackTrace(System.out);
+			return null;
+		}
+	}
+
+	// This executor prevents from creating new threads and from multiple executions.
+	// For example this is important for executing db queries -- if the previous execution is not finished, a new execution will fail.
+	public static class SingleExecutor extends ThreadPoolExecutor {
+		private static String description;
+
+		public SingleExecutor(String description) {
+			// For some reason single executor does not work correctly:
+			// Sometimes when previous task is done, queue does not accept a new task:
+			//   Task java.util.concurrent.FutureTask@3e6bdb53[Not completed, task = com.area9innovation.flow.DatabaseSValue$$Lambda$1400/0x0000000840647040@6ef980b8] rejected from com.area9innovation.flow.FlowRuntime$SingleExecutor@2b1aae93[Running, pool size = 1, active threads = 1, queued tasks = 0, completed tasks = 3524
+			//super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
+			// So try another queue for a while.
+			super(1, 1, 0L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(1));
+			this.description = description;
+		}
+
+		public <T> T runAndWait(Callable<T> callable) throws Exception {
+			Future<T> future = null;
+			try {
+				future = submit(callable);
+			} catch (RejectedExecutionException e) {
+				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong() + "; rejected: " + e.getMessage());
+				throw new Exception("Multiple access is not allowed! Resource: " + description);
+			}
+			while (!future.isDone()) {
+				executeActions();
+				if (!sleep()) break;
+			}
+			try {
+				return future.get();
+			} catch (Exception e) {
+				System.out.println("Exception in '" + description + "' executor: " + e.getMessage());
+				e.printStackTrace(System.out);
+				return null;
+			}
 		}
 	}
 

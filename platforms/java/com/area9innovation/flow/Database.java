@@ -30,6 +30,7 @@ public class Database extends NativeHost {
         public RSObject lrurs = null;
         protected DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
         protected HashSet<String> intOverflowFields = new HashSet<String>();
+        public FlowRuntime.SingleExecutor queryExecutor = new FlowRuntime.SingleExecutor("db query");
 
         public DBObject() {
             dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -199,28 +200,33 @@ public class Database extends NativeHost {
         return requestDbWithQueryParams(database, query, params);
     }
 
-    public static final Object requestDbWithQueryParams(Object database, String query, Object[] queryParams) {
-        if (database == null) return null;
+	public static final Object requestDbWithQueryParams(Object database, String query, Object[] queryParams) {
+		if (database == null) return null;
 		DBObject dbObj = (DBObject) database;
-        try {
-            RSObject rso = null;
-            if (queryParams.length == 0) {
-                rso = new RSObject(dbObj, query);
-            } else {
-                rso = new RSObject(dbObj, query, queryParams);
-            }
-			dbObj.err = "";
-            return (Object) rso;
-        } catch (SQLException se) {
-            String err = getSqlErrorMessage(se);
-            System.out.println("Error on request db: " + err);
-            dbObj.err = err;
-            return null;
-        } catch (Exception e) {
+		try {
+			RSObject rso = dbObj.queryExecutor.runAndWait(() -> {
+				try {
+					dbObj.err = "";
+					if (queryParams.length == 0) {
+						return new RSObject(dbObj, query);
+					} else {
+						return new RSObject(dbObj, query, queryParams);
+					}
+				} catch (SQLException se) {
+					String err = getSqlErrorMessage(se);
+					System.out.println("Error on request db: " + err);
+					dbObj.err = err;
+				} catch (Exception e) {
+					dbObj.err = e.getMessage();
+					printException(e);
+				}
+				return null;
+			});
+			return (Object)rso;
+		} catch (Exception e) {
 			dbObj.err = e.getMessage();
-            printException(e);
-            return null;
-        }
+			return null;
+		}
     }
 
     public static final String requestExceptionDb(Object database) {
@@ -419,7 +425,19 @@ public class Database extends NativeHost {
             }
             String sql = String.join(";", q1);
 
-            boolean isResultSet = dbo.stmt.execute(sql);
+			Pair<Boolean, Exception> pair = dbo.queryExecutor.runAndWait(() -> {
+				try {
+					return new Pair<Boolean, Exception>(dbo.stmt.execute(sql), null);
+				}
+				catch (Exception e) {
+					e.printStackTrace(System.out);
+					return new Pair<Boolean, Exception>(null, e);
+				}
+			});
+			if (pair.second != null) {
+				throw pair.second;
+			}
+			Boolean isResultSet = pair.first;
             Integer updateCount = dbo.stmt.getUpdateCount();
             while (isResultSet || updateCount != -1) {
                 if (isResultSet) {

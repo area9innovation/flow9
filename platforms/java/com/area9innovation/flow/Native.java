@@ -1,65 +1,28 @@
 package com.area9innovation.flow;
 
-import java.util.*;
-import java.io.Writer;
-import java.io.FileOutputStream;
-import java.io.OutputStreamWriter;
-import java.io.BufferedWriter;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.nio.file.InvalidPathException;
-import java.awt.datatransfer.DataFlavor;
-import java.awt.Toolkit;
-import java.awt.datatransfer.StringSelection;
-import java.awt.datatransfer.Clipboard;
-import java.awt.datatransfer.UnsupportedFlavorException;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.BufferedReader;
-import java.io.PrintWriter;
-import java.io.StringWriter;
-import java.nio.charset.CharsetDecoder;
-import java.io.FileInputStream;
-import java.io.File;
-import java.nio.charset.CodingErrorAction;
-import java.net.URLDecoder;
-import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
-import java.nio.charset.CharsetEncoder;
-import java.nio.file.StandardOpenOption;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
-import java.lang.Runtime;
-import java.lang.ClassCastException;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.io.OutputStream;
-import java.io.InputStream;
-import java.math.BigInteger;
-import java.security.*;
-import java.time.format.DateTimeFormatter;
-import java.time.LocalDateTime;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeParseException;
-import java.util.concurrent.ConcurrentHashMap;
-import java.time.format.FormatStyle;
-import java.time.ZonedDateTime;
 import com.google.gson.*;
 import com.sun.management.OperatingSystemMXBean;
+import java.awt.datatransfer.*;
+import java.awt.Toolkit;
+import java.io.*;
+import java.lang.*;
+import java.lang.reflect.*;
+import java.math.BigInteger;
+import java.net.URLDecoder;
+import java.nio.charset.*;
+import java.nio.file.*;
+import java.security.*;
+import java.time.*;
+import java.time.format.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.function.Function;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
 	private static MessageDigest md5original = null;
 	private static ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
+	private static FlowRuntime.SingleExecutor inputExecutor = new FlowRuntime.SingleExecutor("stdin reader");
 	private static OperatingSystemMXBean osBean = java.lang.management.ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
 
 	public Native() {
@@ -1917,6 +1880,28 @@ public class Native extends NativeHost {
 		return resArr;
 	}
 
+	public static final Object concurrentAsyncOne2(
+		Func0<Object> task,
+		Func1<Object, Object> onDone,
+		Func1<Object, String> onError
+	) {
+		Callbacks callbacks = FlowRuntime.getCallbacks();
+		Callbacks.Callback callbackOnDone = callbacks.make(onDone);
+		Callbacks.Callback callbackOnError = callbacks.make(onError);
+		callbackOnDone.alternativeCallbackIds = new Integer[]{callbackOnError.id};
+		callbackOnError.alternativeCallbackIds = new Integer[]{callbackOnDone.id};
+		FlowRuntime.runParallel(() -> {
+			try {
+				Object result = task.invoke();
+				FlowRuntime.eventLoop();
+				callbackOnDone.setReady(result);
+			} catch (Exception e) {
+				callbackOnError.setReady(e.getMessage());
+			}
+		});
+		return null;
+	}
+
 	public static final Object concurrentAsyncCallback(
 		Func2<Object, String, Func1<Object, Object>> task,
 		Func1<Object, Object> onDone,
@@ -2093,20 +2078,26 @@ public class Native extends NativeHost {
 
 	public static final String readBytes(int n) {
 		byte[] input = new byte[n];
-		FlowRuntime.runParallelAndWait(() -> {
-			try {
-				int have_read = 0;
-				while (have_read < n) {
-					int read_bytes = System.in.read(input, have_read, n - have_read);
-					if (read_bytes == -1) {
-						break;
+		try {
+			inputExecutor.runAndWait(() -> {
+				try {
+					int have_read = 0;
+					while (have_read < n) {
+						int read_bytes = System.in.read(input, have_read, n - have_read);
+						if (read_bytes == -1) {
+							break;
+						}
+						have_read += read_bytes;
 					}
-					have_read += read_bytes;
+				} catch (IOException e) {
+					e.printStackTrace();
 				}
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-		});
+				return null;
+			});
+		} catch (Exception e) {
+			System.out.println(e.getMessage());
+			return "";
+		}
 		try {
 			return new String(input, "UTF-8");
 		} catch (UnsupportedEncodingException e) {
@@ -2118,29 +2109,35 @@ public class Native extends NativeHost {
 	public static final String readUntil(String str_pattern) {
 		byte[] pattern = str_pattern.getBytes();
 		ArrayList<Byte> line = new ArrayList<Byte>();
-		FlowRuntime.runParallelAndWait(() -> {
-			try {
-				int pos = 0;
-				while (true) {
-					int ch = System.in.read();
-					if (ch == -1) {
-						break;
-					} else {
-						line.add(Byte.valueOf((byte)ch));
-						if (ch == pattern[pos]) {
-							pos += 1;
-							if (pos == pattern.length) {
-								break;
-							}
+		try {
+			inputExecutor.runAndWait(() -> {
+				try {
+					int pos = 0;
+					while (true) {
+						int ch = System.in.read();
+						if (ch == -1) {
+							break;
 						} else {
-							pos = 0;
+							line.add(Byte.valueOf((byte)ch));
+							if (ch == pattern[pos]) {
+								pos += 1;
+								if (pos == pattern.length) {
+									break;
+								}
+							} else {
+								pos = 0;
+							}
 						}
 					}
+				} catch (IOException e) {
+					e.printStackTrace();
 				}
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-		});
+				return null;
+			});
+		} catch (Exception e) {
+			System.out.println(e.getMessage());
+			return "";
+		}
 		byte[] bytes = new byte[line.size()];
 		for (int i = 0; i < line.size(); ++ i) {
 			bytes[i] = line.get(i).byteValue();
