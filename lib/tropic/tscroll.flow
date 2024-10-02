@@ -12,7 +12,7 @@ export {
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarStart, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
 		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition, TScrollStep,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
-		TScrollbarsAdditionalBox, TScrollbarOverlapContent, TScrollAxisEnabled, TScrollResizeBeforePrint, TScrollCropEnabled, TScrollSkipInteractivityOnHold;
+		TScrollbarsAdditionalBox, TScrollbarOverlapContentExt, TScrollAxisEnabled, TScrollResizeBeforePrint, TScrollCropEnabled, TScrollSkipInteractivityOnHold;
 
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
@@ -30,7 +30,7 @@ export {
 		// Do not handle the mouse events, so they are also sent to stuff below
 		TScrollDontHandle();
 		// If tap inside scroll box without moving for more than 200 ms, then interactive state will be withdrawed.
-		// Helpful for scroll inside MDragDrop 
+		// Helpful for scroll inside MDragDrop
 		TScrollSkipInteractivityOnHold();
 
 		// Disables Mouse Wheel
@@ -139,7 +139,8 @@ export {
 
 		TScrollInspectShowScrolling(show : DynamicBehaviour<bool>);
 
-		TScrollbarOverlapContent(overlap : bool); // true by default
+		TScrollbarOverlapContent(overlap : bool) { TScrollbarOverlapContentExt(overlap, true) }
+		TScrollbarOverlapContentExt(overlap : bool, shrink : bool); // shrink - shrink scroll box or move scrollbar in case overlap=false. true, true by default
 		TScrollResizeBeforePrint(resize : bool); // Resize to the max content height before printing page, true by default
 
 		TScrollCropEnabled(enabled : Transform<bool>); // showScrolling by default
@@ -149,6 +150,7 @@ export {
 	makeTScrollInspectVisible() -> TScrollInspectVisible;
 
 	nativeScroll = \ -> isUrlParameterTrue("native_scroll") && getRendererType() == "html";
+	maxMetricsFix = !isUrlParameterFalse("scroll_max_metrics");
 }
 
 TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyle]) -> Tropic {
@@ -175,16 +177,18 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	xEnabled = axisEnabled.x;
 	yEnabled = axisEnabled.y;
 
-	overlapContent =
+	overlapContent0 =
 		if (isUrlParameterTrue("scroll_overlap_debug"))
-			false
+			TScrollbarOverlapContentExt(false, true)
 		else
-			extractStruct(style, TScrollbarOverlapContent(true)).overlap;
+			extractStruct(style, TScrollbarOverlapContentExt(true, true));
+
+	overlapContent = overlapContent0.overlap || !overlapContent0.shrink;
 
 	scrollBarStyles = extractStruct(style, TScrollbars(standardScrollBar, standardScrollBar));
 	scrollBarsVisible : TScrollbarsVisible = extractStruct(style, TScrollbarsVisible(make(false), make(false)));
 	scrollBarsAdditionalBox = extractStruct(style, TScrollbarsAdditionalBox(
-		if (overlapContent) const(WidthHeight(0., 0.))
+		if (overlapContent0.overlap) const(WidthHeight(0., 0.))
 		else fwh(scrollBarStyles.y.thickness, scrollBarStyles.x.thickness)
 	)).box;
 	scrollFadeContent = tryExtractStruct(style, TScrollFadeContent(0, 0.0, false, false));
@@ -197,14 +201,15 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	contentWH = wh.content;
 	// WidthHeight of available box
 	boxWH0 : DynamicBehaviour<WidthHeight> = wh.box;
+	scrollbarGaps = fstall(fwh(
+		fif(scrollBarsVisible.y, scrollBarStyles.y.thickness, const(0.)),
+		fif(scrollBarsVisible.x, scrollBarStyles.x.thickness, const(0.))
+	), 0);
 	boxWHCutted =
 		if (overlapContent)
 			boxWH0
 		else
-			fwhsubtract(boxWH0, fstall(fwh(
-				fif(scrollBarsVisible.y, scrollBarStyles.y.thickness, const(0.)),
-				fif(scrollBarsVisible.x, scrollBarStyles.x.thickness, const(0.))
-			), 0));
+			fwhsubtract(boxWH0, scrollbarGaps);
 
 	// Maximum scroll offset (0 if content fits available box)
 	maxWH = fwhmax(fwhsubtract(contentWH, boxWHCutted), const(WidthHeight(0., 0.)));
@@ -263,6 +268,9 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 		cAcc = ref zeroTAcc;
 		cAcc2 = ref zeroTAcc;
 		tempScrollPosition = ref getValue(scrollPosition);
+		availBox =
+			if (overlapContent) TSizedWidthHeight(b.metrics.width, b.metrics.height)
+			else TSized(boxWHCutted);
 		c0 = {
 			cont =
 				TFrame(
@@ -294,10 +302,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 						acc;
 					})
 				)
-				|> (\t -> TAvailable(t,
-					if (overlapContent) TSizedWidthHeight(b.metrics.width, b.metrics.height)
-					else TSized(boxWHCutted)
-				));
+				|> (\t -> TAvailable(t, availBox));
 
 			if (isSome(cropByContent))
 				TransformTAcc2(\t2a2 -> {
@@ -509,6 +514,11 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 							t
 					)
 					|> (\t ->
+						if (isRTL)
+							TTweak([TAlign(fif(eitherMap(cropByContent, \crop -> crop.xEnabled, const(false)), zero, const(1.0)), zero)], t, TWidth(availBox))
+						else t
+					)
+					|> (\t ->
 						if (nativeScroll())
 							TScrollRectT(scrollPosition, boxWH, t, enabled)
 						else {
@@ -614,6 +624,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 						xMoving,
 						yMoving,
 						scrollBoxHover,
+						if (overlapContent || !isRTL) zero else fwidth(scrollbarGaps),
 						TRectangle(interactiveRectangleStyle, TSized(fwhaddition(boxWH, scrollBarsAdditionalBox)))
 					)
 				)
@@ -624,14 +635,22 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 			TAcc(
 				c.form,
 				TFormMetrics(
-					fif(crop.xEnabled, fmin(b.metrics.width, ^cAcc2.metrics.width), b.metrics.width),
+					fif(crop.xEnabled, fmin(fwidth(boxWHCutted), ^cAcc2.metrics.width), fwidth(boxWHCutted)),
 					fif(crop.yEnabled, fmin(b.metrics.height, ^cAcc2.metrics.height), b.metrics.height),
 					fif(crop.yEnabled, fmin(b.metrics.baseline, ^cAcc2.metrics.baseline), b.metrics.baseline),
 				),
 				fif(xEnabled, fif(crop.xEnabled, fmin(b.minWidth, ^cAcc2.minWidth), b.minWidth), ^cAcc.minWidth),
 				fif(yEnabled, fif(crop.yEnabled, fmin(b.minHeight, ^cAcc2.minHeight), b.minHeight), ^cAcc.minHeight),
-				b.maxWidth,
-				b.maxHeight,
+				if (maxMetricsFix) {
+					fif(crop.xEnabled, fmin(b.maxWidth, ^cAcc.maxWidth), b.maxWidth)
+				} else {
+					b.maxWidth
+				},
+				if (maxMetricsFix) {
+					fif(crop.yEnabled, fmin(b.maxHeight, ^cAcc.maxHeight), b.maxHeight)
+				} else {
+					b.maxHeight
+				},
 				fif(xEnabled, b.xFillers, ^cAcc.xFillers),
 				fif(yEnabled, b.yFillers, ^cAcc.yFillers),
 				const(false),
@@ -1188,6 +1207,7 @@ createTScrollBars(
 	xMoving : DynamicBehaviour<bool>,
 	yMoving : DynamicBehaviour<bool>,
 	scrollBoxHover : Transform<bool>,
+	xScrollGap : Transform<double>,
 	tr : Tropic
 ) -> Tropic {
 	// Expand scrollbars when on hover
@@ -1292,6 +1312,7 @@ createTScrollBars(
 					)
 				)
 				|> (\t -> TFixSize(t, makeScrollbarBox(boxSize)))
+				|> (\t -> TBorderT(if (!horizontal) fnegate(xScrollGap) else zero, zero, zero, zero, t))
 			})
 			|> (\t ->
 				TConstruct(
@@ -1354,19 +1375,19 @@ createTScrollBars(
 				)
 			}
 		)
-		|> (\f2 ->
+		|> (\f2 -> {
+			showScrollbar = fOr(
+				fthrottle2(fOr(scrollBoxHover, fOr(fOr(hover, down), fselect(currentInteractive, FLift(\ci -> eitherMap(ci, \c -> c, false))))), 33),
+				fOr(scrollPersistent, fOr(xMoving, yMoving))
+			);
+
 			TFadeInOut(
 				manager,
-				fselectdelay(
-					fOr(
-						fthrottle2(fOr(scrollBoxHover, fOr(fOr(hover, down), fselect(currentInteractive, FLift(\ci -> eitherMap(ci, \c -> c, false))))), 33),
-						fOr(scrollPersistent, fOr(xMoving, yMoving))
-					),
-					\m -> if (m) 0 else 500
-				),
+				if (isFConst(scrollPersistent)) showScrollbar
+				else fselectdelay(showScrollbar, \m -> if (m) 0 else 500),
 				f2
 			)
-		)
+		})
 		|> checkAlign
 		|> (\f2 -> TAvailable(f2, tr))
 	};
@@ -1452,26 +1473,29 @@ roundToStep(point : Point, ss : TScrollStep) {
 
 TFadeInOut(manager : TManager, fadeIn : Transform<bool>, content : Tropic) -> Tropic {
 	TCreate(\ -> {
-		alpha = make(0.0);
+		if (isFConst(fadeIn)) {
+			TAlpha(const(b2d(fgetValue(fadeIn))), content)
+		} else {
+			alpha = make(0.0);
+			TConstruct(
+				[
+					makeSubscribeUns(fadeIn, \fi -> {
+						if (equalDoubles(b2d(fi), getValue(alpha))) {
+							[]
+						} else {
+							e = makeTEasing(
+								if (fi) easingEnteringDuration else easingTransitionDuration,
+								easingStandartCurve,
+								manager.deltaTimer
+							);
+							e.start();
 
-		TConstruct(
-			[
-				makeSubscribeUns(fadeIn, \fi -> {
-					if (equalDoubles(b2d(fi), getValue(alpha))) {
-						[]
-					} else {
-						e = makeTEasing(
-							if (fi) easingEnteringDuration else easingTransitionDuration,
-							easingStandartCurve,
-							manager.deltaTimer
-						);
-						e.start();
-
-						[fconnect(flerp(getValue(alpha), b2d(fi), e.percent), alpha)]
-					}
-				})
-			],
-			TAlpha(alpha, content)
-		)
+							[fconnect(flerp(getValue(alpha), b2d(fi), e.percent), alpha)]
+						}
+					})
+				],
+				TAlpha(alpha, content)
+			)
+		}
 	})
 }

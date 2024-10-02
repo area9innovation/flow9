@@ -1,0 +1,97 @@
+import tools/flowc/statements/fs_transform;
+import tools/flowc/manipulation/tail_call;
+
+export {
+	fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat;
+}
+
+FsTailcallArg(
+	var: FsVar,
+	val: FsExp,
+	fictive: bool, // Variables, which should be kept to keep perceus working
+);
+
+fsTailCallExpansion(args: [FsTailcallArg], new_id: () -> string) -> FsStat {
+	tmp_vars = map(args, \arg ->
+		FsVar(arg.var.name + "__tailcall__" + new_id(), arg.var.type)
+	);
+	tailcall = FsTailCall(map(args, \arg -> arg.val), -1, None());
+	assign_func_vars = foldi(args, tailcall, \i, acc, arg -> {
+		if (arg.fictive) acc else {
+			FsAssign(
+				FsVarUse(arg.var, FsVarInfo(FsVarUninit(), true, false), -1),
+				FsVarUse(tmp_vars[i],
+					FsVarInfo(
+						FsVarIntrinsic(),
+						true,
+						false
+					), -1),
+				false, -1, Some(acc)
+			);
+		}
+	});
+	foldi(args, assign_func_vars, \i, acc, arg -> {
+		if (arg.fictive) {
+			acc;
+		} else {
+			arg_val = arg.val;
+			arg_val1 = switch (arg_val) {
+				FsVarUse(v, info,__): {
+					FsVarUse(arg_val with info = FsVarInfo(info with kind = FsVarIntrinsic()));
+				}
+				default: arg.val;
+			}
+			FsLet(tmp_vars[i], false, arg_val1, acc, -1, None());
+		}
+	});
+}
+
+fsStatTailcall(s : FsStat, fn: FiFunctionDec, names: FiGlobalNames) -> FsStat {
+	if (!fcDetectTailCall(fn)) s else {
+		id_counter = ref 0;
+		new_id = \ -> {
+			id = ^id_counter;
+			id_counter := id + 1;
+			i2s(id);
+		}
+		cast(fsMap(s, \x -> switch (x) {
+			FsRet(ex,__,__): {
+				switch (ex) {
+					FsCall(f, vals, type,__): {
+						switch (f) {
+							FsVarUse(v,__,__): {
+								if (v.name != fn.name) x else {
+									args = filtermapi(vals, \i, val -> {
+										arg = fn.lambda.args[i];
+										switch (val) {
+											FsVarUse(w, info,__): {
+												non_local = switch (info.kind) {
+													FsVarLocal(__): false;
+													default: true;
+												}
+												if (w.name == arg.name) {
+													if ((fiTypeIsScalar(arg.type) || non_local)) {
+														None();
+													} else {
+														Some(FsTailcallArg(FsVar(arg.name, arg.type), val, true));
+													}
+												} else {
+													Some(FsTailcallArg(FsVar(arg.name, arg.type), val, false));
+												}
+											}
+											default: Some(FsTailcallArg(FsVar(arg.name, arg.type), val, false));
+										}
+									});
+									fsTailCallExpansion(args, new_id);
+								}
+							}
+							default: x;
+						}
+					}
+					default: x;
+				}
+			}
+			default: x;
+		}, true): FsAll -> FsStat);
+	}
+}

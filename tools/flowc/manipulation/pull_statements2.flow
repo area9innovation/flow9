@@ -1,0 +1,281 @@
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/transform_exps;
+
+export {
+	fiPullStatementsUp2(e : FiExp) -> FiExp;
+}
+
+FiReturnPolicy ::= FiReturnToOuter, FiReturnToLocal;
+	FiReturnToOuter();
+	FiReturnToLocal(var: FiVar);
+
+fiPullStatementsUp2(e : FiExp) -> FiExp {
+	fiExp2FiStat(e, FiReturnToOuter(), makeSet(), ref 0);
+}
+
+fiWrapSeq(stats: [FiExp]) -> FiExp {
+	fold(stats, FiSeq([], FiTypeVoid(), -1), \acc, x ->
+		fiJoinStats(acc, x)
+	);
+}
+
+fiJoinStats(s1: FiExp, s2: FiExp) -> FiExp {
+	switch (s1) {
+		FiSeq(ss1,__,__): {
+			switch (s2) {
+				FiSeq(ss2,__,__): {
+					FiSeq(s2 with
+						es = concat(ss1, ss2),
+						type = fiExpType(s2)
+					);
+				}
+				default: {
+					if (length(ss1) == 0) s2 else {
+						last = ss1[length(ss1) - 1];
+						FiSeq(s1 with
+							es = replace(ss1, length(ss1) - 1, fiJoinStats(last, s2)),
+							type = fiExpType(s2)
+						);
+					}
+				}
+			}
+		}
+		FiLet(__,__,__, e2,__,__): {
+			FiLet(s1 with e2 = fiJoinStats(e2, s2));
+		}
+		FiVoid(__): s2;
+		default: {
+			switch (s2) {
+				FiSeq(ss2,__,__): {
+					FiSeq(s2 with es = concat([s1], ss2));
+				}
+				default: {
+					FiSeq([s1, s2], fiExpType(s2), -1);
+				}
+			}
+		}
+	}
+}
+
+fiUnwrapSeq(stat: FiExp) -> [FiExp] {
+	switch (stat) {
+		FiSeq(stats,__,__): stats;
+		default: [stat];
+	}
+}
+
+fiExp2FiStat(e : FiExp, returns: FiReturnPolicy, locals: Set<string>, tmp: ref int) -> FiExp {
+	wrap = \x: FiExp -> switch (returns) {
+		FiReturnToOuter():  x;
+		FiReturnToLocal(v): FiCallPrim(FcAssignPrim(), [v, x], FiTypeVoid(), -1);
+	}
+	do_exp = \x -> fiExp2FiExp(x, locals, tmp);
+	switch (e) {
+		FiSeq(es, __,__): {
+			fiWrapSeq(concatA(mapi(es, \i, x ->
+				fiUnwrapSeq(fiExp2FiStat(x, if (i + 1 == length(es)) returns else FiReturnToOuter(), locals, tmp))
+			)));
+		}
+		FiCast(ex, from, to,__,__): {
+			pair = do_exp(ex);
+			fiWrapSeq(arrayPush(pair.second, wrap(FiCast(pair.first, from, to, to, -1))));
+		}
+		FiCall(f, args, type, s): {
+			args_pairs = map(args, do_exp);
+			f_pair = do_exp(f);
+			fiWrapSeq(arrayPush(
+				concatA(concat(
+					[f_pair.second],
+					map(args_pairs, \p -> p.second))
+				),
+				wrap(FiCall(f_pair.first,
+					map(args_pairs, \p -> p.first), type, s
+				))
+			));
+		}
+		FiSwitch(v, vtype, cs, type, __): {
+			FiSwitch(e with
+				cases = map(cs, \c -> {
+					case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
+					FiCase(c with body = fiExp2FiStat(c.body, returns, case_locals, tmp))
+				})
+			);
+		}
+		FiLambda(args, body, type,__): {
+			lambda_locals = fold(args, locals, \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
+			wrap(FiLambda(e with body = fiExp2FiStat(body, FiReturnToOuter(), lambda_locals, tmp)));
+		}
+		FiLet(name, vtype, e1, e2, type, __): {
+			if (name == "__") {
+				fail0("let statement for anonymous variable");
+			} else {
+				e1_pair = do_exp(e1);
+				fiWrapSeq(arrayPush(e1_pair.second,
+					FiLet(e with
+						e1 = e1_pair.first,
+						e2 = fiExp2FiStat(e2, returns, insertSet(locals, name), tmp)
+					)
+				));
+			}
+		}
+		FiIf(e1, e2, e3, type, __): {
+			e1_pair = do_exp(e1);
+			fiWrapSeq(arrayPush(e1_pair.second,
+				FiIf(e with
+					e1 = e1_pair.first,
+					e2 = fiExp2FiStat(e2, returns, locals, tmp),
+					e3 = fiExp2FiStat(e3, returns, locals, tmp)
+				)
+			));
+		}
+		FiCallPrim(op, es, type, __): {
+			es_pairs = map(es, do_exp);
+			fiWrapSeq(arrayPush(
+				concatA(map(es_pairs, \p -> p.second)),
+				wrap(FiCallPrim(e with
+					es = map(es_pairs, \p -> p.first)
+				))
+			));
+		}
+		FiRequire(file, ex, type, __): {
+			fail0("FiRequire is unsupported");
+		}
+		FiUnsafe(name, ex, type, __): {
+			fail0("FiUnsafe is unsupported");
+		}
+		FiVar(__,__,__):   wrap(e);
+		FiVoid(__):        wrap(e);
+		FiDouble(__, __):  wrap(e);
+		FiInt(__, __):     wrap(e);
+		FiString(__, __):  wrap(e);
+		FiBool(__, __):    wrap(e);
+	}
+}
+
+fiExp2FiExp(e : FiExp, locals: Set<string>, tmp: ref int) -> Pair<FiExp, [FiExp]> {
+	do_exps = \x -> fiExp2FiExp(x, locals, tmp);
+	switch (e) {
+		FiSeq(es, type, start): {
+			if (length(es) == 0) {
+				Pair(FiVoid(0), []);
+			} else if (length(es) == 1) {
+				do_exps(es[0]);
+			} else {
+				last = lastElement(es, FiVoid(0));
+				other = take(es, length(es) - 1);
+				last_p = do_exps(last);
+				other_s = fiUnwrapSeq(fiExp2FiStat(FiSeq(other, type, start), FiReturnToOuter(), locals, tmp));
+				Pair(
+					last_p.first,
+					concat(other_s, last_p.second)
+				);
+			}
+		}
+		FiCast(ex, from, to, type, s): {
+			pair = do_exps(ex);
+			Pair(FiCast(pair.first, from, to, type, s), pair.second);
+		}
+		FiCall(f, args, type, call_start): {
+			args_pairs = map(args, do_exps);
+			f_pair = do_exps(f);
+			Pair(
+				FiCall(f_pair.first,
+					map(args_pairs, \p -> p.first), type, call_start
+				),
+				concatA(concat(
+					[f_pair.second],
+					map(args_pairs, \p -> p.second)
+				)),
+			);
+		}
+		FiSwitch(v, vtype, cases, type, start): {
+			default_switch_stat = \return -> {
+				cases_stats = map(cases, \c -> {
+					case_locals = fold(c.argNames, locals, \acc, arg -> if (arg == "__") acc else insertSet(acc, arg));
+					case_stat = fiExp2FiStat(c.body, return, case_locals, tmp);
+					FiCase(c.struct, c.argNames, case_stat, c.start);
+				});
+				FiSwitch(e with cases = cases_stats);
+			}
+			if (type == FiTypeVoid()) {
+				Pair(FiVoid(start), [default_switch_stat(FiReturnToOuter())]);
+			} else {
+				tmp_var = FiVar("__switch_" + v.name + (if (^tmp == 0) "" else "_" + i2s(^tmp)), type, -1);
+				tmp := ^tmp + 1;
+				// Trick here: we can't define a var value before use, that's why we just
+				// make an incorrect setup with void value, which must be resolved by a code generator
+				Pair(tmp_var, [
+						FiLet(tmp_var.name, type, FiVoid(-1),
+							default_switch_stat(FiReturnToLocal(tmp_var)),
+							type, -1
+						)
+					]
+				);
+			}
+		}
+		FiLambda(args, body, type, s): {
+			lambda_locals = fold(args, locals, \acc, arg -> if (arg.name == "__") acc else insertSet(acc, arg.name));
+			Pair(FiLambda(e with body = fiExp2FiStat(body, FiReturnToOuter(), lambda_locals, tmp)), []);
+		}
+		FiLet(name, vtype, e1, e2,__, __): {
+			if (name == "__") {
+				fail0("let statement for anonymous variable");
+			} else {
+				e1_pair = do_exps(e1);
+				e2_pair = fiExp2FiExp(e2, insertSet(locals, name), tmp);
+				Pair(
+					e2_pair.first,
+					arrayPush(
+						e1_pair.second,
+						FiLet(e with
+							e1 = e1_pair.first,
+							e2 = fiWrapSeq(e2_pair.second)
+						)
+					)
+				);
+			}
+		}
+		FiIf(e1, e2, e3, type, __): {
+			e1_pair = do_exps(e1);
+			tmp_var = FiVar("__if_" + (if (^tmp == 0) "" else "_" + i2s(^tmp)), type, -1);
+			tmp := ^tmp + 1;
+			Pair(
+				tmp_var,
+				arrayPush(
+					e1_pair.second,
+					FiLet(
+						// Trick here: we can't define a var value before use, that's why we just
+						// make an incorrect setup with void value, which must be resolved by a code generator
+						tmp_var.name, tmp_var.type, FiVoid(-1),
+						FiIf(e with
+							e1 = e1_pair.first,
+							e2 = fiExp2FiStat(e2, FiReturnToLocal(tmp_var), locals, tmp),
+							e3 = fiExp2FiStat(e3, FiReturnToLocal(tmp_var), locals, tmp),
+						), type, -1
+					)
+				)
+			);
+		}
+		FiCallPrim(op, es, type, __): {
+			es_pairs = map(es, do_exps);
+			Pair(
+				FiCallPrim(e with
+					es = map(es_pairs, \p -> p.first)
+				),
+				concatA(map(es_pairs, \p -> p.second))
+			);
+		}
+		FiRequire(file, ex, type, __): {
+			fail0("FiRequire is not supported");
+		}
+		FiUnsafe(name, ex, type, __): {
+			fail0("FiUnsafe is not supported");
+		}
+		FiVar(__,__,__):   Pair(e, []);
+		FiVoid(__):        Pair(e, []);
+		FiDouble(__, __):  Pair(e, []);
+		FiInt(__, __):     Pair(e, []);
+		FiString(__, __):  Pair(e, []);
+		FiBool(__, __):    Pair(e, []);
+	}
+}

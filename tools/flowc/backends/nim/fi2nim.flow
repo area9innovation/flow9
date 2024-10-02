@@ -1,10 +1,9 @@
-import tools/flowc/backends/nim/fi2nim_assemble;
+import tools/flowc/backends/nim/fi2nim_runtime;
 import tools/flowc/backends/nim/fi2nim_types;
 import tools/flowc/backends/nim/fi2nim_compile;
 import tools/flowc/backends/nim/fi2nim_transform;
+import tools/flowc/backends/nim/fi2nim_build;
 import tools/flowc/manipulation/specialization;
-
-import sys/process;
 
 export {
 	fi2nim(program : FiProgram, cfg : FiNimConfig, callback : (int) -> void) -> void;
@@ -16,56 +15,148 @@ fi2nim(program : FiProgram, cfg0 : FiNimConfig, callback : (int) -> void) -> voi
 	}
 	fcVerbose(cfg, 0, "Making NIM '" + cfg.outputfile + "'...");
 	env = fi2nimInitEnv(program, cfg);
-	runtime = fi2nimRuntime(cfg);
+	runtime = fi2nimRuntime(env);
 	types = fi2nimCompileTypes(env);
-	source = fi2nimCompileSourceCode(env, runtime);
+	convs = fi2nimCompileFlowConversions(env);
+	defvals = fi2nimCompileDefvals(env);
+	tostrings = fi2nimCompileToString(env);
+	compares = fi2nimCompileCompare(env);
 
-	fi2nimAssemble(cfg, fi2nimJoinNimCodeMany([
-		NimLine(0, "#[ COMMON RUNTIME ]#"),
-		NimLine(0, runtime),
-		NimLine(0, "#[ TYPES ]#"),
-		fi2nimCompileTypes(env),
-		NimLine(0, "#[ SOURCE CODE ]#"),
-		source,
-		NimLine(0, "main()")
-	]));
-	fi2nimBuild(env.prog, cfg, callback);
+	compiled = if (isConfigParameterTrue(cfg.options, "nim-mono")) {
+		[NimCompiledSource(cfg.outputfile, fi2nimJoinNimCodeMany([
+			NimLine(0, "#[ COMMON RUNTIME ]#"),
+			NimLine(0, runtime),
+			NimLine(0, "#[ TYPES ]#"),
+			types,
+			NimLine(0, "#[ CONVS ]#"),
+			convs,
+			NimLine(0, "#[ DEFVALS ]#"),
+			defvals,
+			NimLine(0, "#[ TO STRINGS ]#"),
+			tostrings,
+			NimLine(0, "#[ COMPARES ]#"),
+			compares,
+			NimLine(0, "#[ SOURCE CODE ]#"),
+			fi2nimCompileSourceCode(env, runtime),
+			NimLine(0, "main()")
+		]))];
+	} else {
+		imports = fi2nimJoinNimCodeMany([
+			NimLine(0, "import osproc"),
+			NimLine(0, "import strutils"),
+			NimLine(0, "import sequtils"),
+			NimLine(0, "import asyncdispatch"),
+			NimLine(0, "import flow_lib/httpServer_type"),
+			NimLine(0, "import flow_runtime")
+		]);
+		concat(
+			[
+				NimCompiledSource("flow_runtime", NimLine(0, runtime)),
+				NimCompiledSource("flow_types", fi2nimJoinNimCode(imports, types)),
+				NimCompiledSource("flow_convs", fi2nimJoinNimCode3(imports, NimLine(0, "import flow_types"), convs)),
+				NimCompiledSource("flow_defvals", fi2nimJoinNimCode3(imports, NimLine(0, "import flow_types"), defvals)),
+				NimCompiledSource("flow_tostring", fi2nimJoinNimCode3(imports, NimLine(0, "import flow_types"), tostrings)),
+				NimCompiledSource("flow_compare", fi2nimJoinNimCode3(imports, NimLine(0, "import flow_types"), compares)),
+			],
+			map(getTreeValues(env.prog.modules), \m -> fiNimCompileModule(env, m))
+		);
+	}
+	if (!fi2nimSave(cfg, compiled)) callback(5) else {
+		fi2nimBuild(cfg, callback);
+	}
 }
 
 fi2nimCompileTypes(env: FiNimEnv) -> NimCode {
-	structs_enum = fi2nimTypeEnums(env);
-	type_decls = fi2nimJoinNimCodeMany(mapConcat(env.prog.traversal, \mod_name -> {
+	structs_enum = fi2nimTypeEnums(env.structs);
+	type_decls = mapConcat(env.prog.traversal, \mod_name -> {
 		module = lookupTreeDef(env.prog.modules, mod_name, dummyFiModule);
 		module_types = concat(module.unions, module.structs);
 		map(module_types, \tp -> fi2nimTypeDecl(env, tp));
-	}));
-	all_types = fi2nimJoinNimCode3(structs_enum, fi2nimEmptyLine(), type_decls);
+	});
 
 	type_defs = fi2nimJoinNimCode3(
-		NimLine(0, "type"),
-		fi2nimSureIndent(all_types),
+		structs_enum,
+		if (length(type_decls) == 0) NimBlock([]) else {
+			fi2nimJoinNimCode(
+				NimLine(0, "type"),
+				fi2nimSureIndent(fi2nimJoinNimCodeMany(type_decls))
+			)
+		},
 		fi2nimEmptyLine()
 	);
-
-	casts_from_flow = lookupTreeDef(env.castsFromTo, FiTypeFlow(), makeSet());
-	from_flow1 = concat(
-		set2array(casts_from_flow),
-		filtermap(env.ordered_types, \t -> if (containsSet(casts_from_flow, t)) None() else Some(t))
+	typenames = list2array(fold(env.unions, 
+		fold(env.structs, makeList(), \acc, s -> Cons(FiTypeName(s.name, s.typars), acc)),
+		\acc, u -> Cons(FiTypeName(u.name, u.typeparameters), acc)
+	));
+	compiled_funcs = concat(
+		[fi2nimCommentAsCompiledFunc("TYPARS TYPE TRAITS")],
+		filtermap(typenames, \t -> fi2nimTypenameTypars(env, t)),
 	);
-
-	compiled_funcs = concatA([
-		filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t)),
-		filtermap(from_flow1, \t -> fi2nimTypeFromFlow(env, t)),
-		filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t)),
-		filtermap(env.ordered_types, \t -> fi2nimTypeCompare(env, t)),
-		filtermap(env.structs, \s -> fi2nimTypeToTypeId(env, FiTypeName(s.name, s.typars)))
-	]);
 
 	fi2nimJoinNimCodeMany(concatA([
 		[type_defs, fi2nimEmptyLine()],
-		mapi(env.ordered_types, \i, t -> fi2nimRegisterType(env, t, i)), 
 		[fi2nimEmptyLine()],
 		map(env.structs, \s -> fi2nimRegisterStruct(env, s)),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.decl),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.def)
+	]));
+}
+
+fi2nimCompileFlowConversions(env: FiNimEnv) -> NimCode {
+	compiled_funcs = concatA([
+		[fi2nimCommentAsCompiledFunc("FROM FLOW CONVERSION")],
+		[fi2nimTypeFromFlow(env)],
+		[fi2nimCommentAsCompiledFunc("TO FLOW CONVERSIONS")],
+		concat(
+			[fi2nimFuncToFlow(env)],
+			filtermap(env.ordered_types, \t -> fi2nimTypeToFlow(env, t))
+		),
+	]);
+	fi2nimJoinNimCodeMany(concatA([
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.decl),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.def)
+	]));
+}
+
+fi2nimCompileDefvals(env: FiNimEnv) -> NimCode {
+	compiled_funcs = concat(
+		[fi2nimCommentAsCompiledFunc("DEFAULT VALUES")],
+		[fi2nimTypeDefVal(env)],
+	);
+	fi2nimJoinNimCodeMany(concatA([
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.decl),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.def)
+	]));
+}
+
+fi2nimCompileToString(env: FiNimEnv) -> NimCode {
+	compiled_funcs = concat(
+		[fi2nimCommentAsCompiledFunc("TO STRING CONVERSIONS")],
+		concat(
+			[fi2nimFuncToString(env)],
+			filtermap(env.ordered_types, \t -> fi2nimTypeToString(env, t))
+		)
+	);
+	fi2nimJoinNimCodeMany(concatA([
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.decl),
+		[fi2nimEmptyLine()],
+		map(compiled_funcs, \fn -> fn.def)
+	]));
+}
+
+fi2nimCompileCompare(env: FiNimEnv) -> NimCode {
+	compiled_funcs = concat(
+		[fi2nimCommentAsCompiledFunc("COMPARE")],
+		filtermap(env.ordered_types, \t -> fi2nimTypeCompare(env, t)),
+	);
+	fi2nimJoinNimCodeMany(concatA([
 		[fi2nimEmptyLine()],
 		map(compiled_funcs, \fn -> fn.decl),
 		[fi2nimEmptyLine()],
@@ -85,10 +176,10 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> NimCode {
 		fcVerbose(env.cfg, 1, "[" + i2s(i + 1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
 		module = lookupTreeDef(env.prog.modules, p.first, dummyFiModule);
 		module_comment = NimLine(0, "# Module: " + p.first);
-		acc1 = Cons(NimCompiled(module_comment, module_comment), acc);
+		acc1 = Cons(NimCompiledFunc(module_comment, module_comment), acc);
 		fold(p.second, acc1, \ac, decl ->
 			eitherMap(fiNimCompileToplevel(env, decl), \compiled -> 
-				Cons(NimCompiled(compiled with def = fi2nimAddEmptyLine(compiled.def)), ac), 
+				Cons(NimCompiledFunc(compiled with def = fi2nimAddEmptyLine(compiled.def)), ac), 
 				ac
 			)
 		);
@@ -99,18 +190,19 @@ fi2nimCompileSourceCode(env: FiNimEnv, runtime: string) -> NimCode {
 	fi2nimJoinNimCodeMany([
 		native_imports,
 		fi2nimEmptyLine(),
-		NimSnippet("# Forward declarations"),
+		NimLine(0, "# Forward declarations"),
 		forward_decls,
 		fi2nimEmptyLine(),
-		NimSnippet("# Source code of functions / global variables"),
+		NimLine(0, "# Source code of functions / global variables"),
 		definitions,
 		fi2nimEmptyLine(),
 	]);
 }
 
-fi2nimOrderDeclarations(env : FiNimEnv) {
+fi2nimOrderDeclarations(env : FiNimEnv) -> [Pair<string, [FiDeclaration]>] {
 	program = env.prog;
-	fold(program.traversal, [], \macc: [Pair<string, [FiDeclaration]>], file -> 
+	missing_predefined = ref buildSet(map(nimPredefinedNatives, \p -> p.name));
+	decls0 = fold(program.traversal, [], \macc: [Pair<string, [FiDeclaration]>], file -> 
 		switch (lookupTree(program.modules, file)) {
 			None(): {
 				fcPrintln("Could not find module '" + file + "'", program.config.threadId);
@@ -126,15 +218,28 @@ fi2nimOrderDeclarations(env : FiNimEnv) {
 					module_natives,
 					filtermap(notNatives, \name -> lookupTree(program.names.toplevel, name))
 				);
+				iter(decls, \d -> if (containsSet(^missing_predefined, d.name)) {
+					// A pre-defined native is found - remove it from missing
+					missing_predefined := removeSet(^missing_predefined, d.name)
+				});
 				arrayPush(macc, Pair(module.fileinfo.flowfile, decls));
 			}
 		}
 	);
+	if (isEmptySet(^missing_predefined)) decls0 else {
+		concat(
+			[Pair("predefined", filtermap(nimPredefinedNatives, \nat ->
+				if (containsSet(^missing_predefined, nat.name)) Some(nat) else None()
+			))], 
+			decls0
+		);
+	}
 }
 
 fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 	effects = collectFiEffects(program0);
-	program = fiNimTransformProgram(program0, effects);
+	natives = fi2nimNatives(cfg);
+	program = fiNimTransformProgram(program0, effects, natives);
 
 	is_explicit_polymorphic = \nm -> switch (lookupTree(program.names.structs, nm)) {
 		Some(struct): length(struct.typars) > 0;
@@ -163,6 +268,7 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		// leave only true (=explicit) polymorhpic structs/unions and remove implicitly polymorphic
 		\nm,__ -> is_explicit_polymorphic(nm)
 	);
+
 	if (debug_polymorphics) {
 		println("specializations:\n" + strIndent(
 			superglue(
@@ -182,7 +288,16 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		switch (lookupTree(specializations, struct.name)) {
 			Some(specs): foldSet(specs, acc, \ac, spec -> 
 				switch (spec) {
-					FiTypeName(nm, typars): Cons(fiSpecializeStruct(spec, struct), ac);
+					FiTypeName(nm, typars): {
+						if (length(typars) == length(struct.typars)) {
+							Cons(fiSpecializeStruct(spec, struct), ac);
+						} else {
+							fcPrintln("Struct type parameters number mismatch the specialization type parameters number:\n" +
+								"struct: " + pretFiStructOrUnion(struct) + ", specialization: " + pretFiType(spec), cfg.threadId
+							);
+							ac;
+						}
+					}
 					default: fail0("must be a typename");
 				}
 			);
@@ -238,6 +353,15 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		)
 	));
 
+	casts = fiProgramCasts(program);
+	if (debug_polymorphics) {
+		println("casts:\n" +
+			strIndent(superglue(tree2pairs(casts), \p -> 
+				pretFiType(p.first) + " =>\n" + strIndent(superglue(set2array(p.second), \x -> pretFiType(x), "\n")),
+			"\n"))
+		);
+	}
+
 	env0 = FiNimEnv(cfg, program, "", ref makeSet(),
 		structs,
 		unions,
@@ -245,32 +369,13 @@ fi2nimInitEnv(program0 : FiProgram, cfg : FiNimConfig) -> FiNimEnv {
 		specialized_structs,
 		specialized_unions,
 		specializations,
-		fi2nimCasts(program),
-		effects, "", [],
-		fi2nimNatives(cfg),
-		[], makeTree(), makeTree()
+		casts,
+		collectFiEffects(program), "", [],
+		natives,
+		[], makeTree(), makeTree(),
+		fi2nimMaxFuncArity(program)
 	);
 	fi2nimInitTypeIndexes(env0, getUrlParameter("nim-debug") == "1");
-}
-
-fi2nimCasts(prog: FiProgram) -> Tree<FiType, Set<FiType>> {
-	proc_exp = \x, acc -> fiFoldExp(x, acc, \e,__, ac -> switch (e) {
-		FiCast(__,from, to,__,__): {
-			from1 = fiPurifyType(from);
-			setTree(ac, from1, 
-				insertSet(lookupTreeDef(ac, from1, makeSet()), fiPurifyType(to))
-			);
-		}
-		default: ac;
-	}, AstTraverseOrder(true, true));
-	fiFoldProgramToplevel(prog, makeTree(), \toplevel,__,__, acc ->
-		switch (toplevel) {
-			FiFunctionDec(__,lambda,__,__,__): proc_exp(lambda, acc);
-			FiGlobalVar(__,value,__,__,__): proc_exp(value, acc);
-			FiNativeDec(__,__,__,__,fallback,__,__): proc_exp(fallback, acc);
-			default: acc;
-		}
-	);
 }
 
 fi2nimNativeImports(env: FiNimEnv, runtime: string) -> NimCode {
@@ -301,30 +406,4 @@ fi2nimNativeImports(env: FiNimEnv, runtime: string) -> NimCode {
 			concat(["# Native function imports"], imports)
 		}
 	);
-}
-
-fi2nimBuild(program : FiProgram, cfg: FiNimConfig, callback : (int) -> void) -> void {
-	if (isConfigParameterFalse(program.config.config, "exe")) {
-		// No need to build binary
-		callback(0);
-	} else {
-		if (cfg.verbose > 1) {
-			fcPrintln("Going to build nim target: '" + cfg.outputfile + "'", cfg.threadId);
-		}
-		out = execSystemProcessOutput("nim", ["--overflowChecks:off", "--threads:on", "-d:ssl", "-d:release", "c", cfg.outputfile], ".");
-		if (out.exitCode != 0) {
-			fcPrintln("Building of " + cfg.outputfile + " failed:\n" + out.stdall, cfg.threadId);
-			callback(5);
-		} else {
-			if (cfg.verbose > 0) {
-				fcPrintln("Building of '" + cfg.outputfile + "' finished.", cfg.threadId);
-				if (cfg.verbose > 1) {
-					fcPrintln("Nim compiler output:", cfg.threadId);
-					fcPrintln(out.stdall, cfg.threadId);
-				}
-			}
-			fcPrintln("Executable '" + changeFileExt(cfg.outputfile, "") + "' is generated.", cfg.threadId);
-			callback(0);
-		}
-	}
 }

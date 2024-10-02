@@ -34,7 +34,8 @@ export {
 		noScalingDecorations : bool,
 		onLoaded : () -> void,
 		onWarning : () -> void,
-		hideLoadingSpinnerB : Behaviour<bool>
+		hideLoadingSpinnerB : Behaviour<bool>,
+		requestHeaders : [KeyValue]
 	) -> Form;
 
 	makeImagePreZoomDecorationsForms(decorations : [PreZoomDecoration], width : double, height : double) -> [Form];
@@ -76,6 +77,15 @@ export {
 		virtualScreenInfoM : Maybe<VirtualScreenInfo>,
 		backcolor : Maybe<Color>
 	) -> ((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form>;
+	// the same as makeZoomAdder2, but it allows to disable 'Zoom by click on image' feature
+	makeZoomAdder4(
+		zoom: ZoomDescription,
+		fn: (Form) -> Form,
+		virtualScreenInfoM : Maybe<VirtualScreenInfo>,
+		backcolor : Maybe<Color>,
+		zoomByClickOnImage : bool,
+	) -> ((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form>;
+
 
 	makeDimmerShape(
 		type : ImageDimmerType,
@@ -149,7 +159,8 @@ makeImageDecorated2(
 	noScalingDecorations : bool,
 	onLoaded : () -> void,
 	onWarning : () -> void,
-	hideLoadingSpinnerB : Behaviour<bool>
+	hideLoadingSpinnerB : Behaviour<bool>,
+	requestHeaders : [KeyValue]
 ) -> Form {
 
 	givenSize = WidthHeight(_width, _height);
@@ -158,7 +169,7 @@ makeImageDecorated2(
 	pictureIsLoading = make(true);
 	pictureWarning = make(false);
 
-	pictureWithWarning = makeImageWithWarning(filename, pictureIsLoading, pictureWarning, hideLoadingSpinnerB);
+	pictureWithWarning = makeImageWithWarning(filename, pictureIsLoading, pictureWarning, hideLoadingSpinnerB, requestHeaders);
 
 	wholeImageWH : DynamicBehaviour<WidthHeight> = makeWH();
 	savedOrRealSize = makeWH();
@@ -176,7 +187,7 @@ makeImageDecorated2(
 
 	pictureWithZoomableDecorations = Group([
 		Inspect([ISize(wholeImageWH)], pictureWithWarning.picture),
-		Scale(replacedImageScale, replacedImageScale, makeImagePreZoomDecorationsForm(preZoomDecorations, _width, _height))
+		Scale(replacedImageScale, replacedImageScale, Select(wholeImageWH, \wh -> makeImagePreZoomDecorationsForm(preZoomDecorations, wh.width, wh.height)))
 	]);
 
 	addDecorations = \scaleConnector, zoom -> \image -> { //is applied both to full size image and downscaled one
@@ -539,7 +550,7 @@ makeImagePreZoomDecorationsForm(decorations : [PreZoomDecoration], _width : doub
 
 
 PictureWithWarning(picture : Form, warning : Form);
-makeImageWithWarning(filename:string, pictureIsLoading : DynamicBehaviour<bool>, pictureWarning : DynamicBehaviour<bool>, hideLoadingSpinnerB : Behaviour<bool>) -> PictureWithWarning {
+makeImageWithWarning(filename:string, pictureIsLoading : DynamicBehaviour<bool>, pictureWarning : DynamicBehaviour<bool>, hideLoadingSpinnerB : Behaviour<bool>, requestHeaders : [KeyValue]) -> PictureWithWarning {
 	filenameUrl = unescapeHtml(filename);
 	warning = make(Empty());
 	setWarning = \t, isBrokenImage -> {
@@ -568,10 +579,13 @@ makeImageWithWarning(filename:string, pictureIsLoading : DynamicBehaviour<bool>,
 	PictureWithWarning(
 		Picture(
 			filenameUrl,
-			[
-				OnLoadingError(\e -> { setWarning(_("Couldn't load image"), true) } ),
-				OnLoaded(\ -> nextDistinct(pictureIsLoading, false))
-			]
+			concat(
+				[
+					OnLoadingError(\e -> { setWarning(_("Couldn't load image"), true) } ),
+					OnLoaded(\ -> nextDistinct(pictureIsLoading, false))
+				],
+				if (requestHeaders == []) [] else [RequestHeaders(requestHeaders)]
+			)
 		),
 		Mutable(warning)
 	)
@@ -620,6 +634,16 @@ makeZoomAdder2(
 	fn: (Form) -> Form,
 	virtualScreenInfoM : Maybe<VirtualScreenInfo>,
 	backcolor : Maybe<Color>
+) -> ((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form> {
+	makeZoomAdder4(zoom, fn, virtualScreenInfoM, backcolor, true)
+}
+
+makeZoomAdder4(
+	zoom: ZoomDescription,
+	fn: (Form) -> Form,
+	virtualScreenInfoM : Maybe<VirtualScreenInfo>,
+	backcolor : Maybe<Color>,
+	zoomByClickOnImage : bool,
 ) -> ((Form) -> Form) -> (Form) -> Pair<Form, (Form) -> Form>
 {
 	if (zoom.mouseZoom) {
@@ -630,7 +654,7 @@ makeZoomAdder2(
 			validSize = zoom.realSize.width > 0.0 && zoom.realSize.height > 0.0;
 
 			magnifier = eitherFn(zoom.zoomButtonM,
-				\zoomBtn -> getHtmlPictureMagnifyCustom(
+				\zoomBtn -> getHtmlPictureMagnifyCustomExt(
 					decoratedForm,
 					embedded,
 					zoom.toWidth,
@@ -641,7 +665,8 @@ makeZoomAdder2(
 					zoom.zoomCustomUIFnM,
 					zoom.closeButtonFn,
 					zoom.closeButtonAlign,
-					virtualScreenInfoM
+					virtualScreenInfoM,
+					zoomByClickOnImage
 				),
 				\ -> getHtmlPictureMagnifyWithCloseButton(
 					decoratedForm,

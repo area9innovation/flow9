@@ -8,7 +8,7 @@ class ProgressiveWebTools {
 	public function new() {}
 
 	public static function __init__() {
-		if (untyped __js__("typeof window !== 'undefined'") && (Browser.window.matchMedia("(display-mode: fullscreen)").matches || ~/CapacitorJS/i.match(Browser.window.navigator.userAgent))) {
+		if (untyped __js__("typeof window !== 'undefined'") && (Browser.window.matchMedia("(display-mode: fullscreen)").matches || Browser.window.matchMedia("(display-mode: standalone)").matches || ~/CapacitorJS/i.match(Browser.window.navigator.userAgent))) {
 			var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
 			if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit") < 0) {
@@ -342,6 +342,18 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function pdfViewerEnabled(onOK : Bool -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			onOK(untyped navigator && untyped navigator.pdfViewerEnabled);
 		} else {
 			onError("ServiceWorker is not initialized");
 		}

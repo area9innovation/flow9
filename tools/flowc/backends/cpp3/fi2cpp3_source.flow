@@ -1,0 +1,108 @@
+import tools/flowc/backends/cpp3/fi2cpp3_structs;
+
+export {
+	fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext) -> string;
+	fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, runtime_parts: [Cpp3RuntimePart], gctx: Cpp3GlobalContext) -> [string];
+
+	fiInitTermModule2cpp3Source(compiled: [Cpp3CompiledModule], runtime_parts: [Cpp3RuntimePart], gctx: Cpp3GlobalContext) -> string;
+}
+
+fiCompiledModule2cpp3header(module: Cpp3CompiledModule, gctx: Cpp3GlobalContext) -> string {
+	includes = superglue(
+		fiCpp3DependenciesIncludes(map(module.natives, \nat -> nat.dependencies)),
+		\inc -> "#inc" + "lude " + inc,
+		"\n"
+	);
+	forwards = filtermap(module.decls, \decl -> if (decl.forward == "") None() else Some(decl.forward));
+	traits = filtermap(module.decls, \decl -> if (decl.traits == "") None() else Some(decl.traits));
+	decls = filtermap(module.decls, \decl -> if (decl.declaration == "") None() else Some(decl.declaration));
+	defs = filtermap(module.decls, \decl -> if (decl.headerOnly && decl.definition != "") Some(decl.definition) else None());
+	decl_defs = concat(decls, defs);
+
+	"#pragma once\n" +
+	(if (includes == "") "" else includes + "\n") +
+	"#inc" + "lude \"__flow_runtime.hpp\"\n" +
+	"// Module " + module.name + "\n\n" +
+	(if (length(module.imports) == 0) "" else concatStrings(map(module.imports, \imp -> "#inc" + "lude \"" + strReplace(imp, "/", "_") + ".hpp\"\n")) + "\n") +
+	(if (length(forwards) == 0) "" else concatStrings(forwards) + "\n") +
+	(if (length(traits) == 0) "" else fiWrapWithNamespace("flow::traits", concatStrings(traits)) + "\n") +
+	(if (length(decl_defs) == 0) "\n" else
+		superglue(["std::string_literals", "flow"], fiMakeUsingStatement, "\n") + "\n" + concatStrings(decl_defs) + "\n"
+	);
+}
+
+fiCompiledModule2cpp3sources(module: Cpp3CompiledModule, runtime_parts: [Cpp3RuntimePart], gctx: Cpp3GlobalContext) -> [string] {
+	all_source_defs = filtermap(module.decls, \decl -> if (!decl.headerOnly) Some(decl.definition) else None());
+	max_cpp_source = s2i(lookupTreeDef(gctx.program.config.config, "cpp-max-source", "100000"));
+	// Cut all definition into parts, not exceeding max-cpp-source kb
+	source_defs_cut = list2array(fold(all_source_defs, Pair(makeList(), 0), \acc, def ->
+		if (acc.second + strlen(def) < max_cpp_source) {
+			switch (acc.first) {
+				Cons(arr, tail_): Pair(Cons(concat(arr, [def]), tail_), acc.second + strlen(def));
+				EmptyList(): Pair(makeList1([def]), strlen(def));
+			}
+		} else {
+			Pair(Cons([def], acc.first), strlen(def));
+		}
+	).first);
+	if (length(source_defs_cut) == 0) {
+		if (!module.isMain) [] else
+		["#inc" + "lude \"" + module.name + ".hpp\"\n" +
+		fiMakeUsingStatement("std::string_literals") +
+		fiMakeUsingStatement("flow") + "\n" +
+		cpp3MainFunc(gctx)];
+	} else {
+		mapi(source_defs_cut, \i, source_defs ->
+			if (length(source_defs) == 0 && !module.isMain) "" else {
+				"#inc" + "lude \"" + module.name + ".hpp\"\n" +
+				fiMakeUsingStatement("std::string_literals") +
+				fiMakeUsingStatement("flow") + "\n" +
+				concatStrings(source_defs) + "\n" +
+				(if (i == 0 && module.isMain) cpp3MainFunc(gctx) else "");
+			}
+		);
+	}
+}
+
+cpp3MainFunc(gctx: Cpp3GlobalContext) -> string {
+	fiMakeUsingStatement("flow") +
+	fiMakeUsingStatement("std::string_literals") +
+	"\n" +
+	"int main(int argc, const char* argv[]) {\n" +
+		"\tRuntimeState::init(argc, argv);\n" +
+		"\t" + fi2cpp3varname2cpp("main") + "();\n" +
+		"\treturn RuntimeState::exit();\n" +
+	"}\n\n";
+}
+
+fiInitTermModule2cpp3Source(compiled: [Cpp3CompiledModule], runtime_parts: [Cpp3RuntimePart], gctx: Cpp3GlobalContext) -> string {
+	has_init_term = filter(compiled, \m -> m.hasInit || m.hasTerm);
+	runtime_sources = superglue(filter(runtime_parts, \part -> part.staysInMain), \part -> part.source, "\n");
+	has_init = filter(has_init_term, \m -> m.hasInit);
+	has_term = filter(has_init_term, \m -> m.hasTerm);
+
+	make_block = \arr -> concatStrings(filtermap(arr, \s -> if (s == "") None() else Some("\t" + s + "\n")));
+
+	superglue(has_init_term, \m -> "#inc" + "lude \"" + m.name + ".hpp\"", "\n") + "\n" +
+	"// Initialization/terminalization module\n\n" +
+	"namespace flow {\n" +
+	"void init_all_modules(){\n" +
+		"\tMemoryPool::init();\n" +
+		"\tThreadPool::init(std::thread::hardware_concurrency());\n" +
+		make_block(map(has_init, \m -> "init_" + m.name + "();")) +
+		make_block(map(runtime_parts, \part -> part.globalInit)) +
+	"}\n\n" +
+	"void term_all_modules(){\n" +
+		make_block(map(reverseA(runtime_parts), \part -> part.globalTerm)) +
+		make_block(map(reverseA(has_term), \m ->
+			"term_" + m.name + "();",
+		)) +
+		"\tThreadPool::release();\n" +
+		"\tMemoryPool::release();\n" +
+	"}\n\n" +
+	"void join_all_modules(){\n" +
+		make_block(map(reverseA(runtime_parts), \part -> part.globalJoin)) +
+	"}\n\n" +
+	(if (runtime_sources != "") runtime_sources + "\n\n" else "") + "\n" +
+	"}\n\n";
+}

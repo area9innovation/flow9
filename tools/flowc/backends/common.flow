@@ -39,7 +39,8 @@ export {
 		FcIncaConfig,
 		FcFlowConfig,
 		FiTsdConfig,
-		FiWiseConfig;
+		FiWiseConfig,
+		FiCpp3Config;
 
 	FcCommonConfig ::= FcBackendConfig, CompilerConfig;
 
@@ -99,7 +100,8 @@ export {
 		backendDirs : [string], // directories, containing native runtime function definition
 		debug : bool,
 		verbose : int,
-		threadId : int
+		threadId : int,
+		options : Tree<string, string> // all other config options
 	);
 
 	FiDConfig(
@@ -191,6 +193,7 @@ export {
 		externNatives : [string], // paths to com/area9innovation/flow/*.java, containing custom native hosts
 		builder : string,         // possible builders: "mvn", "gradle", "raw"
 		builderXmX : string,      // -Xmx parameter for builder JVM. Default value is 1024M.
+		hostSubstitutions : Tree<string, string>,	// For example RenderSupport => FxRenderSupport
 		options : Tree<string, string> // all other config options
 	);
 
@@ -296,14 +299,14 @@ export {
 	);
 
 	FiCpp3Config(
-		outfile : string,      // name of an pitput file. If not explicitly set, is a flowfile name
-		outputdir : string,    // directory for the translated sources
-		namespace : string,    // namespace, enclosing the generated code
-		monolith : bool,       // build a single source file
-		volatile : [string],   // variables, which must be initialized inside main function
-		backendDirs : [string], // directories, containing native runtime function definition
-		qtOpts: [string],      // options for Qt build
-		config: CompilerConfig
+		outputfile : string,    // name of an input file. If not explicitly set, is a flowfile name.
+		outputdir : string,     // directory of the output file.
+		backendDirs : [string], // directories, containing native runtime function definitions.
+		qtOpts: [string],       // options for Qt build.
+		debug : bool,           // produce code with more debugging facilities.
+		config: CompilerConfig,
+		verbose: int,
+		threadId : int,
 	);
 
 	FcBackendConfigs(
@@ -432,7 +435,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 				isConfigParameterTrue(config.config, "keep-debug-newlines"),
 				getConfigParameter(config.config, "js-extern-lib"),
 				js_external_natives(),
-				js_dependencies()
+				js_dependencies(),
 			))
 		} else None();
 
@@ -469,7 +472,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 				isConfigParameterTrue(config.config, "keep-debug-newlines"),
 				getConfigParameter(config.config, "js-extern-lib"),
 				js_external_natives(),
-				js_dependencies()
+				js_dependencies(),
 			))
 		} else None();
 
@@ -499,7 +502,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 				isConfigParameterTrue(config.config, "keep-debug-newlines"),
 				getConfigParameter(config.config, "js-extern-lib"),
 				js_external_natives(),
-				js_dependencies()
+				js_dependencies(),
 			))
 		} else None();
 
@@ -530,7 +533,8 @@ getFcBackendConfigs(config : CompilerConfig) {
 				),
 				config.jsParams.debug,
 				config.verbose,
-				config.threadId)
+				config.threadId,
+				config.config)
 			) else None();
 
 	dparam = getConfigParameter(config.config, "D");
@@ -603,7 +607,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 				if (cpp2 != "1") cpp2_output else pathCombine(outdir, fileNameOnly(config.flowfile)),
 				if (outdir == "") "." else outdir,
 				if (cpp2_gendir != "") rtrim2(cpp2_gendir, "/") else pathCombine(outdir, "cppgen"),
-				getConfigParameterDef(config.config, "cpp-no-exe", "1") == "1",
+				getConfigParameterDef(config.config, "cpp-build", "1") == "1",
 				config.includes,
 				config.jsParams.debug,
 				config.verbose,
@@ -648,11 +652,9 @@ getFcBackendConfigs(config : CompilerConfig) {
 	htmlAdditionalScripts = filter(strSplit(getConfigParameterDef(config.config, "html-additional-scripts", ""), ","), \e -> e != "");
 	htmlPredefinedParams =
 		map(filter(strSplit(getConfigParameterDef(config.config, "html-predefined-params", ""), ","), \e -> e != ""), \e -> {
-			r = strSplit(e, "=");
-			if (length(r) == 1)
-				Pair(r[0], "")
-			else
-				Pair(r[0], r[1]);
+			key = takeBefore(e, "=", e);
+			val = takeAfter(e, "=", "");
+			Pair(key, val);
 		});
 
 	htmlManifest = getConfigParameterDef(config.config, "html-app-manifest", "");
@@ -786,28 +788,6 @@ getFcBackendConfigs(config : CompilerConfig) {
 				)
 			) else None();
 
-	cpp3param = getConfigParameter(config.config, "cpp3");
-	cpp3volatile = getConfigParameter(config.config, "cpp-volatile");
-	cpp3qtOpts = getConfigParameter(config.config, "cpp-qt-opts");
-	cpp3config =
-		if (cpp3param != "") {
-			plain_flowfile = strReplace(config.flowfile, "/", "_");
-			outfile = if (cpp3param == "1") changeFileExt(fileNameOnly(config.flowfile), "") else cpp3param;
-			Some(FiCpp3Config(
-				outfile,
-				fcConcatTarget(config, outdir, pathCombine("cpp3gen", outfile)),
-				getConfigParameterDef(config.config, "cpp-namespace", plain_flowfile),
-				getConfigParameterDef(config.config, "cpp-mono", "0") == "1",
-				concat(["allUrlParameters"], if (cpp3volatile == "") [] else strSplit(cpp3volatile, ",")),
-				concat(
-					[pathCombineMany([getFlowDir(), "tools", "flowc", "backends", "cpp3"])],
-					filter(strSplit(getConfigParameter(config.config, "cpp-natives"), ","), isNotSpace)
-				),
-				if (cpp3qtOpts == "") [] else strSplit(cpp3qtOpts, ";"),
-				config
-			));
-		} else None();
-
 	FcBackendConfigs(
 		jsconfig,
 		es6config,
@@ -830,7 +810,7 @@ getFcBackendConfigs(config : CompilerConfig) {
 		tsdconfig,
 		cpp2config,
 		wiseconfig,
-		cpp3config,
+		fcMakeCpp3Config(config, outdir),
 	)
 }
 
@@ -963,6 +943,8 @@ fcMakeJavaConfig(config : CompilerConfig, outdir : string) -> Maybe<FiJavaConfig
 
 		java_builder_xmx = getConfigParameterDef(config.config, "java-builder-xmx", "1024M");
 
+		hostSubstitutions = configString2tree(getConfigParameter(config.config, "java-sub-host"));
+
 		Some(FiJavaConfig(
 			config.flowfile,
 			outdir,
@@ -979,7 +961,32 @@ fcMakeJavaConfig(config : CompilerConfig, outdir : string) -> Maybe<FiJavaConfig
 			java_externNatives,
 			java_builder,
 			java_builder_xmx,
+			hostSubstitutions,
 			config.config
+		));
+	}
+}
+
+fcMakeCpp3Config(config : CompilerConfig, outdir1 : string) -> Maybe<FiCpp3Config> {
+	cpp3param = getConfigParameter(config.config, "cpp3");
+	if (cpp3param == "") None() else {
+		cpp3qtOpts = getConfigParameter(config.config, "cpp-qt-opts");
+		outfile = if (cpp3param == "1") changeFileExt(config.flowfile, "") else cpp3param;
+		outfile_dir = dirName(outfile);
+		outdir = if (outdir1 != "") outdir1 else if (outfile_dir == outfile) resolveRelativePath(".") else outfile_dir;
+		ensureDirectoryExists(outdir) |> \err -> if (err != "") fcPrintln(err, config.threadId);
+		Some(FiCpp3Config(
+			outfile,
+			outdir,
+			concat(
+				[pathCombineMany([getFlowDir(), "tools", "flowc", "backends", "cpp3"])],
+				filter(strSplit(getConfigParameter(config.config, "cpp-natives"), ","), isNotSpace)
+			),
+			if (cpp3qtOpts == "") [] else strSplit(cpp3qtOpts, ";"),
+			getConfigParameterDef(config.config, "cpp-debug", "0") == "1",
+			config,
+			s2i(getConfigParameterDef(config.config, "cpp-verbose", i2s(config.verbose))),
+			config.threadId,
 		));
 	}
 }
@@ -992,6 +999,7 @@ reservedJavaNames = buildSet([
 	// null
 	"null",
 ]);
+
 escapeJavaReservedName(name : string) -> string {
 	if (containsSet(reservedJavaNames, name)) {
 		name + "_";
@@ -1028,5 +1036,6 @@ fcBackendConfigs2array(configs : FcBackendConfigs) -> [FcBackendConfig] {
 		extract(configs.tsdconfig),
 		extract(configs.cpp2config),
 		extract(configs.wiseconfig),
+		extract(configs.cpp3config),
 	]);
 }

@@ -1,4 +1,5 @@
 import ds/hashmap;
+import sys/concurrent;
 
 export {
 
@@ -89,16 +90,16 @@ clearConcurHashMap(m : ConcurHashMap<?, ??>) -> void {
 }
 
 native makeConcurHashMapNative : (hash: (?) -> int, __ : [Pair<?, ??>]) -> native = ConcurHashMap.make;
-native setConcurHashMapNative : (m : native, key : ?, value : ??) -> void = ConcurHashMap.set;
+native setConcurHashMapNative : io (m : native, key : ?, value : ??) -> void = ConcurHashMap.set;
 native getConcurHashMapNative : (m : native, key : ?, __ : [Pair<?, ??>]) -> Maybe<??> = ConcurHashMap.get;
 native containsKeyConcurHashMapNative : (m : native, key : ?, __ : [Pair<?, ??>]) -> bool = ConcurHashMap.containsKey;
 native valuesConcurHashMapNative : (m : native, __ : [Pair<?, ??>]) -> [??] = ConcurHashMap.values;
-native removeConcurHashMapNative : (m : native, key : ?, __ : [Pair<?, ??>]) -> void = ConcurHashMap.remove;
+native removeConcurHashMapNative : io (m : native, key : ?, __ : [Pair<?, ??>]) -> void = ConcurHashMap.remove;
 native keysConcurHashMapNative : (m : native, __ : [Pair<?, ??>]) -> [?] = ConcurHashMap.keys;
 native sizeConcurHashMapNative : (m : native, __ : [Pair<?, ??>]) -> int = ConcurHashMap.size;
-native clearConcurHashMapNative : (m : native, __ : [Pair<?, ??>]) -> void = ConcurHashMap.clear;
-native cloneConcurHashMapNative : (m : native, __ : [Pair<?, ??>]) -> native = ConcurHashMap.clone;
-native iterConcurHashMapNative : (m : native, f : (?, ??) -> void, __ : [Pair<?, ??>]) -> void = ConcurHashMap.iter;
+native clearConcurHashMapNative : io (m : native, __ : [Pair<?, ??>]) -> void = ConcurHashMap.clear;
+native cloneConcurHashMapNative : io (m : native, __ : [Pair<?, ??>]) -> native = ConcurHashMap.clone;
+native iterConcurHashMapNative : io (m : native, f : (?, ??) -> void, __ : [Pair<?, ??>]) -> void = ConcurHashMap.iter;
 native funcConcurHashMapNative : (m : native, __ : [Pair<?, ??>]) -> (?) -> int = ConcurHashMap.hash;
 
 iterConcurHashMap(hashMap : ConcurHashMap<?, ??>, fn : (key : ?, value : ??) -> void) -> void {
@@ -193,62 +194,97 @@ equalsConcurHashMap(h1 : ConcurHashMap<?, ??>, h2 : ConcurHashMap<?, ??>) -> boo
 
 // Fallbacks for concurrent hash map
 
-makeConcurHashMapNative(hash: (?) -> int, __ : [Pair<?, ??>]) -> native {
-	hashmap : HashMap<?, ??> = makeHashMap(hash);
-	flow(hashmap);
+ConcurHashMapImpl(
+	map : HashMap<?, ??>,
+	get: (?) -> Maybe<??>,
+	set: (?, ??) -> void,
+	remove: (?) -> void,
+	contains: (?) -> bool,
+	keys: () -> [?],
+	values: () -> [??],
+	size: () -> int,
+	clear: () -> void,
+	iter: ((?, ??) -> void) -> void,
+	clone: () -> ConcurHashMapImpl<?, ??>
+);
+
+makeConcurHashMapNative(hash: (?) -> int, p : [Pair<?, ??>]) -> native {
+	flow(makeConcurHashMapImpl(hash, p));
+}
+
+makeConcurHashMapImpl(hash: (?) -> int, p : [Pair<?, ??>]) -> ConcurHashMapImpl<?, ??> {
+	m : HashMap<?, ??> = makeHashMap(hash);
+	ConcurHashMapImpl(
+		m,
+		synchronizedUnaryFn(m, \k -> lookupHashMap(m, k)),        // get
+		synchronizedBinaryFn(m, \k, v -> setHashMap(m, k, v)),    // set
+		synchronizedUnaryFn(m, \k -> removeFromHashMap(m, k)),    // remove
+		synchronizedUnaryFn(m, \k -> containsKeyHashMap(m, k)),   // contains
+		synchronizedConstFn(m, \ -> hashMapKeys(m)),              // keys
+		synchronizedConstFn(m, \ -> hashMapValues(m)),            // values
+		synchronizedConstFn(m, \ -> sizeHashMap(m)),              // size
+		synchronizedConstFn(m, \ -> clearHashMap(m)),             // clear
+		synchronizedUnaryFn(m, \f -> iterHashMap(m, f)),          // iter
+		synchronizedConstFn(m, \ -> {
+			clone = makeConcurHashMapImpl(hash, p);
+			iterHashMap(m, \k, v -> setHashMap(clone.map, k, v));
+			clone
+		}),              // clone
+	);
+}
+
+
+getConcurHashMapNative(n : native, key : ?, __ : [Pair<?, ??>]) -> Maybe<??> {
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	m.get(key);
 }
 
 setConcurHashMapNative(n : native, key : ?, value : ??) -> void {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	setHashMap(m, key, value);
-}
-
-getConcurHashMapNative(n : native, key : ?, __ : [Pair<?, ??>]) -> Maybe<??> {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	lookupHashMap(m, key);
-}
-
-containsKeyConcurHashMapNative(n : native, key : ?, __ : [Pair<?, ??>]) -> bool {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	containsKeyHashMap(m, key);
-}
-
-valuesConcurHashMapNative(n : native, __ : [Pair<?, ??>]) -> [??] {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	hashMapValues(m);
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	m.set(key, value);
 }
 
 removeConcurHashMapNative(n : native, key : ?, __ : [Pair<?, ??>]) -> void {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	removeFromHashMap(m, key);
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	m.remove(key);
+}
+
+containsKeyConcurHashMapNative(n : native, key : ?, __ : [Pair<?, ??>]) -> bool {
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	m.contains(key);
 }
 
 keysConcurHashMapNative(n : native, __ : [Pair<?, ??>]) -> [?] {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	hashMapKeys(m);
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	m.keys();
+}
+
+valuesConcurHashMapNative(n : native, __ : [Pair<?, ??>]) -> [??] {
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	m.values();
 }
 
 sizeConcurHashMapNative(n : native, __ : [Pair<?, ??>]) -> int {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	sizeHashMap(m);
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	m.size();
 }
 
 clearConcurHashMapNative(n : native, __ : [Pair<?, ??>]) -> void {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	clearHashMap(m);
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	m.clear();
 }
 
 funcConcurHashMapNative(n : native, __ : [Pair<?, ??>]) -> (?) -> int {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	funcHashMap(m);
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	funcHashMap(m.map);
 }
 
 iterConcurHashMapNative(n : native, fn : (key : ?, value : ??) -> void, __ : [Pair<?, ??>]) -> void {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	iterHashMap(m, fn);
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	m.iter(fn);
 }
 
 cloneConcurHashMapNative(n : native, __ : [Pair<?, ??>]) -> native {
-	m = cast(flow(n) : flow -> HashMap<?, ??>);
-	flow(copyHashMap(m));
+	m = cast(flow(n) : flow -> ConcurHashMapImpl<?, ??>);
+	flow(m.clone());
 }

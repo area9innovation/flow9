@@ -1,0 +1,216 @@
+import runtime;
+import string;
+import sys/target;
+import fs/filesystem;
+
+// TODO, remove this once the target.flow gets this added.
+nim: bool = hasTargetName("nim");
+
+
+charCodeAndUtf8Test(id: string, charCode: int, utf16expected: [int], utf8expected: [int]) -> bool {
+	println("id: " + id);
+	println("toString:     " + toString(charCode));
+	println("i2s:          " + i2s(charCode));
+	println("formatHex:    " + formatHex(charCode));
+
+	fcc: string = fromCharCode(charCode);
+	println("fromCharCode: '" + fcc + "'");
+	println("strlen(fromCharCode): " + i2s(strlen(fcc)));
+
+	println("toStringForJson(fromCharCode)): " + toStringForJson(fcc));
+	println("strlen(toStringForJson(fromCharCode))): " + i2s(strlen(toStringForJson(fcc))));
+
+	if (strlen(fcc) > 0) {
+		gca : int = getCharCodeAt(fcc, 0);
+		println("i2s(getCharCodeAt(fromCharCode, 0)): " + i2s(gca));
+		println("formatHex(getCharCodeAt(fromCharCode, 0)): " + formatHex(gca));
+		println("getCharAt(fromCharCode, 0): " + getCharAt(fcc, 0));
+		println("toStringForJson(getCharAt(fromCharCode, 0))): " + toStringForJson(getCharAt(fcc, 0)));
+	}
+	if (strlen(fcc) > 1) {
+		gca : int = getCharCodeAt(fcc, 1);
+		println("i2s(getCharCodeAt(fromCharCode, 1)): " + i2s(gca));
+		println("formatHex(getCharCodeAt(fromCharCode, 1)): " + formatHex(gca));
+		println("getCharAt(fromCharCode, 1): " + getCharAt(fcc, 1));
+		println("toStringForJson(getCharAt(fromCharCode, 1))): " + toStringForJson(getCharAt(fcc, 1)));
+	}
+
+	formatHexs = \cs: [int] -> foldi(
+		cs, 
+		"[", 
+		\i: int, acc: string, c: int -> acc + (if (i == 0) "0x" else ", 0x") + formatHex(c)
+	) + "]";
+
+	utf16: [int] = s2a(fcc);
+	println("s2a(fromCharCode): " + formatHexs(utf16));
+
+	utf8: [int] = string2utf8(fcc);
+	println("string2utf8(fromCharCode): " + formatHexs(utf8));
+
+	t16 = utf16 == utf16expected;
+	t8 = utf8 == utf8expected;
+
+	
+	target = if (qt) {
+		"qt";
+	} else if (java) {
+		"java";
+	} else if (js) {
+		"js";
+	} else if (nim) {
+		"nim";
+	} else {
+		getTargetName();
+	};
+
+	// Test file
+	testFileName = "encoding_file_content_" + target + "_" + id + ".utf8.txt";
+	tf: bool = if (js) {
+		// JS does not have setFileContent
+		true;
+	} else if (setFileContent(testFileName, fcc)) {
+		fccf: string = getFileContent(testFileName);
+
+		// Check we store the same as we saved..
+		fccf == fcc;
+	} else {
+		false;
+	};
+	delete_err = deleteFile(testFileName);
+	if (delete_err != "") {
+		println(delete_err);
+	}
+
+	if (!t16) {
+		println("Failed UTF16");
+	}
+	if (!t8) {
+		println("Failed UTF8");
+	}
+	if (!tf) {
+		println("Failed file: " + testFileName)
+	}
+
+	t16 && t8 && tf;
+}
+
+
+// Conver all 16 bit integers to a string and check the binary value can be retrieved. 
+checkStringBinary() -> bool {
+	fold(
+		generate(0, 0xffff, \i: int -> i),
+		true,
+		\acc: bool, i: int -> {
+			s: string = fromCharCode(i);
+			if (strlen(s) == 1) {
+				getCharCodeAt(s, 0) == i
+			} else {
+				false
+			}
+		}
+	);
+}
+
+
+/*
+	Browser UTF8 encoding: 
+	
+	console.log((new TextEncoder()).encode("\uD801"));
+	> Uint8Array(3) [239, 191, 189]
+*/
+
+
+main() {
+	t1: bool = fold(
+		[
+			// Ascii 'a'
+			charCodeAndUtf8Test("a", 0x61, [0x61], [0x61]),
+
+			// Danish letter Ø, Unicode code point: U+00F8
+			charCodeAndUtf8Test("oe", 0xF8, [0xF8], [0xC3, 0xB8]),	
+
+			// Ascii Zero
+			charCodeAndUtf8Test("0", 0x30, [0x30], [0x30]),	
+
+			// Newline
+			charCodeAndUtf8Test("nl", 10, [10], [10]),
+
+			// Chinese letter for man. From Basic Unicode Plane 
+			charCodeAndUtf8Test("china_man", 0x4EBA, [0x4EBA], [0xE4, 0xBA, 0xBA]), 
+
+			// A UTF16 surogate. 0xD800 is the first
+			charCodeAndUtf8Test(
+				"illegal_surogate",
+				0xD801, 
+				[0xD801], 
+				// WARNING. NONE of these UTF8's are probably correct. It should not be possible to utf8 encode 0xD801 ....
+				// See https://en.wikipedia.org/wiki/UTF-8 Invalid sequences and error handling
+				if (js) [0xF0, 0x90, 0x90, 0x80]
+				//else if (nim) [0xED, 0xA0, 0x81]
+				else [0xED, 0xA0, 0x81] 
+			), 
+
+			// Ugaritic, From Unicode Plane 1.
+			charCodeAndUtf8Test(
+				"ugaritic",
+				0x1038C, 
+				// Note: CPP is also correct, as it only handled the Unicode Basic Multilingual Plane
+				if (cpp) [0x038C] else [0xD800, 0xDF8C],
+
+				// CPP, should not allow the encoding ... See https://en.wikipedia.org/wiki/UTF-8 Invalid sequences and error handling
+				if (cpp) [0xCE, 0x8C] else [0xF0, 0x90, 0x8E, 0x8C]
+			), 
+
+			// From https://en.wikipedia.org/wiki/UTF-8
+			charCodeAndUtf8Test(
+				"hangul",
+				0xD55C, 
+				[0xD55C], 
+				[0xED, 0x95, 0x9C]
+			),
+
+			// From https://en.wikipedia.org/wiki/UTF-8
+			charCodeAndUtf8Test(
+				"hwair", 
+				0x10348,
+				// Note: CPP is also correct, as it only handled the Unicode Basic Multilingual Plane
+				if (cpp) [0x0348] else [0xD800, 0xDF48],
+
+				// CPP, should not allow the encoding... See https://en.wikipedia.org/wiki/UTF-8 Invalid sequences and error handling
+				if (cpp) [0xCD, 0x88] else [0xF0, 0x90, 0x8D, 0x88]
+			),
+
+			// 0
+			charCodeAndUtf8Test("null", 0, [0], [0]),
+		],
+		true,
+		\acc: bool, t: bool -> acc && t
+	);
+	
+	t2: bool = checkStringBinary();
+
+	if (t1) {
+		println("CharCodeTest success");
+	} else {
+		println("CharCodeTest FAILURE!!");
+	}
+
+	if (t2) {
+		println("Binary success");
+	} else {
+		println("Binary FAILURE!!");
+	}
+/*
+	// cpp, java, js: [55297]
+	// nim: [65533]
+	println(toString(s2a(fromCharCode(55297))));
+
+	// cpp, java, js: [0]
+	// nim: []
+	println(toString(string2utf8(fromCharCode(0))));
+*/
+	quit(if (t1 && t2) 0 else 1);
+}
+
+
+

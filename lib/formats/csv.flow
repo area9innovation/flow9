@@ -6,6 +6,10 @@ import devmode;
 import lingo/pegcode/driver;
 
 export {
+	// Create a CSV string with escaped cells. 
+	makeCsv(rows : [[string]]) -> string;
+	makeCsvSep(rows : [[string]], sep: string) -> string;
+	// like the string, but with an xFEFF (Zero width no-break space) unicode charater in the file/string.
 	makeCsvFile(rows : [[string]]) -> string;
 	makeCsvFileSep(rows : [[string]], sep: string) -> string;
 
@@ -21,6 +25,7 @@ export {
 	parseCsv(s : string, sep : string) -> [[string]];
 
 	parseCsvLine(s : string, sep : string) -> [string];
+	parseCsvLineWithQuotedSeparators(s: string, sep: string) -> [string];
 
 	parseCsvField(s : string, index : int, sep : string) -> Pair<string, int>;
 
@@ -127,52 +132,85 @@ getBestRowCount(file : string, sep : string) -> int {
 	// Calculate how many columns we'll have in each row
 	// Ignore rows with only one column in them, it means the delimiter is simply not there
 	arr_cnt = filtermap(lines, \a -> {
-		len = length(strSplitCheckQuotes(a, sep, []));
+		len = length(parseCsvLineWithQuotedSeparators(a, sep));
 		if (len == 1) None() else Some(len);
 	});
 
 	fold(map(uniq(arr_cnt), \v -> countA(arr_cnt, eq(v))), 0, max);
 }
 
-//separators in string with quotes are ignored
-strSplitCheckQuotes(s: string, sep: string, acc: [string]) -> [string] {
-	l = strlen(s);
-	i = strIndexOfSepOutOfQuotes(s, sep);
-	if (i < 0) {
-		arrayPush(acc, s);
-	} else {
-		nextSubstr = strLeft(s, i);
+parseCsvLineWithQuotedSeparators(s: string, sep: string) -> [string] {
+	list2array(strSplitCheckQuotes(s, sep, makeList()));
+}
 
+//separators in string with quotes are ignored
+strSplitCheckQuotes(s: string, sep: string, acc: List<string>) -> List<string> {
+	l = strlen(s);
+	lastQuoteInd = ref -1;
+	i = strIndexOfSepOutOfQuotes(s, sep, lastQuoteInd);
+	nextSubstr = if (^lastQuoteInd > 0) {
+		substring(s, 1, if (i < 0) (^lastQuoteInd - 1) else (i - 2));
+	} else if (i < 0) {
+		s;
+	} else {
+		strLeft(s, i);
+	}
+	if (i < 0) {
+		Cons(nextSubstr, acc);
+	} else {
+		newAcc = Cons(nextSubstr, acc);
 		if (i < l) {
 			sepLen = strlen(sep);
-			strSplitCheckQuotes(substring(s, i + sepLen, l - i - sepLen), sep, concat(acc, [nextSubstr]));
+			strSplitCheckQuotes(substring(s, i + sepLen, l - i - sepLen), sep, newAcc);
 		} else {
-			concat(acc, [nextSubstr]);
+			newAcc;
 		}
 	}
 }
 
-strIndexOfSepOutOfQuotes(str : string, sep : string) -> int {
-	if (strIndexOf(str, sep) < strIndexOf(str, "\"")) {
+strIndexOfSepOutOfQuotes(str : string, sep : string, lastQuoteInd : ref int) -> int {
+	quotePos = strIndexOf(str, "\"");
+	if (quotePos < 0 || strIndexOf(str, sep) < quotePos) {
 		strIndexOf(str, sep)
 	} else {
 		quotesIdx = multipleStrIndexOf(str, "\"");
-		qutes = foldi(quotesIdx, [], \idx, acc, quoteIdx -> {
+		quotes = foldi(quotesIdx, [], \idx, acc, quoteIdx -> {
 			if (even(idx)) acc
 			else concat(acc, [Pair(quotesIdx[idx - 1], quotesIdx[idx])])
 		});
 		sepIdxs = multipleStrIndexOf(str, sep);
 		l = strlen(str);
-		isIdxInRange = \i -> fold(qutes, false, \acc, pair -> ((i > pair.first && i < pair.second) || acc));
-		fold(sepIdxs, l, \acc, sepIdx -> {
+		isIdxInRange = \i -> fold(quotes, false, \acc, pair -> (acc || (i > pair.first && i < pair.second)));
+		setQuotedStr = \sepIdx -> {
+			quoteCnt = length(quotesIdx);
+			if (quoteCnt > 1 && quotesIdx[0] == 0 && quotesIdx[1] == (sepIdx - 1)) {
+				lastQuoteInd := sepIdx - 1;
+			}
+		}
+		firstInd = fold(sepIdxs, l, \acc, sepIdx -> {
 			if (acc < l || isIdxInRange(sepIdx)) acc
-			else sepIdx
+			else {
+				setQuotedStr(sepIdx);
+				sepIdx
+			}
 		});
+		if (firstInd == l) {
+			setQuotedStr(l);
+			if ((^lastQuoteInd) < 0) setQuotedStr(l - 1);
+			-1;
+		} else {
+			firstInd;
+		}
 	}
 }
 
+
+makeCsv(rows : [[string]]) -> string {
+	makeCsvSep(rows, ",")
+}
+
 makeCsvFile(rows : [[string]]) -> string {
-	makeCsvFileSep(rows, ",")
+	fromCharCode(0xFEFF) + makeCsv(rows);
 }
 
 escapeCell(v: string, sep: string) -> string {
@@ -182,9 +220,13 @@ escapeCell(v: string, sep: string) -> string {
 		v;
 }
 
-makeCsvFileSep(rows : [[string]], sep: string) -> string {
+makeCsvSep(rows : [[string]], sep: string) -> string {
 	rowsSeparated = map(rows, \r -> strGlue(map(r, \s -> escapeCell(s, sep)), sep));
-	fromCharCode(0xFEFF) + strGlue(rowsSeparated, "\n");
+	strGlue(rowsSeparated, "\n");
+}
+
+makeCsvFileSep(rows : [[string]], sep: string) -> string {
+	fromCharCode(0xFEFF) + makeCsvSep(rows, sep);
 }
 
 parseCsvFile(file : string, onlyRectangular : bool) -> [[string]] {
@@ -195,9 +237,9 @@ parseCsvFile(file : string, onlyRectangular : bool) -> [[string]] {
 
 	f = trim2(trim2(file, c10), c13);
 	tmp_arr = if (strContains(f, c10) || strContains(f, c13)) {
-		map(strSplit2WithoutLeave(f, [c10, c13]), \a -> strSplitCheckQuotes(a, cnt_sep.second, []))
+		map(strSplit2WithoutLeave(f, [c10, c13]), \a -> parseCsvLineWithQuotedSeparators(a, cnt_sep.second))
 	} else {
-		map(strSplitCheckQuotes(f, cnt_sep.second, []), \v -> [v]);
+		map(parseCsvLineWithQuotedSeparators(f, cnt_sep.second), \v -> [v]);
 	}
 
 	arr = map(

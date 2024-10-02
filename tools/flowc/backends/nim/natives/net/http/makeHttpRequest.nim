@@ -50,12 +50,14 @@ proc execHttpRequest(
     client.close()
 
 
-proc makeHttpRequest*(
-                     url : string,
-                     postMethod : bool,
-                     headers : seq[seq[string]],
-                     params : seq[seq[string]],
-                     onData : proc(r : string): void,
-                     onError : proc(e : string): void,
-                     onStatus : proc(c : int32): void,
-) = spawn execHttpRequest(url, postMethod, headers, params, onData, onError, onStatus)
+proc $F_0(makeHttpRequest)*(url0 : RtString, postMethod : bool, headers0 : seq[seq[RtString]], params0 : seq[seq[RtString]], onData0 : proc(r : RtString): void, onError0 : proc(e : RtString): void, onStatus : proc(c : int32): void) =
+  let url = rt_string_to_utf8(url0)
+  let headers = map(headers0, proc(header: seq[RtString]): seq[string] =
+    map(header, proc(x: RtString): string = rt_string_to_utf8(x))
+  )
+  let params = map(params0, proc(param: seq[RtString]): seq[string] =
+    map(param, proc(x: RtString): string = rt_string_to_utf8(x))
+  )
+  let onData = proc(x: string): void = onData0(rt_utf8_to_string(x))
+  let onError = proc(x: string): void = onError0(rt_utf8_to_string(x))
+  spawn execHttpRequest(url, postMethod, headers, params, onData, onError, onStatus)

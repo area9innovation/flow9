@@ -9,6 +9,7 @@ contentZoomDef = MCarouselContentZoom(1., 1., 0.);
 
 MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	state = makeMCarouselState(manager, m);
+	swipeEnabled = extractStruct(m.style, MCarouselSwipeEnabled(state.contentsLength > state.itemsSpan)).enabled; 
 
 	if (state.contentsLength > 0)
 		(\p -> {
@@ -21,32 +22,22 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 				if (state.heightByContent) {
 					TConstruct(
 						[
-							makeSubscribe(state.width, \w -> updateTxForWidth(w, state))
+							makeSubscribe(state.itemWidth, \w -> updateTxForWidth(w, state))
 						],
 						TAttachAvailableWidth(TCropWidth2(f, state.width), state.width)
 					);
 				} else {
 					awh = makeWH();
-					whWithRatio =
-						fselect(awh, FLift(\wh -> {
-							w = wh.width;
-							h = wh.height;
-							WidthHeight(
-								if (w < 120.) {if (h < 120.) 120. else h * goldenRatio} else w,
-								if (h < 120.) {if (w < 120.) 120. else w / goldenRatio} else h
-							)
-						}));
-
 					TConstruct(
 						[
-							makeSubscribe(whWithRatio, \wh -> {
+							makeSubscribe(awh, \wh -> {
 								nextDistinct(state.width, wh.width);
 								nextDistinct(state.height, wh.height);
 								updateTxForWidth(wh.width, state);
 							})
 						],
 						TAttachAvailable(
-							TCrop(const(zeroPoint), whWithRatio, f),
+							TCrop(const(zeroPoint), awh, f),
 							awh
 						)
 					);
@@ -59,7 +50,7 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 				TDecorator(f, [], false)
 			)
 			|> (\f : Tropic ->
-				if (state.contentsLength > state.itemsSpan)
+				if (swipeEnabled)
 					MSwipe2T(
 						manager,
 						p,
@@ -462,7 +453,7 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 
 				easing.start();
 			}),
-			makeSubscribe(down, \d -> if (!d) endPanning()),
+			makeSubscribe2(down, \d -> if (!d) endPanning()),
 			// Animates the transition snap
 			\ -> subscribe(activeIdx, \idx -> {
 				nextDistinct(hasPrev, endlessScroll || idx > 0);
@@ -480,7 +471,15 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 			\ -> subscribe2(activeI, \i -> {
 				nextDistinct(zoomScale, 1.);
 				idx = fgetValue(activeIdx);
-				nextDistinct(activeIdx, floor(i2d(idx) / i2d(contentsLength)) * contentsLength + i);
+				baseNewIdx = floor(i2d(idx) / i2d(contentsLength)) * contentsLength + i;
+				if (contentsLength == itemsSpan) {
+					centralItemIdx = idx + (contentsLength - 1) / 2;
+					shouldAddPage = baseNewIdx + contentsLength <= centralItemIdx;
+
+					nextDistinct(activeIdx, baseNewIdx + (if (shouldAddPage) contentsLength else 0));
+				} else {
+					nextDistinct(activeIdx, baseNewIdx);
+				}
 			}),
 			\ -> \ -> dispUnsM(uns)
 		];
@@ -617,7 +616,7 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	textColor = extractStruct(style, MCarouselTextColor(MWhite())).color;
 	contentScaling = !contains(style, MCarouselNoContentScaling());
-	bgStyle = extractStruct(style, MBackgroundStyle([MFill(MBackgroundMColor(!getLightBackground(parent)))])).style;
+	bgStyle = mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style, MBackgroundStyle([MFill(MBackgroundMColor(!getLightBackground(parent)))])).style);
 	contentSideOffset = extractStruct(style, MCarouselSidesOffset(0.)).sideOffset;
 
 	makeTitle = \text, st : [MTextStyle] -> {
@@ -789,8 +788,7 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 							len = i2d(state.contentsLength);
 							fullWidth = wd * len;
 							currentIndex = dceil((-tx0 - contentSideOffset) / wd);
-							currentWidth = currentIndex * wd;
-							currentPage = (currentIndex + len / 2. - i2d(i)) / len;
+							currentPage = (currentIndex + len / 2. - i2d(i) + b2d(state.contentsLength > 1 && state.contentsLength <= state.itemsSpan)) / len;
 							currentTranslate =
 								dfloor(if (currentPage < 0.) currentPage - 1. else currentPage) * fullWidth 
 								+ i2d(i) * wd

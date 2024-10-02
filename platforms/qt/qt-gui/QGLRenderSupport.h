@@ -3,6 +3,7 @@
 
 #include "gl-gui/GLRenderSupport.h"
 #include "font/Headers.h"
+#include "qt-backend/HttpSupport.h"
 
 #include <qmediaplayer.h>
 
@@ -152,6 +153,7 @@ protected:
     void loadFontsFromFolder(QString dir);
 
     bool loadPicture(unicode_string url, bool cache);
+    bool loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool cache);
 
     void abortPictureLoading(unicode_string url);
 
@@ -225,11 +227,6 @@ private:
     DECLARE_NATIVE_METHOD(getFocus)
 
     DECLARE_NATIVE_METHOD(addFileDropListener)
-
-    DECLARE_NATIVE_METHOD(setCurrentDirectory)
-    DECLARE_NATIVE_METHOD(getCurrentDirectory)
-
-    DECLARE_NATIVE_METHOD(getApplicationPath)
 
     DECLARE_NATIVE_METHOD(toggleFullScreen)
     DECLARE_NATIVE_METHOD(onFullScreen)

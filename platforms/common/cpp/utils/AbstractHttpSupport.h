@@ -39,6 +39,8 @@ struct HttpRequest {
     IncrementalUtf8Parser tmp_parser;
     FILE *tmp_file;
 
+    std::string result_filename;
+
     void *aux_data;
 
     HttpRequest() {
@@ -130,6 +132,8 @@ private:
     DECLARE_NATIVE_METHOD(preloadMediaUrl)
     DECLARE_NATIVE_METHOD(uploadNativeFile)
     DECLARE_NATIVE_METHOD(downloadFile)
+    DECLARE_NATIVE_METHOD(downloadFileBinary)
+    DECLARE_NATIVE_METHOD(downloadFileBinaryWithHeaders)
     DECLARE_NATIVE_METHOD(removeUrlFromCache)
     DECLARE_NATIVE_METHOD(clearUrlCache)
     DECLARE_NATIVE_METHOD(getAvailableCacheSpaceMb)

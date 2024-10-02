@@ -11,7 +11,7 @@ export {
 	MDynamicParagraph2T(parent : MFocusGroup, text : Transform<string>, style : [MParagraphStyle]) -> Tropic;
 
 	extractMTextStyleDef(style : [MParagraphStyle], def : MFontStyleBundle) -> [MTextStyle];
-	
+
 	MFontStyleBundle(color : MThemeColor, fontStyle : MFontStyle, enabled : bool);
 
 	MTextStyle2TCharacterStyle(parent : MFocusGroup, text : string, style : [MTextStyle]) -> [TCharacterStyle];
@@ -31,10 +31,10 @@ export {
 	// Use MTextStyle2CharacterStyle or MTextStyle2CharacterStyleDef instead.
 	MFontStyle2CharacterStyle(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> [BasicCharacterStyle];
 
-	addTagName(style : [MParagraphStyle]) -> ([TCharacterStyle]) -> [TCharacterStyle];
+	addTagName(style : [MParagraphStyle], defTag : string) -> ([TCharacterStyle]) -> [TCharacterStyle];
 	updateOnFontWrapper(parent : MFocusGroup, makeTropic : () -> Tropic) -> Tropic;
 
-	getHeadingTagFromFontSize(fontSize : double) -> Maybe<string>;
+	getHeadingTagFromFontSize(fontSize : double, defTag : string) -> Maybe<string>;
 }
 
 getDisabledTextOpacity(dark : bool) -> double {
@@ -95,11 +95,11 @@ MTextStyle2TCharacterStyle(parent : MFocusGroup, text : string, style : [MTextSt
 	|> (\st -> arrayPush(st, extractStruct(style, LocalizationEnabled(parent.theme.localizationEnabled))))
 	|> (\st -> eitherMap(dynamicColor, \dc -> arrayPush(st, dc), st))
 	|> (\st -> addMLangFontFamily(text, st))
-	|> addTagName(style)
+	|> addTagName(style, "")
 	|> addLangAttribute(style);
 }
 
-addTagName(style : [MParagraphStyle]) -> ([TCharacterStyle]) -> [TCharacterStyle] {
+addTagName(style : [MParagraphStyle], defTag : string) -> ([TCharacterStyle]) -> [TCharacterStyle] {
 	\characterStyle ->
 		eitherFn(
 			tryExtractStruct(style, TagName("")),
@@ -110,7 +110,7 @@ addTagName(style : [MParagraphStyle]) -> ([TCharacterStyle]) -> [TCharacterStyle
 				arrayPushMaybe(
 					characterStyle,
 					maybeMap(
-						getHeadingTagFromFontSize(fontSize),
+						getHeadingTagFromFontSize(fontSize, defTag),
 						\tag -> TagName(tag)
 					)
 				)
@@ -118,7 +118,7 @@ addTagName(style : [MParagraphStyle]) -> ([TCharacterStyle]) -> [TCharacterStyle
 		)
 }
 
-getHeadingTagFromFontSize(fontSize : double) -> Maybe<string> {
+getHeadingTagFromFontSize(fontSize : double, defTag : string) -> Maybe<string> {
 	if (fontSize >= 96.0) {
 		Some("h1");
 	} else if (fontSize >= 60.0) {
@@ -132,7 +132,8 @@ getHeadingTagFromFontSize(fontSize : double) -> Maybe<string> {
 	} else if (fontSize >= 20.0) {
 		Some("h6");
 	} else {
-		None();
+		if (defTag != "") Some(defTag)
+		else None();
 	}
 }
 
@@ -186,27 +187,37 @@ MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], de
 	|> (\bundle : MFontStyleBundle -> {
 		intColor = MThemeColor2int(parent, bundle.color);
 		font = MFontStyle2MFont(parent, bundle.fontStyle);
+		backgroundFill = tryExtractStruct(style, BackgroundFill(0));
+		backgroundFillOpacity = tryExtractStruct(style, BackgroundFillOpacity(0.));
+		preventTextNodeWidthCalculation = tryExtractStruct(style, PreventTextNodeWidthCalculation());
 		wrappedFont = eitherMap(
 			parent.theme.fontWrapper,
 			\wrapper -> fgetValue(wrapper).wrapper(font, intColor, bundle.enabled),
 			font
 		);
-		arrayPush(
-			MFont2CharacterStyle(wrappedFont, intColor == black)
-			|> (\characterStyle ->
-				if (bundle.enabled)
-					arrayPushMaybe(characterStyle, tryExtractStruct(style, FillOpacity(1.0)))
-				else
-					replaceStruct(characterStyle, extractStruct(style, FillOpacity(getDisabledTextOpacity(intColor == black))))
+		maybeArrayPushMany(
+			arrayPush(
+				MFont2CharacterStyle(wrappedFont, intColor == black)
+				|> (\characterStyle ->
+					if (bundle.enabled)
+						arrayPushMaybe(characterStyle, tryExtractStruct(style, FillOpacity(1.0)))
+					else
+						replaceStruct(characterStyle, extractStruct(style, FillOpacity(getDisabledTextOpacity(intColor == black))))
+				),
+				Fill(
+					if (bundle.enabled)
+						intColor
+					else if (rgb2cielab(int2rgb(intColor)).l < 50.)
+						black
+					else
+						white
+				)
 			),
-			Fill(
-				if (bundle.enabled)
-					intColor
-				else if (rgb2cielab(int2rgb(intColor)).l < 50.)
-					black
-				else
-					white
-			)
+			[
+				backgroundFill,
+				backgroundFillOpacity,
+				preventTextNodeWidthCalculation
+			]
 		)
 	})
 	|> (\characterStyle ->
@@ -231,6 +242,8 @@ MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], de
 	|> (\characterStyle -> arrayPush(characterStyle, extractStruct(style, EscapeHTML(true))))
 	|> (\characterStyle -> arrayPushMaybe(characterStyle, tryExtractStruct(style, LetterSpacing(0.0))))
 	|> (\characterStyle -> arrayPushMaybe(characterStyle, tryExtractStruct(style, WordSpacing(zero))))
+	|> (\characterStyle -> arrayPushMaybe(characterStyle, tryExtractStruct(style, LineHeightPercent(0.0))))
+	|> (\characterStyle -> arrayPushMaybe(characterStyle, tryExtractStruct(style, NeedBaseline(false))))
 }
 
 MFont2CharacterStyle(mcf : MFont, darkText : bool) -> [BasicCharacterStyle] {
@@ -252,18 +265,33 @@ MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle] {
 	fontSize = ref 14.0;
 	fill = ref black;
 	fillOpacity = ref primaryTextOpacityDark;
+	backgroundFill = ref None();
+	backgroundFillOpacity = ref None();
+	preventTextNodeWidthCalculation = ref None();
 
 	iter(style, \s ->
 		switch (s) {
 			FontFamily(name) : fontFamily := name;
 			FontSize(size) : fontSize := size;
 			Fill(col) : fill := col;
+			BackgroundFill(col) : backgroundFill := Some(BackgroundFill(col));
+			BackgroundFillOpacity(op) : backgroundFillOpacity := Some(BackgroundFillOpacity(op));
+			PreventTextNodeWidthCalculation() : preventTextNodeWidthCalculation := Some(PreventTextNodeWidthCalculation());
 			FillOpacity(op) : fillOpacity := op;
 			default : {}
 		}
 	);
-
-	[MCustomColor(^fill), MCustomFont(^fontSize, ^fontFamily, ^fillOpacity)]
+	maybeArrayPushMany(
+		[
+			MCustomColor(^fill),
+			MCustomFont(^fontSize, ^fontFamily, ^fillOpacity),
+		],
+		[
+			^backgroundFill,
+			^backgroundFillOpacity,
+			^preventTextNodeWidthCalculation
+		]
+	)
 }
 
 MFontStyle2MFont(parent : MFocusGroup, style : MFontStyle) -> MFont {

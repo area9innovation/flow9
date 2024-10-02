@@ -56,6 +56,7 @@ export {
 		selection : DynamicBehaviour<int>,
 		cursorShape : DynamicBehaviour<CursorShape>,
 		textStyle : Transform<[MTextStyle]>,
+		autofillBackgroundFill : Maybe<AutofillBackgroundFill>,
 		tTextMetrics : Transform<FormMetrics>,
 		smallEdit : bool,
 		label : string,
@@ -73,6 +74,7 @@ export {
 		width : double,
 		textWidth : DynamicBehaviour<double>,
 		maxHeight : double,
+		fullHeight : bool,
 		align : AutoAlignType,
 		iconSize : double,
 		iconBorders : double,
@@ -87,6 +89,7 @@ export {
 		backgroundStyle : MInputBackgroundStyle,
 		labelStyle : Transform<[CharacterStyle]>,
 		floatingLabel : Maybe<MInputFloatingLabelState>,
+		cursorState : MInputCursorState,
 		popup : Maybe<MInputPopupState>,
 		autocomplete : Maybe<MInputAutocompleteState>,
 		error : Maybe<MInputErrorState>,
@@ -107,7 +110,8 @@ export {
 		condensed : bool,
 		skin : MTextInputSkin,
 		scrollStyle : [MScrollStyle],
-		allowEmojis : bool
+		allowEmojis : bool,
+		openDatePickerFn : DynamicBehaviour<Maybe<() -> void>>
 	);
 
 	MInputAutocompleteState(
@@ -117,11 +121,12 @@ export {
 		sentences : DynamicBehaviour<[SentenceMatch]>,
 		selected : DynamicBehaviour<int>,
 		showAllOnEmpty : bool,
+		showAllOnSingleMatch : bool,
 		maxResults : int,
 		autoSelect : bool,
 		includeSpaces : bool,
 		currentMatches : Maybe<MCurrentMatches>,
-		fill : [TGraphicsStyle],
+		fill : [MGraphicsStyle],
 		setWord : (word : string) -> void,
 		isTextInputInPopup : bool,
 		dynListMode : bool,
@@ -180,6 +185,7 @@ export {
 	MInputLimitErrorState(
 		lines : int,
 		height : double,
+		inline : bool,
 		limit : DynamicBehaviour<Pair<string, [MTextStyle]>>
 	);
 
@@ -197,6 +203,12 @@ export {
 		labelWidth : DynamicBehaviour<double>,
 		outlinedColor : DynamicBehaviour<MColor>,
 		progress : DynamicBehaviour<double>
+	);
+
+	MInputCursorState(
+		color : MColor,
+		opacity : double,
+		width : double
 	);
 
 	passwordFilter = \state : [MTextInputState] -> {
@@ -294,6 +306,8 @@ export {
 	};
 }
 
+enablePreventXSSDef = isUrlParameterTrue("new") && !isUrlParameterFalse("input_xss_protection_enabled");
+
 numericFilter(s) {
 	dotB = ref false;
 
@@ -325,7 +339,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	useNativeInput = iScriptBehaviours.useNativeInput;
 	label = iScriptBehaviours.label;
 	dynamicSize = iScriptBehaviours.dynamicSize;
-	hasFloatingLabel = contains(style, MFloatingLabel()) && label != "";
+	flAlwaysOnTop = contains(style, MFloatingLabelAlwaysOnTop());
+	hasFloatingLabel = (contains(style, MFloatingLabel()) || flAlwaysOnTop) && label != "";
 	linesCount = extractStruct(style, MMaxLines(1)).lines;
 	showUnderline = extractStruct(style, MShowUnderline(true)).show;
 	multiline = extractStruct(style, Multiline(false)).multiline;
@@ -335,6 +350,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	width = extractStruct(style, MWidth(-1.)).width;
 	textWidth = make(0.);
 	maxHeight = extractStruct(style, MMaxHeight(-1.)).height;
+	fullHeight = contains(style, MFullHeight());
 	align = extractStruct(style, AutoAlign(AutoAlignNone())).autoalign;
 	filterAction = iScriptBehaviours.filterAction;
 	smallEdit = contains(style, MEditDialog());
@@ -348,19 +364,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	preventContextMenu = contains(state, MInputPreventContextMenu());
 	scrollStyle = extractStruct(style, MTextInputScrollStyle([])).style;
 	allowEmojis = extractStruct(style, MTextInputAllowEmojis(false)).allowEmojis;
-	// For testing purposes
-	defaultSkin =
-		if (getUrlParameter("inputSkin") == "filled" && !smallEdit) MFilled()
-		else if (getUrlParameter("inputSkin") == "outlined" && !smallEdit) MOutlined()
-		else MTextInputPlain();
-	skin =
-		fold(style, defaultSkin, \acc, st ->
-			switch (st) {
-				MFilled(): st;
-				MOutlined(): st;
-				default: acc;
-			}
-		);
+	openDatePickerFn = extractStruct(state, MOpenDatePickerFn(make(None()))).fn;
+	skin = calculateMTextInputSkin(style);
 
 	customTextStyle : [MParagraphStyle] = extractStruct(style, MCustomTextStyle([])).style;
 
@@ -373,11 +378,15 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			),
 			extractStructMany(customTextStyle, LetterSpacing(0.0)),
 			extractStructMany(customTextStyle, EscapeHTML(true)),
-			extractStructMany(customTextStyle, MDynamicColor(const(MBlack())))
+			extractStructMany(customTextStyle, MDynamicColor(const(MBlack()))),
+			extractStructMany(customTextStyle, BackgroundFill(0)),
+			extractStructMany(customTextStyle, BackgroundFillOpacity(0.)),
+			extractStructMany(customTextStyle, PreventTextNodeWidthCalculation())
 		]);
 
 	textStyle = fconcat(extractStruct(style, MDynamicTextStyle(const(mTextStyle))).style, const([LocalizationEnabled(false)]));
 	liftFn : FLift<[MTextStyle], FormMetrics> = FLift(\ts : [MTextStyle] -> getTWordMetrics(TText(" ", MTextStyle2CharacterStyle(parent, ts)), makeTree()));
+	autofillBackgroundFill = tryExtractStruct(style, AutofillBackgroundFill(0));
 	tTextMetrics = fselect(textStyle, liftFn);
 
 	prev = ref getValue(content);
@@ -394,22 +403,24 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				12.;
 			}
 		}
+	inputBordersTopDef = 
+		switch (skin : MTextInputSkin) {
+			MTextInputPlain(): {
+				if (hasFloatingLabel) (if (condensed) 20. else 28.) else if (condensed) 12. else 16.;
+			}
+			MFilled(): {
+				if (hasFloatingLabel) 25.else if (condensed) 11. else 18.;
+			}
+			MOutlined(): {
+				if (!hasFloatingLabel && condensed) 11. else 17.;
+			}
+		}
 	inputBorders =
 		extractStruct(
 			style,
 			MInputBorders(
 				sideBorder,
-				switch (skin : MTextInputSkin) {
-					MTextInputPlain(): {
-						if (hasFloatingLabel) (if (condensed) 20. else 28.) else if (condensed) 12. else 16.;
-					}
-					MFilled(): {
-						if (hasFloatingLabel) 25.else if (condensed) 11. else 18.;
-					}
-					MOutlined(): {
-						if (!hasFloatingLabel && condensed) 11. else 17.;
-					}
-				},
+				inputBordersTopDef,
 				sideBorder,
 				switch (skin : MTextInputSkin) {
 					MTextInputPlain(): {
@@ -424,6 +435,13 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				}
 			)
 		);
+
+	// Cursor
+	cursorStyle = extractStruct(style, MInputCursor([])).style;
+	cursorColor = extractMColor(parent, cursorStyle, color);
+	cursorOpacity = extractStruct(cursorStyle, FillOpacity(1.)).opacity;
+	cursorWidth = extractStruct(cursorStyle, MWidth(2.)).width;
+	cursorState = MInputCursorState(cursorColor, cursorOpacity, cursorWidth);
 
 	// Underline
 	inputUnderline : Maybe<DynamicBehaviour<Pair<[TGraphicsStyle], double>>> =
@@ -474,7 +492,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	iconSize = extractStruct(style, MIconSize(if (condensed) 20. else 24.)).size;
 	iconBorders = extractStruct(style, MIconButtonBorder(8.)).border;
 	showDropDownArrow = !readOnly && extractStruct(style, MShowDropDownArrow(false)).show;
-	mClearIcon = extractStruct(style, MShowClearIcon2(mobile && (width <= 0. || width > 96.), false, false));
+	mClearIcon = extractStruct(style, MShowClearIcon2(mobile && (width <= 0. || width > 96.) || inputType == SearchType(), false, false));
 	showClearIcon = (mClearIcon.onFocus || mClearIcon.onHover || mClearIcon.always) && !readOnly;
 
 	// Left icon
@@ -531,7 +549,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	// Floating Label
 	inactiveColor = contrastingColor(parent);
-	inactiveOpacity = defaultInactiveItemLabelOpacity(MColor2int(color) == black);
+	inactiveOpacity = extractStruct(style, MInactiveOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))).opacity;
 
 	unfocusedUnderline = extractStruct(style, MUnderlineUnfocusedStyle([Fill(inactiveColor), FillOpacity(inactiveOpacity / 4.)])).style;
 
@@ -563,26 +581,26 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		if (hasFloatingLabel) {
 			defFSize = if (condensed) 13. else 16.;
 			fSize = eitherMap(floatingLabelStyle, \fls -> extractStruct(fls, FontSize(defFSize)).size, defFSize);
-			fSizeFocused = forceRange(labelSize, 0., inputBorders.top);
+			fSizeFocused = max(0., labelSize);
 			betweenFLabels =
 				switch (skin : MTextInputSkin) {
 					MTextInputPlain(): if (condensed) 4.0 else 8.0;
-					MFilled(): -2.0;
-					MOutlined(): if (!hasFloatingLabel && condensed) 8.0 else 13.0;
+					MFilled(): -2.0 + (1. - inputBorders.top/inputBordersTopDef) * 8.;
+					MOutlined(): (if (!hasFloatingLabel && condensed) 8.0 else 13.0) + (inputBorders.top - inputBordersTopDef);
 				}
-			aFlabel =
+			aboveFLabel =
 				switch (skin : MTextInputSkin) {
 					MTextInputPlain(): inputBorders.top - fSizeFocused - betweenFLabels;
-					MFilled(): 8.0;
+					MFilled(): 8.0 + (inputBorders.top - inputBordersTopDef);
 					MOutlined(): inputBorders.top - fSizeFocused - betweenFLabels;
 				}
-			showFLabel = fgetValue(mfocus.focused) || getValue(content) != "";
+			showFLabel = flAlwaysOnTop || fgetValue(mfocus.focused) || getValue(content) != "";
 
 			Some(
 				MInputFloatingLabelState(
 					fSize,
 					fSizeFocused,
-					aFlabel,
+					aboveFLabel,
 					betweenFLabels,
 					make(showFLabel),
 					make(0.),
@@ -599,7 +617,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	limitError =
 		if (maxChars > 0 && extractStruct(style, MShowMaxChars(true)).show)
-			Some(MInputLimitErrorState(1, 16., make(Pair(if (dynamicSize) "" else " ", []))))
+			Some(MInputLimitErrorState(1, 16., contains(style, MInlineMaxChars()), make(Pair(if (dynamicSize) "" else " ", []))))
 		else
 			None();
 
@@ -693,7 +711,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					nextDistinct(position, newPosition);
 					nextDistinct(selection, newPosition);
 
-					if (!multiline && !keepFocusOnSelect) nextDistinct(mfocus.focused, false);
+					if (!keepFocusOnSelect) nextDistinct(mfocus.focused, false);
 					
 					maybeApply(autoCompleteAsync, \as -> nextDistinct(as.setWordUpdateEnabled, false));
 			}
@@ -738,6 +756,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					sentences,
 					make(-1),
 					contains(style, MShowAllOnEmpty()),
+					contains(style, MShowAllOnSingleMatch()),
 					maxResults,
 					contains(style, MAutoSelect()),
 					extractStruct(style, MIncludeSpaces(!multiline)).includeSpaces,
@@ -823,7 +842,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	updateFocusContent = \c : string, foc : bool, mtch : [Pair<int, SentenceMatcher>] -> {
 		dispUnsM(showMoreHandlerUns);
 		maybeApply(editIcon, \ei -> nextDistinct(ei, !foc));
-		maybeApply(floatingLabel, \fl -> nextDistinct(fl.showFloatingLabel, foc || c != ""));
+		maybeApply(floatingLabel, \fl -> nextDistinct(fl.showFloatingLabel, flAlwaysOnTop || foc || c != ""));
 
 		maybeApply(
 			autocomplete,
@@ -893,8 +912,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 								else {
 									onResponse = \items -> {
 										mtchr = ac.sentenceMatcher.matcher([]);
-										allCompl = map(items, \it ->
-											SentenceHit(mtchr, it, 0., makeSet())
+										allCompl = mapi(items, \i, it ->
+											SentenceHitExtended(mtchr, it, 0., makeSet(), i)
 										);
 										onAllCompl(allCompl, false);
 										nextDistinct(async.currentRequests, getValue(async.currentRequests) - 1);
@@ -906,30 +925,38 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 							}
 						},
 						\ -> {
+							showAllOnSingleMatch = ac.showAllOnSingleMatch && isSome(popup) && c2 != "";
 							showAll = ac.showAllOnEmpty && isSome(popup) && c2 == "";
 							chunkSize = getUrlParameterDef("chunkSize", "5000") |> s2i;
 							simultaneous = max(length(mtch) / chunkSize, 50);
 							mapAsyncParallelChunked(
 								mtch, chunkSize, simultaneous,
 								\chunk, fulfill, __ -> {
-									mapConcat(
+									showAllFn = \matcherPair -> filtermap(
+										matcherPair.second.sentences, 
+										\s -> {
+											if (s != "") Some(SentenceHitExtended(matcherPair.second, s, 0., makeSet(), matcherPair.first))
+											else None()
+										}
+									);
+
+									allCompl = mapConcat(
 										chunk,
 										\matcherPair -> {
-											if (showAll)
-												filtermap(
-													matcherPair.second.sentences, 
-													\s -> {
-														if (s != "") Some(SentenceHitExtended(matcherPair.second, s, 0., makeSet(), matcherPair.first))
-														else None()
-													}
-												)
+											if (showAll) showAllFn(matcherPair)
 											else
 												map(
 													ac.sentenceMatcher.fn(matcherPair.second, c2, intMax, true, false, getValue(position)),
 													\h -> SentenceHitExtended(h.matcher, h.sentence, h.score, h.origWords, matcherPair.first)
 												)
-										}
-									) |> fulfill
+											}
+									);
+
+									fulfill(
+										if (length(allCompl) == 1 && showAllOnSingleMatch && toLowerCase(firstElement(allCompl[0].matcher.sentences, "")) == toLowerCase(c2))
+											mapConcat(chunk, showAllFn)
+										else allCompl
+									)
 								},
 								\allCompl -> onAllCompl(allCompl, true),
 								\localError -> {
@@ -1228,6 +1255,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		selection,
 		textInputCursorShape,
 		textStyle,
+		autofillBackgroundFill,
 		tTextMetrics,
 		smallEdit,
 		label,
@@ -1245,6 +1273,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		width,
 		textWidth,
 		maxHeight,
+		fullHeight,
 		align,
 		iconSize,
 		iconBorders,
@@ -1259,6 +1288,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		backgroundFill,
 		labelStyleB,
 		floatingLabel,
+		cursorState,
 		popup,
 		autocomplete,
 		error,
@@ -1279,7 +1309,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		condensed,
 		skin,
 		scrollStyle,
-		allowEmojis
+		allowEmojis,
+		openDatePickerFn
 	)
 }
 
@@ -1458,7 +1489,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 		[
 			TScrollbars(
 				invisibleScrollBar,
-				if (multiline && linesCount != 0 && linesCount != -1)
+				if ((multiline && linesCount != 0 && linesCount != -1) || inputState.fullHeight)
 					getMaterialScrollBar().y
 				else
 					invisibleScrollBar
@@ -2435,7 +2466,7 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 
 		MScroll(
 			f,
-			TFillXHT(boxHeight),
+			if (inputState.fullHeight) TFillXY() else TFillXHT(boxHeight),
 			editorState.scrollStyle
 		)
 		|> (\f2 -> MScroll2T(manager, inputState.parent, f2, m2t))
@@ -2444,12 +2475,18 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 }
 
 makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [MTextInputState], inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	isEmailType = inputState.inputType == EmailType();
 	interlineSpacing =
 		if (inputState.multiline) {
 			\ts -> MTextStyle2InterlineSpacing(parent, ts).d
 		} else {
 			\__ -> 0.0
 		};
+
+	paragraphInterlineStyles = \ts -> {
+		is = interlineSpacing(ts);
+		[InterlineSpacing(is), ParagraphMargin(0., is)];
+	}
 
 	inputFlexibleSize =
 		if (mobile && ios())
@@ -2474,14 +2511,11 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 				MDynamicParagraph2T(
 					inputState.parent,
 					const(generate(0, lines, \i -> "M\n") |> concatStrings),
-					concat(
+					concatA([
 						ts,
-						[
-							MWidth(400.),
-							InterlineSpacing(interlineSpacing(ts)),
-							ParagraphMargin(0., 0.)
-						]
-					)
+						paragraphInterlineStyles(ts),
+						[MWidth(400.)]
+					])
 				)
 			)
 		);
@@ -2492,7 +2526,9 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 				TCols2(TWidth(TGhost("MTextInputText")), TFixed(4., 0.))
 			else
 				TFillX(),
-			if (inputState.multiline) {
+			if (inputState.fullHeight) {
+				TFillY()
+			} else if (inputState.multiline) {
 				if (inputState.linesCount == 0 || inputState.linesCount == -1) {
 					inputFlexibleSize();
 				} else if (inputState.linesCount > 0) {
@@ -2510,7 +2546,9 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 
 	inpWH = makeWH();
 
-	showInput = fOr(inputState.mfocus.focused, fand(const(inputState.multiline), inputState.mfocus.focusEnabled));
+	showInput =
+		if (isSome(inputState.autoCompleteType)) const(true)
+		else fOr(inputState.mfocus.focused, fand(const(inputState.multiline), inputState.mfocus.focusEnabled));
 
 	inputAriaLabel =
 		if (strlen(inputState.label) > 0) const(inputState.label)
@@ -2541,9 +2579,9 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 								FFocus(inputState.focus),
 								FPosition(inputState.position),
 								FSelection(inputState.selection),
-								FCursorColor(const(MColor2int(inputState.color))),
-								FCursorOpacity(const(1.)),
-								FCursorWidth(const(2.)),
+								FCursorColor(const(MColor2int(inputState.cursorState.color))),
+								FCursorOpacity(const(inputState.cursorState.opacity)),
+								FCursorWidth(const(inputState.cursorState.width)),
 								FInputKeyFilter(\name, ke -> {
 									if (getValue(inputState.focus)) {
 										scrollIntoView(inputState.mfocus);
@@ -2574,8 +2612,15 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 									filterKey;
 								}),
 								FCharacterStyle(fselect(inputState.textStyle, FLift(\ts : [MTextStyle] -> MTextStyle2CharacterStyle(parent, ts)))),
-								SetRTL(parent.rtl)
+								SetRTL(parent.rtl),
+								FPreventFromXSS(extractStruct(state, MInputPreventFromXSS(enablePreventXSSDef)).enable)
 							],
+							eitherMap(
+								inputState.autofillBackgroundFill,
+								\afbf ->
+									[afbf],
+								[]
+							),
 							eitherMap(
 								inputState.autoCompleteType,
 								\ac ->
@@ -2619,6 +2664,11 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 									);
 							} else {
 								[]
+							},
+							if (isSameStructType(inputState.inputType, DateType(None(), None()))) {
+								[FOpenDatePicker(inputState.openDatePickerFn)]
+							} else {
+								[]
 							}
 						])
 					),
@@ -2657,7 +2707,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 			})
 		);
 
-	TVisibleLazy(inputState.mfocus.focusEnabled, textInput)
+	(if (isEmailType) textInput() else TVisibleLazy(inputState.mfocus.focusEnabled, textInput))
 	|> (\f ->
 		TGroup2WithoutMetrics(
 			TVisible(
@@ -2705,21 +2755,18 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 							strSplit(c, "\n")
 							|> (\spl -> foldi(spl, "", \i, acc, ch -> acc + ch + "\t\n"))
 						else
-							c
+							strReplace(c, "\n", "")
 					);
 
 				if (inputState.multiline)
 					MDynamicParagraph2T(
 						inputState.parent,
 						const(c),
-						concat(
+						concatA([
 							ts,
-							[
-								MWidth(-1.),
-								InterlineSpacing(interlineSpacing(ts)),
-								ParagraphMargin(0., 0.)
-							]
-						)
+							paragraphInterlineStyles(ts),
+							[MWidth(-1.)]
+						])
 					)
 				else
 					MText2T(inputState.parent, c, ts)
@@ -2762,6 +2809,12 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 				if (condensed) 12. else 16.
 			)
 		);
+	skin = calculateMTextInputSkin(style);
+	defLeftIconPadding = switch (skin) {
+		MTextInputPlain(): 72.;
+		MOutlined(): 36.;
+		MFilled(): 36.;
+	}
 
 	lineHeight = completionLineHeight(tTextMetrics, inputBorders);
 
@@ -2786,7 +2839,7 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 						fsum(concat3(
 							[const(inputBorders.start)],
 							if (leftButton && isTextInputInPopup) [custLeftButton.inputIndent] else [],
-							if (leftIcon) [const(72.)] else []
+							if (leftIcon) [const(defLeftIconPadding)] else []
 						)),
 						zero,
 						const(inputBorders.end),
@@ -2851,4 +2904,23 @@ makeAutocompleteMatcher(minChars : int) ->
 		if (strlen(input) < minChars) []
 		else simpleSentenceMatcher(matcher, input, maxHits, prefix, exhaustive, position);
 	}
+}
+
+calculateMTextInputSkin(style : [MAutoCompleteStyle]) -> MTextInputSkin {
+	// For testing purposes
+	urlSkin = getUrlParameter("inputSkin");
+	smallEdit = contains(style, MEditDialog());
+
+	defaultSkin =
+		if (urlSkin == "filled" && !smallEdit) MFilled()
+		else if (urlSkin == "outlined" && !smallEdit) MOutlined()
+		else MTextInputPlain();
+	
+	fold(style, defaultSkin, \acc, st ->
+		switch (st) {
+			MFilled(): st;
+			MOutlined(): st;
+			default: acc;
+		}
+	);
 }

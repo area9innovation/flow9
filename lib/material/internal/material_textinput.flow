@@ -242,7 +242,8 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 			}
 			MOutlined(): {
 				unfocusedColor = contrastingColor(inputState.parent);
-				unfocusedOpacity = if (getLightBackground(inputState.parent)) 0.38 else 0.5;
+				outlinedOpacityCoeff = extractStruct(style, MOutlineOpacity(1.)).opacity;
+				unfocusedOpacity = (if (getLightBackground(inputState.parent)) 0.38 else 0.5) * outlinedOpacityCoeff;
 
 				disabledStroke = 1.0;
 				unfocusedStroke = 1.0;
@@ -256,9 +257,9 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 								if (!e) {
 									MGraphicsState(disabledStroke, unfocusedColor, unfocusedOpacity, false);
 								} else if (isSome(t)) {
-									MGraphicsState(if (fc) focusedStroke else unfocusedStroke, MThemeColor2int(inputState.parent, c), 1.0, false);
+									MGraphicsState(if (fc) focusedStroke else unfocusedStroke, MThemeColor2int(inputState.parent, c), outlinedOpacityCoeff, false);
 								} else if (fc) {
-									MGraphicsState(focusedStroke, MColor2int(inputState.color), 1.0, true);
+									MGraphicsState(focusedStroke, MColor2int(inputState.color), outlinedOpacityCoeff, true);
 								}  else {
 									MGraphicsState(unfocusedStroke, unfocusedColor, unfocusedOpacity, false);
 								}
@@ -268,7 +269,7 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 								if (!e) {
 									MGraphicsState(disabledStroke, unfocusedColor, unfocusedOpacity, false);
 								} else if (fc) {
-									MGraphicsState(focusedStroke, MColor2int(inputState.color), 1.0, true);
+									MGraphicsState(focusedStroke, MColor2int(inputState.color), outlinedOpacityCoeff, true);
 								} else {
 									MGraphicsState(unfocusedStroke, unfocusedColor, unfocusedOpacity, false);
 								}
@@ -281,16 +282,28 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 					inputState.parent,
 					eitherMap(inputState.floatingLabel, \fls -> fls.labelWidth, const(0.0)),
 					eitherMap(inputState.floatingLabel, \fls -> fls.progress, const(0.0)),
-					graphicsState,
+					fselect2Lift(
+						graphicsState,
+						eitherMap(inputState.popup, \ps -> fnot(ps.openMenu.opened), const(true)),
+						\gs, en -> if (en) gs else MGraphicsState(gs with opacity = 0.)
+					),
 					eitherMap(inputState.floatingLabel, \fls -> fls.outlinedColor, make(MWhite()))
 				)
 				|> addMTextInputBackground(const(false), false)
 			}
 			MTextInputPlain(): {
 				leftIconUnderlineEnabled = extractStruct(style, MTextInputLeftIconUnderlineEnabled(false)).enabled;
-				wrapFooter = \f2 -> TBaselineLines([f2, MTextInputUnderline(inputState), either(textError, TEmpty())]);
+				wrapFooter = \f2 ->
+					TBaselineCols2(
+						TBaselineLines([f2, MTextInputUnderline(inputState), either(textError, TEmpty())]),
+						eitherMap(inputState.limitError, \le ->
+							if (le.inline) TSelect(le.limit, \let -> MText2T(inputState.parent, let.first, let.second))
+							else TEmpty(),
+							TEmpty()
+						)
+					);
 
-					f
+				f
 					|> (\f2 ->
 						if (inputState.dynamicSize)
 							eitherMap(
@@ -351,7 +364,25 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 			TLines2Dir(t, MTextInputCompletionBox(inputState, inputState.parent, ac, None(), const(false), m2t), inputState.parent.rtl)
 		else t
 	}, t))
-	|> (\t -> if (inputState.width > 0.) TAvailableWidth(t, const(inputState.width)) else t)
+	|> (\t -> {
+		defValue = if (inputState.width > 0.) Some(inputState.width) else None();
+
+		eitherMap(
+			maybeBind(inputState.popup, \ps ->
+				maybeMap(
+					ps.customMetrics.width,
+					\wd -> fif(ps.openMenu.opened, fselectLift(wd, \v -> Some(v)), const(defValue))
+				)
+			),
+			\availT -> {
+				availableW = make(0.);
+
+				TAvailableWidth(t, fsubselect(availT, FLift(\av -> eitherMap(av, \v -> const(v), availableW))))
+				|> (\t2 -> TAttachAvailableWidth(t2, availableW))
+			},
+			eitherMap(defValue, \av -> TAvailableWidth(t, const(av)), t)
+		);
+	})
 	|> (\f -> TConstruct(inputState.subs, f))
 }
 
@@ -799,6 +830,14 @@ makeRightIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic
 			default: {
 				concatA([
 					eitherMap(
+						inputState.endCustomButton,
+						\rightCustomButton ->
+							[
+								m2t(rightCustomButton, p0)
+							],
+						[]
+					),
+					eitherMap(
 						inputState.endButton,
 						\rightButton ->
 							[
@@ -1008,9 +1047,17 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, tex
 		);
 
 	textInputClip = ref TEmpty();
+	textInputWidth = make(0.);
+	textInputWidthCached = make(0.);
+	stalledTextInputWidth = fstall(textInputWidth, 0);
 
 	content =
-		TMoveClip(textInput, \ti -> textInputClip := ti)
+		TMoveClip(TAttachWidth(textInput, textInputWidth), None(), \ti -> textInputClip := ti)
+		|> (
+			if (isSome(popupState.customMetrics.width))
+				TFixWidth(TSizedWidth(fif(popupState.openMenu.opened, textInputWidthCached, textInputWidth), 0.))
+			else idfn
+		)
 		|> (\t -> TAttachHeight(t, inputHgt))
 		|> addMTextInputBackground(onTop, false)
 		|> addErrorText;
@@ -1036,6 +1083,9 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, tex
 
 	TConstruct(
 		[
+			makeSubscribe(stalledTextInputWidth, \tiwc -> {
+				// Just to keep subscription alive
+			}),
 			makeSubscribe2(onTop, \__ ->
 				if (fgetValue(popupState.openMenu.opened)) {
 					nextDistinct(popupState.openMenu.opened, false);
@@ -1044,6 +1094,7 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, tex
 			}),
 			make2Subscribe(popupState.openMenu.opened, showPopup, \op, show ->
 				if (op && show) {
+					nextDistinct(textInputWidthCached, fgetValue(stalledTextInputWidth));
 					ontop = fgetValue(onTop);
 					RenderMPopup(
 						inputState.manager,
@@ -1177,7 +1228,8 @@ MTextInputError(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropi
 		eitherFn(
 			inputState.limitError,
 			\le ->
-				TSelect(le.limit, \let ->
+				if (le.inline) TEmpty()
+				else TSelect(le.limit, \let ->
 					if (let.first == "")
 						TEmpty()
 					else
@@ -1291,6 +1343,11 @@ MTextInputLabel(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropi
 					Some(MDynamicColor(themeColor)),
 					fls.labelWidth,
 					m2t
+				)
+				|> (\t ->
+					if (inputState.skin == MOutlined())
+						TVisible(eitherMap(inputState.popup, \ps -> fnot(ps.openMenu.opened), const(true)), t)
+					else t
 				)
 			} else {
 				percent = fls.progress;

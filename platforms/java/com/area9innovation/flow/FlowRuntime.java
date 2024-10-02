@@ -1,6 +1,6 @@
 package com.area9innovation.flow;
 
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.*;
 import java.util.Locale;
 
 import java.text.DecimalFormat;
@@ -11,6 +11,9 @@ public abstract class FlowRuntime {
 	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
 	public static String[] program_args;
 	private static ConcurrentHashMap<Class, NativeHost> hosts = new ConcurrentHashMap<Class, NativeHost>();
+	public static Integer quitCode = null;
+	public static ConcurrentHashMap<Long, Timers> timersByThreadId = new ConcurrentHashMap<Long, Timers>();
+	private static ConcurrentHashMap<Long, Callbacks> callbacksByThreadId = new ConcurrentHashMap<Long, Callbacks>();
 
 	private static final ThreadLocal<DecimalFormat> decimalFormat = new ThreadLocal<DecimalFormat>(){
         @Override
@@ -22,6 +25,130 @@ public abstract class FlowRuntime {
 			return df;
         }
     };
+
+	protected abstract void main();
+
+	public synchronized void start() {
+		main();
+		while (quitCode == null) {
+			executeActions();
+			if (!sleep()) break;
+		}
+	}
+
+	public static boolean sleep() {
+		try {
+			Thread.sleep(1);
+			return true;
+		} catch (InterruptedException e) {
+			quitCode = 1;
+			System.exit(1);
+			return false;
+		}
+	}
+
+	public static void eventLoop() {
+		while (quitCode == null && executeActions()) {
+			if (!sleep()) break;
+		}
+	}
+
+	// If runnable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),
+	// then it does not need event loop (call eventLoop()), otherwise it must call eventLoop() before finishing the thread.
+	public static Thread runParallel(Runnable runnable) {
+		Thread thread = new Thread(runnable);
+		thread.start();
+		executeActions();
+		return thread;
+	}
+
+	// If callable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),
+	// then it does not need event loop (call eventLoop()), otherwise it must call eventLoop() before finishing the thread.
+	public static <T> T runParallelAndWait(Callable<T> callable) {
+		FutureTask<T> future = new FutureTask<T>(callable);
+		Thread thread = new Thread(future);
+		thread.start();
+		while (thread.isAlive()) {
+			executeActions();
+			if (!sleep()) break;
+		}
+		try {
+			return future.get();
+		} catch (Exception e) {
+			System.out.println("runParallelAndWait exception: " + e.getMessage());
+			e.printStackTrace(System.out);
+			return null;
+		}
+	}
+
+	// This executor prevents from creating new threads and from multiple executions.
+	// For example this is important for executing db queries -- if the previous execution is not finished, a new execution will fail.
+	public static class SingleExecutor extends ThreadPoolExecutor {
+		private static String description;
+
+		public SingleExecutor(String description) {
+			super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
+			this.description = description;
+		}
+
+		public <T> T runAndWait(Callable<T> callable) throws Exception {
+			Future<T> future = null;
+			try {
+				future = submit(callable);
+			} catch (RejectedExecutionException e) {
+				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong() + "; rejected: " + e.getMessage());
+				throw new Exception("Multiple access is not allowed! Resource: " + description);
+			}
+			while (!future.isDone()) {
+				executeActions();
+				if (!sleep()) break;
+			}
+			try {
+				return future.get();
+			} catch (Exception e) {
+				System.out.println("Exception in '" + description + "' executor: " + e.getMessage());
+				e.printStackTrace(System.out);
+				return null;
+			}
+		}
+	}
+
+	public static Timers getTimers() {
+		return timersByThreadId.get(getThreadIdLong());
+	}
+
+	public static Callbacks getCallbacks() {
+		Long threadId = getThreadIdLong();
+		Callbacks callbacks = callbacksByThreadId.get(threadId);
+		if (callbacks == null) {
+			callbacks = new Callbacks();
+			callbacksByThreadId.put(threadId, callbacks);
+		}
+		return callbacks;
+	}
+
+	public static final Long getThreadIdLong() {
+		return Thread.currentThread().getId();
+	}
+
+	public static boolean executeTimers() {
+		Timers timers = getTimers();
+		if (timers != null) {
+			timers.execute();
+		}
+		return timers != null && !timers.isEmpty();
+	}
+
+	public static boolean executeActions() {
+		boolean hasTimers = executeTimers();
+		Callbacks callbacks = callbacksByThreadId.get(getThreadIdLong());
+		if (callbacks != null) {
+			if (callbacks.execute()) {
+				hasTimers = executeTimers();
+			}
+		}
+		return hasTimers || (callbacks != null && !callbacks.isEmpty());
+	}
 
 	@SuppressWarnings("unchecked")
 	protected static final <T extends NativeHost> T getNativeHost(Class<T> cls) {
@@ -42,7 +169,8 @@ public abstract class FlowRuntime {
 			}
 		}
 	}
-	@SuppressWarnings("unchecked")
+
+	//@SuppressWarnings("unchecked")
 	protected static final <T extends NativeHost> void registerNativeHost(Class<T> cls) {
 		try {
 			T host = cls.getDeclaredConstructor().newInstance();
@@ -55,6 +183,7 @@ public abstract class FlowRuntime {
 			throw new RuntimeException("Could not instantiate native method host " + cls.getName(), e);
 		}
 	}
+
 	public static boolean compareEqual(Object a, Object b) {
 		if (a == b) return true;
 		// void values (null in java backend) may also be compared in the interpreter, so we check this case

@@ -1,0 +1,187 @@
+import net/http;
+import sys/system;
+
+HELP = "Tool to fix paths in a source map file.
+Options:
+  source_map=FILENAME|URL          File to fix
+  flow9_path=PATH                  Path to flow9 folder
+  mode=path_to_var|var_to_path     Mode: replace paths with variables or vice versa
+";
+
+normalizePath(path : string) -> string {
+	rtrim2(strReplace(path, "\\", "/"), "/");
+}
+
+getFolders(path : string) -> [string] {
+	path2 = normalizePath(path) + "/";
+	filter(readDirectory(path), \name -> {
+		name != "." && name != ".." && isDirectory(path2 + name);
+	});
+}
+
+filePathToURL(path : string) -> string {
+	"file:///" + ltrim2(normalizePath(path), "/");
+}
+
+updateSourceMapFile(
+	content : string,
+	destinationFile : string,
+	path2varMode : bool,
+	haxeStdPath : string,
+	haxeLibPath : string,
+	flow9Path : string,
+	onOK : () -> void,
+	onError : (string) -> void
+) -> void {
+	json = parseJson(content);
+	sources = getJsonArrayField(json, "sources");
+	rootPath = takeBeforeLast(flow9Path, "/", "");
+	rootUrl = filePathToURL(rootPath);
+	haxeLibUrl = filePathToURL(haxeLibPath);
+	haxeStdUrl = filePathToURL(haxeStdPath);
+	if (content == "") {
+		onError("File is empty");
+	} else if (sources == []) {
+		onError("File is broken");
+	} else if (rootPath == "" || !isDirectory(rootPath)) {
+		onError("Wrong path: " + flow9Path);
+	} else {
+		println("Haxe std path: " + haxeStdPath);
+		println("Haxe lib path: " + haxeLibPath);
+		println("Root path: " + rootPath);
+
+		folders = getFolders(rootPath);
+		pathVar = concat(
+			map(folders, \name -> {
+				path = rootUrl + "/" + name;
+				var = "$" + toUpperCase(name) + "_PATH";
+				Pair(path, var);
+			}),
+			[	Pair(haxeStdUrl, "$HAXE_STD_PATH"),
+				Pair(haxeLibUrl, "$HAXE_LIB_PATH"),
+			]
+		);
+		replaces0 = if (path2varMode) {
+			pathVar;
+		} else {
+			map(pathVar, unpairC(\path, var -> Pair(var, path)));
+		}
+		replaces = map(replaces0, unpairC(\first, second -> Pair(toLowerCase(first), second)));
+		if (isUrlParameterTrue("verbose")) {
+			println("Replaces:");
+			iter(replaces, println);
+			println("");
+		}
+
+		updateFn = \path -> {
+			pathL = toLowerCase(path);
+			eitherFn(
+				find(replaces, \repl -> startsWith(pathL, repl.first)),
+				unpairC(\from, to -> {
+					to + substring(path, strlen(from), strlen(path));
+				}),
+				\ -> {
+					println("Warning: unexpected path: " + path);
+					path;
+				}
+			);
+		}
+		sources2 = map(sources, \source -> {
+			path = getJsonStringValue(source, "");
+			path2 = updateFn(path);
+			JsonString(path2);
+		});
+		json2 = setJsonField(json, "sources", JsonArray(sources2));
+		if (setFileContent(destinationFile, json2stringFormatted(json2))) {
+			println("Saved file: " + destinationFile);
+			onOK();
+		} else {
+			onError("Cannot write file: " + destinationFile);
+		}
+	}
+}
+
+executeCmd(cmd : string, args : [string], onOK : (string) -> void, onError : (string) -> void) -> void {
+	startProcess(cmd, args, "", "",
+		\__, out, err -> {
+			if (err != "") {
+				onError("Error executing " + cmd + ": " + err);
+			} else {
+				onOK(trim2(out, " \t\n\r"));
+			}
+		}
+	);
+}
+
+main() {
+	modes = ["path_to_var", "var_to_path"];
+
+	file = normalizePath(getUrlParameter("source_map"));
+	flow9Path = normalizePath(getUrlParameter("flow9_path"));
+	mode = getUrlParameter("mode");
+
+	onError = \msg -> {
+		println("ERROR: " + msg);
+		quit(1);
+	}
+	onOK = \ -> quit(0);
+
+	if (isUrlParameterTrue("help") || file == "" || flow9Path == "" || !contains(modes, mode)) {
+		println(HELP);
+		onOK();
+	} else {
+		executeCmd("haxelib", ["config"],
+			\out1 -> {
+				haxeLibPath = normalizePath(strSplit(out1, "\n")[0]);
+				if (haxeLibPath == "") {
+					onError("Cannot get path to haxe lib folder");
+				} else {
+					executeCmd("haxe", ["--cwd", flow9Path + "/tools/source_map", "--run", "ResolveStd.hx"],
+						\out2 -> {
+							haxeStdPath = normalizePath(strSplit(out2, "\n")[0]);
+							if (haxeStdPath == "") {
+								onError("Cannot get path to haxe std folder");
+							} else {
+								isUrl = startsWith(file, "http://") || startsWith(file, "https://");
+								destinationFile = if (isUrl) {
+									takeAfterLast(file, "/", "source.map");
+								} else {
+									file;
+								}
+
+								updateAndSave = \content -> {
+									updateSourceMapFile(
+										content,
+										destinationFile,
+										mode == modes[0],
+										haxeStdPath,
+										haxeLibPath,
+										flow9Path,
+										onOK,
+										onError
+									);
+								}
+
+								if (isUrl) {
+									httpRequest(
+										file,
+										false,
+										[],
+										[],
+										updateAndSave,
+										onError,
+										nop1
+									);
+								} else {
+									updateAndSave(getFileContent(file));
+								}
+							}
+						},
+						onError
+					);
+				}
+			},
+			onError
+		);
+	}
+}

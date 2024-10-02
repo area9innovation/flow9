@@ -3,6 +3,7 @@
 
 #include "core/ByteCodeRunner.h"
 #include "font/TextFont.h"
+#include "utils/AbstractHttpSupport.h"
 
 #include <set>
 #ifdef linux
@@ -330,6 +331,7 @@ protected:
     void paintGLContext(unsigned ad_hoc_fb = 0);
 
     void loadFont(std::string filename, std::vector<unicode_string> aliases, bool set_default = false);
+    void loadNativeFont(std::string filename, std::string familyname, std::vector<unicode_string> aliases, bool set_default = false);
 
     bool NoHoverMouse, DrawMouseRect;
     float MouseRadius; // Degree of confidence radius
@@ -400,6 +402,7 @@ protected:
     virtual void doOpenUrl(unicode_string, unicode_string) {}
 
     virtual bool loadPicture(unicode_string url, bool cache) = 0;
+    virtual bool loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool cache) = 0;
 
     virtual void abortPictureLoading(unicode_string /*url*/) {}
 
@@ -452,6 +455,8 @@ private:
 
     DECLARE_NATIVE_METHOD(getPixelsPerCm)
     DECLARE_NATIVE_METHOD(setHitboxRadius)
+    
+    DECLARE_NATIVE_METHOD(loadFSFont)
 
     DECLARE_NATIVE_METHOD(makeClip)
     DECLARE_NATIVE_METHOD(makeTextField)

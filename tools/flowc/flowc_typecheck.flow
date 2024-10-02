@@ -4,6 +4,7 @@ import tools/flowc/preload_modules;
 import tools/flowc/shadow_globals;
 import tools/flowc/typechecker/typechecker;
 import tools/flowc/flowc_typeverify;
+import tools/flowc/manipulation/import_graph;
 
 export {
 	// Parse and typecheck a program. Uses recursive doParseAndTypecheckProgram() to do the main job
@@ -20,23 +21,23 @@ export {
 parseAndTypecheckProgram(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> Pair<FiProgram, int> {
 	errors = ref 0;
 	acc = prepareInitialFlowcAcc(config);
-	errHandler = \err -> {
-			errors := ^errors + 1;
-			if (!isConfigParameterTrue(config.config, "no-errors")) {
-				if (^errors < 200) {
-					printFcError(acc.config, globEnv, err)
-				} else if (^errors == 200) {
-					fcPrintln("Too many errors. Ignoring the rest", config.threadId);
-				}
+	errHandler = synchronizedUnaryFn(errors, \err -> {
+		errors := ^errors + 1;
+		if (!isConfigParameterTrue(config.config, "no-errors")) {
+			if (^errors < 200) {
+				printFcError(acc.config, globEnv, err)
+			} else if (^errors == 200) {
+				fcPrintln("Too many errors. Ignoring the rest", config.threadId);
 			}
-		};
+		}
+	});
 
 	tenv1 = FcTypeEnvProgram(
 		acc,
 		makeTree(),
 		errHandler,
 		errors,
-		ref makeTree(),
+		makeConcurHashMap(fastHashString),
 		emptyGSubtypeGraph()
 	);
 
@@ -44,6 +45,8 @@ parseAndTypecheckProgram(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fil
 	t0 = timestamp();
 	modules = preloadModules(config, globEnv, file, tenv1.printError);
 	incrementTimePhase(getTimePhases(tenv1.acc.config.threadId).parse, t0);
+
+	// checkForbids(modules, file, tenv1.printError, config);
 
 	t1 = timestamp();
 	// OK, let us reclaim what we can before we continue
@@ -272,7 +275,7 @@ parseAndDesugarProgram(conf : CompilerConfig, globEnv : FcTypeEnvGlobal, file : 
 		makeTree(),
 		if (skip_errors) nop1 else errHandler,
 		if (skip_errors) ref 0 else errors,
-		ref makeTree(),
+		makeConcurHashMap(fastHashString),
 		emptyGSubtypeGraph()
 	);
 

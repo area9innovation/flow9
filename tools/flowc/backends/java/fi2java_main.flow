@@ -40,7 +40,7 @@ generateJavaMainClass(gctx : JavaGlobalContext) -> void {
 
 generateJavaMainInitHosts(gctx : JavaGlobalContext, pushstr : (string) -> void) -> void {
 	host_inits = list2array(foldSet(gctx.uses_host, makeList(), \acc, host -> {
-		if (containsKeyTree(gctx.runtime.natives, host)) {
+		if (containsKeyTree(gctx.runtime.nativeHosts, host)) {
 			Cons("\t\tFlowRuntime.registerNativeHost(" + host + ".class);\n", acc);
 		} else {
 			acc;
@@ -96,15 +96,18 @@ generateJavaMainFunction(gctx : JavaGlobalContext, pushstr : (string) -> void) -
 		// main function
 		switch (lookupTree(gctx.globalFuncs, "main")) {
 			Some(main): {
-				// program entry point
-				pushstr("\tpublic static void main(String[] args) {\n");
-				// init program args
-				pushstr("\t\tFlowRuntime.program_args = args;\n");
-				// init all internal stuff
-				pushstr("\t\t" + gctx.config.mainClassName + ".init();\n");
-				// run a compiled main function
-				pushstr("\t\t" + "Module_" + main.csmodule.id + "." + main.name + "();\n");
-				pushstr("\t}\n");
+				pushstr(
+"	protected void main() {
+		init();
+		Module_" + main.csmodule.id + "." + main.name + "();
+	}
+	public static void main(String[] args) {
+		FlowRuntime.program_args = args;
+		" + main.csmodule.id + " runner = new " + main.csmodule.id + "();
+		runner.start();
+	}
+"
+				);
 			}
 			None(): {
 				fail0("No main function");
@@ -143,25 +146,71 @@ javaInterfaceWrapper(name : string, gctx : JavaGlobalContext, finfo : JavaGlobal
 }
 
 generateJavaSingletonStructs(gctx : JavaGlobalContext) -> void {
-	code = gctx.header_generator(timestamp());
-	pushstr = \s -> rlistPush(code, s);
+	maxCnt = 1000; // max number of fields in on Singleton structure
+	code0 = ^(gctx.header_generator(timestamp()));
 	config = gctx.program.config;
 
-	pushstr("@SuppressWarnings(\"unchecked\")\npublic final class SingletonStructs {\n");
-
-	pushstr("\n\t// Singleton structs\n");
-	pushstr("\tstatic final Object[] arr_empty = new Object[0];\n");
-	num_singleton_structs = foldTree(gctx.cstructs, 0, \sname, struct : JavaStruct, acc ->
-		if (length(struct.fields) != 0) acc else {
-			pushstr("\tstatic final SingletonStruct str_" + sname + " = SingletonStruct.make(" + i2s(struct.id) + ",\"" + sname + "\");\n");
-			acc + 1
+	startCode = \nStr, nPrevious -> {
+		final = if (nStr == "") {
+			" final";
+		} else {
+			"";
 		}
-	);
+		extends = if (nPrevious > 0) {
+			" extends SingletonStructs" + i2s(nPrevious);
+		} else {
+			"";
+		}
+		Cons(
+"@SuppressWarnings(\"unchecked\")
+public" + final + " class SingletonStructs" + nStr + extends + " {
+	// Singleton structs
+",
+		code0);
+	}
+
+	startCodeMain = \partsCnt-> {
+		Cons(
+			"\tstatic final Object[] arr_empty = new Object[0];\n",
+			startCode("", partsCnt)
+		);
+	}
+
+	addStructs = \code, singletons -> {
+		fold(singletons, code, \acc, struct -> {
+			sname = struct.name;
+			s = "\tstatic final SingletonStruct str_" + sname + " = SingletonStruct.make(" + i2s(struct.id) + ",\"" + sname + "\");\n";
+			Cons(s, acc);
+		});
+	}
+
+	writeCode = \nStr, code -> {
+		fname = pathCombine(gctx.package_path, "SingletonStructs" + nStr + ".java");
+		writeJavaSource(gctx, fname, list2string(Cons("}\n", code)));
+	}
+
+	singletons = filterAndMapTreeToArray(gctx.cstructs, \sname, struct -> struct.fields == [], \sname, struct -> struct);
+	num_singleton_structs = length(singletons);
 	if (isConfigParameterTrue(config.config, "java-main-size-stats")) {
 		fcPrintln("Singleton structs: " + i2s(num_singleton_structs), config.threadId);
 	}
-	fname = pathCombine(gctx.package_path, "SingletonStructs.java");
-	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
+
+	if (num_singleton_structs <= maxCnt) {
+		code = addStructs(startCodeMain(0), singletons);
+		writeCode("", code);
+	} else {
+		partsCnt = 1 + (num_singleton_structs - 1) / maxCnt;
+		for(1, \n -> n <= partsCnt, \n -> {
+			nStr = i2s(n);
+			singletonsPart = subrange(singletons, (n - 1) * maxCnt, maxCnt);
+			code = addStructs(startCode(nStr, n - 1), singletonsPart);
+			writeCode(nStr, code);
+			n + 1;
+		});
+
+		code = startCodeMain(partsCnt);
+		writeCode("", code);
+	}
 }
 
 generateJavaStructs(gctx : JavaGlobalContext) -> void {

@@ -130,7 +130,7 @@ class DisplayObjectHelper {
 			invalidateParentTransform(clip);
 		}
 
-		invalidateWorldTransform(clip, true, DebugUpdate ? from + ' ->\ninvalidateTransform' : null, force);
+		invalidateWorldTransform(clip, true, DebugUpdate ? from + ' ->\ninvalidateTransform' : null, null, force);
 	}
 
 	public static function invalidateWorldTransform(clip : DisplayObject, ?localTransformChanged : Bool, ?from : String, ?parentClip : DisplayObject, ?force : Bool = false) : Void {
@@ -209,8 +209,8 @@ class DisplayObjectHelper {
 
 	public static function invalidateVisible(clip : DisplayObject, ?updateAccess : Bool = true, ?parentClip : DisplayObject) : Void {
 		var clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
-		var visible = untyped clip.parent != null && (getClipRenderable(clip.parent) || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)
-			&& (clip.isMask || (clipVisible && (clip.renderable || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)));
+		var visible = (untyped clip.parent != null && (getClipRenderable(clip.parent) || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)
+			&& (clip.isMask || (clipVisible && (clip.renderable || clip.keepNativeWidgetChildren || clip.keepNativeWidgetFSChildren)))) == true; // check to true to prevent undefined
 
 		if (untyped !parentClip) {
 			parentClip = untyped clip.parentClip != null ? clip.parentClip : findParentClip(clip);
@@ -1287,15 +1287,18 @@ class DisplayObjectHelper {
 		}
 
 		nativeWidget.style.left = tx != 0 ? '${tx}px' : (Platform.isIE ? "0" : null);
-		if (!nativeWidget.classList.contains("print-page-container")) {
-			nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
-		}
+		nativeWidget.style.top = ty != 0 ? '${ty}px' : (Platform.isIE ? "0" : null);
 
 		if (isCanvasStage(clip)) {
 			nativeWidget.style.transform = 'matrix(${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0, ${1.0 / RenderSupport.PixiRenderer.resolution}, 0, 0)';
 		} else {
 			nativeWidget.style.transform = (transform.a != 1 || transform.b != 0 || transform.c != 0 || transform.d != 1) ?
 				'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)' : (Platform.isIE ? "none" : null);
+		}
+
+		// Force GPU rasterization in case clip has filter
+		if (untyped clip.filters != null && untyped clip.filters.length > 0) {
+			nativeWidget.style.transform += ' translateZ(0)';
 		}
 
 		if (transform.a == 0 || transform.d == 0) {
@@ -1328,7 +1331,7 @@ class DisplayObjectHelper {
 
 				nativeWidget.style.color = newColor;
 			} else {
-				nativeWidget.style.opacity = untyped clip.isFocused || clip.multiline ? alpha : 0;
+				nativeWidget.style.opacity = untyped clip.isFocused || clip.multiline || clip.autocomplete != '' ? alpha : 0;
 			}
 		} else {
 			nativeWidget.style.opacity = alpha != 1 || Platform.isIE ? alpha : null;
@@ -1368,7 +1371,7 @@ class DisplayObjectHelper {
 					}
 				} else if (untyped HaxeRuntime.instanceof(filter, BlurFilter)) {
 					var nativeWidget : Element = untyped clip.nativeWidget;
-					nativeWidget.style.filter = 'blur(${filter.blur}px)';
+					nativeWidget.style.filter = 'blur(${filter.blurXFilter.strength}px)';
 				} else if (untyped HaxeRuntime.instanceof(filter, BlurBackdropFilter)) {
 					var nativeWidget : Element = untyped clip.nativeWidget;
 					nativeWidget.style.setProperty('backdrop-filter', 'blur(${filter.spread}px)');
@@ -1536,9 +1539,7 @@ class DisplayObjectHelper {
 
 				y = 0;
 			} else {
-				if (!nativeWidget.classList.contains("print-page-container")) {
-					nativeWidget.firstChild.style.top = null;
-				}
+				nativeWidget.firstChild.style.top = null;
 			}
 		}
 

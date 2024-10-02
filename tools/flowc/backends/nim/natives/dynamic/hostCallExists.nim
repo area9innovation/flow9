@@ -1,3 +1,4 @@
-proc $F_0(hostCallExists)*(name: string): bool =
-  echo "hostCallExists is not implemented yet"
-  return false
+import tables
+
+proc $F_0(hostCallExists)*(name: RtString): bool =
+  return name2func.hasKey(name)

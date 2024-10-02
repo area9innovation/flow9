@@ -111,8 +111,8 @@ class Native {
 		#if (js && !flow_nodejs)
 			try {
 				var module = untyped __js__("arg + encodeURI('\\nconst importJSModuleVersion =' + Math.random())");
-				//untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
-				untyped __js__("(new Function(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\"))()");
+				untyped __js__("eval(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\")");
+				//untyped __js__("(new Function(\"import(module).then((v) => { return v && v.default ? v.default : v; }).then((v) => { cb(v); }).catch((e) => { Errors.report(e); cb(null); })\"))()");
 			} catch( e : Dynamic) {
 				Errors.report(e);
 				cb(null);
@@ -359,6 +359,10 @@ class Native {
 
 	public static function getApplicationPath() : String {
 		return "";
+	}
+
+	public static function getApplicationArguments() : Array<String> {
+		return new Array();
 	}
 
 	public static inline function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
@@ -783,6 +787,43 @@ class Native {
 		return NativeTime.timestamp();
 	}
 
+	#if js
+	public static function getLocalTimezoneId() : String {
+		return new js.lib.intl.DateTimeFormat().resolvedOptions().timeZone;
+	}
+
+	public static function getTimezoneTimeString(utcStamp : Float, timezoneId : String, language : String) : String {
+		var date = new js.lib.Date(utcStamp);
+		var tzName : Dynamic = "short";
+
+		if (timezoneId == "") {
+			timezoneId = "UTC";
+		}
+
+		var tz : Dynamic = timezoneId;
+
+		return date.toLocaleString(language, { timeZone: tz, timeZoneName: tzName });
+	}
+
+	public static function getTimezoneOffset(utcStamp : Float, timezoneId : String) : Float {
+		if (timezoneId == "") {
+			return 0;
+		}
+		var tz : Dynamic = timezoneId;
+
+		var stamp;
+		try {
+			var timeString = new js.lib.Date(utcStamp).toLocaleString("en-us", { timeZone: tz });
+			stamp = new js.lib.Date(timeString).getTime();
+		} catch (e : Dynamic) {
+			return 0;
+		}
+
+		var localOffset = new js.lib.Date().getTimezoneOffset();
+		return Math.round(Math.round((stamp - utcStamp) / 600) / 100 - localOffset) * 60 * 1000;
+	}
+	#end
+
 	// native getCurrentDate : () -> [Date] = Native.getCurrentDate;
 	public static function getCurrentDate() : Dynamic {
 		var date = Date.now();
@@ -916,6 +957,18 @@ class Native {
 
 	public static inline function log(a : Float) : Float {
 		return Math.log(a);
+	}
+
+	public static function generate<T>(from : Int, to : Int, fn : Int -> T) : Array<T> {
+		var n = to - from;
+		if (n <= 0) {
+			return untyped Array(0);
+		}
+		var result = untyped Array(n);
+		for (i in 0...n) {
+			result[i] = fn(i + from);
+		}
+		return result;
 	}
 
 	public static function enumFromTo(from : Int, to : Int) : Array<Int> {

@@ -7,4 +7,4 @@ if ERRORLEVEL 1 (
 	goto :eof
 )
 
-java -Xss32m -Xms256m -cp src/java/;. -jar %~dp0..\tools\flowc_lsp\flowc_lsp.jar bin-dir=%~dp0 %*
+java -Xss32m -Xms256m -Xmx1G -cp src/java/;. -jar %~dp0..\tools\flowc_lsp\flowc_lsp.jar bin-dir=%~dp0 %*

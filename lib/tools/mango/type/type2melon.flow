@@ -1,0 +1,115 @@
+import tools/mango/type/types;
+import text/blueprint;
+
+export {
+	union2melon(structs : Tree<string, MTypeConstructor>, flowFormat : bool, t : MTypeUnion) -> string;
+	type2melon(t : MType) -> string;
+	structArgs2melon(s : MTypeConstructor) -> string;
+	prettyMType(t : MType) -> string;
+	mtype2name(m : MType) -> string;
+}
+
+union2melon(structs : Tree<string, MTypeConstructor>, flowFormat : bool, t : MTypeUnion) -> string {
+	t.name + " ::=" + (if (flowFormat) " " else "\n\t")
+	+ superglue(t.types, \tt -> {
+		n = mtype2name(tt);
+		if (flowFormat) n
+		else {
+			mc = lookupTree(structs, n);
+			mc ?? {
+				n + structArgs2melon(mc);
+			} : {
+				// Nested union is kept
+				if (n == "") n
+				else n + "()";
+			}
+		}
+	}, if (flowFormat) ", " else ",\n\t") + ";";
+}
+
+mtype2name(m : MType) -> string {
+	switch (m) {
+		MTypeName(n): n;
+		MTypeConstructor(n, __): n;
+		default: "";
+	}
+}
+
+
+structArgs2melon(s : MTypeConstructor) -> string {
+	// How many times are each field name used
+	keywords = fold(["bool", "int", "double", "string", "exp"], makeTree(), \acc, k -> setTree(acc, k, 1));
+	nameCounts = fold(s.args, keywords, \acc, st -> {
+		fname = fieldName(st);
+		count = lookupTreeDef(acc, fname, 0);
+		setTree(acc, fname, count + 1)
+	});
+	counts = ref makeTree();
+	"(" + superglue(s.args, \st -> {
+		fname = fieldName(st);
+		suffix = if (lookupTreeDef(nameCounts, fname, 0) > 1) {
+			count = 1 + lookupTreeDef(^counts, fname, 0);
+			counts := setTree(^counts, fname, count);
+			i2s(count);
+		} else "";
+		fname + suffix + " : " + type2melon(st);
+	}, ", ") + ")";
+}
+
+fieldName(t : MType) -> string {
+	switch (t) {
+		MTypeField(n, __): n;
+		MTypeResult(rule): rule;
+		MTypeNil(): "nil";
+		MTypeBool(): "bool";
+		MTypeInt(): "int";
+		MTypeDouble(): "double";
+		MTypeString(): "string";
+		MTypeConstructor(name, args): toLowerCase(name);
+		MTypeStar(type): fieldName(type) + "s";
+		MTypeUnion(name, types): toLowerCase(name);
+		MTypeName(name): toLowerCase(name);
+	}
+}
+
+type2melon(t : MType) -> string {
+	error = \ -> {
+		println("Could not resolve type " + prettyMType(t));
+		prettyMType(t);
+	}
+	switch (t) {
+		MTypeResult(rule): error();
+		MTypeNil(): error();
+		MTypeBool(): "bool"; 
+		MTypeInt(): "int";
+		MTypeDouble(): "double";
+		MTypeString(): "string";
+		MTypeConstructor(name, args): name;
+		MTypeStar(type): "[" + type2melon(type) + "]";
+		MTypeUnion(name, types): {
+			if (name == "") {
+				println("ERROR: Could not resolve implicit union " + toString(types));
+				"<error>"
+			} else name;
+		}
+		MTypeName(name): name;
+		MTypeField(name, type): type2melon(type);
+	}
+}
+
+prettyMType(t : MType) -> string {
+	switch (t) {
+		MTypeResult(rule): "`" + rule + "`";
+		MTypeNil(): "nil";
+		MTypeBool(): "bool";
+		MTypeInt(): "int";
+		MTypeDouble(): "double";
+		MTypeString(): "string";
+		MTypeConstructor(name, args): name + "(" + superglue(args, prettyMType, ",") + ")";
+		MTypeStar(type): "[" + prettyMType(type) + "]";
+		MTypeUnion(n, types): n + " ::= " + superglue(types, prettyMType, ",");
+		MTypeName(n): n;
+		MTypeField(n, type): n + ":" + prettyMType(type);
+	}
+}
+

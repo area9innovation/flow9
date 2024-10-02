@@ -4,15 +4,17 @@ export {
 	MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material;
 
 	MInputChipsStyle ::= MInputChipsMaxWidth, MSelectedInputChips, MInputChipsLeftCaption, MCustomAutoCompleteStyle, MCustomChipStyle, MInputChipsTextButton,
-		MInputChipsAlignRight, MInputChipsUniq, MInputChipsMultiline, MAnimationEnabled /*for multiline*/;
+		MInputChipsAlignRight, MInputChipsAddAnyValue, MInputChipsUniq, MInputChipsMultiline, MFocused, MEnabled, MInputChipsCustomTooltip, MAnimationEnabled /*for multiline*/;
 
 		MSelectedInputChips(items : DynamicBehaviour<[string]>);
 		MInputChipsLeftCaption(caption : Material);
 		MInputChipsTextButton(text : string);
 		MInputChipsAlignRight();
 		MInputChipsMaxWidth(width : Transform<double>);
+		MInputChipsCustomTooltip(tooltipFn : (string) -> Transform<string>);
 		MCustomChipStyle(style : [MChipStyle]);
 		MCustomAutoCompleteStyle(style : [MAutoCompleteStyle]);
+		MInputChipsAddAnyValue(); // By default you can only add values from dictionary 
 		MInputChipsMultiline();
 		MInputChipsUniq();
 }
@@ -23,14 +25,17 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 	textButton = extractStruct(style, MInputChipsTextButton("")).text;
 	maxWidth = tryExtractStruct(style, MInputChipsMaxWidth(const(-1.)));
 	chipStyle = extractStruct(style, MCustomChipStyle([])).style;
+	customChipTooltip = tryExtractStruct(style, MInputChipsCustomTooltip(\__ -> const("")));
 	acStyle = extractStruct(style, MCustomAutoCompleteStyle([])).style;
 	multiline = contains(style, MInputChipsMultiline());
 	animationEnabled = extractStruct(style, MAnimationEnabled(true));
 	chipsToRight = contains(style, MInputChipsAlignRight());
 	uniqChips = contains(style, MInputChipsUniq());
+	addAnyValue = contains(style, MInputChipsAddAnyValue());
+	focused = extractStruct(style, MFocused(make(true))).focused;
+	enabled = extractStruct(style, MEnabled(make(true))).enabled;
 
 	text = make("");
-	focused = make(false);
 	position = make(0);
 	leftWidth = make(0.);
 	avWidth = make(0.);
@@ -39,6 +44,7 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 	acPosScale = make(zeroPositionScale);
 	icPosScale = make(zeroPositionScale);
 	acBaseline = make(0.);
+	matchesCount = make(0);
 	
 	button = {
 		if (textButton == "") TEmpty()
@@ -72,9 +78,12 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 							})
 						})),
 						MSentenceMatcher(simpleBuildSentenceMatcher, \matcher, input, maxHits, prefix, exhaustive, pos -> {
-							filteredMatcher = SentenceMatcher(matcher with sentences = filter(matcher.sentences, \sentence -> !contains(getValue(selectedItems), sentence)));
+							selItems = getValue(selectedItems);
+							filteredMatcher = SentenceMatcher(matcher with sentences = subtractA(matcher.sentences, selItems));
 							simpleSentenceMatcher(filteredMatcher, input, maxHits, prefix, exhaustive, pos);
 						}),
+						MCurrentMatches(\matches -> nextDistinct(matchesCount, length(matches))),
+						MKeepFocusOnSelect()
 					], 
 					acStyle
 					|> mergeAndReplaceCustomPopup(
@@ -88,12 +97,12 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 							MCustomPopup(Some(fnegate(leftWidth)), None(), None())
 					)
 				]),
-				[MFocused(focused), TTextInputPosition(position), MInputProcessKeyDown(\ke -> {
-					if (ke.keycode == KEY_ENTER) {
-						if (trim(getValue(text)) != "") dynArrayPush(selectedItems, trim(getValue(text)));
+				[MFocused(focused), MEnabled(enabled), TTextInputPosition(position), MInputProcessKeyDown(\ke -> {
+					if (ke.keycode == KEY_ENTER && addAnyValue && getValue(matchesCount) == 0) {
+						txt = trim(getValue(text));
+						if (txt != "") dynArrayPush(selectedItems, txt);
 						nextDistinct(text, "");
-						deferUntilNextFrameRendered(\-> nextDistinct(focused, true));
-						
+						deferUntilNextFrameRendered(\-> deferUntilNextFrameRendered(\-> nextDistinct(focused, true)));
 					};
 					true
 				})]
@@ -105,11 +114,15 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 		)
 		|> MSetMinWidth2(const(96.));
 
-	materialize = \elem -> MChip(elem, concat([
-		MNewChip(),
-		MCloseButton(),
-		MOnClose(\ -> {nextDistinct(selectedItems, removeAll(fgetValue(selectedItems), elem)); true})
-	], chipStyle));
+	materialize = \elem -> MSelect(enabled, \en -> MChip(elem, concatA([
+		[MNewChip()],
+		if (en) [
+			MCloseButton(),
+			MOnClose(\ -> {nextDistinct(selectedItems, removeAll(fgetValue(selectedItems), elem)); true})
+		] else [MEnabled(enabled)],
+		eitherMap(customChipTooltip, \cct -> [MTooltipText(cct.tooltipFn(elem))], []),
+		chipStyle
+	])));
 
 	chipsGrid =
 		if (multiline) {
@@ -146,7 +159,7 @@ MInputChips(items : Transform<[string]>, style : [MInputChipsStyle]) -> Material
 	|> (\m -> MFrame(0., 0., [MFill(MWhite())], m))
 	|> (\m -> MConstruct(
 		ifArrayPush(
-			[makeSubscribe2(items, \itms -> nextDistinct(selectedItems, filter(getValue(selectedItems), \it -> contains(itms, it))))],
+			[makeSubscribe2(items, \itms -> nextDistinct(selectedItems, intersection(getValue(selectedItems), itms)))],
 			uniqChips, 
 			makeSubscribe(selectedItems, \i -> deferred(\-> nextDistinct(selectedItems, uniq(i)))),
 		),

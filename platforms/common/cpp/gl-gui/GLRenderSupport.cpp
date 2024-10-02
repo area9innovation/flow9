@@ -117,6 +117,31 @@ bool GLRenderSupport::setFallbackFont(unicode_string name) {
     return DefaultFont && FallbackFont != DefaultFont;
 }
 
+void GLRenderSupport::loadNativeFont(std::string filename, std::string familyname, std::vector<unicode_string> aliases, bool set_default)
+{
+    if (!FontLibrary) return;
+
+    // Check if file url, then normalize to file path
+    int is_file_url = filename.compare(0, 7, "file://");
+    if (is_file_url == 0) {
+        filename = filename.substr(7);
+    }
+    
+    TextFont textFont = TextFont::makeWithFamily(familyname);
+    GLFont::Ptr font = FontLibrary->loadNativeFont(filename);
+    if (font) {
+        if (!DefaultFont || set_default)
+            DefaultFont = font;
+
+        Fonts[textFont] = font;
+
+        for (unsigned i = 0; i < aliases.size(); i++)
+            Fonts[TextFont::makeWithFamily(encodeUtf8(aliases[i]))] = font;
+    } else {
+         cerr << "Cannot load font : " << filename << std::endl;
+    }
+}
+
 void GLRenderSupport::loadFont(std::string filename, std::vector<unicode_string> aliases, bool set_default)
 {
     if (!FontLibrary) return;
@@ -993,6 +1018,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
 
     TRY_USE_NATIVE_METHOD(GLRenderSupport, getPixelsPerCm, 0);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, setHitboxRadius, 1);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, loadFSFont, 2);
 
     // Camera API
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeCamera, 10);
@@ -1010,7 +1036,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     // Root
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeClip, 0);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeTextField, 1);
-    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 6);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, makePicture, 7);
     TRY_USE_NATIVE_METHOD_NAME(GLRenderSupport, makePicture4, "makePicture", 4);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeVideo, 4);
 
@@ -1146,7 +1172,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLTextClip, addTextInputKeyEventFilter, 3);
 
     // Video Clip
-    TRY_USE_OBJECT_METHOD(GLVideoClip, playVideo, 3);
+    TRY_USE_OBJECT_METHOD(GLVideoClip, playVideo, 4);
     TRY_USE_OBJECT_METHOD(GLVideoClip, playVideoFromMediaStream, 3);
     TRY_USE_OBJECT_METHOD_NAME(GLVideoClip, playVideo2, "playVideo", 2);
     TRY_USE_OBJECT_METHOD(GLVideoClip, seekVideo, 2);
@@ -1214,6 +1240,16 @@ StackSlot GLRenderSupport::setHitboxRadius(RUNNER_ARGS)
     return StackSlot::MakeBool(true);
 }
 
+StackSlot GLRenderSupport::loadFSFont(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(fontname, url);
+    RUNNER_CheckTag2(TString, fontname, url);
+    
+    this->loadNativeFont(encodeUtf8(RUNNER->GetString(url)), encodeUtf8(RUNNER->GetString(fontname)), std::vector<unicode_string>());
+    
+    RETVOID;
+}
+
 StackSlot GLRenderSupport::makeClip(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
@@ -1236,12 +1272,25 @@ StackSlot GLRenderSupport::makePicture4(RUNNER_ARGS)
 
 StackSlot GLRenderSupport::makePicture(RUNNER_ARGS)
 {
-    RUNNER_PopArgs5(url_str, cache, metrix_cb, error_cb, only_download);
-    RUNNER_CheckTag(TString, url_str);
+    RUNNER_PopArgs7(url_str, cache, metrix_cb, error_cb, only_download, altText, headers);
+    RUNNER_CheckTag2(TString, url_str, altText);
     RUNNER_CheckTag2(TBool, cache, only_download);
     RUNNER_DefSlots1(retval);
+    RUNNER_CheckTag1(TArray, headers)
 
     unicode_string url = RUNNER->GetString(url_str);
+
+    HttpRequest::T_SMap map_headers;
+
+    for (unsigned i = 0; i < RUNNER->GetArraySize(headers); i++) {
+        const StackSlot &header_slot = RUNNER->GetArraySlot(headers, i);
+        RUNNER_CheckTag(TArray, header_slot);
+
+        unicode_string name     = RUNNER->GetString(RUNNER->GetArraySlot(header_slot, 0));
+        unicode_string value    = RUNNER->GetString(RUNNER->GetArraySlot(header_slot, 1));
+
+        map_headers[name] = value;
+    }
 
     GLPictureClip *pclip = new GLPictureClip(this, url);
     retval = RUNNER->AllocNative(pclip);
@@ -1275,7 +1324,7 @@ StackSlot GLRenderSupport::makePicture(RUNNER_ARGS)
     if (already_pending)
         return retval;
 
-    if (!loadPicture(url, cache.GetBool()))
+    if (!loadPicture(url, map_headers, cache.GetBool()))
         resolvePictureError(url, parseUtf8("loadPicture failed"));
 
     return retval;

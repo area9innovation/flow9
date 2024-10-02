@@ -1,62 +1,28 @@
 package com.area9innovation.flow;
 
-import java.util.*;
-import java.io.Writer;
-import java.io.FileOutputStream;
-import java.io.OutputStreamWriter;
-import java.io.BufferedWriter;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.nio.file.InvalidPathException;
-import java.awt.datatransfer.DataFlavor;
-import java.awt.Toolkit;
-import java.awt.datatransfer.StringSelection;
-import java.awt.datatransfer.Clipboard;
-import java.awt.datatransfer.UnsupportedFlavorException;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.BufferedReader;
-import java.io.PrintWriter;
-import java.io.StringWriter;
-import java.nio.charset.CharsetDecoder;
-import java.io.FileInputStream;
-import java.io.File;
-import java.nio.charset.CodingErrorAction;
-import java.net.URLDecoder;
-import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
-import java.nio.charset.CharsetEncoder;
-import java.nio.file.StandardOpenOption;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.lang.Runtime;
-import java.lang.ClassCastException;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.io.OutputStream;
-import java.io.InputStream;
-import java.math.BigInteger;
-import java.security.*;
-import java.util.Arrays;
-import java.time.format.DateTimeFormatter;
-import java.time.LocalDateTime;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeParseException;
-import java.util.concurrent.ConcurrentHashMap;
+import com.google.gson.*;
 import com.sun.management.OperatingSystemMXBean;
+import java.awt.datatransfer.*;
+import java.awt.Toolkit;
+import java.io.*;
+import java.lang.*;
+import java.lang.reflect.*;
+import java.math.BigInteger;
+import java.net.URLDecoder;
+import java.nio.charset.*;
+import java.nio.file.*;
+import java.security.*;
+import java.time.*;
+import java.time.format.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.function.Function;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
 	private static MessageDigest md5original = null;
 	private static ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
+	private static FlowRuntime.SingleExecutor inputExecutor = new FlowRuntime.SingleExecutor("stdin reader");
 	private static OperatingSystemMXBean osBean = java.lang.management.ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
 
 	public Native() {
@@ -156,6 +122,10 @@ public class Native extends NativeHost {
 		File currentJavaJarFile = new File(Native.class.getProtectionDomain().getCodeSource().getLocation().getPath());
 		String currentJavaJarFilePath = currentJavaJarFile.getAbsolutePath();
 		return currentJavaJarFilePath;
+	}
+
+	public static final String[] getApplicationArguments() {
+		return FlowRuntime.program_args;
 	}
 
 	public static final String toString(Object value) {
@@ -853,62 +823,48 @@ public class Native extends NativeHost {
 		};
 	}
 
-	private static void cancelTimer(Timer timer) {
-		timer.cancel();
+	private static void cancelTimer(int timerId) {
+		Timers timers = FlowRuntime.getTimers();
+		if (timers != null) {
+			timers.removeTimer(timerId);
+		}
 	}
 
-	public static void invokeCallback(Runnable cb) {
-		cb.run();
-	}
-
-	public static final Timer scheduleTimerTask(int ms, final Func0<Object> cb) {
-		Timer timer = new Timer(true);
-		TimerTask task = new TimerTask() {
-			public void run() {
-				invokeCallback(new Runnable() {
-					public void run() {
-						try {
-							cb.invoke();
-						} catch (Exception ex) {
-							System.err.println(ex.getMessage());
-							cancelTimer(timer);
-							throw ex;
-						}
-					}
-				});
-			}
-		};
-		timer.schedule(task, ms);
-		return timer;
+	public static final int scheduleTimerTask(int ms, final Func0<Object> cb, boolean repeat) {
+		Timers timers = FlowRuntime.getTimers();
+		if (timers == null) {
+			timers = new Timers();
+			FlowRuntime.timersByThreadId.put(FlowRuntime.getThreadIdLong(), timers);
+		}
+		return timers.addTimer(ms, repeat, cb);
 	}
 
 	public static final Object timer(int ms, final Func0<Object> cb) {
-		scheduleTimerTask(ms, cb);
+		scheduleTimerTask(ms, cb, false);
 		return null;
 	}
 
-	public static final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
-		Timer timer = new Timer(false);
-		TimerTask task = new TimerTask() {
-			public void run() {
-				invokeCallback(new Runnable() {
-					public void run() {
-						cb.invoke();
-						timer.cancel();
-					}
-				});
-			}
-		};
-		timer.schedule(task, ms);
-		return null;
-	}
-
-	public static final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
-		Timer timer = scheduleTimerTask(ms, cb);
+	public static final Func0<Object> setInterval(int ms, final Func0<Object> cb) {
+		int timerId = scheduleTimerTask(ms, cb, true);
 
 		return new Func0<Object>() {
 			public Object invoke() {
-				cancelTimer(timer);
+				cancelTimer(timerId);
+				return null;
+			}
+		};
+	}
+
+	public static final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
+		return timer(ms, cb);
+	}
+
+	public static final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
+		int timerId = scheduleTimerTask(ms, cb, false);
+
+		return new Func0<Object>() {
+			public Object invoke() {
+				cancelTimer(timerId);
 				return null;
 			}
 		};
@@ -942,9 +898,19 @@ public class Native extends NativeHost {
 		return Math.log(a);
 	}
 
+	public static final <T> Object[] generate(int from, int to, Func1<T, Integer> fn) {
+		int n = to - from;
+		if (n <= 0)
+			return new Object[0];
+		Object[] rv = new Object[n];
+		for (int i = 0; i < n; i++)
+			rv[i] = fn.invoke(from + i);
+		return rv;
+	}
+
 	public static final Object[] enumFromTo(int from, int to) {
 		int n = to - from + 1;
-		if (n < 0)
+		if (n <= 0)
 			return new Object[0];
 		Object[] rv = new Object[n];
 		for (int i = 0; i < n; i++)
@@ -954,6 +920,35 @@ public class Native extends NativeHost {
 
 	public static final double timestamp() {
 		return System.currentTimeMillis();
+	}
+
+	public static final String getLocalTimezoneId() {
+		return ZoneId.systemDefault().getId();
+	}
+
+	public static final String getTimezoneTimeString(double utcStamp, String timezoneId, String language) {
+		long utcMillis = Double.valueOf(utcStamp).longValue();
+		Instant instant = Instant.ofEpochMilli(utcMillis);
+
+		if (timezoneId.equals("")) {
+			timezoneId = "UTC";
+		}
+
+		ZoneId zoneId = ZoneId.of(timezoneId);
+		ZonedDateTime date = ZonedDateTime.ofInstant(instant, zoneId);
+
+		DateTimeFormatter dtf = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT, FormatStyle.LONG).withLocale(Locale.forLanguageTag(language));
+
+		return date.format(dtf);
+	}
+
+	public static final double getTimezoneOffset(double utcStamp, String timezoneId) {
+		if (timezoneId.equals("")) {
+			return 0;
+		}
+		long utcMillis = Double.valueOf(utcStamp).longValue();
+		TimeZone tz = TimeZone.getTimeZone(timezoneId);
+		return tz.getOffset(new Date(utcMillis).getTime());
 	}
 
 	public static Object[][] getAllUrlParameters() {
@@ -1051,7 +1046,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object printCallstack() {
-		Thread.dumpStack();
+		new Throwable().printStackTrace(System.out);
 		return null;
 	}
 
@@ -1106,7 +1101,30 @@ public class Native extends NativeHost {
 		return FlowRuntime.struct_ids.containsKey(name);
 	}
 
-	public static final int extractFuncArity(Object fn) {
+	public static final int extractFuncArity(Object x) {
+		int arity = extractRealFuncArity(x);
+		if (arity != -1) {
+			return arity;
+		} else if (x instanceof String) {
+			String fn_name = (String)x;
+			if (!host_call_funcs.containsKey(fn_name)) {
+				// Guess the arity of function, thus pass -1 as arity.
+				addHostCall(fn_name);
+			}
+			Object fn = host_call_funcs.get(fn_name);
+			if (fn instanceof Integer) {
+				// Integer type indicate absence of such function
+				return -1;
+			} else {
+				return extractRealFuncArity(fn);
+			}
+		} else {
+			// Not a function
+			return -1;
+		}
+	}
+
+	private static final int extractRealFuncArity(Object fn) {
 		if (fn instanceof Func0) {
 			return 0;
 		} else if (fn instanceof Func1) {
@@ -1177,7 +1195,6 @@ public class Native extends NativeHost {
 					setter.invoke(struct, value);
 				} else {
 					System.out.println("Failed to set a field " + field + " in struct " + struct.getTypeName());
-					System.exit(255);
 				}
 			}
 		} catch (IllegalAccessException ex) {
@@ -1222,6 +1239,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object quit(int c) {
+		FlowRuntime.quitCode = c;
 		System.exit(c);
 		return null;
 	}
@@ -1594,7 +1612,7 @@ public class Native extends NativeHost {
 		ProcessRunner ps = new ProcessRunner(cmd, currentWorkingDirectory, stdin, onExit);
 		Future future = threadpool.submit(ps);
 	} catch (Exception ex) {
-		onExit.invoke(-200, "", "while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+		onExit.invoke(-200, "", "while starting:\n" + command + "\noccurred:\n" + exceptionStackTrace(ex));
 	}
 	return null;
 	}
@@ -1780,7 +1798,7 @@ public class Native extends NativeHost {
 
 			return runner;
 		} catch (Exception ex) {
-			onErr.invoke("while starting:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+			onErr.invoke("while starting:\n" + command + "\noccurred:\n" + exceptionStackTrace(ex));
 			onExit.invoke(-200);
 			return null;
 		}
@@ -1803,7 +1821,7 @@ public class Native extends NativeHost {
 			runner.run();
 			return runner.waitFor();
 		} catch (Exception ex) {
-			onErr.invoke("while execution of:\n" + command + "\noccured:\n" + exceptionStackTrace(ex));
+			onErr.invoke("while execution of:\n" + command + "\noccurred:\n" + exceptionStackTrace(ex));
 			return 1;
 		}
 	}
@@ -1832,7 +1850,9 @@ public class Native extends NativeHost {
 				@Override
 				public Object call() throws Exception {
 					try {
-						return task.invoke();
+						Object result = task.invoke();
+						FlowRuntime.eventLoop();
+						return result;
 					} catch (OutOfMemoryError e) {
 						// This is brutal, but there is no memory to print anything
 						// so better to stop than to hang in infinite loop.
@@ -1860,6 +1880,28 @@ public class Native extends NativeHost {
 		return resArr;
 	}
 
+	public static final Object concurrentAsyncOne2(
+		Func0<Object> task,
+		Func1<Object, Object> onDone,
+		Func1<Object, String> onError
+	) {
+		Callbacks callbacks = FlowRuntime.getCallbacks();
+		Callbacks.Callback callbackOnDone = callbacks.make(onDone);
+		Callbacks.Callback callbackOnError = callbacks.make(onError);
+		callbackOnDone.alternativeCallbackIds = new Integer[]{callbackOnError.id};
+		callbackOnError.alternativeCallbackIds = new Integer[]{callbackOnDone.id};
+		FlowRuntime.runParallel(() -> {
+			try {
+				Object result = task.invoke();
+				FlowRuntime.eventLoop();
+				callbackOnDone.setReady(result);
+			} catch (Exception e) {
+				callbackOnError.setReady(e.getMessage());
+			}
+		});
+		return null;
+	}
+
 	public static final Object concurrentAsyncCallback(
 		Func2<Object, String, Func1<Object, Object>> task,
 		Func1<Object, Object> onDone,
@@ -1879,6 +1921,7 @@ public class Native extends NativeHost {
 					completableFuture.complete(res);
 					return null;
 				});
+				FlowRuntime.eventLoop();
 			} catch (RuntimeException ex) {
 				Throwable e = ex;
 				e.printStackTrace();
@@ -1931,7 +1974,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final String getThreadId() {
-		return Long.toString(Thread.currentThread().getId());
+		return Long.toString(FlowRuntime.getThreadIdLong());
 	}
 
 	public static final Object initConcurrentHashMap() {
@@ -2036,16 +2079,24 @@ public class Native extends NativeHost {
 	public static final String readBytes(int n) {
 		byte[] input = new byte[n];
 		try {
-			int have_read = 0;
-			while (have_read < n) {
-				int read_bytes = System.in.read(input, have_read, n - have_read);
-				if (read_bytes == -1) {
-					break;
+			inputExecutor.runAndWait(() -> {
+				try {
+					int have_read = 0;
+					while (have_read < n) {
+						int read_bytes = System.in.read(input, have_read, n - have_read);
+						if (read_bytes == -1) {
+							break;
+						}
+						have_read += read_bytes;
+					}
+				} catch (IOException e) {
+					e.printStackTrace();
 				}
-				have_read += read_bytes;
-			}
-		} catch (IOException e) {
-			e.printStackTrace();
+				return null;
+			});
+		} catch (Exception e) {
+			System.out.println(e.getMessage());
+			return "";
 		}
 		try {
 			return new String(input, "UTF-8");
@@ -2058,26 +2109,34 @@ public class Native extends NativeHost {
 	public static final String readUntil(String str_pattern) {
 		byte[] pattern = str_pattern.getBytes();
 		ArrayList<Byte> line = new ArrayList<Byte>();
-		int pos = 0;
 		try {
-			while (true) {
-				int ch = System.in.read();
-				if (ch == -1) {
-					break;
-				} else {
-					line.add(Byte.valueOf((byte)ch));
-					if (ch == pattern[pos]) {
-						pos += 1;
-						if (pos == pattern.length) {
+			inputExecutor.runAndWait(() -> {
+				try {
+					int pos = 0;
+					while (true) {
+						int ch = System.in.read();
+						if (ch == -1) {
 							break;
+						} else {
+							line.add(Byte.valueOf((byte)ch));
+							if (ch == pattern[pos]) {
+								pos += 1;
+								if (pos == pattern.length) {
+									break;
+								}
+							} else {
+								pos = 0;
+							}
 						}
-					} else {
-						pos = 0;
 					}
+				} catch (IOException e) {
+					e.printStackTrace();
 				}
-			}
-		} catch (IOException e) {
-			e.printStackTrace();
+				return null;
+			});
+		} catch (Exception e) {
+			System.out.println(e.getMessage());
+			return "";
 		}
 		byte[] bytes = new byte[line.size()];
 		for (int i = 0; i < line.size(); ++ i) {
@@ -2121,8 +2180,8 @@ public class Native extends NativeHost {
 	}
 
 	// Vector natives:
-	public static final Object makeVector(Integer capacity) {
-		return new ArrayList(capacity);
+	public static final Object makeVector(Integer capacity, Object[] __) {
+		return new ArrayList(capacity >= 0 ? capacity : 0);
 	}
 	public static final Object getVector(Object v, Integer i) {
 		ArrayList vector = (ArrayList)v;
@@ -2140,29 +2199,26 @@ public class Native extends NativeHost {
 		vector.add(x);
 		return null;
 	}
-	public static final Object removeVector(Object v, Integer i) {
+	public static final Object removeVector(Object v, Integer i, Object[] __) {
 		ArrayList vector = (ArrayList)v;
 		vector.remove(i.intValue());
 		return null;
 	}
-	public static final int sizeVector(Object v) {
+	public static final int sizeVector(Object v, Object[] __) {
 		ArrayList vector = (ArrayList)v;
 		return vector.size();
 	}
-	public static final Object clearVector(Object v) {
+	public static final Object clearVector(Object v, Object[] __) {
 		ArrayList vector = (ArrayList)v;
 		vector.clear();
 		return null;
 	}
-	public static final Object shrinkVector(Object v, Integer size) {
+	public static final Object trimToSizeVector(Object v, Object[] __) {
 		ArrayList vector = (ArrayList)v;
-		int i = vector.size();
-		while (i > size) {
-			vector.remove(--i);
-		}
+		vector.trimToSize();
 		return null;
 	}
-	public static final Object subVector(Object v, Integer index, Integer len) {
+	public static final Object subVector(Object v, Integer index, Integer len, Object[] __) {
 		@SuppressWarnings("unchecked")
 		ArrayList<Object> vector = (ArrayList<Object>)v;
 		ArrayList<Object> sub = new ArrayList<Object>(len);
@@ -2235,15 +2291,17 @@ public class Native extends NativeHost {
 	// Formats of a called method name:
 	//   p1.p2.p3.Class.method
 	//   NativeHost.method
+	//   Module_<m>.f_<method>  - functions generated by flowc from sources
 	@SuppressWarnings (value="unchecked")
 	public static final Object hostCall(String name, Object[] args) {
 		if (!host_call_funcs.containsKey(name)) {
-			addHostCall(name, args);
+			addHostCall(name);
 		}
 		Object fn = host_call_funcs.get(name);
-		if (fn == null) {
-			// Native function is not found
-			return null;
+		if (fn instanceof Integer) {
+			// Native / runtime function is not found.
+			// Integer value is a marker of absence of a function.
+			return new String("runtime error: Native / runtime function " + name + " is not found");
 		} else {
 			if (args.length == 0) {
 				return ((Func0)fn).invoke();
@@ -2271,16 +2329,18 @@ public class Native extends NativeHost {
 				return ((Func11)fn).invoke(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]);
 			} else {
 				// Arity is not implemented yet
-				return null;
+				return new String("runtime error: Arity " + args.length + " of function " + name +  " in hostCall is not implemented yet.");
 			}
 		}
 	}
 
 	public static final boolean hostCallExists(String name) {
 		if (host_call_funcs.containsKey(name)) {
-			return true;
+			Object fn = host_call_funcs.get(name);
+			// Check that object is not integer. Integer value marks absent host call name.
+			return !(fn instanceof Integer);
 		} else {
-			return findHostCall(name) != null;
+			return addHostCall(name) != null;
 		}
 	}
 
@@ -2291,7 +2351,6 @@ public class Native extends NativeHost {
 			try {
 				return Class.forName("com.area9innovation.flow." + class_path);
 			} catch (ClassNotFoundException e2) {
-				System.out.println("Class: " + class_path + " was not found");
 				return null;
 			}
 		}
@@ -2300,15 +2359,15 @@ public class Native extends NativeHost {
 	private static final Method findHostCall(String name) {
 		String[] parts = name.split("\\.");
 		if (parts.length < 2) {
-			// Wrong format: must have at least one . in name
-		} else {
-			String class_path = "";
-			for (int i = 0; i < parts.length - 1; ++ i) {
-				class_path += (i == 0) ? parts[i] : "." + parts[i];
-			}
-			String meth_name = parts[parts.length - 1];
-			Class cls = loadHostCallClass(class_path);
-			if (cls != null) {
+			// Search for a proper method in all loaded classes.
+			for (Class cls: LoadedClassesAgent.getAllLoadedClasses()) {
+				String class_name = cls.getName();
+				if (class_name.contains("$") || class_name.contains("[") || !class_name.contains("Module_")) {
+					// Skip all modules except for generated by flowc.
+					// Also skip lambdas and inner classes.
+					continue;
+				}
+				String meth_name = "f_" + name;
 				for (Method meth : cls.getMethods()) {
 					if (meth.getName().equals(meth_name)) {
 						int modifiers = meth.getModifiers();
@@ -2318,16 +2377,40 @@ public class Native extends NativeHost {
 					}
 				}
 			}
+			// Try most common natives.
+			return findHostCall("Native." + name);
+		} else {
+			String class_path = "";
+			for (int i = 0; i < parts.length - 1; ++ i) {
+				class_path += (i == 0) ? parts[i] : "." + parts[i];
+			}
+			Class cls = loadHostCallClass(class_path);
+			if (cls != null) {
+				boolean is_module = cls.getName().contains("Module_");
+				String meth_name = is_module ? "f_" + parts[parts.length - 1] : parts[parts.length - 1];
+				for (Method meth : cls.getMethods()) {
+					if (meth.getName().equals(meth_name)) {
+						int modifiers = meth.getModifiers();
+						if (java.lang.reflect.Modifier.isStatic(modifiers) && java.lang.reflect.Modifier.isPublic(modifiers)) {
+							return meth;
+						}
+					}
+				}
+			}
+			// Method is not found
+			return null;
 		}
-		// Method is not found
-		return null;
 	}
 
-	private static final void addHostCall(String name, Object[] args) {
+	private static final Method addHostCall(String name) {
 		Method meth = findHostCall(name);
-		if (meth != null && meth.getParameterCount() == args.length) {
+		if (meth == null) {
+			// Host call is not found - put Integer value to mark int.
+			host_call_funcs.put(name, Integer.valueOf(0));
+		} else {
+			int arity = meth.getParameterCount();
 			try {
-				if (args.length == 0) {
+				if (arity == 0) {
 					host_call_funcs.put(name, (Func0)(() -> {
 						try {
 							return meth.invoke(null);
@@ -2339,223 +2422,223 @@ public class Native extends NativeHost {
 							return null;
 						}
 					}));
-				} else if (args.length == 1) {
+				} else if (arity == 1) {
 					host_call_funcs.put(name, (Func1)((Object a1) -> {
 						try {
 							return meth.invoke(null, a1);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 2) {
+				} else if (arity == 2) {
 					host_call_funcs.put(name, (Func2)((Object a1, Object a2) -> {
 						try {
 							return meth.invoke(null, a1, a2);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 3) {
+				} else if (arity == 3) {
 					host_call_funcs.put(name, (Func3)((Object a1, Object a2, Object a3) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 4) {
+				} else if (arity == 4) {
 					host_call_funcs.put(name, (Func4)((Object a1, Object a2, Object a3, Object a4) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 5) {
+				} else if (arity == 5) {
 					host_call_funcs.put(name, (Func5)((Object a1, Object a2, Object a3, Object a4, Object a5) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 6) {
+				} else if (arity == 6) {
 					host_call_funcs.put(name, (Func6)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 7) {
+				} else if (arity == 7) {
 					host_call_funcs.put(name, (Func7)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 8) {
+				} else if (arity == 8) {
 					host_call_funcs.put(name, (Func8)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 9) {
+				} else if (arity == 9) {
 					host_call_funcs.put(name, (Func9)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 10) {
+				} else if (arity == 10) {
 					host_call_funcs.put(name, (Func10)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9, Object a10) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
-								"arg 10: " + a10 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
+								"arg 10: " + FlowRuntime.toString(a10) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 11) {
+				} else if (arity == 11) {
 					host_call_funcs.put(name, (Func11)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9, Object a10, Object a11) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
-								"arg 10: " + a10 + "\n" +
-								"arg 11: " + a11 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
+								"arg 10: " + FlowRuntime.toString(a10) + "\n" +
+								"arg 11: " + FlowRuntime.toString(a11) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
 						}
 					}));
-				} else if (args.length == 12) {
+				} else if (arity == 12) {
 					host_call_funcs.put(name, (Func12)((Object a1, Object a2, Object a3, Object a4, Object a5, Object a6, Object a7, Object a8, Object a9, Object a10, Object a11, Object a12) -> {
 						try {
 							return meth.invoke(null, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);
 						} catch (ReflectiveOperationException e) {
 							System.err.println(
 								"at calling " + name + ":\n" +
-								"arg 1: " + a1 + "\n" +
-								"arg 2: " + a2 + "\n" +
-								"arg 3: " + a3 + "\n" +
-								"arg 4: " + a4 + "\n" +
-								"arg 5: " + a5 + "\n" +
-								"arg 6: " + a6 + "\n" +
-								"arg 7: " + a7 + "\n" +
-								"arg 8: " + a8 + "\n" +
-								"arg 9: " + a9 + "\n" +
-								"arg 10: " + a10 + "\n" +
-								"arg 11: " + a11 + "\n" +
-								"arg 12: " + a12 + "\n" +
+								"arg 1: " + FlowRuntime.toString(a1) + "\n" +
+								"arg 2: " + FlowRuntime.toString(a2) + "\n" +
+								"arg 3: " + FlowRuntime.toString(a3) + "\n" +
+								"arg 4: " + FlowRuntime.toString(a4) + "\n" +
+								"arg 5: " + FlowRuntime.toString(a5) + "\n" +
+								"arg 6: " + FlowRuntime.toString(a6) + "\n" +
+								"arg 7: " + FlowRuntime.toString(a7) + "\n" +
+								"arg 8: " + FlowRuntime.toString(a8) + "\n" +
+								"arg 9: " + FlowRuntime.toString(a9) + "\n" +
+								"arg 10: " + FlowRuntime.toString(a10) + "\n" +
+								"arg 11: " + FlowRuntime.toString(a11) + "\n" +
+								"arg 12: " + FlowRuntime.toString(a12) + "\n" +
 								exceptionStackTrace(e)
 							);
 							return null;
@@ -2563,35 +2646,14 @@ public class Native extends NativeHost {
 					}));
 				} else {
 					// Not implemented yet
+					host_call_funcs.put(name, Integer.valueOf(0));
 				}
 			} catch (java.lang.IllegalArgumentException ex) {
 				System.err.println("While adding a function: " + name + "\n" + ex.getMessage());
+				host_call_funcs.put(name, Integer.valueOf(0));
 			}
 		}
-	}
-
-	public static final String runtimeValueType(Object value) {
-		if (value == null) {
-			return "void";
-		} else if (value instanceof Integer) {
-			return "int";
-		} else if (value instanceof Double) {
-			return "double";
-		} else if (value instanceof Boolean) {
-			return "bool";
-		} else if (value instanceof String) {
-			return "string";
-		} else if (value instanceof Struct) {
-			return ((Struct)value).getTypeName();
-		} else if (value instanceof Function) {
-			return "function";
-		} else if (value instanceof Object[]) {
-			return "array";
-		} else if (value instanceof Reference) {
-			return "ref";
-		} else {
-			return "undef";
-		}
+		return meth;
 	}
 
 	public static final String toStringForJson(String value) {
@@ -2602,7 +2664,7 @@ public class Native extends NativeHost {
 		for (int i = 0; i < sv.length(); i++) {
 			char c = sv.charAt(i);
 			switch (c) {
-				// In JSON all control charters must be escaped. 
+				// In JSON all control charters must be escaped.
 				case 0x00: buf.append("\\u0000"); break;	// Do not allow 0 in strings
 				case 0x01: buf.append("\\u0001"); break;
 				case 0x02: buf.append("\\u0002"); break;
@@ -2643,5 +2705,63 @@ public class Native extends NativeHost {
 		buf.append('"');
 		return buf.toString();
 	}
-}
 
+	private static Struct jsonNull_struct = null;
+	private static int jsonObject_struct_id = -1;
+	private static int jsonArray_struct_id = -1;
+	private static int jsonString_struct_id = -1;
+	private static int jsonDouble_struct_id = -1;
+	private static int jsonBool_struct_id = -1;
+	private static int pair_struct_id = -1;
+
+	public static final Struct json2Struct(JsonElement json) {
+		if (json instanceof JsonPrimitive) {
+			JsonPrimitive prim = json.getAsJsonPrimitive();
+			if (prim.isBoolean()) {
+				return FlowRuntime.makeStructValue(jsonBool_struct_id, new Object[] {prim.getAsBoolean()}, null);
+			} else if (prim.isNumber()) {
+				return FlowRuntime.makeStructValue(jsonDouble_struct_id, new Object[] {prim.getAsDouble()}, null);
+			} else {
+				return FlowRuntime.makeStructValue(jsonString_struct_id, new Object[] {prim.getAsString()}, null);
+			}
+		} else if (json instanceof JsonNull) {
+			return jsonNull_struct;
+		} else if (json instanceof JsonArray) {
+			JsonArray arr = json.getAsJsonArray();
+			Struct[] elements =  new Struct[arr.size()];
+			for (int i = 0; i < arr.size(); i++) {
+				elements[i] = json2Struct(arr.get(i));
+			}
+			return FlowRuntime.makeStructValue(jsonArray_struct_id, new Object[] {elements}, null);
+		} else {
+			JsonObject obj = json.getAsJsonObject();
+			Struct[] members =  new Struct[obj.size()];
+			int i = 0;
+			for (Map.Entry<String,JsonElement> entry : obj.entrySet()) {
+				String key = entry.getKey();
+				JsonElement value = entry.getValue();
+				members[i] = FlowRuntime.makeStructValue(pair_struct_id, new Object[] {key, json2Struct(value)}, null);
+				i++;
+			}
+			return FlowRuntime.makeStructValue(jsonObject_struct_id, new Object[] {members}, null);
+		}
+	}
+
+	public static final Struct parseJson(String string) {
+		if (jsonNull_struct == null) {
+			jsonObject_struct_id = FlowRuntime.struct_ids.get("JsonObject");
+			jsonArray_struct_id = FlowRuntime.struct_ids.get("JsonArray");
+			jsonString_struct_id = FlowRuntime.struct_ids.get("JsonString");
+			jsonDouble_struct_id = FlowRuntime.struct_ids.get("JsonDouble");
+			jsonBool_struct_id = FlowRuntime.struct_ids.get("JsonBool");
+			pair_struct_id = FlowRuntime.struct_ids.get("Pair");
+			jsonNull_struct = FlowRuntime.makeStructValue("JsonNull", new Object[0], null);
+		}
+		try {
+			JsonElement json = JsonParser.parseString(string);
+			return json2Struct(json);
+		} catch (Exception e) {
+			return FlowRuntime.makeStructValue("JsonDouble", new Object[] {0.0}, null);
+		}
+	}
+}

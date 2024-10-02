@@ -1,0 +1,730 @@
+import ds/hashset;
+import tools/flowc/statements/fs_expand;
+import tools/common/stats;
+
+export {
+	fsPerceus(s: FsStat, transparent: bool, name: string, debug: bool) -> FsStat;
+
+	// Markups the AST nodes, which are used in Perceus, with unique ids
+	//fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int>;
+
+	// Maps the node indexes to the set of ref-counter operations 
+	//fsPerceusCore(s: FsStat, num_ids: int, transparent: bool, debug: bool, name: string) -> [FsMem];
+}
+
+fsPerceus(s: FsStat, transparent: bool, name: string, debug: bool) -> FsStat {
+	p = fsPerceusMarkup(s);
+	if (debug) {
+		println("MARKUPED:\n" + fs2s(p.first));
+	}
+	mem = fsPerceusCore(p.first, p.second, transparent, debug, name);
+	s1 = fsExpandMem(p.first, mem);
+	cast(fsMarkupUniqueVars(s1): FsAll -> FsStat);
+}
+
+fsMarkupUniqueVars(e: FsAll) -> FsAll {
+	var2num = fsFold(e, makeTree(), \acc, x -> switch (x) {
+		FsVarUse(v,__,__): setTree(acc, v.name, lookupTreeDef(acc, v.name, 0) + 1);
+		default: acc;
+	}, false);
+	fsMap(e, \x -> switch (x) {
+		FsVarUse(v, info,__):
+			if (lookupTreeDef(var2num, v.name, 0) != 1) x else {
+				FsVarUse(x with info = FsVarInfo(info with unique = true));
+			}
+		default: x;
+	}, false);
+}
+
+fsPerceusMarkup(s: FsStat) -> Pair<FsStat, int> {
+	id_counter = ref 0;
+	new_id = \-> {
+		id = ^id_counter;
+		id_counter := ^id_counter + 1;
+		id;
+	}
+	s1 = cast(fsMap(s, \x -> switch(x) {
+		FsIf(c,__,__,__,__):       FsIf(x with id = new_id(), cond = fsExpSetId(c, new_id()));
+		FsSwitch(__,__,__,__,__):  FsSwitch(x with id = new_id());
+		FsWrapExp(e,__,__):        FsWrapExp(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsRet(e,__,__):            FsRet(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsAssign(e1, e2,__,__,__): FsAssign(x with id = new_id(), to = fsExpSetId(e1, new_id()), what = fsExpSetId(e2, new_id()));
+		FsLet(__,__,e,__,__,__):   FsLet(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsFor(__,e,__,__,__,__):   FsFor(x with id = new_id(), e = fsExpSetId(e, new_id()));
+		FsLambda(__,__,__,__,__):  FsLambda(x with id = new_id());
+		FsVarUse(__,__,__):        FsVarUse(x with id = new_id());
+		FsTailCall(__,__,__):      FsTailCall(x with id = new_id());
+		default: x;
+	}, false): FsAll -> FsStat);
+	Pair(s1, ^id_counter);
+}
+
+fsPerceusCore(s: FsStat, num_ids: int, transparent: bool, debug0: bool, name: string) -> [FsMem] {
+	debug = ref debug0;
+	add_var = \x, acc, v -> {
+		switch (lookupTree(acc, v.name)) {
+			Some(w): if (w != v) {
+				fail(
+					"Duplicate variable: " + v.name + " of type: " + pretFiType(v.type) + ", already is of type: " + pretFiType(w.type) + " in:\n" +
+					fs2s(x) + "\n" +
+					"IN:\n" + fs2s(s)
+				);
+			}
+			None(): { }
+		}
+		setTree(acc, v.name, v);
+	}
+	name2var = fsFold(s, makeTree(), \acc, x -> switch (x) {
+		FsLet(v,__,__,__,__,__): add_var(x, acc, v);
+		FsFor(v,__,__,__,__,__): add_var(x, acc, v);
+		FsLambda(__,args,__,__,__): fold(args, acc, \ac, arg -> add_var(x, ac, arg));
+		default: acc;
+	}, true);
+	t1 = timestamp();
+	last = if (transparent) {
+		generate(0, num_ids, \__ -> makeSet());
+	} else {
+		fsPerceusLastUse(s, num_ids, ^debug, name);
+	}
+	fsShowTiming(name + ": fsPerceusLastUse(s1, num_ids, ^debug, name)", t1);
+	t2 = timestamp();
+	id2mem = fsPerceusId2Mem(s, num_ids, last, name2var, ^debug);
+	if (^debug) {
+		println("perceus: id2mem:\n" + fsMemArray2string(id2mem));
+	}
+	fsShowTiming(name + ": fsPerceusId2Mem(s1, num_ids, last, name2var)", t2);
+	id2mem;
+}
+
+fsPerceusId2Mem(s: FsStat, num: int, last: [Set<string>], name2var: Tree<string, FsVar>, debug: bool) -> [FsMem] {
+	make_mem = \ -> FsMem(makeTree());
+	id2mem = generate(0, num, \__ -> ref make_mem());
+	fsPerceusStatId2Mem(s, id2mem, last, name2var, debug);
+	map(id2mem, \m -> ^m /*fsReduceMem(^m)*/);
+}
+
+fsReduceMem(mem: FsMem) -> FsMem {
+	FsMem(
+		filterTree(mem.ops, \v, ops -> !(ops.inc == 1 && ops.dec == Some(FsDecPost())))
+	);
+}
+
+fsPerceusStatId2Mem(x: FsStat, id2mem: [ref FsMem], last: [Set<string>], name2var: Tree<string, FsVar>, debug: bool) -> void {
+	make_mem = \ -> FsMem(makeTree());
+	switch (x) {
+		FsIf(cond, pos, neg, id,__):  {
+			fsPerceusExpId2Mem(cond, id2mem, last, name2var, debug);
+			id2mem[id] := fsPerceusAddUnused2Mem(
+				fsPerceusAddExp2Mem(make_mem(), cond, last, false, false, debug),
+				id, last, name2var
+			);
+			fsPerceusStatId2Mem(pos, id2mem, last, name2var, debug);
+			fsPerceusStatId2Mem(neg, id2mem, last, name2var, debug);
+		}
+		FsLet(v, __, e, s1, id,__): {
+			fsPerceusExpId2Mem(e, id2mem, last, name2var, debug);
+			id2mem[id] := fsPerceusAddUnused2Mem(
+				fsPerceusAddExp2Mem(make_mem(), e, last, false, false, debug),
+				id, last, name2var
+			);
+			fsPerceusStatId2Mem(s1, id2mem, last, name2var, debug);
+		}
+		FsSwitch(v,__, cs, id,__): {
+			id2mem[id] := fsPerceusAddUnused2Mem(
+				fsPerceusAddExp2Mem(make_mem(), v, last, true, false, debug),
+				id, last, name2var
+			);
+			iter(cs, \c -> fsPerceusStatId2Mem(c.body, id2mem, last, name2var, debug));
+		}
+		FsFor(w, e, s1, free_vars, id,__): {
+			fsPerceusExpId2Mem(e, id2mem, last, name2var, debug);
+			e_mem = fsPerceusAddUnused2Mem(
+				fsPerceusAddExp2Mem(make_mem(), e, last, true, false, debug),
+				id, last, name2var
+			);
+			all_vars = arrayPush(free_vars, w);
+			deferred_last = ref [];
+			// Updated last: those which are last in AST are NOT in loop body (thus must be excluded from last).
+			cycle_last = fsFold5(s1, last, \acc, y -> if (y.id == -1) acc else
+				fold(all_vars, acc, \ac, v -> if (!containsSet(ac[y.id], v.name)) ac else {
+					if (v.name != w.name) {
+						refArrayPush(deferred_last, v);
+					}
+					replace(ac, y.id, removeSet(ac[y.id], v.name))
+				}), false
+			);
+			fsPerceusStatId2Mem(s1, id2mem, cycle_last, name2var, debug);
+			id2mem[id] := fold(
+				^deferred_last,
+				e_mem,
+				\acc, v -> fsUpdateFsMem(acc, v, FsVarMem(0, Some(FsDecPost()), 0, 0, false))
+			);
+		}
+		FsRet(e, id,__): {
+			fsPerceusExpId2Mem(e, id2mem, last, name2var, debug);
+			id2mem[id] := fsPerceusAddUnused2Mem(
+				fsPerceusAddExp2Mem(make_mem(), e, last, false, false, debug),
+				id, last, name2var
+			);
+		}
+		FsWrapExp(e, id,__): {
+			fsPerceusExpId2Mem(e, id2mem, last, name2var, debug);
+			id2mem[id] := fsPerceusAddUnused2Mem(
+				fsPerceusAddExp2Mem(make_mem(), e, last, false, false, debug),
+				id, last, name2var
+			);
+		}
+		FsTailCall(args, id,__): {
+			iter(args, \arg -> fsPerceusExpId2Mem(arg, id2mem, last, name2var, debug));
+			if (length(args) > 0) {
+				arg_mems = map(args, \arg -> 
+					fsPerceusAddUnused2Mem(
+						fsPerceusAddExp2Mem(make_mem(), arg, last, false, false, debug),
+						id, last, name2var
+					)
+				);
+				id2mem[id] := fold(tail(arg_mems), arg_mems[0], fsMergeFsMem);
+			} else {
+				id2mem[id] := make_mem();
+			}
+		}
+		FsAssign(to, what, direct, id,__): {
+			fsPerceusExpId2Mem(to, id2mem, last, name2var, debug);
+			fsPerceusExpId2Mem(what, id2mem, last, name2var, debug);
+			what_mem = fsPerceusAddExp2Mem(make_mem(), what, last, false, false, debug);
+			id2mem[id] := fsPerceusAddUnused2Mem(
+				fsPerceusAddExp2Mem(
+					if (!direct) what_mem else {
+						switch (to) {
+							FsVarUse(v,__,__): {
+								if (fiTypeIsScalar(v.type)) what_mem else {
+									switch (lookupTree(what_mem.ops, v)) {
+										Some(ops): {
+											FsMem(setTree(what_mem.ops, v, 
+												FsVarMem(ops with inc = ops.inc - 1)
+											));
+										}
+										None(): {
+											FsMem(setTree(what_mem.ops, v,
+												FsVarMem(0, Some(FsDecPre()), 0, 0, false)
+											));
+										}
+									}
+								}
+							}
+							default: what_mem;
+						}
+					},
+					to, last, false, false, debug
+				),
+				id, last, name2var
+			);
+		}
+		FsIncRc(__,__,__,__): {
+			// skip
+		}
+		FsDecRc(__,__,__,__): {
+			// skip
+		}
+		FsIntrinsicStat(__,__,__): {
+			// skip
+		}
+	}
+	switch (x.next) {
+		Some(nx): fsPerceusStatId2Mem(nx, id2mem, last, name2var, debug);
+		None(): {}
+	}
+}
+
+fsPerceusExpId2Mem(x: FsExp, id2mem: [ref FsMem], last: [Set<string>], name2var: Tree<string, FsVar>, debug: bool) -> void {
+	switch (x) {
+		FsClosure(__,lambda,__,__): {
+			fsPerceusStatId2Mem(lambda.body, id2mem, last, name2var, debug);
+		}
+		FsCall(__,args,__,__): {
+			iter(args, \arg -> fsPerceusExpId2Mem(arg, id2mem, last, name2var, debug));
+		}
+		FsCallPrim(__,args,__,__): {
+			iter(args, \arg -> fsPerceusExpId2Mem(arg, id2mem, last, name2var, debug))
+		};
+		FsInlineExp(__,args,__,__): {
+			iter(args, \arg -> fsPerceusExpId2Mem(arg, id2mem, last, name2var, debug))
+		}
+		FsCast(e,__,__,__): {
+			fsPerceusExpId2Mem(e, id2mem, last, name2var, debug);
+		}
+		FsVarUse(__,__,__): {};
+		FsString(__,__,__): {};
+		FsConst(__,__): {};
+	}
+}
+
+fsPerceusAddUnused2Mem(mem: FsMem, id: int, last: [Set<string>], name2var: Tree<string, FsVar>) -> FsMem {
+	foldSet(last[id], mem, \acc, x -> {
+		v = lookupTreeDef(name2var, x, FsVar(x, FiTypeVoid()));
+		FsMem(setTree(acc.ops, v,
+			switch (lookupTree(acc.ops, v)) {
+				Some(ops): 
+					FsVarMem(ops with
+						dec = Some(FsDecPre())
+					);
+				None(): {
+					FsVarMem(0, Some(FsDecPre()), 0, 0, false);
+				}
+			}
+		));
+	});
+}
+
+fsPerceusAddExp2Mem(acc: FsMem, e: FsExp, last: [Set<string>], inline: bool, intrinsic: bool, debug: bool) -> FsMem {
+	switch (e) {
+		FsClosure(closure,__,__,__): {
+			fold(closure, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, false, false, debug));
+		}
+		FsCall(f, args,__,__): {
+			do_job = \args_inline, args_intrinsic -> {
+				fold(args, fsPerceusAddExp2Mem(acc, f, last, false, false, debug), \ac, x ->
+					fsPerceusAddExp2Mem(ac, x, last, args_inline, args_intrinsic, debug)
+				);
+			}
+			switch (f.info.kind) {
+				FsVarGlobalFunc(k): {
+					switch (k) {
+						FsFunCall(): do_job(false, false);
+						FsRecCallHost(): do_job(true, false);
+						FsRecCallRec(): do_job(false, true);
+					}
+				}
+				default: do_job(false, false);
+			}
+		}
+		FsCallPrim(op, es,__,__): {
+			op_inline = switch (op) {
+				FcGePrim(): true;
+				FcLePrim(): true;
+				FcGtPrim(): true;
+				FcLtPrim(): true;
+				FcEqPrim(): true;
+				FcNePrim(): true;
+				FsFieldPrim(__,__): true;
+				FcIndexPrim(): true;
+				FcDerefPrim(): true;
+				default: false;
+			}
+			op_intrinsic = switch (op) {
+				FsIntrinsicPrim(name): {
+					if (name == "vecSet") {
+						false;
+					} else {
+						true;
+					}
+				}
+				default: false;
+			}
+			fold(es, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, op_inline, op_intrinsic, debug));
+		}
+		FsInlineExp(__,es,__,__): {
+			fold(es, acc, \ac, x -> fsPerceusAddExp2Mem(ac, x, last, true, false, debug));
+		}
+		FsCast(e1,__,__,__): {
+			fsPerceusAddExp2Mem(acc, e1, last, false, false, debug);
+		}
+		FsVarUse(x, info, id): {
+			if (fiTypeIsScalar(x.type) || intrinsic) acc else {
+				switch (info.kind) {
+					FsVarGlobalFunc(__): acc;
+					FsVarUninit(): acc;
+					FsVarIntrinsic(): acc;
+					default: {
+						if (id == -1) acc else {
+							is_last = containsSet(last[id], x.name);
+							fsUpdateFsMem(acc, x, FsVarMem(
+								if (is_last || inline) 0 else 1,
+								if (is_last && inline) Some(FsDecPost()) else None(),
+								if (inline) 1 else 0,
+								if (inline) 0 else 1,
+								is_last
+							));
+						}
+					}
+				}
+			}
+		}
+		FsString(__,__,__): acc;
+		FsConst(__,__): acc;
+	}
+}
+
+fsPerceusLastUse(s: FsStat, num: int, debug: bool, name: string) -> [Set<string>] {
+	//s1 = timestamp();
+	//pre = fsPerceusId2varsPre(s, num, debug);
+	//d1 = fsShowTiming(name + ": fsPerceusId2varsPre(s, num, debug)", s1);
+	s1_1 = timestamp();
+	pre1 = fsPerceusId2varsPre1(s, num, debug);
+	d1_1 = fsShowTiming(name + ": fsPerceusId2varsPre1(s, num, debug)", s1_1);
+	//addStats("fsPerceusId2varsPre", d1);
+	//addStats("fsPerceusId2varsPre1", d1_1);
+/*
+	if (any(mapi(pre, \i, p -> !equalHashSet(p, pre1[i])))) {
+		hashset2s = \hs -> "{" + strGlue(hashSet2array(hs), ", ") + "}";
+		fail(name + ": num=" + i2s(num) + ", pre and pre1 Differs:\n" +
+			strGlue(filtermapi(pre, \i, p ->
+				if (equalHashSet(p, pre1[i])) None() else 
+				Some("\tpre["+ i2s(i) + "]: " + hashset2s(p) + " != " + hashset2s(pre1[i]) + ", diff: " +
+					hashset2s(
+						mergeHashSets(
+							differenceHashSets(p, pre1[i]),
+							differenceHashSets(pre1[i], p)
+						)
+					)
+				)
+			), "\n") + "\n" +
+			"s:\n" + strIndent(fs2s(s)) + "\n"
+		);
+	}
+*/	
+
+	//s2 = timestamp();
+	//post = fsPerceusId2varsPost(s, num, debug);
+	//d2 = fsShowTiming(name + ": fsPerceusId2varsPost(s, num, debug)", s2);
+	s2_1 = timestamp();
+	post1 = fsPerceusId2varsPost1(s, num, debug);
+	d2_1 = fsShowTiming(name + ": fsPerceusId2varsPost1(s, num, debug)", s2_1);
+	//addStats("fsPerceusId2varsPost", d2);
+	//addStats("fsPerceusId2varsPost1", d2_1);
+/*
+	if (any(mapi(post, \i, p -> !equalSet(p, post1[i])))) {
+		set2s = \hs -> "{" + strGlue(set2array(hs), ", ") + "}";
+		fail(name + ": num=" + i2s(num) + ", post and post1 Differs:\n" +
+			strGlue(filtermapi(post, \i, p ->
+				if (equalSet(p, post1[i])) None() else 
+				Some("\tpost["+ i2s(i) + "]: " + set2s(p) + " != " + set2s(post1[i]) + ", diff: " +
+					set2s(
+						mergeSets(
+							differenceSets(p, post1[i]),
+							differenceSets(post1[i], p)
+						)
+					)
+				)
+			), "\n") + "\n" +
+			"s:\n" + strIndent(fs2s(s)) + "\n"
+		);
+	}
+*/
+
+	//s3 = timestamp();
+	//last = fsPerceusId2varsLast(s, num, pre, post, debug);
+	//d3 = fsShowTiming(name + ": fsPerceusId2varsLast(s, num, debug)", s2);
+	s3_1 = timestamp();
+	last1 = fsPerceusId2varsLast1(s, num, pre1, post1, debug);
+	d3_1 = fsShowTiming(name + ": fsPerceusId2varsLast1(s, num, debug)", s3_1);
+	//addStats("fsPerceusId2varsLast", d3);
+	//addStats("fsPerceusId2varsLast1", d3_1);
+/*
+	if (any(mapi(last, \i, p -> !equalSet(p, last1[i])))) {
+		set2s = \hs -> "{" + strGlue(set2array(hs), ", ") + "}";
+		fail(name + ": num=" + i2s(num) + ", last and last1 Differs:\n" +
+			strGlue(filtermapi(last, \i, p ->
+				if (equalSet(p, last1[i])) None() else 
+				Some("\tlast["+ i2s(i) + "]: " + set2s(p) + " != " + set2s(last1[i]) + ", diff: " +
+					set2s(
+						mergeSets(
+							differenceSets(p, last1[i]),
+							differenceSets(last1[i], p)
+						)
+					)
+				)
+			), "\n") + "\n" +
+			"s:\n" + strIndent(fs2s(s)) + "\n"
+		);
+	}
+*/
+	if (debug) {
+		hashset_tree2s1 = \st -> {
+			superglue(
+				filtermapi(st, \i, x -> if (isEmptyHashSet(x)) None() else Some(Pair(i, x))),
+				\p -> "\t" + i2s(p.first) + ": " + "[" + strGlue(hashSet2array(p.second), ", ") + "]", "\n"
+			);
+		}
+		println(
+			//"pre:\n" + hashset_tree2s1(pre1) + "\n" +
+			//"post:\n" + set_tree2s1(post1) + "\n" +
+			//"last:\n" + set_tree2s1(last) + "\n" +
+			"last1:\n" + fsArrayOfSets2s(last1) + "\n" +
+			""
+		);
+	}
+	last1;
+	//last;
+}
+
+fsArrayOfSets2s(arr: [Set<string>]) -> string {
+	superglue(
+		filtermapi(arr, \i, x -> if (isEmptySet(x)) None() else Some(Pair(i, x))), 
+		\p -> "\t" + i2s(p.first) + ": " + "[" + strGlue(set2array(p.second), ", ") + "]", "\n"
+	);
+}
+
+fsPerceusId2varsPre(s: FsStat, num: int, debug: bool) -> [HashSet<string>] {
+	id2vars = generate(0, num, \__ -> ref makeHashSet(fastHashString));
+	fsFold2(s, Cons(makeHashSet(fastHashString), EmptyList()),
+		\acc, x: FsAll -> {
+			add_v = \ac, v -> if (!fiTypeIsScalar(v.type)) insertHashSet(ac, v.name);
+			switch (x) {
+				FsLambda(closure, args,__,__,id): {
+					new_vars = makeHashSet(fastHashString);
+					iter(closure, \v -> add_v(new_vars, v));
+					iter(args, \v -> add_v(new_vars, v));
+					id2vars[id] := new_vars;
+					Cons(new_vars, acc);
+				}
+				FsLet(v,__,__,__,id,__): {
+					id2vars[id] := acc.head;
+					new_vars = copyHashSet(acc.head);
+					add_v(new_vars, v);
+					Cons(new_vars, acc.tail);
+				}
+				FsFor(v,__,__,__,id,__): {
+					id2vars[id] := acc.head;
+					new_vars = copyHashSet(acc.head);
+					add_v(new_vars, v);
+					Cons(new_vars, acc.tail);
+				}
+				default: {
+					if (x.id != -1) {
+						id2vars[x.id] := acc.head;
+					}
+					acc;
+				}
+			}
+		},
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					cast(acc.tail: List<HashSet<string>> -> Cons<HashSet<string>>);
+				}
+				default: acc;
+			}
+		},
+		false,
+		\p1, p2 -> Cons(mergeHashSets(p1.head, p2.head), p1.tail)
+	);
+	map(id2vars, \x -> ^x);
+}
+
+fsPerceusId2varsPre1(s: FsStat, num: int, debug: bool) -> [HashSet<string>] {
+	id2vars = generate(0, num, \__ -> ref makeHashSet(fastHashString));
+	fsFold3(s, makeHashSet(fastHashString),
+		\acc, x: FsAll -> {
+			add_v = \ac, v -> if (!fiTypeIsScalar(v.type)) insertHashSet(ac, v.name);
+			switch (x) {
+				FsLambda(closure, args,__,__,id): {
+					iter(closure, \v -> add_v(acc, v));
+					iter(args, \v -> add_v(acc, v));
+					id2vars[id] := acc;
+					acc;
+				}
+				FsLet(v,__,__,__,id,__): {
+					id2vars[id] := acc;
+					acc1 = copyHashSet(acc);
+					add_v(acc1, v);
+					acc1;
+				}
+				FsFor(v,__,__,__,id,__): {
+					id2vars[id] := acc;
+					acc1 = copyHashSet(acc);
+					add_v(acc1, v);
+					acc1;
+				}
+				default: {
+					if (x.id != -1) {
+						id2vars[x.id] := acc;
+					}
+					acc;
+				}
+			}
+		},
+		\s1, s2 -> { iterHashSet(s2, \x -> insertHashSet(s1, x)); s1 },
+		\ -> makeHashSet(fastHashString),
+		copyHashSet,
+		false, // args_first
+		false  // backwards
+	);
+	map(id2vars, \x -> ^x);
+}
+
+fsPerceusId2varsPost(s: FsStat, num: int, debug: bool) -> [Set<string>] {
+	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
+	id2vars = generate(0, num, \__ -> ref makeSet());
+	merge_sets = \id, x -> id2vars[id] := mergeSets(^(id2vars[id]), x);
+	fsFold2(s, Cons(makeSet(), EmptyList()),
+		\acc, x -> switch (x) {
+			FsLambda(__,__,__,__,id): {
+				Cons(makeSet(), acc);
+			}
+			default: acc;
+		},
+		\acc, x: FsAll -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					merge_sets(id, acc.head);
+					cast(acc.tail: List<Set<string>> -> Cons<Set<string>>);
+				}
+				FsVarUse(v, info, id): {
+					new_vars = switch (info.kind) {
+						FsVarLocal(transparent): {
+							if (fiTypeIsScalar(v.type) || transparent) acc.head else insertSet(acc.head, v.name);
+						}
+						default: acc.head;
+					}
+					merge_sets(id, acc.head);
+					Cons(new_vars, acc.tail);
+				}
+				default: {
+					if (x.id != -1) {
+						merge_sets(x.id, acc.head);
+					}
+					acc;
+				}
+			}
+		},
+		true,
+		\p1, p2 -> Cons(mergeSets(p1.head, p2.head), p1.tail)
+	);
+	map(id2vars, \x -> ^x);
+}
+
+fsPerceusId2varsPost1(s: FsStat, num: int, debug: bool) -> [Set<string>] {
+	show_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
+	id2vars = generate(0, num, \__ -> ref makeSet());
+	merge_sets = \id, x -> id2vars[id] := mergeSets(^(id2vars[id]), x);
+	fsFold3(s, makeSet(),
+		\acc, x: FsAll -> {
+			switch (x) {
+				FsVarUse(v, info, id): {
+					new_vars = switch (info.kind) {
+						FsVarLocal(transparent): {
+							if (fiTypeIsScalar(v.type) || transparent) acc else insertSet(acc, v.name);
+						}
+						default: acc;
+					}
+					merge_sets(id, acc);
+					new_vars;
+				}
+				default: {
+					if (x.id != -1) {
+						merge_sets(x.id, acc);
+					}
+					acc;
+				}
+			}
+		},
+		mergeSets,
+		\ -> makeSet(),
+		idfn, 
+		true,
+		true,
+	);
+	map(id2vars, \x -> ^x);
+}
+
+
+fsPerceusId2varsLast(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string>], debug: bool) -> [Set<string>] {
+	show_hash_vars = \vs -> "[" + strGlue(hashSet2array(vs), ", ") + "]";
+	show_set_vars = \vs -> "[" + strGlue(set2array(vs), ", ") + "]";
+	id2vars = generate(0, num, \__ -> ref makeSet());
+	/*t0 = ref 0.0;
+	t1 = ref 0.0;
+	t2 = ref 0.0;
+	t3 = ref 0.0;
+	t4 = ref 0.0;
+	t5 = ref 0.0;*/
+	hash2set = \x -> foldHashSet(x, makeSet(), \acc, v -> insertSet(acc, v));
+	fsFold2(s, Cons(makeHashSet(fastHashString), makeList()),
+		\acc: Cons<HashSet<string>>, x: FsAll -> {
+			do_diff = \ -> {
+				//s0 = timestamp();
+				diff = copyHashSet(pre[x.id]);
+				//t0 := ^t0 + timestamp() - s0;
+
+				//s1 = timestamp();
+				iterSet(post[x.id], \v -> removeHashSet(diff, v));
+				//t1 := ^t1 + timestamp() - s1;
+
+				//s2 = timestamp();
+				iterHashSet(acc.head, \v -> removeHashSet(diff, v));
+				//t2 := ^t2 + timestamp() - s2;
+
+				id2vars[x.id] := hash2set(diff);
+				diff;
+			}
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					do_diff();
+					Cons(makeHashSet(fastHashString), acc);
+				}
+				default: {
+					if (x.id == -1) acc else {
+						diff = do_diff();
+						//s3 = timestamp();
+						new_head = mergeHashSets(acc.head, diff);
+						//t3 := ^t3 + timestamp() - s3;
+						Cons(new_head, acc.tail);
+					}
+				}
+			}
+		},
+		\acc, x -> {
+			switch (x) {
+				FsLambda(__,__,__,__,id): {
+					cast(acc.tail: List<HashSet<string>> -> Cons<HashSet<string>>);
+				}
+				default: acc;
+			}
+		},
+		false,
+		\p1, p2 -> {
+			//s4 = timestamp();
+			new_head = mergeHashSets(p1.head, p2.head);
+			//t4 := ^t4 + timestamp() - s4;
+			Cons(new_head, p1.tail)
+		}
+	);
+	/*fsShowTiming1("BBB: t0: ", ^t0);
+	fsShowTiming1("BBB: t1: ", ^t1);
+	fsShowTiming1("BBB: t2: ", ^t2);
+	fsShowTiming1("BBB: t3: ", ^t3);
+	fsShowTiming1("BBB: t4: ", ^t4);
+	fsShowTiming1("BBB: t5: ", ^t5);*/
+	map(id2vars, \x -> ^x);
+}
+
+fsPerceusId2varsLast1(s: FsStat, num: int, pre: [HashSet<string>], post: [Set<string>], debug: bool) -> [Set<string>] {
+	id2vars = generate(0, num, \__ -> ref makeSet());
+	hash2set = \x -> foldHashSet(x, makeSet(), \acc, v -> insertSet(acc, v));
+	fsFold3(s, makeHashSet(fastHashString),
+		\acc, x: FsAll -> {
+			if (x.id == -1) acc else {
+				diff = copyHashSet(pre[x.id]);
+				iterSet(post[x.id], \v -> removeHashSet(diff, v));
+				iterHashSet(acc, \v -> removeHashSet(diff, v));
+				id2vars[x.id] := hash2set(diff);
+				switch (x) {
+					FsLambda(__,__,__,__,__): {
+						makeHashSet(fastHashString);
+					}
+					default: {
+						iterHashSet(diff, \v -> insertHashSet(acc, v));
+						acc;
+					}
+				}
+			}
+		},
+		\s1, s2 -> { iterHashSet(s2, \v -> insertHashSet(s1, v)); s1 },
+		\ -> makeHashSet(fastHashString),
+		copyHashSet,
+		false,
+		false,
+	);
+	map(id2vars, \x -> ^x);
+}

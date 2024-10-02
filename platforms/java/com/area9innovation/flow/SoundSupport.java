@@ -8,7 +8,7 @@ public class SoundSupport extends NativeHost {
 	public static Object noSound() {
 		return null;
 	}
-	public static Object loadSound(String url,Func1<Object,String> onfail,Func0<Object> onok) {
+	public static Object loadSound(String url, Object[] headers, Func1<Object,String> onfail, Func0<Object> onok) {
 		return null;
 	}
 	public static double getSoundLength(Object snd) {

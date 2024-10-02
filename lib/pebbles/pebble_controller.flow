@@ -1,7 +1,6 @@
 import pebbles/pebbles;
 import material/material_ui;
 import net/appurl;
-import sys/history;
 
 export {
 
@@ -15,7 +14,7 @@ export {
 		3. Register every possible view and corresponding pebble using `registerDispatcher`
 			Note, you can use MLinkPebbleParameters inside to control parameters of the pebble (only last path part is being updated)
 
-		4. Change global view by passing any registered pebble to `setViewFromPebble`. Corresponding pebble will be pushed to the stack
+		4. Change global view by passing any registered pebble to `restoreLastPebble` or `setViewFromPebble`. Corresponding pebble will be pushed to the stack
 	*/
 
 	// Error handler will be called if user will try to set view based on unregistered pebble
@@ -42,6 +41,7 @@ export {
 	registerDispatcher : (controller : PebbleController, mask : string, dispatcher : () -> Material) -> void;
 	registerDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void;
 	overwriteDispatcher(controller : PebbleController, mask : string, dispatcher : () -> Material) -> void;
+	overwriteDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void;
 	// Call corresponding dispatcher or onError if no dispatcher found to update the view
 	// If mask of the pebble is the same as the current one, just pushes pebble to the stack without calling dispatcher
 	// 	then the view update will be handled by MLinkPebbleParameters
@@ -51,6 +51,7 @@ export {
 	// (from user point of view it will looks like you get back on previously opened screen with all parameters were set as you left),
 	// or setViewFromPebble on pebble if nothing was found
 	restoreLastPebble(controller : PebbleController, pebble : Pebble) -> void;
+	restoreLastPebbleFix(controller : PebbleController, pebble : Pebble, fixPebble : (Pebble) -> Pebble) -> void;
 	// Just refresh the view, i.e. call dispatcher once again. No URL or history changes
 	refreshViewForCurrentPebble : (controller : PebbleController) -> void;
 	// we will find last visited pebble by this key if it was set, otherwise, it will be stored with default key
@@ -103,12 +104,14 @@ export {
 	isUpButtonEnabled : (controller : PebbleController, topPebble : Pebble) -> Transform<bool>;
 	onUpButtonClick : (controller : PebbleController, topPebble : Pebble) -> void;
 
-	// Check for "debug_pebbles=true" URL flag
+	// Check for "debug_pebbles=1" URL flag
 	debugPebbles() -> bool;
+	// For more verbose debug, f.e. "debug_pebbles=2"
+	debugPebblesLevel() -> int;
 
 	// dispatcher builds the correspondant view
 	// handler is called just before dispatcher
-	// required will be added to pebble before it will be set (usefull for tabs e.g.)
+	// required will be added to pebble before it will be set (useful for tabs e.g.)
 	PebbleDispatcher(dispatcher : () -> Material, handler : Maybe<(Pebble) -> void>, required : [KeyValue]);
 
 	// NOTE: This is an internal structure that is exported only because of technical restrictions in the old compiler!
@@ -119,7 +122,7 @@ export {
 	// TODO: remove from export section as soon as we migrate to flowc
 	PebbleController(
 		// Dispatcher registered based on pebble mask
-		dispatchers : ref Tree<string, PebbleDispatcher>,
+		dispatchers : DynamicBehaviour<Tree<string, PebbleDispatcher>>,
 		// Global view
 		view : ref Material,
 		// Set view based on pebble function wrapped with IScript magic
@@ -133,12 +136,18 @@ export {
 		// Async functions to be called right before updating current pebble. Allows to cancel that update.
 		// Takes: current pebble, new pebble, callback to approve or cancel the update
 		// Bookkeeping for MConfirmPebbleParameterSwitch
-		confirmations : DynamicBehaviour<[(Pebble, Pebble, (bool) -> void) -> void]>
+		confirmations : DynamicBehaviour<[(Pebble, Pebble, (bool) -> void) -> void]>,
+		// Here we count how many times we handled the same parameter in the same view (it should be 1).
+		handledParametersB : DynamicBehaviour<Tree<string, int>>
 	);
+	// For debugging
+	printPebbleControllerState(controller : PebbleController, msg : string) -> void;
+
 	pinParameter(parameter : string, value : string, show : (Pebble) -> bool) -> void;
 	unPinParameter(parameter : string) -> void;
 	getPinnedParametersTree() -> DynamicBehaviour<Tree<string, Pair<string, (Pebble) -> bool>>>;
 	updatePinnedParameter(parameter : string, value : string) -> void;
+	isDispatcherRegistered(dispatchers : Transform<Tree<string, PebbleDispatcher>>, mask : string) -> Transform<bool>;
 }
 
 isControllerCreatedRef : ref bool = ref false;
@@ -187,14 +196,14 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 		println("Something is wrong. Pebble controller should be created only once per application");
 	}
 	isControllerCreatedRef := true;
-	dispatchers : ref Tree<string, PebbleDispatcher> = ref makeTree();
+	dispatchers = make(makeTree());
 
 	pebbleStackB = make([]);
 	currentPebbleB = make(urlHash2Pebble2(takeAfter(getUrlHash(), "#", initialPebbleHash()), makeEmptyPebble()));
 
 	setViewFn = fn2IScriptBehaviourDisposable1(
 		\pebbleAndUpdateHashUrl : Pair<Pebble, bool> -> {
-			switch(getPebbleDispatcher2(^dispatchers, pebbleAndUpdateHashUrl.first)) {
+			switch(getPebbleDispatcher2(getValue(dispatchers), pebbleAndUpdateHashUrl.first)) {
 				Some(pebbleAndDispatcher): {
 					unpair(pebbleAndDispatcher, \foundPebble, dispatcher -> {
 						next(viewBoxB, MEmpty());
@@ -226,20 +235,27 @@ makePebbleController(onError : (Pebble) -> void) -> PebbleController {
 		pebbleStackB,
 		currentPebbleB,
 		false,
-		make([])
+		make([]),
+		make(makeTree())
 	);
 
 	view := MGetManager(\manager -> MConstruct(
-		[
-			\-> addBrowserUrlHashListener(manager, controller),
-			makeSubscribe(controller.pebbleStackB, \pebbleStack -> {
-			//	println("pebbleStack is updated: " + superglue(pebbleStack, pebble2UrlHash, " - "));
-				if (getValue(manager.pebblesEnabled)) {
-					next(controller.currentPebbleB, lastPebble(controller, getCurrentPebble(controller)));
-				}
-			}),
-			controller.setViewFn.subscribers
-		],
+		concat(
+			[
+				\-> addBrowserUrlHashListener(manager, controller),
+				makeSubscribe(controller.pebbleStackB, \pebbleStack -> {
+				//	println("pebbleStack is updated: " + superglue(pebbleStack, pebble2UrlHash, " - "));
+					if (getValue(manager.pebblesEnabled)) {
+						next(controller.currentPebbleB, lastPebble(controller, getCurrentPebble(controller)));
+					}
+				}),
+				controller.setViewFn.subscribers
+			],
+			if (debugPebbles()) [
+				makeSubscribe(pebbleStackB, \__ -> printPebbleControllerState(controller, "new stack")),
+				makeSubscribe(currentPebbleB, \__ -> printPebbleControllerState(controller, "new current")),
+			] else []
+		),
 		MComponentGroupMutable(
 			viewBoxB,
 			[
@@ -262,7 +278,7 @@ makePebbleController2(manager : MaterialManager) -> PebbleController {
 
 makeDummyPebbleController() -> PebbleController {
 	PebbleController(
-		ref makeTree(),
+		make(makeTree()),
 		ref MEmpty(),
 		IScriptBehaviourDisposable1(
 			nop1,
@@ -272,12 +288,13 @@ makeDummyPebbleController() -> PebbleController {
 		make([]),
 		make(makeEmptyPebble()),
 		true,
-		make([])
+		make([]),
+		make(makeTree())
 	)
 }
 
 clearPebbleController(controller : PebbleController) -> void {
-	controller.dispatchers := makeTree();
+	next(controller.dispatchers, makeTree());
 	next(viewBoxB, MEmpty());
 	next(controller.pebbleStackB, []);
 	next(controller.confirmations, []);
@@ -297,12 +314,12 @@ registerDispatcher(controller : PebbleController, mask : string, dispatcher : ()
 
 registerDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void {
 	eitherFn(
-		lookupTree(^(controller.dispatchers), mask),
+		lookupTree(getValue(controller.dispatchers), mask),
 		\__ -> {
 			println(formatString("Mask (%1) already in use, view won't be registered", [mask]));
 			println("In case you are doing it on purpose use overwriteDispatcher function");
 		},
-		\-> controller.dispatchers := setTree(^(controller.dispatchers), mask, dispatcher)
+		\-> overwriteDispatcher2(controller, mask, dispatcher)
 	)
 }
 
@@ -311,12 +328,12 @@ overwriteDispatcher(controller : PebbleController, mask : string, dispatcher : (
 }
 
 overwriteDispatcher2(controller : PebbleController, mask : string, dispatcher : PebbleDispatcher) -> void {
-	controller.dispatchers := setTree(^(controller.dispatchers), mask, dispatcher);
+	updateBehaviourDistinct(controller.dispatchers, \dTree -> setTree(dTree, mask, dispatcher));
 }
 
 // Recursively find a function for a given pebble. If it's not found try parent
 getPebbleDispatcher(controller : PebbleController, pebble : Pebble) -> Maybe<Pair<Pebble, PebbleDispatcher>> {
-	getPebbleDispatcher2(^(controller.dispatchers), pebble)
+	getPebbleDispatcher2(getValue(controller.dispatchers), pebble)
 }
 
 getPebbleDispatcher2(dispatchers : Tree<string, PebbleDispatcher>, pebble : Pebble) -> Maybe<Pair<Pebble, PebbleDispatcher>> {
@@ -351,11 +368,17 @@ mask2pebble(mask : string) -> Pebble {
 }
 
 restoreLastPebble(controller : PebbleController, pebble : Pebble) -> void {
+	restoreLastPebbleFix(controller, pebble, idfn)
+}
+
+restoreLastPebbleFix(controller : PebbleController, pebble : Pebble, fixPebble : (Pebble) -> Pebble) -> void {
 	setViewFromPebble(
 		controller,
-		setLastPathPartParameters(
-			findLastPebbleInStack(controller, lastElement(pebble.path, makeEmptyPathPart()), pebble),
-			getPinnedParameters(pebble)
+		fixPebble(
+			setLastPathPartParameters(
+				findLastPebbleInStack(controller, lastElement(pebble.path, makeEmptyPathPart()), pebble),
+				getPinnedParameters(pebble)
+			)
 		)
 	)
 }
@@ -394,7 +417,7 @@ setViewFromPebbleIfRequired(controller : PebbleController, current : Pebble, peb
 		//println("setViewFromPebble: " + pebble2UrlHash(pebble) + " , current: " + pebble2UrlHash(current));
 	//}
 	// we don't want to push broken pebbles
-	if (!isBrokenPebble(pebble) && pebble != makeEmptyPebble()) {
+	if (!isBrokenPebble(pebble) && pebble != makeEmptyPebble() && !equalPebbles(current, pebble)) {
 		pinnedPebble = setLastPathPartParameters(pebble, getPinnedParameters(pebble));
 		if (pebble2mask(pebble) == pebble2mask(current)) {
 			// only parameters changed
@@ -408,7 +431,7 @@ setViewFromPebbleIfRequired(controller : PebbleController, current : Pebble, peb
 // Add subscriber which will create Pebbles from urlHash and call appropriate Fns, if it exists
 addBrowserUrlHashListener(manager : MaterialManager, controller : PebbleController) -> () -> void {
 	if (js) {
-		addUrlHashListener(\__ -> {
+		addUrlHashListener(\hash0 -> {
 			if (!contains(^ignoreHash, getUrlHash()) && getValue(manager.pebblesEnabled)) {
 				currentPebble = getCurrentPebble(controller);
 				// build pebble based on current URL hash
@@ -423,8 +446,10 @@ addBrowserUrlHashListener(manager : MaterialManager, controller : PebbleControll
 						prevPebble = pebbleStack[length(pebbleStack) - 2];
 						if (equalPebbles(urlHashPebble, prevPebble)) {
 							//println("URL handler 2: " + pebble2UrlHash(urlHashPebble) +
-							//	", prev="  + pebble2UrlHash(prevPebble) +
-							//	", curr=" + pebble2UrlHash(currentPebble));
+							//	"\nprev: "  + pebble2UrlHash(prevPebble) +
+							//	"\ncurr: " + pebble2UrlHash(currentPebble) +
+							//	"\nevent: " + hash0
+							//);
 							// back button was probably clicked
 							confirmPebbleSwitch(controller, currentPebble, prevPebble, \-> {
 								// onApproved
@@ -546,17 +571,24 @@ pushPebble2(pebbleStackB : DynamicBehaviour<[Pebble]>, updateHashUrl : bool, peb
 	npebble = normalizePebble(pebble);
 
 	if (!equalPebbles(npebble, lastPebble2(pebbleStackB, makeEmptyPebble()))) {
-
 		//println("pushPebble:" + pebble2UrlHash(npebble) + (if (recordHistory) " recordHistory" else ""));
-		dynArrayPush(pebbleStackB, npebble);
 
+		// first update stack because it does not have subscribers
+		dynArrayPush(pebbleStackB, npebble);
+		currentHash = getUrlHash();
+
+		// finally update URL hash if required and it was not changed outside during updating currentPebbleB
 		if (updateHashUrl) {
-			if (js) {
-				pushPebble2UrlHash(npebble);
-			}
-			if (lastPebbleOn() && pebbleMode() != LAST_PEBBLE_MODE_NEVER) {
-				setKeyValue(getLastPebbleKey(), pebble2UrlHash(npebble));
-				{}
+			if (currentHash == getUrlHash()) {
+				if (js) {
+					pushPebble2UrlHash(npebble);
+				}
+				if (lastPebbleOn() && pebbleMode() != LAST_PEBBLE_MODE_NEVER) {
+					setKeyValue(getLastPebbleKey(), pebble2UrlHash(npebble));
+					{}
+				}
+			} else {
+				devtrace("pebbles: pushing pebble (" + pebble2UrlHash(npebble) + ") to URL was interrupted by another pushing or other action");
 			}
 		}
 	}
@@ -752,4 +784,31 @@ initialPebbleDialog(manager : MaterialManager, controller : PebbleController, on
 
 debugPebbles() -> bool {
 	isUrlParameterTrue("debug_pebbles")
+}
+
+debugPebblesLevel() -> int {
+	if (debugPebbles()) {
+		v = s2i(getUrlParameter("debug_pebbles"));
+		if (v <= 0) 1 else v;
+	} else {
+		0;
+	}
+}
+
+printPebbleControllerState(controller : PebbleController, msg : string) -> void {
+	stack = getValue(controller.pebbleStackB);
+	stackLen = length(stack);
+	lines = concatA([
+		[	"INFO: pebbles state (" + msg +"):",
+			"Current URL hash: " + getUrlHash(),
+			"Current pebble: " + pebble2UrlHash(getValue(controller.currentPebbleB)),
+			"Stack size: " + i2s(stackLen) + ", last items:",
+		],
+		generate(max(stackLen - 3, 0), stackLen, \i -> "\t" + i2s(i + 1) + ": " + pebble2UrlHash(stack[i])),
+	]);
+	println(strGlue(lines, "\n\t"));
+}
+
+isDispatcherRegistered(dispatchers : Transform<Tree<string, PebbleDispatcher>>, mask : string) -> Transform<bool> {
+	fselect(dispatchers, FLift(\dTree -> contains(getTreeKeys(dTree), mask)))
 }

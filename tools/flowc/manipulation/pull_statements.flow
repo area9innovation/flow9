@@ -1,0 +1,201 @@
+import tools/flowc/manipulation/transform_exps;
+
+export {
+
+// In case a statement occurs in a place, when an expression
+// is expected in a statement-bases backend, the statement is replaced
+// by a variable, which is binded with its value by a corresponding upper-level
+// let statement.
+fiPullStatementsUp(expr : FiExp) -> FiExp;
+
+}
+
+fiPullStatementsUp(e: FiExp) -> FiExp {
+	fiPullStatementUpStage2(fiPullStatementUpStage1(e, ref 0));
+}
+
+fiPullStatementUpStage1(x: FiExp, cnt: ref int) -> FiExp {
+	switch (x) {
+		FiLet(v, vtype, e1, e2, type, start): {
+			FiLet(x with
+				e1 = fiPullStatementUpStage1(e1, cnt),
+				e2 = fiPullStatementUpStage1(e2, cnt)
+			);
+		}
+		FiIf(e1, e2, e3, type, start): {
+			switch (fiPullExpUpStage1(e1, cnt)) {
+				FiPullLet(var, let): {
+					FiLet(let with
+						e2 = FiIf(x with 
+							e1 = var,
+							e2 = fiPullStatementUpStage1(e2, cnt),
+							e3 = fiPullStatementUpStage1(e3, cnt)
+						),
+						type2 = type
+					);
+				}
+				FiPullExp(e): {
+					FiIf(x with 
+						e1 = e,
+						e2 = fiPullStatementUpStage1(e2, cnt),
+						e3 = fiPullStatementUpStage1(e3, cnt)
+					);
+				}
+			}
+		}
+		FiSwitch(v, switchType, cases, type, start): {
+			FiSwitch(x with cases = map(cases, \c ->
+				FiCase(c with body = fiPullStatementUpStage1(c.body, cnt))
+			));
+		}
+		FiSeq(es, type, start): {
+			FiSeq(x with es = map(es, \e -> fiPullStatementUpStage1(e, cnt)));
+		}
+		FiCall(f, args, type, start): {
+			f_p = fiPullExpUpStage1(f, cnt);
+			args_p = map(args, \arg -> fiPullExpUpStage1(arg, cnt));
+			call = FiCall(x with f = fiPullRet2FiExp(f_p), args = map(args_p, fiPullRet2FiExp));
+			call_1 = foldr(args_p, call, \acc, e_p -> switch (e_p) {
+				FiPullLet(var, let): FiLet(let with e2 = acc, type2 = type);
+				FiPullExp(e): acc;
+			});
+			switch (f_p) {
+				FiPullLet(var, let): FiLet(let with e2 = call_1, type2 = type);
+				FiPullExp(e): call_1;
+			}
+		}
+		FiCast(e, from, to, type, start): {
+			switch (fiPullExpUpStage1(e, cnt)) {
+				FiPullLet(var, let): {
+					FiLet(let with e2 = FiCast(x with e = var), type2 = type);
+				}
+				FiPullExp(e1): {
+					FiCast(x with e = e1);
+				}
+			}
+		}
+		FiLambda(args, body, type,__): {
+			FiLambda(x with body = fiPullStatementUpStage1(body, cnt));
+		}
+		FiCallPrim(op, es, type, start): {
+			es_p = map(es, \e -> fiPullExpUpStage1(e, cnt));
+			args = map(es_p, fiPullRet2FiExp);
+			foldr(es_p, 
+				FiCallPrim(x with es = args), 
+				\acc, e_p -> switch (e_p) {
+					FiPullLet(var, let): FiLet(let with e2 = acc, type2 = type);
+					FiPullExp(e): acc;
+				}
+			);
+		}
+		default: x;
+	}
+}
+
+fiIsExp1(e: FiExp) -> bool {
+	switch (e) {
+		FiSeq(__,__,__): false;
+		FiLet(__,__,__,__,__,__): false;
+		FiSwitch(__,__,__,__,__): false;
+		FiIf(__,__,__,__,__): false;
+		FiCallPrim(op,__,__,__): {
+			switch (op) {
+				FcAssignPrim(): false;
+				FcSetMutablePrim(__): false;
+				default: true;
+			}
+		}
+		default: true;
+	}
+}
+
+FiPullRet ::= FiPullExp, FiPullLet;
+	FiPullExp(e: FiExp);
+	FiPullLet(var: FiVar, let: FiLet);
+
+fiPullRet2FiExp(r: FiPullRet) -> FiExp {
+	switch (r) {
+		FiPullLet(var, let): var;
+		FiPullExp(x): x;
+	}
+}
+
+fiPullExpUpStage1(x: FiExp, cnt: ref int) -> FiPullRet {
+	y = fiPullStatementUpStage1(x, cnt);
+	if (fiIsExp1(y)) {
+		FiPullExp(y);
+	} else {
+		switch (y) {
+			FiLet(v, v_type, e1, e2, type,__): FiPullExp(y);
+			default: {
+				tmp_var = "tmp_var_" + i2s(^cnt);
+				cnt := ^cnt + 1;
+				type = fiExpType(y);
+				FiPullLet(
+					FiVar(tmp_var, type, 0),
+					FiLet(tmp_var, type, y, FiVoid(0), FiTypeVoid(), 0)
+				);
+			}
+		}
+	}
+}
+
+fiPullSeqUp(xs: [FiExp], type: FiType, fn: ([FiExp]) -> FiExp) -> FiExp {
+	up_xs = map(xs, \x -> switch (x) {
+		FiSeq(es,__,__): es[length(es) - 1];
+		default: x;
+	});
+	up_ss = fold(xs, [], \acc, x -> switch (x) {
+		FiSeq(es,__,__): concat(acc, take(es, length(es) - 1));
+		default: acc;
+	});
+	if (length(up_ss) == 0) fn(up_xs) else {
+		FiSeq(concat(up_ss, [fn(up_xs)]), type, 0);
+	}
+}
+
+fiPullStatementUpStage2(x: FiExp) -> FiExp {
+	switch (x) {
+		FiLet(v, vtype, e1, e2, type, start): {
+			fiPullSeqUp([fiPullStatementUpStage2(e1)], type, \ys -> 
+				FiLet(x with e1 = ys[0], e2 = fiPullStatementUpStage2(e2))
+			);
+		}
+		FiIf(e1, e2, e3, type, start): {
+			fiPullSeqUp([fiPullStatementUpStage2(e1)], type, \ys -> 
+				FiIf(x with e1 = ys[0], e2 = fiPullStatementUpStage2(e2), e3 = fiPullStatementUpStage2(e3))
+			);
+		}
+		FiSwitch(v, switchType, cases, type, start): {
+			FiSwitch(x with cases = map(cases, \c ->
+				FiCase(c with body = fiPullStatementUpStage2(c.body))
+			));
+		}
+		FiSeq(es, type, start): {
+			FiSeq(x with es = concatA(map(es, \e -> unFiSeq(fiPullStatementUpStage2(e)))));
+		}
+		FiCall(f, args, type, start): {
+			fiPullSeqUp(
+				map(concat([f], args), fiPullStatementUpStage2),
+				type,
+				\xs -> FiCall(x with f = xs[0], args = tail(xs))
+			);
+		}
+		FiCast(e, from, to, type, start): {
+			fiPullSeqUp([fiPullStatementUpStage2(e)], type, \ys -> 
+				FiCast(x with e = ys[0])
+			);
+		}
+		FiLambda(args, body, type,__): {
+			FiLambda(x with body = fiPullStatementUpStage2(body));
+		}
+		FiCallPrim(op, es, type, start): {
+			fiPullSeqUp(
+				map(es, fiPullStatementUpStage2),
+				type,
+				\xs -> FiCallPrim(x with es = xs)
+			);
+		}
+		default: x;
+	}
+}

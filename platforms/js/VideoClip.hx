@@ -8,6 +8,7 @@ import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 
 using DisplayObjectHelper;
+using RequestQueue;
 
 class VideoClip extends FlowContainer {
 	private var metricsFn : Float -> Float -> Void;
@@ -104,11 +105,11 @@ class VideoClip extends FlowContainer {
 		} catch (e : Dynamic) {}
 	}
 
-	private function createVideoClip(filename : String, startPaused : Bool) : Void {
+	private function createVideoClip(filename : String, startPaused : Bool, headers : Array<Array<String>>) : Void {
 		deleteVideoClip();
 
 		autoPlay = !startPaused;
-		addVideoSource(filename, "");
+		addVideoSource(filename, "", headers);
 		videoWidget = Browser.document.createElement(this.isAudio ? "audio" : "video");
 
 		if (this.isHTMLRenderer()) {
@@ -127,15 +128,21 @@ class VideoClip extends FlowContainer {
 		}
 
 		if (!this.isHTMLRenderer()) {
-			videoTexture = Texture.fromVideo(videoWidget);
-			untyped videoTexture.baseTexture.autoUpdate = false;
-			videoSprite = new Sprite(videoTexture);
-			untyped videoSprite._visible = true;
-			addChild(videoSprite);
+			addVideoSprite();
 		}
 
 		createStreamStatusListeners();
 		createFullScreenListeners();
+
+		if (!this.isAudio) {
+			this.onAdded(function() {
+				RenderSupport.on("enable_sprites", enableSprites);
+
+				return function() {
+					RenderSupport.off("enable_sprites", enableSprites);
+				}
+			});
+		}
 
 		once("removed", deleteVideoClip);
 	}
@@ -227,12 +234,12 @@ class VideoClip extends FlowContainer {
 		this.isAudio = Util.getParameter("video2audio") != "0";
 	}
 
-	public function playVideo(filename : String, startPaused : Bool) : Void {
-		createVideoClip(filename, startPaused);
+	public function playVideo(filename : String, startPaused : Bool, headers : Array<Array<String>>) : Void {
+		createVideoClip(filename, startPaused, headers);
 	}
 
 	public function playVideoFromMediaStream(mediaStream : FlowMediaStream, startPaused : Bool) : Void {
-		createVideoClip("", startPaused);
+		createVideoClip("", startPaused, []);
 		videoWidget.srcObject = mediaStream.mediaStream;
 		mediaStream.videoClip = this;
 		mediaStream.emit("attached");
@@ -332,6 +339,16 @@ class VideoClip extends FlowContainer {
 		textField = null;
 	}
 
+	private function addVideoSprite() : Void {
+		if (videoWidget != null) {
+			videoTexture = Texture.fromVideo(videoWidget);
+			untyped videoTexture.baseTexture.autoUpdate = false;
+			videoSprite = new Sprite(videoTexture);
+			untyped videoSprite._visible = true;
+			addChild(videoSprite);
+		}
+	}
+
 	private function deleteVideoSprite() : Void {
 		if (videoSprite != null) {
 			videoSprite.destroy({ children: true, texture: true, baseTexture: true });
@@ -343,6 +360,14 @@ class VideoClip extends FlowContainer {
 			videoTexture.destroy(true);
 			videoTexture = null;
 		}
+	}
+
+	private function enableSprites() : Void {
+		if (untyped this.destroyed || parent == null || nativeWidget == null) {
+			return;
+		}
+
+		addVideoSprite();
 	}
 
 	public function getCurrentTime() : Float {
@@ -503,20 +528,61 @@ class VideoClip extends FlowContainer {
 		return function () { streamStatusListener.remove(fn); };
 	}
 
-	public function addVideoSource(src : String, type : String) : Void {
+	public function addVideoSource(src : String, type : String, headers : Array<Array<String>>) : Void {
 		var source = Browser.document.createElement('source');
-		source.onerror = onStreamError;
+		var isAppended = false;
 
-		untyped source.src = src;
-		if (type != "") {
-			untyped source.type = type;
+		if (headers.length == 0) {
+			source.onerror = onStreamError;
+			untyped source.src = src;
+
+			if (type != "") {
+				untyped source.type = type;
+			}
+		} else {
+			// New resources manager
+			var requestQueue = new RequestQueue();
+
+			// Downloads a file from/with a queue
+			var promise = requestQueue.request(src, headers);
+
+			// Handle the response
+			promise.then(function(blob) {
+				if (nativeWidget != null) {
+					if (type != "") {
+						untyped source.type = type;
+					} else {
+						// Is it necessary here?
+						// untyped source.type = videoXhr.getResponseHeader("content-type");
+					}
+
+					// Everything is fine, let's show video
+					untyped source.src = blob;
+
+					// Check and try add source here.
+					if (!isAppended && videoWidget != null) {
+						isAppended = true;
+						videoWidget.appendChild(source);
+					}
+				}
+			}).catchError(function(error) {
+				onStreamError();
+			});
 		}
 
+		// Adds the new media source
 		sources.push(source);
 
-		if (videoWidget != null) {
+		// Sometimes we do not have `videoWidget` initialized here. Will do it on source loaded.
+		if (!isAppended && videoWidget != null) {
+			isAppended = true;
 			videoWidget.appendChild(source);
 		}
+
+// commented out for fast bugfix (see https://trello.com/c/T2mLO2y5)
+//		Native.defer(function() {
+//			js.html.URL.revokeObjectURL(untyped source.src);
+//		});
 	}
 
 	public function setVideoExternalSubtitle(src : String, kind : String) : Void -> Void {

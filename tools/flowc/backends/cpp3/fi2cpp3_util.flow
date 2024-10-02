@@ -1,26 +1,27 @@
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/freevars;
+import tools/flowc/statements/fs_transform;
 import tools/flowc/backends/cpp3/fi2cpp3_defines;
 import string_utils;
 
 export {
 	// Wrap a string with ( ... ) if it's not yet wrapped
-	fiWrapWithPars(s : string) -> string;
+	fiWrapWithPars(s : string, cfg: FiCpp3Config) -> string;
 
 	// Wrap a string with { ... } if it's not yet wrapped
-	fiWrapWithBraces(s : string) -> string;
+	fiWrapWithBraces(s : string, cfg: FiCpp3Config) -> string;
 
 	// Wrap a string with { ... } if it's not yet wrapped
-	fiWrapWith(s : string, open: string, close: string) -> string;
+	fiWrapWith(s : string, open: string, close: string, cfg: FiCpp3Config) -> string;
+
+	// Wrap with `namespace <name> {....}`
+	fiWrapWithNamespace(name: string, s : string) -> string;
+
+	// Make a `using` statement
+	fiMakeUsingStatement(name: string) -> string;
 
 	// Remove outer open and close wrappers
 	fiUnwrap(s : string, open: string, close: string) -> string;
-
-	// Collect all type parameters, met in a type
-	fiTypeTypars(acc : Set<FiTypeParameter>, type : FiType) -> Set<FiTypeParameter>;
-
-	// Checks if a type is void, bool, int or double.
-	fiIsScalarType(t : FiType) -> bool;
 
 	// Perform a transformation in all type parameters. Used to remove stray type parameters on void
 	fiTransformTypars(t : FiType, transform : (FiTypeParameter) -> FiType) -> FiType;
@@ -33,14 +34,37 @@ export {
 
 	// Only calls, primitive operators and constant values
 	fiExpIsSimple(e: FiExp) -> bool;
+	fsIsSimple(e: FsAll) -> bool;
+	fsIsAlmostSimple(x: FsAll, deg: int) -> bool;
 
 	// Count the number of nodes in AST
 	fiExpAstNodesCount(e: FiExp) -> int;
+	fsAstNodesCount(e: FsAll) -> int;
+
+	fiToplevelName(t: Maybe<FiToplevel>) -> string;
+
+	fiExp2stringShort(expr: FiExp) -> string;
+	fiExp2stringFull(expr: FiExp) -> string;
+
+	// Transform a flow file name into a cpp3 file name
+	fi2cpp3flowfile2cpp(flowfile: string) -> string;
+
+	// type parameter representation in c++ source
+	fi2cpp3typar2cpp(t: FiTypeParameter) -> string;
+
+	// type name representation in c++ source
+	fi2cpp3typename2cpp(name: string) -> string;
+
+	// global name (function or variable) representation in c++ source
+	fi2cpp3varname2cpp(name: string) -> string;
+
+	fi2cpp3StartOperationMessage(config: FiCpp3Config, verbosity: int, header: string, name: string) -> double;
+	fi2cpp3EndOperationMessage(config: FiCpp3Config, verbosity: int, header: string, name: string, start: double) -> void;
 }
 
-fiWrapWith(s : string, open: string, close: string) -> string {
+fiWrapWith(s : string, open: string, close: string, cfg: FiCpp3Config) -> string {
 	if (fiIsWrapedWith(s, open, close)) s else {
-		if (strlen(s) > 64 || strContains(s, "\n")) {
+		if ((cfg.debug || strlen(s) > 64 || strContains(s, "\n")) && !isSpace(s)) {
 			open + "\n" + strIndent(s) + "\n" + close;
 		} else {
 			open + s + close;
@@ -70,39 +94,20 @@ fiCheckIsWrapedWith(s : string, open: string, close: string, i: int, depth: int,
 	}
 }
 
-fiWrapWithPars(s : string) -> string {
-	fiWrapWith(s, "(", ")");
+fiWrapWithPars(s : string, cfg: FiCpp3Config) -> string {
+	fiWrapWith(s, "(", ")", cfg);
 }
 
-fiWrapWithBraces(s : string) -> string {
-	fiWrapWith(s, "{", "}");
+fiWrapWithBraces(s : string, cfg: FiCpp3Config) -> string {
+	fiWrapWith(s, "{", "}", cfg);
 }
 
-fiTypeTypars(acc : Set<FiTypeParameter>, type : FiType) -> Set<FiTypeParameter> {
-	switch (type) {
-		FiTypeVoid():       acc;
-		FiTypeBool():       acc;
-		FiTypeInt():        acc;
-		FiTypeDouble():     acc;
-		FiTypeString():     acc;
-		FiTypeFlow():       acc;
-		FiTypeNative():     acc;
-		FiTypeParameter(n): insertSet(acc, type);
-		FiTypeRef(rt):      fiTypeTypars(acc, rt);
-		FiTypeArray(at):    fiTypeTypars(acc, at);
-		FiTypeName(id, tp): fold(tp, acc, fiTypeTypars);
-		FiTypeFunction(args, rt): fold(args, fiTypeTypars(acc, rt), \ac, arg -> fiTypeTypars(ac, arg.type));
-	}
+fiWrapWithNamespace(name: string, s : string) -> string {
+	if (name == "") s else "namespace " + name + " {\n" + s + "\n}\n";
 }
 
-fiIsScalarType(t : FiType) -> bool {
-	switch (t) {
-		FiTypeVoid():   true;
-		FiTypeBool():   true;
-		FiTypeInt():    true;
-		FiTypeDouble(): true;
-		default:        false;
-	}
+fiMakeUsingStatement(name: string) -> string {
+	if (name == "") "" else "using namespace " + name + ";\n"
 }
 
 fiTransformTypars(t : FiType, transform : (FiTypeParameter) -> FiType) -> FiType {
@@ -171,27 +176,25 @@ varsDependencies(prog : FiProgram) -> Tree<string, Set<string>> {
 }
 
 fi2cpp3SaveFile(file: string, content: string, cfg: FiCpp3Config) -> void {
-	path = pathCombine(cfg.outputdir, file);
-	do_save = \-> {
-		ensureDirectoryExists(dirName(path));
-		if (!setFileContent(path, content)) {
+	if (!isConfigParameterSet(cfg.config.config, "cpp3-debug")) {
+		do_save = \-> if (!setFileContent(file, content)) {
 			fcPrintln("Failed to save " + file, cfg.config.threadId);
 		}
-	}
-	if (!fileExists(path)) {
-		if (cfg.config.verbose > 0) {
-			fcPrintln("Saving file: " + file, cfg.config.threadId);
-		}
-		do_save();
-	} else {
-		if (getFileContent(path) != content) {
-			if (cfg.config.verbose > 0) {
-				fcPrintln("Replacing file: " + file, cfg.config.threadId);
+		if (!fileExists(file)) {
+			if (cfg.verbose > 0) {
+				fcPrintln("Saving file: " + file, cfg.config.threadId);
 			}
 			do_save();
 		} else {
-			if (cfg.config.verbose > 0) {
-				fcPrintln("Keeping file: " + file, cfg.config.threadId);
+			if (getFileContent(file) != content) {
+				if (cfg.verbose > 0) {
+					fcPrintln("Replacing file: " + file, cfg.config.threadId);
+				}
+				do_save();
+			} else {
+				if (cfg.verbose > 0) {
+					fcPrintln("Keeping file: " + file, cfg.config.threadId);
+				}
 			}
 		}
 	}
@@ -252,5 +255,241 @@ fiExpAstNodesCount(e: FiExp) -> int {
 			fiExpAstNodesCount(ex) + 1;
 		}
 		default: 1;
+	}
+}
+
+fsIsSimple(x: FsAll) -> bool {
+	switch(x) {
+		FsIf(__,__,__,__,__):        false;
+		FsSwitch(__,__,cs,__,__):    false;
+		FsWrapExp(e,__,__):          fsIsSimple(e);
+		FsRet(e,__,__):              fsIsSimple(e);
+		FsTailCall(__,__,__):        true;
+		FsLet(__,__,__,__,__,__):    false;
+		FsFor(__,__,__,__,__,__):    false;
+		FsAssign(to, what,__,__,__): fsIsSimple(to) && fsIsSimple(what);
+		FsIncRc(__,__,__,__):        true;
+		FsDecRc(__,__,__,__):        true;
+		FsIntrinsicStat(__,__,__):   false;
+		FsClosure(__,lambda,__,__):  false;
+		FsLambda(__,__,__,__,__):    false;
+		FsCall(fn, args,__,__):
+			switch (fn) {
+				FsVarUse(__,__,__):  forall(args, fsIsSimple);
+				default:             false;
+			}
+		FsInlineExp(__,args,__,__):  forall(args, fsIsSimple);
+		FsVarUse(__,__,__):          true;
+		FsCallPrim(__,es,__,__):     forall(es, fsIsSimple);
+		FsCast(e,__,__,__):          fsIsSimple(e);
+		FsString(c,__,__):           true;
+		FsConst(c,__):               true;
+	}
+}
+
+fsIsAlmostSimple(x: FsAll, deg: int) -> bool {
+	if (deg <= 0) {
+		fsIsSimple(x);
+	} else {
+		fsIsSimple(x) || switch(x) {
+			FsIf(e, s1, s2,__,__):       fsIsSimple(e) && fsIsAlmostSimple(s1, deg - 1) && fsIsAlmostSimple(s2, deg - 1);
+			FsSwitch(__,__,cs,__,__):    forall(cs, \c -> fsIsAlmostSimple(c.body, deg - 1));
+			FsWrapExp(e,__,__):          fsIsSimple(e);
+			FsRet(e,__,__):              fsIsSimple(e);
+			FsTailCall(__,__,__):        true;
+			FsLet(__,__,e, s,__,__):     fsIsSimple(e) && fsIsAlmostSimple(s, deg - 1);
+			FsFor(__,__,__,__,__,__):    false;
+			FsAssign(to, what,__,__,__): fsIsSimple(to) && fsIsSimple(what);
+			FsIncRc(__,__,__,__):        true;
+			FsDecRc(__,__,__,__):        true;
+			FsIntrinsicStat(__,__,__):   false;
+			FsClosure(__,lambda,__,__):  false;
+			FsLambda(__,__,__,__,__):    false;
+			FsCall(fn, args,__,__):
+				switch (fn) {
+					FsVarUse(__,__,__):  forall(args, fsIsSimple);
+					default:             false;
+				}
+			FsInlineExp(__,args,__,__):  forall(args, fsIsSimple);
+			FsVarUse(__,__,__):          true;
+			FsCallPrim(__,es,__,__):     forall(es, fsIsSimple);
+			FsCast(e,__,__,__):          fsIsSimple(e);
+			FsString(c,__,__):           true;
+			FsConst(c,__):               true;
+		}
+	}
+}
+
+
+fsAstNodesCount(e: FsAll) -> int {
+	fsFold(e, 0, \acc,__ -> acc + 1, true);
+}
+
+fiToplevelName(mt: Maybe<FiToplevel>) -> string {
+	eitherMap(mt, \t -> t.name, "");
+}
+
+fiExp2stringShort(expr: FiExp) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	switch(expr) {
+		FiLambda(args, __, type, __): "\\" + superglue(args, \arg -> arg.name, ", ") + " -> ...";
+		FiCall(f, __, type, __):      fiExp2stringShort(f) + "(...)";
+		FiVar(name, type, __):        name;
+		FiLet(name, v_type, e1, e2,__, __): name + ":" + t2s(v_type) + "=" + fiExp2stringShort(e1);
+		FiIf(e1, e2, e3,__,__):   "if (" + fiExp2stringShort(e1) + ")";
+		FiSwitch(x,__,__,__,__): "switch(" + x.name + ")...";
+		FiCast(e1, from, to,__,__): "cast(" + fiExp2stringShort(e1) + ":" + t2s(from) + "->" + t2s(to) + ")";
+		FiSeq(es,__,__): "{...}";
+		FiCallPrim(op,__,__,__): toString(op);
+		FiRequire(__,__,__,__) : "require";
+		FiUnsafe(__,__,__,__) : "unsafe";
+		FiVoid(__): "{}";
+		FiDouble(v,__): d2s(v);
+		FiInt(v,__): i2s(v);
+		FiString(v,__) : "\"" + v + "\"";
+		FiBool(v,__) : b2s(v);
+	}
+}
+
+fiExp2stringFull(expr: FiExp) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	sl_test = \x -> !strContains(x, "\n") && strlen(x) < 64;
+	switch(expr) {
+		FiLambda(args, body, type, __): { 
+			body_s = fiExp2stringFull(body);
+			header = "\\" + superglue(args, \arg -> arg.name + " : " + t2s(arg.type), ", ") + " -> " + t2s(type.returnType) + " ";
+			if (!strContains(body_s, "\n") || startsWith(body_s, "{")) header + body_s else header + "{\n" + strIndent(body_s) + "\n}";
+		}
+		FiCall(f, args,__,__): {
+			args_s = map(args, fiExp2stringFull);
+			f_s = fiExp2stringFull(f);
+			s = f_s + "(" + strGlue(args_s, ", ") + ")";
+			if (sl_test(s)) s else {
+				f_s + "(\n" + strIndent(strGlue(args_s, ", ")) + "\n)"
+			}
+		}
+		FiVar(name,__,__): name;
+		FiLet(name, v_type, e1, e2,__, __): {
+			e1_s = fiExp2stringFull(e1);
+			if (!strContains(e1_s, "\n")) {
+				name + " : " + t2s(v_type) + " = " + e1_s + ";\n" + fiExp2stringFull(e2);
+			} else {
+				name + " : " + t2s(v_type) + " = {\n" + strIndent(e1_s) + "\n};\n" + fiExp2stringFull(e2);
+			}
+		}
+		FiIf(e1, e2, e3,__, __): {
+			e1_s = fiExp2stringFull(e1);
+			e2_s = fiExp2stringFull(e2);
+			e3_s = fiExp2stringFull(e3);
+			(if (sl_test(e1_s)) "if (" + e1_s + ") " else "if (\n" + strIndent(e1_s) + "\n) ") + 
+			(if (sl_test(e2_s)) e2_s else "{\n" + strIndent(e2_s) + "\n}") + " else " +
+			(if (sl_test(e3_s)) e3_s else "{\n" + strIndent(e3_s) + "\n}");
+		}
+		FiSwitch(x, __, cases,__, __): {
+			"switch (" + x.name + ") {\n" + 
+				strIndent(superglue(cases, \c -> {
+					body_s = fiExp2stringFull(c.body);
+					body_s1 = if (sl_test(body_s)) {
+						(if (endsWith(body_s, ";")) body_s else body_s + ";") 
+					} else {
+						"{\n" + strIndent(body_s) + "\n}";
+					}
+					c.struct + "(" + strGlue(c.argNames, ", ") + "): " + body_s1;
+				}, "\n")) +
+			"\n}";
+		}
+		FiCast(e1, from, to,__, __): "cast(" + fiExp2stringFull(e1) + " : " + t2s(from) + " -> " + t2s(to) + ")";
+		FiSeq(es,__, __): {
+			if (length(es) == 0) "{}" else 
+			if (length(es) == 1) fiExp2stringFull(es[0]) else {
+				"{\n" + strIndent(superglue(es, fiExp2stringFull, ";\n")) + "\n}";
+			}
+		}
+		FiCallPrim(op, es, type, __): {
+			fcPrim2s(op, map(es, fiExp2stringFull), type)
+		}
+		FiRequire(name, e,__, __) : "require...";
+		FiUnsafe(__,__,__,__) : "unsafe...";
+		FiVoid(__): "{}";
+		FiDouble(v,__): d2s(v);
+		FiInt(v, __): i2s(v);
+		FiString(v,__) : "\"" + escapeStr(v) + "\"";
+		FiBool(v,__) : b2s(v);
+	}
+}
+
+fcPrim2s(op: FcPrim, es: [string], type: FiType) -> string {
+	t2s = \t -> prettyFiType(dummyPretty, t, makeSet());
+	switch (op) {
+		FcOrPrim():  "(" + es[0] + " || " + es[1] + ")";
+		FcAndPrim(): "(" + es[0] + " && " + es[1] + ")";
+		FcNotPrim(): "!" + es[0];
+		FcEqPrim():  "(" + es[0] + " == " + es[1] + ")";
+		FcNePrim():  "(" + es[0] + " != " + es[1] + ")";
+		FcLePrim():  "(" + es[0] + " <= " + es[1] + ")";
+		FcGePrim():  "(" + es[0] + " >= " + es[1] + ")";
+		FcLtPrim():  "(" + es[0] + " < " + es[1] + ")";
+		FcGtPrim():  "(" + es[0] + " > " + es[1] + ")";
+		FcPlusPrim():  "(" + es[0] + " + " + es[1] + ")";
+		FcMinusPrim(): "(" + es[0] + " - " + es[1] + ")"; 
+		FcMulPrim():   "(" + es[0] + " * " + es[1] + ")";
+		FcDivPrim():   "(" + es[0] + " / " + es[1] + ")";
+		FcModPrim():   "(" + es[0] + " % " + es[1] + ")";
+		FcNegPrim():   "-" + es[0];
+		FcArrayPrim():   "[" + strGlue(es,  ", ") + "]";
+		FcIndexPrim():   es[0] + "[" + es[1] + "]";
+		FcDerefPrim():   "(*" +es[0] + ")";
+		FcRefPrim():     "ref " + es[0];
+		FcStructPrim(struct_name): {
+			struct_type = cast(type : FiType -> FiTypeName);
+			typars = if (struct_type.typeparameters == []) "" else 
+				"<" + superglue(struct_type.typeparameters, \tp -> t2s(tp), ", ") + ">";
+			struct_name + typars + "(" + strGlue(es, ", ") + ")";
+		}
+		FcFieldPrim(name): es[0] + "." + name;
+		FcAssignPrim(): es[0] + " := " + es[1];
+		FcSetMutablePrim(name): es[0] + "." + name + " := " + es[1];
+		FcCreateClosurePrim(structName, functionName): "FcCreateClosurePrim"; 
+		FcQuote(): "FcQuote";
+		FcUnquote(): "FcUnquote";
+	}
+}
+
+fi2cpp3flowfile2cpp(flowfile: string) -> string {
+	strReplace(flowfile, "/", "_");
+}
+
+fi2cpp3typar2cpp(t: FiTypeParameter) -> string {
+	"T" + i2s(strlen(t.n));
+}
+
+fi2cpp3typename2cpp(name: string) -> string {
+	"_" + name;
+}
+
+fi2cpp3varname2cpp(name: string) -> string {
+	"_" + name;
+}
+
+fi2cpp3StartOperationMessage(config: FiCpp3Config, verbosity: int, header: string, name: string) -> double {
+	if (config.verbose > 1 && config.verbose >= verbosity) {
+		if (config.verbose == verbosity) {
+			fcPrint(strRepeat("\t", verbosity - 1) + header + ": " + name + " ... ", config.threadId);
+		} else {
+			fcPrintln(strRepeat("\t", verbosity - 1) + header + ": " + name + " ... ", config.threadId);
+		}
+	}
+	timestamp();
+}
+
+fi2cpp3EndOperationMessage(config: FiCpp3Config, verbosity: int, header: string, name: string, start: double) -> void {
+	took = timestamp() - start;
+	if (config.verbose >= verbosity) {
+		done_msg = "done" + if (took >= 1.0) " in " + d2st(took/1000.0, 3) + "s." else ".";
+		if (config.verbose > 1 && config.verbose == verbosity) {
+			fcPrintln(done_msg, config.threadId);
+		} else {
+			fcPrintln(strRepeat("\t", verbosity - 1) + header + ": " + name + " " + done_msg, config.threadId);
+		}
 	}
 }

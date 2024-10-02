@@ -70,8 +70,6 @@ export {
 	// Arabic(RTL) versions. T*Dir are intended to use into Material. Generally, T*A versions are preferable.
 	TColsDir(t : [Tropic], isRTL : bool) -> Tropic;
 	TCols2Dir(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic;
-	TColsDirInvertedZorder(c : [Tropic], isRTL : bool) -> Tropic;
-	TCols2DirInvertedZorder(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic;
 	TColsA(t : [Tropic]) -> Tropic;
 	TCols2A(t1 : Tropic, t2 : Tropic) -> Tropic;
 
@@ -163,6 +161,9 @@ export {
 	TCenterY(b : Tropic) -> Tropic;
 	// Vertical centering inside the box
 	TCenterYIn(t : Tropic, box : Tropic) -> Tropic;
+	// Content align left inside the box if LTR, align right if RTL. Intended for temporary use.
+	TCenterYInA(t : Tropic, box : Tropic) -> Tropic;
+	TCenterYInDir(t : Tropic, box : Tropic, isRtl : bool) -> Tropic;
 
 	// Center in both directions
 	TCenter(b : Tropic) -> Tropic;
@@ -257,8 +258,9 @@ export {
 	// Similar to TCrop*, but doesn't forceably increase metric if it is less than given width/height
 	TLimitWidth(content : Tropic, width : Tropic) -> Tropic;
 	TLimitHeight(content : Tropic, height : Tropic) -> Tropic;
-	TLimitWidth2(content : Tropic, width : Transform<double>) -> Tropic;
-	TLimitHeight2(content : Tropic, height : Transform<double>) -> Tropic;
+	TLimitWidth2(content : Tropic, width : Transform<double>, enabled : Transform<bool>) -> Tropic;
+	TLimitHeight2(content : Tropic, height : Transform<double>, enabled : Transform<bool>) -> Tropic;
+	TLimitWidthHeight(content : Tropic, wh: Transform<WidthHeight>, enabled : Transform<bool>) -> Tropic;
 
 	// For backward compatibility
 	TCropSizeX(content : Tropic, width : Tropic) -> Tropic { TCropWidth(content, width) };
@@ -318,6 +320,7 @@ export {
 	TProportionLines(c : [Pair<Transform<double>, Tropic>]) -> Tropic;
 	TProportionCols(c : [Pair<Transform<double>, Tropic>]) -> Tropic;
 	TProportionBaselineCols(c : [Pair<Transform<double>, Tropic>]) -> Tropic;
+	TProportionBaselineColsA(c : [Pair<Transform<double>, Tropic>]) -> Tropic;
 	TProportionColsA(c : [Pair<Transform<double>, Tropic>], isRTL : bool) -> Tropic;
 
 	// Helpers to set available for only width or only height
@@ -386,7 +389,7 @@ export {
 
 	TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic;
 
-	TEvenGrid(content : [[Tropic]]) -> Tropic;
+	TEvenGrid(content : [[Tropic]], isRtl : bool) -> Tropic;
 
 	TConstructRenderable(constructors : [() -> () -> void], content : Tropic) -> Tropic;
 
@@ -419,7 +422,7 @@ export {
 
 	// Helper to move already rendered clip from one spot to another
 	// Automatically dettaches and reattaches to original clip if tropic passed to 'fn' is rendered anywhere
-	TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic;
+	TMoveClip(t : Tropic, customPosScale : Maybe<Transform<PositionScale>>, fn : (Tropic) -> void) -> Tropic;
 
 	// Draws content with 'canvas' renderer
 	// Works only in js with 'html' renderer, for other targets identical to regular clip
@@ -427,7 +430,7 @@ export {
 	TCanvas(content : Tropic) -> Tropic;
 
 
-	loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) -> void;
+	loadTPdfDocument(url : string, headers : [KeyValue], onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) -> void;
 
 	TPdfDocumentStyle ::= OnError;
 
@@ -473,6 +476,8 @@ export {
 	// setfn returns a function that recieves callback which gets base64 string when image is ready
 	// setfn returns None() if child is destroyed
 	TExtractPNG(t : Tropic, setfn : (fn : Maybe<((png : string) -> void) -> void>) -> void) -> Tropic;
+
+	TExtractPNG2(t : Tropic, ready : DynamicBehaviour<bool>, setfn : (fn : Maybe<((png : string) -> void) -> void>) -> void) -> Tropic;
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -622,23 +627,6 @@ TColsDir(t : [Tropic], isRTL : bool) -> Tropic {
 
 TCols2Dir(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic {
 	TColsDir([t1, t2], isRTL)
-}
-
-TColsDirInvertedZorder(c : [Tropic], isRTL : bool) -> Tropic {
-	len = length(c);
-	if (len == 0) TEmpty()
-	else if (len == 1) c[0]
-	else if (len == 2) TCols2DirInvertedZorder(c[0], c[1], isRTL)
-	else TCols2DirInvertedZorder(
-		TColsDirInvertedZorder(subrange(c, 0, len / 2), isRTL),
-		TColsDirInvertedZorder(subrange(c, len / 2, len - (len / 2)), isRTL),
-		isRTL
-	);
-}
-
-TCols2DirInvertedZorder(t1 : Tropic, t2 : Tropic, isRTL : bool) -> Tropic {
-	if (isRTL) TCopySize2(t2, \sz, c -> TGroup2(TCols2(sz, t1), t2))
-	else TCols2(t1, t2)
 }
 
 TColsA(t : [Tropic]) -> Tropic {
@@ -1241,7 +1229,15 @@ TCenterXIn(t : Tropic, box : Tropic) -> Tropic {
 }
 
 TCenterYIn(t : Tropic, box : Tropic) -> Tropic {
-	TTweak([TAlign(const(0.0), const(0.5))], t, box)
+	TCenterYInA(t, box)
+}
+
+TCenterYInA(t : Tropic, box : Tropic) -> Tropic {
+	TCenterYInDir(t, box, getDefaultRtl())
+}
+
+TCenterYInDir(t : Tropic, box : Tropic, isRtl : bool) -> Tropic {
+	TTweak([TAlign(const(b2d(isRtl)), const(0.5))], t, box)
 }
 
 TCenter(b : Tropic) -> Tropic {
@@ -1807,22 +1803,34 @@ TCropByOneMetricTropic(content : Tropic, size : Tropic, cropByWidth : bool, forc
 }
 
 TCropWidth2(content : Tropic, width : Transform<double>) -> Tropic {
-	TCropByOneMetric(content, width, true, true)
+	TCropByOneMetric(content, width, true, true, const(true))
 };
 
 TCropHeight2(content : Tropic, height : Transform<double>) -> Tropic {
-	TCropByOneMetric(content, height, false, true)
+	TCropByOneMetric(content, height, false, true, const(true))
 };
 
-TLimitWidth2(content : Tropic, width : Transform<double>) -> Tropic {
-	TCropByOneMetric(content, width, true, false)
+TLimitWidth2(content : Tropic, width : Transform<double>, enabled : Transform<bool>) -> Tropic {
+	TCropByOneMetric(content, width, true, false, enabled)
 };
 
-TLimitHeight2(content : Tropic, height : Transform<double>) -> Tropic {
-	TCropByOneMetric(content, height, false, false)
+TLimitHeight2(content : Tropic, height : Transform<double>, enabled : Transform<bool>) -> Tropic {
+	TCropByOneMetric(content, height, false, false, enabled)
 };
 
-TCropByOneMetric(content : Tropic, size : Transform<double>, cropByWidth : bool, force : bool) -> Tropic {
+TLimitWidthHeight(content : Tropic, wh: Transform<WidthHeight>, enabled : Transform<bool>) -> Tropic {
+	TLimitHeight2(
+		TLimitWidth2(
+			content,
+			fwidth(wh),
+			enabled
+		),
+		fheight(wh),
+		enabled
+	)
+};
+
+TCropByOneMetric(content : Tropic, size : Transform<double>, cropByWidth : bool, force : bool, enabled : Transform<bool>) -> Tropic {
 	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
 		c = t2a(content, parent, sheet, metricsOnly);
 		forceSize = \mtr -> if (force) size else fmin(size, mtr);
@@ -1836,12 +1844,14 @@ TCropByOneMetric(content : Tropic, size : Transform<double>, cropByWidth : bool,
 			if (metricsOnly)
 				FEmpty()
 			else
-				FCrop(
+				FCrop2(
 					zero,
 					zero,
 					metrics.width,
 					metrics.height,
-					c.form
+					enabled,
+					c.form,
+					captureCallstack()
 				);
 
 		if (cropByWidth)
@@ -2224,6 +2234,22 @@ TProportionBaselineCols(c : [Pair<Transform<double>, Tropic>]) -> Tropic {
 	|> TBaselineCols
 }
 
+TProportionBaselineColsA(c : [Pair<Transform<double>, Tropic>]) -> Tropic {
+	map(c, \t ->
+		TransformTAcc2(\t2a -> {
+				b1 = t.second |> t2a;
+
+				TAcc(b1 with
+					xFillers = t.first,
+					addFillers = const(false),
+					xConstant = false,
+				)
+			}
+		)
+	)
+	|> TBaselineColsA
+}
+
 TProportionColsA(c : [Pair<Transform<double>, Tropic>], isRTL : bool) -> Tropic {
 	map(c, \t ->
 		TransformTAcc2(\t2a -> {
@@ -2591,7 +2617,7 @@ TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic {
 	)
 }
 
-TEvenGrid(content : [[Tropic]]) -> Tropic {
+TEvenGrid(content : [[Tropic]], isRtl : bool) -> Tropic {
 	if (length(content) > 0 && length(content[0]) > 0)
 		TransformTAcc(\t2a, p, s, mo -> {
 			maxX = p.maxX;
@@ -2631,7 +2657,7 @@ TEvenGrid(content : [[Tropic]]) -> Tropic {
 			xFillers = generate(0, length(columnWidths), \i -> fmaxA(map(contentAcc, \c -> if (i < length(c)) c[i].xFillers else zero), 0.)) |> fmerge;
 			yFillers = map(contentAcc, \c -> fmaxA(map(c, \tacc -> tacc.yFillers), 0.)) |> fmerge;
 
-			realWidths = generate(0, length(columnWidths), \i -> fmaxA(map(contentAcc, \c -> if (i < length(c)) c[i].minWidth else zero), 0.));
+			realWidths = generate(0, length(columnWidths), \i -> fmaxA(map(contentAcc, \c -> if (i < length(c)) {if (isRtl) c[i].metrics.width else c[i].minWidth} else zero), 0.));
 			realHeights = map(contentAcc, \c -> fmaxA(map(c, \tacc -> tacc.metrics.height), 0.));
 
 			uns1 =
@@ -3018,9 +3044,16 @@ THTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> 
 	)
 }
 
-TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
-	TransformTAcc2(\t2a -> {
-		b = t2a(t);
+TMoveClip(t : Tropic, customPosScale : Maybe<Transform<PositionScale>>, fn : (Tropic) -> void) -> Tropic {
+	TransformTAcc(\t2a, pi0, st, mo -> {
+		useCustomTransformMatrix = make(false);
+		pi = eitherMap(customPosScale,
+			\cps -> TParentInfo(pi0 with transformMatrix =
+				fif(useCustomTransformMatrix, fselectLift(cps, positionScale2TransformMatrix), pi0.transformMatrix)
+			),
+			pi0
+		);
+		b = t2a(t, pi, st, mo);
 
 		TAcc(b with
 			form = FNativeForm(
@@ -3045,11 +3078,13 @@ TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
 									alive := true;
 									iter(rr.clips, \c -> addChild(parent, c));
 									nextDistinct(zorder, z2);
+									nextDistinct(useCustomTransformMatrix, true);
 
 									NativeRenderResult(
 										[parent],
 										\ -> {
 											nextDistinct(zorder, z);
+											nextDistinct(useCustomTransformMatrix, false);
 
 											if (^alive) {
 												iter(rr.clips, \c -> addChild(originalParent, c));
@@ -3096,7 +3131,7 @@ filterFPdfDocumentStyle(style : [TPdfDocumentStyle]) -> [FPdfDocumentStyle] {
 	)
 }
 
-loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) {
+loadTPdfDocument(url : string, headers : [KeyValue], onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) {
 	makeTViewFn = \document -> \page -> {
 		availableWH = makeWH();
 		metrics = make(FormMetrics(0.0, 0.0, 0.0, 0.0));
@@ -3119,6 +3154,7 @@ loadTPdfDocument(url : string, onLoad : (TPdfDocument) -> void, style : [TPdfDoc
 
 	loadFPdfDocument(
 		url,
+		headers,
 		\fPdfDocument -> {
 			onLoad(
 				TPdfDocument(
@@ -3297,8 +3333,6 @@ TPrintTarget(t : Tropic) -> Tropic {
 TPrintPages(t : Transform<[Tropic]>) -> Tropic {
 	printMode = make(false);
 	stageWH = makeWH();
-	pageWH = feither(TPrintPageSize, stageWH);
-	pageHeight = fheight(pageWH);
 
 	TConstruct(
 		[
@@ -3316,19 +3350,13 @@ TPrintPages(t : Transform<[Tropic]>) -> Tropic {
 			printMode,
 			TMutable(
 				fselect(
-					fmapi(t, \i, tt ->
+					fmap(t, \tt ->
 						TAccess(
 							[
 								ClassName("print-page")
 							],
-							TAccess(
-								[
-									TagName("div"), // To skip TAccesses optimization
-									ClassName("print-page-container"),
-									FAccessStyle("top", fselectLift(pageHeight, \ph -> d2s(ph * i2d(i)) + "px"))
-								],
 							TAvailable(tt, TIf(printMode, TSized(feither(TPrintPageSize, stageWH)), TFillXY()))
-						))
+						)
 					),
 					FLift(\tt -> TLines(tt))
 				)
@@ -3382,7 +3410,6 @@ TExtractHTML(t : Tropic, setfn : (fn : () -> string) -> void) -> Tropic {
 	})
 }
 
-
 TExtractPNG(t : Tropic, setfn : (fn : Maybe<((png : string) -> void) -> void>) -> void) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b = t2a(t);
@@ -3399,6 +3426,39 @@ TExtractPNG(t : Tropic, setfn : (fn : Maybe<((png : string) -> void) -> void>) -
 					addChild(parent, targetClip);
 					iter(rr.clips, \c -> addChild(targetClip, c));
 					setfn(Some(\cb -> timer(33, \ -> getClipSnapshot(parent, cb))));
+
+					NativeRenderResult(
+						[parent],
+						\ -> {
+							setfn(None());
+							applyall(rr.disposers);
+						}
+					)
+				}
+			)
+		)
+	})
+}
+
+TExtractPNG2(t : Tropic, ready : DynamicBehaviour<bool>, setfn : (fn : Maybe<((png : string) -> void) -> void>) -> void) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		b = t2a(t);
+
+		TAcc(b with
+			form = FNativeForm(
+				t,
+				const(FormMetrics(0., 0., 0., 0.)),
+				\ -> b.form,
+				\__, z, __ -> {
+					rr = renderFForm(b.form, const(z));
+					parent = makeClip();
+					targetClip = makeClip();
+					addChild(parent, targetClip);
+					iter(rr.clips, \c -> addChild(targetClip, c));
+					setfn(Some(\cb -> executeAfter(
+						\ -> getValue(ready),
+						\ -> getClipSnapshot(parent, cb)
+					)));
 
 					NativeRenderResult(
 						[parent],

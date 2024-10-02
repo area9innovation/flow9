@@ -1,5 +1,6 @@
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/incremental/fi_type_unify;
+import tools/flowc/manipulation/common;
 
 export {
 	// Use type parameters of type name in struct s (substitute into arguments)
@@ -17,21 +18,56 @@ export {
 	// Map two cases of a typename: a struct and a union
 	fiMapTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> ?, fn_union: (FiTypeUnion) -> ?, err: (FiTypeName) -> ?) -> ?;
 
+	// Same as fiMapTypeName, but don't consider type parameters - use default from definition
+	fiMapTypeWithName(name: string, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> ?, fn_union: (FiTypeUnion) -> ?, err: (string) -> ?) -> ? ;
+
 	// Get all typenames used in a struct or union definition
 	fiStructOrUnionTypenames(tp: FiStructOrUnion, acc: Set<FiTypeName>) -> Set<FiTypeName>;
 
 	// Get all typenames used in a type
 	fiTypeTypenames(tp: FiType, acc: Set<FiTypeName>) -> Set<FiTypeName>;
+
+	// Check if an expression is like:  `x.f1.f2.f3`
+	fiExpIsNestedField(e: FiExp) -> bool;
+
+	// Convert types to type parameters. Used to take typars of FiTypeStruct/FiTypeUnion.
+	fiTypes2typars(ts: [FiType]) -> [FiTypeParameter];
+
+	// Create a new variable with a given prefix not occurring in global names
+	fiMakeNewVar(pref: string, v: string, locals: Tree<string, FiVar>, names: FiGlobalNames) -> string;
+
+	// Create a new variable with a given prefix not occurring in global names starting with index i
+	fiMakeNewVari(pref: string, v: string, locals: Tree<string, FiVar>, names: FiGlobalNames, i: int) -> string;
+
+	// Sets a `start` field of an expression.
+	fiSetExpStart(e : FiExp, s: int) -> FiExp;
+
+	// In case `e` may be obtained from `pattern` by substitution of vars to some expressions, this substituion is returned.
+	fiMatchExps(pattern: FiExp, e: FiExp, acc: Tree<string, FiExp>) -> Maybe<Tree<string, FiExp>>;
+
+	// Simple expression complexity measure
+	fiCountAstNodes(e: FiExp) -> int;
+
+	// Equality up to AST structure. Such fields as `start` or `type` may differ.
+	fiEqualExps(e1: FiExp, e2: FiExp) -> bool;
+
+	// A helper function, used to find cases of `<fn>(....)`
+	fiDetectCall(e: FiExp, fn: string) -> Maybe<FiCall>;
+
+	// This function tries to lower flow types to particular and if succeeds, outputs the unified result
+	// E.g.: from `S1<flow, ??>` and `S1<S2<?>, flow>` it will return `S1<S2<?>, ??>`,
+	fiLowerFlowTypes(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType>;
 }
 
 fiSpecializeStruct(tn: FiTypeName, s: FiTypeStruct) -> FiTypeStruct {
+	if (length(tn.typeparameters) != length(s.typars)) {
+		fail("length of struct typeparameters mismatch with length of typename typeparameters: " + i2s(length(s.typars)) + " != " + i2s(length(tn.typeparameters)) + " (length(tn.typeparameters))\n" +
+			"struct: " + pretFiStructOrUnion(s) + ", typename: " + pretFiType(tn)
+		);
+	}
 	typars_subst = foldi(s.typars, makeTree(), \i, acc, tp -> 
 		switch (tp) {
-			FiTypeParameter(nm): {
-				if (i < length(tn.typeparameters)) {
-					setTree(acc, nm, tn.typeparameters[i]);
-				} else acc
-			}
+			FiTypeParameter(nm): setTree(acc, nm, tn.typeparameters[i]);
 			default: fail0("must be FiTypeParameter, got: " + toString(tp));
 		}
 	);
@@ -45,7 +81,17 @@ fiSpecializeStruct(tn: FiTypeName, s: FiTypeStruct) -> FiTypeStruct {
 fiSpecializeUnion(tn: FiTypeName, u: FiTypeUnion) -> FiTypeUnion {
 	typars_subst = foldi(u.typeparameters, makeTree(), \i, acc, tp -> 
 		switch (tp) {
-			FiTypeParameter(nm): setTree(acc, nm, tn.typeparameters[i]);
+			FiTypeParameter(nm): {
+				if (i < length(tn.typeparameters)) {
+					setTree(acc, nm, tn.typeparameters[i]);
+				} else {
+					/*fail(
+						"Invalid index of type parameter: " + i2s(i) + ", type: " + pretFiType(tn) + "\n" +
+						"union: " + pretFiStructOrUnion(u)
+					);*/
+					acc;
+				}
+			}
 			default: fail0("must be FiTypeParameter, got: " + toString(tp) + ", union: " + u.name);
 		}
 	);
@@ -105,6 +151,24 @@ fiMapTypeName(tn: FiTypeName, names: FiGlobalNames, fn_struct: (FiTypeStruct) ->
 	}
 }
 
+fiMapTypeWithName(name: string, names: FiGlobalNames, fn_struct: (FiTypeStruct) -> ?, fn_union: (FiTypeUnion) -> ?, err: (string) -> ?) -> ? {
+	switch (lookupTree(names.structs, name)) {
+		Some(struct): {
+			fn_struct(struct);
+		}
+		None(): {
+			switch (lookupTree(names.unions, name)) {
+				Some(union): {
+					fn_union(union);
+				}
+				None(): {
+					err(name);
+				}
+			}
+		}
+	}
+}
+
 fiStructOrUnionTypenames(type: FiStructOrUnion, acc: Set<FiTypeName>) -> Set<FiTypeName> {
 	switch (type) {
 		FiTypeUnion(__, typars, typenames,__): {
@@ -144,5 +208,501 @@ fiTypeTypenames(type: FiType, acc: Set<FiTypeName>) -> Set<FiTypeName> {
 		FiTypeString():     acc;
 		FiTypeFlow():       acc;
 		FiTypeNative():     acc;
+	}
+}
+
+fiExpIsNestedField(e: FiExp) -> bool {
+	switch (e) {
+		FiVar(__,__,__): true;
+		FiCallPrim(op, es,__,__): {
+			switch (op) {
+				FcFieldPrim(__): fiExpIsNestedField(es[0]);
+				default: false;
+			}
+		}
+		default: false;
+	}
+}
+
+fiTypes2typars(ts: [FiType]) -> [FiTypeParameter] {
+	map(ts, \t -> switch (t) {
+		FiTypeParameter(__): t;
+		default: fail0("must be a type parameter, got: " + pretFiType(t));
+	})
+}
+
+fiMakeNewVar(pref: string, v: string, locals: Tree<string, FiVar>, names: FiGlobalNames) -> string {
+	fiMakeNewVari(pref, v, locals, names, 0);
+}
+
+fiMakeNewVari(pref: string, v: string, locals: Tree<string, FiVar>, names: FiGlobalNames, i: int) -> string {
+	w = pref + v + "_" + i2s(i);
+	if (!containsKeyTree(locals, w) && !containsKeyTree(names.toplevel, w)) w else fiMakeNewVari(pref, v, locals, names, i + 1);
+}
+
+fiSetExpStart(e : FiExp, s: int) -> FiExp {
+	switch(e) {
+		FiLambda(__,__,__, __):   FiLambda(e with start = s);
+		FiCall(__,__,__,__):      FiCall(e with start = s);
+		FiLet(__,__,__,__,__,__): FiLet(e with start = s);
+		FiIf(__,__,__,__, __):    FiIf(e with start = s);
+		FiSwitch(__,__,__,__,__): FiSwitch(e with start = s);
+		FiCast(__,__,__,__,__):   FiCast(e with start = s);
+		FiSeq(__,__,__):          FiSeq(e with start = s);
+		FiCallPrim(__,__,__,__):  FiCallPrim(e with start = s);
+		FiRequire(__,__,__,__):   FiRequire(e with start = s);
+		FiUnsafe(__,__,__,__):    FiUnsafe(e with start = s);
+		FiVar(__,__,__):          FiVar(e with start = s);
+		FiVoid(__):       FiVoid(e with start = s);
+		FiDouble(__,__):  FiDouble(e with start = s);
+		FiInt(__,__):     FiInt(e with start = s);
+		FiString(__,__):  FiString(e with start = s);
+		FiBool(__,__):    FiBool(e with start = s);
+	}
+}
+
+fiMatchExps(pattern: FiExp, e: FiExp, acc: Tree<string, FiExp>) -> Maybe<Tree<string, FiExp>> {
+	match_es = \p_es, e_es -> if (length(p_es) != length(e_es)) None() else {
+		foldi(p_es, Some(acc), \i, ac, p_e -> maybeBind(ac, \s -> fiMatchExps(p_e, e_es[i], s)));
+	}
+	switch (pattern) {
+		FiLambda(p_args, p_body,__, __): {
+			switch (e) {
+				FiLambda(e_args, e_body,__,__):
+					if (p_args != e_args) None() else fiMatchExps(p_body, e_body, acc);
+				default: None();
+			}
+		}
+		FiCall(p_f,p_args,__,__): {
+			switch (e) {
+				FiCall(e_f,e_args,__,__): 
+					match_es(
+						arrayPush(p_args, p_f),
+						arrayPush(e_args, e_f)
+					);
+				default: None();
+			}
+		}
+		FiLet(p_v,__,p_e1, p_e2,__,__): {
+			switch (e) {
+				FiLet(e_v,__,e_e1, e_e2,__,__):
+					if (p_v != e_v) None() else {
+						match_es(
+							[p_e1, p_e2],
+							[e_e1, e_e2]
+						);
+					}
+				default: None();
+			}
+		}
+		FiIf(p_e1, p_e2, p_e3,__, __): {
+			switch (e) {
+				FiIf(e_e1, e_e2, e_e3,__, __):
+					match_es(
+						[p_e1, p_e2, p_e3],
+						[e_e1, e_e2, e_e3]
+					);
+				default: None();
+			}
+		}
+		FiSwitch(p_v,__,p_cs,__,__): {
+			switch (e) {
+				FiSwitch(e_v,__,e_cs,__,__):
+					match_es(
+						arrayPush(map(p_cs, \c -> c.body), p_v),
+						arrayPush(map(e_cs, \c -> c.body), e_v)
+					);
+				default: None();
+			}
+		}
+		FiCast(p_e, p_from, p_to,__,__): {
+			switch (e) {
+				FiCast(e_e, e_from, e_to,__,__):
+					if (!(fiEqualTypes(p_from, e_from) && fiEqualTypes(p_to, e_to))) None() else
+					fiMatchExps(p_e, e_e, acc);
+				default: None();
+			}
+		}
+		FiSeq(p_es,__,__): {
+			switch (e) {
+				FiSeq(e_es,__,__):
+					match_es(p_es, e_es);
+				default: None();
+			}
+		}
+		FiCallPrim(p_op, p_es,__,__): {
+			switch (e) {
+				FiCallPrim(e_op, e_es,__,__):
+					if (p_op != e_op) None() else match_es(p_es, e_es);
+				default: None();
+			}
+		}
+		FiRequire(p_file, p_e,__,__): {
+			switch (e) {
+				FiRequire(e_file, e_e,__,__):
+					if (p_file != e_file) None() else fiMatchExps(p_e, e_e, acc);
+				default: None();
+			}
+		}
+		FiUnsafe(p_name, p_e,__,__): {
+			switch (e) {
+				FiUnsafe(e_name, e_e,__,__):
+					if (p_name != e_name) None() else fiMatchExps(p_e, e_e, acc);
+				default: None();
+			}
+		}
+		FiVoid(__): {
+			switch (e) {
+				FiVoid(__): Some(acc);
+				default: None();
+			}
+		}
+		FiDouble(p_v,__): {
+			switch (e) {
+				FiDouble(e_v,__): if (p_v == e_v) Some(acc) else None();
+				default: None();
+			}
+		}
+		FiInt(p_v,__): {
+			switch (e) {
+				FiInt(e_v,__): if (p_v == e_v) Some(acc) else None();
+				default: None();
+			}
+		}
+		FiString(p_v,__): {
+			switch (e) {
+				FiString(e_v,__): if (p_v == e_v) Some(acc) else None();
+				default: None();
+			}
+		}
+		FiBool(p_v,__): {
+			switch (e) {
+				FiBool(e_v,__): if (p_v == e_v) Some(acc) else None();
+				default: None();
+			}
+		}
+		FiVar(v,__,__): {
+			Some(setTree(acc, v, e));
+		}
+	}
+}
+
+fiCountAstNodes(e: FiExp) -> int {
+	fiFoldExp(e, 0, \x,__,acc -> switch (x) {
+		FiVar(__,__,__): acc;
+		default: acc + 1;
+	}, AstTraverseOrder(true, true));
+}
+
+fiEqualExps(p: FiExp, e: FiExp) -> bool {
+	eq_es = \p_es, e_es -> (length(p_es) == length(e_es)) && forall(
+		zipWith(p_es, e_es, \x, y -> Pair(x, y)),
+		\q -> fiEqualExps(q.first, q.second)
+	);
+	do_job = \-> switch (p) {
+		FiLambda(p_args, p_body,__, __): {
+			switch (e) {
+				FiLambda(e_args, e_body,__,__):
+					(length(p_args) == length(e_args)) && fiEqualExps(p_body, e_body);
+				default: false;
+			}
+		}
+		FiCall(p_f,p_args,__,__): {
+			switch (e) {
+				FiCall(e_f,e_args,__,__): 
+					eq_es(
+						arrayPush(p_args, p_f),
+						arrayPush(e_args, e_f)
+					);
+				default: false;
+			}
+		}
+		FiLet(p_v,__,p_e1, p_e2,__,__): {
+			switch (e) {
+				FiLet(e_v,__,e_e1, e_e2,__,__):
+					(p_v == e_v) && eq_es(
+						[p_e1, p_e2],
+						[e_e1, e_e2]
+					);
+				default: false;
+			}
+		}
+		FiIf(p_e1, p_e2, p_e3,__, __): {
+			switch (e) {
+				FiIf(e_e1, e_e2, e_e3,__, __):
+					eq_es(
+						[p_e1, p_e2, p_e3],
+						[e_e1, e_e2, e_e3]
+					);
+				default: false;
+			}
+		}
+		FiSwitch(p_v,__,p_cs,__,__): {
+			switch (e) {
+				FiSwitch(e_v,__,e_cs,__,__):
+					eq_es(
+						arrayPush(map(p_cs, \c -> c.body), p_v),
+						arrayPush(map(e_cs, \c -> c.body), e_v)
+					);
+				default: false;
+			}
+		}
+		FiCast(p_e, p_from, p_to,__,__): {
+			switch (e) {
+				FiCast(e_e, e_from, e_to,__,__):
+					fiEqualTypes(p_from, e_from) && fiEqualTypes(p_to, e_to) &&
+					fiEqualExps(p_e, e_e);
+				default: false;
+			}
+		}
+		FiSeq(p_es,__,__): {
+			switch (e) {
+				FiSeq(e_es,__,__):
+					eq_es(p_es, e_es);
+				default: {
+					if (length(p_es) != 1) false else {
+						fiEqualExps(p_es[0], e);
+					}
+				}
+			}
+		}
+		FiCallPrim(p_op, p_es,__,__): {
+			switch (e) {
+				FiCallPrim(e_op, e_es,__,__):
+					(p_op == e_op) && eq_es(p_es, e_es);
+				default: false;
+			}
+		}
+		FiRequire(p_file, p_e,__,__): {
+			switch (e) {
+				FiRequire(e_file, e_e,__,__):
+					(p_file == e_file) && fiEqualExps(p_e, e_e);
+				default: false;
+			}
+		}
+		FiUnsafe(p_name, p_e,__,__): {
+			switch (e) {
+				FiUnsafe(e_name, e_e,__,__):
+					(p_name == e_name) && fiEqualExps(p_e, e_e);
+				default: false;
+			}
+		}
+		FiVoid(__): {
+			switch (e) {
+				FiVoid(__): true;
+				default: false;
+			}
+		}
+		FiDouble(p_v,__): {
+			switch (e) {
+				FiDouble(e_v,__): (p_v == e_v);
+				default: false;
+			}
+		}
+		FiInt(p_v,__): {
+			switch (e) {
+				FiInt(e_v,__): (p_v == e_v);
+				default: false;
+			}
+		}
+		FiString(p_v,__): {
+			switch (e) {
+				FiString(e_v,__): (p_v == e_v);
+				default: false;
+			}
+		}
+		FiBool(p_v,__): {
+			switch (e) {
+				FiBool(e_v,__): (p_v == e_v);
+				default: false;
+			}
+		}
+		FiVar(p_v,__,__): {
+			switch (e) {
+				FiVar(e_v,__,__): (p_v == e_v);
+				default: false;
+			}
+		}
+	}
+	switch (e) {
+		FiSeq(e_es,__,__): {
+			do_job() || (length(e_es) == 1 && fiEqualExps(p, e_es[0]));
+		}
+		default: do_job();
+	}
+}
+
+fiDetectCall(e: FiExp, name: string) -> Maybe<FiCall> {
+	switch (e) {
+		FiCall(f, args,__,__): switch (f) {
+			FiVar(f_name,__,__): {
+				if (f_name == name) {
+					Some(e);
+				} else {
+					None();
+				}
+			}
+			default: None();
+		}
+		default: None();
+	}
+}
+
+fiLowerFlowTypes(t1: FiType, t2: FiType, names: FiGlobalNames) -> Maybe<FiType> {
+	maybeMap(fiDoLowerFlowTypes(t1, t2, makeTree(), names), \p -> p.first);
+}
+
+fiDoLowerFlowTypes(t1: FiType, t2: FiType, sub: Tree<string, FiType>, names: FiGlobalNames) -> Maybe<Pair<FiType, Tree<string, FiType>>> {
+	flow_param = \-> switch (t2) {
+		FiTypeFlow(): {
+			Some(Pair(t1, sub));
+		}
+		FiTypeParameter(n): {
+			switch (lookupTree(sub, n)) {
+				Some(t3): {
+					if (!fiEqualTypes(t3, t1) || fiTypeContainsTypar(t1, n)) None() else {
+						Some(Pair(t1, sub));
+					}
+				}
+				None(): {
+					Some(Pair(t1, setTree(sub, n, t1)));
+				}
+			}
+		}
+		default: None();
+	}
+	eq_tp = \-> if (fiEqualTypes(t1, t2)) Some(Pair(t1, sub)) else flow_param();
+	switch (t1) {
+		FiTypeRef(rt1): {
+			switch (t2) {
+				FiTypeRef(rt2): {
+					maybeMap(fiDoLowerFlowTypes(rt1, rt2, sub, names), \p -> Pair(FiTypeRef(p.first), p.second));
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeArray(at1): {
+			switch (t2) {
+				FiTypeArray(at2): {
+					maybeMap(fiDoLowerFlowTypes(at1, at2, sub, names), \p -> Pair(FiTypeArray(p.first), p.second));
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeName(id1, tps1): {
+			switch (t2) {
+				FiTypeName(id2, tps2): {
+					if (id1 == id2) {
+						if (length(tps1) != length(tps2)) None() else {
+							maybeMap(
+								foldi(tps1, Some(Pair([], sub)), \i, acc, tp1 ->
+									maybeBind(acc, \p ->
+										maybeMap(fiDoLowerFlowTypes(tp1, tps2[i], p.second, names), \q ->
+											Pair(arrayPush(p.first, q.first), q.second)
+										)
+									)
+								),
+								\p -> Pair(FiTypeName(id1, p.first), p.second)
+							)
+						}
+					} else {
+						switch (lookupTree(names.unions, id1)) {
+							Some(un1): {
+								switch (lookupTree(names.unions, id2)) {
+									Some(un2): {
+										un1_names = buildSet(map(un1.typenames, \tn -> tn.name));
+										un2_names = buildSet(map(un1.typenames, \tn -> tn.name));
+										if (isEmptySet(differenceSets(un2_names, un1_names))) {
+											Some(Pair(t1, sub));
+										} else if (isEmptySet(differenceSets(un1_names, un2_names))) {
+											Some(Pair(t2, sub));
+										} else {
+											println("Typenames are incomparable: '" + id1 + "' and '" + id2 + "'\n" + 
+												"un1.typenames: [" + superglue(un1.typenames, \tn -> tn.name, ", ") + "]\n" +
+												"un2.typenames: [" + superglue(un2.typenames, \tn -> tn.name, ", ") + "]\n"
+											);
+											None();
+										}
+									}
+									None(): Some(Pair(t1, sub));
+								}
+							}
+							None(): {
+								switch (lookupTree(names.unions, id2)) {
+									Some(un2): Some(Pair(t2, sub));
+									None(): None();
+								}
+							}
+						}
+					}
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeFunction(as1, rt1): {
+			switch (t2) {
+				FiTypeFunction(as2, rt2): {
+					if (length(as1) != length(as2)) None() else {
+						maybeBind(fiDoLowerFlowTypes(rt1, rt2, sub, names), \p ->
+							maybeMap(
+								foldi(as1, Some(Pair([], p.second)), \i, acc, a1 ->
+									maybeBind(acc, \q ->
+										maybeMap(fiDoLowerFlowTypes(a1.type, as2[i].type, q.second, names), \r ->
+											Pair(
+												arrayPush(q.first,
+													FiFunArg(if (a1.name != "" && a1.name != "__") a1.name else as2[i].name, r.first)
+												),
+												r.second
+											)
+										)
+									)
+								),
+								\t -> Pair(FiTypeFunction(t.first, p.first), t.second)
+							)
+						);
+					}
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeParameter(n1): {
+			switch (t2) {
+				FiTypeParameter(n2): {
+					if (n1 == n2) Some(Pair(t1, sub)) else { 
+						switch (lookupTree(sub, n1)) {
+							Some(nt1): {
+								switch (lookupTree(sub, n2)) {
+									Some(nt2): {
+										if (!fiEqualTypes(nt1, nt2) || fiTypeContainsTypar(nt1, n2) || fiTypeContainsTypar(nt2, n1)) None() else {
+											Some(Pair(nt1, sub));
+										}
+									}
+									None(): {
+										if (fiTypeContainsTypar(nt1, n2)) None() else {
+											Some(Pair(nt1, setTree(sub, n2, nt1)));
+										}
+									}
+								}
+							}
+							None(): {
+								switch (lookupTree(sub, n2)) {
+									Some(nt2): {
+										if (fiTypeContainsTypar(nt2, n1)) None() else {
+											Some(Pair(nt2, setTree(sub, n1, nt2)));
+										}
+									}
+									None(): {
+										Some(Pair(t1, setTree(sub, n2, t1)));
+									}
+								}
+							}
+						}
+					}
+				}
+				default: flow_param();
+			}
+		}
+		FiTypeFlow(): Some(Pair(t2, sub));
+		default: eq_tp();
 	}
 }

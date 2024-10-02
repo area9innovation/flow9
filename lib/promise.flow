@@ -4,11 +4,7 @@ Promise
 -------
 
 The core idea behind promises is that a promise represents the result of an asynchronous operation.
-A promise is in one of three different states:
-
-	pending - The initial state of a promise.
-	fulfilled - The state of a promise representing a successful operation.
-	rejected - The state of a promise representing a failed operation.
+The async operation can be fulfilled with a value (?) or rejected with an value (??)
 
 Three main operations are `then`, `catch` and `done`. Use `then` whenever you're going to do something
 with the result (even if that's just waiting for it to finish), use `catch` whenever you're going to
@@ -51,12 +47,11 @@ This library gets good reviews:
 import timer;
 
 export {
-	Promise : (
-		f : (/* fulfill */ (?) -> void, /* reject */(??) -> void) -> void
+	Promise(
+		f : (fulfill: (?) -> void, reject: (??) -> void) -> void
 	);
 
-	// The convention is f you don't need to return anything when promise is fulfilled return 0.
-
+	// You can not make a promise that gives void, so use either int, None or JsonNull.
 	// The `done` corresponding callback is triggered when the promise is fulfilled or rejected
 	doneP(promise : Promise<?, ??>, fulfill : (?) -> void, reject : (??) -> void) -> void;
 	// The `then` callback is triggered when the promise is fulfilled
@@ -66,8 +61,13 @@ export {
 
 	// The `all` function takes an array of promises and fires one callback once they are
 	// all fulfilled or as soon as one of them is rejected.
+	// In Java the allP will make threads if there are many promises. In Javascript a timer is used, this might have UI benefits.
 	allP(promises : [Promise<?, ??>]) -> Promise<[?], ??>;
 	allPchunked(promises : [Promise<?, ??>], chunkSize : int) -> Promise<[?], ??>;
+
+	// Like allP, but this will not use timers or threads, it also a avoids a deep call stack.
+	// In a browser there might be UI responsivenes benefits with using appP or allPchunked.
+	allPromises(promises : [Promise<?, ??>]) -> Promise<[?], ??>;
 
 	// Parallel version of `all`.
 	parallelP(promises : [Promise<?, ??>]) -> Promise<[?], ??>;
@@ -178,14 +178,49 @@ allP0(promises : [Promise<?, ??>], idx : int, acc : List<?>, fulfill : ([?]) -> 
 				// For a very big number of promises we can get a very big stack of calls, and it might easily crash (especially in FF),
 				// so let's defer once in a while, it might also let browser redraw UI, so it doesn't look frozen
 				if ((chunkSize == 0 && idx % 0x40 == 0x3F) || (chunkSize != 0 && idx % chunkSize == chunkSize - 1)) {
-					// We use here a sustainable timer because we want it to complete the promise even if a main thread is already shut down.
-					sustainableTimer(0, \ -> allP0(promises, idx+1, Cons(result, acc), fulfill, reject, chunkSize))
+					deferred(\ -> allP0(promises, idx+1, Cons(result, acc), fulfill, reject, chunkSize))
 				} else {
 					allP0(promises, idx+1, Cons(result, acc), fulfill, reject, chunkSize)
 				}
 			},
 			reject
 		)
+	}
+}
+
+allPromises(promises : [Promise<?, ??>]) -> Promise<[?], ??>
+{
+	ps: int = length(promises);
+
+	if (ps == 0) {
+		// No results, success with empty list
+		Promise(\fulfill: ([?]) -> void, reject: (??) -> void -> {
+			fulfill([])
+		});
+	} else if (ps == 1) {
+		// One result, success with one element list
+		Promise(\fulfill: ([?]) -> void, reject: (??) -> void -> {
+			promises[0].f(
+				\result: ? -> fulfill([result]),
+				reject
+			);
+		});
+	} else {
+		psHalf: int = ps / 2;
+
+		left: [Promise<?, ??>] = take(promises, psHalf); // "take" does not include the element at index psHalf.
+		Promise(\fulfill: ([?]) -> void, reject: (??) -> void -> {
+			allPromises(left).f(
+				\leftResults: [?] -> {
+					right: [Promise<?, ??>] = tailFrom(promises, psHalf); // "tailFrom" does include the element at index psHalf.
+					allPromises(right).f(
+						\rightResults: [?] -> fulfill(concat(leftResults, rightResults)),
+						reject
+					);
+				},
+				reject
+			);
+		});
 	}
 }
 

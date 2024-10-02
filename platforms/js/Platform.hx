@@ -39,7 +39,9 @@ class Platform {
 
 	public static var isIEMobile : Bool = ~/iemobile/i.match(Browser.window.navigator.userAgent);
 	public static var isAndroid : Bool = ~/android/i.match(Browser.window.navigator.userAgent);
-	public static var isIOS : Bool = ~/ipad|iphone|ipod/i.match(Browser.window.navigator.userAgent) || untyped HaxeRuntime.typeof(navigator.standalone) != 'undefined' || navigator.platform == 'MacIntel' && navigator.maxTouchPoints > 1 && !window.MSStream;
+	public static var isIOS : Bool = ~/ipad|iphone|ipod/i.match(Browser.window.navigator.userAgent)
+		|| (untyped HaxeRuntime.typeof(navigator.standalone) != 'undefined' && !!Browser.window.navigator.standalone)
+		|| (Browser.window.navigator.platform == 'MacIntel' && Browser.window.navigator.maxTouchPoints > 1 && untyped !Browser.window.MSStream);
 	public static var isMobile : Bool = ~/webOS|BlackBerry|Windows Phone/i.match(Browser.window.navigator.userAgent) || isIEMobile || isAndroid || isIOS;
 	public static var isRetinaDisplay : Bool = getIsRetinaDisplay();
 	public static var isHighDensityDisplay : Bool = isRetinaDisplay || getIsHighDensityDisplay();
@@ -76,6 +78,12 @@ class Platform {
 	private static function getIsHighDensityDisplay(){
 		return untyped __js__("((window.matchMedia && (window.matchMedia('only screen and (min-resolution: 124dpi), only screen and (min-resolution: 1.3dppx), only screen and (min-resolution: 48.8dpcm)').matches || window.matchMedia('only screen and (-webkit-min-device-pixel-ratio: 1.3), only screen and (-o-min-device-pixel-ratio: 2.6/2), only screen and (min--moz-device-pixel-ratio: 1.3), only screen and (min-device-pixel-ratio: 1.3)').matches)) || (window.devicePixelRatio && window.devicePixelRatio > 1.3))");
 	}
+
+	private static function getIsWindows() { return isWindows; }
+	private static function getIsMacOS() { return isMacintosh; }
+	private static function getIsLinux() { return isLinux; }
+	private static function getIsAndroid() { return isAndroid; }
+	private static function getIsIos() { return isIOS; }
 #end
 }
 

@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <assert.h>
+#include <random>
 #include "CommonTypes.h"
 #ifndef _MSC_VER
 #include <unistd.h>
@@ -1265,6 +1266,8 @@ private:
     // Is used by both natives strIndexOf & strRangeIndexOf
     static int strRangeIndexOf(const unicode_char *pstr, const unicode_char *psub, unsigned l1, unsigned l2, unsigned start, unsigned end);
     static StackSlot setFileContentHelper(ByteCodeRunner*,StackSlot*,void (*processor)(int nbytes, const unicode_char * pdata, uint8_t * bytes));
+    static std::uniform_real_distribution<double> random_dist;
+    static std::mt19937 random_gen;
  public:
     static StackSlot mapi(ByteCodeRunner*,StackSlot*);
     static StackSlot map(ByteCodeRunner*,StackSlot*);
@@ -1308,6 +1311,7 @@ private:
     static StackSlot removeAllKeyValues(ByteCodeRunner*,StackSlot*);
     static StackSlot getKeysList(ByteCodeRunner*,StackSlot*);
     static StackSlot removeKeyValue(ByteCodeRunner*,StackSlot*);
+    static StackSlot generate(ByteCodeRunner*,StackSlot*);
     static StackSlot enumFromTo(ByteCodeRunner*,StackSlot*);
     static StackSlot toLowerCase(ByteCodeRunner*,StackSlot*);
     static StackSlot toUpperCase(ByteCodeRunner*,StackSlot*);

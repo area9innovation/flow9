@@ -1,0 +1,179 @@
+import string_utils;
+/*
+native println2 : io (flow) -> void = Native.println;
+native quit : io (code : int) -> void = Native.quit;
+native toString : io (v : ?) -> string = Native.toString;
+
+native replace : ([?], int, ?) -> [?] = Native.replace;
+native subrange : (a : [?], index : int, length : int) -> [?] = Native.subrange;
+native length : ([?]) -> int = Native.length;
+native concat : ([?], [?]) -> [?] = Native.concat;
+native map : ([?], (?) -> ??) -> [??] = Native.map;
+native mapi : ([?], (int, ?) -> ??) -> [??] = Native.mapi;
+native fold : (xs : [?], init : ??, fn : (??, ?)->??) -> ?? = Native.fold;
+native foldi : (xs : [?], init : ??, fn : (int, ??, ?)->??) -> ?? = Native.foldi;
+native enumFromTo : (start : int, end : int) -> [int] = Native.enumFromTo;
+native iter : ([?], (?)->void) -> void = Native.iter;
+native iteri : ([?], (int, ?)->void) -> void = Native.iteri;
+native iteriUntil : ([?], (int, ?)->bool) -> int = Native.iteriUntil;
+native filter : (a : [?], test : (?) -> bool) -> [?] = Native.filter;
+//native filtermapi : (a : [?], test : (int, ?) -> Maybe<??>) -> [??] = Native.filtermapi;
+
+native i2s : (int) -> string = Native.i2s;
+native d2s : (double) -> string = Native.d2s;
+native strlen : (string) -> int = Native.strlen;
+native strIndexOf : (str : string, substr : string) -> int = Native.strIndexOf;
+native substring : (s : string, start : int, length : int) -> string = Native.substring;
+native toLowerCase : (string) -> string = Native.toLowerCase;
+native toUpperCase : (string) -> string = Native.toUpperCase;
+native getCharAt : (string, int) -> string = Native.getCharAt;
+native string2utf8 : (s : string) -> [int] = Native.string2utf8;
+native s2a : (string) -> [int] = Native.s2a;
+native fromCharCode : (charCode: int) -> string = Native.fromCharCode;
+native getCharCodeAt : (s : string, i : int) -> int = Native.getCharCodeAt;
+*/
+ArAll ::= ArStat, ArExp;
+
+ArStat ::= ArIf, ArSeq, ArPrint;
+	ArIf(cond: ArExp, pos: ArStat, neg: ArStat, id: int);
+	ArSeq(ss: [ArStat], id: int);
+	ArPrint(x: ArExp, id: int);
+
+ArExp ::= ArSum, ArMult, ArInt, ArVar;
+	ArSum(lhs : ArExp, rhs : ArExp, id: int);
+	ArMult(lhs : ArExp, rhs : ArExp, id: int);
+	ArInt(val : int, id: int);
+	ArVar(var: string, id: int);
+
+ar2s(e : ArAll) -> string {
+	ar2string(e, -1);
+}		
+
+ar2string(e : ArAll, depth: int) -> string {
+	wrap_long = \x -> if (!strContains(x, "\n") && strlen(x) < 64) x else {
+		"\n" + strIndent(x) + "\n"
+	}
+	do2s = \x -> ar2string(x, depth - 1);
+	if (depth == 0) "..." else {
+		switch (e) {
+			ArIf(cond, pos, neg, id): {
+				"<" + i2s(id) + "> if " + do2s(cond) + "{" + wrap_long(do2s(pos)) + "} else {" + wrap_long(do2s(neg)) + "}";
+			}
+			ArSeq(ss, id):  "<" + i2s(id) + ">\n" + strGlue(map(ss, do2s), "\n");
+			ArPrint(x, id): "<" + i2s(id) + ">print(" + do2s(x) + ")";
+			ArSum(lhs, rhs, id): "<" + i2s(id) + ">(" + do2s(lhs) + " + " + do2s(rhs) + ")";
+			ArMult(lhs, rhs, id): "<" + i2s(id) + ">(" + do2s(lhs) + " * " + do2s(rhs) + ")";
+			ArInt(val, id):  "<" + i2s(id) + ">" + i2s(val);
+			ArVar(var, id):  "<" + i2s(id) + ">" + var;
+		}
+	}
+}
+
+ar2i(e : ArExp) -> int {
+	switch (e) {
+		ArSum(lhs, rhs,__): ar2i(lhs) + ar2i(rhs);
+		ArMult(lhs, rhs,__): ar2i(lhs) * ar2i(rhs);
+		ArInt(val,__): val;
+		ArVar(var,__): -1;
+	}
+}
+
+strIndentN(s: string, n: int) -> string {
+	if (n == 0) s else {
+		strIndentN(strIndent(s), n - 1);
+	}
+}
+
+mapAr(a: ArAll, fn: (ArAll) -> ArAll, args_first: bool, depth: int) -> ArAll {
+	map_exp = \x -> cast(mapAr(x, fn, args_first, depth + 1): ArAll -> ArExp);
+	map_stat = \x -> cast(mapAr(x, fn, args_first, depth + 1): ArAll -> ArStat);
+	do_args = \x -> switch (x) {
+		ArIf(cond, pos, neg, id): ArIf(x with cond = map_exp(cond), pos = map_stat(pos), neg = map_stat(neg));
+		ArSeq(ss, id):  ArSeq(x with ss = map(ss, map_stat));
+		ArPrint(y, id): ArPrint(x with x = map_exp(y));
+		ArSum(lhs, rhs,__): ArSum(x with lhs = map_exp(lhs), rhs = map_exp(rhs));
+		ArMult(lhs, rhs,__): ArMult(x with lhs = map_exp(lhs), rhs = map_exp(rhs));
+		ArInt(val,__): x;
+		ArVar(var,__): x;
+	}
+	println(strIndentN("MAPPING ARG:\n" + strIndent(ar2string(a, 2)), depth));
+	ret = if (args_first) fn(do_args(a)) else do_args(fn(a));
+	println(strIndentN("MAPPRING RET:\n" + strIndent(ar2string(ret, 2)), depth));
+	ret;
+}
+
+iterAr(a: ArAll, fn: (ArAll) -> void, args_first: bool) -> void {
+	do = \x -> iterAr(x, fn, args_first);
+	do_args = \ -> switch (a) {
+		ArIf(cond, pos, neg, id): {
+			do(cond);
+			do(pos);
+			do(neg);
+		}
+		ArSeq(ss, id):  iter(ss, do);
+		ArPrint(y, id): do(y);
+		ArSum(lhs, rhs,__): {
+			do(lhs);
+			do(rhs);
+		}
+		ArMult(lhs, rhs,__): {
+			do(lhs);
+			do(rhs);
+		}
+		ArInt(val,__): {}
+		ArVar(var,__): {}
+	}
+	if (args_first) {
+		do_args();
+		fn(a); 
+	} else {
+		fn(a);
+		do_args();
+	}
+}
+
+
+setNewId(a: ArAll, new_id: () -> int) -> ArAll {
+	ret = switch (a) {
+		ArIf(cond, pos, neg, id): ArIf(a with id = new_id(), cond = setExpId(cond, new_id()));
+		ArSeq(ss, id):  ArSeq(a with id = new_id());
+		ArPrint(x, id): ArPrint(a with id = new_id(), x = setExpId(x, new_id()));
+		ArVar(var,__): ArVar(a with id = new_id());
+		default: a;
+	}
+	println("SETTING ID: " + ar2string(a, 1) + " => " + ar2string(ret, 1));
+	ret;
+}
+
+setExpId(x: ArExp, id: int) -> ArExp {
+	switch (x) {
+		ArSum(__,__,__): ArSum(x with id = id);
+		ArMult(__,__,__): ArMult(x with id = id);
+		ArInt(__,__): ArInt(x with id = id);
+		ArVar(__,__): ArVar(x with id = id);
+	}
+}
+
+main() {
+	id_counter = ref 0;
+	new_id = \-> {
+		id = ^id_counter;
+		id_counter := ^id_counter + 1;
+		id;
+	}
+	s = ArSeq([
+		ArIf(
+			ArSum(ArVar("x", 101), ArInt(2, 102), 103),
+			ArPrint(ArMult(ArVar("y", 104), ArSum(ArInt(2, 105), ArVar("z", 106), 107), 108), 109),
+			ArPrint(ArInt(-1, 110), 111),
+			112
+		),
+		ArPrint(ArSum(ArInt(3, 113), ArMult(ArInt(2, 114), ArInt(5, 115), 116), 117), 118)
+	], 119);
+	println2("s: " + ar2s(s));
+	iterAr(s, \x -> println(i2s(new_id()) + ": " + i2s(x.id)), true);
+	id_counter := 0;
+	s1 = mapAr(s, \x -> setNewId(x, new_id), true, 0);
+	println2("s1: " + ar2s(s1));
+	quit(0);
+}

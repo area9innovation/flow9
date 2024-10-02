@@ -79,12 +79,29 @@
 
 
   static FT_Error
-  af_indic_hints_apply( AF_GlyphHints  hints,
+  af_indic_hints_apply( FT_UInt        glyph_index,
+                        AF_GlyphHints  hints,
                         FT_Outline*    outline,
                         AF_CJKMetrics  metrics )
   {
     /* use CJK routines */
-    return af_cjk_hints_apply( hints, outline, metrics );
+    return af_cjk_hints_apply( glyph_index, hints, outline, metrics );
+  }
+
+
+  /* Extract standard_width from writing system/script specific */
+  /* metrics class.                                             */
+
+  static void
+  af_indic_get_standard_widths( AF_CJKMetrics  metrics,
+                                FT_Pos*        stdHW,
+                                FT_Pos*        stdVW )
+  {
+    if ( stdHW )
+      *stdHW = metrics->axis[AF_DIMENSION_VERT].standard_width;
+
+    if ( stdVW )
+      *stdVW = metrics->axis[AF_DIMENSION_HORZ].standard_width;
   }
 
 
@@ -107,6 +124,7 @@
     (AF_WritingSystem_InitMetricsFunc) af_indic_metrics_init,
     (AF_WritingSystem_ScaleMetricsFunc)af_indic_metrics_scale,
     (AF_WritingSystem_DoneMetricsFunc) NULL,
+    (AF_WritingSystem_GetStdWidthsFunc)af_indic_get_standard_widths,
 
     (AF_WritingSystem_InitHintsFunc)   af_indic_hints_init,
     (AF_WritingSystem_ApplyHintsFunc)  af_indic_hints_apply
@@ -126,6 +144,7 @@
     (AF_WritingSystem_InitMetricsFunc) NULL,
     (AF_WritingSystem_ScaleMetricsFunc)NULL,
     (AF_WritingSystem_DoneMetricsFunc) NULL,
+    (AF_WritingSystem_GetStdWidthsFunc)NULL,
 
     (AF_WritingSystem_InitHintsFunc)   NULL,
     (AF_WritingSystem_ApplyHintsFunc)  NULL

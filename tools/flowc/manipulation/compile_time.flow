@@ -1,0 +1,293 @@
+import tools/flowc/manipulation/freevars;
+import tools/flowc/manipulation/tail_call;
+import tools/flowc/eval;
+import tools/flowc/incremental/fi_helpers2;
+
+export {
+	// Try to find a named constant from config and pass it to AST.
+	// The definition of constants in options is done with `env` option and looks like:
+	//    env=bar=1,js=true,bit_width=32,pi=3.14,app_id=A9_APP
+	//
+	// If `env` option is defined in flow.config file, more sparse format is available:
+	//    env += bar = 1
+	//    env += js=true, bit_width = 32
+	//    env += pi = 3.14, app_id=A9_APP
+	//
+	// Following types of compile-time constants are supported:
+	//    boolean, integer, double and string
+	//
+	// LIMITATIONS:
+	//  - spaces, tabs, etc. are not allowed in string values
+	//  - commas are not allowed in string values
+	//  - booleans are of the form: 1, 0, true, false, TRUE, FALSE
+	//
+	substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram;
+
+	// Try to eval argument of `compileTime` function.
+	evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram;
+}
+
+substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram {
+	env_opt = getConfigParameter(program.config.config, "env");
+	if (env_opt == "") program else {
+		cp_vars = configString2tree(env_opt);
+		if (program.config.verbose > 0) {
+			fcPrintln("Substituting compile-time constants from config:\n" +
+				strGlue(map(tree2pairs(cp_vars), \p -> "\t" + p.first + " = " + p.second), "\n"),
+				program.config.threadId
+			);
+		}
+		fiMapProgramExp(program, \e, decl, module,__ -> {
+			module_err = \msg, pos -> on_err(FcError(msg, [FcPosition(module.fileinfo.flowfile, pos, pos)]));
+			mapFiExp(e,
+				\x -> switch (x) {
+					FiVar(name, type, start): {
+						switch (lookupTree(cp_vars, name)) {
+							Some(val):
+								switch (compileTimeValue(val, type, start, module_err)) {
+									Some(c): c;
+									None(): x;
+								}
+							None(): x;
+						}
+					}
+					default: x;
+				}
+			);
+		}, fcParallelOn(program.config));
+	}
+}
+
+compileTimeValue(val: string, type: FiType, start: int, on_err: (string, int) -> void) -> Maybe<FiExp> {
+	switch (type) {
+		FiTypeBool():   Some(FiBool(s2b(val), start));
+		FiTypeInt():    Some(FiInt(s2i(val), start));
+		FiTypeDouble(): Some(FiDouble(s2d(val), start));
+		FiTypeString(): Some(FiString(val, start));
+		default: {
+			on_err("Compile-time constant cannot be of type: " + pretFiType(type) + ", must be one of: bool, int, double or string", start);
+			None();
+		}
+	}
+}
+
+collectGlobalDependencies(e: FiExp, trav_env: FiExpTraverseEnv, names: FiGlobalNames, acc: Set<string>) -> Set<string> {
+	free = fifreevars(e);
+	globals = filterSet(free, \v -> !containsKeyTree(trav_env.locals, v));
+	foldSet(
+		differenceSets(free, acc),
+		mergeSets(globals, acc), 
+		\ac, v -> switch (lookupTree(trav_env.lets, v)) {
+			Some(x): collectGlobalDependencies(x.e1, trav_env, names, ac);
+			None(): eitherMap(lookupTree(names.toplevel, v),
+				\decl -> collectGlobalDependencies(
+					fiDeclExp(decl),
+					FiExpTraverseEnv(trav_env with
+						lets = makeTree(),
+						locals = switch (fiDeclExp(decl)) {
+							FiLambda(args,__,__,__): {
+								pairs2tree(map(args, \arg -> Pair(arg.name, FiVar(arg.name, arg.type, -1))));
+							}
+							default: makeTree();
+						}
+					),
+					names, ac
+				), ac
+			);
+		}
+	);
+}
+
+evalExpValue(e: FiExp, trav_env: FiExpTraverseEnv, eval_env: FcEvalEnv, locals : HashMap<string, FcEvalLocal>) -> Maybe<flow> {
+	free_vars = filterSet(fifreevars(e), \x -> containsKeyTree(trav_env.locals, x));
+	ok = ref true;
+	iterSet(free_vars, \x -> if (!containsKeyHashMap(locals, x)) {
+		switch (lookupTree(trav_env.lets, x)) {
+			Some(let): {
+				switch (evalExpValue(let.e1, trav_env, eval_env, locals)) {
+					Some(v): setHashMap(locals, let.name, FcEvalLocal(v));
+					None(): ok := false;
+				}
+			}
+			None(): ok := false;
+		}
+	});
+	if (!^ok) None() else {
+		err_no = length(^(eval_env.errors));
+		val = fcEval(e, eval_env, locals);
+		if (length(^(eval_env.errors)) == err_no) Some(val) else None();
+	}
+}
+
+evalProgramCompileTimeExprs(prog : FiProgram, on_err: (FcError) -> void) -> FiProgram {
+	has_compile_time = ref false;
+	used_globals = foldTree(prog.names.toplevel, makeSet(), \__, decl, acc ->
+		fiFoldExp(fiDeclExp(decl), acc,
+			\x, trav_env, ac -> eitherMap(fiDetectCall(x, "compileTime"),
+				\call -> {
+					has_compile_time := true;
+					collectGlobalDependencies(call.args[0], trav_env, prog.names, ac);
+				}, ac
+			),
+			AstTraverseOrder(true, true)
+		)
+	);
+	if (!^has_compile_time) prog else {
+		eval_env = fcInitEvalEnv(fcOptimizeTailCalls(prog), None(), Some(used_globals), nop1);
+		fiMapProgramModule(prog,
+			\m, pr -> fiMapModuleExp(pr, m, \e0, decl,__,__ ->
+				fiMapExp(e0, \x, trav_env ->
+					eitherMap(
+						fiDetectCall(x, "compileTime"),
+						\call -> {
+							ex = call.args[0];
+							switch (evalExpValue(ex, trav_env, eval_env, makeHashMap(fastHashString))) {
+								Some(v): {
+									switch(fiflow2Constant(v, Some(call.type), eval_env)) {
+										Some(const_val): const_val;
+										None(): {
+											on_err(FcError(
+												"Failed to assign the type " + pretFiType(call.type) + " to a constant:\n" +
+												strIndent(toStringFormatted(v)),
+												[FcPosition(m.fileinfo.flowfile, call.start, call.start)]
+											));
+											ex;
+										}
+									}
+								}
+								None(): {
+									on_err(FcError(
+										"Failed to eval a compile-time constant from the expression",
+										[FcPosition(m.fileinfo.flowfile, call.start, call.start)]
+									));
+									ex;
+								}
+							}
+						},
+						x
+					), true
+				)
+			),
+			fcParallelOn(prog.config)
+		)
+	}
+}
+
+fiflow2UntypedConstant(v : flow, structs: HashMap<string, FiTypeStruct>) -> Maybe<FiExp> {
+	v_tag = getDataTagForValue(v);
+	if (v_tag == void_data_tag) Some(FiVoid(-1)) else
+	if (v_tag == bool_data_tag) Some(FiBool(cast(v: flow -> bool), -1)) else
+	if (v_tag == int_data_tag) Some(FiInt(cast(v: flow -> int), -1)) else
+	if (v_tag == double_data_tag) Some(FiDouble(cast(v: flow -> double), -1)) else
+	if (v_tag == string_data_tag) Some(FiString(cast(v: flow -> string), -1)) else
+	if (v_tag == array_data_tag) {
+		arr_f = cast(v: flow -> [flow]);
+		arr = filtermap(arr_f, \x -> fiflow2UntypedConstant(x, structs));
+		if (length(arr_f) != length(arr)) None() else {
+			Some(FiCallPrim(FcArrayPrim(), arr, FiTypeVoid(), -1));
+		}
+	} else if (v_tag == struct_data_tag) {
+		maybeBind(fcEvalDecomposeStruct(v), \p -> {
+			name = p.first;
+			if (name == "" || !containsKeyHashMap(structs, name)) None() else {
+				fields_f = p.second;
+				fields = filtermap(fields_f, \x -> fiflow2UntypedConstant(x, structs));
+				if (length(fields_f) != length(fields)) None() else {
+					Some(FiCallPrim(FcStructPrim(name), fields, FiTypeVoid(), -1));
+				}
+			}
+		});
+	} else {
+		None();
+	}
+}
+
+fiCompleteType(e: FiExp, hint: Maybe<FiType>, env: FcEvalEnv) -> Maybe<FiExp> {
+	switch (e) {
+		FiCallPrim(op, as,__,s): {
+			switch (op) {
+				FcArrayPrim(): {
+					do_flow = \ -> {
+						as1 = filtermap(as, \a -> fiCompleteType(a, None(), env));
+						if (length(as1) == 0 || length(as1) != length(as)) None() else {
+							at = fiExpType(as1[0]);
+							if (exists(tail(as1), \x -> !fiEqualTypes(at, fiExpType(x)))) None() else {
+								Some(FiCallPrim(e with type = FiTypeArray(at), es = as1));
+							}
+						}
+					}
+					switch (hint) {
+						Some(t): {
+							switch (t) {
+								FiTypeArray(at): {
+									es1 = filtermap(as, \a -> fiCompleteType(a, Some(at), env));
+									if (length(es1) != length(as)) None() else {
+										Some(FiCallPrim(e with type = t, es = es1));
+									}
+								}
+								FiTypeFlow(): do_flow();
+								default: None();
+							}
+						}
+						None(): do_flow();
+					}
+				}
+				FcStructPrim(name): {
+					do_flow = \ -> {
+						maybeBind(lookupHashMap(env.structs, name), \struct -> {
+							as1 = filtermap(as, \a -> fiCompleteType(a, None(), env));
+							if (length(as1) != length(struct.args)) None() else {
+								sub = foldi(struct.args, makeTree(), \i, acc, arg ->
+									fiMatchTypars(arg.type, fiExpType(as1[i]), acc)
+								);
+								Some(FiCallPrim(e with
+									type = FiTypeName(name, map(struct.typars, \tp ->
+										fiSubstituteTypars(tp, sub)
+									)),
+									es = as1
+								));
+							}
+						});
+					}
+					switch (hint) {
+						Some(t): {
+							switch (t) {
+								FiTypeName(type_name, typars): {
+									do_struct = \tn -> maybeBind(lookupHashMap(env.structs, tn.name), \struct ->  {
+										sub = fiMatchTyparsArr(struct.typars, tn.typeparameters, makeTree());
+										es1 = filtermapi(as, \i, a ->
+											fiCompleteType(a, Some(fiSubstituteTypars(struct.args[i].type, sub)), env)
+										);
+										if (length(es1) != length(as)) None() else {
+											Some(FiCallPrim(e with type = tn, es = es1));
+										}
+									});
+									if (name == type_name) do_struct(t) else {
+										maybeBind(lookupHashMap(env.unions, type_name), \union -> {
+											maybeBind(find(union.typenames, \tn -> tn.name == name), \tn -> {
+												sub = fiMatchTyparsArr(union.typeparameters, typars, makeTree());
+												tn_spec = FiTypeName(tn with typeparameters = map(tn.typeparameters, \tp ->
+													fiSubstituteTypars(tp, sub)
+												));
+												do_struct(tn_spec);
+											})
+										});
+									}
+								}
+								FiTypeFlow(): do_flow();
+								default: None();
+							}
+						}
+						None(): do_flow();
+					}
+				}
+				default: Some(e);
+			}
+		}
+		default: Some(e);
+	}
+}
+
+fiflow2Constant(v : flow, hint: Maybe<FiType>, env: FcEvalEnv) -> Maybe<FiExp> {
+	maybeBind(fiflow2UntypedConstant(v, env.structs), \e -> fiCompleteType(e, hint, env));
+}

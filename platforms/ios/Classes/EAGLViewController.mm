@@ -83,13 +83,14 @@
         return;
     }
     
-    if (UIDeviceOrientationIsPortrait(UIDevice.currentDevice.orientation) and statusBarVisible) {
-        [[UIApplication sharedApplication].keyWindow addSubview: statusBar];
-    } else {
-        [statusBar removeFromSuperview];
+    if (@available(iOS 13.0, *)) {
+        if (size.width > size.height) {
+            [statusBar removeFromSuperview];
+        } else if (statusBarVisible) {
+            [[UIApplication sharedApplication].keyWindow addSubview: statusBar];
+        }
     }
 }
-
 
 - (void) keyboardDidShow: (NSNotification*) aNotification {
     if (!RenderSupport)
@@ -265,6 +266,10 @@ static bool gestureBeingHandledByFlow = false;
 }
 
 - (void) setStatusBarVisible: (BOOL)visible {
+    if (statusBarVisible == visible) {
+        return;
+    }
+    
     statusBarVisible = visible;
     if (statusBar != nil) {
         if (visible) {

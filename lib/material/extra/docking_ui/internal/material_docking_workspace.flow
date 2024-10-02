@@ -1,3 +1,4 @@
+import ds/treeutils;
 import material/material;
 import material/material_dialog;
 import material/material_snackbar;
@@ -17,6 +18,11 @@ export {
 	resetMDWorkspace(state : MDockingState) -> void;
 	makeMDWorkspaceMenuBtn(state : MDockingState) -> Material;
 	applySelectedWSOnStartup(state : MDockingState,) -> void;
+
+	// Utils for panels
+	makeMDPanelEnableDynamicMenuItem(state : MDockingState, filterPanelsA : [string], textStyleA : [MTextStyle], iconStyleA : [MIconStyle]) -> Transform<[MMenuLine]>;
+	makeMDAreaEnableDynamicMenuItem(state : MDockingState, textStyleA : [MTextStyle], iconStyleA : [MIconStyle]) -> Transform<[MMenuLine]>;
+	makeMDClearWorksoacesDynamicMenuItem(state : MDockingState, textStyleA : [MTextStyle]) -> Transform<[MMenuLine]>;
 }
 
 hasWorkspaceFlag() -> bool {
@@ -43,14 +49,14 @@ dockingState2json(state : MDockingState) -> Json {
 		map(reverseA(getTreeKeys(getValue(state.dockingAreas))),\areaName -> {
 			areaId = lookupTreeDef(getValue(state.dockingAreas), areaName, intMin);
 			areaStyle = lookupTreeDef(getValue(state.areaStyle), areaId, []);
-			areaEnable = lookupTreeDef(getValue(state.areaEnabled), areaId, true);
+			areaVisible = lookupTreeDef(getValue(state.areaEnabled), areaId, true);
 			accordionEnable = lookupTreeDef(getValue(state.areaAccordion), areaId, false);
 
 			Pair(areaName,
 				JsonObject(
 					[
 						Pair("areaId", JsonDouble(i2d(areaId))),
-						Pair("enabled", JsonBool(areaEnable)),
+						Pair("visible", JsonBool(areaVisible)),
 						Pair("accordion", JsonBool(accordionEnable)),
 					]
 				)
@@ -61,7 +67,7 @@ dockingState2json(state : MDockingState) -> Json {
 		JsonObject(
 			mapi(getValue(state.dock),\panelId, dock -> {
 				title = getValue(state.title)[panelId];
-				enabled = getValue(getValue(state.enabled)[panelId]);
+				visible = getValue(getValue(state.enabled)[panelId]);
 				expanded = getValue(getValue(state.expanded)[panelId]);
 				sideExpanded = getValue(getValue(state.sideExpanded)[panelId]);
 				size = getValue(state.size)[panelId];
@@ -70,6 +76,8 @@ dockingState2json(state : MDockingState) -> Json {
 				pos = getValue(getValue(state.positions)[panelId]);
 				pstyle = getValue(state.panelStyle)[panelId];
 				isEndAligned = getValue(extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign);
+				pEnabled = fgetValue(extractStruct(pstyle, MDPanelEnabled(const(true))).enabled);
+				pVisible = getValue(extractStruct(pstyle, MDPanelVisible(make(true))).visible);
 
 				Pair(i2s(panelId),
 					JsonObject(
@@ -86,7 +94,8 @@ dockingState2json(state : MDockingState) -> Json {
 							Pair("mobileH", JsonDouble(mobileSize.height)),
 							Pair("dockedW", JsonDouble(dockedSize.width)),
 							Pair("dockedH", JsonDouble(dockedSize.height)),
-							Pair("enabled", JsonBool(enabled)),
+							Pair("(enabled)", JsonBool(pEnabled)), // Debug use only
+							Pair("visible", JsonBool(pVisible)),
 							Pair("expanded", JsonBool(expanded)),
 							Pair("sideExpanded", JsonBool(sideExpanded)),
 							Pair("endAligned", JsonBool(isEndAligned)),
@@ -97,6 +106,7 @@ dockingState2json(state : MDockingState) -> Json {
 		);
 
 	workspaceJson = JsonObject([
+		Pair("ActivePanel", JsonDouble(i2d(getValue(state.activePanel)))),
 		Pair("DockingAreas", areasAjson),
 		Pair("Panels", panelsAjson)
 	]);
@@ -155,7 +165,7 @@ setMDWorkspaceName(state : MDockingState, name : string) -> bool {
 makeItemMenuLinesA(state : MDockingState, itemsA: [Pair<string, Json>], selectedNameB : DynamicBehaviour<string>, isUser : bool) -> [MMenuCustomLine] {
 	savedString = getMDSCachedString(state);
 	iconStyleOn = [state.manager.theme.palette.primary, MIconSize(20.0)];
-	textStyleA = [MGrey(600)];
+	textStyleA = [MThemedColor(MGrey(600), MGrey(200))];
 
 	mapi(itemsA, \i, ws -> {
 		wsName = ws.first;
@@ -181,18 +191,17 @@ makeItemMenuLinesA(state : MDockingState, itemsA: [Pair<string, Json>], selected
 	})
 }
 
-
 makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
     updateMenu = make(true);
     iconStyleOn = [state.manager.theme.palette.primary, MIconSize(20.0)];
     iconStyleOff = [MGrey(400), MIconSize(20.0)];
-    textStyleA = [MGrey(600)];
-    gapW = 32.0;
+    textStyleA = [MThemedColor(MGrey(600), MGrey(200))];
+    gapSW = 32.0;
+    gapEW = 4.0;
     keyGroupName = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).keyGroupName;
 	defaultWSName = extractStruct(state.style, MDWorkspaceRenameDefault("Default")).name;
 	defaultWSSelected = extractStruct(state.style, MDWorkspaceSelected(defaultWSName)).name;
 	customWorkspacesA = extractStruct(state.style, MDAddCustomWorkspaces([])).workspaces;
-
 
     MSelect(updateMenu, \__ -> {
 		savedString = getMDSCachedString(state);
@@ -243,13 +252,13 @@ makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
 
                     MSeparatorLine(),
                     MMenuCustomLine(
-                        MText(_("Add Workspace"), textStyleA) |> MBorderStart(gapW),
+                        MText(_("Add Workspace"), textStyleA) |> MBorderStart(gapSW) |> MBorderEnd(gapEW),
                         [MOnClick(\ -> {
                             saveEditWorkspaceDialog(state, updateMenu, true);
                         })]		
                     ),
                     MMenuCustomLine(
-                        MText(_("Delete Workspace"), textStyleA) |> MBorderStart(gapW),
+                        MText(_("Delete Workspace"), textStyleA) |> MBorderStart(gapSW) |> MBorderEnd(gapEW),
                         [
                             MOnClick(
                                 confirmDeleteDialogFn(state.manager, formatString(_("Delete %1?"), [getValue(selectedNameB)]), _("DELETE"), \ -> {
@@ -271,7 +280,7 @@ makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
                 // Devtools buttons
                 if (hasWorkspaceFlag()) [
                     MMenuCustomLine(
-                        MText(_("Rename Workspace (dev)"), textStyleA) |> MBorderStart(gapW),
+                        MText(_("Rename Workspace (dev)"), textStyleA) |> MBorderStart(gapSW) |> MBorderEnd(gapEW),
                         [
                             MOnClick(\ -> {
                                 saveEditWorkspaceDialog(state, updateMenu, false);
@@ -280,7 +289,7 @@ makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
                         ]		
                     ),
                     MMenuCustomLine(
-                        MText(_("Update Workspace (dev)"), textStyleA) |> MBorderStart(gapW),
+                        MText(_("Update Workspace (dev)"), textStyleA) |> MBorderStart(gapSW),
 						[
 							MOnClick(\ -> {
 								currentWSJson = dockingState2json(state);
@@ -347,8 +356,10 @@ makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
                     //     ]
                     // ),
 					MSeparatorLine(),
+				] else [],
+				[
                     MMenuCustomLine(
-                        MText(_("Clear Workspaces (dev)"), textStyleA) |> MBorderStart(gapW),
+                        MText(_("Clear Workspaces"), textStyleA) |> MBorderStart(gapSW),
                         // "Reset Layout", 
                         [
                             MOnClick(
@@ -364,7 +375,7 @@ makeMDWorkspaceMenuBtn(state : MDockingState) -> Material {
                             MEnabled(fselectLift(state.enabled, \enA -> savedString != ""))
                         ]
                     )
-                ] else []
+                ]
             ]),
             [MBelowButton()]
         )
@@ -458,4 +469,77 @@ confirmDeleteDialogFn(manager : MaterialManager, title : string, deleteLabel : s
             ]),
         ], MEmpty()
     );
+}
+
+// NOTE: A panel can be enabled with MDPanelEnabled style, this value is not stored in the browser's cache, but could be changed ouside the application (e.g. access rights)
+// When a panel is enabled it could be visible or not: visibility this could be changed by the user with MDPanelVisible style. The value is stored in the cache and can be stored in a workspace
+// DO NOT ACCESS DIRECTLY THE DOCKIG STATE to change a panel's visibility, but use MDPanelVisible style
+makeMDPanelEnableDynamicMenuItem(state : MDockingState, filterPanelsA : [string], textStyleA : [MTextStyle], iconStyleA : [MIconStyle]) -> Transform<[MMenuLine]> {
+	enabledT = fsubselect(state.panelStyle, FLift(\psA -> fmerge(map(psA, \ps -> extractStruct(ps, MDPanelEnabled(const(true))).enabled))));
+	ffiltermapi(fselect2Lift(enabledT, state.enabled, \enableA, visibleA -> zip(enableA, visibleA)),\i, pair ->  unpair(pair, \enabled, enabledB -> {
+		title = elementAt(getValue(state.title), i, "Title not found");
+		pstyle = elementAt(getValue(state.panelStyle), i, []);
+		visibleB = extractStruct(pstyle, MDPanelVisible(make(true))).visible;
+		if (!contains(filterPanelsA, title) && enabled) {
+			Some(
+				MMenuCustomLine(
+					MBaselineCols2A(
+						MVisible(enabledB, MIcon("done", iconStyleA)),
+						MText(formatString(_("Show %1 Panel"), [title]), textStyleA) |> MBorderStart(12.0)
+					),
+				[
+					MOnClick(\ -> reverseBehaviour(visibleB))
+				]
+			))
+		} else None()
+	}))
+}
+
+makeMDAreaEnableDynamicMenuItem(state : MDockingState, textStyleA : [MTextStyle], iconStyleA : [MIconStyle]) -> Transform<[MMenuLine]> {
+	areaIdsT = fselect(state.areaStyle, FLift(\as -> getTreeKeys(as)));
+	ffiltermapi(areaIdsT, \i, aId -> {
+		as = getValue(state.areaStyle);
+		areaStyleA = lookupTreeDef(as, aId, []);
+		if (!isSome(tryExtractStruct(areaStyleA, MDAreaVisible(make(true))))) None() else {
+			areaEnable = fsubselect(state.areaEnabled, FLift(\ae -> make(lookupTreeDef(ae, aId, true))));
+			areaName = lookupTreeDef(reverseTree(getValue(state.dockingAreas)), aId, "") + " Docking Area";
+			Some(
+				MMenuCustomLine(
+					MBaselineCols2A(
+						MVisible(areaEnable, MIcon("done", iconStyleA)),
+						MText(formatString(_("Show %1"), [areaName]), textStyleA) |> MBorderStart(12.0)
+					),
+					[
+						MOnClick(\ -> {
+							nextDistinct(state.areaEnabled, setTree(getValue(state.areaEnabled), aId, !fgetValue(areaEnable)));
+						})
+					]
+				)
+			)
+		}
+	})
+}
+
+makeMDClearWorksoacesDynamicMenuItem(state : MDockingState, textStyleA : [MTextStyle]) -> Transform<[MMenuLine]> {
+	keyGroupName = extractStruct(state.style, MDockingEnableLoadAndStoreCache("", false)).keyGroupName;
+	savedString = getKeyValue(keyGroupName |> addDockingSuffix, "");
+	gapSW = 32.0;
+	const([
+		MMenuCustomLine(
+			MText(_("Clear Workspaces"), textStyleA) |> MBorderStart(gapSW),
+			// "Reset Layout", 
+			[
+				MOnClick(
+					confirmDeleteDialogFn(state.manager, _("All saved workspaces will be deleted, are you sure?"), _("DELETE"),
+						\ -> {
+							removeKeyValue(keyGroupName |> addDockingSuffix);
+							reverseBehaviour(state.loadWorkspace);
+							showMSnackbar(state.manager, _("Browser Cache Cleared"), []);
+						}
+					)
+				),
+				MEnabled(fselectLift(state.enabled, \enA -> savedString != ""))
+			]
+		)
+	])
 }

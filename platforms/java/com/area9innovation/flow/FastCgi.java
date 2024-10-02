@@ -9,15 +9,8 @@ import java.util.Properties;
 import java.util.ArrayList;
 
 public final class FastCgi extends NativeHost {
-    public static final byte BEGIN_REQUEST = 1;
-    public static final byte END_REQUEST = 3;
-    public static final int PARAMETERS = 4;
-
     public static final byte REQUEST_COMPLETE = 0;
     public static final byte NO_MULTIPLEX_CONNECTION = 1;
-
-    public static final byte STDIN = 5;
-    public static final byte STDOUT = 6;
 
     private static final int FCGI_KEEP_CONN = 1;
     private static final int FCGI_RESPONDER = 1;
@@ -47,11 +40,11 @@ public final class FastCgi extends NativeHost {
                     do {
                         message = new FastCgiMessage(inputStream);
                         switch (message.type) {
-                            case BEGIN_REQUEST:
+                            case FastCgiMessage.BEGIN_REQUEST:
                                 if (requestId != 0) {
                                     System.out.println("reject extra request with id " + message.requestId);
                                     //server tries to send multiplexed connection, but we process it only one by one, reject request:
-                                    new FastCgiMessage(END_REQUEST, message.requestId, NO_MULTIPLEX_CONNECTION).write(outputStream);
+                                    new FastCgiMessage(FastCgiMessage.END_REQUEST, message.requestId, NO_MULTIPLEX_CONNECTION).write(outputStream);
                                 } else {
                                     requestId = message.requestId;
                                     closeConnection = (message.content[2] & FCGI_KEEP_CONN) == 0;
@@ -64,7 +57,7 @@ public final class FastCgi extends NativeHost {
                                 }
                                 break;
 
-                            case STDIN:
+                            case FastCgiMessage.STDIN:
                                 // Debug output
                                 // System.out.println("STDIN " + message.contentLength);
                                 if (message.contentLength > 0) {
@@ -79,7 +72,7 @@ public final class FastCgi extends NativeHost {
                                 }
                                 break;
 
-                            case PARAMETERS:
+                            case FastCgiMessage.PARAMETERS:
                                 if (message.contentLength > 0) {
                                     int[] length = new int[2];
                                     int offset = 0;
@@ -104,11 +97,11 @@ public final class FastCgi extends NativeHost {
                                 break;
                         }
                     }
-                    while (message.type != STDIN || message.contentLength != 0);
+                    while (message.type != FastCgiMessage.STDIN || message.contentLength != 0);
 
-                    new FastCgiMessage(STDOUT, requestId, processRequest(data, properties, callback, onError).getBytes()).write(outputStream);
-                    new FastCgiMessage(STDOUT, requestId).write(outputStream);
-                    new FastCgiMessage(END_REQUEST, requestId, REQUEST_COMPLETE).write(outputStream);
+                    new FastCgiMessage(FastCgiMessage.STDOUT, requestId, processRequest(data, properties, callback, onError).getBytes()).write(outputStream);
+                    new FastCgiMessage(FastCgiMessage.STDOUT, requestId).write(outputStream);
+                    new FastCgiMessage(FastCgiMessage.END_REQUEST, requestId, REQUEST_COMPLETE).write(outputStream);
 
                     if (closeConnection) {
                         System.out.println("finished request id " + requestId);
@@ -143,7 +136,7 @@ public final class FastCgi extends NativeHost {
     private static String processRequest(byte[] data,
         HashMap<String, String> properties,
         Func5<String, String, String, String, String, Object[]> callback,
-        Func0<String> onError) throws IOException 
+        Func0<String> onError) throws IOException
     {
 	    ArrayList<String[]> callbackParams = new ArrayList<String[]>();
 	    String[][] props = null;
@@ -153,9 +146,9 @@ public final class FastCgi extends NativeHost {
             String query = properties.get("QUERY_STRING");
             String path = properties.get("SCRIPT_NAME");
             String method = properties.get("REQUEST_METHOD");
-            
+
             String sdata = "";
-            
+
             if (data != null && data.length > 0) {
                 sdata = new String(data, "UTF-8");
             }

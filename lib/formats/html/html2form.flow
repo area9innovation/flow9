@@ -70,6 +70,21 @@ export {
 		virtualScreenInfoM : Maybe<VirtualScreenInfo>
 	) -> Pair<Form, (Form) -> Form>;
 
+	getHtmlPictureMagnifyCustomExt(
+		fullForm : Form,
+		scaledForm : Form,
+		maxw : Maybe<double>,
+		scale : Maybe<double>,
+		backgroundColor : Maybe<Color>,
+		zoomBtnFormFn : (() -> void) -> Form,
+		zoomBtnAlign : Corner,
+		zoomCustomUIFnM : Maybe<() -> void>,
+		closeBtnFormFn : (() -> void) -> Form,
+		closeBtnAlign : int,
+		virtualScreenInfoM : Maybe<VirtualScreenInfo>,
+		zoomByClickOnImage : bool
+	) -> Pair<Form, (Form) -> Form>;
+
 	parseCssStyles(cs : HTMLStyle, cssStyles : string) -> HTMLStyle;
 }
 
@@ -181,6 +196,23 @@ html2form(s : string, stylesheet : Tree<string, HTMLStyle>, special : [HTMLSpeci
 		\lang -> createWithLang(lang, makeForm) |> renderWithLang(lang),
 		makeForm
 	)
+}
+
+renderWithLang(lang : string) -> (Form) -> Form {
+	\f -> {
+		savedLang = ref getLang();
+		Constructor2(
+			f,
+			\ -> {
+				savedLang := getLang();
+				setLang(lang);
+				nop
+			},
+			\ -> {
+				setLang(^savedLang)
+			}
+		)
+	}
 }
 
 spaceAfterParagraph = 8.0;
@@ -608,12 +640,13 @@ getHtmlPictureMagnifyWithCloseButton(
 		);
 
 		cursorB = make(DefaultCursor());
+		isNotScrollB = make(true);
 		form =
 			Interactive(
 				[
-					MouseClick(nop1),
+					MouseClick(\__ -> nextDistinct(isNotScrollB, true)),
 					MouseUp(\mi -> {
-						if (mi().inside) {
+						if (mi().inside && getValue(isNotScrollB)) {
 							onClick();
 							true
 						} else {
@@ -624,6 +657,7 @@ getHtmlPictureMagnifyWithCloseButton(
 						info = mi();
 						nextDistinct(plusCursorVisible, info.inside);
 						nextDistinct(plusBubbleVisible, info.x >= plusBubbleWidth);
+						nextDistinct(isNotScrollB, false);
 						false
 					})
 				],
@@ -684,6 +718,36 @@ getHtmlPictureMagnifyCustom(
 	closeBtnAlign : int,
 	virtualScreenInfoM : Maybe<VirtualScreenInfo>
 ) -> Pair<Form, (Form) -> Form> {
+	getHtmlPictureMagnifyCustomExt(
+		fullForm,
+		scaledForm,
+		maxw,
+		scale,
+		backgroundColor,
+		zoomBtnFormFn,
+		zoomBtnAlign,
+		zoomCustomUIFnM,
+		closeBtnFormFn,
+		closeBtnAlign,
+		virtualScreenInfoM,
+		true
+	)
+}
+
+getHtmlPictureMagnifyCustomExt(
+	fullForm : Form,
+	scaledForm : Form,
+	maxw : Maybe<double>,
+	scale : Maybe<double>,
+	backgroundColor : Maybe<Color>,
+	zoomBtnFormFn : (() -> void) -> Form,
+	zoomBtnAlign : Corner,
+	zoomCustomUIFnM : Maybe<() -> void>,
+	closeBtnFormFn : (() -> void) -> Form,
+	closeBtnAlign : int,
+	virtualScreenInfoM : Maybe<VirtualScreenInfo>,
+	zoomByClickOnImage : bool
+) -> Pair<Form, (Form) -> Form> {
 	closeMagnifyWindow = ref nop;
 	magnifyWindowVisible = make(false);
 	closeMagnify = \ -> {
@@ -700,25 +764,46 @@ getHtmlPictureMagnifyCustom(
 		}
 	);
 
+	startPointM : ref Maybe<Point> = ref None();
+	maxMoveDelta = 20.0;
+
+	makeZoomClick = \form -> Interactive(
+		[
+			MouseDown(\mi -> {
+				if (mi.inside()) startPointM := Some(Point(mi.x, mi.y));
+				false
+			}),
+			MouseUp(\mi -> {
+				mouseInfo = mi();
+				if (mouseInfo.inside) {
+					shouldBeZoomed = eitherMap(
+						^startPointM,
+						\sp -> abs(mouseInfo.x - sp.x) < maxMoveDelta && abs(mouseInfo.y - sp.y) < maxMoveDelta,
+						false
+					);
+					startPointM := None();
+					if (shouldBeZoomed) onClick();
+					shouldBeZoomed
+				} else {
+					false
+				}
+			}),
+		],
+		form
+	);
+
 	postCropTransfrom = \f -> {
 		formSize = makeWH();
+		inspectedForm = Inspect([ISize(formSize)], f);
 		Group([
-			Inspect([ISize(formSize)], f),
+			if (zoomByClickOnImage) {
+				inspectedForm |> makeZoomClick
+			} else {
+				inspectedForm
+			},
 			Available2(
 				formSize,
-				alignCorner(zoomBtnAlign, Interactive(
-					[
-						MouseUp(\mi -> {
-							if (mi().inside) {
-								onClick();
-								true
-							} else {
-								false
-							}
-						}),
-					],
-					zoomBtnFormFn(onClick)
-				))
+				alignCorner(zoomBtnAlign, zoomBtnFormFn(onClick) |> makeZoomClick)
 			)
 		]);
 	};

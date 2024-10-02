@@ -1,0 +1,285 @@
+import tools/flowc/backends/cpp3/fi2cpp3_runtime;
+import tools/flowc/statements/fs_tailcall;
+import tools/flowc/statements/fs_perceus;
+import tools/flowc/statements/fs_reuse;
+import tools/flowc/statements/fs_expand;
+import tools/flowc/statements/fi2fs;
+import tools/flowc/statements/fs_module;
+import tools/flowc/statements/fs_inline;
+import tools/flowc/manipulation/pull_statements2;
+
+export {
+	fi2cpp3TransformProgramExps(program: FiProgram, gctx: Cpp3GlobalContext) -> FiProgram;
+	fi2cpp3TransformModule(module: FiModule, gctx: Cpp3GlobalContext) -> FsModule;
+}
+
+
+fi2cpp3TransformProgramExps(program: FiProgram, gctx: Cpp3GlobalContext) -> FiProgram {
+	fiMapProgramToplevel(program, \x,__,__ -> {
+		switch (x) {
+			FiGlobalVar(name, value, type,__,__): {
+				[FiGlobalVar(x with
+					value = fi2cpp3TransformFiExp(value, type, gctx, name)
+				)];
+			}
+			FiFunctionDec(name, lambda, type,__,__): {
+				[FiFunctionDec(x with
+					lambda = cast(
+						fi2cpp3TransformFiExp(FiLambda(lambda with type = type), type, gctx, name): FiExp -> FiLambda
+					)
+				)];
+			}
+			default: [x];
+		}
+	}, fcParallelOn(program.config));
+}
+
+fi2cpp3TransformModule(module: FiModule, gctx0: Cpp3GlobalContext) -> FsModule {
+	gctx = Cpp3GlobalContext(gctx0 with currentModule = module.fileinfo.flowfile);
+	global_vars = values2tree(
+		map(module.globalVars, \gv -> {
+			start = fi2cpp3StartOperationMessage(gctx.config, 2, "transforming global variable", gv.name);
+			ret = fiTransformGlobalVar2cpp3(gv, gctx);
+			fi2cpp3EndOperationMessage(gctx.config, 2, "transformation of global variable", gv.name, start);
+			ret;
+		}),
+		\v -> v.name
+	);
+	FsModule(
+		module.fileinfo.flowfile,
+		module.imports,
+		module.structs,
+		module.unions,
+		concat(
+			map(module.natives, \nat -> {
+				nat_type = cast(nat.type: FiType -> FiTypeFunction);
+				FsFunctionDec(nat.name, None(), nat_type, FsFuncInfo(map(nat_type.args, \__ -> FsArgInfo(false, false)), false));
+			}),
+			map(module.functions, \fn -> {
+				start = fi2cpp3StartOperationMessage(gctx.config, 2, "transforming function", fn.name);
+				ret = fiTransformFunc2cpp3(fn, gctx);
+				fi2cpp3EndOperationMessage(gctx.config, 2, "transformation of function", fn.name, start);
+				ret;
+			})
+		),
+		filtermap(module.initOrder, \n -> lookupTree(global_vars, n))
+	);
+}
+
+fiTransformGlobalVar2cpp3(globalVar : FiGlobalVar, gctx0: Cpp3GlobalContext) -> FsGlobalVar {
+	names = gctx0.program.names;
+	name = globalVar.name;
+	type = globalVar.type;
+	gctx = Cpp3GlobalContext(gctx0 with
+		currentToplevel = Some(globalVar),
+		toplevelTypars = fiCollectTypars(type, makeSet()),
+		currentToplevelName = name
+	);
+	if (name == getUrlParameter("cpp3-debug")) {
+		println("transforing var: " + name + " of type: " + toString(type) + "\n" + 
+			toStringFormatted(globalVar.value)
+		);
+	}
+	value = fi2cpp3Transform2FsStat(globalVar.value, gctx, name);
+	FsGlobalVar(name, value, type);
+}
+
+fiTransformFunc2cpp3(fun: FiFunctionDec, gctx0: Cpp3GlobalContext) -> FsFunctionDec {
+	name = fun.name;
+	fn_type = fun.type;
+	gctx = Cpp3GlobalContext(
+		gctx0 with currentToplevel = Some(fun),
+		toplevelTypars = fiCollectTypars(fn_type, makeSet()),
+		currentToplevelName = name
+	);
+	lambda_stat = fi2cpp3Transform2FsStat(fun.lambda, gctx, name);
+	lambda_exp = switch (lambda_stat) {
+		FsRet(e,__,__): e;
+		default: fail0("value of '" + name + "' function must be FsRet, got:\n" + fs2s(lambda_stat));
+	}
+	// unwrap lambda from cast
+	stat_lambda = switch (lambda_exp) {
+		FsClosure(__,lambda,__,__): lambda;
+		FsCast(e,__,__,__): {
+			switch (e) {
+				FsClosure(__,lambda,__,__): lambda;
+				default: fail0("must be lambda or cast to lambda");
+			}
+		}
+		default: fail0("must be lambda or cast to lambda");
+	}
+	FsFunctionDec(name, Some(stat_lambda), fn_type, FsFuncInfo(map(fn_type.args, \__ -> FsArgInfo(false, false)), false));
+}
+
+fi2cpp3TransformFiExp(e: FiExp, type: FiType, gctx: Cpp3GlobalContext, name: string) -> FiExp {
+	names = gctx.program.names;
+	debug_cpp3 = getUrlParameter("cpp3-debug");
+	if (debug_cpp3 == "show-transform-names") {
+		println("preparing exp: " + name);
+	}
+	debug = (name == debug_cpp3);
+	fi_debug_transform_exps := debug;
+	maybe_show = \fn, msg -> \x -> {
+		e1 = fn(x);
+		if (!debug) e1 else {
+			println(msg + ":\n" + pretFiExp(e1));
+			e1;
+		}
+	}
+	maybe_show2 = \fn, msg -> \x -> {
+		e1 = fn(x);
+		if (!debug) e1 else {
+			println(msg + ":\n" + pretFiExp(e1) + "\nRAW:\n" + toStringFormatted(e1));
+			e1;
+		}
+	}
+	if (debug) {
+		e_str = if (isConfigParameterTrue(gctx.program.config.config, "cpp-debug-raw")) {
+			toStringFormatted(e);
+		} else {
+			pretFiExp(e);
+		}
+		println("Before transformation " + name + ":\n" + strIndent(e_str));
+	}
+	start = fi2cpp3StartOperationMessage(gctx.config, 3, "transforming expression", name);
+	inlined_functionals =  buildSet(["fold", "foldi", "map", "mapi", "iter", "iteri", "exists", "forall", "find"]);
+	ret = e
+	|> maybe_show(fiRemoveEmptyLets, "fiRemoveEmptyLets")
+	|> maybe_show(\x -> fiInlineHostCalls(x, names), "fiInlineHostCalls")
+	|> maybe_show(\x -> fiWrapGlobalFuncs(x, names), "fiWrapGlobalFuncs")
+	|> maybe_show(\x -> fiComparisonWithConst(x, 3), "fiComparisonWithConst")
+	|> maybe_show(\y -> fiExplicitCastInSwitch(y, names), "fiExplicitCastInSwitch")
+	|> maybe_show(\x -> fiTransEliminateUnionFields(x, names), "fiTransEliminateUnionFields")
+	|> maybe_show(\y -> fiExplicitCastInSwitch(y, names), "fiExplicitCastInSwitch")
+	|> maybe_show(\x -> fiExpMakeCastsExplicit(x, type, names), "fiExpMakeCastsExplicit")
+	|> maybe_show(\x -> fiCorrectStructFieldTypes(x, names), "fiCorrectStructFieldTypes")
+	|> maybe_show(\y -> fiExpShortcutTrivialSwitch(y, names), "fiExpShortcutTrivialSwitch")
+	|> maybe_show(\z -> fiRemoveUnusedVars(z, gctx.effects), "fiRemoveUnusedVars")
+	|> maybe_show(\x -> fiRemoveTrivialCasts(x), "fiRemoveTrivialCasts")
+	|> maybe_show(fiExpShortcutIf, "fiExpShortcutIf")
+	|> maybe_show(fiMakeCallerVar, "fiMakeCallerVar")
+	|> maybe_show(fiPurifyTypesInExp, "fiPurifyTypesInExp")
+	|> maybe_show(fiExpNormalizeSeqences, "fiExpNormalizeSeqences")
+	|> maybe_show(\x -> fiExpUnfoldCasts(x, names, name, false), "fiExpUnfoldCasts")
+	|> maybe_show(\x -> fiExpMakeVarsUniqueCompletely(x, names), "fiExpMakeVarsUnique")
+	|> maybe_show(fiLabelAnonymLambdaArgs, "fiLabelAnonymLambdaArgs")
+	|> maybe_show(\x -> fiExtractCallNonScalarExp(x, names), "fiExtractCallNonScalarExp")
+	|> maybe_show(\x -> fiExtractParticularCalls(x, inlined_functionals, names), "fiExtractParticularCalls")
+	|> maybe_show(fiExpChangeAndOr2If, "fiExpChangeAndOr2If")
+	|> maybe_show(fiPullStatementsUp2, "fiPullStatementsUp2")
+	|> maybe_show(fiRemoveRedundantVoids, "fiRemoveRedundantVoids")
+	;
+	fi2cpp3EndOperationMessage(gctx.config, 3, "transformation of expression", name, start);
+	if (debug_cpp3 == "show-transform-names") {
+		println("\tfinished: " + name);
+	}
+	ret;
+}
+
+fi2cpp3Transform2FsStat(e: FiExp, gctx: Cpp3GlobalContext, name: string) -> FsStat {
+	debug_cpp3 = getUrlParameter("cpp3-debug");
+	debug = (name == debug_cpp3);
+	if (debug_cpp3 == "show-transform-names") {
+		println("preparing stat: " + name);
+	}
+	names = gctx.program.names;
+	// Vars, which (are / are used as) arguments of 'transparent' functions - those, which do not consume their args.
+	transparent = switch (lookupTree(gctx.recursive, name)) {
+		Some(r): {
+			foldFiExp(e,
+				switch (e) {
+					FiLambda(args,__,__,__): buildSet(map(args, \arg -> arg.name));
+					default: makeSet();
+				},
+				\acc, x -> switch (x) {
+					FiCall(f, args,__,__): {
+						switch (f) {
+							FiVar(f_name,__,__): {
+								if (!containsSet(r.rec, f_name)) acc else {
+									fold(args, acc, \ac, arg -> switch (arg) {
+										FiVar(arg_name,__,__): insertSet(ac, arg_name);
+										default: ac;
+									});
+								} 
+							}
+							default: acc;
+						}
+					}
+					default: acc;
+				}
+			);
+		}
+		None(): makeSet();
+	}
+
+	s0: FsStat = fiExp2FsStat2(e, names, true, makeTree());
+	s1: FsStat = cast(fsMap(s0, \x -> switch (x) {
+		FsVarUse(var, info, id): {
+			switch (info.kind) {
+				FsVarGlobalFunc(__): {
+					switch (lookupTree(gctx.recursive, var.name)) {
+						Some(rec): {
+							call = if (containsSet(rec.host, name)) FsRecCallHost() else FsRecCallRec();
+							FsVarUse(x with info = FsVarInfo(info with kind = FsVarGlobalFunc(call)));
+						}
+						None(): x;
+					}
+				}
+				FsVarLocal(__): {
+					FsVarUse(x with info = FsVarInfo(info with kind = FsVarLocal(containsSet(transparent, var.name))));
+				}
+				default: x;
+			}
+		}
+		default: x;
+	}, true): FsAll -> FsStat);
+	if (debug) {
+		println("FS RAW:\n" + fs2s(s1));
+	}
+	decl = lookupTreeDef(gctx.program.names.toplevel, name, FiGlobalVar("", FiVoid(0), FiTypeVoid(), 0, 0));
+	s2 = switch (decl) {
+		FiFunctionDec(__,__,__,__,__): {
+			// Make a tailcall optimization, if applicable
+			fsStatTailcall(s1, decl, names);
+		}
+		default: s1;
+	}
+	if (debug) {
+		println("TAICALLED:\n" + fs2s(s2));
+	}
+	s2_1 = fi2cpp3InsertInlines(s2, gctx);
+	s3 = if (getUrlParameter("cpp-inline-stats") == "0") s2_1 else {
+		fsInlineStat(s2_1, \x -> fsIsAlmostSimple(x, 5), names, name, debug);
+	}
+	if (debug && getUrlParameter("cpp-inline-stats") != "0") {
+		println("NATIVES INLINED:\n" + fs2s(s3));
+	}
+	start = fi2cpp3StartOperationMessage(gctx.config, 3, "inserting memory operations (Perceus)", name);
+	// Memory: ref-counting operations are inserted
+	s4 = fsPerceus(s3, containsKeyTree(gctx.recursive, name), name, debug);
+	if (debug) {
+		println("PERCEUS:\n" + fs2s(s4));
+	}
+	s5 = fsReuse(s4, debug, name);
+	if (debug) {
+		println("REUSED:\n" + fs2s(s5));
+	}
+	fi2cpp3EndOperationMessage(gctx.config, 3, "insertion of memory operations (Perceus)", name, start);
+	s5;
+}
+
+fi2cpp3InsertInlines(e: FsStat, gctx: Cpp3GlobalContext) -> FsStat {
+	cast(fsMap(e, \x -> switch (x) {
+		FsCall(f, args, type, id): {
+			switch (lookupTree(gctx.natives, f.var.name)) {
+				Some(nat): {
+					if (nat.inlining == "") x else {
+						FsInlineExp(f.var.name, args, type, id);
+					}
+				}
+				None(): x;
+			}
+		}
+		default: x;
+	}, true): FsAll -> FsStat);
+}

@@ -1,0 +1,250 @@
+[
+
+Cpp3RuntimePart("sys_system",
+"
+class FlowProcess : public QObject {
+    Q_OBJECT
+public:
+	FlowProcess();
+	// execSystemProcess
+	FlowProcess(Fun<Void, String*>* out, Fun<Void, String*>* err);
+	// runSystemProcess
+	FlowProcess(Fun<Void, String*>* out, Fun<Void, String*>* err, Fun<Void, Int>* ex);
+	// startProcess
+	FlowProcess(Fun<Void, Int, String*, String*>* all);
+
+	~FlowProcess() override;
+
+	Bool start(String* command, Vec<String*>* args, String* cwd, Bool detached);
+
+	static String* bytes2string(QByteArray bytes) {
+		return String::make(std::move(QString::fromLocal8Bit(bytes).toStdU16String()));
+	}
+	static String* bytes2line(QByteArray bytes) {
+		QString s = QString::fromLocal8Bit(bytes);
+		// Java runtime truncates the last new line
+		if (s.endsWith(QChar('\\n'))) {
+			s.truncate(s.size() - 1);
+		}
+		return String::make(std::move(s.toStdU16String()));
+	}
+	void writeStdin(String* s) {
+		to_write.append(QString::fromStdU16String(s->str()).toUtf8());
+		decRc(s);
+	}
+
+	QByteArray to_write;
+	QProcess* process = nullptr;
+
+	Fun<Void, String*>* stdout_cb = nullptr;
+	Fun<Void, String*>* stderr_cb = nullptr;
+	Fun<Void, Int>*     exit_cb = nullptr;
+	Fun<Void, Int, String*, String*>* all_cb = nullptr;
+
+	static std::map<FlowProcess*, Native*> running;
+
+	void showSelf(QString msg) {
+		std::cout << msg.toStdString() << \" [:\" <<
+		\"pointer: \" << this << \", \" <<
+		\"proc id: \" << process->processId() << \", \" <<
+		\"execution of: \" << process->program().toStdString() << \" \" << process->arguments().join(QLatin1String(\" \")).toStdString() << \", \" <<
+		\"exitCode: \" << process->exitCode() << \", \" <<
+		\"exitStatus: \" << process->exitStatus() << \", \" <<
+		\"state: \" << process->state() << \", \" <<
+		\"error: \" << process->error() << \":]\" << std::endl;
+	}
+	static void showRunning(QString msg) {
+		std::cout << msg.toStdString() << \"  -- Running processes:\" << std:: endl;
+		for (auto p : running) {
+			std::cout << p.first << \" --> \";
+			p.second->get<FlowProcess*>()->showSelf(QString());
+		}
+	}
+
+	static void waitForAllFinished() {
+		if (running.size() != 0) {
+			using namespace std::chrono_literals;
+			std::this_thread::sleep_for(3000ms);
+			//std::cout << \"waitForAllFinished()...\" << std::endl;
+			showRunning(QLatin1String(\"waitForAllFinished()...\"));
+			waitForAllFinished();
+		}
+	}
+
+private slots:
+	void processStarted();
+    void processReadyWrite();
+    void processReadyStdout();
+    void processReadyStderr();
+    void processFinished(int code, QProcess::ExitStatus status);
+    void processFailed(QProcess::ProcessError err);
+};
+
+",
+"
+
+std::map<FlowProcess*, Native*> FlowProcess::running;
+
+FlowProcess::FlowProcess() : process(new QProcess(this)) {
+	connect(process, SIGNAL(started()), SLOT(processStarted()));
+    connect(process, SIGNAL(readyReadStandardOutput()), SLOT(processReadyStdout()));
+    connect(process, SIGNAL(readyReadStandardError()), SLOT(processReadyStderr()));
+    connect(process, SIGNAL(finished(int,QProcess::ExitStatus)), SLOT(processFinished(int,QProcess::ExitStatus)));
+    connect(process, SIGNAL(errorOccurred(QProcess::ProcessError)), SLOT(processFailed(QProcess::ProcessError)));
+}
+
+// execSystemProcess
+FlowProcess::FlowProcess(
+	Fun<Void, String*>* out,
+	Fun<Void, String*>* err
+) : FlowProcess() {
+	stdout_cb = out;
+	stderr_cb = err;
+}
+
+// runSystemProcess
+FlowProcess::FlowProcess(
+	Fun<Void, String*>* out,
+	Fun<Void, String*>* err,
+	Fun<Void, Int>* ex
+) : FlowProcess() {
+	stdout_cb = out;
+	stderr_cb = err;
+	exit_cb = ex;
+}
+
+// startProcess
+FlowProcess::FlowProcess(
+	Fun<Void, Int, String*, String*>* all
+) : FlowProcess() {
+	all_cb = all;
+}
+
+FlowProcess::~FlowProcess() {
+	//showSelf(QLatin1String(\"~FlowProcess()\"));
+	if (stdout_cb) decRc(stdout_cb);
+	if (stderr_cb) decRc(stderr_cb);
+	if (exit_cb) decRc(exit_cb);
+	if (all_cb) decRc(all_cb);
+	delete process;
+}
+
+Bool FlowProcess::start(String* command, Vec<String*>* args, String* cwd, Bool detached) {
+	if (cwd->size() > 0) {
+		process->setWorkingDirectory(QString::fromStdU16String(cwd->str()));
+	}
+	decRc(cwd);
+	QStringList qt_args;
+	for (String* arg : *args) {
+		qt_args << QString::fromStdU16String(arg->str());
+	}
+	decRc(args);
+	process->setProgram(QString::fromStdU16String(command->str()));
+	decRc(command);
+	process->setArguments(qt_args);
+	if (detached) {
+		qint64 pid;
+		return process->startDetached(&pid);
+	} else {
+		process->start();
+		return true;
+	}
+}
+
+void FlowProcess::processStarted() {
+    processReadyWrite();
+}
+
+void FlowProcess::processReadyWrite() {
+    if (process->state() == QProcess::Running) {
+		qint64 to_write_size = to_write.size();
+		while (to_write_size > 0) {
+			qint64 written = process->write(
+				to_write.data(),
+				to_write.size()
+			);
+			to_write_size -= written;
+		}
+		to_write.clear();
+	}
+}
+
+void FlowProcess::processReadyStdout() {
+	if (stdout_cb) {
+		process->setReadChannel(QProcess::StandardOutput);
+		QByteArray bytes = process->readLine();
+		if (bytes.size() > 0) {
+			stdout_cb->callRc1(bytes2line(bytes));
+		}
+	}
+}
+
+void FlowProcess::processReadyStderr() {
+	if (stderr_cb) {
+		process->setReadChannel(QProcess::StandardError);
+		QByteArray bytes = process->readLine();
+		if (bytes.size() > 0) {
+			stderr_cb->callRc1(bytes2line(bytes));
+		}
+	}
+}
+
+void FlowProcess::processFinished(int code0, QProcess::ExitStatus status) {
+	int code = (status == QProcess::NormalExit) ? code0 : -100;
+    process->closeWriteChannel();
+
+	// read all yet undread from out/err
+	if (stdout_cb) {
+		process->setReadChannel(QProcess::StandardOutput);
+		while (true) {
+			QByteArray bytes = process->readLine();
+			if (bytes.size() > 0) {
+				stdout_cb->callRc1(bytes2line(bytes));
+			} else {
+				break;
+			}
+		}
+	}
+	if (stderr_cb) {
+		process->setReadChannel(QProcess::StandardError);
+		while (true) {
+			QByteArray bytes = process->readLine();
+			if (bytes.size() > 0) {
+				stderr_cb->callRc1(bytes2line(bytes));
+			} else {
+				break;
+			}
+		}
+	}
+
+	if (all_cb) {
+		all_cb->callRc1(
+			code,
+			bytes2string(process->readAllStandardOutput()),
+			bytes2string(process->readAllStandardError())
+		);
+    }
+	if (exit_cb) {
+		exit_cb->callRc1(code);
+	}
+	/*if (running.find(this) == running.end()) {
+		std::cout << \"running.find(this) == running.end() (!!!! sic), this: \" << this << std::endl;
+		std::cout << \"running.size(): \" << running.size() << std::endl;
+		showRunning(QLatin1String(\"running.find(this) == running.end() (!!!! sic)\"));
+	}*/
+	running.erase(this);
+	//showRunning(QLatin1String(\"processFinished - ended\"));
+}
+
+void FlowProcess::processFailed(QProcess::ProcessError err) {
+	processFinished(200 + err, QProcess::CrashExit);
+}
+
+",
+"", 
+"FlowProcess::waitForAllFinished();",
+"FlowProcess::waitForAllFinished();",
+[Cpp3Std(["<map>", "<chrono>", "<thread>", "<iostream>"], []), Cpp3Qt(["Core"], ["<QProcess>"], [])], false
+)
+
+]

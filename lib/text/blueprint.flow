@@ -1,5 +1,4 @@
-import ds/tree;
-import algorithms;
+import ds/arrayutils;
 
 /*
 	Blueprint
@@ -65,15 +64,20 @@ import algorithms;
 
 	You can also use special syntax for conditional statements:
 
-		% if flag %
-			...
+		% if flag1 %
+			% if !flag2 %
+				...
+			% endif %
 		% else %
 			...
 		% endif %
 
 	Unfortunately you have to convert flag to string when passing as part of key-value array:
 
-		"flag", b2s(myFlag)
+		[	"flag1", b2s(myFlag1),
+			"flag2", b2s(myFlag2),
+			...
+		]
 
 	Reserved parameter names
 	------------------------
@@ -125,12 +129,14 @@ import algorithms;
 
 export {
 	blueprint(s : string, parameters : [string]) -> string;
+	// This function ignores unknown parameters, so it can be used for inner blueprinting (it does not produce errors: Blueprint error: condition `...` can't be resolved)
+	blueprintPartial(s : string, parameters : [string]) -> string;
 
 	buildTabs(n : int) -> string;
 	indentLines(s : string, indent : int) -> string;
 	indentLinesA(lines : [string], indent : int) -> string;
 
-	// count number of tabs (ignoring spaces) in the beggining of the line
+	// count number of tabs (ignoring spaces) in the beginning of the line
 	countLineIndentation(line : string) -> int;
 
 	// Maps each element, ignores the result if the result is the empty string, and then glues everything together
@@ -139,139 +145,186 @@ export {
 	supergluei(xs : [?], fn : (int, ?) -> string, delimiter : string) -> string;
 }
 
-BLUEPRINT_RESERVED_NAMES :[string] = ["nl0", "nl1", "nl2", "nl3"];
+BLUEPRINT_RESERVED_NAMES = ["nl0", "nl1", "nl2", "nl3"];
 
 blueprint(s : string, parameters : [string]) -> string {
-	// Step 1. Unindent lines
-	unindented = unindentLines(s);
-
-	// Process parameters
-	key2value =
-		foldi(parameters, makeTree(), \i, acc, param -> {
-			if (odd(i)) {
-				if (contains(BLUEPRINT_RESERVED_NAMES, param)) {
-					println("Blueprint error: parameter name '" + param + "' is reserved");
-				};
-				setTree(acc, parameters[i-1], param)
-			} else {
-				acc
-			}
-		});
-
-	// Step 2. Substitute conditional statements
-	unconditional0 = substituteConditions(unindented, key2value);
-	unconditional = strGlue(unconditional0, "\n");
-
-	// Step 3. Substitute keys
-	withKeys = substituteKeys(unconditional, key2value);
-
-	// Step 4. New lines
-	substituteNewLines(withKeys);
+	blueprintEx(s, parameters, true, true);
 }
 
-substituteConditions(lines : [string], key2value : Tree<string, string>) -> [string] {
-	// find first IF
-	IF_PREFIX = "% if";
-	IF_POSTFIX = " %";
-	ifLineNumberM = findi(lines, \line -> strContains(line, IF_PREFIX));
+blueprintPartial(s : string, parameters : [string]) -> string {
+	blueprintEx(s, parameters, false, false);
+}
 
-	switch (ifLineNumberM) {
-		Some(ifLineNumber): {
-			beforeIfLines = take(lines, ifLineNumber);
-			ifLine = lines[ifLineNumber];
+blueprintEx(s : string, parameters : [string], requireVariables : bool, processNewLines : bool) -> string {
+	substitute = \str, key2value -> {
+		// Step 1. Unindent lines
+		unindented = unindentLines(str);
+		// Step 2. Substitute conditional statements
+		unconditional0 = substituteConditions(unindented, key2value, requireVariables);
+		unconditional = strGlue(unconditional0, "\n");
+		// Step 3. Substitute keys
+		substituteKeys(unconditional, key2value);
+	}
 
-			//println("IF LINE:" + ifLine);
+	// Process parameters
+	key2value = foldi(parameters, makeTree(), \i, acc, param -> {
+		if (odd(i)) {
+			key = parameters[i - 1];
+			if (contains(BLUEPRINT_RESERVED_NAMES, param)) {
+				println("Blueprint error: parameter name '" + key + "' is reserved");
+			}
+			value = if (strContains(param, "%")) {
+				substitute(param, acc);
+			} else {
+				param;
+			}
+			setTree(acc, key, value);
+		} else {
+			acc;
+		}
+	});
 
-			// find position of IF inside of the line
-			ifPrefixIndex = strIndexOf(ifLine, IF_PREFIX);
-			ifPostixIndex = strRangeIndexOf(ifLine, IF_POSTFIX, ifPrefixIndex, strlen(ifLine));
-			if (ifPrefixIndex == -1 || ifPostixIndex == -1) {
-				println("Blueprint error: unbalanced IF statement");
-			};
+	withKeys = substitute(s, key2value);
+	if (processNewLines) {
+		substituteNewLines(withKeys);
+	} else {
+		withKeys;
+	}
+}
 
-			//println("ifPrefixIndex=" + i2s(ifPrefixIndex));
-			//println("ifPostixIndex=" + i2s(ifPostixIndex));
+BluePrint ::= BluePrintCondition, BluePrintElse, BluePrintLines;
+	BluePrintCondition(condition : string, originalLine : string, i : int);
+	BluePrintElse(originalLine : string, i : int);
+	BluePrintLines(lines : List<string>);
 
-			// find IF condition
-			condition = substring(ifLine, ifPrefixIndex + strlen(IF_PREFIX), ifPostixIndex - ifPrefixIndex - strlen(IF_PREFIX));
-			condition2 = trim(condition);
-			negateCondition = startsWith(condition2, "!");
-			condition3 = ltrim2(condition2, "!");
-			//println("condition2=" + condition);
-
-			// calculate condition based one key-value map
-			valueM = lookupTree(key2value, condition3);
-			switch (valueM) {
-				Some(value): {
-					// convert string value to boolean
-					boolValue = s2b(value);
-					boolValue2 = if (negateCondition) !boolValue else boolValue;
-
-					// run recursively
-					afterIfLines = tailFrom(lines, ifLineNumber + 1);
-					afterIfLines2 = substituteConditions(afterIfLines, key2value);
-
-					// find ENDIF
-					ENDIF_TAG = "% endif %";
-					endifLineNumberM = findi(afterIfLines2, \line -> strContains(line, ENDIF_TAG));
-
-					switch (endifLineNumberM) {
-						Some(endifLineNumber): {
-							afterEndIfLines = tailFrom(afterIfLines2, endifLineNumber + 1);
-							bodyLines = take(afterIfLines2, endifLineNumber);
-
-							// find ELSE if exists
-							ELSE_TAG = "% else %";
-							elseLineNumberM = findi(bodyLines, \line -> strContains(line, ELSE_TAG));
-
-							branchLines =
-								switch (elseLineNumberM) {
-									Some(elseLineNumber): {
-										beforeElseLines = take(bodyLines, elseLineNumber);
-										afterElseLines = tailFrom(bodyLines, elseLineNumber + 1);
-
-										if (boolValue2) {
-											beforeElseLines
-										} else {
-											afterElseLines
+substituteConditions(linesA : [string], key2value : Tree<string, string>, require : bool) -> [string] {
+	unpair(
+		foldi2(linesA, makeList(), makeList(), \i, accResultStack, accCurrentLines, line -> {
+			condition = trim(takeBetween(line, "% if ", " %", ""));
+			if (condition != "") {
+				Pair(Cons(BluePrintCondition(condition, line, i), Cons(BluePrintLines(accCurrentLines), accResultStack)), makeList());
+			} else if (strContains(line, "% else %")) {
+				Pair(Cons(BluePrintElse(line, i), Cons(BluePrintLines(accCurrentLines), accResultStack)), makeList());
+			} else if (strContains(line, "% endif %")) {
+				unquadruple(
+					foldpList(
+						Cons(BluePrintLines(accCurrentLines), accResultStack),
+						Quadruple(false, false, makeList(), Triple(makeList(), "", makeList())),
+						\stack, acc, stackItem -> {
+							unquadruple(acc, \foundCondition, foundElse, result, elseBranches -> {
+								if (foundCondition) {
+									acc;
+								} else {
+									switch (stackItem) {
+										BluePrintCondition(conditionStr, ifLine, ifIdx): {
+											negateCondition = startsWith(conditionStr, "!");
+											conditionStr2 = ltrim2(conditionStr, "!");
+											valueM = lookupTree(key2value, conditionStr2);
+											boolValue2M = maybeMap(valueM, \value -> {
+												// convert string value to boolean
+												boolValue = s2b(value);
+												if (negateCondition) !boolValue else boolValue;
+											});
+											untriple(elseBranches, \trueLines, elseLine, falseLines -> {
+												lines = eitherFn(boolValue2M,
+													\boolValue -> {
+														body = if (boolValue) {
+															trueLines;
+														} else {
+															falseLines;
+														}
+														firstLine = foldList(body, ifLine, \accLine, l -> if (l != "") l else accLine);
+														indentDiff = countLineIndentation(ifLine) - countLineIndentation(firstLine);
+														if (indentDiff == 0) {
+															body;
+														} else if (indentDiff < 0) {
+															mapList(body, \l -> unindentLine(l, -indentDiff));
+														} else {
+															mapList(body, \l -> indentLine(l, indentDiff));
+														}
+													},
+													\ -> {
+														if (require) {
+															println("Blueprint error: condition `" + conditionStr + "` can't be resolved, line: " + i2s(ifIdx + 1));
+														}
+														trueLines2 = if (elseLine == "") {
+															trueLines;
+														} else {
+															Cons(elseLine, trueLines);
+														}
+														concatList(
+															concatList(
+																Cons(line, falseLines),
+																trueLines2
+															),
+															makeList1(ifLine)
+														);
+													}
+												);
+												Quadruple(true, true, Cons(BluePrintLines(lines), tailList(stack)), elseBranches);
+											});
+										}
+										BluePrintElse(originalElseLine, lineIdx): {
+											untriple(elseBranches, \trueLines, elseLine, falseLines -> {
+												if (elseLine == "") {
+													Quadruple(false, true, result, Triple(makeList(), originalElseLine, trueLines));
+												} else {
+													println("Blueprint error: double ELSE statement, lines: " + i2s(lineIdx + 1) + ", " + i2s(i + 1));
+													brokenLines = concatList(
+														concatList(
+															Cons(line, falseLines),
+															Cons(elseLine, trueLines)
+														),
+														makeList1(originalElseLine)
+													);
+													Quadruple(true, true, Cons(BluePrintLines(brokenLines), tailList(stack)), elseBranches);
+												}
+											});
+										}
+										BluePrintLines(lines): {
+											elseBranches2 = untriple(elseBranches, \trueLines, elseLine, falseLines -> {
+												Triple(concatList(trueLines, lines), elseLine, falseLines);
+											});
+											Quadruple(false, foundElse, result, elseBranches2);
 										}
 									}
-									None(): {
-										// no ELSE found, use all body if condition is true
-										if (boolValue2) {
-											bodyLines
-										} else {
-											[]
-										}
-									}
-								};
-
-							// first, unindent branch lines based one the first one
-							// second, indent to match IF tag indentation
-							branchLines2 = indentLines2(unindentLines2(branchLines), ifPrefixIndex);
-
-							// put all lines back together except one with tags
-							concat3(beforeIfLines, branchLines2, afterEndIfLines);
+								}
+							});
 						}
-						None(): {
-							// no ENDIF found, something wrong
-							println("Blueprint error: % endif % is not found");
-							lines;
+					),
+					\ifClosed, __, result, __ -> {
+						if (!ifClosed) {
+							println("Blueprint error: ENDIF statement without IF, line: " + i2s(i + 1));
+						}
+						Pair(result, makeList());
+					}
+				);
+			} else {
+				Pair(accResultStack, Cons(line, accCurrentLines));
+			}
+		}),
+		\resultStack, restLines -> {
+			list2array(fold(
+				list2array(Cons(BluePrintLines(restLines), resultStack)),
+				makeList(),
+				\acc, stackItem -> {
+					switch (stackItem) {
+						BluePrintCondition(__, line, i): {
+							println("Blueprint error: IF statement is not closed, line: " + i2s(i + 1));
+							Cons(line, acc);
+						}
+						BluePrintElse(line, i): {
+							println("Blueprint error: ELSE statement is not closed, line: " + i2s(i + 1));
+							Cons(line, acc);
+						}
+						BluePrintLines(lines): {
+							concatList(lines, acc);
 						}
 					}
 				}
-				None(): {
-					// variable not found, can't resolve
-					println("Blueprint error: condition `" + condition2 + "` can't be resolved");
-					lines;
-				}
-			}
+			));
 		}
-		None(): {
-			// no IF found, nothing we can do here
-			lines;
-		}
-	}
+	);
 }
 
 BlueReplacement : (start : int, end : int, value : string);

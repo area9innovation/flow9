@@ -1,0 +1,93 @@
+import ds/simplegraph;
+
+export {
+	// Takes a bunch of rectangles, and decide what is a good reading order of them
+	// It works by creating a graph of how all rectangles relate to each others
+	readingOrder(rects : [ReadRect<?>]) -> [ReadRect<?>];
+		ReadRect(x1 : double, y1 : double, width : double, height : double, tag : ?);
+}
+
+RectRelation ::= RectAbove, RectBelow, RectLeft, RectRight, RectPartialOverlap, RectInside, RectOutside, RectSame;
+	RectAbove();			// Rectangle A is fully above rectangle B
+	RectBelow();			// Rectangle A is fully below rectangle B
+	RectLeft();				// Rectangle A is fully to the left of rectangle B
+	RectRight();			// Rectangle A is fully to the right of rectangle B
+	RectPartialOverlap(above : bool);	// Rectangle A and B are partially overlapping
+	RectInside();			// Rectangle A is fully inside rectangle B
+	RectOutside();			// Rectangle A is fully outside (and not overlapping) rectangle B
+	RectSame();				// Rectangle A is the same as rectangle B
+
+// How do these rectangles related
+rectRelation(a : ReadRect<?>, b : ReadRect<?>) -> [RectRelation] {
+	// Calculate the bottom and right of each rectangle
+	bottomA = a.y1 + a.height;
+	rightA = a.x1 + a.width;
+	bottomB = b.y1 + b.height;
+	rightB = b.x1 + b.width;
+
+	// Now check for all conditions
+	if (a.x1 == b.x1 && a.y1 == b.y1 && a.width == b.width && a.height == b.height) [RectSame()] 
+	else if (a.x1 >= b.x1 && rightA <= rightB && a.y1 >= b.y1 && bottomA <= bottomB) [RectInside()] 
+	else {
+		rels = concatA([
+			if (bottomA <= b.y1 && bottomA < bottomB) [RectAbove()] else [],
+			if (a.y1 >= bottomB && a.y1 > b.y1) [RectBelow()] else [],
+			if (rightA <= b.x1 && rightA < rightB) [RectLeft()] else [],
+			if (a.x1 >= rightB && a.x1 > b.x1) [RectRight()] else [],
+			if (rightA > b.x1 && a.x1 < rightB && a.y1 > bottomB && bottomA < b.y1) [RectPartialOverlap(a.y1 < b.y1)] else [],
+		]);
+		if (rels == []) [RectOutside()] else rels;
+	}
+}
+
+readingOrder(rects : [ReadRect<?>]) -> [ReadRect<?>] {
+	if (length(rects) <= 1) {
+		rects
+	} else {
+		graph = foldi(rects, makeSimpleGraph(), \x, acc, a -> {
+			foldi(rects, acc, \y, acc1, b -> {
+				if (x >= y) {
+					acc1
+				} else {
+					rels = rectRelation(a, b);
+					// If we have both up/down, and left/right, we let up/down win
+					relations = if (contains(rels, RectAbove()) || contains(rels, RectBelow())) filter(rels, \r -> r != RectLeft() && r != RectRight()) else rels;
+					// println(toString(a.tag) + " " + toString(b.tag) + " " + toString(relations));
+					fold(relations, acc1, \acc2, relation -> {
+						switch (relation) {
+							RectAbove(): addSimpleEdge(acc2, a, b, 0, 1);
+							RectBelow(): addSimpleEdge(acc2, b, a, 0, 1);
+							RectLeft(): addSimpleEdge(acc2, a, b, 0, 1);
+							RectRight(): addSimpleEdge(acc2, b, a, 0, 1);
+							RectPartialOverlap(above): if (above) addSimpleEdge(acc2, a, b, 0, 1) else addSimpleEdge(acc2, b, a, 0, 1);
+							RectInside(): addSimpleEdge(acc2, b, a, 0, 1);
+							RectOutside(): addSimpleEdge(acc2, a, b, 0, 1);
+							RectSame(): addSimpleEdge(acc2, a, b, 0, 1);
+						}
+					})
+				}
+			})
+		});
+/*	dot = simpleGraph2dot(graph, rects[0], [], \f -> [DotLabel(f.tag)], \e -> []);
+	setFileContent("graph.dot", dot);
+*/
+		sgraph = simpleLoopFree(graph, rects[0]);
+		topoSortSimpleGraph(sgraph);
+	}
+}
+
+
+/* main() {
+	rects = [
+		ReadRect(2.0, 6.0, 1.0, 1.0, "D"),
+		ReadRect(4.0, 6.0, 3.0, 1.0, "E"),
+		ReadRect(1.0, 1.0, 4.0, 2.0, "A"),
+		ReadRect(6.0, 2.0, 3.0, 1.0, "B"),
+		ReadRect(2.0, 4.0, 7.0, 1.0, "C"),
+		ReadRect(8.0, 6.0, 2.0, 1.0, "F"),
+	];
+	order = readingOrder(rects);
+	iter(order, println);
+	quit(0);
+}
+ */

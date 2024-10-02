@@ -126,19 +126,21 @@ function loadJSFileInternal(url) {
 	return loadJSFile(url);
 }
 
-function loadCSSFile(url) {
+function loadCSSFile(url, onload = null, onerror = null) {
 	var head = document.getElementsByTagName('head')[0];
 	var node = document.createElement("link");
+	node.onload = onload;
+	node.onerror = onerror;
 	node.setAttribute("rel", "stylesheet");
 	node.setAttribute("type", "text/css");
 	node.setAttribute("href", url);
 	head.appendChild(node);
 }
 
-function loadCSSFileInternal(url) {
+function loadCSSFileInternal(url, onload = null, onerror = null) {
 	var urlObj = parseUrl(url);
 	if (urlObj.origin) throw new PermissionDeniedError("External style loading is not allowed.");
-	return loadCSSFile(url);
+	return loadCSSFile(url, onload, onerror);
 }
 
 function loadFavicon(url) {
@@ -151,7 +153,7 @@ function loadFavicon(url) {
 }
 
 function loadExternalResources() {
-	loadCSSFileInternal("flowjspixi.css?19");
+	loadCSSFileInternal("flowjspixi.css?24");
 }
 
 var overlayLoadTimestamp = "";
@@ -223,7 +225,7 @@ if (typeof htmlBundle == "undefined") {
 		if (this.readyState == 4 && this.status == 200) {
 			var newTimestamp = this.responseText;
 			var oldTimestamp = localStorage.getItem(filename);
-			if (oldTimestamp != newTimestamp) {
+			if (newTimestamp != "0" && oldTimestamp != newTimestamp) {
 				localStorage.setItem(filename, newTimestamp);
 				window.location.reload(true);
 			}

@@ -150,21 +150,16 @@ MDynamicMenuHandleShortcuts(
 }
 
 fgetShortcuts(items : Transform<[MMenuLine]>) -> Transform<[MShortcut]> {
+	extractShortcut = \st -> const(extractStructMany(st, MShortcut("shortcut")));
+	extractShortcutSub = \st, subItems -> fconcat(const(extractStructMany(st, MShortcut("shortcut"))), fgetShortcuts(subItems));
 	fsubmap(items, \it ->
 		switch (it : MMenuLine) {
-			MMenuSingleLine(__, style) : const(extractStructMany(style, MShortcut("shortcut")));
-			MMenuCustomLine(__, style) : const(extractStructMany(style, MShortcut("shortcut")));
-			MMenuGroupLine(__, style) : const(extractStructMany(style, MShortcut("shortcut")));
-			MSubMenu(__, subItems, style) :
-				fconcat(
-					const(extractStructMany(style, MShortcut("shortcut"))),
-					fgetShortcuts(const(subItems))
-				);
-			MSubMenuDynamic(__, subItems, style) :
-				fconcat(
-					const(extractStructMany(style, MShortcut("shortcut"))),
-					fgetShortcuts(subItems)
-				);
+			MMenuSingleLine(__, style) : extractShortcut(style);
+			MMenuCustomLine(__, style) : extractShortcut(style);
+			MMenuGroupLine(__, style) : extractShortcut(style);
+			MSubMenu(__, subItems, style) : extractShortcutSub(style, const(subItems));
+			MSubMenuDynamic(__, subItems, style) : extractShortcutSub(style, subItems);
+			MSubMenuCustom(__, subItems, style) : extractShortcutSub(style, subItems);
 			MSeparatorLine() : const([])
 		}
 	)
@@ -482,7 +477,7 @@ MMenuPanel2T(manager : MaterialManager, parent : MFocusGroup, m : MMenuPanel, m2
 	cropByContent = contains(style, MScrollCropByContent());
 	enabledHover = if (extractStruct(style, MExpandOnHover(true)).expand) Some(make(false)) else None();
 	bgColor = extractStruct(style, MMenuPanelBackground(MSurfaceColor())).color;
-	bgStyle = extractStruct(style, MBackgroundStyle([MThemeFill(parent, bgColor)])).style;
+	bgStyle = mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style, MBackgroundStyle([MThemeFill(parent, bgColor)])).style);
 	elevation = extractStruct(style, MElevation(const(4.0))).elevation;
 	openMenus = ref [];
 
@@ -564,8 +559,9 @@ MDropDownMenu2T(
 	});
 	buttonTitle : MButtonTitle = extractStruct(style, MButtonTitle(const(label)));
 	croppedTitle = contains(style, MDropDownMenuCropByContent());
+	dropDownWarning = tryExtractStruct(style, MDropDownMenuWarning(const(None()), []));
 
-	iconSize = if (tableRow || tableFooter) 16.0 else 20.0;
+	iconSize = extractStruct(style, MDropDownMenuIconSize(if (tableRow || tableFooter) 16.0 else 20.0)).size;
 	iconBorders = extractStruct(style, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
 	iconColorM = maybeMap(tryExtractStruct(style, MDropDownMenuIconColor(MWhite())), \ic -> ic.color);
 
@@ -694,6 +690,7 @@ MDropDownMenu2T(
 			}
 		)
 	)
+	|> addMDropDownMenuWarning(dropDownWarning)
 	|> (\f -> MDynamicMenu(f, const(items), menuStyle))
 	|> (\f -> MDynamicMenu2TInner(manager, parent, f, m2t, Some(popupId)))
 	|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)
@@ -784,6 +781,7 @@ MMultiSelectDropDown2T(
 	iconNearTitle = contains(style, MDropDownIconNearTitle());
 	defButtonLineStyle = [MDisableHover(), MEnabled(enabled), MSecondaryAction(icon)];
 	listSelectionEnabled = tryExtractStruct(style, MListSelectionEnabled(const([])));
+	dropDownWarning = tryExtractStruct(style, MDropDownMenuWarning(const(None()), []));
 
 	popupId = getPopupId(manager);
 
@@ -821,8 +819,10 @@ MMultiSelectDropDown2T(
 					if (plain) [] else [MNonSpecified(MMenuSingleLine(nonSpec, [])), MOpenMenu(opened)],
 					eitherMap(tryExtractStruct(style, MDropDownMenuDisabledOpacity(const(0.0))), \v -> [v], []),
 					eitherMap(tryExtractStruct(style, MCustomLineHeight(-1.)), \v -> [v], []),
+					extractStructMany(style, MSeparators(true)),
 					extractStructMany(style, MDataTableRow()),
-					extractStructMany(style, MDataTableFooter())
+					extractStructMany(style, MDataTableFooter()),
+					extractStructMany(style, MDropDownMenuWarning(const(None()), []))
 				])
 			),
 			onClick,
@@ -850,7 +850,8 @@ MMultiSelectDropDown2T(
 				),
 			defMenuButton
 		)
-		|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn);
+		|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)
+		|> addMDropDownMenuWarning(dropDownWarning);
 
 	dropDownLines =
 		if (length(items) == 0) []
@@ -930,10 +931,27 @@ MMultiSelectDropDown2T(
 			[MOpenMenu(opened), MMenuLineBorders(lineBorders)],
 			if (belowButton) [MBelowButton()] else [],
 			if (isSome(customButton) && isSome(tryExtractStruct(style, MWidth(-1.)))) [] else [MWidthByButton()],
-			if (plain) [] else [MMenuExpandingAnimation()]
+			if (plain) [] else [MMenuExpandingAnimation()],
+			extractStructMany(style, MMenuOpenDelay(0))
 		])
 	)
 	|> (\f -> MDynamicMenu2TInner(manager, parent, f, m2t, Some(popupId)))
+}
+
+addMDropDownMenuWarning(dropDownWarning : Maybe<MDropDownMenuWarning>) -> (Material) -> Material {
+	\m -> eitherMap(dropDownWarning,
+		\ddw -> {
+			separatorColor = extractStruct(ddw.style, MDropDownMenuWarningColor(const(MErrorColor()))).color;
+			warningFont = extractStruct(ddw.style, MDropDownMenuWarningFont(MCaption())).style;
+			MLines2A(
+				m,
+				MSelect2(ddw.text, separatorColor, \txtM, col ->
+					eitherMap(txtM, \txt -> MEllipsisText(txt, [warningFont, col]) |> MBorderTop(4.), TEmpty())
+				)
+			)
+		},
+		m
+	)
 }
 
 MMenuTitle2T(
@@ -1070,11 +1088,20 @@ MDropDownMenuButton2T(
 	buttonBorders = extractStruct(style0, MDropDownMenuButtonBorder(lineBorders0)).border;
 	lineBorders = if (croppedButton) 0. else buttonBorders;
 	color : MColor = extractStruct(style0, if (lightBackground) MBlack() else MWhite());
+	separatorsColorM = tryExtractStruct(style0, MSeparatorsColor(MBlack()));
+	dropDownMenuWarning = tryExtractStruct(style0, MDropDownMenuWarning(const(None()), []));
 	selectedColor = MThemeColor2MColor(parent, extractStruct(style0, MSelectedColor(MAccentColor())).color);
-	textStyle = [
-		if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading(),
-		color
-	];
+	textStyle = concat(
+		extractStruct(
+			style0,
+			MCustomTextStyle([
+				if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading(),
+			])
+		).style,
+		[
+			color
+		]
+	);
 	outlined = contains(style0, MOutlined());
 	filled = contains(style0, MFilled());
 	plain = !outlined && !filled;
@@ -1117,13 +1144,33 @@ MDropDownMenuButton2T(
 		);
 
 	active = fOr(openMenu, focused);
+	outlineColorActive = if (outlined) extractStruct(style0, MOutlineColor(selectedColor)).color else selectedColor;
+	outlineColorPassive = if (outlined) extractStruct(style0, MOutlineColor(color)).color else color;
+	opacity = if (outlined) extractStruct(style0, MOutlineOpacity(1.)).opacity else 1.;
+	widthActive = if (outlined) extractStruct(style0, MOutlineWidth(2.)).width else 2.;
+	widthPassive = if (outlined) extractStruct(style0, MOutlineWidth(1.)).width else 1.;
 	graphicsState = fif(active,
-		const(MGraphicsState(2., MColor2int(selectedColor), 1., true)),
-		const(MGraphicsState(1., MColor2int(color), 0.38, false)),
+		const(MGraphicsState(widthActive, MThemeColor2int(manager, outlineColorActive), opacity, true)),
+		{
+			defPassive = const(MGraphicsState(widthPassive, MThemeColor2int(manager, outlineColorPassive), 0.38 * opacity, false));
+			eitherMap(dropDownMenuWarning,
+				\ddw -> {
+					separatorColor = extractStruct(ddw.style, MDropDownMenuWarningColor(const(MErrorColor()))).color;
+					fif(
+						fselectLift(ddw.text, \txtM -> eitherMap(txtM, \txt -> txt != "", false)),
+						fselectLift(separatorColor, \col -> MGraphicsState(widthPassive, MThemeColor2int(manager, col), 1., false)),
+						defPassive
+					)
+				},
+				defPassive
+			)
+		}
 	);
 
-	outlineColor = fif(openMenu, const(selectedColor), const(color));
-	dynColor = make(color);
+	dynColor = make(eitherMap(dropDownMenuWarning, \ddw ->
+		fgetValue(extractStruct(ddw.style, MDropDownMenuWarningColor(const(MErrorColor()))).color),
+		color
+	));
 	floatingLabelProgress = make(1.);
 	labelWidth = make(0.);
 
@@ -1183,7 +1230,6 @@ MDropDownMenuButton2T(
 
 						characterStyle = MTextStyle2CharacterStyle(parent, lineTextStyle);
 						labelSize = extractStruct(characterStyle, FontSize(14.)).size;
-						themeColor : Transform<MThemeColor> = dynColor;
 						TGroup2(
 							TVisible(showTitle, if (filled && !isNonSpec) TTranslate(const(Point(0., 8.)), t) else t),
 							TVisible(
@@ -1194,7 +1240,7 @@ MDropDownMenuButton2T(
 										const(characterStyle),
 										const(replaceStruct(characterStyle, FillOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))))
 									),
-									Some(MDynamicColor(themeColor)),
+									Some(MDynamicColor(dynColor)),
 									labelWidth, m2t
 								)
 							)
@@ -1216,13 +1262,12 @@ MDropDownMenuButton2T(
 				|> (\t ->
 					if (plain) t
 					else {
-						themeColor : Transform<MThemeColor> = dynColor;
 						TGroup2(
 							if (filled) TTranslate(const(Point(0., 8.)), t) else t,
 							makeMFloatingLabel(manager, parent, nonSpecifiedLabel,
 								makeFloatingLabelState(style, const(true), 14.),
 								fif(active, const([]), const([FillOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))])),
-								Some(MDynamicColor(themeColor)),
+								Some(MDynamicColor(dynColor)),
 								labelWidth, m2t
 							)
 						)
@@ -1275,23 +1320,43 @@ MDropDownMenuButton2T(
 	|> (\f ->
 		if (tableFooter || tableRow || !separators)
 			f
-		else if (croppedButton)
-			TCopySize2(f, \sz, tr ->
+		else TCopySize2(f, \sz, tr -> {
+			separator = eitherMap(
+				separatorsColorM,
+				\separatorColor -> TRectangle([MFill(separatorColor.color)], TFillXH(1.)),
+				eitherMap(
+					dropDownMenuWarning, 
+					\ddw -> {
+						separatorColor = extractStruct(ddw.style, MDropDownMenuWarningColor(const(MErrorColor()))).color;
+						MSelect(ddw.text, \txtM->
+							eitherMap(txtM, \txt ->
+								if (txt != "") MSelect(separatorColor, \col ->
+									TRectangle([MFill(MThemeColor2MColor(parent, col))], TFillXH(1.))
+								) else MSeparator(true),
+								MSeparator(true)
+							)
+						)
+					},
+					MSeparator(true)
+				)
+			)
+			|> (\t -> m2t(t, parent))
+			|> (\t -> TAvailable(t, sz));
+
+			if (croppedButton)
 				TBaselineLines2(
 					tr |> TBorderBottom(-1.),
-					TAvailable(m2t(MSeparator(true), parent), sz)
+					separator
 				)
-			)
-		else
-			TCopySize2(f, \sz, tr ->
+			else
 				TLines2(
-					TAvailable(m2t(MSeparator(true), parent), sz),
+					separator,
 					TBaselineLines2(
 						tr |> TBorderTopBottom(-1.),
-						TAvailable(m2t(MSeparator(true), parent), sz)
+						separator
 					)
 				)
-			)
+		})
 	)
 	|> (if (croppedButton)
 			TBorderLeftRight(buttonBorders)
@@ -1460,7 +1525,6 @@ MMenuLines2Material(
 	nonspecAlwaysOnTop = isSome(nonspecAlwaysOnTopM);
 	indexShift = nonspecAlwaysOnTop || (isSome(selectedOnTop) && isSome(singleSelection));
 	cols = if (indexShift) 0 else extractStruct(style0, MMenuCols(1)).cols - 1;
-	sameZorder = extractStruct(style0, MSameZorder(false)).same;
 	nextFn = if (contains(style0, MForceUpdate())) next else nextDistinct;
 	focusName = extractStruct(style0, MFocusName("MMenu")).name;
 	popupRole = extractStruct(style0, AccessRole(if (strContains(toLowerCase(focusName), "drop")) "listbox" else "menu")).role;
@@ -1488,7 +1552,10 @@ MMenuLines2Material(
 
 	hovered = make(-1);
 
-	textStyle = [if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading()];
+	textStyle = extractStruct(
+		style0,
+		MCustomTextStyle([if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading()])
+	).style;
 	iconSize = if (tableRow || tableFooter) 16.0 else 20.0;
 	iconBorders = extractStruct(style0, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
 
@@ -1513,13 +1580,11 @@ MMenuLines2Material(
 		}
 	}
 
-	onItemClick = \i, click, isSelected, focused -> \ -> {
-		closeFn = \ -> {
+	onItemClick = \i, click, isSelected, focused, shouldClose -> \ -> {
+		if (shouldClose()) {
 			nextDistinct(openMenu.opened, false);
 			closeBelow();
 		}
-
-		closeFn();
 
 		if (i >= shiftGap) {
 			setSelectedFn = \ ->
@@ -1533,8 +1598,7 @@ MMenuLines2Material(
 						nextDistinct(isSelected, true)
 					}
 				});
-			// TODO : Maybe get rid of this defer, looks outdated
-			if (isUrlParameterTrue("new")) setSelectedFn() else deferUntilNextFrameRendered(setSelectedFn);
+			setSelectedFn();
 			if (fgetValue(onListClick.enabled)) onListClick.onClick(i - shiftGap);
 			click(); // action is moved outside delayed code - to solve issue with copying something to clipboard in a firefox.
 		} else if (nonspecAlwaysOnTop && i == 0) maybeApply(singleSelection, \ss -> {
@@ -1572,6 +1636,8 @@ MMenuLines2Material(
 		], parent.rtl)
 		|> (\t2 -> if (state.nearTitle) TGroup2(t2, TFillX()) else t2);
 
+	shouldCloseFn = \def -> \ -> fgetValue(extractStruct(style0, MCloseOnClickEnabled(const(def))).enabled);
+
 	shouldFocus = \fi, i, selectedM ->
 		switch (fi) {
 			MMenuFirstItem() : eitherMap(selectedM, \s -> s || i == 0, i == shiftGap);
@@ -1599,7 +1665,7 @@ MMenuLines2Material(
 			hgt = extractStruct(style, MHeight(lineHeight)).height;
 			selectedInspector = extractStruct(style, MSelected(make(false))).selected;
 			focused = extractStruct(style, MFocused(make(false))).focused;
-			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click, selectedInspector, focused);
+			onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click, selectedInspector, focused, shouldCloseFn(true));
 			visuallySelected = selectedId == i && !indexShift;
 			selected = i == if (!indexShift) selectedId else if (selectedId == -1) 0 else selectedId + shiftGap;
 			id = state.popupId + "_menuitem" + i2s(i);
@@ -1610,8 +1676,8 @@ MMenuLines2Material(
 						MOnClick(onClick),
 						extractStruct(_style, AccessRole(if (popupRole == "menu") "button" else "option")),
 						MRippleType(const(MRippleFill())),
-						MHighlightOnFocus(const(true)),
-						MHighlightOnHover(const(true)),
+						extractStruct(style, MHighlightOnFocus(const(true))),
+						extractStruct(style, MHighlightOnHover(const(true))),
 						MFocusOnDown(ref true),
 						FAccessAttribute("aria-selected", const(if (popupRole == "menu") "" else b2s(selected))),
 						extractStruct(_style, MRippleOutlineEnabled(const(false))),
@@ -1640,7 +1706,7 @@ MMenuLines2Material(
 				)
 				|> (\ttl -> TAccess([FAccessHidden()], ttl))
 				|> addActions(parent, style, visuallySelected, false, primaryWidth, secondaryWidth)
-				|> (\t -> TFrame(0., 0., extractStruct(style0, MBackgroundStyle([])).style, t))
+				|> (\t -> TFrame(0., 0., mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style0, MBackgroundStyle([])).style), t))
 				|> (\t -> TAlpha(lineAlpha, t));
 
 
@@ -1698,12 +1764,15 @@ MMenuLines2Material(
 		}
 	}
 
-	makeMSubMenu = \i, title, items, style : [MSubMenuStyle] -> {
+	makeMSubMenu = \i, title, contentM : Maybe<Material>, items, style : [MSubMenuStyle] -> {
 		subOpenMenu : MOpenMenu = extractStruct(style, MOpenMenu(make(false)));
+		hgt = extractStruct(style, MHeight(lineHeight)).height;
 		expanding = contains(style, MExpanding());
 		lineTextStyle = \p -> extractStruct(style, MCustomTextStyle(arrayPush(textStyle, getTextColor(p)))).style;
 		isCloseParentOnClick = extractStruct(style, MCloseParentOnClick(true)).close;
-		onClick = extractStruct(style, MOnClick(nop)).click;
+		focused = extractStruct(style, MFocused(make(false))).focused;
+		onClick = onItemClick(i, extractStruct(style, MOnClick(nop)).click, make(false), focused, shouldCloseFn(false));
+
 		onClose = \ -> if (isCloseParentOnClick) {
 			next(openMenu.opened, false);
 			closeBelow();
@@ -1725,7 +1794,8 @@ MMenuLines2Material(
 							extractStruct(style, MButtonTitle(title)),
 							MHighlightOnFocus(const(true)),
 							MHighlightOnHover(const(true)),
-							extractStruct(style, MRippleOutlineEnabled(const(false)))
+							extractStruct(style, MRippleOutlineEnabled(const(false))),
+							MFocused(focused)
 						]
 					)
 					|> (\focusState -> replaceStruct(focusState, MFocusOnPrevious(false)));
@@ -1741,12 +1811,18 @@ MMenuLines2Material(
 				secondaryWidth = make(0.);
 
 				MComponent2T(state.manager, parent, "MSubMenuDynamic", focusState, \focus ->
-					state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth))
+					eitherFn(contentM,
+						\content ->
+							state.m2t(content, parent)
+							|> (\t -> TCenterYIn(t, TFixed(0., hgt)))
+							|> (\t -> TGroup2(TFillX(), t)),
+						\ -> state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth)),
+					)
 					|> addActions(parent, actionsStyle, false, false, primaryWidth, secondaryWidth)
 					|> (\t ->
 						TAlpha(
 							getMenuAlpha(focus, parent),
-							TFrame(0., 0., extractStruct(style0, MBackgroundStyle([])).style, t)
+							TFrame(0., 0., mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style0, MBackgroundStyle([])).style), t)
 						)
 					)
 					|> (\t -> TConstruct([makeSubscribe2(items, \__ -> reopenMenu(openMenu))], t)),
@@ -1780,7 +1856,10 @@ MMenuLines2Material(
 					replaceStructMany(
 						style,
 						[
-							MOnClick(\ -> if (isOpenOnClick) deferred(\-> nextDistinct(subOpenMenu.opened, true))),
+							MOnClick(\ -> {
+								if (isOpenOnClick) deferred(\-> nextDistinct(subOpenMenu.opened, true));
+								onClick();
+							}),
 							AccessRole("menuitem"),
 							FAccessAttribute("aria-haspopup", const("menu")),
 							FAccessAttribute("aria-expanded", fselectLift(subOpenMenu.opened, b2s)),
@@ -1790,19 +1869,26 @@ MMenuLines2Material(
 							MHighlightOnFocus(const(true)),
 							MHighlightOnHover(const(true)),
 							MFocusOnDown(ref true),
-							extractStruct(style, MRippleOutlineEnabled(const(false)))
+							extractStruct(style, MRippleOutlineEnabled(const(false))),
+							MFocused(focused)
 						]
 					)
 					|> (\arr -> focusOnOpen(i, arr, None()))
 					|> (\focusState -> replaceStruct(focusState, MFocusOnPrevious(false)));
 
 				MComponent2T(state.manager, parent, "MSubMenuDynamic", focusState, \focus ->
-					state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth))
+					eitherFn(contentM,
+						\content ->
+							state.m2t(content, parent)
+							|> (\t -> TCenterYIn(t, TFixed(0., hgt)))
+							|> (\t -> TGroup2(TFillX(), t)),
+						\ -> state.makeTitle(parent, lineTextStyle(parent), title, false, false, Some(primaryWidth), Some(secondaryWidth))
+					)
 					|> addActions(parent, style, false, true, primaryWidth, secondaryWidth)
 					|> (\t ->
 						TAlpha(
 							getMenuAlpha(focus, parent),
-							TFrame(0., 0., extractStruct(style0, MBackgroundStyle([])).style, t)
+							TFrame(0., 0., mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style0, MBackgroundStyle([])).style), t)
 						)
 					)
 					|> (\t -> TInteractive([
@@ -1838,11 +1924,14 @@ MMenuLines2Material(
 												MSubMenuStyle2MMenuStyle(
 													replaceStructMany(
 														style,
-														[
-															subOpenMenu,
-															extractStruct(style, MSameZorder(sameZorder)),
-															extractStruct(style, MButtonTitle(title))
-														]
+														concat(
+															[
+																subOpenMenu,
+																extractStruct(style, MSameZorder(true)),
+																extractStruct(style, MButtonTitle(title))
+															],
+															extractStructMany(style0, MCloseOnClickEnabled(const(false)))
+														)
 														|> (\arr : [MMenuStyle] -> eitherMap(fixPosition, \fp -> arrayPush(arr, fp), arr))
 													)
 													|> (\subMenuStyle -> replaceStruct(subMenuStyle, MFocusOnPrevious(false)))
@@ -1900,9 +1989,11 @@ MMenuLines2Material(
 			MMenuGroupLine(title, style):
 				makeMMenuGroupLine(i, acc, title, style);
 			MSubMenu(title, items, style):
-				makeMSubMenu(i, const(title), const(items), style) |> distributeToColsA(acc);
+				makeMSubMenu(i, const(title), None(), const(items), style) |> distributeToColsA(acc);
 			MSubMenuDynamic(title, items, style):
-				makeMSubMenu(i, title, items, style) |> distributeToColsA(acc);
+				makeMSubMenu(i, title, None(), items, style) |> distributeToColsA(acc);
+			MSubMenuCustom(content, items, style):
+				makeMSubMenu(i, const(""), Some(content), items, style) |> distributeToColsA(acc);
 			MSeparatorLine():
 				makeSeparatorLine(acc);
 		}
@@ -1927,6 +2018,7 @@ MMenuLines2MPopup(
 	mWidth = extractStruct(style0, MWidth(-1.)).width;
 	widthByButton = contains(style0, MWidthByButton());
 	mWidthLimits = tryExtractStruct(style0, MMenuWidthLimits(zero, zero));
+	useFocusInspector = contains(style0, MMenuUseFocusInspector());
 	singleSelection = tryExtractStruct(style0, MSingleSelection(make(-1)));
 	singleSelectionToggle = contains(style0, MSingleSelectionToggle());
 	selectedId = eitherMap(singleSelection, \ss -> getValue(ss.selected), -1);
@@ -1988,14 +2080,48 @@ MMenuLines2MPopup(
 			t
 		);
 
+	itemsWithFocuses = map(items0, MMenuLineAttachToFocused);
+	items1 = map(itemsWithFocuses, firstOfPair);
+
+	popupWasClicked = make(false);
+
+	// Used for closing popup, when click happens inside iframe
+	addFocusInspector = \arr -> if (useFocusInspector) {
+		focused = make(false);
+		focusEnabled = make(true);
+		itemFocuses = map(itemsWithFocuses, secondOfPair);
+		isAnyFocused = fstall(fOrs(concat(itemFocuses, [focused, popupWasClicked]), false), 0);
+
+		concat([[
+			MComponent(
+				[MFocused(focused), MFocusEnabled(focusEnabled)],
+				\__ -> TFixed(1., 1.)
+			)
+			|> (\m -> MConstruct([
+					\ -> {
+						timer(500, \ -> {
+							if (isNone(fgetValue(getCurrentFocusedItemBehaviour(manager)))) nextDistinct(focused, true)
+							else nextDistinct(focusEnabled, false);
+						});
+						nop;
+					},
+					makeSubscribe2(focused, \f -> if (!f) nextDistinct(focusEnabled, false)),
+					makeSubscribe2(isAnyFocused, \f -> if (!f) {
+						if (!getValue(popupWasClicked)) nextDistinct(openMenu.opened, false);
+					})
+				], m))
+			|> (\m -> MFixSize(m, TEmpty()))
+		]], arr)
+	} else arr;
+
 	menuLinesState = MMenuLinesState(manager, m2t, lineHeight, elevation, nearTitle, popupId, activeDescendantId, makeTitle, singleSelectionToggle);
 
-	items = MMenuLines2Material(items0, style0, lineBorders, closeBelow, focusedItem, menuLinesState);
+	items = MMenuLines2Material(items1, style0, lineBorders, closeBelow, focusedItem, menuLinesState);
 
 	newItems =
 		(if (indexShift && selectedId >= 0 && !nonspecAlwaysOnTop) {
-			if (selectedId > 0 && selectedId < length(items0) - 1 &&
-				items0[selectedId - 1].structname == "MMenuGroupLine" && items0[selectedId + 1].structname == "MMenuGroupLine") {
+			if (selectedId > 0 && selectedId < length(items1) - 1 &&
+				items1[selectedId - 1].structname == "MMenuGroupLine" && items1[selectedId + 1].structname == "MMenuGroupLine") {
 				selIt = items[selectedId + 1];
 
 				concat(
@@ -2013,9 +2139,10 @@ MMenuLines2MPopup(
 		} else
 			items
 		)
-		|> addLabel;
+		|> addLabel
+		|> addFocusInspector;
 
-	labelIdx = b2i(isSome(mLabel));
+	labelIdx = b2i(isSome(mLabel)) + b2i(useFocusInspector);
 	itemsLen = length(newItems);
 
 	popupStyle =
@@ -2031,7 +2158,6 @@ MMenuLines2MPopup(
 			RMScaleAnimation(),
 			MRippleShape("MMenu"),
 			MFocusHorizontal(false),
-			MFocusVertical(true),
 			MActive(make(true)),
 			AccessRole(popupRole),
 			FAccessAttribute(
@@ -2040,8 +2166,12 @@ MMenuLines2MPopup(
 			),
 			FAccessAttribute("aria-activedescendant", activeDescendantId),
 			FAccessAttribute("id", const(popupId)),
-			extractStruct(style0, MFocusOnPrevious(true))
+			extractStruct(style0, MFocusOnPrevious(true)),
 		]
+		|> (\arr -> ifArrayPush(arr, useFocusInspector, RMOnClick(\ -> {
+				nextDistinct(popupWasClicked, true);
+				timer(500, \ -> nextDistinct(popupWasClicked, false));
+			})))
 		|> (\arr : [MPopupStyle] -> maybeArrayPush(arr, tryExtractStruct(menuScrollStyle, TScrollPersistent(const(true)))))
 		|> (\arr -> maybeArrayPush(arr, tryExtractStruct(menuScrollStyle, MScrollWidthHeight(makeWH(), makeWH()))))
 		|> (\arr -> maybeArrayPush(arr, tryExtractStruct(menuScrollStyle, MScrollPosition(makePoint()))))
@@ -2092,7 +2222,8 @@ MMenuLines2MPopup(
 		|> (\f -> ifArrayPush(f, expandingAnimation, RMExpandingAnimation()))
 		|> (\f -> ifArrayPush(f, elevation == 8., RMClickOutToClose()))
 		|> (\f -> ifArrayPush(f, contains(style0, MMenuNoSnapSize()), RMNoSnapSize()))
-		|> (\f -> concat(f, extractStructMany(style0, MBlockClicks())));
+		|> (\f -> concat(f, extractStructMany(style0, MBlockClicks())))
+		|> (\arr -> ifArrayPush(arr, itemsLen > 1, MFocusVertical(true)));
 
 	MPopup(
 		newItems,
@@ -2169,5 +2300,35 @@ reopenMenu(openMenu : MOpenMenu) -> void {
 	if (fgetValue(openMenu.opened)) {
 		next(openMenu.opened, false);
 		next(openMenu.opened, true)
+	}
+}
+
+MMenuLineAttachToFocused(line : MMenuLine) -> Pair<MMenuLine, DynamicBehaviour<bool>> {
+	switch(line) {
+		MSeparatorLine() : Pair(line, make(false));
+		MMenuSingleLine(__, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MMenuSingleLine(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MMenuCustomLine(__, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MMenuCustomLine(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MMenuGroupLine(__, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MMenuGroupLine(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MSubMenu(__, __, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MSubMenu(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MSubMenuDynamic(__, __, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MSubMenuDynamic(line with style = replaceStruct(style, focused)), focused.focused);
+		};
+		MSubMenuCustom(__, __, style) : {
+			focused = extractStruct(style, MFocused(make(false)));
+			Pair(MSubMenuCustom(line with style = replaceStruct(style, focused)), focused.focused);
+		};
 	}
 }

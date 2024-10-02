@@ -1,100 +1,217 @@
 [
 
-Cpp3NativePlain("toString2", false,
-"String $F_1(toString2)(Flow x);\n",
-"String $F_1(toString2)(Flow x) {
-	return flow2string(x);
-}\n", "", [], []),
-
-Cpp3NativePlain("isSameStructType", true,
-"inline Bool $F_1(isSameStructType)(Flow o1, Flow o2);\n",
-"inline Bool $F_1(isSameStructType)(Flow o1, Flow o2) {
-	if (o1.type() < Type::STRUCT || o2.type() < Type::STRUCT) {
-		return false;
+Cpp3Native("toString", true,
+"template<typename T> String* $F_1(toString)(T x);\n",
+"template<typename T> inline String* $F_1(toString)(T x) {
+	if constexpr (std::is_same_v<T, String*>) {
+		string s = u\"\\\"\";
+		s += x->str();
+		decRc(x);
+		s += u\"\\\"\";
+		return String::make(std::move(s));
 	} else {
-		return o1.type() == o2->type();
+		return toStringRc(x);
 	}
-}\n", "", [], []),
+}\n", "toString($A_0)", [], []),
 
-Cpp3NativePlain("makeStructValue", false,
-"Flow $F_1(makeStructValue)(String name, Arr<Flow> args, Flow defval);\n",
-"Flow $F_1(makeStructValue)(String name, Arr<Flow> args, Flow defval) {
-	if (StructDefs::defs.find(*name) == StructDefs::defs.end()) {
+Cpp3Native("toString2", true,
+"String* $F_1(toString2)(Flow* x);\n",
+"inline String* $F_1(toString2)(Flow* x) {
+	if (x->typeId() == TypeFx::STRING) {
+		string s = u\"\\\"\";
+		s += static_cast<String*>(x)->str();
+		decRc(x);
+		s += u\"\\\"\";
+		return String::make(std::move(s));
+	} else {
+		return toStringRc(x);
+	}
+}\n", "toString($A_0)", [], []),
+
+Cpp3Native("isSameStructType", true,
+"template<typename T1, typename T2> Bool $F_1(isSameStructType)(T1 x, T2 y);\n",
+"template<typename T1, typename T2> Bool $F_1(isSameStructType)(T1 x, T2 y) {
+	if constexpr (is_struct_or_union_v<T1> && is_struct_or_union_v<T2>) {
+		return (x->typeIdRc() == y->typeIdRc());
+	} else {
+		decRc(x); decRc(y);
+		return false;
+	}
+}
+\n", "", [], []),
+
+Cpp3Native("makeStructValue", false,
+"Flow* $F_1(makeStructValue)(String* name, Vec<Flow*>* args, Flow* defval);\n",
+"Flow* $F_1(makeStructValue)(String* name, Vec<Flow*>* args, Flow* defval) {
+	TypeId struct_id = Dyn::structId(name->str());
+	if (struct_id == -1) {
+		decRc(args);
+		decRc(name);
 		return defval;
 	} else {
-		return StructDefs::defs.at(*name).make(args);
+		Flow* str = Dyn::structDef(struct_id).constructor(args);
+		decRc(name);
+		decRc(defval);
+		return str;
 	}
-}\n", "", [], ["struct_defs"]),
+}\n", "", [], []),
 
-Cpp3NativePlain("isSameObj", true,
+Cpp3Native("isSameObj", true,
 "template<typename T> Bool $F_1(isSameObj)(T x, T y);\n",
-"template<typename T> Bool $F_1(isSameObj)(T x, T y) { return x.isSameObj(y); }
-template<> inline Bool $F_1(isSameObj)(Int x, Int y) { return x == y; }
-template<> inline Bool $F_1(isSameObj)(Bool x, Bool y) { return x == y; }
-template<> inline Bool $F_1(isSameObj)(Double x, Double y) { return x == y; }
-template<> inline Bool $F_1(isSameObj)(String x, String y) { return *x == *y; }\n\n", 
+"template<typename T> inline Bool $F_1(isSameObj)(T x, T y) {
+	Bool ret = false;
+	if constexpr (std::is_same_v<T, String*>) {
+		ret = (x->str() == y->str());
+	} else {
+		ret = (x == y);
+	}
+	decRc(x);
+	decRc(y);
+	return ret;
+}
+\n", 
 "", [], []),
 
-Cpp3NativePlain("isStructName", true,
-"inline Bool $F_1(isStructName)(String name);\n",
-"inline Bool $F_1(isStructName)(String name) {
-	return (StructDefs::defs.find(*name) != StructDefs::defs.end());
-}\n", "", [], ["struct_defs"]),
+Cpp3Native("isStructName", true,
+"inline Bool $F_1(isStructName)(String* name);\n",
+"inline Bool $F_1(isStructName)(String* name) {
+	Bool ret = Dyn::structId(name->str()) >= structTypeIdOffset;
+	decRc(name);
+	return ret;
+}\n", "", [], []),
 
-Cpp3NativePlain("voidValue", true,
-"inline Flow $F_1(voidValue)();\n",
-"inline Flow $F_1(voidValue)() {
+Cpp3Native("voidValue", true,
+"inline Flow* $F_1(voidValue)();\n",
+"inline Flow* $F_1(voidValue)() {
+	return FVoid::make();
+}\n", "FVoid::make()", [], []),
+
+Cpp3Native("isArray", true,
+"Bool $F_1(isArray)(Flow* f);\n",
+"inline Bool $F_1(isArray)(Flow* f) {
+	return f->typeIdRc() == TypeFx::ARRAY;
+}\n", "", [], []),
+
+Cpp3Native("extractStructArguments", false,
+"Vec<Flow*>* $F_1(extractStructArguments)(Flow* f);\n",
+"Vec<Flow*>* $F_1(extractStructArguments)(Flow* f) {
+	Vec<Flow*>* ret = nullptr;
+	if (f->typeId() >= structTypeIdOffset) {
+		ret = Vec<Flow*>::make(f->componentSize());
+		for (Int i = 0; i < f->componentSize(); ++ i) {
+			ret->pushBack(f->getFlowRc1(i));
+		}
+	} else {
+		ret = Vec<Flow*>::make();
+	}
+	decRc(f);
+	return ret;
+}\n", "", [], []),
+
+Cpp3Native("extractStructName", false,
+"String* $F_1(extractStructName)(Flow* f);\n",
+"String* $F_1(extractStructName)(Flow* f) {
+	TypeId struct_id = f->typeIdRc();
+	if (struct_id >= structTypeIdOffset) {
+		String* name = String::make(Dyn::structDef(struct_id).name);
+		return name;
+	} else {
+		decRc(f);
+		return String::make();
+	}
+}\n", "", [], []),
+
+Cpp3Native("extractFuncArity", false,
+"Int $F_1(extractFuncArity)(Flow* f);\n",
+"Int $F_1(extractFuncArity)(Flow* f) {
+	TypeId struct_id = f->typeId();
+	if (f->typeId() == TypeFx::FUNC) {
+		AFun* fn = static_cast<AFun*>(f);
+		Int arity = fn->arity();
+		decRc(f);
+		return arity;
+	} else if (f->typeId() == TypeFx::STRING) {
+		String* name = static_cast<String*>(f);
+		if (Dyn::funExists(name->str())) {
+			const FunDef& def = Dyn::funDef(name->str());
+			decRc(name);
+			return def.args.size();
+		} else {
+			decRc(name);
+			return -1;
+		}
+	} else {
+		decRc(f);
+		return -1;
+	}
+}\n", "", [], []),
+
+Cpp3Native("structFieldNames", false,
+"Vec<String*>* $F_1(structFieldNames)(String* name);\n",
+"Vec<String*>* $F_1(structFieldNames)(String* name) {
+	TypeId type_id = Dyn::structId(name->str());
+	decRc(name);
+	Vec<String*>* ret = nullptr;
+	if (type_id != -1) {
+		const StructDef& def = Dyn::structDef(type_id);
+		ret = Vec<String*>::make(def.fields.size());
+		for (const FieldDef& field : def.fields) {
+			ret->pushBack(String::make(field.name));
+		}
+	} else {
+		ret = Vec<String*>::make();
+	}
+	return ret;
+}\n", "", [], []),
+
+Cpp3Native("setMutableField", false,
+"Void $F_1(setMutableField)(Flow* str, String* field, Flow* value);\n",
+"Void $F_1(setMutableField)(Flow* str, String* field, Flow* value) {
+	TypeId struct_id = str->typeId();
+	if (struct_id >= structTypeIdOffset) {
+		const StructDef& def = Dyn::structDef(struct_id);
+		Int i = 0;
+		for (const FieldDef& f : def.fields) {
+			if (f.name == field->str()) {
+				str->setFlowRc(i, value);
+				decRc(field);
+				return void_value;
+			}
+			++i;
+		}
+	}
+	decRc(str);
+	decRc(field);
+	decRc(value);
 	return void_value;
-}\n", "void_value", [], ["void_value"]),
-
-Cpp3NativePlain("isArray", true,
-"Bool $F_1(isArray)(Flow f);\n",
-"inline Bool $F_1(isArray)(Flow f) {
-	return f.type() == Type::ARRAY;
 }\n", "", [], []),
 
-Cpp3NativePlain("extractStructArguments", true,
-"Arr<Flow> $F_1(extractStructArguments)(Flow f);\n",
-"inline Arr<Flow> $F_1(extractStructArguments)(Flow f) {
-	return f.val.dynamicCast<AStruct>()->fields();
+Cpp3Native("runtimeValueType", true,
+"String* $F_1(runtimeValueType)(Flow* f);\n",
+"inline String* $F_1(runtimeValueType)(Flow* f) {
+	return String::make(Dyn::typeName(f->typeIdRc()));
 }\n", "", [], []),
 
-Cpp3NativePlain("extractStructName", true,
-"String $F_1(extractStructName)(Flow f);\n",
-"inline String $F_1(extractStructName)(Flow f) {
-	return f.val.dynamicCast<AStruct>()->name();
-}\n", "", [], []),
-
-Cpp3NativePlain("runtimeValueType", true,
-"String $F_1(runtimeValueType)(Flow f);\n",
-"inline String $F_1(runtimeValueType)(Flow f) {
-	switch (f.type()) {
-		case Type::INT:    return makeString(u\"int\");
-		case Type::BOOL:   return makeString(u\"bool\");
-		case Type::DOUBLE: return makeString(u\"double\");
-		case Type::STRING: return makeString(u\"string\");
-		case Type::ARRAY:  return makeString(u\"array\");
-		case Type::REF:    return makeString(u\"ref\");
-		case Type::FUNC:   return makeString(u\"function\");
-		case Type::NATIVE: return makeString(u\"native\");
-		default:           return f.val.dynamicCast<AStruct>()->name();
+Cpp3Native("getDataTagForValue", false,
+"Int $F_1(getDataTagForValue)(Flow* f);\n",
+"Int $F_1(getDataTagForValue)(Flow* f) {
+	switch (f->typeIdRc()) {
+		case TypeFx::INT:    return 2;
+		case TypeFx::BOOL:   return 1;
+		case TypeFx::DOUBLE: return 3;
+		case TypeFx::STRING: return 4;
+		case TypeFx::ARRAY:  return 5;
+		case TypeFx::REF:    return 31;
+		case TypeFx::FUNC:   return 34;
+		case TypeFx::NATIVE: return 32;
+		default:             return 6;
 	}
 }\n", "", [], []),
 
-Cpp3NativePlain("getDataTagForValue", true,
-"Int $F_1(getDataTagForValue)(Flow f);\n",
-"inline Int $F_1(getDataTagForValue)(Flow f) {
-	switch (f.type()) {
-		case Type::INT:    return 2;
-		case Type::BOOL:   return 1;
-		case Type::DOUBLE: return 3;
-		case Type::STRING: return 4;
-		case Type::ARRAY:  return 5;
-		case Type::REF:    return 31;
-		case Type::FUNC:   return 34;
-		case Type::NATIVE: return 32;
-		default:           return 6;
-	}
-}\n", "", [], [])
+Cpp3Native("number2double2", true,
+"inline Double $F_1(number2double2)(Flow* f);\n",
+"inline Double $F_1(number2double2)(Flow* f) {
+	return castRc<Flow*, Double>(f);
+}\n", "castRc<Flow*, Double>($A_0)", [], [])
 
 ]

@@ -1,0 +1,59 @@
+import net/url_parameter;
+import server/http;
+import sys/concurrent;
+import sys/process;
+import string_utils;
+
+/* Launches a process with program/params received from the request.
+ All started processes are logged, and result of execution is also
+ logged: in case of a crash the crash message (i.e. stack trace) is
+ kept in the log file. */
+
+counter = ref 0;
+
+main() -> void {
+	port = s2i(getUrlParameterDef("port", "10005"));
+	start = timestamp();
+	log_file = "launches_" + time2string(start) + ".log";
+	pre_exec = synchronizedUnaryFn(counter, \job -> {
+		id = ^counter + 1;
+		counter := id;
+		println(i2s(id) + " job: '" + job + "' is going to be done ...");
+		setFileContent(log_file,
+			getFileContent(log_file) + "\n" +
+			"STARTED " + i2s(id) + " [" + time2string(timestamp()) + "]:    " + job
+		);
+		id;
+	});
+	post_exec = synchronizedBinaryFn(counter, \id, out -> {
+		outcome = if (out.exitCode == 0) "normally" else "with exit code: " + i2s(out.exitCode) + "\n" + strIndent(out.stdall);
+		println(i2s(id) + " job is finished: " + outcome);
+		setFileContent(log_file,
+			getFileContent(log_file) + "\n" + "FINISHED " + i2s(id) + " " + outcome
+		)
+	});
+	close = createHttpServer(port,
+		\ -> println("launch server started"),
+		\err -> {
+			println(err);
+			quit(1);
+		},
+		\request, respond -> {
+			args = filter(strSplit(request.body, " "), isNotSpace);
+			response = if (length(args) != 0) {
+				id = pre_exec(request.body);
+				out = execSystemProcessOutput(args[0], tail(args), ".");
+				post_exec(id, out);
+				if (out.exitCode == 0) {
+					HttpResponse(200, out.stdall, []);
+				} else {
+					HttpResponse(201, out.stdall, []);
+				};
+			} else {
+				HttpResponse(201, "no job to exec", []);
+			}
+			respond(response);
+		}
+	);
+
+}

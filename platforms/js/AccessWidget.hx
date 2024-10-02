@@ -427,6 +427,7 @@ class AccessWidget extends EventEmitter {
 		"dialog" => "dialog",
 		"radio" => "button",
 		"tab" => "button",
+		"tabpanel" => "button",
 		"link" => "button",
 		"banner" => "header",
 		"main" => "section",
@@ -466,6 +467,8 @@ class AccessWidget extends EventEmitter {
 	@:isVar public var enabled(get, set) : Bool;
 	public var autocomplete(get, set) : String;
 	public var focused : Bool = false;
+	// Set to false to force tabindex = -1, true by default
+	@:isVar private var focusable(get, set) : Bool;
 
 	@:isVar public var parent(get, set) : AccessWidgetTree;
 
@@ -477,6 +480,7 @@ class AccessWidget extends EventEmitter {
 		this.element = element;
 		this.nodeindex = nodeindex;
 		this.zorder = zorder;
+		this.focusable = true;
 		this.enabled = true;
 
 		clip.onAdded(function() {
@@ -886,7 +890,7 @@ class AccessWidget extends EventEmitter {
 
 			if (enabled) {
 				element.removeAttribute("disabled");
-				if (hasTabIndex()) {
+				if (hasTabIndex() && focusable) {
 					element.tabIndex = tabindex;
 				}
 			} else {
@@ -900,6 +904,26 @@ class AccessWidget extends EventEmitter {
 		}
 
 		return this.enabled;
+	}
+
+	public function get_focusable() : Bool {
+		return this.focusable;
+	}
+
+	public function set_focusable(focusable : Bool) : Bool {
+		if (this.focusable != focusable) {
+			this.focusable = focusable;
+
+			if (hasTabIndex()) {
+				if (focusable && enabled) {
+					element.tabIndex = tabindex;
+				} else {
+					element.tabIndex = -1;
+				}
+			}
+		}
+
+		return this.focusable;
 	}
 
 	public function get_autocomplete() : String {
@@ -963,6 +987,7 @@ class AccessWidget extends EventEmitter {
 				}
 				case "id" : id = attributes.get(key);
 				case "enabled" : enabled = attributes.get(key) == "true";
+				case "focusable": focusable = attributes.get(key) == "true";
 				case "nodeindex" : nodeindex = parseNodeIndex(attributes.get(key));
 				case "tabindex" : tabindex = Std.parseInt(attributes.get(key));
 				case "autocomplete" : autocomplete = attributes.get(key);

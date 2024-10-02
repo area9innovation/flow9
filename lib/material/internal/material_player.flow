@@ -1,6 +1,7 @@
 import material/internal/material_menu;
 import material/internal/material_slider;
 import material/internal/material_progress;
+import net/appurl;
 
 export {
 	MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
@@ -16,7 +17,22 @@ export {
 MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	(\p -> eitherFn(
 		getExternalPlayerURL(m.filename),
-		\url -> MVideoPlayer2MRealHTML(url, p, m, m2t),
+		\url -> {
+			enableYoutubeJsApi = isSome(getYouTubeURL(m.filename)) && containsStruct(m.style, MPlayerYoutubeJsApi());
+			playing = extractStruct(m.style, FVideoPlay(make(false))).play;
+			TConstruct(
+				[
+					\ -> fBidirectionalLink(
+						playing,
+						manager.videoRunning,
+						\play -> if (play) next(manager.videoRunning, true),
+						\videoRunning -> if (!videoRunning) next(playing, false)
+					),
+				],
+				if (enableYoutubeJsApi) m2t(MVideoYoutubePlayer(m.filename, m.wh, m.style), p)
+				else MVideoPlayer2MRealHTML(url, p, m, m2t)
+			)
+		},
 		\ -> {
 			itemsColorM : Maybe<MColor> = maybeMap(tryExtractStruct(m.style, MItemsColor(MWhite())), \ic -> MThemeColor2MColor(p, ic.color));
 			color = extractMColor(p, m.style, MAccentColor());
@@ -25,7 +41,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			backgroundOpacity = extractStruct(m.style, MPlayerBackgroundOpacity(const(1.0))).opacity;
 			customBarM = tryExtractStruct(m.style, MCustomBar(\__, __, __ -> MEmpty()));
 			dynColorM = tryExtractStruct(m.style, MDynamicColor(const(color)));
-			poster = extractStruct(m.style, MVideoPoster(TEmpty())).poster;
+			poster = tryExtractStruct(m.style, MVideoPoster(MEmpty(), const(false), true));
 
 			addBackground = \vt : Tropic -> {
 				TFrameT(zero, zero, fselect2Lift(backgroundColor, backgroundOpacity, \bgc, bgo -> [MFill(MThemeColor2MColor(p, bgc)), FillOpacity(bgo)]), vt)
@@ -49,6 +65,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			volumeControl = contains(controls, VolumeControl());
 			fullScreenControl = contains(controls, FullScreenPlayer());
 			playbackRateControl = !android() && contains(controls, PlaybackRateControl());
+			customControlButtonM = tryExtractStruct(mPlayerControls, MPlayerCustomControl("", nop, [], []));
 			subtitlesControl = tryExtractStruct(mPlayerControls, SubtitlesControl(const(false)));
 			subtitlesSelector = tryExtractStruct(mPlayerControls, SubtitlesSelector(make(SubtitleSource("", "", "")), []));
 			subtitles = tryExtractStruct(m.style, FVideoSubtitles(const(VideoSubtitle("", []))));
@@ -193,7 +210,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					\foc ->
 						TVideoWithAnimatedSubtitles(
 							manager,
-							p,
+							MFocusGroup(p with rtl = parent.rtl),
 							TVideo(m.filename, videoWH, videoStyle),
 							poster,
 							maybeMap(animatedSubtitles, \sbtl -> Pair(sbtl, subtitlesVisible)),
@@ -445,6 +462,28 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				if (mobile) const(false)
 				else fselect(showVolumeSlider, FLift(\__ -> getValue(panelFillerW) <= 0.));
 
+			customControlButton = \p2 -> {
+				eitherMap(
+					customControlButtonM,
+					\customControlButton -> {
+						MIconToggle2T(
+							manager,
+							p2,
+							MIconToggle(
+								customControlButton.icon,
+								customControlButton.style
+								|> (\styles -> arrayPushMaybe(styles, itemsColorM)),
+								arrayPush(customControlButton.state, MOnClick(customControlButton.onClickAction))
+							),
+							m2t
+						)
+						|> (\t -> TBorder(4., 0., 8., 0., t));
+					},
+					TEmpty()
+				)
+
+			}
+
 			volumeControlButton = \p2 ->
 				if (volumeControl) {
 					tooltipText = fif(feq(volume, 0.0), const(_("Unmute")), const(_("Mute")));
@@ -691,7 +730,17 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			panel =
 				(\p3 ->
 					TLines2(
-						slider(p3) |> TFixWidth(TEmpty()),
+						slider(p3)
+						|> TFixWidth(TEmpty())
+						|> (\s -> eitherMap(highlightedRanges,
+							\highlighted -> {
+								hasCaptions = fselectLift(highlighted.ranges,
+									\ranges -> exists(ranges, \r -> extractStruct(r.style, MRangeCaption("", nop, [])).text != "")
+								);
+								TBorderT(zero, zero, zero, fif(hasCaptions, const(24.0), zero), s)
+							},
+							s
+						)),
 						[
 							[playPauseButton(p3)],
 							volumeControlButton(p3),
@@ -700,6 +749,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 								chapterTitle(p3),
 								TAttachWidth(TFillX(), panelFillerW)
 							],
+							[customControlButton(p3)],
 							playbackRateControlButton(p3),
 							subtitlesButton(p3),
 							fullScreenControlButton(p3)
@@ -728,7 +778,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 					)
 					|> (\t -> TAttachBox(t, controlsWH))
 				)
-				|> (\f -> m2t(MShowAnimation(fOr(fand(showPanel, showPanelInner), fOr(fnot(playing), settingsMenuOpen)), MGetFocusGroup(f), []), p))
+				|> (\f -> m2t(MShowAnimation(fand(showPanel, fOr(showPanelInner, fOr(fnot(playing), settingsMenuOpen))), MGetFocusGroup(f), []), p))
 				|> TBorderTop(10.0)
 				|> (\t -> TInteractive([if (mobile) TMouseDown(panelHovered) else TMouseInside(panelHovered, false)], t)))
 				|> (\t -> TLines2(TFillY(), t));
@@ -754,16 +804,24 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 				TConstruct(
 					concat(
 						[
+							\ -> fBidirectionalLink(
+								playing,
+								manager.videoRunning,
+								\play -> if (play) next(manager.videoRunning, true),
+								\videoRunning -> if (!videoRunning) next(playing, false)
+							),
 							\ -> fconnect(fdivide(visiblePosition, visibleDuration), sliderPosition),
 							makeSubscribe(
 								faddition(fmultiply(sliderPosition, visibleDuration), visibleRange.start),
 								\pos -> if (pos <= fgetValue(duration)) nextDistinct(position, pos)
 							),
-							\ -> fconnect2Select(
+							make3Subscribe(
+								fwidth(m.wh),
 								eitherMap(fullscreen, \fs -> fif(fs, availableH, fheight(m.wh)), fheight(m.wh)),
 								controlsWH,
-								videoWH,
-								\vh, cwh -> WidthHeight(cwh.width, max(0., if (autoHide) vh else vh - cwh.height))
+								\vw, vh, cwh -> {
+									nextDistinct(videoWH, WidthHeight(max(vw, cwh.width), max(0., if (autoHide) vh else vh - cwh.height)))
+								}
 							),
 							\ -> bidirectionalLink(playbackRate, playbackRateSelected, playbackRate2selected, selected2playbackRate),
 						],
@@ -845,6 +903,153 @@ MVideoPlayer2MRealHTML(url : string, parent : MFocusGroup, m : MVideoPlayer, m2t
 	m2t(MRealHTML(url, m.wh, style), parent)
 }
 
+MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
+	YT_PLAY = "PLAYING";
+	YT_BUFFERING = "BUFFERING";
+	YT_PAUSE = "PAUSED";
+
+	playB = extractStruct(style, FVideoPlay(make(false))).play;
+	lengthB = extractStruct(style, FVideoLength(make(0.0))).length;
+	positionB = extractStruct(style, FVideoPosition(make(0.0))).position;
+	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
+	volumeB = extractStruct(style, FVideoVolume(make(1.0))).volume;
+	disableKeyboard = contains(style, MPlayerDisableKeyboardShortcuts());
+	controls = extractStruct(style, MPlayerControls([FullScreenPlayer(), PlaybackRateControl(), VolumeControl()])).controls;
+	timeRangeM = tryExtractStruct(style, FVideoTimeRange(const(0.0), const(0.0)));
+
+	urlParams = strSplit(elementAt(strSplit(takeBefore(url, "#", url), "?"), 1, ""), "&");
+	videoId = if (strContains(url, "/embed")) {
+		takeBefore(takeAfter(url, "/embed/", ""), "?", "");
+	} else {
+		eitherMap(find(urlParams, \p -> startsWith(p, "v=")), \v -> takeAfter(v, "v=", v), "");
+	}
+	startParam = eitherFn(
+		find(urlParams, \p -> startsWith(p, "start=")),
+		\v -> takeAfter(v, "start=", ""),
+		\ -> eitherMap(timeRangeM, \tr -> i2s(trunc(fgetValue(tr.start))), "")
+	);
+	endParam = eitherFn(
+		find(urlParams, \p -> startsWith(p, "end=")),
+		\v -> takeAfter(v, "end=", ""),
+		\ -> eitherMap(timeRangeM, \tr -> i2s(trunc(fgetValue(tr.end))), "")
+	);
+	controlsParam = eitherFn(
+		find(urlParams, \p -> startsWith(p, "controls=")),
+		\v -> takeAfter(v, "controls=", "1"),
+		\ -> b2i(controls != []) |> i2s
+	);
+	muteParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "mute=")),
+		\v -> takeAfter(v, "mute=", "0"),
+		"0"
+	);
+	autoplayParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "autoplay=")),
+		\v -> takeAfter(v, "autoplay=", "0"),
+		"0"
+	);
+	relatedParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "rel=")),
+		\v -> takeAfter(v, "rel=", "0"),
+		"0"
+	);
+	loopParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "loop=")),
+		\v -> takeAfter(v, "loop=", "0"),
+		fgetValue(loopB) |> b2i |> i2s
+	);
+	fsParam = eitherMap(
+		find(urlParams, \p -> startsWith(p, "fs=")),
+		\v -> takeAfter(v, "fs=", "0"),
+		contains(controls, FullScreenPlayer()) |> b2i |> i2s
+	);
+
+	sendB = make("");
+	receiveB = make("");
+
+	sendState = \s -> next(sendB,
+		JsonObject([Pair("playerState", JsonObject(s))]) |> json2string
+	);
+	fselectFromStateM = \name -> fselectLift(receiveB, \r -> {
+		v = getJsonFieldValueCustom(parseJson(r), "playerState." + name, JsonNull(), [JsonFieldTreatAsPath(".")]);
+		if (v == JsonNull()) None() else Some(v)
+	});
+	onLoaded = \ -> next(sendB,
+		JsonObject([Pair("loadVideo", JsonObject([
+			Pair("videoId", JsonString(videoId)),
+			Pair("params", JsonObject(concatA([
+				if (startParam == "") [] else [Pair("start", JsonString(startParam))],
+				if (endParam == "" || s2i(startParam) >= s2i(endParam)) [] else [Pair("end", JsonString(endParam))],
+				if (disableKeyboard) [Pair("disablekb", JsonString("1"))] else [],
+				[
+					Pair("nocookie", JsonBool(true)),
+					Pair("controls", JsonString(controlsParam)),
+					Pair("mute", JsonString(muteParam)),
+					Pair("autoplay", JsonString(autoplayParam)),
+					Pair("rel", JsonString(relatedParam)),
+					Pair("loop", JsonString(loopParam)),
+					Pair("fs", JsonString(fsParam)),
+					// for other params see https://developers.google.com/youtube/player_parameters#Parameters
+				]
+			]))),
+		]))]) |> json2string
+	);
+
+	sendToJS = ref nop1;
+	getHostCall = \hc -> {
+		sendToJS := \msg -> hc("postMessage", [msg, "*"]) |> ignore;
+	}
+	flowCallBack = \args -> {
+		if (length(args) == 2 && args[0] == "postMessage") next(receiveB, args[1]);
+		""
+	}
+
+	MConstruct(
+		concat(
+			if (isUrlParameterTrue("dev")) [
+				makeSubscribe2(sendB, \s -> println("to YT -> " + s)),
+				makeSubscribe2(receiveB, \s -> println("from YT -> " + s)),
+			] else [],
+			[
+				makeSubscribe(sendB, \m -> ^sendToJS(m)),
+				\ -> fBidirectionalLink(playB, fselectFromStateM("status"),
+					\external -> sendState([Pair("status", JsonString(if (external) YT_PLAY else YT_PAUSE))]),
+					\internalM -> maybeApply(internalM,
+						\internal -> {
+							v = getJsonStringValue(internal, "");
+							nextDistinct(playB, v == YT_PLAY || v == YT_BUFFERING)
+						}
+					)
+				),
+				\ -> fBidirectionalLink(positionB, fselectFromStateM("currentTime"),
+					\external -> sendState([Pair("currentTime", JsonDouble(external))]),
+					\internalM -> maybeApply(internalM,
+						\internal -> nextDistinct(positionB, getJsonDoubleValue(internal, 0.0))
+					)
+				),
+				\ -> fBidirectionalLink(volumeB, fselectFromStateM("volume"),
+					\external -> sendState([Pair("volume", JsonDouble(external * 100.0))]),
+					\internalM -> maybeApply(internalM,
+						\internal -> nextDistinct(volumeB, getJsonDoubleValue(internal, 0.0) * 0.01)
+					)
+				),
+				makeSubscribe2(fselectFromStateM("duration"),
+					\durationM -> maybeApply(durationM, \d -> nextDistinct(lengthB, getJsonDoubleValue(d, 0.0)))
+				),
+			]
+		),
+		MRealHTML(getAppUrl() + "yt_player.html", wh, [
+			FlowCallback(flowCallBack),
+			PageHostcallSetter(getHostCall),
+			UpdateCachedContent(true),
+			OnPageLoaded(onLoaded),
+			ZoomEnabled(const(false)),
+			NoScroll()
+		])
+	)
+}
+
+
 MPlayerControls2PlayerControls(mPlayerControls : [MPlayerControl]) -> [PlayerControl] {
 	filtermap(mPlayerControls, \cntr : MPlayerControl ->
 		switch (cntr) {
@@ -865,7 +1070,7 @@ MVideoWithAnimatedSubtitles(
 			manager,
 			parent,
 			TVideo(filename, wh, style),
-			TEmpty(),
+			None(),
 			Some(Pair(subtitles, const(true))),
 			m2t
 		)
@@ -876,20 +1081,33 @@ TVideoWithAnimatedSubtitles(
 	manager : MaterialManager,
 	parent : MFocusGroup,
 	video : TVideo,
-	poster : Tropic,
+	poster : Maybe<MVideoPoster>,
 	subtitles : Maybe<Pair<MAnimatedSubtitles, Transform<bool>>>,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
 	videoAreaMetrics = extractStruct(video.style, FInspectVideoArea(make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.), Factor(1., 1.))))).metrics;
-	style = eitherMap(subtitles, \__ -> replaceStruct(video.style, FInspectVideoArea(videoAreaMetrics)), video.style);
+	playing = extractStruct(video.style, FVideoPlay(make(false))).play;
+	showPosterInner = make(isSome(poster));
+	showPoster = fand(showPosterInner, eitherMap(poster, \post -> post.enabled, const(false)));
+	style = replaceStructMany(video.style, concatA([
+			[FVideoPlay(playing)],
+			eitherMap(subtitles, \__ -> [FInspectVideoArea(videoAreaMetrics)], [])
+		]));
 
 	applyRange = \scMode, value ->
 		if (scMode.max == -1.) max(scMode.min, value)
 		else forceRange(value, scMode.min, scMode.max);
 
 	TGroupSameMetrics([
-		TVideo(video.filename, video.wh, style),
-		poster,
+		TVisible(fnot(showPoster), TVideo(video.filename, video.wh, style)),
+		eitherMap(poster, \post ->
+			MZoomToFit(post.poster, TSized(video.wh))
+			|> (\t -> m2t(t, parent))
+			|> (\t -> TCenterIn(t, TSized(video.wh)))
+			|> (\t -> TShow(showPoster, t))
+			|> (\t -> TConstruct([\ -> fwhen(playing, \ -> if (post.hideOnPlay) nextDistinct(showPosterInner, false))], t)),
+			TEmpty()
+		),
 		eitherMap(subtitles,
 			\sbtl -> {
 				areaBox = TSized(fselect(videoAreaMetrics, FLift(\vam -> vam.wh)));
@@ -931,12 +1149,14 @@ TVideoWithAnimatedSubtitles(
 TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : MAnimatedSubtitles, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	duration = extractStruct(subtitles.style, MDuration(const(0.5)));
 	frame = extractStruct(subtitles.style, MSubtitlesFrame(4., 4.));
+	paragraphAlignment = extractStruct(subtitles.style, MSubtitlesAlignment(const(CenterAlign()))).alignment;
 
 	percent = make(0.);
 	old2LineSize = makeWH();
 	oldLineSize = makeWH();
 	newLineSize = makeWH();
 
+	avW = make(0.);
 	boxSize = fselect2(oldLineSize, newLineSize, FLift2(\old, new -> WidthHeight(max(old.width, new.width), old.height + new.height)));
 
 	backgroundColor = make(0);
@@ -963,18 +1183,29 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 		|> (\sz -> TFrameT(const(frame.border), const(frame.radius), backgroundStyle, sz));
 
 	makeSubtitleLine = \sbtl, size, translatePoint, dSize ->
-		MDynamicParagraph2T(parent, const(sbtl.text), concat(MCharacterStyle2MTextStyle(sbtl.style), [
-			MSetRTL(false),
-			extractStruct(sbtl.style, EscapeHTML(true)),
-			CenterAlign(),
-			ParagraphMetrics(\met -> nextDistinct(size, WidthHeight(met.width, met.height + dSize)))
-		]))
+		MDynamicParagraph2T(parent, const(trim(sbtl.text)), concat(
+			replaceStruct(MCharacterStyle2MTextStyle(sbtl.style), BackgroundFillOpacity(0.0)),
+			[
+				MSetRTL(parent.rtl),
+				extractStruct(sbtl.style, EscapeHTML(true)),
+				fgetValue(paragraphAlignment),
+				ParagraphMetrics(\met -> nextDistinct(size, WidthHeight(met.width, met.height + dSize)))
+			])
+		)
 		|> TBorderBottom(dSize)
 		|> TBorderTop(frame.border)
 		|> (\t -> TTranslate(translatePoint, t))
 		|> (\t -> TConstruct([\ -> \ -> nextDistinct(size, zeroWH)], t));
 
-	TMutable(fselectWith2Last(subtitles.subtitles, \old2, old, new -> {
+	dummySubtitle = VideoSubtitle("", []);
+
+	meaningfulSubtiles = ftransistor(
+		fselectLift(subtitles.subtitles, \sbt -> sbt.text != dummySubtitle.text),
+		subtitles.subtitles
+	);
+
+	TMutable(fselectWith2Last(meaningfulSubtiles, \old2, old, new -> {
+		boxWidth = make(0.);
 		innerPercent = make(0.);
 		antiInnerPercent = fsubtract(const(1.), innerPercent);
 		old2LineTranslatePoint = flerpPoint(fselect(old2LineSize, FLift(\sz -> Point(0., -sz.height - frame.border))), antiInnerPercent);
@@ -989,8 +1220,12 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 			makeSubtitleLine(old, oldLineSize, oldLineTranslatePoint, 0.),
 			makeSubtitleLine(old2, old2LineSize, old2LineTranslatePoint, 0.) |> (\t -> TAlpha(antiInnerPercent, t))
 		])
+		|> (\t -> TAvailableWidthPreventFillers(t, fsubselect(boxWidth, FLift(\wd ->
+			if (wd == 0.) avW else fmin(const(wd), avW)
+		))))
 		|> (\t -> TConstruct([
 			\ -> fconnectSelect(percent, innerPercent, \perc -> max(getValue(innerPercent), perc)),
+			\ -> fconnect(fstall(fwidth(boxSize), 0), boxWidth),
 			\ -> {
 				color = extractStruct(new.style, BackgroundFill(0)).color;
 				opacity =
@@ -1002,18 +1237,18 @@ TAnimatedSubtitles(manager : MaterialManager, parent : MFocusGroup, subtitles : 
 				nop;
 			}
 		], t))
-	}, VideoSubtitle("", [])))
-	|> (\t -> TGroup2(
-		TDisplay("TAnimatedSubtitlesBackground") |> TCenterX,
-		TCropSize(TGroup2(TFillX(), TGhost("TAnimatedSubtitlesBackground")), t)
-	))
+	}, dummySubtitle))
+	|> TBorderLeftRight(frame.border)
+	|> (\t -> TGroup2(TDisplay("TAnimatedSubtitlesBackground"), TCropSize(TGhost("TAnimatedSubtitlesBackground"), t)))
+	|> TCenterX
 	|> (\t -> TLet("TAnimatedSubtitlesBackground", background, t))
+	|> (\t -> TAttachAvailableWidth(t, avW))
 	|> TBorderBottom(8.)
 }
 
 fselectWith2Last(b : Transform<??>, fn : (??, ??, ??) -> ?, def : ??) -> Transform<?> {
 	lastV : ref Maybe<Pair<??, ??>> = ref None();
-	fselect(ftransistor(fneq(b, def), b), FLift(\v ->
+	fselectLift(b, \v ->
 		switch (^lastV) {
 			Some(prevV): {
 				r = fn(prevV.first, prevV.second, v);
@@ -1025,5 +1260,5 @@ fselectWith2Last(b : Transform<??>, fn : (??, ??, ??) -> ?, def : ??) -> Transfo
 				fn(def, def, v);
 			}
 		}
-	))
+	)
 }

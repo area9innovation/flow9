@@ -13,31 +13,7 @@ export {
 	// first MRadio's index is 0
 	MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material];
 	MRadiosCombined(index : DynamicBehaviour<int>, style : [MCheckableStyle], params : [MRadioParams], colsCombiner : bool) -> Material;
-		MRadioParams(caption : Material, title : Maybe<string>);
-	// Helper to navigate list like in radio-group
-	MRadioArrowNavigation(
-		i : int,
-		listLen : int,
-		makeListItem : ([MButtonState]) -> Material,
-		focusedIdx : DynamicBehaviour<int>,
-		focusEnabledIdx : DynamicBehaviour<int>,
-		getDefFocusableItem : () -> int,
-		selectItem : () -> void,
-		resetSelection : () -> bool,
-		keys : Pair<int, int>
-	) -> Material;
-
-	MRadioArrowNavigationExt(
-		i : int,
-		listLen : int,
-		makeListItem : ([MButtonState]) -> Material,
-		focusedIdx : DynamicBehaviour<int>,
-		focusEnabledIdx : DynamicBehaviour<int>,
-		getDefFocusableItem : () -> int,
-		selectItem : () -> void,
-		resetSelection : () -> bool,
-		keys : Pair<int, int>
-	) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>>;
+		MRadioParams(caption : Material, title : Maybe<string>, style : [MCheckableStyle]);
 
 	// Help to create common patterns, when you need to place smth at the top
 	// of another material
@@ -100,12 +76,14 @@ export {
 
 	// FVideoTimeRange style disabled
 	MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Material;
-		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist, MMultiAudioLength;
+		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist, MMultiAudioLength, MMultiAudioTimerange;
 
 		// to switch files (samples) in multiplayer
 		IndexInPlaylist(index : DynamicBehaviour<int>);
 		// Length of each audio.
 		MMultiAudioLength(lengths : [FVideoLength]);
+		// Timeranges for each audio
+		MMultiAudioTimerange(timeranges : [Maybe<FVideoTimeRange>]);
 
 	// use to place material on top of placeholder over other elements
 	MInlinePopup(
@@ -149,7 +127,8 @@ export {
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector, MHideBrowseButton, MBrowseDialogStyles;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector,
+		MHideBrowseButton, MBrowseDialogStyles, MLazyAutoCompleteDictionary;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -164,6 +143,8 @@ export {
 		MHideBrowseButton(); // Browse button is shown by default in autocomplete mode
 		MBrowseDialogStyles(style : [MBrowseDialogStyle]);
 			MBrowseDialogStyle ::= MDialogStyle, MDynamicListStyle;
+		// We can use MAutoComplete with dynamic dictionary and update the dictionary according to input string
+		MLazyAutoCompleteDictionary(dictionaryT : Transform<[string]>, subscribeInput : (Transform<string>) -> () -> void);
 
 	MCollapsingBox(
 		content : Material,
@@ -247,10 +228,19 @@ export {
 
 	// Intended for preventing iframe from reloading. Not recommended for general use.
 	MFullScreenNoReattachments(fs : DynamicBehaviour<bool>, m : Material) -> Material;
+
+	MPositionScaleEnabled(positionScale : DynamicBehaviour<PositionScale>, content : Material, enabled : Transform<bool>) -> Material;
+	// Becomes visually highlighted and focused once at the start if something (except input/editor) was in focus just before construction
+	// Used for notifying screenreader about changes on the screen
+	MInitiallyFocused(mat : Material, buttonTitle : Transform<string>) -> Material;
+	MInitiallyFocused2(mat : Material, buttonTitle : Transform<string>, previousFocus: Transform<Maybe<MFocus>>) -> Material;
+
+	// Is used to announce some text by screenreader and move focus to the specific place on screen
+	MTemporarilyFocused(mat : Material, buttonTitle : Transform<string>, trigger : Transform<bool>) -> Material;
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
-	MRadiosExtended(index, style, map(captions, \cp -> MRadioParams(cp, None())), true)
+	MRadiosExtended(index, style, map(captions, \cp -> MRadioParams(cp, None(), [])), true)
 }
 
 MRadiosCombined(index : DynamicBehaviour<int>, style : [MCheckableStyle], params : [MRadioParams], colsCombiner : bool) -> Material {
@@ -267,99 +257,27 @@ MRadiosExtended(
 	focusedIdx = make(-1);
 	focusEnabledIdx = make(0);
 
-	backwardsKey = if (isColsCombiner) KEY_LEFT else KEY_UP;
-	forwardKey = if (isColsCombiner) KEY_RIGHT else KEY_DOWN;
-
 	mapi(params, \i, par -> {
 		radioStyle = concatA([
 			style,
+			par.style,
 			eitherMap(par.title, \str -> [MButtonTitle(const(str))], []),
 		]);
 
-		MRadioArrowNavigation(
+		MArrowNavigationItem(
 			i,
 			length(params),
 			\st -> MRadio(par.caption, i, index, concat(radioStyle, st)),
 			focusedIdx,
 			focusEnabledIdx,
-			\ -> {
-				currentSelected = fgetValue(index);
-				if (currentSelected == -1) 0 else currentSelected
-			},
-			\ -> nextDistinct(index, i),
-			\ -> {nextDistinct(index, -1); true},
-			Pair(backwardsKey, forwardKey)
+			\ -> max(0, fgetValue(index)),
+			[
+				MArrowNavigationSelectItem(\ -> nextDistinct(index, i), true),
+				MArrowNavigationResetSelection(\ -> {nextDistinct(index, -1); true}),
+				MArrowNavigationDirection(!isColsCombiner)
+			]
 		)
 	})
-}
-
-// Navigate through list by arrows, not by tab. Wrap each item of list into this.
-MRadioArrowNavigation(
-	i : int,
-	listLen : int,
-	makeListItem : ([MButtonState]) -> Material,
-	focusedIdx : DynamicBehaviour<int>,
-	focusEnabledIdx : DynamicBehaviour<int>,
-	getDefFocusableItem : () -> int,
-	selectItem : () -> void,
-	resetSelection : () -> bool,
-	keys : Pair<int, int>
-) -> Material {
-	MRadioArrowNavigationExt(i, listLen, makeListItem, focusedIdx, focusEnabledIdx, getDefFocusableItem, selectItem, resetSelection, keys).first;	
-}
-
-MRadioArrowNavigationExt(
-	i : int,
-	listLen : int,
-	makeListItem : ([MButtonState]) -> Material,
-	focusedIdx : DynamicBehaviour<int>,
-	focusEnabledIdx : DynamicBehaviour<int>,
-	getDefFocusableItem : () -> int,
-	selectItem : () -> void,
-	resetSelection : () -> bool,
-	keys : Pair<int, int>
-) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>> {
-
-	focused = make(false);
-	focusEnabled = feq(focusEnabledIdx, i);
-
-	makeListItem([MFocused(focused), MFocusEnabled(focusEnabled)])
-	|> (\m -> MInteractive([
-		KeyUp2(\handled, ke -> {
-			if (!handled && fgetValue(focused)) {
-				idx = getValue(focusedIdx);
-				updateFocusedAnswer = \newIdx -> nextDistinct(focusedIdx, newIdx);
-				if (ke.keycode == keys.first) { // backwards
-					updateFocusedAnswer(if (idx == 0) listLen - 1 else idx - 1);
-					true
-				} else if (ke.keycode == keys.second) { // forward
-					updateFocusedAnswer(if (idx == listLen - 1) 0 else idx + 1);
-					true
-				} else if (ke.keycode == KEY_ESCAPE) {
-					resetSelection()
-				} else {
-					false
-				}
-			} else handled
-		})
-	], m))
-	|> (\m -> MConstruct([
-			makeSubscribe(focusedIdx, \focIdx ->
-				if (focIdx == i) deferUntilNextFrameRendered(\ -> {
-					nextDistinct(focusEnabledIdx, i);
-					nextDistinct(focused, true);
-					selectItem()
-				}) else {
-					nextDistinct(focused, false);
-				}
-			),
-			makeSubscribe(focused, \foc -> if (foc) {
-				deferUntilNextFrameRendered(\ -> nextDistinct(focusedIdx, i))
-			} else {
-				nextDistinct(focusEnabledIdx, getDefFocusableItem());
-			})
-		], m))
-	|> (\m -> Triple(m, focused, focusEnabled))
 }
 
 MRightShift(m : Material) -> Material {
@@ -469,6 +387,7 @@ MTopMost(content : Material, style : [MTopMostStyle]) -> Material {
 				),
 				[MZorder(manager.manager.zorder)]
 			),
+			None(),
 			\el -> elementClip := el
 		)
 		|> (\m -> MConstruct([
@@ -741,7 +660,9 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 
 SampleStates(
 	length : [DynamicBehaviour<double>],
+	realLength : [DynamicBehaviour<double>],
 	position : [DynamicBehaviour<double>],
+	realPosition : [DynamicBehaviour<double>],
 	isPlay : [DynamicBehaviour<bool>],
 	isReady : [DynamicBehaviour<bool>]
 );
@@ -755,6 +676,8 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 				default : None()
 			}
 		);
+		isSafari = isSafariBrowser();
+		allFragmentsInitiated = ref false;
 
 	  	// FVideoStyle properties
 	 	lenEx = extractStruct(fvStyle, FVideoLength(make(0.))).length;
@@ -763,22 +686,38 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 	loopEx = extractStruct(fvStyle, FVideoLoop(make(false))).loop;
 	 	synchrocallEx = extractStruct(fvStyle, SynchroCalls(nop, nop));
 		unstoppable = contains(fvStyle, MAudioUnstoppable());
+		timeranges = extractStruct(mStyle, MMultiAudioTimerange([])).timeranges;
+		hasTimeRanges = exists(timeranges, isSome);
+
+		volumeEx = extractStruct(fvStyle, FVideoVolume(make(1.0))).volume;
+		volumeValue = getValue(volumeEx);
+		if (isSafari) next(volumeEx, 0.01);
 
 	  	// MMultiAudioPlayerStyle properties
 	 	currIndexB = extractStruct(mStyle, IndexInPlaylist(make(0))).index;
 
 	  	// init properties for each audio
 	 	states = SampleStates(
-	 		map(filenames, \__ -> make(0.0)),
-	 		map(filenames, \__ -> make(0.0)),
-	 		map(filenames, \__ -> make(false)),
-	 		map(filenames, \__ -> make(false)),
+			map(filenames, \__ -> make(0.0)),
+			map(filenames, \__ -> make(0.0)),
+			map(filenames, \__ -> make(0.0)),
+			map(filenames, \__ -> make(0.0)),
+			map(filenames, \__ -> make(isSafari)),
+			map(filenames, \__ -> make(false)),
 	 	);
+		allIsReady = fands(states.isReady, false);
 
-	  	synchrocalls = mapi(filenames, \i, __ ->
-	 		SynchroCalls(
-	 			// set ready
-	 			\-> nextDistinct(states.isReady[i], true),
+		synchrocalls = mapi(filenames, \i, __ ->
+			SynchroCalls(
+				// set ready
+				\-> if (isSafari) {
+					deferUntilRender(\-> {
+						next(states.isPlay[i], false);
+						nextDistinct(states.isReady[i], true);
+					});
+				} else {
+					nextDistinct(states.isReady[i], true)
+				},
 	 			// play next or stop in the end
 	 			\-> {
 	 				// reset position (for js)
@@ -797,21 +736,52 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 		)
 	 	);
 
-	  	players = mapi(filenames, \i, url ->
-	 		TVideo(
-	 			url,
-	 			make(WidthHeight(-1., -1.)),		// not to draw
-	 			replaceStructMany(fvStyle,
-	 				[
-	 					FVideoLength(states.length[i]),
-	 					FVideoPosition(states.position[i]),
-	 					FVideoPlay(states.isPlay[i]),
-	 					synchrocalls[i],
-	 					FAudio()
-	 				]
-	 			)
-	 		)
-	 	);
+		players = mapi(filenames, \i, url -> eitherFn(
+			elementAt(timeranges, i, None()),
+			\timerange : FVideoTimeRange -> {
+				start = fgetValue(timerange.start);
+				timeRangeLength = fgetValue(timerange.end) - start;
+				MConstruct(
+					[
+						\-> fconnectSelect(states.realLength[i], states.length[i],
+							\realLength -> if (realLength > 0.0) timeRangeLength else 0.0),
+						\-> bidirectionalLink(states.realPosition[i], states.position[i],
+							\realPosition -> realPosition - start,
+							\position -> position + start
+						),
+					],
+					TVideo(
+						url,
+						make(WidthHeight(-1., -1.)),		// not to draw
+						replaceStructMany(fvStyle,
+							[
+								FVideoLength(states.realLength[i]),
+								FVideoPosition(states.realPosition[i]),
+								FVideoPlay(states.isPlay[i]),
+								synchrocalls[i],
+								FAudio(),
+								timerange,
+								FVideoVolume(volumeEx),
+							]
+						)
+					)
+				)
+			},
+			\-> TVideo(
+				url,
+				make(WidthHeight(-1., -1.)),		// not to draw
+				replaceStructMany(fvStyle,
+					[
+						FVideoLength(states.length[i]),
+						FVideoPosition(states.position[i]),
+						FVideoPlay(states.isPlay[i]),
+						synchrocalls[i],
+						FAudio(),
+						FVideoVolume(volumeEx),
+					]
+				)
+			)
+		));
 
 	  	changeAudioPlaying = \index, isPlay -> {
 	 		nextDistinct(states.isPlay[index], isPlay);
@@ -850,6 +820,13 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 	 			nextDistinct(states.position[newIndex], pos - lastEnd.second);
 	 		}
 	 	}
+		calculateAudioLengthWithTimeRanges = \audioLengths -> {
+			dsum(mapi(timeranges, \index, timerange -> eitherMap(
+				timerange,
+				\t -> fgetValue(t.end) - fgetValue(t.start),
+				elementAt(audioLengths, index, 0.0)
+			)))
+		}
 
 		// rendering (empty)
 		MConstruct(
@@ -857,15 +834,24 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 				[
 					\-> \-> next(currIndexB, 0),
 					// when all audios ready
-					makeSubscribe(fands(states.isReady, false), \isReady ->
-						if (isReady) synchrocallEx.onStart()
+					makeSubscribe(allIsReady, \isReady ->
+						if (isReady) {
+							synchrocallEx.onStart();
+							if (isSafari) {
+								next(volumeEx, volumeValue);
+								deferUntilRender(\-> {
+									changeAudioPlaying(getValue(currIndexB), getValue(playEx));
+									allFragmentsInitiated := true;
+								});
+							}
+						}
 					),
 					// sum all audio lengths. but refresh total length only after all data is got (all lengths > 0)
-					\-> fconnectSelect(fmerge(states.length), lenEx, \lens -> {
-							if (all(map(lens, \l -> l > 0.0)))
-								dsum(lens)
-							else
-								0.0
+					\-> fconnect2Select(fmerge(states.length), allIsReady, lenEx, \lens, ready -> {
+							if (isSafari && !ready) 0.0
+							else if (hasTimeRanges) calculateAudioLengthWithTimeRanges(lens)
+							else if (all(map(lens, \l -> l > 0.0))) dsum(lens)
+							else 0.0
 						}),
 					// set possition
 					\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
@@ -880,7 +866,9 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 							changeAudioPlaying(newIndex, getValue(playEx));
 
 							[
-								fconnect(fdelayUntilNextFrameRendered(states.isPlay[newIndex]), playEx)
+								fconnectSelect(fdelayUntilNextFrameRendered(states.isPlay[newIndex]), playEx, \isPlay -> {
+									if (!isSafari || ^allFragmentsInitiated) isPlay else getValue(playEx)
+								})
 							]
 						})
 					),
@@ -888,8 +876,8 @@ MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Ma
 						changeAudioPlaying(getValue(currIndexB), isPlay);
 					}),
 				],
-				mapi(extractStruct(mStyle, MMultiAudioLength([])).lengths, \i, length -> {
-					\-> fconnect(states.length[i], length.length)
+				filtermapi(extractStruct(mStyle, MMultiAudioLength([])).lengths, \i, length -> {
+					elementAtMap(states.length, i,  \l -> Some(\-> fconnect(l, length.length)), None())
 				})
 			),
 			MGroup(players)
@@ -1033,10 +1021,26 @@ MDropDownOrAutoComplete(
 	labelM = tryExtractStruct(style, MLabel(""));
 	multiSelection = tryExtractStruct(style, MMultipleSelection(make([]), []));
 	changeOnlyOnClick = contains(style, MChangeOnClick());
+	lazyDictionaryM = tryExtractStruct(style, MLazyAutoCompleteDictionary(const([]), \__ -> nop));
 
 	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
 	anyItem = extractStruct(style, MCustomAnyItem(_("Any"))).text;
-	items = concat(if (showAnyItem) [anyItem] else [], items0);
+	addAny = \items2 -> concat(if (showAnyItem) [anyItem] else [], items2);
+	itemsT0 = eitherFn(
+		lazyDictionaryM,
+		\lazyDictionary -> lazyDictionary.dictionaryT,
+		\ -> {
+			eitherFn(
+				tryExtractStruct(
+					extractStruct(style, MAutoCompleteStyles([])).style,
+					MDictionaryDynamic(const([]))
+				),
+				\st -> st.dictionaries,
+				\ -> const(items0)
+			);
+		}
+	);
+	itemsT = fselectLift(itemsT0, addAny);
 
 	isError =
 		eitherMap(
@@ -1047,9 +1051,16 @@ MDropDownOrAutoComplete(
 
 	makeMAutoCompleteControl = \manager -> {
 		inputInspector = tryExtractStruct(style, MInputInspector(make("")));
-		idx2string = \idx -> elementAt(items, idx, if (showAnyItem) items[0] else eitherMap(inputInspector, \inp -> getValue(inp.text), ""));
+		initValue = eitherMap(inputInspector, \inp -> getValue(inp.text), "");
+		idx2string = \idx -> {
+			items = fgetValue(itemsT);
+			elementAt(items, idx, if (showAnyItem) items[0] else initValue);
+		}
 		trimStr = \s -> trim(s) |> toLowerCase;
-		string2idx = \str -> findiDef(items, \item -> trimStr(item) == trimStr(str), -1);
+		string2idx = \str -> {
+			str2 = trimStr(str);
+			findiDef(fgetValue(itemsT), \item -> trimStr(item) == str2, -1);
+		}
 
 		selectedStrB = make(if (isSome(multiSelection)) "" else idx2string(getValue(selected)));
 
@@ -1083,21 +1094,28 @@ MDropDownOrAutoComplete(
 						MTextInput(filterText, [], [])
 					);
 
-					matcher = simpleBuildSentenceMatcher(items);
-					filteredItems = fselect(filterText, FLift(\txt -> {
-						itms =
-							if (txt == "") mapi(items, \i, it -> Pair(it, i))
-							else map(
-								simpleSentenceMatcher(matcher, txt, intMax, false, false, -1),
-								\hit -> {
-									index = switch(hit : SentenceMatch) {
-										SentenceHit(__, __, __, __) : string2idx(hit.sentence);
-										SentenceHitExtended(__, __, __, __, idx) : idx;
+					makeFilterItems = \dictionary -> {
+						matcher = simpleBuildSentenceMatcher(dictionary);
+						fselectLift(filterText, \txt -> {
+							itms = if (txt == "") {
+								mapi(dictionary, \i, it -> Pair(it, i));
+							} else {
+								map(
+									simpleSentenceMatcher(matcher, txt, intMax, false, false, -1),
+									\hit -> {
+										index = switch(hit : SentenceMatch) {
+											SentenceHit(__, __, __, __) : string2idx(hit.sentence);
+											SentenceHitExtended(__, __, __, __, idx) : idx;
+										}
+										Pair(hit.sentence, index)
 									}
-									Pair(hit.sentence, index)
-								}
-							);
-						sortCustom(itms, \str -> toLowerCase(str.first), true);
+								);
+							}
+							sortCustom(itms, \str -> toLowerCase(str.first), true);
+						});
+					}
+					filteredItems = fsubselect(itemsT, FLift(\dictionary -> {
+						makeFilterItems(dictionary);
 					}));
 					selectedItems = make([]);
 
@@ -1147,7 +1165,17 @@ MDropDownOrAutoComplete(
 					], m));
 
 					listWidth = make(0.);
-					dialogContent = MLines2A(MAvailableWidth(filterInput, listWidth), MAttachWidth(list, listWidth));
+					dialogContent0 = MLines2A(MAvailableWidth(filterInput, listWidth), MAttachWidth(list, listWidth));
+					dialogContent = eitherMap(
+						lazyDictionaryM,
+						\lazyDictionary -> {
+							MConstruct(
+								[\ -> lazyDictionary.subscribeInput(filterText)],
+								dialogContent0
+							);
+						},
+						dialogContent0
+					);
 
 					ShowMDialog(manager, dialogClose, concat(dialogStyle, [
 						MDialogUseFrame(),
@@ -1157,10 +1185,14 @@ MDropDownOrAutoComplete(
 						])
 					]), dialogContent)
 				};
+				isNotPlain = contains(st, MOutlined()) || contains(st, MFilled());
 				concat(st, [MRightCustomButton(
-					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(10.)], [MTooltipText(const(_("Browse Content")))])
+					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(if (isNotPlain) 0. else 10.)], [MTooltipText(const(_("Browse Content")))])
+					|> MBorderLeftRight(if (isNotPlain) 10. else 0.)
 				), MShowDropDownArrow(false)])
-			});
+			})
+			|> (\st -> replaceStruct(st, MDictionaryDynamic(itemsT)))
+		;
 		autoCompleteState0 =
 			extractStruct(style, MAutoCompleteState([])).state
 			|> (\st ->
@@ -1174,7 +1206,7 @@ MDropDownOrAutoComplete(
 		eitherFn(
 			multiSelection,
 			\ms ->
-				MAutoCompleteMultiSelectionBase(items, ms.selected, [", "], selectedStrB, autoCompleteStyle0, autoCompleteState0),
+				MAutoCompleteMultiSelectionBase(fgetValue(itemsT), ms.selected, [", "], selectedStrB, autoCompleteStyle0, autoCompleteState0),
 			\ -> {
 				preventSelectedChange = ref false;
 
@@ -1198,7 +1230,8 @@ MDropDownOrAutoComplete(
 								};
 								defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
 							})
-					)));
+					)))
+				;
 
 				autoCompleteState =
 					autoCompleteState0
@@ -1208,13 +1241,18 @@ MDropDownOrAutoComplete(
 					});
 
 				MConstruct(
-					[
-						\ -> bidirectionalLink(selected, selectedStrB,
+					concat(
+						[\ -> bidirectionalLink(selected, selectedStrB,
 							\idx -> idx2string(idx),
 							\str -> if (changeOnlyOnClick || ^preventSelectedChange) fgetValue(selected) else string2idx(str)
+						)],
+						eitherMap(
+							lazyDictionaryM,
+							\lazyDictionary -> [\ -> lazyDictionary.subscribeInput(selectedStrB)],
+							[]
 						)
-					],
-					MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
+					),
+					MAutoComplete(selectedStrB, [], autoCompleteStyle, autoCompleteState)
 				)
 			}
 		)
@@ -1226,33 +1264,36 @@ MDropDownOrAutoComplete(
 		)
 	}
 
-	if (length(items0) > limit)
-		MGetManager(makeMAutoCompleteControl)
-	else
-		eitherMap(
-			multiSelection,
-			\multiSelect -> MMultiSelectDropDown(multiSelect.selected, items, concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
-			MConstruct(
-				[makeSubscribe(selected, \i -> if (showAnyItem && i == 0) nextDistinct(selected, -1))],
-				MDropDown(selected, "", items, extractStruct(style, MDropDownStyles([])).style)
+	MIfLazy(fOrLazy(const(isSome(lazyDictionaryM)), fgreateri(flength(itemsT0), const(limit))), \longList -> {
+		if (longList) {
+			MGetManager(makeMAutoCompleteControl)
+		} else {
+			eitherMap(
+				multiSelection,
+				\multiSelect -> MMultiSelectDropDown(multiSelect.selected, fgetValue(itemsT), concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
+				MConstruct(
+					[makeSubscribe(selected, \i -> if (showAnyItem && i == 0) nextDistinct(selected, -1))],
+					MDropDown(selected, "", fgetValue(itemsT), extractStruct(style, MDropDownStyles([])).style)
+				)
 			)
-		)
-		|> (\m -> eitherMap(labelM,	\labelStyle ->
-			MLines2(
-				MText(labelStyle.label, [MCaption()]) |> MBorderBottom(4.0),
+			|> (\m -> eitherMap(labelM,	\labelStyle ->
+				MLines2(
+					MText(labelStyle.label, [MCaption()]) |> MBorderBottom(4.0),
+					m
+				),
 				m
-			),
-			m
-		))
-		|> (\m -> if (isRequired)
-			MLines2(
-				m,
-				MText(_("Required field"), [MErrorColor(), MCaptionSolid()])
-				|> (\m2 -> MVisible(isError, m2))
-				|> MBorderTop(4.0)
+			))
+			|> (\m -> if (isRequired)
+				MLines2(
+					m,
+					MText(_("Required field"), [MErrorColor(), MCaptionSolid()])
+					|> (\m2 -> MVisible(isError, m2))
+					|> MBorderTop(4.0)
+				)
+				else m
 			)
-			else m
-		)
+		}
+	});
 }
 
 MAutoCompleteMultiSelection(items : [string], selected : DynamicBehaviour<[int]>, separator : string) -> Material {
@@ -1351,7 +1392,7 @@ MAutoCompleteMultiSelectionBase(
 						cm = map(getValue(currentMatches), \m -> m.first);
 						nextDistinct(selected,
 							if (sel) uniq(concat(fgetValue(selected), cm))
-							else filter(fgetValue(selected), \it -> !contains(cm, it))
+							else subtractA(fgetValue(selected), cm)
 						)
 					}
 				)
@@ -1437,6 +1478,7 @@ MFlippingCard(
 	percent = extractStruct(state, FAnimationPercent(make(0.0))).percent;
 	triggerType = extractStruct(state, MTrigger(MTriggerHover())).type;
 	isHoverTrigger = isSameStructType(triggerType, MTriggerHover());
+	buttonTitle = extractStruct(state, MButtonTitle(const(""))).title;
 	isBackSide = make(false);
 	flipped = make(false);
 
@@ -1452,7 +1494,7 @@ MFlippingCard(
 
 	MComponent([
 		MHighlightOnFocus(const(true)),
-		MButtonTitle(fselectLift(isBackSide, \isBack -> "Flipping card (" + (if (isBack) "back" else "front") + " side)")),
+		MButtonTitle(fselect2Lift(buttonTitle, isBackSide, \ttl, isBack -> ttl + ". Flipping card (" + (if (isBack) "back" else "front") + " side)")),
 		MOnClick(\ -> {
 			reverseBehaviour(flipped);
 			maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click());
@@ -1732,6 +1774,7 @@ MPictureFit(picURL : string, style : [MPictureStyle]) {
 
 MScrollOrFit(content : Material, box : Material, threshold : double, style : [MScrollStyle]) -> Material {
 	contentHeight = make(0.);
+	maxHeight = make(0.);
 	avBox = makeWH();
 	availableHeight = fheight(avBox);
 	scale = fselect2(contentHeight, availableHeight, FLift2(\ch, ah ->
@@ -1741,9 +1784,10 @@ MScrollOrFit(content : Material, box : Material, threshold : double, style : [MS
 	scrollEnabled = fgreater(fsubtract(contentHeight, availableHeight), const(threshold));
 
 	content
-	|> (\m -> MAttachHeight(m, contentHeight))
+	|> (\m -> MInspect([Height(contentHeight), IMaxHeight(maxHeight)], m))
 	|> (\m -> MAvailableWidth(m, fwidth(avBox)))
 	|> (\m -> MScale(ffactor2(scale), m))
+	|> (\m -> MOverride([OMaxHeight(maxHeight)], m))
 	|> (\m -> MScroll(
 		m,
 		MAttachBox(box, avBox),
@@ -1821,4 +1865,59 @@ MFullScreenNoReattachments(fs : DynamicBehaviour<bool>, m : Material) -> Materia
 			)))
 		);
 	}));
+}
+
+MPositionScaleEnabled(positionScale : DynamicBehaviour<PositionScale>, content : Material, enabled : Transform<bool>) -> Material {
+	MCopySize(content, \tr -> MShowLazy(enabled, \ -> MPositionScale(positionScale, tr)), true)
+}
+
+MInitiallyFocused(mat : Material, buttonTitle : Transform<string>) -> Material {
+	MGetManager(\manager -> MInitiallyFocused2(mat, buttonTitle, manager.latelyFocused))
+}
+
+MInitiallyFocused2(mat : Material, buttonTitle : Transform<string>, previousFocus: Transform<Maybe<MFocus>>) -> Material {
+	focused = make(false);
+	framePadding = 2.;
+	MComponent([
+		MFocused(focused),
+		MButtonTitle(buttonTitle),
+		AccessRole("none"),
+		TagName("div"),
+		ClassName("flow_focusable"),
+		MHighlightOnFocus(const(true)),
+		MCursorShape(const(DefaultCursor()))
+	], \__ -> MBorder4(framePadding, MAccess([FAccessHidden()], mat)))
+	|> (\m -> MBorder4(-framePadding, m))
+	|> (\m -> MConstruct([\ -> {
+		if (eitherMap(fgetValue(previousFocus), \lf -> !contains(["MTextInput", "MAutoComplete", "MWEditor", "MTemporarilyFocused"], lf.name), false)) {
+			deferUntilNextFrameRendered(\ -> nextDistinct(focused, true));
+		}
+		nop
+	}], m))
+}
+
+MTemporarilyFocused(mat : Material, buttonTitle : Transform<string>, trigger : Transform<bool>) -> Material {
+	focusedElementEnabled = make(false);
+	focused = make(false);
+	MSelect(focusedElementEnabled, \en ->
+		if (en) {
+			timer(0, \ -> {
+				nextDistinct(focused, true);
+			});
+			MComponent([
+				MCursorShape(const(DefaultCursor())),
+				MFocused(focused),
+				MButtonTitle(buttonTitle),
+				AccessRole("none"),
+				TagName("div"),
+				ClassName("flow_focusable"),
+				MFocusName("MTemporarilyFocused")
+			], \__ -> mat)
+		} else mat
+	)
+	|> (\m -> MConstruct([
+			// trigger is 'pressed'
+			makeSubscribe2(trigger, \tr -> if (!tr) nextDistinct(focusedElementEnabled, true)),
+			makeSubscribe2(focused, \foc -> if (!foc) nextDistinct(focusedElementEnabled, false))
+	], m))
 }

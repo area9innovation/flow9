@@ -1,10 +1,10 @@
 # native setFileContentBinary : io (filename : string, content : string) -> bool  = Native.setFileContentBinary;
 
-proc $F_0(setFileContentBinary)(filename: string, content : string): bool =
+proc $F_0(setFileContentBinary)*(filename: RtString, content : RtString): bool =
   var f: File
-  if open(f, filename, fmWrite):
+  if open(f, rt_string_to_utf8(filename), fmWrite):
     try:
-      write(f, content)
+      write(f, rt_string_to_utf8(content))
       result = true
     except OverflowDefect, IOError, CatchableError:
       result = false

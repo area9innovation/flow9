@@ -13,7 +13,18 @@ export {
 }
 
 ruHtml2md(html : [HtmlNode]) -> string {
-	ruDoHtml2md(html, "*");
+	output = ruDoHtml2md(html, "*");
+	// OK, now clean it up and avoid too many empty lines
+	lines = strSplit(output, "\n");
+	// Clean out whitespace
+	trimmedLines = map(lines, \line -> {
+		trim2(line, " \t\r");
+	});
+	// Reduce two empty lines to one
+	simplify = fold(trimmedLines, [], \acc, line -> {
+		if (acc != [] && line == "" && lastElement(acc, "") == "") acc else arrayPush(acc, line)
+	});
+	strGlue(simplify, "\n");
 }
 
 ruDoHtml2md(html : [HtmlNode], indent : string) -> string {
@@ -26,22 +37,53 @@ ruHtmlNode2md(html : HtmlNode, indent : string) -> string {
 			contents = ruDoHtml2md(body, indent);
 			if (strlen(tag) == 2 && getCharAt(tag, 0) == "h") {
 				ruHtmlHeading2md(s2i(getCharAt(tag, 1)), contents);
-			} else if (tag == "p") {
+			} else if (tag == "p" || tag == "div" || tag == "body" || tag == "section" || tag == "html") {
 				trim2(contents, " \n\t\r") + "\n\n";
 			} else if (tag == "br") {
 				"\n";
-			} else if (tag == "strong") {
+			} else if (tag == "strong" || tag == "b") {
 				"**" + contents + "**";
-			} else if (tag == "em") {
+			} else if (tag == "pre" || tag == "tt") {
+				"`" + contents + "`";
+			} else if (tag == "sup") {
+				"^" + contents + "^";
+			} else if (tag == "sub") {
+				"~" + contents + "~";
+			} else if (tag == "em" || tag == "i" || tag == "it") {
 				"*" + contents + "*";
 			} else if (tag == "blockquote") {
 				strGlue(map(strSplit(contents, "\n"), \line -> "> " + line), "\n");
-			} else if (tag == "ol" || tag == "ul") {
+			} else if (tag == "ol" || tag == "ul" || tag == "li") {
 				ruHtmlList2md(tag, body, indent);
 			} else if (tag == "sub") {
 				"_" + contents;
 			} else if (tag == "table") {
 				ruHtmlTable2md(body);
+			} else if (tag == "span") {
+				trimmed = trim2(contents, " \n\t\r");
+				if (trimmed != contents) trimmed + " " else trimmed
+			} else if (tag == "a") {
+				href = fold(attribs, "", \acc, attrib -> if (attrib.key == "href") attrib.val else acc);
+				if (startsWith(href, "http")) {
+					"[" + trim2(contents, " \n\t\r") + "](" + href + ")";
+				} else {
+					// Internal link. Ignore
+					trim2(contents, " \n\t\r");
+				}
+			} else if (tag == "head" || tag == "header" || tag == "style" || tag == "script" || tag == "link" || tag == "title") {
+				// Ignore these
+				"";
+			} else if (tag == "tr" || tag == "th" || tag == "td") {
+				// These tags are processed in `ruHtmlTable2md`
+				"";
+			} else if (tag == "img") {
+				// ![Image](http://example.com/image.png)
+				src = fold(attribs, "", \acc, attrib -> if (attrib.key == "src") attrib.val else acc);
+				alt = fold(attribs, "Image", \acc, attrib -> if (attrib.key == "alt") attrib.val else acc);
+				"![" + alt + "](" + src + ")"
+			} else if (tag != "") {
+				println("TODO: Support " + tag + " in ruHtmlNode2md");
+				contents;
 			} else {
 				contents;
 			}
@@ -60,15 +102,7 @@ ruHtmlHeading2md(level : int, body : string) -> string {
 		// Heading has new lines
 		body;
 	} else {
-		if (level == 1) {
-			body1 = trim(body);
-			body1 + "\n" + strRepeat("=", strlen(body1)) + "\n";
-		} else if (level == 2) {
-			body1 = trim(body);
-			body1 + "\n" + strRepeat("-", strlen(body1)) + "\n";
-		} else  {
-			strRepeat("#", level) + (if (startsWith(body, " ")) "" else " ") + body;
-		}
+		"\n\n" + strRepeat("#", level) + (if (startsWith(body, " ")) "" else " ") + body + "\n\n";
 	}
 }
 
@@ -84,11 +118,10 @@ insertPrefix2md(pref : string, s : string) -> string {
 }
 
 ruHtmlList2md(tag : string, body : [HtmlNode], indent : string) -> string {
-	next_indent = if (indent == "*") "+" else if (indent == "+") "-" else "*";
 	i = ref 0;
 	"\n" + concatStrings(
 		map(body, \elem ->  {
-			str = ruHtmlNode2md(elem, next_indent);
+			str = ruHtmlNode2md(elem, indent);
 			switch (elem) {
 				HtmlTag(tag1, __,__): {
 					if (tag1 != "li") str else {

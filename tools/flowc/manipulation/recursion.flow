@@ -1,0 +1,105 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/manipulation/freevars;
+
+export {
+
+	// Describes recursive (possibly mutially) function.
+	FiRecursion(
+		host: Set<string>, // Host functions: the outer ones, which call recursive function
+		rec: Set<string>   // Recursive function(s) itself (maybe mutually recursive)
+	);
+
+	// Maps the name of a recursive function to a proper recursion description.
+	fiDetectRecursion(p: FiProgram) -> Tree<string, FiRecursion>;
+}
+
+fiDetectRecursion(p: FiProgram) -> Tree<string, FiRecursion> {
+	is_used_by = foldTree(p.names.toplevel, makeTree(), \__,decl, acc -> switch (decl) {
+		FiFunctionDec(name, lambda, type,__,__): {
+			free = fifreevars(lambda);
+			foldSet(free, acc, \ac, v ->
+				setTree(ac, v, insertSet(lookupTreeDef(ac, v, makeSet()), name))
+			);
+		}
+		default: acc;
+	});
+	foldTree(p.names.toplevel, makeTree(), \name, decl, acc -> switch (decl) {
+		FiFunctionDec(__,__,__,__,__): {
+			eitherMap(
+				fiIsRecursive(name, is_used_by),
+				\r -> foldSet(r.rec, acc, \ac, n -> setTree(ac, n, r)),
+				acc
+			);
+		}
+		default: acc;
+	});
+}
+
+fiIsRecursive(name: string, is_used_by: Tree<string, Set<string>>) -> Maybe<FiRecursion> {
+	is_used = set2array(lookupTreeDef(is_used_by, name, makeSet()));
+	/*if (name == "fifreevars" || name == "fifreevarsBoundFree" || name == "fifreevarsBoundFreeMany" || name == "existsList") {
+		println(name + ":\n" +
+			"is_used: [" + strGlue(set2array(is_used), ", ")  + "]\n" +
+			"they are used by:\n" +
+				superglue(set2array(is_used), \n -> "\t[" + strGlue(set2array(lookupTreeDef(is_used_by, n, makeSet())), ", ") + "]", "\n")
+		);
+	}*/
+	size = length(is_used);
+	if (length(is_used) == 2) {
+		// simple recursion
+		if (is_used[0] == name) {
+			Some(FiRecursion(makeSet1(is_used[1]), makeSet1(is_used[0])));
+		} else if (is_used[1] == name) {
+			Some(FiRecursion(makeSet1(is_used[0]), makeSet1(is_used[1])));
+		} else {
+			None();
+		}
+	} else if (length(is_used) == 3) {
+		// 2-sides mutual recursion
+		check_helper = \n -> n != name && lookupTreeDef(is_used_by, n, makeSet()) == makeSet1(name);
+		if (is_used[0] == name) {
+			if (check_helper(is_used[1])) {
+				Some(FiRecursion(makeSet1(is_used[2]), buildSet([is_used[0], is_used[1]])));
+			} else if (check_helper(is_used[2])) {
+				Some(FiRecursion(makeSet1(is_used[1]), buildSet([is_used[0], is_used[2]])));
+			} else {
+				None();
+			}
+		} else if (is_used[1] == name) {
+			if (check_helper(is_used[0])) {
+				Some(FiRecursion(makeSet1(is_used[2]), buildSet([is_used[1], is_used[0]])));
+			} else if (check_helper(is_used[2])) {
+				Some(FiRecursion(makeSet1(is_used[1]), buildSet([is_used[1], is_used[2]])));
+			} else {
+				None();
+			}
+		} else if (is_used[2] == name) {
+			if (check_helper(is_used[1])) {
+				Some(FiRecursion(makeSet1(is_used[0]), buildSet([is_used[2], is_used[1]])));
+			} else if (check_helper(is_used[0])) {
+				Some(FiRecursion(makeSet1(is_used[1]), buildSet([is_used[2], is_used[0]])));
+			} else {
+				None();
+			}
+		} else {
+			None();
+		}
+	} else {
+		None();
+	}
+	/*(size == 2 && containsSet(is_used, name)) ||
+	(
+		// 2-sides mutual recursion
+		size == 3 && containsSet(is_used, name) && {
+		exists(set2array(is_used), \n ->
+			n != name && lookupTreeDef(is_used_by, n, makeSet()) == makeSet1(name)
+		)
+	}) || (
+		// 2-sides mutual recursion (other side)
+		size == 1 && {
+			n = set2array(is_used)[0];
+			is_used2 = lookupTreeDef(is_used_by, n, makeSet());
+			sizeSet(is_used2) == 3 && containsSet(is_used2, n);
+		}
+	);*/
+}

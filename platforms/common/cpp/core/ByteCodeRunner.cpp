@@ -85,6 +85,9 @@ StackSlot flowgen_common::error_stub_slot = StackSlot::MakeVoid();
     #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 #endif
 
+std::uniform_real_distribution<double> ByteCodeRunner::random_dist = std::uniform_real_distribution<double>(0.0, 1.0);
+std::mt19937 ByteCodeRunner::random_gen = std::mt19937(std::random_device{}()); // Standard mersenne_twister_engine seeded with random device
+
 ByteCodeRunner::ByteCodeRunner() :
      flow_out(std::cout.rdbuf()), flow_err(std::cerr.rdbuf())
 {
@@ -1110,11 +1113,6 @@ StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
  * Perform allocation of a big object, or when the fast heap runs out.
  */
 FlowPtr ByteCodeRunner::AllocateInner(unsigned size) {
-    if (unlikely(unsigned(size) >= MIN_HEAP_SIZE / 2)) {
-        ReportError(InvalidArgument, "Allocation size too large: %d bytes.", size);
-        return HeapEnd;
-    }
-
     if (unsigned(size) > MAX_EPHEMERAL_ALLOC)
     {
         if (unsigned(size) > unsigned(hp_big_pos - hp_ref_end))
@@ -1264,7 +1262,7 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
     }
     else
     {
-        size_t length = size/FLOW_CHAR_SIZE;
+        size_t length = size/FLOW_CHAR_SIZE+size%FLOW_CHAR_SIZE;
         size_t bytes = length * FLOW_CHAR_SIZE;
 
 #ifdef FLOW_MMAP_HEAP
@@ -2888,7 +2886,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CField:
             {
-                int i = Code.ReadInt31_8();
+                int i = Code.ReadInt31_16();
                 DoField(i);
                 break;
             }
@@ -3710,6 +3708,7 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, removeAllKeyValues, 0);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getKeysList, 0);
 
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, generate, 3);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, enumFromTo, 2);
 
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, captureCallstack, 0);

@@ -7,8 +7,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.FileNotFoundException;
-import java.net.URL;
-import java.net.MalformedURLException;
+import java.net.*;
 import java.nio.charset.Charset;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
@@ -144,12 +143,12 @@ public class FlowFileSystem extends NativeHost {
 	}
 	public static Object makeFileByBlobUrl(String url, String fileName, Func1<Object,Object> onFile, Func1<Object,String> onError) {
 		try (
-			ReadableByteChannel readableByteChannel = Channels.newChannel(new URL(url).openStream());
+			ReadableByteChannel readableByteChannel = Channels.newChannel(new URI(url).toURL().openStream());
 			FileOutputStream fileOutputStream = new FileOutputStream(fileName);
 		) {
 			fileOutputStream.getChannel().transferFrom(readableByteChannel, 0, Long.MAX_VALUE);
 			onFile.invoke(new File(fileName));
-		} catch (MalformedURLException e) {
+		} catch (MalformedURLException|URISyntaxException e) {
 			onError.invoke("Malformed url " + url + " " + e.getMessage());
 		} catch (FileNotFoundException e) {
 			onError.invoke("File not found " + fileName + " " + e.getMessage());

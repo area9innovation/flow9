@@ -17,6 +17,7 @@
     #endif
 #else
 #include <dirent.h>
+#include <unistd.h>
 #endif
 
 std::string urlEscapePath(std::string path)
@@ -66,6 +67,10 @@ void FileLocalStore::SetBasePath(std::string path)
         if (mkdir(base_path.c_str(), 0770) && errno != EEXIST)
 #endif
             cerr << "Could not create directory: " << base_path << endl;
+
+#ifdef ANDROID
+    	chdir(path.c_str());
+#endif
     }
 }
 

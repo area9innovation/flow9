@@ -120,73 +120,135 @@ if (a === b) return true;
 #end
   }
 	static public function compareByValue(o1 : Dynamic, o2 : Dynamic) : Int {
-		#if (js)
-			untyped __js__("if (o1 === o2) return 0;");
-		#else
-			if (o1 == o2) return 0;
-		#end
-		if (o1 == null || o2 == null) return 1;
-
-		#if flash
-		// Possible return values of the getQualifiedClassName:
-		//   "Array"
-		//   "int" for ints (or defacto doubles that are ints)
-		//   "Number" for doubles
-		//   "Boolean" for bools
-		//   "String"
-		//   "FS_Foo" for structs
-		//   "FlowRefObject" for references
-		//   "builtin.as$0::MethodClosure"  for functions
-		// See the results with this:
-		// flash.external.ExternalInterface.call("console.log", qname1);
-		var qname1 = untyped __global__["flash.utils.getQualifiedClassName"](o1);
-		if (qname1 == "Array") {
-		#else
-		if ( isArray(o1) ) {
-		#end
-			if (!isArray(o2)) return 1;
-			var l1 : Int = o1.length;
-			var l2 : Int = o2.length;
-			var l : Int =  l1 < l2 ? l1 : l2;
-			for (i in 0...l ) {
-				var c = compareByValue(o1[i], o2[i]);
-				if (c != 0) return c;
+		#if (js && !readable)
+			untyped __js__("if (o1 === o2) return 0;
+			if(o1 == null || o2 == null) {
+				return 1;
 			}
-			return (l1 == l2) ? 0 : (l1 < l2 ? -1 : 1);
-		}
-		#if flash
-		if (untyped o1.hasOwnProperty("_id")) {
-		#else
-			#if (js && readable)
-				if (Reflect.hasField(o1, "_name")) {
-			#else
-				if (Reflect.hasField(o1, "_id")) {
-			#end
-		#end
-		#if (js && readable)
-			if (!Reflect.hasField(o2, "_name")) return 1;
-			var n1 = o1._name;
-			var n2 = o2._name;
-			var i1 = _structids_.get(n1);
-			var i2 = _structids_.get(n2);
-		#else
-			if (!Reflect.hasField(o2, "_id")) return 1;
+			if(Array.isArray(o1)) {
+				if(!Array.isArray(o2)) {
+					return 1;
+				}
+				var l1 = o1.length;
+				var l2 = o2.length;
+				var l = l1 < l2 ? l1 : l2;
+				var _g = 0;
+				var _g1 = l;
+				while(_g < _g1) {
+					var i = _g++;
+					var c = HaxeRuntime.compareByValue(o1[i],o2[i]);
+					if(c != 0) {
+						return c;
+					}
+				}
+				if(l1 == l2) {
+					return 0;
+				} else if(l1 < l2) {
+					return -1;
+				} else {
+					return 1;
+				}
+			}
 			var i1 = o1._id;
-			var i2 = o2._id;
-		#end
-			if (i1 < i2) return -1;
-			if (i1 > i2) return 1;
-
-			// We need to remember the order of the fields
-			var args = _structargs_.get(i1);
-			for (f in args) {
-				var c = compareByValue(Reflect.field(o1, f), Reflect.field(o2, f));
-				if (c != 0) return c;
+			if(i1 !== undefined) {
+				var i2 = o2._id;
+				if(i2 === undefined) {
+					return 1;
+				}
+				if(i1 < i2) {
+					return -1;
+				}
+				if(i1 > i2) {
+					return 1;
+				}
+				var args = HaxeRuntime._structargs_.h[i1];
+				var _g = 0;
+				while(_g < args.length) {
+					var f = args[_g];
+					++_g;
+					var c = HaxeRuntime.compareByValue(o1[f],o2[f]);
+					if(c != 0) {
+						return c;
+					}
+				}
+				return 0;
 			}
+			if(o1 < o2) {
+				return -1;
+			} else {
+				return 1;
+			}
+			");
 			return 0;
-		}
+		#else
+			#if (js)
+				untyped __js__("if (o1 === o2) return 0;");
+			#else
+				if (o1 == o2) return 0;
+			#end
+			if (o1 == null || o2 == null) return 1;
 
-		return (o1 < o2 ? -1 : 1);
+			#if flash
+			// Possible return values of the getQualifiedClassName:
+			//   "Array"
+			//   "int" for ints (or defacto doubles that are ints)
+			//   "Number" for doubles
+			//   "Boolean" for bools
+			//   "String"
+			//   "FS_Foo" for structs
+			//   "FlowRefObject" for references
+			//   "builtin.as$0::MethodClosure"  for functions
+			// See the results with this:
+			// flash.external.ExternalInterface.call("console.log", qname1);
+			var qname1 = untyped __global__["flash.utils.getQualifiedClassName"](o1);
+			if (qname1 == "Array") {
+			#else
+			if ( isArray(o1) ) {
+			#end
+				if (!isArray(o2)) return 1;
+				var l1 : Int = o1.length;
+				var l2 : Int = o2.length;
+				var l : Int =  l1 < l2 ? l1 : l2;
+				for (i in 0...l ) {
+					var c = compareByValue(o1[i], o2[i]);
+					if (c != 0) return c;
+				}
+				return (l1 == l2) ? 0 : (l1 < l2 ? -1 : 1);
+			}
+			#if flash
+			if (untyped o1.hasOwnProperty("_id")) {
+			#else
+				#if (js && readable)
+					if (Reflect.hasField(o1, "_name")) {
+				#else
+					if (Reflect.hasField(o1, "_id")) {
+				#end
+			#end
+			#if (js && readable)
+				if (!Reflect.hasField(o2, "_name")) return 1;
+				var n1 = o1._name;
+				var n2 = o2._name;
+				var i1 = _structids_.get(n1);
+				var i2 = _structids_.get(n2);
+			#else
+				if (!Reflect.hasField(o2, "_id")) return 1;
+				var i1 = o1._id;
+				var i2 = o2._id;
+			#end
+				if (i1 < i2) return -1;
+				if (i1 > i2) return 1;
+
+				// We need to remember the order of the fields
+				var args = _structargs_.get(i1);
+				for (f in args) {
+					var c = compareByValue(Reflect.field(o1, f), Reflect.field(o2, f));
+					if (c != 0) return c;
+				}
+				return 0;
+			}
+
+			return (o1 < o2 ? -1 : 1);
+		#end
 	}
 
 
@@ -608,5 +670,17 @@ if (a === b) return true;
 		#else
 			return untyped __strict_eq__(v1, v2);
 		#end
+	}
+
+	// Getter with bounds check
+	static public inline function getArray<T>(a : Array<T>, i : Int) : T {
+		if (i < 0 || i >= a.length) {
+			if (a.length == 0) {
+				throw "array index " + i + " is out of bounds: array is empty";
+			} else {
+				throw "array index " + i + " is out of bounds: 0 <= i < " + a.length;
+			}
+		}
+		return a[i];
 	}
 }

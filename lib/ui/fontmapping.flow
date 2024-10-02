@@ -1,6 +1,5 @@
 import sys/target;
 import string_utils;
-import form/form;
 import math/math; // dround
 import rendersupport; // makeTextfield, setTextAndStyle, getTextFieldHeight
 import runtime; // urlParameter funcs
@@ -17,15 +16,16 @@ export {
 	getJapaneseFont() -> FontFamily;
 	getKoreanFont() -> FontFamily;
 	getArabicFont() -> FontFamily;
+	getHebrewFont() -> FontFamily;
 
 	// This should be used for "select language" form
 	getChineseFontMinimal() -> FontFamily;
 
 	setLang(lang : string) -> void;
+	setContentLang(lang : string) -> void;
 
 	// WARNING! On first call also SETS language according to url flags.
 	getLang() -> string;
-	getLangB() -> Behaviour<string>;
 
 	// Returns if current language is RTL
 	getDefaultRtl() -> bool;
@@ -40,7 +40,6 @@ export {
 
 	// Helpers to make Form in specific language environment
 	// At moment of implementation are used to render Chinese transcript for VideoResource in English product
-	renderWithLang(lang : string) -> (Form) -> Form;
 	createWithLang(lang : string, fn : () -> ?) -> ?;
 
 	isCJKLang() -> bool; // is current lang chinese/japanese/korean?
@@ -56,7 +55,7 @@ export {
 
 	// Set font face mapping for languages processed in standard manner (that is not CJK langs).
 	setDefaultFontMappingFn(familyMapping : [Pair<string, string>]) -> void;
-	
+
 	// Set font face mapping for wigify and wigi editor
 	setDefaultWigiFontMappingFn(mappingFn : (string) -> string) -> void;
 	getMappedWigiFont(face : string) -> string;
@@ -120,6 +119,7 @@ export {
 	registerMappedFontFamilies(families : [[string]]) -> void;
 
 	getMappedFontFamilyFaces(family : string) -> [string];
+	getMappedFontFamilyFacesExt(family : string) -> [Pair<string, Maybe<int>>];
 	getFontFaceStyle(fontFace : string, style : FontFamilyStyle) -> bool;
 	canFontFaceStyleBeSwitched(fontFace : string, style : FontFamilyStyle) -> bool;
 	switchFontFaceStyle(fontFace : string, style : FontFamilyStyle, turnOn : Maybe<bool>) -> string;
@@ -137,7 +137,7 @@ debugFontMapping = isUrlParameterTrue("debugfontmapping");
 relativeScaleArabicMultiplier = s2d(getUrlParameterDef("aafs", "1.0"));  // TODO generalize introducing a mapping alphabet→coeficient.
 
 isChinese(lang) {
-	lang == "zh" || lang == "zz"
+	contains(["zh", "zz", "zh-cht"], toLowerCase(lang))
 }
 
 cjkLang = ref false;
@@ -145,6 +145,10 @@ bidiSupport: ref Maybe<bool> = ref None();
 
 isCJKLang() -> bool {
 	^cjkLang
+}
+
+isCJK(lang : string) -> bool {
+	isChinese(lang) || lang == "ja" || lang == "ko" || lang == "ar" || lang == "he" || lang == "yi"
 }
 
 getUniversalFont() -> FontFamily {
@@ -184,7 +188,7 @@ chineseFontParams : FontParams = {
 	if (windows()) {
 		if (opengl) {                                           // QtByteRunner
 			FontParams("Tahoma", "Tahoma")
-		} else if ((cpp || js) && getAnyUrlParameter("lang") != "ch") {
+		} else if (cpp && getAnyUrlParameter("lang") != "ch") {
 			FontParams("NotoSans", "NotoSansMinimal")
 		} else if (windowsxp()) {                               // flash, winxp
 			FontParams("Microsoft YaHei", "Microsoft YaHei")
@@ -251,7 +255,7 @@ koreanFontParams : FontParams = {
 };
 
 arabicFontParams : () -> FontParams = \ -> {
-	f = if (windows()) {
+	minimal = if (windows()) {
 		if (opengl) "Tahoma"
 		else if (windowsxp()) "Andalus"
 		else "Tahoma"
@@ -260,29 +264,30 @@ arabicFontParams : () -> FontParams = \ -> {
 	else if (ios()) "GeezaPro"
 	else if (macosx()) "Tahoma"
 	else "DroidSansFallback";
-	FontParams("Dubai", f)
+
+	mainstream = if (js) "Dubai"
+		else if (android() || ios()) "IBMPlexSansArabic"
+		else "Dubai";
+
+	FontParams(mainstream, minimal);
 };
 
 hebrewFontParams : FontParams = {
-	if (windows()) {
-		if (opengl) {
-			FontParams("Tahoma", "Tahoma")
-		} else if (windowsxp()) {
-			FontParams("Andalus", "Andalus")
-		} else {
-			FontParams("Tahoma", "Tahoma")
-		}
-	} else if (android()) {
-		FontParams("Tahoma", "Tahoma")
-	} else if (linux()) {
-		FontParams("DejaVu Sans", "DejaVu Sans")
-	} else if (ios()) {
-		FontParams("GeezaPro", "GeezaPro")
-	} else if (macosx()) {
-		FontParams("Tahoma", "Tahoma")
-	} else {
-		FontParams("DroidSansFallback", "DroidSansFallback")
-	}
+	minimal = if (windows()) {
+		if (opengl) "Tahoma"
+		else if (windowsxp()) "Andalus"
+		else "Tahoma"
+	} else if (android()) "Tahoma"
+	else if (linux()) "DejaVu Sans"
+	else if (ios()) "GeezaPro"
+	else if (macosx()) "Tahoma"
+	else "DroidSansFallback";
+
+	mainstream =  if (js) minimal
+		else if (android() || ios()) "IBMPlexSansHebrew"
+		else minimal;
+
+	FontParams(mainstream, minimal);
 };
 
 getChineseFont() -> FontFamily {
@@ -299,6 +304,10 @@ getKoreanFont() -> FontFamily {
 
 getArabicFont() -> FontFamily {
 	FontFamily(arabicFontParams().mainstream)
+}
+
+getHebrewFont() -> FontFamily {
+	FontFamily(hebrewFontParams.mainstream)
 }
 
 getChineseFontMinimal() -> FontFamily {
@@ -378,21 +387,20 @@ getMappedFont(face : string, size : double) {
 
 // This var must be set through setLangCore() function only, because this function sets some other related vars as well.
 currentLang = make("");
+currentContentLang = make("");
 
-getLang() {
-	if (getValue(currentLang) == "") {
+getLang() -> string {
+	currLang = getValue(currentLang);
+	if (currLang == "") {
 		l = getAnyUrlParameter("forceLang");
 		urlLang = if (l == "") getNativeLangFromBCP(getAnyUrlParameter("lang")) else l;
 		if (urlLang != "") {
-			// next(currentLang, toLowerCase(urlLang));	 // do not assign this var directly, it must be done through setLangCore() only...
-			setLangCore(urlLang);                        // [-Revise-] ... however, I'm not sure this function actually must do lang initialization
+			setLangCore(urlLang);
 		}
+		urlLang
+	} else {
+		currLang
 	}
-	getValue(currentLang)
-}
-
-getLangB() {
-	currentLang;
 }
 
 setLang(lang) {
@@ -400,13 +408,19 @@ setLang(lang) {
 		setLangCore(lang);
 }
 
-setLangCore(lang0 : string) -> void{
+setContentLang(lang : string) -> void {
+	nextDistinct(currentContentLang, lang);
+	cjkLang := isCJK(lang) || isCJK(getLang());
+	updateFontMappingFunction(Some(lang));
+}
+
+setLangCore(lang0 : string) -> void {
 	lang = toLowerCase(lang0);
 	if (lang != getValue(currentLang)) {
 		if (!cgi) {
 			println("setting language to " + toString(lang));
 		}
-		cjkLang := isChinese(lang) || lang == "ja" || lang == "ko" || lang == "ar" || lang == "he" || lang == "yi";
+		cjkLang := isCJK(lang);
 		updateFontMappingFunction(Some(lang));
 		next(currentLang, lang);
 		setApplicationLanguage(lang);
@@ -486,7 +500,7 @@ getMappedWigiFont(face : string) -> string {
 }
 
 cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
-	lang = getValue(currentLang);
+	lang = either(find([getValue(currentLang), getValue(currentContentLang)], isCJK), "");
 	makeFontMedium = \font1 -> font1 + "Medium";
 	makeFontSloped = \fam -> {
 		slopedStr = if (startsWith(fam, "DejaVu Sans") || startsWith(fam, "DejaVuSans")) "Oblique" else "Italic";
@@ -496,6 +510,7 @@ cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 	makePairs = \font1, font2 -> {[
 		Pair(font1, font2),
 		Pair(makeFontMedium(font1), makeFontBold(font2)),
+		Pair(makeFontBold(font1), makeFontBold(font2)),
 		Pair(makeFontSloped(font1), makeFontSloped(font2)),
 		Pair(makeFontSloped(makeFontMedium(font1)), makeFontSloped(makeFontBold(font2))),
 	]};
@@ -524,6 +539,7 @@ cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 					},
 					[
 						Pair("Book", font),
+						Pair("Medium", makeFontBold(font)),
 						Pair("Bold", makeFontBold(font)),
 						Pair("BoldItalic", makeFontSloped(makeFontBold(font))),
 						Pair("Italic", makeFontSloped(font)),
@@ -561,24 +577,6 @@ applyFontOverriding = {
 				)
 			}
 		}
-	}
-}
-
-
-renderWithLang(lang : string) -> (Form) -> Form {
-	\f -> {
-		savedLang = ref getLang();
-		Constructor2(
-			f,
-			\ -> {
-				savedLang := getLang();
-				setLang(lang);
-				nop
-			},
-			\ -> {
-				setLang(^savedLang)
-			}
-		)
 	}
 }
 
@@ -647,7 +645,7 @@ getNativeLangFromBCP(bcpLang : string) -> string {
 updateFontMappingFunction(langM : Maybe<string>) -> void {
 	lang = either(langM, getValue(currentLang));
 	getMappedFontFn := {
-		if (isCJKLang())
+		if (isCJKLang() || isCJK(lang))
 			cjkFontMappingFn
 		else
 			^defaultFontMappingFn
@@ -697,17 +695,15 @@ applyAlphabetStyles(alphabet: string, styles: [CharacterStyle]) -> [CharacterSty
 		ratio = getAlphabetScaling(alphabet, ffc);
 		[FontSize(fsz * getAlphabetScaling(alphabet, ffc))/*, SetRTL(contains(rtlAlphabets, alphabet))*/];
 	};
-	eitherFn(
-		tryExtractStruct(styles, emptyFontFamily),
-		\ff -> {
-			ffc = ff.name;
-			fontFace = if (alphabet == "arb") strReplace(ffc, "RobotoMedium", "RobotoBold") else ffc;
-			replaceStructMany(styles, arrayPush(getStyles(ffc), FontFamily(fontFace)))
-		},
-		\-> {
-			replaceStructMany(styles, getStyles(defaultFontFace_))
-		}
-	)
+		currentFontFamilies = extractStructMany(styles, FontFamily(""));
+		if (currentFontFamilies != []) {
+			fff = currentFontFamilies[0];
+			styles0 = replaceStructMany(styles, getStyles(fff.name));
+			 if (alphabet == "arb") {
+				concat(removeAllStructs(styles0, FontFamily("")), map(currentFontFamilies, \ff -> FontFamily(strReplace(ff.name, "RobotoMedium", "RobotoBold"))))
+			 } else styles0
+
+		} else styles
 }
 
 defaultMathFontFaces : ref [ string ] = ref [];
@@ -760,7 +756,7 @@ getMappedFontFamily(family) {
 }
 
 // 0=Regular, 1=Italic, 2=Bold, 3=BoldItalic
-FontSwitchingStateMachine(/*family: string, */faces: [string]);
+FontSwitchingStateMachine(faces: [Pair<string, Maybe<int>>]);
 FontSwitchingStateMachines(
 	machines : [FontSwitchingStateMachine],
 	family2machine : Tree<string, Pair<ref FontSwitchingStateMachine, int>>
@@ -771,18 +767,18 @@ Face(family : string, weight : int, slope : bool, name : string, group : string)
 
 registerMappedFontFamilies(families : [[string]]) -> void {
 	getMappedFontFamilyFaces("");  // Initializing
-	newMachines = map(families, \family -> FontSwitchingStateMachine(family));
+	newMachines = map(families, \family -> FontSwitchingStateMachine(map(family, \f -> Pair(f, None()))));
 	existingMachines = either(^fontSwitchingStateMachine, FontSwitchingStateMachines([], makeTree()));
 	fontSwitchingStateMachine := Some(FontSwitchingStateMachines(
 		concat(existingMachines.machines, newMachines),
 		fold(
 			newMachines, existingMachines.family2machine,
-			\acc, machine -> setTreeValues(acc, mapi(machine.faces, \i, face -> Pair(face, Pair(ref machine, i))))
+			\acc, machine -> setTreeValues(acc, mapi(machine.faces, \i, face -> Pair(face.first, Pair(ref machine, i))))
 		)
 	));
 }
 
-mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool, change : (italic : bool, bold : bool) -> string) -> ?, def : ?) -> ? {
+mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool, change : (italic : bool, bold : bool) -> Pair<string, /*weight*/ Maybe<int> > ) -> ?, def : ?) -> ? {
 	indexedStateMachines = onlyOnce(fontSwitchingStateMachine, \-> {
 		// Accessing styles branch of fontconfig.json
 		// (may be overridden via compiler, and state machine will fail)
@@ -831,9 +827,17 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 				// We do not search around 400 and 700 for regular and bold respectively
 				// because we have RobotoMedium instead of RobotoBold in our content.
 				regularI = min(length(paired) - 2, foldi(paired, 0, \i, acc, p -> if (p.first <= 400) i else acc));
+				generatePair = \idx, itl -> {
+					face = paired[idx];
+					Pair(if (itl) face.third else face.second, Some(face.first));
+				};
 				[FontSwitchingStateMachine(
-					/*normal[0].family, */
-					[paired[max(regularI, 0)].second, paired[max(regularI, 0)].third, paired[regularI + 1].second, paired[regularI + 1].third]
+					[
+						generatePair(max(regularI, 0), false),
+						generatePair(max(regularI, 0), true),
+						generatePair(regularI + 1, false),
+						generatePair(regularI + 1, true)
+					]
 				)]
 			} else {
 				familyM = fold(matrix, ^(matrix[0][0]), \acc, f -> eitherMap(
@@ -850,21 +854,23 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 			}
 		});
 
+		makeDefaultFSSM = \faces -> FontSwitchingStateMachine(map(faces, \f -> Pair(f, None())));
+
 		// Initial state machines
 		stateMachines = concat(
 			[
-				FontSwitchingStateMachine(/*"", */["Book", "Italic", "Medium", "MediumItalic"]),
-				FontSwitchingStateMachine(/*"DejaVuSans", */["DejaVuSans", "DejaVuSansOblique", "DejaVuSansBold", "DejaVuSansBoldOblique"]),
-				FontSwitchingStateMachine(/*"Minion", */["Minion", "MinionItalics", "Minion", "MinionItalics"]),
+				makeDefaultFSSM(/*"", */["Book", "Italic", "Medium", "MediumItalic"]),
+				makeDefaultFSSM(/*"DejaVuSans", */["DejaVuSans", "DejaVuSansOblique", "DejaVuSansBold", "DejaVuSansBoldOblique"]),
+				makeDefaultFSSM(/*"Minion", */["Minion", "MinionItalics", "Minion", "MinionItalics"])
 			],
 			validatedStateMachines
 		);
 
 		FontSwitchingStateMachines(
 			stateMachines,
-			setTreeValues(makeTree(), concatA(mapi(stateMachines,
-				\i, machine -> mapi(machine.faces,
-					\j, face -> Pair(face, Pair(ref stateMachines[i], j))
+			setTreeValues(makeTree(), concatA(map(stateMachines,
+				\machine -> mapi(machine.faces,
+					\j, face -> Pair(face.first, Pair(ref machine, j))
 				)
 			)))
 		);
@@ -876,8 +882,9 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 		\italic, bold -> ^refMachine.faces[b2i(italic) + b2i(bold)*2]
 	));
 
+	indexedStateMachine = lookupTree(indexedStateMachines.family2machine, fontFace);
 	eitherMap(
-		lookupTree(indexedStateMachines.family2machine, fontFace),
+		indexedStateMachine,
 		// HACK for cases some product has invalid default face name,
 		// i.e. Cairo Regular instead Cairo, or some other font suffixed with «Book».
 		// To remove this (inner eitherMap to be replaced with def),
@@ -894,6 +901,10 @@ mapFontSwitchingStateMachine(fontFace : string, fn : (italic : bool, bold : bool
 }
 
 getMappedFontFamilyFaces(family : string) -> [string] {
+	map(getMappedFontFamilyFacesExt(family), \f -> f.first) 
+}
+
+getMappedFontFamilyFacesExt(family : string) -> [Pair<string, Maybe<int>>] {
 	mapFontSwitchingStateMachine(family, \__, __, change -> {
 		[change(false, false), change(false, true), change(true, false), change(true, true)]
 	}, [])
@@ -915,17 +926,17 @@ canFontFaceStyleBeSwitched(fontFace : string, style : FontFamilyStyle) -> bool {
 switchFontFaceStyle(fontFace : string, style : FontFamilyStyle, turnOn : Maybe<bool>) -> string {
 	mapFontSwitchingStateMachine(fontFace, \italic, bold, change -> {
 		switch (style : FontFamilyStyle) {
-			SBold(): change(italic, eitherMap(turnOn, idfn, !bold));
-			SItalic(): change(eitherMap(turnOn, idfn, !italic), bold);
+			SBold(): change(italic, eitherMap(turnOn, idfn, !bold)).first;
+			SItalic(): change(eitherMap(turnOn, idfn, !italic), bold).first;
 		};
 	}, fontFace)
 }
 
 replaceFontFamily(srcFace : string, familyChange : (string) -> string) -> string {
 	mapFontSwitchingStateMachine(srcFace, \italic, bold, source -> {
-		dstFamily = familyChange(source(false, false));
+		dstFamily = familyChange(source(false, false).first);
 		mapFontSwitchingStateMachine(dstFamily, \__, __, change -> {
-			change(italic, bold)
+			change(italic, bold).first
 		}, dstFamily)
 	}, srcFace)
 }

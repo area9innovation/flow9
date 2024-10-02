@@ -100,6 +100,8 @@ export {
 	// replaces all occurrences of substring
 	strReplace : (s : string, old : string, new : string) -> string;
 
+	// replaces all occurrences of substring case insensitively
+	strIReplace(s : string, old : string, new : string) -> string;
 	// strReplaces("abc", ["a","1","b","2","c","4"]) == "124"
 	// expected result: chain replace. strReplaces("q1e", ["q", "1", "1", "2"]) == "22e"
 	strReplaces : (s : string, oldnew : [string]) -> string;
@@ -246,11 +248,11 @@ export {
 
 
 	// Split a string at the given separator. If the string starts or ends with the separator
-	// (or multiple separator occur after each other), empty strings result.
-	// has issues on the edges: strSplit("aba", "a") -> ["", "b", ""] instead of ["b"].
+	// (or multiple separators occur after each other), empty strings result.
+	// has issues on the edges:
+	// strSplit("abaaca", "a") -> ["", "b", "", "c", ""] instead of ["b", "c"]
 	strSplit(a : string, sep : string) -> [string];
-	// Separators are included in resulting array, no issues from strSplit
-	// FIXME: hangs when empty separator given
+	// Separators are included in resulting array
 	strSplitLeave(s : string, sep : string) -> [string];
 
 	// separators in some sub-pieces are ignored.
@@ -326,7 +328,7 @@ export {
 
 	// Turn long word into string with hyphens
 	addHyphensIntoWord(input : string, maxlngth : int) -> string;
-
+	addSoftHyphensIntoWord(input : string, maxlngth : int) -> string;
 
 	// Search for the specified paired substrings in source string. TODO: Move somewhere else.
 	findMatchingPairM : (string, string, string) -> Maybe<Pair<int, int>>;
@@ -369,6 +371,9 @@ export {
 
 	// Make escaped string according to Json escaping
 	toStringForJson: (string) -> string;
+
+	softBreakAllowAfter = 0x00ad;
+	softBreakSymbol = fromCharCode(softBreakAllowAfter);
 }
 
 _s(s) { s }
@@ -385,7 +390,7 @@ strsubsmart(s : string, start : int, len : int) -> string {
 	}
 }
 
-native startsWith : (string, string) -> bool = Native.endsWith;
+native startsWith : (string, string) -> bool = Native.startsWith;
 startsWith(s, start) {
 	sl = strlen(start);
 	if (sl > strlen(s)) {
@@ -437,7 +442,7 @@ multipleSuperpositionStrIndexOf(str : string, substr : string, allowSuperpositio
 	if (substr == "") { // main part do not support empty subsrt
 		[]
 	} else {
-		result = ref [];
+		result = ref EmptyList();
 		substrLength = strlen(substr);
 		step = if (allowSuperposition && strlen(str) > substrLength) {
 			firstCharCode = getCharCodeAt(substr, 0);
@@ -452,11 +457,11 @@ multipleSuperpositionStrIndexOf(str : string, substr : string, allowSuperpositio
 			if (pos < 0) {
 				2147483647 // intMax // break loop
 			} else {
-				refArrayPush(result, pos);
+				result := Cons(pos, ^result);
 				pos + step
 			}
 		});
-		^result
+		list2array(^result)
 	}
 }
 
@@ -482,31 +487,37 @@ strCountOfHelper(text : string, substr : string, index : int, count : int) -> in
 native strReplace : (string, string, string) -> string = Native.strReplace;
 strReplace(s : string, old : string, new : string) -> string {
 	if (old == "") s
-	else if (strlen(s) > 500) list2string(doStrReplace(s, 0, old, new, makeList()))
-	else doStrReplace2("", s, old, new);
+	else if (strlen(s) > 500) list2string(doStrReplace(s, 0, old, new, makeList(), false))
+	else doStrReplace2("", s, old, new, false);
 }
 
-doStrReplace(s : string, i : int, old : string, new : string, acc : List<string>) -> List<string> {
+doStrReplace(s : string, i : int, old : string, new : string, acc : List<string>, caseInsensitive : bool) -> List<string> {
 	n = strlen(s);
 	if (i < n) {
-		hit = strRangeIndexOf(s, old, i, n);
+		hit = strRangeIndexOf(if (caseInsensitive) toLowerCase(s) else s, old, i, n);
 		if (hit >= 0) {
 			before = substring(s, i, hit - i);
 			nacc = Cons(new, Cons(before, acc));
-			doStrReplace(s, hit + strlen(old), old, new, nacc)
+			doStrReplace(s, hit + strlen(old), old, new, nacc, caseInsensitive)
 		} else Cons(strRight(s, i), acc);
 	} else acc;
 }
 
-doStrReplace2(prefix : string, suffix : string, old : string, new : string) -> string {
-	i = strIndexOf(suffix, old);
+doStrReplace2(prefix : string, suffix : string, old : string, new : string, caseInsensitive : bool) -> string {
+	i = strIndexOf(if (caseInsensitive) toLowerCase(suffix) else suffix, old);
 	if (i >= 0) {
 		l = strlen(suffix);
 		oldLen = strlen(old);
-		doStrReplace2(prefix + substring(suffix, 0, i) + new, substring(suffix, i + oldLen, l - i - oldLen), old, new);
+		doStrReplace2(prefix + substring(suffix, 0, i) + new, substring(suffix, i + oldLen, l - i - oldLen), old, new, caseInsensitive);
 	} else {
 		prefix + suffix
 	}
+}
+
+strIReplace(s : string, old : string, new : string) -> string {
+	if (old == "") s
+	else if (strlen(s) > 500) list2string(doStrReplace(s, 0, toLowerCase(old), new, makeList(), true))
+	else doStrReplace2("", s, toLowerCase(old), new, true);
 }
 
 strReplaces(s : string, oldnew : [string]) -> string {
@@ -660,9 +671,9 @@ isBase64Char(c : string) -> bool {
 	isDigit(c) || isLetter(c) || c == "+" || c == "/" || c == "=";
 }
 
-isUpperLetter(s) { strlen(s) == 1 && s >= "A" && s <= "Z" }
-isLowerLetter(s) { strlen(s) == 1 && s >= "a" && s <= "z" }
-isLetter(s) { strlen(s) == 1 &&	((s >= "a" && s <= "z") || (s >= "A" && s <= "Z")) }
+isUpperLetter(s) { strlen(s) == 1 && isLetter(s) && s == toUpperCase(s) }
+isLowerLetter(s) { strlen(s) == 1 && isLetter(s) && s == toLowerCase(s) }
+isLetter(s) { strlen(s) == 1 &&	toLowerCase(s) != toUpperCase(s) }
 
 containsLetters(s : string) -> bool {
 	len = strlen(s);
@@ -708,7 +719,7 @@ ltrim(s : string) -> string {
 		s;
 	} else {
 		first = getCharCodeAt(s, 0);
-		if (first == 32) {
+		if (first == 32 || first == 160) {
 			ltrim(substring(s, 1, l - 1));
 		} else {
 			s
@@ -722,7 +733,7 @@ rtrim(s : string) -> string {
 		s;
 	} else {
 		last = getCharCodeAt(s, l - 1);
-		if (last == 32) {
+		if (last == 32 || last == 160) {
 			rtrim(substring(s, 0, l - 1));
 		} else {
 			s;
@@ -911,8 +922,8 @@ doStrSplit2(s : string, sep : string, acc : [string], keepSeparator : bool) -> [
 	}
 }
 
-strSplitLeave(s : string, sep : string) {
-	doStrSplit2(s, sep, [], true);
+strSplitLeave(s : string, sep : string) -> [string] {
+	if (sep == "") [s] else doStrSplit2(s, sep, [], true);
 }
 
 // splits string by all of separators, don't leaving them in resulting array
@@ -1243,17 +1254,20 @@ ellipsis(s, mlen) {
 }
 
 concatStrings(strings) {
-	// list2string is much faster for big arrays
-	if (length(strings) < 35){
+	l = length(strings);
+	if (l == 0) ""
+	else if (l == 1) strings[0]
+	else if (l < 35) {
 		fold(strings, "", \acc, val -> acc + val)
 	} else {
+		// list2string is much faster for big arrays
 		strings |> array2list |> list2string;
 	}
 }
 
 isAuxiliaryWord(word : string) -> bool {
 	auxiliaryWords = ["a", "an", "and", "as", "at", "but", "by", "down", "for", "from", "in", "into", "near", "nor", "of", "on", "onto", "or", "the", "to", "up", "with"];
-	contains(auxiliaryWords, word);
+	contains(auxiliaryWords, toLowerCase(word));
 }
 
 toCapitalization(s : string) -> string {
@@ -1312,8 +1326,20 @@ stringEncodeFix(input : string) {
 	}
 }
 
-addHyphensIntoWord(input : string, maxlngth : int) {
-	if (strlen(input) > maxlngth) substring(input, 0, maxlngth - 5)+"- "+addHyphensIntoWord(substring(input, maxlngth - 5, strlen(input) - maxlngth + 5), maxlngth) else input
+addHyphensIntoWord(input : string, maxlngth : int) -> string {
+	addHyphensIntoWordInner(input, maxlngth, "- ")
+}
+
+addSoftHyphensIntoWord(input : string, maxlngth : int) -> string {
+	addHyphensIntoWordInner(input, maxlngth, softBreakSymbol)
+}
+
+addHyphensIntoWordInner(input : string, maxLength : int, hyphenSymbol : string) -> string {
+	if (strlen(input) > maxLength) {
+		substring(input, 0, maxLength - 5) + hyphenSymbol + addHyphensIntoWordInner(substring(input, maxLength - 5, strlen(input) - maxLength + 5), maxLength, hyphenSymbol)
+	} else {
+		input
+	}
 }
 
 // insertPos must be in [0..strlen(destString)]. Otherwise it is undefined behavior.

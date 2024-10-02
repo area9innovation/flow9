@@ -752,6 +752,35 @@ StackSlot ByteCodeRunner::getKeysList(RUNNER_ARGS)
     RETVOID;
 }
 
+StackSlot ByteCodeRunner::generate(RUNNER_ARGS)
+{
+    RUNNER_PopArgs3(from_arg, to_arg, fn_arg);
+    RUNNER_CheckTag2(TInt, from_arg, to_arg);
+
+    int from = from_arg.GetInt();
+    int to   = to_arg.GetInt();
+    int len  = to - from;
+
+    if (len <= 0) {
+        return StackSlot::MakeEmptyArray();
+    }
+
+    RUNNER_DefSlotArray(fn_args, 2);
+    fn_args[0] = fn_arg;
+
+    RUNNER_DefSlots1(retarr);
+    retarr = RUNNER->AllocateArray(len);
+
+    for (int i = 0; i < len; ++i)
+    {
+        fn_args[1] = StackSlot::MakeInt(from + i);
+        fn_args[1] = RUNNER->FastEvalFunction(fn_args, 1);
+        RUNNER->SetArraySlot(retarr, i, fn_args[1]);
+    }
+
+    return retarr;
+}
+
 StackSlot ByteCodeRunner::enumFromTo(RUNNER_ARGS)
 {
     RUNNER_PopArgs2(from_arg, to_arg);
@@ -955,14 +984,14 @@ StackSlot ByteCodeRunner::NativeTimestamp(RUNNER_ARGS)
 StackSlot ByteCodeRunner::random(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
-    return StackSlot::MakeDouble(FlowDouble(rand()) / (FlowDouble(RAND_MAX) + 1));
+    return StackSlot::MakeDouble(FlowDouble(random_dist(random_gen)));
 }
 
 StackSlot ByteCodeRunner::NativeSrand(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(a1);
     RUNNER_CheckTag1(TInt, a1);
-    srand(a1.GetInt());
+    random_gen = std::mt19937(a1.GetInt());
     RETVOID;
 }
 
@@ -1586,16 +1615,7 @@ StackSlot ByteCodeRunner::getFileContentBinary(RUNNER_ARGS)
 
     std::string name = encodeUtf8(RUNNER->GetString(rawpath));
 
-    std::vector<uint8_t> bytes = std::vector<uint8_t>();
-
-    readFileToVector(&bytes, name);
-    int n = bytes.size();
-    unicode_char * unicode = new unicode_char[n];
-    for (int i = 0; i != n; ++i) {
-        unicode[i] = bytes[i];
-    }
-
-    return RUNNER->AllocateString(unicode, n);
+    return RUNNER->LoadFileAsString(name, false);
 }
 
 
@@ -1659,13 +1679,6 @@ StackSlot ByteCodeRunner::setFileContentUTF16(RUNNER_ARGS)
     return StackSlot::MakeBool(ok);
 }
 
-void unicodeProcessor(int nbytes, const unicode_char * pdata, uint8_t * bytes) {
-    for (unsigned i = 0; i < unsigned(nbytes); i++) {
-        unicode_char data = pdata[i/2];
-        bytes[i] = ((i%2 == 0)? data : (data>>8));
-    }
-}
-
 void bytesProcessor(int nbytes, const unicode_char * pdata, uint8_t * bytes) {
     for (unsigned i = 0; i < unsigned(nbytes); i++) {
         unicode_char data = pdata[i];
@@ -1682,9 +1695,14 @@ StackSlot ByteCodeRunner::setFileContentHelper(RUNNER_ARGS, void (*processor)(in
     unsigned nbytes;
     const unicode_char *pdata = RUNNER->GetStringPtrSize(value_str, &nbytes);
 
-    uint8_t * bytes = new uint8_t[nbytes];
-
-    processor(nbytes, pdata, bytes);
+    uint8_t * bytes;
+    if (processor != NULL) {
+        bytes = new uint8_t[nbytes];
+        processor(nbytes, pdata, bytes);
+    } else {
+        bytes = (uint8_t*)pdata;
+        nbytes *= 2;
+    }
 
     bool ok = false;
     std::string tmp_fn = filename + ".tmp";
@@ -1702,12 +1720,14 @@ StackSlot ByteCodeRunner::setFileContentHelper(RUNNER_ARGS, void (*processor)(in
         }
     }
 
-    delete [] bytes;
+    if (processor != NULL)
+        delete [] bytes;
+
     return StackSlot::MakeBool(ok);
 }
 
 StackSlot ByteCodeRunner::setFileContentBinary(RUNNER_ARGS) {
-    return setFileContentHelper(RUNNER, pRunnerArgs__, &unicodeProcessor);
+    return setFileContentHelper(RUNNER, pRunnerArgs__, NULL);
 }
 
 StackSlot ByteCodeRunner::setFileContentBytes(RUNNER_ARGS) {
@@ -1738,7 +1758,7 @@ StackSlot ByteCodeRunner::getAllUrlParameters(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
 
-    int i = 0;
+    int i = RUNNER->UrlParameters.size();
 
     RUNNER_DefSlots1(array);
     array = RUNNER->AllocateArray(RUNNER->UrlParameters.size());
@@ -1748,8 +1768,7 @@ StackSlot ByteCodeRunner::getAllUrlParameters(RUNNER_ARGS)
         RUNNER->SetArraySlot(keyvalue, 0, RUNNER->AllocateString((*it).first));
         RUNNER->SetArraySlot(keyvalue, 1, RUNNER->AllocateString((*it).second));
 
-        RUNNER->SetArraySlot(array, i, keyvalue);
-        i++;
+        RUNNER->SetArraySlot(array, --i, keyvalue);
     }
 
     return array;

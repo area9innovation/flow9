@@ -64,19 +64,36 @@ export {
 	) -> void = HttpSupport.downloadFile;
 
 	// platform-specific call for system to download the file
-	native systemDownloadFile : (url : string) -> void = HttpSupport.systemDownloadFile;
+	native systemDownloadFile : io (url : string) -> void = HttpSupport.systemDownloadFile;
+
+	// C++ only targets
+	// Downloads file by http request and saves by path provided
+	native downloadFileBinary : io (
+		url : string,
+		pathToSave : string,
+		onDone : () -> void,
+		onError : (string) -> void,
+	) -> void = HttpSupport.downloadFileBinary;
+
+	downloadFileBinaryWithHeaders(
+		url : string,
+		headers : [KeyValue],
+		pathToSave : string,
+		onDone : () -> void,
+		onError : (string) -> void,
+	) -> void;
 
 	// A very simple wrapper that just gets a file and ignores errors and parameters
 	httpRequest2(url : string, onData : (string) -> void) -> void;
 	httpRequest3(url : string, onData : (string) -> void, onError : (string) -> void) -> void;
 
 	preloadMediaUrl(url : string, onSuccess : () -> void, onError : (string) -> void) -> void;
-	native removeUrlFromCache : (url : string) -> void = HttpSupport.removeUrlFromCache;
-	native clearUrlCache : () -> void = HttpSupport.clearUrlCache;
+	native removeUrlFromCache : io (url : string) -> void = HttpSupport.removeUrlFromCache;
+	native clearUrlCache : io () -> void = HttpSupport.clearUrlCache;
 
-	native getAvailableCacheSpaceMb : () -> int = HttpSupport.getAvailableCacheSpaceMb;
+	native getAvailableCacheSpaceMb : io () -> int = HttpSupport.getAvailableCacheSpaceMb;
 
-	native deleteAppCookies : () -> void = HttpSupport.deleteAppCookies;
+	native deleteAppCookies : io () -> void = HttpSupport.deleteAppCookies;
 
 	sendHttpRequestWithAttachments(
 		url : string,
@@ -90,7 +107,7 @@ export {
 	// Sets withCredentials attribute for CORS requests (for targets where they are used - JS).
 	// Setting to true (default value) requires non-wildcard domain in the server's response
 	// Access-Control-Allow-Origin header.
-	native enableCORSCredentials : (enabled : bool) -> void = HttpSupport.enableCORSCredentials;
+	native enableCORSCredentials : io (enabled : bool) -> void = HttpSupport.enableCORSCredentials;
 
 	// Uploads native file(fs/filesystem.flow) to server
 	uploadClientFile : (
@@ -99,6 +116,16 @@ export {
 		params: [KeyValue],
 		headers: [KeyValue],
 		eventListeners: [UploadOnlyEventListener]
+	) -> () -> void;
+
+	// Uploads native files to server
+	// Only js target
+	uploadClientFiles(
+		files: [native],
+		url: string,
+		params: [KeyValue],
+		headers: [KeyValue],
+		listeners: [UploadOnlyEventListener]
 	) -> () -> void;
 
 	// Deprecated: use openFileDialog(fs/filesystem.flow) + uploadClientFile instead
@@ -138,6 +165,24 @@ export {
 	);
 }
 
+downloadFileBinaryWithHeaders(
+	url : string,
+	headers : [KeyValue],
+	pathToSave : string,
+	onDone : () -> void,
+	onError : (string) -> void,
+) {
+	downloadFileBinaryWithHeadersNative(url, keyValues2strings(headers), pathToSave, onDone, onError);
+}
+
+native downloadFileBinaryWithHeadersNative : io (
+	url : string,
+	headers : [[string]],
+	pathToSave : string,
+	onDone : () -> void,
+	onError : (string) -> void,
+) -> void = HttpSupport.downloadFileBinaryWithHeaders;
+
 httpRequestArgsUpdater : ref (HttpRequestArgs) -> Maybe<HttpRequestArgs> = ref \a -> Some(a);
 setHttpRequestArgsUpdater(update : (HttpRequestArgs) -> Maybe<HttpRequestArgs>) -> void {
 	httpRequestArgsUpdater := update;
@@ -147,7 +192,7 @@ setDefaultResponseEncoding(encoding : ResponseEncoding) -> void {
 	setDefaultResponseEncodingNative(responseEncoding2string(encoding));
 }
 
-native setDefaultResponseEncodingNative : (encoding : string) -> void = HttpSupport.setDefaultResponseEncoding;
+native setDefaultResponseEncodingNative : io (encoding : string) -> void = HttpSupport.setDefaultResponseEncoding;
 
 // passing array of KeyValue to native wasn't working in flash on 01.04.2011
 // hence this wrapper
@@ -205,7 +250,7 @@ httpCustomRequestWithTimeoutNative (
 native doPreloadMediaUrl : io (url : string, onSuccess : () -> void, onError : (string) -> void) -> void = HttpSupport.preloadMediaUrl;
 
 // Always post
-native makeSendHttpRequestWithAttachments : (
+native makeSendHttpRequestWithAttachments : io (
 	url : string,
 	headers : [[string]],
 	params : [[string]],
@@ -423,6 +468,9 @@ httpCustomRequestBase(
 	);
 }
 
+doPreloadMediaUrl(url : string, onSuccess : () -> void, onError : (string) -> void) -> void {
+	httpRequest(url + "#", false, [], [], \data -> onSuccess(), onError, nop1);
+}
 preloadMediaUrl(url : string, onSuccess : () -> void, onError : (string) -> void) -> void {
 	if (cpp || csharp) {
 		doPreloadMediaUrl(url, onSuccess, onError);
@@ -459,7 +507,7 @@ uploadFile(url, params, headers, fileTypes, listeners) {
 	});
 }
 
-native doUploadClientFile : (
+native doUploadClientFile : io (
 	file : native,
 	url: string,
 	params: [[string]],
@@ -488,6 +536,34 @@ uploadClientFile(file, url, params, headers, listeners) {
 	);
 }
 
+native doUploadNativeFiles : io (
+	files: [native],
+	url: string,
+	params: [[string]],
+	headers: [[string]],
+	onOpen: () -> void,
+	onData: (string) -> void,
+	onError: (string) -> void,
+	onProgress: (double, double) -> void
+) -> () -> void = HttpSupport.uploadNativeFiles;
+
+uploadClientFiles(files: [native], url: string, params: [KeyValue], headers: [KeyValue], listeners: [UploadOnlyEventListener]) -> () -> void {
+	onOpen = extractStruct(listeners, UploadOpen(nop));
+	onData = extractStruct(listeners, UploadData(nop1));
+	onError = extractStruct(listeners, UploadError(nop1));
+	onProgress = extractStruct(listeners, UploadProgress(nop2));
+
+	doUploadNativeFiles(
+		files,
+		url,
+		keyValues2strings(params),
+		keyValues2strings(headers),
+		onOpen.onOpen,
+		onData.onData,
+		onError.onError,
+		onProgress.onProgress
+	);
+}
 
 removeEmptyURLValues(params: [KeyValue]) -> [KeyValue] {
 	filter(params, \p -> p.value != "")
@@ -521,6 +597,27 @@ getAvailableCacheSpaceMb() {
 }
 
 systemDownloadFile(url : string) {
+	// NOP
+	// Fallback for non-C++ targets
+}
+
+downloadFileBinary(
+	url : string,
+	pathToSave : string,
+	onDone : () -> void,
+	onError : (string) -> void,
+) {
+	// NOP
+	// Fallback for non-C++ targets
+}
+
+downloadFileBinaryWithHeadersNative(
+	url : string,
+	headers : [[string]],
+	pathToSave : string,
+	onDone : () -> void,
+	onError : (string) -> void,
+) {
 	// NOP
 	// Fallback for non-C++ targets
 }

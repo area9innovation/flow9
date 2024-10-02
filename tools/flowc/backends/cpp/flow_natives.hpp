@@ -690,6 +690,19 @@ flow::string getApplicationPath() {
 	return application_path.wstring();
 }
 
+flow::array<flow::string> getApplicationArguments() {
+	if (stored_argc == 1) {
+		return flow::array<flow::string>();
+	} else {
+		flow::array<flow::string>::vector_t params;
+		for (int i = 1; i < stored_argc; i++) {
+			flow::string st = s2ws(std::string(stored_argv[i]));
+			params.push_back(std::move(st));
+		}
+		return std::move(params);
+	}
+}
+
 std::vector<flow::string> readDirectory(const flow::string& path) {
 	std::vector<flow::string> res;
 	for (auto& p : fs::directory_iterator(fs::path(std::wstring(path)))) {

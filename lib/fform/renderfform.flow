@@ -114,7 +114,7 @@ attachFChildrenAt(clip : native, children : [native], disposers : [() -> void], 
 
 attachFChildAndCapability(form : FForm, d : FRenderResult, cap : [FClipCapability], fn : (native) -> () -> void) -> FRenderResult {
 	if (length(d.clips) > 0) {
-		if (length(d.clips) == 1 && !exists(cap, \c -> contains(d.capabilities, c)) && !contains(cap, FClipRotate())) {
+		if (length(d.clips) == 1 && !contains(cap, FClipRotate()) && !exists(d.capabilities, \c -> contains(cap, c))) {
 			FRenderResult(d.clips, concat(map(d.clips, fn), d.disposers), uniq(concat(d.capabilities, cap)));
 		} else {
 			c = makeClip();
@@ -142,7 +142,7 @@ isFullScreenTarget(clip : native) -> bool {
 removeFullScreenTarget(clip : native) -> void {
 	if (isSome(^fullScreenTarget)) {
 		if (isFullScreenTarget(clip)) {
-			setFullScreenTargetFlow(clip);
+			fullScreenTarget := None();
 		}
 	}
 	resetFullScreenTarget();
@@ -198,6 +198,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				onLoaded = ref nop;
 				realSizeFn = ref nop1;
 				picAltText = ref "";
+				headers =  ref [];
 
 				decreaseFFilesCount = increaseFFilesCount();
 				url = applyMediaPathMapping(url_);
@@ -222,6 +223,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						AltText(text): picAltText := text;
 						UseCrossOrigin(__) : {}
 						ReferrerPolicy(__) : {}
+						RequestHeaders(hs) :headers := concat(^headers, hs);
 					}
 				);
 
@@ -232,7 +234,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						httpRequest(
 							addServerPathIfRelative(url),
 							false,
-							[],
+							^headers,
 							[],
 							\d -> {
 								if (^clipalive) {
@@ -300,7 +302,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								}
 							},
 							^onlydl,
-							^picAltText
+							^picAltText,
+							map(^headers, \h -> [h.key, h.value])
 						);
 					}
 
@@ -649,19 +652,25 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				}
 			};
 
-			unsub =
-				makeSubscribe(behaviour, \form ->
-					// Postpone re-entrant updates if necessary
-					if (^nested > 0)
-						deferred(\ -> {
-							impersonateCallstackItem(stack, 1);
-							dodisplay(form);
-						})
-					else {
+			updateFn = \form -> {
+				// Postpone re-entrant updates if necessary
+				if (^nested > 0)
+					deferred(\ -> {
 						impersonateCallstackItem(stack, 1);
 						dodisplay(form);
-					}
-				)();
+					})
+				else {
+					impersonateCallstackItem(stack, 1);
+					dodisplay(form);
+				}
+			}
+
+			unsub =
+				if (!isUrlParameterFalse("mutable_fix")) {
+					makeSubscribeExt(behaviour, updateFn, false)();
+				} else {
+					makeSubscribe(behaviour, updateFn)();
+				}
 
 			FRenderResult(
 				[clip],
@@ -687,6 +696,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			resize = ref nop;
 			container = makeClip();
 			rootId = getRenderRoot();
+			listenerUns = initUnsM();
+			innerFW = make(false);
 
 			setResize = \fw -> {
 				^resize();
@@ -702,8 +713,17 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			setFullWindow = \fw -> {
 				setFullWindowTarget(container);
 				toggleFullWindow(fw);
-				if (!fw) resetFullWindowTarget()
+				if (fw) {
+					setUnsM(listenerUns,
+						onFullWindow(\fw2 -> nextDistinct(innerFW, fw2))
+					);
+				} else {
+					dispUnsM(listenerUns);
+					resetFullWindowTarget();
+				}
 			};
+
+			connectUns = fconnect(fullwindow, innerFW);
 
 			if (getValue(fullwindow)) {
 				deferred(\ -> {
@@ -712,10 +732,24 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				})
 			};
 
-			uns = subscribe2(fullwindow, \fw -> {
+			uns = subscribe2(innerFW, \fw -> {
 				setResize(fw);
 				setFullWindow(fw);
 			});
+
+			innerFWDelayed = fuse(fdelay(innerFW, 100));
+			wasFWbeforePrint = make(false);
+			beforePrintUns = addEventListener(getStage(), "beforeprint", \ ->
+				nextDistinct(wasFWbeforePrint, fgetValue(innerFWDelayed.first))
+			);
+			afterPrintUns = addEventListener(getStage(), "afterprint", \ ->
+				if (fgetValue(wasFWbeforePrint)) {
+					deferUntilNextFrameRendered(\ -> {
+						nextDistinct(innerFW, true);
+						nextDistinct(wasFWbeforePrint, false);
+					})
+				}
+			);
 
 			d = renderFForm(form, zorder);
 
@@ -725,7 +759,11 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				arrayPush(
 					d.disposers,
 					\ -> {
+						beforePrintUns();
+						afterPrintUns();
+						connectUns();
 						uns();
+						applyall(innerFWDelayed.second);
 						^resize();
 						if (getValue(fullwindow)) {
 							setFullWindow(false);
@@ -738,31 +776,59 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 		}
 		FFullScreen2(fullscreen, wh, form, appendToMainStage): {
 			resizeUns = initUnsM();
+			listenerUns = initUnsM();
+
 			attachFChildAndCapability(
 				rform,
 				renderFForm(if (appendToMainStage) FFullWindow(fullscreen, wh, form) else form, zorder),
 				[],
 				\clip -> {
 					changeFullscreen = \fsc -> {
-						if (fsc) {
-							setFullScreenTargetFlow(clip);
-						} else {
-							removeFullScreenTarget(clip);
+						enableFullscreen = \ -> {
+							if (appendToMainStage) {
+								toggleFullScreen(fsc);
+							} else {
+								if (fsc) {
+									rootId = getRenderRoot();
+									nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
+									setUnsM(resizeUns, monitorFResize(wh, rootId));
+									requestFullScreen(clip)
+								}
+								else {
+									dispUnsM(resizeUns);
+									exitFullScreen(clip);
+								}
+							}
 						}
 
-						if (appendToMainStage) {
-							toggleFullScreen(fsc);
+						if (fsc) {
+							openFS = \ -> {
+								setFullScreenTargetFlow(clip);
+								setUnsM(listenerUns, onFullScreen(\change -> {
+									if (!change || isFullScreenTarget(clip)) {
+										nextDistinct(fullscreen, change);
+										if (!change) dispUnsM(listenerUns);
+									}
+								}));
+								enableFullscreen();
+							}
+
+							eitherFn(^fullScreenTarget,
+								\fst -> {
+									tempListenerUns = initUnsM();
+									setUnsM(tempListenerUns, onFullScreen(\fs -> {
+										if (!fs) {
+											openFS();
+											dispUnsM(tempListenerUns);
+										}
+									}));
+									removeFullScreenTarget(fst);
+								},
+								openFS
+							)
 						} else {
-							if (fsc) {
-								rootId = getRenderRoot();
-								nextDistinct(wh, WidthHeight(getStageWidthOf(rootId), getStageHeightOf(rootId)));
-								setUnsM(resizeUns, monitorFResize(wh, rootId));
-								requestFullScreen(clip)
-							}
-							else {
-								dispUnsM(resizeUns);
-								exitFullScreen(clip);
-							}
+							removeFullScreenTarget(clip);
+							enableFullscreen();
 						}
 					}
 
@@ -774,12 +840,6 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						}
 					}
 
-					ofsd = onFullScreen(\change -> {
-						if (isFullScreenTarget(clip) || !change) {
-							nextDistinct(fullscreen, change);
-						}
-					});
-
 					cfsd = subscribe2(fullscreen, changeFullscreen);
 
 					\ -> {
@@ -787,7 +847,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							toggleFullScreen(false);
 						}
 
-						ofsd();
+						dispUnsM(listenerUns);
 						cfsd();
 					}
 				}
@@ -1318,11 +1378,14 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			viewBounds = tryExtractStruct(style, ViewBounds(const(zeroBounds)));
 			getCurrentFrame = tryExtractStruct(style, FVideoGetCurrentFrame(ref \ -> ""));
 			additionalSources = extractStruct(style, FVideoAdditionalSources([])).sources;
+			headers = map(extractStruct(style, RequestHeaders([])).headers, \header -> [header.key, header.value]);
 
 			video =
 				makeVideo(
 					\w, h -> {
-						nextDistinct(realVideoSize, WidthHeight(w, h));
+						if (w > 0. && h > 0.) {
+							nextDistinct(realVideoSize, WidthHeight(w, h));
+						}
 						if (getValue(wh).width == 0. && getValue(wh).height == 0.) {
 							nextDistinct(wh, WidthHeight(w, h));
 						}
@@ -1343,7 +1406,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						streamListenerResponse := false;
 					}
 				);
-			iter(additionalSources, \s -> addVideoSource(video, s.url, s.type));
+			iter(additionalSources, \s -> addVideoSource(video, s.url, s.type, headers));
 			esUns = initUnsM();
 			maybeApply(externalSubtitles, \es -> {
 				setUnsM(esUns, makeSubscribeUns(es.enabled, \en -> if (en) [setVideoExternalSubtitle(video, es.src, es.kind)] else [])());
@@ -1353,7 +1416,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 
 			eitherFn(mediaStream,
 				\ms -> playVideoFromMediaStream(video, ms.stream, !getValue(playing)),
-				\ -> playVideo(video, addServerPathIfRelative(applyMediaPathMapping(filename)), !getValue(playing))
+				\ -> playVideo(video, addServerPathIfRelative(applyMediaPathMapping(filename)), !getValue(playing), headers)
 			);
 
 			if (controls != []) setVideoControls(video, controls);
@@ -1589,10 +1652,15 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			multiline = extractStruct(style, FMultiline(const(false))).multiline;
 			readOnly = extractStruct(style, FReadOnly(const(false))).readOnly;
 			maxChars = extractStruct(style, FMaxChars(const(-1))).maxChars;
+			autofillBackgroundFill = tryExtractStruct(style, AutofillBackgroundFill(0));
 			numericStep = tryExtractStruct(style, FNumericStep(const(1.)));
 			filterFn = tryExtractStruct(style, FInputFilter(idfn));
 			eventFilterFn = tryExtractStruct(style, dummyFInputEventFilter);
 			onCopyFn = tryExtractStruct(style, FInputOnCopy(\ -> None()));
+			onCompositionEndFn = tryExtractStruct(style, FInputOnCompositionEnd(nop));
+			openDatePickerMB = tryExtractStruct(style, FOpenDatePicker(make(None())));
+			enablePreventXSSDef = isUrlParameterTrue("new") && !isUrlParameterFalse("input_xss_protection_enabled");
+			enablePreventXSS = extractStruct(style, FPreventFromXSS(enablePreventXSSDef)).enable;
 
 			keyFilterFn = tryExtractStruct(style, FInputKeyFilter(\__, __ -> true));
 			cursorColor = extractStruct(style, FCursorColor(fselect(characterStyle, FLift(\cs -> extractStruct(cs, Fill(0)).color)))).color;
@@ -1602,7 +1670,11 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			interlineSpacing = extractStruct(style, InterlineSpacing(0.0)).d;
 
 			setTextFieldInterlineSpacing(textfield, interlineSpacing);
+			// changing multiline leads to recreating on native element so we have to set is first
+			setMultiline(textfield, fgetValue(multiline));
 			defineTextStyle(textfield, getValue(content), fgetValue(characterStyle));
+			maybeApply(autofillBackgroundFill, \afbf -> setAutofillBackgroundColor(textfield, afbf.color));
+			setTextFieldPreventXSS(textfield, enablePreventXSS);
 
 			disp =
 				concatA([
@@ -1641,17 +1713,37 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							nextDistinct(selection, ps.selection);
 							textInputResponse := false;
 						})(),
-						makeSubscribe(inputType, \t -> setTextInputType(textfield,
-							switch (t : InputType) {
-								EmailType(): "email";
-								TelType(): "tel";
-								UrlType(): "url";
-								TextType(): "text";
-								NumericType(): "number";
-								SearchType(): "search";
-								PasswordType(): "password";
+						makeSubscribe(inputType, \t -> {
+							type =
+								switch (t : InputType) {
+									EmailType(): "email";
+									TelType(): "tel";
+									UrlType(): "url";
+									TextType(): "text";
+									NumericType(): "number";
+									SearchType(): "search";
+									PasswordType(): "password";
+									DateType(__, __): "date";
+								};
+							setTextInputType(textfield, type);
+							if (type == "date") {
+								switch(t : InputType) {
+									DateType(minDate, maxDate): {
+										maybeApply(minDate, \dt -> {
+											setAccessAttributes(textfield, [["min", date2string(dt)]]);
+										})
+										maybeApply(maxDate, \dt -> {
+											setAccessAttributes(textfield, [["max", date2string(dt)]]);
+										})
+										maybeApply(openDatePickerMB, \openDatePickerB ->	{
+												nextDistinct(openDatePickerB.fn, Some(openDatePicker(textfield)));
+											}
+										)
+									};
+									default : {}
+								}
 							}
-						))(),
+						})(),
 						makeSubscribe(autoAlign, \aa -> setAutoAlign(textfield,
 							switch (aa : AutoAlignType) {
 								AutoAlignLeft(): "AutoAlignLeft";
@@ -1788,6 +1880,14 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 							],
 						[]
 					),
+					eitherMap(
+						onCompositionEndFn,
+						\onCompositionEnd ->
+							[
+								addEventListener(textfield, "compositionend", \ -> onCompositionEnd.fn())
+							],
+						[]
+					)
 				]);
 
 			FRenderResult(

@@ -57,8 +57,10 @@ class RenderSupport {
 	// Better option is to use <meta name="viewport" content="initial-scale=1.0,maximum-scale=1.0"/> inside top window.
 	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0" && isViewportScaleWorkaroundEnabled();
 	// Don't wait for fonts to load
-	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") == "1";
+	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
+	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
+	public static var PinchToScaleEnabled : Bool = true;
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -455,9 +457,7 @@ class RenderSupport {
 		style.setAttribute('type', 'text/css');
 
 		style.innerHTML = "@page { size: " + wd + "px " + hgt + "px !important; margin:0 !important; padding:0 !important; } " +
-			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; background : white} " +
-			".print-page-container {position : fixed;} ";
-
+			".print-page { width: 100% !important; height: 100% !important; overflow: hidden !important; }";
 		Browser.document.head.appendChild(style);
 
 		return function () {
@@ -509,17 +509,13 @@ class RenderSupport {
 			});
 		};
 
-		if (Native.isNew) {
-			PixiStage.once("drawframe", openPrintDialog);
-		} else {
-			Native.timer(10, openPrintDialog);
-		}
+		PixiStage.once("drawframe", openPrintDialog);
 	}
 
 	private static function getBackingStoreRatio() : Float {
 		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
 			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
-		browserZoom = Browser.window.outerWidth / Browser.window.innerWidth;
+		browserZoom = Platform.isSamsung ? Math.max(Browser.window.outerWidth / Browser.window.innerWidth, 1.0) : Browser.window.outerWidth / Browser.window.innerWidth;
 
 		if (!Platform.isMobile && browserZoom != 1.0) {
 			accessibilityZoom = 1.0;
@@ -558,7 +554,7 @@ class RenderSupport {
 
 		if (Util.getParameter("oldjs") != "1") {
 			initPixiRenderer();
-			if (mainNoDelay || Native.isNew) {
+			if (mainNoDelay) {
 				defer(StartFlowMainWithTimeCheck);
 			}
 		} else {
@@ -852,7 +848,7 @@ class RenderSupport {
 		initFullScreenEventListeners();
 
 		webFontsLoadingStartAt = NativeTime.timestamp();
-		WebFontsConfig = FontLoader.loadWebFonts(if (mainNoDelay || Native.isNew) function() {} else StartFlowMainWithTimeCheck);
+		WebFontsConfig = FontLoader.loadWebFonts(if (mainNoDelay) function() {} else StartFlowMainWithTimeCheck);
 
 		initClipboardListeners();
 		initCanvasStackInteractions();
@@ -936,6 +932,7 @@ class RenderSupport {
 	private static var printMode = false;
 	private static var forceOnAfterprint = Platform.isChrome;
 	private static var prevInvalidateRenderable = false;
+	private static var zoomFnUns = function() {};
 	private static inline function initBrowserWindowEventListeners() {
 		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', Platform.isWKWebView || (Platform.isIOS && ProgressiveWebTools.isRunningPWA()) ? onBrowserWindowResizeDelayed : onBrowserWindowResize, false);
@@ -948,6 +945,18 @@ class RenderSupport {
 			}
 		}, false);
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
+		Browser.window.addEventListener("focus", function () {
+			// When page is loaded while browser is minimized, window.outerWidth tend to stuck in wrong state. Have to trigger its recalculation.
+			var oldBrowserZoom = browserZoom;
+			Browser.window.resizeBy(-1, 0);
+			Browser.window.resizeBy(1, 0);
+			backingStoreRatio = getBackingStoreRatio();
+
+			if (oldBrowserZoom != browserZoom) {
+				onBrowserWindowResize({target: {innerWidth: Browser.window.innerWidth - 1, innerHeight: Browser.window.innerHeight}});
+				onBrowserWindowResize({target: {innerWidth: Browser.window.innerWidth, innerHeight: Browser.window.innerHeight}});
+			}
+		});
 		Browser.window.addEventListener('beforeprint', function () {
 			if (!printMode) {
 				printMode = true;
@@ -969,11 +978,37 @@ class RenderSupport {
 			}
 		}, false);
 
+		Browser.document.fonts.addEventListener('loadingdone', FontLoader.onFontsLoadingDone);
+
 		// Make additional resize for mobile fullscreen mode
 		if (Platform.isMobile) {
 			on("fullscreen", function(isFullScreen) {
 				var size = isFullScreen ? getScreenSize() : {width: Browser.window.innerWidth, height: Browser.window.innerHeight};
 				onBrowserWindowResize({target: {innerWidth: size.width, innerHeight: size.height}});
+			});
+		}
+
+		var accessibilityZoomOnPinchStart = 1.;
+
+		if (Platform.isMobile) {
+			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
+				if (!PinchToScaleEnabled) {
+					return false;
+				};
+				if (state == 0) {
+					// On pinch started
+					accessibilityZoomOnPinchStart = getAccessibilityZoom();
+				};
+				var updateZoom = function() {
+					setAccessibilityZoom(Math.min(Math.max(0.25, accessibilityZoomOnPinchStart * scale), 5.0));
+				};
+				if (state == 0 || state == 2) {
+					updateZoom();
+				} else if (state == 1) {
+					zoomFnUns();
+					zoomFnUns = interruptibleDeferUntilRender(updateZoom);
+				}
+				return false;
 			});
 		}
 	}
@@ -1014,9 +1049,27 @@ class RenderSupport {
 		}
 	}
 
+	public static function setStatusBarColor(color : Int) {
+		var head = Browser.document.getElementsByTagName('head')[0];
+
+		var oldThemeMeta = Browser.document.querySelector('meta[name="theme-color"]');
+		if (oldThemeMeta != null) {
+			head.removeChild(oldThemeMeta);
+		}
+
+		var node = Browser.document.createElement('meta');
+		node.setAttribute("name", "theme-color");
+		node.setAttribute("content", RenderSupport.makeCSSColor(color, 1.0));
+		head.appendChild(node);
+	}
+
 	public static function setApplicationLanguage(languageCode : String) {
 		Browser.document.documentElement.setAttribute("lang", languageCode);
 		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
+	}
+
+	public static function setPinchToScaleEnabled(enabled : Bool) {
+		PinchToScaleEnabled = enabled;
 	}
 
 	public static function getSafeArea() : Array<Float> {
@@ -1189,7 +1242,7 @@ class RenderSupport {
 		if (backingStoreRatio != PixiRenderer.resolution) {
 			createPixiRenderer();
 		} else {
-			var win_width = e.target.innerWidth;
+			var win_width = Platform.isSamsung ? Math.min(e.target.innerWidth, e.target.outerWidth) : e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
 			if (viewportScaleWorkaroundEnabled) {
@@ -1219,7 +1272,7 @@ class RenderSupport {
 					if (!Platform.isAndroid) {
 						win_width = screen_size.width;
 					}
-					win_height = Math.floor((screen_size.height - getMobileTopHeight()) / browserZoom);
+					win_height = Math.floor((screen_size.height - (IsFullScreen ? 0.0 : getMobileTopHeight())) / browserZoom);
 				}
 
 				if (Platform.isAndroid) {
@@ -1340,6 +1393,25 @@ class RenderSupport {
 		}
 	}
 
+	private static function preventStuckModifierKeys(e : Dynamic, stage : FlowContainer) : Void {
+		try {
+			if (keysPending.keys().hasNext() && e.ctrlKey != null && e.altKey != null && e.metaKey != null && e.shiftKey != null) {
+				// Parsing pointer event as key event to check for active modifier keys
+				// parseKeyEvent is used to correctly detect modifiers state and swap ctrl with meta in case it's Mac
+				var ke = parseKeyEvent(e);
+				for (key in keysPending) {
+					if ((key.key == "ctrl" && !ke.ctrl) || (key.key == "alt" && !ke.alt) || (key.key == "meta" && !ke.meta) || (key.key == "shift" && !ke.shift)) {
+						key.preventDefault = function() {};
+						emit("keyup", key);
+					}
+				}
+			}
+		} catch (e : Dynamic) {
+			untyped console.log("preventStuckModifierKeys error : ");
+			untyped console.log(e);
+		}
+	}
+
 	public static var PreventDefault : Bool = true;
 	public static function onpointerdown(e : Dynamic, stage : FlowContainer) {
 		try {
@@ -1352,7 +1424,13 @@ class RenderSupport {
 			// Works incorrectly in Edge
 			// There were bugs on iOS 14.0.0 - 14.4.2 : preventing default on 'touchstart' led to bug with trackpad - 'pointer*' events disappered,
 			// swiping on touchscreen led to bug with trackpad events - 'pointer*' became 'mouse*'
-			if (PreventDefault) e.preventDefault();
+			if (
+				PreventDefault
+				// To fix iOS + Chrome input/wigi editor focusability
+				&& (!(Platform.isIOS && Platform.isChrome) || e.pointerType != 'touch')
+			) e.preventDefault();
+
+			preventStuckModifierKeys(e, stage);
 
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
@@ -1462,11 +1540,15 @@ class RenderSupport {
 		}
 	};
 
+	private static function blockEvent(e : Dynamic, stage : FlowContainer) {
+		e.preventDefault();
+	}
+
 	private static inline function initPixiStageEventListeners() {
 		var root = PixiStage.nativeWidget;
 
 		if (Platform.isMobile) {
-			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
+			if (Platform.isAndroid || Platform.isChrome || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
 				updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
 				updateNonPassiveEventListener(root, "pointerup", onpointerup);
 				updateNonPassiveEventListener(root, "pointermove", onpointermove);
@@ -1488,10 +1570,23 @@ class RenderSupport {
 			root.onpointermove = function(e : Dynamic) {onpointermove(e, stage);};
 			root.onpointerout = function(e : Dynamic) {onpointerout(e, stage);};
 		} else {
-			updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
-			updateNonPassiveEventListener(root, "pointerup", onpointerup);
-			updateNonPassiveEventListener(root, "pointermove", onpointermove);
-			updateNonPassiveEventListener(root, "pointerout", onpointerout);
+			// updateNonPassiveEventListener(root, "pointerdown", onpointerdown);
+			// updateNonPassiveEventListener(root, "pointerup", onpointerup);
+			// updateNonPassiveEventListener(root, "pointermove", onpointermove);
+			// updateNonPassiveEventListener(root, "pointerout", onpointerout);
+
+			// Workaround for using with Dashlane plugin.
+			// Consider to revert for 'updateNonPassiveEventListener' implementation after Dashlane is fixed.
+			var stage = PixiStage;
+			root.onpointerdown = function(e : Dynamic) {onpointerdown(e, stage);};
+			root.onpointerup = function(e : Dynamic) {onpointerup(e, stage);};
+			root.onpointermove = function(e : Dynamic) {onpointermove(e, stage);};
+			root.onpointerout = function(e : Dynamic) {onpointerout(e, stage);};
+
+			// Just in case app is switched to mobile mode in dev tools
+			updateNonPassiveEventListener(root, "touchstart", blockEvent);
+			updateNonPassiveEventListener(root, "touchend", blockEvent);
+			updateNonPassiveEventListener(root, "touchmove", blockEvent);
 		}
 
 		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic, stage : FlowContainer) {
@@ -1522,6 +1617,12 @@ class RenderSupport {
 
 		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
+
+		if (Platform.isMobile) {
+			// Collapse of PWA application requires gesture which initiates touchstart, but never receives touchend
+			// We need to reset MouseUpReceived when application is collapsed for success first click after an application is focused
+			Browser.window.addEventListener("blur", function (e) { MouseUpReceived = true; }); 
+		}
 
 		if (root != Browser.document.body) {
 			on("fullscreen", function () {
@@ -2134,6 +2235,18 @@ class RenderSupport {
 			fillColor, fillOpacity, letterSpacing, backgroundColor, backgroundOpacity);
 	}
 
+	public static function setLineHeightPercent(clip : TextClip, lineHeightPercent : Float) : Void {
+		clip.setLineHeightPercent(lineHeightPercent);
+	}
+
+	public static function setTextNeedBaseline(clip : TextClip, needBaseline : Bool) : Void {
+		clip.setNeedBaseline(needBaseline);
+	}
+
+	public static function setTextPreventCheckTextNodeWidth(clip : TextClip, prevent : Bool) : Void {
+		clip.setPreventCheckTextNodeWidth(prevent);
+	}
+
 	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
 		clip.setEscapeHTML(escapeHTML);
 	}
@@ -2181,8 +2294,8 @@ class RenderSupport {
 		clip.setTimeRange(start, end);
 	}
 
-	public static function playVideo(vc : VideoClip, filename : String, startPaused : Bool) : Void {
-		vc.playVideo(filename, startPaused);
+	public static function playVideo(vc : VideoClip, filename : String, startPaused : Bool, headers : Array<Array<String>>) : Void {
+		vc.playVideo(filename, startPaused, headers);
 	}
 
 	public static function playVideoFromMediaStream(vc : VideoClip, mediaStream : Dynamic, startPaused : Bool) : Void {
@@ -2316,6 +2429,10 @@ class RenderSupport {
 		clip.setInterlineSpacing(spacing);
 	}
 
+	public static function setTextFieldPreventXSS(clip : TextClip, enable : Bool) : Void {
+		clip.setPreventXSS(enable);
+	}
+
 	public static function setTextDirection(clip : TextClip, direction : String) : Void {
 		clip.setTextDirection(direction);
 	}
@@ -2422,6 +2539,10 @@ class RenderSupport {
 
 	public static function setMaxChars(clip : TextClip, maxChars : Int) : Void {
 		clip.setMaxChars(maxChars);
+	}
+
+	public static function setAutofillBackgroundColor(clip : TextClip, autofillBackgroundColor : Int) : Void {
+		clip.setAutofillBackgroundColor(autofillBackgroundColor);
 	}
 
 	public static function addTextInputFilter(clip : TextClip, filter : String -> String) : Void -> Void {
@@ -2880,8 +3001,8 @@ class RenderSupport {
 		return clip.addStreamStatusListener(fn);
 	}
 
-	public static function addVideoSource(clip : VideoClip, src : String, type : String) : Void {
-		clip.addVideoSource(src, type);
+	public static function addVideoSource(clip : VideoClip, src : String, type : String, headers : Array<Array<String>>) : Void {
+		clip.addVideoSource(src, type, headers);
 	}
 
 	public static function setVideoExternalSubtitle(clip : VideoClip, src : String, kind : String) : Void -> Void {
@@ -2990,7 +3111,7 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged" || event == "selectionchange" || event == "selectall") {
+		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged" || event == "selectionchange" || event == "selectall" || event == "compositionend") {
 			clip.on(event, fn);
 			return function() { clip.off(event, fn); }
 		} else {
@@ -3026,6 +3147,18 @@ class RenderSupport {
 
 			clip.on(event, parentFn);
 			return function() { clip.off(event, parentFn); }
+		} else if (event == "textwidthchanged") {
+			var widthFn = function(width : Float) {
+				fn([width]);
+			};
+			clip.on(event, widthFn);
+			return function() { clip.off(event, widthFn); }
+		} else if (event == "mathexprresize") {
+			var sizeFn = function(size) {
+				fn([size.width, size.height, size.baseline]);
+			};
+			clip.on(event, sizeFn);
+			return function() { clip.off(event, sizeFn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};
@@ -3172,8 +3305,15 @@ class RenderSupport {
 			}
 
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
-			var clipWidth = untyped clip.getWidth();
-			var clipHeight = untyped clip.getHeight();
+			var clipWidth = 0;
+			var clipHeight = 0;
+			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip) && !clip.isInput) {
+				clipWidth = untyped clip.getClipWidth(false);
+				clipHeight = untyped clip.getClipHeight(false);
+			} else {
+				clipWidth = untyped clip.getWidth();
+				clipHeight = untyped clip.getHeight();
+			}
 			if (checkAlpha != null && untyped HaxeRuntime.instanceof(clip, FlowSprite)) {
 				try {
 					var tempCanvas = Browser.document.createElement('canvas');
@@ -3307,8 +3447,8 @@ class RenderSupport {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String) : Dynamic {
-		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText);
+	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String,  headers : Array<Array<String>>) : Dynamic {
+		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload, altText, headers);
 	}
 
 	public static function setPictureUseCrossOrigin(picture : FlowSprite, useCrossOrigin : Bool) : Void {
@@ -4059,7 +4199,7 @@ class RenderSupport {
 	}
 
 	public static function setWebClipDisabled(clip : WebClip, disabled : Bool) : Void {
-		clip.setDisableOverlay(disabled);
+		clip.setDisabled(disabled);
 	}
 
 	public static function setWebClipNoScroll(clip : WebClip) : Void {
@@ -4253,6 +4393,18 @@ class RenderSupport {
 		}
 		return null;
 	}
+
+	public static function getHadUserInteracted() : Bool {
+		return hadUserInteracted;
+	}
+
+	public static function openDatePicker(clip : TextClip) : Void -> Void {
+		return clip.openDatePicker();
+	}
+
+	public static function createMathJaxClip(latex: String) : Dynamic {
+		return new MathJaxClip(latex);
+	};
 }
 
 class FlowInstance {

@@ -1,5 +1,6 @@
 import material/internal/material_toolbar;
 import material/internal/material_grid;
+import material/internal/material_util;
 import material/internal/tropic_size_util;
 
 export {
@@ -15,9 +16,9 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	tabsId = makeTropicTag(manager);
 	mColor = extractMColor(parent, m.style, MPrimaryColor());
 	fillOpacity = extractStruct(m.style, FillOpacity(1.));
-	bgStyle = extractStruct(m.style, MBackgroundStyle([MFill(mColor), fillOpacity])).style;
-	tabsBgStyle = extractStruct(m.style, MTabsBackgroundStyle(bgStyle)).style;
-	tabsContentBgStyle = extractStruct(m.style, MTabsContentBackgroundStyle([])).style;
+	bgStyle = mgraphicsStyle2tgraphicsStyle(parent, extractStruct(m.style, MBackgroundStyle([MFill(mColor), fillOpacity])).style);
+	tabsBgStyle = mgraphicsStyle2tgraphicsStyle(parent, extractStruct(m.style, MTabsBackgroundStyle(bgStyle)).style);
+	tabsContentBgStyle = mgraphicsStyle2tgraphicsStyle(parent, extractStruct(m.style, MTabsContentBackgroundStyle([])).style);
 	itemsColor = tryExtractMToolbarItemsMColor(parent, mergeTGraphicsStyles(bgStyle, tabsBgStyle), m.style);
 	indicatorColor : MColor = MThemeColor2MColor(parent, extractStruct(m.style, MTabsIndicatorColor(MAccentColor())).color);
 	indicatorHeight = extractStruct(m.style, MTabsIndicatorHeight(2.)).height;
@@ -25,6 +26,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	addAction = tryExtractStruct(m.style, MTabsAddAction(\__ -> TEmpty()));
 	elevation = extractStruct(m.style, MElevation(const(if (js) 0. else 2.))).elevation;
 	order = tryExtractStruct(m.style, MListReorder(make([]), const(false)));
+	orderStyle = extractStruct(m.style, MListReorderStyle([MReorderOnDragEnd()])).style;
 	maxHeight = tryExtractStruct(m.style, MMaxHeight(tabsPanelHeight));
 	tabsHeight = make(eitherMap(maxHeight, \mh -> mh.height, tabsPanelHeight));
 	tabsAlign = extractStruct(m.style, MTabsAlign(StartAlign())).direction;
@@ -44,6 +46,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	oneLineTitle = isSome(iconAlign) || titleAlignIcon;
 	grabDelay = extractStructMany(m.style, MGrabDelay(0));
 	isKeepTabColor = !contains(m.style, MTabChangeIndicatorColor());
+	tabBarStyleOnSelected = mgraphicsStyle2tgraphicsStyle(parent, extractStruct(m.style, MTabSelectedBackgroundStyle([])).style);
 	rescaleEnabled0 = extractStruct(m.style, MTabTitleRescaleEnabled(const(true))).enabled;
 	iconHideable = contains(m.style, MTabIconHideable());
 
@@ -66,6 +69,10 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	tabWidth = tryExtractStruct(m.style, MWidth(0.0));
 	tabsWidths : DynamicBehaviour<[double]> = make(generate(0, length(fgetValue(m.tabs)), \i -> getValue(tabsMinWidth)[i]));
 	panelButtonW = make(0.);
+	headerBox = makeWH();
+
+	focusedIdx = make(-1);
+	focusEnabledIdx = make(0);
 
 	oldTabs : ref [MTab] = ref fgetValue(m.tabs);
 
@@ -138,7 +145,15 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 						}));
 					tabPanelId = fif(feq(m.selected, i), const(makeTabpanelId(tabsId, i)), const(""));
 					focusState = replaceStructMany(tb.style, 
-						[onClick, AccessRole("tab"), FAccessAttribute("aria-controls", tabPanelId), MRippleType(const(MRippleFill()))]
+						[
+							onClick,
+							AccessRole("tab"),
+							FAccessAttribute("id", const(makeTabButtonId(tabsId, i))),
+							FAccessAttribute("aria-controls", tabPanelId),
+							FAccessAttribute("aria-selected", fselectLift(feq(m.selected, i), b2s)),
+							MRippleType(const(MRippleFill())),
+							extractStruct(tb.style, MButtonTitle(tb.text))
+						]
 					);
 					tabIcon = tryExtractStruct(tb.style, MTabIcon(TEmpty()));
 					
@@ -152,8 +167,9 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 					isIconVisible = make(true);
 					dynArrayPush(iconsVisible, isIconVisible);
 					colorT = fselectLift(fand(const(!isKeepTabColor), feq(m.selected, i)), \selected -> if (selected) Some(indicatorColor) else itemsColor);
+					isActive = make(false);
 
-					TSelect2(tb.text, colorT, \txt, color ->
+					(\externalState -> TSelect2(tb.text, colorT, \txt, color ->
 						if (txt != "") {
 							MTabsText(manager, p2, txt, capitalizeTitle, centerTitle, rescaleEnabled, showTooltip, maxLines, tabsFontStyle, color, fullWidth, widthByContent, m2t)
 							|> TBorderTopBottom(2.)
@@ -185,34 +201,38 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 					))
 					|> TBorderLeftRight(bordersGap / 2.)
 					|> (if (oneLineTitle) TCenterY else TCenter)
+					|> (\f ->
+						if (noDimming)
+							f
+						else
+							TAlpha(
+								fif(isActive, const(1.), const(secondaryTextOpacity)),
+								f
+							)
+					)
+					|> (\f -> eitherMap(addAction, \addAct -> m2t(MCols2A(f, addAct.action(i)), p2), f))
 					|> (\t ->
 						TCopySize2(t, \sz, tr -> {
-							isActive = make(false);
 							TGroup2(
 								MComponent2T(
 									manager,
 									p2,
 									"MTabsButton",
-									focusState,
+									concat(focusState, externalState),
 									\focus ->
-										TCopySize(
-											eitherMap(addAction, \addAct -> m2t(MCols2A(sz, addAct.action(i)), p2), sz),
-											\sz2 -> TShowLazy(fOr(focus.focused, focus.down), \ -> TRectangle([MFill(MGrey(500)), FillOpacity(0.3)], sz2)),
-											true
-										)
-										|> (\t2 -> TConstruct([
-												\ -> fconnect(
-													fmaxA([feq(m.selected, i), focus.down, focus.focused, focus.hover], false),
-													isActive
-												)
-											], t2)),
+										TGroup([
+											sz,
+											TShowLazy(fand(const(tabBarStyleOnSelected != []), feq(m.selected, i)), \ -> TRectangle(tabBarStyleOnSelected, sz)),
+											TShowLazy(fOr(focus.focused, focus.down), \ -> TRectangle([MFill(MGrey(500)), FillOpacity(0.3)], sz)),
+										]) |> (\t2 -> TConstruct([
+											\ -> fconnect(
+												fmaxA([feq(m.selected, i), focus.down, focus.focused, focus.hover], false),
+												isActive
+											)
+										], t2)),
 									m2t
 								),
-								if (noDimming) tr
-								else TAlpha(
-									fif(isActive, const(1.), const(secondaryTextOpacity)),
-									tr
-								)
+								tr
 							)
 						})
 					)
@@ -276,7 +296,19 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 							)
 						], t)
 						else t
+					))
+					|> (\makeTab ->
+						MArrowNavigationItem(
+							i,
+							tbsLength,
+							makeTab,
+							focusedIdx,
+							focusEnabledIdx,
+							\ -> max(0, fgetValue(m.selected)),
+							[MArrowNavigationDirection(false)]
+						)
 					)
+					|> (\t -> m2t(t, p2))
 				}
 
 				mapi(tbs, tabHeader2T)
@@ -290,7 +322,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 								p2,
 								map(t, \tb -> MReorderItem(tb, [])),
 								or.order,
-								concat([MEnabled(or.enabled), MVertical()], grabDelay),
+								concat3([MEnabled(or.enabled), MVertical()], orderStyle, grabDelay),
 								m2t
 							)
 							|> (\t2 -> TAvailableHeight(t2, const(0.))),
@@ -374,6 +406,8 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 							next(tabsWidths, newWidths);
 						}),
 
+						makeSubscribe(focusedIdx, \focIdx -> if (focIdx >= 0) nextDistinct(m.selected, focIdx)),
+
 						\ -> fconnectSelect(isAnyIcon, tabsHeight, \b ->
 							max(getValue(tabsHeight), if (b && !oneLineTitle) tabsPanelHeightWithIcons else tabsPanelHeight)
 						)
@@ -394,7 +428,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 				)
 			)
 			|> (\t -> TFrame(0., 0., bgStyle, t))
-			|> (\t -> TShadowShape(p, elevation, t, BottomRectangleShape()))
+			|> (\t -> TAttachBox(t, headerBox))
 		)
 		|> (\makeTabsHeader ->
 			eitherFn(
@@ -418,19 +452,23 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 					makeTabsHeader(p0)
 			)
 		)
-		|> (\t -> TLines2InvertZorder(
+		|> (\t -> TLines2(
 				TIf(showTabsPanel, t, TFillX()),
 				SelectMGroup2T(manager, p0, m.tabs, \i, id, tab, p2 -> {
 					tabEn = feq2(m.selected, i);
 
-					(\p3 -> MComponentGroup2T(manager, p3, "MTabsContent", [
+					(\p3 -> MComponent2T(manager, p3, "MTabsContent", [
 							MEnabled(tabEn),
 							MFocusEnabled(tabEn),
 							MFocusId(const(id)),
 							AccessRole("tabpanel"),
-							FAccessAttribute("id", fselectLift(i, \ii -> makeTabpanelId(tabsId, ii)))
-						], \p4 ->
-						m2t(MAlignStart(tab.content), p4)
+							FAccessAttribute("id", fselectLift(i, \ii -> makeTabpanelId(tabsId, ii))),
+							FAccessAttribute("aria-labelledby", fselectLift(i, \ii -> makeTabButtonId(tabsId, ii))),
+							MHighlightOnFocus(const(true)),
+							MCursorShape(const(ArrowCursor()))
+						],
+						\__ -> m2t(MAlignStart(tab.content), p3),
+						m2t
 					))
 					|> (\makeTabContent ->
 						if (preRender)
@@ -446,6 +484,10 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 			|> (\tabsContent -> eitherMap(tabWidth, \w -> TAvailableWidth(tabsContent, const(w.width)), tabsContent))
 			|> (\tabsContent -> TFrame(0., 0., tabsContentBgStyle, tabsContent))
 		)
+		|> (\t -> TGroup2(
+			t,
+			TShadowShape(p0, elevation, TSized(headerBox), TropicShape(TRectangle([MFill(MWhite()), FillOpacity(0.01)], TSized(headerBox))))
+		))
 	)
 	|> (\t ->
 		MComponentGroup2T(
@@ -651,4 +693,8 @@ mergeTGraphicsStyles(a : [TGraphicsStyle], b : [TGraphicsStyle]) -> [TGraphicsSt
 
 makeTabpanelId(tabsId, tabId) -> string{
 	"tabs" + i2s(tabsId) + "_tabpanel" + i2s(tabId);
+}
+
+makeTabButtonId(tabsId, tabId) -> string{
+	"tabs" + i2s(tabsId) + "_tabbutton" + i2s(tabId);
 }

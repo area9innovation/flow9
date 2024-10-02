@@ -35,7 +35,7 @@ export {
 	distributeSizesEvenlyInt(minWidths : [int], maxWidths : [int], columnWidths : [DynamicBehaviour<int>], availableWidth : int) -> void;
 	distributeSizesEvenly(minWidths : [double], maxWidths : [double], availableWidth : double) -> [double];
 
-	selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>) -> Pair<(MDirection) -> void, () -> void>;
+	selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>, isEmptyCellFn : (cell : ?) -> bool) -> Pair<(MDirection) -> void, () -> void>;
 		MDirection ::= MRight, MLeft, MUp, MDown;
 			MUp();
 			MDown();
@@ -67,13 +67,15 @@ export {
 	applyIfDynamic(beh : Transform<?>, fn : () -> ?) -> void;
 
 	updateMaterialTheme(manager : MaterialManager, theme : MaterialTheme) -> void;
+	setManagerWhite(manager : MaterialManager, white : bool) -> void;
+	switchManagerWhite(manager : MaterialManager) -> void;
 
 	// Use it if TSelect doesn`t affect metrics
 	TSelectConstantMetrics(value : Transform<?>, fn : (?) -> Tropic) -> Tropic;
 
 	// Helper for background drawing
 	addTBackground(color : MColor) -> (Tropic) -> Tropic;
-	addMBackground(color : MColor) -> (Material) -> Material;
+	addMBackground(color : MThemeColor) -> (Material) -> Material;
 
 	addMTooltip(tooltip : string) -> (Material) -> Material;
 	addMTooltipT(tooltip : Transform<string>) -> (Material) -> Material;
@@ -110,6 +112,40 @@ export {
 	flerpPoint(point: Transform<Point>, progress : Transform<double>) -> Transform<Point>;
 	colorLerp(previous : int, current : int, percent : double) -> int;
 	mColorLerp(previous : MColor, current : MColor, percent : double) -> MColor;
+
+	// Helper to navigate list like in radio-group
+	MArrowNavigationArray(
+		itemsMaterialFunctions : [([MButtonState]) -> Material]
+	) -> [Material];
+
+	MArrowNavigationItem(
+		i : int,
+		listLen : int,
+		makeListItem : ([MButtonState]) -> Material,
+		focusedIdx : DynamicBehaviour<int>,
+		focusEnabledIdx : DynamicBehaviour<int>,
+		getDefFocusableItem : () -> int,
+		style : [MArrowNavigationStyle]
+	) -> Material;
+
+	MArrowNavigationExt(
+		i : int,
+		listLen : int,
+		makeListItem : ([MButtonState]) -> Material,
+		focusedIdx : DynamicBehaviour<int>,
+		focusEnabledIdx : DynamicBehaviour<int>,
+		getDefFocusableItem : () -> int,
+		style : [MArrowNavigationStyle]
+	) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>>;
+
+	MArrowNavigationStyle ::= MArrowNavigationDirection, MArrowNavigationSupportHomeEnd, MArrowNavigationCheckFocusability,
+							MArrowNavigationSelectItem, MArrowNavigationResetSelection, MArrowNavigationCustomOnArrow;
+		MArrowNavigationDirection(vertical : bool); // true by default
+		MArrowNavigationSupportHomeEnd(support : bool); // true by default
+		MArrowNavigationCheckFocusability(fn : (int) -> bool);
+		MArrowNavigationSelectItem(fn : () -> void, auto : bool);
+		MArrowNavigationResetSelection(fn : () -> bool);
+		MArrowNavigationCustomOnArrow(fn : (forw : bool) -> void, enabled : () -> bool);
 }
 
 MGridSize(t : Tropic) -> Tropic {
@@ -339,37 +375,62 @@ distributeSizesEvenly(
 		map(newWidths, firstOfPair);
 }
 
-selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>) -> Pair<(MDirection) -> void, () -> void> {
+nextCellPosition(
+	cells : [[?]],
+	initialPosition : Pair<int, int>,
+	isEmptyCellFn : (cell : ?) -> bool,
+	positionMoveFn : (Pair<int, int>) -> Pair<int, int>
+) -> Pair<int, int> {
+	movedPosition = positionMoveFn(initialPosition);
+
+	eitherFn(
+		elementAtM(cells[movedPosition.first], movedPosition.second),
+		\cell -> {
+			if (isEmptyCellFn(cell)) {
+				nextCellPosition(cells, movedPosition, isEmptyCellFn, positionMoveFn)
+			} else {
+				movedPosition
+			}
+		},
+		\ -> nextCellPosition(cells, movedPosition, isEmptyCellFn, positionMoveFn)
+	)
+}
+
+selectableCells(
+	cells : Transform<[[?]]>,
+	currentCell : DynamicBehaviour<?>,
+	isEmptyCellFn : (cell : ?) -> bool
+) -> Pair<(MDirection) -> void, () -> void> {
 	x = ref -1;
 	y = ref -1;
 
 	fn0 = \dir : MDirection, cls : [[?]] -> {
-		switch (dir) {
-			MLeft(): {
-				x := ^x - 1;
-			}
-			MRight(): {
-				x := ^x + 1;
-			}
-			MUp(): {
-				y := ^y - 1;
-			}
-			MDown(): {
-				y := ^y + 1;
-			}
+		initialPosition = Pair(^x, ^y);
+		calculateNextPosition =\moveFn -> nextCellPosition(cls, initialPosition, isEmptyCellFn, moveFn);
+
+		newPosition = switch (dir) {
+			MLeft(): calculateNextPosition(\p -> {
+				cx = p.first - 1;
+				Pair(if (cx < 0) {length(cls) - 1} else {cx}, p.second)
+			});
+			MRight(): calculateNextPosition(\p -> {
+				cx = p.first + 1;
+				Pair(if (cx > length(cls) - 1) {0} else {cx}, p.second)
+			});
+			MUp(): calculateNextPosition(\p -> {
+				cx = p.first;
+				cy = p.second - 1;
+				Pair(cx, if (cy < 0) {length(cls[cx]) - 1} else {cy})
+			});
+			MDown(): calculateNextPosition(\p -> {
+				cx = p.first;
+				cy = p.second + 1;
+				Pair(cx, if (cy > length(cls[cx]) - 1) {0} else {cy})
+			});
 		}
 
-		if (^x < 0) {
-			x := length(cls) - 1;
-		} else if (^x > length(cls) - 1) {
-			x := 0;
-		}
-
-		if (^y < 0) {
-			y := either(maxA(map(cls, \c -> length(c) - 1)), 0);
-		} else if (^y > either(maxA(map(cls, \c -> length(c) - 1)), 0)) {
-			y := 0;
-		}
+		x := newPosition.first;
+		y := newPosition.second;
 	};
 
 	fn = \dir : MDirection -> {
@@ -666,12 +727,28 @@ updateMaterialTheme(manager : MaterialManager, theme : MaterialTheme) -> void {
 	if (manager.theme != theme) {
 		manager.theme ::= theme;
 		(manager.focus).theme ::= theme;
-		nextDistinct(manager.white, theme.palette.light);
+		switch (manager.white) {
+			DynamicBehaviour(__, __): {
+				nextDistinct(cast(manager.white : Transform<bool> -> DynamicBehaviour<bool>), theme.palette.light);
+			}
+			default : {}
+		}
 		prevPebblesEnabled = getValue(manager.pebblesEnabled);
 		nextDistinct(manager.pebblesEnabled, false);
 		reverseBehaviour(manager.forceRender);
 		nextDistinct(manager.pebblesEnabled, prevPebblesEnabled);
 	}
+}
+
+setManagerWhite(manager : MaterialManager, white : bool) -> void {
+	updateMaterialTheme(
+		manager,
+		MaterialTheme(manager.theme with palette = MaterialPalette(manager.theme.palette with light = white))
+	);
+}
+
+switchManagerWhite(manager : MaterialManager) -> void {
+	setManagerWhite(manager, !manager.theme.palette.light);
 }
 
 TSelectConstantMetrics(value : Transform<?>, fn : (?) -> Tropic) -> Tropic {
@@ -683,8 +760,8 @@ addTBackground(color : MColor) -> (Tropic) -> Tropic {
 	\t -> TFrame(0.0, 0.0, [MFill(color)], t)
 }
 
-addMBackground(color : MColor) -> (Material) -> Material {
-	\m -> MFrame(0.0, 0.0, [MFill(color)], m)
+addMBackground(color : MThemeColor) -> (Material) -> Material {
+	\m -> MFrame(0.0, 0.0, [MThemedFill(color)], m)
 }
 
 addMTooltip(tooltip : string) -> (Material) -> Material {
@@ -1066,4 +1143,114 @@ mColorLerp(previous : MColor, current : MColor, percent : double) -> MColor {
 			percent
 		)
 	);
+}
+
+// Helper for wraping items into basic form of MArrowNavigationItem.
+MArrowNavigationArray(
+	itemsMaterialFunctions : [([MButtonState]) -> Material],
+) -> [Material] {
+	itemsLen = length(itemsMaterialFunctions);
+	itemsFocusedIdx = make(-1);
+	itemsFocusEnabledIdx = make(0);
+	mapi(
+		itemsMaterialFunctions,
+		\i, fn -> MArrowNavigationItem(
+			i,
+			itemsLen,
+			fn,
+			itemsFocusedIdx,
+			itemsFocusEnabledIdx,
+			\ -> 0,
+			[]
+		)
+	)
+}
+
+// Navigate through list by arrows, not by tab. Wrap each item of list into this.
+MArrowNavigationItem(
+	i : int,
+	listLen : int,
+	makeListItem : ([MButtonState]) -> Material,
+	focusedIdx : DynamicBehaviour<int>,
+	focusEnabledIdx : DynamicBehaviour<int>,
+	getDefFocusableItem : () -> int,
+	style : [MArrowNavigationStyle]
+) -> Material {
+	MArrowNavigationExt(i, listLen, makeListItem, focusedIdx, focusEnabledIdx, getDefFocusableItem, style).first;
+}
+
+MArrowNavigationExt(
+	i : int,
+	listLen : int,
+	makeListItem : ([MButtonState]) -> Material,
+	focusedIdx : DynamicBehaviour<int>,
+	focusEnabledIdx : DynamicBehaviour<int>,
+	getDefFocusableItem : () -> int,
+	style : [MArrowNavigationStyle]
+) -> Triple<Material, DynamicBehaviour<bool>, Transform<bool>> {
+
+	vertical = extractStruct(style, MArrowNavigationDirection(true)).vertical;
+	supportHomeEnd = extractStruct(style, MArrowNavigationSupportHomeEnd(true)).support;
+	checkFocusability = extractStruct(style, MArrowNavigationCheckFocusability(\__ -> true)).fn;
+	customOnArrow = tryExtractStruct(style, MArrowNavigationCustomOnArrow(nop1, \ -> false));
+	selectItem = tryExtractStruct(style, MArrowNavigationSelectItem(nop, false));
+	resetSelection = extractStruct(style, MArrowNavigationResetSelection(\ -> false)).fn;
+	mainKeys = if (vertical) Pair(KEY_UP, KEY_DOWN) else Pair(KEY_LEFT, KEY_RIGHT);
+
+	focused = make(false);
+	focusEnabled = feq(focusEnabledIdx, i);
+
+	makeListItem([MFocused(focused), MFocusEnabled(focusEnabled)])
+	|> (\m -> MInteractive([
+		KeyUp2(\handled, ke -> {
+			if (!handled && fgetValue(focused)) {
+				idx = getValue(focusedIdx);
+				updateFocusedAnswer = \newIdx -> if (checkFocusability(newIdx)) nextDistinct(focusedIdx, newIdx);
+				onArrow = \forw, newIdx ->
+					eitherFn(customOnArrow,
+						\coa ->
+							if (coa.enabled()) coa.fn(forw)
+							else updateFocusedAnswer(newIdx),
+						\ -> updateFocusedAnswer(newIdx)
+					);
+				if (ke.keycode == mainKeys.first) { // backwards
+					onArrow(false, if (idx == 0) listLen - 1 else idx - 1);
+					true
+				} else if (ke.keycode == mainKeys.second) { // forward
+					onArrow(true, if (idx == listLen - 1) 0 else idx + 1);
+					true
+				} else if (supportHomeEnd && ke.keycode == KEY_HOME) {
+					onArrow(false, 0);
+					true
+				} else if (supportHomeEnd && ke.keycode == KEY_END) {
+					onArrow(true, listLen - 1);
+					true
+				} else if (ke.keycode == KEY_ESCAPE) {
+					resetSelection()
+				} else if (eitherMap(selectItem, \si -> !si.auto, false) && ke.keycode == KEY_SPACE) {
+					maybeApply(selectItem, \si -> si.fn());
+					true
+				} else {
+					false
+				}
+			} else handled
+		})
+	], m))
+	|> (\m -> MConstruct([
+			makeSubscribe(focusedIdx, \focIdx ->
+				if (focIdx == i) deferUntilNextFrameRendered(\ -> {
+					nextDistinct(focusEnabledIdx, i);
+					nextDistinct(focused, true);
+					maybeApply(selectItem, \si -> if (si.auto) si.fn())
+				}) else {
+					nextDistinct(focused, false);
+				}
+			),
+			makeSubscribe(focused, \foc -> if (foc) {
+				deferUntilNextFrameRendered(\ -> nextDistinct(focusedIdx, i))
+			} else {
+				nextDistinct(focusEnabledIdx, getDefFocusableItem());
+			})
+		], m))
+	|> (\m -> Triple(m, focused, focusEnabled))
 }

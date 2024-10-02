@@ -1,6 +1,7 @@
 import tools/flowc/eval;
 import tools/flowc/flowc_typecheck;
 import tools/flowc/manipulation/deadcode;
+import tools/flowc/manipulation/compile_time;
 import tools/flowc/manipulation/tail_call;
 
 export {
@@ -18,21 +19,17 @@ fcInterpret(conf : CompilerConfig) -> void {
 	);
 	globEnv = initFcTypeEnvGlobal();
 	pair = parseAndTypecheckProgram(run_config, globEnv, run_config.flowfile);
-	program = deadFiCode(pair.first, collectFiEffects(pair.first), makeSet1("for"), makeSet(), false, true, conf.verbose);
+	ok = ref true;
+	on_err = \err -> {
+		printFcError(run_config, globEnv, err);
+		ok := false
+	}
+	program1 = substituteCompileTimeValues(pair.first, on_err);
+	program = deadFiCode(program1, collectFiEffects(program1), makeSet1("for"), makeSet(), false, true, conf.verbose);
 	optimzied = fcOptimizeTailCalls(program);
 	if (pair.second == 0) {
-		globals = fcInitEvalGlobals(optimzied, fail, globEnv);
-		ret = fcCallFunction("main", [], globals);
-		if (getDataTagForValue(ret) == string_data_tag) {
-			err = cast(ret : flow -> string);
-			fcPrintln("Runtime error occured: " + err, conf.threadId);
-			quit(1);
-		} else if (getDataTagForValue(ret) == void_data_tag) {
-			// Normal exit status
-		} else {
-			fcPrintln("main function must return void, but returned '" + toString(ret) + "'", conf.threadId);
-			quit(1);
-		}
+		fcCallFunctionByName("main", [], fcInitEvalEnv(optimzied, None(), None(), on_err));
+		quit(if (^ok) 0 else 1);
 	} else {
 		// Some errors in a code
 		quit(1);

@@ -5,17 +5,17 @@ import pebbles/pebble_utils;
 
 export {
 	/*
-		PebbledHierarchy is an arrangement of menu items in which items correspond to 
+		PebbledHierarchy is an arrangement of menu items in which items correspond to
 		related data tables organized in a hierarchy. For example:
 
 			`organizations` -> `projects` -> `subjects` -> `modules`
 							-> `providers`
 
-		In this example: clicking on a row in organizations table will open projects table 
-		filtered by selected organization ID and so on. 
+		In this example: clicking on a row in organizations table will open projects table
+		filtered by selected organization ID and so on.
 
-		Item name is used as a part of pebble parameters that allows to maintain URLs, 
-		handle tables filtering and build visual representation based on MChips. 
+		Item name is used as a part of pebble parameters that allows to maintain URLs,
+		handle tables filtering and build visual representation based on MChips.
 
 	*/
 	PebbledHierarchyItem : (
@@ -30,21 +30,22 @@ export {
 	// Build a material corresponding to the current values of pebbled hierarchy parameters.
 	// Appends UI element (chips) to visually represent and edit pebbled hierarchy filters.
 	MPebbledHierarchyBody(
-		controller : PebbleController, 
-		items : [PebbledHierarchyItem], 
+		controller : PebbleController,
+		items : [PebbledHierarchyItem],
 		content : (Tree</* item parameter name */ string, /* id */ int>) -> Material,
 		style : [PebbledHierarchyBodyStyle]
 	) -> Material;
 
 	PebbledHierarchyBodyStyle ::= PebbledHierarchyBodyAdditionalChips, PebbledHierarchyBodyErrorView,
 		PebbledHierarchyBodyHideChips, PebbledHierarchyBodyChipBorders, PebbledHierarchyBodyChipPinnable,
-		PebbleHierarchyBodyUntilWait;
+		PebbleHierarchyBodyUntilWait, PebbledHierarchyBodyChipWrapper;
 		PebbledHierarchyBodyAdditionalChips(chips : Transform<[Material]>);
 		PebbledHierarchyBodyErrorView(fn : (itemName : string, itemId : string) -> Material);
 		// useful when hierarchy view does not depend on chip filtration and uses visual elements like breadcrumbs
 		PebbledHierarchyBodyHideChips();
 		PebbledHierarchyBodyChipBorders(left : double, top : double, right : double, bottom : double);
 		PebbledHierarchyBodyChipPinnable(labels : [PinnedPebbleHierarchyChip]);
+		PebbledHierarchyBodyChipWrapper(fn : (Material) -> Material);
 		PebbleHierarchyBodyUntilWait(waitFn : ([string]) -> Material);
 
 	PinnedPebbleHierarchyChip(label : string, utf : string, show : (Pebble) -> bool);
@@ -58,7 +59,7 @@ export {
 	) -> void;
 	setViewForPebbledHierarchyItem(controller : PebbleController, items : [PebbledHierarchyItem], itemName : string) -> void;
 
-	// Filter by the row ID of the data table corresponding to the given item. 
+	// Filter by the row ID of the data table corresponding to the given item.
 	// For example: open `projects` table filtered by selected `organization` ID.
 	setViewForPebbledHierarchyFilterParametersChildren(
 		manager : MaterialManager,
@@ -117,18 +118,14 @@ MPebbledHierarchyBody(
 	style : [PebbledHierarchyBodyStyle]
 ) -> Material {
 	allItems = getAllPebbledHierarchyItems(items);
-	valuesBs = map(allItems, \__ -> make(""));
 	parameters = map(allItems, \item -> item.parameter);
 	allItemsLength = length(allItems);
 	waitFn = extractStruct(style, PebbleHierarchyBodyUntilWait(\__ -> MEmpty())).waitFn;
 	hideChips = containsStruct(style, PebbledHierarchyBodyHideChips());
 
-	MLinkPebbleParameters(
-		controller,
-		mapi(allItems, \i, item -> {
-			PebbleStringLink(item.parameter, valuesBs[i], nop1, RecordURLRestoreOrChangeParameters([]))
-		}),
-		MSelect(fmerge(valuesBs), \values -> {
+	MSelectPebbleParameters(controller, parameters, \parameter2valueT -> {
+		valuesTs = map(parameters, parameter2valueT);
+		MSelect(fmerge(valuesTs), \values -> {
 			foundDiffIdx = iteriUntil(parameters, \i, p -> getCurrentPebbleLastParameter(controller, p, "") != elementAt(values, i, ""));
 			if (foundDiffIdx != allItemsLength) {
 				waitFn(values)
@@ -157,7 +154,7 @@ MPebbledHierarchyBody(
 				}
 			}
 		})
-	)
+	});
 }
 
 collectPebbledHierarchyData(controller : PebbleController, items : [PebbledHierarchyItem]) -> PebbledHierarchyData {
@@ -174,7 +171,7 @@ collectPebbledHierarchyItemsValues(controller : PebbleController, items : [Pebbl
 		findDef(pvs, \pv -> pv.key == item.parameter, KeyValue(item.parameter, "")).value
 	})
 }
-	
+
 collectPebbledHierarchyData2(items : [PebbledHierarchyItem], values : [string], includeEmpty : bool) -> PebbledHierarchyData {
 	foldi(items, PebbledHierarchyItemsData([]), \i, acc, item -> {
 		switch(acc) {
@@ -206,6 +203,7 @@ collectPebbledHierarchyData2(items : [PebbledHierarchyItem], values : [string], 
 buildPebbledHierarchyChips(controller : PebbleController, datas : [PebbledHierarchyItemData], style : [PebbledHierarchyBodyStyle]) -> Material {
 	additionalChips = extractStruct(style, PebbledHierarchyBodyAdditionalChips(const([]))).chips;
 	borders = extractStruct(style, PebbledHierarchyBodyChipBorders(8.0, 8.0, 8.0, 8.0));
+	wrapper = extractStruct(style, PebbledHierarchyBodyChipWrapper(idfn)).fn;
 	pinnables = extractStruct(style, PebbledHierarchyBodyChipPinnable([])).labels;
 	utfPressedB = make(false);
 
@@ -266,6 +264,7 @@ buildPebbledHierarchyChips(controller : PebbleController, datas : [PebbledHierar
 		getBorder(borders.left), getBorder(borders.top), getBorder(borders.right), getBorder(borders.bottom),
 		MFlexibleGrid(chipsB, [MOrdered(true)])
 	)
+	|> wrapper
 }
 
 makePebbleHierarchyMChip(
@@ -306,7 +305,7 @@ setViewForPebbledHierarchyItemParametersInner(
 	items : [PebbledHierarchyItem],
 	itemName : string,
 	parameters : [KeyValue]
-) -> void {	
+) -> void {
 	hdata = collectPebbledHierarchyData(controller, items);
 	pebbleParameters = switch(hdata) {
 		PebbledHierarchyItemsData(datas): {

@@ -3,10 +3,7 @@ package com.area9innovation.flow;
 import java.util.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.net.URL;
-import java.net.URLConnection;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
+import java.net.*;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
@@ -28,20 +25,28 @@ import java.nio.file.Files;
 public class HttpSupport extends NativeHost {
 	public static String defaultResponseEncoding = "auto";
 
-	public static Object httpRequest(String url, boolean post,Object[] headers,
-				Object[] params,Func1<Object,String> onData,Func1<Object,String> onError,Func1<Object,Integer> onStatus) {
-		// TODO
-		try {
+	public static Object httpRequest(
+		String url, boolean post,Object[] headers, Object[] params,
+		Func1<Object, String> onData, Func1<Object, String> onError, Func1<Object, Integer> onStatus
+	) {
+		Callbacks callbacks = FlowRuntime.getCallbacks();
+		Callbacks.Callback callbackOnData = callbacks.make(onData);
+		Callbacks.Callback callbackOnError = callbacks.make(onError);
+		Callbacks.Callback callbackOnStatus = callbacks.make(onStatus);
+		callbackOnData.alternativeCallbackIds = new Integer[]{callbackOnError.id};
+		callbackOnError.alternativeCallbackIds = new Integer[]{callbackOnData.id};
+
+		FlowRuntime.runParallel(() -> {try {
 			// Add parameters
 			String urlParameters = "";
 			for (Object param : params) {
-	 			Object [] keyvalue = (Object []) param;
-	 			String key = (String) keyvalue[0];
+				Object [] keyvalue = (Object []) param;
+				String key = (String) keyvalue[0];
 				String value = (String) keyvalue[1];
 				if (!urlParameters.isEmpty()) {
 					urlParameters += "&";
 				}
-	 			urlParameters = urlParameters + encodeUrlParameter(key, value);
+				urlParameters = urlParameters + encodeUrlParameter(key, value);
 			}
 
 			HttpURLConnection con = null;
@@ -50,7 +55,7 @@ public class HttpSupport extends NativeHost {
 				// POST
 				byte[] postData = urlParameters.getBytes(StandardCharsets.UTF_8);
 				int postDataLength = postData.length;
-				URL obj = new URL(url);
+				URL obj = new URI(url).toURL();
 
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
@@ -73,7 +78,7 @@ public class HttpSupport extends NativeHost {
 						urlWithParams += "?" + urlParameters;
 					}
 				}
-				URL obj = new URL(urlWithParams);
+				URL obj = new URI(urlWithParams).toURL();
 				// GET
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
@@ -81,35 +86,27 @@ public class HttpSupport extends NativeHost {
 			}
 
 			int responseCode = con.getResponseCode();
-			onStatus.invoke(responseCode);
+			callbackOnStatus.setReady(responseCode);
 
 			// TODO: Make this asynchronous
 			ResultStreamPair p = getResultStreamPair(con);
 			if (Objects.nonNull(p.stream)) {
-				BufferedReader in = new BufferedReader(new InputStreamReader(p.stream));
-				String inputLine;
-				StringBuffer response = new StringBuffer();
-
-				while ((inputLine = in.readLine()) != null) {
-					response.append(inputLine);
-					response.append('\n');
-				}
-				in.close();
+				String response = stream2string(p.stream, defaultResponseEncoding);
 				if (p.isData) {
-					onData.invoke(response.toString());
+					callbackOnData.setReady(response);
 				} else {
-					onError.invoke(response.toString());
+					callbackOnError.setReady(response);
 				}
 			} else {
-				onError.invoke("");
+				callbackOnError.setReady("");
 			}
-		} catch (MalformedURLException e) {
-			onError.invoke("Malformed url " + url + " " + e.getMessage());
+		} catch (MalformedURLException|URISyntaxException e) {
+			callbackOnError.setReady("Malformed url " + url + " " + e.getMessage());
 		} catch (IOException e) {
-			onError.invoke("IO exception " + url + " " + e.getMessage());
+			callbackOnError.setReady("IO exception " + url + " " + e.getMessage());
 		} catch (Exception e) {
-			onError.invoke("Other exception " + url + " " + e.getMessage());
-		}
+			callbackOnError.setReady("Other exception " + url + " " + e.getMessage());
+		}});
 		return null;
 	}
 
@@ -134,6 +131,92 @@ public class HttpSupport extends NativeHost {
 		}
 	}
 
+	private static final String stream2string(InputStream inputStream, String responseEncoding) throws java.io.IOException {
+		if (Native.getUrlParameter("use_utf8_js_style").equals("1")) {
+			responseEncoding = "utf8_js";
+		} else if (Native.getUrlParameter("utf8_no_surrogates").equals("1")) {
+			responseEncoding = "utf8";
+		} else if (responseEncoding.equals("auto")) {
+			responseEncoding = defaultResponseEncoding;
+		}
+
+		StringBuilder response = new StringBuilder();
+		// inputStream might be null, if body is empty
+		if (Objects.nonNull(inputStream)) {
+			final int bufferSize = 1024;
+
+			if (responseEncoding.equals("utf8")) {
+				// How much last chars from the previous chain we moved to the beginning of the new one (0 or 1).
+				int additionalChars = 0;
+				// +1 additinal char from the prevoius chain
+				final char[] buffer = new char[bufferSize + 1];
+
+				int readSize = 0;
+				int countSize = 0;
+
+				Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
+				while (true) {
+					// How much chars we used to decode symbol into utf8 (1 or 2)
+					int codesUsed = 0;
+
+					readSize = in.read(buffer, additionalChars, bufferSize);
+
+					// We stop, if nothing read
+					if (readSize < 0) break;
+
+					// On one less of real to use it as index + 1 in `for`
+					countSize = readSize + additionalChars - 1;
+					// Now, how much unprocessed chars we have
+					additionalChars = (char)readSize;
+
+					int counter = 0;
+					while (counter < countSize) {
+						codesUsed = unpackSurrogatePair(response, buffer[counter], buffer[counter + 1]);
+						counter += codesUsed;
+
+						additionalChars -= codesUsed;
+					}
+
+					if (additionalChars > 0) {
+						buffer[0] = buffer[counter];
+						additionalChars = 1;
+					}
+				}
+
+				if (additionalChars > 0) {
+					unpackSurrogatePair(response, buffer[0], buffer[0]);
+				}
+			} else if (responseEncoding.equals("utf8_js")) {
+				final char[] buffer = new char[bufferSize];
+				Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
+				while (true) {
+					int rsz = in.read(buffer, 0, buffer.length);
+					// We stop, if nothing read
+					if (rsz < 0) break;
+					response.append(buffer, 0, rsz);
+				}
+			} else if (responseEncoding.equals("byte")) {
+				char c;
+				int length;
+				final byte[] buffer = new byte[bufferSize];
+
+				while ((length = inputStream.read(buffer)) != -1) {
+					for (int i=0; i< length; i++) {
+						response.append((char) (buffer[i]&0x00FF));
+					}
+				}
+			} else { // auto or other
+				BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+				for (String line; (line = reader.readLine()) != null; ) {
+					response.append(line);
+					response.append("\n");
+				}
+				reader.close();
+			}
+		}
+		return response.toString();
+	}
+
 	private static final java.lang.reflect.Method string2utf8Bytes;
 	static {
 		java.lang.reflect.Method method = null;
@@ -148,20 +231,31 @@ public class HttpSupport extends NativeHost {
 	}
 
 	public static  final Object httpCustomRequestNative(String url, String method, Object[] headers,
-		Object[] params, String data, String responseEncoding, Func3<Object,Integer,String,Object[]> onResponse, Boolean async) {
+		Object[] params, String data, String responseEncoding, Func3<Object,Integer,String,Object[]> onResponse, Boolean async
+	) {
 		return httpCustomRequestWithTimeoutNativeBase(url, method, headers, params, data, responseEncoding, onResponse, async, 0);
 	}
 
 	public static final Object httpCustomRequestWithTimeoutNative(String url, String method, Object[] headers,
 		Object[] params, String data, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
-		) {
+	) {
 		return httpCustomRequestWithTimeoutNativeBase(url, method, headers, params, data, "auto", onResponse, async, timeout);
 	}
 
-	private static final Object httpCustomRequestWithTimeoutNativeBase(String url, String method, Object[] headers,
+	private static final Object httpCustomRequestWithTimeoutNativeBase(String url, String method0, Object[] headers,
 		Object[] params, String data, String responseEncoding, Func3<Object,Integer,String,Object[]> onResponse, Boolean async, Integer timeout
-		) {
-		try {
+	) {
+		Callbacks callbacks = FlowRuntime.getCallbacks();
+		Func1<Object, Object> onDone = new Func1<Object, Object>() {
+			public Object invoke(Object argsObj) {
+				Object[] args = (Object[]) argsObj;
+				return onResponse.invoke((Integer)args[0], (String)args[1], (Object[])args[2]);
+			}
+		};
+		Callbacks.Callback callbackOnDone = callbacks.make(onDone);
+
+		FlowRuntime.runParallel(() -> {try {
+			String method = method0;
 			// Add parameters
 			String urlParameters = "";
 			for (Object param : params) {
@@ -177,7 +271,7 @@ public class HttpSupport extends NativeHost {
 			HttpURLConnection con = null;
 			byte[] postData = null;
 			if (method == "POST") {
-				URL obj = new URL(url);
+				URL obj = new URI(url).toURL();
 				con = (HttpURLConnection) obj.openConnection();
 				if (data != null & data != "") {
 					postData = data.getBytes(StandardCharsets.UTF_8);
@@ -205,9 +299,15 @@ public class HttpSupport extends NativeHost {
 						urlWithParams += "?" + urlParameters;
 					}
 				}
-				URL obj = new URL(urlWithParams);
+				URL obj = new URI(urlWithParams).toURL();
 				con = (HttpURLConnection) obj.openConnection();
 				addHeaders(con, headers);
+				// Workaround for the `PATCH` method which does not supported in the `HttpURLConnection`.
+				// https://trello.com/c/OPRchLv4/4399-cron-fails-with-invalid-http-method-patch
+				if (method == "PATCH") {
+					con.setRequestProperty("X-HTTP-Method-Override", "PATCH");
+					method = method == "PATCH" ? "POST" : method;
+				}
 				con.setRequestMethod(method);
 				con.setDoOutput(true);
 			}
@@ -244,97 +344,14 @@ public class HttpSupport extends NativeHost {
 				responseHeaders.add(kv);
 			}
 
-			InputStream inputStream = getResultStreamPair(con).stream;
+			String response = stream2string(getResultStreamPair(con).stream, responseEncoding);
+			callbackOnDone.setReady(new Object[]{responseCode, response, responseHeaders.toArray()});
 
-			if (Native.getUrlParameter("use_utf8_js_style").equals("1")) {
-				responseEncoding = "utf8_js";
-			} else if (Native.getUrlParameter("utf8_no_surrogates").equals("1")) {
-				responseEncoding = "utf8";
-			} else if (responseEncoding.equals("auto")) {
-				responseEncoding = defaultResponseEncoding;
-			}
-
-			StringBuilder response = new StringBuilder();
-			// inputStream might be null, if body is empty
-			if (Objects.nonNull(inputStream)) {
-				final int bufferSize = 1024;
-
-				if (responseEncoding.equals("utf8")) {
-					// How much last chars from the previous chain we moved to the beginning of the new one (0 or 1).
-					int additionalChars = 0;
-					// +1 additinal char from the prevoius chain
-					final char[] buffer = new char[bufferSize + 1];
-
-					int readSize = 0;
-					int countSize = 0;
-
-					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
-					while (true) {
-						// How much chars we used to decode symbol into utf8 (1 or 2)
-						int codesUsed = 0;
-
-						readSize = in.read(buffer, additionalChars, bufferSize);
-
-						// We stop, if nothing read
-						if (readSize < 0) break;
-
-						// On one less of real to use it as index + 1 in `for`
-						countSize = readSize + additionalChars - 1;
-						// Now, how much unprocessed chars we have
-						additionalChars = (char)readSize;
-
-						int counter = 0;
-						while (counter < countSize) {
-							codesUsed = unpackSurrogatePair(response, buffer[counter], buffer[counter + 1]);
-							counter += codesUsed;
-
-							additionalChars -= codesUsed;
-						}
-
-						if (additionalChars > 0) {
-							buffer[0] = buffer[counter];
-							additionalChars = 1;
-						}
-					}
-
-					if (additionalChars > 0) {
-						unpackSurrogatePair(response, buffer[0], buffer[0]);
-					}
-				} else if (responseEncoding.equals("utf8_js")) {
-					final char[] buffer = new char[bufferSize];
-					Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
-					while (true) {
-						int rsz = in.read(buffer, 0, buffer.length);
-						// We stop, if nothing read
-						if (rsz < 0) break;
-						response.append(buffer, 0, rsz);
-					}
-				} else if (responseEncoding.equals("byte")) {
-					char c;
-					int length;
-					final byte[] buffer = new byte[bufferSize];
-
-					while ((length = inputStream.read(buffer)) != -1) {
-						for (int i=0; i< length; i++) {
-							response.append((char) (buffer[i]&0x00FF));
-						}
-					}
-				} else { // auto or other
-					BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-					for (String line; (line = reader.readLine()) != null; ) {
-						response.append(line);
-						response.append("\n");
-					}
-				}
-
-			}
-			onResponse.invoke(responseCode, response.toString(), responseHeaders.toArray());
-
-		} catch (MalformedURLException e) {
-			onResponse.invoke(400, "Malformed url " + url + " " + e.getMessage(), new Object[0]);
+		} catch (MalformedURLException|URISyntaxException e) {
+			callbackOnDone.setReady(new Object[]{400, "Malformed url " + url + " " + e.getMessage(), new Object[0]});
 		} catch (IOException e) {
-			onResponse.invoke(500, "IO exception " + url + " " + e.getMessage(), new Object[0]);
-		}
+			callbackOnDone.setReady(new Object[]{500, "IO exception " + url + " " + e.getMessage(), new Object[0]});
+		}});
 		return null;
 	}
 
@@ -380,6 +397,12 @@ public class HttpSupport extends NativeHost {
 			String value = (String) heads[1];
 			connection.setRequestProperty(key, value);
 		}
+
+		String userInfo = connection.getURL().getUserInfo();
+		if (userInfo != null) {
+			String authorization = new String(Base64.getEncoder().encode(userInfo.getBytes()));
+			connection.setRequestProperty("Authorization", "Basic " + authorization);
+		}
 	}
 
 	public static final Object sendHttpRequestWithAttachments(String url, Object[] headers, Object[] params,
@@ -395,16 +418,18 @@ public class HttpSupport extends NativeHost {
 		return null;
 	}
 
-	public static final Func0<Object> uploadFile(String url,
-			Object[] params,
-			Object[] headers,
-			Object[] fileTypes,
-			Func0<Object> onOpen,
-			Func2<Boolean, String, Integer> onSelect,
-			Func1<Object, String> onData,
-			Func1<Object, String> onError,
-			Func2<Object, Double, Double> onProgress,
-			Func0<Object> onCancel) {
+	public static final Func0<Object> uploadFile(
+		String url,
+		Object[] params,
+		Object[] headers,
+		Object[] fileTypes,
+		Func0<Object> onOpen,
+		Func2<Boolean, String, Integer> onSelect,
+		Func1<Object, String> onData,
+		Func1<Object, String> onError,
+		Func2<Object, Double, Double> onProgress,
+		Func0<Object> onCancel
+	) {
 		// TODO
 		System.out.println("uploadFile not implemented");
 
@@ -412,109 +437,122 @@ public class HttpSupport extends NativeHost {
 	}
 
 	public static final Func0<Object> uploadNativeFile(
-			Object file,
-			String url,
-			Object[] params,
-			Object[] headers,
-			Func0<Object> onOpen,
-			Func1<Object, String> onData,
-			Func1<Object, String> onError,
-			Func2<Object, Double, Double> onProgress) {
+		Object file,
+		String url,
+		Object[] params,
+		Object[] headers,
+		Func0<Object> onOpen,
+		Func1<Object, String> onData,
+		Func1<Object, String> onError,
+		Func2<Object, Double, Double> onProgress
+	) {
+		Callbacks callbacks = FlowRuntime.getCallbacks();
+		Callbacks.Callback callbackOnData = callbacks.make(onData);
+		Callbacks.Callback callbackOnError = callbacks.make(onError);
+		callbackOnData.alternativeCallbackIds = new Integer[]{callbackOnError.id};
+		callbackOnError.alternativeCallbackIds = new Integer[]{callbackOnData.id};
 
-		File _file = (File)file;
-		String contentType = null;
-		try {
-			contentType = Files.probeContentType(_file.toPath());
-		} catch (FileNotFoundException e) {
-			onError.invoke("File not found " + _file.toPath() + " " + e.getMessage());
-		} catch (IOException e) {
-			onError.invoke("IO exception while getting file info " + _file.toPath() + " " + e.getMessage());
-		}
+		FlowRuntime.runParallel(() -> {
+			File _file = (File)file;
+			String contentType = null;
+			try {
+				contentType = Files.probeContentType(_file.toPath());
+			} catch (FileNotFoundException e) {
+				callbackOnError.setReady("File not found " + _file.toPath() + " " + e.getMessage());
+				return;
+			} catch (IOException e) {
+				callbackOnError.setReady("IO exception while getting file info " + _file.toPath() + " " + e.getMessage());
+				return;
+			}
 
-		HttpURLConnection con = null;
-		URL urlObj = null;
-		try {
-			urlObj = new URL(url);
-		} catch (MalformedURLException e) {
-			onError.invoke("Malformed url " + url + " " + e.getMessage());
-		}
+			HttpURLConnection con = null;
+			URL urlObj = null;
+			try {
+				urlObj = new URI(url).toURL();
+			} catch (MalformedURLException|URISyntaxException e) {
+				callbackOnError.setReady("Malformed url " + url + " " + e.getMessage());
+				return;
+			}
 
-		String boundary = Long.toHexString(System.currentTimeMillis()); // Just generate some unique random value.
-		String CRLF = "\r\n"; // Line separator required by multipart/form-data.
+			String boundary = Long.toHexString(System.currentTimeMillis()); // Just generate some unique random value.
+			String CRLF = "\r\n"; // Line separator required by multipart/form-data.
 
-		try {
-			con = (HttpURLConnection) urlObj.openConnection();
-			onOpen.invoke();
+			try {
+				con = (HttpURLConnection) urlObj.openConnection();
+				onOpen.invoke();
 
-			addHeaders(con, headers);
-			con.setDoOutput(true);
-			con.setRequestMethod("POST");
+				addHeaders(con, headers);
+				con.setDoOutput(true);
+				con.setRequestMethod("POST");
 
-			con.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-			con.setUseCaches(false);
+				con.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+				con.setUseCaches(false);
 
-			try (
-				OutputStream output = con.getOutputStream();
-				PrintWriter writer = new PrintWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8), true);
-			) {
+				try (
+					OutputStream output = con.getOutputStream();
+					PrintWriter writer = new PrintWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8), true);
+				) {
 
-				// Send normal param.
-				for (Object param : params) {
-					Object [] keyvalue = (Object []) param;
-					String key = (String) keyvalue[0];
-					String value = (String) keyvalue[1];
+					// Send normal param.
+					for (Object param : params) {
+						Object [] keyvalue = (Object []) param;
+						String key = (String) keyvalue[0];
+						String value = (String) keyvalue[1];
+						writer.append("--" + boundary).append(CRLF);
+						writer.append("Content-Disposition: form-data; name=\"" + URLEncoder.encode(key, StandardCharsets.UTF_8.name()) + "\"").append(CRLF);
+						writer.append("Content-Type: text/plain; charset=" + StandardCharsets.UTF_8.name()).append(CRLF);
+						writer.append(CRLF).append(URLEncoder.encode(value, StandardCharsets.UTF_8.name())).append(CRLF).flush();
+					}
+
+					// Send binary file.
 					writer.append("--" + boundary).append(CRLF);
-					writer.append("Content-Disposition: form-data; name=\"" + URLEncoder.encode(key, StandardCharsets.UTF_8.name()) + "\"").append(CRLF);
-					writer.append("Content-Type: text/plain; charset=" + StandardCharsets.UTF_8.name()).append(CRLF);
-					writer.append(CRLF).append(URLEncoder.encode(value, StandardCharsets.UTF_8.name())).append(CRLF).flush();
+					writer.append("Content-Disposition: form-data; name=\"binaryFile\"; filename=\"" + _file.getName() + "\"").append(CRLF);
+					writer.append("Content-Type: " + contentType).append(CRLF);
+					writer.append("Content-Transfer-Encoding: binary").append(CRLF);
+					writer.append(CRLF).flush();
+					Files.copy(_file.toPath(), output);
+					output.flush(); // Important before continuing with writer!
+					writer.append(CRLF).flush(); // CRLF is important! It indicates end of boundary.
+
+					// // End of multipart/form-data.
+					writer.append("--" + boundary + "--").append(CRLF).flush();
+				} catch (IOException e) {
+					callbackOnError.setReady("IO exception while sending data to " + url + " " + e.getMessage());
+					con.disconnect();
+					return;
 				}
 
-				// Send binary file.
-				writer.append("--" + boundary).append(CRLF);
-				writer.append("Content-Disposition: form-data; name=\"binaryFile\"; filename=\"" + _file.getName() + "\"").append(CRLF);
-				writer.append("Content-Type: " + contentType).append(CRLF);
-				writer.append("Content-Transfer-Encoding: binary").append(CRLF);
-				writer.append(CRLF).flush();
-				Files.copy(_file.toPath(), output);
-				output.flush(); // Important before continuing with writer!
-				writer.append(CRLF).flush(); // CRLF is important! It indicates end of boundary.
+				int responseCode = con.getResponseCode();
 
-				// // End of multipart/form-data.
-				writer.append("--" + boundary + "--").append(CRLF).flush();
-			} catch (IOException e) {
-				onError.invoke("IO exception while sending data to " + url + " " + e.getMessage());
-			}
-
-			int responseCode = con.getResponseCode();
-
-			// TODO: Make this asynchronous
-			StringBuffer response = new StringBuffer();
-
-			try (
-				BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-			) {
-				String inputLine;
-				while ((inputLine = in.readLine()) != null) {
-					response.append(inputLine);
-					response.append('\n');
+				StringBuffer response = new StringBuffer();
+				try (
+					BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+				) {
+					String inputLine;
+					while ((inputLine = in.readLine()) != null) {
+						response.append(inputLine);
+						response.append('\n');
+					}
+					in.close();
+				} catch (IOException e) {
+					callbackOnError.setReady("IO exception while reading response " + url + " " + e.getMessage());
+					con.disconnect();
+					return;
 				}
-				in.close();
-			} catch (IOException e) {
-				onError.invoke("IO exception while reading response " + url + " " + e.getMessage());
-			}
 
-			if (responseCode != 200) {
-				onError.invoke("Response code: " + Integer.toString(responseCode) + ", data: " + response.toString());
-			} else {
-				onData.invoke(response.toString());
+				if (responseCode != 200) {
+					callbackOnError.setReady("Response code: " + Integer.toString(responseCode) + ", data: " + response.toString());
+				} else {
+					callbackOnData.setReady(response.toString());
+				}
+			} catch (IOException e) {
+				callbackOnError.setReady("IO exception " + url + " " + e.getMessage());
+			} finally {
+				if (con != null) {
+					con.disconnect();
+				}
 			}
-		} catch (IOException e) {
-			onError.invoke("IO exception " + url + " " + e.getMessage());
-		} finally {
-			if (con != null) {
-				con.disconnect();
-			}
-		}
+		});
 		return null;
 	}
 

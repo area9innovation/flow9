@@ -79,23 +79,56 @@ export {
 	/*
 	Formats the input matrix (array of columns, which are arrays of rows) into the output like:
 
-	 #   MPE#   ND Expression                  MPE Translation                          ND Rationale   MPE Rationale                               
+	 #   MPE#   ND Expression                  MPE Translation                          ND Rationale   MPE Rationale
 	------------------------------------------------------------------------------------------------------------------------------------------------
-	 1   5       ` ( ( ps /\ ch ) -> th ) `     ` ( ph -> ( ( ps /\ ch ) -> th ) ) `    Given          $e.                                         
-	 2   2       ` ( ch -> ps ) `               ` ( ph -> ( ch -> ps ) ) `              Given          $e.                                         
-	 3   1       ` ch `                         ` ( ph -> ch ) `                        Given          $e.                                         
-	 4   3       ` ps `                         ` ( ph -> ps ) `                         ` -> `E 2,3    ~ mpd , the MPE equivalent of ` -> `E, 1,2 
-	 5   4       ` ( ps /\ ch ) `               ` ( ph -> ( ps /\ ch ) ) `               ` /\ `I 4,3    ~ jca , the MPE equivalent of ` /\ `I, 3,1 
+	 1   5       ` ( ( ps /\ ch ) -> th ) `     ` ( ph -> ( ( ps /\ ch ) -> th ) ) `    Given          $e.
+	 2   2       ` ( ch -> ps ) `               ` ( ph -> ( ch -> ps ) ) `              Given          $e.
+	 3   1       ` ch `                         ` ( ph -> ch ) `                        Given          $e.
+	 4   3       ` ps `                         ` ( ph -> ps ) `                         ` -> `E 2,3    ~ mpd , the MPE equivalent of ` -> `E, 1,2
+	 5   4       ` ( ps /\ ch ) `               ` ( ph -> ( ps /\ ch ) ) `               ` /\ `I 4,3    ~ jca , the MPE equivalent of ` /\ `I, 3,1
 
 	*/
 	stringTable2s(m : [[string]], colHeaders : Maybe<[string]>) -> string;
 
 
 	// Replace patterns like: "$F_2(some_arg)" with corresponding function invocation
-	strApplyFns(s: string) -> ([(string) -> string]) -> string;
+	strApplyFns(s: string, fns: [(string) -> string]) -> string;
 
 	// Replace patterns like: "$A_1" with corresponding values
-	strSubstituteArgs(pattern: string) -> ([string]) -> string;
+	strSubstituteArgs(pattern: string, args: [string]) -> string;
+
+	// Replace patterns like: "$<X>_1", where X is an arg prefix,  with corresponding values.
+	// By passing "A" as an argument prefix we get exactly strSubstituteArgs
+	strSubstituteArgsGroup(pattern: string, args: [string], arg_prefix: string) -> string;
+
+	// Glue a strings array with some delimiter so that the result has exactly width characters.
+	// Extra spaces are added to delimiter to enlarge the deserved string length.
+	strGlueToWidth(ss: [string], delim: string, width: int) -> string;
+
+	// Breaks array of strings into rows (arrays of strings) with maximum length of a row as maxWidth.
+	// If align is true, the strings are aligned as columns by a maximal string length in a row.
+	// Example of output with align = true:
+	//
+	//   Single-quoted  string         literals       (but
+	//   not            triple-quoted  string         literals!)
+	//   may            contain        escape         sequences
+	//   (denoted       by             a              preceding
+	//   backslash),    which          are            used
+	//   to             specify        special        characters.
+	//   A              full           list           of
+	//   available      escape         sequences      is
+	//   here.
+	//
+	// with align = false:
+	//   Single-quoted  string  literals  (but  not  triple-quoted string
+	//   literals!)  may contain escape sequences (denoted by a preceding
+	//   backslash),  which  are  used  to  specify special characters. A
+	//   full    list    of   available   escape   sequences   is   here.
+	//
+	strArrayWrap(s : [string], maxWidth : int, align: bool, delimiter: string) -> string;
+
+	// Removes all empty (i.e. containig only spaces/new lines/tabs) lines from a multy line
+	removeEmptyLines(s: string) -> string;
 }
 
 humpCase(s : string, initial : bool) -> string {
@@ -217,7 +250,8 @@ utf32toUtf16(c : int) -> string {
 }
 
 escapeStr(s : string) -> string {
-	strsubsmart(toString(s), 1, -1);
+	s2 = toString(s);
+	substring(s2, 1, strlen(s2) - 2);
 }
 
 unescapeStr(s : string) -> string {
@@ -250,30 +284,31 @@ toStringFormatted(v : ?) -> string {
 }
 
 toStringFormatted2(v : flow) -> string {
-	type = runtimeValueType(v);
-	if (type == "void") {
+	tag = getDataTagForValue(v);
+	if (tag == void_data_tag) {
 		// Must not ever happen
 		"{}";
-	} else if (type == "function" || type == "undef") {
-		type;
-	} else if (type == "int") {
+	} else if (tag == function_data_tag) {
+		"function";
+	} else if (tag == native_data_tag) {
+		"native";
+	} else if (tag == int_data_tag) {
 		i2s(cast(v : flow -> int));
-	} else if (type == "double") {
+	} else if (tag == double_data_tag) {
 		d2s(cast(v : flow -> double));
-	} else if (type == "bool") {
+	} else if (tag == bool_data_tag) {
 		b2s(cast(v : flow -> bool));
-	} else if (type == "string") {
-		"\"" + escapeStr(cast(v : flow -> string)) + "\"";
-	} else if (type == "array") {
+	} else if (tag == string_data_tag) {
+		toString(v);
+	} else if (tag == array_data_tag) {
 		arr = map(cast(v : flow -> [flow]), toStringFormatted2);
 		arr_sl = "[" + strGlue(arr, ", ") + "]";
 		if (!strContains(arr_sl, "\n") && strlen(arr_sl) < 64) arr_sl else {
 			"[\n" + strIndent(strGlue(arr, ",\n")) + "\n]";
 		}
-
-	} else if (type == "ref") {
+	} else if (tag == reference_data_tag) {
 		"ref " + toStringFormatted2(^cast(v : flow -> ref flow));
-	} else {
+	} else if (tag == struct_data_tag) {
 		name = extractStructName(v);
 		if (name == "") {
 			// give up with formatted output
@@ -285,6 +320,8 @@ toStringFormatted2(v : flow) -> string {
 				name + "(\n" + strIndent(strGlue(args, ",\n")) + "\n)";
 			}
 		}
+	} else {
+		"unknown data with tag " + i2s(tag) + ": " + toString(v);
 	}
 }
 
@@ -399,8 +436,8 @@ stringTable2s(m : [[string]], colHeaders : Maybe<[string]>) -> string {
 	}
 }
 
-strApplyFns(s: string) -> ([(string) -> string]) -> string {
-	\fns -> foldi(fns, s, \k, acc, fn -> {
+strApplyFns(s: string, fns : [(string) -> string]) -> string {
+	foldi(fns, s, \k, acc, fn -> {
 		name = "$F_" + i2s(k) + "(";
 		next_open_bracket = \i -> for(i,
 			\x -> x < strlen(acc) && getCharAt(acc, x) != "(",
@@ -440,6 +477,66 @@ strApplyFns(s: string) -> ([(string) -> string]) -> string {
 	});
 }
 
-strSubstituteArgs(pattern: string) -> ([string]) -> string {
-	\args -> strReplaces(pattern, concatA(mapi(args, \i, arg -> ["$A_" + i2s(i), arg])));
+strSubstituteArgsGroup(pattern: string, args: [string], arg_prefix: string) -> string {
+	strReplaces(pattern, concatA(mapi(args, \i, arg -> ["$" + arg_prefix + "_" + i2s(i), arg])));
+}
+
+strSubstituteArgs(pattern: string, args: [string]) -> string {
+	strSubstituteArgsGroup(pattern, args, "A");
+}
+
+strGlueToWidth(ss: [string], delim: string, width: int) -> string {
+	ss_len = length(ss);
+	if (ss_len == 0) "" else
+	if (ss_len == 1) ss[0] else {
+		len = fold(ss, 0, \acc, s -> acc + strlen(s));
+		glued_len = len + strlen(delim) * (ss_len - 1);
+		to_fill = width - glued_len;
+		on_single = to_fill / (ss_len - 1);
+		rest = to_fill % (ss_len - 1);
+		foldi(ss, "", \i, acc, s -> {
+			if (i + 1 == length(ss)) {
+				acc + s;
+			} else {
+				acc + s + delim + strRepeat(" ", on_single + if (i < rest) 1 else 0);
+			}
+		});
+	}
+}
+
+strArrayWrap(ss : [string], maxWidth : int, align: bool, delimiter: string) -> string {
+	if (length(ss) == 0) ""
+	else if (align) {
+		max_strlen = fold(ss, 0, \acc, s -> max(acc, strlen(s))) + 1;
+		ss1 = map(ss, \s -> rpad(s, " ", max_strlen));
+		n_cols = maxWidth / max_strlen;
+		rows = splitByNumber(ss1, n_cols);
+		strGlue(mapi(rows, \i, r ->
+			strGlue(r, delimiter) + if (i + 1 < length(rows)) delimiter else ""
+		), "\n");
+	} else {
+		delim_len = strlen(delimiter);
+		rows = list2array(foldi(ss, Triple(makeList(), [], 0), \i, acc, s ->
+			if (acc.third + strlen(s) + delim_len > maxWidth) {
+				if (i + 1 == length(ss)) {
+					Triple(Cons([s], Cons(acc.second, acc.first)), [], 0);
+				} else {
+					Triple(Cons(acc.second, acc.first), [s], strlen(s) + delim_len);
+				}
+			} else {
+				if (i + 1 == length(ss)) {
+					Triple(Cons(concat(acc.second, [s]), acc.first), [], 0);
+				} else {
+					Triple(acc.first, concat(acc.second, [s]), acc.third + strlen(s) + delim_len);
+				}
+			}
+		).first);
+		strGlue(mapi(rows, \i, r ->
+			strGlueToWidth(r, delimiter, maxWidth) + if (i + 1 < length(rows)) delimiter else ""
+		), "\n");
+	}
+}
+
+removeEmptyLines(s: string) -> string {
+	strGlue(filter(strSplit(s, "\n"), \line -> isNotSpace(line)), "\n");
 }

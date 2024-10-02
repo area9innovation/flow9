@@ -1,0 +1,327 @@
+import net/url_parameter;
+import tools/mango/type/type_eval;
+import text/blueprint;
+import fs/filesystem;
+import tools/mango/type/type2melon;
+import tools/mango/type/gringo_ops;
+
+export {
+	produceTypes(mangoFile : string, t : Term) -> Tree<string, MType>;
+}
+
+produceTypes(mangoFile : string, t : Term) -> Tree<string, MType> {
+	// OK, what does the type inference figure out?
+	typeEnv = inferTypes(mangoFile, t);
+
+	if (true) {
+		// Now we have all the types required
+		types = getUrlParameter("types");
+		if (types == "1" || types == "2") {
+			result = makeTypeDefinitions(types == "2", typeEnv);
+			filename = if (types == "1") {
+				changeFileExt(mangoFile, "_types.melon");
+			} else if (types == "2") {
+				changeFileExt(mangoFile, "_types.flow");
+			} else types;
+			setFileContent(filename, result);
+			println("Saved '" + filename + "'");
+		}
+
+		if (isUrlParameterTrue("gringoops")) {
+			ops = exportGringoOps(changeFileExt(mangoFile, ""), ^(typeEnv.constructors));
+			filename = changeFileExt(mangoFile, "_ops.flow");
+			setFileContent(filename, ops);
+			println("Saved '" + filename + "'");
+		}
+
+		if (isUrlParameterTrue("ruletypes")) {
+			println("\nResult of typeEnv:");
+			traverseInOrder(^(typeEnv.types), \r, tt -> {
+				println(r + ": " + prettyMType(tt));
+			});
+		}
+	}
+
+	^(typeEnv.types);
+}
+
+produceTypeFile(file : string, t : Term) -> string {
+	typeEnv = inferTypes(file, t);
+	makeTypeDefinitions(false, typeEnv)
+	+ "/*" + foldTree(^(typeEnv.types), "\n", \s, tt, acc -> {
+		acc + s + " : " + prettyMType(tt) + ";\n";
+	}) + "*/\n";
+}
+
+inferTypes(file : string, t : Term) -> MangoInferredTypes {
+	// Determine what the stack is after each rule
+	env = mangoType(file, t);
+
+	// Resolve what types each rule produces (if none, leave it empty)
+	infer = MangoInferredTypes(env.env, ref makeSet(), ref makeTree(), ref makeTree(), ref makeTree(), ref 0, file);
+	traverseInOrder(env.env, \rule, __ -> {
+		rt = resolveMType(infer, rule, ReciRule(), MTypeResult(rule));
+	})
+
+	// Next, resolve all the unions
+	traverseInOrder(^(infer.unions), \u, tt : MTypeUnion -> {
+		rt = resolveMType(infer, u, ReciUnion(), tt);
+	});
+
+	// And finally the constructors
+	traverseInOrder(^(infer.constructors), \n, ct : MTypeConstructor -> {
+		rt = resolveMType(infer, n, ReciStruct(), ct);
+	});
+	// debugMTypes("After constructors:", infer);
+	infer
+}
+
+MangoInferredTypes(
+	// What are the stack types?
+	stacks : Tree<string, [MType]>,
+	// What typeEnv are we processing?
+	processing : ref Set<string>,
+	// The structs we are collecting
+	constructors : ref Tree<string, MTypeConstructor>,
+	// The unions we are collecting
+	unions : ref Tree<string, MTypeUnion>,
+	// Lookup from rule to what type it produces
+	types : ref Tree<string, MType>,
+	// When we need to make names, keep a counter
+	uniqName : ref int, 
+	// What file are we compiling?
+	file : string,
+);
+
+debugMTypes(phase : string, infer : MangoInferredTypes) -> void {
+	println("");
+	println(phase);
+	traverseInOrder(^(infer.types), \r, ty -> {
+		println(r + " -> " + prettyMType(ty))
+	});
+	traverseInOrder(^(infer.unions), \u, un -> {
+		println(prettyMType(un));
+	});
+	traverseInOrder(^(infer.constructors), \n, cn -> {
+		println(prettyMType(cn));
+	});
+}
+
+Recipient ::= ReciUnion, ReciRule, ReciStruct;
+	ReciUnion();
+	ReciRule();
+	ReciStruct();
+
+/*
+Does best effort to resolve a type to whatever Melon type it is.
+It resolves MTypeResult to concrete types when we know what the rule gives.
+
+Unnamed unions are identified and named.
+
+When we meet a constructor or union, it is recorded in the environment.
+
+If we see the same constructor multiple times, they are merged.
+
+A union is simplified for transitive redundant structs and self-references removed.
+*/
+resolveMType(infer : MangoInferredTypes, parent : string, recipient : Recipient, t : MType) -> MType {
+	// Do the caller want a real type or just a name?
+	typeOrName = \r, tn : MTypeName -> {
+		switch (recipient) {
+			ReciUnion(): tn;
+			ReciRule(): tn;
+			ReciStruct(): r;
+		}
+	}
+	switch (t)  {
+		MTypeResult(r): {
+			rt = resolveMRule(infer, r);
+			switch (recipient) {
+				ReciUnion(): {
+					// We do not want field names
+					switch (rt) {
+						MTypeField(__, ft): ft;
+						default: rt;
+					}
+				}
+				default: {
+					// Wrap with a suitable name
+					MTypeField(r, rt);
+				}
+			}
+		}
+		MTypeNil(): t;
+		MTypeBool(): t;
+		MTypeInt(): t;
+		MTypeDouble(): t;
+		MTypeString(): t;
+		MTypeConstructor(name, args): {
+			cons = MTypeConstructor(name, map(args, \a -> resolveMType(infer, name, ReciStruct(), a)));
+			mcons = lookupTree(^(infer.constructors), name);
+			result = mcons ?? {
+				if (mcons == t) cons
+				else {
+					join = joinMTypes(\e -> {
+						println(infer.file + ": Error: " + e);
+					}, cons, mcons);
+					switch (join) {
+						MTypeConstructor(__, __): join;
+						default: cons; // Will never happen
+					}
+				}
+			} : cons;
+			infer.constructors := setTree(^(infer.constructors), name, result);
+			typeOrName(result, MTypeName(name));
+		}
+		MTypeStar(st): MTypeStar(resolveMType(infer, parent, recipient, st));
+		MTypeUnion(n, uns): {
+			// Come up with a name if we need to
+			name = if (n == "") {
+				prefix0 = getUrlParameter("typeprefix");
+				uparent = toCapitalization(parent);
+				prefix = if (startsWith(uparent, prefix0)) "" else prefix0;
+				suffix = if (^(infer.uniqName) > 0) "_" + i2s(^(infer.uniqName)) else "";
+				infer.uniqName := ^(infer.uniqName) + 1;
+				prefix + uparent + suffix;
+			} else n;
+
+			// Collect the abbreviated and expanded list of typenames in this union
+			// We use that to simplify and remove all redundant and self-references
+			members = fold(uns, Pair(makeSet(), makeSet()), \acc, tt -> {
+				rt = resolveMType(infer, name, ReciUnion(), tt);
+				expanded = buildSet(resolveType2Structs(infer, name, rt));
+				all = mergeSets(acc.second, expanded);
+				knownElement = (sizeSet(expanded) > 1 && containsSet(all, rt))
+					|| rt == MTypeName(name)
+					|| containsSet(acc.second, rt);
+				Pair(if (knownElement) {
+					// OK, already covered, so we do not have to add
+					acc.first
+				} else {
+					// If the new value covers existing stuff, get rid of it
+					captured = differenceSets(acc.first, expanded);
+					insertSet(captured, rt)
+				}, all)
+			});
+
+			result = MTypeUnion(name, set2array(members.first));
+			/*println("Comparison for " + name);
+			println(prettyMType(simple));
+			println(prettyMType(MTypeUnion(name, set2array(members.second))));*/
+
+			if (length(result.types) == 1) {
+				// It is not a union after all.
+				// println("Retiring " + name);
+				infer.unions := removeFromTree(^(infer.unions), name);
+				resolveMType(infer, parent, recipient, result.types[0])
+			} else {
+				infer.unions := setTree(^(infer.unions), name, result);
+				typeOrName(result, MTypeName(name));
+			}
+		}
+		MTypeName(n): t
+		MTypeField(n, tt): {
+			rt = resolveMType(infer, parent, recipient, tt);
+			switch (recipient) {
+				ReciUnion(): rt;
+				default: MTypeField(n, rt);
+			}
+		}
+	}
+}
+
+// Find out what this rule returns
+resolveMRule(infer : MangoInferredTypes, rule : string) -> MType {
+	mresult = lookupTree(^(infer.types), rule);
+	mresult ?? {
+		mresult;
+	} : {
+		processing = ^(infer.processing);
+		stack = getTreeArrayValue(infer.stacks, rule);
+		if (length(stack) == 1) {
+			type = stack[0];
+			if (!containsSet(processing, rule)) {
+				// OK, avoid infinite recursion
+				infer.processing := insertSet(processing, rule);
+
+				// println("Resolving " + rule + " from " + prettyMType(type));
+				// Reset the counter
+				infer.uniqName := 0;
+				rt = resolveMType(infer, rule, ReciRule(), type);
+				infer.processing := processing;
+				// Record the result
+				infer.types := setTree(^(infer.types), rule, rt);
+				rt;
+			} else {
+				// println("Recursive " + rule + " for " + toString(set2array(processing)));
+				// Keep the recursive result for now
+				MTypeResult(rule);
+			}
+		} else {
+			if (length(stack) > 1) {
+				println("Ignoring rule `" + rule + "` with " + i2s(length(stack)) + " results on stack");
+			}
+			MTypeResult(rule);
+		}
+	}
+}
+
+resolveType2Structs(infer : MangoInferredTypes, union : string, type : MType) -> [MType] {
+	switch (type) {
+		MTypeResult(rule): [type];
+		MTypeNil(): [type];
+		MTypeBool(): [type];
+		MTypeInt(): [type];
+		MTypeDouble(): [type];
+		MTypeString(): [type];
+		MTypeConstructor(name, args): [MTypeName(name)];
+		MTypeStar(__): [type];
+		MTypeUnion(name, types): {
+			// Self-references are ignored
+			if (name == union) []
+			else {
+				sortUnique(fold(types, [], \acc, t -> {
+					concat(acc, resolveType2Structs(infer, union, t));
+				}));
+			}
+		}
+		MTypeName(name): {
+			if (containsKeyTree(^(infer.constructors), name)) {
+				[type]
+			} else {
+				munion = lookupTree(^(infer.unions), name);
+				munion ?? {
+					resolveType2Structs(infer, union, munion)
+				} : {
+					[type];
+				}
+			}
+		}
+		MTypeField(name, ftype): resolveType2Structs(infer, union, ftype);
+	}
+}
+
+// Turn the struct and unions into definitions in flow or Melon syntax
+makeTypeDefinitions(flowFormat : bool, typeEnv : MangoInferredTypes) -> string {
+	header = "// Automatically generated from Mango grammar\n";
+
+	unions = ^(typeEnv.unions);
+	constructors = ^(typeEnv.constructors);
+
+	unionMelon = foldTree(unions, header + if (flowFormat) "export {\n" else "", \u, tt, acc -> {
+		acc + (if (flowFormat) "\t" else "") + union2melon(constructors, flowFormat, tt) + "\n\n";
+	});
+	typesInUnions : Set<string> = foldTree(unions, makeSet(), \u, tt, acc -> {
+		fold(tt.types, acc, \acc2, ttt -> {
+			insertSet(acc2, type2melon(ttt))
+		})
+	});
+	structMelon = foldTree(constructors, unionMelon, \s, tt, acc -> {
+		if (!flowFormat && containsSet(typesInUnions, s)) {
+			acc
+		} else {
+			acc + (if (flowFormat) "\t" + s else s + " : ") + structArgs2melon(tt) + ";\n";
+		}
+	});
+	structMelon + if (flowFormat) "}\n" else "";
+}
