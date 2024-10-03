@@ -154,7 +154,7 @@ export {
 		// visibleWeekdays - visible weekday columns count (default is 5.4)
 		CalendarWeekAdaptiveWidth(minAvailableWidth : double, visibleWeekdays : double);
 		CalendarDisableHorizontalBorder();
-		HoursGridForWeekView(cellSize : double, startHour : int, endHour : int, getHourOnEmptyCell : bool);
+		HoursGridForWeekView(cellSize : double, startHour : int, endHour : int, getHourOnEmptyCell : bool, postprocessEventMaterial : (Material, CalendarEvent) -> Material);
 
 		CalendarReadOnlyEventDialog(open : (int) -> void);
 		CalendarCombinedEventsView(getCombinedEvents : (CalendarTab, [CalendarEvent]) -> [CalendarEvent], getView : (CalendarTab, [CalendarEvent], ([CalendarEvent]) -> void) -> Material);
@@ -930,7 +930,7 @@ dayEventsPopup(
 	isReadOnly = fgetValue(extractStruct(styles, CalendarReadOnly(const(false))).isReadOnlyB);
 	customPopupM = tryExtractStruct(styles, CalendarEventsPopup(nop4));
 	isReadOnlyEvent = extractStruct(styles, CalendarReadOnlyEvent(\__ -> const(false))).isReadOnly;
-	hoursGridStyle = extractStruct(styles, HoursGridForWeekView(-1.0, 0, 24, false));
+	hoursGridStyle = extractStruct(styles, HoursGridForWeekView(-1.0, 0, 24, false, \m, __ -> m));
 	getHourOnClick = hoursGridStyle.cellSize > 0.0 && rangeType == 0 && hoursGridStyle.getHourOnEmptyCell;
 
 	close = make(false);
@@ -1889,7 +1889,7 @@ RangeView(
 	scrollStyle = extractStruct(styles, CalendarScrollStyle(\__ -> [])).getStyle(Some(tab));
 	hideWeekends = contains(styles, CalendarHideWeekends());
 	openReadOnlyDialog = extractStruct(styles, CalendarReadOnlyEventDialog(nop1)).open;
-	hoursGridStyle = extractStruct(styles, HoursGridForWeekView(-1.0, 0, 24, false));
+	hoursGridStyle = extractStruct(styles, HoursGridForWeekView(-1.0, 0, 24, false, \m, __ -> m));
 	showHoursGrid = hoursGridStyle.cellSize > 0.0 && tab == WeekTab() && !fgetValue(isMobileViewB);
 	showWeekNumber = contains(styles, CalendarShowWeekNumber()) && tab == WeekTab();
 
@@ -2143,7 +2143,7 @@ RangeView(
 				eventCells = getEventCells(eventType);
 				getEventView(tab, event, eventType, date, 1, \e -> getDefaultEventView(e, eventCells, eventType)) |> MFixWidth(eventCells)
 			})
-		) |> disableMInteractivesBelow |> MBorderStart(gridWidth) |> MBorderTop(start); 
+		) |> disableMInteractivesBelow |> MBorderStart(gridWidth) |> MBorderTop(start) |> (\m -> hoursGridStyle.postprocessEventMaterial(m, event)); 
 	};
 
 	rowsHeightsB = generate(0, length(eventsByRow), \__ -> make(0.0));
@@ -2173,19 +2173,22 @@ RangeView(
 		if (eventsColumn == []) {
 			TFillXH(0.0)
 		} else {
-			map(eventsColumn, \event -> {
-				eventStartDate = max(event.startDate, Time(event.startDate with hour = hoursGridStyle.startHour, min = 0, sec = 0));
-				eventEndDate = min(event.endDate, Time(event.endDate with hour = hoursGridStyle.endHour, min = 0, sec = 0));
-				if (eventStartDate >= event.endDate || eventEndDate <= event.startDate) {
-					MEmpty();
-				} else {
-					blankLength = i2d(eventStartDate.hour - hoursGridStyle.startHour) * (hoursGridStyle.cellSize + gridWidth) + gridWidth + i2d(eventStartDate.min) * hoursGridStyle.cellSize / 60.0;
-					eventLength = (eventEndDate.hour - eventStartDate.hour) * 60 + eventEndDate.min - eventStartDate.min;
-					eventHours = eventLength / 60;
-					eventHeight = i2d(eventLength) * hoursGridStyle.cellSize / 60.0 + i2d(eventHours);
-					EventCellForColumn(blankLength, eventHeight, event);
-				}
-			}) |> MGroup;
+			concat(
+				[TFillXH(0.0)],
+				map(eventsColumn, \event -> {
+					eventStartDate = max(event.startDate, Time(event.startDate with hour = hoursGridStyle.startHour, min = 0, sec = 0));
+					eventEndDate = min(event.endDate, Time(event.endDate with hour = hoursGridStyle.endHour, min = 0, sec = 0));
+					if (eventStartDate >= event.endDate || eventEndDate <= event.startDate) {
+						MEmpty();
+					} else {
+						blankLength = i2d(eventStartDate.hour - hoursGridStyle.startHour) * (hoursGridStyle.cellSize + gridWidth) + gridWidth + i2d(eventStartDate.min) * hoursGridStyle.cellSize / 60.0;
+						eventLength = (eventEndDate.hour - eventStartDate.hour) * 60 + eventEndDate.min - eventStartDate.min;
+						eventHours = eventLength / 60;
+						eventHeight = i2d(eventLength) * hoursGridStyle.cellSize / 60.0 + i2d(eventHours);
+						EventCellForColumn(blankLength, eventHeight, event);
+					}
+				})
+			) |> MGroup;
 		}
 	});
 
