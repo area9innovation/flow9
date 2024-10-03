@@ -35,6 +35,7 @@ class VideoClip extends FlowContainer {
 	private var isAudio : Bool = false;
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
+	private static var requestQueue = new RequestQueue();
 
 	public var videoWidget : Dynamic;
 	private var widgetBounds = new Bounds();
@@ -540,9 +541,6 @@ class VideoClip extends FlowContainer {
 				untyped source.type = type;
 			}
 		} else {
-			// New resources manager
-			var requestQueue = new RequestQueue();
-
 			// Downloads a file from/with a queue
 			var promise = requestQueue.request(src, headers);
 
