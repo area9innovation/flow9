@@ -112,6 +112,10 @@ public abstract class FlowRuntime {
 		public <T> T runAndWait(String taskDescription, Callable<T> callable) throws Exception {
 			Future<T> future = null;
 			String ld = lastTaskDescription;
+			if (taskDescription != null) {
+				taskDescription += "\n	Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date())
+				 + "\n	Stack size: " + Thread.currentThread().getStackTrace().length;
+			}
 			lastTaskDescription = taskDescription;
 			try {
 				future = submit(callable);
