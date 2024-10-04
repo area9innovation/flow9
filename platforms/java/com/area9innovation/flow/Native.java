@@ -1851,7 +1851,7 @@ public class Native extends NativeHost {
 				public Object call() throws Exception {
 					try {
 						Object result = task.invoke();
-						FlowRuntime.eventLoop();
+						FlowRuntime.eventLoop(false);
 						return result;
 					} catch (OutOfMemoryError e) {
 						// This is brutal, but there is no memory to print anything
@@ -1893,7 +1893,7 @@ public class Native extends NativeHost {
 		FlowRuntime.runParallel(() -> {
 			try {
 				Object result = task.invoke();
-				FlowRuntime.eventLoop();
+				FlowRuntime.eventLoop(false);
 				callbackOnDone.setReady(result);
 			} catch (Exception e) {
 				callbackOnError.setReady(e.getMessage());
@@ -1921,7 +1921,7 @@ public class Native extends NativeHost {
 					completableFuture.complete(res);
 					return null;
 				});
-				FlowRuntime.eventLoop();
+				FlowRuntime.eventLoop(false);
 			} catch (RuntimeException ex) {
 				Throwable e = ex;
 				e.printStackTrace();

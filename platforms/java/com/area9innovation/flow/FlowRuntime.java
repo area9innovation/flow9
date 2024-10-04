@@ -28,14 +28,12 @@ public abstract class FlowRuntime {
 
 	public synchronized void start() {
 		main();
-		while (quitCode == null) {
-			executeActions();
-			if (!sleep()) break;
-		}
+		eventLoop(true);
 	}
 
-	public static boolean sleep() {
+	public static boolean sleep(String description) {
 		try {
+			//System.out.print(" .sleep " + description + " " + getThreadIdLong() + ". ");
 			Thread.sleep(1);
 			return true;
 		} catch (InterruptedException e) {
@@ -45,9 +43,13 @@ public abstract class FlowRuntime {
 		}
 	}
 
-	public static void eventLoop() {
-		while (quitCode == null && executeActions()) {
-			if (!sleep()) break;
+	public static void eventLoop(boolean isMainThread) {
+		while (quitCode == null) {
+			boolean hasBackgroundActions = executeActions(false);
+			if (!isMainThread && !hasBackgroundActions) {
+				break;
+			}
+			if (!sleep("event loop")) break;
 		}
 	}
 
@@ -56,7 +58,7 @@ public abstract class FlowRuntime {
 	public static Thread runParallel(Runnable runnable) {
 		Thread thread = new Thread(runnable);
 		thread.start();
-		executeActions();
+		executeActions(false);
 		return thread;
 	}
 
@@ -67,8 +69,8 @@ public abstract class FlowRuntime {
 		Thread thread = new Thread(future);
 		thread.start();
 		while (thread.isAlive()) {
-			executeActions();
-			if (!sleep()) break;
+			executeActions(true);
+			if (!sleep("wait for thread")) break;
 		}
 		try {
 			return future.get();
@@ -99,7 +101,12 @@ public abstract class FlowRuntime {
 		}
 
 		public SingleExecutor(String description) {
-			super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
+			// For some reason single executor does not work correctly:
+			// Sometimes when previous task is done, queue does not accept a new task:
+			//   Task java.util.concurrent.FutureTask@3e6bdb53[Not completed, task = com.area9innovation.flow.DatabaseSValue$$Lambda$1400/0x0000000840647040@6ef980b8] rejected from com.area9innovation.flow.FlowRuntime$SingleExecutor@2b1aae93[Running, pool size = 1, active threads = 1, queued tasks = 0, completed tasks = 3524
+			//super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
+			// So try another queue for a while.
+			super(1, 1, 0L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(1));
 			this.description = description;
 		}
 
@@ -122,8 +129,8 @@ public abstract class FlowRuntime {
 				throw new Exception("Multiple access is not allowed! Resource: " + description);
 			}
 			while (!future.isDone() || activeTasks.containsKey(future)) {
-				executeActions();
-				if (!sleep()) break;
+				executeActions(true);
+				if (!sleep("wait for " + description)) break;
 			}
 			try {
 				return future.get();
@@ -153,20 +160,24 @@ public abstract class FlowRuntime {
 		return Thread.currentThread().getId();
 	}
 
-	public static boolean executeTimers() {
+	private static boolean executeTimers(boolean unlockTimers) {
 		Timers timers = getTimers();
 		if (timers != null) {
-			timers.execute();
+			timers.execute(unlockTimers);
 		}
 		return timers != null && !timers.isEmpty();
 	}
 
-	public static boolean executeActions() {
-		boolean hasTimers = executeTimers();
+	// We have to unlock timers if we call executeActions from runParallelAndWait and SingleExecutor.runAndWait.
+	// For example we call runAndWait by timer, i.e. it is called in Timers.execute(),
+	// which used Timers.executingCnt to prevent recursive calls and call stack growth.
+	// So why runAndWait is waiting it cannot execute another timers, while unlockTimers is  not true.
+	private static boolean executeActions(boolean unlockTimers) {
+		boolean hasTimers = executeTimers(unlockTimers);
 		Callbacks callbacks = callbacksByThreadId.get(getThreadIdLong());
 		if (callbacks != null) {
 			if (callbacks.execute()) {
-				hasTimers = executeTimers();
+				hasTimers = executeTimers(unlockTimers);
 			}
 		}
 		return hasTimers || (callbacks != null && !callbacks.isEmpty());
