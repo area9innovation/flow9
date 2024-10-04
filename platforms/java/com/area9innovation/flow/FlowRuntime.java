@@ -121,7 +121,13 @@ public abstract class FlowRuntime {
 					+ "\n	Curr. task: " + taskDescription
 					+ "\n	Exception: " + e.getMessage()
 				);
-				throw new Exception("Multiple access is not allowed! Resource: " + description);
+				//throw new Exception("Multiple access is not allowed! Resource: " + description);
+				throw new Exception("Multiple access is not allowed! Resource: " + description
+					+ "\n	Thread: " + getThreadIdLong()
+					+ "\n	Prev. task: " + ld
+					+ "\n	Curr. task: " + taskDescription
+					+ "\n	Exception: " + e.getMessage()
+				);
 			}
 			while (!future.isDone() || activeTasks.containsKey(future)) {
 				executeActions(true);
