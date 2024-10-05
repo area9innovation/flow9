@@ -119,6 +119,10 @@ public abstract class FlowRuntime {
 			lastTaskDescription = taskDescription;
 			try {
 				future = submit(callable);
+				if (taskDescription != null) {
+					taskDescription += "\n	THIS: " + this.toString();
+					lastTaskDescription = taskDescription;
+				}
 			} catch (RejectedExecutionException e) {
 				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong()
 					+ "\n	Prev. task: " + ld
