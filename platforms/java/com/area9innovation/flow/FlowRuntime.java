@@ -83,44 +83,31 @@ public abstract class FlowRuntime {
 
 	// This executor prevents from creating new threads and from multiple executions.
 	// For example this is important for executing db queries -- if the previous execution is not finished, a new execution will fail.
-	public static class SingleExecutor extends ThreadPoolExecutor {
+	public static class SingleExecutor<T> extends ExecutorCompletionService<T> {
 		private String description;
 		private String lastTaskDescription = null;
-		private final ConcurrentHashMap<Runnable, Boolean> activeTasks = new ConcurrentHashMap<>();
-
-		@Override
-		protected void beforeExecute(Thread t, Runnable r) {
-			activeTasks.put(r, true);
-			super.beforeExecute(t, r);
-		}
-
-		@Override
-		protected void afterExecute(Runnable r, Throwable t) {
-			super.afterExecute(r, t);
-			activeTasks.remove(r);
-		}
 
 		public SingleExecutor(String description) {
-			super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
+			super(new ThreadPoolExecutor(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>()));
 			this.description = description;
 		}
 
-		public <T> T runAndWait(Callable<T> callable) throws Exception {
+		public T runAndWait(Callable<T> callable) throws Exception {
 			return runAndWait(null, callable);
 		}
 
-		public <T> T runAndWait(String taskDescription, Callable<T> callable) throws Exception {
+		public T runAndWait(String taskDescription, Callable<T> callable) throws Exception {
 			Future<T> future = null;
 			String ld = lastTaskDescription;
 			if (taskDescription != null) {
-				taskDescription += "\n	Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date())
-				 + "\n	Stack size: " + Thread.currentThread().getStackTrace().length;
+				taskDescription += "\n		Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date())
+				 + "\n		Stack size: " + Thread.currentThread().getStackTrace().length;
 			}
 			lastTaskDescription = taskDescription;
 			try {
 				future = submit(callable);
 				if (taskDescription != null) {
-					taskDescription += "\n	THIS: " + this.toString();
+					taskDescription += "\n		THIS: " + this.toString();
 					lastTaskDescription = taskDescription;
 				}
 			} catch (RejectedExecutionException e) {
@@ -137,12 +124,12 @@ public abstract class FlowRuntime {
 					+ "\n	Exception: " + e.getMessage()
 				);
 			}
-			while (!future.isDone() || activeTasks.containsKey(future)) {
+			while (!future.isDone()) {
 				executeActions(true);
 				if (!sleep("wait for " + description)) break;
 			}
 			try {
-				return future.get();
+				return take().get();
 			} catch (Exception e) {
 				System.out.println("Exception in '" + description + "' executor: " + e.getMessage());
 				e.printStackTrace(System.out);
