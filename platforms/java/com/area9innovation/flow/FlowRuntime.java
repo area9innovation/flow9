@@ -1,5 +1,6 @@
 package com.area9innovation.flow;
 
+import java.io.*;
 import java.text.*;
 import java.util.concurrent.*;
 import java.util.*;
@@ -111,10 +112,18 @@ public abstract class FlowRuntime {
 					lastTaskDescription = taskDescription;
 				}
 			} catch (RejectedExecutionException e) {
-				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong()
+				StringWriter writer = new StringWriter();
+				PrintWriter printWriter = new PrintWriter(writer);
+				e.printStackTrace(printWriter);
+				printWriter.flush();
+				String stackTrace = writer.toString();
+
+				System.out.println("SingleExecutor.runAndWait: name: " + description
+					+ "\n	thread: " + getThreadIdLong()
 					+ "\n	Prev. task: " + ld
 					+ "\n	Curr. task: " + taskDescription
 					+ "\n	Exception: " + e.getMessage()
+					+ "\n	Stack trace: " + stackTrace
 				);
 				//throw new Exception("Multiple access is not allowed! Resource: " + description);
 				throw new Exception("Multiple access is not allowed! Resource: " + description
@@ -122,6 +131,7 @@ public abstract class FlowRuntime {
 					+ "\n	Prev. task: " + ld
 					+ "\n	Curr. task: " + taskDescription
 					+ "\n	Exception: " + e.getMessage()
+					+ "\n	Stack trace: " + stackTrace
 				);
 			}
 			while (!future.isDone()) {
