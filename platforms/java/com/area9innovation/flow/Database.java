@@ -30,7 +30,7 @@ public class Database extends NativeHost {
         public RSObject lrurs = null;
         protected DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
         protected HashSet<String> intOverflowFields = new HashSet<String>();
-        public FlowRuntime.SingleExecutor<Object> queryExecutor = new FlowRuntime.SingleExecutor<>("db query");
+        public FlowRuntime.SingleExecutor queryExecutor = new FlowRuntime.SingleExecutor("db query");
 
         public DBObject() {
             dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -204,7 +204,7 @@ public class Database extends NativeHost {
 		if (database == null) return null;
 		DBObject dbObj = (DBObject) database;
 		try {
-			RSObject rso = (RSObject)dbObj.queryExecutor.runAndWait(query + "\n;Thread: " + Native.getThreadId(), () -> {
+			RSObject rso = dbObj.queryExecutor.runAndWait(query + "\n;Thread: " + Native.getThreadId(), () -> {
 				try {
 					dbObj.err = "";
 					if (queryParams.length == 0) {
@@ -404,7 +404,6 @@ public class Database extends NativeHost {
         return values;
     }
 
-    @SuppressWarnings("unchecked")
     public static final Struct[][][] requestDbMulti(Object database, Object[] queries) {
         Struct[][][] empty = new Struct[0][][];
         if (database == null || queries.length == 0) {
@@ -426,7 +425,7 @@ public class Database extends NativeHost {
             }
             String sql = String.join(";", q1);
 
-			Pair<Boolean, Exception> pair = (Pair<Boolean, Exception>)dbo.queryExecutor.runAndWait(sql + "\n;Thread: " + Native.getThreadId(), () -> {
+			Pair<Boolean, Exception> pair = dbo.queryExecutor.runAndWait(sql + "\n;Thread: " + Native.getThreadId(), () -> {
 				try {
 					return new Pair<Boolean, Exception>(dbo.stmt.execute(sql), null);
 				}

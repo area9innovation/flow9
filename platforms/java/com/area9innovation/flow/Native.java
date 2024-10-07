@@ -22,7 +22,7 @@ public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
 	private static MessageDigest md5original = null;
 	private static ExecutorService threadpool = Executors.newFixedThreadPool(NTHREDS);
-	private static FlowRuntime.SingleExecutor<Object> inputExecutor = new FlowRuntime.SingleExecutor<Object>("stdin reader");
+	private static FlowRuntime.SingleExecutor inputExecutor = new FlowRuntime.SingleExecutor("stdin reader");
 	private static OperatingSystemMXBean osBean = java.lang.management.ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
 
 	public Native() {
