@@ -55,6 +55,7 @@ class FlowSprite extends Sprite {
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
+	private static var requestQueue = new RequestQueue();
 
 	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String, headers : Array<Array<String>>) {
 		super();
@@ -456,11 +457,18 @@ class FlowSprite extends Sprite {
 
 			nativeWidget.onerror = onError;
 
-			// New resources manager
-			var requestQueue = new RequestQueue();
+			var keepInRequestCache = false;
+			var headers = this.headers.filter(function(header) {
+				if (header.length < 2) return false;
+				if (header[0] == 'keepInRequestCache' && header[1] == 'true') {
+					keepInRequestCache = true;
+					return false;
+				}
+				return true;
+			});
 
 			// Downloads a file from/with a queue
-			var promise = requestQueue.request(url, this.headers);
+			var promise = requestQueue.request(url, headers);
 
 			// Handle the response
 			promise.then(function(blob) {
@@ -469,7 +477,7 @@ class FlowSprite extends Sprite {
 					nativeWidget.src = blob;
 
 					Native.defer(function() {
-						requestQueue.removeBlobUsage(url);
+						requestQueue.removeBlobUsage(url, keepInRequestCache);
 					});
 
 					onLoaded();
@@ -551,5 +559,9 @@ class FlowSprite extends Sprite {
 		}
 
 		widgetBoundsChanged = false;
+	}
+
+	public static function clearPictureRequestCache() {
+		requestQueue.clearCache();
 	}
 }
