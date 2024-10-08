@@ -1,10 +1,9 @@
 package com.area9innovation.flow;
 
+import java.io.*;
+import java.text.*;
 import java.util.concurrent.*;
-import java.util.Locale;
-
-import java.text.DecimalFormat;
-import java.text.DecimalFormatSymbols;
+import java.util.*;
 
 public abstract class FlowRuntime {
 	public static Struct[] struct_prototypes;
@@ -86,27 +85,74 @@ public abstract class FlowRuntime {
 	// This executor prevents from creating new threads and from multiple executions.
 	// For example this is important for executing db queries -- if the previous execution is not finished, a new execution will fail.
 	public static class SingleExecutor extends ThreadPoolExecutor {
-		private static String description;
+		private String description;
+		private String lastTaskDescription = null;
+		private final ConcurrentHashMap<Runnable, Boolean> activeTasks = new ConcurrentHashMap<>();
+
+		@Override
+		protected void beforeExecute(Thread t, Runnable r) {
+			activeTasks.put(r, true);
+			super.beforeExecute(t, r);
+		}
+
+		@Override
+		protected void afterExecute(Runnable r, Throwable t) {
+			super.afterExecute(r, t);
+			activeTasks.remove(r);
+		}
 
 		public SingleExecutor(String description) {
-			// For some reason single executor does not work correctly:
-			// Sometimes when previous task is done, queue does not accept a new task:
-			//   Task java.util.concurrent.FutureTask@3e6bdb53[Not completed, task = com.area9innovation.flow.DatabaseSValue$$Lambda$1400/0x0000000840647040@6ef980b8] rejected from com.area9innovation.flow.FlowRuntime$SingleExecutor@2b1aae93[Running, pool size = 1, active threads = 1, queued tasks = 0, completed tasks = 3524
-			//super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
-			// So try another queue for a while.
+			// We do not need a queue here, i.e. it should be good to use an empty queue -- SynchronousQueue:
+			//   super(1, 1, 0L, TimeUnit.SECONDS, new SynchronousQueue<>());
+			// But for some reason SynchronousQueue does not work correctly sometimes:
+			// When previous task is done, queue does not accept a new task:
+			//   Task java.util.concurrent.FutureTask@3e6bdb53[Not completed, task = com.area9innovation.flow.DatabaseSValue$$Lambda$1400/0x0000000840647040@6ef980b8] rejected from com.area9innovation.flow.FlowRuntime$SingleExecutor@2b1aae93[Running, pool size = 1, active threads = 0, queued tasks = 0, completed tasks = 3524
+			// It looks like task is done, but the worker thread is not ready to accept a new task.
+			// So now we are using queue with capacity 1.
+			// To prevent multiple execution SingleExecutor.activeTasks is used in couple with the builtin reject policy
+			// (but the builtin reject policy cannot reject second execution, only third and more).
 			super(1, 1, 0L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(1));
 			this.description = description;
 		}
 
 		public <T> T runAndWait(Callable<T> callable) throws Exception {
-			Future<T> future = null;
-			try {
-				future = submit(callable);
-			} catch (RejectedExecutionException e) {
-				System.out.println("SingleExecutor.runAndWait: name: " + description + "; thread: " + getThreadIdLong() + "; rejected: " + e.getMessage());
+			return runAndWait(null, callable);
+		}
+
+		public <T> T runAndWait(String taskDescription, Callable<T> callable) throws Exception {
+			if (activeTasks.size() > 0) {
 				throw new Exception("Multiple access is not allowed! Resource: " + description);
 			}
-			while (!future.isDone()) {
+			Future<T> future = null;
+			String ld = lastTaskDescription;
+			if (taskDescription != null) {
+				taskDescription += "\n		Time: " + new SimpleDateFormat("HH:mm:ss.SSS").format(new Date())
+				 + "\n		Stack size: " + Thread.currentThread().getStackTrace().length;
+			}
+			lastTaskDescription = taskDescription;
+			try {
+				future = submit(callable);
+				if (taskDescription != null) {
+					taskDescription += "\n		THIS: " + this.toString();
+					lastTaskDescription = taskDescription;
+				}
+			} catch (RejectedExecutionException e) {
+				StringWriter writer = new StringWriter();
+				PrintWriter printWriter = new PrintWriter(writer);
+				e.printStackTrace(printWriter);
+				printWriter.flush();
+				String stackTrace = writer.toString();
+
+				System.out.println("SingleExecutor.runAndWait: name: " + description
+					+ "\n	thread: " + getThreadIdLong()
+					+ "\n	Prev. task: " + ld
+					+ "\n	Curr. task: " + taskDescription
+					+ "\n	Exception: " + e.getMessage()
+					+ "\n	Stack trace: " + stackTrace
+				);
+				throw new Exception("Multiple access is not allowed! Resource: " + description);
+			}
+			while (!future.isDone() || activeTasks.containsKey(future)) {
 				executeActions(true);
 				if (!sleep("wait for " + description)) break;
 			}
