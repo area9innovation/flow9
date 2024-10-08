@@ -121,6 +121,12 @@ public abstract class FlowRuntime {
 
 		public <T> T runAndWait(String taskDescription, Callable<T> callable) throws Exception {
 			if (activeTasks.size() > 0) {
+				System.out.println("SingleExecutor.runAndWait: name: " + description
+					+ "\n	thread: " + getThreadIdLong()
+					+ "\n	Prev. task: " + lastTaskDescription
+					+ "\n	Curr. task: " + taskDescription
+					+ "\n	Active tasks: " + activeTasks.size()
+				);
 				throw new Exception("Multiple access is not allowed! Resource: " + description);
 			}
 			Future<T> future = null;
