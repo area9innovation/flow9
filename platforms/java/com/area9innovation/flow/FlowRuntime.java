@@ -85,21 +85,9 @@ public abstract class FlowRuntime {
 	// This executor prevents from creating new threads and from multiple executions.
 	// For example this is important for executing db queries -- if the previous execution is not finished, a new execution will fail.
 	public static class SingleExecutor extends ThreadPoolExecutor {
-		private String description;
+		private final String description;
 		private String lastTaskDescription = null;
-		private final ConcurrentHashMap<Runnable, Boolean> activeTasks = new ConcurrentHashMap<>();
-
-		@Override
-		protected void beforeExecute(Thread t, Runnable r) {
-			activeTasks.put(r, true);
-			super.beforeExecute(t, r);
-		}
-
-		@Override
-		protected void afterExecute(Runnable r, Throwable t) {
-			super.afterExecute(r, t);
-			activeTasks.remove(r);
-		}
+		private Callable activeTask = null;
 
 		public SingleExecutor(String description) {
 			// We do not need a queue here, i.e. it should be good to use an empty queue -- SynchronousQueue:
@@ -109,7 +97,7 @@ public abstract class FlowRuntime {
 			//   Task java.util.concurrent.FutureTask@3e6bdb53[Not completed, task = com.area9innovation.flow.DatabaseSValue$$Lambda$1400/0x0000000840647040@6ef980b8] rejected from com.area9innovation.flow.FlowRuntime$SingleExecutor@2b1aae93[Running, pool size = 1, active threads = 0, queued tasks = 0, completed tasks = 3524
 			// It looks like task is done, but the worker thread is not ready to accept a new task.
 			// So now we are using queue with capacity 1.
-			// To prevent multiple execution SingleExecutor.activeTasks is used in couple with the builtin reject policy
+			// To prevent multiple execution SingleExecutor.activeTask is used in couple with the builtin reject policy
 			// (but the builtin reject policy cannot reject second execution, only third and more).
 			super(1, 1, 0L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(1));
 			this.description = description;
@@ -120,12 +108,11 @@ public abstract class FlowRuntime {
 		}
 
 		public <T> T runAndWait(String taskDescription, Callable<T> callable) throws Exception {
-			if (activeTasks.size() > 0) {
+			if (activeTask != null) {
 				System.out.println("SingleExecutor.runAndWait: name: " + description
 					+ "\n	thread: " + getThreadIdLong()
 					+ "\n	Prev. task: " + lastTaskDescription
 					+ "\n	Curr. task: " + taskDescription
-					+ "\n	Active tasks: " + activeTasks.size()
 				);
 				throw new Exception("Multiple access is not allowed! Resource: " + description);
 			}
@@ -137,6 +124,7 @@ public abstract class FlowRuntime {
 			}
 			lastTaskDescription = taskDescription;
 			try {
+				activeTask = callable;
 				future = submit(callable);
 				if (taskDescription != null) {
 					taskDescription += "\n		THIS: " + this.toString();
@@ -158,13 +146,14 @@ public abstract class FlowRuntime {
 				);
 				throw new Exception("Multiple access is not allowed! Resource: " + description);
 			}
-			while (!future.isDone() || activeTasks.containsKey(future)) {
+			while (!future.isDone()) {
 				executeActions(true);
 				if (!sleep("wait for " + description)) break;
 			}
+			activeTask = null;
 			try {
 				return future.get();
-			} catch (Exception e) {
+			} catch (InterruptedException | ExecutionException e) {
 				System.out.println("Exception in '" + description + "' executor: " + e.getMessage());
 				e.printStackTrace(System.out);
 				return null;
