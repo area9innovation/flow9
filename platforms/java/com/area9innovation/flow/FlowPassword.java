@@ -107,8 +107,8 @@ public class FlowPassword extends NativeHost {
 		return Arrays.equals(correctpbkdf2, requestedpbkdf2);
 	}
 	
-	public static String getPasswordValidationString(int exp) {
-		Integer expLocal = exp < 0 ? null : ( exp == 0 ? VALIDATION_DEFAULT_EXP : exp);
+	public static String getPasswordValidationString(int expirationSeconds) {
+		Integer expLocal = expirationSeconds < 0 ? null : ( expirationSeconds == 0 ? VALIDATION_DEFAULT_EXP : expirationSeconds);
 
 		byte[] bytes = new byte[PBKDF2_RANDOM_PASSWORD_BYTE_SIZE];
 		new SecureRandom().nextBytes(bytes);
@@ -149,14 +149,6 @@ public class FlowPassword extends NativeHost {
 		return expiration;
 	}
 
-	public static Boolean checkValidationStringExpiration(String validation, int leeway) {
-		int leewayLocal = leeway <= 0 ? 0 : leeway;
-
-		int expiration = getValidationStringExpiration(validation);
-		long unixTime = System.currentTimeMillis() / 1000L;
-		return expiration == 0 || expiration > (unixTime + leewayLocal);
-	}
-
 	public static String strtr(String str, String froms, String tos) { 
 		char[] str1 = str.toCharArray();
 
@@ -168,6 +160,4 @@ public class FlowPassword extends NativeHost {
 
 		return String.valueOf(str1);
 	}
-/*
-	*/
 }
