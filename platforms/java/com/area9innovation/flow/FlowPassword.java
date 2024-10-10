@@ -17,7 +17,7 @@ import java.security.spec.InvalidKeySpecException;
 import java.util.Base64;
 import java.util.Arrays;
 import java.util.Random;
-import org.json.JSONObject;
+import com.google.gson.*;
 
 public class FlowPassword extends NativeHost {
 	public static final String PBKDF2_HASH_ALGORITHM = "sha256";
@@ -116,13 +116,12 @@ public class FlowPassword extends NativeHost {
 		String validation = "";
 
 		try {
-			JSONObject jo = new JSONObject();
-			jo.put("key", Base64.getEncoder().encodeToString(bytes));
+			JsonObject jo = new JsonObject();
+			jo.addProperty("key", Base64.getEncoder().encodeToString(bytes));
 			if (expLocal != null) {
 				long unixTime = System.currentTimeMillis() / 1000L;
-				jo.put("exp", unixTime + expLocal);
+				jo.addProperty("exp", unixTime + expLocal);
 			};
-
 			validation = replaceCharacters(Base64.getEncoder().encodeToString(jo.toString().getBytes()), "+/=", "*_-");
 		} catch (Exception e) {
 			System.out.println("getPasswordValidationString error: " + e.toString());
@@ -139,9 +138,9 @@ public class FlowPassword extends NativeHost {
 			// String decodedString = new String(decoded, StandardCharsets.UTF_8);
 			String decodedString = new String(decoded);
 
-			JSONObject decodedJson = new JSONObject(decodedString);
-
-			expiration = decodedJson.optInt("exp", 0);
+			JsonObject decodedJson = new JsonParser().parse(decodedString).getAsJsonObject();
+			JsonElement elm = decodedJson.get("exp");
+			expiration = elm == null ? 0 : elm.getAsInt();
 		} catch (Exception e) {
 			System.out.println("getValidationStringExpiration error: " + e.toString());
 		}
