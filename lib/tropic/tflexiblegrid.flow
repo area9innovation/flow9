@@ -38,7 +38,7 @@ export {
 	TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic;
 		TFlexAlignment ::= RelativeAlignment, CenterAlign, TAlign;
 		TFlexStyle ::= TVertical, TWrap, TFlexAlignment, TAnimationTimer, TOrder, TEnabled, TSetRTL, TSameSize,
-			TBaselineAlign, TAvailableMinMax, TArrayThreshold, TFlexibleGridLazyRenderingMode, TSpacing, TSpacingFill, TBalanced;
+			TBaselineAlign, TAvailableMinMax, TArrayThreshold, TFlexibleGridLazyRenderingMode, TSpacing, TSpacingView, TBalanced;
 
 			 // Amount of elements in each row (Amount of elements in each column if TVertical is passed)
 			 // By default wrap is 0, which means that all elements are fitted by their size
@@ -48,7 +48,17 @@ export {
 			// which is calculated by dividing total size of elements by the available space
 			// Overwritten by TWrap if wrap > 0
 			TBalanced();
-			TSpacingFill(color : int); // Color to fill the spacing
+			// Views to use as spacing between elements
+			// Gets size of the spacing box as available
+			TSpacingView(x : Tropic, y : Tropic);
+
+			// Fill spacing between elements with color
+			TSpacingFill(color : int) -> TSpacingView {
+				TSpacingView(
+					TFrame(0.0, 0.0, [Fill(color)], TFillXY()),
+					TFrame(0.0, 0.0, [Fill(color)], TFillXY()),
+				)
+			};
 }
 
 TFlexibleGridItem(
@@ -1054,7 +1064,7 @@ TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic {
 	alignBaselines = contains(style, TBaselineAlign());
 	arrayThreshold = extractStruct(style, TArrayThreshold(const(ARRAY_DIFF_TRESHOLD))).threshold;
 	spacing = extractStruct(style, TSpacing(zero, zero));
-	spacingFill = tryExtractStruct(style, TSpacingFill(0));
+	spacingView = tryExtractStruct(style, TSpacingView(TEmpty(), TEmpty()));
 	spacingB = if (!vertical) spacing.x else spacing.y;
 	availableB = make(0.);
 	balanced = contains(style, TBalanced());
@@ -1074,18 +1084,7 @@ TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic {
 
 			TFlexibleGridItem(
 				^flexibleGridItemId,
-				eitherMap(
-					spacingFill,
-					\sf ->  TCols2Dir(
-						TLines2(
-							it,
-							TFrame(0.0, 0.0, [Fill(sf.color)], TFillXHT(spacing.y))
-						),
-						TFrame(0.0, 0.0, [Fill(sf.color)], TFillWYT(spacing.x)),
-						isRTL
-					),
-					TBorderTDir(zero, zero, spacing.x, spacing.y, it, isRTL),
-				),
+				TBorderTDir(zero, zero, spacing.x, spacing.y, it, isRTL),
 				make(const(zeroPoint)),
 				if (isSameSize) sameSizeWH else make(zeroWH),
 				if (isSameSize) sameSizeBaseline else make(0.0),
@@ -1162,6 +1161,41 @@ TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic {
 				TSized(fsubselect(item.av, idfn |> FLift))
 			)
 		)
+		|> (\f ->
+			eitherMap(
+				spacingView,
+				\sv -> {
+					sizeWithouSpacing = fwh(
+						fsubtract(fwidth(item.wh), spacing.x),
+						fsubtract(fheight(item.wh), spacing.y)
+					);
+
+					TGroup2(
+						f,
+						if (vertical) {
+							TCols2Dir(
+								TLines2(
+									TSized(sizeWithouSpacing),
+									TAvailable(sv.y, TSized(fwh(fwidth(sizeWithouSpacing), spacing.y)))
+								),
+								TAvailable(sv.x, TSized(fwh(spacing.x, fheight(item.wh)))),
+								isRTL
+							)
+						} else {
+							TLines2(
+								TCols2Dir(
+									TSized(sizeWithouSpacing),
+									TAvailable(sv.x, TSized(fwh(spacing.x, fheight(sizeWithouSpacing)))),
+									isRTL
+								),
+								TAvailable(sv.y, TSized(fwh(fwidth(item.wh), spacing.y)))
+							)
+						}
+					)
+				},
+				f,
+			)
+		)
 		|> (\tropic ->
 			eitherMap(
 				animation,
@@ -1215,6 +1249,7 @@ TFlex(items : Transform<[Tropic]>, style : [TFlexStyle]) -> Tropic {
 			)
 		})
 	)
+	|> (\f -> TCopySize2(f, \sz, c -> TMask(c, TFrame(0.0, 0.0, [Fill(white)], sz))))
 	|> (\f -> {
 		itemsOrderedB = fdelayUntilNextFrameRendered(eitherMap(order, \or -> forder(fselect(itemsB, FLift(idfn)), or.order), itemsB));
 		availableMinMaxB = fthrottleUntilNextFrameRendered(ftransistor(gridEnabled, fpair(faddition(availableMinMax.min, spacingB), faddition(availableMinMax.max, spacingB))));
