@@ -123,7 +123,7 @@ public class FlowPassword extends NativeHost {
 				jo.put("exp", unixTime + expLocal);
 			};
 
-			validation = strtr(Base64.getEncoder().encodeToString(jo.toString().getBytes()), "+/=", "*_-");
+			validation = replaceCharaters(Base64.getEncoder().encodeToString(jo.toString().getBytes()), "+/=", "*_-");
 		} catch (Exception e) {
 			System.out.println("getPasswordValidationString error: " + e.toString());
 		}
@@ -135,7 +135,7 @@ public class FlowPassword extends NativeHost {
 		int expiration = 0;
 
 		try {
-			byte[] decoded = Base64.getDecoder().decode(strtr(validation, "*_-", "+/="));
+			byte[] decoded = Base64.getDecoder().decode(replaceCharaters(validation, "*_-", "+/="));
 			// String decodedString = new String(decoded, StandardCharsets.UTF_8);
 			String decodedString = new String(decoded);
 
@@ -149,7 +149,7 @@ public class FlowPassword extends NativeHost {
 		return expiration;
 	}
 
-	public static String strtr(String str, String froms, String tos) { 
+	public static String replaceCharaters(String str, String froms, String tos) { 
 		char[] str1 = str.toCharArray();
 
 		for (int i = 0, len = str.length(); i < len; ++i){
