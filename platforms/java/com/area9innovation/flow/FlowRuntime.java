@@ -191,7 +191,7 @@ public abstract class FlowRuntime {
 	// For example we call runAndWait by timer, i.e. it is called in Timers.execute(),
 	// which used Timers.executingCnt to prevent recursive calls and call stack growth.
 	// So why runAndWait is waiting it cannot execute another timers, while unlockTimers is  not true.
-	private static boolean executeActions(boolean unlockTimers) {
+	protected static boolean executeActions(boolean unlockTimers) {
 		boolean hasTimers = executeTimers(unlockTimers);
 		Callbacks callbacks = callbacksByThreadId.get(getThreadIdLong());
 		if (callbacks != null) {

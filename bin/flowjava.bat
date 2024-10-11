@@ -17,8 +17,9 @@ goto endif
 :endif
 
 set JAVAC=%JAVA_HOME%\bin\javac
-set LIBS=%~dp0..\platforms\java\lib\java-websocket-1.5.1\*;%~dp0..\platforms\java\lib\java-jwt-4.4.0\java-jwt-4.4.0.jar
-set PATH_TO_FX=%~dp0..\platforms\java\lib\javafx-sdk-11.0.2\windows\lib
+set LIB=%~dp0..\platforms\java\lib
+set LIBS=%LIB%\java-websocket-1.5.1\*;%LIB%\java-jwt-4.4.0.jar;%LIB%\bcprov-jdk18on-1.76.jar;%LIB%\json-simple-1.1.jar;%LIB%\gson-2.11.0.jar
+set PATH_TO_FX=%LIB%\javafx-sdk-11.0.2\windows\lib
 
 :argLoopTop
 set FILE=%1
@@ -48,14 +49,16 @@ rem The runtime
 pushd %~dp0..\platforms\java
 "%JAVAC%" -d build --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -classpath "%LIBS%" -g com/area9innovation/flow/*.java javafx/com/area9innovation/flow/javafx/*.java
 popd
+if errorlevel 1 goto :eof
 
 rem Generate the Java for our program
 pushd %~dp0..
 rd /s /q javagen
 popd
 
-call %~dp0\flowc1 java-sub-host=RenderSupport=com.area9innovation.flow.javafx.FxRenderSupport,Native=com.area9innovation.flow.javafx.FxNative java=%~dp0\..\javagen %FILE%
+call %~dp0\flowc1 java-sub-host=RenderSupport=com.area9innovation.flow.javafx.FxRenderSupport,FlowRuntime=com.area9innovation.flow.javafx.FxFlowRuntime java=%~dp0\..\javagen %FILE%
 rem call %~dp0/flow --java %~dp0/../javagen %*
+if errorlevel 1 goto :eof
 
 pushd %~dp0..
 
