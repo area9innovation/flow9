@@ -2130,7 +2130,8 @@ class TextClip extends NativeWidgetClip {
 
 	private function getSanitizedText(text : String) : String {
 		if (preventXSS) {
-			untyped __js__("text = DOMPurify.sanitize(text)");
+			// We have to allow simple '<', '>' and tag-like (but without attributes) texts
+			untyped __js__("text = text.match(/<.*[\\s, //].*>/) ? DOMPurify.sanitize(text) : text");
 		}
 		return text;
 	}
