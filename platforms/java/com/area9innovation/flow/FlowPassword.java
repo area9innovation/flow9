@@ -1,22 +1,17 @@
-// WARNING: if this file is changed keep in mind that 
-// innovation/components/oauth/www/oauth/utils/security.php should be 
+// WARNING: if this file is changed keep in mind that
+// innovation/components/oauth/www/oauth/utils/security.php should be
 // adjusted as well and vice versa
 
 package com.area9innovation.flow;
 
-import javax.crypto.Cipher;
-import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
-import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
-import javax.crypto.spec.SecretKeySpec;
 import java.security.spec.KeySpec;
 import java.security.SecureRandom;
 import java.security.NoSuchAlgorithmException;
 import java.security.spec.InvalidKeySpecException;
 import java.util.Base64;
 import java.util.Arrays;
-import java.util.Random;
 import com.google.gson.*;
 
 public class FlowPassword extends NativeHost {
@@ -43,8 +38,8 @@ public class FlowPassword extends NativeHost {
 	public static String createHash(String password) {
 		String salt = createSalt();
 
-		return PBKDF2_HASH_ALGORITHM + ":" + 
-			PBKDF2_ITERATIONS + ":" + 
+		return PBKDF2_HASH_ALGORITHM + ":" +
+			PBKDF2_ITERATIONS + ":" +
 			salt + ":" +
 			Base64.getEncoder().encodeToString(
 				pbkdf2(
@@ -74,7 +69,7 @@ public class FlowPassword extends NativeHost {
 				case "sha256":
 					alg = "PBKDF2WithHmacSHA256";
 					break;
-				default: 
+				default:
 					throw new NoSuchAlgorithmException("Algorithm doesn't supported");
 			}
 
@@ -92,7 +87,7 @@ public class FlowPassword extends NativeHost {
 	public static Boolean validateHash(String password, String hash) {
 		String[] params = hash.split(":");
 
-		if (params.length < HASH_SECTIONS) 
+		if (params.length < HASH_SECTIONS)
 			return false;
 
 		byte[] correctpbkdf2 = Base64.getDecoder().decode(params[HASH_PBKDF2_INDEX]);
@@ -103,10 +98,10 @@ public class FlowPassword extends NativeHost {
 			Integer.parseInt(params[HASH_ITERATION_INDEX]),
 			correctpbkdf2.length
 		);
-			
+
 		return Arrays.equals(correctpbkdf2, requestedpbkdf2);
 	}
-	
+
 	public static String getPasswordValidationString(int expirationSeconds) {
 		Integer expLocal = expirationSeconds < 0 ? null : ( expirationSeconds == 0 ? VALIDATION_DEFAULT_EXP : expirationSeconds);
 
@@ -138,7 +133,7 @@ public class FlowPassword extends NativeHost {
 			// String decodedString = new String(decoded, StandardCharsets.UTF_8);
 			String decodedString = new String(decoded);
 
-			JsonObject decodedJson = new JsonParser().parse(decodedString).getAsJsonObject();
+			JsonObject decodedJson = JsonParser.parseString(decodedString).getAsJsonObject();
 			JsonElement elm = decodedJson.get("exp");
 			expiration = elm == null ? 0 : elm.getAsInt();
 		} catch (Exception e) {
@@ -148,7 +143,7 @@ public class FlowPassword extends NativeHost {
 		return expiration;
 	}
 
-	public static String replaceCharacters(String str, String froms, String tos) { 
+	public static String replaceCharacters(String str, String froms, String tos) {
 		char[] str1 = str.toCharArray();
 
 		for (int i = 0, len = str.length(); i < len; ++i){
