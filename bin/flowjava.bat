@@ -22,7 +22,7 @@ set LIB=%~dp0..\platforms\java\lib
 
 set LIBS=%LIB%\java-websocket-1.5.1\*
 for %%f in (%LIB%\*.jar) do set LIBS=!LIBS!;%%f
-set PATH_TO_FX=%LIB%\javafx-sdk-11.0.2\windows\lib
+set PATH_TO_FX=%LIB%\javafx-sdk-17.0.12\windows\lib
 
 :argLoopTop
 set FILE=%1
