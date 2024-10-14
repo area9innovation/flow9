@@ -1,4 +1,5 @@
 @echo off
+Setlocal EnableDelayedExpansion
 
 rem if JDK was not located
 rem if %JAVA_HOME% has been defined then use the existing value
@@ -18,7 +19,9 @@ goto endif
 
 set JAVAC=%JAVA_HOME%\bin\javac
 set LIB=%~dp0..\platforms\java\lib
-set LIBS=%LIB%\java-websocket-1.5.1\*;%LIB%\java-jwt-4.4.0.jar;%LIB%\bcprov-jdk18on-1.76.jar;%LIB%\json-simple-1.1.jar;%LIB%\gson-2.11.0.jar
+
+set LIBS=%LIB%\java-websocket-1.5.1\*
+for %%f in (%LIB%\*.jar) do set LIBS=!LIBS!;%%f
 set PATH_TO_FX=%LIB%\javafx-sdk-11.0.2\windows\lib
 
 :argLoopTop
@@ -47,7 +50,7 @@ echo:
 
 rem The runtime
 pushd %~dp0..\platforms\java
-"%JAVAC%" -d build --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -classpath "%LIBS%" -g com/area9innovation/flow/*.java javafx/com/area9innovation/flow/javafx/*.java
+"%JAVAC%" -d build --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -classpath "!LIBS!" -g com/area9innovation/flow/*.java javafx/com/area9innovation/flow/javafx/*.java
 popd
 if errorlevel 1 goto :eof
 
@@ -65,10 +68,12 @@ pushd %~dp0..
 dir javagen\*.java /S /B > temp_java_files.txt
 
 rem Compile the generated code
-"%JAVAC%" -d javagen/build  -Xlint:unchecked -encoding UTF-8 --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "%LIBS%";platforms/java/build/ @temp_java_files.txt
+"%JAVAC%" -d javagen/build  -Xlint:unchecked -encoding UTF-8 --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "!LIBS!";platforms/java/build/ @temp_java_files.txt
 
 del temp_java_files.txt
 
 rem Run the program!
-java --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "%LIBS%";platforms/java/build;javagen/build com.area9innovation.flow.javafx.FxLoader --flowapp="%JAVA_MAIN%.%JAVA_CLASS%" %*
+java --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "!LIBS!";platforms/java/build;javagen/build com.area9innovation.flow.javafx.FxLoader --flowapp="%JAVA_MAIN%.%JAVA_CLASS%" %*
 popd
+
+endlocal
