@@ -18,7 +18,11 @@ goto endif
 :endif
 
 set JAVAC=%JAVA_HOME%\bin\javac
-set LIB=%~dp0..\platforms\java\lib
+set FLOW=%~dp0..
+set JAVAGEN=%FLOW%\javagen
+set TMP_FILE=%JAVAGEN%\temp_java_files.txt
+set LIB=%FLOW%\platforms\java\lib
+set BUILD_DIR=%FLOW%\platforms\java\build
 
 set LIBS=%LIB%\java-websocket-1.5.1\*
 for %%f in (%LIB%\*.jar) do set LIBS=!LIBS!;%%f
@@ -49,31 +53,25 @@ echo Java flowapp: %JAVA_MAIN%.%JAVA_CLASS%
 echo:
 
 rem The runtime
-pushd %~dp0..\platforms\java
+pushd %FLOW%\platforms\java
 "%JAVAC%" -d build --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -classpath "!LIBS!" -g com/area9innovation/flow/*.java javafx/com/area9innovation/flow/javafx/*.java
 popd
 if errorlevel 1 goto :eof
 
 rem Generate the Java for our program
-pushd %~dp0..
-rd /s /q javagen
-popd
-
-call %~dp0\flowc1 java-sub-host=RenderSupport=com.area9innovation.flow.javafx.FxRenderSupport,FlowRuntime=com.area9innovation.flow.javafx.FxFlowRuntime java=%~dp0\..\javagen %FILE%
-rem call %~dp0/flow --java %~dp0/../javagen %*
+rd /s /q %JAVAGEN%
+call %~dp0\flowc1 java-sub-host=RenderSupport=com.area9innovation.flow.javafx.FxRenderSupport,FlowRuntime=com.area9innovation.flow.javafx.FxFlowRuntime java=%JAVAGEN% %FILE%
 if errorlevel 1 goto :eof
 
-pushd %~dp0..
-
-dir javagen\*.java /S /B > temp_java_files.txt
+dir %JAVAGEN%\*.java /S /B > %TMP_FILE%
 
 rem Compile the generated code
-"%JAVAC%" -d javagen/build  -Xlint:unchecked -encoding UTF-8 --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "!LIBS!";platforms/java/build/ @temp_java_files.txt
 
-del temp_java_files.txt
+"%JAVAC%" -d %JAVAGEN%/build  -Xlint:unchecked -encoding UTF-8 --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp %BUILD_DIR% @%TMP_FILE%
+
+del %TMP_FILE%
 
 rem Run the program!
-java --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "!LIBS!";platforms/java/build;javagen/build com.area9innovation.flow.javafx.FxLoader --flowapp="%JAVA_MAIN%.%JAVA_CLASS%" %*
-popd
+java --module-path %PATH_TO_FX% --add-modules javafx.controls,javafx.fxml,javafx.base,javafx.graphics -cp "!LIBS!";%BUILD_DIR%;%JAVAGEN%/build com.area9innovation.flow.javafx.FxLoader --flowapp="%JAVA_MAIN%.%JAVA_CLASS%" %*
 
 endlocal
