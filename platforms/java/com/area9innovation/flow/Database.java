@@ -204,7 +204,7 @@ public class Database extends NativeHost {
 		if (database == null) return null;
 		DBObject dbObj = (DBObject) database;
 		try {
-			RSObject rso = dbObj.queryExecutor.runAndWait(() -> {
+			RSObject rso = dbObj.queryExecutor.runAndWait(query + "\n;Thread: " + Native.getThreadId(), () -> {
 				try {
 					dbObj.err = "";
 					if (queryParams.length == 0) {
@@ -425,7 +425,7 @@ public class Database extends NativeHost {
             }
             String sql = String.join(";", q1);
 
-			Pair<Boolean, Exception> pair = dbo.queryExecutor.runAndWait(() -> {
+			Pair<Boolean, Exception> pair = dbo.queryExecutor.runAndWait(sql + "\n;Thread: " + Native.getThreadId(), () -> {
 				try {
 					return new Pair<Boolean, Exception>(dbo.stmt.execute(sql), null);
 				}

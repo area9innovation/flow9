@@ -1,9 +1,9 @@
 import js.lib.Promise;
 
 class RequestQueue {
-	private static var pendingRequests: Map<String, Promise<String>> = new Map();
-	private static var blobCache: Map<String, String> = new Map<String, String>();
-	private static var blobUsage: Map<String, Int> = new Map<String, Int>();
+	private var pendingRequests: Map<String, Promise<String>> = new Map();
+	private var blobCache: Map<String, String> = new Map<String, String>();
+	private var blobUsage: Map<String, Int> = new Map<String, Int>();
 
 	public function new() {
 		// Nothing to initialize there
@@ -59,15 +59,24 @@ class RequestQueue {
 		return promise;
 	}
 
-	public function removeBlobUsage(url: String) {
+	public function removeBlobUsage(url: String, keepInRequestCache : Bool) {
 		var cnt = blobUsage.get(url);
 		if (cnt > 1) {
 			// Count usages of the blob
 			blobUsage.set(url, cnt - 1);
 		} else {
-			// Removes info about images usage from the caches
-			blobCache.remove(url);
-			blobUsage.remove(url);
+			if (keepInRequestCache) {
+				blobUsage.set(url, 0);
+			} else {
+				// Removes info about images usage from the caches
+				blobCache.remove(url);
+				blobUsage.remove(url);
+			}
 		}
+	}
+
+	public function clearCache() {
+		blobCache.clear();
+		blobUsage.clear();
 	}
 }
