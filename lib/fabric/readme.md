@@ -13,11 +13,11 @@ Requirements:
 - Figure out the style story
 - Replace JS object syntax with new "with" syntax in flow to avoid style arrays:
 
-Foo(a: int, b : double, c : [int]):
-Foo(with b=2.0) 		== Foo(0, 2.0, [])
-Foo(with b=1.0, a=1) 	== Foo(1, 1.0, [])
-sdsfd = 1;
-Foo(with a=sdsfd) 		== Foo(sdsfd, 0.0, [])
+	Foo(a: int, b : double, c : [int]):
+	Foo(with b=2.0) 		== Foo(0, 2.0, [])
+	Foo(with b=1.0, a=1) 	== Foo(1, 1.0, [])
+	sdsfd = 1;
+	Foo(with a=sdsfd) 		== Foo(sdsfd, 0.0, [])
 
 The idea is that most types have an implicit default value:
 
@@ -27,3 +27,16 @@ Maybe: None().
 ref: not possible?
 functions: if return type is default constructible, then construct that type. If void, then nop.
 flow, native, ?, ?? can not be default constructed.
+
+An alternative is to do records, which then have an implicit conversion to structs:
+
+	Foo({b:2.0})
+	Foo({b:1.0, a:1})
+	sdsfd = 1;
+	Foo({a:sdsfd})
+
+The problem with the `with` syntax is that `BLines` and such will need to include the name of a style struct.
+With the records, we can do
+
+	BLines([], {})
+
