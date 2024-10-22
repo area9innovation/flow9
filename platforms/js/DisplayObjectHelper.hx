@@ -324,6 +324,10 @@ class DisplayObjectHelper {
 				updateIsHTML(clip);
 			}
 
+			if (isRelativePosition(clip.parent)) {
+				updateIsRelativePosition(clip);
+			}
+
 			if (untyped clip.keepNativeWidgetChildren || clip.keepNativeWidget) {
 				updateKeepNativeWidgetChildren(clip);
 			}
@@ -764,6 +768,32 @@ class DisplayObjectHelper {
 
 	public static inline function isCanvasStage(clip : DisplayObject) : Bool {
 		return untyped clip.isCanvasStage;
+	}
+
+	public static inline function isRelativePosition(clip : DisplayObject) : Bool {
+		return untyped clip.isRelativePosition;
+	}
+
+	public static function updateIsRelativePosition(clip : DisplayObject) : Void {
+		if (clip.parent != null && isRelativePosition(clip.parent) != isRelativePosition(clip)) {
+			setClipIsRelativePosition(clip, true);
+		}
+	}
+
+	public static function setClipIsRelativePosition(clip : DisplayObject, relativePosition : Bool) : Void {
+		untyped clip.isRelativePosition = relativePosition;
+
+		for (child in getClipChildren(clip)) {
+			updateIsRelativePosition(child);
+		}
+	}
+
+	public static inline function getClipDisplay(clip : DisplayObject) : String {
+		return untyped clip.display != null ? clip.display : "block";
+	}
+
+	public static inline function setClipDisplay(clip : DisplayObject, display : String) : Void {
+		untyped clip.display = display;
 	}
 
 	public static function updateIsHTML(clip : DisplayObject) : Void {
