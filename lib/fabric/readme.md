@@ -18,8 +18,8 @@ We add a new way to do reflection based on existing flowschema definitions in ou
    5_crud: Just write it
    6_circles: undo, clipboard, frame/svg, interactive, clickable
    7_cells: table
-- list, html, iconbutton
-- letMany, formula, composite
+- list, html
+- composite
 - svg
 - spacing and other features for container
 - Generalize container to expose more of the flex layout features, at least as far as we can implement a fallback
