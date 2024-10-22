@@ -585,7 +585,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public inline function updateBaselineWidget() : Void {
-		if (this.isHTMLRenderer() && isNativeWidget && needBaseline) {
+		if (this.isHTMLRenderer() && isNativeWidget && needBaseline && baselineWidget != null) {
 			if (!isInput && nativeWidget.firstChild != null && !isMaterialIconFont()) {
 				// For some fonts italic form has a smaller height, so baseline becomes occasionally unsynchronised with normal-style glyphs on different zoom levels
 				if (style.fontStyle == 'italic') {
