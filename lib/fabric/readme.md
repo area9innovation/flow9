@@ -16,10 +16,9 @@ We add a new way to do reflection based on existing flowschema definitions in ou
 - 7-guis: 
    3_flight: We want reflection based editor first
    5_crud: Just write it
-   6_circles: undo, clipboard, frame/svg, interactive, clickable
+   6_circles: undo, clipboard, frame/svg, interactive
    7_cells: table
 - list, html
-- composite
 - svg
 - spacing and other features for container
 - Generalize container to expose more of the flex layout features, at least as far as we can implement a fallback
