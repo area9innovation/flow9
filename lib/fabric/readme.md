@@ -16,13 +16,13 @@ We add a new way to do reflection based on existing flowschema definitions in ou
 - 7-guis: 
    3_flight: We want reflection based editor first
    5_crud: Just write it
-   6_circles: dialog, undo, clipboard, frame/svg, interactive, clickable
+   6_circles: undo, clipboard, frame/svg, interactive, clickable
    7_cells: table
 - list, html, intinput, checkbox, dropdown, intslider, iconbutton
 - letMany, formula, composite
-- dialog
 - svg
 - Generalize container to expose more of the flex layout features, at least as far as we can implement a fallback
+- Split environment into bool, int, double, string, and flow parts for increased type safety?
 - Potentially add native `getBoundingClientRect` to try to get available to work when embedded Material inside Fabric
 - Figure out the style story
 
