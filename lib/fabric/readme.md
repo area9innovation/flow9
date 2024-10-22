@@ -25,6 +25,7 @@ We add a new way to do reflection based on existing flowschema definitions in ou
 - Split environment into bool, int, double, string, and flow parts for increased type safety?
 - Potentially add native `getBoundingClientRect` to try to get available to work when embedded Material inside Fabric
 - Figure out the style story
+- Work on the flowschema 2 fabric. See innovation/components/flowschema/tests/fabric.flow
 
 ## Proposal for new flow syntax 
 
