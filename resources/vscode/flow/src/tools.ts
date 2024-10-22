@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import * as fs from "fs";
 import { Server } from 'net';
 
-export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (string) => void, childProcesses: ChildProcess[]): ChildProcess {
+export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (string) => void, childProcesses: ChildProcess[] = []): ChildProcess {
     const options = wd && wd.length > 0 ? { cwd: wd, shell: true } : { shell : true};
     let child = spawn(cmd, args, options);
     child.stdout.setEncoding('utf8');
@@ -11,12 +11,16 @@ export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (st
     child.stderr.on("data", outputProc);
     childProcesses.push(child);
     child.on("close", (code) => {
-        console.log(`child process exited with code ${code}`);
+        log(`child process exited with code ${code}`);
         let index = childProcesses.indexOf(child);
         if (index >= 0)
             childProcesses.splice(index, 1);
     });
     return child;
+}
+
+export function log(msg: string) {
+	console.log("[flow] " + msg);
 }
 
 export function run_cmd_sync(cmd: string, wd: string, args: string[]) {
@@ -31,7 +35,7 @@ export function shutdownFlowcHttpServerSync() {
 }
 
 export function shutdownFlowcHttpServer() {
-    return run_cmd("flowc1", "", ["server-shutdown=1"], (s) => { console.log(s); }, []);
+    return run_cmd("flowc1", "", ["server-shutdown=1"], log, []);
 }
 
 export function launchFlowcHttpServer(projectRoot: string, compiler: string, on_start : () => void, on_stop : () => void, on_msg : (any) => void) {
@@ -39,7 +43,7 @@ export function launchFlowcHttpServer(projectRoot: string, compiler: string, on_
 	on_msg((new Date()).toString() + " Flow Http server started");
 	// Only two variants are supported currently: flowc1 or flowc2. Default server is flowc1
 	compiler = (compiler === "flowc2") ? compiler : "flowc1";
-	let httpServer = run_cmd(compiler, projectRoot, ["server-mode=http"], (s) => { console.log(s); }, []);
+	let httpServer = run_cmd(compiler, projectRoot, ["server-mode=http"], log);
 	httpServer.addListener("close", (code: number, signal: string) => {
 		on_msg(
 			(new Date()).toString() + " Flow Http server closed" +

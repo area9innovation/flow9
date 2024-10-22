@@ -46,7 +46,7 @@ let httpServerOnline : boolean = false;
 export function activate(context: vscode.ExtensionContext) {
     // Use the console to output diagnostic information (console.log) and errors (console.error)
     // This line of code will only be executed once when your extension is activated
-    console.log('Flow extension active');
+    tools.log('Flow extension active');
 	serverStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 	serverStatusBarItem.command = 'flow.toggleHttpServer';
 	const reg_comm = (id: string, comm: any) => vscode.commands.registerCommand(id, comm);

@@ -202,3 +202,7 @@
 
 ## 0.6.3
  - Fixed a bug with starting LSP server on Windows
+
+## 0.6.4
+ - Fixed automatic update of the extension on Windows
+ - Removed extra files from the extension
