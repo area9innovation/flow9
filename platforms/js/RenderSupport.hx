@@ -2079,6 +2079,14 @@ class RenderSupport {
 			clip.setClipDisplay(value);
 		}
 
+		if (name == "width") {
+			untyped clip.overrideWidth = value;
+		}
+
+		if (name == "height") {
+			untyped clip.overrideHeight = value;
+		}
+
 		if (accessWidget == null) {
 			if (AccessibilityEnabled || clip.isHTMLRenderer()) {
 				if (clip.isHTMLRenderer()) {
@@ -4437,6 +4445,10 @@ class RenderSupport {
 
 	public static function openDatePicker(clip : TextClip) : Void -> Void {
 		return clip.openDatePicker();
+	}
+
+	public static function getClipBoundingClientRect(clip : DisplayObject) : Array<Float> {
+		return clip.getClipBoundingClientRect();
 	}
 
 	public static function createMathJaxClip(latex: String) : Dynamic {

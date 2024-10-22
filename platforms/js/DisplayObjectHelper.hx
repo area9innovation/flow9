@@ -811,6 +811,15 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static inline function getClipBoundingClientRect(clip : DisplayObject) : Array<Float> {
+		var nativeWidget : Element = untyped clip.nativeWidget;
+		if (nativeWidget != null) {
+			var r = nativeWidget.getBoundingClientRect();
+			return [r.x, r.y, r.width, r.height];
+		}
+		return [];
+	}
+
 	public static inline function isHTML(clip : DisplayObject) : Bool {
 		return untyped clip.isHTML;
 	}
@@ -1281,19 +1290,24 @@ class DisplayObjectHelper {
 
 		if (untyped Math.isFinite(localBounds.minX) && Math.isFinite(localBounds.minY) && clip.nativeWidgetBoundsChanged) {
 			untyped clip.nativeWidgetBoundsChanged = false;
+			var wd = "";
+			var hgt = "";
 
 			if (isCanvasStage(clip)) {
 				nativeWidget.setAttribute('width', '${Math.ceil(localBounds.maxX * transform.a * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupport.PixiRenderer.resolution), 0.0)}');
 				nativeWidget.setAttribute('height', '${Math.ceil(localBounds.maxY * transform.d * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minY * transform.d * RenderSupport.PixiRenderer.resolution), 0.0)}');
-				nativeWidget.style.width = '${Math.ceil(localBounds.maxX * transform.a * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupport.PixiRenderer.resolution), 0.0)}px';
-				nativeWidget.style.height = '${Math.ceil(localBounds.maxY * transform.d * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minY * transform.d * RenderSupport.PixiRenderer.resolution), 0.0)}px';
+				wd = '${Math.ceil(localBounds.maxX * transform.a * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minX * transform.a * RenderSupport.PixiRenderer.resolution), 0.0)}px';
+				hgt = '${Math.ceil(localBounds.maxY * transform.d * RenderSupport.PixiRenderer.resolution) + Math.max(Math.ceil(-localBounds.minY * transform.d * RenderSupport.PixiRenderer.resolution), 0.0)}px';
 			} else if (untyped clip.alphaMask != null) {
-				nativeWidget.style.width = '${localBounds.maxX}px';
-				nativeWidget.style.height = '${localBounds.maxY}px';
+				wd = '${localBounds.maxX}px';
+				hgt = '${localBounds.maxY}px';
 			} else {
-				nativeWidget.style.width = '${getWidgetWidth(clip)}px';
-				nativeWidget.style.height = '${getWidgetHeight(clip)}px';
+				wd = '${getWidgetWidth(clip)}px';
+				hgt = '${getWidgetHeight(clip)}px';
 			}
+
+			nativeWidget.style.width = untyped clip.overrideWidth != null ? clip.overrideWidth : wd;
+			nativeWidget.style.height = untyped clip.overrideHeight != null ? clip.overrideHeight : hgt;
 
 			// nativeWidget.setAttribute('minX', Std.string(localBounds.minX));
 			// nativeWidget.setAttribute('minY', Std.string(localBounds.minY));
