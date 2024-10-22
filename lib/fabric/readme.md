@@ -1,19 +1,37 @@
-### Flow Fabric
+# Flow Fabric
+
+Yet another implementaion of Fabric, this time directly in flow.
+
+## Plan
 
 Extend Material with new Fabric written in flow.
-This implementation uses createElement and other direct APIs into HTML to render.
-It covers the new FRP model, the main layout elements lines, cols, table, group based on HTML, so we do not do metrics.
+This implementation should use createElement and other direct APIs into HTML to render containers.
+It covers the new FRP model, the main layout elements lines, cols, table, group based on HTML, so we do not do metrics for these.
 We wrap Material inside Fabric so any component can be used there. We extend these to be able to reference the Fabric FRP environment.
 We add dialog, timer, ssql, whatever we need to be able to write expression only code as part of the Fabric to avoid splitting code into UI and code that looks at behaviours at the top of a function.
 We add a new way to do reflection based on existing flowschema definitions in our binary, to allow the reflection based UX patterns.
 
-Requirements:
-- A way to get a DOM element from Material to allow Fabric to work on that
-- Potentially expose getBoundingClientRect to try to get available to work when embedded Material inside Fabric
-- Figure out the style story
-- Replace JS object syntax with new "with" syntax in flow to avoid style arrays:
+## TODO
 
-	Foo(a: int, b : double, c : [int]):
+- 7-guis: 
+   3_flight: We want reflection based editor first
+   5_crud: Just write it
+   6_circles: dialog, undo, clipboard, frame/svg, interactive, clickable
+   7_cells: table
+- list, html, intinput, checkbox, dropdown, intslider, iconbutton
+- letMany, formula, composite
+- dialog
+- svg
+- Generalize container to expose more of the flex layout features, at least as far as we can implement a fallback
+- Potentially add native `getBoundingClientRect` to try to get available to work when embedded Material inside Fabric
+- Figure out the style story
+
+## Proposal for new flow syntax 
+
+Replace JS object syntax with new "with" syntax in flow to avoid style arrays:
+
+	Foo(a: int, b : double, c : [int]);
+
 	Foo(with b=2.0) 		== Foo(0, 2.0, [])
 	Foo(with b=1.0, a=1) 	== Foo(1, 1.0, [])
 	sdsfd = 1;
