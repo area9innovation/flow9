@@ -4321,6 +4321,10 @@ class RenderSupport {
 		}
 	}
 
+	public static function setElementStyle(element : Element, name : String, value : String) : Void {
+		untyped element.style[name] = value;
+	}
+
 	public static function removeAttribute(element : Element, name : String) : Void {
 		element.removeAttribute(name);
 	}
@@ -4335,6 +4339,15 @@ class RenderSupport {
 
 	public static function removeElementChild(element : Dynamic, child : Element) : Void {
 		removeChild(element, child);
+	}
+
+	public static function getElementBoundingClientRect(element : Element) : Array<Float> {
+		try {
+			var r = element.getBoundingClientRect();
+			return [r.x, r.y, r.width, r.height];
+		} catch (e) {
+			return [];
+		}
 	}
 
 	public static function getNumberOfCameras() : Int {
@@ -4449,6 +4462,10 @@ class RenderSupport {
 
 	public static function getClipBoundingClientRect(clip : DisplayObject) : Array<Float> {
 		return clip.getClipBoundingClientRect();
+	}
+
+	public static function getClipNativeWidget(clip : DisplayObject) : Element {
+		return clip.getClipNativeWidget();
 	}
 
 	public static function createMathJaxClip(latex: String) : Dynamic {

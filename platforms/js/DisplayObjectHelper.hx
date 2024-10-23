@@ -789,11 +789,12 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getClipDisplay(clip : DisplayObject) : String {
-		return untyped clip.display != null ? clip.display : "block";
+		return untyped clip.display || null;
 	}
 
 	public static inline function setClipDisplay(clip : DisplayObject, display : String) : Void {
 		untyped clip.display = display;
+		initNativeWidget(clip);
 	}
 
 	public static function updateIsHTML(clip : DisplayObject) : Void {
@@ -1970,7 +1971,7 @@ class DisplayObjectHelper {
 					untyped clip.onStage = true;
 
 					if (!Platform.isIE) {
-						untyped clip.nativeWidget.style.display = null;
+						untyped clip.nativeWidget.style.display = getClipDisplay(clip);
 					}
 
 					addNativeWidget(clip);
@@ -2130,12 +2131,14 @@ class DisplayObjectHelper {
 					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
 				}
 			} else {
-				try {
-					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
-				} catch (e : Dynamic) {
-					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
-					nextWidget = findNextNativeWidget(child, clip);
-					untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+				if (!isRelativePosition(child) || childWidget.parentNode == null) {
+					try {
+						untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+					} catch (e : Dynamic) {
+						untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
+						nextWidget = findNextNativeWidget(child, clip);
+						untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
+					}
 				}
 			}
 
@@ -2179,6 +2182,13 @@ class DisplayObjectHelper {
 		} else {
 			appendNativeWidget(clip.parent, child);
 		}
+	}
+
+	public static inline function getClipNativeWidget(clip : DisplayObject) : Element {
+		if (isHTMLRenderer(clip) && untyped clip.nativeWidget == null) {
+			initNativeWidget(clip);
+		}
+		return untyped clip.nativeWidget;
 	}
 
 	public static function updateDialogElementsAriaHidden(parent : Element, isAriaHidden : Bool) : Void {
