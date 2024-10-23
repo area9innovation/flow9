@@ -17,7 +17,7 @@ We add a new way to do reflection based on existing flowschema definitions in ou
    3_flight: We want reflection based editor first
    5_crud: Just write it
    6_circles: frame/svg
-   7_cells: table
+   7_cells: scroll, bug in material table, update environment
 - list, html
 - svg
 - spacing and other features for container
