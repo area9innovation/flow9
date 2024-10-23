@@ -1130,6 +1130,10 @@ class DisplayObjectHelper {
 	}
 
 	public static function updateNativeWidget(clip : DisplayObject) : Void {
+		if (getClipDisplay(clip) != null) {
+			return;
+		}
+
 		if (untyped clip.updateNativeWidget != null) {
 			untyped clip.updateNativeWidget();
 		} else {
@@ -2092,7 +2096,7 @@ class DisplayObjectHelper {
 
 	public static function appendNativeWidget(clip : DisplayObject, child : DisplayObject) { // add possible next nodes
 		if (isNativeWidget(clip)) {
-			var childWidget : Dynamic = untyped child.nativeWidget;
+			var childWidget : Element = untyped child.nativeWidget;
 
 			if (untyped clip.nativeWidget == Browser.document.body && (childWidget.style.zIndex == null || childWidget.style.zIndex == "")) {
 				var localStage : FlowContainer = untyped child.stage;
@@ -2106,14 +2110,16 @@ class DisplayObjectHelper {
 			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck && untyped clip.mask == null;
 
 			var nextWidget = null;
-			if (!skipOrderCheck) {
-				var nextWidgetId = untyped child.nextWidgetId;
-				if (nextWidgetId != null && nextWidgetId != "") {
-					nextWidget = untyped clip.nativeWidget.querySelector('#' + nextWidgetId);
-				}
+			var initNextWidget = function() {
+				if (!skipOrderCheck) {
+					var nextWidgetId = untyped child.nextWidgetId;
+					if (nextWidgetId != null && nextWidgetId != "") {
+						nextWidget = untyped clip.nativeWidget.querySelector('#' + nextWidgetId);
+					}
 
-				if (nextWidget == null) {
-					nextWidget = findNextNativeWidget(child, clip);
+					if (nextWidget == null) {
+						nextWidget = findNextNativeWidget(child, clip);
+					}
 				}
 			}
 
@@ -2124,6 +2130,7 @@ class DisplayObjectHelper {
 					untyped clip.nativeWidget.appendChild(cont);
 				}
 				try {
+					initNextWidget();
 					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
 				} catch (e : Dynamic) {
 					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
@@ -2133,6 +2140,7 @@ class DisplayObjectHelper {
 			} else {
 				if (!isRelativePosition(child) || childWidget.parentNode == null) {
 					try {
+						initNextWidget();
 						untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
 					} catch (e : Dynamic) {
 						untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
