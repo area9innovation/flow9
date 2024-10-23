@@ -16,7 +16,7 @@ We add a new way to do reflection based on existing flowschema definitions in ou
 - 7-guis: 
    3_flight: We want reflection based editor first
    5_crud: Just write it
-   6_circles: frame/svg, interactive
+   6_circles: frame/svg
    7_cells: table
 - list, html
 - svg
