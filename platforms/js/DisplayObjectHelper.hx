@@ -789,12 +789,11 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getClipDisplay(clip : DisplayObject) : String {
-		return untyped clip.display;
+		return untyped clip.display != null ? clip.display : "block";
 	}
 
 	public static inline function setClipDisplay(clip : DisplayObject, display : String) : Void {
 		untyped clip.display = display;
-		initNativeWidget(clip);
 	}
 
 	public static function updateIsHTML(clip : DisplayObject) : Void {
@@ -1971,7 +1970,7 @@ class DisplayObjectHelper {
 					untyped clip.onStage = true;
 
 					if (!Platform.isIE) {
-						untyped clip.nativeWidget.style.display = getClipDisplay(clip);
+						untyped clip.nativeWidget.style.display = null;
 					}
 
 					addNativeWidget(clip);
@@ -2180,13 +2179,6 @@ class DisplayObjectHelper {
 		} else {
 			appendNativeWidget(clip.parent, child);
 		}
-	}
-
-	public static inline function getClipNativeWidget(clip : DisplayObject) : Element {
-		if (isHTMLRenderer(clip) && untyped clip.nativeWidget == null) {
-			initNativeWidget(clip);
-		}
-		return untyped clip.nativeWidget;
 	}
 
 	public static function updateDialogElementsAriaHidden(parent : Element, isAriaHidden : Bool) : Void {

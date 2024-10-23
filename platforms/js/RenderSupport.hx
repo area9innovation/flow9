@@ -4451,10 +4451,6 @@ class RenderSupport {
 		return clip.getClipBoundingClientRect();
 	}
 
-	public static function getClipNativeWidget(clip : DisplayObject) : Element {
-		return clip.getClipNativeWidget();
-	}
-
 	public static function createMathJaxClip(latex: String) : Dynamic {
 		return new MathJaxClip(latex);
 	};
