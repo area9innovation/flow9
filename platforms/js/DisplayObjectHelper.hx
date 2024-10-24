@@ -2145,21 +2145,17 @@ class DisplayObjectHelper {
 					cont.className = 'nativeWidget';
 					parentWidget.appendChild(cont);
 				}
-				try {
-					parentWidget.firstChild.insertBefore(childWidget, nextWidget);
-				} catch (e : Dynamic) {
-					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
-					nextWidget = findNextNativeWidget(child, clip);
-					parentWidget.firstChild.insertBefore(childWidget, nextWidget);
-				}
-			} else {
-				try {
-					parentWidget.insertBefore(childWidget, nextWidget);
-				} catch (e : Dynamic) {
-					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
-					nextWidget = findNextNativeWidget(child, clip);
+				parentWidget = untyped parentWidget.firstChild;
+			}
+
+			try {
+				if (childWidget.parentNode != parentWidget || childWidget.nextSibling != nextWidget) {
 					parentWidget.insertBefore(childWidget, nextWidget);
 				}
+			} catch (e : Dynamic) {
+				untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
+				nextWidget = findNextNativeWidget(child, clip);
+				parentWidget.insertBefore(childWidget, nextWidget);
 			}
 
 			if (ScreenreaderDialog && untyped childWidget.tagName == 'DIALOG') {
