@@ -3050,13 +3050,7 @@ class RenderSupport {
 	private static var pointerOverClips : Array<DisplayObject> = [];
 
 	public static function addDisplayObjectEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {
-		if (event == "transformchanged") {
-			clip.on("transformchanged", fn);
-			return function() { clip.off("transformchanged", fn); }
-		} else if (event == "resize") {
-			on("resize", fn);
-			return function() { off("resize", fn); }
-		} else if (event == "mousedown" || event == "mousemove" || event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup"
+		if (event == "mousedown" || event == "mousemove" || event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup"
 			|| event == "touchstart" || event == "touchmove" || event == "touchend") {
 			on(event, fn);
 			return function() { off(event, fn); }
@@ -3123,9 +3117,6 @@ class RenderSupport {
 				clip.off("pointerout", checkFn);
 				clip.invalidateInteractive();
 			};
-		} else if (event == "scroll") {
-			clip.on("scroll", fn);
-			return function() { clip.off("scroll", fn); };
 		} else if (event == "change") {
 			clip.on("input", fn);
 			return function() { clip.off("input", fn); };
@@ -3135,7 +3126,10 @@ class RenderSupport {
 		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
-		} else if (event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged" || event == "selectionchange" || event == "selectall" || event == "compositionend") {
+		} else if (
+			event == "visible" || event == "added" || event == "removed" || event == "textwidthchanged" || event == "selectionchange" || event == "selectall" || event == "compositionend" ||
+			event == "transformchanged" || event == "resize" || event == "scroll"
+		) {
 			clip.on(event, fn);
 			return function() { clip.off(event, fn); }
 		} else {

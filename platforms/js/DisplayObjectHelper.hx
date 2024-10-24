@@ -1161,6 +1161,7 @@ class DisplayObjectHelper {
 						updateNativeWidgetMask(clip);
 
 						updateNativeWidgetInteractive(clip);
+						updateNativeWidgetResizeObserver(clip);
 
 						if (untyped clip.styleChanged) {
 							untyped clip.updateNativeWidgetStyle();
@@ -1945,6 +1946,22 @@ class DisplayObjectHelper {
 			nativeWidget.style.pointerEvents = null;
 			nativeWidget.ondragover = null;
 			nativeWidget.ondrop = null;
+		}
+	}
+
+	public static function updateNativeWidgetResizeObserver(clip : DisplayObject) : Void {
+		try {
+			if (clip.listeners("resize").length > 0 && untyped clip.resizeObserver == null) {
+				var nativeWidget : Element = untyped clip.nativeWidget;
+				var resizeCallback = () -> { clip.emit("resize"); };
+				untyped clip.resizeObserver = untyped __js__("new ResizeObserver(resizeCallback)");
+				untyped clip.resizeObserver.observe(nativeWidget);
+			} else if (clip.listeners("resize").length == 0 && untyped clip.resizeObserver != null) {
+				untyped clip.resizeObserver.disconnect();
+				untyped clip.resizeObserver = null;
+			}
+		} catch (e) {
+			untyped clip.resizeObserver = null;
 		}
 	}
 
