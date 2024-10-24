@@ -2087,6 +2087,14 @@ class RenderSupport {
 			untyped clip.overrideHeight = value;
 		}
 
+		var updateAccessWidgetStyleFn = (accessWidget : AccessWidget) -> {
+			if ((name == "width" || name == "height") && value == "") {
+				clip.updateNativeWidgetTransformMatrix();
+			} else {
+				untyped accessWidget.element.style[name] = value;
+			}
+		}
+
 		if (accessWidget == null) {
 			if (AccessibilityEnabled || clip.isHTMLRenderer()) {
 				if (clip.isHTMLRenderer()) {
@@ -2099,11 +2107,11 @@ class RenderSupport {
 				if (nativeWidget != null) {
 					accessWidget = new AccessWidget(clip, nativeWidget);
 					untyped clip.accessWidget = accessWidget;
-					untyped accessWidget.element.style[name] = value;
+					updateAccessWidgetStyleFn(accessWidget);
 				}
 			}
 		} else {
-			untyped accessWidget.element.style[name] = value;
+			updateAccessWidgetStyleFn(accessWidget);
 		}
 	}
 
