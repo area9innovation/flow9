@@ -2089,6 +2089,7 @@ class RenderSupport {
 
 		var updateAccessWidgetStyleFn = (accessWidget : AccessWidget) -> {
 			if ((name == "width" || name == "height") && value == "") {
+				// Force update nativeWidget size in case of empty width or height styles
 				clip.updateNativeWidgetTransformMatrix();
 			} else {
 				untyped accessWidget.element.style[name] = value;
