@@ -2072,7 +2072,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function findNextNativeWidget(clip : DisplayObject, parent : DisplayObject) : Element {
-		if (clip.parent != null) {
+		if (clip.parent != null && untyped clip.parentElement == null) {
 			var children = clip.parent.children;
 
 			if (children.indexOf(clip) >= 0) {
@@ -2113,6 +2113,7 @@ class DisplayObjectHelper {
 
 	public static function appendNativeWidget(clip : DisplayObject, child : DisplayObject) { // add possible next nodes
 		if (isNativeWidget(clip)) {
+			var parentWidget : Element = untyped child.parentElement || clip.nativeWidget;
 			var childWidget : Element = untyped child.nativeWidget;
 
 			if (untyped clip.nativeWidget == Browser.document.body && (childWidget.style.zIndex == null || childWidget.style.zIndex == "")) {
@@ -2127,43 +2128,37 @@ class DisplayObjectHelper {
 			var skipOrderCheck = SkipOrderCheckEnabled && HaxeRuntime.instanceof(child, TextClip) && untyped child.skipOrderCheck && untyped clip.mask == null;
 
 			var nextWidget = null;
-			var initNextWidget = function() {
-				if (!skipOrderCheck) {
-					var nextWidgetId = untyped child.nextWidgetId;
-					if (nextWidgetId != null && nextWidgetId != "") {
-						nextWidget = untyped clip.nativeWidget.querySelector('#' + nextWidgetId);
-					}
+			if (!skipOrderCheck) {
+				var nextWidgetId = untyped child.nextWidgetId;
+				if (nextWidgetId != null && nextWidgetId != "") {
+					nextWidget = parentWidget.querySelector('#' + nextWidgetId);
+				}
 
-					if (nextWidget == null) {
-						nextWidget = findNextNativeWidget(child, clip);
-					}
+				if (nextWidget == null) {
+					nextWidget = findNextNativeWidget(child, clip);
 				}
 			}
 
 			if (untyped clip.mask != null) {
-				if (untyped clip.nativeWidget.firstChild == null) {
+				if (parentWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");
 					cont.className = 'nativeWidget';
-					untyped clip.nativeWidget.appendChild(cont);
+					parentWidget.appendChild(cont);
 				}
 				try {
-					initNextWidget();
-					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+					parentWidget.firstChild.insertBefore(childWidget, nextWidget);
 				} catch (e : Dynamic) {
 					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
 					nextWidget = findNextNativeWidget(child, clip);
-					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
+					parentWidget.firstChild.insertBefore(childWidget, nextWidget);
 				}
 			} else {
-				if (!isRelativePosition(child) || childWidget.parentNode == null) {
-					try {
-						initNextWidget();
-						untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
-					} catch (e : Dynamic) {
-						untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
-						nextWidget = findNextNativeWidget(child, clip);
-						untyped clip.nativeWidget.insertBefore(childWidget, nextWidget);
-					}
+				try {
+					parentWidget.insertBefore(childWidget, nextWidget);
+				} catch (e : Dynamic) {
+					untyped console.warn('Error while appending', childWidget, 'before', nextWidget);
+					nextWidget = findNextNativeWidget(child, clip);
+					parentWidget.insertBefore(childWidget, nextWidget);
 				}
 			}
 

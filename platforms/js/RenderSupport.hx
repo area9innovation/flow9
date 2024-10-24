@@ -2073,27 +2073,14 @@ class RenderSupport {
 
 		if (name == "position") {
 			clip.setClipIsRelativePosition(value == "relative");
-		}
-
-		if (name == "display") {
+		} else if (name == "display") {
 			clip.setClipDisplay(value);
-		}
-
-		if (name == "width") {
+		} else if (name == "width") {
+			if (untyped clip.overrideWidth == value) { return; }
 			untyped clip.overrideWidth = value;
-		}
-
-		if (name == "height") {
+		} else if (name == "height") {
+			if (untyped clip.overrideHeight == value) { return; }
 			untyped clip.overrideHeight = value;
-		}
-
-		var updateAccessWidgetStyleFn = (accessWidget : AccessWidget) -> {
-			if ((name == "width" || name == "height") && value == "") {
-				// Force update nativeWidget size in case of empty width or height styles
-				clip.updateNativeWidgetTransformMatrix();
-			} else {
-				untyped accessWidget.element.style[name] = value;
-			}
 		}
 
 		if (accessWidget == null) {
@@ -2108,11 +2095,17 @@ class RenderSupport {
 				if (nativeWidget != null) {
 					accessWidget = new AccessWidget(clip, nativeWidget);
 					untyped clip.accessWidget = accessWidget;
-					updateAccessWidgetStyleFn(accessWidget);
 				}
 			}
-		} else {
-			updateAccessWidgetStyleFn(accessWidget);
+		}
+
+		if (accessWidget != null) {
+			if (name == "width" || name == "height") {
+				// Force update nativeWidget size in case of empty width or height styles
+				clip.updateNativeWidgetTransformMatrix();
+			} else if (untyped accessWidget.element.style[name] != value) {
+				untyped accessWidget.element.style[name] = value;
+			}
 		}
 	}
 
@@ -2149,6 +2142,13 @@ class RenderSupport {
 			clip.initNativeWidget();
 		} else {
 			untyped clip.nativeWidget.classList.add(className);
+		}
+	}
+
+	public static function setClipParentElement(clip : DisplayObject, element : String) : Void {
+		if (untyped clip.parentElement != element) {
+			untyped clip.parentElement = element;
+			clip.updateNativeWidget();
 		}
 	}
 
