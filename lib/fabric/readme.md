@@ -26,6 +26,8 @@ We add a new way to do reflection based on existing flowschema definitions in ou
 - Potentially add native `getBoundingClientRect` to try to get available to work when embedded Material inside Fabric
 - Figure out the style story
 - Work on the flowschema 2 fabric. See innovation/components/flowschema/tests/fabric.flow
+  - Implement array
+  - Make it so that textinputs (also int and double) only update on blur so we can type more than one char before we re-render
 
 ## Proposal for new flow syntax 
 
