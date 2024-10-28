@@ -123,7 +123,7 @@ GLTransform GLUnpackedTransform::toMatrixForm(float width, float height)
     mat3 forward =
             mat3(1.0f, 0.0f, 0.0f,
                  0.0f, 1.0f, 0.0f,
-                 x + width * ox, y + height * oy, 1.0f)
+                 x, y, 1.0f)
             *
             mat3(cosv, sinv, 0.0f,
                  -sinv, cosv, 0.0f,
@@ -152,7 +152,7 @@ GLTransform GLUnpackedTransform::toMatrixForm(float width, float height)
             *
             mat3(1.0f, 0.0f, 0.0f,
                  0.0f, 1.0f, 0.0f,
-                 -x - width * ox, -y - height * oy, 1.0f);
+                 -x, -y, 1.0f);
 
     return GLTransform(forward, reverse);
 }
