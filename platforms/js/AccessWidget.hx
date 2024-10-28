@@ -234,7 +234,7 @@ class AccessWidgetTree extends EventEmitter {
 				}
 
 				if (getZorder() >= AccessWidget.tree.zorder && clip.getClipVisible()) {
-					nativeWidget.style.display = "block";
+					nativeWidget.style.display = clip.getClipDisplay();
 					nativeWidget.style.opacity = clip.worldAlpha;
 				} else {
 					nativeWidget.style.display = "none";

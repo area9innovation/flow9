@@ -2071,6 +2071,22 @@ class RenderSupport {
 	public static function setClipStyle(clip : DisplayObject, name : String, value : String) : Void {
 		var accessWidget : AccessWidget = untyped clip.accessWidget;
 
+		if (name == "position") {
+			clip.setClipIsRelativePosition(value == "relative");
+		}
+
+		if (name == "display") {
+			clip.setClipDisplay(value);
+		}
+
+		if (name == "width") {
+			untyped clip.overrideWidth = value;
+		}
+
+		if (name == "height") {
+			untyped clip.overrideHeight = value;
+		}
+
 		if (accessWidget == null) {
 			if (AccessibilityEnabled || clip.isHTMLRenderer()) {
 				if (clip.isHTMLRenderer()) {
@@ -3187,18 +3203,38 @@ class RenderSupport {
 
 	public static function getMouseX(?clip : DisplayObject) : Float {
 		var viewportScale = getViewportScale();
+		var dx = 0.0;
+
+		if (clip.isRelativePosition()) {
+			var nativeWidget : Element = untyped clip.nativeWidget;
+			if (nativeWidget != null) {
+				var r = nativeWidget.getBoundingClientRect();
+				dx = r.left;
+			}
+		}
+
 		if (clip == null || clip == PixiStage)
 			return MousePos.x * viewportScale;
 		else
-			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).x * viewportScale');
+			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).x * viewportScale - dx');
 	}
 
 	public static function getMouseY(?clip : DisplayObject) : Float {
 		var viewportScale = getViewportScale();
+		var dy = 0.0;
+
+		if (clip.isRelativePosition()) {
+			var nativeWidget : Element = untyped clip.nativeWidget;
+			if (nativeWidget != null) {
+				var r = nativeWidget.getBoundingClientRect();
+				dy = r.top;
+			}
+		}
+
 		if (clip == null || clip == PixiStage)
 			return MousePos.y * viewportScale;
 		else
-			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).y * viewportScale');
+			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).y * viewportScale - dy');
 	}
 
 	public static function getTouchPoints(?clip : DisplayObject) : Array<Array<Float>> {
@@ -3237,6 +3273,15 @@ class RenderSupport {
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
 		if (!clip.getClipRenderable() || clip.parent == null) {
 			return false;
+		}
+
+		if (clip.isRelativePosition()) {
+			var nativeWidget : Element = untyped clip.nativeWidget;
+			if (nativeWidget != null) {
+				var r = nativeWidget.getBoundingClientRect();
+				x = x - r.left;
+				y = y - r.top;
+			}
 		}
 
 		clip.invalidateLocalBounds();
@@ -4400,6 +4445,10 @@ class RenderSupport {
 
 	public static function openDatePicker(clip : TextClip) : Void -> Void {
 		return clip.openDatePicker();
+	}
+
+	public static function getClipBoundingClientRect(clip : DisplayObject) : Array<Float> {
+		return clip.getClipBoundingClientRect();
 	}
 
 	public static function createMathJaxClip(latex: String) : Dynamic {

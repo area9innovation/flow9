@@ -2,27 +2,23 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { execFile } from 'child_process';
 import * as fs from "fs";
+import * as tools from "./tools";
 
 function getFlowExtensionRepo() {
-    let flowRoot: string = vscode.workspace.getConfiguration("flow").get("root")
+    let flowRoot = tools.getFlowRoot();
     return path.resolve(flowRoot, "resources", "vscode", "flow")
 }
 
 export function setupUpdateChecker() {
     let flowRepo = getFlowExtensionRepo();
-    // disable if developing flow extension itself
-    if (!vscode.workspace.workspaceFolders || 
-        !vscode.workspace.workspaceFolders.find((v) => v.uri.fsPath == flowRepo)) {
-        let fw = vscode.workspace.createFileSystemWatcher(path.resolve(flowRepo, "package.json"));
-        fw.onDidChange(() => checkForUpdate());
-    }
+    let fw = vscode.workspace.createFileSystemWatcher(path.resolve(flowRepo, "package.json"));
+    fw.onDidChange(() => checkForUpdate());
 }
 
 export function checkForUpdate() {
     let repoJson = path.resolve(getFlowExtensionRepo(), "package.json");
-    let flowRoot = vscode.workspace.getConfiguration("flow").get("root");
+    let flowRoot : string = tools.getFlowRoot();
     if (fs.existsSync(repoJson)) {
         fs.readFile(repoJson, 'utf8', (err, data) => {
             if (!err) {
@@ -30,31 +26,36 @@ export function checkForUpdate() {
                 var repoVersion = repoData.version;
                 var currentData = vscode.extensions.getExtension("area9.flow").packageJSON;
                 var currentVersion = currentData.version;
+				tools.log(`currentVersion: ${currentVersion}, repoVersion: ${repoVersion}`);
                 if (repoVersion != currentVersion) {
-                    vscode.window.showInformationMessage("An update might be available for the flow extension. Do you want to update?", 
+                    vscode.window.showInformationMessage(`New version ${repoVersion} of the flow extension mentioned in the repository. Do you want to update?`,
                         "Yes", "No").then(result => {
                             if ("Yes" == result) {
                                 updateExtension(flowRoot);
                             }
                         });
                 }
-            }
+            } else {
+				tools.log("Error reading " + repoJson + ": " + err);
+			}
         });
-    }
+    } else {
+		tools.log("Missing file: " + repoJson);
+	}
 }
 
-function updateExtension(flowRoot) {
-    let flowRepoPath = path.resolve(flowRoot, "resources", "vscode");
-    // full path to vscode
-    let codeFn = process.platform == "win32" ? "code.cmd" : "code";
-    let codePath = path.resolve(vscode.env.appRoot, "..", "..", "bin", codeFn);
-    execFile(codePath, ["--install-extension", "flow.vsix"], { cwd: flowRepoPath }, 
-         (error, stdout) => {
-            console.log(stdout);
-            if (!error && stdout.indexOf("successfully") >= 0)
-                vscode.window.showInformationMessage("Flow extension updated successfully. Please reload VSCode to apply changes.",
-                    "Reload").then(s => { if (s) vscode.commands.executeCommand("workbench.action.reloadWindow"); });
-            else
-                vscode.window.showErrorMessage("Flow extension failed to update. Please update manually - check " + flowRepoPath + " folder.", "OK");
-        });
+function updateExtension(flowRoot : string) {
+	let vsixFile = path.resolve(flowRoot, "resources", "vscode", "flow.vsix");
+	if (fs.existsSync(vsixFile)) {
+		vscode.commands.executeCommand("workbench.extensions.command.installFromVSIX", vscode.Uri.file(vsixFile)).then(() => {
+			vscode.window.showInformationMessage(
+				"Flow extension updated successfully. Please reload VSCode to apply changes.",
+				"Reload"
+			).then(s => {
+				if (s) vscode.commands.executeCommand("workbench.action.reloadWindow");
+			});
+		});
+	} else {
+		vscode.window.showInformationMessage("Cannot update Flow extension. Missing file: " + vsixFile);
+	}
 }
