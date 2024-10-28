@@ -23,9 +23,9 @@ We add a new way to do reflection based on existing flowschema definitions in ou
 - spacing and other features for container
 - Generalize container to expose more of the flex layout features, at least as far as we can implement a fallback
 - Split environment into bool, int, double, string, and flow parts for increased type safety?
-- Potentially add native `getBoundingClientRect` to try to get available to work when embedded Material inside Fabric
-- Figure out the style story
+- Figure out the style story - should we just rely on FlowSchema annotations?
 - Work on the flowschema 2 fabric. See innovation/components/flowschema/tests/fabric.flow
+  - stroke, padding
 
 ## Proposal for new flow syntax 
 
