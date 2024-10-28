@@ -82,14 +82,14 @@ protected:
     T_extents text_real_extents;
     T_int_index text_char_index; // char_idx -> text_real_extents idx
     vec2 text_size, ui_size;
-    float justify_width, interline_spacing, cursor_width;
+    float justify_width, interline_spacing, cursor_width, line_height_percent;
 
     int scroll_v;
 
     vec4 bg_color, cursor_color;
     int bg_color_int;
 
-    bool is_input, multiline, wordwrap, readonly;
+    bool is_input, multiline, wordwrap, readonly, need_baseline;
     vec2 explicit_size;
 
     Alignment alignment;
@@ -220,6 +220,8 @@ public:
     DECLARE_NATIVE_METHOD(setTextFieldCursorColor)
     DECLARE_NATIVE_METHOD(setTextFieldCursorWidth)
     DECLARE_NATIVE_METHOD(setTextFieldInterlineSpacing)
+    DECLARE_NATIVE_METHOD(setLineHeightPercent)
+    DECLARE_NATIVE_METHOD(setTextNeedBaseline)
 
     DECLARE_NATIVE_METHOD(getContent)
     DECLARE_NATIVE_METHOD(getCursorPosition)

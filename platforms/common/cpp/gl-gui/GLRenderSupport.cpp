@@ -1160,6 +1160,8 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLTextClip, setTextFieldCursorColor, 3);
     TRY_USE_OBJECT_METHOD(GLTextClip, setTextFieldCursorWidth, 2);
     TRY_USE_OBJECT_METHOD(GLTextClip, setTextFieldInterlineSpacing, 2);
+    TRY_USE_OBJECT_METHOD(GLTextClip, setLineHeightPercent, 2);
+    TRY_USE_OBJECT_METHOD(GLTextClip, setTextNeedBaseline, 2);
 
     TRY_USE_OBJECT_METHOD(GLTextClip, getContent, 1);
     TRY_USE_OBJECT_METHOD(GLTextClip, getCursorPosition, 1);
