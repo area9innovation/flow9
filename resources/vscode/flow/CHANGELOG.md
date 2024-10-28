@@ -206,3 +206,9 @@
 ## 0.6.4
  - Fixed automatic update of the extension on Windows
  - Removed extra files from the extension
+
+## 0.6.5
+ - Removed paths (flow.root, flow.projectRoot) from configuration
+ - Removed deprecated workspaceRoot variable
+ - Fixed debugger configuration
+ - Reworked automatic update of the extension

@@ -1,34 +1,11 @@
 import fabric/env;
 import fabric/table;
+import fabric/css;
 import material/material_ui;
 
 export {
 	fabric2material(env : FabricEnv, f : Fabric) -> Material;
-	fabric2dom(manager : MaterialManager, stage : native, parent : native, env : FabricEnv, f : Fabric) -> () -> void;
-
-	MFabric(env : FabricEnv, fabric : Fabric) -> Material;
-}
-
-MFabric(env : FabricEnv, fabric : Fabric) -> Material {
-	if (js && !isUrlParameterTrue("force_material")) {
-		wh = make(WidthHeight(0.0, 0.0));
-
-		MGetManager(\manager -> MInspect([IAvailable(wh)],
-			MHTMLStage(wh, \stage -> {
-				clip = makeClip();
-				setClipStyle(clip, "position", "relative");
-				setClipStyle(clip, "width", "100%");
-				setClipStyle(clip, "height", "100%");
-				// Call listenScrollRect to prevent global events from blocking the scroll
-				listenScrollRect(clip, nop2);
-				addChild(stage, clip);
-				div = getClipNativeWidget(clip);
-				fabric2dom(manager, clip, div, env, fabric);
-			})
-		));
-	} else {
-		fabric2material(env, fabric);
-	}
+	fabric2dom(manager : MaterialManager, stage : native, parent : native, env : FabricEnv, f : Fabric) -> () -> () -> void;
 }
 
 fabric2material(env : FabricEnv, f : Fabric) -> Material {
@@ -146,15 +123,19 @@ fabric2material(env : FabricEnv, f : Fabric) -> Material {
 		BComposite(name, splitFn, renderFn, mergeFn): {
 			value = getFabDyn(env, name, 0);
 			MSelect(value, \v -> {
-				parts = splitFn(env, value);
-				fab = renderFn(env, parts);
-				mat = fabric2material(env, fab);
-
-				// TODO: Introduce names for each of the parts so we have behaviours for them
+				ienv = innerFabricEnv(env);
+				parts = splitFn(env, v);
+				values = map(parts, \p -> make(p));
+				// Set up these values
+				iteri(values, \i, pvalue -> {
+					defineFab(ienv, name + i2s(i), pvalue);
+				});
+				fab = renderFn(ienv, parts);
+				mat = fabric2material(ienv, fab);
 
 				MConstruct([
 					// TODO: This is wrong. We need behaviours for the parts
-					makeSubscribe(fmerge(parts), \p -> {
+					makeSubscribe(fmerge(values), \p -> {
 						nv = mergeFn(env, p);
 						nextDistinct(value, nv);
 					})
@@ -170,16 +151,16 @@ bcontainer2material(env : FabricEnv, b : BContainerX) -> Material {
 		wh = make(WidthHeight(0.0, 0.0));
 
 		// TODO: Get available directly from clip
-		MGetManager(\manager -> MInspect([IAvailable(wh)], 
+		MGetManager(\manager -> MInspect([IAvailable(wh)],
 			MHTMLStage(wh, \stage -> {
 				div = getClipNativeWidget(stage);
-				fabric2dom(manager, stage, div, env, b);
+				fabric2dom(manager, stage, div, env, b)();
 			})
 		))
 	} else {
 		mitems = map(b.items, \t -> fabric2material(env, t));
 
-		if (style.downwards) {
+		m = if (style.downwards) {
 			MLines(mitems)
 		} else if (style.group) {
 			MGroup(mitems)
@@ -187,22 +168,27 @@ bcontainer2material(env : FabricEnv, b : BContainerX) -> Material {
 			MBaselineCols(mitems)
 		} else {
 			MCols(mitems);
-		}
+		};
+		if (style.padding != BEdges(0.0, 0.0, 0.0, 0.0)) {
+			MBorder(style.padding.left, style.padding.top, style.padding.right, style.padding.bottom, m)
+		} else m;
 	}
 }
 
 // TODO: Move away from DisplayObjects to plain DOM elements
-fabric2dom(manager : MaterialManager, stage : native, parent : native, env : FabricEnv, f : Fabric) -> () -> void {
+fabric2dom(manager : MaterialManager, stage : native, parent : native, env : FabricEnv, f : Fabric) -> () -> () -> void {
 	onError = \e -> {
 		println(e);
 		el = createElement("p");
 		changeNodeValue(el, e);
-		appendChild(parent, el);
 		\ -> {
-			removeChild(parent, el);
+			appendChild(parent, el);
+			\ -> {
+				removeChild(parent, el);
+			}
 		}
 	}
-	renderMaterial = \m -> {
+	renderMaterial : (Material) -> () -> () -> void = \m -> {
 		renderMaterialToClip(manager, stage, parent, m);
 	}
 	switch (f) {
@@ -235,8 +221,8 @@ fabric2dom(manager : MaterialManager, stage : native, parent : native, env : Fab
 
 			makeSubscribeUns(fmerge(values), \vals -> {
 				fabric = fn(env, vals);
-				[fabric2dom(manager, stage, parent, env, fabric)];
-			})();
+				[fabric2dom(manager, stage, parent, env, fabric)()];
+			});
 		}
 		BBidirectional(a, b, a2b, b2a): {
 			ma = getFabDynM(env, a);
@@ -251,7 +237,7 @@ fabric2dom(manager : MaterialManager, stage : native, parent : native, env : Fab
 							onError("Error: Unknown value for " + b);
 						}
 						Some(db): {
-							bidirectionalLink(da, db, a2b, b2a)
+							\ -> bidirectionalLink(da, db, a2b, b2a)
 						}
 					}
 				}
@@ -259,15 +245,13 @@ fabric2dom(manager : MaterialManager, stage : native, parent : native, env : Fab
 		}
 		BTimer(name, delta): {
 			deltaInMs = round(delta * 1000.0);
-			setInterval(deltaInMs, \ -> {
+			\ -> setInterval(deltaInMs, \ -> {
 				val = getFab(env, name, 0.0) + delta;
 				setFab(env, name, val);
 			});
 		}
 		BContainerX(items, style): {
 			div = createElement("div");
-			setElementStyle(div, "position", "static");
-			appendChild(parent, div);
 			if (style.downwards) {
 				setElementStyle(div, "display", "flex");
 				setElementStyle(div, "flex-direction", "column");
@@ -283,20 +267,27 @@ fabric2dom(manager : MaterialManager, stage : native, parent : native, env : Fab
 				setElementStyle(div, "flexDirection", "row");
 				setElementStyle(div, "alignItems", "top");
 			}
-			d = map(items, \t -> fabric2dom(manager, stage, div, env, t));
+			setElementStyle(div, "position", "static");
+			setElementStyle(div, "padding", bedge2css(style.padding));
+			setElementStyle(div, "margin", bedge2css(style.margin));
+			setElementStyle(div, "gap", "0");
+			children = map(items, \t -> fabric2dom(manager, stage, div, env, t));
 			\ -> {
-				removeChild(parent, div);
-				applyall(d);
+				appendChild(parent, div);
+				d = map(children, apply0);
+				\ -> {
+					removeChild(parent, div);
+					applyall(d);
+				}
 			}
 		}
 		BTableX(rows, style): {
 			table = createElement("table");
 			setElementStyle(table, "position", "static");
-			appendChild(parent, table);
 			tbody = createElement("tbody");
 			setElementStyle(tbody, "position", "static");
 			appendChild(table, tbody);
-			d = map(rows, \row -> {
+			children = map(rows, \row -> {
 				tr = createElement("tr");
 				setElementStyle(tr, "position", "static");
 				appendChild(tbody, tr);
@@ -308,18 +299,29 @@ fabric2dom(manager : MaterialManager, stage : native, parent : native, env : Fab
 				})
 			}) |> concatA;
 			\ -> {
-				removeChild(parent, table);
-				applyall(d);
+				appendChild(parent, table);
+				d = map(children, apply0);
+				\ -> {
+					removeChild(parent, table);
+					applyall(d);
+				}
 			}
 		}
 		BScroll(content, style): {
 			div = createElement("div");
-			setElementStyle(div, "position", "static");
-			appendChild(parent, div);
 			setElementStyle(div, "overflow", "auto");
+			setElementStyle(div, "position", "static");
 			setElementStyle(div, "width", "100%");
 			setElementStyle(div, "height", "100%");
-			fabric2dom(manager, stage, div, env, content);
+			child = fabric2dom(manager, stage, div, env, content);
+			\ -> {
+				appendChild(parent, div);
+				d = child();
+				\ -> {
+					removeChild(parent, div);
+					d();
+				}
+			}
 		}
 		BMaterial(material): {
 			renderMaterial(material);
@@ -336,7 +338,7 @@ fabric2dom(manager : MaterialManager, stage : native, parent : native, env : Fab
 				} else {
 					nextDistinct(closeWhen, true);
 				}
-			})();
+			});
 		}
 		BClickable(contents, onClick): {
 			// TODO: Use fabric2dom
@@ -356,64 +358,75 @@ fabric2dom(manager : MaterialManager, stage : native, parent : native, env : Fab
 		BComposite(name, splitFn, renderFn, mergeFn): {
 			value = getFabDyn(env, name, 0);
 			makeSubscribeUns(value, \v -> {
-				parts = splitFn(env, value);
-				fab = renderFn(env, parts);
-				mat = fabric2dom(manager, stage, parent, env, fab);
-				[makeSubscribe(fmerge(parts), \p -> {
-					nv = mergeFn(env, p);
-					nextDistinct(value, nv);
-				})()];
-			})();
+				ienv = innerFabricEnv(env);
+				parts = splitFn(env, v);
+				values = map(parts, \p -> make(p));
+				// Set up these values
+				iteri(values, \i, pvalue -> {
+					defineFab(ienv, name + i2s(i), pvalue);
+				});
+				fab = renderFn(ienv, parts);
+
+				[
+					fabric2dom(manager, stage, parent, ienv, fab)(),
+					makeSubscribe(fmerge(values), \p -> {
+						nv = mergeFn(env, p);
+						nextDistinct(value, nv);
+					})()
+				];
+			});
 		}
 	}
 }
 
-renderMaterialToClip(manager : MaterialManager, stage : native, parent : native, material : Material) -> () -> void {
+renderMaterialToClip(manager : MaterialManager, stage : native, parent : native, material : Material) -> () -> () -> void {
 	tr = material2tropic(manager, material);
 	ot = optimizeTropic(resolveTropicCss(tr, emptyStylesheet));
 	clipWH = make(WidthHeight(0.0, 0.0));
 	tacc = tropic2Acc(ot, makeTParentInfo(clipWH), emptyStylesheet, false);
 	zorder = const([]);
-	r = renderFForm(optimizeFForm(tacc.form), zorder);
-	d = concat(
-		attachFChildren(stage, r.clips, r.disposers, r.capabilities).disposers,
-		if (length(r.clips) > 0) {
-			clip = r.clips[0];
-			setClipParentElement(clip, parent);
-			updateClipWH = \ -> {
-				rect = getClipBoundingClientRect(clip);
-				if (length(rect) > 3) {
-					next(clipWH, WidthHeight(rect[2], rect[3]));
-				}
-			}
-
-			setClipStyle(clip, "position", "relative");
-
-			[
-				make3Subscribe(tacc.xFillers, tacc.minWidth, tacc.maxWidth, \xf, minW, maxW -> {
-					setClipStyle(clip, "width", if (xf > 0.0) d2s(xf * 100.0) + "%" else "");
-					setClipStyle(clip, "minWidth", if (xf > 0.0) d2s(minW) + "px" else "");
-					setClipStyle(clip, "maxWidth", if (xf > 0.0) d2s(maxW) + "px" else "");
-				})(),
-				make3Subscribe(tacc.yFillers, tacc.minHeight, tacc.maxHeight, \yf, minH, maxH -> {
-					setClipStyle(clip, "height", if (yf > 0.0) d2s(yf * 100.0) + "%" else "");
-					setClipStyle(clip, "minHeight", if (yf > 0.0) d2s(minH) + "px" else "");
-					setClipStyle(clip, "maxHeight", if (yf > 0.0) d2s(maxH) + "px" else "");
-				})(),
-				make2SubscribeUns(tacc.xFillers, tacc.yFillers, \xf, yf -> {
-					if (xf > 0.0 || yf > 0.0) {
-						updateClipWH();
-
-						[
-							addEventListener(clip, "resize", updateClipWH)
-						]
-
-					} else {
-						[]
+	\ -> {
+		r = renderFForm(optimizeFForm(tacc.form), zorder);
+		d = concat(
+			attachFChildren(stage, r.clips, r.disposers, r.capabilities).disposers,
+			if (length(r.clips) > 0) {
+				clip = r.clips[0];
+				setClipParentElement(clip, parent);
+				updateClipWH = \ -> {
+					rect = getClipBoundingClientRect(clip);
+					if (length(rect) > 3) {
+						next(clipWH, WidthHeight(rect[2], rect[3]));
 					}
-				})()
-			]
-		} else []
-	);
-	\ -> applyall(d);
+				}
+
+				setClipStyle(clip, "position", "relative");
+
+				[
+					make3Subscribe(tacc.xFillers, tacc.minWidth, tacc.maxWidth, \xf, minW, maxW -> {
+						setClipStyle(clip, "width", if (xf > 0.0) d2s(xf * 100.0) + "%" else "");
+						setClipStyle(clip, "minWidth", if (xf > 0.0) d2s(minW) + "px" else "");
+						setClipStyle(clip, "maxWidth", if (xf > 0.0) d2s(maxW) + "px" else "");
+					})(),
+					make3Subscribe(tacc.yFillers, tacc.minHeight, tacc.maxHeight, \yf, minH, maxH -> {
+						setClipStyle(clip, "height", if (yf > 0.0) d2s(yf * 100.0) + "%" else "");
+						setClipStyle(clip, "minHeight", if (yf > 0.0) d2s(minH) + "px" else "");
+						setClipStyle(clip, "maxHeight", if (yf > 0.0) d2s(maxH) + "px" else "");
+					})(),
+					make2SubscribeUns(tacc.xFillers, tacc.yFillers, \xf, yf -> {
+						if (xf > 0.0 || yf > 0.0) {
+							updateClipWH();
+
+							[
+								addEventListener(clip, "resize", updateClipWH)
+							]
+
+						} else {
+							[]
+						}
+					})()
+				]
+			} else []
+		);
+		\ -> applyall(d);
+	}
 }
