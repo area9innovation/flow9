@@ -64,7 +64,7 @@ export {
 			};
 
 	bfFit(stageSize : double, blocks : [BFBlock], par : BFParameters) -> [Maybe<Point>];
-	bfFitBlocks(line : [Point], size : WidthHeight, blocks : [BFBlock], par : BFParameters) -> BFState;
+	bfFitBlocks(size : WidthHeight, blocks : [BFBlock], par : BFParameters) -> BFState;
 
 		BFBlock(w : double, h : double);
 		BFState(l : [Point], s : WidthHeight, p : Tree<int, Pair<BFBlock, Point>>);
@@ -779,7 +779,7 @@ bfFit(stageSize : double, blocks : [BFBlock], par : BFParameters) -> [Maybe<Poin
 	);
 
 	if (par.ordered) {
-		state = bfFitBlocks([Point(0.0, 0.0)], sz, blocks, par);
+		state = bfFitBlocks(sz, blocks, par);
 
 		generate(0, length(blocks), \i -> maybeMap(lookupTree(state.p, i), \p -> p.second));
 	} else {
@@ -800,7 +800,7 @@ bfFit(stageSize : double, blocks : [BFBlock], par : BFParameters) -> [Maybe<Poin
 
 		orderI = map(blocksI, \b -> b.first);
 
-		state = bfFitBlocks([Point(0.0, 0.0)], sz, map(blocksI, secondOfPair), par);
+		state = bfFitBlocks(sz, map(blocksI, secondOfPair), par);
 
 		getTreeValues(
 			foldi(
@@ -812,68 +812,46 @@ bfFit(stageSize : double, blocks : [BFBlock], par : BFParameters) -> [Maybe<Poin
 	}
 }
 
-bfFitBlocks(line : [Point], size : WidthHeight, blocks : [BFBlock], par : BFParameters) -> BFState {
-	initialState = BFState(line, size, makeTree());
-	state = ref foldi(blocks, Some(initialState), \i, accM, block -> {
-		maybeBind(accM, \acc -> bfFindNode(i, acc, block, par));
-	});
+bfFitBlocks(size : WidthHeight, blocks : [BFBlock], par : BFParameters) -> BFState {
+	initialState = BFState([Point(0.0, 0.0)], size, makeTree());
+	state = ref bfFindNodes(initialState, blocks, par);
 
+	// In case provided size is not big enough to fit all the blocks then try to find the smallest size that fits them
 	if (isNone(^state)) {
 		blockWidths = map(blocks, \b -> b.w);
 		blockHeights = map(blocks, \b -> b.h);
+		maxAvailableState = bfFindNodes(
+			BFState(initialState.l, if (par.lockWidth) WidthHeight(size.width, dsum(blockHeights) + 1.0) else WidthHeight(dsum(blockWidths) + 1.0, size.height), makeTree()),
+			blocks,
+			par
+		);
 		minSize = ref WidthHeight(
 			max(size.width, either(maxA(blockWidths), size.width) + 1.0),
 			max(size.height, either(maxA(blockHeights), size.height) + 1.0)
 		);
+		// If the stage with provided width (height if !par.lockWidth) and max content height (width if !par.lockWidth) can't fit all the blocks
+		// then try to find the smallest width (height if !par.lockWidth) that fits them
+		if (isNone(maxAvailableState)) {
+			maxSize = ref WidthHeight(
+				if (!par.lockWidth) ^minSize.width else dsum(blockWidths) + 1.0,
+				if (par.lockWidth) ^minSize.height else dsum(blockHeights) + 1.0
+			);
+
+			maybeApply(
+				bfFitBlocksBinarySearch(initialState, blocks, par, minSize, maxSize, !par.lockWidth),
+				\newState -> {
+					minSize := WidthHeight(
+						max(^minSize.width, newState.s.width),
+						max(^minSize.height, newState.s.height)
+					);
+				}
+			);
+		}
 		maxSize = ref WidthHeight(
 			if (par.lockWidth) ^minSize.width else dsum(blockWidths) + 1.0,
 			if (!par.lockWidth) ^minSize.height else dsum(blockHeights) + 1.0
 		);
-		lastState = ref initialState;
-		// Perform single binary search for final size refinement
-		while(\ -> isNone(^state), \ -> {
-			midSize = WidthHeight(
-				if (par.lockWidth) ^maxSize.width else (^minSize.width + ^maxSize.width) / 2.0,
-				if (!par.lockWidth) ^maxSize.height else (^minSize.height + ^maxSize.height) / 2.0
-			);
-
-			eitherFn(
-				foldi(blocks, Some(BFState(line, midSize, makeTree())), \i, accM, block -> {
-					maybeBind(accM, \acc -> bfFindNode(i, acc, block, par));
-				}),
-				\newState -> {
-					maxSize := midSize;
-
-					if (
-						if (!par.lockWidth) {
-							round(^minSize.width) < round(^maxSize.width) && midSize.width >= ^minSize.width;
-						} else {
-							round(^minSize.height) < round(^maxSize.height) && midSize.height >= ^minSize.height;
-						}
-					) {
-						lastState := newState;
-					} else {
-						state := Some(newState);
-					}
-				},
-				\ -> {
-					if (
-						if (!par.lockWidth) {
-							^minSize.width >= ^maxSize.width || midSize.width <= ^minSize.width;
-						} else {
-							^minSize.height >= ^maxSize.height || midSize.height <= ^minSize.height;
-						}
-					) {
-						state := Some(^lastState);
-					} else {
-						minSize := WidthHeight(
-							if (par.lockWidth) ^maxSize.width else midSize.width + 1.0,
-							if (!par.lockWidth) ^maxSize.height else midSize.height + 1.0
-						);
-					}
-				}
-			);
-		});
+		state := bfFitBlocksBinarySearch(initialState, blocks, par, minSize, maxSize, par.lockWidth);
 	}
 
 	either(^state, initialState)
@@ -896,6 +874,71 @@ bfFitBlocks(line : [Point], size : WidthHeight, blocks : [BFBlock], par : BFPara
 			s;
 		}
 	})
+}
+
+bfFitBlocksBinarySearch(initialState : BFState, blocks : [BFBlock], par : BFParameters, minSize : ref WidthHeight, maxSize : ref WidthHeight, lockWidth : bool) -> Maybe<BFState> {
+	state = ref None();
+	lastState = ref Some(initialState);
+
+	// Perform single binary search for final size refinement
+	while(\ -> isNone(^state), \ -> {
+		midSize = WidthHeight(
+			if (lockWidth) ^maxSize.width else (^minSize.width + ^maxSize.width) / 2.0,
+			if (!lockWidth) ^maxSize.height else (^minSize.height + ^maxSize.height) / 2.0
+		);
+
+		eitherFn(
+			// Check if we can fit all the blocks
+			bfFindNodes(BFState(initialState.l, midSize, makeTree()), blocks, par),
+			\newState -> {
+				maxSize := midSize;
+
+				if (
+					if (!lockWidth) {
+						round(^minSize.width) < round(^maxSize.width) && midSize.width >= ^minSize.width;
+					} else {
+						round(^minSize.height) < round(^maxSize.height) && midSize.height >= ^minSize.height;
+					}
+				) {
+					// Save the state if we haven't come to the end of the binary search (state fits all the blocks but not exactly the smallest one)
+					lastState := Some(newState);
+				} else {
+					// otherwise return current state
+					state := Some(newState);
+				}
+			},
+			\ -> {
+				if (
+					if (!lockWidth) {
+						^minSize.width >= ^maxSize.width || midSize.width <= ^minSize.width;
+					} else {
+						^minSize.height >= ^maxSize.height || midSize.height <= ^minSize.height;
+					}
+				) {
+					// Return the last state if we've come to the end of the binary search
+					state := ^lastState;
+				} else {
+					// otherwise increase min size
+					minSize := WidthHeight(
+						if (lockWidth) ^maxSize.width else midSize.width + 1.0,
+						if (!lockWidth) ^maxSize.height else midSize.height + 1.0
+					);
+				}
+			}
+		);
+	});
+
+	^state;
+}
+
+bfFindNodes(state : BFState, blocks : [BFBlock], par : BFParameters) -> Maybe<BFState> {
+	foldi(
+		blocks,
+		Some(state),
+		\i, accM, block -> {
+			maybeBind(accM, \acc -> bfFindNode(i, acc, block, par));
+		}
+	);
 }
 
 bfFindNode(i : int, state : BFState, block : BFBlock, par : BFParameters) -> Maybe<BFState> {
@@ -1704,7 +1747,7 @@ fitTFlex(
 			false
 		);
 		blocks = map(items, \item -> BFBlock(item.second.width, item.second.height));
-		state = bfFitBlocks([Point(0.0, 0.0)], size, blocks, par);
+		state = bfFitBlocks(size, blocks, par);
 		lastPoint = ref Point(0.0, 0.0);
 
 		newLines = fold(tree2pairs(state.p), [], \acc : [[TFlexibleGridItem]], p : Pair<int, Pair<BFBlock, Point>> -> {
