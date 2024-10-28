@@ -5,7 +5,7 @@ import material/material_ui;
 
 export {
 	fabric2material(env : FabricEnv, f : Fabric) -> Material;
-	fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabric) -> () -> void;
+	fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabric) -> () -> () -> void;
 }
 
 fabric2material(env : FabricEnv, f : Fabric) -> Material {
@@ -147,14 +147,14 @@ fabric2material(env : FabricEnv, f : Fabric) -> Material {
 
 bcontainer2material(env : FabricEnv, b : BContainerX) -> Material {
 	style = b.style;
-	if (js) {
+	if (js && !isUrlParameterTrue("force_material")) {
 		wh = make(WidthHeight(0.0, 0.0));
 
 		// TODO: Get available directly from clip
-		MGetManager(\manager -> MInspect([IAvailable(wh)], 
+		MGetManager(\manager -> MInspect([IAvailable(wh)],
 			MHTMLStage(wh, \div -> {
 				// div = getClipNativeWidget(stage);
-				fabric2dom(manager, div, env, b);
+				fabric2dom(manager, div, env, b)();
 			})
 		))
 	} else {
@@ -176,16 +176,18 @@ bcontainer2material(env : FabricEnv, b : BContainerX) -> Material {
 }
 
 // TODO: Move away from DisplayObjects to plain DOM elements
-fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabric) -> () -> void {
+fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabric) -> () -> () -> void {
 //	println("fabric2dom");
 //	println(f);
 	onError = \e -> {
 		println(e);
 		el = createElement("p");
 		changeNodeValue(el, e);
-		addChild(parent, el);
 		\ -> {
-			removeChild(parent, el);
+			addChild(parent, el);
+			\ -> {
+				removeChild(parent, el);
+			}
 		}
 	}
 	renderMaterial = \m -> {
@@ -221,8 +223,8 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 
 			makeSubscribeUns(fmerge(values), \vals -> {
 				fabric = fn(env, vals);
-				[fabric2dom(manager, parent, env, fabric)];
-			})();
+				[fabric2dom(manager, parent, env, fabric)()];
+			});
 		}
 		BBidirectional(a, b, a2b, b2a): {
 			ma = getFabDynM(env, a);
@@ -237,7 +239,7 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 							onError("Error: Unknown value for " + b);
 						}
 						Some(db): {
-							bidirectionalLink(da, db, a2b, b2a)
+							\ -> bidirectionalLink(da, db, a2b, b2a)
 						}
 					}
 				}
@@ -245,7 +247,7 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 		}
 		BTimer(name, delta): {
 			deltaInMs = round(delta * 1000.0);
-			setInterval(deltaInMs, \ -> {
+			\ -> setInterval(deltaInMs, \ -> {
 				val = getFab(env, name, 0.0) + delta;
 				setFab(env, name, val);
 			});
@@ -253,7 +255,6 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 		BContainerX(items, style): {
 			div = makeClip();
 			setClipTagName(div, "div");
-			addChild(parent, div);
 			if (style.downwards) {
 				setClipStyle(div, "display", "flex");
 				setClipStyle(div, "flex-direction", "column");
@@ -269,15 +270,18 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 				setClipStyle(div, "flexDirection", "row");
 				setClipStyle(div, "alignItems", "top");
 			}
-			setClipStyle(div, "width", "100%");
-			setClipStyle(div, "height", "100%");
+			setClipStyle(div, "position", "static");
 			setClipStyle(div, "padding", bedge2css(style.padding));
 			setClipStyle(div, "margin", bedge2css(style.margin));
 			setClipStyle(div, "gap", "0");
-			d = map(items, \t -> fabric2dom(manager, div, env, t));
+			children = map(items, \t -> fabric2dom(manager, div, env, t));
 			\ -> {
-				removeChild(parent, div);
-				applyall(d);
+				addChild(parent, div);
+				d = map(children, apply0);
+				\ -> {
+					removeChild(parent, div);
+					applyall(d);
+				}
 			}
 		}
 		BTableX(rows, style): {
@@ -287,11 +291,17 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 		BScroll(content, style): {
 			div = makeClip();
 			setClipTagName(div, "div");
-			addChild(parent, div);
 			setClipStyle(div, "overflow", "auto");
-			setClipStyle(div, "width", "100%");
-			setClipStyle(div, "height", "100%");
-			fabric2dom(manager, div, env, content);
+			setClipStyle(div, "position", "static");
+			child = fabric2dom(manager, div, env, content);
+			\ -> {
+				addChild(parent, div);
+				d = child();
+				\ -> {
+					removeChild(parent, div);
+					d();
+				}
+			}
 		}
 		BMaterial(material): {
 			renderMaterial(material);
@@ -308,7 +318,7 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 				} else {
 					nextDistinct(closeWhen, true);
 				}
-			})();
+			});
 		}
 		BClickable(contents, onClick): {
 			// TODO: Use fabric2dom
@@ -338,54 +348,56 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 				fab = renderFn(ienv, parts);
 
 				[
-					fabric2dom(manager, parent, ienv, fab),
+					fabric2dom(manager, parent, ienv, fab)(),
 					makeSubscribe(fmerge(values), \p -> {
 						nv = mergeFn(env, p);
 						nextDistinct(value, nv);
 					})()
 				];
-			})();
+			});
 		}
 	}
 }
 
-renderMaterialToClip(manager : MaterialManager, parent : native, material : Material) -> () -> void {
+renderMaterialToClip(manager : MaterialManager, parent : native, material : Material) -> () -> () -> void {
 	wh = make(WidthHeight(0.0, 0.0));
 	tr = material2tropic(manager, material);
 	ot = optimizeTropic(resolveTropicCss(tr, emptyStylesheet));
 	clipWH = make(getValue(wh));
 	tacc = tropic2Acc(ot, makeTParentInfo(clipWH), emptyStylesheet, false);
 	zorder = const([]);
-	r = renderFForm(optimizeFForm(tacc.form), zorder);
-	d = attachFChildren(parent, r.clips, r.disposers, r.capabilities).disposers;
-	if (length(r.clips) > 0) {
-		cl = r.clips[0];
-		updateClipWH = \ -> {
-			timer(100, \ -> {
-				rect = getClipBoundingClientRect(cl);
-				if (length(rect) > 3) {
-					next(clipWH, WidthHeight(rect[2], rect[3]));
-				}
-			});
-		}
+	\ -> {
+		r = renderFForm(optimizeFForm(tacc.form), zorder);
+		d = attachFChildren(parent, r.clips, r.disposers, r.capabilities).disposers;
+		if (length(r.clips) > 0) {
+			cl = r.clips[0];
+			updateClipWH = \ -> {
+				timer(100, \ -> {
+					rect = getClipBoundingClientRect(cl);
+					if (length(rect) > 3) {
+						next(clipWH, WidthHeight(rect[2], rect[3]));
+					}
+				});
+			}
 
-		setClipStyle(cl, "position", "relative");
+			setClipStyle(cl, "position", "relative");
 
-		// TODO: Update dynamically
-		if (fgetValue(tacc.xFillers) > 0.0) {
-			setClipStyle(cl, "width", d2s(fgetValue(tacc.xFillers) * 100.0) + "%");
-			setClipStyle(cl, "minWidth", d2s(fgetValue(tacc.minWidth)) + "px");
-			setClipStyle(cl, "maxWidth", d2s(fgetValue(tacc.maxWidth)) + "px");
-		}
-		if (fgetValue(tacc.yFillers) > 0.0) {
-			setClipStyle(cl, "height", d2s(fgetValue(tacc.yFillers) * 100.0) + "%");
-			setClipStyle(cl, "minHeight", d2s(fgetValue(tacc.minHeight)) + "px");
-			setClipStyle(cl, "maxHeight", d2s(fgetValue(tacc.maxHeight)) + "px");
-		}
+			// TODO: Update dynamically
+			if (fgetValue(tacc.xFillers) > 0.0) {
+				setClipStyle(cl, "width", d2s(fgetValue(tacc.xFillers) * 100.0) + "%");
+				setClipStyle(cl, "minWidth", d2s(fgetValue(tacc.minWidth)) + "px");
+				setClipStyle(cl, "maxWidth", d2s(fgetValue(tacc.maxWidth)) + "px");
+			}
+			if (fgetValue(tacc.yFillers) > 0.0) {
+				setClipStyle(cl, "height", d2s(fgetValue(tacc.yFillers) * 100.0) + "%");
+				setClipStyle(cl, "minHeight", d2s(fgetValue(tacc.minHeight)) + "px");
+				setClipStyle(cl, "maxHeight", d2s(fgetValue(tacc.maxHeight)) + "px");
+			}
 
-		// TODO: Dispose event listener; use ResizeObserver to monitor size changes; skip for content without fillers
-		addEventListener(getStage(), "resize", updateClipWH);
-		updateClipWH();
+			// TODO: Dispose event listener; use ResizeObserver to monitor size changes; skip for content without fillers
+			addEventListener(getStage(), "resize", updateClipWH);
+			updateClipWH();
+		}
+		\ -> applyall(d);
 	}
-	\ -> applyall(d);
 }
