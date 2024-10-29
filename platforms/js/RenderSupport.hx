@@ -2561,6 +2561,10 @@ class RenderSupport {
 		clip.setAutofillBackgroundColor(autofillBackgroundColor);
 	}
 
+	public static function setAutofillBackgroundOpacity(clip : TextClip, autofillBackgroundOpacity : Float) : Void {
+		clip.setAutofillBackgroundOpacity(autofillBackgroundOpacity);
+	}
+
 	public static function addTextInputFilter(clip : TextClip, filter : String -> String) : Void -> Void {
 		return clip.addTextInputFilter(filter);
 	}

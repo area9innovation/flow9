@@ -136,6 +136,7 @@ class TextClip extends NativeWidgetClip {
 	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
 	private var autofillBackgroundColor : Int = null;
+	private var autofillBackgroundOpacity : Float = 1.0;
 	private var backgroundOpacity : Float = 0.0;
 	private var cursorColor : Int = -1;
 	private var cursorOpacity : Float = -1.0;
@@ -507,7 +508,7 @@ class TextClip extends NativeWidgetClip {
 			if (autofillBackgroundColor != null) {
 				var colorWithOpacity = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * alpha + ")";
 				// These variables are used in the flowjspixi.css file for input:-webkit-autofill workaround
-				nativeWidget.style.setProperty('--background-color', RenderSupport.makeCSSColor(autofillBackgroundColor, 1));
+				nativeWidget.style.setProperty('--background-color', RenderSupport.makeCSSColor(autofillBackgroundColor, autofillBackgroundOpacity));
 				nativeWidget.style.setProperty('--text-color', colorWithOpacity);
 			}
 		} else {
@@ -1173,6 +1174,14 @@ class TextClip extends NativeWidgetClip {
 	public function setAutofillBackgroundColor(autofillBackgroundColor : Int) {
 		if (this.autofillBackgroundColor != autofillBackgroundColor) {
 			this.autofillBackgroundColor = autofillBackgroundColor;
+
+			invalidateStyle();
+		}
+	}
+
+	public function setAutofillBackgroundOpacity(autofillBackgroundOpacity : Float) {
+		if (this.autofillBackgroundOpacity != autofillBackgroundOpacity) {
+			this.autofillBackgroundOpacity = autofillBackgroundOpacity;
 
 			invalidateStyle();
 		}
