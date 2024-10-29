@@ -789,7 +789,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getClipDisplay(clip : DisplayObject) : String {
-		return untyped clip.display != null ? clip.display : "block";
+		return untyped clip.display || null;
 	}
 
 	public static inline function setClipDisplay(clip : DisplayObject, display : String) : Void {
@@ -1970,7 +1970,7 @@ class DisplayObjectHelper {
 					untyped clip.onStage = true;
 
 					if (!Platform.isIE) {
-						untyped clip.nativeWidget.style.display = null;
+						untyped clip.nativeWidget.style.display = getClipDisplay(clip);
 					}
 
 					addNativeWidget(clip);
