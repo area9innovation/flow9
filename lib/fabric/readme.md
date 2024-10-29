@@ -1,6 +1,6 @@
 # Flow Fabric
 
-Yet another implementaion of Fabric, this time directly in flow.
+Yet another implementation of Fabric, this time directly in flow.
 
 ## Plan
 
