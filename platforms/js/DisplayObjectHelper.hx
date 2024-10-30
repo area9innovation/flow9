@@ -1306,8 +1306,8 @@ class DisplayObjectHelper {
 				hgt = '${getWidgetHeight(clip)}px';
 			}
 
-			nativeWidget.style.width = untyped clip.overrideWidth != null ? clip.overrideWidth : wd;
-			nativeWidget.style.height = untyped clip.overrideHeight != null ? clip.overrideHeight : hgt;
+			nativeWidget.style.width = untyped clip.overrideWidth != null && clip.overrideWidth != "" ? clip.overrideWidth : wd;
+			nativeWidget.style.height = untyped clip.overrideHeight != null && clip.overrideHeight != "" ? clip.overrideHeight : hgt;
 
 			// nativeWidget.setAttribute('minX', Std.string(localBounds.minX));
 			// nativeWidget.setAttribute('minY', Std.string(localBounds.minY));
