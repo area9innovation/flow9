@@ -5,7 +5,14 @@ import material/material_ui;
 
 export {
 	fabric2material(env : FabricEnv, f : Fabric) -> Material;
-	fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabric) -> () -> () -> void;
+	fabric2dom(parentInfo : FabricParentInfo, f : Fabric) -> () -> () -> void;
+
+	FabricParentInfo(
+		manager : MaterialManager,
+		parent : native,
+		env : FabricEnv,
+		zorder : Transform<[int]>
+	);
 }
 
 fabric2material(env : FabricEnv, f : Fabric) -> Material {
@@ -154,7 +161,7 @@ bcontainer2material(env : FabricEnv, b : BContainerX) -> Material {
 		MGetManager(\manager -> MInspect([IAvailable(wh)],
 			MHTMLStage(wh, \div -> {
 				// div = getClipNativeWidget(stage);
-				fabric2dom(manager, div, env, b)();
+				fabric2dom(FabricParentInfo(manager, div, env, const([0])), b)();
 			})
 		))
 	} else {
@@ -175,10 +182,24 @@ bcontainer2material(env : FabricEnv, b : BContainerX) -> Material {
 	}
 }
 
+addFabricChildClip(parent : native, clip : native, zorder : Transform<[int]>) -> () -> void {
+	disp = makeSubscribe(flastElement(zorder, const(0)), \i -> {
+		addChildAt(parent, clip, i);
+	})();
+	\ -> {
+		disp();
+		removeChild(parent, clip);
+	}
+}
+
 // TODO: Move away from DisplayObjects to plain DOM elements
-fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabric) -> () -> () -> void {
+fabric2dom(parentInfo : FabricParentInfo, f : Fabric) -> () -> () -> void {
 //	println("fabric2dom");
 //	println(f);
+	manager = parentInfo.manager;
+	parent = parentInfo.parent;
+	env = parentInfo.env;
+	zorder = parentInfo.zorder;
 	onError = \e -> {
 		println(e);
 		el = createElement("p");
@@ -191,7 +212,7 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 		}
 	}
 	renderMaterial = \m -> {
-		renderMaterialToClip(manager, parent, m);
+		renderMaterialToClip(manager, parent, m, zorder);
 	}
 	switch (f) {
 		BLet(name, value, scope): {
@@ -200,19 +221,19 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 				// Shadowing, and we make a new environment
 				nenv = innerFabricEnv(env);
 				defineFab(nenv, name, dyn);
-				fabric2dom(manager, parent, nenv, scope);
+				fabric2dom(FabricParentInfo(parentInfo with env = nenv), scope);
 			} else {
 				defineFab(env, name, dyn);
-				fabric2dom(manager, parent, env, scope);
+				fabric2dom(parentInfo, scope);
 			}
 		}
 		BCapture(name, value, scope): {
 			dyn = captureFabricValue(env, name, value);
-			fabric2dom(manager, parent, env, scope);
+			fabric2dom(parentInfo, scope);
 		}
 		BGetEnv(fn): {
 			fabric = fn(env);
-			fabric2dom(manager, parent, env, fabric);
+			fabric2dom(parentInfo, fabric);
 		}
 		BSelect(names, fn): {
 			values = filtermap(names, \name -> getFabDynM(env, name));
@@ -220,10 +241,9 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 				missing = filter(names, \name -> !containsKeyTree(^(env.values), name));
 				println("Error: Unknown values in BSelect " + toString(missing));
 			}
-
 			makeSubscribeUns(fmerge(values), \vals -> {
 				fabric = fn(env, vals);
-				[fabric2dom(manager, parent, env, fabric)()];
+				[fabric2dom(parentInfo, fabric)()];
 			});
 		}
 		BBidirectional(a, b, a2b, b2a): {
@@ -276,14 +296,14 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 			setClipStyle(div, "padding", bedge2css(style.padding));
 			setClipStyle(div, "margin", bedge2css(style.margin));
 			setClipStyle(div, "gap", "0");
-			children = map(items, \t -> fabric2dom(manager, div, env, t));
+			children = mapi(items, \i, t -> fabric2dom(FabricParentInfo(parentInfo with parent = div, zorder = farrayPush(zorder, const(i))), t));
 			\ -> {
-				addChild(parent, div);
-				d = map(children, apply0);
-				\ -> {
-					removeChild(parent, div);
-					applyall(d);
-				}
+				d = concat(
+					[addFabricChildClip(parent, div, zorder)],
+					map(children, apply0)
+				);
+
+				\ -> applyall(d);
 			}
 		}
 		BTableX(rows, style): {
@@ -300,6 +320,7 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 			setClipStyle(tbody, "position", "static");
 			setClipStyle(tbody, "display", "table-row-group");
 			addChild(table, tbody);
+			index = ref -1;
 			children = map(rows, \row -> {
 				tr = makeClip();
 				setClipTagName(tr, "tr");
@@ -316,16 +337,17 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 					setClipStyle(td, "position", "static");
 					setClipStyle(td, "display", "table-cell");
 					addChild(tr, td);
-					fabric2dom(manager, td, env, c);
+					index := ^index + 1;
+					fabric2dom(FabricParentInfo(parentInfo with parent = td, zorder = farrayPush(zorder, const(^index))), c);
 				})
 			}) |> concatA;
 			\ -> {
-				addChild(parent, table);
-				d = map(children, apply0);
-				\ -> {
-					removeChild(parent, table);
-					applyall(d);
-				}
+				d = concat(
+					[addFabricChildClip(parent, table, zorder)],
+					map(children, apply0)
+				);
+
+				\ -> applyall(d);
 			}
 		}
 		BScroll(content, style): {
@@ -335,18 +357,18 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 			setClipStyle(div, "position", "relative");
 			setClipStyle(div, "width", "100%");
 			setClipStyle(div, "height", "100%");
-			child = fabric2dom(manager, div, env, content);
+			child = fabric2dom(FabricParentInfo(parentInfo with parent = div), content);
 			\ -> {
-				addChild(parent, div);
-				d = [
-					child(),
-					// Call listenScrollRect to prevent global events from blocking the scroll
-					listenScrollRect(div, nop2)
-				];
-				\ -> {
-					removeChild(parent, div);
-					applyall(d);
-				}
+				d = concat(
+					[addFabricChildClip(parent, div, zorder)],
+					[
+						child(),
+						// Call listenScrollRect to prevent global events from blocking the scroll
+						listenScrollRect(div, nop2)
+					]
+				);
+
+				\ -> applyall(d);
 			}
 		}
 		BMaterial(material): {
@@ -394,7 +416,7 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 				fab = renderFn(ienv, parts);
 
 				[
-					fabric2dom(manager, parent, ienv, fab)(),
+					fabric2dom(FabricParentInfo(parentInfo with env = ienv), fab)(),
 					makeSubscribe(fmerge(values), \p -> {
 						nv = mergeFn(env, p);
 						nextDistinct(value, nv);
@@ -405,45 +427,50 @@ fabric2dom(manager : MaterialManager, parent : native, env : FabricEnv, f : Fabr
 	}
 }
 
-renderMaterialToClip(manager : MaterialManager, parent : native, material : Material) -> () -> () -> void {
+renderMaterialToClip(manager : MaterialManager, parent : native, material : Material, zorder : Transform<[int]>) -> () -> () -> void {
 	wh = make(WidthHeight(0.0, 0.0));
 	tr = material2tropic(manager, material);
 	ot = optimizeTropic(resolveTropicCss(tr, emptyStylesheet));
 	clipWH = make(getValue(wh));
 	tacc = tropic2Acc(ot, makeTParentInfo(clipWH), emptyStylesheet, false);
-	zorder = const([]);
 	\ -> {
 		r = renderFForm(optimizeFForm(tacc.form), zorder);
-		d = attachFChildren(parent, r.clips, r.disposers, r.capabilities).disposers;
-		if (length(r.clips) > 0) {
-			cl = r.clips[0];
-			updateClipWH = \ -> {
-				timer(100, \ -> {
-					rect = getClipBoundingClientRect(cl);
-					if (length(rect) > 3) {
-						next(clipWH, WidthHeight(rect[2], rect[3]));
-					}
-				});
-			}
+		d = concat(
+			if (length(r.clips) > 0) {
+				clip = r.clips[0];
+				updateClipWH = \ -> {
+					timer(100, \ -> {
+						rect = getClipBoundingClientRect(clip);
+						if (length(rect) > 3) {
+							next(clipWH, WidthHeight(rect[2], rect[3]));
+						}
+					});
+				}
 
-			setClipStyle(cl, "position", "relative");
+				setClipStyle(clip, "position", "relative");
 
-			// TODO: Update dynamically
-			if (fgetValue(tacc.xFillers) > 0.0) {
-				setClipStyle(cl, "width", d2s(fgetValue(tacc.xFillers) * 100.0) + "%");
-				setClipStyle(cl, "minWidth", d2s(fgetValue(tacc.minWidth)) + "px");
-				setClipStyle(cl, "maxWidth", d2s(fgetValue(tacc.maxWidth)) + "px");
-			}
-			if (fgetValue(tacc.yFillers) > 0.0) {
-				setClipStyle(cl, "height", d2s(fgetValue(tacc.yFillers) * 100.0) + "%");
-				setClipStyle(cl, "minHeight", d2s(fgetValue(tacc.minHeight)) + "px");
-				setClipStyle(cl, "maxHeight", d2s(fgetValue(tacc.maxHeight)) + "px");
-			}
+				// TODO: Update dynamically
+				if (fgetValue(tacc.xFillers) > 0.0) {
+					setClipStyle(clip, "width", d2s(fgetValue(tacc.xFillers) * 100.0) + "%");
+					setClipStyle(clip, "minWidth", d2s(fgetValue(tacc.minWidth)) + "px");
+					setClipStyle(clip, "maxWidth", d2s(fgetValue(tacc.maxWidth)) + "px");
+				}
+				if (fgetValue(tacc.yFillers) > 0.0) {
+					setClipStyle(clip, "height", d2s(fgetValue(tacc.yFillers) * 100.0) + "%");
+					setClipStyle(clip, "minHeight", d2s(fgetValue(tacc.minHeight)) + "px");
+					setClipStyle(clip, "maxHeight", d2s(fgetValue(tacc.maxHeight)) + "px");
+				}
 
-			// TODO: Dispose event listener; use ResizeObserver to monitor size changes; skip for content without fillers
-			addEventListener(getStage(), "resize", updateClipWH);
-			updateClipWH();
-		}
+				updateClipWH();
+
+				[
+					// TODO: use ResizeObserver to monitor size changes; skip for content without fillers
+					addEventListener(getStage(), "resize", updateClipWH),
+					addFabricChildClip(parent, clip, zorder)
+				]
+			} else [],
+			r.disposers
+		);
 		\ -> applyall(d);
 	}
 }
