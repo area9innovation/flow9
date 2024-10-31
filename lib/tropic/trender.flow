@@ -21,6 +21,8 @@ export {
 
 	// Render the given tropic, setting up the drag/tooltips handling. Drag/tooltips support does not work unless you use this!
 	trenderManager(manager : TManager, t : Tropic) -> () -> void;
+
+	renderTropicToClip(parent : native, tr : Tropic, zorder : Transform<[int]>) -> () -> () -> void;
 }
 
 
@@ -210,4 +212,99 @@ trenderManager(manager : TManager, t : Tropic) -> () -> void {
 		println("Warning: New call of trenderManager would overwrite findPositionScaleFn");
 	}
 	r.first;
+}
+
+renderTropicToClip(parent : native, tr : Tropic, zorder : Transform<[int]>) -> () -> () -> void {
+	ot = optimizeTropic(resolveTropicCss(tr, emptyStylesheet));
+	clipPos = make(Point(0.0, 0.0));
+	clipWH = make(WidthHeight(0.0, 0.0));
+	transformMatrix = fselectLift(clipPos, \p -> positionScale2TransformMatrix(PositionScale(p, Point(1.0, 1.0))));
+	parentInfo = TParentInfo(makeTParentInfo(clipWH) with transformMatrix = transformMatrix);
+	tacc = tropic2Acc(ot, parentInfo, emptyStylesheet, false);
+	\ -> {
+		r = renderFForm(optimizeFForm(tacc.form), zorder);
+		d = concat(
+			if (length(r.clips) > 0) {
+				clip = r.clips[0];
+				updateClipWH = \ -> {
+					rect = getClipBoundingClientRect(clip);
+					if (length(rect) > 3) {
+						nextDistinct(clipPos, Point(rect[0], rect[1]));
+						nextDistinct(clipWH, WidthHeight(rect[2], rect[3]));
+					}
+				}
+				updateClipPos = \ -> {
+					rect = getClipBoundingClientRect(clip);
+					if (length(rect) > 1) {
+						nextDistinct(clipPos, Point(rect[0], rect[1]));
+						nextDistinct(clipWH, WidthHeight(0.0, 0.0));
+					}
+				}
+				hasFillers = fselect2(tacc.xFillers, tacc.yFillers, FLift2(\xf, yf -> xf > 0.0 || yf > 0.0));
+
+				setClipStyle(clip, "position", "relative");
+
+				[
+					makeSubscribeUns(tacc.xFillers, \xf -> {
+						setClipStyle(clip, "width", if (xf > 0.0) d2s(xf * 100.0) + "%" else "");
+						if (xf > 0.0) {
+							[
+								make2Subscribe(tacc.minWidth, tacc.maxWidth, \minW, maxW -> {
+									setClipStyle(clip, "minWidth", d2s(minW) + "px");
+									setClipStyle(clip, "maxWidth", d2s(maxW) + "px");
+								})()
+							]
+						} else {
+							setClipStyle(clip, "minWidth", "");
+							setClipStyle(clip, "maxWidth", "");
+
+							[]
+						}
+					})(),
+					makeSubscribeUns(tacc.yFillers, \yf -> {
+						setClipStyle(clip, "height", if (yf > 0.0) d2s(yf * 100.0) + "%" else "");
+						if (yf > 0.0) {
+							[
+								make2Subscribe(tacc.minHeight, tacc.maxHeight, \minH, maxH -> {
+									setClipStyle(clip, "minHeight", d2s(minH) + "px");
+									setClipStyle(clip, "maxHeight", d2s(maxH) + "px");
+								})()
+							]
+						} else {
+							setClipStyle(clip, "minHeight", "");
+							setClipStyle(clip, "maxHeight", "");
+
+							[]
+						}
+					})(),
+					makeSubscribeUns(hasFillers, \hf -> {
+						if (hf) {
+							updateClipWH();
+
+							[
+								// TODO: use ResizeObserver to monitor size changes
+								addEventListener(clip, "resize", updateClipWH)
+							]
+
+						} else {
+							updateClipPos();
+
+							[
+								// TODO: use proper event to monitor position changes
+								addEventListener(clip, "resize", updateClipPos)
+							]
+						}
+					})(),
+					makeSubscribe(flastElement(zorder, const(0)), \i -> {
+						addChildAt(parent, clip, i);
+					})(),
+					\ -> {
+						removeChild(parent, clip);
+					}
+				]
+			} else [],
+			r.disposers
+		);
+		\ -> applyall(d);
+	}
 }
