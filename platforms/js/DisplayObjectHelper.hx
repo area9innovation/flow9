@@ -2624,7 +2624,7 @@ class DisplayObjectHelper {
 	}
 
 	public static function invalidateRenderable(clip : DisplayObject, viewBounds : Bounds, ?hasAnimation : Bool = false) : Void {
-		if (!InvalidateRenderable) {
+		if (!InvalidateRenderable || isRelativePosition(clip)) {
 			return;
 		}
 
