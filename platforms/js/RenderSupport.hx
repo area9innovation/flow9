@@ -3207,38 +3207,20 @@ class RenderSupport {
 
 	public static function getMouseX(?clip : DisplayObject) : Float {
 		var viewportScale = getViewportScale();
-		var dx = 0.0;
-
-		if (clip.isRelativePosition()) {
-			var nativeWidget : Element = untyped clip.nativeWidget;
-			if (nativeWidget != null) {
-				var r = nativeWidget.getBoundingClientRect();
-				dx = r.left;
-			}
-		}
 
 		if (clip == null || clip == PixiStage)
 			return MousePos.x * viewportScale;
 		else
-			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).x * viewportScale - dx');
+			return clip.toLocalPosition(MousePos).x * viewportScale;
 	}
 
 	public static function getMouseY(?clip : DisplayObject) : Float {
 		var viewportScale = getViewportScale();
-		var dy = 0.0;
-
-		if (clip.isRelativePosition()) {
-			var nativeWidget : Element = untyped clip.nativeWidget;
-			if (nativeWidget != null) {
-				var r = nativeWidget.getBoundingClientRect();
-				dy = r.top;
-			}
-		}
 
 		if (clip == null || clip == PixiStage)
 			return MousePos.y * viewportScale;
 		else
-			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).y * viewportScale - dy');
+			return clip.toLocalPosition(MousePos).y * viewportScale;
 	}
 
 	public static function getTouchPoints(?clip : DisplayObject) : Array<Array<Float>> {
@@ -3250,7 +3232,7 @@ class RenderSupport {
 
 		if (clip != null && clip != PixiStage) {
 			return Lambda.array(Lambda.map(touches, function(t : Dynamic) {
-				t = untyped __js__('clip.toLocal(new PIXI.Point(t[0], t[1]), null, null, true)');
+				t = clip.toLocalPosition(new Point(t[0], t[1]));
 				return [t.x, t.y];
 			}));
 		} else {
@@ -3279,15 +3261,6 @@ class RenderSupport {
 			return false;
 		}
 
-		if (clip.isRelativePosition()) {
-			var nativeWidget : Element = untyped clip.nativeWidget;
-			if (nativeWidget != null) {
-				var r = nativeWidget.getBoundingClientRect();
-				x = x - r.left;
-				y = y - r.top;
-			}
-		}
-
 		clip.invalidateLocalBounds();
 
 		var point = new Point(x, y);
@@ -3300,7 +3273,7 @@ class RenderSupport {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
 
-			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var local : Point = clip.toLocalPosition(point);
 			var viewBounds = untyped clip.viewBounds;
 
 			return viewBounds.minX <= local.x && viewBounds.minY <= local.y && viewBounds.maxX >= local.x && viewBounds.maxY >= local.y;
@@ -3327,7 +3300,7 @@ class RenderSupport {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
 
-			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var local : Point = clip.toLocalPosition(point);
 
 			return data.shape.contains(local.x, local.y);
 		} else {
@@ -3353,7 +3326,7 @@ class RenderSupport {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
 
-			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var local : Point = clip.toLocalPosition(point);
 			var clipWidth = 0;
 			var clipHeight = 0;
 			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip) && !clip.isInput) {
@@ -3383,7 +3356,7 @@ class RenderSupport {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
 
-			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var local : Point = clip.toLocalPosition(point);
 			var localBounds = untyped clip.localBounds;
 
 			if (local.x < localBounds.minX && local.y < localBounds.minY && local.x >= localBounds.maxX && local.y >= localBounds.maxY) {

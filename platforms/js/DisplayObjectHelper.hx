@@ -2833,4 +2833,24 @@ class DisplayObjectHelper {
 
 		return count;
 	}
+
+	public static function toLocalPosition(clip : DisplayObject, position : Point) : Point {
+		if (isHTMLRenderer(clip) && isRelativePosition(clip)) {
+			var nativeWidget : Element = untyped clip.nativeWidget;
+			var deltaPoint = new Point(0.0, 0.0);
+
+			if (nativeWidget == null) {
+				var parentClip = findParentClip(clip);
+				nativeWidget = untyped parentClip.nativeWidget;
+				deltaPoint = untyped __js__('clip.toLocal(new PIXI.Point(0.0, 0.0), parentClip, deltaPoint, false)');
+			}
+
+			if (nativeWidget != null) {
+				var r = nativeWidget.getBoundingClientRect();
+				return new Point(position.x - r.left + deltaPoint.x, position.y - r.top + deltaPoint.y);
+			}
+		}
+
+		return untyped __js__('clip.toLocal(position, null, null, true)');
+	}
 }
