@@ -249,7 +249,11 @@ public class HttpSupport extends NativeHost {
 		Func1<Object, Object> onDone = new Func1<Object, Object>() {
 			public Object invoke(Object argsObj) {
 				Object[] args = (Object[]) argsObj;
-				return onResponse.invoke((Integer)args[0], (String)args[1], (Object[])args[2]);
+				if (args == null || args.length != 3) {
+					return onResponse.invoke(500, "Arguments exception " + url, new Object[0]);
+				} else {
+					return onResponse.invoke((Integer)args[0], (String)args[1], (Object[])args[2]);
+				}
 			}
 		};
 		Callbacks.Callback callbackOnDone = callbacks.make(onDone);
