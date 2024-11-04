@@ -22,7 +22,10 @@ export {
 	// Render the given tropic, setting up the drag/tooltips handling. Drag/tooltips support does not work unless you use this!
 	trenderManager(manager : TManager, t : Tropic) -> () -> void;
 
-	renderTropicToClip(parent : native, tr : Tropic, zorder : Transform<[int]>) -> () -> () -> void;
+	renderTropicToClip(parent : native, tr : Tropic, style : [TRenderToClipStyle]) -> () -> () -> void;
+		TRenderToClipStyle ::= TRenderPosition, TRenderZorder;
+			TRenderPosition(position : string); // "relative" by default
+			TRenderZorder(zorder : Transform<[int]>); // [0] by default
 }
 
 
@@ -214,35 +217,30 @@ trenderManager(manager : TManager, t : Tropic) -> () -> void {
 	r.first;
 }
 
-renderTropicToClip(parent : native, tr : Tropic, zorder : Transform<[int]>) -> () -> () -> void {
+renderTropicToClip(parent : native, tr : Tropic, style : [TRenderToClipStyle]) -> () -> () -> void {
+	zorder = extractStruct(style, TRenderZorder(const([0]))).zorder;
+	position = extractStruct(style, TRenderPosition("relative")).position;
 	ot = optimizeTropic(resolveTropicCss(tr, emptyStylesheet));
 	clipPos = make(Point(0.0, 0.0));
 	clipWH = make(WidthHeight(0.0, 0.0));
 	transformMatrix = fselectLift(clipPos, \p -> positionScale2TransformMatrix(PositionScale(p, Point(1.0, 1.0))));
 	parentInfo = TParentInfo(makeTParentInfo(clipWH) with transformMatrix = transformMatrix);
-	tacc = tropic2Acc(ot, parentInfo, emptyStylesheet, false);
+	tacc = tropic2Acc(TAccess([TagName("div")], ot), parentInfo, emptyStylesheet, false);
 	\ -> {
 		r = renderFForm(optimizeFForm(tacc.form), zorder);
 		d = concat(
 			if (length(r.clips) > 0) {
 				clip = r.clips[0];
+				hasFillers = fselect2(tacc.xFillers, tacc.yFillers, FLift2(\xf, yf -> xf > 0.0 || yf > 0.0));
 				updateClipWH = \ -> {
 					rect = getClipBoundingClientRect(clip);
 					if (length(rect) > 3) {
 						nextDistinct(clipPos, Point(rect[0], rect[1]));
-						nextDistinct(clipWH, WidthHeight(rect[2], rect[3]));
+						nextDistinct(clipWH, if (fgetValue(hasFillers)) WidthHeight(rect[2], rect[3]) else WidthHeight(0.0, 0.0));
 					}
 				}
-				updateClipPos = \ -> {
-					rect = getClipBoundingClientRect(clip);
-					if (length(rect) > 1) {
-						nextDistinct(clipPos, Point(rect[0], rect[1]));
-						nextDistinct(clipWH, WidthHeight(0.0, 0.0));
-					}
-				}
-				hasFillers = fselect2(tacc.xFillers, tacc.yFillers, FLift2(\xf, yf -> xf > 0.0 || yf > 0.0));
 
-				setClipStyle(clip, "position", "relative");
+				setClipStyle(clip, "position", position);
 
 				[
 					makeSubscribeUns(tacc.xFillers, \xf -> {
@@ -277,26 +275,23 @@ renderTropicToClip(parent : native, tr : Tropic, zorder : Transform<[int]>) -> (
 							[]
 						}
 					})(),
+					makeSubscribe(flastElement(zorder, const(0)), \i -> {
+						addChildAt(parent, clip, i);
+					})(),
+					// TODO: use proper event to monitor position changes
+					addEventListener(clip, "transformchanged", updateClipWH),
 					makeSubscribeUns(hasFillers, \hf -> {
-						if (hf) {
-							updateClipWH();
+						updateClipWH();
 
+						if (hf) {
 							[
 								// TODO: use ResizeObserver to monitor size changes
 								addEventListener(clip, "resize", updateClipWH)
 							]
 
 						} else {
-							updateClipPos();
-
-							[
-								// TODO: use proper event to monitor position changes
-								addEventListener(clip, "transformchanged", updateClipPos)
-							]
+							[]
 						}
-					})(),
-					makeSubscribe(flastElement(zorder, const(0)), \i -> {
-						addChildAt(parent, clip, i);
 					})(),
 					\ -> {
 						removeChild(parent, clip);
