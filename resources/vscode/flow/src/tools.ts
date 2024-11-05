@@ -42,7 +42,7 @@ export function launchFlowcHttpServer(compiler: string, on_start : () => void, o
 	on_msg((new Date()).toString() + " Flow Http server started");
 	// Only two variants are supported currently: flowc1 or flowc2. Default server is flowc1
 	compiler = (compiler === "flowc2") ? compiler : "flowc1";
-	let httpServer = run_cmd(compiler, "", ["server-mode=http"], log);
+	let httpServer = run_cmd(compiler, getFlowRoot(), ["server-mode=http"], log);
 	httpServer.addListener("close", (code: number, signal: string) => {
 		on_msg(
 			(new Date()).toString() + " Flow Http server closed" +
@@ -93,4 +93,15 @@ export function isPortAvailable(port: number): Promise<boolean> {
 export function getVerboseParam(): string {
 	let verbose: string = vscode.workspace.getConfiguration("flow").get("compilerVerbose")
 	return verbose ? verbose : "0";
+}
+
+export function getActiveFlowDocument(): vscode.TextDocument {
+	var doc = vscode.window.activeTextEditor.document;
+	if (doc.languageId == "flow") {
+		return doc;
+	} else {
+		vscode.window.showWarningMessage("Active Flow document and repeat your action");
+		log("Not a Flow document is active: " + doc.uri.fsPath);
+		return null;
+	}
 }

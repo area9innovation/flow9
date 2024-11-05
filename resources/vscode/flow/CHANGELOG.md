@@ -212,3 +212,7 @@
  - Removed deprecated workspaceRoot variable
  - Fixed debugger configuration
  - Reworked automatic update of the extension
+
+## 0.6.6
+ - Introduced customizable flowc commands (F1 'Flow9: Execute some of predefined or arbitrary command on http server')
+ - Fixed default flowc server folder

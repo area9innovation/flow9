@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
 import {
-    LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, RevealOutputChannelOn,
+    LanguageClient, LanguageClientOptions, ServerOptions, RevealOutputChannelOn
 } from 'vscode-languageclient/node';
 
 import * as tools from "./tools";
@@ -87,7 +87,8 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function runUI() {
-	const document = vscode.window.activeTextEditor.document;
+	const document = tools.getActiveFlowDocument();
+	if (!document) return;
 	const file_path = document.uri.fsPath;
 	const file_name = path.basename(file_path, path.extname(file_path));
 	const file_dir = path.dirname(file_path);
@@ -153,7 +154,9 @@ function outputHttpServerMemStats() {
 }
 
 function flowConsole() {
-	let file = getPath(vscode.window.activeTextEditor.document.uri);
+	const document = tools.getActiveFlowDocument();
+	if (!document) return;
+	let file = getPath(document.uri);
 	let dir = path.dirname(file);
 	let terminal = vscode.window.createTerminal("Flow console");
 	terminal.sendText("cd " + dir, true);
@@ -406,7 +409,8 @@ function processFile(
 	extra_args : string[] = [],
 	on_compiled : () => void = () => { }
 ) {
-	const document = vscode.window.activeTextEditor.document;
+	const document = tools.getActiveFlowDocument();
+	if (!document) return;
 	const verbose = tools.getVerboseParam();
 	if (verbose != "0") {
 		extra_args.push("verbose=" + verbose);
@@ -523,7 +527,9 @@ function readConfiguration(): PropertiesReader.Reader {
 // finds a closest flow.config file
 function findConfigDir(dir: string = null): string {
 	if (!dir) {
-		const file_conf_dir = findConfigDir(path.dirname(vscode.window.activeTextEditor.document.uri.fsPath));
+		const document = tools.getActiveFlowDocument();
+		if (!document) return null;
+		const file_conf_dir = findConfigDir(path.dirname(document.uri.fsPath));
 		if (file_conf_dir) {
 			return file_conf_dir;
 		} else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
@@ -544,21 +550,63 @@ function findConfigDir(dir: string = null): string {
 }
 
 function execCommand() {
-	flowChannel.show(true);
-	let options: vscode.InputBoxOptions = { prompt: "Command and args: ", placeHolder: "" };
-	vscode.window.showInputBox(options).then(value => {
-		let val_arr = value.split(" ");
-		if (val_arr.length > 0) {
-			let file_arg = Array("file=" + vscode.window.activeTextEditor.document.uri.fsPath);
-			let args = file_arg.concat(val_arr);
-			client.sendRequest("workspace/executeCommand", { command : "command", arguments: args }).then(
-				(out : string) => {
-					flowChannel.appendLine(out);
-				},
-				(err : any) => {
-					vscode.window.showErrorMessage(`command ${value} failed: ${err}`);
-				}
-			);
+	const document = tools.getActiveFlowDocument();
+	if (!document) return;
+
+	let flowc_commands : any[] = vscode.workspace.getConfiguration("flow").get("flowcCommands");
+	flowc_commands = flowc_commands.concat([
+		{name: "Arbitrary command", prompt: "Type command arguments"}
+	]);
+
+	vscode.window.showQuickPick(flowc_commands.map(cmd => cmd.name),
+		{	title: "Choose command",
+			canPickMany: false,
+		}
+	).then(name => {
+		let command = flowc_commands.find(cmd => cmd.name == name);
+		if (command.args) {
+			execCommandWithPrompt(document, command.name, command.args);
+		} else {
+			vscode.window.showInputBox({
+				title: command.name,
+				prompt: command.prompt,
+			}).then(argsStr => {
+				if (argsStr !== undefined) sendExecuteCommand(document, argsStr);
+			});
 		}
 	});
+}
+
+function execCommandWithPrompt(document: vscode.TextDocument, title: string, args: string) {
+	let re = RegExp("{([^{}]+)}");
+	let prompts = args.match(re);
+	if (prompts) {
+		vscode.window.showInputBox({
+			title: title,
+			prompt: prompts[1],
+		}).then(value => {
+			if (value !== undefined) {
+				args = args.replace(re, value);
+				execCommandWithPrompt(document, title, args);
+			}
+		});
+	} else {
+		sendExecuteCommand(document, args);
+	}
+}
+
+function sendExecuteCommand(document: vscode.TextDocument, argsStr: string) {
+	flowChannel.show(true);
+	if (argsStr) {
+		var args = argsStr.split(" ")
+		var file = document.uri.fsPath;
+		let file_arg = [
+			"file=" + file,
+			"working-dir=" + resolveProjectRoot(file),
+		];
+		client.sendRequest("workspace/executeCommand", { command : "command", arguments: file_arg.concat(args) }).then(
+			(out: string) => flowChannel.appendLine(out),
+			(err: any) => vscode.window.showErrorMessage(`command ${argsStr} failed: ${err}`)
+		);
+	}
 }
