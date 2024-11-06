@@ -90,16 +90,20 @@ public class FlowPassword extends NativeHost {
 		if (params.length < HASH_SECTIONS)
 			return false;
 
-		byte[] correctpbkdf2 = Base64.getDecoder().decode(params[HASH_PBKDF2_INDEX]);
-		byte[] requestedpbkdf2 = pbkdf2(
-			params[HASH_ALGORITHM_INDEX],
-			password,
-			params[HASH_SALT_INDEX],
-			Integer.parseInt(params[HASH_ITERATION_INDEX]),
-			correctpbkdf2.length
-		);
-
-		return Arrays.equals(correctpbkdf2, requestedpbkdf2);
+		try {
+			byte[] correctpbkdf2 = Base64.getDecoder().decode(params[HASH_PBKDF2_INDEX]);
+			byte[] requestedpbkdf2 = pbkdf2(
+				params[HASH_ALGORITHM_INDEX],
+				password,
+				params[HASH_SALT_INDEX],
+				Integer.parseInt(params[HASH_ITERATION_INDEX]),
+				correctpbkdf2.length
+			);
+			return Arrays.equals(correctpbkdf2, requestedpbkdf2);
+		} catch (Exception e) {
+			System.out.println("ERROR in validateHash: " + e.getMessage());
+			return false;
+		}
 	}
 
 	public static String getPasswordValidationString(int expirationSeconds) {

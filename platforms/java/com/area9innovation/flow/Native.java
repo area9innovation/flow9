@@ -1930,10 +1930,10 @@ public class Native extends NativeHost {
 					System.out.println("Cause:");
 					e.printStackTrace();
 				}
-				return onFail.invoke("Thread #" + threadId + " failed: " + e.getMessage());
+				return onFail.invoke("E1: Thread #" + threadId + " failed: " + e.getMessage());
 			} catch (Exception e) {
 				e.printStackTrace();
-				return onFail.invoke("Thread #" + threadId + " failed: " + e.getMessage());
+				return onFail.invoke("E2: Thread #" + threadId + " failed: " + e.getMessage());
 			}
 			Object result = null;
 			try {
@@ -1949,7 +1949,7 @@ public class Native extends NativeHost {
 			ex.printStackTrace();
 			Thread thread = Thread.currentThread();
 			String threadId = Long.toString(thread.getId());
-			return onFail.invoke("Thread #" + threadId + " failed: " + ex.getMessage());
+			return onFail.invoke("E3: Thread #" + threadId + " failed: " + ex.getMessage());
 		})
 		.thenApply(result -> {
 			// thread #2
