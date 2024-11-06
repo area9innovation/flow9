@@ -602,7 +602,9 @@ class TextClip extends NativeWidgetClip {
 				
 				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
-				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
+				if (nativeWidget.firstChild != baselineWidget) {
+					nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
+				}
 				updateAmiriWorkaroundWidget();
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
