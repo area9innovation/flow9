@@ -228,9 +228,15 @@ MDynamicDataTable2TInner(
 		// Data rows
 		content =
 			if (state.domRender) {
-				rows = fmap(fselect3(sorting.result, data, page, \sortRes, dat, pg ->
-					map(subrange(sortRes, pg.first, pg.second), \i -> Pair(elementAtM(dat, i), i))
-				), \r -> Pair(eitherMap(r.first, rowsFn, []), r.second));
+				rows = fselect2Lift(
+					fif(
+						state.scrollEnabled,
+						sorting.result,
+						fselect2Lift(sorting.result, page, \sortRes, pg -> subrange(sortRes, pg.first, pg.second + 1))
+					),
+					data,
+					\sortRes, dat -> map(sortRes, \i -> Pair(elementAtM(dat, i), i))
+				);
 				wh = make(WidthHeight(0.0, 0.0));
 
 				TSelect(rows, \rs ->
@@ -238,6 +244,7 @@ MDynamicDataTable2TInner(
 						borderString = if (state.separators) { if (getLightBackground(p)) "1px solid rgba(0, 0, 0, 0.12)" else "1px solid rgba(255, 255, 255, 0.12)"; } else "";
 
 						table = makeClip();
+						setClipProtected(table);
 						setClipTagName(table, "table");
 						setClipStyle(table, "width", "100%");
 						setClipStyle(table, "height", "auto");
@@ -278,7 +285,7 @@ MDynamicDataTable2TInner(
 								renderTropicToClip(th, t, [TRenderZorder(const(concat(zorder, [^index]))), TRenderPosition("relative"), TRenderUpdateClipSizeEvent("rollover")]);
 							}),
 							map(rs, \rowPair -> {
-								row = rowPair.first;
+								row = eitherMap(rowPair.first, rowsFn, []);
 								rowIndex = rowPair.second;
 								tr = makeClip();
 								setClipTagName(tr, "tr");
@@ -314,8 +321,29 @@ MDynamicDataTable2TInner(
 						);
 					})
 				)
+				|> (\t -> {
+					scrollBox = TFillWYT(tableWidth(expandRow));
+
+					MScroll2T(
+						manager,
+						p,
+						MScroll(
+							TFixSize(t, TSizedHeight(1., faddition(totalRowsHeight, const(state.lineHeight(true))))),
+							scrollBox,
+							concat3([
+									TScrollEnabled(state.scrollEnabled),
+									TScrollAxisEnabled(const(false), state.scrollEnabled),
+									MScrollBound(const(true), fselect(page, FLift(\pg -> pg.first <= 0)))
+								],
+								state.verticalScroll,
+								scrollStep
+							)
+						),
+						m2t
+					)
+				})
 				|> (\t -> TInspect([IAvailable(wh)], t))
-				|> (\t -> TFixSize(t, TFillXY()))
+				|> TBorderBottom(-separatorsHeight - state.lineHeight(true))
 			} else if (lightweight) {
 				rowsBoxMaxWidth = make(0.);
 				rows : Transform<[Pair<Maybe<?>, int>]> =
@@ -660,7 +688,7 @@ MDynamicDataTable2TInner(
 			else idfn)
 		|> (\t -> if (!state.domRender && state.separators) addSeparator(manager, p, t, true, state.separatorsStyle) else t)
 		// Header
-		|> (\f -> if (state.domRender) TLines2Dir(f, TFixed(0.0, state.lineHeight(false)), p.rtl) else TLines2Dir(tableHeader(headers, p), f, p.rtl))
+		|> (\f -> if (state.domRender) TLines2Dir(f, TFixed(0.0, state.lineHeight(true) + separatorsHeight), p.rtl) else TLines2Dir(tableHeader(headers, p), f, p.rtl))
 		|> (\t : Tropic -> eitherMap(innerScrollState, \is -> {
 				defaultScrollBarStyle : TScrollbars = extractStruct(is.style, getMaterialScrollBar());
 				overlapContent = extractStruct(is.style, MScrollbarOverlapContent(true)).overlap;
