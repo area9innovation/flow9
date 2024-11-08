@@ -398,6 +398,10 @@ public class HttpServerSupport extends NativeHost {
 			public Func2<String, Integer, Boolean> makeSendHeaders() {
 				return new Func2<String, Integer, Boolean>() {
 					public String invoke(Integer status, Boolean compressBody) {
+						long bodyLength = 0;
+						if (exchange.getRequestMethod().equals("HEAD")) {
+							bodyLength = -1; // No body
+						}
 						try {
 							os = exchange.getResponseBody();
 							if (compressBody) {
@@ -405,10 +409,10 @@ public class HttpServerSupport extends NativeHost {
 									"Content-Encoding",
 									Collections.singletonList("gzip")
 								);
-								exchange.sendResponseHeaders(status, 0);
+								exchange.sendResponseHeaders(status, bodyLength);
 								os = new java.util.zip.GZIPOutputStream(os, true);
 							} else {
-								exchange.sendResponseHeaders(status, 0);
+								exchange.sendResponseHeaders(status, bodyLength);
 							}
 							return "";
 						} catch (IOException e) {
