@@ -1227,7 +1227,7 @@ public class Native extends NativeHost {
 			return 6;
 		} else if (x instanceof Reference) {
 			return 31;
-		} else if (x.getClass().getName().contains("$$Lambda$")) {
+		} else if (x.getClass().getName().contains("$$Lambda")) {
 			return 34;
 		} else {
 			return 32;
