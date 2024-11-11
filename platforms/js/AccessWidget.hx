@@ -1007,6 +1007,8 @@ class AccessWidget extends EventEmitter {
 					if (element != null) {
 						if (key.indexOf("style:") == 0) {
 							element.style.setProperty(key.substr(6, key.length), attributes.get(key));
+						} else if (key == "textContent") {
+							element.textContent = attributes.get(key);
 						} else if (attributes.get(key) != "") {
 							element.setAttribute(key, attributes.get(key));
 						} else {
