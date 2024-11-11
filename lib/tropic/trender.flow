@@ -23,10 +23,11 @@ export {
 	trenderManager(manager : TManager, t : Tropic) -> () -> void;
 
 	renderTropicToClip(parent : native, tr : Tropic, style : [TRenderToClipStyle]) -> () -> () -> void;
-		TRenderToClipStyle ::= TRenderPosition, TRenderZorder, TRenderUpdateClipSizeEvent;
-			TRenderPosition(position : string); // "relative" by default
+		// [TagName("div"), FAccessStyle("position", const("relative"))] by default
+		TRenderToClipStyle ::= TRenderZorder, TRenderUpdateClipSizeEvents, FAccessProperty;
+			TRenderPosition(position : string) -> FAccessStyle { FAccessStyle("position", const(position)); }; // "relative" by default
 			TRenderZorder(zorder : Transform<[int]>); // [0] by default
-			TRenderUpdateClipSizeEvent(event : string); // "transformchanged" by default
+			TRenderUpdateClipSizeEvents(events : [string]); // ["transformchanged"] by default
 }
 
 
@@ -220,16 +221,17 @@ trenderManager(manager : TManager, t : Tropic) -> () -> void {
 
 renderTropicToClip(parent : native, tr : Tropic, style : [TRenderToClipStyle]) -> () -> () -> void {
 	zorder = extractStruct(style, TRenderZorder(const([0]))).zorder;
-	position = extractStruct(style, TRenderPosition("relative")).position;
-	updateClipSizeEvent = extractStruct(style, TRenderUpdateClipSizeEvent("transformchanged")).event;
+	updateClipSizeEvents = extractStruct(style, TRenderUpdateClipSizeEvents(["transformchanged"])).events;
+	accessProperties = replaceStructMany([TagName("div"), FAccessStyle("position", const("relative"))], extractFAccessProperties(style));
 	ot = optimizeTropic(resolveTropicCss(tr, emptyStylesheet));
 	clipPos = make(Point(0.0, 0.0));
 	clipWH = make(WidthHeight(0.0, 0.0));
 	transformMatrix = fselectLift(clipPos, \p -> positionScale2TransformMatrix(PositionScale(p, Point(1.0, 1.0))));
 	parentInfo = TParentInfo(makeTParentInfo(clipWH) with transformMatrix = transformMatrix);
-	tacc = tropic2Acc(TAccess([TagName("div")], TFrame(0.0, 0.0, interactiveRectangleStyle, ot)), parentInfo, emptyStylesheet, false);
+	tacc = tropic2Acc(ot, parentInfo, emptyStylesheet, false);
+	fform = FAccess(accessProperties, optimizeFForm(tacc.form));
 	\ -> {
-		r = renderFForm(optimizeFForm(tacc.form), zorder);
+		r = renderFForm(fform, zorder);
 		d = concat(
 			if (length(r.clips) > 0) {
 				clip = r.clips[0];
@@ -242,70 +244,75 @@ renderTropicToClip(parent : native, tr : Tropic, style : [TRenderToClipStyle]) -
 					}
 				}
 
-				setClipStyle(clip, "position", position);
+				concat(
+					[
+						makeSubscribeUns(tacc.xFillers, \xf -> {
+							if (xf > 0.0) {
+								setClipStyle(clip, "width", d2s(xf * 100.0) + "%");
 
-				[
-					makeSubscribeUns(tacc.xFillers, \xf -> {
-						setClipStyle(clip, "width", if (xf > 0.0) d2s(xf * 100.0) + "%" else "");
-						if (xf > 0.0) {
-							[
-								make2Subscribe(tacc.minWidth, tacc.maxWidth, \minW, maxW -> {
-									setClipStyle(clip, "minWidth", d2s(minW) + "px");
-									setClipStyle(clip, "maxWidth", d2s(maxW) + "px");
-								})()
-							]
-						} else {
-							setClipStyle(clip, "minWidth", "");
-							setClipStyle(clip, "maxWidth", "");
+								[
+									make2Subscribe(tacc.minWidth, tacc.maxWidth, \minW, maxW -> {
+										setClipStyle(clip, "minWidth", d2s(minW) + "px");
+										setClipStyle(clip, "maxWidth", d2s(maxW) + "px");
+									})()
+								]
+							} else {
+								setClipStyle(clip, "minWidth", "");
+								setClipStyle(clip, "maxWidth", "");
 
-							[
-								makeSubscribe(tacc.metrics.width, \w -> {
-									setClipStyle(clip, "width", d2s(w) + "px");
-								})()
-							]
+								[
+									makeSubscribe(tacc.metrics.width, \w -> {
+										setClipStyle(clip, "width", d2s(w) + "px");
+									})()
+								]
+							}
+						})(),
+						makeSubscribeUns(tacc.yFillers, \yf -> {
+							if (yf > 0.0) {
+								setClipStyle(clip, "height", d2s(yf * 100.0) + "%");
+
+								[
+									make2Subscribe(tacc.minHeight, tacc.maxHeight, \minH, maxH -> {
+										setClipStyle(clip, "minHeight", d2s(minH) + "px");
+										setClipStyle(clip, "maxHeight", d2s(maxH) + "px");
+									})()
+								]
+							} else {
+								setClipStyle(clip, "minHeight", "");
+								setClipStyle(clip, "maxHeight", "");
+
+								[
+									makeSubscribe(tacc.metrics.height, \h -> {
+										setClipStyle(clip, "height", d2s(h) + "px");
+									})()
+								]
+							}
+						})(),
+						makeSubscribe(flastElement(zorder, const(0)), \i -> {
+							addChildAt(parent, clip, i);
+						})(),
+						makeSubscribeUns(hasFillers, \hf -> {
+							if (hf) {
+								updateClipSize();
+
+								[
+									// TODO: use ResizeObserver to monitor size changes
+									addEventListener(clip, "resize", updateClipSize)
+								]
+							} else {
+								[]
+							}
+						})(),
+						\ -> {
+							removeChild(parent, clip);
 						}
-					})(),
-					makeSubscribeUns(tacc.yFillers, \yf -> {
-						setClipStyle(clip, "height", if (yf > 0.0) d2s(yf * 100.0) + "%" else "");
-						if (yf > 0.0) {
-							[
-								make2Subscribe(tacc.minHeight, tacc.maxHeight, \minH, maxH -> {
-									setClipStyle(clip, "minHeight", d2s(minH) + "px");
-									setClipStyle(clip, "maxHeight", d2s(maxH) + "px");
-								})()
-							]
-						} else {
-							setClipStyle(clip, "minHeight", "");
-							setClipStyle(clip, "maxHeight", "");
-
-							[
-								makeSubscribe(tacc.metrics.height, \h -> {
-									setClipStyle(clip, "height", d2s(h) + "px");
-								})()
-							]
-						}
-					})(),
-					makeSubscribe(flastElement(zorder, const(0)), \i -> {
-						addChildAt(parent, clip, i);
-					})(),
+					],
 					// TODO: use proper event to monitor position changes
-					addEventListener(clip, updateClipSizeEvent, updateClipSize),
-					makeSubscribeUns(hasFillers, \hf -> {
-						if (hf) {
-							updateClipSize();
-
-							[
-								// TODO: use ResizeObserver to monitor size changes
-								addEventListener(clip, "resize", updateClipSize)
-							]
-						} else {
-							[]
-						}
-					})(),
-					\ -> {
-						removeChild(parent, clip);
-					}
-				]
+					map(
+						updateClipSizeEvents,
+						\updateClipSizeEvent -> addEventListener(clip, updateClipSizeEvent, updateClipSize)
+					)
+				);
 			} else [],
 			r.disposers
 		);
