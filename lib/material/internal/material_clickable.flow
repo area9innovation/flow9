@@ -133,7 +133,7 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 	onDown = tryExtractStruct(state, MOnMouseDown(nop2));
 	onUp = tryExtractStruct(state, MOnMouseUp(nop2));
 	interactionsOnTop = contains(state, MInteractionsOnTop());
-	triggerClickOnMouseDown = clickOnMouseDown && !mobile && isNone(doubleClick) && isNone(tripleClick) && isNone(longClick) && isNone(onTouch);
+	triggerClickOnMouseDown = clickOnMouseDown && !mobile && isNone(longClick) && isNone(onTouch);
 
 	onClickFn =
 		eitherMap(
@@ -147,6 +147,67 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 				},
 			onClick
 		);
+
+	callOnClickFn = \ -> {
+		(\ -> {
+			if (isSome(doubleClick) || isSome(tripleClick)) {
+				if (!^doubleClickWasDown) {
+					doubleClickWasDown := true;
+
+					dispUnsM(doubleClickUns);
+					setUnsM(
+						doubleClickUns,
+						interruptibleTimer(^materialDoubleClickDelay, \ -> {
+							doubleClickWasDown := false;
+							onClickFn();
+						})
+					);
+				}
+			} else {
+				onClickFn()
+			}
+		})
+		|> (\f ->
+			eitherMap(
+				onClickAsync,
+				\clickAsync : MOnClickAsync -> \ -> {
+					next(clickEnabled, false);
+					f();
+					timerDisp = interruptibleTimer(10000, \ -> nextDistinct(clickEnabled, true));
+
+					clickAsync.click(\ -> { timerDisp(); nextDistinct(clickEnabled, true); });
+				},
+				f
+			)
+		)
+		|> (\f ->
+			eitherFn(
+				tripleClick,
+				\tc ->
+					if (^doubleClickWasDown && !^tripleClickWasDown) {
+						doubleClickWasDown := false;
+						tripleClickWasDown := true;
+
+						dispUnsM(doubleClickUns);
+						setUnsM(
+							doubleClickUns,
+							interruptibleTimer(^materialDoubleClickDelay, \ -> {
+								tripleClickWasDown := false;
+
+								eitherFn(
+									doubleClick,
+									\dc ->
+										dc.click(),
+									onClickFn
+								)
+							})
+						);
+					} else
+						f(),
+				f
+			)
+		);
+	};
 
 	onDownFn =
 		eitherMap(
@@ -235,10 +296,6 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 						maybeApply(onDownFn, \fn -> fn.down(Point(mi.x, mi.y), true));
 						hold();
 
-						if (triggerClickOnMouseDown) {
-							onClickFn();
-						}
-
 						eitherFn(
 							tripleClick,
 							\tc ->
@@ -263,6 +320,10 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 								)
 						);
 
+						if (triggerClickOnMouseDown && isSome(^uns)) {
+							callOnClickFn();
+						}
+
 						blockClicks
 					} else {
 						maybeApply(onDownFn, \fn -> fn.down(Point(mi.x, mi.y), false));
@@ -284,67 +345,12 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 						maybeApply(onUp, \fn -> fn.up(Point(mouseInfo.x, mouseInfo.y), mouseInfo.inside));
 					next(down, false);
 
-					if (!h && isSome(^uns) && fgetValue(enabled) && mouseInfo.inside && !triggerClickOnMouseDown) {
+					if (!h && isSome(^uns) && fgetValue(enabled) && mouseInfo.inside) {
 						dispUnsM(uns);
 
-						(\ -> {
-							if (isSome(doubleClick) || isSome(tripleClick)) {
-								if (!^doubleClickWasDown) {
-									doubleClickWasDown := true;
-
-									dispUnsM(doubleClickUns);
-									setUnsM(
-										doubleClickUns,
-										interruptibleTimer(^materialDoubleClickDelay, \ -> {
-											doubleClickWasDown := false;
-											onClickFn();
-										})
-									);
-								}
-							} else {
-								onClickFn()
-							}
-						})
-						|> (\f ->
-							eitherMap(
-								onClickAsync,
-								\clickAsync : MOnClickAsync -> \ -> {
-									next(clickEnabled, false);
-									f();
-									timerDisp = interruptibleTimer(10000, \ -> nextDistinct(clickEnabled, true));
-
-									clickAsync.click(\ -> { timerDisp(); nextDistinct(clickEnabled, true); });
-								},
-								f
-							)
-						)
-						|> (\f ->
-							eitherFn(
-								tripleClick,
-								\tc ->
-									if (^doubleClickWasDown && !^tripleClickWasDown) {
-										doubleClickWasDown := false;
-										tripleClickWasDown := true;
-
-										dispUnsM(doubleClickUns);
-										setUnsM(
-											doubleClickUns,
-											interruptibleTimer(^materialDoubleClickDelay, \ -> {
-												tripleClickWasDown := false;
-
-												eitherFn(
-													doubleClick,
-													\dc ->
-														dc.click(),
-													onClickFn
-												)
-											})
-										);
-									} else
-										f(),
-								f
-							)
-						);
+						if (!triggerClickOnMouseDown) {
+							callOnClickFn();
+						}
 
 						blockClicks
 					} else {
