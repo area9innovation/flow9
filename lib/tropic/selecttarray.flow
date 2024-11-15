@@ -68,25 +68,31 @@ SelectTGroup(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, i
 	SelectTropicArray(values, makeTropicFn, TGroupCombiner());
 }
 
+debugTropicArray = isUrlParameterTrue("debug_tropic_array");
+
 SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic, combiner : TCombiner) -> Tropic {
 	stackChanges = make([]);
 	old = ref [];
 	indexes : ref [DynamicBehaviour<int>] = ref [];
 	ids : ref [int] = ref [];
+	update = make(true);
 
+	debugPrintln : (flow) -> void = if (debugTropicArray) println else ignore;
 	getNextId = \ -> fold(sort(^ids), -1, \acc, id -> if (id == acc + 1) id else acc) + 1;
 
 	TConstruct(
 		[
-			makeSubscribe(values, \l -> {
-				// println("-----");
-				// println(map(^indexes, getValue));
-				// println(^ids);
+			// Prevent nested updates from interrupting a chain of stack changes
+			makeSubscribe(ftransistor(update, values), \l -> {
+				next(update, false);
+				debugPrintln("-----");
+				debugPrintln(map(^indexes, getValue));
+				debugPrintln(^ids);
 
 				iter(arrayDiffReversed(^old, l, false), \op ->
 					switch (op : ArrayOperation) {
 						ArrayNop(x, y): {
-							// println("nop " + i2s(x) + " " + i2s(y));
+							debugPrintln("nop " + i2s(x) + " " + i2s(y));
 
 							index = ^indexes[x];
 							id = ^ids[x];
@@ -96,12 +102,12 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 
 							iter(enumFromTo(y, x), \i -> nextDistinct(^indexes[i], i));
 
-							// println(map(^indexes, getValue));
+							debugPrintln(map(^indexes, getValue));
 
 							next(stackChanges, arrayPush(getValue(stackChanges), TGroupMove(x, y)));
 						}
 						ArrayInsert(x, y, v): {
-							// println("insert " + i2s(x) + " " + i2s(y));
+							debugPrintln("insert " + i2s(x) + " " + i2s(y));
 
 							index = make(y);
 							id = getNextId();
@@ -111,43 +117,44 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 							indexes := insertArray(^indexes, y, index);
 							ids := insertArray(^ids, y, id);
 
-							// println(map(^indexes, getValue));
+							debugPrintln(map(^indexes, getValue));
 
 							// fselect to block any changes to index
 							next(stackChanges, arrayPush(getValue(stackChanges), TGroupAdd(makeTropicFn(fselect(index, idfn |> FLift), id, v), y)));
 						}
 						ArrayReplace(x, y, v): {
-							// println("replace " + i2s(x) + " " + i2s(y));
+							debugPrintln("replace " + i2s(x) + " " + i2s(y));
 
 							index = ^indexes[y];
 							id = ^ids[y];
 
-							// println(map(^indexes, getValue));
+							debugPrintln(map(^indexes, getValue));
 
 							// fselect to block any changes to index
 							next(stackChanges, arrayPush(getValue(stackChanges), TGroupReplace(makeTropicFn(fselect(index, idfn |> FLift), id, v), y)));
 						}
 						ArrayRemove(x, y): {
-							// println("remove " + i2s(x) + " " + i2s(y));
+							debugPrintln("remove " + i2s(x) + " " + i2s(y));
 
 							indexes := removeIndex(^indexes, y);
 							ids := removeIndex(^ids, y);
 
 							mapi(subrange(^indexes, y, length(^indexes) - y), \i, t -> next(t, i + y));
 
-							// println(map(^indexes, getValue));
+							debugPrintln(map(^indexes, getValue));
 
 							next(stackChanges, arrayPush(getValue(stackChanges), TGroupDelete(y)));
 						}
 					}
 				);
 
-				// println(map(^indexes, getValue));
-				// println(^ids);
-				// println(length(l));
-				// println("-----");
+				debugPrintln(map(^indexes, getValue));
+				debugPrintln(^ids);
+				debugPrintln(length(l));
+				debugPrintln("-----");
 
 				old := l;
+				next(update, true);
 			})
 		],
 		TDynamicGroup2(
