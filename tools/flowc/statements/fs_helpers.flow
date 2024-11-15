@@ -1,5 +1,5 @@
 import tools/flowc/incremental/fi_helpers;
-import tools/flowc/statements/fs_exp;
+import tools/flowc/statements/fs_mem;
 import string_utils;
 
 export {
@@ -36,6 +36,8 @@ export {
 
 	fsMergeFsMem(x: FsMem, y: FsMem) -> FsMem;
 	fsUpdateFsMem(x: FsMem, v: FsVar, m2: FsVarMem) -> FsMem;
+
+	fsVarUseIsTransparent(v: FsVarUse) -> bool;
 }
 
 fsType(x: FsAll) -> FiType {
@@ -44,7 +46,7 @@ fsType(x: FsAll) -> FiType {
 		FsSwitch(__,__, cs,__,__):       if (length(cs) == 0) FiTypeVoid() else fsType(cs[0].body);
 		FsWrapExp(e,__,__):              FiTypeVoid();
 		FsRet(e,__,__):                  fsType(e);
-		FsLet(__,__,s,__,__):            fsType(s);
+		FsLet(__,__,__,s,__,__):            fsType(s);
 		FsFor(__,__,s,__,__,__):         FiTypeVoid();
 		FsAssign(__,__,__,__,__):        FiTypeVoid();
 		FsIncRc(__,__,__,__):            FiTypeVoid();
@@ -94,14 +96,22 @@ fs2string(s: FsAll, depth: int) -> string {
 			}
 			FsSwitch(v,__, cases,__,__): {
 				"switch (" + x2s(v) + ") {\n" +
-					superglue(cases, \c -> {
+					strIndent(superglue(cases, \c -> {
 						c.struct + "(" + superglue(c.args, \arg -> arg.name, ", ") + "): " + wrap_long(x2s(c.body));
-					}, "\n") +
+					}, "\n")) +
 				"\n}";
 			}
-			FsLet(var, e, stat,__,__): {
-				"let " + var.name + " : " + t2s(var.type) + " = " + x2s(e) + ";\n" +
+			FsLet(var, transparent, e, stat,__,__): {
+				e_s = x2s(e);
+				if (strContains(e_s, "\n") || strlen(e_s) > 64) {
+					"let" + (if (transparent) "*" else "") + " " + var.name + " : " + t2s(var.type) + " =\n" +
+						strIndent(e_s) + "\n" +
+					";\n" +
+						strIndent(x2s(stat));
+				} else {
+					"let " + var.name + " : " + t2s(var.type) + " = " + e_s + ";\n" +
 					strIndent(x2s(stat));
+				}
 			}
 			FsFor(var, e, stat,__,__,__): {
 				"for " + var.name + " : " + t2s(var.type) + " in " + x2s(e) + " do\n" +
@@ -212,8 +222,8 @@ fsEqualExprs(x: FsAll, y: FsAll) -> bool {
 			}
 			default: false;
 		}
-		FsLet(v1, e1, s1,__,__): switch (y) {
-			FsLet(v2, e2, s2,__,__): v1.name == v2.name && fsEqualExprs(e1, e2) && fsEqualExprs(s1, s2);
+		FsLet(v1,__, e1, s1,__,__): switch (y) {
+			FsLet(v2,__, e2, s2,__,__): v1.name == v2.name && fsEqualExprs(e1, e2) && fsEqualExprs(s1, s2);
 			default: false;
 		}
 		FsFor(v1, e1, s1,__,__,__): switch (y) {
@@ -380,7 +390,7 @@ fsHasTailCall(s: FsStat) -> bool {
 				}
 				FsRet(e,__,__): false;
 				FsTailCall(__,__,__): true;
-				FsLet(__,__, s1,__,__): {
+				FsLet(__,__,__, s1,__,__): {
 					fsHasTailCall(s1);
 				}
 				default: false;
@@ -409,7 +419,7 @@ fsStatTransformReturn(s: FsStat, transform: (FsExp) -> FsStat) -> FsStat {
 				s2 = fsStatTransformReturn(s2, transform)
 			);
 		}
-		FsLet(__,__, s1,__,__): {
+		FsLet(__,__,__, s1,__,__): {
 			FsLet(s with
 				s = fsStatTransformReturn(s1, transform)
 			);
@@ -461,8 +471,8 @@ fsDiffExprs(x: FsAll, y: FsAll, acc0: [Pair<FsAll, FsAll>]) -> [Pair<FsAll, FsAl
 			}
 			default: arrayPush(acc, Pair(x, y));
 		}
-		FsLet(v1, e1, s1,__,__): switch (y) {
-			FsLet(v2, e2, s2,__,__): {
+		FsLet(v1,__, e1, s1,__,__): switch (y) {
+			FsLet(v2,__, e2, s2,__,__): {
 				if (v1.name != v2.name) {
 					arrayPush(acc, Pair(x, y));
 				} else {
@@ -652,7 +662,7 @@ fsStatSetId(s: FsStat, x: int) -> FsStat {
 		FsRet(__,__,__):              FsRet(s with id = x);
 		FsTailCall(__,__,__):         FsTailCall(s with id = x);
 		FsAssign(__,__,__,__,__):     FsAssign(s with id = x);
-		FsLet(__,__,__,__,__):        FsLet(s with id = x);
+		FsLet(__,__,__,__,__,__):     FsLet(s with id = x);
 		FsFor(__,__,__,__,__,__):     FsFor(s with id = x);
 		FsIncRc(__,__,__,__):         FsIncRc(s with id = x);
 		FsDecRc(__,__,__,__):         FsDecRc(s with id = x);
@@ -720,7 +730,7 @@ fsSetNext(x: FsStat, n: FsStat) -> FsStat {
 	switch (x) {
 		FsIf(__,__,__,__,__):         FsIf(x with next = Some(n));
 		FsSwitch(__,__,__,__,__):     FsSwitch(x with next = Some(n));
-		FsLet(__,__,__,__,__):        FsLet(x with next = Some(n));
+		FsLet(__,__,__,__,__,__):     FsLet(x with next = Some(n));
 		FsFor(__,__,__,__,__,__):     FsFor(x with next = Some(n));
 		FsWrapExp(__,__,__):          FsWrapExp(x with next = Some(n));
 		FsAssign(__,__,__,__,__):     FsAssign(x with next = Some(n));
@@ -751,7 +761,7 @@ fsStatFreeVars(s: FsStat, acc: Set<FsVar>, locals: Set<string>) -> Set<FsVar> {
 			fsExpFreeVars(e, acc, locals);
 		FsRet(e,__,__):
 			fsExpFreeVars(e, acc, locals);
-		FsLet(v, e, s1,__,__):
+		FsLet(v,__, e, s1,__,__):
 			fsStatFreeVars(s1, fsExpFreeVars(e, acc, locals), insertSet(locals, v.name));
 		FsFor(v, e, s1,__,__,__):
 			fsStatFreeVars(s1, fsExpFreeVars(e, acc, locals), insertSet(locals, v.name));
@@ -778,7 +788,7 @@ fsExpFreeVars(x: FsExp, acc: Set<FsVar>, locals: Set<string>) -> Set<FsVar> {
 		);
 		FsVarUse(v, info,__): {
 			switch (info.kind) {
-				FsVarLocal(): if (containsSet(locals, v.name)) acc else insertSet(acc, v);
+				FsVarLocal(__): if (containsSet(locals, v.name)) acc else insertSet(acc, v);
 				default: acc;
 			}
 		}
@@ -800,7 +810,7 @@ fsVarIsUsedInStat(v: string, s: FsStat) -> bool {
 			fsVarIsUsedInExp(v, e);
 		FsRet(e,__,__):
 			fsVarIsUsedInExp(v, e);
-		FsLet(__, e, s1,__,__):
+		FsLet(__,__, e, s1,__,__):
 			fsVarIsUsedInExp(v, e) || fsVarIsUsedInStat(v, s1);
 		FsFor(__, e, s1,__,__,__):
 			fsVarIsUsedInExp(v, e) || fsVarIsUsedInStat(v, s1);
@@ -840,9 +850,9 @@ fsMergeFsMem(x: FsMem, y: FsMem) -> FsMem {
 		FsVarMem(
 			m1.inc + m2.inc,
 			eitherMap(m1.dec, \d -> Some(d), m2.dec),
-			m1.inlined + m2.inlined,
-			m1.called + m2.called,
-			m1.last || m2.last
+			m1.inlinedNum + m2.inlinedNum,
+			m1.calledNum + m2.calledNum,
+			m1.lastUse || m2.lastUse
 		)
 	));
 }
@@ -853,11 +863,18 @@ fsUpdateFsMem(x: FsMem, v: FsVar, m2: FsVarMem) -> FsMem {
 			Some(m1): FsVarMem(
 				m1.inc + m2.inc,
 				eitherMap(m1.dec, \d -> Some(d), m2.dec),
-				m1.inlined + m2.inlined,
-				m1.called + m2.called,
-				m1.last || m2.last
+				m1.inlinedNum + m2.inlinedNum,
+				m1.calledNum + m2.calledNum,
+				m1.lastUse || m2.lastUse
 			);
 			None(): m2;
 		}
 	));
+}
+
+fsVarUseIsTransparent(v: FsVarUse) -> bool {
+	switch (v.info.kind) {
+		FsVarLocal(transparent): transparent;
+		default: true;
+	}
 }

@@ -457,11 +457,12 @@ class FlowSprite extends Sprite {
 			
 			imgXhr.responseType = js.html.XMLHttpRequestResponseType.BLOB;
 			imgXhr.onload = function (oEvent) {
-				if (imgXhr.status == 200) {
-					nativeWidget.src = js.html.URL.createObjectURL(imgXhr.response);
+				if (imgXhr.status == 200 && nativeWidget != null) {
+					var oURL = js.html.URL.createObjectURL(imgXhr.response);
+					nativeWidget.src = oURL;
 
 					Native.defer(function() {
-						js.html.URL.revokeObjectURL(nativeWidget.src);
+						js.html.URL.revokeObjectURL(oURL);
 					});
 
 					onLoaded();

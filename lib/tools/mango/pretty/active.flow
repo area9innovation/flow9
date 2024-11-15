@@ -1,0 +1,208 @@
+import tools/mango/mango_types;
+import tools/mango/rules;
+import tools/mango/mango2string;
+import ds/set;
+import tools/mango/inline;
+
+export {
+	// Keep only rules that engage with semantic actions
+	keepOnlyActive(t : Term) -> Term;
+}
+
+ActiveAcc(
+	rules : Tree<string, Term>,
+	working : Set<string>,
+	active : ref Tree<string, bool>
+);
+
+keepOnlyActive(t : Term) -> Term {
+	rules = findRules(makeTree(), t);
+	aacc = ActiveAcc(rules, makeSet(), ref makeTree());
+	// OK, go find out
+	isTermActive(aacc, t);
+
+	active = keepActive(aacc, t);
+
+	// Next, inline all rules without variables
+	activeRules = findRules(makeTree(), active);
+	inlines = foldTree(activeRules, makeTree(), \rule, term, acc -> {
+		if (hasVariable(term)) acc
+		else {
+			setTree(acc, rule, term)
+		}
+	});
+	inlineTerms(inlines, active);
+}
+
+keepActive(acc : ActiveAcc, t : Term) -> Term {
+	rec = \tt -> keepActive(acc, tt);
+	none = String("");
+	switch (t) {
+		Choice(term1, term2): {
+			aterm1 = rec(term1);
+			aterm2 = rec(term2);
+			active1 = isTermActive(acc, aterm1);
+			active2 = isTermActive(acc, aterm2);
+			if (active1 && active2) {
+				Choice(aterm1, aterm2)
+			} else if (active1) {
+				aterm1;
+			} else if (active2) {
+				aterm2;
+			} else {
+				none;
+			}
+		}
+		Construct(uid, int_0): t;
+		Error(term): rec(term);
+		GrammarCall(id, term): none;
+		GrammarFn(id, term1, term2, term3): {
+			println("Did not expect grammar fn here: " + id);
+			none;
+		}
+		Lower(term): Lower(rec(term));
+		Negate(term): none;
+		Optional(term): {
+			aterm = rec(term);
+			if (isTermActive(acc, aterm)) {
+				Optional(aterm)
+			} else none;
+		}
+		Plus(term): {
+			aterm = rec(term);
+			if (isTermActive(acc, aterm)) {
+				Plus(aterm)
+			} else none;
+		}
+		Precedence(term1, term2): {
+			aterm1 = rec(term1);
+			aterm2 = rec(term2);
+			active1 = isTermActive(acc, aterm1);
+			active2 = isTermActive(acc, aterm2);
+			if (active1 && active2) {
+				Precedence(aterm1, aterm2)
+			} else if (active1) {
+				aterm1;
+			} else if (active2) {
+				aterm2;
+			} else {
+				none;
+			}
+		}
+		PushMatch(term): PushMatch(none);
+		Range(char1, char2): t;
+		Rule(id, term1, term2): {
+			if (lookupTreeDef(^(acc.active), id, false)) {
+				// It is active, keep it
+				Rule(id, rec(term1), rec(term2))
+			} else {
+				// OK, we can drop it
+				rec(term2);
+			}
+		}
+		Sequence(term1, term2): {
+			aterm1 = rec(term1);
+			aterm2 = rec(term2);
+			empty1 = aterm1 == none;
+			empty2 = aterm2 == none;
+			if (empty1 && empty2) {
+				none;
+			} else if (empty1) {
+				aterm2;
+			} else if (empty2) {
+				aterm1;
+			} else {
+				Sequence(aterm1, aterm2)
+			}
+		}
+		StackOp(id): t;
+		Star(term): {
+			aterm = rec(term);
+			if (isTermActive(acc, aterm)) {
+				Star(aterm)
+			} else none;
+		}
+		String(stringq): t;
+		Variable(id): {
+			if (lookupTreeDef(^(acc.active), id, false)) {
+				t;
+			} else none;
+		}
+	}
+}
+
+// Checks if this term is active or not, i.e. whether it deconstructs something
+isTermActive(acc : ActiveAcc, t : Term) -> bool {
+	switch (t) {
+		String(s): false;
+		Range(lower, upper): false;
+		Choice(term1, term2): isTermActive(acc, term1) || isTermActive(acc, term2);
+		Construct(uid, int_0): true;
+		Error(term): isTermActive(acc, term);
+		GrammarFn(id, term1, term2, term3): {
+			println("Did not expect grammar fn here: " + id);
+			false;
+		}
+		GrammarCall(id, term): false;
+		Lower(term): isTermActive(acc, term);
+		Negate(term): false;
+		Optional(term): isTermActive(acc, term);
+		Plus(term): isTermActive(acc, term);
+		Precedence(term1, term2): isTermActive(acc, term1) || isTermActive(acc, term2);
+		PushMatch(term): true;
+		Rule(id, term1, term2): {
+			if (containsKeyTree(^(acc.active), id)) {
+				// Already done, so skip it
+			} else {
+				acc.active := setTree(^(acc.active), id, isTermActive(acc, term1));
+			}
+			isTermActive(acc, term2);
+		}
+		Sequence(term1, term2): isTermActive(acc, term1) || isTermActive(acc, term2);
+		StackOp(id): true;
+		Star(term): isTermActive(acc, term);
+		Variable(id): {
+			known = lookupTree(^(acc.active), id);
+			switch (known) {
+				None(): {
+					if (containsSet(acc.working, id)) {
+						// Recursive call, we assume it is active
+						true;
+					} else {
+						// Unknown, so let us find out
+						nacc = ActiveAcc(acc with working = insertSet(acc.working, id));
+						rule = lookupTreeDef(acc.rules, id, String(""));
+						isTermActive(nacc, rule);
+					}
+				}
+				Some(a): a;
+			}
+		}
+	}
+}
+
+hasVariable(t : Term) -> bool {
+	switch (t) {
+		Choice(term1, term2): hasVariable(term1) || hasVariable(term2);
+		Construct(uid, int_0): false;
+		Error(term): hasVariable(term);
+		GrammarFn(id, term1, term2, term3): {
+			println("Did not expect grammar fn here: " + id);
+			false;
+		}
+		GrammarCall(id, term): false;
+		Lower(term): hasVariable(term);
+		Negate(term): hasVariable(term);
+		Optional(term): hasVariable(term);
+		Plus(term): hasVariable(term);
+		Precedence(term1, term2): hasVariable(term1) || hasVariable(term2);
+		PushMatch(term): hasVariable(term);
+		Range(char1, char2): false;
+		Rule(id, term1, term2): hasVariable(term1) || hasVariable(term2);
+		Sequence(term1, term2): hasVariable(term1) || hasVariable(term2);
+		StackOp(id): false;
+		Star(term): hasVariable(term);
+		String(stringq): false;
+		Variable(id): true;
+	}
+}

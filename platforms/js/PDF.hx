@@ -1,6 +1,7 @@
 
 import js.Browser;
 import js.Promise;
+import js.lib.Object;
 
 class PDF {
 	private static var pdfjsLib : Dynamic = null;
@@ -8,15 +9,15 @@ class PDF {
 	public static function loadPdfJsLibrary(cb : Void -> Void) : Void {
 		if (untyped __js__("typeof window['pdfjs-dist/build/pdf'] === 'undefined'")) {
 			var onLoad = function() {
-				pdfjsLib = untyped Browser.window['pdfjs-dist/build/pdf'];
-				pdfjsLib.GlobalWorkerOptions.workerSrc = "js/pdf.js/pdf.worker.min.js";
+				pdfjsLib = untyped globalThis.pdfjsLib;
+				pdfjsLib.GlobalWorkerOptions.workerSrc = "js/pdf.js/pdf.worker.min.mjs";
 
 				cb();
 			}
 			var head = Browser.document.getElementsByTagName('head')[0];
 			var node = Browser.document.createElement('script');
-			node.setAttribute("type","text/javascript");
-			node.setAttribute("src", 'js/pdf.js/pdf.min.js');
+			node.setAttribute("type","module");
+			node.setAttribute("src", 'js/pdf.js/pdf.min.mjs');
 			node.onload = onLoad;
 			head.appendChild(node);
 		} else {
@@ -24,8 +25,8 @@ class PDF {
 		}
 	}
 
-	public static function getPdfDocument(url : String, onOK : Dynamic -> Void, onError : String -> Void) {
-		var promise : Promise<Dynamic> = pdfjsLib.getDocument({ url: url, withCredentials: true }).promise;
+	public static function getPdfDocument(url : String, headers : Array<Array<String>>, onOK : Dynamic -> Void, onError : String -> Void) {
+		var promise : Promise<Dynamic> = pdfjsLib.getDocument({ url: url, httpHeaders: Object.fromEntries(headers), withCredentials: true }).promise;
 		promise.then(onOK).catchError(onError);
 	}
 

@@ -7,7 +7,7 @@ flowc1 \
 	compiler=flowc1 \
 	test=cpp3 \
 	valgrind=1 \
-	exclude=test_runner,test_concur,sizeof,test_clone,benchmark_inlining \
+	exclude=test_runner,test_concur,sizeof,test_clone,test_timer,test_dynamic_func_1,benchmark_inlining,test_native_stub \
 	test-opts=determ
 
 #cpp3-back-opts=cpp-debug

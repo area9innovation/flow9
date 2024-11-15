@@ -1,0 +1,248 @@
+import tools/mango/type/types;
+import ds/tree;
+import tools/poppy/poppy_types;
+import tools/poppy/pretty;
+import tools/poppy/type/env;
+import tools/poppy/type/elaborate;
+import tools/poppy/type/substitute;
+import tools/poppy/type/unions;
+import tools/poppy/type/utils;
+import tools/poppy/type/unify;
+import tools/poppy/type/compose;
+import tools/poppy/type/instantiate;
+import tools/poppy/utils;
+
+/*
+Unification based type inference for Poppy.
+
+See this paper for more information:
+https://prl.khoury.northeastern.edu/blog/static/stack-languages-talk-notes.pdf
+
+See this paper for how to handle lambdas:
+https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=17e9322160dc1e26cc85bb26f8ef7b8a560cb07c
+*/
+
+export {
+	findPoppyDefines(env : PTypeEnv, p : Poppy) -> void;
+	poppyType(env : PTypeEnv, p : Poppy) -> PType;
+}
+
+poppyType(env : PTypeEnv, pop : Poppy) -> PType {
+	todo = \ -> {
+		perror("TODO: Find the type for Poppy '" + prettyPoppy(pop) + "'");
+	}
+
+	indent = ^(env.indent);
+	if (env.verbose > 1) {
+		println(indent +"Infering type of " + toString(prettyPoppy(pop)) + ":");
+		env.indent := indent + "  ";
+	}
+
+	res = switch (pop) {
+		PoppyCons(): {
+			poly = makePTypeEClass(env, "");
+			PTypeWord([plistType(poly), poly], [plistType(poly)]);
+		}
+		PoppyDrop(): {
+			poly = makePTypeEClass(env, "");
+			PTypeWord([poly], []);
+		}
+		PoppyDump(): PTypeWord([], []);
+		PoppyNop(): PTypeWord([], []);
+		PoppyDup(): {
+			poly = makePTypeEClass(env, "");
+			PTypeWord([poly], [poly, poly]);
+		}
+		PoppyEval(): {
+			PTypeEval();
+		}
+		PoppyIfte(): {
+			poly = makePTypeEClass(env, "");
+			PTypeCompose(
+				PTypeWord([
+					PTypeName("bool", []), 
+					poly,
+					poly
+				], [poly]),
+				PTypeEval()
+			);
+		}
+		PoppyNil(): {
+			poly = makePTypeEClass(env, "");
+			PTypeWord([], [plistType(poly)]);
+		}
+		PoppyPrint(): {
+			poly = makePTypeEClass(env, "");
+			PTypeWord([poly], []);
+		}
+		PoppySet(word): {
+			mtype = lookupTree(^(env.words), word);
+			mtype ?? {
+				// We do not allow changing the type
+				PTypeWord([mtype], [])
+			} : {
+				poly = makePTypeEClass(env, word);
+				env.words := setTree(^(env.words), word, poly);
+				PTypeWord([poly], []);
+			}
+		}
+		PoppySwap(): {
+			poly1 = makePTypeEClass(env, "");
+			poly2 = makePTypeEClass(env, "");
+			PTypeWord([poly1, poly2], [poly2, poly1]);
+		}
+		PoppyWhile(): {
+			// TODO: This is not right, since if the body produces whatever, that is what we get N times
+			// Probably we want this: cond eval body [] ifte eval
+			poly0 = makePTypeEClass(env, "");
+			poly1 = makePTypeEClass(env, "");
+			poly2 = makePTypeEClass(env, "");
+			PTypeOverload([
+				PTypeCompose(PTypeWord([PTypeWord([], [PTypeName("bool", [])]), poly0], [poly0]), PTypeEval()),
+				PTypeCompose(PTypeWord([PTypeWord([poly1], [poly1, PTypeName("bool", [])]), poly2], [poly2]), PTypeEval()),
+			]);
+		}
+		PoppyConstructArity(uid, int1): {
+			typars = generate(0, int1, \i -> makePTypeEClass(env, uid));
+			PTypeWord(typars, [PTypeName(uid, typars)]);
+		}
+		PoppyDefine(word, poppy): {
+			// OK, what is the original eclass of this word?
+			meclass = lookupTree(^(env.words), word);
+
+			// To handle recursion, we use a placeholder tyvar to avoid infinite recursion
+			placeholder = makePTypeEClass(env, word);
+			env.words := setTree(^(env.words), word, placeholder);
+
+			if (env.verbose > 1) {
+				println(^(env.indent) + "Using placeholder " + prettyPType(env, placeholder) + " for " + word + " which was " + toString(meclass));
+			}
+
+			// Now type the body
+			namedEnv = env; // PTypeEnv(env with name = word);
+			type = poppyType(namedEnv, poppy);
+
+			if (true || env.verbose > 1) {
+				println(^(env.indent) + "Got raw type " + prettyPType(env, type) + " for " + word + " before substitution");
+				if (env.verbose > 2) {
+					debugPTypeEnv(env);
+				}
+			}
+
+			// Replace the placeholder in the inferred type
+			rtype = substitutePType(placeholder, type, type);
+
+			setUnionMapValue(env.unionFindMap, placeholder.eclass, [rtype]);
+
+			if (env.verbose > 1) {
+				println(^(env.indent) + "Updated placeholder ε" + i2s(placeholder.eclass) + " to " + prettyPType(env, rtype) + " for " + word);
+				// unifyPType(env, false, placeholder, rtype);
+				if (env.verbose > 2) {
+					debugPTypeEnv(env);
+				}
+
+				println(^(env.indent) + "About to reprocess " + prettyPType(env, rtype) + " for " + word);
+			}
+
+			root = findUnionMapRoot(env.unionFindMap, placeholder.eclass);
+			ftype = elaboratePType(env, makeSet1(root), ref makeSet(), rtype);
+
+			if (env.verbose > 0) {
+				println(^(env.indent) + "Type for '" + word + "' is " + prettyPType(env, ftype) + "\n");
+			}
+
+			// Find unions in eclasses, and give those names somehow
+			unionize = extractImplicitUnions(env, ref makeSet(), word, ftype);
+
+			utype = elaboratePType(env, makeSet1(root), ref makeSet(), unionize);
+
+			// And we have the final type
+			env.words := setTree(^(env.words), word, utype);
+
+			// TODO: Should we put this into the type before elaboration?
+			// And also unify against the original
+			meclass ?? {
+				// println("Unify with " + prettyPType(env, meclass) + " for " + word);
+				unifyPType(env, false, meclass, utype);
+				{}
+			} : {
+				println("ERROR: Use findPoppyDefines first");
+			}
+			PTypeWord([], []);
+		}
+		PoppyMakeList(poppy): {
+			code = poppyType(env, poppy);
+			PTypeWord([], [code]);
+		}
+		PoppySequence(poppy1, poppy2): {
+			t1 = poppyType(env, poppy1);
+			t2 = poppyType(env, poppy2);
+			if (false) {
+				// TODO: Find out why this gives different results:
+				PTypeCompose(t1, t2);
+			} else {
+				// println(prettyPoppy(poppy1) + " followed by " + prettyPoppy(poppy2));
+				mtype = composeIfFeasible(env, t1, t2);
+				mtype ?? {
+					mtype;
+				} : {
+					perror("Cannot compose " + prettyPoppy(poppy1) + " : " + prettyPType(env, t1) + "   with   " + prettyPoppy(poppy2) + " : " + prettyPType(env, t2));
+				}
+			}
+		}
+		PoppyBool(bool1): PTypeName("bool", []);
+		PoppyDouble(double1): PTypeName("double", []);
+		PoppyInt(int1): PTypeName("int", []);
+		PoppyString(string1): pstringType();
+		PoppyConstructor(uid, args): {
+			targs = map(args, \a -> poppyType(env, a));
+			PTypeName(uid, targs)
+		}
+		PoppyWord(word): {
+			mtype = lookupTree(^(env.words), word);
+			mtype ?? {
+				instantiatePolymorphism(env.unique, ref makeTree(), mtype);
+			} : {
+				perror("Unknown type of word " + word);
+			}
+		}
+	}
+	if (env.verbose > 1) {
+		env.indent := indent;
+		println(indent + "End Infering type of " + toString(prettyPoppy(pop)) + ": " + prettyPType(env, res));
+	}
+	res;
+}
+
+findPoppyDefines(env : PTypeEnv, p : Poppy) -> void {
+	switch (p) {
+		PoppyCons(): {}
+		PoppyDrop(): {}
+		PoppyDump(): {}
+		PoppyDup(): {}
+		PoppyEval(): {}
+		PoppyIfte(): {}
+		PoppyNil(): {}
+		PoppyPrint(): {}
+		PoppySet(word): {}
+		PoppySwap(): {}
+		PoppyWhile(): {}
+		PoppyNop(): {}
+		PoppyConstructArity(uid, int1): {}
+		PoppyDefine(word, poppy): {
+			poly0 = makePTypeEClass(env, word);
+			env.words := setTree(^(env.words), word, poly0);
+		}
+		PoppyMakeList(poppy): findPoppyDefines(env, poppy);
+		PoppySequence(poppy1, poppy2): {
+			findPoppyDefines(env, poppy1); 
+			findPoppyDefines(env, poppy2);
+		}
+		PoppyBool(bool1): {}
+		PoppyDouble(double1): {}
+		PoppyInt(int1): {}
+		PoppyString(string1): {}
+		PoppyConstructor(uid, args): {}
+		PoppyWord(word): {}
+	}
+}

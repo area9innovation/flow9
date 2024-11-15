@@ -34,10 +34,12 @@ export function shutdownFlowcHttpServer() {
     return run_cmd("flowc1", "", ["server-shutdown=1"], (s) => { console.log(s); }, []);
 }
 
-export function launchFlowcHttpServer(projectRoot: string, on_start : () => void, on_stop : () => void, on_msg : (any) => void) {
+export function launchFlowcHttpServer(projectRoot: string, compiler: string, on_start : () => void, on_stop : () => void, on_msg : (any) => void) {
 	on_start();
 	on_msg((new Date()).toString() + " Flow Http server started");
-	let httpServer = run_cmd("flowc1", projectRoot, ["server-mode=http"], (s) => { console.log(s); }, []);
+	// Only two variants are supported currently: flowc1 or flowc2. Default server is flowc1
+	compiler = (compiler === "flowc2") ? compiler : "flowc1";
+	let httpServer = run_cmd(compiler, projectRoot, ["server-mode=http"], (s) => { console.log(s); }, []);
 	httpServer.addListener("close", (code: number, signal: string) => {
 		on_msg(
 			(new Date()).toString() + " Flow Http server closed" +

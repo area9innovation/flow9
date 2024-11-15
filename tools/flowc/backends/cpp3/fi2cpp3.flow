@@ -2,7 +2,6 @@ import tools/flowc/backends/cpp3/fi2cpp3_compile;
 import tools/flowc/backends/cpp3/fi2cpp3_source;
 import tools/flowc/backends/cpp3/fi2cpp3_build;
 import tools/flowc/backends/cpp3/fi2cpp3_transform;
-import tools/flowc/manipulation/wrap_funcs_as_args;
 
 import tools/common/stats;
 
@@ -16,7 +15,11 @@ fi2cpp3(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config, call
 	}
 	compiled = fi2cpp3Compile(program, globEnv, cfg);
 	if (compiled.success) {
-		fi2cpp3Build(cfg, compiled.sources, compiled.dependencies, callback);
+		if (!isConfigParameterSet(cfg.config.config, "cpp3-debug")) {
+			fi2cpp3Build(cfg, compiled.sources, compiled.dependencies, callback);
+		} else {
+			callback(0);
+		}
 	} else {
 		callback(5);
 	}
@@ -32,9 +35,14 @@ fi2cpp3Compile(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Confi
 	);
 	if (isConfigParameterSet(program.config.config, "cpp3-debug")) {
 		name = getConfigParameter(program.config.config, "cpp3-debug");
-		maybeApply(lookupTree(program.names.toplevel, name), \decl ->
-			fcPrintln("original decl:\n" + strIndent(toStringFormatted(decl)), program.config.threadId)
-		)
+		maybeApply(lookupTree(program.names.toplevel, name), \decl -> {
+			decl_str = if (isConfigParameterTrue(program.config.config, "cpp-debug-raw")) {
+				toStringFormatted(decl);
+			} else {
+				pretFiDeclaration(decl);
+			}
+			fcPrintln("Original decl:\n" + strIndent(decl_str), program.config.threadId)
+		});
 	}
 	if (resolved.second != []) {
 		missing_names = map(resolved.second, \nat -> nat.name);
@@ -55,7 +63,6 @@ fi2cpp3Compile(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Confi
 			|> fiFlattenUnions
 			|> fiCompleteImplicitUnionTypars
 			|> fiRemoveImplicitStructTypars
-			|> fiWasmWrapFuncArgs
 			|> fiProgramAddPolymorphicStructsCasts
 			|> fiRemoveSigletonSeqences
 		;
@@ -64,12 +71,20 @@ fi2cpp3Compile(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Confi
 			|> (\ p -> fi2cpp3TransformProgramExps(p, gctx1))
 			//|> fiAddThreadIdAsLastArg
 		;
-		gctx2 = fi2cpp3updateGctx(program2, gctx);
+		gctx2 = fi2cpp3updateGctx(program2, gctx1);
 		fi2cpp3Translate(gctx2);
 	}
 }
 
 fi2cpp3initGctx(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Config) -> Cpp3GlobalContext {
+	recursive = if (!isConfigParameterTrue(cfg.config.config, "cpp-optimize-recursive")) makeTree() else {
+		recs = fiDetectRecursion(program);
+		rec2s = \r: FiRecursion -> "hosts: " + toString(set2array(r.host)) + ", recs: " + toString(set2array(r.rec));
+		fcPrintln("recursive (" + i2s(sizeTree(recs)) + "):\n" +
+			superglue(tree2pairs(recs), \p -> "\t" + p.first + "=> " + rec2s(p.second), "\n"), program.config.threadId
+		);
+		recs;
+	}
 	Cpp3GlobalContext(globEnv, cfg, program,
 		collectFiEffects(program),
 		[],
@@ -77,7 +92,7 @@ fi2cpp3initGctx(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiCpp3Conf
 		\name -> "",
 		fiCpp3InitNativeFuncs(cfg),
 		fiCpp3InitRuntimeParts(cfg),
-		ref true, "", None(), makeSet(), ""
+		ref true, "", None(), makeSet(), "", recursive
 	);
 }
 
@@ -111,13 +126,13 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 	runtime_sources = fiCpp3BaseRuntimeFiles(gctx.config, ".cpp");
 	iter(runtime_headers, \header ->
 		fi2cpp3SaveFile(
-			src_path(fileNameOnly(header), ".hpp"),
+			src_path(fileNameOnly(header), getFileExt(header)),
 			getFileContent(header), gctx.config
 		)
 	);
 	iter(runtime_sources, \source ->
 		fi2cpp3SaveFile(
-			src_path(fileNameOnly(source), ".cpp"),
+			src_path(fileNameOnly(source), getFileExt(source)),
 			getFileContent(source), gctx.config
 		)
 	);
@@ -135,9 +150,9 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 		}
 	});
 	compiled = if (fcParallelOn(gctx.program.config)) {
-		sequential(true, do_compile_modules);
-	} else {
 		concurrent(true, do_compile_modules);
+	} else {
+		sequential(true, do_compile_modules);
 	}
 	fi2cpp3SaveFile(
 		src_path("__flow_runtime_init_term", ".cpp"),
@@ -160,8 +175,8 @@ fi2cpp3Translate(gctx: Cpp3GlobalContext) -> Cpp3CompiledProgram {
 			fi2cpp3SaveFile(header_path, header, mod_gctx.config);
 			srcs1 = Cons(changeFileExt(name, ".hpp"), srcs);
 			sources = fiCompiledModule2cpp3sources(module, runtime_parts, mod_gctx);
-			if (length(sources) == 0) srcs1 else {
-				foldi(sources, srcs, \i, acc, source -> {
+			if (length(sources) == 0 || forall(module.decls, \decl -> decl.headerOnly)) srcs1 else {
+				foldi(sources, srcs1, \i, acc, source -> {
 					src_name = if (i == 0) name else name + "_" + i2s(i);
 					source_path = src_path(src_name, ".cpp");
 					fi2cpp3SaveFile(source_path, source, mod_gctx.config);

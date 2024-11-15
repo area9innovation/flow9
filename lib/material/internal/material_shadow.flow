@@ -10,6 +10,24 @@ export {
 
 	TShadowShape(parent : MFocusGroup, z : Transform<double>, t : Tropic, shape: ShadowShape) -> Tropic;
 	TEasedShadowShape(manager : MaterialManager, parent : MFocusGroup, z : Transform<double>, t : Tropic, duration : double, shape : ShadowShape) -> Tropic;
+
+	// Create a surface with a background color and shadow for elevations higher than zero
+	// By default has zero elevation and MSurfaceColor background
+	// Use ShadowShape to change background shape, RectangleShape("MEmpty") by default
+	MSurface(m : Material, style: [MSurfaceStyle]) -> Material;
+		MSurfaceStyle ::= ShadowShape, MBackgroundStyle, MElevation, MAddOverlay, MAddShadow;
+			// Add white overlay in dark mode (no overlay implemented for light mode), true by default
+			// Before introducing the surface color roles in March 2023, surface elevation was communicated through tint overlays.
+			// This approach makes life harder for designers and frontend developers because different elevations produce different background colors in dark mode
+			// which are tricky to debug because they are a combination of a base color and a tint. We should gradually move to the new approach.
+			// [Color - Material Design 3](https://m3.material.io/styles/color/roles#22948d54-0450-4cab-8f4f-8853a8c6eccc)
+			MAddOverlay(addOverlay : bool);
+			// Use this to hide shadow if you need only a background and dark mode overlay
+			MAddShadow(addShadow : bool);
+
+	TSurface(parent : MFocusGroup, t : Tropic, style: [MSurfaceStyle]) -> Tropic;
+	// OBSOLETE: Use MSurface instead
+	MCustomShadow = MSurface;
 }
 
 showMaterialShadows = ref !isUrlParameterFalse("material_shadows");
@@ -47,11 +65,17 @@ TEasedShadowShape(manager : MaterialManager, parent : MFocusGroup, z0 : Transfor
 }
 
 TShadowShape(parent : MFocusGroup, zo : Transform<double>, t : Tropic, shape : ShadowShape) -> Tropic {
-	if (!^showMaterialShadows || zo == zero) {
+	TShadowShape2(parent, zo, t, shape, [MThemedFill(MBackgroundColor())], true, true, false);
+}
+
+TShadowShape2(parent : MFocusGroup, zo : Transform<double>, t : Tropic, shape : ShadowShape, backgroundStyle : [MGraphicsStyle], addOverlay : bool, addShadow: bool, forceBackground: bool) -> Tropic {
+	if (!^showMaterialShadows || (zo == zero && !forceBackground)) {
 		t
 	} else {
+		backgroundTStyle = mgraphicsStyle2tgraphicsStyle(parent, backgroundStyle);
+
 		TCopySize(
-			if (getLightBackground(parent))
+			if (getLightBackground(parent) || !addOverlay)
 				t
 			else
 				TCopySize(
@@ -110,7 +134,7 @@ TShadowShape(parent : MFocusGroup, zo : Transform<double>, t : Tropic, shape : S
 				),
 			\tr ->
 				TSelect(zo, \z -> {
-					if (z == 0.0) {
+					if (z == 0.0 && !forceBackground) {
 						TEmpty();
 					} else {
 						zPercent = z / 24.;
@@ -119,54 +143,57 @@ TShadowShape(parent : MFocusGroup, zo : Transform<double>, t : Tropic, shape : S
 						color1 = lerp(0.1, 0.3, zPercent);
 						blur1 = lerp(0., 38., zPercent);
 
-						placement2 = lerp(0., 15., zPercent);
-						color2 = lerp(0.24, 0.22, zPercent);
-						blur2 = lerp(2., 12., zPercent);
+						// placement2 = lerp(0., 15., zPercent);
+						// color2 = lerp(0.24, 0.22, zPercent);
+						// blur2 = lerp(2., 12., zPercent);
 
 						colorMultiplier = 1.5;
 						blurMultiplier = if (js) 1. else 3.;
 
 						addFilter = \centered -> \size ->
-							TFilter(
-								[
-									// shadow by key light
-									DropShadow([
-										Placement(90.0, if (centered) 0. else placement1),
-										Color(black, color1 * colorMultiplier),
-										Radius(blur1 * blurMultiplier),
-									]),
-									// shadow by ambient light
-									// DropShadow([
-									// 	Placement(90.0, placement2),
-									// 	Color(black, color2),
-									// 	Radius(blur2 * blurMultiplier),
-									// ])
-								],
-								size
-							);
+							if (addShadow)
+								TFilter(
+									[
+										// shadow by key light
+										DropShadow([
+											Placement(90.0, if (centered) 0. else placement1),
+											Color(black, color1 * colorMultiplier),
+											Radius(blur1 * blurMultiplier),
+										]),
+										// shadow by ambient light
+										// DropShadow([
+										// 	Placement(90.0, placement2),
+										// 	Color(black, color2),
+										// 	Radius(blur2 * blurMultiplier),
+										// ])
+									],
+									size
+								)
+							else
+								size;
 
 
 						switch (shape: ShadowShape) {
 							RectangleShape(component):
 								TBorder(-0.5, -0.5, -0.5, -0.5, tr)
-								|> (\f -> MShape(parent, [MThemeFill(parent, MBackgroundColor())], f, component))
+								|> (\f -> MShape(parent, backgroundTStyle, f, component))
 								|> addFilter(false)
 								|> (\f -> TCenterIn(f, tr));
 							RectangleCenteredShape(component):
 								TBorder(-0.5, -0.5, -0.5, -0.5, tr)
-								|> (\f -> MShape(parent, [MThemeFill(parent, MBackgroundColor())], f, component))
+								|> (\f -> MShape(parent, backgroundTStyle, f, component))
 								|> addFilter(true)
 								|> (\f -> TCenterIn(f, tr));
 							BottomRectangleShape():
 								TBorder(0.0, 0.0, 0.0, -0.5, tr)
-								|> (\f -> TRectangle([MThemeFill(parent, MBackgroundColor())], f))
+								|> (\f -> TRectangle(backgroundTStyle, f))
 								|> addFilter(false)
 								|> (\f -> TCenterIn(f, tr));
 							RoundShape():
 								TAttach(tr, \m ->
 									TSelect(m.width, \wd ->
 										TCenterIn(
-											TCircle(wd / 2.0 - 0.5, [MThemeFill(parent, MBackgroundColor())])
+											TCircle(wd / 2.0 - 0.5, backgroundTStyle)
 											|> addFilter(false),
 											TFixed(wd, wd)
 										)
@@ -176,7 +203,7 @@ TShadowShape(parent : MFocusGroup, zo : Transform<double>, t : Tropic, shape : S
 								TAttach(tr, \m ->
 									TSelect(m.width, \wd ->
 										TCenterIn(
-											TCircle(wd / 2.0 - 0.5, [MThemeFill(parent, MBackgroundColor())])
+											TCircle(wd / 2.0 - 0.5, backgroundTStyle)
 											|> addFilter(true),
 											TFixed(wd, wd)
 										)
@@ -191,4 +218,31 @@ TShadowShape(parent : MFocusGroup, zo : Transform<double>, t : Tropic, shape : S
 			false
 		)
 	}
+}
+
+MSurface(m : Material, style: [MSurfaceStyle]) -> Material {
+	MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t -> TSurface(p, m2t(m, p), style)));
+}
+
+TSurface(parent : MFocusGroup, t : Tropic, style: [MSurfaceStyle]) -> Tropic {
+	backgroundStyle = extractStruct(style, MBackgroundStyle([MThemedFill(MSurfaceColor())])).style;
+	elevation = extractStruct(style, MElevation(zero)).elevation;
+	shape = extractShadowShape(style);
+	addOverlay = extractStruct(style, MAddOverlay(true)).addOverlay;
+	addShadow = extractStruct(style, MAddShadow(true)).addShadow;
+
+	TShadowShape2(parent, elevation, t, shape, backgroundStyle, addOverlay, addShadow, true);
+}
+
+extractShadowShape(style : [flow]) -> ShadowShape {
+	either(
+		tryExtractStructMany(style, [
+			RoundCenteredShape(),
+			TropicShape(TEmpty()),
+			RectangleShape(""),
+			RectangleCenteredShape(""),
+			BottomRectangleShape()
+		]),
+		RectangleShape("MEmpty")
+	)
 }

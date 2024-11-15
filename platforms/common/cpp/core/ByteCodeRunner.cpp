@@ -85,6 +85,9 @@ StackSlot flowgen_common::error_stub_slot = StackSlot::MakeVoid();
     #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 #endif
 
+std::uniform_real_distribution<double> ByteCodeRunner::random_dist = std::uniform_real_distribution<double>(0.0, 1.0);
+std::mt19937 ByteCodeRunner::random_gen = std::mt19937(std::random_device{}()); // Standard mersenne_twister_engine seeded with random device
+
 ByteCodeRunner::ByteCodeRunner() :
      flow_out(std::cout.rdbuf()), flow_err(std::cerr.rdbuf())
 {

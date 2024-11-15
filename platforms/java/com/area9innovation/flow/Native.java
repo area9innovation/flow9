@@ -860,62 +860,48 @@ public class Native extends NativeHost {
 		};
 	}
 
-	private static void cancelTimer(Timer timer) {
-		timer.cancel();
+	private static void cancelTimer(int timerId) {
+		Timers timers = FlowRuntime.getTimers();
+		if (timers != null) {
+			timers.removeTimer(timerId);
+		}
 	}
 
-	public static void invokeCallback(Runnable cb) {
-		cb.run();
-	}
-
-	public static final Timer scheduleTimerTask(int ms, final Func0<Object> cb) {
-		Timer timer = new Timer(true);
-		TimerTask task = new TimerTask() {
-			public void run() {
-				invokeCallback(new Runnable() {
-					public void run() {
-						try {
-							cb.invoke();
-						} catch (Exception ex) {
-							System.err.println(ex.getMessage());
-							cancelTimer(timer);
-							throw ex;
-						}
-					}
-				});
-			}
-		};
-		timer.schedule(task, ms);
-		return timer;
+	public static final int scheduleTimerTask(int ms, final Func0<Object> cb, boolean repeat) {
+		Timers timers = FlowRuntime.getTimers();
+		if (timers == null) {
+			timers = new Timers();
+			FlowRuntime.timersByThreadId.put(FlowRuntime.getThreadIdLong(), timers);
+		}
+		return timers.addTimer(ms, repeat, cb);
 	}
 
 	public static final Object timer(int ms, final Func0<Object> cb) {
-		scheduleTimerTask(ms, cb);
+		scheduleTimerTask(ms, cb, false);
 		return null;
 	}
 
-	public static final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
-		Timer timer = new Timer(false);
-		TimerTask task = new TimerTask() {
-			public void run() {
-				invokeCallback(new Runnable() {
-					public void run() {
-						cb.invoke();
-						timer.cancel();
-					}
-				});
-			}
-		};
-		timer.schedule(task, ms);
-		return null;
-	}
-
-	public static final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
-		Timer timer = scheduleTimerTask(ms, cb);
+	public static final Func0<Object> setInterval(int ms, final Func0<Object> cb) {
+		int timerId = scheduleTimerTask(ms, cb, true);
 
 		return new Func0<Object>() {
 			public Object invoke() {
-				cancelTimer(timer);
+				cancelTimer(timerId);
+				return null;
+			}
+		};
+	}
+
+	public static final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
+		return timer(ms, cb);
+	}
+
+	public static final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
+		int timerId = scheduleTimerTask(ms, cb, false);
+
+		return new Func0<Object>() {
+			public Object invoke() {
+				cancelTimer(timerId);
 				return null;
 			}
 		};
@@ -1097,7 +1083,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object printCallstack() {
-		Thread.dumpStack();
+		new Throwable().printStackTrace(System.out);
 		return null;
 	}
 
@@ -1290,6 +1276,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object quit(int c) {
+		FlowRuntime.quitCode = c;
 		System.exit(c);
 		return null;
 	}
@@ -1900,7 +1887,9 @@ public class Native extends NativeHost {
 				@Override
 				public Object call() throws Exception {
 					try {
-						return task.invoke();
+						Object result = task.invoke();
+						FlowRuntime.eventLoop();
+						return result;
 					} catch (OutOfMemoryError e) {
 						// This is brutal, but there is no memory to print anything
 						// so better to stop than to hang in infinite loop.
@@ -1947,6 +1936,7 @@ public class Native extends NativeHost {
 					completableFuture.complete(res);
 					return null;
 				});
+				FlowRuntime.eventLoop();
 			} catch (RuntimeException ex) {
 				Throwable e = ex;
 				e.printStackTrace();
@@ -1999,7 +1989,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final String getThreadId() {
-		return Long.toString(Thread.currentThread().getId());
+		return Long.toString(FlowRuntime.getThreadIdLong());
 	}
 
 	public static final Object initConcurrentHashMap() {
@@ -2103,18 +2093,20 @@ public class Native extends NativeHost {
 
 	public static final String readBytes(int n) {
 		byte[] input = new byte[n];
-		try {
-			int have_read = 0;
-			while (have_read < n) {
-				int read_bytes = System.in.read(input, have_read, n - have_read);
-				if (read_bytes == -1) {
-					break;
+		FlowRuntime.runParallelAndWait(() -> {
+			try {
+				int have_read = 0;
+				while (have_read < n) {
+					int read_bytes = System.in.read(input, have_read, n - have_read);
+					if (read_bytes == -1) {
+						break;
+					}
+					have_read += read_bytes;
 				}
-				have_read += read_bytes;
+			} catch (IOException e) {
+				e.printStackTrace();
 			}
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		});
 		try {
 			return new String(input, "UTF-8");
 		} catch (UnsupportedEncodingException e) {
@@ -2126,27 +2118,29 @@ public class Native extends NativeHost {
 	public static final String readUntil(String str_pattern) {
 		byte[] pattern = str_pattern.getBytes();
 		ArrayList<Byte> line = new ArrayList<Byte>();
-		int pos = 0;
-		try {
-			while (true) {
-				int ch = System.in.read();
-				if (ch == -1) {
-					break;
-				} else {
-					line.add(Byte.valueOf((byte)ch));
-					if (ch == pattern[pos]) {
-						pos += 1;
-						if (pos == pattern.length) {
-							break;
-						}
+		FlowRuntime.runParallelAndWait(() -> {
+			try {
+				int pos = 0;
+				while (true) {
+					int ch = System.in.read();
+					if (ch == -1) {
+						break;
 					} else {
-						pos = 0;
+						line.add(Byte.valueOf((byte)ch));
+						if (ch == pattern[pos]) {
+							pos += 1;
+							if (pos == pattern.length) {
+								break;
+							}
+						} else {
+							pos = 0;
+						}
 					}
 				}
+			} catch (IOException e) {
+				e.printStackTrace();
 			}
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		});
 		byte[] bytes = new byte[line.size()];
 		for (int i = 0; i < line.size(); ++ i) {
 			bytes[i] = line.get(i).byteValue();
@@ -2189,8 +2183,8 @@ public class Native extends NativeHost {
 	}
 
 	// Vector natives:
-	public static final Object makeVector(Integer capacity) {
-		return new ArrayList(capacity);
+	public static final Object makeVector(Integer capacity, Object[] __) {
+		return new ArrayList(capacity >= 0 ? capacity : 0);
 	}
 	public static final Object getVector(Object v, Integer i) {
 		ArrayList vector = (ArrayList)v;
@@ -2208,29 +2202,26 @@ public class Native extends NativeHost {
 		vector.add(x);
 		return null;
 	}
-	public static final Object removeVector(Object v, Integer i) {
+	public static final Object removeVector(Object v, Integer i, Object[] __) {
 		ArrayList vector = (ArrayList)v;
 		vector.remove(i.intValue());
 		return null;
 	}
-	public static final int sizeVector(Object v) {
+	public static final int sizeVector(Object v, Object[] __) {
 		ArrayList vector = (ArrayList)v;
 		return vector.size();
 	}
-	public static final Object clearVector(Object v) {
+	public static final Object clearVector(Object v, Object[] __) {
 		ArrayList vector = (ArrayList)v;
 		vector.clear();
 		return null;
 	}
-	public static final Object shrinkVector(Object v, Integer size) {
+	public static final Object trimToSizeVector(Object v, Object[] __) {
 		ArrayList vector = (ArrayList)v;
-		int i = vector.size();
-		while (i > size) {
-			vector.remove(--i);
-		}
+		vector.trimToSize();
 		return null;
 	}
-	public static final Object subVector(Object v, Integer index, Integer len) {
+	public static final Object subVector(Object v, Integer index, Integer len, Object[] __) {
 		@SuppressWarnings("unchecked")
 		ArrayList<Object> vector = (ArrayList<Object>)v;
 		ArrayList<Object> sub = new ArrayList<Object>(len);

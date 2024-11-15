@@ -212,7 +212,7 @@ fform2form(fform : FForm) -> Form {
 }
 
 FRealHTMLStyle2RealHTMLStyle(style : [FRealHTMLStyle]) -> [RealHTMLStyle] {
-	filtermap(style, \st -> 
+	filtermap(style, \st ->
 		switch (st) {
 			RealHTMLStyle(): cast(Some(st) : Some<FRealHTMLStyle> -> Maybe<RealHTMLStyle>);
 			default: None();
@@ -746,8 +746,8 @@ FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> voi
 			[
 				TextChange(modelFn),
 				TextScroll(modelFn),
-				FocusIn(\ -> nextDistinct(focused, true)),
-				FocusOut(\ -> nextDistinct(focused, false)),
+				FocusIn(\ -> if (!cpp) nextDistinct(focused, true)),
+				FocusOut(\ -> if (!cpp) nextDistinct(focused, false)),
 			],
 			[
 				StateChanger(state)
@@ -1358,23 +1358,38 @@ renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, sty
 		else
 			FAnimationNormal();
 
+	durationT = ref const(1.0);
+	delayT = ref const(0.0);
+	easingT = ref const(CubicBezierEasing(0.0, 0.0, 1.0, 1.0));
+	iterationsT = ref const(1);
+
+	iter(style, \s -> {
+		switch (s) {
+			FAnimationDuration(duration): durationT := duration;
+			FAnimationDelay(delay): delayT := delay;
+			FAnimationEasing(easing): easingT := easing;
+			FAnimationIterations(iterations): iterationsT := iterations;
+			default: {}
+		}
+	});
+
 	makeSubscribeUns(keyframes, \kf -> {
 		if (length(kf) > 0) {
 			[
 				makeSubscribeUns(
-					extractStruct(style, FAnimationDuration(const(1.0))).duration,
+					^durationT,
 					\duration ->
 						[
 							makeSubscribeUns(
-								extractStruct(style, FAnimationDelay(const(0.0))).delay,
+								^delayT,
 								\delay ->
 									[
 										makeSubscribeUns(
-											extractStruct(style, FAnimationEasing(const(CubicBezierEasing(0.0, 0.0, 1.0, 1.0)))).easing,
+											^easingT,
 											\easing ->
 												[
 													makeSubscribeUns(
-														extractStruct(style, FAnimationIterations(const(1))).iterations,
+														^iterationsT,
 														\iterations ->
 															[
 																addFClipAnimation(
@@ -1543,6 +1558,9 @@ addFClipAnimation(
 	}
 
 	if (length(keyframes) > 1) {
+		iteration = ref 0;
+		reversed = ref direction == FAnimationReverse() || direction == FAnimationAlternateReverse();
+
 		animationPercentDisposer =
 			eitherMap(
 				animationPercent,
@@ -1566,11 +1584,23 @@ addFClipAnimation(
 
 							if (percent >= 0.0) {
 								if (percent < 1.0) {
-									next(ap.percent, percent);
+									prc = lerpCurve(0.0, 1.0, easing)(percent);
+									next(ap.percent, if (^reversed) 1. - prc else prc);
 								} else {
-									next(ap.percent, 1.0);
-									^disp();
-									disp := nop;
+									next(ap.percent, if (^reversed) 0.0 else 1.0);
+
+									iteration := ^iteration + 1;
+
+									if (^iteration >= iterations) {
+										^disp();
+										disp := nop;
+									} else {
+										started := Some(df);
+
+										if (direction == FAnimationAlternate() || direction == FAnimationAlternateReverse()) {
+											reversed := !^reversed;
+										}
+									}
 								}
 							}
 						});
@@ -1685,9 +1715,7 @@ addFClipAnimation(
 					animationPercentDisposer();
 
 					started = ref None();
-					iteration = ref 0;
 					disp = ref nop;
-					reversed = ref direction == FAnimationReverse() || direction == FAnimationAlternateReverse();
 
 					disp :=
 						addDrawFrameEventListener(\df -> {

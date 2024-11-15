@@ -1,0 +1,164 @@
+import tools/mango/compiler/mopcode;
+import string;
+import text/blueprint;
+import net/url_parameter;
+import tools/poppy/compiler/compile;
+
+export {
+	mopcode2code(c : MOpCode) -> string;
+}
+
+mopcode2code(c : MOpCode) -> string {
+	todo = \ -> {
+		println("TODO: Produce code for " + toString(c));
+		"TODO";
+	}
+	switch (c) {
+		MoFunction(name, code, body): {
+			prefix = getUrlParameter("prefix");
+			blueprint("
+				%id%(acc : MoParseAcc) -> bool {
+					// println(\"%id%\");
+					%term%
+				}
+
+				%body%
+				", [
+					"id", prefix + "parse_" + name,
+					"term", mopcode2code(code),
+					"body", mopcode2code(body),
+				]
+			)
+		}
+		MoMatchString(s): "matchString(acc, " + toString(s) + ")";
+		MoMatchRange(lower, upper): "matchRange(acc, " + i2s(lower) + ", " + i2s(upper) + ")";
+		MoIf(cond, then, else_): {
+			blueprint("
+				if (%cond%) {
+					%then%
+				} else {
+					%else%
+				}", [
+					"cond", mopcode2code(cond),
+					"then", mopcode2code(then),
+					"else", mopcode2code(else_),
+			]);
+		}
+		MoParseStar(term): {
+			blueprint("
+				mparseStar(acc, \\ -> {
+					%term%
+				})", [
+				"term", mopcode2code(term)
+			]);
+		}
+		MoCall(id): {
+			prefix = getUrlParameter("prefix");
+			prefix + "parse_" + id + "(acc)";
+		}
+		MoCaptureI(): "acc.starti ::= acc.i";
+		MoMatched(): "pushPEnv(acc.env, substring(acc.input, acc.starti, acc.i - acc.starti))";
+		MoBool(b): b2s(b);
+		MoEvalPoppy(poppy): {
+			if (isPoppyValue(poppy)) {
+				val = compilePoppy2Value(poppy);
+				"pushPEnv(acc.env, " + val + ")";
+			} else {
+				env = PCompileEnv(getRunCore(), true, ref "", ref 0);
+				code = compilePoppy(env, poppy);
+				if (^(env.functions) != "") {
+					println("TODO: Implement collection of Poppy functions");
+				}
+				blueprint("{env = acc.env;%code%; true}", ["code", code]);
+			}
+		}
+		MoPushCheckpoint(): "pushMCheckpoint(acc)";
+		MoDiscardCheckpoint(): "discardMCheckpoint(acc)";
+		MoRestoreCheckpoint(): "restoreMCheckpoint(acc)";
+		MoSequence(exps): {
+			if (length(exps) == 0) {
+				""
+			} else if (length(exps) == 1) {
+				mopcode2code(exps[0])
+			} else {
+				blueprint("
+					{
+						%seq%
+					}", [
+					"seq", superglue(exps, mopcode2code, ";\n")
+				]);
+			}
+		}
+		MoConstruct(uid, arity): "moconstruct(acc, " + toString(uid) + ", " + i2s(arity) + ")";
+		MoPushPosition(): "pushPEnv(acc.env, i2s(acc.i))";
+		MoAnd(left, right): {
+			"(" + superglue([left, right], \o -> {
+				if (needMOpCodeParenthesis(o)) {
+					"(" + mopcode2code(o) + ")"
+				} else {
+					mopcode2code(o)
+				}
+			}, " && ") + ")"
+
+		}
+		MoOr(left, right): {
+			superglue([left, right], \o -> {
+				if (needMOpCodeParenthesis(o)) {
+					"(" + mopcode2code(o) + ")"
+				} else {
+					mopcode2code(o)
+				}
+			}, " || ")
+		}
+/*		DAddError(error): {
+			blueprint("
+				addParseError(acc, %error%)", [
+				"error", toString(error)
+			]);
+		}
+		DAddVerbatim(e): {
+			blueprint("
+				addVerbatim(acc, %term%)", [
+				"term", opcode2code(e)
+			]);
+		}
+		DAddMatched(e): {
+			blueprint("
+				addMatched(acc, %term%)", [
+				"term", opcode2code(e)
+			]);
+		}
+*/
+	}
+}
+
+needMOpCodeParenthesis(o : MOpCode) -> bool {
+	switch (o) {
+		MoFunction(name, code, body): true;
+		MoMatchString(s): false
+		MoMatchRange(lower, upper): false
+		MoIf(cond, then, else_): true;
+		MoParseStar(term): false
+		MoCall(id): false
+		MoCaptureI(): true;
+		MoMatched(): false
+		MoBool(b): false;
+		MoEvalPoppy(poppy): {
+			switch (poppy) {
+				PoppyBool(bool1): false;
+				PoppyDouble(double1): true;
+				PoppyInt(int1): false;
+				PoppyString(string1): false;
+				default: true;
+			}
+		}
+		MoPushPosition(): false
+		MoPushCheckpoint(): false
+		MoDiscardCheckpoint(): false
+		MoRestoreCheckpoint(): false
+		MoSequence(exps): length(exps) == 1;
+		MoConstruct(uid, arity): false;
+		MoAnd(left, right): true;
+		MoOr(left, right): true;
+	}
+}

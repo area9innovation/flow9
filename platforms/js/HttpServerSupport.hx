@@ -16,6 +16,7 @@ class HttpServerSupport {
 		pfxPath : String,
 		pfxPassword : String,
 		?onOpen : Void -> Void,
+		?onOpenError : String -> Void,
 		?onMessage : String ->
 					String ->
 					String ->

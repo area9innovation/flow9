@@ -170,6 +170,7 @@ function startHttpServer() {
 		serverChannel.show(true);
 		httpServer = tools.launchFlowcHttpServer(
 			getFlowRoot(),
+			getFlowCompiler(),
 			showHttpServerOnline,
 			showHttpServerOffline,
 			(msg : any) => serverChannel.appendLine(msg)
@@ -201,8 +202,8 @@ async function startLspClient() {
 	await stopLspClient();
 	serverStatusBarItem.show();
 	const serverOptions: ServerOptions = {
-		command: process.platform == "win32" ? 'flowc1_lsp.bat' : 'flowc1_lsp',
-		args: [],
+		command: process.platform == "win32" ? 'cmd.exe' : 'flowc1_lsp',
+		args: process.platform == "win32" ? ["/c", "flowc1_lsp.bat"] : [],
 		options: { detached: false }
 	};
 	// Options to control the language client
@@ -219,8 +220,7 @@ async function startLspClient() {
 			protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
 		},
 		markdown: {
-			isTrusted: true,
-			supportHtml: true
+			isTrusted: true
 		}
 	}
 

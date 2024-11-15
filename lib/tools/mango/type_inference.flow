@@ -1,0 +1,281 @@
+import tools/poppy/type/elaborate;
+import tools/poppy/type/infer_type;
+import tools/poppy/type/resolve;
+import tools/mango/rules;
+import tools/mango/topo;
+import tools/mango/util;
+
+export {
+	inferMangoTypes(mangoName : string, env : PTypeEnv, t : Term) -> [PType];
+}
+
+// Performs type inference for a Mango grammar, initializing the environment and calling other inference functions
+inferMangoTypes(mangoName : string, env : PTypeEnv, t : Term) -> [PType] {
+	r = findRules(makeTree(), t);
+	order = topoRules(t);
+	if (env.verbose > 0) {
+		println("About to do type inference in order");
+		println(order);
+	}
+
+	// Grab any Poppy definitions and stuff required for the rules
+	firstPass(env, t);
+
+	mangoTypesOfRules(env, order, r);
+	mangoType2(env, t);
+}
+
+// Processes rules in topological order, performing type inference for each rule
+mangoTypesOfRules(env : PTypeEnv, order : [string], r : Tree<string, Term>) -> void {
+	if (order == []) {
+	} else {
+		rule = order[0];
+		mtt = lookupTree(r, rule);
+		mtt ?? {
+			tt = mtt;
+			indent = ^(env.indent);
+			if (env.verbose > 0) {
+				println("Rule     " + rule + " :    from   " + summarizeTerm(tt));
+				env.indent := indent + "  ";
+			}
+
+			mtype = lookupTree(^(env.words), rule);
+			switch (mtype) {
+				None(): {
+					println("ERROR: Unknown eclass for rule '" + rule + "'");
+				}
+				Some(etype): {
+					eclass = getPTypeEClass(etype);
+					if (eclass == -1) {
+						println("ERROR: Invalid eclass for rule '" + rule + "'");
+					}
+
+					types = mangoType2(env, tt);
+					if (!forall(types, \t -> {
+						unifyPType(env, false, t, etype)
+					})) {
+						println("ERROR: Cannot unify types of rule '" + rule + "'" + prettyPTypes(env, types));
+					}
+
+					ftypes = if (true) {
+						if (length(types) == 1 && isPTypeNop(env, types[0])) {
+							// This is required to ensure we do not have too many eclasses.
+							env.words := setTree(^(env.words), rule, types[0]);
+						}
+						types;
+					} else {
+						rtypes = resolvePTypes(env, ref makeSet(), types);
+						if (rtypes != [] && types != []) {
+							if (length(rtypes) == 1) {
+								env.words := setTree(^(env.words), rule, rtypes[0]);
+							}
+							setUnionMapValue(env.unionFindMap, eclass, rtypes);
+						}
+						rtypes;
+					}
+
+					if (false) {
+						println("Best name " + rule + " is " + bestUnionName(env, eclass));
+						println("Type 1 of " + rule + ": " + prettyPTypes(env, ftypes));
+						println("Type 2 of " + rule + ": " + prettyPType(env, etype));
+					}
+
+					if (env.verbose > 0) {
+						println("Type of " + rule + ": " + prettyPType(env, etype));
+					}
+					mangoTypesOfRules(env, tail(order), r);
+				}
+			}
+		} : {
+			println("ERROR: Unknown rule '" + rule + "'");
+		}
+	}
+}
+
+// Initializes the type environment by processing Poppy definitions and setting up initial types for rules
+firstPass(env : PTypeEnv, t : Term) -> void {
+	rec = \tt -> firstPass(env, tt);
+	switch (t) {
+		Choice(term1, term2): {
+			rec(term1); 
+			rec(term2);
+		}
+		Construct(uid, int1): {}
+		Error(term): rec(term);
+		GrammarCall(id, term): rec(term);
+		GrammarFn(id, term1, term2, term3): {
+			rec(term1);
+			rec(term2);
+			rec(term3);
+		}
+		Lower(term): rec(term);
+		Negate(term): rec(term);
+		Optional(term): rec(term);
+		Plus(term): rec(term);
+		Precedence(term1, term2): {
+			rec(term1);
+			rec(term2);
+		}
+		PushMatch(term): rec(term);
+		Range(char1, char2): {}
+		Rule(id, term1, term2): {
+			// println(id);
+			eclass = makePTypeEClass(env, id);
+			env.words := setTree(^(env.words), id, eclass);
+			firstPass(env, term1);
+			firstPass(env, term2);
+		}
+		Sequence(term1, term2): {
+			firstPass(env, term1);
+			firstPass(env, term2);
+		}
+		StackOp(id): {
+			// We do type inference of the Poppy code to capture any defines
+			mangoType2(env, t);
+			{}
+		}
+		Star(term): rec(term);
+		String(string1): {}
+		Variable(id): {}
+	}
+}
+
+// Performs type inference for a given term, handling various term types and composing types for sequences
+mangoType2(env : PTypeEnv, t : Term) -> [PType] {
+	todo = \ -> {
+		println("TODO: Type of " + t.structname + ": " + term2string(t));
+		[PTypeName("TODO", [])];
+	}
+	indent = ^(env.indent);
+	if (env.verbose > 2) {
+		println(indent + "  Infer     "+ summarizeTerm(t) + ":");
+		env.indent := indent + "  ";
+	}
+	res = switch (t) {
+		Choice(term1, term2): {
+			if (false) {
+				t1 = mangoType2(env, term1);
+				t2 = mangoType2(env, term2);
+				concat(t1, t2);
+			} else {
+				unifyChoices(env, t);
+			}
+		}
+		Construct(uid, int1): {
+			typars = generate(0, s2i(int1), \i -> makePTypeEClass(env, ""));
+			type = PTypeWord(typars, [PTypeName(uid, typars)]);
+
+			env.structs := insertSet(^(env.structs), uid);
+			[type];
+		}
+		Error(term): mangoType2(env, term);
+		GrammarCall(id, term): todo();
+		GrammarFn(id, term1, term2, term3): todo();
+		Lower(term): mangoType2(env, term);
+		Negate(term): mangoType2(env, term);
+		Optional(term): mangoType2(env, term);
+		Plus(term): mangoType2(env, term);
+		Precedence(term1, term2): {
+			if (false) {
+				t1 = mangoType2(env, term1);
+				t2 = mangoType2(env, term2);
+				concat(t1, t2);
+			} else {
+				unifyChoices(env, t);
+			}
+		}
+		PushMatch(term): [pstringType()];
+		Range(char1, char2): [PTypeWord([], [])];
+		Rule(id, term1, term2): {
+			// PoppySequence(PoppyDefine(id, mango2poppy(term1)), mango2poppy(term2));
+			mtype = lookupTree(^(env.words), id);
+			mtype ?? {
+				if (isUnboundPTypeEClass(env, mtype)) {
+					println("ERROR: UNBOUND Eclass for " + id);
+					{}
+				};
+				mangoType2(env, term2);
+			} : {
+				[perror("Unknown type of rule '" + id + "'")];
+			}
+		}
+		Sequence(term1, term2): {
+			t1 = mangoType2(env, term1);
+			t2 = mangoType2(env, term2);
+			// println("Composing " + term2string(term1) + " :   " + prettyPTypes(env, t1) + "   with   " + term2string(term2) + " :   " + prettyPTypes(env, t2));
+			if (t1 == []) t2
+			else if (t2 == []) t1
+			else {
+				concatA(map(t1, \tt1 -> {
+					map(t2, \tt2 -> {
+						mtype = composeIfFeasible(env, tt1, tt2);
+						mtype ?? mtype : {
+							perror("Cannot compose " + term2string(term1) + " : " + prettyPType(env, tt1) + "   with   " + term2string(term2) + " : " + prettyPType(env, tt2));
+						}
+					})
+				}))
+			}
+		}
+		StackOp(id): {
+			if (id == "pos") {
+				[PTypeName("int", [])];
+			} else if (id == "switch") {
+				// println("Switching");
+				result = if (true) PTypeName("Top", []) else makePTypeEClass(env, "switch");
+				[PTypeWord([PTypeName("string", [])], [result])]
+			} else {
+				// Parse the op as Poppy and evaluate
+				poppy : Poppy = mangoParse("", poppyGrammar(), id, PoppyNil(), 0);
+				findPoppyDefines(env, poppy);
+				[poppyType(env, poppy)];
+			}
+		}
+		Star(term): mangoType2(env, term);
+		String(string1): [PTypeWord([], [])];
+		Variable(id): {
+			mtype = lookupTree(^(env.words), id);
+			switch (mtype) {
+				None(): [perror("Unknown type of rule " + id)];
+				Some(type): [instantiatePolymorphism(env.unique, ref makeTree(), type)];
+			}
+		}
+	};
+	if (env.verbose > 2) {
+		println(indent + "  End Infer     "+ summarizeTerm(t) + ":  " + prettyPTypes(env, res));
+		env.indent := indent;
+	}
+	res
+}
+
+// Unifies types of multiple choices in a term, returning a sorted list of unique types
+unifyChoices(env : PTypeEnv, t : Term) -> [PType] {
+	choices = getChoices(t);
+	sortUnique(concatA(map(choices, \c -> mangoType2(env, c))));
+}
+
+// Attempts to unify two types, creating a new unified type if necessary
+// TODO: We should ensure this is a new union each time to avoid contamination
+unifiedType(env : PTypeEnv, t1 : PType, t2 : PType) -> PType {
+	if (t1 == t2) {
+		t1;
+	} else {
+		can = unifyPType(env, true, t1, t2);
+		if (can) {
+			if (isPTypeEClass(t1)) {
+				unifyPType(env, false, t1, t2);
+				t1;
+			} else if (isPTypeEClass(t2)) {
+				unifyPType(env, false, t1, t2);
+				t2;
+			} else {
+				joined = makePTypeEClass(env, "");
+				unifyPType(env, false, t1, joined);
+				unifyPType(env, false, t2, joined);
+				unifyPType(env, false, t1, t2);
+				joined;
+			}
+		} else {
+			perror("Cannot unify " + prettyPType(env, t1) + "   with   " + prettyPType(env, t2));
+		}
+	}
+}

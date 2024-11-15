@@ -38,11 +38,13 @@ export {
 		ignoreLetterSpacing : bool,
 		wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
 	) -> TParaWord;
-	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double) -> Tropic;
+	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double, preventNodeCalculation : bool) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
 
 	isSpaceWord(word : TParaWord) -> bool;
 }
+
+useWigiTextDynamicMetrics = !isUrlParameterFalse("wigi_text_dynamic_metrics");
 
 TRenderDynamicParagraph(
 	wordsB : DynamicBehaviour<[TParaWord]>,
@@ -251,6 +253,8 @@ fixAvailableWidthForIndent(awB : Transform<double>, indent : double) -> (Tropic)
 	}
 }
 
+tparagraphMaxHeightFix = !isUrlParameterFalse("tparagraph_max_height_fix");
+
 TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
@@ -290,13 +294,28 @@ TRenderParagraph(
 
 	rtl = isParagraphRtl(s);
 	reflowHappenedB = make(false);
+
+	// joing words is expensive (like double rendering, triggered by reflowHappenedB)
+	// so we will not trigger it for small paragraphs and for paragraphs with mixed content
+	join_words = !isUrlParameterFalse("join_words") && length(words) > 10 && fold(words, Pair(true, []), \acc, w -> {
+		if (acc.first && (acc.second == [] || acc.second == w.style)) {
+			switch (w.word) {
+				GeneralText(__): Pair(true, w.style);
+				GeneralSpace(__, __, __): Pair(true, w.style);
+
+				default: Pair(false, []);
+			}
+		} else acc;
+	}).first;
+
 	groupedWords = groupAndPositionWords(
 		words,
 		if (rtl) 0.0 else genIndent,
 		reflowHappenedB,
 		joinedWordsConstructors,
 		rtl,
-		ignoreLetterSpacing
+		ignoreLetterSpacing,
+		join_words
 	);
 
 	paragraphWHB = makeWH();
@@ -304,7 +323,7 @@ TRenderParagraph(
 
 	contentGroup =
 		TOverride(
-			[OSize(paragraphWHB), OBaseline(paragraphBaselineB)],
+			ifArrayPush([OSize(paragraphWHB), OBaseline(paragraphBaselineB)], tparagraphMaxHeightFix, OMaxHeight(fheight(paragraphWHB))),
 			TGroup(groupedWords)
 		)
 		|> fixAvailableWidthForIndent(awB, indent);
@@ -395,16 +414,18 @@ TRenderParagraph(
 	}
 
 	executeReflow = \ -> updateFn(traceApi.makeRenderingId(), getValue(awB), maybeMap(alignWidthBM, getValue), false);
+	executeReflowDeferred = \ -> if (useWigiTextDynamicMetrics) deferredUpdate(getValue(awB), maybeMap(alignWidthBM, getValue), false);
 
-	dynMetricsSubscription = \w -> {
+	dynMetricsSubscription = \w, defer -> {
 		apply0(make2Subscribe2(
 			w.inspector.size,
 			w.inspector.baseline,
 			\size, ba -> {
 				// we can't use deferred here - it leads to flickering
-				if (size.width != 0.0 && size.height != 0.0 && ba != 0.0) {
+				if ((size.width != 0.0 && size.height != 0.0 && ba != 0.0) || (size.width == 0.0 && size.height == 0.0)) {
 					traceApi.traceAndNest(\-> "dynMetricsSubscription START size = " + toString(size) + ", baseline = " + toString(ba));
-					executeReflow();
+					if (defer) executeReflowDeferred()
+					else executeReflow();
 					traceApi.unnestAndTrace(\-> "dynMetricsSubscription END  size = " + toString(size) + ", baseline = " + toString(ba));
 				}
 			}
@@ -413,8 +434,9 @@ TRenderParagraph(
 
 	subscribe2dynWord = \w -> {
 		switch (w.word : GeneralWrapElement) {
-			NonTextElement(__, __) : dynMetricsSubscription(w);
-			GeneralDynamicText(__): dynMetricsSubscription(w);
+			NonTextElement(__, __) : dynMetricsSubscription(w, false);
+			GeneralDynamicText(__): dynMetricsSubscription(w, false);
+			GeneralText(__): dynMetricsSubscription(w, true);
 			default: nop;
 		}
 	}
@@ -479,7 +501,8 @@ groupAndPositionWords(
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	rtl : bool,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	join_words : bool
 ) -> [Tropic] {
 	groupResult = fold(
 		words,
@@ -499,7 +522,8 @@ groupAndPositionWords(
 				reflowHappened,
 				joinedWordsConstructors,
 				rtl,
-				ignoreLetterSpacing
+				ignoreLetterSpacing,
+				join_words
 			)
 		}
 	);
@@ -513,7 +537,8 @@ groupAndPositionWords(
 			joinedWordsConstructors,
 			rtl,
 			ignoreLetterSpacing,
-			groupResult.containsDynamicElement
+			groupResult.containsDynamicElement,
+			join_words
 		),
 		groupResult.groupedWords
 	);
@@ -528,7 +553,8 @@ appendWordToLine(
 	reflowHappened : DynamicBehaviour<bool>,
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	rtl : bool,
-	ignoreLetterSpacing : bool
+	ignoreLetterSpacing : bool,
+	join_words : bool
 ) -> LineHeadingsAcc {
 	tag = either(getHeadingTagFromFontSize(extractStruct(word.style, FontSize(0.0)).size, ""), "");
 	if (acc.currentTag == tag && !isUrlParameterFalse("tparawordglue")) {
@@ -545,7 +571,8 @@ appendWordToLine(
 				joinedWordsConstructors,
 				rtl,
 				ignoreLetterSpacing,
-				acc.containsDynamicElement
+				acc.containsDynamicElement,
+				join_words
 			),
 			acc.groupedWords
 		);
@@ -566,16 +593,30 @@ makeHeadingGroup(
 	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
 	rtl : bool,
 	ignoreLetterSpacing : bool,
-	containsDynamicElement : bool
+	containsDynamicElement : bool,
+	join_words : bool
 ) -> Tropic {
-
-	joinedWords = if (isUrlParameterFalse("join_words")) positionInteractiveWords(
-		words,
-		genIndent,
-		joinedWordsConstructors
-	) else joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing, containsDynamicElement);
-
-	TGroup(joinedWords)
+	if (join_words) {
+		joinedTropic = joinGroupedWords(words, if (rtl) 0.0 else genIndent, reflowHappened, joinedWordsConstructors, ignoreLetterSpacing, containsDynamicElement);
+		joinedTropicAndWidth = map(joinedTropic, \tr -> {
+			partWidth = make(0.);
+			Pair(TAttachWidth(tr, partWidth), partWidth);
+		});
+		TConstruct(
+			if (useWigiTextDynamicMetrics) [makeSubscribe2(
+				fmerge(map(joinedTropicAndWidth, \jtw -> jtw.second)),
+				\widths -> applyList(words, \word -> word.updateSize())
+			)] else [],
+			TGroup(map(joinedTropicAndWidth, \jtw -> jtw.first))
+		);
+	} else {
+		positionInteractiveWords(
+			words,
+			genIndent,
+			joinedWordsConstructors
+		)
+		|> TGroup
+	}
 }
 
 // This function converts words to positioned tropic when we don't do joining.
@@ -586,7 +627,22 @@ positionInteractiveWords(
 ) -> [Tropic] {
 	map(
 		list2array(words),
-		\word -> translateWord(word, genIndent)
+		\word -> {
+			viewFn = lookupTreeDef(joinedWordsConstructors, getValue(word.id), word.wordsViewConstructor);
+			wordView = switch (word.word) {
+				GeneralText(str) : {
+					TInspect(
+						if (useWigiTextDynamicMetrics) [ISize(word.inspector.size), IBaseline(word.inspector.baseline)]
+						else [],
+						viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style))
+					)
+				};
+				GeneralSpace(str, alBef, alAft) : viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style));
+				GeneralDynamicSpace(str, alBef, alAft) : viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style));
+				default : word.ghostView;
+			};
+			translateWord(TParaWord(word with ghostView = wordView), genIndent)
+		}
 	)
 }
 
@@ -679,7 +735,7 @@ JoinTextAcc(
 	style : [CharacterStyle],
 	rtlM : Maybe<bool>,
 	lineNumber : int,
-	currentOffset : Point,
+	currentOffset : Transform<Point>,
 	acc : List<Tropic>
 );
 
@@ -698,10 +754,10 @@ joinTextWords(
 		reflowHappened,
 		\__ -> {
 			point = switch(words) {
-				EmptyList(): zeroPoint;
-				Cons(head, __): Point(getValue(head.inspector.x), getValue(head.inspector.y));
+				EmptyList(): const(zeroPoint);
+				Cons(head, __): fpoint(head.inspector.x, head.inspector.y);
 			};
-		joinResult = foldList(
+			joinResult = foldList(
 				words,
 				JoinTextAcc("", "", [], None(), -1, point, EmptyList()),
 				\acc, word -> appendOrJoinWord(
@@ -715,12 +771,8 @@ joinTextWords(
 			TGroup(
 				// here we get group because words of the same style(wigiText) can be placed on few lines
 				list2array(addLastLine(
-					JoinTextAcc(
-						joinResult with
-						currentOffset = Point(
-							joinResult.currentOffset with
-							x = joinResult.currentOffset.x - genIndent
-						)
+					JoinTextAcc(joinResult with
+						currentOffset = fselectLift(joinResult.currentOffset, \co -> Point(co.x - genIndent, co.y))
 					),
 					wordsViewConstructor,
 					ignoreLetterSpacing
@@ -750,10 +802,7 @@ appendOrJoinWord(
 			default : "";
 		};
 
-		wordOffset = Point(
-			getValue(word.inspector.x),
-			getValue(word.inspector.y)
-		);
+		wordOffset = fpoint(word.inspector.x, word.inspector.y);
 
 		if (acc.lineNumber == -1) {
 			// There are no words yet.
@@ -777,7 +826,7 @@ appendOrJoinWord(
 				);
 			}
 		} else if (acc.lineNumber == lineNumber && either(acc.rtlM, getValue(word.rtl)) == getValue(word.rtl)) {
-			ofs = Point(wordOffset with x=min(wordOffset.x, acc.currentOffset.x));
+			ofs = fselect2Lift(wordOffset, acc.currentOffset, \wo, co -> Point(min(wo.x, co.x), wo.y));
 			// just concat to current string
 			if (isSpace(wordString)) {
 				JoinTextAcc(acc with
@@ -802,11 +851,8 @@ appendOrJoinWord(
 					None(),
 					lineNumber,
 					wordOffset,
-					addLastLine(JoinTextAcc(
-						acc with
-						currentOffset = Point(
-							acc.currentOffset with x = acc.currentOffset.x - genIndent
-						)
+					addLastLine(JoinTextAcc(acc with
+						currentOffset = fselectLift(acc.currentOffset, \co -> Point(co.x - genIndent, co.y))
 					), wordsViewConstructor, ignoreLetterSpacing)
 				)
 			}
@@ -823,7 +869,7 @@ addLastLine(
 ) -> List<Tropic> {
 	Cons(
 		TTranslate(
-			const(joinResult.currentOffset),
+			joinResult.currentOffset,
 			wordsViewConstructor(
 				joinResult.currentSpaces + joinResult.currentString,
 				if (ignoreLetterSpacing) removeAllStructs(joinResult.style, LetterSpacing(0.0)) else joinResult.style
@@ -845,21 +891,28 @@ commonWordConstructor(
 	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
 ) -> TParaWord {
 	inspector = eitherFn(inspectorM, idfn, dummyInspectorFn);
+	ls = if (isLastChild) 0.0 else extractStruct(style, zeroLetterSpacing).spacing;
+	isStatic = isConstantSizeTropic(tr);
 
-	inspectFn = \t -> inspectWordView(t, inspector, if (isLastChild) 0.0 else extractStruct(style, zeroLetterSpacing).spacing);
+	inspectFn = \t -> inspectWordView(t, inspector, ls, !isLastChild);
 
 	ghostView = switch(w) {
 		GeneralSpace(__, __, __): TVisible(fnot(inspector.detached), inspectFn(tr));
 		default: inspectFn(tr);
 	}
-	if (!isUrlParameterFalse("wigi921") && isSome(inspectorM) && getValue(inspector.size) == zeroWH) {
-		generateText = \txt -> TText(txt, applyAlphabetStyles(detectAlphabet(txt), style));
+
+	// if tr is not constant size (in the editorm TText is wrapped by TMutable for example)
+	// then the inspector.size would be not measured after inspectFn call
+	// and we have to estimate it using artificially created TText
+	if (!isStatic && isSome(inspectorM) && getValue(inspector.size) == zeroWH) {
+		inspectText = \txt -> inspectFn(TText(txt, applyAlphabetStyles(detectAlphabet(txt), style))) |> ignore;
+		inspectSpace = \txt, alBef, alAft -> inspectFn(TText(txt, apply2AlphabetsScaling(alBef, alAft, style))) |> ignore;
 		switch (w) {
-			GeneralText(txt): inspectFn(generateText(txt)) |> ignore;
-			GeneralDynamicText(txt): inspectFn(generateText(txt)) |> ignore;
-			GeneralSpace(txt, alBef, alAft): inspectFn(TText(txt, apply2AlphabetsScaling(alBef, alAft, style))) |> ignore;
-			GeneralDynamicSpace(txt, alBef, alAft): inspectFn(TText(txt, apply2AlphabetsScaling(alBef, alAft, style))) |> ignore;
-			default: {}
+			GeneralText(txt): inspectText(txt);
+			GeneralDynamicText(txt): inspectText(txt);
+			GeneralSpace(txt, alBef, alAft): inspectSpace(txt, alBef, alAft);
+			GeneralDynamicSpace(txt, alBef, alAft): inspectSpace(txt, alBef, alAft);
+			default: {};
 		}
 	}
 
@@ -872,22 +925,20 @@ commonWordConstructor(
 		rtl,
 		make(false),
 		scriptM,
-		wordsViewConstructor
+		wordsViewConstructor,
+		\ -> if (isStatic) inspectWordViewStatic(tr, inspector, ls, !isLastChild)
 	);
 }
 
-inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double) -> Tropic {
-	addLetterSpacing = \width -> width + if(width > 0.0) letterSpacing else 0.0;
+inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> Tropic {
 	if (isConstantSizeTropic(tr)) {
-		fMetrics = getTropicMetrics(tr);
-		nextDistinct(inspector.size, WidthHeight(addLetterSpacing(fMetrics.width), fMetrics.height));
-		nextDistinct(inspector.baseline, fMetrics.baseline);
+		inspectWordViewStatic(tr, inspector, letterSpacing, preventNodeCalculation);
 		tr;
 	} else {
 		if (letterSpacing > 0.0) {
 			sizeB = make(zeroWH);
 			uns = subscribe2(sizeB, \v -> {
-				nextDistinct(inspector.size, WidthHeight(addLetterSpacing(v.width), v.height));
+				nextDistinct(inspector.size, WidthHeight(addLetterSpacing(v.width, letterSpacing), v.height));
 			});
 			TConstruct(
 				[\-> \-> uns()],
@@ -902,7 +953,35 @@ inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : d
 	}
 }
 
-TParaLine(words : [TParaWord], indent : double);
+inspectWordViewStatic(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> void {
+	preventNodeCalculationFontFamily = switch(tr) {
+		TText(__, style0) : {
+			eitherMap(
+				tryExtractStruct(style0, emptyFontFamily),
+				\fontFamily : FontFamily -> {
+					fontFamily.name == "RobotoItalic"
+				},
+				false
+			)
+		};
+		default : false;
+	};
+	tr2 = if (preventNodeCalculation && preventNodeCalculationFontFamily && !isUrlParameterFalse("wigi_width_inspection_fix"))
+		switch(tr) {
+			TText(txt, style0): TText(txt, arrayPush(style0, PreventTextNodeWidthCalculation()));
+			default : tr;
+		}
+		else tr;
+	fMetrics = getTropicMetrics(tr2);
+	nextDistinct(inspector.size, WidthHeight(addLetterSpacing(fMetrics.width, letterSpacing), fMetrics.height));
+	nextDistinct(inspector.baseline, fMetrics.baseline);
+}
+
+addLetterSpacing(width : double, letterSpacing : double) -> double {
+	width + if (width > 0.0) letterSpacing else 0.0;
+}
+
+TParaLine(words : [TParaWord], indent : double, newLineEnds : bool);
 // To remember changed in reflowTParaWords words and their indexes
 WordsAndIndexes(words : [TParaWord], indexes : [int]);
 // Return type for reflowTParaWordsRec
@@ -953,14 +1032,14 @@ reflowTParaWords(
 
 	lines = reflowAndWidth.first.lines;
 
-	text = if (alignment == Justify()) {
+	text = if (alignment == Justify() || alignment == RightAlign()) {
 		mapi(
 			lines,
 			\i : int, line : TParaLine -> if (i == length(lines) - 1) line
 			else TParaLine(line with words = rtrimWords(line.words))
 		)
 	} else {
-		reflowAndWidth.first.lines;
+		lines;
 	}
 
 	paraLines = if (isBiDiEnabled())
@@ -974,7 +1053,7 @@ reflowTParaWords(
 				setTParaWordRTL,
 				rtl
 			),
-			\l, ws -> TParaLine(ws, l.indent),
+			\l, ws -> TParaLine(ws, l.indent, l.newLineEnds),
 		)
 	else text;
 
@@ -998,7 +1077,9 @@ reflowTParaWords(
 		\renderedLinesInfo -> {
 			nextDistinct(renderedLinesInfo, map(paraLines, \line : TParaLine -> {
 				lineHeightAndAsc = getParalineHeightAndAsc(line.words);
-				RenderedLinesInfo(lineHeightAndAsc.first, lineHeightAndAsc.second, [], 0.0)
+				lastWord = lastElement(rtrimWords(line.words), dummyTParaWord);
+				lineWidth = if (lastWord == dummyTParaWord) 0.0 else (getValue(lastWord.inspector.x) + getValue(lastWord.inspector.size).width);
+				RenderedLinesInfo(lineHeightAndAsc.first, lineHeightAndAsc.second, [], 0.0, lineWidth)
 			}));
 		}
 	);
@@ -1072,6 +1153,8 @@ rtrimWords(words : [TParaWord]) -> [TParaWord] {
 	else rtrimWords(rtrimmedWords)
 }
 
+tryToBreakLongEquations = !isUrlParameterFalse("break_long_equations");
+
 // here availableWidth is an amount of width for current line
 reflowTParaWordsRec(
 	words : [TParaWord],
@@ -1085,9 +1168,11 @@ reflowTParaWordsRec(
 	catchOverflow : bool,
 	ignoreLetterSpacing : bool
 ) -> TReflowResultAcc {
-	addLine = \cw, indent -> switch (result) {
+	traceApi = makeWigiTrace_Tropic("reflowTParaWordsRec", words);
+	traceApi.trace(\-> "remaining: " + toString(remaining));
+	addLine = \cw, indent, endsWithNewLine -> switch (result) {
 		TReflowedLinesAndChanges(lines, changes) : TReflowedLinesAndChanges(
-			ifArrayPush(lines, cw != [], TParaLine(cw, indent)),
+			ifArrayPush(lines, cw != [], TParaLine(cw, indent, endsWithNewLine)),
 			changes
 		);
 		TOverflowCase(__) : result;
@@ -1107,7 +1192,7 @@ reflowTParaWordsRec(
 	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, false);
 
 	if (words == []) {
-		addLine(currentWords, lineIndent);
+		addLine(currentWords, lineIndent, false);
 	} else {
 		word = words[0];
 		detachWord(word, false);
@@ -1115,6 +1200,26 @@ reflowTParaWordsRec(
 		nextWordIndex = currentWordIndex + 1;
 
 		getWordWidth = \word1 -> getValue(word1.inspector.size).width;
+
+		evaluatePositionForGeneralLinePart = \i, _word : TParaWord,  -> {
+			switch (_word.word) {
+				GeneralLinePart(__, __, __, allowBreakAfter): {
+					isLast = i == (length(words) - 1);
+					nextWordWidth = if (isLast) 0.0 else getWordWidth(words[i + 1]);
+					if (currentWords == []) {
+						nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineFirst());
+					} else if (isLast) {
+						nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineEnd());
+					} else {
+						nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineMiddle());
+						if (getWordWidth(_word) + nextWordWidth >= remaining && (allowBreakAfter || isLast)) {
+							nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineEnd());
+						}
+					}
+				}
+				default: {}
+			}
+		}
 
 		switch (word.word : GeneralWrapElement) {
 			NewLine(): {
@@ -1124,7 +1229,7 @@ reflowTParaWordsRec(
 					nextLineWidth,
 					nextLineWidth,
 					[],
-					addLine(currentWords, lineIndent),
+					addLine(currentWords, lineIndent, true),
 					paraIndent,
 					false,
 					catchOverflow,
@@ -1132,33 +1237,10 @@ reflowTParaWordsRec(
 				);
 			}
 			GeneralLinePart(first, mid, end, allowBreakAfter): {
-
-				// maybe we should investigate next word width depending on it's position in the line too
-				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
-
-				if (currentWords == []) {
-					// If it is the first item on the line
-					nextDistinct(word.inspector.wordPositionInLine, WordPositionInLineFirst());
-					width = getWordWidth(word);
-					reflowTParaWordsRec(
-						rest,
-						nextWordIndex,
-						availableWidth,
-						remaining - width,
-						arrayPush(currentWords, word),
-						result,
-						paraIndent,
-						false,
-						catchOverflow,
-						ignoreLetterSpacing
-					);
-				} else {
-					// we have to check the width of the element in case it is inline
-					nextDistinct(word.inspector.wordPositionInLine, WordPositionInLineMiddle());
-					width = getWordWidth(word);
-
-					if (width + nextWordWidth < remaining) {
-						// If it is the middle item on the line
+				evaluatePositionForGeneralLinePart(0, word);
+				width = getWordWidth(word);
+				switch (getValue(word.inspector.wordPositionInLine)) {
+					WordPositionInLineFirst(): {
 						reflowTParaWordsRec(
 							rest,
 							nextWordIndex,
@@ -1171,16 +1253,29 @@ reflowTParaWordsRec(
 							catchOverflow,
 							ignoreLetterSpacing
 						);
-					} else {
-						// If it is the last item on the line
-						nextDistinct(word.inspector.wordPositionInLine, WordPositionInLineEnd());
+					}
+					WordPositionInLineMiddle(): {
+						reflowTParaWordsRec(
+							rest,
+							nextWordIndex,
+							availableWidth,
+							remaining - width,
+							arrayPush(currentWords, word),
+							result,
+							paraIndent,
+							false,
+							catchOverflow,
+							ignoreLetterSpacing
+						);
+					}
+					WordPositionInLineEnd(): {
 						reflowTParaWordsRec(
 							rest,
 							nextWordIndex,
 							nextLineWidth,
 							nextLineWidth,
 							[],
-							addLine(arrayPush(currentWords, word), lineIndent),
+							addLine(arrayPush(currentWords, word), lineIndent, false),
 							paraIndent,
 							false,
 							catchOverflow,
@@ -1191,7 +1286,7 @@ reflowTParaWordsRec(
 			}
 			GeneralSpace(__, __, __) : {
 				width = getWordWidth(word);
-				if (width < remaining || !isSpaceWord(word)) {
+				if (width < remaining) {
 					reflowTParaWordsRec(
 						rest,
 						nextWordIndex,
@@ -1204,7 +1299,7 @@ reflowTParaWordsRec(
 						catchOverflow,
 						ignoreLetterSpacing
 					);
-				} else {
+				} else if (isSpaceWord(word)) {
 					detachWord(word, true);
 					reflowTParaWordsRec(
 						rest,
@@ -1212,13 +1307,26 @@ reflowTParaWordsRec(
 						nextLineWidth,
 						nextLineWidth,
 						[],
-						addLine(currentWords, lineIndent),
+						addLine(currentWords, lineIndent, false),
 						paraIndent,
 						false,
 						catchOverflow,
 						ignoreLetterSpacing
 					);
-				};
+				} else {
+					reflowTParaWordsRec(
+						words,
+						currentWordIndex,
+						nextLineWidth,
+						nextLineWidth,
+						[],
+						addLine(currentWords, lineIndent, false),
+						paraIndent,
+						false,
+						catchOverflow,
+						ignoreLetterSpacing
+					);
+				}
 			}
 			GeneralDynamicSpace(__, __, __) : {
 				width = getWordWidth(word);
@@ -1243,7 +1351,7 @@ reflowTParaWordsRec(
 						nextLineWidth,
 						nextLineWidth,
 						[],
-						addLine(currentWords, lineIndent),
+						addLine(currentWords, lineIndent, false),
 						paraIndent,
 						false,
 						catchOverflow,
@@ -1253,49 +1361,74 @@ reflowTParaWordsRec(
 			};
 			default: {
 				width = ref 0.0;
+				widthWithBreakEquation = ref 0.0;
+				wordsCountWithBreakEquation = ref 0;
 				getWordView = \w -> w.ghostView;
 
-				form = getWordView(word);
-
 				// Number of words that should be on the same line
-				wordsCount = if (keepWordsTogether(form, word, dummyTParaWord)) {
-					iteriUntil(words, \i, _word : TParaWord -> {
-						switch (_word.word) {
-							NewLine(): true;
-							GeneralSpace(__, __, __): true;
-							GeneralDynamicSpace(__, __, __): true;
-							GeneralLinePart(__, __, __, allowBreakAfter): true;
-							default: {
-								f = getWordView(_word);
-								// it is no use to make line with zero-width content, so we continue counting if the width is 0
-								// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
-								// such construction becomes [Empty, form, Empty] and we should keep them on the same line
+				wordsCount0 = iteriUntil(words, \i, _word : TParaWord -> {
+					addWidth = \-> width := ^width + getWordWidth(_word);
+
+					spaceCase = \str -> if(isSpace(str)) {
+						true
+					} else {
+						addWidth();
+						false;
+					};
+
+					switch (_word.word) {
+						NewLine(): true;
+						GeneralSpace(str, __, __): spaceCase(str);
+						GeneralDynamicSpace(str, __, __): spaceCase(str);
+						GeneralLinePart(first, mid, end, allowBreakAfter): {
+							evaluatePositionForGeneralLinePart(i, _word);
+							addWidth();
+							allowBreakAfter;
+						}
+						default: {
+							f = getWordView(_word);
+							// it is no use to make line with zero-width content, so we continue counting if the width is 0
+							// For example, single WigiRecursive in line get surrounded by WigiText("",[]), WigiRecursive, WigiText("",[])
+							// such construction becomes [Empty, form, Empty] and we should keep them on the same line
+							previousWord = elementAt(words, i - 1, dummyTParaWord);
+							keepTogether = keepWordsTogether(f, _word, previousWord);
+							if (
+								(isMarked && i <= 1) ||
+								keepTogether ||
+								^width == 0.0
+							) {
+								// Trying to split the expression by the equal sign only if it cannot be placed on a new line
+								// and the part before the sign occupies at least a quarter of the available width.
 								if (
-									(isMarked && i <= 1) ||
-									keepWordsTogether(f, _word, if (i < 1) dummyTParaWord else words[i - 1]) ||
-									^width == 0.0
+									tryToBreakLongEquations &&
+									currentWords == [] && keepTogether &&
+									^width > remaining / 4.0 && (^widthWithBreakEquation == 0.0 || ^width <= remaining) &&
+									isItBreakableEquation(_word, previousWord)
 								) {
-									width := ^width + getWordWidth(_word);
-									false;
-								} else {
-									true
+									widthWithBreakEquation := ^width;
+									wordsCountWithBreakEquation := i;
 								}
-							};
+								addWidth();
+								false;
+							} else {
+								true
+							}
 						};
-					});
-				} else {
-					width := getWordWidth(word);
-					1;
-				};
+					};
+				});
+
 				if (^width == 0.0 || ^width <= remaining || currentWords == []) {
+					wordsCount =
+						if (^width > remaining && ^widthWithBreakEquation != 0.0) {
+							width := ^widthWithBreakEquation;
+							^wordsCountWithBreakEquation
+						} else {
+							wordsCount0;
+						};
 					_words = take(words, wordsCount);
 					_rest = tailFrom(words, wordsCount);
 
 					newCurrentWords = concat(currentWords, _words);
-					isText = switch(word.word) {
-						NonTextElement(__, __) : false;
-						default : true;
-					}
 
 					reflowTParaWordsRec(
 						_rest,
@@ -1303,7 +1436,7 @@ reflowTParaWordsRec(
 						availableWidth,
 						remaining - ^width,
 						newCurrentWords,
-						if (isText && catchOverflow && ^width > remaining + lineIndent) addOverflow(^width) else result,
+						if (isTextElement(word.word) && catchOverflow && ^width > remaining + lineIndent) addOverflow(^width) else result,
 						paraIndent,
 						false,
 						catchOverflow,
@@ -1316,7 +1449,7 @@ reflowTParaWordsRec(
 						nextLineWidth,
 						nextLineWidth,
 						[],
-						addLine(currentWords, lineIndent),
+						addLine(currentWords, lineIndent, false),
 						paraIndent,
 						false,
 						catchOverflow,
@@ -1328,17 +1461,61 @@ reflowTParaWordsRec(
 	}
 }
 
+isTextElement(word : GeneralWrapElement) -> bool {
+	switch(word) {
+		GeneralText(__): true;
+		GeneralSpace(__, __, __): true;
+		GeneralLinePart(__, __, __, __): true;
+		GeneralDynamicText(__): true;
+		GeneralDynamicSpace(__, __, __): true;
+
+		NonTextElement(__, __) : false;
+		EmptyLineElement(): false;
+		NewLine(): false;
+		GeneralInspectElement(__, element): isTextElement(element);
+	}
+}
+
+isItBreakableEquation(currentWord : TParaWord, previousWord : TParaWord) -> bool {
+	firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
+	firstChr == "=" && switch (previousWord.word) {
+		NonTextElement(__, isFillerFn) : isFillerFn();
+		GeneralSpace(txt, __, __) : ! isWordJoiner(txt);
+		GeneralDynamicSpace(txt, __, __) : ! isWordJoiner(txt);
+		default : {
+			lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
+			! isWordJoiner(lastChr)
+		}
+	}
+}
+
+keepTextTogeteher = !isUrlParameterFalse("keep_text_togeteher");
+
 // This function gets the form and decides, should the next form kept together in the same line or should it be placed on the next line
 keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord) -> bool {
 	lastChr = strsubsmart(getTParaWordText(previousWord), -1, 0);
 
+	chekPreviousWord = \ -> {
+		switch (previousWord.word) {
+			GeneralText(__) : keepTextTogeteher;
+			GeneralDynamicText(__) : keepTextTogeteher;
+			default: false
+		}
+	}
+
 	isWordJoiner(lastChr) ||
 	switch (previousWord.word) {
 		NonTextElement(__, isFillerFn): !isFillerFn();
+		GeneralSpace(txt, __, __): isWordJoiner(txt);
+		GeneralDynamicSpace(txt, __, __): isWordJoiner(txt);
 		default: true
 	} &&
 	switch (currentWord.word) {
 		NonTextElement(keep, __): keep;
+		GeneralSpace(txt, __, __): isWordJoiner(txt);
+		GeneralDynamicSpace(txt, __, __): isWordJoiner(txt);
+		GeneralText(__) : chekPreviousWord();
+		GeneralDynamicText(__) : chekPreviousWord();
 		default: {
 			firstChr = strsubsmart(getTParaWordText(currentWord), 0, 1);
 			isWordJoiner(firstChr) || keepWordsTogetherRec(tr);
@@ -1349,7 +1526,7 @@ keepWordsTogether(tr : Tropic, currentWord : TParaWord, previousWord : TParaWord
 keepWordsTogetherRec(tr : Tropic) -> bool {
 	switch (tr) {
 		TEmpty(): true;
-		TText(t, s): true;
+		TText(t, s): true; // we should not return false here because math depends on the glue default behaviour for sequential texts
 		TCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineCols2(left, right): keepWordsTogetherRec(left) && keepWordsTogetherRec(right);
 		TBaselineLines2(top, bottom): keepWordsTogetherRec(top) && keepWordsTogetherRec(bottom);
@@ -1403,13 +1580,12 @@ TAlignParaLines(
 	lasti = length(lines) - 1;
 
 	a : TParaLineAcc = foldi(lines, TParaLineAcc(0.0, 0.0, 0.0), \i : int, acc : TParaLineAcc, line : TParaLine -> {
-		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
 		lastLine = i == lasti;
 		// On the last line, we do not justify.
 		// Also if the line is single with TightWidth, any alignment is equal to StartAlign
 		// If we have < 3 words (because we should have word + space + word) in the line, we do not justify.
 		// if the first word is filler then we should not justify previous line https://trello.com/c/JLZxfuIW/22099
-		useJustify = !lastLine && eitherMap(
+		useJustify = !lastLine && !line.newLineEnds && eitherMap(
 			elementAtM(lines[i + 1].words, 0),
 			\w -> {
 				switch (w.word) {
@@ -1601,7 +1777,8 @@ inspectedTWord(t: string, w: TParaWord, ignoreLetterSpacing: bool) -> TParaWord 
 	TParaWord(w with ghostView = inspectWordView(
 		TSelect(w.rtl, \rtl -> TText(t, applyAlphabetStyles(detectAlphabet(t), replaceStruct(w.style, SetRTL(rtl)) |> makeSkipOrderCheck))),
 		w.inspector,
-		if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing
+		if (ignoreLetterSpacing) 0.0 else extractStruct(w.style, LetterSpacing(0.0)).spacing,
+		false
 	))
 }
 

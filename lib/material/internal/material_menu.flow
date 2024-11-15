@@ -477,7 +477,7 @@ MMenuPanel2T(manager : MaterialManager, parent : MFocusGroup, m : MMenuPanel, m2
 	cropByContent = contains(style, MScrollCropByContent());
 	enabledHover = if (extractStruct(style, MExpandOnHover(true)).expand) Some(make(false)) else None();
 	bgColor = extractStruct(style, MMenuPanelBackground(MSurfaceColor())).color;
-	bgStyle = extractStruct(style, MBackgroundStyle([MThemeFill(parent, bgColor)])).style;
+	bgStyle = mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style, MBackgroundStyle([MThemeFill(parent, bgColor)])).style);
 	elevation = extractStruct(style, MElevation(const(4.0))).elevation;
 	openMenus = ref [];
 
@@ -559,8 +559,9 @@ MDropDownMenu2T(
 	});
 	buttonTitle : MButtonTitle = extractStruct(style, MButtonTitle(const(label)));
 	croppedTitle = contains(style, MDropDownMenuCropByContent());
+	dropDownWarning = tryExtractStruct(style, MDropDownMenuWarning(const(None()), []));
 
-	iconSize = if (tableRow || tableFooter) 16.0 else 20.0;
+	iconSize = extractStruct(style, MDropDownMenuIconSize(if (tableRow || tableFooter) 16.0 else 20.0)).size;
 	iconBorders = extractStruct(style, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
 	iconColorM = maybeMap(tryExtractStruct(style, MDropDownMenuIconColor(MWhite())), \ic -> ic.color);
 
@@ -689,6 +690,7 @@ MDropDownMenu2T(
 			}
 		)
 	)
+	|> addMDropDownMenuWarning(dropDownWarning)
 	|> (\f -> MDynamicMenu(f, const(items), menuStyle))
 	|> (\f -> MDynamicMenu2TInner(manager, parent, f, m2t, Some(popupId)))
 	|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)
@@ -779,6 +781,7 @@ MMultiSelectDropDown2T(
 	iconNearTitle = contains(style, MDropDownIconNearTitle());
 	defButtonLineStyle = [MDisableHover(), MEnabled(enabled), MSecondaryAction(icon)];
 	listSelectionEnabled = tryExtractStruct(style, MListSelectionEnabled(const([])));
+	dropDownWarning = tryExtractStruct(style, MDropDownMenuWarning(const(None()), []));
 
 	popupId = getPopupId(manager);
 
@@ -818,7 +821,8 @@ MMultiSelectDropDown2T(
 					eitherMap(tryExtractStruct(style, MCustomLineHeight(-1.)), \v -> [v], []),
 					extractStructMany(style, MSeparators(true)),
 					extractStructMany(style, MDataTableRow()),
-					extractStructMany(style, MDataTableFooter())
+					extractStructMany(style, MDataTableFooter()),
+					extractStructMany(style, MDropDownMenuWarning(const(None()), []))
 				])
 			),
 			onClick,
@@ -846,7 +850,8 @@ MMultiSelectDropDown2T(
 				),
 			defMenuButton
 		)
-		|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn);
+		|> (if (croppedButton) TBorderLeftRight(-lineBorders) else idfn)
+		|> addMDropDownMenuWarning(dropDownWarning);
 
 	dropDownLines =
 		if (length(items) == 0) []
@@ -931,6 +936,22 @@ MMultiSelectDropDown2T(
 		])
 	)
 	|> (\f -> MDynamicMenu2TInner(manager, parent, f, m2t, Some(popupId)))
+}
+
+addMDropDownMenuWarning(dropDownWarning : Maybe<MDropDownMenuWarning>) -> (Material) -> Material {
+	\m -> eitherMap(dropDownWarning,
+		\ddw -> {
+			separatorColor = extractStruct(ddw.style, MDropDownMenuWarningColor(const(MErrorColor()))).color;
+			warningFont = extractStruct(ddw.style, MDropDownMenuWarningFont(MCaption())).style;
+			MLines2A(
+				m,
+				MSelect2(ddw.text, separatorColor, \txtM, col ->
+					eitherMap(txtM, \txt -> MEllipsisText(txt, [warningFont, col]) |> MBorderTop(4.), TEmpty())
+				)
+			)
+		},
+		m
+	)
 }
 
 MMenuTitle2T(
@@ -1068,11 +1089,19 @@ MDropDownMenuButton2T(
 	lineBorders = if (croppedButton) 0. else buttonBorders;
 	color : MColor = extractStruct(style0, if (lightBackground) MBlack() else MWhite());
 	separatorsColorM = tryExtractStruct(style0, MSeparatorsColor(MBlack()));
+	dropDownMenuWarning = tryExtractStruct(style0, MDropDownMenuWarning(const(None()), []));
 	selectedColor = MThemeColor2MColor(parent, extractStruct(style0, MSelectedColor(MAccentColor())).color);
-	textStyle = [
-		if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading(),
-		color
-	];
+	textStyle = concat(
+		extractStruct(
+			style0,
+			MCustomTextStyle([
+				if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading(),
+			])
+		).style,
+		[
+			color
+		]
+	);
 	outlined = contains(style0, MOutlined());
 	filled = contains(style0, MFilled());
 	plain = !outlined && !filled;
@@ -1122,10 +1151,26 @@ MDropDownMenuButton2T(
 	widthPassive = if (outlined) extractStruct(style0, MOutlineWidth(1.)).width else 1.;
 	graphicsState = fif(active,
 		const(MGraphicsState(widthActive, MThemeColor2int(manager, outlineColorActive), opacity, true)),
-		const(MGraphicsState(widthPassive, MThemeColor2int(manager, outlineColorPassive), 0.38 * opacity, false))
+		{
+			defPassive = const(MGraphicsState(widthPassive, MThemeColor2int(manager, outlineColorPassive), 0.38 * opacity, false));
+			eitherMap(dropDownMenuWarning,
+				\ddw -> {
+					separatorColor = extractStruct(ddw.style, MDropDownMenuWarningColor(const(MErrorColor()))).color;
+					fif(
+						fselectLift(ddw.text, \txtM -> eitherMap(txtM, \txt -> txt != "", false)),
+						fselectLift(separatorColor, \col -> MGraphicsState(widthPassive, MThemeColor2int(manager, col), 1., false)),
+						defPassive
+					)
+				},
+				defPassive
+			)
+		}
 	);
 
-	dynColor = make(color);
+	dynColor = make(eitherMap(dropDownMenuWarning, \ddw ->
+		fgetValue(extractStruct(ddw.style, MDropDownMenuWarningColor(const(MErrorColor()))).color),
+		color
+	));
 	floatingLabelProgress = make(1.);
 	labelWidth = make(0.);
 
@@ -1185,7 +1230,6 @@ MDropDownMenuButton2T(
 
 						characterStyle = MTextStyle2CharacterStyle(parent, lineTextStyle);
 						labelSize = extractStruct(characterStyle, FontSize(14.)).size;
-						themeColor : Transform<MThemeColor> = dynColor;
 						TGroup2(
 							TVisible(showTitle, if (filled && !isNonSpec) TTranslate(const(Point(0., 8.)), t) else t),
 							TVisible(
@@ -1196,7 +1240,7 @@ MDropDownMenuButton2T(
 										const(characterStyle),
 										const(replaceStruct(characterStyle, FillOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))))
 									),
-									Some(MDynamicColor(themeColor)),
+									Some(MDynamicColor(dynColor)),
 									labelWidth, m2t
 								)
 							)
@@ -1218,13 +1262,12 @@ MDropDownMenuButton2T(
 				|> (\t ->
 					if (plain) t
 					else {
-						themeColor : Transform<MThemeColor> = dynColor;
 						TGroup2(
 							if (filled) TTranslate(const(Point(0., 8.)), t) else t,
 							makeMFloatingLabel(manager, parent, nonSpecifiedLabel,
 								makeFloatingLabelState(style, const(true), 14.),
 								fif(active, const([]), const([FillOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))])),
-								Some(MDynamicColor(themeColor)),
+								Some(MDynamicColor(dynColor)),
 								labelWidth, m2t
 							)
 						)
@@ -1280,18 +1323,26 @@ MDropDownMenuButton2T(
 		else TCopySize2(f, \sz, tr -> {
 			separator = eitherMap(
 				separatorsColorM,
-				\separatorColor -> TAvailable(m2t(MComponentGroup(
-					MSeparator(true),
-					[UpdateMaterialTheme(
-						\theme -> MaterialTheme(
-							theme with palette = MaterialPalette(
-								theme.palette with onBackground = MThemedColor(separatorColor.color, separatorColor.color)
+				\separatorColor -> TRectangle([MFill(separatorColor.color)], TFillXH(1.)),
+				eitherMap(
+					dropDownMenuWarning, 
+					\ddw -> {
+						separatorColor = extractStruct(ddw.style, MDropDownMenuWarningColor(const(MErrorColor()))).color;
+						MSelect(ddw.text, \txtM->
+							eitherMap(txtM, \txt ->
+								if (txt != "") MSelect(separatorColor, \col ->
+									TRectangle([MFill(MThemeColor2MColor(parent, col))], TFillXH(1.))
+								) else MSeparator(true),
+								MSeparator(true)
 							)
 						)
-					)]
-				), parent), sz),
-				TAvailable(m2t(MSeparator(true), parent), sz)
-			);
+					},
+					MSeparator(true)
+				)
+			)
+			|> (\t -> m2t(t, parent))
+			|> (\t -> TAvailable(t, sz));
+
 			if (croppedButton)
 				TBaselineLines2(
 					tr |> TBorderBottom(-1.),
@@ -1501,7 +1552,10 @@ MMenuLines2Material(
 
 	hovered = make(-1);
 
-	textStyle = [if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading()];
+	textStyle = extractStruct(
+		style0,
+		MCustomTextStyle([if (!condensed) MSubheading() else if (tableFooter) MCaption() else if (tableRow) MDataRow() else MSubheading()])
+	).style;
 	iconSize = if (tableRow || tableFooter) 16.0 else 20.0;
 	iconBorders = extractStruct(style0, MDropDownMenuIconBorders(MIconBorder4(0., 0., 0., 0.))).borders;
 
@@ -1652,7 +1706,7 @@ MMenuLines2Material(
 				)
 				|> (\ttl -> TAccess([FAccessHidden()], ttl))
 				|> addActions(parent, style, visuallySelected, false, primaryWidth, secondaryWidth)
-				|> (\t -> TFrame(0., 0., extractStruct(style0, MBackgroundStyle([])).style, t))
+				|> (\t -> TFrame(0., 0., mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style0, MBackgroundStyle([])).style), t))
 				|> (\t -> TAlpha(lineAlpha, t));
 
 
@@ -1768,7 +1822,7 @@ MMenuLines2Material(
 					|> (\t ->
 						TAlpha(
 							getMenuAlpha(focus, parent),
-							TFrame(0., 0., extractStruct(style0, MBackgroundStyle([])).style, t)
+							TFrame(0., 0., mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style0, MBackgroundStyle([])).style), t)
 						)
 					)
 					|> (\t -> TConstruct([makeSubscribe2(items, \__ -> reopenMenu(openMenu))], t)),
@@ -1834,7 +1888,7 @@ MMenuLines2Material(
 					|> (\t ->
 						TAlpha(
 							getMenuAlpha(focus, parent),
-							TFrame(0., 0., extractStruct(style0, MBackgroundStyle([])).style, t)
+							TFrame(0., 0., mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style0, MBackgroundStyle([])).style), t)
 						)
 					)
 					|> (\t -> TInteractive([

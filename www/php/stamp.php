@@ -33,7 +33,7 @@ if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
 $file = getParameter('file');
 $absoluteFile = $root . '/' . trim($file, '/');
 
-$timestamp = time();
+$timestamp = 0;
 
 // supress warnings in file_exists because we may be probed with bogus paths
 // and php complains in that case

@@ -94,6 +94,7 @@ MDynamicDataTable2TInner(
 	tableHeight = make(0.);
 	tableMaxWidth = make(0.);
 	tableMaxHeight = make(0.);
+	headerActionsWidth = make(0.);
 	headerActionsHeight = make(0.);
 
 	countRowHeight0 = \er : int, isHeader : bool ->
@@ -182,6 +183,7 @@ MDynamicDataTable2TInner(
 			TLines2Dir(
 				m2t(state.headerActions.actions, p)
 				|> (\t2 -> TAvailableHeight(t2, const(state.rowHeight)))
+				|> (\t2 -> TAttachWidth(t2, headerActionsWidth))
 				|> (\t2 -> TAttachHeight(t2, headerActionsHeight)),
 				t,
 				p.rtl
@@ -250,7 +252,7 @@ MDynamicDataTable2TInner(
 					|> (\t -> eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
 							TIfLazy2(
 								fcontains(state.selection.selected, const(j)),
-								\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., rb.fn(j), t),
+								\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., mgraphicsStyle2tgraphicsStyle(p, rb.fn(j)), t),
 								false
 							), t
 						))
@@ -262,7 +264,7 @@ MDynamicDataTable2TInner(
 									TFrame(0., 0.,
 										eitherMap(
 											selectedBgStyle,
-											\sbs -> sbs.style,
+											\sbs -> mgraphicsStyle2tgraphicsStyle(p, sbs.style),
 											[Fill(contrastingColor(p)), FillOpacity(if (getLightBackground(p)) 0.08 else 0.16)]
 										),
 										t
@@ -272,7 +274,7 @@ MDynamicDataTable2TInner(
 							false
 						)
 					)
-					|> (\t -> if (state.separators) addSeparator(manager, p, t, false) else t)
+					|> (\t -> if (state.separators) addSeparator(manager, p, t, false, state.separatorsStyle) else t)
 					|> (\t -> TAccess([TagName("tr"), AccessRole("row")], t))
 					|> (\t -> TDispose([\ -> dispUnsM(disp)], t));
 				})
@@ -327,11 +329,11 @@ MDynamicDataTable2TInner(
 								|> (\t -> eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
 											TIfLazy2(
 												fcontains(state.selection.selected, const(j)),
-												\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., rb.fn(j), t),
+												\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., mgraphicsStyle2tgraphicsStyle(p, rb.fn(j)), t),
 												false
 											), t
 										))
-								|> (\t -> if (state.separators) addSeparator(state.manager, p3, t, false) else t);
+								|> (\t -> if (state.separators) addSeparator(state.manager, p3, t, false, state.separatorsStyle) else t);
 
 							MCustomLine(
 								MGetFocusGroup(makeLineContent),
@@ -543,11 +545,12 @@ MDynamicDataTable2TInner(
 		|> (if (!paginationState.anyType && isFConst(data) && isFConst(showFixedRow) && !fgetValue(state.scrollEnabled) && isFConst(expandRow))
 				makeTropicConstantHeight(Some((i2d(fgetValue(rowsCountB)) + b2d(fgetValue(showFixedRow))) * countRowHeight(fgetValue(expandRow))))
 			else idfn)
-		|> (\t -> if (state.separators) addSeparator(manager, p, t, true) else t)
+		|> (\t -> if (state.separators) addSeparator(manager, p, t, true, state.separatorsStyle) else t)
 		// Header
 		|> (\f -> TLines2Dir(tableHeader(headers, p), f, p.rtl))
 		|> (\t : Tropic -> eitherMap(innerScrollState, \is -> {
 				defaultScrollBarStyle : TScrollbars = extractStruct(is.style, getMaterialScrollBar());
+				overlapContent = extractStruct(is.style, MScrollbarOverlapContent(true)).overlap;
 
 				scrollStyle = concat(is.style, [
 					TScrollInspectShowScrolling(is.visibilityInspector),
@@ -563,6 +566,7 @@ MDynamicDataTable2TInner(
 				isYFiller = paginationState.auto || (!paginationState.anyType && fgetValue(state.scrollEnabled));
 				innerMaxWidth = make(0.);
 				innerMaxHeight = make(0.);
+				innerMaxHeight2 = if (overlapContent) innerMaxHeight else faddition(innerMaxHeight, defaultScrollBarStyle.x.thickness);
 
 				scroll =
 					if (isYFiller)
@@ -574,7 +578,7 @@ MDynamicDataTable2TInner(
 
 				MScroll2T(manager, p, scroll, m2t)
 				|> (\t2 ->
-					if (useMaxSizeFix) t2 |> TSetMaxWidth2(innerMaxWidth) |> (if (isYFiller) TSetMaxHeight2(innerMaxHeight) else idfn)
+					if (useMaxSizeFix) t2 |> TSetMaxWidth2(innerMaxWidth) |> (if (isYFiller) TSetMaxHeight2(innerMaxHeight2) else idfn)
 					else t2
 				)
 			}, t))
@@ -609,7 +613,7 @@ MDynamicDataTable2TInner(
 			)
 		)
 		|> (\t -> {
-			tWidth = tableWidth(expandRow);
+			tWidth = fmax(tableWidth(expandRow), headerActionsWidth);
 			TAvailableWidth(t, if (isInnerScroll) fmin(screenW, tWidth) else tWidth)
 			|> (if (useMaxSizeFix) TSetMaxWidth2(tWidth) else idfn)
 		})
@@ -668,6 +672,7 @@ MDTState(
 	headerActions : MHeaderActions,
 	replaceHeader : bool,
 	separators : bool,
+	separatorsStyle : [MGraphicsStyle],
 	selection : MListSelection,
 	selectionEnabled : MListSelectionEnabled,
 	onClick : MOnListClick,
@@ -722,6 +727,7 @@ makeMDataTableState(
 	lineHeight = \isHeader -> if (!isHeader) rowHeight else headerRowHeight;
 
 	separators = !contains(style, MNoSeparators());
+	separatorsStyle = extractStruct(style, MSeparatorsStyle([MFill(getSeparatorColor(parent)), FillOpacity(0.12)])).style;
 	onClick : MOnListClick = extractStruct(style, MOnListClick(const(false), nop1));
 	clickEnabled : MClickEnabled = extractStruct(style, MClickEnabled(const(true)));
 
@@ -992,6 +998,7 @@ makeMDataTableState(
 		headerActions,
 		replaceHeader,
 		separators,
+		separatorsStyle,
 		selection,
 		selectionEnabled,
 		onClick,
@@ -1625,14 +1632,14 @@ MDTSideColumns(
 							TIfLazy2(
 								fcontains(state.selection.selected, const(j)),
 								\v -> if (v)
-										TFrame(0., 0., eitherMap(selectedBgStyle, \sbs -> sbs.style, getDefLineSelectedBackground(parent)), t)
+										TFrame(0., 0., eitherMap(selectedBgStyle, \sbs -> mgraphicsStyle2tgraphicsStyle(parent, sbs.style), getDefLineSelectedBackground(parent)), t)
 									else
-										eitherMap(rowBackgroundStyle, \rb -> TFrame(0., 0., rb.fn(j), t), t),
+										eitherMap(rowBackgroundStyle, \rb -> TFrame(0., 0., mgraphicsStyle2tgraphicsStyle(parent, rb.fn(j)), t), t),
 								false
 							)
 					} else t
 				)
-				|> (\t -> if (state.separators && isGlued) addSeparator(state.manager, parent, t, false) else t)
+				|> (\t -> if (state.separators && isGlued) addSeparator(state.manager, parent, t, false, state.separatorsStyle) else t)
 				|> (\t -> if (isGlued)
 					MComponent2T(state.manager, parent, "MDataTableLine" + i2s(j), [
 						MOnClick(\ -> MListOnClickHandler(state.selection, state.selectionEnabled, state.onClick)(j)),
@@ -1704,7 +1711,7 @@ MDTSideColumns(
 				rows
 				|> (\t -> TAlpha(fif(parent.enabled, const(1.), const(if (getLightBackground(parent)) 0.26 else 0.3)), t))
 				|> (\t -> TAvailableHeightPreventFillers(t, rowsAvailableHeight))
-				|> (\t -> if (state.separators && isGlued) addSeparator(state.manager, parent, t, true) else t)
+				|> (\t -> if (state.separators && isGlued) addSeparator(state.manager, parent, t, true, state.separatorsStyle) else t)
 				|> (\t -> TAvailableWidth(t, columnsWidth))
 				|> (\t -> TLines2Dir(columnsHeader, t, parent.rtl))
 				|> (\t ->
@@ -2030,12 +2037,13 @@ alignCellContent(parent : MFocusGroup, cellBorder : double, colstyle : [MColumnS
 	}
 }
 
-addSeparator(manager : MaterialManager, parent : MFocusGroup, content : Tropic, above : bool) -> Tropic {
-	TCopySize2(content, \sz, tr -> {
-		separator = TAvailable(MSeparator2T(manager, parent, true), sz);
-		if (above) TLines2Dir(separator, tr, parent.rtl)
-		else TLines2Dir(tr, separator, parent.rtl)
-	})
+addSeparator(manager : MaterialManager, parent : MFocusGroup, content : Tropic, above : bool, style : [TGraphicsStyle]) -> Tropic {
+	contentW = make(0.);
+	content2 = TAttachWidth(content, contentW);
+	separator = TAvailableWidthPreventFillers(TRectangle(style, TFillXH(1.)), contentW);
+	
+	if (above) TLines2Dir(separator, content2, parent.rtl)
+	else TLines2Dir(content2, separator, parent.rtl)
 }
 
 colsHead(state : MDTState, arr : [?]) -> [?] {

@@ -1,0 +1,123 @@
+import mango/mango_types;
+import runtime;
+import mango/util;
+import mango/mango_grammar;
+import mango/mango_interpreter;
+
+MangoMacro : (args : [string], body : Term);
+
+expandMangoMacros(defines : ref Tree<string, MangoMacro>, t : Term) -> Term {
+	rec = \tt -> expandMangoMacros(defines, tt);
+	switch (t) {
+		GrammarMacro(id, term): {
+			if (id == "define") {
+				// Deconstruct the three parts into tname, args and the body
+				switch (term) {
+					Sequence(tname, rest): {
+						switch (rest) {
+							Sequence(targs, body): {
+								name = getVariableName(tname);
+								args = map(getSequence(targs), getVariableName);
+								// We are ready to record the macro definition
+								defines := setTree(^defines, name, MangoMacro(args, body));
+								// The definition "disappears"
+								String("");
+							}
+							default: {
+								println("Error: Define expects @define<name (args) body>");
+								t;
+							}
+						}
+					}
+					default: {
+						println("Error: Define expects @define<name (args) body>");
+						t;
+					}
+				}
+			} else if (id == "include") {
+				// Extract the name of the include
+				path = getVariableName(term);
+				// Read the file
+				grammar = getFileContent(resolveMangoPath(path + ".mango"));
+				// Parse it
+				include = mangoParse(mangoGrammar(), grammar, String(""));
+				// Process this to grab any defines it might have
+				expandMangoMacros(defines, include);
+			} else if (containsKeyTree(^defines, id)) {
+				// Find the macro definition
+				macro = lookupTreeDef(^defines, id, MangoMacro([], term));
+				args = getSequence(term);
+				// Bind the arguments as the given names
+				ndefines = foldi(args, ^defines, \i, acc, arg -> {
+					setTree(acc, macro.args[i], MangoMacro([], arg))
+				});
+				// Expand in the body
+				expandMangoMacros(ref ndefines, macro.body);
+			} else if (id == "list") {
+				// This is obsolete given @define, but required until we are feature complete
+				switch (term) {
+					Sequence(left, right): {
+						l = rec(left);
+						r = rec(right);
+						Sequence(StackOp("nil"), Optional(
+							Sequence(
+								l, 
+								Sequence(StackOp("cons"), 
+									Sequence(
+										Star(
+											Sequence(r, 
+												Sequence(Variable("ws"), 
+													Sequence(l, StackOp("cons"))
+												)
+											)
+										), 
+										Optional(Sequence(r, Variable("ws")))
+									)
+								)
+							)
+						));
+					}
+					default: {
+						println("ERROR: @list expected two arguments");
+						term;
+					}
+				}
+			} else {
+				println("Error: Unknown macro " + id);
+				term;
+			}
+		}
+		StackOp(id): {
+			if (containsKeyTree(^defines, id)) {
+				macro = lookupTreeDef(^defines, id, MangoMacro([], t));
+				macro.body;
+			} else {
+				t;
+			}
+		}
+		Lower(term): Lower(rec(term));
+		Negate(term): Negate(rec(term));
+		Optional(term): Optional(rec(term));
+		Plus(term): Plus(rec(term));
+		Precedence(term1, term2): Precedence(rec(term1), rec(term2));
+		PushMatch(term): PushMatch(rec(term));
+		Rule(id, term1, term2): Rule(id, rec(term1), rec(term2));
+		Sequence(term1, term2): Sequence(rec(term1), rec(term2));
+		Choice(term1, term2): Choice(rec(term1), rec(term2));
+		Error(term): Error(rec(term));
+		Star(term): Star(rec(term));
+		Construct(uid, int_0): t;
+		Range(char1, char2): t;
+		String(stringq): t;
+		Variable(id): t;
+	}
+}
+
+resolveMangoPath(p : string) -> string {
+	if (fileExists(p)) p
+	else if (fileExists("mango/lib/" + p)) "mango/lib/" + p
+	else {
+		println("Can not find include " + p);
+		p;
+	}
+}

@@ -35,7 +35,7 @@ export {
 	distributeSizesEvenlyInt(minWidths : [int], maxWidths : [int], columnWidths : [DynamicBehaviour<int>], availableWidth : int) -> void;
 	distributeSizesEvenly(minWidths : [double], maxWidths : [double], availableWidth : double) -> [double];
 
-	selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>) -> Pair<(MDirection) -> void, () -> void>;
+	selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>, isEmptyCellFn : (cell : ?) -> bool) -> Pair<(MDirection) -> void, () -> void>;
 		MDirection ::= MRight, MLeft, MUp, MDown;
 			MUp();
 			MDown();
@@ -75,7 +75,7 @@ export {
 
 	// Helper for background drawing
 	addTBackground(color : MColor) -> (Tropic) -> Tropic;
-	addMBackground(color : MColor) -> (Material) -> Material;
+	addMBackground(color : MThemeColor) -> (Material) -> Material;
 
 	addMTooltip(tooltip : string) -> (Material) -> Material;
 	addMTooltipT(tooltip : Transform<string>) -> (Material) -> Material;
@@ -375,37 +375,62 @@ distributeSizesEvenly(
 		map(newWidths, firstOfPair);
 }
 
-selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>) -> Pair<(MDirection) -> void, () -> void> {
+nextCellPosition(
+	cells : [[?]],
+	initialPosition : Pair<int, int>,
+	isEmptyCellFn : (cell : ?) -> bool,
+	positionMoveFn : (Pair<int, int>) -> Pair<int, int>
+) -> Pair<int, int> {
+	movedPosition = positionMoveFn(initialPosition);
+
+	eitherFn(
+		elementAtM(cells[movedPosition.first], movedPosition.second),
+		\cell -> {
+			if (isEmptyCellFn(cell)) {
+				nextCellPosition(cells, movedPosition, isEmptyCellFn, positionMoveFn)
+			} else {
+				movedPosition
+			}
+		},
+		\ -> nextCellPosition(cells, movedPosition, isEmptyCellFn, positionMoveFn)
+	)
+}
+
+selectableCells(
+	cells : Transform<[[?]]>,
+	currentCell : DynamicBehaviour<?>,
+	isEmptyCellFn : (cell : ?) -> bool
+) -> Pair<(MDirection) -> void, () -> void> {
 	x = ref -1;
 	y = ref -1;
 
 	fn0 = \dir : MDirection, cls : [[?]] -> {
-		switch (dir) {
-			MLeft(): {
-				x := ^x - 1;
-			}
-			MRight(): {
-				x := ^x + 1;
-			}
-			MUp(): {
-				y := ^y - 1;
-			}
-			MDown(): {
-				y := ^y + 1;
-			}
+		initialPosition = Pair(^x, ^y);
+		calculateNextPosition =\moveFn -> nextCellPosition(cls, initialPosition, isEmptyCellFn, moveFn);
+
+		newPosition = switch (dir) {
+			MLeft(): calculateNextPosition(\p -> {
+				cx = p.first - 1;
+				Pair(if (cx < 0) {length(cls) - 1} else {cx}, p.second)
+			});
+			MRight(): calculateNextPosition(\p -> {
+				cx = p.first + 1;
+				Pair(if (cx > length(cls) - 1) {0} else {cx}, p.second)
+			});
+			MUp(): calculateNextPosition(\p -> {
+				cx = p.first;
+				cy = p.second - 1;
+				Pair(cx, if (cy < 0) {length(cls[cx]) - 1} else {cy})
+			});
+			MDown(): calculateNextPosition(\p -> {
+				cx = p.first;
+				cy = p.second + 1;
+				Pair(cx, if (cy > length(cls[cx]) - 1) {0} else {cy})
+			});
 		}
 
-		if (^x < 0) {
-			x := length(cls) - 1;
-		} else if (^x > length(cls) - 1) {
-			x := 0;
-		}
-
-		if (^y < 0) {
-			y := either(maxA(map(cls, \c -> length(c) - 1)), 0);
-		} else if (^y > either(maxA(map(cls, \c -> length(c) - 1)), 0)) {
-			y := 0;
-		}
+		x := newPosition.first;
+		y := newPosition.second;
 	};
 
 	fn = \dir : MDirection -> {
@@ -735,8 +760,8 @@ addTBackground(color : MColor) -> (Tropic) -> Tropic {
 	\t -> TFrame(0.0, 0.0, [MFill(color)], t)
 }
 
-addMBackground(color : MColor) -> (Material) -> Material {
-	\m -> MFrame(0.0, 0.0, [MFill(color)], m)
+addMBackground(color : MThemeColor) -> (Material) -> Material {
+	\m -> MFrame(0.0, 0.0, [MThemedFill(color)], m)
 }
 
 addMTooltip(tooltip : string) -> (Material) -> Material {

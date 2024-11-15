@@ -28,7 +28,7 @@ public class Database extends NativeHost {
         public Statement stmt = null;
         public String err = "";
         public RSObject lrurs = null;
-        protected DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
+        protected DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
         protected HashSet<String> intOverflowFields = new HashSet<String>();
 
         public DBObject() {

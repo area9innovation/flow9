@@ -60,6 +60,7 @@ class RenderSupport {
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
 	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
+	public static var PinchToScaleEnabled : Bool = true;
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -977,6 +978,8 @@ class RenderSupport {
 			}
 		}, false);
 
+		Browser.document.fonts.addEventListener('loadingdone', FontLoader.onFontsLoadingDone);
+
 		// Make additional resize for mobile fullscreen mode
 		if (Platform.isMobile) {
 			on("fullscreen", function(isFullScreen) {
@@ -989,6 +992,9 @@ class RenderSupport {
 
 		if (Platform.isMobile) {
 			GesturesDetector.addPinchListener(function(state, x, y, scale, b) {
+				if (!PinchToScaleEnabled) {
+					return false;
+				};
 				if (state == 0) {
 					// On pinch started
 					accessibilityZoomOnPinchStart = getAccessibilityZoom();
@@ -1060,6 +1066,10 @@ class RenderSupport {
 	public static function setApplicationLanguage(languageCode : String) {
 		Browser.document.documentElement.setAttribute("lang", languageCode);
 		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
+	}
+
+	public static function setPinchToScaleEnabled(enabled : Bool) {
+		PinchToScaleEnabled = enabled;
 	}
 
 	public static function getSafeArea() : Array<Float> {
@@ -1607,6 +1617,12 @@ class RenderSupport {
 
 		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
+
+		if (Platform.isMobile) {
+			// Collapse of PWA application requires gesture which initiates touchstart, but never receives touchend
+			// We need to reset MouseUpReceived when application is collapsed for success first click after an application is focused
+			Browser.window.addEventListener("blur", function (e) { MouseUpReceived = true; }); 
+		}
 
 		if (root != Browser.document.body) {
 			on("fullscreen", function () {
@@ -2413,6 +2429,10 @@ class RenderSupport {
 		clip.setInterlineSpacing(spacing);
 	}
 
+	public static function setTextFieldPreventXSS(clip : TextClip, enable : Bool) : Void {
+		clip.setPreventXSS(enable);
+	}
+
 	public static function setTextDirection(clip : TextClip, direction : String) : Void {
 		clip.setTextDirection(direction);
 	}
@@ -2519,6 +2539,10 @@ class RenderSupport {
 
 	public static function setMaxChars(clip : TextClip, maxChars : Int) : Void {
 		clip.setMaxChars(maxChars);
+	}
+
+	public static function setAutofillBackgroundColor(clip : TextClip, autofillBackgroundColor : Int) : Void {
+		clip.setAutofillBackgroundColor(autofillBackgroundColor);
 	}
 
 	public static function addTextInputFilter(clip : TextClip, filter : String -> String) : Void -> Void {
@@ -3123,12 +3147,18 @@ class RenderSupport {
 
 			clip.on(event, parentFn);
 			return function() { clip.off(event, parentFn); }
-		} if (event == "textwidthchanged") {
+		} else if (event == "textwidthchanged") {
 			var widthFn = function(width : Float) {
 				fn([width]);
 			};
 			clip.on(event, widthFn);
 			return function() { clip.off(event, widthFn); }
+		} else if (event == "mathexprresize") {
+			var sizeFn = function(size) {
+				fn([size.width, size.height, size.baseline]);
+			};
+			clip.on(event, sizeFn);
+			return function() { clip.off(event, sizeFn); }
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};
@@ -3277,7 +3307,7 @@ class RenderSupport {
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 			var clipWidth = 0;
 			var clipHeight = 0;
-			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip)) {
+			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip) && !clip.isInput) {
 				clipWidth = untyped clip.getClipWidth(false);
 				clipHeight = untyped clip.getClipHeight(false);
 			} else {
@@ -4367,6 +4397,14 @@ class RenderSupport {
 	public static function getHadUserInteracted() : Bool {
 		return hadUserInteracted;
 	}
+
+	public static function openDatePicker(clip : TextClip) : Void -> Void {
+		return clip.openDatePicker();
+	}
+
+	public static function createMathJaxClip(latex: String) : Dynamic {
+		return new MathJaxClip(latex);
+	};
 }
 
 class FlowInstance {

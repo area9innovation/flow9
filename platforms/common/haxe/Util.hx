@@ -226,13 +226,16 @@ class Util
 #end
 
 #if (js && !flow_nodejs)
-	public static function loadJS(url : String) : Promise<Dynamic> {
+	public static function loadJS(url : String, ?id : String = "") : Promise<Dynamic> {
 		return new Promise<Dynamic>(function(resolve, reject) {
 			var script : Dynamic = Browser.document.createElement('script');
 			script.addEventListener('load', resolve);
 			script.addEventListener('error', reject);
 			script.addEventListener('abort', reject);
 			script.src = url;
+			if (id != "") {
+				script.id = id;
+			}
 			Browser.document.head.appendChild(script);
 		});
 	}
