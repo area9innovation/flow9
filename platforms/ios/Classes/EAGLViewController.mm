@@ -89,6 +89,8 @@
         } else if (statusBarVisible) {
             [[UIApplication sharedApplication].keyWindow addSubview: statusBar];
         }
+        
+        [self setNeedsStatusBarAppearanceUpdate];
     }
 }
 
@@ -289,8 +291,11 @@ static bool gestureBeingHandledByFlow = false;
 
 - (void) setStatusBarColor: (UIColor*)color {
     if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"13.0")) {
-        CGRect frame = [UIApplication sharedApplication].keyWindow.windowScene.statusBarManager.statusBarFrame;
-        statusBar = [[UIView alloc]initWithFrame:frame];
+        if (statusBar == nil) {
+            CGRect frame = [UIApplication sharedApplication].keyWindow.windowScene.statusBarManager.statusBarFrame;
+            statusBar = [[UIView alloc]initWithFrame:frame];
+        }
+        
         statusBar.backgroundColor =  color;
         
         if (statusBarVisible) {
