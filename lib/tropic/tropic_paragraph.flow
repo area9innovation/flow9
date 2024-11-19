@@ -95,7 +95,8 @@ TRenderDynamicParagraph(
 	))
 	|> fixAvailableWidthForIndent(awB, indent);
 
-	updateFn = \wi, alignWidthM -> {
+	updateFn = \wi_raw, alignWidthM -> {
+		wi = if (wigiParagraphRoundingEnabled) roundUIMetricsValue(wi_raw) else wi_raw;
 		oldWH = getValue(paragraphWHB);
 		traceApi.trace(\-> "updateFn START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		// Ignore negative widths
@@ -334,7 +335,7 @@ TRenderParagraph(
 	updateFn = \id, wi_raw, alignWidthM, immediate -> {
 		oldWH = getValue(paragraphWHB);
 		wi = if (wigiParagraphRoundingEnabled) roundUIMetricsValue(wi_raw) else wi_raw;
-		traceApi.traceAndNest(\-> "updateFn [" + id + "] START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
+		traceApi.traceAndNest(\-> "updateFn [" + id + "] START wi_raw =  " + toString(wi_raw) + ", wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
 		// Ignore negative widths
 		// It's the safest way to simulate single line, because reflowParaWords2 does a lot of useful stuff.
 		w = if (isSingleLine) INF_METRICS else max(0.0, wi);
@@ -362,8 +363,8 @@ TRenderParagraph(
 
 		newWH = paragraphSizeAndBaseline.first;
 
-		if (newWH.width > w) {
-			traceApi.trace(\-> "DONT_FIT: " + toString(newWH.width) + " > " + toString(w));
+		if (newWH.width > wi_raw) {
+			traceApi.trace(\-> "DONT_FIT: " + toString(newWH.width) + " > " + toString(wi));
 		}
 
 		traceApi.traceAndNest(\-> "updateFn [" + id + "] set paragraphWH START wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH) + " -> " + toString(newWH)  + ", linesCount: " + toString(getValue(linesCountB)));
@@ -1162,6 +1163,7 @@ rtrimWords(words : [TParaWord]) -> [TParaWord] {
 }
 
 tryToBreakLongEquations = !isUrlParameterFalse("break_long_equations");
+GeneralSpaceUnion ::= GeneralSpace, GeneralDynamicSpace;
 
 // here availableWidth is an amount of width for current line
 reflowTParaWordsRec(
@@ -1177,7 +1179,6 @@ reflowTParaWordsRec(
 	ignoreLetterSpacing : bool
 ) -> TReflowResultAcc {
 	traceApi = makeWigiTrace_Tropic("reflowTParaWordsRec", words);
-	traceApi.trace(\-> "availableWidth: " + toString(availableWidth) + ", remaining: " + toString(remaining));
 	addLine = \cw, indent, endsWithNewLine -> switch (result) {
 		TReflowedLinesAndChanges(lines, changes) : TReflowedLinesAndChanges(
 			ifArrayPush(lines, cw != [], TParaLine(cw, indent, endsWithNewLine)),
@@ -1199,7 +1200,18 @@ reflowTParaWordsRec(
 	lineIndent = getLineIndent(paraIndent, lineIndex == 0);
 	nextLineWidth = availableWidth + lineIndent - getLineIndent(paraIndent, false);
 
+	makeReflowText = \-> {
+		results = switch (result) {
+			TOverflowCase(__): ["Overflow"];
+			TReflowedLinesAndChanges(lines, __): map(lines, \l -> i2s(length(l.words)));
+		}
+		strGlue(concat(results, [i2s(length(currentWords))]), ", ");
+	}
+
 	if (words == []) {
+		traceApi.trace(\-> {
+			"[END] aw: " + toString(availableWidth) + ", remaining: " + toString(remaining) + " [" + makeReflowText() + "]"
+		});
 		addLine(currentWords, lineIndent, false);
 	} else {
 		word = words[0];
@@ -1208,19 +1220,25 @@ reflowTParaWordsRec(
 		nextWordIndex = currentWordIndex + 1;
 
 		getWordWidth = \word1 -> getValue(word1.inspector.size).width;
+		width = getWordWidth(word);
+		nextWidth = if (rest == []) 0.0 else getWordWidth(rest[0]);
+		fitWithNext = roundUIMetricsValue(remaining - width - nextWidth) >= 0.0;
+		traceApi.trace(\-> {
+			"[" + word.word.structname + "] width: " + toString(width) + ", nextWidth: " + toString(nextWidth) + ", fitWithNext: " + toString(fitWithNext) + ", aw: " + toString(availableWidth) + ", remaining: " + toString(remaining) + " [" + makeReflowText() + "]"
+		});
 
 		evaluatePositionForGeneralLinePart = \i, _word : TParaWord,  -> {
 			switch (_word.word) {
 				GeneralLinePart(__, __, __, allowBreakAfter): {
 					isLast = i == (length(words) - 1);
-					nextWordWidth = if (isLast) 0.0 else getWordWidth(words[i + 1]);
+					nextWordWidth2 = if (isLast) 0.0 else getWordWidth(words[i + 1]);
 					if (currentWords == []) {
 						nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineFirst());
 					} else if (isLast) {
 						nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineEnd());
 					} else {
 						nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineMiddle());
-						if (getWordWidth(_word) + nextWordWidth >= remaining && (allowBreakAfter || isLast)) {
+						if (getWordWidth(_word) + nextWordWidth2 >= remaining && (allowBreakAfter || isLast)) {
 							nextDistinct(_word.inspector.wordPositionInLine, WordPositionInLineEnd());
 						}
 					}
@@ -1246,7 +1264,6 @@ reflowTParaWordsRec(
 			}
 			GeneralLinePart(first, mid, end, allowBreakAfter): {
 				evaluatePositionForGeneralLinePart(0, word);
-				width = getWordWidth(word);
 				switch (getValue(word.inspector.wordPositionInLine)) {
 					WordPositionInLineFirst(): {
 						reflowTParaWordsRec(
@@ -1292,9 +1309,13 @@ reflowTParaWordsRec(
 					}
 				}
 			}
-			GeneralSpace(__, __, __) : {
-				width = getWordWidth(word);
-				if (width == 0.0 || width <= remaining || currentWords == []) {
+			GeneralSpaceUnion() : {
+				// if space we should check if the next word will fit for this branch
+				if (
+					width == 0.0 ||
+					currentWords == [] ||
+					rest != [] && fitWithNext
+				) {
 					reflowTParaWordsRec(
 						rest,
 						nextWordIndex,
@@ -1308,6 +1329,7 @@ reflowTParaWordsRec(
 						ignoreLetterSpacing
 					);
 				} else if (isSpaceWord(word)) {
+					// the line ends with invisible space - we should detach it
 					detachWord(word, true);
 					reflowTParaWordsRec(
 						rest,
@@ -1322,6 +1344,7 @@ reflowTParaWordsRec(
 						ignoreLetterSpacing
 					);
 				} else {
+					// this is some visible space form, we can't detach it
 					reflowTParaWordsRec(
 						words,
 						currentWordIndex,
@@ -1336,46 +1359,15 @@ reflowTParaWordsRec(
 					);
 				}
 			}
-			GeneralDynamicSpace(__, __, __) : {
-				width = getWordWidth(word);
-				if (width < remaining || !isSpaceWord(word)) {
-					reflowTParaWordsRec(
-						rest,
-						nextWordIndex,
-						availableWidth,
-						remaining - width,
-						arrayPush(currentWords, word),
-						result,
-						paraIndent,
-						false,
-						catchOverflow,
-						ignoreLetterSpacing
-					);
-				} else {
-					detachWord(word, true);
-					reflowTParaWordsRec(
-						rest,
-						nextWordIndex,
-						nextLineWidth,
-						nextLineWidth,
-						[],
-						addLine(currentWords, lineIndent, false),
-						paraIndent,
-						false,
-						catchOverflow,
-						ignoreLetterSpacing
-					);
-				}
-			};
 			default: {
-				width = ref 0.0;
+				fragmentWith = ref 0.0;
 				widthWithBreakEquation = ref 0.0;
 				wordsCountWithBreakEquation = ref 0;
 				getWordView = \w -> w.ghostView;
 
 				// Number of words that should be on the same line
 				wordsCount0 = iteriUntil(words, \i, _word : TParaWord -> {
-					addWidth = \-> width := ^width + getWordWidth(_word);
+					addWidth = \-> fragmentWith := ^fragmentWith + getWordWidth(_word);
 
 					spaceCase = \str -> if(isSpace(str)) {
 						true
@@ -1403,17 +1395,17 @@ reflowTParaWordsRec(
 							if (
 								(isMarked && i <= 1) ||
 								keepTogether ||
-								^width == 0.0
+								^fragmentWith == 0.0
 							) {
 								// Trying to split the expression by the equal sign only if it cannot be placed on a new line
 								// and the part before the sign occupies at least a quarter of the available width.
 								if (
 									tryToBreakLongEquations &&
 									currentWords == [] && keepTogether &&
-									^width > remaining / 4.0 && (^widthWithBreakEquation == 0.0 || ^width <= remaining) &&
+									roundUIMetricsValue(remaining / 4.0 - ^fragmentWith) < 0.0  && (^widthWithBreakEquation == 0.0 || roundUIMetricsValue(remaining - ^fragmentWith) >= 0.0) &&
 									isItBreakableEquation(_word, previousWord)
 								) {
-									widthWithBreakEquation := ^width;
+									widthWithBreakEquation := ^fragmentWith;
 									wordsCountWithBreakEquation := i;
 								}
 								addWidth();
@@ -1425,10 +1417,10 @@ reflowTParaWordsRec(
 					};
 				});
 
-				if (^width == 0.0 || ^width <= remaining || currentWords == []) {
+				if (^fragmentWith == 0.0 || roundUIMetricsValue(remaining - ^fragmentWith) >= 0.0 || currentWords == []) {
 					wordsCount =
-						if (^width > remaining && ^widthWithBreakEquation != 0.0) {
-							width := ^widthWithBreakEquation;
+						if (roundUIMetricsValue(^fragmentWith - remaining) > 0.0 && ^widthWithBreakEquation != 0.0) {
+							fragmentWith := ^widthWithBreakEquation;
 							^wordsCountWithBreakEquation
 						} else {
 							wordsCount0;
@@ -1442,9 +1434,9 @@ reflowTParaWordsRec(
 						_rest,
 						currentWordIndex + wordsCount,
 						availableWidth,
-						remaining - ^width,
+						remaining - ^fragmentWith,
 						newCurrentWords,
-						if (isTextElement(word.word) && catchOverflow && ^width > remaining + lineIndent) addOverflow(^width) else result,
+						if (isTextElement(word.word) && catchOverflow && roundUIMetricsValue(^fragmentWith - remaining - lineIndent) > 0.0) addOverflow(^fragmentWith) else result,
 						paraIndent,
 						false,
 						catchOverflow,
