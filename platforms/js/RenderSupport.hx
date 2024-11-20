@@ -61,6 +61,7 @@ class RenderSupport {
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
 	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
 	public static var PinchToScaleEnabled : Bool = true;
+	public static var StopKeyEventsPropagation : Bool = Util.getParameter("stop_key_events_propagation") != "0";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -1072,6 +1073,10 @@ class RenderSupport {
 		PinchToScaleEnabled = enabled;
 	}
 
+	public static function setStopKeyEventsPropagation(stop : Bool) {
+		StopKeyEventsPropagation = stop;
+	}
+
 	public static function getSafeArea() : Array<Float> {
 		var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
@@ -1590,7 +1595,9 @@ class RenderSupport {
 		}
 
 		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic, stage : FlowContainer) {
-			e.stopPropagation();
+			if (StopKeyEventsPropagation) {
+				e.stopPropagation();
+			}
 			if (RendererType == "html") {
 				onKeyDownAccessibilityZoom(e);
 			}
@@ -1602,7 +1609,9 @@ class RenderSupport {
 		});
 
 		updateNonPassiveEventListener(root, "keyup", function(e : Dynamic, stage : FlowContainer) {
-			e.stopPropagation();
+			if (StopKeyEventsPropagation) {
+				e.stopPropagation();
+			}
 			MousePos.x = e.clientX;
 			MousePos.y = e.clientY;
 
