@@ -273,6 +273,7 @@ class GLFont
     GLFontLibrary::Ptr library;
 
     FT_Face face;
+    std::vector<uint8_t>* font_data;
     
     bool is_freetype;
     bool is_system;
@@ -361,7 +362,7 @@ class GLFont
     GLTextureImage::Ptr getGlyphTile(GlyphInfo *info, vec2 *bearing, vec2 *tcoord1, vec2 *tcoord2);
     GLTextureImage::Ptr loadGlyphGrid(unsigned grid_id);
 
-    GLFont(GLFontLibrary::Ptr library, FT_Face face);
+    GLFont(GLFontLibrary::Ptr library, FT_Face face, std::vector<uint8_t>* font_data);
     GLFont(GLFontLibrary::Ptr library, StaticBuffer &data);
     GLFont(GLFontLibrary::Ptr library, const FontHeader &data);
 

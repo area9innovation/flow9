@@ -4314,6 +4314,16 @@ class RenderSupport {
 		removeChild(element, child);
 	}
 
+	public static function getPropertyValue(clip : DisplayObject, property : String) : String {
+		if (untyped HaxeRuntime.instanceof(clip, Element)) {
+			return Browser.window.getComputedStyle(untyped clip).getPropertyValue(property);
+		} else {
+			var parentClip = untyped clip.nativeWidget || clip.findParentClip();
+			var nativeWidget = untyped parentClip.nativeWidget || Browser.document.body;
+			return Browser.window.getComputedStyle(nativeWidget).getPropertyValue(property);
+		}
+	}
+
 	public static function getNumberOfCameras() : Int {
 		return 0;
 	}

@@ -204,8 +204,11 @@ GLFontLibrary::~GLFontLibrary()
 
 GLFont::Ptr GLFontLibrary::loadNativeFont(std::string file)
 {
+    std::vector<uint8_t>* buffer = new std::vector<uint8_t>();
+    readFileToVector(buffer, file, true);
+    
     FT_Face face;
-    FT_Error error = FT_New_Face(library, file.c_str(), 0, &face);
+    FT_Error error = FT_New_Memory_Face(library, buffer->data(), buffer->size(), 0, &face);
 
     if (error) {
         cerr << "Couldn't load " << file << endl;
@@ -216,10 +219,11 @@ GLFont::Ptr GLFontLibrary::loadNativeFont(std::string file)
     if (!FT_IS_SCALABLE(face)) {
         cerr << "Not a scalable font - unsupported: " << file << endl;
         FT_Done_Face(face);
+        buffer->clear();
         return GLFont::Ptr();
     }
 
-    GLFont::Ptr ptr(new GLFont(self.lock(), face));
+    GLFont::Ptr ptr(new GLFont(self.lock(), face, buffer));
     
     ptr->self = ptr;
     return ptr;
@@ -333,8 +337,8 @@ void GLCompoundTexture::resize(int new_size)
 
 // FONT
 
-GLFont::GLFont(GLFontLibrary::Ptr library, FT_Face face) :
-    library(library), face(face)
+GLFont::GLFont(GLFontLibrary::Ptr library, FT_Face face, std::vector<uint8_t>* font_data) :
+    library(library), face(face), font_data(font_data)
 {
     is_freetype = true;
     is_system = false;
@@ -442,6 +446,7 @@ GLFont::~GLFont()
 
     if (is_freetype) {
         FT_Done_Face(face);
+        font_data->clear();
     }
 }
 

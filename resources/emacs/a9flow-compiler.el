@@ -1,25 +1,32 @@
-;; a9flow-compiler.el
-;; a9flow-compiler minor mode
-;; 
-;; Manage (start, kill, restart, clean) flowc http-server.
-;;
+;; a9flow-compiler.el --- Minor mode Run http a9flow compile in a9flow-mode -*- lexical-binding:t -*-
+
+;; Copyright (C) 2024 Evgeniy Turishev
+
 ;; Author: Evgeniy Turishev evgeniy.turishev@area9.dk
-;;
+
 ;; This file is not part of GNU Emacs.
-;;
+
+;;; License:
+
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation; either version 2, or (at your option)
 ;; any later version.
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;;; Commentary:
+
+;; a9flow-compiler minor mode
+;; 
+;; Manage (start, kill, restart, clean) flowc compiler http-server.
+;;
+;;
 ;; Customazing
 ;; set a custom command to run the compiler server as a list command-name and args
 ;; like
 ;;  '("flowc1" "server-mode=http")
 ;; or
 ;;  '("java" "-jar" "-Xss32m" "-Xms256m" "-Xmx8g" "/home/work/area9/flow9/tools/flowc/flowc.jar" "server-mode=http")
-;;
+;;q
 ;; set clean objects command (used in restart also):
 ;; (setq a9flow-compiler-clean-cmd "rm -fR /home/work/area9/flow9/objc")
 
@@ -30,8 +37,6 @@
 ;; M-x a9flow-compiler-clean
 
 
-(provide 'a9flow-compiler)
-
 (defvar a9flow-project-dir nil "a9flow default directory")
 
 (defconst a9flow-http-server-name "a9flow-http-server")
@@ -40,8 +45,8 @@
 
 
 (defvar a9flow-compiler-run-server-cmd nil
-  "can be a list of command-name and its args, that can used in make-process as :command arg"
-  )
+  "list of stirng - command-name and its args")
+
 
 (defvar a9flow-http-server-status 'x)
 
@@ -83,8 +88,8 @@
 		     :sentinel (lambda (process event)
 				 (internal-default-process-sentinel process event)
 				 (a9flow-http-server-upd-status process event)))))
-	(a9flow-http-server-upd-status process nil)
-	))))
+	(a9flow-http-server-upd-status process nil)))))
+
 
 (defun a9flow-kill-http-server ()
   (interactive)
@@ -105,8 +110,6 @@
 (defun a9flow-restart-http-server ()
   (interactive)
   (when (a9flow-http-server-get-status)
-    ;; (add-http-server-sentinel-after (lambda (process event)
-    ;; 				      (message "Process %s had the event: %s" process event)))
     (a9flow-kill-http-server)
     (sleep-for 1)
     (a9flow-compiler-clean)
@@ -138,5 +141,9 @@
     (message "a9flow-compiler-mode autoload: %s" a9flow-compiler-mode)
     (if a9flow-compiler-mode
 	(a9flow-start-http-server)
-      (a9flow-kill-http-server))))
+      (a9flow-kill-http-server)))
+  )
 
+
+(provide 'a9flow-compiler)
+;;; a9flow-compiler.el ends here

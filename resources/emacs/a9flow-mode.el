@@ -26,17 +26,10 @@
 ;; 	    )
 ;; 	  )
 
-(require 'cl-lib)
-(require 'generic-x)
-(require 'compile)
 (provide 'a9flow-mode) ;; the feature name corresponds to the file name
-
 
 (defvar a9flow-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map  "\M-."  'a9flow-goto-definition)
-    (define-key map  "\M-,"  'a9flow-go-back)
-    (define-key map  "\C-ch" 'a9flow-history-point)
     map)
   "Keymap for `a9flow-mode'.")
 
