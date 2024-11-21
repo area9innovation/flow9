@@ -1,0 +1,610 @@
+import material/material2tropic;
+import material/extra/filesystem/localfilesystem_extended_api;
+
+export {
+	makeFilesystemTreeView(
+		initPath : string,
+		fsApi : FilesystemExtAPI,
+		onItemSelected : (paths : [string]) -> void,
+		onError : (string) -> void
+	) -> Material;
+}
+
+FsNodeItem(
+	name : string,
+	isDirectory : bool,
+	isExpandedB : DynamicBehaviour<bool>
+);
+
+emptyNode = MTreeNode(
+	FsNodeItem("", false, make(false)),
+	\__ -> MEmpty(),
+	const([]),
+	[MExpanded(make(false))]
+);
+
+makeFilesystemTreeView(
+	initPath : string,
+	fsApi : FilesystemExtAPI,
+	onItemSelected : ([string]) -> void,
+	onError : (string) -> void
+) -> Material {
+	selectionB = make(makeSet());
+	childrenB = make([]);
+	keySelectionB = make([]);
+
+	// Tracker for responding to selection changes.
+	onItemSelectedInner = \selectionSet, children -> {
+		mapAsync(
+			set2array(selectionSet),
+			\selection, ff, rj -> {
+				fsSelection2path(
+					initPath, selection, children,
+					ff,
+					rj
+				);
+			},
+			onItemSelected,
+			onError
+		);
+
+		sel = set2array(selectionSet);
+		if (length(sel) == 1) {
+			nextDistinct(keySelectionB, sel[0]);
+		}
+	}
+
+	// Loads the top level items list.
+	fsGetChildren(
+		initPath,
+		fsApi,
+		[],
+		keySelectionB,
+		\newSelection -> nextDistinct(selectionB, buildSet([newSelection])),
+		\nodes -> nextDistinct(childrenB, nodes),
+		onError
+	);
+
+	// View for the item tree.
+	MConstruct(
+		[make2Subscribe2(selectionB, childrenB, onItemSelectedInner)],
+		MScroll(
+			// 1px border for key selection frame.
+			// 12px for the scroll on the right side
+			MBorder4(1., MBorderRight(12.)(fsNavigationByKeys(
+				childrenB,
+				selectionB,
+				keySelectionB,
+				MTree(
+					childrenB,
+					[
+						MTreeSimplifiedView(),
+						MTreeSelection(selectionB),
+						MTreeHideSeparators()
+					]
+				)
+			))),
+			MFillXY(),
+			[]
+		)
+	);
+}
+
+// Converts the selection indexe to the filesystem path.
+fsSelection2path(
+	initPath : string,
+	selection : [int],
+	nodes : [MTreeNode<FsNodeItem>],
+	onPath : (string) -> void,
+	onError : (string) -> void
+) -> void {
+	if (selection == []) {
+		onPath(initPath)
+	} else {
+		index = selection[0];
+		if (length(nodes) > index) {
+			node = nodes[index];
+			fsSelection2path(
+				initPath + (if (initPath != "") "/" else "") + node.content.name,
+				tail(selection),
+				fgetValue(node.children),
+				onPath,
+				onError
+			);
+		} else {
+			onError("Corrupted selection index");
+		}
+	}
+}
+
+// Reads the current directory and prepares a list of child elements (nodes).
+fsGetChildren(
+	parentPath : string,
+	fsApi : FilesystemExtAPI,
+	parentIndex : [int],
+	keySelectionB : DynamicBehaviour<[int]>,
+	setSelected : ([int]) -> void,
+	onChildren : ([MTreeNode<FsNodeItem>]) -> void,
+	onError : (string) -> void
+) -> void {
+	fsApi.readDirectory(
+		parentPath,
+		\folders, files -> {
+			folders2 = sort(
+				filtermap(folders, \folder -> {
+					if (contains([".", ".."], folder)) None()
+					else Some(fileNameOnly(folder));
+				})
+			);
+			files2 = sort(
+				map(files, fileNameOnly)
+			);
+			foldersLen = length(folders2);
+
+			onChildren(concat(
+				mapi(folders2, \i, folder -> fsMakeFolderNode(
+					folder, i, parentPath,
+					fsApi, parentIndex, keySelectionB,
+					setSelected, onError
+				)),
+				mapi(files2, \i, file -> fsMakeFileNode(
+					file, foldersLen + i, parentIndex, keySelectionB, setSelected
+				)),
+			));
+		},
+		onError
+	);
+}
+
+// Makes a folder node.
+fsMakeFolderNode(
+	name : string,
+	index : int,
+	parentPath : string,
+	fsApi : FilesystemExtAPI,
+	parentIndex : [int],
+	keySelectionB : DynamicBehaviour<[int]>,
+	setSelected : ([int]) -> void,
+	onError : (string) -> void
+) -> MTreeNode<FsNodeItem> {
+	isLoadedR = ref false;
+	childrenB = make([emptyNode]);
+	curIndex = arrayPush(parentIndex, index);
+	iconColor = MGrey(600);
+	item = FsNodeItem(
+		name,
+		true,
+		make(false)
+	);	
+
+	reloadChildren = \isExpanded -> {
+		if (!^isLoadedR && isExpanded) {
+			fsGetChildren(
+				parentPath + "/" + name,
+				fsApi,
+				curIndex,
+				keySelectionB,
+				setSelected,
+				\nodes -> {
+					isLoadedR := true;
+					nextDistinct(childrenB, nodes);
+				},
+				onError
+			);
+		}
+	}
+
+	getIcon = \isExpandedB, color -> {
+		MConstruct(
+			[makeSubscribe(isExpandedB, reloadChildren)],
+			MIf(
+				isExpandedB,
+				MIconButton("arrow_drop_down", \-> reverseBehaviour(isExpandedB), [MIconSize(18.), iconColor, MIconButtonBorder(0.)], []),
+				MIconButton("arrow_right",  \-> reverseBehaviour(isExpandedB), [MIconSize(18.), iconColor, MIconButtonBorder(0.)], [])
+			)
+		);
+	}
+
+	MTreeNode(
+		item,
+		\s -> fsItem2material(s, "folder", iconColor, feq(keySelectionB, curIndex), \-> setSelected(curIndex)),
+		childrenB,
+		[
+			MExpanded(make(false)),
+			MTreeNodeCustomIcon(getIcon),
+			MExpanded(item.isExpandedB)
+		]
+	);
+}
+
+// Makes a file node.
+fsMakeFileNode(
+	name : string,
+	index : int,
+	parentIndex : [int],
+	keySelectionB : DynamicBehaviour<[int]>,
+	setSelected : ([int]) -> void
+) -> MTreeNode<FsNodeItem> {
+	curIndex = arrayPush(parentIndex, index);
+	item = FsNodeItem(
+		name,
+		false,
+		make(false)
+	);	
+
+	MTreeNode(
+		item,
+		\s -> fsItem2material(s, "insert_drive_file", MGrey(400), feq(keySelectionB, curIndex), \-> setSelected(curIndex)),
+		const([emptyNode]),
+		[
+			MExpanded(make(false)),
+			MTreeNodeCustomIcon(\__, color -> MFixed(18., 18.))
+		]
+	)
+}
+
+// Converts the item node to the Material.
+fsItem2material(
+	item : FsNodeItem,
+	icon : string,
+	iconColor : MColor,
+	isSelectedT : Transform<bool>,
+	onClick : () -> void
+) -> Material {
+	fsItemHovering(
+		MGroup2(
+			MBorder4(4., MColsA([
+				MIcon(icon, [MIconSize(18.), iconColor]),
+				MFixedX(8.),
+				MText(item.name, []),
+			])),
+			MFillX()
+		),
+		32.,
+		const(false),
+		onClick
+	) |> (\m -> {
+		MIf(
+			isSelectedT,
+			MFrame(0., 2., [MStroke(MBlue(400))], m),
+			m
+		)
+	});
+}
+
+// Visual improvement for the item.
+fsItemHovering(
+	material : Material,
+	rowHeight : double,
+	selectedT : Transform<bool>,
+	onClick : () -> void
+) -> Material {
+	MComponent([
+			MRippleColor(const(MBlack())),
+			MRippleType(const(MRippleFill())),
+			MHighlightOnFocus(const(true)),
+			MHighlightOnHover(const(true)),
+			MHighlightOnSelect(const(true)),
+			MRippleSelected(selectedT),
+			MRippleOverlay(false),
+			MOnClick(onClick)
+		],
+		\__ -> material
+	)
+	|> (\m -> MAvailable(m, TFillXH(rowHeight)));
+}
+
+// Tree control by keys.
+fsNavigationByKeys(
+	childrenB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>,
+	view : Material
+) -> Material {
+	MInteractive([
+		KeyDown2(\h, ke -> {
+			if (!h) {
+				if (ke.utf == "up" || ke.keycode == KEY_UP) {
+					fsNavigationByKeysUp(childrenB, selectionB, keySelectionB);
+					true;
+				} else if (ke.utf == "down" || ke.keycode == KEY_DOWN) {
+					fsNavigationByKeysDown(childrenB, selectionB, keySelectionB);
+					true;
+				} else if (ke.utf == "left" || ke.keycode == KEY_LEFT) {
+					fsNavigationByKeysLeft(childrenB, selectionB, keySelectionB);
+					true;
+				} else if (ke.utf == "right" || ke.keycode == KEY_RIGHT) {
+					fsNavigationByKeysRight(childrenB, selectionB, keySelectionB);
+					true;
+				} else if (ke.utf == "home" || ke.keycode == KEY_HOME) {
+					fsNavigationByKeysBranchHome(childrenB, selectionB, keySelectionB);
+					true;
+				} else if (ke.utf == "end" || ke.keycode == KEY_END) {
+					fsNavigationByKeysBranchEnd(childrenB, selectionB, keySelectionB);
+					true;
+				} else if (ke.utf == "enter" || ke.keycode == KEY_ENTER) {
+					keySelection = getValue(keySelectionB);
+					if (keySelection != []) {
+						next(selectionB, buildSet([keySelection]));
+					}
+					true;
+				} else {
+					h;
+				}
+			} else {
+				h;
+			}
+		})
+	], view)
+}
+
+// Moving UP.
+fsNavigationByKeysUp(
+	childrenB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	fsNavigationVertical(true, childrenB, selectionB, keySelectionB);
+}
+
+// Moving DOWN.
+fsNavigationByKeysDown(
+	childrenB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	fsNavigationVertical(false, childrenB, selectionB, keySelectionB);
+}
+
+// Moving LEFT (collapsing the branch or jumping to parent).
+fsNavigationByKeysLeft(
+	childrenB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	fsNavigationHorizontal(true, childrenB, selectionB, keySelectionB);
+}
+
+// Moving RIGHT (expanding the branch or jumping to first child).
+fsNavigationByKeysRight(
+	childrenB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	fsNavigationHorizontal(false, childrenB, selectionB, keySelectionB);
+}
+
+// Moving HOME (jumping to the first item of the branch).
+fsNavigationByKeysBranchHome(
+	childrenB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	fsNavigationBranch(true, childrenB, selectionB, keySelectionB);
+}
+
+// Moving END (jumping to the last item of the branch).
+fsNavigationByKeysBranchEnd(
+	childrenB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	fsNavigationBranch(false, childrenB, selectionB, keySelectionB);
+}
+
+// Initialization of the keys selection (if nothing was selected yet).
+fsNavigationInit(
+	nodesStructureB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	keySelection = getValue(keySelectionB);
+	clickSelection = set2array(getValue(selectionB));
+	nodesStructure  = getValue(nodesStructureB);
+
+	if (keySelection == []) {
+		if (clickSelection == []) {
+			if (nodesStructure != []) {
+				next(keySelectionB, [0]);
+			}
+		} else {
+			next(keySelectionB, clickSelection[0]);
+		}
+	}
+}
+
+// Common tool to navigate with PAGE UP or PAGE DOWN keys.
+fsNavigationBranch(
+	upShift : bool,
+	nodesStructureB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	fsNavigationInit(nodesStructureB, selectionB, keySelectionB);
+
+	keySelection = getValue(keySelectionB);
+	nodesStructure  = getValue(nodesStructureB);
+
+	if (keySelection != []) {
+		lastIndex = lastElement(keySelection, 0);
+		parentCollection = fsNavigationExtractParentNodeChildren(nodesStructure, keySelection);
+		parentlen = length(parentCollection);
+
+		if (upShift && lastIndex != 0) {
+			next(
+				keySelectionB,
+				fsNavigationUpdateLastIndex(keySelection, 0)
+			);
+		} else if (!upShift && lastIndex < parentlen - 1) {
+			next(
+				keySelectionB,
+				fsNavigationUpdateLastIndex(keySelection, parentlen - 1)
+			);
+		}
+	}
+}
+
+// Common tool to navigate with UP or DOWN keys.
+fsNavigationVertical(
+	upShift : bool,
+	nodesStructureB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	fsNavigationInit(nodesStructureB, selectionB, keySelectionB);
+
+	keySelection = getValue(keySelectionB);
+	nodesStructure  = getValue(nodesStructureB);
+
+	if (keySelection != []) {
+		lastIndex = lastElement(keySelection, 0);
+		parentCollection = fsNavigationExtractParentNodeChildren(nodesStructure, keySelection);
+
+		// Moving UP
+		if (upShift) {
+			// Jump to the parent.
+			if (lastIndex == 0) {
+				curlen = length(keySelection);
+				if (curlen > 1) {
+					next(
+						keySelectionB,
+						take(keySelection, curlen - 1)
+					);
+				}
+			// Search last expanded (visible) item of the previous (above) item.
+			} else {
+				prevNode = parentCollection[lastIndex - 1];
+				if (!prevNode.content.isDirectory || !getValue(prevNode.content.isExpandedB) || fgetValue(prevNode.children) == []) {
+					next(
+						keySelectionB,
+						fsNavigationUpdateLastIndex(keySelection, lastIndex - 1)
+					);
+				} else {
+					newIndex = fsNavigationFindLastExpanded(getValue(prevNode.children));
+					if (newIndex != []) {
+						next(
+							keySelectionB,
+							concat(fsNavigationUpdateLastIndex(keySelection, lastIndex - 1), newIndex)
+						);
+					}
+				}
+			}
+		// Moving DOWN
+		} else {
+			parentlen = length(parentCollection);
+			currentNode = parentCollection[lastIndex];
+
+			// We need to go deeper into the current item-directory.
+			if (currentNode.content.isDirectory && getValue(currentNode.content.isExpandedB) && fgetValue(currentNode.children) != []) {
+				next(keySelectionB, arrayPush(keySelection, 0));
+			// It is not the last item in the current branch and we select the next item on the same level.
+			} else if (lastIndex < parentlen - 1) {
+				next(keySelectionB, fsNavigationUpdateLastIndex(keySelection, lastIndex + 1));
+			// It is the last item in the current branch and we need to just to the next branch
+			} else {
+				newIndex = fsNavigationFindNextExpanded(nodesStructure, keySelection);
+				if (newIndex != []) {
+					next(keySelectionB, newIndex);
+				}
+			}
+		}
+	}
+}
+
+// Common tool to navigate with LEFT or RIGHT keys.
+fsNavigationHorizontal(
+	leftShift : bool,
+	nodesStructureB : DynamicBehaviour<[MTreeNode<FsNodeItem>]>,
+	selectionB : DynamicBehaviour<Set<[int]>>,
+	keySelectionB : DynamicBehaviour<[int]>
+) -> void {
+	fsNavigationInit(nodesStructureB, selectionB, keySelectionB);
+
+	keySelection = getValue(keySelectionB);
+	nodesStructure  = getValue(nodesStructureB);
+
+	if (keySelection != []) {
+		lastIndex = lastElement(keySelection, 0);
+		parentCollection = fsNavigationExtractParentNodeChildren(nodesStructure, keySelection);
+		currentNode = parentCollection[lastIndex];
+		parentLen = length(parentCollection);
+
+		if (leftShift) {
+			if (currentNode.content.isDirectory && getValue(currentNode.content.isExpandedB)) {
+				next(currentNode.content.isExpandedB, false);
+			} else if (length(keySelection) > 1) {
+				next(keySelectionB, take(keySelection, length(keySelection) - 1));
+			}
+		} else {
+			if (currentNode.content.isDirectory && !getValue(currentNode.content.isExpandedB)) {
+				next(currentNode.content.isExpandedB, true);
+			} else if (currentNode.content.isDirectory) {
+				subChildren = fgetValue(currentNode.children);
+				if (subChildren != []) {
+					next(keySelectionB, arrayPush(keySelection, 0));
+				}
+			}
+		}
+	}
+}
+
+// Updates the last value in the current selection.
+fsNavigationUpdateLastIndex(selection : [int], value : int) -> [int] {
+	arrayPush(take(selection, length(selection) - 1), value);
+}
+
+// Retrieves the complete list of elements in the current branch.
+fsNavigationExtractParentNodeChildren(nodesStructure : [MTreeNode<FsNodeItem>], selection : [int]) -> [MTreeNode<FsNodeItem>] {
+	if (selection == []) {
+		[]
+	} else if (length(selection) == 1) {
+		nodesStructure
+	} else {
+		firstIndex = firstElement(selection, 0);
+		if (length(nodesStructure) > firstIndex) {
+			fsNavigationExtractParentNodeChildren(
+				fgetValue(nodesStructure[firstIndex].children),
+				tail(selection)
+			);
+		} else {
+			nodesStructure
+		}
+	}
+}
+
+// Searches for the previous expanded (visible) element before the selected one.
+fsNavigationFindLastExpanded(nodesStructure : [MTreeNode<FsNodeItem>]) -> [int] {
+	itemsLen = length(nodesStructure);
+	if (itemsLen == 0) {
+		[]
+	} else {
+		lastItem = nodesStructure[itemsLen - 1];
+		lastItemChildren = fgetValue(lastItem.children);
+		if (lastItem.content.isDirectory && getValue(lastItem.content.isExpandedB) && length(lastItemChildren) > 0) {
+			concat(
+				[itemsLen - 1],
+				fsNavigationFindLastExpanded(lastItemChildren)
+			);
+		} else {
+			[itemsLen - 1];
+		}
+	}
+}
+
+// Searches for the next expanded (visible) element after the selected one.
+fsNavigationFindNextExpanded(nodesStructure : [MTreeNode<FsNodeItem>], selection : [int]) -> [int] {
+	if (selection == []) {
+		[]
+	} else {
+		selection1 = take(selection, length(selection) - 1);
+		parentCollection = fsNavigationExtractParentNodeChildren(nodesStructure, selection1);
+		lastIndex = lastElement(selection1, 0);
+		parentlen = length(parentCollection);
+
+		if (lastIndex < parentlen - 1) {
+			fsNavigationUpdateLastIndex(selection1, lastIndex + 1)
+		} else {
+			fsNavigationFindNextExpanded(nodesStructure, selection1);
+		}
+	}
+}
