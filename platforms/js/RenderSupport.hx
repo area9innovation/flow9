@@ -466,6 +466,34 @@ class RenderSupport {
 		}
 	}
 
+	public static function setGlobalStyle(selector : String, name : String, value : String) : Void {
+		var style : Dynamic = untyped Browser.document.getElementById("flow-global-style") || Browser.document.createElement('style');
+		style.type = 'text/css';
+		style.id = "flow-global-style";
+		Browser.document.getElementsByTagName('head')[0].appendChild(style);
+		if (value != null && value != "") {
+			// Add CSS rule
+			untyped __js__("if (!(style.sheet||{}).insertRule)
+				(style.styleSheet || style.sheet).addRule(selector, name+':'+value);
+			else
+				style.sheet.insertRule(selector+'{'+name+':'+value+';}',0);");
+		} else {
+			// Remove CSS rule
+			untyped __js__("var sheet = style.styleSheet || style.sheet;
+			var rules = sheet.cssRules || sheet.rules;
+			for (var i = 0; i < rules.length; i++) {
+				if (rules[i].selectorText === selector) {
+					if (sheet.deleteRule) {
+						sheet.deleteRule(i);
+					} else {
+						sheet.removeRule(i);
+					}
+					break;
+				}
+			}");
+		}
+	}
+
 	public static function getClipHTML(clip : DisplayObject) : String {
 		if (!printMode) {
 			printMode = true;
