@@ -1564,8 +1564,12 @@ class RenderSupport {
 
 	public static function onpointerout(e : Dynamic, stage : FlowContainer) {
 		try {
-			if (e.relatedTarget == Browser.document.documentElement) {
-				if (!MouseUpReceived) stage.emit("mouseup");
+			if (!MouseUpReceived && (
+				e.relatedTarget == Browser.document.documentElement ||
+				// Support onpointerout event from vscode webview
+				untyped __js__("window.acquireVsCodeApi != null") && e.relatedTarget == null && e.buttons > 0 && e.target == PixiView
+			)) {
+				stage.emit("mouseup");
 			}
 		} catch (e : Dynamic) {
 			untyped console.log("onpointerout error : ");
