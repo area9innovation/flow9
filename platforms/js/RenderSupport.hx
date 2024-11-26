@@ -2128,6 +2128,10 @@ class RenderSupport {
 			untyped clip.overrideHeight = value;
 		}
 
+		if (name == "overflow") {
+			untyped clip.overrideOverflow = value;
+		}
+
 		if (accessWidget == null) {
 			if (AccessibilityEnabled || clip.isHTMLRenderer()) {
 				if (clip.isHTMLRenderer()) {

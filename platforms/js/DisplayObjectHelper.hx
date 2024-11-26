@@ -1729,7 +1729,9 @@ class DisplayObjectHelper {
 			untyped nativeWidget.style.clipPath = null;
 			untyped nativeWidget.style.clip = null;
 			nativeWidget.style.borderRadius = null;
-			if (untyped clip.scrollRectListener != null) {
+			if (untyped clip.overrideOverflow) {
+				nativeWidget.style.overflow = untyped clip.cropEnabled ? clip.overrideOverflow : "visible";
+			} else if (untyped clip.scrollRectListener != null) {
 				nativeWidget.classList.add("nativeScroll");
 				nativeWidget.style.overflow = untyped clip.cropEnabled ? (untyped clip.isInput ? "auto" : "scroll") : "visible";
 			} else {
