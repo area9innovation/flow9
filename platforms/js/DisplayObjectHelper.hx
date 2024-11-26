@@ -1226,8 +1226,14 @@ class DisplayObjectHelper {
 
 			if (nativeWidget.firstChild != null) {
 				if (untyped clip.contentBounds != null) {
-					nativeWidget.firstChild.style.width = '${untyped Math.max(clip.contentBounds.maxX, maskWidth)}px';
-					nativeWidget.firstChild.style.height = '${untyped Math.max(clip.contentBounds.maxY, maskHeight)}px';
+					if (untyped clip.scrollRectListener != null) {
+						nativeWidget.firstChild.style.width = '${untyped clip.contentBounds.maxX}px';
+						nativeWidget.firstChild.style.height = '${untyped clip.contentBounds.maxY}px';
+						nativeWidget.firstChild.style.overflow = 'hidden';
+					} else {
+						nativeWidget.firstChild.style.width = '${untyped Math.max(clip.contentBounds.maxX, maskWidth)}px';
+						nativeWidget.firstChild.style.height = '${untyped Math.max(clip.contentBounds.maxY, maskHeight)}px';
+					}
 				} else if (untyped clip.maxLocalBounds != null) {
 					nativeWidget.firstChild.style.width = '${untyped Math.max(clip.maxLocalBounds.maxX, maskWidth)}px';
 					nativeWidget.firstChild.style.height = '${untyped Math.max(clip.maxLocalBounds.maxY, maskHeight)}px';
@@ -1571,18 +1577,22 @@ class DisplayObjectHelper {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
 
 		if (nativeWidget.firstChild != null) {
-			if (untyped x < 0 || clip.scrollRect == null || x > getContentWidth(clip) - clip.scrollRect.width || RenderSupport.printMode) {
+			if (untyped x < 0 || clip.scrollRect == null || (clip.scrollRectListener == null && x > getContentWidth(clip) - clip.scrollRect.width) || RenderSupport.printMode) {
 				nativeWidget.firstChild.style.left = '${-round(x)}px';
 
 				x = 0;
+			} else if (untyped clip.scrollRectListener != null) {
+				x = Math.min(x, Math.max(getContentWidth(clip) - untyped clip.scrollRect.width, 0.0));
 			} else {
 				nativeWidget.firstChild.style.left = null;
 			}
 
-			if (untyped y < 0 || clip.scrollRect == null || y > getContentHeight(clip) - clip.scrollRect.height || RenderSupport.printMode) {
+			if (untyped y < 0 || clip.scrollRect == null || (clip.scrollRectListener == null && y > getContentHeight(clip) - clip.scrollRect.height) || RenderSupport.printMode) {
 				nativeWidget.firstChild.style.top = '${-round(y)}px';
 
 				y = 0;
+			} else if (untyped clip.scrollRectListener != null) {
+				y = Math.min(y, Math.max(getContentHeight(clip) - untyped clip.scrollRect.height, 0.0));
 			} else {
 				nativeWidget.firstChild.style.top = null;
 			}
