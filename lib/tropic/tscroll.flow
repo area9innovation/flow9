@@ -13,7 +13,7 @@ export {
 		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition, TScrollStep,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
 		TScrollbarsAdditionalBox, TScrollbarOverlapContentExt, TScrollAxisEnabled, TScrollResizeBeforePrint, TScrollCropEnabled, TScrollSkipInteractivityOnHold,
-		TScrollThrottleContentMetrics, TScrollNative;
+		TScrollThrottleContentMetrics, TScrollNative, DomRender;
 
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
@@ -181,20 +181,28 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	mouseEnabled = extractStruct(style, TScrollMouseEnabled(const(true))).enabled;
 	contentThrottled = contains(style, TScrollThrottleContentMetrics());
 	nativeScroll = js && (^nativeScrollEnabled || contains(style, TScrollNative())) && getRendererType() == "html";
+	domRender = isDomRenderEnabled(style);
 
 	axisEnabled = extractStruct(style, TScrollAxisEnabled(const(true), const(true)));
 	xEnabled = axisEnabled.x;
 	yEnabled = axisEnabled.y;
 
+	 // On macosx or mobile native scrollbars overlay content
+	overlayContent = mobile || macosx();
 	overlapContent0 =
-		if (isUrlParameterTrue("scroll_overlap_debug"))
+		if (isUrlParameterTrue("scroll_overlap_debug") || (domRender && !overlayContent))
 			TScrollbarOverlapContentExt(false, true)
 		else
 			extractStruct(style, TScrollbarOverlapContentExt(true, true));
 
 	overlapContent = overlapContent0.overlap || !overlapContent0.shrink;
 
-	scrollBarStyles = extractStruct(style, TScrollbars(standardScrollBar, standardScrollBar));
+	scrollBarStyles =
+		extractStruct(style, TScrollbars(standardScrollBar, standardScrollBar))
+		|> (\ts -> if (domRender && !overlayContent)
+			TScrollbars(ts with x = TScrollbarStyle(ts.x with thickness = const(18.)), y = TScrollbarStyle(ts.y with thickness = const(18.))) // 18px - default scrollbar width on windows
+		else
+			ts);
 	scrollBarsVisible : TScrollbarsVisible = extractStruct(style, TScrollbarsVisible(make(false), make(false)));
 	scrollBarsAdditionalBox = extractStruct(style, TScrollbarsAdditionalBox(
 		if (overlapContent0.overlap) const(WidthHeight(0., 0.))
@@ -529,8 +537,8 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 						else t
 					)
 					|> (\t ->
-						if (nativeScroll)
-							TScrollRectT(scrollPosition, boxWH, t, enabled)
+						if (nativeScroll || domRender)
+							TScrollRectT(scrollPosition, if (domRender) boxWH0 else boxWH, t, enabled, domRender)
 						else {
 							sPosition =
 								eitherMap(
@@ -624,7 +632,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 					\ -> createTScrollBars(
 						manager,
 						scrollId,
-						replaceStruct(style, scrollBarsVisible),
+						replaceStruct(replaceStruct(style, scrollBarsVisible), scrollBarStyles),
 						contentWH,
 						boxWH,
 						scrollPosition,
@@ -686,7 +694,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 	})
 }
 
-TScrollRectT(scrollPosition : DynamicBehaviour<Point>, boxWH : Transform<WidthHeight>, t : Tropic, enabled : Transform<bool>) -> Tropic {
+TScrollRectT(scrollPosition : DynamicBehaviour<Point>, boxWH : Transform<WidthHeight>, t : Tropic, enabled : Transform<bool>, domRender : bool) -> Tropic {
 	TransformTAcc(\t2a, parent, sheet, metricsOnly -> {
 		x1 = fpointX(scrollPosition);
 		y1 = fpointY(scrollPosition);
@@ -726,6 +734,10 @@ TScrollRectT(scrollPosition : DynamicBehaviour<Point>, boxWH : Transform<WidthHe
 
 						d0 = renderFForm(bf.form, const(zo));
 						d = attachFChildren(clip, d0.clips, d0.disposers, [FClipMove(), FClipRotate(), FClipScale(), FClipMask()]);
+
+						if (domRender) {
+							setClipStyle(clip, "overflow", "auto");
+						}
 
 						disposers =
 							concat(
@@ -790,6 +802,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 	// Disable mouse wheel
 	disableWheel = contains(style, TScrollDisableMouseWheel());
 	nativeScroll = js && (^nativeScrollEnabled || contains(style, TScrollNative())) && getRendererType() == "html";
+	domRender = isDomRenderEnabled(style);
 	// Reverse mouse wheel
 	reverseWheel = contains(style, TReverseMouseWheel());
 	disableOutOfBounds = extractStruct(style, TScrollDisableOutOfBounds(const(false))).disable;
@@ -1091,7 +1104,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 		tr
 	)
 	|> (\f2 ->
-		if (disableWheel || nativeScroll)
+		if (disableWheel || nativeScroll || domRender)
 			f2
 		else
 			TGroupWithoutMetrics([
@@ -1229,6 +1242,7 @@ createTScrollBars(
 	scrollBarsVisible = extractStruct(style, TScrollbarsVisible(make(false), make(false)));
 	scrollPersistent = extractStruct(style, TScrollPersistent(const(false))).persistent;
 	isRTL = extractStruct(style, TSetRTL(getDefaultRtl())).rtl;
+	domRender = isDomRenderEnabled(style);
 
 	makeScrollBar =	\horizontal : bool -> {
 		down = make(false);
@@ -1409,6 +1423,7 @@ createTScrollBars(
 		// y scrollbar
 		makeScrollBar(false)
 	])
+	|> (\f -> if (domRender) TVisible(make(false), f) else f)
 	|> (\f -> TDispose([\ -> next(scrollBarsVisible.x, false), \ -> next(scrollBarsVisible.y, false)], f))
 }
 
