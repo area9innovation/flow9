@@ -932,6 +932,7 @@ class RenderSupport {
 		Browser.document.body.appendChild(debugClip);
 
 		debugClip.textContent = "DEBUG";
+		debugClip.id = "debugClip";
 		debugClip.style.position = "fixed";
 		debugClip.style.fontSize = "12px";
 		debugClip.style.zIndex = "1000";
