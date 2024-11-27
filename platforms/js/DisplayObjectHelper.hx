@@ -1575,32 +1575,68 @@ class DisplayObjectHelper {
 
 	public static function scrollNativeWidget(clip : DisplayObject, x : Float, y : Float) : Void {
 		var nativeWidget : Dynamic = untyped clip.nativeWidget;
+		var scrollRect = untyped clip.scrollRect;
+		var hasScrollRectListener : Bool = untyped clip.scrollRectListener != null;
+		var scrollLeftDelta = 0.0;
+		var scrollTopDelta = 0.0;
 
 		if (nativeWidget.firstChild != null) {
-			if (untyped x < 0 || clip.scrollRect == null || (clip.scrollRectListener == null && x > getContentWidth(clip) - clip.scrollRect.width) || RenderSupport.printMode) {
+			if (scrollRect == null || (!hasScrollRectListener && (x < 0 || x > getContentWidth(clip) - scrollRect.width)) || RenderSupport.printMode) {
 				nativeWidget.firstChild.style.left = '${-round(x)}px';
+				nativeWidget.firstChild.style.paddingRight = null;
 
 				x = 0;
-			} else if (untyped clip.scrollRectListener != null) {
-				x = Math.min(x, Math.max(getContentWidth(clip) - untyped clip.scrollRect.width, 0.0));
+			} else if (hasScrollRectListener) {
+				if (x < 0) { // Add left delta if over-scrolling left
+					scrollLeftDelta = -round(x);
+					nativeWidget.firstChild.style.left = '${scrollLeftDelta}px';
+					nativeWidget.firstChild.style.paddingRight = null;
+				} else {
+					var scrollbarWidth = nativeWidget.offsetWidth - nativeWidget.clientWidth;
+					var scrollMaxX = Math.max(getContentWidth(clip) - scrollRect.width + scrollbarWidth, 0.0);
+					if (x > scrollMaxX) { // Add right padding if over-scrolling right
+						nativeWidget.firstChild.style.left = null;
+						nativeWidget.firstChild.style.paddingRight = '${round(x - scrollMaxX)}px';
+					} else {
+						nativeWidget.firstChild.style.left = null;
+						nativeWidget.firstChild.style.paddingRight = null;
+					}
+				}
 			} else {
 				nativeWidget.firstChild.style.left = null;
+				nativeWidget.firstChild.style.paddingRight = null;
 			}
 
-			if (untyped y < 0 || clip.scrollRect == null || (clip.scrollRectListener == null && y > getContentHeight(clip) - clip.scrollRect.height) || RenderSupport.printMode) {
+			if (scrollRect == null || (!hasScrollRectListener && (y < 0 || y > getContentHeight(clip) - scrollRect.height)) || RenderSupport.printMode) {
 				nativeWidget.firstChild.style.top = '${-round(y)}px';
+				nativeWidget.firstChild.style.paddingBottom = null;
 
 				y = 0;
-			} else if (untyped clip.scrollRectListener != null) {
-				y = Math.min(y, Math.max(getContentHeight(clip) - untyped clip.scrollRect.height, 0.0));
+			} else if (hasScrollRectListener) {
+				if (y < 0) { // Add top delta if over-scrolling up
+					scrollTopDelta = -round(y);
+					nativeWidget.firstChild.style.top = '${scrollTopDelta}px';
+					nativeWidget.firstChild.style.paddingBottom = null;
+				} else {
+					var scrollbarHeight = nativeWidget.offsetHeight - nativeWidget.clientHeight;
+					var scrollMaxY = Math.max(getContentHeight(clip) - scrollRect.height + scrollbarHeight, 0.0);
+					if (y > scrollMaxY) { // Add bottom padding if over-scrolling down
+						nativeWidget.firstChild.style.top = null;
+						nativeWidget.firstChild.style.paddingBottom = '${round(y - scrollMaxY)}px';
+					} else {
+						nativeWidget.firstChild.style.top = null;
+						nativeWidget.firstChild.style.paddingBottom = null;
+					}
+				}
 			} else {
 				nativeWidget.firstChild.style.top = null;
+				nativeWidget.firstChild.style.paddingBottom = null;
 			}
 		}
 
 		if (untyped clip.scrollRect != null) {
-			var currentScrollLeft = round(nativeWidget.scrollLeft);
-			var currentScrollTop = round(nativeWidget.scrollTop);
+			var currentScrollLeft = round(nativeWidget.scrollLeft) - scrollLeftDelta;
+			var currentScrollTop = round(nativeWidget.scrollTop) - scrollTopDelta;
 
 			var updateScrollRectFn = function() {
 				if (untyped clip.scrollRect != null && clip.parent != null) {
@@ -1616,38 +1652,24 @@ class DisplayObjectHelper {
 				}
 			}
 
-			var scrollFn =
-				if (untyped clip.scrollRectListener != null)
-					function() {
-						if (untyped clip.scrollRect != null && clip.parent != null) {
-							if (nativeWidget.scrollLeft != untyped x != 0 ? clip.scrollRect.x : x) {
-								nativeWidget.scrollLeft = untyped x != 0 ? clip.scrollRect.x : x;
-							}
-
-							if (nativeWidget.scrollTop != untyped y != 0 ? clip.scrollRect.y : y) {
-								nativeWidget.scrollTop = untyped y != 0 ? clip.scrollRect.y : y;
-							}
-						}
+			var scrollFn = function() {
+				if (untyped clip.scrollRect != null && clip.parent != null) {
+					if (nativeWidget.scrollLeft != x) {
+						nativeWidget.scrollLeft = x;
 					}
-				else
-					function() {
-						if (untyped clip.scrollRect != null && clip.parent != null) {
-							if (nativeWidget.scrollLeft != x) {
-								nativeWidget.scrollLeft = x;
-							}
 
-							if (nativeWidget.scrollTop != y) {
-								nativeWidget.scrollTop = y;
-							}
-						}
+					if (nativeWidget.scrollTop != y) {
+						nativeWidget.scrollTop = y;
 					}
+				}
+			}
 
 			var onScrollFn =
 				if (untyped clip.scrollRectListener != null)
 					function() {
 						if (untyped clip.scrollRect != null && clip.parent != null) {
-							var nativeWidgetScrollLeft = round(nativeWidget.scrollLeft);
-							var nativeWidgetScrollTop = round(nativeWidget.scrollTop);
+							var nativeWidgetScrollLeft = round(nativeWidget.scrollLeft) - scrollLeftDelta;
+							var nativeWidgetScrollTop = round(nativeWidget.scrollTop) - scrollTopDelta;
 
 							if (nativeWidgetScrollLeft == currentScrollLeft && nativeWidgetScrollTop == currentScrollTop) {
 								return;

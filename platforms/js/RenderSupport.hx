@@ -959,7 +959,7 @@ class RenderSupport {
 	//
 
 	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
-	private static var printMode = false;
+	public static var printMode = false;
 	private static var forceOnAfterprint = Platform.isChrome;
 	private static var prevInvalidateRenderable = false;
 	private static var zoomFnUns = function() {};
