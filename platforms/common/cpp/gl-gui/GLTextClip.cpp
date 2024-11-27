@@ -371,10 +371,6 @@ void GLTextClip::layoutTextSpaceLines() {
             line.descender = std::min(line.descender, extent->layout->getDescent() * line_height_percent - interline_spacing);
             line.height = std::max(line.height, extent->layout->getLineHeight() * line_height_percent + interline_spacing);
         }
-        
-        if (!need_baseline) {
-            std::cout << interline_spacing << std::endl;
-        }
 
         // Apply spacing and compute baseline y
         float y_pos = top_limit + line.ascender;
