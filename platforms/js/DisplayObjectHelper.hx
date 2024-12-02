@@ -169,8 +169,7 @@ class DisplayObjectHelper {
 			}
 
 			for (child in getClipChildren(clip)) {
-				// Do not invalidate world transform for children that are invisible or have relative position when clip has absolute position
-				if (child.visible && (isRelativePosition(clip) || !isRelativePosition(child))) {
+				if (child.visible) {
 					invalidateWorldTransform(child, localTransformChanged && !isNativeWidget(clip), DebugUpdate ? from + ' ->\ninvalidateWorldTransform -> child' : null, parentClip, force);
 				}
 			}
