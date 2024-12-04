@@ -9,6 +9,7 @@ import pixi.core.textures.Texture;
 
 using DisplayObjectHelper;
 using RequestQueue;
+using RequestQueueRange;
 
 class VideoClip extends FlowContainer {
 	private var metricsFn : Float -> Float -> Void;
@@ -36,6 +37,7 @@ class VideoClip extends FlowContainer {
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 	private static var requestQueue = new RequestQueue();
+	private static var requestQueueRange = new RequestQueueRange();
 
 	public var videoWidget : Dynamic;
 	private var widgetBounds = new Bounds();
@@ -533,37 +535,56 @@ class VideoClip extends FlowContainer {
 		var source = Browser.document.createElement('source');
 		var isAppended = false;
 
+		if (type != "") {
+			untyped source.type = type;
+		}
+
 		if (headers.length == 0) {
 			source.onerror = onStreamError;
 			untyped source.src = src;
-
-			if (type != "") {
-				untyped source.type = type;
-			}
 		} else {
+			//var promise = requestQueue.request(src, headers);
+
 			// Downloads a file from/with a queue
-			var promise = requestQueue.request(src, headers);
+			var promise = requestQueueRange.request(src, headers, function(blob) {
+				// Capture the current playback time
+				var currentTime = videoWidget.currentTime;
+
+				// Update the source URL to the video, and reload
+				untyped source.src = blob;
+
+				// Reload the video, set to the previous playback time, and play
+				if (isAppended && videoWidget != null) {
+					// Add an event listener to play once the new source is loaded
+					videoWidget.addEventListener("loadeddata", function resumePlayback() {
+						// Restoring the last saved time after an update.
+						videoWidget.currentTime = currentTime;
+						
+						// Remove the event listener to avoid repeated calls
+						videoWidget.removeEventListener("loadeddata", resumePlayback);
+					});
+
+					// Load the new source
+					videoWidget.load();
+				}
+			});
 
 			// Handle the response
 			promise.then(function(blob) {
+				// Update the source URL to the video.
+				untyped source.src = blob;
+
 				if (nativeWidget != null) {
-					if (type != "") {
-						untyped source.type = type;
-					} else {
-						// Is it necessary here?
-						// untyped source.type = videoXhr.getResponseHeader("content-type");
-					}
-
-					// Everything is fine, let's show video
-					untyped source.src = blob;
-
 					// Check and try add source here.
 					if (!isAppended && videoWidget != null) {
 						isAppended = true;
 						videoWidget.appendChild(source);
 					}
+				} else {
+					//trace("nativeWidget is NULL");
 				}
 			}).catchError(function(error) {
+				//trace("Video error:", error);
 				onStreamError();
 			});
 		}
