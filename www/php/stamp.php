@@ -22,7 +22,7 @@ function getParameter($f) {
   return null;
 }
 
-$allowedParameters = ['file', 'json', 'h', 'db'];
+$allowedParameters = ['file', 'json', 'h', 'db', 't'];
 $parameters = array_merge($_POST, $_GET);
 if (!empty($parameters)) {
 	foreach ($parameters as $key => $value) {
