@@ -77,6 +77,8 @@ function callflow_platform(args) {
 		flow.callflow(args);
 	} else if (is_flow_winapp()) {
 		callflow_winapp(args);
+	} else if (is_cross_domain) {
+		parent.postMessage(JSON.stringify({ operation: "callflow", args }), "*");
 	} else {
 		callflow(args);
 	}

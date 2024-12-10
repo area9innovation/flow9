@@ -1,3 +1,4 @@
+import haxe.Json;
 import js.Browser;
 import pixi.core.math.Point;
 
@@ -169,6 +170,20 @@ class WebClip extends NativeWidgetClip {
 				} catch(e : Dynamic) { Errors.report(e); ondone(e);}
 			} catch(e : Dynamic) {
 				// Keep working in case of CORS error
+				function onCrossDomainMessage(e : Dynamic) {
+					try {
+						if (iframe.contentWindow == e.source) {
+							var message = Json.parse(e.data);
+							if (message.operation == "callflow") {
+								cb(message.args);
+							}
+						}
+					} catch(e : Dynamic) { Errors.report(e); }
+				}
+				Browser.window.addEventListener('message', onCrossDomainMessage);
+				once("removed", function() {
+					Browser.window.removeEventListener('message', onCrossDomainMessage);
+				});
 				ondone("OK");
 			}
 		};
