@@ -676,9 +676,9 @@ if (a === b) return true;
 	static public inline function getArray<T>(a : Array<T>, i : Int) : T {
 		if (i < 0 || i >= a.length) {
 			if (a.length == 0) {
-				throw "array index " + i + " is out of bounds: array is empty";
+				throw "array index " + i + " is out of bounds: array is empty " + haxe.CallStack.toString(haxe.CallStack.callStack());
 			} else {
-				throw "array index " + i + " is out of bounds: 0 <= i < " + a.length;
+				throw "array index " + i + " is out of bounds: 0 <= i < " + a.length+" "+haxe.CallStack.toString(haxe.CallStack.callStack());
 			}
 		}
 		return a[i];
