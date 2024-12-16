@@ -146,7 +146,7 @@ prepareAndGetContentUI(
 	lastSlashIdx = strLastIndexOf(curPath, "/");
 	backButtonM = if (lastSlashIdx != -1 && addBackButton && (!endsWith(correctCurPath, state.limitDir))) {
 		contentM = MSelect(state.iconSizeB, \iconSize -> MIcon("reply", [MIconSize(iconSize), MGrey(300)]));
-		Some(fsCustomElement(state, contentM, "..", "", const(false), nop, \-> getValue(state.onClickB)(None()), \-> getValue(state.onClickB)(None()), nop1));
+		Some(fsCustomElement(state, contentM, None(), "", const(false), nop, \-> getValue(state.onClickB)(None()), \-> getValue(state.onClickB)(None()), nop1));
 	} else {
 		None();
 	}
@@ -312,7 +312,7 @@ createItemUI(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, chang
 		\-> onDownElementFn(state, fullName);
 	}
 
-	item = 	fsCustomElement(state, fContent, itemCP.filename, tooltip, isSelectedB, onDown, onClick, onDblClick, onLongClick);
+	item = fsCustomElement(state, fContent, Some(itemCP), tooltip, isSelectedB, onDown, onClick, onDblClick, onLongClick);
 	
 	MConstruct(
 		[make2Subscribe(renderableB, state.contentViewIconsB, \renderable, showPreview -> {
@@ -328,7 +328,7 @@ createItemUI(state : FilebrowserState<?, ??, ???>, itemCP : FBContentPath, chang
 fsCustomElement(
 	state : FilebrowserState<?, ??, ???>,
 	contentM : Material,
-	text : string,
+	itemM : Maybe<FBContentPath>,
 	tooltip : string,
 	isSelectedB : Transform<bool>,
 	onDown : () -> void,
@@ -342,6 +342,7 @@ fsCustomElement(
 	positionScaleB = make(PositionScale(Point(1., 1.), Point(1., 1.)));
 	boxB = makeWH();
 
+	text = eitherMap(itemM, \item -> item.filename, "..");
 	getPoint = \pos, wh -> Point(pos.x + wh.width / 2., pos.y + wh.height / 2.);
 	onRightClick2 = \-> {
 		next(onClickB, false);
@@ -386,6 +387,63 @@ fsCustomElement(
 		next(clickForHoverB, false);
 	}
 
+	propertySizeFn = findmap(
+		state.itemProperties,
+		\itemProperty -> {
+			if (itemProperty.name == "Size") Some(itemProperty.initProperty)
+			else None()
+		}
+	);
+
+	propertyCreatedFn = findmap(
+		state.itemProperties,
+		\itemProperty -> {
+			if (itemProperty.name == "Created") Some(itemProperty.initProperty)
+			else None()
+		}
+	);
+
+	getPropertySize = \valueB -> maybeApply(itemM, \item -> eitherFn(
+		lookupTree(^(item.propertiesR), "Size"),
+		\json -> next(valueB, maybeMap(getJsonStringValueM(json), s2i)),
+		\-> maybeApply(propertySizeFn, \fn -> fn(
+			item,
+			\-> next(valueB, maybeBind(
+				lookupTree(^(item.propertiesR), "Size"),
+				\json -> maybeMap(getJsonStringValueM(json), s2i)
+			)),
+			nop1
+		))
+	));
+
+	getPropertyCreated = \valueB -> maybeApply(itemM, \item -> eitherFn(
+		lookupTree(^(item.propertiesR), "Created"),
+		\json -> next(valueB, maybeMap(getJsonStringValueM(json), \v -> stamp2time(s2d(v)))),
+		\-> maybeApply(propertyCreatedFn, \fn -> fn(
+			item,
+			\-> next(valueB, maybeBind(
+				lookupTree(^(item.propertiesR), "Created"),
+				\json -> maybeMap(getJsonStringValueM(json), \v -> stamp2time(s2d(v)))
+			)),
+			nop1
+		))
+	));
+
+	makeTimeStr = \time -> {
+		if (time == nullTime) ""
+		else time |> time2stamp |> time2string
+	}
+
+	getFileSizeString = \size -> {
+		p = if (size < 1024) Pair(size, _("b"))
+		else if (size < 1048576) Pair(size / 1024, _("Kb"))
+		else if (size < 1073741824) Pair(size / 1048576, _("Mb"))
+		else if (size < 1099511627776) Pair(size / 1073741824, _("Gb"))
+		else Pair(size / 1099511627776, _("Tb"));
+
+		i2s(p.first) + " " + p.second;
+	}
+
 	TEmpty()
 	|> (\tempty -> \hoverB -> MSelect2(state.iconSizeB, state.contentViewIconsB,
 		\iconSize, contentViewIcons -> {
@@ -401,7 +459,7 @@ fsCustomElement(
 			TFixed(iconSize, 23.0)
 			|> (\fixed23 ->
 				if (contentViewIcons) {
-					MLines2(
+					MLines2A(
 						MZoomToFill(contentM, TFixed(iconSize, iconSize), true),
 						MFixSize(
 							MCenterXIn(
@@ -414,11 +472,31 @@ fsCustomElement(
 						)
 					)
 				} else {
-					MColsYCenter([
-						MZoomToFill(contentM, TSizedWidthHeight(state.thumbnailSize, state.thumbnailSize), true),
+					valueSizeB = make(None());
+					valueCreatedB = make(None());
+
+					if (!eitherMap(itemM, \item -> item.isFolder, true)) getPropertySize(valueSizeB);
+					getPropertyCreated(valueCreatedB);
+
+					correctYCenter = \mm -> MCenterY(MPad(0., 4., mm));
+					textColor = \isHovered -> if (isHovered) MPurple(500) else MTextColor();
+
+					MColsA([
+						MZoomToFill(contentM, TSizedWidthHeight(state.thumbnailSize, state.thumbnailSize), true) |> MCenterY,
 						TFixed(5.0, 0.0),
-						MSelect(hoverB, \isHovered -> MText(text, [if (isHovered) MPurple(500) else MTextColor()])),
-					])
+						MSelect(
+							hoverB,
+							\isHovered -> MParagraph(text, [textColor(isHovered), FullWidth()])
+						) |> correctYCenter,
+						MSelect2(
+							hoverB, valueSizeB,
+							\isHovered, valueSizeM -> MParagraph(eitherMap(valueSizeM, getFileSizeString, ""), [textColor(isHovered), RightAlign(), MWidth(108.)])
+						) |> correctYCenter,
+						MSelect2(
+							hoverB, valueCreatedB,
+							\isHovered, valueCreatedM -> MParagraph(eitherMap(valueCreatedM, makeTimeStr, ""), [textColor(isHovered), CenterAlign(), MWidth(200.)])
+						) |> correctYCenter
+					]) |> (\m -> MAvailable(m, MFillXH(16.)))
 				}
 			)
 			|> (\m -> MBorder(6.0, 3.0, 6.0, 3.0, m))
@@ -475,7 +553,6 @@ fsCustomElement(
 		)
 	))
 	//|> (\m -> MGroup2(m, MCheckBox(TEmpty(), make(false), [MIconButtonBorder(4.), MCircleBackground(MGrey(400), 32.)])))
-	|> (\m -> MSelect(state.contentViewIconsB, \contentViewIcons -> if (!contentViewIcons) MCols2(m, TFillX()) else m))
 	|> (\m -> MPositionScale(positionScaleB, m))
 	|> (\m -> MAttachBox(m, boxB))
 	|> (\m -> MBorder4(4.0, m));

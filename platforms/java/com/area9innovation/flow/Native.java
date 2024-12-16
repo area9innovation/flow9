@@ -1064,6 +1064,8 @@ public class Native extends NativeHost {
 				sb.append(el.toString() + "\n");
 			}
 			return sb.toString();
+		} else if (obj instanceof StackTraceElement) {
+			return obj.toString();
 		} else {
 			return new String();
 		}
