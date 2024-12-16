@@ -4072,7 +4072,7 @@ class RenderSupport {
 	}
 
 	public static function takeSnapshot(path : String) : Void {
-		takeSnapshotBox(path, 0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+		takeSnapshotBox(path, 0, 0, Std.int(getStageWidth() * accessibilityZoom), Std.int(getStageHeight() * accessibilityZoom));
 	}
 
 	public static function takeSnapshotBox(path : String, x : Int, y : Int, w : Int, h : Int) : Void {
@@ -4128,7 +4128,7 @@ class RenderSupport {
 		}
 
 		try {
-			var img = PixiRenderer.plugins.extract.base64(PixiStage);
+			var img = untyped __js__("RenderSupport.PixiRenderer.plugins.extract.base64(RenderSupport.mainRenderClip())");
 			dispFn();
 			return img;
 		} catch(e : Dynamic) {
