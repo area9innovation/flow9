@@ -3110,6 +3110,17 @@ class RenderSupport {
 		} else if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);
 			return function() { if (clip != null) clip.removeEventListener(event, fn); }
+		} else if (event == "click" && cast(clip, DisplayObject).isHTMLRenderer()) {
+			cast(clip, DisplayObject).initNativeWidget();
+
+			var nativeWidget : Element = untyped clip.nativeWidget;
+
+			if (nativeWidget != null) {
+				nativeWidget.addEventListener(event, fn);
+				return function() { if (nativeWidget != null) nativeWidget.removeEventListener(event, fn); }
+			} else {
+				return addDisplayObjectEventListener(clip, event, fn);
+			}
 		} else {
 			return addDisplayObjectEventListener(clip, event, fn);
 		}
