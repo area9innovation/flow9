@@ -2,6 +2,8 @@ import material/internal/material_textinput;
 import material/internal/material_dropdown;
 import material/internal/material_list;
 import material/internal/material_dialog_internal;
+import form/graphics2html;
+import math/uuid;
 
 export {
 	MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicDataTable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
@@ -54,6 +56,7 @@ MDynamicDataTable2TInner(
 	headerStyle = tryExtractStruct(style, defaultHS);
 	rowBackgroundStyle = tryExtractStruct(style, MRowBackgroundStyle(\__ -> []));
 	selectedBgStyle : Maybe<MSelectedBackgroundStyle> = tryExtractStruct(style, MSelectedBackgroundStyle([]));
+	defaultSelectedBgStyleFn = \p -> [Fill(contrastingColor(p)), FillOpacity(if (getLightBackground(p)) 0.08 else 0.16)];
 
 	showFixedRow = eitherMap(state.fixedRow, \fr -> fr.show, const(false));
 	lifted = eitherMap(tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), [])), \is -> is.mode == MLiftedFirstColumnMode(), false);
@@ -246,6 +249,11 @@ MDynamicDataTable2TInner(
 		// Data rows
 		content = {
 			if (state.domRender) {
+				selectedGraphicsStyle = eitherMap(
+					selectedBgStyle,
+					\sbs -> tgraphicsStyle2graphicsStyle(mgraphicsStyle2tgraphicsStyle(p, sbs.style)),
+					defaultSelectedBgStyleFn(p)
+				);
 				rows = fselect2Lift(
 					fif(
 						state.scrollEnabled,
@@ -269,6 +277,8 @@ MDynamicDataTable2TInner(
 						setClipStyle(table, "position", "relative");
 						setClipStyle(table, "display", "table");
 						setClipStyle(table, "border-spacing", "0");
+						tableId = "table" + "-" + makeUuid();
+						setClipAttribute(table, "id", tableId);
 						tbody = makeClip();
 						setClipTagName(tbody, "tbody");
 						setClipStyle(tbody, "width", "auto");
@@ -283,10 +293,11 @@ MDynamicDataTable2TInner(
 						setClipStyle(headerTr, "height", "auto");
 						setClipStyle(headerTr, "position", "static");
 						setClipStyle(headerTr, "display", "table-row");
+						setClipClassName(headerTr, "table-header");
 						addChild(tbody, headerTr);
 
 						index = ref -1;
-						children = concat(
+						children = concat3(
 							mapi(headers, \columnIndex, c -> {
 								th = makeClip();
 								setClipTagName(th, "th");
@@ -311,24 +322,102 @@ MDynamicDataTable2TInner(
 								setClipStyle(tr, "height", "auto");
 								setClipStyle(tr, "position", "static");
 								setClipStyle(tr, "display", "table-row");
+								rowId = "row" + "-" + makeUuid();
+								setClipAttribute(tr, "id", rowId);
 								addChild(tbody, tr);
 								rowColumns = concat(state.makeCheckboxMCells(p, rowIndex), row);
-								mapi(rowColumns, \columnIndex, c -> {
-									td = makeClip();
-									setClipTagName(td, "td");
-									setClipStyle(td, "width", "auto");
-									setClipStyle(td, "height", "auto");
-									setClipStyle(td, "position", "static");
-									setClipStyle(td, "display", "table-cell");
-									setClipStyle(td, "border-bottom", borderString);
-									addChild(tr, td);
-									index := ^index + 1;
-									t = state.makeCell(p, rowIndex, columnIndex, c, false)
-										|> (if (columnIndex == 0) wrapFirstColumnIntoBorders(p) else idfn)
-										|> (if (columnIndex == length(rowColumns) - 1) wrapLastColumnIntoBorders(p) else idfn);
-									renderTropicToClip(td, t, [TRenderZorder(const(concat(zorder, [^index]))), TRenderPosition("relative"), TRenderUpdateClipSizeEvents(["rollover", "transformchanged"])]);
-								})
-							}) |> concatA
+
+								lineSelectionEnabled =
+									fand(
+										state.selection.enabled,
+										fsubselect(state.selectionEnabled.enabled, FLift(\selEnabled -> elementAt(selEnabled, rowIndex, const(true))))
+									);
+								isInteractive = fand(
+									state.hoverEnabled.enabled,
+									fOr(lineSelectionEnabled, state.onClick.enabled)
+								);
+								rowGraphicsStyle = eitherMap(
+									rowBackgroundStyle,
+									\rb -> tgraphicsStyle2graphicsStyle(mgraphicsStyle2tgraphicsStyle(p, rb.fn(rowIndex))),
+									[]
+								);
+
+								concat(
+									[
+										makeSubscribeUns(
+											isInteractive,
+											\v -> {
+												if (v) {
+													setGlobalStyle("#" + rowId, "pointer-events:auto !important");
+													setGlobalStyle("#" + rowId + ":not(:hover):not([aria-selected=\"true\"])", graphics2cssStyle(rowGraphicsStyle));
+
+													[
+														\ -> {
+															setGlobalStyle("#" + rowId, "");
+														},
+														addEventListener(tr, "click", \ -> MListOnClickHandler(state.selection, state.selectionEnabled, state.onClick)(rowIndex)),
+													];
+												} else {
+													setGlobalStyle("#" + rowId, "pointer-events:none !important");
+													setGlobalStyle("#" + rowId + ":hover", graphics2cssStyle(rowGraphicsStyle));
+
+													[
+														\ -> {
+															setGlobalStyle("#" + rowId, "");
+															setGlobalStyle("#" + rowId + ":hover", "");
+														}
+													];
+												}
+											}
+										),
+										\ -> {
+											setGlobalStyle("#" + rowId + ":not(:hover):not([aria-selected=\"true\"])", graphics2cssStyle(rowGraphicsStyle));
+
+											\ -> {
+												setGlobalStyle("#" + rowId + ":not(:hover):not([aria-selected=\"true\"])", "");
+											}
+										},
+										makeSubscribe(
+											fand(lineSelectionEnabled, fcontains(state.selection.selected, const(rowIndex))),
+											\v -> setClipAttribute(tr, "aria-selected", if (v) "true" else "false")
+										),
+										makeSubscribe(
+											fOr(lineSelectionEnabled, state.onClick.enabled),
+											\v -> setClipAttribute(tr, "aria-disabled", if (v) "false" else "true")
+										),
+										makeSubscribe(
+											fOr(lineSelectionEnabled, state.onClick.enabled),
+											\v -> setClipAttribute(tr, "disabled", if (v) "false" else "true")
+										),
+									],
+									mapi(rowColumns, \columnIndex, c -> {
+										td = makeClip();
+										setClipTagName(td, "td");
+										setClipStyle(td, "width", "auto");
+										setClipStyle(td, "height", "auto");
+										setClipStyle(td, "position", "static");
+										setClipStyle(td, "display", "table-cell");
+										setClipStyle(td, "border-bottom", borderString);
+										addChild(tr, td);
+										index := ^index + 1;
+										t = state.makeCell(p, rowIndex, columnIndex, c, false)
+											|> (if (columnIndex == 0) wrapFirstColumnIntoBorders(p) else idfn)
+											|> (if (columnIndex == length(rowColumns) - 1) wrapLastColumnIntoBorders(p) else idfn);
+										renderTropicToClip(td, t, [TRenderZorder(const(concat(zorder, [^index]))), TRenderPosition("relative"), TRenderUpdateClipSizeEvents(["rollover", "transformchanged"])]);
+									})
+								)
+							}) |> concatA,
+							[
+								\ -> {
+									setGlobalStyle("#" + tableId + " tr:not(.table-header):hover", graphics2cssStyle(selectedGraphicsStyle));
+									setGlobalStyle("#" + tableId + " tr:not(.table-header)[aria-selected=\"true\"]", graphics2cssStyle(selectedGraphicsStyle));
+
+									\ -> {
+										setGlobalStyle("#" + tableId + " tr:not(.table-header):hover", "");
+										setGlobalStyle("#" + tableId + " tr:not(.table-header)[aria-selected=\"true\"]", "");
+									}
+								}
+							]
 						);
 
 						d = map(children, apply0);
@@ -425,7 +514,7 @@ MDynamicDataTable2TInner(
 										eitherMap(
 											selectedBgStyle,
 											\sbs -> mgraphicsStyle2tgraphicsStyle(p, sbs.style),
-											[Fill(contrastingColor(p)), FillOpacity(if (getLightBackground(p)) 0.08 else 0.16)]
+											defaultSelectedBgStyleFn(p)
 										),
 										t
 									)
