@@ -466,31 +466,57 @@ class RenderSupport {
 		}
 	}
 
-	public static function setGlobalStyle(selector : String, name : String, value : String) : Void {
-		var style : Dynamic = untyped Browser.document.getElementById("flow-global-style") || Browser.document.createElement('style');
-		style.type = 'text/css';
-		style.id = "flow-global-style";
-		Browser.document.getElementsByTagName('head')[0].appendChild(style);
-		if (value != null && value != "") {
-			// Add CSS rule
-			untyped __js__("if (!(style.sheet||{}).insertRule)
-				(style.styleSheet || style.sheet).addRule(selector, name+':'+value);
-			else
-				style.sheet.insertRule(selector+'{'+name+':'+value+';}',0);");
-		} else {
-			// Remove CSS rule
-			untyped __js__("var sheet = style.styleSheet || style.sheet;
-			var rules = sheet.cssRules || sheet.rules;
-			for (var i = 0; i < rules.length; i++) {
-				if (rules[i].selectorText === selector) {
-					if (sheet.deleteRule) {
-						sheet.deleteRule(i);
-					} else {
-						sheet.removeRule(i);
-					}
+	public static function setGlobalStyle(selector:String, newRule:String):Void {
+		try {
+			var doc = Browser.document;
+			var style:js.html.StyleElement = cast doc.getElementById("flow-global-style");
+
+			if (style == null) {
+				style = cast doc.createElement('style');
+				style.type = 'text/css';
+				style.id = "flow-global-style";
+				doc.getElementsByTagName('head')[0].appendChild(style);
+			}
+
+			var sheet:js.html.CSSStyleSheet = cast (style.sheet != null ? style.sheet : untyped style.styleSheet);
+			var rules:Array<js.html.CSSRule> = cast (sheet.cssRules != null ? sheet.cssRules : untyped sheet.rules);
+
+			var existingIndex = -1;
+			for (i in 0...rules.length) {
+				var rule = cast(rules[i], js.html.CSSStyleRule);
+				if (rule.selectorText == selector) {
+					existingIndex = i;
 					break;
 				}
-			}");
+			}
+
+			if (newRule != null && newRule != "") {
+				var rule = '$selector{$newRule}';
+
+				if (untyped sheet.insertRule != null) {
+					if (existingIndex >= 0) {
+						sheet.deleteRule(existingIndex);
+						sheet.insertRule(rule, existingIndex);
+					} else {
+						sheet.insertRule(rule, rules.length);
+					}
+				} else {
+					if (existingIndex >= 0) {
+						untyped sheet.removeRule(existingIndex);
+						untyped sheet.addRule(selector, '$newRule', existingIndex);
+					} else {
+						untyped sheet.addRule(selector, '$newRule');
+					}
+				}
+			} else if (existingIndex >= 0) {
+				if (untyped sheet.deleteRule != null) {
+					sheet.deleteRule(existingIndex);
+				} else {
+					untyped sheet.removeRule(existingIndex);
+				}
+			}
+		} catch (e:Dynamic) {
+			untyped console.error('Error setting global style: $e');
 		}
 	}
 
@@ -3084,6 +3110,17 @@ class RenderSupport {
 		} else if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);
 			return function() { if (clip != null) clip.removeEventListener(event, fn); }
+		} else if (event == "click" && cast(clip, DisplayObject).isHTMLRenderer()) {
+			cast(clip, DisplayObject).initNativeWidget();
+
+			var nativeWidget : Element = untyped clip.nativeWidget;
+
+			if (nativeWidget != null) {
+				nativeWidget.addEventListener(event, fn);
+				return function() { if (nativeWidget != null) nativeWidget.removeEventListener(event, fn); }
+			} else {
+				return addDisplayObjectEventListener(clip, event, fn);
+			}
 		} else {
 			return addDisplayObjectEventListener(clip, event, fn);
 		}

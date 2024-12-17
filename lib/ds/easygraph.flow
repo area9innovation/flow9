@@ -96,6 +96,8 @@ export {
 
 	removeBackEGEdges(graph : EasyGraph<?, ??>, sources : [int]) -> EasyGraph<?, ??>; // DAG-ify
 
+	findEasyGraphCycles(graph : EasyGraph<?, ??>) -> [[GEdge<??>]];
+
 	/////////////////
 	// Reachability
 	/////////////////
@@ -525,4 +527,74 @@ easyGraph2dot(graph : EasyGraph<?, ??>, root : int, graphstyles : [DiGraphStyle<
 	edges = getEGEdges(graph);
 
 	anyGraph2dot(root, nodes, edges, graphstyles, node2styles, edge2styles)
+}
+
+findEasyGraphCycles(graph : EasyGraph<?, ??>) -> [[GEdge<??>]] {
+	// Store visited nodes during each DFS
+	visited = ref makeTree();
+	// Store nodes in current path to detect back edges
+	stack = ref makeTree(); 
+	// Store all found cycles
+	cycles = ref [];
+	// Store current path of edges
+	path = ref [];
+
+	// Do DFS from each node to find cycles
+	traverseInOrder(graph.nodes, \nodeId, node -> {
+		easyGraphDfs(graph, nodeId, visited, stack, cycles, path);
+	});
+
+	^cycles;
+}
+
+easyGraphDfs(
+	graph : EasyGraph<?, ??>, 
+	nodeId : int,
+	visited : ref Tree<int, bool>,
+	stack : ref Tree<int, bool>,
+	cycles : ref [[GEdge<??>]],
+	path : ref [GEdge<??>]
+) -> void {
+	visited := setTree(^visited, nodeId, true);
+	stack := setTree(^stack, nodeId, true);
+
+	// Get outgoing edges
+	outEdges = lookupTreeDef(graph.edges, nodeId, []);
+	
+	// Check each successor
+	iter(outEdges, \edge -> {
+		if (!lookupTreeDef(^visited, edge.to, false)) {
+			// Not visited - continue DFS
+			path := concat(^path, [edge]);
+			easyGraphDfs(graph, edge.to, visited, stack, cycles, path);
+			path := subrange(^path, 0, length(^path) - 1);
+		} else if (lookupTreeDef(^stack, edge.to, false)) {
+			// Found cycle - extract it from current path
+			currentPath = ^path;
+			cycles := concat(^cycles, [
+				extractEGCycle(currentPath, edge)
+			]);
+		}
+	});
+
+	stack := removeFromTree(^stack, nodeId);
+}
+
+extractEGCycle(path : [GEdge<?>], lastEdge : GEdge<?>) -> [GEdge<?>] {
+	// Find where cycle starts in path
+	cycleStartIndex = findi(path, \e -> e.from == lastEdge.to);
+	
+	switch (cycleStartIndex) {
+		None(): {
+			// Self-cycle
+			[lastEdge]
+		}
+		Some(index): {
+			// Extract cycle from path and add the closing edge
+			concat(
+				subrange(path, index, length(path) - index),
+				[lastEdge]
+			)
+		}
+	}
 }
