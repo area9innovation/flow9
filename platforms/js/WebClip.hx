@@ -162,6 +162,7 @@ class WebClip extends NativeWidgetClip {
 						iframe.scrolling = "no";
 					}
 					iframe.contentWindow.callflow = cb;
+					iframe.contentWindow.is_callflow_defined = true;
 					if (iframe.contentWindow.pushCallflowBuffer) {
 						iframe.contentWindow.pushCallflowBuffer();
 					}

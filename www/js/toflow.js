@@ -12,6 +12,7 @@ var callflow = callflow || function (args){
     callflowBuffer.push(args);
 	//alert("JS");
 }
+var is_callflow_defined = false;
 function pushCallflowBuffer(fn) {
 	var call = fn || callflow;
     for (var i = 0; i < callflowBuffer.length; ++i) {
@@ -25,7 +26,11 @@ function define_cross_domain_once() {
 	 
 	if (is_cross_domain) {
 		for (var i = 0; i < callflowBuffer.length; ++i) {
-			parent.postMessage(callflowBuffer[i][1], "*");
+			if (callflowBuffer[i][0] == "postMessage") {
+				parent.postMessage(callflowBuffer[i][1], "*");
+			} else {
+				parent.postMessage(JSON.stringify({ operation: "callflow", args: callflowBuffer[i] }), "*");
+			}
 		}
 
 		callflowBuffer = [];
@@ -77,7 +82,7 @@ function callflow_platform(args) {
 		flow.callflow(args);
 	} else if (is_flow_winapp()) {
 		callflow_winapp(args);
-	} else if (is_cross_domain) {
+	} else if (is_cross_domain && !is_callflow_defined) {
 		parent.postMessage(JSON.stringify({ operation: "callflow", args }), "*");
 	} else {
 		callflow(args);
