@@ -1769,6 +1769,7 @@ class TextClip extends NativeWidgetClip {
 					} else {
 						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic'
 							|| (AmiriHTMLMeasurement && style.fontFamily == "Amiri")
+							|| (nativeWidget != null && nativeWidget.style.fontFeatureSettings != "")
 						) {
 							measureHTMLWidth();
 						}
@@ -1902,6 +1903,7 @@ class TextClip extends NativeWidgetClip {
 		measureElement.style.wrap = nativeWidget.style.wrap;
 		measureElement.style.whiteSpace = nativeWidget.style.whiteSpace;
 		measureElement.style.display = nativeWidget.style.display;
+		measureElement.style.fontFeatureSettings = nativeWidget.style.fontFeatureSettings;
 
 		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 		if (wordWrap) {
@@ -2057,6 +2059,7 @@ class TextClip extends NativeWidgetClip {
 		TextClip.measureSVGTextElement.setAttribute('font-weight', computedStyle.fontWeight);
 		TextClip.measureSVGTextElement.setAttribute('letter-spacing', computedStyle.letterSpacing);
 		TextClip.measureSVGTextElement.setAttribute('white-space', computedStyle.whiteSpace);
+		TextClip.measureSVGTextElement.style.fontFeatureSettings = computedStyle.fontFeatureSettings;
 
 		TextClip.measureSVGTextElement.textContent = textNode.textContent;
 
