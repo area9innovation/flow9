@@ -2177,6 +2177,12 @@ class RenderSupport {
 		} else {
 			untyped accessWidget.element.style[name] = value;
 		}
+
+		if (name == "font-feature-settings") {
+			if (untyped clip.nativeWidget != null) {
+				untyped clip.nativeWidget.style[name] = value;
+			}
+		}
 	}
 
 	public static function removeAccessAttributes(clip : Dynamic) : Void {
