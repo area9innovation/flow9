@@ -1,3 +1,4 @@
+import js.html.WheelEvent;
 import haxe.Json;
 import js.Browser;
 import pixi.core.math.Point;
@@ -176,6 +177,8 @@ class WebClip extends NativeWidgetClip {
 							var message = Json.parse(e.data);
 							if (message.operation == "callflow") {
 								cb(message.args);
+							} else if (message.operation == "wheel" && message.args.length > 0) {
+								RenderSupport.provideEvent(new WheelEvent("wheel", Json.parse(message.args[0])));
 							}
 						}
 					} catch(e : Dynamic) { Errors.report(e); }
