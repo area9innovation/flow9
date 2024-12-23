@@ -180,6 +180,21 @@ class WebClip extends NativeWidgetClip {
 								cb(message.args);
 							} else if (message.operation == "wheel" && message.args.length > 0) {
 								RenderSupport.provideEvent(new WheelEvent("wheel", Json.parse(message.args[0])));
+							} else if ((message.operation == "pointermove" || message.operation == "pointerdown" || message.operation == "pointerup") && message.args.length > 0) {
+								var pos0 = Util.getPointerEventPosition(Json.parse(message.args[0]));
+								var iframeBoundingRect = iframe.getBoundingClientRect();
+								var pos = new Point(
+									pos0.x * this.worldTransform.a + iframeBoundingRect.x,
+									pos0.y * this.worldTransform.d + iframeBoundingRect.y
+								);
+								var emittedEventName = (Platform.isSafari && Platform.isMobile) ? switch (message.operation) {
+									case "pointerdown": "mousedown";
+									case "pointerup": "mouseup";
+									case "pointermove": "mousemove";
+									default: message.operation;
+								} : message.operation;
+
+								RenderSupport.emitMouseEvent(RenderSupport.PixiStage, emittedEventName, pos.x, pos.y);
 							}
 						}
 					} catch(e : Dynamic) { Errors.report(e); }

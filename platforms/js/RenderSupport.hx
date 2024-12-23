@@ -1,6 +1,7 @@
 import js.Browser;
 import js.html.Element;
 import js.html.IFrameElement;
+import haxe.Json;
 
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Bounds;
@@ -1264,6 +1265,16 @@ class RenderSupport {
 
 		var content_win = e.source;
 		var all_iframes = Browser.document.getElementsByTagName("iframe");
+
+		try {
+			var message = Json.parse(e.data);
+			// Handled by onCrossDomainMessage in WebClip.hx
+			if (message.operation != null && (message.operation == "callflow" || message.operation == "wheel" || message.operation == "pointerdown" || message.operation == "pointerup" || message.operation == "pointermove")) {
+				return;
+			}
+		} catch (e : Dynamic) {
+			Errors.print(e);
+		}
 
 		for (i in 0...all_iframes.length) {
 			var f : js.html.Node = all_iframes[i];
