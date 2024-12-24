@@ -1272,9 +1272,7 @@ class RenderSupport {
 			if (message.operation != null && (message.operation == "callflow" || message.operation == "wheel" || message.operation == "pointerdown" || message.operation == "pointerup" || message.operation == "pointermove")) {
 				return;
 			}
-		} catch (e : Dynamic) {
-			Errors.print(e);
-		}
+		} catch (e : Dynamic) {};
 
 		for (i in 0...all_iframes.length) {
 			var f : js.html.Node = all_iframes[i];
