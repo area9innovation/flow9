@@ -2172,6 +2172,7 @@ class TextClip extends NativeWidgetClip {
 			baselineWidget = Browser.document.createElement('span');
 			baselineWidget.classList.add('baselineWidget');
 			baselineWidget.role = 'presentation';
+			baselineWidget.setAttribute('aria-hidden', 'true');
 
 			if (useTextBackgroundWidget && !isInput) {
 				textBackgroundWidget = Browser.document.createElement('span');
