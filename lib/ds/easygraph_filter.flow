@@ -1,0 +1,131 @@
+import ds/easygraph;
+
+export {
+	// Filter a graph, keeping only nodes that satisfy the keep predicate, but preserving all paths between kept nodes
+	// Also known as graph contraction
+	filterEasyGraph(graph : EasyGraph<?, ??>, keep : (GNode<?>) -> bool) -> EasyGraph<?, ??>;
+}
+
+filterEasyGraph(graph : EasyGraph<?, ??>, keep : (GNode<?>) -> bool) -> EasyGraph<?, ??> {
+	// First, identify nodes to keep
+	keepNodes = filter(getEGNodes(graph), keep);
+	keepIds = buildSet(map(keepNodes, \n -> n.id));
+	
+	// Start with new graph containing just the kept nodes
+	newNodes = fold(keepNodes, makeTree(), \acc, node -> {
+		setTree(acc, node.id, node)
+	});
+	
+	// Find all paths between kept nodes
+	newEdges = fold(keepNodes, makeTree(), \acc, fromNode -> {
+		// For this node, find paths to all other kept nodes
+		nextReachable = findNextKeptNodes(graph, fromNode.id, keepIds, makeSet());
+		
+		// Add all edges from this node, keeping only shortest path to each destination
+		mergeTree(acc, 
+			setTree(makeTree(), fromNode.id, getTreeValues(nextReachable))
+		)
+	});
+
+	// Count total edges
+	edgeCount = foldTree(newEdges, 0, \__, edges, acc -> {
+		acc + length(edges)
+	});
+	
+	// Construct new graph directly
+	EasyGraph(newNodes, newEdges, edgeCount)
+}
+
+findNextKeptNodes(
+	graph : EasyGraph<?, ??>, 
+	startId : int, 
+	keepIds : Set<int>,
+	visited : Set<int>
+) -> Tree<int, GEdge<??>> {
+	if (containsSet(visited, startId)) makeTree()
+	else {
+		edges = lookupTreeDef(graph.edges, startId, []);
+		visited2 = insertSet(visited, startId);
+		
+		fold(edges, makeTree(), \acc, edge -> {
+			if (containsSet(keepIds, edge.to)) {
+				// Direct path to kept node
+				setTree(acc, edge.to, edge)
+			} else {
+				// Find paths through this node
+				nextPaths = findNextKeptNodes(graph, edge.to, keepIds, visited2);
+				// Create edges from start to all found destinations
+				mergeTree(acc, mapTree(nextPaths, \nextEdge -> 
+					GEdge(startId, nextEdge.to, nextEdge.data, 1)
+				))
+			}
+		})
+	}
+}
+
+/*
+main() {
+	// Create a complex test graph with multiple components:
+	//
+	// Component 1:		Component 2:
+	//	  A					X
+	//  /   \			  /   \
+	// B	 C			 Y	   Z
+	//  \  /  \			  \   /
+	//   D	   E		    W
+	//	  \  /
+	//	    F
+	//
+	// Where we will keep only A, D, F and X, W
+	// Expected result should be:
+	// Component 1:		Component 2:
+	//	A					X
+	//	 \					 \
+	//	  D					  W
+	//		\
+	//		 F
+
+	graph = makeEasyGraph();
+	
+	// Add nodes
+	nodes = ["A", "B", "C", "D", "E", "F", "X", "Y", "Z", "W"];
+	graph1 = foldi(nodes, graph, \i, acc, name -> {
+		addEGNode(acc, GNode(i + 1, name))
+	});
+
+	// Add edges
+	edges = [Pair(1, 2), Pair(1, 3), Pair(2, 4), Pair(3, 4), Pair(3, 5), Pair(4, 6), Pair(5, 6), Pair(7, 8), Pair(7, 9), Pair(8, 10), Pair(9, 10)];
+	graph2 = fold(edges, graph1, \acc, edge : Pair<int, int> -> {
+		addEGEdge(acc, GEdge(edge.first, edge.second, nodes[edge.first - 1] + " -> " + nodes[edge.second - 1], 1))
+	});
+
+	// Filter to keep only A, D, F and X, W
+	keepNodes = \node -> {
+		name = node.data;
+		name == "A" || name == "D" || name == "F" || name == "X" || name == "W"
+	};
+
+	filtered = filterEasyGraph(graph2, keepNodes);
+
+	// Validate results
+	println("Original graph:");
+	printGraph(graph2);
+	
+	println("\nFiltered graph:");
+	printGraph(filtered);
+	quit(0);
+}
+
+printGraph(graph : EasyGraph<string, string>) {
+	nodes = getEGNodes(graph);
+	edges = getEGEdges(graph);
+	
+	println("Nodes: " + strGlue(map(nodes, \n -> n.data), ", "));
+	println("Edges:");
+	iter(edges, \e -> {
+		fromNode = getEGNode(graph, e.from, GNode(-1, "?"));
+		toNode = getEGNode(graph, e.to, GNode(-1, "?"));
+		println("  " + fromNode.data + " -> " + toNode.data + " (" + e.data + ", weight: " + i2s(e.weight) + ")");
+	});
+}
+*/
