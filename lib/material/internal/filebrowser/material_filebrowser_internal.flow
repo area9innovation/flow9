@@ -1904,39 +1904,48 @@ filterUploadedFilesForRestrictions(
 
 				showDefaultDialog(manager, closeDialogB, "", buttons, view);
 
-				checkImagesFn = \iData, onChecked -> mapAsync(
-					iData,
-					\iDataRow, ff, __ -> {
-						gotWHR = ref true;
-						gotWH = \wh -> {
-							if (^gotWHR) {
-								gotWHR := false;
-								ff(FbFileTestResult(iDataRow, wh, 0, make(false)));
+				checkImagesFn = \iData, maxValue, onChecked -> {
+					// the maximum size of (maxValue px) x (maxValue px) png image
+					maxImageSizePng = i2d(maxValue * maxValue * 4);
+
+					mapAsync(
+						iData,
+						\iDataRow, ff, __ -> {
+							gotWHR = ref true;
+							gotWH = \wh -> {
+								if (^gotWHR) {
+									gotWHR := false;
+									ff(FbFileTestResult(iDataRow, wh, 0, make(false)));
+								}
 							}
-						}
 
-						iDataRow.getContentBase64(
-							\base64Content -> {
-								next(
-									imageDataMB, 
-									Some(Pair(
-										"data:image/" + iDataRow.extension + ";base64," + base64Content,
-										gotWH
-									))
+							if (iDataRow.size > maxImageSizePng) {
+								gotWH(WidthHeight(i2d(maxValue + 1), i2d(maxValue + 1)));
+							} else {
+								iDataRow.getContentBase64(
+									\base64Content -> {
+										next(
+											imageDataMB, 
+											Some(Pair(
+												"data:image/" + iDataRow.extension + ";base64," + base64Content,
+												gotWH
+											))
+										);
+
+										// If can't load image for a long time
+										timer(5000, \-> gotWH(WidthHeight(0., 0.)));
+									},
+									\__ -> gotWH(WidthHeight(0., 0.))
 								);
-							},
-							\__ -> gotWH(WidthHeight(0., 0.))
-						);
+							}
+						},
+						onChecked,
+						// Never should happen
+						\__ -> onChecked(map(iData, \iDataRow -> FbFileTestResult(iDataRow, WidthHeight(0., 0.), 0, make(false))))
+					);
+				}
 
-						// If can't load image for a long time
-						timer(5000, \-> gotWH(WidthHeight(0., 0.)));
-					},
-					onChecked,
-					// Never should happen
-					\__ -> onChecked(map(iData, \iDataRow -> FbFileTestResult(iDataRow, WidthHeight(0., 0.), 0, make(false))))
-				);
-
-				checkVideosFn = \vData, onChecked -> mapAsync(
+				checkVideosFn = \vData, __, onChecked -> mapAsync(
 					vData,
 					\vDataRow, ff, __ -> {
 						lengthDoneR = ref false;
@@ -1979,7 +1988,7 @@ filterUploadedFilesForRestrictions(
 							eitherFn(
 								sM,
 								\maxValue -> {
-									extractSizeFn(files, \result -> {
+									extractSizeFn(files, maxValue, \result -> {
 										ff(map(result, \r -> { next(r.flagB, isLargeFn(maxValue, r)); r }))
 									})
 								},
