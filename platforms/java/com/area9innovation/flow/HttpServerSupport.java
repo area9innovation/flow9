@@ -303,20 +303,29 @@ public class HttpServerSupport extends NativeHost {
 		public static class ResponseHandler {
 			private Integer responseStatusCode = 200;
 			private HttpExchange exchange;
+			private boolean hasBody;	// if the response has a body; HEAD request requires no body in the response.
 			private OutputStream os;
 
 			public ResponseHandler(HttpExchange _exchange)
 			{
 				exchange = _exchange;
+				hasBody = !exchange.getRequestMethod().equals("HEAD");
 			}
 
 			public Func1<String, String> makeSendChunk() {
 				return new Func1<String, String>() {
 					public String invoke(String chunk) {
-						try {
-							os.write(chunk.getBytes("UTF-8"));
-							os.flush();
+						if (chunk.equals("")) {
 							return "";
+						}
+						try {
+							if (hasBody) {
+								os.write(chunk.getBytes("UTF-8"));
+								os.flush();
+								return "";
+							} else {
+								return "Do not include a body in the response for HEAD request";
+							}
 						} catch (IOException e) {
 							return "Sending chunk error: " + e.getMessage();
 						}
@@ -327,10 +336,13 @@ public class HttpServerSupport extends NativeHost {
 			public Func0<Object> makeEndResponse() {
 				return new Func0<Object>() {
 					public Object invoke() {
-						try {
-							os.close();
-						} catch (IOException e) {
-							System.out.println(e);
+						if (hasBody) {
+							try {
+								os.close();
+							} catch (IOException e) {
+								System.out.println("Ending response error: " + e.getMessage());
+								e.printStackTrace(System.out);
+							}
 						}
 						return null;
 					}
@@ -356,20 +368,28 @@ public class HttpServerSupport extends NativeHost {
 				{
 					public Object invoke(String responseBody)
 					{
-						try
-						{
-							byte[] responseBytes = responseBody.getBytes("UTF-8");
-							exchange.sendResponseHeaders(
-								responseStatusCode,
-								responseBytes.length
-							);
-							if (os == null) os = exchange.getResponseBody();
-							os.write(responseBytes);
-							os.close();
-						}
-						catch (IOException e)
-						{
-							System.out.println(e);
+						try {
+							if (hasBody) {
+								byte[] responseBytes = responseBody.getBytes("UTF-8");
+								exchange.sendResponseHeaders(
+									responseStatusCode,
+									responseBytes.length
+								);
+								if (os == null) os = exchange.getResponseBody();
+								os.write(responseBytes);
+								os.close();
+							} else {
+								if (responseBody.length() > 0) {
+									System.out.println("Sending response error: Do not include a body in the response for HEAD request");
+								}
+								exchange.sendResponseHeaders(
+									responseStatusCode,
+									-1
+								);
+							}
+						} catch (IOException e) {
+							System.out.println("Sending response error: " + e.getMessage());
+							e.printStackTrace(System.out);
 						}
 						return null;
 					}
@@ -398,21 +418,21 @@ public class HttpServerSupport extends NativeHost {
 			public Func2<String, Integer, Boolean> makeSendHeaders() {
 				return new Func2<String, Integer, Boolean>() {
 					public String invoke(Integer status, Boolean compressBody) {
-						long bodyLength = 0;
-						if (exchange.getRequestMethod().equals("HEAD")) {
-							bodyLength = -1; // No body
-						}
 						try {
-							os = exchange.getResponseBody();
 							if (compressBody) {
 								exchange.getResponseHeaders().put(
 									"Content-Encoding",
 									Collections.singletonList("gzip")
 								);
-								exchange.sendResponseHeaders(status, bodyLength);
-								os = new java.util.zip.GZIPOutputStream(os, true);
+							}
+							if (hasBody) {
+								exchange.sendResponseHeaders(status, 0);
+								os = exchange.getResponseBody();
+								if (compressBody) {
+									os = new java.util.zip.GZIPOutputStream(os, true);
+								}
 							} else {
-								exchange.sendResponseHeaders(status, bodyLength);
+								exchange.sendResponseHeaders(status, -1);
 							}
 							return "";
 						} catch (IOException e) {
