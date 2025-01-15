@@ -351,6 +351,8 @@ public class HttpSupport extends NativeHost {
 			callbackOnDone.setReady(new Object[]{400, "Malformed url " + url + " " + e.getMessage(), new Object[0]});
 		} catch (IOException e) {
 			callbackOnDone.setReady(new Object[]{500, "IO exception " + url + " " + e.getMessage(), new Object[0]});
+		} catch (Exception e) {
+			callbackOnDone.setReady(new Object[]{500, e.getMessage(), new Object[0]});
 		}});
 		return null;
 	}
@@ -472,6 +474,8 @@ public class HttpSupport extends NativeHost {
 			} catch (MalformedURLException|URISyntaxException e) {
 				callbackOnError.setReady("Malformed url " + url + " " + e.getMessage());
 				return;
+			} catch (Exception e) {
+				callbackOnError.setReady(e.getMessage());
 			}
 
 			String boundary = Long.toHexString(System.currentTimeMillis()); // Just generate some unique random value.
