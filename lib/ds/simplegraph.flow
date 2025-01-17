@@ -23,9 +23,12 @@ export {
 
 	getSimpleAdjacentNodes(g : SimpleGraph<?, ??>, from : ?) -> [?];
 	getSimpleAdjacentEdges(g : SimpleGraph<?, ??>, from : ?) -> [??];
+
+    // Get all edges with both source and target node data
+    getSimpleGraphEdges2(g : SimpleGraph<?, ??>) -> [SimpleEdge2<?, ??>];
 	getSimpleGraphEdges(g : SimpleGraph<?, ??>) -> [SimpleEdge<?, ??>];
 	getSimpleOutEdges(g : SimpleGraph<?, ??>, node : ?) -> [SimpleEdge2<?, ??>];
-
+	
     SimpleEdge2(
         from : ?, // Source node data
         to : ?,   // Target node data
@@ -33,13 +36,14 @@ export {
         weight : int
     );
 
-    // Get all edges with both source and target node data
-    getSimpleGrapEdges2(g : SimpleGraph<?, ??>) -> [SimpleEdge2<?, ??>];
 
 	reverseSimpleGraph(g : SimpleGraph<?, ??>) -> SimpleGraph<?, ??>;
 
 	reachableClosureFromSimpleNode(g : SimpleGraph<?, ??>, from : ?) -> Set<?>;
 	reachableEdgesFromSimpleNode(g : SimpleGraph<?, ??>, from : ?) -> Set<??>;
+
+	// Finds all nodes reachable from a starting node by following edges that match a predicate.
+	findSimpleEdgeClosure(graph : SimpleGraph<?, ??>, start : ?, edgePred : (??) -> bool) -> Set<?>;
 
 	// Get distances from the specified node to all reachable nodes in the graph
 	getSimpleDijkstra(g : SimpleGraph<?, ??>, from : ?) -> SimpleDijkstra<?, ??>;
@@ -70,6 +74,15 @@ export {
 		graphstyles : [DiGraphStyle<??>], 
 		node2styles : (?) -> [GNodeStyle], 
 		edge2styles : (??) -> [GEdgeStyle]
+	) -> string;
+
+	// Same, but where we get more info on the edges
+	simpleGraph2dot2(
+		graph : SimpleGraph<?, ??>,
+		root : ?,
+		graphstyles : [DiGraphStyle<??>],
+		node2styles : (?) -> [GNodeStyle],
+		edge2styles : (SimpleEdge2<?,??>) -> [GEdgeStyle]
 	) -> string;
 
 	simpleLoopFree(g : SimpleGraph<?, ??>, source : ?) -> SimpleGraph<?, ??>;
@@ -388,6 +401,40 @@ simpleGraph2dot(
 	);
 }
 
+simpleGraph2dot2(
+	graph : SimpleGraph<?, ??>,
+	root : ?,
+	graphstyles : [DiGraphStyle<??>],
+	node2styles : (?) -> [GNodeStyle],
+	edge2styles : (SimpleEdge2<?,??>) -> [GEdgeStyle]
+) -> string {
+	rootId = getSimpleNodeId(graph, root);
+
+	easyGraph2dot(
+		graph.graph,
+		rootId,
+		graphstyles,
+		\n -> node2styles(n.data),
+		\e -> {
+			// Look up the source and target nodes to get their data
+			fromNode = lookupTree(graph.graph.nodes, e.from);
+			toNode = lookupTree(graph.graph.nodes, e.to);
+
+			switch (fromNode) {
+				None(): [];
+				Some(from): {
+					switch (toNode) {
+						None(): [];
+						Some(to): {
+							edge2styles(SimpleEdge2(from.data, to.data, e.data, e.weight));
+						}
+					}
+				}
+			}
+		}
+	);
+}
+
 topoSortSimpleGraph(graph : SimpleGraph<?, ??>) -> [?] {
 	tree = topSortEasyGraph(graph.graph);
 	reversed = foldTree(tree, makeTree(), \nodeid, order, acc -> {
@@ -476,7 +523,7 @@ splitSimpleGraphComponents(graph : SimpleGraph<?, ??>) -> [SimpleGraph<?, ??>] {
     })
 }
 
-getSimpleGrapEdges2(g : SimpleGraph<?, ??>) -> [SimpleEdge2<?, ??>] {
+getSimpleGraphEdges2(g : SimpleGraph<?, ??>) -> [SimpleEdge2<?, ??>] {
     foldTree(g.graph.edges, [], \fromId, edges : [GEdge<??> ], acc -> {
         // For each edge, we need to look up the source and target nodes to get their data
         edgesWithNodes = filtermap(edges, \edge -> {
@@ -523,3 +570,32 @@ getSimpleOutEdges(g : SimpleGraph<?, ??>, node : ?) -> [SimpleEdge2<?, ??>] {
 		});
 	}
 }
+
+findSimpleEdgeClosure(graph : SimpleGraph<?, ??>, start : ?, edgePred : (??) -> bool) -> Set<?> {
+	removeSet(findSimpleEdgeClosureHelper(graph, [start], makeSet1(start), edgePred), start);
+}
+
+findSimpleEdgeClosureHelper(graph : SimpleGraph<?, ??>, pending : [?], visited : Set<?>, edgePred : (??) -> bool) -> Set<?> {
+	if (pending == []) visited
+	else {
+		node = pending[0];
+		rest = tail(pending);
+
+		// Get edges matching our predicate
+		edges = filter(getSimpleOutEdges(graph, node), \edge -> edgePred(edge.data));
+		neighbors = map(edges, \e -> e.to);
+
+		// Find unvisited neighbors
+		unvisited = filter(neighbors, \n -> !containsSet(visited, n));
+
+		if (unvisited == []) {
+			// No new nodes, continue with rest
+			findSimpleEdgeClosureHelper(graph, rest, insertSet(visited, node), edgePred)
+		} else {
+			// Add new nodes to visit
+			newVisited = insertSet(visited, node);
+			findSimpleEdgeClosureHelper(graph, concat(rest, unvisited), newVisited, edgePred)
+		}
+	}
+}
+
