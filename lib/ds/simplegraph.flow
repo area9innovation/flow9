@@ -1,10 +1,13 @@
 import ds/easygraph_utils;
 import ds/easygraph_contract;
 import ds/easygraph_components;
+import ds/easygraph_cut;
 
 export {
 	// A simple graph builder where nodes are identified by the data itself
 	makeSimpleGraph() -> SimpleGraph<?, ??>;
+
+	isEmptySimpleGraph(g : SimpleGraph<?, ??>) -> bool;
 
 	addSimpleNode(g : SimpleGraph<?, ??>, node : ?) -> SimpleGraph<?, ??>;
 	hasSimpleNode(g : SimpleGraph<?, ??>, node : ?) -> bool;
@@ -15,10 +18,21 @@ export {
 
 	hasSimpleEdge(g : SimpleGraph<?, ??>, from : ?, to : ?) -> bool;
 	addSimpleEdge(g : SimpleGraph<?, ??>, from : ?, to : ?, data : ??, weight : int) -> SimpleGraph<?, ??>;
+	// Adds an edge between two nodes only if there isn't already an edge with the same data between them.
+	// Returns the modified graph if the edge was added, or the original graph if a matching edge already existed.
+	addSimpleUniqueEdge(g : SimpleGraph<?, ??>, from : ?, to : ?, data : ??, weight : int) -> SimpleGraph<?, ??>;
+
+	removeSimpleEdge2(g : SimpleGraph<?, ??>, edge : SimpleEdge2<?, ??>) -> SimpleGraph<?, ??>;
+	reverseSimpleEdge2(edge : SimpleEdge2<?, ??>) -> SimpleEdge2<?, ??>;
+
 	getSimpleAdjacentNodes(g : SimpleGraph<?, ??>, from : ?) -> [?];
 	getSimpleAdjacentEdges(g : SimpleGraph<?, ??>, from : ?) -> [??];
-	getSimpleGraphEdges(g : SimpleGraph<?, ??>) -> [SimpleEdge<?, ??>];
 
+    // Get all edges with both source and target node data
+    getSimpleGraphEdges2(g : SimpleGraph<?, ??>) -> [SimpleEdge2<?, ??>];
+	getSimpleGraphEdges(g : SimpleGraph<?, ??>) -> [SimpleEdge<?, ??>];
+	getSimpleOutEdges(g : SimpleGraph<?, ??>, node : ?) -> [SimpleEdge2<?, ??>];
+	
     SimpleEdge2(
         from : ?, // Source node data
         to : ?,   // Target node data
@@ -26,13 +40,14 @@ export {
         weight : int
     );
 
-    // Get all edges with both source and target node data
-    getSimpleGrapEdges2(g : SimpleGraph<?, ??>) -> [SimpleEdge2<?, ??>];
 
 	reverseSimpleGraph(g : SimpleGraph<?, ??>) -> SimpleGraph<?, ??>;
 
 	reachableClosureFromSimpleNode(g : SimpleGraph<?, ??>, from : ?) -> Set<?>;
 	reachableEdgesFromSimpleNode(g : SimpleGraph<?, ??>, from : ?) -> Set<??>;
+
+	// Finds all nodes reachable from a starting node by following edges that match a predicate.
+	findSimpleEdgeClosure(graph : SimpleGraph<?, ??>, start : ?, edgePred : (??) -> bool) -> Set<?>;
 
 	// Get distances from the specified node to all reachable nodes in the graph
 	getSimpleDijkstra(g : SimpleGraph<?, ??>, from : ?) -> SimpleDijkstra<?, ??>;
@@ -65,6 +80,15 @@ export {
 		edge2styles : (??) -> [GEdgeStyle]
 	) -> string;
 
+	// Same, but where we get more info on the edges
+	simpleGraph2dot2(
+		graph : SimpleGraph<?, ??>,
+		root : ?,
+		graphstyles : [DiGraphStyle<??>],
+		node2styles : (?) -> [GNodeStyle],
+		edge2styles : (SimpleEdge2<?,??>) -> [GEdgeStyle]
+	) -> string;
+
 	simpleLoopFree(g : SimpleGraph<?, ??>, source : ?) -> SimpleGraph<?, ??>;
 	// Does not work when there are loops
 	simpleTransitiveReduction(g : SimpleGraph<?, ??>) -> SimpleGraph<?, ??>;
@@ -77,10 +101,35 @@ export {
 
 	// Splits a SimpleGraph into multiple separate connected components
 	splitSimpleGraphComponents(graph : SimpleGraph<?, ??>) -> [SimpleGraph<?, ??>];
+
+	// Add reverse edges to a graph, so it is effectively undirected
+	// If we want to use findSimpleEdgeCut in a undirected graph, you have to remove the
+	// reverse edge yourself first.
+	makeUndirectedSimpleGraph(graph : SimpleGraph<?, ??>) -> SimpleGraph<?, ??>;
+
+	// Analysis of an edge cut in a SimpleGraph
+	SimpleGraphEdgeCutAnalysis(
+		edge : SimpleEdge2<?, ??>,        // The edge being analyzed
+		fromReachable : Set<?>,           // What nodes are reachable from 'from' when edge is removed
+		toReachable : Set<?>             // What nodes are reachable from 'to' when edge is removed
+	);
+
+	// Given an edge, find what nodes become unreachable when removing it
+	findSimpleEdgeCut(graph : SimpleGraph<?, ??>, edge : SimpleEdge2<?, ??>) -> SimpleGraphEdgeCutAnalysis<?, ??>;
+
+	// Find edge cuts in a graph component. The graph should be strongly connected
+	// (i.e., every node can reach every other node)
+	// Give it a function to decide which edges to cut
+	findSimpleEdgeCuts(graph : SimpleGraph<?, ??>, cutEdge : (SimpleEdge2<?, ??>) -> bool) -> [SimpleGraphEdgeCutAnalysis<?, ??>];
+
 }
 
 makeSimpleGraph() -> SimpleGraph<?, ??> {
 	SimpleGraph(makeTree(), 0, makeEasyGraph());
+}
+
+isEmptySimpleGraph(g : SimpleGraph<?, ??>) -> bool {
+	g.nnodes == 0
 }
 
 addSimpleNode(g : SimpleGraph<?, ??>, node : ?) -> SimpleGraph<?, ??> {
@@ -130,6 +179,40 @@ addSimpleEdge(g : SimpleGraph<?, ??>, from : ?, to : ?, data : ??, weight : int)
 	}
 }
 
+// Adds an edge between two nodes only if there isn't already an edge with the same data between them.
+// Returns the modified graph if the edge was added, or the original graph if a matching edge already existed.
+addSimpleUniqueEdge(g : SimpleGraph<?, ??>, from : ?, to : ?, data : ??, weight : int) -> SimpleGraph<?, ??> {
+	fromId = lookupTreeDef(g.nodes, from, -1);
+	if (fromId == -1) {
+		// Source node doesn't exist, add edge with new nodes
+		addSimpleEdge(g, from, to, data, weight)
+	} else {
+		toId = lookupTreeDef(g.nodes, to, -1);
+		if (toId == -1) {
+			// Target node doesn't exist, add edge with new node
+			addSimpleEdge(g, from, to, data, weight)
+		} else {
+			// Both nodes exist, check edges
+			succs = lookupTreeDef(g.graph.edges, fromId, []);
+			// Check if there's an edge with matching target and data
+			existingEdge = find(succs, \edge ->
+				edge.to == toId && edge.data == data
+			);
+
+			switch (existingEdge) {
+				None(): {
+					// No matching edge found, add new edge
+					addSimpleEdge(g, from, to, data, weight)
+				}
+				Some(__): {
+					// Matching edge exists, return unchanged graph
+					g
+				}
+			}
+		}
+	}
+}
+
 hasSimpleEdge(g : SimpleGraph<?, ??>, from : ?, to : ?) -> bool {
 	fromId = lookupTreeDef(g.nodes, from, -1);
 	if (fromId == -1) {
@@ -144,6 +227,23 @@ hasSimpleEdge(g : SimpleGraph<?, ??>, from : ?, to : ?) -> bool {
 		}
 	}
 }
+
+removeSimpleEdge2(g : SimpleGraph<?, ??>, edge : SimpleEdge2<?, ??>) -> SimpleGraph<?, ??> {
+	fromId = getSimpleNodeId(g, edge.from);
+	toId = getSimpleNodeId(g, edge.to);
+	if (fromId == -1 || toId == -1) {
+		g // Edge doesn't exist, return unchanged graph
+	} else {
+		SimpleGraph(g with
+			graph = removeEGEdge(g.graph, GEdge(fromId, toId, edge.data, edge.weight))
+		)
+	}
+}
+
+reverseSimpleEdge2(edge : SimpleEdge2<?, ??>) -> SimpleEdge2<?, ??> {
+	SimpleEdge2(edge.to, edge.from, edge.data, edge.weight)
+}
+
 
 getSimpleAdjacentNodes(g : SimpleGraph<?, ??>, from : ?) -> [?] {
 	succs : [GEdge<??>] = lookupTreeDef(g.graph.edges, getSimpleNodeId(g, from), []);
@@ -343,6 +443,40 @@ simpleGraph2dot(
 	);
 }
 
+simpleGraph2dot2(
+	graph : SimpleGraph<?, ??>,
+	root : ?,
+	graphstyles : [DiGraphStyle<??>],
+	node2styles : (?) -> [GNodeStyle],
+	edge2styles : (SimpleEdge2<?,??>) -> [GEdgeStyle]
+) -> string {
+	rootId = getSimpleNodeId(graph, root);
+
+	easyGraph2dot(
+		graph.graph,
+		rootId,
+		graphstyles,
+		\n -> node2styles(n.data),
+		\e -> {
+			// Look up the source and target nodes to get their data
+			fromNode = lookupTree(graph.graph.nodes, e.from);
+			toNode = lookupTree(graph.graph.nodes, e.to);
+
+			switch (fromNode) {
+				None(): [];
+				Some(from): {
+					switch (toNode) {
+						None(): [];
+						Some(to): {
+							edge2styles(SimpleEdge2(from.data, to.data, e.data, e.weight));
+						}
+					}
+				}
+			}
+		}
+	);
+}
+
 topoSortSimpleGraph(graph : SimpleGraph<?, ??>) -> [?] {
 	tree = topSortEasyGraph(graph.graph);
 	reversed = foldTree(tree, makeTree(), \nodeid, order, acc -> {
@@ -431,7 +565,7 @@ splitSimpleGraphComponents(graph : SimpleGraph<?, ??>) -> [SimpleGraph<?, ??>] {
     })
 }
 
-getSimpleGrapEdges2(g : SimpleGraph<?, ??>) -> [SimpleEdge2<?, ??>] {
+getSimpleGraphEdges2(g : SimpleGraph<?, ??>) -> [SimpleEdge2<?, ??>] {
     foldTree(g.graph.edges, [], \fromId, edges : [GEdge<??> ], acc -> {
         // For each edge, we need to look up the source and target nodes to get their data
         edgesWithNodes = filtermap(edges, \edge -> {
@@ -456,4 +590,82 @@ getSimpleGrapEdges2(g : SimpleGraph<?, ??>) -> [SimpleEdge2<?, ??>] {
         });
         concat(acc, edgesWithNodes);
     });
+}
+
+getSimpleOutEdges(g : SimpleGraph<?, ??>, node : ?) -> [SimpleEdge2<?, ??>] {
+	nodeId = getSimpleNodeId(g, node);
+	if (nodeId == -1) [] else {
+		edges : [GEdge<??> ] = lookupTreeDef(g.graph.edges, nodeId, []);
+		filtermap(edges, \edge -> {
+			toNode = lookupTree(g.graph.nodes, edge.to);
+			switch (toNode) {
+				None(): None();
+				Some(to): {
+					Some(SimpleEdge2(
+						node,
+						to.data,
+						edge.data,
+						edge.weight
+					));
+				}
+			}
+		});
+	}
+}
+
+findSimpleEdgeClosure(graph : SimpleGraph<?, ??>, start : ?, edgePred : (??) -> bool) -> Set<?> {
+	removeSet(findSimpleEdgeClosureHelper(graph, [start], makeSet1(start), edgePred), start);
+}
+
+findSimpleEdgeClosureHelper(graph : SimpleGraph<?, ??>, pending : [?], visited : Set<?>, edgePred : (??) -> bool) -> Set<?> {
+	if (pending == []) visited
+	else {
+		node = pending[0];
+		rest = tail(pending);
+
+		// Get edges matching our predicate
+		edges = filter(getSimpleOutEdges(graph, node), \edge -> edgePred(edge.data));
+		neighbors = map(edges, \e -> e.to);
+
+		// Find unvisited neighbors
+		unvisited = filter(neighbors, \n -> !containsSet(visited, n));
+
+		if (unvisited == []) {
+			// No new nodes, continue with rest
+			findSimpleEdgeClosureHelper(graph, rest, insertSet(visited, node), edgePred)
+		} else {
+			// Add new nodes to visit
+			newVisited = insertSet(visited, node);
+			findSimpleEdgeClosureHelper(graph, concat(rest, unvisited), newVisited, edgePred)
+		}
+	}
+}
+
+makeUndirectedSimpleGraph(graph : SimpleGraph<?, ??>) -> SimpleGraph<?, ??> {
+	SimpleGraph(graph with
+		graph = makeUndirectedGraph(graph.graph)
+	);
+}
+
+findSimpleEdgeCut(graph : SimpleGraph<?, ??>, edge : SimpleEdge2<?, ??>) -> SimpleGraphEdgeCutAnalysis<?, ??> {
+	fromId = getSimpleNodeId(graph, edge.from);
+	toId = getSimpleNodeId(graph, edge.to);
+
+	analysis = findEGEdgeCut(graph.graph, GEdge(fromId, toId, edge.data, edge.weight));
+
+	// Convert the node id sets to node data sets
+	SimpleGraphEdgeCutAnalysis(
+		edge,
+		mapSet(analysis.fromReachable, \id -> lookupSimpleNode(graph, id, edge.from)),
+		mapSet(analysis.toReachable, \id -> lookupSimpleNode(graph, id, edge.to)),
+	)
+}
+
+findSimpleEdgeCuts(graph : SimpleGraph<?, ??>, cutEdge : (SimpleEdge2<?, ??>) -> bool) -> [SimpleGraphEdgeCutAnalysis<?, ??>] {
+	edges = getSimpleGraphEdges2(graph);
+	filtermap(edges, \edge -> {
+		if (cutEdge(edge)) {
+			Some(findSimpleEdgeCut(graph, edge))
+		} else None();
+	});
 }
