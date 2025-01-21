@@ -2,19 +2,9 @@
 #define SOUNDSUPPORT_H
 
 #include "utils/AbstractSoundSupport.h"
-
-// #if defined(linux) || defined(__APPLE__)
-// #include <phonon/mediaobject.h>
-// #include <phonon/audiooutput.h>
-// #include <phonon/mediasource.h>
-// #else
-// #include <Phonon/MediaObject>
-// #include <Phonon/AudioOutput>
-// #include <Phonon/MediaSource>
-// #endif
-
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QMediaPlayer>
 
 class QtSound : public QObject, public AbstractSound
 {
@@ -22,21 +12,23 @@ class QtSound : public QObject, public AbstractSound
 
 protected:
     friend class QtSoundChannel;
-
-    //Phonon::MediaSource source;
-
+    QMediaPlayer *player;
     QNetworkReply *reply;
     QByteArray data;
 
 public:
-    QtSound(AbstractSoundSupport *owner) : AbstractSound(owner), reply(NULL) {}
+    QtSound(AbstractSoundSupport *owner) : AbstractSound(owner), player(NULL), reply(NULL) {}
+    ~QtSound() { delete player; }
 
     virtual void beginLoad(unicode_string url, StackSlot onFail, StackSlot onReady);
+    virtual float computeSoundLength();
 
     DEFINE_FLOW_NATIVE_OBJECT(QtSound, AbstractSound);
 
 private slots:
     void finished();
+    void handleError(QMediaPlayer::Error error);
+    void handleMediaStatusChanged(QMediaPlayer::MediaStatus status);
 };
 
 class QtSoundChannel : public QObject, public AbstractSoundChannel
@@ -44,20 +36,19 @@ class QtSoundChannel : public QObject, public AbstractSoundChannel
     Q_OBJECT
 
 protected:
-    //Phonon::MediaObject *MediaObject;
-    //Phonon::AudioOutput *AudioOutput;
+    QMediaPlayer *player;
+    bool looping;
 
     virtual void setVolume(float value);
     virtual void stopSound();
     virtual float getSoundPosition();
 
 private slots:
-    void finished();
+    void handleStateChanged(QMediaPlayer::State state);
 
 public:
     QtSoundChannel(AbstractSoundSupport *owner, AbstractSound *snd)
-        // : AbstractSoundChannel(owner, snd), MediaObject(NULL), AudioOutput(NULL)
-        : AbstractSoundChannel(owner, snd)
+        : AbstractSoundChannel(owner, snd), player(NULL), looping(false)
     {}
 
     virtual void beginPlay(float start_pos, bool loop, StackSlot onDone);

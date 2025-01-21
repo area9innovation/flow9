@@ -275,7 +275,7 @@ NativeFunction *AbstractSoundSupport::MakeNativeFunction(const char *name, int n
 #undef NATIVE_NAME_PREFIX
 #define NATIVE_NAME_PREFIX "SoundSupport."
 
-    TRY_USE_NATIVE_METHOD(AbstractSoundSupport, loadSound, 3);
+    TRY_USE_NATIVE_METHOD(AbstractSoundSupport, loadSound, 4);
     TRY_USE_NATIVE_METHOD(AbstractSoundSupport, noSound, 0);
     TRY_USE_NATIVE_METHOD(AbstractSoundSupport, play, 1);
     
@@ -295,7 +295,7 @@ NativeFunction *AbstractSoundSupport::MakeNativeFunction(const char *name, int n
 }
 
 StackSlot AbstractSoundSupport::loadSound(RUNNER_ARGS) {
-    RUNNER_PopArgs3(url, onFail, onDone);
+    RUNNER_PopArgs4(url, headers, onFail, onDone);
     RUNNER_CheckTag(TString, url);
     RUNNER_DefSlots1(retval);
 
