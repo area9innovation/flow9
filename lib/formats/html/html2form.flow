@@ -33,8 +33,11 @@ export {
 	HTMLZoomBackground : (color : Maybe<int>);
 	HTMLAllowMoreLineBreaks : ();
 
-
-	HTMLStyle(characterStyle : [CharacterStyle], paragraphStyle : [ParagraphStyle]);
+	HtmlMetricsStyle ::= HtmlHeight, HtmlWidth;
+		HtmlHeight(height : double);
+		HtmlWidth(width : double);
+	HTMLStyle(characterStyle : [CharacterStyle], paragraphStyle : [ParagraphStyle], htmlMetricsStyle : [HtmlMetricsStyle]);
+		emptyHTMLStyle = HTMLStyle([], [], []);
 	html2form(s : string, stylesheet : Tree<string, HTMLStyle>, special : [HTMLSpecial]) -> Form;
 	html2formGetWordCount(s : string) -> int;
 	getHtmlPictureMagnify(fullForm : Form, scaledForm : Form, p_caption : string, stylesheet : Tree<string, HTMLStyle>, maxw : Maybe<double>, scale : Maybe<double>, extraZoom : bool, backgroundColor : Maybe<int>) -> Form;
@@ -869,7 +872,7 @@ renderHtmlXml(xml : XmlNode, availableWidth : Behaviour<double>,
 		stylesheet : Tree<string, HTMLStyle>, paragraphStyle : [ParagraphStyle], special : [HTMLSpecial]) -> Form {
 
 	defaultFontstyle = getDefaultFontStyle(special);
-	acc = renderHtmlAcc(xml, availableWidth, stylesheet, HtmlAcc(HTMLStyle(defaultFontstyle, []), makeList(), makeList(), makeList(), 0, 0), special);
+	acc = renderHtmlAcc(xml, availableWidth, stylesheet, HtmlAcc(HTMLStyle(defaultFontstyle, [], []), makeList(), makeList(), makeList(), 0, 0), special);
 	htmlAcc2Form(acc, availableWidth, paragraphStyle)
 }
 
@@ -889,30 +892,33 @@ extractChildrenTextIgnoringTags(nodes : [XmlNode]) -> string {
 HtmlAcc : (htmlStyle : HTMLStyle, story : List<[ParagraphElement]>, storyStyle : List<[ParagraphStyle]>, paragraph : List<ParagraphElement>, listNumber : int, paragraphNumber : int);
 
 renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : Tree<string, HTMLStyle>, acc : HtmlAcc, special : [HTMLSpecial]) -> HtmlAcc {
-	emptyStyle = HTMLStyle([], []);
-
 	result = switch(node : XmlNode) {
 		XmlElement(tagcs, attrs, children): {
 			tag = toLowerCase(tagcs);
 			classAttr = getXmlAttribute(attrs, "class", "");
 
-			curStyle = ref HTMLStyle([], []);
+			curStyle = ref emptyHTMLStyle;
 
 			curStyle := if (classAttr != "") {
-				lookupTreeDef(stylesheet, "." + classAttr, emptyStyle);
+				lookupTreeDef(stylesheet, "." + classAttr, emptyHTMLStyle);
 			} else {
-				emptyStyle;
+				emptyHTMLStyle;
 			};
 
-			tagStyle = lookupTreeDef(stylesheet, tag, emptyStyle);
-			curStyle := HTMLStyle(concat(tagStyle.characterStyle, ^curStyle.characterStyle), concat(tagStyle.paragraphStyle, ^curStyle.paragraphStyle));
+			tagStyle = lookupTreeDef(stylesheet, tag, emptyHTMLStyle);
+			curStyle := HTMLStyle(
+				concat(tagStyle.characterStyle, ^curStyle.characterStyle),
+				concat(tagStyle.paragraphStyle, ^curStyle.paragraphStyle),
+				concat(tagStyle.htmlMetricsStyle, ^curStyle.htmlMetricsStyle),
+			);
 
 			cs2 = concat(acc.htmlStyle.characterStyle, ^curStyle.characterStyle);
 			ps = concat(acc.htmlStyle.paragraphStyle, ^curStyle.paragraphStyle);
+			hms = concat(acc.htmlStyle.htmlMetricsStyle, ^curStyle.htmlMetricsStyle);
 
 			// Tag styles
 			styleAttr = getXmlAttribute(attrs, "style", "");
-			htmls = parseCssStyles(HTMLStyle(cs2, []), styleAttr);
+			htmls = parseCssStyles(HTMLStyle(cs2, [], []), styleAttr);
 
 			mathModificators = \mm -> \s -> {
 				if (contains(special, HTMLMathMlSmall())) {
@@ -944,7 +950,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					[]
 				};
 
-				styled = ref HtmlAcc(HTMLStyle(concat(cs, style), ps), flush.story, flush.storyStyle, flush.paragraph, acc.listNumber, acc.paragraphNumber);
+				styled = ref HtmlAcc(HTMLStyle(concat(cs, style), ps, hms), flush.story, flush.storyStyle, flush.paragraph, acc.listNumber, acc.paragraphNumber);
 
 				if (tag == "p" && contains(special, HTMLNumberedParagraph())) {
 					lineWidth = select(availableWidth, \aw2 -> aw2 - 20.0);
@@ -980,7 +986,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 
 				listNumber = if (tag == "ol") olStart else if (tag == "ul") 0 else acc.listNumber;
 
-				styled = ref HtmlAcc(HTMLStyle(cs, ps), flush.story, flush.storyStyle, flush.paragraph, listNumber, acc.paragraphNumber);
+				styled = ref HtmlAcc(HTMLStyle(cs, ps, hms), flush.story, flush.storyStyle, flush.paragraph, listNumber, acc.paragraphNumber);
 
 				styled := renderHtmlChildren(children, availableWidth, stylesheet, acc, ^styled, special);
 
@@ -991,7 +997,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				listChar = if (acc.listNumber == 0) "&#x2022; " else i2s(acc.listNumber) + ". ";
 				listNumberNew = if (acc.listNumber > 0) acc.listNumber + 1 else 0;
 
-				styled = ref HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(TextFragment(listChar, acc.htmlStyle.characterStyle), acc.paragraph), listNumberNew, acc.paragraphNumber);
+				styled = ref HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, Cons(TextFragment(listChar, acc.htmlStyle.characterStyle), acc.paragraph), listNumberNew, acc.paragraphNumber);
 
 				styled := renderHtmlChildren(children, availableWidth, stylesheet, acc, ^styled, special);
 
@@ -999,7 +1005,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 
 				^styled;
 			} else if (tag == "a") {
-				styled = HtmlAcc(HTMLStyle(concat([Fill(0x0000ff)], cs), ps), acc.story, acc.storyStyle, makeList(), acc.listNumber, acc.paragraphNumber);
+				styled = HtmlAcc(HTMLStyle(concat([Fill(0x0000ff)], cs), ps, hms), acc.story, acc.storyStyle, makeList(), acc.listNumber, acc.paragraphNumber);
 				link = renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);
 
 				href = getXmlAttribute(attrs, "href", "");
@@ -1037,10 +1043,10 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				});
 				HtmlAcc(link.htmlStyle, link.story, link.storyStyle, concatList(buttonified, acc.paragraph), link.listNumber, link.paragraphNumber);
 			} else if (tag == "em" || tag == "i") {
-				styled = HtmlAcc(HTMLStyle(concat(cs, [FontFamily("RobotoItalic")]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				styled = HtmlAcc(HTMLStyle(concat(cs, [FontFamily("RobotoItalic")]), ps, hms), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);
 			} else if (tag == "b" || tag == "strong") {
-				styled = HtmlAcc(HTMLStyle(concat(cs, [FontFamily("RobotoMedium")]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				styled = HtmlAcc(HTMLStyle(concat(cs, [FontFamily("RobotoMedium")]), ps, hms), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);
 			} else if (tag == "font") {
 				family = getXmlAttribute(attrs, "family", "");
@@ -1062,10 +1068,10 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				} else {
 					[]
 				}
-				styled = HtmlAcc(HTMLStyle(concatA([cs, fv, cv, sv]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				styled = HtmlAcc(HTMLStyle(concatA([cs, fv, cv, sv]), ps, hms), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);}
 			else if (tag == "code") {
-				styled = HtmlAcc(HTMLStyle(concat(cs, [/*FontFamily("Courier")*/]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				styled = HtmlAcc(HTMLStyle(concat(cs, [/*FontFamily("Courier")*/]), ps, hms), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);
 			} else if (tag == "table") {
 				initRows = fold(children, [], \ac, tr -> {
@@ -1311,13 +1317,13 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					Text("Array out of bounds error during processing of 'table' tag", [Fill(red)])
 				}
 
-				HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(table, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+				HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, Cons(table, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 			} else if (tag == "link" || tag == "head" || tag == "title" || tag == "meta" || tag == "script") {
 				// Tags we ignore
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, acc, special);
 				acc;
 			} else if (tag == "span") {
-				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				ac2 = HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
 			} else if (tag == "img") {
 				pictureLoadBeh = make(-1);
@@ -1397,39 +1403,39 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					}
 
 				centered = if (getXmlAttribute(attrs, "align", "") == "middle") Align(0.5, 0.5, p) else p;
-				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(centered, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+				ac2 = HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, Cons(centered, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 				deferred(\-> if (getValue(pictureLoadBeh) < 0) next(pictureLoadBeh, 0));
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
 			} else if (tag == "br") {
 				f = TextFragment("&nbsp;\n", acc.htmlStyle.characterStyle);
-				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+				ac2 = HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
 			} else if (tag == "hr") {
 				z = Select(availableWidth, \aw2 -> Graphics([MoveTo(0.0, 0.0), LineTo(aw2, 0.0), ClosePath()], [Stroke(0x000000), StrokeWidth(1.0)]));
 				f = TextFragment("\n", acc.htmlStyle.characterStyle);
-				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, Cons(z, acc.paragraph)), acc.listNumber, acc.paragraphNumber);
+				ac2 = HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, Cons(f, Cons(z, acc.paragraph)), acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
 			} else if (tag == "u") {
 				f = TextFragment("<u>", acc.htmlStyle.characterStyle);
-				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+				ac2 = HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 				styled = renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
 				f2 = TextFragment("</u>", acc.htmlStyle.characterStyle);
 				HtmlAcc(styled.htmlStyle, styled.story, styled.storyStyle, Cons(f2, styled.paragraph), acc.listNumber, acc.paragraphNumber);
 			} else if (tag == "sub") {
 				childrenText = extractChildrenTextIgnoringTags(children);
 				f = Subscript(childrenText, acc.htmlStyle.characterStyle);
-				HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+				HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 			} else if (tag == "sup") {
 				childrenText = extractChildrenTextIgnoringTags(children);
 				f = Superscript(childrenText, acc.htmlStyle.characterStyle);
-				HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+				HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 			} else if (tag == "mn") {
 				// MathMl number
-				ac2 = HtmlAcc(HTMLStyle(cs |> mathModificators(asMath), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				ac2 = HtmlAcc(HTMLStyle(cs |> mathModificators(asMath), ps, hms), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
 			} else if (tag == "mi") {
 				// MathMl identifier
-				ac2 = HtmlAcc(HTMLStyle(cs |> mathModificators(\s -> s |> asMath |> asItalic), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				ac2 = HtmlAcc(HTMLStyle(cs |> mathModificators(\s -> s |> asMath |> asItalic), ps, hms), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
 			} else if (tag == "mo") {
 				// MathMl operator
@@ -1451,7 +1457,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				newAW = if (newAWSrc != "") const(newAWSrc |> s2d) else availableWidth;
 
 				addNbsp = \p -> if (inRow && !isInvisibleTimes) Cons(TextFragment("\u00a0", acc.htmlStyle.characterStyle), p) else p;
-				ac2 = HtmlAcc(HTMLStyle(cs |> mathModificators(asMath), ps), acc.story, acc.storyStyle, acc.paragraph |> addNbsp, acc.listNumber, acc.paragraphNumber);
+				ac2 = HtmlAcc(HTMLStyle(cs |> mathModificators(asMath), ps, hms), acc.story, acc.storyStyle, acc.paragraph |> addNbsp, acc.listNumber, acc.paragraphNumber);
 				newAcc = renderHtmlChildren(children, newAW, stylesheet, acc, ac2, special);
 				HtmlAcc(newAcc.htmlStyle, newAcc.story, acc.storyStyle, newAcc.paragraph |> addNbsp, newAcc.listNumber, newAcc.paragraphNumber)
 			} else if (tag == "vbar") {
@@ -1685,7 +1691,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 										// We have to provide caller with one form based on children.
 										// Not an ideal decision but that is much harder to process time based visibility or highlight related style.
 										htmlAcc2Form(
-											renderHtmlChildren(children, availableWidth, stylesheet, acc, HtmlAcc(HTMLStyle(defaultFontStyle, []), makeList(), makeList(), makeList(), 0, 0), special),
+											renderHtmlChildren(children, availableWidth, stylesheet, acc, HtmlAcc(HTMLStyle(defaultFontStyle, [], []), makeList(), makeList(), makeList(), 0, 0), special),
 											availableWidth,
 											[TightWidth()]
 										)
@@ -1703,10 +1709,10 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					renderHtmlChildren(children, availableWidth, stylesheet, acc, acc, special)
 				} else {
 					if (^inline) {
-						HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+						HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 					} else {
 						flush = flushHtmlStory(acc);
-						HtmlAcc(HTMLStyle(cs, ps), flush.story, flush.storyStyle, Cons(f, flush.paragraph), acc.listNumber, acc.paragraphNumber);
+						HtmlAcc(HTMLStyle(cs, ps, hms), flush.story, flush.storyStyle, Cons(f, flush.paragraph), acc.listNumber, acc.paragraphNumber);
 					}
 					//renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
 				}
@@ -1834,7 +1840,7 @@ renderHtmlChildren(children : [XmlNode], availableWidth : Behaviour<double>, sty
 			Pair(newAcc, false)
 		}
 	}) |> firstOfPair;
-	HtmlAcc(HTMLStyle(orgacc.htmlStyle.characterStyle, r.htmlStyle.paragraphStyle), r.story, r.storyStyle, r.paragraph, r.listNumber, r.paragraphNumber);
+	HtmlAcc(HTMLStyle(orgacc.htmlStyle.characterStyle, r.htmlStyle.paragraphStyle, orgacc.htmlStyle.htmlMetricsStyle), r.story, r.storyStyle, r.paragraph, r.listNumber, r.paragraphNumber);
 }
 
 flushHtmlStory(acc : HtmlAcc) -> HtmlAcc {
@@ -1855,18 +1861,18 @@ parseCssStyles(cs : HTMLStyle, cssStyles : string) -> HTMLStyle {
 			if (curStyle[0] == "font-weight") {
 				tempStyle = filter(s.characterStyle, \elem -> if (elem == FontFamily("Medium")) false else true);
 				if (curStyle[1] == "bold" || curStyle[1] == "700") {
-					HTMLStyle(concat(tempStyle, [FontFamily("RobotoMedium")]), s.paragraphStyle)
+					HTMLStyle(s with characterStyle = concat(tempStyle, [FontFamily("RobotoMedium")]))
 				} else {
-					HTMLStyle(tempStyle, s.paragraphStyle)
+					HTMLStyle(s with characterStyle = tempStyle)
 				}
 			} else if (curStyle[0] == "font-style") {
 				tempStyle = filter(s.characterStyle, \elem -> if (elem == FontFamily("Italic") || elem == FontFamily("DejaVuSans")) false else true);
 				if (curStyle[1] == "italic") {
-					HTMLStyle(concat(tempStyle, [FontFamily("Italic")]), s.paragraphStyle)
+					HTMLStyle(s with characterStyle = concat(tempStyle, [FontFamily("Italic")]))
 				} else if (curStyle[1] == "serif") {
-					HTMLStyle(concat(tempStyle, [FontFamily("DejaVuSans")]), s.paragraphStyle)
+					HTMLStyle(s with characterStyle = concat(tempStyle, [FontFamily("DejaVuSans")]))
 				} else {
-					HTMLStyle(tempStyle, s.paragraphStyle);
+					HTMLStyle(s with characterStyle = tempStyle);
 				}
 			} else if (curStyle[0] == "background" || curStyle[0] == "background-color") {
 				tempStyle = fold(s.characterStyle, [], \i, elem ->
@@ -1877,20 +1883,36 @@ parseCssStyles(cs : HTMLStyle, cssStyles : string) -> HTMLStyle {
 				);
 				if (startsWith(curStyle[1], "#")) {
 					bgColor = parseHex(substring(curStyle[1], 1, 6));
-					HTMLStyle(concat(tempStyle, [BackgroundFill(bgColor)]), s.paragraphStyle)
+					HTMLStyle(s with characterStyle = concat(tempStyle, [BackgroundFill(bgColor)]))
 				} else if (startsWith(curStyle[1], "rgb(")) {
 					temp = map(strSplit(substring(curStyle[1], 4, strlen(curStyle[1])-4), ","), trim);
 					bgColor = s2i(temp[0])*65536 + s2i(temp[1])*256 + s2i(temp[2]);
-					HTMLStyle(concat(tempStyle, [BackgroundFill(bgColor)]), s.paragraphStyle)
+					HTMLStyle(s with characterStyle = concat(tempStyle, [BackgroundFill(bgColor)]))
 				} else
-					HTMLStyle(tempStyle, s.paragraphStyle)
-			} else if (curStyle[0] == "height" && endsWith(curStyle[1], "px") && strlen(curStyle[1]) > 2) {
+					HTMLStyle(s with characterStyle = tempStyle)
+			} else if ((curStyle[0] == "height" || curStyle[0] == "width") && endsWith(curStyle[1], "px") && strlen(curStyle[1]) > 2) {
 				sizeStr = takeBefore(curStyle[1], "px", "");
 				if (sizeStr == "") {
 					s;
 				} else {
-					HTMLStyle(replaceStruct(s.characterStyle, FontSize(s2d(sizeStr))), s.paragraphStyle);
+					HTMLStyle(s with htmlMetricsStyle = replaceStruct(s.htmlMetricsStyle, if (curStyle[0] == "height") HtmlHeight(s2d(sizeStr)) else HtmlWidth(s2d(sizeStr))));
 				}
+			} else if (curStyle[0] == "color") {
+				tempStyle = fold(s.characterStyle, [], \i, elem ->
+					switch(elem : CharacterStyle) {
+						Fill(__) : i;
+						default: concat(i, [elem]);
+					}
+				);
+				if (startsWith(curStyle[1], "#")) {
+					color = parseHex(substring(curStyle[1], 1, 6));
+					HTMLStyle(s with characterStyle = concat(tempStyle, [Fill(color)]))
+				} else if (startsWith(curStyle[1], "rgb(")) {
+					temp = map(strSplit(substring(curStyle[1], 4, strlen(curStyle[1])-4), ","), trim);
+					color = s2i(temp[0])*65536 + s2i(temp[1])*256 + s2i(temp[2]);
+					HTMLStyle(s with characterStyle = concat(tempStyle, [Fill(color)]))
+				} else
+					HTMLStyle(s with characterStyle = tempStyle)
 			} else {
 				// if (curStyle[0] != "")
 					// println("Unsupported CSS style: " + curStyle[0] + ". Consider to add support in html2form");
