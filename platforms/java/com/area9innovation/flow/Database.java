@@ -159,16 +159,12 @@ public class Database extends NativeHost {
 				db.con = DriverManager.getConnection(socket, user, password);
 			}
             db.err = "";
-            return db;
         } catch (SQLException se) {
             db.err = getSqlErrorMessage(se);
-            System.out.println("Error on connect db: " + db.err);
-            return null;
         } catch (Exception e) {
             db.err = e.getMessage();
-            printException(e);
-            return null;
         }
+        return db;
     }
 
     public static final String connectExceptionDb(Object database) {
