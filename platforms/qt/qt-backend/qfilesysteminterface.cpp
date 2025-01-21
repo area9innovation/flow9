@@ -43,13 +43,6 @@ void QFileSystemInterface::selectAccepted()
 #ifdef QT_GUI_LIB
     QFileDialog *currentDialog = (QFileDialog*)sender();
 
-    /* Fix for drawing file dialog contents under Linux */
-    #ifdef __linux__
-    if (window) {
-        window->setUpdatesEnabled(true);
-    }
-    #endif
-
     RUNNER_VAR = owner;
     RUNNER_DefSlots1(flowFilesArray);
 
@@ -67,6 +60,13 @@ void QFileSystemInterface::selectAccepted()
 
     RUNNER->ReleaseRoot(selectCallbackId);
     delete currentDialog;
+
+    /* Fix for drawing file dialog contents under Linux */
+    #ifdef __linux__
+    if (window) {
+        window->setUpdatesEnabled(true);
+    }
+    #endif
 #endif
 }
 
@@ -75,17 +75,17 @@ void QFileSystemInterface::selectRejected()
 #ifdef QT_GUI_LIB
     RUNNER_VAR = owner;
 
+    RUNNER->EvalFunction(RUNNER->LookupRoot(selectCallbackId), 1, RUNNER->AllocateArray(0));
+
+    RUNNER->ReleaseRoot(selectCallbackId);
+    delete sender();
+
     /* Fix for drawing file dialog contents under Linux */
     #ifdef __linux__
     if (window) {
         window->setUpdatesEnabled(true);
     }
     #endif
-
-    RUNNER->EvalFunction(RUNNER->LookupRoot(selectCallbackId), 1, RUNNER->AllocateArray(0));
-
-    RUNNER->ReleaseRoot(selectCallbackId);
-    delete sender();
 #endif
 }
 
