@@ -1226,6 +1226,20 @@ class RenderSupport {
 					files[i] = e.clipboardData.files[i];
 				}
 
+			// Emit simulated cmd+v key events
+			if (Platform.isMacintosh) {
+				var ke = {
+					key: "v",
+					ctrl: true,
+					shift: false,
+					alt: false,
+					meta: false,
+					keyCode: 86,
+					preventDefault: function() {}
+				};
+				emit("keyup", ke);
+			}
+
 			emit("paste", files);
 		};
 
