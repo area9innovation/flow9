@@ -1227,13 +1227,13 @@ class RenderSupport {
 				}
 
 			// Emit simulated cmd+v key events
-			if (Platform.isMacintosh && (Platform.isSafari || Platform.isChrome)) {
+			if (Platform.isMacintosh) {
 				var ke = {
 					key: "v",
-					ctrl: false,
+					ctrl: true,
 					shift: false,
 					alt: false,
-					meta: true,
+					meta: false,
 					keyCode: 86,
 					preventDefault: function() {}
 				};
