@@ -1125,6 +1125,10 @@ class RenderSupport {
 		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
 	}
 
+	public static function setTranslateAttribute(translate : Bool) {
+		Browser.document.documentElement.setAttribute("translate", translate ? "yes" : "no");
+	}
+
 	public static function setPinchToScaleEnabled(enabled : Bool) {
 		PinchToScaleEnabled = enabled;
 	}
