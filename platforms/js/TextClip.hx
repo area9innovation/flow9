@@ -474,7 +474,6 @@ class TextClip extends NativeWidgetClip {
 
 			if (type == 'number') {
 				nativeWidget.step = step;
-				nativeWidget.addEventListener('wheel', function(e) {e.preventDefault();});
 			}
 
 			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : 'off';
@@ -1206,6 +1205,26 @@ class TextClip extends NativeWidgetClip {
 		this.invalidateInteractive();
 
 		this.renderStage = RenderSupport.PixiStage;
+
+		var numberWheelFn = function(e) {
+			e.preventDefault();
+		}
+
+		var multilineWheelFn = function(e) {
+			e.stopPropagation();
+		}
+
+		if (type == "number") {
+			nativeWidget.addEventListener('wheel', numberWheelFn);
+		} else {
+			nativeWidget.removeEventListener('wheel', numberWheelFn);
+		}
+
+		if (multiline) {
+			nativeWidget.addEventListener('wheel', multilineWheelFn);
+		} else {
+			nativeWidget.removeEventListener('wheel', multilineWheelFn);
+		}
 
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
