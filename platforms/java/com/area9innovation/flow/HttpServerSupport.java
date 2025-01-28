@@ -342,8 +342,11 @@ public class HttpServerSupport extends NativeHost {
 							try {
 								os.close();
 							} catch (IOException e) {
-								System.out.println("Ending response error: " + e.getMessage());
-								e.printStackTrace(System.out);
+								String err = e.getMessage();
+								if (!err.equals("Broken pipe") && !err.equals("Connection reset by peer")) {
+									System.out.println("Ending response error: " + err);
+									e.printStackTrace(System.out);
+								}
 							}
 						}
 						return null;
