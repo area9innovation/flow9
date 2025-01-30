@@ -1,0 +1,134 @@
+import fabric/fabric;
+
+export {
+	fabricUndo(name : string) -> Fabric;
+	fabricClipboard(valueName : string) -> Fabric;
+}
+
+fabricUndo(valueName : string) -> Fabric {
+	undoStack = valueName + "Undo";
+	undoEnabled = valueName + "undoenabled";
+	redoStack = valueName + "Redo";
+	redoEnabled = valueName + "redoenabled";
+	currentBuffer = valueName + "undocurrent";
+	working = valueName + "undoworking";
+
+	magic = 40000337; // We use this as a special marker to indicate that the value has not been set yet
+
+	BLetMany([
+			flow(currentBuffer), magic, 
+			undoStack, [], 
+			redoStack, [], 
+			undoEnabled, false, 
+			redoEnabled, false, 
+			working, false
+		],
+		BGetEnv(\benv -> {
+			BGroup([
+				BSelect1(valueName, \env, value -> {
+					if (!getFab(env, working, false)) {
+						currentValue = getFab(env, currentBuffer, magic);
+						newValue = getFab(env, valueName, magic);
+
+						if (currentValue == magic) {
+							setFab(env, currentBuffer, newValue);
+						} else if (currentValue != newValue) {
+							stack = getFab(env, undoStack, []);
+							setFab(env, undoStack, concat([currentValue], stack));
+							setFab(env, redoStack, []);
+							setFab(env, currentBuffer, newValue);
+							setFab(env, undoEnabled, true);
+							setFab(env, redoEnabled, false);
+						}
+					}
+					BEmpty();
+				}),
+
+				BCols([
+					BIconButton("undo", \env -> {
+						values = getFab(env, undoStack, []);
+						if (length(values) > 0) {
+							setFab(env, working, true);
+							currentValue = getFab(env, currentBuffer, magic);
+							setFab(env, redoStack, concat([currentValue], getFab(env, redoStack, [])));
+							setFab(env, currentBuffer, values[0]);
+							setFab(env, valueName, values[0]);
+							setFab(env, undoStack, tail(values));
+							setFab(env, working, false);
+							setFab(env, undoEnabled, length(values) > 1);
+							setFab(env, redoEnabled, true);
+						}
+					}, [], [MEnabled(getFabDyn(benv, undoEnabled, true))]),
+					BIconButton("redo", \env -> {
+						redoValues = getFab(env, redoStack, []);
+						if (length(redoValues) > 0) {
+							setFab(env, working, true);
+							currentValue = getFab(env, currentBuffer, magic);
+							setFab(env, undoStack, concat([currentValue], getFab(env, undoStack, [])));
+							setFab(env, currentBuffer, redoValues[0]);
+							setFab(env, valueName, redoValues[0]);
+							setFab(env, redoStack, tail(redoValues));
+							setFab(env, working, false);
+							setFab(env, redoEnabled, length(redoValues) > 1);
+							setFab(env, undoEnabled, true);
+						}
+					}, [], [MEnabled(getFabDyn(benv, redoEnabled, true))])
+				])
+			])
+		})
+	);
+}
+
+fabricClipboard(valueName : string) -> Fabric {
+	// Implement in a similar way to fabricUndo above
+	currentBuffer = valueName + "Clipboard";
+	cutVisible = valueName + "cutvisible";
+	cutEnabled = valueName + "cutenabled";
+	copyEnabled = valueName + "copyenabled";
+
+	magic = 40000337; // We use this as a special marker to indicate that the value has not been set yet
+
+	BLetMany([
+			flow(currentBuffer), magic,
+			cutVisible, false,
+			cutEnabled, false,
+			copyEnabled, true
+		],
+		BGetEnv(\benv -> {
+			BCols([
+				BSelect1(valueName, \env, value -> {
+					setFab(env, copyEnabled, true);
+					currentValue = getFab(env, valueName, magic);
+					setFab(env, cutVisible, isArray(currentValue));
+					setFab(env, cutEnabled, isArray(currentValue) && length(currentValue) > 0);
+					BEmpty();
+				}),
+				BSelect1(cutVisible, \env, visible -> {
+					if (getFab(env, cutVisible, false)) {
+						BIconButton("content_cut", \ienv -> {
+							cvalue = getFab(ienv, valueName, magic);
+							setFab(env, currentBuffer, cvalue);
+							// Simulating clipboard write
+							println("Clipboard: " + toString(cvalue));
+							setFab(ienv, valueName, []);
+						}, [], [MEnabled(getFabDyn(benv, cutEnabled, false))])
+					} else {
+						BEmpty();
+					}
+				}),
+				BIconButton("content_copy", \env -> {
+					cvalue = getFab(env, valueName, magic);
+					setFab(env, currentBuffer, cvalue);
+					// Simulating clipboard write
+					println("Clipboard: " + toString(cvalue));
+					setFab(env, copyEnabled, false);
+				}, [], [MEnabled(getFabDyn(benv, copyEnabled, true))]),
+				BIconButton("content_paste", \env -> {
+					// Simulating clipboard read
+					value = getFab(env, currentBuffer, magic);
+					setFab(env, valueName, value);
+				}, [], [])
+			])
+		})
+	)
+}

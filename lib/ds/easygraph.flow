@@ -22,6 +22,7 @@ export {
 
 	addEGEdge(graph : EasyGraph<?, ??>, edge : GEdge<??>) -> EasyGraph<?, ??>;
 		// GEdge : (from : int, to : int, data : ?, weight : int);
+	addEGEdgeUnique(graph : EasyGraph<?, ??>, edge : GEdge<??>) -> EasyGraph<?, ??>;
 
 	/////////////////
 	// Getters
@@ -43,6 +44,7 @@ export {
 	/////////////////
 	removeEGNodes(graph : EasyGraph<?, ??>, keepFn : (GNode<?>) -> bool) -> EasyGraph<?, ??>;
 	removeEGEdges(graph : EasyGraph<?, ??>, keepFn : (GEdge<??>) -> bool) -> EasyGraph<?, ??>;
+	removeEGEdge(g : EasyGraph<?, ??>, edge : GEdge<??>) -> EasyGraph<?, ??>;
 
 	// TODO: Remove subgraph from the graph 
 	// TODO: Add subgraph to the graph
@@ -95,6 +97,8 @@ export {
 	collectBackEGEdges(graph : EasyGraph<?, ??>, sources : [int]) -> [GEdge<??>];
 
 	removeBackEGEdges(graph : EasyGraph<?, ??>, sources : [int]) -> EasyGraph<?, ??>; // DAG-ify
+
+	findEasyGraphCycles(graph : EasyGraph<?, ??>) -> [[GEdge<??>]];
 
 	/////////////////
 	// Reachability
@@ -190,6 +194,18 @@ addEGEdge(graph : EasyGraph<?, ??>, edge : GEdge<??>) -> EasyGraph<?, ??> {
 	)
 }
 
+addEGEdgeUnique(graph : EasyGraph<?, ??>, edge : GEdge<??>) -> EasyGraph<?, ??> {
+	// Get existing edges from the source node
+	existingEdges = getTreeArrayValue(graph.edges, edge.from);
+
+	// Check if edge already exists
+	if (exists(existingEdges, \e -> e.to == edge.to)) {
+		graph
+	} else {
+		addEGEdge(graph, edge)
+	}
+}
+
 /////////////////
 // Getters
 /////////////////
@@ -264,6 +280,28 @@ removeEGEdges(graph : EasyGraph<?, ??>, keepFn : (GEdge<??>) -> bool) -> EasyGra
 			acc.numberOfEdges + length(succs2)
 		)
 	})
+}
+
+removeEGEdge(g : EasyGraph<?, ??>, edge : GEdge<??>) -> EasyGraph<?, ??> {
+	fromEdges = lookupTreeDef(g.edges, edge.from, []);
+
+	// Remove all instances of this exact edge (considering from, to, data and weight)
+	newEdges = removeAll(fromEdges, edge);
+
+	if (length(newEdges) == length(fromEdges)) {
+		// Edge was not found, return original graph unchanged
+		g
+	} else {
+		// Edge was found, update graph
+		EasyGraph(
+			g.nodes,
+			if (length(newEdges) == 0)
+				removeFromTree(g.edges, edge.from)
+			else
+				setTree(g.edges, edge.from, newEdges),
+			g.numberOfEdges - 1
+		)
+	}
 }
 
 /////////////////
@@ -525,4 +563,74 @@ easyGraph2dot(graph : EasyGraph<?, ??>, root : int, graphstyles : [DiGraphStyle<
 	edges = getEGEdges(graph);
 
 	anyGraph2dot(root, nodes, edges, graphstyles, node2styles, edge2styles)
+}
+
+findEasyGraphCycles(graph : EasyGraph<?, ??>) -> [[GEdge<??>]] {
+	// Store visited nodes during each DFS
+	visited = ref makeTree();
+	// Store nodes in current path to detect back edges
+	stack = ref makeTree(); 
+	// Store all found cycles
+	cycles = ref [];
+	// Store current path of edges
+	path = ref [];
+
+	// Do DFS from each node to find cycles
+	traverseInOrder(graph.nodes, \nodeId, node -> {
+		easyGraphDfs(graph, nodeId, visited, stack, cycles, path);
+	});
+
+	^cycles;
+}
+
+easyGraphDfs(
+	graph : EasyGraph<?, ??>, 
+	nodeId : int,
+	visited : ref Tree<int, bool>,
+	stack : ref Tree<int, bool>,
+	cycles : ref [[GEdge<??>]],
+	path : ref [GEdge<??>]
+) -> void {
+	visited := setTree(^visited, nodeId, true);
+	stack := setTree(^stack, nodeId, true);
+
+	// Get outgoing edges
+	outEdges = lookupTreeDef(graph.edges, nodeId, []);
+	
+	// Check each successor
+	iter(outEdges, \edge -> {
+		if (!lookupTreeDef(^visited, edge.to, false)) {
+			// Not visited - continue DFS
+			path := concat(^path, [edge]);
+			easyGraphDfs(graph, edge.to, visited, stack, cycles, path);
+			path := subrange(^path, 0, length(^path) - 1);
+		} else if (lookupTreeDef(^stack, edge.to, false)) {
+			// Found cycle - extract it from current path
+			currentPath = ^path;
+			cycles := concat(^cycles, [
+				extractEGCycle(currentPath, edge)
+			]);
+		}
+	});
+
+	stack := removeFromTree(^stack, nodeId);
+}
+
+extractEGCycle(path : [GEdge<?>], lastEdge : GEdge<?>) -> [GEdge<?>] {
+	// Find where cycle starts in path
+	cycleStartIndex = findi(path, \e -> e.from == lastEdge.to);
+	
+	switch (cycleStartIndex) {
+		None(): {
+			// Self-cycle
+			[lastEdge]
+		}
+		Some(index): {
+			// Extract cycle from path and add the closing edge
+			concat(
+				subrange(path, index, length(path) - index),
+				[lastEdge]
+			)
+		}
+	}
 }

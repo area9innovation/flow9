@@ -136,6 +136,7 @@ class TextClip extends NativeWidgetClip {
 	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
 	private var autofillBackgroundColor : Int = null;
+	private var autofillBackgroundOpacity : Float = 1.0;
 	private var backgroundOpacity : Float = 0.0;
 	private var cursorColor : Int = -1;
 	private var cursorOpacity : Float = -1.0;
@@ -473,7 +474,6 @@ class TextClip extends NativeWidgetClip {
 
 			if (type == 'number') {
 				nativeWidget.step = step;
-				nativeWidget.addEventListener('wheel', function(e) {e.preventDefault();});
 			}
 
 			nativeWidget.autocomplete = autocomplete != '' ? autocomplete : 'off';
@@ -507,7 +507,7 @@ class TextClip extends NativeWidgetClip {
 			if (autofillBackgroundColor != null) {
 				var colorWithOpacity = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * alpha + ")";
 				// These variables are used in the flowjspixi.css file for input:-webkit-autofill workaround
-				nativeWidget.style.setProperty('--background-color', RenderSupport.makeCSSColor(autofillBackgroundColor, 1));
+				nativeWidget.style.setProperty('--background-color', RenderSupport.makeCSSColor(autofillBackgroundColor, autofillBackgroundOpacity));
 				nativeWidget.style.setProperty('--text-color', colorWithOpacity);
 			}
 		} else {
@@ -585,7 +585,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public inline function updateBaselineWidget() : Void {
-		if (this.isHTMLRenderer() && isNativeWidget && needBaseline) {
+		if (this.isHTMLRenderer() && isNativeWidget && needBaseline && baselineWidget != null) {
 			if (!isInput && nativeWidget.firstChild != null && !isMaterialIconFont()) {
 				// For some fonts italic form has a smaller height, so baseline becomes occasionally unsynchronised with normal-style glyphs on different zoom levels
 				if (style.fontStyle == 'italic') {
@@ -601,7 +601,9 @@ class TextClip extends NativeWidgetClip {
 				
 				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
-				nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
+				if (nativeWidget.firstChild != baselineWidget) {
+					nativeWidget.insertBefore(baselineWidget, nativeWidget.firstChild);
+				}
 				updateAmiriWorkaroundWidget();
 			} else if (baselineWidget.parentNode != null) {
 				baselineWidget.parentNode.removeChild(baselineWidget);
@@ -1178,6 +1180,14 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
+	public function setAutofillBackgroundOpacity(autofillBackgroundOpacity : Float) {
+		if (this.autofillBackgroundOpacity != autofillBackgroundOpacity) {
+			this.autofillBackgroundOpacity = autofillBackgroundOpacity;
+
+			invalidateStyle();
+		}
+	}
+
 	public function setTextInput() {
 		isInput = true;
 
@@ -1195,6 +1205,26 @@ class TextClip extends NativeWidgetClip {
 		this.invalidateInteractive();
 
 		this.renderStage = RenderSupport.PixiStage;
+
+		var numberWheelFn = function(e) {
+			e.preventDefault();
+		}
+
+		var multilineWheelFn = function(e) {
+			e.stopPropagation();
+		}
+
+		if (type == "number") {
+			nativeWidget.addEventListener('wheel', numberWheelFn);
+		} else {
+			nativeWidget.removeEventListener('wheel', numberWheelFn);
+		}
+
+		if (multiline) {
+			nativeWidget.addEventListener('wheel', multilineWheelFn);
+		} else {
+			nativeWidget.removeEventListener('wheel', multilineWheelFn);
+		}
 
 		if (Platform.isMobile) {
 			if (Platform.isAndroid || (Platform.isSafari && Platform.browserMajorVersion >= 13)) {
@@ -1758,6 +1788,7 @@ class TextClip extends NativeWidgetClip {
 					} else {
 						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic'
 							|| (AmiriHTMLMeasurement && style.fontFamily == "Amiri")
+							|| (nativeWidget != null && nativeWidget.style.fontFeatureSettings != "")
 						) {
 							measureHTMLWidth();
 						}
@@ -1891,6 +1922,7 @@ class TextClip extends NativeWidgetClip {
 		measureElement.style.wrap = nativeWidget.style.wrap;
 		measureElement.style.whiteSpace = nativeWidget.style.whiteSpace;
 		measureElement.style.display = nativeWidget.style.display;
+		measureElement.style.fontFeatureSettings = nativeWidget.style.fontFeatureSettings;
 
 		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 		if (wordWrap) {
@@ -2046,6 +2078,7 @@ class TextClip extends NativeWidgetClip {
 		TextClip.measureSVGTextElement.setAttribute('font-weight', computedStyle.fontWeight);
 		TextClip.measureSVGTextElement.setAttribute('letter-spacing', computedStyle.letterSpacing);
 		TextClip.measureSVGTextElement.setAttribute('white-space', computedStyle.whiteSpace);
+		TextClip.measureSVGTextElement.style.fontFeatureSettings = computedStyle.fontFeatureSettings;
 
 		TextClip.measureSVGTextElement.textContent = textNode.textContent;
 
@@ -2130,7 +2163,8 @@ class TextClip extends NativeWidgetClip {
 
 	private function getSanitizedText(text : String) : String {
 		if (preventXSS) {
-			untyped __js__("text = DOMPurify.sanitize(text)");
+			// We have to allow simple '<', '>' and tag-like (but without attributes) texts
+			untyped __js__("text = text.match(/<.*[\\s, //].*>/) ? DOMPurify.sanitize(text) : text");
 		}
 		return text;
 	}

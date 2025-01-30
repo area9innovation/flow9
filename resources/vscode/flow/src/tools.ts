@@ -1,9 +1,8 @@
 import { spawn, ChildProcess, spawnSync } from 'child_process';
 import * as vscode from 'vscode';
-import * as fs from "fs";
-import { Server } from 'net';
+import { Socket } from 'net';
 
-export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (string) => void, childProcesses: ChildProcess[]): ChildProcess {
+export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (string) => void, childProcesses: ChildProcess[] = []): ChildProcess {
     const options = wd && wd.length > 0 ? { cwd: wd, shell: true } : { shell : true};
     let child = spawn(cmd, args, options);
     child.stdout.setEncoding('utf8');
@@ -11,12 +10,16 @@ export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (st
     child.stderr.on("data", outputProc);
     childProcesses.push(child);
     child.on("close", (code) => {
-        console.log(`child process exited with code ${code}`);
+        log(`child process exited with code ${code}`);
         let index = childProcesses.indexOf(child);
         if (index >= 0)
             childProcesses.splice(index, 1);
     });
     return child;
+}
+
+export function log(msg: string) {
+	console.log("[flow] " + msg);
 }
 
 export function run_cmd_sync(cmd: string, wd: string, args: string[]) {
@@ -31,15 +34,15 @@ export function shutdownFlowcHttpServerSync() {
 }
 
 export function shutdownFlowcHttpServer() {
-    return run_cmd("flowc1", "", ["server-shutdown=1"], (s) => { console.log(s); }, []);
+    return run_cmd("flowc1", "", ["server-shutdown=1"], log, []);
 }
 
-export function launchFlowcHttpServer(projectRoot: string, compiler: string, on_start : () => void, on_stop : () => void, on_msg : (any) => void) {
+export function launchFlowcHttpServer(compiler: string, on_start : () => void, on_stop : () => void, on_msg : (msg : string) => void) {
 	on_start();
 	on_msg((new Date()).toString() + " Flow Http server started");
 	// Only two variants are supported currently: flowc1 or flowc2. Default server is flowc1
 	compiler = (compiler === "flowc2") ? compiler : "flowc1";
-	let httpServer = run_cmd(compiler, projectRoot, ["server-mode=http"], (s) => { console.log(s); }, []);
+	let httpServer = run_cmd(compiler, getFlowRoot(), ["server-mode=http"], log);
 	httpServer.addListener("close", (code: number, signal: string) => {
 		on_msg(
 			(new Date()).toString() + " Flow Http server closed" +
@@ -65,33 +68,40 @@ export function launchFlowcHttpServer(projectRoot: string, compiler: string, on_
     return httpServer
 }
 
+var flowRoot : string = null;
 export function getFlowRoot(): string {
-    const config = vscode.workspace.getConfiguration("flow");
-	let root: string = config.get("root");
-	if (!fs.existsSync(root)) {
-		root = run_cmd_sync("flowc1", ".", ["print-flow-dir=1"]).stdout.toString().trim();
-		config.update("root", root, vscode.ConfigurationTarget.Global);
+	if (!flowRoot) {
+		flowRoot = run_cmd_sync("flowc1", ".", ["print-flow-dir=1"]).stdout.toString().trim();
 	}
-	return root;
+	return flowRoot
 }
 
 export function isPortAvailable(port: number): Promise<boolean> {
 	return new Promise((resolve) => {
-		const server = new Server();
-		server.once('error', function (err: any) {
-			if (err.code === 'EADDRINUSE') {
-			  resolve(false);
-			}
-		});
-		server.once('listening', function () {
-			server.close();
-			resolve(true);
-		});
-		server.listen(port);
+		const socket = new Socket();
+		const resolve2 = (val : boolean) => {
+			resolve(val);
+			socket.destroy();
+		}
+		socket.setTimeout(100, () => resolve2(true));
+		socket.on("connect", () => resolve2(false));
+		socket.on("error", () => resolve2(true));
+		socket.connect(port, "0.0.0.0");
 	});
 }
 
 export function getVerboseParam(): string {
 	let verbose: string = vscode.workspace.getConfiguration("flow").get("compilerVerbose")
 	return verbose ? verbose : "0";
+}
+
+export function getActiveFlowDocument(): vscode.TextDocument {
+	var doc = vscode.window.activeTextEditor.document;
+	if (doc.languageId == "flow") {
+		return doc;
+	} else {
+		vscode.window.showWarningMessage("Active Flow document and repeat your action");
+		log("Not a Flow document is active: " + doc.uri.fsPath);
+		return null;
+	}
 }

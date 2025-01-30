@@ -57,6 +57,7 @@ export {
 		cursorShape : DynamicBehaviour<CursorShape>,
 		textStyle : Transform<[MTextStyle]>,
 		autofillBackgroundFill : Maybe<AutofillBackgroundFill>,
+		autofillBackgroundOpacity : Maybe<AutofillBackgroundOpacity>,
 		tTextMetrics : Transform<FormMetrics>,
 		smallEdit : bool,
 		label : string,
@@ -100,6 +101,7 @@ export {
 		processedKeyDown : Maybe<MInputProcessKeyDown>,
 		filterFn : Maybe<MInputFilter>,
 		filterAction : (string) -> void,
+		filterActionKeyEvent : (KeyEvent) -> bool,
 		positionOnFocus : Maybe<(content : string, previous : int) -> int>,
 		selectionOnFocus : Maybe<(content : string, previous : int) -> int>,
 		clearContent : () -> void,
@@ -304,7 +306,13 @@ export {
 			)
 		}
 	};
+
+	defFilterActionKeyEvent(multiline : bool) -> (KeyEvent) -> bool {
+		\k : KeyEvent -> k.keycode == KEY_ENTER && (!multiline || k.shift)
+	};
 }
+
+enablePreventXSSDef = isUrlParameterTrue("new") && !isUrlParameterFalse("input_xss_protection_enabled");
 
 numericFilter(s) {
 	dotB = ref false;
@@ -357,6 +365,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	eatKeyDown = extractStruct(state, MEatKeyDown(defEatKeyDown(multiline, readOnly))).fn;
 	processedKeyDown = tryExtractStruct(state, MInputProcessKeyDown(\__ -> true));
 	filterFn = tryExtractStruct(state, MInputFilter(\c, __ -> c));
+	filterActionKeyEvent = extractStruct(style, MFilterActionKeyEvent(defFilterActionKeyEvent(multiline))).fn;
 	textInputCursorShape = make(DefaultCursor());
 	noLeftBorder = contains(style, MInputNoLeftBorder());
 	preventContextMenu = contains(state, MInputPreventContextMenu());
@@ -385,6 +394,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	textStyle = fconcat(extractStruct(style, MDynamicTextStyle(const(mTextStyle))).style, const([LocalizationEnabled(false)]));
 	liftFn : FLift<[MTextStyle], FormMetrics> = FLift(\ts : [MTextStyle] -> getTWordMetrics(TText(" ", MTextStyle2CharacterStyle(parent, ts)), makeTree()));
 	autofillBackgroundFill = tryExtractStruct(style, AutofillBackgroundFill(0));
+	autofillBackgroundOpacity = tryExtractStruct(style, AutofillBackgroundOpacity(1.0));
 	tTextMetrics = fselect(textStyle, liftFn);
 
 	prev = ref getValue(content);
@@ -1254,6 +1264,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		textInputCursorShape,
 		textStyle,
 		autofillBackgroundFill,
+		autofillBackgroundOpacity,
 		tTextMetrics,
 		smallEdit,
 		label,
@@ -1297,6 +1308,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		processedKeyDown,
 		filterFn,
 		filterAction.fn,
+		filterActionKeyEvent,
 		positionOnFocus,
 		selectionOnFocus,
 		clearContent,
@@ -1436,6 +1448,7 @@ MTextEditorState(
 	textHeight : double,
 	scrollStyle : [MScrollStyle],
 	handleDownKeys : (h : bool, k : KeyEvent) -> bool,
+	handleUpKeys : (h : bool, k : KeyEvent) -> bool,
 	pasteEventListener : () -> () -> void,
 	handleMouseDown : (h : bool, mi : MouseDownInfo) -> bool,
 	handleMouseUp : (h : bool, mi : () -> MouseInfo) -> bool,
@@ -1482,6 +1495,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 	numeric = inputState.numeric;
 	textStyle = MTextStyle2CharacterStyle(inputState.parent, fgetValue(inputState.textStyle)); // TODO:
 	textHeight = getTextSize(".", textStyle).height;
+	escapeHtml = extractStruct(textStyle, EscapeHTML(true)).escape;
 
 	scrollStyle =
 		[
@@ -1592,7 +1606,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 				mapi(if (length(l) > 0) l else [Pair(0, "")], \j, ns -> {
 					addN = (i < length(splitted) - 1 && j == length(l) - 1);
 					visibleText = if (sp) secondOfPair(ns) else concatStrings(generate(0, firstOfPair(ns), \__ -> "\u2022"));
-					filteredTagsText = if (sp) filterTags(secondOfPair(ns)) else Triple(visibleText, secondOfPair(ns), []);
+					filteredTagsText = if (sp && !escapeHtml) filterTags(secondOfPair(ns)) else Triple(visibleText, secondOfPair(ns), []);
 
 					MTextInputLine(visibleText + "\n", secondOfPair(ns), filteredTagsText, firstOfPair(ns), addN)
 				})
@@ -2111,6 +2125,8 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 		nextDistinct(cursorPosition, en);
 	}
 
+	isShiftDown = make(false);
+
 	handleDownKeys = \handled : bool, k : KeyEvent -> {
 		if (fgetValue(focused) && !handled && eitherMap(inputState.processedKeyDown, \pk -> pk.fn(k), true)) {
 			if (k.utf == "home") {
@@ -2161,11 +2177,19 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 				insertStr(k.utf);
 			}
 
+			next(isShiftDown, k.shift);
+
 			eatKDown = inputState.eatKeyDown(k);
 			if (eatKDown) k.preventDefault();
 			eatKDown;
 		} else
 			handled
+	}
+
+	handleUpKeys = \handled : bool, k : KeyEvent -> {
+		next(isShiftDown, k.keycode != KEY_SHIFT && k.shift);
+
+		handled;
 	}
 
 	pasteEventListener = \ -> addPasteEventListener(\__ -> {
@@ -2190,10 +2214,9 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 					selectCurrentWord();
 				}
 			} else {
-				updateCursorPosition(getValue(mousexy));
+				updateCursorPosition(Point(mi.x, mi.y));
 				cp = getValue(cursorPosition);
-
-				nextDistinct(selectionPosition, MTextEditorSelection(cp, cp));
+				nextDistinct(selectionPosition, MTextEditorSelection(if (fgetValue(isShiftDown)) getValue(selectionPosition).start else cp, cp));
 			}
 
 			prevPrevDown := ^prevDown;
@@ -2352,6 +2375,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 		textHeight,
 		scrollStyle,
 		handleDownKeys,
+		handleUpKeys,
 		pasteEventListener,
 		handleMouseDown,
 		handleMouseUp,
@@ -2415,7 +2439,7 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 							if (fc)
 								[
 									TInteractive(
-										[KeyDown2(editorState.handleDownKeys)],
+										[KeyDown2(editorState.handleDownKeys), KeyUp2(editorState.handleUpKeys)],
 										TRectangle(interactiveRectangleStyle, TGroup2(TFillXY(), tr))
 									)
 									|> (\t -> if (inputState.readOnly) t else TConstruct([editorState.pasteEventListener], t))
@@ -2611,12 +2635,18 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 								}),
 								FCharacterStyle(fselect(inputState.textStyle, FLift(\ts : [MTextStyle] -> MTextStyle2CharacterStyle(parent, ts)))),
 								SetRTL(parent.rtl),
-								FPreventFromXSS(extractStruct(state, MInputPreventFromXSS(false)).enable)
+								FPreventFromXSS(extractStruct(state, MInputPreventFromXSS(enablePreventXSSDef)).enable)
 							],
 							eitherMap(
 								inputState.autofillBackgroundFill,
 								\afbf ->
 									[afbf],
+								[]
+							),
+							eitherMap(
+								inputState.autofillBackgroundOpacity,
+								\afbo ->
+									[afbo],
 								[]
 							),
 							eitherMap(
@@ -2705,6 +2735,35 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 			})
 		);
 
+	dynamicContent = fselect2Lift(
+		inputState.content,
+		eitherMap(
+			inputState.password,
+			\pw -> pw.showPassword,
+			const(true)
+		),
+		\c0, sp -> {
+			eol = getCharCodeAt("\n", 0);
+
+			(if (sp)
+				c0
+			else
+				stringFold(c0, "", \acc, c ->
+					if (c == eol)
+						acc + fromCharCode(c)
+					else
+						acc + "\u2022"
+				))
+			|> (\c ->
+				if (inputState.multiline)
+					strSplit(c, "\n")
+					|> (\spl -> foldi(spl, "", \i, acc, ch -> acc + ch + "\t\n"))
+				else
+					strReplace(c, "\n", "")
+			);
+		}
+	);
+
 	(if (isEmailType) textInput() else TVisibleLazy(inputState.mfocus.focusEnabled, textInput))
 	|> (\f ->
 		TGroup2WithoutMetrics(
@@ -2736,30 +2795,11 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 	|> (\f ->
 		TLet(
 			"MTextInputText",
-			(\c0, sp, ts : [MTextStyle] -> {
-				eol = getCharCodeAt("\n", 0);
-				c =
-					(if (sp)
-						c0
-					else
-						stringFold(c0, "", \acc, c ->
-							if (c == eol)
-								acc + fromCharCode(c)
-							else
-								acc + "\u2022"
-						))
-					|> (\c ->
-						if (inputState.multiline)
-							strSplit(c, "\n")
-							|> (\spl -> foldi(spl, "", \i, acc, ch -> acc + ch + "\t\n"))
-						else
-							strReplace(c, "\n", "")
-					);
-
+			TSelect(inputState.textStyle, \ts : [MTextStyle] -> {
 				if (inputState.multiline)
 					MDynamicParagraph2T(
 						inputState.parent,
-						const(c),
+						dynamicContent,
 						concatA([
 							ts,
 							paragraphInterlineStyles(ts),
@@ -2767,15 +2807,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						])
 					)
 				else
-					MText2T(inputState.parent, c, ts)
+					TSelect(dynamicContent, \c -> MText2T(inputState.parent, c, ts))
 			})
-			|> (\f2 ->
-				eitherMap(
-					inputState.password,
-					\pw -> TSelect3(inputState.content, pw.showPassword, inputState.textStyle, f2),
-					TSelect2(inputState.content, inputState.textStyle, \c, ts -> f2(c, true, ts))
-				)
-			)
 			|> (\t -> TAttachWidth(t, inputState.textWidth)),
 			f
 		)

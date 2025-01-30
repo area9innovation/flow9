@@ -16,6 +16,8 @@ export {
 
 	// Also escape numeric and named escapes: &#xHHHH; and &#DDD;
 	unescapeHtml2(s : string) -> string;
+	// the same as unescapeHtml2, but we return the errors. Result : (html, error)
+	unescapeHtml3(s : string) -> Pair<string, string>;
 
 	// Only escape numeric escapes: &#xHHHH; and &#DDD;
 	unescapeNumericHtml(s : string) -> string;
@@ -380,16 +382,29 @@ ensureHtmlEntitiesInitialized() -> void {
 	}
 }
 
-unescapeHtml2(s) {
+unescapeHtml2(s : string) -> string {
 	ensureHtmlEntitiesInitialized();
-	doUnescapeHtml("", s, false);
+	errors = ref makeList();
+	result = doUnescapeHtml("", s, false, \e -> errors := Cons(e, ^errors));
+	if (!isEmptyList(^errors)) println(list2string(^errors));
+	result;
 }
 
-unescapeNumericHtml(s) {
-	doUnescapeHtml("", s, true);
+unescapeHtml3(s : string) -> Pair<string, string> {
+	ensureHtmlEntitiesInitialized();
+	errors = ref makeList();
+	result = doUnescapeHtml("", s, false, \e -> errors := Cons(e, ^errors));
+	Pair(result, list2string(^errors));
 }
 
-doUnescapeHtml(acc : string, s : string, numericOnly : bool) -> string {
+unescapeNumericHtml(s: string) -> string {
+	errors = ref makeList();
+	result = doUnescapeHtml("", s, true, \e -> errors := Cons(e, ^errors));
+	if (!isEmptyList(^errors)) println(list2string(^errors));
+	result;
+}
+
+doUnescapeHtml(acc : string, s : string, numericOnly : bool, onError : (string) -> void) -> string {
 	i = strIndexOf(s, "&");
 	if (i == -1) acc + s else {
 		left = acc + strLeft(s, i);
@@ -403,11 +418,11 @@ doUnescapeHtml(acc : string, s : string, numericOnly : bool) -> string {
 			if (startsWith(esca, "&#x")) {
 				// Hex
 				c = fromCharCode(parseHex(strRight(esca, 3)));
-				doUnescapeHtml(left + c, after, numericOnly)
+				doUnescapeHtml(left + c, after, numericOnly, onError)
 			} else if (startsWith(esca, "&#")) {
 				// Decimal
 				c = fromCharCode(s2i(strRight(esca, 2)));
-				doUnescapeHtml(left + c, after, numericOnly)
+				doUnescapeHtml(left + c, after, numericOnly, onError)
 			} else if (!numericOnly){
 				c = if (esca == "&nbsp") "\u00a0"
 				else if (esca == "&amp") "&"
@@ -417,13 +432,13 @@ doUnescapeHtml(acc : string, s : string, numericOnly : bool) -> string {
 				else {
 					e = lookupTreeDef(^htmlEntity2string, esca, "");
 					if (e == "") {
-						println("Unknown escape: " + esca);
+						onError("Unknown escape: " + esca + "\n");
 						esca + ";"
 					} else e;
 				}
-				doUnescapeHtml(left + c, after, numericOnly)
+				doUnescapeHtml(left + c, after, numericOnly, onError)
 			} else {
-				doUnescapeHtml(left + esca + ";", after, numericOnly)
+				doUnescapeHtml(left + esca + ";", after, numericOnly, onError)
 			}
 		}
 	}

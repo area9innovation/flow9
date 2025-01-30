@@ -202,3 +202,17 @@
 
 ## 0.6.3
  - Fixed a bug with starting LSP server on Windows
+
+## 0.6.4
+ - Fixed automatic update of the extension on Windows
+ - Removed extra files from the extension
+
+## 0.6.5
+ - Removed paths (flow.root, flow.projectRoot) from configuration
+ - Removed deprecated workspaceRoot variable
+ - Fixed debugger configuration
+ - Reworked automatic update of the extension
+
+## 0.6.6
+ - Introduced customizable flowc commands (F1 'Flow9: Execute some of predefined or arbitrary command on flowc server')
+ - Fixed default flowc server folder

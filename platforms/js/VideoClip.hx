@@ -8,6 +8,7 @@ import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 
 using DisplayObjectHelper;
+using RequestQueue;
 
 class VideoClip extends FlowContainer {
 	private var metricsFn : Float -> Float -> Void;
@@ -34,6 +35,7 @@ class VideoClip extends FlowContainer {
 	private var isAudio : Bool = false;
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
+	private static var requestQueue = new RequestQueue();
 
 	public var videoWidget : Dynamic;
 	private var widgetBounds = new Bounds();
@@ -539,39 +541,34 @@ class VideoClip extends FlowContainer {
 				untyped source.type = type;
 			}
 		} else {
-			var videoXhr = new js.html.XMLHttpRequest();
-			videoXhr.open("GET", src, true);
-			for (header in headers) {
-				videoXhr.setRequestHeader(header[0], header[1]);
-			}
+			// Downloads a file from/with a queue
+			var promise = requestQueue.request(src, headers);
 
-			videoXhr.responseType = js.html.XMLHttpRequestResponseType.BLOB;
-			videoXhr.onload = function (oEvent) {
-				if (videoXhr.status == 200) {
-					if (type == "") {
-						type = videoXhr.getResponseHeader("content-type");
-					}
-
+			// Handle the response
+			promise.then(function(blob) {
+				if (nativeWidget != null) {
 					if (type != "") {
 						untyped source.type = type;
+					} else {
+						// Is it necessary here?
+						// untyped source.type = videoXhr.getResponseHeader("content-type");
 					}
 
-					untyped source.src = js.html.URL.createObjectURL(videoXhr.response);
+					// Everything is fine, let's show video
+					untyped source.src = blob;
 
 					// Check and try add source here.
 					if (!isAppended && videoWidget != null) {
 						isAppended = true;
 						videoWidget.appendChild(source);
 					}
-				} else if (videoXhr.status >= 400) {
-					onStreamError();
 				}
-			};
-
-			videoXhr.onerror = onStreamError;
-			videoXhr.send(null);
+			}).catchError(function(error) {
+				onStreamError();
+			});
 		}
 
+		// Adds the new media source
 		sources.push(source);
 
 		// Sometimes we do not have `videoWidget` initialized here. Will do it on source loaded.

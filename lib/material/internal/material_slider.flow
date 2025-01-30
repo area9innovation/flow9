@@ -52,10 +52,12 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	captionFn = tryExtractStruct(m.style, MSliderCaption(\__ -> TEmpty()));
 	updateOnEnd = contains(m.style, MSliderUpdateOnEnd());
 	currentValueM = tryExtractStruct(m.style, MSliderCurrentValue(make(0.)));
+	disableWheel = contains(m.style, MDisableWheel());
 
 	mousePosition : MMousePosition = extractStruct(m.style, MMousePosition(make(zeroPoint)));
 	point = mousePosition.point;
 	hover = make(false);
+	mouseWheel = make(0.);
 
 	isRTL = parent.rtl;
 	lightBackground = getLightBackground(parent);
@@ -179,7 +181,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 				thumbRadius;
 
 		circleStyle = fsubselect(foc.enabled, FLift(st));
-		setMarker = \t -> t |> MHintMarker(manager, foc, false);
+		setMarker = \t -> t |> MHintMarker(manager, foc, Some(10.));
 
 		TCenteredCircle(foc.parent, radius, circleStyle, setMarker)
 		|> (\f -> TBorderT(radius, radius, zero, zero, f))
@@ -640,6 +642,40 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 							],
 							TFrame(0.0, 0.0, interactiveRectangleStyle, tr)
 						)
+						|> (\t2 -> if (disableWheel) t2 else {
+							wheelSupportUns = initUnsM();
+							wheelCallback = \valueUpdateEnabled -> \v -> {
+								if (v != 0.) {
+									dispUnsM(wheelSupportUns);
+									thumb =
+										if (isSome(chooseRange)) {
+											prc = snapPercent(fgetValue(cursorPercent));
+											if (prc <= getValue(rangeStartPercent)) startThumb
+											else if (prc >= getValue(rangeEndPercent)) endThumb
+											else if (fgetValue(showMainThumb)) mainThumb
+											else if (getValue(startThumb.active)) startThumb
+											else if (getValue(endThumb.active)) endThumb
+											else startThumb
+										} else mainThumb;
+
+									nextDistinct(thumb.active, true);
+									if (isCurrentMInteractionItemId(manager, sliderId)) {
+										if (valueUpdateEnabled) setNewPercent(thumb, getValue(thumb.percent) + stepPercent * sign(v));
+										setUnsM(wheelSupportUns, interruptibleTimer(1000, \ -> {
+											nextDistinct(thumb.active, false);
+											dispUnsM(wheelSupportUns);
+										}));
+										true
+									} else {
+										nextDistinct(thumb.active, false);
+										false
+									}
+								} else {
+									false
+								}
+							}
+							TMouseWheelInteractive(manager.manager, t2, wheelCallback(true), wheelCallback(false))
+						})
 					)
 				),
 			false
@@ -668,7 +704,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		),
 		makeSubscribeUns(fmax3(startThumb.active, endThumb.active, mainThumb.active), \active -> {
 			if (active) {
-				addMInteractionItemId(manager, sliderId);
+				addMInteractionItemIdIfEmpty(manager, sliderId);
 
 				[
 					makeSubscribe2(point, \p -> {
@@ -677,9 +713,28 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 					})()
 				]
 			} else {
+				removeMInteractionItemId(manager, sliderId);
 				[]
 			}
 		})],
+		eitherMap(
+			chooseRange,
+			\chR -> [
+				makeSubscribe2(mainThumb.active, \a -> if (a) {
+					nextDistinct(startThumb.active, false);
+					nextDistinct(endThumb.active, false);
+				}),
+				makeSubscribe2(startThumb.active, \a -> if (a) {
+					nextDistinct(mainThumb.active, false);
+					nextDistinct(endThumb.active, false);
+				}),
+				makeSubscribe2(endThumb.active, \a -> if (a) {
+					nextDistinct(startThumb.active, false);
+					nextDistinct(mainThumb.active, false);
+				}),
+			],
+			[]
+		),
 		eitherMap(
 			chooseRange,
 			\chR -> concat(

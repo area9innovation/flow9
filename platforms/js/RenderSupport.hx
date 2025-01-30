@@ -1,6 +1,7 @@
 import js.Browser;
 import js.html.Element;
 import js.html.IFrameElement;
+import haxe.Json;
 
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Bounds;
@@ -61,6 +62,7 @@ class RenderSupport {
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
 	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
 	public static var PinchToScaleEnabled : Bool = true;
+	public static var StopKeyEventsPropagation : Bool = Util.getParameter("stop_key_events_propagation") != "0";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -462,6 +464,60 @@ class RenderSupport {
 
 		return function () {
 			Browser.document.head.removeChild(style);
+		}
+	}
+
+	public static function setGlobalStyle(selector:String, newRule:String):Void {
+		try {
+			var doc = Browser.document;
+			var style:js.html.StyleElement = cast doc.getElementById("flow-global-style");
+
+			if (style == null) {
+				style = cast doc.createElement('style');
+				style.type = 'text/css';
+				style.id = "flow-global-style";
+				doc.getElementsByTagName('head')[0].appendChild(style);
+			}
+
+			var sheet:js.html.CSSStyleSheet = cast (style.sheet != null ? style.sheet : untyped style.styleSheet);
+			var rules:Array<js.html.CSSRule> = cast (sheet.cssRules != null ? sheet.cssRules : untyped sheet.rules);
+
+			var existingIndex = -1;
+			for (i in 0...rules.length) {
+				var rule = cast(rules[i], js.html.CSSStyleRule);
+				if (rule.selectorText == selector) {
+					existingIndex = i;
+					break;
+				}
+			}
+
+			if (newRule != null && newRule != "") {
+				var rule = '$selector{$newRule}';
+
+				if (untyped sheet.insertRule != null) {
+					if (existingIndex >= 0) {
+						sheet.deleteRule(existingIndex);
+						sheet.insertRule(rule, existingIndex);
+					} else {
+						sheet.insertRule(rule, rules.length);
+					}
+				} else {
+					if (existingIndex >= 0) {
+						untyped sheet.removeRule(existingIndex);
+						untyped sheet.addRule(selector, '$newRule', existingIndex);
+					} else {
+						untyped sheet.addRule(selector, '$newRule');
+					}
+				}
+			} else if (existingIndex >= 0) {
+				if (untyped sheet.deleteRule != null) {
+					sheet.deleteRule(existingIndex);
+				} else {
+					untyped sheet.removeRule(existingIndex);
+				}
+			}
+		} catch (e:Dynamic) {
+			untyped console.error('Error setting global style: $e');
 		}
 	}
 
@@ -903,6 +959,7 @@ class RenderSupport {
 		Browser.document.body.appendChild(debugClip);
 
 		debugClip.textContent = "DEBUG";
+		debugClip.id = "debugClip";
 		debugClip.style.position = "fixed";
 		debugClip.style.fontSize = "12px";
 		debugClip.style.zIndex = "1000";
@@ -929,7 +986,7 @@ class RenderSupport {
 	//
 
 	private static var keysPending : Map<Int, Dynamic> = new Map<Int, Dynamic>();
-	private static var printMode = false;
+	public static var printMode = false;
 	private static var forceOnAfterprint = Platform.isChrome;
 	private static var prevInvalidateRenderable = false;
 	private static var zoomFnUns = function() {};
@@ -1068,8 +1125,16 @@ class RenderSupport {
 		Browser.document.documentElement.setAttribute("xml:lang", languageCode);
 	}
 
+	public static function setTranslateAttribute(translate : Bool) {
+		Browser.document.documentElement.setAttribute("translate", translate ? "yes" : "no");
+	}
+
 	public static function setPinchToScaleEnabled(enabled : Bool) {
 		PinchToScaleEnabled = enabled;
+	}
+
+	public static function setStopKeyEventsPropagation(stop : Bool) {
+		StopKeyEventsPropagation = stop;
 	}
 
 	public static function getSafeArea() : Array<Float> {
@@ -1165,6 +1230,20 @@ class RenderSupport {
 					files[i] = e.clipboardData.files[i];
 				}
 
+			// Emit simulated cmd+v key events
+			if (Platform.isMacintosh) {
+				var ke = {
+					key: "v",
+					ctrl: true,
+					shift: false,
+					alt: false,
+					meta: false,
+					keyCode: 86,
+					preventDefault: function() {}
+				};
+				emit("keyup", ke);
+			}
+
 			emit("paste", files);
 		};
 
@@ -1204,6 +1283,14 @@ class RenderSupport {
 
 		var content_win = e.source;
 		var all_iframes = Browser.document.getElementsByTagName("iframe");
+
+		try {
+			var message = Json.parse(e.data);
+			// Handled by onCrossDomainMessage in WebClip.hx
+			if (message.operation != null && (message.operation == "callflow" || message.operation == "wheel" || message.operation == "pointerdown" || message.operation == "pointerup" || message.operation == "pointermove")) {
+				return;
+			}
+		} catch (e : Dynamic) {};
 
 		for (i in 0...all_iframes.length) {
 			var f : js.html.Node = all_iframes[i];
@@ -1531,8 +1618,12 @@ class RenderSupport {
 
 	public static function onpointerout(e : Dynamic, stage : FlowContainer) {
 		try {
-			if (e.relatedTarget == Browser.document.documentElement) {
-				if (!MouseUpReceived) stage.emit("mouseup");
+			if (!MouseUpReceived && (
+				e.relatedTarget == Browser.document.documentElement ||
+				// Support onpointerout event from vscode webview
+				untyped __js__("window.acquireVsCodeApi != null") && e.relatedTarget == null && e.buttons > 0 && e.target == PixiView
+			)) {
+				stage.emit("mouseup");
 			}
 		} catch (e : Dynamic) {
 			untyped console.log("onpointerout error : ");
@@ -1590,7 +1681,9 @@ class RenderSupport {
 		}
 
 		updateNonPassiveEventListener(root, "keydown", function(e : Dynamic, stage : FlowContainer) {
-			e.stopPropagation();
+			if (StopKeyEventsPropagation) {
+				e.stopPropagation();
+			}
 			if (RendererType == "html") {
 				onKeyDownAccessibilityZoom(e);
 			}
@@ -1602,7 +1695,9 @@ class RenderSupport {
 		});
 
 		updateNonPassiveEventListener(root, "keyup", function(e : Dynamic, stage : FlowContainer) {
-			e.stopPropagation();
+			if (StopKeyEventsPropagation) {
+				e.stopPropagation();
+			}
 			MousePos.x = e.clientX;
 			MousePos.y = e.clientY;
 
@@ -2071,6 +2166,26 @@ class RenderSupport {
 	public static function setClipStyle(clip : DisplayObject, name : String, value : String) : Void {
 		var accessWidget : AccessWidget = untyped clip.accessWidget;
 
+		if (name == "position") {
+			clip.setClipIsRelativePosition(value == "relative");
+		}
+
+		if (name == "display") {
+			clip.setClipDisplay(value);
+		}
+
+		if (name == "width") {
+			untyped clip.overrideWidth = value;
+		}
+
+		if (name == "height") {
+			untyped clip.overrideHeight = value;
+		}
+
+		if (name == "overflow") {
+			untyped clip.overrideOverflow = value;
+		}
+
 		if (accessWidget == null) {
 			if (AccessibilityEnabled || clip.isHTMLRenderer()) {
 				if (clip.isHTMLRenderer()) {
@@ -2088,6 +2203,12 @@ class RenderSupport {
 			}
 		} else {
 			untyped accessWidget.element.style[name] = value;
+		}
+
+		if (name == "font-feature-settings") {
+			if (untyped clip.nativeWidget != null) {
+				untyped clip.nativeWidget.style[name] = value;
+			}
 		}
 	}
 
@@ -2543,6 +2664,10 @@ class RenderSupport {
 
 	public static function setAutofillBackgroundColor(clip : TextClip, autofillBackgroundColor : Int) : Void {
 		clip.setAutofillBackgroundColor(autofillBackgroundColor);
+	}
+
+	public static function setAutofillBackgroundOpacity(clip : TextClip, autofillBackgroundOpacity : Float) : Void {
+		clip.setAutofillBackgroundOpacity(autofillBackgroundOpacity);
 	}
 
 	public static function addTextInputFilter(clip : TextClip, filter : String -> String) : Void -> Void {
@@ -3018,6 +3143,17 @@ class RenderSupport {
 		} else if (untyped HaxeRuntime.instanceof(clip, Element)) {
 			clip.addEventListener(event, fn);
 			return function() { if (clip != null) clip.removeEventListener(event, fn); }
+		} else if (event == "click" && cast(clip, DisplayObject).isHTMLRenderer()) {
+			cast(clip, DisplayObject).initNativeWidget();
+
+			var nativeWidget : Element = untyped clip.nativeWidget;
+
+			if (nativeWidget != null) {
+				nativeWidget.addEventListener(event, fn);
+				return function() { if (nativeWidget != null) nativeWidget.removeEventListener(event, fn); }
+			} else {
+				return addDisplayObjectEventListener(clip, event, fn);
+			}
 		} else {
 			return addDisplayObjectEventListener(clip, event, fn);
 		}
@@ -3187,18 +3323,20 @@ class RenderSupport {
 
 	public static function getMouseX(?clip : DisplayObject) : Float {
 		var viewportScale = getViewportScale();
+
 		if (clip == null || clip == PixiStage)
 			return MousePos.x * viewportScale;
 		else
-			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).x * viewportScale');
+			return clip.toLocalPosition(MousePos).x * viewportScale;
 	}
 
 	public static function getMouseY(?clip : DisplayObject) : Float {
 		var viewportScale = getViewportScale();
+
 		if (clip == null || clip == PixiStage)
 			return MousePos.y * viewportScale;
 		else
-			return untyped __js__('clip.toLocal(RenderSupport.MousePos, null, null, true).y * viewportScale');
+			return clip.toLocalPosition(MousePos).y * viewportScale;
 	}
 
 	public static function getTouchPoints(?clip : DisplayObject) : Array<Array<Float>> {
@@ -3210,7 +3348,7 @@ class RenderSupport {
 
 		if (clip != null && clip != PixiStage) {
 			return Lambda.array(Lambda.map(touches, function(t : Dynamic) {
-				t = untyped __js__('clip.toLocal(new PIXI.Point(t[0], t[1]), null, null, true)');
+				t = clip.toLocalPosition(new Point(t[0], t[1]));
 				return [t.x, t.y];
 			}));
 		} else {
@@ -3251,7 +3389,7 @@ class RenderSupport {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
 
-			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var local : Point = clip.toLocalPosition(point);
 			var viewBounds = untyped clip.viewBounds;
 
 			return viewBounds.minX <= local.x && viewBounds.minY <= local.y && viewBounds.maxX >= local.x && viewBounds.maxY >= local.y;
@@ -3278,7 +3416,7 @@ class RenderSupport {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
 
-			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var local : Point = clip.toLocalPosition(point);
 
 			return data.shape.contains(local.x, local.y);
 		} else {
@@ -3304,7 +3442,7 @@ class RenderSupport {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
 
-			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var local : Point = clip.toLocalPosition(point);
 			var clipWidth = 0;
 			var clipHeight = 0;
 			if (Native.isNew && TextClipWidthUpdateOptimizationEnabled && untyped HaxeRuntime.instanceof(clip, TextClip) && !clip.isInput) {
@@ -3334,7 +3472,7 @@ class RenderSupport {
 				untyped clip.transform.updateTransform(clip.parent.transform);
 			}
 
-			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var local : Point = clip.toLocalPosition(point);
 			var localBounds = untyped clip.localBounds;
 
 			if (local.x < localBounds.minX && local.y < localBounds.minY && local.x >= localBounds.maxX && local.y >= localBounds.maxY) {
@@ -4004,7 +4142,7 @@ class RenderSupport {
 	}
 
 	public static function takeSnapshot(path : String) : Void {
-		takeSnapshotBox(path, 0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+		takeSnapshotBox(path, 0, 0, Std.int(getStageWidth() * accessibilityZoom), Std.int(getStageHeight() * accessibilityZoom));
 	}
 
 	public static function takeSnapshotBox(path : String, x : Int, y : Int, w : Int, h : Int) : Void {
@@ -4060,7 +4198,7 @@ class RenderSupport {
 		}
 
 		try {
-			var img = PixiRenderer.plugins.extract.base64(PixiStage);
+			var img = untyped __js__("RenderSupport.PixiRenderer.plugins.extract.base64(RenderSupport.mainRenderClip())");
 			dispFn();
 			return img;
 		} catch(e : Dynamic) {
@@ -4292,6 +4430,16 @@ class RenderSupport {
 		removeChild(element, child);
 	}
 
+	public static function getPropertyValue(clip : DisplayObject, property : String) : String {
+		if (untyped HaxeRuntime.instanceof(clip, Element)) {
+			return Browser.window.getComputedStyle(untyped clip).getPropertyValue(property);
+		} else {
+			var parentClip = untyped clip.nativeWidget || clip.findParentClip();
+			var nativeWidget = untyped parentClip.nativeWidget || Browser.document.body;
+			return Browser.window.getComputedStyle(nativeWidget).getPropertyValue(property);
+		}
+	}
+
 	public static function getNumberOfCameras() : Int {
 		return 0;
 	}
@@ -4400,6 +4548,10 @@ class RenderSupport {
 
 	public static function openDatePicker(clip : TextClip) : Void -> Void {
 		return clip.openDatePicker();
+	}
+
+	public static function getClipBoundingClientRect(clip : DisplayObject) : Array<Float> {
+		return clip.getClipBoundingClientRect();
 	}
 
 	public static function createMathJaxClip(latex: String) : Dynamic {

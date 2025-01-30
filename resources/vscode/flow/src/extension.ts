@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
 import {
-    LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, RevealOutputChannelOn,
+    LanguageClient, LanguageClientOptions, ServerOptions, RevealOutputChannelOn
 } from 'vscode-languageclient/node';
 
 import * as tools from "./tools";
@@ -46,14 +46,14 @@ let httpServerOnline : boolean = false;
 export function activate(context: vscode.ExtensionContext) {
     // Use the console to output diagnostic information (console.log) and errors (console.error)
     // This line of code will only be executed once when your extension is activated
-    console.log('Flow extension active');
+    tools.log('Flow extension active');
 	serverStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 	serverStatusBarItem.command = 'flow.toggleHttpServer';
 	const reg_comm = (id: string, comm: any) => vscode.commands.registerCommand(id, comm);
     context.subscriptions.push(
 		serverStatusBarItem,
     	reg_comm('flow.compile', compileCurrentFile),
-    	reg_comm('flow.GetFlowCompiler', getFlowCompilerFamily),
+    	reg_comm('flow.outputFlowCompiler', outputFlowCompiler),
     	reg_comm('flow.compileNeko', () => compileCurrentFile([], () => { }, "nekocompiler")),
     	reg_comm('flow.run', runCurrentFile),
     	reg_comm('flow.updateFlowRepo', () => updateFlowRepo(context)),
@@ -64,6 +64,10 @@ export function activate(context: vscode.ExtensionContext) {
 		reg_comm('flow.execCommand', execCommand),
 		reg_comm('flow.runUI', runUI),
 		reg_comm('flow.restartLspClient', startLspClient),
+		// These 2 commands are to use in configuration files (launch.json) not to use in UI,
+		// so they are not registered in package.json as contributions.commands
+		reg_comm('flow.getFlowCompiler', getFlowCompilerFamily),
+		reg_comm('flow.getFlowRoot', tools.getFlowRoot),
 		vscode.workspace.onDidChangeConfiguration(handleConfigurationUpdates()),
 		vscode.workspace.registerNotebookSerializer('flow-notebook', new notebook.FlowNotebookSerializer()),
 		new notebook.FlowNotebookController()
@@ -83,7 +87,8 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function runUI() {
-	const document = vscode.window.activeTextEditor.document;
+	const document = tools.getActiveFlowDocument();
+	if (!document) return;
 	const file_path = document.uri.fsPath;
 	const file_name = path.basename(file_path, path.extname(file_path));
 	const file_dir = path.dirname(file_path);
@@ -149,7 +154,9 @@ function outputHttpServerMemStats() {
 }
 
 function flowConsole() {
-	let file = getPath(vscode.window.activeTextEditor.document.uri);
+	const document = tools.getActiveFlowDocument();
+	if (!document) return;
+	let file = getPath(document.uri);
 	let dir = path.dirname(file);
 	let terminal = vscode.window.createTerminal("Flow console");
 	terminal.sendText("cd " + dir, true);
@@ -169,7 +176,6 @@ function startHttpServer() {
 	if (!httpServerOnline) {
 		serverChannel.show(true);
 		httpServer = tools.launchFlowcHttpServer(
-			getFlowRoot(),
 			getFlowCompiler(),
 			showHttpServerOnline,
 			showHttpServerOffline,
@@ -269,7 +275,7 @@ export async function updateFlowRepo(context: vscode.ExtensionContext) {
     if (null == flowRepoUpdateChannel) {
         flowRepoUpdateChannel = vscode.window.createOutputChannel("Flow Update");
     }
-    const flowRoot = getFlowRoot();
+    const flowRoot = tools.getFlowRoot();
     if (!fs.existsSync(flowRoot)) {
         await vscode.window.showErrorMessage("Flow repository not found. Make sure flow.root parameter is set up correctly");
         return;
@@ -352,11 +358,8 @@ function getPath(uri : string | vscode.Uri) : string {
 }
 
 function resolveProjectRoot(uri : string | vscode.Uri) : string {
-	const config = vscode.workspace.getConfiguration("flow");
-
 	if (uri != null) {
-		let dir = uri != null ? getPath(uri) : path.resolve(getPath(config.get("projectRoot")), "flow.config");
-
+		let dir = getPath(uri);
 		while (dir != path.resolve(dir, "..")) {
 			dir = path.resolve(dir, "..");
 
@@ -366,7 +369,7 @@ function resolveProjectRoot(uri : string | vscode.Uri) : string {
 		}
 	}
 
-	return getPath(config.get("root"));
+	return getPath(tools.getFlowRoot());
 }
 
 interface CommandWithArgs {
@@ -400,23 +403,14 @@ function compileCurrentFile(extra_args : string[] = [], on_compiled : () => void
 	);
 }
 
-function getFlowRoot(): string {
-    const config = vscode.workspace.getConfiguration("flow");
-	let root: string = config.get("root");
-	if (!fs.existsSync(root)) {
-		root = tools.run_cmd_sync("flowc1", ".", ["print-flow-dir=1"]).stdout.toString().trim();
-		config.update("root", root, vscode.ConfigurationTarget.Global);
-	}
-	return root;
-}
-
 function processFile(
 	getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs,
 	use_lsp : boolean,
 	extra_args : string[] = [],
 	on_compiled : () => void = () => { }
 ) {
-	const document = vscode.window.activeTextEditor.document;
+	const document = tools.getActiveFlowDocument();
+	if (!document) return;
 	const verbose = tools.getVerboseParam();
 	if (verbose != "0") {
 		extra_args.push("verbose=" + verbose);
@@ -425,7 +419,7 @@ function processFile(
         let current = ++counter;
         flowChannel.clear();
         flowChannel.show(true);
-        let flowpath: string = getFlowRoot();
+        let flowpath: string = tools.getFlowRoot();
         let rootPath = resolveProjectRoot(document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
@@ -481,6 +475,11 @@ function getCompilerCommand(compilerHint: string, flowbinpath: string, flowfile:
     }
 }
 
+function outputFlowCompiler() {
+	flowChannel.show();
+	flowChannel.appendLine("Current compiler: " + getFlowCompiler());
+}
+
 function getFlowCompiler(): string {
     let compilerBare = getFlowCompilerFamily();
     let backendOption: string = vscode.workspace.getConfiguration("flow").get("compilerBackend");
@@ -503,7 +502,7 @@ function getFlowCompilerFamily(): string {
     let flowcompiler = flowConfig.get("flowcompiler");
     // it can be '0' or 'false' which are valued values
     if (flowcompiler == null || typeof flowcompiler === 'undefined')
-        flowcompiler = config.get("compiler") || "flowc";
+        return config.get("compiler") || "flowc";
 
     if (flowcompiler == "0" || flowcompiler == "false" || flowcompiler == "nekocompiler")
         return "nekocompiler";
@@ -528,7 +527,9 @@ function readConfiguration(): PropertiesReader.Reader {
 // finds a closest flow.config file
 function findConfigDir(dir: string = null): string {
 	if (!dir) {
-		const file_conf_dir = findConfigDir(path.dirname(vscode.window.activeTextEditor.document.uri.fsPath));
+		const document = tools.getActiveFlowDocument();
+		if (!document) return null;
+		const file_conf_dir = findConfigDir(path.dirname(document.uri.fsPath));
 		if (file_conf_dir) {
 			return file_conf_dir;
 		} else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
@@ -549,21 +550,63 @@ function findConfigDir(dir: string = null): string {
 }
 
 function execCommand() {
-	flowChannel.show(true);
-	let options: vscode.InputBoxOptions = { prompt: "Command and args: ", placeHolder: "" };
-	vscode.window.showInputBox(options).then(value => {
-		let val_arr = value.split(" ");
-		if (val_arr.length > 0) {
-			let file_arg = Array("file=" + vscode.window.activeTextEditor.document.uri.fsPath);
-			let args = file_arg.concat(val_arr);
-			client.sendRequest("workspace/executeCommand", { command : "command", arguments: args }).then(
-				(out : string) => {
-					flowChannel.appendLine(out);
-				},
-				(err : any) => {
-					vscode.window.showErrorMessage(`command ${value} failed: ${err}`);
-				}
-			);
+	const document = tools.getActiveFlowDocument();
+	if (!document) return;
+
+	let flowc_commands : any[] = vscode.workspace.getConfiguration("flow").get("flowcCommands");
+	flowc_commands = flowc_commands.concat([
+		{name: "Arbitrary command", prompt: "Type command arguments"}
+	]);
+
+	vscode.window.showQuickPick(flowc_commands.map(cmd => cmd.name),
+		{	title: "Choose command",
+			canPickMany: false,
+		}
+	).then(name => {
+		let command = flowc_commands.find(cmd => cmd.name == name);
+		if (command.args) {
+			execCommandWithPrompt(document, command.name, command.args);
+		} else {
+			vscode.window.showInputBox({
+				title: command.name,
+				prompt: command.prompt,
+			}).then(argsStr => {
+				if (argsStr !== undefined) sendExecuteCommand(document, argsStr);
+			});
 		}
 	});
+}
+
+function execCommandWithPrompt(document: vscode.TextDocument, title: string, args: string) {
+	let re = RegExp("{([^{}]+)}");
+	let prompts = args.match(re);
+	if (prompts) {
+		vscode.window.showInputBox({
+			title: title,
+			prompt: prompts[1],
+		}).then(value => {
+			if (value !== undefined) {
+				args = args.replace(re, value);
+				execCommandWithPrompt(document, title, args);
+			}
+		});
+	} else {
+		sendExecuteCommand(document, args);
+	}
+}
+
+function sendExecuteCommand(document: vscode.TextDocument, argsStr: string) {
+	flowChannel.show(true);
+	if (argsStr) {
+		var args = argsStr.split(" ")
+		var file = document.uri.fsPath;
+		let file_arg = [
+			"file=" + file,
+			"working-dir=" + resolveProjectRoot(file),
+		];
+		client.sendRequest("workspace/executeCommand", { command : "command", arguments: file_arg.concat(args) }).then(
+			(out: string) => flowChannel.appendLine(out),
+			(err: any) => vscode.window.showErrorMessage(`command ${argsStr} failed: ${err}`)
+		);
+	}
 }

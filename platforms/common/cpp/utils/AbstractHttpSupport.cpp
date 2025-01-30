@@ -370,7 +370,6 @@ void AbstractHttpSupport::processAttachmentsAsMultipart(HttpRequest& rq) {
         if(!flowFile->open())
             continue;
         std::vector<uint8_t> fileContent = flowFile->readBytes();
-        std::cout<<fileContent.size()<<std::endl;
         flowFile->close();
 
         body << boundaryDataLine;

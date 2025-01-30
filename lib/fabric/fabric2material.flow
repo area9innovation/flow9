@@ -1,0 +1,432 @@
+import fabric/env;
+import fabric/table;
+import fabric/css;
+import material/material_ui;
+
+export {
+	fabric2material(env : FabricEnv, f : Fabric) -> Material;
+	fabric2dom(parentInfo : FabricParentInfo, f : Fabric) -> () -> () -> void;
+
+	FabricParentInfo(
+		manager : MaterialManager,
+		parent : native,
+		env : FabricEnv,
+		zorder : Transform<[int]>
+	);
+}
+
+fabric2material(env : FabricEnv, f : Fabric) -> Material {
+	switch (f) {
+		BLet(name, value, scope): {
+			dyn = make(value);
+			if (containsKeyTree(^(env.values), name)) {
+				// Shadowing, and we make a new environment
+				nenv = innerFabricEnv(env);
+				defineFab(nenv, name, dyn);
+				fabric2material(nenv, scope);
+			} else {
+				defineFab(env, name, dyn);
+				fabric2material(env, scope);
+			}
+		}
+		BCapture(name, value, scope): {
+			dyn = captureFabricValue(env, name, value);
+			fabric2material(env, scope);
+		}
+		BSelect(names, fn): {
+			values = filtermap(names, \name -> getFabDynM(env, name));
+			if (length(values) != length(names)) {
+				missing = filter(names, \name -> !containsKeyTree(^(env.values), name));
+				println("Error: Unknown values in BSelect " + toString(missing));
+			}
+			MSelect(fmerge(values), \vals -> {
+				fabric = fn(env, vals);
+				fabric2material(env, fabric);
+			})
+		}
+		BBidirectional(a, b, a2b, b2a): {
+			ma = getFabDynM(env, a);
+			mb = getFabDynM(env, b);
+			switch (ma) {
+				None(): {
+					println("Error: Unknown value for " + a);
+					MText("Error", [])
+				}
+				Some(da): {
+					switch (mb) {
+						None(): {
+							println("Error: Unknown value for " + b);
+							MText("Error", [])
+						}
+						Some(db): {
+							MConstruct([
+								\ -> {
+									bidirectionalLink(da, db, a2b, b2a)
+								},
+							], MEmpty())
+						}
+					}
+				}
+			}
+		}
+		BTimer(name, delta): {
+			deltaInMs = round(delta * 1000.0);
+			MConstruct([
+				\ -> {
+					setInterval(deltaInMs, \ -> {
+						val = getFab(env, name, 0.0) + delta;
+						setFab(env, name, val);
+					})
+				}], MEmpty()
+			);
+		}
+		BContainerX(items, style): bcontainer2material(env, f);
+		BTableX(rows, style): {
+			mrows = map(rows, \row -> {
+				map(row, \c -> {
+					fabric2material(env, c)
+				})
+			});
+			btable2material(mrows, style);
+		}
+		BScroll(content, style): {
+			mat = fabric2material(env, content);
+			MScroll(mat, MFillXY(), style)
+		}
+		BMaterial(material): material;
+		BGetEnv(fn): {
+			fabric = fn(env);
+			fabric2material(env, fabric);
+		}
+		BDialog(name, contents, style): {
+			open = getFabDyn(env, name, false);
+			closeWhen = make(false);
+			MGetManager(\man -> {
+				MConstruct([
+					makeSubscribe(open, \o -> {
+						if (o) {
+							next(closeWhen, false);
+							mat = fabric2material(env, contents);
+							ShowMDialog(man, closeWhen, style, mat);
+						} else {
+							nextDistinct(closeWhen, true);
+						}
+					})
+				], MEmpty())
+			})
+		}
+		BClickable(contents, onClick): {
+			MClickable(fabric2material(env, contents), onClick)
+		}
+		BCheckBox(name, caption, style): {
+			value = getOrMakeFabricValue(env, name, false);
+			mat = fabric2material(env, caption);
+			MCheckBox(mat, value, style)
+		}
+		BInteractive(interactivity, contents): {
+			mat = fabric2material(env, contents);
+			MInteractive(interactivity, mat)
+		}
+		BComposite(name, splitFn, renderFn, mergeFn): {
+			value = getFabDyn(env, name, 0);
+			MSelect(value, \v -> {
+				ienv = innerFabricEnv(env);
+				parts = splitFn(env, v);
+				values = map(parts, \p -> make(p));
+				// Set up these values
+				iteri(values, \i, pvalue -> {
+					defineFab(ienv, name + i2s(i), pvalue);
+				});
+				fab = renderFn(ienv, parts);
+				mat = fabric2material(ienv, fab);
+
+				MConstruct([
+					// TODO: This is wrong. We need behaviours for the parts
+					makeSubscribe(fmerge(values), \p -> {
+						nv = mergeFn(env, p);
+						nextDistinct(value, nv);
+					})
+				], mat);
+			})
+		}
+	}
+}
+
+bcontainer2material(env : FabricEnv, b : BContainerX) -> Material {
+	style = b.style;
+	if (js && !isUrlParameterTrue("force_material")) {
+		wh = make(WidthHeight(0.0, 0.0));
+
+		// TODO: Get available directly from clip
+		MGetManager(\manager -> MInspect([IAvailable(wh)],
+			MHTMLStage(wh, \div -> {
+				// div = getClipNativeWidget(stage);
+				fabric2dom(FabricParentInfo(manager, div, env, const([0])), b)();
+			})
+		))
+	} else {
+		mitems = map(b.items, \t -> fabric2material(env, t));
+
+		m = if (style.downwards) {
+			MLines(mitems)
+		} else if (style.group) {
+			MGroup(mitems)
+		} else if (style.baseline) {
+			MBaselineCols(mitems)
+		} else {
+			MCols(mitems);
+		};
+		if (style.padding != BEdges(0.0, 0.0, 0.0, 0.0)) {
+			MBorder(style.padding.left, style.padding.top, style.padding.right, style.padding.bottom, m)
+		} else m;
+	}
+}
+
+addFabricChildClip(parent : native, clip : native, zorder : Transform<[int]>) -> () -> void {
+	disp = makeSubscribe(flastElement(zorder, const(0)), \i -> {
+		addChildAt(parent, clip, i);
+	})();
+	\ -> {
+		disp();
+		removeChild(parent, clip);
+	}
+}
+
+// TODO: Move away from DisplayObjects to plain DOM elements
+fabric2dom(parentInfo : FabricParentInfo, f : Fabric) -> () -> () -> void {
+//	println("fabric2dom");
+//	println(f);
+	manager = parentInfo.manager;
+	parent = parentInfo.parent;
+	env = parentInfo.env;
+	zorder = parentInfo.zorder;
+	onError = \e -> {
+		println(e);
+		el = createElement("p");
+		changeNodeValue(el, e);
+		\ -> {
+			addChild(parent, el);
+			\ -> {
+				removeChild(parent, el);
+			}
+		}
+	}
+	renderMaterial = \m -> {
+		renderMaterialToClip(manager, parent, m, zorder);
+	}
+	switch (f) {
+		BLet(name, value, scope): {
+			dyn = make(value);
+			if (containsKeyTree(^(env.values), name)) {
+				// Shadowing, and we make a new environment
+				nenv = innerFabricEnv(env);
+				defineFab(nenv, name, dyn);
+				fabric2dom(FabricParentInfo(parentInfo with env = nenv), scope);
+			} else {
+				defineFab(env, name, dyn);
+				fabric2dom(parentInfo, scope);
+			}
+		}
+		BCapture(name, value, scope): {
+			dyn = captureFabricValue(env, name, value);
+			fabric2dom(parentInfo, scope);
+		}
+		BGetEnv(fn): {
+			fabric = fn(env);
+			fabric2dom(parentInfo, fabric);
+		}
+		BSelect(names, fn): {
+			values = filtermap(names, \name -> getFabDynM(env, name));
+			if (length(values) != length(names)) {
+				missing = filter(names, \name -> !containsKeyTree(^(env.values), name));
+				println("Error: Unknown values in BSelect " + toString(missing));
+			}
+			makeSubscribeUns(fmerge(values), \vals -> {
+				fabric = fn(env, vals);
+				[fabric2dom(parentInfo, fabric)()];
+			});
+		}
+		BBidirectional(a, b, a2b, b2a): {
+			ma = getFabDynM(env, a);
+			mb = getFabDynM(env, b);
+			switch (ma) {
+				None(): {
+					onError("Error: Unknown value for " + a);
+				}
+				Some(da): {
+					switch (mb) {
+						None(): {
+							onError("Error: Unknown value for " + b);
+						}
+						Some(db): {
+							\ -> bidirectionalLink(da, db, a2b, b2a)
+						}
+					}
+				}
+			}
+		}
+		BTimer(name, delta): {
+			deltaInMs = round(delta * 1000.0);
+			\ -> setInterval(deltaInMs, \ -> {
+				val = getFab(env, name, 0.0) + delta;
+				setFab(env, name, val);
+			});
+		}
+		BContainerX(items, style): {
+			div = makeClip();
+			setClipTagName(div, "div");
+			if (style.downwards) {
+				setClipStyle(div, "display", "flex");
+				setClipStyle(div, "flex-direction", "column");
+				setClipStyle(div, "alignItems", "flex-start");
+			} else if (style.group) {
+				setClipStyle(div, "display", "grid");
+			} else if (style.baseline) {
+				setClipStyle(div, "display", "flex");
+				setClipStyle(div, "flexDirection", "row");
+				setClipStyle(div, "alignItems", "baseline");
+			} else {
+				setClipStyle(div, "display", "flex");
+				setClipStyle(div, "flexDirection", "row");
+				setClipStyle(div, "alignItems", "top");
+			}
+			setClipStyle(div, "position", "relative");
+			setClipStyle(div, "width", "auto");
+			setClipStyle(div, "height", "auto");
+			setClipStyle(div, "padding", bedge2css(style.padding));
+			setClipStyle(div, "margin", bedge2css(style.margin));
+			setClipStyle(div, "gap", "0");
+			children = mapi(items, \i, t -> fabric2dom(FabricParentInfo(parentInfo with parent = div, zorder = farrayPush(zorder, const(i))), t));
+			\ -> {
+				d = concat(
+					[addFabricChildClip(parent, div, zorder)],
+					map(children, apply0)
+				);
+
+				\ -> applyall(d);
+			}
+		}
+		BTableX(rows, style): {
+			table = makeClip();
+			setClipTagName(table, "table");
+			setClipStyle(table, "width", "auto");
+			setClipStyle(table, "height", "auto");
+			setClipStyle(table, "position", "static");
+			setClipStyle(table, "display", "table");
+			tbody = makeClip();
+			setClipTagName(tbody, "tbody");
+			setClipStyle(tbody, "width", "auto");
+			setClipStyle(tbody, "height", "auto");
+			setClipStyle(tbody, "position", "static");
+			setClipStyle(tbody, "display", "table-row-group");
+			addChild(table, tbody);
+			index = ref -1;
+			children = map(rows, \row -> {
+				tr = makeClip();
+				setClipTagName(tr, "tr");
+				setClipStyle(tr, "width", "auto");
+				setClipStyle(tr, "height", "auto");
+				setClipStyle(tr, "position", "static");
+				setClipStyle(tr, "display", "table-row");
+				addChild(tbody, tr);
+				map(row, \c -> {
+					td = makeClip();
+					setClipTagName(td, "td");
+					setClipStyle(td, "width", "auto");
+					setClipStyle(td, "height", "auto");
+					setClipStyle(td, "position", "static");
+					setClipStyle(td, "display", "table-cell");
+					addChild(tr, td);
+					index := ^index + 1;
+					fabric2dom(FabricParentInfo(parentInfo with parent = td, zorder = farrayPush(zorder, const(^index))), c);
+				})
+			}) |> concatA;
+			\ -> {
+				d = concat(
+					[addFabricChildClip(parent, table, zorder)],
+					map(children, apply0)
+				);
+
+				\ -> applyall(d);
+			}
+		}
+		BScroll(content, style): {
+			div = makeClip();
+			setClipTagName(div, "div");
+			setClipStyle(div, "overflow", "auto");
+			setClipStyle(div, "position", "relative");
+			setClipStyle(div, "width", "100%");
+			setClipStyle(div, "height", "100%");
+			child = fabric2dom(FabricParentInfo(parentInfo with parent = div), content);
+			\ -> {
+				d = concat(
+					[addFabricChildClip(parent, div, zorder)],
+					[
+						child(),
+						// Call listenScrollRect to prevent global events from blocking the scroll
+						listenScrollRect(div, nop2)
+					]
+				);
+
+				\ -> applyall(d);
+			}
+		}
+		BMaterial(material): {
+			renderMaterial(material);
+		}
+		BDialog(name, contents, style): {
+			open = getFabDyn(env, name, false);
+			closeWhen = make(false);
+			makeSubscribe(open, \o -> {
+				if (o) {
+					next(closeWhen, false);
+					// TODO: Use fabric2dom
+					mat = fabric2material(env, contents);
+					ShowMDialog(manager, closeWhen, style, mat);
+				} else {
+					nextDistinct(closeWhen, true);
+				}
+			});
+		}
+		BClickable(contents, onClick): {
+			// TODO: Use fabric2dom
+			renderMaterial(MClickable(fabric2material(env, contents), onClick));
+		}
+		BCheckBox(name, caption, style): {
+			value = getOrMakeFabricValue(env, name, false);
+			// TODO: Use fabric2dom
+			mat = fabric2material(env, caption);
+			renderMaterial(MCheckBox(mat, value, style));
+		}
+		BInteractive(interactivity, contents): {
+			// TODO: Use fabric2dom when possible
+			mat = fabric2material(env, contents);
+			renderMaterial(MInteractive(interactivity, mat));
+		}
+		BComposite(name, splitFn, renderFn, mergeFn): {
+			value = getFabDyn(env, name, 0);
+			makeSubscribeUns(value, \v -> {
+				ienv = innerFabricEnv(env);
+				parts = splitFn(env, v);
+				values = map(parts, \p -> make(p));
+				// Set up these values
+				iteri(values, \i, pvalue -> {
+					defineFab(ienv, name + i2s(i), pvalue);
+				});
+				fab = renderFn(ienv, parts);
+
+				[
+					fabric2dom(FabricParentInfo(parentInfo with env = ienv), fab)(),
+					makeSubscribe(fmerge(values), \p -> {
+						nv = mergeFn(env, p);
+						nextDistinct(value, nv);
+					})()
+				];
+			});
+		}
+	}
+}
+
+renderMaterialToClip(manager : MaterialManager, parent : native, material : Material, zorder : Transform<[int]>) -> () -> () -> void {
+	renderTropicToClip(parent, material2tropic(manager, material), [TRenderZorder(zorder), TRenderPosition("relative")]);
+}

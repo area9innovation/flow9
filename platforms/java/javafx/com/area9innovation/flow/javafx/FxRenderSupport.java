@@ -1585,5 +1585,33 @@ public class FxRenderSupport extends RenderSupport {
 				return null;
 			}
 		};
-    }
+	}
+
+	static boolean clearGraphicsF = false;
+	public static Object clearGraphics(Object v) {
+		if (!clearGraphicsF) {
+			clearGraphicsF = true;
+			System.out.println("TODO: implement 'clearGraphics'");
+		}
+		return null;
+	}
+
+	static boolean setClipDebugInfoF = false;
+	public static Object setClipDebugInfo(Object a, String b, Object c) {
+		if (!setClipDebugInfoF) {
+			setClipDebugInfoF = true;
+			System.out.println("TODO: implement 'setClipDebugInfo'");
+		}
+		return null;
+	}
+
+	static boolean getStageIdF = false;
+	public static Integer getStageId(Object v) {
+		if (!getStageIdF) {
+			getStageIdF = true;
+			System.out.println("TODO: implement 'getStageId'");
+		}
+		return 0;
+	}
+
 }

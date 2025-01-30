@@ -195,10 +195,12 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 
 	// Cache
 	savedString = getMDSCachedString(state);
+	savedJson = parseJson(savedString);
 
-	currentAreasA = getJsonFieldValueCustom(parseJson(savedString), "Current.DockingAreas", JsonNull(), [JsonFieldTreatAsPath(".")]);
-	currentPanelsA = getJsonFieldValueCustom(parseJson(savedString), "Current.Panels", JsonNull(), [JsonFieldTreatAsPath(".")]);
-	currentActivePanel = getJsonFieldValueCustom(parseJson(savedString), "Current.ActivePanel", JsonNull(), [JsonFieldTreatAsPath(".")]);
+	current = getJsonFieldValueCustom(savedJson, "Current", JsonNull(), [JsonFieldTreatAsPath(".")]);
+	currentAreasA = getJsonFieldValueCustom(savedJson, "Current.DockingAreas", JsonNull(), [JsonFieldTreatAsPath(".")]);
+	currentPanelsA = getJsonFieldValueCustom(savedJson, "Current.Panels", JsonNull(), [JsonFieldTreatAsPath(".")]);
+	currentActivePanel = getJsonFieldValueCustom(savedJson, "Current.ActivePanel", JsonNull(), [JsonFieldTreatAsPath(".")]);
 
 	// Docking Areas
 	iter(reverseA(getTreeKeys(getValue(state.dockingAreas))),\areaName -> {
@@ -224,13 +226,13 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 	// End Alignment
 	alignToolbar = \pId : int  -> {
 		cachedPanel = getJsonFieldValueCustom(currentPanelsA, i2s(pId), JsonNull(), [JsonFieldTreatAsPath(".")]);
-		pstyle = getValue(state.panelStyle)[pId];
+		pstyle = elementAt(getValue(state.panelStyle), pId, []);
 		isEndAligned = getValue(extractStruct(pstyle, MDToolbarEndAlign(make(false))).endAlign);
 		cEndAligned = getJsonBoolValue(getJsonFieldValue(cachedPanel, "endAligned", JsonNull()), isEndAligned);
 		endAligned = if (cacheEnabled) cEndAligned else isEndAligned;
 
 		nextDistinct(state.panelStyle, replace(getValue(panelsStyleA), pId , 
-			replaceStruct(getValue(panelsStyleA)[pId], MDToolbarEndAlign(make(endAligned)))
+			replaceStruct(elementAt(getValue(panelsStyleA), pId, []), MDToolbarEndAlign(make(endAligned)))
 		));
 	}
 
@@ -275,11 +277,11 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 		nextDistinct(panelIconA, replace(getValue(panelIconA), i , extractStruct(p.style, MDPanelIcon("web_asset")).icon));
 		nextDistinct(contentA, replace(getValue(contentA), i , p.content));
 		nextDistinct(groupA, replace(getValue(groupA), i ,  extractStruct(p.style, MDPanelAllowedGroups([])).allowedGroups));
-		
-		// Update state.panelStyle with mandatory styles
-		defPStyle = addMissingStructMany(p.style, [MDToolbarEndAlign(make(false)), MDPanelVisible(make(true)), MDPanelEnabled(const(true))]);
-		nextDistinct(state.panelStyle, replace(getValue(panelsStyleA), i , defPStyle));
-			
+
+		// Update state.panelStyle with MANDATORY styles for alignment
+		defPStyleAlign = addMissingStructMany(p.style, [MDToolbarEndAlign(make(false))]);
+		nextDistinct(state.panelStyle, replace(getValue(panelsStyleA), i , defPStyleAlign));
+
 		switch (p.content) {
 			// Toolbar
 			MDToolbarContent(buttonsA) : {
@@ -330,11 +332,23 @@ updateMDockingState(state : MDockingState, panelsA : [MDockingPanel], cacheEnabl
 
 		// Enabled
 		enabledT = extractStruct(p.style, MDPanelEnabled(const(true))).enabled;
-		visibleB = extractStruct(p.style, MDPanelVisible(make(true))).visible;
+
+		// Visible on startup
+		hiddenOnStartup = contains(p.style, MDPanelHideOnStartup());
+		visibleB = extractStruct(p.style, MDPanelVisible(make(!hiddenOnStartup))).visible;
 		cVisible = getJsonBoolValue(getJsonFieldValue(cachedPanel, "visible", JsonNull()), getValue(visibleB));
 		visible = if (cacheEnabled) cVisible else getValue(visibleB);
+
+		// Generale visibility is given by 'enable' and 'visible'
 		enB = make(fgetValue(enabledT) && visible);
+
+		// Update state.panelStyle with MANDATORY styles, BEFORE updating enabled state
+		defPStyle = addMissingStructMany(p.style, [MDPanelVisible(make(visible)), MDPanelEnabled(const(true))]);
+		nextDistinct(state.panelStyle, replace(getValue(panelsStyleA), i , defPStyle));
+
+		// update enabled state
 		nextDistinct(state.enabled, replace(getValue(state.enabled), i , enB));
+		
 		// Undock disabled panels by default
 		// if (!getValue(enB)) undockPanel(state, i);
 	});

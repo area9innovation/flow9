@@ -244,7 +244,15 @@ public class FlowJwt extends NativeHost {
 			} else {
 				return "Algorithm not supported";
 			}
-			JWTVerifier verifier = JWT.require(algorithm).build();
+
+			// Accepts some seconds of leeway to account for clock skew. (5 minutes is default for OIDC and LTI)
+			long clockSkewSeconds = 300; // 5 minutes
+
+			JWTVerifier verifier = 
+				JWT.require(algorithm)
+				.acceptLeeway(clockSkewSeconds)
+				.build();
+
 			verifier.verify(jwtStr);
 			return "OK";
 		} catch (Exception e) {

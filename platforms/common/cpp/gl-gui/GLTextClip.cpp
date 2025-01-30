@@ -41,6 +41,8 @@ GLTextClip::GLTextClip(GLRenderSupport *owner) :
     bg_color = vec4(0.0f);
     next_text_input_filter_id = next_text_input_key_down_event_filter_id = next_text_input_key_up_event_filter_id = 0;
     interline_spacing = 0.0;
+    line_height_percent = 1.0f;
+    need_baseline = true;
     cursor_width = 2.0;
     cursor_color = vec4(-1.0f);
 }
@@ -94,19 +96,11 @@ void GLTextClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, const
             surface->pushCropRect(global_transform, box);
         }
 
-        // Render the text
-        float pixel_size = global_transform.getScaleRev();
-        float pixel_div = global_transform.getScale();
-
         for (unsigned l = scroll_v; l < text_lines.size(); l++) {
             Line &line = text_lines[l];
 
             if (line.baseline_y-line.ascender > ui_size.y+y_base)
                 break;
-
-            vec2 base_origin(0.0f, line.baseline_y-y_base);
-            vec2 base_adj_origin = roundToGrid(global_transform, base_origin);
-            float base_x = line.justify_x - base_adj_origin.x;
 
             for (unsigned i = 0; i < line.extents.size(); i++) {
                 Extent::Ptr extent = line.extents[i];
@@ -373,9 +367,9 @@ void GLTextClip::layoutTextSpaceLines() {
         for (unsigned i = 0; i < line.extents.size(); i++) {
             Extent::Ptr extent = line.extents[i];
 
-            line.ascender = std::max(line.ascender, extent->layout->getAscent());
-            line.descender = std::min(line.descender, extent->layout->getDescent() - interline_spacing);
-            line.height = std::max(line.height, extent->layout->getLineHeight() + interline_spacing);
+            line.ascender = std::max(line.ascender, extent->layout->getAscent() * line_height_percent);
+            line.descender = std::min(line.descender, extent->layout->getDescent() * line_height_percent - interline_spacing);
+            line.height = std::max(line.height, extent->layout->getLineHeight() * line_height_percent + interline_spacing);
         }
 
         // Apply spacing and compute baseline y
@@ -1154,6 +1148,30 @@ StackSlot GLTextClip::setTextFieldInterlineSpacing(RUNNER_ARGS)
 
     invalidateLayout();
     interline_spacing = spacing.GetDouble();
+
+    stateChanged();
+    RETVOID;
+}
+
+StackSlot GLTextClip::setLineHeightPercent(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(lineHeightPercent);
+    RUNNER_CheckTag(TDouble, lineHeightPercent);
+
+    invalidateLayout();
+    line_height_percent = lineHeightPercent.GetDouble() + 0.2f;
+
+    stateChanged();
+    RETVOID;
+}
+
+StackSlot GLTextClip::setTextNeedBaseline(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(needBaseline);
+    RUNNER_CheckTag(TBool, needBaseline);
+
+    invalidateLayout();
+    need_baseline = needBaseline.GetBool();
 
     stateChanged();
     RETVOID;

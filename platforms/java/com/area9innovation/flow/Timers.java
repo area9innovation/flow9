@@ -3,14 +3,14 @@ package com.area9innovation.flow;
 import java.util.*;
 
 public class Timers {
-	private boolean executing = false;
+	private int executingCnt = 0;
 	private int lastTimerId = 0;
 	private TreeMap<Integer, Timer> timers = new TreeMap<Integer, Timer>();
 	private boolean debug = false;
 
 	private class Timer {
 		int id;
-		double executeTime;
+		double executeTime;	// 0 means do not execute. This is used to not run repeatable timer when it is already executing.
 		boolean repeatable;
 		double repeatInterval;
 		Func0<Object> callback;
@@ -28,7 +28,7 @@ public class Timers {
 		timer.callback = callback;
 		timers.put(lastTimerId, timer);
 		if (debug) {
-			System.out.println("New timer " + lastTimerId + ", total cnt " + timers.size());
+			System.out.println("New timer " + lastTimerId + ", total cnt " + timers.size() + ", tread " + FlowRuntime.getThreadIdLong());
 		}
 		return lastTimerId;
 	}
@@ -40,18 +40,18 @@ public class Timers {
 		}
 	}
 
-	public void execute() {
-		if (executing) {
+	public void execute(boolean allowRecursive) {
+		if (!allowRecursive && executingCnt > 0) {
 			return;
 		}
-		executing = true;
+		executingCnt++;
 		TreeSet<Integer> timerIds = new TreeSet<Integer>();
 		do {
 			timerIds.clear();
 			double tm = System.currentTimeMillis();
 			for (Iterator<Timer> iterator = timers.values().iterator(); iterator.hasNext(); ) {
 				Timer timer = iterator.next();
-				if (timer.executeTime <= tm) {
+				if (timer.executeTime != 0 && timer.executeTime <= tm) {
 					timerIds.add(timer.id);
 				}
 			}
@@ -61,6 +61,11 @@ public class Timers {
 				if (timer == null) {
 					iterator.remove();
 				} else {
+					if (timer.repeatable) {
+						timer.executeTime = 0;
+					} else {
+						timers.remove(timerId);
+					}
 					try {
 						timer.callback.invoke();
 					} catch (Exception ex) {
@@ -68,13 +73,11 @@ public class Timers {
 					}
 					if (timer.repeatable) {
 						timer.executeTime = System.currentTimeMillis() + timer.repeatInterval;
-					} else {
-						timers.remove(timerId);
 					}
 				}
 			}
 		} while (!timerIds.isEmpty());
-		executing = false;
+		executingCnt--;
 	}
 
 	public boolean isEmpty() {

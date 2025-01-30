@@ -11,7 +11,7 @@ const scripts = [
 	"pixi-4.8.2.min.js",
 	"pixi.filters.js?10",
 	"purify/purify.min.js?1",
-	"jscommon.js?12"
+	"jscommon.js?14"
 ];
 
 function appendJsScript(url) {

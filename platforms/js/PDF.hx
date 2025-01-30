@@ -26,8 +26,10 @@ class PDF {
 	}
 
 	public static function getPdfDocument(url : String, headers : Array<Array<String>>, onOK : Dynamic -> Void, onError : String -> Void) {
-		var promise : Promise<Dynamic> = pdfjsLib.getDocument({ url: url, httpHeaders: Object.fromEntries(headers), withCredentials: true }).promise;
-		promise.then(onOK).catchError(onError);
+		try {
+			var promise : Promise<Dynamic> = pdfjsLib.getDocument({ url: url, httpHeaders: Object.fromEntries(headers), withCredentials: true }).promise;
+			promise.then(onOK).catchError((e) -> onError(e.name + "\n" + e.message + "\n" + e.stack));
+		} catch (e : Dynamic) {}
 	}
 
 	public static function getPdfDocumentNumPages(document : Dynamic) {

@@ -99,6 +99,14 @@ MEllipsis2T(m : MEllipsis, m2t : (Material) -> Tropic) {
 }
 
 MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisText, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	if (isDomRenderEnabled(m.style)) {
+		MEllipsisText2TDom(manager, parent, m, m2t);
+	} else {
+		MEllipsisText2TMaterial(manager, parent, m, m2t);
+	}
+}
+
+MEllipsisText2TMaterial(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisText, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	mTextStyle = style2MTextStyle(m.style);
 	minWidth = extractStruct(m.style, MMinWidth(-1.)).width;
 	tooltipMaxWidth = extractStruct(m.style, MTooltipMaxWidth(400.0)).width;
@@ -130,8 +138,9 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 		1
 	);
 	lines = extractStruct(m.style, MMaxLines(defLines)).lines;
+	areLinesOverflowed = strCountOf(text, "\n") + strCountOf(text, "<br>") < lines;
 
-	if (minWidth > 0. && minWidth >= fullWidth && strCountOf(text, "\n") < lines) {
+	if (minWidth > 0. && minWidth >= fullWidth && areLinesOverflowed) {
 		setIsTruncated(false);
 		TText(text, charStyle);
 	} else {
@@ -169,7 +178,7 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 					[
 						\ -> fconnectSelect(availableWidth, currentText, \aw0 -> {
 							aw = dceil(aw0 * 100.) / 100.; // To avoid false positive truncations in IE.
-							if (aw >= fullWidth && strCountOf(text, "\n") < lines) {
+							if (aw >= fullWidth && areLinesOverflowed) {
 								setIsTruncated(false);
 								text;
 							} else {
@@ -251,6 +260,79 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 		)
 	}
 	}
+
+	updateOnFontWrapper(parent, makeTropic);
+}
+
+fontStyleConfigPad : ref Maybe<Json> = ref None();
+
+MEllipsisText2TDom(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisText, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	mTextStyle = style2MTextStyle(m.style);
+	escapeHTML = extractStruct(m.style, EscapeHTML(true));
+	unescape = if (escapeHTML.escape) idfn else unescapeSpacesIntoTags;
+	text = unescape(m.text);
+	charStyle = MTextStyle2TCharacterStyle(parent, text, mTextStyle);
+	clipWH = make(WidthHeight(0.0, 0.0));
+	avWidth = make(0.0);
+	actualWidth = make(0.0);
+	definedTextStyle = getDefinedTextStyle(tcharacterStyle2charStyle(charStyle));
+	lineHeight = dceil((if (definedTextStyle.lineHeightPercent > 0.0) definedTextStyle.lineHeightPercent else 1.15) * definedTextStyle.fontSize);
+	isFullWidth = contains(m.style, MFullWidth());
+
+	makeTropic = \ -> TInspect([IAvailableWidth(avWidth)],
+		TGroup2(
+			if (isFullWidth) TFillX() else TSizedWidth(actualWidth, 0.0),
+			TNativeForm(fwh(avWidth, const(lineHeight)), \av, zorder, tabOrder -> {
+				clip = makeClip();
+				setClipTagName(clip, "p");
+				setClipStyle(clip, "position", "absolute");
+				setClipStyle(
+					clip,
+					"font-family",
+					if (js && length(definedTextStyle.face.families) > 0 && getRendererType() == "html")
+						strGlue(definedTextStyle.face.families, ",")
+					else
+						definedTextStyle.face.family
+				);
+				setClipStyle(clip, "white-space", "pre");
+				setClipStyle(clip, "color", "#" + formatColor(definedTextStyle.fillColor));
+				setClipAlpha(clip, definedTextStyle.fillOpacity);
+				setClipStyle(clip, "letter-spacing", d2s(definedTextStyle.letterSpacing));
+				if (definedTextStyle.face.weight != 400) {
+					setClipStyle(clip, "font-weight", i2s(definedTextStyle.face.weight));
+				} else {
+					cfg = onlyOnce(fontStyleConfigPad, getFontStylesConfig);
+					setClipStyle(clip, "font-weight", i2s(getJsonIntValue(getJsonFieldValue(getJsonObjectField(cfg, definedTextStyle.face.name), "weight", JsonNull()), definedTextStyle.face.weight)));
+				}
+				setClipStyle(clip, "font-size", d2s(definedTextStyle.fontSize) + "px");
+				setClipStyle(clip, "line-height", d2s(lineHeight) + "px");
+				setClipStyle(clip, "overflow", "hidden");
+				setClipStyle(clip, "text-overflow", "ellipsis");
+				setClipStyle(clip, "max-width", "fit-content");
+				setAccessAttributes(clip, [["textContent", text]]);
+
+				d = concat(
+					[
+						makeSubscribe(avWidth, \a -> {
+							setClipStyle(clip, "width", d2s(a) + "px");
+						})()
+					],
+					map(if (isFullWidth) [] else ["transformchanged", "resize"], \ev -> addEventListener(clip, ev, \ -> {
+						rect = getClipBoundingClientRect(clip);
+						if (length(rect) > 3) {
+							nextDistinct(actualWidth, rect[2]);
+						}
+					}))
+				);
+
+				NativeRenderResult(
+					[clip],
+					\ -> applyall(d)
+				);
+			})
+			|> TFixWidth(TEmpty())
+		)
+	)
 
 	updateOnFontWrapper(parent, makeTropic);
 }
