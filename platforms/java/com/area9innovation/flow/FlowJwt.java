@@ -256,7 +256,18 @@ public class FlowJwt extends NativeHost {
 			verifier.verify(jwtStr);
 			return "OK";
 		} catch (Exception e) {
-			return e.getMessage();
+			// Some exceptions have a null getMessage value
+			String message = e.getMessage();
+			if (message == null || message.isEmpty()) {
+				String simpleName = e.getClass().getSimpleName();
+				if (simpleName == null || simpleName.isEmpty()) {
+					return "Exception";
+				} else {
+					return simpleName;
+				}
+			} else {
+				return message;
+			}
 		}
 	}
 }
