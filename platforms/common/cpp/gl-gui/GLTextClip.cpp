@@ -31,6 +31,7 @@ GLTextClip::GLTextClip(GLRenderSupport *owner) :
     crop_words = false;
     multiline = true;
     layout_ready = true;
+    first_render_layout_invalidated = false;
     readonly = false;
     input_type = "text";
     selection_start = selection_end = 0;
@@ -74,6 +75,11 @@ void GLTextClip::computeBBoxSelf(GLBoundingBox &bbox, const GLTransform &transfo
 void GLTextClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, const GLBoundingBox &clip_box)
 {
     layoutText();
+    
+    if (!first_render_layout_invalidated) {
+        invalidateLayout();
+        first_render_layout_invalidated = true;
+    }
 
     if (bg_color.a >= 0.0f)
     {

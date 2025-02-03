@@ -1,0 +1,237 @@
+import ds/set;
+import ds/tree;
+import ds/simplegraph;
+
+export {
+	// Represents the dominator tree information
+	DominatorTree(
+		idom : Tree<?, ?>,      // Immediate dominator for each node
+		dom : Tree<?, Set<?>>   // Set of all dominators for each node
+	);
+
+	// Represents convergence and divergence points
+	ControlFlowPoints(
+		convergenceNodes : Set<?>,  // Join nodes where multiple paths meet
+		divergenceNodes : Set<?>    // Split nodes where path diverges
+	);
+
+	// Find dominators using Lengauer-Tarjan algorithm
+	findDominators(graph : SimpleGraph<?, ??>, entry : ?) -> DominatorTree<?>;
+
+	// Find convergence and divergence points
+	findControlFlowPoints(graph : SimpleGraph<?, ??>, entry : ?) -> ControlFlowPoints<?>;
+
+	findControlFlowPointsMulti(graph : SimpleGraph<?, ??>) -> ControlFlowPoints<?>;
+}
+
+lengauerTarjanDfs(
+	graph : SimpleGraph<?, ??>,
+	node : ?, p : ?,
+	number : ref int,
+	vertex : ref Tree<int, ?>,
+	parent : ref Tree<?, ?>,
+	semi : ref Tree<?, int>,
+	ancestor : ref Tree<?, ?>
+) -> void {
+	semi := setTree(^semi, node, ^number);
+	vertex := setTree(^vertex, ^number, node);
+	number := ^number + 1;
+	parent := setTree(^parent, node, p);
+	ancestor := setTree(^ancestor, node, node);
+
+	// Visit successors
+	iter(getSimpleAdjacentNodes(graph, node), \succ -> {
+		if (!containsKeyTree(^semi, succ)) {
+			lengauerTarjanDfs(graph, succ, node, number, vertex, parent, semi, ancestor);
+		}
+	});
+}
+
+// Helper for Lengauer-Tarjan - returns Pair of result and new state
+eval(v : ?, semi : Tree<?, int>, ancestor : ref Tree<?, ?>, best : Tree<?, ?>) -> Pair<?, Tree<?, ?>> {
+	a = lookupTreeDef(^ancestor, v, v);
+	if (a == v) {
+		Pair(lookupTreeDef(best, v, v), best)
+	} else {
+		evalResult = eval(a, semi, ancestor, best);
+		u = evalResult.first;
+		newBest = evalResult.second;
+
+		// Update best if needed
+		finalBest = if (lookupTreeDef(semi, u, 0) < lookupTreeDef(semi, v, 0)) {
+			setTree(newBest, v, u)
+		} else newBest;
+
+		// Return result and new state
+		Pair(
+			lookupTreeDef(finalBest, v, v),
+			finalBest
+		)
+	}
+}
+
+findDominators(graph : SimpleGraph<?, ??>, entry : ?) -> DominatorTree<?> {
+	// Semi-dominator numbers for DFS
+	number = ref 1;
+	vertex = ref makeTree();    // number -> node
+	parent = ref makeTree();    // node -> parent
+	semi = ref makeTree();      // node -> semi-dominator number
+	ancestor = ref makeTree();  // node -> ancestor in forest
+	best = makeTree();         // node -> best vertex
+	initBucket = makeTree();   // node -> set of vertices
+
+	// Initial DFS from entry
+	lengauerTarjanDfs(graph, entry, entry, number, vertex, parent, semi, ancestor);
+
+	// Process vertices in reverse order, we use list for reverse
+	nums = generate(1, ^number, idfn);
+	// Make types explicit: first is the dominator tree, second is the bucket
+	state : Pair<Tree<?, ?>, Tree<?, Set<?>>> = fold(reverseA(nums), Pair(makeTree(), initBucket),
+		\acc : Pair<Tree<?, ?>, Tree<?, Set<?>>>, w -> {
+		v = lookupTreeDef(^vertex, w, entry);
+		p = lookupTreeDef(^parent, v, entry);
+
+		// Find semi-dominator
+		sdom = fold(getSimpleAdjacentNodes(graph, v), lookupTreeDef(^semi, p, 0), \s, u -> {
+			min(s, lookupTreeDef(^semi, u, 0))
+		});
+
+		semi := setTree(^semi, v, sdom);
+
+		// Add to bucket
+		bucket0 = lookupTreeDef(acc.second, lookupTreeDef(^vertex, sdom, entry), makeSet());
+		newBucket1 = setTree(acc.second, lookupTreeDef(^vertex, sdom, entry),
+			insertSet(bucket0, v));
+
+		// Process bucket of parent
+		bucket1 = lookupTreeDef(newBucket1, p, makeSet());
+		newState = fold(set2array(bucket1), Pair(acc.first, best),
+			\st : Pair<Tree<?, ?>, Tree<?, ?>>, u -> {
+				evalResult = eval(u, ^semi, ancestor, st.second);
+				y = evalResult.first;
+				if (lookupTreeDef(^semi, y, 0) < lookupTreeDef(^semi, u, 0)) {
+					Pair(setTree(st.first, u, y), evalResult.second)
+				} else {
+					Pair(setTree(st.first, u, p), evalResult.second)
+				}
+			}
+		);
+
+		// Clear bucket for parent and continue
+		newBucket2 = setTree(newBucket1, p, makeSet());
+		Pair(newState.first, newBucket2)
+	});
+
+	idom = state.first;
+
+	// Build complete dominator sets
+	dominatorSets = foldTree(idom, makeTree(), \node, idomNode, acc -> {
+		nodedoms = if (node == entry) {
+			makeSet1(entry)
+		} else {
+			insertSet(
+				lookupTreeDef(acc, idomNode, makeSet()),
+				node
+			)
+		};
+		setTree(acc, node, nodedoms)
+	});
+
+	DominatorTree(idom, dominatorSets)
+}
+
+findControlFlowPoints(graph : SimpleGraph<?, ??>, entry : ?) -> ControlFlowPoints<?> {
+	dt = findDominators(graph, entry);
+
+	// Find convergence nodes (nodes with multiple predecessors)
+	convergence = foldTree(graph.nodes, makeSet(), \node, id, acc -> {
+		inEdges = getSimpleInEdges(graph, node);
+		if (length(inEdges) > 1) {
+			insertSet(acc, node)
+		} else acc
+	});
+
+	// Find divergence nodes (nodes with multiple successors)
+	divergence = foldTree(graph.nodes, makeSet(), \node, id, acc -> {
+		outEdges = getSimpleOutEdges(graph, node);
+		if (length(outEdges) > 1) {
+			insertSet(acc, node)
+		} else acc
+	});
+
+	ControlFlowPoints(convergence, divergence)
+}
+
+// Helper to get incoming edges
+getSimpleInEdges(graph : SimpleGraph<?, ??>, node : ?) -> [SimpleEdge2<?, ??>] {
+	edges = getSimpleGraphEdges2(graph);
+	filter(edges, \e -> e.to == node)
+}
+
+findDominatorsMulti(graph : SimpleGraph<?, ??>) -> DominatorTree<?> {
+	// Find all roots (nodes with no incoming edges)
+	roots : [?] = foldTree(graph.nodes, [], \node : ?, id : int, acc : [?] -> {
+		inEdges = getSimpleInEdges(graph, node);
+		if (length(inEdges) == 0) {
+			concat(acc, [node])
+		} else acc
+	});
+
+	if (length(roots) == 0 && !isEmptySimpleGraph(graph)) {
+		// No roots - pick any node
+		pairs = tree2pairs(graph.nodes);
+		if (pairs == []) {
+			// Empty graph
+			DominatorTree(makeTree(), makeTree())
+		} else {
+			// Take the first node we can find
+			someNode = pairs[0].first;
+			findDominators(graph, someNode)
+		}
+	} else if (length(roots) == 1) {
+		// Single root - use original algorithm
+		findDominators(graph, roots[0])
+	} else if (length(roots) > 1) {
+		// Multiple roots - process each and merge
+		dominatorsByRoot : [DominatorTree<?>] = map(roots, \root -> findDominators(graph, root));
+		fold(tail(dominatorsByRoot), dominatorsByRoot[0], mergeDominatorTrees)
+	} else {
+		// Empty case
+		DominatorTree(makeTree(), makeTree())
+	}
+}
+
+findControlFlowPointsMulti(graph : SimpleGraph<?, ??>) -> ControlFlowPoints<?> {
+	// Find convergence nodes (nodes with multiple predecessors)
+	convergence = foldTree(graph.nodes, makeSet(), \node, id, acc -> {
+		inEdges = getSimpleInEdges(graph, node);
+		if (length(inEdges) > 1) {
+			insertSet(acc, node)
+		} else acc
+	});
+
+	// Find divergence nodes (nodes with multiple successors)
+	divergence = foldTree(graph.nodes, makeSet(), \node, id, acc -> {
+		outEdges = getSimpleOutEdges(graph, node);
+		if (length(outEdges) > 1) {
+			insertSet(acc, node)
+		} else acc
+	});
+
+	ControlFlowPoints(convergence, divergence)
+}
+
+mergeTreeOfSets(t1 : Tree<?, Set<??>>, t2 : Tree<?, Set<??>>) -> Tree<?, Set<??>>{
+	foldTree(t2, t1, \k, v, acc -> {
+		existing = lookupTreeDef(acc, k, makeSet());
+		setTree(acc, k, mergeSets(existing, v))
+	})
+}
+
+mergeDominatorTrees(dt1 : DominatorTree<?>, dt2 : DominatorTree<?>) -> DominatorTree<?> {
+	DominatorTree(
+		mergeTree(dt1.idom, dt2.idom),
+		mergeTreeOfSets(dt1.dom, dt2.dom)
+	)
+}
+
