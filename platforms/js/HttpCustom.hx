@@ -4,8 +4,8 @@ class HttpCustom extends haxe.Http {
 	#if (js && !nwjs)
 	var method : String;
 	var availableMethods = ['GET', 'POST', 'DELETE', 'PATCH', 'PUT'];
-	var arrayBufferEncodings = ['utf8', 'byte'];
-	var defaultEncodings = ['auto', 'utf8_js'];
+	var arrayBufferEncodings = ['wtf8', 'byte'];
+	var defaultEncodings = ['auto', 'utf8'];
 
 	var responseHeaders2 : Array<Array<String>>;
 
@@ -33,11 +33,11 @@ class HttpCustom extends haxe.Http {
 		#end
 		var r = me.req = js.Browser.createXMLHttpRequest();
 
-		var utf8NoSurrogatesFlag = Util.getParameter("utf8_no_surrogates");
+		var wtf8Flag = Util.getParameter("use_wtf8");
 		// Url parameter takes precedence.
-		if (utf8NoSurrogatesFlag != null && utf8NoSurrogatesFlag != "0") {
-			responseEncoding = "utf8";
-		} else if (responseEncoding == "utf8_js") {
+		if (wtf8Flag != null && wtf8Flag != "0") {
+			responseEncoding = "wtf8";
+		} else if (responseEncoding == "utf8") {
 			responseEncoding = "auto";
 		} else if (this.arrayBufferEncodings.indexOf(responseEncoding) == -1 && this.defaultEncodings.indexOf(responseEncoding) == -1) {
 			responseEncoding = "auto";
@@ -73,7 +73,7 @@ class HttpCustom extends haxe.Http {
 				me.onStatus(s);
 			me.req = null;
 
-			if (responseEncoding == "utf8") {
+			if (responseEncoding == "wtf8") {
 				try {
 					encodedResponse = this.parseUtf8Real(
 						new Uint8Array(r.response),

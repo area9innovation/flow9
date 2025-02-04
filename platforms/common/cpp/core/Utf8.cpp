@@ -18,18 +18,24 @@
 #endif
 
 // We store here compiler flag about which logic of utf8 decode we should use:
-//  false - usual way with loss real code for 3 bytes codes,
-//  true - with decoding 3 bytes codes into UTF-16 codes (pairs of 2 bytes codes).
-bool utf8_js_style_global_flag = false;
+//  false - old UTF8 format with coding UTF16 surrogate pairs independently (WTF-8 (Wobbly Transformation Format − 8-bit) https://simonsapin.github.io/wtf-8/):
+//    It produces 6 bytes (a pair of 3 byte UTF8 characters) for the UTF16 surrogate pair.
+//    From https://en.wikipedia.org/wiki/UTF-8:
+//      Since RFC 3629 (November 2003), the high and low surrogates used by UTF-16 (U+D800 through U+DFFF) are not legal Unicode values,
+//      and their UTF-8 encodings must be treated as an invalid byte sequence.
+//  true - Recent UTF8 format:
+//    It produces 4 byte UTF8 character from a UTF16 surrogate pair.
+// This flag is used for backward compatibility only and should be removed in the future.
+bool utf8_style_global_flag = true;
 
-void setUtf8JsStyleGlobalFlag(const bool flag)
+void setUtf8StyleGlobalFlag(const bool flag)
 {
-    utf8_js_style_global_flag = flag;
+    utf8_style_global_flag = flag;
 }
 
 /* Character encoding */
 
-static unsigned encode(uint16_t c, uint16_t next_c, bool is_last, uint8_t *out, int &cnt)
+static unsigned encode(uint16_t c, uint16_t next_c, uint8_t *out, int &cnt)
 {
     // How much symbols (chars) used to decode original symbol
     unsigned usedSymbolsCount = 1;
@@ -37,14 +43,13 @@ static unsigned encode(uint16_t c, uint16_t next_c, bool is_last, uint8_t *out, 
     // Some of utf8 codes are 4 bytes length
     uint32_t code = c;
 
-    // If we started in utf8_js_style - we need to check utf-16 codes first.
-    if (::utf8_js_style_global_flag)
+    if (::utf8_style_global_flag)
     {
         // `code` is the highest part of the surrogate pair
         if (0xD800 <= code && code <= 0xDBFF)
         {
             // We have second symbol of surrogate pair and we can decode original symbol
-            if (!is_last)
+            if (0xDC00 <= next_c && next_c <= 0xDFFF)
             {
                 uint16_t hi = code;
                 uint16_t low = next_c;
@@ -116,25 +121,17 @@ struct Utf8Parser
     int bytes;
 
     unicode_string parse(const C &str, unsigned size);
-    unicode_string parse_base(const C &str, unsigned size, bool js_style);
     void parse_range(unicode_string &out, const C &str, unsigned size);
-    void parse_range_base(unicode_string &out, const C &str, unsigned size, bool js_style);
 };
 
 template<class C>
 unicode_string Utf8Parser<C>::parse(const C &str, unsigned size)
 {
-    return parse_base(str, size, ::utf8_js_style_global_flag);
-}
-
-template<class C>
-unicode_string Utf8Parser<C>::parse_base(const C &str, unsigned size, bool js_style)
-{
     unicode_string out;
     w = 0;
     bytes = 0;
     uint32_t err = L'?';
-    parse_range_base(out, str, size, js_style);
+    parse_range(out, str, size);
     if (bytes)
         out.push_back(err);
     return out;
@@ -162,25 +159,12 @@ unicode_string Utf8Parser<C>::parse_base(const C &str, unsigned size, bool js_st
 template<class C>
 void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size)
 {
-    return parse_range_base(out, str, size, ::utf8_js_style_global_flag);
-}
-
-template<class C>
-void Utf8Parser<C>::parse_range_base(unicode_string &out, const C &str, unsigned size, bool js_style)
-{
     int bytes = 0;
     uint16_t decode_error = (uint16_t)0xFFFD;
 
-    // js and cpp targets decode utf8 in different ways.
-    // In some cases (when we have specific symbols in the text) js and cpp apps will works by different too.
-    // Historically becomes that js store text in 2bytes chars and by this reason can't store specific large-code symbols.
-    // In this case js decode those symbols into UTF-16.
-    // It is not easy to fix js native (and browsers) to get "works" utf8 text properly, let's break cpp in the same way. :)
-    // In this case we will convert 3 bytes (and more) symbols into UTF-16 pairs (like that do js target).
-    // But only in case, if compiler started with "--use_utf8_js_style" flag.
-    auto to_utf16_js_style = [&out, js_style](uint64_t w)
+    auto to_utf16 = [&out](uint64_t w)
     {
-        if (w < 0x10000 /* 2 bytes or less */ || !js_style)
+        if (w < 0x10000 /* 2 bytes or less */)
         {
             out.push_back((uint32_t) w);
         }
@@ -218,7 +202,7 @@ void Utf8Parser<C>::parse_range_base(unicode_string &out, const C &str, unsigned
     };
 
     // Decode the chain of bytes into one symbol.
-    auto push_sequence = [&out, str, decode_error, is_sequence_correct, to_utf16_js_style](unsigned char mask, unsigned char c, size_t i, int bytes)
+    auto push_sequence = [&out, str, decode_error, is_sequence_correct, to_utf16](unsigned char mask, unsigned char c, size_t i, int bytes)
     {
         if (is_sequence_correct(i, bytes))
         {
@@ -230,8 +214,8 @@ void Utf8Parser<C>::parse_range_base(unicode_string &out, const C &str, unsigned
                 c = (unsigned char) str[i + j];
                 w = ((w << 6)|(c & 0x3F)); // 0x3F = 0011 1111
             }
-            
-            to_utf16_js_style(w);
+
+            to_utf16(w);
         }
         else
         {
@@ -292,11 +276,7 @@ unicode_string parseUtf8(const std::string &str) {
 }
 
 unicode_string parseUtf8(const char *str, unsigned size) {
-    return parseUtf8Base(str, size, ::utf8_js_style_global_flag);
-}
-
-unicode_string parseUtf8Base(const char *str, unsigned size, bool js_style) {
-    return Utf8Parser<const char*>().parse_base(str, size, js_style);
+    return Utf8Parser<const char*>().parse(str, size);
 }
 
 unicode_string parseUtf8u(const unicode_string &str) {
@@ -315,11 +295,9 @@ inline C doEncodeUtf8(I str, unsigned size)
     for (unsigned i = 0; i < size; i++)
     {
         bool is_last = size - i == 1;
-        // Sometimes in case of flag `defaultResponseEncoding = ResponseEncodingUTF8js` we will need the next symbol to do decode
-        //  original symbol from the utf16 surrogate pair.
-        uint16_t next_c = str[i];
+        uint16_t next_c = 0;
         if (!is_last) next_c = str[i + 1];
-        i += encode(str[i], next_c, is_last, buf, cnt) - 1;
+        i += encode(str[i], next_c, buf, cnt) - 1;
         out.append(&buf[0], &buf[cnt]);
     }
 
