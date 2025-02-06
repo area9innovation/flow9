@@ -6,55 +6,84 @@ import devmode;
 import lingo/pegcode/driver;
 
 export {
-	// Create a CSV string with escaped cells. 
+	// Create a CSV string with provided rows, using comma as separator
 	makeCsv(rows : [[string]]) -> string;
+
+	// Create a CSV string with custom separator
 	makeCsvSep(rows : [[string]], sep: string) -> string;
-	// like the string, but with an xFEFF (Zero width no-break space) unicode charater in the file/string.
+
+	// Like makeCsv but adds BOM marker for Excel compatibility
 	makeCsvFile(rows : [[string]]) -> string;
+
+	// Like makeCsvSep but adds BOM marker for Excel compatibility
 	makeCsvFileSep(rows : [[string]], sep: string) -> string;
 
-	// NOTE: cannot correctly parse data that contains multiline strings
-	// If onlyRectangular is set, we return [[]] when there is not the same
-	// number of columns in each line. If it is not set, we can return an
-	// uneven array.
-	// This tries to detect the separator automatically
+	// Parses a CSV file with automatic separator detection
+	// onlyRectangular: if true, returns empty array when rows have different column counts
 	parseCsvFile(content : string, onlyRectangular : bool) -> [[string]];
 
-	// NOTE: cannot correctly parse data that contains multiline strings
-	// If you know the separator, use this one.
+	// Parses CSV content with known separator
 	parseCsv(s : string, sep : string) -> [[string]];
 
+	// Parses a single CSV line into array of fields
 	parseCsvLine(s : string, sep : string) -> [string];
+
+	// Like parseCsvLine but handles quoted separators correctly
 	parseCsvLineWithQuotedSeparators(s: string, sep: string) -> [string];
 
+	// Extracts next field from CSV line starting at given index
 	parseCsvField(s : string, index : int, sep : string) -> Pair<string, int>;
 
 	ParseCsvOption ::= ParseCsvSeparator, ParseCsvDetectSeparator, ParseCsvRectangle, ParseCsvSkipEmpty, ParseCsvQuotedEscapes;
-		ParseCsvSeparator(sep : string); // any character except double quotes or empty string
-		ParseCsvDetectSeparator(); // try to detect if separator is either of , ; \t 
-		ParseCsvRectangle(); // treat inconsistent number of columns as an error
-		ParseCsvSkipEmpty(); // ignore empty rows, can be used with ParseCsvRectangle
-		ParseCsvQuotedEscapes(enabled : bool); // whether to parse values escaped with quotes
+		// Any character except double quotes or empty string
+		ParseCsvSeparator(sep : string);
+		// Try to detect if separator is either of , ; \t
+		ParseCsvDetectSeparator();
+		// Treat inconsistent number of columns as an error
+		ParseCsvRectangle();
+		// Ignore empty rows, can be used with ParseCsvRectangle
+		ParseCsvSkipEmpty();
+		// Whether to parse values escaped with quotes
+		ParseCsvQuotedEscapes(enabled : bool);
 
-	// By default uses ',' as a separator.
-	// If an error occurs the second element of the pair will contain an error message
-	// and first element of the pair may contain a partial result.
-	parseCsvData(data : string, styles : [ParseCsvOption]) -> Pair<[[string]], string>;
+	// Parses CSV data with configurable options
+	// Returns parsed rows and any error messages
+	parseCsvData(data : string, styles : [ParseCsvOption]) -> CsvParseResult;
 }
 
+// Represents the result of parsing CSV data
+CsvParseResult(
+	rows : [[string]],
+	error : string
+);
+
+// Information about a parsed CSV row
+CsvRowInfo(
+	start : int,
+	end : int,
+	row : [string]
+);
+
+// Cache for compiled CSV grammars
 compiledCsvGrammarsR : ref Tree<string, [PegOp]> = ref makeTree();
+
+// Actions for parsing quoted strings
 csvGrammarActions = SemanticActions(setTree(defaultPegActions.t, "unescapeQ", \args : [flow] -> {
 	str = flow2s(args[0]);
 	trimmed = substring(str, 1, strlen(str) - 2);
 	strReplace(trimmed, "\"\"", "\"");
 }));
 
-CsvRowInfo(start : int, end : int, row : [string]);
+// Validates if a separator is valid (not empty or containing quotes)
+validateSeparator(sepStr : string) -> Maybe<string> {
+	if (sepStr == "" || strContains(sepStr, "\\u0022")) None()
+	else Some(sepStr);
+}
 
-parseCsvData(data : string, styles : [ParseCsvOption]) -> Pair<[[string]], string> {
-	disableEscapes = !extractStruct(styles, ParseCsvQuotedEscapes(true)).enabled;
+// Determines the separator to use based on parsing options
+getSeparator(styles : [ParseCsvOption], data : string) -> string {
 	styleSepM = tryExtractStruct(styles, ParseCsvSeparator(""));
-	sepStr = eitherFn(styleSepM, \styleSep -> styleSep.sep, \ -> {
+	eitherFn(styleSepM, \styleSep -> styleSep.sep, \ -> {
 		if (containsStruct(styles, ParseCsvDetectSeparator())) {
 			sep = detectCsvSeparator(data).second;
 			devtrace("parseCsvData: detected separator is " + sep);
@@ -63,221 +92,283 @@ parseCsvData(data : string, styles : [ParseCsvOption]) -> Pair<[[string]], strin
 			","; // default separator
 		}
 	});
+}
 
-	// convert string to unicode escapes
+// Gets or creates a grammar for parsing CSV with given separator
+getGrammar(sep : string, disableEscapes : bool) -> [PegOp] {
+	grammarM = if (disableEscapes) None() else lookupTree(^compiledCsvGrammarsR, sep);
+	eitherFn(grammarM, idfn, \ -> {
+		escapeCh = if (disableEscapes) "\\uFFFF" else "\\u0022";
+		wsCh1 = if (strContains(sep, "\\u0020")) "\\uFFFF" else "\\u0020";
+		wsCh2 = if (strContains(sep, "\\u0009")) "\\uFFFF" else "\\u0009";
+		newOps = compilePegGrammar(formatString("#include formats/csv/csv.lingo-template",
+			[sep, escapeCh, wsCh1, wsCh2]));
+		if (!disableEscapes) {
+			compiledCsvGrammarsR := setTree(^compiledCsvGrammarsR, sep, newOps);
+		}
+		newOps;
+	});
+}
+
+// Main CSV parsing function with configurable options
+parseCsvData(data : string, styles : [ParseCsvOption]) -> CsvParseResult {
+	disableEscapes = !extractStruct(styles, ParseCsvQuotedEscapes(true)).enabled;
+	sepStr = getSeparator(styles, data);
+
+	// Convert string to unicode escapes
 	sep = concatStrings(map(s2a(sepStr), \code -> {
 		hex = formatHex(code);
 		substring("\\u0000", 0, 6 - strlen(hex)) + hex;
 	}));
 
-	// cannot have double quotes or empty string as a separator
-	if (sepStr == "" || strContains(sep, "\\u0022")) {
-		Pair([], "invalid separator");
-	} else {
-		grammarM = if (disableEscapes) None() else lookupTree(^compiledCsvGrammarsR, sep);
-		grammar = eitherFn(grammarM, idfn, \ -> {
-			escapeCh = if (disableEscapes) "\\uFFFF" else "\\u0022";
-			wsCh1 = if (strContains(sep, "\\u0020")) "\\uFFFF" else "\\u0020";
-			wsCh2 = if (strContains(sep, "\\u0009")) "\\uFFFF" else "\\u0009";
-			newOps = compilePegGrammar(formatString("#include formats/csv/csv.lingo-template", [sep, escapeCh, wsCh1, wsCh2]));
-			if (!disableEscapes) {
-				compiledCsvGrammarsR := setTree(^compiledCsvGrammarsR, sep, newOps);
-			}
-			newOps;
-		});
+	sepM = validateSeparator(sepStr);
+	switch (sepM) {
+		None(): CsvParseResult([], "invalid separator");
+		Some(validSep): {
+			grammar = getGrammar(sep, disableEscapes);
+			parseResult = parsic3(grammar, data, csvGrammarActions, []);
 
-		triple = parsic3(grammar, data, csvGrammarActions, []);
-		if (triple.third != "") {
-			devtrace("parseCsvData: " + triple.third);
-			Pair([], "parsing error");
-		} else {
-			array = map(triple.first, \info -> if (info.start == info.end) [] else info.row);
-			result = if (containsStruct(styles, ParseCsvSkipEmpty())) {
-				filter(array, \row -> row != []);
+			if (parseResult.third != "") {
+				devtrace("parseCsvData: " + parseResult.third);
+				CsvParseResult([], "parsing error");
 			} else {
-				// trim empty rows at the end
-				idxM = lastfindi(array, \row -> row != []);
-				eitherMap(idxM, \idx -> take(array, idx + 1), array);
-			}
-
-			if (containsStruct(styles, ParseCsvRectangle())) {
-				numCols = uniq(map(result, length));
-				if (length(numCols) > 1) {
-					Pair(result, "inconsistent number of columns");
-				} else {
-					Pair(result, "");
-				}
-			} else {
-				Pair(result, "");
+				processParseResult(parseResult.first, styles);
 			}
 		}
 	}
 }
 
-detectCsvSeparator(s : string) -> Pair<int, string> {
-	part = strLeft(s, 2000);
-	counts = map([",", ";", "\t"], \sep -> if (strCountOf(part, sep) > 0) getBestRowCount(part, sep) else 0);
-	if (counts[0] == counts[1] && counts[1] == counts[2]) Pair(counts[0], ",") else max3(
-		Pair(counts[0], ","),
-		Pair(counts[1], ";"),
-		Pair(counts[2], "\t"),
-	);
+// Process parsed rows according to style options
+processParseResult(rawRows : [CsvRowInfo], styles : [ParseCsvOption]) -> CsvParseResult {
+	rows = map(rawRows, \info -> if (info.start == info.end) [] else info.row);
+	filteredRows = if (containsStruct(styles, ParseCsvSkipEmpty())) {
+		filter(rows, \row -> row != []);
+	} else {
+		// Trim empty rows at the end
+		idxM = lastfindi(rows, \row -> row != []);
+		eitherMap(idxM, \idx -> take(rows, idx + 1), rows);
+	}
+
+	if (containsStruct(styles, ParseCsvRectangle())) {
+		columnCounts = uniq(map(filteredRows, length));
+		if (length(columnCounts) > 1) {
+			CsvParseResult(filteredRows, "inconsistent number of columns");
+		} else {
+			CsvParseResult(filteredRows, "");
+		}
+	} else {
+		CsvParseResult(filteredRows, "");
+	}
 }
 
-// How many rows with the given delimiter will have the same number of columns (the more, the more likely this is the delimiter)
-getBestRowCount(file : string, sep : string) -> int {
-	// Break the text into lines
-	lines = strSplit2WithoutLeave(file, [fromCharCode(10), fromCharCode(13)]);
+// Detects the most likely separator in CSV content
+detectCsvSeparator(s : string) -> Pair<int, string> {
+	sampleText = strLeft(s, 2000);
+	separators = [",", ";", "\t"];
+	counts = map(separators, \sep ->
+		if (strCountOf(sampleText, sep) > 0) getBestRowCount(sampleText, sep)
+		else 0
+	);
 
-	// Calculate how many columns we'll have in each row
-	// Ignore rows with only one column in them, it means the delimiter is simply not there
-	arr_cnt = filtermap(lines, \a -> {
-		len = length(parseCsvLineWithQuotedSeparators(a, sep));
-		if (len == 1) None() else Some(len);
+	if (counts[0] == counts[1] && counts[1] == counts[2]) {
+		Pair(counts[0], ",")
+	} else {
+		max3(
+			Pair(counts[0], ","),
+			Pair(counts[1], ";"),
+			Pair(counts[2], "\t")
+		);
+	}
+}
+
+// Determines how many rows have consistent column counts for a given separator
+getBestRowCount(content : string, sep : string) -> int {
+	lines = strSplit2WithoutLeave(content, [fromCharCode(10), fromCharCode(13)]);
+	columnCounts = filtermap(lines, \line -> {
+		columnCount = length(parseCsvLineWithQuotedSeparators(line, sep));
+		if (columnCount == 1) None() else Some(columnCount);
 	});
 
-	fold(map(uniq(arr_cnt), \v -> countA(arr_cnt, eq(v))), 0, max);
+	uniqueCounts = uniq(columnCounts);
+	fold(map(uniqueCounts, \count ->
+		countA(columnCounts, eq(count))
+	), 0, max);
 }
 
+// Parses a CSV line handling quoted separators
 parseCsvLineWithQuotedSeparators(s: string, sep: string) -> [string] {
 	list2array(strSplitCheckQuotes(s, sep, makeList()));
 }
 
-//separators in string with quotes are ignored
+// Splits string on separator while respecting quotes
 strSplitCheckQuotes(s: string, sep: string, acc: List<string>) -> List<string> {
-	l = strlen(s);
-	lastQuoteInd = ref -1;
-	i = strIndexOfSepOutOfQuotes(s, sep, lastQuoteInd);
-	nextSubstr = if (^lastQuoteInd > 0) {
-		substring(s, 1, if (i < 0) (^lastQuoteInd - 1) else (i - 2));
-	} else if (i < 0) {
+	strLen = strlen(s);
+	lastQuoteIndex = ref -1;
+	separatorIndex = strIndexOfSepOutOfQuotes(s, sep, lastQuoteIndex);
+
+	nextSubstring = if (^lastQuoteIndex > 0) {
+		substring(s, 1, if (separatorIndex < 0) (^lastQuoteIndex - 1) else (separatorIndex - 2));
+	} else if (separatorIndex < 0) {
 		s;
 	} else {
-		strLeft(s, i);
+		strLeft(s, separatorIndex);
 	}
-	if (i < 0) {
-		Cons(nextSubstr, acc);
+
+	if (separatorIndex < 0) {
+		Cons(nextSubstring, acc);
 	} else {
-		newAcc = Cons(nextSubstr, acc);
-		if (i < l) {
+		newAcc = Cons(nextSubstring, acc);
+		if (separatorIndex < strLen) {
 			sepLen = strlen(sep);
-			strSplitCheckQuotes(substring(s, i + sepLen, l - i - sepLen), sep, newAcc);
+			remainingStr = substring(s, separatorIndex + sepLen, strLen - separatorIndex - sepLen);
+			strSplitCheckQuotes(remainingStr, sep, newAcc);
 		} else {
 			newAcc;
 		}
 	}
 }
 
+// Finds index of separator outside quoted sections
 strIndexOfSepOutOfQuotes(str : string, sep : string, lastQuoteInd : ref int) -> int {
 	quotePos = strIndexOf(str, "\"");
 	if (quotePos < 0 || strIndexOf(str, sep) < quotePos) {
-		strIndexOf(str, sep)
+		strIndexOf(str, sep);
 	} else {
-		quotesIdx = multipleStrIndexOf(str, "\"");
-		quotes = foldi(quotesIdx, [], \idx, acc, quoteIdx -> {
+		quotesPositions = multipleStrIndexOf(str, "\"");
+		// Group quote positions into pairs (start, end)
+		quotePairs = foldi(quotesPositions, [], \idx, acc, quoteIdx -> {
 			if (even(idx)) acc
-			else concat(acc, [Pair(quotesIdx[idx - 1], quotesIdx[idx])])
+			else concat(acc, [Pair(quotesPositions[idx - 1], quotesPositions[idx])])
 		});
-		sepIdxs = multipleStrIndexOf(str, sep);
-		l = strlen(str);
-		isIdxInRange = \i -> fold(quotes, false, \acc, pair -> (acc || (i > pair.first && i < pair.second)));
-		setQuotedStr = \sepIdx -> {
-			quoteCnt = length(quotesIdx);
-			if (quoteCnt > 1 && quotesIdx[0] == 0 && quotesIdx[1] == (sepIdx - 1)) {
+		
+		separatorPositions = multipleStrIndexOf(str, sep);
+		strLength = strlen(str);
+		
+		isInQuotes = \pos -> fold(quotePairs, false, \acc, pair -> 
+			acc || (pos > pair.first && pos < pair.second)
+		);
+		
+		updateLastQuote = \sepIdx -> {
+			quoteCount = length(quotesPositions);
+			if (quoteCount > 1 && quotesPositions[0] == 0 && quotesPositions[1] == (sepIdx - 1)) {
 				lastQuoteInd := sepIdx - 1;
 			}
 		}
-		firstInd = fold(sepIdxs, l, \acc, sepIdx -> {
-			if (acc < l || isIdxInRange(sepIdx)) acc
+		
+		firstValidSep = fold(separatorPositions, strLength, \acc, sepIdx -> {
+			if (acc < strLength || isInQuotes(sepIdx)) acc
 			else {
-				setQuotedStr(sepIdx);
-				sepIdx
+				updateLastQuote(sepIdx);
+				sepIdx;
 			}
 		});
-		if (firstInd == l) {
-			setQuotedStr(l);
-			if ((^lastQuoteInd) < 0) setQuotedStr(l - 1);
+		
+		if (firstValidSep == strLength) {
+			updateLastQuote(strLength);
+			if ((^lastQuoteInd) < 0) updateLastQuote(strLength - 1);
 			-1;
 		} else {
-			firstInd;
+			firstValidSep;
 		}
 	}
 }
 
-
+// Create CSV string with default comma separator
 makeCsv(rows : [[string]]) -> string {
-	makeCsvSep(rows, ",")
+	makeCsvSep(rows, ",");
 }
 
+// Create CSV file with BOM marker
 makeCsvFile(rows : [[string]]) -> string {
 	fromCharCode(0xFEFF) + makeCsv(rows);
 }
 
-escapeCell(v: string, sep: string) -> string {
-	if (isSome(strFindFirstOfStrings(v, ["\n", sep, ";", "\""])))
-		formatString("\"%1\"", [strReplace(v, "\"", "\"\"")])
-	else
-		v;
+// Escapes a cell value if needed
+escapeCell(value: string, sep: string) -> string {
+	needsEscaping = isSome(strFindFirstOfStrings(value, ["\n", sep, ";", "\""]));
+	if (needsEscaping) {
+		formatString("\"%1\"", [strReplace(value, "\"", "\"\"")])
+	} else {
+		value;
+	}
 }
 
+// Create CSV string with custom separator
 makeCsvSep(rows : [[string]], sep: string) -> string {
-	rowsSeparated = map(rows, \r -> strGlue(map(r, \s -> escapeCell(s, sep)), sep));
-	strGlue(rowsSeparated, "\n");
+	rowStrings = map(rows, \row -> strGlue(map(row, \cell -> escapeCell(cell, sep)), sep));
+	strGlue(rowStrings, "\n");
 }
 
+// Create CSV file with BOM marker and custom separator
 makeCsvFileSep(rows : [[string]], sep: string) -> string {
 	fromCharCode(0xFEFF) + makeCsvSep(rows, sep);
 }
 
-parseCsvFile(file : string, onlyRectangular : bool) -> [[string]] {
-	cnt_sep = detectCsvSeparator(file);
+// Parse CSV file with automatic separator detection
+parseCsvFile(content : string, onlyRectangular : bool) -> [[string]] {
+	detectedSeparator = detectCsvSeparator(content);
 
-	c10 = fromCharCode(10);
-	c13 = fromCharCode(13);
+	// Handle line endings
+	newline = fromCharCode(10);
+	carriageReturn = fromCharCode(13);
 
-	f = trim2(trim2(file, c10), c13);
-	tmp_arr = if (strContains(f, c10) || strContains(f, c13)) {
-		map(strSplit2WithoutLeave(f, [c10, c13]), \a -> parseCsvLineWithQuotedSeparators(a, cnt_sep.second))
+	trimmedContent = trim2(trim2(content, newline), carriageReturn);
+
+	parsedRows = if (strContains(trimmedContent, newline) || strContains(trimmedContent, carriageReturn)) {
+		map(strSplit2WithoutLeave(trimmedContent, [newline, carriageReturn]),
+			\line -> parseCsvLineWithQuotedSeparators(line, detectedSeparator.second))
 	} else {
-		map(parseCsvLineWithQuotedSeparators(f, cnt_sep.second), \v -> [v]);
+		map(parseCsvLineWithQuotedSeparators(trimmedContent, detectedSeparator.second), \v -> [v]);
 	}
 
-	arr = map(
-		map(tmp_arr, \v -> if (length(v) != cnt_sep.first) tryToConcatStringsWithQuotes(v) else v),
-		\v -> map(v, \s -> strReplace(trimQuotes(trim(s)), "\"\"", "\""))
+	// Process and clean parsed rows
+	processedRows = map(
+		map(parsedRows, \row ->
+			if (length(row) != detectedSeparator.first)
+				tryToConcatStringsWithQuotes(row)
+			else row
+		),
+		\row -> map(row, \cell -> strReplace(trimQuotes(trim(cell)), "\"\"", "\""))
 	);
 
-	arr_cnt = map(arr, length);
-	arr_cnt_uniq = uniq(arr_cnt);
-	arr_stat = sort(map(arr_cnt_uniq, \v -> Pair(countA(arr_cnt, eq(v)), v)));
-	bestResult = arr_stat[length(arr_stat)-1].second;
+	// Analyze column counts
+	columnCounts = map(processedRows, length);
+	uniqueColumnCounts = uniq(columnCounts);
+	columnStatistics = sort(map(uniqueColumnCounts, \count ->
+		Pair(countA(columnCounts, eq(count)), count)
+	));
 
-	devtrace("separator: " + if (cnt_sep.second == "\t") "tab" else cnt_sep.second);
-	iter(arr_stat, \i -> {
-		devtrace(i2s(i.first)+" rows have "+i2s(i.second)+" columns")
+	mostCommonColumnCount = columnStatistics[length(columnStatistics)-1].second;
+
+	devtrace("separator: " + if (detectedSeparator.second == "\t") "tab" else detectedSeparator.second);
+	iter(columnStatistics, \stat -> {
+		devtrace(i2s(stat.first) + " rows have " + i2s(stat.second) + " columns")
 	});
 
-	if (onlyRectangular && length(arr_stat) > 1) [[]]
-	else arr
-//	else filter(arr, \v -> length(v) == bestResult);
+	if (onlyRectangular && length(columnStatistics) > 1) [[]]
+	else processedRows;
 }
 
+// Try to concatenate strings that were incorrectly split due to quotes
 tryToConcatStringsWithQuotes(arr : [string]) -> [string] {
-	switch(findi(arr, \s -> startsWith(s, "\"") && !endsWith(s, "\""))) {
+	quoteStartIndex = findi(arr, \s -> startsWith(s, "\"") && !endsWith(s, "\""));
+	switch(quoteStartIndex) {
 		None(): arr;
-		Some(index): {
-			startPos = index;
-			tmp_arr = subrange(arr, startPos, length(arr)-startPos);
-			switch(findi(tmp_arr, \s -> !startsWith(s, "\"") && (endsWith(s, "\"")))) {
+		Some(startPos): {
+			remainingArr = subrange(arr, startPos, length(arr)-startPos);
+			quoteEndIndex = findi(remainingArr, \s -> !startsWith(s, "\"") && endsWith(s, "\""));
+
+			switch(quoteEndIndex) {
 				None(): arr;
-				Some(idx): {
-					endPos = idx;
-					concat_str = concatStrings(subrange(arr, startPos, startPos+endPos));
-					arr_length = length(arr);
+				Some(endPos): {
+					concatenatedStr = concatStrings(subrange(arr, startPos, startPos+endPos));
+					arrayLength = length(arr);
 					concat3(
-						subrange(arr, 1, startPos-1),
-						[concat_str],
-						if (arr_length-1 > endPos) tryToConcatStringsWithQuotes(subrange(arr, endPos, arr_length-1-endPos)) else []
+						subrange(arr, 0, startPos),
+						[concatenatedStr],
+						if (arrayLength-1 > endPos)
+							tryToConcatStringsWithQuotes(subrange(arr, endPos, arrayLength-1-endPos))
+						else []
 					);
 				}
 			}
@@ -285,6 +376,7 @@ tryToConcatStringsWithQuotes(arr : [string]) -> [string] {
 	}
 }
 
+// Remove surrounding quotes from a string if present
 trimQuotes(s : string) -> string {
 	if (startsWith(s, "\"") && endsWith(s, "\"")) {
 		substring(s, 1, strlen(s)-2);
@@ -293,66 +385,66 @@ trimQuotes(s : string) -> string {
 	}
 }
 
-// Extracts a piece of string from the "from" index until the limit occurs.
-// Returns the piece, as well as the index where it ends. If the limit does
-// not appear, the index is -1.
-takeUntil(s : string, from : int, limit : string) -> Pair<string, int> {
+// Extract substring until a delimiter is found
+takeUntil(s : string, from : int, delimiter : string) -> Pair<string, int> {
 	if (from == -1) {
-		// Protection
 		Pair("", -1);
 	} else {
-		piece = strRight(s, from);
-		index = strIndexOf(piece, limit);
-		if (index == -1) {
-			Pair(piece, -1);
+		remainder = strRight(s, from);
+		delimiterIndex = strIndexOf(remainder, delimiter);
+		if (delimiterIndex == -1) {
+			Pair(remainder, -1);
 		} else {
-			Pair(substring(s, from, index), index + from + strlen(limit));
+			Pair(substring(s, from, delimiterIndex), delimiterIndex + from + strlen(delimiter));
 		}
 	}
 }
 
+// Parse a single CSV line into fields
 parseCsvLine(s : string, sep : string) -> [string] {
 	doParseCsvLine(s, 0, [], sep);
 }
 
+// Helper function for parseCsvLine
 doParseCsvLine(s : string, index : int, acc : [string], sep : string) -> [string] {
-	f = parseCsvField(s, index, sep);
-	a = arrayPush(acc, rtrim2(f.first, "\u000d"));
-	if (f.second == -1) a
-	else doParseCsvLine(s, f.second, a, sep);
+	field = parseCsvField(s, index, sep);
+	updatedAcc = arrayPush(acc, rtrim2(field.first, "\u000d"));
+	if (field.second == -1) updatedAcc
+	else doParseCsvLine(s, field.second, updatedAcc, sep);
 }
 
-// Extract the next field in the CSV file. Returns -1 as index for the last field
+// Parse next field from CSV content
 parseCsvField(s : string, index : int, sep : string) -> Pair<string, int> {
 	if (index <= -1) {
-		// Protection
 		Pair("", -1);
 	} else {
 		if (getCharAt(s, index) == "\"") {
-			str = parseRestOfString(s, index + 1);
-			comma = takeUntil(s, str.second, sep);
-			Pair(str.first, comma.second);
+			stringContent = parseRestOfString(s, index + 1);
+			separatorPos = takeUntil(s, stringContent.second, sep);
+			Pair(stringContent.first, separatorPos.second);
 		} else {
 			takeUntil(s, index, sep);
 		}
 	}
 }
 
-// Extract the remainder of a string. "" is escaping
+// Parse quoted string content
 parseRestOfString(s : string, start : int) -> Pair<string, int> {
-	piece = strRight(s, start);
-	nextQuote = strIndexOf(piece, "\"");
-	quotedQuote = strIndexOf(piece, "\"\"");
-	if (quotedQuote != -1 && quotedQuote == nextQuote) {
-		// We have a quoted quote "", so skip this guy
-		rest = parseRestOfString(s, start + quotedQuote + 2);
-		Pair(substring(s, start, nextQuote - start + 2) + rest.first, rest.second);
+	remainder = strRight(s, start);
+	nextQuotePos = strIndexOf(remainder, "\"");
+	escapedQuotePos = strIndexOf(remainder, "\"\"");
+
+	if (escapedQuotePos != -1 && escapedQuotePos == nextQuotePos) {
+		// Handle escaped quote
+		restOfString = parseRestOfString(s, start + escapedQuotePos + 2);
+		Pair(substring(s, start, nextQuotePos - start + 2) + restOfString.first, restOfString.second);
 	} else {
-		Pair(strLeft(piece, nextQuote), start + nextQuote + 1);
+		Pair(strLeft(remainder, nextQuotePos), start + nextQuotePos + 1);
 	}
 }
 
+// Parse CSV with known separator
 parseCsv(s : string, sep : string) -> [[string]] {
 	lines = strSplit(s, "\n");
-	map(lines, \l -> parseCsvLine(l, sep));
+	map(lines, \line -> parseCsvLine(line, sep));
 }
