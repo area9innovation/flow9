@@ -80,13 +80,13 @@ csvGrammarActions = SemanticActions(setTree(defaultPegActions.t, "unescapeQ", \a
 }));
 
 // Validates if a separator is valid (not empty or containing quotes)
-validateSeparator(sepStr : string) -> Maybe<string> {
+validateCSVeparator(sepStr : string) -> Maybe<string> {
 	if (sepStr == "" || strContains(sepStr, "\\u0022")) None()
 	else Some(sepStr);
 }
 
 // Determines the separator to use based on parsing options
-getSeparator(styles : [ParseCsvOption], data : string) -> string {
+getCSVSeparator(styles : [ParseCsvOption], data : string) -> string {
 	styleSepM = tryExtractStruct(styles, ParseCsvSeparator(""));
 	eitherFn(styleSepM, \styleSep -> styleSep.sep, \ -> {
 		if (containsStruct(styles, ParseCsvDetectSeparator())) {
@@ -100,7 +100,7 @@ getSeparator(styles : [ParseCsvOption], data : string) -> string {
 }
 
 // Gets or creates a grammar for parsing CSV with given separator
-getGrammar(sep : string, disableEscapes : bool) -> [PegOp] {
+getCSVGrammar(sep : string, disableEscapes : bool) -> [PegOp] {
 	grammarM = if (disableEscapes) None() else lookupTree(^compiledCsvGrammarsR, sep);
 	eitherFn(grammarM, idfn, \ -> {
 		escapeCh = if (disableEscapes) "\\uFFFF" else "\\u0022";
@@ -118,7 +118,7 @@ getGrammar(sep : string, disableEscapes : bool) -> [PegOp] {
 // Main CSV parsing function with configurable options
 parseCsvData(data : string, styles : [ParseCsvOption]) -> CsvParseResult {
 	disableEscapes = !extractStruct(styles, ParseCsvQuotedEscapes(true)).enabled;
-	sepStr = getSeparator(styles, data);
+	sepStr = getCSVSeparator(styles, data);
 
 	// Convert string to unicode escapes
 	sep = concatStrings(map(s2a(sepStr), \code -> {
@@ -126,25 +126,25 @@ parseCsvData(data : string, styles : [ParseCsvOption]) -> CsvParseResult {
 		substring("\\u0000", 0, 6 - strlen(hex)) + hex;
 	}));
 
-	sepM = validateSeparator(sepStr);
+	sepM = validateCSVeparator(sepStr);
 	switch (sepM) {
 		None(): CsvParseResult([], "invalid separator");
 		Some(validSep): {
-			grammar = getGrammar(sep, disableEscapes);
+			grammar = getCSVGrammar(sep, disableEscapes);
 			parseResult = parsic3(grammar, data, csvGrammarActions, []);
 
 			if (parseResult.third != "") {
 				devtrace("parseCsvData: " + parseResult.third);
 				CsvParseResult([], "parsing error");
 			} else {
-				processParseResult(parseResult.first, styles);
+				processCSVParseResult(parseResult.first, styles);
 			}
 		}
 	}
 }
 
 // Process parsed rows according to style options
-processParseResult(rawRows : [CsvRowInfo], styles : [ParseCsvOption]) -> CsvParseResult {
+processCSVParseResult(rawRows : [CsvRowInfo], styles : [ParseCsvOption]) -> CsvParseResult {
 	rows = map(rawRows, \info -> if (info.start == info.end) [] else info.row);
 	filteredRows = if (containsStruct(styles, ParseCsvSkipEmpty())) {
 		filter(rows, \row -> row != []);
@@ -167,13 +167,13 @@ processParseResult(rawRows : [CsvRowInfo], styles : [ParseCsvOption]) -> CsvPars
 }
 
 // Information about detected separator and column structure
-SeparatorInfo(
+CSVSeparatorInfo(
 	separator : string,  // The detected separator character
 	columnCount : int    // The most common number of columns
 );
 
 // Detect the most likely separator and column structure
-detectCsvSeparator(s : string) -> SeparatorInfo {
+detectCsvSeparator(s : string) -> CSVSeparatorInfo {
 	sampleText = strLeft(s, 2000);
 	counts = map([",", ";", "\t"], \sep -> {
 		if (strCountOf(sampleText, sep) > 0) {
@@ -186,23 +186,23 @@ detectCsvSeparator(s : string) -> SeparatorInfo {
 
 	if (counts[0].first == counts[1].first && counts[1].first == counts[2].first) {
 		// If all give same count, default to comma
-		SeparatorInfo(",", counts[0].third);
+		CSVSeparatorInfo(",", counts[0].third);
 	} else {
 		bestSep = fold(counts, counts[0], \acc, x ->
 			if (x.first > acc.first) x else acc
 		);
-		SeparatorInfo(bestSep.second, bestSep.third);
+		CSVSeparatorInfo(bestSep.second, bestSep.third);
 	}
 }
 
 // Results from analyzing row consistency
-BestRowInfo(
+CSVBestRowInfo(
 	rowCount : int,     // How many rows have the most common column count
 	columnCount : int   // The most common number of columns
 );
 
 // Determine the most common column count and how many rows have it
-getBestRowCount(content : string, sep : string) -> BestRowInfo {
+getBestRowCount(content : string, sep : string) -> CSVBestRowInfo {
 	// Break the text into lines
 	lines = strSplit2WithoutLeave(content, [fromCharCode(10), fromCharCode(13)]);
 
@@ -220,7 +220,7 @@ getBestRowCount(content : string, sep : string) -> BestRowInfo {
 		\acc, p -> if (p.first > acc.first) p else acc
 	);
 
-	BestRowInfo(bestCount.first, bestCount.second);
+	CSVBestRowInfo(bestCount.first, bestCount.second);
 }
 
 // Parses a CSV line handling quoted separators
