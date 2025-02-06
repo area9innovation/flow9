@@ -178,20 +178,20 @@ detectCsvSeparator(s : string) -> SeparatorInfo {
 	counts = map([",", ";", "\t"], \sep -> {
 		if (strCountOf(sampleText, sep) > 0) {
 			bestRowInfo = getBestRowCount(sampleText, sep);
-			Pair(bestRowInfo.rowCount, Pair(sep, bestRowInfo.columnCount))
+			Triple(bestRowInfo.rowCount, sep, bestRowInfo.columnCount)
 		} else {
-			Pair(0, Pair(sep, 0))
+			Triple(0, sep, 0)
 		}
 	});
 
 	if (counts[0].first == counts[1].first && counts[1].first == counts[2].first) {
 		// If all give same count, default to comma
-		SeparatorInfo(",", counts[0].second.second);
+		SeparatorInfo(",", counts[0].third);
 	} else {
 		bestSep = fold(counts, counts[0], \acc, x ->
 			if (x.first > acc.first) x else acc
 		);
-		SeparatorInfo(bestSep.second.first, bestSep.second.second);
+		SeparatorInfo(bestSep.second, bestSep.third);
 	}
 }
 
@@ -349,17 +349,12 @@ parseCsvFile(content : string, onlyRectangular : bool) -> [[string]] {
 		map(parseCsvLineWithQuotedSeparators(trimmedContent, sepInfo.separator), \v -> [v]);
 	}
 
-	// Process and clean parsed rows
-	processedRows = map(
-		map(parsedRows, \row ->
-			if (length(row) != sepInfo.columnCount)
-				tryToConcatStringsWithQuotes(row)
-			else row
-		),
+	// Just clean the cells
+	processedRows = map(parsedRows,
 		\row -> map(row, \cell -> strReplace(trimQuotes(trim(cell)), "\"\"", "\""))
 	);
 
-	// Analyze column counts
+	// Analyze column counts for debugging
 	columnCounts = map(processedRows, length);
 	uniqueColumnCounts = uniq(columnCounts);
 	columnStatistics = sort(map(uniqueColumnCounts, \count ->
@@ -367,40 +362,15 @@ parseCsvFile(content : string, onlyRectangular : bool) -> [[string]] {
 	));
 
 	devtrace("separator: " + if (sepInfo.separator == "\t") "tab" else sepInfo.separator);
+	devtrace("expected " + i2s(sepInfo.columnCount) + " columns");
 	iter(columnStatistics, \stat -> {
 		devtrace(i2s(stat.first) + " rows have " + i2s(stat.second) + " columns")
 	});
 
-	if (onlyRectangular && length(columnStatistics) > 1) [[]]
+	if (onlyRectangular && exists(processedRows, \row -> length(row) != sepInfo.columnCount)) [[]]
 	else processedRows;
 }
 
-// Try to concatenate strings that were incorrectly split due to quotes
-tryToConcatStringsWithQuotes(arr : [string]) -> [string] {
-	quoteStartIndex = findi(arr, \s -> startsWith(s, "\"") && !endsWith(s, "\""));
-	switch(quoteStartIndex) {
-		None(): arr;
-		Some(startPos): {
-			remainingArr = subrange(arr, startPos, length(arr)-startPos);
-			quoteEndIndex = findi(remainingArr, \s -> !startsWith(s, "\"") && endsWith(s, "\""));
-
-			switch(quoteEndIndex) {
-				None(): arr;
-				Some(endPos): {
-					concatenatedStr = concatStrings(subrange(arr, startPos, startPos+endPos));
-					arrayLength = length(arr);
-					concat3(
-						subrange(arr, 0, startPos),
-						[concatenatedStr],
-						if (arrayLength-1 > endPos)
-							tryToConcatStringsWithQuotes(subrange(arr, endPos, arrayLength-1-endPos))
-						else []
-					);
-				}
-			}
-		}
-	}
-}
 
 // Remove surrounding quotes from a string if present
 trimQuotes(s : string) -> string {
