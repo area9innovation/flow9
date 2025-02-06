@@ -90,7 +90,7 @@ getSeparator(styles : [ParseCsvOption], data : string) -> string {
 	styleSepM = tryExtractStruct(styles, ParseCsvSeparator(""));
 	eitherFn(styleSepM, \styleSep -> styleSep.sep, \ -> {
 		if (containsStruct(styles, ParseCsvDetectSeparator())) {
-			sep = detectCsvSeparator(data).second;
+			sep = detectCsvSeparator(data).separator;
 			devtrace("parseCsvData: detected separator is " + sep);
 			sep;
 		} else {
@@ -166,28 +166,43 @@ processParseResult(rawRows : [CsvRowInfo], styles : [ParseCsvOption]) -> CsvPars
 	}
 }
 
-// Detects the most likely separator in CSV content
-detectCsvSeparator(s : string) -> Pair<int, string> {
-	sampleText = strLeft(s, 2000);
-	separators = [",", ";", "\t"];
-	counts = map(separators, \sep ->
-		if (strCountOf(sampleText, sep) > 0) getBestRowCount(sampleText, sep)
-		else 0
-	);
+// Information about detected separator and column structure
+SeparatorInfo(
+	separator : string,  // The detected separator character
+	columnCount : int    // The most common number of columns
+);
 
-	if (counts[0] == counts[1] && counts[1] == counts[2]) {
-		Pair(counts[0], ",")
+// Detect the most likely separator and column structure
+detectCsvSeparator(s : string) -> SeparatorInfo {
+	sampleText = strLeft(s, 2000);
+	counts = map([",", ";", "\t"], \sep -> {
+		if (strCountOf(sampleText, sep) > 0) {
+			bestRowInfo = getBestRowCount(sampleText, sep);
+			Pair(bestRowInfo.rowCount, Pair(sep, bestRowInfo.columnCount))
+		} else {
+			Pair(0, Pair(sep, 0))
+		}
+	});
+
+	if (counts[0].first == counts[1].first && counts[1].first == counts[2].first) {
+		// If all give same count, default to comma
+		SeparatorInfo(",", counts[0].second.second);
 	} else {
-		max3(
-			Pair(counts[0], ","),
-			Pair(counts[1], ";"),
-			Pair(counts[2], "\t")
+		bestSep = fold(counts, counts[0], \acc, x ->
+			if (x.first > acc.first) x else acc
 		);
+		SeparatorInfo(bestSep.second.first, bestSep.second.second);
 	}
 }
 
-// Determines how many rows have consistent column counts for a given separator
-getBestRowCount(content : string, sep : string) -> int {
+// Results from analyzing row consistency
+BestRowInfo(
+	rowCount : int,     // How many rows have the most common column count
+	columnCount : int   // The most common number of columns
+);
+
+// Determine the most common column count and how many rows have it
+getBestRowCount(content : string, sep : string) -> BestRowInfo {
 	// Break the text into lines
 	lines = strSplit2WithoutLeave(content, [fromCharCode(10), fromCharCode(13)]);
 
@@ -199,7 +214,13 @@ getBestRowCount(content : string, sep : string) -> int {
 	});
 
 	uniqueCounts = uniq(columnCounts);
-	fold(map(uniqueCounts, \count -> countA(columnCounts, eq(count))), 0, max);
+	bestCount = fold(
+		map(uniqueCounts, \count -> Pair(countA(columnCounts, eq(count)), count)),
+		Pair(0, 0),
+		\acc, p -> if (p.first > acc.first) p else acc
+	);
+
+	BestRowInfo(bestCount.first, bestCount.second);
 }
 
 // Parses a CSV line handling quoted separators
@@ -313,25 +334,25 @@ makeCsvFileSep(rows : [[string]], sep: string) -> string {
 
 // Parse CSV file with automatic separator detection
 parseCsvFile(content : string, onlyRectangular : bool) -> [[string]] {
-	detectedSeparator = detectCsvSeparator(content);
+	sepInfo = detectCsvSeparator(content);
 
 	// Handle line endings
 	newline = fromCharCode(10);
 	carriageReturn = fromCharCode(13);
-
 	trimmedContent = trim2(trim2(content, newline), carriageReturn);
 
+	// Parse into rows
 	parsedRows = if (strContains(trimmedContent, newline) || strContains(trimmedContent, carriageReturn)) {
 		map(strSplit2WithoutLeave(trimmedContent, [newline, carriageReturn]),
-			\line -> parseCsvLineWithQuotedSeparators(line, detectedSeparator.second))
+			\line -> parseCsvLineWithQuotedSeparators(line, sepInfo.separator))
 	} else {
-		map(parseCsvLineWithQuotedSeparators(trimmedContent, detectedSeparator.second), \v -> [v]);
+		map(parseCsvLineWithQuotedSeparators(trimmedContent, sepInfo.separator), \v -> [v]);
 	}
 
 	// Process and clean parsed rows
 	processedRows = map(
 		map(parsedRows, \row ->
-			if (length(row) != detectedSeparator.first)
+			if (length(row) != sepInfo.columnCount)
 				tryToConcatStringsWithQuotes(row)
 			else row
 		),
@@ -345,9 +366,7 @@ parseCsvFile(content : string, onlyRectangular : bool) -> [[string]] {
 		Pair(countA(columnCounts, eq(count)), count)
 	));
 
-	mostCommonColumnCount = columnStatistics[length(columnStatistics)-1].second;
-
-	devtrace("separator: " + if (detectedSeparator.second == "\t") "tab" else detectedSeparator.second);
+	devtrace("separator: " + if (sepInfo.separator == "\t") "tab" else sepInfo.separator);
 	iter(columnStatistics, \stat -> {
 		devtrace(i2s(stat.first) + " rows have " + i2s(stat.second) + " columns")
 	});
