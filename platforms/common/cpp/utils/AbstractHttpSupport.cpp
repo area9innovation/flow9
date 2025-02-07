@@ -736,9 +736,9 @@ StackSlot AbstractHttpSupport::deleteAppCookies(RUNNER_ARGS)
 ResponseEncoding AbstractHttpSupport::GetResponseEncodingFromString(std::string str)
 {
     if (str == "utf8")
-        return ResponseEncodingWTF8;
-    else if (str == "wtf8") {
         return ResponseEncodingUTF8;
+    else if (str == "wtf8") {
+        return ResponseEncodingWTF8;
     } else if (str == "byte")
         return ResponseEncodingByte;
     else if (str == "auto")

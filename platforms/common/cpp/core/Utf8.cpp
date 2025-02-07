@@ -33,8 +33,10 @@ void setUtf8StyleGlobalFlag(const bool flag)
     utf8_style_global_flag = flag;
 }
 
-/* Character encoding */
-
+/*  Character encoding from internal format (UTF16) to UTF8/WTF8 bytes
+ *  In WTF8 each UTF16 charecter is one WTF8 character (from 1 to 3 bytes) even if the UTF16 charecter if a part of a surrogate pair.
+ *  In UTF8 each UTF16 charecter is one UTF8 character (from 1 to 3 bytes) exept to surrogate pair when 2 UTF16 charecters produces 1 UTF8 charecter (4 bytes).
+ */
 static unsigned encode(uint16_t c, uint16_t next_c, uint8_t *out, int &cnt)
 {
     // How much symbols (chars) used to decode original symbol
@@ -113,7 +115,7 @@ static unsigned encode(uint16_t c, uint16_t next_c, uint8_t *out, int &cnt)
 }
 
 /* String processing */
-
+/* Parse UTF8 string to UTF16 (internal format) */
 template<class C>
 struct Utf8Parser
 {
@@ -144,18 +146,7 @@ unicode_string Utf8Parser<C>::parse(const C &str, unsigned size)
  * | 2 octets      | 110xxxxx 10xxxxxx                   | 000000DF              | 000000BF               |
  * | 3 octets      | 1110xxxx 10xxxxxx 10xxxxxx          | 000000EF              | 000000BF               |
  * | 4 octets      | 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx | 000000F7              | 000000BF               |
- * |------------------------------------------------------------------------------------------------------|
 */
-
-// Also, here is a BUG:
-//  We store decoded char in the 2 bytes structure
-//  so, we can loos the real code (symbol) in case
-//  if the code large than 0xFFFF.
-//
-// For example, hex string 0xF0 0x9F 0x98 0x89
-//  should be decoded as 0x1F609 (3 bytes code) = 128521,
-//  but really we got 0xF609 (2 bytes code) = 62985
-
 template<class C>
 void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size)
 {
