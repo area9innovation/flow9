@@ -23,7 +23,7 @@ import java.nio.file.Files;
 
 @SuppressWarnings("unchecked")
 public class HttpSupport extends NativeHost {
-	public static String defaultResponseEncoding = "auto";
+	public static String defaultResponseEncoding = "utf8";
 
 	public static Object httpRequest(
 		String url, boolean post,Object[] headers, Object[] params,
@@ -132,10 +132,10 @@ public class HttpSupport extends NativeHost {
 	}
 
 	private static final String stream2string(InputStream inputStream, String responseEncoding) throws java.io.IOException {
-		if (Native.getUrlParameter("use_utf8_js_style").equals("1")) {
-			responseEncoding = "utf8_js";
-		} else if (Native.getUrlParameter("utf8_no_surrogates").equals("1")) {
+		if (Native.getUrlParameter("use_wtf8").equals("0")) {
 			responseEncoding = "utf8";
+		} else if (Native.getUrlParameter("use_wtf8").equals("1")) {
+			responseEncoding = "wtf8";
 		} else if (responseEncoding.equals("auto")) {
 			responseEncoding = defaultResponseEncoding;
 		}
@@ -145,10 +145,10 @@ public class HttpSupport extends NativeHost {
 		if (Objects.nonNull(inputStream)) {
 			final int bufferSize = 1024;
 
-			if (responseEncoding.equals("utf8")) {
+			if (responseEncoding.equals("wtf8")) {
 				// How much last chars from the previous chain we moved to the beginning of the new one (0 or 1).
 				int additionalChars = 0;
-				// +1 additinal char from the prevoius chain
+				// +1 additional char from the previous chain
 				final char[] buffer = new char[bufferSize + 1];
 
 				int readSize = 0;
@@ -186,7 +186,7 @@ public class HttpSupport extends NativeHost {
 				if (additionalChars > 0) {
 					unpackSurrogatePair(response, buffer[0], buffer[0]);
 				}
-			} else if (responseEncoding.equals("utf8_js")) {
+			} else if (responseEncoding.equals("utf8")) {
 				final char[] buffer = new char[bufferSize];
 				Reader in = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
 				while (true) {
@@ -588,10 +588,10 @@ public class HttpSupport extends NativeHost {
 		String encodingName = "";
 		if (responseEncoding.equals("auto")) {
 			encodingName = "auto";
-		} else if (responseEncoding.equals("utf8_js")) {
-			encodingName = "utf8 with surrogate pairs";
 		} else if (responseEncoding.equals("utf8")) {
-			encodingName = "utf8 without surrogate pairs";
+			encodingName = "utf8";
+		} else if (responseEncoding.equals("wtf8")) {
+			encodingName = "wtf8";
 		} else if (responseEncoding.equals("byte")) {
 			encodingName = "raw byte";
 		} else {
