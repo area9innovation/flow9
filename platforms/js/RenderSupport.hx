@@ -1157,6 +1157,24 @@ class RenderSupport {
 		}
 	}
 
+	public static function getViewportContent() : String {
+		var viewport = Browser.document.querySelector('meta[name="viewport"]');
+		return viewport != null ? viewport.getAttribute("content") : "";
+	}
+
+	public static function setViewportContent(value : String) : Void {
+		var viewport = Browser.document.querySelector('meta[name="viewport"]');
+		if (viewport != null) {
+			viewport.setAttribute("content", value);
+		} else {
+			var head = Browser.document.getElementsByTagName('head')[0];
+			var node = Browser.document.createElement('meta');
+			node.setAttribute("name", "viewport");
+			node.setAttribute("content", value);
+			head.appendChild(node);
+		}
+	}
+
 	private static inline function initCanvasStackInteractions() {
 		var onmove = function(e) {
 			var localStages = PixiStage.children;
