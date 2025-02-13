@@ -192,10 +192,10 @@ class TextClip extends NativeWidgetClip {
 	private var preventMouseUpEvent : Bool = false;
 	private var preventEnsureCurrentInputVisible : Bool = false;
 	private var preventCheckTextNodeWidth : Bool = false;
-	
-	private var scheduledForceUpdate : Bool = false;  
-	private static var onFontLoadedListenerInitialized : Bool = false;  
-	private static var scheduledForceUpdateTree : Map<String, Set<TextClip>> = new Map();  
+
+	private var scheduledForceUpdate : Bool = false;
+	private static var onFontLoadedListenerInitialized : Bool = false;
+	private static var scheduledForceUpdateTree : Map<String, Set<TextClip>> = new Map();
 
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
@@ -598,7 +598,7 @@ class TextClip extends NativeWidgetClip {
 				} else {
 					baselineWidget.style.height = '${Math.round(style.fontProperties.fontSize + getLineHeightGap())}px';
 				}
-				
+
 				baselineWidget.style.direction = textDirection;
 				nativeWidget.style.marginTop = '${-getTextMargin()}px';
 				if (nativeWidget.firstChild != baselineWidget) {
@@ -1211,7 +1211,41 @@ class TextClip extends NativeWidgetClip {
 		}
 
 		var multilineWheelFn = function(e) {
-			e.stopPropagation();
+			var target = e.target;
+			var willScroll = false;
+
+			if (e.deltaY != 0) {
+				// Check vertical scrolling
+				var hasVerticalScrollRoom = target.scrollHeight > target.clientHeight;
+				if (hasVerticalScrollRoom) {
+					if (e.deltaY > 0) {
+						// Scrolling down - check if not at bottom
+						willScroll = target.scrollTop < (target.scrollHeight - target.clientHeight);
+					} else {
+						// Scrolling up - check if not at top
+						willScroll = target.scrollTop > 0;
+					}
+				}
+			}
+
+			if (e.deltaX != 0) {
+				// Check horizontal scrolling
+				var hasHorizontalScrollRoom = target.scrollWidth > target.clientWidth;
+				if (hasHorizontalScrollRoom) {
+					if (e.deltaX > 0) {
+						// Scrolling right - check if not at rightmost
+						willScroll = target.scrollLeft < (target.scrollWidth - target.clientWidth);
+					} else {
+						// Scrolling left - check if not at leftmost
+						willScroll = target.scrollLeft > 0;
+					}
+				}
+			}
+
+			// Only stop propagation if the wheel event will cause scrolling
+			if (willScroll) {
+				e.stopPropagation();
+			}
 		}
 
 		if (type == "number") {
@@ -2087,7 +2121,7 @@ class TextClip extends NativeWidgetClip {
 		TextClip.measureSVGTextElement.textContent = '';
 
 		var letSp = Std.parseFloat(computedStyle.letterSpacing);
-		textNodeMetrics.width += bbox.width - (Math.isNaN(letSp) ? 0 : letSp);	
+		textNodeMetrics.width += bbox.width - (Math.isNaN(letSp) ? 0 : letSp);
 		if (textNodeMetrics.updateOffset && (textNode.classList == null || !textNode.classList.contains('baselineWidget'))) {
 			textNodeMetrics.x = bbox.x;
 			textNodeMetrics.updateOffset = false;
@@ -2174,7 +2208,7 @@ class TextClip extends NativeWidgetClip {
 			if (!isNativeWidget) {
 				return;
 			}
-			var tagName2 = this.tagName != null && this.tagName != '' ? this.tagName : tagName; 
+			var tagName2 = this.tagName != null && this.tagName != '' ? this.tagName : tagName;
 
 			this.deleteNativeWidget();
 
@@ -2195,7 +2229,7 @@ class TextClip extends NativeWidgetClip {
 			if (useTextBackgroundWidget && !isInput) {
 				textBackgroundWidget = Browser.document.createElement('span');
 				textBackgroundWidget.classList.add('textBackgroundWidget');
-				textBackgroundWidget.classList.add('textBackgroundLayer');				
+				textBackgroundWidget.classList.add('textBackgroundLayer');
 			}
 
 			isNativeWidget = true;
