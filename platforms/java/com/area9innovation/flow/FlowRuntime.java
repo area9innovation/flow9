@@ -70,7 +70,7 @@ public abstract class FlowRuntime {
 		Thread thread = new Thread(future);
 		thread.start();
 		while (thread.isAlive()) {
-			executeActions(true);
+			executeActions(true);	// Allow execute timers recursively because runParallelAndWait can be called from a timer, and we should have a chance to finish this while loop.
 			if (!sleep("wait for thread")) break;
 		}
 		try {
@@ -147,7 +147,7 @@ public abstract class FlowRuntime {
 				throw new Exception("Multiple access is not allowed! Resource: " + description);
 			}
 			while (!future.isDone()) {
-				executeActions(true);
+				executeActions(true);	// Allow execute timers recursively because runAndWait can be called from a timer, and we should have a chance to finish this while loop.
 				if (!sleep("wait for " + description)) break;
 			}
 			activeTask = null;
@@ -165,6 +165,7 @@ public abstract class FlowRuntime {
 		return timersByThreadId.get(getThreadIdLong());
 	}
 
+	// Creates new if missing
 	public static Callbacks getCallbacks() {
 		Long threadId = getThreadIdLong();
 		Callbacks callbacks = callbacksByThreadId.get(threadId);
@@ -179,18 +180,38 @@ public abstract class FlowRuntime {
 		return Thread.currentThread().getId();
 	}
 
+	public static final String getThreadDebugInfo() {
+		Long threadId = getThreadIdLong();
+
+		Callbacks callbacks = callbacksByThreadId.get(threadId);
+		Integer callbacksCnt = 0;
+		if (callbacks != null) {
+			callbacksCnt = callbacks.size();
+		}
+
+		Timers timers = timersByThreadId.get(threadId);
+		Integer timersCnt = 0;
+		if (timers != null) {
+			timersCnt = timers.size();
+		}
+
+		return "Tread " + Long.toString(threadId) + ", callbacks " + callbacksCnt + ", timers " + timersCnt;
+	}
+
 	private static boolean executeTimers(boolean unlockTimers) {
 		Timers timers = getTimers();
 		if (timers != null) {
 			timers.execute(unlockTimers);
+			return !timers.isEmpty();
 		}
-		return timers != null && !timers.isEmpty();
+		return false;
 	}
 
 	// We have to unlock timers if we call executeActions from runParallelAndWait and SingleExecutor.runAndWait.
 	// For example we call runAndWait by timer, i.e. it is called in Timers.execute(),
-	// which used Timers.executingCnt to prevent recursive calls and call stack growth.
-	// So why runAndWait is waiting it cannot execute another timers, while unlockTimers is  not true.
+	// which has increased Timers.executingCnt to prevent recursive calls and call stack growth.
+	// Then some new timer was started and runAndWait should wait for this new timer too,
+	// so unlockTimers must be true.
 	protected static boolean executeActions(boolean unlockTimers) {
 		boolean hasTimers = executeTimers(unlockTimers);
 		Callbacks callbacks = callbacksByThreadId.get(getThreadIdLong());

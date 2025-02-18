@@ -63,4 +63,8 @@ public class Callbacks {
 	public boolean isEmpty() {
 		return callbacks.isEmpty();
 	}
+
+	public int size() {
+		return callbacks.size();
+	}
 }

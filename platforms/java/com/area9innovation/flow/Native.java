@@ -1979,6 +1979,10 @@ public class Native extends NativeHost {
 		return Long.toString(FlowRuntime.getThreadIdLong());
 	}
 
+	public static final String getThreadDebugInfo() {
+		return FlowRuntime.getThreadDebugInfo();
+	}
+
 	public static final Object initConcurrentHashMap() {
 		return new ConcurrentHashMap();
 	}

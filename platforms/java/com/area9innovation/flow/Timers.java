@@ -83,4 +83,8 @@ public class Timers {
 	public boolean isEmpty() {
 		return timers.isEmpty();
 	}
+
+	public int size() {
+		return timers.size();
+	}
 }
