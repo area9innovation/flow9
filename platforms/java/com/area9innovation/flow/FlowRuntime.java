@@ -195,7 +195,7 @@ public abstract class FlowRuntime {
 			timersCnt = timers.size();
 		}
 
-		return "Tread " + Long.toString(threadId) + ", callbacks " + callbacksCnt + ", timers " + timersCnt;
+		return "Thread " + Long.toString(threadId) + ", callbacks " + callbacksCnt + ", timers " + timersCnt;
 	}
 
 	private static boolean executeTimers(boolean unlockTimers) {
