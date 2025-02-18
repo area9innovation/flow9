@@ -76,7 +76,7 @@ protected:
     bool has_urls;
     T_extents text_extents;
 
-    bool layout_ready, crop_words;
+    bool layout_ready, crop_words, first_render_layout_invalidated;
     T_lines text_lines;
     T_index text_line_index; // y end -> line_idx
     T_extents text_real_extents;

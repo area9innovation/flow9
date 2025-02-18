@@ -8,7 +8,7 @@ const scripts = [
 	"ua-parser.js",
 	"jquery-3.4.1.min.js",
 	"webfont.js",
-	"pixi-4.8.2.min.js",
+	"pixi-4.8.2.min.js?2",
 	"pixi.filters.js?10",
 	"purify/purify.min.js?1",
 	"jscommon.js?14"

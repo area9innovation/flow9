@@ -55,6 +55,8 @@ export {
 	setTokenToHeaderConverter(tokenName : string, converter : (string) -> KeyValue) -> void;
 
 	// Split URL string into a string without tokens and request headers with tokens.
+	// Additionally, we check for duplicated parameters in the URL and use only the
+	//  last parameter (of the duplicates) to process the headers.
 	splitOnUrlAndHeaders(url : string) -> Pair<string /*url*/, [KeyValue] /*headers*/>;
 
 	// The same as above but with callback implementation.
@@ -192,25 +194,50 @@ setTokenToHeaderConverter(tokenName : string, converter : (string) -> KeyValue) 
 
 splitOnUrlAndHeaders(url : string) -> Pair<string /*url*/, [KeyValue] /*headers*/> {
 	if (!(^requestHeadersLessR) && isPhpUrl(url)) {
+		processedNamesR = ref [];
+		duplicatedNamesR = ref [];
+
 		unpair(
 			splitUrlToParams(url),
 			\urlPath, urlParams -> {
+				replaceHeader = \header, headers -> {
+					map(headers, \h -> if (h.key == header.key) header else h)
+				}
+
 				paramsAndTokens = fold(urlParams, Pair([], []), \pair, p -> {
 					eitherFn(
 						strIndexOfM(p, "="),
 						\index -> {
-							name = strLeft(p, index);
+							name = toLowerCase(strLeft(p, index));
 							value = urlDecode(strRight(p, index + 1));
 
+							isDuplicated = contains(^processedNamesR, name);
+							if (isDuplicated && !contains(^duplicatedNamesR, name)) {
+								duplicatedNamesR := arrayPush(^duplicatedNamesR, name);
+							}
+
+							processedNamesR := arrayPush(^processedNamesR, name);
+
 							eitherMap(
-								lookupTree(^tokenConvertersTreeR, toLowerCase(name)),
-								\fn -> Pair(pair.first, concat(pair.second, [fn(value)])),
+								lookupTree(^tokenConvertersTreeR, name),
+								\fn -> Pair(
+									pair.first,
+									if (isDuplicated) {
+										replaceHeader(fn(value), pair.second);
+									} else {
+										concat(pair.second, [fn(value)]);
+									}
+								),
 								Pair(concat(pair.first, [p]), pair.second)
 							)
 						},
 						\-> Pair(concat(pair.first, [p]), pair.second)
 					)
 				});
+
+				if (^duplicatedNamesR != []) {
+					println("Duplicate parameters found in URL: " + toString(^duplicatedNamesR));
+				}
 
 				Pair(
 					urlPath + "?" + strGlue(paramsAndTokens.first, "&"),
