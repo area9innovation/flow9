@@ -3,6 +3,7 @@ package com.area9innovation.flow;
 import java.io.*;
 import java.text.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.*;
 
 public abstract class FlowRuntime {
@@ -44,14 +45,64 @@ public abstract class FlowRuntime {
 		}
 	}
 
-	public static void eventLoop(boolean isMainThread) {
-		while (quitCode == null) {
+	private static void eventLoop(boolean isMainThread, AtomicBoolean forceExit) {
+		while (quitCode == null && (forceExit == null || !forceExit.get())) {
 			boolean hasBackgroundActions = executeActions(false);
 			if (!isMainThread && !hasBackgroundActions) {
 				break;
 			}
 			if (!sleep("event loop")) break;
 		}
+
+		if (forceExit != null && forceExit.get()) {
+			Long threadId = getThreadIdLong();
+
+			String callbacksStr = null;
+			Callbacks callbacks = callbacksByThreadId.get(threadId);
+			if (callbacks != null && !callbacks.isEmpty()) {
+				callbacksStr = "There are not finished callbacks:" + callbacks.toString("\n\t");
+			}
+
+			String timersStr = null;
+			Timers timers = timersByThreadId.get(threadId);
+			if (timers != null && !timers.isEmpty()) {
+				timersStr = "There are not finished timers:" + timers.toString("\n\t");
+			}
+
+			if (callbacksStr != null || timersStr != null) {
+				String msg = "Force exiting thread #" + threadId + " event loop, while some background actions are pending.";
+				if (callbacksStr != null) {
+					msg = msg + "\n" + callbacksStr;
+				}
+				if (timersStr != null) {
+					msg = msg + "\n" + timersStr;
+				}
+				System.out.println(msg);
+			}
+		}
+	}
+
+	public static void eventLoop(boolean isMainThread) {
+		eventLoop(isMainThread, null);
+	}
+
+	// Returns Pair(loopFn, interruptFn)
+	public static Pair<Func0<Object>, Func0<Object>> makeInterruptibleEvenLoopPair() {
+		AtomicBoolean forceExit = new AtomicBoolean(false);
+		return new Pair<Func0<Object>, Func0<Object>>(
+			new Func0<Object>() {
+				public Object invoke() {
+					eventLoop(false, forceExit);
+					return null;
+				}
+			},
+			new Func0<Object>() {
+				public Object invoke() {
+					forceExit.set(true);
+					return null;
+				}
+			}
+		);
 	}
 
 	// If runnable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),

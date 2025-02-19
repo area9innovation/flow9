@@ -14,6 +14,9 @@ public class Timers {
 		boolean repeatable;
 		double repeatInterval;
 		Func0<Object> callback;
+		public String toString() {
+			return callback.toString();
+		}
 	}
 
 	public int addTimer(double timeout, boolean repeatable, Func0<Object> callback) {
@@ -86,5 +89,23 @@ public class Timers {
 
 	public int size() {
 		return timers.size();
+	}
+
+	public String toString(String separator) {
+		if (isEmpty()) {
+			return "";
+		}
+
+		StringBuilder sb = new StringBuilder();
+		for (Iterator<Timer> iterator = timers.values().iterator(); iterator.hasNext(); ) {
+			Timer timer = iterator.next();
+			sb.append(separator);
+			sb.append(timer.toString());
+		}
+		return sb.toString();
+	}
+
+	public String toString() {
+		return toString("\n");
 	}
 }

@@ -1905,7 +1905,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object concurrentAsyncCallback(
-		Func2<Object, String, Func1<Object, Object>> task,
+		Func2<Object, Func1<Object, Object>, Func0<Object>> task,
 		Func1<Object, Object> onDone,
 		Func1<Object, String> onFail
 	) {
@@ -1918,12 +1918,18 @@ public class Native extends NativeHost {
 			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
 			String threadId = Long.toString(thread.getId());
 			try {
-				task.invoke(threadId, (res) -> {
-					// thread #2
-					completableFuture.complete(res);
-					return null;
-				});
-				FlowRuntime.eventLoop(false);
+				Pair<Func0<Object>, Func0<Object>> loopPair = FlowRuntime.makeInterruptibleEvenLoopPair();
+				task.invoke(
+					new Func1<Object, Object>() {
+						public Object invoke(Object res) {
+							// thread #2
+							completableFuture.complete(res);
+							return null;
+						}
+					},
+					loopPair.second
+				);
+				loopPair.first.invoke();
 			} catch (RuntimeException ex) {
 				Throwable e = ex;
 				e.printStackTrace();
