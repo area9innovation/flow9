@@ -372,6 +372,10 @@ export {
 	// Identical to MFrame, only the frame is placed on top of the "content"
 	MOverlay(margin : double, radius : double, style : [MGraphicsStyle], content : Material) -> Material;
 	MOverlayT(margin : Transform<double>, radius : Transform<double>, style : Transform<[MGraphicsStyle]>, content : Material) -> Material;
+
+	//Helper for Segmented buttons
+	MSegmentedButtons (items : [Pair<Pair<Maybe<MText>, Maybe<MIcon>>, Pair<[MButtonState], DynamicBehaviour<bool>>>],
+		multiSelect : bool, iconsOnly : bool, size : WidthHeight, graphicsStyles : [MGraphicsStyle] ) -> Material;
 }
 
 // Inner helpers
@@ -1467,5 +1471,201 @@ MOverlayT(margin : Transform<double>, radius : Transform<double>, style : Transf
 		box,
 		\sz -> MGetFocusGroup(\parent -> TFrameT(margin, radius, fselectLift(style, \s -> mgraphicsStyle2tgraphicsStyle(parent, s)), sz)),
 		true
+	)
+}
+
+MSegmentedButtons(
+	items : [Pair<Pair<Maybe<MText>, Maybe<MIcon>>, Pair<[MButtonState], DynamicBehaviour<bool>>>],
+	multiSelect : bool,
+	iconsOnly : bool,
+	size : WidthHeight,
+	graphicsStyles : [MGraphicsStyle]
+) -> Material {
+	defaultBgColor = extractStruct(graphicsStyles, MThemedFill(MSecondaryColor())).color;
+	defaultStrokeColor = extractStruct(graphicsStyles, MThemedStroke(MSecondaryColor())).color;
+
+    minCellWidthIcons = 40.0;
+    minCellWidthText = 60.0;
+    charWidthMultiplier = 8.0;
+    textPadding = 32.0;
+    iconPadding = 24.0;
+    cellPadding = 16.0;
+    buttonContentMargin = 48.0;
+
+	totalWidth = size.width;
+	totalHeight = size.height;
+	borderRadius = totalHeight / 2.0; // 50%
+
+	// Calculate required width for each button based on content
+	requiredWidths = map(items, \item -> {
+		title = if (iconsOnly) "" else eitherFn(item.first.first, \text -> text.text, \ -> "");
+		hasIcon = isSome(item.first.second);
+		textWidth = i2d(strlen(title)) * charWidthMultiplier;
+		padding = if (iconsOnly) iconPadding else textPadding;
+
+		if (iconsOnly) minCellWidthIcons + padding
+		else textWidth + minCellWidthIcons + padding;
+	});
+
+	// Optimize cell width distribution
+	calculateCellWidths = {
+		availableWidth = totalWidth;
+		itemCount = length(items);
+		minCellWidth = if (iconsOnly) minCellWidthIcons else minCellWidthText;
+
+		needsMore = map(requiredWidths, \w -> w > (availableWidth / i2d(itemCount)));
+		withEnoughSpace = mapi(requiredWidths, \i, w -> if (!needsMore[i]) w else 0.0);
+		needMoreSpace = mapi(requiredWidths, \i, w -> if (needsMore[i]) w else 0.0);
+
+		spaceUsedByEnough = fold(withEnoughSpace, 0.0, \acc, w -> acc + w);
+		needMoreCount = fold(needsMore, 0, \acc, need -> if (need) acc + 1 else acc);
+		enoughSpaceCount = itemCount - needMoreCount;
+        
+		if (needMoreCount == 0) {
+			remainingSpace = availableWidth - spaceUsedByEnough;
+			extraPerCell = remainingSpace / i2d(itemCount);
+			map(requiredWidths, \w -> max(w + extraPerCell, minCellWidth));
+		} else {
+			remainingSpace = availableWidth - spaceUsedByEnough;
+			equalShare = remainingSpace / i2d(needMoreCount);
+			mapi(requiredWidths, \i, w ->
+				if (needsMore[i]) max(equalShare, minCellWidth)
+				else max(w, minCellWidth)
+			);
+		}
+	}
+
+	cellWidths = calculateCellWidths;
+	lastSelected = make(None());
+	buttonsFocus = generate(0, length(items), \__ -> make(false));
+
+	makeButton = \i, item, isInteractive -> {
+		content = item.first;
+		states = item.second;
+		buttonState = if (isInteractive) states.first else [];
+		isSelected = states.second;
+
+		title = if (iconsOnly) "" else eitherFn(content.first, \text -> text.text, \ -> "");
+		textStyle = eitherFn(content.first, \text -> text.style, \ -> []);
+		iconName = eitherFn(content.second, \icon -> icon.name, \ -> "");
+		iconStyle = eitherFn(content.second, \icon -> icon.style, \ -> []);
+		accessibilityLabel = if (title != "") title else iconName;
+		buttonRole = if (multiSelect) "checkbox" else "radio";
+
+		cellWidth = elementAt(cellWidths, i, totalWidth / i2d(length(items)));
+        isFirst = i == 0;
+        isLast = i == length(items) - 1;
+		createIcon = \icon -> MIcon(icon, concat([defaultBgColor], iconStyle));
+        createCheckIcon = MIcon("check", concat(iconStyle, [MIconSize(20.0), defaultBgColor])) |> MBorderRight(8.);
+
+        if (isInteractive) MComponent(
+			concat(
+				[
+					MOnClick(\ -> {
+						if (!multiSelect) {
+							current = getValue(lastSelected);
+							switch (current) {
+								None(): {}
+								Some(prev): {
+									if (prev != isSelected) {
+										nextDistinct(prev, false);
+									}
+								}
+							}
+							if (!getValue(isSelected)) {
+								nextDistinct(lastSelected, Some(isSelected));
+							}
+						}
+						nextDistinct(isSelected, !getValue(isSelected));
+					}),
+					AccessRole(buttonRole),
+					MMobileForceHover(),
+					MButtonTitle(const(accessibilityLabel)),
+					FAccessAttribute("aria-checked", fselect(isSelected, FLift(\sel -> if (sel) "true" else "false"))),
+					MOnFocus(\f -> nextDistinct(buttonsFocus[i], f))
+				],
+				buttonState
+			),
+			\focus -> {
+				MSelect3(
+					isSelected,
+					focus.hover,
+					buttonsFocus[i],
+					\selected, hovered, focused ->
+						MFrameCustom(
+							0.0, if (isFirst) borderRadius else 0.0, true,
+							0.0, if (isLast) borderRadius else 0.0, true,
+							0.0, if (isLast) borderRadius else 0.0, true,
+							0.0, if (isFirst) borderRadius else 0.0, true,
+							concat(
+								concat(
+									if (selected || focused) [
+										MThemedFill(defaultBgColor),
+										FillOpacity(0.3)
+									] else if (hovered) [
+										MThemedFill(defaultBgColor),
+										FillOpacity(0.15)
+									] else [],
+									[
+										StrokeWidth(1.0),
+										MThemedStroke(defaultStrokeColor)
+									]
+								),
+								graphicsStyles
+							),
+							MCenterIn(
+								MAvailable(
+									MCols(
+									    if (iconsOnly) {
+											[
+                                                MCenterY(if (selected) createCheckIcon else MEmpty()),
+											    MCenterY(if (iconName != "") createIcon(iconName) else MEmpty())
+                                            ]
+									    } else {
+                                            [
+                                                MCenterY(if (selected) createCheckIcon
+                                                    else if (iconName != "") createIcon(iconName) |> MBorderRight(8.)
+                                                    else MEmpty()
+                                                ),
+                                                MCenterY(if (title != "") {
+                                                    MAvailable(
+                                                        MEllipsisText(title, concat([MBody()],textStyle)),
+                                                        MFixed(cellWidth - buttonContentMargin, totalHeight)
+                                                    )
+                                                } else MEmpty())
+                                            ]
+									    }
+                                    ),	
+									MFixed(cellWidth - cellPadding, totalHeight)
+								),
+								MFixed(cellWidth, totalHeight)
+							)
+						)
+				)
+			}
+		)
+        else MSelect(buttonsFocus[i], \focused -> 
+            MFrameCustom(
+                0.0, if (isFirst) borderRadius else 0.0, true,
+                0.0, if (isLast) borderRadius else 0.0, true,
+                0.0, if (isLast) borderRadius else 0.0, true,
+                0.0, if (isFirst) borderRadius else 0.0, true,
+                if (focused) [
+                    StrokeWidth(2.0),
+                    MThemedStroke(MGrey(800)),
+                ] else [],
+                MFixed(cellWidth, totalHeight)
+            )
+        )
+	}
+	buttons = mapi(items, \i, item -> makeButton(i, item, true));
+	buttonsCopy = mapi(items, \i, item -> makeButton(i, item, false));
+
+	MAvailable(
+		MGroup([
+			MCenterX(MCols(buttons)),
+			MCenterX(MCols(buttonsCopy))
+		]),
+		MFixed(totalWidth, totalHeight)
 	)
 }
