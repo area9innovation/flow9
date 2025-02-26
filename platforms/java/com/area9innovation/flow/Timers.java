@@ -6,28 +6,37 @@ public class Timers {
 	private int executingCnt = 0;
 	private int lastTimerId = 0;
 	private TreeMap<Integer, Timer> timers = new TreeMap<Integer, Timer>();
-	private boolean debug = false;
+	private static boolean debug = false;
 
 	private class Timer {
 		int id;
 		double executeTime;	// 0 means do not execute. This is used to not run repeatable timer when it is already executing.
 		boolean repeatable;
 		double repeatInterval;
+		String description;
 		Func0<Object> callback;
 		public String toString() {
-			return callback.toString();
+			String s = "Timer " + id + ": callback " + callback.toString() + "; ";
+			if (executeTime == 0) {
+				s += "running";
+			} else {
+				s += "next start " + Native.time2string(executeTime);
+			}
+			if (description != null && !description.isEmpty()) {
+				s += "; " + description;
+			}
+			return s;
 		}
 	}
 
-	public int addTimer(double timeout, boolean repeatable, Func0<Object> callback) {
-		//execute();
-
+	public int addTimer(double timeout, boolean repeatable, String description, Func0<Object> callback) {
 		Timer timer = new Timer();
 		lastTimerId++;
 		timer.id = lastTimerId;
 		timer.executeTime = System.currentTimeMillis() + timeout;
 		timer.repeatable = repeatable;
 		timer.repeatInterval = timeout;
+		timer.description = description;
 		timer.callback = callback;
 		timers.put(lastTimerId, timer);
 		if (debug) {
