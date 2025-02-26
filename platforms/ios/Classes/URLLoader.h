@@ -18,12 +18,14 @@
     NSString * tmpFilePath;
     NSString * lastModifiedResponseHeader;
     NSURLRequest * rawRequest;
+    NSDictionary* requestHeaders;
 }
 
 @property (nonatomic, assign) NSString * relativeURL;
 
 // Init immediately starts downloading
 - (id) initWithURL: (NSString *) relative_url onSuccess: (void (^)(NSData * data)) on_success onError: (void (^) (void)) on_error onProgress: (void (^)(float p)) on_progress onlyCache: (bool) only_cache;
+- (id) initWithURL: (NSString *) relative_url withHeaders: (NSDictionary*) headers onSuccess: (void (^)(NSData * data)) on_success onError: (void (^) (void)) on_error onProgress: (void (^)(float p)) on_progress onlyCache: (bool) only_cache;
 - (id) initWithURLRequest: (NSURLRequest *) request onSuccess: (void (^)(NSData * data)) on_success onError: (void (^) (void)) on_error onProgress: (void (^)(float p)) on_progress onlyCache: (bool) only_cache;
 - (void) start;
 

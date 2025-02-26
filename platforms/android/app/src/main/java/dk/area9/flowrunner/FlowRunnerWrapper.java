@@ -441,7 +441,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
          * @param callback Interface for supplying the picture back to the renderer.
          *                 May be called either immediately or asynchronously. 
          */
-        void load(String url, boolean cache, PictureResolver callback) throws IOException;
+        void load(String url, HashMap<String, String> headers, boolean cache, PictureResolver callback) throws IOException;
 
         void abortPictureLoad(String url);
     }
@@ -453,7 +453,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         picture_loader = loader;
     }
     
-    private void cbLoadPicture(final String url, boolean cache) {
+    private void cbLoadPicture(final String url, @NonNull String[] headers, boolean cache) {
+
+        HashMap<String, String> headers_map = new HashMap<String, String>();
+        for (int i = 0; i < headers.length / 2; ++i) {
+            headers_map.put(headers[i * 2], headers[ i * 2 + 1 ]);
+        }
         if (picture_loader == null) {
             nResolvePictureError(cPtr(), url, "PictureLoader not set");
             return;
@@ -475,7 +480,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
                 }
             };
 
-            picture_loader.load(url, cache, cb);
+            picture_loader.load(url, headers_map, cache, cb);
         } catch (IOException e) {
             nResolvePictureError(cPtr(), url, "I/O error: " + e.getMessage());
         }
@@ -769,7 +774,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             String text_input_type, String alignment,
             int max_size, int cursor_pos, int sel_start, int sel_end
         );
-        void onFlowCreateVideoWidget(long id, String url, boolean playing, boolean looping, int controls, float volume);
+        void onFlowCreateVideoWidget(long id, String url, String[] headers, boolean playing, boolean looping, int controls, float volume);
         void onFlowCreateVideoWidgetFromMediaStream(long id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream);
         void onFlowCreateWebWidget(long id, String url);
         void onFlowWebClipHostCall(long id, String js);
@@ -820,9 +825,9 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             );
     }
 
-    private void cbCreateVideoWidget(long id, String url, boolean playing, boolean looping, int controls, float volume) {
+    private void cbCreateVideoWidget(long id, String url, @NonNull String[] headers, boolean playing, boolean looping, int controls, float volume) {
         if (widget_host != null)
-            widget_host.onFlowCreateVideoWidget(id, url, playing, looping, controls, volume);
+            widget_host.onFlowCreateVideoWidget(id, url, headers, playing, looping, controls, volume);
     }
     
     private void cbCreateVideoWidgetFromMediaStream(long id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream) {

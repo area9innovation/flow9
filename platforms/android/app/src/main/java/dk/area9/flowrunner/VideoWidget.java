@@ -27,6 +27,7 @@ import org.webrtc.RendererCommon;
 import org.webrtc.SurfaceEglRenderer;
 
 import java.io.IOException;
+import java.util.HashMap;
 
 class VideoWidget extends NativeWidget {
     @Nullable
@@ -506,7 +507,7 @@ class VideoWidget extends NativeWidget {
         });
     }
 
-    public void init(final String url, boolean playing, boolean looping, int controls, float volume) {
+    public void init(final String url, HashMap<String,String> headers, boolean playing, boolean looping, int controls, float volume) {
         this.url = url;
         this.filename = null;
         this.playing = playing;
@@ -531,7 +532,7 @@ class VideoWidget extends NativeWidget {
         };
 
         try {
-            ResourceCache.getInstance(group.getContext()).getCachedResource(group.resource_uri, url, resolver);
+            ResourceCache.getInstance(group.getContext()).getCachedResource(group.resource_uri, url, headers, resolver);
         } catch (IOException e) {
             Log.e(Utils.LOG_TAG, "Cannot load video: " + e.getMessage());
             reportFailure();

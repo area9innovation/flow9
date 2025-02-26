@@ -911,8 +911,10 @@ void GLRenderSupport::dispatchVideoPosition(GLClip* clip, int64_t position)
     WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
 
     GLVideoClip *video = flow_native_cast<GLVideoClip>(clip);
-    if (video)
+    if (video) {
+        video->wipeFlags(GLClip::ChildrenUnchangedFromRender | GLClip::SelfUnchangedFromRender);
         video->notify(GLVideoClip::PositionChange, position);
+    }
 
     getFlowRunner()->NotifyHostEvent(HostEventMedia);
 }

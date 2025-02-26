@@ -191,7 +191,7 @@ void GLGraphics::Contour::render(GLGraphics *obj, GLRenderer *renderer, const GL
             glDrawArrays(GL_TRIANGLE_FAN, 0, count);
         }
 
-        if (draw_line) {
+        if (draw_line && border.size() > 0) {
             if (!obj->line_gradient.enabled)
                 renderer->resetStencilTest(true);
             
@@ -268,7 +268,7 @@ void GLGraphics::Contour::render(GLGraphics *obj, GLRenderer *renderer, const GL
 
                 pmesh->render(renderer, alpha);
             }
-            else
+            else if (border.size() > 0)
             {
                 glVertexAttribPointer(GLRenderer::AttrVertexPos, 2, GL_FLOAT, GL_FALSE, 0, &border[0]);
                 renderer->beginDrawSimple(obj->line_color * alpha);

@@ -246,7 +246,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
 
         wrapper.setPictureLoader(new FlowRunnerWrapper.PictureLoader() {
-            public void load(@NonNull String url, boolean cache, @NonNull final PictureResolver callback) throws IOException {
+            public void load(@NonNull String url, HashMap<String,String> headers, boolean cache, @NonNull final PictureResolver callback) throws IOException {
                 /*// Replace swf with png
                 if (url.toLowerCase().endsWith(".swf")) {
                     String png_url = DATA_PATH + url.substring(0, url.length()-4) + ".png";
@@ -262,7 +262,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                     return;
                 }*/
 
-                ResourceCache.getInstance(FlowRunnerActivity.this).getCachedResource(loader_uri, url, callback);
+                ResourceCache.getInstance(FlowRunnerActivity.this).getCachedResource(loader_uri, url, headers, callback);
             }
 
             public void abortPictureLoad(@NonNull String url) {
