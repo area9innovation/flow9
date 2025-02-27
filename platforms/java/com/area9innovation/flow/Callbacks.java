@@ -79,8 +79,10 @@ public class Callbacks {
 		StringBuilder sb = new StringBuilder();
 		for (Iterator<Callback> iterator = callbacks.values().iterator(); iterator.hasNext(); ) {
 			Callback callback = iterator.next();
-			sb.append(separator);
 			sb.append(callback.toString());
+			if (iterator.hasNext()) {
+				sb.append(separator);
+			}
 		}
 		return sb.toString();
 	}

@@ -54,19 +54,19 @@ public abstract class FlowRuntime {
 			if (!sleep("event loop")) break;
 		}
 
-		if (forceExit != null && forceExit.get()) {
+		if (forceExit != null && forceExit.get() && executeActions(false)) { // give the last chance to execute pending operations in the case of the forced exit
 			Long threadId = getThreadIdLong();
 
 			String callbacksStr = null;
 			Callbacks callbacks = callbacksByThreadId.get(threadId);
 			if (callbacks != null && !callbacks.isEmpty()) {
-				callbacksStr = "There are unfinished callbacks:" + callbacks.toString("\n\t");
+				callbacksStr = "There are unfinished callbacks:\n\t" + callbacks.toString("\n\t");
 			}
 
 			String timersStr = null;
 			Timers timers = timersByThreadId.get(threadId);
 			if (timers != null && !timers.isEmpty()) {
-				timersStr = "There are unfinished timers:" + timers.toString("\n\t");
+				timersStr = "There are unfinished timers:\n\t" + timers.toString("\n\t");
 			}
 
 			if (callbacksStr != null || timersStr != null) {

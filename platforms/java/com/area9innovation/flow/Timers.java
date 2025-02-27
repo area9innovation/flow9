@@ -16,14 +16,14 @@ public class Timers {
 		String description;
 		Func0<Object> callback;
 		public String toString() {
-			String s = "Timer " + id + ": callback " + callback.toString() + "; ";
+			String s = "Timer " + id + ": callback " + callback.toString() + ", ";
 			if (executeTime == 0) {
 				s += "running";
 			} else {
 				s += "next start " + Native.time2string(executeTime);
 			}
 			if (description != null && !description.isEmpty()) {
-				s += "; " + description;
+				s += ", " + description;
 			}
 			return s;
 		}
@@ -108,8 +108,10 @@ public class Timers {
 		StringBuilder sb = new StringBuilder();
 		for (Iterator<Timer> iterator = timers.values().iterator(); iterator.hasNext(); ) {
 			Timer timer = iterator.next();
-			sb.append(separator);
 			sb.append(timer.toString());
+			if (iterator.hasNext()) {
+				sb.append(separator);
+			}
 		}
 		return sb.toString();
 	}
