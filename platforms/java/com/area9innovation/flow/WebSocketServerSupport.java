@@ -28,6 +28,7 @@ public class WebSocketServerSupport extends NativeHost {
             @Override
             public void onOpen(WebSocket webSocket, ClientHandshake clientHandshake) {
                 onOpen.invoke(webSocket);
+                FlowRuntime.eventLoop(false);
             }
 
             @Override
@@ -35,6 +36,7 @@ public class WebSocketServerSupport extends NativeHost {
                 if (webSocketListeners.containsKey(webSocket)) {
                     webSocketListeners.get(webSocket).onClose.invoke(code);
                     webSocketListeners.remove(webSocket);
+                    FlowRuntime.eventLoop(false);
                 }
             }
 
@@ -42,6 +44,7 @@ public class WebSocketServerSupport extends NativeHost {
             public void onMessage(WebSocket webSocket, String message) {
                 if (webSocketListeners.containsKey(webSocket)) {
                     webSocketListeners.get(webSocket).onMessage.invoke(message);
+                    FlowRuntime.eventLoop(false);
                 }
             }
 
@@ -50,6 +53,7 @@ public class WebSocketServerSupport extends NativeHost {
                 if (webSocket != null) {
                     if (webSocketListeners.containsKey(webSocket)) {
                         webSocketListeners.get(webSocket).onError.invoke(e.getMessage());
+                        FlowRuntime.eventLoop(false);
                     }
                 } else {
                     onError.invoke(e.getMessage());

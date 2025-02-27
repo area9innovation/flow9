@@ -14,8 +14,8 @@ public class Callbacks {
 		protected boolean ready = false;
 		protected Object data = null;
 		public void setReady(Object data) {
-			ready = true;
 			this.data = data;
+			ready = true;
 		}
 	}
 

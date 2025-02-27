@@ -231,10 +231,8 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
                 switch (rq->response_enc)
                 {
                     case ResponseEncodingUTF8:
-                        data = RUNNER->AllocateString(parseUtf8Base((const char*)pdata, count, false));
-                        break;
-                    case ResponseEncodingUTF8js:
-                        data = RUNNER->AllocateString(parseUtf8Base((const char*)pdata, count, true));
+                    case ResponseEncodingWTF8:
+                        data = RUNNER->AllocateString(parseUtf8((const char*)pdata, count));
                         break;
                     case ResponseEncodingByte:
                         data = RUNNER->AllocateString((unicode_char*)pdata, count/FLOW_CHAR_SIZE+count%FLOW_CHAR_SIZE);
@@ -370,7 +368,6 @@ void AbstractHttpSupport::processAttachmentsAsMultipart(HttpRequest& rq) {
         if(!flowFile->open())
             continue;
         std::vector<uint8_t> fileContent = flowFile->readBytes();
-        std::cout<<fileContent.size()<<std::endl;
         flowFile->close();
 
         body << boundaryDataLine;
@@ -738,10 +735,10 @@ StackSlot AbstractHttpSupport::deleteAppCookies(RUNNER_ARGS)
 
 ResponseEncoding AbstractHttpSupport::GetResponseEncodingFromString(std::string str)
 {
-    if (str == "utf8_js")
-        return ResponseEncodingUTF8js;
-    else if (str == "utf8") {
+    if (str == "utf8")
         return ResponseEncodingUTF8;
+    else if (str == "wtf8") {
+        return ResponseEncodingWTF8;
     } else if (str == "byte")
         return ResponseEncodingByte;
     else if (str == "auto")
@@ -763,23 +760,23 @@ StackSlot AbstractHttpSupport::setDefaultResponseEncoding(RUNNER_ARGS)
 
     switch (defaultResponseEncoding) {
         case ResponseEncodingUTF8:
-            setUtf8JsStyleGlobalFlag(false);
-            cout << lookup << "'" << "utf8 without surrogate pairs" << "'." << endl;
+            setUtf8StyleGlobalFlag(true);
+            cout << lookup << "'UTF8'." << endl;
             break;
-        case ResponseEncodingUTF8js:
-            setUtf8JsStyleGlobalFlag(true);
-            cout << lookup << "'" << "utf8 with surrogate pairs" << "'." << endl;
+        case ResponseEncodingWTF8:
+            setUtf8StyleGlobalFlag(false);
+            cout << lookup << "'WTF8'." << endl;
             break;
         case ResponseEncodingByte:
-            setUtf8JsStyleGlobalFlag(false);
-            cout << lookup << "'" << "raw byte" << "'." << endl;
+            setUtf8StyleGlobalFlag(false);
+            cout << lookup << "'raw byte'." << endl;
             break;
         case ResponseEncodingAuto:
-            setUtf8JsStyleGlobalFlag(false);
-            cout << lookup << "'" << "auto" << "'." << endl;
+            setUtf8StyleGlobalFlag(true);
+            cout << lookup << "'auto'." << endl;
             break;
         default:
-            setUtf8JsStyleGlobalFlag(false);
+            setUtf8StyleGlobalFlag(true);
             cout << "Invalid encoding '" << encodeUtf8(RUNNER->GetString(tmp_value)) << "'. Switched to 'auto'." << endl;
     }
 

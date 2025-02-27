@@ -22,6 +22,16 @@ function getParameter($f) {
   return null;
 }
 
+$allowedParameters = ['file', 'json', 'h', 'db', 't'];
+$parameters = array_merge($_POST, $_GET);
+if (!empty($parameters)) {
+	foreach ($parameters as $key => $value) {
+		if (!in_array($key, $allowedParameters)) {
+			http_response_code(400);
+		}
+	}
+}
+
 // $root = '/var/www/html/flow';
 $root = str_replace("/php/stamp.php", "", __FILE__); // on the server, contents of flow/www are copied to .../flow. Differs from repository path
 if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
@@ -30,7 +40,7 @@ if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
 	$root = dirname($pi['dirname']);
 }
 
-$file = getParameter('file');
+$file = getParameter('file') ?? '';
 $absoluteFile = $root . '/' . trim($file, '/');
 
 $timestamp = 0;

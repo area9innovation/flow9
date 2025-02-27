@@ -8,7 +8,7 @@
 enum ResponseEncoding {
     ResponseEncodingAuto,
     ResponseEncodingUTF8,
-    ResponseEncodingUTF8js,
+    ResponseEncodingWTF8,
     ResponseEncodingByte
 };
 

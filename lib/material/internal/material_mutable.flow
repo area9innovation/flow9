@@ -35,7 +35,8 @@ export {
 
 	extractMComponentGroupState(state : [flow]) -> [MComponentGroupState];
 
-	MHintMarker(manager : MaterialManager, focus : MFocus, radiusByContent : bool) -> (Tropic) -> Tropic;
+	// radius = None() is for radius by content
+	MHintMarker(manager : MaterialManager, focus : MFocus, radius : Maybe<double>) -> (Tropic) -> Tropic;
 }
 
 MIfLazy2T(manager : MaterialManager, parent : MFocusGroup, value : Transform<bool>, fn : (bool, MFocusGroup) -> Tropic, sameSize : bool) -> Tropic {
@@ -162,6 +163,7 @@ MComponentGroup2T(manager : MaterialManager, parent : MFocusGroup, name : string
 		ready = extractStruct(state, MSetReady(const(true))).ready;
 		isReady = tryExtractStruct(state, MIsReady(make(true)));
 		focusOnPrevious = extractStruct(state, MFocusOnPrevious(false)).enabled;
+		trapFocus = contains(state, MTrapFocus());
 
 		(\p -> addMaterialFocusGroupId(
 			manager, p, focusName, isInitialized, vertical, horizontal, scrollInfo, ready, focused, active, enabled, focusEnabled,
@@ -256,7 +258,39 @@ MComponentGroup2T(manager : MaterialManager, parent : MFocusGroup, name : string
 						)
 					else
 						f2
-				);
+				)
+				|> (\f2 : Tropic -> if (trapFocus) {
+					currentFocusedItemB = getCurrentFocusedItemBehaviour(manager);
+					firstMaterialFocus = getFirstMaterialFocus(f);
+					lastMaterialFocus = getLastMaterialFocus(f);
+
+					TInteractive([
+						KeyDown2(\handled, k -> {
+							if (k.keycode == KEY_TAB) {
+								currentFocusedItem = fgetValue(currentFocusedItemB);
+
+								curFirstMaterialFocus = fgetValue(firstMaterialFocus);
+								curLastMaterialFocus = fgetValue(lastMaterialFocus);
+
+								isFirst = currentFocusedItem == curFirstMaterialFocus; 
+								isLast = currentFocusedItem == curLastMaterialFocus;
+
+								if ((isFirst && k.shift) || (isLast && !k.shift)) {
+									k.preventDefault();
+									if (isNone(nextFocus(manager, manager.focus, !k.shift))) {
+										resetMFocus(manager);
+										maybeApply(if (k.shift) curLastMaterialFocus else curFirstMaterialFocus, \foc ->
+											deferUntilNextFrameRendered(\ -> nextDistinct(foc.focused, true))
+										);
+									}
+								}
+								handled;
+							} else {
+								handled;
+							}
+						})
+					], f2)
+				} else f2);
 			}
 		))
 		|> (\f -> eitherFn(setParent, \p -> TSelect(p.parent, \p2 -> eitherFn(p2, f, \ -> f(parent))), \ -> f(parent)))
@@ -402,9 +436,9 @@ extractMComponentGroupState(state : [flow]) -> [MComponentGroupState] {
 	)
 }
 
-MHintMarker(manager : MaterialManager, focus : MFocus, radiusByContent : bool) -> (Tropic) -> Tropic {
+MHintMarker(manager : MaterialManager, focus : MFocus, radius : Maybe<double>) -> (Tropic) -> Tropic {
 	size = makeWH();
-	innerRadius = if (radiusByContent) fdivide(fmax(fwidth(size), fheight(size)), const(2.)) else const(10.);
+	innerRadius = eitherFn(radius, \r -> const(r), \ -> fdivide(fmax(fwidth(size), fheight(size)), const(2.)));
 
 	percent = make(0.);
 
@@ -447,6 +481,6 @@ MHintMarker(manager : MaterialManager, focus : MFocus, radiusByContent : bool) -
 	\t -> TCopySize2(t, \sz, tr -> TGroup2(
 		TTweak([TAlign(const(0.5), const(0.5)), TTweakNoLeftTopLimit()], marker, sz)
 		|> (\t2 -> TFixSize(t2, TEmpty())),
-		if (radiusByContent) TAttachBox(tr, size) else tr
+		if (isNone(radius)) TAttachBox(tr, size) else tr
 	))
 }

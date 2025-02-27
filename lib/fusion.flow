@@ -106,6 +106,7 @@ export {
 
 	makeSubscribeDelayedDispose(t : Transform<?>, delay : int, fn : (?) -> void) -> () -> () -> void;
 	makeSubscribeWithLast(t : Transform<?>, fn : (?, ?) -> void) -> () -> () -> void;
+	makeSubscribe2WithLast(t : Transform<?>, fn : (?, ?) -> void) -> () -> () -> void;
 
 	// Helpers for ref unsubscribers disposal
 	dispUns(uns : ref () -> void) -> void;
@@ -220,7 +221,7 @@ export {
 
 	// Builtin functions - use the functions above instead
 	FFn<?, ??> ::= FLift<?, ??>, FCompose<?, ??>, FIdentity, FNegate,
-			FAddConst, FMulConst, FMaxConst<??>, FMinConst<??>, FEqual, FIf<??>;
+			FAddConst, FMulConst, FMaxConst<??>, FMinConst<??>, FEqual<?>, FIf<??>;
 
 		// This is for using any other transform function
 		FLift(fn : (?) -> ??);
@@ -811,6 +812,10 @@ makeSubscribeWithLast(t : Transform<?>, fn : (?, ?) -> void) -> () -> () -> void
 	makeSubscribe(fselectWithLast(t, FLift2(\prev : ?, curr : ? -> Pair(prev, curr))), \p -> fn(p.first, p.second))
 }
 
+makeSubscribe2WithLast(t : Transform<?>, fn : (?, ?) -> void) -> () -> () -> void  {
+	makeSubscribe2(fselectWithLast(t, FLift2(\prev : ?, curr : ? -> Pair(prev, curr))), \p -> fn(p.first, p.second))
+}
+
 dispUns(uns : ref () -> void) -> void {
 	^uns();
 	uns := nop;
@@ -904,6 +909,14 @@ doFuse(t : Transform<?>) -> Pair<Behaviour<?>, () -> void> {
 }
 
 useFSubSelectFix = !isUrlParameterFalse("use_fsubselect_fix");
+
+makeDisconnectFSubSelect(bf : Pair<?, () -> void>, u : () -> void) -> () -> void {
+	dis = bf.second;
+	\ -> {
+		dis();
+		u();
+	}
+}
 
 doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 	switch (t : Transform<?>) {
@@ -1135,10 +1148,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 							bf0 : Pair<Behaviour<flow>, () -> void> = doFuse(ifn(^dv));
 							dyn = make(getValue(firstOfPair(bf0)));
 							u0 = subscribe2(firstOfPair(bf0), \v2 -> nextDistinct(dyn, v2));
-							disconnect = ref \ -> {
-								secondOfPair(bf0)();
-								u0();
-							};
+							disconnect = ref makeDisconnectFSubSelect(bf0, u0);
 							u = subscribe2(b, \v1 -> {
 								if (useFSubSelectFix) ^disconnect();
 
@@ -1147,10 +1157,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 
 								if (!useFSubSelectFix) ^disconnect();
 
-								disconnect := \ -> {
-									secondOfPair(bf)();
-									u2();
-								};
+								disconnect := makeDisconnectFSubSelect(bf, u2);
 							});
 							disp = \ -> {subs := ^subs - 1; if (^subs == 0) {u(); ^disconnect(); t.beh ::= FDestroyed();}};
 
@@ -1164,10 +1171,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 							bf0 = doFuse(ifn(getValue(firstOfPair(cb))));
 							dyn = make(getValue(firstOfPair(bf0)));
 							u0 = subscribe2(firstOfPair(bf0), \v2 -> nextDistinct(dyn, v2));
-							disconnect = ref \ -> {
-								secondOfPair(bf0)();
-								u0();
-							};
+							disconnect = ref makeDisconnectFSubSelect(bf0, u0);
 							u = subscribe2(firstOfPair(cb), \v1 -> {
 								if (useFSubSelectFix) ^disconnect();
 
@@ -1176,10 +1180,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 
 								if (!useFSubSelectFix) ^disconnect();
 
-								disconnect := \ -> {
-									secondOfPair(bf)();
-									u2();
-								};
+								disconnect := makeDisconnectFSubSelect(bf, u2);
 							});
 							disp = \ -> {subs := ^subs - 1; if (^subs == 0) {u(); ^disconnect(); secondOfPair(cb)(); t.beh ::= FDestroyed();}};
 
@@ -2043,7 +2044,7 @@ fselectWithLast(b : Transform<??>, fn : FFn2<??, ??, ?>) -> Transform<?> {
 	lastV = ref None();
 
 	fselect(b, FLift(\v ->
-		switch (^lastV) {
+		switch (^lastV : Maybe<??>) {
 			Some(prevV): {
 				r = ifn(prevV, v);
 				lastV := Some(v);

@@ -1,10 +1,11 @@
 // © Copyright 2011 Area9 Technologies.
 
-import transforms;
 import form/optimizeform;
-import sys/fullscreen;
 import formats/html/html2text;
+import net/url_utils;
+import sys/fullscreen;
 import sys/interactive;
+import transforms;
 
 export {
 	// Render the given form on the screen
@@ -270,8 +271,10 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			renderText(text, style, available, zorder, tabOrder)
 		}
 	}
-	Picture(url_, style): {
-		if (downloadPictures && strlen(url_) > 0) {
+	Picture(url2, style2): {
+		f = PictureApplyJwtExtraction(rform);
+
+		if (downloadPictures && strlen(f.url) > 0) {
 			cache = ref true;
 			onlydl = ref false;
 			errhndlr = ref nop1;
@@ -280,7 +283,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			realSizeFn = ref nop1;
 			picAltText = ref "";
 			headers = ref [];
-			iter(style, \s -> switch(s : PictureStyle) {
+			iter(f.style, \s -> switch(s : PictureStyle) {
 				DontCache(): cache := false;
 				OnlyDownloadToCache(): onlydl := true;
 				OnLoadingError(fn): errhndlr := fn;
@@ -297,6 +300,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				UseCrossOrigin(__) : {}
 				ReferrerPolicy(__) : {}
 				RequestHeaders(hs) : headers := concat(^headers, map(hs, \h -> [h.key, h.value]));
+				SharedUrl(): {}
 			});
 
 			widthHeight = make(zeroWH);
@@ -304,9 +308,10 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			pending = make(1);
 			alreadyDecreased = make(false); //Let's use separate variable as pending mcould be updated outside the scope
 			increaseFilesCount(loadingContentFilesCount);
-			url = applyMediaPathMapping(url_);
-			picture = makePicture(addServerPathIfRelative(url), ^cache, \w, h -> {
-				CachedPicturesSizes := setTree(^CachedPicturesSizes, url, WidthHeight(w, h));
+			// Seems, we need no this transformation there
+			// url = if (contains(f.style, SharedUrl())) f.url else applyMediaPathMapping(f.url);
+			picture = makePicture(addServerPathIfRelative(f.url), ^cache, \w, h -> {
+				setCachedPictureSize(f.url, WidthHeight(w, h));
 				nextDistinct(widthHeight, WidthHeight(w, h));
 				nextDistinct(baseline, h);
 				decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
@@ -317,7 +322,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				if (startsWith(e, "Warning")) {
 					^onWarning(e)
 				} else {
-					CachedPicturesSizes := setTree(^CachedPicturesSizes, url, zeroWH);
+					setCachedPictureSize(f.url, zeroWH);
 					^errhndlr(e);
 					decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
 					nextDistinct(pending, 0);
@@ -327,8 +332,8 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				}
 			}, ^onlydl, ^picAltText, ^headers);
 
-			setPictureUseCrossOrigin(picture, extractStruct(style, UseCrossOrigin(false)).useCrossOrigin);
-			setPictureReferrerPolicy(picture, extractStruct(style, ReferrerPolicy("")).referrerpolicy);
+			setPictureUseCrossOrigin(picture, extractStruct(f.style, UseCrossOrigin(false)).useCrossOrigin);
+			setPictureReferrerPolicy(picture, extractStruct(f.style, ReferrerPolicy("")).referrerpolicy);
 
 			RenderResult(
 				[picture], widthHeight, baseline, pending,
@@ -342,9 +347,9 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			// This branch is a special one. We need it only to increase LR/probe rendering speed
 			// when regression testing tool is applied to really big product to look for memory leaks
 			// [Investigate] do we need to call one of the following functions
-			//onError = extractStruct(style, OnLoadingError(nop1)).fn;
+			//onError = extractStruct(f.style, OnLoadingError(nop1)).fn;
 			//onError("download_pictures=0");
-			//onLoaded = extractStruct(style, OnLoaded(nop)).fn;
+			//onLoaded = extractStruct(f.style, OnLoaded(nop)).fn;
 			//onLoaded();
 			emptyRenderResult
 		}
@@ -906,7 +911,9 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			alive := false;
 		}], ClipCapabilities(true, false, true, false, false));
 	}
-	Video(filename, parameters, listeners, controls): {
+	Video(filename2, parameters2, listeners, controls): {
+		//f = VideoApplyJwtExtraction(rform);
+		filename = filename2; //if (contains(parameters2, SharedUrl())) filename2 else applyMediaPathMapping(f.filename);
 		w = ref 0.;
 		h = ref 0.;
 		looping = ref false;
@@ -920,7 +927,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		headers = ref [];
 
-		iter(parameters, \p -> switch (p : VideoParameter) {
+		iter(parameters2/*f.parameters*/, \p -> switch (p : VideoParameter) {
 			VideoSize(vw, vh) : {
 				w := i2d(vw);
 				h := i2d(vh);
@@ -943,6 +950,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			RequestHeaders(hs) : {
 				headers := concat(^headers, map(hs, \header -> [header.key, header.value]));
 			}
+			SharedUrl() : {}
 		});
 
 		widthHeight = make(WidthHeight(^w, ^h));
@@ -1164,7 +1172,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		});
 		eitherFn(^mediaStream,
 			\ms -> playVideoFromMediaStream(video, ms, ^startPaused),
-			\ -> playVideo(video, addServerPathIfRelative(applyMediaPathMapping(filename)), ^startPaused, ^headers)
+			\ -> playVideo(video, addServerPathIfRelative(filename), ^startPaused, ^headers)
 		);
 
 		RenderResult([video], if (^w > 0. || ^h > 0.) const(WidthHeight(^w, ^h)) else widthHeight, if (^w > 0. || ^h > 0.) const(^h) else baseline, pending, [\ -> {
@@ -2661,10 +2669,10 @@ getDontCacheSuffix() {
 preloadAndCachePicture(url_ : string, errHandler : (string) -> void) -> void {
 	url = applyMediaPathMapping(url_);
 	metricsFn = \w, h -> {
-		CachedPicturesSizes := setTree(^CachedPicturesSizes, url, WidthHeight(w, h));
+		setCachedPictureSize(url, WidthHeight(w, h));
 	}
 	errFn = \error -> {
-		CachedPicturesSizes := setTree(^CachedPicturesSizes, url, zeroWH);
+		setCachedPictureSize(url, zeroWH);
 		errHandler(error)
 	}
 	if (downloadPictures) {
@@ -2856,4 +2864,36 @@ makeGlobalCursorListeners(
 			}
 		}
 	)
+}
+
+PictureApplyJwtExtraction(f : Picture) -> Picture {
+	moveJwtToHeaders(
+		f.url,
+		f.style,
+		SharedUrl(),
+		\style : PictureStyle -> {
+			switch (style : PictureStyle) {
+				RequestHeaders(headers): Some(headers);
+				default: None();
+			}
+		},
+		\style : [PictureStyle], headers : [KeyValue] -> concat(style, [RequestHeaders(headers)]),
+		\url : string, style : [PictureStyle] -> Picture(url, style)
+	);
+}
+
+VideoApplyJwtExtraction(f : Video) -> Video {
+	moveJwtToHeaders(
+		f.filename,
+		f.parameters,
+		SharedUrl(),
+		\parameters : VideoParameter -> {
+			switch (parameters : VideoParameter) {
+				RequestHeaders(headers): Some(headers);
+				default: None();
+			}
+		},
+		\parameters : [VideoParameter], headers : [KeyValue] -> concat(parameters, [RequestHeaders(headers)]),
+		\filename : string, parameters : [VideoParameter] -> Video(filename, parameters, f.listeners, f.controls)
+	);
 }

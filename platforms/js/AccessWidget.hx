@@ -234,7 +234,8 @@ class AccessWidgetTree extends EventEmitter {
 				}
 
 				if (getZorder() >= AccessWidget.tree.zorder && clip.getClipVisible()) {
-					nativeWidget.style.display = "block";
+					var clipDisplay = clip.getClipDisplay();
+					nativeWidget.style.display = clipDisplay != null ? clipDisplay : "block";
 					nativeWidget.style.opacity = clip.worldAlpha;
 				} else {
 					nativeWidget.style.display = "none";
@@ -1006,6 +1007,8 @@ class AccessWidget extends EventEmitter {
 					if (element != null) {
 						if (key.indexOf("style:") == 0) {
 							element.style.setProperty(key.substr(6, key.length), attributes.get(key));
+						} else if (key == "textContent") {
+							element.textContent = attributes.get(key);
 						} else if (attributes.get(key) != "") {
 							element.setAttribute(key, attributes.get(key));
 						} else {

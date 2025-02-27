@@ -114,7 +114,7 @@ attachFChildrenAt(clip : native, children : [native], disposers : [() -> void], 
 
 attachFChildAndCapability(form : FForm, d : FRenderResult, cap : [FClipCapability], fn : (native) -> () -> void) -> FRenderResult {
 	if (length(d.clips) > 0) {
-		if (length(d.clips) == 1 && !contains(cap, FClipRotate()) && !exists(d.capabilities, \c -> contains(cap, c))) {
+		if (length(d.clips) == 1 && !exists(d.capabilities, \c -> contains(cap, c))) {
 			FRenderResult(d.clips, concat(map(d.clips, fn), d.disposers), uniq(concat(d.capabilities, cap)));
 		} else {
 			c = makeClip();
@@ -189,7 +189,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				renderFParagraph(text, style);
 			}
 		}
-		FPicture(url_, wh, style): {
+		FPicture(url2, wh, style2): {
+			f = FPictureApplyJwtExtraction(rform);
+
 			if (downloadPictures) {
 				cache = ref true;
 				onlydl = ref false;
@@ -201,10 +203,11 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				headers =  ref [];
 
 				decreaseFFilesCount = increaseFFilesCount();
-				url = applyMediaPathMapping(url_);
+				// Seems, we need no this transformation there
+				// url = if (contains(f.style, SharedUrl())) f.url else applyMediaPathMapping(f.url);
 				clipalive = ref true;
 
-				iter(style, \s ->
+				iter(f.style, \s ->
 					switch (s : PictureStyle) {
 						DontCache(): cache := false;
 						OnlyDownloadToCache(): onlydl := true;
@@ -224,15 +227,16 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						UseCrossOrigin(__) : {}
 						ReferrerPolicy(__) : {}
 						RequestHeaders(hs) :headers := concat(^headers, hs);
+						SharedUrl(): {}
 					}
 				);
 
 				picture =
-					if (endsWith(url, ".svg") && ^fSvg2GraphicsEnabled) {
+					if (endsWith(f.url, ".svg") && ^fSvg2GraphicsEnabled) {
 						container = makeClip();
 
 						httpRequest(
-							addServerPathIfRelative(url),
+							addServerPathIfRelative(f.url),
 							false,
 							^headers,
 							[],
@@ -243,7 +247,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 
 									iter(renderFForm(form |> form2fform |> optimizeFForm, zorder).clips, \c -> addChild(container, c));
 
-									CachedPicturesSizes := setTree(^CachedPicturesSizes, url, formWH);
+									setCachedPictureSize(f.url, formWH);
 									nextDistinct(wh, formWH);
 
 									decreaseFFilesCount();
@@ -259,17 +263,16 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 									if (startsWith(er, "Warning")) {
 										^onWarning(er);
 									} else {
-										e = "Cannot load " + url + " " + er;
+										e = "Cannot load " + f.url + " " + er;
 
-										CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+										removeCachedPictureSize(f.url);
 										nextDistinct(wh, zeroWH);
 
 										^picErrorHandler(e);
 										decreaseFFilesCount();
 									}
 								} else {
-									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
-
+									removeCachedPictureSize(f.url);
 									decreaseFFilesCount();
 								}
 							},
@@ -279,10 +282,10 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						container;
 					} else {
 						makePicture(
-							addServerPathIfRelative(url),
+							addServerPathIfRelative(f.url),
 							^cache,
 							\w, h -> {
-								CachedPicturesSizes := setTree(^CachedPicturesSizes, url, WidthHeight(w, h));
+								setCachedPictureSize(f.url, WidthHeight(w, h));
 								nextDistinct(wh, WidthHeight(w, h));
 
 								decreaseFFilesCount();
@@ -294,7 +297,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								if (startsWith(e, "Warning")) {
 									^onWarning(e);
 								} else {
-									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+									removeCachedPictureSize(f.url);
 									nextDistinct(wh, zeroWH);
 
 									^picErrorHandler(e);
@@ -307,8 +310,8 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 						);
 					}
 
-				setPictureUseCrossOrigin(picture, extractStruct(style, UseCrossOrigin(false)).useCrossOrigin);
-				setPictureReferrerPolicy(picture, extractStruct(style, ReferrerPolicy("")).referrerpolicy);
+				setPictureUseCrossOrigin(picture, extractStruct(f.style, UseCrossOrigin(false)).useCrossOrigin);
+				setPictureReferrerPolicy(picture, extractStruct(f.style, ReferrerPolicy("")).referrerpolicy);
 
 				FRenderResult(
 					[picture],
@@ -939,25 +942,29 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 									makeBevel(^angle, ^distance, ^radius, ^spread, ^color1, ^alpha1, ^color2, ^alpha2, ^inner) |> Some;
 								}
 								DropShadow(params): {
-									angle = ref 45.0;
-									distance = ref 4.0;
-									radius = ref 4.0;
-									spread = ref 1.0;
-									color = ref 0x000000;
-									alpha = ref 1.0;
-									inner = ref false;
-									useBoxShadow = ref false;
-									iter(params, \p -> switch (p : DropShadowParameter) {
-										Placement(a, ds): { angle := a; distance := ds; }
-										Radius(r): radius := r;
-										Spread(s): spread := s;
-										Color(c, a): { color := c; alpha := a; }
-										Inner(i): inner := i;
-										UseBoxShadow(): useBoxShadow := true;
-									});
-									ds = makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
-									if (^useBoxShadow) setUseBoxShadow(ds);
-									Some(ds);
+									if (!ios() || isUrlParameterTrue("shadow")) {
+										angle = ref 45.0;
+										distance = ref 4.0;
+										radius = ref 4.0;
+										spread = ref 1.0;
+										color = ref 0x000000;
+										alpha = ref 1.0;
+										inner = ref false;
+										useBoxShadow = ref false;
+										iter(params, \p -> switch (p : DropShadowParameter) {
+											Placement(a, ds): { angle := a; distance := ds; }
+											Radius(r): radius := r;
+											Spread(s): spread := s;
+											Color(c, a): { color := c; alpha := a; }
+											Inner(i): inner := i;
+											UseBoxShadow(): useBoxShadow := true;
+										});
+										ds = makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
+										if (^useBoxShadow) setUseBoxShadow(ds);
+										Some(ds);
+									} else {
+										None();
+									}
 								}
 								Blur(params): {
 									radius = ref 3.0;
@@ -1163,7 +1170,23 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				\clip -> {
 					setClipCallstack(clip, stack);
 					uns = [
-						make4Subscribe(left, top, cwidth, cheight, \l, t, w, h -> setScrollRect(clip, l, t, w, h))(),
+						if (cpp)
+							// Workaround to disable cropping in cpp
+							// TODO : implement setCropEnabled on cpp level
+							makeSubscribeUns(fstall(enabled, 0), \en ->
+								if (en) [
+									make4Subscribe(left, top, cwidth, cheight, \l, t, w, h -> setScrollRect(clip, l, t, w, h))()
+								] else [
+									makeSubscribe(left, \l -> if (l != 0.) setClipX(clip, -l))(),
+									makeSubscribe(top, \t -> if (t != 0.) setClipY(clip, -t))(),
+									\ -> {
+										setClipX(clip, 0.);
+										setClipY(clip, 0.);
+									}
+								]
+							)()
+						else
+							make4Subscribe(left, top, cwidth, cheight, \l, t, w, h -> setScrollRect(clip, l, t, w, h))(),					
 						makeSubscribe(enabled, \en -> setCropEnabled(clip, en))()
 					];
 					\ -> applyall(uns)
@@ -1347,7 +1370,12 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				[FClipInteractive(), FClipFilters(), FClipMask(), FClipAccess()]
 			);
 		}
-		FVideo(filename, wh, style): {
+		FVideo(url2, wh, style2): {
+			//f = FVideoApplyJwtExtraction(rform);
+			// Seems, we need no this transformation there
+			// url = if (contains(style2, SharedUrl())) url2 else applyMediaPathMapping(f.url);
+			url = url2;//f.url;
+			style = style2;//f.style;
 			streamListenerResponse = ref false;
 			realVideoSize = extractStruct(style, FVideoRealSize(make(getValue(wh)))).size;
 			inspectVideoArea = tryExtractStruct(style, FInspectVideoArea(make(FVideoAreaMetrics(zeroPoint, WidthHeight(0., 0.), Factor(0., 0.)))));
@@ -1416,7 +1444,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 
 			eitherFn(mediaStream,
 				\ms -> playVideoFromMediaStream(video, ms.stream, !getValue(playing)),
-				\ -> playVideo(video, addServerPathIfRelative(applyMediaPathMapping(filename)), !getValue(playing), headers)
+				\ -> playVideo(video, addServerPathIfRelative(url), !getValue(playing), headers)
 			);
 
 			if (controls != []) setVideoControls(video, controls);
@@ -1653,13 +1681,15 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			readOnly = extractStruct(style, FReadOnly(const(false))).readOnly;
 			maxChars = extractStruct(style, FMaxChars(const(-1))).maxChars;
 			autofillBackgroundFill = tryExtractStruct(style, AutofillBackgroundFill(0));
+			autofillBackgroundOpacity = tryExtractStruct(style, AutofillBackgroundOpacity(1.0));
 			numericStep = tryExtractStruct(style, FNumericStep(const(1.)));
 			filterFn = tryExtractStruct(style, FInputFilter(idfn));
 			eventFilterFn = tryExtractStruct(style, dummyFInputEventFilter);
 			onCopyFn = tryExtractStruct(style, FInputOnCopy(\ -> None()));
 			onCompositionEndFn = tryExtractStruct(style, FInputOnCompositionEnd(nop));
 			openDatePickerMB = tryExtractStruct(style, FOpenDatePicker(make(None())));
-			enablePreventXSS = extractStruct(style, FPreventFromXSS(false)).enable;
+			enablePreventXSSDef = isUrlParameterTrue("new") && !isUrlParameterFalse("input_xss_protection_enabled");
+			enablePreventXSS = extractStruct(style, FPreventFromXSS(enablePreventXSSDef)).enable;
 
 			keyFilterFn = tryExtractStruct(style, FInputKeyFilter(\__, __ -> true));
 			cursorColor = extractStruct(style, FCursorColor(fselect(characterStyle, FLift(\cs -> extractStruct(cs, Fill(0)).color)))).color;
@@ -1673,6 +1703,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			setMultiline(textfield, fgetValue(multiline));
 			defineTextStyle(textfield, getValue(content), fgetValue(characterStyle));
 			maybeApply(autofillBackgroundFill, \afbf -> setAutofillBackgroundColor(textfield, afbf.color));
+			maybeApply(autofillBackgroundOpacity, \afbo -> setAutofillBackgroundOpacity(textfield, afbo.opacity));
 			setTextFieldPreventXSS(textfield, enablePreventXSS);
 
 			disp =

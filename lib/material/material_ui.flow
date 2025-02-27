@@ -63,6 +63,7 @@ export {
 	// index - position in array, id - unique identifier
 	SelectMLines(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
+	SelectMLinesASameAvailable(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMBaselineLines(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMBaselineLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
 	SelectMCols(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material;
@@ -237,6 +238,11 @@ export {
 
 	// Is used to announce some text by screenreader and move focus to the specific place on screen
 	MTemporarilyFocused(mat : Material, buttonTitle : Transform<string>, trigger : Transform<bool>) -> Material;
+
+	// Scroll to this material when rendered
+	MScrollToOnRender(m : Material) -> Material;
+	// Scroll to the top of material when rendered
+	MScrollToTopOnRender(m : Material) -> Material;
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -565,6 +571,27 @@ SelectMLinesA(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>
 	MGetAll(\manager, parent, m2t ->
 		SelectMLines2AT(manager, parent, values, \index, id, v, p -> m2t(makeMaterialFn(index, id, v), p))
 	)
+}
+
+SelectMLinesASameAvailable(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
+	itemsMinWidth = make(0.);
+	inspectedAvailableWidth = make(0.);
+	availableWidth = fmax(inspectedAvailableWidth, itemsMinWidth);
+	MGetAll(\manager, parent, m2t ->
+		SelectMLines2AT(manager, parent, values, \index, id, v, p -> {
+			itMinWidth = make(0.);
+			TConstruct(
+				[
+					makeSubscribe(itMinWidth, \itW -> nextDistinct(itemsMinWidth, max(itW, getValue(itemsMinWidth))))
+				],
+				TInspect([IMinWidth(itMinWidth)],
+					m2t(makeMaterialFn(index, id, v), p)
+				)
+			)
+		})
+	)
+	|> (\t -> MAvailableWidthPreventFillers(t, availableWidth))
+	|> (\m -> MInspect([IAvailableWidth(inspectedAvailableWidth)], m))
 }
 
 SelectMBaselineLines(values : Transform<[?]>, makeMaterialFn : (index :  Transform<int>, id : int, ?) -> Material) -> Material {
@@ -1494,7 +1521,7 @@ MFlippingCard(
 
 	MComponent([
 		MHighlightOnFocus(const(true)),
-		MButtonTitle(fselect2Lift(buttonTitle, isBackSide, \ttl, isBack -> ttl + ". Flipping card (" + (if (isBack) "back" else "front") + " side)")),
+		MButtonTitle(fselect2Lift(buttonTitle, isBackSide, \ttl, isBack -> ttl + ". Flipping card (" + (if (isBack) "back" else "front") + " side) with content inside")),
 		MOnClick(\ -> {
 			reverseBehaviour(flipped);
 			maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click());
@@ -1773,19 +1800,24 @@ MPictureFit(picURL : string, style : [MPictureStyle]) {
 }
 
 MScrollOrFit(content : Material, box : Material, threshold : double, style : [MScrollStyle]) -> Material {
+	contentWidth = make(0.);
 	contentHeight = make(0.);
 	maxHeight = make(0.);
 	avBox = makeWH();
+	availableWidth = fwidth(avBox);
 	availableHeight = fheight(avBox);
 	scale = fselect2(contentHeight, availableHeight, FLift2(\ch, ah ->
 		if (ah == 0. || ch - ah > threshold) 1. else min(1., ah / ch)
 	));
 
-	scrollEnabled = fgreater(fsubtract(contentHeight, availableHeight), const(threshold));
+	scrollEnabled = fOr(
+		fgreater(contentWidth, availableWidth),
+		fgreater(fsubtract(contentHeight, availableHeight), const(threshold))
+	);
 
 	content
-	|> (\m -> MInspect([Height(contentHeight), IMaxHeight(maxHeight)], m))
-	|> (\m -> MAvailableWidth(m, fwidth(avBox)))
+	|> (\m -> MInspect([IWidth(contentWidth), IHeight(contentHeight), IMaxHeight(maxHeight)], m))
+	|> (\m -> MAvailableWidth(m, availableWidth))
 	|> (\m -> MScale(ffactor2(scale), m))
 	|> (\m -> MOverride([OMaxHeight(maxHeight)], m))
 	|> (\m -> MScroll(
@@ -1831,11 +1863,10 @@ MFullScreenNoReattachments(fs : DynamicBehaviour<bool>, m : Material) -> Materia
 
 		b = m2a(
 				m,
-				TParentInfo(
-					fif(fs, fwidth(wh), parent.maxX),
-					fif(fs, fheight(wh), parent.maxY),
-					parent.environment,
-					fif(fs, fselect(parent.transformMatrix, FLift(\tm -> TransformMatrix(tm with tx = 0., ty = 0.))), parent.transformMatrix)
+				TParentInfo(parent with
+					maxX = fif(fs, fwidth(wh), parent.maxX),
+					maxY = fif(fs, fheight(wh), parent.maxY),
+					transformMatrix = fif(fs, fselect(parent.transformMatrix, FLift(\tm -> TransformMatrix(tm with tx = 0., ty = 0.))), parent.transformMatrix)
 				),
 				sheet,
 				metricsOnly
@@ -1886,7 +1917,7 @@ MInitiallyFocused2(mat : Material, buttonTitle : Transform<string>, previousFocu
 		ClassName("flow_focusable"),
 		MHighlightOnFocus(const(true)),
 		MCursorShape(const(DefaultCursor()))
-	], \__ -> MBorder4(framePadding, MAccess([FAccessHidden()], mat)))
+	], \__ -> MBorder4(framePadding, MAccess([FAccessAttribute("aria-hidden", fselectLift(focused, b2s))], mat)))
 	|> (\m -> MBorder4(-framePadding, m))
 	|> (\m -> MConstruct([\ -> {
 		if (eitherMap(fgetValue(previousFocus), \lf -> !contains(["MTextInput", "MAutoComplete", "MWEditor", "MTemporarilyFocused"], lf.name), false)) {
@@ -1920,4 +1951,28 @@ MTemporarilyFocused(mat : Material, buttonTitle : Transform<string>, trigger : T
 			makeSubscribe2(trigger, \tr -> if (!tr) nextDistinct(focusedElementEnabled, true)),
 			makeSubscribe2(focused, \foc -> if (!foc) nextDistinct(focusedElementEnabled, false))
 	], m))
+}
+
+MScrollToOnRender(m : Material) -> Material {
+	MComponent(
+		[MEnabled(const(false)), FAccessHidden()],
+		\foc -> {
+			MConstruct(
+				[
+					\ -> {
+						scrollIntoView(foc);
+						nop;
+					}
+				],
+				m
+			)
+		}
+	)
+}
+
+MScrollToTopOnRender(m : Material) -> Material {
+	MLines2(
+		MScrollToOnRender(TEmpty()),
+		m
+	)
 }

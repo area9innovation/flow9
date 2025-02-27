@@ -491,32 +491,46 @@ renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, captio
 					showDialog = \existsNames -> {
 						nameB = make(_("new folder"));
 						errorTextT = fsValidateNameTransform(nameB, existsNames, true, []);
+						onCancel = \-> next(closeDialogB, true);
+						onCreate = \withOpen -> {
+							if (withOpen) {
+								pathName = getValue(state.currentPathB) + getValue(nameB) + "/";
+								state.engine.createDirectory(
+									pathName,
+									\ -> {
+										next(state.currentPathB, pathName);
+										updateFilesViewWithZeroScrollPosition();
+									},
+									println
+								);
+								next(closeDialogB, true);
+							} else {
+								state.engine.createDirectory(
+									getValue(state.currentPathB) + getValue(nameB) + "/",
+									updateFilesViewWithSameScrollPosition,
+									println
+								);
+								next(closeDialogB, true);
+							}
+						};
 
-						renderMDialog(manager, closeDialogB,
-							[
-								MDialogTitle(_("Create new folder")),
-								MDialogUseFrame(),
-								MDialogActions([
-									MTextButton(_("CANCEL"), \-> next(closeDialogB, true), [], [MShortcut("esc")]),
-									MTextButton(_("CREATE"), \-> {
-										state.engine.createDirectory(
-											getValue(state.currentPathB) + getValue(nameB) + "/",
-											updateFilesViewWithSameScrollPosition,
-											println
-										);
-										next(closeDialogB, true);
-									}, [MButtonRaised()], [MShortcut("enter"), MEnabled(feq(errorTextT, None()))])
-								]),
-								MDialogScroll(),
-							],
-							MBaselineCols2A(
-								MText(_("Folder name:"), []),
-								MTextInput(
-									nameB,
-									[MWidth(400.0), MMaxLines(1)],
-									[MInputError(errorTextT, [])]
-								) |> MBorderStart(8.0)
-							),
+						ShowMDialogCreateFolderWithCallbacks(
+							manager,
+							MLines([
+								MText(_("Create New Folder"), [MTitle()]),
+								TFixed(0.0, 32.0),
+								MBaselineCols2A(
+									MText(_("Folder name:"), []),
+									MTextInput(
+										nameB,
+										[MWidth(400.0), MMaxLines(1)],
+										[MInputError(errorTextT, [])]
+									) |> MBorderStart(8.0)
+								)
+							]),
+							feq(errorTextT, None()),
+							onCreate,
+							onCancel,
 							m2t
 						);
 					}
@@ -1542,9 +1556,9 @@ filterUploadedFilesForRestrictions(
 	defImageBehaviour = extractStruct(style, FbFilterMaxImageResolution(0, FbReduceAskUser(either(defImageAskUserM, true)))).behaviour;
 	defVideoBehaviour = extractStruct(style, FbFilterMaxImageResolution(0, FbReduceAskUser(either(defVideoAskUserM, true)))).behaviour;
 
-	getTitle = \isMany -> if (isMany) _("Files too large") else _("File too large");
-	getText = \isMany -> if (isMany) _("The files are very large. We recommend you to reduce them.")
-		else _("The file is very large. We recommend you to reduce it.");
+	getTitle = \isMany -> if (isMany) _("Too large files") else _("Too large file");
+	getText = \isMany -> if (isMany) _("The files are too large. We recommend you reduce them.")
+		else _("The file is too large. We recommend you reduce it.");
 
 	videoExtensions = ["mp4", "webm", "m4v"];
 	imageExtensions = ["swf", "png", "jpg", "jpeg", "bmp"];
@@ -1904,39 +1918,48 @@ filterUploadedFilesForRestrictions(
 
 				showDefaultDialog(manager, closeDialogB, "", buttons, view);
 
-				checkImagesFn = \iData, onChecked -> mapAsync(
-					iData,
-					\iDataRow, ff, __ -> {
-						gotWHR = ref true;
-						gotWH = \wh -> {
-							if (^gotWHR) {
-								gotWHR := false;
-								ff(FbFileTestResult(iDataRow, wh, 0, make(false)));
+				checkImagesFn = \iData, maxValue, onChecked -> {
+					// the maximum size of (maxValue px) x (maxValue px) png image
+					maxImageSizePng = i2d(maxValue * maxValue * 4);
+
+					mapAsync(
+						iData,
+						\iDataRow, ff, __ -> {
+							gotWHR = ref true;
+							gotWH = \wh -> {
+								if (^gotWHR) {
+									gotWHR := false;
+									ff(FbFileTestResult(iDataRow, wh, 0, make(false)));
+								}
 							}
-						}
 
-						iDataRow.getContentBase64(
-							\base64Content -> {
-								next(
-									imageDataMB, 
-									Some(Pair(
-										"data:image/" + iDataRow.extension + ";base64," + base64Content,
-										gotWH
-									))
+							if (iDataRow.size > maxImageSizePng) {
+								gotWH(WidthHeight(i2d(maxValue + 1), i2d(maxValue + 1)));
+							} else {
+								iDataRow.getContentBase64(
+									\base64Content -> {
+										next(
+											imageDataMB, 
+											Some(Pair(
+												"data:image/" + iDataRow.extension + ";base64," + base64Content,
+												gotWH
+											))
+										);
+
+										// If can't load image for a long time
+										timer(5000, \-> gotWH(WidthHeight(0., 0.)));
+									},
+									\__ -> gotWH(WidthHeight(0., 0.))
 								);
-							},
-							\__ -> gotWH(WidthHeight(0., 0.))
-						);
+							}
+						},
+						onChecked,
+						// Never should happen
+						\__ -> onChecked(map(iData, \iDataRow -> FbFileTestResult(iDataRow, WidthHeight(0., 0.), 0, make(false))))
+					);
+				}
 
-						// If can't load image for a long time
-						timer(5000, \-> gotWH(WidthHeight(0., 0.)));
-					},
-					onChecked,
-					// Never should happen
-					\__ -> onChecked(map(iData, \iDataRow -> FbFileTestResult(iDataRow, WidthHeight(0., 0.), 0, make(false))))
-				);
-
-				checkVideosFn = \vData, onChecked -> mapAsync(
+				checkVideosFn = \vData, __, onChecked -> mapAsync(
 					vData,
 					\vDataRow, ff, __ -> {
 						lengthDoneR = ref false;
@@ -1979,7 +2002,7 @@ filterUploadedFilesForRestrictions(
 							eitherFn(
 								sM,
 								\maxValue -> {
-									extractSizeFn(files, \result -> {
+									extractSizeFn(files, maxValue, \result -> {
 										ff(map(result, \r -> { next(r.flagB, isLargeFn(maxValue, r)); r }))
 									})
 								},

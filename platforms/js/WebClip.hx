@@ -1,3 +1,5 @@
+import js.html.WheelEvent;
+import haxe.Json;
 import js.Browser;
 import pixi.core.math.Point;
 
@@ -160,6 +162,7 @@ class WebClip extends NativeWidgetClip {
 						iframe.scrolling = "no";
 					}
 					iframe.contentWindow.callflow = cb;
+					iframe.contentWindow.is_callflow_defined = true;
 					if (iframe.contentWindow.pushCallflowBuffer) {
 						iframe.contentWindow.pushCallflowBuffer();
 					}
@@ -169,6 +172,37 @@ class WebClip extends NativeWidgetClip {
 				} catch(e : Dynamic) { Errors.report(e); ondone(e);}
 			} catch(e : Dynamic) {
 				// Keep working in case of CORS error
+				function onCrossDomainMessage(e : Dynamic) {
+					try {
+						if (iframe.contentWindow == e.source) {
+							var message = Json.parse(e.data);
+							if (message.operation == "callflow") {
+								cb(message.args);
+							} else if (message.operation == "wheel" && message.args.length > 0) {
+								RenderSupport.provideEvent(new WheelEvent("wheel", Json.parse(message.args[0])));
+							} else if ((message.operation == "pointermove" || message.operation == "pointerdown" || message.operation == "pointerup") && message.args.length > 0) {
+								var pos0 = Util.getPointerEventPosition(Json.parse(message.args[0]));
+								var iframeBoundingRect = iframe.getBoundingClientRect();
+								var pos = new Point(
+									pos0.x * this.worldTransform.a + iframeBoundingRect.x,
+									pos0.y * this.worldTransform.d + iframeBoundingRect.y
+								);
+								var emittedEventName = (Platform.isSafari && Platform.isMobile) ? switch (message.operation) {
+									case "pointerdown": "mousedown";
+									case "pointerup": "mouseup";
+									case "pointermove": "mousemove";
+									default: message.operation;
+								} : message.operation;
+
+								RenderSupport.emitMouseEvent(RenderSupport.PixiStage, emittedEventName, pos.x, pos.y);
+							}
+						}
+					} catch(e : Dynamic) { Errors.report(e); }
+				}
+				Browser.window.addEventListener('message', onCrossDomainMessage);
+				once("removed", function() {
+					Browser.window.removeEventListener('message', onCrossDomainMessage);
+				});
 				ondone("OK");
 			}
 		};

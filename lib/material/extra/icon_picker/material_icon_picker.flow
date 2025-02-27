@@ -6,17 +6,38 @@ import material/iconic_font;
 import form/realhtmlworkaround;
 
 export {
+	// TODO : Switch to MIconPickerExtended by default
 	MIconPicker(icon : DynamicBehaviour<string>, style : [MIconPickerStyle]) -> Material;
-	MIconPickerStyle ::= MTimePickerStyle, MIconPickerGroup, MDialogButtons, MIconPickerDontShowNumbers, FontFamily, MIconPickerShowAllIcons;
+	MIconPickerExtended(icon : DynamicBehaviour<Maybe<MIconTyped>>, style : [MIconPickerStyle]) -> Material;
+	
+	MIconPickerStyle ::= MTimePickerStyle, MIconPickerGroup, MDialogButtons, MIconPickerDontShowNumbers, FontFamily, MIconPickerShowAllIcons, MIconPickerInnerIconName;
 
 	// Open with a starting group
 	MIconPickerGroup(id : int);
 	//Don't show icon numeration
 	MIconPickerDontShowNumbers();
 	MIconPickerShowAllIcons();
+	MIconPickerInnerIconName(name : DynamicBehaviour<string>);
 
 	showMIconDialog(manager : MaterialManager, iconName : DynamicBehaviour<string>) -> void;
+	showMIconDialogExtended(manager : MaterialManager, icon : DynamicBehaviour<Maybe<MIconTyped>>) -> void;
+
+	MIconPickerButton(icon : DynamicBehaviour<Maybe<MIconTyped>>, style : [MIconStyle], state : [MButtonState]) -> Material;
+
+	isNewIconPickerUrlParameterTrue() -> bool {
+		isUrlParameterTrue("new_icon_picker");
+	}
+
+	MIconTyped(
+		name : string,
+		type : MIconTypeStyle
+	);
 }
+
+MIconPickerInfo(
+	icons : [string],
+	groups : [Pair<string, [string]>]
+);
 
 MIconPicker(icon : DynamicBehaviour<string>, style : [MIconPickerStyle]) -> Material {
 	color = extractStruct(style, MBlue(700));
@@ -290,16 +311,349 @@ MIconPicker(icon : DynamicBehaviour<string>, style : [MIconPickerStyle]) -> Mate
  	]);
 }
 
+MIconPickerExtended(icon : DynamicBehaviour<Maybe<MIconTyped>>, style : [MIconPickerStyle]) -> Material {
+	color = extractStruct(style, MBlue(700));
+	dialogButtons = extractStruct(style, MDialogButtons([])).buttons;
+	hasOk = length(extractStructMany(dialogButtons, MButtonOk("", nop))) > 0;
+	hasCancel = length(extractStructMany(dialogButtons, MButtonCancel("", nop))) > 0;
+	hasButtons = hasOk || hasCancel;
+	showAll = contains(style, MIconPickerShowAllIcons());
+	customFontFamily = extractStruct(style, FontFamily(defIconFontFamily)).name;
+	isMaterialIcons = isMaterialIconsFontFamily(customFontFamily);
+
+	iconTypeIdx = make(0);
+	iconType = fselectLift(iconTypeIdx, \idx -> elementAtMap(materialIconicFontsByType, idx, \p -> p.first, MIconFilled())); 
+	materialIconicFont = fselectLift(iconType, getMaterialIconicFontByType);
+
+	iconPickerInfo = fselectLift(iconType, \type ->
+		if (isMaterialSymbolType(type))
+			MIconPickerInfo(getMaterialSymbolsList(), iconGroups)
+		else 
+			MIconPickerInfo(getMaterialIconsList(), iconGroups)
+	);
+
+	countGroups = \groups : [Pair<string, [string]>] ->
+		fold(groups, 0, \acc, g -> acc + length(g.second));
+
+	makeInnerPickerIcon = \name, st ->
+		if (isMaterialIcons)
+			MSelect(iconType, \type ->
+				MIcon(name, arrayPush(st, MIconType(type)))
+			)
+		else
+			MIcon(name, arrayPush(st, FontFamily(customFontFamily)));
+
+	group = extractStruct(style, MIconPickerGroup(-1)).id;
+	innerIconName = extractStruct(style, MIconPickerInnerIconName(make(""))).name;
+	iconSearch = make("");
+	selectedGroup = make(group);
+
+	iconsPerRow = 8;
+	iconCellSize = 40.0;
+	sideNaveWidth = 220.0;
+
+	boxSize = make(zeroWH);
+	itemSize = fselectLift(boxSize, \bs -> {
+		sz = bs.width / i2d(iconsPerRow);
+		WidthHeight(sz, sz);
+	});
+	iconSize = iconCellSize * 0.85;
+	pickerWidth = (i2d(iconsPerRow) * (iconCellSize * 2.0)) + 32.0;
+	pickerHeight = 480.0;
+	footerBtnHeight = 35.0;
+	sideBtnHeight = 40.0;
+	headerHeight = 80.0;
+	searchHeight = 50.0;
+	iconPickerHeight = pickerHeight + (if (hasButtons) footerBtnHeight else 0.0) + 14.0;
+
+	headerSize = TFixed(pickerWidth, searchHeight);
+	sideNavSize = TFixed(sideNaveWidth, iconPickerHeight);
+	sideBtnSize = TFixed(sideNaveWidth - 4.0, sideBtnHeight);
+	footerSize = TFixed(pickerWidth, footerBtnHeight);
+	bodySize = TFixed(pickerWidth, pickerHeight - 52.0);
+	iconBtnSize = TFixed(iconCellSize * 2.0, iconCellSize * 2.0);
+	mainSectionSize = TFixed(pickerWidth, iconPickerHeight);
+
+	iconColor = MGrey(700);
+	fillColor = MGrey(200);
+	strokeColor = MGrey(50);
+	selectedColor = MOrange(300);
+	makeIconButtonRect = \col -> TRectangle([MFill(col), StrokeWidth(1.0), MStroke(strokeColor)], iconBtnSize);
+
+	addTooltip = \label : string, m : Material -> MTooltip(m , MText(label, [MTooltipDesktop()]), [MBackgroundStyle([MFill(color)])]);
+
+	makeIconButton : (string) -> Material = \name -> {
+		pressed = make(false);
+		hovering = make(false);
+
+		MAvailable(
+			MGroup([
+				MSelect(innerIconName, \ic -> {
+					if (ic == name) {
+						makeIconButtonRect(selectedColor)
+					} else {
+						MInteractive([TMouseInside(hovering, false)],
+							MIf(hovering, makeIconButtonRect(strokeColor), makeIconButtonRect(fillColor))
+						)
+					}
+				}),
+				makeInnerPickerIcon(name, [MIconSize(iconSize), FillOpacity(1.0), iconColor]) |> MCenter,
+				MConstruct([
+						makeSubscribe(pressed, \p -> if (p) {
+							nextDistinct(innerIconName, name);
+							setClipboard(name);
+							devtrace(name + " - copied to cliboard");
+						}),
+					],
+					MInteractive([TMouseDown(pressed)],
+						MCursor(FingerCursor(),
+							TRectangle([MFill(fillColor), StrokeWidth(1.0), MStroke(strokeColor), FillOpacity(0.0)], iconBtnSize)
+						)
+					)
+				)
+			]) |> (\f -> addTooltip(name, f)),
+			iconBtnSize
+		);
+	 };
+
+	makeSideButton = \sideItemName : string, iconName : string, numIcon : int, id : int -> {
+		pressed = make(false);
+		hovering = make(false);
+
+		MAvailable(
+			MGroup2(
+				MCols([
+					MSelect2(selectedGroup, hovering, \sg, h -> {
+						st = if (sg == id) {
+							[MFill(selectedColor)]
+						} else {
+							if (h) [MFill(selectedColor), FillOpacity(0.8)] else [MFill(color), FillOpacity(0.0)]
+						};
+						TRectangle(st, TFixed(4.0, sideBtnHeight));
+					}) |> MCenterY,
+					makeInnerPickerIcon(iconName, [MIconSize(16.0), MWhite()]) |> MBorderStart(16.) |> MCenterY,
+					MText(sideItemName + " (" + i2s(numIcon) + ")", [MBody(), MWhite()]) |> MBorderStart(8.) |> MCenterY
+				]) |> MCenterY,
+
+				MConstruct(
+					[makeSubscribe(pressed, \p -> if (p) {
+						next(selectedGroup, id)
+					})],
+					MInteractive([TMouseDown(pressed), TMouseInside(hovering, true)],
+						MCursor(FingerCursor(),
+							TRectangle([MFill(selectedColor), FillOpacity(0.0)], TFillXY())
+						)
+					)
+				)
+			),
+			sideBtnSize
+		);
+	};
+
+	sideNav =
+		MGroup2(
+			TRectangle([MFill(color)], TFillXY()),
+			MLines([
+				MDropDown(iconTypeIdx, "Pick", map(materialIconicFontsByType, \p -> toString(p.first)), [MWhite(), MOutlined(), MLabel("Icon type"), MWidth(200.)])
+				|> MBorderLeftRight(8.),
+				MSelect(iconPickerInfo, \ipi ->
+					makeSideButton("All", "list", if (showAll) length(ipi.icons) else countGroups(ipi.groups), -1)
+				) |> MBorderTop(8.),
+				TRectangle([MFill(MWhite())], TFixed(sideNaveWidth - 32.0, 0.5)) |> MBorderStart(16.),
+				MSelect(iconPickerInfo, \ipi ->
+					mapi(ipi.groups, \j, g ->
+						makeSideButton(firstOfPair(g), secondOfPair(g)[0], length(secondOfPair(g)), j) |> MBorderBottom(4.)
+					)
+					|> MLines
+				)
+				|> MScrollBox
+			])
+			|> MBorderTop(12.)
+		)
+		|> (\m -> MAvailable(m, sideNavSize));
+
+	searchInput =
+		MCenterY(
+			MTextInput(iconSearch, [
+				MLabel("search by name"),
+				MWidth(-1.),
+				color,
+				MCustomTextStyle([MGrey(800)]),
+				MShowUnderline(false),
+				MShowClearIcon(true, false),
+				MStartCustomButton(
+					MIcon("search", [MIconSize(18.0)]),
+					MIcon("search", [MIconSize(18.0), color]),
+					16.0,
+					true
+				)
+				], []
+			)
+		);
+
+	headerSection =
+		MGroup([
+			TRectangle([MFill(MGrey(200))], TFixed(pickerWidth, searchHeight)),
+			MCols([
+				searchInput,
+				MSelect(innerIconName, \icName -> {
+					MCols2(
+						makeInnerPickerIcon(icName, [MIconSize(28.0), FillOpacity(1.0), color]) |> MCenterY,
+						MText(icName, [MTitle()]) |> MBorderStart(8.) |> MCenterY
+					)
+				}),
+			])
+			|> MBorderLeftRight(32.)
+		])
+		|> (\m -> MAvailable(m, headerSize));
+
+
+	bodySection =
+		MDynamicGrid(
+			fsubselect(iconPickerInfo, FLift(\icPickerInfo ->
+				fselect2(selectedGroup, iconSearch, FLift2(\sg, i -> {
+					if (showAll && sg == -1) {
+						filtermap(icPickerInfo.icons, \ic -> {
+							if (strContains(ic, i)) {
+								Some(makeIconButton(ic))
+							} else {
+								None()
+							}
+						})
+					} else {
+						mapi(icPickerInfo.groups, \j, pg -> {
+							availableIcons = filter(pg.second, \ic -> strContains(ic, i));
+							iconButtonsA = map(availableIcons, makeIconButton);
+							if (sg == -1 || sg == j) iconButtonsA else [];
+						})
+						|> concatA
+					}
+				}))
+			)),
+			[MBoxSize(boxSize), MItemSize(itemSize)]
+		)
+		|> MBorderStart(16.)
+		|> MBorderTop(8.)
+		|> (\m -> MAvailable(m, bodySize));
+
+
+	footerSection =
+		MAvailable(
+			MBorder(16.0, 8.0 ,16.0, 8.0,
+				MCols([
+					MTextButton(_("CLEAR"), \-> nextDistinct(icon, None()), [], []),
+					// TODO : Add Reset button
+					TFillX(),
+					if (hasCancel) {
+						buttonCn = extractStruct(dialogButtons, MButtonCancel("", nop));
+						MTextButton(_("CANCEL"), buttonCn.fn, [color], [MShortcut(buttonCn.shortcut)]);
+					} else TEmpty(),
+					TFixed(16.0, 0.0),
+					if (hasOk) {
+						buttonOk = extractStruct(dialogButtons, MButtonOk("", nop));
+						MTextButton(_("OK"), buttonOk.fn, [color, MButtonRaised()], [MShortcut(buttonOk.shortcut)]);
+					} else TEmpty(),
+				])
+			),
+			footerSize
+		);
+
+
+	MCols([
+		sideNav,
+		MGroup2(
+			TRectangle([MFill(MBackgroundMColor(true))], mainSectionSize),
+			MLines([
+				headerSection,
+				bodySection,
+				footerSection
+			])
+		)
+ 	])
+	|> (\m -> MConstruct([
+		\ -> fBidirectionalLink(
+			icon,
+			innerIconName,
+			\icM -> {
+				nextDistinct(innerIconName, eitherMap(icM, \ic -> ic.name, ""));
+			},
+			\iic -> {
+				nextDistinct(icon, if (iic == "") None() else Some(MIconTyped(iic, fgetValue(iconType))));
+			}
+		),
+		\ -> fBidirectionalLink(
+			icon,
+			iconType,
+			\icM -> {
+				nextDistinct(iconTypeIdx, eitherMap(icM, \ic -> findiDef(materialIconicFontsByType, \p -> p.first == ic.type, 0), 0));
+			},
+			\icType -> {
+				icName = getValue(innerIconName);
+				nextDistinct(icon, if (icName == "") None() else Some(MIconTyped(icName, icType)));
+			}
+		)
+	], m));
+}
+
 showMIconDialog(manager : MaterialManager, iconName : DynamicBehaviour<string>) -> void {
-	lastName = getValue(iconName);
+	if (isNewIconPickerUrlParameterTrue()) {
+		// Under 'new_icon_picker' flag you can select both iconName and iconType, although showMIconDialog will return iconName only
+		// Consider switching to showMIconDialogExtended
+		prevIconName = getValue(iconName);
+		close = make(false);
+		icon = make(Some(MIconTyped(prevIconName, MIconFilled())));
+
+		picker = MIconPickerExtended(icon, [
+			MDialogButtons([
+				MButtonOk("", \ -> {next(close, true); showAllRealHTML();}),
+				MButtonCancel("esc", \ -> {next(iconName, prevIconName); next(close, true); showAllRealHTML();})
+			]),
+			MIconPickerShowAllIcons(),
+			MIconPickerInnerIconName(iconName)
+		]);
+		hideAllRealHTML();
+		ShowMDialog(manager, close, [MDialogClickOutToCancel(iconName)], picker);
+	} else {
+		lastName = getValue(iconName);
+		close = make(false);
+
+		picker = MIconPicker(iconName, [
+			MIconPickerShowAllIcons(),
+			MDialogButtons([
+				MButtonOk("", \ -> {next(close, true); showAllRealHTML();}),
+				MButtonCancel("esc", \ -> {next(iconName, lastName); next(close, true); showAllRealHTML();})
+			])
+		]);
+		hideAllRealHTML();
+		ShowMDialog(manager, close, [MDialogClickOutToCancel(iconName)], picker);
+	}
+}
+
+showMIconDialogExtended(manager : MaterialManager, icon : DynamicBehaviour<Maybe<MIconTyped>>) -> void {
+	prevIcon = getValue(icon);
 	close = make(false);
 
-	picker = MIconPicker(iconName, [
+	picker = MIconPickerExtended(icon, [
 		MDialogButtons([
 			MButtonOk("", \ -> {next(close, true); showAllRealHTML();}),
-			MButtonCancel("esc", \ -> {next(iconName, lastName); next(close, true); showAllRealHTML();})
-		])
+			MButtonCancel("esc", \ -> {next(icon, prevIcon); next(close, true); showAllRealHTML();})
+		]),
+		MIconPickerShowAllIcons()
 	]);
- 	hideAllRealHTML();
-	ShowMDialog(manager, close, [MDialogClickOutToCancel(iconName)], picker);
+	hideAllRealHTML();
+	ShowMDialog(manager, close, [MDialogClickOutToCancel(icon)], picker);
+}
+
+MIconPickerButton(icon : DynamicBehaviour<Maybe<MIconTyped>>, style : [MIconStyle], state : [MButtonState]) -> Material {
+	MGetManager(\manager -> MSelect(icon, \icM -> 
+		MIconButton(
+			eitherMap(icM, \ic -> ic.name, ""),
+			\-> showMIconDialogExtended(manager, icon),
+			eitherMap(icM, \ic ->
+				replaceStruct(style, MIconType(ic.type)),
+				style
+			),
+			state
+		)
+	))
 }

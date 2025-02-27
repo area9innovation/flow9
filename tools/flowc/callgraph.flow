@@ -16,13 +16,13 @@ export {
 	printCallGraph(filename : string, prog : FiProgram) -> void;
 
 	// Prints all paths from the one function to another.
-	// Default value for 'func_to' is "main". 
+	// Default value for 'func_to' is "main".
 	// max_num is a limit on the number of reported paths (there may be too much paths).
 	// exclude - skip paths, containing functions from set
 	pathInCallGraph(func_from : string, func_to : string, max_num : int, exclude : Set<string>, prog : FiProgram) -> void;
 
 	// Execute following LSP methods:
-	// - textDocument/callHierarchy 
+	// - textDocument/callHierarchy
 	// - callHierarchy/incomingCalls
 	// - callHierarchy/outgoingCalls
 	// Output is made in LSP format (JSON).
@@ -38,7 +38,7 @@ saveImportGraph(filename : string, simplify : bool, prog : FiProgram) -> void {
 	});
 	// Remove redundant imports to simplify the graph
 	reduced = if (simplify) simpleTransitiveReduction(importGraph) else importGraph;
-	dot = simpleGraph2dot(reduced, prog.config.flowfile, [], \f -> [DotLabel(f)], \e -> []);
+	dot = simpleGraph2dot(reduced, getTargetModuleName(prog.config), [], \f -> [DotLabel(f)], \e -> []);
 	setFileContent(filename, dot);
 	println("Saved import graph to " + filename + ". Convert to SVG with Graphviz:\n");
 	println("  dot -Tsvg " + filename + " -o " + changeFileExt(filename, ".svg") + "\n");
@@ -88,7 +88,7 @@ printCallGraph(filename : string, prog : FiProgram) -> void {
 	}));
 	if (setFileContent(filename, strGlue(map(lines, \l -> l + "\n"), ""))) {
 		if (prog.config.verbose > 0) {
-			fcPrintln("Callgraph was successfully written to file '" + filename + "'", prog.config.threadId);	
+			fcPrintln("Callgraph was successfully written to file '" + filename + "'", prog.config.threadId);
 		}
 	} else {
 		fcPrintln("Cannot write callgraph to file '" + filename + "'", prog.config.threadId);
@@ -220,7 +220,7 @@ pathInCallGraph(func_from : string, func_to : string, max_num : int, exclude : S
 findAllPathsToMain(uses : Tree<string, [string]>, paths : [[string]], acc : [[string]], func_to : string, max_num : int) -> [[string]] {
 	frontier = filter(paths, \path -> length(path) == sizeSet(buildSet(path)));
 	if (frontier == [] || length(acc) > max_num) acc else {
-		new_paths = mapConcat(frontier, \path -> 
+		new_paths = mapConcat(frontier, \path ->
 			map(lookupTreeDef(uses, lastElement(path, ""), []), \last -> concat(path, [last]))
 		);
 		new_acc = concat(acc, filter(new_paths, \path -> lastElement(path, "") == func_to));
@@ -229,6 +229,8 @@ findAllPathsToMain(uses : Tree<string, [string]>, paths : [[string]], acc : [[st
 }
 
 rewriteImports(prog : FiProgram, fine : bool, showPathTo : string) -> void {
+	flowFile = getTargetModuleName(prog.config);
+
 	// Find out what dependencies each file has
 	deps : Tree<string, Set<string>> = moduleDependencies(prog);
 	simpleGraph = foldTree(deps, makeSimpleGraph(), \mod, uses, acc -> {
@@ -243,7 +245,7 @@ rewriteImports(prog : FiProgram, fine : bool, showPathTo : string) -> void {
 	simplified = simpleTransitiveReduction(simpleGraph);
 
 	// OK, we we can find the real set of files we need
-	realNeed : Set<string> = reachableClosureFromSimpleNode(simplified, prog.config.flowfile);
+	realNeed : Set<string> = reachableClosureFromSimpleNode(simplified, flowFile);
 
 	pr = \s -> fcPrintln(s, prog.config.threadId);
 
@@ -258,7 +260,7 @@ rewriteImports(prog : FiProgram, fine : bool, showPathTo : string) -> void {
 	});
 	// Remove redundant imports to simplify the graph
 	reduced = simpleTransitiveReduction(importGraph);
-	current : Set<string> = reachableClosureFromSimpleNode(reduced, prog.config.flowfile);
+	current : Set<string> = reachableClosureFromSimpleNode(reduced, flowFile);
 
 	if (showPathTo != "") {
 		opposite = reverseSimpleGraph(reduced);
@@ -421,8 +423,8 @@ lspCallHierarchyMethods(prog : FiProgram, env : FcTypeEnvGlobal) -> void {
 
 lspPrepareCallHierarchy(prog : FiProgram, line : int, col : int, env : FcTypeEnvGlobal) -> void {
 	config = prog.config;
-	file = config.flowfile;
-	path = findFlowPath(config.flowfile, true, config.includes, lookupTreeDef(config.config, "working-dir", ""));
+	file = getTargetModuleName(config);
+	path = findFlowPath(file, true, config.includes, lookupTreeDef(config.config, "working-dir", ""));
 	src = fcFileSource(env, path);
 	resolver = makeLineResolver(src);
 	name = getNameByLineCol(line, col, src);
@@ -431,7 +433,7 @@ lspPrepareCallHierarchy(prog : FiProgram, line : int, col : int, env : FcTypeEnv
 			kind = nature2LspSymbolkind(nature, prog.names);
 			range = info2LspRange(fc_range, resolver);
 			item = LspCallHierarchyItem(
-				name, kind, 
+				name, kind,
 				[], // no tags yet
 				"", // no details yet
 				URI("file", URIAuthority("", "", ""), path, "", ""),
@@ -444,7 +446,6 @@ lspPrepareCallHierarchy(prog : FiProgram, line : int, col : int, env : FcTypeEnv
 
 lspCallHierarchyIncoming(prog : FiProgram, json : string, env : FcTypeEnvGlobal) -> void {
 	config = prog.config;
-	file = config.flowfile;
 	maybeApply(json2LspCallHierarchyItem(parseJsonSafe(json)), \item -> {
 		calls = map(symbolIcomingCalls(prog, item.name, env), lspCallHierarchyIncomingCall2Json);
 		fcPrintln(json2string(JsonArray(calls)), config.threadId);
@@ -453,7 +454,6 @@ lspCallHierarchyIncoming(prog : FiProgram, json : string, env : FcTypeEnvGlobal)
 
 lspCallHierarchyOutgoing(prog : FiProgram, json : string, env : FcTypeEnvGlobal) -> void {
 	config = prog.config;
-	file = config.flowfile;
 	maybeApply(json2LspCallHierarchyItem(parseJsonSafe(json)), \item -> {
 		calls = map(symbolOutgoingCalls(prog, item.name, env), lspCallHierarchyOutgoingCall2Json);
 		fcPrintln(json2string(JsonArray(calls)), config.threadId);
@@ -495,7 +495,7 @@ fifreevarsOccursBoundFree(expr : FiExp, path : string, src : string, threadId : 
 			if (containsSet(bound, x)) free else {
 				switch (getFcInfo2ByPos(beg, src)) {
 					Some(info2): {
-						setTree(free, x, insertSet(lookupTreeDef(free, x, makeSet()), 
+						setTree(free, x, insertSet(lookupTreeDef(free, x, makeSet()),
 							FiSymbolOccurrence(path, info2)
 						));
 					}
@@ -541,12 +541,12 @@ fifreevarsOccursBoundFree(expr : FiExp, path : string, src : string, threadId : 
 }
 
 fiDeclarationIcomingCalls(
-	path : string, name : string, src : string, threadId : int, 
+	path : string, name : string, src : string, threadId : int,
 	decl : FiDeclaration, env : FcTypeEnvGlobal
 ) -> [LspCallHierarchyIncomingCall] {
 	body = bodyOfFiDeclaration(decl);
 	freeOccurs = fifreevarsOccurs(body, path, src, threadId);
-	fromRanges = map(set2array(lookupTreeDef(freeOccurs, name, makeSet())), \occur -> 
+	fromRanges = map(set2array(lookupTreeDef(freeOccurs, name, makeSet())), \occur ->
 		fiSymbolOccur2LspLocation(occur, env).range
 	);
 	if (fromRanges == []) [] else {
@@ -555,7 +555,7 @@ fiDeclarationIcomingCalls(
 				resolver = makeLineResolver(src);
 				range = info2LspRange(info2, resolver);
 				item = LspCallHierarchyItem(
-					decl.name, lspKindOfFiDeclaration(decl), 
+					decl.name, lspKindOfFiDeclaration(decl),
 					[], // no tags yet
 					"", // no details yet
 					URI("file", URIAuthority("", "", ""), path, "", ""),
@@ -575,17 +575,17 @@ symbolIcomingCalls(prog : FiProgram, name : string, env : FcTypeEnvGlobal) -> [L
 		path = module.fileinfo.fullpath;
 		src = fcFileSource(env, path);
 		acc1 = fold(module.functions, acc, \ac, fn ->
-			concat(ac, 
+			concat(ac,
 				fiDeclarationIcomingCalls(
-					path, name, src, prog.config.threadId, 
+					path, name, src, prog.config.threadId,
 					fn, env
 				)
 			)
 		);
 		acc2 = fold(module.globalVars, acc1, \ac, var ->
-			concat(ac, 
+			concat(ac,
 				fiDeclarationIcomingCalls(
-					path, name, src, prog.config.threadId, 
+					path, name, src, prog.config.threadId,
 					var, env
 				)
 			)
@@ -593,9 +593,9 @@ symbolIcomingCalls(prog : FiProgram, name : string, env : FcTypeEnvGlobal) -> [L
 		fold(module.natives, acc2, \ac, nat ->
 			switch (nat.fallbackLambda) {
 				FiLambda(__, __, __, __): {
-					concat(ac, 
+					concat(ac,
 						fiDeclarationIcomingCalls(
-							path, name, src, prog.config.threadId, 
+							path, name, src, prog.config.threadId,
 							nat, env
 						)
 					);
@@ -640,17 +640,18 @@ lspKindOfFiDeclaration(decl : FiDeclaration) -> int {
 
 symbolOutgoingCalls(prog : FiProgram, name : string, env : FcTypeEnvGlobal) -> [LspCallHierarchyOutgoingCall] {
 	conf = prog.config;
+	flowFile = getTargetModuleName(prog.config);
 	switch (lookupTree(prog.names.toplevel, name)) {
 		Some(decl): {
 			body = bodyOfFiDeclaration(decl);
-			module = name2FimoduleInFiProgram(prog, conf.flowfile, name);
+			module = name2FimoduleInFiProgram(prog, flowFile, name);
 			path = module.fileinfo.fullpath;
 			src = fcFileSource(env, path);
 			freeOccurs = fifreevarsOccurs(body, path, src, conf.threadId);
 			filtermap(tree2pairs(freeOccurs), \p -> {
 				called_name = p.first;
 				occurs = set2array(p.second);
-				called_module = name2FimoduleInFiProgram(prog, conf.flowfile, called_name);
+				called_module = name2FimoduleInFiProgram(prog, flowFile, called_name);
 				called_path = called_module.fileinfo.fullpath;
 				called_src = fcFileSource(env, called_path);
 				fromRanges = map(occurs, \occur -> fiSymbolOccur2LspLocation(occur, env).range);
@@ -662,7 +663,7 @@ symbolOutgoingCalls(prog : FiProgram, name : string, env : FcTypeEnvGlobal) -> [
 								resolver = makeLineResolver(called_src);
 								range = info2LspRange(called_info2, resolver);
 								called_item = LspCallHierarchyItem(
-									called_name, lspKindOfFiDeclaration(called_decl), 
+									called_name, lspKindOfFiDeclaration(called_decl),
 									[], // no tags yet
 									"", // no details yet
 									URI("file", URIAuthority("", "", ""), called_path, "", ""),

@@ -615,37 +615,41 @@ lspCallHierarchyOutgoingCalls(call: LspMethodCall) -> void {
 lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 	switch (json2LspExecuteCommandParams(call.params)) {
 		Some(commandParams): {
+			file = ref "";
+			makeConfig = \ -> {
+				params = filtermap(commandParams.arguments, \arg ->
+					switch (arg) {
+						JsonString(str): {
+							opt_val = strSplit(str, "=");
+							if (length(opt_val) == 0) None() else
+							if (length(opt_val) == 1) { file := opt_val[0]; None(); } else {
+								opt = opt_val[0];
+								val = opt_val[1];
+								if (opt == "file") {
+									file := val;
+									None();
+								} else {
+									Some(Pair(opt, val));
+								}
+							}
+						}
+						default: None();
+					}
+				);
+				conf = lspFileConfig2(^file);
+				setConfigOptions(conf, params);
+			}
 			if (commandParams.command == "compile") {
 				// Execute a special command: compilation
 				if (length(commandParams.arguments) == 0) {
 					call.out_cb(lspErrorResponse(call.id, 1, "no file for compilation is provided"));
 				} else {
-					file = ref "";
-					params = filtermap(commandParams.arguments, \arg ->
-						switch (arg) {
-							JsonString(str): {
-								opt_val = strSplit(str, "=");
-								if (length(opt_val) == 0) None() else
-								if (length(opt_val) == 1) { file := opt_val[0]; None(); } else {
-									opt = opt_val[0];
-									val = opt_val[1];
-									if (opt == "file") {
-										file := val;
-										None();
-									} else {
-										Some(Pair(opt, val));
-									}
-								}
-							}
-							default: None();
-						}
-					);
+					config = makeConfig();
 					if (^file == "") {
 						call.out_cb(lspErrorResponse(call.id, 1, "no file for compilation"));
 					} else {
-						conf = lspFileConfig2(^file);
 						lspRunConf(false,
-							setConfigOptions(conf, params),
+							config,
 							\code, out, err -> {
 								msg = if (err == "") out else err + "\n" + out;
 								lspCallOutErrorDiagnostics(call.out_cb, msg);
@@ -655,24 +659,8 @@ lspWorkspaceExecuteCommand(call: LspMethodCall) -> void {
 					}
 				}
 			} else if (commandParams.command == "command") {
-				// Execute a general command
-				params = filtermap(commandParams.arguments, \arg ->
-					switch (arg) {
-						JsonString(str): {
-							opt_val = strSplit(str, "=");
-							if (length(opt_val) == 0) None() else
-							if (length(opt_val) == 1) Some(Pair(opt_val[0], "")) else {
-								opt = opt_val[0];
-								val = opt_val[1];
-								Some(Pair(opt, val));
-							}
-						}
-						default: None();
-					}
-				);
-				conf = compilerConfigFromConfig(pairs2tree(params));
 				lspRunConf(false,
-					conf,
+					makeConfig(),
 					\code, out, err -> {
 						msg = if (err == "") out else err + "\n" + out;
 						call.out_cb(lspNormalResponse(call.id, JsonString(msg)));

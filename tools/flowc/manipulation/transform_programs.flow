@@ -604,22 +604,31 @@ fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> boo
 	// Convert a function into native. Used to make implicit natives.
 	func2nat = \func -> FiNativeDec(func.name, false, func.type, func.name, FiVoid(0), 0, 0);
 	// Convert a native to a stub, which causes a runtime error.
-	nat2func = \nat: FiNativeDec, type -> FiFunctionDec(nat.name,
-		FiLambda(type.args,
-			// Crash when called.
-			FiCall(
-				FiVar("fail0",
-					FiTypeFunction([FiFunArg("arg1", FiTypeString())], type.returnType),
+	nat2func = \nat: FiNativeDec, type : FiTypeFunction -> {
+		natFn = switch (nat.type) {
+			FiTypeFunction(args, rt): FiTypeFunction(args, type.returnType);
+			default: {
+				println("Native " + nat.name + "is not a function");
+				FiTypeFunction([], nat.type);
+			}
+		}
+		FiFunctionDec(nat.name,
+			FiLambda(type.args,
+				// Crash when called.
+				FiCall(
+					FiVar("fail0",
+						FiTypeFunction([FiFunArg("arg1", FiTypeString())], type.returnType),
+						nat.declStart
+					),
+					[FiString("Native '" + nat.name + "' is not implemented, but called. Execution of program aborted.", nat.declStart)],
+					type.returnType,
 					nat.declStart
 				),
-				[FiString("Native '" + nat.name + "' is not implemented, but called. Execution of program aborted.", nat.declStart)],
-				type.returnType,
-				nat.declStart
+				type, nat.declStart
 			),
-			type, nat.declStart
-		),
-		nat.type, 0, 0
-	);
+			natFn, 0, 0
+		);
+	}
 	// for each function name decide: if it is a true native or should use a fallback
 	native_resolver = foldTree(program.modules, makeTree(), \__, module, acc: Tree<string, FiDeclaration> ->
 		fold(module.natives,
@@ -635,7 +644,8 @@ fiResolveNatives(program : FiProgram, has_native_implementation: (string) -> boo
 						switch (type) {
 							FiTypeFunction(__,__): {
 								// make a stub
-								setTree(ac, nat.name, nat2func(nat, type));
+								fn : FiFunctionDec = nat2func(nat, type);
+								setTree(ac, nat.name, fn);
 							}
 							default: {
 								// Native is not a function (?...)

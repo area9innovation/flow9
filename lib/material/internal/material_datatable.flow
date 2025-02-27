@@ -2,6 +2,8 @@ import material/internal/material_textinput;
 import material/internal/material_dropdown;
 import material/internal/material_list;
 import material/internal/material_dialog_internal;
+import form/graphics2html;
+import math/uuid;
 
 export {
 	MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicDataTable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
@@ -54,6 +56,7 @@ MDynamicDataTable2TInner(
 	headerStyle = tryExtractStruct(style, defaultHS);
 	rowBackgroundStyle = tryExtractStruct(style, MRowBackgroundStyle(\__ -> []));
 	selectedBgStyle : Maybe<MSelectedBackgroundStyle> = tryExtractStruct(style, MSelectedBackgroundStyle([]));
+	defaultSelectedBgStyleFn = \p -> [Fill(contrastingColor(p)), FillOpacity(if (getLightBackground(p)) 0.08 else 0.16)];
 
 	showFixedRow = eitherMap(state.fixedRow, \fr -> fr.show, const(false));
 	lifted = eitherMap(tryExtractStruct(style, MDataTableInnerScroll(MStandardMode(), [])), \is -> is.mode == MLiftedFirstColumnMode(), false);
@@ -151,6 +154,30 @@ MDynamicDataTable2TInner(
 		t |> TBorderLeftRight(state.externalBorder)
 	);
 
+	wrapFirstColumnIntoBorders = \p -> TBorderStartT(
+		eitherMap(innerScrollState, \is ->
+			eitherMap(is.glued, \gl ->
+				if (gl) fif(is.visible, zero, const(state.externalBorder))
+				else const(state.externalBorder),
+				const(state.externalBorder)
+			),
+			const(state.externalBorder)
+		),
+		p.rtl
+	);
+
+	wrapLastColumnIntoBorders = \p -> TBorderEndT(
+		eitherMap(innerScrollState, \is ->
+			eitherMap(is.glued, \gl ->
+				if (gl) const(state.externalBorder)
+				else fif(is.visible, zero, const(state.externalBorder)),
+				const(state.externalBorder)
+			),
+			const(state.externalBorder)
+		),
+		p.rtl
+	);
+
 	yTranslation = fselectLift(page, \pg -> max(0., i2d(pg.first)) * rowHeight);
 	totalRowsHeight = fselect2(rowsCountB, showFixedRow, FLift2(\rc, fr -> (i2d(rc) + b2d(fr)) * rowHeight));
 
@@ -201,9 +228,230 @@ MDynamicDataTable2TInner(
 		footer =
 			MDTFooter(manager, p, paginationState, rowsCountB, state.scrollEnabled, noFooter, footerHeight, footerMinWidth, m2t);
 
+		onHoverHandler = \rowIdxM : Maybe<int> -> \t : Tropic -> {
+			if (state.onHover.onHover != nop1) {
+				insideB = make(false);
+				TInteractive([TMouseInside(insideB, false)],
+					TConstruct(
+						[
+							makeSubscribe2(ftransistor(state.onHover.enabled, insideB), \h -> {
+								if ((h && isSome(rowIdxM)) || (!h && isNone(rowIdxM))) {
+									state.onHover.onHover(rowIdxM)
+								}
+							})
+						],
+						TFrame(0., 0., interactiveRectangleStyle, t)
+					)
+				)
+			} else t
+		}
+
 		// Data rows
-		content =
-			if (lightweight) {
+		content = {
+			if (state.domRender) {
+				selectedGraphicsStyle = eitherMap(
+					selectedBgStyle,
+					\sbs -> tgraphicsStyle2graphicsStyle(mgraphicsStyle2tgraphicsStyle(p, sbs.style)),
+					defaultSelectedBgStyleFn(p)
+				);
+				rows = fselect2Lift(
+					fif(
+						state.scrollEnabled,
+						sorting.result,
+						fselect2Lift(sorting.result, page, \sortRes, pg -> subrange(sortRes, pg.first, pg.second + 1))
+					),
+					data,
+					\sortRes, dat -> map(sortRes, \i -> Pair(elementAtM(dat, i), i))
+				);
+				wh = make(WidthHeight(0.0, 0.0));
+
+				TSelect(rows, \rs ->
+					TNativeForm(wh, \av, zorder, tabOrder -> {
+						borderString = if (state.separators) { if (getLightBackground(p)) "1px solid rgba(0, 0, 0, 0.12)" else "1px solid rgba(255, 255, 255, 0.12)"; } else "";
+
+						table = makeClip();
+						setClipProtected(table);
+						setClipTagName(table, "table");
+						setClipStyle(table, "width", "100%");
+						setClipStyle(table, "height", "auto");
+						setClipStyle(table, "position", "relative");
+						setClipStyle(table, "display", "table");
+						setClipStyle(table, "border-spacing", "0");
+						tableId = "table" + "-" + makeUuid();
+						setClipAttribute(table, "id", tableId);
+						tbody = makeClip();
+						setClipTagName(tbody, "tbody");
+						setClipStyle(tbody, "width", "auto");
+						setClipStyle(tbody, "height", "auto");
+						setClipStyle(tbody, "position", "static");
+						setClipStyle(tbody, "display", "table-row-group");
+						addChild(table, tbody);
+
+						headerTr = makeClip();
+						setClipTagName(headerTr, "tr");
+						setClipStyle(headerTr, "width", "auto");
+						setClipStyle(headerTr, "height", "auto");
+						setClipStyle(headerTr, "position", "static");
+						setClipStyle(headerTr, "display", "table-row");
+						setClipClassName(headerTr, "table-header");
+						addChild(tbody, headerTr);
+
+						index = ref -1;
+						children = concat3(
+							mapi(headers, \columnIndex, c -> {
+								th = makeClip();
+								setClipTagName(th, "th");
+								setClipStyle(th, "width", "auto");
+								setClipStyle(th, "height", "auto");
+								setClipStyle(th, "position", "static");
+								setClipStyle(th, "display", "table-cell");
+								setClipStyle(th, "border-bottom", borderString);
+								addChild(headerTr, th);
+								index := ^index + 1;
+								t = m2t(c, p)
+									|> (if (columnIndex == 0) wrapFirstColumnIntoBorders(p) else idfn)
+									|> (if (columnIndex == length(headers) - 1) wrapLastColumnIntoBorders(p) else idfn);
+								renderTropicToClip(th, t, [TRenderZorder(const(concat(zorder, [^index]))), TRenderPosition("relative"), TRenderUpdateClipSizeEvents(["rollover", "transformchanged"])]);
+							}),
+							map(rs, \rowPair -> {
+								row = eitherMap(rowPair.first, rowsFn, []);
+								rowIndex = rowPair.second;
+								tr = makeClip();
+								setClipTagName(tr, "tr");
+								setClipStyle(tr, "width", "auto");
+								setClipStyle(tr, "height", "auto");
+								setClipStyle(tr, "position", "static");
+								setClipStyle(tr, "display", "table-row");
+								rowId = "row" + "-" + makeUuid();
+								setClipAttribute(tr, "id", rowId);
+								addChild(tbody, tr);
+								rowColumns = concat(state.makeCheckboxMCells(p, rowIndex), row);
+
+								lineSelectionEnabled =
+									fand(
+										state.selection.enabled,
+										fsubselect(state.selectionEnabled.enabled, FLift(\selEnabled -> elementAt(selEnabled, rowIndex, const(true))))
+									);
+								isInteractive = fand(
+									state.hoverEnabled.enabled,
+									fOr(lineSelectionEnabled, state.onClick.enabled)
+								);
+								rowGraphicsStyle = eitherMap(
+									rowBackgroundStyle,
+									\rb -> tgraphicsStyle2graphicsStyle(mgraphicsStyle2tgraphicsStyle(p, rb.fn(rowIndex))),
+									[]
+								);
+
+								concat(
+									[
+										makeSubscribeUns(
+											isInteractive,
+											\v -> {
+												if (v) {
+													setGlobalStyle("#" + rowId, "pointer-events:auto !important; cursor:pointer");
+													setGlobalStyle("#" + rowId + ":not(:hover):not([aria-selected=\"true\"])", graphics2cssStyle(rowGraphicsStyle));
+
+													[
+														\ -> {
+															setGlobalStyle("#" + rowId, "");
+														},
+														addEventListener(tr, "click", \ -> MListOnClickHandler(state.selection, state.selectionEnabled, state.onClick)(rowIndex)),
+													];
+												} else {
+													setGlobalStyle("#" + rowId, "pointer-events:none !important; cursor:unset");
+													setGlobalStyle("#" + rowId + ":hover", graphics2cssStyle(rowGraphicsStyle));
+
+													[
+														\ -> {
+															setGlobalStyle("#" + rowId, "");
+															setGlobalStyle("#" + rowId + ":hover", "");
+														}
+													];
+												}
+											}
+										),
+										\ -> {
+											setGlobalStyle("#" + rowId + ":not(:hover):not([aria-selected=\"true\"])", graphics2cssStyle(rowGraphicsStyle));
+
+											\ -> {
+												setGlobalStyle("#" + rowId + ":not(:hover):not([aria-selected=\"true\"])", "");
+											}
+										},
+										makeSubscribe(
+											fand(lineSelectionEnabled, fcontains(state.selection.selected, const(rowIndex))),
+											\v -> setClipAttribute(tr, "aria-selected", if (v) "true" else "false")
+										),
+										makeSubscribe(
+											fOr(lineSelectionEnabled, state.onClick.enabled),
+											\v -> setClipAttribute(tr, "aria-disabled", if (v) "false" else "true")
+										),
+										makeSubscribe(
+											fOr(lineSelectionEnabled, state.onClick.enabled),
+											\v -> setClipAttribute(tr, "disabled", if (v) "false" else "true")
+										),
+									],
+									mapi(rowColumns, \columnIndex, c -> {
+										td = makeClip();
+										setClipTagName(td, "td");
+										setClipStyle(td, "width", "auto");
+										setClipStyle(td, "height", "auto");
+										setClipStyle(td, "position", "static");
+										setClipStyle(td, "display", "table-cell");
+										setClipStyle(td, "border-bottom", borderString);
+										addChild(tr, td);
+										index := ^index + 1;
+										t = state.makeCell(p, rowIndex, columnIndex, c, false)
+											|> (if (columnIndex == 0) wrapFirstColumnIntoBorders(p) else idfn)
+											|> (if (columnIndex == length(rowColumns) - 1) wrapLastColumnIntoBorders(p) else idfn);
+										renderTropicToClip(td, t, [TRenderZorder(const(concat(zorder, [^index]))), TRenderPosition("relative"), TRenderUpdateClipSizeEvents(["rollover", "transformchanged"])]);
+									})
+								)
+							}) |> concatA,
+							[
+								\ -> {
+									setGlobalStyle("#" + tableId + " tr:not(.table-header):hover", graphics2cssStyle(selectedGraphicsStyle));
+									setGlobalStyle("#" + tableId + " tr:not(.table-header)[aria-selected=\"true\"]", graphics2cssStyle(selectedGraphicsStyle));
+
+									\ -> {
+										setGlobalStyle("#" + tableId + " tr:not(.table-header):hover", "");
+										setGlobalStyle("#" + tableId + " tr:not(.table-header)[aria-selected=\"true\"]", "");
+									}
+								}
+							]
+						);
+
+						d = map(children, apply0);
+
+						NativeRenderResult(
+							[table],
+							\ -> applyall(d)
+						);
+					})
+				)
+				|> (\t -> {
+					scrollBox = TFillWYT(tableWidth(expandRow));
+
+					MScroll2T(
+						manager,
+						p,
+						MScroll(
+							TFixSize(t, TSizedHeight(1., faddition(totalRowsHeight, const(state.lineHeight(true))))),
+							scrollBox,
+							concat3([
+									TScrollEnabled(state.scrollEnabled),
+									TScrollAxisEnabled(const(false), state.scrollEnabled),
+									MScrollBound(const(true), fselect(page, FLift(\pg -> pg.first <= 0)))
+								],
+								state.verticalScroll,
+								scrollStep
+							)
+						),
+						m2t
+					)
+				})
+				|> (\t -> TInspect([IAvailable(wh)], t))
+				|> TBorderBottom(-separatorsHeight - state.lineHeight(true))
+			} else if (lightweight) {
 				rowsBoxMaxWidth = make(0.);
 				rows : Transform<[Pair<Maybe<?>, int>]> =
 					fselect3(sorting.result, data, page, \sortRes, dat, pg ->
@@ -249,6 +497,7 @@ MDynamicDataTable2TInner(
 							MEnabled(fOr(lineSelectionEnabled, state.onClick.enabled))
 						], \__ -> t, m2t)
 					})
+					|> onHoverHandler(Some(j))
 					|> (\t -> eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
 							TIfLazy2(
 								fcontains(state.selection.selected, const(j)),
@@ -265,7 +514,7 @@ MDynamicDataTable2TInner(
 										eitherMap(
 											selectedBgStyle,
 											\sbs -> mgraphicsStyle2tgraphicsStyle(p, sbs.style),
-											[Fill(contrastingColor(p)), FillOpacity(if (getLightBackground(p)) 0.08 else 0.16)]
+											defaultSelectedBgStyleFn(p)
 										),
 										t
 									)
@@ -333,7 +582,8 @@ MDynamicDataTable2TInner(
 												false
 											), t
 										))
-								|> (\t -> if (state.separators) addSeparator(state.manager, p3, t, false, state.separatorsStyle) else t);
+								|> (\t -> if (state.separators) addSeparator(state.manager, p3, t, false, state.separatorsStyle) else t)
+								|> onHoverHandler(Some(j));
 
 							MCustomLine(
 								MGetFocusGroup(makeLineContent),
@@ -444,7 +694,9 @@ MDynamicDataTable2TInner(
 						)
 					)
 				)
-			};
+			}
+		}
+		|> onHoverHandler(None())
 
 		content
 		|> (\f -> TAvailableHeightPreventFillers(f, if (paginationState.cropPageHeight) visibleRowsHeight else rowsAvailableHeight))
@@ -545,9 +797,9 @@ MDynamicDataTable2TInner(
 		|> (if (!paginationState.anyType && isFConst(data) && isFConst(showFixedRow) && !fgetValue(state.scrollEnabled) && isFConst(expandRow))
 				makeTropicConstantHeight(Some((i2d(fgetValue(rowsCountB)) + b2d(fgetValue(showFixedRow))) * countRowHeight(fgetValue(expandRow))))
 			else idfn)
-		|> (\t -> if (state.separators) addSeparator(manager, p, t, true, state.separatorsStyle) else t)
+		|> (\t -> if (!state.domRender && state.separators) addSeparator(manager, p, t, true, state.separatorsStyle) else t)
 		// Header
-		|> (\f -> TLines2Dir(tableHeader(headers, p), f, p.rtl))
+		|> (\f -> if (state.domRender) TLines2Dir(f, TFixed(0.0, state.lineHeight(true) + separatorsHeight), p.rtl) else TLines2Dir(tableHeader(headers, p), f, p.rtl))
 		|> (\t : Tropic -> eitherMap(innerScrollState, \is -> {
 				defaultScrollBarStyle : TScrollbars = extractStruct(is.style, getMaterialScrollBar());
 				overlapContent = extractStruct(is.style, MScrollbarOverlapContent(true)).overlap;
@@ -584,8 +836,8 @@ MDynamicDataTable2TInner(
 			}, t))
 		|> MDTSideColumns(state, p, headers, data, rowsFn, sorting, innerScrollState, expandRow, yTranslation,
 				rowBackgroundStyle, selectedBgStyle, totalRowsHeight, visibleRowsHeight, rowsAvailableHeight, page, lightweight)
-		|> (\t -> TAccess([TagName("tbody")], t))
-		|> (\t -> TAccess([TagName("table"), AccessRole("table")], t))
+		|> (\t -> if (state.domRender) t else TAccess([TagName("tbody")], t))
+		|> (\t -> if (state.domRender) t else TAccess([TagName("table"), AccessRole("table")], t))
 		|> addHeaderActions(p)
 		// Bottom bar
 		|> (\f : Tropic -> TLines2Dir(f, footer, p.rtl))
@@ -676,6 +928,7 @@ MDTState(
 	selection : MListSelection,
 	selectionEnabled : MListSelectionEnabled,
 	onClick : MOnListClick,
+	onHover : MOnListHover,
 	clickEnabled : MClickEnabled,
 	fixedRow : Maybe<MFixedRow>,
 	fullWidthAdvanced : bool,
@@ -689,6 +942,8 @@ MDTState(
 	isCheckboxColumn : (int) -> bool,
 	checkboxSelectAllPages : Transform<bool>,
 	makeChkbox : (MFocusGroup, DynamicBehaviour<bool>, Transform<bool>, () -> void, Maybe<[MIconStyle]>, Maybe<Transform<string>>) -> Tropic,
+	makeCheckboxMCells : (MFocusGroup, int) -> [MCell],
+	makeCell : (MFocusGroup, int, int, MCell, bool) -> Tropic,
 	makeCells : (MFocusGroup, int, [MCell], bool, Maybe<MTableRowspanInfo>) -> Transform<[Tropic]>,
 	cellBox : (int, bool, int, int) -> Tropic,
 	enabled : Transform<bool>,
@@ -696,6 +951,7 @@ MDTState(
 	rowsBoxScrollPosition : TScrollPosition,
 	scrollEnabled : Transform<bool>,
 	verticalScroll : [MScrollStyle],
+	domRender : bool,
 	subs : [() -> () -> void],
 	m2t : (Material, MFocusGroup) -> Tropic
 );
@@ -713,6 +969,8 @@ makeMDataTableState(
 	cellBorder = 16.;
 	externalBorder = 16.;
 
+	domRender = isDomRenderEnabled(style);
+
 	enabled = extractStruct(style, MEnabled(const(true))).enabled;
 	hoverEnabled : MHoverEnabled = extractStruct(style, MHoverEnabled(const(true)));
 
@@ -729,6 +987,7 @@ makeMDataTableState(
 	separators = !contains(style, MNoSeparators());
 	separatorsStyle = extractStruct(style, MSeparatorsStyle([MFill(getSeparatorColor(parent)), FillOpacity(0.12)])).style;
 	onClick : MOnListClick = extractStruct(style, MOnListClick(const(false), nop1));
+	onHover : MOnListHover = extractStruct(style, MOnListHover(const(false), nop1));
 	clickEnabled : MClickEnabled = extractStruct(style, MClickEnabled(const(true)));
 
 	singleSelection = tryExtractStruct(style, MSingleSelection(make(-1)));
@@ -857,41 +1116,76 @@ makeMDataTableState(
 		lineHeight(h) * i2d(rowspan)
 	);
 
-	makeCells = \p, j, row : [MCell], firstColumn : bool, rowspanInfo : Maybe<MTableRowspanInfo> -> {
-		checkbox = eitherMap(checkboxSelection, \__ ->
-			if (j >= 0) {
-				selRow = make(contains(getValue(selection.selected), j));
-				makeChkbox(p, selRow,
-					fsubselect(selectionEnabled.enabled, FLift(\en ->
-						fand(selection.enabled, elementAt(en, j, const(true))),
-					)),
-					\ -> {
-						sel = getValue(selection.selected);
+	makeCell = \p : MFocusGroup, rowIndex : int, columnIndex : int, cell : MCell, firstColumn : bool -> {
+		if (columnIndex >= columnsCount)
+			TEmpty()
+		else {
+			colStyle = columns[columnIndex].style;
+			colEnabled = extractStruct(colStyle, MEnabled(const(true))).enabled;
+			box = cellBox(columnIndex, false, if (firstColumn) 1 else cell.colspan, cell.rowspan);
+			cellContent = cell.content;
+			content =
+				eitherMap(
+					tryExtractStruct(colStyle, MWidthByContentLimited(const(-1.), const(-1.))), \wbcl ->
+					MSelect(fstall(cellWs, 0), \cws -> {
+						widthInspector = elementAt(elementAt(cws, rowIndex + b2i(isSome(fixedRow)), []), columnIndex, make(0.0));
+						if (fgetValue(wbcl.maxWidth) == -1.)
+							MAttachWidth(cellContent, widthInspector)
+						else
+							MInspect([IMaxWidth(widthInspector)], cellContent)
+					}),
+					cellContent
+				);
 
-						if (selection.multiple) {
-							if (!getValue(selRow))
-								nextDistinct(selection.selected, removeAll(sel, j))
-							else if (!contains(sel, j))
-								nextDistinct(selection.selected, arrayPush(sel, j))
-						} else {
-							if (getValue(selRow))
-								nextDistinct(selection.selected, [j])
-							else
-								nextDistinct(selection.selected, [])
-						}
-					},
-					None(),
-					None()
-				)
-				|> (\t -> TConstruct(
-					[\ -> fconnectSelect(selection.selected, selRow, \s -> contains(s, j))], t
-				))
-				|> unitaryCell
-				|> v2a
-			}
-			else [TFixed(checkboxColumnWidth, 0.) |> unitaryCell],
-			[]
-		);
+			MCellContent2T(manager, p, content, rowHeight, box, crop && !isCheckboxColumn(columnIndex), m2t)
+			|> alignCellContent(p, cellBorder, colStyle, box)
+			|> TFixHeight(TFixed(0., lineHeight(false)))
+			|> (\t -> if (domRender) t else TAccess(concatA([
+				[TagName("td"), AccessRole("cell")],
+				if (cell.colspan > 1) [FAccessAttribute("colspan", const(i2s(cell.colspan)))] else [],
+				if (cell.rowspan > 1) [FAccessAttribute("rowspan", const(i2s(cell.rowspan)))] else [],
+			]), t))
+			|> (\t -> TShow(colEnabled, t))
+		}
+	}
+
+	makeCheckboxMCells = \p, j -> eitherMap(checkboxSelection, \__ ->
+		if (j >= 0) {
+			selRow = make(contains(getValue(selection.selected), j));
+			makeChkbox(p, selRow,
+				fsubselect(selectionEnabled.enabled, FLift(\en ->
+					fand(selection.enabled, elementAt(en, j, const(true))),
+				)),
+				\ -> {
+					sel = getValue(selection.selected);
+
+					if (selection.multiple) {
+						if (!getValue(selRow))
+							nextDistinct(selection.selected, removeAll(sel, j))
+						else if (!contains(sel, j))
+							nextDistinct(selection.selected, arrayPush(sel, j))
+					} else {
+						if (getValue(selRow))
+							nextDistinct(selection.selected, [j])
+						else
+							nextDistinct(selection.selected, [])
+					}
+				},
+				None(),
+				None()
+			)
+			|> (\t -> TConstruct(
+				[\ -> fconnectSelect(selection.selected, selRow, \s -> contains(s, j))], t
+			))
+			|> unitaryCell
+			|> v2a
+		}
+		else [TFixed(checkboxColumnWidth, 0.) |> unitaryCell],
+		[]
+	);
+
+	makeCells = \p, j, row : [MCell], firstColumn : bool, rowspanInfo : Maybe<MTableRowspanInfo> -> {
+		checkbox = makeCheckboxMCells(p, j);
 
 		fullRow : Transform<[MCell]> = [
 			const(checkbox),
@@ -926,38 +1220,7 @@ makeMDataTableState(
 		|> fconcatA;
 
 		fselect(fullRow, FLift(\fr ->
-			mapi(fr, \i, cell : MCell -> {
-				if (i >= columnsCount)
-					TEmpty()
-				else {
-					colStyle = columns[i].style;
-					colEnabled = extractStruct(colStyle, MEnabled(const(true))).enabled;
-					box = cellBox(i, false, if (firstColumn) 1 else cell.colspan, cell.rowspan);
-					cellContent = cell.content;
-					content =
-						eitherMap(
-							tryExtractStruct(colStyle, MWidthByContentLimited(const(-1.), const(-1.))), \wbcl ->
-							MSelect(fstall(cellWs, 0), \cws -> {
-								widthInspector = elementAt(elementAt(cws, j + b2i(isSome(fixedRow)), []), i, make(0.0));
-								if (fgetValue(wbcl.maxWidth) == -1.)
-									MAttachWidth(cellContent, widthInspector)
-								else
-									MInspect([IMaxWidth(widthInspector)], cellContent)
-							}),
-							cellContent
-						);
-
-					MCellContent2T(manager, p, content, rowHeight, box, crop && !isCheckboxColumn(i), m2t)
-					|> alignCellContent(p, cellBorder, colStyle, box)
-					|> TFixHeight(TFixed(0., lineHeight(false)))
-					|> (\t -> TAccess(concatA([
-							[TagName("td"), AccessRole("cell")],
-							if (cell.colspan > 1) [FAccessAttribute("colspan", const(i2s(cell.colspan)))] else [],
-							if (cell.rowspan > 1) [FAccessAttribute("rowspan", const(i2s(cell.rowspan)))] else [],
-						]), t))
-					|> (\t -> TShow(colEnabled, t))
-				}
-			})
+			mapi(fr, \i, cell -> makeCell(p, j, i, cell, firstColumn))
 		))
 	};
 
@@ -1002,6 +1265,7 @@ makeMDataTableState(
 		selection,
 		selectionEnabled,
 		onClick,
+		onHover,
 		clickEnabled,
 		fixedRow,
 		fullWidthAdvanced,
@@ -1015,6 +1279,8 @@ makeMDataTableState(
 		isCheckboxColumn,
 		checkboxSelectAllPages,
 		makeChkbox,
+		makeCheckboxMCells,
+		makeCell,
 		makeCells,
 		cellBox,
 		enabled,
@@ -1022,6 +1288,7 @@ makeMDataTableState(
 		rowsBoxScrollPosition,
 		scrollEnabled,
 		verticalScroll,
+		domRender,
 		subs,
 		m2t
 	)
@@ -1568,7 +1835,7 @@ MDTTitles(
 				else t,
 				t
 			))
-		|> (\t -> TAccess([TagName("th"), AccessRole("columnheader"), FAccessAttribute("scope", const("col")), FAccessAttribute("aria-sort", ascendingAttribute)], t))
+		|> (\t -> if (state.domRender) t else TAccess([TagName("th"), AccessRole("columnheader"), FAccessAttribute("scope", const("col")), FAccessAttribute("aria-sort", ascendingAttribute)], t))
 		|> (\t -> TShow(colEnabled, t))
 	});
 }

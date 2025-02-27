@@ -21,11 +21,15 @@ public class FxLoader extends Application {
 
 		Class cl = Class.forName(flowappMain);
 		Constructor constructor = cl.getConstructor();
-		FlowRuntime runtime = (FlowRuntime) constructor.newInstance();
+		FxFlowRuntime fxRuntime = (FxFlowRuntime) constructor.newInstance();
+
+		primaryStage.setOnCloseRequest(event -> {
+			fxRuntime.stop();
+		});
 
 		new FxRenderSupport(primaryStage);
 
-		runtime.start();
+		fxRuntime.start();
 	}
 
 	public static void main(String[] args) {

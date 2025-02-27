@@ -587,4 +587,17 @@ public class RenderSupport extends NativeHost {
 		System.out.println("Warning: Empty takeSnapshot called");
 		return null;
 	}
+	public static Object clearGraphics(Object v) {
+		System.out.println("TODO: implement 'clearGraphics'");
+		return null;
+	}
+	public static Object setClipDebugInfo(Object a, String b, Object c) {
+		System.out.println("TODO: implement 'setClipDebugInfo'");
+		return null;
+	}
+	public static Integer getStageId(Object v) {
+		System.out.println("TODO: implement 'getStageId'");
+		return 0;
+	}
+
 }

@@ -9,7 +9,7 @@ export {
 }
 
 fi2JavaBuildRaw(cfg : FiJavaConfig, path : string, callback : (int) -> void) -> void {
-	fi2JavaBuildRawCheckDependencies(cfg, \code -> 
+	fi2JavaBuildRawCheckDependencies(cfg, \code ->
 		if (code == 0) {
 			fi2JavaBuildFatJar(cfg, path, callback);
 		} else {
@@ -41,7 +41,7 @@ fi2JavaBuildRawCheckDependencies(cfg : FiJavaConfig, callback : (int) -> void) -
 				} else {
 					fcPrintln("Gradle version: " + d2s(fcGradleVersion(cfg)) + " is too old. Use >= 6.7", cfg.threadId);
 				}
-				fcPrintln( 
+				fcPrintln(
 					"There are dependencies, which are not present in '" + java_lib_dir + "', please place them there:\n" +
 					strIndent(strGlue(jar_deps, "\n")), cfg.threadId
 				);
@@ -61,7 +61,7 @@ fi2JavaBuildFatJar(cfg : FiJavaConfig, path : string, callback : (int) -> void) 
 	java_deps = fi2JavaJarDependencies(cfg, path);
 	jobs = concat3(
 		[
-			fi2javaCompileJavaProgram(cfg, java_deps, outdir, flowdir, path), 
+			fi2javaCompileJavaProgram(cfg, java_deps, outdir, flowdir, path),
 			fi2javaBuildRuntimeJar(cfg, jar, outdir, flowdir)
 		],
 		concat(
@@ -88,7 +88,7 @@ fi2JavaJarDependencies(cfg : FiJavaConfig, path : string) -> [Pair<string, strin
 		path1 = pathCombine(path, dep);
 		if (fileExists(path1)) Some(Pair(path, dep)) else {
 			path2 = pathCombineMany([flow_dir, "platforms", "java", "lib"]);
-			if (fileExists(pathCombine(path2, dep))) Some(Pair(path2, dep)) 
+			if (fileExists(pathCombine(path2, dep))) Some(Pair(path2, dep))
 			else {
 				fcPrintln("library: " + dep + " is not resolved", cfg.threadId);
 				None();
@@ -107,7 +107,7 @@ fi2JavaBuilderExitHandler(cfg : FiJavaConfig, prog : string, args : [string], su
 			fcPrintln("stdout:\n" + stdout, cfg.threadId);
 			fcPrintln("stderr:\n" + stderr, cfg.threadId);
 			fcPrintln(
-				"Failed to run '" + prog + concatStrings(map(args, \arg -> " " + arg)) + "'\n" + 
+				"Failed to run '" + prog + concatStrings(map(args, \arg -> " " + arg)) + "'\n" +
 				"Check if " + prog + " is installed, JAVA_HOME environment variable is properly defined and is present in your PATH.", cfg.threadId);
 			failure(5 + errcode)
 		}
@@ -162,8 +162,8 @@ fi2javaCompileJavaProgram(cfg : FiJavaConfig, java_deps : [Pair<string, string>]
 				None();
 			}
 		});
-		args0 = ["-Xlint:unchecked", "-encoding", "UTF-8", "-cp", 
-			flowdir + "/platforms/java" + cp_sep + "javagen" + 
+		args0 = ["-Xlint:unchecked", "-encoding", "UTF-8", "-cp",
+			flowdir + "/platforms/java" + cp_sep + "javagen" +
 				fold(java_deps, "", \acc, dep -> acc + cp_sep + pathCombine(dep.first, dep.second)) +
 				fold(extern_natives, "", \acc, nat -> acc + cp_sep + resolveRelativePath(nat))
 			,
@@ -188,12 +188,43 @@ fi2javaAddLibraryJar(cfg : FiJavaConfig, outdir : string, jar : string, dir : st
 					startProcess("jar", args, lib_dir, "", fi2JavaBuilderExitHandler(cfg, "jar", args, fulfil, reject))
 			})]
 		},
-		[Promise(\fulfil, reject -> {
-			fcVerbose(cfg, 0, "Adding a library " + jar_lib + " to " + jar);
-			args = ["fu", jar, "-C", lib_dir, "."];
-			fcVerbose(cfg, 1, "\tjar " + strGlue(args, " "));
-			startProcess("jar", args, outdir, "", fi2JavaBuilderExitHandler(cfg, "jar", args, fulfil, reject))
-		})]
+		[	Promise(\fulfil, __ -> {
+				metaInfFolder = pathCombine(lib_dir, "META-INF");
+				if (isDirectory(metaInfFolder)) {
+					files = filtermap(readDirectory(metaInfFolder), \item -> {
+						itemPath = pathCombine(metaInfFolder, item);
+						if (isDirectory(itemPath)) {
+							None();
+						} else {
+							Some(itemPath);
+						}
+					});
+					if (files != []) {
+						fcVerbose(cfg, 0, "Deleting files from META-INF folder of " + lib_dir);
+						notDeleted = filtermap(files, \file -> {
+							err = deleteFile(file);
+							if (err == "") {
+								None();
+							} else {
+								fcPrintln("Could not delete file " + file + ": " + err, cfg.threadId);
+								Some(file);
+							}
+						});
+						if (notDeleted != []) {
+							fcPrintln("Could not delete these files:\n\t" + strGlue(notDeleted, "\n\t"), cfg.threadId);
+							fcPrintln("Generated jar file can be corrupted, please remove these files and recompile " + jar, cfg.threadId);
+						}
+					}
+				}
+				fulfil(0);
+			}),
+			Promise(\fulfil, reject -> {
+				fcVerbose(cfg, 0, "Adding a library " + jar_lib + " to " + jar);
+				args = ["fuM", jar, "-C", lib_dir, "."];
+				fcVerbose(cfg, 1, "\tjar " + strGlue(args, " "));
+				startProcess("jar", args, outdir, "", fi2JavaBuilderExitHandler(cfg, "jar", args, fulfil, reject))
+			}),
+		]
 	);
 }
 

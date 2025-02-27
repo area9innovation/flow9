@@ -53,6 +53,7 @@ export {
 	TAttachHeightTrigger(t : Tropic, height : DynamicBehaviour<double>, trigger : Transform<bool>) -> Tropic;
 
 	TThrottleMetrics(t : Tropic, maxDelta : int) -> Tropic;
+	TThrottleMetricsNextFrame(t : Tropic) -> Tropic;
 
 	// A rectangle that expands to the given size
 	TRectangle(style : [TGraphicsStyle], size : Tropic) -> Tropic;
@@ -362,6 +363,15 @@ export {
 	TBorderT(left : Transform<double>, top : Transform<double>, right : Transform<double>, bottom : Transform<double>, t : Tropic) -> Tropic;
 	TBorderTDir(left : Transform<double>, top : Transform<double>, right : Transform<double>, bottom : Transform<double>, t : Tropic, isRTL : bool) -> Tropic;
 
+	TBorderTopT(border : Transform<double>) -> (Tropic) -> Tropic;
+	TBorderBottomT(border : Transform<double>) -> (Tropic) -> Tropic;
+	TBorderLeftT(border : Transform<double>) -> (Tropic) -> Tropic;
+	TBorderRightT(border : Transform<double>) -> (Tropic) -> Tropic;
+	TBorderStartT(border : Transform<double>, isRTL : bool) -> (Tropic) -> Tropic;
+	TBorderEndT(border : Transform<double>, isRTL : bool) -> (Tropic) -> Tropic;
+	TBorderTopBottomT(border : Transform<double>) -> (Tropic) -> Tropic;
+	TBorderLeftRightT(border : Transform<double>) -> (Tropic) -> Tropic;
+
 	TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeight>) -> Tropic>], above : bool) -> Tropic;
 	// Helper for dynamic text
 	TDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic;
@@ -420,6 +430,8 @@ export {
 
 	THTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Tropic;
 
+	TNativeForm(wh : Transform<WidthHeight>, fn : (available : Behaviour<WidthHeight>, zorder : [int], tabOrder : [int]) -> NativeRenderResult) -> Tropic;
+
 	// Helper to move already rendered clip from one spot to another
 	// Automatically dettaches and reattaches to original clip if tropic passed to 'fn' is rendered anywhere
 	TMoveClip(t : Tropic, customPosScale : Maybe<Transform<PositionScale>>, fn : (Tropic) -> void) -> Tropic;
@@ -432,7 +444,8 @@ export {
 
 	loadTPdfDocument(url : string, headers : [KeyValue], onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) -> void;
 
-	TPdfDocumentStyle ::= OnError;
+	TPdfDocumentStyle ::= OnError, TPdfWH;
+		TPdfWH(wh : Transform<WidthHeight>);
 
 	TPdfDocument(
 		pageCount : int,
@@ -1080,11 +1093,10 @@ TScrollable(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : 
 			ba1 =
 				t2a(
 					content,
-					TParentInfo(
-						wb,
-						hb,
-						parent.environment,
-						fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(scrollRect.x, scrollRect.y)))
+					TParentInfo(parent with
+						maxX = wb,
+						maxY = hb,
+						transformMatrix = fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(scrollRect.x, scrollRect.y)))
 					),
 					sheet,
 					metricsOnly
@@ -1633,7 +1645,7 @@ TLetMany(items : [Pair<string, Tropic>], scope : Tropic) -> Tropic {
 
 TRotate90(tropic : Tropic) -> Tropic {
 	TransformTAcc(\t2a, p, s, mo -> {
-		bf = t2a(tropic, TParentInfo(p.maxY, p.maxX, p.environment, p.transformMatrix), s, mo);
+		bf = t2a(tropic, TParentInfo(p with maxX = p.maxY, maxY = p.maxX), s, mo);
 
 		TAcc(
 			FRotate(const(90.), bf.form)
@@ -1659,7 +1671,7 @@ TRotate90(tropic : Tropic) -> Tropic {
 
 TRotate90Left(tropic : Tropic) -> Tropic {
 	TransformTAcc(\t2a, p, s, mo -> {
-		bf = t2a(tropic, TParentInfo(p.maxY, p.maxX, p.environment, p.transformMatrix), s, mo);
+		bf = t2a(tropic, TParentInfo(p with maxX = p.maxY, maxY = p.maxX), s, mo);
 
 		TAcc(
 			FRotate(const(-90.), bf.form)
@@ -1912,11 +1924,8 @@ TCopySize2(content : Tropic, copyFn : (Tropic, Tropic) -> Tropic) -> Tropic {
 			innerParentInfo = make(pi);
 
 			parentInfo =
-				TParentInfo(
-					pi.maxX,
-					pi.maxY,
-					pi.environment,
-					fsubselect(innerParentInfo, FLift(\v -> v.transformMatrix)) // Handle properly view bounds in child
+				TParentInfo(pi with
+					transformMatrix = fsubselect(innerParentInfo, FLift(\v -> v.transformMatrix)) // Handle properly view bounds in child
 				);
 
 
@@ -2141,6 +2150,31 @@ TThrottleMetrics(t : Tropic, maxDelta : int) -> Tropic {
 			fthrottle2(b1.xFillers, maxDelta),
 			fthrottle2(b1.yFillers, maxDelta),
 			fthrottle2(b1.addFillers, maxDelta),
+			b1.xConstant,
+			b1.yConstant,
+			b1.disposers
+		)
+	})
+}
+
+TThrottleMetricsNextFrame(t : Tropic) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		b1 = t |> t2a;
+
+		TAcc(
+			b1.form,
+			TFormMetrics(
+				fthrottle2NextFrame(b1.metrics.width),
+				fthrottle2NextFrame(b1.metrics.height),
+				fthrottle2NextFrame(b1.metrics.baseline)
+			),
+			fthrottle2NextFrame(b1.minWidth),
+			fthrottle2NextFrame(b1.minHeight),
+			fthrottle2NextFrame(b1.maxWidth),
+			fthrottle2NextFrame(b1.maxHeight),
+			fthrottle2NextFrame(b1.xFillers),
+			fthrottle2NextFrame(b1.yFillers),
+			fthrottle2NextFrame(b1.addFillers),
 			b1.xConstant,
 			b1.yConstant,
 			b1.disposers
@@ -2407,11 +2441,9 @@ TBorderT(left : Transform<double>, top : Transform<double>, right : Transform<do
 
 		t2a = \tr -> tropic2acc(
 			tr,
-			TParentInfo(
-				fsubtract(parent.maxX, wSum),
-				fsubtract(parent.maxY, hSum),
-				parent.environment,
-				parent.transformMatrix
+			TParentInfo(parent with
+				maxX = fsubtract(parent.maxX, wSum),
+				maxY = fsubtract(parent.maxY, hSum),
 			),
 			sheet,
 			metricsOnly
@@ -2444,6 +2476,38 @@ TBorderT(left : Transform<double>, top : Transform<double>, right : Transform<do
 TBorderTDir(left : Transform<double>, top : Transform<double>, right : Transform<double>, bottom : Transform<double>, t : Tropic, isRTL : bool) -> Tropic {
 	if (isRTL) TBorderT(right, top, left, bottom, t)
 	else TBorderT(left, top, right, bottom, t)
+}
+
+TBorderTopT(border : Transform<double>) -> (Tropic) -> Tropic {
+	\tr -> TBorderT(zero, border, zero, zero, tr)
+}
+
+TBorderBottomT(border : Transform<double>) -> (Tropic) -> Tropic {
+	\tr -> TBorderT(zero, zero, zero, border, tr)
+}
+
+TBorderLeftT(border : Transform<double>) -> (Tropic) -> Tropic {
+	\tr -> TBorderT(border, zero, zero, zero, tr)
+}
+
+TBorderRightT(border : Transform<double>) -> (Tropic) -> Tropic {
+	\tr -> TBorderT(zero, zero, border, zero, tr)
+}
+
+TBorderStartT(border : Transform<double>, isRTL : bool) -> (Tropic) -> Tropic {
+	\tr -> TBorderTDir(border, zero, zero, zero, tr, isRTL)
+}
+
+TBorderEndT(border : Transform<double>, isRTL : bool) -> (Tropic) -> Tropic {
+	\tr -> TBorderTDir(zero, zero, border, zero, tr, isRTL)
+}
+
+TBorderTopBottomT(border : Transform<double>) -> (Tropic) -> Tropic {
+	\tr -> TBorderT(zero, border, zero, border, tr)
+}
+
+TBorderLeftRightT(border : Transform<double>) -> (Tropic) -> Tropic {
+	\tr -> TBorderT(border, zero, border, zero, tr)
 }
 
 TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeight>) -> Tropic>], above : bool) -> Tropic {
@@ -2633,11 +2697,10 @@ TEvenGrid(content : [[Tropic]], isRtl : bool) -> Tropic {
 				mapi(content, \j, c -> mapi(c, \i, tr ->
 					t2a(
 						tr,
-						TParentInfo(
-							columnWidths[i],
-							rowHeights[j],
-							p.environment,
-							fworldtransform(p.transformMatrix, fpoint2transform(fpoint(translatesX[i], translatesY[j])))
+						TParentInfo(p with
+							maxX = columnWidths[i],
+							maxY = rowHeights[j],
+							transformMatrix = fworldtransform(p.transformMatrix, fpoint2transform(fpoint(translatesX[i], translatesY[j])))
 						),
 						s,
 						mo
@@ -3044,6 +3107,27 @@ THTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> 
 	)
 }
 
+TNativeForm(wh : Transform<WidthHeight>, fn : (available : Behaviour<WidthHeight>, zorder : [int], tabOrder : [int]) -> NativeRenderResult) -> Tropic {
+	metrics = make(FormMetrics(0.0, 0.0, 0.0, 0.0));
+
+	TFForm(
+		FConstructor(
+			FNativeForm(
+				"",
+				metrics,
+				\ -> FEmpty(),
+				fn
+			),
+			makeSubscribe(wh, \v -> next(metrics, FormMetrics(v.width, v.height, v.height, v.height)))
+		),
+		TFormMetrics(
+			fwidth(wh),
+			fheight(wh),
+			fheight(wh)
+		)
+	)
+}
+
 TMoveClip(t : Tropic, customPosScale : Maybe<Transform<PositionScale>>, fn : (Tropic) -> void) -> Tropic {
 	TransformTAcc(\t2a, pi0, st, mo -> {
 		useCustomTransformMatrix = make(false);
@@ -3127,12 +3211,14 @@ filterFPdfDocumentStyle(style : [TPdfDocumentStyle]) -> [FPdfDocumentStyle] {
 	filtermap(style, \st ->
 		switch (st) {
 			OnError(__): Some(st);
+			TPdfWH(__): None();
 		}
 	)
 }
 
 loadTPdfDocument(url : string, headers : [KeyValue], onLoad : (TPdfDocument) -> void, style : [TPdfDocumentStyle]) {
 	makeTViewFn = \document -> \page -> {
+		pdfWHM = tryExtractStruct(style, TPdfWH(makeWH()));
 		availableWH = makeWH();
 		metrics = make(FormMetrics(0.0, 0.0, 0.0, 0.0));
 		tMetrics = TFormMetrics(
@@ -3141,14 +3227,18 @@ loadTPdfDocument(url : string, headers : [KeyValue], onLoad : (TPdfDocument) -> 
 			fselect(metrics, FLift(\m -> m.baseline))
 		);
 
-		TInspect(
-			[
-				IAvailable(availableWH)
-			],
-			TFForm(
-				document.getPageView(page, [FPdfMetrics(metrics)], availableWH),
-				tMetrics
-			)
+		TFForm(
+			document.getPageView(page, [FPdfMetrics(metrics)], eitherMap(pdfWHM, \pdfWH -> pdfWH.wh, availableWH)),
+			tMetrics
+		) |> (\t ->
+			if (isNone(pdfWHM)) {
+				TInspect(
+					[
+						IAvailable(availableWH)
+					],
+					t
+				)
+			} else t
 		)
 	}
 

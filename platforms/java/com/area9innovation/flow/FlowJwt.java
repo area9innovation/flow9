@@ -153,6 +153,42 @@ public class FlowJwt extends NativeHost {
 		return builder.sign(algorithm);
 	}
 
+	public static String createJwtAlgorithm(String key, String jsonClaims, String algorithm) {
+		try {
+			Algorithm alg = null;
+			if (algorithm.equals("HS256")) {
+				alg = Algorithm.HMAC256(key);
+			} else if (algorithm.equals("HS384")) {
+				alg = Algorithm.HMAC384(key);
+			} else if (algorithm.equals("HS512")) {
+				alg = Algorithm.HMAC512(key);
+			} else if (algorithm.equals("RS256")) {
+				alg = Algorithm.RSA256(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
+			} else if (algorithm.equals("RS384")) {
+				alg = Algorithm.RSA384(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
+			} else if (algorithm.equals("RS512")) {
+				alg = Algorithm.RSA512(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
+			} else {
+				return "Error: Algorithm not supported";
+			}
+			JWTCreator.Builder builder = JWT.create().withPayload(jsonClaims);
+			return builder.sign(alg);
+		} catch (Exception e) {
+			// Some exceptions have a null getMessage value
+			String message = e.getMessage();
+			if (message == null || message.isEmpty()) {
+				String simpleName = e.getClass().getSimpleName();
+				if (simpleName == null || simpleName.isEmpty()) {
+					return "Error: Exception";
+				} else {
+					return "Error: " + simpleName;
+				}
+			} else {
+				return "Error: " + message;
+			}
+		}
+	}
+
 	public static PublicKey getPemPublicKeyFromString(String publicKeyPEM, String keyType) throws Exception {
 		publicKeyPEM = publicKeyPEM.replace("-----BEGIN PUBLIC KEY-----", "");
 		publicKeyPEM = publicKeyPEM.replace("-----END PUBLIC KEY-----", "");
@@ -161,6 +197,20 @@ public class FlowJwt extends NativeHost {
 
 		KeyFactory kf = KeyFactory.getInstance(keyType);
 		return kf.generatePublic(new java.security.spec.X509EncodedKeySpec(decodedPublicKey));
+	}
+
+	public static PrivateKey getPemRsaPkcs8PrivateKeyFromString(String privateKeyPEM) throws Exception {
+		String key = privateKeyPEM.replace("-----BEGIN PRIVATE KEY-----", "")
+                 .replace("-----END PRIVATE KEY-----", "")
+                 .replaceAll("\\s", "");
+        // Decode the Base64 string
+        byte[] keyBytes = Base64.getDecoder().decode(key);
+
+		 // Create the key specification
+        PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
+        // Generate the PrivateKey object from the specification
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+        return keyFactory.generatePrivate(keySpec);
 	}
 
 	public static RSAPublicKey getRSAPublicKeyFromJsonString(String jsonStr) throws Exception {
@@ -193,27 +243,17 @@ public class FlowJwt extends NativeHost {
 		return pubKey;
 	}
 
-	public static String getJwtAlgHeader(String jwtStr) {
+	public static String verifyJwtAlgorithm(String jwtStr, String keyStr, String algorithmStr) {
 		try {
-			DecodedJWT jwt = JWT.decode(jwtStr);
-			String header = new String(Base64.getDecoder().decode(jwt.getHeader()), "UTF-8");
-			JSONObject json = (JSONObject) new JSONParser().parse(header);
-			return (String)json.get("alg");
-		} catch (Exception e) {
-			return "";
-		}
-	}
-
-	public static String verifyJwtWithPublicKey(String jwtStr, String keyStr, String algorithmStr) {
-		try {
-			if (algorithmStr.equals("")) {
-				algorithmStr = getJwtAlgHeader(jwtStr);
-				if (algorithmStr.equals("")) {
-					return "Algorithm is not specified";
-				}
-			}
 			Algorithm algorithm = null;
-			if (algorithmStr.equals("RS256") || algorithmStr.equals("RS384") || algorithmStr.equals("RS512")) {
+			// Convert the key string to UTF8 bytes
+			if (algorithmStr.equals("HS256")) {
+				algorithm = Algorithm.HMAC256(keyStr);
+			} else if (algorithmStr.equals("HS384")) {
+				algorithm = Algorithm.HMAC384(keyStr);
+			} else if (algorithmStr.equals("HS512")) {
+				algorithm = Algorithm.HMAC512(keyStr);
+			} else if (algorithmStr.equals("RS256") || algorithmStr.equals("RS384") || algorithmStr.equals("RS512")) {
 				RSAPublicKey publicKey = null;
 				if (keyStr.startsWith("{")) {
 					publicKey = getRSAPublicKeyFromJsonString(keyStr);
@@ -244,11 +284,30 @@ public class FlowJwt extends NativeHost {
 			} else {
 				return "Algorithm not supported";
 			}
-			JWTVerifier verifier = JWT.require(algorithm).build();
+
+			// Accepts some seconds of leeway to account for clock skew. (5 minutes is default for OIDC and LTI)
+			long clockSkewSeconds = 300; // 5 minutes
+			
+			JWTVerifier verifier = 
+				JWT.require(algorithm)
+				.acceptLeeway(clockSkewSeconds)
+				.build();
+
 			verifier.verify(jwtStr);
 			return "OK";
 		} catch (Exception e) {
-			return e.getMessage();
+			// Some exceptions have a null getMessage value
+			String message = e.getMessage();
+			if (message == null || message.isEmpty()) {
+				String simpleName = e.getClass().getSimpleName();
+				if (simpleName == null || simpleName.isEmpty()) {
+					return "Exception";
+				} else {
+					return simpleName;
+				}
+			} else {
+				return message;
+			}
 		}
 	}
 }
