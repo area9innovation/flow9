@@ -26,7 +26,7 @@ typedef void (^PositionBlock)(CMTime);
 @property (readwrite, copy) VoidBlock OnUserResume;
 @property (readwrite, copy) VoidBlock OnUserPause;
 
-- (void) loadVideo: (NSURL*) videoUrl onResolutionReceived: (void (^)(float width, float height)) on_resolution_received
+- (void) loadVideo: (NSURL*) videoUrl withHeaders: (NSDictionary*) headers onResolutionReceived: (void (^)(float width, float height)) on_resolution_received
         onSuccess: (void (^)(float duration)) on_success
         onError: (void (^)()) on_error onFrameReady: (void (^)(CMTime)) on_frame;
 - (void) renderFrame: (CMTime) cur_time;

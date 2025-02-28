@@ -2,7 +2,49 @@
 #import "utils.h"
 #import <mach/mach_time.h>
 
+#import <AVFoundation/AVFoundation.h>
+
 #define VIDEO_FPS 48
+
+@interface CustomAssetResourceLoaderDelegate : NSObject <AVAssetResourceLoaderDelegate>
+@property (nonatomic, strong) NSDictionary *headers;
+@end
+
+@implementation CustomAssetResourceLoaderDelegate
+
+- (instancetype)initWithHeaders:(NSDictionary *)headers {
+    self = [super init];
+    if (self) {
+        _headers = headers;
+    }
+    return self;
+}
+
+// Intercept and modify the URL loading request
+- (BOOL)resourceLoader:(AVAssetResourceLoader *)resourceLoader shouldWaitForLoadingRequest:(AVAssetResourceLoadingRequest *)loadingRequest {
+    NSMutableURLRequest *newRequest = [loadingRequest.request mutableCopy];
+
+    // Add custom headers
+    for (NSString *key in self.headers) {
+        [newRequest setValue:self.headers[key] forHTTPHeaderField:key];
+    }
+
+    // Perform the modified request
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:newRequest completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+        if (data && response) {
+            loadingRequest.response = response;
+            [loadingRequest.dataRequest respondWithData:data];
+            [loadingRequest finishLoading];
+        } else {
+            [loadingRequest finishLoadingWithError:error];
+        }
+    }];
+    
+    [task resume];
+    return YES;
+}
+
+@end
 
 @implementation FlowAVPlayerView
 
@@ -112,7 +154,7 @@ static BOOL UseOpenGLVideo = NO;
 
 // TO DO : move to controller
 
-- (void) loadVideo: (NSURL*) videoUrl onResolutionReceived: (void (^)(float width, float height)) on_resolution_received
+- (void) loadVideo: (NSURL*) videoUrl withHeaders: (NSDictionary*) headers onResolutionReceived: (void (^)(float width, float height)) on_resolution_received
         onSuccess: (void (^)(float duration)) on_success
         onError: (void (^)()) on_error onFrameReady: (void (^)(CMTime)) on_frame {
     self.OnFrame = on_frame;
@@ -122,7 +164,9 @@ static BOOL UseOpenGLVideo = NO;
     
     __block FlowAVPlayerView* blockSelf = self;
     
+    CustomAssetResourceLoaderDelegate *resourceLoaderDelegate = [[CustomAssetResourceLoaderDelegate alloc] initWithHeaders:headers];
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL: videoUrl options: nil];
+    [asset.resourceLoader setDelegate:resourceLoaderDelegate queue:dispatch_get_main_queue()];
     NSString *tracksKey = @"tracks";
     
     AVAssetImageGenerator* imageGenerator = [AVAssetImageGenerator assetImageGeneratorWithAsset:asset];
