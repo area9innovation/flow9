@@ -1675,17 +1675,18 @@ MMenuLines2Material(
 						extractStruct(style, MHighlightOnFocus(const(true))),
 						extractStruct(style, MHighlightOnHover(const(true))),
 						MFocusOnDown(ref true),
-						FAccessAttribute("aria-selected", const(if (popupRole == "menu") "" else b2s(selected))),
 						extractStruct(_style, MRippleOutlineEnabled(const(false))),
 						MFocused(focused)
 					]
-					|> (\arr -> arrayPush(arr,
-							if (popupRole == "menu" && !mobile) FAccessAttribute("aria-hidden", fselectLift(focused, \foc -> b2s(!foc)))
-							else FAccessAttribute("id", const(id))
-						))
-					|> (\arr -> focusOnOpen(i, arr, Some(selected)))
-					|> (\arr -> eitherMap(title, \t -> arrayPush(arr, extractStruct(_style, MButtonTitle(const(t)))), arr))
-				);
+				)
+				|> (\arr -> focusOnOpen(i, arr, Some(selected)))
+				|> (\arr -> arrayPush(arr,
+						if (popupRole == "menu" && !mobile) FAccessAttribute("aria-hidden", fselectLift(focused, \foc -> b2s(!foc)))
+						else FAccessAttribute("id", const(id))
+					))
+				|> (\arr -> arrayPush(arr, FAccessAttribute("aria-selected", const(if (popupRole == "menu") "" else b2s(selected)))))
+				|> (\arr -> eitherMap(title, \t -> arrayPush(arr, extractStruct(_style, MButtonTitle(const(t)))), arr));
+
 			lineTextStyle = extractStruct(style, MCustomTextStyle(textStyle)).style;
 
 			primaryWidth = make(0.);
@@ -1909,7 +1910,10 @@ MMenuLines2Material(
 								),
 								makeSubscribe2(items, \__ -> reopenMenu(subOpenMenu)),
 								makeSubscribe(subOpenMenu.opened, \op -> {
-									itms = fgetValue(items);
+									subMenuSingleSelection = tryExtractStruct(style, MSingleSelection(make(-1)));
+									itms =
+										if (isSome(subMenuSingleSelection)) mapi(fgetValue(items), \j, it -> applySubMenuSingleSelection(it, j, subMenuSingleSelection))
+										else fgetValue(items);
 									if (op)
 										RenderMPopup(
 											state.manager,
@@ -2341,4 +2345,39 @@ MMenuLineAttachToFocused(line : MMenuLine) -> Pair<MMenuLine, DynamicBehaviour<b
 FAccessAriaOwns(popupId : string, opened : Transform<bool>) -> FAccessAttribute {
 	// On iOS aria-owns blocks popup items focusing
 	FAccessAttribute("aria-owns", if (ios()) const("") else fif(opened, const(popupId), const("")));
+}
+
+applySubMenuSingleSelection(line : MMenuLine, i : int, singleSelection : Maybe<MSingleSelection>) -> MMenuLine {
+	eitherMap(singleSelection,
+		\ss -> {
+			applyStyles = \style : flow -> {
+				arrayPush(
+					replaceStruct(style, AccessRole("menuitemradio")),
+					FAccessAttribute("aria-checked", fselectLift(ss.selected, \sel -> b2s(sel == i)))
+				)
+			}
+			switch(line) {
+				MSeparatorLine() : line;
+				MMenuSingleLine(__, style) : {
+					MMenuSingleLine(line with style = applyStyles(style));
+				};
+				MMenuCustomLine(__, style) : {
+					MMenuCustomLine(line with style = applyStyles(style));
+				};
+				MMenuGroupLine(__, style) : {
+					MMenuGroupLine(line with style = applyStyles(style));
+				};
+				MSubMenu(__, __, style) : {
+					MSubMenu(line with style = applyStyles(style));
+				};
+				MSubMenuDynamic(__, __, style) : {
+					MSubMenuDynamic(line with style = applyStyles(style));
+				};
+				MSubMenuCustom(__, __, style) : {
+					MSubMenuCustom(line with style = applyStyles(style));
+				};
+			}
+		},
+		line
+	)
 }
