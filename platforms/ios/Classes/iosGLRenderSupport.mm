@@ -877,14 +877,16 @@ void iosGLRenderSupport::resolvePictureDataAsBitmap(unicode_string url, NSData *
     resolvePicture(url, bmp);
 }
 
-bool iosGLRenderSupport::loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool cache)
-{
-    return this->loadPicture(url, cache);
-}
-
-bool iosGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
+bool iosGLRenderSupport::loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool /*cache*/)
 {
     NSString * ns_url =  UNICODE2NS(url);
+    
+    NSMutableDictionary* headersDictinary = [NSMutableDictionary dictionary];
+    
+    for (HttpRequest::T_SMap::iterator it = headers.begin(); it != headers.end(); ++it) {
+        headersDictinary[UNICODE2NS(it->first)] = UNICODE2NS(it->second);
+    }
+    
     
     /*if ([[NSBundle mainBundle] pathForResource: ns_url ofType: nil] != nil) {
         resolvePictureDataAsBitmap(url, [NSData dataWithContentsOfFile:[[NSBundle mainBundle] pathForResource: ns_url ofType: nil]]);
@@ -892,10 +894,10 @@ bool iosGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
     }*/
     
 
-#define TRY_CACHED_OR_DOWNLAOD(path, on_error_fn) if ([URLLoader isCached: path]) \
+#define TRY_CACHED_OR_DOWNLAOD(path, headers, on_error_fn) if ([URLLoader isCached: path]) \
         resolvePictureDataAsBitmap(url, [URLLoader cacheDataForURL: path] ); \
     else { \
-        URLLoader * loader = [[URLLoader alloc] initWithURL: path onSuccess: on_success onError: on_error_fn onProgress: ^(float) {} onlyCache: false]; \
+        URLLoader * loader = [[URLLoader alloc] initWithURL: path withHeaders: headers onSuccess: on_success onError: on_error_fn onProgress: ^(float) {} onlyCache: false]; \
         [loader start]; \
     }
     
@@ -918,16 +920,22 @@ bool iosGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
         resolvePictureDataAsBitmap(url, data);
     };
     void (^on_error)(void)= ^void(void) { resolvePictureError(url, NS2UNICODE(@"Cannot download from the network")); };
-    void (^on_error_png)(void) = ^void(void) { TRY_CACHED_OR_DOWNLAOD(ns_url, on_error); };
+    void (^on_error_png)(void) = ^void(void) { TRY_CACHED_OR_DOWNLAOD(ns_url, headersDictinary, on_error); };
     
     if ([ns_url hasSuffix: @".swf"]) {
         NSString * png_url = [[ns_url stringByDeletingPathExtension] stringByAppendingPathExtension: @"png"];
-        TRY_CACHED_OR_DOWNLAOD(png_url, on_error_png);
+        TRY_CACHED_OR_DOWNLAOD(png_url, headersDictinary, on_error_png);
     } else {
-        TRY_CACHED_OR_DOWNLAOD(ns_url, on_error);
+        TRY_CACHED_OR_DOWNLAOD(ns_url, headersDictinary, on_error);
     }
     
     return true;
+}
+
+bool iosGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
+{
+    HttpRequest::T_SMap headers = HttpRequest::T_SMap();
+    return this->loadPicture(url, headers, false);
 }
 
 void iosGLRenderSupport::abortPictureLoading(unicode_string url) {
@@ -1302,11 +1310,17 @@ bool iosGLRenderSupport::doCreateVideoWidget(UIView* &widget, GLVideoClip* video
         FlowAVPlayerView *view = [[FlowAVPlayerView alloc] init];
 
         view.looping = video_clip->isLooping();
+        NSMutableDictionary* headersDictinary = [NSMutableDictionary dictionary];
+        
+        HttpRequest::T_SMap headers = video_clip->getHeaders();
+        for (HttpRequest::T_SMap::iterator it = headers.begin(); it != headers.end(); ++it) {
+            headersDictinary[UNICODE2NS(it->first)] = UNICODE2NS(it->second);
+        }
         
         __block FlowAVPlayerView *bView = view;
         __block FlowVideoPlayerController *bController = vc;
 #define CHECK_CLIP_ALIVE(c) if (NativeWidgets.find(c) == NativeWidgets.end()) return;
-        [view loadVideo: videoURL
+        [view loadVideo: videoURL withHeaders: headersDictinary
             onResolutionReceived: ^void(float width, float height) {
                CHECK_CLIP_ALIVE(video_clip); // It looks like loadValuesAsynchronouslyForKeys cannot be cancelled so check
                // clip is still actual here

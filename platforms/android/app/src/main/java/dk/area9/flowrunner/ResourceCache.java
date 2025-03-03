@@ -65,14 +65,24 @@ public class ResourceCache {
         return getCachedResource(link, callback);
     }
 
+    public synchronized boolean getCachedResource(@NonNull URI base, @NonNull String url, @NonNull HashMap<String,String> headers, @NonNull Resolver callback) throws IOException {
+        URI link = base.resolve(url.replace(" ", "%20"));
+        Log.i(Utils.LOG_TAG, "load resource " + link);
+        return getCachedResource(link, headers, callback);
+    }
+
     public synchronized boolean getCachedResource(@NonNull URI link, @NonNull Resolver callback) throws IOException {
+        return getCachedResource(link, new HashMap<String,String>(), callback);
+    }
+
+    public synchronized boolean getCachedResource(@NonNull URI link, @NonNull HashMap<String,String> headers, @NonNull Resolver callback) throws IOException {
         //Log.i(Utils.LOG_TAG, "Geting resource: " + link.toString());
-        
+
         if ("file".equals(link.getScheme())) {
             tryLocalFile(link, callback);
             return true;
         }
-        
+
         // Save the callback if already pending
         List<Resolver> pending = pending_links.get(link);
         if (pending != null) {
@@ -93,15 +103,15 @@ public class ResourceCache {
         File target_dir = ext_cache_dir;
         if (target_dir == null)
             target_dir = cache_dir;
-        
+
         // Check, if URI is data URI scheme
         if (link.getScheme().equals("data")) {
             String strLink = link.toString();
             decodeBase64(target_dir, id, strLink.substring(strLink.indexOf(",") + 1), callback);
             return false;
         }
-        
-        startDownload(target_dir, id, link, callback);
+
+        startDownload(target_dir, id, link, headers, callback);
         return false;
     }
 
@@ -156,7 +166,7 @@ public class ResourceCache {
                 ext_cache_dir = null;
     }
 
-    private void startDownload(File dir, @NonNull String id, @NonNull URI link, Resolver callback) throws IOException {
+    private void startDownload(File dir, @NonNull String id, @NonNull URI link, @NonNull HashMap<String,String> headers, Resolver callback) throws IOException {
         List<URI> uris = new LinkedList<URI>();
         generateVariantURIs(uris, link);
         uris.add(link);
@@ -167,7 +177,7 @@ public class ResourceCache {
         pending_links.put(link, rlst);
 
         try {
-            if (!startDownloadThread(dir, id, link, null))
+            if (!startDownloadThread(dir, id, link, headers, null))
                 resolveAsError(link, "Could not start download");
         } catch (IOException e) {
             resolveAsError(link, "I/O error: " + e.getMessage());
@@ -239,7 +249,7 @@ public class ResourceCache {
             rv.resolveFile(fn);
     }
 
-    private boolean startDownloadThread(final File dir, @NonNull final String id, final URI base_link, FileOutputStream old_output) throws IOException {
+    private boolean startDownloadThread(final File dir, @NonNull final String id, final URI base_link, @NonNull HashMap<String,String> headers, FileOutputStream old_output) throws IOException {
         List<URI> uris = pending_tries.get(base_link);
         if (uris == null || uris.isEmpty()) {
             pending_tries.remove(base_link);
@@ -260,13 +270,13 @@ public class ResourceCache {
             output = new FileOutputStream(tmp);
             final FileOutputStream foutput = output;
             URL url = new URL(link.toString());
-            Utils.loadHttpAsync(url, null, null, null, output, new Utils.HttpLoadAdaptor(link.toString()) {
+            Utils.loadHttpAsync(url, null, headers, null, output, new Utils.HttpLoadAdaptor(link.toString()) {
                 boolean switched = false;
                 
                 public boolean httpStatus(int status) {
                     if (status == 404) {
                         try {
-                            if (startDownloadThread(dir, id, base_link, foutput)) {
+                            if (startDownloadThread(dir, id, base_link, headers, foutput)) {
                                 switched = true;
                                 return false;
                             }

@@ -44,8 +44,8 @@ static NSMutableArray * queuedRequests;
     return NO;
 }
 
-- (id) initWithURL: (NSString *) relative_url onSuccess: (void (^)(NSData * data)) on_success onError: (void (^) (void)) on_error onProgress: (void (^)(float p)) on_progress onlyCache: (bool) only_cache
-{    
+- (id) initWithURL: (NSString *) relative_url withHeaders: (NSDictionary*) headers onSuccess: (void (^)(NSData * data)) on_success onError: (void (^) (void)) on_error onProgress: (void (^)(float p)) on_progress onlyCache: (bool) only_cache
+{
     self = [super init];
     
     LogI(@"URLLoader initWithURL %@", relative_url);
@@ -55,6 +55,7 @@ static NSMutableArray * queuedRequests;
     onError = Block_copy(on_error);
     onProgress = Block_copy(on_progress);
     onlyCache = only_cache;
+    requestHeaders = headers;
     
     self.relativeURL = [relative_url retain];
     
@@ -65,18 +66,24 @@ static NSMutableArray * queuedRequests;
     
     // Create unique temp file path
     CFUUIDRef newUniqueId = CFUUIDCreate(kCFAllocatorDefault);
-	CFStringRef newUniqueIdString = CFUUIDCreateString(kCFAllocatorDefault, newUniqueId);
+    CFStringRef newUniqueIdString = CFUUIDCreateString(kCFAllocatorDefault, newUniqueId);
     tmpFilePath = [[[URLLoader cachePathForURL: self.relativeURL] stringByAppendingPathExtension: (NSString *)newUniqueIdString] retain];
-	CFRelease(newUniqueId);
-	CFRelease(newUniqueIdString);
+    CFRelease(newUniqueId);
+    CFRelease(newUniqueIdString);
     
     return self;
+}
+
+- (id) initWithURL: (NSString *) relative_url onSuccess: (void (^)(NSData * data)) on_success onError: (void (^) (void)) on_error onProgress: (void (^)(float p)) on_progress onlyCache: (bool) only_cache
+{
+    return [self initWithURL:relative_url withHeaders: [NSDictionary dictionary] onSuccess:on_success onError:on_error onProgress:on_progress onlyCache:only_cache];
 }
 
 - (id) initWithURLRequest: (NSURLRequest *) request onSuccess: (void (^)(NSData * data)) on_success onError: (void (^) (void)) on_error onProgress: (void (^)(float p)) on_progress onlyCache: (bool) only_cache
 {
     NSString * url = request.URL.absoluteString;
-    [self initWithURL: url onSuccess: on_success onError: on_error onProgress: on_progress onlyCache: only_cache];
+    NSDictionary* headers = request.allHTTPHeaderFields;
+    [self initWithURL: url withHeaders: headers onSuccess: on_success onError: on_error onProgress: on_progress onlyCache: only_cache];
     
     rawRequest = [request retain];
     
@@ -148,6 +155,10 @@ static NSMutableArray * queuedRequests;
     if ([URLLoader isCached: self.relativeURL]) { // Already have cached. Check if modified on the server.
         NSString * last_modified = [URLLoader metadaForUrl: self.relativeURL];
         if (last_modified != nil) [request addValue: last_modified forHTTPHeaderField: @"If-Modified-Since"];
+    }
+    
+    for (NSString* key in requestHeaders) {
+        [request addValue: requestHeaders[key] forHTTPHeaderField: key];
     }
     
     connection = [[NSURLConnection alloc] initWithRequest: request delegate: self];
