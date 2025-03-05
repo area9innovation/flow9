@@ -372,6 +372,16 @@ export {
 	// Identical to MFrame, only the frame is placed on top of the "content"
 	MOverlay(margin : double, radius : double, style : [MGraphicsStyle], content : Material) -> Material;
 	MOverlayT(margin : Transform<double>, radius : Transform<double>, style : Transform<[MGraphicsStyle]>, content : Material) -> Material;
+
+	// Helper for Segmented buttons 
+	// https://m3.material.io/components/segmented-buttons/overview
+	SegmentButtonItem(text : Maybe<MText>, icon : Maybe<MIcon>, state : [MButtonState], selected : DynamicBehaviour<bool>);
+
+	SegmentButtonsStyle ::= MMultiSelect, MIconsOnly;
+		MMultiSelect(enabled : bool);
+		MIconsOnly(enabled : bool);
+
+	MSegmentedButtons(items : [SegmentButtonItem], style : [SegmentButtonsStyle], graphicsStyles : [MGraphicsStyle] ) -> Material;
 }
 
 // Inner helpers
@@ -1468,4 +1478,142 @@ MOverlayT(margin : Transform<double>, radius : Transform<double>, style : Transf
 		\sz -> MGetFocusGroup(\parent -> TFrameT(margin, radius, fselectLift(style, \s -> mgraphicsStyle2tgraphicsStyle(parent, s)), sz)),
 		true
 	)
+}
+
+MSegmentedButtons(
+	items : [SegmentButtonItem],
+	style : [SegmentButtonsStyle],
+	graphicsStyles : [MGraphicsStyle]
+) -> Material {
+	MGetFocusGroup(\fg -> {
+		multiSelect = extractStruct(style, MMultiSelect(false)).enabled;
+		iconsOnly = extractStruct(style, MIconsOnly(false)).enabled;
+		defaultBgColor = extractStruct(graphicsStyles, MThemedFill(MSecondaryColor())).color;
+		defaultStrokeColor = extractStruct(graphicsStyles, MThemedStroke(either(fg.theme.focusOutlineColor, MAccentColor()))).color;
+		
+		paddingWithoutIcon = 12.0;
+
+		maxHeight = make(0.0);
+		lastSelected = make(None());
+
+		makeButton = \i, item -> {
+			buttonState = item.state;
+			isSelected = item.selected;
+			maxWidth = make(60.0);
+			
+			title = if (iconsOnly) "" else eitherFn(item.text, \text -> text.text, \ -> "");
+			textStyle = eitherFn(item.text, \text -> text.style, \ -> []);
+			iconName = eitherFn(item.icon, \icon -> icon.name, \ -> "");
+			iconStyle = eitherFn(item.icon, \icon -> icon.style, \ -> []);
+			accessibilityLabel = if (title != "") title else iconName;
+			buttonRole = if (multiSelect) "checkbox" else "radio";
+
+			isFirst = i == 0;
+			isLast = i == length(items) - 1;
+			createIcon = \icon -> MIcon(icon, concat([defaultBgColor], iconStyle)); 
+			createCheckIcon = MIcon("check", concat(iconStyle, [MIconSize(20.0), defaultBgColor])) |> MBorderRight(4.);
+
+			focused = make(false);
+
+			interactive = MComponent(
+				concat(
+					[
+						MOnClick(\ -> {
+							if (!multiSelect) {
+								maybeApply(getValue(lastSelected), \prev -> if (prev != isSelected) nextDistinct(prev, false));
+								if (!getValue(isSelected)) {
+									nextDistinct(lastSelected, Some(isSelected));
+								}
+							}
+							reverseBehaviour(isSelected);
+						}),
+						AccessRole(buttonRole),
+						MMobileForceHover(),
+						MButtonTitle(const(accessibilityLabel)),
+						FAccessAttribute("aria-checked", fselectLift(isSelected, b2s)),
+						MFocused(focused)
+					],
+					buttonState
+				),
+				\focus -> {
+					MSelect5(
+						isSelected,
+						focus.hover,
+						focused,
+						maxHeight,
+						maxWidth,
+						\selected, hovered, isFocused, height, width -> MFrameCustomT(
+							const(0.0), const(if (isFirst) height/2.0 else 0.0), const(true),
+							const(0.0), const(if (isLast) height/2.0 else 0.0), const(true),
+							const(0.0), const(if (isLast) height/2.0 else 0.0), const(true),
+							const(0.0), const(if (isFirst) height/2.0 else 0.0), const(true),
+							const(concat(
+								concat(
+									if (selected || isFocused) [
+										MThemedFill(defaultBgColor),
+										FillOpacity(0.3)
+									] else if (hovered) [
+										MThemedFill(defaultBgColor),
+										FillOpacity(0.15)
+									] else [],
+									[
+										StrokeWidth(1.0),
+										MThemedStroke(defaultStrokeColor)
+									]
+								),
+								graphicsStyles
+							)),
+							MAttachWidth(MCenterIn(
+									MBorder4(8.0, MColsYCenter(
+										if (iconsOnly) {
+											[
+												if (selected) createCheckIcon else MEmpty(),
+												if (iconName != "") createIcon(iconName) |> MBorderLeftRight(if (!selected) paddingWithoutIcon else 0.0) else MEmpty()
+											]
+										} else {
+											[
+												if (selected) createCheckIcon
+													else if (iconName != "") createIcon(iconName) |> MBorderRight (4.)
+													else MEmpty()
+												,
+												if (title != "") {
+														MEllipsisText(title, concat([MBody()], textStyle)) |> MBorderLeftRight (if (iconName == "" && !selected) paddingWithoutIcon else 0.)
+												} else MEmpty()
+											]
+										} 
+									)),
+								MFixed(width, height)
+							),
+							maxWidth)
+						)
+					)
+				}
+			);
+
+			nonInteractive = MSelect3(focused, maxWidth, maxHeight, \isFocused, width, height -> 
+				MFrameCustomT(
+					const(0.0), const(if (isFirst) height/2.0 else 0.0), const(true),
+					const(0.0), const(if (isLast) height/2.0 else 0.0), const(true),
+					const(0.0), const(if (isLast) height/2.0 else 0.0), const(true),
+					const(0.0), const(if (isFirst) height/2.0 else 0.0), const(true),
+					const(if (isFocused) [
+						StrokeWidth(2.0),
+						MThemedStroke(defaultStrokeColor),
+					] else []),
+					MFixed(width, height)
+				)
+			);
+
+			Pair(interactive, nonInteractive)
+		}
+
+		buttonPairs = mapi(items, makeButton);
+		buttons = map(buttonPairs, \p -> p.first);
+		buttonsCopy = map(buttonPairs, \p -> p.second);
+
+		MGroup([
+			MAttachHeight(MCols(buttons), maxHeight),
+			MCols(buttonsCopy)
+		])	
+	})
 }
