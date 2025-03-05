@@ -1440,6 +1440,7 @@ class DisplayObjectHelper {
 		}
 
 		var nativeWidget = untyped clip.nativeWidget;
+		if (nativeWidget == null) return;
 
 		if (untyped clip.filterPadding != parent.filterPadding) {
 			untyped clip.filterPadding = parent.filterPadding;
@@ -1449,111 +1450,93 @@ class DisplayObjectHelper {
 			}
 		}
 
-		if (nativeWidget != null) {
-			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
-
-			if (svgs.length > 0) {
-				var svg = svgs[0];
-				var elementId = untyped svg.parentNode.getAttribute('id');
-				var clipFilter : Element = nativeWidget.querySelector("#" + elementId + "filter");
-
-				if (clipFilter != null && clipFilter.parentNode != null) {
-					clipFilter.parentNode.removeChild(clipFilter);
-				}
-
-				var defs = svg.firstElementChild != null && svg.firstElementChild.tagName.toLowerCase() == 'defs' ? svg.firstElementChild :
-					Browser.document.createElementNS("http://www.w3.org/2000/svg", 'defs');
-				clipFilter = defs.firstElementChild != null && defs.firstElementChild.tagName.toLowerCase() == 'mask' ? defs.firstElementChild :
-					Browser.document.createElementNS("http://www.w3.org/2000/svg", 'filter');
-
-				for (child in clipFilter.childNodes) {
-					if (child.parentNode == clipFilter) {
-						clipFilter.removeChild(child);
-					}
-				}
-
-				var feColorMatrix = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feColorMatrix');
-				feColorMatrix.setAttribute("in", "SourceAlpha");
-				feColorMatrix.setAttribute("result", "matrixOut");
-				feColorMatrix.setAttribute("type", "matrix");
-				feColorMatrix.setAttribute("values", '${color[0]} ${color[0]} ${color[0]} ${color[0]} 0
-													${color[1]} ${color[1]} ${color[1]} ${color[1]} 0
-													${color[2]} ${color[2]} ${color[2]} ${color[2]} 0
-													0 0 0 ${filter.alpha} 0');
-
-				var feOffset = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feOffset');
-				feOffset.setAttribute("result", "offOut");
-				feOffset.setAttribute("in", "matrixOut");
-				feOffset.setAttribute("dx", '${Math.cos(filter.angle) * filter.distance}');
-				feOffset.setAttribute("dy", '${Math.sin(filter.angle) * filter.distance}');
-
-				var feGaussianBlur = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feGaussianBlur');
-				if (!Platform.isSafari) {
-					feGaussianBlur.setAttribute("result", "blurOut");
-				}
-				feGaussianBlur.setAttribute("in", "offOut");
-				feGaussianBlur.setAttribute("stdDeviation", '${filter.blur}');
-
-				clipFilter.setAttribute('id', elementId + "filter");
-				clipFilter.setAttribute('x', '${untyped -clip.filterPadding}');
-				clipFilter.setAttribute('y', '${untyped -clip.filterPadding}');
-				clipFilter.setAttribute('width', '${untyped getWidgetWidth(clip) + clip.filterPadding}');
-				clipFilter.setAttribute('height', '${untyped getWidgetHeight(clip) + clip.filterPadding}');
-
-				clipFilter.appendChild(feColorMatrix);
-				clipFilter.appendChild(feOffset);
-				clipFilter.appendChild(feGaussianBlur);
-
-				if (!Platform.isSafari && !(Platform.isIOS && Platform.isChrome)) {
-					var feBlend = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'feBlend');
-					feBlend.setAttribute("in2", "blurOut");
-					feBlend.setAttribute("in", "SourceGraphic");
-					feBlend.setAttribute("mode", "normal");
-
-
-					clipFilter.appendChild(feBlend);
-				}
-
-				defs.insertBefore(clipFilter, defs.firstChild);
+		var svg: Element = nativeWidget.querySelector("svg");
+		if (svg != null) {
+			var elementId = untyped svg.parentNode.getAttribute('id');
+			var defs: Element = svg.querySelector("defs");
+			if (defs == null) {
+				defs = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'defs');
 				svg.insertBefore(defs, svg.firstChild);
-
-				var blendGroup = Browser.document.getElementById(elementId + "blend");
-				if (Platform.isSafari) {
-					if (blendGroup == null) {
-						blendGroup = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'g');
-						blendGroup.setAttribute('id', elementId + "blend");
-						svg.appendChild(blendGroup);
-					}
-
-					for (child in blendGroup.childNodes) {
-						if (child.parentNode == blendGroup) {
-							blendGroup.removeChild(child);
-						}
-					}
-				}
-
-				for (child in svg.childNodes) {
-					if (untyped child.tagName.toLowerCase() != "defs" && child.getAttribute('id') != elementId + "blend") {
-						if (Platform.isSafari) {
-							untyped child.removeAttribute("filter");
-							blendGroup.appendChild(child.cloneNode());
-						}
-
-						untyped child.setAttribute("filter", 'url(#' + elementId + "filter)");
-
-						parent.once("clearfilter", function() { if (child != null) untyped child.removeAttribute("filter"); });
-					}
-				}
-			} else {
-				nativeWidget.style.boxShadow = '
-					${Math.cos(filter.angle) * filter.distance}px
-					${Math.sin(filter.angle) * filter.distance}px
-					${filter.blur}px
-					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
-				';
-
-				parent.once("clearfilter", function() { if (nativeWidget != null) nativeWidget.style.boxShadow = null; });
 			}
+
+			var clipFilter: Element = defs.querySelector("#" + elementId + "filter");
+			if (clipFilter == null) {
+				clipFilter = Browser.document.createElementNS("http://www.w3.org/2000/svg", 'filter');
+				clipFilter.setAttribute('id', elementId + "filter");
+				defs.appendChild(clipFilter);
+			}
+
+			function updateOrCreateFilterElement(tag: String, attributes: Map<String, String>) : Element {
+				var elem = clipFilter.querySelector(tag);
+				if (elem == null) {
+					elem = Browser.document.createElementNS("http://www.w3.org/2000/svg", tag);
+					clipFilter.appendChild(elem);
+				}
+				for (key => value in attributes) elem.setAttribute(key, value);
+				return elem;
+			}
+
+			updateOrCreateFilterElement("feColorMatrix", [
+				"in" => "SourceAlpha",
+				"result" => "matrixOut",
+				"type" => "matrix",
+				"values" => '${color[0]} ${color[0]} ${color[0]} ${color[0]} 0
+							 ${color[1]} ${color[1]} ${color[1]} ${color[1]} 0
+							 ${color[2]} ${color[2]} ${color[2]} ${color[2]} 0
+							 0 0 0 ${filter.alpha} 0'
+			]);
+
+			updateOrCreateFilterElement("feOffset", [
+				"result" => "offOut",
+				"in" => "matrixOut",
+				"dx" => '${Math.cos(filter.angle) * filter.distance}',
+				"dy" => '${Math.sin(filter.angle) * filter.distance}'
+			]);
+
+			updateOrCreateFilterElement("feGaussianBlur",
+			if (!Platform.isSafari) [
+				"result" => "blurOut",
+				"in" => "offOut",
+				"stdDeviation" => '${filter.blur}'
+			] else [
+				"in" => "offOut",
+				"stdDeviation" => '${filter.blur}'
+			]);
+
+			if (!Platform.isSafari && !(Platform.isIOS && Platform.isChrome)) {
+				updateOrCreateFilterElement("feBlend", [
+					"in2" => "blurOut",
+					"in" => "SourceGraphic",
+					"mode" => "normal"
+				]);
+			}
+
+			for (child in svg.childNodes) {
+				if (untyped child.tagName.toLowerCase() != "defs") {
+					untyped child.setAttribute("filter", 'url(#' + elementId + "filter)");
+				}
+			}
+
+			parent.once("clearfilter", function() {
+				for (child in svg.childNodes) {
+					if (child != null) untyped child.removeAttribute("filter");
+				}
+			});
+
+		} else {
+			var newShadow = '
+				${Math.cos(filter.angle) * filter.distance}px
+				${Math.sin(filter.angle) * filter.distance}px
+				${filter.blur}px
+				rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
+			';
+			if (nativeWidget.style.boxShadow != newShadow) {
+				nativeWidget.style.boxShadow = newShadow;
+			}
+
+			parent.once("clearfilter", function() {
+				if (nativeWidget != null) nativeWidget.style.boxShadow = null;
+			});
 		}
 	}
 
