@@ -183,7 +183,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbRunnerError, "()V") \
     CALLBACK(cbRunnerReset, "()V") \
     CALLBACK(cbNewTimer, "(II)V") \
-    CALLBACK(cbLoadPicture, "(Ljava/lang/String;Z)V") \
+    CALLBACK(cbLoadPicture, "(Ljava/lang/String;[Ljava/lang/String;Z)V") \
     CALLBACK(cbAbortPictureLoading, "(Ljava/lang/String;)V") \
     CALLBACK(cbBindTextureBitmap, "(Landroid/graphics/Bitmap;)V") \
     CALLBACK(cbBrowseUrl, "(Ljava/lang/String;Ljava/lang/String;)V") \
@@ -191,7 +191,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbDestroyWidget, "(J)V") \
     CALLBACK(cbResizeWidget, "(JZFFFFFF)V") \
     CALLBACK(cbCreateTextWidget, "(JLjava/lang/String;Ljava/lang/String;FIZZFLjava/lang/String;Ljava/lang/String;IIII)V") \
-    CALLBACK(cbCreateVideoWidget, "(JLjava/lang/String;ZZIF)V") \
+    CALLBACK(cbCreateVideoWidget, "(JLjava/lang/String;[Ljava/lang/String;ZZIF)V") \
     CALLBACK(cbCreateVideoWidgetFromMediaStream, "(JLdk/area9/flowrunner/FlowMediaStreamSupport$FlowMediaStreamObject;)V") \
     CALLBACK(cbUpdateVideoPlay, "(JZ)V") \
     CALLBACK(cbUpdateVideoPosition, "(JJ)V") \
@@ -1325,19 +1325,22 @@ void AndroidRenderSupport::doSetInterfaceOrientation(std::string orientation)
     env->CallVoidMethod(owner->owner, cbSetInterfaceOrientation, jorientation);
 }
 
-bool AndroidRenderSupport::loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool cache)
+bool AndroidRenderSupport::loadPicture(unicode_string url, bool cache)
 {
-    // TODO: Implement headers for loadPicture
-    return this->loadPicture(url, cache);
+    HttpRequest::T_SMap headers = HttpRequest::T_SMap();
+    return loadPicture(url, headers, cache);
 }
 
-bool AndroidRenderSupport::loadPicture(unicode_string url, bool cache)
+bool AndroidRenderSupport::loadPicture(unicode_string url, HttpRequest::T_SMap& headers, bool cache)
 {
     JNIEnv *env = owner->env;
 
     jstring url_string = string2jni(env, url);
-    env->CallVoidMethod(owner->owner, cbLoadPicture, url_string, jboolean(cache));
+    jobjectArray headers_arr = string_map2jni(env, headers);
+
+    env->CallVoidMethod(owner->owner, cbLoadPicture, url_string, headers_arr, jboolean(cache));
     env->DeleteLocalRef(url_string);
+    env->DeleteLocalRef(headers_arr);
 
     std::string msg;
     if (owner->eatExceptions(&msg))
@@ -1447,6 +1450,7 @@ void AndroidRenderSupport::deliverVideoDuration(jlong clip_id, jlong duration)
 
 void AndroidRenderSupport::deliverVideoPosition(jlong clip_id, jlong position)
 {
+    doRequestRedraw();
     dispatchVideoPosition((GLClip*)clip_id, (int64_t)position);
 }
 
@@ -1532,11 +1536,13 @@ bool AndroidRenderSupport::doCreateNativeWidget(GLClip* clip, bool neww)
             );
         } else {
             jstring url = string2jni(env, video_clip->getName());
+            jobjectArray headers_arr = string_map2jni(env, video_clip->getHeaders());
 
             env->CallVoidMethod(
                 owner->owner, cbCreateVideoWidget,
                 (jlong)clip,
                 url,
+                headers_arr,
                 (jboolean)video_clip->isPlaying(),
                 (jboolean)video_clip->isLooping(),
                 (jint)video_clip->getControls(),
@@ -1544,6 +1550,7 @@ bool AndroidRenderSupport::doCreateNativeWidget(GLClip* clip, bool neww)
             );
 
             env->DeleteLocalRef(url);
+            env->DeleteLocalRef(headers_arr);
         }
 
         if (owner->eatExceptions())

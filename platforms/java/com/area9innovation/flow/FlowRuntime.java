@@ -3,6 +3,7 @@ package com.area9innovation.flow;
 import java.io.*;
 import java.text.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.*;
 
 public abstract class FlowRuntime {
@@ -44,14 +45,64 @@ public abstract class FlowRuntime {
 		}
 	}
 
-	public static void eventLoop(boolean isMainThread) {
-		while (quitCode == null) {
+	private static void eventLoop(boolean isMainThread, AtomicBoolean forceExit) {
+		while (quitCode == null && (forceExit == null || !forceExit.get())) {
 			boolean hasBackgroundActions = executeActions(false);
 			if (!isMainThread && !hasBackgroundActions) {
 				break;
 			}
 			if (!sleep("event loop")) break;
 		}
+
+		if (forceExit != null && forceExit.get() && executeActions(false)) { // give the last chance to execute pending operations in the case of the forced exit
+			Long threadId = getThreadIdLong();
+
+			String callbacksStr = null;
+			Callbacks callbacks = callbacksByThreadId.get(threadId);
+			if (callbacks != null && !callbacks.isEmpty()) {
+				callbacksStr = "There are unfinished callbacks:\n\t" + callbacks.toString("\n\t");
+			}
+
+			String timersStr = null;
+			Timers timers = timersByThreadId.get(threadId);
+			if (timers != null && !timers.isEmpty()) {
+				timersStr = "There are unfinished timers:\n\t" + timers.toString("\n\t");
+			}
+
+			if (callbacksStr != null || timersStr != null) {
+				String msg = "Force exiting thread #" + threadId + " event loop, while some background actions are pending.";
+				if (callbacksStr != null) {
+					msg = msg + "\n" + callbacksStr;
+				}
+				if (timersStr != null) {
+					msg = msg + "\n" + timersStr;
+				}
+				System.out.println(msg);
+			}
+		}
+	}
+
+	public static void eventLoop(boolean isMainThread) {
+		eventLoop(isMainThread, null);
+	}
+
+	// Returns Pair(loopFn, interruptFn)
+	public static Pair<Func0<Object>, Func0<Object>> makeInterruptibleEvenLoopPair() {
+		AtomicBoolean forceExit = new AtomicBoolean(false);
+		return new Pair<Func0<Object>, Func0<Object>>(
+			new Func0<Object>() {
+				public Object invoke() {
+					eventLoop(false, forceExit);
+					return null;
+				}
+			},
+			new Func0<Object>() {
+				public Object invoke() {
+					forceExit.set(true);
+					return null;
+				}
+			}
+		);
 	}
 
 	// If runnable does call flow functions (Func<*>.invoke()), it calls only callbacks (instances of Callbacks.Callback),
@@ -70,7 +121,7 @@ public abstract class FlowRuntime {
 		Thread thread = new Thread(future);
 		thread.start();
 		while (thread.isAlive()) {
-			executeActions(true);
+			executeActions(true);	// Allow execute timers recursively because runParallelAndWait can be called from a timer, and we should have a chance to finish this while loop.
 			if (!sleep("wait for thread")) break;
 		}
 		try {
@@ -147,7 +198,7 @@ public abstract class FlowRuntime {
 				throw new Exception("Multiple access is not allowed! Resource: " + description);
 			}
 			while (!future.isDone()) {
-				executeActions(true);
+				executeActions(true);	// Allow execute timers recursively because runAndWait can be called from a timer, and we should have a chance to finish this while loop.
 				if (!sleep("wait for " + description)) break;
 			}
 			activeTask = null;
@@ -165,6 +216,7 @@ public abstract class FlowRuntime {
 		return timersByThreadId.get(getThreadIdLong());
 	}
 
+	// Creates new if missing
 	public static Callbacks getCallbacks() {
 		Long threadId = getThreadIdLong();
 		Callbacks callbacks = callbacksByThreadId.get(threadId);
@@ -179,18 +231,46 @@ public abstract class FlowRuntime {
 		return Thread.currentThread().getId();
 	}
 
+	public static final String getThreadDebugInfo() {
+		Long threadId = getThreadIdLong();
+
+		Callbacks callbacks = callbacksByThreadId.get(threadId);
+		Integer callbacksCnt = 0;
+		String details = "";
+		if (callbacks != null) {
+			callbacksCnt = callbacks.size();
+			details = ": " + callbacks.toString("; ");
+		}
+
+		Timers timers = timersByThreadId.get(threadId);
+		Integer timersCnt = 0;
+		if (timers != null) {
+			timersCnt = timers.size();
+			if (details.isEmpty()) {
+				details = ": ";
+			} else {
+				details += "; ";
+			}
+			details += timers.toString("; ");
+		}
+
+		return "Thread " + Long.toString(threadId) + ", callbacks " + callbacksCnt + ", timers " + timersCnt + details;
+	}
+
 	private static boolean executeTimers(boolean unlockTimers) {
 		Timers timers = getTimers();
 		if (timers != null) {
 			timers.execute(unlockTimers);
+			return !timers.isEmpty();
 		}
-		return timers != null && !timers.isEmpty();
+		return false;
 	}
 
 	// We have to unlock timers if we call executeActions from runParallelAndWait and SingleExecutor.runAndWait.
 	// For example we call runAndWait by timer, i.e. it is called in Timers.execute(),
-	// which used Timers.executingCnt to prevent recursive calls and call stack growth.
-	// So why runAndWait is waiting it cannot execute another timers, while unlockTimers is  not true.
+	// which has increased Timers.executingCnt to prevent recursive calls and call stack growth.
+	// Then some new timer was started and runAndWait should wait for this new timer too,
+	// so unlockTimers must be true.
 	protected static boolean executeActions(boolean unlockTimers) {
 		boolean hasTimers = executeTimers(unlockTimers);
 		Callbacks callbacks = callbacksByThreadId.get(getThreadIdLong());
