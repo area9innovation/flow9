@@ -1835,7 +1835,7 @@ public class Native extends NativeHost {
 		return false;
 	}
 
-	public static final Object[] concurrent(Boolean fine, Object[] tasks) {
+	public static final Object[] concurrent(Object threadPool, Object[] tasks) {
 		List<Callable<Object>> tasks2 = new ArrayList<Callable<Object>>();
 
 		for (int i = 0; i < tasks.length; i++) {
@@ -1862,7 +1862,8 @@ public class Native extends NativeHost {
 
 		try {
 			List<Object> res = new ArrayList<Object>();
-			for (Future<Object> future : threadpool.invokeAll(tasks2)) {
+			ExecutorService threadPool2 = (ExecutorService) threadPool;
+			for (Future<Object> future : threadPool2.invokeAll(tasks2)) {
 				res.add(future.get());
 			}
 			resArr = res.toArray();
@@ -1898,6 +1899,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object concurrentAsyncCallback(
+		Object threadPool,
 		Func2<Object, Func1<Object, Object>, Func0<Object>> task,
 		Func1<Object, Object> onDone,
 		Func1<Object, String> onFail
@@ -1945,7 +1947,7 @@ public class Native extends NativeHost {
 				e.printStackTrace();
 			}
 			return result;
-		}, threadpool)
+		}, (ExecutorService) threadPool)
 		.exceptionally(ex -> {
 			ex.printStackTrace();
 			Thread thread = Thread.currentThread();
@@ -2076,9 +2078,8 @@ public class Native extends NativeHost {
 		return Runtime.getRuntime().availableProcessors();
 	}
 
-	public static final Object setThreadPoolSize(int threads) {
-		threadpool = Executors.newFixedThreadPool(threads);
-		return null;
+	public static final Object newThreadPool(int threadsCount) {
+		return Executors.newFixedThreadPool(threadsCount);
 	}
 
 	public static final String readBytes(int n) {
