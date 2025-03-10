@@ -418,6 +418,13 @@ class WebWidget extends NativeWidget {
 
         web_view.addJavascriptInterface(new FlowJSInterface(group.getWrapper(), id, this), "flow");
 
+		ViewGroup.LayoutParams layoutParams = new ViewGroup.LayoutParams(
+			ViewGroup.LayoutParams.MATCH_PARENT,
+			ViewGroup.LayoutParams.MATCH_PARENT
+		);
+
+		web_view.setLayoutParams(layoutParams);
+
         return web_view;
     }
 
