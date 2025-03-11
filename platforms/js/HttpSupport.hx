@@ -526,6 +526,364 @@ class HttpSupport {
 		#end
 	}
 
+	// Full implementation of streaming HTTP requests that handles Server-Sent Events (SSE)
+	// and other streaming response formats
+	public static function httpStreamingRequestNative(
+		url : String, method : String, headers : Array<Array<String>>,
+		params: Array<Array<String>>, data : String, responseEncoding : String,
+		onChunkFn : String -> Float -> Float -> Void,
+		onCompleteFn : Int -> String -> Array<Array<String>> -> Void,
+		onErrorFn : String -> Void,
+		async : Bool,
+		timeout : Int) : Void -> Void {
+
+		if (defaultResponseEncoding != null && responseEncoding == "auto") {
+			responseEncoding = defaultResponseEncoding;
+		}
+
+		#if (js && !flow_nodejs)
+		// Browser JavaScript implementation
+		if (!XMLHttpRequestOverriden) overrideXMLHttpRequest();
+
+		// Add required headers for streaming
+		var hasAcceptHeader = false;
+		for (header in headers) {
+			if (header[0].toLowerCase() == "accept") {
+				hasAcceptHeader = true;
+				break;
+			}
+		}
+
+		// Add accept header for SSE if not present
+		if (!hasAcceptHeader) {
+			headers.push(["Accept", "text/event-stream"]);
+		}
+
+		var accumulatedResponse = "";
+		var isCompleted = false;
+		var xhr : Dynamic = untyped __js__("new XMLHttpRequest()");
+
+		// Setup abort function
+		var cancelFn = function() {
+			if (!isCompleted) {
+				xhr.abort();
+			}
+		};
+
+		// Handle timeout
+		var timeoutId = null;
+		if (timeout > 0) {
+			timeoutId = haxe.Timer.delay(function() {
+				if (!isCompleted) {
+					isCompleted = true;
+					xhr.abort();
+					onErrorFn("Request timed out after " + timeout + "ms");
+				}
+			}, timeout);
+		}
+
+		// Prepare URL with query parameters for GET requests
+		var finalUrl = url;
+		if (method == "GET" && params.length > 0) {
+			var queryParts = [];
+			for (param in params) {
+				queryParts.push(param[0] + "=" + untyped encodeURIComponent(param[1]));
+			}
+
+			var queryString = queryParts.join("&");
+			if (finalUrl.indexOf("?") >= 0) {
+				finalUrl += "&" + queryString;
+			} else {
+				finalUrl += "?" + queryString;
+			}
+		}
+
+		// Setup request
+		xhr.open(method, finalUrl, async);
+
+		// Add headers
+		for (header in headers) {
+			xhr.setRequestHeader(header[0], header[1]);
+		}
+
+		// Previous response length to track new content
+		var prevResponseLength = 0;
+
+		// Setup event handlers for streaming response
+		untyped xhr.onreadystatechange = function() {
+			// readyState 3 = LOADING (data is being received)
+			// readyState 4 = DONE (request complete)
+			if (xhr.readyState >= 3 && !isCompleted) {
+				// Get only the new data from responseText
+				var newData = "";
+				try {
+					// Only process if we have new data to handle
+					if (xhr.responseText.length > prevResponseLength) {
+						newData = xhr.responseText.substring(prevResponseLength);
+						prevResponseLength = xhr.responseText.length;
+						accumulatedResponse = xhr.responseText;
+
+						// Call the chunk handler with new data
+						onChunkFn(newData, prevResponseLength,
+							xhr.getResponseHeader("Content-Length") != null ?
+							Std.parseFloat(xhr.getResponseHeader("Content-Length")) : 0);
+					}
+
+					// If complete, call completion handler
+					if (xhr.readyState == 4) {
+						if (timeoutId != null) {
+							timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
+						}
+
+						// Get response headers
+						var responseHeaders = [];
+						var headerStr = xhr.getAllResponseHeaders();
+						if (headerStr != null) {
+							var headerLines = headerStr.split("\r\n");
+							// Safe iteration through headerLines (it's an Array<String>, so iteration is safe)
+							for (i in 0...headerLines.length) {
+								var line = headerLines[i];
+								if (line != null && line != "") {
+									var parts = line.split(":");
+									if (parts.length >= 2) {
+										var headerName = StringTools.trim(parts[0]);
+										// Instead of using parts.slice, manually extract the value portion
+										var valueIndex = line.indexOf(":");
+										var headerValue = "";
+										if (valueIndex >= 0 && valueIndex + 1 < line.length) {
+											headerValue = StringTools.trim(line.substr(valueIndex + 1));
+										}
+
+										if (headerName != "") {
+											responseHeaders.push([headerName, headerValue]);
+										}
+									}
+								}
+							}
+						}
+
+						isCompleted = true;
+						onCompleteFn(xhr.status, accumulatedResponse, responseHeaders);
+					}
+				} catch (e : Dynamic) {
+					if (!isCompleted) {
+						isCompleted = true;
+						if (timeoutId != null) {
+							timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
+						}
+						onErrorFn("Error processing response: " + Std.string(e));
+					}
+				}
+			}
+		};
+
+		// Handle errors
+		untyped xhr.onerror = function() {
+			if (!isCompleted) {
+				isCompleted = true;
+				if (timeoutId != null) {
+					timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
+				}
+				onErrorFn("Network error occurred");
+			}
+		};
+
+		// Send the request with data if applicable
+		if (method == "POST" || method == "PUT" || method == "PATCH") {
+			if (data != "") {
+				xhr.send(data);
+			} else if (params.length > 0) {
+				// Build form data
+				var formData = [];
+				for (param in params) {
+					formData.push(param[0] + "=" + untyped encodeURIComponent(param[1]));
+				}
+				xhr.send(formData.join("&"));
+			} else {
+				xhr.send();
+			}
+		} else {
+			xhr.send();
+		}
+
+		return cancelFn;
+
+		#elseif (js && flow_nodejs)
+		// Node.js implementation
+		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
+		var isCompleted = false;
+
+		// Setup timeout if needed
+		var timeoutId = null;
+		if (timeout > 0) {
+			timeoutId = haxe.Timer.delay(function() {
+				if (!isCompleted && req != null) {
+					isCompleted = true;
+					req.abort();
+					onErrorFn("Request timed out after " + timeout + "ms");
+				}
+			}, timeout);
+		}
+
+		// Configure the request options
+		options.method = method;
+		options.headers = {};
+
+		// Set headers
+		for (header in headers) {
+			options.headers[header[0]] = header[1];
+		}
+
+		// Set default content type if not provided
+		if (options.headers["Content-Type"] == null && (method == "POST" || method == "PUT" || method == "PATCH")) {
+			options.headers["Content-Type"] = "application/x-www-form-urlencoded";
+		}
+
+		// Prepare the payload
+		var payload = data;
+		if (data == "" && params.length > 0) {
+			var queryParts = [];
+			for (param in params) {
+				queryParts.push(param[0] + "=" + Querystring.escape(param[1]));
+			}
+			payload = queryParts.join("&");
+		}
+
+		// Track accumulated response data
+		var responseData = "";
+
+		// Handle the response
+		var responseHandler = function(response : IncomingMessage) {
+			// Set text encoding
+			response.setEncoding('utf8');
+
+			// Handle redirects
+			if (response.statusCode == 301 || response.statusCode == 302) {
+				if (timeoutId != null) {
+					timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
+				}
+
+				var redirectUrl = null;
+				// Safely access location header
+				var headersObj = response.headers;
+				if (headersObj != null && Reflect.hasField(headersObj, "location")) {
+					redirectUrl = Reflect.field(headersObj, "location");
+				}
+
+				if (redirectUrl != null) {
+					// Follow redirect
+					var cancelFn = httpStreamingRequestNative(
+						redirectUrl, method, headers, params, data, responseEncoding,
+						onChunkFn, onCompleteFn, onErrorFn, async, timeout
+					);
+					return cancelFn;
+				}
+			}
+
+			// Extract headers
+			var responseHeaders : Array<Array<String>> = [];
+			var headersObj = response.headers;
+			var headerNames = Reflect.fields(headersObj);
+			for (key in headerNames) {
+				var value = Reflect.field(headersObj, key);
+				if (value != null) {
+					responseHeaders.push([key, value]);
+				}
+			}
+
+			// Process data chunks as they arrive
+			response.on('data', function(chunk : String) {
+				if (!isCompleted) {
+					responseData += chunk;
+					// Call chunk handler with new data
+					onChunkFn(chunk, responseData.length,
+						(Reflect.hasField(headersObj, "content-length") && Reflect.field(headersObj, "content-length") != null) ?
+						Std.parseFloat(Reflect.field(headersObj, "content-length")) : 0);
+				}
+			});
+
+			// Handle completion
+			response.on('end', function(_) {
+				if (!isCompleted) {
+					isCompleted = true;
+					if (timeoutId != null) {
+						timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
+					}
+					onCompleteFn(response.statusCode, responseData, responseHeaders);
+				}
+			});
+
+			// Handle errors
+			response.on('error', function(err) {
+				if (!isCompleted) {
+					isCompleted = true;
+					if (timeoutId != null) {
+						timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
+					}
+					onErrorFn(Std.string(err));
+				}
+			});
+		};
+
+		// Create the request
+		var req = null;
+		if (options.protocol == "https:") {
+			req = Https.request(options, responseHandler);
+		} else {
+			req = Http.request(options, responseHandler);
+		}
+
+		// Handle request errors
+		req.on('error', function(err) {
+			if (!isCompleted) {
+				isCompleted = true;
+				if (timeoutId != null) {
+					timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
+				}
+				onErrorFn(Std.string(err));
+			}
+		});
+
+		// Send the payload if applicable
+		if (payload != "") {
+			req.write(payload);
+		}
+
+		// End the request
+		req.end();
+
+		// Return cancellation function
+		return function() {
+			if (!isCompleted && req != null) {
+				req.abort();
+				isCompleted = true;
+				if (timeoutId != null) {
+					timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
+				}
+			}
+		};
+
+		#else
+		// Fallback for other platforms - simulate streaming with the standard request
+		var fullResponse = "";
+
+		httpCustomRequestNative(
+			url, method, headers, params, data, responseEncoding,
+			function(status, response, responseHeaders) {
+				if (response.length > 0) {
+					onChunkFn(response, response.length, response.length);
+				}
+				fullResponse = response;
+				onCompleteFn(status, response, responseHeaders);
+			},
+			async
+		);
+
+		// Return no-op cancel function
+		return function() {};
+		#end
+	}
+
 	public static function preloadMediaUrl(url : String, onSuccessFn : Void -> Void, onErrorFn : String -> Void) : Void {
 		// STUB; native only used in the C++ target
 	}

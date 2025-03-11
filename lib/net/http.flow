@@ -157,6 +157,32 @@ export {
 		onData : (int, string, [KeyValue]) -> void,
 		onError : (int, string, [KeyValue]) -> void
 	);
+
+	// Makes an HTTP request with support for streaming responses
+	// Useful for server-sent events (SSE) and other streaming APIs
+	httpStreamingRequest(
+		url : string,
+		method : RequestMethod,
+		headers : [KeyValue],
+		data : RequestData,
+		onChunk : (chunk : string, loaded : double, total : double) -> void,
+		onComplete : (responseStatus : int, fullResponse : string, responseHeaders : [KeyValue]) -> void,
+		onError : (string) -> void
+	) -> () -> void;
+
+	// Makes an HTTP request with streaming support using styled parameters
+	httpStreamingRequestStyled(
+		url : string,
+		method : RequestMethod,
+		style : [RequestStyle],
+		onChunk : (chunk : string, loaded : double, total : double) -> void,
+		onComplete : (responseStatus : int, fullResponse : string, responseHeaders : [KeyValue]) -> void,
+		onError : (string) -> void
+	) -> () -> void;
+
+	// Process SSE (Server-Sent Events) response chunks
+	// Returns a Json object parsed from the data: field
+	parseSSEChunk(chunk : string) -> Maybe<Json>;
 }
 
 downloadFileBinaryWithHeaders(
@@ -241,6 +267,22 @@ httpCustomRequestWithTimeoutNative (
 	httpCustomRequestNative(url, method, headers, parameters, data, responseEncoding2string(ResponseEncodingAuto()), onResponse, async);
 }
 
+// Native implementation for streaming HTTP requests
+// The onChunk callback is called with each chunk received
+native httpStreamingRequestNative : io (
+	url : string,
+	method : string,
+	headers : [[string]],
+	parameters : [[string]],
+	data : string,
+	responseEncoding : string,
+	onChunk : (string, double, double) -> void,
+	onComplete : (int, string, [[string]]) -> void,
+	onError : (string) -> void,
+	async : bool,
+	timeout : int
+) -> () -> void = HttpSupport.httpStreamingRequestNative;
+
 native doPreloadMediaUrl : io (url : string, onSuccess : () -> void, onError : (string) -> void) -> void = HttpSupport.preloadMediaUrl;
 
 // Always post
@@ -252,6 +294,174 @@ native makeSendHttpRequestWithAttachments : io (
 	onData : (string) -> void,
 	onError : (string) -> void
 ) -> void = HttpSupport.sendHttpRequestWithAttachments;
+
+// Implementation of streaming HTTP requests
+httpStreamingRequest(
+	url : string,
+	method : RequestMethod,
+	headers : [KeyValue],
+	data : RequestData,
+	onChunk : (chunk : string, loaded : double, total : double) -> void,
+	onComplete : (responseStatus : int, fullResponse : string, responseHeaders : [KeyValue]) -> void,
+	onError : (string) -> void
+) -> () -> void {
+	// Default timeout of 30 seconds
+	httpStreamingRequestWithTimeout(url, method, headers, data, onChunk, onComplete, onError, true, 30000);
+}
+
+httpStreamingRequestStyled(
+	url : string,
+	method : RequestMethod,
+	style : [RequestStyle],
+	onChunk : (chunk : string, loaded : double, total : double) -> void,
+	onComplete : (responseStatus : int, fullResponse : string, responseHeaders : [KeyValue]) -> void,
+	onError : (string) -> void
+) -> () -> void {
+	headers = extractStruct(style, RequestHeaders([])).headers;
+	data = either(tryExtractStruct(style, RequestPayload("")), extractStruct(style, RequestParameters([])));
+	async = extractStruct(style, RequestAsync(true)).async;
+	responseEncoding = extractStruct(style, RequestEncoding(ResponseEncodingAuto())).responseEncoding;
+	timeout = extractStruct(style, RequestTimeout(30000)).timeout;
+
+	httpStreamingRequestWithTimeout(url, method, headers, data, onChunk, onComplete, onError, async, timeout);
+}
+
+httpStreamingRequestWithTimeout(
+	url : string,
+	method : RequestMethod,
+	headers : [KeyValue],
+	data : RequestData,
+	onChunk : (chunk : string, loaded : double, total : double) -> void,
+	onComplete : (responseStatus : int, fullResponse : string, responseHeaders : [KeyValue]) -> void,
+	onError : (string) -> void,
+	async : bool,
+	timeout : int
+) -> () -> void {
+	isPHPRequest = endsWith(url, ".php");
+	noCacheTimestamp = KeyValue("t", d2s(timestamp()));
+
+	params = switch(data : RequestData) {
+		RequestParameters(params): ifArrayPush(params, isPHPRequest, noCacheTimestamp);
+		default: [];
+	}
+
+	headers2 = ifArrayPush(headers, isPHPRequest && !isSameStructType(data, RequestParameters([])), noCacheTimestamp);
+
+	payload = switch(data : RequestData) {
+		RequestPayload(body): body;
+		default: "";
+	}
+
+	methodName = method2string(method);
+	// In OWASP mode GET request with parameters is forbidden, so we replace it with POST
+	methodName2 =
+		if (isOWASPLevel1() && methodName == "GET" && (payload != "" || params != [] || strContains(url, "?"))) {
+			if (!cgi) println2(flow("GET request with parameters is forbidden by the current security settings. It is replaced by POST."));
+			"POST"
+		} else {
+			methodName;
+		}
+
+	runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests + 1;
+	fixedUrl =
+		if (!isOWASPLevel1() && isUrlParameterTrue("disable_https_fix_protocol")) {
+			url;
+		} else {
+			if (!nwjs && js && !isCapacitor() && startsWith(url, "http://")) {
+				proto = if (startsWith(loaderUrl(), "http://")) "http" else "https";
+				proto + strRight(url, 4);
+			} else {
+				url;
+			}
+		}
+
+	// Use native implementation when available, otherwise fallback to emulation
+	if (js) {
+		// For JavaScript, we can use the native implementation
+		onChunkWrapper = \chunk, loaded, total -> {
+			onChunk(chunk, loaded, total);
+		}
+
+		onCompleteWrapper = \responseStatus, responseData, responseHeaders -> {
+			runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+			onComplete(responseStatus, responseData, strings2KeyValues(responseHeaders));
+		}
+
+		onErrorWrapper = \error -> {
+			runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+			onError(error);
+		}
+
+		httpStreamingRequestNative(
+			fixedUrl,
+			methodName2,
+			keyValues2strings(headers2),
+			keyValues2strings(params),
+			payload,
+			responseEncoding2string(ResponseEncodingAuto()),
+			onChunkWrapper,
+			onCompleteWrapper,
+			onErrorWrapper,
+			async,
+			timeout
+		);
+	} else {
+		// Fallback implementation for other platforms
+		// This simulates streaming by breaking the response into chunks
+
+		// Buffer to accumulate the full response
+		responseBuffer = ref "";
+
+		// Create a regular request to simulate streaming
+		httpCustomRequestStyled(
+			fixedUrl,
+			string2method(methodName2),
+			\responseStatus, responseData, responseHeaders -> {
+				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+
+				// Extract chunks from the response if it looks like SSE
+				chunks = strSplit(responseData, "\n\n");
+				if (length(chunks) > 1) {
+					// Process as SSE
+					iter(chunks, \chunk -> {
+						if (chunk != "") {
+							onChunk(chunk, 1.0, 1.0);
+						}
+					});
+				} else {
+					// Process as a single chunk
+					onChunk(responseData, 1.0, 1.0);
+				}
+
+				responseBuffer := responseData;
+				onComplete(responseStatus, responseData, responseHeaders);
+			},
+			[
+				RequestHeaders(headers2),
+				if (isSameStructType(data, RequestPayload(""))) {
+					cast(data : RequestData -> RequestPayload)
+				} else {
+					RequestParameters(params)
+				},
+				RequestAsync(async),
+				RequestTimeout(timeout)
+			]
+		);
+
+		// Return a function that can cancel the request (for now it does nothing)
+		nop;
+	}
+}
+
+parseSSEChunk(chunk : string) -> Maybe<Json> {
+	if (startsWith(chunk, "data: ")) {
+		dataStr = substring(chunk, 6, strlen(chunk) - 6);
+		json = parseJson(dataStr);
+		if (json == JsonNull()) None() else Some(json);
+	} else {
+		None();
+	}
+}
 
 runningRealtimeHTTPrequests = ref 0;
 httpRequest(url, postMethod2, headers, params2, onData, onError, onStatus) {
