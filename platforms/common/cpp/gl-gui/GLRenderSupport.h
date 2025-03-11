@@ -5,6 +5,7 @@
 #include "font/TextFont.h"
 #include "utils/AbstractHttpSupport.h"
 
+#include <glm/gtc/type_ptr.hpp>
 #include <set>
 #ifdef linux
 #include <math.h>
@@ -12,6 +13,9 @@
 
 enum FlowEvent {
     FlowUnknownEvent = 0,
+    FlowTouchStart = 3,
+    FlowTouchMove = 4,
+    FlowTouchEnd = 5,
     FlowMouseMiddleDown = 6,
     FlowMouseMiddleUp = 7,
     FlowMouseRightDown = 8,
@@ -208,6 +212,8 @@ protected:
     int MouseDownX, MouseDownY;
     double lastUserAction;
     bool gl_transparent;
+    
+    std::vector<glm::vec2> TouchPoints;
 
     GLClip *getCurrentFocus();
 private:
@@ -358,6 +364,7 @@ protected:
     void adjustGlobalScale(float shift_x, float shift_y, float center_x, float center_y, float df);
     void setGlobalScale(float scale_center_x, float scale_center_y, float scale_factor);
     bool isScreenScaled() { return fabsf(ScaleFactor - 1.0f) > 0.01f; }
+    std::vector<glm::vec2> getTouchPoints() { return TouchPoints; }
 
     void flowGCObject(GarbageCollectorFn ref);
 

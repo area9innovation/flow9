@@ -479,7 +479,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
             return true;
 
         scale_detector.onTouchEvent(event);
-        return inScaleMode;
+        return false;
     }
     
     public boolean onTouchEvent(@NonNull MotionEvent event) {

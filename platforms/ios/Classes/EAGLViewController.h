@@ -19,7 +19,6 @@ class iosGLRenderSupport;
 @private
     iosGLRenderSupport * RenderSupport;
     CADisplayLink * DisplayLink;
-    CGPoint currentTouchPos;
     
     UIView * statusBar;
     BOOL statusBarVisible, statusBarIconsTheme;
@@ -37,8 +36,6 @@ class iosGLRenderSupport;
 - (void) suspendDrawing;
 - (void) resumeDrawing;
 
-- (IBAction) handlePinchGesture: (UIPinchGestureRecognizer *) recognizer;
-- (IBAction) handlePanGesture:(UIPanGestureRecognizer *)recognizer;
 - (IBAction) copyLog: (id) sender;
 - (IBAction) debugViewHeightStepperValueChanged: (UIStepper *)sender;
 

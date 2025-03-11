@@ -51,6 +51,8 @@ public:
     void resize(int w, int h) { resizeGLContext(w, h); }
     void paint() { paintGLContext(); }
 
+    void deliverTouchPoints(jobjectArray points);
+
     void deliverMouseEvent(jint type, jint x, jint y) {
         dispatchMouseEvent(FlowEvent(type), x, y);
     }

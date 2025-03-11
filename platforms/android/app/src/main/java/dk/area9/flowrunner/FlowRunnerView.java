@@ -298,11 +298,33 @@ class FlowRunnerView extends GLSurfaceView {
     public boolean onTouchEvent(@NonNull MotionEvent event) {
         int x = Math.round(event.getX());
         int y = Math.round(event.getY());
+
+        ArrayList<float[]> points = new ArrayList<>();
+        for (int i = 0; i < event.getPointerCount(); i++) {
+            MotionEvent.PointerCoords coords = new MotionEvent.PointerCoords();
+            event.getPointerCoords(i, coords);
+
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_POINTER_1_UP:
+                    if (coords.x == event.getX() && coords.y == event.getY()) {
+                        continue;
+                    }
+            }
+
+            points.add(new float[] { coords.x, coords.y });
+        }
+
+        wrapper.deliverTouchPoints(points.toArray(new float[0][0]));
         
         switch (event.getActionMasked()) {
         case MotionEvent.ACTION_DOWN:
             wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_MOUSE_DOWN, x, y);
+            wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_TOUCH_START, x, y);
             touch_start_x = x; touch_start_y = y;
+            break;
+        case MotionEvent.ACTION_POINTER_1_DOWN:
+            wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_TOUCH_START, x, y);
             break;
             
         case MotionEvent.ACTION_MOVE:
@@ -313,19 +335,31 @@ class FlowRunnerView extends GLSurfaceView {
                 if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
                     touch_start_x = touch_start_y = -1;
                     wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_MOUSE_MOVE, x, y);
+                    wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_TOUCH_MOVE, x, y);
                 }
             } else {
                 wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_MOUSE_MOVE, x, y);
+                wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_TOUCH_MOVE, x, y);
             }
           
             break;
             
         case MotionEvent.ACTION_UP:
-            if (!gestureListener.isFlowGestureInProgress()) wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_MOUSE_UP, x, y);
+            if (!gestureListener.isFlowGestureInProgress()) {
+                wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_MOUSE_UP, x, y);
+                wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_TOUCH_END, x, y);
+            }
+            break;
+
+        case MotionEvent.ACTION_POINTER_1_UP:
+            wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_TOUCH_END, x, y);
             break;
             
         case MotionEvent.ACTION_CANCEL:
-            if (!gestureListener.isFlowGestureInProgress()) wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_MOUSE_CANCEL, x, y);
+            if (!gestureListener.isFlowGestureInProgress()) {
+                wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_MOUSE_CANCEL, x, y);
+                wrapper.deliverMouseEvent(FlowRunnerWrapper.EVENT_TOUCH_END, x, y);
+            }
             break;
         }
         

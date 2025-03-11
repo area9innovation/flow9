@@ -960,22 +960,48 @@ CGPoint iosGLRenderSupport::fixIphoneXMousePoint(int x, int y) {
     return CGPointMake(x - GLView.frame.origin.x, y - GLView.frame.origin.y);
 }
 
-void iosGLRenderSupport::mouseMoveEvent(int x, int y)
+std::vector<vec2> iosGLRenderSupport::convertTouchesToVector(NSArray<NSValue*>* touchPoints)
 {
-    CGPoint mousePoint = fixIphoneXMousePoint(x, y);
+    std::vector<vec2> points;
+    
+    for (NSValue *value in touchPoints) {
+        CGPoint point = [value CGPointValue];
+        
+        vec2 glm_point(point.x, point.y);
+        points.push_back(glm_point);
+    }
+    
+    return points;
+}
+
+void iosGLRenderSupport::mouseMoveEvent(NSArray<NSValue*>* touchPoints)
+{
+    TouchPoints = convertTouchesToVector(touchPoints);
+    
+    CGPoint firstPoint = [[touchPoints firstObject] CGPointValue];
+    CGPoint mousePoint = fixIphoneXMousePoint(firstPoint.x, firstPoint.y);
     dispatchMouseEvent(FlowMouseMove, mousePoint.x * ScreenScale, mousePoint.y * ScreenScale);
+    dispatchMouseEvent(FlowTouchMove, mousePoint.x * ScreenScale, mousePoint.y * ScreenScale);
 }
 
-void iosGLRenderSupport::mousePressEvent(int x, int y)
+void iosGLRenderSupport::mousePressEvent(NSArray<NSValue*>* touchPoints)
 {
-    CGPoint mousePoint = fixIphoneXMousePoint(x, y);
+    TouchPoints = convertTouchesToVector(touchPoints);
+    
+    CGPoint firstPoint = [[touchPoints firstObject] CGPointValue];
+    CGPoint mousePoint = fixIphoneXMousePoint(firstPoint.x, firstPoint.y);
     dispatchMouseEvent(FlowMouseDown, mousePoint.x * ScreenScale, mousePoint.y * ScreenScale);
+    dispatchMouseEvent(FlowTouchStart, mousePoint.x * ScreenScale, mousePoint.y * ScreenScale);
 }
 
-void iosGLRenderSupport::mouseReleaseEvent(int x, int y)
+void iosGLRenderSupport::mouseReleaseEvent(NSArray<NSValue*>* touchPoints)
 {
-    CGPoint mousePoint = fixIphoneXMousePoint(x, y);
+    TouchPoints = convertTouchesToVector(touchPoints);
+    
+    CGPoint firstPoint = [[touchPoints firstObject] CGPointValue];
+    CGPoint mousePoint = fixIphoneXMousePoint(firstPoint.x, firstPoint.y);
     dispatchMouseEvent(FlowMouseUp, mousePoint.x * ScreenScale, mousePoint.y * ScreenScale);
+    dispatchMouseEvent(FlowTouchEnd, mousePoint.x * ScreenScale, mousePoint.y * ScreenScale);
 }
 
 // Return key on the screen keyboard for one-line textbox
