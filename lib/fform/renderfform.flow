@@ -454,26 +454,61 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 				childDisposers := removeIndex(^childDisposers, z);
 			}
 
-			handleReplace = \form, z -> {
-				childrenAfter = tailFrom(^childrenClips, z);
-
-				iter(childrenAfter, \children ->
-					iter(children, \child -> removeChildClip(parentClip, child.first, child.second))
-				);
-
-				applyall(^childDisposers[z]);
-
+			handleReplace = \form, z, delay -> {
+				// Render the new form
 				childResult = renderFForm(form, farrayPush(zorder, const(z)));
 				childClip = map(childResult.clips, \c -> Pair(c, ref false));
 
-				iter(
-					replace(childrenAfter, 0, childClip),
-					\childClips ->
-						iter(childClips, \clip -> addChildClip(parentClip, clip.first, clip.second))
-				);
+				// Keep a reference to the old clips and disposers
+				oldClips = ^childrenClips[z];
+				oldDisposers = ^childDisposers[z];
 
-				childrenClips := replace(^childrenClips, z, childClip);
-				childDisposers := replace(^childDisposers, z, childResult.disposers);
+				// Add the new clips but keep the old ones temporarily
+				clipsBefore = foldi(^childrenClips, 0, \i, acc, c -> {
+					if (i < z) {
+						acc + length(c)
+					} else {
+						acc
+					}
+				});
+
+				// Place new clips on top
+				iteri(childClip, \i, d -> addChildClipAt(parentClip, d.first, clipsBefore + i + length(oldClips), d.second));
+
+				// Update the arrays with both old and new clips/disposers
+				childrenClips := replace(^childrenClips, z, concat(oldClips, childClip));
+				childDisposers := replace(^childDisposers, z, concat(oldDisposers, childResult.disposers));
+
+				// If delay is 0, do immediate replacement
+				if (delay <= 0) {
+					// Remove old clips
+					iter(oldClips, \clip -> removeChildClip(parentClip, clip.first, clip.second));
+					// Apply old disposers
+					applyall(oldDisposers);
+					// Update the arrays with just the new clips/disposers
+					childrenClips := replace(^childrenClips, z, childClip);
+					childDisposers := replace(^childDisposers, z, childResult.disposers);
+				} else {
+					// Schedule removal of old clips after delay
+					timer(delay, \ -> {
+						// Make sure we still exist when timer fires
+						if (length(^childrenClips) > z) {
+							currentClips = ^childrenClips[z];
+							// Check if we still have the old clips (they might have been replaced again)
+							if (length(currentClips) >= length(oldClips)) {
+								// Remove old clips
+								iter(oldClips, \clip -> removeChildClip(parentClip, clip.first, clip.second));
+								// Apply old disposers
+								applyall(oldDisposers);
+								// Update the arrays with just the new clips
+								childrenClips := replace(^childrenClips, z, subrange(currentClips, length(oldClips), length(currentClips) - length(oldClips)));
+								// Update the disposers array to keep only the new disposers
+								currentDisposers = ^childDisposers[z];
+								childDisposers := replace(^childDisposers, z, subrange(currentDisposers, length(oldDisposers), length(currentDisposers) - length(oldDisposers)));
+							}
+						}
+					});
+				}
 			}
 
 			handleMove = \from, to -> {
@@ -522,9 +557,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 								handleMove(from, toFixed);
 							}
 						}
-						FGroupReplace(form, z) : {
+						FGroupReplace(form, z, delay) : {
 							next(currentStack, replace(getValue(currentStack), z, form));
-							handleReplace(form, z);
+							handleReplace(form, z, delay);
 						}
 					}
 				});
