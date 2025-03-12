@@ -122,6 +122,7 @@ class TextClip extends NativeWidgetClip {
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") != "0";
 	public static var AmiriHTMLMeasurement = Util.getParameter("amiri_html_measurement") != "0";
+	public static var SafariAdditionalTextWidthUpdateEnabled = Util.getParameter("safari_additional_text_width_update") != "0";
 	public static var useLetterSpacingFix = Util.getParameter("letter_spacing_fix") == "1";
 	public static var useForcedUpdateTextWidth = Util.getParameter("forced_textwidth_update") != "0";
 	public static var checkTextNodeWidth = Util.getParameter("text_node_width") != "0";
@@ -1852,7 +1853,7 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 
-		if (Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && !isMaterialIconFont()) {
+		if (SafariAdditionalTextWidthUpdateEnabled && Platform.isSafari && Platform.isMacintosh && RenderSupport.getAccessibilityZoom() == 1.0 && untyped text != "" && !isMaterialIconFont()) {
 			RenderSupport.defer(updateTextWidth, 0);
 		}
 	}
