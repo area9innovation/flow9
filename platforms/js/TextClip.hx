@@ -2106,12 +2106,12 @@ class TextClip extends NativeWidgetClip {
 
 		// Set font properties
 		var computedStyle = Browser.window.getComputedStyle(untyped textNode.parentNode);
-		TextClip.measureSVGTextElement.setAttribute('font-family', computedStyle.fontFamily);
-		TextClip.measureSVGTextElement.setAttribute('font-size', computedStyle.fontSize);
-		TextClip.measureSVGTextElement.setAttribute('font-style', computedStyle.fontStyle);
-		TextClip.measureSVGTextElement.setAttribute('font-weight', computedStyle.fontWeight);
-		TextClip.measureSVGTextElement.setAttribute('letter-spacing', computedStyle.letterSpacing);
-		TextClip.measureSVGTextElement.setAttribute('white-space', computedStyle.whiteSpace);
+		TextClip.measureSVGTextElement.style.fontFamily = computedStyle.fontFamily;
+		TextClip.measureSVGTextElement.style.fontSize = computedStyle.fontSize;
+		TextClip.measureSVGTextElement.style.fontStyle = computedStyle.fontStyle;
+		TextClip.measureSVGTextElement.style.fontWeight = computedStyle.fontWeight;
+		TextClip.measureSVGTextElement.style.letterSpacing = computedStyle.letterSpacing;
+		TextClip.measureSVGTextElement.style.whiteSpace = computedStyle.whiteSpace;
 		TextClip.measureSVGTextElement.style.fontFeatureSettings = computedStyle.fontFeatureSettings;
 
 		TextClip.measureSVGTextElement.textContent = textNode.textContent;
