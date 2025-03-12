@@ -181,8 +181,8 @@ export {
 	) -> () -> void;
 
 	// Process SSE (Server-Sent Events) response chunks
-	// Returns a Json object parsed from the data: field
-	parseSSEChunk(chunk : string) -> Maybe<Pair<string, Json>>;
+	// Returns a list of all events found in the chunk, each as a Pair of event type and parsed JSON data
+	parseSSEChunk(chunk : string) -> [Pair<string, Json>];
 }
 
 downloadFileBinaryWithHeaders(
@@ -453,56 +453,82 @@ httpStreamingRequestWithTimeout(
 	}
 }
 
-// Function to parse SSE formatted chunks
-parseSSEChunk(chunk : string) -> Maybe<Pair<string, Json>> {
-	// Look for event: and data: lines
-	eventPattern = "event: ";
-	dataPattern = "data: ";
+// Process SSE (Server-Sent Events) response chunks
+// Returns a list of all events found in the chunk, each as a Pair of event type and parsed JSON data
+parseSSEChunk(chunk : string) -> [Pair<string, Json>] {
+	// Events in SSE are separated by double newlines
+	events = strSplit(chunk, "\n\n");
 
-	// Extract event type
-	eventStart = strIndexOf(chunk, eventPattern);
-	if (eventStart < 0) {
-		None(); // No event found
-	} else {
-		// Find where the event line ends
-		eventEndPos = strIndexOf(chunk, "\n");
-		eventEndIndex = if (eventEndPos < 0) strlen(chunk) else eventEndPos;
+	filtermap(events, \event -> {
+		if (trim(event) == "") None()
+		else {
+			maybeEventType = extractEventType(event);
+			maybeData = extractEventData(event);
 
-		// Extract event type from the line
-		eventStart2 = eventStart + strlen(eventPattern);
-		eventType = substring(chunk, eventStart2, eventEndIndex - eventStart2);
-		eventTypeTrimmed = trim(eventType); // Remove whitespace
-
-		// Extract data (JSON)
-		dataStart = strIndexOf(chunk, dataPattern);
-		if (dataStart < 0) {
-			None(); // No data found
-		} else {
-			// Find where the data line ends - need to look for a newline after dataStart
-			dataRestLength = strlen(chunk) - dataStart;
-			dataChunk = substring(chunk, dataStart, dataRestLength);
-
-			// Now find the first newline in this substring
-			dataEndPos = strIndexOf(dataChunk, "\n");
-			dataEndIndex = if (dataEndPos < 0)
-				strlen(dataChunk)
-			else
-				dataEndPos;
-
-			// Extract data from the line
-			dataStart2 = strlen(dataPattern);
-			dataString = substring(dataChunk, dataStart2, dataEndIndex - dataStart2);
-			dataStringTrimmed = trim(dataString); // Remove whitespace
-
-			// Parse JSON
-			maybeJson = parseJson(dataStringTrimmed);
-
-			if (maybeJson == JsonNull()) {
-				None();
-			} else {
-				Some(Pair(eventTypeTrimmed, maybeJson));
+			// Only include valid events with both type and parseable data
+			switch (maybeEventType) {
+				Some(eventType): {
+					switch (maybeData) {
+						Some(data): {
+							parsedJson = parseJson(data);
+							if (parsedJson != JsonNull()) {
+								Some(Pair(eventType, parsedJson))
+							} else None();
+						}
+						None(): None();
+					}
+				}
+				None(): None();
 			}
 		}
+	});
+}
+
+// Helper function to extract event type from an SSE event
+extractEventType(event : string) -> Maybe<string> {
+	eventPattern = "event: ";
+	eventStart = strIndexOf(event, eventPattern);
+
+	if (eventStart >= 0) {
+		// Find where the event line ends
+		eventStartPos = eventStart + strlen(eventPattern);
+		restOfEvent = substring(event, eventStartPos, strlen(event) - eventStartPos);
+		eventEndPos = strIndexOf(restOfEvent, "\n");
+
+		// Extract and trim the event type
+		if (eventEndPos >= 0) {
+			eventType = trim(substring(restOfEvent, 0, eventEndPos));
+			if (eventType != "") Some(eventType) else None();
+		} else {
+			eventType = trim(restOfEvent);
+			if (eventType != "") Some(eventType) else None();
+		}
+	} else {
+		None(); // No event type found
+	}
+}
+
+// Helper function to extract data from an SSE event
+extractEventData(event : string) -> Maybe<string> {
+	dataPattern = "data: ";
+	dataStart = strIndexOf(event, dataPattern);
+
+	if (dataStart >= 0) {
+		// Find where the data line ends
+		dataStartPos = dataStart + strlen(dataPattern);
+		restOfData = substring(event, dataStartPos, strlen(event) - dataStartPos);
+		dataEndPos = strIndexOf(restOfData, "\n");
+
+		// Extract and trim the data
+		if (dataEndPos >= 0) {
+			data = trim(substring(restOfData, 0, dataEndPos));
+			if (data != "") Some(data) else None();
+		} else {
+			data = trim(restOfData);
+			if (data != "") Some(data) else None();
+		}
+	} else {
+		None(); // No data found
 	}
 }
 
