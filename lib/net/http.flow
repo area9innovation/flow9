@@ -182,7 +182,7 @@ export {
 
 	// Process SSE (Server-Sent Events) response chunks
 	// Returns a Json object parsed from the data: field
-	parseSSEChunk(chunk : string) -> Maybe<Json>;
+	parseSSEChunk(chunk : string) -> Maybe<Pair<string, Json>>;
 }
 
 downloadFileBinaryWithHeaders(
@@ -453,13 +453,56 @@ httpStreamingRequestWithTimeout(
 	}
 }
 
-parseSSEChunk(chunk : string) -> Maybe<Json> {
-	if (startsWith(chunk, "data: ")) {
-		dataStr = substring(chunk, 6, strlen(chunk) - 6);
-		json = parseJson(dataStr);
-		if (json == JsonNull()) None() else Some(json);
+// Function to parse SSE formatted chunks
+parseSSEChunk(chunk : string) -> Maybe<Pair<string, Json>> {
+	// Look for event: and data: lines
+	eventPattern = "event: ";
+	dataPattern = "data: ";
+
+	// Extract event type
+	eventStart = strIndexOf(chunk, eventPattern);
+	if (eventStart < 0) {
+		None(); // No event found
 	} else {
-		None();
+		// Find where the event line ends
+		eventEndPos = strIndexOf(chunk, "\n");
+		eventEndIndex = if (eventEndPos < 0) strlen(chunk) else eventEndPos;
+
+		// Extract event type from the line
+		eventStart2 = eventStart + strlen(eventPattern);
+		eventType = substring(chunk, eventStart2, eventEndIndex - eventStart2);
+		eventTypeTrimmed = trim(eventType); // Remove whitespace
+
+		// Extract data (JSON)
+		dataStart = strIndexOf(chunk, dataPattern);
+		if (dataStart < 0) {
+			None(); // No data found
+		} else {
+			// Find where the data line ends - need to look for a newline after dataStart
+			dataRestLength = strlen(chunk) - dataStart;
+			dataChunk = substring(chunk, dataStart, dataRestLength);
+
+			// Now find the first newline in this substring
+			dataEndPos = strIndexOf(dataChunk, "\n");
+			dataEndIndex = if (dataEndPos < 0)
+				strlen(dataChunk)
+			else
+				dataEndPos;
+
+			// Extract data from the line
+			dataStart2 = strlen(dataPattern);
+			dataString = substring(dataChunk, dataStart2, dataEndIndex - dataStart2);
+			dataStringTrimmed = trim(dataString); // Remove whitespace
+
+			// Parse JSON
+			maybeJson = parseJson(dataStringTrimmed);
+
+			if (maybeJson == JsonNull()) {
+				None();
+			} else {
+				Some(Pair(eventTypeTrimmed, maybeJson));
+			}
+		}
 	}
 }
 
