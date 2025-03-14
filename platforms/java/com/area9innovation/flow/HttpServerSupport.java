@@ -341,7 +341,11 @@ public class HttpServerSupport extends NativeHost {
 								os.close();
 							} catch (IOException e) {
 								String err = e.getMessage();
-								if (!err.equals("Broken pipe") && !err.equals("Connection reset by peer")) {
+								if (
+									!err.equals("Broken pipe")
+									&& !err.equals("Connection reset by peer")
+									&& !err.equals("An established connection was aborted by the software in your host machine")
+								) {
 									System.out.println("Ending response error: " + err);
 									e.printStackTrace(System.out);
 								}
