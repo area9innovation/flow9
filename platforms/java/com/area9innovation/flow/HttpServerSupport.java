@@ -210,7 +210,7 @@ public class HttpServerSupport extends NativeHost {
 				handler.makeSetHeaders(),
 				handler.makeResponseStatus()
 			);
-			FlowRuntime.eventLoop(false);
+			FlowRuntime.eventLoop();
 		}
 	}
 
@@ -256,7 +256,7 @@ public class HttpServerSupport extends NativeHost {
 				handler.makeSendHeaders(),
 				handler.makeSetHeaders()
 			);
-			FlowRuntime.eventLoop(false);
+			FlowRuntime.eventLoop();
 		}
 	}
 
