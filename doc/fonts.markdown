@@ -20,6 +20,7 @@ How to update Material icons
 	1.8. Notify colleagues that keep their own copy of font locally or in the project. (GroveX, Rodion Safonov, etc.)
 
 2. Update dfont for flowcpp
+	*Skip steps 2.1 - 2.9 in case MaterialIcons-<option> fonts have no updates
 	2.1. Go to https://github.com/google/material-design-icons/tree/master/font
 	2.2. Download `MaterialIcons-Regular.ttf`
 	2.3. Go to `flow9/platforms/qt/bin/fontconvertor`
