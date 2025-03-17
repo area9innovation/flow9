@@ -13,6 +13,9 @@ import pixi.core.math.Point;
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") == "1";
 	public static var DebugUpdate : Bool = Util.getParameter("debugupdate") == "1";
+	public static var UseOnlyDropShadow = Util.getParameter("use_dropshadow") == "1";
+	public static var UseOnlyBoxShadow = Util.getParameter("use_boxshadow") == "1";
+	public static var ApplyIOSBoxShadowFix = Util.getParameter("apply_ios_boxshadow_fix") == "1";
 	public static var BoxShadow : Bool = ((Platform.isChrome || Platform.isFirefox) && !Platform.isMobile) ?
 		Util.getParameter("boxshadow") != "0" : Util.getParameter("boxshadow") == "1";
 	public static var InvalidateRenderable : Bool = Util.getParameter("renderable") != "0";
@@ -1400,7 +1403,9 @@ class DisplayObjectHelper {
 				var filter = filters[0];
 
 				if (untyped HaxeRuntime.instanceof(filter, DropShadowFilter)) {
-					if (untyped BoxShadow || filter.useBoxShadow || clip.isGraphics()) {
+					if (UseOnlyBoxShadow || (!UseOnlyDropShadow && (
+						untyped BoxShadow || filter.useBoxShadow || (clip.isGraphics() && !(ApplyIOSBoxShadowFix && Platform.isIOS))
+					))) {
 						applyNativeWidgetBoxShadow(clip, filter);
 					} else {
 						var color : Array<Int> = pixi.core.utils.Utils.hex2rgb(untyped filter.color, []);

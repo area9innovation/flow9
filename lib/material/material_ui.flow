@@ -193,9 +193,10 @@ export {
 
 	MPopupOpener(button : MaterialButton, popupContent : Material, style : [MPopupOpenerStyle]) -> Material;
 		MaterialButton ::= MTextButton, MIconButton;
-		MPopupOpenerStyle ::= MPopupAlignment, MOpenMenu;
+		MPopupOpenerStyle ::= MPopupAlignment, MOpenMenu, MMenuOpenDelay, MCustomPopupStyle;
 			MPopupAlignment(type : Transform<MPopupAlignmentType>);
 				MPopupAlignmentType ::= MStart, MEnd, MLeft, MRight, MTop, MBottom, MNoAlignment;
+			MCustomPopupStyle(style : [MPopupStyle]);
 
 	// Construct an HTML stage with the given metrics
 	MHTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Material;
@@ -252,6 +253,7 @@ MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Ma
 MRadiosCombined(index : DynamicBehaviour<int>, style : [MCheckableStyle], params : [MRadioParams], colsCombiner : bool) -> Material {
 	MRadiosExtended(index, style, params, colsCombiner)
 	|> (\radios -> if (colsCombiner) MFlexibleGrid(const(radios), [TightWidth()]) else MLinesA(radios))
+	|> (\m -> MAccess([AccessRole("radiogroup"), FAccessAttribute("aria-label", extractStruct(style, MButtonTitle(const(""))).title)], m))
 }
 
 MRadiosExtended(
@@ -1648,26 +1650,38 @@ MEditableRectangle(
 }
 
 MPopupOpener(button : MaterialButton, popupContent : Material, style : [MPopupOpenerStyle]) -> Material {
+	customStyle = extractStruct(style, MCustomPopupStyle([])).style;
+	openDelayM = tryExtractStruct(style, MMenuOpenDelay(0));
 	popupOpened = extractStruct(style, MOpenMenu(make(false))).opened;
+	openFn = \ -> reverseBehaviour(popupOpened);
+
 	posScale = make(zeroPositionScale);
 	buttonWH = makeWH();
 	popupW = make(0.);
 	popupH = make(0.);
 	border = 16.;
 
-	mat = switch (button) {
-		MIconButton(__, onClick, __, __):
-			MIconButton(button with onClick = \ -> {
-				reverseBehaviour(popupOpened);
-				onClick()
-			});
-		MTextButton(__, onClick, __, __):
-			MTextButton(button with onClick = \ -> {
-				reverseBehaviour(popupOpened);
-				onClick()
-			})
-	}
 	MGetManager(\manager -> MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t -> {
+		popupId = "popup_menu_" + i2s(makeTropicTag(manager));
+		additionalState = [
+			FAccessAttribute("aria-haspopup", const("menu")),
+			FAccessAttribute("aria-expanded", fselectLift(popupOpened, b2s)),
+			FAccessAriaOwns(popupId, popupOpened)
+		];
+
+		mat = switch (button) {
+			MIconButton(__, onClick, __, st):
+				MIconButton(button with
+					onClick = \ -> {openFn(); onClick()},
+					state = concat(st, additionalState)
+				);
+			MTextButton(__, onClick, __, st):
+				MTextButton(button with
+					onClick = \ -> {openFn(); onClick()},
+					state = concat(st, additionalState)
+				);
+		}
+
 		alignment = extractStruct(style, MPopupAlignment(const(MNoAlignment()))).type;
 		leftOffset = fnegate(popupW);
 		rightOffset = fwidth(buttonWH);
@@ -1681,22 +1695,28 @@ MPopupOpener(button : MaterialButton, popupContent : Material, style : [MPopupOp
 			default : const(WidthHeight(0., 0.))
 		}));
 
+		renderFn = \ -> RenderMPopup(manager, p, MPopup(
+				[[popupContent]],
+				posScale,
+				concat(customStyle, [
+					RMBorders(border),
+					MOpenMenu(popupOpened),
+					MFocusOnPrevious(true),
+					RMOffset(fstall(fselectLift(offset, \o -> Pair(o, 0.)), 0)),
+					RMCurrentWidth(popupW),
+					RMCurrentHeight(popupH),
+					FAccessAttribute("id", const(popupId)),
+					AccessRole("menu"),
+					RMClickOutToClose(),
+					MTrapFocus()
+				])
+			),
+			m2t
+		);
+
 		MConstruct([
 			makeSubscribe2(popupOpened, \op ->
-				if (op) RenderMPopup(manager, p, MPopup(
-						[[popupContent]],
-						posScale,
-						[
-							RMBorders(border),
-							MOpenMenu(popupOpened),
-							MFocusOnPrevious(true),
-							RMOffset(fstall(fselectLift(offset, \o -> Pair(o, 0.)), 0)),
-							RMCurrentWidth(popupW),
-							RMCurrentHeight(popupH)
-						]
-					),
-					m2t
-				)
+				if (op) eitherFn(openDelayM, \delay -> timer(delay.delay, renderFn), renderFn)
 			)
 		], MPositionScale(posScale, MAttachBox(mat, buttonWH)))
 		|> (\m -> MCopySize(m, \sz ->

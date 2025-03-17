@@ -30,7 +30,7 @@ public abstract class FlowRuntime {
 
 	public synchronized void start() {
 		main();
-		eventLoop(true);
+		eventLoop(true, true, null);
 	}
 
 	public static boolean sleep(String description) {
@@ -45,16 +45,19 @@ public abstract class FlowRuntime {
 		}
 	}
 
-	private static void eventLoop(boolean isMainThread, AtomicBoolean forceExit) {
+	// isMainLoop means the main loop of the thread.
+	// We have extra loops when we have to wait for a result (f.e. runAndWait).
+	// Each thread has only one main event loop.
+	private static void eventLoop(boolean isMainThread, boolean isMainLoop, AtomicBoolean forceExit) {
 		while (quitCode == null && (forceExit == null || !forceExit.get())) {
-			boolean hasBackgroundActions = executeActions(false);
+			boolean hasBackgroundActions = executeActions(isMainLoop, isMainLoop);
 			if (!isMainThread && !hasBackgroundActions) {
 				break;
 			}
 			if (!sleep("event loop")) break;
 		}
 
-		if (forceExit != null && forceExit.get() && executeActions(false)) { // give the last chance to execute pending operations in the case of the forced exit
+		if (forceExit != null && forceExit.get() && executeActions(isMainLoop, isMainLoop)) { // give the last chance to execute pending operations in the case of the forced exit
 			Long threadId = getThreadIdLong();
 
 			String callbacksStr = null;
@@ -82,17 +85,17 @@ public abstract class FlowRuntime {
 		}
 	}
 
-	public static void eventLoop(boolean isMainThread) {
-		eventLoop(isMainThread, null);
+	public static void eventLoop() {
+		eventLoop(false, false, null);
 	}
 
 	// Returns Pair(loopFn, interruptFn)
-	public static Pair<Func0<Object>, Func0<Object>> makeInterruptibleEvenLoopPair() {
+	public static Pair<Func0<Object>, Func0<Object>> makeInterruptibleEvenLoopPair(boolean isMainLoop) {
 		AtomicBoolean forceExit = new AtomicBoolean(false);
 		return new Pair<Func0<Object>, Func0<Object>>(
 			new Func0<Object>() {
 				public Object invoke() {
-					eventLoop(false, forceExit);
+					eventLoop(false, isMainLoop, forceExit);
 					return null;
 				}
 			},
@@ -110,7 +113,7 @@ public abstract class FlowRuntime {
 	public static Thread runParallel(Runnable runnable) {
 		Thread thread = new Thread(runnable);
 		thread.start();
-		executeActions(false);
+		executeActions(false, false);
 		return thread;
 	}
 
@@ -121,7 +124,7 @@ public abstract class FlowRuntime {
 		Thread thread = new Thread(future);
 		thread.start();
 		while (thread.isAlive()) {
-			executeActions(true);	// Allow execute timers recursively because runParallelAndWait can be called from a timer, and we should have a chance to finish this while loop.
+			executeActions(true, false);	// Allow execute timers recursively because runParallelAndWait can be called from a timer, and we should have a chance to finish this while loop.
 			if (!sleep("wait for thread")) break;
 		}
 		try {
@@ -198,7 +201,7 @@ public abstract class FlowRuntime {
 				throw new Exception("Multiple access is not allowed! Resource: " + description);
 			}
 			while (!future.isDone()) {
-				executeActions(true);	// Allow execute timers recursively because runAndWait can be called from a timer, and we should have a chance to finish this while loop.
+				executeActions(true, false);	// Allow execute timers recursively because runAndWait can be called from a timer, and we should have a chance to finish this while loop.
 				if (!sleep("wait for " + description)) break;
 			}
 			activeTask = null;
@@ -257,26 +260,26 @@ public abstract class FlowRuntime {
 		return "Thread " + Long.toString(threadId) + ", callbacks " + callbacksCnt + ", timers " + timersCnt + details;
 	}
 
-	private static boolean executeTimers(boolean unlockTimers) {
+	private static boolean executeTimers(boolean allowRecursive, boolean isMainLoop) {
 		Timers timers = getTimers();
 		if (timers != null) {
-			timers.execute(unlockTimers);
+			timers.execute(allowRecursive, isMainLoop);
 			return !timers.isEmpty();
 		}
 		return false;
 	}
 
-	// We have to unlock timers if we call executeActions from runParallelAndWait and SingleExecutor.runAndWait.
+	// We have to allow recursive call of executeActions if we call it from runParallelAndWait and SingleExecutor.runAndWait.
 	// For example we call runAndWait by timer, i.e. it is called in Timers.execute(),
 	// which has increased Timers.executingCnt to prevent recursive calls and call stack growth.
 	// Then some new timer was started and runAndWait should wait for this new timer too,
-	// so unlockTimers must be true.
-	protected static boolean executeActions(boolean unlockTimers) {
-		boolean hasTimers = executeTimers(unlockTimers);
+	// so allowRecursive must be true.
+	protected static boolean executeActions(boolean allowRecursive, boolean isMainLoop) {
+		boolean hasTimers = executeTimers(allowRecursive, isMainLoop);
 		Callbacks callbacks = callbacksByThreadId.get(getThreadIdLong());
 		if (callbacks != null) {
 			if (callbacks.execute()) {
-				hasTimers = executeTimers(unlockTimers);
+				hasTimers = executeTimers(allowRecursive, isMainLoop);
 			}
 		}
 		return hasTimers || (callbacks != null && !callbacks.isEmpty());

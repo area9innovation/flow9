@@ -1018,7 +1018,13 @@ StackSlot GLClip::addEventListener(RUNNER_ARGS)
 
     FlowEvent type = FlowUnknownEvent;
 
-    if (event == "mouseenter" || event == "rollover")
+    if (event == "touchstart")
+        type = FlowTouchStart;
+    else if (event == "touchmove")
+        type = FlowTouchMove;
+    else if (event == "touchend")
+        type = FlowTouchEnd;
+    else if (event == "mouseenter" || event == "rollover")
         type = FlowMouseEnter;
     else if (event == "mouseleave" || event == "rollout")
         type = FlowMouseLeave;
@@ -1067,7 +1073,13 @@ StackSlot GLClip::emitMouseEvent(RUNNER_ARGS)
 
     FlowEvent type = FlowUnknownEvent;
 
-    if (event == "mouseenter" || event == "rollover")
+    if (event == "touchstart")
+        type = FlowTouchStart;
+    else if (event == "touchmove")
+        type = FlowTouchMove;
+    else if (event == "touchend")
+        type = FlowTouchEnd;
+    else if (event == "mouseenter" || event == "rollover")
         type = FlowMouseEnter;
     else if (event == "mouseleave" || event == "rollout")
         type = FlowMouseLeave;
@@ -1191,6 +1203,25 @@ StackSlot GLClip::getMouseY(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
     return StackSlot::MakeDouble(getLocalMousePos().y);
+}
+
+StackSlot GLClip::getTouchPoints(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
+    std::vector<vec2> points = owner->getTouchPoints();
+    
+    const StackSlot & pointsArray = RUNNER->AllocateArray(points.size());
+    
+    for (short i = 0; i < points.size(); i++)
+    {
+        const StackSlot & pointsPair = RUNNER->AllocateArray(2);
+        RUNNER->SetArraySlot(pointsPair, 0, StackSlot::MakeDouble(points[i].x));
+        RUNNER->SetArraySlot(pointsPair, 1, StackSlot::MakeDouble(points[i].y));
+        
+        RUNNER->SetArraySlot(pointsArray, i, pointsPair);
+    }
+    
+    return pointsArray;
 }
 
 StackSlot GLClip::hittest(RUNNER_ARGS)

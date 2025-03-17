@@ -568,6 +568,12 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverHttpStatus
     WRAPPER_FLUSH(getHttp()->deliverStatus(id, status));
 }
 
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverTouchPoints
+(JNIEnv *env, jobject obj, jlong ptr, jobjectArray points)
+{
+WRAPPER(getRenderer()->deliverTouchPoints(points));
+}
+
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverMouseEvent
   (JNIEnv *env, jobject obj, jlong ptr, jint type, jint x, jint y)
 {
@@ -1255,6 +1261,21 @@ StackSlot AndroidRenderSupport::timer(RUNNER_ARGS)
     }
 
     RETVOID;
+}
+
+void AndroidRenderSupport::deliverTouchPoints(jobjectArray points)  {
+    JNIEnv *env = owner->env;
+
+    std::vector<glm::vec2> touch_points;
+    int anum = env->GetArrayLength(points);
+    for (int i = 0; i < anum; i++) {
+        jobject obj = env->GetObjectArrayElement(points, i);
+        jfloat* jpoint = env->GetFloatArrayElements((jfloatArray)obj, 0);
+        glm::vec2 point(jpoint[0], jpoint[1]);
+        touch_points.push_back(point);
+    }
+
+    TouchPoints = touch_points;
 }
 
 void AndroidRenderSupport::deliverTimer(jint id)

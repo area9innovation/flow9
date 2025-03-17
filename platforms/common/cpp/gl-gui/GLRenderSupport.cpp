@@ -1102,6 +1102,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLClip, getMouseX, 1);
     TRY_USE_OBJECT_METHOD(GLClip, getMouseY, 1);
     TRY_USE_OBJECT_METHOD(GLClip, hittest, 3);
+    TRY_USE_OBJECT_METHOD(GLClip, getTouchPoints, 1);
 
     TRY_USE_OBJECT_METHOD(GLClip, addFilters, 2);
 

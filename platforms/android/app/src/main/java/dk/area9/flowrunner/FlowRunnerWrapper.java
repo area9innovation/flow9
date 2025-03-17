@@ -710,7 +710,14 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     private byte[] cbLoadAssetData(String name) {
         return Utils.loadAssetData(assets, name);
     }
-    
+
+
+    public synchronized void deliverTouchPoints(float[][] points) {
+        nDeliverTouchPoints(cPtr(), points);
+    }
+
+    private native void nDeliverTouchPoints(long ptr, float[][] points);
+
     /**
      * Delivers a mouse event to the flow code.
      */
@@ -718,6 +725,9 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         nDeliverMouseEvent(cPtr(), type, x, y);
     }
 
+    public static int EVENT_TOUCH_START = 3;
+    public static int EVENT_TOUCH_MOVE = 4;
+    public static int EVENT_TOUCH_END = 5;
     public static int EVENT_MOUSE_DOWN = 10;
     public static int EVENT_MOUSE_UP = 11;
     public static int EVENT_MOUSE_MOVE = 12;
