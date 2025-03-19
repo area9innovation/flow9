@@ -994,12 +994,11 @@ void iosGLRenderSupport::mousePressEvent(NSArray<NSValue*>* touchPoints)
     dispatchMouseEvent(FlowTouchStart, mousePoint.x * ScreenScale, mousePoint.y * ScreenScale);
 }
 
-void iosGLRenderSupport::mouseReleaseEvent(NSArray<NSValue*>* touchPoints)
+void iosGLRenderSupport::mouseReleaseEvent(NSArray<NSValue*>* touchPoints, CGPoint touchPosition)
 {
     TouchPoints = convertTouchesToVector(touchPoints);
     
-    CGPoint firstPoint = [[touchPoints firstObject] CGPointValue];
-    CGPoint mousePoint = fixIphoneXMousePoint(firstPoint.x, firstPoint.y);
+    CGPoint mousePoint = fixIphoneXMousePoint(touchPosition.x, touchPosition.y);
     dispatchMouseEvent(FlowMouseUp, mousePoint.x * ScreenScale, mousePoint.y * ScreenScale);
     dispatchMouseEvent(FlowTouchEnd, mousePoint.x * ScreenScale, mousePoint.y * ScreenScale);
 }

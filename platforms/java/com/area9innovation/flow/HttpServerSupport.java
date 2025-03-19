@@ -324,6 +324,8 @@ public class HttpServerSupport extends NativeHost {
 								os.flush();
 								return "";
 							} else {
+								System.out.println("Body must be empty for HEAD request, but it contains: " + chunk);
+								Native.printCallstack();
 								return "Do not include a body in the response for HEAD request";
 							}
 						} catch (IOException e) {

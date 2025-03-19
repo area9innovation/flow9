@@ -198,11 +198,6 @@ static bool gestureBeingHandledByFlow = false;
 
 // Emulate mouse events
 - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
-    
-//    NSLog(@"Gesture Recognizers: %lu", (unsigned long)self.view.gestureRecognizers.count);
-//    NSLog(@"Multiple Touch Enabled: %d", self.view.multipleTouchEnabled);
-    NSLog(@"Touches in touchesBegan: %lu %lu", (unsigned long)touches.count, (unsigned long)[event allTouches].count);
-//    NSLog(@"IS MY VIEW: %d", [[touches anyObject] view] == self.view);
     if (RenderSupport) {
         NSArray<NSValue*>* touchPoints = [self mapTouchesToPoints:[event allTouches]];
         RenderSupport->mousePressEvent(touchPoints);
@@ -210,9 +205,6 @@ static bool gestureBeingHandledByFlow = false;
 }
 
 - (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event {
-//    NSLog(@"Touches in touchesMoved: %lu", (unsigned long)touches.count);
-//    NSLog(@"Touch event with %lu touches", (unsigned long)[event allTouches].count);
-//    NSLog(@"IS MY VIEW: %d", [[touches anyObject] view] == self.view);
     if (RenderSupport && !gestureBeingHandledByFlow) {
         NSArray<NSValue*>* touchPoints = [self mapTouchesToPoints:[event allTouches]];
         RenderSupport->mouseMoveEvent(touchPoints);
@@ -233,7 +225,9 @@ static bool gestureBeingHandledByFlow = false;
 - (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event {
     if (RenderSupport) {
         NSArray<NSValue*>* touchPoints = [self mapTouchesToPoints:[self filterActiveTouches:[event allTouches]]];
-        RenderSupport->mouseReleaseEvent(touchPoints);
+        UITouch* touch = [touches anyObject];
+        CGPoint pos = [touch locationInView: self.view];
+        RenderSupport->mouseReleaseEvent(touchPoints, pos);
     }
     
     [self extendIdleTimerTimeout];
