@@ -22,6 +22,9 @@ export {
 	restoreMCheckpoint(acc : MoParseAcc) -> bool;
 
 	mparseStar(acc : MoParseAcc, matcher : () -> bool) -> bool;
+	mparseStarNobacktrackOrStack(acc : MoParseAcc, matcher : () -> bool) -> bool;
+	mparseStarBacktrackOnly(acc : MoParseAcc, matcher : () -> bool) -> bool;
+
 	mmatchString(acc : MoParseAcc, s : string) -> bool;
 	mmatchRange(acc : MoParseAcc, l : int, u : int) -> bool;
 	moconstruct(acc : MoParseAcc, uid : string, arity : int) -> bool;
@@ -65,6 +68,56 @@ mparseStar(acc : MoParseAcc, matcher : () -> bool) -> bool {
 		restoreMCheckpoint(acc);
 		true;
 	};
+}
+
+// Optimized version of mparseStar for operations that don't modify the stack
+// and don't need full backtracking. This is for simple patterns like character
+// classes or simple string matches.
+//
+// This function avoids creating checkpoints entirely, only tracking position.
+mparseStarNobacktrackOrStack(acc : MoParseAcc, matcher : () -> bool) -> bool {
+	doMparseStarNobacktrackOrStack(acc, matcher);
+	true;  // Star always succeeds
+}
+
+doMparseStarNobacktrackOrStack(acc : MoParseAcc, matcher : () -> bool) -> void {
+	startPos = acc.i;
+
+	// Try to match
+	if (matcher()) {
+		// If match succeeds, continue recursively
+		doMparseStarNobacktrackOrStack(acc, matcher);
+	} else {
+		// If match fails, restore position and stop recursion
+		acc.i ::= startPos;
+	}
+}
+
+// Optimized version of mparseStar for operations that don't modify the stack
+// but may need position backtracking. This avoids the overhead of managing
+// the full checkpoint stack but still handles position tracking.
+//
+// Good for patterns that might fail and need position restoration but don't
+// manipulate the parser value stack.
+mparseStarBacktrackOnly(acc : MoParseAcc, matcher : () -> bool) -> bool {
+	doMparseStarBacktrackOnly(acc, matcher);
+	true;  // Star always succeeds
+}
+
+doMparseStarBacktrackOnly(acc : MoParseAcc, matcher : () -> bool) -> void {
+	startPos = acc.i;
+
+	// Try to match
+	if (matcher()) {
+		// Continue matching if successful
+		if (acc.i > startPos) {
+			// Only recurse if we've advanced to avoid infinite loops
+			doMparseStarBacktrackOnly(acc, matcher);
+		}
+	} else {
+		// If match fails, restore position and stop recursion
+		acc.i ::= startPos;
+	}
 }
 
 mmatchString(acc : MoParseAcc, s : string) -> bool {
