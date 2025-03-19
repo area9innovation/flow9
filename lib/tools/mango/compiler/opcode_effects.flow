@@ -1,0 +1,124 @@
+import tools/mango/compiler/mopcode;
+import ds/array;
+
+export {
+	// Determines if an MOpCode manipulates the parser stack
+	modifiesStack(op : MOpCode) -> bool;
+	
+	// Determines if an MOpCode needs full backtracking capabilities
+	needsBacktracking(op : MOpCode) -> bool;
+	
+	// Helper: determines if an operation can fail
+	canFail(op : MOpCode) -> bool;
+}
+
+// Determines if an MOpCode manipulates the value stack
+modifiesStack(op : MOpCode) -> bool {
+	switch (op) {
+		MoConstruct(__, __): true;  // Creates and pushes a new struct
+		MoEvalPoppy(__): true;      // Poppy code can modify stack
+		MoMatched(): true;          // Pushes matched text
+		MoPushPosition(): true;     // Pushes current position
+		MoCaptureI(): false;        // Just updates starti
+		MoMatchString(__): false;   // Just advances position
+		MoMatchRange(__, __): false; // Just advances position
+		MoBool(__): false;          // Constant
+		MoFunction(__, code, __): modifiesStack(code);
+		MoIf(cond, then, else_): 
+			modifiesStack(cond) || modifiesStack(then) || modifiesStack(else_);
+		MoParseStar(term): modifiesStack(term);
+		MoCall(id): true;  // Conservative assumption unless we analyze the function
+		MoSequence(exps): exists(exps, modifiesStack);
+		MoAnd(left, right): modifiesStack(left) || modifiesStack(right);
+		MoOr(left, right): modifiesStack(left) || modifiesStack(right);
+		// Checkpoint operations themselves don't modify the value stack
+		MoPushCheckpoint(): false;
+		MoDiscardCheckpoint(): false;
+		MoRestoreCheckpoint(): false;
+	}
+}
+
+// Determines if an MOpCode needs backtracking capabilities
+needsBacktracking(op : MOpCode) -> bool {
+	switch (op) {
+		// These definitely need backtracking
+		MoOr(__, __): true;                 // Choice operator
+		MoParseStar(term): needsBacktracking(term); // Repetition may need backtracking
+		
+		// These operations are pure and don't need backtracking
+		MoMatchString(__): false;           // Simple string match
+		MoMatchRange(__, __): false;        // Simple character match
+		MoBool(__): false;                  // Constant
+		MoCaptureI(): false;                // Just sets a marker
+		MoPushPosition(): false;            // Just pushes position
+		
+		// These depend on their components
+		MoFunction(__, code, __): needsBacktracking(code);
+		MoIf(cond, then, else_): 
+			needsBacktracking(cond) || needsBacktracking(then) || needsBacktracking(else_);
+		MoSequence(exps): {
+			// A sequence needs backtracking if any component does,
+			// or if any component can fail after changing the stack
+			if (exists(exps, needsBacktracking)) true
+			else {
+				doNeedsBacktrackingSequence(exps, 0);
+			}
+		}
+		MoAnd(left, right): 
+			// If left modifies stack and right can fail, we need backtracking
+			(modifiesStack(left) && canFail(right)) || 
+			needsBacktracking(left) || needsBacktracking(right);
+		
+		// Calls to other rules may need backtracking unless we know they're deterministic
+		MoCall(__): true;  // Conservative - could be refined with whole-grammar analysis
+		
+		// Checkpoint operations themselves
+		MoPushCheckpoint(): false;
+		MoDiscardCheckpoint(): false;
+		MoRestoreCheckpoint(): false;
+
+		MoMatched(): false;
+		MoEvalPoppy(poppy): false;
+		MoConstruct(uid, arity): false;
+	}
+}
+
+// Helper for checking sequences
+doNeedsBacktrackingSequence(exps : [MOpCode], i : int) -> bool {
+	if (i >= length(exps) - 1) {
+		false;
+	} else if (modifiesStack(exps[i]) && canFail(exps[i+1])) {
+		true;
+	} else {
+		doNeedsBacktrackingSequence(exps, i + 1);
+	}
+}
+
+// Helper: determines if an operation can fail
+canFail(op : MOpCode) -> bool {
+	switch (op) {
+		MoMatchString(__): true;        // String match can fail
+		MoMatchRange(__, __): true;     // Character match can fail
+		MoBool(b): !b;                  // Only MoBool(false) always fails
+		MoConstruct(__, __): false;     // Always succeeds if args are on stack
+		MoMatched(): false;             // Always succeeds
+		MoCaptureI(): false;            // Always succeeds
+		MoPushPosition(): false;        // Always succeeds
+		
+		// These operations depend on their components
+		MoFunction(__, __, body): canFail(body);
+		MoIf(cond, then, else_): canFail(cond) || canFail(then) || canFail(else_);
+		MoParseStar(__): false;         // Star never fails by definition
+		MoCall(__): true;               // Conservative - rules can fail
+		MoSequence(exps): exists(exps, canFail);
+		MoAnd(left, right): canFail(left) || canFail(right);
+		MoOr(left, right): canFail(left) && canFail(right);
+		
+		// Checkpoint operations
+		MoPushCheckpoint(): false;
+		MoDiscardCheckpoint(): true;    // Can fail if stack is empty
+		MoRestoreCheckpoint(): true;    // Can fail if stack is empty
+
+		MoEvalPoppy(poppy): true;
+	}
+}
