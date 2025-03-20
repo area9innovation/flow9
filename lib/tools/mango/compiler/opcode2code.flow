@@ -10,6 +10,83 @@ import ds/tree;
 export {
 	// Function signature with effects tree parameter
 	mopcode2code(c : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string;
+	
+	// Ensures that a piece of code produces a boolean value
+	ensureBooleanReturn(code : string) -> string;
+	
+	// Helper function to generate code for a sequence of operations without lambdas
+	generateSequenceCode(ops : [MOpCode], effects : Tree<string, MOpCodeEffects>, checkStack : bool, uniqueId : int) -> string;
+	
+	// Checks if any operation in the list contains a MoParseStar
+	containsMOpStar(ops : [MOpCode]) -> bool;
+	
+	// Counter for generating unique IDs for variables
+	idCounter : ref int = ref 0;
+}
+
+// Helper function to ensure code produces a boolean
+// If the code already produces a boolean value, leave it as is
+// Otherwise, add a "true" at the end to ensure it yields a boolean
+ensureBooleanReturn(code : string) -> string {
+	code_trim = trim(code);
+	
+	// Empty code - just use true
+	if (code_trim == "") {
+		"true";
+	} else if (code_trim == "true" || code_trim == "false" ||
+	    startsWith(code_trim, "mmatchString") ||
+	    startsWith(code_trim, "mmatchRange") ||
+	    startsWith(code_trim, "moChoice") ||
+	    startsWith(code_trim, "moSequence") ||
+	    startsWith(code_trim, "moNegate") ||
+	    startsWith(code_trim, "moOptional") ||
+	    startsWith(code_trim, "mparseStar") ||
+	    startsWith(code_trim, "mparseStarNobacktrackOrStack") ||
+	    startsWith(code_trim, "mparseStarBacktrackOnly") ||
+	    startsWith(code_trim, "moconstruct")) {
+		// These operations already produce boolean values
+		code;
+	} else if (strContains(code_trim, "::=") ||
+	    startsWith(code_trim, "acc.i ::=") ||
+	    startsWith(code_trim, "acc.starti ::=")) {
+		// Check for assignments and ::= operators - these always yield void
+		// Ensure they are wrapped in a block with a boolean result
+		"{ " + code_trim + (if (endsWith(code_trim, ";")) " " else "; ") + "true }";
+	} else if (!endsWith(code_trim, ";")) {
+		// For expressions that don't end with semicolons, assume they produce a boolean
+		code;
+	} else {
+		// For anything else ending with semicolon, add true
+		code + " true";
+	}
+}
+
+// Helper function to generate efficient straight-line code for sequences without lambdas
+generateSequenceCode(ops : [MOpCode], effects : Tree<string, MOpCodeEffects>, checkStack : bool, uniqueId : int) -> string {
+	if (length(ops) == 0) {
+		"true";
+	} else if (length(ops) == 1) {
+		// For single operation, just return its code directly
+		ensureBooleanReturn(mopcode2code(ops[0], effects));
+	} else {
+		// Create unique variable names with the uniqueId
+		okVar = "_seqOk" + i2s(uniqueId);
+		
+		// Structure code as a sequence of operations with proper control flow
+		// First operation followed by a check for the rest
+		firstOp = ensureBooleanReturn(mopcode2code(ops[0], effects));
+		
+		// Build the rest of the sequence
+		// Increment the uniqueId for nested operations
+		restOps = generateSequenceCode(tail(ops), effects, checkStack, uniqueId + 1);
+		
+		// Combine with proper flow control
+		blueprint("%first%\nif (!%ok%) false else {\n  %rest%\n}", [
+			"first", okVar + " = " + firstOp + ";",
+			"ok", okVar,
+			"rest", strReplace(restOps, "\n", "\n  ")
+		]);
+	}
 }
 
 mopcode2code(c : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string {
@@ -56,7 +133,7 @@ mopcode2code(c : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string {
 			prefix = getUrlParameter("prefix");
 			prefix + "parse_" + id + "(acc)";
 		}
-		MoCaptureI(): "acc.starti ::= acc.i";
+		MoCaptureI(): "{ acc.starti ::= acc.i; true }";
 		MoMatched(): "pushPEnv(acc.env, substring(acc.input, acc.starti, acc.i - acc.starti))";
 		MoBool(b): b2s(b);
 		MoEvalPoppy(poppy): {
@@ -73,20 +150,105 @@ mopcode2code(c : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string {
 				blueprint("{%code%; true}", ["code", renameEnv]);
 			}
 		}
-		MoPushCheckpoint(): "pushMCheckpoint(acc)";
-		MoDiscardCheckpoint(): "discardMCheckpoint(acc)";
-		MoRestoreCheckpoint(): "restoreMCheckpoint(acc)";
-		MoSequence(exps): {
-			if (length(exps) == 0) {
-				""
-			} else if (length(exps) == 1) {
-				mopcode2code(exps[0], effects)
-			} else {
+		MoNegate(op): {
+			modifiesStack = modifiesStackWithEffects(op, effects);
+
+			blueprint("
+				moNegate(acc, \\ -> {
+					%op%
+				}, %modifies%)", [
+				"op", ensureBooleanReturn(mopcode2code(op, effects)),
+				"modifies", b2s(modifiesStack)
+			]);
+		}
+		MoOptional(op): {
+			// Get effects analysis
+			modifiesStack = modifiesStackWithEffects(op, effects);
+
+			blueprint("
+				moOptional(acc, \\ -> {
+					%op%
+				}, %modifies%)", [
+				"op", ensureBooleanReturn(mopcode2code(op, effects)),
+				"modifies", b2s(modifiesStack)
+			]);
+		}
+		MoChoice(ops): {
+			// Get effects for all operations - check if any modify the stack
+			anyModifiesStack = exists(ops, \op -> modifiesStackWithEffects(op, effects));
+
+			blueprint("
+				moChoice(acc, [
+					%ops%
+				], %modifies%)", [
+				"ops", superglue(ops, \op ->
+					"\\ -> { " + ensureBooleanReturn(mopcode2code(op, effects)) + " }",
+					",\n            "),
+				"modifies", b2s(anyModifiesStack)
+			]);
+		}
+		MoSequence(ops): {
+			// Get effects for all operations
+			anyModifiesStack = exists(ops, \op -> modifiesStackWithEffects(op, effects));
+
+			if (length(ops) == 0) {
+				"true";
+			} else if (anyModifiesStack) {
+				// Get a unique ID for this sequence
+				idCounter := ^idCounter + 1000;
+				seqId = ^idCounter;
+				okVar = "_seqOk" + i2s(seqId);
+
+				// Generate code for stack-modifying sequences
+				// This requires checkpoints for proper backtracking
+				blueprint("{
+					pushMCheckpoint(acc);
+					%code%
+					if (%ok%) {
+						discardMCheckpoint(acc);
+						true;
+					} else {
+						restoreMCheckpoint(acc);
+						false;
+					}
+				}", [
+					"code", generateSequenceCode(ops, effects, true, seqId),
+					"ok", okVar
+				]);
+			} else if (containsMOpStar(ops)) {
+				// If any operation contains MoParseStar, use lambdas for this sequence
+				// to avoid variable conflicts in nested code blocks
 				blueprint("
-					{
-						%seq%
-					}", [
-					"seq", superglue(exps, \exp -> mopcode2code(exp, effects), ";\n")
+					moSequence(acc, [
+						%ops%
+					], %modifies%)", [
+						"ops", superglue(ops, \op ->
+							"\\ -> { " + ensureBooleanReturn(mopcode2code(op, effects)) + " }",
+							",\n            "),
+						"modifies", b2s(anyModifiesStack)
+				]);
+			} else {
+				// Get a unique ID for this sequence
+				idCounter := ^idCounter + 1000;
+				seqId = ^idCounter;
+				okVar = "_seqOk" + i2s(seqId);
+				posVar = "_seqPos" + i2s(seqId);
+
+				// Generate code for non-stack-modifying sequences
+				// This only needs position tracking for backtracking
+				blueprint("{
+					%pos% = acc.i;
+					%code%
+					if (!%ok%) {
+						acc.i ::= %pos%;
+						false;
+					} else {
+						true;
+					}
+				}", [
+					"code", generateSequenceCode(ops, effects, false, seqId),
+					"ok", okVar,
+					"pos", posVar
 				]);
 			}
 		}
@@ -122,7 +284,7 @@ generateOptimizedParseStar(term : MOpCode, effects : Tree<string, MOpCodeEffects
 			mparseStarNobacktrackOrStack(acc, \\ -> {
 				%term%
 			})", [
-			"term", mopcode2code(term, effects)
+			"term", ensureBooleanReturn(mopcode2code(term, effects))
 		]);
 	} else if (!modifiesStackWithEffects(term, effects)) {
 		// Medium path: position-only backtracking
@@ -131,7 +293,7 @@ generateOptimizedParseStar(term : MOpCode, effects : Tree<string, MOpCodeEffects
 			mparseStarBacktrackOnly(acc, \\ -> {
 				%term%
 			})", [
-			"term", mopcode2code(term, effects)
+			"term", ensureBooleanReturn(mopcode2code(term, effects))
 		]);
 	} else {
 		// Standard mparseStar with full checkpointing
@@ -139,8 +301,36 @@ generateOptimizedParseStar(term : MOpCode, effects : Tree<string, MOpCodeEffects
 			mparseStar(acc, \\ -> {
 				%term%
 			})", [
-			"term", mopcode2code(term, effects)
+			"term", ensureBooleanReturn(mopcode2code(term, effects))
 		]);
+	}
+}
+
+// Helper function to check if operations contain MoParseStar recursively
+containsMOpStar(ops : [MOpCode]) -> bool {
+	exists(ops, isMOpStarOrContainsStar)
+}
+
+isMOpStarOrContainsStar(opcode : MOpCode) -> bool {
+	switch (opcode) {
+		MoFunction(name, code, body): isMOpStarOrContainsStar(code) || isMOpStarOrContainsStar(body);
+		MoMatchString(s): false;
+		MoMatchRange(lower, upper): false;
+		MoIf(cond, then, else_): isMOpStarOrContainsStar(cond) || isMOpStarOrContainsStar(then) || isMOpStarOrContainsStar(else_);
+		MoParseStar(term): true;
+		MoCall(id): false;
+		MoCaptureI(): false;
+		MoMatched(): false;
+		MoBool(b): false;
+		MoEvalPoppy(poppy): false;
+		MoPushPosition(): false;
+		MoSequence(exps): containsMOpStar(exps);
+		MoConstruct(uid, arity): false;
+		MoNegate(inner): isMOpStarOrContainsStar(inner);
+		MoOptional(inner): isMOpStarOrContainsStar(inner);
+		MoChoice(choices): containsMOpStar(choices);
+		MoAnd(left, right): isMOpStarOrContainsStar(left) || isMOpStarOrContainsStar(right);
+		MoOr(left, right): isMOpStarOrContainsStar(left) || isMOpStarOrContainsStar(right);
 	}
 }
 
@@ -165,11 +355,11 @@ needMOpCodeParenthesis(o : MOpCode) -> bool {
 			}
 		}
 		MoPushPosition(): false
-		MoPushCheckpoint(): false
-		MoDiscardCheckpoint(): false
-		MoRestoreCheckpoint(): false
 		MoSequence(exps): length(exps) == 1;
 		MoConstruct(uid, arity): false;
+		MoNegate(op): false;      // Unary operation, high precedence
+		MoOptional(op): false;    // Unary operation, high precedence
+		MoChoice(ops): true;      // Multi-way choice, likely needs parentheses in expressions
 		MoAnd(left, right): true;
 		MoOr(left, right): true;
 	}

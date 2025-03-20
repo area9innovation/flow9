@@ -40,14 +40,14 @@ modifiesStackWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -
 			lookupTreeDef(effects, id, MOpCodeEffects(true, true)).modifiesStack;
 		}
 		MoSequence(exps): exists(exps, \exp -> modifiesStackWithEffects(exp, effects));
+		MoNegate(__): false;  // Negation itself doesn't modify the stack
+		MoOptional(opt): modifiesStackWithEffects(opt, effects);  // Optional passes through stack effects
+		MoChoice(ops): exists(ops, \cop -> modifiesStackWithEffects(cop, effects));  // Choice modifies if any option does
 		MoAnd(left, right):
 			modifiesStackWithEffects(left, effects) || modifiesStackWithEffects(right, effects);
 		MoOr(left, right):
 			modifiesStackWithEffects(left, effects) || modifiesStackWithEffects(right, effects);
-		// Checkpoint operations themselves don't modify the value stack
-		MoPushCheckpoint(): false;
-		MoDiscardCheckpoint(): false;
-		MoRestoreCheckpoint(): false;
+
 	}
 }
 
@@ -82,6 +82,9 @@ needsBacktrackingWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects
 				doNeedsBacktrackingSequenceWithEffects(exps, 0, effects);
 			}
 		}
+		MoNegate(opc): modifiesStackWithEffects(opc, effects);  // Needs backtracking only if operation modifies stack
+		MoOptional(opt): modifiesStackWithEffects(opt, effects);  // Needs backtracking only if operation modifies stack
+		MoChoice(ops): true;  // Choice always needs some form of backtracking for alternatives
 		MoAnd(left, right):
 			// If left modifies stack and right can fail, we need backtracking
 			(modifiesStackWithEffects(left, effects) && canFailWithEffects(right, effects)) ||
@@ -92,11 +95,6 @@ needsBacktrackingWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects
 		MoCall(id): {
 			lookupTreeDef(effects, id, MOpCodeEffects(true, true)).needsBacktracking;
 		}
-
-		// Checkpoint operations themselves
-		MoPushCheckpoint(): true;
-		MoDiscardCheckpoint(): true;
-		MoRestoreCheckpoint(): true;
 	}
 }
 
@@ -131,15 +129,14 @@ canFailWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -> bool
 		MoParseStar(__): false;       // Star never fails by definition
 		MoCall(id): true;             // Conservative - rules can fail
 		MoSequence(exps): exists(exps, \exp -> canFailWithEffects(exp, effects));
+		MoNegate(opc): !canFailWithEffects(opc, effects);  // Negation fails only if child always succeeds
+		MoOptional(__): false;  // Optional operations never fail
+		MoChoice(ops): fold(ops, true, \acc, opc -> acc && canFailWithEffects(opc, effects));  // Fails if all options fail
+
 		MoAnd(left, right):
 			canFailWithEffects(left, effects) || canFailWithEffects(right, effects);
 		MoOr(left, right):
 			canFailWithEffects(left, effects) && canFailWithEffects(right, effects);
-
-		// Checkpoint operations
-		MoPushCheckpoint(): false;
-		MoDiscardCheckpoint(): true;  // Can fail if stack is empty
-		MoRestoreCheckpoint(): true;  // Can fail if stack is empty
 
 		MoEvalPoppy(__): true;
 	}

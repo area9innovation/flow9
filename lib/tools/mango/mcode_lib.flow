@@ -1,6 +1,7 @@
 import string;
 import tools/poppy/penv;
 import tools/mango/line;
+import ds/array;
 
 export {
 	MoParseAcc(
@@ -24,6 +25,12 @@ export {
 	mparseStar(acc : MoParseAcc, matcher : () -> bool) -> bool;
 	mparseStarNobacktrackOrStack(acc : MoParseAcc, matcher : () -> bool) -> bool;
 	mparseStarBacktrackOnly(acc : MoParseAcc, matcher : () -> bool) -> bool;
+
+	// New high-level pattern operations
+	moNegate(acc : MoParseAcc, op : () -> bool, modifiesStack : bool) -> bool;
+	moOptional(acc : MoParseAcc, op : () -> bool, modifiesStack : bool) -> bool;
+	moChoice(acc : MoParseAcc, ops : [() -> bool], modifiesStack : bool) -> bool;
+	moSequence(acc : MoParseAcc, ops : [() -> bool], modifiesStack : bool) -> bool;
 
 	mmatchString(acc : MoParseAcc, s : string) -> bool;
 	mmatchRange(acc : MoParseAcc, l : int, u : int) -> bool;
@@ -54,6 +61,109 @@ restoreMCheckpoint(acc : MoParseAcc) -> bool {
 			acc.i ::= head.i;
 			acc.env.stack := head.poppyStack;
 			acc.stack ::= tail_;
+			false;
+		}
+	}
+}
+
+// Negation - succeed if the pattern fails
+moNegate(acc : MoParseAcc, op : () -> bool, modifiesStack : bool) -> bool {
+	if (modifiesStack) {
+		// Full checkpoint for stack-modifying patterns
+		pushMCheckpoint(acc);
+		if (op()) {
+			restoreMCheckpoint(acc);
+			false;
+		} else {
+			restoreMCheckpoint(acc);
+			true;
+		}
+	} else {
+		// Position-only tracking for simple patterns
+		pos = acc.i;
+		if (op()) {
+			acc.i ::= pos;
+			false;
+		} else {
+			acc.i ::= pos;
+			true;
+		}
+	}
+}
+
+// Optional - try a pattern but succeed regardless
+moOptional(acc : MoParseAcc, op : () -> bool, modifiesStack : bool) -> bool {
+	if (modifiesStack) {
+		// Full checkpoint for stack-modifying patterns
+		pushMCheckpoint(acc);
+		if (op()) {
+			discardMCheckpoint(acc);
+		} else {
+			restoreMCheckpoint(acc);
+		}
+		{}
+	} else {
+		// Position-only tracking for simple patterns
+		pos = acc.i;
+		if (!op()) {
+			acc.i ::= pos;
+		}
+	}
+	true;
+}
+
+// Choice - try patterns until one succeeds
+moChoice(acc : MoParseAcc, ops : [() -> bool], modifiesStack : bool) -> bool {
+	if (length(ops) == 0) {
+		false;
+	} else if (modifiesStack) {
+		// Full checkpoint version
+		pushMCheckpoint(acc);
+		if (ops[0]()) {
+			discardMCheckpoint(acc);
+			true;
+		} else {
+			restoreMCheckpoint(acc);
+			moChoice(acc, tail(ops), modifiesStack);
+		}
+	} else {
+		// Position-only version
+		pos = acc.i;
+		if (ops[0]()) {
+			true;
+		} else {
+			acc.i ::= pos;
+			moChoice(acc, tail(ops), modifiesStack);
+		}
+	}
+}
+
+// Sequence - try patterns in sequence, backtracking on failure
+moSequence(acc : MoParseAcc, ops : [() -> bool], modifiesStack : bool) -> bool {
+	if (length(ops) == 0) {
+		true;
+	} else if (modifiesStack) {
+		// Full checkpoint version
+		pushMCheckpoint(acc);
+		if (ops[0]() && moSequence(acc, tail(ops), modifiesStack)) {
+			discardMCheckpoint(acc);
+			true;
+		} else {
+			restoreMCheckpoint(acc);
+			false;
+		}
+	} else {
+		// Position-only version
+		pos = acc.i;
+		if (ops[0]()) {
+			if (moSequence(acc, tail(ops), modifiesStack)) {
+				true;
+			} else {
+				acc.i ::= pos;
+				false;
+			}
+		} else {
+			acc.i ::= pos;
 			false;
 		}
 	}
