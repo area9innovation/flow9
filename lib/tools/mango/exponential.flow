@@ -1,0 +1,162 @@
+import tools/mango/mango_types;
+import tools/mango/mango2string;
+import ds/tree;
+import string;
+
+export {
+	// Detects potential exponential behavior in PEG grammar
+	// This happens when multiple choice alternatives have the same first-set
+	detectExponentialBehavior(grammar : Term) -> [string];
+}
+
+detectExponentialBehavior(grammar : Term) -> [string] {
+	traverseForExponentialBehavior(grammar, None(), []);
+}
+
+// Context tracks the current rule name being processed
+traverseForExponentialBehavior(term : Term, context : Maybe<string>, warnings : [string]) -> [string] {
+	switch(term) {
+		Choice(term1, term2): {
+			// First analyze this choice
+			alternatives = flattenChoice(term);
+			newWarnings = checkAlternativesExponential(alternatives, context, warnings);
+			
+			// Then continue with both branches
+			traverseForExponentialBehavior(term1, context, 
+				traverseForExponentialBehavior(term2, context, newWarnings));
+		}
+		Rule(id, term1, term2): {
+			// For rules, pass down the rule name as context
+			traverseForExponentialBehavior(term1, Some(id), 
+				traverseForExponentialBehavior(term2, Some(id), warnings));
+		}
+		Sequence(term1, term2): {
+			// Check both terms in the sequence
+			traverseForExponentialBehavior(term1, context, 
+				traverseForExponentialBehavior(term2, context, warnings));
+		}
+		Optional(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Plus(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Star(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Negate(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		PushMatch(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Error(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Lower(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Precedence(term1, term2): {
+			traverseForExponentialBehavior(term1, context, 
+				traverseForExponentialBehavior(term2, context, warnings));
+		}
+		GrammarCall(__, termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		GrammarFn(__, term1, term2, term3): {
+			traverseForExponentialBehavior(term1, context, 
+				traverseForExponentialBehavior(term2, context, 
+					traverseForExponentialBehavior(term3, context, warnings)));
+		}
+		default: warnings;
+	}
+}
+
+flattenChoice(term : Term) -> [Term] {
+	switch(term) {
+		Choice(term1, term2): {
+			concat(flattenChoice(term1), flattenChoice(term2));
+		}
+		default: [term];
+	}
+}
+
+checkAlternativesExponential(alternatives : [Term], context : Maybe<string>, warnings : [string]) -> [string] {
+	if (length(alternatives) <= 1) {
+		warnings;
+	} else {
+		// Group alternatives by their first element
+		groups = fold(alternatives, makeTree(), \acc, alt -> {
+			first = getFirstElement(alt);
+			if (first != "") {
+				existing = lookupTreeDef(acc, first, []);
+				setTree(acc, first, arrayPush(existing, alt));
+			} else {
+				acc;
+			}
+		});
+		
+		// Find groups with multiple alternatives (potential exponential behavior)
+		problematicGroups = filtermap(getTreeKeys(groups), \key -> {
+			group = lookupTreeDef(groups, key, []);
+			if (length(group) > 1) Some(group) else None();
+		});
+		
+		// Generate warnings for each problematic group
+		fold(problematicGroups, warnings, \acc, group -> {
+			first = getFirstElement(group[0]);
+			
+			// Include rule name in the warning if available
+			ruleInfo = switch (context) {
+				Some(ruleName): " in rule '" + ruleName + "'";
+				None(): "";
+			}
+			
+			warning = "Potential exponential behavior" + ruleInfo + ": " + 
+					 i2s(length(group)) + " choices with the same first element '" + 
+					 first + "':\n" + strGlue(map(group, \t -> indent(term2string(t))), ",\n");
+			
+			arrayPush(acc, warning);
+		});
+	}
+}
+
+// Get the first element of a term (the first terminal or rule reference)
+getFirstElement(term : Term) -> string {
+	switch(term) {
+		String(s): "\"" + s + "\""; // Direct terminal
+		Variable(id): id; // Rule reference
+		Range(c1, __): "'" + c1 + "'"; // Character range starts with first char
+		Sequence(term1, term2): {
+			// Skip stack operations and non-terminal first elements in sequence
+			switch (term1) {
+				PushMatch(innerTerm): {
+					// Look inside PushMatch for the actual first element
+					firstInPushMatch = getFirstElement(innerTerm);
+					if (firstInPushMatch != "") {
+						// We found a specific token inside the PushMatch
+						firstInPushMatch;
+					} else {
+						// Move to the next term in the sequence
+						getFirstElement(term2);
+					}
+				}
+				StackOp(__): {
+					// Skip stack op and look at the next term
+					getFirstElement(term2);
+				}
+				default: {
+					// For normal terms, use the first term's first element
+					getFirstElement(term1);
+				}
+			}
+		}
+		PushMatch(innerTerm): {
+			// Look inside PushMatch for the actual first element
+			getFirstElement(innerTerm);
+		}
+		StackOp(__): ""; // No meaningful first element
+		Choice(term1, __): {
+			// For a choice within a choice, just look at the first alternative
+			getFirstElement(term1);
+		}
+		Optional(innerTerm): {
+			// For optional terms, the first element is the same as the inner term
+			// This is a simplification as Optional could also match nothing
+			getFirstElement(innerTerm);
+		}
+		Plus(innerTerm): getFirstElement(innerTerm);
+		Star(innerTerm): getFirstElement(innerTerm); // Simplification
+		Negate(innerTerm): getFirstElement(innerTerm); // Simplified
+		// For other terms, we need more sophisticated analysis
+		default: "";
+	}
+}
+
+indent(s : string) -> string {
+	"    " + strReplace(s, "\n", "\n    ");
+}
