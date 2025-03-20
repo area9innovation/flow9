@@ -1,4 +1,5 @@
 import tools/mango/compiler/mopcode;
+import tools/mango/mango_types;
 import ds/array;
 import ds/tree;
 
@@ -16,6 +17,13 @@ export {
 	modifiesStackWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -> bool;
 	// Determines if an MOpCode needs backtracking capabilities, using function effects map
 	needsBacktrackingWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -> bool;
+	
+	// Analyze effects for a Term expression to determine stack and backtracking needs
+	analyzeTermEffects(term : Term) -> MOpCodeEffects;
+	// Check if a Term modifies the stack
+	modifiesStackTerm(term : Term) -> bool;
+	// Check if a Term needs backtracking capabilities
+	needsBacktrackingTerm(term : Term) -> bool;
 }
 
 // Determines if an MOpCode manipulates the value stack, using function effects map
@@ -45,9 +53,9 @@ modifiesStackWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -
 		MoOr(left, right):
 			modifiesStackWithEffects(left, effects) || modifiesStackWithEffects(right, effects);
 		// Checkpoint operations themselves don't modify the value stack
-		MoPushCheckpoint(): false;
-		MoDiscardCheckpoint(): false;
-		MoRestoreCheckpoint(): false;
+		MoPushCheckpoint(withStack): false;
+		MoDiscardCheckpoint(withStack): false;
+		MoRestoreCheckpoint(withStack): false;
 	}
 }
 
@@ -94,9 +102,9 @@ needsBacktrackingWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects
 		}
 
 		// Checkpoint operations themselves
-		MoPushCheckpoint(): true;
-		MoDiscardCheckpoint(): true;
-		MoRestoreCheckpoint(): true;
+		MoPushCheckpoint(withStack): true;
+		MoDiscardCheckpoint(withStack): true;
+		MoRestoreCheckpoint(withStack): true;
 	}
 }
 
@@ -137,9 +145,9 @@ canFailWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -> bool
 			canFailWithEffects(left, effects) && canFailWithEffects(right, effects);
 
 		// Checkpoint operations
-		MoPushCheckpoint(): false;
-		MoDiscardCheckpoint(): true;  // Can fail if stack is empty
-		MoRestoreCheckpoint(): true;  // Can fail if stack is empty
+		MoPushCheckpoint(withStack): false;
+		MoDiscardCheckpoint(withStack): true;  // Can fail if stack is empty
+		MoRestoreCheckpoint(withStack): true;  // Can fail if stack is empty
 
 		MoEvalPoppy(__): true;
 	}
@@ -193,5 +201,111 @@ doAnalyzeGrammarEffects(currentEffects : Tree<string, MOpCodeEffects>, grammar :
 	} else {
 		// Return the stable effects
 		newEffects;
+	}
+}
+
+// Analyze a Term to determine its effects
+analyzeTermEffects(term : Term) -> MOpCodeEffects {
+	MOpCodeEffects(
+		modifiesStackTerm(term),
+		needsBacktrackingTerm(term)
+	)
+}
+
+// Checks if a Term modifies the stack
+modifiesStackTerm(term : Term) -> bool {
+	switch (term) {
+		String(__): false;  // String literals don't modify stack
+		Range(__, __): false;  // Character ranges don't modify stack
+		Variable(__): true;  // TODO: We have to be conservative
+		
+		PushMatch(__): true;  // Explicitly pushes a match
+		Construct(__, __): true;  // Creates a structure
+		StackOp(__): true;  // Stack operations modify the stack by definition
+		
+		Choice(t1, t2): modifiesStackTerm(t1) || modifiesStackTerm(t2);
+		Sequence(t1, t2): modifiesStackTerm(t1) || modifiesStackTerm(t2);
+		Rule(__, t1, t2): modifiesStackTerm(t1) || modifiesStackTerm(t2);
+		
+		Star(t): modifiesStackTerm(t);
+		Plus(t): modifiesStackTerm(t);
+		Optional(t): modifiesStackTerm(t);
+		Negate(t): modifiesStackTerm(t);
+		
+		Precedence(t1, t2): modifiesStackTerm(t1) || modifiesStackTerm(t2);
+		Error(t): modifiesStackTerm(t);
+		Lower(t): modifiesStackTerm(t);
+		
+		GrammarCall(__, t): modifiesStackTerm(t);
+		GrammarFn(__, t1, t2, t3): modifiesStackTerm(t1) || modifiesStackTerm(t2) || modifiesStackTerm(t3);
+	}
+}
+
+// Checks if a Term needs backtracking capabilities
+needsBacktrackingTerm(term : Term) -> bool {
+	switch (term) {
+		// These always need backtracking
+		Choice(__, __): true;  // Choice requires backtracking by definition
+		Negate(__): true;  // Negation requires backtracking
+		Optional(__): true;  // Optional requires backtracking
+		
+		// Star doesn't need backtracking if its term doesn't
+		Star(t): needsBacktrackingTerm(t);
+		Plus(t): needsBacktrackingTerm(t);
+		
+		// These depend on their components and potential stack modifications
+		Sequence(t1, t2): {
+			// Sequence needs backtracking if either term needs it
+			// or if t1 modifies stack and t2 can fail
+			needsBacktrackingTerm(t1) || needsBacktrackingTerm(t2) ||
+			(modifiesStackTerm(t1) && canFailTerm(t2))
+		};
+		
+		// Rules/functions depend on their bodies
+		Rule(__, t1, t2): needsBacktrackingTerm(t1) || needsBacktrackingTerm(t2);
+		Precedence(t1, t2): needsBacktrackingTerm(t1) || needsBacktrackingTerm(t2);
+		
+		// Simple operations generally don't need backtracking
+		String(__): false;  // String literals can fail but don't need backtracking
+		Range(__, __): false;  // Character ranges can fail but don't need backtracking
+		Variable(__): false;  // Variables depend on what they reference, but conservative: false
+		PushMatch(t): needsBacktrackingTerm(t);
+		Construct(__, __): false;  // Constructors always succeed
+		StackOp(__): false;  // Stack operations don't need backtracking
+		
+		// Other terms
+		Error(t): needsBacktrackingTerm(t);
+		Lower(t): needsBacktrackingTerm(t);
+		GrammarCall(__, t): needsBacktrackingTerm(t);
+		GrammarFn(__, t1, t2, t3): needsBacktrackingTerm(t1) || needsBacktrackingTerm(t2) || needsBacktrackingTerm(t3);
+	}
+}
+
+// Helper: determines if a Term can fail
+canFailTerm(term : Term) -> bool {
+	switch (term) {
+		String(__): true;  // String literals can fail if they don't match
+		Range(__, __): true;  // Character ranges can fail if no match
+		Variable(__): true;  // Variables can fail (conservative assumption)
+		
+		PushMatch(t): canFailTerm(t);
+		Construct(__, __): false;  // Constructors always succeed
+		StackOp(__): false;  // Most stack operations succeed
+		
+		Choice(t1, t2): canFailTerm(t1) && canFailTerm(t2);  // Both alternatives must fail
+		Sequence(t1, t2): canFailTerm(t1) || canFailTerm(t2);  // Either component can fail
+		
+		Rule(__, t1, t2): canFailTerm(t1) || canFailTerm(t2);
+		Star(__): false;  // Star never fails by definition
+		Plus(t): canFailTerm(t);  // Plus can fail if first iteration fails
+		Optional(__): false;  // Optional never fails by definition
+		Negate(t): !canFailTerm(t);  // Negate fails if inner term succeeds
+		
+		Precedence(t1, t2): canFailTerm(t1) || canFailTerm(t2);
+		Error(t): canFailTerm(t);
+		Lower(t): canFailTerm(t);
+		
+		GrammarCall(__, t): canFailTerm(t);
+		GrammarFn(__, t1, t2, t3): canFailTerm(t1) || canFailTerm(t2) || canFailTerm(t3);
 	}
 }

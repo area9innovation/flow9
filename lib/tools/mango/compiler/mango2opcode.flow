@@ -2,6 +2,7 @@ import tools/poppy/poppy_grammar;
 import tools/mango/mango_interpreter;
 import tools/mango/mango_types;
 import tools/mango/compiler/mopcode;
+import tools/mango/compiler/opcode_effects;
 import tools/mango/mango2string;
 import tools/mango/util;
 import math/math;
@@ -18,11 +19,15 @@ mango2opcode(t : Term) -> MOpCode {
 	switch (t) {
 		Choice(term1, term2): {
 			choices = getChoices(t);
+			// Analyze whether this choice needs full stack checkpointing
+			effects = analyzeTermEffects(t);
+			withStack = effects.modifiesStack;
+			
 			MoSequence(
 				[
-					MoPushCheckpoint(),
-					fold(reverseA(choices), MoRestoreCheckpoint(), \acc, s -> {
-						MoIf(mango2opcode(s), MoDiscardCheckpoint(), acc);
+					MoPushCheckpoint(withStack),
+					fold(reverseA(choices), MoRestoreCheckpoint(withStack), \acc, s -> {
+						MoIf(mango2opcode(s), MoDiscardCheckpoint(withStack), acc);
 					})
 				]
 			);
@@ -37,25 +42,33 @@ mango2opcode(t : Term) -> MOpCode {
 		GrammarFn(id, term1, term2, term3): todo();
 		Lower(term): todo();
 		Negate(term): {
+			// Analyze whether this negation needs full stack checkpointing
+			effects = analyzeTermEffects(term);
+			withStack = effects.modifiesStack;
+			
 			MoSequence([
-				MoPushCheckpoint(),
+				MoPushCheckpoint(withStack),
 				MoIf(
 					mango2opcode(term),
-					MoRestoreCheckpoint(),	// Basically false
+					MoRestoreCheckpoint(withStack),	// Basically false
 					MoSequence([
-						MoRestoreCheckpoint(),
+						MoRestoreCheckpoint(withStack),
 						MoBool(true)
 					]),
 				)
 			])
 		}
 		Optional(term): {
+			// Analyze whether this optional needs full stack checkpointing
+			effects = analyzeTermEffects(term);
+			withStack = effects.modifiesStack;
+			
 			MoSequence([
-				MoPushCheckpoint(),
+				MoPushCheckpoint(withStack),
 				MoIf(
 					mango2opcode(term),
-					MoDiscardCheckpoint(),
-					MoRestoreCheckpoint(),
+					MoDiscardCheckpoint(withStack),
+					MoRestoreCheckpoint(withStack),
 				),
 				MoBool(true)
 			])
@@ -89,11 +102,15 @@ mango2opcode(t : Term) -> MOpCode {
 		}
 		Sequence(term1, term2): {
 			seq = getSequence(t);
+			// Analyze whether this sequence needs full stack checkpointing
+			effects = analyzeTermEffects(t);
+			withStack = effects.modifiesStack;
+			
 			MoSequence(
 				[
-					MoPushCheckpoint(),
-					fold(reverseA(seq), MoDiscardCheckpoint(), \acc, s -> {
-						MoIf(mango2opcode(s), acc, MoRestoreCheckpoint());
+					MoPushCheckpoint(withStack),
+					fold(reverseA(seq), MoDiscardCheckpoint(withStack), \acc, s -> {
+						MoIf(mango2opcode(s), acc, MoRestoreCheckpoint(withStack));
 					})
 				]
 			);
