@@ -8,10 +8,12 @@ import tools/mango/util;
 import math/math;
 
 export {
-	mango2opcode(t : Term) -> MOpCode;
+	// Updated function signature to accept rule effects map
+	mango2opcode(t : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> MOpCode;
 }
 
-mango2opcode(t : Term) -> MOpCode {
+// Updated implementation that uses rule effects for optimization decisions
+mango2opcode(t : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> MOpCode {
 	todo = \ -> {
 		println("ERROR: Implement mango2opcode for " + t.structname + " :" + term2string(t));
 		MoMatchString("TODO");
@@ -19,15 +21,15 @@ mango2opcode(t : Term) -> MOpCode {
 	switch (t) {
 		Choice(term1, term2): {
 			choices = getChoices(t);
-			// Analyze whether this choice needs full stack checkpointing
-			effects = analyzeTermEffects(t);
+			// Use the rule effects map for more accurate analysis
+			effects = analyzeTermEffects(t, ruleEffects);
 			withStack = effects.modifiesStack;
-			
+
 			MoSequence(
 				[
 					MoPushCheckpoint(withStack),
 					fold(reverseA(choices), MoRestoreCheckpoint(withStack), \acc, s -> {
-						MoIf(mango2opcode(s), MoDiscardCheckpoint(withStack), acc);
+						MoIf(mango2opcode(s, ruleEffects), MoDiscardCheckpoint(withStack), acc);
 					})
 				]
 			);
@@ -36,21 +38,21 @@ mango2opcode(t : Term) -> MOpCode {
 		Error(term): {
 			// OK, we just ignore the error part and go with the body
 			println("TODO: Ignore # error in grammar. Will still work, but without error reporting");
-			mango2opcode(term);
+			mango2opcode(term, ruleEffects);
 		}
 		GrammarCall(id, term): todo();
 		GrammarFn(id, term1, term2, term3): todo();
 		Lower(term): todo();
 		Negate(term): {
-			// Analyze whether this negation needs full stack checkpointing
-			effects = analyzeTermEffects(term);
+			// Use the rule effects map for more accurate analysis
+			effects = analyzeTermEffects(term, ruleEffects);
 			withStack = effects.modifiesStack;
-			
+
 			MoSequence([
 				MoPushCheckpoint(withStack),
 				MoIf(
-					mango2opcode(term),
-					MoRestoreCheckpoint(withStack),	// Basically false
+					mango2opcode(term, ruleEffects),
+					MoRestoreCheckpoint(withStack),    // Basically false
 					MoSequence([
 						MoRestoreCheckpoint(withStack),
 						MoBool(true)
@@ -59,14 +61,14 @@ mango2opcode(t : Term) -> MOpCode {
 			])
 		}
 		Optional(term): {
-			// Analyze whether this optional needs full stack checkpointing
-			effects = analyzeTermEffects(term);
+			// Use the rule effects map for more accurate analysis
+			effects = analyzeTermEffects(term, ruleEffects);
 			withStack = effects.modifiesStack;
-			
+
 			MoSequence([
 				MoPushCheckpoint(withStack),
 				MoIf(
-					mango2opcode(term),
+					mango2opcode(term, ruleEffects),
 					MoDiscardCheckpoint(withStack),
 					MoRestoreCheckpoint(withStack),
 				),
@@ -75,7 +77,8 @@ mango2opcode(t : Term) -> MOpCode {
 		}
 		Plus(term): {
 			mango2opcode(
-				Sequence(term, Star(term))
+				Sequence(term, Star(term)),
+				ruleEffects
 			);
 		}
 		Precedence(term1, term2): todo();
@@ -83,7 +86,7 @@ mango2opcode(t : Term) -> MOpCode {
 			MoSequence([
 				MoCaptureI(),
 				MoIf(
-					mango2opcode(term),
+					mango2opcode(term, ruleEffects),
 					MoSequence([
 						MoMatched(),
 						MoBool(true),
@@ -98,19 +101,19 @@ mango2opcode(t : Term) -> MOpCode {
 			MoMatchRange(lower, upper);
 		}
 		Rule(id, term1, term2): {
-			MoFunction(id, mango2opcode(term1), mango2opcode(term2));
+			MoFunction(id, mango2opcode(term1, ruleEffects), mango2opcode(term2, ruleEffects));
 		}
 		Sequence(term1, term2): {
 			seq = getSequence(t);
-			// Analyze whether this sequence needs full stack checkpointing
-			effects = analyzeTermEffects(t);
+			// Use the rule effects map for more accurate analysis
+			effects = analyzeTermEffects(t, ruleEffects);
 			withStack = effects.modifiesStack;
-			
+
 			MoSequence(
 				[
 					MoPushCheckpoint(withStack),
 					fold(reverseA(seq), MoDiscardCheckpoint(withStack), \acc, s -> {
-						MoIf(mango2opcode(s), acc, MoRestoreCheckpoint(withStack));
+						MoIf(mango2opcode(s, ruleEffects), acc, MoRestoreCheckpoint(withStack));
 					})
 				]
 			);
@@ -125,9 +128,9 @@ mango2opcode(t : Term) -> MOpCode {
 				MoEvalPoppy(pop);
 			}
 		}
-		Star(term): MoParseStar(mango2opcode(term));
+		Star(term): MoParseStar(mango2opcode(term, ruleEffects));
 		String(ttext): {
-			text = if (ttext == "\\n") "\n" 
+			text = if (ttext == "\\n") "\n"
 				else if (ttext == "\\r") "\x0d"
 				else if (ttext == "\\t") "\t"
 				else ttext;
