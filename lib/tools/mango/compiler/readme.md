@@ -4,7 +4,6 @@ Separate the recovery stacks for position & semantic actions, and then we do not
 Introduce a new AST that represents the flow code we construct in the Blueprint of opcode2code, so we have yet another intermediate represntation we can potentially optimize.
 Consider to compile directly to Java code, and expose the entire parser as a native.
 Introduce a native List for Java.
-Add profiling to Mango.
 
 # Specification: Fixpoint Algorithm for First-Set Extraction in PEG Grammars
 
