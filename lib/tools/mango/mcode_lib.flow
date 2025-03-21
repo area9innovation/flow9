@@ -1,6 +1,7 @@
 import string;
 import tools/poppy/penv;
 import tools/mango/line;
+import ds/stack;
 
 export {
 	MoParseAcc(
@@ -8,13 +9,13 @@ export {
 		// This has the output stack
 		env : PEnv,
 		mutable i : int,
-		mutable stack : List<MCheckpoint>,
+		mutable stack : Stack<MCheckpoint>,
 		// The last checkpoint for match string
 		mutable starti : int,
 		// The longest we have matched
 		mutable maxi : int,
 		// Position-only backtracking stack (no PEnv state)
-		mutable posStack : List<int>,
+		mutable posStack : Stack<int>,
 	);
 
 	MCheckpoint(i : int, poppyStack : List<flow>);
@@ -42,59 +43,38 @@ export {
 }
 
 pushMCheckpoint(acc : MoParseAcc) -> void {
-	acc.stack ::= Cons(MCheckpoint(acc.i, ^(acc.env.stack)), acc.stack);
+	pushStack(acc.stack, MCheckpoint(acc.i, ^(acc.env.stack)));
 }
 
 discardMCheckpoint(acc : MoParseAcc) -> bool {
-	switch (acc.stack) {
-		EmptyList(): true;
-		Cons(head, tail_): {
-			acc.stack ::= tail_;
-			true;
-		}
-	}
+	discardStack(acc.stack);
+	true;
 }
 
+dummyMCheckpoint : MCheckpoint = MCheckpoint(0, makeList());
+
 restoreMCheckpoint(acc : MoParseAcc) -> bool {
-	switch (acc.stack) {
-		EmptyList(): false;
-		Cons(head, tail_): {
-			acc.i ::= head.i;
-			acc.env.stack := head.poppyStack;
-			acc.stack ::= tail_;
-			false;
-		}
-	}
+	checkPoint = popStackDef(acc.stack, dummyMCheckpoint);
+	acc.i ::= checkPoint.i;
+	acc.env.stack := checkPoint.poppyStack;
+	false;
 }
 
 pushMCheckpointNoStack(acc : MoParseAcc) -> void {
 	// Position-only checkpoint (faster)
-	acc.posStack ::= Cons(acc.i, acc.posStack);
+	pushStack(acc.posStack, acc.i);
 }
 
 discardMCheckpointNoStack(acc : MoParseAcc) -> bool {
-	// For position-only checkpoints
-	switch (acc.posStack) {
-		EmptyList(): true;
-		Cons(head, tail_): {
-			acc.posStack ::= tail_;
-			true;
-		}
-	}
+	discardStack(acc.posStack);
+	true;
 }
 
 restoreMCheckpointNoStack(acc : MoParseAcc) -> bool {
 	// Restore position-only checkpoint
-	switch (acc.posStack) {
-		EmptyList(): false;
-		Cons(head, tail_): {
-			acc.i ::= head;
-			acc.posStack ::= tail_;
-			false;
-		}
-	}
+	acc.i ::= popStackDef(acc.posStack, 0);
+	false;
 }
-
 
 mparseStar(acc : MoParseAcc, matcher : () -> bool) -> bool {
 	pushMCheckpoint(acc);
@@ -191,7 +171,7 @@ moconstruct(acc : MoParseAcc, uid : string, arity : int) -> bool {
 }
 
 parseCompiledMango(path : string, content : string, parseFn : (MoParseAcc) -> bool, def : ?) -> Pair<?, string> {
-	macc = MoParseAcc(content, PEnv(ref makeList()), 0, makeList(), 0, 0, makeList());
+	macc = MoParseAcc(content, PEnv(ref makeList()), 0, makeStack(), 0, 0, makeStack());
 	ok = parseFn(macc);
 
 	value = getSinglePEnv(macc.env, def);
