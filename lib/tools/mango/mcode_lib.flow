@@ -1,6 +1,9 @@
 import string;
 import tools/poppy/penv;
 import tools/mango/line;
+import ds/stack;
+import ds/tree;
+import algorithms;
 
 export {
 	MoParseAcc(
@@ -8,52 +11,76 @@ export {
 		// This has the output stack
 		env : PEnv,
 		mutable i : int,
-		mutable stack : List<MCheckpoint>,
+		mutable stack : Stack<MCheckpoint>,
 		// The last checkpoint for match string
 		mutable starti : int,
 		// The longest we have matched
 		mutable maxi : int,
+		// Position-only backtracking stack (no PEnv state)
+		mutable posStack : Stack<int>,
 	);
 
 	MCheckpoint(i : int, poppyStack : List<flow>);
 
+	// Optimized checkpoint functions when we do not need the stack
+	pushMCheckpointNoStack(acc : MoParseAcc) -> void;
+	discardMCheckpointNoStack(acc : MoParseAcc) -> bool;
+	restoreMCheckpointNoStack(acc : MoParseAcc) -> bool;
+	
+	// Always use full stack checkpoints
 	pushMCheckpoint(acc : MoParseAcc) -> void;
 	discardMCheckpoint(acc : MoParseAcc) -> bool;
 	restoreMCheckpoint(acc : MoParseAcc) -> bool;
 
 	mparseStar(acc : MoParseAcc, matcher : () -> bool) -> bool;
+	mparseStarNobacktrackOrStack(acc : MoParseAcc, matcher : () -> bool) -> bool;
+	mparseStarBacktrackOnly(acc : MoParseAcc, matcher : () -> bool) -> bool;
+
 	mmatchString(acc : MoParseAcc, s : string) -> bool;
 	mmatchRange(acc : MoParseAcc, l : int, u : int) -> bool;
 	moconstruct(acc : MoParseAcc, uid : string, arity : int) -> bool;
 
 	// Driver to parse a compiled mango file
 	parseCompiledMango(path : string, content : string, parseFn : (MoParseAcc) -> bool, def : ?) -> Pair<?, string>;
+
+	// Record that we visited this production
+	profileMangoProduction(name : string) -> void;
+	// With position information for more precise profiling
+	profileMangoProductionWithPos(acc : MoParseAcc, name : string) -> void;
 }
 
 pushMCheckpoint(acc : MoParseAcc) -> void {
-	acc.stack ::= Cons(MCheckpoint(acc.i, ^(acc.env.stack)), acc.stack);
+	pushStack(acc.stack, MCheckpoint(acc.i, ^(acc.env.stack)));
 }
 
 discardMCheckpoint(acc : MoParseAcc) -> bool {
-	switch (acc.stack) {
-		EmptyList(): true;
-		Cons(head, tail_): {
-			acc.stack ::= tail_;
-			true;
-		}
-	}
+	discardStack(acc.stack);
+	true;
 }
 
+dummyMCheckpoint : MCheckpoint = MCheckpoint(0, makeList());
+
 restoreMCheckpoint(acc : MoParseAcc) -> bool {
-	switch (acc.stack) {
-		EmptyList(): false;
-		Cons(head, tail_): {
-			acc.i ::= head.i;
-			acc.env.stack := head.poppyStack;
-			acc.stack ::= tail_;
-			false;
-		}
-	}
+	checkPoint = popStackDef(acc.stack, dummyMCheckpoint);
+	acc.i ::= checkPoint.i;
+	acc.env.stack := checkPoint.poppyStack;
+	false;
+}
+
+pushMCheckpointNoStack(acc : MoParseAcc) -> void {
+	// Position-only checkpoint (faster)
+	pushStack(acc.posStack, acc.i);
+}
+
+discardMCheckpointNoStack(acc : MoParseAcc) -> bool {
+	discardStack(acc.posStack);
+	true;
+}
+
+restoreMCheckpointNoStack(acc : MoParseAcc) -> bool {
+	// Restore position-only checkpoint
+	acc.i ::= popStackDef(acc.posStack, 0);
+	false;
 }
 
 mparseStar(acc : MoParseAcc, matcher : () -> bool) -> bool {
@@ -65,6 +92,52 @@ mparseStar(acc : MoParseAcc, matcher : () -> bool) -> bool {
 		restoreMCheckpoint(acc);
 		true;
 	};
+}
+
+// Optimized version of mparseStar for operations that don't modify the stack
+// and don't need full backtracking. This is for simple patterns like character
+// classes or simple string matches.
+//
+// This function avoids creating checkpoints entirely, only tracking position.
+mparseStarNobacktrackOrStack(acc : MoParseAcc, matcher : () -> bool) -> bool {
+	doMparseStarNobacktrackOrStack(acc, matcher);
+	true;  // Star always succeeds
+}
+
+doMparseStarNobacktrackOrStack(acc : MoParseAcc, matcher : () -> bool) -> void {
+	startPos = acc.i;
+
+	// Try to match
+	if (matcher()) {
+		// If match succeeds, continue recursively
+		doMparseStarNobacktrackOrStack(acc, matcher);
+	} else {
+		// If match fails, restore position and stop recursion
+		acc.i ::= startPos;
+	}
+}
+
+// Optimized version of mparseStar for operations that don't modify the stack
+// but may need position backtracking. This avoids the overhead of managing
+// the full checkpoint stack but still handles position tracking.
+//
+// Good for patterns that might fail and need position restoration but don't
+// manipulate the parser value stack.
+mparseStarBacktrackOnly(acc : MoParseAcc, matcher : () -> bool) -> bool {
+	doMparseStarBacktrackOnly(acc, matcher);
+	true;  // Star always succeeds
+}
+
+doMparseStarBacktrackOnly(acc : MoParseAcc, matcher : () -> bool) -> void {
+	startPos = acc.i;
+
+	// Try to match
+	if (matcher()) {
+		doMparseStarBacktrackOnly(acc, matcher);
+	} else {
+		// If match fails, restore position and stop recursion
+		acc.i ::= startPos;
+	}
 }
 
 mmatchString(acc : MoParseAcc, s : string) -> bool {
@@ -101,8 +174,14 @@ moconstruct(acc : MoParseAcc, uid : string, arity : int) -> bool {
 }
 
 parseCompiledMango(path : string, content : string, parseFn : (MoParseAcc) -> bool, def : ?) -> Pair<?, string> {
-	macc = MoParseAcc(content, PEnv(ref makeList()), 0, makeList(), 0, 0);
+	resetProfilingData();
+	macc = MoParseAcc(content, PEnv(ref makeList()), 0, makeStack(), 0, 0, makeStack());
 	ok = parseFn(macc);
+
+	if (!isEmptyTree(^profileMangoProductions)) {
+		// Update profiling data
+		printProfilingResults(path, macc);
+	}
 
 	value = getSinglePEnv(macc.env, def);
 
@@ -111,5 +190,129 @@ parseCompiledMango(path : string, content : string, parseFn : (MoParseAcc) -> bo
 		Pair(value, getLinePos(path, content, "Parse error", macc.maxi, 1, 0));
 	} else {
 		Pair(value, "");
+	}
+}
+
+// Global references for profiling rule calls
+profileMangoProductions : ref Tree<string, int> = ref makeTree();
+// Maps rule name -> position -> count
+profileMangoPositions : ref Tree<string, Tree<int, int>> = ref makeTree();
+
+// Reset profiling data
+resetProfilingData() -> void {
+	profileMangoProductions := makeTree();
+	profileMangoPositions := makeTree();
+}
+
+profileMangoProduction(name : string) -> void {
+	// Increment global rule counter
+	profileMangoProductions := incTreeValue(^profileMangoProductions, name);
+}
+
+// Call this version when you want to profile by position
+profileMangoProductionWithPos(acc : MoParseAcc, name : string) -> void {
+	// Increment global rule counter
+	profileMangoProductions := incTreeValue(^profileMangoProductions, name);
+	
+	// Get current position
+	pos = acc.i;
+	
+	// Get or create position tree for this rule
+	posTree = lookupTreeDef(^profileMangoPositions, name, makeTree());
+	
+	// Increment counter for this position
+	posTree2 = incTreeValue(posTree, pos);
+	
+	// Update the position tree in the global map
+	profileMangoPositions := setTree(^profileMangoPositions, name, posTree2);
+}
+
+// Get content fragment at a specific position
+getSourceFragment(source : string, pos : int, contextSize : int) -> string {
+	// Find start of line
+	startPos = max(0, pos - contextSize);
+	// Find end of line or context
+	endPos = min(strlen(source), pos + contextSize);
+	
+	// Extract the fragment
+	fragment = substring(source, startPos, endPos - startPos);
+	
+	// Add position indicator
+	relativePos = pos - startPos;
+	indicator = strRepeat(" ", relativePos) + "^";
+	
+	fragment + "\n" + indicator;
+}
+
+// Print profiling results
+printProfilingResults(path : string, macc : MoParseAcc) -> void {
+	prodTree = ^profileMangoProductions;
+	
+	// Convert tree to array for sorting
+	prods = foldTree(prodTree, [], \rule, count, acc -> {
+		arrayPush(acc, Pair(rule, count));
+	});
+	
+	// Sort by count in descending order
+	sortedProds = mergeSort(prods, \p1, p2 -> genericCompare(p2.second, p1.second));
+	
+	println("\nMango Grammar Profiling Results:\n");
+	println("Rule Count   | Rule Name");
+	println("------------+--------------------");
+	
+	iter(sortedProds, \p -> {
+		rule = p.first;
+		count = p.second;
+		countStr = i2s(count);
+		// Right-align the count with padding
+		padding = strRepeat(" ", max(0, 10 - strlen(countStr)));
+		println(padding + countStr + " | " + rule);
+	});
+	
+	println("");
+	
+	// Print position histogram for top rules
+	posTreeMap = ^profileMangoPositions;
+	if (!isEmptyTree(posTreeMap)) {
+		println("\nTop Call Sites by Position:\n");
+		
+		// Limit to top N rules
+		topRules = getTreeKeys(posTreeMap);
+		
+		iter(topRules, \rule -> {
+			// Get position map for this rule
+			posTree = lookupTreeDef(posTreeMap, rule, makeTree());
+			
+			if (!isEmptyTree(posTree)) {
+				println("\nHotspots for rule '" + rule + "':");
+				
+				// Convert position tree to array
+				posCounts = foldTree(posTree, [], \pos, count, acc -> {
+					arrayPush(acc, Triple(pos, count, ""));
+				});
+				
+				// Sort by count in descending order
+				sortedPosCounts = mergeSort(posCounts, \p1, p2 -> genericCompare(p2.second, p1.second));
+				
+				// Show top N positions
+				topPosToShow = min(100, length(sortedPosCounts));
+				topPosCounts = take(sortedPosCounts, topPosToShow);
+				
+				iter(topPosCounts, \posTriple -> {
+					pos = posTriple.first;
+					count = posTriple.second;
+					
+					posStr = i2s(pos);
+					countStr = i2s(count);
+					
+					// Get source fragment from position
+					contextStr = getSourceFragment(macc.input, pos, 25);
+					
+					println(getLinePos(path, macc.input, countStr + "calls", pos, 1, 0));
+
+					println("");
+				});
+			}
+		});
 	}
 }

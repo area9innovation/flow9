@@ -4,6 +4,11 @@ import tools/poppy/compiler/compile;
 
 export {
 	optimizeMOpCode(m : MOpCode) -> MOpCode;
+	
+	// Helper functions to check checkpoint operations
+	isMPushCheckPoint(op : MOpCode) -> bool;
+	isMDiscardCheckPoint(op : MOpCode) -> bool;
+	isMRestoreCheckPoint(op : MOpCode) -> bool;
 }
 
 optimizeMOpCode(m : MOpCode) -> MOpCode {
@@ -46,9 +51,9 @@ optimizeMOpCode(m : MOpCode) -> MOpCode {
 		MoBool(b): m;
 		MoEvalPoppy(poppy): m;
 		MoPushPosition(): m;
-		MoPushCheckpoint(): m;
-		MoDiscardCheckpoint(): m;
-		MoRestoreCheckpoint(): m;
+		MoPushCheckpoint(withStack): m;
+		MoDiscardCheckpoint(withStack): m;
+		MoRestoreCheckpoint(withStack): m;
 		MoSequence(exps): {
 			seq = concatA(filtermapi(exps, \i, e -> {
 				co = optimizeMOpCode(e);
@@ -206,12 +211,12 @@ optimizeMMatchString(seq : [MOpCode], i : int, acc : [MOpCode]) -> [MOpCode] {
 		optimizeMMatchString(seq, i + 1, arrayPush(acc, seq[i]));
 	}
 	if (i + 1 < length(seq)) {
-		if (seq[i] == MoPushCheckpoint()) {
+		if (isMPushCheckPoint(seq[i])) {
 			// OK, see if we have an DIf
 			after = seq[i + 1];
 			switch (after) {
 				MoIf(cond, then, else_): {
-					if (else_ == MoRestoreCheckpoint()) {
+					if (isMRestoreCheckPoint(else_)) {
 						if (isMOpCodeMatch(cond) && !existsMOpCode(then, isMPushCheckPoint)) {
 							// OK, we have something of the given pattern.
 							/*
@@ -271,9 +276,9 @@ existsMOpCode(d : MOpCode, fn : (MOpCode) -> bool) -> bool {
 		MoBool(poppy): false;
 		MoEvalPoppy(poppy): false;
 		MoPushPosition(): false;
-		MoPushCheckpoint(): false;
-		MoDiscardCheckpoint(): false;
-		MoRestoreCheckpoint(): false;
+		MoPushCheckpoint(withStack): false;
+		MoDiscardCheckpoint(withStack): false;
+		MoRestoreCheckpoint(withStack): false;
 		MoSequence(exps): existsMOpCodes(exps, fn);
 		MoConstruct(uid, arity): false;
 		MoAnd(left, right): existsMOpCodes([left, right], fn);
@@ -297,9 +302,9 @@ replaceMCheckpoints(d : MOpCode) -> MOpCode {
 			else MoIf(tcond, tthen, telse);
 		}
 		MoSequence(exps): MoSequence(map(exps, replaceMCheckpoints));
-		MoPushCheckpoint(): d;
-		MoDiscardCheckpoint(): MoBool(true);
-		MoRestoreCheckpoint(): MoBool(false);
+		MoPushCheckpoint(withStack): d;
+		MoDiscardCheckpoint(withStack): MoBool(true);
+		MoRestoreCheckpoint(withStack): MoBool(false);
 		MoParseStar(term): MoParseStar(replaceMCheckpoints(term));
 		//DAddError(error): d;
 		MoCaptureI(): d;
@@ -319,12 +324,25 @@ replaceMCheckpoints(d : MOpCode) -> MOpCode {
 
 isMPushCheckPoint(d : MOpCode) -> bool {
 	switch (d) {
-		MoPushCheckpoint(): true;
+		MoPushCheckpoint(withStack): true;
 		MoCall(id): true;
 		default: false;
 	}
 }
 
+isMDiscardCheckPoint(d : MOpCode) -> bool {
+	switch (d) {
+		MoDiscardCheckpoint(withStack): true;
+		default: false;
+	}
+}
+
+isMRestoreCheckPoint(d : MOpCode) -> bool {
+	switch (d) {
+		MoRestoreCheckpoint(withStack): true;
+		default: false;
+	}
+}
 
 // Should this be avoided inside an && construct?
 isMNotAndable(d : MOpCode) -> bool {
@@ -357,13 +375,13 @@ isMNotAndable(d : MOpCode) -> bool {
 optimizeMPushDiscardSequence(d : [MOpCode]) -> MOpCode {
 	n = length(d);
 	if (n >= 2) {
-		if (d[n - 2] == MoPushCheckpoint()) {
+		if (isMPushCheckPoint(d[n - 2])) {
 			switch (d[n - 1]) {
 				MoIf(cond, then, else_): {
 					if (!isMOpCodeMatch(cond)) {
 						MoSequence(d);
-					} else if (then == MoDiscardCheckpoint()
-						&& else_ == MoRestoreCheckpoint()) {
+					} else if (isMDiscardCheckPoint(then)
+						&& isMRestoreCheckPoint(else_)) {
 						pre = subrange(d, 0, n - 2);
 						MoSequence(arrayPush(pre, cond));
 					} else MoSequence(d);
@@ -393,9 +411,9 @@ isMOpCodeAlwaysTrue(o : MOpCode) -> bool {
 		MoBool(b): b;
 		MoEvalPoppy(p): true; // This is also always true
 		MoPushPosition(): true;
-		MoPushCheckpoint(): false;
-		MoDiscardCheckpoint(): true;
-		MoRestoreCheckpoint(): false;
+		MoPushCheckpoint(withStack): false;
+		MoDiscardCheckpoint(withStack): true;
+		MoRestoreCheckpoint(withStack): false;
 		MoSequence(exps): false;
 		MoConstruct(uid, arity): true;
 		MoAnd(left, right): isMOpCodeAlwaysTrue(left) && isMOpCodeAlwaysTrue(right);
