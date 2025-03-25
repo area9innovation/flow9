@@ -205,6 +205,15 @@ class TextClip extends NativeWidgetClip {
 		style.wordWrap = false;
 		style.wordWrapWidth = 2048.0;
 
+		this.onAdded(function() {
+			RenderSupport.on("enable_sprites", enableSprites);
+
+			return function() {
+				RenderSupport.off("enable_sprites", enableSprites);
+				disableSprites();
+			}
+		});
+
 		this.keepNativeWidget = KeepTextClips;
 	}
 
@@ -2238,4 +2247,22 @@ class TextClip extends NativeWidgetClip {
 			super.createNativeWidget(tagName);
 		}
 	}
+
+	private function enableSprites() : Void {
+		if (untyped this.destroyed || parent == null || nativeWidget == null) {
+			return;
+		}
+
+		RenderSupport.on("disable_sprites", disableSprites);
+	}
+
+	private function disableSprites() : Void {
+		if (textClip != null && untyped textClip._texture != null) {
+			textClip.destroy({ children: true, texture: true, baseTexture: true });
+			textClip = null;
+		}
+
+		RenderSupport.off("disable_sprites", disableSprites);
+	}
+
 }
