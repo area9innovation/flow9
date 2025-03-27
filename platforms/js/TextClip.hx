@@ -2265,4 +2265,10 @@ class TextClip extends NativeWidgetClip {
 		RenderSupport.off("disable_sprites", disableSprites);
 	}
 
+	public function removeNativeWidget() : Void {
+		baselineWidget = null;
+		textBackgroundWidget = null;
+		amiriItalicWorkaroundWidget = null;
+		nativeWidget = null;
+	}
 }
