@@ -2059,24 +2059,21 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function removeNativeWidgetDef(nativeWidget : Dynamic) : Void {
-		if (nativeWidget != null && untyped nativeWidget.parentNode != null) {
-			nativeWidget.parentNode.removeChild(nativeWidget);
-
-			if (untyped clip.parentClip != null) {
-				applyScrollFn(untyped clip.parentClip);
-				untyped clip.parentClip = null;
-			}
-		}
-}
-
 	public static function removeNativeWidget(clip : DisplayObject) : Void {
 		if (untyped clip.removeNativeWidget != null) {
 			untyped clip.removeNativeWidget();
 		} else {
 			if (untyped isNativeWidget(clip)) {
 				var nativeWidget : Dynamic = untyped clip.nativeWidget;
-				removeNativeWidgetDef(nativeWidget);
+
+				if (untyped nativeWidget.parentNode != null) {
+					nativeWidget.parentNode.removeChild(nativeWidget);
+
+					if (untyped clip.parentClip != null) {
+						applyScrollFn(untyped clip.parentClip);
+						untyped clip.parentClip = null;
+					}
+				}
 			}
 		}
 	}

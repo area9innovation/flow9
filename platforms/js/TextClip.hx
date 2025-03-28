@@ -6,6 +6,8 @@ import pixi.core.text.TextMetrics;
 import pixi.core.text.TextStyle;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
+import haxe.extern.EitherType;
+import pixi.core.display.DisplayObject;
 
 import FlowFontStyle;
 
@@ -2255,11 +2257,12 @@ class TextClip extends NativeWidgetClip {
 		RenderSupport.off("disable_sprites", disableSprites);
 	}
 
-	public function removeNativeWidget() : Void {
-		DisplayObjectHelper.removeNativeWidgetDef(nativeWidget);
+	public override function destroy(?options : EitherType<Bool, DestroyOptions>) : Void {
+		super.destroy(options);
 		baselineWidget = null;
 		textBackgroundWidget = null;
 		amiriItalicWorkaroundWidget = null;
 		nativeWidget = null;
+		isNativeWidget = false;
 	}
 }
