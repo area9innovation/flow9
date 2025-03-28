@@ -312,6 +312,15 @@ public class HttpServerSupport extends NativeHost {
 				hasBody = !exchange.getRequestMethod().equals("HEAD");
 			}
 
+			public byte[] utf8String2bytes(String data) throws Exception {
+				try {
+					return data.getBytes("UTF-8");
+				} catch (Exception e) {
+					System.out.print("Cannot make bytes from a string of length " + data.length() + ": " + e.getMessage());
+					throw e;
+				}
+			}
+
 			public Func1<String, String> makeSendChunk() {
 				return new Func1<String, String>() {
 					public String invoke(String chunk) {
@@ -320,7 +329,7 @@ public class HttpServerSupport extends NativeHost {
 						}
 						try {
 							if (hasBody) {
-								os.write(chunk.getBytes("UTF-8"));
+								os.write(utf8String2bytes(chunk));
 								os.flush();
 								return "";
 							} else {
@@ -329,6 +338,8 @@ public class HttpServerSupport extends NativeHost {
 								return "Do not include a body in the response for HEAD request";
 							}
 						} catch (IOException e) {
+							return "Sending chunk error: " + e.getMessage();
+						} catch (Exception e) {
 							return "Sending chunk error: " + e.getMessage();
 						}
 					}
@@ -379,7 +390,7 @@ public class HttpServerSupport extends NativeHost {
 					{
 						try {
 							if (hasBody) {
-								byte[] responseBytes = responseBody.getBytes("UTF-8");
+								byte[] responseBytes = utf8String2bytes(responseBody);
 								exchange.sendResponseHeaders(
 									responseStatusCode,
 									responseBytes.length
@@ -396,7 +407,7 @@ public class HttpServerSupport extends NativeHost {
 									-1
 								);
 							}
-						} catch (IOException e) {
+						} catch (Exception e) {
 							System.out.println("Sending response error: " + e.getMessage());
 							e.printStackTrace(System.out);
 						}
