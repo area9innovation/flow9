@@ -1,0 +1,287 @@
+import runtime;
+import tools/flow9/type/egraph/types;
+import tools/flow9/type/egraph/utils;
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/egraph/pretty;
+import tools/flow9/type/egraph/subtype_util;
+import ds/arrayutils;
+
+export {
+	// Unify two type nodes in the egraph.
+	unifyEGraphTypes(g : EGraph, id1 : int, id2 : int, infos : Set<EContext>) -> int;
+
+	// When a node is changed, we can update the alternatives
+	updateTypeNode(g : EGraph, id : int, node : TypeNode, infos : Set<EContext>) -> void;
+
+	mergeWithCheck(g : EGraph, id1 : int, id2 : int, info : Set<EContext>) -> int;
+
+	// When a node is updated, we can streamline the alts with this one.
+	updateNodeAlts(g : EGraph, id : int, infos : Set<EContext>) -> void;
+
+	// All tyvars in the nodeid are unified with the flowId
+	bindChildrenToFlow(g : EGraph, flowId : int, nodeid : int, infos : Set<EContext>) -> void;
+
+	// Does varId occur inside typeId?
+	tyvarOccursCheck(g : EGraph, varId : int, typeId : int) -> bool;
+}
+
+unifyEGraphTypes(g : EGraph, id1 : int, id2 : int, infos : Set<EContext>) -> int {
+	r1 = findEGraphRoot(g, id1);
+	r2 = findEGraphRoot(g, id2);
+
+	if (r1 == r2) r1
+	else {
+		node1 = getNodeDef(g, r1);
+		node2 = getNodeDef(g, r2);
+		unifyTypeNodes(g, r1, node1, r2, node2, infos);
+	}
+}
+
+unifyTypeNodes(g : EGraph, id1 : int, node1 : TypeNode, id2 : int, node2 : TypeNode, infos : Set<EContext>) -> int {
+	if (g.tracing > 1) {
+		debugMsg(g, 1, "Unifying " + typeNodeToString(g, id1, false, true) + "   and   " + typeNodeToString(g, id2, false, true));
+	}
+
+	if (isFlowTypeNode(node2)) {
+		if (getConstructor(node1) == "void") {
+			g.onError(infos, "Cannot unify void with flow type");
+			id1;
+		} else {
+			// Flow type is a supertype of all other types
+			bindChildrenToFlow(g, id2, id1, infos);
+			id1;
+		}
+	} else if (isFlowTypeNode(node1)) {
+		if (getConstructor(node1) == "void") {
+			g.onError(infos, "Cannot unify void with flow type");
+			id1;
+		} else {
+			// Flow type is a subtype of all types
+			bindChildrenToFlow(g, id1, id2, infos);
+			id1;
+		}
+	} else if (isTypeVar(node1)) {
+		// Check if id2 contains id1 anywhere in its structure
+		if (tyvarOccursCheck(g, id1, id2)) {
+			g.onError(infos, "Occurs check failed: type variable would create infinite type");
+			id1;
+		} else {
+			root = if (g.tracing > 1) {
+				id1s = typeNodeToString(g, id1, true, true);
+				id2s = typeNodeToString(g, id2, true, true);
+				m = mergeEClasses(g, id1, id2);
+				if (g.tracing > 1) {
+					debugMsg(g, 1, "Merged   " + id1s + "   and   " + id2s + "   to   " + typeNodeToString(g, m, true, true));
+				}
+				m
+			} else {
+				mergeEClasses(g, id1, id2);
+			};
+
+			updateNodeAlts(g, root, infos);
+			root;
+		}
+	} else if (isTypeVar(node2)) {
+		if (tyvarOccursCheck(g, id2, id1)) {
+			g.onError(infos, "Occurs check failed: type variable would create infinite type");
+			id1;
+		} else {
+			root = if (g.tracing > 1) {
+				id1s = typeNodeToString(g, id1, true, true);
+				id2s = typeNodeToString(g, id2, true, true);
+				m = mergeEClasses(g, id1, id2);
+				if (g.tracing > 1) {
+					debugMsg(g, 1, "Merged   " + id1s + "   and   " + id2s + "   to   " + typeNodeToString(g, m, true, true));
+				}
+				m
+			} else {
+				mergeEClasses(g, id1, id2);
+			};
+			updateNodeAlts(g, root, infos);
+			root;
+
+		}
+	} else {
+		indentMsg(g);
+		res = switch (node1) {
+			Constructor(name1, params1): {
+				switch (node2) {
+					Constructor(name2, params2): {
+						if (name1 != name2) {
+							g.onError(infos, "Different constructors cannot be unified: " + name1 + " vs " + name2);
+							id1;
+						} else {
+							// Unify all parameters
+							mparams = unifyTypeArrays(g, id1, id2, params1, params2, infos);
+							switch (mparams) {
+								None(): id1;
+								Some(params): {
+									// If all params unified, merge these nodes
+									newNode = Constructor(name1, params);
+									updateTypeNode(g, id1, newNode, infos);
+									mergeWithCheck(g, id1, id2, infos);
+								}
+							}
+						}
+					}
+					Function(__, __): {
+						g.onError(infos, "Cannot unify constructor with function");
+						id1;
+					}
+					Variable(__): {
+						// Handled in outer if
+						g.onError(infos, "INVARIANT BROKEN: Variable case should be handled earlier");
+						id1;
+					}
+				}
+			}
+			Function(args1, ret1): {
+				switch (node2) {
+					Function(args2, ret2): {
+						// First unify return types
+						newRet = unifyEGraphTypes(g, ret1, ret2, infos);
+						// Then unify all arguments
+						margs = unifyTypeArrays(g, id1, id2, args1, args2, infos);
+						switch (margs) {
+							None(): id1;
+							Some(newArgs): {
+								// If all unified successfully, merge the functions
+								newNode = Function(newArgs, newRet);
+								updateTypeNode(g, id1, newNode, infos);
+
+								mergeWithCheck(g, id1, id2, infos);
+							}
+						}
+					}
+					Constructor(__, __): {
+						g.onError(infos, "Cannot unify function with constructor");
+						id1;
+					}
+					Variable(__): {
+						// Handled in outer if
+						g.onError(infos, "INVARIANT BROKEN: Variable case should be handled earlier");
+						id1;
+					}
+				}
+			}
+			Variable(__): {
+				// Handled in outer if
+				g.onError(infos, "INVARIANT BROKEN: Variable case should be handled earlier");
+				id1;
+			}
+		}
+		dedentMsg(g);
+		if (g.tracing > 1) {
+			debugMsg(g, 1, "Unified " + typeNodeToString(g, res, false, true));
+		}
+		res;
+	}
+}
+
+
+// Helper to unify arrays of types
+unifyTypeArrays(g : EGraph, id1 : int, id2 : int, arr1 : [int], arr2 : [int], infos : Set<EContext>) -> Maybe<[int]> {
+	if (length(arr1) != length(arr2)) {
+		g.onError(infos, "Length mismatch: " + i2s(length(arr1)) + " vs " + i2s(length(arr2)));
+		None();
+	} else {
+		Some(mapi(arr1, \i, __ -> unifyEGraphTypes(g, arr1[i], arr2[i], infos)));
+	}
+}
+
+tyvarOccursCheck(g : EGraph, varId : int, typeId : int) -> bool {
+	mtype = getNode(g, typeId);
+	switch (mtype) {
+		None(): false;
+		Some(type): {
+			switch (type) {
+				Variable(__): findEGraphRoot(g, typeId) == findEGraphRoot(g, varId);
+				Constructor(__, params): exists(params, \p -> tyvarOccursCheck(g, varId, p));
+				Function(args, ret): exists(args, \a -> tyvarOccursCheck(g, varId, a)) || tyvarOccursCheck(g, varId, ret);
+			}
+		}
+	}
+}
+
+
+bindChildrenToFlow(g : EGraph, flowId : int, nodeid : int, infos : Set<EContext>) -> void {
+	node = getNodeDef(g, nodeid);
+	switch (node) {
+		Constructor(name, params): {
+			iter(params, \p -> bindChildrenToFlow(g, flowId, p, infos));
+		}
+		Function(args, ret): {
+			iter(args, \a -> bindChildrenToFlow(g, flowId, a, infos));
+			bindChildrenToFlow(g, flowId, ret, infos);
+		}
+		Variable(id): {
+			m = mergeWithCheck(g, flowId, id, infos);
+		}
+	}
+}
+
+updateTypeNode(g : EGraph, id : int, node : TypeNode, infos : Set<EContext>) -> void {
+	if (updateNode(g, id, node)) {
+		if (g.tracing > 1) {
+			debugMsg(g, 1, "α" + i2s(id) + " = " + typeNodeToString(g, id, true, true));
+		}
+		updateNodeAlts(g, id, infos);
+	}
+}
+
+updateNodeAlts(g : EGraph, id : int, infos : Set<EContext>) -> void {
+	eclass = getEClassDef(g, id);
+	if (!isTypeVar(eclass.node)) {
+		filtered = filterSet(eclass.alternatives, \altId -> {
+			// debugMsg(g, 1, "  Checking alternative " + typeNodeToString(g, altId, false, true) + " for " + typeNodeToString(g, id, false, false));
+			// Must be compatible with the eclass's type node (can be both sub and super)
+			canNodesBeSubtypes(g, eclass.root, altId) &&
+			canNodesBeSubtypes(g, altId, eclass.root)
+
+			// Must be supertype of all lower bounds
+			&& foldSet(eclass.subtypes, true, \acc, lowId -> {
+				// debugMsg(g, 1, "Checking " + typeNodeToString(g, lowId, false, true) + " against " + typeNodeToString(g, altId, false, true) + ": " + b2s(canNodesBeSubtypes(g, lowId, altId)));
+				acc && canNodesBeSubtypes(g, lowId, altId)
+			})
+
+			// Must be subtype of all upper bounds
+			&& foldSet(eclass.supertypes, true, \acc, upId ->
+				acc && canNodesBeSubtypes(g, altId, upId)
+			)
+		});
+		working = sizeSet(filtered);
+		if (working == 1) {
+			// If we have exactly one alternative left, unify with it
+			alt = set2array(filtered)[0];
+			if (g.tracing > 1) {
+				debugMsg(g, 1, "Resolved alternative " + typeNodeToString(g, id, false, true) + " to " + typeNodeToString(g, alt, false, true));
+			}
+			// Take out the alternatives to avoid infinite loop
+			updateEClass(g, id, EClass(eclass with alternatives = makeSet()));
+			unifyEGraphTypes(g, id, alt, infos);
+			{}
+		} else if (sizeSet(eclass.alternatives) != working) {
+			// Update alternatives to filtered set
+			if (g.tracing > 1) {
+				debugMsg(g, 1, "Reduced alternative " + typeNodeToString(g, id, false, true) + " to " + i2s(sizeSet(filtered)) + " alternatives");
+			}
+			updateEClass(g, id, EClass(eclass with alternatives = filtered));
+		} else {
+			if (g.tracing >0 && !isEmptySet(eclass.alternatives)) {
+				debugMsg(g, 1, "No change in alternatives for " + typeNodeToString(g, id, false, true) + "  " + prettyNodes(g, filtered));
+			}
+			{}
+		}
+	}
+}
+
+mergeWithCheck(g : EGraph, id1 : int, id2 : int, infos : Set<EContext>) -> int {
+	if (isSameEClass(g, id1, id2)) {
+		id1;
+	} else if (tyvarOccursCheck(g, id1, id2)) {
+		g.onError(infos, "Occurs check failed: type variable would create infinite type " + prettyNode(g, id1) + " and " + prettyNode(g, id2));
+		id1;
+	} else {
+		mergeEClasses(g, id1, id2);
+	}
+}

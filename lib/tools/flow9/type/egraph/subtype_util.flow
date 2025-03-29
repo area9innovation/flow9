@@ -1,0 +1,254 @@
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/egraph/subtype_path;
+
+export {
+	// Does this name have a subtype? I.e. are we a union
+	canHaveSubtype(g : EGraph, name : string) -> bool;
+	// Does this name have a supertype? I.e. are we in a union
+	canHaveSupertype(g : EGraph, name : string) -> bool;
+	canHaveSubOrSupertype(g : EGraph, name : string) -> bool;
+
+	canNodeHaveSubtype(g : EGraph, id : int) -> bool;
+	canNodeHaveSupertype(g : EGraph, id : int) -> bool;
+	canNodeHaveSubOrSupertype(g : EGraph, id : int) -> bool;
+
+	// Checks if sub can potentially be a subtype of super based on the static type hierarchy
+	// Returns true if there exists a possible subtype path between the two types
+	// Considers the args and everything
+	canNodesBeSubtypes(g : EGraph, sub : int, super : int) -> bool;
+	canNamesBeSubtypes(g : EGraph, name1 : string, name2 : string) -> bool;
+	canTypeNodesBeSubtypes(g : EGraph, sub : TypeNode, super : TypeNode) -> bool;
+
+	// Following the definition of a union, instantiate the member with the
+	// right typar mapping
+	instantiateHUnionMember(g : EGraph, node1 : int, member : string, supertype : Constructor, union : HUnion) -> int;
+
+	findUnionsContainingStruct(interface : HModuleInterface, structName : string) -> [HUnion];
+	getAllSupertypes(interface : HModuleInterface, typeName : string, acc : Set<string>) -> Set<string>;
+	// Is super strictly bigger than sub? (not equal)
+	isStrictSupertype(interface : HModuleInterface, sub : string, sup : string) -> bool;
+	// Is equal or supertype?
+	isEqualOrSupertype(interface : HModuleInterface, sub : string, sup : string) -> bool;
+
+	// Helper function to find the intersection of two lists of unions
+	intersectUnions(unions1 : [HUnion], unions2 : [HUnion]) -> [HUnion];
+}
+
+canHaveSubtype(g : EGraph, name : string) -> bool {
+	containsKeyTree(g.interface.unions, name);
+}
+
+canHaveSupertype(g : EGraph, name : string) -> bool {
+	containsKeyTree(g.interface.supertypes, name);
+}
+
+canHaveSubOrSupertype(g : EGraph, name : string) -> bool {
+	canHaveSubtype(g, name) || canHaveSupertype(g, name);
+}
+
+canNodeHaveSubtype(g : EGraph, id : int) -> bool {
+	node = getNodeDef(g, id);
+	switch (node) {
+		Variable(__): true;
+		Constructor(name, args): canHaveSubtype(g, name) || exists(args, \a -> canNodeHaveSubtype(g, a));
+		Function(args, ret): exists(args, \a -> canNodeHaveSubtype(g, a)) || canNodeHaveSubtype(g, ret);
+	}
+}
+
+canNodeHaveSupertype(g : EGraph, id : int) -> bool {
+	node = getNodeDef(g, id);
+	switch (node) {
+		Variable(__): true;
+		Constructor(name, args): canHaveSupertype(g, name) || exists(args, \a -> canNodeHaveSupertype(g, a));
+		Function(args, ret): exists(args, \a -> canNodeHaveSupertype(g, a)) || canNodeHaveSupertype(g, ret);
+	}
+}
+
+canNodeHaveSubOrSupertype(g : EGraph, id : int) -> bool {
+	node = getNodeDef(g, id);
+	switch (node) {
+		Variable(__): true;
+		Constructor(name, args): canHaveSubOrSupertype(g, name) || exists(args, \a -> canNodeHaveSubOrSupertype(g, a));
+		Function(args, ret): exists(args, \a -> canNodeHaveSubOrSupertype(g, a)) || canNodeHaveSubOrSupertype(g, ret);
+	}
+}
+
+instantiateHUnionMember(g : EGraph, node1 : int, member : string, supertype : Constructor, union : HUnion) -> int {
+	// Find the member definition in the union
+	memberDef = find(union.types, \t -> t.name == member);
+	switch (memberDef) {
+		Some(def): {
+			if (length(supertype.params) != length(union.typars)) {
+				g.onError(makeSet(),
+					"Wrong number of type parameters for union " + supertype.name +
+					". Expected " + i2s(length(union.typars)) +
+					", got " + i2s(length(supertype.params)));
+				node1
+			} else {
+				// Create mapping from union type parameters to actual types
+				typeParMapping : Tree<string, int> = foldi(union.typars, makeTree(), \i, acc, typar ->
+					setTree(acc, typar, supertype.params[i])
+				);
+
+				infos = getNodeInfos(g, node1);
+				// Map the member's type parameters according to the union definition
+				newArgs = map(def.args, \arg -> {
+					substituteHTypePars(g, typeParMapping, arg, infos);
+				});
+
+				// Create the new constructor with mapped args
+				newCons = Constructor(member, newArgs);
+				insertNode(g, newCons, infos);
+			}
+		}
+		None(): {
+			mraw = lookupTree(g.interface.rawUnions, supertype.name);
+			switch (mraw) {
+				Some(raw): instantiateHUnionMember(g, node1, member, supertype, raw);
+				None(): {
+					g.onError(makeSet(),
+						"Member " + member + " not found in union " + supertype.name);
+					node1;
+				}
+			}
+		}
+	}
+}
+
+substituteHTypePars(g : EGraph, mapping : Tree<string, int>, type : HType, infos : Set<EContext>) -> int {
+    switch (type) {
+        HTypeVar(name): {
+			mval = lookupTree(mapping, name);
+			mval ?? {
+				mval
+			} : {
+				makeTypeVariable(g, infos);
+			}
+		}
+        HTypeCons(name, args): {
+			node = Constructor(name, map(args, \a -> substituteHTypePars(g, mapping, a, infos)));
+			insertNode(g, node, infos);
+		}
+        HTypeFn(from, to): {
+			fn = Function(map(from, \f -> substituteHTypePars(g, mapping, f, infos)), substituteHTypePars(g, mapping, to, infos));
+			insertNode(g, fn, infos);
+		}
+    }
+}
+
+// Checks if sub can potentially be a subtype of super based on the static type hierarchy
+// Returns true if there exists a possible subtype path between the two types
+canNodesBeSubtypes(g : EGraph, sub : int, super : int) -> bool {
+	node1 = getNodeDef(g, sub);
+	node2 = getNodeDef(g, super);
+	canTypeNodesBeSubtypes(g, node1, node2)
+}
+
+canNamesBeSubtypes(g : EGraph, name1 : string, name2 : string) -> bool {
+	name1 == name2
+	|| findNameConstructorPath(g, name1, name2) != []
+}
+
+canTypeNodesBeSubtypes(g : EGraph, node1 : TypeNode, node2 : TypeNode) -> bool {
+	switch (node1) {
+		Variable(__): true;  // Type variables can be anything
+		Constructor(name1, args1): {
+			switch (node2) {
+				Variable(__): true;
+				Constructor(name2, args2): {
+					if (name1 == name2) {
+						// Same constructor - check args recursively
+						length(args1) == length(args2)
+						&& foldi(args1, true, \i, acc, arg -> {
+							acc && canNodesBeSubtypes(g, arg, args2[i])
+						})
+					} else {
+						// See if there is a path between these constructors
+						path = findConstructorPath(g, node1, node2);
+						path != []
+					}
+				}
+				Function(__, __): false;
+			}
+		}
+		Function(args1, ret1): {
+			switch (node2) {
+				Variable(__): true;
+				Constructor(__,__): false;
+				Function(args2, ret2): {
+					length(args1) == length(args2)
+					&& foldi(args1, true, \i, acc, arg -> {
+						// Contravariant arguments
+						acc && canNodesBeSubtypes(g, args2[i], arg)
+					})
+					&& canNodesBeSubtypes(g, ret1, ret2)  // Covariant return
+				}
+			}
+		}
+	}
+}
+
+getAllSupertypes(interface : HModuleInterface, typeName : string, acc : Set<string>) -> Set<string> {
+    direct = getTreeArrayValue(interface.supertypes, typeName);
+    
+    fold(direct, insertSet(acc, typeName), \currentAcc, sup -> {
+        if (containsSet(currentAcc, sup.name)) {
+            // Already processed this branch, skip recursion
+            currentAcc
+        } else {
+            // Add this supertype and recurse
+            getAllSupertypes(interface, sup.name, insertSet(currentAcc, sup.name))
+        }
+    })
+}
+
+isStrictSupertype(interface : HModuleInterface, sub : string, sup : string) -> bool {
+	sub != sup &&
+	exists(getTreeArrayValue(interface.supertypes, sub), \t : HUnion -> t.name == sup)
+}
+
+isEqualOrSupertype(interface : HModuleInterface, sub : string, sup : string) -> bool {
+	sub == sup || isStrictSupertype(interface, sub, sup)
+}
+
+
+// Helper function to find unions containing a given struct
+findUnionsContainingStruct(interface : HModuleInterface, structName : string) -> [HUnion] {
+    // Get direct supertypes from the environment
+    directSupers = getTreeArrayValue(interface.supertypes, structName);
+    
+    // Collect all supertypes transitively
+    set2array(collectSupertypes(interface, directSupers, makeSet()));
+}
+
+collectSupertypes(interface : HModuleInterface, unions : [HUnion], acc : Set<HUnion>) -> Set<HUnion> {
+    if (unions == []) acc
+    else {
+        // Add current unions to accumulator
+        acc1 = fold(unions, acc, \a, u -> insertSet(a, u));
+        
+        // Get next level of supertypes and recurse
+        nextLevel = concatA(map(unions, \u -> 
+            getTreeArrayValue(interface.supertypes, u.name)
+        ));
+        
+        // Only recurse with unions we haven't seen
+        newUnions = filter(nextLevel, \u -> !containsSet(acc1, u));
+        collectSupertypes(interface, newUnions, acc1);
+    }
+}
+
+
+// Helper function to find the intersection of two lists of unions
+intersectUnions(
+    unions1 : [HUnion],
+    unions2 : [HUnion]
+) -> [HUnion] {
+    fold(unions1, [], \acc, u1 -> {
+        fold(unions2, acc, \acc2, u2 -> {
+            if (u1.name == u2.name) {
+                arrayPush(acc2, u1);
+            } else acc2
+        })
+    });
+}

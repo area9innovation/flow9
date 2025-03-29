@@ -1,0 +1,335 @@
+import maybe;
+import tools/flow9/type/types;
+import tools/flow9/type/pretty;
+import tools/flow9/type/dtype;
+import tools/flow9/type/instantiate;
+import tools/flow9/type/unify;
+import tools/flow9/type/infer_values;
+import tools/flow9/type/infer_builtin;
+import tools/flow9/type/infer_switch;
+import tools/flow9/utils/vars;
+import tools/flow9/desugar/dexp;
+import tools/flow9/desugar/pretty;
+import tools/flow9/utils/typars;
+
+export {
+	/*
+	Performs type inference on a desugared expression within the given type environment, aiming to unify it with the expected type.
+	Returns a type that captures type constraints and unifications resulting from analyzing the expression.
+	The expected type should always be a supertype of the type the expresssion has.
+	*/
+	inferDExp(env : HTypeEnv, dexp : DExp, expected : HTypeExpect) -> int;
+}
+
+inferDExp(env : HTypeEnv, dexp : DExp, expected : HTypeExpect) -> int {
+    if (shouldTrace(env, 1)) {
+        printTrace(env, "Infering type for  " + summarizeDExp(dexp) + prettyHTypeExpect(env.egraph, expected) + 
+            ".   ", 0);
+		indentMsg(env.egraph);
+    }
+
+    res = switch (dexp) {
+        DValue(): inferDValue(env, inferDExp, dexp, expected);
+        DVar(name, info): {
+			switch (lookupTree(env.egraph.locals, name)) {
+				Some(eclass): {
+					unify(env, eclass, expected, info);
+				}
+				None(): {
+					switch (lookupTree(env.interface.env, name)) {
+						Some(schema): {
+							context = EContext(info, name);
+							instantiated = htypeSchema2root(env.egraph, schema, context);
+							if (shouldTrace(env, 1)) {
+								printTrace(env, "Found variable " + name + " with schema  " + 
+									prettyHTypeSchema(schema) + "  instantiated to  " + prettyNode(env.egraph, instantiated), 0);
+							}
+							unify(env, instantiated, expected, info);
+						}
+						None(): {
+							typeError(env, info, "Undefined variable or function '" + name + "'");
+						}
+					}
+				}
+			}
+        }
+        DLet(name, value, body, info): {
+			// For let-bound values, we infer without expectation
+			valueResult = inferDExp(env, value, HTypeNone());
+
+			if (shouldTrace(env, 2)) {
+            	printTrace(env, "Inferred type for let '" + name + "' value : " + prettyNode(env.egraph, valueResult), 0);
+			}
+
+            newEnv = setLocalType(env, name, valueResult);
+            bodyResult = inferDExp(newEnv, body, expected);
+            
+			if (shouldTrace(env, 1)) {
+                printTrace(env, "Inferred type for let '" + name + "' : " + 
+                    prettyNode(env.egraph, valueResult) + "  in  " + prettyNode(env.egraph, bodyResult), 0);
+            };
+			bodyResult;
+        }
+        DIfElse(condition, thenBranch, elseBranch, info): {
+			// Condition must be bool
+			context = EContext(info, "if condition");
+			boolClass = insertNode(env.egraph, Constructor("bool", []), makeSet1(context));
+			condResult = inferDExp(env, condition, HTypeExpectUnify("condition", HExactType(), boolClass));
+
+			// Both branches should satisfy the expected type
+			thenResult = inferDExp(env, thenBranch, expected);
+			elseResult = inferDExp(env, elseBranch, expected);
+
+			// The result type should be the lub of both branches
+			branchResult = unifyLubInfoTypes(env, [Pair(thenResult, thenBranch.info), Pair(elseResult, elseBranch.info)], expected, info);
+
+			if (shouldTrace(env, 2)) {
+				printTrace(env, "Inferred result for if-else: ", 0);
+				printTrace(env, "  Condition: " + prettyNode(env.egraph, condResult), 0);
+				printTrace(env, "  Then: " + prettyNode(env.egraph, thenResult), 0);
+				printTrace(env, "  Else: " + prettyNode(env.egraph, elseResult), 0);
+				printTrace(env, "  Branch unified: " + prettyNode(env.egraph, branchResult), 0);
+			}
+
+			branchResult
+		}
+        DBuiltin(op, args, i): inferDBuiltin(env, inferDExp, dexp, expected);
+        DArray(values, info): inferDArray(env, values, expected, info);
+        DMaybe(condition, then, else_, info): inferDMaybe(env, inferDExp, condition, then, else_, info, expected);
+        DSwitch(value, cases, defaultCase, info): inferDSwitch(env, inferDExp, value, cases, defaultCase, expected, info);
+        DWith(uid, exp1, fieldassigns, info): inferDWith(env, uid, exp1, fieldassigns, expected);
+        DCall(fn, args, info): inferDCall(env, inferDExp, dexp, expected);
+    }
+
+	setIntMap(env.info2types, dexp.info, res);
+    if (shouldTrace(env, 1)) {
+		dedentMsg(env.egraph);
+        printTrace(env, "Inferred type for  " + summarizeDExp(dexp) + "  : " + prettyNode(env.egraph, res) + 
+            ".   " , 0
+		);
+    }
+    res;
+}
+
+// Helper function to check if a name has a type alternative in the environment
+isNameTypeAlternative(env : HTypeEnv, name : string) -> bool {
+    switch (lookupTree(env.interface.env, name)) {
+        Some(schema): {
+            switch (schema) {
+                HTypeAlternatives(__): true;
+                default: false;
+            }
+        }
+        None(): false;
+    }
+}
+
+// Extracts an inner type expectation from an array type expectation
+extractArrayElementExpectation(env : HTypeEnv, expected : HTypeExpect) -> HTypeExpect {
+    switch (expected) {
+        HTypeNone(): HTypeNone();
+        HTypeExpectUnify(context, mode, rightEclass): {
+            // Get the node definition for the right eclass
+            rightNode = getNodeDef(env.egraph, rightEclass);
+            
+            // Check if it's an array constructor
+            switch (rightNode) {
+                Constructor(name, params): {
+                    if (name == "array" && length(params) == 1) {
+                        // Extract the element type and create a new expectation
+                        elementType = params[0];
+                        HTypeExpectUnify(context + " element", mode, elementType);
+                    } else {
+                        // Not an array type, so no expectation for elements
+                        HTypeNone();
+                    }
+                }
+                default: HTypeNone(); // Not a constructor, so no specific expectation
+            }
+        }
+    }
+}
+
+inferDArray(env : HTypeEnv, values : [DExp], expected : HTypeExpect, info : int) -> int {
+    if (length(values) == 0) {
+        // For empty arrays, we need a fresh element type
+		context = makeSet1(EContext(info, "[]"));
+        elementType = makeTypeVariable(env.egraph, context);
+        arrayType = Constructor("array", [elementType]);
+        arrayEClass = insertNode(env.egraph, arrayType, context);
+        unify(env, arrayEClass, expected, info);
+    } else {
+		// Extract element expectation from the array expectation
+		elementExpect = extractArrayElementExpectation(env, expected);
+		
+        // Infer element types with the extracted element expectation
+        elemResults = map(values, \e -> Pair(inferDExp(env, e, elementExpect), e.info));
+
+        // Find common supertype of all elements
+        unified = unifyLubInfoTypes(env, elemResults, elementExpect, info);
+
+        // Create array type with unified element type
+        arrayType = Constructor("array", [unified]);
+		context = makeSet1(EContext(info, "[ ]"));
+        arrayEClass = insertNode(env.egraph, arrayType, context);
+
+        // Final unification with expected type
+        unify(env, arrayEClass, expected, info);
+    }
+}
+
+inferDWith(env : HTypeEnv, uid : string, sourceExp : DExp, fieldAssigns : [DFieldAssign], expected : HTypeExpect) -> int {
+	maybeStruct = lookupTree(env.interface.structs, uid);
+	switch (maybeStruct) {
+		Some(struct): {
+			// First infer the source expression type to ensure it's valid
+			sourceResult = inferDExp(env, sourceExp, HTypeNone());
+
+			// Create a map of the field assignments
+			fieldAssignMap = fold(fieldAssigns, makeTree(), \map, assign ->
+				setTree(map, assign.field, assign.exp)
+			);
+
+			// Create arguments for struct constructor by either using assigned values
+			// or extracting values from source struct
+			fieldArgs = mapi(struct.fields, \i, fieldDef -> {
+				fieldName = fieldDef.field;
+
+				switch (lookupTree(fieldAssignMap, fieldName)) {
+					Some(expr): expr;  // Use the assigned expression
+					None(): {
+						// Extract from source using field accessor
+						DBuiltin(DDot(fieldName), [sourceExp], sourceExp.info);
+					}
+				}
+			});
+
+			// Create a struct constructor call with the computed arguments
+			structConstructor = DCall(
+				DVar(uid, sourceExp.info),
+				fieldArgs,
+				sourceExp.info
+			);
+
+			// Let the regular function call inference handle type resolution
+			result = inferDExp(env, structConstructor, expected);
+			result;
+		}
+		None(): {
+			typeError(env, sourceExp.info, "Struct '" + uid + "' not found");
+		}
+	}
+}
+
+inferDMaybe(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int,
+        condition : DExp, then : DExp, else_ : DExp, info : int, expected : HTypeExpect) -> int {
+	context = makeSet1(EContext(info, "??-switch"));
+	maybeTypeVar = makeTypeVariable(env.egraph, makeSet1(EContext(info, "type for ??")));
+	conditionType = insertNode(env.egraph, Constructor("Maybe", [maybeTypeVar]), context);
+	conditionResult = inferDExp(env, condition, HTypeExpectSubtype("maybe condition", conditionType));
+
+	// Update environment with condition type for the then branch
+	var = getDVar(condition);
+	deconstructedEnv = if (var != "") {
+		setLocalType(env, getDVar(condition), maybeTypeVar) 
+	} else env;
+
+	// Infer both branches
+	thenResult = inferDExp(deconstructedEnv, then, expected);
+	elseResult = inferDExp(env, else_, expected);
+
+	// Find common supertype of branches
+	unifyLubInfoTypes(env, [Pair(thenResult, then.info), Pair(elseResult, else_.info)], expected, info);
+}
+
+inferDCall(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, 
+		dexp : DCall, expected : HTypeExpect) -> int {
+	args = dexp.args;
+	info = dexp.info;
+	
+    // First, check if we're calling a variable (known function)
+    switch (dexp.fn) {
+        DVar(name, var_info): {
+            // Check if the name has a type alternative in the environment
+            if (isNameTypeAlternative(env, name)) {
+                // If it's an alternative type, fall back to the generic approach
+                inferDCallGeneric(env, inferDExp, dexp, expected);
+            } else {
+                // Infer the function type without expectation first
+                fnType = inferDExp(env, dexp.fn, HTypeNone());
+                
+                // Check if we got a function type
+                fnNode = getNodeDef(env.egraph, fnType);
+                switch (fnNode) {
+                    Function(paramTypes, retType): {
+                        // Check argument count
+                        if (length(paramTypes) != length(args)) {
+                            typeError(env, info, "Function " + name + " expects " + 
+                                i2s(length(paramTypes)) + " arguments, but got " + i2s(length(args)));
+                            unify(env, retType, expected, info);
+                        } else {
+                            // Infer argument types using parameter expectations
+                            fnArgs = mapi(args, \i, arg -> {
+                                paramExpect = HTypeExpectUnify("Type error in arg #" + i2s(i + 1) + " in call to " + name, HSubtype(), paramTypes[i]);
+                                inferDExp(env, arg, paramExpect);
+                            });
+                            // Unify return type with expected type
+                            unify(env, retType, expected, info);
+                        }
+                    }
+                    default: {
+                        // Not a function type, fall back to generic approach
+                        inferDCallGeneric(env, inferDExp, dexp, expected);
+                    }
+                }
+            }
+        }
+        default: {
+            // Not a variable reference, fall back to generic approach
+            inferDCallGeneric(env, inferDExp, dexp, expected);
+        }
+    }
+}
+
+// Original function call inference when we don't know the function type in advance
+inferDCallGeneric(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, 
+        dexp : DCall, expected : HTypeExpect) -> int {
+    args = dexp.args;
+    info = dexp.info;
+    
+    // Infer argument types without expectations
+    argVars = mapi(args, \i, arg -> inferDExp(env, arg, HTypeNone()));
+    
+    // Create a return type variable
+    returnType = makeTypeVariable(env.egraph, makeSet1(EContext(info, "call result")));
+    
+    // Construct function type with argument types and return type
+    callType = insertNode(env.egraph, Function(argVars, returnType), makeSet1(EContext(info, "call fn")));
+    
+    name = switch (dexp.fn) {
+        DVar(name, __): name + "()";
+        default: "call";
+    };
+    
+    // Infer the function type, requiring it to be a subtype of our constructed type
+    fnType = inferDExp(env, dexp.fn, HTypeExpectSubtype(name, callType));
+    
+    // Extract the function's actual type
+    fnNode = getNodeDef(env.egraph, fnType);
+    
+    switch (fnNode) {
+        Function(paramTypes, retType): {
+            if (length(paramTypes) != length(argVars)) {
+                typeError(env, info, "Argument count mismatch");
+            } else {
+	            unify(env, retType, expected, info);
+			}
+        }
+        Variable(id): {
+            typeError(env, info, "Not supposed to happen, since we should infer a function type");
+        }
+        default: {
+            typeError(env, info, "Not a function type: " + prettyNode(env.egraph, fnType));
+        }
+    }
+}

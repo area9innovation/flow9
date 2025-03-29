@@ -1,0 +1,83 @@
+import tools/flow9/desugar/dependencies;
+import tools/flow9/compile_state;
+import tools/flow9/type/merge_env;
+import tools/flow9/type/unify;
+import tools/flow9/type/pretty;
+import tools/flow9/flow_path;
+
+export {
+	// This constructs a unified environment of all imports
+	// TODO: This is extremely inefficient, we should cache the results
+	buildDepEnv(c : CompileState, d : DModule) -> HModuleInterface;
+}
+
+buildDepEnv(c : CompileState, d : DModule) -> HModuleInterface {
+	// Since Flow values are immutable, we can't directly modify d.typeEnvIsFull.
+	// Instead, we set the status in the CompileState after we return.
+	if (false) {
+		// println("Building dep env for " + d.flowpath);
+		// TODO: Right now, this is not really used for anything: There is also a bug in fituple1.flow where we end up without deps
+		dependencies = getDModuleDependencies(d);
+		allDeps : Set<string> = foldTree(dependencies, makeSet(), \_, deps, acc -> mergeSets(acc, deps));
+		// println("Deps for " + d.flowpath + ": " + toString(set2array(allDeps)));
+		if (isEmptySet(allDeps)) {
+			d.typeEnv;
+		} else {
+			addToDepenv(d.typeEnv, c, ref makeSet(), d.imports, allDeps);
+		};
+
+	} else {
+		// println("Building env for " + d.fullpath);
+		addToDepenv(d.typeEnv, c, ref makeSet(), d.imports, makeSet());
+	}
+}
+
+addToDepenv(acc : HModuleInterface, c : CompileState, seen : ref Set<DImport>, imports : [DImport], deps : Set<string>) -> HModuleInterface {
+	fold(imports, acc, \acc2, import -> {
+		if (containsSet(^seen, import)) {
+			acc2;
+		} else {
+			seen := insertSet(^seen, import);
+			fullpath = flowPath2path(c.config.includes, import.path + ".flow");
+			dep = getCompileStatus(c, fullpath);
+			error = \ -> {
+				c.onError("Error: " + fullpath + " not ready for types");
+				acc2;
+			}
+			switch (dep) {
+				CompileNotSeen(): error();
+				CompileInProgress(): error();
+				CompileParsed(_): error();
+				CompileNeedsRecheck(tmod, __): {
+					// The module needs rechecking but we can use its current environment
+					// println("  Merge from module that needs rechecking: " + tmod.fullpath);
+					// Merge with accumulated environment
+					mergedEnv = mergeHModuleInterface(acc2, tmod.typeEnv);
+					
+					// Check if the imported module has a full environment
+					if (!tmod.typeEnvIsFull) {
+						// Recursively process imports from the imported module
+						addToDepenv(mergedEnv, c, seen, tmod.imports, makeSet());
+					} else {
+						mergedEnv;
+					}
+				}
+				CompileTyped(tmod): {
+					// println("  Merge from cache: " + tmod.fullpath);
+					// Merge with accumulated environment
+					mergedEnv = mergeHModuleInterface(acc2, tmod.typeEnv);
+					
+					// Check if the imported module has a full environment
+					if (!tmod.typeEnvIsFull) {
+						// Recursively process imports from the imported module
+						addToDepenv(mergedEnv, c, seen, tmod.imports, makeSet());
+					} else {
+						// Module has a full environment, we can just use it
+						mergedEnv;
+					}
+				}
+				CompileFailure(__): error();
+			}
+		}
+	})
+}

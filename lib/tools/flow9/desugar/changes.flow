@@ -1,0 +1,219 @@
+import tools/flow9/desugar/dexp;
+import tools/flow9/desugar/dependencies;
+import tools/flow9/type/module_types;
+import tools/flowc/dependencies;
+import ds/set;
+import ds/tree;
+
+export {
+	// Determines if a top-level name needs to be re-typechecked based on changed IDs
+	shouldRetypecheck(name : string, changedIds : Set<string>, dependencies : Tree<string, Set<string>>) -> bool;
+
+	// Compares old and new modules to determine which exported names have changed
+	getChangedExports(oldModule : DModule, newModule : DModule) -> [string];
+
+	// Convert module dependencies to a DependencyTracker for efficient dependency resolution
+	buildDependencyTracker(dependencies : Tree<string, Set<string>>) -> DependencyTracker<string>;
+}
+
+// Check if a name depends on any of the changed IDs directly or transitively
+shouldRetypecheck(name : string, changedIds : Set<string>, dependencies : Tree<string, Set<string>>) -> bool {
+	// Direct check - is this name directly changed?
+	if (containsSet(changedIds, name)) {
+		true;
+	} else {
+		// Get direct dependencies for this name
+		directDeps = lookupTreeDef(dependencies, name, makeSet());
+
+		// Check if any direct dependency is in the changed set
+		if (intersectingSets(directDeps, changedIds)) {
+			true;
+		} else {
+
+			// Create a tracker to help with transitive dependencies
+			tracker = buildDependencyTracker(dependencies);
+
+			// Add our name as dependent on all changedIds
+			changed = set2array(changedIds);
+			tracker2 = addDependencies(tracker, name, changed);
+
+			// If our name is still dependent (not in nonDependent set), it needs retypechecking
+			extracted = extractNonDependent(tracker2);
+			!containsSet(extracted.second, name);
+		}
+	}
+}
+
+// Build a dependency tracker from a dependency tree
+buildDependencyTracker(dependencies : Tree<string, Set<string>>) -> DependencyTracker<string> {
+	tracker = makeDependencyTracker();
+
+	// For each name and its dependencies
+	foldTree(dependencies, tracker, \name, deps, acc -> {
+		// Add them to the tracker
+		addDependencies(acc, name, set2array(deps))
+	});
+}
+
+// Compares two modules to determine which exported names have changed
+getChangedExports(oldModule : DModule, newModule : DModule) -> [string] {
+	if (oldModule.flowpath != newModule.flowpath) {
+		// Different modules, all exports are considered changed
+		newModule.exported;
+	} else {
+		// Check if both modules have type environments
+		if (oldModule.types == [] || newModule.types == []) {
+			// If either module doesn't have a type environment, consider all exports changed
+			newModule.exported;
+		} else {
+			// Compare the module interfaces
+			oldInterface = oldModule.typeEnv;
+			newInterface = newModule.typeEnv;
+
+			// Check type environments
+			envChanges = foldTree(newInterface.env, makeSet(), \name, newType, acc -> {
+				oldType = lookupTree(oldInterface.env, name);
+				switch (oldType) {
+					None(): insertSet(acc, name); // New type
+					Some(old): {
+						// Use structural equality for comparison
+						if (old != newType) {
+							insertSet(acc, name);
+						} else acc;
+					}
+				}
+			});
+
+			// Check struct definitions
+			structChanges = foldTree(newInterface.structs, makeSet(), \name, newStruct, acc -> {
+				oldStruct = lookupTree(oldInterface.structs, name);
+				switch (oldStruct) {
+					None(): insertSet(acc, name); // New struct
+					Some(old): {
+						// Use structural equality for comparison
+						if (old != newStruct) {
+							insertSet(acc, name);
+						} else acc;
+					}
+				}
+			});
+
+			// Check union definitions
+			unionChanges = foldTree(newInterface.unions, makeSet(), \name, newUnion, acc -> {
+				oldUnion = lookupTree(oldInterface.unions, name);
+				switch (oldUnion) {
+					None(): insertSet(acc, name); // New union
+					Some(old): {
+						// Use structural equality for comparison
+						if (old != newUnion) {
+							insertSet(acc, name);
+						} else acc;
+					}
+				}
+			});
+
+			// Check raw union definitions
+			rawUnionChanges = foldTree(newInterface.rawUnions, makeSet(), \name, newUnion, acc -> {
+				oldUnion = lookupTree(oldInterface.rawUnions, name);
+				switch (oldUnion) {
+					None(): insertSet(acc, name); // New raw union
+					Some(old): {
+						// Use structural equality for comparison
+						if (old != newUnion) {
+							insertSet(acc, name);
+						} else acc;
+					}
+				}
+			});
+
+			// Check supertypes
+			supertypeChanges = foldTree(newInterface.supertypes, makeSet(), \name, newSupertypes, acc -> {
+				oldSupertypes = lookupTree(oldInterface.supertypes, name);
+				switch (oldSupertypes) {
+					None(): insertSet(acc, name); // New supertype relationship
+					Some(old): {
+						// Use structural equality for comparison
+						if (old != newSupertypes) {
+							insertSet(acc, name);
+						} else acc;
+					}
+				}
+			});
+
+			// Also check for removals from the old module interface
+
+			// Check for removed types
+			removedEnv = foldTree(oldInterface.env, makeSet(), \name, _, acc -> {
+				if (!containsKeyTree(newInterface.env, name)) {
+					insertSet(acc, name);
+				} else acc;
+			});
+
+			// Check for removed structs
+			removedStructs = foldTree(oldInterface.structs, makeSet(), \name, _, acc -> {
+				if (!containsKeyTree(newInterface.structs, name)) {
+					insertSet(acc, name);
+				} else acc;
+			});
+
+			// Check for removed unions
+			removedUnions = foldTree(oldInterface.unions, makeSet(), \name, _, acc -> {
+				if (!containsKeyTree(newInterface.unions, name)) {
+					insertSet(acc, name);
+				} else acc;
+			});
+
+			// Check for removed raw unions
+			removedRawUnions = foldTree(oldInterface.rawUnions, makeSet(), \name, _, acc -> {
+				if (!containsKeyTree(newInterface.rawUnions, name)) {
+					insertSet(acc, name);
+				} else acc;
+			});
+
+			// Check for removed supertypes
+			removedSupertypes = foldTree(oldInterface.supertypes, makeSet(), \name, _, acc -> {
+				if (!containsKeyTree(newInterface.supertypes, name)) {
+					insertSet(acc, name);
+				} else acc;
+			});
+
+			// Combine all changes
+			allChanges = mergeSets(envChanges,
+						 mergeSets(structChanges,
+						 mergeSets(unionChanges,
+						 mergeSets(rawUnionChanges,
+						 mergeSets(supertypeChanges,
+						 mergeSets(removedEnv,
+						 mergeSets(removedStructs,
+						 mergeSets(removedUnions,
+						 mergeSets(removedRawUnions, removedSupertypes)))))))));
+
+			// Filter by exported names
+			oldExportSet = buildSet(oldModule.exported);
+			newExportSet = buildSet(newModule.exported);
+
+			// Include newly exported names
+			newExports = filter(newModule.exported, \name -> !containsSet(oldExportSet, name));
+
+			// Find removed exported names (crucial for rename detection)
+			removedExports = filter(oldModule.exported, \name -> !containsSet(newExportSet, name));
+			
+			// Debug logging for export comparison
+			// println(">>> EXPORT COMPARISON for " + oldModule.flowpath);
+			// println(">>> OLD exports: " + strGlue(oldModule.exported, ", "));
+			// println(">>> NEW exports: " + strGlue(newModule.exported, ", "));
+			// println(">>> REMOVED exports: " + strGlue(removedExports, ", "));
+
+			// Find exported names that have changed in implementation
+			exportedChanges = filter(oldModule.exported, \name -> containsSet(allChanges, name));
+
+			// Combine all sets of changes: implementation changes, new exports, and removed exports
+			changedExportsList = concat(concat(exportedChanges, newExports), removedExports);
+			// println(">>> DEBUG all changes: " + strGlue(changedExportsList, ", "));
+			// println(">>> DEBUG exported changes: " + strGlue(exportedChanges, ", "));
+			// println(">>> DEBUG new exports: " + strGlue(newExports, ", "));
+			// println(">>> DEBUG removed exports: " + strGlue(removedExports, ", "));
+			changedExportsList;
+		}
+	}
+}

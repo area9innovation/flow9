@@ -1,0 +1,71 @@
+import runtime;
+import ds/tree;
+import tools/flow9/type/egraph/types;
+import tools/flow9/type/egraph/unify;
+import ds/easygraph;
+
+export {
+	// Find and merge all cyclic type relationships in the graph
+	detectAndMergeCycles(g : EGraph) -> void;
+}
+
+detectAndMergeCycles(g : EGraph) -> void {
+	// First, canonicalize to ensure all references are up to date
+	// canonicalizeEGraph(g);
+
+	cycles = findEgraphCycles(g);
+	nonFlow = filtermap(cycles, \cycle -> {
+		nonFlowCycle = filter(cycle, \edge -> {
+			!isFlowEClass(g, edge.first) && !isFlowEClass(g, edge.second)
+		});
+		if (nonFlowCycle != []) {
+			Some(nonFlowCycle)
+		} else None();
+	});
+
+	if (cycles != [] && g.tracing > 0) {
+		debugMsg(g, 1, "Found " + i2s(length(cycles)) + " cycles");
+		indentMsg(g);
+	}
+	iter(nonFlow, \cycle -> {
+		//debugMsg(g, 3, "Cycle: " + superglue(cycle, \edge -> prettyNode(g, edge.first) + " -> " + prettyNode(g, edge.second), ", "));
+		iter(cycle, \edge -> {
+			context = getRelationshipContexts(g, edge.first, edge.second);
+			res = unifyEGraphTypes(g, edge.first, edge.second, context);
+			//debugMsg(g, 1, "Temp: " + typeNodeToString(g, res, false, true));
+			{}
+		});
+		//debugMsg(g, 1, "Result: " + typeNodeToString(g, cycle[0].first, false, true));
+		// println("Result: " + typeNodeToString(g
+	});
+	dedentMsg(g);
+	if (nonFlow != []) {
+		// OK, go again, since there might be more
+		detectAndMergeCycles(g);
+	}
+}
+
+findEgraphCycles(e : EGraph) -> [[Pair<int, int>]] {
+	// Convert EGraph subtype relationships to EasyGraph
+	g = makeEasyGraph();
+
+	// Add all nodes first
+	g1 = foldTree(^(e.classes), g, \id, eclass, acc -> {
+		addEGNode(acc, GNode(id, id))
+	});
+
+	// Add edges for subtype relationships
+	g2 = foldTree(^(e.classes), g1, \id, eclass, acc -> {
+		fold(set2array(eclass.subtypes), acc, \innerAcc, subtypeId -> {
+			addEGEdge(innerAcc, GEdge(id, subtypeId, 0, 1))
+		})
+	});
+
+	// Find cycles using existing algorithm
+	cycles = findEasyGraphCycles(g2);
+
+	// Convert each cycle from [GEdge] to [Pair<int, int>]
+	map(cycles, \cycle ->
+		map(cycle, \edge -> Pair(edge.from, edge.to))
+	);
+}

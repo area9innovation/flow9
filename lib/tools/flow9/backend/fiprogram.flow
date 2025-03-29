@@ -1,0 +1,145 @@
+import tools/flow9/compile_state;
+import tools/flow9/backend/fimodule;
+import tools/flow9/backend/debug;
+import tools/flowc/manipulation/common;
+import tools/flowc/incremental/fiprogram;
+import tools/common/config;
+import ds/tree;
+import tools/flow9/flow_path;
+
+export {
+	// Converts a module (by name) to FiProgram to allow reusing the flowc backends
+	dmodule2fiprogram(state : CompileState, fullpath : string) -> Maybe<FiProgram>;
+}
+
+dmodule2fiprogram(state : CompileState, fullpath : string) -> Maybe<FiProgram> {
+	// Get the compiler config
+	config = state.config;
+
+	// Get the module's compilation status
+	moduleStatus = getCompileStatus(state, fullpath);
+
+	switch (moduleStatus) {
+		CompileTyped(module): {
+			// Get all dependencies of this module
+			allDependencies = collectDependencies(state, module);
+
+			// Convert all modules to FiModules
+			fiModules0 = setTree(makeTree(), module.flowpath, dmodule2fimodule(module));
+
+			// Add all dependencies
+			fiModules = fold(allDependencies, fiModules0, \acc, dep -> {
+				depStatus = getCompileStatus(state, flowPath2path(config.includes, dep + ".flow"));
+				switch (depStatus) {
+					CompileTyped(depModule): {
+						setTree(acc, dep, dmodule2fimodule(depModule));
+					}
+					default: acc;
+				}
+			});
+
+			// Build the global names
+			names = fold(getTreeValues(fiModules),
+				FiGlobalNames(
+					makeTree(), makeTree(), makeTree(), makeTree(),
+					makeTree(), makeTree(), makeTree(), makeTree(),
+				),
+				\acc, m -> fiAddModule2GlobalNames(m, acc)
+			);
+
+			// debugPrintGlobalNames(names);
+
+			// Determine traversal order
+			traversal = findTraversalOrder(fiModules);
+
+			// Create and return the FiProgram
+			Some(FiProgram(config, fiModules, traversal, names));
+		}
+		default: {
+			// Failed to find the typed module
+			state.onError("Could not find typed module for " + fullpath + ", but only " + moduleStatus.structname);
+			None();
+		}
+	}
+}
+
+// Collect all dependencies (transitively) for a module
+collectDependencies(state : CompileState, module : DModule) -> [string] {
+	// Start with direct imports
+	imports = map(module.imports, \imp -> imp.path);
+
+	// Collect transitive dependencies recursively
+	collectTransitiveDependencies(state, imports, makeSet());
+}
+
+collectTransitiveDependencies(state : CompileState, toProcess : [string], visited : Set<string>) -> [string] {
+	if (toProcess == []) {
+		set2array(visited);
+	} else {
+		current = toProcess[0];
+		rest = tail(toProcess);
+
+		if (containsSet(visited, current)) {
+			// Already processed this dependency
+			collectTransitiveDependencies(state, rest, visited);
+		} else {
+			// Add current to visited
+			newVisited = insertSet(visited, current);
+
+			// Get the module's status
+			fullpath = flowPath2path(state.config.includes, current + ".flow");
+			moduleStatus = getCompileStatus(state, fullpath);
+
+			// Get its imports
+			newImports = switch (moduleStatus) {
+				CompileTyped(module): map(module.imports, \imp -> imp.path);
+				default: [];
+			}
+
+			// Add new imports to the processing queue
+			collectTransitiveDependencies(
+				state,
+				concat(rest, filter(newImports, \imp -> !containsSet(newVisited, imp))),
+				newVisited
+			);
+		}
+	}
+}
+
+// Determine the correct traversal order of modules (topologically sorted)
+findTraversalOrder(modules : Tree<string, FiModule>) -> [string] {
+	// Create a graph of dependencies
+	dependencies = foldTree(modules, makeTree(), \path, module, acc -> {
+		deps = map(module.imports, \imp : FiImport -> imp.flowfile);
+		setTree(acc, path, deps);
+	});
+
+	// Do topological sort
+	topologicalSort(dependencies, []);
+}
+
+// Simple topological sort implementation
+topologicalSort(dependencies : Tree<string, [string]>, visited : [string]) -> [string] {
+	// Find nodes with no dependencies or whose dependencies are all visited
+	ready = filter(getTreeKeys(dependencies), \node -> {
+		deps = lookupTreeDef(dependencies, node, []);
+		forall(deps, \dep -> contains(visited, dep));
+	});
+
+	if (ready == []) {
+		if (sizeTree(dependencies) > 0) {
+			// There might be a cycle
+			println("Warning: Possible cyclic dependencies detected");
+		}
+		// Return the visited nodes
+		visited;
+	} else {
+		// Remove ready nodes from dependencies
+		newDependencies = fold(ready, dependencies, \acc, node ->
+			removeFromTree(acc, node)
+		);
+
+		// Continue sorting with updated visited list
+		topologicalSort(newDependencies, concat(visited, ready));
+	}
+}

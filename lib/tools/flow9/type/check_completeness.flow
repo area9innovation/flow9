@@ -1,0 +1,157 @@
+import tools/flow9/type/pretty;
+import tools/flow9/desugar/pretty;
+
+export {
+    checkModuleUnboundTypars(m : DModule, onError : (int, string) -> void) -> void;
+}
+
+// Check if a type variable is bound in the current scope
+isTyparBound(tyvar : string, boundTypars : Set<string>) -> bool {
+    containsSet(boundTypars, tyvar)
+}
+
+// Check a single HType for unbound type variables, returns true if all typevars are bound
+checkHType(type : HType, boundTypars : Set<string>) -> bool {
+    switch (type) {
+        HTypeVar(name): isTyparBound(name, boundTypars);
+        HTypeCons(_, args): fold(args, true, \acc, arg -> acc && checkHType(arg, boundTypars));
+        HTypeFn(args, ret): {
+            argsOk = fold(args, true, \acc, arg -> acc && checkHType(arg, boundTypars));
+            argsOk && checkHType(ret, boundTypars);
+        }
+    }
+}
+
+// Check a type schema, handling ForAll bindings, and report any errors
+checkHTypeSchema(schema : HTypeSchema, types : [HTypeSchema], boundTypars : Set<string>, info : int, onError : (int, string) -> void) -> void {
+    switch (schema) {
+        HTypeForAll(vars, type): {
+            newBound = fold(vars, boundTypars, \acc, v -> insertSet(acc, v));
+            if (!checkHType(type, newBound)) {
+                onError(info, "Add type annotation to clarify: '" + prettyHTypeSchema(schema) + "'");
+            }
+        }
+		HTypeAlternatives(options): {
+			onError(info, "Type contains alternatives: '" + prettyHTypeSchema(schema) + "'");
+		}
+        HType(): {
+            if (!checkHType(schema, boundTypars)) {
+                onError(info, "Add type annotation to clarify: '" + prettyHTypeSchema(schema) + "'");
+            }
+        }
+    }
+}
+
+// Check a single node's type for unbound type variables
+checkNodeType(info : int, types : [HTypeSchema], boundTypars : Set<string>, onError : (int, string) -> void) -> void {
+    typeAtInfo = elementAt(types, info, HTypeCons("error", []));
+    checkHTypeSchema(typeAtInfo, types, boundTypars, info, onError);
+}
+
+getBoundTyparsFromInfo(info : int, types : [HTypeSchema]) -> Set<string> {
+    type = elementAt(types, info, HTypeCons("error", []));
+    typars = switch (type) {
+        HTypeForAll(vars, __): vars;
+        default: [];
+    }
+    buildSet(typars);
+}
+
+checkModuleUnboundTypars(m : DModule, onError : (int, string) -> void) -> void {
+    // Check structs
+    traverseInOrder(m.structs, \_, struct -> {
+        structBound = getBoundTyparsFromInfo(struct.info, m.types);
+        checkNodeType(struct.info, m.types, structBound, onError);
+    });
+
+    // Check unions
+    traverseInOrder(m.unions, \_, union -> {
+        unionBound = getBoundTyparsFromInfo(union.info, m.types);
+        checkNodeType(union.info, m.types, unionBound, onError);
+    });
+
+    // Check globals and their expressions
+    traverseInOrder(m.toplevels, \_, global -> {
+        globalBound = getBoundTyparsFromInfo(global.info, m.types);
+        checkNodeType(global.info, m.types, globalBound, onError);
+        checkExpTypes(global.value, m.types, globalBound, onError);
+    });
+}
+
+// Recursively check all expression nodes in a DExp
+checkExpTypes(e : DExp, types : [HTypeSchema], boundTypars : Set<string>, onError : (int, string) -> void) -> void {
+    // Check this node's type
+    checkNodeType(e.info, types, boundTypars, onError);
+
+    // Recursively check all child expressions
+    switch (e) {
+        DValue(): {}  // Leaf node
+        DLambda(args, body, __): {
+           // Check argument types
+            iter(args, \arg -> checkDTypeInfo(arg.type, types, boundTypars, onError));
+            
+            // Check body with updated bound variables
+            checkExpTypes(body, types, boundTypars, onError);
+        }
+        DVar(__,__): {}  // Leaf node
+        DArray(values, __): iter(values, \v -> checkExpTypes(v, types, boundTypars, onError));
+        DCall(fn, args, info): {
+            checkExpTypes(fn, types, boundTypars, onError);
+
+		    typeAtInfo = elementAt(types, fn.info, HTypeCons("error", []));
+
+			switch (typeAtInfo) {
+				HTypeFn(__, __): {}
+				HTypeForAll(__, fntype): {
+					switch (fntype) {
+						HTypeFn(__, __): {}
+						default: {
+							onError(info, "Expected a function type for call, but got " + prettyHTypeSchema(typeAtInfo));
+						}
+					}
+				}
+				default: {
+					onError(info, "Expected a function type for call, but got " + prettyHTypeSchema(typeAtInfo));
+				}
+			}
+
+            iter(args, \a -> checkExpTypes(a, types, boundTypars, onError));
+        }
+        DLet(__, value, body, __): {
+            checkExpTypes(value, types, boundTypars, onError);
+            checkExpTypes(body, types, boundTypars, onError);
+        }
+        DIfElse(cond, then, else_, __): {
+            checkExpTypes(cond, types, boundTypars, onError);
+            checkExpTypes(then, types, boundTypars, onError);
+            checkExpTypes(else_, types, boundTypars, onError);
+        }
+        DMaybe(cond, then, else_, __): {
+            checkExpTypes(cond, types, boundTypars, onError);
+            checkExpTypes(then, types, boundTypars, onError);
+            checkExpTypes(else_, types, boundTypars, onError);
+        }
+        DSwitch(value, cases, defaultCase, __): {
+            checkExpTypes(value, types, boundTypars, onError);
+            iter(cases, \case -> checkExpTypes(case.body, types, boundTypars, onError));
+            maybeApply(defaultCase, \d -> checkExpTypes(d, types, boundTypars, onError));
+        }
+        DBuiltin(op, args, __): {
+            // Check DTypes in operators
+            switch (op) {
+                DCast(toType): checkDTypeInfo(toType, types, boundTypars, onError);
+                DIsSubType(type): checkDTypeInfo(type, types, boundTypars, onError);
+                default: {}
+            }
+            iter(args, \a -> checkExpTypes(a, types, boundTypars, onError));
+        }
+        DWith(__, wexp, fieldassigns, __): {
+            checkExpTypes(wexp, types, boundTypars, onError);
+            iter(fieldassigns, \fa -> checkExpTypes(fa.exp, types, boundTypars, onError));
+        }
+    }
+}   
+
+checkDTypeInfo(dtype : DType, types : [HTypeSchema], boundTypars : Set<string>, onError : (int, string) -> void) -> void {
+    checkNodeType(dtype.info, types, boundTypars, onError);
+}

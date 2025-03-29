@@ -1,0 +1,65 @@
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/egraph/pretty;
+import string_utils;
+import fs/filesystem;
+
+export {
+	saveEGraph(g : EGraph, fullpath : string, suffix : string) -> void;
+	egraph2dot(g : EGraph) -> string;
+}
+
+saveEGraph(g : EGraph, name : string, suffix : string) -> void {
+	// Save the E-graph to a file
+	dot = egraph2dot(g);
+	filename = name + "_" + suffix + ".dot";
+	setFileContent(filename, dot);
+	println("Saved '" + filename + "'");
+}
+
+egraph2dot(g : EGraph) -> string {
+	// Header
+	header = "digraph egraph {\n";
+	// Node attributes
+	nodeAttr = "    node [shape=box];\n";
+
+	mentioned = foldTree(^(g.classes), makeSet(), \id, eclass, acc -> {
+		root = findEGraphRoot(g, id);
+		acc1 = if (!isEmptySet(eclass.alternatives) || !isEmptySet(eclass.subtypes)) insertSet(acc, root) else acc;
+		acc2 = foldSet(eclass.alternatives, acc1, \sacc, altId -> insertSet(sacc, findEGraphRoot(g, altId)));
+		foldSet(eclass.subtypes, acc2, \sacc, subId -> insertSet(sacc, findEGraphRoot(g, subId)))
+	});
+
+	// Generate nodes
+	nodes = foldTree(^(g.classes), "", \id, eclass, acc -> {
+		root = findEGraphRoot(g, id);
+		if (root == id && containsSet(mentioned, id)) {
+			// Only process root nodes
+			nodeLabel = strReplace(wrapString(typeNodeToString(g, id, false, true), 70), "\"", "\\\"");
+			acc + "    " + i2s(id) + " [label=\"" + nodeLabel + "\"];\n";
+		} else acc
+	});
+
+	// Generate edges
+	edges = foldTree(^(g.classes), "", \id, eclass, acc -> {
+		root = findEGraphRoot(g, id);
+		if (root == id) {
+			// Subtype edges (solid)
+			subtypeEdges = foldSet(eclass.subtypes, "", \sacc, subId ->
+				sacc + "    " + i2s(findEGraphRoot(g, subId)) + " -> " + i2s(id) +
+				" [label=\"<:\"];\n"
+			);
+
+			// Alternative edges (dashed)
+			altEdges = if (false) {
+				foldSet(eclass.alternatives, "", \aacc, altId ->
+					aacc + "    " + i2s(id) + " -> " + i2s(findEGraphRoot(g, altId)) +
+					" [label=\"alt\", style=dashed];\n"
+				);
+			} else "";
+
+			acc + subtypeEdges + altEdges;
+		} else acc
+	});
+
+	header + nodeAttr + nodes + edges + "}\n";
+}

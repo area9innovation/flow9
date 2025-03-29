@@ -1,0 +1,177 @@
+import tools/flow9/type/types;
+import tools/flow9/type/pretty;
+import tools/flow9/desugar/dependencies;
+
+export {
+	// Given the names referenced in this DExp, specialize the top level environment to only contain that subset
+	specializeTopEnv(env : HModuleInterface, tracing : int, name : string, top : DExp) -> HModuleInterface;
+
+	getTypeNamesFromSchema(env : HModuleInterface, typeSchema : HTypeSchema) -> Set<string>;
+	
+	// Also export helper functions for type extraction
+	getTypeNames(env : HModuleInterface, acc : Set<string>, type : HType) -> Set<string>;
+	expandUnionTypeMembers(env : HModuleInterface, typeNames : Set<string>) -> Set<string>;
+}
+
+specializeTopEnv(env : HModuleInterface, tracing : int, name : string, top : DExp) -> HModuleInterface {
+	free = getFreeDVarsFromDExp(makeSet(), makeSet(), top);
+	if (tracing > 3) {
+		println("Free variables for " + name + ": " + toString(set2array(free)));
+	}
+
+    // Get both types from environment and direct type names
+    typeNames = fold(set2array(free), makeSet(), \acc, v -> {
+        maybeType = lookupTree(env.env, v);
+        switch (maybeType) {
+            None(): {
+                // If not found in env, treat as type name
+                insertSet(acc, v)
+            }
+            Some(schema): {
+				namesInName = getTypeNamesFromSchema(env, schema);
+				if (tracing > 3) {
+					println("Used types names in " + v + ": " + toString(set2array(namesInName)) + " from " + prettyHTypeSchema(schema));
+				}
+                // Add type names from the schema
+                mergeSets(acc, namesInName)
+            }
+        }
+    });
+
+	withSupers = foldSet(typeNames, makeSet(), \acc, tn -> {
+		// Get direct supertypes for this type name
+		supers = getTreeArrayValue(env.supertypes, tn);
+		
+		// Add the type name itself
+		acc1 = insertSet(acc, tn);
+		
+		// Add all supertypes' names
+		fold(supers, acc1, \innerAcc, union -> {
+			insertSet(innerAcc, union.name)
+		})
+	});
+
+	if (tracing > 1) {
+		println("Used types names in " + name + ": " + toString(set2array(withSupers)));
+	}
+
+	// OK, grab all structs from the unions we are working with
+	// The alternative would be to rewrite the unions to omit structs
+	// that are not mentioned.
+	addStructsInUnions = expandUnionTypeMembers(env, typeNames);
+
+	// Reduce the alternatives to only those that use the type names
+	spec = HModuleInterface(
+		env with
+			env = specializeSchematics(env, tracing, addStructsInUnions),
+			structs = filterTree(env.structs, \k, v -> containsSet(addStructsInUnions, k)),
+			unions = filterTree(env.unions, \k, v -> containsSet(addStructsInUnions, k)),
+			rawUnions = filterTree(env.rawUnions, \k, v -> containsSet(addStructsInUnions, k))
+	);
+
+	if (tracing > 0) {
+//		println("Specialized top level environment for " + name + ": " + prettyHTypeEnv(spec));
+	}
+	spec;
+}
+
+expandUnionTypeMembers(env : HModuleInterface, typeNames : Set<string>) -> Set<string> {
+	newNames = foldTree(env.rawUnions, typeNames, \k, v, acc -> {
+		// Collect all type names used in union types
+		if (containsSet(typeNames, k)) {
+			fold(v.types, acc, \innerAcc, t -> {
+				getTypeNames(env, innerAcc, t);
+			});
+		} else acc;
+	});
+	if (equalSet(newNames, typeNames)) {
+		newNames
+	} else expandUnionTypeMembers(env, newNames);
+}
+
+getTypeNamesFromSchema(env : HModuleInterface, typeSchema : HTypeSchema) -> Set<string> {
+	switch (typeSchema) {
+		HType(): getTypeNames(env, makeSet(), typeSchema);
+		HTypeForAll(vars, type): getTypeNames(env, makeSet(), type);
+		HTypeAlternatives(options): {
+			// Collect type vars from all options and the type
+			fold(options, makeSet(), \acc, o -> {
+				mergeSets(acc, getTypeNamesFromSchema(env, o))
+			});
+		}
+	}
+}
+
+// Grab typenames only
+getTypeNames(env : HModuleInterface, acc : Set<string>, type : HType) -> Set<string> {
+	switch (type) {
+		HTypeCons(name, args): {
+			acc1 = fold(args, acc, \ac, a -> getTypeNames(env, ac, a));
+			// Check for recursion - if name is already in acc, don't process it again
+			if (containsSet(acc, name)) {
+				acc1
+			} else {
+				if (startsWithUpperLetter(name)) {
+					acc2 = insertSet(acc1, name);
+
+					// Look up struct definition and include types from its fields
+					maybeStruct = lookupTree(env.structs, name);
+					switch (maybeStruct) {
+						None(): acc2;
+						Some(struct): {
+							// Get types from struct fields
+							fold(struct.fields, acc2, \ac, field -> {
+								getTypeNames(env, ac, field.type)
+							});
+						}
+					}
+				} else acc1;
+			}
+		}
+		HTypeFn(args, ret): {
+			acc1 = fold(args, acc, \ac, a -> getTypeNames(env, ac, a));
+			getTypeNames(env, acc1, ret);
+		}
+		HTypeVar(name): acc;
+	}
+}
+
+startsWithUpperLetter(s : string) -> bool {
+    if (strlen(s) == 0) false 
+    else isUpperLetter(getCharAt(s, 0));
+}
+
+specializeSchematics(env : HModuleInterface, tracing : int, typeNames : Set<string>) -> Tree<string, HTypeSchema> {
+    foldTree(env.env, makeTree(), \k, schema, acc : Tree<string, HTypeSchema> -> {
+        switch (schema) {
+            HTypeAlternatives(options): {
+                // Filter options that only use referenced type names
+                filteredOptions = filter(options, \opt -> {
+                    namesInOpt = getTypeNamesFromSchema(env, opt);
+                    // Keep this option if all its type names are in our set
+                    forallSet(namesInOpt, \n -> containsSet(typeNames, n))
+                });
+                
+                if (length(filteredOptions) > 0) {
+                    // Add modified HTypeAlternatives with filtered options to accumulator
+					reduced = HTypeAlternatives(filteredOptions);
+					if (tracing > 0 && length(filteredOptions) < length(options)) {
+						println("Reduced " + k + " to   " + prettyHTypeSchema(reduced) + "   from   " + prettyHTypeSchema(schema));
+					}
+                    setTree(acc, k, reduced)
+                } else {
+					if (tracing > 1) {
+						println("Dropping " + k + " from " + prettyHTypeSchema(schema));
+					}
+                    acc  // Skip this entry if no valid options remain
+                }
+            }
+			HType(): {
+				setTree(acc, k, schema);  // Keep non-schematic entries
+			}
+			HTypeForAll(vars, type): {
+				setTree(acc, k, schema)
+			}
+        }
+    });
+}

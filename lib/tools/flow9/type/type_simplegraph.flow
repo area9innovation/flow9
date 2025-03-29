@@ -1,0 +1,135 @@
+import tools/flow9/type/types;
+import tools/flow9/type/pretty;
+import tools/flow9/type/module_types;
+import string_utils;
+import fs/filesystem;
+import ds/array;
+import ds/simplegraph;
+import ds/easygraph_utils;
+
+export {
+	// Builds a SimpleGraph representation of the type hierarchy with polymorphism
+	buildTypeHierarchyGraph(rawUnions : Tree<string, HUnion>) -> SimpleGraph<string, string>;
+
+	// Generates and optionally saves a DOT file
+	saveTypeHierarchyDot(interface : HModuleInterface, moduleName : string) -> void;
+}
+
+// Helper to create type name with polymorphic parameters
+makeTypeNameWithPolymorphism(typeName : string, typars : [string]) -> string {
+	if (typars == []) typeName
+	else typeName + "<" + strGlue(typars, ", ") + ">"
+}
+
+// Helper to repeat a string n times
+repeatString(s : string, n : int) -> string {
+	if (n <= 0) ""
+	else if (n == 1) s
+	else s + repeatString(s, n - 1)
+}
+
+// Builds a SimpleGraph representation of the type hierarchy from rawUnions
+buildTypeHierarchyGraph(rawUnions : Tree<string, HUnion>) -> SimpleGraph<string, string> {
+	// Create a new SimpleGraph for the type hierarchy
+	graph = makeSimpleGraph();
+	
+	// Process all unions and their members
+	graph1 = foldTree(rawUnions, graph, \unionName, union, acc -> {
+		// Create a polymorphic version of the union name
+		polyUnionName = makeTypeNameWithPolymorphism(unionName, union.typars);
+		
+		// Add the union type as a node
+		acc1 = addSimpleNode(acc, polyUnionName);
+		
+		// Process all member types
+		fold(union.types, acc1, \graphAcc, memberType -> {
+			// Create a polymorphic version of the member type name
+			// Map type parameters from union to member type
+			memberPolyName = mapTypeWithPolymorphism(memberType, union.typars);
+			
+			// Add member type node if not already in graph
+			graphAcc1 = addSimpleNode(graphAcc, memberPolyName);
+			
+			// Add edge from member (subtype) to union (supertype)
+			// The edge label shows the "is-a" relationship
+			addSimpleEdge(graphAcc1, memberPolyName, polyUnionName, "is-a", 1)
+		})
+	});
+	
+	graph1
+}
+
+// Maps type parameters from union definition to specific type
+mapTypeWithPolymorphism(type : HType, unionTypars : [string]) -> string {
+	switch (type) {
+		HTypeCons(name, params): {
+			if (params == []) name
+			else {
+				// Map type parameters from the union to this type
+				mappedParams = map(params, \param -> {
+					switch (param) {
+						HTypeVar(varName): {
+							// For variables, use the position in the union's typars
+							i = findiDef(unionTypars, \tp -> tp == varName, -1);
+							if (i >= 0) "?" + repeatString("?", i) else varName;
+						}
+						default: prettyHType(param);
+					}
+				});
+				name + "<" + strGlue(mappedParams, ", ") + ">";
+			}
+		}
+		default: prettyHType(type);
+	}
+}
+
+// Generate DOT file manually since we need more control over formatting
+typeHierarchyGraph2dot(graph : SimpleGraph<string, string>, title : string) -> string {
+	// Start with graph header
+	header = "digraph \"" + title + "\" {\n";
+	withAttributes = header + "  node [shape=box, fontname=\"sans-serif\", style=\"filled\", fillcolor=\"#f0f0f0\"];\n" +
+					 "  edge [fontname=\"sans-serif\"];\n" +
+					 "  rankdir=BT;\n"; // Bottom to top direction for hierarchy
+	
+	// Add all nodes
+	edges = getSimpleGraphEdges2(graph);
+	nodes = fold(edges, makeSet(), \acc, edge -> {
+		insertSet(insertSet(acc, edge.from), edge.to)
+	});
+	
+	// Add nodes to DOT file
+	withNodes = foldSet(nodes, withAttributes, \acc, node -> {
+		// Escape quotes in node names
+		escapedName = strReplace(node, "\"", "\\\"");
+		acc + "  \"" + escapedName + "\" [label=\"" + escapedName + "\"];\n"
+	});
+	
+	// Add edges to DOT file
+	withEdges = fold(edges, withNodes, \acc, edge -> {
+		// Escape quotes in node names
+		escapedFrom = strReplace(edge.from, "\"", "\\\"");
+		escapedTo = strReplace(edge.to, "\"", "\\\"");
+		acc + "  \"" + escapedFrom + "\" -> \"" + escapedTo + "\" [label=\"" + edge.data + "\"];\n"
+	});
+	
+	// Close the graph
+	withEdges + "}\n"
+}
+
+// Generate and save a DOT file for the type hierarchy if tracing is enabled
+saveTypeHierarchyDot(interface : HModuleInterface, moduleName : string) -> void {
+	graph = buildTypeHierarchyGraph(interface.rawUnions);
+	
+	// Check if we have any nodes in the graph
+	if (!isEmptySimpleGraph(graph)) {
+		// Generate DOT file using our custom function
+		dot = typeHierarchyGraph2dot(graph, moduleName + " Type Hierarchy");
+		
+		// Save to file
+		filename = moduleName + "_type_hierarchy.dot";
+		setFileContent(filename, dot);
+		println("Type hierarchy visualization saved to: " + filename);
+	} else {
+		println("No type hierarchy to visualize for " + moduleName);
+	}
+}

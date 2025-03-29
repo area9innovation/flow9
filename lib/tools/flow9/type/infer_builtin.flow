@@ -1,0 +1,249 @@
+import tools/flow9/desugar/pretty;
+import tools/flow9/type/unify;
+import tools/flow9/type/egraph/dtype;
+import tools/flow9/utils/vars;
+import tools/flow9/type/equal;
+import tools/flow9/type/instantiate;
+
+export {
+	inferDBuiltin(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, builtin : DBuiltin, expected : HTypeExpect) -> int;
+}
+
+inferDBuiltin(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, builtin : DBuiltin, expected : HTypeExpect) -> int {
+    inferBuiltinOp = \opName -> {
+        call = DCall(DVar(opName, builtin.info), builtin.args, builtin.info);
+        inferDExp(env, call, expected)
+    }
+
+    switch (builtin.op) {
+        DAdd(): inferBuiltinOp("+");
+        DSub(): inferBuiltinOp("-");
+        DMul(): inferBuiltinOp("*");
+        DDiv(): inferBuiltinOp("/");
+        DMod(): inferBuiltinOp("%");
+		DNegative(): inferBuiltinOp("--");
+	    DEqual(): inferBuiltinOp("==");
+        DNotEqual(): inferBuiltinOp("!=");
+        DLess(): inferBuiltinOp("<");
+        DLessEqual(): inferBuiltinOp("<=");
+        DGreater(): inferBuiltinOp(">");
+        DGreaterEqual(): inferBuiltinOp(">=");
+        DAnd(): inferBuiltinOp("&&");
+        DOr(): inferBuiltinOp("||");
+        DNot(): inferBuiltinOp("!");
+        DRef(): inferBuiltinOp("ref^");
+        DDeref(): inferBuiltinOp("^");
+		DAssign(): {
+			// Set of a ref type for our friend
+			context = makeSet1(EContext(builtin.info, ":= "));
+			expectValType = makeTypeVariable(env.egraph, context);
+			refSkeleton = insertNode(env.egraph, Constructor("ref", [expectValType]), context);
+			refType = inferDExp(env, builtin.args[0], HTypeExpectUnify(":=", HExactType(), refSkeleton));
+
+			// Find the value type
+			refValueType = inferDExp(env, builtin.args[1], HTypeNone());
+
+			// println("Expected value type: " + prettyHType(expectValType));
+			unify(env, refValueType, HTypeExpectSubtype(":=", expectValType), builtin.info);
+
+			// The final result is void
+			unifyWithExpected(env, "void", expected, builtin.info);
+		}
+        DIndex(): inferBuiltinOp("[]");
+        DDot(field): {
+			if (false) {
+				// Model as call with subtyping
+				inferBuiltinOp("." + field);
+			} else {
+				// OK, model this as function call without subtyping
+				inferDDot(env, inferDExp, field, builtin.args, builtin.info, expected);
+			}
+		}
+        DMutableAssign(field): {
+			if (true) {
+				opName = "." + field + "::=";
+
+				// Lookup mutator function
+				switch (lookupTree(env.interface.env, opName)) {
+					Some(schema): {
+						if (shouldTrace(env, 0)) {
+							printTrace(env, "Stubbing type for " + opName, 0);
+							indentMsg(env.egraph);
+						}
+						context = makeSet1(EContext(builtin.info, opName));
+						// Get type for the mutator function: (Struct/Union) -> (Value) -> void;
+						mutatorType = htypeSchema2root(env.egraph, schema, EContext(builtin.info, opName));
+
+						// First call - get the mutator with exact type match for the struct
+						structType = inferDExp(env, builtin.args[0], HTypeNone());
+						// What is the type we assign to the field?
+						valType = makeTypeVariable(env.egraph, context);
+						// The return type
+						voidEclass = insertNode(env.egraph, Constructor("void", []), context);
+						// (val) -> void
+						setter = insertNode(env.egraph, Function([valType], voidEclass), context);
+						// (Struct/Union) -> (val) -> void
+						firstCall = insertNode(env.egraph, Function([structType], setter), context);
+
+						// Important that we do unification here, instead of subtyping
+						res = unifyEGraphTypes(env.egraph, firstCall, mutatorType, context);
+
+						// Second call - check value against the expected type
+						valueType = inferDExp(env, builtin.args[1], HTypeNone());
+						subtypeEGraphTypes(env.egraph, valueType, valType, context);
+
+						if (shouldTrace(env, 0)) {
+							dedentMsg(env.egraph);
+							printTrace(env, "Stubbed type for " + opName + " is " + prettyNode(env.egraph, firstCall), 0);
+						}
+						// Return void type
+						unifyWithExpected(env, "void", expected, builtin.info);
+					}
+					None(): {
+						typeError(env, builtin.info, "No field mutator function found for '" + field + "'");
+					}
+				}
+			} else {
+				// (.field::=(arg0))(arg1);
+				opName = "." + field + "::=";
+				call = DCall(
+					DCall(DVar(opName, builtin.info), [builtin.args[0]], builtin.info),
+					[builtin.args[1]],
+					builtin.info
+				);
+				inferDExp(env, call, expected)
+			}
+		}
+        // Special cases
+        DSequence(): inferDSequence(env, inferDExp, builtin.args, expected, builtin.info);
+        DCast(toType): inferDCast(env, inferDExp, toType, builtin.args[0], expected);
+        DIsSubType(type): {
+            expectSubtype = dtype2typenode(env.egraph, type);
+			// Instantiate typars
+            inferredType = inferDExp(env, builtin.args[0], HTypeExpectSubtype(": " + typeNodeToString(env.egraph, expectSubtype, false, false), expectSubtype));
+            
+            checkExpected = unify(env, inferredType, expected, builtin.info);
+
+			// Record the resolved type
+			setIntMap(env.info2types, type.info, expectSubtype);
+
+			// println
+
+			expectSubtype
+		}
+        DPipe(): {
+            var = getDVar(builtin.args[1]);
+			call = DCall(builtin.args[1], [builtin.args[0]], builtin.info);
+			inferDExp(env, call, expected);
+        }
+	}
+}
+
+inferDSequence(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, 
+        es : [DExp], expected : HTypeExpect, info : int) -> int {
+	voidEClass = insertNode(env.egraph, Constructor("void", []), makeSet1(EContext(info, "sequence void")));
+    if (length(es) == 0) {
+        unify(env, voidEClass, expected, info)
+    } else {
+        // Infer types for all expressions
+        foldi(es, voidEClass, \i, acc, e -> {
+			expect = if (i == length(es) - 1) expected else HTypeNone();
+            inferDExp(env, e, expect);
+        });
+    }
+}
+
+inferDCast(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, 
+        toType : DType, arg : DExp, expected : HTypeExpect) -> int {
+    castType = dtype2typenode(env.egraph, toType);
+	setIntMap(env.info2types, toType.info, castType);
+
+	// First infer the argument type with no expectation
+	value = inferDExp(env, arg, HTypeNone());
+	    
+    // Unify argument type with cast type
+	if (isFlowTypeNode(getNodeDef(env.egraph, castType)) || isFlowTypeNode(getNodeDef(env.egraph, value))) {
+		// OK, this is fine
+	} else {
+		// Check that we have a lub type, but do not unify, since these types are intentionall distinct
+		ok = areTypesStructurallyEqual(env.egraph, value, castType) ||
+			canNodesBeSubtypes(env.egraph, value, castType) ||
+			canNodesBeSubtypes(env.egraph, castType, value);
+		if (!ok) {
+			typeError(env, toType.info, "Cannot cast " + prettyNode(env.egraph, value) + " to " + prettyNode(env.egraph, castType));
+			{}
+		}
+	};
+    
+    // Then unify with expected type
+    expectedUnified = unify(env, castType, expected, toType.info);
+    
+    // Return the cast type - it can be a lowering, so we should not use the expectedUnified
+	castType
+}
+
+
+inferDDot(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, 
+		field : string,
+        args : [DExp], info : int, expected : HTypeExpect) -> int {
+    
+    if (length(args) != 1) {
+        typeError(env, info, "Field access requires exactly one argument");
+    } else {
+        // Special case for "structname" field - always returns a string for any struct/union/flow
+        if (field == "structname") {
+            // First infer the type of the structure we are accessing
+            structType = inferDExp(env, args[0], HTypeNone());
+            
+            // Get the node definition to check if it's a Cons or flow type
+            nodeDef = getNodeDef(env.egraph, structType);
+            
+            // For Constructor or flow types, we know it returns a string without looking up alternatives
+            switch (nodeDef) {
+                Constructor(name, __): {
+                    // Return a string type directly
+                    context = makeSet1(EContext(info, ".structname"));
+                    stringType = insertNode(env.egraph, Constructor("string", []), context);
+                    unify(env, stringType, expected, info);
+                }
+                default: {
+                    // For other types, fall back to the regular field access process
+                    opName = "." + field;
+                    useFieldAccessor(env, inferDExp, opName, args[0], structType, info, expected);
+                }
+            }
+        } else {
+            // Regular field access for non-structname fields
+            opName = "." + field;
+            
+            // First infer the type of the structure we are accessing
+            structType = inferDExp(env, args[0], HTypeNone());
+            useFieldAccessor(env, inferDExp, opName, args[0], structType, info, expected);
+        }
+    }
+}
+
+// Helper function to handle regular field access via accessor functions
+useFieldAccessor(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int,
+        opName : string, arg : DExp, structType : int, info : int, expected : HTypeExpect) -> int {
+    // Lookup field accessor function
+    switch (lookupTree(env.interface.env, opName)) {
+        Some(schema): {
+            context = EContext(info, opName);
+            fieldType = makeTypeVariable(env.egraph, makeSet1(context));
+            callType = insertNode(env.egraph, Function([structType], fieldType), makeSet1(context));
+
+            // Instantiate the field accessor type
+            fnType = htypeSchema2root(env.egraph, schema, context);
+
+            // For field access, require exact type match (no subtyping, since we know any accessor that is a supertype will be one of the alternatives)
+            call = unify(env, callType, HTypeExpectUnify(opName, HExactType(), fnType), info);
+
+            // Return value type matches function return type 
+            unify(env, fieldType, expected, info);
+        }
+        None(): {
+            typeError(env, info, "No field accessor function found for '" + opName + "'");
+        }
+    }
+}

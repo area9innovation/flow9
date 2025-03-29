@@ -1,0 +1,647 @@
+import tools/flowc/incremental/fiexp;
+import tools/flow9/desugar/dexp;
+import tools/flow9/backend/fitype;
+import tools/flow9/backend/unique;
+import tools/flow9/desugar/substitute;
+import tools/flow9/type/types;
+
+export {
+	// Convert a DExp to FiExp using type information from the module
+	dexp2fiexp(dexp : DExp, dmodule : DModule) -> FiExp;
+	dtype2fitype(type : DType) -> FiType;
+	getTypeFromInfo(info : int, dmodule : DModule) -> HTypeSchema;
+}
+
+dexp2fiexp(dexp : DExp, dmodule : DModule) -> FiExp {
+	// Get the type from module.types using the expression's info field
+	typeSchema = getTypeFromInfo(dexp.info, dmodule);
+	fiType = htypeschema2fitype(typeSchema);
+
+	convertDExpWithType(dexp, fiType, dmodule)
+}
+
+// Get the type schema from the module's types array using info index
+getTypeFromInfo(info : int, dmodule : DModule) -> HTypeSchema {
+	if (info >= 0 && info < length(dmodule.types)) {
+		dmodule.types[info]
+	} else {
+		// Fallback for invalid info index
+		println("Could not find type");
+		HTypeCons("flow", [])
+	}
+}
+
+// Convert DExp to FiExp with the determined type
+convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
+	switch (dexp) {
+		DVar(name, info): {
+			FiVar(name, type, info)
+		}
+		DArray(values, info): {
+			// Create an array using a sequence of expressions with array constructor
+			fiValues = map(values, \v -> dexp2fiexp(v, dmodule));
+			FiCallPrim(FcArrayPrim(), fiValues, type, info);
+		}
+		DCall(fn, args, info): {
+			switch (fn) {
+				DVar(uid, varInfo): {
+					// Check if this is a special cast function
+					if (uid == "__cast__i2s" || uid == "__cast__i2d" || uid == "__cast__d2s" || uid == "__cast__trunc") {
+						if (length(args) > 0) {
+							// Get the argument being cast
+							arg = args[0];
+							fiArg = dexp2fiexp(arg, dmodule);
+
+							// Get source type
+							fromTypeSchema = getTypeFromInfo(arg.info, dmodule);
+							fromType = htypeschema2fitype(fromTypeSchema);
+
+							// Determine target type based on the cast function
+							toType = if (uid == "__cast__i2s" || uid == "__cast__d2s") {
+								FiTypeString();
+							} else if (uid == "__cast__i2d") {
+								FiTypeDouble();
+							} else if (uid == "__cast__trunc") {
+								FiTypeInt();
+							} else {
+								// Should never happen, but just in case
+								type;
+							}
+
+							// Create FiCast expression
+							FiCast(fiArg, fromType, toType, type, info)
+						} else {
+							// Error case - cast with no argument
+							println("Expected argument for cast function " + uid);
+							FiVoid(info)
+						}
+					// Check if this is a constructor call for a known struct
+					} else if (containsKeyTree(dmodule.structs, uid)) {
+						// This is a struct constructor, use FcStructPrim instead of FiCall
+						FiCallPrim(
+							FcStructPrim(uid),
+							map(args, \a -> dexp2fiexp(a, dmodule)),
+							type,
+							info
+						)
+					} else {
+						// Regular function call
+						FiCall(
+							dexp2fiexp(fn, dmodule),
+							map(args, \a -> dexp2fiexp(a, dmodule)),
+							type,
+							info
+						)
+					}
+				}
+				default: {
+					// For any other type of function expression, use regular FiCall
+					FiCall(
+						dexp2fiexp(fn, dmodule),
+						map(args, \a -> dexp2fiexp(a, dmodule)),
+						type,
+						info
+					)
+				}
+			}
+		}
+		DLet(name, value, body, info): {
+			// Get value's type from module
+			valueTypeSchema = getTypeFromInfo(value.info, dmodule);
+			valueType = htypeschema2fitype(valueTypeSchema);
+
+			// Get body's type from module
+			bodyTypeSchema = getTypeFromInfo(body.info, dmodule);
+			bodyType = htypeschema2fitype(bodyTypeSchema);
+
+			FiLet(
+				name,
+				valueType,
+				dexp2fiexp(value, dmodule),
+				dexp2fiexp(body, dmodule),
+				type,
+				info
+			)
+		}
+		DIfElse(condition, then, else_, info): {
+			FiIf(
+				dexp2fiexp(condition, dmodule),
+				dexp2fiexp(then, dmodule),
+				dexp2fiexp(else_, dmodule),
+				type,
+				info
+			)
+		}
+		DMaybe(condition, then, else_, info): {
+			convertDMaybe(dmodule, condition, then, else_, type, info)
+		}
+		DSwitch(value, cases, defaultCase, info): {
+			def = \-> {
+				// Value is not a variable, create a let binding first
+				tempSwitchVar = getUniqueTmp("__switch_tmp");
+
+				// Create a temporary DLet that evaluates the value once
+				dlet = DLet(
+					tempSwitchVar,
+					value,
+					// Then create a switch on the temporary variable
+					DSwitch(DVar(tempSwitchVar, value.info), cases, defaultCase, info),
+					info
+				);
+
+				// Convert the let expression to FiExp
+				dexp2fiexp(dlet, dmodule)
+			};
+			// Check if the value is already a variable
+			switch (value) {
+				DVar(name, varInfo): {
+					// Value is already a variable, proceed normally
+					// Get switch value's type
+					valueTypeSchema = getTypeFromInfo(value.info, dmodule);
+					switchVarType = htypeschema2fitype(valueTypeSchema);
+
+					// Create the switch variable
+					switchVar = FiVar(name, switchVarType, varInfo);
+
+					// Convert cases, expanding unions as needed, and binding struct fields
+					fiCases = expandDSwitchCases(cases, dmodule.typeEnv, dmodule, switchVar, switchVarType);
+
+					// Handle default case if present
+					fiDefaultCase = switch (defaultCase) {
+						None(): [];
+						Some(defExp): [FiCase("default", [], dexp2fiexp(defExp, dmodule), info)];
+					}
+
+					FiSwitch(
+						FiVar(name, switchVarType, varInfo),
+						switchVarType,
+						concat(fiCases, fiDefaultCase),
+						type,
+						info
+					)
+				}
+				DBuiltin(op, args, bninfo): {
+					switch (op) {
+						DIsSubType(__): {
+							convertDExpWithType(
+								DSwitch(args[0], cases, defaultCase, info), type, dmodule
+							)
+						}
+						default: def();
+					}
+				}
+				default: def();
+			}
+		}
+		DBuiltin(op, args, info): {
+			// Handle built-in operations directly - don't try to convert to FcPrim first
+			convertBuiltinOp(op, args, type, info, dmodule)
+		}
+		DWith(uid, wexp, fieldassigns, info): {
+			convertDWith(dmodule, uid, type, wexp, fieldassigns, info)
+		}
+
+		// DValue variants
+		DVoid(info): {
+			FiVoid(info)
+		}
+		DBool(value, info): {
+			FiBool(value, info)
+		}
+		DInt(value, info): {
+			FiInt(value, info)
+		}
+		DDouble(value, info): {
+			FiDouble(value, info)
+		}
+		DString(value, info): {
+			FiString(value, info)
+		}
+		DLambda(args, body, info): {
+			// Convert lambda arguments
+			fiArgs = map(args, \a -> {
+				argTypeSchema = getTypeFromInfo(a.info, dmodule);
+				argType = htypeschema2fitype(argTypeSchema);
+				FiFunArg(a.name, argType)
+			});
+
+			// Get body's type
+			bodyTypeSchema = getTypeFromInfo(body.info, dmodule);
+			bodyType = htypeschema2fitype(bodyTypeSchema);
+
+			// Extract function type from the lambda's type
+			fnType = switch (type) {
+				FiTypeFunction(targs, rt): {
+					FiTypeFunction(
+						// Grab the names from the declaration
+						mapi(fiArgs, \i, arg -> {
+							FiFunArg(arg.name, targs[i].type)
+						}), rt
+					);
+				}
+				default: {
+					// Construct function type from args and body type
+					FiTypeFunction(fiArgs, bodyType)
+				}
+			}
+
+			FiLambda(fiArgs, dexp2fiexp(body, dmodule), fnType, info)
+		}
+	}
+}
+
+// Convert DOp and args to appropriate FiExp
+convertBuiltinOp(op : DOp, args : [DExp], type : FiType, info : int, dmodule : DModule) -> FiExp {
+	fiArgs = map(args, \a -> dexp2fiexp(a, dmodule));
+
+	switch (op) {
+		DCast(toType): {
+			if (length(fiArgs) > 0) {
+				// Get the "from" type
+				fromTypeSchema = getTypeFromInfo(args[0].info, dmodule);
+				fromType = htypeschema2fitype(fromTypeSchema);
+
+				// Create cast expression
+				FiCast(fiArgs[0], fromType, dtype2fitype(toType), type, info)
+			} else {
+				// Error case - cast with no argument
+				println("Expected argument for cast");
+				FiVoid(info)
+			}
+		}
+		DIsSubType(subType): {
+			// IsSubType doesn't have a direct equivalent, so just convert the argument
+			if (length(fiArgs) > 0) fiArgs[0] else FiVoid(info)
+		}
+		DDeref(): {
+			// Create deref primitive
+			FiCallPrim(FcDerefPrim(), fiArgs, type, info)
+		}
+		DDot(field): {
+			// Create field access primitive
+			FiCallPrim(FcFieldPrim(field), fiArgs, type, info)
+		}
+		DNegative(): {
+			FiCallPrim(FcNegPrim(), fiArgs, type, info)
+		}
+		DNot(): {
+			FiCallPrim(FcNotPrim(), fiArgs, type, info)
+		}
+		DRef(): {
+			FiCallPrim(FcRefPrim(), fiArgs, type, info)
+		}
+		DAdd(): {
+			FiCallPrim(FcPlusPrim(), fiArgs, type, info)
+		}
+		DAnd(): {
+			FiCallPrim(FcAndPrim(), fiArgs, type, info)
+		}
+		DAssign(): {
+			FiCallPrim(FcAssignPrim(), fiArgs, type, info)
+		}
+		DDiv(): {
+			FiCallPrim(FcDivPrim(), fiArgs, type, info)
+		}
+		DEqual(): {
+			FiCallPrim(FcEqPrim(), fiArgs, type, info)
+		}
+		DGreater(): {
+			FiCallPrim(FcGtPrim(), fiArgs, type, info)
+		}
+		DGreaterEqual(): {
+			FiCallPrim(FcGePrim(), fiArgs, type, info)
+		}
+		DLess(): {
+			FiCallPrim(FcLtPrim(), fiArgs, type, info)
+		}
+		DLessEqual(): {
+			FiCallPrim(FcLePrim(), fiArgs, type, info)
+		}
+		DNotEqual(): {
+			FiCallPrim(FcNePrim(), fiArgs, type, info)
+		}
+		DMod(): {
+			FiCallPrim(FcModPrim(), fiArgs, type, info)
+		}
+		DMul(): {
+			FiCallPrim(FcMulPrim(), fiArgs, type, info)
+		}
+		DIndex(): {
+			FiCallPrim(FcIndexPrim(), fiArgs, type, info)
+		}
+		DMutableAssign(field): {
+			FiCallPrim(FcSetMutablePrim(field), fiArgs, type, info)
+		}
+		DOr(): {
+			FiCallPrim(FcOrPrim(), fiArgs, type, info)
+		}
+		DSequence(): {
+			// Use FiSeq for pipe and sequence operations
+			FiSeq(fiArgs, type, info)
+		}
+		DPipe(): {
+			// a |> b should become b(a)
+			if (length(fiArgs) >= 2) {
+				// First arg is the value being piped
+				arg = fiArgs[0];
+
+				// Second arg is the function receiving the piped value
+				fn = fiArgs[1];
+
+				// Call the function with the piped value as its first argument
+				FiCall(fn, [arg], type, info)
+			} else {
+				// Fallback if we don't have enough arguments
+				println("ERROR in pipe");
+				FiSeq(fiArgs, type, info)
+			}
+		}
+		DSub(): {
+			FiCallPrim(FcMinusPrim(), fiArgs, type, info)
+		}
+	}
+}
+
+// Convert DType to FiType
+dtype2fitype(type : DType) -> FiType {
+	switch (type) {
+		DAutoType(info): FiTypeFlow(); // Fallback
+		DVoidType(info): FiTypeVoid();
+		DBoolType(info): FiTypeBool();
+		DIntType(info): FiTypeInt();
+		DDoubleType(info): FiTypeDouble();
+		DStringType(info): FiTypeString();
+		DFlowType(info): FiTypeFlow();
+		DNativeType(info): FiTypeNative();
+		DArrayType(elementType, info): FiTypeArray(dtype2fitype(elementType));
+		DPolyType(id, info): FiTypeParameter(id);
+		DFnType(args, returnType, info): {
+			fiArgs = mapi(args, \i, a -> FiFunArg("arg" + i2s(i), dtype2fitype(a)));
+			FiTypeFunction(fiArgs, dtype2fitype(returnType))
+		}
+		DRefType(refType, info): FiTypeRef(dtype2fitype(refType));
+		DTypename(uid, typars, info): FiTypeName(uid, map(typars, dtype2fitype));
+	}
+}
+
+// Helper to extract array element type from an array type
+getArrayElementType(type : FiType) -> FiType {
+	switch (type) {
+		FiTypeArray(elemType): elemType;
+		default: FiTypeVoid();
+	}
+}
+
+// Handle DWith case properly by extracting existing struct fields and constructing a new struct
+convertDWith(dmodule : DModule, uid : string, type : FiType, sourceExp : DExp, fieldAssigns : [DFieldAssign], info : int) -> FiExp {
+	// Get the type of the original struct
+	sourceTypeSchema = getTypeFromInfo(sourceExp.info, dmodule);
+	sourceType = htypeschema2fitype(sourceTypeSchema);
+
+	// Convert the source expression
+	fiSourceExp = dexp2fiexp(sourceExp, dmodule);
+
+	// Create a map of fields being explicitly assigned
+	fieldAssignMap = fold(fieldAssigns, makeTree(), \map, assign ->
+		setTree(map, assign.field, assign)
+	);
+
+	// Get struct definition if available
+	structDef = lookupTree(dmodule.structs, uid);
+
+	switch (structDef) {
+		Some(struct): {
+			// For each field in the struct, either use the new assignment or extract from source
+			fieldArgs = map(struct.args, \fieldDef -> {
+				fieldName = fieldDef.field;
+
+				switch (lookupTree(fieldAssignMap, fieldName)) {
+					Some(assign): {
+						// Field is being assigned a new value
+						dexp2fiexp(assign.exp, dmodule)
+					}
+					None(): {
+						// Field should be extracted from the source struct
+						// Create a field access expression
+						dotExp = DBuiltin(DDot(fieldName), [sourceExp], sourceExp.info);
+						dexp2fiexp(dotExp, dmodule)
+					}
+				}
+			});
+
+			// Create a struct constructor with all fields
+			FiCallPrim(
+				FcStructPrim(uid),
+				fieldArgs,
+				type,
+				info
+			)
+		}
+		None(): {
+			// If struct definition not available, fallback to simpler approach
+			// Just include the fields being assigned
+			fiFieldAssigns = map(fieldAssigns, \f -> dexp2fiexp(f.exp, dmodule));
+
+			// Create a struct constructor using source as first arg and new field values
+			FiCallPrim(
+				FcStructPrim(uid),
+				concat([fiSourceExp], fiFieldAssigns),
+				type,
+				info
+			)
+		}
+	}
+}
+
+
+// Handle DMaybe case by expanding it to a proper switch on Maybe type
+convertDMaybe(dmodule : DModule, condition : DExp, then : DExp, else_ : DExp, type : FiType, info : int) -> FiExp {
+	// Get the type of the condition
+	conditionTypeSchema = getTypeFromInfo(condition.info, dmodule);
+	conditionType = htypeschema2fitype(conditionTypeSchema);
+
+	// Extract the variable name from the condition if it's a variable
+	originalVar = switch (condition) {
+		DVar(name, __): name;
+		default: "";
+	};
+
+	if (originalVar != "") {
+		// Create a temporary variable name for the unwrapped value
+		tempVar = getUniqueTmp(originalVar + "_unwrapped");
+
+		// Replace all occurrences of the original variable with the new temporary variable in the then branch
+		substitutedThen = if (originalVar != "") {
+			substituteVariable(then, originalVar, tempVar)
+		} else {
+			then
+		};
+
+		// Convert the modified then expression with the binding
+		fiThen = dexp2fiexp(DLet(tempVar, condition, substitutedThen, info), dmodule);
+
+		// Convert the else expression
+		fiElse = dexp2fiexp(else_, dmodule);
+
+		// Create the switch on the condition
+		switchVar = FiVar(originalVar, conditionType, condition.info);
+
+		// Create cases for Some and None
+		someCase = FiCase("Some", [tempVar], fiThen, then.info);
+		noneCase = FiCase("None", [], fiElse, else_.info);
+
+		FiSwitch(switchVar, conditionType, [someCase, noneCase], type, info)
+	} else {
+		// If condition is not a simple variable, we need a more complex approach
+		// First, evaluate the condition and store it in a temporary variable
+		tempSwitchVar = getUniqueTmp("__maybe_tmp");
+
+		// Convert condition
+		fiCondition = dexp2fiexp(condition, dmodule);
+
+		// Create a let that binds the condition to a temporary variable
+		letExp = FiLet(
+			tempSwitchVar,
+			conditionType,
+			fiCondition,
+			// Inside the let, do the switch on the temporary variable
+			FiSwitch(
+				FiVar(tempSwitchVar, conditionType, info),
+				conditionType,
+				[
+					// Some case with the value extracted
+					FiCase("Some", ["__"], dexp2fiexp(then, dmodule), then.info),
+					// None case
+					FiCase("None", [], dexp2fiexp(else_, dmodule), else_.info)
+				],
+				type,
+				info
+			),
+			type,
+			info
+		);
+
+		letExp
+	}
+}
+
+// Modify the expandDSwitchCases function to use the new helper
+expandDSwitchCases(cases : [DCase], moduleInterface : HModuleInterface, dmodule : DModule,
+				   switchVar : FiExp, switchVarType : FiType) -> [FiCase] {
+	// First, collect the set of all explicitly named structs in the cases
+	explicitStructs = fold(cases, makeSet(), \acc, c -> {
+		if (containsKeyTree(moduleInterface.unions, c.uid)) {
+			acc;
+		} else {
+			// Only add the non-union struct names
+			insertSet(acc, c.uid)
+		}
+	});
+
+	// Process each case, expanding unions as needed
+	fold(cases, [], \acc, c -> {
+		// Convert the body to FiExp (only once per case)
+		fiBody = dexp2fiexp(c.body, dmodule);
+
+		// Check if this case is a union
+		unionMaybe = lookupTree(moduleInterface.unions, c.uid);
+
+		switch (unionMaybe) {
+			Some(union): {
+				// It's a union type, expand it to multiple FiCases, one for each struct
+				// But only include structs that aren't already explicitly covered
+				expandedCases = filtermap(union.types, \type -> {
+					structName = type.name;
+
+					// Skip if this struct is already explicitly covered
+					if (containsSet(explicitStructs, structName)) {
+						None()
+					} else {
+						// Look up struct definition to get correct number of arguments
+						structMaybe = lookupTree(moduleInterface.structs, structName);
+
+						numberOfArgs = switch (structMaybe) {
+							Some(struct): length(struct.fields);
+							None(): {
+								println("Warning: Struct definition not found for " + structName);
+								0;
+							}
+						}
+
+						// For expanded cases, use dummy "__" for arguments
+						dummyArgs = generate(0, numberOfArgs, \__ -> "__");
+
+						// Create a new FiCase for this struct with the same body
+						Some(FiCase(structName, dummyArgs, fiBody, c.info))
+					}
+				});
+
+				concat(acc, expandedCases)
+			}
+			None(): {
+				// Create bindings for the struct fields if this is a struct
+				bodyWithBindings = if (containsKeyTree(moduleInterface.structs, c.uid)) {
+					createStructLetBindings(c.uid, c.ids, switchVar, fiBody,
+										  switchVarType, c.info, moduleInterface)
+				} else {
+					fiBody
+				};
+
+				// Create a single FiCase with the possibly wrapped body
+				concat(acc, [FiCase(c.uid, c.ids, bodyWithBindings, c.info)])
+			}
+		}
+	});
+}
+
+// Add a helper function to create let-bindings for struct fields
+createStructLetBindings(structName : string, bindingNames : [string], switchVar : FiExp,
+						body : FiExp, type : FiType, info : int,
+						moduleInterface : HModuleInterface) -> FiExp {
+
+	// Look up the struct definition to get field names
+	structMaybe = lookupTree(moduleInterface.structs, structName);
+
+	switch (structMaybe) {
+		Some(struct): {
+			// Match struct fields with binding names
+			fieldsAndBindings = zip(struct.fields,
+								   take(bindingNames, length(struct.fields)));
+
+			// Create nested let-bindings, skipping "__" bindings
+			fold(fieldsAndBindings, body, \acc, fieldAndBinding -> {
+				field = fieldAndBinding.first;
+				bindingName = fieldAndBinding.second;
+
+				// Skip creating bindings for "__"
+				if (bindingName == "__") {
+					acc;
+				} else {
+					// Create field access to extract the value
+					fieldAccess = FiCallPrim(
+						FcFieldPrim(field.field),
+						[switchVar],
+						// The type should be the field's type, but here we're simplifying
+						type,
+						info
+					);
+
+					// Create let binding for this field
+					FiLet(
+						bindingName,
+						type, // This should be the field's type
+						fieldAccess,
+						acc,
+						type,
+						info
+					);
+				}
+			});
+		}
+		None(): {
+			// If struct definition not found, return the body unchanged
+			println("Warning: Struct definition not found for " + structName);
+			body;
+		}
+	}
+}
