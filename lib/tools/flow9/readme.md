@@ -27,6 +27,7 @@ Switches are not allowed to match bigger types than the switch variable.
 Top-level variables can not be polymorphic.
 It is not allowed to mention vars in switch cases on unions: `Union(vars): ...`
 Even unused variables need to have a resolved type.
+We do not allow .field on flow type.
 
 New things:
 `a : int` is allowed as expression anywhere.
