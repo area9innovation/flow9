@@ -61,6 +61,7 @@ mwigi/mwigi/external_recursives/highlighter.flow:84
 
 Two alternatives, where both would work, but for some reason, we do not pick one.
 
+in this type checker, as a final phase, we do subtype_unification. However, before we do that, we could do the bounds resolution in a speculative mode. The difference is that if we have a unique top-type, then we do not require no tyvars above, but can still resolve with that. Can you implement this change? We have a test case in md2string.flow which currently does not type.
 
 - Figure out how to reduce memory usage from incremental use. Share the module interface? Streamline it, to only keep exported for the current module?
 
