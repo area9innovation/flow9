@@ -9,6 +9,7 @@ class HTMLStage extends NativeWidgetClip {
 	public var isHTMLStage = true;
 	private var clips : Map<String, FlowContainer> = new Map<String, FlowContainer>();
 	private var stageRect : Dynamic;
+	private var callbackFn = null;
 	public var isInteractive : Bool = true;
 	public function new(width : Float, height : Float) {
 		super();
@@ -68,7 +69,18 @@ class HTMLStage extends NativeWidgetClip {
 		nativeWidget.appendChild(child);
 	}
 
+	public function assignClipRoot(clip : DisplayObject) : Void {
+		untyped clip.forceParentNode = nativeWidget;
+		clip.initNativeWidget();
+		this.addChild(clip);
+	}
+	
 	public function assignClip(className : String, clip : DisplayObject) : Void {
+		// untyped console.log('assignClip', className, clip);
+		if (className == 'root') {
+			assignClipRoot(clip);
+			return;
+		}
 		if (clips.get(className) != null) {
 			clips.get(className).removeChildren();
 			this.removeChild(clips.get(className));
@@ -100,5 +112,43 @@ class HTMLStage extends NativeWidgetClip {
 
 	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
 		return;
+	}
+
+	public function setInspectHtmlStage(callbackFn : Float -> Float -> Void) : Void {
+		this.callbackFn = callbackFn;
+		updateStageWH();
+		// TODO : Get rid of timer
+		Native.timer(100, function () {
+			updateStageWH();
+		});
+	}
+
+	public function updateStageWH() : Void {
+		// untyped console.log('updateStageWH', nativeWidget != null, this.callbackFn != null);
+		if (nativeWidget != null && this.callbackFn != null) {
+			RenderSupport.once("drawframe", function() {
+				if (nativeWidget != null) {
+					var prevW = nativeWidget.style.width;
+					var prevH = nativeWidget.style.height;
+
+					nativeWidget.style.maxWidth = prevW;
+					nativeWidget.style.width = null;
+					nativeWidget.style.height = null;
+
+					var bRect = nativeWidget.getBoundingClientRect();
+					this.callbackFn(bRect.width, bRect.height);
+
+					nativeWidget.style.width = prevW;
+					nativeWidget.style.height = prevH;
+					nativeWidget.style.maxWidth = null;
+				}
+			});
+		}
+	}
+
+	public override function setWidth(widgetWidth : Float) : Void {
+		// untyped console.log('setWidth', widgetWidth);
+		super.setWidth(widgetWidth);
+		updateStageWH();
 	}
 }
