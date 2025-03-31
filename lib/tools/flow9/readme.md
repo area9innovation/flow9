@@ -57,7 +57,10 @@ Type inference is per-file, not global.
 
 # Plan
 
-md2wigi.flow: Impossible to figure out what the type errors mean
+mwigi/mwigi/external_recursives/highlighter.flow:84
+
+Two alternatives, where both would work, but for some reason, we do not pick one.
+
 
 - Figure out how to reduce memory usage from incremental use. Share the module interface? Streamline it, to only keep exported for the current module?
 
