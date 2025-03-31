@@ -36,10 +36,6 @@ Type inference is per-file, not global.
 
 ## TODO
 
-make_env:
-	c.onError("Error: " + fullpath + " not ready for types");
-When this happens, we have to handle it better and wait with typing this one.
-
 - Debug Incremental
   - Fix dependency tracking to make finegrained incremental in typecheck
 - Have warnings and errors. Implicit auto in toplevel is a warning, for example.
