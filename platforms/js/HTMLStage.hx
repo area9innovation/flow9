@@ -118,72 +118,56 @@ class HTMLStage extends NativeWidgetClip {
 	public function setInspectHtmlStage(baselineByTop : Bool, callbackFn : Float -> Float -> Float -> Void) : Void {
 		this.metricsFn = callbackFn;
 		this.metricsBaselineByTop = baselineByTop;
-		updateStageWH();
+		updateStageMetrics();
 		// TODO : Get rid of timer
 		Native.timer(100, function () {
-			updateStageWH();
+			updateStageMetrics();
 		});
 	}
 
-	public function updateStageWH() : Void {
-		// untyped console.log('updateStageWH', nativeWidget != null, this.callbackFn != null);
+	private function updateStageMetrics() : Void {
+		// untyped console.log('updateStageMetrics', nativeWidget != null, this.callbackFn != null);
 		if (nativeWidget != null && this.metricsFn != null) {
 			RenderSupport.once("drawframe", function() {
 				if (nativeWidget != null) {
-					var prevW = nativeWidget.style.width;
 					var prevH = nativeWidget.style.height;
-
-					nativeWidget.style.maxWidth = prevW;
-					nativeWidget.style.width = null;
 					nativeWidget.style.height = null;
 
 					var bRect = nativeWidget.getBoundingClientRect();
-					var width = bRect.width;
-					untyped console.log('prevW', prevW);
-					untyped console.log('width', width);
-					var height = bRect.height;
 
-					if (width != prevW || height != prevH) {
-						var baseline = calculateBaseline();
-						this.metricsFn(width, height, baseline);
+					var range = Browser.document.createRange();
+					range.selectNodeContents(nativeWidget);
+					var rects = range.getClientRects();
+
+					var maxWidth = 0.0;
+					for (rect in rects) {
+						maxWidth = Math.max(maxWidth, rect.x + rect.width);
 					}
-					
-					nativeWidget.style.width = prevW;
+
+					var baseline = bRect.height;
+
+					var lastChildren = this.children[this.children.length - 1];
+					if (HaxeRuntime.instanceof(lastChildren, TextClip)) {
+						var childBaseline = untyped lastChildren.getTextMetrics()[0];
+						if (metricsBaselineByTop) {
+							baseline = childBaseline;
+						} else if (rects.length > 0) {
+							var lastRect = rects[rects.length - 1];
+							baseline = lastRect.y - bRect.y + childBaseline;
+						}
+					}
+
+					this.metricsFn(maxWidth - bRect.x, bRect.height, baseline);
+
 					nativeWidget.style.height = prevH;
-					nativeWidget.style.maxWidth = null;
 				}
 			});
 		}
 	}
 
-	private function calculateBaseline() : Float {
-		var baseline = height;
-
-		var lastChildren = this.children[this.children.length - 1];
-
-		if (HaxeRuntime.instanceof(lastChildren, TextClip)) {
-			var childBaseline =  untyped lastChildren.getTextMetrics()[0];
-			untyped console.log('childBaseline', childBaseline);
-			if (metricsBaselineByTop) {
-				baseline = childBaseline;
-			} else {
-				var range = Browser.document.createRange();
-				range.selectNodeContents(nativeWidget);
-				var rects = range.getClientRects();
-
-				if (rects.length > 0) {
-					var lastRect = rects[rects.length - 1];
-					baseline = lastRect.y + childBaseline;
-				}
-			}
-		}
-
-		return baseline;
-	}
-
 	public override function setWidth(widgetWidth : Float) : Void {
 		// untyped console.log('setWidth', widgetWidth);
 		super.setWidth(widgetWidth);
-		updateStageWH();
+		updateStageMetrics();
 	}
 }
