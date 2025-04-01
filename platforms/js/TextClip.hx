@@ -1820,7 +1820,7 @@ class TextClip extends NativeWidgetClip {
 					measureHTMLWidth();
 				}
 			} else {
-				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
+				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style, checkIsWigiText() ? false : null);
 				if (this.isHTMLRenderer()) {
 					if (useHTMLMeasurementJapaneseFont(style)) {
 						measureHTMLSize();
