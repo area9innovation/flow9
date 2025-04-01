@@ -1,0 +1,381 @@
+import tools/mango/compiler/mopcode;
+import tools/mango/mango_types;
+import ds/array;
+import ds/tree;
+
+export {
+	// Structure to track the effects of each function or rule
+	MOpCodeEffects(
+		modifiesStack : bool,     // Whether the operation modifies the value stack
+		needsBacktracking : bool  // Whether the operation needs backtracking capabilities
+	);
+
+	// Perform fixed-point analysis for mutually recursive functions (MOpCode level)
+	analyzeGrammarEffects(grammar : MOpCode) -> Tree<string, MOpCodeEffects>;
+
+	// Determines if an MOpCode manipulates the value stack, using function effects map
+	modifiesStackWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -> bool;
+	// Determines if an MOpCode needs backtracking capabilities, using function effects map
+	needsBacktrackingWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -> bool;
+
+	// Term-level effect analysis with fixpoint iteration for rule references
+	// Analyze a complete grammar (starting term) to build effects map for all rules
+	analyzeTermGrammarEffects(grammar : Term) -> Tree<string, MOpCodeEffects>;
+
+	// Analyze effects for a Term expression using computed rule effects
+	analyzeTermEffects(term : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> MOpCodeEffects;
+}
+
+// Determines if an MOpCode manipulates the value stack, using function effects map
+modifiesStackWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -> bool {
+	switch (op) {
+		MoConstruct(__, __): true;  // Creates and pushes a new struct
+		MoEvalPoppy(__): true;      // Poppy code can modify stack
+		MoMatched(): true;          // Pushes matched text
+		MoPushPosition(): true;     // Pushes current position
+		MoCaptureI(): false;        // Just updates starti
+		MoMatchString(__): false;   // Just advances position
+		MoMatchRange(__, __): false; // Just advances position
+		MoBool(__): false;          // Constant
+		MoFunction(__, code, __): modifiesStackWithEffects(code, effects);
+		MoIf(cond, then, else_):
+			modifiesStackWithEffects(cond, effects) ||
+			modifiesStackWithEffects(then, effects) ||
+			modifiesStackWithEffects(else_, effects);
+		MoParseStar(term): modifiesStackWithEffects(term, effects);
+		MoCall(id): {
+			// Use the effects map to determine if the called function modifies the stack
+			lookupTreeDef(effects, id, MOpCodeEffects(true, true)).modifiesStack;
+		}
+		MoSequence(exps): exists(exps, \exp -> modifiesStackWithEffects(exp, effects));
+		MoAnd(left, right):
+			modifiesStackWithEffects(left, effects) || modifiesStackWithEffects(right, effects);
+		MoOr(left, right):
+			modifiesStackWithEffects(left, effects) || modifiesStackWithEffects(right, effects);
+		// Checkpoint operations themselves don't modify the value stack
+		MoPushCheckpoint(withStack): false;
+		MoDiscardCheckpoint(withStack): false;
+		MoRestoreCheckpoint(withStack): false;
+	}
+}
+
+// Determines if an MOpCode needs backtracking capabilities, using function effects map
+needsBacktrackingWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -> bool {
+	switch (op) {
+		// These definitely need backtracking
+		MoOr(__, __): true;  // Choice operator
+		MoParseStar(term): needsBacktrackingWithEffects(term, effects);
+
+		// These operations are pure and don't need backtracking
+		MoMatchString(__): false;    // Simple string match
+		MoMatchRange(__, __): false; // Simple character match
+		MoBool(__): false;           // Constant
+		MoCaptureI(): false;         // Just sets a marker
+		MoPushPosition(): false;     // Just pushes position
+		MoMatched(): false;
+		MoEvalPoppy(__): false;
+		MoConstruct(__, __): false;
+
+		// These depend on their components
+		MoFunction(__, code, __): needsBacktrackingWithEffects(code, effects);
+		MoIf(cond, then, else_):
+			needsBacktrackingWithEffects(cond, effects) ||
+			needsBacktrackingWithEffects(then, effects) ||
+			needsBacktrackingWithEffects(else_, effects);
+		MoSequence(exps): {
+			// A sequence needs backtracking if any component does,
+			// or if any component can fail after changing the stack
+			if (exists(exps, \exp -> needsBacktrackingWithEffects(exp, effects))) true
+			else {
+				doNeedsBacktrackingSequenceWithEffects(exps, 0, effects);
+			}
+		}
+		MoAnd(left, right):
+			// If left modifies stack and right can fail, we need backtracking
+			(modifiesStackWithEffects(left, effects) && canFailWithEffects(right, effects)) ||
+			needsBacktrackingWithEffects(left, effects) ||
+			needsBacktrackingWithEffects(right, effects);
+
+		// Calls to other rules - use the effects map
+		MoCall(id): {
+			lookupTreeDef(effects, id, MOpCodeEffects(true, true)).needsBacktracking;
+		}
+
+		// Checkpoint operations themselves
+		MoPushCheckpoint(withStack): true;
+		MoDiscardCheckpoint(withStack): true;
+		MoRestoreCheckpoint(withStack): true;
+	}
+}
+
+// Helper for checking sequences with effects map
+doNeedsBacktrackingSequenceWithEffects(exps : [MOpCode], i : int, effects : Tree<string, MOpCodeEffects>) -> bool {
+	if (i >= length(exps) - 1) {
+		false;
+	} else if (modifiesStackWithEffects(exps[i], effects) && canFailWithEffects(exps[i+1], effects)) {
+		true;
+	} else {
+		doNeedsBacktrackingSequenceWithEffects(exps, i + 1, effects);
+	}
+}
+
+// Helper: determines if an operation can fail, using function effects map
+canFailWithEffects(op : MOpCode, effects : Tree<string, MOpCodeEffects>) -> bool {
+	switch (op) {
+		MoMatchString(__): true;      // String match can fail
+		MoMatchRange(__, __): true;   // Character match can fail
+		MoBool(b): !b;                // Only MoBool(false) always fails
+		MoConstruct(__, __): false;   // Always succeeds if args are on stack
+		MoMatched(): false;           // Always succeeds
+		MoCaptureI(): false;          // Always succeeds
+		MoPushPosition(): false;      // Always succeeds
+
+		// These operations depend on their components
+		MoFunction(__, code, __): canFailWithEffects(code, effects);
+		MoIf(cond, then, else_):
+			canFailWithEffects(cond, effects) ||
+			canFailWithEffects(then, effects) ||
+			canFailWithEffects(else_, effects);
+		MoParseStar(__): false;       // Star never fails by definition
+		MoCall(id): true;             // Conservative - rules can fail
+		MoSequence(exps): exists(exps, \exp -> canFailWithEffects(exp, effects));
+		MoAnd(left, right):
+			canFailWithEffects(left, effects) || canFailWithEffects(right, effects);
+		MoOr(left, right):
+			canFailWithEffects(left, effects) && canFailWithEffects(right, effects);
+
+		// Checkpoint operations
+		MoPushCheckpoint(withStack): false;
+		MoDiscardCheckpoint(withStack): true;  // Can fail if stack is empty
+		MoRestoreCheckpoint(withStack): true;  // Can fail if stack is empty
+
+		MoEvalPoppy(__): true;
+	}
+}
+
+// Analyze the entire grammar to build a map of function effects
+// Returns a tree mapping function names to their effects
+determineOpcodeEffects(acc : Tree<string, MOpCodeEffects>, m : MOpCode) -> Tree<string, MOpCodeEffects> {
+	switch (m) {
+		MoFunction(name, code, body): {
+			// First analyze the function's body to handle forward references
+			newAcc = determineOpcodeEffects(acc, body);
+
+			// Then analyze this function's code
+			modifiesStack = modifiesStackWithEffects(code, newAcc);
+			needsBacktracking = needsBacktrackingWithEffects(code, newAcc);
+
+			// Store this function's effects
+			newAcc2 = setTree(newAcc, name, MOpCodeEffects(modifiesStack, needsBacktracking));
+
+			// Return the updated effects map
+			newAcc2;
+		}
+		MoSequence(exps): {
+			// Analyze each expression in the sequence
+			fold(exps, acc, \currentAcc, exp -> {
+				determineOpcodeEffects(currentAcc, exp)
+			});
+		}
+		// For other operations, just return the accumulated effects
+		// since they don't define new functions
+		default: acc;
+	}
+}
+
+// Perform fixed-point analysis using recursion instead of while loop
+analyzeGrammarEffects(grammar : MOpCode) -> Tree<string, MOpCodeEffects> {
+	doAnalyzeGrammarEffects(makeTree(), grammar, true);
+}
+
+// Helper function for fixed-point iteration using recursion
+doAnalyzeGrammarEffects(currentEffects : Tree<string, MOpCodeEffects>, grammar : MOpCode,
+						isFirstRun : bool) -> Tree<string, MOpCodeEffects> {
+	// Analyze with current effects
+	newEffects = determineOpcodeEffects(currentEffects, grammar);
+
+	// Check if we've reached a fixed point
+	if (isFirstRun || !equalTrees(currentEffects, newEffects)) {
+		// Continue iterating if not stable
+		doAnalyzeGrammarEffects(newEffects, grammar, false);
+	} else {
+		// Return the stable effects
+		newEffects;
+	}
+}
+
+// TERM EFFECTS ANALYSIS (with rule effects) //
+
+// Analyze a Term grammar to determine effects of all rules
+analyzeTermGrammarEffects(grammar : Term) -> Tree<string, MOpCodeEffects> {
+	// Initialize with an empty map and perform fixed-point iteration
+	doAnalyzeTermGrammarEffects(makeTree(), grammar, true);
+}
+
+// Helper function for fixed-point iteration on Term grammar
+doAnalyzeTermGrammarEffects(currentEffects : Tree<string, MOpCodeEffects>, grammar : Term,
+							isFirstRun : bool) -> Tree<string, MOpCodeEffects> {
+	// Collect rule definitions and analyze their effects
+	newEffects = determineTermEffects(currentEffects, grammar);
+
+	// Check if we've reached a fixed point
+	if (isFirstRun || !equalTrees(currentEffects, newEffects)) {
+		// Continue iterating if not stable
+		doAnalyzeTermGrammarEffects(newEffects, grammar, false);
+	} else {
+		// Return the stable effects
+		newEffects;
+	}
+}
+
+// Determine effects for each rule in a term grammar
+determineTermEffects(acc : Tree<string, MOpCodeEffects>, term : Term) -> Tree<string, MOpCodeEffects> {
+	switch (term) {
+		Rule(id, body, rest): {
+			// First analyze the remaining rules to handle forward references
+			newAcc = determineTermEffects(acc, rest);
+
+			// Then analyze this rule's body
+			effects = analyzeTermEffects(body, newAcc);
+
+			// Store this rule's effects
+			newAcc2 = setTree(newAcc, id, effects);
+
+			// Return the updated effects map
+			newAcc2;
+		}
+		// For sequences, recursively analyze both sides
+		Sequence(t1, t2): determineTermEffects(determineTermEffects(acc, t1), t2);
+		// For other terms, just return the accumulated effects
+		// since they don't define new rules
+		default: acc;
+	}
+}
+
+// Analyze effects for a Term using the rule effects map
+analyzeTermEffects(term : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> MOpCodeEffects {
+	MOpCodeEffects(
+		modifiesStackTerm(term, ruleEffects),
+		needsBacktrackingTerm(term, ruleEffects)
+	)
+}
+
+// Check if a Term modifies the stack, using rule effects
+modifiesStackTerm(term : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> bool {
+	switch (term) {
+		String(__): false;  // String literals don't modify stack
+		Range(__, __): false;  // Character ranges don't modify stack
+		Variable(id): {
+			// Use the effects map to determine if the referenced rule modifies the stack
+			lookupTreeDef(ruleEffects, id, MOpCodeEffects(true, true)).modifiesStack;
+		}
+
+		PushMatch(__): true;  // Explicitly pushes a match
+		Construct(__, __): true;  // Creates a structure
+		StackOp(__): true;  // Stack operations modify the stack by definition
+
+		Choice(t1, t2): modifiesStackTerm(t1, ruleEffects) || modifiesStackTerm(t2, ruleEffects);
+		Sequence(t1, t2): modifiesStackTerm(t1, ruleEffects) || modifiesStackTerm(t2, ruleEffects);
+		Rule(__, t1, t2): modifiesStackTerm(t1, ruleEffects) || modifiesStackTerm(t2, ruleEffects);
+
+		Star(t): modifiesStackTerm(t, ruleEffects);
+		Plus(t): modifiesStackTerm(t, ruleEffects);
+		Optional(t): modifiesStackTerm(t, ruleEffects);
+		Negate(t): modifiesStackTerm(t, ruleEffects);
+
+		Precedence(t1, t2): modifiesStackTerm(t1, ruleEffects) || modifiesStackTerm(t2, ruleEffects);
+		Error(t): modifiesStackTerm(t, ruleEffects);
+		Lower(t): modifiesStackTerm(t, ruleEffects);
+
+		GrammarCall(__, t): modifiesStackTerm(t, ruleEffects);
+		GrammarFn(__, t1, t2, t3):
+			modifiesStackTerm(t1, ruleEffects) ||
+			modifiesStackTerm(t2, ruleEffects) ||
+			modifiesStackTerm(t3, ruleEffects);
+	}
+}
+
+// Check if a Term needs backtracking, using rule effects
+needsBacktrackingTerm(term : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> bool {
+	switch (term) {
+		// These always need backtracking
+		Choice(__, __): true;  // Choice requires backtracking by definition
+		Negate(__): true;  // Negation requires backtracking
+		Optional(__): true;  // Optional requires backtracking
+
+		// Star doesn't need backtracking if its term doesn't
+		Star(t): needsBacktrackingTerm(t, ruleEffects);
+		Plus(t): needsBacktrackingTerm(t, ruleEffects);
+
+		// These depend on their components and potential stack modifications
+		Sequence(t1, t2): {
+			// Sequence needs backtracking if either term needs it
+			// or if t1 modifies stack and t2 can fail
+			needsBacktrackingTerm(t1, ruleEffects) ||
+			needsBacktrackingTerm(t2, ruleEffects) ||
+			(modifiesStackTerm(t1, ruleEffects) && canFailTerm(t2, ruleEffects))
+		};
+
+		// Rules/functions depend on their bodies
+		Rule(__, t1, t2): needsBacktrackingTerm(t1, ruleEffects) || needsBacktrackingTerm(t2, ruleEffects);
+		Precedence(t1, t2): needsBacktrackingTerm(t1, ruleEffects) || needsBacktrackingTerm(t2, ruleEffects);
+
+		// Simple operations generally don't need backtracking
+		String(__): false;  // String literals can fail but don't need backtracking
+		Range(__, __): false;  // Character ranges can fail but don't need backtracking
+
+		Variable(id): {
+			// Use the effects map to determine if the referenced rule needs backtracking
+			lookupTreeDef(ruleEffects, id, MOpCodeEffects(true, true)).needsBacktracking;
+		}
+
+		PushMatch(t): needsBacktrackingTerm(t, ruleEffects);
+		Construct(__, __): false;  // Constructors always succeed
+		StackOp(__): false;  // Stack operations don't need backtracking
+
+		// Other terms
+		Error(t): needsBacktrackingTerm(t, ruleEffects);
+		Lower(t): needsBacktrackingTerm(t, ruleEffects);
+		GrammarCall(__, t): needsBacktrackingTerm(t, ruleEffects);
+		GrammarFn(__, t1, t2, t3):
+			needsBacktrackingTerm(t1, ruleEffects) ||
+			needsBacktrackingTerm(t2, ruleEffects) ||
+			needsBacktrackingTerm(t3, ruleEffects);
+	}
+}
+
+// Helper: determines if a Term can fail, using rule effects
+canFailTerm(term : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> bool {
+	switch (term) {
+		String(__): true;  // String literals can fail if they don't match
+		Range(__, __): true;  // Character ranges can fail if no match
+		Variable(id): {
+			// Most rules can fail (conservative) but we could potentially refine this
+			// based on more detailed analysis in the future
+			true;
+		}
+
+		PushMatch(t): canFailTerm(t, ruleEffects);
+		Construct(__, __): false;  // Constructors always succeed
+		StackOp(__): false;  // Most stack operations succeed
+
+		Choice(t1, t2): canFailTerm(t1, ruleEffects) && canFailTerm(t2, ruleEffects);  // Both alternatives must fail
+		Sequence(t1, t2): canFailTerm(t1, ruleEffects) || canFailTerm(t2, ruleEffects);  // Either component can fail
+
+		Rule(__, t1, t2): canFailTerm(t1, ruleEffects) || canFailTerm(t2, ruleEffects);
+		Star(__): false;  // Star never fails by definition
+		Plus(t): canFailTerm(t, ruleEffects);  // Plus can fail if first iteration fails
+		Optional(__): false;  // Optional never fails by definition
+		Negate(t): !canFailTerm(t, ruleEffects);  // Negate fails if inner term succeeds
+
+		Precedence(t1, t2): canFailTerm(t1, ruleEffects) || canFailTerm(t2, ruleEffects);
+		Error(t): canFailTerm(t, ruleEffects);
+		Lower(t): canFailTerm(t, ruleEffects);
+
+		GrammarCall(__, t): canFailTerm(t, ruleEffects);
+		GrammarFn(__, t1, t2, t3):
+			canFailTerm(t1, ruleEffects) ||
+			canFailTerm(t2, ruleEffects) ||
+			canFailTerm(t3, ruleEffects);
+	}
+}

@@ -164,7 +164,7 @@ public:
     CGPoint fixIphoneXMousePoint(int x, int y);
     void mouseMoveEvent(NSArray<NSValue*>* touchPoints);
     void mousePressEvent(NSArray<NSValue*>* touchPoints);
-    void mouseReleaseEvent(NSArray<NSValue*>* touchPoints);
+    void mouseReleaseEvent(NSArray<NSValue*>* touchPoints, CGPoint touchPosition);
     bool returnKeyEventFromTextClip(GLTextClip* clip);
 
     void textViewChanged(FlowUITextView * textview, bool text_changed);

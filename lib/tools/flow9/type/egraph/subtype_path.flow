@@ -1,0 +1,140 @@
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/egraph/utils;
+import text/blueprint;
+
+export {
+	// Given an EGraph and two type nodes, finds a path of HUnions between them to tie the subtype relationships
+	subtypeConstructorsThroughPath(g : EGraph, id1 : int, node1 : Constructor, id2 : int, node2 : Constructor, subtypeFn : (g : EGraph, id1 : int, id2 : int, infos : Set<EContext>) -> int, infos : Set<EContext>) -> int;
+
+	// Is this effectively a supertype, by looking at fully expanded unions?
+	isEffectivelySupertype(interface : HModuleInterface, sub : string, sup : string) -> bool;
+
+	findConstructorPath(g : EGraph, fromNode : Constructor, toNode : Constructor) -> [HUnion];
+	findNameConstructorPath(g : EGraph, from : string, to : string) -> [HUnion];
+}
+
+// First pass: Find path of HUnions between (but not including) the start and end types
+findConstructorPath(g : EGraph, fromNode : Constructor, toNode : Constructor) -> [HUnion] {
+	initialQueue = [Pair(fromNode.name, [])];
+	constructorBfs(g, initialQueue, toNode.name, makeSet());
+}
+
+findNameConstructorPath(g : EGraph, from : string, to : string) -> [HUnion] {
+	initialQueue = [Pair(from, [])];
+	constructorBfs(g, initialQueue, to, makeSet());
+}
+
+// Does search for a subtype path between two types - returns the path without the start and end.
+constructorBfs(g : EGraph, queue : [Pair<string, [HUnion]>], targetName : string, visited : Set<string>) -> [HUnion] {
+	if (length(queue) == 0) []
+	else {
+		current = queue[0];
+		currentName = current.first;
+		currentPath = current.second;
+
+		if (currentName == targetName) {
+			// Found the target, return the intermediate path (excluding start and end)
+			currentPath
+		} else {
+			// Get direct supertypes for current type from the interface
+			supers = getTreeArrayValue(g.interface.supertypes, currentName);
+
+			// Filter already visited, but add all the rest as potential paths
+			newQueue = concat(
+				tail(queue),
+				filtermap(supers, \super : HUnion -> {
+					if (containsSet(visited, super.name)) None()
+					else Some(Pair(super.name, concat(currentPath, [super])))
+				})
+			);
+
+			// Add current to visited and continue search
+			newVisited = insertSet(visited, currentName);
+			constructorBfs(g, newQueue, targetName, newVisited)
+		}
+	}
+}
+
+// Given a path of HUnions, instantiate them in the EGraph
+instantiateUnionPath(g : EGraph, unions : [HUnion], infos : Set<EContext>) -> [int] {
+	map(unions, \union -> {
+		createUnionConsNode(g, union, infos);
+	});
+}
+
+subtypeConstructorsThroughPath(g : EGraph, id1 : int, node1 : Constructor, id2 : int, node2 : Constructor, subtypeFn : (g : EGraph, id1 : int, id2 : int, infos : Set<EContext>) -> int, infos : Set<EContext>) -> int {
+	// First pass: find the HUnion path (excluding start, bu including end types)
+	unionPath : [HUnion] = findConstructorPath(g, node1, node2);
+	// println(node1.name + " -> " + node2.name + ": " + superglue(unionPath, \u -> u.name, ", "));
+
+	if (unionPath == []) {
+		// OK, we could not find a path through super types.
+		if (getSingleMemberUnion(g, node1.name) == node2.name) {
+			// OK, we have two single member unions, we can do it reversed
+			if (g.tracing > 1) {
+				debugMsg(g, 1, node1.name + " is a single member union so it is equal to " + node2.name);
+			}
+
+			subtypeFn(g, id2, id1, infos);
+		} else {
+			if (isEffectivelySupertype(g.interface, node1.name, node2.name)) {
+				g.onError(infos,
+					"'" + node1.name + "' is implicitly a subtype of '" + node2.name + "' (α" + i2s(id1) + " <: α" + i2s(id2) + "). Make sure " + node1.name + " is explicitly listed in the definition of " + node2.name + " to allow finegrained incremental type inference."
+				);
+				id1;
+			} else {
+				union1members = buildSet(map(lookupTreeDef(g.interface.unions, node1.name, HUnion(node1.name, [],[])).types, \t -> t.name));
+				union2members = buildSet(map(lookupTreeDef(g.interface.unions, node2.name, HUnion(node2.name, [],[])).types, \t -> t.name));
+				diff = set2array(differenceSets(union1members, union2members));
+				
+				g.onError(infos,
+					"'" + node1.name + "' is not an explicit subtype of '" + node2.name + "' (α" + i2s(id1) + " <: α" + i2s(id2) + ")"
+					+ (if (!isEmptySet(union1members) && !isEmptySet(union2members) && diff != []) {
+						". " + node1.name + " has these members beyond " + node2.name + ": " + strGlue(diff, ", ")
+					} else "")
+				);
+				id1;
+			}
+		}
+	} else {
+		// Second pass: instantiate the intermediate types
+		withoutLast = subrange(unionPath, 0, length(unionPath) - 1);
+		path = instantiateUnionPath(g, withoutLast, infos);
+
+		// Add all subtyping relationships along the complete path (including start and end)
+		fullPath = concat3([id1], path, [id2]);
+		foldi(fullPath, id1, \i, acc, currentId -> {
+			if (i + 1 < length(fullPath)) {
+				nextId = fullPath[i + 1];
+				subtypeFn(g, currentId, nextId, infos);
+				nextId;
+			} else acc
+		});
+		// Make sure to return the smallest type
+		id1;
+	}
+}
+
+
+isEffectivelySupertype(interface : HModuleInterface, sub : string, sup : string) -> bool {
+	// If we want to allow implicit subunions based on their fully expanded constitution, we could do this:
+	union1 = lookupTreeDef(interface.unions, sub, HUnion(sub, [],[]));
+	union2 = lookupTreeDef(interface.unions, sup, HUnion(sup, [],[]));
+	if (union1.types != [] && union1.types != []) {
+		isArraySubset(union1.types, union2.types)
+	} else false
+}
+
+isArraySubset(subset : [?], superset : [?]) -> bool {
+	forall(subset, \item -> contains(superset, item));
+}
+
+// Determines if a union has exactly one member, returning that member's name if true
+getSingleMemberUnion(g : EGraph, unionName : string) -> string {
+    // Check in regular unions first
+    munion = lookupTree(g.interface.unions, unionName);
+    switch (munion) {
+        Some(union): if (length(union.types) == 1) union.types[0].name else "";
+        None(): "";
+    }
+}

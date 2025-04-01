@@ -5,28 +5,24 @@ import com.area9innovation.flow.*;
 import javafx.application.Platform;
 
 public abstract class FxFlowRuntime extends FlowRuntime {
-	private static boolean isOpen = true;
+	private static boolean isOpen = true; // is running
 
 	public synchronized void start() {
 		main();
-		eventLoop(true);
+		eventLoopFx();
 	}
 
 	public static void stop() {
 		isOpen = false;
 	}
 
-	public static void eventLoop(boolean isMainThread) {
-		if (isMainThread) {
-			if (quitCode == null) {
-				executeActions(false);
-				if (!sleep("event loop fx")) return;
-			}
-			if (isOpen) {
-				Platform.runLater(() -> eventLoop(true));
-			}
-		} else {
-			FlowRuntime.eventLoop(false);
+	private static void eventLoopFx() {
+		if (quitCode == null) {
+			executeActions(true, true);
+			if (!sleep("event loop fx")) return;
+		}
+		if (isOpen) {
+			Platform.runLater(() -> eventLoopFx());
 		}
 	}
 

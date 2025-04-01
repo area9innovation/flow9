@@ -1,0 +1,281 @@
+import tools/flow9/desugar/extract;
+import tools/flow9/desugar/dump;
+import tools/flow9/type/topo_order;
+import tools/flow9/type/infer;
+import tools/flow9/type/fieldaccessors;
+import tools/flow9/type/type_hierarchy;
+import tools/flow9/type/type_simplegraph; // Added import for our new module
+import tools/flow9/type/merge_env;
+import tools/flow9/type/resolve_types;
+import tools/flow9/type/check_completeness;
+import tools/flow9/type/toplevel_env;
+import tools/flow9/type/constructors;
+import tools/flow9/type/egraph/resolve;
+import tools/mango/line;
+
+export {
+	typecheckDModule(depEnv : HModuleInterface, d : DModule) -> Maybe<DModule>;
+	makeHTypeEnv(menv : HModuleInterface, tracing : int, onError : (int, string) -> void) -> HTypeEnv;
+}
+
+typecheckDModule(depEnv : HModuleInterface, d : DModule) -> Maybe<DModule> {
+	println("\nType checking " + d.flowpath + " (" + d2s(fileSize(d.fullpath)) + ")");
+	errors = ref makeSet();
+	errorCount = ref 0;
+
+	maxEclass = ref 0;
+	maxSubtypes = ref 0;
+
+	onError = \info, error -> {
+		pos = elementAt(d.positions, info, -1);
+		withline = if (pos == -1) {
+			d.fullpath + ": " + error
+		} else {
+			getLinePos(d.fullpath, getFileContent(d.fullpath), error, pos, 1, 0);
+		};
+		errorCount := ^errorCount + 1;
+		if (^errorCount > 1000) {
+			fail("Too many errors");
+		}
+		if (!containsSet(^errors, withline)) {
+			errors := insertSet(^errors, withline);
+			println(withline)
+		}
+	};
+
+	structs = mapTree(d.structs, \s -> dstruct2hstruct(depEnv, s));
+	rawUnions = mapTree(d.unions, \u -> dunion2hunionRaw(depEnv, u));
+
+    // Merge with dependency environment
+    allStructs = mergeTree(depEnv.structs, structs);
+    allRawUnions = mergeTree(depEnv.rawUnions, rawUnions);
+
+	uenv = HModuleInterface(depEnv with structs = allStructs, rawUnions = allRawUnions);
+
+	unions = mapTree(allRawUnions, \u -> expandHUnion(uenv, \error -> {
+		println(d.fullpath + ": " + error);
+		errors := insertSet(^errors, d.fullpath + ": " + error);
+	}, u));
+	typeHierarchy = buildTypeHierarchy(rawUnions);
+
+	if (false) {
+		traverseInOrder(unions, \name, union -> {
+			println("Union " + name + " = " + prettyHUnion(union, true));
+		});
+	}
+
+	baseenv = HModuleInterface(
+		mergeTree(
+			mergeTree(buildConstructors(structs), buildNativeTypes(depEnv, d.natives)),
+			buildFieldAccessors(structs, unions, allStructs),
+		),
+		structs, 
+		unions,
+		rawUnions,
+		typeHierarchy,
+	);
+	menv0 = mergeHModuleInterface(baseenv, depEnv);
+	// OK, now we have all unions, build the supertypes
+	mergedSupertypes = buildTypeHierarchy(menv0.rawUnions);
+	menv = HModuleInterface(menv0 with supertypes = mergedSupertypes);
+
+	// Allow tracing a specific module at a specific level
+	trace = getUrlParameter("trace");
+	tracing = if (trace != "" && !endsWith(d.flowpath, trace)) 0 else s2i(getUrlParameter("tracing"));
+
+	// Create a temporary environment to use for generating the graph visualization
+	if (tracing > 0) {
+		// Generate and save the type hierarchy visualization
+		saveTypeHierarchyDot(menv, fileNameOnly(d.flowpath));
+	}
+
+	if (tracing > 2) {
+		dmod = DModule(d with typeEnv = depEnv);
+		printModuleInterface(dmod);
+	}
+
+	// OK, first we set up a type for each top-level so they can see each others
+	topenv = foldTree(d.toplevels, menv, \name, top, acc -> {
+		type = dtype2htype(acc.structs, acc.unions, top.type);
+		schema = if (top.typars != []) HTypeForAll(top.typars, type) else type;
+		setHTypeEnv(acc, name, schema);
+	});
+
+	// We resolve all position infos to a type in this map
+	infoTypeSchemas : IntMap<HTypeSchema> = makeIntMap();
+
+	topoOrder = getTopLevelInferenceOrder(d);
+	moduleInterface = fold(topoOrder, topenv, \acc : HModuleInterface, name -> {
+		mtop : Maybe<DGlobal> = lookupTree(d.toplevels, name);
+		mtop ?? {
+			// Instantiate typars into a new substitution
+
+			nameTrace = getUrlParameter("name");
+			newTrace = if (nameTrace == "") tracing else if (name == nameTrace) tracing else 0;
+
+			joinEnv = makeHTypeEnv(acc, newTrace, onError);
+
+			// Map each typar to some eclass
+			fsubst : Tree<string, int> = fold(mtop.typars, makeTree(), \acc2, typar -> {
+				tv = makeTypeVariable(joinEnv.egraph, makeSet1(EContext(mtop.info, name + "<" + typar + ">")));
+				setTree(acc2, typar, tv)
+			});
+			fenv = HTypeEnv(joinEnv with egraph = EGraph(joinEnv.egraph with typars = ETypeParMap(fsubst)));
+			// This can potentially be used to reduce the env to just what is used in the value
+			fnenv : HTypeEnv = if (true) fenv else {
+				HTypeEnv(fenv with interface =
+					specializeTopEnv(fenv.interface, fenv.egraph.tracing, name, mtop.value)
+				)
+			};
+			
+			// What type did we set up for this?
+			schematype = lookupTreeDef(acc.env, name, HTypeVar(name + "_type"));
+
+			// Extract the type, but without new instantiation
+			stype = switch (schematype : HTypeSchema) {
+				HType(): schematype;
+				HTypeForAll(tyvars, t): t;
+				HTypeAlternatives(tyvar): {
+					println("TODO: We do not support alternatives in top-levels yet");
+					HTypeVar("ERROR")
+				}
+			};
+			// Now, be sure to instantiate the typars correctly, so we can go back later
+			type = htype2root(fenv.egraph, stype, EContext(mtop.info, name));
+
+			if (shouldTrace(joinEnv, 0)) {
+				println("\nType inference of '" + name + "' using expected type  " + prettyNode(fenv.egraph, type));
+			}
+
+			expected = HTypeExpectSubtype("toplevel " + name, type);
+
+			result = inferDExp(fnenv, mtop.value, expected);
+
+			if (shouldTrace(joinEnv, 0) && isUrlParameterTrue("dump")) {
+				rd = resolveDModuleTypes(onError, infoTypeSchemas, d, false);
+				dumpDModule(rd);
+			}
+
+			// Count subtypes before we resolve
+			if (true || shouldTrace(joinEnv, 0)) {
+				subtypes = countSubtypeRelations(fnenv.egraph);
+				if (subtypes > ^maxSubtypes) {
+					maxSubtypes := subtypes;
+				}
+			}
+
+			// OK, resolve our graph
+			resolveEGraph(fnenv.egraph, name);
+
+			// Update the generalized type both places
+			setIntMap(fnenv.info2types, mtop.value.info, result);
+			setIntMap(fnenv.info2types, mtop.info, result);
+
+			// Reverse the mapping from typar->id to id->typar
+			generalizedType = generalizeEGraph(fnenv.egraph, result, name);
+			eclass2typar = reverseETypeParMap(fnenv.egraph, fnenv.egraph.typars);
+
+			if (!isFunctionType(generalizedType)) {
+				switch (generalizedType) {
+					HTypeForAll(vars, __): {
+						onError(mtop.info, "Top-level variable '" + name + "' has a polymorphic type: " + prettyHTypeSchema(generalizedType) + ". This is not safe, since the polymorphic type might differ between uses.");
+					}
+					default: {}
+				}
+			}
+
+			if (shouldTrace(joinEnv, 2)) {
+				println(name + " : " + prettyHTypeSchema(generalizedType));
+				debugPrintEGraph(fnenv.egraph);
+			}
+
+			// OK, resolve all types into the infoTypeSchemas
+			iterIntMap(fnenv.info2types, \info, eclass -> {
+				// println("Resolving " + i2s(eclass));
+				schema = rootToHTypeSchema(fnenv.egraph, eclass2typar, eclass);
+				setIntMap(infoTypeSchemas, info, schema);
+			});
+
+			// Define our type to the external world
+			// TODO: Check if name is exported first
+			wasType = lookupTreeDef(acc.env, name, generalizedType);
+			if (hasAutoType(wasType) && isFunctionType(wasType) && isRecursive(name, mtop.value)) {
+
+				onError(mtop.info, "Add type for recursive '" + name + " : " + prettyHTypeSchema(generalizedType) + "' to avoid auto-type:  " + prettyHTypeSchema(wasType));
+			}
+
+			nameEnv = setHTypeEnv(acc, name, generalizedType);
+			if (shouldTrace(joinEnv, 1)) {
+				if (wasType != generalizedType) {
+					println("Type of " + name + " changed from " + prettyHTypeSchema(wasType) + " to " + prettyHTypeSchema(generalizedType));
+				}
+			}
+
+			if (getUrlParameter("extract") == name) {
+				free = getFreeDVarsFromDExp(makeSet(), makeSet(), mtop.value);
+
+				spec = HTypeEnv(fnenv with interface = specializeTopEnv(nameEnv, tracing, name, mtop.value));
+				code = extractToplevelAndDeps(d, spec, free, name);
+
+				filename = "tests/" + fileNameOnly(d.flowpath) + "_" + name + ".flow";
+				setFileContent(filename, code);
+				println("Saved '" + filename + "'");
+			}
+
+			if (^(fnenv.egraph.nextId) > ^maxEclass) {
+				maxEclass := ^(fnenv.egraph.nextId);
+			}
+			nameEnv;
+		} : {
+			println("Unknown " + name);
+			acc;
+		}
+	});
+	if (true || tracing > 0) {
+		println(d.flowpath + " has " + i2s(^maxEclass) + " eclass and " + i2s(^maxSubtypes) + " subtypes");
+	}
+
+	// println(prettyHTypeEnv(moduleInterface));
+	// If there were type errors, return None
+	if (!isEmptySet(^errors)) {
+		if (tracing > 0) {
+			m = resolveDModuleTypes(onError, infoTypeSchemas, d, true);
+			dumpDModule(m);
+		};
+
+		None()
+	} else {
+
+		// Reverse our typar mapping onto our combined mapping
+		m = resolveDModuleTypes(onError, infoTypeSchemas, d, false);
+		checkModuleUnboundTypars(m, onError);
+		// println("Joinmap: " + prettyHJoinMap(renv));
+		if (!isEmptySet(^errors)) {
+			m1 = resolveDModuleTypes(onError, infoTypeSchemas, d, true);
+			None()
+		} else {
+			Some(DModule(m with typeEnv = moduleInterface, typeEnvIsFull = true));
+		}
+	}
+}
+
+makeHTypeEnv(menv : HModuleInterface, tracing : int, onError : (int, string) -> void) -> HTypeEnv {
+	HTypeEnv(
+		menv,
+		makeEGraph(menv, ETypeParMap(makeTree()), tracing, \infos : Set<EContext>, error -> {
+			if (isEmptySet(infos)) {
+				onError(-1, error)
+			} else {
+				iterSet(infos, \info -> onError(info.info, info.context + ": " + error));
+			}
+		}),
+		makeIntMap(),
+		onError, 
+	);
+}
+
+
+isRecursive(name : string, d : DExp) -> bool {
+	free = getFreeDVarsFromDExp(makeSet(), makeSet(), d);
+	containsSet(free, name);
+}

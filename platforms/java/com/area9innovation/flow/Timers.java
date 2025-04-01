@@ -40,7 +40,7 @@ public class Timers {
 		timer.callback = callback;
 		timers.put(lastTimerId, timer);
 		if (debug) {
-			System.out.println("New timer " + lastTimerId + ", total cnt " + timers.size() + ", tread " + FlowRuntime.getThreadIdLong());
+			System.out.println("New timer " + lastTimerId + ", total cnt " + timers.size() + ", tread #" + FlowRuntime.getThreadIdLong());
 		}
 		return lastTimerId;
 	}
@@ -52,9 +52,16 @@ public class Timers {
 		}
 	}
 
-	public void execute(boolean allowRecursive) {
-		if (!allowRecursive && executingCnt > 0) {
+	public void execute(boolean allowRecursive, boolean mainCall) {
+		if (!(allowRecursive || mainCall) && executingCnt > 0) {
 			return;
+		}
+		if (mainCall && executingCnt > 0) {
+			System.out.println(
+				"Thread #" + FlowRuntime.getThreadIdLong() + " has wrong state of timers: executingCnt = " + executingCnt + ". "
+				+ "This could have happen after an exception. Thread timers: " + toString()
+			);
+			executingCnt = 0;
 		}
 		executingCnt++;
 		TreeSet<Integer> timerIds = new TreeSet<Integer>();
@@ -101,7 +108,7 @@ public class Timers {
 	}
 
 	public String toString(String separator) {
-		if (isEmpty()) {
+		if (isEmpty() && executingCnt == 0) {
 			return "";
 		}
 
@@ -112,6 +119,12 @@ public class Timers {
 			if (iterator.hasNext()) {
 				sb.append(separator);
 			}
+		}
+		if (executingCnt != 0) {
+			if (!isEmpty()) {
+				sb.append(separator);
+			}
+			sb.append("Recursive call level: " + executingCnt);
 		}
 		return sb.toString();
 	}

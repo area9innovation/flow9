@@ -1,0 +1,86 @@
+import tools/flow9/type/egraph/egraph;
+
+export {
+	isVariableNode(g : EGraph, id : int) -> bool;
+	isTopDecidedNode(g : EGraph, id : int) -> bool;
+	isConstructorNode(g : EGraph, id : int) -> bool;
+	getConstructor(node : TypeNode) -> string;
+	isFlowTypeNode(node : TypeNode) -> bool;
+	isFlowEClass(g : EGraph, eclass : int) -> bool;
+	getNodeConstructorName(g : EGraph, id : int) -> string;
+
+	// Creates a Constructor node for either a union or a struct type
+	createConstructorNode(g : EGraph, typeName : string, infos : Set<EContext>) -> Constructor;
+	createUnionConsNode(g : EGraph, union : HUnion, infos : Set<EContext>) -> int;
+}
+
+isVariableNode(g : EGraph, id : int) -> bool {
+	isTypeVar(getNodeDef(g, id))
+}
+
+isTopDecidedNode(g : EGraph, id : int) -> bool {
+	eclass = getEClassDef(g, id);
+	!isTypeVar(eclass.node) 
+	&& isEmptySet(eclass.alternatives)
+}
+
+isConstructorNode(g : EGraph, id : int) -> bool {
+	switch (getNodeDef(g, id)) {
+		Constructor(__, __): true;
+		default: false;
+	}
+}
+
+isFlowTypeNode(node : TypeNode) -> bool {
+	getConstructor(node) == "flow"
+}
+
+isFlowEClass(g : EGraph, eclass : int) -> bool {
+	isFlowTypeNode(getNodeDef(g, eclass))
+}
+
+getConstructor(node : TypeNode) -> string {
+	switch (node) {
+		Constructor(name, __): name;
+		default: "";
+	}
+}
+
+getNodeConstructorName(g : EGraph, id : int) -> string {
+	getConstructor(getNodeDef(g, id)) 
+}
+
+createUnionConsNode(g : EGraph, union : HUnion, infos : Set<EContext>) -> int {
+	params = map(union.typars, \__ -> makeTypeVariable(g, makeSet()));
+	newCons = Constructor(union.name, params);
+	insertNode(g, newCons, infos);
+}
+
+
+// Creates a Constructor node for either a union or a struct type
+createConstructorNode(g : EGraph, typeName : string, infos : Set<EContext>) -> Constructor {
+	// First check if it's a union
+	switch (lookupTree(g.interface.unions, typeName)) {
+		Some(union): Constructor(union.name, map(union.typars, \__ -> makeTypeVariable(g, infos)));
+		None(): {
+			// Check if it's a struct
+			switch (lookupTree(g.interface.structs, typeName)) {
+				Some(struct): {
+					// For structs, create fresh type variables for each field
+					params = map(struct.typars, \__ -> makeTypeVariable(g, infos));
+					Constructor(typeName, params);
+				}
+				None(): {
+					if (typeName == "array" || typeName == "ref") {
+						// Flow type - create a parameterless constructor
+						Constructor(typeName, [makeTypeVariable(g, infos)]);
+					} else {
+						// Neither union nor struct - create a parameterless constructor
+						// println("Invariant violated: " + typeName + " is not a union or struct");
+						Constructor(typeName, []);
+					}
+				}
+			}
+		}
+	}
+}

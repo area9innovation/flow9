@@ -74,6 +74,12 @@ export {
         config : Tree<string, string>,
         threadId : int, // stores the id of a thread, responsible for a task (in parallel mode)
     );
+
+	// What is the thread pool?
+	getCompilerThreadPool() -> native;
+	// Set up the thread pool for the compiler
+	setCompilerThreadPool(threads : int) -> void;
+
     compilerConfigFromConfig : (config : Tree<string, string>) -> CompilerConfig;
     compilerConfigToTree : (config : CompilerConfig) -> Tree<string, string>;
     compilerConfigToString(config : CompilerConfig) -> string;
@@ -128,7 +134,8 @@ findFlowDir() -> string {
 			} else {
 				dir_lines = ref "";
 				err_lines = ref "";
-				code = execSystemProcess("flowc1", ["print-flow-dir=1"], ".",
+				flowc = if (windows()) "flowc1.bat" else "flowc1";
+				code = execSystemProcess(flowc, ["print-flow-dir=1"], ".",
 					\out -> dir_lines := ^dir_lines + out,
 					\err -> {
 						println(err);
@@ -333,6 +340,15 @@ combineConfigsOverride(over, under)
 combineConfigs(left, right, combine)
     mergeTreeCustom(left, right, combine);
 
+compilerThreadPool : ref Maybe<native> = ref None();
+getCompilerThreadPool() -> native {
+	onlyOnce(compilerThreadPool, \ -> newThreadPool(availableProcessors()));
+}
+
+setCompilerThreadPool(threads : int) -> void {
+	compilerThreadPool := Some(newThreadPool(threads));
+}
+
 compilerConfigFromConfig(config) {
 	v = getConfigParameterDef(config, "verbose", "0");
 	verboseLevel = if (isDigits(v)) s2i(v) else 0;
@@ -341,6 +357,9 @@ compilerConfigFromConfig(config) {
 	dcePreservedNames = fold(strSplit(dpn, ","), makeSet(), \a, i -> {
 		if (i != "") insertSet(a, i) else a
 	});
+
+	setCompilerThreadPool(getConfigParameterInt(config, "threads", availableProcessors()));
+
 	CompilerConfig(
 		getConfigParameter(config, "flowfile"),
 		//includes : [string]
@@ -395,7 +414,7 @@ compilerConfigFromConfig(config) {
 		),
 		//config : Tree<string, string>
 		config,
-		s2i(getThreadId()) // current thread id
+		s2i(getThreadId()), // current thread id
 	);
 }
 

@@ -1,0 +1,486 @@
+import ds/set;
+import tools/flow9/type/egraph/lub_glb;
+import tools/flow9/type/egraph/contract;
+import tools/flow9/type/egraph/easygraph;
+import tools/flow9/type/util;
+import ds/easygraph_utils;
+import ds/easygraph_transitive;  // Add this import for reachableEdgeClosure
+
+export {
+	// Do two passes to compute bounds
+	propagateBounds(g : EGraph, name : string, speculate : bool) -> void;
+}
+
+TypeBounds(
+	lower : Set<GEdge<Set<EContext>>>,  // Set of possible subtypes (lower bound) with context
+	upper : Set<GEdge<Set<EContext>>>   // Set of possible supertypes (upper bound) with context
+);
+
+// Updated cache structure to include precomputed closures
+TypeGraphCache(
+	subgraph : EasyGraph<TypeNode, Set<EContext>>,
+	supergraph : EasyGraph<TypeNode, Set<EContext>>,
+	lowerClosure : Tree<int, Set<GEdge<Set<EContext>>>>,  // Precomputed reachable edges for subgraph
+	upperClosure : Tree<int, Set<GEdge<Set<EContext>>>>   // Precomputed reachable edges for supergraph
+);
+
+propagateBounds(g : EGraph, name : string, speculate : bool) -> void {
+	// canonicalizeEGraph(g);
+
+	// Calculate graphs once and store in cache
+	subgraph = egraph2easyGraph(g, true);
+	supergraph = egraph2easyGraph(g, false);
+
+	// Precompute all reachable edges for both graphs
+	lowerClosure = reachableEdgeClosure(subgraph);
+	upperClosure = reachableEdgeClosure(supergraph);
+
+	// Create cache with precomputed closures
+	cache = TypeGraphCache(
+		subgraph,
+		supergraph,
+		lowerClosure,
+		upperClosure
+	);
+
+	// Get topological order
+	topo = topoOrderEasyGraph(cache.supergraph);
+
+	// Sort nodes to prioritize those with alternatives first
+	sortedNodes = sortCustom(topo, \id -> {
+		eclass = getEClassDef(g, id);
+		isEmptySet(eclass.alternatives) // true will sort later
+	}, true);
+
+	iter(sortedNodes, \id -> {
+		// Get the reachable sets from the precomputed closures
+		reachableLower = lookupTreeDef(cache.lowerClosure, id, makeSet());
+		reachableUpper = lookupTreeDef(cache.upperClosure, id, makeSet());
+
+		// Now we store the full edge information including context
+		resolveEClassBounds(g, id, TypeBounds(reachableLower, reachableUpper), speculate, cache)
+	});
+}
+
+resolveEClassBounds(g : EGraph, root : int, bounds : TypeBounds, speculate : bool, cache : TypeGraphCache) -> void {
+	r = findEGraphRoot(g, root);
+	if (r == root && !isTopDecidedNode(g, r)) {
+		// Count proper (non-tyvar) types in bounds
+		upperCons = filterMapSet(bounds.upper, \edge -> {
+			node = getNodeDef(g, edge.to);
+			switch (node) {
+				Constructor(name, __): Some(node);
+				Variable(__): None();
+				Function(__, __): None();
+			}
+		});
+		lowerCons : Set<Constructor> = filterMapSet(bounds.lower, \edge -> {
+			node = getNodeDef(g, edge.to);
+			switch (node) {
+				Constructor(name, __): Some(node);
+				Variable(__): None();
+				Function(__, __): None();
+			}
+		});
+
+		lowerTyvars = countSet(bounds.lower, \edge -> isVariableNode(g, edge.to));
+		upperTyvars = countSet(bounds.upper, \edge -> isVariableNode(g, edge.to));
+
+		eclass = getEClassDef(g, r);
+
+		// OK, find what common supertypes work for all the subtypes
+		workingLower : [string] = set2array(findCommonSupertypes(g, lowerCons));
+
+		// Create constructor-context pairs for upper bounds
+		upperConsPairs : Set<Pair<Constructor, Set<EContext>>> = mapSet(upperCons, \constructor -> {
+			// Find the edge that corresponds to this constructor
+			edgeContext : Set<EContext> = foldSet(bounds.upper, eclass.infos, \acc, edge -> {
+				edgeNode = getNodeDef(g, edge.to);
+				switch (edgeNode) {
+					Constructor(name, __): if (name == constructor.name) edge.data else acc;
+					default: acc;
+				}
+			});
+
+			// Create the pair with constructor and its specific context
+			Pair(constructor, edgeContext);
+		});
+
+		workingUpper : [string] = findCommonSubtypes(g, upperConsPairs);
+		// What lower types are also subtypes of our upper bounds?
+		suitableLower : [string] = filter(workingLower, \l -> {
+			forallSet(upperCons, \u -> canNamesBeSubtypes(g, l, u.name))
+		});
+		suitableUpper : [string] = filter(workingUpper, \u -> {
+			forall(suitableLower, \l -> canNamesBeSubtypes(g, l, u))
+		});
+		if (g.tracing > 0) {
+			debugMsg(g, 1, "Resolving bounds for α" + i2s(r) + ": " + typeNodeToString(g, r, false, true));
+			if (!isEmptySet(bounds.upper)) {
+				debugMsg(g, 1, "  Upper bounds: " + superglue(set2array(bounds.upper),
+					\edge : GEdge<Set<EContext>> -> prettyNode(g, edge.to), ", "));
+			}
+			if (!isEmptySet(bounds.lower)) {
+				debugMsg(g, 1, "  Lower bounds: " + superglue(set2array(bounds.lower),
+					\edge -> prettyNode(g, edge.to), ", "));
+			}
+			if (suitableUpper != []) {
+				debugMsg(g, 1, "  Working upper: "+ strGlue(suitableUpper, ", "));
+			}
+			if (suitableLower != []) {
+				debugMsg(g, 1, "  Working lower: "+ strGlue(suitableLower, ", "));
+			}
+		}
+
+		boundLimits = \ -> {
+			properLower = length(suitableLower);
+			properUpper = length(suitableUpper);
+
+			// OK, if we have to speculate, we will do so
+			spec = \ -> {
+				if (speculate) {
+					// OK, we prefer any mentioned type
+					cons = mapSet(mergeSets(lowerCons, upperCons), \c -> c.name);
+					suitable = if (suitableUpper == []) suitableLower else suitableUpper;
+					mentioned = filter(suitable, \c -> {
+						containsSet(cons, c)
+					});
+					choices = if (mentioned == []) suitable else mentioned;
+					if (choices != []) {
+						orderedBySize = sortCustom(choices, \a -> sizeUnion(g.interface, a), true);
+						choice = orderedBySize[0];
+						upperNode = insertNode(g, createConstructorNode(g, choice, eclass.infos), eclass.infos);
+						if (g.tracing > 0) {
+							debugMsg(g, 1, "Speculative choice: " + choice + " from " + strGlue(suitableLower, ", ") + " and " + strGlue(suitableUpper, ", "));
+						}
+						unifyEGraphTypes(g, r, upperNode, insertSet(eclass.infos, EContext(-1, "Speculative choice")));
+						{}
+					}
+				}
+			}
+			// Handle special cases based on number of proper types
+			if (properLower == 0 && properUpper == 0) {
+				if (isEmptySet(lowerCons) && isEmptySet(upperCons)) {
+					// All tyvars - merge all bounds
+					mergeManyTypesInClass(g, set2array(insertSet(mergeSets(eclass.subtypes, eclass.supertypes), r)))
+				} else {
+					// We have named types, but no common type
+
+					// Find those that do not go with the others
+					guiltyLower : Set<Constructor> = filterMapSet(lowerCons, \lc -> {
+						without = removeSet(lowerCons, lc);
+						sup = findCommonSupertypes(g, without);
+						if (isEmptySet(sup)) None() else Some(lc)
+					});
+					guiltyUpper : Set<Constructor> = filterMapSet(upperConsPairs, \p -> {
+						without = removeSet(upperConsPairs, p);
+						sub = findCommonSubtypes(g, without);
+						if (sub == []) None() else Some(p.first)
+					});
+
+					lowerMessage = if (isEmptySet(lowerCons)) "" else ("Has to be supertype of: " + superglue(set2array(lowerCons), \c -> prettyTypeNode(g, c), ", ") + ". ");
+					upperMessage = if (isEmptySet(upperCons)) "" else ("Has to be subtype of: " + superglue(set2array(upperCons), \c -> prettyTypeNode(g, c), ", ") + ". ");
+					lowerGuilty = if (isEmptySet(guiltyLower)) "" else ("Problematic lower type bound: " + superglue(set2array(guiltyLower), \c -> prettyTypeNode(g, c), ", ") + ". ");
+					upperGuilty = if (isEmptySet(guiltyUpper)) "" else ("Problematic upper type bound: " + superglue(set2array(guiltyUpper), \c -> prettyTypeNode(g, c), ", ")  + ". ");
+					g.onError(eclass.infos, "No type satisfies all bounds (for " + prettyNode(g, r) + "): " + lowerGuilty + upperGuilty + lowerMessage + upperMessage);
+					{}
+				}
+			} else if (properLower == 1 && suitableLower == suitableUpper) {
+				// If the bounds agree
+				lower = suitableLower[0];
+				lowerNode = insertNode(g, createConstructorNode(g, lower, eclass.infos), eclass.infos);
+				// Find the most relevant context from the bounds for better error messages
+				relevantContext = findMostRelevantContext(bounds.lower, bounds.upper);
+				unifyEGraphTypes(g, r, lowerNode, relevantContext);
+				{}
+			} else if (properLower == 1 && properUpper == 0) {
+				lower = suitableLower[0];
+				if (lowerTyvars == 0 || !canHaveSupertype(g, lower)) {
+					// One proper lower
+					lowerNode = insertNode(g, createConstructorNode(g, lower, eclass.infos), eclass.infos);
+					// Get the most relevant context from lower bounds
+					relevantContext = findMostRelevantContext(bounds.lower, makeSet());
+					unifyEGraphTypes(g, r, lowerNode, relevantContext);
+					{}
+				} else spec();
+			} else if (properUpper == 1) {
+				// One proper upper bound - use it
+				upper = suitableUpper[0];
+				if (upperTyvars == 0 || !canHaveSubtype(g, upper)) {
+					upperNode = insertNode(g, createConstructorNode(g, upper, eclass.infos), eclass.infos);
+					// Get the most relevant context from upper bounds
+					relevantContext = findMostRelevantContext(makeSet(), bounds.upper);
+					unifyEGraphTypes(g, r, upperNode, relevantContext);
+					{}
+				} else spec();
+			} else spec();
+		}
+
+		// Filter alternatives against bounds
+		filtered = filterEnhancedAlternatives(g, eclass, lowerCons, upperCons, bounds, cache);
+		if (!updateAlternatives(g, r, filtered)) {
+			boundLimits();
+		}
+	} else {
+		if (g.tracing > 2) {
+			debugMsg(g, 1, "Is not root or is resolved: " + i2s(root) + ": " + prettyNode(g, root));
+		}
+	}
+}
+
+// Helper to find the most relevant context from bound edges for better error messages
+findMostRelevantContext(lower : Set<GEdge<Set<EContext>>>, upper : Set<GEdge<Set<EContext>>>) -> Set<EContext> {
+	// Combine contexts from both bounds
+	foldSet(mergeSets(lower, upper), makeSet(), \acc, edge -> {
+		mergeSets(acc, edge.data)
+	});
+}
+
+// New function that applies both general filtering and function-specific filtering
+filterEnhancedAlternatives(g : EGraph, eclass : EClass, lowerBounds : Set<Constructor>, upperBounds : Set<Constructor>,
+	fullBounds : TypeBounds, cache : TypeGraphCache) -> Set<int> {
+    
+    // First apply the standard filtering
+    standardFiltered = filterAlternativesAgainstTypeBounds(g, eclass, lowerBounds, upperBounds, fullBounds, cache);
+    
+	tracing = g.tracing > 0/* && eclass.root == 3773*/;
+
+    // Check if this is a function type node
+    node = getNodeDef(g, eclass.root);
+    isFuncType = switch (node) {
+        Function(funcArgs, funcRet): true;
+        default: false;
+    };
+    
+    if (!isFuncType) {
+        // Not a function type, return standard filtering result
+        standardFiltered
+    } else {
+        // This is a function type, apply additional function-specific filtering
+        if (tracing) {
+            debugMsg(g, 1, "  Function bounds filter: Processing function type " + typeNodeToString(g, eclass.root, true, true));
+        }
+        
+        // Extract argument types and return type
+        funcArgsList = switch (node) {
+            Function(funcArgs, funcRet): funcArgs;
+            default: [];
+        };
+        funcReturnType = switch (node) {
+            Function(funcArgs, funcRet): funcRet;
+            default: -1;
+        };
+        
+		// Get bounds for return type
+		retBounds = getTypeBounds(g, funcReturnType, cache);
+		
+		// Debug output for return type bounds
+		if (tracing) {
+			debugMsg(g, 1, "  Function bounds filter: Return type α" + i2s(funcReturnType) + 
+				" has " + i2s(sizeSet(retBounds.upper)) + " upper bounds");
+		}
+		
+		// Apply additional function-specific filtering
+		filteredResult = filterSet(standardFiltered, \altId -> {
+			altNode = getNodeDef(g, altId);
+			// Check if alternative is a function
+			switch (altNode) {
+				Function(altArgs, altRet): {
+					// Check if argument counts match (basic sanity check)
+					if (length(altArgs) != length(funcArgsList)) {
+						if (tracing) {
+							debugMsg(g, 1, "    Alternative " + prettyNode(g, altId) + 
+								" rejected: argument count mismatch");
+						}
+						false
+					} else {
+						// Check all arguments (contravariant positions)
+						argsOk = fold(mapi(funcArgsList, \i, argTypeId -> {
+							altArgId = altArgs[i];
+							argBounds = getTypeBounds(g, argTypeId, cache);
+							
+							// For argument types (contravariant):
+							// Any lower bound of argTypeId must be a subtype of altArgId
+							argLowerCheck = foldSet(argBounds.lower, true, \acc, edge -> {
+								lowerOk = canNodesBeSubtypes(g, edge.to, altArgId);
+								if (!lowerOk && tracing) {
+									debugMsg(g, 1, "    Argument " + i2s(i) + " bound check failed: " + 
+										prettyNode(g, edge.to) + " is not a subtype of " + prettyNode(g, altArgId));
+								}
+								acc && lowerOk
+							});
+							
+							// Debug output for argument bounds
+							if (g.tracing > 1 && !argLowerCheck) {
+								debugMsg(g, 1, "    Alternative " + prettyNode(g, altId) + 
+									" rejected: argument " + i2s(i) + " bounds incompatible");
+							}
+							
+							argLowerCheck
+						}), true, \acc, ok -> acc && ok);
+						
+						// Check return type (covariant position)
+						// For return types (covariant):
+						// Any upper bound of retTypeId must be a supertype of altRetId
+						retUpperCheck = foldSet(retBounds.upper, true, \acc, edge -> {
+							upperOk = canNodesBeSubtypes(g, altRet, edge.to);
+							if (!upperOk && tracing) {
+								debugMsg(g, 1, "    Return type bound check failed: " + 
+									prettyNode(g, altRet) + " is not a subtype of " + prettyNode(g, edge.to));
+							}
+							acc && upperOk
+						});
+						
+						// Debug output for return type bounds
+						if (tracing && !retUpperCheck) {
+							debugMsg(g, 1, "    Alternative " + prettyNode(g, altId) + 
+								" rejected: return type bounds incompatible");
+						}
+						
+						// Both conditions must hold
+						argsOk && retUpperCheck
+					}
+				}
+				default: {
+					if (tracing) {
+						debugMsg(g, 1, "    Alternative " + prettyNode(g, altId) + 
+							" rejected: not a function type");
+					}
+					false; // Not a function, can't match
+				}
+			}
+		});
+		
+		// Debug output for final result
+		if (tracing) {
+			debugMsg(g, 1, "  Function bounds filter: Filtered " + 
+				i2s(sizeSet(standardFiltered) - sizeSet(filteredResult)) + 
+				" alternatives, " + i2s(sizeSet(filteredResult)) + " remain");
+		}
+
+		// If we have multiple filtered alternatives, check for common types
+		if (sizeSet(filteredResult) > 1) {
+			// Extract all types from alternatives
+			typesData = extractTypesFromAlternatives(g, filteredResult);
+			argTypesByPosition = typesData.first;
+			returnTypes = typesData.second;
+
+			// Check if return type can be unified - if all alternatives share exactly one type
+			if (sizeSet(returnTypes) == 1) {
+				commonRetType = set2array(returnTypes)[0];
+				if (tracing) {
+					debugMsg(g, 1, "All alternatives have the same return type: " +
+						prettyNode(g, commonRetType) + " for function node α" + i2s(eclass.root));
+				}
+
+				// Unify the function's return type with this common type
+				unifyEGraphTypes(g, funcReturnType, commonRetType, eclass.infos);
+				{}
+			}
+
+			// Check if any argument position can be unified
+			if (length(argTypesByPosition) == length(funcArgsList)) {
+				iteri(argTypesByPosition, \i, argTypes -> {
+					// If all alternatives share exactly one type for this argument
+					if (sizeSet(argTypes) == 1) {
+						commonArgType = set2array(argTypes)[0];
+						if (tracing) {
+							debugMsg(g, 1, "All alternatives have the same arg type at position " + i2s(i) +
+								": " + prettyNode(g, commonArgType) + " for function node α" + i2s(eclass.root));
+						}
+
+						// Unify this argument position with the common type
+						unifyEGraphTypes(g, funcArgsList[i], commonArgType, eclass.infos);
+						{}
+					}
+				});
+			}
+		}
+
+		filteredResult
+    }
+}
+
+filterAlternativesAgainstTypeBounds(g : EGraph, eclass : EClass, lowerBounds : Set<Constructor>, upperBounds : Set<Constructor>,
+	fullBounds : TypeBounds, cache : TypeGraphCache) -> Set<int> {
+	// Now filter alternatives
+	filterSet(eclass.alternatives, \altId -> {
+		// Must be compatible with the eclass's type node
+		okWithNode = if (!isTypeVar(eclass.node)) {
+			areTypesCompatible(g, eclass.root, altId)
+		} else true;
+
+		altNode = getNodeDef(g, altId);
+
+		// Must be supertype of all lower bounds
+		okLower = foldSet(lowerBounds, true, \acc, lower ->
+			acc && canTypeNodesBeSubtypes(g, lower, altNode)
+		);
+
+		// Must be subtype of all upper bounds
+		okUpper = foldSet(upperBounds, true, \acc, upper ->
+			acc && canTypeNodesBeSubtypes(g, altNode, upper)
+		);
+
+		okWithNode && okLower && okUpper
+	})
+}
+
+
+// Extracts all argument types by position and return types from a set of function alternatives
+// Returns a pair of:
+// - A list of sets, where each set contains all the types seen for that argument position
+// - A set of all return types seen across alternatives
+extractTypesFromAlternatives(g : EGraph, alternatives : Set<int>) -> Pair<[Set<int>], Set<int>> {
+	// Check if we have any alternatives to analyze
+	if (isEmptySet(alternatives)) {
+		Pair([], makeSet())
+	} else {
+		// First, determine the function arity from the first alternative
+		firstAlt = getNodeDef(g, set2array(alternatives)[0]);
+		arity = switch (firstAlt) {
+			Function(args, ret): length(args);
+			default: 0;
+		};
+
+		// Initialize result data structures
+		argTypesByPosition : [Set<int>] = generate(0, arity, \__ -> makeSet());
+		returnTypes : Set<int> = makeSet();
+
+		// Process each alternative
+		foldSet(alternatives, Pair(argTypesByPosition, returnTypes), \acc, altId -> {
+			altNode = getNodeDef(g, altId);
+
+			switch (altNode) {
+				Function(args, ret): {
+					// Add return type to our set
+					newReturnTypes = insertSet(acc.second, findEGraphRoot(g, ret));
+
+					// Add each argument type to the corresponding position's set
+					newArgTypes = foldi(args, acc.first, \i, argAcc, argId -> {
+						if (i < arity) {
+							// Get canonical root ID for the arg
+							rootArgId = findEGraphRoot(g, argId);
+							// Update the set at this position
+							replace(argAcc, i, insertSet(argAcc[i], rootArgId))
+						} else {
+							// This shouldn't happen if all alternatives have same arity
+							argAcc
+						}
+					});
+
+					Pair(newArgTypes, newReturnTypes)
+				}
+				default: acc; // Not a function, skip it
+			}
+		});
+	}
+}
+
+
+// Updated helper function to use the precomputed closure cache
+getTypeBounds(g : EGraph, typeId : int, cache : TypeGraphCache) -> TypeBounds {
+	reachableLower = lookupTreeDef(cache.lowerClosure, typeId, makeSet());
+	reachableUpper = lookupTreeDef(cache.upperClosure, typeId, makeSet());
+	TypeBounds(reachableLower, reachableUpper)
+}

@@ -153,25 +153,47 @@ public class FlowJwt extends NativeHost {
 		return builder.sign(algorithm);
 	}
 
-	public static String createJwtAlgorithm(String key, String jsonClaims, String algorithm) {
+	public static String createJwtAlgorithm(String key, String jsonClaims, String algorithm, String kid) {
 		try {
 			Algorithm alg = null;
+			Map<String, Object> headerClaims = new HashMap<>();
 			if (algorithm.equals("HS256")) {
 				alg = Algorithm.HMAC256(key);
+				if (kid != "") {
+					return "Error: kid is not supported";
+				}
 			} else if (algorithm.equals("HS384")) {
 				alg = Algorithm.HMAC384(key);
+				if (kid != "") {
+					return "Error: kid is not supported";
+				}
 			} else if (algorithm.equals("HS512")) {
 				alg = Algorithm.HMAC512(key);
+				if (kid != "") {
+					return "Error: kid is not supported";
+				}
 			} else if (algorithm.equals("RS256")) {
 				alg = Algorithm.RSA256(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
+				if (kid != "") {
+					headerClaims = new HashMap<>();
+					headerClaims.put("kid", kid);
+				}
 			} else if (algorithm.equals("RS384")) {
 				alg = Algorithm.RSA384(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
+				if (kid != "") {
+					headerClaims = new HashMap<>();
+					headerClaims.put("kid", kid);
+				}
 			} else if (algorithm.equals("RS512")) {
 				alg = Algorithm.RSA512(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
+				if (kid != "") {
+					headerClaims = new HashMap<>();
+					headerClaims.put("kid", kid);
+				}
 			} else {
 				return "Error: Algorithm not supported";
 			}
-			JWTCreator.Builder builder = JWT.create().withPayload(jsonClaims);
+			JWTCreator.Builder builder = (headerClaims == null ? JWT.create() : JWT.create()).withHeader(headerClaims).withPayload(jsonClaims);
 			return builder.sign(alg);
 		} catch (Exception e) {
 			// Some exceptions have a null getMessage value
