@@ -9,7 +9,8 @@ class HTMLStage extends NativeWidgetClip {
 	public var isHTMLStage = true;
 	private var clips : Map<String, FlowContainer> = new Map<String, FlowContainer>();
 	private var stageRect : Dynamic;
-	private var callbackFn = null;
+	private var metricsFn = null;
+	private var metricsBaselineByTop : Bool = true;
 	public var isInteractive : Bool = true;
 	public function new(width : Float, height : Float) {
 		super();
@@ -114,8 +115,9 @@ class HTMLStage extends NativeWidgetClip {
 		return;
 	}
 
-	public function setInspectHtmlStage(callbackFn : Float -> Float -> Void) : Void {
-		this.callbackFn = callbackFn;
+	public function setInspectHtmlStage(baselineByTop : Bool, callbackFn : Float -> Float -> Float -> Void) : Void {
+		this.metricsFn = callbackFn;
+		this.metricsBaselineByTop = baselineByTop;
 		updateStageWH();
 		// TODO : Get rid of timer
 		Native.timer(100, function () {
@@ -125,7 +127,7 @@ class HTMLStage extends NativeWidgetClip {
 
 	public function updateStageWH() : Void {
 		// untyped console.log('updateStageWH', nativeWidget != null, this.callbackFn != null);
-		if (nativeWidget != null && this.callbackFn != null) {
+		if (nativeWidget != null && this.metricsFn != null) {
 			RenderSupport.once("drawframe", function() {
 				if (nativeWidget != null) {
 					var prevW = nativeWidget.style.width;
@@ -136,14 +138,47 @@ class HTMLStage extends NativeWidgetClip {
 					nativeWidget.style.height = null;
 
 					var bRect = nativeWidget.getBoundingClientRect();
-					this.callbackFn(bRect.width, bRect.height);
+					var width = bRect.width;
+					untyped console.log('prevW', prevW);
+					untyped console.log('width', width);
+					var height = bRect.height;
 
+					if (width != prevW || height != prevH) {
+						var baseline = calculateBaseline();
+						this.metricsFn(width, height, baseline);
+					}
+					
 					nativeWidget.style.width = prevW;
 					nativeWidget.style.height = prevH;
 					nativeWidget.style.maxWidth = null;
 				}
 			});
 		}
+	}
+
+	private function calculateBaseline() : Float {
+		var baseline = height;
+
+		var lastChildren = this.children[this.children.length - 1];
+
+		if (HaxeRuntime.instanceof(lastChildren, TextClip)) {
+			var childBaseline =  untyped lastChildren.getTextMetrics()[0];
+			untyped console.log('childBaseline', childBaseline);
+			if (metricsBaselineByTop) {
+				baseline = childBaseline;
+			} else {
+				var range = Browser.document.createRange();
+				range.selectNodeContents(nativeWidget);
+				var rects = range.getClientRects();
+
+				if (rects.length > 0) {
+					var lastRect = rects[rects.length - 1];
+					baseline = lastRect.y + childBaseline;
+				}
+			}
+		}
+
+		return baseline;
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
