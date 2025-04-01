@@ -144,20 +144,22 @@ class HTMLStage extends NativeWidgetClip {
 						maxWidth = Math.max(maxWidth, rect.x + rect.width);
 					}
 
-					var baseline = bRect.height;
+					var paragraphHeight = bRect.height;
+					var baseline : Float = bRect.height;
 
 					var lastChildren = this.children[this.children.length - 1];
 					if (HaxeRuntime.instanceof(lastChildren, TextClip)) {
-						var childBaseline = untyped lastChildren.getTextMetrics()[0];
+						paragraphHeight -= untyped lastChildren.style.leading;
+						var childBaseline : Float = untyped lastChildren.getTextMetrics()[0];
 						if (metricsBaselineByTop) {
 							baseline = childBaseline;
 						} else if (rects.length > 0) {
 							var lastRect = rects[rects.length - 1];
-							baseline = lastRect.y - bRect.y + childBaseline;
+							baseline = paragraphHeight + (childBaseline - lastRect.height);
 						}
 					}
 
-					this.metricsFn(maxWidth - bRect.x, bRect.height, baseline);
+					this.metricsFn(maxWidth - bRect.x, paragraphHeight, baseline);
 
 					nativeWidget.style.height = prevH;
 				}
