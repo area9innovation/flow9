@@ -32,7 +32,7 @@ export {
 		retypecheckedCount : ref int,
 	);
 
-	CompileStatus ::= CompileNotSeen, CompileInProgress, CompileParsed, CompileTyped, CompileNeedsRecheck, CompileFailure;
+	CompileStatus ::= CompileNotSeen, CompileInProgress, CompileParsed, CompileTyped, CompileNeedsRecheck, CompileFailure, CompilePendingIncremental;
 		CompileNotSeen();
 		// We are currently compiling this file
 		CompileInProgress();
@@ -44,6 +44,8 @@ export {
 		CompileNeedsRecheck(module : DModule, changedIds : Set<string>);
 		// We had an error compiling this file
 		CompileFailure(error : string);
+		// An incremental file waiting for its dependencies to be typed
+		CompilePendingIncremental(module : DModule, pendingDeps : [string]);
 }
 
 makeCompileState(config : CompilerConfig, onError : (string) -> void) -> CompileState {
@@ -62,19 +64,21 @@ makeCompileState(config : CompilerConfig, onError : (string) -> void) -> Compile
 summarizeCompileStatus(state : CompileState) -> string {
 	values = valuesConcurrentHashMap(state.compileStatus);
 	// getTreeValues();
-	counts = fold(values, [0, 0, 0, 0, 0, 0, 0], \acc, s -> {
+	counts = fold(values, [0, 0, 0, 0, 0, 0, 0, 0], \acc, s -> {
 		switch (s) {
 			CompileNotSeen(): replace(acc, 0, acc[0] + 1);
 			CompileInProgress(): replace(acc, 1, acc[1] + 1);
 			CompileParsed(_): replace(acc, 2, acc[2] + 1);
 			CompileFailure(_): replace(acc, 3, acc[3] + 1);
 			CompileTyped(_): replace(acc, 4, acc[4] + 1);
-			CompileNeedsRecheck(_, __): replace(acc, 5, acc[5] + 1);}
+			CompileNeedsRecheck(_, __): replace(acc, 5, acc[5] + 1);
+			CompilePendingIncremental(_, __): replace(acc, 6, acc[6] + 1);}
 	});
 
 	"Parsed: " + i2s(counts[2]) 
 	+ ", typed: " + i2s(counts[4] - ^(state.reusedIncrementalCount)) 
 	+ ", needs recheck: " + i2s(counts[5])
+	+ ", pending incremental: " + i2s(counts[6])
 	+ ", errors: " + i2s(counts[3]) 
 	+ ", used incremental: " + i2s(^(state.reusedIncrementalCount))
 	+ ", retypechecked: " + i2s(^(state.retypecheckedCount))

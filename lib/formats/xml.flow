@@ -281,6 +281,96 @@ makeTextParser(parameters : [XmlParsingOption]) -> (string, DynamicBehaviour<Xml
 	}
 }
 
+// Function to find the proper end of an XML tag, accounting for attribute values that might contain angle brackets
+// <span data-mathml="<span>data-mathml-internal-span</span>">
+findTagEnd(s : string, i : int, inQuotes : bool, inApos : bool) -> int {
+	l = strlen(s);
+	if (i >= l) {
+		-1; // Base case - reached end of string without finding closing bracket
+	} else {
+		ch = getCharAt(s, i);
+		
+		if (ch == "\"" && (i == 0 || getCharAt(s, i-1) != "\\")) {
+			// Toggle quote state (if not escaped)
+			findTagEnd(s, i + 1, !inQuotes, inApos);
+		} else if (ch == "'" && (i == 0 || getCharAt(s, i-1) != "\\")) {
+			// Toggle apostrophe state (if not escaped)
+			findTagEnd(s, i + 1, inQuotes, !inApos);
+		} else if (ch == ">" && !inQuotes && !inApos) {
+			// Found the end of the tag, but only if not inside quotes
+			i;
+		} else {
+			// Keep searching
+			findTagEnd(s, i + 1, inQuotes, inApos);
+		}
+	}
+}
+
+doParseXmlFixed(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool) -> void {
+	l = strlen(s);
+	tagStart = strIndexOf(s, "<");
+	if (tagStart == -1) {
+		// OK, the rest is just text
+		if (l != 0) {
+			parseText(s, events);
+		}
+		// Signal the end!
+		next(events, XmlEndEvent());
+	} else if (tagStart == 0) {
+		// We have a tag or comment!
+		if (startsWith(s, "<!--")) {
+			endComment = strIndexOf(substring(s, 4, l - 4), "-->");
+			next(events, XmlCommentEvent(substring(s, 4, endComment)));
+			doParseXmlFixed(strRight(s, endComment + 7), events, parseText, validateNames);
+		} else if (startsWith(s, "<![CDATA[")) {
+			endComment = strIndexOf(substring(s, 9, l - 9), "]]>");
+			next(events, XmlTextEvent(substring(s, 9, endComment)));
+			doParseXmlFixed(strRight(s, endComment + 12), events, parseText, validateNames);
+		} else {
+			// It's a tag
+			endTag = findTagEnd(s, 1, false, false);
+			
+			if (endTag == -1) {
+				// Couldn't find a proper end tag, treat as text
+				parseText(strLeft(s, 1), events);
+				// Recursively handle the rest
+				doParseXmlFixed(substring(s, 1, l - 1), events, parseText, validateNames);
+			} else {
+				tag = strLeft(s, endTag + 1);
+				event = parseTag(tag);
+
+				ok = if (validateNames) {
+					// Do a sanity check on the tag name and attribute names
+					tagValid = isValidXmlName(event.tag);
+					atts = switch (event : XmlTagEvent) {
+						XmlEmptyElement(t, attrs): attrs;
+						XmlElementStart(t, attrs): attrs;
+						XmlProcessingEvent(t, attrs): attrs;
+						default: [];
+					};
+					tagValid && forall(atts, \a : XmlAttribute -> isValidXmlName(a.key));
+				} else true;
+				
+				if (ok) {
+					// Everything looks good, so parse and send that
+					next(events, event);
+					// And then do the rest...
+					doParseXmlFixed(substring(s, endTag + 1, l - endTag - 1), events, parseText, validateNames);
+				} else {
+					// If it does not pass as a valid names, change our mind and treat this like text
+					parseText(strLeft(s, 1), events);
+					// Recursively handle the rest
+					doParseXmlFixed(substring(s, 1, l - 1), events, parseText, validateNames);
+				}
+			}
+		}
+	} else {
+		// Before the tag, there is some text
+		parseText(strLeft(s, tagStart), events);
+		// Recursively handle the rest
+		doParseXmlFixed(substring(s, tagStart, l - tagStart), events, parseText, validateNames);
+	}
+};
 
 doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool) -> void {
 	l = strlen(s);
@@ -367,7 +457,12 @@ isRestAValidName(t : string, i : int) -> bool {
 }
 
 parseXmlWithStrategy(s, events, strategy) {
-	doParseXml(s, events, makeTextParser(strategy), contains(strategy, XmlValidateNames()))
+	if (isUrlParameterTrue("new")) {
+		doParseXmlFixed(s, events, makeTextParser(strategy), contains(strategy, XmlValidateNames()))
+	} else {
+		doParseXml(s, events, makeTextParser(strategy), contains(strategy, XmlValidateNames()))
+	}
+	
 }
 
 

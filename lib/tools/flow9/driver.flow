@@ -39,6 +39,7 @@ statusToString(status : CompileStatus) -> string {
 		CompileTyped(__): "typed";
 		CompileNeedsRecheck(__, __): "needs recheck";
 		CompileFailure(__): "failed";
+		CompilePendingIncremental(__, __): "pending incremental";
 	}
 }
 
@@ -273,6 +274,57 @@ typecheckQueue(state : CompileState, onDone : () -> void) -> void {
 	} else {
 		ok = typecheckFlow9s(state, set2array(readyToType));
 		if (forall(ok, \b -> b)) {
+			// Check if any pending incremental files can now be promoted
+			// We need to work with key-value pairs since we need the paths
+			allFiles = keysConcurrentHashMap(state.compileStatus);
+			
+			// Find all pending incremental files in the compile status
+			pendingIncrementals = fold(allFiles, [], \acc, fullPath -> {
+				status = getCompileStatus(state, fullPath);
+				switch (status) {
+					CompilePendingIncremental(module, pendingDeps): {
+						// Get the file path for dependency tracking
+						filePath = module.flowpath;
+						
+						// Check if all dependencies are now typed
+						nonTyped = filter(pendingDeps, \i -> !isTypeChecked(state, i));
+						
+						if (nonTyped == []) {
+							// All dependencies are now typed, add to promotion list
+							arrayPush(acc, Pair(fullPath, module));
+						} else {
+							acc;
+						}
+					}
+					CompileNotSeen(): acc;
+					CompileInProgress(): acc;
+					CompileParsed(module): acc;
+					CompileTyped(module): acc;
+					CompileNeedsRecheck(module, changedIds): acc;
+					CompileFailure(error): acc;
+				}
+			});
+			
+			// Promote any files that are ready
+			if (pendingIncrementals != []) {
+				debugLog(state, 1, "Promoting " + i2s(length(pendingIncrementals)) + " pending incremental files to typed");
+				
+				iter(pendingIncrementals, \pair -> {
+					fullPath = pair.first; // This is already the full filesystem path
+					module = pair.second;
+					filePath = module.flowpath; // Flow path for dependency tracking
+					
+					debugLog(state, 0, "Promoting " + filePath + " to typed as all dependencies are now satisfied");
+					
+					// Update status to typed
+					setCompileStatus(state, fullPath, CompileTyped(module));
+					
+					// Mark as resolved in dependency tracker
+					processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, filePath));
+					{}
+				});
+			}
+			
 			typecheckQueue(state, onDone);
 		} else {
 			debugLog(state, 1, "Typechecking failed, stopping");
@@ -321,9 +373,7 @@ parseFlow9(state : CompileState, file : string) -> CompileStatus {
 			switch (maybeModule) {
 				Some(module): {
 					debugLog(state, 0, "Loaded module from incremental cache: " + file);
-					// We have a cached module, use it
-					setCompileStatus(state, fullpath, CompileTyped(module));
-
+					
 					// Still register imports for further processing
 					imports = map(module.imports, \i -> i.path + ".flow");
 					nonTyped = filter(imports, \i -> !isTypeChecked(state, i));
@@ -340,11 +390,22 @@ parseFlow9(state : CompileState, file : string) -> CompileStatus {
 					processConcurrentState(state.dependencies, \dt -> addDependencies(dt, file, nonTyped));
 					add2ConcurrentSet(state.parseQueue, nonTyped);
 
-					// Mark ourselves as typed to clear out other things to type
-					processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
-
-					// This is typed now!
-					CompileTyped(module);
+					// Check if there are any untyped dependencies
+					if (nonTyped != []) {
+						debugLog(state, 1, "Incremental module " + file + " has untyped dependencies: " + strGlue(nonTyped, ", "));
+						// We have untyped dependencies, mark as pending incremental
+						setCompileStatus(state, fullpath, CompilePendingIncremental(module, nonTyped));
+						// Return pending status
+						CompilePendingIncremental(module, nonTyped);
+					} else {
+						// No untyped dependencies, we can mark as fully typed
+						debugLog(state, 1, "Incremental module " + file + " has all dependencies typed, marking as typed");
+						setCompileStatus(state, fullpath, CompileTyped(module));
+						// Mark ourselves as typed to clear out other things to type
+						processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
+						// This is typed now!
+						CompileTyped(module);
+					}
 				}
 				None(): {
 					// No cached module or outdated, parse the file
@@ -496,6 +557,10 @@ parseFlow9(state : CompileState, file : string) -> CompileStatus {
 
 			status;
 		}
+		CompilePendingIncremental(module, pendingDeps): {
+			debugLog(state, 2, "File is pending incremental: " + file + " waiting for dependencies: " + strGlue(pendingDeps, ", "));
+			status;
+		}
 	}
 }
 
@@ -540,8 +605,8 @@ doTypecheckModule(state : CompileState, file : string, fullpath : string, m : DM
 			}
 			
 			// Mark as resolved and update status
-			processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
 			setCompileStatus(state, fullpath, CompileTyped(typeenv));
+			processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
 			
 			// Save the module to incremental cache
 			if (!incrementalOff) {
@@ -568,6 +633,37 @@ typecheckFlow9(state : CompileState, file : string) -> bool {
 
 	status = getCompileStatus(state, fullpath);
 	switch (status) {
+		CompilePendingIncremental(module, pendingDeps): {
+			debugLog(state, 1, "Checking if pending incremental module " + file + " can be promoted to typed");
+			
+			// Check if all dependencies are now typed
+			nonTyped = filter(pendingDeps, \i -> !isTypeChecked(state, i));
+			
+			if (nonTyped == []) {
+				// All dependencies are typed, we can promote this module
+				debugLog(state, 0, "Promoting incremental module " + file + " to typed as all dependencies are ready");
+				setCompileStatus(state, fullpath, CompileTyped(module));
+				
+				// Mark ourselves as resolved in dependency tracker
+				processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
+				
+				true;
+			} else {
+				// Still have untyped dependencies
+				debugLog(state, 1, "Incremental module " + file + " still has untyped dependencies: " + strGlue(nonTyped, ", "));
+				
+				// Update pending dependencies list in case some got typed
+				if (length(nonTyped) != length(pendingDeps)) {
+					setCompileStatus(state, fullpath, CompilePendingIncremental(module, nonTyped));
+				}
+				
+				// Re-add to the type queue to check again later
+				add2ConcurrentSet(state.typeQueue, [file]);
+				
+				// Return true because we'll handle this later
+				true;
+			}
+		}
 		CompileParsed(m): {
 			// Check if we have a previous version of this module
 			maybeOldModule = switch (getCompileStatus(state, fullpath)) {
@@ -681,6 +777,8 @@ typecheckFlow9(state : CompileState, file : string) -> bool {
 		}
 		CompileTyped(typedModule): {
 			debugLog(state, 1, "File already typed: " + file + ", skipping");
+			// Ensure it's properly marked as resolved in dependency tracker
+			processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
 			true;
 		}
 		default: {
@@ -704,6 +802,7 @@ isTypeChecked(state : CompileState, file : string) -> bool {
 		CompileTyped(_): true;
 		CompileNeedsRecheck(_, __): true; // Needs recheck but already typed
 		CompileFailure(_): false;
+		CompilePendingIncremental(_, __): false; // Has untyped dependencies
 	}
 	if (state.config.verbose >= 3) {
 		debugLog(state, 3, "Checking if " + file + " is typed: " + b2s(result));
