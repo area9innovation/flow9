@@ -57,6 +57,8 @@ Type inference is per-file, not global.
 
 # Plan
 
+TODO: Send in all unions & structs to compiler backend, so it knows what are unions and how to expand them in switches.
+
 mwigi/mwigi/external_recursives/highlighter.flow:84
 
 Two alternatives, where both would work, but for some reason, we do not pick one.
