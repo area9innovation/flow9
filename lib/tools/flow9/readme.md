@@ -59,7 +59,276 @@ Type inference is per-file, not global.
 
 flow9 /home/alstrup/area9/innovation/components/mwigi/mwigi/external_recursives/highlighter.flow tracing=2 name=makeWigiFormulaHelperExt trace=mw_material_utils >out2.c
 
-We have a alternative, which should be DynamicBehaviour<int>, but in another place, we resolve it to Behaviour<int> because we do not notice that there is an implicit constrain due to an alternative.
+
+# Analysis of the Subtype2.flow Type Inference Issue
+
+Based on the debug trace and the code snippet, I can see this is a complex issue with the Flow9 type inference system around handling alternatives in function field access.
+
+## The Problem
+
+Let me explain what's happening:
+
+1. We have two struct types with a `.position` field:
+   - `Style1(position: DynamicBehaviour<int>)`
+   - `Style2(position: Behaviour<int>)`
+
+2. We have two functions:
+   - `getValue(a: Behaviour<?>)` - accepts any `Behaviour` (including `DynamicBehaviour`)
+   - `next(a: DynamicBehaviour<?>, v: ?)` - specifically requires `DynamicBehaviour`
+
+3. In the `foo()` function, we create two functions that use a `state` parameter:
+   ```flow
+	 fn1 = \state -> {
+		 curPos = getValue(state.position); // Just needs Behaviour
+	 };
+	 fn2 = \state -> {
+		 next(state.position, 1); // Specifically needs DynamicBehaviour
+	 }
+```
+
+4. The error happens because the type system resolves the type too early:
+   - When processing `fn1`, `state.position` gets the type alternatives `Behaviour<int>` or `DynamicBehaviour<int>`
+   - Since `getValue` only requires `Behaviour<?>`, the system resolves `state.position` to `Behaviour<int>`
+   - Later in `fn2`, we need `state.position` to be `DynamicBehaviour<int>`, causing a conflict
+
+## The Specific Issue in the Trace
+
+The critical part of the trace shows:
+
+```
+Resolving bounds for α20: (α5) -> α11 ={α12, α20*} ∈{ (Style1=α13) -> DynamicBehaviour<int=α26>=α15, (Style2=α17) -> Behaviour<int=α26>=α18 }
+Function bounds filter: Return type α11 has 1 upper bounds
+Multiple return types found: Behaviour<int=α26>=α18, DynamicBehaviour<int=α26>=α29
+
+Resolving bounds for α11: α11=α11
+Upper bounds: Behaviour<α8>=α9
+Working upper: Behaviour
+Unifying α11=α11 and Behaviour<α41>=α42
+```
+
+The problem is that when resolving `α11` (the type of `state.position`), the system only sees an upper bound of `Behaviour<α8>` and decides to resolve it to `Behaviour<α41>`. But this is premature since later we need it to be `DynamicBehaviour<int>`.
+
+
+
+
+# Specification: Minimal Alternative-Aware Type Resolution
+
+## 1. Data Structure Changes
+
+Extend the `EClass` structure by adding a field to track which alternatives this type is part of:
+
+```flow
+EClass(
+	node : TypeNode,         // What is this node?
+	mutable root : int,      // Representative ID
+	alternatives : Set<int>, // If not empty, we know this eclass has to be exactly one of these alternative types
+	subtypes : Set<int>,     // Subtypes of this eclass
+	supertypes : Set<int>,   // Supertypes of this eclass
+	subtypeContexts : Set<TypeRelationContext>,   // Contexts for subtype relationships
+	supertypeContexts : Set<TypeRelationContext>, // Contexts for supertype relationships
+	infos : Set<EContext>,   // For error reporting, we keep source infos
+	// NEW: Set of alternative sets this eclass is part of
+	partOfAlternatives : Set<int>  // IDs of alternative sets this type is a component of
+);
+```
+
+## 2. Alternative Registration
+
+When constructing alternatives for field access, function arguments, etc., update the code to track the relationship between component types and their parent alternatives:
+
+```flow
+// When creating a new alternative set
+// This would be in the code that handles field access (state.position)
+registerAlternativeComponents(g : EGraph, alternativeId : int, componentIds : [int]) -> void {
+	iter(componentIds, \componentId -> {
+		componentRoot = findEGraphRoot(g, componentId);
+		eclass = getEClassDef(g, componentRoot);
+
+		// Only update if we're adding a new alternative dependency
+		if (!containsSet(eclass.partOfAlternatives, alternativeId)) {
+			// Add this alternative to the component's dependencies
+			newEClass = EClass(
+				eclass.node,
+				eclass.root,
+				eclass.alternatives,
+				eclass.subtypes,
+				eclass.supertypes,
+				eclass.subtypeContexts,
+				eclass.supertypeContexts,
+				eclass.infos,
+				insertSet(eclass.partOfAlternatives, alternativeId)
+			);
+
+			updateEClass(g, componentRoot, newEClass);
+		}
+	});
+}
+```
+
+## 3. Handling EClass Merging
+
+When two EClasses are merged, we need to update the partOfAlternatives sets:
+
+```flow
+// In mergeEClasses function
+mergeEClasses(g : EGraph, id1 : int, id2 : int) -> int {
+	// Find the canonical representatives
+	r1 = findEGraphRoot(g, id1);
+	r2 = findEGraphRoot(g, id2);
+
+	if (r1 == r2) {
+		// Already merged
+		r1
+	} else {
+		// Get the two eclasses
+		ec1 = getEClassDef(g, r1);
+		ec2 = getEClassDef(g, r2);
+
+		// Merge all fields as before...
+
+		// ADDED: Merge the partOfAlternatives sets
+		mergedPartOfAlts = mergeSets(ec1.partOfAlternatives, ec2.partOfAlternatives);
+
+		// Create the merged eclass with all merged properties
+		merged = EClass(
+			// other fields as before...
+			mergedPartOfAlts
+		);
+
+		// Update as before...
+		updateEClass(g, r1, merged);
+
+		// Continue with existing merge logic...
+		r1
+	}
+}
+```
+
+## 4. Field Access Alternative Handling
+
+When processing a field access that creates alternatives (e.g., state.position), register both the owner type and the result type:
+
+```flow
+// When processing field access with multiple possible struct types
+processFieldAccessAlternatives(g : EGraph, ownerTypeId : int, fieldName : string, resultTypeId : int, alternatives : Set<int>) -> void {
+	// Register that both the owner type and result type are components of this alternative set
+	registerAlternativeComponents(g, resultTypeId, [ownerTypeId, resultTypeId]);
+
+	// Handle each alternative to extract return types
+	iter(set2array(alternatives), \altId -> {
+		altFnNode = getNodeDef(g, altId);
+		switch (altFnNode) {
+			Function(__, returnTypeId): {
+				// The return type is also part of this alternative
+				registerAlternativeComponents(g, resultTypeId, [returnTypeId]);
+			}
+			default: {}
+		}
+	});
+}
+```
+
+## 5. Delay Resolution Logic
+
+Modify the resolution logic in `resolveEClassBounds` to delay resolution when a type is part of alternatives:
+
+```flow
+resolveEClassBounds(g : EGraph, root : int, bounds : TypeBounds, speculate : bool, cache : TypeGraphCache) -> void {
+	r = findEGraphRoot(g, root);
+	if (r == root && !isTopDecidedNode(g, r)) {
+		// Existing code to calculate bounds...
+
+		eclass = getEClassDef(g, r);
+
+		// NEW: Check if this is part of any alternative sets
+		shouldDelay = !isEmptySet(eclass.partOfAlternatives) && !speculate;
+
+		// If we should delay resolution, only update alternatives, don't resolve to a single type
+		if (shouldDelay) {
+			// Only filter alternatives against bounds, don't resolve to a single type yet
+			filtered = filterAlternativesAgainstTypeBounds(g, eclass, lowerCons, upperCons, bounds, cache);
+			if (!updateAlternatives(g, r, filtered)) {
+				// If we couldn't update alternatives, we might need to resolve anyway
+				// but be more cautious about it
+				if (g.tracing > 0) {
+					debugMsg(g, 1, "Delaying full resolution for α" + i2s(r) +
+						" as it's part of alternatives: " +
+						superglue(set2array(eclass.partOfAlternatives),
+							\altId -> "α" + i2s(altId), ", "));
+				}
+			}
+		} else {
+			// Existing resolution logic...
+			boundLimits();
+		}
+	}
+}
+```
+
+## 6. Speculative Resolution Pass
+
+Add a final pass that resolves any remaining types after all constraints are known:
+
+```flow
+// After main propagateBounds
+resolveDelayedEClasses(g : EGraph) -> void {
+	// Find all eclasses that were delayed due to being part of alternatives
+	delayed = filterMap(getEGraphEClasses(g), \id, eclass ->
+		if (!isEmptySet(eclass.partOfAlternatives) && isTypeVar(eclass.node))
+			Some(id)
+		else
+			None()
+	);
+
+	// Sort them to process dependent types in the right order
+	sorted = topoSortEClassDependencies(g, delayed);
+
+	// Resolve each delayed eclass with speculate=true to force resolution
+	iter(sorted, \id -> {
+		bounds = getTypeBounds(g, id, makeTypeBoundsCache(g));
+		resolveEClassBounds(g, id, bounds, true, makeTypeBoundsCache(g));
+	});
+}
+```
+
+## 7. Integration in Type Inference Pipeline
+
+In your main type inference pipeline, modify the sequence:
+
+```flow
+propagateBounds(g : EGraph, name : string, speculate : bool) -> void {
+	// Existing code...
+
+	// First pass - conservative, delay types in alternatives
+	iter(sortedNodes, \id -> {
+		// Get the reachable sets from the precomputed closures
+		reachableLower = lookupTreeDef(cache.lowerClosure, id, makeSet());
+		reachableUpper = lookupTreeDef(cache.upperClosure, id, makeSet());
+
+		resolveEClassBounds(g, id, TypeBounds(reachableLower, reachableUpper), false, cache)
+	});
+
+	// If speculate is true, do a second pass to resolve remaining delayed types
+	if (speculate) {
+		resolveDelayedEClasses(g);
+	}
+}
+```
+
+## Implementation Approach
+
+1. First, update the `EClass` structure in `types.flow` to add the `partOfAlternatives` field
+2. Modify the `EGraph` construction to initialize this field as an empty set
+3. Update the code that creates field access alternatives to register component dependencies
+4. Modify `mergeEClasses` to properly merge the partOfAlternatives sets
+5. Update `resolveEClassBounds` to delay resolution when appropriate
+6. Add the final speculative resolution pass if needed
+
+This minimal approach doesn't try to be overly smart about when to delay or how to infer from alternatives - it simply delays resolution for any type that's part of an alternative set. This addresses the specific problem in `subtype2.flow` while being conservative with changes to the type system.
+
+
+--
+
 
 TODO: Send in all unions & structs to compiler backend, so it knows what are unions and how to expand them in switches.
 
