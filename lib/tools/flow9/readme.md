@@ -57,6 +57,10 @@ Type inference is per-file, not global.
 
 # Plan
 
+flow9 /home/alstrup/area9/innovation/components/mwigi/mwigi/external_recursives/highlighter.flow tracing=2 name=makeWigiFormulaHelperExt trace=mw_material_utils >out2.c
+
+We have a alternative, which should be DynamicBehaviour<int>, but in another place, we resolve it to Behaviour<int> because we do not notice that there is an implicit constrain due to an alternative.
+
 TODO: Send in all unions & structs to compiler backend, so it knows what are unions and how to expand them in switches.
 
 mwigi/mwigi/external_recursives/highlighter.flow:84

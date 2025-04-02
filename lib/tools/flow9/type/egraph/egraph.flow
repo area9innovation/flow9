@@ -5,7 +5,7 @@ import sys/concurrent;
 
 export {
 	// Create a new empty EGraph against this interface
-	makeEGraph(interface : HModuleInterface, typars : ETypeParMap, tracing : int, onError : (Set<EContext>, string) -> void) -> EGraph;
+	makeEGraph(interface : HModuleInterface, typars : ETypeParMap, tracing : int, fineGrained : bool, onError : (Set<EContext>, string) -> void) -> EGraph;
 
 	// Core E-graph Operations
 
@@ -83,7 +83,7 @@ export {
 }
 
 // Helper to create a new empty EGraph
-makeEGraph(interface : HModuleInterface, typars : ETypeParMap, tracing : int, onError : (Set<EContext>, string) -> void) -> EGraph {
+makeEGraph(interface : HModuleInterface, typars : ETypeParMap, tracing : int, fineGrained : bool, onError : (Set<EContext>, string) -> void) -> EGraph {
 	errors = ref makeSet();
 	onErrorFn = \contexts : Set<EContext>, e -> {
 		newContexts = differenceSets(^(errors), contexts);
@@ -106,7 +106,8 @@ makeEGraph(interface : HModuleInterface, typars : ETypeParMap, tracing : int, on
 		onError,
 		errors,
 		tracing,
-		ref ""
+		ref "",
+		fineGrained
 	)
 }
 
@@ -470,29 +471,22 @@ mergeEqualClasses(g : EGraph) -> void {
 // First tries a direct lookup. If that fails, canonicalizes the graph and tries again.
 // If that fails, adds a new node.
 insertNode(g : EGraph, n : TypeNode, infos : Set<EContext>) -> int {
-	errorReporting = false;
-	switch (lookupTree(^(g.nodeIndex), n)) {
-		Some(id): {
-			if (errorReporting) {
-				eclass = getEClassDef(g, id);
-				newEclass = EClass(eclass with infos = mergeSets(eclass.infos, infos));
-				updateEClass(g, id, newEclass);
+	if (g.fineGrained) {
+		insertNewNode(g, n, infos);
+	} else {
+		switch (lookupTree(^(g.nodeIndex), n)) {
+			Some(id): {
+				findEGraphRoot(g, id)
 			}
-			findEGraphRoot(g, id)
-		}
-		None(): {
-			// Now canonicalize the node we're looking for as well
-			canonicalNode = canonicalizeNode(g, n);
-			switch (lookupTree(^(g.nodeIndex), canonicalNode)) {
-				Some(id): {
-					if (errorReporting) {
-						eclass = getEClassDef(g, id);
-						newEclass = EClass(eclass with infos = mergeSets(eclass.infos, infos));
-						updateEClass(g, id, newEclass);
+			None(): {
+				// Now canonicalize the node we're looking for as well
+				canonicalNode = canonicalizeNode(g, n);
+				switch (lookupTree(^(g.nodeIndex), canonicalNode)) {
+					Some(id): {
+						findEGraphRoot(g, id)
 					}
-					findEGraphRoot(g, id)
+					None(): insertNewNode(g, canonicalNode, infos);
 				}
-				None(): insertNewNode(g, canonicalNode, infos);
 			}
 		}
 	}
