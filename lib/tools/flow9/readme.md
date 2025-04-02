@@ -57,21 +57,11 @@ Type inference is per-file, not global.
 
 # Plan
 
-flow9 /home/alstrup/area9/innovation/components/mwigi/mwigi/external_recursives/highlighter.flow tracing=2 name=makeWigiFormulaHelperExt trace=mw_material_utils >out2.c
-
-
---
-
 
 TODO: Send in all unions & structs to compiler backend, so it knows what are unions and how to expand them in switches.
 
-mwigi/mwigi/external_recursives/highlighter.flow:84
-
-Two alternatives, where both would work, but for some reason, we do not pick one.
-
-in this type checker, as a final phase, we do subtype_unification. However, before we do that, we could do the bounds resolution in a speculative mode. The difference is that if we have a unique top-type, then we do not require no tyvars above, but can still resolve with that. Can you implement this change? We have a test case in md2string.flow which currently does not type.
-
 - Figure out how to reduce memory usage from incremental use. Share the module interface? Streamline it, to only keep exported for the current module?
+  Build a union-find table for all htypeschemas, and have a table with them. that should reduce memory usage.
 
 - Incremental is wrong somehow. We changed MSortItem to not be polymorphic, but incremental files kept it
 
