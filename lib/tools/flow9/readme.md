@@ -139,28 +139,16 @@ When constructing alternatives for field access, function arguments, etc., updat
 ```flow
 // When creating a new alternative set
 // This would be in the code that handles field access (state.position)
-registerAlternativeComponents(g : EGraph, alternativeId : int, componentIds : [int]) -> void {
-	iter(componentIds, \componentId -> {
+registerAlternativeComponents(g : EGraph, alternativeId : int) -> void {
+	// Extract tyvars in the node of this eclass
+	eclass = getEClassDef(g, alternativeId);
+
+	// Then, for each, record the dependency:
+
 		componentRoot = findEGraphRoot(g, componentId);
 		eclass = getEClassDef(g, componentRoot);
-
-		// Only update if we're adding a new alternative dependency
-		if (!containsSet(eclass.partOfAlternatives, alternativeId)) {
-			// Add this alternative to the component's dependencies
-			newEClass = EClass(
-				eclass.node,
-				eclass.root,
-				eclass.alternatives,
-				eclass.subtypes,
-				eclass.supertypes,
-				eclass.subtypeContexts,
-				eclass.supertypeContexts,
-				eclass.infos,
-				insertSet(eclass.partOfAlternatives, alternativeId)
-			);
-
-			updateEClass(g, componentRoot, newEClass);
-		}
+		newEclass = EClass(eclass with partOfAlternatives = insertSet(eclass.partOfAlternatives, alternativeId));
+		updateEClass(g, componentRoot, newEClass);
 	});
 }
 ```
