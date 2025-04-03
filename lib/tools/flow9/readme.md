@@ -57,19 +57,14 @@ Type inference is per-file, not global.
 
 # Plan
 
-
-TODO: Send in all unions & structs to compiler backend, so it knows what are unions and how to expand them in switches.
+/home/alstrup/area9/innovation/lib/meta_app_lib/subtable_material.flow:264:80: .m: Expected same number of arguments SubTableCustomNamedButton<α27390>=α27392 and SubTableCustomNamedButton=α34425
 
 - Figure out how to reduce memory usage from incremental use. Share the module interface? Streamline it, to only keep exported for the current module?
   Build a union-find table for all htypeschemas, and have a table with them. that should reduce memory usage.
 
 - Incremental is wrong somehow. We changed MSortItem to not be polymorphic, but incremental files kept it
 
-unifyLubInfoTypes should take EContext instead of just info?
-
 EContext can contain names of vars we have to lookup and print the type of
-
-material/internal/material_icons_list.flow:  Very slow.
 
 find out why passing many files to compile does not work in our driver. We parse them, but they never reach type checking for some reason.
 
