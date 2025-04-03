@@ -1,0 +1,67 @@
+import tools/flow9/desugar/dexp;
+import tools/flow9/utils/rec;
+
+export {
+	extractPPolyTypes(acc : Set<string>, typ : DType) -> Set<string>;
+	extractPPolyTypess(acc : Set<string>, types : [DType]) -> Set<string>;
+
+	extractPExpTypars(acc : Set<string>, e : DExp) -> Set<string>;
+	extractPExpsTypars(acc : Set<string>, es : [DExp]) -> Set<string>;
+}
+
+extractPPolyTypes(acc : Set<string>, typ : DType) -> Set<string> {
+	switch (typ) {
+		DArrayType(type, info): extractPPolyTypes(acc, type);
+		DAutoType(info): acc;
+		DBoolType(info): acc;
+		DDoubleType(info): acc;
+		DFlowType(info): acc;
+		DFnType(args, returnType, info): fold(args, extractPPolyTypes(acc, returnType), extractPPolyTypes);
+		DIntType(info): acc;
+		DNativeType(info): acc;
+		DPolyType(id, info): insertSet(acc, id);
+		DRefType(type, info): extractPPolyTypes(acc, type);
+		DStringType(info): acc;
+		DTypename(uid, typars, info): extractPPolyTypess(acc, typars);
+		DVoidType(info): acc;
+	}
+}
+
+extractPPolyTypess(acc : Set<string>, types : [DType]) -> Set<string> {
+	fold(types, acc, extractPPolyTypes);
+}
+
+extractPExpTypars(acc : Set<string>, e : DExp) -> Set<string> {
+	switch (e) {
+		DLambda(args, body, info): {
+            // First collect type parameters from argument types
+            argsTypars = fold(args, acc, \a, arg -> 
+                extractPPolyTypes(a, arg.type)
+            );
+            // Then collect from the body
+            extractPExpTypars(argsTypars, body)
+		}
+		DBuiltin(op, args, info): {
+			nacc = switch (op) {
+				DCast(toType): extractPPolyTypes(acc, toType);
+				DIsSubType(type): extractPPolyTypes(acc, type);
+				DComparison(): acc;
+				DCalculation(): acc;
+				DDeref(): acc;
+				DDot(field): acc;
+				DRef(): acc;
+				DAssign(): acc;
+				DIndex(): acc;
+				DMutableAssign(field): acc;
+				DPipe(): acc;
+				DSequence(): acc;
+			}
+			extractPExpsTypars(nacc, args);
+		}
+		default: extractPExpsTypars(acc, getDExpChildren(e));
+	}
+}
+
+extractPExpsTypars(acc : Set<string>, es : [DExp]) -> Set<string> {
+	fold(es, acc, extractPExpTypars);
+}

@@ -1,0 +1,98 @@
+import tools/flow9/dexp/desugar;
+import tools/flow9/incremental/modules;
+import ds/set;
+import sys/concurrent;
+
+export {
+	// A structure to help do lookups in the modules import tree
+	BLookupFromImport(
+		kind : string,
+		// A function to lookup a name in a module (not transitively)
+		lookup : (BModule, string) -> Maybe<?>,
+		// A function to check if this name is exported
+		isExported : (BModule, string) -> bool,
+		// An error reporter
+		onError : (flowpath : string, value : ?, error : string) -> void,
+		// A cache to speed up the matching
+		cache : ref Tree<string, ?>,
+	);
+	
+	// This is the main function to find a given id
+	lookupFromImport(modules : BModules, m : BLookupFromImport<?>, imports : [DImport], name : string) -> Maybe<?>;
+
+	// Find all hits across all modules. Only used for types
+	lookupsFromImport(modules : BModules, m : BLookupFromImport<[?]>, imports : [DImport], name : string) -> [?];
+}
+
+lookupFromImport(modules : BModules, m : BLookupFromImport<?>, imports : [DImport], name : string) -> Maybe<?> {
+	doImportLookup(modules, m, imports, name, ref makeSet());
+
+	// TODO: If none, then we could check all modules to try to find it as a fallback
+}
+
+doImportLookup(modules : BModules, m : BLookupFromImport<?>, imports : [DImport], name : string, pathVisited : ref Set<string>) -> Maybe<?> {
+	seen = lookupTree(^(m.cache), name);
+	seen ?? {
+		Some(seen)
+	} : {
+		// TODO: We could track visited and avoid infinite recursion in import loops
+		mfind = fold(imports, None(), \acc, impor : DImport -> {
+			if (acc == None() && !containsSet(^pathVisited, impor.path)) {
+				module : BModule = getCachedBModule(modules, impor.path);
+				pathVisited := insertSet(^pathVisited, impor.path);
+				// TODO: Maybe check exported first to speed this up?
+				modfind = m.lookup(module, name);
+				switch (modfind) {
+					None(): {
+						// OK, not found in our module, so we have to check the imports
+						doImportLookup(modules, m, module.imports, name, pathVisited);
+					}
+					Some(f): {
+						if (!m.isExported(module, name)) {
+							doImportLookup(modules, m, module.imports, name, pathVisited);
+						} else {
+							Some(f);
+						}
+					}
+				}
+			} else acc;
+		});
+		mfind ?? {
+			// OK, add to the cache
+			// TODO: We could add a "strict" mode where we do not do this
+			// and the name lookup will be import-exact
+			m.cache := setTree(^(m.cache), name, mfind);
+			Some(mfind);
+		} : {
+			None();
+		}
+	}
+}
+
+
+builtinTypeNames = ["", "?", "??", "???", "????", "void", "bool", "int", "double", "string", "flow", "array", "ref"];
+
+lookupsFromImport(modules : BModules, m : BLookupFromImport<[?]>, imports : [DImport], name : string) -> [?] {
+	if (contains(builtinTypeNames, name)) []
+	else {
+		doLookupsFromImport(modules, m, imports, [], name, ref makeSet())
+	}
+}
+
+doLookupsFromImport(modules : BModules, m : BLookupFromImport<[?]>, imports : [DImport], acc : [?], name : string, pathVisited : ref Set<string>) -> [?] {
+	fold(imports, acc, \acc2, impor : DImport -> {
+		if (containsSet(^pathVisited, impor.path)) {
+			// println("Skip " + impor.path);
+			acc2
+		} else {
+			module : BModule = getCachedBModule(modules, impor.path);
+			modfind = m.lookup(module, name);
+			acc3 = switch (modfind) {
+				None(): acc2;
+				Some(val): concat(acc2, val);
+			}
+			pathVisited := insertSet(^pathVisited, impor.path);
+			doLookupsFromImport(modules, m, module.imports, acc3, name, pathVisited);
+		}
+	})
+}

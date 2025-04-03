@@ -1,0 +1,200 @@
+import tools/flow9/type/types;
+import tools/flow9/type/instantiate;
+
+export {
+	/**
+	Constructs a map of field accessor functions for all structs in the given environment.
+	
+	This function traverses all the structs and generates accessor function types for each field in the structs. 
+	If multiple structs share the same field name, the accessor functions for that field are collected, and an 
+	overloaded function type (`HTypeOneOf`) is created.
+	
+	Suppose we have two structs, `Pair` and `Triple`, both with a field named `first`:
+	
+	- `Pair(first : ?, second : ??)`
+	- `Triple(first : ?, second : ??, third : ???)`
+	
+	The function will create these types for accessor functions:
+	
+	- `first(p: Pair<?, ??>) -> ?`
+	- `first(t: Triple<?, ??, >) -> ?`
+	
+	Since both accessor functions share the same field name `first`, they are collected and combined into an
+	overloaded function type using `HTypeOneOf` in the .dot type inference.
+
+	For mutable fields, setter functions are also generated with a "::=" suffix on the field name.
+	They have the type `.i::= (u : Union) -> (v : Value) -> void`, so we have the correct subtyping for the value.
+
+	For unions, setter functions are only generated when all member structs have the same field as mutable
+	with the same type.
+	*/
+	buildFieldAccessors(structs : Tree<string, HStruct>, unions : Tree<string, HUnion>, allStructs : Tree<string, HStruct>) -> Tree<string, HTypeSchema>;
+}
+
+buildFieldAccessors(structs : Tree<string, HStruct>, unions : Tree<string, HUnion>, allStructs : Tree<string, HStruct>) -> Tree<string, HTypeSchema> {
+	// Step 1: Collect accessor functions into a map from field names to lists of HType
+	fieldAccessorsMap : Tree<string, [HTypeSchema]> = if (isEmptyTree(structs)) makeTree() else makeTree1(".structname", [HTypeFn([HTypeCons("flow", [])], HTypeCons("string", []))]);
+
+	// Traverse each struct in the environment
+	fieldAccessorsMap2 = foldTree(structs, fieldAccessorsMap, \structName, struct, accFieldMap  -> {
+		processStructFields(struct, accFieldMap);
+	});
+
+	// Step 2: Process unions and add union field accessors
+	fieldAccessorsMap3 = foldTree(unions, fieldAccessorsMap2, \unionName, union, accFieldMap -> {
+		processUnionFields(union, allStructs, accFieldMap);
+	});
+
+    // Now construct HTypeAlternatives where needed
+    mapTree2(fieldAccessorsMap3, \field, schemas -> {
+        if (length(schemas) == 1) {
+            // Single accessor, just return it directly
+            schemas[0]
+        } else {
+            // Multiple accessors, create a schematic
+            HTypeAlternatives(schemas)
+        }
+    })
+}
+
+processStructFields(struct : HStruct, fieldMap : Tree<string, [HTypeSchema]>) -> Tree<string, [HTypeSchema]> {
+	typars = struct.typars; // [string]
+
+	// Construct the struct type with instantiated type variables
+	structType = HTypeCons(struct.name, map(struct.typars, \tp -> HTypeVar(tp)));
+
+	// Make the .structname accessor
+	structName = HTypeFn([structType], HTypeCons("string", []));
+	structSchema = wrapTypars(struct.typars, structName);
+	fieldMap1 = treePushToArrayValue(fieldMap, ".structname", structSchema);
+
+	// For each field in the struct
+	fold(struct.fields, fieldMap1, \accFieldMap, fieldDef -> {
+		fieldName = "." + fieldDef.field;
+
+		// Construct the accessor function type: (structType) -> fieldType
+		accessorType = HTypeFn([structType], fieldDef.type);
+
+		schema = wrapTypars(struct.typars, accessorType);
+
+		// println("Adding " + fieldName + " with type " + prettyHTypeSchema(schema) + " for struct " + struct.name);
+		// Add the accessorType to the list for this field name
+		accFieldMap1 = treePushToArrayValue(accFieldMap, fieldName, schema);
+
+        // Add setter if field is mutable
+        if (fieldDef.ismutable) {
+			// We append := to the name
+            setterName = "." + fieldDef.field + "::=";
+            setterType = HTypeFn([structType], HTypeFn([fieldDef.type], HTypeCons("void", [])));
+            setterSchema = wrapTypars(struct.typars, setterType);
+            treePushToArrayValue(accFieldMap1, setterName, setterSchema)
+        } else {
+            accFieldMap1
+        }
+	});
+}
+
+processUnionFields(union : HUnion, structs : Tree<string, HStruct>, fieldMap : Tree<string, [HTypeSchema]>) -> Tree<string, [HTypeSchema]> {
+	memberStructs = union.types; // List of HTypeCons representing member structs
+	//	println("Processing union " + union.name + " with " + superglue(memberStructs, prettyHType, " ") + " member structs");
+
+	unionType = HTypeCons(union.name, map(union.typars, \tp -> HTypeVar(tp)));
+
+	// Temporary map to collect field types for each field name
+	// Traverse each struct in the union
+	fieldCandidates : Tree<string, [HType]> = fold(memberStructs, makeTree(), \accCandidates, structType -> {
+		structName = structType.name;
+		mstruct = lookupTree(structs, structName);
+		switch (mstruct) {
+			None(): {
+				println("Something is wrong: Could not find " + structName + " from structs " + toString(getTreeKeys(structs)));
+				accCandidates; // Struct not found, do nothing
+			}
+			Some(struct): {
+				fold(struct.fields, accCandidates, \acc, fieldDef -> {
+					fieldName = "." + fieldDef.field;
+					fieldType = fieldDef.type;
+
+					// Add the field type to the candidate list for the field name
+					treePushToArrayValue(acc, fieldName, fieldType);
+				});
+			}
+		}
+	});
+
+	// Validate shared fields and ensure type consistency
+	sharedFields : Tree<string, HType> = foldTree(fieldCandidates, makeTree(), \fieldName, types, accSharedFields -> {
+		// We need all structs to have it, and it has to be unique
+		if (length(types) == length(memberStructs) && length(uniq(types)) == 1) {
+			// All types are consistent, add to shared fields
+			// println("Consistent field " + fieldName + " with type " + prettyHType(types[0]) + "  for union " + union.name);
+			setTree(accSharedFields, fieldName, types[0]);
+		} else {
+			// println("Skipping inconsistent field " + fieldName + " for union " + union.name);
+			accSharedFields; // Skip inconsistent fields
+		}
+	});
+
+
+	// Make the .structname accessor
+	unionName = HTypeFn([unionType], HTypeCons("string", []));
+	unionSchema = wrapTypars(union.typars, unionName);
+	fieldMap1 = treePushToArrayValue(fieldMap, ".structname", unionSchema);
+
+	// Generate accessor functions for shared fields
+	getters = foldTree(sharedFields, fieldMap1, \fieldName, fieldType, accFieldMap -> {
+		accessorType = HTypeFn([unionType], fieldType);
+
+		schema = wrapTypars(union.typars, accessorType);
+
+//		println("Adding accessor for shared field " + fieldName + " with type " + prettyHTypeSchema(schema));
+		treePushToArrayValue(accFieldMap, fieldName, schema);
+	});
+
+	// Generate setter functions for mutable shared fields
+	res = processUnionSetters(union, structs, getters);
+
+	if (false) {
+		traverseInOrder(res, \k, v -> {
+			println("Field " + k + " has  " + superglue(v, prettyHTypeSchema, ",  ") + " accessors");
+		});
+	}
+	res;
+}
+
+processUnionSetters(union : HUnion, structs : Tree<string, HStruct>, fieldMap : Tree<string, [HTypeSchema]>) -> Tree<string, [HTypeSchema]> {
+    memberStructs = union.types;
+
+    // Collect mutable fields info
+    mutableFields : Tree<string, [HType]> = fold(memberStructs, makeTree(), \acc, structType -> {
+        structName = structType.name;
+        mstruct = lookupTree(structs, structName);
+        switch (mstruct) {
+            None(): acc;
+            Some(struct): {
+                fold(struct.fields, acc, \fieldAcc, fieldDef -> {
+                    if (fieldDef.ismutable) {
+                        fieldName = fieldDef.field;
+                        treePushToArrayValue(fieldAcc, fieldName, fieldDef.type);
+                    } else fieldAcc
+                });
+            }
+        }
+    });
+
+    // Add setters for fields that are mutable in all structs with the same type
+    foldTree(mutableFields, fieldMap, \fieldName, types, acc -> {
+        if (length(types) == length(memberStructs) && length(uniq(types)) == 1) {
+            // Create setter function
+            unionType = HTypeCons(union.name, map(union.typars, \tp -> HTypeVar(tp)));
+            setterType = HTypeFn([unionType], HTypeFn([types[0]], HTypeCons("void", [])));
+            setterSchema = wrapTypars(union.typars, setterType);
+            treePushToArrayValue(acc, "." + fieldName + "::=", setterSchema)
+        } else acc
+    })
+}
+
+wrapTypars(typars : [string], type : HType) -> HTypeSchema {
+	if (typars == []) type
+	else HTypeForAll(typars, type)
+}

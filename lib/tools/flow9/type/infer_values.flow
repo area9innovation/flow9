@@ -1,0 +1,71 @@
+import tools/flow9/desugar/pretty;
+import tools/flow9/type/unify;
+import tools/flow9/type/egraph/dtype;
+import tools/flow9/type/instantiate;
+
+export {
+	inferDValue(env : HTypeEnv, inferTypeDExp : (HTypeEnv, DExp, HTypeExpect) -> int, 
+		dexp : DValue, expected : HTypeExpect) -> int;
+}
+
+inferDValue(env : HTypeEnv, inferDExp : (env : HTypeEnv, dexp : DExp, expected : HTypeExpect) -> int, 
+        dexp : DValue, expected : HTypeExpect) -> int {
+    switch (dexp) {
+        DVoid(info): unifyWithExpected(env, "void", expected, info);
+        DBool(__, info): unifyWithExpected(env, "bool", expected, info);
+        DInt(__, info): unifyWithExpected(env, "int", expected, info);
+        DDouble(__, info): unifyWithExpected(env, "double", expected, info);
+        DString(__, info): unifyWithExpected(env, "string", expected, info);
+
+		DLambda(args, body, info): {
+			// Create types for the arguments
+			argTypes = map(args, \arg -> {
+				dtype2typenode(env.egraph, arg.type);
+			});
+			context = makeSet1(EContext(info, "lambda"));
+			returnType = makeTypeVariable(env.egraph, makeSet1(EContext(info, "return")));
+
+			// Create initial function type
+			fnType = insertNode(env.egraph, Function(argTypes, returnType), context);
+
+			// Unify with expected type FIRST to get type information
+			initialUnified = unify(env, fnType, expected, info);
+
+			initialNode = getNodeDef(env.egraph, initialUnified);
+
+			// Extract potentially refined types from unification
+			refinedTypes = switch (initialNode) {
+				Function(from, to): from;
+				default: argTypes;
+			};
+			
+			refinedReturn = switch (initialNode) {
+				Function(from, to): to;
+				default: returnType;
+			};
+
+			// Put the instantiated arguments into the environment
+			bodyEnv = foldi(args, env, \i, acc, arg -> {
+				// Be sure to capture the types
+				setIntMap(env.info2types, arg.info, refinedTypes[i]);
+				setIntMap(env.info2types, arg.type.info, refinedTypes[i]);
+				setLocalType(acc, arg.name, refinedTypes[i])
+			});
+
+			// Infer the body with the refined return type as an expected subtype
+			bodyResult = inferDExp(bodyEnv, body, HTypeExpectSubtype("lambda return", refinedReturn));
+
+			if (shouldTrace(env, 2)) {
+				printTrace(env, "bodyResult: " + typeNodeToString(env.egraph, bodyResult, false, false), 0);
+			}
+
+			// Create the final function type with the body's actual type
+			res = insertNode(bodyEnv.egraph, Function(refinedTypes, bodyResult), context);
+
+			if (shouldTrace(env, 2)) {
+				printTrace(env, "final: " + typeNodeToString(env.egraph, res, false, false), 0);
+			}
+			res;
+		}
+    }
+}

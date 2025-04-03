@@ -1,0 +1,243 @@
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/egraph/subtype_util;
+import tools/flow9/type/egraph/subtype_path;
+import tools/flow9/type/egraph/unify;
+import tools/flow9/type/egraph/pretty;
+
+export {
+	// Ensure eclass id1 is a subtype of eclass with id2
+	// Returns the subtype
+	subtypeEGraphTypes(g : EGraph, id1 : int, id2 : int, infos : Set<EContext>) -> int;
+}
+
+// Core subtyping check
+subtypeEGraphTypes(g : EGraph, id1 : int, id2 : int, infos : Set<EContext>) -> int {
+	// Find canonical representatives
+	r1 = findEGraphRoot(g, id1);
+	r2 = findEGraphRoot(g, id2);
+
+	if (r1 == r2) r1
+	else {
+		// If not direct, get the node definitions
+		node1 = getNodeDef(g, r1);
+		node2 = getNodeDef(g, r2);
+		if (g.tracing > 1) {
+			debugMsg(g, 1, "Subtyping  " + typeNodeToString(g, r1, false, true) + "  <:  " + typeNodeToString(g, r2, false, true));
+			indentMsg(g);
+		}
+
+		// Handle flow types first
+		res = if (isFlowTypeNode(node2)) {
+			if (g.tracing > 1) {
+				debugMsg(g, 1, "Against upper flow " + typeNodeToString(g, r1, false, true));
+			}
+			if (getConstructor(node1) == "void") {
+				g.onError(infos, "Cannot unify void with flow type");
+				r1;
+			} else {
+				// Flow type is a supertype of all other types, but we do not unify
+				addSubtype(g, r1, r2, infos);
+				r1;
+			}
+		} else if (isFlowTypeNode(node1)) {
+			if (g.tracing > 1) {
+				debugMsg(g, 1, "Against lower flow " + typeNodeToString(g, r1, false, true));
+			}
+			if (getConstructor(node1) == "void") {
+				g.onError(infos, "Cannot unify void with flow type");
+				r1;
+			} else {
+				// Flow type is a supertype of all types
+				bindChildrenToFlow(g, r1, r2, infos);
+				r1;
+			}
+		} else switch (node1) {
+			Variable(__): {
+				switch (node2) {
+					Variable(__): {
+						addSubtype(g, r1, r2, infos);
+						r1;
+					}
+					Constructor(name2, args2): {
+						// a1 <: Name2<args2>
+						if (tyvarOccursCheck(g, r1, r2)) {
+							g.onError(infos, "Occurs check failed in subtyping: type variable would create infinite type: " + prettyNode(g, r1) + " <: " + prettyNode(g, r2));
+							r1;
+						} else if (canHaveSubtype(g, name2)) {
+							addSubtype(g, r1, r2, infos);
+							r1;
+						} else if (args2 != []) {
+							// OK, we can still stub our level
+							stub = Constructor(name2, map(args2, \__ -> makeTypeVariable(g, getNodeInfos(g, r2))));
+							updateTypeNode(g, r1, stub, infos);
+							// For debugging, this helps
+							// addSubtype(g, r1, r2);
+							subtypeEGraphTypes(g, r1, r2, infos);
+						} else {
+							// OK, we can do equality unification
+							unifyEGraphTypes(g, r1, r2, infos);
+						}
+					}
+					Function(args2, ret2): {
+						// a1 <: Fn<args2>
+						stub = 
+							// If the return type can have subtypes, so we have to stub
+							canNodeHaveSubtype(g, ret2) 
+							// or if any of the args can have supertypes
+							|| exists(args2, \a -> canNodeHaveSupertype(g, a));
+						if (stub) {
+							fnstub = Function(map(args2, \__ -> makeTypeVariable(g, infos)), makeTypeVariable(g, infos));
+							updateTypeNode(g, r1, fnstub, infos);
+							// And then do the subtyping on the function
+							subtypeEGraphTypes(g, r1, r2, infos);
+						} else {
+							// OK, we can do equality unification
+							unifyEGraphTypes(g, r1, r2, infos);
+						}
+					}
+				}
+			}
+			Constructor(name1, args1): {
+				switch (node2) {
+					Variable(__): {
+						// Name1<args> <: a2
+						if (tyvarOccursCheck(g, r2, r1)) {
+							g.onError(infos, "Occurs check failed in subtyping: type variable would create infinite type: " + prettyNode(g, r1) + " <: " + prettyNode(g, r2));
+							r1;
+						} else if (canHaveSupertype(g, name1)) {
+							addSubtype(g, r1, r2, infos);
+							r1;
+						} else if (args1 != []) {
+							// OK, we can stub our level
+							stub = Constructor(name1, map(args1, \__ -> makeTypeVariable(g, getNodeInfos(g, r1))));
+							updateTypeNode(g, r2, stub, infos);
+							// For debugging
+							// addSubtype(g, r1, r2);
+							subtypeEGraphTypes(g, r1, r2, infos);
+						} else {
+							// OK, we can do equality unification
+							unifyEGraphTypes(g, r1, r2, infos);
+						}
+					}
+					Constructor(name2, args2): {
+						if (name1 == name2) {
+							cons = Constructor(name1, subtypeArrays(g, r1, r2, args1, args2, infos));
+							updateTypeNode(g, r1, cons, infos);
+							r1;
+						} else {
+							// Different constructors - check supertype relationships
+							subtypeConstructors(g, r1, node1, r2, node2, infos)
+						}
+					}
+					Function(__, __): {
+						g.onError(infos, "Cannot unify constructor with function");
+						r1;
+					}
+				}
+			}
+			Function(args1, ret1): {
+				switch (node2) {
+					Function(args2, ret2): {
+						// Contra-variance
+						sargs = subtypeArrays(g, r2, r1, args2, args1, infos);
+
+						// Enhanced context for return type subtyping
+						retContext = insertSet(infos, EContext(-1, "function return type"));
+						sret = subtypeEGraphTypes(g, ret1, ret2, retContext);
+						r1;
+					}
+					Variable(__): {
+						// Fn<args1, ret1> <: a2
+						stub = 
+							// If the return type can have subtypes, so we have to stub
+							canNodeHaveSupertype(g, ret1) 
+							// or if any of the args can have subtypes
+							|| exists(args1, \a -> canNodeHaveSubtype(g, a));
+						if (stub) {
+							fnstub = Function(map(args1, \__ -> makeTypeVariable(g, infos)), makeTypeVariable(g, infos));
+							updateTypeNode(g, r2, fnstub, infos);
+							// And then do the subtyping on the stubbed function
+							subtypeEGraphTypes(g, r1, r2, infos);
+						} else {
+							// OK, we can do equality unification
+							unifyEGraphTypes(g, r1, r2, infos);
+						}
+					}
+					Constructor(__, __): {
+						g.onError(infos, "Cannot unify constructor with function");
+						r1;
+					}
+				}
+			}
+		}
+
+		if (g.tracing > 1) {
+			dedentMsg(g);
+			debugMsg(g, 1, "Subtyping gave " + typeNodeToString(g, res, false, true));
+		}
+
+		res;
+	}
+}
+
+// Helper to handle subtyping of arrays, with explicit variance direction
+subtypeArrays(g : EGraph, id1 : int, id2 : int, left : [int], right : [int], infos : Set<EContext>) -> [int] {
+	if (length(left) != length(right)) {
+		g.onError(infos, "Expected same number of arguments " + prettyNode(g, id1) + " and " + prettyNode(g, id2));	
+		left
+	} else {
+		mapi(left, \i, l -> {
+			// debugMsg(g, 1, "Subtyping array element #" + i2s(i + 1) + "  " + typeNodeToString(g, l, false, true) + "  <:  " + typeNodeToString(g, right[i], false, true));
+			subtypeEGraphTypes(g, l, right[i], infos)
+		});
+	}
+}
+
+// Check subtyping between different constructors through type hierarchy
+subtypeConstructors(g : EGraph, id1 : int, node1 : Constructor, id2 : int, node2 : Constructor, infos : Set<EContext>) -> int {
+	raw = \ -> {
+		munions2 = lookupTree(g.interface.rawUnions, node2.name);
+		munions2 ?? {
+			if (exists(munions2.types, \sub : HTypeCons -> {
+				sub.name == node1.name
+			})) {
+				// OK, node2 is a direct supertype of node1.name
+				// Some<a1> <: Maybe<a2>
+				// We make a Some<a3> 
+				um = instantiateHUnionMember(g, id1, node1.name, node2, munions2);
+				if (g.tracing > 1) {
+					debugMsg(g, 1, "Instantiating " + node1.name + " as a subtype of " + node2.name + ":  " + typeNodeToString(g, um, false, true));
+				}
+				addSubtype(g, id1, um, infos);
+				subtypeEGraphTypes(g, id1, um, infos);
+			} else {
+				// OK, go for a path through intermediate guys
+				subtypeConstructorsThroughPath(g, id1, node1, id2, node2, subtypeEGraphTypes, infos);
+			}
+		} : {
+			// OK, it can be a transitive relation
+			subtypeConstructorsThroughPath(g, id1, node1, id2, node2, subtypeEGraphTypes, infos);
+		}
+	}
+
+	munions = lookupTree(g.interface.unions, node2.name);
+	munions ?? {
+		if (exists(munions.types, \sub : HTypeCons -> {
+			sub.name == node1.name
+		})) {
+			// OK, node2 is a direct supertype of node1.name
+			// Some<a1> <: Maybe<a2>
+			// We make a Some<a3> 
+			um = instantiateHUnionMember(g, id1, node1.name, node2, munions);
+			if (g.tracing > 1) {
+				debugMsg(g, 1, "Instantiating " + node1.name + " as a subtype of " + node2.name + "  " + typeNodeToString(g, um, false, true));
+			}
+			addSubtype(g, id1, um, infos);
+			subtypeEGraphTypes(g, id1, um, infos);
+		} else {
+			raw();
+		}
+	} : {
+		raw();
+	}
+}

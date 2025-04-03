@@ -1,0 +1,62 @@
+import tools/flow9/type/types;
+import tools/flow9/type/util;
+import tools/flow9/type/pretty;
+import tools/flow9/type/egraph/pretty;
+import string_utils;
+
+export {
+	instantiateHStruct(e : EGraph, struct : HStruct) -> Constructor;
+	instantiateHUnion(e : EGraph, union : HUnion) -> Constructor;
+
+	applySubst(subst : HTypeSubst, htype : HType) -> HType;
+
+	setHTypeEnv(interface : HModuleInterface, name : string, htype : HTypeSchema) -> HModuleInterface;
+
+	setLocalType(env : HTypeEnv, name : string, eclass : int) -> HTypeEnv;
+
+	typeError(env : HTypeEnv, info : int, msg : string) -> int;
+}
+
+instantiateHStruct(e : EGraph, struct : HStruct) -> Constructor {
+	Constructor(struct.name, map(struct.typars, \typar -> makeTypeVariable(e, makeSet())));
+}
+
+instantiateHUnion(e : EGraph, union : HUnion) -> Constructor {
+	Constructor(union.name, map(union.typars, \typar -> makeTypeVariable(e, makeSet())));
+}
+
+applySubst(subst : HTypeSubst, htype : HType) -> HType {
+	applySubstWithGuard(subst, htype, makeSet());
+}
+
+applySubstWithGuard(subst : HTypeSubst, htype : HType, visited : Set<string>) -> HType {
+    switch (htype) {
+        HTypeCons(name, args): HTypeCons(name, map(args, \arg -> applySubstWithGuard(subst, arg, visited)));
+        HTypeFn(from, to): HTypeFn(map(from, \f -> applySubstWithGuard(subst, f, visited)), applySubstWithGuard(subst, to, visited));
+        HTypeVar(name): {
+            r = lookupTreeDef(subst.subst, name, htype);
+			// OK, this can go badly wrong and infinite recursion
+			if (!containsSet(visited, name) && r != htype) {
+				applySubstWithGuard(subst, r, insertSet(visited, name));
+			} else r;
+        }
+    }
+}
+
+setHTypeEnv(interface : HModuleInterface, name : string, htype : HTypeSchema) -> HModuleInterface {
+	// println(^(env.indent) + "setHTypeEnv " + name + " = " + prettyHTypeSchema(htype));	
+	HModuleInterface(interface with env = setTree(interface.env, name, htype));
+}
+
+setLocalType(env : HTypeEnv, name : string, eclass : int) -> HTypeEnv {
+	if (env.egraph.tracing >= 1) {
+		debugMsg(env.egraph, 1, "set local " + name + " = " + prettyNode(env.egraph, eclass));
+	}
+	HTypeEnv(env with egraph = EGraph(env.egraph with locals = setTree(env.egraph.locals, name, eclass)));
+}
+
+typeError(env : HTypeEnv, info : int, msg : string) -> int {
+	env.onError(info, msg);
+	makeTypeVariable(env.egraph, makeSet1(EContext(info, msg)));
+}
+

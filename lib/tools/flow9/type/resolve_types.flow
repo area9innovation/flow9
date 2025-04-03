@@ -1,0 +1,47 @@
+import tools/flow9/desugar/dexp;
+import tools/flow9/desugar/pretty;
+import tools/flow9/type/instantiate;
+import tools/flow9/type/egraph/generalize;
+
+export {
+	// We have a type substitution in the env that we apply to the types in the module
+	resolveDModuleTypes(onError : (int,string) -> void, info2schema : IntMap<HTypeSchema>, d : DModule, warn : bool) -> DModule;
+}
+
+resolveDModuleTypes(onError : (int, string) -> void, info2schema : IntMap<HTypeSchema>, d : DModule, warn : bool) -> DModule {
+	// Collect all the types per position
+	types : [HTypeSchema] = mapi(d.positions, \i, __ -> {
+		mschema : Maybe<HTypeSchema> = lookupIntMap(info2schema, i);
+		mschema ?? {
+			if (warn) {
+				checkDType(onError, mschema, i);
+			}
+			mschema;
+		} : {
+			HTypeCons("*** Missing ***" + i2s(i), []);
+		}
+	});
+	DModule(d with types = types);
+}
+
+checkDType(onError : (int, string) -> void, t : HTypeSchema, info : int) -> void {
+	error = \ -> {
+		onError(info, "Can not resolve type: " + prettyHTypeSchema(t));
+	}
+	switch (t : HTypeSchema) {
+		HTypeCons(name, args): {
+			iter(args, \a -> checkDType(onError, a, info));
+		}
+		HTypeFn(from, to): {
+			checkDType(onError, to, info);
+			iter(from, \f -> checkDType(onError, f, info));
+		}
+		HTypeVar(name): {
+			if (trim2(name, "?") != "") {
+				error();
+			}
+		}
+		HTypeForAll(vars, tt): checkDType(onError, tt, info);
+		HTypeAlternatives(options): onError(info, "Can not resolve type: " + prettyHTypeSchema(t));
+	}
+}

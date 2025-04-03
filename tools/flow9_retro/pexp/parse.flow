@@ -1,0 +1,294 @@
+import tools/flow9/pexp/pexp;
+import tools/flow9/pexp/position;
+import tools/flow9/pexp/values;
+import tools/flow9/pexp/pexp_parser;
+import text/gringo/gringo_interpreter;
+import text/deserialize_string;
+
+export {
+	parsePExp(program : string, onError : (string) -> void) -> PExp;
+}
+
+parsePExp(program : string, onError : (string) -> void) -> PExp {
+	if (true) {
+		gringoTypedParse(program, pexpTypeAction(onError), g_parse_flow, PSequence([], -1), onError);
+	} else {
+		gterm = prepareGringoParser("#include tools/flow9/pexp/pexp.gringo", onError);
+		// println(gterm2string(gterm));
+		if (gterm != GEpsilon()) {
+			// OK, parse the program
+			ops = pexpTypeOps();
+			gringoParseWithActionCheck(program, ops, pexpTypeAction(onError), gterm, PSequence([], -1), onError);
+		} else {
+			onError("Could not understand grammar");
+			PSequence([], -1);
+		}
+	}
+}
+
+// This defines the semantic actions used in the grammar
+pexpTypeAction(onError : (string) -> void) -> GringoAction<List<PExp>> {
+	gringoTypedAction(
+		// Make a string
+		\s : string -> PString(s, -1),
+		// Extract a string from a value (typically a string)
+		getPString,
+		// Construct the basic value
+		\b -> PBool(b, -1),
+		\i -> PInt(s2i(i), -1),
+		\d -> PDouble(s2d(d), -1),
+		// Construct an empty array
+		\ -> PList(makeList(), -1),
+		// Append an element to an array
+		\h, t -> {
+			switch (t) {
+				PList(es, p): PList(Cons(h, es), p);
+				default: t;
+			}
+		},
+		pexpTypeOps()
+	);
+}
+
+pexpTypeOps() -> GringoTypedOperators<PExp> {
+	un = \op -> Pair(op, \l -> PCallOp(op, [l], -1));
+	bin = \op -> Pair(op, \l, r -> PCallOp(op, [l, r], -1));
+	tri = \op -> Pair(op, \l, m, r -> PCallOp(op, [l, m, r], -1));
+	mktype = \t -> PTypeName(t, [], -1);
+
+	GringoTypedOperators(
+		// Nullary operators
+		pairs2tree([
+			Pair("void", \ -> PVoid(-1)),
+			Pair("voidtype", \ -> mktype("void")),
+			Pair("bool", \ -> mktype("bool")),
+			Pair("int", \ -> mktype("int")),
+			Pair("double", \ -> mktype("double")),
+			Pair("string", \ -> mktype("string")),
+			Pair("flow", \ -> mktype("flow")),
+			Pair("auto", \ -> mktype("auto")),
+			Pair("nativetype", \ -> mktype("native")),
+		]),
+		// Unary operators
+		pairs2tree([
+			un("__negate"),
+			un("__not"),
+			un("__deref"),
+
+			Pair("unescape", \e -> {
+				switch (e) {
+					PString(t, pos): PString(deserializeString(t).first, pos);
+					default: e;
+				}
+			}),
+			Pair("var", \e -> {
+				PVar(getPString(e), -1)
+			}),
+			Pair("sequence", \e -> {
+				PSequence(getPListArray(e), -1);
+			}),
+			Pair("hex", \e -> {
+				PInt(parseHex(getPString(e)), -1)
+			}),
+			Pair("stringinclude", \e -> {
+				PStringInclude(getPString(e), getPPos(e))
+			}),
+			Pair("import", \e -> {
+				PImport(getPString(e), getPPos(e))
+			}),
+			Pair("forbid", \e -> {
+				PForbid(getPString(e), getPPos(e))
+			}),
+			Pair("export", \e -> {
+				PExport(map(getPListArray(e), getPTopLevel), -1)
+			}),
+			Pair("ref", \e -> {
+				PRef(e, -1)
+			}),
+			Pair("default", \e -> {
+				PCase("default", [], e, -1)
+			}),
+			Pair("polytype", \e -> {
+				PTypePar(getPString(e), -1)
+			}),
+			Pair("arraytype", \e -> {
+				PTypeName("array", [getPType(e)], -1)
+			}),
+			Pair("reftype", \e -> {
+				PTypeName("ref", [getPType(e)], -1)
+			}),
+			Pair("array", \e -> {
+				PArray(getPListArray(e), -1);
+			}),
+			Pair("module", \tl -> {
+				PModule(map(getPListArray(tl), getPTopLevel), -1);
+			}),
+			Pair("b1", \p -> {
+				PString(i2s(s2i(getPString(p)) - 1), p.pos);
+			}),
+			Pair("b2", \p -> {
+				PString(i2s(s2i(getPString(p)) - 2), p.pos);
+			}),
+		]),
+		// Binary operators
+		pairs2tree([
+			bin("||"), bin("&&"),
+			bin("=="), bin("!="),
+			bin("<="), bin("<"), bin(">"), bin(">="),
+			bin("+"), bin("-"), 
+			bin("*"), bin("/"), bin("%"), 
+			bin("__index"), 
+			Pair("dot", \val, field -> {
+				PField(val, getPString(field), -1)
+			}),
+			Pair("lambda", \args, b -> {
+				fargs = map(getPListArray(args), getPArgType);
+				PLambda(fargs, b, -1);
+			}),
+			Pair("call", \fn, args -> {
+				PCall(fn, getPListArray(args), -1)
+			}),
+			bin(":="), bin("|>"), 
+			Pair(":", \ex, type -> {
+				PTyped(ex, getPType(type), -1)
+			}),
+
+			Pair("switch", \a, b -> {
+				PSwitch(a, map(getPListArray(b), getPCase), -1)
+			}),
+			Pair("typename", \a, b -> {
+				PTypeName(getPString(a), map(getPListArray(b), getPType), getPPos(a))
+			}),
+			Pair("union", \a, b -> {
+				PUnion(getPTypeName(a), map(getPListArray(b), getPTypeName), getPPos(a))
+			}),
+			Pair("global", \a, b -> {
+				PGlobal(getPString(a), b, getPPos(a))
+			}),
+			Pair("structdef", \a, b -> {
+				PStruct(getPString(a), map(getPListArray(b), getPStructArg), getPPos(a));
+			}),
+			Pair("fntype", \a, b -> {
+				PTypeFunction(map(getPListArray(a), getPArgType), getPType(b), -1)
+			}),
+			Pair("argtype", \id, type -> {
+				PArgType(getPString(id), getPType(type), -1)
+			}),
+			Pair("cast", \val, type -> {
+				PCast(val, getPType(type), -1)
+			}),
+			Pair("fieldassign", \field, value -> {
+				PFieldAssign(getPString(field), value, getPPos(field))
+			}),
+			Pair("typedef", \var, type -> {
+				PTypeDef(getPString(var), getPType(type), getPPos(var))
+			}),
+			Pair("setpos", \pos, e -> {
+				setPPos(s2i(getPString(pos)), e)
+			}),
+		]),
+		// Ternary operators
+		pairs2tree([
+			Pair("ifelse", \c, t, e -> {
+				PIf(c, t, e, -1)
+			}),
+			Pair("maybe", \c, t, e -> {
+				PMaybe(c, t, e, -1)
+			}),
+			Pair("let", \a, b, c -> {
+				PLet(getPString(a), b, c, getPPos(a))
+			}),
+			Pair("case", \a, b, c -> {
+				PCase(getPString(a), map(getPListArray(b), getPString), c, getPPos(a))
+			}),
+			Pair("structarg", \a, b, c -> {
+				PStructArg(getPString(b), getPListArray(a) != [], getPType(c), getPPos(b))
+			}),
+			Pair("global_typed", \id, type, value -> {
+				PGlobal(getPString(id), PTyped(value, getPType(type), getPPos(id)), getPPos(id))
+			}),
+			Pair("fndef_typed", \id, type, body -> {
+				fntype = getPTypeFunction(type);
+				argtypes : [PArgType] = fntype.args;
+				PGlobal(getPString(id), 
+					PTyped(
+						PLambda(argtypes, body, getPPos(id)),
+						fntype,
+						getPPos(id)
+					), getPPos(id)
+				)
+			}),
+			Pair("::=", \a, field, val -> {
+				PSetMutable(a, getPString(field), val, -1);
+			}),
+			Pair("with", \struct, value, fields -> {
+				PWith(getPVar(struct), value, map(getPListArray(fields), getPFieldAssign), -1);
+			}),
+		]),
+		// Quadrary operators
+		pairs2tree([
+			Pair("let_typed", \a, b, c, d -> {
+				PLet(getPString(a), PTyped(c, getPType(b), getPPos(a)), d, getPPos(a))
+			}),
+			Pair("native", \id, isIo, type, name -> {
+				PNative(getPString(id), getPListArray(isIo) != [], getPType(type), getPString(name), getPPos(id))
+			})
+		]),
+		// Stack ops
+		pairs2tree([
+			Pair("swap", \s : List<PExp> -> {
+				switch (s : List<PExp>) {
+					Cons(h0, t0): {
+						switch (t0 : List<PExp>) {
+							Cons(h1, t1): {
+								Cons(h1, Cons(h0, t1))
+							}
+							EmptyList(): s;
+						}
+					}
+					EmptyList(): s;
+				}
+			}),
+			Pair("drop", \s : List<PExp> -> {
+				switch (s) {
+					Cons(h0, t0): t0;
+					EmptyList(): s;
+				}
+			}),
+		]),
+	);
+}
+
+getPArgType(a : PExp) -> PArgType {
+	switch (a) {
+		PArgType(__, __, __): a;
+		default: {
+			println("Expected arg type, got " + toString(a));
+			PArgType("error", PTypeName("", [], -1), -1);
+		}
+	}
+}
+
+getPStructArg(a : PExp) -> PStructArg {
+	switch (a) {
+		PStructArg(__, __, __, __): a;
+		default: {
+			println("Expected struct type, got " + toString(a));
+			PStructArg("error", false, PTypeName("", [], -1), -1);
+		}
+	}
+}
+
+getPTopLevel(e : PExp) -> PTopLevel {
+	switch (e) {
+		PTopLevel(): e;
+		default: PForbid("", -1);
+	}
+}
+
+getPCase(e : PExp) -> PCase {
+	switch (e) {
+		PCase(__, __, __, __): e;
+		default: PCase("", [], PVoid(-1), -1);
+	}
+}

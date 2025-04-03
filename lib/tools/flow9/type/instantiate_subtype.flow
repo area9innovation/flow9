@@ -1,0 +1,120 @@
+import tools/flow9/type/types;
+import tools/flow9/type/egraph/subtype_util;
+import tools/flow9/type/egraph/subtype_path;
+import tools/flow9/type/module_types;
+
+export {
+    // Directly instantiate a case type from a union type by following the union membership path
+    directInstantiateCaseFromUnion(env : HTypeEnv, valueType : int, caseUid : string, info : int) -> Maybe<int>;
+}
+
+// Helper to instantiate a case through multiple layers of unions
+recursiveInstantiateThroughPath(env : HTypeEnv, currentType : int, 
+                               unionPath : [HUnion], pathIndex : int, 
+                               targetUid : string, info : int) -> Maybe<int> {
+    if (pathIndex >= length(unionPath)) {
+        // Base case: we've reached the end of the path, instantiate the final struct
+        currentNode = getNodeDef(env.egraph, currentType);
+        
+        switch (currentNode) {
+            Constructor(name, _): {
+                switch (lookupTree(env.interface.unions, name)) {
+                    Some(union): {
+                        // Use instantiateHUnionMember directly with string parameter
+                        instantiated = instantiateHUnionMember(
+                            env.egraph, 
+                            currentType, 
+                            targetUid, 
+                            currentNode, 
+                            union
+                        );
+                        Some(instantiated);
+                    }
+                    None(): None();
+                }
+            }
+            default: None();
+        }
+    } else {
+        // Recursive case: instantiate the next union in the path
+        currentUnion = unionPath[pathIndex];
+        
+        // Determine the next type in the path
+        nextTypeName = if (pathIndex + 1 < length(unionPath)) 
+                          unionPath[pathIndex + 1].name 
+                       else 
+                          targetUid;
+        
+        // Get the current node
+        currentNode = getNodeDef(env.egraph, currentType);
+        
+        switch (currentNode) {
+            Constructor(name, _): {
+                switch (lookupTree(env.interface.unions, name)) {
+                    Some(union): {
+                        // Instantiate the next type from the current union
+                        nextType = instantiateHUnionMember(
+                            env.egraph, 
+                            currentType, 
+                            nextTypeName, 
+                            currentNode, 
+                            union
+                        );
+                        
+                        // Continue with the rest of the path
+                        recursiveInstantiateThroughPath(
+                            env, nextType, unionPath, pathIndex + 1, targetUid, info
+                        );
+                    }
+                    None(): None();
+                }
+            }
+            default: None();
+        }
+    }
+}
+
+// Check if a struct is a direct member of a union by name
+isDirectMember(union : HUnion, structName : string) -> bool {
+    // Properly check if the struct is a member of the union
+    exists(union.types, \typeDef -> typeDef.name == structName);
+}
+
+directInstantiateCaseFromUnion(env : HTypeEnv, valueType : int, caseUid : string, info : int) -> Maybe<int> {
+    valueNode = getNodeDef(env.egraph, valueType);
+    
+    switch (valueNode) {
+        Constructor(unionName, _): {
+            // Check if it's a direct member of the union first
+            switch (lookupTree(env.interface.unions, unionName)) {
+                Some(union): {
+                    if (isDirectMember(union, caseUid)) {
+                        // Direct member - simple instantiation
+                        instantiated = instantiateHUnionMember(
+                            env.egraph, 
+                            valueType, 
+                            caseUid, 
+                            valueNode, 
+                            union
+                        );
+                        Some(instantiated);
+                    } else {
+                        // Not a direct member, try to find a path through union hierarchy
+                        unionPath = findNameConstructorPath(env.egraph, unionName, caseUid);
+                        
+                        if (unionPath == []) {
+                            None() // No path found
+                        } else {
+                            // Found a path - instantiate through it
+                            recursiveInstantiateThroughPath(
+                                env, valueType, unionPath, 0, caseUid, info
+                            );
+                        }
+                    }
+                }
+                None(): None();
+            }
+        }
+        default: None();
+    }
+}

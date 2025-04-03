@@ -1,0 +1,159 @@
+import tools/flow9/desugar/dexp;
+import tools/flow9/type/pretty;
+import tools/flow9/type/instantiate;
+
+export {
+	// For constructing a debugging, standalone version of a function
+	extractToplevelAndDeps(module : DModule, env : HTypeEnv, used : Set<string>, name : string) -> string;
+	extractSourceCode(module : DModule, name : string) -> string;
+}
+
+extractToplevelAndDeps(module : DModule, env : HTypeEnv, used : Set<string>, name : string) -> string {
+	structDefs = mapTree(env.interface.structs, \struct -> {
+		prettyHStruct(struct, true) + ";"
+	});
+
+	// Then all union definitions
+	unionDefs = mapTree(env.interface.rawUnions, \union -> {
+		prettyHUnion(union, true) + ";"
+	});
+
+	types = foldTree(env.interface.env, "", \tname, type, acc -> {
+		if ((name == tname || containsSet(used, tname)) 
+			&& !containsKeyTree(env.interface.structs, tname)
+			&& !startsWith(tname, ".")
+			) {
+			itype = switch (type) {
+				HTypeForAll(vars, atype): atype;
+				HTypeAlternatives(options): type;
+				HType(): type;
+			};
+			
+			acc + tname + extractHTypeSchema(itype) + 
+				" {" + writeDefaultHTypeValue(env, getHTypeRet(itype)) + "};\n";
+		} else {
+			acc;
+		}
+	});
+	code = extractSourceCode(module, name);
+
+	concatStrings([
+		// Union definitions
+		if (!isEmptyTree(unionDefs)) "// Unions\n" else "",
+		strGlue(getTreeValues(unionDefs), "\n"),
+		// Struct definitions
+		if (!isEmptyTree(structDefs)) "\n\n// Structs\n" else "",
+		strGlue(getTreeValues(structDefs), "\n"),
+		"\n\n",
+		types,
+		code,
+	])
+}
+
+getHTypeRet(h : HTypeSchema) -> HTypeSchema {
+	switch (h) {
+		HTypeFn(__, r): r;
+		HTypeCons(__, __): h;
+		HTypeVar(__): h;
+		HTypeForAll(vars, type): getHTypeRet(type);
+		HTypeAlternatives(options): h;
+	}
+}
+
+extractSourceCode(module : DModule, name : string) -> string {
+	// Find the index of the name in the order array
+	nameIndex = findiDef(module.order, \n -> n == name, -1);
+	if (nameIndex == -1) {
+		// Name not found
+		"";
+	} else {
+		// Get the source code text
+		sourceText = getFileContent(module.fullpath);
+
+		// Find info for current name
+		info = lookupTreeDef(module.toplevels, name, DGlobal("", [], false, DAutoType(0), DVoid(0), 0)).info;
+
+		// Find the next name's info if it exists
+		endPos = if (nameIndex + 1 < length(module.order)) {
+			nextName = module.order[nameIndex + 1];
+			module.positions[lookupTreeDef(module.toplevels, nextName, DGlobal("", [], false, DAutoType(0), DVoid(0), 0)).info];
+		} else {
+			// If it's the last name, use the length of the source text
+			strlen(sourceText);
+		}
+
+		// Get the start position
+		startPos = module.positions[info];
+
+		substring(sourceText, startPos, endPos - startPos);
+	}
+}
+
+extractHTypeSchema(s : HTypeSchema) -> string {
+	switch (s) {
+		HTypeForAll(vars, type): {
+			extractHTypeSchema(type);
+		}
+		HTypeAlternatives(types): {
+			"alternatives {" + superglue(types, prettyHTypeSchema, ",  ") + "}";
+		}
+		HTypeFn(args, ret): {
+			"(" + supergluei(args, \i, a -> "a" + i2s(i) + ":" + prettyHType(a), ", ") + ") -> " + prettyHType(ret);
+		}
+		HType(): {
+			prettyHType(s);
+		}
+	}
+}
+
+writeDefaultHTypeValue(env : HTypeEnv, type : HTypeSchema) -> string {
+	switch (type) {
+		HTypeVar(name): {
+			"0";
+		}
+		HTypeCons(name, args): {
+			if (name == "array") {
+				"[]";
+			} else if (name == "ref") {
+				"ref " + writeDefaultHTypeValue(env, args[0]);
+			} else if (name == "void") {
+				"{}"
+			} else if (name == "bool") {
+				"false"
+			} else if (name == "int") {
+				"0"
+			} else if (name == "double") {
+				"0.0"
+			} else if (name == "string") {
+				"\"\""
+			} else if (startsWithUpperLetter2(name)) {
+				if (containsKeyTree(env.interface.structs, name)) {
+					struct = lookupTreeDef(env.interface.structs, name, HStruct(name, [], []));
+					name + "(" + superglue(struct.fields, \fa -> writeDefaultHTypeValue(env, fa.type), ", ") + ")";
+				} else {
+					union = lookupTreeDef(env.interface.unions, name, HUnion(name, [],[]));
+					if (union.types != []) {
+						// To avoid infinite recursion for Tree and such, find the "shortest" struct
+						shortest = sortCustom(union.types, \t -> {
+							struct = lookupTreeDef(env.interface.structs, t.name, HStruct(t.name, [], [HStructArg("", false, t), HStructArg("", false, t), HStructArg("", false, t)]));
+							length(struct.fields)
+						}, true);
+						writeDefaultHTypeValue(env, shortest[0]);
+					} else {
+						name
+					}
+				}
+			} else name;
+		}
+		HTypeFn(args, ret): {
+			"\\" + supergluei(args, \i, a -> "a" + i2s(i), ", ") + " -> " + writeDefaultHTypeValue(env, ret);
+		}
+		HTypeForAll(vars, typ): writeDefaultHTypeValue(env, typ);
+		HTypeAlternatives(options): "undefined";
+	}
+}
+
+startsWithUpperLetter2(s : string) -> bool {
+    if (strlen(s) == 0) false 
+    else isUpperLetter(getCharAt(s, 0));
+}

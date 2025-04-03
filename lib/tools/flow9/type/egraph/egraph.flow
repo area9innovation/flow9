@@ -1,0 +1,665 @@
+import runtime;
+import maybe;
+import tools/flow9/type/egraph/types;
+import sys/concurrent;
+
+export {
+	// Create a new empty EGraph against this interface
+	makeEGraph(interface : HModuleInterface, typars : ETypeParMap, tracing : int, fineGrained : bool, onError : (Set<EContext>, string) -> void) -> EGraph;
+
+	// Core E-graph Operations
+
+	// Find the representative ID for a given node ID (with path compression)
+	findEGraphRoot(g : EGraph, id : int) -> int;
+
+	isSameEClass(g : EGraph, id1 : int, id2 : int) -> bool;
+
+	// Add a node to the graph, returns its ID. If it exists, we get the existing ID
+	insertNode(g : EGraph, n : TypeNode, infos : Set<EContext>) -> int;
+
+	// Updates an EClass in the EGraph
+	updateEClass(g : EGraph, id : int, newClass : EClass) -> void;
+	// Update an existing node with a new value
+	updateNode(g : EGraph, id : int, n : TypeNode) -> bool;
+
+	// Insert a new node into the EGraph
+	// This assumes this is a new node, and just adds it
+	insertNewNode(g : EGraph, n : TypeNode, infos : Set<EContext>) -> int;
+
+	// Insert a new type var with these alternatives
+	insertNewEClass(g : EGraph, alternatives : Set<int>, infos : Set<EContext>) -> int;
+
+	// Create a fresh type variable in the graph
+	makeTypeVariable(g : EGraph, infos : Set<EContext>) -> int;
+
+	// Merge two equivalence classes and their subtype relationships
+	mergeEClasses(g : EGraph, id1 : int, id2 : int) -> int;
+
+	isTypeVar(node : TypeNode) -> bool;
+
+	// Query Operations
+
+	// Get the TypeNode associated with an ID
+	getNode(g : EGraph, id : int) -> Maybe<TypeNode>;
+	getNodeDef(g : EGraph, id : int) -> TypeNode;
+	getEClassDef(g : EGraph, id : int) -> EClass;
+
+	getNodeInfos(g : EGraph, id : int) -> Set<EContext>;
+	get2NodeInfos(g : EGraph, id1 : int, id2 : int) -> Set<EContext>;
+
+	// Get all IDs that are equivalent to the given ID
+	getEquivClass(g : EGraph, id : int) -> Set<int>;
+
+	// Is this egraph fully decided? Ignores those in the typars set
+	isDecidedEGraph(g : EGraph, typars : Set<int>) -> bool;
+
+	// Subtyping Operations
+
+	// Record that id1 is a subtype of id2
+	addSubtype(g : EGraph, sub : int, sup : int, contexts : Set<EContext>) -> void;
+	removeSubtype(g : EGraph, sub : int, sup : int) -> bool;
+
+	// Check if id1 is a direct subtype of id2
+	isDirectSubtyped(g : EGraph, a1 : int, a2 : int) -> bool;
+
+	// Maintenance Operations
+
+	// Make the graph canonical by ensuring all references point to representatives
+	canonicalizeEGraph(g : EGraph) -> void;
+
+	// Ensure each of these eclasses are separate, if necessary by splitting them
+	separateEClasses(g : EGraph, eclasses : Set<int>) -> void;
+
+	// Extract meaningful context information from type relationships for error reporting
+	getRelationshipContexts(g : EGraph, r1 : int, r2 : int) -> Set<EContext>;
+
+	// How many subtypes do we have?
+	countSubtypeRelations(g : EGraph) -> int;
+
+	// Debug helpers
+	debugMsg(g : EGraph, level : int, msg : string) -> void;
+	indentMsg(g : EGraph) -> void;
+	dedentMsg(g : EGraph) -> void;
+}
+
+// Helper to create a new empty EGraph
+makeEGraph(interface : HModuleInterface, typars : ETypeParMap, tracing : int, fineGrained : bool, onError : (Set<EContext>, string) -> void) -> EGraph {
+	errors = ref makeSet();
+	onErrorFn = \contexts : Set<EContext>, e -> {
+		newContexts = differenceSets(^(errors), contexts);
+		if (isEmptySet(newContexts)) {
+			// OK, we ignore it
+		} else {
+			errors := mergeSets(^(errors), contexts);
+			onError(newContexts, e)
+		}
+	};
+	EGraph(
+		interface,
+		typars,
+		makeTree(),
+		ref makeTree(),    // classes
+		ref makeTree(),    // nodeIndex
+		ref makeTree(),    // roots
+		ref 1,             // nextId
+		ref 0,			   // modification counter
+		onError,
+		errors,
+		tracing,
+		ref "",
+		fineGrained
+	)
+}
+
+// Helper function to find the root, or representative of an id (union-find)
+findEGraphRoot(g : EGraph, id : int) -> int {
+	switch (lookupTree(^(g.roots), id)) {
+		None(): {
+			// If not found, this node is its own root
+			g.roots := setTree(^(g.roots), id, id);
+			id;
+		}
+		Some(root): {
+			if (root != id) {
+				// Path compression: Update the root to point directly to the ultimate parent
+				ultimateRoot = findEGraphRoot(g, root);
+				g.roots := setTree(^(g.roots), id, ultimateRoot);
+				ultimateRoot;
+			} else root;
+		}
+	}
+}
+
+isSameEClass(g : EGraph, id1 : int, id2 : int) -> bool {
+	findEGraphRoot(g, id1) == findEGraphRoot(g, id2)
+}
+
+// Add subtype relationship (a1 <: a2)
+addSubtype(g : EGraph, sub : int, sup : int, contexts : Set<EContext>) -> void {
+	// Resolve to roots
+	rSub = findEGraphRoot(g, sub);
+	rSup = findEGraphRoot(g, sup);
+
+	if (rSub != rSup) {
+		subClass = getEClassDef(g, rSub);
+		supClass = getEClassDef(g, rSup);
+
+		if (!containsSet(subClass.supertypes, rSup) || !containsSet(supClass.subtypes, rSub)) {
+			if (g.tracing > 1) {
+				debugMsg(g, 2, "Add direct subtype α" + i2s(rSub) + " <: α" + i2s(rSup));
+			}
+
+			// Create context objects
+			subToSupContext = TypeRelationContext(rSup, contexts);
+			supToSubContext = TypeRelationContext(rSub, contexts);
+
+			// Add the relationship
+			newSubClass = EClass(subClass with 
+				supertypes = insertSet(subClass.supertypes, rSup),
+				supertypeContexts = insertSet(subClass.supertypeContexts, subToSupContext)
+			);
+			newSupClass = EClass(supClass with 
+				subtypes = insertSet(supClass.subtypes, rSub),
+				subtypeContexts = insertSet(supClass.subtypeContexts, supToSubContext)
+			);
+
+			// Update classes
+			g.classes := setTree(setTree(^(g.classes), rSub, newSubClass), rSup, newSupClass);
+		}
+	}
+}
+
+// Removes a subtyping relation between two eclasses if it exists
+// Returns true if a relation was removed, false if no relation existed
+removeSubtype(g : EGraph, sub : int, sup : int) -> bool {
+	// Resolve to roots
+	rSub = findEGraphRoot(g, sub);
+	rSup = findEGraphRoot(g, sup);
+
+	if (rSub == rSup) {
+		// Can't have a subtyping relation with itself
+		false;
+	} else {
+		// Get the classes
+		subClass = getEClassDef(g, rSub);
+		supClass = getEClassDef(g, rSup);
+
+		// Check if the relation exists
+		relationExists = containsSet(subClass.supertypes, rSup) &&
+			containsSet(supClass.subtypes, rSub);
+
+		if (relationExists) {
+			if (g.tracing > 1) {
+				debugMsg(g, 0, "Removing direct subtype α" + i2s(rSub) + " <: α" + i2s(rSup));
+			}
+
+			// Remove the relationship from both classes
+			newSubClass = EClass(subClass with
+				supertypes = removeSet(subClass.supertypes, rSup),
+				supertypeContexts = filterSet(subClass.supertypeContexts, \ctx -> ctx.id != rSup)
+			);
+
+			newSupClass = EClass(supClass with
+				subtypes = removeSet(supClass.subtypes, rSub),
+				subtypeContexts = filterSet(supClass.subtypeContexts, \ctx -> ctx.id != rSub)
+			);
+
+			// Update classes in the graph
+			g.classes := setTree(setTree(^(g.classes), rSub, newSubClass), rSup, newSupClass);
+
+			true;
+		} else {
+			// No relation to remove
+			false;
+		}
+	}
+}
+
+
+// Merge two e-classes without merging subtypes transitively
+mergeEClasses(g : EGraph, id1 : int, id2 : int) -> int {
+	r1 = findEGraphRoot(g, id1);
+	r2 = findEGraphRoot(g, id2);
+
+	if (r1 != r2) {
+		rSmall = min(r1, r2);
+		rLarge = max(r1, r2);
+		smallClass = getEClassDef(g, rSmall);
+		largeClass = getEClassDef(g, rLarge);
+
+		// Update the root mapping
+		g.roots := setTree(^(g.roots), rSmall, rLarge);
+
+		// Combine and clean up subtypes and supertypes
+		cleanSubtypes = \s -> filterSet(s, \t -> {
+			troot = findEGraphRoot(g, t);
+			troot != rLarge && troot != rSmall;
+		});
+
+		combinedSubtypes = mergeSets(
+			cleanSubtypes(largeClass.subtypes),
+			cleanSubtypes(smallClass.subtypes)
+		);
+
+		combinedSupertypes = mergeSets(
+			cleanSubtypes(largeClass.supertypes),
+			cleanSubtypes(smallClass.supertypes)
+		);
+
+		combinedSubtypeContexts = mergeSets(smallClass.subtypeContexts, largeClass.subtypeContexts);
+		combinedSupertypeContexts = mergeSets(smallClass.supertypeContexts, largeClass.supertypeContexts);
+
+		// TODO: This can be done better. We should do unique on the them like we do during resolution
+		alts = mergeSets(smallClass.alternatives, largeClass.alternatives);
+		combinedPartOfAlternatives = mergeSets(smallClass.partOfAlternatives, largeClass.partOfAlternatives);
+
+		// Just combine the direct relationships
+		g.classes := setTree(^(g.classes), rLarge,
+			EClass(
+				pickSpecificNode(smallClass.node, largeClass.node),
+				rLarge,
+				alts,
+				combinedSubtypes,
+				combinedSupertypes,
+				combinedSubtypeContexts,
+				combinedSupertypeContexts,
+				combinedPartOfAlternatives,
+				if (true) smallClass.infos else mergeSets(smallClass.infos, largeClass.infos),
+			)
+		);
+
+		if (g.tracing > 1) {
+			debugMsg(g, 2, "Merged α" + i2s(rLarge) + " = α" + i2s(rSmall));
+		}
+
+		// Remove the small class entry completely
+		g.classes := removeFromTree(^(g.classes), rSmall);
+		rLarge
+	} else r1;
+}
+
+// Extract meaningful context information from type relationships
+getRelationshipContexts(g : EGraph, r1 : int, r2 : int) -> Set<EContext> {
+	// Look for r2 in the supertype contexts of r1
+	class1 = getEClassDef(g, r1);
+	mergeTypeRelationContext(filterSet(class1.supertypeContexts, \ctx -> isSameEClass(g, ctx.id, r2)));
+}
+
+mergeTypeRelationContext(contexts : Set<TypeRelationContext>) -> Set<EContext> {
+	foldSet(contexts, makeSet(), \acc, ctx -> mergeSets(acc, ctx.contexts))
+}
+
+// Pick the more specific of two nodes, preferring concrete types over type variables
+pickSpecificNode(node1 : TypeNode, node2 : TypeNode) -> TypeNode {
+	if (isTypeVar(node1)) node2
+	else if (isTypeVar(node2)) node1
+	else if (node1 <= node2) node1  // Use structural ordering as tie-breaker
+	else node2
+}
+
+isTypeVar(node : TypeNode) -> bool {
+	switch (node) {
+		Variable(__): true;
+		default: false;
+	}
+}
+
+
+// Introduce a new type variable
+makeTypeVariable(g : EGraph, infos : Set<EContext>) -> int {
+	newId = ^(g.nextId);
+	// This one will update the next id
+	insertNewNode(g, Variable(newId), infos)
+}
+
+// Insert a new node into the EGraph
+// This assumes this is a new node, and just adds it
+insertNewNode(g : EGraph, n : TypeNode, infos : Set<EContext>) -> int {
+	newId = ^(g.nextId);
+	newClass = EClass(
+		n,          // node
+		newId,      // root
+		makeSet(),  // alternatives
+		makeSet(),  // subtypes
+		makeSet(),   // supertypes
+		makeSet(), makeSet(), // subtypeContexts, supertypeContexts
+		makeSet(),  // partOfAlternatives
+		infos,
+	);
+	g.classes := setTree(^(g.classes), newId, newClass);
+	g.nodeIndex := setTree(^(g.nodeIndex), n, newId);
+	g.roots := setTree(^(g.roots), newId, newId);  // Initialize root
+	g.nextId := newId + 1;
+	newId;
+}
+
+// Insert a new EClass into the EGraph
+insertNewEClass(g : EGraph, alternatives : Set<int>, infos : Set<EContext>) -> int {
+	root = ^(g.nextId);
+	n = Variable(root);
+	newClass = EClass(
+		n, 				// node
+		root,          // root
+		alternatives,   // alternatives
+		makeSet(),      // subtypes
+		makeSet(),      // supertypes
+		makeSet(), makeSet(), // subtypeContexts, supertypeContexts
+		makeSet(),  // partOfAlternatives
+		infos           // infos
+	);
+
+	// Update the classes tree
+	g.classes := setTree(^(g.classes), root, newClass);
+
+	// Update the node index
+	g.nodeIndex := setTree(^(g.nodeIndex), n, root);
+
+	// Initialize root mapping
+	g.roots := setTree(^(g.roots), root, root);
+
+	g.nextId := root + 1;
+
+	root;
+}
+
+updateEClass(g : EGraph, id : int, newClass : EClass) -> void {
+	root = findEGraphRoot(g, id);
+	if (getEClassDef(g, root) != newClass) {
+		g.classes := setTree(^(g.classes), root, newClass);
+	} else {
+		// println("Not changed");
+	}
+}
+
+updateNode(g : EGraph, id : int, n : TypeNode) -> bool {
+	root = findEGraphRoot(g, id);
+	eclass = getEClassDef(g, root);
+	if (eclass.node != n) {
+		newEclass = EClass(eclass with node = n);
+		g.classes := setTree(^(g.classes), root, newEclass);
+		g.nodeIndex := setTree(^(g.nodeIndex), n, root);
+		true
+	} else {
+		// println("Node not changed");
+		false
+	}
+}
+
+// Makes an egraph canonical by ensuring all references point to representative classes
+canonicalizeEGraph(g : EGraph) -> void {
+	// First find all representatives to ensure path compression is done
+	traverseInOrder(^(g.classes), \id, eclass -> {
+		findEGraphRoot(g, id);
+		{}
+	});
+
+	// Now update all references to point to representatives
+	g.classes := foldTree(^(g.classes), makeTree(), \id, eclass, acc -> {
+		repr = findEGraphRoot(g, id);
+		if (repr != id) {
+			// This class is not a representative, skip it
+			acc
+		} else {
+			// Update the node to point to representatives
+			newNode = canonicalizeNode(g, eclass.node);
+
+			areWeDecided = isCompleteNodeDecided(g, id);
+			updateSet = \ss -> {
+				alive = if (false && areWeDecided) {
+					filterSet(ss, \s -> !isCompleteNodeDecided(g, s));
+				} else ss;
+				mapSet(alive, \s -> findEGraphRoot(g, s))
+			}
+
+			// Update all references to point to representatives
+			newEClass = EClass(
+				newNode,
+				repr,
+				// Map each alternative to its representative
+				mapSet(eclass.alternatives, \a -> findEGraphRoot(g, a)),
+				// Map each subtype to its representative
+				updateSet(eclass.subtypes),
+				// Map each supertype to its representative
+				updateSet(eclass.supertypes),
+				// Map each subtype context to its representative
+				mapSet(eclass.subtypeContexts, \ctx -> TypeRelationContext(ctx with id = findEGraphRoot(g, ctx.id))),
+				mapSet(eclass.supertypeContexts, \ctx -> TypeRelationContext(ctx with id = findEGraphRoot(g, ctx.id))),
+				mapSet(eclass.partOfAlternatives, \a -> findEGraphRoot(g, a)),
+				eclass.infos,
+			);
+			setTree(acc, id, newEClass)
+		}
+	});
+
+	// mergeEqualClasses(g);
+
+	if (false) {
+		// Update nodeIndex to point to representatives, and update all node references
+		g.nodeIndex := foldTree(^(g.nodeIndex), makeTree(), \node, id, acc -> {
+			repr = findEGraphRoot(g, id);
+			newNode = canonicalizeNode(g, node);
+			setTree(acc, newNode, repr)
+		});
+	}
+}
+
+// Updates all type references in a node to point to their representatives
+canonicalizeNode(g : EGraph, node : TypeNode) -> TypeNode {
+	switch (node) {
+		Variable(vid): Variable(findEGraphRoot(g, vid));
+		Constructor(name, params): Constructor(name, map(params, \p -> findEGraphRoot(g, p)));
+		Function(args, ret): Function(map(args, \a -> findEGraphRoot(g, a)), findEGraphRoot(g, ret));
+	}
+}
+
+mergeEqualClasses(g : EGraph) -> void {
+	// Group classes by their node value
+	classesByNode : Tree<TypeNode, [int]> = foldTree(^(g.classes), makeTree(), \id, eclass, acc -> {
+		root = findEGraphRoot(g, id);
+		if (root == id) {
+			// Only consider root classes
+			treePushToArrayValue(acc, eclass.node, id)
+		} else acc
+	});
+
+	// For each group with multiple classes, merge them
+	traverseInOrder(classesByNode, \node, ids -> {
+		if (length(ids) > 1) {
+			target = ids[0];
+			iter(tail(ids), \otherId -> {
+				mergeEClasses(g, target, otherId);
+				{}
+			});
+		}
+	});
+}
+
+// First tries a direct lookup. If that fails, canonicalizes the graph and tries again.
+// If that fails, adds a new node.
+insertNode(g : EGraph, n : TypeNode, infos : Set<EContext>) -> int {
+	if (g.fineGrained) {
+		insertNewNode(g, n, infos);
+	} else {
+		switch (lookupTree(^(g.nodeIndex), n)) {
+			Some(id): {
+				findEGraphRoot(g, id)
+			}
+			None(): {
+				// Now canonicalize the node we're looking for as well
+				canonicalNode = canonicalizeNode(g, n);
+				switch (lookupTree(^(g.nodeIndex), canonicalNode)) {
+					Some(id): {
+						findEGraphRoot(g, id)
+					}
+					None(): insertNewNode(g, canonicalNode, infos);
+				}
+			}
+		}
+	}
+}
+
+
+// Get a node from its id
+getNode(g : EGraph, id : int) -> Maybe<TypeNode> {
+	root = findEGraphRoot(g, id);
+	lookupTree(^(g.classes), root)
+	|> (\mc -> switch(mc) {
+		None(): None();
+		Some(ec): Some(ec.node);
+	});
+}
+
+getNodeDef(g : EGraph, id : int) -> TypeNode {
+	root = findEGraphRoot(g, id);
+	lookupTree(^(g.classes), root)
+	|> (\mc -> switch(mc) {
+		None(): Variable(id);
+		Some(ec): ec.node;
+	});
+}
+
+getNodeInfos(g : EGraph, id : int) -> Set<EContext> {
+	root = findEGraphRoot(g, id);
+	lookupTree(^(g.classes), root)
+	|> (\mc -> switch(mc) {
+		None(): makeSet();
+		Some(ec): ec.infos;
+	});
+}
+
+get2NodeInfos(g : EGraph, id1 : int, id2 : int) -> Set<EContext> {
+	mergeSets(getNodeInfos(g, id1), getNodeInfos(g, id2))
+}
+
+getEClass(g : EGraph, id : int) -> Maybe<EClass> {
+	root = findEGraphRoot(g, id);
+	lookupTree(^(g.classes), root)
+}
+
+getEClassDef(g : EGraph, id : int) -> EClass {
+	root = findEGraphRoot(g, id);
+	m = lookupTree(^(g.classes), root);
+	m ?? {
+		m
+	} : {
+		println("INVARIANT BROKEN: EClass not found for ID " + i2s(id));
+		EClass(Variable(id), id, makeSet(), makeSet(), makeSet(), makeSet(), makeSet(), makeSet(), makeSet())
+	}
+}
+
+// Returns a set of all node IDs that are equivalent to the given ID
+getEquivClass(g : EGraph, id : int) -> Set<int> {
+	root = findEGraphRoot(g, id);
+	// Find all nodes that have this root
+	foldTree(^(g.roots), makeSet1(root), \nodeId, nodeRoot, acc -> {
+		if (nodeId != root && findEGraphRoot(g, nodeId) == root) {
+			insertSet(acc, nodeId)
+		} else acc
+	});
+}
+
+// Check if a1 is a subtype of a2
+isDirectSubtyped(g : EGraph, a1 : int, a2 : int) -> bool {
+	eclass2 = getEClassDef(g, a2);
+	existsSet(eclass2.subtypes, \sub -> isSameEClass(g, sub, a1))
+}
+
+
+separateEClasses(g : EGraph, eclasses : Set<int>) -> void {
+	if (sizeSet(eclasses) > 1) {
+		// Group elements by their roots
+		byRoot : Tree<int, [int]> = foldSet(eclasses, makeTree(), \acc, t -> {
+			root = findEGraphRoot(g, t);
+			treePushToArrayValue(acc, root, t)
+		});
+
+		// For each group that has multiple elements
+		traverseInOrder(byRoot, \root, group -> {
+			if (length(group) > 1) {
+				// Copy relationships from old class
+				oldClass = getEClassDef(g, root);
+				node = oldClass.node;
+
+				// For all elements except the first one:
+				iter(tail(group), \id -> {
+					// Create new eclass with same node
+					newId = insertNewNode(g, node, makeSet());
+
+					// Update the roots mapping
+					g.roots := setTree(^(g.roots), id, newId);
+
+					// Create new class with same relationships
+					newClass = EClass(
+						Variable(newId),
+						newId,
+						oldClass.alternatives,
+						oldClass.subtypes,
+						oldClass.supertypes,
+						oldClass.subtypeContexts,
+						oldClass.supertypeContexts,
+						oldClass.partOfAlternatives,
+						oldClass.infos,
+					);
+
+					g.classes := setTree(^(g.classes), newId, newClass);
+				});
+			}
+		});
+	}
+}
+
+
+debugMsg(g : EGraph, level : int, msg : string) -> void {
+	if (g.tracing >= level) {
+		println(^(g.indent) + msg);
+	}
+}
+indentMsg(g : EGraph) -> void {
+	if (g.tracing >= 0) {
+		g.indent := ^(g.indent) + "  ";
+	}
+}
+dedentMsg(g : EGraph) -> void {
+	if (g.tracing >= 0) {
+		g.indent := substring(^(g.indent), 0, strlen(^(g.indent)) - 2);
+	}
+}
+
+// Checks if there is at least one undecided top node in the EGraph.  Stops scanning as soon as one is found.
+isDecidedEGraph(g : EGraph, typars : Set<int>) -> bool {
+	undecided = findInOrder(^(g.classes), \id, eclass -> {
+		noGood = isTypeVar(eclass.node) || !isEmptySet(eclass.alternatives);
+		if (noGood && !existsSet(typars, \tp -> isSameEClass(g, tp, id))) Some(true) else None();
+	});
+	undecided == None();
+}
+
+// Recursive helper function to determine if a node and all its children are decided
+isCompleteNodeDecided(g : EGraph, id : int) -> bool {
+	eclass = getEClassDef(g, id);
+	isEmptySet(eclass.alternatives)
+	&& switch (eclass.node) {
+		Variable(__): false; 
+		Constructor(__, args): forall(args, \arg -> isCompleteNodeDecided(g, arg)); // Check all constructor arguments
+		Function(args, ret): forall(args, \arg -> isCompleteNodeDecided(g, arg)) && isCompleteNodeDecided(g, ret); // Check all function arguments and return type
+	}
+}
+
+// Count how many subtype relations exist in the entire egraph
+countSubtypeRelations(g : EGraph) -> int {
+	// First canonicalize to ensure everything points to representatives
+	// canonicalizeEGraph(g);
+
+	totalRelations = ref 0;
+	// Iterate through all the classes
+	traverseInOrder(^(g.classes), \id, eclass -> {
+		// Only process representative classes (roots)
+		if (findEGraphRoot(g, id) == id) {
+			// For each supertype relation
+			totalRelations := ^totalRelations + sizeSet(eclass.supertypes);
+		}
+	});
+
+	// Return the total count
+	^totalRelations;
+}

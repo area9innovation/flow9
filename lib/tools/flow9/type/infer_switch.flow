@@ -1,0 +1,356 @@
+import tools/flow9/desugar/pretty;
+import tools/flow9/type/unify;
+import tools/flow9/type/dtype;
+import tools/flow9/type/egraph/subtype_util;
+import tools/flow9/type/instantiate_subtype;
+import tools/flow9/utils/vars;
+
+export {
+	inferDSwitch(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, value : DExp, cases : [DCase], defaultCase : Maybe<DExp>, expected : HTypeExpect, info : int) -> int;
+}
+
+inferDSwitch(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, 
+        value : DExp, cases : [DCase], defaultCase : Maybe<DExp>, expected : HTypeExpect, info : int) -> int {
+    // Infer the type of the value expression
+    valueResult = inferDExp(env, value, HTypeNone());
+
+	node = getNodeDef(env.egraph, valueResult);
+    switch (node) {
+		Constructor(unionName, typeArgs): {
+            switch (lookupTree(env.interface.unions, unionName)) {
+                Some(union): {
+                    inferDSwitchUnion(env, inferDExp, value, valueResult, 
+                        union, typeArgs, cases, defaultCase, expected);
+                }
+                None(): {
+                    switch (lookupTree(env.interface.structs, unionName)) {
+                        Some(struct): {
+                            inferDSwitchStruct(env, inferDExp, value, valueResult, 
+                                struct, typeArgs, cases, defaultCase, expected, info);
+                        }
+                        None(): {
+							if (unionName == "flow") {
+								// OK, for now, we allow this non-sense
+								// TODO: Add a flag to disallow this
+								inferDSwitchFlow(env, inferDExp, value, valueResult, cases, defaultCase, expected);
+							} else {
+				                typeError(env, value.info, "Union expected in switch, got " + prettyNode(env.egraph, valueResult));
+							}
+                        }
+                    }
+                }
+            }
+        }
+        default: {
+            // Find potential unions containing all cases
+            potUnions = foldi(cases, [], \i, acc, case -> {
+                if (length(acc) == 1) acc
+                else {
+                    caseUnions = findUnionsContainingStruct(env.interface, case.uid);
+                    if (i == 0) caseUnions
+                    else intersectUnions(acc, caseUnions)
+                }
+            });
+            inOrder = sortCustom(potUnions, \a -> length(a.types), true);
+            if (inOrder == [])  {
+				typeError(env, value.info, "Union expected in switch, got " + prettyNode(env.egraph, valueResult));
+            } else {
+                // Pick the smallest union
+                union = inOrder[0];
+                inferDSwitchUnion(env, inferDExp, value, valueResult, 
+                    union, [], cases, defaultCase, expected);
+            }
+        }
+    }
+}
+
+// We know we are switching on a union value.
+inferDSwitchUnion(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int,
+		value : DExp, valueType : int, union : HUnion,
+		typeArgs : [int], cases : [DCase], defaultCase : Maybe<DExp>, expected : HTypeExpect) -> int {
+	if (typeArgs != [] && length(union.typars) != length(typeArgs)) {
+		typeError(env, value.info, "Type arguments do not match type parameters for union " + 
+			prettyHUnion(union, false) + " in switch, got " + superglue(typeArgs, \e -> prettyNode(env.egraph, e), ", "));
+	} else {
+		switchVar = getDVar(value);
+		
+		// Process all cases, passing through the expected type
+		caseTypes = map(cases, \case -> {
+			processSwitchCase(env, inferDExp, switchVar, valueType, case, union.name, expected)
+		});
+
+		// Handle default case
+		allBodies = switch (defaultCase) {
+			Some(defaultExpr): {
+				defaultResult = inferDExp(env, defaultExpr, expected);
+				arrayPush(caseTypes, defaultResult);
+			}
+			None(): caseTypes;
+		}
+
+		if (shouldTrace(env, 2)) {
+			printTrace(env, "After cases: " + superglue(allBodies, \e -> prettyNode(env.egraph, e), ", "), 0);
+		}
+
+		// Find common supertype of all cases
+		// Create pairs of eclass and its associated info
+		typesWithInfo = foldi(cases, [], \i, acc, case -> {
+			arrayPush(acc, Pair(caseTypes[i], case.info));
+		});
+
+		// Add default case info if present
+		allTypesWithInfo = switch (defaultCase) {
+			Some(defaultExpr): {
+				arrayPush(typesWithInfo, Pair(allBodies[length(allBodies) - 1], defaultExpr.info));
+			}
+			None(): typesWithInfo;
+		}
+
+		// Use the new function with pairs of eclass and info
+		unifyLubInfoTypes(env, allTypesWithInfo, expected, value.info);
+	}
+}
+
+inferDSwitchFlow(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, value : DExp, valueType: int,
+		cases : [DCase], defaultCase : Maybe<DExp>, expected : HTypeExpect) -> int {
+
+	switchVar = getDVar(value);
+	// Process all cases, inferring their types
+	caseTypes = map(cases, \case -> {
+		// Just infer the body directly since we don't need to do any value type checking
+		processSwitchCase(env, inferDExp, switchVar, valueType, case, "flow", expected)
+	});
+
+	// Handle default case if present
+	allBodies = switch (defaultCase) {
+		Some(defaultExpr): {
+			defaultResult = inferDExp(env, defaultExpr, expected);
+			arrayPush(caseTypes, defaultResult);
+		}
+		None(): caseTypes;
+	}
+
+	// If we have no cases at all, that's an error
+	if (length(allBodies) == 0) {
+		typeError(env, firstElement(cases, DCase("", [], DInt(0, 0), 0)).info,
+			"Switch must have at least one case or default");
+	} else {
+		// Find common supertype of all cases
+		// Create pairs of eclass and its associated info
+		typesWithInfo = foldi(cases, [], \i, acc, case -> {
+			arrayPush(acc, Pair(caseTypes[i], case.info));
+		});
+
+		// Add default case info if present
+		allTypesWithInfo = switch (defaultCase) {
+			Some(defaultExpr): {
+				arrayPush(typesWithInfo, Pair(allBodies[length(allBodies) - 1], defaultExpr.info));
+			}
+			None(): typesWithInfo;
+		}
+
+		// Use the new function with pairs
+		unifyLubInfoTypes(env, allTypesWithInfo, expected, firstElement(cases, DCase("", [], DInt(0, 0), 0)).info)
+	}
+}
+
+// Unify the value type with the instantiated struct type, and infer the case body.
+// If it turns out to be a subunion, we dispatch to a helper that does that
+processSwitchCase(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int, 
+        switchVar : string, valueType : int, case : DCase, unionName : string, expected : HTypeExpect) -> int {
+    if (shouldTrace(env, 2)) {
+        printTrace(env, "Processing case " + case.uid + " in switch", 0);
+
+		printTrace(env, "processSwitchCase: Starting with:", 0);
+		printTrace(env, "  switchVar: " + switchVar, 0);
+		printTrace(env, "  valueType: " + prettyNode(env.egraph, valueType), 0);
+		printTrace(env, "  case: " + case.uid, 0);
+		indentMsg(env.egraph);
+    }
+
+    result = switch (lookupTree(env.interface.structs, case.uid)) {
+        Some(struct): {
+            // Try to directly instantiate from the union
+            maybeDirectCase = directInstantiateCaseFromUnion(env, valueType, case.uid, case.info);
+            
+            caseEclass = switch (maybeDirectCase) {
+                Some(eclass): {
+                    if (shouldTrace(env, 2)) {
+                        printTrace(env, "  Directly instantiated case from union: " + 
+                                  prettyNode(env.egraph, eclass), 0);
+                    }
+                    eclass;
+                }
+                None(): {
+                    // Fall back to the current approach with subtyping - this happens when we do not know the switch type
+                    if (shouldTrace(env, 2)) {
+                        printTrace(env, "  Falling back to subtyping for case instantiation", 0);
+                    }
+                    
+                    // Instantiate the struct type
+                    caseType = instantiateHStruct(env.egraph, struct);
+                    caseEclass = insertNewNode(env.egraph, caseType, makeSet1(EContext(case.info, case.uid + " body")));
+                    
+                    expectedValue = HTypeExpectSubtype("case `" + case.uid + "`", valueType);
+                    
+                    // Unify value type with struct type - we want subtype here
+                    unified = unify(env, caseEclass, expectedValue, case.info);
+                    
+                    caseEclass;
+                }
+            };
+
+            // Extend environment with case ids only for struct cases
+            extendedEnv = if (length(case.ids) > 0) {
+                caseNode = getNodeDef(env.egraph, caseEclass);
+                switch (caseNode) {
+                    Constructor(name, params): {
+                        extendEnvWithCaseIds(env, case.ids, struct, caseNode, case.info);
+                    }
+                    default: {
+                        typeError(env, case.info, "Expected Constructor type for case " + case.uid);
+                        env;
+                    }
+                }
+            } else env;
+
+            // Set switch var type in environment
+            switchEnv = if (switchVar != "") {
+                if (shouldTrace(env, 2)) {
+                    printTrace(env, "Setting switch var " + switchVar + " to " + prettyNode(env.egraph, caseEclass), 0);
+                }
+                setLocalType(extendedEnv, switchVar, caseEclass)
+            } else extendedEnv;
+
+            // Infer case body
+            bodyResult = inferDExp(switchEnv, case.body, expected);
+
+			// Record the type on the case
+			setIntMap(env.info2types, case.info, bodyResult);
+
+            bodyResult;
+        }
+        None(): {
+            switch (lookupTree(env.interface.unions, case.uid)) {
+                Some(subunion): {
+                    if (length(case.ids) > 0) {
+                        typeError(env, case.info, "Union case '" + case.uid + "' must not have any identifiers.");
+                    } else {
+                        processSwitchUnionCase(env, inferDExp, switchVar, valueType, case, subunion, expected);
+                    }
+                }
+                None(): {
+					typeError(env, case.info, "Case '" + case.uid + "' not found in union '" + unionName + "'");
+                }
+            }
+        }
+    }
+
+    if (shouldTrace(env, 2)) {
+        printTrace(env, "End case " + case.uid + " giving " + prettyNode(env.egraph, result), 0);
+		dedentMsg(env.egraph);
+    }
+    result;
+}
+
+// Unify the value type with the instantiated subUnion agains the union, and infer the case body with the given expected body type
+processSwitchUnionCase(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int,
+        switchVar : string, valueType : int, case : DCase, union : HUnion, expected : HTypeExpect) -> int {
+    if (length(case.ids) > 0) {
+        typeError(env, case.info, "Union case '" + case.uid + "' must not have any identifiers.");
+    } else {
+        // Unify with subUnion
+        subUnion = instantiateHUnion(env.egraph, union);
+		subUnionEClass = insertNode(env.egraph, subUnion, makeSet1(EContext(case.info, case.uid + " case")));
+		expectedValue = HTypeExpectSubtype("case `" + case.uid + "`", valueType); 
+        unified = unify(env, subUnionEClass, expectedValue, case.info);
+
+        // Set switch var type
+        switchEnv = if (switchVar != "") {
+			if (shouldTrace(env, 2)) {
+				printTrace(env, "Setting switch var " + switchVar + " to " + prettyNode(env.egraph, subUnionEClass), 0);
+			}
+            setLocalType(env, switchVar, subUnionEClass)
+        } else env;
+
+        // Infer body
+        inferDExp(switchEnv, case.body, expected);
+    }
+}
+
+// Infer a switch on a struct value
+inferDSwitchStruct(env : HTypeEnv, inferDExp : (HTypeEnv, DExp, HTypeExpect) -> int,
+        value : DExp, valueType : int, 
+        struct : HStruct, typeArgs : [int], cases : [DCase], 
+        defaultCase : Maybe<DExp>, expected : HTypeExpect, info : int) -> int {
+	nonDefault = \ -> {
+ 		if (length(cases) >= 1) {
+			if (length(cases) > 1) {
+				env.onError(cases[1].info, "Warning: Multiple cases in switch on struct, only the first will be checked");
+			}
+			case = cases[0];
+			if (case.uid != struct.name) {
+				typeError(env, case.info, "Struct switch case must match struct type '" + 
+					struct.name + "', got '" + case.uid + "'");
+			} else {
+				switchVar = getDVar(value);
+				processSwitchCase(env, inferDExp, switchVar, valueType, case, struct.name, expected);
+			}
+		} else {
+			typeError(env, value.info, "switch on struct must have just one case or a default");
+		}		
+	}
+    switch (defaultCase) {
+        None(): {
+			nonDefault();
+        }
+        Some(defaultExpr): {
+			defaultResult = inferDExp(env, defaultExpr, expected);
+            if (false && length(cases) > 0) {
+                typeError(env, value.info, "Switch on struct '" + struct.name + 
+                    "' must have exactly one case and no default, or no cases and one default.");
+				{}
+            }
+			nonCases = nonDefault();
+
+			// Create pairs with their respective info values
+			lubPairs = [Pair(defaultResult, defaultExpr.info)];
+
+			// Add the non-default case result with its info
+			lubPairs2 = if (length(cases) >= 1) {
+				arrayPush(lubPairs, Pair(nonCases, cases[0].info));
+			} else lubPairs
+
+			// Use the new function with pairs
+			unifyLubInfoTypes(env, lubPairs2, expected, info);
+		}
+	}
+}
+
+extendEnvWithCaseIds(env : HTypeEnv, ids : [string], structDef : HStruct, caseType : Constructor, info : int) -> HTypeEnv {
+    if (length(ids) != length(structDef.fields)) {
+        env.onError(info, "Number of variables in case '" + structDef.name + "(" + 
+            strGlue(ids, ",") + ")' does not match number of fields in struct '" + 
+            prettyHStruct(structDef, false) + "'");
+        env;
+    } else {
+		// println("Struct type: " + prettyHType(structType) + " for ids " + strGlue(ids, ","));
+
+        // Extend environment with field bindings
+        foldi(ids, env, \i, accEnv, id -> {
+            if (id != "__") {
+				// Instantiate the field type
+                fieldDef = structDef.fields[i];
+                fieldTypeSubst = ETypeParMap(foldi(structDef.typars, makeTree(), \j, map, typar ->
+                    setTree(map, typar, caseType.params[j])
+                ));
+                
+                // Apply substitutions to get final field type
+                fieldType = htype2root(EGraph(env.egraph with typars = fieldTypeSubst), fieldDef.type, EContext(info, structDef.name + " case"));
+                
+				// println("Case " + structDef.name + ": Setting " + id + " to " + prettyHType(fieldType) + "   from value " + prettyHType(caseType));
+                setLocalType(accEnv, id, fieldType);
+            } else accEnv;
+        });
+    }
+}

@@ -1455,10 +1455,8 @@ class DisplayObjectHelper {
 		}
 
 		if (nativeWidget != null) {
-			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
-
-			if (svgs.length > 0) {
-				var svg = svgs[0];
+			var svg: Element = nativeWidget.querySelector("svg");
+			if (svg != null) {
 				var elementId = untyped svg.parentNode.getAttribute('id');
 				var clipFilter : Element = nativeWidget.querySelector("#" + elementId + "filter");
 

@@ -1,0 +1,811 @@
+import tools/flow9/parser/flow_compiled_parser;
+import tools/flow9/parser/flow_types;
+import tools/flow9/desugar/desugar;
+import tools/flow9/make_env;
+import tools/flow9/type/typecheck;
+import tools/flow9/compile_state;
+import tools/flow9/desugar/incremental;
+import tools/flow9/desugar/changes;
+import tools/mango/mcode_lib;
+import tools/flowc/dependencies;
+import tools/flowc/flowc_timephases;
+import ds/arrayutils;
+import ds/array;
+import string;
+import sys/concurrent;
+import net/url_parameter;
+
+export {
+	// This pushes a set of files to the compile queue, and when they and transitive imports are done, calls onDone
+	// The queue is compiled in parallel
+	compileQueue(state : CompileState, files : [string], onDone : () -> void) -> void;
+
+	// Parse a single file, pushing dependencies on the queue, but does not process them
+	parseFlow9(state : CompileState, file : string) -> CompileStatus;
+}
+
+debugLog(state : CompileState, level : int, msg : string) -> void {
+	if (state.config.verbose > level) {
+		println("[DEBUG] " + msg);
+	}
+}
+
+// Helper function to get a useful string representation of a compile status
+statusToString(status : CompileStatus) -> string {
+	switch (status) {
+		CompileNotSeen(): "not seen";
+		CompileInProgress(): "in progress";
+		CompileParsed(__): "parsed";
+		CompileTyped(__): "typed";
+		CompileNeedsRecheck(__, __): "needs recheck";
+		CompileFailure(__): "failed";
+		CompilePendingIncremental(__, __): "pending incremental";
+	}
+}
+
+// Update reverse dependencies when a module imports other modules
+updateReverseDependencies(state : CompileState, file : string, imports : [string]) -> void {
+	debugLog(state, 1, "Updating reverse dependencies for " + file + ", imports: " + strGlue(imports, ", "));
+	
+	// Check for cyclic dependencies
+	if (false) {
+		cycle = hasCyclicDependency(state, file, imports);
+		if (cycle != []) {
+			// We found a cycle, print an error
+			cyclePath = strGlue(cycle, " -> ");
+			cycleError = "Error: Cyclic dependency detected: " + cyclePath;
+			println(cycleError);
+			state.onError(cycleError);
+		}
+	}
+	iter(imports, \importFile -> {
+		// Get current reverse dependencies for the imported file
+		deps = getConcurrentHashMap(state.reverseDependencies, importFile, makeSet());
+		// Add this file as a dependent
+		setConcurrentHashMap(state.reverseDependencies, importFile, insertSet(deps, file));
+		
+		// Debug to show the updated reverse dependencies
+		updatedDeps = getConcurrentHashMap(state.reverseDependencies, importFile, makeSet());
+		debugLog(state, 1, "Modules depending on " + importFile + ": " + strGlue(set2array(updatedDeps), ", "));
+	});
+}
+
+// Mark modules that depend on this module for rechecking
+markDependentModulesForRecheck(state : CompileState, changedModule : string, changedIds : Set<string>) -> void {
+	debugLog(state, 1, "Looking for modules depending on " + changedModule + " to mark for rechecking");
+	
+	// Get modules that depend on the changed module
+	affectedModules = getConcurrentHashMap(state.reverseDependencies, changedModule, makeSet());
+	debugLog(state, 1, "Found " + i2s(sizeSet(affectedModules)) + " modules depending on " + changedModule);
+	
+	// For each dependent module, mark it for rechecking
+	iterSet(affectedModules, \dependentModule -> {
+		debugLog(state, 1, "Marking dependent module for recheck: " + dependentModule);
+		dependentPath = flowPath2path(state.config.includes, dependentModule);
+		status = getCompileStatus(state, dependentPath);
+		
+		switch (status) {
+			CompileTyped(module): {
+				// Module is typed - mark it as needing recheck
+				debugLog(state, 1, "Marking typed module " + dependentModule + " for rechecking");
+				setCompileStatus(state, dependentPath, CompileNeedsRecheck(module, changedIds));
+				add2ConcurrentSet(state.typeQueue, [dependentModule]);
+			}
+			CompileNeedsRecheck(module, existingChangedIds): {
+				// Module already needs recheck - merge changed IDs
+				debugLog(state, 1, "Module " + dependentModule + " already marked for rechecking, merging changed IDs");
+				mergedIds = mergeSets(existingChangedIds, changedIds);
+				setCompileStatus(state, dependentPath, CompileNeedsRecheck(module, mergedIds));
+			}
+			CompileParsed(module): {
+				// Module is parsed but not typed yet
+				// Just let it go through normal type checking which will pick up the latest changes
+				debugLog(state, 1, "Dependent module " + dependentModule + " is only parsed, will get changes during normal type checking");
+			}
+			default: {
+				// Other states don't need special handling
+				debugLog(state, 1, "Dependent module " + dependentModule + " is in state " + statusToString(status) + ", no special handling needed");
+			}
+		}
+	});
+}
+
+// Detect whether adding a dependency would create a cycle in the graph
+hasCyclicDependency(state : CompileState, module : string, imports : [string]) -> [string] {
+	// For each import, check if it already (transitively) depends on the module
+	fold(imports, [], \cycle, importedModule -> {
+		if (cycle != []) cycle  // Stop once we've found a cycle
+		else checkDependencyPath(state, importedModule, module, [importedModule]);
+	});
+}
+
+// Helper function to check if there's a path from start to target in the dependency graph
+checkDependencyPath(state : CompileState, current : string, target : string, path : [string]) -> [string] {
+	if (current == target) {
+		// Found a cycle - the path is the cycle
+		arrayPush(path, target);
+	} else {
+		// Check all modules that the current module depends on
+		deps = getConcurrentHashMap(state.reverseDependencies, current, makeSet());
+		
+		// Check each dependent module for a path to target
+		fold(set2array(deps), [], \acc, dep -> {
+			if (acc != []) acc  // We've already found a cycle
+			else if (contains(path, dep)) {
+				// We've found a cycle back to a module we've already visited
+				depIndex = elemIndex(path, dep, 0);
+				subPath = subrange(path, depIndex, length(path) - depIndex);
+				arrayPush(subPath, dep);
+			} else {
+				// Continue checking with this dependency added to the path
+				checkDependencyPath(state, dep, target, arrayPush(path, dep));
+			}
+		});
+	}
+}
+
+// Mark modules that depend on a failed module
+markDependentsAsFailureDependents(state : CompileState, failedModule : string) -> void {
+	debugLog(state, 1, "Marking dependents of failed module: " + failedModule);
+	
+	// Get modules that depend on the failed module
+	affectedModules = getConcurrentHashMap(state.reverseDependencies, failedModule, makeSet());
+	debugLog(state, 1, "Found " + i2s(sizeSet(affectedModules)) + " modules depending on failed module " + failedModule);
+	
+	// For each dependent module, mark it appropriately
+	iterSet(affectedModules, \dependentModule -> {
+		debugLog(state, 1, "Dependency failure impacts module: " + dependentModule);
+		dependentPath = flowPath2path(state.config.includes, dependentModule);
+		status = getCompileStatus(state, dependentPath);
+		
+		switch (status) {
+			CompileTyped(module): {
+				// Module is typed - mark it as needing recheck with empty set (all changed)
+				debugLog(state, 1, "Marking typed module " + dependentModule + " for rechecking due to failed dependency");
+				setCompileStatus(state, dependentPath, CompileNeedsRecheck(module, makeSet()));
+				add2ConcurrentSet(state.typeQueue, [dependentModule]);
+			}
+			CompileNeedsRecheck(module, existingChangedIds): {
+				// Module already needs recheck - set to empty set (all changed)
+				debugLog(state, 1, "Module " + dependentModule + " already marked for rechecking, marking all exports as changed");
+				setCompileStatus(state, dependentPath, CompileNeedsRecheck(module, makeSet()));
+			}
+			CompileParsed(module): {
+				// Module is parsed but not typed yet
+				// Since dependency failed, this module will likely fail too, but let normal typechecking handle it
+				debugLog(state, 1, "Dependent module " + dependentModule + " is only parsed, will likely fail during typechecking");
+			}
+			default: {
+				// Other states don't need special handling
+				debugLog(state, 1, "Dependent module " + dependentModule + " is in state " + statusToString(status) + ", no special handling needed");
+			}
+		}
+	});
+}
+
+// Propagate changes to dependent modules
+propagateChanges(state : CompileState, changedModule : string, changedIds : Set<string>) -> void {
+	// Always propagate changes, even with empty set (which means ALL changed)
+	debugLog(state, 1, "Propagating changes from " + changedModule + ", IDs: " + 
+		strGlue(set2array(changedIds), ", "));
+	
+	// Get modules that depend on the changed module
+	affectedModules = getConcurrentHashMap(state.reverseDependencies, changedModule, makeSet());
+	debugLog(state, 1, "Modules depending on " + changedModule + ": " + 
+		strGlue(set2array(affectedModules), ", "));
+	
+	// Process each affected module
+	iterSet(affectedModules, \m -> {
+		fullpath = flowPath2path(state.config.includes, m);
+		status = getCompileStatus(state, fullpath);
+		
+		// Update module status based on current state
+		switch (status) {
+			CompileTyped(module): {
+				// Module was typed - mark it as needing recheck and track changed IDs
+				debugLog(state, 1, "Marking " + m + " for rechecking due to changes in " + changedModule);
+				setCompileStatus(state, fullpath, CompileNeedsRecheck(module, changedIds));
+				
+				// Add to typecheck queue
+				add2ConcurrentSet(state.typeQueue, [m]);
+			}
+			CompileNeedsRecheck(module, existingChangedIds): {
+				// Module already needs recheck - merge in additional changed IDs
+				mergedIds = mergeSets(existingChangedIds, changedIds);
+				setCompileStatus(state, fullpath, CompileNeedsRecheck(module, mergedIds));
+			}
+			default: {
+				// For other states (not typed yet), no need to do anything special
+				debugLog(state, 1, "Module " + m + " is in state " + statusToString(status) + 
+					", no special handling needed");
+			}
+		}
+	});
+}
+
+compileQueue(state : CompileState, files : [string], onDone : () -> void) -> void {
+	add2ConcurrentSet(state.parseQueue, files);
+	allFiles = set2arrayConcurrent(state.parseQueue);
+	debugLog(state, 2, "Parsing " + i2s(length(allFiles)) + " files");
+	results = parseFlow9s(state, allFiles);
+	remove2ConcurrentSet(state.parseQueue, allFiles);
+
+	// TODO: We could process the typecheck queue eagerly as well
+
+	if (exists(results, isCompileFailure)) {
+		debugLog(state, 1, "Compilation failed");
+		onDone();
+	} else if (isEmptyConcurrentSet(state.parseQueue)) {
+		if (isUrlParameterTrue("check-syntax")) {
+			debugLog(state, 1, "Parse queue empty, 'check-syntax' flag is set, skipping typechecking");
+			onDone();
+		} else {
+			debugLog(state, 1, "Parse queue empty, proceeding to typecheck queue");
+			typecheckQueue(state, onDone);
+		}
+	} else {
+		debugLog(state, 2, "More files in parse queue, continuing compilation");
+		compileQueue(state, [], onDone);
+	}
+}
+
+
+isCompileFailure(status : CompileStatus) -> bool {
+	switch (status) {
+		CompileFailure(__): true;
+		default: false;
+	}
+}
+
+
+typecheckQueue(state : CompileState, onDone : () -> void) -> void {
+	readyToType = extractConcurrentState(state.dependencies, \dt -> extractNonDependent(dt));
+	debugLog(state, 2, "Type checking " + i2s(sizeSet(readyToType)) + " dependencies");
+
+	if (state.config.verbose >= 2) {
+		filesList = strGlue(set2array(readyToType), ", ");
+		debugLog(state, 2, "Files ready for typechecking: " + filesList);
+	}
+
+	if (isEmptySet(readyToType)) {
+		debugLog(state, 1, "No dependencies to typecheck, done");
+		// Clear change tracking state when all type checking is done
+		onDone();
+	} else {
+		ok = typecheckFlow9s(state, set2array(readyToType));
+		if (forall(ok, \b -> b)) {
+			// Check if any pending incremental files can now be promoted
+			// We need to work with key-value pairs since we need the paths
+			allFiles = keysConcurrentHashMap(state.compileStatus);
+			
+			// Find all pending incremental files in the compile status
+			pendingIncrementals = fold(allFiles, [], \acc, fullPath -> {
+				status = getCompileStatus(state, fullPath);
+				switch (status) {
+					CompilePendingIncremental(module, pendingDeps): {
+						// Get the file path for dependency tracking
+						filePath = module.flowpath;
+						
+						// Check if all dependencies are now typed
+						nonTyped = filter(pendingDeps, \i -> !isTypeChecked(state, i));
+						
+						if (nonTyped == []) {
+							// All dependencies are now typed, add to promotion list
+							arrayPush(acc, Pair(fullPath, module));
+						} else {
+							acc;
+						}
+					}
+					CompileNotSeen(): acc;
+					CompileInProgress(): acc;
+					CompileParsed(module): acc;
+					CompileTyped(module): acc;
+					CompileNeedsRecheck(module, changedIds): acc;
+					CompileFailure(error): acc;
+				}
+			});
+			
+			// Promote any files that are ready
+			if (pendingIncrementals != []) {
+				debugLog(state, 1, "Promoting " + i2s(length(pendingIncrementals)) + " pending incremental files to typed");
+				
+				iter(pendingIncrementals, \pair -> {
+					fullPath = pair.first; // This is already the full filesystem path
+					module = pair.second;
+					filePath = module.flowpath; // Flow path for dependency tracking
+					
+					debugLog(state, 0, "Promoting " + filePath + " to typed as all dependencies are now satisfied");
+					
+					// Update status to typed
+					setCompileStatus(state, fullPath, CompileTyped(module));
+					
+					// Mark as resolved in dependency tracker
+					processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, filePath));
+					{}
+				});
+			}
+			
+			typecheckQueue(state, onDone);
+		} else {
+			debugLog(state, 1, "Typechecking failed, stopping");
+			// OK, we stop because of failure
+			onDone();
+		}
+	}
+}
+
+parseFlow9s(state : CompileState, files : [string]) -> [CompileStatus] {
+	debugLog(state, 2, "Parsing files in parallel: " + strGlue(files, ", "));
+	concurrent(getCompilerThreadPool(),
+		map(files, \path -> \ -> parseFlow9(state, path))
+	);
+}
+
+typecheckFlow9s(state : CompileState, files : [string]) -> [bool] {
+	debugLog(state, 2, "Typechecking files in parallel: " + strGlue(files, ", "));
+	concurrent(getCompilerThreadPool(),
+		map(files, \path -> \ -> typecheckFlow9(state, path))
+	);
+}
+
+parseFlow9(state : CompileState, file : string) -> CompileStatus {
+	fullpath = flowPath2path(state.config.includes, file);
+	// Check if incremental is turned off
+	incrementalOff = isConfigParameterFalse(state.config.config, "incremental");
+	// Check if we should reject existing incremental files
+	updateIncrementalCache = isConfigParameterTrue(state.config.config, "update-incremental");
+
+	status = getCompileStatus(state, fullpath);
+	switch (status) {
+		CompileNotSeen(): {
+			setCompileStatus(state, fullpath, CompileInProgress());
+
+			// Check if we can load from incremental cache
+			flowpath = path2flowPath(state.config.includes, fullpath);
+			t_preload = timestamp();
+			
+			// First check if we might use a cached module
+			maybeModule = if (incrementalOff || updateIncrementalCache) None() 
+				else preloadDIncrementalModule(state, flowpath);
+			
+			incrementTimePhase(getTimePhases(state.config.threadId).parse, t_preload);
+			
+			switch (maybeModule) {
+				Some(module): {
+					debugLog(state, 0, "Loaded module from incremental cache: " + file);
+					
+					// Still register imports for further processing
+					imports = map(module.imports, \i -> i.path + ".flow");
+					nonTyped = filter(imports, \i -> !isTypeChecked(state, i));
+
+					if (state.config.verbose >= 2) {
+						debugLog(state, 2, file + " (from cache) imports: " + strGlue(imports, ", "));
+						debugLog(state, 2, file + " (from cache) non-typed imports: " + strGlue(nonTyped, ", "));
+					}
+					atomicRefIntAddition(state.reusedIncrementalCount, 1);
+
+					// Track reverse dependencies (which modules import this one)
+					updateReverseDependencies(state, file, imports);
+					
+					processConcurrentState(state.dependencies, \dt -> addDependencies(dt, file, nonTyped));
+					add2ConcurrentSet(state.parseQueue, nonTyped);
+
+					// Check if there are any untyped dependencies
+					if (nonTyped != []) {
+						debugLog(state, 1, "Incremental module " + file + " has untyped dependencies: " + strGlue(nonTyped, ", "));
+						// We have untyped dependencies, mark as pending incremental
+						setCompileStatus(state, fullpath, CompilePendingIncremental(module, nonTyped));
+						// Return pending status
+						CompilePendingIncremental(module, nonTyped);
+					} else {
+						// No untyped dependencies, we can mark as fully typed
+						debugLog(state, 1, "Incremental module " + file + " has all dependencies typed, marking as typed");
+						setCompileStatus(state, fullpath, CompileTyped(module));
+						// Mark ourselves as typed to clear out other things to type
+						processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
+						// This is typed now!
+						CompileTyped(module);
+					}
+				}
+				None(): {
+					// No cached module or outdated, parse the file
+					// But first, try to load the old incremental file for comparison later
+					maybeOldModule = if (incrementalOff) None() 
+						else loadOldIncrementalModule(state, flowpath);
+					
+					t_parse = timestamp();
+					program = getFileContent(fullpath);
+
+					{
+						debugLog(state, 0, "Parsing file: " + file);
+						res : Pair<PModule, string> = parseCompiledMango(fullpath, program, P_parse_flow_compiled, flow(0));
+						incrementTimePhase(getTimePhases(state.config.threadId).parse, t_parse);
+
+						if (res.second != "") {
+							debugLog(state, 1, "Parse error in " + file + ": " + res.second);
+							setCompileStatus(state, fullpath, CompileFailure(res.second));
+							state.onError(res.second);
+							
+							// Delete any obsolete incremental files when we get errors
+							if (!incrementalOff) deleteDIncrementalModule(state, file);
+							
+							CompileFailure(res.second);
+						} else {
+							// Desugar and compile our file
+							errors = ref [];
+							onError = \e -> {
+								errors := arrayPush(^errors, e);
+								state.onError(e);
+							}
+							debugLog(state, 2, "Desugaring " + file);
+							t_desugar = timestamp();
+							desugar = desugarPModule(state.config, onError, fullpath, program, res.first);
+							incrementTimePhase(getTimePhases(state.config.threadId).desugar, t_desugar);
+
+							if (^errors != []) {
+								failure = CompileFailure(strGlue(^errors, "\n"));
+								debugLog(state, 1, "Desugar errors in " + file);
+								setCompileStatus(state, fullpath, failure);
+
+								// Delete any obsolete incremental files when we get errors
+								if (!incrementalOff) deleteDIncrementalModule(state, file);
+
+								failure;
+							} else {
+								// Compare with old module to find changes
+								if (state.config.verbose >= 2 && maybeOldModule != None()) {
+									debugLog(state, 2, "Comparing with old incremental module for " + file);
+								}
+								
+								// Extract changed identifiers by comparing old and new modules
+								initialChangedIds = getChangedIdsFromModules(maybeOldModule, desugar);
+								debugLog(state, 1, "Checking for changed IDs in " + file + ": " + 
+									b2s(isEmptySet(initialChangedIds)) + ", size: " + i2s(sizeSet(initialChangedIds)));
+								
+								// Always propagate changes if there are any changes at all
+								// (including empty set which means all changed)
+								finalChangedIds = if (maybeOldModule != None()) {
+									oldModule = either(maybeOldModule, desugar);
+									oldExports = set2array(buildSet(oldModule.exported));
+									newExports = set2array(buildSet(desugar.exported));
+									
+									debugLog(state, 1, "Old exports: " + strGlue(oldExports, ", "));
+									debugLog(state, 1, "New exports: " + strGlue(newExports, ", "));
+									
+									if (oldExports != newExports) {
+										// If exports have changed, we need to rebuild changedIds
+										debugLog(state, 1, "Exports list changed in " + file);
+										buildSet(oldExports);
+									} else if (sizeSet(initialChangedIds) == 0) {
+										// For all changed, use all exports from the old module
+										debugLog(state, 1, "All identifiers considered changed in " + file);
+										buildSet(oldModule.exported);
+									} else {
+										initialChangedIds;
+									}
+								} else {
+									// No old module to compare with
+									initialChangedIds;
+								};
+								
+								if (!isEmptySet(finalChangedIds)) {
+									debugLog(state, 1, "Found changed IDs in " + file + ": " + 
+										strGlue(set2array(finalChangedIds), ", "));
+									
+									// Propagate changes to dependent modules
+									propagateChanges(state, file, finalChangedIds);
+								}
+								
+								// Now that we've compared for changes, we can delete the old incremental
+								// file if it exists and we're not keeping incrementals
+								if (!incrementalOff && maybeOldModule != None()) {
+									deleteDIncrementalModule(state, file);
+								}
+								
+								// Also mark any modules that depend on this one as needing rechecking
+								// This is necessary when we make changes to modules during parsing
+								markDependentModulesForRecheck(state, file, finalChangedIds);
+								
+								setCompileStatus(state, fullpath, CompileParsed(desugar));
+
+								// Register imports
+								imports = map(desugar.imports, \i -> i.path + ".flow");
+								// Which have not been typed yet?
+								nonTyped = filter(imports, \i -> !isTypeChecked(state, i));
+
+								if (state.config.verbose >= 2) {
+									debugLog(state, 2, file + " imports: " + strGlue(imports, ", "));
+									debugLog(state, 2, file + " non-typed imports: " + strGlue(nonTyped, ", "));
+								}
+
+								// Track reverse dependencies (which modules import this one)
+								updateReverseDependencies(state, file, imports);
+
+								processConcurrentState(state.dependencies, \dt -> addDependencies(dt, file, nonTyped));
+								add2ConcurrentSet(state.parseQueue, nonTyped);
+
+								// Return successful compilation result
+								CompileParsed(desugar);
+							}
+						}
+					}
+				}
+			}
+		}
+		CompileInProgress(): {
+			debugLog(state, 2, "File already in progress: " + file);
+			status;
+		}
+		CompileParsed(module): {
+			debugLog(state, 2, "File already parsed: " + file);
+			status;
+		}
+		CompileTyped(module): {
+			debugLog(state, 2, "File already typed: " + file);
+			status;
+		}
+		CompileNeedsRecheck(module, changedIds): {
+			debugLog(state, 2, "File needs rechecking: " + file + " due to dependency changes");
+			// We treat it like it's already parsed for the parsing phase
+			status;
+		}
+		CompileFailure(error): {
+			debugLog(state, 2, "File previously failed: " + file + " with error: " + error);
+
+			// Delete any incremental file for failed compilations
+			if (!incrementalOff) deleteDIncrementalModule(state, file);
+
+			status;
+		}
+		CompilePendingIncremental(module, pendingDeps): {
+			debugLog(state, 2, "File is pending incremental: " + file + " waiting for dependencies: " + strGlue(pendingDeps, ", "));
+			status;
+		}
+	}
+}
+
+// Helper function to typecheck a module and handle the results
+doTypecheckModule(state : CompileState, file : string, fullpath : string, m : DModule, incrementalOff : bool, shouldFullRecheck : bool, maybeOldModule : Maybe<DModule>) -> bool {
+	// Build a unified environment for typechecking
+	debugLog(state, 2, "Building environment for " + file);
+	t_build_env = timestamp();
+	env = buildDepEnv(state, m);
+	incrementTimePhase(getTimePhases(state.config.threadId).build, t_build_env);
+	
+	// Do a full typecheck
+	atomicRefIntAddition(state.retypecheckedCount, 1);
+	debugLog(state, 0, "Starting full typecheck for " + file);
+	t_typecheck = timestamp();
+	mtypeenv = typecheckDModule(env, m);
+	incrementTimePhase(getTimePhases(state.config.threadId).typecheck, t_typecheck);
+	
+	switch (mtypeenv) {
+		None(): {
+			debugLog(state, 1, "Typecheck failed for " + file);
+			setCompileStatus(state, fullpath, CompileFailure("Could not type"));
+			
+			// Delete incremental file on failure
+			if (!incrementalOff) deleteDIncrementalModule(state, file);
+			
+			false;
+		}
+		Some(typeenv): {
+			debugLog(state, 1, "Typecheck successful for " + file);
+			
+			// Get the changes in exports and propagate them if needed
+			changedExports = switch (maybeOldModule) {
+				Some(oldModule): getChangedExports(oldModule, typeenv);
+				None(): [];
+			}
+			
+			if (changedExports != []) {
+				debugLog(state, 2, "Module " + file + " has changed exports: " + strGlue(changedExports, ", "));
+				// Propagate these changes to modules that depend on this one
+				propagateChanges(state, file, buildSet(changedExports));
+			}
+			
+			// Mark as resolved and update status
+			setCompileStatus(state, fullpath, CompileTyped(typeenv));
+			processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
+			
+			// Save the module to incremental cache
+			if (!incrementalOff) {
+				debugLog(state, 1, "Saving module to incremental cache: " + getDCacheFilename(state, typeenv.flowpath));
+				t_save = timestamp();
+				saveDModuleInIncremental(state, typeenv, state.config.verbose);
+				incrementTimePhase(getTimePhases(state.config.threadId).save, t_save);
+			}
+			
+			true;
+		}
+	}
+}
+
+// We know all dependencies have been typed, so go ahead and type this file
+typecheckFlow9(state : CompileState, file : string) -> bool {
+	fullpath = flowPath2path(state.config.includes, file);
+	debugLog(state, 2, "Typechecking file: " + file + " (fullpath: " + fullpath + ")");
+
+	// Check if incremental is turned off
+	incrementalOff = isConfigParameterFalse(state.config.config, "incremental");
+	// Check if we should reject existing incremental files
+	rejectIncrementalCache = isConfigParameterTrue(state.config.config, "reject-incremental-cache");
+
+	status = getCompileStatus(state, fullpath);
+	switch (status) {
+		CompilePendingIncremental(module, pendingDeps): {
+			debugLog(state, 1, "Checking if pending incremental module " + file + " can be promoted to typed");
+			
+			// Check if all dependencies are now typed
+			nonTyped = filter(pendingDeps, \i -> !isTypeChecked(state, i));
+			
+			if (nonTyped == []) {
+				// All dependencies are typed, we can promote this module
+				debugLog(state, 0, "Promoting incremental module " + file + " to typed as all dependencies are ready");
+				setCompileStatus(state, fullpath, CompileTyped(module));
+				
+				// Mark ourselves as resolved in dependency tracker
+				processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
+				
+				true;
+			} else {
+				// Still have untyped dependencies
+				debugLog(state, 1, "Incremental module " + file + " still has untyped dependencies: " + strGlue(nonTyped, ", "));
+				
+				// Update pending dependencies list in case some got typed
+				if (length(nonTyped) != length(pendingDeps)) {
+					setCompileStatus(state, fullpath, CompilePendingIncremental(module, nonTyped));
+				}
+				
+				// Re-add to the type queue to check again later
+				add2ConcurrentSet(state.typeQueue, [file]);
+				
+				// Return true because we'll handle this later
+				true;
+			}
+		}
+		CompileParsed(m): {
+			// Check if we have a previous version of this module
+			maybeOldModule = switch (getCompileStatus(state, fullpath)) {
+				CompileTyped(typedModule): {
+					// We found the module, retrieve it
+					debugLog(state, 1, "Found previous version of module: " + file);
+					Some(typedModule);
+				}
+				default: {
+					// No previous version found
+					debugLog(state, 1, "No previous version found for module: " + file);
+					None();
+				}
+			};
+
+			// Determine if we need to fully recheck the module or can use incremental checking
+			shouldFullRecheck = switch (maybeOldModule) {
+				None(): {
+					debugLog(state, 1, "Full typecheck required for " + file);
+					true; // No previous version, do full check
+				}
+				Some(oldModule): {
+					// If incremental is turned off or rejecting cached files, always do full recheck
+					if (incrementalOff || rejectIncrementalCache) {
+						debugLog(state, 1, "Full recheck required for " + file + " (incremental off or rejecting cache)");
+						true;
+					} else if (m.flowpath != oldModule.flowpath) {
+						debugLog(state, 1, "Full recheck required for " + file + " (different path: " + m.flowpath + " vs " + oldModule.flowpath + ")");
+						true; // Different modules, do full check
+					} else {
+						// Get dependencies for the new module
+						newDependencies = getDModuleDependencies(m);
+
+						// Get dependencies for the old module
+						oldDependencies = getDModuleDependencies(oldModule);
+
+						// Find changed exports between old and new modules
+						changedExports = getChangedExports(oldModule, m);
+
+						// Create a set of changed IDs
+						changedIds = buildSet(changedExports);
+
+
+						if (state.config.verbose >= 2) {
+							debugLog(state, 1, "Module " + file + " changed exports: " + strGlue(changedExports, ", "));
+						}
+
+						// If nothing has changed, we can skip typechecking
+						if (isEmptySet(changedIds)) {
+							// Skip typechecking, module is up to date
+							debugLog(state, 1, "No changes detected in " + file + ", skipping typechecking");
+							false;
+						} else {
+							// Some changes detected, do full recheck
+							debugLog(state, 1, "Changes detected in " + file + ", performing full recheck");
+							debugLog(state, 2, "Changed IDs: " + strGlue(set2array(changedIds), ", "));
+							true;
+						}
+					}
+				}
+			};
+
+			if (shouldFullRecheck) {
+				// Use our helper function to typecheck
+				doTypecheckModule(state, file, fullpath, m, incrementalOff, true, maybeOldModule);
+			} else {
+				// Module is up to date, use the previous typed version
+				switch (maybeOldModule) {
+					None(): {
+						debugLog(state, 1, "ERROR: No old module found despite expecting one for " + file);
+						// Delete incremental file to avoid future problems
+						if (!incrementalOff) deleteDIncrementalModule(state, file);
+						false; // Should never happen
+					}
+					Some(oldModule): {
+						// Get the previous type environment
+						debugLog(state, 1, "Reusing previous type environment for " + file);
+						processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
+						setCompileStatus(state, fullpath, CompileTyped(oldModule));
+						true;
+					}
+				}
+			}
+		}
+		CompileNeedsRecheck(m, changedIds): {
+			// Module was previously typed but needs rechecking due to dependency changes
+			debugLog(state, 0, "Rechecking " + file + " due to dependency changes");
+			debugLog(state, 1, "Changed dependency IDs: " + strGlue(set2array(changedIds), ", "));
+			
+			// Check if we have an updated state since we started processing
+			currentStatus = getCompileStatus(state, fullpath);
+			if (currentStatus != status) {
+				// The module state has changed since we were added to the queue
+				debugLog(state, 1, "Module " + file + " state changed from 'needs recheck' to " + 
+					statusToString(currentStatus) + " while in queue, skipping this round");
+				// We're likely already in the queue again, so just return true
+				true;
+			} else {
+				// Force a full recheck since dependencies have changed
+				debugLog(state, 1, "Forcing full recheck of " + file + " due to dependency changes");
+				
+				// Delete any existing incremental file to ensure a fresh recompile
+				if (!incrementalOff) {
+					debugLog(state, 1, "Deleting incremental file for " + file + " to force recompilation");
+					deleteDIncrementalModule(state, file);
+				}
+				
+				// Use our helper function to typecheck with forced recompilation
+				doTypecheckModule(state, file, fullpath, m, incrementalOff, true, Some(m));
+			}
+		}
+		CompileTyped(typedModule): {
+			debugLog(state, 1, "File already typed: " + file + ", skipping");
+			// Ensure it's properly marked as resolved in dependency tracker
+			processConcurrentState(state.dependencies, \dt -> resolveDependency(dt, file));
+			true;
+		}
+		default: {
+			debugLog(state, 1, "Cannot typecheck file: " + file + " (unexpected status: " + statusToString(status) + ")");
+
+			// Delete incremental file for problematic modules
+			if (!incrementalOff) deleteDIncrementalModule(state, file);
+
+			false;
+		}
+	}
+}
+
+isTypeChecked(state : CompileState, file : string) -> bool {
+	fullpath = flowPath2path(state.config.includes, file);
+	s = getCompileStatus(state, fullpath);
+	result = switch (s) {
+		CompileNotSeen(): false;
+		CompileInProgress(): false;
+		CompileParsed(_): false;
+		CompileTyped(_): true;
+		CompileNeedsRecheck(_, __): true; // Needs recheck but already typed
+		CompileFailure(_): false;
+		CompilePendingIncremental(_, __): false; // Has untyped dependencies
+	}
+	if (state.config.verbose >= 3) {
+		debugLog(state, 3, "Checking if " + file + " is typed: " + b2s(result));
+	}
+	result;
+}
