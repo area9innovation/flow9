@@ -6,6 +6,8 @@ import pixi.core.text.TextMetrics;
 import pixi.core.text.TextStyle;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
+import haxe.extern.EitherType;
+import pixi.core.display.DisplayObject;
 
 import FlowFontStyle;
 
@@ -204,6 +206,13 @@ class TextClip extends NativeWidgetClip {
 		style.resolution = 1.0;
 		style.wordWrap = false;
 		style.wordWrapWidth = 2048.0;
+
+		this.onAdded(function() {
+			RenderSupport.on("disable_sprites", disableSprites);
+			return function() {
+				disableSprites();
+			}
+		});
 
 		this.keepNativeWidget = KeepTextClips;
 	}
@@ -2237,5 +2246,23 @@ class TextClip extends NativeWidgetClip {
 		} else {
 			super.createNativeWidget(tagName);
 		}
+	}
+
+	private function disableSprites() : Void {
+		if (textClip != null && untyped textClip._texture != null) {
+			textClip.destroy({ children: true, texture: true, baseTexture: true });
+			textClip = null;
+		}
+
+		RenderSupport.off("disable_sprites", disableSprites);
+	}
+
+	public override function destroy(?options : EitherType<Bool, DestroyOptions>) : Void {
+		super.destroy(options);
+		baselineWidget = null;
+		textBackgroundWidget = null;
+		amiriItalicWorkaroundWidget = null;
+		nativeWidget = null;
+		isNativeWidget = false;
 	}
 }
