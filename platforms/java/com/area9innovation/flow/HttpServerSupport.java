@@ -313,11 +313,38 @@ public class HttpServerSupport extends NativeHost {
 			}
 
 			public byte[] utf8String2bytes(String data) throws Exception {
-				try {
-					return data.getBytes("UTF-8");
-				} catch (Exception e) {
-					System.out.print("Cannot make bytes from a string of length " + data.length() + ": " + e.getMessage());
-					throw e;
+				final int CHUNK_SIZE = 128 * 1024 * 1024; // 128M
+				final int len = data.length();
+
+				// For small strings, use direct conversion
+				if (len <= CHUNK_SIZE) {
+					try {
+						return data.getBytes("UTF-8");
+					} catch (Exception e) {
+						System.out.println(
+							"Cannot make bytes from a string of length " + len + "."
+							+ " Error: " + e.getMessage()
+						);
+						throw e;
+					}
+				} else {
+					// For large strings, split into chunks and process
+					ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+					try {
+						for (int i = 0; i < len; i += CHUNK_SIZE) {
+							int end = Math.min(i + CHUNK_SIZE, len);
+							String chunk = data.substring(i, end);
+							byte[] chunkBytes = chunk.getBytes("UTF-8");
+							outputStream.write(chunkBytes);
+						}
+						return outputStream.toByteArray();
+					} catch (Exception e) {
+						System.out.println(
+							"Cannot make bytes from a string of length " + len + "."
+							+ " Chunk position: " + outputStream.size() + ". Error: " + e.getMessage()
+						);
+						throw e;
+					}
 				}
 			}
 
