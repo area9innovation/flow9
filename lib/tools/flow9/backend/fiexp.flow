@@ -7,17 +7,23 @@ import tools/flow9/type/types;
 
 export {
 	// Convert a DExp to FiExp using type information from the module
-	dexp2fiexp(dexp : DExp, dmodule : DModule) -> FiExp;
+	dexp2fiexp(structsAndUnions : StructsAndUnions, dexp : DExp, dmodule : DModule) -> FiExp;
 	dtype2fitype(type : DType) -> FiType;
 	getTypeFromInfo(info : int, dmodule : DModule) -> HTypeSchema;
+
+	StructsAndUnions(
+		structs : Tree<string, DStruct>,
+		unions : Tree<string, DUnion>
+	);
+
 }
 
-dexp2fiexp(dexp : DExp, dmodule : DModule) -> FiExp {
+dexp2fiexp(structsAndUnions : StructsAndUnions, dexp : DExp, dmodule : DModule) -> FiExp {
 	// Get the type from module.types using the expression's info field
 	typeSchema = getTypeFromInfo(dexp.info, dmodule);
 	fiType = htypeschema2fitype(typeSchema);
 
-	convertDExpWithType(dexp, fiType, dmodule)
+	convertDExpWithType(structsAndUnions, dexp, fiType, dmodule)
 }
 
 // Get the type schema from the module's types array using info index
@@ -32,14 +38,14 @@ getTypeFromInfo(info : int, dmodule : DModule) -> HTypeSchema {
 }
 
 // Convert DExp to FiExp with the determined type
-convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
+convertDExpWithType(structsAndUnions : StructsAndUnions, dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 	switch (dexp) {
 		DVar(name, info): {
 			FiVar(name, type, info)
 		}
 		DArray(values, info): {
 			// Create an array using a sequence of expressions with array constructor
-			fiValues = map(values, \v -> dexp2fiexp(v, dmodule));
+			fiValues = map(values, \v -> dexp2fiexp(structsAndUnions, v, dmodule));
 			FiCallPrim(FcArrayPrim(), fiValues, type, info);
 		}
 		DCall(fn, args, info): {
@@ -50,7 +56,7 @@ convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 						if (length(args) > 0) {
 							// Get the argument being cast
 							arg = args[0];
-							fiArg = dexp2fiexp(arg, dmodule);
+							fiArg = dexp2fiexp(structsAndUnions, arg, dmodule);
 
 							// Get source type
 							fromTypeSchema = getTypeFromInfo(arg.info, dmodule);
@@ -80,15 +86,15 @@ convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 						// This is a struct constructor, use FcStructPrim instead of FiCall
 						FiCallPrim(
 							FcStructPrim(uid),
-							map(args, \a -> dexp2fiexp(a, dmodule)),
+							map(args, \a -> dexp2fiexp(structsAndUnions, a, dmodule)),
 							type,
 							info
 						)
 					} else {
 						// Regular function call
 						FiCall(
-							dexp2fiexp(fn, dmodule),
-							map(args, \a -> dexp2fiexp(a, dmodule)),
+							dexp2fiexp(structsAndUnions, fn, dmodule),
+							map(args, \a -> dexp2fiexp(structsAndUnions, a, dmodule)),
 							type,
 							info
 						)
@@ -97,8 +103,8 @@ convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 				default: {
 					// For any other type of function expression, use regular FiCall
 					FiCall(
-						dexp2fiexp(fn, dmodule),
-						map(args, \a -> dexp2fiexp(a, dmodule)),
+						dexp2fiexp(structsAndUnions, fn, dmodule),
+						map(args, \a -> dexp2fiexp(structsAndUnions, a, dmodule)),
 						type,
 						info
 					)
@@ -117,23 +123,23 @@ convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 			FiLet(
 				name,
 				valueType,
-				dexp2fiexp(value, dmodule),
-				dexp2fiexp(body, dmodule),
+				dexp2fiexp(structsAndUnions, value, dmodule),
+				dexp2fiexp(structsAndUnions, body, dmodule),
 				type,
 				info
 			)
 		}
 		DIfElse(condition, then, else_, info): {
 			FiIf(
-				dexp2fiexp(condition, dmodule),
-				dexp2fiexp(then, dmodule),
-				dexp2fiexp(else_, dmodule),
+				dexp2fiexp(structsAndUnions, condition, dmodule),
+				dexp2fiexp(structsAndUnions, then, dmodule),
+				dexp2fiexp(structsAndUnions, else_, dmodule),
 				type,
 				info
 			)
 		}
 		DMaybe(condition, then, else_, info): {
-			convertDMaybe(dmodule, condition, then, else_, type, info)
+			convertDMaybe(structsAndUnions, dmodule, condition, then, else_, type, info)
 		}
 		DSwitch(value, cases, defaultCase, info): {
 			def = \-> {
@@ -150,7 +156,7 @@ convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 				);
 
 				// Convert the let expression to FiExp
-				dexp2fiexp(dlet, dmodule)
+				dexp2fiexp(structsAndUnions, dlet, dmodule)
 			};
 			// Check if the value is already a variable
 			switch (value) {
@@ -164,12 +170,12 @@ convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 					switchVar = FiVar(name, switchVarType, varInfo);
 
 					// Convert cases, expanding unions as needed, and binding struct fields
-					fiCases = expandDSwitchCases(cases, dmodule.typeEnv, dmodule, switchVar, switchVarType);
+					fiCases = expandDSwitchCases(structsAndUnions, cases, dmodule.typeEnv, dmodule, switchVar, switchVarType);
 
 					// Handle default case if present
 					fiDefaultCase = switch (defaultCase) {
 						None(): [];
-						Some(defExp): [FiCase("default", [], dexp2fiexp(defExp, dmodule), info)];
+						Some(defExp): [FiCase("default", [], dexp2fiexp(structsAndUnions, defExp, dmodule), info)];
 					}
 
 					FiSwitch(
@@ -183,7 +189,7 @@ convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 				DBuiltin(op, args, bninfo): {
 					switch (op) {
 						DIsSubType(__): {
-							convertDExpWithType(
+							convertDExpWithType(structsAndUnions, 
 								DSwitch(args[0], cases, defaultCase, info), type, dmodule
 							)
 						}
@@ -195,10 +201,10 @@ convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 		}
 		DBuiltin(op, args, info): {
 			// Handle built-in operations directly - don't try to convert to FcPrim first
-			convertBuiltinOp(op, args, type, info, dmodule)
+			convertBuiltinOp(structsAndUnions, op, args, type, info, dmodule)
 		}
 		DWith(uid, wexp, fieldassigns, info): {
-			convertDWith(dmodule, uid, type, wexp, fieldassigns, info)
+			convertDWith(structsAndUnions, dmodule, uid, type, wexp, fieldassigns, info)
 		}
 
 		// DValue variants
@@ -245,14 +251,14 @@ convertDExpWithType(dexp : DExp, type : FiType, dmodule : DModule) -> FiExp {
 				}
 			}
 
-			FiLambda(fiArgs, dexp2fiexp(body, dmodule), fnType, info)
+			FiLambda(fiArgs, dexp2fiexp(structsAndUnions, body, dmodule), fnType, info)
 		}
 	}
 }
 
 // Convert DOp and args to appropriate FiExp
-convertBuiltinOp(op : DOp, args : [DExp], type : FiType, info : int, dmodule : DModule) -> FiExp {
-	fiArgs = map(args, \a -> dexp2fiexp(a, dmodule));
+convertBuiltinOp(structsAndUnions : StructsAndUnions, op : DOp, args : [DExp], type : FiType, info : int, dmodule : DModule) -> FiExp {
+	fiArgs = map(args, \a -> dexp2fiexp(structsAndUnions, a, dmodule));
 
 	switch (op) {
 		DCast(toType): {
@@ -393,13 +399,13 @@ getArrayElementType(type : FiType) -> FiType {
 }
 
 // Handle DWith case properly by extracting existing struct fields and constructing a new struct
-convertDWith(dmodule : DModule, uid : string, type : FiType, sourceExp : DExp, fieldAssigns : [DFieldAssign], info : int) -> FiExp {
+convertDWith(structsAndUnions : StructsAndUnions, dmodule : DModule, uid : string, type : FiType, sourceExp : DExp, fieldAssigns : [DFieldAssign], info : int) -> FiExp {
 	// Get the type of the original struct
 	sourceTypeSchema = getTypeFromInfo(sourceExp.info, dmodule);
 	sourceType = htypeschema2fitype(sourceTypeSchema);
 
 	// Convert the source expression
-	fiSourceExp = dexp2fiexp(sourceExp, dmodule);
+	fiSourceExp = dexp2fiexp(structsAndUnions, sourceExp, dmodule);
 
 	// Create a map of fields being explicitly assigned
 	fieldAssignMap = fold(fieldAssigns, makeTree(), \map, assign ->
@@ -418,13 +424,13 @@ convertDWith(dmodule : DModule, uid : string, type : FiType, sourceExp : DExp, f
 				switch (lookupTree(fieldAssignMap, fieldName)) {
 					Some(assign): {
 						// Field is being assigned a new value
-						dexp2fiexp(assign.exp, dmodule)
+						dexp2fiexp(structsAndUnions, assign.exp, dmodule)
 					}
 					None(): {
 						// Field should be extracted from the source struct
 						// Create a field access expression
 						dotExp = DBuiltin(DDot(fieldName), [sourceExp], sourceExp.info);
-						dexp2fiexp(dotExp, dmodule)
+						dexp2fiexp(structsAndUnions, dotExp, dmodule)
 					}
 				}
 			});
@@ -440,7 +446,7 @@ convertDWith(dmodule : DModule, uid : string, type : FiType, sourceExp : DExp, f
 		None(): {
 			// If struct definition not available, fallback to simpler approach
 			// Just include the fields being assigned
-			fiFieldAssigns = map(fieldAssigns, \f -> dexp2fiexp(f.exp, dmodule));
+			fiFieldAssigns = map(fieldAssigns, \f -> dexp2fiexp(structsAndUnions, f.exp, dmodule));
 
 			// Create a struct constructor using source as first arg and new field values
 			FiCallPrim(
@@ -455,7 +461,7 @@ convertDWith(dmodule : DModule, uid : string, type : FiType, sourceExp : DExp, f
 
 
 // Handle DMaybe case by expanding it to a proper switch on Maybe type
-convertDMaybe(dmodule : DModule, condition : DExp, then : DExp, else_ : DExp, type : FiType, info : int) -> FiExp {
+convertDMaybe(structsAndUnions : StructsAndUnions, dmodule : DModule, condition : DExp, then : DExp, else_ : DExp, type : FiType, info : int) -> FiExp {
 	// Get the type of the condition
 	conditionTypeSchema = getTypeFromInfo(condition.info, dmodule);
 	conditionType = htypeschema2fitype(conditionTypeSchema);
@@ -478,10 +484,10 @@ convertDMaybe(dmodule : DModule, condition : DExp, then : DExp, else_ : DExp, ty
 		};
 
 		// Convert the modified then expression with the binding
-		fiThen = dexp2fiexp(DLet(tempVar, condition, substitutedThen, info), dmodule);
+		fiThen = dexp2fiexp(structsAndUnions, DLet(tempVar, condition, substitutedThen, info), dmodule);
 
 		// Convert the else expression
-		fiElse = dexp2fiexp(else_, dmodule);
+		fiElse = dexp2fiexp(structsAndUnions, else_, dmodule);
 
 		// Create the switch on the condition
 		switchVar = FiVar(originalVar, conditionType, condition.info);
@@ -497,7 +503,7 @@ convertDMaybe(dmodule : DModule, condition : DExp, then : DExp, else_ : DExp, ty
 		tempSwitchVar = getUniqueTmp("__maybe_tmp");
 
 		// Convert condition
-		fiCondition = dexp2fiexp(condition, dmodule);
+		fiCondition = dexp2fiexp(structsAndUnions, condition, dmodule);
 
 		// Create a let that binds the condition to a temporary variable
 		letExp = FiLet(
@@ -510,9 +516,9 @@ convertDMaybe(dmodule : DModule, condition : DExp, then : DExp, else_ : DExp, ty
 				conditionType,
 				[
 					// Some case with the value extracted
-					FiCase("Some", ["__"], dexp2fiexp(then, dmodule), then.info),
+					FiCase("Some", ["__"], dexp2fiexp(structsAndUnions, then, dmodule), then.info),
 					// None case
-					FiCase("None", [], dexp2fiexp(else_, dmodule), else_.info)
+					FiCase("None", [], dexp2fiexp(structsAndUnions, else_, dmodule), else_.info)
 				],
 				type,
 				info
@@ -526,7 +532,7 @@ convertDMaybe(dmodule : DModule, condition : DExp, then : DExp, else_ : DExp, ty
 }
 
 // Modify the expandDSwitchCases function to use the new helper
-expandDSwitchCases(cases : [DCase], moduleInterface : HModuleInterface, dmodule : DModule,
+expandDSwitchCases(structsAndUnions : StructsAndUnions, cases : [DCase], moduleInterface : HModuleInterface, dmodule : DModule,
 				   switchVar : FiExp, switchVarType : FiType) -> [FiCase] {
 	// First, collect the set of all explicitly named structs in the cases
 	explicitStructs = fold(cases, makeSet(), \acc, c -> {
@@ -547,27 +553,27 @@ expandDSwitchCases(cases : [DCase], moduleInterface : HModuleInterface, dmodule 
 	// Process each case, expanding unions as needed
 	fold(cases, [], \acc, c -> {
 		// Convert the body to FiExp (only once per case)
-		fiBody = dexp2fiexp(c.body, dmodule);
+		fiBody = dexp2fiexp(structsAndUnions, c.body, dmodule);
 
 		// Check if this case is a union
-		unionMaybe = lookupTree(moduleInterface.unions, c.uid);
+		unionMaybe = lookupTree(structsAndUnions.unions, c.uid);
 
 		switch (unionMaybe) {
 			Some(union): {
 				// It's a union type, expand it to multiple FiCases, one for each struct
 				// But only include structs that aren't already explicitly covered
 				expandedCases = filtermap(union.types, \type -> {
-					structName = type.name;
+					structName = type.uid;
 
 					// Skip if this struct is already explicitly covered
 					if (containsSet(explicitStructs, structName)) {
 						None()
 					} else {
 						// Look up struct definition to get correct number of arguments
-						structMaybe = lookupTree(moduleInterface.structs, structName);
+						structMaybe = lookupTree(structsAndUnions.structs, structName);
 
 						numberOfArgs = switch (structMaybe) {
-							Some(struct): length(struct.fields);
+							Some(struct): length(struct.args);
 							None(): {
 								println("Warning: Struct definition not found for " + structName);
 								0;
