@@ -876,7 +876,7 @@ class TextClip extends NativeWidgetClip {
 			if (textClip != null) {
 				textClip.setClipVisible(false);
 			}
-		} else if (textClipChanged) {
+		} else if (textClipChanged && !this.isHTML()) {
 			var modification : TextMappedModification = this.contentGlyphs;
 			var text = modification.modified;
 			var chrIdx: Int = 0;
