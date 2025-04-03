@@ -170,7 +170,7 @@ convertDExpWithType(structsAndUnions : StructsAndUnions, dexp : DExp, type : FiT
 					switchVar = FiVar(name, switchVarType, varInfo);
 
 					// Convert cases, expanding unions as needed, and binding struct fields
-					fiCases = expandDSwitchCases(structsAndUnions, cases, dmodule.typeEnv, dmodule, switchVar, switchVarType);
+					fiCases = expandDSwitchCases(structsAndUnions, cases, dmodule, switchVar, switchVarType);
 
 					// Handle default case if present
 					fiDefaultCase = switch (defaultCase) {
@@ -532,14 +532,14 @@ convertDMaybe(structsAndUnions : StructsAndUnions, dmodule : DModule, condition 
 }
 
 // Modify the expandDSwitchCases function to use the new helper
-expandDSwitchCases(structsAndUnions : StructsAndUnions, cases : [DCase], moduleInterface : HModuleInterface, dmodule : DModule,
+expandDSwitchCases(structsAndUnions : StructsAndUnions, cases : [DCase], dmodule : DModule,
 				   switchVar : FiExp, switchVarType : FiType) -> [FiCase] {
 	// First, collect the set of all explicitly named structs in the cases
 	explicitStructs = fold(cases, makeSet(), \acc, c -> {
-		if (containsKeyTree(moduleInterface.unions, c.uid)) {
+		if (containsKeyTree(structsAndUnions.unions, c.uid)) {
 			acc;
 		} else {
-			if (containsKeyTree(moduleInterface.structs, c.uid)) {
+			if (containsKeyTree(structsAndUnions.structs, c.uid)) {
 				// This is a struct case, add it to the set
 				insertSet(acc, c.uid);
 			} else {
@@ -592,9 +592,9 @@ expandDSwitchCases(structsAndUnions : StructsAndUnions, cases : [DCase], moduleI
 			}
 			None(): {
 				// Create bindings for the struct fields if this is a struct
-				bodyWithBindings = if (containsKeyTree(moduleInterface.structs, c.uid)) {
-					createStructLetBindings(c.uid, c.ids, switchVar, fiBody,
-										  switchVarType, c.info, moduleInterface)
+				bodyWithBindings = if (containsKeyTree(structsAndUnions.structs, c.uid)) {
+					createStructLetBindings(structsAndUnions, c.uid, c.ids, switchVar, fiBody,
+										  switchVarType, c.info)
 				} else {
 					fiBody
 				};
@@ -607,18 +607,17 @@ expandDSwitchCases(structsAndUnions : StructsAndUnions, cases : [DCase], moduleI
 }
 
 // Add a helper function to create let-bindings for struct fields
-createStructLetBindings(structName : string, bindingNames : [string], switchVar : FiExp,
-						body : FiExp, type : FiType, info : int,
-						moduleInterface : HModuleInterface) -> FiExp {
+createStructLetBindings(structsAndUnions : StructsAndUnions, structName : string, bindingNames : [string], switchVar : FiExp,
+						body : FiExp, type : FiType, info : int) -> FiExp {
 
 	// Look up the struct definition to get field names
-	structMaybe = lookupTree(moduleInterface.structs, structName);
+	structMaybe = lookupTree(structsAndUnions.structs, structName);
 
 	switch (structMaybe) {
 		Some(struct): {
 			// Match struct fields with binding names
-			fieldsAndBindings = zip(struct.fields,
-								   take(bindingNames, length(struct.fields)));
+			fieldsAndBindings = zip(struct.args,
+								   take(bindingNames, length(struct.args)));
 
 			// Create nested let-bindings, skipping "__" bindings
 			fold(fieldsAndBindings, body, \acc, fieldAndBinding -> {
