@@ -531,79 +531,94 @@ convertDMaybe(structsAndUnions : StructsAndUnions, dmodule : DModule, condition 
 	}
 }
 
-// Modify the expandDSwitchCases function to use the new helper
+// Function to recursively expand union cases, handling nested unions
+expandUnionCase(structsAndUnions : StructsAndUnions, unionName : string, 
+                explicitStructs : Set<string>, fiBody : FiExp, info : int) -> [FiCase] {
+    // Look up the union definition
+    unionMaybe = lookupTree(structsAndUnions.unions, unionName);
+    
+    switch (unionMaybe) {
+        Some(union): {
+            // Process each type in the union
+            fold(union.types, [], \acc, type -> {
+                structName = type.uid;
+                
+                // Check if this is already explicitly covered
+                if (containsSet(explicitStructs, structName)) {
+                    acc; // Skip if explicitly covered elsewhere
+                } else {
+                    // Check if this is another union (i.e., a subunion)
+                    if (containsKeyTree(structsAndUnions.unions, structName)) {
+                        // Recursively expand this subunion
+                        nestedCases = expandUnionCase(structsAndUnions, structName, 
+                                                     explicitStructs, fiBody, info);
+                        concat(acc, nestedCases);
+                    } else {
+                        // It's a regular struct, create a case for it
+                        // Look up struct definition to get correct number of arguments
+                        structMaybe = lookupTree(structsAndUnions.structs, structName);
+                        
+                        numberOfArgs = switch (structMaybe) {
+                            Some(struct): length(struct.args);
+                            None(): {
+                                println("Warning: Struct definition not found for " + structName);
+                                0;
+                            }
+                        }
+                        
+                        // For expanded cases, use dummy "__" for arguments
+                        dummyArgs = generate(0, numberOfArgs, \__ -> "__");
+                        
+                        // Create a new FiCase for this struct with the same body
+                        concat(acc, [FiCase(structName, dummyArgs, fiBody, info)]);
+                    }
+                }
+            });
+        }
+        None(): {
+            // Not a union, return empty list
+            println("Warning: Union " + unionName + " not found");
+            [];
+        }
+    }
+}
+
+// Modified expandDSwitchCases to use the recursive expandUnionCase function
 expandDSwitchCases(structsAndUnions : StructsAndUnions, cases : [DCase], dmodule : DModule,
-				   switchVar : FiExp, switchVarType : FiType) -> [FiCase] {
-	// First, collect the set of all explicitly named structs in the cases
-	explicitStructs = fold(cases, makeSet(), \acc, c -> {
-		if (containsKeyTree(structsAndUnions.unions, c.uid)) {
-			acc;
-		} else {
-			if (containsKeyTree(structsAndUnions.structs, c.uid)) {
-				// This is a struct case, add it to the set
-				insertSet(acc, c.uid);
-			} else {
-				// This is a non-union case, add it to the set
-				println("Warning: Case " + c.uid + " not found in structs or unions");
-				acc;
-			}
-		}
-	});
+                   switchVar : FiExp, switchVarType : FiType) -> [FiCase] {
+    // First, collect the set of all explicitly named structs in the cases
+    explicitStructs = fold(cases, makeSet(), \acc, c -> {
+        if (containsKeyTree(structsAndUnions.structs, c.uid)) {
+            // This is a struct case, add it to the set
+            insertSet(acc, c.uid);
+        } else {
+            acc;
+        }
+    });
 
-	// Process each case, expanding unions as needed
-	fold(cases, [], \acc, c -> {
-		// Convert the body to FiExp (only once per case)
-		fiBody = dexp2fiexp(structsAndUnions, c.body, dmodule);
+    // Process each case, expanding unions as needed
+    fold(cases, [], \acc, c -> {
+        // Convert the body to FiExp (only once per case)
+        fiBody = dexp2fiexp(structsAndUnions, c.body, dmodule);
 
-		// Check if this case is a union
-		unionMaybe = lookupTree(structsAndUnions.unions, c.uid);
+        // Check if this case is a union
+        if (containsKeyTree(structsAndUnions.unions, c.uid)) {
+            // Use the new recursive function to expand the union
+            unionCases = expandUnionCase(structsAndUnions, c.uid, explicitStructs, fiBody, c.info);
+            concat(acc, unionCases);
+        } else {
+            // Create bindings for the struct fields if this is a struct
+            bodyWithBindings = if (containsKeyTree(structsAndUnions.structs, c.uid)) {
+                createStructLetBindings(structsAndUnions, c.uid, c.ids, switchVar, fiBody,
+                                      switchVarType, c.info);
+            } else {
+                fiBody;
+            };
 
-		switch (unionMaybe) {
-			Some(union): {
-				// It's a union type, expand it to multiple FiCases, one for each struct
-				// But only include structs that aren't already explicitly covered
-				expandedCases = filtermap(union.types, \type -> {
-					structName = type.uid;
-
-					// Skip if this struct is already explicitly covered
-					if (containsSet(explicitStructs, structName)) {
-						None()
-					} else {
-						// Look up struct definition to get correct number of arguments
-						structMaybe = lookupTree(structsAndUnions.structs, structName);
-
-						numberOfArgs = switch (structMaybe) {
-							Some(struct): length(struct.args);
-							None(): {
-								println("Warning: Struct definition not found for " + structName);
-								0;
-							}
-						}
-
-						// For expanded cases, use dummy "__" for arguments
-						dummyArgs = generate(0, numberOfArgs, \__ -> "__");
-
-						// Create a new FiCase for this struct with the same body
-						Some(FiCase(structName, dummyArgs, fiBody, c.info))
-					}
-				});
-
-				concat(acc, expandedCases)
-			}
-			None(): {
-				// Create bindings for the struct fields if this is a struct
-				bodyWithBindings = if (containsKeyTree(structsAndUnions.structs, c.uid)) {
-					createStructLetBindings(structsAndUnions, c.uid, c.ids, switchVar, fiBody,
-										  switchVarType, c.info)
-				} else {
-					fiBody
-				};
-
-				// Create a single FiCase with the possibly wrapped body
-				concat(acc, [FiCase(c.uid, c.ids, bodyWithBindings, c.info)])
-			}
-		}
-	});
+            // Create a single FiCase with the possibly wrapped body
+            concat(acc, [FiCase(c.uid, c.ids, bodyWithBindings, c.info)]);
+        }
+    });
 }
 
 // Add a helper function to create let-bindings for struct fields
