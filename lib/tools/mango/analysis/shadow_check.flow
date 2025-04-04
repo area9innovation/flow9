@@ -1,192 +1,29 @@
-// -*- flow -*-
-import ds/tree;
-import ds/set;
-import tools/mango/mango_types;
-import tools/mango/analysis/exponential;
-import tools/mango/rules; // Assuming findRules is here
-import tools/mango/util; // Assuming flattenChoice, getSequence, etc. are here
-import string;
-import algorithms; // For mergeSort, etc.
-import tools/mango/mango2string; // For summarizeTerm and term2string
-import math/math; // For s2i
-import text/blueprint;
+import tools/mango/rules; // findRules is here
+import tools/mango/analysis/exponential; // flattenChoice
+import tools/mango/mango_interpreter; // For mangoParse
 
 export {
 	detectShadowedChoices(grammar: Term) -> [string];
 }
 
-// --- Data Structures ---
-
-// Represents the first possible concrete tokens a term can match
-FirstToken ::= StringToken, RangeToken, EpsilonToken;
-	StringToken(value: string);
-	RangeToken(start: string, end: string);
-	EpsilonToken();
-
-// Environment to hold analysis results
-AnalysisEnv(
-	rules: Tree<string, Term>,
-	nullableSet: Tree<string, bool>, // Rule name -> is nullable?
-	firstTokensMap: Tree<string, Set<FirstToken>>, // Rule name -> Set of first tokens
-);
-
 // Context for recursive traversal
 DetectContext(
 	currentRule: Maybe<string>,
-	env: AnalysisEnv,
+	rules: Tree<string, Term>,
 	warnings: [string]
 );
 
-// Expansion state for tracking variable expansions to prevent infinite recursion
-ExpansionState(
-	depth: int,                    // Current expansion depth
-	maxDepth: int,                 // Maximum expansion depth
-	expandedVars: Set<string>      // Set of variables that have already been expanded in current path
-);
-
-// Required Tokens in a sequence - captures tokens that MUST be present
-RequiredTokensResult ::= HasRequiredToken, OnlyOptionalOrVariable;
-	HasRequiredToken(token: FirstToken); // Sequence has this specific required token
-	OnlyOptionalOrVariable();           // No concrete required tokens found
 
 // --- Main Function ---
 
 detectShadowedChoices(grammar: Term) -> [string] {
 	//println("--- Starting Shadow Detection ---");
 	rulesMap = findRules(makeTree(), grammar);
-	env = precomputeAnalysis(rulesMap);
-	if (false) {
-		traverseInOrder(env.nullableSet, \rule, term -> {
-			println("Rule: " + rule + " is nullable: " + b2s(term));
-		});
-		traverseInOrder(env.firstTokensMap, \rule, tokens -> {
-			println("Rule: " + rule + " has first tokens: " + superglue(set2array(tokens), prettyFirstToken, ", "));
-		});
-	}
-	initialContext = DetectContext(None(), env, []);
+	initialContext = DetectContext(None(), rulesMap, []);
 	finalContext = traverseForShadowing(grammar, initialContext);
 	iter(finalContext.warnings, println);
 	finalContext.warnings;
 }
-
-// --- Precomputation: Nullable & FirstTokens ---
-
-// Build the analysis environment (Nullable and FirstTokens)
-precomputeAnalysis(rules: Tree<string, Term>) -> AnalysisEnv {
-	// 1. Compute Nullable Set using fixpoint iteration
-	initialNullable = mapTree(rules, \t -> false); // Start assuming nothing is nullable
-	stableNullable = fixpointNullable(rules, initialNullable);
-
-	// 2. Compute FirstTokens Map using fixpoint iteration
-	initialFirstTokens = mapTree(rules, \t -> makeSet()); // Start with empty sets
-	stableFirstTokens = fixpointFirstTokens(rules, stableNullable, initialFirstTokens);
-
-	AnalysisEnv(rules, stableNullable, stableFirstTokens);
-}
-
-// Fixpoint iteration for Nullable calculation
-fixpointNullable(rules: Tree<string, Term>, currentNullable: Tree<string, bool>) -> Tree<string, bool> {
-	changed = ref false;
-	newNullable = foldTree(rules, currentNullable, \rule, term, acc -> {
-		canBeNull = computeNullable(term, acc, rules);
-		if (lookupTreeDef(acc, rule, false) != canBeNull) {
-			changed := true;
-		}
-		setTree(acc, rule, canBeNull);
-	});
-
-	if (! ^changed) {
-		newNullable; // Fixed point reached
-	} else {
-		fixpointNullable(rules, newNullable); // Iterate again
-	}
-}
-
-// Compute if a single term is nullable
-computeNullable(term: Term, nullableSet: Tree<string, bool>, rules: Tree<string, Term>) -> bool {
-	switch (term) {
-		String(s): s == "";
-		Range(__, __): false;
-		Sequence(t1, t2): computeNullable(t1, nullableSet, rules) && computeNullable(t2, nullableSet, rules);
-		Choice(t1, t2): computeNullable(t1, nullableSet, rules) || computeNullable(t2, nullableSet, rules);
-		Optional(__): true;
-		Star(__): true;
-		Plus(t): computeNullable(t, nullableSet, rules);
-		Negate(__): false; // Negation doesn't match empty (conservatively)
-		Variable(id): lookupTreeDef(nullableSet, id, false); // Use current knowledge
-		PushMatch(t): computeNullable(t, nullableSet, rules);
-		Rule(__, t1, t2): computeNullable(t2, nullableSet, rules); // Rules are processed via fixpoint wrapper
-		Construct(__, __): true; // Don't consume input
-		StackOp(__): true;       // Don't consume input
-		Lower(t): computeNullable(t, nullableSet, rules);
-		Error(t): computeNullable(t, nullableSet, rules); // Assume error recovery could match empty
-		GrammarCall(__, __): true; // Assume external calls might be nullable
-		GrammarFn(__, __, __, t3): computeNullable(t3, nullableSet, rules);
-		Precedence(t1, t2): computeNullable(t1, nullableSet, rules) || computeNullable(t2, nullableSet, rules);
-	}
-}
-
-// Fixpoint iteration for FirstTokens calculation
-fixpointFirstTokens(rules: Tree<string, Term>, nullableSet: Tree<string, bool>, currentFirstTokens: Tree<string, Set<FirstToken>>) -> Tree<string, Set<FirstToken>> {
-	changed = ref false;
-	newFirstTokens = foldTree(rules, currentFirstTokens, \rule, term, acc -> {
-		tokens = computeFirstTokens(term, acc, nullableSet, rules);
-		if (!equalSet(lookupTreeDef(acc, rule, makeSet()), tokens)) {
-			changed := true;
-		}
-		setTree(acc, rule, tokens);
-	});
-
-	if (! ^changed) {
-		newFirstTokens; // Fixed point reached
-	} else {
-		fixpointFirstTokens(rules, nullableSet, newFirstTokens); // Iterate again
-	}
-}
-
-// Compute the FirstTokens set for a single term
-computeFirstTokens(term: Term, firstTokensMap: Tree<string, Set<FirstToken>>, nullableSet: Tree<string, bool>, rules: Tree<string, Term>) -> Set<FirstToken> {
-	epsilon = makeSet1(EpsilonToken());
-	emptySet = makeSet();
-
-	switch (term) {
-		String(s): if (s == "") epsilon else makeSet1(StringToken(s));
-		Range(c1, c2): makeSet1(RangeToken(c1, c2)); // Represent range directly
-		Sequence(t1, t2): {
-			ft1 = computeFirstTokens(t1, firstTokensMap, nullableSet, rules);
-			if (containsSet(ft1, EpsilonToken())) {
-				ft2 = computeFirstTokens(t2, firstTokensMap, nullableSet, rules);
-				mergeSets(differenceSets(ft1, epsilon), ft2);
-			} else {
-				ft1;
-			}
-		}
-		Choice(t1, t2): {
-			ft1 = computeFirstTokens(t1, firstTokensMap, nullableSet, rules);
-			ft2 = computeFirstTokens(t2, firstTokensMap, nullableSet, rules);
-			mergeSets(ft1, ft2);
-		}
-		Optional(t): mergeSets(computeFirstTokens(t, firstTokensMap, nullableSet, rules), epsilon);
-		Star(t): mergeSets(computeFirstTokens(t, firstTokensMap, nullableSet, rules), epsilon);
-		Plus(t): computeFirstTokens(t, firstTokensMap, nullableSet, rules); // Plus cannot be epsilon unless term can
-		Negate(__): epsilon; // Doesn't contribute positive first tokens
-		Variable(id): lookupTreeDef(firstTokensMap, id, emptySet); // Use current knowledge
-		PushMatch(t): computeFirstTokens(t, firstTokensMap, nullableSet, rules);
-		Rule(__, t1, t2): computeFirstTokens(t2, firstTokensMap, nullableSet, rules); // Processed via fixpoint
-		Construct(__, __): epsilon; // Doesn't consume input
-		StackOp(__): epsilon;       // Don't consume input
-		Lower(t): computeFirstTokens(t, firstTokensMap, nullableSet, rules);
-		Error(t): computeFirstTokens(t, firstTokensMap, nullableSet, rules); // Error recovery might consume tokens
-		GrammarCall(__, __): epsilon; // Assume external calls don't contribute known first tokens
-		GrammarFn(__, __, __, t3): computeFirstTokens(t3, firstTokensMap, nullableSet, rules);
-		Precedence(t1, t2): { // Similar to Choice
-			ft1 = computeFirstTokens(t1, firstTokensMap, nullableSet, rules);
-			ft2 = computeFirstTokens(t2, firstTokensMap, nullableSet, rules);
-			mergeSets(ft1, ft2);
-		}
-	}
-}
-
 
 // --- Detection Phase ---
 
@@ -247,636 +84,77 @@ checkAlternatives(alternatives: [Term], context: DetectContext) -> [string] {
 
 // Check if termA potentially shadows termB and generate a warning message if needed
 checkShadowPair(termA: Term, termB: Term, context: DetectContext, warnings: [string]) -> [string] {
-	// Handle the special case where one term is a variable rule and the other is a string literal
+	// Check if termA shadows termB when termB is a string literal
 	// This is common with identifier rules (id) shadowing keywords
-	variableVsStringWarning = checkVariableShadowsString(termA, termB, context);
-	if (variableVsStringWarning != None()) {
-		switch (variableVsStringWarning) {
-			Some(warningText): arrayPush(warnings, warningText);
-			None(): warnings;
-		}
-	} else {
-		// Use the comprehensive shadow check with caching
-		cache = ref makeTree();
-		expState = ExpansionState(0, 3, makeSet());  // Allow rule expansion up to depth 3
-		
-		shadowResult = checkDeepShadows(
-			termA, termB, 
-			context.env.rules, 
-			context.env.nullableSet,
-			context.env.firstTokensMap,
-			cache, expState
-		);
-		
-		// Generate warning only if definite shadowing is detected
-		switch(shadowResult) {
-			DoesShadow(): {
-				ruleCtx = switch (context.currentRule) {
-					Some(r): "in rule '" + r + "'";
-					None(): "at top level"; 
-				}
-				
-				warning = "WARNING: Shadowing detected " + ruleCtx + ".\n" +
-					"  Alternative 1 (shadowing): " + summarizeTerm(termA) + "\n" +
-					"  Alternative 2 (shadowed):  " + summarizeTerm(termB) + "\n" +
-					"  Suggestion: The first alternative prevents the second from matching. " + 
-					"Consider reordering or refining your grammar rules. Keywords should be followed by 'kwsep'.";
-				
-				arrayPush(warnings, warning);
-			}
-			NoShadow(): warnings;
-			Undecided(): {
-				// Fallback to simpler token-based check for undecided cases
-				ftA = computeFirstTokens(termA, context.env.firstTokensMap, context.env.nullableSet, context.env.rules);
-				ftB = computeFirstTokens(termB, context.env.firstTokensMap, context.env.nullableSet, context.env.rules);
-				checkTokenSets(termA, termB, ftA, ftB, context, warnings);
-			}
-		}
+	variableVsStringWarning = checkTermShadowsString(termA, termB, context);
+	switch (variableVsStringWarning) {
+		Some(warningText): arrayPush(warnings, warningText);
+		None(): warnings;
 	}
 }
 
-// Special check for variable rules shadowing string literals (common pattern in PEG grammars)
-checkVariableShadowsString(termA: Term, termB: Term, context: DetectContext) -> Maybe<string> {
-	// Check if termA is a variable reference (like an 'id' rule) and termB is a string literal
-	switch (termA) {
-		Variable(id): {
-			// Common identifier rule names
-			if (id == "id" || id == "ident" || id == "identifier") {
-				switch (termB) {
-					String(s): {
-						// The string should look like a valid identifier (e.g., "if", "while")
-						if (s != "" && s != "_") { // Non-empty and not just underscore
-							// First character should be letter or underscore
-							if (isLetter(strLeft(s, 1)) || strLeft(s, 1) == "_") {
-								// It's likely that the id rule will match this string
-								ruleCtx = switch (context.currentRule) {
-									Some(r): "in rule '" + r + "'";
-									None(): "at top level"; 
-								}
-								
-								warning = "WARNING: Identifier rule shadows keyword " + ruleCtx + ".\n" +
-									"  Alternative 1 (shadowing): " + summarizeTerm(termA) + "\n" +
-									"  Alternative 2 (shadowed):  " + summarizeTerm(termB) + "\n" +
-									"  Problem: The identifier rule will match '" + s + "' before this alternative is tried.\n" +
-									"  Suggestion: Keywords should come before identifier rules, or be followed by 'kwsep' " + 
-									"(typically defined as `!alnum ws` - matching a word boundary and whitespace).";
-								
-								Some(warning);
-							} else None();
-						} else None();
-					}
-					default: None();
-				}
-			} else None();
-		}
-		default: None();
-	}
-}
-
-// Check for shadowing between two sets of first tokens
-checkTokenSets(termA: Term, termB: Term, ftA: Set<FirstToken>, ftB: Set<FirstToken>, context: DetectContext, warnings: [string]) -> [string] {
-	foldSet(ftA, warnings, \currentWarnings, tokenA -> {
-		foldSet(ftB, currentWarnings, \innerWarnings, tokenB -> {
-			maybeWarning = detectShadow(tokenA, tokenB, termA, termB, context);
-			switch (maybeWarning) {
-				None(): innerWarnings;
-				Some(w): arrayPush(innerWarnings, w);
-			}
-		});
+// Build a term with all rules from the environment embedded
+// This allows a term to be interpreted in isolation with all necessary rules defined
+buildTermWithEnvironment(context: DetectContext, term: Term) -> Term {
+	// Build a nested Term with all rules defined and the input term at the end
+	foldTree(context.rules, term, \ruleName, ruleDef, acc -> {
+		Rule(ruleName, ruleDef, acc);
 	});
 }
 
-// Check if tokenA shadows tokenB
-detectShadow(tokenA: FirstToken, tokenB: FirstToken, termA: Term, termB: Term, context: DetectContext) -> Maybe<string> {
-	ruleCtx = switch (context.currentRule) {
-		Some(r): "in rule '" + r + "'";
-		None(): "at top level"; // Or adjust if rules aren't mandatory
-	}
-
-	detailedWarning = \reason -> {
-		Some(
-			"WARNING: Potential shadowing detected " + ruleCtx + ".\n" +
-			"  Reason: " + reason + "\n" +
-			"  Alternative 1 (potentially shadowing): " + summarizeTerm(termA) + "\n" +
-			"  Alternative 2 (potentially shadowed):  " + summarizeTerm(termB) + "\n" +
-			"  Suggestion: The first alternative might prevent the second from ever matching this input pattern. Consider reordering these alternatives (e.g., placing the more specific or longer match first) or refining the grammar rules to ensure choices are unambiguous. Keywords should be followed by 'kwsep' (defined as `!alnum ws`)"
-		);
-
-	}
-
-	switch (tokenA) {
-		StringToken(sA): {
-			if (sA == "") None() // Epsilon doesn't shadow
-			else switch (tokenB) {
-				StringToken(sB): {
-                    if (sA == sB) {
-                        // Identical strings. Suppress if termA is a sequence (heuristic).
-                        if (isSequence(termA)) None()
-                        else {
-                             detailedWarning("Identical starting string '" + sA + "'. Could indicate redundancy or shadowing if Alternative 1 doesn't consume more input.");
-                        }
-                    } else if (startsWith(sB, sA)) {
-						detailedWarning("String '" + sA + "' is a prefix of string '" + sB + "'.");
-					} else None();
-				}
-				RangeToken(c1B, c2B): {
-					if (strlen(sA) == 1 && isCharInRange(sA, c1B, c2B)) {
-						detailedWarning("String '" + sA + "' is included in the starting range " + prettyFirstToken(tokenB) + "."); 
-					} else None();
-				}
-				EpsilonToken(): None();
-			}
-		}
-		RangeToken(c1A, c2A): {
-			switch (tokenB) {
-				StringToken(sB): {
-					if (sB != "" && isCharInRange(strLeft(sB, 1), c1A, c2A)) {
-						detailedWarning("Range " + prettyFirstToken(tokenA) + " includes the starting character ('" + strLeft(sB,1) + "') of string '" + sB + "'.");
-					} else None();
-				}
-				RangeToken(c1B, c2B): {
-					if (tokenA == tokenB) { // Structurally identical ranges
-                         if (isSequence(termA)) None()
-                         else {
-                             detailedWarning("Identical starting range " + prettyFirstToken(tokenA) + ". Could indicate redundancy or shadowing.");
-                         }
-                    } else if (rangesOverlap(tokenA, tokenB)) {
-						detailedWarning("Range " + prettyFirstToken(tokenA) + " overlaps with range " + prettyFirstToken(tokenB) + ".");
-					} else None();
-				}
-				EpsilonToken(): None();
-			}
-		}
-		EpsilonToken(): None();
-	}
-}
-
-
-// --- Utility Functions ---
-
-isCharInRange(charStr: string, rangeStart: string, rangeEnd: string) -> bool {
-	charCode = getCharCodeAt(charStr, 0);
-	startCode = parseRangeBound(rangeStart);
-	endCode = parseRangeBound(rangeEnd);
-	charCode >= startCode && charCode <= endCode;
-}
-
-rangesOverlap(rA: FirstToken, rB: FirstToken) -> bool {
-	switch (rA) {
-		RangeToken(sA, eA): {
-			switch (rB) {
-				RangeToken(sB, eB): {
-					startA = parseRangeBound(sA);
-					endA = parseRangeBound(eA);
-					startB = parseRangeBound(sB);
-					endB = parseRangeBound(eB);
-					// Check for non-overlapping: A ends before B starts OR B ends before A starts
-					!(endA < startB || endB < startA);
-				}
-				default: false;
-			}
-		}
-		default: false;
-	}
-}
-
-prettyFirstToken(t: FirstToken) -> string {
-	switch(t) {
-		RangeToken(s, e): "'" + s + "'-'" + e + "'";
-		StringToken(value): toString(value);
-		EpsilonToken(): "<epsilon>";
-	}
-}
-
-isSequence(t : Term) -> bool {
-	switch (t) {
-		Sequence(__, __): true;
-		default: false;
-	}
-}
-
-// Check if term is a Variable
-isVariable(t : Term) -> bool {
-	switch (t) {
-		Variable(__): true;
-		default: false;
-	}
-}
-
-// Note: getVariableName is imported from util.flow
-
-isNullable(term: Term, nullableSet: Tree<string, bool>, rules: Tree<string, Term>) -> bool { 
-	switch (term) {
-		String(s): s == ""; 
-		Range(__, __): false; 
-		Construct(__, __): true; 
-		StackOp(__): true; 
-		Optional(__): true; 
-		Star(__): true;
-		Sequence(t1, t2): isNullable(t1, nullableSet, rules) && isNullable(t2, nullableSet, rules);
-		Choice(t1, t2): isNullable(t1, nullableSet, rules) || isNullable(t2, nullableSet, rules);
-		Plus(t): isNullable(t, nullableSet, rules); 
-		PushMatch(t): isNullable(t, nullableSet, rules);
-		Lower(t): isNullable(t, nullableSet, rules); 
-		Error(t): isNullable(t, nullableSet, rules);
-		Negate(__): false; 
-		Variable(id): lookupTreeDef(nullableSet, id, false);
-		Rule(__, t1, t2): isNullable(t2, nullableSet, rules); 
-		GrammarCall(__, __): true;
-		GrammarFn(__, __, __, t3): isNullable(t3, nullableSet, rules); 
-		Precedence(t1, t2): isNullable(t1, nullableSet, rules) || isNullable(t2, nullableSet, rules);
-	}
-}
-
-// --- New Sequence Analysis Functions ---
-
-// ShadowResult represents the result of a shadow check
-ShadowResult ::= DoesShadow, NoShadow, Undecided;
-	DoesShadow();
-	NoShadow();
-	Undecided();
-
-// Deep shadow check with rule expansion
-checkDeepShadows(
-	termA: Term, termB: Term, 
-	rules: Tree<string, Term>, 
-	nullableSet: Tree<string, bool>,
-	firstTokensMap: Tree<string, Set<FirstToken>>, 
-	cache: ref Tree<Pair<Term, Term>, ShadowResult>, 
-	expState: ExpansionState
-) -> ShadowResult {
-	// Prevent infinite recursion by limiting depth
-	if (expState.depth > expState.maxDepth) {
-		Undecided()
-	} else {
-		// Check if we've already computed this pair
-		key = Pair(termA, termB);
-		cachedResult = lookupTree(^cache, key);
-		switch (cachedResult) {
-			Some(res): res;
-			None(): {
-				// Prevent cycles by marking as undecided during computation
-				cache := setTree(^cache, key, Undecided());
-				
-				// Expand rules and simplify terms
-				expA = expandTerm(termA, rules, expState);
-				expB = expandTerm(termB, rules, expState);
-				
-				// Find required tokens in both terms
-				requiredTokensA = findRequiredTokens(expA, rules, nullableSet, expState);
-				requiredTokensB = findRequiredTokens(expB, rules, nullableSet, expState);
-				
-				// If either term has required tokens that the other doesn't have,
-				// then there's no shadowing (they require different inputs)
-				requiredTokensResult = compareRequiredTokens(requiredTokensA, requiredTokensB);
-				
-				if (requiredTokensResult != None()) {
-					// We can determine from required tokens alone
-					switch (requiredTokensResult) {
-						Some(shadow): shadow;
-						None(): Undecided();
-					}
-				} else {
-					// Need to do deeper analysis
-					result = analyzeTermStructures(expA, expB, rules, nullableSet, firstTokensMap, cache, expState);
-					
-					// Store result in cache
-					cache := setTree(^cache, key, result);
-					result;
-				}
-			}
-		}
-	}
-}
-
-// Find the required (non-optional) tokens in a term
-findRequiredTokens(
-	term: Term, 
-	rules: Tree<string, Term>, 
-	nullableSet: Tree<string, bool>, 
-	expState: ExpansionState
-) -> [FirstToken] {
-	switch (term) {
+// Check if a term shadows a string literal by using the interpreter
+checkTermShadowsString(termA: Term, termB: Term, context: DetectContext) -> Maybe<string> {
+	// Function to generate a warning message if a shadow is detected
+	makeWarning = \theTermA, theTermB, theString, theContext -> {
+		ruleCtx = switch (theContext.currentRule) {
+			Some(r): "in rule '" + r + "'";
+			None(): "at top level";
+		};
+		
+		// Determine description based on term type
+		descriptionA = switch (theTermA) {
+			Variable(id): "Identifier rule '" + id + "'";
+			String(__): "String literal";
+			Range(__, __): "Character range";
+			default: "Term";
+		};
+		
+		warningText = "WARNING: " + descriptionA + " shadows string literal " + ruleCtx + ".\n" + 
+			"  Alternative 1 (shadowing): " + summarizeTerm(theTermA) + "\n" + 
+			"  Alternative 2 (shadowed):  " + summarizeTerm(theTermB) + "\n" + 
+			"  Problem: The first alternative will match '" + theString + "' before the second alternative is tried.\n" + 
+			"  Suggestion: Consider reordering the alternatives, or making the rule patterns more specific.";
+			
+		Some(warningText);
+	};
+	
+	// Main function logic
+	switch (termB) {
 		String(s): {
 			if (s == "") {
-				[];
+				// Empty strings don't cause shadowing concerns
+				None();
 			} else {
-				[StringToken(s)]; // Concrete string token is required
-			}
-		}
-		Range(c1, c2): [RangeToken(c1, c2)]; // Range token is required
-		Sequence(t1, t2): {
-			// Get required tokens from first part
-			requiredTokens1 = findRequiredTokens(t1, rules, nullableSet, expState);
-			
-			// If first part is nullable, also need tokens from second part
-			if (isNullable(t1, nullableSet, rules)) {
-				requiredTokens2 = findRequiredTokens(t2, rules, nullableSet, expState);
-				concat(requiredTokens1, requiredTokens2); // Both parts can contribute required tokens
-			} else {
-				requiredTokens1; // Only first part contributes required tokens
-			}
-		}
-		Choice(t1, t2): {
-			// A choice requires tokens that are common to both alternatives
-			requiredTokens1 = findRequiredTokens(t1, rules, nullableSet, expState);
-			requiredTokens2 = findRequiredTokens(t2, rules, nullableSet, expState);
-			
-			// Find tokens that appear in both branches
-			commonTokens = ref [];
-			iter(requiredTokens1, \token1 -> {
-				if (exists(requiredTokens2, \token2 -> token1 == token2)) {
-					commonTokens := arrayPush(^commonTokens, token1);
-				}
-			});
-			^commonTokens;
-		}
-		Optional(t): []; // Optional term contributes no required tokens
-		Star(t): []; // Star term contributes no required tokens
-		Plus(t): findRequiredTokens(t, rules, nullableSet, expState); // Plus requires at least one occurrence
-		Variable(id): {
-			if (containsSet(expState.expandedVars, id) || expState.depth >= expState.maxDepth) {
-				[]; // To avoid infinite recursion, treat as having no required tokens
-			} else {
-				lookupResult = lookupTree(rules, id);
-				switch (lookupResult) {
-					Some(ruleTerm): {
-						// Create a new expansion state with this variable marked as expanded
-						newExpState = ExpansionState(
-							expState.depth + 1, 
-							expState.maxDepth, 
-							insertSet(expState.expandedVars, id)
-						);
-						// Find required tokens in the expanded rule
-						findRequiredTokens(ruleTerm, rules, nullableSet, newExpState);
-					}
-					None(): [];
-				}
-			}
-		}
-		// Nodes that don't contribute required concrete tokens
-		PushMatch(t): findRequiredTokens(t, rules, nullableSet, expState);
-		Construct(__, __): [];
-		StackOp(__): [];
-		Error(t): findRequiredTokens(t, rules, nullableSet, expState);
-		Negate(t): [];
-		Rule(__, t1, t2): findRequiredTokens(t2, rules, nullableSet, expState);
-		GrammarCall(__, t): findRequiredTokens(t, rules, nullableSet, expState);
-		GrammarFn(__, __, __, t3): findRequiredTokens(t3, rules, nullableSet, expState);
-		Lower(t): findRequiredTokens(t, rules, nullableSet, expState);
-		Precedence(t1, t2): findRequiredTokens(Choice(t1, t2), rules, nullableSet, expState);
-	}
-}
-
-// Compare required tokens between termA and termB to determine if one shadows the other
-compareRequiredTokens(requiredTokensA: [FirstToken], requiredTokensB: [FirstToken]) -> Maybe<ShadowResult> {
-	// If termA has required tokens that termB doesn't have, then it can't shadow termB
-	termAHasUniqueTokens = exists(requiredTokensA, \tokenA -> 
-		!exists(requiredTokensB, \tokenB -> areCompatibleTokens(tokenA, tokenB)));
-	
-	// If termB has required tokens that termA doesn't have, then termA can't shadow termB
-	termBHasUniqueTokens = exists(requiredTokensB, \tokenB -> 
-		!exists(requiredTokensA, \tokenA -> areCompatibleTokens(tokenA, tokenB)));
-	
-	if (termAHasUniqueTokens && termBHasUniqueTokens) {
-		// Both terms have unique required tokens - they can't shadow each other
-		Some(NoShadow());
-	} else if (termAHasUniqueTokens && !termBHasUniqueTokens) {
-		// Term A has unique tokens but B doesn't - A can't shadow B
-		Some(NoShadow());
-	} else if (!termAHasUniqueTokens && termBHasUniqueTokens) {
-		// Term B has unique tokens but A doesn't - A might shadow B
-		Some(NoShadow()); // A can't match what B requires
-	} else {
-		// Neither has unique tokens - need deeper analysis
-		None();
-	}
-}
-
-// Check if two tokens are compatible (for required token analysis)
-areCompatibleTokens(tokenA: FirstToken, tokenB: FirstToken) -> bool {
-	switch (tokenA) {
-		StringToken(sA): {
-			switch (tokenB) {
-				StringToken(sB): sA == sB; // Exact string match
-				RangeToken(c1B, c2B): strlen(sA) == 1 && isCharInRange(sA, c1B, c2B); // Single char in range
-				EpsilonToken(): false;
-			}
-		}
-		RangeToken(c1A, c2A): {
-			switch (tokenB) {
-				StringToken(sB): strlen(sB) == 1 && isCharInRange(sB, c1A, c2A); // Single char in range
-				RangeToken(c1B, c2B): rangesOverlap(tokenA, tokenB); // Overlapping ranges
-				EpsilonToken(): false;
-			}
-		}
-		EpsilonToken(): tokenB == EpsilonToken();
-	}
-}
-
-// Expand rule references in a term up to a certain depth
-expandTerm(term: Term, rules: Tree<string, Term>, expState: ExpansionState) -> Term {
-	// Helper to expand with incremented depth
-	incrExpState = ExpansionState(expState.depth + 1, expState.maxDepth, expState.expandedVars);
-	
-	switch (term) {
-		Variable(id): {
-			// Prevent expansion loops by tracking expanded variables
-			if (containsSet(expState.expandedVars, id) || expState.depth >= expState.maxDepth) {
-				term // Don't expand this variable to avoid a loop
-			} else {
-				// Expand this variable
-				lookupResult = lookupTree(rules, id);
-				switch (lookupResult) {
-					Some(ruleTerm): {
-						// Create a new expansion state with this variable marked as expanded
-						newExpState = ExpansionState(
-							expState.depth + 1, 
-							expState.maxDepth, 
-							insertSet(expState.expandedVars, id)
-						);
-						// Expand the rule term
-						expandTerm(ruleTerm, rules, newExpState);
-					}
-					None(): term; // Rule not found, keep as is
-				}
-			}
-		}
-		Sequence(t1, t2): Sequence(expandTerm(t1, rules, incrExpState), expandTerm(t2, rules, incrExpState));
-		Choice(t1, t2): Choice(expandTerm(t1, rules, incrExpState), expandTerm(t2, rules, incrExpState));
-		Optional(t): Optional(expandTerm(t, rules, incrExpState));
-		Star(t): Star(expandTerm(t, rules, incrExpState));
-		Plus(t): Plus(expandTerm(t, rules, incrExpState));
-		Negate(t): Negate(expandTerm(t, rules, incrExpState));
-		PushMatch(t): PushMatch(expandTerm(t, rules, incrExpState));
-		Rule(id, t1, t2): Rule(id, expandTerm(t1, rules, incrExpState), expandTerm(t2, rules, incrExpState));
-		Lower(t): Lower(expandTerm(t, rules, incrExpState));
-		Error(t): Error(expandTerm(t, rules, incrExpState));
-		GrammarFn(id, t1, t2, t3): GrammarFn(id, expandTerm(t1, rules, incrExpState), expandTerm(t2, rules, incrExpState), expandTerm(t3, rules, incrExpState));
-		Precedence(t1, t2): Precedence(expandTerm(t1, rules, incrExpState), expandTerm(t2, rules, incrExpState));
-		GrammarCall(id, t): GrammarCall(id, expandTerm(t, rules, incrExpState));
-		// Primitives and semantic actions (don't need expansion)
-		String(__): term;
-		Range(__, __): term;
-		Construct(__, __): term;
-		StackOp(__): term;
-	}
-}
-
-// Analyze term structures to determine if one term shadows another
-analyzeTermStructures(
-	termA: Term, termB: Term, 
-	rules: Tree<string, Term>, 
-	nullableSet: Tree<string, bool>,
-	firstTokensMap: Tree<string, Set<FirstToken>>, 
-	cache: ref Tree<Pair<Term, Term>, ShadowResult>, 
-	expState: ExpansionState
-) -> ShadowResult {
-	// Basic equality check
-	if (termA == termB) {
-		DoesShadow()  // Identical terms - first will shadow second
-	} else {
-		// Handle epsilon/empty cases
-		if (termA == String("")) {
-			NoShadow()
-		} else if (termB == String("")) {
-			if (isNullable(termA, nullableSet, rules)) DoesShadow() else NoShadow()
-		} else {
-			// Analyze common prefixes
-			sequenceResult = analyzeSequences(termA, termB, rules, nullableSet, firstTokensMap, cache, expState);
-			
-			if (sequenceResult != Undecided()) {
-				sequenceResult  // Sequence analysis was conclusive
-			} else {
-				// Fall back to first token analysis
-				ftA = computeFirstTokens(termA, firstTokensMap, nullableSet, rules); 
-				ftB = computeFirstTokens(termB, firstTokensMap, nullableSet, rules);
+				// Create a test environment that will be used for parsing
+				env = makeMEnv("", s, \e -> e, 0);
 				
-				// Compare first token sets
-				sharedTokens = differenceSets(intersectSets(ftA, ftB), makeSet1(EpsilonToken()));
-
-				if (isEmptySet(sharedTokens)) {
-					// No overlapping tokens - no shadowing
-					NoShadow();
+				// Build a self-contained term with all rule definitions
+				augmentedTerm = buildTermWithEnvironment(context, termA);
+				
+				// Manually parse using the augmented Term rather than raw termA
+				resultEnv = parse(env, augmentedTerm);
+				
+				// The parse succeeds if we didn't fail and we consumed all input
+				if (!resultEnv.fail && resultEnv.i == strlen(s)) {
+					// Generate warning since termA successfully consumed all of s
+					makeWarning(termA, termB, s, context);
 				} else {
-					// Check for string prefix shadowing
-					prefixShadow = foldSet(ftA, false, \acc, tokenA -> acc || foldSet(ftB, false, \acc2, tokenB -> acc2 ||
-						switch (tokenA) {
-							StringToken(sA): sA != "" && switch(tokenB) { 
-								StringToken(sB): sA != sB && startsWith(sB, sA); 
-								RangeToken(c1B, c2B): strlen(sA) == 1 && isCharInRange(sA, c1B, c2B); 
-								default: false; 
-							};
-							RangeToken(c1A, c2A): switch(tokenB) { 
-								StringToken(sB): sB != "" && isCharInRange(strLeft(sB, 1), c1A, c2A); 
-								RangeToken(c1B, c2B): tokenA != tokenB && rangesOverlap(tokenA, tokenB); 
-								default: false; 
-							};
-							default: false;
-						}
-					));
-					
-					if (prefixShadow) {
-						DoesShadow();
-					} else {
-						// Conservative approach for cases where we can't be sure
-						Undecided();
-					}
+					// No shadowing detected
+					None();
 				}
 			}
 		}
+		default: None(); // Only checking String terms for now
 	}
 }
 
-// Analyze sequence structures to detect if one term shadows another
-analyzeSequences(
-	termA: Term, termB: Term, 
-	rules: Tree<string, Term>, 
-	nullableSet: Tree<string, bool>,
-	firstTokensMap: Tree<string, Set<FirstToken>>, 
-	cache: ref Tree<Pair<Term, Term>, ShadowResult>, 
-	expState: ExpansionState
-) -> ShadowResult {
-	// Handle the special case where termA is a sequence starting with termB
-	if (isSequence(termA)) {
-		switch (termA) {
-			Sequence(firstA, restA): {
-				// Check if firstA is the same as termB or could match termB
-				if (firstA == termB || (isVariable(firstA) && isVariable(termB) && 
-						getVariableName(firstA) == getVariableName(termB))) {
-					// If the rest of termA is not nullable, termA won't shadow termB
-					if (!isNullable(restA, nullableSet, rules)) {
-						// No shadowing - termA requires additional tokens that termB doesn't
-						NoShadow();
-					} else {
-						// RestA is nullable, so termA could match exactly what termB matches
-						DoesShadow();
-					}
-				} else {
-					// Check if firstA could match termB through recursion
-					if (expState.depth < expState.maxDepth) {
-						subResult = checkDeepShadows(firstA, termB, rules, nullableSet, firstTokensMap, 
-							cache, ExpansionState(expState.depth + 1, expState.maxDepth, expState.expandedVars));
-						
-						if (subResult == DoesShadow()) {
-							// FirstA could match termB
-							if (!isNullable(restA, nullableSet, rules)) {
-								// But restA requires additional tokens
-								NoShadow();
-							} else {
-								// RestA is nullable, so termA could match exactly what termB matches
-								DoesShadow();
-							}
-						} else {
-							// FirstA doesn't match termB
-							Undecided();
-						}
-					} else {
-						Undecided(); // Can't determine
-					}
-				}
-			}
-			default: Undecided();
-		}
-	} else if (isSequence(termB)) {
-		// Handle the case where termB is a sequence
-		switch (termB) {
-			Sequence(firstB, restB): {
-				// If termA exactly matches the first part of termB
-				if (termA == firstB || (isVariable(termA) && isVariable(firstB) && 
-						getVariableName(termA) == getVariableName(firstB))) {
-					// termA matches the first part of termB - it will shadow termB
-					DoesShadow();
-				} else {
-					// Check if termA could match firstB through recursion
-					if (expState.depth < expState.maxDepth) {
-						subResult = checkDeepShadows(termA, firstB, rules, nullableSet, firstTokensMap, 
-							cache, ExpansionState(expState.depth + 1, expState.maxDepth, expState.expandedVars));
-						
-						if (subResult == DoesShadow()) {
-							// termA matches firstB - it will shadow termB
-							DoesShadow();
-						} else {
-							Undecided();
-						}
-					} else {
-						Undecided();
-					}
-				}
-			}
-			default: Undecided();
-		}
-	} else {
-		Undecided(); // Not a sequence relationship we can analyze
-	}
-}
-
-// Helper to parse range bounds (handle hex)
-parseRangeBound(bound: string) -> int {
-	if (startsWith(bound, "0x")) parseHex(bound)
-	else if (strlen(bound) == 1) getCharCodeAt(bound, 0)
-	else {
-		 println("Warning: Unexpected range bound format: " + bound);
-		 -1; // Invalid bound indicator
-	}
-}
