@@ -217,6 +217,7 @@ The system leverages Flow9's functional programming principles and includes feat
 *   `vscode/`: Contains logic for generating VS Code extensions (TextMate grammars, packaging).
 *   `lib/`: Contains reusable `.mango` grammar snippets (lexical rules, list patterns, etc.).
 *   `pretty/`: Experimental pretty-printer inference logic.
+*   `tests/`: Contains test cases for the Mango grammar and its components.
 *   `*.mango`: Mango grammar definition files (including standard library snippets in `lib/`).
 *   `*.md`: Documentation files.
 
