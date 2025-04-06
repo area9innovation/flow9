@@ -1,5 +1,5 @@
-import { LoggingDebugSession, Logger, logger, InitializedEvent, TerminatedEvent, StoppedEvent, OutputEvent, Thread, StackFrame, Scope, Source, Handles, DebugSession, Breakpoint } from 'vscode-debugadapter';
-import { DebugProtocol } from 'vscode-debugprotocol';
+import { LoggingDebugSession, Logger, logger, InitializedEvent, TerminatedEvent, StoppedEvent, OutputEvent, Thread, StackFrame, Scope, Source, Handles, DebugSession, Breakpoint } from '@vscode/debugadapter';
+import { DebugProtocol } from '@vscode/debugprotocol';
 import { Variable, Stack, VariableObject, MIError } from './backend/backend';
 import { MI2 } from './backend/flowcpp_runtime';
 
