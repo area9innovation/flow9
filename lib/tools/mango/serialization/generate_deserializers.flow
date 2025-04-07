@@ -1,0 +1,481 @@
+import tools/mango/type/types;
+import tools/mango/type/type_eval;  // For type utility functions
+import string;
+import text/blueprint;
+import tools/mango/serialization/serialize_runtime;
+import maybe; // For Maybe type support
+import tools/mango/serialization/util;
+
+export {
+	// Generate deserialization code for the given types
+	// Returns the content to be saved to a file
+	generateDeserializers(types : [MType], modulePrefix : string) -> string;
+}
+
+// Generate all deserialization code for the given types
+generateDeserializers(types : [MType], modulePrefix : string) -> string {
+	// Find the root type (first union or last type)
+	rootType = fold(types, types[length(types) - 1], \acc, t -> {
+		switch (t) {
+			MTypeUnion(name, subtypes): if (acc == types[length(types) - 1]) t else acc;
+			default: acc;
+		}
+	});
+
+	rootTypeName = typeName2string(rootType);
+
+	// Process all types in a single pass
+	typeResults = processTypeDeserializers(types);
+	
+	// Export all deserialization functions
+	typeFunctions = strGlue(map(types, \t -> {
+		switch (t) {
+			MTypeUnion(name, __): "deserialize" + name;
+			MTypeConstructor(name, __): "deserialize" + name;
+			default: "";
+		}
+	}), ", ");
+
+	// Generate top-level deserializer
+	topLevelDeserializer = generateTopLevelDeserializer(rootType);
+
+	// Generate the complete code with blueprint
+	blueprint(
+		"import tools/mango/serialization/serialize_runtime;
+		import tools/mango/serialization/deserialize_runtime;
+		import %modulePrefix%_types;
+		import %modulePrefix%_opcodes;
+
+		export {
+			// Top-level deserialization function
+			deserializeFromMemory(memory : Memory) -> %rootTypeName%;
+
+			// Individual deserialization functions
+			%typeFunctions% : (DeserializeState, int) -> ?;
+		}
+
+		// Internal implementation for this module
+		getOpcode(state : DeserializeState, index : int) -> Opcode {
+			if (index >= 0 && index < length(state.memory.opcodes)) {
+				state.memory.opcodes[index];
+			} else {
+				Opcode(OP_RESERVED, -1, -1, -1); // Error/empty opcode
+			}
+		}
+
+		internalDeserializeInt(state : DeserializeState, opcodeIndex : int) -> int {
+			opcode = getOpcode(state, opcodeIndex);
+			if (opcode.code == OP_INT && opcode.child1 >= 0 && opcode.child1 < length(state.memory.ints)) {
+				state.memory.ints[opcode.child1];
+			} else {
+				0; // Default value on error
+			}
+		}
+
+		internalDeserializeDouble(state : DeserializeState, opcodeIndex : int) -> double {
+			opcode = getOpcode(state, opcodeIndex);
+			if (opcode.code == OP_DOUBLE && opcode.child1 >= 0 && opcode.child1 < length(state.memory.doubles)) {
+				state.memory.doubles[opcode.child1];
+			} else {
+				0.0; // Default value on error
+			}
+		}
+
+		internalDeserializeString(state : DeserializeState, opcodeIndex : int) -> string {
+			opcode = getOpcode(state, opcodeIndex);
+			if (opcode.code == OP_STRING && opcode.child1 >= 0 && opcode.child1 < length(state.memory.strings)) {
+				state.memory.strings[opcode.child1];
+			} else {
+				\"\"; // Empty string on error
+			}
+		}
+
+		internalDeserializeBool(state : DeserializeState, opcodeIndex : int) -> bool {
+			opcode = getOpcode(state, opcodeIndex);
+			opcode.code == OP_TRUE;
+		}
+
+		internalDeserializeArray(state : DeserializeState, opcodeIndex : int, elementDeserializer : (DeserializeState, int) -> ?) -> [?] {
+			opcode = getOpcode(state, opcodeIndex);
+
+			if (opcode.code == OP_ARRAY_EMPTY) {
+				// Empty array
+				[];
+			} else if (opcode.code == OP_ARRAY_CONS) {
+				// Array cons - recursively build the array
+				buildArrayImpl = \\buildFn, currentIndex, acc -> {
+					currentOpcode = getOpcode(state, currentIndex);
+					if (currentOpcode.code != OP_ARRAY_CONS) {
+						// End of array construction
+						acc;
+					} else {
+						// Get the element
+						elementIndex = currentOpcode.child1;
+						element = elementDeserializer(state, elementIndex);
+						
+						// Recursively process the rest
+						buildFn(buildFn, currentOpcode.child2, arrayPush(acc, element));
+					}
+				};
+				
+				// Start the recursive array building
+				buildArrayImpl(buildArrayImpl, opcodeIndex, []);
+			} else {
+				// Invalid array opcode
+				[];
+			}
+		}
+
+		%typeResults.first%
+		%typeResults.second%
+		%topLevelDeserializer%",
+		[
+			"modulePrefix", modulePrefix,
+			"rootTypeName", rootTypeName,
+			"typeFunctions", typeFunctions,
+			"typeResults.first", typeResults.first,
+			"typeResults.second", typeResults.second,
+			"topLevelDeserializer", topLevelDeserializer
+		]
+	);
+}
+
+// Process all types in a single pass
+processTypeDeserializers(types : [MType]) -> Pair<string, string> {
+	fold(types, Pair("", ""), \acc, t -> {
+		switch (t) {
+			MTypeConstructor(__, __): Pair(
+				acc.first + generateStructDeserializer(t, types) + "\n",
+				acc.second
+			);
+			MTypeUnion(__, __): Pair(
+				acc.first, 
+				acc.second + generateUnionDeserializer(t, types) + "\n"
+			);
+			default: acc;
+		}
+	});
+}
+
+// Generate a deserializer for a struct type
+generateStructDeserializer(structType : MTypeConstructor, types : [MType]) -> string {
+	name = structType.name;
+	fields = structType.args;
+
+	// Generate different code based on the number of fields
+	deserializerBody = if (length(fields) == 0) {
+		// No fields, just create and return the struct
+		blueprint(
+			"// Verify correct opcode type
+			if (opcode.code != OP_%STRUCT_NAME%) {
+				print(\"Error: Expected %name% opcode, got \" + i2s(opcode.code));
+				return %name%();
+			}
+
+			%name%();",
+			["STRUCT_NAME", toUpperCase(name),
+			 "name", name]
+		);
+	} else if (length(fields) <= 3) {
+		// Up to 3 fields - all in the main opcode
+		// Deserialize each field
+		fieldDeserializers = strGlue(mapi(fields, \i, field -> {
+			child = if (i == 0) "opcode.child1" else if (i == 1) "opcode.child2" else "opcode.child3";
+			"// Deserialize field " + i2s(i) + "\n" +
+			"field" + i2s(i) + " = " + generateFieldDeserializer(field, child) + ";"
+		}), "\n\t\t\t");
+
+		// Create and return the struct
+		fieldNames = strGlue(map(generate(0, length(fields)), \i -> "field" + i2s(i)), ", ");
+		
+		blueprint(
+			"// Verify correct opcode type
+			if (opcode.code != OP_%STRUCT_NAME%) {
+				print(\"Error: Expected %name% opcode, got \" + i2s(opcode.code));
+				return %DEFAULT_STRUCT%;
+			}
+
+			%FIELD_DESERIALIZERS%
+
+			// Create and return the struct
+			%name%(%FIELD_NAMES%);",
+			["STRUCT_NAME", toUpperCase(name),
+			 "name", name,
+			 "DEFAULT_STRUCT", generateDefaultStruct(name, fields),
+			 "FIELD_DESERIALIZERS", fieldDeserializers,
+			 "FIELD_NAMES", fieldNames]
+		);
+	} else {
+		// More than 3 fields - need to handle continuation opcodes
+		// First get field descriptions and names
+		fieldNames = strGlue(map(generate(0, length(fields)), \i -> "field" + i2s(i)), ", ");
+		
+		// Process remaining fields using continuation opcodes
+		continuationCode = processRemainingFieldsDeserializers(fields, 3);
+		
+		blueprint(
+			"// Verify correct opcode type
+			if (opcode.code != OP_%STRUCT_NAME%) {
+				print(\"Error: Expected %name% opcode, got \" + i2s(opcode.code));
+				return %DEFAULT_STRUCT%;
+			}
+
+			// First 3 fields from main opcode
+			field0 = %FIELD0%;
+			field1 = %FIELD1%;
+			field2 = %FIELD2%;
+
+			// Additional fields from continuation opcodes
+			%CONTINUATION_CODE%
+
+			// Create and return the struct
+			%name%(%FIELD_NAMES%);",
+			["STRUCT_NAME", toUpperCase(name),
+			 "name", name,
+			 "DEFAULT_STRUCT", generateDefaultStruct(name, fields),
+			 "FIELD0", generateFieldDeserializer(fields[0], "opcode.child1"),
+			 "FIELD1", generateFieldDeserializer(fields[1], "opcode.child2"),
+			 "FIELD2", generateFieldDeserializer(fields[2], "opcode.child3"),
+			 "CONTINUATION_CODE", continuationCode,
+			 "FIELD_NAMES", fieldNames]
+		);
+	};
+
+	// Function header and body
+	blueprint(
+		"// Deserializes a %name% struct
+		deserialize%name%(state : DeserializeState, opcodeIndex : int) -> %name% {
+			opcode = getOpcode(state, opcodeIndex);
+
+			%BODY%
+		}",
+		["name", name, 
+		 "BODY", deserializerBody]
+	);
+}
+
+// Generate code for deserializing a field based on its type
+generateFieldDeserializer(field : MType, childExpr : string) -> string {
+	switch (field) {
+		MTypeInt(): "internalDeserializeInt(state, " + childExpr + ")";
+		MTypeDouble(): "internalDeserializeDouble(state, " + childExpr + ")";
+		MTypeString(): "internalDeserializeString(state, " + childExpr + ")";
+		MTypeBool(): "internalDeserializeBool(state, " + childExpr + ")";
+		MTypeStar(__): "internalDeserializeArray(state, " + childExpr + ", deserializeValue)";
+		MTypeConstructor(name, __): "deserialize" + name + "(state, " + childExpr + ")";
+		MTypeUnion(name, __): "deserialize" + name + "(state, " + childExpr + ")";
+		MTypeName(__): "deserializeValue(state, " + childExpr + ")";
+		MTypeField(__, __): "deserializeValue(state, " + childExpr + ")";
+		MTypeNil(): "deserializeValue(state, " + childExpr + ")";
+		MTypeResult(__): "deserializeValue(state, " + childExpr + ")";
+	}
+}
+
+// Generate a default struct constructor (for error cases)
+generateDefaultStruct(name : string, fields : [MType]) -> string {
+	if (length(fields) == 0) {
+		name + "()";
+	} else {
+		fieldDefaults = map(fields, generateDefaultValue);
+		name + "(" + strGlue(fieldDefaults, ", ") + ")";
+	}
+}
+
+// Helper function to process remaining fields in groups of 3
+processRemainingFieldsDeserializers(fields : [MType], startIndex : int) -> string {
+	// Define a recursive function for processing remaining fields
+	processFields = \process, index, acc -> {
+		if (index >= length(fields)) {
+			// Base case: no more fields to process
+			acc;
+		} else {
+			contIdx = index / 3;
+			
+			// Build fields for this continuation opcode
+			fieldCode = blueprint(
+				"// Get continuation opcode at index %contIdx%
+			cont%contIdx% = getOpcode(state, opcodeIndex + %contIdx%);
+			if (cont%contIdx%.code != OP_CONT) {
+				print(\"Error: Expected continuation opcode, got \" + i2s(cont%contIdx%.code));
+			}",
+				["contIdx", i2s(contIdx)]
+			);
+			
+			// Add field deserializers in functional style to avoid variable reassignment
+			field1 = if (index < length(fields))
+				"\n\t\t\tfield" + i2s(index) + " = " + 
+				generateFieldDeserializer(fields[index], "cont" + i2s(contIdx) + ".child1") + ";"
+			else "";
+			
+			field2 = if (index + 1 < length(fields))
+				field1 + "\n\t\t\tfield" + i2s(index+1) + " = " + 
+				generateFieldDeserializer(fields[index+1], "cont" + i2s(contIdx) + ".child2") + ";"
+			else field1;
+			
+			fieldDeserializers = if (index + 2 < length(fields))
+				field2 + "\n\t\t\tfield" + i2s(index+2) + " = " + 
+				generateFieldDeserializer(fields[index+2], "cont" + i2s(contIdx) + ".child3") + ";"
+			else field2;
+			
+			// Recursively process the next group
+			process(process, index + 3, acc + (if (acc != "") "\n\n\t\t\t" else "") + fieldCode + fieldDeserializers);
+		}
+	};
+
+	// Start the recursive processing from startIndex
+	processFields(processFields, startIndex, "");
+}
+
+// Generate a default value for a type
+generateDefaultValue(field : MType) -> string {
+	switch (field) {
+		MTypeInt(): "0";
+		MTypeDouble(): "0.0";
+		MTypeString(): "\"\"";
+		MTypeBool(): "false";
+		MTypeStar(__): "[]";
+		MTypeName(__): "deserializeValue(makeDeserializeState(Memory([], [], [], [])), 0)";
+		MTypeField(__, __): "deserializeValue(makeDeserializeState(Memory([], [], [], [])), 0)";
+		MTypeNil(): "deserializeValue(makeDeserializeState(Memory([], [], [], [])), 0)";
+		MTypeResult(__): "deserializeValue(makeDeserializeState(Memory([], [], [], [])), 0)";
+		MTypeConstructor(__, __): "deserializeValue(makeDeserializeState(Memory([], [], [], [])), 0)";
+		MTypeUnion(__, __): "deserializeValue(makeDeserializeState(Memory([], [], [], [])), 0)";
+	}
+}
+
+// Generate a deserializer for a union type
+generateUnionDeserializer(unionType : MTypeUnion, types : [MType]) -> string {
+	name = unionType.name;
+	subtypes = unionType.types;
+	
+	// Generate special handling for primitive types if they're part of the union
+	parsedSubtypes = fold(subtypes, Pair("", false), \acc, st -> {
+		switch (st) {
+			MTypeInt(): {
+				handler = "if (opcode.code == OP_INT) {\n\t\treturn Int(internalDeserializeInt(state, opcodeIndex));\n\t}";
+				Pair(acc.first + (if (acc.first != "") "\n\t" else "") + handler, true);
+			}
+			MTypeDouble(): {
+				handler = "if (opcode.code == OP_DOUBLE) {\n\t\treturn Double(internalDeserializeDouble(state, opcodeIndex));\n\t}";
+				Pair(acc.first + (if (acc.first != "") "\n\t" else "") + handler, true);
+			}
+			MTypeString(): {
+				handler = "if (opcode.code == OP_STRING) {\n\t\treturn String(internalDeserializeString(state, opcodeIndex));\n\t}";
+				Pair(acc.first + (if (acc.first != "") "\n\t" else "") + handler, true);
+			}
+			MTypeBool(): {
+				handler = "if (opcode.code == OP_TRUE || opcode.code == OP_FALSE) {\n\t\treturn Bool(internalDeserializeBool(state, opcodeIndex));\n\t}";
+				Pair(acc.first + (if (acc.first != "") "\n\t" else "") + handler, true);
+			}
+			default: acc;
+		}
+	});
+	primitiveHandlers = parsedSubtypes.first;
+	hasPrimitiveCases = parsedSubtypes.second;
+	
+	// Generate switch on opcode for struct types
+	structCases = fold(subtypes, "", \acc, st -> {
+		switch (st) {
+			MTypeConstructor(typeName, __): {
+				structCase = "OP_" + toUpperCase(typeName) + ": deserialize" + typeName + "(state, opcodeIndex);";
+				acc + (if (acc != "") "\n\t\t" else "") + structCase;
+			}
+			default: acc;
+		}
+	});
+
+	// Generate function with blueprint
+	blueprint(
+		"// Deserializes a %name% union value
+		deserialize%name%(state : DeserializeState, opcodeIndex : int) -> %name% {
+			opcode = getOpcode(state, opcodeIndex);
+
+			%PRIMITIVE_HANDLERS%
+			// Determine the concrete type based on opcode
+			switch (opcode.code) {
+				%STRUCT_CASES%
+				default: {
+					print(\"Unknown opcode for %name%: \" + i2s(opcode.code));
+					%DEFAULT_UNION%
+				}
+			}
+		}",
+		["name", name, 
+		 "PRIMITIVE_HANDLERS", if (hasPrimitiveCases) "// Handle primitive types\n\t" + primitiveHandlers + "\n" else "",
+		 "STRUCT_CASES", structCases,
+		 "DEFAULT_UNION", findDefaultSubtypeValue(subtypes, 0, name, types)]
+	);
+}
+
+// Helper function to find the first suitable subtype for default value
+findDefaultSubtypeValue(subtypes : [MType], index : int, unionName : string, types : [MType]) -> string {
+	if (index >= length(subtypes)) {
+		// No suitable subtype found, use fallback
+		"null as " + unionName + "; // Should never happen";
+	} else {
+		switch (subtypes[index]) {
+			MTypeConstructor(typeName, __): {
+				fields = lookupStructFields(typeName, types);
+				defaultValues = map(fields, \__ -> "deserializeValue(state, 0)");
+				typeName + "(" + strGlue(defaultValues, ", ") + ");";
+			}
+			MTypeInt(): "Int(0);";
+			MTypeDouble(): "Double(0.0);";
+			MTypeString(): "String(\"\");";
+			MTypeBool(): "Bool(false);";
+			default: findDefaultSubtypeValue(subtypes, index + 1, unionName, types);
+		}
+	}
+}
+
+// Look up the fields of a struct by name - fixed to properly handle the Maybe type
+lookupStructFields(typeName : string, types : [MType]) -> [MType] {
+    // Find the constructor type with matching name
+    typeMatches = filter(types, \t -> {
+        switch (t) {
+            MTypeConstructor(name, __): name == typeName;
+            default: false;
+        }
+    });
+    
+    // Extract first matching constructor's fields or return empty array
+    if (length(typeMatches) > 0) {
+        switch (typeMatches[0]) {
+            MTypeConstructor(__, args): args;
+            default: [];
+        }
+    } else {
+        []; // No matching constructor found
+    }
+}
+
+// Generate the top-level deserialization function
+generateTopLevelDeserializer(rootType : MType) -> string {
+	rootTypeName = typeName2string(rootType);
+
+	// Use blueprint for consistent code generation
+	blueprint(
+		"// Top-level function to initiate deserialization
+		deserializeFromMemory(memory : Memory) -> %rootTypeName% {
+			state = makeDeserializeState(memory);
+
+			// Deserialize from the root opcode (always at index 0)
+			deserialize%rootTypeName%(state, 0);
+		}
+
+		// Generic value deserializer dispatching based on opcode type
+		deserializeValue(state : DeserializeState, opcodeIndex : int) -> ? {
+			opcode = getOpcode(state, opcodeIndex);
+
+			switch (opcode.code) {
+				OP_INT: internalDeserializeInt(state, opcodeIndex);
+				OP_DOUBLE: internalDeserializeDouble(state, opcodeIndex);
+				OP_STRING: internalDeserializeString(state, opcodeIndex);
+				OP_TRUE, OP_FALSE: internalDeserializeBool(state, opcodeIndex);
+				OP_ARRAY_EMPTY, OP_ARRAY_CONS: internalDeserializeArray(state, opcodeIndex, deserializeValue);
+				default: deserialize%rootTypeName%(state, opcodeIndex);
+			}
+		}",
+		["rootTypeName", rootTypeName]
+	);
+}
