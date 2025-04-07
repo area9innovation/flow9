@@ -1,5 +1,5 @@
 import { MINode } from "./mi_parse";
-import { DebugProtocol } from "vscode-debugprotocol/lib/debugProtocol";
+import { DebugProtocol } from "@vscode/debugprotocol/lib/debugProtocol";
 
 export interface BackendBreakpoint {
 	file?: string;

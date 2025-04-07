@@ -16,101 +16,100 @@ dmodule2fiprogram(state : CompileState, fullpath : string) -> Maybe<FiProgram> {
 	// Get the compiler config
 	config = state.config;
 
-	// Get the module's compilation status
-	moduleStatus = getCompileStatus(state, fullpath);
-
-	switch (moduleStatus) {
-		CompileTyped(module): {
-			// Get all dependencies of this module
-			allDependencies = collectDependencies(state, module);
-
-			// Convert all modules to FiModules
-			fiModules0 = setTree(makeTree(), module.flowpath, dmodule2fimodule(module));
-
-			// Add all dependencies
-			fiModules = fold(allDependencies, fiModules0, \acc, dep -> {
-				depStatus = getCompileStatus(state, flowPath2path(config.includes, dep + ".flow"));
-				switch (depStatus) {
-					CompileTyped(depModule): {
-						setTree(acc, dep, dmodule2fimodule(depModule));
-					}
-					default: acc;
-				}
-			});
-
-			// Build the global names
-			names = fold(getTreeValues(fiModules),
-				FiGlobalNames(
-					makeTree(), makeTree(), makeTree(), makeTree(),
-					makeTree(), makeTree(), makeTree(), makeTree(),
-				),
-				\acc, m -> fiAddModule2GlobalNames(m, acc)
-			);
-
-			// debugPrintGlobalNames(names);
-
-			// Determine traversal order
-			traversal = findTraversalOrder(fiModules);
-
-			// Create and return the FiProgram
-			Some(FiProgram(config, fiModules, traversal, names));
-		}
-		default: {
-			// Failed to find the typed module
-			state.onError("Could not find typed module for " + fullpath + ", but only " + moduleStatus.structname);
-			None();
-		}
-	}
-}
-
-// Collect all dependencies (transitively) for a module
-collectDependencies(state : CompileState, module : DModule) -> [string] {
-	// Start with direct imports
-	imports = map(module.imports, \imp -> imp.path);
-
-	// Collect transitive dependencies recursively
-	collectTransitiveDependencies(state, imports, makeSet());
-}
-
-collectTransitiveDependencies(state : CompileState, toProcess : [string], visited : Set<string>) -> [string] {
-	if (toProcess == []) {
-		set2array(visited);
+	flowpath = if (endsWith(fullpath, ".flow")) {
+		// Extract the path prefix (remove .flow extension if present)
+        path2flowPath(config.includes, fullpath);
 	} else {
-		current = toProcess[0];
-		rest = tail(toProcess);
+		fullpath;
+	};
+	
+	// Collect all dependencies including the main module
+	allDependenciesTree = collectTransitiveDependencies(state, [flowpath], makeSet(), makeTree());
+	
+	// Collect structs and unions
+	structsAndUnions = foldTree(allDependenciesTree, StructsAndUnions(makeTree(), makeTree()), \path, depModule, acc -> {
+		// Merge structs and unions from all modules
+		structs = mergeTree(acc.structs, depModule.structs);
+		unions = mergeTree(acc.unions, depModule.unions);
+		StructsAndUnions(structs, unions)
+	});
 
-		if (containsSet(visited, current)) {
-			// Already processed this dependency
-			collectTransitiveDependencies(state, rest, visited);
-		} else {
-			// Add current to visited
-			newVisited = insertSet(visited, current);
+	// Convert all modules to FiModules
+	fiModules = foldTree(allDependenciesTree, makeTree(), \path, depModule, acc -> {
+		setTree(acc, path, dmodule2fimodule(structsAndUnions, depModule));
+	});
+	
+	// Build the global names
+	names = fold(getTreeValues(fiModules),
+		FiGlobalNames(
+			makeTree(), makeTree(), makeTree(), makeTree(),
+			makeTree(), makeTree(), makeTree(), makeTree(),
+		),
+		\acc, m -> fiAddModule2GlobalNames(m, acc)
+	);
 
-			// Get the module's status
-			fullpath = flowPath2path(state.config.includes, current + ".flow");
-			moduleStatus = getCompileStatus(state, fullpath);
+	// Determine traversal order
+	traversal = findTraversalOrder(config, fiModules);
 
-			// Get its imports
-			newImports = switch (moduleStatus) {
-				CompileTyped(module): map(module.imports, \imp -> imp.path);
-				default: [];
-			}
+	// Create and return the FiProgram
+	Some(FiProgram(config, fiModules, traversal, names));
+}
 
-			// Add new imports to the processing queue
-			collectTransitiveDependencies(
-				state,
-				concat(rest, filter(newImports, \imp -> !containsSet(newVisited, imp))),
-				newVisited
-			);
-		}
-	}
+// Collect transitive dependencies recursively. The result is indexed by flowpaths
+collectTransitiveDependencies(state : CompileState, toProcess : [string], visited : Set<string>, 
+                             acc : Tree<string, DModule>) -> Tree<string, DModule> {
+    if (toProcess == []) {
+        // All dependencies processed
+        acc;
+    } else {
+        current = toProcess[0];
+        rest = tail(toProcess);
+        
+        if (containsSet(visited, current)) {
+            // Already processed this dependency
+            collectTransitiveDependencies(state, rest, visited, acc);
+        } else {
+            // Add current to visited
+            newVisited = insertSet(visited, current);
+            
+            // Get the module's status
+            fullpath = flowPath2path(state.config.includes, current + ".flow");
+            moduleStatus = getCompileStatus(state, fullpath);
+            
+            // Process based on module status
+            switch (moduleStatus) {
+                CompileTyped(depModule): {
+                    // Add module to our accumulator tree
+                    newAcc = setTree(acc, current, depModule);
+                    
+                    // Get its imports for further processing
+                    newImports = map(depModule.imports, \imp -> imp.path);
+                    
+                    // Add new imports to the processing queue
+                    collectTransitiveDependencies(
+                        state,
+                        concat(rest, filter(newImports, \imp -> !containsSet(newVisited, imp))),
+                        newVisited,
+                        newAcc
+                    );
+                }
+                default: {
+                    // Module not found or not typed
+                    state.onError("Could not find typed module for " + fullpath + ", but only " + moduleStatus.structname);
+                    collectTransitiveDependencies(state, rest, newVisited, acc);
+                }
+            }
+        }
+    }
 }
 
 // Determine the correct traversal order of modules (topologically sorted)
-findTraversalOrder(modules : Tree<string, FiModule>) -> [string] {
+findTraversalOrder(config : CompilerConfig, modules : Tree<string, FiModule>) -> [string] {
 	// Create a graph of dependencies
 	dependencies = foldTree(modules, makeTree(), \path, module, acc -> {
-		deps = map(module.imports, \imp : FiImport -> imp.flowfile);
+		deps = map(module.imports, \imp : FiImport -> {
+            imp.flowfile
+		});
 		setTree(acc, path, deps);
 	});
 
@@ -130,6 +129,7 @@ topologicalSort(dependencies : Tree<string, [string]>, visited : [string]) -> [s
 		if (sizeTree(dependencies) > 0) {
 			// There might be a cycle
 			println("Warning: Possible cyclic dependencies detected");
+			println("Remaining " + strGlue(getTreeKeys(dependencies), ", "));
 		}
 		// Return the visited nodes
 		visited;

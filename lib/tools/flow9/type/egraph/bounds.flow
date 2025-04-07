@@ -8,7 +8,7 @@ import ds/easygraph_transitive;  // Add this import for reachableEdgeClosure
 
 export {
 	// Do two passes to compute bounds
-	propagateBounds(g : EGraph, name : string, speculate : bool) -> void;
+	propagateBounds(g : EGraph, name : string, phase : int) -> void;
 }
 
 TypeBounds(
@@ -24,7 +24,7 @@ TypeGraphCache(
 	upperClosure : Tree<int, Set<GEdge<Set<EContext>>>>   // Precomputed reachable edges for supergraph
 );
 
-propagateBounds(g : EGraph, name : string, speculate : bool) -> void {
+propagateBounds(g : EGraph, name : string, phase : int) -> void {
 	// canonicalizeEGraph(g);
 
 	// Calculate graphs once and store in cache
@@ -58,11 +58,11 @@ propagateBounds(g : EGraph, name : string, speculate : bool) -> void {
 		reachableUpper = lookupTreeDef(cache.upperClosure, id, makeSet());
 
 		// Now we store the full edge information including context
-		resolveEClassBounds(g, id, TypeBounds(reachableLower, reachableUpper), speculate, cache)
+		resolveEClassBounds(g, id, TypeBounds(reachableLower, reachableUpper), phase, cache)
 	});
 }
 
-resolveEClassBounds(g : EGraph, root : int, bounds : TypeBounds, speculate : bool, cache : TypeGraphCache) -> void {
+resolveEClassBounds(g : EGraph, root : int, bounds : TypeBounds, phase : int, cache : TypeGraphCache) -> void {
 	r = findEGraphRoot(g, root);
 	if (r == root && !isTopDecidedNode(g, r)) {
 		// Count proper (non-tyvar) types in bounds
@@ -138,7 +138,7 @@ resolveEClassBounds(g : EGraph, root : int, bounds : TypeBounds, speculate : boo
 
 			// OK, if we have to speculate, we will do so
 			spec = \ -> {
-				if (speculate) {
+				if (phase > 5) {
 					// OK, we prefer any mentioned type
 					cons = mapSet(mergeSets(lowerCons, upperCons), \c -> c.name);
 					suitable = if (suitableUpper == []) suitableLower else suitableUpper;
@@ -195,7 +195,7 @@ resolveEClassBounds(g : EGraph, root : int, bounds : TypeBounds, speculate : boo
 				{}
 			} else if (properLower == 1 && properUpper == 0) {
 				lower = suitableLower[0];
-				if (lowerTyvars == 0 || !canHaveSupertype(g, lower)) {
+				if (phase > 5 || lowerTyvars == 0 || !canHaveSupertype(g, lower)) {
 					// One proper lower
 					lowerNode = insertNode(g, createConstructorNode(g, lower, eclass.infos), eclass.infos);
 					// Get the most relevant context from lower bounds
@@ -206,7 +206,7 @@ resolveEClassBounds(g : EGraph, root : int, bounds : TypeBounds, speculate : boo
 			} else if (properUpper == 1) {
 				// One proper upper bound - use it
 				upper = suitableUpper[0];
-				if (upperTyvars == 0 || !canHaveSubtype(g, upper)) {
+				if (phase > 5 || upperTyvars == 0 || !canHaveSubtype(g, upper)) {
 					upperNode = insertNode(g, createConstructorNode(g, upper, eclass.infos), eclass.infos);
 					// Get the most relevant context from upper bounds
 					relevantContext = findMostRelevantContext(makeSet(), bounds.upper);
@@ -219,10 +219,18 @@ resolveEClassBounds(g : EGraph, root : int, bounds : TypeBounds, speculate : boo
 		// Filter alternatives against bounds
 		filtered = filterEnhancedAlternatives(g, eclass, lowerCons, upperCons, bounds, cache);
 		if (!updateAlternatives(g, r, filtered)) {
-			boundLimits();
+
+			shouldDelay = phase == 0 && isPartOfUndecidedAlternatives(g, eclass);
+			if (shouldDelay){
+				if (g.tracing > 1) {
+					debugMsg(g, 1, "Delaying because it is part of alternative: " + prettyNode(g, root));
+				}
+			} else {
+				boundLimits();
+			}
 		}
 	} else {
-		if (g.tracing > 2) {
+		if (g.tracing > 3) {
 			debugMsg(g, 1, "Is not root or is resolved: " + i2s(root) + ": " + prettyNode(g, root));
 		}
 	}
@@ -376,6 +384,10 @@ filterEnhancedAlternatives(g : EGraph, eclass : EClass, lowerBounds : Set<Constr
 				// Unify the function's return type with this common type
 				unifyEGraphTypes(g, funcReturnType, commonRetType, eclass.infos);
 				{}
+			} else {
+				if (tracing) {
+					debugMsg(g, 1, "Multiple return types found: " + superglue(set2array(returnTypes), \t -> prettyNode(g, t), ", "));
+				}
 			}
 
 			// Check if any argument position can be unified

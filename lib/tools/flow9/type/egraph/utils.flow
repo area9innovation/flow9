@@ -12,6 +12,12 @@ export {
 	// Creates a Constructor node for either a union or a struct type
 	createConstructorNode(g : EGraph, typeName : string, infos : Set<EContext>) -> Constructor;
 	createUnionConsNode(g : EGraph, union : HUnion, infos : Set<EContext>) -> int;
+
+	registerAlternativeComponents(g : EGraph, alternativeId : int) -> void;
+	isPartOfUndecidedAlternatives(g : EGraph, eclass : EClass) -> bool;
+
+	// Extracts all type variables mentioned in an eclass node
+	getNodeTyvars(g : EGraph, acc : Set<int>, eclass : int) -> Set<int>;
 }
 
 isVariableNode(g : EGraph, id : int) -> bool {
@@ -83,4 +89,59 @@ createConstructorNode(g : EGraph, typeName : string, infos : Set<EContext>) -> C
 			}
 		}
 	}
+}
+
+// Extracts all type variables mentioned in an eclass node
+getNodeTyvars(g : EGraph, acc : Set<int>, eclass : int) -> Set<int> {
+	// Get the node definition for this eclass
+	node = getNodeDef(g, eclass);
+
+	// Process based on node type
+	switch (node) {
+		Variable(id): {
+			// This is a type variable, add its ID to the accumulator
+			insertSet(acc, id)
+		}
+		Constructor(__, params): {
+			// For constructor nodes, recursively collect type variables from all parameters
+			fold(params, acc, \a, param -> getNodeTyvars(g, a, param))
+		}
+		Function(args, ret): {
+			// For function nodes, collect from both arguments and return type
+			argsAcc = fold(args, acc, \a, arg -> getNodeTyvars(g, a, arg));
+			// And then collect from the return type
+			getNodeTyvars(g, argsAcc, ret)
+		}
+	}
+}
+
+// When creating a new alternative set, record dependencies (or remove them)
+registerAlternativeComponents(g : EGraph, alternativeId : int) -> void {
+	mainclass = getEClassDef(g, alternativeId);
+	// Get all type variables mentioned in this eclass
+	tyvars = getNodeTyvars(g, makeSet(), alternativeId);
+
+	// For each type variable found, record the dependency
+	iterSet(tyvars, \componentId -> {
+		componentRoot = findEGraphRoot(g, componentId);
+		eclass = getEClassDef(g, componentRoot);
+		newPart = if (isEmptySet(mainclass.alternatives)) {
+			// If we do not have alternatives, remove the dependencies
+			removeSet(eclass.partOfAlternatives, alternativeId);
+		} else {
+			// This is a type variable, add its ID to the accumulator
+			insertSet(eclass.partOfAlternatives, alternativeId);
+		};
+		newEclass = EClass(eclass with partOfAlternatives = newPart);
+
+		updateEClass(g, componentRoot, newEclass);
+	});
+}
+
+isPartOfUndecidedAlternatives(g : EGraph, eclass : EClass) -> bool {
+	// Check if any of the alternatives are not top decided nodes
+	existsSet(eclass.partOfAlternatives, \alternativeId -> {
+		// Check if this node is NOT a top decided node
+		!isTopDecidedNode(g, alternativeId)
+	})
 }

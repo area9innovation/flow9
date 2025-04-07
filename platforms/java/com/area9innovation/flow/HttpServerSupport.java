@@ -313,11 +313,38 @@ public class HttpServerSupport extends NativeHost {
 			}
 
 			public byte[] utf8String2bytes(String data) throws Exception {
-				try {
-					return data.getBytes("UTF-8");
-				} catch (Exception e) {
-					System.out.print("Cannot make bytes from a string of length " + data.length() + ": " + e.getMessage());
-					throw e;
+				final int CHUNK_SIZE = 128 * 1024 * 1024; // 128M
+				final int len = data.length();
+
+				// For small strings, use direct conversion
+				if (len <= CHUNK_SIZE) {
+					try {
+						return data.getBytes("UTF-8");
+					} catch (Exception e) {
+						System.out.println(
+							"Cannot make bytes from a string of length " + len + "."
+							+ " Error: " + e.toString()
+						);
+						throw new RuntimeException("Cannot convert array", e);
+					}
+				} else {
+					// For large strings, split into chunks and process
+					ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+					try {
+						for (int pos = 0; pos < len; pos += CHUNK_SIZE) {
+							int end = Math.min(pos + CHUNK_SIZE, len);
+							String chunk = data.substring(pos, end);
+							byte[] chunkBytes = chunk.getBytes("UTF-8");
+							outputStream.write(chunkBytes);
+						}
+						return outputStream.toByteArray();
+					} catch (Exception e) {
+						System.out.println(
+							"Cannot make bytes from a string of length " + len + "."
+							+ " Chunk position: " + outputStream.size() + ". Error: " + e.toString()
+						);
+						throw new RuntimeException("Cannot convert big array", e);
+					}
 				}
 			}
 
@@ -337,8 +364,6 @@ public class HttpServerSupport extends NativeHost {
 								Native.printCallstack();
 								return "Do not include a body in the response for HEAD request";
 							}
-						} catch (IOException e) {
-							return "Sending chunk error: " + e.getMessage();
 						} catch (Exception e) {
 							return "Sending chunk error: " + e.getMessage();
 						}

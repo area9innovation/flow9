@@ -1,0 +1,101 @@
+import tools/mango/type/types;
+import tools/mango/type/type_eval;
+import tools/mango/type/infer_types;
+import tools/mango/serialization/generate_type_opcodes;
+import tools/mango/serialization/generate_serializers;
+import tools/mango/serialization/generate_deserializers;
+
+import fs/filesystem;
+import string;
+import text/blueprint;
+
+export {
+	// Generate serialization code for the AST defined in a Mango file
+	generateAstSerialization(mangoFile : string, outputDir : string) -> void;
+
+	// Generate serialization code from already parsed types
+	generateSerializationFromTypes(types : [MType], modulePrefix : string, outputDir : string) -> void;
+}
+
+// Generate serialization code for the AST defined in a Mango file
+generateAstSerialization(mangoFile : string, outputDir : string) -> void {
+	// Parse the module prefix (remove path and extension)
+	fileSplit = strSplit(mangoFile, "/");
+	fileNameWithExt = fileSplit[length(fileSplit) - 1];
+	modulePrefix = strLeft(fileNameWithExt, strLastIndexOf(fileNameWithExt, "."));
+
+	// Load and parse the Mango file to get types
+	fileContent = getFileContent(mangoFile);
+	types = if (fileContent != "") {
+		// Use inferTypesFromMango to parse the Mango file
+		parsedTypes = inferTypesFromMango(fileContent, modulePrefix, false, false, false);
+		convertMParsedTypes(parsedTypes);
+	} else {
+		// Empty file or file not found
+		[];
+	}
+
+	// Generate serialization code from the parsed types
+	generateSerializationFromTypes(types, modulePrefix, outputDir);
+}
+
+// Convert MParsedTypes (from inferTypesFromMango) to [MType]
+convertMParsedTypes(parsedTypes : MParsedTypes) -> [MType] {
+	typesList = [];
+
+	// Add constructors
+	typesList = fold(getTreeValues(parsedTypes.constructors), typesList, \acc, ct -> {
+		arrayPush(acc, ct);
+	});
+
+	// Add unions
+	typesList = fold(getTreeValues(parsedTypes.unions), typesList, \acc, ut -> {
+		arrayPush(acc, ut);
+	});
+
+	typesList;
+}
+
+// No wrapper functions needed - using native imports directly
+
+// Generate all serialization code from parsed types
+generateSerializationFromTypes(types : [MType], modulePrefix : string, outputDir : string) -> void {
+	if (length(types) == 0) {
+		println("Error: No types found to generate serialization code");
+		return;
+	}
+
+	// Ensure output directory exists
+	if (!isDirectory(outputDir)) {
+		makeDirectoryDeep(outputDir);
+	}
+
+	// Use blueprint for consistent path building
+	opcodeFile = blueprint("%outputDir%/%modulePrefix%_opcodes.flow", 
+		["outputDir", outputDir, "modulePrefix", modulePrefix]);
+	generateTypeOpcodes(opcodeFile, types, modulePrefix, STRUCT_OPCODE_BASE);
+	println(blueprint("Generated opcode definitions in: %file%", ["file", opcodeFile]));
+
+	// Generate serializers (using native import directly)
+	serializerContent = generateSerializers(types, modulePrefix);
+	serializerFile = blueprint("%outputDir%/%modulePrefix%_serializer.flow",
+		["outputDir", outputDir, "modulePrefix", modulePrefix]);
+	setFileContent(serializerFile, serializerContent);
+	println(blueprint("Generated serializer code in: %file%", ["file", serializerFile]));
+
+	// Generate deserializers (using native import directly)
+	deserializerContent = generateDeserializers(types, modulePrefix);
+	deserializerFile = blueprint("%outputDir%/%modulePrefix%_deserializer.flow",
+		["outputDir", outputDir, "modulePrefix", modulePrefix]);
+	setFileContent(deserializerFile, deserializerContent);
+	println(blueprint("Generated deserializer code in: %file%", ["file", deserializerFile]));
+}
+
+// Helper to infer types from a Mango file
+inferTypesFromMango(mangoContent : string, modulePrefix : string, recursiveRules : bool, unionDebug : bool, addComments : bool) -> MParsedTypes {
+	state = ref MParsedTypes(makeTree(), makeTree(), makeTree(), []);
+	analysisState = mangoTypeEval(mangoContent, recursiveRules, addComments, state);
+
+	// Finalize the types
+	makeTypeDefinitions(analysisState.final_state, unionDebug, false);
+}
