@@ -36,7 +36,7 @@ This directory contains Nix configurations to build a Docker image equivalent to
 Run the image with a JAR file:
 
 ```bash
-docker run -e JAR=filename.jar -v /path/to/jar/dir:/app flow-java:latest
+docker run -e JAR=tools/flowc/flowc.jar -v $(pwd):/app flow-java:latest
 ```
 
 You can also set memory parameters:
