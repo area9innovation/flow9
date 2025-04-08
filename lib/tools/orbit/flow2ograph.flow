@@ -1,0 +1,618 @@
+import tools/flow9/parser/flow_compiled_parser;
+import tools/flow9/desugar/desugar;
+import tools/flow9/config;
+import tools/orbit/ograph;
+import tools/orbit/types;
+import string;
+import string_utils;
+import math/math;
+import sys/system;
+import ds/array;
+
+// Main function that handles command-line arguments and runs the conversion
+main() -> void {
+	// Get command line arguments
+	files = filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
+	
+	if (files == []) {
+		println("Error: No input file specified. Use path/to/your/file.flow");
+		quit(1);
+	} else {
+		quit(processFlowFile(files[0]));
+	}
+}
+
+// Process a flow file and generate the OGraph converter code
+processFlowFile(filePath : string) -> int {
+	// Read the file content
+	fileContent = getFileContent(filePath);
+	
+	if (fileContent == "") {
+		println("Error: Could not read file: " + filePath);
+		1;
+	} else {
+		println("Processing file: " + filePath);
+		
+		// Parse the flow file
+		parseResult = parseCompiledMango(filePath, fileContent, P_parse_flow_compiled, flow(0));
+		
+		if (parseResult.second != "") {
+			println("Parse error: " + parseResult.second);
+			1
+		} else {
+			
+			// Desugar the parsed module
+			onError = \e -> println("Desugar error: " + e);
+			config = getFlow9Config();
+			desugared = desugarPModule(config, onError, filePath, fileContent, parseResult.first);
+			
+			// Generate the converter code
+			generatedCode = generateOGraphConverters(desugared);
+			
+			// Determine output filename based on input filename
+			outputPath = changeFileExt(filePath, "_ograph.flow");
+			
+			// Save the generated code
+			setFileContent(outputPath, generatedCode);
+			println("Generated converter code saved to: " + outputPath);
+			0
+		}
+	}
+}
+
+// Generate OGraph converter code for all structs and unions in the module
+generateOGraphConverters(module : DModule) -> string {
+	// Extract all structs and unions
+	structs = foldTree(module.structs, [], \name, struct, acc -> arrayPush(acc, struct));
+	unions = foldTree(module.unions, [], \name, union, acc -> arrayPush(acc, union));
+	
+	// Generate imports section
+	importsCode = "import tools/orbit/ograph;\n" + 
+	             "import tools/orbit/types;\n" + 
+	             "import " + module.flowpath + ";\n\n";
+	
+	// Generate exports section
+	exportsCode = "export {\n" + 
+	              generateExportsSection(structs, unions) + 
+	              "}\n\n";
+	
+	// Generate converter implementations
+	converterCode = generateStructConverters(structs) + 
+	               generateUnionConverters(unions);
+	
+	// Combine all parts
+	importsCode + exportsCode + converterCode;
+}
+
+// Generate exports section of the generated file
+generateExportsSection(structs : [DStruct], unions : [DUnion]) -> string {
+	structFunctions = concatStrings(map(structs, \struct -> {
+		name = struct.uid;
+		
+		// Define to/from ograph conversion function signatures
+		"\t// Convert " + name + " to OGraph node\n" + 
+		"\t" + snakeCase(name) + "2ograph(graph : OGraph, value : " + name + ") -> int;\n" + 
+		"\n" + 
+		"\t// Convert OGraph node to " + name + "\n" + 
+		"\tograph2" + snakeCase(name) + "(graph : OGraph, nodeId : int) -> " + name + ";\n\n";
+	}));
+	
+	unionFunctions = concatStrings(map(unions, \union -> {
+		name = union.uid;
+		
+		// Define to/from ograph conversion function signatures
+		"\t// Convert " + name + " to OGraph node\n" + 
+		"\t" + snakeCase(name) + "2ograph(graph : OGraph, value : " + name + ") -> int;\n" + 
+		"\n" + 
+		"\t// Convert OGraph node to " + name + "\n" + 
+		"\tograph2" + snakeCase(name) + "(graph : OGraph, nodeId : int) -> " + name + ";\n\n";
+	}));
+	
+	structFunctions + unionFunctions;
+}
+
+// Generate converter functions for structs
+generateStructConverters(structs : [DStruct]) -> string {
+	concatStrings(map(structs, \struct -> {
+		name = struct.uid;
+		camelName = snakeCase(name);
+		
+		// Generate toOGraph function
+		toOGraph = camelName + "2ograph(graph : OGraph, value : " + name + ") -> int {\n" + 
+		"\t// Create nodes for each field\n" + 
+		generateStructToOGraph(struct) + 
+		"}\n\n";
+		
+		// Generate fromOGraph function
+		fromOGraph = "ograph2" + camelName + "(graph : OGraph, nodeId : int) -> " + name + " {\n" + 
+		"\t// Extract the node from the graph\n" + 
+		"\troot = findORoot(graph, nodeId);\n" + 
+		"\tswitch (lookupOClass(graph, root)) {\n" + 
+		"\t\tNone(): {\n" + 
+		"\t\t\tprintln(\"Error: Could not find node \" + i2s(root) + \" in the graph\");\n" + 
+		"\t\t\t" + generateStructDefault(struct) + "\n" + 
+		"\t\t}\n" + 
+		"\t\tSome(oclass): {\n" + 
+		"\t\t\tif (oclass.node.op == \"" + name + "\") {\n" + 
+		"\t\t\t\t// Extract fields from children nodes\n" + 
+		"\t\t\t\tchildren = oclass.node.children;\n" + 
+		"\t\t\t\t" + generateStructFromOGraph(struct) + "\n" + 
+		"\t\t\t} else {\n" + 
+		"\t\t\t\tprintln(\"Error: Expected node of type " + name + " but found \" + oclass.node.op);\n" + 
+		"\t\t\t\t" + generateStructDefault(struct) + "\n" + 
+		"\t\t\t}\n" + 
+		"\t\t}\n" + 
+		"\t}\n" + 
+		"}\n\n";
+		
+		toOGraph + fromOGraph;
+	}));
+}
+
+// Generate code to convert a struct to an OGraph node
+generateStructToOGraph(struct : DStruct) -> string {
+	// For each field, generate conversion code
+	fieldConversions = mapi(struct.args, \i, field -> {
+		name = field.field;
+		type = field.type;
+		
+		// Generate conversion based on field type
+		conversionCode = generateFieldToOGraph(name, type);
+		
+		// Return the field conversion code
+		"\t// Convert " + name + " field\n" + 
+		"\t" + name + "Id = " + conversionCode + ";\n";
+	});
+	
+	// Combine field conversions
+	fieldConversionsCode = concatStrings(fieldConversions);
+	
+	// Generate array of field IDs
+	fieldIdsArray = "[" + strGlue(map(struct.args, \arg -> arg.field + "Id"), ", ") + "]";
+	
+	// Generate node insertion
+	fieldConversionsCode + 
+	"\n\t// Create struct node with all fields\n" + 
+	"\tnode = ONode(ODomain(\"flow\"), \"" + struct.uid + "\", " + fieldIdsArray + ");\n" + 
+	"\tinsertONode(graph, node);\n";
+}
+
+// Generate code to convert a field to an OGraph node based on its type
+generateFieldToOGraph(fieldName : string, fieldType : DType) -> string {
+	switch (fieldType) {
+		DIntType(__): "primitiveInt2ograph(graph, value." + fieldName + ")";
+		DDoubleType(__): "primitiveDouble2ograph(graph, value." + fieldName + ")";
+		DStringType(__): "primitiveString2ograph(graph, value." + fieldName + ")";
+		DBoolType(__): "primitiveBool2ograph(graph, value." + fieldName + ")";
+		DArrayType(elemType, __): "array2ograph(graph, value." + fieldName + ", \\elem -> " + 
+			generateTypeToOGraph("elem", elemType) + ")";
+		DTypename(typeName, typars, __): snakeCase(typeName) + "2ograph(graph, value." + fieldName + ")";
+		default: {
+			"// Unsupported type for field " + fieldName + ": " + fieldTypeToString(fieldType) + "\n" + 
+			"primitiveInt2ograph(graph, 0) // Placeholder for unsupported type";
+		}
+	}
+}
+
+// Generate code to convert a generic type to an OGraph node
+generateTypeToOGraph(varName : string, type : DType) -> string {
+	switch (type) {
+		DIntType(__): "primitiveInt2ograph(graph, " + varName + ")";
+		DDoubleType(__): "primitiveDouble2ograph(graph, " + varName + ")";
+		DStringType(__): "primitiveString2ograph(graph, " + varName + ")";
+		DBoolType(__): "primitiveBool2ograph(graph, " + varName + ")";
+		DArrayType(elemType, __): "array2ograph(graph, " + varName + ", \\elem -> " + 
+			generateTypeToOGraph("elem", elemType) + ")";
+		DTypename(typeName, typars, __): snakeCase(typeName) + "2ograph(graph, " + varName + ")";
+		default: {
+			"// Unsupported type: " + fieldTypeToString(type) + "\n" + 
+			"primitiveInt2ograph(graph, 0) // Placeholder for unsupported type";
+		}
+	}
+}
+
+// Generate code to extract a struct from an OGraph node
+generateStructFromOGraph(struct : DStruct) -> string {
+	// Extract each field from the children nodes
+	fieldExtractions = mapi(struct.args, \i, field -> {
+		name = field.field;
+		type = field.type;
+		
+		// First check if we have enough children
+		"if (length(children) <= " + i2s(i) + ") {\n" + 
+		"\tprintln(\"Error: Not enough children for " + struct.uid + " node\");\n" + 
+		"\t" + name + " = " + generateDefaultValueForType(type) + ";\n" + 
+		"} else {\n" + 
+		"\t" + name + " = " + generateFieldFromOGraph(i, field.type) + ";\n" + 
+		"}";
+	});
+	
+	// Join field extractions
+	fieldExtractionsCode = strGlue(fieldExtractions, "\n\t\t\t\t");
+	
+	// Generate constructor call
+	fieldAssignments = strGlue(map(struct.args, \arg -> arg.field), ", ");
+	
+	fieldExtractionsCode + "\n\t\t\t\t" + 
+	"// Construct the struct\n\t\t\t\t" + 
+	"" + struct.uid + "(" + fieldAssignments + ")";
+}
+
+// Generate code to extract a field from an OGraph node based on its type
+generateFieldFromOGraph(index : int, fieldType : DType) -> string {
+	switch (fieldType) {
+		DIntType(__): "ograph2primitiveInt(graph, children[" + i2s(index) + "])";
+		DDoubleType(__): "ograph2primitiveDouble(graph, children[" + i2s(index) + "])";
+		DStringType(__): "ograph2primitiveString(graph, children[" + i2s(index) + "])";
+		DBoolType(__): "ograph2primitiveBool(graph, children[" + i2s(index) + "])";
+		DArrayType(elemType, __): "ograph2array(graph, children[" + i2s(index) + "], \\elemId -> " + 
+			generateTypeFromOGraph("elemId", elemType) + ")";
+		DTypename(typeName, typars, __): "ograph2" + snakeCase(typeName) + "(graph, children[" + i2s(index) + "])";
+		default: {
+			"// Unsupported type: " + fieldTypeToString(fieldType) + "\n" + 
+			generateDefaultValueForType(fieldType) + " // Placeholder for unsupported type";
+		}
+	}
+}
+
+// Generate code to convert a type from an OGraph node
+generateTypeFromOGraph(varName : string, type : DType) -> string {
+	switch (type) {
+		DIntType(__): "ograph2primitiveInt(graph, " + varName + ")";
+		DDoubleType(__): "ograph2primitiveDouble(graph, " + varName + ")";
+		DStringType(__): "ograph2primitiveString(graph, " + varName + ")";
+		DBoolType(__): "ograph2primitiveBool(graph, " + varName + ")";
+		DArrayType(elemType, __): "ograph2array(graph, " + varName + ", \\elemId -> " + 
+			generateTypeFromOGraph("elemId", elemType) + ")";
+		DTypename(typeName, typars, __): "ograph2" + snakeCase(typeName) + "(graph, " + varName + ")";
+		default: {
+			"// Unsupported type: " + fieldTypeToString(type) + "\n" + 
+			generateDefaultValueForType(type) + " // Placeholder for unsupported type";
+		}
+	}
+}
+
+// Generate default struct constructor for error cases
+generateStructDefault(struct : DStruct) -> string {
+	// For each field, generate a default value
+	defaultFields = map(struct.args, \field -> {
+		generateDefaultValueForType(field.type);
+	});
+	
+	"return " + struct.uid + "(" + strGlue(defaultFields, ", ") + ");";
+}
+
+// Generate default value for a type
+generateDefaultValueForType(type : DType) -> string {
+	switch (type) {
+		DIntType(__): "0";
+		DDoubleType(__): "0.0";
+		DStringType(__): "\"\"";
+		DBoolType(__): "false";
+		DArrayType(__, __): "[]";
+		DTypename(typeName, typars, __): {
+			"makeDefault" + typeName + "() /* Default for " + typeName + " */";
+		}
+		default: "/* Unsupported type for default */";
+	}
+}
+
+// Generate converter functions for unions
+generateUnionConverters(unions : [DUnion]) -> string {
+	concatStrings(map(unions, \union -> {
+		name = union.uid;
+		camelName = snakeCase(name);
+		
+		// Generate toOGraph function
+		toOGraph = camelName + "2ograph(graph : OGraph, value : " + name + ") -> int {\n" + 
+		"\t// Convert the union based on its constructor\n" + 
+		"\tswitch (value) {\n" + 
+		generateUnionToOGraph(union) + 
+		"\t}\n" + 
+		"}\n\n";
+		
+		// Generate fromOGraph function
+		fromOGraph = "ograph2" + camelName + "(graph : OGraph, nodeId : int) -> " + name + " {\n" + 
+		"\t// Extract the node from the graph\n" + 
+		"\troot = findORoot(graph, nodeId);\n" + 
+		"\tswitch (lookupOClass(graph, root)) {\n" + 
+		"\t\tNone(): {\n" + 
+		"\t\t\tprintln(\"Error: Could not find union node \" + i2s(root) + \" in the graph\");\n" + 
+		"\t\t\t" + generateUnionDefault(union) + "\n" + 
+		"\t\t}\n" + 
+		"\t\tSome(oclass): {\n" + 
+		"\t\t\t// The op field contains the variant name\n" + 
+		"\t\t\tvariantName = oclass.node.op;\n" + 
+		"\t\t\tchildren = oclass.node.children;\n\n" + 
+		"\t\t\t// Convert based on the variant\n" + 
+		"\t\t\tswitch (variantName) {\n" + 
+		generateUnionFromOGraph(union) + 
+		"\t\t\t\tdefault: {\n" + 
+		"\t\t\t\t\tprintln(\"Unknown variant: \" + variantName);\n" + 
+		"\t\t\t\t\t" + generateUnionDefault(union) + "\n" + 
+		"\t\t\t\t}\n" + 
+		"\t\t\t}\n" + 
+		"\t\t}\n" + 
+		"\t}\n" + 
+		"}\n\n";
+		
+		toOGraph + fromOGraph;
+	}));
+}
+
+// Generate code to convert a union to an OGraph node
+generateUnionToOGraph(union : DUnion) -> string {
+	// For each union variant, generate a case
+	concatStrings(map(union.types, \type -> {
+		typeName = getTypeName(type);
+		switch (type) {
+			DTypename(variantName, typars, __): {
+				// Generate code for this variant
+				"\t\t" + variantName + "(args): {\n" + 
+				"\t\t\t// Convert the " + variantName + " variant\n";
+				
+				// If it has type parameters, we need to handle the fields
+				if (length(typars) > 0) {
+					// Generate conversion for each field
+					fieldConversions = mapi(typars, \i, typepar -> {
+						"\t\t\targ" + i2s(i) + "Id = " + 
+						generateTypeToOGraph("args", typepar) + ";\n";
+					});
+					
+					// Build array of field IDs
+					argsArray = "[" + strGlue(mapi(typars, \i, __ -> "arg" + i2s(i) + "Id"), ", ") + "]";
+					
+					// Return the node ID
+					concatStrings(fieldConversions) + 
+					"\t\t\t// Create union variant node\n" + 
+					"\t\t\tnode = ONode(ODomain(\"flow\"), \"" + variantName + "\", " + argsArray + ");\n" + 
+					"\t\t\tinsertONode(graph, node);\n" + 
+					"\t\t}\n";
+				} else {
+					// No fields - simple constructor
+					"\t\t\t// Create union variant node with no fields\n" + 
+					"\t\t\tnode = ONode(ODomain(\"flow\"), \"" + variantName + "\", []);\n" + 
+					"\t\t\tinsertONode(graph, node);\n" + 
+					"\t\t}\n";
+				}
+			}
+			default: {
+				// This shouldn't happen in well-formed code
+				"\t\t// Unsupported union variant type: " + fieldTypeToString(type) + "\n" + 
+				"\t\t/* Fallback code */: {\n" + 
+				"\t\t\tnode = ONode(ODomain(\"flow\"), \"unknown\", []);\n" + 
+				"\t\t\tinsertONode(graph, node);\n" + 
+				"\t\t}\n";
+			}
+		}
+	}));
+}
+
+// Generate code to convert an OGraph node back to a union
+generateUnionFromOGraph(union : DUnion) -> string {
+	concatStrings(map(union.types, \type -> {
+		switch (type) {
+			DTypename(variantName, typars, __): {
+				"\t\t\t\t\"" + variantName + "\": {\n";
+				
+				if (length(typars) > 0) {
+					// Extract fields for variants with parameters
+					fieldExtractions = mapi(typars, \i, typepar -> {
+						"\t\t\t\t\t// Check if we have enough children\n" + 
+						"\t\t\t\t\tif (length(children) <= " + i2s(i) + ") {\n" + 
+						"\t\t\t\t\t\tprintln(\"Error: Not enough children for " + variantName + " node\");\n" + 
+						"\t\t\t\t\t\treturn " + generateUnionDefault(union) + ";\n" + 
+						"\t\t\t\t\t}\n\n" + 
+						"\t\t\t\t\t// Extract field " + i2s(i) + "\n" + 
+						"\t\t\t\t\targ" + i2s(i) + " = " + generateTypeFromOGraph("children[" + i2s(i) + "]", typepar) + ";\n";
+					});
+					
+					// Build constructor call
+					argsArray = strGlue(mapi(typars, \i, __ -> "arg" + i2s(i)), ", ");
+					
+					concatStrings(fieldExtractions) + 
+					"\t\t\t\t\t" + variantName + "(" + argsArray + ");\n" + 
+					"\t\t\t\t}\n";
+				} else {
+					// Simple constructor with no fields
+					"\t\t\t\t\t" + variantName + "();\n" + 
+					"\t\t\t\t}\n";
+				}
+			}
+			default: {
+				"\t\t\t\t// Unsupported union variant type: " + fieldTypeToString(type) + "\n";
+			}
+		}
+	}));
+}
+
+// Generate a default constructor for a union (for error cases)
+generateUnionDefault(union : DUnion) -> string {
+	if (length(union.types) > 0) {
+		// Use the first variant as default
+		defaultVariant = union.types[0];
+		switch (defaultVariant) {
+			DTypename(variantName, typars, __): {
+				if (length(typars) > 0) {
+					// Constructor with arguments - generate default values
+					defaultArgs = map(typars, \typepar -> generateDefaultValueForType(typepar));
+					"return " + variantName + "(" + strGlue(defaultArgs, ", ") + ")";
+				} else {
+					// Simple constructor with no arguments
+					"return " + variantName + "()";
+				}
+			}
+			default: "return /* Default for union */;";
+		}
+	} else {
+		"return /* Empty union type, cannot create default */;";
+	}
+}
+
+// Get string representation of a field type (for comments)
+fieldTypeToString(fieldType : DType) -> string {
+	switch (fieldType) {
+		DIntType(__): "int";
+		DDoubleType(__): "double";
+		DStringType(__): "string";
+		DBoolType(__): "bool";
+		DArrayType(elemType, __): "[" + fieldTypeToString(elemType) + "]";
+		DTypename(typeName, typars, __): {
+			if (length(typars) > 0) {
+				typeName + "<" + strGlue(map(typars, \t -> fieldTypeToString(t)), ", ") + ">";
+			} else {
+				typeName;
+			}
+		}
+		default: "unknown";
+	}
+}
+
+// Extract type name from a typename
+getTypeName(type : DType) -> string {
+	switch (type) {
+		DTypename(name, __, __): name;
+		default: "UnknownType";
+	}
+}
+
+// Helper to extract a parameter from URL parameters
+extractParameter(args : [[string]], name : string, defaultValue : string) -> string {
+	value = find(args, \arg -> length(arg) > 0 && arg[0] == name);
+	switch (value) {
+		Some(arr): if (length(arr) >= 2) arr[1] else defaultValue;
+		None(): defaultValue;
+	}
+}
+
+// Helper functions for creating primitive converters
+primitiveInt2ograph(graph : OGraph, value : int) -> int {
+	// Create a node for the int value
+	node = ONode(ODomain("flow"), "int", []);
+	nodeId = insertONode(graph, node);
+	
+	// Associate the integer value with this node
+	setOClassInt(graph, nodeId, value);
+	
+	nodeId;
+}
+
+ograph2primitiveInt(graph : OGraph, nodeId : int) -> int {
+	// Find the canonical representation
+	root = findORoot(graph, nodeId);
+	
+	// Get the int value
+	switch (getOClassInt(graph, root)) {
+		Some(value): value;
+		None(): {
+			println("Error: Could not extract int value from node " + i2s(root));
+			0; // Default value
+		}
+	}
+}
+
+primitiveDouble2ograph(graph : OGraph, value : double) -> int {
+	// Create a node for the double value
+	node = ONode(ODomain("flow"), "double", []);
+	nodeId = insertONode(graph, node);
+	
+	// Associate the double value with this node
+	setOClassDouble(graph, nodeId, value);
+	
+	nodeId;
+}
+
+ograph2primitiveDouble(graph : OGraph, nodeId : int) -> double {
+	// Find the canonical representation
+	root = findORoot(graph, nodeId);
+	
+	// Get the double value
+	switch (getOClassDouble(graph, root)) {
+		Some(value): value;
+		None(): {
+			println("Error: Could not extract double value from node " + i2s(root));
+			0.0; // Default value
+		}
+	}
+}
+
+primitiveString2ograph(graph : OGraph, value : string) -> int {
+	// Create a node for the string value
+	node = ONode(ODomain("flow"), "string", []);
+	nodeId = insertONode(graph, node);
+	
+	// Associate the string value with this node
+	setOClassString(graph, nodeId, value);
+	
+	nodeId;
+}
+
+ograph2primitiveString(graph : OGraph, nodeId : int) -> string {
+	// Find the canonical representation
+	root = findORoot(graph, nodeId);
+	
+	// Get the string value
+	switch (getOClassString(graph, root)) {
+		Some(value): value;
+		None(): {
+			println("Error: Could not extract string value from node " + i2s(root));
+			""; // Default value
+		}
+	}
+}
+
+primitiveBool2ograph(graph : OGraph, value : bool) -> int {
+	// Create a node for the bool value
+	node = ONode(ODomain("flow"), "bool", []);
+	nodeId = insertONode(graph, node);
+	
+	// Associate the bool value with this node (as int)
+	setOClassInt(graph, nodeId, if (value) 1 else 0);
+	
+	nodeId;
+}
+
+ograph2primitiveBool(graph : OGraph, nodeId : int) -> bool {
+	// Find the canonical representation
+	root = findORoot(graph, nodeId);
+	
+	// Get the bool value (stored as int)
+	switch (getOClassInt(graph, root)) {
+		Some(value): value != 0;
+		None(): {
+			println("Error: Could not extract bool value from node " + i2s(root));
+			false; // Default value
+		}
+	}
+}
+
+array2ograph(graph : OGraph, arr : [?], elementFn : (?) -> int) -> int {
+	// Convert each element
+	elementIds = map(arr, \element -> elementFn(element));
+	
+	// Create a node for the array
+	node = ONode(ODomain("flow"), "array", elementIds);
+	insertONode(graph, node);
+}
+
+ograph2array(graph : OGraph, nodeId : int, elementFn : (int) -> ?) -> [?] {
+	// Find the canonical representation
+	root = findORoot(graph, nodeId);
+	
+	// Get the array node
+	switch (lookupOClass(graph, root)) {
+		Some(oclass): {
+			if (oclass.node.op == "array") {
+				// Convert each element
+				map(oclass.node.children, \childId -> elementFn(childId));
+			} else {
+				println("Error: Expected array node but found " + oclass.node.op);
+				[]; // Default value
+			}
+		}
+		None(): {
+			println("Error: Could not find array node " + i2s(root));
+			[]; // Default value
+		}
+	}
+}
