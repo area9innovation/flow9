@@ -296,12 +296,12 @@ Integer ⊂ Rational ⊂ Real ⊂ Complex ⊂ Abelian;
 	(a : Abelian) + (b : Abelian)  |-   + : S₂;
 
 	// S₂ symmetry (commutativity) with explicit ordering
-	(a + b) : S₂ => a + b : Canonical if a <= b;
-	(a + b) : S₂ => b + a : Canonical if b < a;
+	(a + b) : S₂ => a + b : Canonical   if a <= b;
+	(a + b) : S₂ => b + a : Canonical   if b < a;
 
 	// Same for multiplication. We could use an AST syntax to generalize this to any binary operator
-	a * b : S₂ => a * b : Canonical if a <= b;
-	a * b : S₂ => b * a : Canonical if b < a;
+	a * b : S₂ => a * b : Canonical   if a <= b;
+	a * b : S₂ => b * a : Canonical   if b < a;
 
 	// For S₃ symmetry (e.g., in associative operators with 3 arguments)
 	a * b * c : S₃ => ordered3(a, b, c);
