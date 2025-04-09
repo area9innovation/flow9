@@ -5,7 +5,6 @@
 
 // Main math expression grammar with precedence levels
 math_expr = 
-
 	// Level 2: Set relationships
 	math_expr (
 		("c=" | "⊂") ws math_expr Subset/2
@@ -26,143 +25,105 @@ math_expr =
 		| "<" ws math_expr LessThan/2
 		| (">=" | "≥") ws math_expr GreaterEquals/2
 		| ">" ws math_expr GreaterThan/2
-	)
+	)*
 	
 	|> // Level 5: Set operations
 	math_expr (
-		("union" | "∪") ws math_expr Union/2
-		| ("intersect" | "∩") ws math_expr Intersection/2
-	)
+		("union" kwsep | "∪") ws math_expr Union/2
+		| ("intersect" kwsep | "∩") ws math_expr Intersection/2
+	)*
 	
 	|> // Level 6: Function types
 	math_expr (
 		("->" | "→") ws math_expr FunctionType/2
-	)
+	)*
 	
 	|> // Level 7: Addition and subtraction
 	math_expr (
 		"+" ws math_expr Add/2
 		| "-" ws math_expr Subtract/2
-	)
+	)*
 	
 	|> // Level 8: Multiplication and division
 	math_expr (
 		"*" ws math_expr Multiply/2
 		| "/" ws math_expr Divide/2
 		| ("x" | "×") ws math_expr DirectProduct/2   // Direct product of groups
-		| ("semi_x" | "⋊") ws math_expr SemidirectProduct/2  // Semidirect product
 		| ("o" | "∘") ws math_expr Compose/2  // Function composition
-	)
+	)*
 	
 	|> // Level 9: Exponentiation
 	math_expr (
-		"^" ws math_expr Exponent/2
+		"^" ws <math_expr Exponent/2
 		| superscript Superscript/2
-	)
+	)*
 	
 	|> // Level 10: Unary operators
 	(
-		"-" ws math_expr Negate/1
-		| ("!" | "¬") ws math_expr LogicalNot/1
+		"-" ws <math_expr Negate/1
+		| ("!" | "¬") ws <math_expr LogicalNot/1
 	)
-	
-	|> // Level 11: Highest precedence - atomic expressions
+
+	|>
+		math_expr ("(" ws @array<math_expr ","> ")" ws Function/2)+  // Function call
+	|> 
 	(
 		number Number/1
-		| id Variable/1
-		| greek_letter GreekLetter/1
-		| id "(" ws @array<math_expr ","> ")" ws Function/2  // Function call
 		| "(" ws math_expr ")" ws                          // Parenthesized expression
+		| "{" ws @array<math_expr ","> "|" ws math_expr "}" ws SetComprehension/2  // Set comprehension
 		| "{" ws @array<math_expr ","> "}" ws SetLiteral/1  // Set literal
-		| "{" ws math_expr "|" ws math_expr "}" ws SetComprehension/2  // Set comprehension
-		| ("\\" | "λ") ws id "." ws math_expr Lambda/2  // Lambda (single param)
-		| ("\\" | "λ") ws "(" ws @array<id ","> ")" ws "." ws math_expr LambdaMulti/2  // Lambda (multi param)
-		| ("forall" | "∀") ws id "." ws math_expr Forall/2  // Universal quantifier
-		| ("exists" | "∃") ws id "." ws math_expr Exists/2  // Existential quantifier
-		| math_expr ":" ws math_expr TypeAnnotation/2   // Type annotation
+		| ('\' | "λ") ws math_id "." ws math_expr Lambda/2  // Lambda (single param)
+		| ('\' | "λ") ws "(" ws @array<math_id ","> ")" ws "." ws math_expr LambdaMulti/2  // Lambda (multi param)
+		| ("forall" kwsep | "∀") ws math_id "." ws math_expr Forall/2  // Universal quantifier
+		| ("exists" kwsep | "∃") ws math_id "." ws math_expr Exists/2  // Existential quantifier
+//		| math_expr ":" ws math_expr TypeAnnotation/2   // Type annotation
 		| math_expr "[" ws math_expr ":=" ws math_expr "]" ws TypeSubstitution/3  // Type substitution
 		| math_expr subscript Subscript/2  // Subscript
+		| greek_letter GreekLetter/1
+		| math_id Variable/1
 	)
 	;
 
 // Subscripts for variables (e.g., T₁, x₀)
-subscript = 
-	"_" ws $int ws @s2i
-	| "₀" @'0'
-	| "₁" @'1'
-	| "₂" @'2'
-	| "₃" @'3'
-	| "₄" @'4'
-	| "₅" @'5'
-	| "₆" @'6'
-	| "₇" @'7'
-	| "₈" @'8'
-	| "₉" @'9'
-	;
+subscript = $("₋"? ("₀" | "₁" | "₂" | "₃" | "₄" | "₅" | "₆" | "₇" | "₈" | "₉")+);
+// "," | "₊" | "₋" | "₌" | "₍" | "₎" | "ₐ" | "ₑ" | "ₒ" | "ₓ" | "ₔ" | "ₕ" | "ₖ" | "ₗ" | "ₘ" | "ₙ" | "ₚ" | "ₛ" | "ₜ"
 
 // Superscripts for variables (e.g., x², f⁻¹)
-superscript = 
-	"^" ws "-" ws $int ws @'dup s2i -1 *' // Negative superscript like x^-1
-	| "^" ws $int ws @s2i  // Explicit superscript like x^2
-	| "¹" @'1'
-	| "²" @'2'
-	| "³" @'3'
-	| "⁴" @'4'
-	| "⁵" @'5'
-	| "⁶" @'6'
-	| "⁷" @'7'
-	| "⁸" @'8'
-	| "⁹" @'9'
-	| "⁻¹" @'-1'
-	;
+superscript = $("⁻"? ("¹" | "²" | "³" | "⁴" | "⁵" | "⁶" | "⁷" | "⁸" | "⁹" | "⁰")+);
+ // "⁺" | "⁻" | "⁼" | "⁽" | "⁾" |  "ⁿ"
 
 // Numbers
-number = $double ws @s2d | $int ws @s2i;
+number = $double ws @s2d | $signed_int ws @s2i;
 
 // Greek letters (with both Unicode and ASCII names)
 greek_letter = 
-	("alpha" | "α") ws @'"alpha"'
-	| ("beta" | "β") ws @'"beta"'
-	| ("gamma" | "γ") ws @'"gamma"'
-	| ("delta" | "δ") ws @'"delta"'
-	| ("epsilon" | "ε") ws @'"epsilon"'
-	| ("zeta" | "ζ") ws @'"zeta"'
-	| ("eta" | "η") ws @'"eta"'
-	| ("theta" | "θ") ws @'"theta"'
-	| ("iota" | "ι") ws @'"iota"'
-	| ("kappa" | "κ") ws @'"kappa"'
-	| ("lambda" | "λ") ws @'"lambda"'
-	| ("mu" | "μ") ws @'"mu"'
-	| ("nu" | "ν") ws @'"nu"'
-	| ("xi" | "ξ") ws @'"xi"'
-	| ("omicron" | "ο") ws @'"omicron"'
-	| ("pi" | "π") ws @'"pi"'
-	| ("rho" | "ρ") ws @'"rho"'
-	| ("sigma" | "σ") ws @'"sigma"'
-	| ("tau" | "τ") ws @'"tau"'
-	| ("upsilon" | "υ") ws @'"upsilon"'
-	| ("phi" | "φ") ws @'"phi"'
-	| ("chi" | "χ") ws @'"chi"'
-	| ("psi" | "ψ") ws @'"psi"'
-	| ("omega" | "ω") ws @'"omega"'
+	("alpha" kwsep | "α") ws @'"alpha"'
+	| ("beta" kwsep | "β") ws @'"beta"'
+	| ("gamma" kwsep | "γ") ws @'"gamma"'
+	| ("delta" kwsep | "δ") ws @'"delta"'
+	| ("epsilon" kwsep | "ε") ws @'"epsilon"'
+	| ("zeta" kwsep | "ζ") ws @'"zeta"'
+	| ("eta" kwsep | "η") ws @'"eta"'
+	| ("theta" kwsep | "θ") ws @'"theta"'
+	| ("iota" kwsep | "ι") ws @'"iota"'
+	| ("kappa" kwsep | "κ") ws @'"kappa"'
+	| ("lambda" kwsep | "λ") ws @'"lambda"'
+	| ("mu" kwsep | "μ") ws @'"mu"'
+	| ("nu" kwsep | "ν") ws @'"nu"'
+	| ("xi" kwsep | "ξ") ws @'"xi"'
+	| ("omicron" kwsep | "ο") ws @'"omicron"'
+	| ("pi" kwsep  | "π") ws @'"pi"'
+	| ("rho" kwsep | "ρ") ws @'"rho"'
+	| ("sigma" kwsep | "σ") ws @'"sigma"'
+	| ("tau" kwsep | "τ") ws @'"tau"'
+	| ("upsilon" kwsep | "υ") ws @'"upsilon"'
+	| ("phi" kwsep | "φ") ws @'"phi"'
+	| ("chi" kwsep | "χ") ws @'"chi"'
+	| ("psi" kwsep | "ψ") ws @'"psi"'
+	| ("omega" kwsep | "ω") ws @'"omega"'
 	;
 
 // Special identifiers (group theory, types, etc.)
-id = 
-	group_id
-	| type_var
-	| normal_id
-	;
-
-// Group identifiers like S₂, C₄, etc.
-group_id = $('S' | 'C' | 'D' | 'A' | 'Q' | 'Z' | 'G' | 'SO' | 'SU') subscript? ws;
-
-// Type variables
-type_var = 
-	$('T' | 'A' | 'B' | 'X' | 'Y') subscript? ws
-	| '?' ('?')* ws;
-
-// Regular identifiers
-normal_id = $bid ws;
+math_id = id | uid | $'?'+ ws;
 
 ws math_expr

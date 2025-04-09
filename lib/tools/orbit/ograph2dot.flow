@@ -1,0 +1,103 @@
+import tools/orbit/types;
+import tools/orbit/ograph;
+import math/math; // For i2s, d2s
+import ds/tree;
+import ds/array;
+import string;
+
+export {
+    // Convert an OGraph to GraphViz DOT format
+    ograph2dot(o : OGraph) -> string;
+}
+
+// Convert an OGraph to GraphViz DOT format
+ograph2dot(o : OGraph) -> string {
+    nodeMap = ref makeTree(); // Map from id to node info
+    nodeStrings = ref [];
+    edgeStrings = ref [];
+    
+    // Collect all nodes
+    traverseOGraph(o, \nodeId, node -> {
+        root = findORoot(o, nodeId);
+        isRoot = (nodeId == root);
+        
+        // Create node label
+        finalLabel = makeNodeLabel(o, nodeId, node, root, isRoot);
+        
+        // Store in map for edge generation
+        nodeMap := setTree(^nodeMap, nodeId, Pair(node, isRoot));
+        
+        // Create node DOT syntax
+        fillColor = if (isRoot) "lightblue" else "white";
+        nodeStr = "  node" + i2s(nodeId) + " [label=\"" + finalLabel + "\", shape=box, style=filled, fillcolor=" + fillColor + "]";
+        nodeStrings := arrayPush(^nodeStrings, nodeStr);
+    });
+    
+    // Create edges
+    traverseInOrder(^nodeMap, \nodeId, nodePair -> {
+        node = nodePair.first;
+        
+        // Add edges for children
+        iter(node.children, \childId -> {
+            childRoot = findORoot(o, childId);
+            edgeStr = "  node" + i2s(nodeId) + " -> node" + i2s(childRoot) + " [color=black]";
+            edgeStrings := arrayPush(^edgeStrings, edgeStr);
+        });
+        
+        // Add edges for belongsTo relationships
+        iter(node.belongsTo, \domainId -> {
+            if (nodeId != domainId) { // Avoid self-loops
+                edgeStr = "  node" + i2s(nodeId) + " -> node" + i2s(domainId) + " [color=blue, style=dotted, label=\"belongs-to\"]";
+                edgeStrings := arrayPush(^edgeStrings, edgeStr);
+            }
+        });
+    });
+    
+    // Build the complete DOT syntax
+    dotHeader = "digraph OGraph {\n";
+    dotNodeStyle = "  node [shape=box]\n";
+    dotEdgeStyle = "  edge [color=black]\n\n";
+    
+    // Combine node strings
+    dotNodes = fold(^nodeStrings, "", \acc, s -> acc + s + "\n");
+    
+    // Add separator
+    dotNodeEdgeSep = "\n";
+    
+    // Combine edge strings
+    dotEdges = fold(^edgeStrings, "", \acc, s -> acc + s + "\n");
+    
+    // Add footer
+    dotFooter = "}\n";
+    
+    // Combine all parts
+    dotHeader + dotNodeStyle + dotEdgeStyle + dotNodes + dotNodeEdgeSep + dotEdges + dotFooter;
+}
+
+// Create a formatted node label with all relevant information
+makeNodeLabel(o : OGraph, nodeId : int, node : ONode, rootId : int, isRoot : bool) -> string {
+    // Basic label with node info
+    baseLabel = "ID: " + i2s(nodeId) + "\n" +
+        "Domain: " + node.domain.domain + "\n" +
+        "Op: " + node.op + "\n" +
+        "Root: " + i2s(rootId);
+    
+    // Add any associated values
+    labelWithInt = switch (getOClassInt(o, nodeId)) {
+        None(): baseLabel;
+        Some(val): baseLabel + "\nInt: " + i2s(val);
+    };
+    
+    labelWithDouble = switch (getOClassDouble(o, nodeId)) {
+        None(): labelWithInt;
+        Some(val): labelWithInt + "\nDouble: " + d2s(val);
+    };
+    
+    labelWithString = switch (getOClassString(o, nodeId)) {
+        None(): labelWithDouble;
+        Some(val): labelWithDouble + "\nString: \"" + val + "\"";
+    };
+    
+    // Escape quotes for DOT syntax
+    strReplace(labelWithString, "\"", "\\\"");
+}
