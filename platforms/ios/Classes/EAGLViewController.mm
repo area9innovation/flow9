@@ -182,32 +182,52 @@ static bool gestureBeingHandledByFlow = false;
     RenderSupport = renderer;
 }
 
+- (NSArray<NSValue *> *)mapTouchesToPoints:(NSSet<UITouch *> *)touches {
+    NSMutableArray<NSValue *> *pointsArray = [NSMutableArray array];
+    
+    for (UITouch *touch in touches) {
+        // Get the location of the touch in the specified view
+        CGPoint location = [touch locationInView:self.view];
+        
+        // Store the CGPoint in an NSValue object to add to the array
+        [pointsArray addObject:[NSValue valueWithCGPoint:location]];
+    }
+    
+    return pointsArray;
+}
+
 // Emulate mouse events
 - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
-    UITouch * touch = [touches anyObject];
     if (RenderSupport) {
-        currentTouchPos = [touch locationInView: self.view];
-        RenderSupport->mousePressEvent(currentTouchPos.x, currentTouchPos.y);
+        NSArray<NSValue*>* touchPoints = [self mapTouchesToPoints:[event allTouches]];
+        RenderSupport->mousePressEvent(touchPoints);
     }
 }
 
 - (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event {
-    UITouch * touch = [touches anyObject];
     if (RenderSupport && !gestureBeingHandledByFlow) {
-        currentTouchPos = [touch locationInView: self.view];
-        RenderSupport->mouseMoveEvent(currentTouchPos.x, currentTouchPos.y);
+        NSArray<NSValue*>* touchPoints = [self mapTouchesToPoints:[event allTouches]];
+        RenderSupport->mouseMoveEvent(touchPoints);
     }
 }
 
-- (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event {
-    UITouch * touch = [touches anyObject];
-    if (RenderSupport) {
-        if (!gestureBeingHandledByFlow) {
-            CGPoint pos = [touch locationInView: self.view];
-            RenderSupport->mouseReleaseEvent(pos.x, pos.y);
-        } else {
-            gestureBeingHandledByFlow = false;
+- (NSSet<UITouch*>*)filterActiveTouches:(NSSet<UITouch *> *)activeTouches {
+    NSMutableSet *activeTouchesSet = [NSMutableSet set];
+    for (UITouch *touch in activeTouches) {
+        if (touch.phase != UITouchPhaseEnded && touch.phase != UITouchPhaseCancelled) {
+            [activeTouchesSet addObject:touch];
         }
+    }
+    
+    return activeTouchesSet;
+}
+
+- (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event {
+    if (RenderSupport) {
+        NSArray<NSValue*>* touchPoints = [self mapTouchesToPoints:[self filterActiveTouches:[event allTouches]]];
+        UITouch* touch = [touches anyObject];
+        CGPoint pos = [touch locationInView: self.view];
+        RenderSupport->mouseReleaseEvent(touchPoints, pos);
     }
     
     [self extendIdleTimerTimeout];

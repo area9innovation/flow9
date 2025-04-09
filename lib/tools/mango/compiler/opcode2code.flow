@@ -1,14 +1,21 @@
 import tools/mango/compiler/mopcode;
+import tools/mango/compiler/opcode_effects;
+import tools/mango/compiler/pretty;
 import string;
 import text/blueprint;
 import net/url_parameter;
 import tools/poppy/compiler/compile;
+import ds/tree;
+import math/math;  // For i2s and other conversions
+import ds/array;  // For array functions
+import algorithms;
 
 export {
-	mopcode2code(c : MOpCode) -> string;
+	// Function signature with effects tree parameter
+	mopcode2code(c : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string;
 }
 
-mopcode2code(c : MOpCode) -> string {
+mopcode2code(c : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string {
 	todo = \ -> {
 		println("TODO: Produce code for " + toString(c));
 		"TODO";
@@ -16,17 +23,24 @@ mopcode2code(c : MOpCode) -> string {
 	switch (c) {
 		MoFunction(name, code, body): {
 			prefix = getUrlParameter("prefix");
+			profileOn = isUrlParameterTrue("profile");
+			profiles = strSplit(getUrlParameter("profile"), ",");
+
 			blueprint("
 				%id%(acc : MoParseAcc) -> bool {
-					// println(\"%id%\");
-					%term%
+					%prof%%term%
 				}
 
 				%body%
 				", [
 					"id", prefix + "parse_" + name,
-					"term", mopcode2code(code),
-					"body", mopcode2code(body),
+					"prof", if (contains(profiles, name)) {
+						"profileMangoProductionWithPos(acc, " + toString(name) + ");\n"
+					} else if (profileOn) {
+						"profileMangoProduction(" + toString(name) + ");\n"
+					} else "",
+					"term", mopcode2code(code, effects),
+					"body", mopcode2code(body, effects),
 				]
 			)
 		}
@@ -39,18 +53,14 @@ mopcode2code(c : MOpCode) -> string {
 				} else {
 					%else%
 				}", [
-					"cond", mopcode2code(cond),
-					"then", mopcode2code(then),
-					"else", mopcode2code(else_),
+					"cond", mopcode2code(cond, effects),
+					"then", mopcode2code(then, effects),
+					"else", mopcode2code(else_, effects),
 			]);
 		}
 		MoParseStar(term): {
-			blueprint("
-				mparseStar(acc, \\ -> {
-					%term%
-				})", [
-				"term", mopcode2code(term)
-			]);
+			// Use the effects map for optimization
+			generateOptimizedParseStar(term, effects);
 		}
 		MoCall(id): {
 			prefix = getUrlParameter("prefix");
@@ -73,20 +83,40 @@ mopcode2code(c : MOpCode) -> string {
 				blueprint("{%code%; true}", ["code", renameEnv]);
 			}
 		}
-		MoPushCheckpoint(): "pushMCheckpoint(acc)";
-		MoDiscardCheckpoint(): "discardMCheckpoint(acc)";
-		MoRestoreCheckpoint(): "restoreMCheckpoint(acc)";
+		MoPushCheckpoint(mode): {
+			switch (mode) {
+				FullStackMode(): "pushMCheckpoint(acc)";
+				PositionStackMode(): "pushMCheckpointNoStack(acc)";
+				LocalVariableMode(id): "pos_" + i2s(id) + " = acc.i";
+			}
+		}
+		MoDiscardCheckpoint(mode): {
+			switch (mode) {
+				FullStackMode(): "discardMCheckpoint(acc)";
+				PositionStackMode(): "discardMCheckpointNoStack(acc)";
+				LocalVariableMode(id): "true";  // Return true for success
+			}
+		}
+		MoRestoreCheckpoint(mode): {
+			switch (mode) {
+				FullStackMode(): "restoreMCheckpoint(acc)";
+				PositionStackMode(): "restoreMCheckpointNoStack(acc)";
+				LocalVariableMode(id): {
+					"{acc.i ::= pos_" + i2s(id) + "; false}"  // Restore position and return false
+				}
+			}
+		}
 		MoSequence(exps): {
 			if (length(exps) == 0) {
 				""
 			} else if (length(exps) == 1) {
-				mopcode2code(exps[0])
+				mopcode2code(exps[0], effects)
 			} else {
 				blueprint("
 					{
 						%seq%
 					}", [
-					"seq", superglue(exps, mopcode2code, ";\n")
+					"seq", superglue(exps, \exp -> mopcode2code(exp, effects), ";\n")
 				]);
 			}
 		}
@@ -95,41 +125,52 @@ mopcode2code(c : MOpCode) -> string {
 		MoAnd(left, right): {
 			"(" + superglue([left, right], \o -> {
 				if (needMOpCodeParenthesis(o)) {
-					"(" + mopcode2code(o) + ")"
+					"(" + mopcode2code(o, effects) + ")"
 				} else {
-					mopcode2code(o)
+					mopcode2code(o, effects)
 				}
 			}, " && ") + ")"
-
 		}
 		MoOr(left, right): {
 			superglue([left, right], \o -> {
 				if (needMOpCodeParenthesis(o)) {
-					"(" + mopcode2code(o) + ")"
+					"(" + mopcode2code(o, effects) + ")"
 				} else {
-					mopcode2code(o)
+					mopcode2code(o, effects)
 				}
 			}, " || ")
 		}
-/*		DAddError(error): {
-			blueprint("
-				addParseError(acc, %error%)", [
-				"error", toString(error)
-			]);
-		}
-		DAddVerbatim(e): {
-			blueprint("
-				addVerbatim(acc, %term%)", [
-				"term", opcode2code(e)
-			]);
-		}
-		DAddMatched(e): {
-			blueprint("
-				addMatched(acc, %term%)", [
-				"term", opcode2code(e)
-			]);
-		}
-*/
+	}
+}
+
+// Generate optimized code for MoParseStar based on analysis with effects map
+generateOptimizedParseStar(term : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string {
+	if (!modifiesStackWithEffects(term, effects) && !needsBacktrackingWithEffects(term, effects)) {
+		// Fast path: simple repetition with no backtracking needed
+		// println("No stack, no backtrack for " + prettyMOpCode(term));
+		blueprint("
+			mparseStarNobacktrackOrStack(acc, \\ -> {
+				%term%
+			})", [
+			"term", mopcode2code(term, effects)
+		]);
+	} else if (!modifiesStackWithEffects(term, effects)) {
+		// Medium path: position-only backtracking
+		// println("No stack for " + prettyMOpCode(term));
+		blueprint("
+			mparseStarBacktrackOnly(acc, \\ -> {
+				%term%
+			})", [
+			"term", mopcode2code(term, effects)
+		]);
+	} else {
+		// Standard mparseStar with full checkpointing
+		blueprint("
+			mparseStar(acc, \\ -> {
+				%term%
+			})", [
+			"term", mopcode2code(term, effects)
+		]);
 	}
 }
 
@@ -154,12 +195,13 @@ needMOpCodeParenthesis(o : MOpCode) -> bool {
 			}
 		}
 		MoPushPosition(): false
-		MoPushCheckpoint(): false
-		MoDiscardCheckpoint(): false
-		MoRestoreCheckpoint(): false
+		MoPushCheckpoint(__): false
+		MoDiscardCheckpoint(__): false
+		MoRestoreCheckpoint(__): false
 		MoSequence(exps): length(exps) == 1;
 		MoConstruct(uid, arity): false;
 		MoAnd(left, right): true;
 		MoOr(left, right): true;
 	}
 }
+

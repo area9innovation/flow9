@@ -162,9 +162,9 @@ public:
     bool loadAssetData(StaticBuffer *buffer, std::string name, size_t size);
     
     CGPoint fixIphoneXMousePoint(int x, int y);
-    void mouseMoveEvent(int x, int y);
-    void mousePressEvent(int x, int y);
-    void mouseReleaseEvent(int x, int y);
+    void mouseMoveEvent(NSArray<NSValue*>* touchPoints);
+    void mousePressEvent(NSArray<NSValue*>* touchPoints);
+    void mouseReleaseEvent(NSArray<NSValue*>* touchPoints, CGPoint touchPosition);
     bool returnKeyEventFromTextClip(GLTextClip* clip);
 
     void textViewChanged(FlowUITextView * textview, bool text_changed);
@@ -272,6 +272,8 @@ private:
     float FullScreenTargetCenterX, FullScreenTargetCenterY, FullScreenTargetScaleFactor;
     
     std::string lastCameraAdditionalArgs;
+    
+    std::vector<vec2> convertTouchesToVector(NSArray<NSValue*>* touchPoints);
     
     FlowGestureState GestureRecognizerState2FlowGestureState(UIGestureRecognizerState state) {
         if (state == UIGestureRecognizerStateBegan) return FlowGestureStateBegin;

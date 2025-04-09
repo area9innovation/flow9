@@ -830,29 +830,29 @@ public class Native extends NativeHost {
 		}
 	}
 
-	public static final int scheduleTimerTask(int ms, final Func0<Object> cb, boolean repeat) {
+	public static final Func0<Object> scheduleTimerTask(int ms, final Func0<Object> cb, boolean repeat, String description) {
 		Timers timers = FlowRuntime.getTimers();
 		if (timers == null) {
 			timers = new Timers();
 			FlowRuntime.timersByThreadId.put(FlowRuntime.getThreadIdLong(), timers);
 		}
-		return timers.addTimer(ms, repeat, cb);
-	}
 
-	public static final Object timer(int ms, final Func0<Object> cb) {
-		scheduleTimerTask(ms, cb, false);
-		return null;
-	}
-
-	public static final Func0<Object> setInterval(int ms, final Func0<Object> cb) {
-		int timerId = scheduleTimerTask(ms, cb, true);
-
+		int timerId = timers.addTimer(ms, repeat, description, cb);
 		return new Func0<Object>() {
 			public Object invoke() {
 				cancelTimer(timerId);
 				return null;
 			}
 		};
+	}
+
+	public static final Object timer(int ms, final Func0<Object> cb) {
+		scheduleTimerTask(ms, cb, false, null);
+		return null;
+	}
+
+	public static final Func0<Object> setInterval(int ms, final Func0<Object> cb) {
+		return scheduleTimerTask(ms, cb, true, null);
 	}
 
 	public static final Object sustainableTimer(Integer ms, final Func0<Object> cb) {
@@ -860,14 +860,7 @@ public class Native extends NativeHost {
 	}
 
 	public static final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
-		int timerId = scheduleTimerTask(ms, cb, false);
-
-		return new Func0<Object>() {
-			public Object invoke() {
-				cancelTimer(timerId);
-				return null;
-			}
-		};
+		return scheduleTimerTask(ms, cb, false, null);
 	}
 
 	public static final double sin(double a) {
@@ -1842,7 +1835,7 @@ public class Native extends NativeHost {
 		return false;
 	}
 
-	public static final Object[] concurrent(Boolean fine, Object[] tasks) {
+	public static final Object[] concurrent(Object threadPool, Object[] tasks) {
 		List<Callable<Object>> tasks2 = new ArrayList<Callable<Object>>();
 
 		for (int i = 0; i < tasks.length; i++) {
@@ -1853,7 +1846,7 @@ public class Native extends NativeHost {
 				public Object call() throws Exception {
 					try {
 						Object result = task.invoke();
-						FlowRuntime.eventLoop(false);
+						FlowRuntime.eventLoop();
 						return result;
 					} catch (OutOfMemoryError e) {
 						// This is brutal, but there is no memory to print anything
@@ -1869,7 +1862,8 @@ public class Native extends NativeHost {
 
 		try {
 			List<Object> res = new ArrayList<Object>();
-			for (Future<Object> future : threadpool.invokeAll(tasks2)) {
+			ExecutorService threadPool2 = (ExecutorService) threadPool;
+			for (Future<Object> future : threadPool2.invokeAll(tasks2)) {
 				res.add(future.get());
 			}
 			resArr = res.toArray();
@@ -1895,7 +1889,7 @@ public class Native extends NativeHost {
 		FlowRuntime.runParallel(() -> {
 			try {
 				Object result = task.invoke();
-				FlowRuntime.eventLoop(false);
+				FlowRuntime.eventLoop();
 				callbackOnDone.setReady(result);
 			} catch (Exception e) {
 				callbackOnError.setReady(e.getMessage());
@@ -1905,7 +1899,8 @@ public class Native extends NativeHost {
 	}
 
 	public static final Object concurrentAsyncCallback(
-		Func2<Object, String, Func1<Object, Object>> task,
+		Object threadPool,
+		Func2<Object, Func1<Object, Object>, Func0<Object>> task,
 		Func1<Object, Object> onDone,
 		Func1<Object, String> onFail
 	) {
@@ -1918,12 +1913,18 @@ public class Native extends NativeHost {
 			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
 			String threadId = Long.toString(thread.getId());
 			try {
-				task.invoke(threadId, (res) -> {
-					// thread #2
-					completableFuture.complete(res);
-					return null;
-				});
-				FlowRuntime.eventLoop(false);
+				Pair<Func0<Object>, Func0<Object>> loopPair = FlowRuntime.makeInterruptibleEvenLoopPair(true);
+				task.invoke(
+					new Func1<Object, Object>() {
+						public Object invoke(Object res) {
+							// thread #2
+							completableFuture.complete(res);
+							return null;
+						}
+					},
+					loopPair.second
+				);
+				loopPair.first.invoke();
 			} catch (RuntimeException ex) {
 				Throwable e = ex;
 				e.printStackTrace();
@@ -1946,7 +1947,7 @@ public class Native extends NativeHost {
 				e.printStackTrace();
 			}
 			return result;
-		}, threadpool)
+		}, (ExecutorService) threadPool)
 		.exceptionally(ex -> {
 			ex.printStackTrace();
 			Thread thread = Thread.currentThread();
@@ -1977,6 +1978,10 @@ public class Native extends NativeHost {
 
 	public static final String getThreadId() {
 		return Long.toString(FlowRuntime.getThreadIdLong());
+	}
+
+	public static final String getThreadDebugInfo() {
+		return FlowRuntime.getThreadDebugInfo();
 	}
 
 	public static final Object initConcurrentHashMap() {
@@ -2073,9 +2078,8 @@ public class Native extends NativeHost {
 		return Runtime.getRuntime().availableProcessors();
 	}
 
-	public static final Object setThreadPoolSize(int threads) {
-		threadpool = Executors.newFixedThreadPool(threads);
-		return null;
+	public static final Object newThreadPool(int threadsCount) {
+		return Executors.newFixedThreadPool(threadsCount);
 	}
 
 	public static final String readBytes(int n) {

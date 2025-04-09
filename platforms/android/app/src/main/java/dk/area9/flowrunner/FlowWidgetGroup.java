@@ -215,14 +215,19 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
     }
     
     public void onFlowCreateVideoWidget(
-            long id, @NonNull String url,
+            long id, @NonNull String url, @NonNull String[] headers,
             boolean playing, boolean looping, int controls, float volume) {
-        
+
+        HashMap<String, String> headers_map = new HashMap<String, String>();
+        for (int i = 0; i < headers.length / 2; ++i) {
+            headers_map.put(headers[i * 2], headers[ i * 2 + 1 ]);
+        }
+
         VideoWidget widget = (VideoWidget)widgets.get(id);
         if (widget == null) {
             widgets.put(id, widget = new VideoWidget(this, id));
             videoWidgets.put(id, widget);
-            widget.init( resource_uri.resolve(url).toString(), playing, looping, controls, volume );
+            widget.init( resource_uri.resolve(url).toString(), headers_map, playing, looping, controls, volume );
         }
     }
 
@@ -474,7 +479,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
             return true;
 
         scale_detector.onTouchEvent(event);
-        return inScaleMode;
+        return false;
     }
     
     public boolean onTouchEvent(@NonNull MotionEvent event) {

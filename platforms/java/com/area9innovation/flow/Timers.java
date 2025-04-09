@@ -6,29 +6,41 @@ public class Timers {
 	private int executingCnt = 0;
 	private int lastTimerId = 0;
 	private TreeMap<Integer, Timer> timers = new TreeMap<Integer, Timer>();
-	private boolean debug = false;
+	private static boolean debug = false;
 
 	private class Timer {
 		int id;
 		double executeTime;	// 0 means do not execute. This is used to not run repeatable timer when it is already executing.
 		boolean repeatable;
 		double repeatInterval;
+		String description;
 		Func0<Object> callback;
+		public String toString() {
+			String s = "Timer " + id + ": callback " + callback.toString() + ", ";
+			if (executeTime == 0) {
+				s += "running";
+			} else {
+				s += "next start " + Native.time2string(executeTime);
+			}
+			if (description != null && !description.isEmpty()) {
+				s += ", " + description;
+			}
+			return s;
+		}
 	}
 
-	public int addTimer(double timeout, boolean repeatable, Func0<Object> callback) {
-		//execute();
-
+	public int addTimer(double timeout, boolean repeatable, String description, Func0<Object> callback) {
 		Timer timer = new Timer();
 		lastTimerId++;
 		timer.id = lastTimerId;
 		timer.executeTime = System.currentTimeMillis() + timeout;
 		timer.repeatable = repeatable;
 		timer.repeatInterval = timeout;
+		timer.description = description;
 		timer.callback = callback;
 		timers.put(lastTimerId, timer);
 		if (debug) {
-			System.out.println("New timer " + lastTimerId + ", total cnt " + timers.size() + ", tread " + FlowRuntime.getThreadIdLong());
+			System.out.println("New timer " + lastTimerId + ", total cnt " + timers.size() + ", tread #" + FlowRuntime.getThreadIdLong());
 		}
 		return lastTimerId;
 	}
@@ -40,9 +52,16 @@ public class Timers {
 		}
 	}
 
-	public void execute(boolean allowRecursive) {
-		if (!allowRecursive && executingCnt > 0) {
+	public void execute(boolean allowRecursive, boolean mainCall) {
+		if (!(allowRecursive || mainCall) && executingCnt > 0) {
 			return;
+		}
+		if (mainCall && executingCnt > 0) {
+			System.out.println(
+				"Thread #" + FlowRuntime.getThreadIdLong() + " has wrong state of timers: executingCnt = " + executingCnt + ". "
+				+ "This could have happen after an exception. Thread timers: " + toString()
+			);
+			executingCnt = 0;
 		}
 		executingCnt++;
 		TreeSet<Integer> timerIds = new TreeSet<Integer>();
@@ -82,5 +101,35 @@ public class Timers {
 
 	public boolean isEmpty() {
 		return timers.isEmpty();
+	}
+
+	public int size() {
+		return timers.size();
+	}
+
+	public String toString(String separator) {
+		if (isEmpty() && executingCnt == 0) {
+			return "";
+		}
+
+		StringBuilder sb = new StringBuilder();
+		for (Iterator<Timer> iterator = timers.values().iterator(); iterator.hasNext(); ) {
+			Timer timer = iterator.next();
+			sb.append(timer.toString());
+			if (iterator.hasNext()) {
+				sb.append(separator);
+			}
+		}
+		if (executingCnt != 0) {
+			if (!isEmpty()) {
+				sb.append(separator);
+			}
+			sb.append("Recursive call level: " + executingCnt);
+		}
+		return sb.toString();
+	}
+
+	public String toString() {
+		return toString("\n");
 	}
 }

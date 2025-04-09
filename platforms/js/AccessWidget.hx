@@ -438,6 +438,8 @@ class AccessWidget extends EventEmitter {
 		"textbox" => "input",
 		"switch" => "button",
 		"menuitem" => "button",
+		"menuitemradio" => "button",
+		"menuitemcheckbox" => "button",
 		"option" => "button",
 		"table" => "table",
 		"row" => "tr",

@@ -5,27 +5,57 @@ export {
 	RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 }
 
+// Global reference for popup down function unsubscribers
 popupDownFnUns = initUnsM();
 
+// Animation constants
+alphaDuration = mStepOf5TransitionDuration(2);
+alphaDelay = 0.;
+alphaContentDuration = mStepOf5TransitionDuration(3) - mStepOf5TransitionDuration(1);
+alphaContentDelay = mStepOf5TransitionDuration(1);
+alphaStart = 0.0;
+alphaFinish = 1.0;
+
+heightDuration = mStepOf5TransitionDuration(3);
+heightStart = 0.25;
+heightFinish = 1.0;
+
+widthDuration = mStepOf5TransitionDuration(2);
+widthStart = 0.5;
+widthFinish = 1.0;
+
+translateDuration = easingTransitionDuration;
+translateStart = -48.0;
+translateFinish = 0.;
+
 RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	// Handle RTL (right-to-left) text direction if needed
 	items = if (parent.rtl) map(m.items, reverseA) else m.items;
 	style = m.style;
 	positionScale0 = m.positionScale;
 	stageWH = makeWH();
 
+	// Extract style parameters
 	dpiScale = extractStruct(manager.manager.renderStyle, TInspectDpiFactor(make(Factor(1.0, 1.0)))).factor;
 	elevation = extractStruct(style, MElevation(const(8.))).elevation;
 	virtualScreen = tryExtractStruct(style, MVirtualScreen(makeWH(), make(zeroPositionScale)));
 	customScale = tryExtractStruct(style, MCustomScale(const(Factor(1., 1.))));
+
+	// Adjust position scale based on virtual screen if present
 	positionScale1 = eitherMap(virtualScreen, \vs ->
 		fselect2(vs.position, positionScale0, FLift2(\vsp, ps ->
 			PositionScale(Point(ps.pos.x - vsp.pos.x, ps.pos.y - vsp.pos.y), ps.scale)
 		)),
 		positionScale0
 	);
-	positionScale = eitherMap(customScale, \cus -> fselect2(positionScale1, cus.factor, FLift2(\ps, cs ->
-		PositionScale(ps.pos, Point(cs.x, cs.y)))), positionScale1);
 
+	// Apply custom scale if present
+	positionScale = eitherMap(customScale, \cus ->
+		fselect2Lift(positionScale1, cus.factor, \ps, cs -> PositionScale(ps.pos, Point(cs.x, cs.y))),
+		positionScale1
+	);
+
+	// Extract more style parameters
 	offset = extractStruct(style, RMOffset(const(Pair(WidthHeight(0., 0.), 0.)))).offset;
 	mWidth = extractStruct(style, RMWidth(const(-1.))).width;
 	mWidthLimits = extractStruct(style, RMWidthLimits(const(-1.), const(-1.)));
@@ -35,21 +65,25 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 	additionalBorder = extractStruct(style, RMOutterBorder(8.0)).border;
 	wrapperFn = extractStruct(style, MPopupWrapper(idfn)).fn;
 
-	mHeight = extractStruct(style, RMHeight(-1., -1.)) |> (\f -> RMHeight(f.min - borders * 2., f.max - borders * 2.));
+	// Calculate height constraints
+	mHeight = extractStruct(style, RMHeight(-1., -1.))
+		|> (\h -> RMHeight(h.min - borders * 2., h.max - borders * 2.));
+
+	// Function to calculate maximum height based on constraints
 	maxHeight = \wh : WidthHeight, offs : Point, ps : PositionScale -> {
 		hgt0 = wh.height / ps.scale.y - borders * 2.;
 
-		hgt =
-			eitherMap(fixPosition,
-				\fp ->
-					if (fp.top) {
-						if (ps.pos.y > 0.) {
-							hgt0 - additionalBorder - (ps.pos.y / ps.scale.y + offs.y)
-						} else hgt0
-					} else max(ps.pos.y, 0.),
-				hgt0
-			);
+		hgt = eitherMap(fixPosition,
+			\fp ->
+				if (fp.top) {
+					if (ps.pos.y > 0.) {
+						hgt0 - additionalBorder - (ps.pos.y / ps.scale.y + offs.y)
+					} else hgt0
+				} else max(ps.pos.y, 0.),
+			hgt0
+		);
 
+		// Apply min/max height constraints if scrolling is enabled
 		if (mHeight.max > 0. && scrollArea.from < scrollArea.to)
 			min(mHeight.max, max(max(mHeight.min, 0.), hgt))
 		else if (mHeight.min > 0.)
@@ -58,6 +92,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 			hgt
 	};
 
+	// Extract remaining style parameters
 	selected = extractStruct(style, RMSelected(-1)).selected;
 	menuOpened = extractStruct(style, MOpenMenu(make(false))).opened;
 	leftAnimation = extractStruct(style, RMLeftAnimation(true)).leftAnimation;
@@ -67,15 +102,18 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 	currentHeight = extractStruct(style, RMCurrentHeight(make(0.))).height;
 	currentWidth = extractStruct(style, RMCurrentWidth(make(0.))).width;
 	dontHandle = contains(style, RMDontHandle());
-	scrollPosition : TScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
+	scrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
 	scrollWH = extractStruct(style, MScrollWidthHeight(makeWH(), makeWH()));
 	scrollPersistent = tryExtractStruct(style, TScrollPersistent(const(false)));
 	blockClicks = contains(style, MBlockClicks());
 	shape = extractStruct(style, MRippleShape("")).component;
 	expandingAnimation = contains(style, RMExpandingAnimation());
 
+	// Handle z-order
 	zorder = getValue(manager.manager.zorder);
 	newZorder = zorder + 1;
+
+	// Handle focus
 	previousFocus =
 		if (extractStruct(style, MFocusOnPrevious(true)).enabled) {
 			eitherFn(
@@ -87,105 +125,92 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 			None();
 		};
 
+	// Update z-order if needed
 	if (!sameZorder) nextDistinct(manager.manager.zorder, newZorder);
 
+	// Setup animation state
 	uns = initUnsM();
 	beginAnimation = make(false);
 	animated = make(false);
 	nextDistinct(menuOpened, true);
 
+	// Create array of size behaviors for each item
 	sizes : [[DynamicBehaviour<WidthHeight>]] = generate(0, length(items), \i -> generate(0, length(items[i]), \__ -> makeWH()));
 
-	sizesB = fmerge(map(sizes, \s -> fold(s, const(WidthHeight(0., 0.)), \acc : Transform<WidthHeight>, s2 : Transform<WidthHeight> ->
-		fselect2(acc, s2, FLift2(\wh1, wh2 -> WidthHeight(wh1.width + wh2.width, max(wh1.height, wh2.height))))
-	)));
-	positionDpiScale = fselect2(positionScale, dpiScale, FLift2(\psc : PositionScale, dsc : Factor ->
-		PositionScale(Point(psc.pos.x / dsc.x, psc.pos.y / dsc.y), Point(psc.scale.x / dsc.x, psc.scale.y / dsc.y))));
-
-	startingOffset = make(zeroPoint);
-	startingPosition =
-		eitherMap(
-			fixPosition,
-			\fp ->
-				if (fp.top)
-					fselect2(startingOffset, positionDpiScale, FLift2(\so : Point, ps : PositionScale ->
-						Point(ps.pos.x + so.x, ps.pos.y + so.y)
-					))
-				else
-					fselect3(startingOffset, positionDpiScale, currentHeight, \so : Point, ps : PositionScale, curH ->
-						Point(ps.pos.x + so.x, ps.pos.y + so.y - (curH + borders) * ps.scale.y)
-					),
-			fselect5(
-				startingOffset,
-				positionDpiScale,
-				stageWH,
-				currentWidth,
-				currentHeight,
-				\so : Point, ps : PositionScale, sWH : WidthHeight, curW, curH -> {
-					wd = additionalBorder + curW * ps.scale.x;
-					hgt = additionalBorder + (curH + borders * 2.) * ps.scale.y;
-
-					Point(
-						min(
-							if (ps.pos.x + so.x < additionalBorder)
-								min(ps.pos.x, additionalBorder)
-							else
-								ps.pos.x + so.x,
-							max(
-								sWH.width - wd,
-								ps.pos.x - wd
-							)
-						),
-						min(
-							if (ps.pos.y + so.y < additionalBorder)
-								min(ps.pos.y, additionalBorder)
-							else
-								ps.pos.y + so.y,
-							max(
-								sWH.height - hgt,
-								ps.pos.y - hgt
-							)
-						)
-					)
-			})
+	// Merge all item sizes to get total size
+	sizesB = fmerge(map(sizes, \s ->
+		fold(s, const(WidthHeight(0., 0.)), \acc : Transform<WidthHeight>, s2 : Transform<WidthHeight> ->
+			fselect2(acc, s2, FLift2(\wh1, wh2 ->
+				WidthHeight(wh1.width + wh2.width, max(wh1.height, wh2.height))
+			))
 		)
-		|> (\sp -> eitherMap(virtualScreen, \vs -> fpointaddition(sp, fselect(vs.position, FLift(\vsp -> vsp.pos))), sp));
+	));
 
+	// Calculate position with DPI scale
+	positionDpiScale = fselect2(positionScale, dpiScale, FLift2(\psc : PositionScale, dsc : Factor ->
+		PositionScale(
+			Point(psc.pos.x / dsc.x, psc.pos.y / dsc.y),
+			Point(psc.scale.x / dsc.x, psc.scale.y / dsc.y)
+		)
+	));
+
+	// Initialize popup position
+	startingOffset = make(zeroPoint);
+	startingPosition = calculateStartingPosition(fixPosition, startingOffset, positionDpiScale,
+		stageWH, currentWidth, currentHeight, borders, additionalBorder, virtualScreen);
+
+	// Define mouse event handlers for popup
 	popupDownFn = \h, mi : MouseDownInfo -> {
-			if (mi.inside()) {
-				setDownInsideFocusTimer(manager, either(sameFocus, RMSameFocus(manager.focus)).focus, popupDownFnUns)
-			}
-
-			h
-		};
+		if (mi.inside()) {
+			setDownInsideFocusTimer(manager, either(sameFocus, RMSameFocus(manager.focus)).focus, popupDownFnUns)
+		}
+		h
+	};
 
 	popupClickOutDownFn = \h, mi : MouseDownInfo -> {
-			if (!h && mi.inside()) {
-				next(menuOpened, false);
-			}
+		if (!h && mi.inside()) {
+			next(menuOpened, false);
+		}
+		h || blockClicks
+	};
 
-			h || blockClicks
-		};
-
+	// Check for onClick handler
 	onPopupClickM = tryExtractStruct(style, RMOnClick(nop));
 
-	contentWH : Transform<WidthHeight> =
-		fselect4(sizesB, mWidth, mWidthLimits.min, mWidthLimits.max, \szs, w, minW, maxW ->
-			fold(szs, WidthHeight(0., 0.), \acc, sz ->
-				WidthHeight(if (w > 0.) w else max(sz.width, acc.width), sz.height + acc.height)
-			)
-			|> (\wh : WidthHeight -> WidthHeight(max(minW, wh.width), wh.height))
-			|> (\wh : WidthHeight -> if (maxW > 0.) WidthHeight(min(maxW, wh.width), wh.height) else wh)
-			|> (\wh : WidthHeight ->
-				if (contains(style, RMNoSnapSize()) || w > 0. || minW > 0. || maxW > 0.) wh
-				else WidthHeight(
-					(if (mobile) 56. else 64.)
-					|> (\snappingSize -> dceil(wh.width / snappingSize) * snappingSize),
-					wh.height
-				)
+	// Calculate content width/height based on constraints
+	contentWH = fselect4(sizesB, mWidth, mWidthLimits.min, mWidthLimits.max, \szs, w, minW, maxW -> {
+		// Fold all sizes to get the total width/height
+		baseSize = fold(
+			szs,
+			WidthHeight(0., 0.),
+			\acc, sz -> WidthHeight(
+				if (w > 0.) w else max(sz.width, acc.width),
+				sz.height + acc.height
 			)
 		);
 
+		// Apply minimum width constraint
+		withMinWidth = WidthHeight(max(minW, baseSize.width), baseSize.height);
+
+		// Apply maximum width constraint if present
+		withMaxWidth =
+			if (maxW > 0.) WidthHeight(min(maxW, withMinWidth.width), withMinWidth.height)
+			else withMinWidth;
+
+		// Apply size snapping if needed
+		if (contains(style, RMNoSnapSize()) || w > 0. || minW > 0. || maxW > 0.) {
+			withMaxWidth;
+		} else {
+			// Snap size to grid for better visual alignment
+			snappingSize = if (mobile) 56. else 64.;
+			WidthHeight(
+				dceil(withMaxWidth.width / snappingSize) * snappingSize,
+				withMaxWidth.height
+			);
+		}
+	});
+
+	// Helper to create a grid of items for a section of the popup
 	popupPart = \par, start, end ->
 		TEvenGrid(
 			generate(start, end, \i ->
@@ -195,29 +220,40 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 		)
 		|> (\f -> TGroup2(f, TFillX()));
 
+	// Create scroll style array
+	baseScrollStyle = [scrollPosition, scrollWH];
+	scrollStyleWithPersistent = maybeArrayPush(baseScrollStyle, scrollPersistent);
 	scrollStyle =
-		[scrollPosition, scrollWH]
-		|> (\arr -> maybeArrayPush(arr, scrollPersistent))
-		|> (\st ->
-			if (contains(style, RMNoScrollbars()))
-				concat(st, [TScrollEnabled(const(false)), TScrollbars(invisibleScrollBar, invisibleScrollBar)])
-			else
-				st
-		);
+		if (contains(style, RMNoScrollbars()))
+			concat(scrollStyleWithPersistent, [TScrollEnabled(const(false)), TScrollbars(invisibleScrollBar, invisibleScrollBar)])
+		else
+			scrollStyleWithPersistent;
 
+	// Create the popup UI
 	(\p ->
 		TLines(
 			[
+				// Top section (if needed)
 				if (scrollArea.from > 0)
 					[popupPart(p, 0, min(scrollArea.from, length(items)))]
 				else
 					[],
+
+				// Scrollable middle section (if needed)
 				if (scrollArea.from < scrollArea.to) {
 					if (scrollArea.to - scrollArea.from > 100) {
+						// For large content, use recycler grid for performance
 						gridContentSize = makeWH();
 						[
-							generate(max(scrollArea.from, 0), min(scrollArea.to, length(items)), \i ->
-								mapi(items[i], \j, it -> MGetFocusGroup(\p2 -> TAttachBox(m2t(it, p2), sizes[i][j])))
+							generate(
+								max(scrollArea.from, 0),
+								min(scrollArea.to, length(items)),
+								\i -> mapi(
+									items[i],
+									\j, it -> MGetFocusGroup(\p2 ->
+										TAttachBox(m2t(it, p2), sizes[i][j])
+									)
+								)
 							)
 							|> (\f ->
 								MRecyclerGrid2T(
@@ -230,16 +266,19 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 									m2t
 								)
 							)
-							// Initialize sizes of non-rendered items by average values, evaluated in MRecyclerGrid
-							|> (\f -> TConstruct([
+							// Initialize sizes of non-rendered items by average values
+							|> (\f -> TConstruct(
+								[
 									makeSubscribe2(gridContentSize, \gsz -> {
 										if (length(sizes) > 0) {
 											hgt = gsz.height / i2d(length(sizes));
 											iter(sizes, \part -> if (length(part) > 0) {
 												wd = gsz.width / i2d(length(part));
-												iter(part, \sz -> if (getValue(sz).width == 0. && getValue(sz).height == 0.) {
-													nextDistinct(sz, WidthHeight(wd, hgt))
-												})
+												iter(part, \sz ->
+													if (getValue(sz).width == 0. && getValue(sz).height == 0.) {
+														nextDistinct(sz, WidthHeight(wd, hgt))
+													}
+												)
 											})
 										}
 									})
@@ -247,7 +286,8 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 								f
 							))
 						]
-					} else
+					} else {
+						// For smaller content, use regular scroll
 						[
 							MGetFocusGroup(\p2 ->
 								popupPart(p2, max(scrollArea.from, 0), min(scrollArea.to, length(items)))
@@ -256,17 +296,16 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 								MScroll2T(
 									manager,
 									p,
-									MScroll(
-										f,
-										TFillXY(),
-										scrollStyle
-									),
+									MScroll(f, TFillXY(), scrollStyle),
 									m2t
 								)
 							)
 						]
+					}
 				} else
 					[],
+
+				// Bottom section (if needed)
 				if (scrollArea.to < length(items))
 					[popupPart(p, max(scrollArea.to, 0), length(items))]
 				else
@@ -284,35 +323,43 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 						offset,
 						positionDpiScale,
 						\realSize : WidthHeight, wh : WidthHeight, offs : Pair<WidthHeight, double>, ps : PositionScale -> {
-							maxSize =
-								WidthHeight(
-									max(wh.width / ps.scale.x, 0.),
-									max(
-										maxHeight(
-											wh,
-											Point(offs.first.width, offs.second + if (selected < 0) offs.first.height else 0.),
-											ps
+							// Calculate maximum allowed size
+							maxSize = WidthHeight(
+								max(wh.width / ps.scale.x, 0.),
+								max(
+									maxHeight(
+										wh,
+										Point(
+											offs.first.width,
+											offs.second +
+											if (selected < 0) offs.first.height else 0.
 										),
-										0.
-									)
-								);
+										ps
+									),
+									0.
+								)
+							);
 
+							// Constrain actual size to max size
 							wd = min(realSize.width, maxSize.width);
 							hgt = min(realSize.height, maxSize.height);
 
+							// Update size behaviors
 							nextDistinct(currentMaxSize, maxSize);
 							nextDistinct(currentWidth, wd);
 							nextDistinct(currentHeight, hgt);
 
-							offsetX =
-								if (!leftAnimation)
-									offs.first.width - wd
-								else
-									offs.first.width;
+							// Calculate offset X based on animation direction
+							offsetX = if (!leftAnimation)
+								offs.first.width - wd
+							else
+								offs.first.width;
 
+							// Calculate vertical offset for selected item
 							szs = fgetValue(sizesB);
 							offsY = dsum(map(subrange(szs, 0, selected), \sz -> sz.height));
 
+							// Update scroll position for selected item
 							if (selected >= 0 && scrollArea.from < scrollArea.to)
 								nextDistinct(
 									scrollPosition.position,
@@ -331,13 +378,17 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 									)
 								);
 
-							offsetY =
-								if (selected >= 0)
-									offs.second - offsY - borders + getValue(scrollPosition.position).y
-								else
-									offs.second + offs.first.height;
+							// Calculate final offsetY
+							offsetY = if (selected >= 0)
+								offs.second - offsY - borders + getValue(scrollPosition.position).y
+							else
+								offs.second + offs.first.height;
 
-							nextDistinct(startingOffset, Point(offsetX * ps.scale.x, offsetY * ps.scale.y))
+							// Update the starting offset
+							nextDistinct(
+								startingOffset,
+								Point(offsetX * ps.scale.x, offsetY * ps.scale.y)
+							)
 						}
 					)
 				],
@@ -388,7 +439,6 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 					KeyDown2(\h, ke -> {
 						if (fgetValue(p.keysEnabled) && ke.keycode == KEY_ESCAPE) {
 							nextDistinct(menuOpened, false);
-
 							true;
 						} else {
 							h;
@@ -481,16 +531,66 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 				});
 			}
 		);
-	})
+	});
 }
 
-alphaDuration = mStepOf5TransitionDuration(2);
-alphaDelay = 0.;
-alphaContentDuration = mStepOf5TransitionDuration(3) - mStepOf5TransitionDuration(1);
-alphaContentDelay = mStepOf5TransitionDuration(1);
-alphaStart = 0.0;
-alphaFinish = 1.0;
+// Calculate starting position for the popup
+calculateStartingPosition(fixPosition : Maybe<MFixPosition>, startingOffset : DynamicBehaviour<Point>,
+	positionDpiScale : Transform<PositionScale>, stageWH : DynamicBehaviour<WidthHeight>,
+	currentWidth : DynamicBehaviour<double>, currentHeight : DynamicBehaviour<double>,
+	borderSize : double, additionalBorderSize : double,
+	virtualScreen : Maybe<MVirtualScreen>) -> Transform<Point> {
+	basePosition = eitherMap(
+		fixPosition,
+		\fp ->
+			if (fp.top)
+				fselect2(startingOffset, positionDpiScale, FLift2(\so : Point, ps : PositionScale ->
+					Point(ps.pos.x + so.x, ps.pos.y + so.y)
+				))
+			else
+				fselect3(startingOffset, positionDpiScale, currentHeight, \so : Point, ps : PositionScale, curH ->
+					Point(ps.pos.x + so.x, ps.pos.y + so.y - (curH + borderSize) * ps.scale.y)
+				),
+		fselect5(
+			startingOffset,
+			positionDpiScale,
+			stageWH,
+			currentWidth,
+			currentHeight,
+			\so : Point, ps : PositionScale, sWH : WidthHeight, curW, curH -> {
+				wd = additionalBorderSize + curW * ps.scale.x;
+				hgt = additionalBorderSize + (curH + borderSize * 2.) * ps.scale.y;
 
+				Point(
+					// Calculate x position within bounds
+					min(
+						if (ps.pos.x + so.x < additionalBorderSize)
+							min(ps.pos.x, additionalBorderSize)
+						else
+							ps.pos.x + so.x,
+						max(sWH.width - wd, ps.pos.x - wd)
+					),
+					// Calculate y position within bounds
+					min(
+						if (ps.pos.y + so.y < additionalBorderSize)
+							min(ps.pos.y, additionalBorderSize)
+						else
+							ps.pos.y + so.y,
+						max(sWH.height - hgt, ps.pos.y - hgt)
+					)
+				)
+		})
+	);
+
+	// Adjust for virtual screen if present
+	eitherMap(
+		virtualScreen,
+		\vs -> fpointaddition(basePosition, fselect(vs.position, FLift(\vsp -> vsp.pos))),
+		basePosition
+	);
+}
+
+// Animation functions
 MPopupAlphaAnimation(
 	manager : MaterialManager,
 	parent : MFocusGroup,
@@ -524,14 +624,6 @@ MPopupAlphaAnimation(
 	} else
 		content
 }
-
-heightDuration = mStepOf5TransitionDuration(3);
-heightStart = 0.25;
-heightFinish = 1.0;
-
-widthDuration = mStepOf5TransitionDuration(2);
-widthStart = 0.5;
-widthFinish = 1.0;
 
 MPopupScaleAnimation(
 	manager : MaterialManager,
@@ -601,10 +693,6 @@ MPopupScaleAnimation(
 		maybeShadow(content);
 	}
 }
-
-translateDuration = easingTransitionDuration;
-translateStart = -48.0;
-translateFinish = 0.;
 
 MPopupTranslateAnimation(
 	manager : MaterialManager,

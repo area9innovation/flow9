@@ -24,9 +24,7 @@ export {
 
 	renderFGraphics(path : Transform<[StaticGraphicOp]>, style : Transform<[GraphicsStyle]>) -> FRenderResult;
 	renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult;
-	renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult;
 	renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult;
-	renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRenderResult;
 
 	renderFAnimation(clip : native, keyframes : Transform<[FAnimationKeyframe]>, style : [FAnimationStyle]) -> () -> void;
 
@@ -53,7 +51,7 @@ export {
 	emptyFRenderResult = FRenderResult([], [], []);
 
 	extractFAccessProperties(style : [flow]) -> [FAccessProperty];
-	addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) -> (native) -> () -> void;
+	addFAccessProperties(properties : [FAccessProperty]) -> (native) -> () -> void;
 
 	// We extract jwt and other tokens from the media url and pass them in the request headers.
 	// We are prefer the headers from the picture style.
@@ -1048,27 +1046,6 @@ renderFGraphics(path0 : Transform<[StaticGraphicOp]>, style0 : Transform<[Graphi
 	}
 }
 
-FTextRenderResult(
-	x : Transform<double>,
-	maxX : Transform<double>,
-	y : Transform<double>,
-	disposers : [() -> void]
-);
-
-emptyFTextRenderResult = FTextRenderResult(zero, zero, zero, []);
-
-renderFTexts(texts : Transform<[Text]>, style : [FTextStyle]) -> FRenderResult {
-	if (isFConst(texts) && length(fgetValue(texts)) < 2) {
-		if (length(fgetValue(texts)) == 1) {
-			renderFText(const(fgetValue(texts)[0].text), style);
-		} else {
-			emptyFRenderResult;
-		}
-	} else {
-		renderFParagraphs(texts, style);
-	}
-}
-
 renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 	charStyle = style2characterStyle(style);
 	localizationEnabled = extractStruct(style, LocalizationEnabled(false)).enabled;
@@ -1133,80 +1110,6 @@ renderFText(text : Transform<string>, style : [FTextStyle]) -> FRenderResult {
 		\ ->
 			FRenderResult([textfield], [disposer], [FClipMask()])
 	)
-}
-
-renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRenderResult {
-	if (isFConst(texts) && length(fgetValue(texts)) < 2) {
-		if (length(fgetValue(texts)) == 1) {
-			renderFParagraph(const(fgetValue(texts)[0].text), style);
-		} else {
-			emptyFRenderResult;
-		}
-	} else {
-		clip = makeClip();
-
-		FRenderResult(
-			[clip],
-			[
-				makeSubscribeUns(texts, \tt -> {
-					lineHeight = ref 0.0;
-
-					d = foldi(tt, emptyFTextRenderResult, \i, acc, t -> {
-						tstyle = replaceStructMany(style, t.style);
-
-						childClip : ref native = ref clip;
-						cx = make(0.0);
-						cmx = make(0.0);
-						cy = make(0.0);
-						pm = ParagraphMetrics(\fm -> {
-							deferUntilNextFrameRendered(\ -> next(cx, getTextFieldCharXPosition(^childClip, strlen(t.text))));
-							next(cx, fm.width);
-							next(cmx, fm.maxWidth);
-							next(cy, fm.height);
-						});
-
-						alive = ref false;
-						c = renderFParagraph(const(t.text), replaceStruct(tstyle, pm));
-						childClip := c.clips[0];
-
-						addChildClipAt(clip, ^childClip, i, alive);
-						tm = getTextMetrics(^childClip);
-						lineHeight := tm[0] + tm[1];
-						accY = fmax(fsubtract(acc.y, const(^lineHeight)), zero);
-
-						FTextRenderResult(
-							faddition(acc.x, cx),
-							faddition(acc.maxX, cmx),
-							faddition(accY, cy),
-							concat3(
-								acc.disposers,
-								[
-									make2Subscribe(acc.x, accY, \x, y -> {
-										setClipX(^childClip, x);
-										setClipY(^childClip, y);
-									})(),
-									\ -> {
-										removeChildClip(clip, ^childClip, alive);
-									}
-								],
-								c.disposers
-							)
-						);
-					});
-
-					concat(
-						d.disposers,
-						[
-							make3Subscribe(d.x, d.y, d.maxX, \x, y, mx ->
-								maybeApply(tryExtractStruct(style, ParagraphMetrics(nop1)), \pm -> pm.fn(FFormMetrics(x, y, y, mx)))
-							)()
-						]
-					)
-				})()
-			],
-			[FClipMask()]
-		);
-	}
 }
 
 renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult {
@@ -2047,7 +1950,7 @@ extractFAccessProperties(style : [flow]) -> [FAccessProperty] {
 	})
 }
 
-addFAccessProperties(properties : [FAccessProperty], zorder : Transform<[int]>) -> (native) -> () -> void {
+addFAccessProperties(properties : [FAccessProperty]) -> (native) -> () -> void {
 	\clip -> {
 		accessVisible = extractStruct(properties, FAccessVisible(const(true))).visible;
 		accessCallback = ref None();

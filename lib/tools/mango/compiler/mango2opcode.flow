@@ -2,15 +2,75 @@ import tools/poppy/poppy_grammar;
 import tools/mango/mango_interpreter;
 import tools/mango/mango_types;
 import tools/mango/compiler/mopcode;
+import tools/mango/compiler/opcode_effects;
 import tools/mango/mango2string;
 import tools/mango/util;
 import math/math;
 
 export {
-	mango2opcode(t : Term) -> MOpCode;
+	// Updated function signature to accept rule effects map
+	mango2opcode(t : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> MOpCode;
+	
+	// Reset the position variable counter (called before each new compilation)
+	resetPositionVarCounter() -> void;
 }
 
-mango2opcode(t : Term) -> MOpCode {
+// Global counter for generating unique position variable IDs
+positionVarCounter : ref int = ref 0;
+
+// Get next unique position variable ID
+nextPositionVarId() -> int {
+	id = ^positionVarCounter;
+	positionVarCounter := id + 1;
+	id;
+}
+
+// Reset the position variable counter
+resetPositionVarCounter() -> void {
+	positionVarCounter := 0;
+}
+
+// Determines the most efficient checkpoint mode based on term analysis
+determineCheckpointMode(term : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> CheckpointMode {
+	effects = analyzeTermEffects(term, ruleEffects);
+
+	if (effects.modifiesStack) {
+		FullStackMode();
+	} else if (isComplexBacktracking(term)) {
+		PositionStackMode();
+	} else {
+		LocalVariableMode(nextPositionVarId());
+	}
+}
+
+// Checks if a term requires complex backtracking strategies
+isComplexBacktracking(tr : Term) -> bool {
+	switch (tr) {
+		Choice(t1, t2): true;
+		Sequence(t1, t2): isComplexBacktracking(t1) || isComplexBacktracking(t2);
+		Negate(t): isComplexBacktracking(t);
+		Optional(t): isComplexBacktracking(t);
+		// Potentially add other complex patterns here
+
+		Construct(uid, string1): false;
+		Error(term): true;
+		GrammarCall(id, term): true;
+		GrammarFn(id, term1, term2, term3): isComplexBacktracking(term3);
+		Lower(term): isComplexBacktracking(term);
+		Plus(term): true;
+		Precedence(term1, term2): true;
+		PushMatch(term): false;
+		Range(char1, char2): false;
+		Rule(id, term1, term2): isComplexBacktracking(term2);
+		StackOp(id): true;
+		Star(term): true;
+		String(string1): false;
+		Variable(id): false;
+	}
+}
+
+// Updated implementation that uses rule effects for optimization decisions
+mango2opcode(t : Term, ruleEffects : Tree<string, MOpCodeEffects>) -> MOpCode {
 	todo = \ -> {
 		println("ERROR: Implement mango2opcode for " + t.structname + " :" + term2string(t));
 		MoMatchString("TODO");
@@ -18,11 +78,13 @@ mango2opcode(t : Term) -> MOpCode {
 	switch (t) {
 		Choice(term1, term2): {
 			choices = getChoices(t);
+			mode = determineCheckpointMode(t, ruleEffects);
+
 			MoSequence(
 				[
-					MoPushCheckpoint(),
-					fold(reverseA(choices), MoRestoreCheckpoint(), \acc, s -> {
-						MoIf(mango2opcode(s), MoDiscardCheckpoint(), acc);
+					MoPushCheckpoint(mode),
+					fold(reverseA(choices), MoRestoreCheckpoint(mode), \acc, s -> {
+						MoIf(mango2opcode(s, ruleEffects), MoDiscardCheckpoint(mode), acc);
 					})
 				]
 			);
@@ -31,38 +93,43 @@ mango2opcode(t : Term) -> MOpCode {
 		Error(term): {
 			// OK, we just ignore the error part and go with the body
 			println("TODO: Ignore # error in grammar. Will still work, but without error reporting");
-			mango2opcode(term);
+			mango2opcode(term, ruleEffects);
 		}
 		GrammarCall(id, term): todo();
 		GrammarFn(id, term1, term2, term3): todo();
 		Lower(term): todo();
 		Negate(term): {
+			mode = determineCheckpointMode(term, ruleEffects);
+
 			MoSequence([
-				MoPushCheckpoint(),
+				MoPushCheckpoint(mode),
 				MoIf(
-					mango2opcode(term),
-					MoRestoreCheckpoint(),	// Basically false
+					mango2opcode(term, ruleEffects),
+					MoRestoreCheckpoint(mode),    // Basically false
 					MoSequence([
-						MoRestoreCheckpoint(),
+						MoRestoreCheckpoint(mode),
 						MoBool(true)
 					]),
 				)
 			])
 		}
 		Optional(term): {
+			mode = determineCheckpointMode(term, ruleEffects);
+
 			MoSequence([
-				MoPushCheckpoint(),
+				MoPushCheckpoint(mode),
 				MoIf(
-					mango2opcode(term),
-					MoDiscardCheckpoint(),
-					MoRestoreCheckpoint(),
+					mango2opcode(term, ruleEffects),
+					MoDiscardCheckpoint(mode),
+					MoRestoreCheckpoint(mode),
 				),
 				MoBool(true)
 			])
 		}
 		Plus(term): {
 			mango2opcode(
-				Sequence(term, Star(term))
+				Sequence(term, Star(term)),
+				ruleEffects
 			);
 		}
 		Precedence(term1, term2): todo();
@@ -70,7 +137,7 @@ mango2opcode(t : Term) -> MOpCode {
 			MoSequence([
 				MoCaptureI(),
 				MoIf(
-					mango2opcode(term),
+					mango2opcode(term, ruleEffects),
 					MoSequence([
 						MoMatched(),
 						MoBool(true),
@@ -85,15 +152,17 @@ mango2opcode(t : Term) -> MOpCode {
 			MoMatchRange(lower, upper);
 		}
 		Rule(id, term1, term2): {
-			MoFunction(id, mango2opcode(term1), mango2opcode(term2));
+			MoFunction(id, mango2opcode(term1, ruleEffects), mango2opcode(term2, ruleEffects));
 		}
 		Sequence(term1, term2): {
 			seq = getSequence(t);
+			mode = determineCheckpointMode(t, ruleEffects);
+
 			MoSequence(
 				[
-					MoPushCheckpoint(),
-					fold(reverseA(seq), MoDiscardCheckpoint(), \acc, s -> {
-						MoIf(mango2opcode(s), acc, MoRestoreCheckpoint());
+					MoPushCheckpoint(mode),
+					fold(reverseA(seq), MoDiscardCheckpoint(mode), \acc, s -> {
+						MoIf(mango2opcode(s, ruleEffects), acc, MoRestoreCheckpoint(mode));
 					})
 				]
 			);
@@ -108,9 +177,9 @@ mango2opcode(t : Term) -> MOpCode {
 				MoEvalPoppy(pop);
 			}
 		}
-		Star(term): MoParseStar(mango2opcode(term));
+		Star(term): MoParseStar(mango2opcode(term, ruleEffects));
 		String(ttext): {
-			text = if (ttext == "\\n") "\n" 
+			text = if (ttext == "\\n") "\n"
 				else if (ttext == "\\r") "\x0d"
 				else if (ttext == "\\t") "\t"
 				else ttext;

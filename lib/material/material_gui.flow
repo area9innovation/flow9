@@ -368,6 +368,20 @@ export {
 			// Views to use as spacing between elements
 			// Gets size of the spacing box as available
 			MSpacingView(x : Material, y : Material);
+
+	// Identical to MFrame, only the frame is placed on top of the "content"
+	MOverlay(margin : double, radius : double, style : [MGraphicsStyle], content : Material) -> Material;
+	MOverlayT(margin : Transform<double>, radius : Transform<double>, style : Transform<[MGraphicsStyle]>, content : Material) -> Material;
+
+	// Helper for Segmented buttons 
+	// https://m3.material.io/components/segmented-buttons/overview
+	MSegmentedButtons(items : [SegmentButtonItem], styles : [SegmentButtonsStyle]) -> Material;
+
+	SegmentButtonItem(text : Maybe<MText>, icon : Maybe<MIcon>, state : [MButtonState], selected : DynamicBehaviour<bool>);
+
+	SegmentButtonsStyle ::= MMultiSelect, MIconsOnly, MGraphicsStyle;
+		MMultiSelect(enabled : bool);
+		MIconsOnly(enabled : bool);
 }
 
 // Inner helpers
@@ -1448,4 +1462,201 @@ extractTFlexStyle(style : [MFlexStyle]) -> [TFlexStyle] {
 			default: acc;
 		}
 	)
+}
+
+MOverlay(margin : double, radius : double, style : [MGraphicsStyle], box : Material) -> Material {
+	MCopySize(
+		box,
+		\sz -> MFrame(margin, radius, style, sz),
+		true
+	)
+}
+
+MOverlayT(margin : Transform<double>, radius : Transform<double>, style : Transform<[MGraphicsStyle]>, box : Material) -> Material {
+	MCopySize(
+		box,
+		\sz -> MGetFocusGroup(\parent -> TFrameT(margin, radius, fselectLift(style, \s -> mgraphicsStyle2tgraphicsStyle(parent, s)), sz)),
+		true
+	)
+}
+
+MSegmentedButtons(
+	items : [SegmentButtonItem],
+	styles : [SegmentButtonsStyle]
+) -> Material {
+	MGetFocusGroup(\fg -> {
+		multiSelect = extractStruct(styles, MMultiSelect(false)).enabled;
+		iconsOnly = extractStruct(styles, MIconsOnly(false)).enabled;
+		defaultBgColor = extractStruct(styles, MThemedFill(MSecondaryColor())).color;
+		defaultStrokeColor = extractStruct(styles, MThemedStroke(either(fg.theme.focusOutlineColor, MAccentColor()))).color;
+		graphicsStyles = filtermap(styles, \style -> {
+			switch (style) {
+				MGraphicsStyle(): Some(style);
+				default: None();
+			}
+		});
+
+		baseGraphicsStyles = concat(
+			[
+				StrokeWidth(1.0),
+				MThemedStroke(defaultStrokeColor)
+			],
+			graphicsStyles
+		);
+
+		selectedGraphicsStyles = concat(
+			[
+				MThemedFill(defaultBgColor),
+				FillOpacity(0.3)
+			],
+			baseGraphicsStyles
+		);
+
+		hoverGraphicsStyles = concat(
+			[
+				MThemedFill(defaultBgColor),
+				FillOpacity(0.15)
+			],
+			baseGraphicsStyles
+		);
+
+		maxHeight = make(0.0);
+
+		makeButtonPair = \i, item -> {
+			buttonState = item.state;
+			isSelected = item.selected;
+
+			title = if (iconsOnly) "" else eitherMap(item.text, \text -> text.text, "");
+			textStyle = eitherMap(item.text, \text -> text.style, []);
+			iconName = eitherMap(item.icon, \icon -> icon.name, "");
+			iconStyle = eitherMap(item.icon, \icon -> icon.style, []);
+			accessibilityLabel = if (title != "") title else iconName;
+			buttonRole = if (multiSelect) "checkbox" else "radio";
+
+			isFirst = i == 0;
+			isLast = i == length(items) - 1;
+
+			focused = make(false);
+			componentWidth = make(0.0);
+			minWidth = make(0.0);
+			iconMinWidth = make(0.0);
+
+			createIcon = \icon -> MIcon(icon, concat([defaultBgColor], iconStyle));
+			checkIcon = MIcon("check", concat(iconStyle, [MIconSize(20.0), defaultBgColor])) |> MBorderRight(8.);
+			
+			iconSize = extractStruct(iconStyle, MIconSize(24.)).size;
+			iconsMaxSize = if (iconsOnly || iconName == "") 0. else max(iconSize + 8. , 28.);
+			leftRadius = if (isFirst) fselectLift(maxHeight, \h -> h/2.0) else zero;
+			rightRadius = if (isLast) fselectLift(maxHeight, \h -> h/2.0) else zero;
+
+			frameStyle = fselect2Lift(isSelected, focused, \selected, isFocused ->
+				if (selected || isFocused) selectedGraphicsStyles
+				else baseGraphicsStyles
+			);
+
+			interactive = MAttachWidth(
+				MComponent(
+					concat(
+						[
+							MOnClick(\ -> {
+								if (multiSelect) {
+									reverseBehaviour(isSelected);
+								} else {
+									if (!getValue(isSelected)) {
+										iter(items, \it -> {
+											nextDistinct(it.selected, it == item);
+										});
+									}
+								}
+							}),
+							AccessRole(buttonRole),
+							MMobileForceHover(),
+							MButtonTitle(const(accessibilityLabel)),
+							FAccessAttribute("aria-checked", fselectLift(isSelected, b2s)),
+							MFocused(focused)
+						],
+						buttonState
+					),
+					\focus -> {
+						MFrameCustomT(
+							const(0.0), leftRadius, const(true),
+							const(0.0), rightRadius, const(true),
+							const(0.0), rightRadius, const(true),
+							const(0.0), leftRadius, const(true),
+							fif(focus.hover, const(hoverGraphicsStyles), frameStyle),
+							MCenterIn(
+								MBorder4(8.0,
+									MGroup2(  
+										// To keep button width static 
+										TSizedWidth(fselect2Lift(minWidth, iconMinWidth, \mw, iw -> mw - iw + iconsMaxSize), 0.),
+								 		MInspect([IMinWidth(minWidth)], 
+											MColsYCenter(
+												if (iconsOnly) {
+													[
+														MInspect(
+															[
+																IMinWidth(iconMinWidth),
+															], 
+															MShow(isSelected, checkIcon)
+														),
+														if (iconName != "") createIcon(iconName)
+														else MEmpty()
+													]
+												} else {
+													[ 
+														MInspect(
+															[
+																IMinWidth(iconMinWidth),
+															], 
+															MSelect(isSelected, \selected ->
+																if (selected) checkIcon
+																else if (iconName != "") createIcon(iconName) |> MBorderRight(8.)
+																else MEmpty()
+															),
+														),
+														if (title != "") {
+															MEllipsisText(title, concat([MBody()], textStyle))
+														} else MEmpty()
+													]
+												}
+											)
+										)
+									)
+								) |> MBorderLeftRight(12.),
+								TSizedHeight(0.0, maxHeight)
+							)
+						)
+					}
+				),
+				componentWidth
+			);
+
+			nonInteractive = MFrameCustomT(
+				const(0.0), leftRadius, const(true),
+				const(0.0), rightRadius, const(true),
+				const(0.0), rightRadius, const(true),
+				const(0.0), leftRadius, const(true),
+				fselectLift(focused, \isFocused ->
+					if (isFocused) [
+						StrokeWidth(2.0),
+						MThemedStroke(defaultStrokeColor),
+					] else []
+				),
+				TSizedWidthHeight(componentWidth, maxHeight)
+			);
+
+			Pair(interactive, nonInteractive)
+		}
+
+		buttonPairs = mapi(items, makeButtonPair);
+		buttons = map(buttonPairs, \p -> p.first);
+		buttonsCopy = map(buttonPairs, \p -> p.second);
+
+		MInspect([AvailableWidth(make(0.0))],
+			MGroup([
+				MAttachHeight(MCols(buttons), maxHeight),
+				MCols(buttonsCopy)
+			])
+		)
+	})
 }

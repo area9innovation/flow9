@@ -911,8 +911,10 @@ void GLRenderSupport::dispatchVideoPosition(GLClip* clip, int64_t position)
     WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
 
     GLVideoClip *video = flow_native_cast<GLVideoClip>(clip);
-    if (video)
+    if (video) {
+        video->wipeFlags(GLClip::ChildrenUnchangedFromRender | GLClip::SelfUnchangedFromRender);
         video->notify(GLVideoClip::PositionChange, position);
+    }
 
     getFlowRunner()->NotifyHostEvent(HostEventMedia);
 }
@@ -1100,6 +1102,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLClip, getMouseX, 1);
     TRY_USE_OBJECT_METHOD(GLClip, getMouseY, 1);
     TRY_USE_OBJECT_METHOD(GLClip, hittest, 3);
+    TRY_USE_OBJECT_METHOD(GLClip, getTouchPoints, 1);
 
     TRY_USE_OBJECT_METHOD(GLClip, addFilters, 2);
 

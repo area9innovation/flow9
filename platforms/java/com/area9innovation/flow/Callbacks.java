@@ -17,6 +17,9 @@ public class Callbacks {
 			this.data = data;
 			ready = true;
 		}
+		public String toString() {
+			return callbackFn.toString();
+		}
 	}
 
 	@SuppressWarnings("unchecked")
@@ -62,5 +65,29 @@ public class Callbacks {
 
 	public boolean isEmpty() {
 		return callbacks.isEmpty();
+	}
+
+	public int size() {
+		return callbacks.size();
+	}
+
+	public String toString(String separator) {
+		if (isEmpty()) {
+			return "";
+		}
+
+		StringBuilder sb = new StringBuilder();
+		for (Iterator<Callback> iterator = callbacks.values().iterator(); iterator.hasNext(); ) {
+			Callback callback = iterator.next();
+			sb.append(callback.toString());
+			if (iterator.hasNext()) {
+				sb.append(separator);
+			}
+		}
+		return sb.toString();
+	}
+
+	public String toString() {
+		return toString("\n");
 	}
 }

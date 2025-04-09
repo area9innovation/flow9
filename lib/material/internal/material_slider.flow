@@ -18,7 +18,7 @@ MSliderThumb(
 MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	sliderId = makeTropicTag(manager);
 	color : MThemeColor = extractStruct(m.style, MAccentColor());
-	dynColor = extractStruct(m.style, MDynamicColor(const(color))).color;
+	dynColor : Transform<MThemeColor> = extractStruct(m.style, MDynamicColor(const(color))).color;
 	inactiveColorM : Maybe<MThemeColor> = maybeMap(
 		tryExtractStruct(m.style, MInactiveAreaColor(MAccentColor())),
 		\ic -> ic.color
@@ -49,7 +49,8 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 	sliderStepDescription = tryExtractStruct(m.style, MSliderStepDescription(\__ -> ""));
 	thumbRadius = extractStruct(m.style, MSliderThumbRadius(const(if (condensed) 6.0 else 8.0))).radius;
 	highlightedRanges = tryExtractStruct(m.style, MSliderHighlightedRanges(const([])));
-	captionFn = tryExtractStruct(m.style, MSliderCaption(\__ -> TEmpty()));
+	captionFn = tryExtractStruct(m.style, MSliderCaption(\__ -> TEmpty(), false));
+	isCaptionIncreaseSize = eitherMap(captionFn, \cfn -> cfn.increaseSize, false);
 	updateOnEnd = contains(m.style, MSliderUpdateOnEnd());
 	currentValueM = tryExtractStruct(m.style, MSliderCurrentValue(make(0.)));
 	disableWheel = contains(m.style, MDisableWheel());
@@ -173,19 +174,24 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		|> (\st -> if (en) st else replaceStruct(st, FillOpacity(extractStruct(st, FillOpacity(0.0)).opacity / 4.0)));
 	outlinedStyle = replaceStruct(mDisabledStyle(lightBackground), FillOpacity(defaultDisabledItemOpacity(lightBackground)));
 
-	makeCircleThumb = \foc, st -> {
+	makeCircleThumb = \foc, st : (bool) -> Transform<[MGraphicsStyle]> -> {
 		radius =
 			if (condensed)
 				fif(fmax3(foc.focused, fOr(hover, foc.hover), down2), thumbRadius, const(0.))
 			else
 				thumbRadius;
 
-		circleStyle = fsubselect(foc.enabled, FLift(st));
+		circleStyle = fsubselect(foc.enabled, FLift(\e -> {
+			mgraphics = st(e);
+			fselect(mgraphics, FLift(\mg -> {
+				mgraphicsStyle2tgraphicsStyle(parent, mg)
+			}))
+		}));
 		setMarker = \t -> t |> MHintMarker(manager, foc, Some(10.));
 
 		TCenteredCircle(foc.parent, radius, circleStyle, setMarker)
 		|> (\f -> TBorderT(radius, radius, zero, zero, f))
-		|> (\f -> TShadowShape(foc.parent, const(3.0), f, RectangleShape("MSlider")))
+		|> (\f -> TSelect(circleStyle, \style -> TShadowShape2(foc.parent, const(3.0), f, RectangleShape("MSlider"), style, true, true, true)))
 		|> (\f -> TTranslate(fpoint(fnegate(radius), fnegate(radius)), f))
 		|> (\f -> TShow(fneq(radius, 0.0), f))
 	}
@@ -407,7 +413,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 
 		strValue = make("");
 
-		TSelect(dynColor, \col : MTextInputStyle -> MTextInput2T(
+		TSelect(dynColor, \col : MThemeColor -> MTextInput2T(
 			manager,
 			parent,
 			MTextInput(
@@ -445,6 +451,29 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 			MIfLazy2T(manager, parent, enabled, \en, p -> MIcon2T(p, title, iconStyle(en)), true)
 		}
 
+	startIconWidthB = make(.0);
+	endIconWidthB = make(.0);
+	makeBorderedIcon = \title, iconWidthB, borderB, borderFn -> {
+		makeSliderIcon(title)
+		 	|> (\t -> if (isCaptionIncreaseSize) { 
+				TAttachWidth(t, iconWidthB)
+				|> borderFn(borderB, isRTL)
+			} else t)
+	};
+		
+	startCaptionWidthB = make(.0);
+	endCaptionWidthB = make(.0);
+
+	makeBorder = \captionWidthB, iconWidthB -> {
+		if (isCaptionIncreaseSize) fmax(
+			fsubtract(fdivide(captionWidthB, const(2.0)), iconWidthB),
+			const(.0)
+		) else const(.0);
+	};
+
+	stratBorderB = makeBorder(startCaptionWidthB, startIconWidthB);
+	endBorderB = makeBorder(endCaptionWidthB, endIconWidthB);
+	
 	sliderBar = \foc, type, prc ->
 		TSelect2(foc.enabled, enabled, \focEn, en -> {
 			circleGap = if (!en || focEn || isSome(customThumb)) zero else thumbRadius;
@@ -536,6 +565,7 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		);
 
 	addDiscreteValues = \foc -> \f2 -> {
+		lengthDiscreteValues = length(discreteValues);
 		showTicks = fand(
 			eitherMap(
 				showDiscreteValues,
@@ -545,12 +575,12 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 					fOrs([down2, startThumb.focused, endThumb.focused, mainThumb.focused, startThumb.active, endThumb.active, mainThumb.active], false)
 				)
 			),
-			fselect(sliderWidth, FLift(\w -> i2d(length(discreteValues)) < w / 10.))
+			fselect(sliderWidth, FLift(\w -> i2d(lengthDiscreteValues) < w / 10.))
 		);
 
 		TGroup2(
 			f2,
-			map(discreteValues, \v -> {
+			mapi(discreteValues, \i, v -> {
 				tickColor = fselect3(startThumb.percent, endThumb.percent, dynColor, \st, e, col -> {
 					light = if (v >= st && v <= e) isLightMColor(MThemeColor2MColor(foc, col)) else lightBackground;
 					MDialogMColor(!light)
@@ -572,8 +602,16 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 
 							m2t(cfn.fn(percent2value(v)), foc)
 							|> (\t2 -> TAttachWidth(t2, width))
+							|> (\t2 -> {
+								if (cfn.increaseSize && (i == 0 || i == lengthDiscreteValues - 1)) {
+									TConstruct(
+										[\ -> fconnect(width, if (i == 0) startCaptionWidthB else endCaptionWidthB)],
+										t2	
+									)
+								} else t2
+							})
 							|> (\t2 -> TTranslate(fselect(width, FLift(\w -> Point(-w / 2., 0.))), t2))
-							|> (\t2 -> TFixSize(t2, TEmpty()))
+							|> (\t2 -> if (cfn.increaseSize) TBaseline(const(0.), t2) else TFixSize(t2, TEmpty()))
 							|> (\t2 -> TGroup2(t, t2))
 						}, t
 					))
@@ -704,7 +742,11 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		),
 		makeSubscribeUns(fmax3(startThumb.active, endThumb.active, mainThumb.active), \active -> {
 			if (active) {
-				addMInteractionItemIdIfEmpty(manager, sliderId);
+				if (fgetValue(down2)) {
+					addMInteractionItemId(manager, sliderId);
+				} else {
+					addMInteractionItemIdIfEmpty(manager, sliderId);
+				};
 
 				[
 					makeSubscribe2(point, \p -> {
@@ -780,7 +822,11 @@ MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (M
 		else if (showValueInput && isSome(chooseRange)) TBaselineColsDir([makeValueInput(startThumb), t, makeValueInput(endThumb)], isRTL)
 		else t
 	)
-	|> (\t -> TBaselineColsDir([makeSliderIcon(iconLeft), t, makeSliderIcon(iconRight)], isRTL))
+	|> (\t -> TBaselineColsDir([
+			makeBorderedIcon(iconLeft, startIconWidthB, stratBorderB, TBorderStartT),
+			t,
+			makeBorderedIcon(iconRight, endIconWidthB, endBorderB, TBorderEndT)
+		], isRTL))
 }
 
 TCenteredCircle(

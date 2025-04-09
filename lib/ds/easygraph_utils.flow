@@ -4,6 +4,8 @@ export {
 	// Topological sort of the graph - result is a a lookup from node id to what order it should be
 	topSortEasyGraph(graph : EasyGraph<?, ??>) -> Tree<int, int>; 
 
+	topoOrderEasyGraph(graph : EasyGraph<?, ??>) -> [int];
+
 	// What are roots in this graph?
 	findEGRoots(graph : EasyGraph<?, ??>) -> Set<int>;
 
@@ -246,4 +248,141 @@ transitiveReduction(graph : EasyGraph<?, ??>) -> EasyGraph<?, ??> {
 			else addEGEdge(acc2, edge)
 		})
 	});
+}
+
+
+// Optimized topological ordering algorithm
+topoOrderEasyGraph(graph : EasyGraph<?, ??>) -> [int] {
+    // Get all nodes and cache the count
+    nodes = getEGNodes(graph);
+    nodeCount = length(nodes);
+    
+    // Create an initial set of unprocessed nodes to avoid repeated getEGNodes calls
+    unprocessedSet = fold(nodes, makeSet(), \acc, node -> {
+        insertSet(acc, node.id)
+    });
+    
+    // Get all edges to compute in-degrees
+    edges = getEGEdges(graph);
+    
+    // Compute initial in-degrees for all nodes
+    inDegrees = fold(edges, makeTree(), \acc, edge -> {
+        incTreeValue(acc, edge.to);
+    });
+    
+    // Create queue array with all nodes that have in-degree 0
+    nodesWithZeroDegree = filter(nodes, \node -> 
+        !containsKeyTree(inDegrees, node.id)
+    );
+    
+    queue = map(nodesWithZeroDegree, \node -> node.id);
+    
+    // Track visited nodes
+    processedSet = makeSet();
+    
+    // Start the optimized algorithm
+    list2array(topologicalOrderOptimized(graph, inDegrees, queue, 0, processedSet, 0, nodeCount, makeList(), unprocessedSet, nodes));
+}
+
+topologicalOrderOptimized(
+    graph : EasyGraph<?, ??>,
+    inDegrees : Tree<int, int>,
+    queue : [int],          // Static array
+    queueIndex : int,       // Current index in queue
+    visited : Set<int>,
+    visitedCount : int,     // Count of visited nodes (optimization to avoid sizeSet)
+    nodeCount : int,        // Cached node count
+    result : List<int>,     // Using List for O(1) prepending
+    unprocessedSet : Set<int>, // Set of nodes not yet processed
+    allNodes : [GNode<?>]   // Cached list of all nodes
+) -> List<int> {
+    if (queueIndex >= length(queue)) {
+        // No more ready nodes in queue
+        if (visitedCount < nodeCount) {
+            // Still have unprocessed nodes, means we have a cycle
+            // Find an unprocessed node to break the cycle - using more efficient method
+            
+            // Get first unprocessed node using popMinSet (O(log n) operation)
+            maybePopResult = popMinSet(unprocessedSet);
+            
+            switch (maybePopResult) {
+                None(): result; // Shouldn't happen, but return reversed result
+                Some(popResult): {
+                    // Process this node to break the cycle
+                    nodeId = popResult.value;
+                    newVisited = insertSet(visited, nodeId);
+                    newUnprocessed = popResult.rest; // Use the rest set directly from popMinSet
+                    
+                    // Get adjacent nodes
+                    adjacentNodes = getAdjacentEGNodes(graph, nodeId);
+                    
+                    // Update in-degrees
+                    newInDegrees = fold(adjacentNodes, inDegrees, \acc, adj -> {
+                        currentDegree = lookupTreeDef(acc, adj, 0);
+                        if (currentDegree <= 1) {
+                            removeFromTree(acc, adj);
+                        } else {
+                            setTree(acc, adj, currentDegree - 1);
+                        }
+                    });
+                    
+                    // Find new zero-degree nodes
+                    newNodes = filter(adjacentNodes, \adj -> 
+                        containsSet(newUnprocessed, adj) && 
+                        !containsKeyTree(newInDegrees, adj)
+                    );
+                    
+                    // Continue with updated queue
+                    newQueue = concat(queue, newNodes);
+                    
+                    // Add node to result using Cons (O(1) prepend)
+                    newResult = Cons(nodeId, result);
+                    
+                    topologicalOrderOptimized(graph, newInDegrees, newQueue, queueIndex, newVisited, visitedCount + 1, nodeCount, newResult, newUnprocessed, allNodes);
+                }
+            }
+        } else {
+            // All nodes processed, reverse list for correct order
+            result;
+        }
+    } else {
+        // Process current node in queue
+        nodeId = queue[queueIndex];
+        
+        // Skip if already visited
+        if (containsSet(visited, nodeId)) {
+            topologicalOrderOptimized(graph, inDegrees, queue, queueIndex + 1, visited, visitedCount, nodeCount, result, unprocessedSet, allNodes);
+        } else {
+            // Mark as visited
+            newVisited = insertSet(visited, nodeId);
+            newUnprocessed = removeSet(unprocessedSet, nodeId);
+            
+            // Get adjacent nodes
+            adjacentNodes = getAdjacentEGNodes(graph, nodeId);
+            
+            // Update in-degrees
+            newInDegrees = fold(adjacentNodes, inDegrees, \acc, adj -> {
+                currentDegree = lookupTreeDef(acc, adj, 0);
+                if (currentDegree <= 1) {
+                    removeFromTree(acc, adj);
+                } else {
+                    setTree(acc, adj, currentDegree - 1);
+                }
+            });
+            
+            // Find new zero-degree nodes
+            newNodes = filter(adjacentNodes, \adj -> 
+                containsSet(newUnprocessed, adj) && 
+                !containsKeyTree(newInDegrees, adj)
+            );
+            
+            // Continue with updated queue
+            newQueue = concat(queue, newNodes);
+            
+            // Add node to result using Cons (O(1) prepend)
+            newResult = Cons(nodeId, result);
+            
+            topologicalOrderOptimized(graph, newInDegrees, newQueue, queueIndex + 1, newVisited, visitedCount + 1, nodeCount, newResult, newUnprocessed, allNodes);
+        }
+    }
 }
