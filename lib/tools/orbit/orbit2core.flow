@@ -1,0 +1,139 @@
+import tools/runcore/value_types;
+import tools/orbit/orbit_types;
+import runtime;
+
+export {
+	// Conversion functions between orbit expressions and CoreValue
+	orbit2CoreValue(expr : OrMath_expr) -> CoreValue;
+	coreValue2Orbit(val : CoreValue) -> OrMath_expr;
+}
+
+// Convert Orbit expression to CoreValue
+orbit2CoreValue(expr : OrMath_expr) -> CoreValue {
+	switch (expr) {
+		OrInt(i): CoreInt(i);
+		OrDouble(d): CoreDouble(d);
+		OrString(s): CoreString(s);
+		OrIdentifier(id): CoreString(id); // Just the identifier name, not its value
+		OrVariable(uid): CoreString(uid); // Same for variables
+		OrGreekLetter(letter): CoreString(letter);
+		
+		OrLambda(id, body): {
+			// Lambdas represented as constructors with id and body
+			CoreConstructor("Lambda", [CoreString(id), orbit2CoreValue(body)])
+		}
+		
+		OrLambdaMulti(ids, body): {
+			// Multi-param lambdas
+			CoreConstructor("LambdaMulti", [
+				CoreArray(map(ids, \id -> CoreString(id))),
+				orbit2CoreValue(body)
+			])
+		}
+		
+		OrSetLiteral(exprs): {
+			CoreArray(map(exprs, orbit2CoreValue))
+		}
+		
+		OrFunction(fn, args): {
+			CoreConstructor("Function", [
+				orbit2CoreValue(fn),
+				CoreArray(map(args, orbit2CoreValue))
+			])
+		}
+		
+		// For other expressions, we'll use a generic representation
+		default: {
+			constructorName = switch (expr) {
+				OrAdd(__, __): "Add";
+				OrSubtract(__, __): "Subtract";
+				OrMultiply(__, __): "Multiply";
+				OrDivide(__, __): "Divide";
+				OrNegate(__): "Negate";
+				OrEquals(__, __): "Equals";
+				OrNotEquals(__, __): "NotEquals";
+				OrLessThan(__, __): "LessThan";
+				OrGreaterThan(__, __): "GreaterThan";
+				OrLessEquals(__, __): "LessEquals";
+				OrGreaterEquals(__, __): "GreaterEquals";
+				OrLogicalAnd(__, __): "LogicalAnd";
+				OrLogicalOr(__, __): "LogicalOr";
+				OrLogicalNot(__): "LogicalNot";
+				OrLet(__, __): "Let";
+				OrIfElse(__, __, __): "IfElse";
+				OrFnDef(__, __, __, __): "FnDef";
+				OrSequence(__, __): "Sequence";
+				default: "Unknown";
+			}
+			
+			values = switch (expr) {
+				OrAdd(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrSubtract(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrMultiply(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrDivide(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrNegate(a): [orbit2CoreValue(a)];
+				OrEquals(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrNotEquals(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrLessThan(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrGreaterThan(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrLessEquals(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrGreaterEquals(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrLogicalAnd(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrLogicalOr(a, b): [orbit2CoreValue(a), orbit2CoreValue(b)];
+				OrLogicalNot(a): [orbit2CoreValue(a)];
+				OrLet(idType, val): [
+					CoreString(idType.id),
+					orbit2CoreValue(val),
+				];
+				OrIfElse(cond, then, else_): [
+					orbit2CoreValue(cond),
+					orbit2CoreValue(then),
+					orbit2CoreValue(else_)
+				];
+				OrFnDef(name, params, type, body): [
+					CoreString(name),
+					CoreArray(map(params, \p -> CoreString(p.id))),
+					CoreArray(map(type, \t -> orbit2CoreValue(t.math_expr))),
+					orbit2CoreValue(body)
+				];
+				OrSequence(first, second): [
+					orbit2CoreValue(first),
+					orbit2CoreValue(second)
+				];
+				default: [];
+			}
+			
+			CoreConstructor(constructorName, values);
+		}
+	}
+}
+
+// Convert CoreValue back to Orbit expression
+coreValue2Orbit(val : CoreValue) -> OrMath_expr {
+	switch (val) {
+		CoreInt(i): OrInt(i);
+		CoreDouble(d): OrDouble(d);
+		CoreString(s): OrString(s);
+		CoreArray(values): OrSetLiteral(map(values, coreValue2Orbit));
+		CoreBool(b): if (b) OrInt(1) else OrInt(0); // Represent bools as 0/1
+		CoreConstructor(name, args): {
+			if (name == "Lambda" && length(args) >= 2) {
+				id = switch (args[0]) {
+					CoreString(s): s;
+					default: "";
+				};
+				OrLambda(id, coreValue2Orbit(args[1]));
+			} else if (name == "Add" && length(args) >= 2) {
+				OrAdd(coreValue2Orbit(args[0]), coreValue2Orbit(args[1]));
+			} else if (name == "Subtract" && length(args) >= 2) {
+				OrSubtract(coreValue2Orbit(args[0]), coreValue2Orbit(args[1]));
+			} else if (name == "Multiply" && length(args) >= 2) {
+				OrMultiply(coreValue2Orbit(args[0]), coreValue2Orbit(args[1]));
+			} else if (name == "Divide" && length(args) >= 2) {
+				OrDivide(coreValue2Orbit(args[0]), coreValue2Orbit(args[1]));
+			} else {
+				OrIdentifier("constructor_" + name);
+			}
+		}
+	}
+}
