@@ -2,13 +2,13 @@
 
 ## Introduction
 
-We present a novel approach to program transformation and optimization that unifies three powerful technologies: equivalence graphs (e-graphs) accelerated by WebGPU, a domain-unified rewriting system based on group theory, and Mango's concise grammar framework. This synthesis creates a powerful cross-language rewriting engine capable of applying formal mathematical theorems directly to program code.
+We present a novel approach to program transformation and optimization that unifies three powerful technologies: equivalence graphs (e-graphs) accelerated by WebGPU, a domain-unified rewriting system based on group theory, and Mango's concise grammar framework. This synthesis creates a powerful cross-language rewriting engine capable of applying formal mathematical theorems directly to program code. We call the resulting system Orbit.
 
 ## Theoretical Foundation: Domains and Symmetry Groups
 
 At the heart of our system lies the insight that computational domains themselves—whether programming languages, algebraic structures, or formal systems—should be first-class citizens in the rewriting process. By representing domains explicitly within our e-graph structure, we enable:
 
-1. **Cross-Domain Reasoning**: Values can exist simultaneously in multiple domains through e-class equivalence
+1. **Cross-Domain Reasoning**: Values can exist simultaneously in multiple domains through the "belongs to" field
 2. **Canonical Representations**: Each domain leverages its natural symmetry group for canonicalization
 3. **Deep Algebraic Structures**: The system automatically discovers and exploits algebraic properties
 
@@ -30,16 +30,14 @@ exp =
 
 This allows us to rapidly create parsers for multiple languages (Python, JavaScript, Lean, etc.) and define transformations between them. Each language becomes a domain in our unified system, with Mango providing the infrastructure to convert text to typed ASTs that can be processed by our e-graph engine.
 
-## Cross-Domain Transformations with E-Graphs on WebGPU
+## Cross-Domain Transformations with E-Graphs
 
-Our system leverages WebGPU to dramatically accelerate e-graph saturation, enabling complex rewriting operations across domains. The e-graph structure:
+Our system leverages e-graph saturation, enabling complex rewriting operations across domains. The e-graph structure:
 
 1. Represents equivalence classes of expressions
-2. Each eclass belongs to some domain
-3. Applies cross-domain rewrite rules efficiently, so eclasses across different domains can be unified
+2. Each node can belong to multiple domains
+3. Applies cross-domain rewrite rules efficiently by operating on nodes that belong to specific domains
 4. Extracts optimal representations based on domain-specific cost models
-
-We compile expressions and rewrite rules directly into specialized WebGPU Compute Shaders (WGSL), where the e-graph saturation process takes advantage of parallel GPU processing. This approach allows for real-time optimization of complex expressions across multiple domains.
 
 # Domain-Unified Rewriting System: Grammar and Semantics
 
@@ -47,11 +45,11 @@ We compile expressions and rewrite rules directly into specialized WebGPU Comput
 
 The Domain-Unified Rewriting System uses a specialized notation to express relationships between expressions across different domains:
 
-```
-// a is in equivalence class A
+```orbit
+// a belongs to domain A
 a : A
 
-// If a is in A, then a and b are equivalent, and b is in B
+// If a belongs to domain A, then a and b are equivalent, and b belongs to domain B
 a : A => b : B
 
 // Entailment: Addition between two reals is commutative
@@ -67,27 +65,27 @@ Int ⊂ Real
 
 ### Operator Semantics in E-Graph Context
 
-| Operator | ASCII Alternative | E-Graph Interpretation | Semantic Meaning | Example | E-Class Merging Behavior |
-|----------|------------------|------------------------|------------------|---------|--------------------------|
-| `:` | `:` | Domain annotation | In patterns: Constrains matches to the specified domain. In results: Asserts the expression belongs to the domain (merges eclasses) | `x : Algebra` | Creates two eclasses: one for `x` and one for `Algebra`. Then merges these eclasses across domain boundaries. The expression `x` becomes the root of this merged eclass, since it is more specific. |
-| `⇒` | `=>` | Rewrite rule | Unifies eclasses with the right side becoming the root, can include conditions | `a + b : JavaScript => a + b : Python` | Creates eclasses for `a + b` in the `JavaScript` domain, `a + b` in the `Python` domain. Then merges the LHS and RHS eclasses, with `sum([a, b])` becoming the root. Both expressions now represent the same computation across language domains. |
-| `⇔` | `<=>` | Equivalence | Declares bidirectional equivalence between patterns, merging their eclasses | `x * (y + z) : Algebra <=> (x * y) + (x * z) : Algebra` | Creates eclasses for both expressions and merges them into a single eclass. Depending on what side was matched, either form might be selected as the root, but both are considered completely equivalent. |
-| `⊢` | `\|-` | Entailment | When the left pattern matches, the right side annotation is applied | `a : Field + b : Field \|- + : S₂` | When an expression matching `a : Field + b : Field` is found, then the eclass for the `+` is unified with an eclass for `S₂`. This attaches the property `S₂` (commutativity) to the + operator in fields. |
-| `⊂` | `c=` | Subset relation | Indicates domain hierarchy, automatically applying parent domain rules to children | `Integer c= Real` | Creates a relationship between domain eclasses where rules applied to `Real` are automatically inherited by `Integer`. This corresponds to a general rule `a : Integer => a : Real`, and thus we merge an eclass `Real` onto any `Integer` eclass, but keep the `Integer` eclass as the more specific one |
+| Operator | ASCII Alternative | E-Graph Interpretation | Semantic Meaning | Example | Node Relationship Behavior |
+|----------|------------------|------------------------|------------------|---------|---------------------------|
+| `:` | `:` | Domain annotation | In patterns: Constrains matches to the specified domain. In results: Asserts the expression belongs to the domain | `x : Algebra` | Adds the domain `Algebra` to the "belongs to" field of node `x`. This allows a node to belong to multiple domains simultaneously. |
+| `⇒` | `=>` | Rewrite rule | Converts an expression from one form to another, potentially across domains | `a + b : JavaScript => a + b : Python` | Creates a node for `a + b` that belongs to the `JavaScript` domain, and another node for `a + b` that belongs to the `Python` domain. These nodes are merged into the same eclass, but maintain their distinct domain memberships. |
+| `⇔` | `<=>` | Equivalence | Declares bidirectional equivalence between patterns, preserving domain membership | `x * (y + z) : Algebra <=> (x * y) + (x * z) : Algebra` | Creates nodes for both expressions that belong to the `Algebra` domain and marks them as equivalent. Both forms are in the same eclass. |
+| `⊢` | `\|-` | Entailment | When the left pattern matches, the right side domain annotation is applied | `a : Field + b : Field \|- + : S₂` | When an expression matching `a : Field + b : Field` is found, the `+` operator node has domain `S₂` added to its "belongs to" field. This attaches the property `S₂` (commutativity) to the + operator in fields. |
+| `⊂` | `c=` | Subset relation | Indicates domain hierarchy, automatically applying parent domain memberships to children | `Integer c= Real` | Establishes that any node belonging to the `Integer` domain also implicitly belongs to the `Real` domain. This corresponds to a general rule `a : Integer => a : Real`, which adds the `Real` domain to the "belongs to" field of any node already belonging to the `Integer` domain. |
 
-In the e-graph implementation, each unique expression and domain is initially represented by its own eclass. The operators above define how these eclasses should be merged or related:
+In the e-graph implementation, each node maintains a "belongs to" field that tracks which domains it belongs to. The operators above define how domains are added to nodes and how nodes relate to each other:
 
-- Domain annotations (`:`) establish cross-domain relationships, unifying expressions with their domain types.
-- Rewrite rules (`⇒`) merge the eclasses of their left and right sides, with the right side becoming the canonical form.
-- Equivalence statements (`⇔`) merge eclasses bidirectionally, treating both patterns as equally valid.
-- Entailments (`⊢`) conditionally apply properties or domains to expressions when patterns match.
-- Subset relations (`⊂`) establish rule inheritance without merging domain eclasses, preventing incorrect equivalence implications.
+- Domain annotations (`:`) add domain membership to nodes.
+- Rewrite rules (`⇒`) establish equivalence between two expressions while preserving their distinct domain memberships.
+- Equivalence statements (`⇔`) declare two expressions as completely interchangeable while maintaining their domain memberships. `a ⇔ b` is equivalent to `a⇒b; b⇒a`.
+- Entailments (`⊢`) add domain memberships to nodes when specific patterns are matched.
+- Subset relations (`⊂`) establish domain hierarchies, allowing nodes to inherit domain memberships from parent domains.
 
-These merging behaviors enable the system to maintain a unified view of equivalent expressions across different domains, while respecting the specific semantics of each operator.
+These behaviors enable the system to maintain a unified view of equivalent expressions across different domains, while respecting the specific semantics of each operator.
 
-The system's power comes from its ability to represent domain-crossing relationships directly within the e-graph structure. Domain annotations serve dual purposes: as pattern constraints when matching, and as domain entailments when creating new nodes.
+The system's power comes from its ability to represent domain-crossing relationships in each term. Domain annotations serve dual purposes: as pattern constraints when matching, and as domain memberships when creating new nodes.
 
-The domains are organized in a lattice with a partial order, so the eclassess always point to the most specific domain. This allows us to have a single S₂ eclass annotated on many operators. When we then do a S₂ <=> C₂ rewrite, it will apply to all operators that are annotated with S₂, and the result will be a C₂ eclass. This is a very powerful way to express the symmetry of the operators, and it allows us to have a single eclass for all the operators that are equivalent under S₂, giving us an exponential reduction in the number of eclasses we have to deal with.
+The domains are organized in a lattice with a partial order. This allows us to have a single node that belongs to many domains, such as the + operator belonging to both its base domain and to the S₂ symmetry domain. When we apply an S₂ <=> C₂ rewrite, it will apply to all operators that belong to the S₂ domain. This approach gives us an exponential reduction in the number of nodes we need to explicitly represent.
 
 ## Mango Grammar Definition
 
@@ -135,19 +133,19 @@ The domains are organized in a lattice with a partial order, so the eclassess al
 
 	// Optional conditional clause for rules
 	conditional = "if" ws cond_expr Conditional/1;
-	rewrite_system	
+	rewrite_system
 );
 ""
 ```
 
-This grammar defines a parameterized function `@make_rewrite_system` that instantiates a rewriting system for specific domain languages. The function takes these parameters:
+This grammar defines a parameterized function `@make_rewrite_system` that instantiates a rewriting system for specific domain languages. The function works with the pattern macro and allow these parameters to be defined:
 - `expr`: Base expression grammar for the target domain
 - `pattern_variable`: Grammar for pattern variables, typically @a, uid or lid.
 - `domain_expr`: Grammar for domain expressions
 - `cond_expr`: Grammar for conditional expressions
 - `rule_sep`: Separator between rules in a ruleset, typically `;` or `.`
 
-Using this grammar, you can create specialized rewrite systems for different domains (algebra, programming languages, formal systems) while maintaining a consistent semantic interpretation within the e-graph structure. When expressions cross domain boundaries, the e-graph representation unifies eclasses appropriately, allowing formal reasoning across language barriers.
+Using this grammar, you can create specialized rewrite systems for different domains (algebra, programming languages, formal systems) while maintaining a consistent semantic interpretation within the e-graph structure. When expressions cross domain boundaries, the e-graph representation correctly tracks domain memberships, allowing formal reasoning across language barriers.
 
 ## Pattern Matching vs. Entailment
 
@@ -160,8 +158,8 @@ expr : Domain
 ```
 
 On the left-hand side of a rule, this is a **constraint** requiring that:
-- The matched node must already have a domain annotation indicating it belongs to `Domain`
-- This acts as a filter in pattern matching, restricting the match to specific domains
+- The matched node must already have the specified domain in its "belongs to" field
+- This acts as a filter in pattern matching, restricting the match to nodes that belong to specific domains
 
 ```
 a + b : Int
@@ -169,10 +167,10 @@ a + b : S₂
 ```
 
 This matches:
-- An addition expression that is marked as an Int in the Type domain
+- An addition expression that belongs to the Int domain
 - An addition with S₂ symmetry property (matches any permutation in the S₂ orbit)
 
-In particular, this means that `a + b` and `Int`/`S₂` are in the same eclass for this pattern to match.
+In particular, this means that the node for `a + b` must have both its original domain and the specified domain (`Int`/`S₂`) in its "belongs to" field for this pattern to match.
 
 ### 2. Entailment (Right-Hand Side)
 
@@ -181,8 +179,8 @@ a + b => a + b : S₂
 ```
 
 On the right-hand side, this is an **assertion** that:
-- The resulting node should be annotated as belonging to `S₂`
-- This adds domain membership information to the e-class of `a+b`, so it is equivalent with `S₂`. The `a+b` eclass will be the root of the `S₂` eclass, since it is the most specific one.
+- The resulting node should have `S₂` added to its "belongs to" field
+- This adds domain membership information to the node for `a+b`, allowing it to match patterns requiring S₂ membership
 
 ### 3. Explicit Entailment Rules
 
@@ -192,12 +190,11 @@ pattern ⊢ op : Domain
 
 This creates a conditional domain annotation:
 - When `pattern` matches something, including an op
-- The op node's e-class gets the `Domain` annotation
+- The op node has `Domain` added to its "belongs to" field
 
 For example:
 ```
-isPrime(n) ⊢ n : Prime
-is_commutative(op) ⊢ op : CommutativeOp
+n  ⊢  n : Prime  if  isPrime(n);
 ```
 
 ## Domain Hierarchies and Rule Inheritance
@@ -212,7 +209,7 @@ Python.List ⊂ Python.Iterable
 
 Rules defined at more abstract levels automatically apply to concrete instances. For example, commutativity defined for `AbelianGroup` applies to integers in Python, allowing the system to apply `a + b ⇔ b + a` without explicitly defining this rule for Python integers.
 
-`A ⊂ B` is short for a rule: `a : A => a : B`, which means that if `a` is in the domain `A`, then it is also in the domain `B`. This allows us to define a hierarchy of domains, where each domain inherits the rules of its parent domains, keeping `A` as the most specific domain.
+`A ⊂ B` is short for a rule: `a : A => a : B`, which means that if a node belongs to domain `A`, then the domain `B` is also added to its "belongs to" field. This allows us to define a hierarchy of domains, where each domain inherits the rules of its parent domains.
 
 # Domain-Crossing Rewrite System with Symmetry-Based Canonicalization
 
@@ -220,8 +217,8 @@ Rules defined at more abstract levels automatically apply to concrete instances.
 
 We represent these AST and rules in the orbit e-graph with:
 
-1. **Nodes**: Each `expression : Domain` creates a domain-specific node for the expression, and another for the Domain. They belong to their own domains, but are unified to be equivalent through the eclass.
-2. **E-classes**: Equivalent expressions across domains share an e-class
+1. **Nodes**: Each expression node has a "belongs to" field that contains the set of domains it belongs to.
+2. **E-classes**: Equivalent expressions are grouped into eclasses while maintaining their individual domain memberships via the "belongs to" field
 
 ```flow
 // The OGraph structure for storing and manipulating orbit graphs
@@ -229,9 +226,9 @@ OGraph(
 	oclasses : ref Tree<int, OClass>, // Map from class id to equivalence class
 	classes : ref Tree<int, int>,     // Union-find data structure: maps from an id to its parent id
 	next_id : ref int,               // Next available id
-	int_values : ref Tree<int, int>,  // Integer values associated with eclasses
-	double_values : ref Tree<int, double>,  // Double values associated with eclasses
-	string_values : ref Tree<int, string>   // String values associated with eclasses
+	int_values : ref Tree<int, int>,  // Integer values associated with nodes
+	double_values : ref Tree<int, double>,  // Double values associated with nodes
+	string_values : ref Tree<int, string>   // String values associated with nodes
 );
 
 // An equivalence class
@@ -242,9 +239,10 @@ OClass(
 
 // A node in the graph
 ONode(
-	domain : ODomain,  // The domain this node belongs to (e.g., "flow", "math")
+	domain : ODomain,  // The domain this node lives in (e.g., "flow", "math")
 	op : string,        // Operator or constructor name (e.g., "Person", "+")
-	children : [int]    // Child nodes (references to other class ids)
+	children : [int],   // Child nodes (references to other class ids)
+	belongsTo : [int]   // What domains do this node belong to?
 );
 
 // Domain identifier
@@ -253,10 +251,7 @@ ODomain(
 );
 ```
 
-Our egraph is special in the sense that the equivalences come with a direction. They point from the general to the specific. Also, the interpretation is different since each node belongs to one domain. We do not want transitively infer that given 1 : Int, and 2 : Int, 1 is NOT equivalent with 2, even if they are both in the same eclass as Int.
-If Int was the same eclass for both, we would wrongly infer 1 and 2 are equivalent, and we intentionally do not want that. It is natural that the most specific node is the root when we have multiple domains.
-
-TODO: This means we have to change how we find the root, since we 1 should point to Int, and 2 should also point to Int, but 1 and 2 should be the roots. This is not reflected in this document or code yet.
+The key change in our implementation compared to a normal egraph is that each node is defined in a given domain. This is represented by the `domain` field in the `ONode` structure. When a domain annotation is applied (`expr : Domain`), the domain is added to the node's `belongsTo` array, and that way we build a hierarchy of containment across domains.
 
 ## 2. Defining domain syntaxes
 
@@ -264,7 +259,7 @@ We use Mango macros to instantiate a number of domain-specific syntaxes. The `@m
 
 ```
 // We use Upper-case id's for pattern variables, and allow Math domains to be annotated
-@js<> = @make_pattern<js_expr uid math>;	
+@js<> = @make_pattern<js_expr uid math>;
 @python<> = @make_pattern<python_expr uid math>;
 @math<> = @make_pattern<math_expr uid math>;
 @lean<> = @make_pattern<lean_expr uid math>;
@@ -340,7 +335,7 @@ The key additions here are:
 
 This approach ensures that equivalent expressions are always transformed to the exact same canonical representation, which is essential for:
 
-1. Efficient e-graph operation (avoiding redundant eclasses)
+1. Efficient e-graph operation (avoiding redundant nodes)
 2. Deterministic pattern matching
 3. Consistent extraction of optimized expressions
 
@@ -361,37 +356,7 @@ Also add sets.
 Add $ or similar notation for evaluation on the right hand side.
 Use Mango precedence to shorten grammar.
 
-```mango
-@include<lexical>
-@include<list>
-
-math_expr =
-	math_expr "+" ws term Addition/2
-	|> math_expr "-" ws term Subtraction/2
-	|> term
-	;
-
-term =
-	term "*" ws factor Multiplication/2
-	|> term "/" ws factor Division/2
-	|> factor
-	;
-
-factor =
-	factor "^" ws power Exponentiation/2
-	|> atom
-	;
-
-atom =
-	$double ws @s2d Number/1
-	| id Variable/1
-	| "(" ws math_expr ")" ws
-	| "-" ws factor Negation/1
-	| "sqrt" ws "(" ws math_expr ")" ws Sqrt/1
-	;
-
-ws math_expr
-```
+@include math.mango
 
 ## 2. JavaScript Expression Domain
 
@@ -530,7 +495,6 @@ console.log(solve((x) => x**2 - 6*x + 9 == 0));
 // 5. [3]                          (solution)
 ```
 
-
 ## 5. Entailment Rules
 
 We can do more advanced number theory and algebraic properties using entailment rules. This allows us to define properties of numbers and functions, and then use them in our rewrite rules.
@@ -540,6 +504,7 @@ We can do more advanced number theory and algebraic properties using entailment 
 	// Type-based entailments
 	2 ⊢ 2 : Prime;
 	3 ⊢ 3 : Prime;
+	n ⊢ n : Prime   if   is_prime(n);
 
 	// Explicit entailment with a condition
 	n : Integer  ⊢  n : Odd   if   n % 2 = 1;
