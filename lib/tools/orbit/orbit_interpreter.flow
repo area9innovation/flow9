@@ -13,20 +13,34 @@ export {
 	interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv;
 }
 
+// Helper function to perform CoreLib operations and convert types
+performCoreOperation(env : OrbEnv, a : OrMath_expr, b : OrMath_expr, operation : (CoreValue, CoreValue) -> CoreValue) -> OrbEnv {
+	// Convert orbit expressions to CoreValues
+	aCore = orbit2CoreValue(a);
+	bCore = orbit2CoreValue(b);
+	
+	// Perform the operation using CoreLib
+	resultCore = operation(aCore, bCore);
+	
+	// Convert back to OrMath_expr
+	OrbEnv(env with result = coreValue2Orbit(resultCore));
+}
+
 // Main interpreter function
 interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
+	ret = \v -> OrbEnv(env with result = v);
 	// Handle each expression type
-	result = switch (expr) {
-		OrInt(i): OrInt(i);
-		OrDouble(d): OrDouble(d);
-		OrString(s): OrString(s);
+	switch (expr) {
+		OrInt(i): ret(expr);
+		OrDouble(d): ret(expr);
+		OrString(s): ret(expr);
 		
 		OrIdentifier(id): {
 			switch (lookupVar(env, id)) {
-				Some(value): value;
+				Some(value): ret(value);
 				None(): {
 					println("Variable not found: " + id);
-					OrInt(0);
+					ret(OrInt(0));
 				}
 			}
 		}
@@ -34,200 +48,58 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 		OrAdd(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			
-			switch (envA.result) {
-				OrInt(i1): {
-					switch (envB.result) {
-						OrInt(i2): OrInt(i1 + i2);
-						OrDouble(d2): OrDouble(i2d(i1) + d2);
-						default: {
-							println("Cannot add: " + toString(envA.result) + " and " + toString(envB.result));
-							OrInt(0);
-						}
-					}
-				}
-				OrDouble(d1): {
-					switch (envB.result) {
-						OrInt(i2): OrDouble(d1 + i2d(i2));
-						OrDouble(d2): OrDouble(d1 + d2);
-						default: {
-							println("Cannot add: " + toString(envA.result) + " and " + toString(envB.result));
-							OrInt(0);
-						}
-					}
-				}
-				OrString(s1): {
-					switch (envB.result) {
-						OrString(s2): OrString(s1 + s2);
-						default: {
-							println("Cannot add string with non-string: " + toString(envB.result));
-							OrString(s1);
-						}
-					}
-				}
-				default: {
-					println("Unsupported addition: " + toString(envA.result));
-					OrInt(0);
-				}
-			}
+			performCoreOperation(env, envA.result, envB.result, addValue);
 		}
 		
 		OrSubtract(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			
-			switch (envA.result) {
-				OrInt(i1): {
-					switch (envB.result) {
-						OrInt(i2): OrInt(i1 - i2);
-						OrDouble(d2): OrDouble(i2d(i1) - d2);
-						default: {
-							println("Cannot subtract: " + toString(envB.result) + " from " + toString(envA.result));
-							OrInt(0);
-						}
-					}
-				}
-				OrDouble(d1): {
-					switch (envB.result) {
-						OrInt(i2): OrDouble(d1 - i2d(i2));
-						OrDouble(d2): OrDouble(d1 - d2);
-						default: {
-							println("Cannot subtract: " + toString(envB.result) + " from " + toString(envA.result));
-							OrInt(0);
-						}
-					}
-				}
-				default: {
-					println("Unsupported subtraction: " + toString(envA.result));
-					OrInt(0);
-				}
-			}
+			performCoreOperation(env, envA.result, envB.result, minusValue);
 		}
 		
 		OrMultiply(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			
-			switch (envA.result) {
-				OrInt(i1): {
-					switch (envB.result) {
-						OrInt(i2): OrInt(i1 * i2);
-						OrDouble(d2): OrDouble(i2d(i1) * d2);
-						default: {
-							println("Cannot multiply: " + toString(envA.result) + " and " + toString(envB.result));
-							OrInt(0);
-						}
-					}
-				}
-				OrDouble(d1): {
-					switch (envB.result) {
-						OrInt(i2): OrDouble(d1 * i2d(i2));
-						OrDouble(d2): OrDouble(d1 * d2);
-						default: {
-							println("Cannot multiply: " + toString(envA.result) + " and " + toString(envB.result));
-							OrInt(0);
-						}
-					}
-				}
-				default: {
-					println("Unsupported multiplication: " + toString(envA.result));
-					OrInt(0);
-				}
-			}
+			performCoreOperation(env, envA.result, envB.result, mulValue);
 		}
 		
 		OrDivide(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
+			performCoreOperation(env, envA.result, envB.result, divideValue);
+		}
+		
+		OrLet(idType, val): {
+			varName = idType.id;
+			envVal = interpretOrbit(env, val);
+			varValue = envVal.result;
 			
-			switch (envA.result) {
-				OrInt(i1): {
-					switch (envB.result) {
-						OrInt(i2): {
-							if (i2 == 0) {
-								println("Division by zero");
-								OrInt(0);
-							} else {
-								OrInt(i1 / i2);
-							}
-						}
-						OrDouble(d2): {
-							if (d2 == 0.0) {
-								println("Division by zero");
-								OrInt(0);
-							} else {
-								OrDouble(i2d(i1) / d2);
-							}
-						}
-						default: {
-							println("Cannot divide: " + toString(envA.result) + " by " + toString(envB.result));
-							OrInt(0);
-						}
-					}
-				}
-				OrDouble(d1): {
-					switch (envB.result) {
-						OrInt(i2): {
-							if (i2 == 0) {
-								println("Division by zero");
-								OrInt(0);
-							} else {
-								OrDouble(d1 / i2d(i2));
-							}
-						}
-						OrDouble(d2): {
-							if (d2 == 0.0) {
-								println("Division by zero");
-								OrInt(0);
-							} else {
-								OrDouble(d1 / d2);
-							}
-						}
-						default: {
-							println("Cannot divide: " + toString(envA.result) + " by " + toString(envB.result));
-							OrInt(0);
-						}
-					}
-				}
-				default: {
-					println("Unsupported division: " + toString(envA.result));
-					OrInt(0);
-				}
+			// Create new environment with the binding
+			bindVar(envVal, varName, varValue);
+		}
+		
+		OrIfElse(cond, thenExpr, elseExpr): {
+			envCond = interpretOrbit(env, cond);
+			// Convert to CoreValue to evaluate condition
+			condCore = orbit2CoreValue(envCond.result);
+			condValue = switch (condCore) {
+				CoreBool(b): b;
+				CoreInt(i): i != 0;
+				CoreDouble(d): d != 0.0;
+				CoreString(s): s != "";
+				default: false;
+			};
+			
+			if (condValue) {
+				interpretOrbit(envCond, thenExpr);
+			} else {
+				interpretOrbit(envCond, elseExpr);
 			}
 		}
 		
-	OrLet(idType, val): {
-		varName = idType.id;
-		envVal = interpretOrbit(env, val);
-		varValue = envVal.result;
-		
-		// Create new environment with the binding
-		updatedEnv = bindVar(envVal, varName, varValue);
-		// Return the value that was bound
-		varValue;
-	}
-		
-	OrIfElse(cond, thenExpr, elseExpr): {
-		envCond = interpretOrbit(env, cond);
-		condValue = switch (envCond.result) {
-			OrInt(i): i != 0;
-			OrDouble(d): d != 0.0;
-			OrString(s): s != "";
-			default: false;
-		};
-		
-		if (condValue) {
-			interpretOrbit(envCond, thenExpr).result;
-		} else {
-			interpretOrbit(envCond, elseExpr).result;
-		}
-	}
-		
 		default: {
 			println("Unsupported expression type: " + toString(expr));
-			OrInt(0);
+			env
 		}
-	};
-	
-	OrbEnv(env.bindings, result);
+	}
 }
