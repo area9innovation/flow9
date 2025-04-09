@@ -1,16 +1,16 @@
 Proof of concept:
 ☑ Small language for Orbit
 ☑ Driver, types
+- Evaluation with environment. TODO: Call
 - Pattern match (unification)
-- Evaluation with environment
-- Pretty printer
-- Extract minimal program
-- Have include in Orbit
-- Way to read files and parse them and rewrite them and extract them
+☑ Pretty printer
+- Have `include` in Orbit
+- Runtime function to read & parse files
+- Build ograph to/from OrMath_exp
+- Extract minimal program from ograph via cost function
 
-Math functions for functions to be used in rewrites and on the right hand side.
-
-- Extend to allow JS and other syntaxes. Wrap patterns and rewrites in () if necessary in syntax.
+Other languages:
+- Extend to allow JS and other syntaxes more naturally. Wrap patterns and rewrites in () if necessary in syntax.
 - Then hook in parsers for each language statically, with a convention for how patterns are defined.
 - Maybe it is just special ids we always use?
 - Have an operator language, where we can just use (+) as the syntax for such a node.
