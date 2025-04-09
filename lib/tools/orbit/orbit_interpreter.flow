@@ -1,5 +1,6 @@
 import tools/orbit/orbit2core;
 import tools/orbit/orbit_env;
+import tools/orbit/prettyprint;
 import tools/runcore/core_lib;
 import tools/runcore/value_util;
 import ds/tree;
@@ -14,7 +15,7 @@ export {
 }
 
 // Helper function to perform CoreLib operations and convert types
-performCoreOperation(env : OrbEnv, a : OrMath_expr, b : OrMath_expr, operation : (CoreValue, CoreValue) -> CoreValue) -> OrbEnv {
+performCoreBinOperation(env : OrbEnv, a : OrMath_expr, b : OrMath_expr, operation : (CoreValue, CoreValue) -> CoreValue) -> OrbEnv {
 	// Convert orbit expressions to CoreValues
 	aCore = orbit2CoreValue(a);
 	bCore = orbit2CoreValue(b);
@@ -26,8 +27,25 @@ performCoreOperation(env : OrbEnv, a : OrMath_expr, b : OrMath_expr, operation :
 	OrbEnv(env with result = coreValue2Orbit(resultCore));
 }
 
+// Helper function to perform CoreLib operations and convert types
+performCoreUnOperation(env : OrbEnv, a : OrMath_expr, operation : (CoreValue) -> CoreValue) -> OrbEnv {
+	// Convert orbit expressions to CoreValues
+	aCore = orbit2CoreValue(a);
+	
+	// Perform the operation using CoreLib
+	resultCore = operation(aCore);
+	
+	// Convert back to OrMath_expr
+	OrbEnv(env with result = coreValue2Orbit(resultCore));
+}
+
 // Main interpreter function
 interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
+	todo = \ -> {
+		println("TODO: Interpret " + expr.structname + ": " + prettyOrbit(expr));
+		env
+	};
+	println(expr);
 	ret = \v -> OrbEnv(env with result = v);
 	// Handle each expression type
 	switch (expr) {
@@ -44,38 +62,94 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 				}
 			}
 		}
+		OrVariable(uid): {
+			switch (lookupVar(env, uid)) {
+				Some(value): ret(value);
+				None(): {
+					println("Variable not found: " + uid);
+					ret(OrInt(0));
+				}
+			}
+		} 
 		
 		OrAdd(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreOperation(env, envA.result, envB.result, addValue);
+			performCoreBinOperation(env, envA.result, envB.result, addValue);
 		}
 		
 		OrSubtract(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreOperation(env, envA.result, envB.result, minusValue);
+			performCoreBinOperation(env, envA.result, envB.result, minusValue);
 		}
 		
 		OrMultiply(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreOperation(env, envA.result, envB.result, mulValue);
+			performCoreBinOperation(env, envA.result, envB.result, mulValue);
 		}
 		
 		OrDivide(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreOperation(env, envA.result, envB.result, divideValue);
+			performCoreBinOperation(env, envA.result, envB.result, divideValue);
 		}
-		
+		OrNegate(a): {
+			envA = interpretOrbit(env, a);
+			performCoreBinOperation(env, OrInt(-1), envA.result, mulValue);
+		}
+		OrEquals(a, b): {
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			performCoreBinOperation(env, envA.result, envB.result, eqValue);
+		}
+		OrGreaterEquals(a, b): {
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			performCoreBinOperation(env, envA.result, envB.result, geValue);
+		}
+		OrGreaterThan(a, b): {
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			performCoreBinOperation(env, envA.result, envB.result, gtValue);
+		}
+		OrLessEquals(a, b): {
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			performCoreBinOperation(env, envA.result, envB.result, leValue);
+		}
+		OrLessThan(a, b): {
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			performCoreBinOperation(env, envA.result, envB.result, ltValue);
+		}
+		OrNotEquals(a, b): {
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			performCoreBinOperation(env, envA.result, envB.result, neqValue);
+		}
+		OrLogicalAnd(a, b): {
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			performCoreBinOperation(env, envA.result, envB.result, andValue);
+		} 
+		OrLogicalNot(a): {
+			envA = interpretOrbit(env, a);
+			performCoreUnOperation(env, envA.result, notValue);
+		}
+		OrLogicalOr(a, b): {
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			performCoreBinOperation(env, envA.result, envB.result, orValue);
+		}
+
 		OrLet(idType, val): {
 			varName = idType.id;
 			envVal = interpretOrbit(env, val);
-			varValue = envVal.result;
-			
+			println("Letting " + varName + " = " + prettyOrbit(envVal.result));
 			// Create new environment with the binding
-			bindVar(envVal, varName, varValue);
+			bindVar(env, varName, envVal.result);
 		}
 		
 		OrIfElse(cond, thenExpr, elseExpr): {
@@ -96,10 +170,38 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 				interpretOrbit(envCond, elseExpr);
 			}
 		}
-		
-		default: {
-			println("Unsupported expression type: " + toString(expr));
-			env
+		OrSequence(a, b): {
+			env1 = interpretOrbit(env, a);
+			// The result of the first expression is discarded
+			interpretOrbit(env1, b);
 		}
+		
+		OrCompose(math_expr1, math_expr2): todo();
+		OrDirectProduct(math_expr1, math_expr2): todo();
+		OrElementOf(math_expr1, math_expr2): todo();
+		OrEntailment(math_expr1, math_expr2, conditionals): todo();
+		OrEquivalence(math_expr1, math_expr2, conditionals): todo();
+		OrExists(math_exprs, math_expr): todo();
+		OrExponent(math_expr1, math_expr2): todo();
+		OrField(math_expr, id): todo();
+		OrFnDef(id, id_types, type_annotations, math_expr): todo();
+		OrForall(math_exprs, math_expr): todo();
+		OrFunction(math_expr, math_exprs): todo();
+		OrFunctionType(math_expr1, math_expr2): todo();
+		OrGreekLetter(greek_letter): todo();
+		OrIntersection(math_expr1, math_expr2): todo();
+		OrLambda(id, math_expr): todo();
+		OrLambdaMulti(ids, math_expr): todo();
+		OrMatch(math_expr1, math_expr2): todo();
+		OrRule(math_expr1, math_expr2, conditionals): todo();
+		OrSetComprehension(math_exprs, math_expr): todo();
+		OrSetLiteral(math_exprs): todo();
+		OrSubscript(math_expr, subscript): todo();
+		OrSubset(math_expr1, math_expr2): todo();
+		OrSuperscript(math_expr, superscript): todo();
+		OrTypeAnnotation(math_expr1, math_expr2): todo();
+		OrTypeSubstitution(math_expr1, math_expr2, math_expr3): todo();
+		OrTypeVar(string1): todo();
+		OrUnion(math_expr1, math_expr2): todo();
 	}
 }
