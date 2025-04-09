@@ -3,6 +3,8 @@ import ds/tree;
 import maybe;
 import string;
 import math/math; // For d2s conversion
+import ds/set;
+import ds/array;
 
 export {
     // Create a new, empty OGraph
@@ -38,7 +40,7 @@ export {
     // Functions for primitive values
     
     // Associate an int value with an eclass
-    setOClassInt(graph : OGraph, eclass : int, value : int) -> void ;
+    setOClassInt(graph : OGraph, eclass : int, value : int) -> void;
     
     // Retrieve the eclass ID associated with an int value, if it exists
     getOClassInt(graph : OGraph, eclass : int) -> Maybe<int>;
@@ -54,6 +56,24 @@ export {
     
     // Retrieve the eclass ID associated with a string value, if it exists
     getOClassString(graph : OGraph, eclass : int) -> Maybe<string>;
+
+    // Domain membership functions
+    
+    // Add a domain to a node's belongsTo list
+    addDomainToONode(graph : OGraph, nodeId : int, domainId : int) -> void;
+    
+    // Remove a domain from a node's belongsTo list
+    removeDomainFromONode(graph : OGraph, nodeId : int, domainId : int) -> void;
+    
+    // Check if a node belongs to a specific domain
+    onodeHasDomain(graph : OGraph, nodeId : int, domainId : int) -> bool;
+    
+    // Get all domains a node belongs to
+    getONodeDomains(graph : OGraph, nodeId : int) -> [int];
+
+    // Find a node in the graph that both has the given primary domain,
+    // and matches the given op and children
+    findONodeWithDomain(graph : OGraph, domain : ODomain, op : string, children : [int], domainId : int) -> Maybe<int>;
 }
 
 // Create a new, empty OGraph
@@ -109,6 +129,31 @@ findONode(graph : OGraph, domain : ODomain, op : string, children : [int]) -> Ma
     })
 }
 
+// Find a node that both has the given primary domain and belongs to a specific domain
+findONodeWithDomain(graph : OGraph, domain : ODomain, op : string, children : [int], domainId : int) -> Maybe<int> {
+    // Find canonical representatives for all children
+    canonicalChildren = map(children, \child -> findORoot(graph, child));
+    
+    // Look through all nodes in the graph to find a match
+    foldTree(^(graph.oclasses), None(), \classId, oclass, acc -> {
+        if (acc != None()) {
+            acc
+        } else if (oclass.node.op == op && 
+                 oclass.node.domain.domain == domain.domain && 
+                 length(oclass.node.children) == length(canonicalChildren) &&
+                 contains(oclass.node.belongsTo, domainId)) {
+            // Check if all children match
+            allMatch = foldi(oclass.node.children, true, \i, match, child -> {
+                match && (i < length(canonicalChildren)) && (findORoot(graph, child) == canonicalChildren[i])
+            });
+            
+            if (allMatch) Some(classId) else None();
+        } else {
+            None()
+        }
+    })
+}
+
 changeONodeInClass(graph : OGraph, classId : int, node : ONode) -> void {
     root = findORoot(graph, classId);
     switch (lookupTree(^(graph.oclasses), root)) {
@@ -125,7 +170,15 @@ changeONodeInClass(graph : OGraph, classId : int, node : ONode) -> void {
 insertONode(graph : OGraph, node : ONode) -> int {
 	// Get the next available ID
 	newId = ^(graph.next_id);
-	newClass = OClass(newId, node);
+
+    // Ensure belongsTo includes at least the primary domain ID if it's a new node with empty belongsTo
+    updatedNode = if (length(node.belongsTo) == 0) {
+        ONode(node.domain, node.op, node.children, [newId])
+    } else {
+        node
+    };
+
+	newClass = OClass(newId, updatedNode);
 	
 	// Add the node to the graph
 	graph.oclasses := setTree(^(graph.oclasses), newId, newClass);
@@ -217,4 +270,62 @@ setOClassString(graph : OGraph, eclass : int, value : string) -> void {
 // Find the eclass associated with a string value
 getOClassString(graph : OGraph, eclass : int) -> Maybe<string> {
     lookupTree(^(graph.string_values), eclass);
+}
+
+// Add a domain to a node's belongsTo list
+addDomainToONode(graph : OGraph, nodeId : int, domainId : int) -> void {
+    root = findORoot(graph, nodeId);
+    switch (lookupTree(^(graph.oclasses), root)) {
+        None(): {}; // Node doesn't exist
+        Some(oclass): {
+            // Only add if not already present
+            if (!contains(oclass.node.belongsTo, domainId)) {
+                updatedBelongsTo = concat(oclass.node.belongsTo, [domainId]);
+                updatedNode = ONode(
+                    oclass.node.domain,
+                    oclass.node.op,
+                    oclass.node.children,
+                    updatedBelongsTo
+                );
+                changeONodeInClass(graph, root, updatedNode);
+            }
+        }
+    }
+}
+
+// Remove a domain from a node's belongsTo list
+removeDomainFromONode(graph : OGraph, nodeId : int, domainId : int) -> void {
+    root = findORoot(graph, nodeId);
+    switch (lookupTree(^(graph.oclasses), root)) {
+        None(): {}; // Node doesn't exist
+        Some(oclass): {
+            // Filter out the domain to remove
+            updatedBelongsTo = filter(oclass.node.belongsTo, \id -> id != domainId);
+            updatedNode = ONode(
+                oclass.node.domain,
+                oclass.node.op,
+                oclass.node.children,
+                updatedBelongsTo
+            );
+            changeONodeInClass(graph, root, updatedNode);
+        }
+    }
+}
+
+// Check if a node belongs to a specific domain
+onodeHasDomain(graph : OGraph, nodeId : int, domainId : int) -> bool {
+    root = findORoot(graph, nodeId);
+    switch (lookupTree(^(graph.oclasses), root)) {
+        None(): false; // Node doesn't exist
+        Some(oclass): contains(oclass.node.belongsTo, domainId);
+    }
+}
+
+// Get all domains a node belongs to
+getONodeDomains(graph : OGraph, nodeId : int) -> [int] {
+    root = findORoot(graph, nodeId);
+    switch (lookupTree(^(graph.oclasses), root)) {
+        None(): []; // Node doesn't exist
+        Some(oclass): oclass.node.belongsTo;
+    }
 }

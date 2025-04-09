@@ -1,4 +1,10 @@
-Change ograph to have belongsTo so domains are tracked explicitly.
+Proof of concept:
+- Small language for Orbit
+- Pattern match
+- Evaluation with environment
+- Pretty printer
+- Extract minimal program
+
 Add Graphviz export of an Ograph.
 Change orbit to be a language by itself that parses without Mango switch at runtime. This language has nice syntax for the different languages we want.
 Wrap patterns and rewrites in () if necessary in syntax.
