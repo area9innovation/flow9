@@ -1,7 +1,7 @@
 Proof of concept:
 ☑ Small language for Orbit
 ☑ Driver, types
-- Evaluation with environment. TODO: Call
+- Evaluation with environment. Change call to use the closure in the lambda instead of a new registry0
 - Pattern match (unification)
 ☑ Pretty printer
 - Have `include` in Orbit

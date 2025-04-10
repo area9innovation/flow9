@@ -1,9 +1,11 @@
 import tools/orbit/orbit2core;
 import tools/orbit/orbit_env;
 import tools/orbit/prettyprint;
+import tools/orbit/utils;
 import tools/runcore/core_lib;
 import tools/runcore/value_util;
 import ds/tree;
+import ds/set;
 import math/math;
 import string;
 import fs/filesystem;
@@ -12,6 +14,20 @@ import maybe;
 export {
 	// Main interpreter function
 	interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv;
+	// Closure registry for storing closures during execution
+	closureRegistry : ref Tree<string, OrbClosure> = ref makeTree();
+}
+
+// Helper to register a closure and get its ID
+registerClosure(closure : OrbClosure) -> string {
+	id = "__closure::" + i2s(sizeTree(^closureRegistry));
+	closureRegistry := setTree(^closureRegistry, id, closure);
+	id; // Last expression is the return value
+}
+
+// Helper to get a closure from the registry
+getClosureFromRegistry(id : string) -> Maybe<OrbClosure> {
+	lookupTree(^closureRegistry, id);
 }
 
 // Helper function to perform CoreLib operations and convert types
@@ -37,6 +53,80 @@ performCoreUnOperation(env : OrbEnv, a : OrMath_expr, operation : (CoreValue) ->
 	
 	// Convert back to OrMath_expr
 	OrbEnv(env with result = coreValue2Orbit(resultCore));
+}
+
+// Evaluate a function call with the given arguments
+callFunction(env : OrbEnv, fn : OrMath_expr, args : [OrMath_expr]) -> OrbEnv {
+	// Evaluate arguments
+	evaluatedArgs = foldi(args, [], \i, acc, arg -> {
+		// Use the environment from the previous argument evaluation
+		envArg = if (i == 0) env else OrbEnv(env with vars = acc[i-1].vars);
+		// Evaluate the argument
+		resEnv = interpretOrbit(envArg, arg);
+		arrayPush(acc, resEnv);
+	});
+	
+	// Extract argument values
+	argValues = map(evaluatedArgs, \argEnv -> argEnv.result);
+	
+	// Get the environment after evaluating all arguments
+	finalArgEnv = if (length(evaluatedArgs) > 0) lastElement(evaluatedArgs, env) else env;
+	
+	// Handle the function based on its type
+	switch (fn) {
+		OrVariable(id): {
+			// Check if this is a closure reference
+			if (strContains(id, "__closure::")) {
+				switch (getClosureFromRegistry(id)) {
+					Some(closure): {
+						// Create new environment with captured variables
+						callEnv = OrbEnv(finalArgEnv with vars = closure.capturedEnv);
+						
+						// Bind arguments to parameters
+						boundEnv = foldi(args, callEnv, \i, accEnv, __ -> {
+							if (i < length(closure.params) && i < length(argValues)) {
+								// Get parameter name and argument value
+								paramName = closure.params[i].id;
+								argValue = argValues[i];
+								
+								// Bind parameter to argument value
+								bindVar(accEnv, paramName, argValue);
+							} else {
+								// If we have more or fewer arguments than parameters, just continue
+								accEnv;
+							}
+						});
+						
+						// Evaluate the function body in the new environment
+						interpretOrbit(boundEnv, closure.body);
+					}
+					None(): {
+						// Closure not found in registry
+						println("Closure not found: " + id);
+						finalArgEnv;
+					}
+				}
+			} else {
+				// Not a closure reference
+				println("Cannot call non-function value: " + prettyOrbit(fn));
+				finalArgEnv;
+			}
+		}
+		
+		OrLambda(bindings, params, body): {
+			// First convert the lambda to a closure (captures environment)
+			closureEnv = interpretOrbit(finalArgEnv, fn);
+			
+			// Then call the closure
+			callFunction(closureEnv, closureEnv.result, args);
+		}
+		
+		default: {
+			// Not a callable expression
+			println("Cannot call non-function value: " + prettyOrbit(fn));
+			finalArgEnv;
+		}
+	}
 }
 
 // Main interpreter function
@@ -65,8 +155,14 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 			switch (lookupVar(env, uid)) {
 				Some(value): ret(value);
 				None(): {
-					println("Variable not found: " + uid);
-					ret(OrInt(0));
+					// Check if it's a direct closure reference
+					if (strContains(uid, "__closure::")) {
+						// It's already a closure reference, return as is
+						ret(expr);
+					} else {
+						println("Variable not found: " + uid);
+						ret(OrInt(0));
+					}
 				}
 			}
 		} 
@@ -181,6 +277,35 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 			interpretOrbit(env1, b);
 		}
 		
+		OrFunction(fnExpr, argExprs): {
+			// Evaluate the function expression
+			envFn = interpretOrbit(env, fnExpr);
+			
+			// Call the function with arguments
+			callFunction(envFn, envFn.result, argExprs);
+		}
+		
+		OrLambda(bindings, params, body): {
+			// Create capture environment with all free variables from the current scope
+			// For now, we'll just capture all variables from the current environment
+			// In the future, we can optimize to only capture what's needed
+			capturedEnv = env.vars;
+			
+			// Process explicit environment bindings
+			bindingsEnv = fold(bindings, makeTree(), \acc, binding -> {
+				// Evaluate the binding expression in the current environment
+				bindingResult = interpretOrbit(env, binding.math_expr).result;
+				setTree(acc, binding.id, bindingResult);
+			});
+			
+			// Create the runtime closure object and register it
+			closure = OrbClosure(mergeTree(capturedEnv, bindingsEnv), params, body);
+			closureId = registerClosure(closure);
+			
+			// Return a variable referring to the closure
+			ret(OrVariable(closureId));
+		}
+		
 		OrCompose(math_expr1, math_expr2): todo();
 		OrDirectProduct(math_expr1, math_expr2): todo();
 		OrElementOf(math_expr1, math_expr2): todo();
@@ -190,13 +315,8 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 		OrExponent(math_expr1, math_expr2): todo();
 		OrField(math_expr, id): todo();
 		OrForall(math_exprs, math_expr): todo();
-		OrFunction(math_expr, math_exprs): todo();
-		OrFunctionType(math_expr1, math_expr2): todo();
 		OrGreekLetter(greek_letter): todo();
 		OrIntersection(math_expr1, math_expr2): todo();
-		OrLambda(bindings, ids, math_expr): {
-			todo();
-		}
 		OrMatch(math_expr1, math_expr2): todo();
 		OrRule(math_expr1, math_expr2, conditionals): todo();
 		OrSetComprehension(math_exprs, math_expr): todo();
@@ -204,6 +324,7 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 		OrSubscript(math_expr, subscript): todo();
 		OrSubset(math_expr1, math_expr2): todo();
 		OrSuperscript(math_expr, superscript): todo();
+		OrFunctionType(math_expr1, math_expr2): todo();
 		OrTypeAnnotation(math_expr1, math_expr2): todo();
 		OrTypeSubstitution(math_expr1, math_expr2, math_expr3): todo();
 		OrTypeVar(string1): todo();
