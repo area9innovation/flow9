@@ -7,7 +7,7 @@ Proof of concept:
 ☑ Use AST type to avoid evaluating arguments to special calls but keep as ASTs.
 - Have `include` in Orbit
 - Runtime function to read & parse files
-- Build ograph to/from OrMath_exp
+☑ Build ograph to/from OrMath_exp. Debug it
 - Extract minimal program from ograph via cost function
 
 Other languages:
