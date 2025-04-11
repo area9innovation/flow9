@@ -62,12 +62,7 @@ performCoreUnOperation(env : OrbEnv, a : OrMath_expr, operation : (CoreValue) ->
 
 // Attempt to call a function from RunCore
 callRunCoreFunction(env : OrbEnv, id : string, args : [OrMath_expr]) -> Maybe<OrbEnv> {
-    // Special case for prettyOrbit function which isn't in RunCore
-    if (id == "prettyOrbit" && length(args) == 1) {
-        // Convert the AST to a string and return
-        pretty = prettyOrbit(args[0]);
-        Some(OrbEnv(env with result = OrString(pretty)));
-    } else if (isCoreDefined(env.runCore, id)) {
+    if (isCoreDefined(env.runCore, id)) {
         // Convert orbit args to CoreValues
         coreArgs = map(args, orbit2CoreValue);
         
@@ -346,7 +341,7 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 		}
 		
 		OrFunction(fnExpr, argExprs): {
-			// Check if this is a constructor call (starts with uppercase)
+			// Check if this is a constructor call
 			if (isConstructor(expr)) {
 				// For constructors, we just evaluate the arguments and keep the constructor as is
 				evaluatedArgs = map(argExprs, \arg -> {
@@ -451,20 +446,33 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 					println("OGraph '" + name + "':\n" + str);
 					OrbEnv(envName with result = OrString(str));
 				}
-						else {
-							// Evaluate arguments first
-							evaluatedArgs = map(argExprs, \arg -> {
-								interpretOrbit(env, arg).result;
-							});
-							
-							// Try to call from RunCore
-							switch (callRunCoreFunction(env, id, evaluatedArgs)) {
-								Some(resultEnv): resultEnv;
-								None(): {
-									// Not in RunCore, proceed with normal function evaluation
-									envFn = interpretOrbit(env, fnExpr);
-									callFunction(envFn, envFn.result, argExprs);
+						else if (id == "prettyOrbit" && length(argExprs) == 1) {
+							// Special case for prettyOrbit function
+							envArg = interpretOrbit(env, argExprs[0]);
+							pretty = prettyOrbit(envArg.result);
+							OrbEnv(envArg with result = OrString(pretty));
+						} else {
+							// Check if function is defined in RunCore first
+							if (isCoreDefined(env.runCore, id)) {
+								// Only evaluate arguments for RunCore functions
+								evaluatedArgs = map(argExprs, \arg -> {
+									interpretOrbit(env, arg).result;
+								});
+								
+								// Try to call from RunCore
+									switch (callRunCoreFunction(env, id, evaluatedArgs)) {
+									Some(resultEnv): resultEnv;
+									None(): {
+										// Should not happen - we already checked isCoreDefined
+										println("WARNING: Core function " + id + " is defined but call failed");
+										envFn = interpretOrbit(env, fnExpr);
+										callFunction(envFn, envFn.result, argExprs);
+									}
 								}
+							} else {
+								// Not in RunCore, don't evaluate arguments, just pass them to callFunction
+								envFn = interpretOrbit(env, fnExpr);
+								callFunction(envFn, envFn.result, argExprs);
 							}
 						}
 					}
