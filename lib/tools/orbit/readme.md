@@ -2,7 +2,15 @@
 
 ## Introduction
 
-We present a novel approach to program transformation and optimization that unifies three powerful technologies: equivalence graphs (e-graphs) accelerated by WebGPU, a domain-unified rewriting system based on group theory, and Mango's concise grammar framework. This synthesis creates a powerful cross-language rewriting engine capable of applying formal mathematical theorems directly to program code. We call the resulting system Orbit.
+We present a novel approach to program transformation and optimization that unifies three powerful technologies: equivalence graphs (e-graphs), a domain-unified rewriting system based on group theory, and Mango's concise grammar framework. This synthesis creates a powerful cross-language rewriting engine capable of applying formal mathematical theorems directly to program code. We call the resulting system Orbit.
+
+## A programming language
+
+Orbit is a functional programming language, which integrates the o-graph to allow the advanced rewriting.
+
+You run orbit like this:
+
+flow9/lib/tools/orbit> flowcpp orbit.flow -- tests/pattern.orb
 
 ## Theoretical Foundation: Domains and Symmetry Groups
 

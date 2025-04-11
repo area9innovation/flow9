@@ -4,6 +4,7 @@ Proof of concept:
 - Evaluation with environment. Change call to use the closure in the lambda instead of a new registry0
 - Pattern match (unification)
 ☑ Pretty printer
+- Use AST type to avoid evaluating arguments to special calls but keep as ASTs.
 - Have `include` in Orbit
 - Runtime function to read & parse files
 - Build ograph to/from OrMath_exp

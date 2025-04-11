@@ -1,0 +1,244 @@
+import tools/orbit/orbit2core;
+import tools/orbit/orbit_env;
+import ds/tree;
+import string;
+
+export {
+	// Result of pattern matching: Either a mapping of variable bindings or a failure
+	PatternResult ::= PatternSuccess, PatternFailure;
+		PatternSuccess(bindings : Tree<string, OrMath_expr>); // Variable name to value binding
+		PatternFailure();
+
+	// Check if an expression is a constructor (capitalized function name)
+	isConstructor(expr : OrMath_expr) -> bool;
+
+	// Main unification function: Match a pattern against an expression
+	// Returns either PatternSuccess with variable bindings or PatternFailure
+	unify(pattern : OrMath_expr, expr : OrMath_expr) -> PatternResult;
+
+	// Apply variable bindings to an expression
+	applyBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>) -> OrMath_expr;
+
+	// Execute a match expression
+	executeMatch(env : OrbEnv, matchExpr : OrMath_expr, patterns : OrMath_expr) -> OrbEnv;
+}
+
+// Check if an expression is a constructor (capitalized function name)
+isConstructor(expr : OrMath_expr) -> bool {
+	switch (expr) {
+		OrFunction(fnExpr, args): {
+			switch (fnExpr) {
+				OrVariable(id): isUppercase(id);
+				OrIdentifier(id): isUppercase(id);
+				default: false;
+			}
+		}
+		default: false;
+	}
+}
+
+// Check if a string starts with an uppercase letter
+isUppercase(s : string) -> bool {
+	strlen(s) > 0 && isUppercaseChar(substring(s, 0, 1));
+}
+
+// Check if a character is uppercase
+isUppercaseChar(c : string) -> bool {
+	strContains("ABCDEFGHIJKLMNOPQRSTUVWXYZ", c);
+}
+
+// Main unification function: Match a pattern against an expression
+unify(pattern : OrMath_expr, expr : OrMath_expr) -> PatternResult {
+	switch (pattern) {
+		// Variable pattern: binds the variable to the expression
+		OrVariable(id): PatternSuccess(makeTree1(id, expr));
+		OrIdentifier(id): PatternSuccess(makeTree1(id, expr));
+
+		// Constructor pattern
+		OrFunction(fnPattern, patternArgs): {
+			switch (expr) {
+				OrFunction(fnExpr, exprArgs): {
+					// Check if function names match
+					patternFnName = switch (fnPattern) {
+						OrVariable(id): id;
+						OrIdentifier(id): id;
+						default: "";
+					}
+
+					exprFnName = switch (fnExpr) {
+						OrVariable(id): id;
+						OrIdentifier(id): id;
+						default: "";
+					}
+
+					if (patternFnName == exprFnName && length(patternArgs) == length(exprArgs)) {
+						// Recursively unify all arguments
+						unifyArgs(patternArgs, exprArgs, makeTree());
+					} else {
+						PatternFailure();
+					}
+				}
+				default: PatternFailure();
+			}
+		}
+
+		// Literals must match exactly
+		OrInt(i): switch (expr) { OrInt(j): if (i == j) PatternSuccess(makeTree()) else PatternFailure(); default: PatternFailure(); }
+		OrDouble(d): switch (expr) { OrDouble(e): if (d == e) PatternSuccess(makeTree()) else PatternFailure(); default: PatternFailure(); }
+		OrString(s): switch (expr) { OrString(t): if (s == t) PatternSuccess(makeTree()) else PatternFailure(); default: PatternFailure(); }
+
+		// Structured patterns
+		OrAdd(a, b): switch (expr) { OrAdd(c, d): unifyBinary(a, b, c, d); default: PatternFailure(); }
+		OrSubtract(a, b): switch (expr) { OrSubtract(c, d): unifyBinary(a, b, c, d); default: PatternFailure(); }
+		OrMultiply(a, b): switch (expr) { OrMultiply(c, d): unifyBinary(a, b, c, d); default: PatternFailure(); }
+		OrDivide(a, b): switch (expr) { OrDivide(c, d): unifyBinary(a, b, c, d); default: PatternFailure(); }
+		OrNegate(a): switch (expr) { OrNegate(b): unify(a, b); default: PatternFailure(); }
+
+		// Default case: patterns don't match
+		default: PatternFailure();
+	}
+}
+
+// Helper for unifying binary operations
+unifyBinary(patternLeft : OrMath_expr, patternRight : OrMath_expr, exprLeft : OrMath_expr, exprRight : OrMath_expr) -> PatternResult {
+	switch (unify(patternLeft, exprLeft)) {
+		PatternSuccess(leftBindings): {
+			switch (unify(patternRight, exprRight)) {
+				PatternSuccess(rightBindings): {
+					// Merge bindings, checking for consistency
+					mergeBindings(leftBindings, rightBindings);
+				}
+				PatternFailure(): PatternFailure();
+			}
+		}
+		PatternFailure(): PatternFailure();
+	}
+}
+
+// Merge two binding sets, checking for consistency
+mergeBindings(left : Tree<string, OrMath_expr>, right : Tree<string, OrMath_expr>) -> PatternResult {
+	fold(getTreeKeys(right), PatternSuccess(left), \acc, key -> {
+		switch (acc) {
+			PatternSuccess(accBindings): {
+				rightValue = lookupTreeDef(right, key, OrInt(0));
+				switch (lookupTree(accBindings, key)) {
+					Some(leftValue): {
+						// If the same variable is bound to different values, fail
+						if (isExprsEqual(leftValue, rightValue)) {
+							PatternSuccess(accBindings);
+						} else {
+							PatternFailure();
+						}
+					}
+					None(): {
+						// New binding is fine
+						PatternSuccess(setTree(accBindings, key, rightValue));
+					}
+				}
+			}
+			PatternFailure(): PatternFailure();
+		}
+	});
+}
+
+// Compare if two expressions are equal
+isExprsEqual(expr1 : OrMath_expr, expr2 : OrMath_expr) -> bool {
+	switch (expr1) {
+		OrInt(i): switch (expr2) { OrInt(j): i == j; default: false; }
+		OrDouble(d): switch (expr2) { OrDouble(e): d == e; default: false; }
+		OrString(s): switch (expr2) { OrString(t): s == t; default: false; }
+		OrVariable(id1): switch (expr2) { OrVariable(id2): id1 == id2; default: false; }
+		OrIdentifier(id1): switch (expr2) { OrIdentifier(id2): id1 == id2; default: false; }
+		// Add more cases as needed
+		default: false; // For now, consider complex expressions not equal
+	}
+}
+
+// Helper for unifying function/constructor arguments
+unifyArgs(patternArgs : [OrMath_expr], exprArgs : [OrMath_expr], accBindings : Tree<string, OrMath_expr>) -> PatternResult {
+	if (length(patternArgs) == 0) {
+		PatternSuccess(accBindings);
+	} else {
+		// Unify the first argument
+		switch (unify(patternArgs[0], exprArgs[0])) {
+			PatternSuccess(firstBindings): {
+				// Merge bindings
+				switch (mergeBindings(accBindings, firstBindings)) {
+					PatternSuccess(mergedBindings): {
+						// Recursively unify remaining arguments
+						unifyArgs(tail(patternArgs), tail(exprArgs), mergedBindings);
+					}
+					PatternFailure(): PatternFailure();
+				}
+			}
+			PatternFailure(): PatternFailure();
+		}
+	}
+}
+
+// Apply variable bindings to an expression
+applyBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>) -> OrMath_expr {
+	switch (expr) {
+		OrVariable(id): {
+			switch (lookupTree(bindings, id)) {
+				Some(val): val;
+				None(): expr;
+			}
+		}
+		OrIdentifier(id): {
+			switch (lookupTree(bindings, id)) {
+				Some(val): val;
+				None(): expr;
+			}
+		}
+		OrFunction(fnExpr, args): {
+			OrFunction(
+				applyBindings(fnExpr, bindings),
+				map(args, \arg -> applyBindings(arg, bindings))
+			);
+		}
+		OrAdd(a, b): OrAdd(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrSubtract(a, b): OrSubtract(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrMultiply(a, b): OrMultiply(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrDivide(a, b): OrDivide(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrNegate(a): OrNegate(applyBindings(a, bindings));
+		// Add other expression types as needed
+
+		default: expr; // For literals (Int, Double, String) and other expressions, return as is
+	}
+}
+
+// Execute a match expression
+// Takes the already evaluated expression to match and the pattern to match against
+executeMatch(env : OrbEnv, exprValue : OrMath_expr, patterns : OrMath_expr) -> OrbEnv {
+	// Extract pattern cases from the patterns expression
+	switch (patterns) {
+		// Handle simple pattern for now
+		OrRule(patternExpr, bodyExpr, conditionals): {
+			// Try to unify the pattern with the expression
+			switch (unify(patternExpr, exprValue)) {
+				PatternSuccess(bindings): {
+					// Apply bindings and evaluate the body
+					boundBody = applyBindings(bodyExpr, bindings);
+					
+					// Update environment with pattern variables
+					boundEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
+						bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
+					});
+					
+					// Return environment with updated bindings and the body to be evaluated by interpreter
+					OrbEnv(boundEnv with result = boundBody);
+				}
+				PatternFailure(): {
+					// TODO: Add support for multiple patterns
+					println("Pattern match failed");
+					env;
+				}
+			}
+		}
+		default: {
+			println("Invalid match pattern structure");
+			env;
+		}
+	}
+}
