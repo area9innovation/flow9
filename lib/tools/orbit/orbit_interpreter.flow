@@ -11,6 +11,7 @@ import math/math;
 import string;
 import fs/filesystem;
 import maybe;
+import tools/orbit/orbit_ast;
 
 export {
 	// Main interpreter function
@@ -78,12 +79,38 @@ callRunCoreFunction(env : OrbEnv, id : string, args : [OrMath_expr]) -> Maybe<Or
 
 // Evaluate a function call with the given arguments
 callFunction(env : OrbEnv, fn : OrMath_expr, args : [OrMath_expr]) -> OrbEnv {
-	// Evaluate arguments
+	// First determine if we need to lazily evaluate any arguments
+	paramTypes = switch (fn) {
+		OrLambda(__, params, __): params;
+		OrVariable(id): {
+			// Check if this is a closure reference
+			if (strContains(id, "__closure::")) {
+				switch (getClosureFromRegistry(id)) {
+					Some(closure): closure.params;
+					None(): [];
+				};
+			} else {
+				[];
+			}
+		}
+		default: [];
+	};
+	
+	// Process arguments - either evaluate them or keep as AST
 	evaluatedArgs = foldi(args, [], \i, acc, arg -> {
 		// Use the environment from the previous argument evaluation
 		envArg = if (i == 0) env else OrbEnv(env with vars = acc[i-1].vars);
-		// Evaluate the argument
-		resEnv = interpretOrbit(envArg, arg);
+		
+		// Check if this parameter should be lazily evaluated
+		lazyEval = i < length(paramTypes) && isAstType(paramTypes[i].type_annotations);
+		
+		// If lazy evaluation, just wrap the argument, otherwise evaluate it
+		resEnv = if (lazyEval) {
+			OrbEnv(envArg with result = arg);
+		} else {
+			interpretOrbit(envArg, arg);
+		};
+		
 		arrayPush(acc, resEnv);
 	});
 	
@@ -323,18 +350,24 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 				// Direct function name in RunCore?
 				switch (fnExpr) {
 					OrIdentifier(id): {
-						// Evaluate arguments first
-						evaluatedArgs = map(argExprs, \arg -> {
-							interpretOrbit(env, arg).result;
-						});
-						
-						// Try to call from RunCore
-						switch (callRunCoreFunction(env, id, evaluatedArgs)) {
-							Some(resultEnv): resultEnv;
-							None(): {
-								// Not in RunCore, proceed with normal function evaluation
-								envFn = interpretOrbit(env, fnExpr);
-								callFunction(envFn, envFn.result, argExprs);
+						// Special case for eval function
+						if (id == "eval" && length(argExprs) == 1) {
+							// Directly evaluate the expression without converting to CoreValue
+							interpretOrbit(env, argExprs[0]);
+						} else {
+							// Evaluate arguments first
+							evaluatedArgs = map(argExprs, \arg -> {
+								interpretOrbit(env, arg).result;
+							});
+							
+							// Try to call from RunCore
+							switch (callRunCoreFunction(env, id, evaluatedArgs)) {
+								Some(resultEnv): resultEnv;
+								None(): {
+									// Not in RunCore, proceed with normal function evaluation
+									envFn = interpretOrbit(env, fnExpr);
+									callFunction(envFn, envFn.result, argExprs);
+								}
 							}
 						}
 					}
