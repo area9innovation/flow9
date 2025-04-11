@@ -57,6 +57,25 @@ performCoreUnOperation(env : OrbEnv, a : OrMath_expr, operation : (CoreValue) ->
 	OrbEnv(env with result = coreValue2Orbit(resultCore));
 }
 
+// Attempt to call a function from RunCore
+callRunCoreFunction(env : OrbEnv, id : string, args : [OrMath_expr]) -> Maybe<OrbEnv> {
+    if (isCoreDefined(env.runCore, id)) {
+        // Convert orbit args to CoreValues
+        coreArgs = map(args, orbit2CoreValue);
+        
+        // Call the RunCore function
+        switch (evalCoreFn(env.runCore, id, coreArgs)) {
+            Some(result): {
+                // Convert result back to orbit expression
+                Some(OrbEnv(env with result = coreValue2Orbit(result)));
+            }
+            None(): None();
+        }
+    } else {
+        None();
+    }
+}
+
 // Evaluate a function call with the given arguments
 callFunction(env : OrbEnv, fn : OrMath_expr, args : [OrMath_expr]) -> OrbEnv {
 	// Evaluate arguments
@@ -77,41 +96,47 @@ callFunction(env : OrbEnv, fn : OrMath_expr, args : [OrMath_expr]) -> OrbEnv {
 	// Handle the function based on its type
 	switch (fn) {
 		OrVariable(id): {
-			// Check if this is a closure reference
-			if (strContains(id, "__closure::")) {
-				switch (getClosureFromRegistry(id)) {
-					Some(closure): {
-						// Create new environment with captured variables
-						callEnv = OrbEnv(finalArgEnv with vars = closure.capturedEnv);
-						
-						// Bind arguments to parameters
-						boundEnv = foldi(args, callEnv, \i, accEnv, __ -> {
-							if (i < length(closure.params) && i < length(argValues)) {
-								// Get parameter name and argument value
-								paramName = closure.params[i].id;
-								argValue = argValues[i];
+			// First check if this function is defined in RunCore
+			switch (callRunCoreFunction(finalArgEnv, id, argValues)) {
+				Some(resultEnv): resultEnv;
+				None(): {
+					// If not in RunCore, check if this is a closure reference
+					if (strContains(id, "__closure::")) {
+						switch (getClosureFromRegistry(id)) {
+							Some(closure): {
+								// Create new environment with captured variables
+								callEnv = OrbEnv(finalArgEnv with vars = closure.capturedEnv);
 								
-								// Bind parameter to argument value
-								bindVar(accEnv, paramName, argValue);
-							} else {
-								// If we have more or fewer arguments than parameters, just continue
-								accEnv;
+								// Bind arguments to parameters
+								boundEnv = foldi(args, callEnv, \i, accEnv, __ -> {
+									if (i < length(closure.params) && i < length(argValues)) {
+										// Get parameter name and argument value
+										paramName = closure.params[i].id;
+										argValue = argValues[i];
+										
+										// Bind parameter to argument value
+										bindVar(accEnv, paramName, argValue);
+									} else {
+										// If we have more or fewer arguments than parameters, just continue
+										accEnv;
+									}
+								});
+								
+								// Evaluate the function body in the new environment
+								interpretOrbit(boundEnv, closure.body);
 							}
-						});
-						
-						// Evaluate the function body in the new environment
-						interpretOrbit(boundEnv, closure.body);
-					}
-					None(): {
-						// Closure not found in registry
-						println("Closure not found: " + id);
+							None(): {
+								// Closure not found in registry
+								println("Closure not found: " + id);
+								finalArgEnv;
+							}
+						}
+					} else {
+						// Not a closure reference or RunCore function
+						println("Cannot call non-function value: " + prettyOrbit(fn));
 						finalArgEnv;
 					}
 				}
-			} else {
-				// Not a closure reference
-				println("Cannot call non-function value: " + prettyOrbit(fn));
-				finalArgEnv;
 			}
 		}
 		
@@ -148,8 +173,14 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 			switch (lookupVar(env, id)) {
 				Some(value): ret(value);
 				None(): {
-					println("Variable not found: " + id);
-					ret(OrInt(0));
+					// Check if it's a RunCore function name
+					if (isCoreDefined(env.runCore, id)) {
+						// Return a variable with the same name - will be resolved when called
+						ret(OrVariable(id));
+					} else {
+						println("Variable not found: " + id);
+						ret(OrInt(0));
+					}
 				}
 			}
 		}
@@ -288,11 +319,32 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 				});
 				ret(OrFunction(fnExpr, evaluatedArgs));
 			} else {
-				// Evaluate the function expression
-				envFn = interpretOrbit(env, fnExpr);
-				
-				// Call the function with arguments
-				callFunction(envFn, envFn.result, argExprs);
+				// Direct function name in RunCore?
+				switch (fnExpr) {
+					OrIdentifier(id): {
+						// Evaluate arguments first
+						evaluatedArgs = map(argExprs, \arg -> {
+							interpretOrbit(env, arg).result;
+						});
+						
+						// Try to call from RunCore
+						switch (callRunCoreFunction(env, id, evaluatedArgs)) {
+							Some(resultEnv): resultEnv;
+							None(): {
+								// Not in RunCore, proceed with normal function evaluation
+								envFn = interpretOrbit(env, fnExpr);
+								callFunction(envFn, envFn.result, argExprs);
+							}
+						}
+					}
+					default: {
+						// Evaluate the function expression
+						envFn = interpretOrbit(env, fnExpr);
+						
+						// Call the function with arguments
+						callFunction(envFn, envFn.result, argExprs);
+					}
+				}
 			}
 		}
 		
