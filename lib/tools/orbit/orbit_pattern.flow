@@ -267,6 +267,7 @@ unifyArgs(patternArgs : [OrMath_expr], exprArgs : [OrMath_expr], accBindings : T
 // Apply variable bindings to an expression
 applyBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>) -> OrMath_expr {
 	switch (expr) {
+		// Variable substitution - core of pattern matching
 		OrVariable(id): {
 			switch (lookupTree(bindings, id)) {
 				Some(val): val;
@@ -279,20 +280,72 @@ applyBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>) -> OrMat
 				None(): expr;
 			}
 		}
+
+		// Function application and constructors
 		OrFunction(fnExpr, args): {
 			OrFunction(
 				applyBindings(fnExpr, bindings),
 				map(args, \arg -> applyBindings(arg, bindings))
 			);
 		}
+
+		// Arithmetic operations
 		OrAdd(a, b): OrAdd(applyBindings(a, bindings), applyBindings(b, bindings));
 		OrSubtract(a, b): OrSubtract(applyBindings(a, bindings), applyBindings(b, bindings));
 		OrMultiply(a, b): OrMultiply(applyBindings(a, bindings), applyBindings(b, bindings));
 		OrDivide(a, b): OrDivide(applyBindings(a, bindings), applyBindings(b, bindings));
 		OrNegate(a): OrNegate(applyBindings(a, bindings));
-		// Add other expression types as needed
+		OrExponent(a, b): OrExponent(applyBindings(a, bindings), applyBindings(b, bindings));
 
-		default: expr; // For literals (Int, Double, String) and other expressions, return as is
+		// Comparison operations
+		OrEquals(a, b): OrEquals(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrNotEquals(a, b): OrNotEquals(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrGreaterThan(a, b): OrGreaterThan(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrGreaterEquals(a, b): OrGreaterEquals(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrLessThan(a, b): OrLessThan(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrLessEquals(a, b): OrLessEquals(applyBindings(a, bindings), applyBindings(b, bindings));
+
+		// Logical operations
+		OrLogicalAnd(a, b): OrLogicalAnd(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrLogicalOr(a, b): OrLogicalOr(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrLogicalNot(a): OrLogicalNot(applyBindings(a, bindings));
+
+		// Control flow
+		OrIfElse(cond, thenExpr, elseExpr): OrIfElse(
+			applyBindings(cond, bindings),
+			applyBindings(thenExpr, bindings),
+			applyBindings(elseExpr, bindings)
+		);
+
+		// Structure and sequence
+		OrLambda(lambdaBindings, params, body): {
+			// Transform the lambda bindings
+			newBindings = map(lambdaBindings, \binding -> {
+				OrEnvBinding(binding.id, applyBindings(binding.math_expr, bindings));
+			});
+			// Keep parameter names but transform body
+			OrLambda(newBindings, params, applyBindings(body, bindings));
+		}
+		OrSequence(a, b): OrSequence(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrLet(idType, val): OrLet(idType, applyBindings(val, bindings));
+
+		// Set operations
+		OrSetLiteral(items): OrSetLiteral(map(items, \item -> applyBindings(item, bindings)));
+		OrUnion(a, b): OrUnion(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrIntersection(a, b): OrIntersection(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrElementOf(a, b): OrElementOf(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrSubset(a, b): OrSubset(applyBindings(a, bindings), applyBindings(b, bindings));
+
+		// Other operations that need variable substitution
+		OrMatch(matchExpr, patterns): OrMatch(applyBindings(matchExpr, bindings), applyBindings(patterns, bindings));
+		OrRule(a, b, conds): OrRule(
+			applyBindings(a, bindings), 
+			applyBindings(b, bindings),
+			map(conds, \cond -> OrConditional(applyBindings(cond.math_expr, bindings)))
+		);
+
+		// Default: primitives and unimplemented expressions don't need substitution
+		default: expr; // For literals (Int, Double, String, Bool) and other expressions, return as is
 	}
 }
 
@@ -301,7 +354,7 @@ applyBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>) -> OrMat
 executeMatch(env : OrbEnv, exprValue : OrMath_expr, patterns : OrMath_expr) -> OrbEnv {
 	// Extract pattern cases from the patterns expression
 	switch (patterns) {
-		// Handle simple pattern for now
+		// Handle a single rule
 		OrRule(patternExpr, bodyExpr, conditionals): {
 			// Debug information
 			println("Trying to match pattern: " + prettyOrbit(patternExpr));
@@ -310,20 +363,27 @@ executeMatch(env : OrbEnv, exprValue : OrMath_expr, patterns : OrMath_expr) -> O
 			// Try to unify the pattern with the expression
 			switch (unify(patternExpr, exprValue)) {
 				PatternSuccess(bindings): {
-					println("Pattern matched successfully");
-					// Apply bindings and evaluate the body
-					boundBody = applyBindings(bodyExpr, bindings);
-					
-					// Update environment with pattern variables
-					boundEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
-						bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
-					});
-					
-					// Return environment with updated bindings and the body to be evaluated by interpreter
-					OrbEnv(boundEnv with result = boundBody);
+					// Check condition if present (simplified for now)
+					if (isConditionSatisfied(conditionals, bindings, env)) {
+						println("Pattern matched successfully");
+						// Apply bindings and evaluate the body
+						boundBody = applyBindings(bodyExpr, bindings);
+						
+						// Update environment with pattern variables
+						boundEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
+							bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
+						});
+						
+						// Return environment with updated bindings and the body to be evaluated by interpreter
+						OrbEnv(boundEnv with result = boundBody);
+					} else {
+						println("Pattern matched but condition failed");
+						// Act as if pattern didn't match
+						OrbEnv(env with result = exprValue);
+					}
 				}
 				PatternFailure(): {
-					// If we have a default case, use it
+					// Pattern didn't match
 					println("Pattern match failed - using default case");
 					// Return the original expression as fallback
 					OrbEnv(env with result = exprValue);
@@ -335,5 +395,18 @@ executeMatch(env : OrbEnv, exprValue : OrMath_expr, patterns : OrMath_expr) -> O
 			// Return original value to prevent loops
 			OrbEnv(env with result = exprValue);
 		}
+	}
+}
+
+// Simplified conditional evaluation for now
+isConditionSatisfied(conditionals : [OrConditional], bindings : Tree<string, OrMath_expr>, env : OrbEnv) -> bool {
+	if (length(conditionals) == 0) {
+		// No conditions means always satisfied
+		true;
+	} else {
+		// For simplicity, we're just returning true
+		// In a real implementation, we'd evaluate each condition
+		println("Condition evaluation not fully implemented yet");
+		true;
 	}
 }
