@@ -10,6 +10,23 @@ TRACE=0
 VERBOSE=0
 TIMEOUT=10  # Timeout in seconds
 
+# Function to clean up output files by removing timing information and exit codes
+# which cause unnecessary diffs in git
+clean_output_file() {
+  local file="$1"
+  # Create a temporary file
+  local tmpfile="${file}.tmp"
+  
+  # Remove timing information, exit code reporting, and irrelevant warnings
+  sed -E '/done in [0-9]+.[0-9]+s/d' "$file" | 
+    sed -E '/cgihost->quitCode == [0-9]+/d' | 
+    sed -E '/app->exec() == [0-9]+/d' | 
+    sed -E '/QStandardPaths: wrong permissions/d' > "$tmpfile"
+  
+  # Replace original file with cleaned version
+  mv "$tmpfile" "$file"
+}
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -106,6 +123,9 @@ for TEST_FILE in $TEST_FILES; do
   
   # Save the output
   echo "$OUTPUT" > "$OUTPUT_FILE"
+  
+  # Clean up the output file to remove timing and exit code information
+  clean_output_file "$OUTPUT_FILE"
   
   # Update counters
   TOTAL_TESTS=$((TOTAL_TESTS + 1))
