@@ -21,7 +21,8 @@ export {
 	applyBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>) -> OrMath_expr;
 
 	// Execute a match expression
-	executeMatch(env : OrbEnv, matchExpr : OrMath_expr, patterns : OrMath_expr) -> OrbEnv;
+	executeMatch(env : OrbEnv, matchExpr : OrMath_expr, patterns : OrMath_expr, 
+		interpreter : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv;
 }
 
 // Check if an expression is a constructor (capitalized function name)
@@ -353,13 +354,16 @@ applyBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>) -> OrMat
 
 // Execute a match expression
 // Takes the already evaluated expression to match and the patterns to match against
-executeMatch(env : OrbEnv, exprValue : OrMath_expr, patterns : OrMath_expr) -> OrbEnv {
+// interpreter parameter: Function to interpret expressions with conditions
+executeMatch(env : OrbEnv, exprValue : OrMath_expr, patterns : OrMath_expr, 
+	interpreter : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
 	// Implement pattern matching with multiple patterns
-	tryPatterns(patterns, env, exprValue);
+	tryPatterns(patterns, env, exprValue, interpreter);
 }
 
 // Try to match a sequence of patterns
-tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr) -> OrbEnv {
+tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr, 
+	interpreter : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
 	switch (patterns) {
 		// Try a single rule
 		OrRule(patternExpr, bodyExpr, conditionals): {
@@ -380,8 +384,8 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr) -> Or
 			// Try to unify the pattern with the expression
 			switch (unify(patternExpr, exprValue)) {
 				PatternSuccess(bindings): {
-					// Check condition if present (simplified for now)
-						if (isConditionSatisfied(conditionals, bindings, env)) {
+					// Check condition if present
+						if (isConditionSatisfied(conditionals, bindings, env, interpreter)) {
 						// Apply bindings and evaluate the body
 						boundBody = applyBindings(^actualBodyRef, bindings);
 						
@@ -406,7 +410,7 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr) -> Or
 						Some(next): {
 
 							// Extract the next pattern and try it
-							tryPatterns(next, env, exprValue);
+							tryPatterns(next, env, exprValue, interpreter);
 						}
 						None(): {
 							// No next pattern, return the original expression as fallback
@@ -420,13 +424,13 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr) -> Or
 		// Handle a sequence of patterns - try left first, then right if left fails
 		OrSequence(left, right): {
 			// Try the left pattern first
-			leftResult = tryPatterns(left, env, exprValue);
+			leftResult = tryPatterns(left, env, exprValue, interpreter);
 			
 			// If we get back the original expression, it means no pattern matched
 			// Try the right pattern in that case
 			if (leftResult.result == exprValue) {
 				// Try the right pattern
-				tryPatterns(right, leftResult, exprValue);
+				tryPatterns(right, leftResult, exprValue, interpreter);
 			} else {
 				// A pattern matched on the left side
 				leftResult;
@@ -440,15 +444,43 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr) -> Or
 	}
 }
 
-// Simplified conditional evaluation for now
-isConditionSatisfied(conditionals : [OrConditional], bindings : Tree<string, OrMath_expr>, env : OrbEnv) -> bool {
+// Evaluate conditions in pattern matching rules
+isConditionSatisfied(conditionals : [OrConditional], bindings : Tree<string, OrMath_expr>, env : OrbEnv,
+	interpreter : (OrbEnv, OrMath_expr) -> OrbEnv) -> bool {
 	if (length(conditionals) == 0) {
 		// No conditions means always satisfied
 		true;
 	} else {
-		// For simplicity, we're just returning true
-		// In a real implementation, we'd evaluate each condition
-		println("Condition evaluation not fully implemented yet");
-		true;
+		// Evaluate each condition with the bindings applied
+		fold(conditionals, true, \allSatisfied, cond -> {
+			// Short-circuit if previous condition failed
+			if (!allSatisfied) false 
+			else {
+				// Apply the bindings to the condition
+				boundCondition = applyBindings(cond.math_expr, bindings);
+				
+				// Create a new environment with the bindings
+				condEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
+					bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
+				});
+				
+				// Evaluate the condition expression using the passed interpreter function
+				evalResult = interpreter(condEnv, boundCondition);
+				
+				// Convert result to boolean
+				switch (evalResult.result) {
+					OrBool(b): b;
+					OrInt(i): i != 0;
+					OrDouble(d): d != 0.0;
+					OrString(s): s != "";
+					default: {
+						println("Warning: Non-boolean condition evaluated to " + 
+							evalResult.result.structname + ": " + 
+							prettyOrbit(evalResult.result));
+						false;
+					}
+				}
+			}
+		});
 	}
 }
