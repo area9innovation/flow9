@@ -828,6 +828,10 @@ class TextClip extends NativeWidgetClip {
 			var selectionStartPrev = nativeWidget.selectionStart;
 			var selectionEndPrev = nativeWidget.selectionEnd;
 			nativeWidget.value = getSanitizedText(text);
+			if (text != nativeWidget.value) {
+				untyped __js__("this.text = this.nativeWidget.value");
+				emit('input', nativeWidget.value);
+			}
 			setSelection(selectionStartPrev, selectionEndPrev);
 		}
 
@@ -2208,7 +2212,7 @@ class TextClip extends NativeWidgetClip {
 	private function getSanitizedText(text : String) : String {
 		if (preventXSS) {
 			// We have to allow simple '<', '>' and tag-like (but without attributes) texts
-			untyped __js__("text = text.match(/<.*[\\s, //].*>/) ? DOMPurify.sanitize(text) : text");
+			untyped __js__("text = /<[^>]*[,// ][^>]*>/.test(text) ? DOMPurify.sanitize(text) : text");
 		}
 		return text;
 	}
