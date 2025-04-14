@@ -32,6 +32,70 @@ With tracing enabled, you'll see detailed output for each interpretation step, i
 
 Without tracing (the default), only the final result will be displayed, making the output cleaner and more concise for normal usage.
 
+### Using the Test Suite
+
+Orbit includes a comprehensive test suite to verify correct behavior and prevent regressions. The test suite automatically runs all .orb files in a specified directory and captures their outputs.
+
+#### Running the Test Suite
+
+To run the test suite on all tests in the default 'tests' directory:
+
+```
+flow9/lib/tools/orbit> ./run_orbit_tests.sh
+```
+
+This script executes all .orb files in the 'tests' directory and saves the outputs to the 'test_output' directory.
+
+#### Test Suite Options
+
+The test script supports several command-line parameters:
+
+```
+flow9/lib/tools/orbit> ./run_orbit_tests.sh --test-dir=custom_tests --output-dir=results --trace --verbose
+```
+
+- `--test-dir=DIR`: Specifies the directory containing test files (default: 'tests')
+- `--output-dir=DIR`: Specifies the directory to save test outputs (default: 'test_output')
+- `--trace`: Enables detailed tracing during test execution
+- `--verbose`: Shows detailed output for each test while running
+- `--help`: Displays usage information
+
+#### Test Suite Output
+
+The test suite generates:
+
+1. Individual output files for each test in the output directory
+2. A summary file (_summary.txt) with test results and statistics
+3. Console output showing which tests passed or failed
+
+#### Using for Regression Testing
+
+The test suite is designed to work with version control systems like git for regression testing:
+
+1. Run the test suite to generate baseline outputs
+2. Commit these outputs to your repository
+3. After making changes, run the test suite again
+4. Use `git diff` to see if any test outputs have changed
+
+This workflow makes it easy to identify unintended changes in behavior during development.
+
+#### Examples
+
+Run all tests in the default directory:
+```
+./run_orbit_tests.sh
+```
+
+Run a specific set of tests with detailed output:
+```
+./run_orbit_tests.sh --test-dir=tests/math --verbose
+```
+
+Turn on tracing for step-by-step execution details:
+```
+./run_orbit_tests.sh --trace
+```
+
 ## Theoretical Foundation: Domains and Symmetry Groups
 
 At the heart of our system lies the insight that computational domains themselves—whether programming languages, algebraic structures, or formal systems—should be first-class citizens in the rewriting process. By representing domains explicitly within our e-graph structure, we enable:

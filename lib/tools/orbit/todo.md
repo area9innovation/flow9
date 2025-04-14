@@ -72,7 +72,7 @@
 - Consider parallel processing for e-graph saturation
 
 ## Testing
-- ✅ Create comprehensive test suite infrastructure with automated testing
+- ✅ Create comprehensive test suite infrastructure with automated testing (run_orbit_tests.sh)
 - Fix failing tests:
   - `advanced_runcore_test.orb` - Parse error with array syntax
   - `closure.orb` - Parse error with lambda syntax
