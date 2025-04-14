@@ -8,9 +8,29 @@ We present a novel approach to program transformation and optimization that unif
 
 Orbit is a functional programming language, which integrates the o-graph to allow the advanced rewriting.
 
+### Running Orbit
+
 You run orbit like this:
 
+```
 flow9/lib/tools/orbit> flowcpp orbit.flow -- tests/pattern.orb
+```
+
+### Enabling Tracing
+
+Orbit provides a detailed tracing feature that shows all steps of interpretation, which is useful for debugging and understanding program execution. To enable tracing, use the `trace=1` URL parameter:
+
+```
+flow9/lib/tools/orbit> flowcpp orbit.flow -- trace=1 tests/pattern.orb
+```
+
+With tracing enabled, you'll see detailed output for each interpretation step, including:
+- Expression types being processed
+- Variable lookups and bindings
+- Function calls and their arguments
+- Evaluation of sub-expressions
+
+Without tracing (the default), only the final result will be displayed, making the output cleaner and more concise for normal usage.
 
 ## Theoretical Foundation: Domains and Symmetry Groups
 
