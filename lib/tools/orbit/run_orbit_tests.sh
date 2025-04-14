@@ -6,9 +6,11 @@
 # Default settings
 TEST_DIR="tests"
 OUTPUT_DIR="test_output"
+EXPECTED_DIR="expected_output"  # Directory for expected outputs
 TRACE=0
 VERBOSE=0
 TIMEOUT=10  # Timeout in seconds
+GENERATE_EXPECTED=0  # Flag to generate expected output files
 
 # Function to clean up output files by removing timing information and exit codes
 # which cause unnecessary diffs in git
@@ -50,6 +52,10 @@ while [[ $# -gt 0 ]]; do
       VERBOSE=1
       shift
       ;;
+    --generate-expected)
+      GENERATE_EXPECTED=1
+      shift
+      ;;
     --help)
       echo "Orbit Test Suite Runner"
       echo "Usage: $0 [options]"
@@ -59,6 +65,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --timeout=SECONDS Maximum time to allow a test to run (default: 10 seconds)"
       echo "  --trace           Enable detailed tracing of interpretation steps"
       echo "  --verbose         Show detailed output for each test"
+      echo "  --generate-expected  Generate expected output files from current outputs"
       echo "  --help            Show this help message"
       exit 0
       ;;
@@ -78,6 +85,12 @@ fi
 
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
+
+# Create expected output directory if generating expected outputs
+if [ $GENERATE_EXPECTED -eq 1 ]; then
+  mkdir -p "$EXPECTED_DIR"
+  echo "Will generate expected output files in: $EXPECTED_DIR"
+fi
 
 # Find all .orb files in the test directory
 TEST_FILES=$(find "$TEST_DIR" -name "*.orb" | sort)
@@ -136,14 +149,47 @@ for TEST_FILE in $TEST_FILES; do
     echo "TIMEOUT after $TIMEOUT seconds" >> "$OUTPUT_FILE"
     FAILED_TESTS=$((FAILED_TESTS + 1))
     FAILURE_LIST="$FAILURE_LIST $FILE_NAME(timeout)"
-  # Check if the test passed
-  elif [ $EXIT_CODE -eq 0 ] && echo "$OUTPUT" | grep -q "Result:"; then
-    STATUS="PASSED"
-    PASSED_TESTS=$((PASSED_TESTS + 1))
   else
-    STATUS="FAILED"
-    FAILED_TESTS=$((FAILED_TESTS + 1))
-    FAILURE_LIST="$FAILURE_LIST $FILE_NAME"
+    # Check for expected output file
+    EXPECTED_FILE="$EXPECTED_DIR/${FILE_NAME%.orb}.expected"
+    
+    if [ -f "$EXPECTED_FILE" ]; then
+      # If expected output exists, compare with actual output
+      if diff -q "$OUTPUT_FILE" "$EXPECTED_FILE" > /dev/null; then
+        STATUS="PASSED"
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+      else
+        STATUS="OUTPUT-MISMATCH"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        FAILURE_LIST="$FAILURE_LIST $FILE_NAME(output-mismatch)"
+        
+        # Add diff to output file for debugging if verbose
+        if [ $VERBOSE -eq 1 ]; then
+          echo "\n==== EXPECTED OUTPUT DIFF ====" >> "$OUTPUT_FILE"
+          diff "$OUTPUT_FILE" "$EXPECTED_FILE" >> "$OUTPUT_FILE"
+        fi
+      fi
+    else
+      # Fall back to the old way of checking
+      if [ $EXIT_CODE -eq 0 ] && echo "$OUTPUT" | grep -q "Result:"; then
+        STATUS="PASSED"
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+      else
+        STATUS="FAILED"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        FAILURE_LIST="$FAILURE_LIST $FILE_NAME"
+      fi
+    fi
+  fi
+  
+  # Generate expected output if requested
+  if [ $GENERATE_EXPECTED -eq 1 ]; then
+    # Only generate expected output for tests that pass with the old criteria
+    if [ $EXIT_CODE -eq 0 ] && echo "$OUTPUT" | grep -q "Result:"; then
+      EXPECTED_FILE="$EXPECTED_DIR/${FILE_NAME%.orb}.expected"
+      cp "$OUTPUT_FILE" "$EXPECTED_FILE"
+      echo "Generated expected output for: $FILE_NAME"
+    fi
   fi
   
   # Add to summary
