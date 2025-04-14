@@ -73,12 +73,24 @@
 
 ## Testing
 - ✅ Create comprehensive test suite infrastructure with automated testing (run_orbit_tests.sh)
+- ✅ Add timeout mechanism to prevent infinite loops in tests (default: 10 seconds)
+- Baseline test results: 10 tests pass, 12 tests fail (including 3 timeouts)
 - Fix failing tests:
-  - `advanced_runcore_test.orb` - Parse error with array syntax
-  - `closure.orb` - Parse error with lambda syntax
-  - `custom_functions_test.orb` - Parse error in function definition
-  - `lazy.orb` - Parse error with curly braces
-  - Several ograph-related tests fail with various errors
+  - Syntax parsing errors:
+    - `advanced_runcore_test.orb` - Parse error with array syntax
+    - `closure.orb` - Parse error with lambda syntax
+    - `custom_functions_test.orb` - Parse error in function definition
+    - `lazy.orb` - Parse error with curly braces
+  - Timeout issues (potential infinite loops):
+    - `lazy_ograph.orb` - Times out after 10 seconds
+    - `lazy_ograph_fixed.orb` - Times out after 10 seconds
+    - `pretty_test.orb` - Times out after 10 seconds
+  - Other failures (implementation issues):
+    - `ograph_demo.orb` - Execution failed
+    - `pattern_matching.orb` - Execution failed
+    - `rewrite_patterns.orb` - Execution failed
+    - `runcore_test.orb` - Execution failed
+    - `simple_ograph.orb` - Execution failed
 - Add regression tests for pattern matching edge cases
 - Test cross-domain transformations thoroughly
 - Create benchmarks for performance evaluation
