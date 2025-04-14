@@ -385,7 +385,7 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr,
 			switch (unify(patternExpr, exprValue)) {
 				PatternSuccess(bindings): {
 					// Check condition if present
-						if (isConditionSatisfied(conditionals, bindings, env, interpreter)) {
+					if (isConditionSatisfied(conditionals, bindings, env, interpreter)) {
 						// Apply bindings and evaluate the body
 						boundBody = applyBindings(^actualBodyRef, bindings);
 						
@@ -397,9 +397,17 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr,
 						// Return environment with updated bindings and the body to be evaluated by interpreter
 						OrbEnv(boundEnv with result = boundBody);
 					} else {
-
-						// Act as if pattern didn't match
-						OrbEnv(env with result = exprValue);
+						// If condition failed, try next rule if available
+						switch (^nextRuleRef) {
+							Some(next): {
+								// Extract the next pattern and try it
+								tryPatterns(next, env, exprValue, interpreter);
+							}
+							None(): {
+								// No next pattern, return the original expression as fallback
+								OrbEnv(env with result = exprValue);
+							}
+						}
 					}
 				}
 				PatternFailure(): {
@@ -408,7 +416,6 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr,
 					// Check if there's a next pattern in a sequence
 					switch (^nextRuleRef) {
 						Some(next): {
-
 							// Extract the next pattern and try it
 							tryPatterns(next, env, exprValue, interpreter);
 						}
@@ -451,6 +458,11 @@ isConditionSatisfied(conditionals : [OrConditional], bindings : Tree<string, OrM
 		// No conditions means always satisfied
 		true;
 	} else {
+		// Create a new environment with the bindings first
+		condEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
+			bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
+		});
+
 		// Evaluate each condition with the bindings applied
 		fold(conditionals, true, \allSatisfied, cond -> {
 			// Short-circuit if previous condition failed
@@ -459,13 +471,10 @@ isConditionSatisfied(conditionals : [OrConditional], bindings : Tree<string, OrM
 				// Apply the bindings to the condition
 				boundCondition = applyBindings(cond.math_expr, bindings);
 				
-				// Create a new environment with the bindings
-				condEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
-					bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
-				});
 				
 				// Evaluate the condition expression using the passed interpreter function
 				evalResult = interpreter(condEnv, boundCondition);
+				
 				
 				// Convert result to boolean
 				switch (evalResult.result) {
