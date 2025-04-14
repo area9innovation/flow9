@@ -9,39 +9,217 @@ import tools/orbit/prettyprint;
 import tools/orbit/orbit_ast;
 import tools/orbit/ograph;
 import tools/orbit/orbit_simple_ograph;
+import fs/filesystem;
+import sys/system;
+import ds/tree;
+
+// Run a single Orbit file and return 1 if there was an error, 0 otherwise
+runOrbitFile(f : string, tracingEnabled : bool, captureOutput : bool, outputDir : string) -> Pair<int, string> {
+	program = getFileContent(f);
+	res : Pair<OrMath_expr, string> = parseCompiledMango(f, program, orbit_parse_orbit_compiled, flow(0));
+	
+	// Start capturing output if needed
+	captureBuffer = ref "";
+	originalPrintln = println;
+	if (captureOutput) {
+		println = \s -> { captureBuffer := ^captureBuffer + s + "\n"; };
+	}
+	
+	// Process the file
+	if (res.second != "") {
+		println(f + ": " + res.second);
+		if (captureOutput) {
+			// Reset println to original behavior
+			println = originalPrintln;
+		}
+		Pair(1, ^captureBuffer);
+	} else {
+		// Create environment with tracing enabled/disabled according to URL parameter
+		env = setTracing(emptyOrbEnv(), tracingEnabled);
+		
+		val = interpretOrbit(env, res.first);
+		println("Result: " + prettyOrbit(val.result));
+		
+		// If capturing output, save it to a file
+		if (captureOutput) {
+			// Reset println to original behavior
+			println = originalPrintln;
+			
+			// Get the base filename without path and extension
+			baseName = fileNameOnly(f);
+			
+			// Create the output directory if it doesn't exist
+			ensureDirectoryExists(outputDir);
+			
+			// Create the output file path
+			outputFile = pathCombine(outputDir, baseName + ".output");
+			
+			// Save the captured output
+			writeOrbFile(outputFile, ^captureBuffer);
+		}
+		
+		Pair(0, ^captureBuffer);
+	}
+}
+
+// Run all Orbit files in a directory as a test suite
+runTestSuite(testDir : string, outputDir : string, tracingEnabled : bool) -> int {
+	// Get all .orb files in the test directory
+	testFiles = filter(readDirectory(testDir), \f -> endsWith(f, ".orb"));
+	
+	// Sort files for consistent ordering
+	sortedFiles = sort(testFiles);
+	
+	// Summary content to be printed directly to console
+	summaryContent = ref "Orbit Test Suite Results\n"
+		+ "======================\n"
+		+ "Run at: " + d2s(timestamp()) + "\n\n";
+	
+	// Track test results
+	passing = ref [];
+	failing = ref [];
+	testOutputs = ref [];
+	
+	// Run each test file
+	iter(sortedFiles, \f -> {
+		// Full path to the test file
+		testFile = pathCombine(testDir, f);
+		
+		println("Running test: " + f);
+		result = runOrbitFile(testFile, tracingEnabled, true, "");  // Don't try to write files directly
+		
+		// Store the test result
+		passed = result.first == 0;
+		if (passed) {
+			passing := arrayPush(^passing, f);
+		} else {
+			failing := arrayPush(^failing, f);
+		}
+		
+		// Store the output with the filename for later
+		testOutputs := arrayPush(^testOutputs, Pair(f, result.second));
+		
+		// Log test result
+		resultStr = f + ": " + (if (passed) "PASSED" else "FAILED") + "\n";
+		summaryContent := ^summaryContent + resultStr;
+	});
+	
+	// Add summary statistics
+	summaryStr = "\nTests run: " + i2s(length(sortedFiles)) + ", Passed: " + i2s(length(^passing)) + ", Failed: " + i2s(length(^failing)) + "\n";
+	summaryContent := ^summaryContent + summaryStr;
+	
+	// List failing tests if any
+	if (length(^failing) > 0) {
+		failedStr = "Failed tests: " + strGlue(^failing, ", ") + "\n";
+		summaryContent := ^summaryContent + failedStr;
+	}
+	
+	// Print full summary
+	println("\n" + ^summaryContent);
+	
+	// For each test output, print it with a separator
+	if (getUrlParameter("print-outputs") == "1") {
+		iter(^testOutputs, \testOutput -> {
+			println("\n===================================================");
+			println("TEST OUTPUT FOR: " + testOutput.first);
+			println("===================================================");
+			println(testOutput.second);
+		});
+	} else {
+		println("\nUse 'print-outputs=1' to show detailed test outputs");
+	}
+	
+	// Return number of failed tests
+	length(^failing);
+}
+
+// Helper to write file content
+writeOrbFile(file : string, content : string) -> void {
+	// Get directory path
+	dirPath = dirName(file);
+	
+	// Make sure directory exists
+	if (dirPath != "") {
+		createDirResult = createDirectory(dirPath);
+		if (createDirResult != "") {
+			println("Warning: Could not create directory '" + dirPath + "': " + createDirResult);
+		}
+	}
+	
+	// Delete first if exists to avoid any issues
+	if (fileExists(file)) {
+		error = deleteFile(file);
+		if (error != "") {
+			println("Warning: Could not delete existing file: " + error);
+		}
+	}
+	
+	// Write the file
+	writeTextFile(file, content);
+	
+	// Verify file was written
+	if (!fileExists(file)) {
+		println("Warning: Failed to write file: " + file);
+	} else {
+		println("Successfully wrote output to: " + file);
+	}
+}
+
+// Native function to write text file
+native writeTextFile : io (path : string, content : string) -> void = Native.writeTextFile;
 
 main() {
-	files = filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
-	if (files == []) {
+	// Parse command line arguments
+	args = filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
+	
+	// Check if running test suite mode
+	if (getUrlParameter("test-suite") == "1") {
+		// If in test suite mode, run all tests in the specified directory
+		specifiedTestDir = getUrlParameter("test-dir");
+		specifiedOutputDir = getUrlParameter("output-dir");
+		
+		// Set defaults if not specified
+		actualTestDir = if (specifiedTestDir == "") "tests" else specifiedTestDir;
+		actualOutputDir = if (specifiedOutputDir == "") "test_output" else specifiedOutputDir;
+		
+		// Check if testDir exists
+		if (!isDirectory(actualTestDir)) {
+			println("Error: Test directory '" + actualTestDir + "' does not exist or is not a directory");
+			quit(1);
+		}
+		
+		// Check if tracing is enabled
+		tracingEnabled = getUrlParameter("trace") == "1";
+		
+		// Run test suite
+		println("Running Orbit test suite from directory: " + actualTestDir);
+		println("Saving output to: " + actualOutputDir);
+		
+		failedTests = runTestSuite(actualTestDir, actualOutputDir, tracingEnabled);
+		
+		// Print summary
+		println("Test suite completed. Failed tests: " + i2s(failedTests));
+		quit(failedTests);
+	} else if (args == []) {
+		// Regular mode but no files specified
 		println("Usage: orbit <file>");
 		println("Optional parameters:");
 		println("  trace=1 - Enable detailed tracing of interpretation steps");
-	}
-	
-	// Check if tracing is enabled via URL parameter
-	tracingEnabled = getUrlParameter("trace") == "1";
-	if (tracingEnabled) {
-		println("Tracing enabled: Will show all interpretation steps");
-	}
-	
-	errors = sum(map(files, \f -> {
-		program = getFileContent(f);
-		res : Pair<OrMath_expr, string> = parseCompiledMango(f, program, orbit_parse_orbit_compiled, flow(0));
-		if (res.second != "") {
-			println(f + ": " + res.second);
-			1
-		} else {
-			//println("Interpreting:");
-			//println(prettyOrbit(res.first));
-			
-			// Create environment with tracing enabled/disabled according to URL parameter
-			env = setTracing(emptyOrbEnv(), tracingEnabled);
-			
-			val = interpretOrbit(env, res.first);
-			println("Result: " + prettyOrbit(val.result));
-			0;
+		println("\nTest suite mode:");
+		println("  test-suite=1 - Run all .orb files in test directory as tests");
+		println("  test-dir=<path> - Directory containing test files (default: 'tests')");
+		println("  output-dir=<path> - Directory to save test outputs (default: 'test_output')");
+		quit(0);
+	} else {
+		// Regular mode with files specified
+		// Check if tracing is enabled via URL parameter
+		tracingEnabled = getUrlParameter("trace") == "1";
+		if (tracingEnabled) {
+			println("Tracing enabled: Will show all interpretation steps");
 		}
-	}));
-	quit(errors);
+		
+		// Run each file
+		errors = sum(map(args, \f -> runOrbitFile(f, tracingEnabled, false, "").first));
+		quit(errors);
+	}
 }
-

@@ -8,6 +8,7 @@
 ✅ Pretty printer
 ✅ Use AST type to avoid evaluating arguments to special calls but keep as ASTs
 ✅ Build ograph to/from OrMath_exp. Debug it
+✅ Add test suite mode to orbit.flow with automated test execution and reporting
 
 ## High Priority Tasks
 - Add proper error handling and reporting for pattern matching failures
@@ -71,7 +72,13 @@
 - Consider parallel processing for e-graph saturation
 
 ## Testing
-- Create comprehensive test suite for all language features
+- ✅ Create comprehensive test suite infrastructure with automated testing
+- Fix failing tests:
+  - `advanced_runcore_test.orb` - Parse error with array syntax
+  - `closure.orb` - Parse error with lambda syntax
+  - `custom_functions_test.orb` - Parse error in function definition
+  - `lazy.orb` - Parse error with curly braces
+  - Several ograph-related tests fail with various errors
 - Add regression tests for pattern matching edge cases
 - Test cross-domain transformations thoroughly
 - Create benchmarks for performance evaluation
