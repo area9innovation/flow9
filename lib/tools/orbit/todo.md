@@ -17,6 +17,7 @@
   - Pattern matching for SetComprehension
 - Implement full conditional evaluation in pattern matching (the `if` part of rules)
 - ✅ Support multiple patterns with fallthrough in match expressions
+- ✅ Improve string concatenation for mixed types in Orbit expressions
 - Add proper error handling and reporting for pattern matching failures
 - Extract minimal program from ograph via cost function
 - Runtime function to read & parse files
@@ -32,6 +33,8 @@
 - Strengthen pattern variable reuse constraints (ensure consistency when same variable appears multiple times)
 - Add wildcard pattern support (`_` matching anything)
 - Support for deep pattern matching with nested patterns
+- ✅ Support multiple patterns with fallthrough in match expressions
+- ✅ Handle constructor pattern matching correctly
 - Improve pattern matching performance with more efficient algorithms
 - Add pattern guards for more complex conditional matching
 - Implement destructuring patterns for complex data structures
