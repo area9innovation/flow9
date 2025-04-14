@@ -1,30 +1,28 @@
 # Orbit TODO List
 
 ## Core Functionality
-☑ Small language for Orbit
-☑ Driver, types
-☑ Evaluation with environment. Change call to use the closure in the lambda instead of a new registry
-☑ Pattern match (unification)
-☑ Pretty printer
-☑ Use AST type to avoid evaluating arguments to special calls but keep as ASTs
-☑ Build ograph to/from OrMath_exp. Debug it
+✅ Small language for Orbit
+✅ Driver, types
+✅ Evaluation with environment. Change call to use the closure in the lambda instead of a new registry
+✅ Pattern match (unification)
+✅ Pretty printer
+✅ Use AST type to avoid evaluating arguments to special calls but keep as ASTs
+✅ Build ograph to/from OrMath_exp. Debug it
 
 ## High Priority Tasks
-- Complete missing pattern matching for remaining expression types:
-  - ✅ Pattern matching for type annotations and type substitutions
-  - ✅ Pattern matching for rewrite rules (Rule, Equivalence, Entailment)
-  - ✅ Pattern matching for quantifiers (Forall, Exists)
-  - ✅ Pattern matching for SetComprehension
-- ✅ Implement full conditional evaluation in pattern matching (the `if` part of rules)
-- ✅ Support multiple patterns with fallthrough in match expressions
-- ✅ Improve string concatenation for mixed types in Orbit expressions
 - Add proper error handling and reporting for pattern matching failures
 - Extract minimal program from ograph via cost function
 - Runtime function to read & parse files
 - Implement `include` in Orbit
 
 ## Interpreter Extensions
-- Complete all TODOs in `interpretOrbit` (many expression types are unimplemented)
+- Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
+  - Mathematical operations: `OrExponent`, `OrCompose`, `OrDirectProduct`
+  - Set operations: `OrSetLiteral`, `OrSetComprehension`, `OrUnion`, `OrIntersection`, `OrSubset`, `OrElementOf`
+  - Rewrite rules: `OrRule`, `OrEquivalence`, `OrEntailment`
+  - Type operations: `OrTypeAnnotation`, `OrTypeSubstitution`, `OrTypeVar`, `OrFunctionType`
+  - Quantifiers: `OrForall`, `OrExists`
+  - Notation elements: `OrGreekLetter`, `OrSubscript`, `OrSuperscript`, `OrField`
 - Better error handling and recovery mechanisms
 
 ## Pattern Matching Improvements
