@@ -56,6 +56,7 @@ flow9/lib/tools/orbit> ./run_orbit_tests.sh --test-dir=custom_tests --output-dir
 
 - `--test-dir=DIR`: Specifies the directory containing test files (default: 'tests')
 - `--output-dir=DIR`: Specifies the directory to save test outputs (default: 'test_output')
+- `--timeout=SECONDS`: Maximum time to allow a test to run before timing out (default: 10 seconds)
 - `--trace`: Enables detailed tracing during test execution
 - `--verbose`: Shows detailed output for each test while running
 - `--help`: Displays usage information

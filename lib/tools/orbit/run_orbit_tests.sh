@@ -8,6 +8,7 @@ TEST_DIR="tests"
 OUTPUT_DIR="test_output"
 TRACE=0
 VERBOSE=0
+TIMEOUT=10  # Timeout in seconds
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -18,6 +19,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --output-dir=*)
       OUTPUT_DIR="${1#*=}"
+      shift
+      ;;
+    --timeout=*)
+      TIMEOUT="${1#*=}"
       shift
       ;;
     --trace)
@@ -34,6 +39,7 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --test-dir=DIR    Directory containing test files (default: 'tests')"
       echo "  --output-dir=DIR  Directory to save test outputs (default: 'test_output')"
+      echo "  --timeout=SECONDS Maximum time to allow a test to run (default: 10 seconds)"
       echo "  --trace           Enable detailed tracing of interpretation steps"
       echo "  --verbose         Show detailed output for each test"
       echo "  --help            Show this help message"
@@ -94,8 +100,8 @@ for TEST_FILE in $TEST_FILES; do
     TRACE_PARAM="trace=1"
   fi
   
-  # Run orbit with the test file and capture the output
-  OUTPUT=$(flowcpp orbit.flow -- $TRACE_PARAM "$TEST_FILE" 2>&1)
+  # Run orbit with the test file and capture the output with timeout
+  OUTPUT=$(timeout --kill-after=2 $TIMEOUT flowcpp orbit.flow -- $TRACE_PARAM "$TEST_FILE" 2>&1)
   EXIT_CODE=$?
   
   # Save the output
@@ -104,8 +110,14 @@ for TEST_FILE in $TEST_FILES; do
   # Update counters
   TOTAL_TESTS=$((TOTAL_TESTS + 1))
   
+  # Check timeout status
+  if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 137 ]; then
+    STATUS="TIMEOUT"
+    echo "TIMEOUT after $TIMEOUT seconds" >> "$OUTPUT_FILE"
+    FAILED_TESTS=$((FAILED_TESTS + 1))
+    FAILURE_LIST="$FAILURE_LIST $FILE_NAME(timeout)"
   # Check if the test passed
-  if [ $EXIT_CODE -eq 0 ] && echo "$OUTPUT" | grep -q "Result:"; then
+  elif [ $EXIT_CODE -eq 0 ] && echo "$OUTPUT" | grep -q "Result:"; then
     STATUS="PASSED"
     PASSED_TESTS=$((PASSED_TESTS + 1))
   else
