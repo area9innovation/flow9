@@ -74,24 +74,35 @@
 ## Testing
 - ✅ Create comprehensive test suite infrastructure with automated testing (run_orbit_tests.sh)
 - ✅ Add timeout mechanism to prevent infinite loops in tests (default: 10 seconds)
-- Baseline test results: 10 tests pass, 12 tests fail (including 3 timeouts)
+- ✅ Make test suite output stable by filtering out timing information and exit codes
+- ✅ Add expected output validation to catch incorrect behavior even when exit code is 0
+- ✅ Add `--generate-expected` flag for easy creation of expected output files
+
+- Updated test results: 11 tests pass, 11 tests fail (including 5 timeouts and 3 output mismatches)
 - Fix failing tests:
   - Syntax parsing errors:
     - `advanced_runcore_test.orb` - Parse error with array syntax
-    - `closure.orb` - Parse error with lambda syntax
     - `custom_functions_test.orb` - Parse error in function definition
-    - `lazy.orb` - Parse error with curly braces
+    - `runcore_test.orb` - Parse error with array syntax
   - Timeout issues (potential infinite loops):
     - `lazy_ograph.orb` - Times out after 10 seconds
     - `lazy_ograph_fixed.orb` - Times out after 10 seconds
+    - `ograph_demo.orb` - Times out after 10 seconds
     - `pretty_test.orb` - Times out after 10 seconds
-  - Other failures (implementation issues):
-    - `ograph_demo.orb` - Execution failed
-    - `pattern_matching.orb` - Execution failed
-    - `rewrite_patterns.orb` - Execution failed
-    - `runcore_test.orb` - Execution failed
-    - `simple_ograph.orb` - Execution failed
-- Add regression tests for pattern matching edge cases
-- Test cross-domain transformations thoroughly
-- Create benchmarks for performance evaluation
-- Add property-based testing for ograph invariants
+    - `simple_ograph.orb` - Times out after 10 seconds
+  - Output mismatch issues (functionality not correctly implemented):
+    - `lazy.orb` - Errors in lazy evaluation implementation
+    - `match_test.orb` - TODO in pattern match interpreter
+    - `pattern_matching.orb` - Type handling errors
+
+- Next steps for testing improvements:
+  - Fix tests with output mismatches (implement lazy evaluation correctly)
+  - Implement proper handler for OrRule interpretation to fix match_test.orb
+  - Fix type handling in pattern matching to properly handle int vs string
+  - Add test cases for edge cases in pattern matching
+  - Update expected output files as implementation improves
+  - Add regression tests for pattern matching edge cases
+  - Test cross-domain transformations thoroughly
+  - Create benchmarks for performance evaluation
+  - Add property-based testing for ograph invariants
+  - Consider a more structured test result format (JSON) for better analysis
