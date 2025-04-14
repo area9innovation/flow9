@@ -11,11 +11,11 @@
 
 ## High Priority Tasks
 - Complete missing pattern matching for remaining expression types:
-  - Pattern matching for type annotations and type substitutions
-  - Pattern matching for rewrite rules (Rule, Equivalence, Entailment)
-  - Pattern matching for quantifiers (Forall, Exists)
-  - Pattern matching for SetComprehension
-- Implement full conditional evaluation in pattern matching (the `if` part of rules)
+  - ✅ Pattern matching for type annotations and type substitutions
+  - ✅ Pattern matching for rewrite rules (Rule, Equivalence, Entailment)
+  - ✅ Pattern matching for quantifiers (Forall, Exists)
+  - ✅ Pattern matching for SetComprehension
+- ✅ Implement full conditional evaluation in pattern matching (the `if` part of rules)
 - ✅ Support multiple patterns with fallthrough in match expressions
 - ✅ Improve string concatenation for mixed types in Orbit expressions
 - Add proper error handling and reporting for pattern matching failures

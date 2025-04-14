@@ -126,6 +126,27 @@ unify(pattern : OrMath_expr, expr : OrMath_expr) -> PatternResult {
 			}
 			default: PatternFailure();
 		}
+		// Pattern matching for SetComprehension
+		OrSetComprehension(items, predicate): switch (expr) {
+			OrSetComprehension(exprItems, exprPredicate): {
+				// Match both items array and the predicate expression
+				if (length(items) == length(exprItems)) {
+					switch (unifyArgs(items, exprItems, makeTree())) {
+						PatternSuccess(itemsBindings): {
+							// Now match the predicate
+							switch (unify(predicate, exprPredicate)) {
+								PatternSuccess(predicateBindings): mergeBindings(itemsBindings, predicateBindings);
+								PatternFailure(): PatternFailure();
+							}
+						}
+						PatternFailure(): PatternFailure();
+					}
+				} else {
+					PatternFailure();
+				}
+			}
+			default: PatternFailure();
+		}
 
 		// Control flow patterns
 		OrIfElse(cond, then, els): switch (expr) { 
@@ -191,6 +212,233 @@ unify(pattern : OrMath_expr, expr : OrMath_expr) -> PatternResult {
 					}
 				} else {
 					PatternFailure();
+				}
+			}
+			default: PatternFailure();
+		}
+
+		// Pattern matching for type annotations
+		OrTypeAnnotation(expr1, type1): switch (expr) {
+			OrTypeAnnotation(expr2, type2): {
+				// Match both the expression and its type annotation
+				switch (unify(expr1, expr2)) {
+					PatternSuccess(exprBindings): {
+						switch (unify(type1, type2)) {
+							PatternSuccess(typeBindings): mergeBindings(exprBindings, typeBindings);
+							PatternFailure(): PatternFailure();
+						}
+					}
+					PatternFailure(): PatternFailure();
+				}
+			}
+			default: PatternFailure();
+		}
+
+		// Pattern matching for type substitutions
+		OrTypeSubstitution(expr1, id1, replacement1): switch (expr) {
+			OrTypeSubstitution(expr2, id2, replacement2): {
+				// Match the base expression, the ID being substituted, and the replacement
+				switch (unify(expr1, expr2)) {
+					PatternSuccess(exprBindings): {
+						switch (unify(id1, id2)) {
+							PatternSuccess(idBindings): {
+								switch (unify(replacement1, replacement2)) {
+									PatternSuccess(replBindings): {
+										// Need to merge all three binding sets
+										switch (mergeBindings(exprBindings, idBindings)) {
+											PatternSuccess(temp): mergeBindings(temp, replBindings);
+											PatternFailure(): PatternFailure();
+										}
+									}
+									PatternFailure(): PatternFailure();
+								}
+							}
+							PatternFailure(): PatternFailure();
+						}
+					}
+					PatternFailure(): PatternFailure();
+				}
+			}
+			default: PatternFailure();
+		}
+
+		// Pattern matching for rewrite rules
+		OrRule(lhs1, rhs1, conds1): switch (expr) {
+			OrRule(lhs2, rhs2, conds2): {
+				// Match left-hand side, right-hand side, and conditions
+				switch (unify(lhs1, lhs2)) {
+					PatternSuccess(lhsBindings): {
+						switch (unify(rhs1, rhs2)) {
+							PatternSuccess(rhsBindings): {
+								// For conditions, we need to check if they're the same length first
+								if (length(conds1) != length(conds2)) {
+									PatternFailure();
+								} else {
+									// Match each condition and accumulate bindings
+									condBindings = fold(mapi(conds1, \i, cond1 -> {
+										unify(cond1.math_expr, conds2[i].math_expr);
+									}), PatternSuccess(makeTree()), \acc, res -> {
+										switch (acc) {
+											PatternSuccess(accBindings): {
+												switch (res) {
+													PatternSuccess(newBindings): mergeBindings(accBindings, newBindings);
+													PatternFailure(): PatternFailure();
+												}
+											}
+											PatternFailure(): PatternFailure();
+										}
+									});
+									
+									// Merge all bindings
+									switch (condBindings) {
+										PatternSuccess(cBindings): {
+											switch (mergeBindings(lhsBindings, rhsBindings)) {
+												PatternSuccess(temp): mergeBindings(temp, cBindings);
+												PatternFailure(): PatternFailure();
+											}
+										}
+										PatternFailure(): PatternFailure();
+									}
+								}
+							}
+							PatternFailure(): PatternFailure();
+						}
+					}
+					PatternFailure(): PatternFailure();
+				}
+			}
+			default: PatternFailure();
+		}
+
+		// Pattern matching for Equivalence (same as Rule but symmetric)
+		OrEquivalence(lhs1, rhs1, conds1): switch (expr) {
+			OrEquivalence(lhs2, rhs2, conds2): {
+				// Same implementation as for Rule
+				switch (unify(lhs1, lhs2)) {
+					PatternSuccess(lhsBindings): {
+						switch (unify(rhs1, rhs2)) {
+							PatternSuccess(rhsBindings): {
+								if (length(conds1) != length(conds2)) {
+									PatternFailure();
+								} else {
+									condBindings = fold(mapi(conds1, \i, cond1 -> {
+										unify(cond1.math_expr, conds2[i].math_expr);
+									}), PatternSuccess(makeTree()), \acc, res -> {
+										switch (acc) {
+											PatternSuccess(accBindings): {
+												switch (res) {
+													PatternSuccess(newBindings): mergeBindings(accBindings, newBindings);
+													PatternFailure(): PatternFailure();
+												}
+											}
+											PatternFailure(): PatternFailure();
+										}
+									});
+									
+									switch (condBindings) {
+										PatternSuccess(cBindings): {
+											switch (mergeBindings(lhsBindings, rhsBindings)) {
+												PatternSuccess(temp): mergeBindings(temp, cBindings);
+												PatternFailure(): PatternFailure();
+											}
+										}
+										PatternFailure(): PatternFailure();
+									}
+								}
+							}
+							PatternFailure(): PatternFailure();
+						}
+					}
+					PatternFailure(): PatternFailure();
+				}
+			}
+			default: PatternFailure();
+		}
+
+		// Pattern matching for Entailment (same structure as Rule/Equivalence)
+		OrEntailment(lhs1, rhs1, conds1): switch (expr) {
+			OrEntailment(lhs2, rhs2, conds2): {
+				// Same implementation as for Rule/Equivalence
+				switch (unify(lhs1, lhs2)) {
+					PatternSuccess(lhsBindings): {
+						switch (unify(rhs1, rhs2)) {
+							PatternSuccess(rhsBindings): {
+								if (length(conds1) != length(conds2)) {
+									PatternFailure();
+								} else {
+									condBindings = fold(mapi(conds1, \i, cond1 -> {
+										unify(cond1.math_expr, conds2[i].math_expr);
+									}), PatternSuccess(makeTree()), \acc, res -> {
+										switch (acc) {
+											PatternSuccess(accBindings): {
+												switch (res) {
+													PatternSuccess(newBindings): mergeBindings(accBindings, newBindings);
+													PatternFailure(): PatternFailure();
+												}
+											}
+											PatternFailure(): PatternFailure();
+										}
+									});
+									
+									switch (condBindings) {
+										PatternSuccess(cBindings): {
+											switch (mergeBindings(lhsBindings, rhsBindings)) {
+												PatternSuccess(temp): mergeBindings(temp, cBindings);
+												PatternFailure(): PatternFailure();
+											}
+										}
+										PatternFailure(): PatternFailure();
+									}
+								}
+							}
+							PatternFailure(): PatternFailure();
+						}
+					}
+					PatternFailure(): PatternFailure();
+				}
+			}
+			default: PatternFailure();
+		}
+
+		// Pattern matching for quantifiers (Forall)
+		OrForall(vars1, body1): switch (expr) {
+			OrForall(vars2, body2): {
+				// Check that we have the same number of variables
+				if (length(vars1) != length(vars2)) {
+					PatternFailure();
+				} else {
+					// Match the variables array first
+					switch (unifyArgs(vars1, vars2, makeTree())) {
+						PatternSuccess(varsBindings): {
+							// Then match the body
+							switch (unify(body1, body2)) {
+								PatternSuccess(bodyBindings): mergeBindings(varsBindings, bodyBindings);
+								PatternFailure(): PatternFailure();
+							}
+						}
+						PatternFailure(): PatternFailure();
+					}
+				}
+			}
+			default: PatternFailure();
+		}
+
+		// Pattern matching for quantifiers (Exists)
+		OrExists(vars1, body1): switch (expr) {
+			OrExists(vars2, body2): {
+				// Same implementation as for Forall
+				if (length(vars1) != length(vars2)) {
+					PatternFailure();
+				} else {
+					switch (unifyArgs(vars1, vars2, makeTree())) {
+						PatternSuccess(varsBindings): {
+							switch (unify(body1, body2)) {
+								PatternSuccess(bodyBindings): mergeBindings(varsBindings, bodyBindings);
+								PatternFailure(): PatternFailure();
+							}
+						}
+						PatternFailure(): PatternFailure();
+					}
 				}
 			}
 			default: PatternFailure();
@@ -336,14 +584,51 @@ applyBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>) -> OrMat
 		OrIntersection(a, b): OrIntersection(applyBindings(a, bindings), applyBindings(b, bindings));
 		OrElementOf(a, b): OrElementOf(applyBindings(a, bindings), applyBindings(b, bindings));
 		OrSubset(a, b): OrSubset(applyBindings(a, bindings), applyBindings(b, bindings));
+		OrSetComprehension(items, predicate): OrSetComprehension(
+			map(items, \item -> applyBindings(item, bindings)),
+			applyBindings(predicate, bindings)
+		);
 
-		// Other operations that need variable substitution
-		OrMatch(matchExpr, patterns): OrMatch(applyBindings(matchExpr, bindings), applyBindings(patterns, bindings));
+		// Type operations
+		OrTypeAnnotation(expr1, type1): OrTypeAnnotation(
+			applyBindings(expr1, bindings),
+			applyBindings(type1, bindings)
+		);
+		OrTypeSubstitution(expr1, id1, replacement1): OrTypeSubstitution(
+			applyBindings(expr1, bindings),
+			applyBindings(id1, bindings),
+			applyBindings(replacement1, bindings)
+		);
+
+		// Rewrite rules
 		OrRule(a, b, conds): OrRule(
 			applyBindings(a, bindings), 
 			applyBindings(b, bindings),
 			map(conds, \cond -> OrConditional(applyBindings(cond.math_expr, bindings)))
 		);
+		OrEquivalence(a, b, conds): OrEquivalence(
+			applyBindings(a, bindings), 
+			applyBindings(b, bindings),
+			map(conds, \cond -> OrConditional(applyBindings(cond.math_expr, bindings)))
+		);
+		OrEntailment(a, b, conds): OrEntailment(
+			applyBindings(a, bindings), 
+			applyBindings(b, bindings),
+			map(conds, \cond -> OrConditional(applyBindings(cond.math_expr, bindings)))
+		);
+
+		// Quantifiers
+		OrForall(vars, body): OrForall(
+			map(vars, \v -> applyBindings(v, bindings)),
+			applyBindings(body, bindings)
+		);
+		OrExists(vars, body): OrExists(
+			map(vars, \v -> applyBindings(v, bindings)),
+			applyBindings(body, bindings)
+		);
+
+		// Other operations that need variable substitution
+		OrMatch(matchExpr, patterns): OrMatch(applyBindings(matchExpr, bindings), applyBindings(patterns, bindings));
 
 		// Default: primitives and unimplemented expressions don't need substitution
 		default: expr; // For literals (Int, Double, String, Bool) and other expressions, return as is
