@@ -101,7 +101,7 @@ for TEST_FILE in $TEST_FILES; do
   fi
   
   # Run orbit with the test file and capture the output with timeout
-  OUTPUT=$(timeout --kill-after=2 $TIMEOUT flowcpp orbit.flow -- $TRACE_PARAM "$TEST_FILE" 2>&1)
+  OUTPUT=$(timeout --kill-after=2 $TIMEOUT flowcpp --batch orbit.flow -- $TRACE_PARAM "$TEST_FILE" 2>&1)
   EXIT_CODE=$?
   
   # Save the output
