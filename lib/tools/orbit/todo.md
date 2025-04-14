@@ -10,12 +10,14 @@
 ☑ Build ograph to/from OrMath_exp. Debug it
 
 ## High Priority Tasks
-- Extend pattern matching to handle all expression types (currently missing many cases)
-  - Add cases for comparison operators (OrGreaterThan, OrLessEquals, etc.)
-  - Add cases for logical operators (OrLogicalAnd, OrLogicalOr, etc.)
-  - Support for set operations and mathematical constructs
-- Implement conditionals in pattern matching (the `if` part of rules)
-- Support multiple patterns with fallthrough (current match only works with simple rules)
+- Complete missing pattern matching for remaining expression types:
+  - Pattern matching for type annotations and type substitutions
+  - Pattern matching for rewrite rules (Rule, Equivalence, Entailment)
+  - Pattern matching for quantifiers (Forall, Exists)
+  - Pattern matching for SetComprehension
+- Implement full conditional evaluation in pattern matching (the `if` part of rules)
+- ✅ Support multiple patterns with fallthrough in match expressions
+- Add proper error handling and reporting for pattern matching failures
 - Extract minimal program from ograph via cost function
 - Runtime function to read & parse files
 - Implement `include` in Orbit
@@ -27,9 +29,14 @@
 ## Pattern Matching Improvements
 - Add support for commutative pattern matching (e.g., `a + b` matching `b + a`)
 - Add associative pattern matching (e.g., `(a + b) + c` matching `a + (b + c)`)
-- Implement pattern variable reuse constraints (ensure same variable binds to same value)
+- Strengthen pattern variable reuse constraints (ensure consistency when same variable appears multiple times)
 - Add wildcard pattern support (`_` matching anything)
 - Support for deep pattern matching with nested patterns
+- Improve pattern matching performance with more efficient algorithms
+- Add pattern guards for more complex conditional matching
+- Implement destructuring patterns for complex data structures
+- Add domain-specific pattern matching (match expressions within specific mathematical domains)
+- Support for pattern matching on domain annotations (e.g., `expr : Domain`)
 
 ## OGraph Enhancements
 - Complete domain annotation handling in ograph
