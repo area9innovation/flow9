@@ -363,9 +363,23 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr) -> Or
 	switch (patterns) {
 		// Try a single rule
 		OrRule(patternExpr, bodyExpr, conditionals): {
-			// Debug information
+			// Debug information more extensively
 			println("Trying to match pattern: " + prettyOrbit(patternExpr));
 			println("Against expression: " + prettyOrbit(exprValue));
+
+			// Extract the actual body and next pattern if body is a sequence
+			actualBodyRef = ref bodyExpr;
+			nextRuleRef = ref None();
+
+			if (bodyExpr.structname == "OrSequence") {
+				switch (bodyExpr) {
+					OrSequence(seqBody, seqNext): {
+						actualBodyRef := seqBody;
+						nextRuleRef := Some(seqNext);
+					}
+					default: {}
+				}
+			}
 
 			// Try to unify the pattern with the expression
 			switch (unify(patternExpr, exprValue)) {
@@ -374,7 +388,7 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr) -> Or
 					if (isConditionSatisfied(conditionals, bindings, env)) {
 						println("Pattern matched successfully");
 						// Apply bindings and evaluate the body
-						boundBody = applyBindings(bodyExpr, bindings);
+						boundBody = applyBindings(^actualBodyRef, bindings);
 						
 						// Update environment with pattern variables
 						boundEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
@@ -392,8 +406,19 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr) -> Or
 				PatternFailure(): {
 					// Pattern didn't match
 					println("Pattern match failed - falling through to next pattern");
-					// Return the original expression as fallback
-					OrbEnv(env with result = exprValue);
+
+					// Check if there's a next pattern in a sequence
+					switch (^nextRuleRef) {
+						Some(next): {
+							println("Trying next pattern in sequence");
+							// Extract the next pattern and try it
+							tryPatterns(next, env, exprValue);
+						}
+						None(): {
+							// No next pattern, return the original expression as fallback
+							OrbEnv(env with result = exprValue);
+						}
+					}
 				}
 			}
 		}
@@ -406,7 +431,8 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr) -> Or
 			// If we get back the original expression, it means no pattern matched
 			// Try the right pattern in that case
 			if (leftResult.result == exprValue) {
-				tryPatterns(right, env, exprValue);
+				// Try the right pattern
+				tryPatterns(right, leftResult, exprValue);
 			} else {
 				// A pattern matched on the left side
 				leftResult;
