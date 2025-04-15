@@ -12,7 +12,8 @@
 
 ## High Priority Tasks
 - Array indexing, modulo %
-- Fix pattern matching
+- Fix pattern matching ✅ (First step: rule extraction and visualization implemented)
+- Implement indexing function for conditional pattern matching and fix factorial calculation
 - Add proper error handling and reporting for pattern matching failures
 - Extract minimal program from ograph via cost function
 - Runtime function to read & parse files
@@ -41,6 +42,11 @@
 - Implement destructuring patterns for complex data structures
 - Add domain-specific pattern matching (match expressions within specific mathematical domains)
 - Support for pattern matching on domain annotations (e.g., `expr : Domain`)
+- Improve conditional pattern matching:
+  - ✅ Extract all rules with their conditionals as a structured array of {pattern, result, condition} (using a named structure)
+  - Create an indexing function that attempts matching one rule at a time
+  - Handle condition evaluation (use implicit "true" for missing conditions)
+  - Update the interpreter code to use this new approach
 
 ## OGraph Enhancements
 - Complete domain annotation handling in ograph
