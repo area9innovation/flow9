@@ -14,6 +14,7 @@
 - Array indexing, modulo %
 ✅ Fix pattern matching (First step: rule extraction and visualization implemented)
 ✅ Fix pattern matching with sequences (Fixed handling of sequence expressions in pattern bodies)
+✅ Fix rule extraction for semicolon-separated patterns (fixed factorial calculation)
 - Add proper error handling and reporting for pattern matching failures
 - Extract minimal program from ograph via cost function
 - Runtime function to read & parse files
