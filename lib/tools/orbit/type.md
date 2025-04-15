@@ -1,359 +1,202 @@
-# Flow Type System in Orbit: Domain-Driven Type Inference
+# Representing Types as Domains in Orbit
 
 ## Introduction
 
-This document describes how the Flow9 type inference system can be represented and enhanced using Orbit's domain-unified rewriting approach. Flow9 uses a sophisticated type system with subtyping, polymorphism, and structural types, all implemented through an E-Graph-based constraint system. By reformulating this system in Orbit, we gain the ability to leverage group-theoretic properties and cross-domain optimization.
+This document describes how type systems, particularly one similar to Flow9's, can be represented and reasoned about using Orbit's core mechanism: associating expressions with **Domains** via the `:` operator. Orbit's domain-unified rewriting approach allows type information to be integrated seamlessly with other kinds of reasoning, such as mathematical properties or effects, within the same framework.
 
-## Type Nodes and EGraph Representation
+While Flow9 uses a sophisticated internal E-Graph for its type inference, Orbit provides a language-level abstraction where types are simply one category of Domain that can be inferred or asserted for expressions.
 
-In Flow's type system, types are represented in an EGraph with three kinds of nodes:
+## Types as Domains
 
-1. **Constructor**: Named types with optional parameters (e.g., `Int`, `Array(Int)`) 
-2. **Function**: Function types with argument and return types
-3. **Variable**: Type variables for polymorphism
+In Orbit, there isn't a separate system for "types." Instead, terms representing types are treated like any other Domain term that can be associated with an expression node using the `:` operator.
 
-In Orbit, we can represent these concepts directly as domain nodes:
+Examples of Type Domains:
+*   Primitive Types: `int`, `float`, `string`, `bool`
+*   Constructed Types: `list<int>`, `map<string, bool>`, `Maybe<float>`
+*   Function Types: `(int, string) -> bool`, `(float) -> float`
+*   Type Variables: `?`, `??` (representing placeholders in polymorphic types)
+*   Type Schemas: `forall ? . list<?> -> int` (representing generalized polymorphic types)
+*   Special Types: `None`, `Any`, `Void`
 
-```
-@egraph<> = @make_pattern<egraph_expr, uid, domain_expr>;
+An expression node in the underlying OGraph can be associated with one or more Domains simultaneously. For example, an expression might be associated with `int` (its type domain) and `Positive` (a property domain).
 
-@rewrite_system<@egraph, @egraph, egraph_expr, ";">(
-	// Define TypeNode domain
-	Constructor(name, params) ⊂ TypeNode;
-	Function(args, ret) ⊂ TypeNode;
-	Variable(id) ⊂ TypeNode;
-);
-```
+## Type Relationships as Domain Relationships
 
-## Type Constraints as Domain Relationships
+Relationships inherent to type systems, like subtyping, are expressed as relationships between the corresponding Domain terms.
 
-The Flow type system uses constraints to enforce relationships between types. In Orbit, these constraints can be expressed directly through domain relationships:
+```orbit
+// Define relationships between Type Domains
+int ⊂ float;       // Subtyping: int is a subtype of float
+string ⊂ Any;      // All types are subtypes of Any
+None ⊂ Maybe<?>;   // None is a subtype of any Maybe type
 
-```
-@rewrite_system<@type, @type, type_expr, ";">(
-	// Subtyping constraint
-	a : T₁ ⊢ a : T₂ if T₁ ⊂ T₂;
+// Function subtyping (contravariant in args, covariant in return)
+(A₁ → B₁) ⊂ (A₂ → B₂) if A₂ ⊂ A₁ && B₁ ⊂ B₂;
 
-	// Unification constraint
-	a : T₁, a : T₂ => a : MeetType(T₁, T₂);
+// List subtyping (covariant)
+list<A> ⊂ list<B> if A ⊂ B;
 
-	// Function subtyping (contravariant in args, covariant in return)
-	(A₁ → B₁) ⊂ (A₂ → B₂) if A₂ ⊂ A₁ && B₁ ⊂ B₂;
+// Maybe subtyping (covariant)
+Maybe<A> ⊂ Maybe<B> if A ⊂ B;
 
-	// Array subtyping (covariant)
-	Array(A) ⊂ Array(B) if A ⊂ B;
+// Constraints can trigger assertions
+// If 'a' has Type Domain T1, and T1 is a subtype of T2,
+// then 'a' also belongs to Type Domain T2.
+a : T₁ ⊢ a : T₂ if T₁ ⊂ T₂;
 
-	// Maybe subtyping (covariant)
-	Maybe(A) ⊂ Maybe(B) if A ⊂ B;
-);
-```
-
-## Type Inference Through Rewriting
-
-In Flow's implementation, type inference is performed by traversing the AST and generating constraints. With Orbit, we can express this as rewrite rules that connect language constructs to their types:
+// Unification constraint (example using GLB - Greatest Lower Bound)
+// If 'a' must belong to both T1 and T2, it belongs to their GLB.
+a : T₁, a : T₂ => a : GLB(T₁, T₂);
 
 ```
-@lang<> = @make_pattern<lang_expr, uid, domain_expr>;
 
-@rewrite_system<@lang, @type, lang_expr, ";">(
-	// Literals
-	1 => 1 : Int;
-	3.14 => 3.14 : Double;
-	"hello" => "hello" : String;
-	true => true : Bool;
-	[] => [] : Array(?);
-	None() => None() : None;
+## Inferring Type Domains via Rewriting
 
-	// Variables get their type from context
-	x => x : $type(x);
+Type inference, the process of determining the type of an expression, is achieved in Orbit through rewrite rules that associate language constructs with their corresponding Type Domains.
 
-	// Binary operators
-	a + b => (a + b) : Int if a : Int && b : Int;
-	a + b => (a + b) : Double if (a : Double || b : Double) && (a : Number && b : Number);
-	a + b => (a + b) : String if a : String || b : String;
+```orbit
+// Associating language expressions with their Type Domains
 
-	// Comparisons
-	a == b => a == b : Bool if a : T && b : T;
+// Literals
+1 => 1 : int;
+3.14 => 3.14 : float;
+"hello" => "hello" : string;
+true => true : bool;
+[] => [] : list<?>; // Empty list is polymorphic
+None() => None() : None;
 
-	// Function application
-	f(args) => f(args) : ReturnType(f) if MatchesFunctionType(f, TypesOf(args));
+// Variables get their Type Domain from the environment (lookup mechanism needed)
+// x => x : lookupTypeDomain(x, env);
 
-	// Conditionals
-	if (c) e1 else e2 => if (c) e1 else e2 : LUB(TypeOf(e1), TypeOf(e2)) if c : Bool;
+// Binary operators infer Type Domain based on operand Domains
+a + b => (a + b) : int if a : int && b : int;
+a + b => (a + b) : float if (a : float || b : float) && (a : number && b : number); // Assuming number ⊂ float, number ⊂ int
+a + b => (a + b) : string if a : string || b : string; // String concatenation
 
-	// Let binding
-	let x = e1; e2 => let x = e1; e2 : TypeOf(e2);
+// Comparisons result in Bool Domain
+a == b => a == b : bool if a : T && b : T; // Requires operands have compatible domains
 
-	// Arrays
-	[e1, e2, ..., en] => [e1, e2, ..., en] : Array(LUB(TypeOf(e1), TypeOf(e2), ..., TypeOf(en)));
+// Function application infers result Type Domain
+// (Requires matching function domain and argument domains)
+f(args) => f(args) : ReturnTypeDomain(f) if MatchesFunctionDomain(f, TypeDomainsOf(args));
 
-	// Maybe unwrapping (Flow's ?? operator)
-	e1 ?? e2 => e1 ?? e2 : T if e1 : Maybe(T) && e2 : T;
-);
-```
+// Conditionals require Bool Domain for condition; result is LUB of branches
+if (c) e1 else e2 => if (c) e1 else e2 : LUB(TypeDomainOf(e1), TypeDomainOf(e2)) if c : bool;
 
-## Subtyping Constraints and Least Upper Bounds
+// Let binding (example simplified)
+let x = e1; e2 => let x = e1; e2 : TypeDomainOf(e2);
 
-A key feature of Flow's type system is its use of subtyping with least upper bounds (LUBs) and greatest lower bounds (GLBs). Orbit can express these operations with explicit group-theoretic rules:
+// Arrays infer a list Type Domain based on element LUB
+[e1, e2] => [e1, e2] : list<LUB(TypeDomainOf(e1), TypeDomainOf(e2))>;
 
-```
-@rewrite_system<@type, @type, type_expr, ";">(
-	// LUB and GLB form a lattice structure
-	LUB : Semilattice;  // LUB is associative, commutative, idempotent
-	GLB : Semilattice;  // GLB is associative, commutative, idempotent
-
-	// LUB of basic types follows the type hierarchy
-	LUB(T₁, T₂) => T₁ if T₂ ⊂ T₁;
-	LUB(T₁, T₂) => T₂ if T₁ ⊂ T₂;
-	LUB(T₁, T₂) => commonSupertype(T₁, T₂);
-
-	// LUB of function types
-	LUB((A₁ → B₁), (A₂ → B₂)) => (GLB(A₁, A₂) → LUB(B₁, B₂));
-
-	// LUB of container types
-	LUB(Array(A), Array(B)) => Array(LUB(A, B));
-	LUB(Maybe(A), Maybe(B)) => Maybe(LUB(A, B));
-	LUB(None, Maybe(T)) => Maybe(T);
-);
-```
-
-## Polymorphic Type Handling
-
-Flow uses type variables (denoted as `?` or `??`) to represent polymorphic types. In Orbit, we can handle these with instantiation and generalization rules:
+// Maybe unwrapping (Flow's ?? operator)
+e1 ?? e2 => e1 ?? e2 : T if e1 : Maybe<T> && e2 : T; // Result Type Domain is T
 
 ```
-@rewrite_system<@type, @type, type_expr, ";">(
-	// Type schema instantiation
-	forall α. T => T[α := fresh()];
 
-	// Type variable instantiation
-	? => freshTypeVar();
-	?? => freshTypeVar();
+## Operations on Type Domains (LUB/GLB)
 
-	// Type generalization
-	generalize(T, localVars) => forall αs. T where αs = freeVars(T) - localVars;
+Type systems often rely on Least Upper Bounds (LUB) and Greatest Lower Bounds (GLB) to find common types. These are simply operations defined on the Type Domain terms.
 
-	// Instantiation of a type with explicit substitution
-	T[α := S] => substitute(α, S, T);
-);
-```
+```orbit
+// LUB and GLB form a lattice structure over Type Domains
+LUB : Semilattice; // LUB is associative, commutative, idempotent
+GLB : Semilattice; // GLB is associative, commutative, idempotent
 
-## Type Inference Algorithm in Orbit
+// LUB definition based on subtyping hierarchy
+LUB(T₁, T₂) => T₁ if T₂ ⊂ T₁;
+LUB(T₁, T₂) => T₂ if T₁ ⊂ T₂;
+// LUB(T₁, T₂) => commonSupertypeDomain(T₁, T₂); // Needs specific rules per hierarchy
 
-Flow's type inference algorithm walks the AST and generates constraints. With Orbit, this can be expressed as a set of transformation rules that operate directly on the AST:
+// Example LUB rules
+LUB(int, float) => float;
+LUB(list<int>, list<float>) => list<float>; // Covariance
+LUB(Maybe<int>, Maybe<float>) => Maybe<float>; // Covariance
+LUB(None, Maybe<T>) => Maybe<T>;
+LUB(T, Any) => Any;
+LUB(T, Void) => T; // Assuming Void is the bottom type
 
-```
-@rewrite_system<@lang, @typed_lang, lang_expr, ";">(
-	// Expression typing
-	infer(e, env) => typed(e, infer_expr(e, env));
+// GLB definition based on subtyping hierarchy
+// ... similar rules for GLB ...
+GLB(int, float) => int;
+GLB(T, Any) => T;
+GLB(T, Void) => Void;
 
-	// Type environment lookup
-	infer_expr(var(x), env) => lookup(env, x);
-
-	// Literal typing
-	infer_expr(int_lit(n), _) => Int;
-	infer_expr(double_lit(d), _) => Double;
-	infer_expr(string_lit(s), _) => String;
-	infer_expr(bool_lit(b), _) => Bool;
-
-	// Function typing
-	infer_expr(lambda(params, body), env) => {
-		paramTypes = map(params, \p -> freshTypeVar());
-		extendedEnv = extendEnv(env, zip(params, paramTypes));
-		retType = infer_expr(body, extendedEnv);
-		FunctionType(paramTypes, retType)
-	};
-
-	// Function application
-	infer_expr(apply(func, args), env) => {
-		funcType = infer_expr(func, env);
-		argTypes = map(args, \a -> infer_expr(a, env));
-		retType = freshTypeVar();
-		addConstraint(funcType, FunctionType(argTypes, retType));
-		retType
-	};
-);
-```
-
-## Examples of Type Inference with Orbit
-
-Let's examine how the Orbit system would perform type inference on some Flow examples:
-
-### Example 1: Simple Function with Polymorphism
+// LUB/GLB for function types
+LUB((A₁ → B₁), (A₂ → B₂)) => (GLB(A₁, A₂) → LUB(B₁, B₂));
+GLB((A₁ → B₁), (A₂ → B₂)) => (LUB(A₁, A₂) → GLB(B₁, B₂)); // Check variance rules
 
 ```
-// Flow code
-id = \x -> x;
 
-// Orbit type inference
-@rewrite_system<@flow, @typed_flow, flow_expr, ";">(
-	\x -> x => (\x -> x) : forall α. α -> α;
+## Polymorphism and Type Variables
 
-	id(3) => id(3) : Int;
-	id("hello") => id("hello") : String;
-);
-```
+Polymorphic types involve Type Domains that contain placeholders (type variables like `?`) or are generalized (type schemas like `forall`).
 
-### Example 2: Subtyping with Maybe
+```orbit
+// Type variable Domains (placeholders)
+? => freshTypeVarDomain(); // Create a unique placeholder domain
 
-```
-// Flow code
-processValue = \v -> if (v == None()) "empty" else v + " processed";
+// Instantiation: Replacing placeholders in a Type Domain
+// Example: Instantiate list<?> with int => list<int>
+Instantiate(list<?>, int) => list<int>;
+Instantiate((? → ?), (int, string)) => (int → string);
 
-// Orbit type inference
-@rewrite_system<@flow, @typed_flow, flow_expr, ";">(
-	// First, infer the parameter type
-	v == None() => v == None() : Bool |- v : Maybe(String);
-
-	// Then, infer the branches
-	"empty" => "empty" : String;
-	v + " processed" => v + " processed" : String |- v : String;
-
-	// For the if-else, take the LUB of the branches
-	if (v == None()) "empty" else v + " processed" =>
-		if (v == None()) "empty" else v + " processed" : String;
-
-	// Finally, infer the lambda
-	\v -> if (v == None()) "empty" else v + " processed" =>
-		\v -> if (v == None()) "empty" else v + " processed" : Maybe(String) -> String;
-);
-```
-
-### Example 3: Structural Typing with Records
+// Generalization: Creating a polymorphic Type Domain (Schema)
+// generalize(TypeDomain, Env) => ForallDomain(...)
 
 ```
-// Flow code
-makePoint = \x, y -> { x : x, y : y };
 
-// Orbit type inference
-@rewrite_system<@flow, @typed_flow, flow_expr, ";">(
-	// First, infer parameters
-	x => x : α;
-	y => y : u03b2;
+## EGraph Implementation Note
 
-	// Then, infer the record
-	{ x : x, y : y } => { x : x, y : y } : { x : α, y : u03b2 };
-
-	// Finally, infer the function
-	\x, y -> { x : x, y : y } => \x, y -> { x : x, y : y } : (α, u03b2) -> { x : α, y : u03b2 };
-);
-```
-
-## Egraph-based Type Inference Implementation
-
-Flow's implementation uses an EGraph-based approach to efficiently represent and solve type constraints. In Orbit, we can model the key operations of this engine:
-
-### EClass Operations
-
-```
-@rewrite_system<@egraph, @egraph, egraph_expr, ";">(
-	// Create a new EClass from a TypeNode
-	makeEClass(node) => EClass(node, freshId(), emptySet(), emptySet(), emptySet(), emptySet());
-
-	// Finding the representative
-	find(id) => id if isRoot(id);
-	find(id) => find(parent(id)) if !isRoot(id);
-
-	// Union operation
-	union(id1, id2) => {
-		root1 = find(id1);
-		root2 = find(id2);
-		if (root1 != root2) {
-			parent(root2) := root1;
-			mergeContexts(root1, root2);
-		}
-		root1
-	};
-
-	// Canonicalization
-	canonicalizeEClass(id) => {
-		root = find(id);
-		updateNode(root, canonicalForm(getNode(root)));
-		maybe_congruence(root);
-		root
-	};
-);
-```
-
-### Subtyping Operations
-
-```
-@rewrite_system<@egraph, @egraph, egraph_expr, ";">(
-	// Add a subtype relationship
-	addSubtype(sub, sup, context) => {
-		subRoot = find(sub);
-		supRoot = find(sup);
-		addSubtypeSet(subRoot, supRoot);
-		addContext(subRoot, supRoot, context);
-		propagateSubtyping(subRoot, supRoot);
-	};
-
-	// Subtype transitivity
-	propagateSubtyping(sub, sup) => {
-		// Apply transitivity: If A <: B and B <: C, then A <: C
-		foreach (direct_super in getDirectSupertypes(sub))
-			addSubtype(direct_super, sup, "transitivity");
-
-		foreach (direct_sub in getDirectSubtypes(sup))
-			addSubtype(sub, direct_sub, "transitivity");
-	};
-);
-```
+While Orbit defines typing rules at the language level using Domains, an efficient implementation (like Flow9's) would likely use an EGraph structure internally. In such an implementation:
+*   Expressions and subexpressions become nodes in the EGraph.
+*   The `:` associations link expression nodes to nodes representing their Domains (e.g., `int`, `list<float>`).
+*   Operations like `union` (when two expressions are found equivalent) and `find` (to get the canonical representation) are used on expression nodes.
+*   Type constraints (`⊂`, unification) trigger operations that merge or relate the *Domain nodes* associated with the expressions.
+*   The OGraph manages the consistency of these relationships.
 
 ## Type Error Reporting
 
-One of the strengths of the Flow type system is its ability to provide detailed error messages. In Orbit, we can capture error contexts and report them through domain-aware rules:
+Type errors arise from conflicting Domain associations or relationships.
+
+```orbit
+// Potential error conditions expressed via rules
+
+// Unification Failure: Cannot satisfy conflicting Type Domains
+a : int, a : string => typeError("Type mismatch: cannot unify int and string", getContext(a));
+
+// Subtyping Failure: Asserted subtype relation doesn't hold
+a : string |- a : int => typeError("Type error: string is not a subtype of int", getContext(a)) if !(string ⊂ int);
+
+// Occurs Check Failure (Cyclic Type Domain):
+// Requires specific rules detecting cycles during unification/subtyping on recursive types.
+// unify(?, list<?>) => typeError("Recursive type detected", ...);
 
 ```
-@rewrite_system<@egraph, @error, egraph_expr, ";">(
-	// Type mismatch error
-	unify(t1, t2) => typeError("Type mismatch: expected " + prettyPrint(t1) +
-		", but got " + prettyPrint(t2), getContexts(t1, t2)) if !canUnify(t1, t2);
 
-	// Subtyping error
-	subtype(sub, sup) => typeError("Type error: " + prettyPrint(sub) +
-		" is not a subtype of " + prettyPrint(sup), getSubtypeContexts(sub, sup))
-		if !canBeSubtype(sub, sup);
+## Algebraic Properties of Type Domains
 
-	// Occurs check error (cyclic types)
-	occursCheck(var, type) => typeError("Recursive type detected: " +
-		prettyPrint(var) + " occurs in " + prettyPrint(type), getContexts(var, type))
-		if occursIn(var, type);
-);
-```
+The operations (`LUB`, `GLB`) and relationships (`⊂`) on Type Domains often form algebraic structures like lattices, which can be declared in Orbit for potential optimization or verification.
 
-## Group Theoretic Properties of Flow Types
+```orbit
+// Declaring algebraic properties of operations on Type Domains
+LUB : Semilattice;
+GLB : Semilattice;
 
-The Flow type system exhibits several algebraic group properties that can be exploited for optimization using Orbit:
+// Potential lattice laws (examples)
+LUB(A, GLB(B, C)) <=> GLB(LUB(A, B), LUB(A, C)); // Distributivity
+LUB(A, GLB(A, B)) <=> A; // Absorption
+GLB(A, LUB(A, B)) <=> A; // Absorption
 
-```
-@rewrite_system<@type, @type, type_expr, ";">(
-	// Type operators form algebraic structures
-	LUB : Semilattice;  // Least Upper Bound forms a semilattice
-	GLB : Semilattice;  // Greatest Lower Bound forms a semilattice
-
-	// Distributivity laws
-	LUB(A, GLB(B, C)) => GLB(LUB(A, B), LUB(A, C));
-
-	// Neutral elements
-	LUB(T, Any) => Any;
-	LUB(T, Void) => T;
-	GLB(T, Any) => T;
-	GLB(T, Void) => Void;
-
-	// Absorption laws
-	LUB(A, GLB(A, B)) => A;
-	GLB(A, LUB(A, B)) => A;
-);
 ```
 
 ## Conclusion
 
-By representing Flow's type system in Orbit, we gain several advantages:
+Representing types as Domains in Orbit provides a unified framework for type checking and inference alongside other forms of program analysis and transformation. Key advantages include:
 
-1. **Formal verification**: The domain-crossing rules provide a formal specification of the type system
-2. **Optimization**: Group-theoretic properties enable more efficient type constraint solving
-3. **Extensibility**: New type features can be added by simply extending the rewrite rules
-4. **Cross-language interoperability**: Types can be translated across language boundaries
+1.  **Unified Framework:** Type rules are just another set of rewrite rules operating on Domain associations.
+2.  **Integration:** Type information (e.g., `expr : int`) can directly interact with other domains (e.g., `expr : Positive`, `expr : Pure`) within the same rule system.
+3.  **Extensibility:** Adding new type constructs or rules involves defining new Domain terms and rewrite rules.
+4.  **Formalism:** The rewrite rules provide a clear, declarative specification of the type system's logic.
 
-The Orbit representation demonstrates that Flow's sophisticated type system, with its subtyping, polymorphism, and structural types, can be expressed elegantly through domain-unified rewriting rules that capture both the operational aspects of type inference and the algebraic properties of the type system.
+This approach shifts the perspective from a dedicated type system to viewing typing as one specific, albeit crucial, application of Orbit's general-purpose, domain-based rewriting capabilities.
