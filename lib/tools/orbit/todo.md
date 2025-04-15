@@ -44,9 +44,23 @@
 - Support for pattern matching on domain annotations (e.g., `expr : Domain`)
 - Improve conditional pattern matching:
   - ✅ Extract all rules with their conditionals as a structured array of {pattern, result, condition} (using a named structure)
-  - Create an indexing function that attempts matching one rule at a time
-  - Handle condition evaluation (use implicit "true" for missing conditions)
-  - Update the interpreter code to use this new approach
+  - ✅ Create an indexing function that attempts matching one rule at a time
+  - ✅ Handle condition evaluation (use implicit "true" for missing conditions)
+  - ✅ Update the interpreter code to use this new approach
+
+## Pattern Matching Implementation Plan (Recently Completed)
+- Transition from recursive pattern matching to iterative approach:
+  1. ✅ Remove old recursive `tryPatterns` function
+  2. ✅ Replace `executeMatch` with a new implementation that:
+     - Uses `extractPatternRules` to get all rules as a flat array
+     - Iterates through each rule one by one
+     - Attempts to match each pattern using the existing unification logic
+     - Evaluates conditions for patterns that match
+     - Returns the result of the first successful match
+  3. ✅ Keep existing unification and binding application logic
+  4. ✅ Simplify match handling code path in the interpreter
+  5. ✅ Properly handle pattern conditions with proper short-circuiting
+  6. ✅ Add more detailed debugging/tracing output to help diagnose matching issues
 
 ## OGraph Enhancements
 - Complete domain annotation handling in ograph
