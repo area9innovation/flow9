@@ -13,9 +13,7 @@ Orbit is a functional programming language that integrates e-graphs (called ogra
 You run Orbit like this:
 
 ```
-
 flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- tests/pattern.orb
-
 ```
 
 ### Enabling Tracing
@@ -23,9 +21,7 @@ flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- tests/pattern.orb
 Orbit provides a detailed tracing feature that shows all steps of interpretation, which is useful for debugging and understanding program execution. To enable tracing, use the `trace=1` URL parameter:
 
 ```
-
 flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- trace=1 tests/pattern.orb
-
 ```
 
 With tracing enabled, you'll see detailed output for each interpretation step, including:
@@ -45,9 +41,7 @@ Orbit includes a comprehensive test suite to verify correct behavior and prevent
 To run the test suite on all tests in the default 'tests' directory:
 
 ```
-
 flow9/lib/tools/orbit> ./run_orbit_tests.sh
-
 ```
 
 This script executes all .orb files in the 'tests' directory and saves the outputs to the 'test_output' directory.
@@ -57,9 +51,7 @@ This script executes all .orb files in the 'tests' directory and saves the outpu
 The test script supports several command-line parameters:
 
 ```
-
 flow9/lib/tools/orbit> ./run_orbit_tests.sh --test-dir=custom_tests --output-dir=results --trace --verbose
-
 ```
 
 - `--test-dir=DIR`: Specifies the directory containing test files (default: 'tests')
@@ -92,23 +84,17 @@ This workflow makes it easy to identify unintended changes in behavior during de
 
 Run all tests in the default directory:
 ```
-
 ./run_orbit_tests.sh
-
 ```
 
 Run a specific set of tests with detailed output:
 ```
-
 ./run_orbit_tests.sh --test-dir=tests/math --verbose
-
 ```
 
 Turn on tracing for step-by-step execution details:
 ```
-
 ./run_orbit_tests.sh --trace
-
 ```
 
 ## Theoretical Foundation: Domains and Symmetry Groups
@@ -242,6 +228,20 @@ For example:
 ```
 n ⊢ n : Prime if isPrime(n);
 ```
+
+## A Note on Terminology: The Concept of "Domain"
+
+A key feature in Orbit is the ability to associate expressions with descriptive terms using the `:` operator (e.g., `x : Real` or `myList : list<int>`). Within the Orbit system, we generally refer to these associated terms (`Real`, `list<int>`, etc.) as **Domains**.
+
+We acknowledge that this term is used broadly here to encompass several related concepts that might traditionally have different names:
+
+*   **Mathematical Domains/Structures:** e.g., `Integer`, `Real`, `Field`, `AbelianGroup`, symmetry groups like `S₂`.
+*   **Types:** e.g., `int`, `string`, `list<float>`, `map<string, bool>`, function types like `(int) -> string`.
+*   **Effects or Computational Properties:** e.g., `Pure` (no side effects), `IO` (performs input/output), `Total` (guaranteed to terminate).
+*   **Semantic States or Tags:** e.g., `Canonical`, `Simplified`, `Processed`, `Solutions`.
+*   **Other Annotations:** Any term used to classify or describe an expression for rewriting or analysis purposes.
+
+The choice of "Domain" as the unifying term stems from Orbit's operational perspective. Often, the system *infers* these properties or classifications for expressions during rewriting and analysis. An expression is thus seen as existing *within* one or more of these inferred "Domains". This unified concept simplifies the core rewriting mechanism, allowing rules to operate based on these classifications regardless of whether they represent a traditional mathematical domain, a type, an effect, or a specific state.
 
 ## Domain Hierarchies and Rule Inheritance
 
