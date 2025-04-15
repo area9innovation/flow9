@@ -56,11 +56,11 @@ Orbit uses functional control structures:
 let max = if a > b then a else b;
 
 // Pattern matching
-match expr {
+expr is (
 	0 => "Zero";
 	1 => "One";
 	n => "Other: " + i2s(n);
-}
+)
 ```
 
 ## 3. Functional Programming in Orbit
@@ -128,13 +128,13 @@ One of Orbit's most powerful features is its pattern matching and rewriting syst
 
 ```orbit
 // Simple pattern matching
-match expr {
+expr is (
 	a + 0 => a;                 // Addition with zero
 	a * 1 => a;                 // Multiplication by one
 	a * 0 => 0;                 // Multiplication by zero
 	a + b => b + a if a > b;    // Canonicalization (ordering terms)
 	_ => expr;                  // Default case: unchanged
-}
+);
 
 // Rewrite rules
 a + b => b + a;               // Commutativity of addition
@@ -150,7 +150,7 @@ Orbit has first-class support for manipulating abstract syntax trees (ASTs), whi
 ```orbit
 // Define a function that expects an AST
 fn simplify(expr : ast) =
-	match expr {
+	expr is (
 		a + 0 => a;
 		0 + a => a;
 		a * 1 => a;
@@ -158,7 +158,7 @@ fn simplify(expr : ast) =
 		a * 0 => 0;
 		0 * a => 0;
 		x => x;
-	};
+	);
 
 // Use with unevaluated expression
 let result = simplify(x * 0);  // Returns 0 regardless of x's value
@@ -237,7 +237,7 @@ Here's a complete example that demonstrates the power of Orbit for symbolic math
 ```orbit
 // Symbolic differentiation function
 fn diff(expr : ast, x : ast) -> ast =
-	match expr {
+	expr is (
 		// Constants differentiate to zero
 		n => 0 if !containsVar(n, x);
 
@@ -255,18 +255,17 @@ fn diff(expr : ast, x : ast) -> ast =
 
 		// Default: can't differentiate
 		_ => error("Cannot differentiate: " + prettyOrbit(expr));
-	};
+	);
 
 // Helper function to check if an expression contains a variable
-fn containsVar(expr : ast, var : ast) -> bool = {
-	match expr {
+fn containsVar(expr : ast, var : ast) -> bool =
+	expr is (
 		var => true;
 		a + b => containsVar(a, var) || containsVar(b, var);
 		a * b => containsVar(a, var) || containsVar(b, var);
 		a ^ b => containsVar(a, var) || containsVar(b, var);
 		_ => false;
-	}
-};
+	);
 
 // Example usage
 let f = x^2 + 3*x + 5;
