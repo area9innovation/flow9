@@ -787,6 +787,211 @@ These inference rules enable automated discovery of algebraic structures in code
 (a*x + b*x) : Ring => (a+b)*x : Factorized;
 ```
 
+## Bidirectional Type Mappings and Rules
+
+This section provides bidirectional rules for moving between primitive numeric operations, algebraic structures, and symmetry groups. These rules allow us to translate between different mathematical worlds in both directions, enabling powerful optimizations and canonicalizations across domains.
+
+### From Primitive Types to Algebraic Structures
+
+```
+// Domain hierarchy for numeric types
+Int ⊂ Double ⊂ Real ⊂ Complex;
+
+// Mapping primitive operations to algebraic properties
+// Addition forms an abelian group
+a : Int + b : Int ⊢ + : S₂;  // Addition is commutative (symmetric group S₂)
+(a : Int + b : Int) + c : Int ⊢ + : Associative;  // Addition is associative
+0 + a : Int ⊢ 0 : Identity;  // 0 is the identity element for addition
+a : Int + (-a : Int) ⊢ - : Inverse;  // Negation provides inverse elements
+
+// Multiplication forms a monoid
+a : Int * b : Int ⊢ * : S₂;  // Multiplication is commutative
+(a : Int * b : Int) * c : Int ⊢ * : Associative;  // Multiplication is associative
+1 * a : Int ⊢ 1 : Identity;  // 1 is the identity element for multiplication
+
+// Distribution connects addition and multiplication
+a : Int * (b : Int + c : Int) ⊢ * : Distributive;
+
+// Together these form a ring structure
+a : Int + b : Int, a : Int * b : Int ⊢ Int : Ring;
+
+// For Double, we have a field (division is defined for non-zero elements)
+a : Double / b : Double ⊢ Double : Field if b != 0;
+
+// Modular arithmetic forms cyclic groups
+a : Int % n : Int ⊢ (Int % n) : Cₙ if n > 0;  // Integers mod n form cyclic group Cₙ
+
+// Integers under addition form an infinite cyclic group Z
+a : Int + b : Int ⊢ Int : Z;  // Integers under addition
+
+// Bitwise operations form different algebraic structures
+a : Int ^ b : Int ⊢ (^) : BooleanRing;  // XOR and AND form a Boolean ring
+a : Int & b : Int ⊢ (&) : Semilattice;  // Bitwise AND forms a semilattice
+a : Int | b : Int ⊢ (|) : Semilattice;  // Bitwise OR forms a semilattice
+```
+
+### From Algebraic Structures to Groups
+
+```
+// Abelian Group structures
+(S, +, 0, -) : AbelianGroup ⊢ (S, +) : S₂;  // Commutativity implies S₂ symmetry
+(S, +, 0, -) : AbelianGroup ⊢ (S, +) : Associative;
+
+// Special case: Cyclic groups
+(ℤₙ, +, 0) : AbelianGroup ⊢ (ℤₙ, +) : Cₙ;  // Modular addition forms cyclic group
+
+// Ring structure implies underlying abelian group
+(R, +, *, 0, 1) : Ring ⊢ (R, +, 0, -) : AbelianGroup;
+
+// Field structure implies ring structure
+(F, +, *, 0, 1, /) : Field ⊢ (F, +, *, 0, 1) : Ring;
+
+// Vector spaces over fields form abelian groups
+(V, +, 0, -, F) : VectorSpace ⊢ (V, +, 0, -) : AbelianGroup;
+
+// Boolean algebra connections to groups
+(B, ∨, ∧, ¬, 0, 1) : BooleanAlgebra ⊢ (B, ∨, 0) : Semilattice;
+(B, ∨, ∧, ¬, 0, 1) : BooleanAlgebra ⊢ (B, ∧, 1) : Semilattice;
+```
+
+### Bidirectional Mappings Between Groups and Operations
+
+```
+// Bidirectional mappings between groups and operations
+// From operations to groups (forward direction)
+(a : Int + b : Int) ⇒ group_op(a, b, Z);  // Integer addition maps to group Z operation
+(a : Int * b : Int) ⇒ monoid_op(a, b, Z_mul);  // Integer multiplication maps to monoid operation
+(a : Int % n : Int) ⇒ group_op(a % n, b % n, Cₙ) : Canonical;  // Modular arithmetic maps to cyclic group
+(a : Int ^ b : Int) ⇒ group_op(a, b, (C₂)ⁿ);  // XOR maps to product of C₂ groups
+
+// From groups to operations (reverse direction)
+group_op(a, b, Z) ⇒ a + b : Int;  // Group Z operation maps to integer addition
+group_op(a, b, Cₙ) ⇒ (a + b) % n : Int;  // Cyclic group Cₙ maps to modular addition
+group_op(a, b, S₂) ⇒ ordered(a, b);  // S₂ group ensures canonicalization by ordering
+group_op(a, b, (C₂)ⁿ) ⇒ a ^ b : Int;  // Product of C₂ groups maps to bitwise XOR
+
+// Dihedral group maps to bit rotation and reflection operations
+group_op(a, b, Dₙ) ⇒ bit_transform(a, b) : Int;
+bit_transform(rotate(k), x) ⇒ rotate_left(x, k);
+bit_transform(reflect(), x) ⇒ bit_reflect(x);
+```
+
+### Type-Based Inference Rules
+
+```
+// Inferring algebraic structures from types and operations
+// Double values with operations form a field
+a : Double, b : Double, a + b, a * b, a / b ⊢ Double : Field if b != 0;
+
+// Int values with operations form a ring
+a : Int, b : Int, a + b, a * b ⊢ Int : Ring;
+
+// Bitwise Int operations form a Boolean algebra
+a : Int, b : Int, a | b, a & b, ~a ⊢ Int : BooleanAlgebra;
+
+// Infer specific symmetry groups from observed operations
+a + b == b + a ⊢ + : S₂;  // Detect commutativity
+rotateLeft(x, n) == rotateLeft(rotateLeft(x, m), n-m) ⊢ rotateLeft : Cₙ;  // Detect cyclic group
+```
+
+### Canonicalization Rules Using Group Theory
+
+```
+// Canonicalization rules using group theory
+// Use S₂ group to canonicalize commutative operations
+(a + b) : S₂ ⇒ a + b : Canonical if a ≤ b;
+(a + b) : S₂ ⇒ b + a : Canonical if b < a;
+
+// Use Cₙ to canonicalize cyclic operations
+rotate(x, k) : Cₙ ⇒ rotate(x, k % n) : Canonical;
+
+// Use Dₙ to canonicalize dihedral transformations
+transform(x, [rotate(k), reflect()]) : Dₙ ⇒ reflect(rotate(x, k % n)) : Canonical;
+
+// Distributive property uses ring structure
+a * (b + c) : Ring ⇒ (a * b) + (a * c) : Canonical;
+(a * c) + (b * c) : Ring ⇒ (a + b) * c : Canonical;
+```
+
+### Concrete Implementations for Int and Double Operations
+
+```
+// Concrete implementations for Int operations mapped to group operations
+// Addition maps to Z (infinite cyclic group)
+(a : Int + b : Int) ⇒ (a + b) : Z : Int;
+(a : Int - b : Int) ⇒ (a + (-b)) : Z : Int;
+
+// Modular arithmetic maps to Cₙ (finite cyclic group)
+(a : Int + b : Int) % n ⇒ group_op(a % n, b % n, Cₙ) : Int;
+(a : Int * b : Int) % n ⇒ monoid_op(a % n, b % n, (ℤₙ)*) : Int if gcd(b, n) == 1;
+
+// Bitwise operations map to (C₂)ⁿ (product of cyclic groups of order 2)
+(a : Int ^ b : Int) ⇒ group_op(a, b, (C₂)ⁿ) : Int;
+(a : Int & b : Int) ⇒ meet_op(a, b, Lattice) : Int;
+(a : Int | b : Int) ⇒ join_op(a, b, Lattice) : Int;
+
+// Double operations form a field
+(a : Double + b : Double) ⇒ (a + b) : Field : Double;
+(a : Double * b : Double) ⇒ (a * b) : Field : Double;
+(a : Double / b : Double) ⇒ (a * (1/b)) : Field : Double if b != 0;
+```
+
+### Bidirectional Lifting Rules (Type Promotion and Demotion)
+
+```
+// Lifting integers to reals (promotion)
+a : Int ⇒ a : Real;
+(a : Int + b : Int) : Ring ⇒ (a + b) : Real : Field;
+(a : Int * b : Int) : Ring ⇒ (a * b) : Real : Field;
+
+// Demoting reals to integers when possible (demotion)
+a : Real ⇒ a : Int if isInteger(a);
+(a : Real + b : Real) : Field ⇒ (a + b) : Int : Ring if isInteger(a) && isInteger(b) && isInteger(a+b);
+(a : Real * b : Real) : Field ⇒ (a * b) : Int : Ring if isInteger(a) && isInteger(b) && isInteger(a*b);
+```
+
+### Inference Rules for Discovering Group Structure
+
+```
+// Inference rules for discovering group structure
+// If an operation is associative, has identity, and inverses, it forms a group
+op(a, op(b, c)) == op(op(a, b), c) ⊢ op : Associative;  // Detect associativity
+op(e, a) == a && op(a, e) == a ⊢ e : Identity;  // Detect identity element
+op(a, inv(a)) == e ⊢ inv : Inverse;  // Detect inverse operation
+
+// If a group operation is commutative, it forms an abelian group
+op(a, b) == op(b, a) ⊢ op : S₂;  // Detect commutativity
+
+// Detect characteristic group properties from operation patterns
+op(a, a) == a ⊢ op : Idempotent;  // Detect idempotence
+op(a, a) == e ⊢ op : Involution;  // Detect involution (self-inverse)
+
+// Detect group structures from operations
+op : Associative, e : Identity, inv : Inverse ⊢ (Set, op, e, inv) : Group;
+op : Associative, op : S₂, e : Identity, inv : Inverse ⊢ (Set, op, e, inv) : AbelianGroup;
+```
+
+### Pattern-Based Optimization Rules
+
+```
+// Pattern-based optimization using group properties
+// Use distributive property in rings for factorization
+(a * c) + (b * c) : Ring ⇒ (a + b) * c : Optimized;
+
+// Use commutativity in abelian groups for reordering
+(a + b) + c : AbelianGroup ⇒ a + (b + c) : Optimized if cost(a + (b + c)) < cost((a + b) + c);
+
+// Exploit cyclic group properties for simplification
+rotate(rotate(x, a), b) : Cₙ ⇒ rotate(x, (a + b) % n) : Optimized;
+
+// Use modular arithmetic properties for optimization
+(a * b) % p : PrimeField ⇒ ((a % p) * (b % p)) % p : Optimized if isPrime(p);
+
+// Exploit knowledge about specific domains
+a % n + b % n : Cₙ ⇒ (a + b) % n : Optimized;
+(a % n) * (b % n) : (ℤₙ)* ⇒ (a * b) % n : Optimized;
+```
+
 ## Conclusion
 
 The rewriting rules presented in this document provide a foundation for working with symmetry groups in computational contexts. By understanding the structure of these groups and their relationships, we can develop efficient canonicalization strategies, optimize expressions, and reason about program equivalence across a wide range of domains.
