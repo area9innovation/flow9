@@ -1,1 +1,161 @@
-@include<math>
+@include<lexical>
+@include<list>
+
+// AsciiMath-inspired grammar for Orbit mathematical notation
+
+// Main math expression grammar with precedence levels
+math_expr = 
+	// Rewriting patterns
+
+	math_expr (
+		("=>" | "⇒") ws math_expr @opt<conditional> Rule/3
+		| ("<=>" | "⇔") ws math_expr @opt<conditional> Equivalence/3
+		| ("|-" | "⊢" ws) math_expr @opt<conditional>  Entailment/3
+	)
+	|> math_expr ";" ws math_expr "" Sequence/2
+
+	|> "let" kwsep id_type "=" ws math_expr Let/2
+		| "fn" kwsep ws id "(" ws @array<id_type ","> ")" ws @opt<type_annotation> "=" ws math_expr FnDef/4
+		| "if" kwsep math_expr "then" kwsep math_expr "else" kwsep math_expr "" IfElse/3
+
+	|> // Level 2: Set relationships
+	math_expr (
+		("c=" | "⊂") ws math_expr Subset/2
+		| ("in" | "∈") ws math_expr ElementOf/2
+	)*
+	
+	|> // Level 3: Boolean operators
+	math_expr (
+		("&&" | "∧") ws math_expr LogicalAnd/2
+		| ("||" | "∨") ws math_expr LogicalOr/2
+	)*
+	
+	|> // Level 4: Equality and comparison
+	math_expr (
+		"=" ws math_expr Equals/2
+		| "!=" ws math_expr NotEquals/2
+		| ("<=" | "≤") ws math_expr LessEquals/2
+		| "<" ws math_expr LessThan/2
+		| (">=" | "≥") ws math_expr GreaterEquals/2
+		| ">" ws math_expr GreaterThan/2
+	)* 
+	
+	|> // Level 5: Set operations
+	math_expr (
+		("union" kwsep | "∪") ws math_expr Union/2
+		| ("intersect" kwsep | "∩") ws math_expr Intersection/2
+	)*
+	
+	|> // Level 6: Function types
+	math_expr (
+		("->" | "→") ws math_expr FunctionType/2
+	)*
+	
+	|> // Level 7: Addition and subtraction
+	math_expr (
+		"+" ws math_expr Add/2 
+		| "-" ws math_expr Subtract/2
+	)*
+	
+	|> // Level 8: Multiplication and division
+	math_expr (
+		"*" ws math_expr Multiply/2 
+		| "/" ws math_expr Divide/2
+		| "×" ws math_expr DirectProduct/2   // Direct product of groups
+		| "∘" ws math_expr Compose/2  // Function composition
+	)*
+	
+	|> // Level 9: Exponentiation
+	math_expr (
+		"^" ws <math_expr Exponent/2
+		| superscript Superscript/2
+	)*
+	
+	|> // Level 10: Unary operators
+	(
+		"-" ws <math_expr Negate/1
+		| ("!" | "¬") ws <math_expr LogicalNot/1
+	)
+
+	|>
+		math_expr (
+			"(" ws @array<math_expr ","> ")" ws Function/2
+			| "." ws id Field/2
+			| subscript Subscript/2  // Subscript
+			| ":" ws math_expr TypeAnnotation/2   // Type annotation
+			| "[" ws math_expr ":=" ws math_expr "]" ws TypeSubstitution/3  // Type substitution
+		)* 
+	|> 
+	(
+		$double ws @s2d Double/1 
+		| $signed_int ws @s2i Int/1
+		| string @unescape String/1
+		| "true" kwsep @true Bool/1
+		| "false" kwsep @false Bool/1
+		| "(" ws math_expr optsemi ")" ws                          // Parenthesized expression
+		| "{" ws @array<math_expr ","> "|" ws math_expr "}" ws SetComprehension/2  // Set comprehension
+		| "{" ws @array<math_expr ","> "}" ws SetLiteral/1  // Set literal
+		| ('\' | "λ") ws env_bindings @nil id_type @cons @list2array "." ws math_expr Lambda/3  // Lambda (single param) with optional env bindings
+		| ('\' | "λ") ws env_bindings "(" ws @array<id_type ","> ")" ws "." ws math_expr Lambda/3  // Lambda (multi param) with optional env bindings
+		| ("forall" kwsep | "∀") ws @array<math_expr ","> ("," | ":") ws math_expr Forall/2  // Universal quantifier
+		| ("exists" kwsep | "∃") ws @array<math_expr ","> ("," | ":") ws math_expr Exists/2  // Existential quantifier
+		| "match" kwsep math_expr !"{" math_expr Match/2
+		| greek_letter GreekLetter/1
+		| id Identifier/1
+		| uid Variable/1
+		| $'?'+ ws TypeVar/1
+	);
+
+// Environment bindings for closures
+env_bindings = "{" ws @array<env_binding ","> "}" ws | @nil @list2array;
+
+// Individual environment binding
+env_binding = id "=" ws math_expr EnvBinding/2;
+
+conditional = "if" ws math_expr Conditional/1;
+
+// Function parameter definition
+id_type = id @opt<type_annotation> IdType/2;
+
+// Type annotation
+type_annotation = ":" ws math_expr Type/1;
+
+// Subscripts for variables (e.g., T₁, x₀)
+subscript = $("₋"? ("₀" | "₁" | "₂" | "₃" | "₄" | "₅" | "₆" | "₇" | "₈" | "₉")+);
+// "," | "₊" | "₋" | "₌" | "₍" | "₎" | "ₐ" | "ₑ" | "ₒ" | "ₓ" | "ₔ" | "ₕ" | "ₖ" | "ₗ" | "ₘ" | "ₙ" | "ₚ" | "ₛ" | "ₜ"
+
+// Superscripts for variables (e.g., x², f⁻¹)
+superscript = $("⁻"? ("¹" | "²" | "³" | "⁴" | "⁵" | "⁶" | "⁷" | "⁸" | "⁹" | "⁰")+);
+ // "⁺" | "⁻" | "⁼" | "⁽" | "⁾" |  "ⁿ"
+
+// Greek letters (with both Unicode and ASCII names)
+greek_letter = 
+	("alpha" kwsep | "α") ws @'"alpha"'
+	| ("beta" kwsep | "β") ws @'"beta"'
+	| ("gamma" kwsep | "γ") ws @'"gamma"'
+	| ("delta" kwsep | "δ") ws @'"delta"'
+	| ("epsilon" kwsep | "ε") ws @'"epsilon"'
+	| ("zeta" kwsep | "ζ") ws @'"zeta"'
+	| ("eta" kwsep | "η") ws @'"eta"'
+	| ("theta" kwsep | "θ") ws @'"theta"'
+	| ("iota" kwsep | "ι") ws @'"iota"'
+	| ("kappa" kwsep | "κ") ws @'"kappa"'
+	| ("lambda" kwsep | "λ") ws @'"lambda"'
+	| ("mu" kwsep | "μ") ws @'"mu"'
+	| ("nu" kwsep | "ν") ws @'"nu"'
+	| ("xi" kwsep | "ξ") ws @'"xi"'
+	| ("omicron" kwsep | "ο") ws @'"omicron"'
+	| ("pi" kwsep  | "π") ws @'"pi"'
+	| ("rho" kwsep | "ρ") ws @'"rho"'
+	| ("sigma" kwsep | "σ") ws @'"sigma"'
+	| ("tau" kwsep | "τ") ws @'"tau"'
+	| ("upsilon" kwsep | "υ") ws @'"upsilon"'
+	| ("phi" kwsep | "φ") ws @'"phi"'
+	| ("chi" kwsep | "χ") ws @'"chi"'
+	| ("psi" kwsep | "ψ") ws @'"psi"'
+	| ("omega" kwsep | "ω") ws @'"omega"'
+	;
+
+optsemi = (";" ws)?;
+
+ws math_expr optsemi

@@ -440,16 +440,9 @@ An example that demonstrates how we can use canonical mathematical syntax to sol
 
 ## 1. Math Domain Definition in Mango
 
-First, let's define a grammar for mathematical expression:
+First, let's define a grammar for mathematical expression using Orbit:
 
-TODO: 
-Allow more natural syntax: ax² + bx + c = 0. 
-Add equations.
-Also add sets. 
-Add $ or similar notation for evaluation on the right hand side.
-Use Mango precedence to shorten grammar.
-
-@include math.mango
+@include orbit.mango
 
 ## 2. JavaScript Expression Domain
 
