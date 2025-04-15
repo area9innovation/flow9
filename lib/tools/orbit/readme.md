@@ -97,6 +97,17 @@ Turn on tracing for step-by-step execution details:
 ./run_orbit_tests.sh --trace
 ```
 
+## Orbit Documentation Guide
+
+- **[tutorial.md](tutorial.md)**: Comprehensive introduction to the language
+- **[canonical.md](canonical.md)**: Rewriting rules for symmetry groups
+- **[extensions.md](extensions.md)**: Extended domains for advanced mathematics
+- **[type_orbit.md](type_orbit.md.md)**: Type system for Orbit itself
+- **[type.md](type.md)**: Type system for flow9 represented as domains
+- **[semantics.md](semantics.md)**: Semantic property inference
+- **[design.md](design.md)**: API design for OGraph optimization
+- **[todo.md](todo.md)**: Development roadmap and tasks
+
 ## Pattern Matching and Rewriting Notation
 
 Orbit uses a powerful pattern matching and rewriting notation for its domain-unified transformation system. This notation includes domain annotations, symmetry group operations, and canonical form specifications.
