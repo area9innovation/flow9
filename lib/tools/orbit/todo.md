@@ -108,3 +108,8 @@
   - Create benchmarks for performance evaluation
   - Add property-based testing for ograph invariants
   - Consider a more structured test result format (JSON) for better analysis
+
+## Future Work / Exploration
+- Implement the orbit function and get it to work with the ograph.
+- Add the examples to the tests/ and get them to work.
+- Do more advanced examples, for example with Groebner bases or similar to attempt to generally solve systems of equations in fields.

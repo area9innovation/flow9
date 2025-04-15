@@ -13,7 +13,9 @@ Orbit is a functional programming language that integrates e-graphs (called ogra
 You run Orbit like this:
 
 ```
+
 flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- tests/pattern.orb
+
 ```
 
 ### Enabling Tracing
@@ -21,7 +23,9 @@ flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- tests/pattern.orb
 Orbit provides a detailed tracing feature that shows all steps of interpretation, which is useful for debugging and understanding program execution. To enable tracing, use the `trace=1` URL parameter:
 
 ```
+
 flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- trace=1 tests/pattern.orb
+
 ```
 
 With tracing enabled, you'll see detailed output for each interpretation step, including:
@@ -41,7 +45,9 @@ Orbit includes a comprehensive test suite to verify correct behavior and prevent
 To run the test suite on all tests in the default 'tests' directory:
 
 ```
+
 flow9/lib/tools/orbit> ./run_orbit_tests.sh
+
 ```
 
 This script executes all .orb files in the 'tests' directory and saves the outputs to the 'test_output' directory.
@@ -51,7 +57,9 @@ This script executes all .orb files in the 'tests' directory and saves the outpu
 The test script supports several command-line parameters:
 
 ```
+
 flow9/lib/tools/orbit> ./run_orbit_tests.sh --test-dir=custom_tests --output-dir=results --trace --verbose
+
 ```
 
 - `--test-dir=DIR`: Specifies the directory containing test files (default: 'tests')
@@ -84,28 +92,37 @@ This workflow makes it easy to identify unintended changes in behavior during de
 
 Run all tests in the default directory:
 ```
+
 ./run_orbit_tests.sh
+
 ```
 
 Run a specific set of tests with detailed output:
 ```
+
 ./run_orbit_tests.sh --test-dir=tests/math --verbose
+
 ```
 
 Turn on tracing for step-by-step execution details:
 ```
+
 ./run_orbit_tests.sh --trace
+
 ```
 
 ## Theoretical Foundation: Domains and Symmetry Groups
 
-At the heart of our system lies the insight that computational domains themselves—whether programming languages, algebraic structures, or formal systems—should be first-class citizens in the rewriting process. By representing domains explicitly within our e-graph structure, we enable:
+At the heart of our system lies the insight that computational domains themselves—whether programming languages, algebraic structures, or formal systems—should be first-class citizens in the rewriting process. **In Orbit, domains are represented simply as terms within the language.** However, the intention is for users to **structure these domain terms into a hierarchy, ideally forming a partial order or lattice (e.g., `Integer ⊂ Real ⊂ Complex`).** This hierarchical structure allows the system to apply rewrite rules and reasoning defined at more abstract domain levels (like `Ring`) to expressions belonging to more specific sub-domains (like `Integer`), thereby maintaining the system's expressive power while enabling high-level optimization and transformation strategies.
 
-1. **Cross-Domain Reasoning**: Values can exist simultaneously in multiple domains through domain annotations
-2. **Canonical Representations**: Each domain leverages its natural symmetry group for canonicalization
-3. **Deep Algebraic Structures**: The system automatically discovers and exploits algebraic properties
+By representing domains explicitly within our e-graph structure, we enable:
 
-For example, addition exhibits symmetry group S₂ (the symmetric group of order 2), which captures commutativity. When we encounter expressions like `a + b` in any language, the system can automatically canonicalize to a standard form based on this algebraic property, thus avoiding exponential blowup.
+1. **Cross-Domain Reasoning**: Values can exist simultaneously in multiple domains through domain annotations.
+2. **Hierarchical Rule Application**: Rules defined for parent domains apply to child domains.
+3. **Canonical Representations**: Each domain can leverage its natural symmetry group for canonicalization.
+4. **Deep Algebraic Structures**: The system automatically discovers and exploits algebraic properties.
+
+For example, addition exhibits symmetry group S₂ (the symmetric group of order 2), which captures commutativity. When we encounter expressions like `a + b` in any language associated with a domain where addition is commutative (like `Real` or `Integer`), the system can automatically canonicalize to a standard form based on this algebraic property, thus avoiding redundant representations.
 
 ## Native OGraph Integration
 
@@ -158,19 +175,23 @@ a : Real + b : Real => (a + b) : Real
 
 // The domain of Int is a subset of Real
 Int ⊂ Real
+
+// Apply an annotation during rewrite only if it's not already present
+(x + c) !: ExplicitCoef => (1 * x + c) : ExplicitCoef
 ```
 
 ### Operator Semantics in E-Graph Context
 
 | Operator | ASCII Alternative | E-Graph Interpretation | Semantic Meaning | Example | Node Relationship Behavior |
 |----------|------------------|------------------------|------------------|---------|---------------------------|
-| `:` | `:` | Domain annotation | In patterns: Constrains matches to the specified domain. In results: Asserts the expression belongs to the domain | `x : Algebra` | Adds the domain `Algebra` to the "belongs to" field of node `x`. |
-| `⇒` | `=>` | Rewrite rule | Converts an expression from one form to another, potentially across domains | `a + b : JavaScript => a + b : Python` | Creates a node for `a + b` that belongs to the `JavaScript` domain, and another node for `a + b` that belongs to the `Python` domain. |
-| `⇔` | `<=>` | Equivalence | Declares bidirectional equivalence between patterns, preserving domain membership | `x * (y + z) : Algebra <=> (x * y) + (x * z) : Algebra` | Creates nodes for both expressions and marks them as equivalent. |
-| `⊢` | `\|-` | Entailment | When the left pattern matches, the right side domain annotation is applied | `a : Field + b : Field \|- + : S₂` | When a matching expression is found, the `+` operator node has domain `S₂` added to it. |
-| `⊂` | `c=` | Subset relation | Indicates domain hierarchy, automatically applying parent domain memberships to children | `Integer c= Real` | Establishes that any node belonging to the `Integer` domain also implicitly belongs to the `Real` domain. |
+| `:` | `:` | Domain annotation | In patterns: Constrains matches to the specified domain. In results: Asserts the expression belongs to the domain. | `x : Algebra` | Adds the domain `Algebra` to the "belongs to" field of node `x`. |
+| `⇒` | `=>` | Rewrite rule | Converts an expression from one form to another, potentially across domains. | `a + b : JavaScript => a + b : Python` | Creates a node for `a + b` that belongs to the `JavaScript` domain, and another node for `a + b` that belongs to the `Python` domain. |
+| `⇔` | `<=>` | Equivalence | Declares bidirectional equivalence between patterns, preserving domain membership. | `x * (y + z) : Algebra <=> (x * y) + (x * z) : Algebra` | Creates nodes for both expressions and marks them as equivalent. |
+| `⊢` | `\|-` | Entailment | When the left pattern matches, the right side domain annotation is applied. | `a : Field + b : Field \|- + : S₂` | When a matching expression is found, the `+` operator node has domain `S₂` added to it. |
+| `⊂` | `c=` | Subset relation | Indicates domain hierarchy, automatically applying parent domain memberships to children. | `Integer c= Real` | Establishes that any node belonging to the `Integer` domain also implicitly belongs to the `Real` domain. |
+| `!:` | `!:` | Negative Domain Constraint | In patterns: Constrains matches to nodes that *do not* belong to the specified domain/annotation. | `x !: Processed => ...` | Checks if the node `x`'s "belongs to" field *does not* contain `Processed`. Match succeeds only if the domain/annotation is absent. |
 
-In the e-graph implementation, each node maintains a "belongs to" field that tracks which domains it belongs to. The operators above define how domains are added to nodes and how nodes relate to each other.
+In the e-graph implementation, each node maintains a "belongs to" field that tracks which domains or annotations it belongs to. The operators above define how domains are added to nodes and how nodes relate to each other.
 
 ## Pattern Matching vs. Entailment
 
@@ -327,6 +348,8 @@ let quadraticRules = quote(
 	a : Constant - b : Constant <=> $(a-b) : Constant : Canonical;
 
 	// Add explicit coefficient to x when needed
+	// Rule: If (x + c) does NOT have the ExplicitCoef annotation,
+	// rewrite it to (1 * x + c) and add the ExplicitCoef annotation to the result.
 	(x + c) !: ExplicitCoef => (1 * x + c) : ExplicitCoef;
 
 	// Quadratic formula cases based on discriminant
@@ -377,7 +400,7 @@ fn main() (
 	let sol1 = solveQuadratic(eq1);
 	println("Equation 1: " + prettyOrbit(eq1));
 	println("Solution 1: " + prettyOrbit(sol1));
-	// Expected: {-1, 2}
+	// Expected: {1 + sqrt(2), 1 - sqrt(2)} -- Actual simplified result might vary based on sqrt precision
 
 	// Example 2: x^2 + 4 = 0
 	let eq2 = quote(solve x in (x^2 + 4 = 0));
@@ -410,8 +433,8 @@ When this code is executed, it would demonstrate how the Orbit system can solve 
    - Extract coefficients: `a=1, b=-2, c=-1`
    - Calculate discriminant: `b^2-4ac = 4+4 = 8 > 0`
    - Apply quadratic formula: `{(-(-2) + sqrt(8))/2, (-(-2) - sqrt(8))/2}`
-   - Simplify: `{(2 + 2.83)/2, (2 - 2.83)/2}`
-   - Final result: `{2.41, -0.41}` or exactly `{2, -1}`
+   - Simplify: `{(2 + 2*sqrt(2))/2, (2 - 2*sqrt(2))/2}`
+   - Final result: `{1 + sqrt(2), 1 - sqrt(2)}`
 
 The system would use domain annotations throughout this process to track what kinds of mathematical operations are valid and to direct the simplification strategy.
 
