@@ -99,6 +99,34 @@ In addition to the notation established in the primary document, we introduce th
 - **≅**: Isomorphism
 - **⊗**: Tensor product in monoidal category
 
+### PDE and Scientific Computing Symbols
+- **∇**: Gradient operator
+- **∇·**: Divergence operator
+- **∇²**: Laplacian operator (∇·∇)
+- **∂u/∂t**: Partial derivative of u with respect to t
+- **h**: Grid spacing parameter
+- **O(h^n)**: Order of accuracy notation
+- **‖x‖**: Norm of x
+- **A^†**: Adjoint of operator A
+- **[a,b]×[c,d]**: Domain product (2D domain)
+
+### Numerical Analysis Symbols
+- **ε**: Error bound or machine epsilon
+- **εₐ**: Error in a
+- **εᵦ**: Error in b
+- **‖A‖**: Matrix norm
+- **κ(A)**: Condition number of A
+- **x ± δ**: Value x with uncertainty δ
+- **O(h^p)**: Truncation error of order p
+
+### Memory and Performance Symbols
+- **τ**: Execution time
+- **B(n)**: Memory bandwidth function
+- **L₁,L₂,L₃**: Cache levels
+- **T**: Matrix transposition flag
+- **AoS**: Array of Structures layout
+- **SoA**: Structure of Arrays layout
+
 ## 1. Differential Calculus and Automatic Differentiation
 
 Differential calculus is concerned with the computation of derivatives and their application. Automatic differentiation (AD) is a computational implementation of the chain rule that efficiently computes exact derivatives.
@@ -856,6 +884,23 @@ Loop transformations are crucial for optimizing numerical code, especially for d
 
 // Code generation from polyhedral model
 (polyhedral(D, S, A)) : PolyhedralModel => generated_code(D, S, A) : LoopNest : Canonical;
+
+// Iteration domain representation with constraints
+(For(i, lb, ub, S)) : LoopNest => IterationDomain({i | lb u2264 i < ub}, S) : PolyhedralModel;
+
+// Dependence analysis
+(Su2081; Su2082) : LoopNest => (Su2081; Su2082) : DependenceAnnotated where
+	readSet(Su2081) := reads(Su2081),
+	writeSet(Su2081) := writes(Su2081),
+	dependence(Su2081, Su2082) := writeSet(Su2081) u2229 (readSet(Su2082) u222a writeSet(Su2082)) u2260 u2205;
+
+// Loop interchange with dependence check
+(For(i, a, b, For(j, c, d, S))) : LoopNest =>
+	(For(j, c, d, For(i, a, b, S))) : LoopNest : Canonical if no_loop_carried_dependence(S, i, j);
+
+// Loop fusion with dependence analysis
+(For(i, a, b, Su2081); For(i, a, b, Su2082)) : LoopNest =>
+	For(i, a, b, Su2081; Su2082) : LoopNest : Canonical if no_backward_dependence(Su2081, Su2082);
 ```
 
 ## 11. Parser Combinators and Grammar Transformations
@@ -1024,6 +1069,20 @@ Concurrency and process calculi formalize the behavior of concurrent and communi
 // Parallel loop conversion
 (for(i=0; i<n; i+=1) { S[i] }) : Loop =>
 	(parallel_for(i=0; i<n; i+=1) { S[i] }) : ParallelLoop : Canonical if independent_iterations(S);
+
+// Synchronization primitives
+(barrier(threads) ; barrier(threads)) : ConcurrentProgram => barrier(threads) : ConcurrentProgram if no_side_effects_between_barriers;
+
+// Data-race prevention with effects
+(e₁ ; e₂) : ConcurrentEffect !=> (e₂ ; e₁) : ConcurrentEffect if writes(e₁) ∩ (reads(e₂) ∪ writes(e₂)) ≠ ∅ || reads(e₁) ∩ writes(e₂) ≠ ∅;
+
+// Distributed memory operations (MPI-style)
+(send(rank, data) ; compute(x) ; receive(rank, result)) : DistributedMemory =>
+	(compute(x) ; send(rank, data) ; receive(rank, result)) : DistributedMemory if no_dependency(compute, data);
+
+// Safe atomic operations
+(atomic_update(x, f) || atomic_update(y, g)) : ConcurrentProgram <=>
+	(atomic_update(y, g) || atomic_update(x, f)) : ConcurrentProgram if x ≠ y;
 ```
 
 ## 13. Category-Theoretic Transformations
@@ -1414,7 +1473,297 @@ expr = do {
 => ma <*> mb <*> pure(f)
 ```
 
-## 14. Effect Tracking in Programming Languages
+## 14. Memory Models and Layout Transformations
+
+### Tensor and Array Slicing
+
+```
+// Array slice operations
+(slice(A, i:j, k:l)) : ArraySlice => subarray_view(A, i, j, k, l) : Canonical;
+
+// Slice fusion for contiguous regions
+(slice(A, i:j, k:l) ∪ slice(A, j:m, k:l)) : ArraySlice => slice(A, i:m, k:l) : Canonical if j_equals_j;
+
+// Slice transposition
+(slice(A, i:j, k:l)^T) : ArraySlice => slice(A^T, k:l, i:j) : Canonical;
+
+// Pure vs. effectful slicing
+(slice(A, i:j, k:l)) : Pure => view_of(A, i, j, k, l) : Pure : Canonical; // No copy
+(copy_slice(A, i:j, k:l)) : Effect => copy_of(A, i, j, k, l) : Effect : Canonical; // Creates copy
+```
+
+### In-Place Updates
+
+```
+// In-place array update
+(update_in_place(A, i, j, v)) : MutableEffect => A_with_update(i, j, v) : MutableEffect : Canonical;
+
+// Fusion of compatible updates
+(update_in_place(A, i, j, v); update_in_place(A, k, l, w)) : MutableEffect =>
+	batched_update(A, [(i,j,v), (k,l,w)]) : MutableEffect : Canonical if no_overlap(i,j,k,l);
+
+// Reordering independent updates
+(update_in_place(A, i, j, v); update_in_place(B, k, l, w)) : MutableEffect <=>
+	(update_in_place(B, k, l, w); update_in_place(A, i, j, v)) : MutableEffect : Canonical if A ≠ B;
+```
+
+### Layout Transformations
+
+```
+// AoS to SoA transformation
+(array_of_structs(data)) : Memory => struct_of_arrays(transpose_layout(data)) : Memory if beneficial_for_vectorization;
+
+// Row-major to column-major conversion
+(array_row_major(A)) : Memory => array_column_major(transpose_internal(A)) : Memory if matches_library_expectations;
+
+// Memory padding for alignment
+(array(data, [n, m])) : Memory => padded_array(data, [n, m], [p₁, p₂]) : Memory : Canonical if improves_alignment(p₁, p₂);
+```
+
+## 15. Specialized PDE Operators
+
+### Stencil Operations
+
+```
+// Laplacian operator (1D)
+(laplacian(u, i)) : PDEStencil => (u[i+1] - 2*u[i] + u[i-1])/h² : Canonical where h is grid spacing;
+
+// Laplacian operator (2D)
+(laplacian(u, i, j)) : PDEStencil =>
+	(u[i+1,j] + u[i-1,j] + u[i,j+1] + u[i,j-1] - 4*u[i,j])/h² : Canonical where h is grid spacing;
+
+// Gradient operator (1D)
+(gradient(u, i)) : PDEStencil => (u[i+1] - u[i-1])/(2*h) : Canonical where h is grid spacing;
+
+// Gradient operator (2D x-component)
+(gradient_x(u, i, j)) : PDEStencil => (u[i+1,j] - u[i-1,j])/(2*h) : Canonical where h is grid spacing;
+
+// Divergence of gradient (alternative Laplacian)
+(div(grad(u, i, j))) : PDEStencil => laplacian(u, i, j) : Canonical;
+```
+
+### Boundary Conditions
+
+```
+// Dirichlet boundary condition
+(apply_boundary(u, dirichlet(v))) : PDEBoundary => set_boundary_values(u, v) : Canonical;
+
+// Neumann boundary condition
+(apply_boundary(u, neumann(v))) : PDEBoundary => set_boundary_gradients(u, v) : Canonical;
+
+// Periodic boundary condition
+(apply_boundary(u, periodic)) : PDEBoundary => connect_opposite_boundaries(u) : Canonical;
+
+// Interior vs boundary separation
+(update(u)) : PDEUpdate => (update_interior(u); update_boundary(u)) : PDEUpdate : Canonical;
+```
+
+### Sparsity Patterns
+
+```
+// Sparse matrix-vector product
+(SpMV(A, v)) : SparseMatrix => sum_over_nonzeros(A, v) : Canonical;
+
+// Structured sparse matrix optimizations
+(SpMV(tridiagonal(a, b, c), v)) : SparseMatrix =>
+	tridiagonal_matvec(a, b, c, v) : SparseMatrix : Canonical;
+
+// Block-sparse reductions
+(SpMV(block_diagonal(blocks), v)) : SparseMatrix =>
+	block_diagonal_matvec(blocks, v) : SparseMatrix : Canonical;
+```
+
+## 16. Numerical Stability and Error Control
+
+### Floating-Point Error Models
+
+```
+// Error propagation in addition
+(a + b) : ErrorAnalysis => (a + b) : ErrorBound(εₐ + εᵦ) if a : ErrorBound(εₐ) && b : ErrorBound(εᵦ);
+
+// Error propagation in multiplication
+(a * b) : ErrorAnalysis => (a * b) : ErrorBound(|b|*εₐ + |a|*εᵦ + εₐ*εᵦ)
+	if a : ErrorBound(εₐ) && b : ErrorBound(εᵦ);
+
+// Catastrophic cancellation detection
+(a - b) : ErrorAnalysis => (a - b) : ErrorBound(εₐ + εᵦ) : NumericalWarning
+	if a : ErrorBound(εₐ) && b : ErrorBound(εᵦ) && similar_magnitude(a, b);
+```
+
+### Precision Adaptation
+
+```
+// Double to single precision conversion
+(double(x)) : Precision => float(x) : Precision : Canonical if precision_sufficient(float, x);
+
+// Mixed precision optimization
+(double(x) * double(y)) : Precision => double(float(x) * float(y)) : Precision
+	if multiplication_benefits_from_lower_precision;
+
+// Adaptive precision selection
+(compute(x)) : Precision =>
+	if_error_bound(compute_double(x), compute_float(x), error_threshold) : Precision : Canonical;
+```
+
+### Monotonicity Preservation
+
+```
+// Monotonic transformation detection
+(f(x)) : Monotonic => f(x) : Monotonic if is_monotonic_function(f);
+
+// Monotonicity-preserving reordering
+(f(x); g(x)) : Monotonic <=> (g(x); f(x)) : Monotonic
+	if both_increasing(f, g) || both_decreasing(f, g);
+
+// Convergence preservation rule
+(iterate(f, x, n)) : Convergence => iterate(f, x, n) : Convergence
+	if contraction_mapping(f) && within_basin(x);
+```
+
+## 17. Differentiation for PDE and Adjoints
+
+### PDE-Specific Differentiation Rules
+
+```
+// Derivative of Laplacian operator
+(d/du (laplacian(u))) : PDEDiff => laplacian(d/du (u)) : Canonical;
+
+// Gradient of divergence
+(∇(div(v))) : PDEDiff => laplacian(v) : Canonical if is_smooth(v);
+
+// Adjoint of gradient operator
+(adj(grad)) : PDEDiff => -div : Canonical; // Adjoint of gradient is negative divergence
+
+// Stencil Jacobians
+(J(stencil(u, width))) : PDEDiff => sparse_banded_matrix(width*2 + 1) : Canonical;
+```
+
+### Checkpointing for Reverse-Mode Differentiation
+
+```
+// Reverse-mode AD with checkpointing
+(grad_reverse(f(g(h(x))))) : ADCheckpoint =>
+	compose_adjoints(grad(f), grad(g), grad(h), checkpoint(x)) : Canonical;
+
+// Optimizing checkpoint intervals
+(reverse_ad_steps(f, n)) : ADCheckpoint =>
+	reverse_with_optimal_checkpoints(f, sqrt(n)) : ADCheckpoint : Canonical;
+
+// Memory-compute tradeoff in AD
+(reverse_ad(f, x)) : ADCheckpoint =>
+	if memory_available then reverse_full(f, x) else reverse_checkpointed(f, x) : Canonical;
+```
+
+### Sensitivity Analysis
+
+```
+// PDE parameter sensitivity
+(sensitivity(solution(pde), parameter)) : Sensitivity =>
+	adjoint_method(pde, parameter) : Canonical if is_differentiable(pde);
+
+// Stochastic sensitivity analysis
+(expected_sensitivity(model, parameter, distribution)) : Sensitivity =>
+	monte_carlo_estimate(model, parameter, distribution, samples) : Canonical;
+```
+
+## 18. Advanced Type System for Scientific Computing
+
+### Dimension Typing
+
+```
+// Dimension constraint checking
+(a : Vector(n) + b : Vector(m)) : DimCheck => (a + b) : Vector(n) if n == m;
+(a : Vector(n) + b : Vector(m)) : DimCheck => error("dimension mismatch") if n != m;
+
+// Matrix-vector product dimension check
+(A : Matrix(m,n) * v : Vector(p)) : DimCheck => (A * v) : Vector(m) if n == p;
+(A : Matrix(m,n) * v : Vector(p)) : DimCheck => error("dimension mismatch") if n != p;
+
+// Dimension inference
+(transpose(A : Matrix(m,n))) : DimInference => transpose(A) : Matrix(n,m) : Canonical;
+```
+
+### Units of Measurement
+
+```
+// Unit-aware computations
+(a : Quantity(v₁, m/s) + b : Quantity(v₂, m/s)) : UnitCheck =>
+	(a + b) : Quantity(v₁ + v₂, m/s) : Canonical;
+
+// Unit conversion
+(a : Quantity(v, km)) : UnitConversion =>
+	a : Quantity(v * 1000, m) : Canonical;
+
+// Dimensional analysis errors
+(a : Quantity(v₁, m) + b : Quantity(v₂, s)) : UnitCheck =>
+	error("incompatible units") : UnitError;
+```
+
+### Grid and Mesh Types
+
+```
+// Grid type checking
+(discretize(f, grid : Grid2D(n,m))) : GridType =>
+	discrete_function(f, grid) : DiscreteFunction2D(n,m) : Canonical;
+
+// Mesh compatibility
+(interpolate(f : DiscreteFunction(mesh₁), mesh₂)) : MeshType =>
+	interpolated_function(f, mesh₁, mesh₂) : DiscreteFunction(mesh₂) : Canonical;
+
+// Refinement type checking
+(refine(mesh : Mesh(n))) : MeshRefinement =>
+	refined_mesh : Mesh(2*n) : Canonical if uniform_refinement;
+```
+
+## 19. Performance Models and Cost-Driven Search
+
+### Cost Models
+
+```
+// Computational cost estimation
+(matmul(A, B)) : CostModel => matmul(A, B) : Complexity(O(n³)) : Canonical;
+(matmul(A, B)) : CostModel => strassen(A, B) : Complexity(O(n^2.807)) if large_enough(n);
+
+// Memory access cost
+(access(array_row_major(A), j, i)) : CostModel =>
+	access(A, j, i) : MemoryCost(high) : Canonical; // Column access in row-major is expensive
+
+// Parallel execution cost
+(parallel(tasks, p)) : CostModel =>
+	parallel(tasks, p) : ExecutionTime(max_time(tasks) + communication_overhead(tasks, p)) : Canonical;
+```
+
+### Heuristic Search
+
+```
+// Transformation sequence search
+(optimize(expr, goal)) : Search =>
+	apply_transformations(expr, best_sequence(available_transforms, expr, goal)) : Canonical;
+
+// Genetic algorithm optimization
+(autotune(kernel, params)) : Search =>
+	kernel(best_params_from_genetic(kernel, params, generations, fitness)) : Canonical;
+
+// Machine learning guided optimization
+(optimize(expr)) : MLGuided =>
+	apply_transforms(expr, predict_best_transforms(expr, ml_model)) : Canonical;
+```
+
+### Incremental Optimization
+
+```
+// Partial optimization with fallback
+(optimize_with_fallback(expr)) : Incremental =>
+	if is_valid(optimized) then optimized else expr : Canonical
+	where optimized = attempt_optimization(expr);
+
+// Progressive optimization levels
+(optimize(expr, level)) : Progressive =>
+	if level == 0 then expr else
+	optimize(apply_safe_transforms(expr), level-1) : Canonical;
+```
+
+## 20. Effect Tracking in Programming Languages
 
 Effect tracking is a powerful technique for statically analyzing and optimizing code based on its computational effects. By capturing the potential side effects of expressions within the e-graph, we can reason about program transformations that preserve semantics across effectful and pure code regions.
 
@@ -1425,6 +1774,9 @@ Effect tracking is a powerful technique for statically analyzing and optimizing 
 - **IO**: Effect domain for input/output operations
 - **Exception**: Effect domain for exception-raising operations
 - **EffectDomain(E)**: Domain indicating expressions with effect E
+- **CommutativeEffect**: Effect that can safely be reordered
+- **CheckpointEffect**: Effect for state persistence operations
+- **spawn/join/barrier**: Concurrency control operations
 
 ### Effect Representation in E-Graphs
 
@@ -1491,6 +1843,21 @@ EffectDomain(Console) ⊂ EffectDomain(IO);
 // Conditional effect propagation
 (if c then t else f) : EffectInference => (if c then t else f) : EffectDomain(E₁ ∪ E₂ ∪ E₃)
 	if c : EffectDomain(E₁) && t : EffectDomain(E₂) && f : EffectDomain(E₃);
+
+// Checkpointing effects
+(Op(checkpoint, state)) : CheckpointEffect => checkpoint_node(state) : EffectDomain(IO) : Canonical;
+
+// Distributed checkpointing optimizations
+(Op(checkpoint, full_state)) : DistributedCheckpoint =>
+	Op(partial_checkpoint, extract_relevant(full_state)) : DistributedCheckpoint : Canonical if can_extract_partial(full_state);
+
+// Commutative logging optimization
+(Op(log, msg₁) ; Op(log, msg₂)) : CommutativeEffect =>
+	Op(batch_log, [msg₁, msg₂]) : CommutativeEffect : Canonical if can_batch_logs;
+
+// I/O effect merging
+(Op(write_file, f, data₁) ; Op(write_file, f, data₂)) : IO =>
+	Op(write_file, f, concat(data₁, data₂)) : IO : Canonical if sequential_writes(f);
 ```
 
 ### Cross-Domain Effect Transformations
@@ -1529,8 +1896,16 @@ if (x > 0) {
 
 ## Conclusion
 
-This document has extended the rewriting framework established in `canonical.md` to encompass additional mathematical domains. By integrating differential calculus, linear algebra, polynomial ideals, homomorphic cryptography, tensor operations, interval arithmetic, finite automata, loop transformations, parser combinators, process calculi, category theory, and effect tracking into the e-graph rewriting system, we enable powerful cross-domain optimizations and transformations.
+This document has extended the rewriting framework established in `canonical.md` to encompass a comprehensive set of mathematical and computational domains. By integrating differential calculus, linear algebra, polynomial ideals, homomorphic cryptography, tensor operations, interval arithmetic, finite automata, loop transformations, parser combinators, process calculi, category theory, effect tracking, memory models, PDE operators, numerical stability analysis, differentiation for PDE solvers, scientific computing type systems, and performance modeling into the e-graph rewriting system, we provide a unified framework for powerful cross-domain optimizations and transformations.
 
-The rewriting rules provided offer a foundation for developing computational systems that can fluidly move between different mathematical structures while preserving semantic equivalence. This capability is essential for advanced applications in scientific computing, symbolic mathematics, cryptography, machine learning, verified computing, compiler construction, and programming language design.
+The extended system now addresses the key requirements for building high-performance computing applications such as PDE solvers:
 
-By continually expanding the range of domains covered by our rewriting system, we strengthen its ability to support increasingly sophisticated computational tasks across the mathematical sciences and program optimization landscape.
+1. **Correctness**: Through advanced type systems, dimension checking, units of measurement, and formal verification
+2. **Performance**: Via sophisticated loop transformations, memory layout optimizations, and cost-driven search strategies
+3. **Scalability**: Through explicit support for parallelism, concurrency, and distributed memory operations
+4. **Robustness**: Via numerical stability analysis, error propagation tracking, and adaptive precision techniques
+5. **Domain-specificity**: Through specialized PDE operators, stencil optimizations, and boundary condition handling
+
+These rewriting rules offer a foundation for developing computational systems that can fluidly move between different mathematical structures while preserving semantic equivalence. This capability is essential for advanced applications in scientific computing, symbolic mathematics, cryptography, machine learning, verified computing, compiler construction, and high-performance computing.
+
+By integrating concerns that are typically addressed separately—numerical analysis, parallelism, memory management, domain-specific operations, and effect tracking—into a single e-graph framework, we enable a new generation of optimizing compilers and program transformation tools that can reason holistically about complex scientific codes.
