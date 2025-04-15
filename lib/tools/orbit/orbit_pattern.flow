@@ -657,17 +657,40 @@ applyBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>) -> OrMat
 // interpreter parameter: Function to interpret expressions with conditions
 executeMatch(env : OrbEnv, exprValue : OrMath_expr, patterns : OrMath_expr, 
 	interpreter : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+	tracing = env.tracing;
+	if (tracing) {
+		println("### EXECUTE MATCH: Starting pattern matching");
+		println("### EXECUTE MATCH: Expression to match: " + prettyOrbit(exprValue));
+		println("### EXECUTE MATCH: Patterns: " + prettyOrbit(patterns));
+	}
+	
 	// Implement pattern matching with multiple patterns
-	tryPatterns(patterns, env, exprValue, interpreter);
+	result = tryPatterns(patterns, env, exprValue, interpreter);
+	if (tracing) {
+		println("### EXECUTE MATCH: Pattern matching completed with result: " + prettyOrbit(result.result));
+	}
+	result;
 }
 
 // Try to match a sequence of patterns
 tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr, 
 	interpreter : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-	// THIS VERSION HAS AN ISSUE: When handling OrRule, it returns the rule body without evaluating it
+	tracing = env.tracing;
+	// Add pattern trace for debugging
+	if (tracing) {
+		println("### PATTERN MATCHING: Trying to match expression: " + prettyOrbit(exprValue));
+		println("### PATTERN MATCHING: Against pattern: " + prettyOrbit(patterns));
+	}
+	
 	switch (patterns) {
 		// Try a single rule
 		OrRule(patternExpr, bodyExpr, conditionals): {
+			if (tracing) {
+				println("### PATTERN RULE: LHS = " + prettyOrbit(patternExpr));
+				println("### PATTERN RULE: RHS = " + prettyOrbit(bodyExpr));
+				println("### PATTERN RULE: Conditions = " + i2s(length(conditionals)));
+			}
+			
 			// Extract the actual body and next pattern if body is a sequence
 			actualBodyRef = ref bodyExpr;
 			nextRuleRef = ref None();
@@ -675,6 +698,7 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr,
 			if (bodyExpr.structname == "OrSequence") {
 				switch (bodyExpr) {
 					OrSequence(seqBody, seqNext): {
+						if (tracing) println("### PATTERN RULE: Body is a sequence, extracting first part");
 						actualBodyRef := seqBody;
 						nextRuleRef := Some(seqNext);
 					}
@@ -683,12 +707,16 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr,
 			}
 
 			// Try to unify the pattern with the expression
+			if (tracing) println("### PATTERN RULE: Attempting to unify pattern with expression");
 			switch (unify(patternExpr, exprValue)) {
 				PatternSuccess(bindings): {
+					if (tracing) println("### PATTERN RULE: Unification successful with " + i2s(sizeTree(bindings)) + " bindings");
 					// Check condition if present
 					if (isConditionSatisfied(conditionals, bindings, env, interpreter)) {
+						if (tracing) println("### PATTERN RULE: Condition satisfied");
 						// Apply bindings and evaluate the body
 						boundBody = applyBindings(^actualBodyRef, bindings);
+						if (tracing) println("### PATTERN RULE: Bound body = " + prettyOrbit(boundBody));
 						
 						// Update environment with pattern variables
 						boundEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
@@ -696,35 +724,41 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr,
 						});
 						
 						// FIX: Execute the rule body immediately in this environment
-						// This is critical for recursive function calls
-						// Note: We still return just the environment with the result set (no nested interpretOrbit)
-						// BUT now we've fully evaluated the right-hand side
-						interpreter(boundEnv, boundBody);
+						if (tracing) println("### PATTERN RULE: Evaluating rule body");
+						result = interpreter(boundEnv, boundBody);
+						if (tracing) println("### PATTERN RULE: Rule body evaluated to: " + prettyOrbit(result.result));
+						result;
 					} else {
+						if (tracing) println("### PATTERN RULE: Condition failed");
 						// If condition failed, try next rule if available
 						switch (^nextRuleRef) {
 							Some(next): {
+								if (tracing) println("### PATTERN RULE: Trying next pattern in sequence");
 								// Extract the next pattern and try it
 								tryPatterns(next, env, exprValue, interpreter);
 							}
 							None(): {
 								// No next pattern, return the original expression as fallback
+								if (tracing) println("### PATTERN RULE: No more patterns to try, returning original value");
 								OrbEnv(env with result = exprValue);
 							}
 						}
 					}
 				}
 				PatternFailure(): {
+					if (tracing) println("### PATTERN RULE: Unification failed");
 					// Pattern didn't match
 
 					// Check if there's a next pattern in a sequence
 					switch (^nextRuleRef) {
 						Some(next): {
+							if (tracing) println("### PATTERN RULE: Trying next pattern in sequence after unification failure");
 							// Extract the next pattern and try it
 							tryPatterns(next, env, exprValue, interpreter);
 						}
 						None(): {
 							// No next pattern, return the original expression as fallback
+							if (tracing) println("### PATTERN RULE: No more patterns to try after unification failure, returning original value");
 							OrbEnv(env with result = exprValue);
 						}
 					}
@@ -734,22 +768,25 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr,
 		
 		// Handle a sequence of patterns - try left first, then right if left fails
 		OrSequence(left, right): {
+			if (tracing) println("### PATTERN SEQUENCE: Trying left pattern first");
 			// Try the left pattern first
 			leftResult = tryPatterns(left, env, exprValue, interpreter);
 			
 			// If we get back the original expression, it means no pattern matched
 			// Try the right pattern in that case
 			if (leftResult.result == exprValue) {
+				if (tracing) println("### PATTERN SEQUENCE: Left pattern didn't match, trying right pattern");
 				// Try the right pattern
 				tryPatterns(right, leftResult, exprValue, interpreter);
 			} else {
+				if (tracing) println("### PATTERN SEQUENCE: Left pattern matched, returning result");
 				// A pattern matched on the left side
 				leftResult;
 			}
 		}
 		
 		default: {
-			println("Invalid pattern structure in match: " + prettyOrbit(patterns));
+			if (tracing) println("### PATTERN ERROR: Invalid pattern structure in match: " + prettyOrbit(patterns));
 			OrbEnv(env with result = exprValue); // Return original as fallback
 		}
 	}
@@ -758,30 +795,63 @@ tryPatterns(patterns : OrMath_expr, env : OrbEnv, exprValue : OrMath_expr,
 // Evaluate conditions in pattern matching rules
 isConditionSatisfied(conditionals : [OrConditional], bindings : Tree<string, OrMath_expr>, env : OrbEnv,
 	interpreter : (OrbEnv, OrMath_expr) -> OrbEnv) -> bool {
+	if (env.tracing) println("### CONDITION CHECK: Evaluating " + i2s(length(conditionals)) + " condition(s)");
 	if (length(conditionals) == 0) {
+		if (env.tracing) println("### CONDITION CHECK: No conditions, returning true");
 		// No conditions means always satisfied
 		true;
 	} else {
 		// Create a new environment with the bindings first
+		if (env.tracing) {
+			println("### CONDITION CHECK: Creating environment with " + i2s(sizeTree(bindings)) + " bindings");
+			// Print each binding for debugging
+			iter(getTreeKeys(bindings), \key -> {
+				value = lookupTreeDef(bindings, key, OrInt(0));
+				println("### BINDING: " + key + " = " + prettyOrbit(value));
+			});
+		}
+		
 		condEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
 			bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
 		});
 
 		// Evaluate each condition with the bindings applied
-		fold(conditionals, true, \allSatisfied, cond -> {
+		result = fold(mapi(conditionals, \idx, cond -> Pair(idx, cond)), true, \allSatisfied, condPair -> {
+			index = condPair.first;
+			cond = condPair.second;
+			
 			// Short-circuit if previous condition failed
-			if (!allSatisfied) false 
-			else {
+			if (!allSatisfied) {
+				if (env.tracing) println("### CONDITION CHECK: Previous condition failed, short-circuiting");
+				false;
+			} else {
 				// Apply the bindings to the condition
 				boundCondition = applyBindings(cond.math_expr, bindings);
 				
+				if (env.tracing) println("### CONDITION " + i2s(index) + ": Evaluating condition: " + prettyOrbit(boundCondition));
+				
+				// Special handling for sequence with a rule
+				// This pattern frequently appears when parsing conditions like "a <= b; a => expr"
+				cleanedCondition = switch (boundCondition) {
+					OrSequence(first, second): {
+						// Check if the second part is a rule - if so, just evaluate the first part
+						if (second.structname == "OrRule") {
+							if (env.tracing) println("### CONDITION FIXED: Sequence contains rule - only evaluating first part: " + prettyOrbit(first));
+							first;
+						} else {
+							boundCondition;
+						}
+					}
+					default: boundCondition;
+				};
 				
 				// Evaluate the condition expression using the passed interpreter function
-				evalResult = interpreter(condEnv, boundCondition);
-				
+				if (env.tracing) println("### CONDITION " + i2s(index) + ": Calling interpreter on condition: " + prettyOrbit(cleanedCondition));
+				evalResult = interpreter(condEnv, cleanedCondition);
+				if (env.tracing) println("### CONDITION " + i2s(index) + ": Interpreter returned: " + prettyOrbit(evalResult.result));
 				
 				// Convert result to boolean
-				switch (evalResult.result) {
+				boolResult = switch (evalResult.result) {
 					OrBool(b): b;
 					OrInt(i): i != 0;
 					OrDouble(d): d != 0.0;
@@ -792,8 +862,14 @@ isConditionSatisfied(conditionals : [OrConditional], bindings : Tree<string, OrM
 							prettyOrbit(evalResult.result));
 						false;
 					}
-				}
+				};
+				
+				if (env.tracing) println("### CONDITION " + i2s(index) + ": Result = " + (if (boolResult) "TRUE" else "FALSE"));
+				boolResult;
 			}
 		});
+		
+		if (env.tracing) println("### CONDITION CHECK: Final result = " + (if (result) "TRUE" else "FALSE"));
+		result;
 	}
 }
