@@ -11,6 +11,8 @@
 ✅ Add test suite mode to orbit.flow with automated test execution and reporting
 
 ## High Priority Tasks
+- Array indexing, modulo %
+- Fix pattern matching
 - Add proper error handling and reporting for pattern matching failures
 - Extract minimal program from ograph via cost function
 - Runtime function to read & parse files
