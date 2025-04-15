@@ -4,6 +4,44 @@
 
 This document provides a comprehensive set of rewriting rules for common symmetry groups, enabling canonical representations of expressions involving these groups. These rules are particularly useful for optimization and simplification in computational domains that exhibit symmetries.
 
+## Notation
+
+This document uses the following notation for groups, operators, and relations:
+
+### Group Symbols
+- **Sₙ**: Symmetric group of order n! (all permutations of n elements)
+- **Aₙ**: Alternating group of order n!/2 (even permutations of n elements)
+- **Cₙ**: Cyclic group of order n (rotational symmetry)
+- **Dₙ**: Dihedral group of order 2n (reflections and rotations of a regular n-gon)
+- **GL(n,F)**: General linear group (invertible n×n matrices over field F)
+- **SL(n,F)**: Special linear group (n×n matrices with determinant 1 over field F)
+- **O(n)**: Orthogonal group (n×n matrices M where M^T·M = I)
+- **Q₈**: Quaternion group (non-abelian group of order 8)
+- **ℤ/nℤ**: Integers modulo n (also denoted as ℤₙ)
+
+### Operators and Relations
+- **×**: Direct product of groups
+- **⋊**: Semi-direct product of groups
+- **⊂**: Subset relation (A ⊂ B means A is a subgroup of B)
+- **⊲**: Normal subgroup (A ⊲ B means A is a normal subgroup of B)
+- **≅**: Isomorphism (A ≅ B means groups A and B are isomorphic)
+- **≇**: Not isomorphic (A ≇ B means groups A and B are not isomorphic)
+- **|G|**: Order (size) of group G
+- **∈**: Element membership (a ∈ G means a is an element of G)
+- **⟺**: Logical equivalence (p ⟺ q means p if and only if q)
+
+### Rewrite Rule Notation
+- **a : G**: Expression a belongs to domain G
+- **=>**: Rewrite rule (left hand side rewrites to right hand side)
+- **if**: Conditional application of a rule
+- **a : G => b : H**: Expression a in domain G rewrites to expression b in domain H
+- **a !: G**: Expression a does NOT belong to domain G
+- **eval()**: Used to evaluate expressions on the right-hand side during rewriting
+- **: Canonical**: Annotation indicating the result is in canonical form
+- **discard**: Indicates a branch that should be pruned during canonicalization
+
+Throughout this document, rewrite rules are presented in a pattern-matching style where the left side of => describes a pattern to match, and the right side describes the transformation to apply. Conditions after "if" specify when the rule applies.
+
 ## Basic Symmetry Groups
 
 ### Symmetric Group (Sₙ)
