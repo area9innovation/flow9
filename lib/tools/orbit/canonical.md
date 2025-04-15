@@ -33,14 +33,97 @@ This document uses the following notation for groups, operators, and relations:
 ### Rewrite Rule Notation
 - **a : G**: Expression a belongs to domain G
 - **=>**: Rewrite rule (left hand side rewrites to right hand side)
+- **<=>**: Bidirectional equivalence between patterns
 - **if**: Conditional application of a rule
 - **a : G => b : H**: Expression a in domain G rewrites to expression b in domain H
 - **a !: G**: Expression a does NOT belong to domain G
+- **⊢** or **\|-**: Entailment operator (when left pattern matches, right side domain annotation is applied)
+- **⊂** or **c=**: Subset relation (indicates domain hierarchy)
 - **eval()**: Used to evaluate expressions on the right-hand side during rewriting
 - **: Canonical**: Annotation indicating the result is in canonical form
 - **discard**: Indicates a branch that should be pruned during canonicalization
 
 Throughout this document, rewrite rules are presented in a pattern-matching style where the left side of => describes a pattern to match, and the right side describes the transformation to apply. Conditions after "if" specify when the rule applies.
+
+### Domain Annotation Syntax
+
+Domain annotations serve multiple purposes in the rewriting system depending on context:
+
+#### Pattern Matching of Domain (Left-Hand Side)
+
+```
+expr : Domain
+```
+
+On the left-hand side of a rule, this is a **constraint** requiring that:
+- The matched node must already have the specified domain in its "belongs to" field
+- This acts as a filter in pattern matching, restricting the match to nodes that belong to specific domains
+
+Examples:
+```
+a + b : Int          // Matches addition expressions in the Int domain
+a + b : S₂           // Matches addition with S₂ symmetry property
+```
+
+#### Negative Domain Match (!:)
+
+The `!:` operator allows matching expressions that do NOT belong to a domain:
+
+```
+expr !: Domain => ...
+```
+
+This pattern matches only when the expression does not have the specified domain annotation, which is useful for:
+- Applying transformations only to expressions that haven't been processed yet
+- Preventing infinite loops in rewriting
+- Implementing multi-phase transformations
+
+Example:
+```
+expr !: Simplified => simplify(expr) : Simplified  // Apply only to unsimplified expressions
+```
+
+#### Entailment (Right-Hand Side)
+
+```
+a + b => a + b : S₂
+```
+
+On the right-hand side, this is an **assertion** that:
+- The resulting node should have the domain added to its "belongs to" field
+- This is how domain membership information is assigned to expressions
+
+#### Explicit Entailment Rules
+
+The entailment operator (⊢) creates conditional domain annotations:
+
+```
+pattern ⊢ op : Domain
+```
+
+This means when `pattern` matches, the operator `op` has `Domain` added to its "belongs to" field.
+
+Examples:
+```
+a : Real + b : Real ⊢ + : S₂  // When adding reals, the + operator has S₂ symmetry
+n ⊢ n : Prime if isPrime(n)   // If n is prime, it gets the Prime domain
+```
+
+#### Domain Hierarchy
+
+The subset relation (⊂) indicates domain inheritance:
+
+```
+SubDomain ⊂ SuperDomain
+```
+
+This establishes that any expression in the subdomain is also in the superdomain, allowing rules defined for parent domains to apply to child domains.
+
+Example:
+```
+Integer ⊂ Real ⊂ Complex  // Integer values are also Real values
+Group ⊂ Ring ⊂ Field      // Rings have group structure
+```
 
 ## Common Group Properties
 
@@ -178,6 +261,71 @@ Q₈ is a non-abelian group of order 8, with all non-identity elements having or
 - Not isomorphic to D₄ (dihedral group of order 8)
 - Not isomorphic to C₂ × C₄ (direct product of cyclic groups)
 - Elements usually denoted {±1, ±i, ±j, ±k}
+
+## Group Actions
+
+Group actions define how the abstract symmetry groups concretely transform expressions or data structures. These actions form the bridge between abstract group theory and practical transformations in computational domains.
+
+### Direct Group Action Representation
+
+```
+// S₂ acts by swapping elements
+action(S₂, [a, b]) => [b, a];
+
+// Cyclic group acts by rotation
+action(C₄, arr) => arr[n:] + arr[:n];
+
+// Dihedral group combines rotations and reflections
+action(D₄, arr) => rotate_or_reflect(arr);
+
+// Group composition follows group laws
+action(S₂, action(S₂, arr)) => arr : Identity;  // Double swap is identity
+action(C₄, action(C₄, action(C₄, action(C₄, arr)))) => arr : Identity;  // Four rotations is identity
+```
+
+### Group Actions on Common Data Structures
+
+#### Arrays and Lists
+
+```
+// S₂ swaps elements
+apply(S₂, [a, b]) => [b, a];
+
+// S₃ permutes three elements (6 possible arrangements)
+apply(S₃, [a, b, c]) => one_of([a,b,c], [a,c,b], [b,a,c], [b,c,a], [c,a,b], [c,b,a]);
+
+// C₄ rotates elements
+apply(C₄, [a, b, c, d]) => one_of([a,b,c,d], [d,a,b,c], [c,d,a,b], [b,c,d,a]);
+
+// D₄ includes rotations and reflections of a square
+apply(D₄, matrix) => one_of(rotations_and_reflections(matrix));
+```
+
+#### Algebraic Expressions
+
+```
+// S₂ acts on binary operations by swapping operands
+apply(S₂, op(a, b)) => op(b, a) if op : S₂;
+
+// C₄ acts on rotational transformations
+apply(C₄, rotate(x, k)) => rotate(x, (k + 1) % 4);
+
+// Group action on nested expressions
+apply(G, op(a, b)) => op(apply(G, a), apply(G, b)) if preserves_structure(G, op);
+```
+
+#### Matrices
+
+```
+// GL(n,F) acts on vectors by matrix multiplication
+apply(GL(n,F), v) => A * v where A : GL(n,F);
+
+// O(3) represents 3D rotations and reflections
+apply(O(3), point) => R * point where R : O(3);
+
+// Group action composition
+apply(compose(G₁, G₂), x) => apply(G₁, apply(G₂, x));
+```
 
 ## Canonical Forms
 
@@ -694,6 +842,151 @@ x ^ x => 0 : Canonical;
 (x ^ a) ^ b => x ^ eval(a ^ b) : Canonical;
 ```
 
+## Functional Programming Optimizations
+
+Group-theoretic properties enable powerful optimizations in functional programming contexts, where higher-order functions and composition create opportunities for algebraic simplification.
+
+### Function Composition and Application
+
+```
+// Detect commutativity in lambda expressions
+(λ(a, b).op(a, b)) ⊢ λ : S₂ if op : S₂;  // Lambda inherits commutativity from operation
+
+// Detect associativity in lambda expressions
+(λ(a, b).op(a, b)) ⊢ λ : Associative if op : Associative;
+
+// Function composition associativity
+(f ∘ (g ∘ h)) : Associative => ((f ∘ g) ∘ h) : Canonical;
+
+// Identity function laws
+(id ∘ f) => f : Canonical;  // Left identity
+(f ∘ id) => f : Canonical;  // Right identity
+```
+
+### Collection Operation Fusion
+
+```
+// Map fusion when function composition is detected
+map(f, map(g, xs)) => map(λ(x).f(g(x)), xs) : Canonical;
+
+// Filter fusion when predicates have logical properties
+filter(p, filter(q, xs)) => filter(λ(x).p(x) && q(x), xs) : Canonical;
+
+// Map-filter interchange when functions preserve predicates
+map(f, filter(p, xs)) : Commutable => filter(p, map(f, xs)) : Canonical if independent(f, p);
+
+// Fold-map fusion
+fold(op, init, map(f, xs)) => fold(λ(acc, x).op(acc, f(x)), init, xs) : Canonical;
+```
+
+### Stream and Collection Optimizations
+
+```
+// Stream operation fusion
+stream.map(f).map(g) => stream.map(λ(x).g(f(x))) : Canonical;
+stream.filter(p).filter(q) => stream.filter(λ(x).p(x) && q(x)) : Canonical;
+
+// Detect parallelizable operations
+fold(op, id, xs) ⊢ fold : Parallelizable if op : Associative && op : Commutative;
+
+// Apply optimization based on algebraic properties
+fold : Parallelizable => parallel_reduce : Optimized;
+
+// Special case optimizations
+fold(+, 0, map(λ(x).c * f(x), xs)) : Distributive => c * fold(+, 0, map(f, xs)) : Canonical if c : Constant;
+```
+
+### Algebraic Data Type Transformations
+
+```
+// Option/Maybe monad
+map(f, None) => None : Canonical;
+map(f, Some(x)) => Some(f(x)) : Canonical;
+
+// List monad
+flatMap(f, concat(xs, ys)) => concat(flatMap(f, xs), flatMap(f, ys)) : Canonical;
+flatMap(f, nil) => nil : Canonical;
+
+// Monad laws
+flatMap(return, m) => m : Canonical;  // Left identity
+flatMap(f, return(x)) => f(x) : Canonical;  // Right identity
+flatMap(g, flatMap(f, m)) => flatMap(λ(x).flatMap(g, f(x)), m) : Canonical;  // Associativity
+```
+
+## Cost Functions with Algebraic Structure
+
+Cost functions that respect algebraic structure can dramatically improve optimization by guiding the search toward algebraically meaningful representations.
+
+### Cost Function with Group Properties
+
+```
+fn costWithGroups(expr : ast) -> double (
+	expr is (
+		// Operations with symmetry groups can be reordered for cheaper evaluation
+		a + b : Su2082 => 1.0 + min(costWithGroups(a), costWithGroups(b)) +
+					 max(costWithGroups(a), costWithGroups(b))/2.0;
+		a * b : Su2082 => 1.2 + min(costWithGroups(a), costWithGroups(b)) +
+					 max(costWithGroups(a), costWithGroups(b))/2.0;
+
+		// Nested associative operations
+		(a + b) + c : Associative => 0.8 + costWithGroups(a) +
+									 costWithGroups(b) + costWithGroups(c);
+		a + (b + c) : Associative => 0.8 + costWithGroups(a) +
+									 costWithGroups(b) + costWithGroups(c);
+
+		// Default costing for other expressions
+		_ => 1.0;
+	)
+)
+```
+
+### Cost Functions for Domain-Specific Optimization
+
+```
+// Prefer canonical forms when available
+fn domainAwareCost(expr : ast) -> double (
+	expr is (
+		// Prioritize expressions in canonical form
+		_ : Canonical => 0.5 * baseCost(expr);
+
+		// Prioritize expressions that have been simplified
+		_ : Simplified => 0.7 * baseCost(expr);
+
+		// Penalize expressions that should be expanded
+		_ : ShouldExpand => 1.5 * baseCost(expr);
+
+		// Default cost calculation
+		_ => baseCost(expr);
+	)
+)
+```
+
+### Structural Costs for Expression Trees
+
+```
+// Cost function for expression optimization
+fn expressionCost(expr : ast) -> double (
+	expr is (
+		// Binary operations have fixed costs plus recursive component
+		a + b => 1.0 + expressionCost(a) + expressionCost(b);
+		a * b => 1.2 + expressionCost(a) + expressionCost(b);
+		a - b => 1.0 + expressionCost(a) + expressionCost(b);
+		a / b => 1.5 + expressionCost(a) + expressionCost(b);
+
+		// Unary operations
+		-a => 0.8 + expressionCost(a);
+		f(a) => 1.2 + expressionCost(a);
+
+		// Base cases
+		n : Constant => 0.5;  // Constants are cheap
+		x : Variable => 0.7;  // Variables are relatively cheap
+
+		// Default for other expressions
+		_ => 1.0;
+	)
+)
+```
+
 ## Optimization Using Group Properties
 
 ### Rewrite Rules Based on Group Structure
@@ -973,6 +1266,20 @@ This section provides a concise summary of key concepts, canonical forms, and re
 
 The rewriting rules presented in this document provide a foundation for working with symmetry groups in computational contexts. By understanding the structure of these groups and their relationships, we can develop efficient canonicalization strategies, optimize expressions, and reason about program equivalence across a wide range of domains.
 
-These rules are particularly valuable for optimization in areas such as computer graphics (where geometric symmetries are common), cryptography (where group-theoretic properties are fundamental), and algebraic simplification (where commutativity and associativity enable powerful rewrites).
+These rules are particularly valuable for optimization in areas such as:
 
-By leveraging these group-theoretic principles, we can develop more powerful and general program optimization techniques that transcend specific domains and apply across the entire computational landscape.
+- **Computer graphics**: Where geometric symmetries (rotations, reflections) are fundamental
+- **Cryptography**: Where group-theoretic properties form the mathematical basis
+- **Algebraic simplification**: Where commutativity and associativity enable powerful rewrites
+- **Functional programming**: Where higher-order function composition follows algebraic laws
+- **Machine learning**: Where tensor operations benefit from symmetry optimizations
+- **Parallel computing**: Where associative operations enable efficient distribution
+
+By representing symmetry groups explicitly in our e-graph structure via domain annotations, we achieve several powerful capabilities:
+
+1. **Exponential reduction** in the number of equivalent expressions that need representation
+2. **Automatic discovery** of optimizations that exploit symmetry properties
+3. **Transfer of optimizations** across domains with isomorphic group structures
+4. **Inference of algebraic properties** that enable non-trivial optimizations
+
+This group-theoretic foundation significantly enhances our ability to perform deep algebraic reasoning and optimization, allowing us to develop more powerful and general program transformation techniques that transcend specific domains and apply across the entire computational landscape.

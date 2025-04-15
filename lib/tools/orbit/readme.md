@@ -130,6 +130,18 @@ By representing domains explicitly within our e-graph structure, we enable:
 
 For example, addition exhibits symmetry group S₂ (the symmetric group of order 2), which captures commutativity. When we encounter expressions like `a + b` in any language associated with a domain where addition is commutative (like `Real` or `Integer`), the system can automatically canonicalize to a standard form based on this algebraic property, thus avoiding redundant representations.
 
+This approach can be clearly seen in rules that explicitly assign symmetry properties:
+
+```orbit
+// Define symmetry properties using domain annotations
+a : Real + b : Real ⊢ + : S₂;  // The + operation belongs to the S₂ symmetry group
+a : Real * b : Real ⊢ * : S₂;  // The * operation belongs to the S₂ symmetry group
+
+// Rotation operations have cyclic group structure
+rotate : C₄;  // Rotation operation belongs to cyclic group of order 4
+rotate(rotate(rotate(rotate(arr, 1), 1), 1), 1) => arr;  // Four rotations is identity
+```
+
 ## Native OGraph Integration
 
 Orbit provides a native interface to the OGraph system, enabling direct manipulation of abstract syntax trees and powerful rewriting capabilities. The core API is centered around the `orbit` function:
@@ -238,6 +250,15 @@ We acknowledge that this term is used broadly here to encompass several related 
 *   **Other Annotations:** Any term used to classify or describe an expression for rewriting or analysis purposes.
 
 The choice of "Domain" as the unifying term stems from Orbit's operational perspective. Often, the system *infers* these properties or classifications for expressions during rewriting and analysis. An expression is thus seen as existing *within* one or more of these inferred "Domains". This unified concept simplifies the core rewriting mechanism, allowing rules to operate based on these classifications regardless of whether they represent a traditional mathematical domain, a type, an effect, or a specific state.
+
+Orbit's group-theoretic approach unifies several powerful mathematical frameworks:
+
+1. **Group Theory**: For capturing symmetries and canonical forms
+2. **Category Theory**: For formalizing transformations between domains  
+3. **Order Theory**: For determining canonical representatives
+4. **Universal Algebra**: For detecting properties like associativity and commutativity
+
+By representing symmetry groups explicitly in the ograph structure (via domain annotations), we achieve exponential reduction in equivalent expressions, automatic discovery of optimizations that exploit symmetry, and transfer of optimizations across domains with isomorphic group structures.
 
 ## Domain Hierarchies and Rule Inheritance
 

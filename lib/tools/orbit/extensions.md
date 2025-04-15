@@ -51,6 +51,54 @@ In addition to the notation established in the primary document, we introduce th
 - **ℤ/nℤ**: Ring of integers modulo n
 - **(ℤ/nℤ)^***: Multiplicative group of units modulo n
 
+### Finite Automata and Regex Symbols
+- **ε**: Empty string/epsilon
+- **∅**: Empty set/Empty language
+- **Σ**: Alphabet of symbols
+- **L(r)**: Language denoted by regex r
+- **δ(q,a)**: Transition function (from state q on symbol a)
+- **q₀**: Initial state
+- **F**: Set of accepting states
+- **|**: Alternation operator in regex
+- **·**: Concatenation operator
+- **\***: Kleene star operator
+
+### Loop Transformation Symbols
+- **T(S)**: Schedule transformation of statement S
+- **δ**: Dependence distance vector
+- **⊥**: Independence relation between operations
+- **⟨i,j,k⟩**: Iteration vector in loop nest
+- **⊑**: Schedule ordering relation
+- **⨂**: Loop tiling/blocking operator
+
+### Parser Combinator Symbols
+- **p ⟨*⟩ q**: Sequence combinator (p followed by q)
+- **p ⟨|⟩ q**: Choice combinator (p or q)
+- **p\***: Many repetitions of parser p
+- **p+**: One or more repetitions of parser p
+- **p?**: Optional parser p
+- **⊢**: Derivation relation in grammar
+- **⟹**: Multiple-step derivation
+
+### Concurrency Symbols
+- **p ∥ q**: Parallel composition of processes p and q
+- **p ⊕ q**: Choice between processes p and q
+- **p ; q**: Sequential composition
+- **!p**: Replication of process p
+- **↓**: Process termination
+- **a↑**: Channel sending event
+- **a↓**: Channel receiving event
+
+### Category Theory Symbols
+- **F**: Functor
+- **η**: Unit/return of monad
+- **μ**: Multiplication/join of monad
+- **α**: Natural transformation
+- **∘**: Function composition
+- **id**: Identity morphism
+- **≅**: Isomorphism
+- **⊗**: Tensor product in monoidal category
+
 ## 1. Differential Calculus and Automatic Differentiation
 
 Differential calculus is concerned with the computation of derivatives and their application. Automatic differentiation (AD) is a computational implementation of the chain rule that efficiently computes exact derivatives.
@@ -630,6 +678,443 @@ Interval arithmetic operates on intervals instead of precise values, providing g
 (solve(x ∈ [a, b] ∨ x ∈ [c, d])) : Interval => x ∈ ([a, b] ∪ [c, d]) : Canonical if can_form_single_interval;
 ```
 
+## 9. Finite Automata and Regex Algebra
+
+Finite automata and regular expressions provide powerful abstractions for string processing and pattern matching. This domain focuses on rewrite rules for regular language optimizations and transformations between representations.
+
+### Regular Expression Algebraic Laws
+
+```
+// Regex associativity
+((a|b)|c) : Regex => (a|(b|c)) : Regex : Canonical;
+((ab)c) : Regex => (a(bc)) : Regex : Canonical;
+
+// Regex commutativity of alternation
+(a|b) : Regex => (b|a) : Regex : Canonical if less_than(b, a);
+
+// Regex idempotence
+(a|a) : Regex => a : Regex : Canonical;
+(a**) : Regex => a* : Regex : Canonical;
+
+// Empty string (ε) laws
+(aε) : Regex => a : Regex : Canonical;
+(εa) : Regex => a : Regex : Canonical;
+(ε*) : Regex => ε : Regex : Canonical;
+
+// Empty set (∅) laws
+(a∅) : Regex => ∅ : Regex : Canonical;
+(∅a) : Regex => ∅ : Regex : Canonical;
+(a|∅) : Regex => a : Regex : Canonical;
+(∅*) : Regex => ε : Regex : Canonical;
+
+// Distributivity laws
+(a(b|c)) : Regex => (ab|ac) : Regex;
+((a|b)c) : Regex => (ac|bc) : Regex;
+
+// Star operator laws
+((a*)*) : Regex => a* : Regex : Canonical;
+(a*a*) : Regex => a* : Regex : Canonical;
+(a|a*) : Regex => a* : Regex : Canonical;
+(a*(ba*)*) : Regex => (a|b)* : Regex : Canonical;
+
+// Character class optimizations
+([a-z]|[0-9]) : Regex => [a-z0-9] : Regex : Canonical;
+([a-m]|[l-z]) : Regex => [a-z] : Regex : Canonical;
+```
+
+### Automaton Transformations
+
+```
+// DFA minimization
+(minimize(A)) : DFA => A' : Canonical where states(A') = min_states(A) && L(A') = L(A);
+
+// NFA determinization
+(determinize(A)) : NFA => A' : DFA : Canonical where L(A') = L(A);
+
+// Regex to NFA transformation
+(thompson(r)) : Regex => A : NFA : Canonical where L(A) = L(r);
+
+// NFA to regex transformation
+(state_elimination(A)) : Automaton => r : Regex : Canonical where L(r) = L(A);
+
+// Automaton equivalence
+(A) : Automaton <=> B : Automaton : Canonical if L(A) = L(B) && |states(A)| ≤ |states(B)|;
+```
+
+### Automaton Composition
+
+```
+// Language union (automaton union)
+(A ∪ B) : Automaton => union_construction(A, B) : Automaton : Canonical where L(A ∪ B) = L(A) ∪ L(B);
+
+// Language intersection (automaton product)
+(A ∩ B) : Automaton => product_construction(A, B) : Automaton : Canonical where L(A ∩ B) = L(A) ∩ L(B);
+
+// Language complement
+(¬A) : Automaton => complement_construction(A) : Automaton : Canonical where L(¬A) = Σ* - L(A);
+
+// Language concatenation
+(A·B) : Automaton => concatenation_construction(A, B) : Automaton : Canonical where L(A·B) = L(A)·L(B);
+
+// Kleene star of language
+(A*) : Automaton => kleene_construction(A) : Automaton : Canonical where L(A*) = (L(A))*;
+```
+
+### Regular Language Operations
+
+```
+// Quotient of languages
+(A/B) : RegularLanguage => quotient_construction(A, B) : RegularLanguage : Canonical where L(A/B) = {x | ∃y ∈ L(B) s.t. xy ∈ L(A)};
+
+// Left quotient of languages
+(B\A) : RegularLanguage => left_quotient_construction(A, B) : RegularLanguage : Canonical where L(B\A) = {x | ∃y ∈ L(B) s.t. yx ∈ L(A)};
+
+// Reversal of language
+(reverse(A)) : RegularLanguage => reverse_construction(A) : RegularLanguage : Canonical where L(reverse(A)) = {w^R | w ∈ L(A)};
+
+// Prefix/suffix/infix closure
+(prefix(A)) : RegularLanguage => prefix_construction(A) : RegularLanguage : Canonical;
+(suffix(A)) : RegularLanguage => suffix_construction(A) : RegularLanguage : Canonical;
+(infix(A)) : RegularLanguage => infix_construction(A) : RegularLanguage : Canonical;
+```
+
+## 10. Loop Transformation and Polyhedral Optimizations
+
+Loop transformations are crucial for optimizing numerical code, especially for data-parallel operations. This domain formalizes transformations that enhance locality, parallelism, and computational efficiency.
+
+### Loop Restructuring Transformations
+
+```
+// Loop normalization (canonical form)
+(for(i=a; i<b; i+=c) { S }) : Loop =>
+	(for(i'=0; i'<(b-a)/c; i'+=1) { S[i'/c + a/c] }) : Loop : Canonical;
+
+// Loop fusion
+(for(i=0; i<n; i+=1) { S1 } for(i=0; i<n; i+=1) { S2 }) : AdjacentLoops =>
+	(for(i=0; i<n; i+=1) { S1 S2 }) : FusedLoop : Canonical if no_dependency_violation(S1, S2);
+
+// Loop fission/distribution
+(for(i=0; i<n; i+=1) { S1 S2 }) : Loop =>
+	(for(i=0; i<n; i+=1) { S1 } for(i=0; i<n; i+=1) { S2 }) : SplitLoops if beneficial_for_parallelism(S1, S2);
+
+// Loop interchange
+(for(i=0; i<n; i+=1) { for(j=0; j<m; j+=1) { S[i,j] } }) : LoopNest =>
+	(for(j=0; j<m; j+=1) { for(i=0; i<n; i+=1) { S[i,j] } }) : LoopNest if legal_interchange(S, i, j);
+
+// Loop tiling
+(for(i=0; i<n; i+=1) { S[i] }) : Loop =>
+	(for(ii=0; ii<n; ii+=B) { for(i=ii; i<min(ii+B, n); i+=1) { S[i] } }) : TiledLoop : Canonical if beneficial_for_locality(S, B);
+
+// Loop unrolling
+(for(i=0; i<n; i+=1) { S[i] }) : Loop =>
+	(for(i=0; i<(n/k)*k; i+=k) { S[i] S[i+1] ... S[i+k-1] } for(i=(n/k)*k; i<n; i+=1) { S[i] }) : UnrolledLoop if beneficial_for_vectorization(S, k);
+```
+
+### Affine Transformations
+
+```
+// Loop skewing
+(for(i=0; i<n; i+=1) { for(j=0; j<m; j+=1) { S[i,j] } }) : NestedLoop =>
+	(for(i=0; i<n; i+=1) { for(j'=j-i; j'<m-i; j'+=1) { S[i,j'+i] } }) : SkewedLoop if enhances_parallelism(S);
+
+// Loop shifting
+(for(i=a; i<b; i+=1) { S[i] }) : Loop =>
+	(for(i=a+k; i<b+k; i+=1) { S[i-k] }) : ShiftedLoop : Canonical if beneficial_for_alignment(S, k);
+
+// Index set splitting
+(for(i=a; i<b; i+=1) { S[i] }) : Loop =>
+	(for(i=a; i<c; i+=1) { S[i] } for(i=c; i<b; i+=1) { S[i] }) : SplitLoop if improves_vectorization(S, c);
+
+// Affine scheduling transformation
+(stmt(S, D) : Stmt => stmt(S, T(D)) : TransformedStmt where T is an affine transformation matrix;
+```
+
+### Data Layout Transformations
+
+```
+// Array linearization
+(A[i][j]) : ArrayAccess => A[i*cols + j] : LinearizedAccess : Canonical if improves_memory_access(A);
+
+// Array padding
+(array(A, [n, m])) : Array => array(A_padded, [n+2*p, m+2*p]) : PaddedArray if reduces_conflict_misses(A, p);
+
+// Array transposition
+(A[i][j]) : ArrayAccess <=> A_T[j][i] : TransposedAccess if improves_locality(A);
+```
+
+### Polyhedral Transformations
+
+```
+// Polyhedral representation
+(nested_loop(L)) : LoopNest => polyhedral(domain(L), schedule(L), access(L)) : PolyhedralModel;
+
+// Schedule optimization (automatic)
+(polyhedral(D, S, A)) : PolyhedralModel => polyhedral(D, S', A) : OptimizedModel where S' = pluto_schedule(D, A);
+
+// Dependence-based tiling
+(polyhedral(D, S, A)) : PolyhedralModel => tiled_polyhedral(D, tile(S, B), A) : TiledModel where B is an optimal tile size;
+
+// Code generation from polyhedral model
+(polyhedral(D, S, A)) : PolyhedralModel => generated_code(D, S, A) : LoopNest : Canonical;
+```
+
+## 11. Parser Combinators and Grammar Transformations
+
+Parser combinators and grammar transformations are essential for language processing and compiler construction. This domain formalizes rules for parser optimization and grammar transformations.
+
+### Parser Combinator Algebraic Laws
+
+```
+// Identity laws
+(p ⟨*⟩ empty) : Parser => p : Parser : Canonical;
+(empty ⟨*⟩ p) : Parser => p : Parser : Canonical;
+(p ⟨|⟩ fail) : Parser => p : Parser : Canonical;
+(fail ⟨|⟩ p) : Parser => p : Parser : Canonical;
+
+// Associativity laws
+((p ⟨*⟩ q) ⟨*⟩ r) : Parser => (p ⟨*⟩ (q ⟨*⟩ r)) : Parser : Canonical;
+((p ⟨|⟩ q) ⟨|⟩ r) : Parser => (p ⟨|⟩ (q ⟨|⟩ r)) : Parser : Canonical;
+
+// Distributivity laws
+(p ⟨*⟩ (q ⟨|⟩ r)) : Parser => ((p ⟨*⟩ q) ⟨|⟩ (p ⟨*⟩ r)) : Parser;
+((p ⟨|⟩ q) ⟨*⟩ r) : Parser => ((p ⟨*⟩ r) ⟨|⟩ (q ⟨*⟩ r)) : Parser;
+
+// Functor laws
+(map(f, map(g, p))) : Parser => map(compose(f, g), p) : Parser : Canonical;
+(map(id, p)) : Parser => p : Parser : Canonical;
+
+// Applicative laws
+(pure(f) ⟨*⟩ pure(x)) : Parser => pure(f(x)) : Parser : Canonical;
+(pure(id) ⟨*⟩ p) : Parser => p : Parser : Canonical;
+
+// Monad laws
+(bind(return(x), f)) : Parser => f(x) : Parser : Canonical;
+(bind(p, return)) : Parser => p : Parser : Canonical;
+(bind(bind(p, f), g)) : Parser => bind(p, λx.bind(f(x), g)) : Parser : Canonical;
+```
+
+### Parser Repetition and Control
+
+```
+// Repetition laws
+(many(fail)) : Parser => empty : Parser : Canonical;
+(many(empty)) : Parser => empty : Parser : Canonical;
+(many(many(p))) : Parser => many(p) : Parser : Canonical;
+(many(option(p))) : Parser => many(p) : Parser : Canonical;
+(many1(fail)) : Parser => fail : Parser : Canonical;
+
+// Backtracking control
+(attempt(attempt(p))) : Parser => attempt(p) : Parser : Canonical;
+(attempt(p ⟨|⟩ q)) : Parser => attempt(p) ⟨|⟩ attempt(q) : Parser;
+```
+
+### Grammar Transformations
+
+```
+// Left-factoring transformation
+(A → αβ₁ | αβ₂ | ... | αβₙ) : Grammar =>
+	(A → αA'
+	 A' → β₁ | β₂ | ... | βₙ) : LeftFactoredGrammar : Canonical;
+
+// Elimination of left-recursion
+(A → Aα₁ | Aα₂ | ... | Aαₙ | β₁ | β₂ | ... | βₘ) : Grammar =>
+	(A → β₁A' | β₂A' | ... | βₘA'
+	 A' → α₁A' | α₂A' | ... | αₙA' | ε) : NonLeftRecursiveGrammar : Canonical;
+
+// Elimination of ε-productions
+(A → ε) : Grammar => eliminate_null(A) : Grammar : Canonical where eliminate_null adjusts all productions;
+
+// Elimination of unit productions
+(A → B, B → γ) : Grammar => (A → γ) : Grammar : Canonical if is_nonterminal(B);
+
+// Grammar minimization
+(G) : Grammar => minimize(G) : Grammar : Canonical where minimize removes unreachable and unproductive rules;
+```
+
+### First/Follow Set Computations
+
+```
+// First set computation
+(first(A)) : GrammarAnalysis => {a ∈ Σ | A ⟹* aα for some α} : FirstSet : Canonical;
+(first(ε)) : GrammarAnalysis => {ε} : FirstSet : Canonical;
+(first(a)) : GrammarAnalysis => {a} : FirstSet : Canonical if a ∈ Σ;
+(first(αβ)) : GrammarAnalysis => first(α) ∪ (first(β) if ε ∈ first(α)) : FirstSet : Canonical;
+
+// Follow set computation
+(follow(A)) : GrammarAnalysis => {a ∈ Σ | S ⟹* αAaβ for some α,β} : FollowSet : Canonical;
+
+// LL(1) condition check
+(is_ll1(G)) : GrammarAnalysis =>
+	true : Boolean : Canonical if ∀A → α | β: (first(α) ∩ first(β) = ∅) and (ε ∈ first(β) ⟹ first(α) ∩ follow(A) = ∅);
+```
+
+## 12. Concurrency and Process Calculi
+
+Concurrency and process calculi formalize the behavior of concurrent and communicating systems. This domain provides rules for reasoning about concurrent programs and optimizing their execution.
+
+### Process Algebra Laws
+
+```
+// Structural congruence
+(P | Q) : Process <=> (Q | P) : Process : Canonical if less_than(Q, P);  // Commutativity
+((P | Q) | R) : Process <=> (P | (Q | R)) : Process : Canonical;  // Associativity
+(P | 0) : Process => P : Process : Canonical;  // Identity
+
+// Choice laws
+(P + Q) : Process <=> (Q + P) : Process : Canonical if less_than(Q, P);  // Commutativity
+((P + Q) + R) : Process <=> (P + (Q + R)) : Process : Canonical;  // Associativity
+(P + P) : Process => P : Process : Canonical;  // Idempotence
+(P + 0) : Process => P : Process : Canonical;  // Identity
+
+// Sequential composition
+((P ; Q) ; R) : Process <=> (P ; (Q ; R)) : Process : Canonical;  // Associativity
+(P ; 0) : Process => P : Process : Canonical;  // Right identity
+(0 ; P) : Process => P : Process : Canonical;  // Left identity
+```
+
+### Pi-Calculus Reductions
+
+```
+// Communication reduction
+(x̅⟨v⟩.P | x(y).Q) : PiCalculus => P | Q[v/y] : PiCalculus : Canonical;
+
+// Scope extrusion
+((νx)(P | Q)) : PiCalculus => (P | (νx)Q) : PiCalculus : Canonical if x ∉ free_names(P);
+
+// Alpha-conversion
+((νx)P) : PiCalculus <=> ((νy)P[y/x]) : PiCalculus : Canonical if y ∉ free_names(P);
+
+// Replication
+(!P) : PiCalculus <=> (P | !P) : PiCalculus;
+```
+
+### CSP Transformations
+
+```
+// Hiding distribution
+(P \ a) : CSP => (P \ {a}) : CSP : Canonical;
+((P || Q) \ X) : CSP => ((P \ X) || (Q \ X)) : CSP : Canonical if X only contains internal events;
+
+// Parallel composition laws
+(P [|∅|] Q) : CSP <=> (P ||| Q) : CSP : Canonical;  // No synchronization = interleaving
+(P [|Σ|] Q) : CSP <=> (P || Q) : CSP : Canonical;  // Full synchronization
+
+// Refinement relations
+(P ⊑_T Q) : CSP => true : Boolean : Canonical if traces(P) ⊇ traces(Q);  // Trace refinement
+(P ⊑_F Q) : CSP => true : Boolean : Canonical if failures(P) ⊇ failures(Q);  // Failures refinement
+```
+
+### Concurrent Program Optimizations
+
+```
+// Thread merging
+(spawn { P } ; spawn { Q }) : ConcurrentProgram => spawn { P ; Q } : ConcurrentProgram if no_dependency(P, Q);
+
+// Lock coarsening
+(lock(m) ; S1 ; unlock(m) ; lock(m) ; S2 ; unlock(m)) : ConcurrentProgram =>
+	(lock(m) ; S1 ; S2 ; unlock(m)) : ConcurrentProgram : Canonical if no_external_access(S1, S2, m);
+
+// Lock elimination
+(lock(m) ; S ; unlock(m)) : ConcurrentProgram => S : ConcurrentProgram : Canonical if thread_local(S, m);
+
+// Read-write lock optimization
+(lock(m) ; read(x) ; unlock(m)) : ConcurrentProgram =>
+	(read_lock(m) ; read(x) ; read_unlock(m)) : ConcurrentProgram : Canonical;
+
+// Parallel loop conversion
+(for(i=0; i<n; i+=1) { S[i] }) : Loop =>
+	(parallel_for(i=0; i<n; i+=1) { S[i] }) : ParallelLoop : Canonical if independent_iterations(S);
+```
+
+## 13. Category-Theoretic Transformations
+
+Category theory provides a unified framework for functional programming abstractions. This domain formalizes rules for optimizing functors, monads, and other categorical structures.
+
+### Functor Laws
+
+```
+// Functor identity law
+(map(id, x)) : Functor => x : Functor : Canonical;
+
+// Functor composition law
+(map(compose(f, g), x)) : Functor => map(f, map(g, x)) : Functor;
+(map(f, map(g, x))) : Functor => map(compose(f, g), x) : Functor : Canonical;
+```
+
+### Monad Laws
+
+```
+// Monad left identity
+(bind(return(x), f)) : Monad => f(x) : Monad : Canonical;
+
+// Monad right identity
+(bind(m, return)) : Monad => m : Monad : Canonical;
+
+// Monad associativity
+(bind(bind(m, f), g)) : Monad => bind(m, λx.bind(f(x), g)) : Monad : Canonical;
+
+// Kleisli composition
+(compose_kleisli(f, g)) : Monad => λx.bind(f(x), g) : Monad : Canonical;
+```
+
+### Applicative Laws
+
+```
+// Applicative identity
+(ap(pure(id), x)) : Applicative => x : Applicative : Canonical;
+
+// Applicative homomorphism
+(ap(pure(f), pure(x))) : Applicative => pure(f(x)) : Applicative : Canonical;
+
+// Applicative interchange
+(ap(u, pure(y))) : Applicative => ap(pure(λf.f(y)), u) : Applicative : Canonical;
+
+// Applicative composition
+(ap(ap(ap(pure(compose), u), v), w)) : Applicative => ap(u, ap(v, w)) : Applicative : Canonical;
+```
+
+### Natural Transformations
+
+```
+// Natural transformation property
+(α(map(f, x))) : NaturalTransformation => map(f, α(x)) : NaturalTransformation : Canonical;
+
+// Vertical composition of natural transformations
+((β ∘ α)(x)) : NaturalTransformation => β(α(x)) : NaturalTransformation : Canonical;
+```
+
+### F-Algebras and Recursion Schemes
+
+```
+// Catamorphism (fold) definition
+(cata(alg, Fix(f))) : FAlgebra => alg(map(cata(alg), f)) : Canonical;
+
+// Anamorphism (unfold) definition
+(ana(coalg, x)) : FCoalgebra => Fix(map(ana(coalg), coalg(x))) : Canonical;
+
+// Hylomorphism (general recursion) fusion
+(cata(alg, ana(coalg, x))) : RecursionScheme => hylo(alg, coalg, x) : RecursionScheme : Canonical;
+
+// Paramorphism (primitive recursion with access to original data)
+(para(alg, Fix(f))) : RecursionScheme => alg(map(λx.(para(alg, x), x), f)) : Canonical;
+```
+
+### Specialized Optimizations
+
+```
+// List monad optimization
+(map(f, bind(xs, g))) : ListMonad => bind(xs, λx.map(f, g(x))) : ListMonad : Canonical;
+(bind(xs, λx.return(f(x)))) : ListMonad => map(f, xs) : ListMonad : Canonical;
+
+// State monad optimization
+(bind(get, λs.bind(get, λ_.k))) : StateMonad => bind(get, λs.k(s,s)) : StateMonad : Canonical;
+(bind(put(s), λ_.bind(get, k))) : StateMonad => bind(put(s), λ_.k(s)) : StateMonad : Canonical;
+
+// Reader monad optimization
+(bind(ask, λe.bind(ask, λ_.k))) : ReaderMonad => bind(ask, λe.k(e,e)) : ReaderMonad : Canonical;
+(bind(ask, λe.local(f, m))) : ReaderMonad => local(f, bind(ask, λe.m[f(e)/e])) : ReaderMonad : Canonical;
+```
+
 ## Domain Interconnections
 
 This section explores relationships and transformations between the extended domains, showcasing how concepts from one domain relate to another.
@@ -685,6 +1170,46 @@ This section explores relationships and transformations between the extended dom
 
 // Mean value theorem application
 (f(y) - f(x)) : IntervalDiff => (y - x) * f'(ξ) : Canonical where ξ ∈ [x, y];
+```
+
+### Regular Expressions and Automata
+
+```
+// Regex to DFA via NFA
+(regex_to_dfa(r)) : RegexAutomaton => determinize(thompson(r)) : RegexAutomaton : Canonical;
+
+// Language equivalence test
+(equiv(A, r)) : RegexAutomaton => L(A) = L(r) : Boolean : Canonical;
+```
+
+### Loop Transformations and Tensor Operations
+
+```
+// Matrix multiplication loop optimization
+(matmul(A, B)) : LoopTensor => tiled_matmul(A, B) : LoopTensor : Canonical;
+
+// Tensor contraction loop optimization
+(contract(T, dims)) : LoopTensor => optimized_contraction(T, dims) : LoopTensor : Canonical;
+```
+
+### Parser Combinators and Category Theory
+
+```
+// Parser as applicative functor
+(p ⟨*⟩ q) : ParserCat => ap(map(curry, p), q) : ParserCat : Canonical;
+
+// Parser as monad
+(p >>= f) : ParserCat => bind(p, f) : ParserCat : Canonical;
+```
+
+### Concurrency and Process Calculi
+
+```
+// CSP to Pi-calculus translation
+(P || Q) : CSPtoPi => (νc)(P'|Q') : CSPtoPi : Canonical where c contains shared channels;
+
+// Actor model to Pi-calculus
+(actor(A)) : ActorToPi => pi_representation(A) : ActorToPi : Canonical;
 ```
 
 ## Practical Applications
@@ -799,17 +1324,100 @@ expr = A_{ij} B^j_k C^{ki}
 => tr(A * C * B^T)
 ```
 
+### Example 7: Regular Expression Optimization
+
+```
+// Optimize a complex regex
+expr = (a|b)*|(b|a)*
+
+// Apply commutativity law
+=> (a|b)*|(a|b)*
+
+// Apply idempotence of alternation
+=> (a|b)*
+
+// Check if the result is minimal
+// Convert to DFA and verify state count is minimal
+=> minimize(regex_to_dfa((a|b)*)) has 2 states
+```
+
+### Example 8: Loop Optimization for Matrix Multiplication
+
+```
+// Original matrix multiplication code
+for(i=0; i<n; i+=1) {
+	for(j=0; j<n; j+=1) {
+		for(k=0; k<n; k+=1) {
+			C[i][j] += A[i][k] * B[k][j];
+		}
+	}
+}
+
+// Step 1: Apply loop interchange for better cache locality
+=> for(i=0; i<n; i+=1) {
+		 for(k=0; k<n; k+=1) {
+			 for(j=0; j<n; j+=1) {
+				 C[i][j] += A[i][k] * B[k][j];
+			 }
+		 }
+	 }
+
+// Step 2: Apply loop tiling for blocking
+=> for(ii=0; ii<n; ii+=B) {
+		 for(kk=0; kk<n; kk+=B) {
+			 for(jj=0; jj<n; jj+=B) {
+				 for(i=ii; i<min(ii+B, n); i+=1) {
+					 for(k=kk; k<min(kk+B, n); k+=1) {
+						 for(j=jj; j<min(jj+B, n); j+=1) {
+							 C[i][j] += A[i][k] * B[k][j];
+						 }
+					 }
+				 }
+			 }
+		 }
+	 }
+```
+
+### Example 9: Parser Optimization
+
+```
+// Optimize a nested parser expression
+expr = attempt(char('a') ⟨|⟩ char('b')) ⟨*⟩ many(digit())
+
+// Step 1: Apply distributivity of attempt
+=> (attempt(char('a')) ⟨|⟩ attempt(char('b'))) ⟨*⟩ many(digit())
+
+// Step 2: Recognize common pattern
+=> oneOf("ab") ⟨*⟩ many(digit())
+
+// Step 3: Create specialized parser
+=> followed_by_digits(oneOf("ab"))
+```
+
+### Example 10: Category-Theoretic Optimization
+
+```
+// Optimize a monadic expression
+expr = do {
+	a <- ma;
+	b <- mb;
+	return f(a, b);
+}
+
+// Step 1: Convert to bind notation
+=> bind(ma, λa.bind(mb, λb.return(f(a, b))))
+
+// Step 2: Recognize applicative pattern
+=> ap(map(curry(f), ma), mb)
+
+// Step 3: Use specialized applicative operator
+=> ma <*> mb <*> pure(f)
+```
+
 ## Conclusion
 
-This document has extended the rewriting framework established in `canonical.md` to encompass six additional mathematical domains. By integrating differential calculus, linear algebra, polynomial ideals, homomorphic cryptography, tensor operations, and interval arithmetic into the e-graph rewriting system, we enable powerful cross-domain optimizations and transformations.
+This document has extended the rewriting framework established in `canonical.md` to encompass additional mathematical domains. By integrating differential calculus, linear algebra, polynomial ideals, homomorphic cryptography, tensor operations, interval arithmetic, finite automata, loop transformations, parser combinators, process calculi, and category theory into the e-graph rewriting system, we enable powerful cross-domain optimizations and transformations.
 
-The rewriting rules provided offer a foundation for developing computational systems that can fluidly move between different mathematical structures while preserving semantic equivalence. This capability is essential for advanced applications in scientific computing, symbolic mathematics, cryptography, machine learning, and verified computing.
+The rewriting rules provided offer a foundation for developing computational systems that can fluidly move between different mathematical structures while preserving semantic equivalence. This capability is essential for advanced applications in scientific computing, symbolic mathematics, cryptography, machine learning, verified computing, compiler construction, and programming language design.
 
-Future extensions could include domains such as:
-1. Probability theory and statistics
-2. Boolean algebra and logical circuits
-3. Type theory and proof systems
-4. Quantum computation
-5. Category theory
-
-By continually expanding the range of domains covered by our rewriting system, we strengthen its ability to support increasingly sophisticated computational tasks across the mathematical sciences.
+By continually expanding the range of domains covered by our rewriting system, we strengthen its ability to support increasingly sophisticated computational tasks across the mathematical sciences and program optimization landscape.
