@@ -353,6 +353,61 @@ solve_system(F) => eval(solutions_from_gröbner(gröbner_basis(F)));
 eliminate(G, vars) => eval(G ∩ k[remaining_vars]);
 ```
 
+### Integer Type Operations (intₙ)
+
+Fixed-width signed integers exhibit rich algebraic structure with various operations forming different groups.
+
+```
+// Addition on n-bit signed integers forms a cyclic group
+(a + b) : intₙ => eval((a + b) mod 2^n) : C₂ₙ;
+
+// XOR operation forms a direct product of cyclic groups
+(a ^ b) : intₙ => eval(a ^ b) : (C₂)^n;
+
+// Multiplication only forms a group on odd integers
+(a * b) : intₙ => eval((a * b) mod 2^n) : (Z/2^nZ)* if gcd(a, 2^n) == 1 && gcd(b, 2^n) == 1;
+
+// Bitwise NOT forms an involution (order 2 group)
+~a : intₙ => eval(~a) : C₂;
+
+// Two's complement negation
+negate(a) : intₙ => eval(~a + 1) : C₂;
+
+// Bit rotation forms a cyclic group
+rotate_left(a, k) : intₙ => eval(rotate_left(a, k mod n)) : Cₙ;
+
+// Composition of rotations and reflections forms a dihedral group
+(rotate_left(reflect(a), k)) : intₙ => eval(Dₙ_operation(a, k, true)) : Dₙ;
+```
+
+Here's a summary of the most important group structures on n-bit signed integers:
+
+| Operation | Group Structure | Properties | Notes |
+|-----------|----------------|------------|-------|
+| Addition | C₂ₙ (cyclic) | Abelian | Wraps around due to two's complement |
+| XOR | (C₂)^n | Abelian, elementary | Forms a vector space over GF(2) |
+| Multiplication | (Z/2^nZ)* | Non-cyclic for n > 2 | Only invertible for odd integers |
+| Bitwise NOT | C₂ | Involution | NOT is its own inverse |
+| Negation | C₂ | Involution | x = -x only for 0 and overflow values |
+| Bit rotation | Cₙ | Cyclic | Acts on the bit positions |
+| Rotations + reflections | Dₙ | Non-abelian | Full symmetry group of bit arrangements |
+
+Examples for int₄ (4-bit signed integers, range: -8 to 7):
+
+```
+// Addition forms C₁₆
+(a + b) : int₄ => (a + b) mod 16 : C₁₆;
+
+// XOR forms (C₂)^4
+(a ^ b) : int₄ => a ^ b : (C₂)^4;
+
+// Multiplication group is {1,3,5,7,9,11,13,15}, not cyclic
+(a * b) : int₄ => (a * b) mod 16 : (Z/16Z)* if a % 2 == 1 && b % 2 == 1;
+
+// Bitwise operations that aren't groups (no inverses):
+// AND, OR, shift operations
+```
+
 ## Optimization Using Group Properties
 
 ### Rewrite Rules Based on Group Structure
