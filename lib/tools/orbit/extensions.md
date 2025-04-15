@@ -1414,9 +1414,122 @@ expr = do {
 => ma <*> mb <*> pure(f)
 ```
 
+## 14. Effect Tracking in Programming Languages
+
+Effect tracking is a powerful technique for statically analyzing and optimizing code based on its computational effects. By capturing the potential side effects of expressions within the e-graph, we can reason about program transformations that preserve semantics across effectful and pure code regions.
+
+### Effect Symbols
+- **Op(op, args...)**: Effect operation with arguments
+- **Pure**: Annotation for expressions with no side effects
+- **State**: Effect domain for state operations
+- **IO**: Effect domain for input/output operations
+- **Exception**: Effect domain for exception-raising operations
+- **EffectDomain(E)**: Domain indicating expressions with effect E
+
+### Effect Representation in E-Graphs
+
+```
+// Effect operation nodes
+(Op(get)) : Effect => effect_node(get, []) : Canonical;
+(Op(put, v)) : Effect => effect_node(put, [v]) : Canonical;
+(Op(throw, e)) : Effect => effect_node(throw, [e]) : Canonical;
+(Op(log, msg)) : Effect => effect_node(log, [msg]) : Canonical;
+
+// Effect domain tagging
+(expr) : State => expr : EffectDomain(State) : Canonical;
+(expr) : IO => expr : EffectDomain(IO) : Canonical;
+(expr) : Exception => expr : EffectDomain(Exception) : Canonical;
+
+// Pure expressions (no effects)
+(expr) : Pure => expr !: EffectDomain : Canonical;
+```
+
+### Effect Domain Hierarchy
+
+```
+// Effect domain hierarchy
+EffectDomain(Exception) ⊂ EffectDomain;
+EffectDomain(State) ⊂ EffectDomain;
+EffectDomain(IO) ⊂ EffectDomain;
+
+// More specialized effect domains
+EffectDomain(ReadOnlyState) ⊂ EffectDomain(State);
+EffectDomain(Console) ⊂ EffectDomain(IO);
+```
+
+### Effect Safety and Rewriting Rules
+
+```
+// Effect-preserving transformations
+(e₁ + e₂) : Pure => (e₂ + e₁) : Pure : Canonical if is_commutative(+);
+
+// Effect-order preservation (non-commutative)
+(e₁ ; e₂) : EffectDomain !=> (e₂ ; e₁) : EffectDomain if may_have_side_effects(e₁) && may_have_side_effects(e₂);
+
+// Pure operation extraction
+(e₁ * pure_fn(e₂)) : EffectDomain => pure_fn(e₂) * e₁ : EffectDomain if is_pure(pure_fn) && may_have_side_effects(e₁);
+
+// Pure subexpressions can be freely reordered
+(Op(op, args₁ ++ [e] ++ args₂)) : Effect => (Op(op, args₁ ++ [e'] ++ args₂)) : Effect if e : Pure && e <=> e' : Pure;
+
+// Commutative effects (e.g., idempotent logging)
+(Op(log, msg₁) ; Op(log, msg₂)) : CommutativeEffect <=> (Op(log, msg₂) ; Op(log, msg₁)) : CommutativeEffect;
+```
+
+### Effect Analysis
+
+```
+// Effect inference
+(f(x)) : EffectInference => f(x) : EffectDomain(E) if f : EffectDomain(E);
+
+// Effect composition
+(e₁ ; e₂) : EffectInference => (e₁ ; e₂) : EffectDomain(E₁ ∪ E₂) if e₁ : EffectDomain(E₁) && e₂ : EffectDomain(E₂);
+
+// Pure function detection
+(\x -> e) : EffectInference => (\x -> e) : Pure if e : Pure;
+
+// Conditional effect propagation
+(if c then t else f) : EffectInference => (if c then t else f) : EffectDomain(E₁ ∪ E₂ ∪ E₃)
+	if c : EffectDomain(E₁) && t : EffectDomain(E₂) && f : EffectDomain(E₃);
+```
+
+### Cross-Domain Effect Transformations
+
+```
+// Language-specific effect mapping
+(Op(print, msg)) : JavaScript => console.log(msg) : JavaScript : EffectDomain(IO);
+(Op(print, msg)) : Python => print(msg) : Python : EffectDomain(IO);
+
+// Effect abstraction for DSLs
+(set_state(s)) : DSL => Op(put, s) : EffectDomain(State);
+(get_state()) : DSL => Op(get) : EffectDomain(State);
+```
+
+### Practical Applications
+
+```
+// Example: Dead code elimination with effects
+if (x > 0) {
+	y = x * 2;     // Pure computation
+	print(y);      // Effect: IO
+} else {
+	z = x + 1;     // Pure computation
+	// No effects
+}
+
+// After effect analysis, we identify that the else branch has no effects
+// and its computation result is unused, so it can be eliminated:
+
+if (x > 0) {
+	y = x * 2;
+	print(y);
+}
+// else branch eliminated due to no observable effects
+```
+
 ## Conclusion
 
-This document has extended the rewriting framework established in `canonical.md` to encompass additional mathematical domains. By integrating differential calculus, linear algebra, polynomial ideals, homomorphic cryptography, tensor operations, interval arithmetic, finite automata, loop transformations, parser combinators, process calculi, and category theory into the e-graph rewriting system, we enable powerful cross-domain optimizations and transformations.
+This document has extended the rewriting framework established in `canonical.md` to encompass additional mathematical domains. By integrating differential calculus, linear algebra, polynomial ideals, homomorphic cryptography, tensor operations, interval arithmetic, finite automata, loop transformations, parser combinators, process calculi, category theory, and effect tracking into the e-graph rewriting system, we enable powerful cross-domain optimizations and transformations.
 
 The rewriting rules provided offer a foundation for developing computational systems that can fluidly move between different mathematical structures while preserving semantic equivalence. This capability is essential for advanced applications in scientific computing, symbolic mathematics, cryptography, machine learning, verified computing, compiler construction, and programming language design.
 
