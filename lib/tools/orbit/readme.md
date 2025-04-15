@@ -97,77 +97,25 @@ Turn on tracing for step-by-step execution details:
 ./run_orbit_tests.sh --trace
 ```
 
-## Pattern Matching Conventions and Notation
+## Pattern Matching and Rewriting Notation
 
-### Variable and Term Conventions
+Orbit uses a powerful pattern matching and rewriting notation for its domain-unified transformation system. This notation includes domain annotations, symmetry group operations, and canonical form specifications.
 
-Orbit follows these conventions for variables and terms in pattern matching:
+**For detailed information about the pattern matching conventions, group notation, and canonicalization constructs, please refer to the [canonical.md](canonical.md) document**, which provides a comprehensive reference of:
 
-- **Lowercase letters** (a, b, c, x, y, z): Used for pattern variables that match arbitrary expressions
-- **Uppercase letters** (A, B, C, X, Y, Z): Used for terms, domain labels, or specific mathematical structures
-- **Subscripted variables** (x₁, x₂, etc.): Represent indexed variables or sequence elements
-- **Subscripted groups** (Sₙ, Aₙ, Cₙ, Dₙ): Represent specific mathematical groups with parameter n
+- Notation for groups, operators, and relations
+- Pattern matching with domain constraints
+- Canonicalization rules for various symmetry groups
+- Group operations and decompositions
+- Algebraic structure inference
 
-For example, in the pattern `a + b : Int`, lowercase `a` and `b` are pattern variables that match any expressions, while `Int` is a domain label.
+The key conventions used throughout Orbit include:
 
-### Pattern Matching Semantics
-
-```
-// Match any expression 'a' that belongs to domain 'A'
-a : A
-
-// Match any expression 'a' that does NOT belong to domain 'A'
-a !: A
-
-// Pattern with conjunctive constraints
-a : A : B  // Matches 'a' that belongs to both domains A and B
-
-// Conditional pattern matching
-pattern if condition  // Matches only if the condition is true
-```
-
-### Group and Algebraic Structure Notation
-
-Orbit uses specialized notation for representing groups and algebraic structures:
-
-```
-// Group product notations
-G × H      // Direct product of groups G and H
-G ⋊ H      // Semi-direct product where H acts on G
-G ⋊_σ H    // Semi-direct product with explicit action σ
-
-// Group relationships
-A ⊂ B      // A is a subgroup of B
-A ⊲ B      // A is a normal subgroup of B
-A ≅ B      // A is isomorphic to B
-A ≇ B      // A is not isomorphic to B
-|G|        // Order (size) of group G
-```
-
-### Rewrite Rule Notation
-
-```
-// Basic rewrite rule (unidirectional)
-lhs => rhs
-
-// Rewrite with domain preservation
-a : Domain => b : Domain
-
-// Bidirectional equivalence
-lhs <=> rhs
-
-// Conditional rewrite rule
-lhs => rhs if condition
-
-// Rule with domain transformation
-a : DomainA => b : DomainB
-
-// Entailment (when left pattern matches, right side annotation is applied)
-pattern ⊢ annotation
-
-// Domain hierarchy specification
-DomainA ⊂ DomainB  // DomainA is a subdomain of DomainB
-```
+- Lowercase letters (a, b, c, x, y, z) represent pattern variables that match arbitrary expressions
+- Uppercase letters (A, B, C) typically represent terms, domain labels, or specific structures
+- Domain annotations use colon syntax: `expr : Domain`
+- Negative domain constraints use: `expr !: Domain`
+- Rewrite rules use arrow syntax: `lhs => rhs` or bidirectional `lhs <=> rhs`
 
 ## Theoretical Foundation: Domains and Symmetry Groups
 
@@ -212,73 +160,9 @@ The `orbit` function takes three parameters:
 
 It returns the optimized version of the input expression.
 
-## Canonicalization Constructs
+## Domain-Unified Rewriting System: Operator Semantics
 
-The system provides several constructs specifically for working with canonical forms and representations:
-
-### Canonical Form Annotation
-
-```
-expr : Canonical  // Marks an expression as being in canonical form
-```
-
-When an expression is annotated with `: Canonical`, it indicates that the expression is in a preferred, standardized representation. This is useful during optimization where multiple equivalent representations may exist.
-
-### Canonicalization Functions
-
-```
-// Evaluation during canonicalization
-eval(expr)  // Evaluates expressions during the rewriting process
-
-// Discard instruction for pruning branches
-discard     // Indicates a branch that should be removed from consideration
-
-// Ordering helpers for canonical forms
-ordered(a, b)  // Returns ordered pair based on some ordering criterion
-ordered3(a, b, c)  // Orders triplets for canonical representation
-```
-
-### Special Canonicalization Patterns
-
-```
-// Combiner for like terms
-(a*x + b*x) : Ring => (a+b)*x : Canonical  // Canonical factored form
-
-// Removal of identity elements
-a + 0 => a : Canonical  // Addition identity elimination
-a * 1 => a : Canonical  // Multiplication identity elimination
-
-// Rotation canonicalization
-rotate(x, k) : Cₙ => rotate(x, k % n) : Canonical  // Normalize rotation amount
-```
-
-## Domain-Unified Rewriting System: Grammar and Semantics
-
-### Core Notation and Semantics
-
-The Domain-Unified Rewriting System uses domain annotations to express relationships between expressions across different domains:
-
-```orbit
-// a belongs to domain A
-a : A
-
-// If a belongs to domain A, then a and b are equivalent, and b belongs to domain B
-a : A => b : B
-
-// Entailment: Addition between two reals is commutative
-a : Real + b : Real  ⊢  + : S₂
-
-// The addition of two reals is a real
-a : Real + b : Real => (a + b) : Real
-
-// The domain of Int is a subset of Real
-Int ⊂ Real
-
-// Apply an annotation during rewrite only if it's not already present
-(x + c) !: ExplicitCoef => (1 * x + c) : ExplicitCoef
-```
-
-### Operator Semantics in E-Graph Context
+The Domain-Unified Rewriting System uses domain annotations to express relationships between expressions across different domains. Below is a detailed explanation of the operators and their semantics in the e-graph context:
 
 | Operator | ASCII Alternative | E-Graph Interpretation | Semantic Meaning | Example | Node Relationship Behavior |
 |----------|------------------|------------------------|------------------|---------|---------------------------|
@@ -339,34 +223,6 @@ This creates a conditional domain annotation:
 For example:
 ```
 n ⊢ n : Prime if isPrime(n);
-```
-
-## Group Operations and Decompositions
-
-Orbit supports expressing and working with group operations and decompositions:
-
-### Group Combinations
-
-```
-// Direct product
-(a : G × b : H) => (a, b) : Direct_Product(G, H)
-
-// Semi-direct product
-(a : G ⋊_σ b : H) => (a, b) : Semi_Direct_Product(G, H, σ)
-
-// Group combination with GCD/LCM
-Cₘ × Cₙ => Direct_Product(C_lcm(m,n), C_gcd(m,n))
-Cₘ × Cₙ => C_m*n if gcd(m, n) == 1
-```
-
-### Common Group Decompositions
-
-```
-// Dihedral group decompositions
-Dₙ => Cₙ ⋊ C₂  // Dihedral group as semi-direct product
-
-// Symmetric group decompositions
-Sₙ => Aₙ ⋊ C₂  // Symmetric group as semi-direct product with alternating group
 ```
 
 ## A Note on Terminology: The Concept of "Domain"
