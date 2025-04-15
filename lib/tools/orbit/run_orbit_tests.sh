@@ -170,10 +170,19 @@ for TEST_FILE in $TEST_FILES; do
         fi
       fi
     else
-      # Fall back to the old way of checking
+      # Check if the output indicates a test passed
       if [ $EXIT_CODE -eq 0 ] && echo "$OUTPUT" | grep -q "Result:"; then
-        STATUS="PASSED"
-        PASSED_TESTS=$((PASSED_TESTS + 1))
+        # Missing expected output file - create one with VERIFY marker
+        mkdir -p "$EXPECTED_DIR"
+        # Copy the output but add VERIFY marker at the end
+        cat "$OUTPUT_FILE" > "$EXPECTED_FILE"
+        echo "VERIFY - THIS OUTPUT NEEDS HUMAN VERIFICATION" >> "$EXPECTED_FILE"
+        echo "Auto-generated expected output for $FILE_NAME (needs verification)"
+        
+        # Still mark as failing until verified
+        STATUS="VERIFY-NEEDED"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        FAILURE_LIST="$FAILURE_LIST $FILE_NAME(verify-needed)"
       else
         STATUS="FAILED"
         FAILED_TESTS=$((FAILED_TESTS + 1))
