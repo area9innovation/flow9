@@ -12,8 +12,8 @@
 
 ## High Priority Tasks
 - Array indexing, modulo %
-- Fix pattern matching ✅ (First step: rule extraction and visualization implemented)
-- Implement indexing function for conditional pattern matching and fix factorial calculation
+✅ Fix pattern matching (First step: rule extraction and visualization implemented)
+✅ Fix pattern matching with sequences (Fixed handling of sequence expressions in pattern bodies)
 - Add proper error handling and reporting for pattern matching failures
 - Extract minimal program from ograph via cost function
 - Runtime function to read & parse files
@@ -35,32 +35,14 @@
 - Strengthen pattern variable reuse constraints (ensure consistency when same variable appears multiple times)
 - Add wildcard pattern support (`_` matching anything)
 - Support for deep pattern matching with nested patterns
-- ✅ Support multiple patterns with fallthrough in match expressions
-- ✅ Handle constructor pattern matching correctly
+✅ Support multiple patterns with fallthrough in match expressions
+✅ Handle constructor pattern matching correctly
+✅ Fix execution of multiple expressions in pattern match bodies
 - Improve pattern matching performance with more efficient algorithms
 - Add pattern guards for more complex conditional matching
 - Implement destructuring patterns for complex data structures
 - Add domain-specific pattern matching (match expressions within specific mathematical domains)
 - Support for pattern matching on domain annotations (e.g., `expr : Domain`)
-- Improve conditional pattern matching:
-  - ✅ Extract all rules with their conditionals as a structured array of {pattern, result, condition} (using a named structure)
-  - ✅ Create an indexing function that attempts matching one rule at a time
-  - ✅ Handle condition evaluation (use implicit "true" for missing conditions)
-  - ✅ Update the interpreter code to use this new approach
-
-## Pattern Matching Implementation Plan (Recently Completed)
-- Transition from recursive pattern matching to iterative approach:
-  1. ✅ Remove old recursive `tryPatterns` function
-  2. ✅ Replace `executeMatch` with a new implementation that:
-     - Uses `extractPatternRules` to get all rules as a flat array
-     - Iterates through each rule one by one
-     - Attempts to match each pattern using the existing unification logic
-     - Evaluates conditions for patterns that match
-     - Returns the result of the first successful match
-  3. ✅ Keep existing unification and binding application logic
-  4. ✅ Simplify match handling code path in the interpreter
-  5. ✅ Properly handle pattern conditions with proper short-circuiting
-  6. ✅ Add more detailed debugging/tracing output to help diagnose matching issues
 
 ## OGraph Enhancements
 - Complete domain annotation handling in ograph
@@ -99,6 +81,7 @@
 - ✅ Make test suite output stable by filtering out timing information and exit codes
 - ✅ Add expected output validation to catch incorrect behavior even when exit code is 0
 - ✅ Add `--generate-expected` flag for easy creation of expected output files
+- ✅ Add test cases demonstrating pattern matching with sequences (pattern_matching_fixed_test.orb)
 
 - Updated test results: 11 tests pass, 11 tests fail (including 5 timeouts and 3 output mismatches)
 - Fix failing tests:
