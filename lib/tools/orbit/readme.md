@@ -2,11 +2,11 @@
 
 ## Introduction
 
-We present a novel approach to program transformation and optimization that unifies three powerful technologies: equivalence graphs (e-graphs), a domain-unified rewriting system based on group theory, and Orbit's native AST capabilities. This synthesis creates a powerful cross-language rewriting engine capable of applying formal mathematical theorems directly to program code.
+We present a novel approach to program transformation and optimization that unifies three powerful technologies: equivalence graphs (e-graphs), a domain-unified rewriting system based on group theory, and Orbit, a functional programming language with native AST capabilities. This synthesis creates a powerful rewriting engine capable of applying formal mathematical theorems directly to program code.
 
 ## Orbit: A Functional Programming Language
 
-Orbit is a functional programming language that integrates e-graphs (called ographs) to enable advanced rewriting and optimization capabilities. The language provides a native interface to ographs, allowing direct manipulation of abstract syntax trees (ASTs) and application of rewrite rules.
+Orbit is a functional programming language that integrates generalized e-graphs (called ographs) to enable advanced rewriting and optimization capabilities. The language provides a native interface to ographs, allowing direct manipulation of abstract syntax trees (ASTs) and application of rewrite rules.
 
 ### Running Orbit
 
@@ -44,7 +44,7 @@ To run the test suite on all tests in the default 'tests' directory:
 flow9/lib/tools/orbit> ./run_orbit_tests.sh
 ```
 
-This script executes all .orb files in the 'tests' directory and saves the outputs to the 'test_output' directory.
+This script executes all .orb files in the 'tests' directory and saves the outputs to the 'test_output' directory, and compares against the expected output in the 'expected_output/' directory.
 
 #### Test Suite Options
 
@@ -109,7 +109,7 @@ Turn on tracing for step-by-step execution details:
 
 ## Pattern Matching and Rewriting Notation
 
-Orbit uses a powerful pattern matching and rewriting notation for its domain-unified transformation system. This notation includes domain annotations, symmetry group operations, and canonical form specifications.
+Orbit uses a powerful pattern matching and rewriting notation for its transformation system. This notation includes domain annotations, symmetry group operations, and canonical form specifications.
 
 **For detailed information about the pattern matching conventions, group notation, and canonicalization constructs, please refer to the [canonical.md](canonical.md) document**, which provides a comprehensive reference of:
 
@@ -129,9 +129,9 @@ The key conventions used throughout Orbit include:
 
 ## Theoretical Foundation: Domains and Symmetry Groups
 
-At the heart of our system lies the insight that computational domains themselves—whether programming languages, algebraic structures, or formal systems—should be first-class citizens in the rewriting process. **In Orbit, domains are represented simply as terms within the language.** However, the intention is for users to **structure these domain terms into a hierarchy, ideally forming a partial order or lattice (e.g., `Integer ⊂ Real ⊂ Complex`).** This hierarchical structure allows the system to apply rewrite rules and reasoning defined at more abstract domain levels (like `Ring`) to expressions belonging to more specific sub-domains (like `Integer`), thereby maintaining the system's expressive power while enabling high-level optimization and transformation strategies.
+At the heart of our system lies the insight that computational domains themselves—whether programming languages, algebraic structures, or formal systems—should be first-class citizens in the rewriting process. In Orbit, domains are represented simply as terms within the language.** However, the intention is for users to **structure these domain terms into a hierarchy, ideally forming a partial order or lattice (e.g., `Integer ⊂ Real ⊂ Complex`). This hierarchical structure allows the system to apply rewrite rules and reasoning defined at more abstract domain levels (like `Ring`) to expressions belonging to more specific sub-domains (like `Integer`), thereby maintaining the system's expressive power while enabling high-level optimization and transformation strategies.
 
-By representing domains explicitly within our e-graph structure, we enable:
+By representing domains and structures explicitly within our e-graph structure, we enable:
 
 1. **Cross-Domain Reasoning**: Values can exist simultaneously in multiple domains through domain annotations.
 2. **Hierarchical Rule Application**: Rules defined for parent domains apply to child domains.
@@ -182,18 +182,18 @@ The `orbit` function takes three parameters:
 
 It returns the optimized version of the input expression.
 
-## Domain-Unified Rewriting System: Operator Semantics
+## Orbit Rewriting System: Operator Semantics
 
-The Domain-Unified Rewriting System uses domain annotations to express relationships between expressions across different domains. Below is a detailed explanation of the operators and their semantics in the e-graph context:
+The Orbit Rewriting System uses domain annotations to express relationships between expressions across different domains. Below is a detailed explanation of the operators and their semantics in the e-graph context:
 
 | Operator | ASCII Alternative | E-Graph Interpretation | Semantic Meaning | Example | Node Relationship Behavior |
 |----------|------------------|------------------------|------------------|---------|---------------------------|
 | `:` | `:` | Domain annotation | In patterns: Constrains matches to the specified domain. In results: Asserts the expression belongs to the domain. | `x : Algebra` | Adds the domain `Algebra` to the "belongs to" field of node `x`. |
-| `⇒` | `=>` | Rewrite rule | Converts an expression from one form to another, potentially across domains. | `a + b : JavaScript => a + b : Python` | Creates a node for `a + b` that belongs to the `JavaScript` domain, and another node for `a + b` that belongs to the `Python` domain. |
-| `⇔` | `<=>` | Equivalence | Declares bidirectional equivalence between patterns, preserving domain membership. | `x * (y + z) : Algebra <=> (x * y) + (x * z) : Algebra` | Creates nodes for both expressions and marks them as equivalent. |
+| `!:` | `!:` | Negative Domain Constraint | In patterns: Constrains matches to nodes that *do not* belong to the specified domain/annotation. | `x !: Processed => ...` | Checks if the node `x`'s "belongs to" field *does not* contain `Processed`. Match succeeds only if the domain/annotation is absent. |
+| `⇒` | `=>` | Rewrite rule | Converts an expression from one form to another, potentially across domains. | `a + b : JavaScript => a + b : Python` | Creates a node for `a + b` that belongs to the `JavaScript` domain, and another node for `a + b` that belongs to the `Python` domain, and then merges these eclasses, with the root being the original. |
+| `⇔` | `<=>` | Equivalence | Declares bidirectional equivalence between patterns, preserving domain membership. | `x * (y + z) : Algebra <=> (x * y) + (x * z) : Algebra` | Creates nodes for both expressions and marks them as equivalent, with the root being the original. |
 | `⊢` | `\|-` | Entailment | When the left pattern matches, the right side domain annotation is applied. | `a : Field + b : Field \|- + : S₂` | When a matching expression is found, the `+` operator node has domain `S₂` added to it. |
 | `⊂` | `c=` | Subset relation | Indicates domain hierarchy, automatically applying parent domain memberships to children. | `Integer c= Real` | Establishes that any node belonging to the `Integer` domain also implicitly belongs to the `Real` domain. |
-| `!:` | `!:` | Negative Domain Constraint | In patterns: Constrains matches to nodes that *do not* belong to the specified domain/annotation. | `x !: Processed => ...` | Checks if the node `x`'s "belongs to" field *does not* contain `Processed`. Match succeeds only if the domain/annotation is absent. |
 
 In the e-graph implementation, each node maintains a "belongs to" field that tracks which domains or annotations it belongs to. The operators above define how domains are added to nodes and how nodes relate to each other.
 

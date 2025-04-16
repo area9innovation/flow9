@@ -15,6 +15,7 @@
 - Extract minimal program from ograph via cost function
 - Runtime function to read & parse files
 - Implement `include` in Orbit
+- Operators as symbols
 - Subscripts on operators
 - Implement symmetry group based canonicalization rules from canonical.md
 - Add support for domain annotations and constraints (`: Domain` and `!: Domain`)
