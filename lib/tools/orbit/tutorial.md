@@ -63,6 +63,23 @@ expr is (
 )
 ```
 
+### Sequence Operations
+
+Orbit provides two operators for sequencing expressions:
+
+- Semicolon (`;`) - The traditional sequence operator
+- Comma (`,`) - Alternative sequence operator that reduces the need for parentheses
+
+```orbit
+// Using semicolons with required parentheses
+if a then (b; c; d) else (f; g; h); i
+
+// Using commas without parentheses - more concise
+if a then b, c, d else f, g, h; i
+```
+
+The comma operator makes code more readable by eliminating unnecessary parentheses while preserving the same execution sequence. Both operators perform the same function (executing statements in sequence), but the comma operator is particularly useful in control structures like if-then-else statements.
+
 ## 3. Functional Programming in Orbit
 
 ### Immutability
