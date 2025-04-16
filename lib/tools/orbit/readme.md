@@ -102,6 +102,7 @@ Turn on tracing for step-by-step execution details:
 - **[tutorial.md](tutorial.md)**: Comprehensive introduction to the language
 - **[canonical.md](canonical.md)**: Rewriting rules for symmetry groups
 - **[extensions.md](extensions.md)**: Extended domains for advanced mathematics
+- **[algorithms.md](algorithms.md)**: Notes on how to implement canonicalization 
 - **[type_system.md](type_system.md)**: How to use Orbit for typing
 - **[semantics.md](semantics.md)**: Semantic property inference
 - **[design.md](design.md)**: API design for OGraph optimization
