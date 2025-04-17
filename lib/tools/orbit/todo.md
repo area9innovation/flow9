@@ -11,33 +11,6 @@
 ✅ Add test suite mode to orbit.flow with automated test execution and reporting
 
 ## High Priority Tasks
-- Change call to use the closure in the lambda instead of a new registry
-- Fix bug with recursion and bindings:
-
-	fn merge(a, b) = (
-		if length(a) = 0 then b
-		else if length(b) = 0 then a
-		else (
-			if a[0] <= b[0] then
-				[a[0]] + merge(subrange(a, 1, length(a) - 1), b)
-			else
-				[b[0]] + merge(a, subrange(b, 1, length(b) - 1))
-		)
-	);
-
-	// Merge sort implementation
-	fn mergeSort(arr) = (
-		if length(arr) <= 1 then arr
-		else (
-			let mid = length(arr) / 2;
-			let left = mergeSort(subrange(arr, 0, mid));
-			let right = mergeSort(subrange(arr, mid, length(arr) - mid));
-			merge(left, right)
-		)
-	);
-
-	works, but if we move the mergeSet calls to the merge line, it breaks.
-
 - Rewrite builtin functions to have a stdlib instead of being in the interpreter
 - Port the corelib functinos to Orbit native?
 - Check the constructor corelib functions
