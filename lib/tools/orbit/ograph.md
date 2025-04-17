@@ -82,9 +82,9 @@ This allows associating expressions with arbitrary domain expressions.
 
 ### Pattern Matching
 
-#### `matchOGraphPattern(graphName: string, pattern: expression, callback: (bindings: Map<string, expression>) -> void) -> int`
+#### `matchOGraphPattern(graphName: string, pattern: expression, callback: (bindings: Map<string, expression>, eclassId: int) -> void) -> int`
 
-Searches for all occurrences of a pattern in the graph and calls the provided callback for each match, passing a map of variable bindings. Returns the number of matches found.
+Searches for all occurrences of a pattern in the graph and calls the provided callback for each match, passing a map of variable bindings and the e-class ID of the matched node. Returns the number of matches found.
 
 ```orbit
 // Create a graph with some expressions
@@ -94,11 +94,14 @@ addOGraph(g, 5 * 6);
 addOGraph(g, (a + b) * c);
 
 // Find all expressions matching the pattern x + y
-let matchCount = matchOGraphPattern(g, x + y, \bindings -> {
-	// For each match, print the bindings
+let matchCount = matchOGraphPattern(g, x + y, \bindings, eclassId -> {
+	// For each match, print the bindings and the e-class ID
 	let xExpr = bindings["x"];
 	let yExpr = bindings["y"];
-	println("Found: " + xExpr + " + " + yExpr);
+	println("Found: " + xExpr + " + " + yExpr + " at e-class " + eclassId);
+
+	// You can use the e-class ID to modify the graph or for further processing
+	// For example, to merge with another node or add domain annotations
 });
 
 println("Found " + matchCount + " matches");

@@ -40,7 +40,6 @@
 ## OGraph Enhancements
 ✅ Check that inserting into and extraction from ograph works correct
 - lib/tools/orbit/tests/ograph_rewrite_test.orb:
-  - we need a function that does substitution of an env. We have this  in substitute.
   - we need to send the eclass of the matching nodes when doing graph matching
 - Check ograph dot export
 ✅ Check ograph operations
