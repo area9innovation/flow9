@@ -104,6 +104,29 @@ let matchCount = matchOGraphPattern(g, x + y, \bindings -> {
 println("Found " + matchCount + " matches");
 ```
 
+#### `substituteWithBindings(expr: expression, bindings: Map<string, expression>) -> expression`
+
+Applies variable substitutions to an expression using the provided bindings, but does not evaluate the result. This is useful for template-based code generation or symbolic manipulation where you want to substitute variables without triggering evaluation.
+
+```orbit
+// Pattern match to extract components
+let pattern = quote(a + b);
+let expr = quote(5 + 10);
+
+// Manual binding creation
+let bindings = [
+	Pair("a", quote(5)),
+	Pair("b", quote(10))
+];
+
+// Use the bindings to create a new expression
+let template = quote(2 * a - b);
+let result = substituteWithBindings(template, bindings);
+println("Result: " + prettyOrbit(result)); // Result: 2 * 5 - 10
+```
+
+This function performs a direct syntactic substitution without evaluating the resulting expression, unlike `evalWithBindings` which also evaluates the expression after substitution. It's particularly useful for rule-based term rewriting systems where you want to control when and how substituted expressions are evaluated.
+
 Pattern matching is a powerful feature that enables finding and transforming expressions in the graph based on their structure. The pattern can contain concrete values (e.g., `5`, `"hello"`) and pattern variables (e.g., `x`, `y`) that match any expression.
 
 #### Pattern Variables
@@ -122,6 +145,50 @@ When the same pattern variable appears multiple times in a pattern, the system e
 4. They are operations with the same operator and semantically equivalent children
 
 This semantic equivalence checking allows for robust pattern matching even in the presence of shared structure or when expressions have been merged through equivalence relationships.
+
+#### Variable Substitution vs. Evaluation
+
+When working with pattern matching results, Orbit provides three complementary functions for handling variable bindings:
+
+1. **`substituteWithBindings(expr, bindings)`**: Performs only variable substitution, replacing variables with their bound expressions without evaluating the result.
+2. **`evalWithBindings(expr, bindings)`**: Both substitutes variables and evaluates the resulting expression.
+3. **`unquote(expr, bindings)`**: Traverses an AST, evaluating only the parts wrapped in `eval` calls, while leaving the rest intact.
+
+Choosing between these functions depends on your use case:
+
+```orbit
+// Example showing the difference between substitute and eval
+let expr = quote(2 * x + y);
+let bindings = [
+	Pair("x", quote(3 + 4)),  // x is bound to the expression (3 + 4)
+	Pair("y", quote(10))
+];
+
+// Just substitute variables without evaluation
+let substituted = substituteWithBindings(expr, bindings);
+println(prettyOrbit(substituted));  // Output: 2 * (3 + 4) + 10
+
+// Substitute and evaluate
+let evaluated = evalWithBindings(expr, bindings);
+println(prettyOrbit(evaluated));    // Output: 24 (because 2 * 7 + 10 = 24)
+
+// Selective evaluation with unquote
+let template = quote(2 * eval(x) + y);  // Only evaluate the x part
+let selectively = unquote(template, bindings);
+println(prettyOrbit(selectively));  // Output: 2 * 7 + 10 (only x was evaluated)
+```
+
+The `unquote` function is particularly useful for template metaprogramming where you want most of an expression to remain as syntax (quoted), with only specific parts evaluated. This provides selective evaluation similar to quasiquotation in Lisp/Scheme but with more fine-grained control.
+
+These distinctions are particularly important in rewriting systems where you may want to:
+
+1. **Preserve Structure**: Use `substituteWithBindings` when you want to preserve the structure of expressions for further pattern matching or when building templates.
+
+2. **Compute Results**: Use `evalWithBindings` when you want to compute concrete results or perform simplification.
+
+3. **Selective Evaluation**: Use `unquote` when you need fine-grained control over which parts of an expression to evaluate, especially in template metaprogramming or complex rewriting systems.
+
+For example, in a rule-based rewriting system, you might use `substituteWithBindings` to generate the right-hand side of a rule with bindings from a matched left-hand side, preserving the structure for further transformations.
 
 #### Pattern Matching Use Cases
 

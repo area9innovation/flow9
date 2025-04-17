@@ -7,6 +7,7 @@ import tools/orbit/ograph2dot;
 import tools/orbit/orbit2ograph;
 import tools/orbit/ograph_pattern; // For OGraph pattern matching
 import tools/orbit/utils; // For access to the original utility functions
+import tools/orbit/substitute; // For variable substitution
 import ds/tree;
 import string;
 
@@ -32,6 +33,20 @@ export {
         bindings : Tree<string, OrMath_expr>,  // Variable bindings from pattern matching
         env : OrbEnv               // Environment context
     ) -> OrMath_expr;  // Returns the evaluated expression
+    
+    // Substitute variables in an expression using bindings from pattern matching
+    substituteWithBindings(
+        expr : OrMath_expr,        // Expression to substitute variables in
+        bindings : Tree<string, OrMath_expr>,  // Variable bindings from pattern matching
+        env : OrbEnv               // Environment context
+    ) -> OrMath_expr;  // Returns the expression with variables substituted
+    
+    // Process an AST and evaluate only the parts wrapped in eval calls
+    unquote(
+        expr : OrMath_expr,        // AST to process
+        bindings : Tree<string, OrMath_expr>,  // Variable bindings from pattern matching
+        env : OrbEnv               // Environment context
+    ) -> OrMath_expr;  // Returns the processed AST with eval parts evaluated
 }
 
 // Check if a type annotation indicates AST type
@@ -74,6 +89,8 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
         Pair("extractOGraph", OrbitRuntimeFn(extractOGraphFunction)),
         Pair("matchOGraphPattern", OrbitRuntimeFn(matchOGraphPatternFunction)),
         Pair("evalWithBindings", OrbitRuntimeFn(evalWithBindingsFunction)),
+        Pair("substituteWithBindings", OrbitRuntimeFn(substituteWithBindingsFunction)),
+        Pair("unquote", OrbitRuntimeFn(unquoteFunction)),
     ];
     
     // Convert the list of pairs to a tree
@@ -419,4 +436,208 @@ ograph2dotFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMa
             }
         }
     }
+}
+
+// Implementation of substituteWithBindings function
+substituteWithBindingsFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 2) {
+        println("ERROR: substituteWithBindings expects exactly 2 arguments: expression and bindings");
+        env;
+    } else {
+        // Get the expression to substitute variables in (not evaluated yet)
+        expr = args[0];
+        
+        // Evaluate the bindings argument to get a map of variable bindings
+        envBindings = interpret(env, args[1]);
+        
+        // Extract the bindings from the result
+        bindings = switch (envBindings.result) {
+            OrArray(pairs): {
+                // Convert array of Pair(key, value) to a Tree
+                fold(pairs, makeTree(), \acc, p -> {
+                    switch (p) {
+                        OrFunction(fn, pargs): {
+                            if (length(pargs) == 2) {
+                                switch (pargs[0]) {
+                                    OrString(key): setTree(acc, key, pargs[1]);
+                                    default: acc;
+                                }
+                            } else acc;
+                        }
+                        default: acc;
+                    }
+                });
+            }
+            default: {
+                println("ERROR: substituteWithBindings second argument must be an array of Pair(key, value)");
+                makeTree();
+            }
+        };
+        
+        // Debug output if tracing
+        if (env.tracing) {
+            println("Substituting variables in expression with bindings:");
+            println("Expression: " + prettyOrbit(expr));
+            println("Bindings: " + i2s(sizeTree(bindings)) + " variables");
+            iter(getTreeKeys(bindings), \key -> {
+                println("  " + key + " = " + prettyOrbit(lookupTreeDef(bindings, key, OrInt(0))));
+            });
+        }
+        
+        // Apply substitutions using the bindings
+        result = applyBindings(expr, bindings);
+        
+        // Return the result
+        OrbEnv(envBindings with result = result);
+    }
+}
+
+// Public API for substituteWithBindings - used by other modules
+substituteWithBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>, env : OrbEnv) -> OrMath_expr {
+    // Apply the substitutions directly
+    applyBindings(expr, bindings);
+}
+
+// Implementation of unquote function
+unquoteFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 2) {
+        println("ERROR: unquote expects exactly 2 arguments: expression and bindings");
+        env;
+    } else {
+        // Get the expression to process
+        expr = args[0];
+        
+        // Evaluate the bindings argument to get a map of variable bindings
+        envBindings = interpret(env, args[1]);
+        
+        // Extract the bindings from the result
+        bindings = switch (envBindings.result) {
+            OrArray(pairs): {
+                // Convert array of Pair(key, value) to a Tree
+                fold(pairs, makeTree(), \acc, p -> {
+                    switch (p) {
+                        OrFunction(fn, pargs): {
+                            if (length(pargs) == 2) {
+                                switch (pargs[0]) {
+                                    OrString(key): setTree(acc, key, pargs[1]);
+                                    default: acc;
+                                }
+                            } else acc;
+                        }
+                        default: acc;
+                    }
+                });
+            }
+            default: {
+                println("ERROR: unquote second argument must be an array of Pair(key, value)");
+                makeTree();
+            }
+        };
+        
+        // Debug output if tracing
+        if (env.tracing) {
+            println("Unquoting expression with bindings:");
+            println("Expression: " + prettyOrbit(expr));
+            println("Bindings: " + i2s(sizeTree(bindings)) + " variables");
+            iter(getTreeKeys(bindings), \key -> {
+                println("  " + key + " = " + prettyOrbit(lookupTreeDef(bindings, key, OrInt(0))));
+            });
+        }
+        
+        // Process the expression, evaluating only eval calls
+        result = unquoteRecursive(expr, bindings, envBindings, interpret);
+        
+        // Return the result
+        OrbEnv(envBindings with result = result);
+    }
+}
+
+// Helper function for unquote to recursively process the AST
+unquoteRecursive(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>, env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrMath_expr {
+    switch (expr) {
+        // Check if we have an eval function call
+        OrFunction(fnExpr, args): {
+            // Check if this is an eval call
+            switch (fnExpr) {
+                OrIdentifier(id): {
+                    if (id == "eval" && length(args) == 1) {
+                        // This is an eval call, evaluate its argument with bindings
+                        // Create a new environment with bindings
+                        newEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
+                            bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
+                        });
+                        
+                        // Evaluate the argument using the interpreter
+                        resultEnv = interpret(newEnv, args[0]);
+                        
+                        // Return the result of evaluation
+                        resultEnv.result;
+                    } else {
+                        // Not an eval call, process recursively
+                        OrFunction(
+                            unquoteRecursive(fnExpr, bindings, env, interpret),
+                            map(args, \arg -> unquoteRecursive(arg, bindings, env, interpret))
+                        );
+                    }
+                }
+                default: {
+                    // Not an identifier, process recursively
+                    OrFunction(
+                        unquoteRecursive(fnExpr, bindings, env, interpret),
+                        map(args, \arg -> unquoteRecursive(arg, bindings, env, interpret))
+                    );
+                }
+            }
+        }
+        
+        // Recursively process other expression types
+        OrAdd(a, b): OrAdd(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrSubtract(a, b): OrSubtract(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrMultiply(a, b): OrMultiply(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrDivide(a, b): OrDivide(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrNegate(a): OrNegate(unquoteRecursive(a, bindings, env, interpret));
+        OrExponent(a, b): OrExponent(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        
+        // Comparison operations
+        OrEquals(a, b): OrEquals(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrNotEquals(a, b): OrNotEquals(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrGreaterThan(a, b): OrGreaterThan(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrGreaterEquals(a, b): OrGreaterEquals(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrLessThan(a, b): OrLessThan(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrLessEquals(a, b): OrLessEquals(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        
+        // Logical operations
+        OrLogicalAnd(a, b): OrLogicalAnd(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrLogicalOr(a, b): OrLogicalOr(unquoteRecursive(a, bindings, env, interpret), unquoteRecursive(b, bindings, env, interpret));
+        OrLogicalNot(a): OrLogicalNot(unquoteRecursive(a, bindings, env, interpret));
+        
+        // Control flow
+        OrIfElse(cond, thenExpr, elseExpr): OrIfElse(
+            unquoteRecursive(cond, bindings, env, interpret),
+            unquoteRecursive(thenExpr, bindings, env, interpret),
+            unquoteRecursive(elseExpr, bindings, env, interpret)
+        );
+        
+        // Structured data
+        OrArray(items): OrArray(map(items, \item -> unquoteRecursive(item, bindings, env, interpret)));
+        
+        // Variable references
+        OrVariable(id): {
+            switch (lookupTree(bindings, id)) {
+                Some(val): val;
+                None(): expr;
+            }
+        }
+        
+        // For other expression types, return as is
+        default: expr;
+    }
+}
+
+// Public API for unquote - used by other modules
+unquote(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>, env : OrbEnv) -> OrMath_expr {
+    // This is just a wrapper that would typically need the interpreter function
+    // For direct API calls we can't provide this, so this method should typically be used
+    // from the runtime function instead
+    expr;
 }
