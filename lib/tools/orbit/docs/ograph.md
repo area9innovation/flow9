@@ -48,6 +48,12 @@ let expr = extractOGraph(g, exprId);
 
 ### Establishing Equivalences
 
+#### O-Graph Canonicalization and Equivalence Classes
+
+When working with O-Graphs, understanding how canonicalization works is critical. When expressions are merged to represent equivalence, one expression is designated as the "canonical representative" or "root" of the equivalence class.
+
+When you later extract an expression from an eclass, you'll always get the canonical form, not necessarily the exact expression you originally added. This behavior is by design and enables the system to maintain a consistent representation of equivalent expressions.
+
 #### `mergeOGraphNodes(graphName: string, nodeId1: int, nodeId2: int) -> bool`
 
 Merges two nodes to represent that they are equivalent expressions. Returns true if successful.
@@ -59,7 +65,21 @@ let n2 = addOGraph(g, c - d);
 mergeOGraphNodes(g, n1, n2);
 ```
 
-The first node will be the new root.
+**IMPORTANT**: The order of nodeIds matters! The first node (`nodeId1`) will become the canonical representative (root) of the merged equivalence class. When extracting expressions later, the canonical form will be used. This is especially important in rewriting systems where you typically want the transformed expression to be canonical.
+
+```orbit
+// Pattern matching and rewriting example
+matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
+	// Process the replacement
+	let result = substituteWithBindings(replacement, bindings);
+
+	// Add the result to the graph
+	let resultId = addOGraph(graph, result);
+
+	// Make the result the canonical form by putting its ID first
+	mergeOGraphNodes(graph, resultId, eclassId);
+));
+```
 
 ### Domain Associations
 
@@ -136,6 +156,26 @@ This function performs a direct syntactic substitution without evaluating the re
 **IMPORTANT**: The `bindings` parameter must be marked as `ast` to ensure they are not prematurely evaluated.
 
 Pattern matching is a powerful feature that enables finding and transforming expressions in the graph based on their structure. The pattern can contain concrete values (e.g., `5`, `"hello"`) and pattern variables (e.g., `x`, `y`) that match any expression.
+
+#### Working with Pattern Matching Results
+
+**CRITICAL**: When defining a callback for `matchOGraphPattern`, always explicitly mark the `bindings` parameter as `ast` type. This prevents premature evaluation of the bindings and ensures proper functioning when used with functions like `substituteWithBindings`.
+
+```orbit
+// CORRECT: Explicit ast typing for bindings
+matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
+	// Now you can safely use substituteWithBindings
+	let result = substituteWithBindings(replacement, bindings);
+	// ...
+));
+
+// INCORRECT: Without ast typing, bindings may be prematurely evaluated
+matchOGraphPattern(graph, pattern, \(bindings, eclassId) . (
+	// May cause unexpected behavior
+	let result = substituteWithBindings(replacement, bindings);
+	// ...
+));
+```
 
 #### Pattern Variables
 
