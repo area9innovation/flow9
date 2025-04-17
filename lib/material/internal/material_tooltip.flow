@@ -3,10 +3,15 @@ import material/internal/material_typography;
 
 export {
 	MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MTooltip2TExtended(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, externalHover : Maybe<Transform<bool>>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 	makeTooltipId(id : int) -> string;
 }
 
 MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	MTooltip2TExtended(manager, parent, m, None(), m2t)
+}
+
+MTooltip2TExtended(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, externalHover : Maybe<Transform<bool>>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	zorder = getValue(manager.manager.zorder);
 	virtualScreen = tryExtractStruct(m.style, MVirtualScreen(makeWH(), make(zeroPositionScale)));
 	disableOnDragging = contains(m.style, MDisableOnDragging());
@@ -15,9 +20,11 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 
 	tooltipGap = 8.;
 	overlapGap = 4.;
-	hover = make(false);
+	innerHover = make(false);
 	popupHover = make(false);
 	externalFocused = extractStruct(m.style, MTooltipExternalFocused(const(false))).focused;
+	hover = either(externalHover, innerHover);
+	
 	enabled =
 		extractStruct(m.style, MEnabled(const(true))).enabled
 		|> (\en -> if (disableOnDragging) fand(en, feq(manager.manager.dragging, -1)) else en);
@@ -258,26 +265,30 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 				],
 				if (!mobile)
 					TInteractive(
-						[TMouseInside(hover, blockHover)],
+						if (isSome(externalHover)) [] else [TMouseInside(innerHover, blockHover)],
 						m2t(mat, p)
 					)
 				else
 					TCopySize(
 						m2t(mat, p),
 						\tr ->
-							TInteractive([
-								if (switchByClick)
-									MouseDown(\mi -> {
-										if (mi.inside()) reverseBehaviour(hover)
-										else nextDistinct(hover, false);
+							TInteractive(
+								if (isSome(externalHover)) []
+								else if (switchByClick)
+									[MouseDown(\mi -> {
+										if (mi.inside()) reverseBehaviour(innerHover)
+										else nextDistinct(innerHover, false);
 										false;
-									})
-								else TMouseDownGhost(hover)
-							], tr),
+									})]
+								else [TMouseDownGhost(innerHover)],
+								tr
+							),
 						true
 					)
 			)
 			|> (\t -> TAttachBox(t, tooltipContentWH))
+			// Add interactive layer to ensure interactivity over an iframe
+			|> (\t -> TGroup2SameMetrics(t, TRectangle(interactiveRectangleStyle, TFillXY())))
 			|> (\t -> TGroup2(
 				TShow(fOr(const(mobileTooltipSupport), fand(showTooltip, fOr(p.focused, externalFocused))),
 				MComponentGroup2T(
