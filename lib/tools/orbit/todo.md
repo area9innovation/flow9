@@ -40,8 +40,9 @@
 ## OGraph Enhancements
 ✅ Check that inserting into and extraction from ograph works correct
 - Check ograph dot export
-- Check ograph operations
-- Implement pattern matching in ograph
+✅ Check ograph operations
+✅ Implement pattern matching in ograph
+- Implement domain pattern matching as well
 - Extract minimal program from ograph via cost function
 - Implement domain hierarchy relationships (e.g., Integer ⊂ Real)
 - Add cost model for extracting optimal expressions from ograph
