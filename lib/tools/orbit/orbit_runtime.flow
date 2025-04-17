@@ -5,6 +5,7 @@ import tools/orbit/orbit_pattern;
 import tools/orbit/orbit_simple_ograph;
 import tools/orbit/ograph2dot;
 import tools/orbit/orbit2ograph;
+import tools/orbit/ograph_pattern; // For OGraph pattern matching
 import tools/orbit/utils; // For access to the original utility functions
 import ds/tree;
 import string;
@@ -64,6 +65,7 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
         Pair("mergeOGraphNodes", OrbitRuntimeFn(mergeOGraphNodesFunction)),
         Pair("ograph2dot", OrbitRuntimeFn(ograph2dotFunction)),
         Pair("extractOGraph", OrbitRuntimeFn(extractOGraphFunction)),
+        Pair("matchOGraphPattern", OrbitRuntimeFn(matchOGraphPatternFunction)),
     ];
     
     // Convert the list of pairs to a tree
@@ -223,6 +225,91 @@ extractOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, O
             }
         }
     }
+}
+
+// Implementation of matchOGraphPattern function
+matchOGraphPatternFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 3) {
+        println("ERROR: matchOGraphPattern expects exactly 3 arguments: graph name, pattern, and callback");
+        env;
+    } else {
+        // Evaluate the graph name
+        envName = interpret(env, args[0]);
+        name = getOString(envName.result, "matchOGraphPattern.name");
+        
+        // Get the pattern (not evaluated - passed as AST)
+        pattern = args[1];
+        
+        // Get the callback function
+        callbackEnv = interpret(envName, args[2]);
+        callback = callbackEnv.result;
+        
+        // Debug output if tracing
+        if (env.tracing) {
+            println("Pattern matching in graph '" + name + "'");
+            println("Pattern: " + prettyOrbit(pattern));
+        }
+        
+        // Store the results of pattern matching
+        results = ref [];
+        
+        // Ensure the callback is a function
+        switch (callback) {
+            OrLambda(__, params, body): {
+                if (length(params) != 1) {
+                    println("ERROR: matchOGraphPattern callback must take exactly one argument (bindings)");
+                    OrbEnv(callbackEnv with result = OrInt(0));
+                } else {
+                    // Create callback adapter that will be called for each match
+                    // Note: This function MUST return void (not OrbEnv) to match the expected callback type
+                    matchCallback = \bindings -> {
+                        // Convert bindings to Orbit-friendly format - array of pairs
+                        bindingsExpr = bindings2OrbitExpr(bindings);
+                        
+                        if (env.tracing) {
+                            println("Found match with " + i2s(sizeTree(bindings)) + " bindings");
+                        }
+                        
+                        // Create new environment with the variables from the bindings
+                        newEnv = fold(getTreeKeys(bindings), callbackEnv, \accEnv, key -> {
+                            value = lookupTreeDef(bindings, key, OrInt(0));
+                            bindVar(accEnv, key, value);
+                        });
+                        
+                        // Interpret the callback with the new environment and save the result
+                        callResult = interpret(newEnv, OrFunction(callback, [bindingsExpr]));
+                        
+                        // Save the result
+                        results := arrayPush(^results, callResult.result);
+                    };
+                    
+                    // Call the pattern matcher with the callback
+                    matchCount = matchOGraphPattern(name, pattern, matchCallback);
+                    
+                    if (env.tracing) {
+                        println("Pattern matching complete - found " + i2s(matchCount) + " matches");
+                    }
+                    
+                    // Return the number of matches as the result
+                    OrbEnv(callbackEnv with result = OrInt(matchCount));
+                }
+            }
+            default: {
+                println("ERROR: matchOGraphPattern third argument must be a function");
+                OrbEnv(callbackEnv with result = OrInt(0));
+            }
+        }
+    }
+}
+
+// Convert variable bindings to an Orbit expression (array of pairs)
+bindings2OrbitExpr(bindings : Tree<string, OrMath_expr>) -> OrMath_expr {
+    pairs = map(getTreeKeys(bindings), \key -> {
+        value = lookupTreeDef(bindings, key, OrInt(0));
+        OrFunction(OrIdentifier("Pair"), [OrString(key), value])
+    });
+    
+    OrArray(pairs);
 }
 
 // Implementation of ograph2dot function
