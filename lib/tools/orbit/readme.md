@@ -99,15 +99,17 @@ Turn on tracing for step-by-step execution details:
 
 ## Orbit Documentation Guide
 
-- **[tutorial.md](tutorial.md)**: Comprehensive introduction to the language
-- **[orbit.md](orbit.md)**: Description of the language suitable for AIs
-- **[todo.md](todo.md)**: Development roadmap and tasks
+- **[tutorial.md](docs/tutorial.md)**: Comprehensive introduction to the language
+- **[orbit.md](docs/orbit.md)**: Description of the language suitable for AIs
+- **[todo.md](docs/todo.md)**: Development roadmap and tasks
 
 Orbit is mainly used to implement the OGraph based rewriting system.
-- **[ograph.md](ograph.md)**: Description of the OGraph library
-- **[canonical.md](canonical.md)**: Rewriting rules for symmetry groups
-- **[extensions.md](extensions.md)**: Extended domains for advanced mathematics
-- **[algorithms.md](algorithms.md)**: Notes on how to implement canonicalization 
-- **[type_system.md](type_system.md)**: How to use Orbit for typing
-- **[semantics.md](semantics.md)**: Semantic property inference
-
+- **[ograph.md](docs/ograph.md)**: Description of the OGraph library
+- **[canonical.md](docs/canonical.md)**: Rewriting rules for symmetry groups
+- **[extensions.md](docs/extensions.md)**: Extended domains for advanced mathematics
+- **[algorithms.md](docs/algorithms.md)**: Notes on how to implement canonicalization 
+- **[type_system.md](docs/type_system.md)**: How to use Orbit for typing
+- **[semantics.md](docs/semantics.md)**: Semantic property inference
+- **[recurrence.md](docs/recurrence.md)**: Notes on solving recurrences using Orbit
+- **[webgpu.md](docs/webgpu.md)**: Ideas for using Orbit with WebGPU
+- **[research.md](docs/research.md)**: Links to other research in this area
