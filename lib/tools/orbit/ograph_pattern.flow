@@ -1,0 +1,278 @@
+import tools/orbit/orbit_pattern;  // For existing pattern matching utilities
+import tools/orbit/ograph;         // For OGraph operations
+import tools/orbit/orbit2ograph;   // For conversion between Orbit and OGraph
+import tools/orbit/orbit_types;    // For OrMath_expr types
+import tools/orbit/orbit_simple_ograph; // For ographRegistry
+import ds/tree;                    // For binding maps
+import string;                     // For string operations
+
+export {
+    // Main pattern matching function
+    // Finds all matches of the pattern in the graph and calls the callback for each
+    matchOGraphPattern(
+        graphName : string,                      // Name of the OGraph to search in
+        pattern : OrMath_expr,                   // Pattern to match (with variables)
+        callback : (Tree<string, OrMath_expr>) -> void  // Called for each match with bindings
+    ) -> int;  // Returns the number of matches found
+    
+    // Internal helpers
+    OPatternResult ::= OPatternSuccess, OPatternFailure;
+        OPatternSuccess(bindings : Tree<string, int>); // Variable name to node ID
+        OPatternFailure();
+    
+    // Match a pattern directly against a specific node
+    matchPatternAtNode(
+        graph : OGraph, 
+        nodeId : int, 
+        pattern : OrMath_expr
+    ) -> OPatternResult;
+}
+
+// Main function for pattern matching in an OGraph
+matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<string, OrMath_expr>) -> void) -> int {
+    // Get the graph from the registry
+    matchCount = ref 0;
+    
+    switch (lookupTree(^ographRegistry, graphName)) {
+        Some(graph): {
+            // Strategy: Try to match the pattern starting at each node in the graph
+            traverseOGraph(graph, \nodeId, __ -> {
+                // Try to match the pattern at this node
+                switch (matchPatternAtNode(graph, nodeId, pattern)) {
+                    OPatternSuccess(bindings): {
+                        // Found a match, convert node IDs to expressions
+                        exprBindings = convertBindingsToExpressions(graph, bindings);
+                        
+                        // Call the callback with the bindings
+                        matchCount := ^matchCount + 1;
+                        callback(exprBindings);
+                    }
+                    OPatternFailure(): {
+                        // No match at this node, continue searching
+                    }
+                }
+            });
+            
+            ^matchCount;
+        }
+        None(): {
+            println("ERROR: OGraph '" + graphName + "' not found");
+            0;
+        }
+    }
+}
+
+// Convert bindings from node IDs to expressions
+convertBindingsToExpressions(graph : OGraph, bindings : Tree<string, int>) -> Tree<string, OrMath_expr> {
+    mapTree(bindings, \nodeId -> ograph2Orbit(graph, nodeId));
+}
+
+// Match a pattern at a specific node
+matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr) -> OPatternResult {
+    root = findORoot(graph, nodeId);
+    
+    switch (pattern) {
+        // Variable pattern - matches any node
+        OrVariable(id): {
+            OPatternSuccess(makeTree1(id, root));
+        }
+        
+        OrIdentifier(id): {
+            // For identifiers, check if the node represents the same identifier
+            switch (lookupOClass(graph, root)) {
+                Some(oclass): {
+                    if (oclass.node.op == "Identifier" || oclass.node.op == "Variable") {
+                        switch (getOClassString(graph, root)) {
+                            Some(name): {
+                                if (name == id) {
+                                    OPatternSuccess(makeTree());
+                                } else {
+                                    OPatternFailure();
+                                }
+                            }
+                            None(): OPatternFailure();
+                        }
+                    } else {
+                        OPatternFailure();
+                    }
+                }
+                None(): OPatternFailure();
+            }
+        }
+        
+        // For literals, check if node represents the same value
+        OrInt(i): {
+            switch (lookupOClass(graph, root)) {
+                Some(oclass): {
+                    if (oclass.node.op == "Int") {
+                        switch (getOClassInt(graph, root)) {
+                            Some(val): if (val == i) OPatternSuccess(makeTree()) else OPatternFailure();
+                            None(): OPatternFailure();
+                        }
+                    } else {
+                        OPatternFailure();
+                    }
+                }
+                None(): OPatternFailure();
+            }
+        }
+        
+        OrDouble(d): {
+            switch (lookupOClass(graph, root)) {
+                Some(oclass): {
+                    if (oclass.node.op == "Double") {
+                        switch (getOClassDouble(graph, root)) {
+                            Some(val): if (val == d) OPatternSuccess(makeTree()) else OPatternFailure();
+                            None(): OPatternFailure();
+                        }
+                    } else {
+                        OPatternFailure();
+                    }
+                }
+                None(): OPatternFailure();
+            }
+        }
+        
+        OrString(s): {
+            switch (lookupOClass(graph, root)) {
+                Some(oclass): {
+                    if (oclass.node.op == "String") {
+                        switch (getOClassString(graph, root)) {
+                            Some(val): if (val == s) OPatternSuccess(makeTree()) else OPatternFailure();
+                            None(): OPatternFailure();
+                        }
+                    } else {
+                        OPatternFailure();
+                    }
+                }
+                None(): OPatternFailure();
+            }
+        }
+        
+        OrBool(b): {
+            switch (lookupOClass(graph, root)) {
+                Some(oclass): {
+                    if (oclass.node.op == "Bool") {
+                        switch (getOClassInt(graph, root)) {
+                            Some(val): if ((val != 0) == b) OPatternSuccess(makeTree()) else OPatternFailure();
+                            None(): OPatternFailure();
+                        }
+                    } else {
+                        OPatternFailure();
+                    }
+                }
+                None(): OPatternFailure();
+            }
+        }
+        
+        // For operations, match structure recursively
+        OrAdd(a, b): matchOperation(graph, root, "+", [a, b]);
+        OrSubtract(a, b): matchOperation(graph, root, "-", [a, b]);
+        OrMultiply(a, b): matchOperation(graph, root, "*", [a, b]);
+        OrDivide(a, b): matchOperation(graph, root, "/", [a, b]);
+        
+        // Comparison operations
+        OrEquals(a, b): matchOperation(graph, root, "=", [a, b]);
+        OrNotEquals(a, b): matchOperation(graph, root, "!=", [a, b]);
+        OrGreaterThan(a, b): matchOperation(graph, root, ">", [a, b]);
+        OrGreaterEquals(a, b): matchOperation(graph, root, ">=", [a, b]);
+        OrLessThan(a, b): matchOperation(graph, root, "<", [a, b]);
+        OrLessEquals(a, b): matchOperation(graph, root, "<=", [a, b]);
+        
+        // Logical operations
+        OrLogicalAnd(a, b): matchOperation(graph, root, "&&", [a, b]);
+        OrLogicalOr(a, b): matchOperation(graph, root, "||", [a, b]);
+        OrLogicalNot(a): matchOperation(graph, root, "!", [a]);
+        
+        // Unary arithmetic
+        OrNegate(a): matchOperation(graph, root, "negate", [a]);
+        
+        // Function calls
+        OrFunction(fn, args): {
+            // For function calls, first match the function name
+            fnName = switch (fn) {
+                OrVariable(id): id;
+                OrIdentifier(id): id;
+                default: "";
+            };
+            
+            if (fnName != "") {
+                matchOperation(graph, root, "call", concat([fn], args));
+            } else {
+                OPatternFailure();
+            }
+        }
+        
+        // Add more patterns as needed...
+        
+        default: OPatternFailure();
+    }
+}
+
+// Match an operation pattern
+matchOperation(graph : OGraph, nodeId : int, op : string, subpatterns : [OrMath_expr]) -> OPatternResult {
+    // Check if this node has the right operator
+    switch (lookupOClass(graph, nodeId)) {
+        Some(oclass): {
+            if (oclass.node.op == op && length(oclass.node.children) == length(subpatterns)) {
+                // Try to match all children
+                matchAllChildren(graph, oclass.node.children, subpatterns, makeTree());
+            } else {
+                OPatternFailure();
+            }
+        }
+        None(): OPatternFailure();
+    }
+}
+
+// Match all children of an operation
+matchAllChildren(graph : OGraph, childIds : [int], patterns : [OrMath_expr], 
+                 bindings : Tree<string, int>) -> OPatternResult {
+    if (length(childIds) == 0) {
+        // All children matched successfully
+        OPatternSuccess(bindings);
+    } else {
+        // Try to match the first child
+        switch (matchPatternAtNode(graph, childIds[0], patterns[0])) {
+            OPatternSuccess(childBindings): {
+                // Merge bindings, ensuring consistency
+                switch (mergeOBindings(bindings, childBindings)) {
+                    OPatternSuccess(mergedBindings): {
+                        // Continue with remaining children
+                        matchAllChildren(graph, tail(childIds), tail(patterns), mergedBindings);
+                    }
+                    OPatternFailure(): OPatternFailure();
+                }
+            }
+            OPatternFailure(): OPatternFailure();
+        }
+    }
+}
+
+// Merge bindings, ensuring consistency (same variable bound to same node)
+mergeOBindings(a : Tree<string, int>, b : Tree<string, int>) -> OPatternResult {
+    result = fold(getTreeKeys(b), OPatternSuccess(a), \acc, key -> {
+        switch (acc) {
+            OPatternSuccess(bindings): {
+                bValue = lookupTreeDef(b, key, -1);
+                switch (lookupTree(bindings, key)) {
+                    Some(aValue): {
+                        // Variable already bound, must be consistent
+                        if (aValue == bValue) {
+                            OPatternSuccess(bindings);
+                        } else {
+                            OPatternFailure();
+                        }
+                    }
+                    None(): {
+                        // New binding
+                        OPatternSuccess(setTree(bindings, key, bValue));
+                    }
+                }
+            }
+            OPatternFailure(): OPatternFailure();
+        }
+    });
+    
+    result;
+}
