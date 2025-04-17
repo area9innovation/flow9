@@ -3,6 +3,8 @@ import tools/orbit/orbit_env;
 import tools/orbit/prettyprint;
 import tools/orbit/orbit_pattern;
 import tools/orbit/orbit_simple_ograph;
+import tools/orbit/ograph2dot;
+import tools/orbit/orbit2ograph;
 import tools/orbit/utils; // For access to the original utility functions
 import ds/tree;
 import string;
@@ -57,11 +59,10 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
         Pair("eval", OrbitRuntimeFn(evalFunction)),
         Pair("prettyOrbit", OrbitRuntimeFn(prettyOrbitFunction)),
         Pair("makeOGraph", OrbitRuntimeFn(makeOGraphFunction)),
-        Pair("addNodeToOGraph", OrbitRuntimeFn(addNodeToOGraphFunction)),
+        Pair("addOGraph", OrbitRuntimeFn(addFullExpressionToOGraphFunction)),
         Pair("addDomainToNode", OrbitRuntimeFn(addDomainToNodeFunction)),
         Pair("mergeOGraphNodes", OrbitRuntimeFn(mergeOGraphNodesFunction)),
-        Pair("extractOGraphNode", OrbitRuntimeFn(extractOGraphNodeFunction)),
-        Pair("printOGraph", OrbitRuntimeFn(printOGraphFunction)),
+        Pair("ograph2dot", OrbitRuntimeFn(ograph2dotFunction)),
     ];
     
     // Convert the list of pairs to a tree
@@ -111,29 +112,7 @@ makeOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMa
     }
 }
 
-// Implementation of addNodeToOGraph function
-addNodeToOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) < 2) {
-        println("ERROR: addNodeToOGraph expects at least 2 arguments");
-        env;
-    } else {
-        // Evaluate the graph name
-        envName = interpret(env, args[0]);
-        name = getOString(envName.result, "addNodeToOGraph.name");
-        
-        // Get the expression (not evaluated - passed as AST)
-        astExpr = args[1];
-        
-        // Debug the AST expression if tracing
-        if (env.tracing) println("Adding AST expression to ograph: " + prettyOrbit(astExpr));
-        
-        // Add the node to the graph
-        nodeId = addNodeToOGraph(name, astExpr);
-        OrbEnv(envName with result = OrInt(nodeId));
-    }
-}
-
-// Implementation of addDomainToNode function
+// Implementation of addDomainToNode function (node ID version)
 addDomainToNodeFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
     if (length(args) != 3) {
         println("ERROR: addDomainToNode expects exactly 3 arguments");
@@ -147,15 +126,17 @@ addDomainToNodeFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv,
         envNodeId = interpret(envName, args[1]);
         nodeId = getOInt(envNodeId.result, "addDomainToNode.nodeId");
         
-        // Evaluate the domain
-        envDomain = interpret(envNodeId, args[2]);
-        domain = getOString(envDomain.result, "addDomainToNode.domain");
+        // Evaluate the domain node ID
+        envDomainId = interpret(envNodeId, args[2]);
+        domainId = getOInt(envDomainId.result, "addDomainToNode.domainId");
         
         // Add the domain
-        success = addDomainToNode(name, nodeId, domain);
-        OrbEnv(envDomain with result = OrBool(success));
+        success = addDomainToNode(name, nodeId, domainId);
+        OrbEnv(envDomainId with result = OrBool(success));
     }
 }
+
+
 
 // Implementation of mergeOGraphNodes function
 mergeOGraphNodesFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
@@ -181,39 +162,60 @@ mergeOGraphNodesFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv
     }
 }
 
-// Implementation of extractOGraphNode function
-extractOGraphNodeFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: extractOGraphNode expects exactly 2 arguments");
+// Implementation of addOGraph function
+addFullExpressionToOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) < 2) {
+        println("ERROR: addOGraph expects at least 2 arguments: graph name and expression");
         env;
     } else {
         // Evaluate the graph name
         envName = interpret(env, args[0]);
-        name = getOString(envName.result, "extractOGraphNode.name");
+        name = getOString(envName.result, "addOGraph.name");
         
-        // Evaluate the node ID
-        envNodeId = interpret(envName, args[1]);
-        nodeId = getOInt(envNodeId.result, "extractOGraphNode.nodeId");
+        // Get the expression (not evaluated - passed as AST)
+        astExpr = args[1];
         
-        // Extract the node
-        extractedExpr = extractOGraphNode(name, nodeId);
-        OrbEnv(envNodeId with result = extractedExpr);
+        // Debug the AST expression if tracing
+        if (env.tracing) println("Adding full expression to ograph: " + prettyOrbit(astExpr));
+        
+        // Get the graph from the registry
+        switch (lookupTree(^ographRegistry, name)) {
+            Some(ograph): {
+                // Add the full expression recursively
+                nodeId = orbit2OGraph(ograph, astExpr);
+                if (env.tracing) println("Added full expression, root node ID: " + i2s(nodeId));
+                OrbEnv(envName with result = OrInt(nodeId));
+            }
+            None(): {
+                println("ERROR: OGraph '" + name + "' not found");
+                OrbEnv(envName with result = OrInt(-1));
+            }
+        }
     }
 }
 
-// Implementation of printOGraph function
-printOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+// Implementation of ograph2dot function
+ograph2dotFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
     if (length(args) != 1) {
-        println("ERROR: printOGraph expects exactly 1 argument");
+        println("ERROR: ograph2dot expects exactly 1 argument");
         env;
     } else {
         // Evaluate the graph name
         envName = interpret(env, args[0]);
-        name = getOString(envName.result, "printOGraph.name");
+        name = getOString(envName.result, "ograph2dot.name");
         
-        // Print the graph
-        str = printOGraph(name);
-        if (env.tracing) println("OGraph '" + name + "':\n" + str);
-        OrbEnv(envName with result = OrString(str));
+        // Get the graph from the registry
+        switch (lookupTree(^ographRegistry, name)) {
+            Some(ograph): {
+                // Convert the graph to DOT format
+                dotCode = ograph2dot(ograph);
+                if (env.tracing) println("OGraph '" + name + "' converted to DOT format");
+                OrbEnv(envName with result = OrString(dotCode));
+            }
+            None(): {
+                println("ERROR: OGraph '" + name + "' not found");
+                OrbEnv(envName with result = OrString(""));
+            }
+        }
     }
 }
