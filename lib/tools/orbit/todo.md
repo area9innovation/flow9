@@ -38,7 +38,7 @@
 ✅ Fix execution of multiple expressions in pattern match bodies
 
 ## OGraph Enhancements
-- Check that inserting into ograph works correct
+✅ Check that inserting into and extraction from ograph works correct
 - Check ograph dot export
 - Check ograph operations
 - Implement pattern matching in ograph

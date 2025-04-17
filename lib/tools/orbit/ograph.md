@@ -6,7 +6,7 @@ This document describes the O-Graph functionality available in the Orbit languag
 
 O-Graphs (Orbit Graphs) are a data structure that efficiently represents equivalence classes of expressions similar to E-graphs (Equivalence Graphs). They are used in term rewriting systems, theorem provers, and optimizing compilers to efficiently reason about equality between expressions.
 
-O-Graphs are an extension of E-Graphs. The main innovations are that each e-class can belong to other e-classes. The other main difference is that we let the root of an e-class be the representative of that e-class. These two innovations allow a range of new capabilities as discussed further below.
+O-Graphs are an extension of E-Graphs. The main innovations are that each e-class can belong to other e-classes. The other main difference is that we let the root of an e-class be the representative of that e-class. Also, we allow multiple instances of the same e-node with different e-classes. These innovations combine to allow new capabilities as discussed further below.
 
 In Orbit, O-Graphs are accessible through a set of runtime functions that allow you to:
 
