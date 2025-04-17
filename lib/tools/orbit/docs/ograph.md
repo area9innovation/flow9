@@ -82,9 +82,11 @@ This allows associating expressions with arbitrary domain expressions.
 
 ### Pattern Matching
 
-#### `matchOGraphPattern(graphName: string, pattern: expression, callback: (bindings: Map<string, expression>, eclassId: int) -> void) -> int`
+#### `matchOGraphPattern(graphName: string, pattern: expression, callback: (bindings: ast, eclassId: int) -> void) -> int`
 
 Searches for all occurrences of a pattern in the graph and calls the provided callback for each match, passing a map of variable bindings and the e-class ID of the matched node. Returns the number of matches found.
+
+**IMPORTANT**: The `bindings` parameter in the callback function must be marked as `ast` to ensure the bindings are not prematurely evaluated. This typing is crucial for proper functionality when using these bindings with functions like `substituteWithBindings`.
 
 ```orbit
 // Create a graph with some expressions
@@ -94,7 +96,8 @@ addOGraph(g, 5 * 6);
 addOGraph(g, (a + b) * c);
 
 // Find all expressions matching the pattern x + y
-let matchCount = matchOGraphPattern(g, x + y, \bindings, eclassId -> {
+// Note: bindings parameter is explicitly typed as ast to prevent premature evaluation
+let matchCount = matchOGraphPattern(g, x + y, \(bindings : ast, eclassId) -> {
 	// For each match, print the bindings and the e-class ID
 	let xExpr = bindings["x"];
 	let yExpr = bindings["y"];
@@ -107,7 +110,7 @@ let matchCount = matchOGraphPattern(g, x + y, \bindings, eclassId -> {
 println("Found " + matchCount + " matches");
 ```
 
-#### `substituteWithBindings(expr: expression, bindings: Map<string, expression>) -> expression`
+#### `substituteWithBindings(expr: expression, bindings: ast) -> expression`
 
 Applies variable substitutions to an expression using the provided bindings, but does not evaluate the result. This is useful for template-based code generation or symbolic manipulation where you want to substitute variables without triggering evaluation.
 
@@ -129,6 +132,8 @@ println("Result: " + prettyOrbit(result)); // Result: 2 * 5 - 10
 ```
 
 This function performs a direct syntactic substitution without evaluating the resulting expression, unlike `evalWithBindings` which also evaluates the expression after substitution. It's particularly useful for rule-based term rewriting systems where you want to control when and how substituted expressions are evaluated.
+
+**IMPORTANT**: The `bindings` parameter must be marked as `ast` to ensure they are not prematurely evaluated.
 
 Pattern matching is a powerful feature that enables finding and transforming expressions in the graph based on their structure. The pattern can contain concrete values (e.g., `5`, `"hello"`) and pattern variables (e.g., `x`, `y`) that match any expression.
 
@@ -181,6 +186,29 @@ let selectively = unquote(template, bindings);
 println(prettyOrbit(selectively));  // Output: 2 * 7 + 10 (only x was evaluated)
 ```
 
+#### `unquote(expr: expression, bindings: ast) -> expression`
+
+Traverses an abstract syntax tree and selectively evaluates only the parts wrapped in `eval` calls, while preserving the structure of the rest of the expression. This provides fine-grained control over which parts of an expression are evaluated versus which parts remain as syntax.
+
+```orbit
+// Create a template with selective evaluation
+let template = quote(
+	let x = 3 + 4;
+	let y = eval(2 * x);
+	[x, y, eval(x + y), multiplier]
+);
+
+// Bindings for any variables that might be in the template
+let bindings = quote([
+	Pair("multiplier", 2)
+]);
+
+// Process the template, evaluating only the eval parts
+let result = unquote(template, bindings);
+println("Result: " + prettyOrbit(result));
+// Result: { let x = 3 + 4; let y = 14; [x, y, 21, 2] }
+```
+
 The `unquote` function is particularly useful for template metaprogramming where you want most of an expression to remain as syntax (quoted), with only specific parts evaluated. This provides selective evaluation similar to quasiquotation in Lisp/Scheme but with more fine-grained control.
 
 These distinctions are particularly important in rewriting systems where you may want to:
@@ -190,6 +218,30 @@ These distinctions are particularly important in rewriting systems where you may
 2. **Compute Results**: Use `evalWithBindings` when you want to compute concrete results or perform simplification.
 
 3. **Selective Evaluation**: Use `unquote` when you need fine-grained control over which parts of an expression to evaluate, especially in template metaprogramming or complex rewriting systems.
+
+Here's a comparison of all three functions with the same input:
+
+```orbit
+// Setup
+let expr = quote(2 * x + y);
+let bindings = [
+	Pair("x", quote(3 + 4)),  // x is bound to the expression (3 + 4)
+	Pair("y", quote(10))
+];
+
+// 1. substituteWithBindings - only replaces variables
+let substituted = substituteWithBindings(expr, bindings);
+println(prettyOrbit(substituted));  // Output: 2 * (3 + 4) + 10
+
+// 2. evalWithBindings - substitutes and evaluates everything
+let evaluated = evalWithBindings(expr, bindings);
+println(prettyOrbit(evaluated));    // Output: 24 (because 2 * 7 + 10 = 24)
+
+// 3. unquote - selective evaluation with 'eval' markers
+let template = quote(2 * x + eval(y + 5));
+let selectively = unquote(template, bindings);
+println(prettyOrbit(selectively));  // Output: 2 * (3 + 4) + 15 (only "y + 5" was evaluated)
+```
 
 For example, in a rule-based rewriting system, you might use `substituteWithBindings` to generate the right-hand side of a rule with bindings from a matched left-hand side, preserving the structure for further transformations.
 

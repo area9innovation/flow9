@@ -41,8 +41,9 @@
 
 ## OGraph Enhancements
 ✅ Check that inserting into and extraction from ograph works correct
-- lib/tools/orbit/tests/ograph_rewrite_single.orb:
-  - debug why it is not working
+✅ lib/tools/orbit/tests/ograph_rewrite_single.orb:
+- lib/tools/orbit/tests/ograph_rewrite_test.orb:
+  fix and test
 - Check ograph dot export
 ✅ Check ograph operations
 ✅ Implement pattern matching in ograph
