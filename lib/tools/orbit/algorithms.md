@@ -1404,6 +1404,78 @@ fn find_canonical_form(object, group, action) (
 )
 ```
 
+## Pruning of orbit
+
+```orbit
+// Orbit sketch: generic orbit pruning via stabilizer‐chain & prefix pruning
+// Hooks: user supplies action, comparison, invariants, and coset reps
+
+/// Find the canonical representative of `obj` under a group action.
+/// - `gens`        : array of group generators
+/// - `action`      : (g, o) -> o′ applies g to object o
+/// - `compare`     : (o1, o2) -> int  lex compare: -1 if o1<o2, 0 if =, 1 if o1>o2
+/// - `invariants`  : array of (o -> I) functions; higher I means “worse”
+/// - `cosetRepsFn` : fn(gens) -> [[G]]   array of coset‐rep arrays for each base point
+fn findCanonical(obj, gens, action, compare, invariants, cosetRepsFn) = (
+    // Precompute coset representatives for each level
+    let cosetReps = cosetRepsFn(gens);
+    
+    // Recursive DFS with pruning
+    fn dfs(level, currObj, bestObj) = (
+        // 1) Invariant‐based prune: if any inv(currObj) > inv(bestObj), cut
+        let bad = invariants is (
+            inv => inv(currObj) > inv(bestObj) => true;
+            _   => false
+        );
+        if bad then bestObj
+        // 2) Fully assigned: compare to best
+        else if level == length(cosetReps) then
+            if compare(currObj, bestObj) < 0 then currObj else bestObj
+        else (
+            // 3) Explore coset reps at this level
+            let reps = cosetReps[level];
+            // Fold over all g in this coset
+            fold(reps, bestObj, \(acc, g).
+                let nextObj = action(g, obj);
+                // Prefix‐lex prune: if partial action can't beat acc, user hook may reject
+                acc2 is (
+                  // optional user‐provided prune hooks could go here
+                  _ => dfs(level + 1, nextObj, acc)
+                );
+                acc2
+            )
+        )
+    );
+    
+    // Start recursion with level=0, obj as both current and best
+    dfs(0, obj, obj)
+);
+
+/// Example stub: builds a stabilizer‐chain coset reprs for a permutation group
+fn exampleCosets(gens) = (
+    // In practice run Schreier–Sims to get a base and coset reps per level
+    // Here: single‐level trivial coset of identity
+    [ [ identity ] ]
+);
+
+// === Usage sketch ===
+
+let myGenerators = [ g1, g2, g3 ];           // user‐provided group generators
+let myAction     = \(g, o). apply(g, o);     // how g acts on object o
+let myCompare    = \(o1, o2). lexCmp(o1, o2);
+let myInvariants = [ sizeInvariant, hashInvariant ];  // cheap bounds
+let canon = findCanonical(
+    originalObject,
+    myGenerators,
+    myAction,
+    myCompare,
+    myInvariants,
+    exampleCosets
+);
+
+println("Canonical form: " + prettyOrbit(canon));
+```
+
 ## Implementation in Orbit System
 
 In the Orbit system, canonicalization is integrated through:
