@@ -39,6 +39,13 @@ let exprId = addOGraph(g, (a + b) * (c - d));
 
 This adds all nodes in the expression tree: *, +, -, a, b, c, d with proper relationships.
 
+The `extractOGraph` allows us to get it back out:
+
+```orbit
+// Now we can extract the expression from the graph
+let expr = extractOGraph(g, exprId);
+```
+
 ### Establishing Equivalences
 
 #### `mergeOGraphNodes(graphName: string, nodeId1: int, nodeId2: int) -> bool`
