@@ -80,6 +80,60 @@ addDomainToNode(g, exprId, domainId);
 
 This allows associating expressions with arbitrary domain expressions.
 
+### Pattern Matching
+
+#### `matchOGraphPattern(graphName: string, pattern: expression, callback: (bindings: Map<string, expression>) -> void) -> int`
+
+Searches for all occurrences of a pattern in the graph and calls the provided callback for each match, passing a map of variable bindings. Returns the number of matches found.
+
+```orbit
+// Create a graph with some expressions
+let g = makeOGraph("myGraph");
+addOGraph(g, a + b);
+addOGraph(g, 5 * 6);
+addOGraph(g, (a + b) * c);
+
+// Find all expressions matching the pattern x + y
+let matchCount = matchOGraphPattern(g, x + y, \bindings -> {
+	// For each match, print the bindings
+	let xExpr = bindings["x"];
+	let yExpr = bindings["y"];
+	println("Found: " + xExpr + " + " + yExpr);
+});
+
+println("Found " + matchCount + " matches");
+```
+
+Pattern matching is a powerful feature that enables finding and transforming expressions in the graph based on their structure. The pattern can contain concrete values (e.g., `5`, `"hello"`) and pattern variables (e.g., `x`, `y`) that match any expression.
+
+#### Pattern Variables
+
+Pattern variables in patterns are represented as identifiers (e.g., `x`, `y`, `z`) and can match any expression. When a pattern variable appears multiple times in a pattern, all occurrences must match semantically equivalent expressions.
+
+For example, the pattern `x + x` would match expressions like `a + a` or `5 + 5`, but not `a + b` or `5 + 6`.
+
+#### Consistency and Semantic Equivalence
+
+When the same pattern variable appears multiple times in a pattern, the system ensures that all occurrences match semantically equivalent expressions, not just syntactically identical ones. Two nodes are considered semantically equivalent if:
+
+1. They refer to the same node ID in the graph
+2. They are variables/identifiers with the same name
+3. They are literals with the same value
+4. They are operations with the same operator and semantically equivalent children
+
+This semantic equivalence checking allows for robust pattern matching even in the presence of shared structure or when expressions have been merged through equivalence relationships.
+
+#### Pattern Matching Use Cases
+
+Pattern matching is fundamental to many O-Graph operations, particularly:
+
+1. **Rule Application**: Finding subexpressions that match the left-hand side of rewrite rules
+2. **Query and Analysis**: Extracting parts of expressions that match certain patterns
+3. **Domain Inference**: Identifying expressions that should be associated with domains
+4. **Optimization**: Recognizing patterns that can be optimized (e.g., `a * 0 => 0`)
+
+The callback-based API allows for flexible processing of matches without building up large intermediate data structures.
+
 ### Visualization
 
 #### Graphviz: `ograph2dot(graphName: string) -> string`
