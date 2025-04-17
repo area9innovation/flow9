@@ -91,7 +91,7 @@ Lambda functions (anonymous functions) use the backslash syntax:
 let increment = \x.x + 1;
 
 // Lambda with multiple parameters
-let add = \a,b.a + b;
+let add = \(a, b).a + b;
 
 // Using lambdas as arguments
 let doubled = map([1, 2, 3], \x.x * 2);
@@ -237,7 +237,7 @@ let doubled = map(numbers, \x.x * 2);
 let evens = filter(numbers, \x.x % 2 == 0);
 
 // Fold: Accumulate values
-let sum = fold(numbers, 0, \acc,x.acc + x);
+let sum = fold(numbers, 0, \(acc, x).acc + x);
 ```
 </arrays>
 
