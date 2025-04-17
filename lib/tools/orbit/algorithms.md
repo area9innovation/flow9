@@ -1163,6 +1163,410 @@ function optimize_schedule(domain, schedule, accesses):
 	return new_schedule
 ```
 
+## Binary Decision Diagrams (BDDs)
+
+Binary Decision Diagrams (BDDs) provide a canonical representation for Boolean functions, enabling efficient symbolic verification, model checking, and Boolean function manipulation.
+
+### Structure and Representation
+
+A BDD represents a Boolean function φ:{0,1}ⁿ→{0,1} as a rooted directed acyclic graph (DAG) with decision nodes and terminal leaves. Each decision node tests one Boolean variable and has two children:
+
+```
+t ::= 0 | 1 | Node(v, t₀, t₁)
+	 where v ∈ {v₁ < ... < vₙ}, t₀, t₁ ∈ t
+```
+
+Here `Node(v, t₀, t₁)` means "if v=0 then follow t₀, else follow t₁." BDDs become powerful when we enforce a canonical form through reduction and variable ordering.
+
+### Conversion to BDD (Shannon Expansion)
+
+To convert arbitrary Boolean formulas into BDD form, we apply Shannon expansion recursively:
+
+```orbit
+fn shannon_expand(formula) (
+	formula is (
+		// Constants
+		0 => 0;
+		1 => 1;
+
+		// Variables
+		v if is_variable(v) => Node(v, 0, 1);
+
+		// Negation
+		!phi => (
+			let v = min_variable(phi);
+			Node(v, !restrict(phi, v, 0), !restrict(phi, v, 1))
+		);
+
+		// Conjunction
+		phi & psi => (
+			let v = min_variable(phi, psi);
+			Node(v,
+				restrict(phi, v, 0) & restrict(psi, v, 0),
+				restrict(phi, v, 1) & restrict(psi, v, 1)
+			)
+		);
+
+		// Disjunction
+		phi | psi => (
+			let v = min_variable(phi, psi);
+			Node(v,
+				restrict(phi, v, 0) | restrict(psi, v, 0),
+				restrict(phi, v, 1) | restrict(psi, v, 1)
+			)
+		);
+
+		// Exclusive-OR
+		phi ^ psi => (
+			let v = min_variable(phi, psi);
+			Node(v,
+				restrict(phi, v, 0) ^ restrict(psi, v, 0),
+				restrict(phi, v, 1) ^ restrict(psi, v, 1)
+			)
+		);
+	)
+)
+
+// Restrict a formula by setting variable v to value b
+fn restrict(formula, v, b) (
+	// Substitute v with constant b in the formula
+	substitute(formula, v, b)
+)
+
+// Find the smallest (first in order) variable in formula(s)
+fn min_variable(formulas...) (
+	// Get all variables in the formulas
+	let vars = union_all(map(formulas, get_variables));
+	// Return the smallest according to the ordering
+	min(vars)
+)
+```
+
+This recursively applies Shannon expansion, always choosing the smallest variable according to the fixed variable ordering.
+
+### BDD Reduction Rules
+
+After converting to BDD form, we apply reduction rules to maintain canonicity:
+
+```orbit
+fn reduce_bdd(bdd) (
+	bdd is (
+		// Terminal nodes remain unchanged
+		0 => 0;
+		1 => 1;
+
+		Node(v, t_low, t_high) => (
+			// Recursively reduce the children
+			let reduced_low = reduce_bdd(t_low);
+			let reduced_high = reduce_bdd(t_high);
+
+			// Apply reduction rules
+
+			// Rule 1: Terminal collapse - if both children are same terminal
+			if reduced_low == reduced_high then
+				reduced_low
+
+			// Rule 2: Check for existing node in unique table
+			else if has_node_in_table(v, reduced_low, reduced_high) then
+				get_node_from_table(v, reduced_low, reduced_high)
+
+			// Create new reduced node and add to table
+			else (
+				let new_node = Node(v, reduced_low, reduced_high);
+				add_node_to_table(new_node);
+				new_node
+			)
+		)
+	)
+)
+```
+
+Additionally, we need to implement the variable ordering rule:
+
+```orbit
+fn apply_variable_ordering(bdd) (
+	bdd is (
+		// Terminal nodes are already in order
+		0 => 0;
+		1 => 1;
+
+		Node(v, t_low, t_high) => (
+			// Check if we need to reorder
+			let min_var = min_variable_in_node(t_low, t_high);
+
+			if min_var < v then (
+				// Reorder: move min_var to the top
+				Node(min_var,
+					apply_variable_ordering(restrict_node(bdd, min_var, 0)),
+					apply_variable_ordering(restrict_node(bdd, min_var, 1))
+				)
+			) else (
+				// Already in order, just recurse on children
+				Node(v,
+					apply_variable_ordering(t_low),
+					apply_variable_ordering(t_high)
+				)
+			)
+		)
+	)
+)
+```
+
+### Complete BDD Canonicalization
+
+The full canonicalization process combines conversion and reduction:
+
+```orbit
+fn canonicalize_boolean_function(formula) (
+	// Step 1: Convert to BDD form using Shannon expansion
+	let bdd_form = shannon_expand(formula);
+
+	// Step 2: Apply variable ordering
+	let ordered_bdd = apply_variable_ordering(bdd_form);
+
+	// Step 3: Apply reduction rules
+	let canonical_bdd = reduce_bdd(ordered_bdd);
+
+	canonical_bdd
+)
+```
+
+### Applications and Benefits
+
+Reduced, ordered BDDs provide:
+
+1. **Canonical representation**: Semantically equivalent Boolean functions have identical BDDs
+2. **Compactness**: Many Boolean functions have compact BDD representations
+3. **Efficient operations**: Boolean operations become graph operations on BDDs
+4. **Memory efficiency**: Shared sub-graphs reduce redundancy
+5. **Symbolic verification**: Enables verification of systems with large state spaces
+
+**Example**:
+```
+// Formula: (a & b) | (a & c)
+// Shannon expanded:
+//   Node(a,
+//     Node(b, Node(c, 0, 0), Node(c, 0, 1)),
+//     Node(b, Node(c, 0, 1), Node(c, 1, 1))
+//   )
+
+// After reduction:
+//   Node(a,
+//     Node(b, 0, Node(c, 0, 1)),
+//     Node(c, 1, 1)
+//   )
+
+// Further simplified to:
+//   Node(a, Node(b, 0, c), 1)
+// Which is equivalent to a & (b => c)
+```
+
+This canonical representation enables efficient equality testing for Boolean functions, regardless of their original syntactic form.
+
+### BDD Operations and Applications
+
+Beyond basic construction and canonicalization, BDDs support efficient implementations of various Boolean operations and analyses.
+
+#### Boolean Operations on BDDs
+
+We can define Boolean operations directly on BDDs by aligning their top-level tests:
+
+```orbit
+fn bdd_and(node1, node2) (
+	// Handle terminal cases first
+	if node1 == 0 || node2 == 0 then 0
+	else if node1 == 1 then node2
+	else if node2 == 1 then node1
+	else (
+		// Both are internal nodes
+		let v1 = get_var(node1);
+		let v2 = get_var(node2);
+
+		if v1 == v2 then (
+			// Same variable - align and recurse on both branches
+			let low = bdd_and(get_low(node1), get_low(node2));
+			let high = bdd_and(get_high(node1), get_high(node2));
+			make_node(v1, low, high)
+		) else if v1 < v2 then (
+			// v1 comes before v2 in order - recurse on v1's branches
+			let low = bdd_and(get_low(node1), node2);
+			let high = bdd_and(get_high(node1), node2);
+			make_node(v1, low, high)
+		) else (
+			// v2 comes before v1 in order - recurse on v2's branches
+			let low = bdd_and(node1, get_low(node2));
+			let high = bdd_and(node1, get_high(node2));
+			make_node(v2, low, high)
+		)
+	)
+)
+
+// Similar implementations for other operations
+fn bdd_or(node1, node2) (
+	// Handle terminal cases
+	if node1 == 1 || node2 == 1 then 1
+	else if node1 == 0 then node2
+	else if node2 == 0 then node1
+	else /* Similar recursive implementation */
+)
+
+fn bdd_not(node) (
+	if node == 0 then 1
+	else if node == 1 then 0
+	else (
+		let v = get_var(node);
+		let low = bdd_not(get_low(node));
+		let high = bdd_not(get_high(node));
+		make_node(v, low, high)
+	)
+)
+
+fn bdd_xor(node1, node2) (
+	// Terminal cases
+	if node1 == 0 then node2
+	else if node2 == 0 then node1
+	else if node1 == 1 then bdd_not(node2)
+	else if node2 == 1 then bdd_not(node1)
+	else /* Similar recursive implementation */
+)
+```
+
+These operations preserve canonicity and reuse shared structure, making them very efficient.
+
+#### Quantification
+
+Quantifiers are implemented as Boolean operations over variable cofactors:
+
+```orbit
+// Existential quantification: ∃v.f
+fn bdd_exists(var, node) (
+	// Compute f[v→0] ∨ f[v→1]
+	bdd_or(
+		bdd_restrict(node, var, 0),
+		bdd_restrict(node, var, 1)
+	)
+)
+
+// Universal quantification: ∀v.f
+fn bdd_forall(var, node) (
+	// Compute f[v→0] ∧ f[v→1]
+	bdd_and(
+		bdd_restrict(node, var, 0),
+		bdd_restrict(node, var, 1)
+	)
+)
+
+// Variable substitution/restriction
+fn bdd_restrict(node, var, value) (
+	if is_terminal(node) then node
+	else (
+		let v = get_var(node);
+		if v == var then
+			// Direct substitution
+			if value == 0 then get_low(node) else get_high(node)
+		else if v > var then
+			// var doesn't appear in this subtree
+			node
+		else (
+			// Recurse on both branches
+			let low = bdd_restrict(get_low(node), var, value);
+			let high = bdd_restrict(get_high(node), var, value);
+			make_node(v, low, high)
+		)
+	)
+)
+```
+
+By rewriting quantifiers into BDD operations, we avoid explicit enumeration of all 2ⁿ variable assignments.
+
+#### Satisfiability and Equivalence
+
+BDDs make some complex problems trivial:
+
+```orbit
+fn bdd_is_satisfiable(node) (
+	// A BDD is satisfiable if it's not identically 0
+	node != 0
+)
+
+fn bdd_are_equivalent(node1, node2) (
+	// Two functions are equivalent if their canonical BDDs are identical
+	node1 == node2
+)
+
+// Find one satisfying assignment
+fn bdd_find_satisfying_assignment(node) (
+	if node == 0 then [] // Unsatisfiable
+	else if node == 1 then [] // Any assignment works
+	else (
+		let v = get_var(node);
+		// Try low branch first (v=0)
+		if get_low(node) != 0 then
+			concat([Pair(v, 0)], bdd_find_satisfying_assignment(get_low(node)))
+		else
+			// Otherwise try high branch (v=1)
+			concat([Pair(v, 1)], bdd_find_satisfying_assignment(get_high(node)))
+	)
+)
+```
+
+#### Model Counting
+
+We can efficiently count satisfying assignments by annotating BDD nodes:
+
+```orbit
+fn bdd_count_models(node, var_count) (
+	// Cache for dynamic programming
+	let counts = makeTree();
+
+	// Recursive counting function
+	fn count(n, remaining_vars) (
+		// Check cache
+		let key = Pair(n, remaining_vars);
+		if hasKey(counts, key) then
+			lookupTree(counts, key).value
+		else (
+			let result = if n == 0 then
+				0 // No models
+			else if n == 1 then
+				pow(2, remaining_vars) // All remaining variables can be anything
+			else (
+				let v = get_var(n);
+				// Skip variables not in this path
+				let skipped = count_skipped_vars(v, remaining_vars);
+				let factor = pow(2, skipped);
+
+				// Recursive counting on both branches
+				let low_count = count(get_low(n), remaining_vars - skipped - 1);
+				let high_count = count(get_high(n), remaining_vars - skipped - 1);
+
+				factor * (low_count + high_count)
+			);
+
+			// Cache result
+			setTree(counts, key, result);
+			result
+		)
+	);
+
+	count(node, var_count)
+)
+```
+
+This approach counts models in time proportional to the BDD size, not the (potentially exponential) number of solutions.
+
+### Practical Applications of BDDs
+
+BDDs excel in several domains:
+
+1. **Hardware Verification**: Representing and checking circuits with millions of gates
+2. **Model Checking**: Verifying temporal logic properties of finite-state systems
+3. **Logic Synthesis**: Optimizing Boolean functions in circuit design
+4. **Symbolic AI**: Compact encoding of domains like planning problems
+5. **Set Operations**: Representing large sets and performing operations efficiently
+
+The key property making BDDs practical is that many real-world Boolean functions have compact BDD representations, avoiding exponential blow-up through structural sharing and canonicity.
+
 ## Interval Arithmetic
 
 Interval arithmetic operates on intervals rather than precise values, providing bounded guarantees for numerical computations.
@@ -1417,45 +1821,45 @@ fn find_canonical_form(object, group, action) (
 /// - `invariants`  : array of (o -> I) functions; higher I means “worse”
 /// - `cosetRepsFn` : fn(gens) -> [[G]]   array of coset‐rep arrays for each base point
 fn findCanonical(obj, gens, action, compare, invariants, cosetRepsFn) = (
-    // Precompute coset representatives for each level
-    let cosetReps = cosetRepsFn(gens);
-    
-    // Recursive DFS with pruning
-    fn dfs(level, currObj, bestObj) = (
-        // 1) Invariant‐based prune: if any inv(currObj) > inv(bestObj), cut
-        let bad = invariants is (
-            inv => inv(currObj) > inv(bestObj) => true;
-            _   => false
-        );
-        if bad then bestObj
-        // 2) Fully assigned: compare to best
-        else if level == length(cosetReps) then
-            if compare(currObj, bestObj) < 0 then currObj else bestObj
-        else (
-            // 3) Explore coset reps at this level
-            let reps = cosetReps[level];
-            // Fold over all g in this coset
-            fold(reps, bestObj, \(acc, g).
-                let nextObj = action(g, obj);
-                // Prefix‐lex prune: if partial action can't beat acc, user hook may reject
-                acc2 is (
-                  // optional user‐provided prune hooks could go here
-                  _ => dfs(level + 1, nextObj, acc)
-                );
-                acc2
-            )
-        )
-    );
-    
-    // Start recursion with level=0, obj as both current and best
-    dfs(0, obj, obj)
+	// Precompute coset representatives for each level
+	let cosetReps = cosetRepsFn(gens);
+
+	// Recursive DFS with pruning
+	fn dfs(level, currObj, bestObj) = (
+		// 1) Invariant‐based prune: if any inv(currObj) > inv(bestObj), cut
+		let bad = invariants is (
+			inv => inv(currObj) > inv(bestObj) => true;
+			_   => false
+		);
+		if bad then bestObj
+		// 2) Fully assigned: compare to best
+		else if level == length(cosetReps) then
+			if compare(currObj, bestObj) < 0 then currObj else bestObj
+		else (
+			// 3) Explore coset reps at this level
+			let reps = cosetReps[level];
+			// Fold over all g in this coset
+			fold(reps, bestObj, \(acc, g).
+				let nextObj = action(g, obj);
+				// Prefix‐lex prune: if partial action can't beat acc, user hook may reject
+				acc2 is (
+				  // optional user‐provided prune hooks could go here
+				  _ => dfs(level + 1, nextObj, acc)
+				);
+				acc2
+			)
+		)
+	);
+
+	// Start recursion with level=0, obj as both current and best
+	dfs(0, obj, obj)
 );
 
 /// Example stub: builds a stabilizer‐chain coset reprs for a permutation group
 fn exampleCosets(gens) = (
-    // In practice run Schreier–Sims to get a base and coset reps per level
-    // Here: single‐level trivial coset of identity
-    [ [ identity ] ]
+	// In practice run Schreier–Sims to get a base and coset reps per level
+	// Here: single‐level trivial coset of identity
+	[ [ identity ] ]
 );
 
 // === Usage sketch ===
@@ -1465,12 +1869,12 @@ let myAction     = \(g, o). apply(g, o);     // how g acts on object o
 let myCompare    = \(o1, o2). lexCmp(o1, o2);
 let myInvariants = [ sizeInvariant, hashInvariant ];  // cheap bounds
 let canon = findCanonical(
-    originalObject,
-    myGenerators,
-    myAction,
-    myCompare,
-    myInvariants,
-    exampleCosets
+	originalObject,
+	myGenerators,
+	myAction,
+	myCompare,
+	myInvariants,
+	exampleCosets
 );
 
 println("Canonical form: " + prettyOrbit(canon));
