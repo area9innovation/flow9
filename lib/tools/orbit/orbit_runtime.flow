@@ -200,8 +200,9 @@ addFullExpressionToOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret 
         envName = interpret(env, args[0]);
         name = getOString(envName.result, "addOGraph.name");
         
-        // Get the expression (not evaluated - passed as AST)
-        astExpr = args[1];
+        // Evaluate the expression to get its actual value
+        envExpr = interpret(envName, args[1]);
+        astExpr = envExpr.result;
         
         // Debug the AST expression if tracing
         if (env.tracing) println("Adding full expression to ograph: " + prettyOrbit(astExpr));
@@ -212,11 +213,11 @@ addFullExpressionToOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret 
                 // Add the full expression recursively
                 nodeId = orbit2OGraph(ograph, astExpr);
                 if (env.tracing) println("Added full expression, root node ID: " + i2s(nodeId));
-                OrbEnv(envName with result = OrInt(nodeId));
+                OrbEnv(envExpr with result = OrInt(nodeId));
             }
             None(): {
                 println("ERROR: OGraph '" + name + "' not found");
-                OrbEnv(envName with result = OrInt(-1));
+                OrbEnv(envExpr with result = OrInt(-1));
             }
         }
     }
@@ -262,15 +263,14 @@ matchOGraphPatternFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbE
         envName = interpret(env, args[0]);
         name = getOString(envName.result, "matchOGraphPattern.name");
         
-        // Get the pattern (not evaluated - passed as AST)
+        // Get the pattern	
         pattern = interpret(env, args[1]).result;
-        
+		
         if (env.tracing) println("DEBUG: Pattern for matching: " + prettyOrbit(pattern));
         
         // Get the callback function
         callbackEnv = interpret(envName, args[2]);
         callback = callbackEnv.result;
-        
         // Debug output if tracing
         if (env.tracing) {
             println("Pattern matching in graph '" + name + "'");
@@ -282,7 +282,7 @@ matchOGraphPatternFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbE
         
         // Ensure the callback is a function
         switch (callback) {
-            OrLambda(__, params, body): {
+            OrLambda(bnds, params, body): {
                 if (length(params) != 1 && length(params) != 2) {
                     println("ERROR: matchOGraphPattern callback must take one or two arguments (bindings, [eclassId])");
                     OrbEnv(callbackEnv with result = OrInt(0));
@@ -302,29 +302,13 @@ matchOGraphPatternFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbE
                                 println("  " + key + " = " + prettyOrbit(value));
                             });
                         }
-                        
-                        // Create new environment with the variables from the bindings
-                        newEnv = fold(getTreeKeys(bindings), callbackEnv, \accEnv, key -> {
-                            value = lookupTreeDef(bindings, key, OrInt(0));
-                            bindVar(accEnv, key, value);
-                        });
-                        
-                        // Also bind the special '__eclassId' variable with the e-class ID
-                        newEnvWithId = bindVar(newEnv, "__eclassId", OrInt(eclassId));
-                        
-                        // Interpret the callback with the new environment based on number of parameters
-                        callResult = if (length(params) == 1) {
-                            // Only bindings parameter - backward compatibility
-                            interpret(newEnvWithId, OrFunction(callback, [bindingsExpr]));
-                        } else {
-                            // Both bindings and eclassId parameters
-                            interpret(newEnvWithId, OrFunction(callback, [bindingsExpr, OrInt(eclassId)]));
-                        };
+                        // Interpret the callback with the new environment
+                        callResult = interpret(callbackEnv, OrFunction(callback, [bindingsExpr, OrInt(eclassId)]));
+						if (env.tracing) println("DEBUG: Callback result: " + prettyOrbit(callResult.result));
                         
                         // Save the result
                         results := arrayPush(^results, callResult.result);
                     };
-                    
                     // Call the pattern matcher with the callback
                     if (env.tracing) println("DEBUG: Calling matchOGraphPattern with graph " + name);
                     matchCount = matchOGraphPattern(name, pattern, matchCallback, env.tracing);
@@ -358,8 +342,8 @@ evalWithBindingsFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv
         println("ERROR: evalWithBindings expects exactly 2 arguments: expression and bindings");
         env;
     } else {
-        // Get the expression to evaluate (not evaluated yet)
-        expr = args[0];
+        // Get the expression to evaluate
+        expr = interpret(env, args[0]).result;
         
         // Evaluate the bindings argument to get a map of variable bindings
         envBindings = interpret(env, args[1]);
@@ -455,8 +439,8 @@ substituteWithBindingsFunction(args : [OrMath_expr], env : OrbEnv, interpret : (
         println("ERROR: substituteWithBindings expects exactly 2 arguments: expression and bindings");
         env;
     } else {
-        // Get the expression to substitute variables in (not evaluated yet)
-        expr = args[0];
+        // Get the expression to substitute variables in
+        expr = interpret(env, args[0]).result;
         
         // Evaluate the bindings argument to get a map of variable bindings
         envBindings = interpret(env, args[1]);
@@ -516,7 +500,7 @@ unquoteFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_
         env;
     } else {
         // Get the expression to process
-        expr = args[0];
+        expr = interpret(env, args[0]).result;
         
         // Evaluate the bindings argument to get a map of variable bindings
         envBindings = interpret(env, args[1]);
