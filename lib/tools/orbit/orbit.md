@@ -280,6 +280,12 @@ let exists = ∃ x: P(x);  // Existential quantifier
 ```
 </math_operations>
 
+<import>
+```orbit
+import lib/sort;
+```
+</import>
+
 <running_and_debugging>
 ## Running and Debugging Orbit Programs
 

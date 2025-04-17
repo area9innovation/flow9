@@ -583,51 +583,63 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 		OrTypeVar(string1): todo();
 		OrUnion(math_expr1, math_expr2): todo();
 		OrImport(path): {
-			// Try to get the imported file from cache first
-			switch (lookupTree(^(env.importCache), path)) {
-				Some(content): {
-					// File already imported and parsed, but we still need to evaluate it in the current env
-					if (env.tracing) {
-						println("Using cached import for: " + path);
-					}
-					
-					// Interpret the content in the current environment
-					interpretOrbit(env, content);
+			// Check if the file has already been imported in the current scope
+			if (containsSet(env.importedFiles, path)) {
+				if (env.tracing) {
+					println("Already imported in current scope: " + path);
 				}
-				None(): {
-					// File not in cache, we need to parse it
-					if (env.tracing) {
-						println("Importing file: " + path);
-					}
-					
-					// Build the full file path (add .orb extension if not present)
-					filePath = if (!strContains(path, ".orb")) {
-						path + ".orb";
-					} else path;
-					
-					// Check if file exists
-					if (fileExists(filePath)) {
-						// Read file content
-						program = getFileContent(filePath);
-						
-						// Parse the file using the mango parser
-						res = parseCompiledMango(filePath, program, orbit_parse_orbit_compiled, flow(0));
-						
-						if (res.second != "") {
-							// Parse error
-							println(filePath + ": " + res.second);
-							ret(OrString("Error parsing imported file: " + filePath + " - " + res.second));
-						} else {
-							// Cache the parsed expression (AST, not the evaluated result)
-							env.importCache := setTree(^(env.importCache), path, res.first);
-							
-							// Interpret the imported content in the current environment
-							interpretOrbit(env, res.first);
+				// Return the current environment unchanged, since the file is already imported
+				env;
+			} else {
+				// Mark this file as imported in the current scope
+				envWithImport = OrbEnv(env with importedFiles = insertSet(env.importedFiles, path));
+				
+				// Try to get the imported file from cache first
+				switch (lookupTree(^(env.importCache), path)) {
+					Some(content): {
+						// File already parsed, just evaluate it in the current env
+						if (env.tracing) {
+							println("Using cached import for: " + path);
 						}
-					} else {
-						// File not found
-						println("Error: File not found: " + filePath + " with cwd " + getCurrentDirectory());
-						ret(OrString("Error: File not found: " + filePath));
+						
+						// Interpret the content in the current environment
+						interpretOrbit(envWithImport, content);
+					}
+					None(): {
+						// File not in cache, we need to parse it
+						if (env.tracing) {
+							println("Importing file: " + path);
+						}
+						
+						// Build the full file path (add .orb extension if not present)
+						filePath = if (!strContains(path, ".orb")) {
+							path + ".orb";
+						} else path;
+						
+						// Check if file exists
+						if (fileExists(filePath)) {
+							// Read file content
+							program = getFileContent(filePath);
+							
+							// Parse the file using the mango parser
+							res = parseCompiledMango(filePath, program, orbit_parse_orbit_compiled, flow(0));
+							
+							if (res.second != "") {
+								// Parse error
+								println(filePath + ": " + res.second);
+								ret(OrString("Error parsing imported file: " + filePath + " - " + res.second));
+							} else {
+								// Cache the parsed expression (AST, not the evaluated result)
+								env.importCache := setTree(^(env.importCache), path, res.first);
+								
+								// Interpret the imported content in the current environment
+								interpretOrbit(envWithImport, res.first);
+							}
+						} else {
+							// File not found
+							println("Error: File not found: " + filePath + " with cwd " + getCurrentDirectory());
+							ret(OrString("Error: File not found: " + filePath));
+						}
 					}
 				}
 			}
