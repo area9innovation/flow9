@@ -12,40 +12,32 @@ export {
     matchOGraphPattern(
         graphName : string,                      // Name of the OGraph to search in
         pattern : OrMath_expr,                   // Pattern to match (with variables)
-        callback : (Tree<string, OrMath_expr>, int) -> void  // Called for each match with bindings and the e-class ID
+        callback : (Tree<string, OrMath_expr>, int) -> void,  // Called for each match with bindings and the e-class ID
+		tracing : bool
     ) -> int;  // Returns the number of matches found
     
     // Internal helpers
     OPatternResult ::= OPatternSuccess, OPatternFailure;
         OPatternSuccess(bindings : Tree<string, int>); // Variable name to node ID
         OPatternFailure();
-    
-    // Match a pattern directly against a specific node
-    matchPatternAtNode(
-        graph : OGraph, 
-        nodeId : int, 
-        pattern : OrMath_expr
-    ) -> OPatternResult;
 }
 
 // Main function for pattern matching in an OGraph
-matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<string, OrMath_expr>, int) -> void) -> int {
+matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<string, OrMath_expr>, int) -> void, tracing : bool) -> int {
     // Get the graph from the registry
     matchCount = ref 0;
-    
-    // println("DEBUG: matchOGraphPattern - looking for pattern: " + prettyOrbit(pattern));
     
     switch (lookupTree(^ographRegistry, graphName)) {
         Some(graph): {
             // Strategy: Try to match the pattern starting at each node in the graph
-            // println("DEBUG: Found graph, traversing nodes");
+            if (tracing) println("DEBUG: Found graph, traversing nodes");
             traverseOGraph(graph, \nodeId, node -> {
-                // println("DEBUG: Checking node ID: " + i2s(nodeId) + ", op: " + node.op);
+                if (tracing) println("DEBUG: Checking node ID: " + i2s(nodeId) + ", op: " + node.op);
                 
                 // Try to match the pattern at this node
-                switch (matchPatternAtNode(graph, nodeId, pattern)) {
+                switch (matchPatternAtNode(graph, nodeId, pattern, tracing)) {
                     OPatternSuccess(bindings): {
-                        // println("DEBUG: Found match at node ID: " + i2s(nodeId));
+                        if (tracing)  println("DEBUG: Found match at node ID: " + i2s(nodeId));
                         // Found a match, convert node IDs to expressions
                         exprBindings = convertBindingsToExpressions(graph, bindings);
                         
@@ -56,7 +48,7 @@ matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<s
                     }
                     OPatternFailure(): {
                         // No match at this node, continue searching
-                        // println("DEBUG: No match at node ID: " + i2s(nodeId));
+                        if (tracing) println("DEBUG: No match at node ID: " + i2s(nodeId));
                     }
                 }
             });
@@ -65,7 +57,7 @@ matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<s
             ^matchCount;
         }
         None(): {
-            // println("ERROR: OGraph '" + graphName + "' not found");
+            println("ERROR: OGraph '" + graphName + "' not found");
             0;
         }
     }
@@ -77,7 +69,7 @@ convertBindingsToExpressions(graph : OGraph, bindings : Tree<string, int>) -> Tr
 }
 
 // Match a pattern at a specific node
-matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr) -> OPatternResult {
+matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr, tracing : bool) -> OPatternResult {
     root = findORoot(graph, nodeId);
     
     // println("DEBUG: matchPatternAtNode - pattern: " + prettyOrbit(pattern) + ", at node: " + i2s(root));
@@ -88,7 +80,7 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr) -> OPatt
         OrIdentifier(id): {
             // In pattern matching, identifiers like x, y, z are treated as pattern variables
             // that can match any node (not just concrete identifiers)
-            // println("DEBUG: Pattern variable " + id + " binds to node " + i2s(root));
+            if (tracing) println("DEBUG: Pattern variable " + id + " binds to node " + i2s(root));
             OPatternSuccess(makeTree1(id, root));
         }
         
@@ -97,7 +89,7 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr) -> OPatt
             // For variables in expressions, check if the node represents the same variable
             switch (lookupOClass(graph, root)) {
                 Some(oclass): {
-                    // println("DEBUG: Matching variable " + id + " against node op " + oclass.node.op);
+                    if (tracing) println("DEBUG: Matching variable " + id + " against node op " + oclass.node.op);
                     if (oclass.node.op == "Variable" || oclass.node.op == "Identifier") {
                         switch (getOClassString(graph, root)) {
                             Some(name): {
@@ -193,36 +185,35 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr) -> OPatt
         // For operations, match structure recursively
         OrAdd(a, b): {
             // println("DEBUG: Matching binary operation + with children");
-            matchOperation(graph, root, "+", [a, b]);
+            matchOperation(graph, root, "+", [a, b], tracing);
         }
-        OrSubtract(a, b): matchOperation(graph, root, "-", [a, b]);
+        OrSubtract(a, b): matchOperation(graph, root, "-", [a, b], tracing);
         OrMultiply(a, b): {
-            // println("DEBUG: Matching binary operation * with children");
-            matchOperation(graph, root, "*", [a, b]);
+	        matchOperation(graph, root, "*", [a, b], tracing);
         }
-        OrDivide(a, b): matchOperation(graph, root, "/", [a, b]);
+        OrDivide(a, b): matchOperation(graph, root, "/", [a, b], tracing);
         
         // Comparison operations
-        OrEquals(a, b): matchOperation(graph, root, "=", [a, b]);
-        OrNotEquals(a, b): matchOperation(graph, root, "!=", [a, b]);
-        OrGreaterThan(a, b): matchOperation(graph, root, ">", [a, b]);
-        OrGreaterEquals(a, b): matchOperation(graph, root, ">=", [a, b]);
-        OrLessThan(a, b): matchOperation(graph, root, "<", [a, b]);
-        OrLessEquals(a, b): matchOperation(graph, root, "<=", [a, b]);
+        OrEquals(a, b): matchOperation(graph, root, "=", [a, b], tracing);
+        OrNotEquals(a, b): matchOperation(graph, root, "!=", [a, b], tracing);
+        OrGreaterThan(a, b): matchOperation(graph, root, ">", [a, b], tracing);
+        OrGreaterEquals(a, b): matchOperation(graph, root, ">=", [a, b], tracing);
+        OrLessThan(a, b): matchOperation(graph, root, "<", [a, b], tracing);
+        OrLessEquals(a, b): matchOperation(graph, root, "<=", [a, b], tracing);
         
         // Logical operations
-        OrLogicalAnd(a, b): matchOperation(graph, root, "&&", [a, b]);
-        OrLogicalOr(a, b): matchOperation(graph, root, "||", [a, b]);
-        OrLogicalNot(a): matchOperation(graph, root, "!", [a]);
+        OrLogicalAnd(a, b): matchOperation(graph, root, "&&", [a, b], tracing);
+        OrLogicalOr(a, b): matchOperation(graph, root, "||", [a, b], tracing);
+        OrLogicalNot(a): matchOperation(graph, root, "!", [a], tracing);
         
         // Unary arithmetic
-        OrNegate(a): matchOperation(graph, root, "negate", [a]);
+        OrNegate(a): matchOperation(graph, root, "negate", [a], tracing);
         
         // Function calls
         OrFunction(fn, args): {
             // For function calls
             // println("DEBUG: Matching function call");
-            matchOperation(graph, root, "call", concat([fn], args));
+            matchOperation(graph, root, "call", concat([fn], args), tracing);
         }
         
         // Add more patterns as needed...
@@ -236,17 +227,17 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr) -> OPatt
 }
 
 // Match an operation pattern
-matchOperation(graph : OGraph, nodeId : int, op : string, subpatterns : [OrMath_expr]) -> OPatternResult {
+matchOperation(graph : OGraph, nodeId : int, op : string, subpatterns : [OrMath_expr], tracing : bool) -> OPatternResult {
     // Check if this node has the right operator
     switch (lookupOClass(graph, nodeId)) {
         Some(oclass): {
-            // println("DEBUG: Matching operation " + op + " against node op " + oclass.node.op + ". Children count: pattern=" + i2s(length(subpatterns)) + ", node=" + i2s(length(oclass.node.children)));
+            if (tracing) println("DEBUG: Matching operation " + op + " against node op " + oclass.node.op + ". Children count: pattern=" + i2s(length(subpatterns)) + ", node=" + i2s(length(oclass.node.children)));
             if (oclass.node.op == op && length(oclass.node.children) == length(subpatterns)) {
                 // Try to match all children
-                // println("DEBUG: Operator matches, now checking children");
-                matchAllChildren(graph, oclass.node.children, subpatterns, makeTree());
+                if (tracing) println("DEBUG: Operator matches, now checking children");
+                matchAllChildren(graph, oclass.node.children, subpatterns, makeTree(), tracing);
             } else {
-                // println("DEBUG: Operation mismatch: expected " + op + ", got " + oclass.node.op);
+                if (tracing) println("DEBUG: Operation mismatch: expected " + op + ", got " + oclass.node.op);
                 OPatternFailure();
             }
         }
@@ -256,7 +247,7 @@ matchOperation(graph : OGraph, nodeId : int, op : string, subpatterns : [OrMath_
 
 // Match all children of an operation
 matchAllChildren(graph : OGraph, childIds : [int], patterns : [OrMath_expr], 
-                 bindings : Tree<string, int>) -> OPatternResult {
+                 bindings : Tree<string, int>, tracing : bool) -> OPatternResult {
     if (length(childIds) == 0 && length(patterns) == 0) {
         // All children matched successfully
         // println("DEBUG: All children matched successfully. Final bindings: " + 
@@ -269,7 +260,7 @@ matchAllChildren(graph : OGraph, childIds : [int], patterns : [OrMath_expr],
     } else {
         // Try to match the first child
         // println("DEBUG: Matching child " + i2s(childIds[0]) + " with pattern " + prettyOrbit(patterns[0]));
-        switch (matchPatternAtNode(graph, childIds[0], patterns[0])) {
+        switch (matchPatternAtNode(graph, childIds[0], patterns[0], tracing)) {
             OPatternSuccess(childBindings): {
                 // println("DEBUG: Child match succeeded with bindings: " + 
                 //        superglue(getTreeKeys(childBindings), \k -> k + ":" + i2s(lookupTreeDef(childBindings, k, -1)), ", "));
@@ -278,7 +269,7 @@ matchAllChildren(graph : OGraph, childIds : [int], patterns : [OrMath_expr],
                     OPatternSuccess(mergedBindings): {
                         // println("DEBUG: Bindings merged successfully, continuing with remaining children");
                         // Continue with remaining children
-                        matchAllChildren(graph, tail(childIds), tail(patterns), mergedBindings);
+                        matchAllChildren(graph, tail(childIds), tail(patterns), mergedBindings, tracing);
                     }
                     OPatternFailure(): {
                         // println("DEBUG: Bindings merge failed - inconsistent variable bindings");
