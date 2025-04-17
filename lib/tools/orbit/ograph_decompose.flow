@@ -1,0 +1,113 @@
+import tools/orbit/orbit_decompose;  // For OrbitValue structure
+import tools/orbit/ograph;         // For OGraph operations
+import tools/orbit/types;          // For OGraph type definitions
+import ds/tree;                    // For Tree operations
+import string;                     // For string operations
+import maybe;                      // For Maybe<?>
+
+export {
+    // Check if two nodes in the graph are semantically equivalent
+    // This considers both structure and stored primitive values
+    oNodesEquivalent(graph : OGraph, node1Id : int, node2Id : int) -> bool;
+    
+    // Get the primitive value associated with an eclass
+    getOClassValue(graph : OGraph, eclassId : int) -> OrbitValue;
+}
+
+// Decompose an ONode into its operator name, children, and value
+decomposeONode(graph : OGraph, nodeId : int) -> Triple<string, [int], OrbitValue> {
+    // Find the canonical representative for this node
+    rootId = findORoot(graph, nodeId);
+    
+    // Get the node from the graph
+    switch (lookupOClass(graph, rootId)) {
+        Some(oclass): {
+            // Get the node's operator and children
+            op = oclass.node.op;
+            children = oclass.node.children;
+            
+            // Get the node's value based on its operator
+            value = getOClassValue(graph, rootId);
+            
+            Triple(op, children, value);
+        }
+        None(): {
+            Triple("", [], OrbitNone());
+        }
+    }
+}
+
+// Check if two nodes in the graph are semantically equivalent
+oNodesEquivalent(graph : OGraph, node1Id : int, node2Id : int) -> bool {
+    // Get the canonical IDs
+    root1 = findORoot(graph, node1Id);
+    root2 = findORoot(graph, node2Id);
+    
+    // If they are the same node (same equivalence class), they are equivalent
+    if (root1 == root2) true
+    else {
+        // Decompose both nodes to compare their structure and values
+        decomp1 = decomposeONode(graph, root1);
+        decomp2 = decomposeONode(graph, root2);
+        
+        op1 = decomp1.first;
+        op2 = decomp2.first;
+        
+        children1 = decomp1.second;
+        children2 = decomp2.second;
+        
+        value1 = decomp1.third;
+        value2 = decomp2.third;
+        
+        // Check if operators match
+        if (op1 != op2) false
+        // Check if they have the same number of children
+        else if (length(children1) != length(children2)) false
+        // Check primitive values (for leaf nodes)
+        else if (length(children1) == 0) {
+            // For leaf nodes, we compare their primitive values
+            value1 == value2
+        } else {
+            // For non-leaf nodes, we check that all children are equivalent
+            foldRange(0, length(children1) - 1, true, \acc, i -> {
+                if (!acc) false  // Short-circuit if we already found non-matching children
+                else oNodesEquivalent(graph, children1[i], children2[i])
+            })
+        }
+    }
+}
+
+// Get the primitive value associated with an eclass
+// Simplified version that just checks each value store directly
+getOClassValue(graph : OGraph, eclassId : int) -> OrbitValue {
+    // Find the canonical representative
+    rootId = findORoot(graph, eclassId);
+    
+    // Check each value store in sequence and return the first value found
+    switch (getOClassInt(graph, rootId)) {
+        Some(intVal): {
+            // Check if this is a boolean (this is application-specific logic)
+            // In many cases, booleans are stored as 0/1 integers
+            // This is just a heuristic - you might want to refine this based on node op
+            switch (lookupOClass(graph, rootId)) {
+                Some(oclass): {
+                    if (oclass.node.op == "Bool") OrbitBool(intVal != 0) else OrbitInt(intVal);
+                }
+                None(): OrbitInt(intVal);
+            }
+        }
+        None(): {
+            // Check for double values
+            switch (getOClassDouble(graph, rootId)) {
+                Some(doubleVal): OrbitDouble(doubleVal);
+                None(): {
+                    // Check for string values
+                    switch (getOClassString(graph, rootId)) {
+                        Some(stringVal): OrbitString(stringVal);
+                        None(): OrbitNone(); // No primitive value found
+                    }
+                }
+            }
+        }
+    }
+}

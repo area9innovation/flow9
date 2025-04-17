@@ -4,6 +4,7 @@ import tools/orbit/orbit2ograph;   // For conversion between Orbit and OGraph
 import tools/orbit/orbit_types;    // For OrMath_expr types
 import tools/orbit/orbit_simple_ograph; // For ographRegistry
 import tools/orbit/orbit_decompose; // For centralized decomposition
+import tools/orbit/ograph_decompose; // For OGraph node decomposition
 import ds/tree;                    // For binding maps
 import string;                     // For string operations
 
@@ -281,68 +282,6 @@ matchAllChildren(graph : OGraph, childIds : [int], patterns : [OrMath_expr],
     }
 }
 
-// Check if two nodes in the graph are semantically equivalent
-nodeEquivalence(graph : OGraph, node1Id : int, node2Id : int) -> bool {
-    // Get the canonical IDs
-    root1 = findORoot(graph, node1Id);
-    root2 = findORoot(graph, node2Id);
-    
-    // If they are the same node (same equivalence class), they are equivalent
-    if (root1 == root2) true
-    else {
-        // For pattern variables that represent concrete nodes in the graph,
-        // we need to check for semantic equivalence, not just ID equality
-        
-        // Get the nodes from the graph
-        node1 = switch (lookupOClass(graph, root1)) {
-            Some(oclass): oclass.node;
-            None(): ONode("", [], []);
-        }
-        
-        node2 = switch (lookupOClass(graph, root2)) {
-            Some(oclass): oclass.node;
-            None(): ONode("", [], []);
-        }
-        
-        // Special case for identifiers/variables - check if they have the same name
-        if ((node1.op == "Identifier" || node1.op == "Variable") && 
-            (node2.op == "Identifier" || node2.op == "Variable")) {
-            
-            // Get their names
-            name1 = switch (getOClassString(graph, root1)) {
-                Some(s): s;
-                None(): "";
-            }
-            
-            name2 = switch (getOClassString(graph, root2)) {
-                Some(s): s;
-                None(): "";
-            }
-            
-            // Check if names match
-            name1 == name2 && name1 != ""
-        } else {
-            // For all other node types, we just check if they have the same structure
-            if (node1.op == node2.op && length(node1.children) == length(node2.children)) {
-                // For nodes with children, we need to check that all children are equivalent
-                if (length(node1.children) > 0) {
-                    // Check all children recursively
-                    foldRange(0, length(node1.children) - 1, true, \acc, i -> {
-                        if (!acc) false  // Short-circuit if we already found non-matching children
-                        else nodeEquivalence(graph, node1.children[i], node2.children[i])
-                    });
-                } else {
-                    // For leaf nodes with the same operator, they're equivalent
-                    true;
-                }
-            } else {
-                // Different operators or different number of children means not equivalent
-                false;
-            }
-        }
-    }
-}
-
 // Merge bindings, ensuring consistency (same variable bound to semantically equivalent nodes)
 mergeOBindings(graph : OGraph, a : Tree<string, int>, b : Tree<string, int>) -> OPatternResult {
     result = fold(getTreeKeys(b), OPatternSuccess(a), \acc, key -> {
@@ -353,7 +292,7 @@ mergeOBindings(graph : OGraph, a : Tree<string, int>, b : Tree<string, int>) -> 
                     Some(aValue): {
                         // Variable already bound, must be consistent
                         // This is critical for patterns like x + x where the same variable appears multiple times
-                        if (nodeEquivalence(graph, aValue, bValue)) {
+                        if (oNodesEquivalent(graph, aValue, bValue)) {
                             // println("DEBUG: Consistent binding for " + key + ": already bound to " + i2s(aValue) + 
                             //        ", new node " + i2s(bValue) + " is equivalent");
                             OPatternSuccess(bindings);
