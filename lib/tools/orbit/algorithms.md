@@ -1567,6 +1567,8 @@ BDDs excel in several domains:
 
 The key property making BDDs practical is that many real-world Boolean functions have compact BDD representations, avoiding exponential blow-up through structural sharing and canonicity.
 
+TODO: Consider if variable reordering in BDDs could be a canonicalization step. This is a common optimization in BDD libraries, but it may not strictly be canonicalization in the same sense as the other examples.
+
 ## Interval Arithmetic
 
 Interval arithmetic operates on intervals rather than precise values, providing bounded guarantees for numerical computations.

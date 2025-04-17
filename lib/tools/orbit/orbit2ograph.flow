@@ -1,6 +1,7 @@
 import tools/orbit/orbit_types;
 import tools/orbit/ograph;
 import tools/orbit/prettyprint;
+import tools/orbit/orbit_decompose;
 import string;
 
 export {
@@ -15,165 +16,37 @@ export {
 orbit2OGraph(graph : OGraph, expr : OrMath_expr) -> int {
 	belongs = []; // Will be assigned in the graph
 	
-	switch (expr) {
-		// For primitive values, we need to store the actual values
-		OrInt(i): {
-			node = ONode("Int", [], belongs);
-			nodeId = insertONode(graph, node);
-			setOClassInt(graph, nodeId, i);
-			nodeId;
-		}
-		OrDouble(d): {
-			node = ONode("Double", [], belongs);
-			nodeId = insertONode(graph, node);
-			setOClassDouble(graph, nodeId, d);
-			nodeId;
-		}
-		OrString(s): {
-			node = ONode("String", [], belongs);
-			nodeId = insertONode(graph, node);
-			setOClassString(graph, nodeId, s);
-			nodeId;
-		}
-		OrBool(b): {
-			node = ONode("Bool", [], belongs);
-			nodeId = insertONode(graph, node);
-			setOClassInt(graph, nodeId, if (b) 1 else 0); // Store as int: true=1, false=0
-			nodeId;
-		}
-		OrIdentifier(id): {
-			node = ONode("Identifier", [], belongs);
-			nodeId = insertONode(graph, node);
-			setOClassString(graph, nodeId, id);
-			nodeId;
-		}
-		OrVariable(id): {
-			node = ONode("Variable", [], belongs);
-			nodeId = insertONode(graph, node);
-			setOClassString(graph, nodeId, id);
-			nodeId;
-		}
+	// Use the new decompose function
+	decomposed = decomposeOrbit(expr);
+	op = decomposed.first;
+	children = decomposed.second.first;
+	value = decomposed.second.second;
+	
+	// Create node with operator and empty children first
+	node = ONode(op, [], belongs);
+	nodeId = insertONode(graph, node);
+	
+	// Set value if available
+	switch (value) {
+		OrbitInt(i): setOClassInt(graph, nodeId, i);
+		OrbitDouble(d): setOClassDouble(graph, nodeId, d);
+		OrbitString(s): setOClassString(graph, nodeId, s);
+		OrbitBool(b): setOClassInt(graph, nodeId, if (b) 1 else 0);
+		OrbitNone(): {};
+	}
+	
+	// If this is a leaf node (no children), return the node ID
+	if (length(children) == 0) {
+		nodeId; // Last expression is returned value
+	} else {
+		// Otherwise, recursively process children and update the node
+		childIds = map(children, \child -> orbit2OGraph(graph, child));
 		
-		// Binary operations
-		OrAdd(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("+", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrSubtract(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("-", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrMultiply(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("*", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrDivide(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("/", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrEquals(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("=", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrNotEquals(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("!=", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrGreaterThan(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode(">", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrGreaterEquals(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode(">=", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrLessThan(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("<", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrLessEquals(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("<=", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrLogicalAnd(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("&&", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		OrLogicalOr(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("||", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
+		// Update the node with children (recreate it with same ID but with children)
+		node2 = ONode(op, childIds, getNodeBelongsTo(graph, nodeId));
+		nodeId2 = insertONode(graph, node2);
 		
-		// Unary operations
-		OrNegate(a): {
-			aId = orbit2OGraph(graph, a);
-			node = ONode("negate", [aId], belongs);
-			insertONode(graph, node);
-		}
-		OrLogicalNot(a): {
-			aId = orbit2OGraph(graph, a);
-			node = ONode("!", [aId], belongs);
-			insertONode(graph, node);
-		}
-		
-		// Function call
-		OrFunction(fn, args): {
-			fnId = orbit2OGraph(graph, fn);
-			argIds = map(args, \arg -> orbit2OGraph(graph, arg));
-			node = ONode("call", concat([fnId], argIds), belongs);
-			insertONode(graph, node);
-		}
-		
-		// Control structures
-		OrIfElse(cond, thenExpr, elseExpr): {
-			condId = orbit2OGraph(graph, cond);
-			thenId = orbit2OGraph(graph, thenExpr);
-			elseId = orbit2OGraph(graph, elseExpr);
-			node = ONode("if", [condId, thenId, elseId], belongs);
-			insertONode(graph, node);
-		}
-		
-		OrSequence(a, b): {
-			aId = orbit2OGraph(graph, a);
-			bId = orbit2OGraph(graph, b);
-			node = ONode("seq", [aId, bId], belongs);
-			insertONode(graph, node);
-		}
-		
-		// For anything else, just use a generic representation
-		default: {
-			println("TODO: Handle expression type in orbit2ograph: " + prettyOrbit(expr));
-			// Create node with a generic "unknown" op
-			node = ONode("unknown", [], belongs);
-			nodeId = insertONode(graph, node);
-			// Store the string representation of the expression
-			setOClassString(graph, nodeId, prettyOrbit(expr));
-			nodeId;
-		}
+		nodeId2; // Last expression is returned value
 	}
 }
 
@@ -189,188 +62,48 @@ ograph2Orbit(graph : OGraph, classId : int) -> OrMath_expr {
 		Some(oclass): {
 			op = oclass.node.op;
 			
-			if (op == "Int") {
+			// Get children expressions recursively
+			children = map(oclass.node.children, \childId -> ograph2Orbit(graph, childId));
+			
+			// Get value based on operator type
+			value = if (op == "Int") {
 				switch (getOClassInt(graph, root)) {
-					Some(i): OrInt(i);
-					None(): OrInt(0);
+					Some(i): OrbitInt(i);
+					None(): OrbitInt(0);
 				}
 			} else if (op == "Double") {
 				switch (getOClassDouble(graph, root)) {
-					Some(d): OrDouble(d);
-					None(): OrDouble(0.0);
+					Some(d): OrbitDouble(d);
+					None(): OrbitDouble(0.0);
 				}
-			} else if (op == "String") {
+			} else if (op == "String" || op == "Identifier" || op == "Variable") {
 				switch (getOClassString(graph, root)) {
-					Some(s): OrString(s);
-					None(): OrString("");
+					Some(s): OrbitString(s);
+					None(): OrbitString("");
 				}
 			} else if (op == "Bool") {
 				switch (getOClassInt(graph, root)) {
-					Some(i): OrBool(i != 0);
-					None(): OrBool(false);
+					Some(i): OrbitBool(i != 0);
+					None(): OrbitBool(false);
 				}
-			} else if (op == "Identifier") {
+			} else {
+				// For unknown operators, try to get a string representation
 				switch (getOClassString(graph, root)) {
-					Some(id): OrIdentifier(id);
-					None(): OrIdentifier("unknown");
+					Some(str): OrbitString(str);
+					None(): OrbitNone();
 				}
-			} else if (op == "Variable") {
-				switch (getOClassString(graph, root)) {
-					Some(id): OrVariable(id);
-					None(): OrVariable("unknown");
-				}
-			} 
-			// Binary operations
-			else if (op == "+") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrAdd(a, b);
-				} else {
-					OrInt(0); // Default if children missing
-				}
-			} else if (op == "-") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrSubtract(a, b);
-				} else {
-					OrInt(0);
-				}
-			} else if (op == "*") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrMultiply(a, b);
-				} else {
-					OrInt(1);
-				}
-			} else if (op == "/") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrDivide(a, b);
-				} else {
-					OrInt(0);
-				}
-			} else if (op == "=") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrEquals(a, b);
-				} else {
-					OrBool(false);
-				}
-			} else if (op == "!=") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrNotEquals(a, b);
-				} else {
-					OrBool(false);
-				}
-			} else if (op == ">") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrGreaterThan(a, b);
-				} else {
-					OrBool(false);
-				}
-			} else if (op == ">=") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrGreaterEquals(a, b);
-				} else {
-					OrBool(false);
-				}
-			} else if (op == "<") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrLessThan(a, b);
-				} else {
-					OrBool(false);
-				}
-			} else if (op == "<=") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrLessEquals(a, b);
-				} else {
-					OrBool(false);
-				}
-			} else if (op == "&&") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrLogicalAnd(a, b);
-				} else {
-					OrBool(false);
-				}
-			} else if (op == "||") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrLogicalOr(a, b);
-				} else {
-					OrBool(false);
-				}
-			} 
-			// Unary operations
-			else if (op == "negate") {
-				if (length(oclass.node.children) >= 1) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					OrNegate(a);
-				} else {
-					OrInt(0);
-				}
-			} else if (op == "!") {
-				if (length(oclass.node.children) >= 1) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					OrLogicalNot(a);
-				} else {
-					OrBool(false);
-				}
-			} 
-			// Function call
-			else if (op == "call") {
-				if (length(oclass.node.children) >= 1) {
-					fn = ograph2Orbit(graph, oclass.node.children[0]);
-					args = map(tail(oclass.node.children), \argId -> ograph2Orbit(graph, argId));
-					OrFunction(fn, args);
-				} else {
-					OrInt(0);
-				}
-			} 
-			// Control structures
-			else if (op == "if") {
-				if (length(oclass.node.children) >= 3) {
-					cond = ograph2Orbit(graph, oclass.node.children[0]);
-					then = ograph2Orbit(graph, oclass.node.children[1]);
-					else = ograph2Orbit(graph, oclass.node.children[2]);
-					OrIfElse(cond, then, else);
-				} else {
-					OrInt(0);
-				}
-			} else if (op == "seq") {
-				if (length(oclass.node.children) >= 2) {
-					a = ograph2Orbit(graph, oclass.node.children[0]);
-					b = ograph2Orbit(graph, oclass.node.children[1]);
-					OrSequence(a, b);
-				} else {
-					OrInt(0);
-				}
-			} 
-			// For unknown operators, return a default value
-			else {
-				// Try to get a string representation
-				switch (getOClassString(graph, root)) {
-					Some(str): OrString(str);
-					None(): OrInt(0);
-				}
-			}
+			};
+			
+			// Use the new construct function to build the expression
+			constructOrbit(op, children, value);
 		}
+	}
+}
+
+// Helper function to get belongsTo array from a class ID
+getNodeBelongsTo(graph : OGraph, classId : int) -> [int] {
+	switch (lookupOClass(graph, classId)) {
+		Some(cl): cl.node.belongsTo;
+		None(): [];
 	}
 }

@@ -3,6 +3,7 @@ import tools/orbit/ograph;         // For OGraph operations
 import tools/orbit/orbit2ograph;   // For conversion between Orbit and OGraph
 import tools/orbit/orbit_types;    // For OrMath_expr types
 import tools/orbit/orbit_simple_ograph; // For ographRegistry
+import tools/orbit/orbit_decompose; // For centralized decomposition
 import ds/tree;                    // For binding maps
 import string;                     // For string operations
 
@@ -31,24 +32,24 @@ matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<s
         Some(graph): {
             // Strategy: Try to match the pattern starting at each node in the graph
             if (tracing) println("DEBUG: Found graph, traversing nodes");
-            traverseOGraph(graph, \nodeId, node -> {
-                if (tracing) println("DEBUG: Checking node ID: " + i2s(nodeId) + ", op: " + node.op);
+            traverseOGraph(graph, \nodeIndex, node -> {
+                if (tracing) println("DEBUG: Checking node ID: " + i2s(nodeIndex) + ", op: " + node.op);
                 
                 // Try to match the pattern at this node
-                switch (matchPatternAtNode(graph, nodeId, pattern, tracing)) {
+                switch (matchPatternAtNode(graph, nodeIndex, pattern, tracing)) {
                     OPatternSuccess(bindings): {
-                        if (tracing)  println("DEBUG: Found match at node ID: " + i2s(nodeId));
+                        if (tracing)  println("DEBUG: Found match at node ID: " + i2s(nodeIndex));
                         // Found a match, convert node IDs to expressions
                         exprBindings = convertBindingsToExpressions(graph, bindings);
                         
                         // Call the callback with the bindings and the e-class ID (root of the matched node)
                         matchCount := ^matchCount + 1;
-                        rootId = findORoot(graph, nodeId);
+                        rootId = findORoot(graph, nodeIndex);
                         callback(exprBindings, rootId);
                     }
                     OPatternFailure(): {
                         // No match at this node, continue searching
-                        if (tracing) println("DEBUG: No match at node ID: " + i2s(nodeId));
+                        if (tracing) println("DEBUG: No match at node ID: " + i2s(nodeIndex));
                     }
                 }
             });
@@ -72,176 +73,171 @@ convertBindingsToExpressions(graph : OGraph, bindings : Tree<string, int>) -> Tr
 matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr, tracing : bool) -> OPatternResult {
     root = findORoot(graph, nodeId);
     
-    // println("DEBUG: matchPatternAtNode - pattern: " + prettyOrbit(pattern) + ", at node: " + i2s(root));
+    // Decompose the pattern using the centralized function
+    patternDecomposed = decomposeOrbit(pattern);
+    patternOp = patternDecomposed.first;
+    patternChildren = patternDecomposed.second.first;
+    patternValue = patternDecomposed.second.second;
     
-    switch (pattern) {
-        // Pattern variable - should match ANY node and bind the variable to it
-        // This is the key to pattern matching!
-        OrIdentifier(id): {
-            // In pattern matching, identifiers like x, y, z are treated as pattern variables
-            // that can match any node (not just concrete identifiers)
-            if (tracing) println("DEBUG: Pattern variable " + id + " binds to node " + i2s(root));
-            OPatternSuccess(makeTree1(id, root));
-        }
+    if (tracing) println("DEBUG: Matching pattern with op: " + patternOp + ", at node: " + i2s(root));
+    
+    // Special case for pattern variables (identifiers in pattern context)
+    if (patternOp == "Identifier") {
+        // Extract the variable name
+        varName = switch (patternValue) {
+            OrbitString(s): s;
+            default: "";
+        };
         
-        // Variable reference - match against specific variables
-        OrVariable(id): {
-            // For variables in expressions, check if the node represents the same variable
-            switch (lookupOClass(graph, root)) {
-                Some(oclass): {
-                    if (tracing) println("DEBUG: Matching variable " + id + " against node op " + oclass.node.op);
-                    if (oclass.node.op == "Variable" || oclass.node.op == "Identifier") {
-                        switch (getOClassString(graph, root)) {
-                            Some(name): {
-                                // println("DEBUG: Comparing variable name " + name + " with " + id);
-                                if (name == id) {
-                                    OPatternSuccess(makeTree());
-                                } else {
+        if (varName != "") {
+            // In pattern matching, identifiers are treated as pattern variables
+            // that can match any node (not just concrete identifiers)
+            if (tracing) println("DEBUG: Pattern variable " + varName + " binds to node " + i2s(root));
+            OPatternSuccess(makeTree1(varName, root));
+        } else {
+            // Handle the case when varName is empty
+            OPatternFailure();
+        }
+    } else {
+        // For all other patterns, get the node information and attempt to match
+        switch (lookupOClass(graph, root)) {
+            Some(oclass): {
+                nodeOp = oclass.node.op;
+                nodeChildren = oclass.node.children;
+                
+                if (tracing) println("DEBUG: Matching pattern op '" + patternOp + "' against node op '" + nodeOp + "'");
+                
+                // Match operator name
+                if (patternOp != nodeOp) {
+                    if (tracing) println("DEBUG: Operator mismatch");
+                    OPatternFailure();
+                } else {
+                    // Match primitive values for leaf nodes
+                    if (patternOp == "Int") {
+                        patternInt = switch (patternValue) { 
+                            OrbitInt(i): i; 
+                            default: -999999; // Sentinel value indicating no valid pattern value
+                        };
+                        
+                        switch (getOClassInt(graph, root)) {
+                            Some(nodeInt): {
+                                if (patternInt != -999999 && patternInt != nodeInt) {
+                                    if (tracing) println("DEBUG: Int value mismatch: " + i2s(patternInt) + " vs " + i2s(nodeInt));
                                     OPatternFailure();
+                                } else {
+                                    // Integer value matched or pattern had no specific value constraint
+                                    OPatternSuccess(makeTree());
                                 }
                             }
-                            None(): OPatternFailure();
-                        }
-                    } else {
-                        OPatternFailure();
-                    }
-                }
-                None(): OPatternFailure();
-            }
-        }
-        
-        // For literals, check if node represents the same value
-        OrInt(i): {
-            switch (lookupOClass(graph, root)) {
-                Some(oclass): {
-                    // println("DEBUG: Matching int " + i2s(i) + " against node op " + oclass.node.op);
-                    if (oclass.node.op == "Int") {
-                        switch (getOClassInt(graph, root)) {
-                            Some(val): {
-                                // println("DEBUG: Comparing int value " + i2s(val) + " with " + i2s(i));
-                                if (val == i) OPatternSuccess(makeTree()) else OPatternFailure();
+                            None(): {
+                                if (tracing) println("DEBUG: Node has no int value");
+                                OPatternFailure();
                             }
-                            None(): OPatternFailure();
                         }
-                    } else {
-                        OPatternFailure();
-                    }
-                }
-                None(): OPatternFailure();
-            }
-        }
-        
-        OrDouble(d): {
-            switch (lookupOClass(graph, root)) {
-                Some(oclass): {
-                    // println("DEBUG: Matching double " + d2s(d) + " against node op " + oclass.node.op);
-                    if (oclass.node.op == "Double") {
+                    } 
+                    else if (patternOp == "Double") {
+                        patternDouble = switch (patternValue) { 
+                            OrbitDouble(d): d; 
+                            default: -999999.0; // Sentinel
+                        };
+                        
                         switch (getOClassDouble(graph, root)) {
-                            Some(val): if (val == d) OPatternSuccess(makeTree()) else OPatternFailure();
-                            None(): OPatternFailure();
+                            Some(nodeDouble): {
+                                if (patternDouble != -999999.0 && patternDouble != nodeDouble) {
+                                    if (tracing) println("DEBUG: Double value mismatch");
+                                    OPatternFailure();
+                                } else {
+                                    OPatternSuccess(makeTree());
+                                }
+                            }
+                            None(): {
+                                if (tracing) println("DEBUG: Node has no double value");
+                                OPatternFailure();
+                            }
                         }
-                    } else {
-                        OPatternFailure();
                     }
-                }
-                None(): OPatternFailure();
-            }
-        }
-        
-        OrString(s): {
-            switch (lookupOClass(graph, root)) {
-                Some(oclass): {
-                    // println("DEBUG: Matching string \"" + s + "\" against node op " + oclass.node.op);
-                    if (oclass.node.op == "String") {
+                    else if (patternOp == "String") {
+                        patternString = switch (patternValue) { 
+                            OrbitString(s): s; 
+                            default: ""; 
+                        };
+                        
                         switch (getOClassString(graph, root)) {
-                            Some(val): if (val == s) OPatternSuccess(makeTree()) else OPatternFailure();
-                            None(): OPatternFailure();
+                            Some(nodeString): {
+                                if (patternString != "" && patternString != nodeString) {
+                                    if (tracing) println("DEBUG: String value mismatch");
+                                    OPatternFailure();
+                                } else {
+                                    OPatternSuccess(makeTree());
+                                }
+                            }
+                            None(): {
+                                if (tracing) println("DEBUG: Node has no string value");
+                                OPatternFailure();
+                            }
                         }
-                    } else {
-                        OPatternFailure();
                     }
-                }
-                None(): OPatternFailure();
-            }
-        }
-        
-        OrBool(b): {
-            switch (lookupOClass(graph, root)) {
-                Some(oclass): {
-                    // println("DEBUG: Matching bool " + (if (b) "true" else "false") + " against node op " + oclass.node.op);
-                    if (oclass.node.op == "Bool") {
+                    else if (patternOp == "Bool") {
+                        patternBool = switch (patternValue) { 
+                            OrbitBool(b): b; 
+                            OrbitInt(i): i != 0;
+                            default: false; // Default value without pattern constraint
+                        };
+                        
                         switch (getOClassInt(graph, root)) {
-                            Some(val): if ((val != 0) == b) OPatternSuccess(makeTree()) else OPatternFailure();
-                            None(): OPatternFailure();
+                            Some(nodeInt): {
+                                // Bool is stored as int: 0 = false, non-zero = true
+                                nodeBool = nodeInt != 0;
+                                if (nodeBool != patternBool) {
+                                    if (tracing) println("DEBUG: Bool value mismatch");
+                                    OPatternFailure();
+                                } else {
+                                    OPatternSuccess(makeTree());
+                                }
+                            }
+                            None(): {
+                                if (tracing) println("DEBUG: Node has no bool/int value");
+                                OPatternFailure();
+                            }
                         }
-                    } else {
+                    }
+                    else if (patternOp == "Variable" || patternOp == "Identifier") {
+                        patternId = switch (patternValue) { 
+                            OrbitString(s): s; 
+                            default: ""; 
+                        };
+                        
+                        switch (getOClassString(graph, root)) {
+                            Some(nodeStr): {
+                                if (patternId != "" && patternId != nodeStr) {
+                                    if (tracing) println("DEBUG: Variable/Identifier name mismatch");
+                                    OPatternFailure();
+                                } else {
+                                    OPatternSuccess(makeTree());
+                                }
+                            }
+                            None(): {
+                                if (tracing) println("DEBUG: Node has no string value for identifier");
+                                OPatternFailure();
+                            }
+                        }
+                    }
+                    // For operators that have children, match recursively
+                    else if (length(patternChildren) != length(nodeChildren)) {
+                        if (tracing) println("DEBUG: Children count mismatch: pattern=" + i2s(length(patternChildren)) + ", node=" + i2s(length(nodeChildren)));
                         OPatternFailure();
+                    } else {
+                        // If operator and child count match, try to match all children
+                        if (tracing) println("DEBUG: Operator and child count match, checking children");
+                        matchAllChildren(graph, nodeChildren, patternChildren, makeTree(), tracing);
                     }
                 }
-                None(): OPatternFailure();
             }
-        }
-        
-        // For operations, match structure recursively
-        OrAdd(a, b): {
-            // println("DEBUG: Matching binary operation + with children");
-            matchOperation(graph, root, "+", [a, b], tracing);
-        }
-        OrSubtract(a, b): matchOperation(graph, root, "-", [a, b], tracing);
-        OrMultiply(a, b): {
-	        matchOperation(graph, root, "*", [a, b], tracing);
-        }
-        OrDivide(a, b): matchOperation(graph, root, "/", [a, b], tracing);
-        
-        // Comparison operations
-        OrEquals(a, b): matchOperation(graph, root, "=", [a, b], tracing);
-        OrNotEquals(a, b): matchOperation(graph, root, "!=", [a, b], tracing);
-        OrGreaterThan(a, b): matchOperation(graph, root, ">", [a, b], tracing);
-        OrGreaterEquals(a, b): matchOperation(graph, root, ">=", [a, b], tracing);
-        OrLessThan(a, b): matchOperation(graph, root, "<", [a, b], tracing);
-        OrLessEquals(a, b): matchOperation(graph, root, "<=", [a, b], tracing);
-        
-        // Logical operations
-        OrLogicalAnd(a, b): matchOperation(graph, root, "&&", [a, b], tracing);
-        OrLogicalOr(a, b): matchOperation(graph, root, "||", [a, b], tracing);
-        OrLogicalNot(a): matchOperation(graph, root, "!", [a], tracing);
-        
-        // Unary arithmetic
-        OrNegate(a): matchOperation(graph, root, "negate", [a], tracing);
-        
-        // Function calls
-        OrFunction(fn, args): {
-            // For function calls
-            // println("DEBUG: Matching function call");
-            matchOperation(graph, root, "call", concat([fn], args), tracing);
-        }
-        
-        // Add more patterns as needed...
-        
-        default: {
-			println("TODO: Implement matching of " + prettyOrbit(pattern));
-			// For unrecognized patterns, fail
-			OPatternFailure();
-		}
-    }
-}
-
-// Match an operation pattern
-matchOperation(graph : OGraph, nodeId : int, op : string, subpatterns : [OrMath_expr], tracing : bool) -> OPatternResult {
-    // Check if this node has the right operator
-    switch (lookupOClass(graph, nodeId)) {
-        Some(oclass): {
-            if (tracing) println("DEBUG: Matching operation " + op + " against node op " + oclass.node.op + ". Children count: pattern=" + i2s(length(subpatterns)) + ", node=" + i2s(length(oclass.node.children)));
-            if (oclass.node.op == op && length(oclass.node.children) == length(subpatterns)) {
-                // Try to match all children
-                if (tracing) println("DEBUG: Operator matches, now checking children");
-                matchAllChildren(graph, oclass.node.children, subpatterns, makeTree(), tracing);
-            } else {
-                if (tracing) println("DEBUG: Operation mismatch: expected " + op + ", got " + oclass.node.op);
+            None(): {
+                if (tracing) println("DEBUG: Node not found in graph");
                 OPatternFailure();
             }
         }
-        None(): OPatternFailure();
     }
 }
 
@@ -291,11 +287,13 @@ nodeEquivalence(graph : OGraph, node1Id : int, node2Id : int) -> bool {
     root1 = findORoot(graph, node1Id);
     root2 = findORoot(graph, node2Id);
     
-    // If they are the same node, they are equivalent
+    // If they are the same node (same equivalence class), they are equivalent
     if (root1 == root2) true
     else {
-        // For our specific test case of "a + a", we need to check if both nodes
-        // are identifiers with the same name
+        // For pattern variables that represent concrete nodes in the graph,
+        // we need to check for semantic equivalence, not just ID equality
+        
+        // Get the nodes from the graph
         node1 = switch (lookupOClass(graph, root1)) {
             Some(oclass): oclass.node;
             None(): ONode("", [], []);
@@ -306,7 +304,7 @@ nodeEquivalence(graph : OGraph, node1Id : int, node2Id : int) -> bool {
             None(): ONode("", [], []);
         }
         
-        // Check if both are identifiers
+        // Special case for identifiers/variables - check if they have the same name
         if ((node1.op == "Identifier" || node1.op == "Variable") && 
             (node2.op == "Identifier" || node2.op == "Variable")) {
             
@@ -322,11 +320,25 @@ nodeEquivalence(graph : OGraph, node1Id : int, node2Id : int) -> bool {
             }
             
             // Check if names match
-            // println("DEBUG: Comparing identifiers '" + name1 + "' and '" + name2 + "'");
             name1 == name2 && name1 != ""
         } else {
-            // For now, other nodes are equivalent only if they have the same ID
-            root1 == root2
+            // For all other node types, we just check if they have the same structure
+            if (node1.op == node2.op && length(node1.children) == length(node2.children)) {
+                // For nodes with children, we need to check that all children are equivalent
+                if (length(node1.children) > 0) {
+                    // Check all children recursively
+                    foldRange(0, length(node1.children) - 1, true, \acc, i -> {
+                        if (!acc) false  // Short-circuit if we already found non-matching children
+                        else nodeEquivalence(graph, node1.children[i], node2.children[i])
+                    });
+                } else {
+                    // For leaf nodes with the same operator, they're equivalent
+                    true;
+                }
+            } else {
+                // Different operators or different number of children means not equivalent
+                false;
+            }
         }
     }
 }
