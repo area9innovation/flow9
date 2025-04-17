@@ -18,6 +18,8 @@
 - Runtime function to read & parse files
 - Operators as symbols
 - Subscripts on operators
+- Equivalence between subscripts in unicode and _ and superscripts and ^
+- Hook in evaluation functions to implement AST nodes directly in Orbit itself, potentially using rewriting
 
 ## Interpreter Extensions
 - Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
@@ -39,8 +41,8 @@
 
 ## OGraph Enhancements
 ✅ Check that inserting into and extraction from ograph works correct
-- lib/tools/orbit/tests/ograph_rewrite_test.orb:
-  - we need to send the eclass of the matching nodes when doing graph matching
+- lib/tools/orbit/tests/ograph_rewrite_single.orb:
+  - debug why it is not working
 - Check ograph dot export
 ✅ Check ograph operations
 ✅ Implement pattern matching in ograph
