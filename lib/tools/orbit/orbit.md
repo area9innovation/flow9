@@ -318,27 +318,73 @@ println(prettyOrbit(expr));
 The `ast` annotation indicates that an expression should be treated as syntax rather than being evaluated.
 </ast_manipulation>
 
-<standard_library>
-Orbit has a small runtime with basic functions:
+<runtime_functions>
+Orbit provides a comprehensive set of built-in runtime functions. These are the core functions available in the language:
 
+## Comparison Operations
 ```orbit
-// String functions
-length("hello");    // 5
-"hello" + "world";  // "helloworld"
-substring(s, 0, 3); // First 3 characters
-
-// Conversion functions
-i2s(42);            // "42"
-s2i("42");          // 42
-i2d(5);             // 5.0
-d2i(5.7);           // 5
-
-// I/O functions
-println("Hello");   // Prints to console
-
-// Mathematical functions
-abs(-5);            // 5
-sqrt(16);           // 4.0
-sin(3.14159 / 2);   // ~1.0
+<=> (a : *, b : *) -> int      // Compare: -1 if a<b, 0 if a=b, 1 if a>b
 ```
-</standard_library>
+
+## Type Conversion
+```orbit
+i2s(x : int) -> string         // Convert integer to string
+d2s(x : double) -> string      // Convert double to string
+i2b(x : int) -> bool           // Convert integer to boolean (0=false, otherwise true)
+b2i(x : bool) -> int           // Convert boolean to integer (false=0, true=1)
+s2i(x : string) -> int         // Convert string to integer
+s2d(x : string) -> double      // Convert string to double
+```
+
+## Type Checking
+```orbit
+isBool(x : *) -> bool          // Check if value is a boolean
+isInt(x : *) -> bool           // Check if value is an integer
+isDouble(x : *) -> bool        // Check if value is a double
+isString(x : *) -> bool        // Check if value is a string
+isArray(x : *) -> bool         // Check if value is an array
+isConstructor(x : *) -> bool   // Check if value is a constructor
+```
+
+## String Operations
+```orbit
+strlen(s : string) -> int           // Get string length
+strIndex(s : string, sub : string) -> int  // Find index of substring
+substring(s : string, start : int, len : int) -> string  // Extract substring
+strContainsAt(s : string, sub : string, pos : int) -> bool  // Check if string contains substring at position
+strGlue(arr : [string], separator : string) -> string  // Join strings with separator
+string2ints(s : string) -> [int]    // Convert string to array of character codes
+ints2string(arr : [int]) -> string  // Convert array of character codes to string
+escape(s : string) -> string        // Escape special characters in string
+unescape(s : string) -> string      // Unescape special characters in string
+parsehex(s : string) -> int         // Parse hexadecimal string to integer
+capitalize(s : string) -> string    // Capitalize first letter of string
+decapitalize(s : string) -> string  // Decapitalize first letter of string
+```
+
+## Array Operations
+```orbit
+length(arr : [*]) -> int            // Get array length
+reverse(arr : [*]) -> [*]           // Reverse array
+subrange(arr : [*], start : int, len : int) -> [*]  // Extract subarray
+list2array(list : *) -> [*]         // Convert list to array
+```
+
+## Constructor Operations
+```orbit
+getConstructor(x : *) -> string     // Get constructor name of value
+getField(obj : *, field : int) -> *  // Get field from constructor by index
+setField(obj : *, field : int, value : *) -> *  // Set field in constructor by index
+```
+
+## Input/Output
+```orbit
+println(s : string) -> void         // Print string with newline
+```
+
+Note: In the type signatures above:
+- `*` represents any type
+- `int|double` means either an integer or a double
+- `[*]` represents an array of any type
+- The actual behavior of operators may depend on the types of their operands
+</runtime_functions>
