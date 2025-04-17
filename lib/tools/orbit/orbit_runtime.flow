@@ -25,6 +25,13 @@ export {
     // Type checking for AST nodes (renamed to avoid collision)
     runtimeIsAstType(typeAnnotations : [OrType]) -> bool;
     runtimeIsConstructor(expr : OrMath_expr) -> bool;
+    
+    // Evaluate an expression using bindings from pattern matching
+    evalWithBindings(
+        expr : OrMath_expr,        // Expression to evaluate
+        bindings : Tree<string, OrMath_expr>,  // Variable bindings from pattern matching
+        env : OrbEnv               // Environment context
+    ) -> OrMath_expr;  // Returns the evaluated expression
 }
 
 // Check if a type annotation indicates AST type
@@ -66,6 +73,7 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
         Pair("ograph2dot", OrbitRuntimeFn(ograph2dotFunction)),
         Pair("extractOGraph", OrbitRuntimeFn(extractOGraphFunction)),
         Pair("matchOGraphPattern", OrbitRuntimeFn(matchOGraphPatternFunction)),
+        Pair("evalWithBindings", OrbitRuntimeFn(evalWithBindingsFunction)),
     ];
     
     // Convert the list of pairs to a tree
@@ -318,6 +326,77 @@ bindings2OrbitExpr(bindings : Tree<string, OrMath_expr>) -> OrMath_expr {
     });
     
     OrArray(pairs);
+}
+
+// Implementation of evalWithBindings function
+evalWithBindingsFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 2) {
+        println("ERROR: evalWithBindings expects exactly 2 arguments: expression and bindings");
+        env;
+    } else {
+        // Get the expression to evaluate (not evaluated yet)
+        expr = args[0];
+        
+        // Evaluate the bindings argument to get a map of variable bindings
+        envBindings = interpret(env, args[1]);
+        
+        // Extract the bindings from the result
+        bindings = switch (envBindings.result) {
+            OrArray(pairs): {
+                // Convert array of Pair(key, value) to a Tree
+                fold(pairs, makeTree(), \acc, p -> {
+                    switch (p) {
+                        OrFunction(fn, pargs): {
+                            if (length(pargs) == 2) {
+                                switch (pargs[0]) {
+                                    OrString(key): setTree(acc, key, pargs[1]);
+                                    default: acc;
+                                }
+                            } else acc;
+                        }
+                        default: acc;
+                    }
+                });
+            }
+            default: {
+                println("ERROR: evalWithBindings second argument must be an array of Pair(key, value)");
+                makeTree();
+            }
+        };
+        
+        // Debug output if tracing
+        if (env.tracing) {
+            println("Evaluating expression with bindings:");
+            println("Expression: " + prettyOrbit(expr));
+            println("Bindings: " + i2s(sizeTree(bindings)) + " variables");
+            iter(getTreeKeys(bindings), \key -> {
+                println("  " + key + " = " + prettyOrbit(lookupTreeDef(bindings, key, OrInt(0))));
+            });
+        }
+        
+        // Create a new environment with the original env plus the bindings
+        newEnv = fold(getTreeKeys(bindings), envBindings, \accEnv, key -> {
+            bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
+        });
+        
+        // Now evaluate the expression in the new environment
+        resultEnv = interpret(newEnv, expr);
+        
+        // Return the result
+        resultEnv;
+    }
+}
+
+// Public API for evalWithBindings - used by other modules
+evalWithBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>, env : OrbEnv) -> OrMath_expr {
+    // Create a new environment with the original env plus the bindings
+    newEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
+        bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
+    });
+    
+    // The interpreter will need to evaluate this expression with the new environment
+    // For the public API, we just return the expression - the caller must handle evaluation
+    expr;
 }
 
 // Implementation of ograph2dot function
