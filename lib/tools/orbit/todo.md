@@ -11,6 +11,7 @@
 ✅ Add test suite mode to orbit.flow with automated test execution and reporting
 
 ## High Priority Tasks
+- Make VS code plugin
 - Rewrite builtin functions to have a stdlib instead of being in the interpreter
 - Port the corelib functinos to Orbit native?
 - Check the constructor corelib functions

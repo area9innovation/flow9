@@ -1,0 +1,219 @@
+import tools/orbit/orbit_types;
+import tools/orbit/orbit_env;
+import tools/orbit/prettyprint;
+import tools/orbit/orbit_pattern;
+import tools/orbit/orbit_simple_ograph;
+import tools/orbit/utils; // For access to the original utility functions
+import ds/tree;
+import string;
+
+// This file provides special internal orbit functions that have the ability to NOT evaluate arguments
+// These functions work directly with the AST and are used by the interpreter
+
+export {
+    // Define a struct to hold a runtime function
+    OrbitRuntimeFn(
+        fn: ([OrMath_expr], OrbEnv, (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv
+    );
+
+    // Initialize the runtime tree with all special functions
+    initOrbitRuntime() -> Tree<string, OrbitRuntimeFn>;
+    
+    // Type checking for AST nodes (renamed to avoid collision)
+    runtimeIsAstType(typeAnnotations : [OrType]) -> bool;
+    runtimeIsConstructor(expr : OrMath_expr) -> bool;
+}
+
+// Check if a type annotation indicates AST type
+runtimeIsAstType(typeAnnotations : [OrType]) -> bool {
+    exists(typeAnnotations, \t -> {
+        switch (t.math_expr) {
+            OrIdentifier(id): id == "ast";
+            default: false;
+        }
+    });
+}
+
+// Check if expression is a constructor call
+runtimeIsConstructor(expr : OrMath_expr) -> bool {
+    switch (expr) {
+        OrFunction(fn, __): {
+            switch (fn) {
+                OrIdentifier(id): {
+                    // Check if first character is uppercase (convention for constructors)
+                    s = getCharAt(id, 0);
+                    s >= "A" && s <= "Z";
+                }
+                default: false;
+            }
+        }
+        default: false;
+    }
+}
+
+// Initialize the runtime tree with all special functions
+initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
+    functions = [
+        Pair("eval", OrbitRuntimeFn(evalFunction)),
+        Pair("prettyOrbit", OrbitRuntimeFn(prettyOrbitFunction)),
+        Pair("makeOGraph", OrbitRuntimeFn(makeOGraphFunction)),
+        Pair("addNodeToOGraph", OrbitRuntimeFn(addNodeToOGraphFunction)),
+        Pair("addDomainToNode", OrbitRuntimeFn(addDomainToNodeFunction)),
+        Pair("mergeOGraphNodes", OrbitRuntimeFn(mergeOGraphNodesFunction)),
+        Pair("extractOGraphNode", OrbitRuntimeFn(extractOGraphNodeFunction)),
+        Pair("printOGraph", OrbitRuntimeFn(printOGraphFunction)),
+    ];
+    
+    // Convert the list of pairs to a tree
+    fold(functions, makeTree(), \acc, p -> setTree(acc, p.first, p.second));
+}
+
+// Implementation of eval function
+evalFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 1) {
+        println("ERROR: eval expects exactly 1 argument");
+        env;
+    } else {
+        // Direct evaluation of the expression without conversion
+        interpret(env, args[0]);
+    }
+}
+
+// Implementation of prettyOrbit function
+prettyOrbitFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 1) {
+        println("ERROR: prettyOrbit expects exactly 1 argument");
+        env;
+    } else {
+        // Evaluate the argument first
+        envArg = interpret(env, args[0]);
+        // Then pretty print it
+        pretty = prettyOrbit(envArg.result);
+        OrbEnv(envArg with result = OrString(pretty));
+    }
+}
+
+// Implementation of makeOGraph function
+makeOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 1) {
+        println("ERROR: makeOGraph expects exactly 1 argument");
+        env;
+    } else {
+        // Evaluate the name argument
+        envName = interpret(env, args[0]);
+        name = getOString(envName.result, "makeOGraph");
+        
+        // Create the graph
+        createOGraph(name);
+        
+        // Return the name
+        OrbEnv(envName with result = OrString(name));
+    }
+}
+
+// Implementation of addNodeToOGraph function
+addNodeToOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) < 2) {
+        println("ERROR: addNodeToOGraph expects at least 2 arguments");
+        env;
+    } else {
+        // Evaluate the graph name
+        envName = interpret(env, args[0]);
+        name = getOString(envName.result, "addNodeToOGraph.name");
+        
+        // Get the expression (not evaluated - passed as AST)
+        astExpr = args[1];
+        
+        // Debug the AST expression if tracing
+        if (env.tracing) println("Adding AST expression to ograph: " + prettyOrbit(astExpr));
+        
+        // Add the node to the graph
+        nodeId = addNodeToOGraph(name, astExpr);
+        OrbEnv(envName with result = OrInt(nodeId));
+    }
+}
+
+// Implementation of addDomainToNode function
+addDomainToNodeFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 3) {
+        println("ERROR: addDomainToNode expects exactly 3 arguments");
+        env;
+    } else {
+        // Evaluate the graph name
+        envName = interpret(env, args[0]);
+        name = getOString(envName.result, "addDomainToNode.name");
+        
+        // Evaluate the node ID
+        envNodeId = interpret(envName, args[1]);
+        nodeId = getOInt(envNodeId.result, "addDomainToNode.nodeId");
+        
+        // Evaluate the domain
+        envDomain = interpret(envNodeId, args[2]);
+        domain = getOString(envDomain.result, "addDomainToNode.domain");
+        
+        // Add the domain
+        success = addDomainToNode(name, nodeId, domain);
+        OrbEnv(envDomain with result = OrBool(success));
+    }
+}
+
+// Implementation of mergeOGraphNodes function
+mergeOGraphNodesFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 3) {
+        println("ERROR: mergeOGraphNodes expects exactly 3 arguments");
+        env;
+    } else {
+        // Evaluate the graph name
+        envName = interpret(env, args[0]);
+        name = getOString(envName.result, "mergeOGraphNodes.name");
+        
+        // Evaluate the first node ID
+        envId1 = interpret(envName, args[1]);
+        id1 = getOInt(envId1.result, "mergeOGraphNodes.id1");
+        
+        // Evaluate the second node ID
+        envId2 = interpret(envId1, args[2]);
+        id2 = getOInt(envId2.result, "mergeOGraphNodes.id2");
+        
+        // Merge the nodes
+        success = mergeOGraphNodes(name, id1, id2);
+        OrbEnv(envId2 with result = OrBool(success));
+    }
+}
+
+// Implementation of extractOGraphNode function
+extractOGraphNodeFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 2) {
+        println("ERROR: extractOGraphNode expects exactly 2 arguments");
+        env;
+    } else {
+        // Evaluate the graph name
+        envName = interpret(env, args[0]);
+        name = getOString(envName.result, "extractOGraphNode.name");
+        
+        // Evaluate the node ID
+        envNodeId = interpret(envName, args[1]);
+        nodeId = getOInt(envNodeId.result, "extractOGraphNode.nodeId");
+        
+        // Extract the node
+        extractedExpr = extractOGraphNode(name, nodeId);
+        OrbEnv(envNodeId with result = extractedExpr);
+    }
+}
+
+// Implementation of printOGraph function
+printOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 1) {
+        println("ERROR: printOGraph expects exactly 1 argument");
+        env;
+    } else {
+        // Evaluate the graph name
+        envName = interpret(env, args[0]);
+        name = getOString(envName.result, "printOGraph.name");
+        
+        // Print the graph
+        str = printOGraph(name);
+        if (env.tracing) println("OGraph '" + name + "':\n" + str);
+        OrbEnv(envName with result = OrString(str));
+    }
+}
