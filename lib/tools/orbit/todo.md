@@ -40,7 +40,7 @@
 - Add proper error handling and reporting for pattern matching failures
 - Extract minimal program from ograph via cost function
 - Runtime function to read & parse files
-- Implement `include` in Orbit
+- `include` does full eval each time. We could try to track if we have imported in the current env and skip if so
 - Operators as symbols
 - Subscripts on operators
 - Implement symmetry group based canonicalization rules from canonical.md
