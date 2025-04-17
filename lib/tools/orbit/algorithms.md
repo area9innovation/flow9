@@ -32,9 +32,10 @@ For symmetric groups, which represent all possible permutations of n elements, t
 1. Sort elements according to a consistent ordering criterion
 2. For compound structures, recursively canonicalize elements before sorting
 
-```
-function canonicalize_symmetric(elements, comparator):
-	return sort(elements, comparator)
+```orbit
+fn canonicalize_symmetric(elements, comparator) (
+	sort(elements, comparator)
+)
 ```
 
 **Example**:
@@ -53,38 +54,73 @@ For cyclic groups, which represent rotational symmetry, we need to find the lexi
 
 **Booth's Algorithm for Minimum Rotation**:
 
-```python
-def least_rotation(s: str) -> int:
-	"""Booth's lexicographically minimal string rotation algorithm."""
-	n = len(s)
-	f = [-1] * (2 * n)
-	k = 0
-	for j in range(1, 2 * n):
-		i = f[j - k - 1]
-		while i != -1 and s[j % n] != s[(k + i + 1) % n]:
-			if s[j % n] < s[(k + i + 1) % n]:
-				k = j - i - 1
-			i = f[i]
-		if i == -1 and s[j % n] != s[(k + i + 1) % n]:
-			if s[j % n] < s[(k + i + 1) % n]:
-				k = j
-			f[j - k] = -1
-		else:
-			f[j - k] = i + 1
-	return k
+```orbit
+// Booth's lexicographically minimal string rotation algorithm
+fn least_rotation(s) (
+	let n = length(s);
+	let initial_f = map(range(0, 2 * n), \__.(-1));
+
+	// Process all positions through recursion
+	fn process_j(j, k, f) (
+		if j >= 2 * n then k
+		else (
+			let initial_i = f[j - k - 1];
+
+			// Process inner while loop recursively
+			fn process_i(i, curr_k) (
+				if i == -1 || s[j % n] == s[(curr_k + i + 1) % n] then
+					Pair(i, curr_k)
+				else (
+					let new_k = if s[j % n] < s[(curr_k + i + 1) % n] then
+						j - i - 1
+					else
+						curr_k;
+					process_i(f[i], new_k)
+				)
+			);
+
+			let result = process_i(initial_i, k);
+			let i = result.first;
+			let new_k = result.second;
+
+			// Update f and continue loop
+			let new_f = if i == -1 && s[j % n] != s[(new_k + i + 1) % n] then (
+				let final_k = if s[j % n] < s[(new_k + i + 1) % n] then j else new_k;
+				// Create new array with updated value at j-final_k
+				update_array(f, j - final_k, -1)
+			) else (
+				// Create new array with updated value at j-new_k
+				update_array(f, j - new_k, i + 1)
+			);
+
+			process_j(j + 1, new_k, new_f)
+		)
+	);
+
+	// Start the recursive process
+	process_j(1, 0, initial_f)
+)
 ```
 
 A simpler but less efficient O(n²) algorithm for finding the minimum rotation:
 
-```
-function min_rotation(array):
-	n = length(array)
-	min_array = array
-	for i from 1 to n-1:
-		rotation = array[i:] + array[:i]
-		if rotation < min_array:  # lexicographic comparison
-			min_array = rotation
-	return min_array
+```orbit
+fn min_rotation(array) (
+	let n = length(array);
+
+	// Find minimum rotation recursively
+	fn find_min(i, min_so_far) (
+		if i >= n then min_so_far
+		else (
+			let rotation = concat(subarray(array, i, n - i), subarray(array, 0, i));
+			let new_min = if is_less(rotation, min_so_far) then rotation else min_so_far;
+			find_min(i + 1, new_min)
+		)
+	);
+
+	// Start with the original array as minimum
+	find_min(1, array)
+)
 ```
 
 **Example**:
@@ -99,25 +135,27 @@ function min_rotation(array):
 Dihedral groups represent rotations and reflections. The canonical form requires checking all rotations and the reflection of each rotation to find the lexicographically minimal form.
 
 **Algorithm**:
-```
-function canonicalize_dihedral(array):
-	n = length(array)
-	min_array = array
+```orbit
+fn canonicalize_dihedral(array) (
+	let n = length(array);
 
-	// Check all rotations
-	for i from 1 to n-1:
-		rotation = array[i:] + array[:i]
-		if rotation < min_array:
-			min_array = rotation
+	// Helper function to find minimum rotation
+	fn check_rotations(i, curr_array, curr_min) (
+		if i >= n then curr_min
+		else (
+			let rotation = concat(subarray(curr_array, i, n - i), subarray(curr_array, 0, i));
+			let new_min = if is_less(rotation, curr_min) then rotation else curr_min;
+			check_rotations(i + 1, curr_array, new_min)
+		)
+	);
 
-	// Check all rotations of the reflection
-	reflected = reverse(array)
-	for i from 0 to n-1:
-		rotation = reflected[i:] + reflected[:i]
-		if rotation < min_array:
-			min_array = rotation
+	// First check all rotations of original array
+	let min_after_rotations = check_rotations(1, array, array);
 
-	return min_array
+	// Then check all rotations of the reflected array
+	let reflected = reverse(array);
+	check_rotations(0, reflected, min_after_rotations)
+)
 ```
 
 **Example**:
@@ -133,9 +171,10 @@ function canonicalize_dihedral(array):
 A bag (multiset) allows multiple occurrences of elements. The canonical form of a bag is simply a sorted array.
 
 **Algorithm**:
-```
-function canonicalize_bag(bag):
-	return sort(bag)
+```orbit
+fn canonicalize_bag(bag) (
+	sort(bag)
+)
 ```
 
 **Example**:
@@ -149,9 +188,10 @@ function canonicalize_bag(bag):
 A set has no duplicates and no defined order. The canonical form of a set is a sorted array with duplicates removed.
 
 **Algorithm**:
-```
-function canonicalize_set(set):
-	return sort(remove_duplicates(set))
+```orbit
+fn canonicalize_set(set) (
+	sort(remove_duplicates(set))
+)
 ```
 
 **Example**:
@@ -166,20 +206,23 @@ function canonicalize_set(set):
 For binary trees, we can use a recursive approach to canonicalize:
 
 **Algorithm**:
-```
-function canonicalize_binary_tree(node):
-	if node is null:
-		return null
+```orbit
+fn canonicalize_binary_tree(node) (
+	node is (
+		Nil() => Nil();
+		Node(value, left, right) => (
+			// Recursively canonicalize left and right subtrees
+			let canon_left = canonicalize_binary_tree(left);
+			let canon_right = canonicalize_binary_tree(right);
 
-	// Recursively canonicalize left and right subtrees
-	left = canonicalize_binary_tree(node.left)
-	right = canonicalize_binary_tree(node.right)
-
-	// Make smaller subtree the left child
-	if compare(right, left) < 0:
-		return new Node(node.value, right, left)
-	else:
-		return new Node(node.value, left, right)
+			// Make smaller subtree the left child
+			if compare(canon_right, canon_left) < 0 then
+				Node(value, canon_right, canon_left)
+			else
+				Node(value, canon_left, canon_right)
+		)
+	)
+)
 ```
 
 **Example**:
@@ -203,19 +246,22 @@ function canonicalize_binary_tree(node):
 A trie (prefix tree) can be canonicalized by ensuring children at each node are ordered:
 
 **Algorithm**:
-```
-function canonicalize_trie(node):
-	if node is leaf:
-		return node
+```orbit
+fn canonicalize_trie(node) (
+	node is (
+		Leaf() => node;
+		TrieNode(children) => (
+			// Canonicalize all children recursively
+			let canonicalized_children = map(children, \child.canonicalize_trie(child));
 
-	// Canonicalize all children
-	for each child in node.children:
-		child = canonicalize_trie(child)
+			// Sort children by their edge labels
+			let sorted_children = sort(canonicalized_children, \a, b.compare_edge_labels(a, b));
 
-	// Sort children by their edge labels
-	node.children = sort(node.children, by=edge_label)
-
-	return node
+			// Return new node with sorted children
+			TrieNode(sorted_children)
+		)
+	)
+)
 ```
 
 ### Undirected Graphs
@@ -228,10 +274,11 @@ Canonicalizing undirected graphs is a complex problem equivalent to the graph is
 3. Refine partitions iteratively
 4. Generate canonical labeling through backtracking search
 
-```
-function canonicalize_undirected_graph(graph):
+```orbit
+fn canonicalize_undirected_graph(graph) (
 	// Using nauty or similar algorithm
-	return compute_canonical_form(graph)
+	compute_canonical_form(graph)
+)
 ```
 
 **Example**:
@@ -258,10 +305,11 @@ Directed graphs require considering edge directions during canonicalization:
 2. Perform similar partitioning and refinement as with undirected graphs
 3. Consider edge directions when comparing vertex neighborhoods
 
-```
-function canonicalize_directed_graph(graph):
+```orbit
+fn canonicalize_directed_graph(graph) (
 	// Similar to undirected graphs but with direction considered
-	return compute_canonical_directed_form(graph)
+	compute_canonical_directed_form(graph)
+)
 ```
 
 ### Polynomials
@@ -275,15 +323,16 @@ For polynomials, we need to establish a consistent term ordering:
 3. **Graded Reverse Lexicographic (grevlex)**: First total degree, then reverse lex on last differing exponent
 
 **Algorithm**:
-```
-function canonicalize_polynomial(poly, order_type):
+```orbit
+fn canonicalize_polynomial(poly, order_type) (
 	// Combine like terms
-	terms = combine_like_terms(poly)
+	let terms = combine_like_terms(poly);
 
 	// Sort terms according to selected monomial order
-	sorted_terms = sort(terms, by=order_type)
+	let sorted_terms = sort(terms, \t1, t2.compare_monomials(t1, t2, order_type));
 
-	return sorted_terms
+	sorted_terms
+)
 ```
 
 **Example**:
@@ -306,21 +355,38 @@ For sets of polynomials, we need Buchberger's algorithm to compute a Gröbner ba
 3. Reduce S-polynomial with respect to G. If not zero, add to G
 4. Repeat until all S-polynomial reductions are zero
 
-```
-function compute_groebner_basis(polynomials, order):
-	G = polynomials
-	pairs = all_pairs(G)
+```orbit
+fn compute_groebner_basis(polynomials, order) (
+	// Process pairs recursively until fixed point
+	fn process_pairs(G, pairs) (
+		if is_empty(pairs) then G
+		else (
+			let pair = head(pairs);
+			let remaining_pairs = tail(pairs);
 
-	while pairs is not empty:
-		(f, g) = remove_pair(pairs)
-		s = s_polynomial(f, g)
-		r = reduce(s, G)
+			let f = pair.first;
+			let g = pair.second;
 
-		if r != 0:
-			pairs.extend([(r, g) for g in G])
-			G.append(r)
+			let s = s_polynomial(f, g);
+			let r = reduce(s, G);
 
-	return G
+			if r != 0 then (
+				// Create new pairs with r and each element in G
+				let new_pairs = append_all(remaining_pairs, map(G, \h.Pair(r, h)));
+
+				// Add r to G
+				let new_G = append(G, r);
+
+				process_pairs(new_G, new_pairs)
+			) else
+				process_pairs(G, remaining_pairs)
+		)
+	);
+
+	// Start with all pairs from initial polynomials
+	let initial_pairs = all_pairs(polynomials);
+	process_pairs(polynomials, initial_pairs)
+)
 ```
 
 **Example**:
@@ -387,16 +453,17 @@ Automatic differentiation comes in two main forms: forward mode and reverse mode
 
 Forward mode AD tracks derivatives alongside values using dual numbers:
 
-```
-function forward_ad(f, x, ẋ):
+```orbit
+fn forward_ad(f, x, x_dot) (
 	// Create dual number (value, derivative)
-	dual_x = Dual(x, ẋ)
+	let dual_x = Dual(x, x_dot);
 
 	// Evaluate function with dual arithmetic rules
-	dual_result = f(dual_x)  // Using overloaded operators for duals
+	let dual_result = f(dual_x);  // Using overloaded operators for duals
 
-	// Extract and return value and derivative
-	return dual_result.value, dual_result.derivative
+	// Return pair of value and derivative
+	Pair(dual_result.value, dual_result.derivative)
+)
 ```
 
 **Example**:
@@ -417,28 +484,59 @@ function forward_ad(f, x, ẋ):
 
 Reverse mode AD is more efficient for functions with many inputs and few outputs:
 
-```
-function reverse_ad(f, x):
+```orbit
+fn reverse_ad(f, x) (
 	// Forward pass: compute function and build computational graph
-	y, tape = forward_with_recording(f, x)
+	let result = forward_with_recording(f, x);
+	let y = result.first;
+	let tape = result.second;
 
-	// Initialize adjoints (partial derivatives)
-	adjoints = {y: 1.0}  // Initialize output adjoints
+	// Initialize adjoints (partial derivatives) with output having adjoint 1.0
+	let initial_adjoints = singleton_tree(y, 1.0);
 
-	// Backward pass: propagate adjoints backward through the graph
-	for node in reverse(tape):
-		// Get current node's adjoint
-		node_adjoint = adjoints[node]
+	// Helper function to process each node in the backward pass
+	fn process_nodes(nodes, curr_idx, adjoints) (
+		if curr_idx < 0 then adjoints
+		else (
+			let node = nodes[curr_idx];
 
-		// Distribute adjoint to input nodes based on local derivatives
-		for input_node, local_gradient in node.inputs_with_gradients():
-			if input_node in adjoints:
-				adjoints[input_node] += node_adjoint * local_gradient
-			else:
-				adjoints[input_node] = node_adjoint * local_gradient
+			// Get current node's adjoint
+			let node_adjoint = lookupDefault(adjoints, node, 0.0);
 
-	// Return gradient with respect to inputs
-	return [adjoints.get(input_var, 0.0) for input_var in x]
+			// Process all inputs of this node
+			let inputs_with_grads = node.inputs_with_gradients();
+
+			// Helper to update adjoints for each input
+			fn process_inputs(inputs, idx, curr_adjoints) (
+				if idx >= length(inputs) then curr_adjoints
+				else (
+					let input_pair = inputs[idx];
+					let input_node = input_pair.first;
+					let local_gradient = input_pair.second;
+
+					// Update adjoint for this input
+					let new_adjoints = if hasKey(curr_adjoints, input_node) then
+						setTree(curr_adjoints, input_node,
+							lookupTree(curr_adjoints, input_node).value + node_adjoint * local_gradient)
+					else
+						setTree(curr_adjoints, input_node, node_adjoint * local_gradient);
+
+					process_inputs(inputs, idx + 1, new_adjoints)
+				)
+			);
+
+			let updated_adjoints = process_inputs(inputs_with_grads, 0, adjoints);
+			process_nodes(nodes, curr_idx - 1, updated_adjoints)
+		)
+	);
+
+	// Reverse the tape and process all nodes
+	let reversed_tape = reverse(tape);
+	let final_adjoints = process_nodes(reversed_tape, length(reversed_tape) - 1, initial_adjoints);
+
+	// Extract gradients for input variables
+	map(x, \var.lookupDefault(final_adjoints, var, 0.0))
+)
 ```
 
 ### Multivariate Differentiation
@@ -594,66 +692,92 @@ Polynomial systems and Gröbner bases provide a powerful framework for solving s
 
 ### Detailed Buchberger's Algorithm
 
-```
-function buchberger_algorithm(F):
+```orbit
+fn buchberger_algorithm(F) (
 	// Input: Set of polynomials F = {f₁, ..., fₘ}
 	// Output: Gröbner basis G for the ideal generated by F
 
-	G = F
-	B = {{f, g} for each pair f,g in G}  // Pairs to process
+	// Process all pairs recursively
+	fn process_pairs(G, B) (
+		if is_empty(B) then (
+			// Minimize and reduce the basis (optional optimization)
+			let minimized_G = minimize_grobner_basis(G);
+			reduce_grobner_basis(minimized_G)
+		) else (
+			// Select and remove a pair from B
+			let pair = select_pair(B);
+			let remaining_B = remove_pair(B, pair);
+			let f = pair.first;
+			let g = pair.second;
 
-	while B is not empty:
-		select and remove a pair {f, g} from B
+			// Compute S-polynomial
+			let s = s_polynomial(f, g);
 
-		// Compute S-polynomial
-		s = s_polynomial(f, g)
+			// Reduce S-polynomial with respect to G
+			let r = reduce(s, G);
 
-		// Reduce S-polynomial with respect to G
-		r = reduce(s, G)
+			if r != 0 then (
+				// Add new pairs to B (B = B ∪ {{r, h} for each h in G})
+				let new_pairs = map(G, \h.Pair(r, h));
+				let new_B = union(remaining_B, new_pairs);
 
-		if r ≠ 0:
-			// Add new pairs to B
-			B = B ∪ {{r, h} for each h in G}
+				// Add r to the basis (G = G ∪ {r})
+				let new_G = append(G, r);
 
-			// Add r to the basis
-			G = G ∪ {r}
+				process_pairs(new_G, new_B)
+			) else
+				process_pairs(G, remaining_B)
+		)
+	);
 
-	// Minimize and reduce the basis (optional optimization)
-	G = minimize_grobner_basis(G)
-	G = reduce_grobner_basis(G)
+	// Initial pairs: {{f, g} for each pair f,g in F}
+	let initial_pairs = all_pairs(F);
+	process_pairs(F, initial_pairs)
+)
 
-	return G
-
-function s_polynomial(f, g):
+fn s_polynomial(f, g) (
 	// Compute the S-polynomial of f and g
-	lt_f = leading_term(f)
-	lt_g = leading_term(g)
-	lcm_term = least_common_multiple(lt_f, lt_g)
+	let lt_f = leading_term(f);
+	let lt_g = leading_term(g);
+	let lcm_term = least_common_multiple(lt_f, lt_g);
 
-	return (lcm_term/lt_f) * f - (lcm_term/lt_g) * g
+	(lcm_term/lt_f) * f - (lcm_term/lt_g) * g
+)
 
-function reduce(p, G):
-	// Reduce polynomial p with respect to set G
-	r = 0
-	q = p
+fn reduce(p, G) (
+	// Reduce polynomial p with respect to set G using recursive approach
+	fn reduction_step(q, r, divisible_found) (
+		if q == 0 then r
+		else if !divisible_found then (
+			// Try to find a divisor among G elements
+			fn find_divisor(g_idx) (
+				if g_idx >= length(G) then
+					// No divisor found, move leading term to result
+					reduction_step(q - leading_term(q), r + leading_term(q), false)
+				else (
+					let g = G[g_idx];
+					let lt_g = leading_term(g);
+					let lt_q = leading_term(q);
 
-	while q ≠ 0:
-		divisible = false
+					if divides(lt_g, lt_q) then
+						// Found divisor, reduce q and continue
+						reduction_step(q - (lt_q/lt_g) * g, r, false)
+					else
+						// Try next divisor
+						find_divisor(g_idx + 1)
+				)
+			);
 
-		for g in G:
-			lt_g = leading_term(g)
-			lt_q = leading_term(q)
+			find_divisor(0)
+		) else (
+			// Continue with current q and r
+			reduction_step(q, r, false)
+		)
+	);
 
-			if lt_g divides lt_q:
-				divisible = true
-				q = q - (lt_q/lt_g) * g
-				break
-
-		if not divisible:
-			r = r + leading_term(q)
-			q = q - leading_term(q)
-
-	return r
+	// Start reduction with p, empty result, and no divisor found yet
+	reduction_step(p, 0, false)
+)
 ```
 
 ### Polynomial Reduction and Normal Forms
@@ -681,33 +805,31 @@ function polynomial_canonicalization(f, I):
 
 ### Monomial Ordering
 
-```
-function compare_monomials(m1, m2, order_type):
-	// Compare two monomials based on the specified ordering
-	if order_type is "lex":
-		return lexicographic_comparison(m1, m2)
+```orbit
+fn compare_monomials(m1, m2, order_type) (
+	order_type is (
+		"lex" => lexicographic_comparison(m1, m2);
+		"grlex" => (
+			let deg1 = total_degree(m1);
+			let deg2 = total_degree(m2);
 
-	if order_type is "grlex":
-		// First compare total degree
-		deg1 = total_degree(m1)
-		deg2 = total_degree(m2)
+			if deg1 != deg2 then
+				deg1 - deg2
+			else
+				lexicographic_comparison(m1, m2)
+		);
+		"grevlex" => (
+			let deg1 = total_degree(m1);
+			let deg2 = total_degree(m2);
 
-		if deg1 != deg2:
-			return deg1 - deg2
-
-		// If same degree, use lexicographic comparison
-		return lexicographic_comparison(m1, m2)
-
-	if order_type is "grevlex":
-		// First compare total degree
-		deg1 = total_degree(m1)
-		deg2 = total_degree(m2)
-
-		if deg1 != deg2:
-			return deg1 - deg2
-
-		// If same degree, use reversed lexicographic comparison
-		return reverse_lexicographic_comparison(m1, m2)
+			if deg1 != deg2 then
+				deg1 - deg2
+			else
+				reverse_lexicographic_comparison(m1, m2)
+		);
+		__ => error("Unknown monomial order: " + order_type)
+	)
+)
 ```
 
 ## Tensor Canonicalization
@@ -816,51 +938,87 @@ Finite automata and regular expressions are fundamental to computation theory an
 
 ### DFA Minimization
 
-```
-function minimize_dfa(dfa):
+```orbit
+fn minimize_dfa(dfa) (
 	// Step 1: Remove unreachable states
-	reachable = find_reachable_states(dfa.start_state, dfa.transitions)
-	dfa = restrict_to_states(dfa, reachable)
+	let reachable = find_reachable_states(dfa.start_state, dfa.transitions);
+	let restricted_dfa = restrict_to_states(dfa, reachable);
 
 	// Step 2: Partition states by equivalence
 	// Initial partition: accepting vs non-accepting states
-	partition = [dfa.accepting_states, dfa.states - dfa.accepting_states]
+	let initial_partition = [
+		restricted_dfa.accepting_states,
+		difference(restricted_dfa.states, restricted_dfa.accepting_states)
+	];
 
-	// Refine partition until it stabilizes
-	changed = true
-	while changed:
-		changed = false
-		new_partition = []
+	// Helper function to refine partition until it stabilizes
+	fn refine_partition(partition, changed) (
+		if !changed then partition
+		else (
+			fn process_blocks(blocks, idx, new_partition, any_changed) (
+				if idx >= length(blocks) then
+					refine_partition(new_partition, any_changed)
+				else (
+					let block = blocks[idx];
 
-		for block in partition:
-			// Try to split block based on transitions
-			splits = {}
+					// Try to split block based on transitions
+					let splits = makeTree();
 
-			for state in block:
-				signature = []
-				for symbol in dfa.alphabet:
-					target = dfa.transitions[state][symbol]
-					target_block = find_block_containing(target, partition)
-					signature.append(target_block)
+					// Build transition signatures for each state
+					fn process_states(states, s_idx, current_splits) (
+						if s_idx >= length(states) then current_splits
+						else (
+							let state = states[s_idx];
+							let signature = [];
 
-				signature_key = tuple(signature)
-				if signature_key not in splits:
-					splits[signature_key] = []
-				splits[signature_key].append(state)
+							// Create signature based on transitions
+							fn build_signature(alphabet, a_idx, sig) (
+								if a_idx >= length(alphabet) then sig
+								else (
+									let symbol = alphabet[a_idx];
+									let target = restricted_dfa.transitions[state][symbol];
+									let target_block = find_block_containing(target, partition);
+									build_signature(alphabet, a_idx + 1, append(sig, target_block))
+								)
+							);
 
-			// If block was split, update partition
-			if len(splits) > 1:
-				changed = true
-				for split_states in splits.values():
-					new_partition.append(split_states)
-			else:
-				new_partition.append(block)
+							let state_signature = build_signature(restricted_dfa.alphabet, 0, []);
+							let signature_key = tuple(state_signature);
 
-		partition = new_partition
+							// Add state to appropriate signature group
+							let updated_splits = if hasKey(current_splits, signature_key) then
+								setTree(current_splits, signature_key,
+									append(lookupTree(current_splits, signature_key).value, state))
+							else
+								setTree(current_splits, signature_key, [state]);
+
+							process_states(states, s_idx + 1, updated_splits)
+						)
+					);
+
+					let block_splits = process_states(block, 0, makeTree());
+					let split_values = values(block_splits);
+
+					// If block was split, update partition
+					if length(split_values) > 1 then (
+						let updated_partition = append_all(new_partition, split_values);
+						process_blocks(blocks, idx + 1, updated_partition, true)
+					) else (
+						let updated_partition = append(new_partition, block);
+						process_blocks(blocks, idx + 1, updated_partition, any_changed)
+					)
+				)
+			);
+
+			process_blocks(partition, 0, [], false)
+		)
+	);
+
+	let final_partition = refine_partition(initial_partition, true);
 
 	// Step 3: Construct minimized DFA
-	minimized_dfa = construct_dfa_from_partition(dfa, partition)
-	return minimized_dfa
+	construct_dfa_from_partition(restricted_dfa, final_partition)
+)
 ```
 
 ### Regular Expression Canonicalization
@@ -1012,62 +1170,68 @@ Interval arithmetic operates on intervals rather than precise values, providing 
 ### Interval Operations
 
 ```
-function canonicalize_interval(interval):
+fn canonicalize_interval(interval) (
 	// Handle degenerate cases
-	if interval.lower > interval.upper:
-		return empty_interval()  // Empty interval
+	if interval.lower > interval.upper then
+		empty_interval()  // Empty interval
+	else if interval.lower == interval.upper then
+		point_interval(interval.lower)  // Point interval
+	else
+		// Canonical form: [a, b] where a ≤ b
+		Interval(interval.lower, interval.upper)
+)
 
-	if interval.lower == interval.upper:
-		return point_interval(interval.lower)  // Point interval
-
-	// Canonical form: [a, b] where a ≤ b
-	return Interval(interval.lower, interval.upper)
-
-function interval_add(a, b):
+fn interval_add(a, b) (
 	// [a_lo, a_hi] + [b_lo, b_hi] = [a_lo + b_lo, a_hi + b_hi]
-	return Interval(a.lower + b.lower, a.upper + b.upper)
+	Interval(a.lower + b.lower, a.upper + b.upper)
+)
 
-function interval_subtract(a, b):
+fn interval_subtract(a, b) (
 	// [a_lo, a_hi] - [b_lo, b_hi] = [a_lo - b_hi, a_hi - b_lo]
-	return Interval(a.lower - b.upper, a.upper - b.lower)
+	Interval(a.lower - b.upper, a.upper - b.lower)
+)
 
-function interval_multiply(a, b):
+fn interval_multiply(a, b) (
 	// [a_lo, a_hi] * [b_lo, b_hi] = [min(products), max(products)]
-	products = [
+	let products = [
 		a.lower * b.lower,
 		a.lower * b.upper,
 		a.upper * b.lower,
 		a.upper * b.upper
-	]
+	];
 
-	return Interval(min(products), max(products))
+	Interval(min(products), max(products))
+)
 
-function interval_divide(a, b):
+fn interval_divide(a, b) (
 	// Division by an interval containing zero
-	if b.lower <= 0 and b.upper >= 0:
-		throw Error("Division by interval containing zero")
-
-	// [a_lo, a_hi] / [b_lo, b_hi] = [a_lo, a_hi] * [1/b_hi, 1/b_lo]
-	return interval_multiply(a, Interval(1.0/b.upper, 1.0/b.lower))
+	if b.lower <= 0 && b.upper >= 0 then
+		error("Division by interval containing zero")
+	else
+		// [a_lo, a_hi] / [b_lo, b_hi] = [a_lo, a_hi] * [1/b_hi, 1/b_lo]
+		interval_multiply(a, Interval(1.0/b.upper, 1.0/b.lower))
+)
 ```
 
 ### Interval Set Operations
 
 ```
-function interval_intersection(a, b):
+fn interval_intersection(a, b) (
 	// [a_lo, a_hi] ∩ [b_lo, b_hi] = [max(a_lo, b_lo), min(a_hi, b_hi)]
-	lower = max(a.lower, b.lower)
-	upper = min(a.upper, b.upper)
+	let lower = max(a.lower, b.lower);
+	let upper = min(a.upper, b.upper);
 
-	if lower <= upper:
-		return Interval(lower, upper)
-	else:
-		return empty_interval()  // Empty intersection
+	if lower <= upper then
+		Interval(lower, upper)
+	else
+		empty_interval()  // Empty intersection
+)
 
-function interval_hull(a, b):
+fn interval_hull(a, b) (
 	// Hull (smallest interval containing both a and b)
 	// [a_lo, a_hi] ∪ [b_lo, b_hi] = [min(a_lo, b_lo), max(a_hi, b_hi)]
-	return Interval(min(a.lower, b.lower), max(a.upper, b.upper))
+	Interval(min(a.lower, b.lower), max(a.upper, b.upper))
+)
 ```
 
 ## Effect System Canonicalization
@@ -1077,105 +1241,131 @@ Effect systems track computational effects like state mutation, I/O, and excepti
 ### Effect Analysis and Canonicalization
 
 ```
-function infer_effects(expr):
-	// Recursively infer effects in expressions
-	if expr is literal or constant:
-		return Pure  // No effects
+fn infer_effects(expr) (
+	expr is (
+		// Literal or constant
+		e => Pure if is_literal(e) || is_constant(e);  // No effects
 
-	if expr is variable_reference:
-		return Pure  // Reading a variable has no effect
+		// Variable reference
+		VariableRef(__) => Pure;  // Reading a variable has no effect
 
-	if expr is assignment(var, value):
-		value_effect = infer_effects(value)
-		return combine_effects(value_effect, State)  // Assignment affects state
+		// Assignment
+		Assignment(var, value) => (
+			let value_effect = infer_effects(value);
+			combine_effects(value_effect, State)  // Assignment affects state
+		);
 
-	if expr is function_call(f, args):
-		arg_effects = [infer_effects(arg) for arg in args]
-		function_effect = get_function_effect(f)
-		return combine_all_effects([function_effect] + arg_effects)
+		// Function call
+		FunctionCall(f, args) => (
+			let arg_effects = map(args, infer_effects);
+			let function_effect = get_function_effect(f);
+			combine_all_effects(cons(function_effect, arg_effects))
+		);
 
-	if expr is if_statement(cond, then_branch, else_branch):
-		cond_effect = infer_effects(cond)
-		then_effect = infer_effects(then_branch)
-		else_effect = infer_effects(else_branch)
-		return combine_all_effects([cond_effect, then_effect, else_effect])
+		// Conditional
+		IfStatement(cond, then_branch, else_branch) => (
+			let cond_effect = infer_effects(cond);
+			let then_effect = infer_effects(then_branch);
+			let else_effect = infer_effects(else_branch);
+			combine_all_effects([cond_effect, then_effect, else_effect])
+		);
 
-	if expr is sequence(expr1, expr2):
-		effect1 = infer_effects(expr1)
-		effect2 = infer_effects(expr2)
-		return combine_effects(effect1, effect2)
+		// Sequence
+		Sequence(expr1, expr2) => (
+			let effect1 = infer_effects(expr1);
+			let effect2 = infer_effects(expr2);
+			combine_effects(effect1, effect2)
+		);
 
-	return Unknown  // Default case
+		// Default case
+		__ => Unknown
+	)
+)
 ```
 
 ### Effect-Based Code Transformation
 
 ```
-function canonicalize_with_effects(expr):
+fn canonicalize_with_effects(expr) (
 	// Analyze effects
-	effects = infer_effects(expr)
+	let effects = infer_effects(expr);
 
 	// Separate pure from effectful code
-	pure_parts, effectful_parts = separate_by_effects(expr, effects)
+	let parts = separate_by_effects(expr, effects);
+	let pure_parts = parts.first;
+	let effectful_parts = parts.second;
 
 	// Hoist pure computations
-	result = hoist_pure_computations(pure_parts, effectful_parts)
+	let result1 = hoist_pure_computations(pure_parts, effectful_parts);
 
 	// Ensure consistent ordering of effects
-	result = order_effects(result)
+	let result2 = order_effects(result1);
 
-	return result
+	result2
+)
 
-function separate_by_effects(expr, effects):
+fn separate_by_effects(expr, effects) (
 	// Separate expression into pure and effectful parts
-	if effects == Pure:
-		return expr, None
+	if effects == Pure then
+		Pair(expr, None())
+	else expr is (
+		Sequence(expr1, expr2) => (
+			let result1 = separate_by_effects(expr1, infer_effects(expr1));
+			let pure1 = result1.first;
+			let effectful1 = result1.second;
 
-	if expr is sequence(expr1, expr2):
-		pure1, effectful1 = separate_by_effects(expr1, infer_effects(expr1))
-		pure2, effectful2 = separate_by_effects(expr2, infer_effects(expr2))
+			let result2 = separate_by_effects(expr2, infer_effects(expr2));
+			let pure2 = result2.first;
+			let effectful2 = result2.second;
 
-		pure = combine_pure(pure1, pure2)
-		effectful = combine_effectful(effectful1, effectful2)
+			let pure = combine_pure(pure1, pure2);
+			let effectful = combine_effectful(effectful1, effectful2);
 
-		return pure, effectful
+			Pair(pure, effectful)
+		);
 
-	// Default case: consider the whole expression effectful if it has effects
-	return None, expr
+		// Default case: consider the whole expression effectful if it has effects
+		__ => Pair(None(), expr)
+	)
+)
 ```
 
 ### Effect Commutativity
 
 ```
-function order_effects(expr):
-	// Order effects based on commutativity properties
-	if expr is sequence(expr1, expr2):
-		effect1 = infer_effects(expr1)
-		effect2 = infer_effects(expr2)
+fn order_effects(expr) (
+	expr is (
+		Sequence(expr1, expr2) => (
+			let effect1 = infer_effects(expr1);
+			let effect2 = infer_effects(expr2);
 
-		if are_commutative(effect1, effect2):
-			// Use canonical ordering for commutative effects
-			if should_swap(expr1, expr2):
-				return sequence(expr2, expr1)
+			if are_commutative(effect1, effect2) then
+				// Use canonical ordering for commutative effects
+				if should_swap(expr1, expr2) then
+					Sequence(expr2, expr1)
+				else
+					Sequence(order_effects(expr1), order_effects(expr2))
+			else
+				// Recursively order subexpressions
+				Sequence(order_effects(expr1), order_effects(expr2))
+		);
 
-		// Recursively order subexpressions
-		return sequence(order_effects(expr1), order_effects(expr2))
+		// For non-sequence expressions, return as is
+		__ => expr
+	)
+)
 
-	return expr
-
-function are_commutative(effect1, effect2):
+fn are_commutative(effect1, effect2) (
 	// Check if two effects commute (can be reordered)
-	if effect1 == Pure or effect2 == Pure:
-		return true  // Pure effects commute with anything
-
-	if effect1 == ReadOnly and effect2 == ReadOnly:
-		return true  // Multiple reads commute
-
-	// Specific effect commutativity rules
-	if effect1 == Print and effect2 == Print:
-		return false  // Print effects don't commute (order matters)
-
-	return false  // Default: assume effects don't commute
+	if effect1 == Pure || effect2 == Pure then
+		true  // Pure effects commute with anything
+	else if effect1 == ReadOnly && effect2 == ReadOnly then
+		true  // Multiple reads commute
+	else if effect1 == Print && effect2 == Print then
+		false  // Print effects don't commute (order matters)
+	else
+		false  // Default: assume effects don't commute
+)
 ```
 
 ## General Approach for Any Data Structure
@@ -1187,19 +1377,31 @@ For any data structure with a defined group action, the general approach is:
 3. **Generate the orbit** or use a specialized algorithm
 4. **Select the canonical representative** (usually the lexicographically smallest)
 
-```
-function find_canonical_form(object, group, action):
-	if has_specialized_algorithm(group):
-		return apply_specialized_algorithm(object, group)
+```orbit
+fn find_canonical_form(object, group, action) (
+	if has_specialized_algorithm(group) then
+		apply_specialized_algorithm(object, group)
+	else (
+		// General case - generate orbit and find minimum
+		fn find_min_in_orbit(elements, idx, current_min) (
+			if idx >= length(elements) then current_min
+			else (
+				let g = elements[idx];
+				let transformed = action(g, object);
 
-	// General case - generate orbit and find minimum
-	canonical = object
-	for each g in group:
-		transformed = action(g, object)
-		if transformed < canonical:  // Using consistent comparison
-			canonical = transformed
+				let new_min = if is_less(transformed, current_min) then
+					transformed
+				else
+					current_min;
 
-	return canonical
+				find_min_in_orbit(elements, idx + 1, new_min)
+			)
+		);
+
+		// Start with the object itself as the minimum
+		find_min_in_orbit(group, 0, object)
+	)
+)
 ```
 
 ## Implementation in Orbit System
@@ -1208,9 +1410,9 @@ In the Orbit system, canonicalization is integrated through:
 
 1. **Data Structure Registration**:
    Each major structure registers its symmetry group(s) and canonicalization action:
-   ```
-	 register_structure(array, symmetric_group, sort_array)
-	 register_structure(cyclic_array, cyclic_group, min_rotation)
+```orbit
+register_structure(array, symmetric_group, sort_array);
+register_structure(cyclic_array, cyclic_group, min_rotation);
 ```
 
 2. **Canonicalization Algorithms**:

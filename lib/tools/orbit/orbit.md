@@ -19,7 +19,7 @@ Orbit programs use parentheses for grouping statements and semicolons as separat
 
 ```orbit
 // This is a basic Orbit program
-fn main() (
+fn main() = (
 	let x = 5;
 	let y = 10;
 	let result = x + y;
@@ -65,7 +65,7 @@ Functions in Orbit are defined using the `fn` keyword, followed by the function 
 
 ```orbit
 // Basic function definition
-fn add(a, b) (
+fn add(a, b) = (
 	a + b
 );
 
@@ -73,7 +73,7 @@ fn add(a, b) (
 fn multiply(a, b) = a * b;
 
 // Function with multiple statements
-fn calculateArea(width, height) (
+fn calculateArea(width, height) = (
 	let area = width * height;
 	println("Calculating area: " + i2s(width) + " * " + i2s(height));
 	area  // Last expression is the return value
@@ -191,19 +191,19 @@ Since Orbit has no loops, recursion is the primary method for iteration:
 
 ```orbit
 // Sum numbers from 1 to n using recursion
-fn sum(n) (
+fn sum(n) = (
 	if n <= 0 then 0
 	else n + sum(n - 1)
 );
 
 // Factorial function
-fn factorial(n) (
+fn factorial(n) = (
 	if n <= 1 then 1
 	else n * factorial(n - 1)
 );
 
 // Processing lists recursively
-fn length(list) (
+fn length(list) = (
 	list is (
 		Nil() => 0;
 		Cons(_, tail) => 1 + length(tail)
@@ -280,6 +280,36 @@ let exists = ∃ x: P(x);  // Existential quantifier
 ```
 </math_operations>
 
+<running_and_debugging>
+## Running and Debugging Orbit Programs
+
+### Running a Single Orbit Program
+
+To run a single Orbit program, use the Flow compiler with the orbit.flow file as the entry point:
+
+```bash
+flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- path/to/yourprogram.orb
+```
+
+### Tracing Program Execution
+
+Orbit provides a detailed tracing feature that shows all steps of interpretation, which is invaluable for debugging and understanding program execution. To enable tracing, add the `trace=1` parameter:
+
+```bash
+flowcpp --batch orbit.flow -- trace=1 path/to/yourprogram.orb
+```
+
+### Pretty Printing Orbit Programs
+
+Orbit provides a command-line flag to pretty print the parse tree of a program without executing it. This is useful for understanding how your code is parsed and structured.
+
+To pretty print an Orbit program, use the `pretty=1` parameter:
+
+```bash
+flowcpp --batch orbit.flow -- pretty=1 path/to/yourprogram.orb
+```
+</running_and_debugging>
+
 <ast_manipulation>
 Orbit has powerful capabilities for working with abstract syntax trees (ASTs):
 
@@ -299,7 +329,7 @@ expr is (
 )
 
 // Transform an AST
-fn simplify(expr : ast) (
+fn simplify(expr : ast) = (
 	expr is (
 		a + 0 => a;
 		0 + a => a;
@@ -375,6 +405,11 @@ list2array(list : *) -> [*]         // Convert list to array
 getConstructor(x : *) -> string     // Get constructor name of value
 getField(obj : *, field : int) -> *  // Get field from constructor by index
 setField(obj : *, field : int, value : *) -> *  // Set field in constructor by index
+```
+
+## AST Manipulation
+```orbit
+prettyOrbit(expr : ast) -> string   // Format an AST expression as readable code
 ```
 
 ## Input/Output
