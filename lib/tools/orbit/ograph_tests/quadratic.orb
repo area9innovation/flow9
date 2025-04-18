@@ -1,47 +1,134 @@
-// TODO: We probably need more stuff
+// Quadratic equation solver using Orbit ograph system with rewrite library
+import lib/rewrite;
 
-// Rewrite subtraction to addition for uniformity
-u - v => u + (-1) * v;
-a = b => a - b = 0;
+// Helper functions to check if expression is a number or variable
+fn is_number(expr) = (astname(expr) == "Int" || astname(expr) == "Double");
+fn is_var(expr) = (astname(expr) == "Variable" || astname(expr) == "Identifier");
 
-// Associate and commute sums for GLex ordering
-a + (b + c) => (a + b) + c;
-(-1) * (-1) => 1;
-a * x + b * x => (a + b) * x if is_number(a) && is_number(b);
+// Create rewrite rules for solving quadratic equations
+fn makeQuadraticRules() = [
+    // Rewrite subtraction to addition for uniformity
+    prepareRule(
+        "Subtraction to addition",
+        quote(u - v),
+        quote(u + (-1) * v)
+    ),
+    prepareRule(
+        "Equation to standard form",
+        quote(a = b),
+        quote(a - b = 0)
+    ),
+    
+    // Associate and commute sums for GLex ordering
+    prepareRule(
+        "Associativity of addition",
+        quote(a + (b + c)),
+        quote((a + b) + c)
+    ),
+    prepareRule(
+        "Double negation",
+        quote((-1) * (-1)),
+        quote(1)
+    ),
+    prepareRule(
+        "Collect like terms with variable",
+        quote(a * x + b * x),
+        quote((a + b) * x),
+        quote(is_number(a) && is_number(b))
+    ),
+    
+    // Reordering rules to force canonical GLex order
+    prepareRule(
+        "Order linear and quadratic terms",
+        quote(a * x + b * x^2),
+        quote(b * x^2 + a * x),
+        quote(is_number(a) && is_number(b) && is_var(x))
+    ),
+    prepareRule(
+        "Order constant and linear terms",
+        quote(a + b * x),
+        quote(b * x + a),
+        quote(is_number(a) && is_number(b) && is_var(x))
+    ),
+    prepareRule(
+        "Order full quadratic expression",
+        quote(c + b * x + a * x^2),
+        quote(a * x^2 + b * x + c),
+        quote(is_number(a) && is_number(b) && is_number(c) && is_var(x))
+    ),
+    
+    // Combine like constants
+    prepareRule(
+        "Add numeric constants",
+        quote(a + b),
+        quote(eval(a + b)),
+        quote(is_number(a) && is_number(b))
+    ),
+    prepareRule(
+        "Multiply numeric constants",
+        quote(a * b),
+        quote(eval(a * b)),
+        quote(is_number(a) && is_number(b))
+    ),
+    
+    // Solve based on discriminant
+    prepareRule(
+        "Solve quadratic with positive discriminant",
+        quote(a * x^2 + b * x + c = 0),
+        quote(Solutions(x, [(-b + sqrt(b^2 - 4 * a * c)) / (2 * a), (-b - sqrt(b^2 - 4 * a * c)) / (2 * a)])),
+        quote(is_number(a) && is_number(b) && is_number(c) && eval(b^2 - 4 * a * c) > 0 && is_var(x))
+    ),
+    prepareRule(
+        "Solve quadratic with zero discriminant",
+        quote(a * x^2 + b * x + c = 0),
+        quote(Solutions(x, [-b / (2 * a)])),
+        quote(is_number(a) && is_number(b) && is_number(c) && eval(b^2 - 4 * a * c) == 0 && is_var(x))
+    ),
+    prepareRule(
+        "Solve quadratic with negative discriminant",
+        quote(a * x^2 + b * x + c = 0),
+        quote(Solutions(x, [])),
+        quote(is_number(a) && is_number(b) && is_number(c) && eval(b^2 - 4 * a * c) < 0 && is_var(x))
+    )
+];
 
-// Reordering rules to force canonical GLex order
-a * x + b * x² => b * x² + a * x if is_number(a) && is_number(b) && is_var(x);
-a + b * x => b * x + a if is_number(a) && is_number(b) && is_var(x);
-c + b * x + a * x² => a * x² + b * x + c if is_number(a) && is_number(b) && is_number(c) && is_var(x);
+// Function to solve a quadratic equation using the rewrite rules
+fn solveQuadratic(expr) = (
+    let rules = makeQuadraticRules();
+    let maxIterations = 50;
+    applyRulesUntilFixedPoint(expr, rules, maxIterations)
+);
 
-// Combine like constants
-a + b => eval(a + b) if is_number(a) && is_number(b);
-a * b => eval(a * b) if is_number(a) && is_number(b);
+// Test function to run all tests and print results
+fn runTests() = (
+    let testCases = [
+        quote(1 + 2*x + x^2 = 0),
+        quote(x + x^2 + 4 = 0),
+        quote(4 + x^2 - 6*x = 0),
+        quote(-6*x + x^2 + 4 = 0),
+        quote(x^2 + x = 2*x^2 - 3*x + 4),
+        quote(3 + x = x^2 + x^2 + 5),
+        quote(x^2 + 2*x = x^2 + 1),
+        quote(x + 1 = x^2 + 2*x^2 + 1),
+        quote(2*x^2 + 3 = x + x^2 + x^2 + 3),
+        quote(x = x^2 + x + 1),
+        quote(x^2 + x^2 = x + x)
+    ];
+    
+    let i = 0;
+    while (i < length(testCases)) (
+        let testCase = testCases[i];
+        println("Test " + i2s(i + 1) + ": " + prettyOrbit(testCase));
+        
+        let result = solveQuadratic(testCase);
+        println("Result: " + prettyOrbit(result));
+        println("");
+        
+        i = i + 1
+    )
+);
 
-// Solve based on discriminant
-a * x² + b * x + c = 0 =>
-	x ∈ { (-b + sqrt(b² - 4 * a * c)) / (2 * a), (-b - sqrt(b² - 4 * a * c)) / (2 * a) }
-	if is_number(a) && is_number(b) && is_number(c) && eval(b² - 4 * a * c) > 0 && is_var(x);
-
-a * x² + b * x + c = 0 =>
-	x ∈ { -b / (2 * a) } 
-	if is_number(a) && is_number(b) && is_number(c) && eval(b² - 4 * a * c) = 0 && is_var(x);
-
-a * x² + b * x + c = 0 =>
-	x ∈ {}
-	if is_number(a) && is_number(b) && is_number(c) && eval(b² - 4 * a * c) < 0 && is_var(x);
-
-// Test cases:
-
-1 + 2x + x^2 = 0
-x + x^2 + 4= 0
-4 + x^2 - 6x= 0
--6x + x^2 + 4= 0
-x^2 + x = 2x^2 - 3x + 4
-x^2 + x = 2x^2 - 3x + 4
-3 + x = x^2 + x^2 + 5
-x^2 + 2x = x^2 + 1
-x + 1 = x^2 + 2x^2 + 1
-2x^2 + 3 = x + x^2 + x^2 + 3
-x = x^2 + x + 1
-x^2 + x^2 = x + x
+// Main function that runs the tests
+println("Testing quadratic equation solver with ograph rewrite system:");
+println("--------------------------------------------------");
+runTests()
