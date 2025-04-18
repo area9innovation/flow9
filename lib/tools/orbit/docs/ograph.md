@@ -46,6 +46,42 @@ The `extractOGraph` allows us to get it back out:
 let expr = extractOGraph(g, exprId);
 ```
 
+#### `processDomainAnnotations(graphName: string, expr: expression) -> int`
+
+**Processes an expression with domain annotations, adding domains to the appropriate nodes.**
+
+- **Parameters:**
+  - `graphName`: The name of the O-Graph (as a string).
+  - `expr`: The expression that may contain domain annotations using the colon syntax (e.g., `(a + b) : Algebra`).
+
+- **Returns:**  
+  The ID of the base expression node (without the domain annotation).
+
+- **Behavior:**
+  - For expressions with domain annotations like `(expr) : Domain`, it adds the domain to the expression's eclass.
+  - For nested annotations like `((expr) : Domain1) : Domain2`, it adds both domains to the same expression.
+  - Reuses existing nodes when possible rather than creating duplicates.
+  - For regular expressions without annotations, behaves similarly to `addOGraph`.
+
+- **Usage Example:**
+  ```orbit
+	let g = makeOGraph("myGraph");
+
+	// Add an expression with domain annotation
+	let id = processDomainAnnotations(g, quote((a + b) : Algebra));
+
+	// Add a nested domain annotation
+	processDomainAnnotations(g, quote(((a + b) : Algebra) : Ring));
+
+	// Check if expression has domains
+	let has_algebra = findOGraphId(g, quote((a + b) : Algebra));
+	let has_ring = findOGraphId(g, quote((a + b) : Ring));
+```
+
+- **Notes:**
+  - More natural way to add domain annotations compared to adding domains separately with `addDomainToNode`.
+  - Particularly useful when working with substitution results in rewriting systems.
+
 To document the new `findOGraphId` runtime function in `ograph.md`, you should add a subsection in the "Available Runtime Functions" section (below or near `addOGraph` and `extractOGraph`). Here’s a precise documentation excerpt to include:
 
 #### `findOGraphId(graphName: string, expr: expression) -> int`
@@ -123,6 +159,22 @@ addDomainToNode(g, exprId, domainId);
 ```
 
 This allows associating expressions with arbitrary domain expressions.
+
+#### Using Domain Annotations with `processDomainAnnotations`
+
+A more intuitive way to associate domains with expressions is to use the colon (`:`) syntax together with the `processDomainAnnotations` function:
+
+```orbit
+// Add an expression with domain annotation directly
+let id = processDomainAnnotations(g, (a + b) : Algebra);
+
+// This is equivalent to:
+let exprId = addOGraph(g, a + b);
+let domainId = addOGraph(g, Algebra);
+addDomainToNode(g, exprId, domainId);
+```
+
+Using domain annotations with `processDomainAnnotations` is particularly valuable when working with pattern matching and rewriting systems, as it allows you to directly express that the result of a rewrite belongs to a specific domain.
 
 ### Pattern Matching
 
@@ -225,6 +277,31 @@ When working with pattern matching results, Orbit provides three complementary f
 1. **`substituteWithBindings(expr, bindings)`**: Performs only variable substitution, replacing variables with their bound expressions without evaluating the result.
 2. **`evalWithBindings(expr, bindings)`**: Both substitutes variables and evaluates the resulting expression.
 3. **`unquote(expr, bindings)`**: Traverses an AST, evaluating only the parts wrapped in `eval` calls, while leaving the rest intact.
+
+#### Domain Annotations in Pattern Matching and Substitution
+
+When working with domain annotations in pattern matching and rewriting, you typically want to:
+
+1. Match a pattern and create a new expression with domain annotations
+2. Add this expression to the graph while preserving the domain annotations
+
+Here's how to do this effectively:
+
+```orbit
+// Example rewriting with domain annotations
+matchOGraphPattern(g, pattern, \(bindings : ast, eclassId) . (
+	// Create result with domain annotation
+	let result = substituteWithBindings(quote((x + y) : Algebra), bindings);
+
+	// Process the result with domain annotations properly handled
+	let resultId = processDomainAnnotations(g, result);
+
+	// Merge with the original node (optional, depending on use case)
+	mergeOGraphNodes(g, resultId, eclassId);
+));
+```
+
+This approach ensures that domain annotations in the substitution result are properly processed and added to the graph, rather than being treated as plain syntax.
 
 Choosing between these functions depends on your use case:
 
