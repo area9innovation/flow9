@@ -17,6 +17,7 @@
 - Add math natives
 - Runtime function to read & parse files
 - Operators as symbols
+- Support exponentiation ^
 - Subscripts on operators
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Hook in evaluation functions to implement AST nodes directly in Orbit itself, potentially using rewriting
