@@ -48,7 +48,7 @@
 - Implement attaching Domain on rhs of pattern (in substitution maybe?)
 ✅ Check ograph operations
 ✅ Implement pattern matching in ograph
-- Extract minimal program from ograph via cost function
+- Extract minimal program from ograph via cost function or domain annotation?
 - Implement domain hierarchy relationships (e.g., Integer ⊂ Real)
 - Add cost model for extracting optimal expressions from ograph
 - Add domain-specific canonicalization via symmetry groups
