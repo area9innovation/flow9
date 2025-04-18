@@ -404,45 +404,38 @@ Differential calculus deals with rates of change and slopes of curves. Automatic
 
 To canonicalize derivatives, we apply the standard rules of calculus in a consistent order:
 
-```
-function canonicalize_derivative(expr):
-	// Apply chain rule for composite functions
-	if expr is d/dx(f(g(x))):
-		return canonicalize((d/df(f))(g(x)) * (d/dx(g(x))))
+```orbit
+fn canonicalize_derivative(expr) = (
+	expr is (
+		// Apply chain rule for composite functions
+		d/dx(f(g(x))) => canonicalize((d/df(f))(g(x)) * (d/dx(g(x))));
 
-	// Apply product rule
-	if expr is d/dx(f * g):
-		return canonicalize(f * (d/dx(g)) + (d/dx(f)) * g)
+		// Apply product rule
+		d/dx(f * g) => canonicalize(f * (d/dx(g)) + (d/dx(f)) * g);
 
-	// Apply quotient rule
-	if expr is d/dx(f / g):
-		return canonicalize(((d/dx(f)) * g - f * (d/dx(g))) / (g^2))
+		// Apply quotient rule
+		d/dx(f / g) => canonicalize(((d/dx(f)) * g - f * (d/dx(g))) / (g^2));
 
-	// Apply sum/difference rule
-	if expr is d/dx(f + g):
-		return canonicalize((d/dx(f)) + (d/dx(g)))
-	if expr is d/dx(f - g):
-		return canonicalize((d/dx(f)) - (d/dx(g)))
+		// Apply sum/difference rule
+		d/dx(f + g) => canonicalize((d/dx(f)) + (d/dx(g)));
+		d/dx(f - g) => canonicalize((d/dx(f)) - (d/dx(g)));
 
-	// Apply power rule
-	if expr is d/dx(x^n) where n is constant:
-		return canonicalize(n * x^(n-1))
+		// Apply power rule
+		d/dx(x^n) => canonicalize(n * x^(n-1)) if is_constant(n);
 
-	// Apply standard function derivatives
-	if expr is d/dx(sin(x)):
-		return canonicalize(cos(x))
-	if expr is d/dx(cos(x)):
-		return canonicalize(-sin(x))
-	if expr is d/dx(e^x):
-		return canonicalize(e^x)
-	if expr is d/dx(ln(x)):
-		return canonicalize(1/x)
+		// Apply standard function derivatives
+		d/dx(sin(x)) => canonicalize(cos(x));
+		d/dx(cos(x)) => canonicalize(-sin(x));
+		d/dx(e^x) => canonicalize(e^x);
+		d/dx(ln(x)) => canonicalize(1/x);
 
-	// Handle higher-order derivatives recursively
-	if expr is d²/dx²(f):
-		return canonicalize(d/dx(d/dx(f)))
+		// Handle higher-order derivatives recursively
+		d²/dx²(f) => canonicalize(d/dx(d/dx(f)));
 
-	return expr
+		// Default case
+		_ => expr
+	)
+)
 ```
 
 ### Automatic Differentiation Algorithms
@@ -543,29 +536,28 @@ fn reverse_ad(f, x) (
 
 For multivariate functions, we need to handle partial derivatives:
 
-```
-function canonicalize_partial_derivative(expr):
-	// For constants with respect to the variable
-	if expr is ∂/∂xᵢ(c) and c is constant with respect to xᵢ:
-		return 0
+```orbit
+fn canonicalize_partial_derivative(expr) = (
+	expr is (
+		// For constants with respect to the variable
+		∂/∂xᵢ(c) => 0 if is_constant_wrt(c, xᵢ);
 
-	// For variables
-	if expr is ∂/∂xᵢ(xⱼ):
-		return 1 if i == j else 0
+		// For variables
+		∂/∂xᵢ(xⱼ) => if i == j then 1 else 0;
 
-	// Sum rule
-	if expr is ∂/∂xᵢ(f + g):
-		return canonicalize(∂/∂xᵢ(f) + ∂/∂xᵢ(g))
+		// Sum rule
+		∂/∂xᵢ(f + g) => canonicalize(∂/∂xᵢ(f) + ∂/∂xᵢ(g));
 
-	// Product rule
-	if expr is ∂/∂xᵢ(f * g):
-		return canonicalize(f * ∂/∂xᵢ(g) + ∂/∂xᵢ(f) * g)
+		// Product rule
+		∂/∂xᵢ(f * g) => canonicalize(f * ∂/∂xᵢ(g) + ∂/∂xᵢ(f) * g);
 
-	// Mixed partial derivatives (equal for smooth functions)
-	if expr is ∂²f/∂xᵢ∂xⱼ and is_smooth(f):
-		return canonicalize(∂²f/∂xⱼ∂xᵢ)
+		// Mixed partial derivatives (equal for smooth functions)
+		∂²f/∂xᵢ∂xⱼ => canonicalize(∂²f/∂xⱼ∂xᵢ) if is_smooth(f);
 
-	return expr
+		// Default case
+		_ => expr
+	)
+)
 ```
 
 ## Matrix and Linear Algebra Canonicalization
@@ -574,116 +566,179 @@ Matrices and linear algebraic structures require specialized canonicalization ap
 
 ### Basic Matrix Canonicalization
 
-```
-function canonicalize_matrix(matrix):
+```orbit
+fn canonicalize_matrix(matrix) = (
 	// Handle special cases based on matrix properties
-	if is_diagonal(matrix):
-		return canonicalize_diagonal_matrix(matrix)
-
-	if is_symmetric(matrix):
-		return canonicalize_symmetric_matrix(matrix)
-
-	if is_triangular(matrix):
-		return canonicalize_triangular_matrix(matrix)
-
+	if is_diagonal(matrix) then
+		canonicaliz_ediagonal_matrix(matrix)
+	else if is_symmetric(matrix) then
+		canonicaliz_esymmetric_matrix(matrix)
+	else if is_triangular(matrix) then
+		canonicaliz_etriangular_matrix(matrix)
 	// For general matrices, use row echelon form
-	if need_canonical_representation:
-		return row_echelon_form(matrix)
-
-	return matrix
+	else if need_canonical_representation then
+		row_echelon_form(matrix)
+	else
+		matrix
+)
 ```
 
 ### Matrix Decomposition-Based Canonicalization
 
 Matrix decompositions provide powerful tools for canonicalization:
 
-```
-function canonicalize_via_decomposition(matrix):
+```orbit
+fn canonicalize_via_decomposition(matrix) = (
 	// Singular Value Decomposition (SVD)
-	if svd_is_appropriate(matrix):
-		U, Σ, V_T = svd(matrix)
+	if svd_is_appropriate(matrix) then (
+		let svd_result = svd(matrix);
+		let U = svd_result.first;
+		let Σ = svd_result.second;
+		let V_T = svd_result.third;
 		// Ensure uniqueness of decomposition
-		U, Σ, V_T = make_unique_svd(U, Σ, V_T)
-		return (U, Σ, V_T)  // Canonical triplet representation
+		let unique_svd = make_unique_svd(U, Σ, V_T);
+		Triple(unique_svd.first, unique_svd.second, unique_svd.third)  // Canonical triplet representation
+	)
 
 	// Eigendecomposition for diagonalizable matrices
-	if is_diagonalizable(matrix):
-		P, D = eigendecomposition(matrix)
+	else if is_diagonalizable(matrix) then (
+		let eigen_result = eigendecomposition(matrix);
+		let P = eigen_result.first;
+		let D = eigen_result.second;
 		// Sort eigenvalues and corresponding eigenvectors
-		P, D = sort_eigen(P, D)
-		return (P, D)  // Canonical pair representation
+		let sorted_eigen = sort_eigen(P, D);
+		Pair(sorted_eigen.first, sorted_eigen.second)  // Canonical pair representation
+	)
 
 	// QR decomposition
-	if qr_is_appropriate(matrix):
-		Q, R = qr_decomposition(matrix)
+	else if qr_is_appropriate(matrix) then (
+		let qr_result = qr_decomposition(matrix);
+		let Q = qr_result.first;
+		let R = qr_result.second;
 		// Ensure uniqueness (e.g., positive diagonal in R)
-		Q, R = make_unique_qr(Q, R)
-		return (Q, R)  // Canonical pair representation
+		let unique_qr = make_unique_qr(Q, R);
+		Pair(unique_qr.first, unique_qr.second)  // Canonical pair representation
+	)
 
 	// LU decomposition
-	if lu_is_appropriate(matrix):
-		L, U = lu_decomposition(matrix)
-		return (L, U)  // Canonical pair representation
+	else if lu_is_appropriate(matrix) then (
+		let lu_result = lu_decomposition(matrix);
+		Pair(lu_result.first, lu_result.second)  // Canonical pair representation
+	)
 
 	// Cholesky for positive definite matrices
-	if is_positive_definite(matrix):
-		L = cholesky_decomposition(matrix)  // Lower triangular
-		return L  // Canonical representation
+	else if is_positive_definite(matrix) then (
+		let L = cholesky_decomposition(matrix);  // Lower triangular
+		L  // Canonical representation
+	)
 
-	return matrix
+	else
+		matrix
+)
 ```
 
 ### Structured Matrix Canonicalization
 
-```
-function canonicalize_symmetric_matrix(matrix):
+```orbit
+fn canonicalize_symmetric_matrix(matrix) = (
 	// Ensure the matrix is exactly symmetric
-	n = matrix.rows
-	for i from 0 to n-1:
-		for j from i+1 to n-1:
-			matrix[i,j] = matrix[j,i] = (matrix[i,j] + matrix[j,i])/2
+	let n = matrix.rows;
 
-	return matrix
+	// Helper function to symmetrize all elements
+	fn symmetrize_elements(i, result_matrix) = (
+		if i >= n then result_matrix
+		else (
+			fn process_j(j, curr_matrix) = (
+				if j >= n then curr_matrix
+				else (
+					let avg_value = (curr_matrix[i,j] + curr_matrix[j,i])/2;
+					let matrix1 = set_matrix_element(curr_matrix, i, j, avg_value);
+					let matrix2 = set_matrix_element(matrix1, j, i, avg_value);
+					process_j(j + 1, matrix2)
+				)
+			);
 
-function canonicalize_triangular_matrix(matrix):
+			let updated_matrix = process_j(i + 1, result_matrix);
+			symmetrize_elements(i + 1, updated_matrix)
+		)
+	);
+
+	symmetrize_elements(0, matrix)
+)
+
+fn canonicalize_triangular_matrix(matrix) = (
+	let n = matrix.rows;
+
 	// For upper triangular, zero out below diagonal
-	if is_upper_triangular(matrix):
-		for i from 1 to n-1:
-			for j from 0 to i-1:
-				matrix[i,j] = 0
+	let matrix1 = if is_upper_triangular(matrix) then (
+		// Helper to zero out elements below diagonal
+		fn zero_below(i, curr_matrix) = (
+			if i >= n then curr_matrix
+			else (
+				fn process_j(j, mat) = (
+					if j >= i then mat
+					else (
+						let new_mat = set_matrix_element(mat, i, j, 0);
+						process_j(j + 1, new_mat)
+					)
+				);
+				let updated_matrix = process_j(0, curr_matrix);
+				zero_below(i + 1, updated_matrix)
+			)
+		);
+		zero_below(1, matrix)
+	) else matrix;
 
 	// For lower triangular, zero out above diagonal
-	if is_lower_triangular(matrix):
-		for i from 0 to n-2:
-			for j from i+1 to n-1:
-				matrix[i,j] = 0
+	let matrix2 = if is_lower_triangular(matrix1) then (
+		// Helper to zero out elements above diagonal
+		fn zero_above(i, curr_matrix) = (
+			if i >= n then curr_matrix
+			else (
+				fn process_j(j, mat) = (
+					if j >= n then mat
+					else if j <= i then process_j(j + 1, mat)
+					else (
+						let new_mat = set_matrix_element(mat, i, j, 0);
+						process_j(j + 1, new_mat)
+					)
+				);
+				let updated_matrix = process_j(0, curr_matrix);
+				zero_above(i + 1, updated_matrix)
+			)
+		);
+		zero_above(0, matrix1)
+	) else matrix1;
 
-	return matrix
+	matrix2
+)
 ```
 
 ### Matrix Multiplication Canonicalization
 
-```
-function canonicalize_matrix_multiplication(expr):
-	// Associative property: (AB)C = A(BC)
-	if expr is (A*B)*C:
-		// Choose canonical grouping based on dimensions
-		if A.cols*B.cols + A.cols*C.cols < A.cols*B.cols + B.cols*C.cols:
-			return canonicalize(A*(B*C))
-		else:
-			return canonicalize((A*B)*C)
+```orbit
+fn canonicalize_matrix_multiplication(expr) = (
+	expr is (
+		// Associative property: (AB)C = A(BC)
+		(A*B)*C => (
+			// Choose canonical grouping based on dimensions
+			if A.cols*B.cols + A.cols*C.cols < A.cols*B.cols + B.cols*C.cols then
+				canonicaliz(A*(B*C))
+			else
+				canonicaliz((A*B)*C)
+		);
 
-	// Identity elimination
-	if expr is A*I:
-		return canonicalize(A)
-	if expr is I*A:
-		return canonicalize(A)
+		// Identity elimination
+		A*I => canonicalize(A);
+		I*A => canonicalize(A);
 
-	// Special case: diagonal matrix multiplication
-	if is_diagonal(A) and is_diagonal(B):
-		return canonicalize_diagonal_product(A, B)
+		// Special case: diagonal matrix multiplication
+		A*B => canonicalize_diagonal_product(A, B) if is_diagonal(A) && is_diagonal(B);
 
-	return expr
+		// Default
+		_ => expr
+	)
+)
 ```
 
 ## Enhanced Polynomial Systems and Gröbner Basis
@@ -782,25 +837,28 @@ fn reduce(p, G) (
 
 ### Polynomial Reduction and Normal Forms
 
-```
-function normal_form(f, G):
+```orbit
+fn normal_form(f, G) = (
 	// Compute the normal form of f with respect to Gröbner basis G
 	// This is a unique representative of f in the ideal generated by G
 
-	return reduce(f, G)
+	reduce(f, G)
+)
 
-function ideal_membership_test(f, G):
+fn ideal_membership_test(f, G) = (
 	// Test if polynomial f belongs to the ideal generated by G
-	nf = normal_form(f, G)
+	let nf = normal_form(f, G);
 
-	return nf == 0  // f is in the ideal if and only if its normal form is zero
+	nf == 0  // f is in the ideal if and only if its normal form is zero
+)
 
-function polynomial_canonicalization(f, I):
+fn polynomial_canonicalization(f, I) = (
 	// Canonicalize a polynomial f with respect to an ideal I
 	// by reducing it modulo a Gröbner basis for I
 
-	G = compute_grobner_basis(I)
-	return normal_form(f, G)
+	let G = compute_grobner_basis(I);
+	normal_form(f, G)
+)
 ```
 
 ### Monomial Ordering
@@ -838,98 +896,149 @@ Tensors generalize vectors and matrices to higher dimensions and require special
 
 ### Basic Tensor Canonicalization
 
-```
-function canonicalize_tensor(tensor):
+```orbit
+fn canonicalize_tensor(tensor) = (
 	// Handle tensor symmetry properties
-	if has_index_symmetry(tensor):
-		tensor = apply_symmetry_constraints(tensor)
+	let tensor1 = if has_index_symmetry(tensor) then
+		apply_symmetry_constraints(tensor)
+	else
+		tensor;
 
 	// Rename free indices to canonical names
-	tensor = rename_free_indices(tensor)
+	let tensor2 = rename_free_indices(tensor1);
 
 	// Rename dummy (repeated) indices canonically
-	tensor = rename_dummy_indices(tensor)
+	let tensor3 = rename_dummy_indices(tensor2);
 
 	// Apply tensor contractions where possible
-	tensor = apply_contractions(tensor)
+	let tensor4 = apply_contractions(tensor3);
 
-	return tensor
+	tensor4
+)
 ```
 
 ### Index Canonicalization
 
-```
-function rename_free_indices(tensor):
+```orbit
+fn rename_free_indices(tensor) = (
 	// Identify free indices (those appearing exactly once)
-	free_indices = find_free_indices(tensor)
+	let free_indices = find_free_indices(tensor);
 
 	// Sort free indices based on position and rename to canonical names
-	sorted_indices = sort_by_position(free_indices)
+	let sorted_indices = sort_by_position(free_indices);
 
 	// Create mapping from original indices to canonical names
-	mapping = {sorted_indices[i]: canonical_name(i) for i in range(len(sorted_indices))}
+	fn build_mapping(i, mapping) = (
+		if i >= length(sorted_indices) then mapping
+		else (
+			let new_mapping = setTree(mapping, sorted_indices[i], canonical_name(i));
+			build_mapping(i + 1, new_mapping)
+		)
+	);
+	let mapping = build_mapping(0, makeTree());
 
 	// Apply renaming
-	return rename_indices(tensor, mapping)
+	rename_indices(tensor, mapping)
+)
 
-function rename_dummy_indices(tensor):
+fn rename_dummy_indices(tensor) = (
 	// Identify pairs of dummy indices (those appearing exactly twice)
-	dummy_pairs = find_dummy_pairs(tensor)
+	let dummy_pairs = find_dummy_pairs(tensor);
 
 	// Sort pairs based on position and rename to canonical names
-	sorted_pairs = sort_by_position(dummy_pairs)
+	let sorted_pairs = sort_by_position(dummy_pairs);
 
 	// Create mapping from original indices to canonical names
-	mapping = {}
-	for i, (idx1, idx2) in enumerate(sorted_pairs):
-		dummy_name = canonical_dummy_name(i)
-		mapping[idx1] = dummy_name
-		mapping[idx2] = dummy_name
+	fn build_mapping(i, mapping) = (
+		if i >= length(sorted_pairs) then mapping
+		else (
+			let pair = sorted_pairs[i];
+			let idx1 = pair.first;
+			let idx2 = pair.second;
+			let dummy_name = canonical_dummy_name(i);
+			let mapping1 = setTree(mapping, idx1, dummy_name);
+			let mapping2 = setTree(mapping1, idx2, dummy_name);
+			build_mapping(i + 1, mapping2)
+		)
+	);
+	let mapping = build_mapping(0, makeTree());
 
 	// Apply renaming
-	return rename_indices(tensor, mapping)
+	rename_indices(tensor, mapping)
+)
 ```
 
 ### Symmetry Application
 
-```
-function apply_symmetry_constraints(tensor):
+```orbit
+fn apply_symmetry_constraints(tensor) = (
 	// Get tensor symmetry properties
-	symmetries = get_tensor_symmetries(tensor)
+	let symmetries = get_tensor_symmetries(tensor);
 
-	// Apply each symmetry type
-	for symmetry in symmetries:
-		if symmetry.type == "symmetric":
-			tensor = symmetrize(tensor, symmetry.indices)
+	// Apply each symmetry type recursively
+	fn apply_symmetries(remaining_symmetries, current_tensor) = (
+		if is_empty(remaining_symmetries) then current_tensor
+		else (
+			let symmetry = head(remaining_symmetries);
+			let next_symmetries = tail(remaining_symmetries);
 
-		if symmetry.type == "antisymmetric":
-			tensor = antisymmetrize(tensor, symmetry.indices)
+			let updated_tensor = symmetry.type is (
+				"symmetric" => symmetrize(current_tensor, symmetry.indices);
+				"antisymmetric" => antisymmetrize(current_tensor, symmetry.indices);
+				"cyclic" => cyclically_symmetrize(current_tensor, symmetry.indices);
+				_ => current_tensor
+			);
 
-		if symmetry.type == "cyclic":
-			tensor = cyclically_symmetrize(tensor, symmetry.indices)
+			apply_symmetries(next_symmetries, updated_tensor)
+		)
+	);
 
-	return tensor
+	apply_symmetries(symmetries, tensor)
+)
 
-function symmetrize(tensor, indices):
+fn symmetrize(tensor, indices) = (
 	// Average over all permutations of the specified indices
-	result = zero_tensor_like(tensor)
-	perms = all_permutations(indices)
+	let result = zero_tensor_like(tensor);
+	let perms = all_permutations(indices);
 
-	for perm in perms:
-		result += permute_indices(tensor, indices, perm)
+	// Sum over permutations recursively
+	fn sum_permutations(remaining_perms, sum_tensor) = (
+		if is_empty(remaining_perms) then sum_tensor
+		else (
+			let perm = head(remaining_perms);
+			let next_perms = tail(remaining_perms);
+			let permuted_tensor = permute_indices(tensor, indices, perm);
+			let updated_sum = tensor_add(sum_tensor, permuted_tensor);
+			sum_permutations(next_perms, updated_sum)
+		)
+	);
 
-	return result / len(perms)
+	let total = sum_permutations(perms, result);
+	tensor_divide(total, length(perms))
+)
 
-function antisymmetrize(tensor, indices):
+fn antisymmetrize(tensor, indices) = (
 	// Average over all permutations of the specified indices with sign
-	result = zero_tensor_like(tensor)
-	perms = all_permutations(indices)
+	let result = zero_tensor_like(tensor);
+	let perms = all_permutations(indices);
 
-	for perm in perms:
-		sign = permutation_sign(perm)
-		result += sign * permute_indices(tensor, indices, perm)
+	// Sum over permutations with sign recursively
+	fn sum_signed_permutations(remaining_perms, sum_tensor) = (
+		if is_empty(remaining_perms) then sum_tensor
+		else (
+			let perm = head(remaining_perms);
+			let next_perms = tail(remaining_perms);
+			let sign = permutation_sign(perm);
+			let permuted_tensor = permute_indices(tensor, indices, perm);
+			let signed_tensor = tensor_multiply(permuted_tensor, sign);
+			let updated_sum = tensor_add(sum_tensor, signed_tensor);
+			sum_signed_permutations(next_perms, updated_sum)
+		)
+	);
 
-	return result / len(perms)
+	let total = sum_signed_permutations(perms, result);
+	tensor_divide(total, length(perms))
+)
 ```
 
 ## Finite Automata and Regular Expressions
@@ -1023,45 +1132,44 @@ fn minimize_dfa(dfa) (
 
 ### Regular Expression Canonicalization
 
-```
-function canonicalize_regex(regex):
+```orbit
+fn canonicalize_regex(regex) = (
 	// Convert to NFA
-	nfa = regex_to_nfa(regex)
+	let nfa = regex_to_nfa(regex);
 
 	// Convert NFA to DFA
-	dfa = nfa_to_dfa(nfa)
+	let dfa = nfa_to_dfa(nfa);
 
 	// Minimize DFA
-	min_dfa = minimize_dfa(dfa)
+	let min_dfa = minimize_dfa(dfa);
 
 	// Convert back to regex (if needed)
-	canonical_regex = dfa_to_regex(min_dfa)
+	let canonical_regex = dfa_to_regex(min_dfa);
 
-	return canonical_regex
+	canonical_regex
 
-function regex_algebraic_simplification(regex):
-	// Apply algebraic laws to simplify regex
-	// Idempotence
-	if regex matches (r|r):
-		return simplify(r)
+fn regex_algebraic_simplification(regex) = (
+	// Apply algebraic laws to simplify regex using pattern matching
+	regex is (
+		// Idempotence
+		r|r => simplify(r);
 
-	// Empty string laws
-	if regex matches (rε):
-		return simplify(r)
+		// Empty string laws
+		rε => simplify(r);
 
-	// Empty set laws
-	if regex matches (r|∅):
-		return simplify(r)
+		// Empty set laws
+		r|∅ => simplify(r);
 
-	// Distributivity
-	if regex matches (r(s|t)):
-		return simplify(rs|rt)
+		// Distributivity
+		r(s|t) => simplify(rs|rt);
 
-	// Kleene star laws
-	if regex matches ((r*)*):
-		return simplify(r*)
+		// Kleene star laws
+		(r*)* => simplify(r*);
 
-	return regex
+		// Default case
+		_ => regex
+	)
+)
 ```
 
 ## Loop Transformations and Polyhedral Model
@@ -1070,97 +1178,109 @@ Loop transformations are critical for optimizing computation-intensive programs.
 
 ### Loop Transformations
 
-```
-function canonicalize_loop_nest(loop_nest):
+```orbit
+fn canonicalize_loop_nest(loop_nest) = (
 	// Normalize loop bounds to start at 0 with step 1
-	normalized = normalize_loops(loop_nest)
+	let normalized = normalize_loops(loop_nest);
 
 	// Apply canonical loop ordering based on data access patterns
-	ordered = reorder_loops(normalized)
+	let ordered = reorder_loops(normalized);
 
-	return ordered
+	ordered
+)
 
-function normalize_loops(loop_nest):
-	result = loop_nest
+fn normalize_loops(loop_nest) = (
+	// Transform each loop recursively
+	fn process_loops(loops, idx, current_result) = (
+		if idx >= length(loops) then current_result
+		else (
+			let loop = loops[idx];
+			// Transform: for(i=a; i<b; i+=c) → for(i'=0; i'<(b-a)/c; i'+=1)
+			let normalized_loop = normalize_loop(loop);
+			let updated_result = replace_loop(current_result, loop, normalized_loop);
+			process_loops(loops, idx + 1, updated_result)
+		)
+	);
 
-	for loop in loop_nest.loops:
-		// Transform: for(i=a; i<b; i+=c) → for(i'=0; i'<(b-a)/c; i'+=1)
-		normalized_loop = normalize_loop(loop)
-		result = replace_loop(result, loop, normalized_loop)
+	process_loops(loop_nest.loops, 0, loop_nest)
+)
 
-	return result
-
-function reorder_loops(loop_nest):
+fn reorder_loops(loop_nest) = (
 	// Analyze data dependencies
-	deps = analyze_dependencies(loop_nest)
+	let deps = analyze_dependencies(loop_nest);
 
 	// Determine legal loop ordering
-	ordering = compute_legal_ordering(loop_nest.loops, deps)
+	let ordering = compute_legal_ordering(loop_nest.loops, deps);
 
 	// Apply reordering
-	return reorder_by(loop_nest, ordering)
+	reorder_by(loop_nest, ordering)
+)
 ```
 
 ### Loop Fusion and Tiling
 
-```
-function fuse_loops(loop1, loop2):
+```orbit
+fn fuse_loops(loop1, loop2) = (
 	// Check if loops can be legally fused
-	if not can_legally_fuse(loop1, loop2):
-		return [loop1, loop2]
+	if !can_legally_fuse(loop1, loop2) then
+		[loop1, loop2]
+	else (
+		// Create fused loop
+		let fused = create_fused_loop(loop1, loop2);
+		[fused]
+	)
+)
 
-	// Create fused loop
-	fused = create_fused_loop(loop1, loop2)
-
-	return [fused]
-
-function tile_loop(loop, tile_size):
+fn tile_loop(loop, tile_size) = (
 	// Transform single loop into nested tile+intra-tile loops
 	// for(i=0; i<N; i++) → for(ii=0; ii<N; ii+=T) for(i=ii; i<min(ii+T,N); i++)
 
-	outer_loop = create_tile_loop(loop, tile_size)
-	inner_loop = create_intra_tile_loop(loop, tile_size)
+	let outer_loop = create_tile_loop(loop, tile_size);
+	let inner_loop = create_intra_tile_loop(loop, tile_size);
 
 	// Replace inner loop body with original loop body
-	inner_loop.body = loop.body
+	let inner_with_body = set_loop_body(inner_loop, loop.body);
 
 	// Set inner loop as body of outer loop
-	outer_loop.body = inner_loop
+	let result = set_loop_body(outer_loop, inner_with_body);
 
-	return outer_loop
+	result
+)
 ```
 
 ### Polyhedral Model
 
-```
-function polyhedral_canonicalization(loop_nest):
+```orbit
+fn polyhedral_canonicalization(loop_nest) = (
 	// Extract polyhedral representation
-	domain = extract_iteration_domain(loop_nest)
-	schedule = extract_schedule(loop_nest)
-	accesses = extract_access_functions(loop_nest)
+	let domain = extract_iteration_domain(loop_nest);
+	let schedule = extract_schedule(loop_nest);
+	let accesses = extract_access_functions(loop_nest);
 
 	// Optimize schedule while preserving semantics
-	optimized_schedule = optimize_schedule(domain, schedule, accesses)
+	let optimized_schedule = optimize_schedule(domain, schedule, accesses);
 
 	// Generate loop nest from optimized schedule
-	optimized_loops = generate_loops(domain, optimized_schedule, accesses)
+	let optimized_loops = generate_loops(domain, optimized_schedule, accesses);
 
-	return optimized_loops
+	optimized_loops
+)
 
-function optimize_schedule(domain, schedule, accesses):
+fn optimize_schedule(domain, schedule, accesses) = (
 	// Find schedule that minimizes cost function (e.g., data locality)
-	dependencies = compute_dependencies(domain, accesses)
+	let dependencies = compute_dependencies(domain, accesses);
 
 	// Create schedule optimization problem
-	problem = create_scheduling_problem(domain, dependencies)
+	let problem = create_scheduling_problem(domain, dependencies);
 
 	// Solve for optimal schedule coefficients
-	solution = solve_scheduling_problem(problem)
+	let solution = solve_scheduling_problem(problem);
 
 	// Construct new schedule from solution
-	new_schedule = construct_schedule(solution)
+	let new_schedule = construct_schedule(solution);
 
-	return new_schedule
+	new_schedule
+)
 ```
 
 ## Binary Decision Diagrams (BDDs)
@@ -1575,8 +1695,8 @@ Interval arithmetic operates on intervals rather than precise values, providing 
 
 ### Interval Operations
 
-```
-fn canonicalize_interval(interval) (
+```orbit
+fn canonicalize_interval(interval) = (
 	// Handle degenerate cases
 	if interval.lower > interval.upper then
 		empty_interval()  // Empty interval
@@ -1587,17 +1707,17 @@ fn canonicalize_interval(interval) (
 		Interval(interval.lower, interval.upper)
 )
 
-fn interval_add(a, b) (
+fn interval_add(a, b) = (
 	// [a_lo, a_hi] + [b_lo, b_hi] = [a_lo + b_lo, a_hi + b_hi]
 	Interval(a.lower + b.lower, a.upper + b.upper)
 )
 
-fn interval_subtract(a, b) (
+fn interval_subtract(a, b) = (
 	// [a_lo, a_hi] - [b_lo, b_hi] = [a_lo - b_hi, a_hi - b_lo]
 	Interval(a.lower - b.upper, a.upper - b.lower)
 )
 
-fn interval_multiply(a, b) (
+fn interval_multiply(a, b) = (
 	// [a_lo, a_hi] * [b_lo, b_hi] = [min(products), max(products)]
 	let products = [
 		a.lower * b.lower,
@@ -1609,7 +1729,7 @@ fn interval_multiply(a, b) (
 	Interval(min(products), max(products))
 )
 
-fn interval_divide(a, b) (
+fn interval_divide(a, b) = (
 	// Division by an interval containing zero
 	if b.lower <= 0 && b.upper >= 0 then
 		error("Division by interval containing zero")
@@ -1621,8 +1741,8 @@ fn interval_divide(a, b) (
 
 ### Interval Set Operations
 
-```
-fn interval_intersection(a, b) (
+```orbit
+fn interval_intersection(a, b) = (
 	// [a_lo, a_hi] ∩ [b_lo, b_hi] = [max(a_lo, b_lo), min(a_hi, b_hi)]
 	let lower = max(a.lower, b.lower);
 	let upper = min(a.upper, b.upper);
@@ -1633,7 +1753,7 @@ fn interval_intersection(a, b) (
 		empty_interval()  // Empty intersection
 )
 
-fn interval_hull(a, b) (
+fn interval_hull(a, b) = (
 	// Hull (smallest interval containing both a and b)
 	// [a_lo, a_hi] ∪ [b_lo, b_hi] = [min(a_lo, b_lo), max(a_hi, b_hi)]
 	Interval(min(a.lower, b.lower), max(a.upper, b.upper))
@@ -1646,8 +1766,8 @@ Effect systems track computational effects like state mutation, I/O, and excepti
 
 ### Effect Analysis and Canonicalization
 
-```
-fn infer_effects(expr) (
+```orbit
+fn infer_effects(expr) = (
 	expr is (
 		// Literal or constant
 		e => Pure if is_literal(e) || is_constant(e);  // No effects
@@ -1691,8 +1811,8 @@ fn infer_effects(expr) (
 
 ### Effect-Based Code Transformation
 
-```
-fn canonicalize_with_effects(expr) (
+```orbit
+fn canonicalize_with_effects(expr) = (
 	// Analyze effects
 	let effects = infer_effects(expr);
 
@@ -1710,7 +1830,7 @@ fn canonicalize_with_effects(expr) (
 	result2
 )
 
-fn separate_by_effects(expr, effects) (
+fn separate_by_effects(expr, effects) = (
 	// Separate expression into pure and effectful parts
 	if effects == Pure then
 		Pair(expr, None())
@@ -1738,8 +1858,8 @@ fn separate_by_effects(expr, effects) (
 
 ### Effect Commutativity
 
-```
-fn order_effects(expr) (
+```orbit
+fn order_effects(expr) = (
 	expr is (
 		Sequence(expr1, expr2) => (
 			let effect1 = infer_effects(expr1);
@@ -1761,7 +1881,7 @@ fn order_effects(expr) (
 	)
 )
 
-fn are_commutative(effect1, effect2) (
+fn are_commutative(effect1, effect2) = (
 	// Check if two effects commute (can be reordered)
 	if effect1 == Pure || effect2 == Pure then
 		true  // Pure effects commute with anything
