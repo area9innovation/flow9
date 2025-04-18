@@ -46,6 +46,30 @@ The `extractOGraph` allows us to get it back out:
 let expr = extractOGraph(g, exprId);
 ```
 
+To document the new `findOGraphId` runtime function in `ograph.md`, you should add a subsection in the "Available Runtime Functions" section (below or near `addOGraph` and `extractOGraph`). Here’s a precise documentation excerpt to include:
+
+#### `findOGraphId(graphName: string, expr: expression) -> int`
+
+**Finds the node ID for a structurally-equal term in the O-Graph, or returns -1 if it does not exist.**
+
+- **Parameters:**
+  - `graphName`: The name of the O-Graph (as a string).
+  - `expr`: The (possibly quoted) term or expression to look for.
+
+- **Returns:**  
+  The node ID (as integer) of a node in the graph that is *structurally equal* to `expr`, or -1 if no such node exists. If the term was just added, this will match the inserted node’s ID.
+
+- **Usage Example:**
+  ```orbit
+	let g = makeOGraph("myGraph");
+	let x_id = addOGraph(g, quote(foo(bar, 7)));
+	let found = findOGraphId(g, quote(foo(bar, 7)));   // returns x_id
+	let not_found = findOGraphId(g, quote(nonexistent())); // returns -1
+```
+
+- **Notes:**
+  - "Structurally equal" means the term’s tree shape and content matches, regardless of canonicalization or node IDs.
+
 ### Establishing Equivalences
 
 #### O-Graph Canonicalization and Equivalence Classes
