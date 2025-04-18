@@ -270,6 +270,43 @@ When the same pattern variable appears multiple times in a pattern, the system e
 
 This semantic equivalence checking allows for robust pattern matching even in the presence of shared structure or when expressions have been merged through equivalence relationships.
 
+### AST Introspection and Manipulation
+
+#### `astname(expr: expression) -> string`
+
+**Returns the canonical name of an AST node, allowing for type checking and introspection.**
+
+- **Parameters:**
+  - `expr`: The expression to inspect.
+
+- **Returns:**  
+  A string representing the canonical name of the expression's node type (e.g., "Int", "Variable", "+", "call", etc.).
+
+- **Usage Example:**
+  ```orbit
+	// Check the type of an expression
+	let x = 42;
+	let name = astname(x);  // Returns "Int"
+
+	// Implement type predicates
+	fn is_number(expr) = (astname(expr) == "Int" || astname(expr) == "Double");
+	fn is_var(expr) = (astname(expr) == "Variable" || astname(expr) == "Identifier");
+
+	// Use in pattern matching
+	fn process(expr) = (
+		expr is (
+			x if is_number(x) => x * 2;
+			x if is_var(x) => lookup(x);
+			_ => expr;
+		)
+	);
+```
+
+- **Notes:**
+  - Particularly useful for implementing type predicates and pattern guards
+  - Returns operator names for operations (e.g., "+", "*", "=")
+  - For function calls, returns "call"
+
 #### Variable Substitution vs. Evaluation
 
 When working with pattern matching results, Orbit provides three complementary functions for handling variable bindings:

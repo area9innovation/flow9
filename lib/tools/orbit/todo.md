@@ -45,7 +45,7 @@
 ✅ Check that inserting into and extraction from ograph works correct
 ✅ lib/tools/orbit/tests/ograph_rewrite_single.orb:
 - Check ograph dot export
-- Implement attaching Domain on rhs of pattern (in substitution maybe?)
+✅ Implement attaching Domain on rhs of pattern (in substitution maybe?)
 ✅ Check ograph operations
 ✅ Implement pattern matching in ograph
 - Extract minimal program from ograph via cost function or domain annotation?
