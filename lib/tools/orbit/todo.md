@@ -21,7 +21,6 @@
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Hook in evaluation functions to implement AST nodes directly in Orbit itself, potentially using rewriting
 - Semi-direct product
-- add onodeBelongsTo to runtime 
 
 ## Interpreter Extensions
 - Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
@@ -35,7 +34,6 @@
 
 ## Pattern Matching Improvements
 - Strengthen pattern variable reuse constraints (ensure consistency when same variable appears multiple times)
-- Add wildcard pattern support (`_` matching anything)
 - Support for deep pattern matching with nested patterns
 ✅ Support multiple patterns with fallthrough in match expressions
 ✅ Handle constructor pattern matching correctly

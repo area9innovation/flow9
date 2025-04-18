@@ -1,0 +1,148 @@
+// Domain-aware rewriting library for OGraph manipulation
+// This library provides functions for pattern matching, rewriting, and
+// domain annotation handling with the correct sequence of operations.
+fn quote(e : ast) = e;
+
+//
+// CORE REWRITING FUNCTIONS
+//
+
+// Apply a single rewrite pattern and replacement to a graph,
+// correctly handling domain annotations
+fn applyRewriteRule(graph, pattern, replacement, ruleName) = (
+    println("\nApplying rule: " + ruleName);
+    println("Pattern: " + prettyOrbit(pattern));
+    println("Replacement: " + prettyOrbit(replacement));
+    
+    // Apply the pattern match
+    let matches = matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
+        println("Match found at ID: " + i2s(eclassId));
+        println("Bindings: " + prettyOrbit(bindings));
+        
+        // THE CORRECT SEQUENCE FOR DOMAIN-AWARE REWRITING:
+        
+        // STEP 1: Substitute variables in the replacement
+        let substituted = substituteWithBindings(replacement, bindings);
+        println("1. After substitution: " + prettyOrbit(substituted));
+        
+        // STEP 2: Process domain annotations
+        let domainProcessed = processDomainAnnotations(graph, substituted);
+        println("2. After processing domain annotations, ID: " + i2s(domainProcessed));
+        
+        // STEP 3: Merge nodes (result first to make it canonical)
+        let merged = mergeOGraphNodes(graph, domainProcessed, eclassId);
+        println("3. Merged result: " + (if merged then "SUCCESS" else "FAILED"));
+    ));
+    
+    println("Applied " + i2s(matches) + " matches");
+    matches
+);
+
+// Apply a list of rewrite rules to an expression
+// Rules are triples: [name, pattern, replacement]
+fn applyRules(expr, rules) = (
+    // Create a new graph 
+    let graph = makeOGraph("transform");
+    
+    // Process the input expression's domain annotations first
+    let exprId = processDomainAnnotations(graph, expr);
+    let processedExpr = extractOGraph(graph, exprId);
+    
+    println("Original expression: " + prettyOrbit(expr));
+    println("After processing domains: " + prettyOrbit(processedExpr));
+    
+    // Helper function to apply rules recursively 
+    fn applyRulesRecursive(rules, index, totalMatches) = (
+        if index < length(rules) then (
+            let rule = rules[index];
+            let ruleName = rule[0];
+            let pattern = rule[1];
+            let replacement = rule[2];
+            
+            // Apply the rule
+            let matches = applyRewriteRule(graph, pattern, replacement, ruleName);
+            
+            // Print the current state
+            let currentExpr = extractOGraph(graph, exprId);
+            println("Expression after this rule: " + prettyOrbit(currentExpr));
+            
+            // Apply the next rule
+            applyRulesRecursive(rules, index + 1, totalMatches + matches)
+        ) else (
+            // Return total matches when done
+            totalMatches
+        )
+    );
+    
+    // Apply all rules
+    let totalMatches = applyRulesRecursive(rules, 0, 0);
+    println("\nTotal rewrites applied: " + i2s(totalMatches));
+    
+    // Return the final transformed expression
+    let finalResult = extractOGraph(graph, exprId);
+    println("Final result: " + prettyOrbit(finalResult));
+    finalResult
+);
+
+//
+// HELPER FUNCTIONS
+//
+
+// Prepares a rule with proper domain handling
+// Returns a triple of [name, pattern, replacement]
+fn prepareRule(name, patternExpr, replacementExpr) = (
+    [name, patternExpr, replacementExpr]
+);
+
+// Apply a single rule to an expression
+fn applyRule(expr, name, pattern, replacement) = (
+    applyRules(expr, [[name, pattern, replacement]])
+);
+
+// Apply rules until saturation (fixed point)
+fn applyRulesUntilFixedPoint(expr, rules, maxIterations) = (
+    // Create a graph with the initial expression
+    let graph = makeOGraph("fixed_point");
+    let exprId = processDomainAnnotations(graph, expr);
+    
+    // Function to apply all rules once and count matches
+    fn applyAllRules(id, rules) = (
+        fn applyHelper(index, totalMatches) = (
+            if index < length(rules) then (
+                let rule = rules[index];
+                let ruleName = rule[0];
+                let pattern = rule[1];
+                let replacement = rule[2];
+                
+                let matches = applyRewriteRule(graph, pattern, replacement, ruleName);
+                applyHelper(index + 1, totalMatches + matches)
+            ) else totalMatches
+        );
+        
+        applyHelper(0, 0)
+    );
+    
+    // Iterate until fixed point or max iterations
+    fn iterate(iteration, prevMatches) = (
+        if iteration >= maxIterations then (
+            println("Reached max iterations (" + i2s(maxIterations) + ")");
+            extractOGraph(graph, exprId)
+        ) else (
+            let matches = applyAllRules(exprId, rules);
+            println("Iteration " + i2s(iteration) + ": applied " + i2s(matches) + " rewrites");
+            
+            if matches > 0 then (
+                // Continue iterating
+                iterate(iteration + 1, matches)
+            ) else (
+                // Fixed point reached
+                println("Fixed point reached after " + i2s(iteration) + " iterations");
+                extractOGraph(graph, exprId)
+            )
+        )
+    );
+    
+    iterate(1, -1)
+);
+
+"Rewrite Library Successfully Loaded"
