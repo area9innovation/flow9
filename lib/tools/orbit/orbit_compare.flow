@@ -3,6 +3,7 @@ import tools/orbit/orbit_decompose;
 import tools/orbit/ograph;
 import tools/orbit/types;
 import tools/orbit/ograph_decompose;
+import tools/orbit/orbit_simple_ograph; // For ographRegistry
 import ds/array;
 import maybe;
 
@@ -11,6 +12,36 @@ export {
     // Returns true if they represent the same expression
     // Also handles domain membership checks for pattern matching
     compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool;
+    
+    // Helper function to check if a node belongs to a specific domain
+    findDomainMatch(graph : OGraph, nodeId : int, domain : OrMath_expr) -> bool;
+    
+    // Find a node ID in an OGraph that structurally matches the given expression without modifying the graph
+    // Returns the ID if found, or -1 if not found
+    findOGraphId(graphName : string, expr : OrMath_expr) -> int;
+}
+
+// Helper function to check if a node belongs to a domain that matches the given domain expression
+findDomainMatch(graph : OGraph, nodeId : int, domain : OrMath_expr) -> bool {
+    // Get the canonical representation of the node
+    rootId = findORoot(graph, nodeId);
+    
+    // Get all domains this node belongs to
+    domains = getONodeBelongsTo(graph, rootId);
+    
+    if (length(domains) == 0) {
+        // Node doesn't belong to any domain
+        false;
+    } else {
+        // Check if any of the domains structurally match the expected domain
+        fold(domains, false, \acc, domainId -> {
+            if (acc) acc // Short-circuit if we already found a match
+            else {
+                // Compare the domain expression directly with the domain node
+                compareOrbitWithNode(domain, graph, domainId);
+            }
+        });
+    }
 }
 
 // Compare an OrMath_expr with a node in an OGraph
@@ -30,26 +61,8 @@ compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool {
                 if (!baseMatches) {
                     false;
                 } else {
-                    // Check if the node belongs to any domain that matches structurally
-                    // First get the canonical representation of the node
-                    rootId = findORoot(graph, nodeId);
-                    
-                    // Get all domains this node belongs to
-                    domains = getONodeBelongsTo(graph, rootId);
-                    
-                    if (length(domains) == 0) {
-                        // Node doesn't belong to any domain
-                        false;
-                    } else {
-                        // Check if any of the domains structurally match the expected domain
-                        fold(domains, false, \acc, domainId -> {
-                            if (acc) acc // Short-circuit if we already found a match
-                            else {
-                                // Compare the domain expression with the domain ID from the graph
-                                compareOrbitWithNode(domain, graph, domainId);
-                            }
-                        });
-                    }
+                    // Use our helper to check domain membership
+                    findDomainMatch(graph, nodeId, domain);
                 }
             }
             default: false; // Should never happen due to check above
@@ -132,6 +145,75 @@ compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool {
                     });
                 }
             }
+        }
+    }
+}
+
+// Implementation of findOGraphId function
+findOGraphId(graphName : string, expr : OrMath_expr) -> int {
+	// Handle special case for domain annotations
+    isDomainAnnotation = switch (expr) {
+        OrTypeAnnotation(baseExpr, domain): true;
+        default: false;
+    };
+    
+    if (isDomainAnnotation) {
+        // Extract base expression and domain
+        baseExpr = switch (expr) {
+            OrTypeAnnotation(be, __): be;
+            default: expr; // Should never happen
+        };
+        
+        domain = switch (expr) {
+            OrTypeAnnotation(__, dom): dom;
+            default: OrInt(0); // Should never happen
+        };
+        
+        // First, find the base expression
+        baseId = findOGraphId(graphName, baseExpr);
+        if (baseId == -1) {
+            -1; // Base expression not found
+        } else {
+            // Find the domain expression
+            domainId = findOGraphId(graphName, domain);
+            if (domainId == -1) {
+                -1; // Domain not found
+            } else {
+                // Get the ograph from the registry
+                switch (lookupTree(^ographRegistry, graphName)) {
+                    Some(ograph): {
+                        // Check if base node belongs to domain
+                        if (onodeBelongsTo(ograph, baseId, domainId)) {
+                            baseId; // Found a match
+                        } else {
+                            -1; // No match
+                        }
+                    }
+                    None(): -1;
+                }
+            }
+        }    
+    } else {
+        // Regular case - non-domain expression
+        // Get the ograph from the registry
+        switch (lookupTree(^ographRegistry, graphName)) {
+            Some(ograph): {
+                // Use direct comparison without modifying the graph
+                foundId = ref -1;
+                
+                // Look through all nodes in the graph for a match
+                traverseOGraph(ograph, \id, __ -> {
+                    if (^foundId == -1) { // Stop searching if we found a match
+                        if (compareOrbitWithNode(expr, ograph, id)) {
+                            foundId := id;
+                        }
+                    }
+                });
+                
+                // Return the found ID or -1 if not found
+                ^foundId;
+            }
+            None(): -1;
         }
     }
 }
