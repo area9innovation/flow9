@@ -1,157 +1,228 @@
 # Rubik's Cubes: Group Structures, Rewriting, and Canonical Forms
 
-## Introduction
+## 1. Introduction
 
-Rubik's Cubes and their NxN×N variants are governed by precise mathematical structures, specifically permutation groups. This document outlines how the group-theoretic properties of these puzzles can be leveraged within a rewriting system (like Orbit's OGraph) to simplify states, establish canonical forms, and work towards solving strategies applicable across different cube sizes. We focus on the underlying mathematical concepts and rewrite rules, using a generalized coordinate system for moves.
+Rubik's Cubes and their `N×N×N` variants (for `N≥2`) possess rich mathematical structures, specifically permutation groups. This document details how these group-theoretic properties can be leveraged within a rewriting system (like Orbit's OGraph). By defining abstract group structures and their simplification rules separately, we can apply them to the specific domain of Rubik's Cubes simply by annotating states and moves appropriately.
 
-## Coordinate-Based Representation
+*This document is structured as follows:* Sections 2-3 define the state/move representation and the precise group structures involved. Sections 4-5 detail the abstract group rewrite rules and canonicalization strategies. Section 6 explains how these abstract rules apply to the cube domain. Section 7 discusses synergy across cube sizes, and Section 8 concludes with potential evaluation metrics. A running example is used to illustrate key concepts.
 
-To generalize across cube sizes (N×N×N), we avoid traditional face notation (R, U, F, etc.) and use a coordinate system.
+## Notation Table
 
-1.  **State Representation**: The cube's state can be represented as a mapping from *cubie positions* to *cubie identities* and *orientations*. Positions can be defined by (x, y, z) coordinates, and identities specify the type (corner, edge, center) and original colors/stickers.
-2.  **Move Representation**: A move is defined by:
-    *   **Axis**: The axis of rotation (e.g., X, Y, Z).
-    *   **Layer Index**: Which slice/layer parallel to the axis is being turned (e.g., 0 to N-1). Index 0 might be the "Left" face turn on the X-axis, N-1 the "Right" face turn.
-    *   **Direction**: Clockwise (+1) or Counter-clockwise (-1) rotation relative to the axis direction.
-    *   **Notation**: `Turn(Axis, LayerIndex, Direction)`
+| Symbol           | Meaning                                        | Example Usage                 |
+| :--------------- | :--------------------------------------------- | :---------------------------- |
+| `N`              | Size of the cube (N×N×N)                       | `N=3` for standard cube       |
+| `State`          | Represents the configuration of the cube       | `State(...)`                  |
+| `Turn(Ax,L,Dir)` | A move: Axis `Ax`, Layer `L`, Direction `Dir`  | `Turn(X, 0, +1)`              |
+| `Compose(g, h)`  | Abstract group operation (g then h)            | `Compose(Move1, Move2)`       |
+| `Inverse(g)`     | Abstract inverse of group element g            | `Inverse(Turn(X,0,1))`        |
+| `Identity(G)`    | Abstract identity element of group G           | `Identity(RubikGroup_3x3)`    |
+| `Element(d, G)`  | Abstract element `d` in group `G`              | `Element(p, S₈)`              |
+| `g : G`          | Element `g` belongs to domain/group `G`        | `State : Canonical(G₁)`       |
+| `G₁ ⊂ G₂`        | Group `G₁` is a subgroup of `G₂`               | `A₈ ⊂ S₈`                     |
+| `H ⋊ G`          | Semi-direct product of H by G                  | `C₃⁷ ⋊ A₈`                    |
+| `G × H`          | Direct product of G and H                      | `S₈ × S₁₂`                    |
+| `Sₙ`             | Symmetric group on n elements                  | `S₈` (corner permutations)    |
+| `Aₙ`             | Alternating group on n elements (even perms)   | `A₈` (reachable corner perms) |
+| `Cₙ`             | Cyclic group of order n                        | `C₃` (corner orientation)     |
+| `ℤₙᵏ`            | Direct product of k copies of `Cₙ`             | `C₃⁷`, `C₂¹¹`                 |
+| `→`              | Unidirectional rewrite rule                    | `g ⋅ Identity(G) → g`         |
+| `↔`              | Bidirectional equivalence rule                 | `Compose(a,b) ↔ Compose(b,a)` |
+| `φ`              | Homomorphism defining group action             | Action in `H ⋊ G`             |
+| `Canonical(G)`   | Annotation for canonical form within group `G` | `State : Canonical(G₀)`       |
 
-    *Example*: A standard 'R' move on a 3x3 cube could be `Turn(X, 2, +1)` (assuming X-axis points right, Layer 0 is Left, Layer 2 is Right). A slice move 'M' might be `Turn(X, 1, -1)`.
+## 2. Coordinate-Based Representation
 
-This coordinate system allows defining move semantics consistently for any N.
+To generalize across cube sizes (`N×N×N`, `N≥2`), we use a coordinate system:
 
-## Rubik's Cube Groups
+1.  **Coordinate System**: Assume a standard 3D Cartesian system with the cube centered at (0,0,0). Axes X, Y, Z point conventionally (e.g., Right, Up, Front). Layer indices range from `0` to `N-1` along each axis. For even `N`, center layers may be non-integer indices; layer indices still run `0..N-1`. For odd `N`, layer `(N-1)/2` is the center slice.
+2.  **State Representation**: A mapping from *cubie positions* (defined by coordinates) to *cubie identities* (type: corner, edge, center; original colors/stickers) and *orientations*.
+3.  **Move Representation**: A move `Turn(Axis, LayerIndex, Direction)`:
+    *   `Axis`: The axis of rotation (`X`, `Y`, or `Z`).
+    *   `LayerIndex`: Integer from `0` to `N-1`, specifying the slice perpendicular to `Axis` to turn. `0` might be the "Left" face layer along X, `N-1` the "Right".
+    *   `Direction`: `+1` for clockwise (e.g., 90°), `-1` for counter-clockwise (e.g., -90° or 270°), when looking along the positive axis direction. `+2` could represent 180°.
 
-The set of all possible states reachable from a solved cube through valid moves forms a mathematical group, where:
-*   **Elements**: Permutations and re-orientations of the cubies.
-*   **Operation**: Composition of moves (applying one move after another).
-*   **Identity**: The solved state.
-*   **Inverse**: Reversing a sequence of moves.
-
-### Specific Group Structures
-
-1.  **2×2×2 Cube (Pocket Cube)**:
-    *   Involves 8 corner pieces.
-    *   The group describes permutations of these 8 pieces (a subgroup of S₈) and the orientation of 7 of them (relative to the 8th, a subgroup of ℤ₃⁷).
-    *   The group is isomorphic to **(ℤ₃⁷ ⋊ S₈)**, where ⋊ denotes the semi-direct product. Its order is (3⁷ × 8!) / 3 = 3,674,160. (Division by 3 accounts for fixed total orientation).
-
-2.  **3×3×3 Cube**:
-    *   Involves 8 corner pieces and 12 edge pieces (centers are fixed).
-    *   The group describes permutations of corners (S₈), orientation of 7 corners (ℤ₃⁷), permutations of edges (S₁₂), and orientation of 11 edges (ℤ₂¹¹).
-    *   Constraints: Total corner orientation must be fixed (divides by 3), total edge orientation must be fixed (divides by 2), and the parity of corner and edge permutations must match (divides by 2).
-    *   The group is isomorphic to **((ℤ₃⁷ × ℤ₂¹¹) ⋊ (S₈ × S₁₂)) / 2**. Its order is approx 4.3 × 10¹⁹.
-
-3.  **N×N×N Cube (N > 3)**:
-    *   The structure becomes significantly more complex, involving multiple types of edge pieces and center pieces in addition to corners.
-    *   The group involves permutations and orientations of corners, permutations and orientations of different edge types, and permutations of different center types.
-    *   The full group structure is very large and intricate.
-
-### Group Decomposition and Subgroups
-
-Solving larger cubes often relies on decomposing the problem by considering **subgroups**. A subgroup is a subset of group elements that is itself a group. Key subgroups relevant to Rubik's cubes include:
-
-*   **Corner Group**: Permutations and orientations of only the corner pieces.
-*   **Edge Group**: Permutations and orientations of only the edge pieces.
-*   **Orientation Group**: Operations that only change piece orientations but not their positions.
-*   **Permutation Group**: Operations that only change piece positions but not their orientations.
-*   **Slice Groups**: Operations generated by turning only inner layers (e.g., M, E, S moves on a 3x3).
-*   **Square Group**: Operations that leave specific pieces (like centers) invariant.
-*   **Thistlethwaite/Kociemba Subgroups (G₀ ⊃ G₁ ⊃ G₂ ⊃ G₃ ⊃ G₄ = {Identity})**: A nested sequence of subgroups defined by restricting allowed moves. Solving involves finding move sequences within each subgroup to transition to the next smaller one.
-    *   G₀: Full cube group.
-    *   G₁: Edge orientations are correct. Moves allowed: U, D, R², L², F², B².
-    *   G₂: Corner orientations correct, edges in middle layer slice. Moves allowed: U, D, R², L², F₂, B₂, M², E², S².
-    *   G₃: Corners and edges in correct orbits (correct piece types in corner/edge positions). Moves allowed: U², D², R², L², F², B². (The "Square Group").
-    *   G₄: Solved state {I}.
-
-## Rewrite Rules from Group Relations
-
-The fundamental properties of the group translate directly into rewrite rules that simplify sequences of moves applied to a state. `Apply(Move, State)` represents applying a move to a state.
-
-1.  **Inverse Property**: Applying a move and its inverse results in the original state.
+    *Formal Grammar (BNF-like):*
     ```
-	Apply(Turn(Axis, Layer, -Dir), Apply(Turn(Axis, Layer, Dir), State))  =>  State
-	Apply(Turn(Axis, Layer, Dir), Apply(Turn(Axis, Layer, -Dir), State))  =>  State
+	Move ::= Turn(Axis, LayerIndex, Direction)
+	Axis ::= 'X' | 'Y' | 'Z'
+	LayerIndex ::= <integer 0..N-1>
+	Direction ::= <integer typically +1, -1, +2>
 ```
 
-2.  **Order of Moves**: Applying a move `k` times returns to the original state, where `k` is the order of the move (typically 4 for 90° face turns, 2 for 180° turns).
-    ```
-	// For a 90-degree turn (order 4)
-	Apply(T, Apply(T, Apply(T, Apply(T, State))))  =>  State  where T = Turn(Axis, Layer, Dir)
+    *Example*: Standard 'R' on a 3x3: `Turn(X, 2, +1)`. Slice 'M' on 3x3: `Turn(X, 1, -1)` (typically defined CCW).
 
-	// Using exponent notation if available:
-	Apply(Move^k, State) => State  if order(Move) = k
+## 3. The Abstract Group Layer
+
+We use abstract constructors to represent group concepts:
+
+*   `Compose(g, h)`: Group operation.
+*   `Inverse(g)`: Inverse element.
+*   `Identity(G)`: Identity element of group `G`.
+*   `Element(data, G)`: Group element `data` in group `G`.
+
+Concrete cube turns are mapped to `Element` nodes within the rewriting system, annotated with the appropriate `RubikGroup_NxN`.
+
+## 4. Rubik's Cube Groups
+
+The set of reachable states forms the `RubikGroup_NxN`.
+
+### 4.1 Specific Group Structures & Decomposition
+
+Here we quote the exact cardinality of the `RubikGroup_3x3`: \(|G| = 43,252,003,274,489,856,000 = 2^{27} \cdot 3^{14} \cdot 5^{3} \cdot 7^{2} \cdot 11\).
+
+1.  **2×2×2 Cube (`RubikGroup_2x2`)**: 8 corners.
+    *   **Structure**: A semi-direct product `C₃⁷ ⋊ A₈`. Only *even* permutations of corners are reachable (`A₈`), and orientations of 7 corners determine the 8th (`C₃⁷`). Element orders can reach a maximum of 1260, which is valuable for algorithmic heuristic considerations.
+    *   **Decomposition**: Combines **Corner Orientation Group** (`C₃⁷`) and the **Corner Permutation Group** (`A₈`).
+
+2.  **3×3×3 Cube (`RubikGroup_3x3`)**: 8 corners, 12 edges.
+    *   **Structure**: Isomorphic to `((C₃⁷ × C₂¹¹) ⋊ (A₈ × A₁₂))`. Combines corner orientation (`C₃⁷`), edge orientation (`C₂¹¹`), *even* corner permutations (`A₈`), and *even* edge permutations (`A₁₂`).
+    *   **Parity Constraint**: The permutation of corners and the permutation of edges must have the *same parity*. This constraint is implicitly handled by generating moves ensuring `sgn(perm_corner) = sgn(perm_edge)`. The structure `A₈ × A₁₂` in the semi-direct product reflects states reachable by moves preserving this combined parity.
+    *   **Decomposition**: Involves the **Corner Group** (`C₃⁷ ⋊ A₈`) and the **Edge Group** (`C₂¹¹ ⋊ A₁₂`), linked by the parity constraint.
+
+3.  **N×N×N Cube (N > 3)**: Adds multiple edge types and center pieces.
+    *   **Structure**: Complex direct and semi-direct products of symmetric and cyclic groups.
+
+### 4.2 Relevant Subgroups
+
+Solving often uses the Thistlethwaite/Kociemba sequence (G₀ ⊃ G₁ ⊃ G₂ ⊃ G₃ ⊃ G₄ = {Identity}):
+*   **G₀**: `RubikGroup_NxN`.
+*   **G₁**: Edge orientations correct. Generators include {U, D, R², L², F², B², M, E, S} (slice moves added for clarification).
+*   **G₂**: Corner orientations correct, edges in the correct slice (for 3x3). Generators include those of G₁ plus slice moves like {M², E², S²} (or their equivalents expressed via outer layer turns).
+*   **G₃**: "Square Group" - pieces in correct orbits. Generators {U², D², R², L², F², B², M², E², S²}.
+*   **G₄**: `{Identity(RubikGroup_NxN)}`.
+
+## 5. Abstract Rewrite Rules
+
+These apply to any elements annotated with a group domain `G`.
+
+### 5.1 General Group Axiom Rules
+
+```
+# Associativity
+Compose(a, Compose(b, c)) : G  ↔  Compose(Compose(a, b), c) : G;
+
+# Identity Laws
+Compose(g : G, Identity(G))  →  g : G;
+Compose(Identity(G), g : G)  →  g : G;
+
+# Inverse Laws
+Compose(g : G, Inverse(g))  →  Identity(G);
+Compose(Inverse(g), g : G)  →  Identity(G);
+Inverse(Inverse(g : G))     →  g : G;
+Inverse(Identity(G))        →  Identity(G);
+Inverse(Compose(g : G, h : G)) → Compose(Inverse(h), Inverse(g)) : G;
 ```
 
-3.  **Commutation Rules**: If two moves `M₁` and `M₂` affect disjoint sets of cubies (e.g., turns of opposite faces like L and R, or turns of layers that don't overlap), they commute.
-    ```
-	Apply(M₂, Apply(M₁, State))  <=>  Apply(M₁, Apply(M₂, State))  if AffectsDisjointPieces(M₁, M₂)
+### 5.2 Commutation and Conjugation
+
 ```
-    *Example*: `Turn(X, 0, D1)` and `Turn(X, N-1, D2)` commute. `Turn(X, L1, D1)` and `Turn(Y, L2, D2)` commute if the layers L1 and L2 don't intersect significantly (more complex for N>3).
+# Commutation (Conditional)
+# Define DisjointLayers(M₁, M₂) based on coordinate system:
+# Returns true if Turn(Ax₁, L₁, D₁) and Turn(Ax₂, L₂, D₂) affect layers
+# that do not share any cubies (e.g., Ax₁=Ax₂, L₁≠L₂; or Ax₁≠Ax₂, ...)
+Compose(M₂, M₁) : G  ↔  Compose(M₁, M₂) : G  if DisjointLayers(M₁, M₂);
 
-4.  **Conjugation Rules**: Conjugation `A ⋅ B ⋅ A⁻¹` transforms the effect of move `B` by move `A`. This is key for algorithms that position or orient pieces without disturbing others.
-    ```
-	// Representing application of a conjugate B^A = A B A'
-	Apply(Conjugate(A, B), State)  <=>  Apply(Inverse(A), Apply(B, Apply(A, State)))
+# Conjugation Definition
+Apply(Conjugate(A, B), State)  ↔  Apply(Inverse(A), Apply(B, Apply(A, State)));
 ```
-    Rewrite rules can be defined for specific useful conjugates that achieve specific state transformations (e.g., 3-cycle of edges).
+Specific useful commutator/conjugate sequences can be added as named rules.
 
-5.  **Associativity**: Move composition is associative.
-    ```
-	Apply(M₃, Apply(M₂, Apply(M₁, State))) <=> Apply(Compose(M₃, M₂), Apply(M₁, State))
+Here's the explicit definition of the semidirect-action \(φ\): permutations act on orientations
+\[\phi: C_{p} \to Aut(C_{o})\] where an element of \(C_{o}\) is a tuple of orientation indices, and \(C_{p}\) permutes those indices.
+
+### 5.3 Decomposition Rules (Semi-direct Product H ⋊ G)
+
+The permutation part `g` acts on the orientation part `h` via a homomorphism `φ: G → Aut(H)`. Specifically, `φ(g)` permutes the components of the orientation vector `h` according to how `g` permutes the piece positions.
+
 ```
-    This rule allows grouping sequences of moves.
+# Composition: (h₁, g₁) ⋅ (h₂, g₂) = (h₁ ⋅ φ(g₁)(h₂), g₁ ⋅ g₂)
+Compose(Pair(h1, g1) : H ⋊ G, Pair(h2, g2) : H ⋊ G) →
+	Pair(Compose(h1, ApplyAction(g1, h2, φ)), Compose(g1, g2)) : H ⋊ G;
+# 'ApplyAction(g, h, φ)' represents φ(g)(h).
 
-## Canonicalization Strategies
-
-The ultimate goal is typically to reach the **solved state**, which serves as the **canonical form** for the entire group (the identity element). However, canonicalization can also be defined *within subgroups*.
-
-1.  **Global Canonical Form**: The unique solved state.
-    ```
-	State : IsSolved => State : Canonical(G₀)
-```
-    Rewriting aims to merge any state e-class with the e-class containing the `Canonical(G₀)` node.
-
-2.  **Subgroup Canonical Forms**: A state can be considered "canonical" or "solved" *with respect to a subgroup* if it satisfies the properties defining that subgroup.
-    *   **Edge Orientation**: A state where all edges are correctly oriented (e.g., no flipped edges) can be considered canonical for the subgroup G₁.
-        ```
-		State : EdgesAreOriented => State : Canonical(G₁)
-```
-    *   **Corner Orientation**: A state where all corners are correctly oriented.
-        ```
-		State : CornersAreOriented => State : Canonical(CornerOrientationGroup)
-```
-    *   **Permutation Subgroups**: A state where pieces are in the correct positions, ignoring orientation.
-
-3.  **Rewriting Towards Subgroup Canonical Forms**: Rewrite rules can be designed to specifically achieve these intermediate canonical forms.
-    *   Rules that only use moves from subgroup G₁ (e.g., U, D, R², L², F², B²) can transform a state towards `Canonical(G₁)`.
-    *   Rules implementing specific algorithms (like edge orientation sequences) can be tagged:
-        ```
-		Apply(EdgeOrientAlg, State) => NewState : EdgesAreOriented
+# Inverse: (h, g)⁻¹ = (φ(g⁻¹)(h⁻¹), g⁻¹)
+Inverse(Pair(h, g) : H ⋊ G) →
+	Pair(ApplyAction(Inverse(g), Inverse(h), φ), Inverse(g)) : H ⋊ G;
 ```
 
-The process of solving via subgroups (like Kociemba's algorithm) involves applying sequences of rules, each designed to reach the canonical form of the next smaller subgroup, using only moves allowed within the current subgroup.
+### 5.4 Example: Move Sequence Simplification
 
-## Synergy Across Cube Sizes
+Consider `R U R'` on a 2x2 corner piece (ignoring others).
+*   Let `State₀` be the initial state.
+*   `R` might be `Element(r_data, RubikGroup_2x2)`, `U` is `Element(u_data, ...)`, `R'` is `Inverse(R)`.
+*   Sequence: `Compose(Inverse(R), Compose(U, R))`.
+*   Abstract rules alone don't simplify this beyond associativity.
+*   However, if `R = Pair(h_r, g_r)` and `U = Pair(h_u, g_u)` in `C₃⁷ ⋊ A₈`, the semi-direct product rules calculate the combined effect:
+    `R U = Pair(h_r ⋅ φ(g_r)(h_u), g_r ⋅ g_u)`
+    `(R U) R' = Compose(Pair(h_ru, g_ru), Pair(h_r_inv, g_r_inv))`
+    Applying the rule yields the final `Pair(h_final, g_final)` representing the state change.
 
-The coordinate-based notation and subgroup approach facilitate solving different cube sizes:
+## 6. Canonicalization Strategies
 
-1.  **Generalized Moves**: `Turn(Axis, Layer, Dir)` applies conceptually to any N. The *effect* on the state mapping depends on N, but the move definition is uniform.
-2.  **Shared Substructures**:
-    *   **Corners**: The 8 corner pieces of any N×N×N cube (N≥2) behave identically under face turns affecting only corners. Rewrite rules manipulating *only* corner state and orientation (perhaps tagged with a `CornerPiece` domain) can potentially be reused across N≥2. The canonicalization for the corner subgroup is similar.
-    *   **Edges**: While N>3 introduces multiple edge types, the concept of edge orientation and permutation subgroups exists for all N≥3. Rules for orienting edges or placing them in the correct layer might share structural similarities.
-    *   **Centers**: For N>3, center pieces need solving. Rules for cycling center pieces might be generalized based on layer indices.
-3.  **Hierarchical Solving Strategy**: Many NxN methods follow a pattern:
-    *   Solve Centers (N>3)
-    *   Pair Edges (N>3)
-    *   Solve as a 3x3 (using the outer layers and paired edges/centers)
-    This hierarchical strategy can be modelled using subgroup canonicalization rules. Rules for the "Solve as 3x3" phase would operate on the domains representing the outer layers and effective pieces.
-4.  **Domain-Tagged Rules**: By tagging pieces (Corner, EdgeType1, EdgeType2, CenterType1...) and layers (OuterLayer, InnerSlice...) with domains, rewrite rules can be made more general. A rule might apply to `AnyEdge` or only `EdgeType1`.
+### 6.1 Global Canonical Form (Solved State = Identity)
 
-## Conclusion
+The solved state is `Identity(RubikGroup_NxN)`. The goal of solving is to find a sequence of moves `M` such that `Apply(M, InitialState)` is equivalent to `Identity(RubikGroup_NxN)`.
 
-Modeling Rubik's Cubes using their group-theoretic structure provides a powerful foundation for simplification and solving within a rewriting system. By using a generalized coordinate-based notation for moves and decomposing the problem into subgroups, we can define rewrite rules that:
+```
+# The identity element is canonical for the whole group
+Identity(RubikGroup_NxN) : Canonical(G₀);
 
-*   Simplify move sequences based on group axioms.
-*   Work towards canonical forms, both globally (solved state) and within specific subgroups (e.g., oriented edges).
-*   Offer potential for synergy across different cube sizes (N×N×N) by focusing on common substructures and hierarchical solving strategies.
+# We check for equivalence, not rewrite the state away.
+# If State's eclass merges with Identity's eclass:
+CheckEquivalence(State, Identity(RubikGroup_NxN)) → true : IsSolved;
+```
 
-While the computational cost of solving large cubes via pure rewriting might be high, this approach provides a formal framework for encoding known algorithms, potentially discovering new simplifications, and reasoning about the combinatorial complexity of these fascinating puzzles in a unified mathematical language.
+### 6.2 Subgroup Canonical Forms & Rules
+
+Intermediate canonical forms are defined relative to subgroups. Abstract canonicalization rules are triggered by annotations.
+
+```
+# Abstract rules (implementations external)
+p : Aₙ  →  canonical_even_permutation(p) : Canonical(Aₙ);
+r : Cₙ  →  canonical_rotation(r) : Canonical(Cₙ); # e.g., r mod n
+d : Dₙ  →  canonical_dihedral(d) : Canonical(Dₙ);
+
+# Link state components to abstract groups
+CornerPermutationState(...) : A₈; # Note: A₈ for N≥2
+EdgePermutationState(...)   : A₁₂; # Note: A₁₂ for N=3, parity-linked
+CornerOrientationState(...) : C₃⁷; # Or component-wise : C₃
+EdgeOrientationState(...)   : C₂¹¹; # Or component-wise : C₂
+
+# Define subgroup canonical properties
+State : EdgesAreOriented      → State : Canonical(G₁);
+State : CornersAreOriented    → State : Canonical(OrientationGroup);
+State : PiecesInCorrectOrbits → State : Canonical(G₃);
+```
+The rewriting system applies these rules to simplify components of the state representation (e.g., canonicalizing the permutation part using the `Aₙ` rule).
+
+Reflection of this richness is that 81,120 conjugacy classes exist; providing ample structure for sampler or canonical-class enumeration benchmarks.
+
+### 6.3 Solving via Subgroups
+
+Modeled by rules applying move sequences valid within a subgroup `Gᵢ` to reach the canonical form for the next subgroup `Gᵢ₊₁`.
+
+```
+# Rule applying G₀ moves to reach G₁ canonical form (Edge Orientation)
+State : G₀ → Apply(SolveEdgeOrientationAlg, State) : Canonical(G₁);
+
+# Rule applying G₁ moves to reach G₂ canonical form
+State : Canonical(G₁) → Apply(SolveCornerOrientAndEdgeSliceAlg, State) : Canonical(G₂);
+
+# ... down to G₄ (Identity)
+State : Canonical(G₃) → Apply(SolveSquareGroupAlg, State) : Canonical(G₄); # Canonical(G₄) is Identity
+```
+
+## 7. Synergy Across Cube Sizes (`N≥2`)
+
+1.  **Abstract Rule Reuse**: Axioms and canonicalization for `Aₙ`, `Cₙ`, `Dₙ`, product groups apply universally via annotations.
+2.  **Coordinate Notation**: `Turn(Axis, Layer, Dir)` is uniform.
+3.  **Component Annotation**: Corners are always `: A₈`, `: C₃⁷`. Edges complexity varies, but orientation is often `: C₂`. Reusable rules apply to these components.
+4.  **Hierarchical Structure**: Subgroup strategy (G₀-G₄) provides a common framework.
+    
+Canonical forms beyond ‘solved’ recognize that a cube's position can be a minimal *word metric* length ≤ 20 under the quarter-turn metric, referencing God’s number as the upper bound.
+
+## 8. Conclusion and Evaluation Hook
+
+Separating abstract group rules from the Rubik's Cube domain allows leveraging general mathematical properties automatically via domain annotations. This modular approach simplifies implementation and enhances synergy across different cube sizes.
+
+*Evaluation Idea*: A potential benchmark could measure the number of rewrite steps (using the abstract rules + cube-specific move effects) required to reduce a scrambled state to its canonical form within successive subgroups (G₁, G₂, etc.) and compare this against the number of states explored in a simple breadth-first search within those subgroups. This would quantify the reduction in search space achieved by the algebraic simplification rules.
