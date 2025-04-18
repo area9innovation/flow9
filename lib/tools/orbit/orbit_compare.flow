@@ -3,90 +3,134 @@ import tools/orbit/orbit_decompose;
 import tools/orbit/ograph;
 import tools/orbit/types;
 import tools/orbit/ograph_decompose;
+import ds/array;
 import maybe;
 
 export {
     // Compare an OrMath_expr with a node in an OGraph
     // Returns true if they represent the same expression
+    // Also handles domain membership checks for pattern matching
     compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool;
 }
 
 // Compare an OrMath_expr with a node in an OGraph
 compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool {
-    // Find the canonical representative for this node
-    rootId = findORoot(graph, nodeId);
+    // Handle domain type annotations (special case)
+    isDomainAnnotation = switch (expr) {
+        OrTypeAnnotation(__, __): true;
+        default: false;
+    };
     
-    // Decompose the OrMath_expr
-    decomposedExpr = decomposeOrbit(expr);
-    opExpr = decomposedExpr.first;
-    childrenAndValue = decomposedExpr.second;
-    childrenExpr = childrenAndValue.first;
-    valueExpr = childrenAndValue.second;
-    
-    // Get the node's information from the OGraph
-    switch (lookupOClass(graph, rootId)) {
-        None(): false; // Node doesn't exist
-        Some(oclass): {
-            // Check if operators match
-            if (oclass.node.op != opExpr) {
-                false;
-            } else if (length(oclass.node.children) != length(childrenExpr)) {
-                // Check if number of children match
-                false;
-            } else if (length(childrenExpr) == 0) {
-                // Handle leaf nodes with primitive values
-                if (opExpr == "Int") {
-                    switch (getOClassInt(graph, rootId)) {
-                        None(): false;
-                        Some(intValue): {
-                            switch (valueExpr) {
-                                OrbitInt(exprValue): intValue == exprValue;
-                                default: false;
+    if (isDomainAnnotation) {
+        switch (expr) {
+            OrTypeAnnotation(baseExpr, domain): {
+                // First check if the base expression matches
+                baseMatches = compareOrbitWithNode(baseExpr, graph, nodeId);
+                
+                if (!baseMatches) {
+                    false;
+                } else {
+                    // Check if the node belongs to any domain that matches structurally
+                    // First get the canonical representation of the node
+                    rootId = findORoot(graph, nodeId);
+                    
+                    // Get all domains this node belongs to
+                    domains = getONodeBelongsTo(graph, rootId);
+                    
+                    if (length(domains) == 0) {
+                        // Node doesn't belong to any domain
+                        false;
+                    } else {
+                        // Check if any of the domains structurally match the expected domain
+                        fold(domains, false, \acc, domainId -> {
+                            if (acc) acc // Short-circuit if we already found a match
+                            else {
+                                // Compare the domain expression with the domain ID from the graph
+                                compareOrbitWithNode(domain, graph, domainId);
                             }
-                        }
+                        });
                     }
-                } else if (opExpr == "Double") {
-                    switch (getOClassDouble(graph, rootId)) {
-                        None(): false;
-                        Some(doubleValue): {
-                            switch (valueExpr) {
-                                OrbitDouble(exprValue): doubleValue == exprValue;
-                                default: false;
+                }
+            }
+            default: false; // Should never happen due to check above
+        }
+    } else {
+        // Regular non-domain comparison
+        // Find the canonical representative for this node
+        rootId = findORoot(graph, nodeId);
+        
+        // Decompose the OrMath_expr
+        decomposedExpr = decomposeOrbit(expr);
+        opExpr = decomposedExpr.first;
+        childrenAndValue = decomposedExpr.second;
+        childrenExpr = childrenAndValue.first;
+        valueExpr = childrenAndValue.second;
+        
+        // Get the node's information from the OGraph
+        switch (lookupOClass(graph, rootId)) {
+            None(): false; // Node doesn't exist
+            Some(oclass): {
+                // Check if operators match
+                if (oclass.node.op != opExpr) {
+                    false;
+                } else if (length(oclass.node.children) != length(childrenExpr)) {
+                    // Check if number of children match
+                    false;
+                } else if (length(childrenExpr) == 0) {
+                    // Handle leaf nodes with primitive values
+                    if (opExpr == "Int") {
+                        switch (getOClassInt(graph, rootId)) {
+                            None(): false;
+                            Some(intValue): {
+                                switch (valueExpr) {
+                                    OrbitInt(exprValue): intValue == exprValue;
+                                    default: false;
+                                }
                             }
                         }
-                    }
-                } else if (opExpr == "String" || opExpr == "Identifier" || opExpr == "Variable") {
-                    switch (getOClassString(graph, rootId)) {
-                        None(): false;
-                        Some(stringValue): {
-                            switch (valueExpr) {
-                                OrbitString(exprValue): stringValue == exprValue;
-                                default: false;
+                    } else if (opExpr == "Double") {
+                        switch (getOClassDouble(graph, rootId)) {
+                            None(): false;
+                            Some(doubleValue): {
+                                switch (valueExpr) {
+                                    OrbitDouble(exprValue): doubleValue == exprValue;
+                                    default: false;
+                                }
                             }
                         }
-                    }
-                } else if (opExpr == "Bool") {
-                    // Booleans are typically stored as integers (0/1) in OGraph
-                    switch (getOClassInt(graph, rootId)) {
-                        None(): false;
-                        Some(intValue): {
-                            switch (valueExpr) {
-                                OrbitBool(exprValue): (intValue != 0) == exprValue;
-                                default: false;
+                    } else if (opExpr == "String" || opExpr == "Identifier" || opExpr == "Variable") {
+                        switch (getOClassString(graph, rootId)) {
+                            None(): false;
+                            Some(stringValue): {
+                                switch (valueExpr) {
+                                    OrbitString(exprValue): stringValue == exprValue;
+                                    default: false;
+                                }
                             }
                         }
+                    } else if (opExpr == "Bool") {
+                        // Booleans are typically stored as integers (0/1) in OGraph
+                        switch (getOClassInt(graph, rootId)) {
+                            None(): false;
+                            Some(intValue): {
+                                switch (valueExpr) {
+                                    OrbitBool(exprValue): (intValue != 0) == exprValue;
+                                    default: false;
+                                }
+                            }
+                        }
+                    } else {
+                        // Other leaf node types without primitive values
+                        true;
                     }
                 } else {
-                    // Other leaf node types without primitive values
-                    true;
+                    // For non-leaf nodes, recursively compare all children
+                    foldRange(0, length(childrenExpr) - 1, true, \acc, i -> {
+                        if (!acc) false  // Short-circuit if we already found mismatch
+                        else if (i >= length(oclass.node.children)) false
+                        else compareOrbitWithNode(childrenExpr[i], graph, oclass.node.children[i]);
+                    });
                 }
-            } else {
-                // For non-leaf nodes, recursively compare all children
-                foldRange(0, length(childrenExpr) - 1, true, \acc, i -> {
-                    if (!acc) false  // Short-circuit if we already found mismatch
-                    else if (i >= length(oclass.node.children)) false
-                    else compareOrbitWithNode(childrenExpr[i], graph, oclass.node.children[i]);
-                });
             }
         }
     }
