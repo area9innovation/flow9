@@ -188,73 +188,231 @@ Our approach to canonicalization follows a general meta-algorithm pattern:
 
 This meta-algorithm is implemented efficiently using prefix-based pruning for large groups:
 
-TODO: Rewrite to be in Orbit syntax
+```orbit
+// Meta-Algorithm: Finding Canonical Forms
+fn find_canonical_form(expression, group) = (
+	// Apply the group action to generate variations and find minimum
+	let variations = apply_group_action(expression, group);
+	min(variations)
+);
 
-```
-function find_canonical_form(expression, group):
-	// Initialize with empty prefix
-	return prefix_dfs(expression, group, [])
+// Optimized implementation using prefix-based pruning
+fn find_canonical_form_optimized(expression, group) = (
+	prefix_dfs(expression, group, [])
+);
 
-function prefix_dfs(expression, group, prefix):
+fn prefix_dfs(expression, group, prefix) = (
 	// Base case: if expression is fully determined by prefix
-	if is_fully_determined(expression, prefix):
-		return construct_expression(prefix)
+	if is_fully_determined(expression, prefix) then (
+		construct_expression(prefix)
+	) else (
+		// Get possible next elements based on current prefix
+		let candidates = get_next_candidates(expression, group, prefix);
 
-	// Get possible next elements based on current prefix
-	candidates ← get_next_candidates(expression, group, prefix)
+		// Sort candidates lexicographically
+		let sorted_candidates = sort(candidates, \a, b.compare(a, b));
 
-	// Sort candidates lexicographically
-	sorted_candidates ← sort(candidates)
+		// Try each candidate prefix extension recursively
+		sorted_candidates is (
+			[] => null;  // No candidates found
+			[candidate|rest] => (
+				let extended_prefix = prefix + [candidate];
 
-	// Try each candidate prefix extension
-	for candidate in sorted_candidates:
-		extended_prefix ← prefix + [candidate]
-		// Check if this prefix can lead to minimal form
-		if is_viable_prefix(expression, group, extended_prefix):
-			result ← prefix_dfs(expression, group, extended_prefix)
-			if result is not null:
-				return result
+				// Check if this prefix can lead to minimal form
+				if is_viable_prefix(expression, group, extended_prefix) then (
+					let result = prefix_dfs(expression, group, extended_prefix);
+					if result != null then result
+					else try_remaining(expression, group, rest, prefix)
+				) else
+					try_remaining(expression, group, rest, prefix)
+			)
+		)
+	)
+);
 
-	return null
+fn try_remaining(expression, group, candidates, prefix) = (
+	candidates is (
+		[] => null;
+		[candidate|rest] => (
+			let extended_prefix = prefix + [candidate];
+			if is_viable_prefix(expression, group, extended_prefix) then (
+				let result = prefix_dfs(expression, group, extended_prefix);
+				if result != null then result
+				else try_remaining(expression, group, rest, prefix)
+			) else
+				try_remaining(expression, group, rest, prefix)
+		)
+	)
+);
 ```
 
 For specific groups, we implement optimized versions:
 
 **Algorithm 1: Symmetric Group Canonicalisation (Sₙ)**
+```orbit
+// Algorithm 1: Symmetric Group Canonicalisation (Sₙ)
+fn canonicalise_symmetric(elements, comparison_fn) = (
+	// Default comparison if none provided
+	let comparator = if comparison_fn == null then
+		\a, b.(a <=> b)
+	else
+		comparison_fn;
+
+	// Sort the elements using the comparator function
+	sort(elements, comparator)
+);
+
+// Example usage for commutative addition
+fn canonicalize_commutative_sum(expr) = (
+	expr is (
+		a + b => (
+			if a <= b then a + b
+			else b + a
+		);
+
+		// Handle n-ary sum by flattening and sorting
+		(a + b) + c => canonicalize_commutative_sum(a + (b + c));
+
+		// Default case - return unchanged
+		_ => expr
+	)
+);
 ```
-function canonicalise_symmetric(elements):
-	return sort(elements)
-```
-TODO: Rewrite to be in Orbit syntax
 
 
 This reduces the O(n!) complexity to O(n log n) for sorting.
 
 **Algorithm 2: Cyclic Group Canonicalisation (Cₙ)**
+```orbit
+// Algorithm 2: Cyclic Group Canonicalisation (Cₙ)
+fn canonicalise_cyclic(array) = (
+	// Naive O(n²) implementation
+	let n = length(array);
+
+	// Find minimum rotation using fold
+	fn try_rotations(i, best_so_far) = (
+		if i >= n then best_so_far
+		else (
+			let rotated = rotate(array, i);
+			let next_best = if compare(rotated, best_so_far) < 0 then rotated else best_so_far;
+			try_rotations(i + 1, next_best)
+		)
+	);
+
+	try_rotations(0, array)
+);
+
+// Helper function to rotate array by n positions
+fn rotate(array, n) = (
+	let len = length(array);
+	if len == 0 then []
+	else (
+		let normalized_n = n % len;
+		concat(
+			subrange(array, normalized_n, len - normalized_n),
+			subrange(array, 0, normalized_n)
+		)
+	)
+);
+
+// Efficient O(n) implementation using Booth's algorithm
+fn canonicalise_cyclic_efficient(array) = (
+	// Find the lexicographically minimal rotation index
+	let min_index = find_min_rotation_index(array);
+
+	// Rotate the array by that index
+	rotate(array, min_index)
+);
+
+// Booth's algorithm for finding minimal rotation index
+fn find_min_rotation_index(array) = (
+	let n = length(array);
+	let double_array = array + array;  // Concatenate array with itself
+
+	// Initialize failure function
+	let f = map(range(0, 2*n), \_.(-1));
+
+	// Initialize minimum rotation index
+	let min_rotation = 0;
+
+	// Process each character
+	fn process_chars(i, min_rot, fail_func) = (
+		if i >= 2*n then min_rot
+		else (
+			// Compare with the current minimum
+			fn compare_with_min(j, curr_min) = (
+				if j == -1 || double_array[i % n] != double_array[(curr_min + j + 1) % n] then (
+					// Determine new minimum based on comparison
+					let new_min = if j == -1 && double_array[i % n] < double_array[(curr_min + j + 1) % n] then
+						i - j - 1
+					else
+						curr_min;
+
+					Pair(j, new_min)
+				) else (
+					compare_with_min(fail_func[j], curr_min)
+				)
+			);
+
+			let result = compare_with_min(fail_func[i - min_rot - 1], min_rot);
+			let j = result.first;
+			let new_min_rot = result.second;
+
+			// Update failure function
+			let new_fail = fail_func;
+			let new_fail_index = if j == -1 && double_array[i % n] != double_array[(new_min_rot + j + 1) % n] then (
+				// Case where characters differ
+				i - new_min_rot
+			) else (
+				// Case where partial match
+				j + 1
+			);
+
+			let updated_fail = setArrayIndex(new_fail, i - new_min_rot, new_fail_index);
+
+			// Continue recursion
+			process_chars(i + 1, new_min_rot, updated_fail)
+		)
+	);
+
+	// Start processing from index 1
+	process_chars(1, 0, f) % n
+);
 ```
-function canonicalise_cyclic(array):
-	best ← array
-	for i in 0…n-1:           # rotations
-		best ← min(best, rotᵢ(array))
-	return best
-```
-TODO: Rewrite to be in Orbit syntax
 
 
 The naive implementation above has O(n²) time complexity, but we can achieve linear time using Booth's algorithm [Booth, 1980]. Booth's algorithm finds the lexicographically minimal rotation of a string or array in O(n) time by using a variant of the Knuth-Morris-Pratt (KMP) string matching algorithm.
 
 **Algorithm 3: Dihedral Group Canonicalisation (Dₙ)**
-```
-function canonicalise_dihedral(array):
-	best ← array
-	for i in 0…n-1:           # rotations
-		best ← min(best, rotᵢ(array))
-	for i in 0…n-1:           # reflections
-		best ← min(best, rotᵢ(reverse(array)))
-	return best
-```
+```orbit
+// Algorithm 3: Dihedral Group Canonicalisation (Dₙ)
+fn canonicalise_dihedral(array) = (
+	// Use Booth's algorithm to find minimal rotation on original array
+	let min_rotation = canonicalise_cyclic_efficient(array);
 
-TODO: This can be done simpler using Booth algorithm on the original and the flipped version, and picked the smallest. Be sure to write in Orbit syntax
+	// Use Booth's algorithm to find minimal rotation on reversed array
+	let reversed = reverse(array);
+	let min_reversed_rotation = canonicalise_cyclic_efficient(reversed);
+
+	// Return the lexicographically smaller of the two
+	if compare(min_rotation, min_reversed_rotation) <= 0 then
+		min_rotation
+	else
+		min_reversed_rotation
+);
+
+// Helper function to reverse an array
+fn reverse(array) = (
+	let len = length(array);
+
+	fn build_reversed(i, result) = (
+		if i < 0 then result
+		else build_reversed(i - 1, result + [array[i]])
+	);
+
+	build_reversed(len - 1, [])
+);
+```
 
 ## 5. Canonicalisation Strategies
 
@@ -346,7 +504,109 @@ canon(p(x)) = min(p(x), x*p(x) mod (x^4-1), x^2*p(x) mod (x^4-1), x^3*p(x) mod (
 
 This parallel between the direct array representation and the polynomial encoding demonstrates how our group-theoretic framework unifies seemingly disparate representations under the same mathematical structure.
 
-TODO: Introduce Groebner basis and the algorithm to solve those as another method to try this.
+#### Groebner Basis for Polynomial Canonicalization
+
+An alternative approach to cyclic permutation optimization is using Groebner bases, which provide a powerful framework for polynomial system canonicalization:
+
+```orbit
+// Groebner Basis Algorithm for Polynomial Canonicalization
+fn compute_groebner_basis(polynomials, order) = (
+	// Initialize the basis with the input polynomials
+	let g = polynomials;
+
+	// Create all pairs of polynomials for S-polynomial computation
+	fn create_pairs(polys) = (
+		let n = length(polys);
+
+		fn build_pairs(i, j, pairs) = (
+			if i >= n then pairs
+			else if j >= n then build_pairs(i + 1, i + 2, pairs)
+			else build_pairs(i, j + 1, pairs + [Pair(polys[i], polys[j])])
+		);
+
+		build_pairs(0, 1, [])
+	);
+
+	let pairs = create_pairs(g);
+
+	// Process all pairs until fixed point
+	fn process_pairs(basis, remaining_pairs) = (
+		remaining_pairs is (
+			[] => basis;  // No more pairs to process
+			[pair|rest] => (
+				let f = pair.first;
+				let h = pair.second;
+
+				// Compute S-polynomial
+				let s = s_polynomial(f, h, order);
+
+				// Reduce S-polynomial with respect to basis
+				let r = reduce_polynomial(s, basis, order);
+
+				if r != 0 then (
+					// If non-zero, add to basis and create new pairs
+					let new_basis = basis + [r];
+					let new_pairs = rest + map(basis, \p.Pair(r, p));
+					process_pairs(new_basis, new_pairs)
+				) else (
+					// Continue with remaining pairs
+					process_pairs(basis, rest)
+				)
+			)
+		)
+	);
+
+	// Start the Buchberger algorithm with initial basis and pairs
+	process_pairs(g, pairs)
+);
+
+// Compute S-polynomial of two polynomials
+fn s_polynomial(f, h, order) = (
+	// Get leading terms
+	let lt_f = leading_term(f, order);
+	let lt_h = leading_term(h, order);
+
+	// Compute least common multiple of leading terms
+	let lcm = least_common_multiple(lt_f, lt_h);
+
+	// Compute S-polynomial formula
+	(lcm / lt_f) * f - (lcm / lt_h) * h
+);
+
+// Reduce a polynomial with respect to a Groebner basis
+fn reduce_polynomial(p, basis, order) = (
+	if p == 0 then 0
+	else (
+		let lt_p = leading_term(p, order);
+
+		// Try to find a divisor in the basis
+		fn find_divisor(i, curr_p) = (
+			if i >= length(basis) then (
+				// No divisor found, keep this term and continue with remainder
+				let remaining = curr_p - lt_p;
+				lt_p + reduce_polynomial(remaining, basis, order)
+			) else (
+				let g = basis[i];
+				let lt_g = leading_term(g, order);
+
+				if divides(lt_g, lt_p) then (
+					// Found divisor, reduce polynomial and continue recursively
+					let factor = lt_p / lt_g;
+					let reduced = curr_p - factor * g;
+					reduce_polynomial(reduced, basis, order)
+				) else (
+					// Try next basis element
+					find_divisor(i + 1, curr_p)
+				)
+			)
+		);
+
+		find_divisor(0, p)
+	)
+);
+```
+
+For the 2x2 Rubik's cube face, we can encode its cyclic symmetry into a polynomial ideal and use Groebner basis techniques to find its canonical form. This approach provides a unified algebraic framework that extends beyond simple cyclic permutations to more complex polynomial systems.
 
 ### 5.3 Dihedral Group Canonicalization (Dₙ)
 
