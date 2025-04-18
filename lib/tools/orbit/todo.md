@@ -42,12 +42,11 @@
 ## OGraph Enhancements
 ✅ Check that inserting into and extraction from ograph works correct
 ✅ lib/tools/orbit/tests/ograph_rewrite_single.orb:
-- lib/tools/orbit/tests/ograph_rewrite_test.orb:
-  fix and test
+- Fix : Domain and !: Domain
 - Check ograph dot export
+- Implement attaching Domain on rhs of pattern (in substitution maybe?)
 ✅ Check ograph operations
 ✅ Implement pattern matching in ograph
-- Implement domain pattern matching as well
 - Extract minimal program from ograph via cost function
 - Implement domain hierarchy relationships (e.g., Integer ⊂ Real)
 - Add cost model for extracting optimal expressions from ograph
