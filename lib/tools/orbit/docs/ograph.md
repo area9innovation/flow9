@@ -434,6 +434,39 @@ Pattern matching is fundamental to many O-Graph operations, particularly:
 
 The callback-based API allows for flexible processing of matches without building up large intermediate data structures.
 
+### Using the Rewrite Library
+
+A reusable library for rewriting can be imported in Orbit programs:
+
+```orbit
+import lib/rewrite;
+
+// Define rewrite rules
+let rules = [
+	prepareRule(
+		"Addition Identity in Integer Domain",
+		quote(x + 0),
+		quote(x : Integer)
+	),
+	prepareRule(
+		"Multiplication Identity in Real Domain",
+		quote(x * 1),
+		quote(x : Real)
+	)
+];
+
+// Apply rules to an expression
+let expr = quote((a + 0) : Integer);
+let result = applyRules(expr, rules);
+```
+
+The library provides several key functions:
+
+- `applyRules(expr, rules)`: Applies a list of rules to an expression
+- `applyRule(expr, name, pattern, replacement)`: Applies a single rule
+- `applyRulesUntilFixedPoint(expr, rules, maxIterations)`: Applies rules repeatedly until no more matches are found
+- `prepareRule(name, pattern, replacement)`: Creates a rule triple
+
 ### Visualization
 
 #### Graphviz: `ograph2dot(graphName: string) -> string`
@@ -840,4 +873,6 @@ let crossDomainRules = quote(
 
 Orbit provides a powerful platform for working with symbolic expressions, mathematical rewriting, and cross-domain transformations. Its native OGraph integration and domain annotation system enable sophisticated program optimization and transformation capabilities while maintaining a clean, functional programming model.
 
-The ability to express and solve problems in domains like polynomial equations demonstrates the power of combining group theory with computational rewriting. By bridging the gap between mathematical formalism and practical programming, Orbit enables new approaches to challenging computational problems through group-theoretic reasoning, domain-crossing transformations, and cost-driven optimization.
+The ability to express and solve problems in domains like polynomial equations demonstrates the power of combining group theory with computational rewriting. The included `lib/rewrite` library further simplifies the implementation of domain-aware rewriting systems by enforcing the correct sequence of operations (substitution → domain processing → merging).
+
+By bridging the gap between mathematical formalism and practical programming, Orbit enables new approaches to challenging computational problems through group-theoretic reasoning, domain-crossing transformations, and cost-driven optimization.
