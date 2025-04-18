@@ -29,8 +29,12 @@ matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<s
     // Get the graph from the registry
     matchCount = ref 0;
     
+    if (tracing) println("Pattern matching in graph '" + graphName + "'");
+    if (tracing) println("Pattern: " + prettyOrbit(pattern));
+    
     switch (lookupTree(^ographRegistry, graphName)) {
         Some(graph): {
+            if (tracing) println("DEBUG: Calling matchOGraphPattern with graph " + graphName);
             // Strategy: Try to match the pattern starting at each node in the graph
             if (tracing) println("DEBUG: Found graph, traversing nodes");
             traverseOGraph(graph, \nodeIndex, node -> {
@@ -39,7 +43,17 @@ matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<s
                 // Try to match the pattern at this node
                 switch (matchPatternAtNode(graph, nodeIndex, pattern, tracing)) {
                     OPatternSuccess(bindings): {
-                        if (tracing)  println("DEBUG: Found match at node ID: " + i2s(nodeIndex));
+                        if (tracing)  {
+                            println("DEBUG: Found match at node ID: " + i2s(nodeIndex));
+                            println("DEBUG: Found match with " + i2s(sizeTree(bindings)) + " bindings at eclass ID: " + i2s(findORoot(graph, nodeIndex)));
+
+                            // Debug output - log all bindings
+                            iter(getTreeKeys(bindings), \key -> {
+                                value = lookupTreeDef(bindings, key, -1);
+                                println("  " + key + " = " + ograph2OrbitPretty(graph, value));
+                            });
+                        }
+                        
                         // Found a match, convert node IDs to expressions
                         exprBindings = convertBindingsToExpressions(graph, bindings);
                         
@@ -55,7 +69,7 @@ matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<s
                 }
             });
             
-            // println("DEBUG: Finished traversing graph, found " + i2s(^matchCount) + " matches");
+            if (tracing) println("DEBUG: matchOGraphPattern returned " + i2s(^matchCount) + " matches");
             ^matchCount;
         }
         None(): {
@@ -65,22 +79,28 @@ matchOGraphPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<s
     }
 }
 
+// Helper to pretty print a node for debugging
+ograph2OrbitPretty(graph : OGraph, nodeId : int) -> string {
+    expr = ograph2Orbit(graph, nodeId);
+    prettyOrbit(expr);
+}
+
 // Convert bindings from node IDs to expressions
 convertBindingsToExpressions(graph : OGraph, bindings : Tree<string, int>) -> Tree<string, OrMath_expr> {
     mapTree(bindings, \nodeId -> ograph2Orbit(graph, nodeId));
 }
 
-// Get domain ID from pattern
-getDomainId(graph : OGraph, domainPattern : OrMath_expr, domainBindings : Tree<string, int>, tracing : bool) -> int {
+// Get domain ID from pattern - simplified to focus on the common case
+getDomainId(graph : OGraph, domainPattern : OrMath_expr, tracing : bool) -> int {
     // Decompose pattern to get its operation type
     patternDecomposed = decomposeOrbit(domainPattern);
     patternOp = patternDecomposed.first;
     patternChildren = patternDecomposed.second.first;
     patternValue = patternDecomposed.second.second;
     
-    if (tracing) println("DEBUG: Finding domain for pattern: " + prettyOrbit(domainPattern));
+    if (tracing) println("DEBUG: Finding domain ID for pattern: " + prettyOrbit(domainPattern));
     
-    // Check if it's a direct identifier (most common case)
+    // For Identifier pattern, get the name and find the node
     if (patternOp == "Identifier") {
         domainName = switch (patternValue) { 
             OrbitString(s): s;
@@ -89,11 +109,11 @@ getDomainId(graph : OGraph, domainPattern : OrMath_expr, domainBindings : Tree<s
         
         if (tracing) println("DEBUG: Looking for domain identifier: '" + domainName + "'");
         
-        // Search for the domain node by name with a direct traversal
+        // Search for domain node with matching name
         if (domainName != "") {
             domainId = ref -1;
             traverseOGraph(graph, \ecid, onode -> {
-                if (onode.op == "Identifier") {
+                if (onode.op == "Identifier" || onode.op == "Variable") {
                     switch (getOClassString(graph, ecid)) {
                         Some(name): {
                             if (name == domainName) {
@@ -105,44 +125,18 @@ getDomainId(graph : OGraph, domainPattern : OrMath_expr, domainBindings : Tree<s
                     }
                 }
             });
-            ^domainId;
+            
+            result = ^domainId;
+            if (result == -1 && tracing) {
+                println("DEBUG: Could not find domain '" + domainName + "' in the graph");
+            }
+            result;
         } else -1;
     } 
-    // Try to directly use bindings for other domain patterns
-    else if (sizeTree(domainBindings) > 0) {
-        // Use matched bindings if available
-        firstKey = getTreeKeys(domainBindings)[0];
-        result = lookupTreeDef(domainBindings, firstKey, -1);
-        if (tracing) println("DEBUG: Using domain binding with ID: " + i2s(result));
-        result;
-    } 
-    // Special case for specific complex domains we know about
+    // Special handling for non-identifier domains
     else {
-        if (tracing) println("DEBUG: Handling complex domain pattern");
-        
-        // Try to find the domain node structurally
-        // Extract the key components of the domain pattern
-        candidateIds = ref []; // Collect candidates
-        
-        // Search all nodes for potential matches
-        traverseOGraph(graph, \nodeId, node -> {
-            if (node.op == patternOp) {
-                // Check for structural similarity
-                structuralMatch = nodesStructurallyEqual(graph, nodeId, nodeId); // Placeholder
-                if (structuralMatch) {
-                    candidateIds := arrayPush(^candidateIds, nodeId);
-                }
-            }
-        });
-        
-        if (length(^candidateIds) > 0) {
-            result = ^candidateIds[0];
-            if (tracing) println("DEBUG: Found domain by structure search: " + i2s(result));
-            result;
-        } else {
-            if (tracing) println("DEBUG: Could not find matching domain node");
-            -1;
-        }
+        if (tracing) println("DEBUG: Complex domain pattern: " + patternOp);
+        -1; // Simplified for now - extended logic needed for complex domain patterns
     }
 }
 
@@ -161,7 +155,7 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr, tracing 
     // Special case for TypeAnnotation (: operator)
     if (patternOp == "TypeAnnotation") {
         if (tracing) println("DEBUG: Processing TypeAnnotation pattern (: operator)");
-        // TypeAnnotation means the expression should belong to the specified domain
+        
         // Extract the expression and domain from the pattern
         expressionPattern = switch (pattern) {
             OrTypeAnnotation(expr, domain): expr;
@@ -173,43 +167,45 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr, tracing 
             default: pattern; // Should never happen
         };
         
-        // First, match the expression part of the pattern
+        // First match the expression part against this node
+        // *IMPORTANT FIX*: We match only the expression part, not the TypeAnnotation structure
         switch (matchPatternAtNode(graph, nodeId, expressionPattern, tracing)) {
             OPatternSuccess(exprBindings): {
-                // Now we need to match the domain part
-                // We first need to evaluate the domain part to get its node ID
-                switch (matchPatternAtNode(graph, nodeId, domainPattern, tracing)) {
-                    OPatternSuccess(domainBindings): {
-                        // Get all bindings from domain pattern
-                        // Combine all bindings
-                        allBindings = mergeOBindings(graph, exprBindings, domainBindings);
-                        switch (allBindings) {
-                            OPatternSuccess(bindings): {
-                                // Get the domain ID
-                                domainNodeId = getDomainId(graph, domainPattern, domainBindings, tracing);
-                                
-                                // Check if the node belongs to this domain
-                                if (domainNodeId != -1 && onodeBelongsTo(graph, nodeId, domainNodeId)) {
-                                    if (tracing) println("DEBUG: Node belongs to required domain, match successful");
-                                    OPatternSuccess(bindings);
-                                } else {
-                                    if (tracing) println("DEBUG: Node does not belong to required domain, match failed");
-                                    OPatternFailure();
-                                }
-                            }
-                            OPatternFailure(): OPatternFailure();
-                        }
+                // Found a match for the expression part
+                // Now verify domain membership
+                domainNodeId = getDomainId(graph, domainPattern, tracing);
+                
+                if (domainNodeId == -1) {
+                    if (tracing) println("DEBUG: Could not find domain node for: " + prettyOrbit(domainPattern));
+                    OPatternFailure();
+                } else {
+                    // Check domain membership
+                    belongsToDomain = onodeBelongsTo(graph, nodeId, domainNodeId);
+                    
+                    if (tracing) {
+                        println("DEBUG: Checking if node " + i2s(nodeId) + " belongs to domain " + i2s(domainNodeId));
+                        println("DEBUG: Domain membership result: " + i2s(b2i(belongsToDomain)));
                     }
-                    OPatternFailure(): OPatternFailure();
+                    
+                    if (belongsToDomain) {
+                        if (tracing) println("DEBUG: Node belongs to required domain, match successful");
+                        OPatternSuccess(exprBindings);  // Return the expression match bindings
+                    } else {
+                        if (tracing) println("DEBUG: Node does not belong to required domain, match failed");
+                        OPatternFailure();
+                    }
                 }
             }
-            OPatternFailure(): OPatternFailure();
+            OPatternFailure(): {
+                if (tracing) println("DEBUG: Expression part of TypeAnnotation pattern didn't match");
+                OPatternFailure();
+            }
         }
     }
     // Special case for NotTypeAnnotation (!: operator)
     else if (patternOp == "NotTypeAnnotation") {
         if (tracing) println("DEBUG: Processing NotTypeAnnotation pattern (!: operator)");
-        // NotTypeAnnotation means the expression should NOT belong to the specified domain
+        
         // Extract the expression and domain from the pattern
         expressionPattern = switch (pattern) {
             OrNotTypeAnnotation(expr, domain): expr;
@@ -221,35 +217,40 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr, tracing 
             default: pattern; // Should never happen
         };
         
-        // First, match the expression part of the pattern
+        // First match the expression part against this node
+        // *IMPORTANT FIX*: We match only the expression part, not the NotTypeAnnotation structure
         switch (matchPatternAtNode(graph, nodeId, expressionPattern, tracing)) {
             OPatternSuccess(exprBindings): {
-                // Now we need to match the domain part (to get its ID)
-                switch (matchPatternAtNode(graph, nodeId, domainPattern, tracing)) {
-                    OPatternSuccess(domainBindings): {
-                        // Combine all bindings
-                        allBindings = mergeOBindings(graph, exprBindings, domainBindings);
-                        switch (allBindings) {
-                            OPatternSuccess(bindings): {
-                                // Get the domain ID
-                                domainNodeId = getDomainId(graph, domainPattern, domainBindings, tracing);
-                                
-                                // Check that the node does NOT belong to the domain
-                                if (domainNodeId == -1 || !onodeBelongsTo(graph, nodeId, domainNodeId)) {
-                                    if (tracing) println("DEBUG: Node does not belong to the domain, negative match successful");
-                                    OPatternSuccess(bindings);
-                                } else {
-                                    if (tracing) println("DEBUG: Node belongs to the domain we don't want, match failed");
-                                    OPatternFailure();
-                                }
-                            }
-                            OPatternFailure(): OPatternFailure();
-                        }
+                // Found a match for the expression part
+                // Now verify negative domain membership
+                domainNodeId = getDomainId(graph, domainPattern, tracing);
+                
+                if (domainNodeId == -1) {
+                    if (tracing) println("DEBUG: Could not find domain node for negative check: " + prettyOrbit(domainPattern));
+                    // If the domain doesn't exist, we consider the negative check a success
+                    OPatternSuccess(exprBindings);
+                } else {
+                    // Check that the node does NOT belong to the domain
+                    belongsToDomain = onodeBelongsTo(graph, nodeId, domainNodeId);
+                    
+                    if (tracing) {
+                        println("DEBUG: Checking if node " + i2s(nodeId) + " does NOT belong to domain " + i2s(domainNodeId));
+                        println("DEBUG: Domain membership result: " + i2s(b2i(belongsToDomain)));
                     }
-                    OPatternFailure(): OPatternFailure();
+                    
+                    if (!belongsToDomain) {
+                        if (tracing) println("DEBUG: Node does not belong to the domain, negative match successful");
+                        OPatternSuccess(exprBindings);  // Return the expression match bindings
+                    } else {
+                        if (tracing) println("DEBUG: Node belongs to the domain we don't want, match failed");
+                        OPatternFailure();
+                    }
                 }
             }
-            OPatternFailure(): OPatternFailure();
+            OPatternFailure(): {
+                if (tracing) println("DEBUG: Expression part of NotTypeAnnotation pattern didn't match");
+                OPatternFailure();
+            }
         }
     }
     // Special case for pattern variables (identifiers in pattern context)
@@ -417,35 +418,26 @@ matchAllChildren(graph : OGraph, childIds : [int], patterns : [OrMath_expr],
                  bindings : Tree<string, int>, tracing : bool) -> OPatternResult {
     if (length(childIds) == 0 && length(patterns) == 0) {
         // All children matched successfully
-        // println("DEBUG: All children matched successfully. Final bindings: " + 
-        //        superglue(getTreeKeys(bindings), \k -> k + ":" + i2s(lookupTreeDef(bindings, k, -1)), ", "));
         OPatternSuccess(bindings);
     } else if (length(childIds) == 0 || length(patterns) == 0) {
         // Mismatched number of children
-        // println("DEBUG: Mismatched number of children. childIds=" + i2s(length(childIds)) + ", patterns=" + i2s(length(patterns)));
         OPatternFailure();
     } else {
         // Try to match the first child
-        // println("DEBUG: Matching child " + i2s(childIds[0]) + " with pattern " + prettyOrbit(patterns[0]));
         switch (matchPatternAtNode(graph, childIds[0], patterns[0], tracing)) {
             OPatternSuccess(childBindings): {
-                // println("DEBUG: Child match succeeded with bindings: " + 
-                //        superglue(getTreeKeys(childBindings), \k -> k + ":" + i2s(lookupTreeDef(childBindings, k, -1)), ", "));
                 // Merge bindings, ensuring consistency
                 switch (mergeOBindings(graph, bindings, childBindings)) {
                     OPatternSuccess(mergedBindings): {
-                        // println("DEBUG: Bindings merged successfully, continuing with remaining children");
                         // Continue with remaining children
                         matchAllChildren(graph, tail(childIds), tail(patterns), mergedBindings, tracing);
                     }
                     OPatternFailure(): {
-                        // println("DEBUG: Bindings merge failed - inconsistent variable bindings");
                         OPatternFailure();
                     }
                 }
             }
             OPatternFailure(): {
-                // println("DEBUG: Child match failed");
                 OPatternFailure();
             }
         }
@@ -462,19 +454,14 @@ mergeOBindings(graph : OGraph, a : Tree<string, int>, b : Tree<string, int>) -> 
                     Some(aValue): {
                         // Variable already bound, must be consistent
                         // This is critical for patterns like x + x where the same variable appears multiple times
-                        if (oNodesEquivalent(graph, aValue, bValue)) {
-                            // println("DEBUG: Consistent binding for " + key + ": already bound to " + i2s(aValue) + 
-                            //        ", new node " + i2s(bValue) + " is equivalent");
+                        if (findORoot(graph, aValue) == findORoot(graph, bValue)) { // Simplified check for equivalence
                             OPatternSuccess(bindings);
                         } else {
-                            // println("DEBUG: INCONSISTENT binding for " + key + ": previous=" + i2s(aValue) + 
-                            //        ", new=" + i2s(bValue) + " are not equivalent");
                             OPatternFailure();
                         }
                     }
                     None(): {
                         // New binding
-                        // println("DEBUG: New binding: " + key + " = " + i2s(bValue));
                         OPatternSuccess(setTree(bindings, key, bValue));
                     }
                 }
