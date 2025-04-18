@@ -4,6 +4,8 @@
 
 Canonical forms are indispensable for equality reasoning, pattern matching, and optimisation. We present Orbit, an extension of e-graphs that attaches domain annotations and group-theoretic metadata to e-classes. Exploiting the action of symmetry groups (Sₙ, Cₙ, Dₙ, …) on expressions we derive canonical representatives, transfer rewrite rules across domains, and obtain exponential reductions in search space. The framework unifies canonicalisation strategies from bit-vector algebra to differential calculus within a single mathematical language.
 
+<!-- TODO: Add a concrete performance improvement or example domain to immediately convey practical benefits -->
+
 ## 1. Introduction
 
 ### Problem
@@ -13,6 +15,8 @@ Canonical forms provide unique names for equivalence classes; compilers, compute
 ### Gap
 
 No current equality-saturation engine offers first-class knowledge of algebraic symmetry groups; consequently many optimisations and proofs have to be encoded manually.
+
+<!-- TODO: Clarify explicitly how Orbit differs fundamentally from existing approaches (such as standard e-graphs) and highlight the exact novelty compared to other group-aware canonicalization approaches -->
 
 ### Contribution
 
@@ -102,6 +106,8 @@ Ring    ⊂ Field
 x !: Processed  →  process(x) : Processed
 ```
 
+<!-- TODO: Add a short practical explanation of when negative domain guards would typically be useful with contextual examples -->
+
 ### 2.5 Combined example
 
 ```
@@ -114,6 +120,8 @@ x^2 + 2*x + 1 : Algebra  →  (x + 1)^2 : Factored
 ```
 
 ## 3. O-graph Data Structure vs. Traditional E-Graphs
+
+<!-- TODO: Add a brief illustrative example showing the step-by-step transformation from a traditional e-graph to an O-graph, highlighting what changes and what benefits emerge from domain and group annotations -->
 
 ### 3.1 Recap of e-graphs
 
@@ -142,6 +150,8 @@ Our system formalizes several key symmetry groups that commonly arise in computa
 | Sₙ | n! | Symmetric group (permutations) | sort operands |
 | Cₙ | n | Cyclic group (rotations) | lexicographic minimum over rotations |
 | Dₙ | 2n | Dihedral group (rotations+reflections) | min over rotations and reflections |
+
+<!-- TODO: Add brief descriptions or examples of each canonicalization strategy directly in the table for immediate intuition -->
 
 These fundamental groups appear across diverse domains:
 - S₂: Commutative operations (addition, multiplication)
@@ -175,6 +185,8 @@ The correctness of our canonicalization approach relies on the following theorem
 **Theorem 1**: *Let G be a finite group acting on a set X, and let ≤ be a total ordering on X. For any x ∈ X, the element min(Orb(x)) is a canonical representative of the orbit of x under G's action.*
 
 Proof sketch: Since G is finite, Orb(x) is finite. The minimum element under a total ordering is unique, ensuring that the canonical representative is well-defined. Since all elements in Orb(x) are equivalent under G's action, choosing any consistent representative (such as the minimum) preserves the equivalence relation.
+
+<!-- TODO: Add a small example illustrating why a total ordering guarantees a canonical representative, making the theorem's significance more immediate -->
 
 The time complexity of naïve orbit enumeration is O(|G|·|X|), where |G| is the group size and |X| is the size of the expression. For large groups like Sₙ (with size n!), this is prohibitive. However, we can use specialized algorithms for each group type:
 
@@ -503,6 +515,8 @@ canon(p(x)) = min(p(x), x*p(x) mod (x^4-1), x^2*p(x) mod (x^4-1), x^3*p(x) mod (
 ```
 
 This parallel between the direct array representation and the polynomial encoding demonstrates how our group-theoretic framework unifies seemingly disparate representations under the same mathematical structure.
+
+<!-- TODO: Clarify why polynomial encoding is introduced here and how it concretely relates to canonicalization and the framework -->
 
 #### Groebner Basis for Polynomial Canonicalization
 

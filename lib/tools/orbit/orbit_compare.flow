@@ -4,6 +4,8 @@ import tools/orbit/ograph;
 import tools/orbit/types;
 import tools/orbit/ograph_decompose;
 import tools/orbit/orbit_simple_ograph; // For ographRegistry
+import tools/orbit/orbit2ograph;      // For ograph2Orbit
+import tools/orbit/prettyprint;      // For prettyOrbit
 import ds/array;
 import maybe;
 
@@ -19,6 +21,9 @@ export {
     // Find a node ID in an OGraph that structurally matches the given expression without modifying the graph
     // Returns the ID if found, or -1 if not found
     findOGraphId(graphName : string, expr : OrMath_expr) -> int;
+    
+    // Check if two expressions are equivalent (for domain matching)
+    areExpressionsEquivalent(expr1 : OrMath_expr, expr2 : OrMath_expr) -> bool;
 }
 
 // Helper function to check if a node belongs to a domain that matches the given domain expression
@@ -151,13 +156,56 @@ compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool {
 
 // Implementation of findOGraphId function
 findOGraphId(graphName : string, expr : OrMath_expr) -> int {
+    
 	// Handle special case for domain annotations
     isDomainAnnotation = switch (expr) {
         OrTypeAnnotation(baseExpr, domain): true;
         default: false;
     };
     
-    if (isDomainAnnotation) {
+    // Special case: Check if this is a function call applied to a domain annotation
+    // Like ((a + b) : Type)("number") which should be treated as (a + b) : Type("number")
+    isComplexDomain = switch (expr) {
+        OrFunction(fnExpr, args): {
+            switch (fnExpr) {
+                OrTypeAnnotation(__, __): true;
+                default: false;
+            }
+        }
+        default: false;
+    };
+    
+    if (isComplexDomain) {
+        // Extract parts from the complex expression
+        switch (expr) {
+            OrFunction(fnExpr, fnArgs): {
+                switch (fnExpr) {
+                    OrTypeAnnotation(baseExpr, domainName): {
+                        // Create a proper domain annotation with the function call
+                        // baseExpr : domainName(fnArgs)
+                        domainNameStr = switch (domainName) {
+                            OrVariable(id): id;
+                            OrIdentifier(id): id;
+                            default: "";
+                        };
+                        
+                        // Construct a proper domain function with its arguments
+                        domainFunction = OrFunction(domainName, fnArgs);
+                        
+                        // Create the correct type annotation
+                        fixedExpr = OrTypeAnnotation(baseExpr, domainFunction);
+                        
+                        // Reconstructed the domain annotation with the function call
+                        
+                        // Call findOGraphId with the fixed expression
+                        findOGraphId(graphName, fixedExpr);
+                    }
+                    default: -1;
+                }
+            }
+            default: -1;
+        }
+    } else if (isDomainAnnotation) {
         // Extract base expression and domain
         baseExpr = switch (expr) {
             OrTypeAnnotation(be, __): be;
@@ -174,25 +222,40 @@ findOGraphId(graphName : string, expr : OrMath_expr) -> int {
         if (baseId == -1) {
             -1; // Base expression not found
         } else {
-            // Find the domain expression
-            domainId = findOGraphId(graphName, domain);
-            if (domainId == -1) {
-                -1; // Domain not found
-            } else {
-                // Get the ograph from the registry
-                switch (lookupTree(^ographRegistry, graphName)) {
-                    Some(ograph): {
-                        // Check if base node belongs to domain
-                        if (onodeBelongsTo(ograph, baseId, domainId)) {
-                            baseId; // Found a match
-                        } else {
-                            -1; // No match
-                        }
+            // Get the ograph from the registry
+            switch (lookupTree(^ographRegistry, graphName)) {
+                Some(ograph): {
+                    // Get all domains this node belongs to
+                    rootId = findORoot(ograph, baseId);
+                    domains = getONodeBelongsTo(ograph, rootId);
+                    
+                    if (length(domains) == 0) {
+                        -1; // Node doesn't belong to any domain
+                    } else {
+                        // Check each domain this node belongs to
+                        matchFound = ref false;
+                        
+                        // For each domain the node belongs to
+                        iter(domains, \domainId -> {
+                            if (!^matchFound) {
+                                // Extract the domain expression
+                                domainExpr = ograph2Orbit(ograph, domainId);
+                                
+                                // Compare the extracted domain with the one we're looking for
+                                equivalent = areExpressionsEquivalent(domain, domainExpr);
+                                
+                                if (equivalent) {
+                                    matchFound := true;
+                                }
+                            }
+                        });
+                        
+                        if (^matchFound) baseId else -1;
                     }
-                    None(): -1;
                 }
+                None(): -1;
             }
-        }    
+        }
     } else {
         // Regular case - non-domain expression
         // Get the ograph from the registry
@@ -214,6 +277,111 @@ findOGraphId(graphName : string, expr : OrMath_expr) -> int {
                 ^foundId;
             }
             None(): -1;
+        }
+    }
+}
+
+// Helper function for domain comparison
+
+// Helper function to check if two expressions are equivalent
+// This function handles special cases like function call expressions that need deeper comparison
+areExpressionsEquivalent(expr1 : OrMath_expr, expr2 : OrMath_expr) -> bool {
+    // Easy case: direct equality
+    if (expr1 == expr2) {
+        true;
+    } else {
+        // Get the structnames for both expressions
+        structname1 = expr1.structname;
+        structname2 = expr2.structname;
+        
+        if (structname1 != structname2) {
+            // Handle special case for OrIdentifier vs OrVariable
+            if ((structname1 == "OrIdentifier" && structname2 == "OrVariable") ||
+                (structname1 == "OrVariable" && structname2 == "OrIdentifier")) {
+                // Get the IDs
+                id1 = switch (expr1) {
+                    OrIdentifier(id): id;
+                    OrVariable(id): id;
+                    default: "";
+                };
+                
+                id2 = switch (expr2) {
+                    OrIdentifier(id): id;
+                    OrVariable(id): id;
+                    default: "";
+                };
+                
+                // Check if IDs match
+                id1 == id2;
+            } else {
+                // Different structure types that aren't compatible
+                false;
+            }
+        } else {
+            // Same structure types, compare contents
+            switch (expr1) {
+                OrInt(val1): {
+                    switch (expr2) {
+                        OrInt(val2): val1 == val2;
+                        default: false; // Should never happen due to structname check
+                    }
+                }
+                OrDouble(val1): {
+                    switch (expr2) {
+                        OrDouble(val2): val1 == val2;
+                        default: false;
+                    }
+                }
+                OrString(val1): {
+                    switch (expr2) {
+                        OrString(val2): val1 == val2;
+                        default: false;
+                    }
+                }
+                OrBool(val1): {
+                    switch (expr2) {
+                        OrBool(val2): val1 == val2;
+                        default: false;
+                    }
+                }
+                OrIdentifier(id1): {
+                    switch (expr2) {
+                        OrIdentifier(id2): id1 == id2;
+                        default: false;
+                    }
+                }
+                OrVariable(id1): {
+                    switch (expr2) {
+                        OrVariable(id2): id1 == id2;
+                        default: false;
+                    }
+                }
+                OrFunction(fnExpr1, args1): {
+                    switch (expr2) {
+                        OrFunction(fnExpr2, args2): {
+                            // Check function names first
+                            fnMatches = areExpressionsEquivalent(fnExpr1, fnExpr2);
+                            
+                            if (!fnMatches || length(args1) != length(args2)) {
+                                false;
+                            } else {
+                                // Recursively check all arguments
+                                foldRange(0, length(args1) - 1, true, \acc, i -> {
+                                    if (!acc) false  // Short-circuit if we already found mismatch
+                                    else areExpressionsEquivalent(args1[i], args2[i]);
+                                });
+                            }
+                        }
+                        default: false; // Should never happen due to structname check
+                    }
+                }
+                // Handle other expression types as needed
+                default: {
+                    // For any other types, fall back to direct equality
+                    // This could be enhanced for other specific types as needed
+                    expr1 == expr2;
+                }
+            }
         }
     }
 }
