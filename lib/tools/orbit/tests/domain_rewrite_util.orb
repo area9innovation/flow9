@@ -1,0 +1,130 @@
+// Domain-aware rewriting utilities building on ograph_util
+fn quote(e : ast) = e;
+
+// Enhanced function to apply a single pattern and replacement to a graph with domain support
+fn applyPatternToGraphWithDomains(graph, pattern, replacement, ruleName) = (
+    println("\nApplying rule: " + ruleName);
+    println("Pattern: " + prettyOrbit(pattern));
+    println("Replacement: " + prettyOrbit(replacement));
+    
+    // Apply the pattern match
+    let matches = matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
+        println("Match found at ID: " + i2s(eclassId));
+        
+        // Debug: Print binding contents
+        println("Bindings: (first few shown)");
+        let bindingKeys = [];
+        fn getKeys(arr, i) = (
+            if i < length(arr) then (
+                let pair = arr[i];
+                pair is (Pair(k, v) => (
+                    println(k + " => " + prettyOrbit(v));
+                    getKeys(arr, i + 1)
+                ))
+            ) else bindingKeys
+        );
+        getKeys(bindings, 0);
+        
+        // STEP 1: Substitute variables in the replacement
+        let substituted = substituteWithBindings(replacement, bindings);
+        println("1. After substitution: " + prettyOrbit(substituted));
+        
+        // STEP 2: Process domain annotations
+        let domainProcessed = processDomainAnnotations(graph, substituted);
+        println("2. After processing domain annotations, ID: " + i2s(domainProcessed));
+        
+        // STEP 3: Merge nodes (result first to make it canonical)
+        let merged = mergeOGraphNodes(graph, domainProcessed, eclassId);
+        println("3. Merged result: " + (if merged then "SUCCESS" else "FAILED"));
+    ));
+    
+    println("Applied " + i2s(matches) + " matches");
+    matches
+);
+
+// Apply a list of rewrite rules to an expression
+fn applyRulesWithDomains(expr, rules) = (
+    // Create a new graph 
+    let graph = makeOGraph("transform");
+    
+    // Process the input expression's domain annotations first
+    let exprId = processDomainAnnotations(graph, expr);
+    let processedExpr = extractOGraph(graph, exprId);
+    
+    println("Original expression: " + prettyOrbit(expr));
+    println("After processing domains: " + prettyOrbit(processedExpr));
+    
+    // Helper function to apply rules recursively 
+    fn applyRulesRecursive(rules, index, totalMatches) = (
+        if index < length(rules) then (
+            let rule = rules[index];
+            let ruleName = rule[0];
+            let pattern = rule[1];
+            let replacement = rule[2];
+            
+            // Apply the rule with domain support
+            let matches = applyPatternToGraphWithDomains(graph, pattern, replacement, ruleName);
+            
+            // Print the current state
+            let currentExpr = extractOGraph(graph, exprId);
+            println("Expression after this rule: " + prettyOrbit(currentExpr));
+            
+            // Apply the next rule
+            applyRulesRecursive(rules, index + 1, totalMatches + matches)
+        ) else (
+            // Return total matches when done
+            totalMatches
+        )
+    );
+    
+    // Apply all rules
+    let totalMatches = applyRulesRecursive(rules, 0, 0);
+    println("\nTotal rewrites applied: " + i2s(totalMatches));
+    
+    // Return the final transformed expression
+    let finalResult = extractOGraph(graph, exprId);
+    println("Final result: " + prettyOrbit(finalResult));
+    finalResult
+);
+
+// Domain-aware algebraic rules
+fn domainAlgebraRules() = [
+    ["Addition Identity in Integer Domain", 
+     quote(x + 0), 
+     quote(x : Integer)],
+     
+    ["Multiplication Identity in Real Domain", 
+     quote(x * 1), 
+     quote(x : Real)],
+     
+    ["Zero Product in Complex Domain", 
+     quote(x * 0), 
+     quote(0 : Complex)],
+     
+    ["Distributive Property in Algebra Domain", 
+     quote(x * (y + z)), 
+     quote((x * y + x * z) : Algebra)]
+];
+
+// TEST CASE 1: Simple integer addition identity with domain preservation
+println("\n--- TEST CASE 1: Integer Addition Identity ---");
+let expr1 = quote((a + 0) : Integer);
+let result1 = applyRulesWithDomains(expr1, domainAlgebraRules());
+println("Starting: " + prettyOrbit(expr1));
+println("Result: " + prettyOrbit(result1));
+
+// TEST CASE 2: Nested expressions with domain annotations
+println("\n--- TEST CASE 2: Distributive Property with Domain ---");
+let expr2 = quote(((p * (q + r)) : Algebra) : Ring);
+let result2 = applyRulesWithDomains(expr2, domainAlgebraRules());
+println("Starting: " + prettyOrbit(expr2));
+println("Result: " + prettyOrbit(result2));
+
+// TEST CASE 3: Multiple rewrites in sequence
+println("\n--- TEST CASE 3: Multiple Rewrites ---");
+let expr3 = quote(((x * 1) * (y + 0)) : Algebra);
+let result3 = applyRulesWithDomains(expr3, domainAlgebraRules());
+println("Starting: " + prettyOrbit(expr3));
+println("Result: " + prettyOrbit(result3));
+
+"Domain rewrite utilities test completed"
