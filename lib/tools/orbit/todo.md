@@ -21,6 +21,8 @@
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Hook in evaluation functions to implement AST nodes directly in Orbit itself, potentially using rewriting
 
+- add onodeBelongsTo run runtime 
+
 ## Interpreter Extensions
 - Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
   - Mathematical operations: `OrExponent`, `OrCompose`, `OrDirectProduct`
