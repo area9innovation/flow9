@@ -75,6 +75,7 @@ getDomainId(graph : OGraph, domainPattern : OrMath_expr, domainBindings : Tree<s
     // Decompose pattern to get its operation type
     patternDecomposed = decomposeOrbit(domainPattern);
     patternOp = patternDecomposed.first;
+    patternChildren = patternDecomposed.second.first;
     patternValue = patternDecomposed.second.second;
     
     // Check if it's a direct identifier
@@ -84,26 +85,33 @@ getDomainId(graph : OGraph, domainPattern : OrMath_expr, domainBindings : Tree<s
             default: "";
         };
         
-        // Look for this identifier in the graph
-        domainId = ref -1;
+        // Look for this identifier in the graph, ignoring domain memberships
         if (domainName != "") {
-            traverseOGraph(graph, \ecid, onode -> {
-                if (onode.op == "Identifier") {
-                    switch (getOClassString(graph, ecid)) {
-                        Some(name): if (name == domainName) domainId := ecid;
-                        None(): {};
+            // First, create a node with the identifier
+            identifierNode = ONode("Identifier", [], []);
+            
+            // Try to find a matching node ignoring belongsTo field
+            switch (findONodeIgnoreBelongsTo(graph, "Identifier", [])) {
+                Some(nodeId): {
+                    // Check if it has the right name
+                    switch (getOClassString(graph, nodeId)) {
+                        Some(name): {
+                            if (name == domainName) {
+                                if (tracing) {
+                                    println("DEBUG: Found domain '" + domainName + "' with ID: " + i2s(nodeId));
+                                }
+                                nodeId;
+                            } else -1;
+                        }
+                        None(): -1;
                     }
                 }
-            });
-        }
-        
-        if (tracing && ^domainId != -1) {
-            println("DEBUG: Found domain '" + domainName + "' with ID: " + i2s(^domainId));
-        }
-        
-        ^domainId;
+                None(): -1;
+            }
+        } else -1;
     } else {
-        // Use the first binding if available
+        // For complex domain patterns, we need to reconstruct the node
+        // First try using binding information from pattern matching
         if (sizeTree(domainBindings) > 0) {
             firstKey = getTreeKeys(domainBindings)[0];
             result = lookupTreeDef(domainBindings, firstKey, -1);
@@ -111,7 +119,33 @@ getDomainId(graph : OGraph, domainPattern : OrMath_expr, domainBindings : Tree<s
                 println("DEBUG: Using domain binding with ID: " + i2s(result));
             }
             result;
-        } else -1;
+        } else {
+            // If no bindings, try to find the node structure directly
+            // Convert pattern children to node IDs if needed
+            childrenIds = map(patternChildren, \child -> {
+                // Use the existing pattern matching to find this node if possible
+                switch (matchPatternAtNode(graph, 0, child, false)) { // 0 is a dummy nodeId, we just need the bindings
+                    OPatternSuccess(childBindings): {
+                        if (sizeTree(childBindings) > 0) {
+                            firstKey = getTreeKeys(childBindings)[0];
+                            lookupTreeDef(childBindings, firstKey, -1);
+                        } else -1;
+                    }
+                    OPatternFailure(): -1;
+                }
+            });
+            
+            // Try to find a matching node structure
+            switch (findONodeIgnoreBelongsTo(graph, patternOp, childrenIds)) {
+                Some(nodeId): {
+                    if (tracing) {
+                        println("DEBUG: Found complex domain with ID: " + i2s(nodeId));
+                    }
+                    nodeId;
+                }
+                None(): -1;
+            }
+        }
     }
 }
 
