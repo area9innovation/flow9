@@ -2,7 +2,7 @@
 
 ## Abstract
 
-Canonical forms are indispensable for equality reasoning, pattern matching, and optimisation. We present Orbit, an extension of e-graphs that attaches domain annotations and group-theoretic metadata to e-classes. Exploiting the action of symmetry groups (Sₙ, Cₙ, Dₙ, …) on expressions we derive canonical representatives, transfer rewrite rules across domains, and obtain exponential reductions in search space. We formalise correctness, bound worst-case orbit enumeration to O(|G|·|E|). The framework unifies canonicalisation strategies from bit-vector algebra to differential calculus within a single mathematical language.
+Canonical forms are indispensable for equality reasoning, pattern matching, and optimisation. We present Orbit, an extension of e-graphs that attaches domain annotations and group-theoretic metadata to e-classes. Exploiting the action of symmetry groups (Sₙ, Cₙ, Dₙ, …) on expressions we derive canonical representatives, transfer rewrite rules across domains, and obtain exponential reductions in search space. The framework unifies canonicalisation strategies from bit-vector algebra to differential calculus within a single mathematical language.
 
 ## 1. Introduction
 
@@ -22,14 +22,14 @@ We propose Orbit, a framework unifying canonical forms and rewriting; its concre
 
 2. **Group-theoretic canonicalisation**: Orbits under a group action are collapsed by a deterministic representative function.
 
-3. **Uniform rewrite language**: A syntax with typed patterns, negative domain guards, and bidirectional rules.
+3. **Uniform rewrite language**: A natural syntax with typed patterns, negative domain guards, and bidirectional rewriting rules.
 
 ### A Motivating Example: Commutative Addition
 
 Consider the simple case of integer addition, which is commutative: `3 + 5 = 5 + 3`. Without canonicalization, a system would need to store and match against both forms. With Orbit, we can annotate the addition with the S₂ symmetry group (the group of permutations on 2 elements):
 
 ```
-(3 + 5) : S₂ → 3 + 5 : Canonical  // if 3 <= 5
+(3 + 5) : S₂ → 3 + 5 : Canonical  // since 3 <= 5
 (5 + 3) : S₂ → 3 + 5 : Canonical  // forcing canonical ordering
 ```
 
@@ -79,19 +79,21 @@ Domain-constrained rule:
 x + y : Real  →  y + x : Real
 ```
 
-### 2.3 Hierarchy and entailment
+The left hand side : Real is a restriction, while the right hand side : Real is an entailment, meaning that we will add Real to the domains for `(y+x)`.
+
+### 2.3 Hierarchy
 
 ```
 D₁ ⊂ D₂              -- sub-domain
-Γ ⊢ φ                -- entailment (turnstile)
 ```
+
+This is short for the rule `a : D₁ → a : D`, which means that if `a` is in domain `D₁`, it is also in domain `D₂`. This is useful for defining domain hierarchies, where a more specific domain is a subset of a more general one.
 
 Examples:
 
 ```
 Integer ⊂ Rational ⊂ Real ⊂ Complex
 Ring    ⊂ Field
-x : Real + y : Real  ⊢  +  : S₂
 ```
 
 ### 2.4 Negative domain guard (!: D)
@@ -119,16 +121,14 @@ An e-graph stores e-nodes (operators with e-class children) and e-classes (sets 
 
 ### 3.2 O-graph extensions
 
-1. **Domain membership**: Each e-class carries domains : ℙ(Domain).
+1. **Domain membership**: Each e-class carries a set of domains it belongs to. Each domain is a term in the same o-graph.
 
-2. **Root canonicalisation**: A chosen e-node acts as the class representative for pattern matching.
-
-3. **Domain hierarchy**: Subsumption (⊂) propagates properties automatically.
+2. **Root canonicalisation**: A chosen e-node acts as the class representative for pattern matching. Rewriting rules from lhs to rhs makes the rhs the root of the e-class.
 
 Example:
 
 ```
-eclass42 = { a + b, b + a , domains = {Integer, S₂} , rep = a + b }
+eclass42 = { a + b, b + a , belongsTo = {Integer, S₂} }
 ```
 
 ## 4. Group-Theoretic Foundations
@@ -164,8 +164,8 @@ These relationships allow us to transfer canonicalization strategies between dom
 Canonical forms are derived through group actions on expressions. When a group G acts on a set X, it partitions X into orbits. We select a canonical representative from each orbit using a consistent ordering criterion:
 
 ```
-Orb(x) = {g·x | g ∈ G} // The orbit of x under group G's action
-canon(x) = min(Orb(x))  // The canonical form is the minimum element in the orbit
+Orbit(x) = {g·x | g ∈ G} // The orbit of x under group G's action
+canon(x) = min(Orbit(x))  // The canonical form is the minimum element in the orbit
 ```
 
 ### 4.4 Formal Correctness and Complexity
@@ -187,6 +187,8 @@ Our approach to canonicalization follows a general meta-algorithm pattern:
 3. **Optimization**: Use domain-specific algorithms to avoid enumeration
 
 This meta-algorithm is implemented efficiently using prefix-based pruning for large groups:
+
+TODO: Rewrite to be in Orbit syntax
 
 ```
 function find_canonical_form(expression, group):
@@ -223,6 +225,8 @@ For specific groups, we implement optimized versions:
 function canonicalise_symmetric(elements):
 	return sort(elements)
 ```
+TODO: Rewrite to be in Orbit syntax
+
 
 This reduces the O(n!) complexity to O(n log n) for sorting.
 
@@ -234,6 +238,8 @@ function canonicalise_cyclic(array):
 		best ← min(best, rotᵢ(array))
 	return best
 ```
+TODO: Rewrite to be in Orbit syntax
+
 
 The naive implementation above has O(n²) time complexity, but we can achieve linear time using Booth's algorithm [Booth, 1980]. Booth's algorithm finds the lexicographically minimal rotation of a string or array in O(n) time by using a variant of the Knuth-Morris-Pratt (KMP) string matching algorithm.
 
@@ -248,7 +254,7 @@ function canonicalise_dihedral(array):
 	return best
 ```
 
-TODO: This can be done simpler using Booth algorithm on the original and the flipped version, and picked the smallest.
+TODO: This can be done simpler using Booth algorithm on the original and the flipped version, and picked the smallest. Be sure to write in Orbit syntax
 
 ## 5. Canonicalisation Strategies
 
@@ -287,7 +293,7 @@ However, binary operator canonicalization works incrementally through pairwise c
 // Continue until fully canonicalized
 ```
 
-This approach reduces the complexity from O(n!) to O(n log n), as we're essentially implementing a sorting algorithm through pairwise swaps. For associative-commutative operators, we can further optimize by flattening the expression first, sorting all terms, and then rebuilding the expression in canonical form.
+This approach reduces the complexity from O(n!) to O(n^2), as we're essentially implementing a bubble sort algorithm through pairwise swaps. For associative-commutative operators, we can further optimize by flattening the expression first, sorting all terms, and then rebuilding the expression in canonical form.
 
 The exponential savings become apparent when we consider pattern matching: instead of matching against all n! permutations, we match only against the single canonical form. For nested expressions with multiple commutative operators at different levels, the savings compound exponentially with the depth of the expression tree.
 
@@ -295,7 +301,7 @@ For instance, with just 10 commutative binary operations nested in a tree, naive
 
 ### 5.2 Cyclic Group Canonicalization (Cₙ)
 
-The cyclic group Cₙ represents rotational symmetry. Its canonical form is determined by finding the lexicographically minimal rotation.
+The cyclic group Cₙ represents rotational symmetry. Its canonical form is determined by finding the lexicographically minimal rotation using Booth's algorithm in linear time.
 
 #### Example: 2x2 Rubik's Cube Rotations (C₄)
 
@@ -319,6 +325,8 @@ canon([yellow, red, blue, green]) → [blue, green, yellow, red];      // Canoni
 
 In this example, we lexicographically compare the cube face arrays to find the minimal rotation. This ensures that equivalent cube positions (differing only by rotation) have the same canonical representation, which is crucial for pattern matching and state space reduction in cube-solving algorithms. Without canonicalization, the state space would be 4 times larger, as each unique configuration would appear in 4 rotational variants.
 
+If we wanted to extract the moves, we would have to actively add the number of rotations found by Booth's algorithm as equivalent forms. We can choose to rotate in either direction, so picking the shortest of the two will give the shortest solution.
+
 #### Polynomial Encoding of the 2x2 Rubik's Cube
 
 Interestingly, the 2x2 Rubik's cube can also be represented using a polynomial encoding, which provides another view of the same group structure:
@@ -338,6 +346,8 @@ canon(p(x)) = min(p(x), x*p(x) mod (x^4-1), x^2*p(x) mod (x^4-1), x^3*p(x) mod (
 
 This parallel between the direct array representation and the polynomial encoding demonstrates how our group-theoretic framework unifies seemingly disparate representations under the same mathematical structure.
 
+TODO: Introduce Groebner basis and the algorithm to solve those as another method to try this.
+
 ### 5.3 Dihedral Group Canonicalization (Dₙ)
 
 The dihedral group Dₙ represents rotational and reflectional symmetries. Its canonical form requires checking all rotations and the reflection of each rotation.
@@ -353,6 +363,8 @@ The dihedral group Dₙ represents rotational and reflectional symmetries. Its c
 reflect_h([[1, 2], [3, 4]]) : D₄ → [[1, 3], [2, 4]] : Canonical;
 // The canonical form is the lexicographically minimal among all 8 symmetries
 ```
+
+If we need to output the orbit of rotations and reflections to find the canonical form, we can use the same approach as with the cyclic group. The only difference is that we need to check the rotations against both reflections.
 
 ## 6. Extended Examples
 
@@ -394,7 +406,7 @@ Monomial ordering is fundamental to finding canonical forms of polynomials. In a
 ```
 // Graded lexicographic ordering
 x^a * y^b * z^c < x^d * y^e * z^f  if  (a+b+c < d+e+f)  or
-																		 ((a+b+c = d+e+f) and (a,b,c) <_lex (d,e,f))
+		((a+b+c = d+e+f) and (a,b,c) <_lex (d,e,f))
 ```
 
 This ordering enables a systematic approach to canonicalization:
@@ -624,49 +636,9 @@ Applied examples:
 
 ## 7. Evaluation
 
-### 7.1 Size Reduction Results
-
-To evaluate the effectiveness of our group-theoretic approach, we compared standard e-graphs with our O-graphs across several domains. We measured both space efficiency (number of e-classes required) and pattern matching efficiency (number of pattern match attempts required).
-
-#### Experimental Setup
-
-We implemented both a standard e-graph and our O-graph extension with domain and group annotations in Rust 1.58, building on the egg library [1]. Benchmarks were run on an AMD Ryzen 9 5900X CPU @ 3.7GHz with 64GB RAM running Linux 5.15. 
-
-For each benchmark domain, we constructed equivalent term sets and performed the same series of rewrites, measuring:
-
-1. **Storage efficiency**: Number of e-classes required to represent the same mathematical concepts
-2. **Pattern matching efficiency**: Number of pattern match attempts required during rewriting
-3. **Canonicalization overhead**: Additional time required for group-theoretic canonicalization
-
-#### Results
-
-**Table 1: Comparative performance of E-graphs vs. O-graphs across domains**
-
-| Domain | Data Structure | E-classes | Pattern Matches | Canonicalization Time |
-|--------|----------------|-----------|-----------------|------------------------|
-| Polynomial Algebra (n=10) | E-graph | 3,628 | 45,123 | N/A |
-| Polynomial Algebra (n=10) | O-graph | 46 | 124 | 3.2ms |
-| Boolean Logic (n=8) | E-graph | 986 | 12,450 | N/A |
-| Boolean Logic (n=8) | O-graph | 68 | 245 | 2.8ms |
-| Matrix Algebra (4x4) | E-graph | 1,248 | 8,954 | N/A |
-| Matrix Algebra (4x4) | O-graph | 89 | 312 | 4.1ms |
-
-*Caption: O-graphs dramatically reduce both storage requirements and pattern matching operations compared to standard e-graphs. The small canonicalization overhead (2-4ms) is negligible compared to the exponential reduction in matching operations, which translates to orders of magnitude speedup for complex expressions.*
-
-These results demonstrate significant reductions in both space and matching complexity. For the polynomial algebra benchmark with 10 variables, the O-graph requires only ~1.3% of the e-classes needed by the standard e-graph, with pattern matching attempts reduced to ~0.3% of the original.
-
-The canonicalization overhead remains modest across all domains, typically adding only a few milliseconds per operation. This overhead is heavily outweighed by the exponential benefits in both storage and pattern matching efficiency, especially as expression complexity increases.
-
-#### Analysis
-
-The dramatic reduction in e-class count is primarily due to our ability to collapse symmetry orbits into canonical representatives. For example, in polynomial expressions with S₁₀ symmetry, all n! permutations of terms are represented by a single canonical form.
-
-Pattern matching efficiency improves even more dramatically than storage efficiency because:
-
-1. Fewer e-classes means fewer potential match targets
-2. Each e-class only needs to be matched against once (for the canonical representative) rather than once per variant
-
-This combined effect leads to the observed 99.7% reduction in pattern matching attempts for complex polynomial expressions.
+<draft>
+Later: We have to implement all of Orbit and the rules and then test. We should count the number of pattern matches we have to do, as well as the number of eclasses required. This work is in progress,
+</draft>
 
 ## 8. Discussion
 
@@ -682,19 +654,6 @@ The arrow symbols follow these conventions:
 - →: Unidirectional rewrite rule
 - ↔: Bidirectional equivalence relation
 - ⊂: Subset or subtype relation
-- ⊢: Entailment (turnstile)
-
-### 8.2 Future Research Directions
-
-We envision several promising directions for future work:
-
-1. **Additional symmetry groups**: Extending the framework to capture more complex symmetries like Lie groups and quantum groups
-
-2. **Automated group inference**: Developing techniques to automatically discover symmetry groups in expressions, perhaps by analyzing patterns of equivalence and invariance in the data. This could be framed as a type-inference problem similar to Hindley-Milner type systems, where symmetry properties are inferred from the structure of expressions and their usage patterns.
-
-3. **Integration with learning systems**: Using the canonicalization framework to improve the sample efficiency of neural network-based equation learning and program synthesis
-
-4. **Parallel and distributed implementations**: Scaling the approach to large-scale systems through parallelization of group orbit computation
 
 ## 9. Conclusion
 
