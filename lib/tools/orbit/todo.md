@@ -20,8 +20,8 @@
 - Subscripts on operators
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Hook in evaluation functions to implement AST nodes directly in Orbit itself, potentially using rewriting
-
-- add onodeBelongsTo run runtime 
+- Semi-direct product
+- add onodeBelongsTo to runtime 
 
 ## Interpreter Extensions
 - Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
@@ -44,7 +44,6 @@
 ## OGraph Enhancements
 ✅ Check that inserting into and extraction from ograph works correct
 ✅ lib/tools/orbit/tests/ograph_rewrite_single.orb:
-- Fix : Domain and !: Domain
 - Check ograph dot export
 - Implement attaching Domain on rhs of pattern (in substitution maybe?)
 ✅ Check ograph operations

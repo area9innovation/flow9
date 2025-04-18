@@ -90,7 +90,7 @@ convertBindingsToExpressions(graph : OGraph, bindings : Tree<string, int>) -> Tr
     mapTree(bindings, \nodeId -> ograph2Orbit(graph, nodeId));
 }
 
-// Get domain ID from pattern - simplified to focus on the common case
+// Get domain ID from pattern - enhanced to work with any AST construct
 getDomainId(graph : OGraph, domainPattern : OrMath_expr, tracing : bool) -> int {
     // Decompose pattern to get its operation type
     patternDecomposed = decomposeOrbit(domainPattern);
@@ -100,24 +100,25 @@ getDomainId(graph : OGraph, domainPattern : OrMath_expr, tracing : bool) -> int 
     
     if (tracing) println("DEBUG: Finding domain ID for pattern: " + prettyOrbit(domainPattern));
     
-    // For Identifier pattern, get the name and find the node
-    if (patternOp == "Identifier") {
+    // Special case for Identifier and Variable - use fast string lookup
+    if (patternOp == "Identifier" || patternOp == "Variable") {
         domainName = switch (patternValue) { 
             OrbitString(s): s;
             default: "";
         };
         
-        if (tracing) println("DEBUG: Looking for domain identifier: '" + domainName + "'");
+        if (tracing) println("DEBUG: Looking for domain name: '" + domainName + "' (type: " + patternOp + ")");
         
         // Search for domain node with matching name
         if (domainName != "") {
             domainId = ref -1;
             traverseOGraph(graph, \ecid, onode -> {
+                // Check nodes of both Identifier and Variable types
                 if (onode.op == "Identifier" || onode.op == "Variable") {
                     switch (getOClassString(graph, ecid)) {
                         Some(name): {
                             if (name == domainName) {
-                                if (tracing) println("DEBUG: Found domain '" + domainName + "' with ID " + i2s(ecid));
+                                if (tracing) println("DEBUG: Found domain '" + domainName + "' with ID " + i2s(ecid) + " (op: " + onode.op + ")");
                                 domainId := ecid;
                             }
                         }
@@ -132,11 +133,57 @@ getDomainId(graph : OGraph, domainPattern : OrMath_expr, tracing : bool) -> int 
             }
             result;
         } else -1;
+    }
+    // Special case for function calls like Type("number") or Group(x+y)
+    else if (patternOp == "call") {
+        if (tracing) println("DEBUG: Searching for function-call domain: " + prettyOrbit(domainPattern));
+        
+        // For function-based domains, directly add the pattern to the graph
+        // and look for structural matches
+        patternNodeId = orbit2OGraph(graph, domainPattern);
+        if (tracing) println("DEBUG: Added function-call domain pattern to graph with temporary ID: " + i2s(patternNodeId));
+        
+        // Find any existing node that structurally matches this pattern
+        domainId = ref -1;
+        traverseOGraph(graph, \ecid, onode -> {
+            // Skip the node we just added
+            if (ecid != patternNodeId && nodesStructurallyEqual(graph, ecid, patternNodeId)) {
+                if (tracing) println("DEBUG: Found structurally matching function domain with ID " + i2s(ecid));
+                domainId := ecid;
+            }
+        });
+        
+        funcResult = ^domainId;
+        if (funcResult == -1 && tracing) {
+            println("DEBUG: Could not find matching function domain in the graph");
+        }
+        
+        funcResult;
     } 
-    // Special handling for non-identifier domains
+    // General case: Find any kind of term by adding it to the graph and looking for a structural match
     else {
-        if (tracing) println("DEBUG: Complex domain pattern: " + patternOp);
-        -1; // Simplified for now - extended logic needed for complex domain patterns
+        if (tracing) println("DEBUG: Searching for complex domain expression in graph");
+        
+        // First try to add the pattern to the graph
+        domainNodeId = orbit2OGraph(graph, domainPattern);
+        if (tracing) println("DEBUG: Added domain pattern to graph with temporary ID: " + i2s(domainNodeId));
+        
+        // Now find any existing node that structurally matches this pattern
+        domainId = ref -1;
+        traverseOGraph(graph, \ecid, onode -> {
+            // Skip the node we just added
+            if (ecid != domainNodeId && nodesStructurallyEqual(graph, ecid, domainNodeId)) {
+                if (tracing) println("DEBUG: Found structurally matching domain with ID " + i2s(ecid));
+                domainId := ecid;
+            }
+        });
+        
+        result = ^domainId;
+        if (result == -1 && tracing) {
+            println("DEBUG: Could not find matching domain expression in the graph");
+        }
+        
+        result;
     }
 }
 
