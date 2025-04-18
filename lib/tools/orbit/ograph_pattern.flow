@@ -5,8 +5,8 @@ import tools/orbit/orbit_types;    // For OrMath_expr types
 import tools/orbit/orbit_simple_ograph; // For ographRegistry
 import tools/orbit/orbit_decompose; // For centralized decomposition
 import tools/orbit/ograph_decompose; // For OGraph node decomposition
-import ds/tree;                    // For binding maps
-import string;                     // For string operations
+import tools/orbit/orbit_compare;  // For comparing expressions to nodes
+import tools/orbit/ograph_find;    // For findOGraphId
 
 export {
     // Main pattern matching function
@@ -90,100 +90,36 @@ convertBindingsToExpressions(graph : OGraph, bindings : Tree<string, int>) -> Tr
     mapTree(bindings, \nodeId -> ograph2Orbit(graph, nodeId));
 }
 
-// Get domain ID from pattern - enhanced to work with any AST construct
+// Get domain ID from pattern - simplified version using findOGraphId
 getDomainId(graph : OGraph, domainPattern : OrMath_expr, tracing : bool) -> int {
-    // Decompose pattern to get its operation type
-    patternDecomposed = decomposeOrbit(domainPattern);
-    patternOp = patternDecomposed.first;
-    patternChildren = patternDecomposed.second.first;
-    patternValue = patternDecomposed.second.second;
+    // Find the registered name of the graph
+    graphName = ref "";
     
-    if (tracing) println("DEBUG: Finding domain ID for pattern: " + prettyOrbit(domainPattern));
+    // Iterate through the registry to find the graph name
+    iter(getTreeKeys(^ographRegistry), \name -> {
+        if (lookupTreeDef(^ographRegistry, name, makeOGraph()) == graph) {
+            graphName := name;
+        }
+    });
     
-    // Special case for Identifier and Variable - use fast string lookup
-    if (patternOp == "Identifier" || patternOp == "Variable") {
-        domainName = switch (patternValue) { 
-            OrbitString(s): s;
-            default: "";
-        };
+    if (^graphName == "") {
+        if (tracing) println("ERROR: Could not find graph name in registry");
+        -1;
+    } else {
+        if (tracing) println("DEBUG: Finding domain ID for pattern: " + prettyOrbit(domainPattern));
         
-        if (tracing) println("DEBUG: Looking for domain name: '" + domainName + "' (type: " + patternOp + ")");
-        
-        // Search for domain node with matching name
-        if (domainName != "") {
-            domainId = ref -1;
-            traverseOGraph(graph, \ecid, onode -> {
-                // Check nodes of both Identifier and Variable types
-                if (onode.op == "Identifier" || onode.op == "Variable") {
-                    switch (getOClassString(graph, ecid)) {
-                        Some(name): {
-                            if (name == domainName) {
-                                if (tracing) println("DEBUG: Found domain '" + domainName + "' with ID " + i2s(ecid) + " (op: " + onode.op + ")");
-                                domainId := ecid;
-                            }
-                        }
-                        None(): {};
-                    }
-                }
-            });
+        // Use findOGraphId which doesn't modify the graph
+        domainId = findOGraphId(^graphName, domainPattern);
             
-            result = ^domainId;
-            if (result == -1 && tracing) {
-                println("DEBUG: Could not find domain '" + domainName + "' in the graph");
+        if (tracing) {
+            if (domainId == -1) {
+                println("DEBUG: Could not find domain '" + prettyOrbit(domainPattern) + "' in the graph");
+            } else {
+                println("DEBUG: Found domain '" + prettyOrbit(domainPattern) + "' with ID " + i2s(domainId));
             }
-            result;
-        } else -1;
-    }
-    // Special case for function calls like Type("number") or Group(x+y)
-    else if (patternOp == "call") {
-        if (tracing) println("DEBUG: Searching for function-call domain: " + prettyOrbit(domainPattern));
-        
-        // For function-based domains, directly add the pattern to the graph
-        // and look for structural matches
-        patternNodeId = orbit2OGraph(graph, domainPattern);
-        if (tracing) println("DEBUG: Added function-call domain pattern to graph with temporary ID: " + i2s(patternNodeId));
-        
-        // Find any existing node that structurally matches this pattern
-        domainId = ref -1;
-        traverseOGraph(graph, \ecid, onode -> {
-            // Skip the node we just added
-            if (ecid != patternNodeId && nodesStructurallyEqual(graph, ecid, patternNodeId)) {
-                if (tracing) println("DEBUG: Found structurally matching function domain with ID " + i2s(ecid));
-                domainId := ecid;
-            }
-        });
-        
-        funcResult = ^domainId;
-        if (funcResult == -1 && tracing) {
-            println("DEBUG: Could not find matching function domain in the graph");
         }
-        
-        funcResult;
-    } 
-    // General case: Find any kind of term by adding it to the graph and looking for a structural match
-    else {
-        if (tracing) println("DEBUG: Searching for complex domain expression in graph");
-        
-        // First try to add the pattern to the graph
-        domainNodeId = orbit2OGraph(graph, domainPattern);
-        if (tracing) println("DEBUG: Added domain pattern to graph with temporary ID: " + i2s(domainNodeId));
-        
-        // Now find any existing node that structurally matches this pattern
-        domainId = ref -1;
-        traverseOGraph(graph, \ecid, onode -> {
-            // Skip the node we just added
-            if (ecid != domainNodeId && nodesStructurallyEqual(graph, ecid, domainNodeId)) {
-                if (tracing) println("DEBUG: Found structurally matching domain with ID " + i2s(ecid));
-                domainId := ecid;
-            }
-        });
-        
-        result = ^domainId;
-        if (result == -1 && tracing) {
-            println("DEBUG: Could not find matching domain expression in the graph");
-        }
-        
-        result;
+            
+        domainId;
     }
 }
 
@@ -214,13 +150,21 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr, tracing 
             default: pattern; // Should never happen
         };
         
+        if (tracing) {
+            println("DEBUG: TypeAnnotation domain pattern: " + prettyOrbit(domainPattern));
+        }
+        
         // First match the expression part against this node
         // *IMPORTANT FIX*: We match only the expression part, not the TypeAnnotation structure
         switch (matchPatternAtNode(graph, nodeId, expressionPattern, tracing)) {
             OPatternSuccess(exprBindings): {
                 // Found a match for the expression part
                 // Now verify domain membership
-                domainNodeId = getDomainId(graph, domainPattern, tracing);
+                domainNodeId = getDomainId(graph, domainPattern, true); // Force tracing for debugging
+                
+                if (tracing) {
+                    println("DEBUG: getDomainId for " + prettyOrbit(domainPattern) + " returned: " + i2s(domainNodeId));
+                }
                 
                 if (domainNodeId == -1) {
                     if (tracing) println("DEBUG: Could not find domain node for: " + prettyOrbit(domainPattern));
@@ -263,6 +207,10 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr, tracing 
             OrNotTypeAnnotation(expr, domain): domain;
             default: pattern; // Should never happen
         };
+        
+        if (tracing) {
+            println("DEBUG: NotTypeAnnotation domain pattern: " + prettyOrbit(domainPattern));
+        }
         
         // First match the expression part against this node
         // *IMPORTANT FIX*: We match only the expression part, not the NotTypeAnnotation structure
