@@ -70,6 +70,51 @@ convertBindingsToExpressions(graph : OGraph, bindings : Tree<string, int>) -> Tr
     mapTree(bindings, \nodeId -> ograph2Orbit(graph, nodeId));
 }
 
+// Get domain ID from pattern
+getDomainId(graph : OGraph, domainPattern : OrMath_expr, domainBindings : Tree<string, int>, tracing : bool) -> int {
+    // Decompose pattern to get its operation type
+    patternDecomposed = decomposeOrbit(domainPattern);
+    patternOp = patternDecomposed.first;
+    patternValue = patternDecomposed.second.second;
+    
+    // Check if it's a direct identifier
+    if (patternOp == "Identifier") {
+        domainName = switch (patternValue) { 
+            OrbitString(s): s;
+            default: "";
+        };
+        
+        // Look for this identifier in the graph
+        domainId = ref -1;
+        if (domainName != "") {
+            traverseOGraph(graph, \ecid, onode -> {
+                if (onode.op == "Identifier") {
+                    switch (getOClassString(graph, ecid)) {
+                        Some(name): if (name == domainName) domainId := ecid;
+                        None(): {};
+                    }
+                }
+            });
+        }
+        
+        if (tracing && ^domainId != -1) {
+            println("DEBUG: Found domain '" + domainName + "' with ID: " + i2s(^domainId));
+        }
+        
+        ^domainId;
+    } else {
+        // Use the first binding if available
+        if (sizeTree(domainBindings) > 0) {
+            firstKey = getTreeKeys(domainBindings)[0];
+            result = lookupTreeDef(domainBindings, firstKey, -1);
+            if (tracing) {
+                println("DEBUG: Using domain binding with ID: " + i2s(result));
+            }
+            result;
+        } else -1;
+    }
+}
+
 // Match a pattern at a specific node
 matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr, tracing : bool) -> OPatternResult {
     root = findORoot(graph, nodeId);
@@ -82,8 +127,102 @@ matchPatternAtNode(graph : OGraph, nodeId : int, pattern : OrMath_expr, tracing 
     
     if (tracing) println("DEBUG: Matching pattern with op: " + patternOp + ", at node: " + i2s(root));
     
+    // Special case for TypeAnnotation (: operator)
+    if (patternOp == "TypeAnnotation") {
+        if (tracing) println("DEBUG: Processing TypeAnnotation pattern (: operator)");
+        // TypeAnnotation means the expression should belong to the specified domain
+        // Extract the expression and domain from the pattern
+        expressionPattern = switch (pattern) {
+            OrTypeAnnotation(expr, domain): expr;
+            default: pattern; // Should never happen
+        };
+        
+        domainPattern = switch (pattern) {
+            OrTypeAnnotation(expr, domain): domain;
+            default: pattern; // Should never happen
+        };
+        
+        // First, match the expression part of the pattern
+        switch (matchPatternAtNode(graph, nodeId, expressionPattern, tracing)) {
+            OPatternSuccess(exprBindings): {
+                // Now we need to match the domain part
+                // We first need to evaluate the domain part to get its node ID
+                switch (matchPatternAtNode(graph, nodeId, domainPattern, tracing)) {
+                    OPatternSuccess(domainBindings): {
+                        // Get all bindings from domain pattern
+                        // Combine all bindings
+                        allBindings = mergeOBindings(graph, exprBindings, domainBindings);
+                        switch (allBindings) {
+                            OPatternSuccess(bindings): {
+                                // Get the domain ID
+                                domainNodeId = getDomainId(graph, domainPattern, domainBindings, tracing);
+                                
+                                // Check if the node belongs to this domain
+                                if (domainNodeId != -1 && onodeBelongsTo(graph, nodeId, domainNodeId)) {
+                                    if (tracing) println("DEBUG: Node belongs to required domain, match successful");
+                                    OPatternSuccess(bindings);
+                                } else {
+                                    if (tracing) println("DEBUG: Node does not belong to required domain, match failed");
+                                    OPatternFailure();
+                                }
+                            }
+                            OPatternFailure(): OPatternFailure();
+                        }
+                    }
+                    OPatternFailure(): OPatternFailure();
+                }
+            }
+            OPatternFailure(): OPatternFailure();
+        }
+    }
+    // Special case for NotTypeAnnotation (!: operator)
+    else if (patternOp == "NotTypeAnnotation") {
+        if (tracing) println("DEBUG: Processing NotTypeAnnotation pattern (!: operator)");
+        // NotTypeAnnotation means the expression should NOT belong to the specified domain
+        // Extract the expression and domain from the pattern
+        expressionPattern = switch (pattern) {
+            OrNotTypeAnnotation(expr, domain): expr;
+            default: pattern; // Should never happen
+        };
+        
+        domainPattern = switch (pattern) {
+            OrNotTypeAnnotation(expr, domain): domain;
+            default: pattern; // Should never happen
+        };
+        
+        // First, match the expression part of the pattern
+        switch (matchPatternAtNode(graph, nodeId, expressionPattern, tracing)) {
+            OPatternSuccess(exprBindings): {
+                // Now we need to match the domain part (to get its ID)
+                switch (matchPatternAtNode(graph, nodeId, domainPattern, tracing)) {
+                    OPatternSuccess(domainBindings): {
+                        // Combine all bindings
+                        allBindings = mergeOBindings(graph, exprBindings, domainBindings);
+                        switch (allBindings) {
+                            OPatternSuccess(bindings): {
+                                // Get the domain ID
+                                domainNodeId = getDomainId(graph, domainPattern, domainBindings, tracing);
+                                
+                                // Check that the node does NOT belong to the domain
+                                if (domainNodeId == -1 || !onodeBelongsTo(graph, nodeId, domainNodeId)) {
+                                    if (tracing) println("DEBUG: Node does not belong to the domain, negative match successful");
+                                    OPatternSuccess(bindings);
+                                } else {
+                                    if (tracing) println("DEBUG: Node belongs to the domain we don't want, match failed");
+                                    OPatternFailure();
+                                }
+                            }
+                            OPatternFailure(): OPatternFailure();
+                        }
+                    }
+                    OPatternFailure(): OPatternFailure();
+                }
+            }
+            OPatternFailure(): OPatternFailure();
+        }
+    }
     // Special case for pattern variables (identifiers in pattern context)
-    if (patternOp == "Identifier") {
+    else if (patternOp == "Identifier") {
         // Extract the variable name
         varName = switch (patternValue) {
             OrbitString(s): s;
