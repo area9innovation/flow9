@@ -7,6 +7,7 @@ import tools/orbit/orbit_simple_ograph; // For ographRegistry
 import tools/orbit/orbit2ograph;      // For ograph2Orbit
 import tools/orbit/prettyprint;      // For prettyOrbit
 import ds/array;
+import ds/set;                      // For Set operations
 import maybe;
 
 export {
@@ -225,32 +226,32 @@ findOGraphId(graphName : string, expr : OrMath_expr) -> int {
             // Get the ograph from the registry
             switch (lookupTree(^ographRegistry, graphName)) {
                 Some(ograph): {
-                    // Get all domains this node belongs to
                     rootId = findORoot(ograph, baseId);
-                    domains = getONodeBelongsTo(ograph, rootId);
                     
-                    if (length(domains) == 0) {
-                        -1; // Node doesn't belong to any domain
-                    } else {
-                        // Check each domain this node belongs to
-                        matchFound = ref false;
-                        
-                        // For each domain the node belongs to
-                        iter(domains, \domainId -> {
-                            if (!^matchFound) {
-                                // Extract the domain expression
-                                domainExpr = ograph2Orbit(ograph, domainId);
-                                
-                                // Compare the extracted domain with the one we're looking for
-                                equivalent = areExpressionsEquivalent(domain, domainExpr);
-                                
-                                if (equivalent) {
-                                    matchFound := true;
-                                }
+                    // Try to find the domain node by its expression
+                    // For each node in the graph, check if it matches the domain expression
+                    targetDomainId = ref -1;
+                    traverseOGraph(ograph, \domId, __ -> {
+                        if (^targetDomainId == -1) {
+                            // Extract this domain's expression
+                            domainExpr = ograph2Orbit(ograph, domId);
+                            
+                            // Check if it matches the domain we're looking for
+                            if (areExpressionsEquivalent(domain, domainExpr)) {
+                                targetDomainId := domId;
                             }
-                        });
-                        
-                        if (^matchFound) baseId else -1;
+                        }
+                    });
+                    
+                    if (^targetDomainId == -1) {
+                        -1; // Domain not found in graph
+                    } else {
+                        // Check if node belongs transitively to the target domain
+                        if (belongsTransitivelyToDomain(ograph, rootId, ^targetDomainId)) {
+                            baseId; // Node belongs to domain either directly or transitively
+                        } else {
+                            -1; // Node doesn't belong to domain
+                        }
                     }
                 }
                 None(): -1;
@@ -282,6 +283,44 @@ findOGraphId(graphName : string, expr : OrMath_expr) -> int {
 }
 
 // Helper function for domain comparison
+
+// Check if a node belongs transitively to a domain
+// This handles cases like "a : Integer : Real : Complex" where a is transitively in Complex domain
+belongsTransitivelyToDomain(graph : OGraph, nodeId : int, targetDomainId : int) -> bool {
+    // Use a reference to track visited nodes to prevent infinite recursion
+    visitedNodes = ref makeSet();
+    
+    belongsTransitivelyToDomainHelper(graph, nodeId, targetDomainId, visitedNodes);
+}
+
+// Helper function that does the actual transitive domain checking
+belongsTransitivelyToDomainHelper(graph : OGraph, nodeId : int, targetDomainId : int, visitedNodes : ref Set<int>) -> bool {
+    // Prevent infinite recursion by tracking visited nodes
+    if (containsSet(^visitedNodes, nodeId)) {
+        false;
+    } else {
+        // Mark this node as visited
+        visitedNodes := insertSet(^visitedNodes, nodeId);
+        
+        if (nodeId == targetDomainId) {
+            // Direct equality - a domain is always a member of itself
+            true;
+        } else if (onodeBelongsTo(graph, nodeId, targetDomainId)) {
+            // Direct domain membership
+            true;
+        } else {
+            // Check transitive membership through the domain hierarchy
+            // Get all domains this node belongs to
+            domains = getONodeBelongsTo(graph, nodeId);
+            
+            // For each domain, check if it transitively belongs to the target domain
+            fold(domains, false, \acc, currentDomainId -> {
+                if (acc) acc  // Short-circuit if already found
+                else belongsTransitivelyToDomainHelper(graph, currentDomainId, targetDomainId, visitedNodes);
+            });
+        }
+    }
+}
 
 // Helper function to check if two expressions are equivalent
 // This function handles special cases like function call expressions that need deeper comparison
