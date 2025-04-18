@@ -1292,11 +1292,11 @@ Binary Decision Diagrams (BDDs) provide a canonical representation for Boolean f
 A BDD represents a Boolean function φ:{0,1}ⁿ→{0,1} as a rooted directed acyclic graph (DAG) with decision nodes and terminal leaves. Each decision node tests one Boolean variable and has two children:
 
 ```
-t ::= 0 | 1 | Node(v, t₀, t₁)
+t ::= 0 | 1 | ITE(v, t₀, t₁)
 	 where v ∈ {v₁ < ... < vₙ}, t₀, t₁ ∈ t
 ```
 
-Here `Node(v, t₀, t₁)` means "if v=0 then follow t₀, else follow t₁." BDDs become powerful when we enforce a canonical form through reduction and variable ordering.
+Here `ITE(v, t₀, t₁)` means "if v=0 then follow t₀, else follow t₁." BDDs become powerful when we enforce a canonical form through reduction and variable ordering.
 
 ### Conversion to BDD (Shannon Expansion)
 
@@ -1310,18 +1310,18 @@ fn shannon_expand(formula) (
 		1 => 1;
 
 		// Variables
-		v if is_variable(v) => Node(v, 0, 1);
+		v if is_variable(v) => ITE(v, 0, 1);
 
 		// Negation
 		!phi => (
 			let v = min_variable(phi);
-			Node(v, !restrict(phi, v, 0), !restrict(phi, v, 1))
+			ITE(v, !restrict(phi, v, 0), !restrict(phi, v, 1))
 		);
 
 		// Conjunction
 		phi & psi => (
 			let v = min_variable(phi, psi);
-			Node(v,
+			ITE(v,
 				restrict(phi, v, 0) & restrict(psi, v, 0),
 				restrict(phi, v, 1) & restrict(psi, v, 1)
 			)
@@ -1330,7 +1330,7 @@ fn shannon_expand(formula) (
 		// Disjunction
 		phi | psi => (
 			let v = min_variable(phi, psi);
-			Node(v,
+			ITE(v,
 				restrict(phi, v, 0) | restrict(psi, v, 0),
 				restrict(phi, v, 1) | restrict(psi, v, 1)
 			)
@@ -1339,7 +1339,7 @@ fn shannon_expand(formula) (
 		// Exclusive-OR
 		phi ^ psi => (
 			let v = min_variable(phi, psi);
-			Node(v,
+			ITE(v,
 				restrict(phi, v, 0) ^ restrict(psi, v, 0),
 				restrict(phi, v, 1) ^ restrict(psi, v, 1)
 			)
@@ -1375,7 +1375,7 @@ fn reduce_bdd(bdd) (
 		0 => 0;
 		1 => 1;
 
-		Node(v, t_low, t_high) => (
+		ITE(v, t_low, t_high) => (
 			// Recursively reduce the children
 			let reduced_low = reduce_bdd(t_low);
 			let reduced_high = reduce_bdd(t_high);
@@ -1392,7 +1392,7 @@ fn reduce_bdd(bdd) (
 
 			// Create new reduced node and add to table
 			else (
-				let new_node = Node(v, reduced_low, reduced_high);
+				let new_node = ITE(v, reduced_low, reduced_high);
 				add_node_to_table(new_node);
 				new_node
 			)
@@ -1410,19 +1410,19 @@ fn apply_variable_ordering(bdd) (
 		0 => 0;
 		1 => 1;
 
-		Node(v, t_low, t_high) => (
+		ITE(v, t_low, t_high) => (
 			// Check if we need to reorder
 			let min_var = min_variable_in_node(t_low, t_high);
 
 			if min_var < v then (
 				// Reorder: move min_var to the top
-				Node(min_var,
+				ITE(min_var,
 					apply_variable_ordering(restrict_node(bdd, min_var, 0)),
 					apply_variable_ordering(restrict_node(bdd, min_var, 1))
 				)
 			) else (
 				// Already in order, just recurse on children
-				Node(v,
+				ITE(v,
 					apply_variable_ordering(t_low),
 					apply_variable_ordering(t_high)
 				)
@@ -1465,19 +1465,19 @@ Reduced, ordered BDDs provide:
 ```
 // Formula: (a & b) | (a & c)
 // Shannon expanded:
-//   Node(a,
-//     Node(b, Node(c, 0, 0), Node(c, 0, 1)),
-//     Node(b, Node(c, 0, 1), Node(c, 1, 1))
+//   ITE(a,
+//     ITE(b, ITE(c, 0, 0), ITE(c, 0, 1)),
+//     ITE(b, ITE(c, 0, 1), ITE(c, 1, 1))
 //   )
 
 // After reduction:
-//   Node(a,
-//     Node(b, 0, Node(c, 0, 1)),
-//     Node(c, 1, 1)
+//   ITE(a,
+//     ITE(b, 0, ITE(c, 0, 1)),
+//     ITE(c, 1, 1)
 //   )
 
 // Further simplified to:
-//   Node(a, Node(b, 0, c), 1)
+//   ITE(a, ITE(b, 0, c), 1)
 // Which is equivalent to a & (b => c)
 ```
 
