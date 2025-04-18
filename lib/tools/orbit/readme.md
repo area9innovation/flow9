@@ -112,4 +112,6 @@ Orbit is mainly used to implement the OGraph based rewriting system.
 - **[semantics.md](docs/semantics.md)**: Semantic property inference
 - **[recurrence.md](docs/recurrence.md)**: Notes on solving recurrences using Orbit
 - **[webgpu.md](docs/webgpu.md)**: Ideas for using Orbit with WebGPU
+- **[rubiks.md](docs/rubiks.md)**: Notes on how we could use Orbit to solve the Rubik's cube
 - **[research.md](docs/research.md)**: Links to other research in this area
+- **[paper.md](docs/paper.md)**: Rough draft of a paper about Orbit
