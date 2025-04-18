@@ -2,33 +2,45 @@
 
 ## Introduction
 
-This document provides a comprehensive set of rewriting rules for common symmetry groups, enabling canonical representations of expressions involving these groups. These rules are particularly useful for optimization and simplification in computational domains that exhibit symmetries.
+This document provides a comprehensive set of rewriting rules for common symmetry groups, enabling canonical representations of expressions involving these groups. These rules are essential for practical computational optimization across multiple domains.
+
+### Why Canonical Forms Matter
+
+Canonical forms provide tremendous practical benefits in computational systems:
+
+- **Storage Efficiency**: By representing equivalent expressions with a single canonical form, memory usage can be dramatically reduced. For example, the expression `a + b + c` has 6 equivalent forms due to commutativity, but only needs to be stored once in canonical form.
+
+- **Computational Efficiency**: Pattern matching on canonical forms is exponentially faster. Without canonicalization, systems would need to check all equivalent variations of a pattern - with n terms under symmetric group Sₙ, that's n! possibilities!
+
+- **Optimization Opportunities**: Identifying algebraic patterns becomes much easier with canonical forms, enabling advanced optimizations like algebraic simplification and automatic parallelization.
+
+- **Consistent Representation**: Canonical forms ensure that the same mathematical expression always has the same representation, which is critical for caching, memoization, and equality testing.
 
 ## Notation
 
 This document uses the following notation for groups, operators, and relations:
 
 ### Group Symbols
-- **Sₙ**: Symmetric group of order n! (all permutations of n elements)
-- **Aₙ**: Alternating group of order n!/2 (even permutations of n elements)
-- **Cₙ**: Cyclic group of order n (rotational symmetry)
-- **Dₙ**: Dihedral group of order 2n (reflections and rotations of a regular n-gon)
-- **GL(n,F)**: General linear group (invertible n×n matrices over field F)
-- **SL(n,F)**: Special linear group (n×n matrices with determinant 1 over field F)
-- **O(n)**: Orthogonal group (n×n matrices M where M^T·M = I)
-- **Q₈**: Quaternion group (non-abelian group of order 8)
-- **ℤ/nℤ**: Integers modulo n (also denoted as ℤₙ)
+- **Sₙ**: Symmetric group of order n! (all permutations of n elements). *Example: S₃ contains all 6 permutations of 3 elements (e.g., [1,2,3], [1,3,2], [2,1,3], etc.)*
+- **Aₙ**: Alternating group of order n!/2 (even permutations of n elements). *Example: A₄ contains the 12 even permutations of 4 elements.*
+- **Cₙ**: Cyclic group of order n (rotational symmetry). *Example: C₄ represents 90° rotations, like rotating a square by 0°, 90°, 180°, or 270°.*
+- **Dₙ**: Dihedral group of order 2n (reflections and rotations of a regular n-gon). *Example: D₄ includes all 8 symmetries of a square (4 rotations and 2 reflections).*
+- **GL(n,F)**: General linear group (invertible n×n matrices over field F). *Example: GL(2,ℝ) includes all 2×2 invertible matrices with real entries.*
+- **SL(n,F)**: Special linear group (n×n matrices with determinant 1 over field F). *Example: SL(2,ℝ) includes matrices like [[a,b],[c,d]] where ad-bc=1.*
+- **O(n)**: Orthogonal group (n×n matrices M where M^T·M = I). *Example: O(2) represents all rotations and reflections in 2D space.*
+- **Q₈**: Quaternion group (non-abelian group of order 8). *Example: Q₈ = {±1, ±i, ±j, ±k} where i²=j²=k²=ijk=-1.*
+- **ℤ/nℤ**: Integers modulo n (also denoted as ℤₙ). *Example: ℤ/4ℤ = {0,1,2,3} with modular addition.*
 
 ### Operators and Relations
-- **×**: Direct product of groups
-- **⋊**: Semi-direct product of groups
-- **⊂**: Subset relation (A ⊂ B means A is a subgroup of B)
-- **⊲**: Normal subgroup (A ⊲ B means A is a normal subgroup of B)
-- **≅**: Isomorphism (A ≅ B means groups A and B are isomorphic)
-- **≇**: Not isomorphic (A ≇ B means groups A and B are not isomorphic)
-- **|G|**: Order (size) of group G
-- **∈**: Element membership (a ∈ G means a is an element of G)
-- **⟺**: Logical equivalence (p ⟺ q means p if and only if q)
+- **×**: Direct product of groups. *Example: C₂ × C₃ forms a group of order 6 with elements like (a,b) where a ∈ C₂, b ∈ C₃.*
+- **⋊**: Semi-direct product of groups. *Example: Dₙ ≅ Cₙ ⋊ C₂ where reflections act on rotations.*
+- **⊂**: Subset relation (A ⊂ B means A is a subgroup of B). *Example: C₃ ⊂ S₃ since rotations are a subset of all permutations.*
+- **⊲**: Normal subgroup (A ⊲ B means A is a normal subgroup of B). *Example: Aₙ ⊲ Sₙ for all n ≥ 2.*
+- **≅**: Isomorphism (A ≅ B means groups A and B are isomorphic). *Example: C₆ ≅ C₂ × C₃ since gcd(2,3)=1.*
+- **≇**: Not isomorphic (A ≇ B means groups A and B are not isomorphic). *Example: Q₈ ≇ D₄ despite both having order 8.*
+- **|G|**: Order (size) of group G. *Example: |S₄| = 24, the number of permutations of 4 elements.*
+- **∈**: Element membership (a ∈ G means a is an element of G). *Example: (1 2 3) ∈ S₃ means this cycle is in the symmetric group.*
+- **⟺**: Logical equivalence (p ⟺ q means p if and only if q). *Example: x ∈ Aₙ ⟺ x is an even permutation.*
 
 ### Rewrite Rule Notation
 - **a : G**: Expression a belongs to domain G
@@ -78,10 +90,33 @@ This pattern matches only when the expression does not have the specified domain
 - Preventing infinite loops in rewriting
 - Implementing multi-phase transformations
 
-Example:
+Examples:
 ```
-expr !: Simplified => simplify(expr) : Simplified  // Apply only to unsimplified expressions
+// Apply simplification only to expressions that haven't been simplified yet
+expr !: Simplified => simplify(expr) : Simplified
+
+// Prevent infinite recursion by marking processed expressions
+x * (y + z) !: Expanded => (x * y + x * z) : Expanded
+
+// Multi-phase transformation pipeline
+expr !: Phase1 => phase1(expr) : Phase1
+expr : Phase1 !: Phase2 => phase2(expr) : Phase2
+expr : Phase2 !: Phase3 => phase3(expr) : Phase3
 ```
+
+**Comparing Negative Guards vs. Positive Annotations**:
+
+Positive annotations (`:`) and negative guards (`!:`) serve complementary purposes:
+
+```
+// Positive annotation - only applies to expressions already in the Int domain
+a + b : Int => canonical_sum(a, b)
+
+// Negative guard - explicitly avoids expressions in the Processed domain
+a + b !: Processed => canonical_sum(a, b) : Processed
+```
+
+Positive annotations restrict rules to expressions with specific properties, while negative guards prevent re-processing expressions that have already been handled. Together, they enable fine-grained control over the rewriting process.
 
 #### Entailment (Right-Hand Side)
 
@@ -131,13 +166,13 @@ Many symmetry groups share fundamental properties. This section consolidates the
 
 ### Core Group Properties
 
-| Property | Description | Example Groups |
-|----------|-------------|----------------|
-| **Associativity** | (a·b)·c = a·(b·c) for all elements | All groups |
-| **Identity** | There exists an element e such that e·a = a·e = a | All groups |
-| **Inverses** | For each element a, there exists a⁻¹ such that a·a⁻¹ = a⁻¹·a = e | All groups |
-| **Commutativity** | a·b = b·a for all elements (not required for all groups) | Cₙ, Aₙ, ℤₙ |
-| **Non-commutativity** | a·b ≠ b·a for some elements | Sₙ (n≥3), Dₙ (n≥3), Q₈ |
+| Property | Description | Example Groups | Concrete Example |
+|----------|-------------|----------------|------------------|
+| **Associativity** | (a·b)·c = a·(b·c) for all elements | All groups | `(2+3)+4 = 2+(3+4) = 9` in integer addition |
+| **Identity** | There exists an element e such that e·a = a·e = a | All groups | `0+a = a+0 = a` in addition; `1×a = a×1 = a` in multiplication |
+| **Inverses** | For each element a, there exists a⁻¹ such that a·a⁻¹ = a⁻¹·a = e | All groups | `-5+5 = 0` in addition; `2×(1/2) = 1` in multiplication |
+| **Commutativity** | a·b = b·a for all elements (not required for all groups) | Cₙ, Aₙ, ℤₙ | `3+4 = 4+3 = 7` in addition; `3×5 = 5×3 = 15` in multiplication |
+| **Non-commutativity** | a·b ≠ b·a for some elements | Sₙ (n≥3), Dₙ (n≥3), Q₈ | Matrix multiplication: `[[0,1],[1,0]]×[[1,0],[0,0]] = [[0,0],[1,0]]` but `[[1,0],[0,0]]×[[0,1],[1,0]] = [[0,1],[0,0]]` |
 
 ### Common Subgroup Relationships
 
@@ -256,11 +291,23 @@ O(n) consists of all n×n orthogonal matrices (matrices M where M^T M = I).
 
 ### Quaternion Group (Q₈)
 
-Q₈ is a non-abelian group of order 8, with all non-identity elements having order 4.
+Q₈ is a non-abelian group of order 8, with all non-identity elements having order 4. The quaternion group is important in 3D computer graphics, robotics, and physics for representing rotations in 3D space without gimbal lock problems.
 
-- Not isomorphic to D₄ (dihedral group of order 8)
+- **Elements**: Q₈ = {±1, ±i, ±j, ±k} where 1 is the identity element
+- **Multiplication Rules**: i² = j² = k² = ijk = -1
+- **Multiplication Table** (excerpt):
+  ```
+	| * | i  | j  | k  |
+	|---|----|----|----|
+	| i | -1 | k  | -j |
+	| j | -k | -1 | i  |
+	| k | j  | -i | -1 |
+```
+
+- Not isomorphic to D₄ (dihedral group of order 8) despite both having order 8
 - Not isomorphic to C₂ × C₄ (direct product of cyclic groups)
-- Elements usually denoted {±1, ±i, ±j, ±k}
+- Used in computer graphics for representing 3D rotations smoothly
+- **Practical Application**: Unit quaternions provide a more efficient and numerically stable way to compose 3D rotations than 3×3 rotation matrices
 
 ## Group Actions
 
@@ -456,12 +503,32 @@ Matrix groups have important applications in mathematics, physics, and computer 
 
 ### Gröbner Basis for Commutative Rings
 
-Gröbner bases provide a systematic approach to canonicalizing expressions in commutative rings, especially polynomial rings.
+Gröbner bases provide a systematic approach to canonicalizing expressions in commutative rings, especially polynomial rings. This powerful mathematical tool generalizes both Gaussian elimination for linear systems and polynomial division for univariate polynomials.
 
-- **Monomial Order**: Defines a canonical way to arrange monomials in polynomials (lex, grlex, grevlex)
+#### Why Gröbner Bases Matter
+
+Gröbner bases allow us to canonicalize complex polynomial expressions by establishing a unique normal form for each equivalence class of polynomials. This is particularly valuable for:
+
+- Solving systems of polynomial equations
+- Simplifying expressions in commutative rings
+- Proving polynomial identities
+- Computing intersections and projections of algebraic varieties
+
+#### Key Concepts
+
+- **Monomial Order**: Defines a canonical way to arrange monomials in polynomials
+  - **lex**: Lexicographic order (like dictionary ordering): x² > xy > y²
+  - **grlex**: Graded lexicographic (first by total degree, then lexicographically): x² > xy > y² 
+  - **grevlex**: Graded reverse lexicographic (first by total degree, then by reverse lex on variables): x² > xy > y²
+
 - **Normal Form**: Reduced representation of a polynomial modulo an ideal
+  - Example: The normal form of x² + xy with respect to G = {x-y} is 2y²
+  
 - **Ideal Membership**: Determines if a polynomial belongs to an ideal generated by a set of polynomials
+  - Example: Testing if x²y - y³ is in the ideal generated by {x-y, y²-1}
+  
 - **Ideal Operations**: Enables computation with polynomial ideals (intersection, quotient, elimination)
+  - Example: Eliminating variables from systems of equations
 
 ## Group Combination Rules
 
@@ -698,45 +765,119 @@ transform(x) : Dₙ => canonical_form_in_orbit(x) : Canonical
 
 ### Integer Operations
 
+Modular arithmetic provides a concrete implementation of group theory in computing systems.
+
 ```
 // Addition forms a cyclic group in modular arithmetic
 (a + b) mod n : Cₙ;  // Addition modulo n has cyclic group structure
 
+// Example: Clock arithmetic (mod 12)
+ClockAdd(10, 5) => (10 + 5) % 12 => 3  // 10 hours + 5 hours = 3 o'clock
+
 // Multiplication forms a more complex group
 (a * b) mod n : (ℤ/nℤ)*;  // Multiplicative group of integers modulo n
 
-// Powers in modular arithmetic
+// Example: Modular exponentiation used in cryptography (RSA algorithm)
 (a^k) mod n => a^(k mod φ(n)) mod n if gcd(a, n) == 1;  // Where φ is Euler's totient function
+ModPow(5, 117, 19) => 5^(117 % 18) % 19 => 5^9 % 19 => 1  // Since φ(19) = 18
 ```
 
+Practical applications include:
+
+- **Cryptography**: RSA encryption relies on modular exponentiation
+- **Hash functions**: Use modular arithmetic for distribution
+- **Random number generation**: Linear congruential generators use modular arithmetic
+- **Error detection/correction**: CRC checksums use polynomial arithmetic over finite fields
+
 ### Bit Operations
+
+Bitwise operations provide a rich playground for algebraic structures, with direct applications in computer architecture and cryptography.
 
 ```
 // Bitwise operations on fixed-width integers
 (a ^ b) : (C₂)ⁿ for n-bit integers;  // XOR forms an abelian group
 
+// Example: XOR forming a group (self-inverse property)
+int x = 0b1010;
+int y = 0b0110;
+
+// Identity element: x ^ 0 = x
+x ^ 0 => 0b1010 ^ 0b0000 => 0b1010   // Identity preserved
+
+// Inverse: x ^ x = 0 (each element is its own inverse)
+x ^ x => 0b1010 ^ 0b1010 => 0b0000   // Self-inverse
+
+// Associativity: (x ^ y) ^ z = x ^ (y ^ z)
+(x ^ y) ^ 0b0011 = x ^ (y ^ 0b0011)   // Associative
+
 // Bit rotations form cyclic groups
 rotate_left(x, k) : Cₙ for n-bit integers;  // Left rotation by k positions
 
+// Example: 8-bit rotation
+rotate_left(0b10100000, 3) => 0b00000101   // Rotate left by 3 bits
+rotate_left(rotate_left(0b10100000, 3), 5) => rotate_left(0b10100000, 8) => 0b10100000
+
 // Bit shifts don't form a group (not invertible)
 shift_left(x, k) !: group;  // Shift operations don't form a group
+
+// Example: Shift operations lose information
+shift_left(0b10100000, 3) => 0b00000000   // Information lost, can't recover
 ```
 
+Practical applications of bitwise operations include:
+
+- **Cryptography**: XOR is used in stream ciphers like RC4 and in block cipher modes
+- **Hash functions**: SHA and MD5 use bitwise operations extensively
+- **Error detection**: Parity bits use XOR for error detection
+- **Graphics**: Bit manipulation for masking and compositing
+- **Performance optimization**: Replacing multiplication by powers of 2 with bit shifts
+
 ### Matrix Group Operations
+
+Matrix groups provide a powerful framework for understanding transformations in linear algebra and geometry, with numerous applications in computer graphics and physics.
 
 ```
 // Matrix multiplication forms a group for invertible matrices
 (A * B) : GL(n, F);  // Matrix multiplication in general linear group
 
+// Example: 2×2 rotation matrices form a group under multiplication
+R(30°) * R(45°) = R(75°)  // Composition of rotations is a rotation
+
+// Concrete example with rotation matrices:
+R(30°) = [[cos(30°), -sin(30°)], [sin(30°), cos(30°)]]
+R(45°) = [[cos(45°), -sin(45°)], [sin(45°), cos(45°)]]
+R(30°) * R(45°) = R(75°)  // Matrix multiplication preserves the group structure
+
 // Orthogonal transformations preserve inner products
 (M * v) · (M * w) => v · w if M : O(n);  // Inner product preservation
+
+// Example: Rotation matrices preserve distances and angles
+// For any vectors v and w and rotation matrix R:
+// (Rv) · (Rw) = v · w
+// |Rv| = |v|  // Length preservation
 
 // Special linear group preserves volume
 det(M) => 1 if M : SL(n, F);  // Determinant is always 1
 
+// Example: Area preservation in 2D transformations
+// If A is in SL(2,ℝ), then a parallelogram transformed by A has the same area
+
 // Matrix exponential maps Lie algebra to Lie group
 exp(A) : SO(n) if A : so(n);  // Exponential of skew-symmetric matrix gives rotation
+
+// Example: Converting angular velocity to rotation matrix
+// For the 2D case, with angular velocity ω:
+// A = [[0, -ω], [ω, 0]]  // Skew-symmetric matrix
+// exp(A*t) gives the rotation matrix for angle ωt
 ```
+
+Practical applications of matrix groups include:
+
+- **Computer Graphics**: 3D transformations using GL(4,ℝ) and special orthogonal groups
+- **Physics**: Describing symmetry operations in crystallography and quantum mechanics
+- **Robotics**: Representing rigid body motions using special Euclidean groups
+- **Computer Vision**: Camera calibration and structure from motion algorithms
+- **Quantum Computing**: Quantum gates as special unitary transformations
 
 ### Gröbner Basis Applications
 
