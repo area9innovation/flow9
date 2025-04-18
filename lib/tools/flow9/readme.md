@@ -36,6 +36,7 @@ Type inference is per-file, not global.
 
 ## TODO
 
+- Warn if we have a top-level var or function that is unused and not exported
 - Debug Incremental
   - Fix dependency tracking to make finegrained incremental in typecheck
 - Have warnings and errors. Implicit auto in toplevel is a warning, for example.
