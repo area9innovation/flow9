@@ -269,6 +269,38 @@ When the same pattern variable appears multiple times in a pattern, the system e
 
 This semantic equivalence checking allows for robust pattern matching even in the presence of shared structure or when expressions have been merged through equivalence relationships.
 
+### File Operations
+
+#### `getFileContent(path: string) -> string`
+
+**Reads the entire content of a file as a string.**
+
+- **Parameters:**
+  - `path`: The path to the file to read.
+
+- **Returns:**  
+  The entire content of the file as a string.
+
+- **Notes:**
+  - Returns an empty string if the file does not exist or cannot be read.
+  - Useful for loading expressions, rules, or other data from files.
+
+#### `setFileContent(path: string, content: string) -> bool`
+
+**Writes content to a file, creating the file if it doesn't exist.**
+
+- **Parameters:**
+  - `path`: The path to the file to write.
+  - `content`: The string content to write to the file.
+
+- **Returns:**  
+  Boolean indicating success (true) or failure (false).
+
+- **Notes:**
+  - Overwrites the file if it already exists.
+  - Creates parent directories if they don't exist.
+  - Useful for saving expressions, serialized graphs, or rule sets.
+
 ### AST Introspection and Manipulation
 
 #### `astname(expr: expression) -> string`
