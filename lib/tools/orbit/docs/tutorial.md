@@ -171,7 +171,6 @@ The `ast` annotation tells Orbit not to evaluate the argument before passing it 
 Orbit provides an `eval` function to evaluate AST expressions:
 
 ```orbit
-
 // Create an AST without evaluating
 fn quote(x : ast) = x;
 let expr = quote(2 + 3 * 4);
@@ -179,6 +178,44 @@ let expr = quote(2 + 3 * 4);
 // Evaluate the expression
 let result = eval(expr);  // Returns 14
 ```
+
+#### Selective Evaluation with eval()
+
+A powerful feature of Orbit is the ability to selectively evaluate parts of an AST inside functions that take AST parameters. Normally, arguments to parameters marked with `:ast` are not evaluated at all, preserving their syntactic structure. However, the `eval()` function provides a special exception to this rule.
+
+When `eval(expr)` appears inside an argument to a parameter marked as `:ast`, the inner expression `expr` is evaluated before being passed to the function:
+
+```orbit
+// A function that examines AST structure
+fn is_var(expr : ast) = (astname(expr) == "Variable" || astname(expr) == "Identifier");
+
+// A function that combines structural analysis with evaluation
+fn is_polynomial_term(expr : ast) = (
+	// Direct check without evaluation
+	is_var(expr) ||
+
+	// Pattern match with selective evaluation
+	expr is (
+		a * b => is_var(eval(a)) && is_number(eval(b));
+		a ^ n => is_var(eval(a)) && is_number(eval(n));
+		_ => false
+	)
+);
+
+// Usage examples
+println(is_polynomial_term(x));      // Variable - true
+println(is_polynomial_term(x^2));    // Variable raised to power - true
+println(is_polynomial_term(3*x));    // Variable multiplied by constant - true
+println(is_polynomial_term(x+y));    // Not a single term - false
+```
+
+This selective evaluation capability enables powerful symbolic manipulation where you can:
+
+1. Examine the structural properties of expressions (like their AST node types)
+2. Selectively evaluate subexpressions when needed
+3. Combine structural and semantic analyses in the same function
+
+This is particularly useful for implementing symbolic mathematics, program analysis tools, and custom language processors.
 
 ### Pretty Printing
 

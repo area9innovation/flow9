@@ -352,6 +352,31 @@ println(prettyOrbit(expr));
 ```
 
 The `ast` annotation indicates that an expression should be treated as syntax rather than being evaluated.
+
+### Using eval() with AST parameters
+
+Normally, when a function parameter is marked with `:ast`, the corresponding argument is not evaluated before being passed to the function. However, you can selectively evaluate parts of an AST argument using the `eval()` function:
+
+```orbit
+// Function that works with AST
+fn is_number(expr : ast) = (astname(expr) == "Int" || astname(expr) == "Double");
+
+// Function that selectively evaluates parts of its AST argument
+fn is_complex_expr(expr : ast) = (
+	// eval() causes its argument to be evaluated, even within an AST context
+	is_number(eval(expr)) ||
+	expr is (
+		a * b => is_complex_expr(eval(a)) && is_complex_expr(eval(b));
+		_ => false
+	)
+);
+
+// Usage
+println(is_complex_expr(x^2));        // Evaluates parts of the expression
+println(is_complex_expr(quote(x^2)));  // Keeps the expression as quoted AST
+```
+
+This capability allows for powerful hybrid approaches where you can manipulate expressions structurally while selectively evaluating parts of them.
 </ast_manipulation>
 
 <runtime_functions>
