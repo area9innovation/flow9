@@ -15,13 +15,52 @@ A group (G) is a set with an operation that satisfies four key properties: closu
 #### Key Group Types
 
 | Group | Description | Order | Example Application |
-|-------|-------------|-------|--------------------|
+|-------|-------------|-------|--------------------|  
 | Sₙ    | Symmetric group of permutations on n elements | n! | Permutations of rows/columns/values in Sudoku |
 | Aₙ    | Alternating group of even permutations on n elements | n!/2 | Reachable corner permutations in Rubik's Cube |
 | Cₙ    | Cyclic group of order n | n | Rotations in Rubik's Cube |
 | Dₙ    | Dihedral group - symmetries of a regular n-gon | 2n | Board game transformations |
 
-### 2.2 Group Products
+### 2.2 Homomorphisms and Automorphisms
+
+At the heart of group theory are structure-preserving maps that enable us to relate different groups and understand their internal symmetries.
+
+#### Homomorphisms: Structure-Preserving Maps
+
+A **homomorphism** φ: G → H between groups G and H is a function that preserves the group operation:
+
+φ(g₁·g₂) = φ(g₁)·φ(g₂) for all g₁, g₂ ∈ G
+
+Homomorphisms capture structural similarities between groups, even when the groups themselves look different. They're fundamental to understanding how groups relate to each other and how we can transfer properties from one group to another.
+
+**Key Properties of Homomorphisms:**
+1. They map the identity element of G to the identity element of H: φ(e_G) = e_H
+2. They preserve inverses: φ(g⁻¹) = [φ(g)]⁻¹
+3. The **kernel** of φ (elements that map to the identity in H) is a normal subgroup of G
+4. The **image** of φ is a subgroup of H
+
+**Example:** Consider the group Z of integers under addition and Z₂ = {0,1} of integers modulo 2. The mapping φ: Z → Z₂ given by φ(n) = n mod 2 is a homomorphism, as it preserves addition: φ(a+b) = φ(a) + φ(b) (mod 2).
+
+#### Automorphisms: Self-Preserving Maps
+
+An **automorphism** is a bijective homomorphism from a group to itself. The set of all automorphisms of a group G, denoted Aut(G), forms a group under function composition.
+
+Automorphisms represent the symmetries of the group itself. They tell us how we can rearrange the elements of a group while preserving its structure.
+
+**Examples of Automorphisms:**
+1. For cyclic groups C_n, Aut(C_n) is isomorphic to the multiplicative group (Z/nZ)* of integers relatively prime to n
+2. For S_n (n≠2,6), all automorphisms are inner automorphisms (conjugation by group elements)
+3. For the Rubik's Cube group, certain physical cube symmetries (like reflecting the entire cube) induce automorphisms
+
+#### The Importance of Automorphisms in Puzzles
+
+In puzzle contexts, automorphisms help us understand structural symmetries:
+
+1. **Sudoku**: Certain transformations (row/column swaps within blocks, block swaps, etc.) are automorphisms of the Sudoku solution space
+
+2. **Rubik's Cube**: The physical symmetries of the cube induce automorphisms of the Rubik's Cube group. For instance, rotating the entire cube doesn't change the fundamental structure of available moves
+
+### 2.3 Group Products
 
 Groups can be combined in various ways to form more complex structures:
 
@@ -32,12 +71,69 @@ Groups can be combined in various ways to form more complex structures:
 2. **Semi-Direct Product (⋊)**: One group acts on another via automorphisms
    - H ⋊ G = {(h, g) | h ∈ H, g ∈ G}
    - Operations: (h₁, g₁) · (h₂, g₂) = (h₁·φ(g₁)(h₂), g₁·g₂)
-   - Where φ: G → Aut(H) is a homomorphism
+   - Where φ: G → Aut(H) is a homomorphism that defines how G acts on H
 
 3. **Wreath Product (≀)**: Hierarchical action of one group on multiple copies of another
    - G ≀ H represents G acting on copies of H indexed by the set G operates on
 
-### 2.3 Constraint Systems
+### 2.4 Semi-Direct Product in Detail
+
+The semi-direct product is a sophisticated way to combine groups that captures how one group can act on another. Unlike the direct product where components operate independently, the semi-direct product encodes an interaction.
+
+#### Formal Definition
+
+Given:
+- A group H (typically a normal subgroup in the resulting product)
+- A group G
+- A homomorphism φ: G → Aut(H) that defines how elements of G transform elements of H
+
+The semi-direct product H ⋊φ G consists of:
+- Elements: ordered pairs (h, g) where h ∈ H and g ∈ G
+- Operation: (h₁, g₁) · (h₂, g₂) = (h₁ · φ(g₁)(h₂), g₁ · g₂)
+
+#### Physical Interpretation for Puzzles
+
+Think of H as representing one aspect of a puzzle (e.g., orientations) and G as another aspect (e.g., positions). The semi-direct product captures how changing positions affects orientations.
+
+**Visualization:**
+```
+(h₁, g₁) · (h₂, g₂) = (h₁ · φ(g₁)(h₂), g₁ · g₂)
+			|
+			v
+  h₁ * [g₁ acts on h₂] * g₁ * g₂
+```
+
+#### Concrete Example: Dihedral Group Dₙ
+
+The dihedral group Dₙ (symmetries of a regular n-gon) can be expressed as a semi-direct product Cₙ ⋊ C₂ where:
+- Cₙ represents rotations
+- C₂ represents reflections
+- The action φ: C₂ → Aut(Cₙ) maps the non-identity element of C₂ to the automorphism that inverts elements of Cₙ
+
+Specifically, if r represents a rotation and s represents a reflection:
+- sr = r⁻¹s (reflection followed by rotation equals rotation in opposite direction followed by reflection)
+
+#### Calculation Example in Rubik's Cube Context
+
+In the Rubik's Cube, the semi-direct product C₃⁷ ⋊ A₈ for the corners works as follows:
+
+Suppose we have:
+- Orientation state h₁ = (2,0,1,0,0,2,1) for the 7 independent corners
+- Permutation g₁ = (1,3,7) (cycle moving corner 1 to position 3, 3 to 7, and 7 to 1)
+
+Applying another operation with:
+- Orientation state h₂ = (0,2,0,1,1,0,2)
+- Permutation g₂ = (2,4,5)
+
+The result (h₁, g₁) · (h₂, g₂) = (h₁ · φ(g₁)(h₂), g₁ · g₂) involves:
+
+1. Composing permutations: g₁ · g₂ = (1,3,7)(2,4,5)
+2. Applying φ(g₁) to h₂: φ(g₁)(h₂) = (h₂[g₁⁻¹(1)], ..., h₂[g₁⁻¹(7)]) = (h₂[7], h₂[2], h₂[3], h₂[4], h₂[5], h₂[6], h₂[1]]) = (2,2,1,1,1,0,0)
+3. Combining orientations: h₁ · φ(g₁)(h₂) = (2,0,1,0,0,2,1) · (2,2,1,1,1,0,0) = (1,2,2,1,1,2,1) (addition modulo 3)
+
+The final result is ((1,2,2,1,1,2,1), (1,3,7)(2,4,5)).
+
+### 2.5 Constraint Systems
 
 Constraint systems impose additional restrictions on the valid configurations within a group structure. These can be expressed as:
 
@@ -278,7 +374,7 @@ For group-theoretic problems encoded as polynomial systems, computing a Gröbner
 Translating between group operations and polynomial operations provides powerful tools for solving problems:
 
 | Group Concept | Polynomial Equivalent | Computation Advantage |
-|---------------|------------------------|------------------------|
+|---------------|------------------------|------------------------|  
 | Group element | Polynomial in specific form | Canonical representation |
 | Subgroup | Polynomial ideal | Ideal membership testing |
 | Coset | Shifted variety | Geometric interpretation |
@@ -387,11 +483,149 @@ fn modelRubiksCube2x2() {
 }
 ```
 
-## 7. Connection to Algebraic Invariants
+## 7. Binary Decision Diagrams for Modeling Constraints
+
+### 7.1 Introduction to BDDs
+
+Binary Decision Diagrams (BDDs) are compact, canonical representations of Boolean functions that provide efficient algorithms for manipulation and analysis. They serve as a powerful tool for representing and reasoning about constraint systems in puzzles and combinatorial problems.
+
+#### Structure and Properties
+
+A BDD is a directed acyclic graph where:
+- Each non-terminal node represents a Boolean variable and has two outgoing edges (low/0 and high/1)
+- Terminal nodes represent function values (0 or 1)
+- The diagram is ordered (variables appear in fixed order along paths)
+- The diagram is reduced (no redundant nodes or duplicate subtrees)
+
+```
+		 x₁
+		/  \
+	 /    \
+	x₂     x₂
+ /  \   /  \
+0    1 1    0
+```
+
+Key properties that make BDDs valuable:
+1. **Canonical representation**: Equivalent Boolean functions have identical reduced BDDs
+2. **Compactness**: Many practical Boolean functions have compact BDD representations
+3. **Efficient operations**: AND, OR, and NOT operations have polynomial time implementations
+4. **Satisfiability checking**: Determining if a function is satisfiable is immediate (check if BDD ≠ 0)
+
+### 7.2 BDDs for Constraint Satisfaction Problems
+
+BDDs excel at representing and solving constraint satisfaction problems like Sudoku or aspects of Rubik's Cube by:
+
+1. **Encoding constraints as Boolean functions**:
+   - Each constraint becomes a Boolean function that evaluates to 1 for valid assignments, 0 for invalid
+   - For example, the "all-different" constraint for a Sudoku row becomes a Boolean function checking that no two variables have the same value
+
+2. **Combining constraints using logical operations**:
+   - Multiple constraints are combined with AND operations
+   - The resulting BDD represents all solutions satisfying all constraints
+
+3. **Solution extraction and counting**:
+   - All satisfying assignments can be enumerated by traversing paths from root to 1-terminal
+   - The number of solutions can be counted efficiently
+
+### 7.3 BDDs for Sudoku Constraints
+
+For Sudoku, BDDs can represent constraints with remarkable efficiency:
+
+```flow
+// Example: Creating BDD for row constraint in Sudoku
+fn create_row_constraint_bdd(row_index) {
+	let bdd = BDD.true_node();  // Start with BDD representing true
+
+	// For each pair of distinct cells in the row
+	for (i in 0..8) {
+		for (j in i+1..8) {
+			// Create BDD ensuring cells have different values
+			let diff_constraint = BDD.create_not_equal(var(row_index, i), var(row_index, j));
+
+			// Combine with existing constraints
+			bdd = BDD.and(bdd, diff_constraint);
+		}
+	}
+
+	return bdd;
+}
+```
+
+The complete Sudoku constraint system combines BDDs for rows, columns, and blocks:
+
+```flow
+fn create_sudoku_bdd() {
+	let bdd = BDD.true_node();
+
+	// Add row constraints
+	for (r in 0..8) {
+		bdd = BDD.and(bdd, create_row_constraint_bdd(r));
+	}
+
+	// Add column constraints
+	for (c in 0..8) {
+		bdd = BDD.and(bdd, create_column_constraint_bdd(c));
+	}
+
+	// Add block constraints
+	for (br in 0..2) {
+		for (bc in 0..2) {
+			bdd = BDD.and(bdd, create_block_constraint_bdd(br, bc));
+		}
+	}
+
+	// Add initial values as constraints
+	for ((r, c, val) in initial_values) {
+		bdd = BDD.and(bdd, BDD.create_equals(var(r, c), val));
+	}
+
+	return bdd;
+}
+```
+
+### 7.4 Advantages of BDDs for Constraint Modeling
+
+BDDs offer several advantages for constraint modeling in puzzles:
+
+1. **Implicit representation**: BDDs can represent huge solution spaces compactly
+
+2. **Constraint propagation**: Operations like existential quantification efficiently implement constraint propagation
+
+3. **Dynamic variable ordering**: Heuristic variable ordering can dramatically reduce BDD size
+
+4. **Composability**: Complex constraints can be built from simpler ones using standard logical operations
+
+5. **Integration with group theory**: BDDs can represent sets of group elements and their actions
+
+### 7.5 BDDs and Group Theory
+
+BDDs combine well with group-theoretic approaches:
+
+1. **Encoding group constraints**: Invariants arising from group structure can be encoded as BDDs
+
+2. **Orbit representation**: Sets of states in the same orbit under group action can be compactly represented
+
+3. **Symmetry breaking**: BDDs can encode constraints that eliminate symmetric solutions
+
+For Rubik's Cube, BDDs can encode reachability constraints:
+
+```flow
+fn create_parity_constraint_bdd() {
+	// Create BDD ensuring corner and edge permutation parities match
+	let corner_parity = compute_parity_bdd(corner_permutation_vars);
+	let edge_parity = compute_parity_bdd(edge_permutation_vars);
+
+	// Parity constraint: corner_parity == edge_parity
+	return BDD.equiv(corner_parity, edge_parity);
+}
+```
+
+## 8. Connection to Algebraic Invariants
 
 The group structure and constraints together generate algebraic invariants that characterize the solution space:
 
-### 7.1 Group Invariants
+### 8.1 Group Invariants
 
 Functions that remain unchanged under group actions form the invariant ring:
 
@@ -403,14 +637,14 @@ In Sudoku, invariants include the sum of all values in rows/columns/boxes (alway
 
 In Rubik's Cube, invariants include the parity of permutations and the total orientation counts.
 
-### 7.2 Constraint Invariants
+### 8.2 Constraint Invariants
 
 Constraints define additional invariants that must be preserved in valid solutions. These can be encoded as:
 
 1. **Hard constraints**: Must be satisfied (corresponding to equations f = 0)
 2. **Soft constraints**: Preferences or objectives (corresponding to minimizing f)
 
-### 7.3 Polynomial Ideal of Invariants
+### 8.3 Polynomial Ideal of Invariants
 
 The ideal generated by all invariant polynomials defines the solution space algebraically:
 
@@ -420,9 +654,9 @@ I = <f₁, f₂, ..., fₙ>
 
 Where each fᵢ is either a group structure polynomial or a constraint polynomial.
 
-## 8. Practical Applications and Extensions
+## 9. Practical Applications and Extensions
 
-### 8.1 Solving Strategies for Group-Constraint Systems
+### 9.1 Solving Strategies for Group-Constraint Systems
 
 Four main approaches exist for solving these combined systems:
 
@@ -431,7 +665,7 @@ Four main approaches exist for solving these combined systems:
 3. **Hybrid approach**: Use group theory to reduce the search space, then constraint solving
 4. **Algebraic geometry approach**: Convert to polynomial system and use Gröbner basis methods
 
-### 8.2 Extending to Other Puzzles and Problems
+### 9.2 Extending to Other Puzzles and Problems
 
 This framework extends to many other domains:
 
@@ -439,7 +673,7 @@ This framework extends to many other domains:
 - **Graph coloring**: Permutation groups acting on colors with adjacency constraints
 - **Cryptographic problems**: Group actions with specific output constraints
 
-### 8.3 Computational Complexity Considerations
+### 9.3 Computational Complexity Considerations
 
 While group-theoretic and algebraic approaches provide elegant formulations, practical computation must address:
 
@@ -449,7 +683,7 @@ While group-theoretic and algebraic approaches provide elegant formulations, pra
 
 Hybrid approaches that leverage both group structure and efficient constraint propagation often yield the best practical performance.
 
-## 9. Conclusion
+## 10. Conclusion
 
 The integration of group theory, constraint systems, and polynomial algebra provides a powerful framework for modeling and solving complex combinatorial problems. The semi-direct and wreath products capture the essential interactions between different aspects of these problems, while polynomial representations enable systematic algebraic approaches to finding solutions.
 
@@ -472,3 +706,9 @@ This unified approach not only offers theoretical elegance but also practical ad
 6. Buchberger, B. (2006). "Bruno Buchberger's PhD thesis 1965: An algorithm for finding the basis elements of the residue class ring of a zero dimensional polynomial ideal." Journal of Symbolic Computation, 41(3-4), 475-511.
 
 7. Chen, G. (2012). "The Symmetric Group and Polynomial Rings." American Mathematical Monthly, 119(7), 555-567.
+
+8. Bryant, R. E. (1986). "Graph-Based Algorithms for Boolean Function Manipulation." IEEE Transactions on Computers, C-35(8), 677-691.
+
+9. Meinel, C., & Theobald, T. (1998). "Algorithms and Data Structures in VLSI Design: OBDD - Foundations and Applications." Springer.
+
+10. Knuth, D. E. (2011). "The Art of Computer Programming, Volume 4A: Combinatorial Algorithms, Part 1." Addison-Wesley Professional.
