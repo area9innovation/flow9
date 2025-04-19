@@ -13,6 +13,7 @@ import maybe;
 export {
     // Compare an OrMath_expr with a node in an OGraph
     // Returns true if they represent the same expression
+	// A lowercase variable is identical to any node
     // Also handles domain membership checks for pattern matching
     compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool;
     
@@ -35,129 +36,138 @@ findDomainMatch(graph : OGraph, nodeId : int, domain : OrMath_expr) -> bool {
     // Get all domains this node belongs to
     domains = getONodeBelongsTo(graph, rootId);
     
-    if (length(domains) == 0) {
-        // Node doesn't belong to any domain
-        false;
-    } else {
-        // Check if any of the domains structurally match the expected domain
-        fold(domains, false, \acc, domainId -> {
-            if (acc) acc // Short-circuit if we already found a match
-            else {
-                // Compare the domain expression directly with the domain node
-                compareOrbitWithNode(domain, graph, domainId);
-            }
-        });
+	// Check if any of the domains structurally match the expected domain
+	exists(domains, \domainId -> {
+		// Compare the domain expression directly with the domain node
+		compareOrbitWithNode(domain, graph, domainId);
+	});
+}
+
+// Helper to check if an expression is a pattern variable (lowercase identifier/variable)
+isPatternVariable(expr : OrMath_expr) -> bool {
+    // Pattern variables are lowercase identifiers or variables
+    // Simple check - lowercase single-letter variables are pattern variables
+    switch (expr) {
+        OrIdentifier(name): true;
+        default: false;
     }
 }
 
 // Compare an OrMath_expr with a node in an OGraph
 compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool {
-    // Handle domain type annotations (special case)
-    isDomainAnnotation = switch (expr) {
-        OrTypeAnnotation(__, __): true;
-        default: false;
-    };
-    
-    if (isDomainAnnotation) {
-        switch (expr) {
-            OrTypeAnnotation(baseExpr, domain): {
-                // First check if the base expression matches
-                baseMatches = compareOrbitWithNode(baseExpr, graph, nodeId);
-                
-                if (!baseMatches) {
-                    false;
-                } else {
-                    // Use our helper to check domain membership
-                    findDomainMatch(graph, nodeId, domain);
-                }
-            }
-            default: false; // Should never happen due to check above
-        }
+    // Check if the expression is a pattern variable that matches anything
+    if (isPatternVariable(expr)) {
+        // Pattern variables match any node
+		// TODO: Arguably, we shold have the binding environment and check against that
+        true;
     } else {
-        // Regular non-domain comparison
-        // Find the canonical representative for this node
-        rootId = findORoot(graph, nodeId);
-        
-        // Decompose the OrMath_expr
-        decomposedExpr = decomposeOrbit(expr);
-        opExpr = decomposedExpr.first;
-        childrenAndValue = decomposedExpr.second;
-        childrenExpr = childrenAndValue.first;
-        valueExpr = childrenAndValue.second;
-        
-        // Get the node's information from the OGraph
-        switch (lookupOClass(graph, rootId)) {
-            None(): false; // Node doesn't exist
-            Some(oclass): {
-                // Check if operators match
-                if (oclass.node.op != opExpr) {
-                    false;
-                } else if (length(oclass.node.children) != length(childrenExpr)) {
-                    // Check if number of children match
-                    false;
-                } else if (length(childrenExpr) == 0) {
-                    // Handle leaf nodes with primitive values
-                    if (opExpr == "Int") {
-                        switch (getOClassInt(graph, rootId)) {
-                            None(): false;
-                            Some(intValue): {
-                                switch (valueExpr) {
-                                    OrbitInt(exprValue): intValue == exprValue;
-                                    default: false;
-                                }
-                            }
-                        }
-                    } else if (opExpr == "Double") {
-                        switch (getOClassDouble(graph, rootId)) {
-                            None(): false;
-                            Some(doubleValue): {
-                                switch (valueExpr) {
-                                    OrbitDouble(exprValue): doubleValue == exprValue;
-                                    default: false;
-                                }
-                            }
-                        }
-                    } else if (opExpr == "String" || opExpr == "Identifier" || opExpr == "Variable") {
-                        switch (getOClassString(graph, rootId)) {
-                            None(): false;
-                            Some(stringValue): {
-                                switch (valueExpr) {
-                                    OrbitString(exprValue): stringValue == exprValue;
-                                    default: false;
-                                }
-                            }
-                        }
-                    } else if (opExpr == "Bool") {
-                        // Booleans are typically stored as integers (0/1) in OGraph
-                        switch (getOClassInt(graph, rootId)) {
-                            None(): false;
-                            Some(intValue): {
-                                switch (valueExpr) {
-                                    OrbitBool(exprValue): (intValue != 0) == exprValue;
-                                    default: false;
-                                }
-                            }
-                        }
-                    } else {
-                        // Other leaf node types without primitive values
-                        true;
-                    }
-                } else {
-                    // For non-leaf nodes, recursively compare all children
-                    foldRange(0, length(childrenExpr) - 1, true, \acc, i -> {
-                        if (!acc) false  // Short-circuit if we already found mismatch
-                        else if (i >= length(oclass.node.children)) false
-                        else compareOrbitWithNode(childrenExpr[i], graph, oclass.node.children[i]);
-                    });
-                }
-            }
-        }
-    }
+    
+		// Handle domain type annotations (special case)
+		isDomainAnnotation = switch (expr) {
+			OrTypeAnnotation(__, __): true;
+			default: false;
+		};
+		
+		if (isDomainAnnotation) {
+			switch (expr) {
+				OrTypeAnnotation(baseExpr, domain): {
+					// First check if the base expression matches
+					baseMatches = compareOrbitWithNode(baseExpr, graph, nodeId);
+					
+					if (!baseMatches) {
+						false;
+					} else {
+						// Use our helper to check domain membership
+						findDomainMatch(graph, nodeId, domain);
+					}
+				}
+				default: false; // Should never happen due to check above
+			}
+		} else {
+			// Regular non-domain comparison
+			// Find the canonical representative for this node
+			rootId = findORoot(graph, nodeId);
+			
+			// Decompose the OrMath_expr
+			decomposedExpr = decomposeOrbit(expr);
+			opExpr = decomposedExpr.first;
+			childrenAndValue = decomposedExpr.second;
+			childrenExpr = childrenAndValue.first;
+			valueExpr = childrenAndValue.second;
+			
+			// Get the node's information from the OGraph
+			switch (lookupOClass(graph, rootId)) {
+				None(): false; // Node doesn't exist
+				Some(oclass): {
+					// Check if operators match
+					if (oclass.node.op != opExpr) {
+						false;
+					} else if (length(oclass.node.children) != length(childrenExpr)) {
+						// Check if number of children match
+						false;
+					} else if (length(childrenExpr) == 0) {
+						// Handle leaf nodes with primitive values
+						if (opExpr == "Int") {
+							switch (getOClassInt(graph, rootId)) {
+								None(): false;
+								Some(intValue): {
+									switch (valueExpr) {
+										OrbitInt(exprValue): intValue == exprValue;
+										default: false;
+									}
+								}
+							}
+						} else if (opExpr == "Double") {
+							switch (getOClassDouble(graph, rootId)) {
+								None(): false;
+								Some(doubleValue): {
+									switch (valueExpr) {
+										OrbitDouble(exprValue): doubleValue == exprValue;
+										default: false;
+									}
+								}
+							}
+						} else if (opExpr == "String" || opExpr == "Identifier" || opExpr == "Variable") {
+							switch (getOClassString(graph, rootId)) {
+								None(): false;
+								Some(stringValue): {
+									switch (valueExpr) {
+										OrbitString(exprValue): stringValue == exprValue;
+										default: false;
+									}
+								}
+							}
+						} else if (opExpr == "Bool") {
+							// Booleans are typically stored as integers (0/1) in OGraph
+							switch (getOClassInt(graph, rootId)) {
+								None(): false;
+								Some(intValue): {
+									switch (valueExpr) {
+										OrbitBool(exprValue): (intValue != 0) == exprValue;
+										default: false;
+									}
+								}
+							}
+						} else {
+							// Other leaf node types without primitive values
+							true;
+						}
+					} else {
+						// For non-leaf nodes, recursively compare all children
+						foldRange(0, length(childrenExpr) - 1, true, \acc, i -> {
+							if (!acc) false  // Short-circuit if we already found mismatch
+							else if (i >= length(oclass.node.children)) false
+							else compareOrbitWithNode(childrenExpr[i], graph, oclass.node.children[i]);
+						});
+					}
+				}
+			}
+		}
+	}
 }
 
 // Implementation of findOGraphId function
 findOGraphId(graphName : string, expr : OrMath_expr) -> int {
-    
 	// Handle special case for domain annotations
     isDomainAnnotation = switch (expr) {
         OrTypeAnnotation(baseExpr, domain): true;
@@ -325,102 +335,5 @@ belongsTransitivelyToDomainHelper(graph : OGraph, nodeId : int, targetDomainId :
 // Helper function to check if two expressions are equivalent
 // This function handles special cases like function call expressions that need deeper comparison
 areExpressionsEquivalent(expr1 : OrMath_expr, expr2 : OrMath_expr) -> bool {
-    // Easy case: direct equality
-    if (expr1 == expr2) {
-        true;
-    } else {
-        // Get the structnames for both expressions
-        structname1 = expr1.structname;
-        structname2 = expr2.structname;
-        
-        if (structname1 != structname2) {
-            // Handle special case for OrIdentifier vs OrVariable
-            if ((structname1 == "OrIdentifier" && structname2 == "OrVariable") ||
-                (structname1 == "OrVariable" && structname2 == "OrIdentifier")) {
-                // Get the IDs
-                id1 = switch (expr1) {
-                    OrIdentifier(id): id;
-                    OrVariable(id): id;
-                    default: "";
-                };
-                
-                id2 = switch (expr2) {
-                    OrIdentifier(id): id;
-                    OrVariable(id): id;
-                    default: "";
-                };
-                
-                // Check if IDs match
-                id1 == id2;
-            } else {
-                // Different structure types that aren't compatible
-                false;
-            }
-        } else {
-            // Same structure types, compare contents
-            switch (expr1) {
-                OrInt(val1): {
-                    switch (expr2) {
-                        OrInt(val2): val1 == val2;
-                        default: false; // Should never happen due to structname check
-                    }
-                }
-                OrDouble(val1): {
-                    switch (expr2) {
-                        OrDouble(val2): val1 == val2;
-                        default: false;
-                    }
-                }
-                OrString(val1): {
-                    switch (expr2) {
-                        OrString(val2): val1 == val2;
-                        default: false;
-                    }
-                }
-                OrBool(val1): {
-                    switch (expr2) {
-                        OrBool(val2): val1 == val2;
-                        default: false;
-                    }
-                }
-                OrIdentifier(id1): {
-                    switch (expr2) {
-                        OrIdentifier(id2): id1 == id2;
-                        default: false;
-                    }
-                }
-                OrVariable(id1): {
-                    switch (expr2) {
-                        OrVariable(id2): id1 == id2;
-                        default: false;
-                    }
-                }
-                OrFunction(fnExpr1, args1): {
-                    switch (expr2) {
-                        OrFunction(fnExpr2, args2): {
-                            // Check function names first
-                            fnMatches = areExpressionsEquivalent(fnExpr1, fnExpr2);
-                            
-                            if (!fnMatches || length(args1) != length(args2)) {
-                                false;
-                            } else {
-                                // Recursively check all arguments
-                                foldRange(0, length(args1) - 1, true, \acc, i -> {
-                                    if (!acc) false  // Short-circuit if we already found mismatch
-                                    else areExpressionsEquivalent(args1[i], args2[i]);
-                                });
-                            }
-                        }
-                        default: false; // Should never happen due to structname check
-                    }
-                }
-                // Handle other expression types as needed
-                default: {
-                    // For any other types, fall back to direct equality
-                    // This could be enhanced for other specific types as needed
-                    expr1 == expr2;
-                }
-            }
-        }
-    }
+    expr1 == expr2
 }

@@ -22,6 +22,7 @@
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Hook in evaluation functions to implement AST nodes directly in Orbit itself, potentially using rewriting
 - Semi-direct product
+- (a + b) : Type("number")  parses wrong
 
 ## Interpreter Extensions
 - Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
