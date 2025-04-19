@@ -46,6 +46,47 @@ The `extractOGraph` allows us to get it back out:
 let expr = extractOGraph(g, exprId);
 ```
 
+#### `addOGraphWithSub(graphName: string, expr: expression, bindings: [Pair<string, int>]) -> int`
+
+**Adds an expression to the graph with variable substitution using eclass IDs.**
+
+- **Parameters:**
+  - `graphName`: The name of the O-Graph (as a string).
+  - `expr`: The expression to add, which may contain variables to be substituted.
+  - `bindings`: An array of Pair<string, int> where the string is a variable name and the int is an eclass ID to substitute.
+
+- **Returns:**  
+  The eclass ID of the resulting expression.
+
+- **Behavior:**
+  - Any variable in the expression that has a matching name in the bindings will be replaced with the corresponding eclass ID.
+  - Domain annotations in the expression (using `:` syntax) are processed automatically during addition.
+  - Greatly improves efficiency by avoiding conversion between OGraph and OrMath_expr representations.
+
+- **Usage Example:**
+  ```orbit
+	let g = makeOGraph("myGraph");
+
+	// Add base expressions
+	let x_id = addOGraph(g, 5);
+	let y_id = addOGraph(g, 10);
+
+	// Create a template with variables
+	let template = quote(a * b);
+
+	// Add the template with substitutions
+	let bindings = [Pair("a", x_id), Pair("b", y_id)];
+	let result_id = addOGraphWithSub(g, template, bindings);
+
+	// This effectively adds (5 * 10) to the graph
+	// The result_id points to the node representing this expression
+```
+
+- **Notes:**
+  - Particularly useful after pattern matching, as it works directly with the eclass IDs returned by `matchOGraphPattern`.
+  - Performs more efficiently than adding a substituted expression with `addOGraph` because it avoids creating intermediate OrMath_expr objects.
+  - Automatically handles domain annotations, making it ideal for rewriting systems.
+
 #### `processDomainAnnotations(graphName: string, exprId: int) -> bool`
 
 **Processes an expression with domain annotations, adding domains to the appropriate nodes.**
@@ -92,7 +133,7 @@ let expr = extractOGraph(g, exprId);
   - `expr`: The (possibly quoted) term or expression to look for.
 
 - **Returns:**  
-  The node ID (as integer) of a node in the graph that is *structurally equal* to `expr`, or -1 if no such node exists. If the term was just added, this will match the inserted node’s ID.
+  The node ID (as integer) of a node in the graph that is *structurally equal* to `expr`, or -1 if no such node exists. If the term was just added, this will match the inserted node's ID.
 
 - **Usage Example:**
   ```orbit
@@ -103,7 +144,7 @@ let expr = extractOGraph(g, exprId);
 ```
 
 - **Notes:**
-  - "Structurally equal" means the term’s tree shape and content matches, regardless of canonicalization or node IDs.
+  - "Structurally equal" means the term's tree shape and content matches, regardless of canonicalization or node IDs.
 
 ### Establishing Equivalences
 
@@ -203,6 +244,23 @@ let matchCount = matchOGraphPattern(g, x + y, \(bindings : ast, eclassId) -> {
 });
 
 println("Found " + matchCount + " matches");
+```
+
+**Direct Access to Eclass IDs**: The `bindings` map passed to the callback now contains variable name → eclass ID mappings, allowing you to work directly with the graph structure. This is more efficient than the previous implementation which returned OrMath_expr objects.
+
+```orbit
+// Example using eclass IDs directly
+matchOGraphPattern(g, pattern, \(bindings : ast, eclassId) -> {
+	// Get eclass IDs for pattern variables
+	let x_id = bindings["x"];
+	let y_id = bindings["y"];
+
+	// Work directly with the graph structure
+	let result_id = addOGraphWithSub(g, replacement_template, bindings);
+
+	// Make the result the canonical form
+	mergeOGraphNodes(g, result_id, eclassId);
+});
 ```
 
 #### `substituteWithBindings(expr: expression, bindings: ast) -> expression`

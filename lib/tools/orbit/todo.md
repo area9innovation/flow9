@@ -15,14 +15,15 @@
 - Port the corelib functinos to Orbit native?
 - Check the constructor corelib functions
 - Add math natives
-- Runtime function to read & parse files
+✅ Runtime function to read & write files
+- Runtime function to parse Orbit, read command line args
 - Operators as symbols
-- Support exponentiation ^
-- Subscripts on operators
-- Equivalence between subscripts in unicode and _ and superscripts and ^
-- Hook in evaluation functions to implement AST nodes directly in Orbit itself, potentially using rewriting
 - Semi-direct product
 - (a + b) : Type("number")  parses wrong
+- Support exponentiation ^ in interpreter
+- Subscripts on operators
+- Equivalence between subscripts in unicode and _ and superscripts and ^
+- Hook in evaluation functions to implement interpretation of AST nodes directly in Orbit itself, potentially using rewriting
 - Use orbit2OGraphWithSubstitution to insert the substitution into the ograph that also does domain processing. Fix pattern matching to give eclasses, and we have a cleaner system
 
 ## Interpreter Extensions
