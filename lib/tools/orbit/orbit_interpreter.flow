@@ -120,14 +120,41 @@ callFunction(env : OrbEnv, fn : OrMath_expr, args : [OrMath_expr]) -> OrbEnv {
 		// Use the environment from the previous argument evaluation
 		envArg = if (i == 0) env else OrbEnv(env with vars = acc[i-1].vars);
 		
-		// Check if this parameter should be lazily evaluated
-		lazyEval = isSpecialFn || (i < length(paramTypes) && runtimeIsAstType(paramTypes[i].type_annotations));
+		// Check whether we should evaluate this argument
+		paramType = if (i < length(paramTypes)) Some(paramTypes[i]) else None();
+		shouldEval = !isSpecialFn && shouldEvaluateArg(paramType, arg);
 		
-		// If lazy evaluation, just wrap the argument, otherwise evaluate it
-		resEnv = if (lazyEval) {
-			OrbEnv(envArg with result = arg);
+		resEnv = if (shouldEval) {
+			// If it's an eval() call, we need to extract and evaluate the inner argument
+			switch (arg) {
+				OrFunction(funcExpr, innerArgs): {
+					switch(funcExpr) {
+						OrVariable(id): {
+							if (id == "eval" && length(innerArgs) > 0) {
+								// Evaluate the first argument of eval()
+								interpretOrbit(envArg, innerArgs[0]);
+							} else {
+								// Normal evaluation
+								interpretOrbit(envArg, arg);
+							}
+						}
+						OrIdentifier(id): {
+							if (id == "eval" && length(innerArgs) > 0) {
+								// Evaluate the first argument of eval()
+								interpretOrbit(envArg, innerArgs[0]);
+							} else {
+								// Normal evaluation
+								interpretOrbit(envArg, arg);
+							}
+						}
+						default: interpretOrbit(envArg, arg);
+					}
+				}
+				default: interpretOrbit(envArg, arg);
+			}
 		} else {
-			interpretOrbit(envArg, arg);
+			// Lazy evaluation - don't evaluate this argument
+			OrbEnv(envArg with result = arg);
 		};
 		
 		arrayPush(acc, resEnv);
@@ -193,6 +220,33 @@ callFunction(env : OrbEnv, fn : OrMath_expr, args : [OrMath_expr]) -> OrbEnv {
 			// Not a callable expression
 			println("Cannot call non-function value: " + prettyOrbit(fn));
 			finalArgEnv;
+		}
+	}
+}
+
+// Determines if an argument should be evaluated based on type and shape
+shouldEvaluateArg(paramType : Maybe<OrIdType>, arg : OrMath_expr) -> bool {
+	// Check if this is an "eval()" function call
+	isEvalCall = switch(arg) {
+		OrFunction(funcExpr, innerArgs): {
+			// Check if the function is named "eval" and has exactly one argument
+			switch(funcExpr) {
+				OrVariable(id): id == "eval" && length(innerArgs) == 1;
+				OrIdentifier(id): id == "eval" && length(innerArgs) == 1;
+				default: false;
+			}
+		}
+		default: false;
+	};
+	
+	// If it's an AST type but wrapped in eval(), we should evaluate
+	if (isEvalCall) {
+		true;
+	} else {
+		// Otherwise, check if it should be lazily evaluated based on type
+		switch(paramType) {
+			Some(param): !runtimeIsAstType(param.type_annotations);
+			None(): true;  // If we don't know the type, evaluate by default
 		}
 	}
 }
