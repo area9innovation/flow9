@@ -1,0 +1,85 @@
+import tools/orbit/orbit_types;
+import tools/orbit/ograph;
+import tools/orbit/types;
+import tools/orbit/orbit_decompose;
+import ds/tree;
+import string;
+
+export {
+    // Add an OrMath_expr to an OGraph, substituting variables with existing eclasses
+    // Takes a mapping from variable names to eclass IDs for substitution
+    // Returns the eclass ID of the added expression
+    orbit2OGraphWithSubstitution(graph : OGraph, expr : OrMath_expr, varToEclass : Tree<string, int>) -> int;
+}
+
+// Add an OrMath_expr to an OGraph with variable substitution
+orbit2OGraphWithSubstitution(graph : OGraph, expr : OrMath_expr, varToEclass : Tree<string, int>) -> int {
+    // Decompose the expression into operator, children, and primitive value
+    decomposed = decomposeOrbit(expr);
+    op = decomposed.first;
+    children = decomposed.second.first;
+    value = decomposed.second.second;
+    
+    // Handle variable/identifier substitution
+    if ((op == "Variable" || op == "Identifier") && length(children) == 0) {
+        // Extract the variable name
+        varName = switch (value) {
+            OrbitString(name): name;
+            default: "";
+        };
+        
+        // Check if we have a mapping for this variable
+        switch (lookupTree(varToEclass, varName)) {
+            Some(eclassId): {
+                // Use the provided eclass ID directly
+                println("Substituting variable '" + varName + "' with eclass ID " + i2s(eclassId));
+                eclassId;
+            }
+            None(): {
+                // No substitution - add as a normal variable/identifier
+                addValueNode(graph, op, varName);
+            }
+        };
+    } else if (length(children) == 0) {
+        // For leaf nodes without children, add the primitive value
+        switch (value) {
+            OrbitInt(i): {
+                nodeId = insertONode(graph, ONode(op, [], []));
+                setOClassInt(graph, nodeId, i);
+                nodeId;
+            }
+            OrbitDouble(d): {
+                nodeId = insertONode(graph, ONode(op, [], []));
+                setOClassDouble(graph, nodeId, d);
+                nodeId;
+            }
+            OrbitString(s): {
+                addValueNode(graph, op, s);
+            }
+            OrbitBool(b): {
+                nodeId = insertONode(graph, ONode(op, [], []));
+                setOClassInt(graph, nodeId, if (b) 1 else 0);
+                nodeId;
+            }
+            default: {
+                // Empty value, just create a node
+                insertONode(graph, ONode(op, [], []));
+            }
+        }
+    } else {
+        // For non-leaf nodes, recursively process all children with substitution
+        childIds = map(children, \child -> {
+            orbit2OGraphWithSubstitution(graph, child, varToEclass);
+        });
+        
+        // Create a node with the processed children
+        insertONode(graph, ONode(op, childIds, []));
+    }
+}
+
+// Helper function to add a string value node
+addValueNode(graph : OGraph, op : string, value : string) -> int {
+    nodeId = insertONode(graph, ONode(op, [], []));
+    setOClassString(graph, nodeId, value);
+    nodeId;
+}
