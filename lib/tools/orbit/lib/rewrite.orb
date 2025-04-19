@@ -8,11 +8,12 @@ fn quote(e : ast) = e;
 //
 
 // Apply a single rewrite pattern and replacement to a graph,
-// correctly handling domain annotations
-fn applyRewriteRule(graph, pattern, replacement, ruleName) = (
-//    println("\nApplying rule: " + ruleName);
+// correctly handling domain annotations and conditions
+fn applyRewriteRule(graph, pattern, replacement, condition, ruleName) = (
+    println("\nApplying rule: " + ruleName);
 //    println("Pattern: " + prettyOrbit(pattern));
 //    println("Replacement: " + prettyOrbit(replacement));
+//    println("Condition: " + prettyOrbit(condition));
     
     // Apply the pattern match
     let matches = matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
@@ -21,13 +22,37 @@ fn applyRewriteRule(graph, pattern, replacement, ruleName) = (
         
         // THE CORRECT SEQUENCE FOR DOMAIN-AWARE REWRITING:
         
-        // Modern approach using direct eclass ID substitution
-        // This is more efficient and works directly with eclass IDs
-        let newId = addOGraphWithSub(graph, replacement, bindings);
-        println("1. After adding with direct substitution, ID: " + i2s(newId));
+        // Step 1: Check if the condition is satisfied
+        let shouldApplyRule = if (condition) then (
+            // Optimize for the common case of condition=true
+            true
+        ) else (
+            // Substitute bindings into the condition in the graph
+            let condId = addOGraphWithSub(graph, condition, bindings);
+            
+            // Extract for evaluation
+            let condExpr = extractOGraph(graph, condId);
+            println("Condition instantiated to: " + prettyOrbit(condExpr));
+
+            // Evaluate the condition
+            let condResult = eval(condExpr);
+            println("Condition evaluated to: " + prettyOrbit(condResult));
+            
+            condResult
+        );
         
-        // Merge nodes (result first to make it canonical)
-        mergeOGraphNodes(graph, newId, eclassId);
+        if (shouldApplyRule) then (
+            // Step 2: Apply the replacement (only if condition is true)
+            // Modern approach using direct eclass ID substitution
+            // This is more efficient and works directly with eclass IDs
+            let newId = addOGraphWithSub(graph, replacement, bindings);
+            println("1. After adding with direct substitution, ID: " + i2s(newId));
+            
+            // Step 3: Merge nodes (result first to make it canonical)
+            mergeOGraphNodes(graph, newId, eclassId);
+        ) else (
+            println("Condition not satisfied, rule not applied");
+        );
 
 		// TODO: Should we not unquote as well?
     ));
@@ -37,7 +62,7 @@ fn applyRewriteRule(graph, pattern, replacement, ruleName) = (
 );
 
 // Apply a list of rewrite rules to an expression
-// Rules are triples: [name, pattern, replacement]
+// Rules are quadruples: [name, pattern, replacement, condition]
 fn applyRules(expr, rules) = (
     // Create a new graph 
     let graph = makeOGraph("transform");
@@ -52,9 +77,10 @@ fn applyRules(expr, rules) = (
             let ruleName = rule[0];
             let pattern = rule[1];
             let replacement = rule[2];
+            let condition = if (length(rule) >= 4) then rule[3] else true;
             
-            // Apply the rule
-            let matches = applyRewriteRule(graph, pattern, replacement, ruleName);
+            // Apply the rule with condition
+            let matches = applyRewriteRule(graph, pattern, replacement, condition, ruleName);
             
             // Apply the next rule
             applyRulesRecursive(rules, index + 1, totalMatches + matches)
@@ -75,14 +101,20 @@ fn applyRules(expr, rules) = (
 //
 
 // Prepares a rule with proper domain handling
-// Returns a triple of [name, pattern, replacement]
-fn prepareRule(name, patternExpr, replacementExpr) = (
-    [name, patternExpr, replacementExpr]
+// Returns a quadruple of [name, pattern, replacement, condition]
+// If condition is omitted, it defaults to 'true'
+fn prepareRule(name, patternExpr, replacementExpr, conditionExpr) = (
+	[name, patternExpr, replacementExpr, conditionExpr]
+);
+
+// Convenience function for rules without conditions
+fn prepareSimpleRule(name, patternExpr, replacementExpr) = (
+    prepareRule(name, patternExpr, replacementExpr, true)
 );
 
 // Apply a single rule to an expression
-fn applyRule(expr, name, pattern, replacement) = (
-    applyRules(expr, [[name, pattern, replacement]])
+fn applyRule(expr, name, pattern, replacement, condition) = (
+    applyRules(expr, [[name, pattern, replacement, condition]])
 );
 
 // Apply rules until saturation (fixed point)
@@ -99,8 +131,9 @@ fn applyRulesUntilFixedPoint(expr, rules, maxIterations) = (
                 let ruleName = rule[0];
                 let pattern = rule[1];
                 let replacement = rule[2];
+                let condition = if (length(rule) >= 4) then rule[3] else true;
                 
-                let matches = applyRewriteRule(graph, pattern, replacement, ruleName);
+                let matches = applyRewriteRule(graph, pattern, replacement, condition, ruleName);
                 applyHelper(index + 1, totalMatches + matches)
             ) else totalMatches
         );
