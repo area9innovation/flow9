@@ -48,8 +48,8 @@ An **automorphism** is a bijective homomorphism from a group to itself. The set 
 Automorphisms represent the symmetries of the group itself. They tell us how we can rearrange the elements of a group while preserving its structure.
 
 **Examples of Automorphisms:**
-1. For cyclic groups C_n, Aut(C_n) is isomorphic to the multiplicative group (Z/nZ)* of integers relatively prime to n
-2. For S_n (n≠2,6), all automorphisms are inner automorphisms (conjugation by group elements)
+1. For cyclic groups Cₙ, Aut(Cₙ) is isomorphic to the multiplicative group (Z/nZ)* of integers relatively prime to n
+2. For Sₙ (n≠2,6), all automorphisms are inner automorphisms (conjugation by group elements)
 3. For the Rubik's Cube group, certain physical cube symmetries (like reflecting the entire cube) induce automorphisms
 
 #### The Importance of Automorphisms in Puzzles
@@ -620,6 +620,49 @@ fn create_parity_constraint_bdd() {
 	return BDD.equiv(corner_parity, edge_parity);
 }
 ```
+
+### 7.6 Comparative Table of Constraint Modeling Techniques
+
+The following table provides a comprehensive overview of how different group structures and their products can be modeled using various constraint representation techniques. This comparison helps in selecting the most appropriate approach for a specific problem domain.
+
+| Group Structure | Polynomial Representation | BDD Representation | Canonical Form Characteristics | Application Domain | Complexity Tradeoffs |
+|-----------------|---------------------------|-------------------|--------------------------------|-------------------|---------------------|
+| **Symmetric Group (Sₙ)** | Permutation variables p_{i,j} with constraints:<br>∑ᵢ p_{i,j} = 1, ∑ⱼ p_{i,j} = 1 | Binary encoding of permutation with<br>constraints on valid permutations | Lexicographically ordered permutation;<br>reduces search space by n! factor;<br>directly solvable for small n | Sudoku row/column/value permutations | BDDs: better for small n<br>Polynomials: better for algebraic manipulation<br>Canonical forms: dramatic speedup for pattern matching |
+| **Alternating Group (Aₙ)** | Permutation variables with added<br>parity constraint (determinant = 1) | BDD with parity constraint<br>(odd number of inversions) | Minimal even permutation under<br>lexicographic ordering;<br>halves search space vs Sₙ | Rubik's Cube permutations | BDDs handle parity efficiently<br>Polynomials capture algebraic structure<br>Canonical forms enable efficient group composition |
+| **Cyclic Group (Cₙ)** | Variables with constraints:<br>x^n = 1, polynomial in ℤₙ | Rotation counter modulo n<br>with binary representation | Booth's algorithm finds minimal<br>rotation in linear time;<br>enables direct optimization | Rotational symmetries | BDDs: compact for small n<br>Polynomials: natural for algebraic structure<br>Canonical forms: O(n) vs O(n²) naive approach |
+| **Dihedral Group (Dₙ)** | Variables for rotation r and reflection s<br>with r^n = s² = 1, srs = r^(-1) | Binary variables for rotation index<br>and reflection bit | Minimal element under rotations<br>and reflections;<br>handles both r and s actions | 2D geometric transformations | Polynomials better capture algebraic relations<br>BDDs more efficient for constraint checking<br>Canonical forms: essential for symmetry detection |
+| **Direct Product (G×H)** | Independent polynomial systems<br>P₁(x) = 0, P₂(y) = 0 | Separate BDD variables for<br>each group component | Component-wise canonicalization<br>with independent operations;<br>directly composable | Independent constraints<br>(e.g., row and column constraints) | Direct composition makes both<br>approaches equally efficient<br>Canonical forms preserve component structure |
+| **Semi-Direct Product (H⋊G)** | Coupled polynomial systems with<br>action polynomials encoding φ | BDDs with action variables and<br>constraints on valid operations | Two-phase canonicalization:<br>1) canonicalize G component<br>2) canonicalize H under G-action | Rubik's Cube (orientations acted on<br>by permutations) | Polynomials: better for algebraic structure<br>BDDs: better for composition and checking<br>Canonical forms: essential for multi-component systems |
+| **Wreath Product (G≀H)** | Multiple copies of H polynomials<br>with G acting on indices | Indexed BDD variables with<br>constraints on actions | Hierarchical canonicalization<br>with base and fiber components;<br>computationally expensive | Hierarchical symmetries | Very complex in both representations<br>BDDs often more practical for verification<br>Canonical forms enable effective pruning |
+
+### Practical Implementation Considerations
+
+1. **Polynomial Approach Advantages**:
+   - Natural representation of algebraic constraints
+   - Well-suited for solving systems with Gröbner basis techniques
+   - Makes algebraic structure explicit
+   - Allows extraction of mathematical properties
+
+2. **BDD Approach Advantages**:
+   - Efficient constraint checking and propagation
+   - Compact representation of solution spaces
+   - Fast satisfiability and equivalence testing
+   - Handles logical combinations of constraints easily
+   - More practical for large search spaces
+
+3. **Canonical Form Advantages**:
+   - Exponential reduction in search space (from n! to 1 for Sₙ)
+   - Enables efficient pattern matching and equality testing
+   - Simplifies composition of group operations
+   - Makes certain symmetry problems directly solvable
+   - Essential for orbit-based reasoning
+
+4. **Hybrid Approaches**:
+   - Use polynomials to express structure and invariants
+   - Use BDDs for efficient constraint propagation and checking
+   - Use canonical forms to eliminate redundant search branches
+   - Convert between representations based on current needs
+   - For complex problems like Rubik's Cube, a group-theory-aware constraint solver combines strengths of all three approaches
 
 ## 8. Connection to Algebraic Invariants
 
