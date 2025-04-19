@@ -22,6 +22,8 @@
 - (a + b) : Type("number")  parses wrong
 - Support exponentiation ^ in interpreter
 - Subscripts on operators
+- Glex rules
+- Support for pattern matching where we visit all the equivalent nodes as well
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Hook in evaluation functions to implement interpretation of AST nodes directly in Orbit itself, potentially using rewriting
 
