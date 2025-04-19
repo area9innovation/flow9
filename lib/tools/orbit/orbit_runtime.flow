@@ -11,6 +11,7 @@ import tools/orbit/substitute; // For variable substitution
 import tools/orbit/orbit_compare; // For comparing Orbit expressions with OGraph nodes and finding nodes
 import tools/orbit/orbit_domain_handler; // For domain annotation processing
 import tools/orbit/orbit_decompose; // For decomposing AST nodes
+import tools/orbit/orbit2ograph_sub; // For adding expressions with substitution
 import ds/tree;
 import string;
 import fs/filesystem; // For file system operations
@@ -100,6 +101,7 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
         Pair("astname", OrbitRuntimeFn(astnameFunction)),
         Pair("getFileContent", OrbitRuntimeFn(getFileContentFunction)),
         Pair("setFileContent", OrbitRuntimeFn(setFileContentFunction)),
+        Pair("addOGraphWithSub", OrbitRuntimeFn(addExpressionWithSubstitutionFunction)),
     ];
     
     // Convert the list of pairs to a tree
@@ -227,6 +229,85 @@ addFullExpressionToOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret 
             None(): {
                 println("ERROR: OGraph '" + name + "' not found");
                 OrbEnv(envExpr with result = OrInt(-1));
+            }
+        }
+    }
+}
+
+// Implementation of addExpressionWithSubstitution function
+addExpressionWithSubstitutionFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 3) {
+        println("ERROR: addOGraphWithSub expects exactly 3 arguments: graph name, expression, and variable bindings");
+        env;
+    } else {
+        // Evaluate the graph name
+        envName = interpret(env, args[0]);
+        name = getOString(envName.result, "addOGraphWithSub.name");
+        
+        // Evaluate the expression to get its actual value
+        envExpr = interpret(envName, args[1]);
+        astExpr = envExpr.result;
+        
+        // Evaluate the bindings argument to get a map of variable name -> eclass ID
+        envBindings = interpret(envExpr, args[2]);
+        
+        // Extract the bindings from the result
+        varBindings = switch (envBindings.result) {
+            OrArray(pairs): {
+                // Convert array of Pair(key, value) to a Tree<string, int>
+                fold(pairs, makeTree(), \acc, p -> {
+                    switch (p) {
+                        OrFunction(fn, pargs): {
+                            if (length(pargs) == 2) {
+                                switch (pargs[0]) {
+                                    OrString(key): {
+                                        // Extract the int value for the eclass ID
+                                        eclassId = switch (pargs[1]) {
+                                            OrInt(id): id;
+                                            default: {
+                                                println("ERROR: Variable binding value must be an integer eclass ID");
+                                                -1;
+                                            }
+                                        };
+                                        if (eclassId != -1) {
+                                            setTree(acc, key, eclassId);
+                                        } else acc;
+                                    }
+                                    default: acc;
+                                }
+                            } else acc;
+                        }
+                        default: acc;
+                    }
+                });
+            }
+            default: {
+                println("ERROR: addOGraphWithSub third argument must be an array of Pair(key, value)");
+                makeTree();
+            }
+        };
+        
+        // Debug the AST expression and bindings if tracing
+        if (env.tracing) {
+            println("Adding expression to ograph with substitutions: " + prettyOrbit(astExpr));
+            println("Variable bindings: " + i2s(sizeTree(varBindings)) + " variables");
+            iter(getTreeKeys(varBindings), \key -> {
+                value = lookupTreeDef(varBindings, key, -1);
+                println("  " + key + " = " + i2s(value));
+            });
+        }
+        
+        // Get the graph from the registry
+        switch (lookupTree(^ographRegistry, name)) {
+            Some(ograph): {
+                // Add the expression with substitutions
+                nodeId = orbit2OGraphWithSubstitution(ograph, astExpr, varBindings);
+                if (env.tracing) println("Added expression with substitutions, root node ID: " + i2s(nodeId));
+                OrbEnv(envBindings with result = OrInt(nodeId));
+            }
+            None(): {
+                println("ERROR: OGraph '" + name + "' not found");
+                OrbEnv(envBindings with result = OrInt(-1));
             }
         }
     }
