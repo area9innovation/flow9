@@ -87,43 +87,6 @@ let expr = extractOGraph(g, exprId);
   - Performs more efficiently than adding a substituted expression with `addOGraph` because it avoids creating intermediate OrMath_expr objects.
   - Automatically handles domain annotations, making it ideal for rewriting systems.
 
-#### `processDomainAnnotations(graphName: string, exprId: int) -> bool`
-
-**Processes an expression with domain annotations, adding domains to the appropriate nodes.**
-
-- **Parameters:**
-  - `graphName`: The name of the O-Graph (as a string).
-  - `exprId`: The expression that may contain domain annotations using the colon syntax (e.g., `(a + b) : Algebra`).
-
-- **Returns:**  
-  Bool if successful
-
-- **Behavior:**
-  - For expressions with domain annotations like `(expr) : Domain`, it adds the domain to the expression's eclass.
-  - For nested annotations like `((expr) : Domain1) : Domain2`, it adds both domains to the same expression.
-  - Reuses existing nodes when possible rather than creating duplicates.
-
-- **Usage Example:**
-  ```orbit
-	let g = makeOGraph("myGraph");
-
-	// Add an expression with domain annotation
-	let exprId = addOGraph(g, quote((a + b) : Algebra));
-	// Now process it and turn : into domain
-	let ok = processDomainAnnotations(g, exprId);
-
-	// Add a nested domain annotation
-	processDomainAnnotations(g, addOGRaph(g, quote(((a + b) : Algebra) : Ring)));
-
-	// Check if expression has domains
-	let has_algebra = findOGraphId(g, quote((a + b) : Algebra));
-	let has_ring = findOGraphId(g, quote((a + b) : Ring));
-```
-
-- **Notes:**
-  - More natural way to add domain annotations compared to adding domains separately with `addDomainToNode`.
-  - Particularly useful when working with substitution results in rewriting systems.
-
 #### `findOGraphId(graphName: string, expr: expression) -> int`
 
 **Finds the node ID for a structurally-equal term in the O-Graph, or returns -1 if it does not exist.**
