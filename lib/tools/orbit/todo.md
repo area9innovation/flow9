@@ -24,7 +24,6 @@
 - Subscripts on operators
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Hook in evaluation functions to implement interpretation of AST nodes directly in Orbit itself, potentially using rewriting
-- Use orbit2OGraphWithSubstitution to insert the substitution into the ograph that also does domain processing. Fix pattern matching to give eclasses, and we have a cleaner system
 
 ## Interpreter Extensions
 - Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
