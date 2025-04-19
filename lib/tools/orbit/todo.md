@@ -23,7 +23,7 @@
 - Hook in evaluation functions to implement AST nodes directly in Orbit itself, potentially using rewriting
 - Semi-direct product
 - (a + b) : Type("number")  parses wrong
-- Use orbit2OGraphWithSubstitution to insert the substitution into the ograph
+- Use orbit2OGraphWithSubstitution to insert the substitution into the ograph that also does domain processing. Fix pattern matching to give eclasses, and we have a cleaner system
 
 ## Interpreter Extensions
 - Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
