@@ -12,9 +12,12 @@ import tools/orbit/orbit_compare; // For comparing Orbit expressions with OGraph
 import tools/orbit/orbit_domain_handler; // For domain annotation processing
 import tools/orbit/orbit_decompose; // For decomposing AST nodes
 import tools/orbit/orbit2ograph_sub; // For adding expressions with substitution
+import tools/orbit/orbit_compiled_parser; // For parsing Orbit code
+import tools/mango/mcode_lib; // For Mango parser
 import ds/tree;
 import string;
 import fs/filesystem; // For file system operations
+import net/url_parameter; // For URL parameters
 
 // This file provides special internal orbit functions that have the ability to NOT evaluate arguments
 // These functions work directly with the AST and are used by the interpreter
@@ -52,6 +55,16 @@ export {
         bindings : Tree<string, OrMath_expr>,  // Variable bindings from pattern matching
         env : OrbEnv               // Environment context
     ) -> OrMath_expr;  // Returns the processed AST with eval parts evaluated
+}
+
+// Get all command line arguments as an array of strings
+getCommandLineArgs() -> [string] {
+	filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
+}
+
+// Parse Orbit code from a string and return the resulting AST
+parseOrbit(code : string) -> Pair<OrMath_expr, string> {
+	parseCompiledMango("", code, orbit_parse_orbit_compiled, flow(0));
 }
 
 // Check if a type annotation indicates AST type
@@ -102,10 +115,65 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
         Pair("getFileContent", OrbitRuntimeFn(getFileContentFunction)),
         Pair("setFileContent", OrbitRuntimeFn(setFileContentFunction)),
         Pair("addOGraphWithSub", OrbitRuntimeFn(addExpressionWithSubstitutionFunction)),
+        Pair("getCommandLineArgs", OrbitRuntimeFn(getCommandLineArgsFunction)),
+        Pair("parseOrbit", OrbitRuntimeFn(parseOrbitFunction)),
     ];
     
     // Convert the list of pairs to a tree
     fold(functions, makeTree(), \acc, p -> setTree(acc, p.first, p.second));
+}
+
+// Implementation of getCommandLineArgs function
+getCommandLineArgsFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    // This function takes no arguments
+    if (length(args) != 0) {
+        println("ERROR: getCommandLineArgs expects no arguments");
+        env;
+    } else {
+        // Get the command line arguments
+        commandLineArgs = getCommandLineArgs();
+        
+        // Convert to an OrArray of OrString
+        result = OrArray(map(commandLineArgs, \arg -> OrString(arg)));
+        
+        // Return the result
+        OrbEnv(env with result = result);
+    }
+}
+
+// Implementation of parseOrbit function
+parseOrbitFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 1) {
+        println("ERROR: parseOrbit expects exactly 1 argument: code string");
+        env;
+    } else {
+        // Evaluate the code argument
+        envCode = interpret(env, args[0]);
+        code = getOString(envCode.result, "parseOrbit.code");
+        
+        // Parse the code
+        parsed = parseOrbit(code);
+        
+        // Debug output if tracing
+        if (env.tracing) {
+            if (parsed.second != "") {
+                println("Parse error: " + parsed.second);
+            } else {
+                println("Successfully parsed: " + prettyOrbit(parsed.first));
+            }
+        }
+        
+        // Return the result as a pair
+        resultPair = OrFunction(
+            OrIdentifier("Pair"), 
+            [
+                parsed.first,
+                OrString(parsed.second)
+            ]
+        );
+        
+        OrbEnv(envCode with result = resultPair);
+    }
 }
 
 // Implementation of eval function

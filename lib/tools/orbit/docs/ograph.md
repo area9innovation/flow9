@@ -359,6 +359,108 @@ This semantic equivalence checking allows for robust pattern matching even in th
   - Creates parent directories if they don't exist.
   - Useful for saving expressions, serialized graphs, or rule sets.
 
+### Program Environment & Code Manipulation
+
+#### `getCommandLineArgs() -> [string]`
+
+**Retrieves command line arguments passed to the Orbit program.**
+
+- **Parameters:** None
+
+- **Returns:**  
+  An array of strings containing the command line arguments.
+
+- **Usage Example:**
+  ```orbit
+	// Process command line arguments
+	let args = getCommandLineArgs();
+	println("Command line arguments: " + args);
+
+	// Check for specific flags
+	let verbose = contains(args, "--verbose");
+	let help = contains(args, "--help");
+
+	if (help) {
+		printHelp();
+	} else {
+		// Process remaining arguments
+		for (arg in args) {
+			if (arg != "--verbose" && !startsWith(arg, "--")) {
+				processFile(arg);
+			}
+		}
+	}
+```
+
+- **Notes:**
+  - Useful for implementing command-line tools and utilities in Orbit.
+  - Particularly valuable for scripting and batch processing applications.
+  - Can be combined with parsing to create Orbit-based code transformers and analyzers.
+
+#### `parseOrbit(code: string) -> Pair<expr, string>`
+
+**Parses Orbit code from a string into an abstract syntax tree.**
+
+- **Parameters:**
+  - `code`: A string containing Orbit code to parse.
+
+- **Returns:**  
+  A pair containing:
+  - The parsed expression (AST) if successful
+  - An error message string (empty if parsing succeeded)
+
+- **Behavior:**
+  - Converts Orbit code text into a structured abstract syntax tree.
+  - Performs lexical analysis, parsing, and basic semantic analysis.
+  - Reports syntax errors in the error message component of the result.
+
+- **Usage Example:**
+  ```orbit
+	// Parse code dynamically
+	let codeToParse = "1 + 2 * 3";
+	let parseResult = parseOrbit(codeToParse);
+
+	// Check for parsing errors
+	if (parseResult.second != "") {
+		println("Parse error: " + parseResult.second);
+	} else {
+		// Successfully parsed - now can evaluate, transform, or analyze
+		let ast = parseResult.first;
+		println("AST: " + prettyOrbit(ast));
+
+		// Evaluate the parsed expression
+		let result = eval(ast);
+		println("Result: " + result);  // Prints 7
+	}
+```
+
+- **Advanced Example - Dynamic Code Generation:**
+  ```orbit
+	// Generate code dynamically
+	fn generateFunction(name, argNames, body) {
+		let functionCode = "fn " + name + "(" + strJoin(argNames, ", ") + ") = (\n";
+		functionCode = functionCode + "  " + body + "\n)";
+
+		// Parse the generated code
+		let parsed = parseOrbit(functionCode);
+		if (parsed.second != "") {
+			println("Error generating function: " + parsed.second);
+			None();
+		} else {
+			Some(parsed.first);
+		}
+	}
+
+	// Use the generator
+	let squareFn = generateFunction("square", ["x"], "x * x");
+```
+
+- **Notes:**
+  - Enables meta-programming capabilities within Orbit programs.
+  - Useful for code generation, domain-specific languages, and dynamic evaluation.
+  - Can be combined with `eval` to implement interpreters or compilers in Orbit itself.
+  - Makes it possible to load and parse Orbit code at runtime from external sources.
+
 ### AST Introspection and Manipulation
 
 #### `astname(expr: expression) -> string`

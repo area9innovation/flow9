@@ -16,7 +16,7 @@
 - Check the constructor corelib functions
 - Add math natives
 ✅ Runtime function to read & write files
-- Runtime function to parse Orbit, read command line args
+✅ Runtime function to parse Orbit, read command line args
 - Operators as symbols
 - Semi-direct product
 - (a + b) : Type("number")  parses wrong
