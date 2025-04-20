@@ -14,7 +14,7 @@
 - Make VS code plugin
 - Port the corelib functinos to Orbit native?
 - Check the constructor corelib functions
-- Add math natives
+✅ Add math natives
 ✅ Runtime function to read & write files
 ✅ Runtime function to parse Orbit, read command line args
 ✅ Operators as symbols
