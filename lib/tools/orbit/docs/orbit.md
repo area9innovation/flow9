@@ -382,6 +382,62 @@ This capability allows for powerful hybrid approaches where you can manipulate e
 <runtime_functions>
 Orbit provides a comprehensive set of built-in runtime functions. These are the core functions available in the language:
 
+## Unique ID Generation
+```orbit
+uid(prefix : string) -> string   // Generate a unique ID with prefix (e.g., "button0", "button1")
+```
+
+## Math Functions
+```orbit
+// Trigonometric functions
+sin(x : double) -> double        // Sine function
+cos(x : double) -> double        // Cosine function
+tan(x : double) -> double        // Tangent function
+asin(x : double) -> double       // Arc sine (inverse sine)
+acos(x : double) -> double       // Arc cosine (inverse cosine)
+atan(x : double) -> double       // Arc tangent (inverse tangent)
+atan2(y : double, x : double) -> double  // Two-argument arc tangent
+
+// Exponential and logarithmic functions
+sqrt(x : double) -> double       // Square root
+exp(x : double) -> double        // Exponential function (e^x)
+log(x : double) -> double        // Natural logarithm (base e)
+log10(x : double) -> double      // Base-10 logarithm
+
+// Power functions
+pow(base : int, exp : int) -> int       // Integer power
+dpow(base : double, exp : double) -> double  // Double power
+
+// Rounding functions
+round(x : double) -> int         // Round to nearest integer
+floor(x : double) -> int         // Round down to nearest integer
+ceil(x : double) -> int          // Round up to nearest integer
+dround(x : double) -> double     // Round to nearest double
+dfloor(x : double) -> double     // Round down to nearest double
+dceil(x : double) -> double      // Round up to nearest double
+
+// Number properties
+abs(x : double) -> double        // Absolute value for doubles
+iabs(x : int) -> int             // Absolute value for integers
+sign(x : double) -> double       // Sign of a number (-1.0, 0.0, or 1.0)
+isign(x : int) -> int            // Sign of an integer (-1, 0, or 1)
+even(x : int) -> bool            // Check if number is even
+odd(x : int) -> bool             // Check if number is odd
+
+// Modular arithmetic
+mod(a : int, b : int) -> int     // Integer modulo (always non-negative)
+dmod(a : double, b : double) -> double  // Double modulo (always non-negative)
+
+// Special functions
+factorial(n : int) -> int        // Factorial function
+gcd(a : int, b : int) -> int     // Greatest common divisor
+lcm(a : int, b : int) -> int     // Least common multiple
+
+// Min/max functions
+max(a : *|double, b : *|double) -> *|double  // Maximum of two values
+min(a : *|double, b : *|double) -> *|double  // Minimum of two values
+```
+
 ## Comparison Operations
 ```orbit
 <=> (a : *, b : *) -> int      // Compare: -1 if a<b, 0 if a=b, 1 if a>b

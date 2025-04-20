@@ -21,7 +21,7 @@
 ✅ Semi-direct product
 ✅ (a + b) : Type("number")  parses wrong
 ✅ Support exponentiation ^ in interpreter
-- Native to give unique id
+✅ Native to give unique id
 - Subscripts on operators
 - Glex rules
 - Support for pattern matching where we visit all the equivalent nodes as well. => vs -> maybe
