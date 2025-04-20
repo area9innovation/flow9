@@ -34,6 +34,39 @@
 	...+1+2+3+... ⇒ match [1,2,3] anywhere
 - Support for custom comparisons for sorting. For glex, we have a function to sum the exponents of the glex term
 
+Here are the operators that are traditionally considered associative and would benefit from array-based representation:
+
+1. **Addition (`+`)** - `Add/2`
+   - In arithmetic: 1 + 2 + 3 = (1 + 2) + 3 = 1 + (2 + 3)
+
+2. **Multiplication (`*` or `·`)** - `Multiply/2`
+   - In arithmetic: a * b * c = (a * b) * c = a * (b * c)
+
+3. **Logical AND (`&&` or `∧`)** - `LogicalAnd/2`
+   - In Boolean algebra: a && b && c = (a && b) && c = a && (b && c)
+
+4. **Logical OR (`||` or `∨`)** - `LogicalOr/2`
+   - In Boolean algebra: a || b || c = (a || b) || c = a || (b || c)
+
+5. **Function Composition (`∘`)** - `Compose/2`
+   - In mathematics: f ∘ g ∘ h = (f ∘ g) ∘ h = f ∘ (g ∘ h)
+
+6. **Set Union (`union` or `∪`)** - `Union/2`
+   - In set theory: A ∪ B ∪ C = (A ∪ B) ∪ C = A ∪ (B ∪ C)
+
+7. **Set Intersection (`intersect` or `∩`)** - `Intersection/2`
+   - In set theory: A ∩ B ∩ C = (A ∩ B) ∩ C = A ∩ (B ∩ C)
+
+8. **Direct Product (`×`)** - `DirectProduct/2`
+   - In group theory: G × H × K = (G × H) × K = G × (H × K)
+
+9. **Sequence (`;`)** - `Sequence/2`
+   - In programming semantics: stmt1; stmt2; stmt3 = (stmt1; stmt2); stmt3 = stmt1; (stmt2; stmt3)
+
+Non-associative operators (like subtraction, division, exponentiation, etc.) would still use the traditional binary representation.
+
+
+
 ## Interpreter Extensions
 - Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
   - Mathematical operations: `OrExponent`, `OrCompose`, `OrDirectProduct`
