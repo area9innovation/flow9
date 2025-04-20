@@ -227,8 +227,21 @@ The correctness of our canonicalization approach relies on the following theorem
 
 Proof sketch: Since G is finite, Orb(x) is finite. The minimum element under a total ordering ≤ is unique, ensuring that the canonical representative is well-defined and consistent. Since all elements in Orb(x) are equivalent under G's action (by definition of an orbit), choosing any consistent representative (such as the minimum) preserves the equivalence relation.
 
-<!-- TODO: Add a small example illustrating why a total ordering guarantees a canonical representative, making the theorem's significance more immediate -->
 Example: Consider Orb(`5+3`) = {`5+3`, `3+5`} under S₂ action. With standard integer ordering `3 < 5`, `min(Orb(5+3))` is uniquely `3+5`.
+
+### 4.4.1 Array-based Representation for Associative Operations
+
+To efficiently handle associative operations, we collect operands into arrays rather than using nested binary operators. This provides significant performance improvements for pattern matching and canonicalization.
+
+**Definition**: *For an associative operation ⊗, we represent expressions `x₁ ⊗ x₂ ⊗ ... ⊗ xₙ` as `⊗([x₁, x₂, ..., xₙ])` rather than nested applications `(x₁ ⊗ (x₂ ⊗ (...)))`.*
+
+Example: The expression `a + b + c + d` is represented as `+([a, b, c, d])` rather than `((a + b) + c) + d` or `(a + (b + c)) + d`.
+
+This flattened representation allows for:
+1. Direct application of group actions on the entire array
+2. Efficient pattern matching within the array structure
+3. Single-pass sorting for commutative operations
+4. Simplified rule application without tree traversal
 
 The time complexity of naïve orbit enumeration is O(|G|·|X|), where |G| is the group size and |X| is the size of the expression. For large groups like Sₙ (with size n!), this is prohibitive. However, we use specialized algorithms for each group type:
 
@@ -240,6 +253,22 @@ Our approach to canonicalization follows a general meta-algorithm pattern:
 2.  **Action**: Conceptually, understand the group action `g·x` for `g ∈ G`.
 3.  **Selection**: Efficiently compute `canon(x) = min(Orbit(x))` using group-specific algorithms, avoiding explicit enumeration.
 4.  **Optimization**: Use domain-specific algorithms (sorting for Sₙ, Booth's for Cₙ, etc.) to find the minimum efficiently.
+5.  **Array Handling**: For associative operations, operate directly on flattened arrays rather than nested binary operations.
+
+### 4.4.2 Pattern Matching within Sequences
+
+In addition to full sequence matching, the array-based representation enables efficient partial sequence matching using pattern indicators:
+
+| Pattern | Description | Example | Matches in `+([a,b,c,d,e])` |
+|---------|-------------|---------|-----------------------------|
+| Exact | Match the exact sequence | `1+2+3` | Only `+([1,2,3])` |
+| Prefix | Match start of sequence | `1+2+3+...` | `+([1,2,3,d,e])` |
+| Suffix | Match end of sequence | `...+1+2+3` | `+([a,b,1,2,3])` |
+| Subsequence | Match anywhere in sequence | `...+1+2+3+...` | `+([a,1,2,3,e])` |
+
+This pattern matching is particularly powerful for rewrite rules, as substitutions can be applied to precisely the matched subsequence without affecting the rest of the array. The implementation preserves associativity properties while dramatically improving rule application efficiency.
+
+**Example**: A rule matching `x+y+z` where `y` is a constant can efficiently find all such patterns in a large sum without needing to consider all binary partitions of the expression.
 
 This meta-algorithm is implemented efficiently using prefix-based pruning for large groups:
 
@@ -604,11 +633,23 @@ a + b : Polynomial ↔ b + a : Polynomial : S₂ // From AbelianGroup (+)
 a * (b + c) : Polynomial → (a * b) + (a * c) : Polynomial // From Ring (Distributivity)
 // ... other Ring rules ...
 
+// Array-based representation for associative operations
+// For addition (terms of a polynomial)
++([term1, term2, ..., termN]) : Polynomial → +([sorted_terms]) : Canonical
+
+// For multiplication (factors in a monomial)
+*([factor1, factor2, ..., factorN]) : Monomial → *([sorted_factors]) : Canonical : S₂
+
 // Polynomial-Specific Rules:
 // Monomial ordering (e.g., graded lex order) ensures canonical term order
 // x^a * y^b : Monomial → ordered_monomial(x,y, [a,b]) : Canonical
 term1 + term2 : Polynomial → ordered_sum(term1, term2) : Canonical if compare_terms(term1, term2) <= 0 // Sort terms
 term1 + term2 : Polynomial → ordered_sum(term2, term1) : Canonical if compare_terms(term1, term2) > 0
+
+// Graded lexicographic (glex) ordering for monomials using array representation
+*([x^a, y^b, z^c, ...]) : Monomial : GradedLex →
+	glex_ordered_monomial(*([x^a, y^b, z^c, ...])) : Canonical
+	where total_degree = a + b + c + ...
 
 // Combine like terms (relies on + being AbelianGroup, * being Commutative Monoid)
 coeff1 * term + coeff2 * term : Polynomial → (coeff1 + coeff2) * term : Canonical
@@ -617,16 +658,70 @@ coeff1 * term + coeff2 * term : Polynomial → (coeff1 + coeff2) * term : Canoni
 Polynomial ⊂ Ring
 ```
 
+#### Array-Based Representation and Pattern Matching
+
+Instead of using nested binary operations, we represent polynomials as arrays of terms, and monomials as arrays of factors:
+
+```orbit
+// Traditional representation (nested binary ops)
+(3*x*y + 2*x*y) + x*(y+z)  // Deeply nested structure, complex to navigate
+
+// Array-based representation
++([3*x*y, 2*x*y, x*(y+z)]) // Flat structure with direct access to terms
+
+// With expanded distributivity
++([3*x*y, 2*x*y, x*y, x*z])
+
+// After combining like terms
++([6*x*y, x*z]) // Ordered by glex
+```
+
+This representation enables efficient pattern matching using the syntax from §4.4.2:
+
+```orbit
+// Match exact sequence
+3*x*y + 2*x*y  matches  +([3*x*y, 2*x*y])
+
+// Match prefix
+3*x*y + 2*x*y + ...  matches  +([3*x*y, 2*x*y, x*z])
+
+// Match suffix
+... + x*y + x*z  matches  +([3*x*y, x*y, x*z])
+
+// Match subsequence
+... + 2*x*y + ...  matches any polynomial containing 2*x*y
+```
+
+#### Efficient Graded Lexicographic Ordering
+
+The array-based representation enables a dramatic performance improvement for graded lexicographic (glex) ordering of polynomials:
+
+```orbit
+// Glex ordering function (simplified)
+fn glex_compare(a, b) = (
+	// First compare by total degree
+	let deg_a = total_degree(a);
+	let deg_b = total_degree(b);
+
+	if deg_a != deg_b then deg_a <=> deg_b
+	else lexicographic_compare(a, b) // Compare lexicographically if same degree
+);
+
+// Apply to array representation
+fn canonicalize_poly(terms) = (
+	// O(n log n) sorting of terms using glex
+	sort(terms, glex_compare)
+);
+```
+
+Instead of requiring O(n³) time to canonicalize a sum of n terms using binary operations over many iterations, we achieve the same result in O(n log n) time using direct sorting of the flattened array representation with the custom comparison function.
+
 Applied example: simplifying `3*x*y + 2*y*x + x*(y+z)`
-1.  `2*y*x → 2*x*y` (S₂ on `*` inherited from Commutative Ring)
-    Result: `3*x*y + 2*x*y + x*(y+z)`
-2.  `3*x*y + 2*x*y → (3+2)*x*y → 5*x*y` (Combine like terms, using Ring properties)
-    Result: `5*x*y + x*(y+z)`
-3.  `x*(y+z) → x*y + x*z` (Distributivity from Ring)
-    Result: `5*x*y + x*y + x*z`
-4.  `5*x*y + x*y → (5+1)*x*y → 6*x*y` (Combine like terms)
-    Result: `6*x*y + x*z`
-5.  `6*x*y + x*z → sorted(6*x*y, x*z)` (Monomial Ordering Rule - assuming xy > xz)
+1.  Convert to array representation: `+([3*x*y, 2*y*x, x*(y+z)])`
+2.  Apply S₂ to each term: `+([3*x*y, 2*x*y, x*(y+z)])` (S₂ on `*` inherited from Commutative Ring)
+3.  Apply distributivity to the last term: `+([3*x*y, 2*x*y, x*y, x*z])` 
+4.  Group like terms: `+([3*x*y, 2*x*y, x*y, x*z])` → `+([6*x*y, x*z])` (One-pass collection of like terms)
+5.  Apply glex ordering (xy > xz by total degree and lex ordering): `+([6*x*y, x*z])`
     Final Canonical Form: `6*x*y + x*z`
 
 ### 6.2 Matrix Expression Optimization
