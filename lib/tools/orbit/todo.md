@@ -23,9 +23,16 @@
 - Support exponentiation ^ in interpreter
 - Subscripts on operators
 - Glex rules
-- Support for pattern matching where we visit all the equivalent nodes as well
+- Support for pattern matching where we visit all the equivalent nodes as well. => vs -> maybe
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Hook in evaluation functions to implement interpretation of AST nodes directly in Orbit itself, potentially using rewriting
+- Parse associative into arrays: +([1,2,3,4]), *([x,y,z]), ...
+- Support for pattern matching within sequences. We look at neighbours
+	1+2+3 ⇒ match exactly [1,2,3]
+	1+2+3+... ⇒ match start in [1,2,3] 
+	...+1+2+3 ⇒ match ending in [1,2,3]
+	...+1+2+3+... ⇒ match [1,2,3] anywhere
+- Support for custom comparisons for sorting. For glex, we have a function to sum the exponents of the glex term
 
 ## Interpreter Extensions
 - Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
