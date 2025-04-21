@@ -82,6 +82,127 @@ inverse(A) : TriangularMatrix → triangular_inverse(A) : Optimized;  // O(n²) 
 
 This allows Orbit to discover domain-specific optimizations without explicitly encoding algorithm selection logic. The domain properties flow through the computation graph, triggering optimizations wherever applicable.
 
+## Cross-Domain Synergies Through Group-Theoretic Bridging
+
+### Mathematical Structures as Bridges Between Domains
+
+One of the most powerful aspects of Orbit's approach is the ability to establish bridges between different mathematical domains using group theory and algebraic structures. This enables applying optimizations from one domain to problems in another domain:
+
+```orbit
+// Bridge between graph theory and linear algebra
+G : Graph ↔ adjacency_matrix(G) : Matrix;  // Bidirectional transformation
+
+// Bridge between polynomials and vectors
+p : Polynomial ↔ coefficient_vector(p) : Vector;  // Bidirectional transformation
+
+// Bridge between groups and permutations
+g : Group ↔ permutation_representation(g) : Permutation;  // Bidirectional transformation
+```
+
+These bridges allow optimizations to flow across domain boundaries, potentially unlocking algorithms that wouldn't be obvious in the original domain.
+
+### Group-Theoretic Identities Unlocking New Optimizations
+
+The recognition of group structures in problems can lead to entirely new optimization strategies that weren't apparent in the original formulation:
+
+```orbit
+// Recognizing cyclic group structure in rotations
+rotation(x, n) : Operation ⊢ rotation(x, n) : C_n;  // Detect cyclic group
+
+// This domain annotation enables these optimizations
+rotation(rotation(x, a), b) : C_n → rotation(x, (a + b) % n) : Optimized;  // Combining rotations
+rotation(x, 0) : C_n → x : Identity;  // Identity element optimization
+rotation(x, n) : C_n → rotation(x, n % cyclicGroupOrder(x)) : Canonical;  // Canonical form
+```
+
+The key insight is that once group-theoretic properties are discovered, they unlock an entire family of optimizations that apply to any operation with the same group structure, regardless of the underlying domain.
+
+### Transformations Between Representation Domains
+
+Problems can often be transformed between different representation domains to leverage specialized algorithms:
+
+```orbit
+// Graph coloring via transformation to SAT
+graph_coloring(G, k) : GraphColoring ↔ sat_encoding(G, k) : SatisfiabilityProblem;  // Transform to SAT
+
+// Polynomial system solving via transformation to matrix
+solve_poly_system(eqs) : PolynomialSystem ↔ macaulay_matrix(eqs) : LinearAlgebra;  // Transform to linear algebra
+
+// Convex optimization via transformation to geometric programming
+optimize(f, constraints) : ConvexProblem ↔ geometric_program(f, constraints) : GeometricProgramming;  // Transform to geometric programming
+```
+
+These transformations act as "wormholes" between domains, allowing problems to be solved using the most effective techniques from each domain.
+
+## Tabulation-Based Optimizations in Fixed-Size Domains
+
+### Complete Tabulation in Z₈/C₈
+
+For small finite groups like Z₈ (integers modulo 8) or C₈ (cyclic group of order 8), complete tabulation of all operations becomes a practical optimization technique:
+
+```orbit
+// Recognize 8-bit integer operations as operations in Z₈
+a + b : Int8 ⊢ a + b : Z_8;  // Modular addition
+a * b : Int8 ⊢ a * b : Z_8;  // Modular multiplication
+
+// Tabulation-based optimizations for Z₈ operations
+a + b : Z_8 → addition_table_lookup(a, b) : Tabulated if use_lookup_tables;  // O(1) lookup
+a * b : Z_8 → multiplication_table_lookup(a, b) : Tabulated if use_lookup_tables;  // O(1) lookup
+
+// Precomputed tables (feasible because only 256×256 entries for 8-bit integers)
+initialize_tables() → {
+	addition_table = [[i + j) % 256 for j in 0..255] for i in 0..255];
+	multiplication_table = [[(i * j) % 256 for j in 0..255] for i in 0..255];
+};
+```
+
+These tabulation optimizations can then be applied automatically whenever operations are recognized as occurring in Z₈/C₈, without the need for explicit algorithm selection.
+
+### Synergy Between Group Theory and Tabulation
+
+The real power emerges when group-theoretic properties are combined with tabulation:
+
+```orbit
+// Detect cyclic subgroup structure in tabulated operations
+multiply(a, b) : Z_8, is_power_of_2(a) ⊢ multiply(a, b) : CyclicSubgroup;  // Detect power-of-2 subgroups
+
+// This enables additional optimizations
+multiply(a, b) : CyclicSubgroup → shift_left(b, log2(a)) : BitShift;  // Replace multiply with shift
+divide(b, a) : CyclicSubgroup → shift_right(b, log2(a)) : BitShift;  // Replace divide with shift
+
+// Precomputed log tables for powers of 2
+log2_table = [log2(i) for i in powers_of_2(0..255)];
+```
+
+This example demonstrates how recognizing group structure in tabulated operations can unlock additional optimizations like replacing multiplications with bit shifts.
+
+### Example: Fast Modular Exponentiation via Table and Group Structure
+
+```orbit
+// Traditional approach to modular exponentiation
+pow_mod(base, exp, 8) : Z_8 → {
+	let result = 1;
+	for (i = 0; i < exp; i++)
+		result = (result * base) % 8;
+	result
+};
+
+// With group theory and tabulation
+pow_mod(base, exp, 8) : Z_8 → {
+	// Detect that Z_8 has order 4 for multiplicative group (elements that have inverses)
+	// This means x^4 = x^0 = 1 for any x relatively prime to 8
+	let reduced_exp = exp % multiplicative_order(base, 8);
+
+	// Lookup in precomputed power table
+	power_table[base][reduced_exp]
+} : Optimized;
+
+// Precomputed power tables
+power_table = [[pow_mod_naive(base, exp, 8) for exp in 0..3] for base in 0..7];
+```
+
+By combining the group-theoretic insight about the order of the multiplicative group with tabulation, we achieve O(1) modular exponentiation for Z₈.
+
 ## Core Principles of Algorithm Acceleration
 
 ### 1. Algebraic Identity Exploitation
@@ -127,6 +248,57 @@ operation(data, n) : Recurrence : Splittable →
 ```
 
 The saturation of these rules in the e-graph allows divide-and-conquer patterns to emerge for computations that satisfy the necessary properties.
+
+## Graph-Matrix Transformation Example: PageRank
+
+A powerful example of cross-domain synergy is the computation of PageRank, which can be expressed both as a graph algorithm and as a matrix computation:
+
+```orbit
+// PageRank as an iterative graph algorithm
+pagerank_graph(G, alpha, iterations) : GraphAlgorithm → {
+	// Initialize scores
+	let scores = [1/|V| for v in G.vertices];
+
+	// Iterative propagation on graph
+	for (i = 0; i < iterations; i++) {
+		let new_scores = [0 for v in G.vertices];
+		for (v in G.vertices) {
+			for (u in G.in_neighbors(v)) {
+				new_scores[v] += alpha * scores[u] / G.out_degree(u);
+			}
+			new_scores[v] += (1 - alpha) / |V|;
+		}
+		scores = new_scores;
+	}
+
+	scores
+};
+
+// PageRank as a matrix eigenvector problem
+pagerank_matrix(G, alpha) : LinearAlgebra → {
+	// Create transition matrix
+	let M = transition_matrix(G, alpha);
+
+	// Compute principal eigenvector
+	power_iteration(M)
+};
+```
+
+The key insight is that Orbit can automatically bridge between these representations:
+
+```orbit
+// Bridge between graph and matrix representations
+pagerank_graph(G, alpha, iterations) : GraphAlgorithm ↔ pagerank_matrix(G, alpha) : LinearAlgebra;
+
+// This enables optimizations from both domains
+// From graph domain: exploiting sparsity, parallelizing over vertices
+// From matrix domain: using specialized eigenvalue algorithms, exploiting matrix structure
+
+// Specialized case: when graph has specific structure
+G : StronglyConnectedComponents ⊢ pagerank_matrix(G, alpha) → block_decomposed_pagerank(G, alpha) : Optimized;
+```
+
+By bridging between graph and matrix representations, Orbit can automatically apply optimizations from both domains, potentially discovering algorithms that combine the best aspects of both approaches.
 
 ## Linear Algebra Algorithms
 
@@ -260,6 +432,33 @@ fft(p) : C_n → butterfly_fft(p) : Optimized if is_power_of_2(length(p));  // A
 
 Through rule saturation, the e-graph discovers that polynomial multiplication can be implemented efficiently through FFT, reducing complexity from O(n²) to O(n log n).
 
+## Specialized Representations for Computation Domains
+
+Another powerful aspect of Orbit's approach is the ability to leverage specialized representations for different computation domains. This enables performance gains by matching the representation to the computation's needs:
+
+```orbit
+// Dense vector operations
+v + w : DenseVector → dense_vector_add(v, w) : Optimized;
+v * w : DenseVector → dense_vector_multiply(v, w) : Optimized;
+
+// Sparse vector operations
+v + w : SparseVector → sparse_vector_add(v, w) : Optimized;
+v * w : SparseVector → sparse_vector_multiply(v, w) : Optimized;
+
+// Compressed sparse row matrix operations
+A * v : CSRMatrix → csr_matrix_vector_multiply(A, v) : Optimized;
+```
+
+The insights from one representation can influence optimizations in another:
+
+```orbit
+// Bridge between computation domains allows cross-domain learning
+A : DenseMatrix, is_mostly_zeros(A) ⊢ convert(A, SparseMatrix) : Optimization;
+v : SparseVector, is_mostly_nonzeros(v) ⊢ convert(v, DenseVector) : Optimization;
+```
+
+This ability to fluidly move between different representations based on computational properties leads to algorithms that can adapt to the specific characteristics of the input data.
+
 ## Fast Transforms and Spectral Methods
 
 ### Walsh-Hadamard Transform (WHT)
@@ -347,67 +546,6 @@ force(p, q) : Interaction : DistantInteraction → multipole_approximation(p, q)
 
 These rules enable the automatic emergence of O(n) algorithms for n-body simulations instead of the naive O(n²) approach.
 
-## Graph Algorithms
-
-### Specialized Shortest Path Algorithms
-
-Specialized shortest path algorithms emerge from graph structure detection:
-
-```orbit
-// Basic shortest path algorithm
-shortest_path(G, source, target) : Graph → dijkstra(G, source, target) : ShortestPath;
-
-// Domain-specific optimizations emerge automatically
-G : UnweightedGraph ⊢ shortest_path(G, source, target) → bfs_shortest_path(G, source, target) : Optimized;  // O(|V|+|E|)
-G : DirectedAcyclicGraph ⊢ shortest_path(G, source, target) → dag_shortest_path(G, source, target) : Optimized;  // O(|V|+|E|)
-G : PlanarGraph ⊢ shortest_path(G, source, target) → planar_shortest_path(G, source, target) : Optimized;  // Special algorithm
-```
-
-### Fast Maximum Flow Algorithms
-
-Specialized max flow algorithms emerge from network property detection:
-
-```orbit
-// Basic maximum flow algorithm
-max_flow(G, source, sink) : FlowNetwork → ford_fulkerson(G, source, sink) : MaxFlow;
-
-// Domain-specific optimizations emerge automatically
-G : UnitCapacityNetwork ⊢ max_flow(G, source, sink) → unit_capacity_flow(G, source, sink) : Optimized;
-G : BipartiteGraph ⊢ max_flow(G, source, sink) → hopcroft_karp(G, source, sink) : Optimized;  // For matching
-```
-
-## String and Pattern Matching Algorithms
-
-### Specialized String Matching
-
-Efficient string matching algorithms emerge from pattern property detection:
-
-```orbit
-// Basic string matching
-string_match(text, pattern) : StringMatching → naive_match(text, pattern) : Matches;
-
-// Domain-specific optimizations emerge automatically
-pattern : ShortPattern ⊢ string_match(text, pattern) → direct_string_match(text, pattern) : Optimized;
-pattern : BinaryPattern ⊢ string_match(text, pattern) → bitparallel_string_match(text, pattern) : Optimized;
-pattern : PeriodicPattern ⊢ string_match(text, pattern) → kmp_string_match(text, pattern) : Optimized;
-```
-
-## Machine Learning Algorithms
-
-### Fast Neural Network Operations
-
-Specialized matrix operations for neural networks emerge from tensor property detection:
-
-```orbit
-// Basic neural network matrix multiplication
-nn_matmul(A, B) : NeuralNetworkOp → standard_matmul(A, B) : TensorProduct;
-
-// Domain-specific optimizations emerge automatically
-A : QuantizedTensor, B : QuantizedTensor ⊢ nn_matmul(A, B) → quantized_matmul(A, B) : Optimized;
-A : SparseTensor ⊢ nn_matmul(A, B) → sparse_matmul(A, B) : Optimized;
-A : LowRankTensor ⊢ nn_matmul(A, B) → low_rank_matmul(A, B) : Optimized;
-```
-
 ## FFT Implementation Variants
 
 Just as in our original FFT case study, different FFT implementations emerge automatically from input properties:
@@ -480,6 +618,9 @@ pattern_match(text, pattern) : RepeatingPattern → fft_based_match(text, patter
 
 // Image processing can use FFT for large convolutions
 image_convolve(image, kernel) : LargeKernel → fft_convolution(image, kernel) : Optimized;
+
+// Graph spectral algorithms can use matrix decompositions
+graph_spectral_clustering(G) : Graph → svd_clustering(adjacency_matrix(G)) : LinearAlgebra;
 ```
 
 ### 4. Automatic Algorithm Derivation
@@ -504,6 +645,9 @@ Orbit's e-graph architecture with canonical forms enables a fundamentally differ
 2. **Domain properties are automatically detected and propagated** throughout the computation
 3. **Optimal algorithms emerge naturally** from the interaction of rewrite rules
 4. **Exponential reductions from e-graphs and canonical forms** make this approach computationally feasible
+5. **Cross-domain transformations** enable applying techniques from different mathematical areas
+6. **Group-theoretic structures** unlock entire families of optimizations across domains
+7. **Representation changes** allow problems to be solved in their most natural domain
 
 This approach has several advantages:
 
@@ -511,5 +655,6 @@ This approach has several advantages:
 - **Composability**: Optimizations naturally compose through e-graph saturation
 - **Discoverability**: New algorithms can emerge from the interaction of existing rules
 - **Adaptability**: The system automatically adapts to the specific properties of the input data
+- **Cross-domain synergy**: Optimizations from different domains can combine in unexpected ways
 
-The ultimate vision is a system where users express their intent in a high-level mathematical language, and Orbit automatically discovers the most efficient implementation based on the specific properties of the problem, potentially discovering new algorithmic optimizations in the process.
+The ultimate vision is a system where users express their intent in a high-level mathematical language, and Orbit automatically discovers the most efficient implementation based on the specific properties of the problem, potentially discovering novel algorithmic optimizations by bridging between different mathematical domains.
