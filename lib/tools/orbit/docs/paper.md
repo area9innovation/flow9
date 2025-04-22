@@ -103,20 +103,24 @@ Example hierarchy:
 
 ```orbit
 // Core algebraic structures (single operation)
-Monoid ⊂ Semigroup       // Add Identity
-Group ⊂ Monoid         // Add Inverse
-AbelianGroup ⊂ Group     // Add Commutativity (S₂)
+Magma                     // Binary operation
+Semigroup ⊂ Magma         // Add associativity
+Monoid ⊂ Semigroup        // Add identity element
+Group ⊂ Monoid            // Add inverse
+AbelianGroup ⊂ Group      // Add commutativity (S₂)
 
 // Ring-like structures (two operations: +, *)
-Ring ⊂ AbelianGroup   // Additive structure (+)
-Ring ⊂ Monoid         // Multiplicative structure (*) - Needs careful scope
-Field ⊂ Ring          // Adds Multiplicative Inverse (for non-zero)
+Semiring                  // Additive Monoid, Multiplicative Monoid + distributivity
+Ring ⊂ Semiring           // Extends Additive AbelianGroup
+CommutativeRing ⊂ Ring    // Add multiplicative commutativity (*) - implies * : S₂
+Field ⊂ CommutativeRing   // Add multiplicative inverse for non-zero
 
 // Concrete domains inheriting structure
-Integer ⊂ Ring
+Integer ⊂ CommutativeRing
 Rational ⊂ Field
 Real ⊂ Field
-BitVector<N> ⊂ Ring   // Ring Modulo 2^N
+Complex ⊂ Field
+BitVector<N> ⊂ Ring       // Ring Modulo 2^N
 Set ⊂ DistributiveLattice // Set operations form a lattice
 ```
 
@@ -152,7 +156,7 @@ This prevents the rule from repeatedly expanding the same expression by marking 
 a * (b + c) : Ring !: Expanded → (a * b) + (a * c) : Ring : Expanded
 
 -- Factor a specific quadratic expression found in Algebra domain
-x^2 + 2*x + 1 : Algebra → (x + 1)^2 : Factored : Algebra
+x² + 2*x + 1 : Algebra → (x + 1)² : Factored : Algebra
 ```
 
 ## 3. O-graph Data Structure vs. Traditional E-Graphs
@@ -174,7 +178,7 @@ Example:
 ```
 eclass42 = {
 	nodes = { (5 + 3), (3 + 5) },
-	belongsTo = { Integer, Ring, S₂ }, // Domain membership
+	belongsTo = { Integer, CommutativeRing, S₂ }, // Domain membership
 	representative = (3 + 5)        // Canonical form based on S₂ ordering
 }
 ```
@@ -187,9 +191,9 @@ Our system formalizes several key symmetry groups that commonly arise in computa
 
 | Group | Order | Description                     | Canonicalisation strategy                     | Example Use Case                  |
 |-------|-------|---------------------------------|-----------------------------------------------|-----------------------------------|
-| Sₙ    | n!    | Symmetric group (permutations)  | Sort operands lexicographically             | Commutative ops (`+`, `*`), Sets  |
+| Sₙ    | n!    | Symmetric group (permutations)  | Sort operands lexicographically               | Commutative ops (`+`, `*`), Sets  |
 | Cₙ    | n     | Cyclic group (rotations)        | Lexicographic minimum over rotations (Booth)  | Modular arithmetic, bit rotations |
-| Dₙ    | 2n    | Dihedral (rotations+reflections) | Min over rotations and reflections          | Geometric symmetry, bit patterns  |
+| Dₙ    | 2n    | Dihedral (rotations+reflections) | Min over rotations and reflections         | Geometric symmetry, bit patterns  |
 
 <!-- TODO: Add brief descriptions or examples of each canonicalization strategy directly in the table for immediate intuition -->
 
@@ -260,7 +264,7 @@ Our approach to canonicalization follows a general meta-algorithm pattern:
 In addition to full sequence matching, the array-based representation enables efficient partial sequence matching using pattern indicators:
 
 | Pattern | Description | Example | Matches in `+([a,b,c,d,e])` |
-|---------|-------------|---------|-----------------------------|
+|---------|-------------|---------|--------------------------|
 | Exact | Match the exact sequence | `1+2+3` | Only `+([1,2,3])` |
 | Prefix | Match start of sequence | `1+2+3+...` | `+([1,2,3,d,e])` |
 | Suffix | Match end of sequence | `...+1+2+3` | `+([a,b,1,2,3])` |
@@ -525,12 +529,12 @@ Used for permutation symmetry, typically commutative operations. The canonical f
 
 ```orbit
 // Canonicalizing a + b under commutativity (S₂)
-(a + b) : S₂ → a + b : Canonical if a <= b;
+(a + b) : S₂ → a + b : Canonical if a ≤ b;
 (a + b) : S₂ → b + a : Canonical if b < a;
 
 // Applied examples
 (5 + 3) : S₂ → 3 + 5 : Canonical;  // 3 < 5, so swap
-(x + y) : S₂ → x + y : Canonical;  // Assuming x <= y in the term ordering
+(x + y) : S₂ → x + y : Canonical;  // Assuming x ≤ y in the term ordering
 ```
 
 #### Exponential Speedup Through Canonicalization
@@ -566,12 +570,12 @@ All byte values reachable via rotation from `11001000` will map to the same cano
 
 #### Polynomial Encoding and Groebner Bases
 
-Cyclic symmetry can sometimes be modeled algebraically. For Cₙ, rotations correspond to multiplication by `x` modulo `xⁿ - 1` in a polynomial ring. Canonicalization can then, in principle, be achieved via Gröbner basis computation relative to the ideal `<xⁿ - 1>`, although direct algorithms like Booth's are usually far more efficient for the pure cyclic group case. Groebner bases offer a more general tool for canonicalizing polynomial expressions under algebraic constraints beyond simple rotations.
+Cyclic symmetry can sometimes be modeled algebraically. For Cₙ, rotations correspond to multiplication by `x` modulo `xⁿ - 1` in a polynomial ring. Canonicalization can then, in principle, be achieved via Gröbner basis computation relative to the ideal `⟨xⁿ - 1⟩`, although direct algorithms like Booth's are usually far more efficient for the pure cyclic group case. Groebner bases offer a more general tool for canonicalizing polynomial expressions under algebraic constraints beyond simple rotations.
 
 ```orbit
 // Conceptual Groebner Basis approach for C₄
 // Expression: [a,b,c,d] -> p(x) = a + bx + cx² + dx³
-// Ideal: I = <x⁴ - 1>
+// Ideal: I = ⟨x⁴ - 1⟩
 // Canonical form: NormalForm(p(x), GroebnerBasis(I))
 // This requires defining polynomial operations and Groebner basis algorithms within Orbit.
 
@@ -655,7 +659,7 @@ term1 + term2 : Polynomial → ordered_sum(term2, term1) : Canonical if compare_
 coeff1 * term + coeff2 * term : Polynomial → (coeff1 + coeff2) * term : Canonical
 
 // Define Polynomial ⊂ Ring
-Polynomial ⊂ Ring
+Polynomial ⊂ CommutativeRing
 ```
 
 #### Array-Based Representation and Pattern Matching
@@ -740,20 +744,20 @@ A * (B + C) : Matrix → A*B + A*C : Matrix // Distributivity
 // Matrix-Specific Rules:
 A * I → A : Canonical // Multiplicative Identity (if I exists)
 I * A → A : Canonical
-(A^T)^T → A : Canonical // Transpose Involution
-(A + B)^T → A^T + B^T : Canonical // Transpose Distribution over +
-(A * B)^T → B^T * A^T : Canonical // Transpose of Product (order reversed!)
+(Aᵀ)ᵀ → A : Canonical // Transpose Involution
+(A + B)ᵀ → Aᵀ + Bᵀ : Canonical // Transpose Distribution over +
+(A * B)ᵀ → Bᵀ * Aᵀ : Canonical // Transpose of Product (order reversed!)
 
 // Special matrix properties
 // Requires domains like DiagonalMatrix, OrthogonalMatrix(O(n)), SL(n) etc.
-M : O(n) → canonical_orthogonal_form(M) : Canonical if M^T * M == I
+M : O(n) → canonical_orthogonal_form(M) : Canonical if Mᵀ * M == I
 M : SL(n) → canonical_SL_form(M) : Canonical if det(M) == 1
 ```
 
-Applied example: optimizing `((A*B)^T * (C+D))`
-1. Apply transpose of product rule: `(B^T * A^T) * (C+D)`
-2. Apply distributivity (from Ring): `(B^T * A^T) * C + (B^T * A^T) * D`
-3. (Optional) If matrix multiplication is associative (it is): `B^T * (A^T * C) + B^T * (A^T * D)`
+Applied example: optimizing `((A*B)ᵀ * (C+D))`
+1. Apply transpose of product rule: `(Bᵀ * Aᵀ) * (C+D)`
+2. Apply distributivity (from Ring): `(Bᵀ * Aᵀ) * C + (Bᵀ * Aᵀ) * D`
+3. (Optional) If matrix multiplication is associative (it is): `Bᵀ * (Aᵀ * C) + Bᵀ * (Aᵀ * D)`
 
 ### 6.3 Logic Formula Canonicalization
 
@@ -764,30 +768,30 @@ Boolean logic forms a Boolean Algebra (a specific type of Ring and Distributive 
 // Boolean ⊂ Ring // (Using XOR for +, AND for *)
 
 // Inherited Lattice/Ring Rules:
-p || q : Boolean ↔ q || p : Boolean : S₂ // OR commutativity
-p && q : Boolean ↔ q && p : Boolean : S₂ // AND commutativity
-(p || q) || r : Boolean ↔ p || (q || r) : Boolean : A // OR associativity
-(p && q) && r : Boolean ↔ p && (q && r) : Boolean : A // AND associativity
-p || (q && r) : Boolean ↔ (p || q) && (p || r) : Boolean // Distributivity
-p && (q || r) : Boolean ↔ (p && q) || (p && r) : Boolean // Distributivity
-p || false ↔ p : Boolean // OR identity
-p && true ↔ p : Boolean // AND identity
-p || true ↔ true : Boolean // OR annihilation
-p && false ↔ false : Boolean // AND annihilation
-p || p ↔ p : Boolean // Idempotence
-p && p ↔ p : Boolean // Idempotence
+p ∨ q : Boolean ↔ q ∨ p : Boolean : S₂ // OR commutativity
+p ∧ q : Boolean ↔ q ∧ p : Boolean : S₂ // AND commutativity
+(p ∨ q) ∨ r : Boolean ↔ p ∨ (q ∨ r) : Boolean : A // OR associativity
+(p ∧ q) ∧ r : Boolean ↔ p ∧ (q ∧ r) : Boolean : A // AND associativity
+p ∨ (q ∧ r) : Boolean ↔ (p ∨ q) ∧ (p ∨ r) : Boolean // Distributivity
+p ∧ (q ∨ r) : Boolean ↔ (p ∧ q) ∨ (p ∧ r) : Boolean // Distributivity
+p ∨ false ↔ p : Boolean // OR identity
+p ∧ true ↔ p : Boolean // AND identity
+p ∨ true ↔ true : Boolean // OR annihilation
+p ∧ false ↔ false : Boolean // AND annihilation
+p ∨ p ↔ p : Boolean // Idempotence
+p ∧ p ↔ p : Boolean // Idempotence
 
 // Boolean-Specific Rules (Negation):
-!!p ↔ p : Boolean // Double Negation
-!(p || q) ↔ !p && !q : Boolean // De Morgan's
-!(p && q) ↔ !p || !q : Boolean // De Morgan's
-p || !p ↔ true : Boolean // Excluded Middle
-p && !p ↔ false : Boolean // Contradiction
+¬¬p ↔ p : Boolean // Double Negation
+¬(p ∨ q) ↔ ¬p ∧ ¬q : Boolean // De Morgan's
+¬(p ∧ q) ↔ ¬p ∨ ¬q : Boolean // De Morgan's
+p ∨ ¬p ↔ true : Boolean // Excluded Middle
+p ∧ ¬p ↔ false : Boolean // Contradiction
 
 // Canonical Forms (e.g., NNF, DNF, CNF, BDD)
 // Rules to convert to specific forms, often using negative guards.
 // Example DNF Rule (pushes AND inwards):
-p && (q || r) : Boolean !: DNF_Expanded → (p && q) || (p && r) : Boolean : DNF_Expanded
+p ∧ (q ∨ r) : Boolean !: DNF_Expanded → (p ∧ q) ∨ (p ∧ r) : Boolean : DNF_Expanded
 
 // Example BDD Rule (Shannon Expansion):
 f : Boolean → ite(v, substitute(f, v, true), substitute(f, v, false)) : BDD if v = choose_variable(f)
@@ -801,7 +805,7 @@ BDDs offer a canonical form for Boolean functions based on a fixed variable orde
 // BDD specific reduction rules:
 ite(v, t, t) → t : BDD                             // Redundant test
 ite(v, true, false) → v : BDD                       // Direct variable
-ite(v, false, true) → !v : BDD                      // Negated variable
+ite(v, false, true) → ¬v : BDD                      // Negated variable
 ite(v, t, f) : BDD → ite(v, f, t) : BDD : Canonical if compare_nodes(f,t) < 0 // Ensure unique child order for non-terminal nodes
 
 // Cross-representation:
@@ -825,7 +829,7 @@ xs ++ [] → xs : Canonical
 (xs ++ ys) ++ zs → xs ++ (ys ++ zs) : Canonical : A
 
 // Other common list rules:
-filter(p, filter(q, xs)) → filter(\x -> p(x) && q(x), xs) : Canonical // Filter fusion
+filter(p, filter(q, xs)) → filter(\x -> p(x) ∧ q(x), xs) : Canonical // Filter fusion
 fold(op, init, map(f, xs)) → fold(\acc x -> op(acc, f(x)), init, xs) : Canonical // Fold-map fusion
 reverse(reverse(xs)) → xs : Canonical
 length(xs ++ ys) → length(xs) + length(ys) : Canonical
@@ -835,7 +839,7 @@ length(xs ++ ys) → length(xs) + length(ys) : Canonical
 
 While Orbit primarily focuses on term rewriting, its domain system can represent types. Type inference and checking can interact with the rewriting process.
 
-```
+```orbit
 // Type inference rules
 let type_rules = (
 	// Type variable introduction
@@ -857,7 +861,7 @@ let type_rules = (
 
 The key insight is that we can treat type variables and concrete types as members of the same e-graph, with unification being a process of finding a canonical form under substitution. This approach handles polymorphism naturally:
 
-```
+```orbit
 // Type inference example
 let id = \x -> x;               // Identity function
 let f = \x -> x + 1;            // Int -> Int function
@@ -872,7 +876,7 @@ apply(id, "hello") : String;    // Infer id : String -> String in this context
 
 Types that exhibit symmetry properties can be canonicalized using the same group-theoretic machinery. For example, record types in structural typing systems often have field ordering symmetry that can be handled by S₂ canonicalization:
 
-```
+```orbit
 // Record type canonicalization
 typeof({x: Int, y: String}) = typeof({y: String, x: Int})  // By S₂ canonicalization
 ```
@@ -889,7 +893,7 @@ Calculus ⊂ Field // Calculus operates on Reals/Complex (Fields)
 
 // Rules crossing domains:
 d/dx(f(x)) : Calculus → (f(x+h) - f(x))/h : Numerical : FiniteDifference if is_small(h) // Forward difference
-integral(f, a, b) : Calculus → sum(i, 0, n-1, f(a + i*h)*h) : Numerical : RiemannSum where h = (b-a)/n // Riemann sum
+∫(f, a, b) : Calculus → sum(i, 0, n-1, f(a + i*h)*h) : Numerical : RiemannSum where h = (b-a)/n // Riemann sum
 ```
 
 ## 7. Evaluation
