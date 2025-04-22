@@ -1,88 +1,32 @@
 # Orbit TODO List
-
-## Core Functionality
-✅ Small language for Orbit
-✅ Driver, types
-✅ Evaluation with environment.
-✅ Pattern match (unification)
-✅ Pretty printer
-✅ Use AST type to avoid evaluating arguments to special calls but keep as ASTs
-✅ Build ograph to/from OrMath_exp. Debug it
-✅ Add test suite mode to orbit.flow with automated test execution and reporting
-- The " : Canonical" annotation is not required (each oclass is intended to be canonical at saturation).
-
-## High Priority Tasks
-- Make VS code plugin
-- Check the constructor corelib functions
-✅ Add math natives
-✅ Runtime function to read & write files
-✅ Runtime function to parse Orbit, read command line args
-✅ Operators as symbols
-✅ Semi-direct product
-✅ (a + b) : Type("number")  parses wrong
-✅ Support exponentiation ^ in interpreter
-✅ Native to give unique id
-- Subscripts on operators
-- Glex rules
+- Glex rules for polynomial rings
+- Relational algebra and optimizations of that
 - Support for pattern matching where we visit all the equivalent nodes as well. => vs -> maybe
+- The " : Canonical" annotation is not required (each oclass is intended to be canonical at saturation).
+- Make VS code plugin using Mango
+- Subscripts on operators
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Figure out how we can do "lazy" rule saturation. If we ask for a CodeSize, JS domain of something, it should transitively find out how to convert Math expression to runnable, short JS code.
-- Relational algebra and optimizations of that
 - Hook in evaluation functions to implement interpretation of AST nodes directly in Orbit itself, potentially using rewriting
-- Parse associative into arrays: +([1,2,3,4]), *([x,y,z]), ...
 - Support for pattern matching within sequences. We look at neighbours
 	1+2+3 ⇒ match exactly [1,2,3]
 	1+2+3+... ⇒ match start in [1,2,3] 
 	...+1+2+3 ⇒ match ending in [1,2,3]
 	...+1+2+3+... ⇒ match [1,2,3] anywhere
-- Support for custom comparisons for sorting. For glex, we have a function to sum the exponents of the glex term
 
 Here are the operators that are traditionally considered associative and would benefit from array-based representation:
 
 1. **Addition (`+`)** - `Add/2`
-   - In arithmetic: 1 + 2 + 3 = (1 + 2) + 3 = 1 + (2 + 3)
-
 2. **Multiplication (`*` or `·`)** - `Multiply/2`
-   - In arithmetic: a * b * c = (a * b) * c = a * (b * c)
-
 3. **Logical AND (`&&` or `∧`)** - `LogicalAnd/2`
-   - In Boolean algebra: a && b && c = (a && b) && c = a && (b && c)
-
 4. **Logical OR (`||` or `∨`)** - `LogicalOr/2`
-   - In Boolean algebra: a || b || c = (a || b) || c = a || (b || c)
-
 5. **Function Composition (`∘`)** - `Compose/2`
-   - In mathematics: f ∘ g ∘ h = (f ∘ g) ∘ h = f ∘ (g ∘ h)
-
 6. **Set Union (`union` or `∪`)** - `Union/2`
-   - In set theory: A ∪ B ∪ C = (A ∪ B) ∪ C = A ∪ (B ∪ C)
-
 7. **Set Intersection (`intersect` or `∩`)** - `Intersection/2`
-   - In set theory: A ∩ B ∩ C = (A ∩ B) ∩ C = A ∩ (B ∩ C)
-
 8. **Direct Product (`×`)** - `DirectProduct/2`
-   - In group theory: G × H × K = (G × H) × K = G × (H × K)
-
 9. **Sequence (`;`)** - `Sequence/2`
-   - In programming semantics: stmt1; stmt2; stmt3 = (stmt1; stmt2); stmt3 = stmt1; (stmt2; stmt3)
 
-Non-associative operators (like subtraction, division, exponentiation, etc.) would still use the traditional binary representation.
-
-
-
-## Interpreter Extensions
-- Complete all TODOs in `interpretOrbit` (many expression types are unimplemented):
-  - Mathematical operations: `OrExponent`, `OrCompose`, `OrDirectProduct`
-  - Set operations: `OrSetLiteral`, `OrSetComprehension`, `OrUnion`, `OrIntersection`, `OrSubset`, `OrElementOf`
-  - Rewrite rules: `OrRule`, `OrEquivalence`, `OrEntailment`
-  - Type operations: `OrTypeAnnotation`, `OrTypeSubstitution`, `OrTypeVar`, `OrFunctionType` 
-  - Quantifiers: `OrForall`, `OrExists`
-  - Notation elements: `OrGreekLetter`, `OrSubscript`, `OrSuperscript`, `OrField`
-  - ✅ Calculus operations: Derivatives (`d/dx`, `∂/∂xᵢ`), Gradients (`∇`), Integrals (`∫`), Summations (`∑`)
-  - Calculus operations (remaining): Jacobians, Hessians, Limits
-  - ✅ Tensor operations: Tensor Product (`⊗`)
-  - Tensor operations (remaining): Higher-dimensional arrays, Index Notation, Contraction, Einstein Summation
-- Better error handling and recovery mechanisms
+Non-associative operators (like subtraction, division, exponentiation, etc.) would still use the traditional binary representation, although subtraction is addition with a negative.
 
 ## Pattern Matching Improvements
 - Strengthen pattern variable reuse constraints (ensure consistency when same variable appears multiple times)
