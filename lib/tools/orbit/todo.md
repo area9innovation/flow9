@@ -77,8 +77,10 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
   - Type operations: `OrTypeAnnotation`, `OrTypeSubstitution`, `OrTypeVar`, `OrFunctionType` 
   - Quantifiers: `OrForall`, `OrExists`
   - Notation elements: `OrGreekLetter`, `OrSubscript`, `OrSuperscript`, `OrField`
-  - Calculus operations: Derivatives (`d/dx`, `∂/∂xᵢ`), Gradients (`∇`), Jacobians, Hessians, Integrals (`∫`), Summations (`∑`), Limits
-  - Tensor operations: Higher-dimensional arrays, Index Notation, Contraction, Tensor Product (`⊗`), Einstein Summation
+  - ✅ Calculus operations: Derivatives (`d/dx`, `∂/∂xᵢ`), Gradients (`∇`), Integrals (`∫`), Summations (`∑`)
+  - Calculus operations (remaining): Jacobians, Hessians, Limits
+  - ✅ Tensor operations: Tensor Product (`⊗`)
+  - Tensor operations (remaining): Higher-dimensional arrays, Index Notation, Contraction, Einstein Summation
 - Better error handling and recovery mechanisms
 
 ## Pattern Matching Improvements
@@ -114,13 +116,13 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
 - Implement group product operations (direct, semi-direct)
 - Add group decomposition functionality
 - Implement group isomorphism testing
-- Add syntax support for quaternion group Q₈
-- Add syntax support for integers modulo n (ℤ/nℤ or ℤₙ)
-- Add syntax support for abstract group operation (· or Compose(g,h))
-- Add syntax support for order of group G (|G|)
-- Add syntax support for normal subgroup relation (⊲)
-- Add syntax support for isomorphism (≅)
-- Add syntax support for homomorphism (φ)
+✅ Add syntax support for quaternion group Q₈
+✅ Add syntax support for integers modulo n (ℤ/nℤ or ℤₙ)
+✅ Add syntax support for abstract group operation (· or Compose(g,h))
+✅ Add syntax support for order of group G (|G|)
+✅ Add syntax support for normal subgroup relation (⊲)
+✅ Add syntax support for isomorphism (≅)
+✅ Add syntax support for homomorphism (φ)
 
 ## Algebraic Structure Support
 - Add support for detecting and working with rings, fields, and vector spaces
