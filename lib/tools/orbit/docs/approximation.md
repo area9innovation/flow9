@@ -700,6 +700,120 @@ f(x) : ElementaryFunction : Precision(ε) : FloatPrecision !: FullyOptimized →
 
 By combining algebraic rewriting for numerical stability with appropriate approximation techniques, Orbit can deliver superior results that maintain precision while optimizing performance.
 
+### Practical Precision Measurement Using ULPs
+
+While algebraic transformations improve precision, quantifying this improvement requires a practical measurement framework. We implement ULP (Units in Last Place) tracking, the industry standard for measuring floating-point precision:
+
+```orbit
+// Define domain for ULP error tracking
+ULPErrorTracking ⊂ NumericalAnalysis
+ULPError ⊂ Domain
+
+// Track precision in terms of maximum ULP error
+expr : ULPError(n) → result : ULPError(propagated_error);
+
+// Example rules for tracking ULP errors through operations
+(a : ULPError(ua)) + (b : ULPError(ub)) →
+	(a + b) : ULPError(propagate_ulp_addition(a, b, ua, ub)) : Canonical;
+
+(a : ULPError(ua)) - (b : ULPError(ub)) →
+	(a - b) : ULPError(propagate_ulp_subtraction(a, b, ua, ub)) : Canonical;
+
+(a : ULPError(ua)) * (b : ULPError(ub)) →
+	(a * b) : ULPError(ua + ub + 0.5) : Canonical; // Standard rounding error + propagation
+
+(a : ULPError(ua)) / (b : ULPError(ub)) →
+	(a / b) : ULPError(propagate_ulp_division(a, b, ua, ub)) : Canonical;
+```
+
+The implementation measures precision loss based on the specific operation and operand values:
+
+```orbit
+// Calculate ULP error when subtracting nearly equal numbers (catastrophic cancellation)
+propagate_ulp_subtraction(a, b, ua, ub) : ULPErrorTracking →
+	if similar_magnitude(a, b) then
+		// ULP error grows inversely proportional to the result's magnitude
+		let result_magnitude = abs(a - b);
+		let input_magnitude = max(abs(a), abs(b));
+		let magnification = input_magnitude / result_magnitude;
+		(ua + ub) * magnification
+	else
+		ua + ub + 0.5; // Standard ULP error propagation
+
+// Calculate ULP error after addition
+propagate_ulp_addition(a, b, ua, ub) : ULPErrorTracking →
+	if magnitude_difference(a, b) > ULP_CANCELLATION_THRESHOLD then
+		// Small value doesn't significantly affect ULP error of larger value
+		max(ua, ub) + 0.5 // Half ULP for rounding error
+	else
+		ua + ub + 0.5; // Standard case with rounding error
+```
+
+This system allows Orbit to predict precision loss and apply appropriate transformations:
+
+```orbit
+// Identify operations that would result in unacceptable ULP error
+expr : ULPError(n) : MaxAllowedULPError(m) →
+	expr : PrecisionCritical if n > m;
+
+// ULP-based approximate equality testing
+approx_equal(a, b, max_ulps) : ULPErrorTracking →
+	ulp_distance(a, b) ≤ max_ulps;
+
+// Compute exact ULP distance between two floats
+ulp_distance(a, b) : ULPErrorTracking →
+	if a == b then 0
+	else if isnan(a) || isnan(b) then INFINITY
+	else abs(float_to_int_bits(a) - float_to_int_bits(b));
+
+// Automatically apply precision-improving transformations when needed
+expr : PrecisionCritical !: Transformed →
+	rewrite_for_precision(expr) : ULPError(n') : Transformed;
+```
+
+### Integration with Approximation Methods
+
+ULP error tracking can be combined with both algebraic rewriting and approximation methods:
+
+```orbit
+// Apply both precision-preserving rewrites and approximation
+expr : Precision(ε) : ULPError(n) : MaxAllowedULPError(m) !: Optimized →
+	if n > m then
+		// First rewrite for precision improvement
+		let improved = rewrite_for_precision(expr);
+		// Then apply appropriate approximation method
+		apply_approximation(improved, ε) : ULPError(n') : Optimized
+	else
+		// Precision already sufficient, just apply approximation
+		apply_approximation(expr, ε) : Optimized;
+```
+
+### Example: Tracking ULP Error Through a Calculation
+
+Consider computing the expression `sqrt(x² + y) - x` with and without rewriting:
+
+```orbit
+// Original expression with ULP error tracking
+// Assume x = 1000.0 with ULPError(0.5), y = 0.0001 with ULPError(0.5)
+let x² = 1000.0² : ULPError(1.0);                // = 1,000,000.0 with ~1 ULP error
+let x² + y = 1000000.0 + 0.0001 : ULPError(1.5);  // Addition adds 0.5 ULP
+let sqrt_term = sqrt(1000000.0001) : ULPError(1.75); // sqrt adds ~0.25 ULP
+let result = 1000.00000005 - 1000.0 : ULPError(10⁷); // Catastrophic cancellation!
+// Final result: 0.00000005 with ~10⁷ ULPs of error - extremely inaccurate!
+
+// Rewritten expression: y / (sqrt(x² + y) + x)
+let x² = 1000.0² : ULPError(1.0);                // = 1,000,000.0 with ~1 ULP error
+let x² + y = 1000000.0 + 0.0001 : ULPError(1.5);  // Addition adds 0.5 ULP
+let sqrt_term = sqrt(1000000.0001) : ULPError(1.75); // sqrt adds ~0.25 ULP
+let denominator = 1000.00000005 + 1000.0 : ULPError(2.25); // = 2000.00000005
+let result = 0.0001 / 2000.00000005 : ULPError(3.0);  // No catastrophic cancellation
+// Final result: 0.00000005 with ~3 ULPs of error - dramatically more accurate!
+```
+
+The rewritten form reduces the error from approximately 10⁷ ULPs to just 3 ULPs - a million-fold improvement in precision! The ULP error tracking system makes this improvement quantifiable and allows Orbit to automatically select the appropriate expression form.
+
+This example clearly demonstrates why algebraic rewriting is so valuable for numerical accuracy, and the ULP framework provides an industry-standard way to measure and reason about these improvements.
+
 ## Method Selection Heuristics
 
 Intelligent method selection is key to balancing efficiency and accuracy:
