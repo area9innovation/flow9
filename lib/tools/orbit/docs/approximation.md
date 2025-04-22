@@ -463,6 +463,243 @@ sin(sqrt(x)) : Error(ε₁ + ε₂) if sqrt(x) : Error(ε₁) and sin(sqrt(x)) :
 f(g(x)) : Precision(ε) → f(g(x) : Precision(ε/2)) : Precision(ε);
 ```
 
+## Numerical Precision Through Expression Rewriting
+
+Beyond approximation methods, significant precision improvements can be achieved through algebraic rewriting of floating-point expressions. Even mathematically equivalent formulations can exhibit vastly different numerical behaviors due to the limited precision of floating-point representation and arithmetic.
+
+### The Floating-Point Precision Problem
+
+Floating-point calculations suffer from several inherent precision challenges:
+
+1. **Catastrophic cancellation**: Subtracting nearly equal large numbers can result in significant loss of precision
+2. **Limited precision representation**: Only a finite number of significant digits can be stored
+3. **Rounding errors**: Each operation introduces small rounding errors that can accumulate
+4. **Overflow and underflow**: Very large or small numbers can exceed representation limits
+5. **Order-dependent accuracy**: The sequence of operations affects the final precision
+
+By recognizing these issues, we can systematically transform expressions to minimize their impact.
+
+### Domain: Numerically Stable Expressions
+
+```orbit
+// Add to domain hierarchy
+NumericallyStable ⊂ Domain
+FloatPrecision ⊂ Domain
+CatastrophicCancellation ⊂ Domain  // Expressions vulnerable to catastrophic cancellation
+
+// Domain-specific annotations
+expr : ImproveFloatPrecision → rewrite_for_precision(expr) : NumericallyStable;
+expr : HighPrecisionRequired → rewrite_for_precision(expr) : NumericallyStable;
+```
+
+### Catastrophic Cancellation Avoidance
+
+Catastrophic cancellation occurs when subtracting nearly equal floating-point numbers, resulting in significant digit loss. Many classic expressions can be rewritten to avoid this problem:
+
+```orbit
+// Original expression contains potential catastrophic cancellation
+sqrt(x² + y) - x : CatastrophicCancellation : FloatPrecision !: Rewritten →
+	y / (sqrt(x² + y) + x) : NumericallyStable : Rewritten;
+
+// Quadratic formula with improved precision when b² >> 4ac
+quadratic_formula_plus(a, b, c) : CatastrophicCancellation : FloatPrecision !: Rewritten →
+	(-b + sign(b) * sqrt(b² - 4*a*c)) / (2*a) : NumericallyStable : Rewritten;
+
+// Computing log(1+x) when x is small
+log(1 + x) : FloatPrecision !: Rewritten →
+	log1p(x) : NumericallyStable : Rewritten if |x| < 0.01;
+
+// Computing 1-cos(x) for small x
+1 - cos(x) : CatastrophicCancellation : FloatPrecision !: Rewritten →
+	2 * sin²(x/2) : NumericallyStable : Rewritten if |x| < 0.1;
+
+// Computing exp(x) - 1 for small x
+exp(x) - 1 : CatastrophicCancellation : FloatPrecision !: Rewritten →
+	expm1(x) : NumericallyStable : Rewritten if |x| < 0.01;
+```
+
+### Summation Reordering
+
+The order of summation can dramatically affect accuracy, especially with widely varying magnitudes:
+
+```orbit
+// Reorganize summation from smallest to largest magnitude
+sum(terms) : FloatPrecision !: Rewritten →
+	sum(sort_by_magnitude(terms)) : NumericallyStable : Rewritten;
+
+// Kahan summation algorithm for improved precision
+sum(terms) : HighPrecisionRequired !: Rewritten →
+	kahan_sum(terms) : NumericallyStable : Rewritten;
+
+// Kahan summation implementation
+kahan_sum(terms) : NumericallyStable →
+	fn kahan_algo(values, sum, c) {
+		values is {
+			[] => sum;
+			[x|xs] => {
+				let y = x - c;        // Corrected next term
+				let t = sum + y;      // New sum
+				let c_new = (t - sum) - y;  // New correction term
+				kahan_algo(xs, t, c_new);
+			}
+		}
+	};
+	kahan_algo(terms, 0.0, 0.0) : ApproximateCanonical;
+```
+
+### Parenthesization and Expression Restructuring
+
+Rearranging calculation order can reduce error accumulation:
+
+```orbit
+// Restructure product calculations for improved stability
+product(factors) : FloatPrecision !: Rewritten →
+	pairwise_product(sort_by_magnitude(factors)) : NumericallyStable : Rewritten;
+
+// Implement balanced pairwise multiplication
+pairwise_product(factors) : NumericallyStable →
+	factors is {
+		[] => 1.0;
+		[x] => x;
+		list => {
+			let mid = length(list) / 2;
+			let (left, right) = split_at(list, mid);
+			pairwise_product(left) * pairwise_product(right);
+		}
+	};
+
+// Horner's method for polynomial evaluation
+polynomial_eval(coeffs, x) : FloatPrecision !: Rewritten →
+	horner_method(coeffs, x) : NumericallyStable : Rewritten;
+
+// Horner's method implementation
+horner_method(coeffs, x) : NumericallyStable →
+	fn horner_impl(cs, accum) {
+		cs is {
+			[] => accum;
+			[c|rest] => horner_impl(rest, accum * x + c);
+		}
+	};
+	reversed_coeffs = reverse(coeffs);
+	horner_impl(tail(reversed_coeffs), head(reversed_coeffs)) : ApproximateCanonical;
+```
+
+### Division and Reciprocal Transformations
+
+Division operations often benefit from algebraic restructuring:
+
+```orbit
+// Convert repeated divisions to a single division
+(a / b) / c : FloatPrecision !: Rewritten →
+	a / (b * c) : NumericallyStable : Rewritten;
+
+// Handle near-zero denominators safely
+x / y : FloatPrecision !: Rewritten →
+	safe_division(x, y, epsilon) : NumericallyStable : Rewritten if is_potentially_small(y);
+
+// Avoiding division altogether when possible
+a / a : FloatPrecision !: Rewritten →
+	1.0 : NumericallyStable : Rewritten;
+```
+
+### Complex Arithmetic Stability
+
+Complex number operations have special stabilization transformations:
+
+```orbit
+// Complex division stabilization
+(a + b*i) / (c + d*i) : FloatPrecision !: Rewritten →
+	stable_complex_division(a, b, c, d) : NumericallyStable : Rewritten;
+
+// Implementation for magnitude-balanced complex division
+stable_complex_division(a, b, c, d) : NumericallyStable →
+	if |c| >= |d| then
+		let r = d / c;
+		let den = c + d * r;
+		(a + b * r) / den + i * (b - a * r) / den
+	else
+		let r = c / d;
+		let den = d + c * r;
+		(a * r + b) / den + i * (b * r - a) / den
+	: ApproximateCanonical;
+```
+
+### Example: Quadratic Formula Improvement
+
+The classic quadratic formula is particularly prone to catastrophic cancellation. Consider computing the roots of `x² + 10000x + 1 = 0`:
+
+```orbit
+// Standard formula: x = (-b ± sqrt(b² - 4ac))/(2a)
+// For a=1, b=10000, c=1
+
+// Standard approach (loses precision)
+let discr = 10000² - 4*1*1;      // = 99,999,996
+let root1 = (-10000 + sqrt(discr))/(2*1);
+// Expected: -0.0001, Actual: 0 (complete loss of precision)
+
+// Rewritten formula
+let root1_stable = -2*1 / (10000 + sqrt(10000² - 4*1*1));
+// Expected: -0.0001, Actual: -0.0001 (correct result)
+```
+
+The rewritten form maintains precision despite the extreme difference in magnitude between the coefficients.
+
+### Composable Transformations
+
+These rewriting rules can be composed to handle complex expressions:
+
+```orbit
+// Identify and transform precision-critical subexpressions
+expr : FloatPrecision !: FullyRewritten →
+	rewrite_for_precision_recursive(expr) : NumericallyStable : FullyRewritten;
+
+// Recursive precision improvement
+rewrite_for_precision_recursive(expr) : NumericallyStable →
+	expr is {
+		a + b => rewrite_for_precision_recursive(a) + rewrite_for_precision_recursive(b);
+		a - b => rewrite_for_precision_recursive(a) - rewrite_for_precision_recursive(b);
+		a * b => rewrite_for_precision_recursive(a) * rewrite_for_precision_recursive(b);
+		a / b => rewrite_for_precision_recursive(a) / rewrite_for_precision_recursive(b);
+		sqrt(x² + y) - x => y / (sqrt(x² + y) + x); // Apply catastrophic cancellation rule
+		// Additional pattern transformations
+		_ => expr; // Default case: leave unchanged
+	};
+```
+
+### Automated Precision Analysis
+
+Orbit can automatically identify expressions at risk of precision loss:
+
+```orbit
+// Automatic detection of catastrophic cancellation
+expr₁ - expr₂ : FloatPrecision !: AnalyzedForPrecision →
+	mark_catastrophic_if_similar(expr₁, expr₂) : AnalyzedForPrecision;
+
+// Helper function
+mark_catastrophic_if_similar(a, b) : AnalyzedForPrecision →
+	if potentially_similar_magnitude(a, b) then
+		(a - b) : CatastrophicCancellation
+	else
+		(a - b)
+	: AnalyzedForPrecision;
+```
+
+### Integration with Orbit's Approximation Framework
+
+These numerical precision rewriting rules integrate seamlessly with Orbit's existing approximation framework:
+
+```orbit
+// Combine precision improvement with approximation methods
+expr : Precision(ε) : FloatPrecision !: Optimized →
+	rewrite_for_precision(expr) : Precision(ε) : Optimized;
+
+// Apply precision improvement before approximation
+f(x) : ElementaryFunction : Precision(ε) : FloatPrecision !: FullyOptimized →
+	apply_approximation(rewrite_for_precision(f(x)), ε) : FullyOptimized;
+```
+
+By combining algebraic rewriting for numerical stability with appropriate approximation techniques, Orbit can deliver superior results that maintain precision while optimizing performance.
+
 ## Method Selection Heuristics
 
 Intelligent method selection is key to balancing efficiency and accuracy:
