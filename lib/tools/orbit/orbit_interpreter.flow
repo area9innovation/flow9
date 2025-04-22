@@ -1,9 +1,7 @@
-import tools/orbit/orbit2core;
 import tools/orbit/orbit_env;
 import tools/orbit/utils;
 import tools/orbit/orbit_pattern;
-import tools/runcore/core_lib;
-import tools/runcore/value_util;
+// Removed RunCore-related imports as they're no longer needed
 import ds/tree;
 import ds/set;
 import math/math;
@@ -66,50 +64,8 @@ initOrbitInterpreter() -> void {
 	initOrbitRuntimeFunctions();
 }
 
-// Helper function to perform CoreLib operations and convert types
-performCoreBinOperation(env : OrbEnv, a : OrMath_expr, b : OrMath_expr, operation : (CoreValue, CoreValue) -> CoreValue) -> OrbEnv {
-	// Convert orbit expressions to CoreValues
-	aCore = orbit2CoreValue(a);
-	bCore = orbit2CoreValue(b);
-	
-	// Perform the operation using CoreLib
-	resultCore = operation(aCore, bCore);
-	
-	// Convert back to OrMath_expr
-	OrbEnv(env with result = coreValue2Orbit(resultCore));
-}
-
-
-// Helper function to perform CoreLib operations and convert types
-performCoreUnOperation(env : OrbEnv, a : OrMath_expr, operation : (CoreValue) -> CoreValue) -> OrbEnv {
-	// Convert orbit expressions to CoreValues
-	aCore = orbit2CoreValue(a);
-	
-	// Perform the operation using CoreLib
-	resultCore = operation(aCore);
-	
-	// Convert back to OrMath_expr
-	OrbEnv(env with result = coreValue2Orbit(resultCore));
-}
-
-// Attempt to call a function from RunCore
-callRunCoreFunction(env : OrbEnv, id : string, args : [OrMath_expr]) -> Maybe<OrbEnv> {
-    if (isCoreDefined(env.runCore, id)) {
-        // Convert orbit args to CoreValues
-        coreArgs = map(args, orbit2CoreValue);
-       	// println("Calling RunCore function: " + id + " with args: " + superglue(coreArgs, prettyValue, ", "));
-        // Call the RunCore function
-        switch (evalCoreFn(env.runCore, id, coreArgs)) {
-            Some(result): {
-                // Convert result back to orbit expression
-                Some(OrbEnv(env with result = coreValue2Orbit(result)));
-            }
-            None(): None();
-        }
-    } else {
-        None();
-    }
-}
+// No longer needed - Removed CoreLib helper functions and RunCore function calls
+// We now directly use the Orbit native implementations
 
 // Evaluate a function call with the given arguments
 callFunction(env : OrbEnv, fn : OrMath_expr, args : [OrMath_expr]) -> OrbEnv {
@@ -178,22 +134,16 @@ callFunction(env : OrbEnv, fn : OrMath_expr, args : [OrMath_expr]) -> OrbEnv {
 	// Handle the function based on its type
 	switch (fn) {
 		OrVariable(id): {
-			// First check if this function is defined in RunCore
-			switch (callRunCoreFunction(finalArgEnv, id, argValues)) {
-				Some(resultEnv): resultEnv;
+			// Check if identifier is in environment
+			switch (lookupVar(finalArgEnv, id)) {
+				Some(value): {
+					// Call with the value from environment
+					callFunction(finalArgEnv, value, args);
+				}
 				None(): {
-					// Check if identifier is in environment
-					switch (lookupVar(finalArgEnv, id)) {
-						Some(value): {
-							// Call with the value from environment
-							callFunction(finalArgEnv, value, args);
-						}
-						None(): {
-							// Not in RunCore or environment
-							println("Cannot call non-function value: " + prettyOrbit(fn));
-							finalArgEnv;
-						}
-					}
+					// Not in environment
+					println("Cannot call non-function value: " + prettyOrbit(fn));
+					finalArgEnv;
 				}
 			}
 		}
@@ -319,10 +269,11 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 				Some(value): ret(value);
 				None(): {
 					// Check if it's a RunCore function name
-					if (isCoreDefined(env.runCore, id)) {
+					// TODO. Check if it is defined in our runtime, so we can use those are first-order names
+					/*if (isCoreDefined(env.runCore, id)) {
 						// Return a variable with the same name - will be resolved when called
 						ret(OrVariable(id));
-					} else {
+					} else */{
 						println("Variable not found: " + id);
 						ret(OrInt(0));
 					}
@@ -342,65 +293,74 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 		OrAdd(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, addValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("+", [envA.result, envB.result], env).result);
 		}
 		
 		OrSubtract(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, minusValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("-", [envA.result, envB.result], env).result);
 		}
 		
 		OrMultiply(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, mulValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("*", [envA.result, envB.result], env).result);
 		}
 		
 		OrDivide(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, divideValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("/", [envA.result, envB.result], env).result);
 		}
+		
 		OrModulo(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, modValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("%", [envA.result, envB.result], env).result);
 		}
+		
 		OrNegate(a): {
 			envA = interpretOrbit(env, a);
-			performCoreBinOperation(env, OrInt(-1), envA.result, mulValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("*", [OrInt(-1), envA.result], env).result);
 		}
+		
 		OrEquals(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, eqValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("==", [envA.result, envB.result], env).result);
 		}
+		
 		OrGreaterEquals(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, geValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction(">=", [envA.result, envB.result], env).result);
 		}
+		
 		OrGreaterThan(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, gtValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction(">", [envA.result, envB.result], env).result);
 		}
+		
 		OrLessEquals(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, leValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("<=", [envA.result, envB.result], env).result);
 		}
+		
 		OrLessThan(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, ltValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("<", [envA.result, envB.result], env).result);
 		}
+		
 		OrNotEquals(a, b): {
 			envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
-			performCoreBinOperation(env, envA.result, envB.result, neqValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("!=", [envA.result, envB.result], env).result);
 		}
+		
 		OrLogicalAnd(a, b): {
 			envA = interpretOrbit(env, a);
 			if (getOBool(envA.result, "logical and") == false) {
@@ -408,21 +368,23 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 				envA;
 			} else {
 				envB = interpretOrbit(envA, b);
-				performCoreBinOperation(env, envA.result, envB.result, andValue);
+				OrbEnv(env with result = callOrbitRuntimeFunction("&&", [envA.result, envB.result], env).result);
 			}
-		} 
+		}
+		
 		OrLogicalNot(a): {
 			envA = interpretOrbit(env, a);
-			performCoreUnOperation(env, envA.result, notValue);
+			OrbEnv(env with result = callOrbitRuntimeFunction("not", [envA.result], env).result);
 		}
+		
 		OrLogicalOr(a, b): {
 			envA = interpretOrbit(env, a);
-			if (getOBool(envA.result, "logical oe") == true) {
+			if (getOBool(envA.result, "logical or") == true) {
 				// Short-circuit evaluation
 				envA;
 			} else {
 				envB = interpretOrbit(envA, b);
-				performCoreBinOperation(env, envA.result, envB.result, orValue);
+				OrbEnv(env with result = callOrbitRuntimeFunction("||", [envA.result, envB.result], env).result);
 			}
 		}
 
@@ -442,15 +404,8 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 		
 		OrIfElse(cond, thenExpr, elseExpr): {
 			envCond = interpretOrbit(env, cond);
-			// Convert to CoreValue to evaluate condition
-			condCore = orbit2CoreValue(envCond.result);
-			condValue = switch (condCore) {
-				CoreBool(b): b;
-				CoreInt(i): i != 0;
-				CoreDouble(d): d != 0.0;
-				CoreString(s): s != "";
-				default: false;
-			};
+			// Use our native getOBool function
+			condValue = getOBool(envCond.result, "if condition");
 			
 			if (condValue) {
 				interpretOrbit(envCond, thenExpr);
@@ -484,7 +439,6 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 				});
 				ret(OrFunction(fnExpr, evaluatedArgs));
 			} else {
-				// Direct function name in RunCore?
 				switch (fnExpr) {
 					OrIdentifier(id): {
 						// Check if this is a function in our runtime
@@ -492,28 +446,9 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 							// Call the runtime function directly with raw arguments
 							callOrbitRuntimeFunction(id, argExprs, env);
 						} else {
-							// Check if function is defined in RunCore first
-							if (isCoreDefined(env.runCore, id)) {
-								// Only evaluate arguments for RunCore functions
-								evaluatedArgs = map(argExprs, \arg -> {
-									interpretOrbit(env, arg).result;
-								});
-								
-								// Try to call from RunCore
-									switch (callRunCoreFunction(env, id, evaluatedArgs)) {
-									Some(resultEnv): resultEnv;
-									None(): {
-										// Should not happen - we already checked isCoreDefined
-										println("WARNING: Core function " + id + " is defined but call failed");
-										envFn = interpretOrbit(env, fnExpr);
-										callFunction(envFn, envFn.result, argExprs);
-									}
-								}
-							} else {
-								// Not in RunCore, don't evaluate arguments, just pass them to callFunction
-								envFn = interpretOrbit(env, fnExpr);
-								callFunction(envFn, envFn.result, argExprs);
-							}
+							// Not in runtime, pass to callFunction
+							envFn = interpretOrbit(env, fnExpr);
+							callFunction(envFn, envFn.result, argExprs);
 						}
 					}
 					default: {
@@ -551,7 +486,7 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 		OrEquivalence(math_expr1, math_expr2, conditionals, full): todo();
 		OrExists(math_exprs, math_expr): todo();
 		OrExponent(a, b): {
-			envA = interpretOrbit(env, a);
+			/*envA = interpretOrbit(env, a);
 			envB = interpretOrbit(envA, b);
 			
 			// Check if both values are integers 
@@ -596,7 +531,8 @@ interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
 					
 					CoreDouble(dpow(aDouble, bDouble));
 				});
-			}
+			}*/
+			todo();
 		}
 		OrField(math_expr, id): todo();
 		OrForall(math_exprs, math_expr): todo();

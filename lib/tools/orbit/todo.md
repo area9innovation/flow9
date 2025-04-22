@@ -13,7 +13,6 @@
 
 ## High Priority Tasks
 - Make VS code plugin
-- Port the corelib functinos to Orbit native?
 - Check the constructor corelib functions
 ✅ Add math natives
 ✅ Runtime function to read & write files
