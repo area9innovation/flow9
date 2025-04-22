@@ -9,6 +9,7 @@
 ✅ Use AST type to avoid evaluating arguments to special calls but keep as ASTs
 ✅ Build ograph to/from OrMath_exp. Debug it
 ✅ Add test suite mode to orbit.flow with automated test execution and reporting
+- The " : Canonical" annotation is not required (each oclass is intended to be canonical at saturation).
 
 ## High Priority Tasks
 - Make VS code plugin
@@ -73,9 +74,11 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
   - Mathematical operations: `OrExponent`, `OrCompose`, `OrDirectProduct`
   - Set operations: `OrSetLiteral`, `OrSetComprehension`, `OrUnion`, `OrIntersection`, `OrSubset`, `OrElementOf`
   - Rewrite rules: `OrRule`, `OrEquivalence`, `OrEntailment`
-  - Type operations: `OrTypeAnnotation`, `OrTypeSubstitution`, `OrTypeVar`, `OrFunctionType`
+  - Type operations: `OrTypeAnnotation`, `OrTypeSubstitution`, `OrTypeVar`, `OrFunctionType` 
   - Quantifiers: `OrForall`, `OrExists`
   - Notation elements: `OrGreekLetter`, `OrSubscript`, `OrSuperscript`, `OrField`
+  - Calculus operations: Derivatives (`d/dx`, `∂/∂xᵢ`), Gradients (`∇`), Jacobians, Hessians, Integrals (`∫`), Summations (`∑`), Limits
+  - Tensor operations: Higher-dimensional arrays, Index Notation, Contraction, Tensor Product (`⊗`), Einstein Summation
 - Better error handling and recovery mechanisms
 
 ## Pattern Matching Improvements
@@ -99,6 +102,7 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
 - Implement canonical form computation for common groups (Sₙ, Cₙ, Dₙ, Aₙ)
 - Add support for Gröbner basis canonicalization for polynomial rings
 - Integrate matrix group canonicalization (GL, SL, O groups)
+- Implement efficient mechanism to pattern match from a domain down to the terms in that domain
 
 ## Group Theory Implementation
 - Implement core group operations (multiplication, inverses, identity checking)
@@ -110,6 +114,13 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
 - Implement group product operations (direct, semi-direct)
 - Add group decomposition functionality
 - Implement group isomorphism testing
+- Add syntax support for quaternion group Q₈
+- Add syntax support for integers modulo n (ℤ/nℤ or ℤₙ)
+- Add syntax support for abstract group operation (· or Compose(g,h))
+- Add syntax support for order of group G (|G|)
+- Add syntax support for normal subgroup relation (⊲)
+- Add syntax support for isomorphism (≅)
+- Add syntax support for homomorphism (φ)
 
 ## Algebraic Structure Support
 - Add support for detecting and working with rings, fields, and vector spaces
