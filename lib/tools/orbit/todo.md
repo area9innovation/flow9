@@ -24,7 +24,6 @@
 ✅ Native to give unique id
 - Subscripts on operators
 - Glex rules
-- Name capture problems. See mergeSortWith and a comparison that uses a and b as names
 - Support for pattern matching where we visit all the equivalent nodes as well. => vs -> maybe
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Figure out how we can do "lazy" rule saturation. If we ask for a CodeSize, JS domain of something, it should transitively find out how to convert Math expression to runnable, short JS code.
