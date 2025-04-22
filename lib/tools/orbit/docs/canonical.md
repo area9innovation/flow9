@@ -52,8 +52,6 @@ This document uses the following notation for groups, operators, and relations:
 - **⊢** or **\|-**: Entailment operator (when left pattern matches, right side domain annotation is applied)
 - **⊂** or **c=**: Subset relation (indicates domain hierarchy)
 - **eval()**: Used to evaluate expressions on the right-hand side during rewriting
-- **: Canonical**: Annotation indicating the result is in canonical form
-- **discard**: Indicates a branch that should be pruned during canonicalization
 
 Throughout this document, rewrite rules are presented in a pattern-matching style where the left side of => describes a pattern to match, and the right side describes the transformation to apply. Conditions after "if" specify when the rule applies.
 
@@ -384,17 +382,17 @@ Many groups involve rotation operations that share common canonicalization patte
 
 ```
 // General rotation canonicalization pattern
-(rotate(x, n % k)) : G => x : Canonical if (n % k) == 0;
-(rotate(x, n % k)) : G => rotate_by_angle(x, (n % k) * (360/k)) : Canonical if (n % k) != 0;
+(rotate(x, n % k)) : G => x if (n % k) == 0;
+(rotate(x, n % k)) : G => rotate_by_angle(x, (n % k) * (360/k)) if (n % k) != 0;
 
 // Composition of rotations
-rotate_left(rotate_left(x, a), b) => rotate_left(x, eval((a + b) % n)) : Canonical;
+rotate_left(rotate_left(x, a), b) => rotate_left(x, eval((a + b) % n));
 
 // Identity rotation
-rotate_left(x, 0) => x : Canonical;
+rotate_left(x, 0) => x;
 
 // Inverse rotations
-rotate_left(rotate_right(x, k), k) => x : Canonical;
+rotate_left(rotate_right(x, k), k) => x;
 ```
 
 This general pattern applies to cyclic groups (Cₙ) and the rotation subgroup of dihedral groups (Dₙ).
@@ -403,33 +401,33 @@ This general pattern applies to cyclic groups (Cₙ) and the rotation subgroup o
 
 ```
 // S₂ canonicalization (commutative operation)
-(a + b) : S₂ => a + b : Canonical if a <= b;
-(a + b) : S₂ => b + a : Canonical if b < a;
+(a + b) : S₂ => a + b if a <= b;
+(a + b) : S₂ => b + a if b < a;
 
 // S₃ canonicalization (3 elements)
 (a * b * c) : S₃ => ordered3(a, b, c);
 
 // Helper function for S₃ ordering
-ordered3(a, b, c) => a * b * c : Canonical if a <= b && b <= c;
-ordered3(a, b, c) => a * c * b : Canonical if a <= c && c < b;
-ordered3(a, b, c) => b * a * c : Canonical if b < a && a <= c;
-ordered3(a, b, c) => b * c * a : Canonical if b <= c && c < a;
-ordered3(a, b, c) => c * a * b : Canonical if c < a && a <= b;
-ordered3(a, b, c) => c * b * a : Canonical if c < b && b < a;
+ordered3(a, b, c) => a * b * c if a <= b && b <= c;
+ordered3(a, b, c) => a * c * b if a <= c && c < b;
+ordered3(a, b, c) => b * a * c if b < a && a <= c;
+ordered3(a, b, c) => b * c * a if b <= c && c < a;
+ordered3(a, b, c) => c * a * b if c < a && a <= b;
+ordered3(a, b, c) => c * b * a if c < b && b < a;
 ```
 
 #### Cyclic Group (Cₙ)
 
 ```
 // C₂ canonicalization (180° rotation)
-(rotate180(x)) : C₂ => x : Canonical;
-(rotate180(rotate180(x))) : C₂ => x : Canonical;
+(rotate180(x)) : C₂ => x;
+(rotate180(rotate180(x))) : C₂ => x;
 
 // C₄ canonicalization (90° rotation)
-(rotate(x, n % 4)) : C₄ => x : Canonical if (n % 4) == 0;
-(rotate(x, n % 4)) : C₄ => rotate90(x) : Canonical if (n % 4) == 1;
-(rotate(x, n % 4)) : C₄ => rotate180(x) : Canonical if (n % 4) == 2;
-(rotate(x, n % 4)) : C₄ => rotate270(x) : Canonical if (n % 4) == 3;
+(rotate(x, n % 4)) : C₄ => x if (n % 4) == 0;
+(rotate(x, n % 4)) : C₄ => rotate90(x) if (n % 4) == 1;
+(rotate(x, n % 4)) : C₄ => rotate180(x) if (n % 4) == 2;
+(rotate(x, n % 4)) : C₄ => rotate270(x) if (n % 4) == 3;
 ```
 
 #### Dihedral Group (Dₙ)
@@ -437,16 +435,16 @@ ordered3(a, b, c) => c * b * a : Canonical if c < b && b < a;
 ```
 // D₄ canonicalization (square symmetry group)
 // First canonicalize rotations
-(rotate(x, n % 4)) : D₄ => x : Canonical if (n % 4) == 0;
-(rotate(x, n % 4)) : D₄ => rotate90(x) : Canonical if (n % 4) == 1;
-(rotate(x, n % 4)) : D₄ => rotate180(x) : Canonical if (n % 4) == 2;
-(rotate(x, n % 4)) : D₄ => rotate270(x) : Canonical if (n % 4) == 3;
+(rotate(x, n % 4)) : D₄ => x if (n % 4) == 0;
+(rotate(x, n % 4)) : D₄ => rotate90(x) if (n % 4) == 1;
+(rotate(x, n % 4)) : D₄ => rotate180(x) if (n % 4) == 2;
+(rotate(x, n % 4)) : D₄ => rotate270(x) if (n % 4) == 3;
 
 // Then handle reflections
-(reflect(x, axis)) : D₄ => reflectH(x) : Canonical if axis == "horizontal";
-(reflect(x, axis)) : D₄ => reflectV(x) : Canonical if axis == "vertical";
-(reflect(x, axis)) : D₄ => reflectD1(x) : Canonical if axis == "diagonal1";
-(reflect(x, axis)) : D₄ => reflectD2(x) : Canonical if axis == "diagonal2";
+(reflect(x, axis)) : D₄ => reflectH(x) if axis == "horizontal";
+(reflect(x, axis)) : D₄ => reflectV(x) if axis == "vertical";
+(reflect(x, axis)) : D₄ => reflectD1(x) if axis == "diagonal1";
+(reflect(x, axis)) : D₄ => reflectD2(x) if axis == "diagonal2";
 ```
 
 #### Alternating Groups (Aₙ)
@@ -474,7 +472,7 @@ Matrix groups have important applications in mathematics, physics, and computer 
 
 ```
 // GL canonicalization using row echelon form
-(M) : GL(n, F) => eval(rref(M)) : Canonical;
+(M) : GL(n, F) => eval(rref(M));
 (M) : GL(n, F) => discard if eval(det(M)) == 0;  // Not invertible ⇒ not in GL
 
 // SL canonicalization using normalized RREF with det = 1
@@ -498,7 +496,7 @@ Matrix groups have important applications in mathematics, physics, and computer 
 (x^a * y^b * z^c) => eval(Monomial(x, y, z, [a, b, c]));
 
 // Reduction via known ideal (Gröbner-like)
-(p) : Ideal(I) => eval(normal_form(p, I)) : Canonical;
+(p) : Ideal(I) => eval(normal_form(p, I));
 ```
 
 ### Gröbner Basis for Commutative Rings
@@ -752,13 +750,13 @@ rotate(rotate(x))   ⊢ rotate : Cₙ    // Detect cyclic group (Cₙ)
 
 ```
 // Using S₂ for commutative operations
-(a + b) : S₂ => ordered(a, b) : Canonical
+(a + b) : S₂ => ordered(a, b);
 
 // Using Cₙ for rotations
-rotate(x, k) : Cₙ => rotate(x, k % n) : Canonical
+rotate(x, k) : Cₙ => rotate(x, k % n);
 
 // Using Dₙ for transformations
-transform(x) : Dₙ => canonical_form_in_orbit(x) : Canonical
+transform(x) : Dₙ => canonical_form_in_orbit(x);
 ```
 
 ## Practical Applications
@@ -951,36 +949,36 @@ Examples for int₄ (4-bit signed integers, range: -8 to 7):
 
 ```
 // Inverse for multiplication
-(x * k) * k⁻¹ => x : Canonical if gcd(k, 2^n) == 1;
+(x * k) * k⁻¹ => x if gcd(k, 2^n) == 1;
 
 // Associativity and folding
-(x * k₁) * k₂ => x * eval(k₁ * k₂) : Canonical if gcd(k₁, 2^n) == 1 && gcd(k₂, 2^n) == 1;
+(x * k₁) * k₂ => x * eval(k₁ * k₂) if gcd(k₁, 2^n) == 1 && gcd(k₂, 2^n) == 1;
 ```
 
 #### Division as Shift or Multiplication with Inverse
 
 ```
 // Division by 2^k
-(x / 2^k) => x >> k : Canonical if logical/arithmetic_shift_valid(x, k);
+(x / 2^k) => x >> k if logical/arithmetic_shift_valid(x, k);
 
 // Division by invertible constant
-(x / k) => x * eval(mod_inverse(k, 2^n)) : Canonical if gcd(k, 2^n) == 1;
+(x / k) => x * eval(mod_inverse(k, 2^n)) if gcd(k, 2^n) == 1;
 ```
 
 #### XOR in (C₂)^n
 
 ```
 // Identity
-x ^ 0 => x : Canonical;
+x ^ 0 => x;
 
 // Inverse
-x ^ x => 0 : Canonical;
+x ^ x => 0;
 
 // Double applications
-(x ^ m) ^ m => x : Canonical;
+(x ^ m) ^ m => x;
 
 // Composition
-(x ^ a) ^ b => x ^ eval(a ^ b) : Canonical;
+(x ^ a) ^ b => x ^ eval(a ^ b);
 ```
 
 ## Functional Programming Optimizations
@@ -997,35 +995,35 @@ Group-theoretic properties enable powerful optimizations in functional programmi
 (λ(a, b).op(a, b)) ⊢ λ : Associative if op : Associative;
 
 // Function composition associativity
-(f ∘ (g ∘ h)) : Associative => ((f ∘ g) ∘ h) : Canonical;
+(f ∘ (g ∘ h)) : Associative => ((f ∘ g) ∘ h);
 
 // Identity function laws
-(id ∘ f) => f : Canonical;  // Left identity
-(f ∘ id) => f : Canonical;  // Right identity
+(id ∘ f) => f;  // Left identity
+(f ∘ id) => f;  // Right identity
 ```
 
 ### Collection Operation Fusion
 
 ```
 // Map fusion when function composition is detected
-map(f, map(g, xs)) => map(λ(x).f(g(x)), xs) : Canonical;
+map(f, map(g, xs)) => map(λ(x).f(g(x)), xs);
 
 // Filter fusion when predicates have logical properties
-filter(p, filter(q, xs)) => filter(λ(x).p(x) && q(x), xs) : Canonical;
+filter(p, filter(q, xs)) => filter(λ(x).p(x) && q(x), xs);
 
 // Map-filter interchange when functions preserve predicates
-map(f, filter(p, xs)) : Commutable => filter(p, map(f, xs)) : Canonical if independent(f, p);
+map(f, filter(p, xs)) : Commutable => filter(p, map(f, xs)) if independent(f, p);
 
 // Fold-map fusion
-fold(op, init, map(f, xs)) => fold(λ(acc, x).op(acc, f(x)), init, xs) : Canonical;
+fold(op, init, map(f, xs)) => fold(λ(acc, x).op(acc, f(x)), init, xs);
 ```
 
 ### Stream and Collection Optimizations
 
 ```
 // Stream operation fusion
-stream.map(f).map(g) => stream.map(λ(x).g(f(x))) : Canonical;
-stream.filter(p).filter(q) => stream.filter(λ(x).p(x) && q(x)) : Canonical;
+stream.map(f).map(g) => stream.map(λ(x).g(f(x)));
+stream.filter(p).filter(q) => stream.filter(λ(x).p(x) && q(x));
 
 // Detect parallelizable operations
 fold(op, id, xs) ⊢ fold : Parallelizable if op : Associative && op : Commutative;
@@ -1034,24 +1032,24 @@ fold(op, id, xs) ⊢ fold : Parallelizable if op : Associative && op : Commutati
 fold : Parallelizable => parallel_reduce : Optimized;
 
 // Special case optimizations
-fold(+, 0, map(λ(x).c * f(x), xs)) : Distributive => c * fold(+, 0, map(f, xs)) : Canonical if c : Constant;
+fold(+, 0, map(λ(x).c * f(x), xs)) : Distributive => c * fold(+, 0, map(f, xs)) if c : Constant;
 ```
 
 ### Algebraic Data Type Transformations
 
 ```
 // Option/Maybe monad
-map(f, None) => None : Canonical;
-map(f, Some(x)) => Some(f(x)) : Canonical;
+map(f, None) => None;
+map(f, Some(x)) => Some(f(x));
 
 // List monad
-flatMap(f, concat(xs, ys)) => concat(flatMap(f, xs), flatMap(f, ys)) : Canonical;
-flatMap(f, nil) => nil : Canonical;
+flatMap(f, concat(xs, ys)) => concat(flatMap(f, xs), flatMap(f, ys));
+flatMap(f, nil) => nil;
 
 // Monad laws
-flatMap(return, m) => m : Canonical;  // Left identity
-flatMap(f, return(x)) => f(x) : Canonical;  // Right identity
-flatMap(g, flatMap(f, m)) => flatMap(λ(x).flatMap(g, f(x)), m) : Canonical;  // Associativity
+flatMap(return, m) => m;  // Left identity
+flatMap(f, return(x)) => f(x);  // Right identity
+flatMap(g, flatMap(f, m)) => flatMap(λ(x).flatMap(g, f(x)), m);  // Associativity
 ```
 
 ## Cost Functions with Algebraic Structure
@@ -1077,27 +1075,6 @@ fn costWithGroups(expr : ast) -> double (
 
 		// Default costing for other expressions
 		_ => 1.0;
-	)
-)
-```
-
-### Cost Functions for Domain-Specific Optimization
-
-```
-// Prefer canonical forms when available
-fn domainAwareCost(expr : ast) -> double (
-	expr is (
-		// Prioritize expressions in canonical form
-		_ : Canonical => 0.5 * baseCost(expr);
-
-		// Prioritize expressions that have been simplified
-		_ : Simplified => 0.7 * baseCost(expr);
-
-		// Penalize expressions that should be expanded
-		_ : ShouldExpand => 1.5 * baseCost(expr);
-
-		// Default cost calculation
-		_ => baseCost(expr);
 	)
 )
 ```

@@ -444,17 +444,17 @@ A critical component of approximation is tracking error bounds to ensure the fin
 ```orbit
 // Error propagation for basic operations
 (a : Value(v₁) : Error(ε₁)) + (b : Value(v₂) : Error(ε₂)) →
-	(a + b) : Value(v₁ + v₂) : Error(ε₁ + ε₂) : Canonical;
+	(a + b) : Value(v₁ + v₂) : Error(ε₁ + ε₂);
 
 (a : Value(v₁) : Error(ε₁)) * (b : Value(v₂) : Error(ε₂)) →
-	(a * b) : Value(v₁ * v₂) : Error(|v₂|*ε₁ + |v₁|*ε₂ + ε₁*ε₂) : Canonical;
+	(a * b) : Value(v₁ * v₂) : Error(|v₂|*ε₁ + |v₁|*ε₂ + ε₁*ε₂);
 
 // Error analysis for specific approximation methods
 newton_sqrt(x, x_n, ε) : Error →
-	newton_sqrt(x, x_n, ε) : Error(ε*x) : Canonical;  // Relative error ε means absolute error ε*x
+	newton_sqrt(x, x_n, ε) : Error(ε*x);  // Relative error ε means absolute error ε*x
 
 taylor_sin(x, terms) : Error →
-	taylor_sin(x, terms) : Error(|x|^(2*terms+1) / factorial(2*terms+1)) : Canonical;
+	taylor_sin(x, terms) : Error(|x|^(2*terms+1) / factorial(2*terms+1));
 
 // Track error through composed functions
 sin(sqrt(x)) : Error(ε₁ + ε₂) if sqrt(x) : Error(ε₁) and sin(sqrt(x)) : Error(ε₂);
@@ -714,16 +714,16 @@ expr : ULPError(n) → result : ULPError(propagated_error);
 
 // Example rules for tracking ULP errors through operations
 (a : ULPError(ua)) + (b : ULPError(ub)) →
-	(a + b) : ULPError(propagate_ulp_addition(a, b, ua, ub)) : Canonical;
+	(a + b) : ULPError(propagate_ulp_addition(a, b, ua, ub));
 
 (a : ULPError(ua)) - (b : ULPError(ub)) →
-	(a - b) : ULPError(propagate_ulp_subtraction(a, b, ua, ub)) : Canonical;
+	(a - b) : ULPError(propagate_ulp_subtraction(a, b, ua, ub));
 
 (a : ULPError(ua)) * (b : ULPError(ub)) →
-	(a * b) : ULPError(ua + ub + 0.5) : Canonical; // Standard rounding error + propagation
+	(a * b) : ULPError(ua + ub + 0.5); // Standard rounding error + propagation
 
 (a : ULPError(ua)) / (b : ULPError(ub)) →
-	(a / b) : ULPError(propagate_ulp_division(a, b, ua, ub)) : Canonical;
+	(a / b) : ULPError(propagate_ulp_division(a, b, ua, ub));
 ```
 
 The implementation measures precision loss based on the specific operation and operand values:
