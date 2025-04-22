@@ -2212,7 +2212,17 @@ class TextClip extends NativeWidgetClip {
 	private function getSanitizedText(text : String) : String {
 		if (preventXSS) {
 			// We have to allow simple '<', '>' and tag-like (but without attributes) texts
-			untyped __js__("text = /<[^>]*[,// ][^>]*>/.test(text) ? DOMPurify.sanitize(text) : text");
+			// Regex explanation:
+			// <         : Matches opening bracket
+			// [^>]*     : Matches any chars except closing bracket
+			// [,// ]    : Matches comma, slash or space (attribute separators)
+			// [^<]      : Ensures next char is not another opening bracket
+			// [^>]*     : Matches any chars except closing bracket
+			// >         : Matches closing bracket
+			//
+			// This pattern identifies HTML tags with attributes (potential XSS vectors)
+			// while allowing simple tag-like structures without attributes
+			untyped __js__("text = /<[^>]*[,// ][^<][^>]*>/.test(text) ? DOMPurify.sanitize(text) : text");
 		}
 		return text;
 	}
