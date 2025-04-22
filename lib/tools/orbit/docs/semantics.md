@@ -988,6 +988,345 @@ closure(fn1, env1), fn1 = closure(fn2, env2) ⊢
 
 By representing these transformations as rewrite rules in Orbit, we obtain a powerful and flexible system for optimizing functional programs while preserving their semantics.
 
+## Register Allocation via Graph Coloring
+
+With SSA-based analysis and scope information in place, we can implement register allocation using graph coloring, expressing the entire process through Orbit's rewrite system. This approach produces efficient code while maintaining the semantics of the original program.
+
+### 1. Interference Graph Construction
+
+The first step is to build an interference graph where each node represents a variable and edges represent interferences (variables that need to be live at the same time).
+
+#### 1.1 Interference Graph Domains
+
+```orbit
+// Domains for interference graph
+InterferenceGraph ⊂ Term;
+Interferes(v1 : SSAVar, v2 : SSAVar) ⊂ Property;
+LiveAt(v : SSAVar, point : Location) ⊂ Property;
+Degree(v : SSAVar, count : Integer) ⊂ Property;
+
+// Register allocation domains
+Register ⊂ Term;
+NumRegisters(n : Integer) ⊂ Property;
+Color(v : SSAVar, color : Integer) ⊂ Property;
+Spilled(v : SSAVar) ⊂ Property;
+```
+
+#### 1.2 Computing Live Ranges
+
+Live ranges determine when variables interfere. We compute them with rewrite rules:
+
+```orbit
+// Variable is live at its definition point
+define(x_i, expr) : SSADef, PointOf(define(x_i, expr), point) ⊢
+	LiveAt(x_i, point);
+
+// Variable is live at each use
+use(x_i) : InSSA, PointOf(use(x_i), point) ⊢
+	LiveAt(x_i, point);
+
+// Live range propagation through control flow
+LiveAt(v, point), SuccessorPoint(point, next),
+!Killed(v, point, next) ⊢ LiveAt(v, next);
+
+// Phi nodes create special backward-propagating live ranges
+phiParam(phi_node, pred_block, v_i), ExitPoint(pred_block, exit_point) ⊢
+	LiveAt(v_i, exit_point);
+```
+
+#### 1.3 Building Interference Edges
+
+```orbit
+// Two different variables that are live at the same point interfere
+LiveAt(v1, point), LiveAt(v2, point), v1 ≠ v2,
+!Duplicate(v1, v2) ⊢ Interferes(v1, v2);
+
+// Explicit interference with phi results for the variables coming from the same path
+assign(x_i, phi([...])) : SSAPhi, PhiParam(phi_node, block, v_j),
+!Duplicate(x_i, v_j) ⊢ Interferes(x_i, v_j);
+
+// Compute degree of each node (number of interferences)
+v : SSAVar, count = CountInterfering(v) ⊢ Degree(v, count);
+```
+
+### 2. Graph Coloring Algorithm
+
+We model graph coloring using rewrite rules. This is a simplified version of the Chaitin-Briggs algorithm:
+
+#### 2.1 Building the Coloring Stack
+
+```orbit
+// Start with an empty stack
+InitializeStack() ⊢ Stack([]) : ColoringStack;
+
+// Push low-degree nodes onto the stack (degree < available registers)
+Stack(nodes) : ColoringStack, v : SSAVar !: OnStack, !Spilled(v),
+NumRegisters(k), Degree(v, d), d < k ⊢
+	Stack([v | nodes]) : ColoringStack, v : OnStack;
+
+// If no low-degree nodes exist, choose the highest-degree node to spill
+Stack(nodes) : ColoringStack,
+!(∃v. !OnStack(v) ∧ !Spilled(v) ∧ Degree(v, d) ∧ NumRegisters(k) ∧ d < k),
+v : SSAVar !: OnStack, !Spilled(v), HighestDegree(v) ⊢
+	v : Spilled, v : OnStack, Stack([v | nodes]) : ColoringStack;
+
+// When all nodes are on stack, start coloring
+Stack(nodes) : ColoringStack,
+(∀v. v : SSAVar ⊢ (OnStack(v) ∨ Spilled(v))) ⊢
+	BeginColoring(nodes) : ColoringPhase;
+```
+
+#### 2.2 Assigning Colors (Registers)
+
+```orbit
+// Pop nodes from stack and assign colors (registers)
+BeginColoring([v | rest]) : ColoringPhase, NumRegisters(k),
+AvailableColors(v, used, k) ⊢
+	Coloring(rest) : ColoringPhase, Color(v, FirstAvailable(used, k));
+
+// Helper to find available colors based on already-colored neighbors
+v : SSAVar, neighbors = [n | Interferes(v, n) ∧ Color(n, _)],
+colors = [c | n ∈ neighbors ∧ Color(n, c)],
+avail = {0,1,...,k-1} - colors ⊢
+	AvailableColors(v, avail, k);
+
+// When a spilled node is encountered during coloring, skip it
+BeginColoring([v | rest]) : ColoringPhase, v : Spilled ⊢
+	BeginColoring(rest) : ColoringPhase;
+
+// When we finish coloring, verify results
+BeginColoring([]) : ColoringPhase ⊢
+	VerifyColoring() : ValidationPhase;
+```
+
+#### 2.3 Handling Register Pressure and Spilling
+
+```orbit
+// Verification may detect coloring failures - nodes that couldn't get a color
+VerifyColoring() : ValidationPhase,
+∃v. !Spilled(v) ∧ !Color(v, _) ⊢
+	SpillMore() : SpillPhase;
+
+// When verification succeeds, prepare for code generation
+VerifyColoring() : ValidationPhase,
+∀v. v : SSAVar ⊢ (Spilled(v) ∨ Color(v, _)) ⊢
+	PrepareCodeGen() : CodeGenPhase;
+```
+
+### 3. Code Generation with Register Assignments
+
+#### 3.1 Mapping Colors to Physical Registers
+
+```orbit
+// Associate colors with physical register names
+Color(v, 0) ⊢ RegisterName(v, "rax");
+Color(v, 1) ⊢ RegisterName(v, "rbx");
+Color(v, 2) ⊢ RegisterName(v, "rcx");
+// ... and so on for all available registers
+```
+
+#### 3.2 Transforming Code to Use Registers
+
+```orbit
+// Transform variable references to register references in assignments
+assign(x_i, expr) : SSADef, RegisterName(x_i, reg) ⊢
+	assign(reg, expr) : MachineCode;
+
+// Transform variable references to register references in expressions
+use(x_i) : InSSA, RegisterName(x_i, reg) ⊢
+	use(reg) : MachineCode;
+
+// Generate memory operations for spilled variables
+assign(x_i, expr) : SSADef, Spilled(x_i), StackSlot(x_i, offset) ⊢
+	[compute(expr, "rax"), store("rax", "rbp", offset)] : MachineCode;
+
+use(x_i) : InSSA, Spilled(x_i), StackSlot(x_i, offset) ⊢
+	load("rbp", offset, "rax") : MachineCode;
+```
+
+### 4. Interfacing with SSA and Scope Information
+
+We leverage the scope analysis and SSA information to make better register allocation decisions:
+
+```orbit
+// Variables from the same scope but different basic blocks may not interfere
+// even if their live ranges overlap (if control flow prevents them from being used together)
+LiveAt(v1, point1), LiveAt(v2, point2), ScopeOf(v1, s), ScopeOf(v2, s),
+BlockOf(point1, b1), BlockOf(point2, b2), b1 ≠ b2,
+!CanReach(b1, b2) ∧ !CanReach(b2, b1) ⊢
+	NonInterfering(v1, v2);
+
+// Environment-allocated variables don't need registers
+AllocateInEnvironment(v, env, idx) ⊢ EnvironmentAllocated(v);
+
+// Don't consider environment-allocated variables for register allocation
+v : SSAVar, EnvironmentAllocated(v) ⊢ SkipRegisterAllocation(v);
+```
+
+### 5. Example: Allocating Registers in a Function
+
+Let's look at a practical example of the register allocation process for a simple function:
+
+```js
+function sumSquares(n) {
+	let sum = 0;
+	for (let i = 1; i <= n; i++) {
+		let square = i * i;
+		sum = sum + square;
+	}
+	return sum;
+}
+```
+
+#### 5.1 After SSA Conversion
+
+```orbit
+// SSA Form
+function sumSquares(n_1) {
+	let sum_1 = 0;
+	let i_1 = 1;
+	goto loop_condition;
+
+loop_condition:
+	let continue_1 = i_1 <= n_1;
+	if (continue_1) goto loop_body else goto exit;
+
+loop_body:
+	let square_1 = i_1 * i_1;
+	let sum_2 = sum_1 + square_1;
+	let i_2 = i_1 + 1;
+	sum_1 = phi([sum_1, sum_2]);
+	i_1 = phi([i_1, i_2]);
+	goto loop_condition;
+
+exit:
+	return sum_1;
+}
+```
+
+#### 5.2 Interference Graph
+
+```orbit
+// Interferences
+Interferes(n_1, sum_1);
+Interferes(n_1, i_1);
+Interferes(n_1, continue_1);
+Interferes(n_1, square_1);
+Interferes(sum_1, i_1);
+Interferes(sum_1, continue_1);
+Interferes(sum_1, square_1);
+Interferes(i_1, continue_1);
+Interferes(i_1, square_1);
+Interferes(continue_1, i_2);
+Interferes(square_1, sum_2);
+Interferes(square_1, i_2);
+Interferes(sum_2, i_2);
+
+// Degrees
+Degree(n_1, 4);
+Degree(sum_1, 4);
+Degree(i_1, 4);
+Degree(continue_1, 3);
+Degree(square_1, 4);
+Degree(sum_2, 2);
+Degree(i_2, 3);
+```
+
+#### 5.3 Graph Coloring Process
+
+Assuming we have 4 registers available:
+
+```orbit
+// Initial stack build (low-degree first)
+Stack([sum_2, continue_1, i_2]);
+
+// No more low-degree nodes, spill highest-degree
+Spilled(n_1); // Chosen for spill
+Stack([n_1, sum_2, continue_1, i_2]);
+
+// Continue with remaining nodes
+Stack([square_1, i_1, sum_1, n_1, sum_2, continue_1, i_2]);
+
+// Start coloring (popping in reverse order)
+Color(i_2, 0);       // Register 0
+Color(continue_1, 1); // Register 1
+Color(sum_2, 2);     // Register 2
+// Skip n_1 (spilled)
+Color(sum_1, 2);     // Register 2 (reusing sum_2's register)
+Color(i_1, 0);       // Register 0 (reusing i_2's register)
+Color(square_1, 3);  // Register 3
+```
+
+#### 5.4 Register Allocation Result
+
+```orbit
+// Physical register mapping
+RegisterName(i_1, "rax");    // reg0
+RegisterName(i_2, "rax");    // reg0
+RegisterName(continue_1, "rbx"); // reg1
+RegisterName(sum_1, "rcx");   // reg2
+RegisterName(sum_2, "rcx");   // reg2
+RegisterName(square_1, "rdx"); // reg3
+StackSlot(n_1, -8);      // spilled to stack
+```
+
+#### 5.5 Final Code With Registers
+
+```orbit
+// Machine code with registers
+function sumSquares() {
+	// Parameter n_1 already spilled to [rbp-8] by convention
+	mov rcx, 0          // sum_1 = 0
+	mov rax, 1          // i_1 = 1
+	jmp loop_condition
+
+loop_condition:
+	cmp rax, [rbp-8]    // compare i_1 and n_1 (from stack)
+	setle bl            // continue_1 = i_1 <= n_1
+	test bl, bl
+	jnz loop_body
+	jmp exit
+
+loop_body:
+	mov rdx, rax        // square_1 = i_1
+	imul rdx, rax       // square_1 = square_1 * i_1
+	add rcx, rdx        // sum_2 = sum_1 + square_1
+	inc rax             // i_2 = i_1 + 1
+	jmp loop_condition  // phi nodes handled naturally by register reuse
+
+exit:
+	mov rax, rcx        // return sum_1 (result in rax)
+	ret
+}
+```
+
+This example demonstrates how Orbit's rewrite system can model the complete register allocation process using graph coloring. By expressing allocation as rewrite rules, we obtain a clear and formal description of the algorithm while leveraging scope and SSA information to optimize register usage.
+
+### 6. Extensions and Advanced Techniques
+
+The register allocation framework can be extended to handle more advanced techniques:
+
+```orbit
+// Register coalescing - avoid unnecessary moves between variables
+Interferes(x_i, y_j) !: true,
+Move(y_j, x_i), Color(x_i, c) ⊢
+	Color(y_j, c), Coalesced(y_j, x_i);
+
+// Register hints for ABI conventions
+ReturnValue(v) ⊢ PreferRegister(v, "rax");
+Parameter(v, 1) ⊢ PreferRegister(v, "rdi");
+Parameter(v, 2) ⊢ PreferRegister(v, "rsi");
+
+// Live range splitting for better allocation
+SpillCandidate(v), LongLiveRange(v) ⊢
+	SplitLiveRange(v, split_points) : SplitPhase;
+
+// Register allocation for SIMD registers
+SIMDVariable(v) ⊢ AllocateSIMDRegister(v);
+```
+
+These extensions allow the register allocator to handle complex codebases, optimizing for both general-purpose and special-purpose registers while respecting ABI conventions and minimizing the performance impact of spills.
+
 ## Conclusion
 
 By using pattern matching with domain annotations and the entailment operator, Orbit can infer semantic properties of expressions and propagate them appropriately. The ability to bubble up properties from subexpressions is particularly powerful, allowing for compositional reasoning about complex expressions while maintaining precision. This approach enables sophisticated program transformation while preserving semantic guarantees.
