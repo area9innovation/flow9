@@ -10,7 +10,7 @@ This document consolidates terminology, structures, domains, and notation used a
 *   **Domain Annotation (`: Domain`):** Syntax used to associate an expression with a domain. On the LHS of a rule, it acts as a constraint; on the RHS, it's an assertion.
 *   **Negative Domain Guard (`!: Domain`):** Syntax used in patterns to match expressions that *do not* belong to the specified domain. Useful for preventing infinite loops or applying rules only once.
 *   **Domain Hierarchy (`⊂` or `c=`):** Defines subset relationships between domains (e.g., `Integer ⊂ Real`). Rules defined for parent domains apply to child domains.
-*   **Canonical Form:** A unique, standard representation chosen from a set of equivalent expressions. Essential for equality testing, optimization, and reducing redundancy. Marked with `: Canonical`.
+*   **Canonical Form:** A unique, standard representation chosen from a set of equivalent expressions. Essential for equality testing, optimization, and reducing redundancy. Marked with `: Canonical`. TODO: We might not require this, since each oclass is intended to be canonical at saturation.
 *   **AST (Abstract Syntax Tree):** The tree structure representing code or expressions. Orbit has first-class support for AST manipulation.
 	*   `: ast`: Annotation indicating a function parameter receives an unevaluated AST.
 	*   `quote(e)`: Prevents evaluation, treating `e` as an AST.
@@ -24,6 +24,7 @@ This document consolidates terminology, structures, domains, and notation used a
 	*   `e-node`: Represents an operation and its children (which are e-classes).
 	*   `e-class`: Represents a set of equivalent e-nodes.
 	*   `makeOGraph`, `addOGraph`, `mergeOGraphNodes`, `addDomainToNode`, `matchOGraphPattern`, etc.: Runtime functions for manipulating OGraphs.
+TODO: We need an efficient mechanism to pattern match from a domain down to the terms in that domain.
 
 ## Rewriting Syntax
 
@@ -45,24 +46,24 @@ This document consolidates terminology, structures, domains, and notation used a
 	*   `GL(n,F)`: General Linear group (invertible n×n matrices over field F).
 	*   `SL(n,F)`: Special Linear group (n×n matrices with determinant 1).
 	*   `O(n)`: Orthogonal group (n×n matrices M where MᵀM = I).
-	*   `Q₈`: Quaternion group.
-	*   `ℤ/nℤ` or `ℤₙ`: Integers modulo n (isomorphic to Cₙ under addition).
+	*   `Q₈`: Quaternion group. TODO: Add this syntax to Orbit.
+	*   `ℤ/nℤ` or `ℤₙ`: Integers modulo n (isomorphic to Cₙ under addition). TODO: Add this syntax to Orbit.
 	*   `(ℤ/nℤ)^*`: Multiplicative group of units modulo n.
 *   **Group Operation Symbols:**
-	*   `·` or `Compose(g,h)`: Abstract group operation.
+	*   `·` or `Compose(g,h)`: Abstract group operation. TODO: Add this syntax to Orbit.
 	*   `×`: Direct Product (independent groups).
 	*   `⋊`: Semi-Direct Product (one group acts on another).
 	*   `≀`: Wreath Product (hierarchical action).
 *   **Group Properties/Concepts:**
-	*   `|G|`: Order (size) of group G.
+	*   `|G|`: Order (size) of group G. TODO: Add this syntax to Orbit.
 	*   `Identity(G)`: Identity element.
 	*   `Inverse(g)`: Inverse of element g.
 	*   `⊂`: Subgroup relation.
-	*   `⊲`: Normal subgroup relation.
-	*   `≅`: Isomorphism (structurally identical groups).
+	*   `⊲`: Normal subgroup relation. TODO: Add this syntax to Orbit.
+	*   `≅`: Isomorphism (structurally identical groups). TODO: Add this syntax to Orbit.
 	*   `Action`: How a group transforms elements of a set.
 	*   `Orbit`: Set of elements reachable from one element via group action.
-	*   `Homomorphism (φ)`: Structure-preserving map between groups.
+	*   `Homomorphism (φ)`: Structure-preserving map between groups. TODO: Add this syntax to Orbit.
 	*   `Automorphism (Aut(G))`: Isomorphism from a group to itself.
 	*   `Kernel`: Elements mapping to identity under homomorphism.
 	*   `Image`: Set of elements reached by homomorphism.
@@ -75,10 +76,10 @@ This document consolidates terminology, structures, domains, and notation used a
 *   **Algebraic Structures:** `Set`, `Magma`, `Semigroup`, `Monoid`, `Group`, `AbelianGroup`, `Ring`, `Field`, `Vector Space`, `BooleanAlgebra`, `Lattice`.
 *   **Numbers:** `Integer`, `Int32`, `Rational`, `Real`, `Double`, `Complex`, `Numeric`.
 *   **Linear Algebra:** `Matrix`, `Vector`, `Transpose (Aᵀ)`, `Inverse (A⁻¹)`, `Determinant (det(A))`, `Trace (tr(A))`, `Dot Product (·)`, `Cross Product (×)`, `Row Echelon Form (rref)`, Matrix Decompositions (`svd`, `eigen`, `qr`, `lu`, `cholesky`), `DiagonalMatrix`, `SymmetricMatrix`, `OrthogonalMatrix`, etc.
-*   **Calculus:** `Differential Calculus`, `Derivative (d/dx)`, `Partial Derivative (∂/∂xᵢ)`, `Gradient (∇)`, `Jacobian (J(f))`, `Hessian (H(f))`, `Integral (∫)`, `Summation (∑)`, `Limit`.
+*   **Calculus:** `Differential Calculus`, `Derivative (d/dx)`, `Partial Derivative (∂/∂xᵢ)`, `Gradient (∇)`, `Jacobian (J(f))`, `Hessian (H(f))`, `Integral (∫)`, `Summation (∑)`, `Limit`. TODO: Add this syntax to Orbit.
 *   **Polynomials:** `Polynomial`, `Monomial`, `Polynomial Ring`, `Ideal (⟨...⟩)`, `Gröbner Basis`, `Leading Term (LT)`, `Normal Form (NF)`, `S-polynomial (S(f,g))`, Monomial Orders (`lex`, `grlex`, `grevlex`).
 *   **Logic:** `Boolean`, Propositional Logic (`&&`/`∧`, `||`/`∨`, `!` /`¬`), Quantifiers (`∀`, `∃`), BDD (`ITE(v,t₀,t₁)`), CNF/DNF.
-*   **Tensors:** Higher-dimensional arrays, Index Notation (`T^{i}_{j}`), Contraction (`C(T)`), Tensor Product (`⊗`), Einstein Summation.
+*   **Tensors:** Higher-dimensional arrays, Index Notation (`T^{i}_{j}`), Contraction (`C(T)`), Tensor Product (`⊗`), Einstein Summation. TODO: Add this syntax to Orbit.
 *   **Interval Arithmetic:** Intervals (`[a,b]`), Interval operations, `inf`, `sup`, `width`, `mid`, Intersection (`∩`), Hull (`∪`).
 *   **Transforms:** `DFT`, `FFT`, `WHT`, `Convolution`.
 *   **Recurrence Relations:** `T(n)`, Master Theorem, Akra-Bazzi, Characteristic Polynomial, Generating Functions.
@@ -86,9 +87,9 @@ This document consolidates terminology, structures, domains, and notation used a
 ## Computer Science Domains
 
 *   **Data Structures:** `Array`, `List`, `Set`, `Bag/Multiset`, `Binary Tree`, `Trie`, `Graph`.
-*   **Automata & Formal Languages:** `Finite Automata (DFA, NFA)`, `Regular Expression (Regex)`, `Alphabet (Σ)`, `Language (L(r))`, `ε` (empty string), `∅` (empty set), `State (q)`, `Transition (δ)`.
+*   **Automata & Formal Languages:** `Finite Automata (DFA, NFA)`, `Regular Expression (Regex)`, `Alphabet (Σ)`, `Language (L(r))`, `ε` (empty string), `∅` (empty set), `State (q)`, `Transition (δ)`. TODO: Add this syntax to Orbit.
 *   **Compilers & Languages:** `Parser Combinators` (`⟨*⟩`, `⟨|⟩`), `Grammar`, `Left-recursion`, `Left-factoring`, `First/Follow sets`.
-*   **Concurrency:** `Process Calculus`, Parallel (`∥`), Choice (`+`/`⊕`), Sequence (`;`), Replication (`!`), Restriction (`ν`), Channels (`a↑`/`a↓`), Locks, Barriers, Threads.
+*   **Concurrency:** `Process Calculus`, Parallel (`∥`), Choice (`+`/`⊕`), Sequence (`;`), Replication (`!`), Restriction (`ν`), Channels (`a↑`/`a↓`), Locks, Barriers, Threads. TODO: Add this syntax to Orbit.
 *   **Functional Programming:** `Lambda (λ)`, `map`, `filter`, `fold`, `Functor`, `Monad`, `Applicative`.
 *   **Complexity Analysis:** `O(...)`, `Θ(...)`, `Ω(...)`, `Cost`, `Potential (Φ)`, Amortized Analysis, Average/Worst Case.
 *   **Cryptography:** `Homomorphic Encryption` (`E(m)`, `D(c)`, `⊕`, `⊗`), Modular Arithmetic (`mod n`), `φ(n)`, RSA, Diffie-Hellman.
@@ -108,10 +109,7 @@ This consolidated list provides a reference for the key terms and notations used
 
 To enable a unified system where rules and properties can be inherited and shared, we can structure the identified domains into a conceptual lattice or hierarchy. This hierarchy uses the subset relation (`⊂`) to denote that elements of a subdomain also belong to the superdomain, allowing rules defined for broader categories (like `Ring`) to apply to more specific instances (like `Integer` or `Int32`).
 
-This is one possible structure; the exact relationships can be refined based on the specific semantics desired within the Orbit system.
-
-
-\`\`\`
+```
 Top (Most General Domain)
  ├── ComputationalObject
  │   ├── DataStructure
@@ -120,157 +118,19 @@ Top (Most General Domain)
  │   │   │   ├── List
  │   │   │   └── String
  │   │   ├── Map / Dictionary
- │   │   ├── Set / Multiset (Bag)
+ │   │   ├── Set
+ │   │   ├── Bag
  │   │   ├── Tree
  │   │   │   ├── BinaryTree
  │   │   │   └── Trie
- │   │   └── Graph (Directed/Undirected)
- │   ├── Expression / AST (Abstract Syntax Tree)
- │   │   ├── OrbitExpr (Orbit's own AST)
- │   │   └── MathExpr (Mathematical Notation)
- │   └── Representation
- │       ├── BDD (Binary Decision Diagram)
- │       ├── PolynomialSystem
- │       └── State (e.g., CubeState, SudokuGrid)
+ │   │   └── Graph
+ │   │       ├── Directed Graph
+ │   │       └── UnDirected Graph
+ │   └── Expression / AST (Abstract Syntax Tree)
+ │       ├── OrbitExpr (Orbit's own AST)
+ │       └── MathExpr (Mathematical Notation)
  │
- ├── MathematicalStructure
- │   ├── AlgebraicStructure
- │   │   ├── SetTheory (Operations: ∪, ∩)
- │   │   ├── Magma
- │   │   │   └── Semigroup
- │   │   │       └── Monoid
- │   │   │           ├── Group
- │   │   │           │   ├── AbelianGroup
- │   │   │           │   │   └── CyclicGroup (Cₙ)
- │   │   │           │   │       └── IntegersModN (ℤ/nℤ)
- │   │   │           │   ├── SymmetricGroup (Sₙ)
- │   │   │           │   │   └── AlternatingGroup (Aₙ)
- │   │   │           │   ├── DihedralGroup (Dₙ)
- │   │   │           │   ├── MatrixGroup
- │   │   │           │   │   ├── GeneralLinearGroup (GL(n,F))
- │   │   │           │   │   │   └── SpecialLinearGroup (SL(n,F))
- │   │   │           │   │   └── OrthogonalGroup (O(n))
- │   │   │           │   └── QuaternionGroup (Q₈)
- │   │   │           └── Semiring
- │   │   │               └── Ring
- │   │   │                   ├── CommutativeRing
- │   │   │                   │   ├── PolynomialRing
- │   │   │                   │   │   └── Ideal / GröbnerBasis
- │   │   │                   │   └── Field
- │   │   │                   │       ├── Rational
- │   │   │                   │       ├── Real
- │   │   │                   │       │   └── Interval // Interval Arithmetic relates here
- │   │   │                   │       └── Complex
- │   │   │                   └── Integer ⊂ CommutativeRing // Integer is a Ring, subset of Rational
- │   │   │                       └── IntN (e.g., Int32) ⊂ Integer // Finite Integer Ring/Group
- │   │   ├── VectorSpace (over a Field)
- │   │   │   ├── Vector
- │   │   │   └── Matrix
- │   │   ├── Tensor
- │   │   └── Lattice
- │   │       └── DistributiveLattice
- │   │           └── BooleanAlgebra
- │   │               └── BooleanFunction (represented by LogicExpr, BDD, CNF, etc.)
- │   └── Calculus
- │       ├── DifferentialCalculus (Operators: d/dx, ∂/∂xᵢ, ∇, J, H)
- │       ├── IntegralCalculus (Operators: ∫)
- │       └── TensorCalculus (Operators: ∇ᵢ, div, curl)
- │
- ├── ProgrammingConstruct
- │   ├── Type
- │   │   ├── PrimitiveType (int, float, bool, string)
- │   │   ├── ConstructedType (list<T>, map<K,V>, FunctionType)
- │   │   └── OrbitType (Int, Double, String, Bool, Ast, Function)
- │   ├── Effect
- │   │   ├── Pure
- │   │   ├── State (ReadOnlyState)
- │   │   ├── IO (Console)
- │   │   └── Exception
- │   ├── ConcurrencyConstruct
- │   │   ├── Process (PiCalculus, CSP)
- │   │   ├── Channel
- │   │   └── SynchronizationPrimitive (Lock, Barrier)
- │   ├── LoopConstruct / IterationDomain
- │   ├── Parser / GrammarConstruct
- │   └── MemoryLayout (AoS, SoA, RowMajor, ColMajor)
- │
- ├── AnalysisProperty
- │   ├── SemanticProperty
- │   │   ├── Associative
- │   │   ├── Commutative (often linked to S₂)
- │   │   ├── Distributive
- │   │   ├── Idempotent
- │   │   └── Invertible (InvertibleIf)
- │   ├── ComplexityMeasure
- │   │   ├── Cost (O, Θ, Ω)
- │   │   ├── Potential (Φ)
- │   │   ├── AmortizedCost, AverageCost, WorstCost, BitCost
- │   │   └── SpaceComplexity
- │   ├── NumericalProperty
- │   │   ├── Precision / ErrorBound
- │   │   ├── Stability
- │   │   └── ConditionNumber
- │   └── VerificationProperty
- │       ├── Correctness
- │       └── Termination
- │
- ├── FormalSystem
- │   ├── LogicSystem (Propositional, Predicate)
- │   ├── FormalLanguage
- │   │   └── RegularLanguage (Regex, DFA, NFA)
- │   └── CategoryTheoryConstruct (Functor, Monad, Applicative)
- │
- └── ApplicationDomain
-		 ├── SignalProcessing (DFT, FFT, WHT)
-		 ├── Cryptography (HomomorphicEncryption, RSA, ModularArithmetic)
-		 ├── Physics / Simulation (NBodyProblem, PDE, Electrodynamics)
-		 ├── Graphics (Transformations, Rendering)
-		 ├── ConstraintSatisfaction (Sudoku, Rubik's Cube)
-		 └── MachineLearning (NeuralNetworkOps)
-
-\`\`\`
-
-
-**Explanation and Usage:**
-
-1.  **Hierarchy:** Indentation represents the `⊂` relationship. For example, `CyclicGroup ⊂ AbelianGroup ⊂ Group`.
-2.  **Inheritance:** A rule defined for `Group` (like associativity) automatically applies to `AbelianGroup`, `CyclicGroup`, `Sₙ`, etc. A rule for `Ring` applies to `Integer`, `Real`, `PolynomialRing`.
-3.  **Multiple Inheritance:** Some domains fit in multiple places (e.g., `BooleanAlgebra` is both a `Ring` and a `DistributiveLattice`). The O-Graph supports multiple domain annotations per e-class to handle this.
-4.  **Instances vs. Subtypes:** Some entries are instances (e.g., `Sₙ` is *an instance* of `Group`) while others are true subtypes (e.g., `Integer` *is a kind of* `Ring`). The `⊂` notation is used broadly here to indicate that properties/rules should be inherited.
-5.  **Orthogonal Concepts:** Some domains like `Type`, `Effect`, `Complexity`, or `MemoryLayout` are somewhat orthogonal to the mathematical structures but interact with them. They are grouped logically.
-6.  **Purpose:** This lattice allows Orbit to automatically apply general mathematical laws (like commutativity via `S₂` defined for `AbelianGroup`) to specific computational types (like Orbit's `Int` or `Double`) once the connection (`Int ⊂ Ring ⊂ AbelianGroup`) is established. It also enables cross-domain rule application where structures are isomorphic (e.g., `ℤ/nℤ` addition and `Cₙ`).
-
-This unified structure allows the Orbit system to reason about expressions from diverse sources within a single, coherent framework, maximizing code reuse for rewrite rules and enabling powerful cross-domain optimizations based on shared underlying mathematical principles.
-
-## Aligning Orbit's Domain Hierarchy with Lean/Mathlib
-
-To facilitate verification of Orbit transformations by Lean and the potential use of Lean theorems as Orbit rewrite rules, the **mathematical structure** part of Orbit's domain hierarchy should closely mirror the type class hierarchy used in Mathlib.
-
-**Alignment Principles:**
-
-1.  **Mirror Algebraic Structures:** Orbit domains representing standard algebraic structures (`Semigroup`, `Monoid`, `Group`, `Ring`, `Field`, `VectorSpace`, `Lattice`, etc.) should directly correspond to Mathlib's type classes (`semigroup`, `monoid`, `group`, `ring`, `field`, `vector_space`, `lattice`). The naming should be consistent where possible.
-2.  **Use `⊂` for Inheritance:** Orbit's subset relation (`⊂`) between domains should mirror Mathlib's type class inheritance (`extends`). For example, since `ring` extends `add_comm_group` and `monoid` in Lean, Orbit should have `Ring ⊂ AbelianGroup` and `Ring ⊂ Monoid`.
-3.  **Map Concrete Types:** Create Orbit domains for base types corresponding to Lean's types (`Int` for `ℤ`, `Real` for `ℝ`, `Rat` for `ℚ`, `Nat` for `ℕ`, `Bool` for `bool`). The `⊂` relationships should reflect Lean's coercions or instance relationships (e.g., `Int ⊂ Rat ⊂ Real`).
-4.  **Axioms vs. Properties:**
-    *   **Lean:** Defines structures via axioms (e.g., `add_comm : ∀ a b : G, a + b = b + a` within `add_comm_group`). Theorems are proven from these axioms.
-    *   **Orbit:** Can represent these properties using specific domains or annotations on operators. For interoperability:
-        *   Lean theorems (`lhs = rhs`) can translate to Orbit rewrite rules (`lhs <=> rhs` or `lhs => rhs`).
-        *   Orbit transformations (`e1 => e2`) need to generate Lean proof goals (`e1 = e2`) within the appropriate algebraic context (e.g., `variables [ring R] (a b c : R) ... prove (a * (b + c) = a * b + a * c)`).
-5.  **Symmetry Groups:** Orbit's explicit symmetry groups (`S₂`, `Cₙ`, etc.) used for canonicalization relate to Mathlib's axioms. For instance, if an Orbit domain `MyDomain` inherits from `AbelianGroup`, an Orbit rule like `a:MyDomain + b:MyDomain ⊢ + : S₂` establishes the link. This means Orbit's `S₂` canonicalization rule for `+` is justified by the `add_comm` axiom proven for `AbelianGroup` in Lean.
-6.  **Computational Domains:** Domains unique to Orbit (like `Effect`, `Cost`, `MemoryLayout`, `Approximation`) might not have direct Mathlib algebraic counterparts. Verifying transformations involving these might require specialized Lean theories or treating them as uninterpreted properties during verification of the algebraic parts.
-7.  **Translation Layer:** A dedicated mechanism will be needed to translate between Orbit's domain annotations on O-Graph nodes and Lean's typed terms within type class contexts.
-
-## Unified Domain Lattice Structure (Aligned with Mathlib)
-
-This revised lattice emphasizes the alignment of the algebraic hierarchy with Mathlib.
-
-
-\`\`\`
-Top (Most General Domain)
- ├── ComputationalObject
- │   └── ... (Data Structures, Expression/AST, Representation - Largely Orbit-specific)
- │
- ├── MathematicalStructure  // ** ALIGNED WITH MATHLIB HIERARCHY **
+├── MathematicalStructure
  │   ├── **Core Algebraic Structures (Single Operation)**
  │   │   ├── Magma // Type* → Type* → Type* (binary operation)
  │   │   │   └── Semigroup ⊂ Magma // + mul_assoc axiom
@@ -321,34 +181,101 @@ Top (Most General Domain)
  │       ├── IntegralCalculus
  │       └── TensorCalculus
  │
- ├── ProgrammingConstruct // ** PARTIALLY ALIGNED / ORBIT-SPECIFIC **
- │   ├── Type // Can map to Lean types (int, string, bool, list α, α → β)
- │   ├── Effect // Orbit-specific concept, may need dedicated Lean formalization
- │   └── ... (Concurrency, LoopConstruct, Parser, MemoryLayout - mostly Orbit-specific)
+ ├── ProgrammingConstruct
+ │   ├── Type
+ │   │   ├── PrimitiveType (int, float, bool, string)
+ │   │   ├── Constructor (Foo, Maybe<?>)
+ │   │   ├── ConstructedType (List<T>, Map<K,V>, FunctionType<?, ??>)
+ │   │   ├── Polymormism (List<?>, Map<?,??>)
+ │   │   └── OrbitType (Int, Double, String, Bool, Ast, Function)
+ │   ├── Effect
+ │   │   ├── Pure
+ │   │   ├── State (ReadOnlyState)
+ │   │   ├── IO (Console)
+ │   │   └── Exception
+ │   ├── ConcurrencyConstruct
+ │   │   ├── Process (PiCalculus, CSP)
+ │   │   ├── Channel
+ │   │   └── SynchronizationPrimitive (Lock, Barrier)
+ │   ├── LoopConstruct / IterationDomain
+ │   ├── Parser / GrammarConstruct
+ │   └── MemoryLayout (AoS, SoA, RowMajor, ColMajor)
  │
- ├── AnalysisProperty // ** PARTIALLY ALIGNED / ORBIT-SPECIFIC **
- │   ├── SemanticProperty // Associative, Commutative (S₂), Distributive etc. -> Map to Lean axioms
- │   ├── ComplexityMeasure // Orbit-specific, potential for formalization in Lean
- │   └── ... (NumericalProperty, VerificationProperty)
+ ├── AnalysisProperty
+ │   ├── SemanticProperty
+ │   │   ├── Associative
+ │   │   ├── Commutative (often linked to S₂)
+ │   │   ├── Distributive
+ │   │   ├── Idempotent
+ │   │   └── Invertible (InvertibleIf)
+ │   ├── ComplexityMeasure
+ │   │   ├── Cost (O, Θ, Ω) TODO: Split in code speed, code size, memory
+ │   │   ├── Potential (Φ)
+ │   │   ├── AmortizedCost, AverageCost, WorstCost, BitCost
+ │   │   └── SpaceComplexity
+ │   ├── NumericalProperty
+ │   │   ├── Precision / ErrorBound
+ │   │   ├── Stability
+ │   │   └── ConditionNumber
+ │   └── VerificationProperty
+ │       ├── Correctness
+ │       └── Termination
  │
- └── ... (FormalSystem, ApplicationDomain - map based on underlying structures)
+ ├── FormalSystem
+ │   ├── LogicSystem (Propositional, Predicate)
+ │   ├── FormalLanguage
+ │   │   └── RegularLanguage (Regex, DFA, NFA)
+ │   └── CategoryTheoryConstruct (Functor, Monad, Applicative)
+ │
+ └── ApplicationDomain
+		 ├── SignalProcessing (DFT, FFT, WHT)
+		 ├── Cryptography (HomomorphicEncryption, RSA, ModularArithmetic)
+		 ├── Physics / Simulation (NBodyProblem, PDE, Electrodynamics)
+		 ├── Graphics (Transformations, Rendering)
+		 ├── ConstraintSatisfaction (Sudoku, Rubik's Cube)
+		 └── MachineLearning (NeuralNetworkOps)
+``` 
 
-\`\`\`
+**Explanation and Usage:**
 
+1.  **Hierarchy:** Indentation represents the `⊂` relationship. For example, `CyclicGroup ⊂ AbelianGroup ⊂ Group`.
+2.  **Inheritance:** A rule defined for `Group` (like associativity) automatically applies to `AbelianGroup`, `CyclicGroup`, `Sₙ`, etc. A rule for `Ring` applies to `Integer`, `Real`, `PolynomialRing`.
+3.  **Multiple Inheritance:** Some domains fit in multiple places (e.g., `BooleanAlgebra` is both a `Ring` and a `DistributiveLattice`). The O-Graph supports multiple domain annotations per e-class to handle this.
+4.  **Instances vs. Subtypes:** Some entries are instances (e.g., `Sₙ` is *an instance* of `Group`) while others are true subtypes (e.g., `Integer` *is a kind of* `Ring`). The `⊂` notation is used broadly here to indicate that properties/rules should be inherited.
+5.  **Orthogonal Concepts:** Some domains like `Type`, `Effect`, `Complexity`, or `MemoryLayout` are somewhat orthogonal to the mathematical structures but interact with them. They are grouped logically.
+6.  **Purpose:** This lattice allows Orbit to automatically apply general mathematical laws (like commutativity via `S₂` defined for `AbelianGroup`) to specific computational types (like Orbit's `Int` or `Double`) once the connection (`Int ⊂ Ring ⊂ AbelianGroup`) is established. It also enables cross-domain rule application where structures are isomorphic (e.g., `ℤ/nℤ` addition and `Cₙ`).
+
+This unified structure allows the Orbit system to reason about expressions from diverse sources within a single, coherent framework, maximizing code reuse for rewrite rules and enabling powerful cross-domain optimizations based on shared underlying mathematical principles.
+
+## Aligning Orbit's Domain Hierarchy with Lean/Mathlib
+
+To facilitate verification of Orbit transformations by Lean and the potential use of Lean theorems as Orbit rewrite rules, the **mathematical structure** part of Orbit's domain hierarchy closely mirror the type class hierarchy used in Mathlib.
+
+**Alignment Principles:**
+
+1.  **Mirror Algebraic Structures:** Orbit domains representing standard algebraic structures (`Semigroup`, `Monoid`, `Group`, `Ring`, `Field`, `VectorSpace`, `Lattice`, etc.) should directly correspond to Mathlib's type classes (`semigroup`, `monoid`, `group`, `ring`, `field`, `vector_space`, `lattice`). The naming is consistent where possible.
+2.  **Use `⊂` for Inheritance:** Orbit's subset relation (`⊂`) between domains should mirror Mathlib's type class inheritance (`extends`). For example, since `ring` extends `add_comm_group` and `monoid` in Lean, Orbit should have `Ring ⊂ AbelianGroup` and `Ring ⊂ Monoid`. TODO: Should we use extends as well?
+3.  **Map Concrete Types:** Create Orbit domains for base types corresponding to Lean's types (`Int` for `ℤ`, `Real` for `ℝ`, `Rat` for `ℚ`, `Nat` for `ℕ`, `Bool` for `bool`). The `⊂` relationships should reflect Lean's coercions or instance relationships (e.g., `Int ⊂ Rat ⊂ Real`).
+4.  **Axioms vs. Properties:**
+    *   **Lean:** Defines structures via axioms (e.g., `add_comm : ∀ a b : G, a + b = b + a` within `add_comm_group`). Theorems are proven from these axioms.
+    *   **Orbit:** Can represent these properties using specific domains or annotations on operators. For interoperability:
+        *   Lean theorems (`lhs = rhs`) can translate to Orbit rewrite rules (`lhs <=> rhs` or `lhs => rhs`).
+        *   Orbit transformations (`e1 => e2`) need to generate Lean proof goals (`e1 = e2`) within the appropriate algebraic context (e.g., `variables [ring R] (a b c : R) ... prove (a * (b + c) = a * b + a * c)`).
+5.  **Symmetry Groups:** Orbit's explicit symmetry groups (`S₂`, `Cₙ`, etc.) used for canonicalization relate to Mathlib's axioms. For instance, if an Orbit domain `MyDomain` inherits from `AbelianGroup`, an Orbit rule like `a:MyDomain + b:MyDomain ⊢ + : S₂` establishes the link. This means Orbit's `S₂` canonicalization rule for `+` is justified by the `add_comm` axiom proven for `AbelianGroup` in Lean.
 
 **Verification Workflow Example:**
 
 1.  **Orbit Transformation:** Orbit applies a rule `a * (b + c) => (a * b) + (a * c)` because the node for the expression has the `Ring` domain.
 2.  **Generate Lean Goal:** Orbit outputs a verification goal for Lean:
 
-    \`\`\`lean
+```lean
     import Mathlib.Algebra.Ring.Defs
 
     theorem orbit_step_123 {R : Type*} [ring R] (a b c : R) :
       a * (b + c) = a * b + a * c := by
       -- Goal: Prove this equality using ring axioms
       rw [mul_add] -- Apply the distributivity theorem from Mathlib's ring class
-    \`\`\`
+```
 3.  **Lean Verification:** Lean attempts to prove the goal using theorems associated with the `ring` type class (like `mul_add`). If successful, the Orbit step is verified.
 4.  **Lean Rule to Orbit:** A Lean theorem `theorem add_comm_nat : ∀ n m : ℕ, n + m = m + n := ...` can be translated into an Orbit rule `n:Nat + m:Nat <=> m:Nat + n:Nat`.
 
