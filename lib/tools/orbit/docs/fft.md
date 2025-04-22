@@ -261,7 +261,7 @@ dft(x, N) : DFT !: Complete → [
 ] : Complete if can_split_indices(N);
 
 // Base case for recursion
-dft(x, 1, 0) : DFT → x[0] : Canonical;
+dft(x, 1, 0) : DFT → x[0];
 ```
 
 The power of this approach is that these same rewrite rules will recursively apply to the smaller DFTs, automatically generating the full FFT butterfly structure when N is a power of 2. No explicit recursion needs to be encoded - it emerges naturally from repeated rule application.

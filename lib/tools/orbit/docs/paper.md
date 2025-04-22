@@ -32,11 +32,10 @@ Consider the simple case of integer addition, which is commutative: `3 + 5 = 5 +
 
 ```orbit
 // Rule intended to produce the canonical form for addition under S₂
-(a + b) : S₂ => a + b : Canonical if a <= b; // Mark rule output as canonical
-(a + b) : S₂ => b + a : Canonical if b < a;  // Mark rule output as canonical
+(a + b) : S₂ => b + a if b < a;  // Replace with the canonical order
 
 // Applied examples during saturation
-(5 + 3) : S₂ => 3 + 5 : Canonical; // Rewrite to canonical form
+(5 + 3) : S₂ => 3 + 5; // Rewrite to canonical form
 // The merge operation `mergeOGraphNodes(id_of(3+5), id_of(5+3))` makes `3+5` the root.
 ```
 
@@ -172,7 +171,7 @@ An e-graph stores e-nodes (operators with e-class children) and e-classes (sets 
 
 1.  **Domain membership**: Each e-class carries a set of domains it belongs to (e.g., `Integer`, `Ring`, `S₂`). Domains are terms, enabling hierarchical relations (§2.3).
 2.  **Group metadata**: Group domains (`S₂`, `C₄`) trigger canonicalization algorithms.
-3.  **Root Representative**: Each e-class has a designated **representative (root)** e-node. The `mergeOGraphNodes(root_id, other_id)` operation establishes `root_id` as this representative. Rewrite rules, particularly those marked `: Canonical` to signify their intent, are applied repeatedly during saturation. This process drives the representative node towards the unique canonical form defined by the system's group-theoretic rules and ordering criteria.
+3.  **Root Representative**: Each e-class has a designated **representative (root)** e-node. The `mergeOGraphNodes(root_id, other_id)` operation establishes `root_id` as this representative. Rewrite rules are applied repeatedly during saturation. This process drives the representative node towards the unique canonical form defined by the system's group-theoretic rules and ordering criteria.
 
 Example:
 
@@ -526,16 +525,6 @@ This section details how the core algorithms are applied, resulting in canonical
 
 Used for permutation symmetry. The canonical form is the sorted sequence of operands.
 
-#### Example: Commutative Operations (S₂)
-
-```orbit
-// Canonicalizing rule for a + b under S₂
-(a + b) : S₂ => a + b : Canonical if a <= b;
-(a + b) : S₂ => b + a : Canonical if b < a;
-
-// Saturation ensures the root of the e-class becomes the sorted form.
-```
-
 #### Exponential Speedup Through Canonicalization
 
 Consider `a + b + c + d`. Without canonicalization, matching a pattern like `x + y` requires checking sub-expressions in potentially O(n!) permutations for n-ary operations. With canonicalization (e.g., sorting operands for Sₙ symmetry), the expression becomes a single form like `a + b + c + d` (assuming alphabetical order). A pattern `x + y` then only needs to be matched against adjacent pairs in the canonical form, drastically reducing matching complexity. For nested expressions with multiple commutative/associative operators, the savings compound exponentially. TODO: In reality, we use the gather operation to collect all operands into a single array, which is then sorted. This allows us to apply the canonicalization rules directly on the array rather than on individual terms.
@@ -552,7 +541,7 @@ Used for rotational symmetry (e.g., bit rotations, modular arithmetic). The cano
 // This operation has C₈ symmetry.
 
 // Canonicalizing using Algorithm 2 (efficient version)
-rotate_left(x, k) : C₈ → canonicalise_cyclic_efficient(to_bit_array(x), k) : Canonical;
+rotate_left(x, k) : C₈ → canonicalise_cyclic_efficient(to_bit_array(x), k);
 
 // Example: x = 11001000 (binary)
 rotate_left(x, 3) = 01000110
@@ -563,7 +552,7 @@ canon(11001000) = 00011001 // Found via Algorithm 2
 canon(01000110) = 00011001
 
 // Rule using the canonicalization function:
-op(y) : C₈ → canonical_form(y, C₈) : Canonical;
+op(y) : C₈ → canonical_form(y, C₈);
 ```
 All byte values reachable via rotation from `11001000` will map to the same canonical form `00011001`.
 
@@ -617,7 +606,7 @@ min_rev_rot = canonicalise_cyclic_efficient(reversed) // -> [1, 3, 4, 2] (Exampl
 canonical_form = min(min_orig_rot, min_rev_rot) // compare([1,2,4,3], [1,3,4,2]) -> [1,2,4,3]
 
 // Rule:
-transform(x) : D₄ → canonicalise_dihedral(x) : Canonical;
+transform(x) : D₄ → canonicalise_dihedral(x);
 ```
 Any of the 8 states related by rotation/reflection map to the same canonical form `[1, 2, 4, 3]`.
 
@@ -638,24 +627,24 @@ a * (b + c) : Polynomial → (a * b) + (a * c) : Polynomial // From Ring (Distri
 
 // Array-based representation for associative operations
 // For addition (terms of a polynomial)
-+([term1, term2, ..., termN]) : Polynomial → +([sorted_terms]) : Canonical
++([term1, term2, ..., termN]) : Polynomial → +([sorted_terms])
 
 // For multiplication (factors in a monomial)
-*([factor1, factor2, ..., factorN]) : Monomial → *([sorted_factors]) : Canonical : S₂
+*([factor1, factor2, ..., factorN]) : Monomial → *([sorted_factors]) : S₂
 
 // Polynomial-Specific Rules:
 // Monomial ordering (e.g., graded lex order) ensures canonical term order
-// x^a * y^b : Monomial → ordered_monomial(x,y, [a,b]) : Canonical
-term1 + term2 : Polynomial → ordered_sum(term1, term2) : Canonical if compare_terms(term1, term2) <= 0 // Sort terms
-term1 + term2 : Polynomial → ordered_sum(term2, term1) : Canonical if compare_terms(term1, term2) > 0
+// x^a * y^b : Monomial → ordered_monomial(x,y, [a,b])
+term1 + term2 : Polynomial → ordered_sum(term1, term2) if compare_terms(term1, term2) <= 0 // Sort terms
+term1 + term2 : Polynomial → ordered_sum(term2, term1) if compare_terms(term1, term2) > 0
 
 // Graded lexicographic (glex) ordering for monomials using array representation
 *([x^a, y^b, z^c, ...]) : Monomial : GradedLex →
-	glex_ordered_monomial(*([x^a, y^b, z^c, ...])) : Canonical
+	glex_ordered_monomial(*([x^a, y^b, z^c, ...]))
 	where total_degree = a + b + c + ...
 
 // Combine like terms (relies on + being AbelianGroup, * being Commutative Monoid)
-coeff1 * term + coeff2 * term : Polynomial → (coeff1 + coeff2) * term : Canonical
+coeff1 * term + coeff2 * term : Polynomial → (coeff1 + coeff2) * term
 
 // Define Polynomial ⊂ Ring
 Polynomial ⊂ CommutativeRing
@@ -741,16 +730,16 @@ A * (B + C) : Matrix → A*B + A*C : Matrix // Distributivity
 // ... etc ...
 
 // Matrix-Specific Rules:
-A * I → A : Canonical // Multiplicative Identity (if I exists)
-I * A → A : Canonical
-(Aᵀ)ᵀ → A : Canonical // Transpose Involution
-(A + B)ᵀ → Aᵀ + Bᵀ : Canonical // Transpose Distribution over +
-(A * B)ᵀ → Bᵀ * Aᵀ : Canonical // Transpose of Product (order reversed!)
+A * I → A // Multiplicative Identity (if I exists)
+I * A → A
+(Aᵀ)ᵀ → A // Transpose Involution
+(A + B)ᵀ → Aᵀ + Bᵀ // Transpose Distribution over +
+(A * B)ᵀ → Bᵀ * Aᵀ // Transpose of Product (order reversed!)
 
 // Special matrix properties
 // Requires domains like DiagonalMatrix, OrthogonalMatrix(O(n)), SL(n) etc.
-M : O(n) → canonical_orthogonal_form(M) : Canonical if Mᵀ * M == I
-M : SL(n) → canonical_SL_form(M) : Canonical if det(M) == 1
+M : O(n) → canonical_orthogonal_form(M) if Mᵀ * M == I
+M : SL(n) → canonical_SL_form(M) if det(M) == 1
 ```
 
 Applied example: optimizing `((A*B)ᵀ * (C+D))`
@@ -805,7 +794,7 @@ BDDs offer a canonical form for Boolean functions based on a fixed variable orde
 ite(v, t, t) → t : BDD                             // Redundant test
 ite(v, true, false) → v : BDD                       // Direct variable
 ite(v, false, true) → ¬v : BDD                      // Negated variable
-ite(v, t, f) : BDD → ite(v, f, t) : BDD : Canonical if compare_nodes(f,t) < 0 // Ensure unique child order for non-terminal nodes
+ite(v, t, f) : BDD → ite(v, f, t) : BDD if compare_nodes(f,t) < 0 // Ensure unique child order for non-terminal nodes
 
 // Cross-representation:
 expr : Boolean → to_bdd(expr) : BDD // Convert to BDD representation
@@ -819,19 +808,19 @@ Functional list operations have algebraic properties often related to Monoids or
 
 ```orbit
 // Functor Laws (map):
-map(id, xs) → xs : Canonical
-map(f, map(g, xs)) → map(\x -> f(g(x)), xs) : Canonical // Map fusion (Associativity of composition)
+map(id, xs) → xs
+map(f, map(g, xs)) → map(\x -> f(g(x)), xs) // Map fusion (Associativity of composition)
 
 // Monoid Laws (append/concat ++):
-xs ++ [] → xs : Canonical
-[] ++ xs → xs : Canonical
-(xs ++ ys) ++ zs → xs ++ (ys ++ zs) : Canonical : A
+xs ++ [] → xs
+[] ++ xs → xs
+(xs ++ ys) ++ zs → xs ++ (ys ++ zs) : A
 
 // Other common list rules:
-filter(p, filter(q, xs)) → filter(\x -> p(x) ∧ q(x), xs) : Canonical // Filter fusion
-fold(op, init, map(f, xs)) → fold(\acc x -> op(acc, f(x)), init, xs) : Canonical // Fold-map fusion
-reverse(reverse(xs)) → xs : Canonical
-length(xs ++ ys) → length(xs) + length(ys) : Canonical
+filter(p, filter(q, xs)) → filter(\x -> p(x) ∧ q(x), xs) // Filter fusion
+fold(op, init, map(f, xs)) → fold(\acc x -> op(acc, f(x)), init, xs) // Fold-map fusion
+reverse(reverse(xs)) → xs
+length(xs ++ ys) → length(xs) + length(ys)
 ```
 
 ### 6.4.1 Type Inference Integration
@@ -848,13 +837,13 @@ let type_rules = (
 	apply(f : α → β, x : α) → apply(f, x) : β : Typed;
 
 	// Type unification (via group-theoretic canonicalization)
-	unify(t, t) → t : Canonical;
-	unify(α, t) → subst(α, t) : Canonical if !occurs_in(α, t);
-	unify(t, α) → subst(α, t) : Canonical if !occurs_in(α, t);
+	unify(t, t) → t;
+	unify(α, t) → subst(α, t) if !occurs_in(α, t);
+	unify(t, α) → subst(α, t) if !occurs_in(α, t);
 
 	// Complex type constructors (with S₂ symmetry for product types)
 	pair(a : α, b : β) → pair(a, b) : α × β : Typed;
-	tuple(elems...) : S₂ → sorted_tuple(elems...) : Canonical; // For records with symmetry
+	tuple(elems...) : S₂ → sorted_tuple(elems...); // For records with symmetry
 );
 ```
 

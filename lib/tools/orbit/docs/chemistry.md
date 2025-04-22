@@ -46,13 +46,13 @@ Canonical representation of molecular structures is essential for comparison, da
 
 ```orbit
 // Representing a molecule as a graph structure with Orbit annotations
-molecule(atoms, bonds) : MolecularGraph => canonical_molecular_form(atoms, bonds) : Canonical
+molecule(atoms, bonds) : MolecularGraph => canonical_molecular_form(atoms, bonds);
 
 // Specific rewrite rule for symmetric structures
-molecule(atoms, bonds) : Cn => rotate_to_minimum_representation(atoms, bonds) : Canonical
+molecule(atoms, bonds) : Cn => rotate_to_minimum_representation(atoms, bonds);
 
 // Handling aromatic rings (e.g., benzene with D6h symmetry)
-molecule("benzene") : D6h => canonical_aromatic_representation("benzene") : Canonical
+molecule("benzene") : D6h => canonical_aromatic_representation("benzene");
 ```
 
 ### 2.2 SMILES and InChI Integration
@@ -62,7 +62,7 @@ Orbit can interface with standard chemical notations like SMILES (Simplified Mol
 ```orbit
 // Converting between representations while preserving canonicality
 smiles("CCO") => molecule(["C", "C", "O"], [(0,1,1), (1,2,1)]) : MolecularGraph
-molecule(atoms, bonds) : Canonical => generate_canonical_smiles(atoms, bonds) : SMILES : Canonical
+molecule(atoms, bonds); => generate_canonical_smiles(atoms, bonds) : SMILES;
 
 // Bidirectional conversion with InChI
 molecule <=> inchi : BidirectionalMapping
@@ -322,11 +322,11 @@ Quantum chemistry involves complex mathematical expressions that can benefit fro
 
 ```orbit
 // Symmetrizing Hamiltonian expressions
-H_operator(a, b) : S₂ => ordered_operator_terms(a, b) : Canonical
+H_operator(a, b) : S₂ => ordered_operator_terms(a, b);
 
 // Simplification of common patterns in electronic structure theory
 sum_operator([p, q], [r, s], g(p,q,r,s) * a†(p) * a†(q) * a(s) * a(r)) : ElectronicRepulsion =>
-	canonical_two_electron_integral_form(p, q, r, s, g) : Canonical
+	canonical_two_electron_integral_form(p, q, r, s, g);
 ```
 
 ### 7.2 Molecular Orbital Symmetry
@@ -336,7 +336,7 @@ sum_operator([p, q], [r, s], g(p,q,r,s) * a†(p) * a†(q) * a(s) * a(r)) : Ele
 orbital(coefficients) : C2v => classify_by_irrep(coefficients, C2v) : IrreducibleRepresentation
 
 // Symmetry-adapted linear combinations
-linear_combination(orbitals) : PointGroup => symmetry_adapted_combination(orbitals) : Canonical
+linear_combination(orbitals) : PointGroup => symmetry_adapted_combination(orbitals);
 ```
 
 ## 8. Practical Applications

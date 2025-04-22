@@ -115,7 +115,7 @@ let expr = extractOGraph(g, exprId);
 
 When working with O-Graphs, understanding how canonicalization works is critical. When expressions are merged to represent equivalence, one expression is designated as the **representative** or "root" of the equivalence class (e-class). This is achieved mechanically using the `mergeOGraphNodes` function.
 
-When you later extract an expression from an e-class using functions like `extractOGraph`, you'll always get the *current representative* of that class. Crucially, through the process of **equality saturation** (repeatedly applying rewrite rules until no more changes occur), this representative node is driven towards the *true canonical form* as defined by the system's rules (e.g., sorting operands for commutativity, applying specific normal forms). Rules intended to produce such canonical forms might be marked with the `: Canonical` annotation to indicate their purpose.
+When you later extract an expression from an e-class using functions like `extractOGraph`, you'll always get the *current representative* of that class. Crucially, through the process of **equality saturation** (repeatedly applying rewrite rules until no more changes occur), this representative node is driven towards the *true canonical form* as defined by the system's rules (e.g., sorting operands for commutativity, applying specific normal forms).
 
 #### `mergeOGraphNodes(graphName: string, nodeId1: int, nodeId2: int) -> bool`
 
@@ -126,23 +126,6 @@ Merges two nodes (and their respective e-classes) to represent that they are equ
 let n1 = addOGraph(g, a + b);
 let n2 = addOGraph(g, c - d);
 mergeOGraphNodes(g, n1, n2);
-```
-
-**IMPORTANT**: The order of nodeIds matters! The first node (`nodeId1`) becomes the **designated representative (root)** of the merged equivalence class. During equality saturation, rewrite rules (potentially marked with `: Canonical` to indicate their purpose, like `expr => canonical_expr : Canonical`) transform expressions within an e-class. When merging the result of such a canonicalizing rule (`resultId`) with the original node (`eclassId`), using `mergeOGraphNodes(resultId, eclassId)` ensures the *intended* canonical form becomes the designated representative. The saturation process then guarantees that this representative eventually converges to the unique canonical form defined by the system's rules and ordering criteria.
-
-```orbit
-// Pattern matching and rewriting example demonstrating root selection
-matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
-	// Process the replacement to get the intended canonical result
-	let canonical_result = substituteWithBindings(replacement_template, bindings); // replacement might be marked : Canonical
-
-	// Add the canonical result to the graph
-	let canonicalId = processDomainAnnotations(graph, canonical_result); // Ensures domains are added
-
-	// Make the canonical result the representative of the merged class
-	// By putting its ID first, we designate it as the root.
-	mergeOGraphNodes(graph, canonicalId, eclassId);
-));
 ```
 
 ### Domain Associations
@@ -722,7 +705,7 @@ let quadraticRules = quote(
 	A = B - n*C <=> A + n*C = B;
 
 	// Moving all terms to the left side (canonical form preparation)
-	A = B <=> A - B = 0 : Canonical;
+	A = B <=> A - B = 0 if B != 0;
 
 	// Combining like terms for x^2
 	a*x^2 + b*x^2 <=> (a+b)*x^2;
@@ -733,8 +716,8 @@ let quadraticRules = quote(
 	a*x - b*x <=> (a-b)*x;
 
 	// Combining constants
-	a : Constant + b : Constant <=> $(a+b) : Constant : Canonical;
-	a : Constant - b : Constant <=> $(a-b) : Constant : Canonical;
+	a : Constant + b : Constant <=> $(a+b) : Constant;
+	a : Constant - b : Constant <=> $(a-b) : Constant;
 
 	// Add explicit coefficient to x when needed
 	// Rule: If (x + c) does NOT have the ExplicitCoef annotation,
@@ -763,24 +746,8 @@ let quadraticRules = quote(
 	} : ComplexSolutions if b^2 - 4*a*c < 0;
 
 	// Solve interface
-	solve x in (y : Set) => x = y : Canonical;
+	solve x in (y : Set) => x = y;
 );
-
-// Function to solve a quadratic equation
-fn solveQuadratic(expr : ast) -> ast = (
-	// Use the quadratic rules to solve the equation
-	let costFunction = \expr -> (
-		expr is (
-			_ : Solutions => 0.0;  // Favor solution sets
-			_ : Canonical => 1.0;  // Prefer canonical forms over others
-			_ => 10.0;           // Penalize other expressions
-		)
-	);
-
-	// Apply optimization
-	let result = orbit(quadraticRules, costFunction, expr);
-	result
-)
 
 // Example usage
 fn main() = (

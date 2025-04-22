@@ -2,7 +2,6 @@
 - Glex rules for polynomial rings
 - Relational algebra and optimizations of that
 - Support for pattern matching where we visit all the equivalent nodes as well. => vs -> maybe
-- The " : Canonical" annotation is not required (each oclass is intended to be canonical at saturation).
 - Make VS code plugin using Mango
 - Subscripts on operators
 - Explain how we do not have a cost functino anymore, but just canonical forms in each domain

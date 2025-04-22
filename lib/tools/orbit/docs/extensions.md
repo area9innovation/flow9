@@ -135,104 +135,104 @@ Differential calculus is concerned with the computation of derivatives and their
 
 ```
 // Constant rule
-(d/dx (c)) : Diff => 0 : Canonical if is_constant(c, x);
+(d/dx (c)) : Diff => 0 if is_constant(c, x);
 
 // Identity rule
-(d/dx (x)) : Diff => 1 : Canonical;
+(d/dx (x)) : Diff => 1;
 
 // Power rule
-(d/dx (x^n)) : Diff => n * x^(n-1) : Canonical if is_constant(n, x);
+(d/dx (x^n)) : Diff => n * x^(n-1) if is_constant(n, x);
 
 // Sum rule
-(d/dx (f + g)) : Diff => (d/dx (f)) + (d/dx (g)) : Canonical;
+(d/dx (f + g)) : Diff => (d/dx (f)) + (d/dx (g));
 
 // Difference rule
-(d/dx (f - g)) : Diff => (d/dx (f)) - (d/dx (g)) : Canonical;
+(d/dx (f - g)) : Diff => (d/dx (f)) - (d/dx (g));
 
 // Product rule
-(d/dx (f * g)) : Diff => f * (d/dx (g)) + (d/dx (f)) * g : Canonical;
+(d/dx (f * g)) : Diff => f * (d/dx (g)) + (d/dx (f)) * g;
 
 // Quotient rule
-(d/dx (f / g)) : Diff => ((d/dx (f)) * g - f * (d/dx (g))) / (g^2) : Canonical if g != 0;
+(d/dx (f / g)) : Diff => ((d/dx (f)) * g - f * (d/dx (g))) / (g^2) if g != 0;
 
 // Chain rule
-(d/dx (f(g(x)))) : Diff => (d/df (f))(g(x)) * (d/dx (g(x))) : Canonical;
+(d/dx (f(g(x)))) : Diff => (d/df (f))(g(x)) * (d/dx (g(x)));
 ```
 
 ### Standard Function Derivatives
 
 ```
 // Exponential function
-(d/dx (e^x)) : Diff => e^x : Canonical;
-(d/dx (a^x)) : Diff => a^x * ln(a) : Canonical if is_constant(a, x) && a > 0;
+(d/dx (e^x)) : Diff => e^x;
+(d/dx (a^x)) : Diff => a^x * ln(a) if is_constant(a, x) && a > 0;
 
 // Logarithmic function
-(d/dx (ln(x))) : Diff => 1/x : Canonical if x > 0;
-(d/dx (log_a(x))) : Diff => 1/(x * ln(a)) : Canonical if is_constant(a, x) && a > 0 && x > 0;
+(d/dx (ln(x))) : Diff => 1/x if x > 0;
+(d/dx (log_a(x))) : Diff => 1/(x * ln(a)) if is_constant(a, x) && a > 0 && x > 0;
 
 // Trigonometric functions
-(d/dx (sin(x))) : Diff => cos(x) : Canonical;
-(d/dx (cos(x))) : Diff => -sin(x) : Canonical;
-(d/dx (tan(x))) : Diff => sec^2(x) : Canonical if cos(x) != 0;
-(d/dx (cot(x))) : Diff => -csc^2(x) : Canonical if sin(x) != 0;
-(d/dx (sec(x))) : Diff => sec(x) * tan(x) : Canonical if cos(x) != 0;
-(d/dx (csc(x))) : Diff => -csc(x) * cot(x) : Canonical if sin(x) != 0;
+(d/dx (sin(x))) : Diff => cos(x);
+(d/dx (cos(x))) : Diff => -sin(x);
+(d/dx (tan(x))) : Diff => sec^2(x) if cos(x) != 0;
+(d/dx (cot(x))) : Diff => -csc^2(x) if sin(x) != 0;
+(d/dx (sec(x))) : Diff => sec(x) * tan(x) if cos(x) != 0;
+(d/dx (csc(x))) : Diff => -csc(x) * cot(x) if sin(x) != 0;
 
 // Inverse trigonometric functions
-(d/dx (arcsin(x))) : Diff => 1/sqrt(1 - x^2) : Canonical if -1 < x && x < 1;
-(d/dx (arccos(x))) : Diff => -1/sqrt(1 - x^2) : Canonical if -1 < x && x < 1;
-(d/dx (arctan(x))) : Diff => 1/(1 + x^2) : Canonical;
+(d/dx (arcsin(x))) : Diff => 1/sqrt(1 - x^2) if -1 < x && x < 1;
+(d/dx (arccos(x))) : Diff => -1/sqrt(1 - x^2) if -1 < x && x < 1;
+(d/dx (arctan(x))) : Diff => 1/(1 + x^2);
 ```
 
 ### Multivariate Calculus and Partial Derivatives
 
 ```
 // Partial derivative of a constant
-(∂/∂xᵢ (c)) : Diff => 0 : Canonical if is_constant(c, xᵢ);
+(∂/∂xᵢ (c)) : Diff => 0 if is_constant(c, xᵢ);
 
 // Partial derivative of a variable
-(∂/∂xᵢ (xⱼ)) : Diff => 1 : Canonical if i == j;
-(∂/∂xᵢ (xⱼ)) : Diff => 0 : Canonical if i != j;
+(∂/∂xᵢ (xⱼ)) : Diff => 1 if i == j;
+(∂/∂xᵢ (xⱼ)) : Diff => 0 if i != j;
 
 // Partial derivative of a sum
-(∂/∂xᵢ (f + g)) : Diff => (∂/∂xᵢ (f)) + (∂/∂xᵢ (g)) : Canonical;
+(∂/∂xᵢ (f + g)) : Diff => (∂/∂xᵢ (f)) + (∂/∂xᵢ (g));
 
 // Partial derivative of a product
-(∂/∂xᵢ (f * g)) : Diff => f * (∂/∂xᵢ (g)) + (∂/∂xᵢ (f)) * g : Canonical;
+(∂/∂xᵢ (f * g)) : Diff => f * (∂/∂xᵢ (g)) + (∂/∂xᵢ (f)) * g;
 ```
 
 ### Gradient, Jacobian, and Higher-Order Derivatives
 
 ```
 // Gradient of a scalar function
-(∇(f)) : Diff => {∂f/∂x₁, ∂f/∂x₂, ..., ∂f/∂xₙ} : Canonical;
+(∇(f)) : Diff => {∂f/∂x₁, ∂f/∂x₂, ..., ∂f/∂xₙ};
 
 // Second-order partial derivatives (commutativity) - mixed partials are equal under appropriate smoothness
-(∂²f/∂xᵢ∂xⱼ) : Diff => (∂²f/∂xⱼ∂xᵢ) : Canonical if is_smooth(f);
+(∂²f/∂xᵢ∂xⱼ) : Diff => (∂²f/∂xⱼ∂xᵢ) if is_smooth(f);
 
 // Higher-order derivative (composite notation simplification)
-(d^n/dx^n (f + g)) : Diff => (d^n/dx^n (f)) + (d^n/dx^n (g)) : Canonical;
-(d^n/dx^n (c * f)) : Diff => c * (d^n/dx^n (f)) : Canonical if is_constant(c, x);
+(d^n/dx^n (f + g)) : Diff => (d^n/dx^n (f)) + (d^n/dx^n (g));
+(d^n/dx^n (c * f)) : Diff => c * (d^n/dx^n (f)) if is_constant(c, x);
 ```
 
 ### Automatic Differentiation Rules
 
 ```
 // Forward-mode dual number representation
-(dual(v, dv)) : Dual => (v, dv) : Canonical;
+(dual(v, dv)) : Dual => (v, dv);
 
 // Dual number addition
-(dual(a, da) + dual(b, db)) : Dual => dual(a + b, da + db) : Canonical;
+(dual(a, da) + dual(b, db)) : Dual => dual(a + b, da + db);
 
 // Dual number multiplication
-(dual(a, da) * dual(b, db)) : Dual => dual(a * b, a * db + da * b) : Canonical;
+(dual(a, da) * dual(b, db)) : Dual => dual(a * b, a * db + da * b);
 
 // Dual number function application (chain rule)
-(f(dual(x, dx))) : Dual => dual(f(x), f'(x) * dx) : Canonical;
+(f(dual(x, dx))) : Dual => dual(f(x), f'(x) * dx);
 
 // Reverse-mode accumulation
-(backprop(f(x), x)) : Diff => (∂f/∂x) : Canonical;
-(backprop(f(g(x)), x)) : Diff => (∂f/∂g) * (∂g/∂x) : Canonical;
+(backprop(f(x), x)) : Diff => (∂f/∂x);
+(backprop(f(g(x)), x)) : Diff => (∂f/∂g) * (∂g/∂x);
 ```
 
 ## 2. Linear Algebra and Matrix Identities
@@ -243,115 +243,115 @@ Linear algebra provides a framework for working with vectors, matrices, and line
 
 ```
 // Matrix addition (element-wise)
-(A + B) : Matrix => {A[i,j] + B[i,j]}_{i,j} : Canonical if dimensions(A) == dimensions(B);
+(A + B) : Matrix => {A[i,j] + B[i,j]}_{i,j} if dimensions(A) == dimensions(B);
 
 // Matrix subtraction
-(A - B) : Matrix => {A[i,j] - B[i,j]}_{i,j} : Canonical if dimensions(A) == dimensions(B);
+(A - B) : Matrix => {A[i,j] - B[i,j]}_{i,j} if dimensions(A) == dimensions(B);
 
 // Scalar multiplication
-(c * A) : Matrix => {c * A[i,j]}_{i,j} : Canonical if is_scalar(c);
+(c * A) : Matrix => {c * A[i,j]}_{i,j} if is_scalar(c);
 
 // Matrix multiplication
-(A * B) : Matrix => {∑ₖ A[i,k] * B[k,j]}_{i,j} : Canonical if columns(A) == rows(B);
+(A * B) : Matrix => {∑ₖ A[i,k] * B[k,j]}_{i,j} if columns(A) == rows(B);
 
 // Matrix transposition
-(A^T) : Matrix => {A[j,i]}_{i,j} : Canonical;
+(A^T) : Matrix => {A[j,i]}_{i,j};
 
 // Matrix inverse (definition only, not computational)
-(A * A^{-1}) : Matrix => I : Canonical if is_invertible(A);
-(A^{-1} * A) : Matrix => I : Canonical if is_invertible(A);
+(A * A^{-1}) : Matrix => I if is_invertible(A);
+(A^{-1} * A) : Matrix => I if is_invertible(A);
 ```
 
 ### Matrix Forms and Canonical Representations
 
 ```
 // Row echelon form (conceptual, not computational)
-(rref(A)) : Matrix => A_rref : Canonical;
+(rref(A)) : Matrix => A_rref;
 
 // Determinant of triangular matrices
-(det(A)) : Matrix => ∏ᵢ A[i,i] : Canonical if is_triangular(A);
+(det(A)) : Matrix => ∏ᵢ A[i,i] if is_triangular(A);
 
 // Trace definition
-(tr(A)) : Matrix => ∑ᵢ A[i,i] : Canonical;
+(tr(A)) : Matrix => ∑ᵢ A[i,i];
 
 // Matrix transposition rules
-((A^T)^T) : Matrix => A : Canonical;
-((A + B)^T) : Matrix => A^T + B^T : Canonical;
-((c * A)^T) : Matrix => c * A^T : Canonical if is_scalar(c);
-((A * B)^T) : Matrix => B^T * A^T : Canonical;
+((A^T)^T) : Matrix => A;
+((A + B)^T) : Matrix => A^T + B^T;
+((c * A)^T) : Matrix => c * A^T if is_scalar(c);
+((A * B)^T) : Matrix => B^T * A^T;
 ```
 
 ### Special Matrices and Their Properties
 
 ```
 // Identity matrix properties
-(A * I) : Matrix => A : Canonical if columns(A) == rows(I);
-(I * A) : Matrix => A : Canonical if columns(I) == rows(A);
+(A * I) : Matrix => A if columns(A) == rows(I);
+(I * A) : Matrix => A if columns(I) == rows(A);
 
 // Diagonal matrix multiplication (efficiency rewrite)
-(diag(v) * A) : Matrix => {v[i] * A[i,j]}_{i,j} : Canonical if is_diagonal(diag(v));
-(A * diag(v)) : Matrix => {A[i,j] * v[j]}_{i,j} : Canonical if is_diagonal(diag(v));
+(diag(v) * A) : Matrix => {v[i] * A[i,j]}_{i,j} if is_diagonal(diag(v));
+(A * diag(v)) : Matrix => {A[i,j] * v[j]}_{i,j} if is_diagonal(diag(v));
 
 // Orthogonal matrix properties
-(A^T * A) : Matrix => I : Canonical if is_orthogonal(A);
-(A * A^T) : Matrix => I : Canonical if is_orthogonal(A);
+(A^T * A) : Matrix => I if is_orthogonal(A);
+(A * A^T) : Matrix => I if is_orthogonal(A);
 
 // Symmetric matrix properties
-(A) : Matrix => A^T : Canonical if is_symmetric(A);
-((A^T + A)/2) : Matrix => A : Canonical if is_symmetric(A);
+(A) : Matrix => A^T if is_symmetric(A);
+((A^T + A)/2) : Matrix => A if is_symmetric(A);
 
 // Skew-symmetric matrix properties
-(A) : Matrix => -A^T : Canonical if is_skew_symmetric(A);
-((A - A^T)/2) : Matrix => A : Canonical if is_skew_symmetric(A);
+(A) : Matrix => -A^T if is_skew_symmetric(A);
+((A - A^T)/2) : Matrix => A if is_skew_symmetric(A);
 ```
 
 ### Matrix Decompositions
 
 ```
 // Eigen-decomposition (for diagonalizable matrices)
-(A) : Matrix => P * D * P^{-1} : Canonical if is_diagonalizable(A);
+(A) : Matrix => P * D * P^{-1} if is_diagonalizable(A);
 
 // Singular Value Decomposition
-(A) : Matrix => U * Σ * V^T : Canonical;
+(A) : Matrix => U * Σ * V^T;
 
 // QR Decomposition
-(A) : Matrix => Q * R : Canonical if has_QR_decomposition(A);
+(A) : Matrix => Q * R if has_QR_decomposition(A);
 
 // LU Decomposition
-(A) : Matrix => L * U : Canonical if has_LU_decomposition(A);
+(A) : Matrix => L * U if has_LU_decomposition(A);
 
 // Cholesky Decomposition
-(A) : Matrix => L * L^T : Canonical if is_positive_definite(A);
+(A) : Matrix => L * L^T if is_positive_definite(A);
 ```
 
 ### Vector Operations
 
 ```
 // Dot product
-(u · v) : Vector => ∑ᵢ u[i] * v[i] : Canonical if dimensions(u) == dimensions(v);
+(u · v) : Vector => ∑ᵢ u[i] * v[i] if dimensions(u) == dimensions(v);
 
 // Cross product (3D vectors)
 (u × v) : Vector => {
 	u[1]*v[2] - u[2]*v[1],
 	u[2]*v[0] - u[0]*v[2],
 	u[0]*v[1] - u[1]*v[0]
-} : Canonical if dimensions(u) == dimensions(v) == 3;
+} if dimensions(u) == dimensions(v) == 3;
 
 // Vector normalization
-(normalize(v)) : Vector => v / |v| : Canonical if |v| != 0;
+(normalize(v)) : Vector => v / |v| if |v| != 0;
 ```
 
 ### Linear Transformations
 
 ```
 // Linear transformation composability
-(T₁ ∘ T₂) : LinearTransform => T₁(T₂) : Canonical;
+(T₁ ∘ T₂) : LinearTransform => T₁(T₂);
 
 // Matrix representation of composition
-(A * B) : LinearTransform => matrix_of(A ∘ B) : Canonical;
+(A * B) : LinearTransform => matrix_of(A ∘ B);
 
 // Linear transformation of linear combination
-(T(a*u + b*v)) : LinearTransform => a*T(u) + b*T(v) : Canonical;
+(T(a*u + b*v)) : LinearTransform => a*T(u) + b*T(v);
 ```
 
 ## 3. Polynomial Ideals and Gröbner Basis
@@ -362,82 +362,82 @@ Polynomial ideals and Gröbner bases provide a powerful framework for solving sy
 
 ```
 // Monomial ordering (lexicographic)
-(x^a * y^b * z^c) : Lex => ordered_lex(x, y, z, [a, b, c]) : Canonical;
+(x^a * y^b * z^c) : Lex => ordered_lex(x, y, z, [a, b, c]);
 
 // Monomial ordering (graded lexicographic)
-(x^a * y^b * z^c) : Grlex => ordered_grlex(x, y, z, [a, b, c]) : Canonical;
+(x^a * y^b * z^c) : Grlex => ordered_grlex(x, y, z, [a, b, c]);
 
 // Monomial ordering (graded reverse lexicographic)
-(x^a * y^b * z^c) : Grevlex => ordered_grevlex(x, y, z, [a, b, c]) : Canonical;
+(x^a * y^b * z^c) : Grevlex => ordered_grevlex(x, y, z, [a, b, c]);
 
 // Leading term extraction
-(LT(f)) : Poly => max_term(f) : Canonical for monomial ordering;
+(LT(f)) : Poly => max_term(f) for monomial ordering;
 
 // Leading coefficient extraction
-(LC(f)) : Poly => coefficient(LT(f)) : Canonical;
+(LC(f)) : Poly => coefficient(LT(f));
 
 // Polynomial canonicalization (combining like terms)
-(c₁ * x^a * y^b + c₂ * x^a * y^b) : Poly => (c₁ + c₂) * x^a * y^b : Canonical;
+(c₁ * x^a * y^b + c₂ * x^a * y^b) : Poly => (c₁ + c₂) * x^a * y^b;
 ```
 
 ### Polynomial Arithmetic and Division
 
 ```
 // Polynomial addition
-(f + g) : Poly => sum_by_like_terms(f, g) : Canonical;
+(f + g) : Poly => sum_by_like_terms(f, g);
 
 // Polynomial multiplication
-(f * g) : Poly => sum_of_term_products(f, g) : Canonical;
+(f * g) : Poly => sum_of_term_products(f, g);
 
 // Multivariate polynomial division
-(f / {g₁, g₂, ..., gₙ}) : Poly => {q₁, q₂, ..., qₙ, r} : Canonical where f = ∑ᵢ qᵢ * gᵢ + r;
+(f / {g₁, g₂, ..., gₙ}) : Poly => {q₁, q₂, ..., qₙ, r} where f = ∑ᵢ qᵢ * gᵢ + r;
 
 // S-polynomial construction
-(S(f, g)) : Poly => (lcm(LT(f), LT(g))/LT(f)) * f - (lcm(LT(f), LT(g))/LT(g)) * g : Canonical;
+(S(f, g)) : Poly => (lcm(LT(f), LT(g))/LT(f)) * f - (lcm(LT(f), LT(g))/LT(g)) * g;
 ```
 
 ### Gröbner Basis Operations
 
 ```
 // Normal form with respect to a Gröbner basis
-(NF(f, G)) : Poly => remainder_after_division(f, G) : Canonical;
+(NF(f, G)) : Poly => remainder_after_division(f, G);
 
 // Ideal membership test
-(f ∈ ⟨G⟩) : Ideal => true : Canonical if NF(f, G) == 0;
-(f ∈ ⟨G⟩) : Ideal => false : Canonical if NF(f, G) != 0;
+(f ∈ ⟨G⟩) : Ideal => true if NF(f, G) == 0;
+(f ∈ ⟨G⟩) : Ideal => false if NF(f, G) != 0;
 
 // Reduced Gröbner basis
-(reduced_GB(G)) : Ideal => reduced_basis : Canonical;
+(reduced_GB(G)) : Ideal => reduced_basis;
 
 // Buchberger's algorithm (conceptual, not computational)
-(grobner_basis({f₁, f₂, ..., fₙ})) : Ideal => G : Canonical;
+(grobner_basis({f₁, f₂, ..., fₙ})) : Ideal => G;
 ```
 
 ### Polynomial Reduction
 
 ```
 // Polynomial reduction by a single rule
-(reduce(f, g)) : Poly => f - c * x^a * g : Canonical if LT(f) == c * x^a * LT(g);
+(reduce(f, g)) : Poly => f - c * x^a * g if LT(f) == c * x^a * LT(g);
 
 // Full reduction by a set of polynomials
-(reduce(f, {g₁, g₂, ..., gₙ})) : Poly => result_of_iterative_reduction : Canonical;
+(reduce(f, {g₁, g₂, ..., gₙ})) : Poly => result_of_iterative_reduction;
 
 // Elimination ideal
-(eliminate({f₁, f₂, ..., fₙ}, {x₁, x₂, ..., xₖ})) : Ideal => G ∩ k[remaining_vars] : Canonical;
+(eliminate({f₁, f₂, ..., fₙ}, {x₁, x₂, ..., xₖ})) : Ideal => G ∩ k[remaining_vars];
 ```
 
 ### Special Polynomial Systems
 
 ```
 // Resultant computation
-(resultant(f, g, x)) : Poly => determinant_of_sylvester_matrix(f, g, x) : Canonical;
+(resultant(f, g, x)) : Poly => determinant_of_sylvester_matrix(f, g, x);
 
 // Factorization (conceptual)
-(factor(f)) : Poly => f₁ * f₂ * ... * fₖ : Canonical where f = f₁ * f₂ * ... * fₖ;
+(factor(f)) : Poly => f₁ * f₂ * ... * fₖ where f = f₁ * f₂ * ... * fₖ;
 
 // Root finding from factorized form
-(roots(f₁ * f₂ * ... * fₖ)) : Poly => union(roots(f₁), roots(f₂), ..., roots(fₖ)) : Canonical;
-(roots(x - a)) : Poly => {a} : Canonical;
+(roots(f₁ * f₂ * ... * fₖ)) : Poly => union(roots(f₁), roots(f₂), ..., roots(fₖ));
+(roots(x - a)) : Poly => {a};
 ```
 
 ## 6. Homomorphic Cryptography and Modular Arithmetic
@@ -448,63 +448,63 @@ Homomorphic cryptography allows computation on encrypted data without decryption
 
 ```
 // Basic modular arithmetic (canonicalization)
-(a mod n) : Mod => r : Canonical if a = q*n + r, 0 ≤ r < n;
+(a mod n) : Mod => r if a = q*n + r, 0 ≤ r < n;
 
 // Modular addition
-((a + b) mod n) : Mod => ((a mod n) + (b mod n)) mod n : Canonical;
+((a + b) mod n) : Mod => ((a mod n) + (b mod n)) mod n;
 
 // Modular subtraction
-((a - b) mod n) : Mod => ((a mod n) - (b mod n) + n) mod n : Canonical;
+((a - b) mod n) : Mod => ((a mod n) - (b mod n) + n) mod n;
 
 // Modular multiplication
-((a * b) mod n) : Mod => ((a mod n) * (b mod n)) mod n : Canonical;
+((a * b) mod n) : Mod => ((a mod n) * (b mod n)) mod n;
 
 // Modular inverse
-(a⁻¹ mod n) : Mod => b : Canonical if (a * b) mod n = 1 and gcd(a, n) = 1;
+(a⁻¹ mod n) : Mod => b if (a * b) mod n = 1 and gcd(a, n) = 1;
 ```
 
 ### Modular Exponentiation
 
 ```
 // Modular exponentiation (direct definition)
-(a^b mod n) : Mod => powmod(a, b, n) : Canonical;
+(a^b mod n) : Mod => powmod(a, b, n);
 
 // Repeated squaring optimization
-(a^(2k) mod n) : Mod => (a^k mod n)^2 mod n : Canonical;
-(a^(2k+1) mod n) : Mod => (a * (a^k mod n)^2) mod n : Canonical;
+(a^(2k) mod n) : Mod => (a^k mod n)^2 mod n;
+(a^(2k+1) mod n) : Mod => (a * (a^k mod n)^2) mod n;
 
 // Euler's theorem application
-(a^b mod n) : Mod => a^(b mod φ(n)) mod n : Canonical if gcd(a, n) = 1;
+(a^b mod n) : Mod => a^(b mod φ(n)) mod n if gcd(a, n) = 1;
 
 // Fermat's little theorem application
-(a^b mod p) : Mod => a^(b mod (p-1)) mod p : Canonical if is_prime(p) and gcd(a, p) = 1;
+(a^b mod p) : Mod => a^(b mod (p-1)) mod p if is_prime(p) and gcd(a, p) = 1;
 ```
 
 ### Chinese Remainder Theorem
 
 ```
 // Chinese remainder theorem for two moduli
-(x ≡ a₁ (mod n₁) ∧ x ≡ a₂ (mod n₂)) : CRT => x ≡ a (mod n₁*n₂) : Canonical if gcd(n₁, n₂) = 1;
+(x ≡ a₁ (mod n₁) ∧ x ≡ a₂ (mod n₂)) : CRT => x ≡ a (mod n₁*n₂) if gcd(n₁, n₂) = 1;
 
 // CRT for multiple moduli
-(x ≡ a₁ (mod n₁) ∧ ... ∧ x ≡ aₖ (mod nₖ)) : CRT => x ≡ a (mod n₁*...*nₖ) : Canonical if all nᵢ are pairwise coprime;
+(x ≡ a₁ (mod n₁) ∧ ... ∧ x ≡ aₖ (mod nₖ)) : CRT => x ≡ a (mod n₁*...*nₖ) if all nᵢ are pairwise coprime;
 ```
 
 ### Homomorphic Properties
 
 ```
 // Additive homomorphism
-(E(a + b)) : HomomorphicAdd => E(a) ⊕ E(b) : Canonical;
+(E(a + b)) : HomomorphicAdd => E(a) ⊕ E(b);
 
 // Multiplicative homomorphism
-(E(a * b)) : HomomorphicMul => E(a) ⊗ E(b) : Canonical;
+(E(a * b)) : HomomorphicMul => E(a) ⊗ E(b);
 
 // Mixed homomorphism (partially homomorphic)
-(E(a)^b) : HomomorphicPaillier => E(a * b) : Canonical;
+(E(a)^b) : HomomorphicPaillier => E(a * b);
 
 // Decryption of homomorphic operations
-(D(E(a) ⊕ E(b))) : Homomorphic => a + b : Canonical;
-(D(E(a) ⊗ E(b))) : Homomorphic => a * b : Canonical;
+(D(E(a) ⊕ E(b))) : Homomorphic => a + b;
+(D(E(a) ⊗ E(b))) : Homomorphic => a * b;
 ```
 
 ### Ring and Group Structures
@@ -523,15 +523,15 @@ Homomorphic cryptography allows computation on encrypted data without decryption
 
 ```
 // RSA encryption/decryption
-(E_RSA(m)) : RSA => m^e mod n : Canonical;
-(D_RSA(c)) : RSA => c^d mod n : Canonical where e*d ≡ 1 (mod φ(n));
+(E_RSA(m)) : RSA => m^e mod n;
+(D_RSA(c)) : RSA => c^d mod n where e*d ≡ 1 (mod φ(n));
 
 // Diffie-Hellman key exchange
-(k_A) : DiffieHellman => g^a mod p : Canonical;
-(k_B) : DiffieHellman => g^b mod p : Canonical;
-(K) : DiffieHellman => (g^a)^b mod p : Canonical;
-(K) : DiffieHellman => (g^b)^a mod p : Canonical;
-(K) : DiffieHellman => g^(ab) mod p : Canonical;
+(k_A) : DiffieHellman => g^a mod p;
+(k_B) : DiffieHellman => g^b mod p;
+(K) : DiffieHellman => (g^a)^b mod p;
+(K) : DiffieHellman => (g^b)^a mod p;
+(K) : DiffieHellman => g^(ab) mod p;
 ```
 
 ## 7. Tensor Operations
@@ -542,81 +542,81 @@ Tensors generalize vectors and matrices to higher dimensions. This section focus
 
 ```
 // Einstein summation convention (automatic contraction over repeated indices)
-(A_{ij} B^j) : Tensor => ∑_j A_{ij} B^j : Canonical;
+(A_{ij} B^j) : Tensor => ∑_j A_{ij} B^j;
 
 // Index renaming (equivalent expressions)
-(A_{ij} B^j) : Tensor => A_{ik} B^k : Canonical;
+(A_{ij} B^j) : Tensor => A_{ik} B^k;
 
 // Tensor contraction (trace-like operation)
-(C(T^{ij}_{ij})) : Tensor => ∑_{i,j} T^{ij}_{ij} : Canonical;
+(C(T^{ij}_{ij})) : Tensor => ∑_{i,j} T^{ij}_{ij};
 
 // Symmetrized tensors
-(Sym(T)_{ij}) : Tensor => (T_{ij} + T_{ji})/2 : Canonical;
+(Sym(T)_{ij}) : Tensor => (T_{ij} + T_{ji})/2;
 ```
 
 ### Tensor Products and Direct Products
 
 ```
 // Tensor product definition
-(A ⊗ B)_{ijkl} : Tensor => A_{ij} B_{kl} : Canonical;
+(A ⊗ B)_{ijkl} : Tensor => A_{ij} B_{kl};
 
 // Kronecker product properties
-((A ⊗ B) · (C ⊗ D)) : Tensor => (A · C) ⊗ (B · D) : Canonical if dimensions_match;
+((A ⊗ B) · (C ⊗ D)) : Tensor => (A · C) ⊗ (B · D) if dimensions_match;
 
 // Tensor product distributivity
-(A ⊗ (B + C)) : Tensor => A ⊗ B + A ⊗ C : Canonical;
-((A + B) ⊗ C) : Tensor => A ⊗ C + B ⊗ C : Canonical;
+(A ⊗ (B + C)) : Tensor => A ⊗ B + A ⊗ C;
+((A + B) ⊗ C) : Tensor => A ⊗ C + B ⊗ C;
 ```
 
 ### Tensor Symmetry Properties
 
 ```
 // Symmetric tensor properties
-(T_{ij}) : SymmetricTensor => T_{ji} : Canonical;
+(T_{ij}) : SymmetricTensor => T_{ji};
 
 // Anti-symmetric (skew-symmetric) tensor properties
-(T_{ij}) : SkewSymmetricTensor => -T_{ji} : Canonical;
-(T_{ii}) : SkewSymmetricTensor => 0 : Canonical;
+(T_{ij}) : SkewSymmetricTensor => -T_{ji};
+(T_{ii}) : SkewSymmetricTensor => 0;
 
 // Cyclic tensor property
-(T_{ijk}) : CyclicTensor => T_{jki} : Canonical;
-(T_{ijk}) : CyclicTensor => T_{kij} : Canonical;
+(T_{ijk}) : CyclicTensor => T_{jki};
+(T_{ijk}) : CyclicTensor => T_{kij};
 ```
 
 ### Tensor Algebra
 
 ```
 // Tensor addition
-(A + B)_{ij...} : Tensor => A_{ij...} + B_{ij...} : Canonical if same_shape(A, B);
+(A + B)_{ij...} : Tensor => A_{ij...} + B_{ij...} if same_shape(A, B);
 
 // Scalar multiplication
-(c * A)_{ij...} : Tensor => c * A_{ij...} : Canonical;
+(c * A)_{ij...} : Tensor => c * A_{ij...};
 
 // Inner product of tensors (full contraction)
-(A_{ij} · B^{ij}) : Tensor => ∑_{i,j} A_{ij} B^{ij} : Canonical;
+(A_{ij} · B^{ij}) : Tensor => ∑_{i,j} A_{ij} B^{ij};
 ```
 
 ### Tensor Calculus
 
 ```
 // Covariant derivative
-(∇_i T^j) : TensorCalculus => ∂_i T^j + Γ^j_{ik} T^k : Canonical;
+(∇_i T^j) : TensorCalculus => ∂_i T^j + Γ^j_{ik} T^k;
 
 // Divergence of a tensor
-(div T)_i : TensorCalculus => ∇_j T^j_i : Canonical;
+(div T)_i : TensorCalculus => ∇_j T^j_i;
 
 // Curl of a vector field (anti-symmetric part of gradient)
-(curl v)^i : TensorCalculus => ε^{ijk} ∇_j v_k : Canonical;
+(curl v)^i : TensorCalculus => ε^{ijk} ∇_j v_k;
 ```
 
 ### Tensor Canonical Ordering of Indices
 
 ```
 // Canonical order of free indices (lexicographic ordering)
-(T_{ji}^{kl}) : Tensor => T_{ij}^{kl} : Canonical if i < j;
+(T_{ji}^{kl}) : Tensor => T_{ij}^{kl} if i < j;
 
 // Canonical ordering of dummy indices (lexicographically earliest pairs first)
-(A_{ik} B^k_j) : Tensor => A_{im} B^m_j : Canonical;
+(A_{ik} B^k_j) : Tensor => A_{im} B^m_j;
 ```
 
 ## 8. Interval Arithmetic
@@ -627,83 +627,83 @@ Interval arithmetic operates on intervals instead of precise values, providing g
 
 ```
 // Interval canonicalization
-([a, b]) : Interval => {} : Canonical if a > b; // Empty interval
-([a, b]) : Interval => [a, b] : Canonical if a ≤ b; // Valid interval
+([a, b]) : Interval => {} if a > b; // Empty interval
+([a, b]) : Interval => [a, b] if a ≤ b; // Valid interval
 
 // Interval addition
-([a, b] + [c, d]) : Interval => [a + c, b + d] : Canonical;
+([a, b] + [c, d]) : Interval => [a + c, b + d];
 
 // Interval subtraction
-([a, b] - [c, d]) : Interval => [a - d, b - c] : Canonical;
+([a, b] - [c, d]) : Interval => [a - d, b - c];
 
 // Interval multiplication
-([a, b] * [c, d]) : Interval => [min(a*c, a*d, b*c, b*d), max(a*c, a*d, b*c, b*d)] : Canonical;
+([a, b] * [c, d]) : Interval => [min(a*c, a*d, b*c, b*d), max(a*c, a*d, b*c, b*d)];
 
 // Special case for positive intervals
-([a, b] * [c, d]) : Interval => [a*c, b*d] : Canonical if a ≥ 0 && c ≥ 0;
+([a, b] * [c, d]) : Interval => [a*c, b*d] if a ≥ 0 && c ≥ 0;
 
 // Interval reciprocal
-(1 / [a, b]) : Interval => [1/b, 1/a] : Canonical if 0 ∉ [a, b];
+(1 / [a, b]) : Interval => [1/b, 1/a] if 0 ∉ [a, b];
 
 // Interval division
-([a, b] / [c, d]) : Interval => [a, b] * [1/d, 1/c] : Canonical if 0 ∉ [c, d];
+([a, b] / [c, d]) : Interval => [a, b] * [1/d, 1/c] if 0 ∉ [c, d];
 ```
 
 ### Interval Functions
 
 ```
 // Interval square
-([a, b]^2) : Interval => [min(a^2, b^2), max(a^2, b^2)] : Canonical if a ≤ 0 && b ≥ 0;
-([a, b]^2) : Interval => [a^2, b^2] : Canonical if a ≥ 0 || b ≤ 0;
+([a, b]^2) : Interval => [min(a^2, b^2), max(a^2, b^2)] if a ≤ 0 && b ≥ 0;
+([a, b]^2) : Interval => [a^2, b^2] if a ≥ 0 || b ≤ 0;
 
 // Interval square root
-(sqrt([a, b])) : Interval => [sqrt(a), sqrt(b)] : Canonical if a ≥ 0;
-(sqrt([a, b])) : Interval => [0, sqrt(b)] : Canonical if a < 0 && b ≥ 0;
+(sqrt([a, b])) : Interval => [sqrt(a), sqrt(b)] if a ≥ 0;
+(sqrt([a, b])) : Interval => [0, sqrt(b)] if a < 0 && b ≥ 0;
 
 // Interval exponential
-(exp([a, b])) : Interval => [exp(a), exp(b)] : Canonical;
+(exp([a, b])) : Interval => [exp(a), exp(b)];
 
 // Interval logarithm
-(log([a, b])) : Interval => [log(a), log(b)] : Canonical if a > 0;
+(log([a, b])) : Interval => [log(a), log(b)] if a > 0;
 ```
 
 ### Interval Set Operations
 
 ```
 // Interval intersection
-([a, b] ∩ [c, d]) : Interval => [max(a, c), min(b, d)] : Canonical if max(a, c) ≤ min(b, d);
-([a, b] ∩ [c, d]) : Interval => {} : Canonical if max(a, c) > min(b, d); // Empty intersection
+([a, b] ∩ [c, d]) : Interval => [max(a, c), min(b, d)] if max(a, c) ≤ min(b, d);
+([a, b] ∩ [c, d]) : Interval => {} if max(a, c) > min(b, d); // Empty intersection
 
 // Interval union (only if intervals overlap or touch)
-([a, b] ∪ [c, d]) : Interval => [min(a, c), max(b, d)] : Canonical if max(a, c) ≤ min(b, d) + epsilon;
+([a, b] ∪ [c, d]) : Interval => [min(a, c), max(b, d)] if max(a, c) ≤ min(b, d) + epsilon;
 ```
 
 ### Interval Properties and Relations
 
 ```
 // Interval width
-(width([a, b])) : Interval => b - a : Canonical;
+(width([a, b])) : Interval => b - a;
 
 // Interval midpoint
-(mid([a, b])) : Interval => (a + b) / 2 : Canonical;
+(mid([a, b])) : Interval => (a + b) / 2;
 
 // Interval inclusion
-([a, b] ⊆ [c, d]) : Interval => true : Canonical if a ≥ c && b ≤ d;
-([a, b] ⊆ [c, d]) : Interval => false : Canonical if a < c || b > d;
+([a, b] ⊆ [c, d]) : Interval => true if a ≥ c && b ≤ d;
+([a, b] ⊆ [c, d]) : Interval => false if a < c || b > d;
 
 // Point membership
-(x ∈ [a, b]) : Interval => true : Canonical if a ≤ x && x ≤ b;
-(x ∈ [a, b]) : Interval => false : Canonical if x < a || x > b;
+(x ∈ [a, b]) : Interval => true if a ≤ x && x ≤ b;
+(x ∈ [a, b]) : Interval => false if x < a || x > b;
 ```
 
 ### Interval Constraints and Solutions
 
 ```
 // Interval constraints intersection
-(solve(x ∈ [a, b] ∧ x ∈ [c, d])) : Interval => x ∈ ([a, b] ∩ [c, d]) : Canonical;
+(solve(x ∈ [a, b] ∧ x ∈ [c, d])) : Interval => x ∈ ([a, b] ∩ [c, d]);
 
 // Interval constraints union
-(solve(x ∈ [a, b] ∨ x ∈ [c, d])) : Interval => x ∈ ([a, b] ∪ [c, d]) : Canonical if can_form_single_interval;
+(solve(x ∈ [a, b] ∨ x ∈ [c, d])) : Interval => x ∈ ([a, b] ∪ [c, d]) if can_form_single_interval;
 ```
 
 ## 9. Finite Automata and Regex Algebra
@@ -714,96 +714,96 @@ Finite automata and regular expressions provide powerful abstractions for string
 
 ```
 // Regex associativity
-((a|b)|c) : Regex => (a|(b|c)) : Regex : Canonical;
-((ab)c) : Regex => (a(bc)) : Regex : Canonical;
+((a|b)|c) : Regex => (a|(b|c)) : Regex;
+((ab)c) : Regex => (a(bc)) : Regex;
 
 // Regex commutativity of alternation
-(a|b) : Regex => (b|a) : Regex : Canonical if less_than(b, a);
+(a|b) : Regex => (b|a) : Regex if less_than(b, a);
 
 // Regex idempotence
-(a|a) : Regex => a : Regex : Canonical;
-(a**) : Regex => a* : Regex : Canonical;
+(a|a) : Regex => a : Regex;
+(a**) : Regex => a* : Regex;
 
 // Empty string (ε) laws
-(aε) : Regex => a : Regex : Canonical;
-(εa) : Regex => a : Regex : Canonical;
-(ε*) : Regex => ε : Regex : Canonical;
+(aε) : Regex => a : Regex;
+(εa) : Regex => a : Regex;
+(ε*) : Regex => ε : Regex;
 
 // Empty set (∅) laws
-(a∅) : Regex => ∅ : Regex : Canonical;
-(∅a) : Regex => ∅ : Regex : Canonical;
-(a|∅) : Regex => a : Regex : Canonical;
-(∅*) : Regex => ε : Regex : Canonical;
+(a∅) : Regex => ∅ : Regex;
+(∅a) : Regex => ∅ : Regex;
+(a|∅) : Regex => a : Regex;
+(∅*) : Regex => ε : Regex;
 
 // Distributivity laws
 (a(b|c)) : Regex => (ab|ac) : Regex;
 ((a|b)c) : Regex => (ac|bc) : Regex;
 
 // Star operator laws
-((a*)*) : Regex => a* : Regex : Canonical;
-(a*a*) : Regex => a* : Regex : Canonical;
-(a|a*) : Regex => a* : Regex : Canonical;
-(a*(ba*)*) : Regex => (a|b)* : Regex : Canonical;
+((a*)*) : Regex => a* : Regex;
+(a*a*) : Regex => a* : Regex;
+(a|a*) : Regex => a* : Regex;
+(a*(ba*)*) : Regex => (a|b)* : Regex;
 
 // Character class optimizations
-([a-z]|[0-9]) : Regex => [a-z0-9] : Regex : Canonical;
-([a-m]|[l-z]) : Regex => [a-z] : Regex : Canonical;
+([a-z]|[0-9]) : Regex => [a-z0-9] : Regex;
+([a-m]|[l-z]) : Regex => [a-z] : Regex;
 ```
 
 ### Automaton Transformations
 
 ```
 // DFA minimization
-(minimize(A)) : DFA => A' : Canonical where states(A') = min_states(A) && L(A') = L(A);
+(minimize(A)) : DFA => A' where states(A') = min_states(A) && L(A') = L(A);
 
 // NFA determinization
-(determinize(A)) : NFA => A' : DFA : Canonical where L(A') = L(A);
+(determinize(A)) : NFA => A' : DFA where L(A') = L(A);
 
 // Regex to NFA transformation
-(thompson(r)) : Regex => A : NFA : Canonical where L(A) = L(r);
+(thompson(r)) : Regex => A : NFA where L(A) = L(r);
 
 // NFA to regex transformation
-(state_elimination(A)) : Automaton => r : Regex : Canonical where L(r) = L(A);
+(state_elimination(A)) : Automaton => r : Regex where L(r) = L(A);
 
 // Automaton equivalence
-(A) : Automaton <=> B : Automaton : Canonical if L(A) = L(B) && |states(A)| ≤ |states(B)|;
+(A) : Automaton <=> B : Automaton if L(A) = L(B) && |states(A)| ≤ |states(B)|;
 ```
 
 ### Automaton Composition
 
 ```
 // Language union (automaton union)
-(A ∪ B) : Automaton => union_construction(A, B) : Automaton : Canonical where L(A ∪ B) = L(A) ∪ L(B);
+(A ∪ B) : Automaton => union_construction(A, B) : Automaton where L(A ∪ B) = L(A) ∪ L(B);
 
 // Language intersection (automaton product)
-(A ∩ B) : Automaton => product_construction(A, B) : Automaton : Canonical where L(A ∩ B) = L(A) ∩ L(B);
+(A ∩ B) : Automaton => product_construction(A, B) : Automaton where L(A ∩ B) = L(A) ∩ L(B);
 
 // Language complement
-(¬A) : Automaton => complement_construction(A) : Automaton : Canonical where L(¬A) = Σ* - L(A);
+(¬A) : Automaton => complement_construction(A) : Automaton where L(¬A) = Σ* - L(A);
 
 // Language concatenation
-(A·B) : Automaton => concatenation_construction(A, B) : Automaton : Canonical where L(A·B) = L(A)·L(B);
+(A·B) : Automaton => concatenation_construction(A, B) : Automaton where L(A·B) = L(A)·L(B);
 
 // Kleene star of language
-(A*) : Automaton => kleene_construction(A) : Automaton : Canonical where L(A*) = (L(A))*;
+(A*) : Automaton => kleene_construction(A) : Automaton where L(A*) = (L(A))*;
 ```
 
 ### Regular Language Operations
 
 ```
 // Quotient of languages
-(A/B) : RegularLanguage => quotient_construction(A, B) : RegularLanguage : Canonical where L(A/B) = {x | ∃y ∈ L(B) s.t. xy ∈ L(A)};
+(A/B) : RegularLanguage => quotient_construction(A, B) : RegularLanguage where L(A/B) = {x | ∃y ∈ L(B) s.t. xy ∈ L(A)};
 
 // Left quotient of languages
-(B\A) : RegularLanguage => left_quotient_construction(A, B) : RegularLanguage : Canonical where L(B\A) = {x | ∃y ∈ L(B) s.t. yx ∈ L(A)};
+(B\A) : RegularLanguage => left_quotient_construction(A, B) : RegularLanguage where L(B\A) = {x | ∃y ∈ L(B) s.t. yx ∈ L(A)};
 
 // Reversal of language
-(reverse(A)) : RegularLanguage => reverse_construction(A) : RegularLanguage : Canonical where L(reverse(A)) = {w^R | w ∈ L(A)};
+(reverse(A)) : RegularLanguage => reverse_construction(A) : RegularLanguage where L(reverse(A)) = {w^R | w ∈ L(A)};
 
 // Prefix/suffix/infix closure
-(prefix(A)) : RegularLanguage => prefix_construction(A) : RegularLanguage : Canonical;
-(suffix(A)) : RegularLanguage => suffix_construction(A) : RegularLanguage : Canonical;
-(infix(A)) : RegularLanguage => infix_construction(A) : RegularLanguage : Canonical;
+(prefix(A)) : RegularLanguage => prefix_construction(A) : RegularLanguage;
+(suffix(A)) : RegularLanguage => suffix_construction(A) : RegularLanguage;
+(infix(A)) : RegularLanguage => infix_construction(A) : RegularLanguage;
 ```
 
 ## 10. Loop Transformation and Polyhedral Optimizations
@@ -815,11 +815,11 @@ Loop transformations are crucial for optimizing numerical code, especially for d
 ```
 // Loop normalization (canonical form)
 (for(i=a; i<b; i+=c) { S }) : Loop =>
-	(for(i'=0; i'<(b-a)/c; i'+=1) { S[i'/c + a/c] }) : Loop : Canonical;
+	(for(i'=0; i'<(b-a)/c; i'+=1) { S[i'/c + a/c] }) : Loop;
 
 // Loop fusion
 (for(i=0; i<n; i+=1) { S1 } for(i=0; i<n; i+=1) { S2 }) : AdjacentLoops =>
-	(for(i=0; i<n; i+=1) { S1 S2 }) : FusedLoop : Canonical if no_dependency_violation(S1, S2);
+	(for(i=0; i<n; i+=1) { S1 S2 }) : FusedLoop if no_dependency_violation(S1, S2);
 
 // Loop fission/distribution
 (for(i=0; i<n; i+=1) { S1 S2 }) : Loop =>
@@ -831,7 +831,7 @@ Loop transformations are crucial for optimizing numerical code, especially for d
 
 // Loop tiling
 (for(i=0; i<n; i+=1) { S[i] }) : Loop =>
-	(for(ii=0; ii<n; ii+=B) { for(i=ii; i<min(ii+B, n); i+=1) { S[i] } }) : TiledLoop : Canonical if beneficial_for_locality(S, B);
+	(for(ii=0; ii<n; ii+=B) { for(i=ii; i<min(ii+B, n); i+=1) { S[i] } }) : TiledLoop if beneficial_for_locality(S, B);
 
 // Loop unrolling
 (for(i=0; i<n; i+=1) { S[i] }) : Loop =>
@@ -847,7 +847,7 @@ Loop transformations are crucial for optimizing numerical code, especially for d
 
 // Loop shifting
 (for(i=a; i<b; i+=1) { S[i] }) : Loop =>
-	(for(i=a+k; i<b+k; i+=1) { S[i-k] }) : ShiftedLoop : Canonical if beneficial_for_alignment(S, k);
+	(for(i=a+k; i<b+k; i+=1) { S[i-k] }) : ShiftedLoop if beneficial_for_alignment(S, k);
 
 // Index set splitting
 (for(i=a; i<b; i+=1) { S[i] }) : Loop =>
@@ -861,7 +861,7 @@ Loop transformations are crucial for optimizing numerical code, especially for d
 
 ```
 // Array linearization
-(A[i][j]) : ArrayAccess => A[i*cols + j] : LinearizedAccess : Canonical if improves_memory_access(A);
+(A[i][j]) : ArrayAccess => A[i*cols + j] : LinearizedAccess if improves_memory_access(A);
 
 // Array padding
 (array(A, [n, m])) : Array => array(A_padded, [n+2*p, m+2*p]) : PaddedArray if reduces_conflict_misses(A, p);
@@ -883,7 +883,7 @@ Loop transformations are crucial for optimizing numerical code, especially for d
 (polyhedral(D, S, A)) : PolyhedralModel => tiled_polyhedral(D, tile(S, B), A) : TiledModel where B is an optimal tile size;
 
 // Code generation from polyhedral model
-(polyhedral(D, S, A)) : PolyhedralModel => generated_code(D, S, A) : LoopNest : Canonical;
+(polyhedral(D, S, A)) : PolyhedralModel => generated_code(D, S, A) : LoopNest;
 
 // Iteration domain representation with constraints
 (For(i, lb, ub, S)) : LoopNest => IterationDomain({i | lb u2264 i < ub}, S) : PolyhedralModel;
@@ -896,11 +896,11 @@ Loop transformations are crucial for optimizing numerical code, especially for d
 
 // Loop interchange with dependence check
 (For(i, a, b, For(j, c, d, S))) : LoopNest =>
-	(For(j, c, d, For(i, a, b, S))) : LoopNest : Canonical if no_loop_carried_dependence(S, i, j);
+	(For(j, c, d, For(i, a, b, S))) : LoopNest if no_loop_carried_dependence(S, i, j);
 
 // Loop fusion with dependence analysis
 (For(i, a, b, Su2081); For(i, a, b, Su2082)) : LoopNest =>
-	For(i, a, b, Su2081; Su2082) : LoopNest : Canonical if no_backward_dependence(Su2081, Su2082);
+	For(i, a, b, Su2081; Su2082) : LoopNest if no_backward_dependence(Su2081, Su2082);
 ```
 
 ## 11. Parser Combinators and Grammar Transformations
@@ -911,45 +911,45 @@ Parser combinators and grammar transformations are essential for language proces
 
 ```
 // Identity laws
-(p ⟨*⟩ empty) : Parser => p : Parser : Canonical;
-(empty ⟨*⟩ p) : Parser => p : Parser : Canonical;
-(p ⟨|⟩ fail) : Parser => p : Parser : Canonical;
-(fail ⟨|⟩ p) : Parser => p : Parser : Canonical;
+(p ⟨*⟩ empty) : Parser => p : Parser;
+(empty ⟨*⟩ p) : Parser => p : Parser;
+(p ⟨|⟩ fail) : Parser => p : Parser;
+(fail ⟨|⟩ p) : Parser => p : Parser;
 
 // Associativity laws
-((p ⟨*⟩ q) ⟨*⟩ r) : Parser => (p ⟨*⟩ (q ⟨*⟩ r)) : Parser : Canonical;
-((p ⟨|⟩ q) ⟨|⟩ r) : Parser => (p ⟨|⟩ (q ⟨|⟩ r)) : Parser : Canonical;
+((p ⟨*⟩ q) ⟨*⟩ r) : Parser => (p ⟨*⟩ (q ⟨*⟩ r)) : Parser;
+((p ⟨|⟩ q) ⟨|⟩ r) : Parser => (p ⟨|⟩ (q ⟨|⟩ r)) : Parser;
 
 // Distributivity laws
 (p ⟨*⟩ (q ⟨|⟩ r)) : Parser => ((p ⟨*⟩ q) ⟨|⟩ (p ⟨*⟩ r)) : Parser;
 ((p ⟨|⟩ q) ⟨*⟩ r) : Parser => ((p ⟨*⟩ r) ⟨|⟩ (q ⟨*⟩ r)) : Parser;
 
 // Functor laws
-(map(f, map(g, p))) : Parser => map(compose(f, g), p) : Parser : Canonical;
-(map(id, p)) : Parser => p : Parser : Canonical;
+(map(f, map(g, p))) : Parser => map(compose(f, g), p) : Parser;
+(map(id, p)) : Parser => p : Parser;
 
 // Applicative laws
-(pure(f) ⟨*⟩ pure(x)) : Parser => pure(f(x)) : Parser : Canonical;
-(pure(id) ⟨*⟩ p) : Parser => p : Parser : Canonical;
+(pure(f) ⟨*⟩ pure(x)) : Parser => pure(f(x)) : Parser;
+(pure(id) ⟨*⟩ p) : Parser => p : Parser;
 
 // Monad laws
-(bind(return(x), f)) : Parser => f(x) : Parser : Canonical;
-(bind(p, return)) : Parser => p : Parser : Canonical;
-(bind(bind(p, f), g)) : Parser => bind(p, λx.bind(f(x), g)) : Parser : Canonical;
+(bind(return(x), f)) : Parser => f(x) : Parser;
+(bind(p, return)) : Parser => p : Parser;
+(bind(bind(p, f), g)) : Parser => bind(p, λx.bind(f(x), g)) : Parser;
 ```
 
 ### Parser Repetition and Control
 
 ```
 // Repetition laws
-(many(fail)) : Parser => empty : Parser : Canonical;
-(many(empty)) : Parser => empty : Parser : Canonical;
-(many(many(p))) : Parser => many(p) : Parser : Canonical;
-(many(option(p))) : Parser => many(p) : Parser : Canonical;
-(many1(fail)) : Parser => fail : Parser : Canonical;
+(many(fail)) : Parser => empty : Parser;
+(many(empty)) : Parser => empty : Parser;
+(many(many(p))) : Parser => many(p) : Parser;
+(many(option(p))) : Parser => many(p) : Parser;
+(many1(fail)) : Parser => fail : Parser;
 
 // Backtracking control
-(attempt(attempt(p))) : Parser => attempt(p) : Parser : Canonical;
+(attempt(attempt(p))) : Parser => attempt(p) : Parser;
 (attempt(p ⟨|⟩ q)) : Parser => attempt(p) ⟨|⟩ attempt(q) : Parser;
 ```
 
@@ -959,38 +959,38 @@ Parser combinators and grammar transformations are essential for language proces
 // Left-factoring transformation
 (A → αβ₁ | αβ₂ | ... | αβₙ) : Grammar =>
 	(A → αA'
-	 A' → β₁ | β₂ | ... | βₙ) : LeftFactoredGrammar : Canonical;
+	 A' → β₁ | β₂ | ... | βₙ) : LeftFactoredGrammar;
 
 // Elimination of left-recursion
 (A → Aα₁ | Aα₂ | ... | Aαₙ | β₁ | β₂ | ... | βₘ) : Grammar =>
 	(A → β₁A' | β₂A' | ... | βₘA'
-	 A' → α₁A' | α₂A' | ... | αₙA' | ε) : NonLeftRecursiveGrammar : Canonical;
+	 A' → α₁A' | α₂A' | ... | αₙA' | ε) : NonLeftRecursiveGrammar;
 
 // Elimination of ε-productions
-(A → ε) : Grammar => eliminate_null(A) : Grammar : Canonical where eliminate_null adjusts all productions;
+(A → ε) : Grammar => eliminate_null(A) : Grammar where eliminate_null adjusts all productions;
 
 // Elimination of unit productions
-(A → B, B → γ) : Grammar => (A → γ) : Grammar : Canonical if is_nonterminal(B);
+(A → B, B → γ) : Grammar => (A → γ) : Grammar if is_nonterminal(B);
 
 // Grammar minimization
-(G) : Grammar => minimize(G) : Grammar : Canonical where minimize removes unreachable and unproductive rules;
+(G) : Grammar => minimize(G) : Grammar where minimize removes unreachable and unproductive rules;
 ```
 
 ### First/Follow Set Computations
 
 ```
 // First set computation
-(first(A)) : GrammarAnalysis => {a ∈ Σ | A ⟹* aα for some α} : FirstSet : Canonical;
-(first(ε)) : GrammarAnalysis => {ε} : FirstSet : Canonical;
-(first(a)) : GrammarAnalysis => {a} : FirstSet : Canonical if a ∈ Σ;
-(first(αβ)) : GrammarAnalysis => first(α) ∪ (first(β) if ε ∈ first(α)) : FirstSet : Canonical;
+(first(A)) : GrammarAnalysis => {a ∈ Σ | A ⟹* aα for some α} : FirstSet;
+(first(ε)) : GrammarAnalysis => {ε} : FirstSet;
+(first(a)) : GrammarAnalysis => {a} : FirstSet if a ∈ Σ;
+(first(αβ)) : GrammarAnalysis => first(α) ∪ (first(β) if ε ∈ first(α)) : FirstSet;
 
 // Follow set computation
-(follow(A)) : GrammarAnalysis => {a ∈ Σ | S ⟹* αAaβ for some α,β} : FollowSet : Canonical;
+(follow(A)) : GrammarAnalysis => {a ∈ Σ | S ⟹* αAaβ for some α,β} : FollowSet;
 
 // LL(1) condition check
 (is_ll1(G)) : GrammarAnalysis =>
-	true : Boolean : Canonical if ∀A → α | β: (first(α) ∩ first(β) = ∅) and (ε ∈ first(β) ⟹ first(α) ∩ follow(A) = ∅);
+	true : Boolean if ∀A → α | β: (first(α) ∩ first(β) = ∅) and (ε ∈ first(β) ⟹ first(α) ∩ follow(A) = ∅);
 ```
 
 ## 12. Concurrency and Process Calculi
@@ -1001,33 +1001,33 @@ Concurrency and process calculi formalize the behavior of concurrent and communi
 
 ```
 // Structural congruence
-(P | Q) : Process <=> (Q | P) : Process : Canonical if less_than(Q, P);  // Commutativity
-((P | Q) | R) : Process <=> (P | (Q | R)) : Process : Canonical;  // Associativity
-(P | 0) : Process => P : Process : Canonical;  // Identity
+(P | Q) : Process <=> (Q | P) : Process if less_than(Q, P);  // Commutativity
+((P | Q) | R) : Process <=> (P | (Q | R)) : Process;  // Associativity
+(P | 0) : Process => P : Process;  // Identity
 
 // Choice laws
-(P + Q) : Process <=> (Q + P) : Process : Canonical if less_than(Q, P);  // Commutativity
-((P + Q) + R) : Process <=> (P + (Q + R)) : Process : Canonical;  // Associativity
-(P + P) : Process => P : Process : Canonical;  // Idempotence
-(P + 0) : Process => P : Process : Canonical;  // Identity
+(P + Q) : Process <=> (Q + P) : Process if less_than(Q, P);  // Commutativity
+((P + Q) + R) : Process <=> (P + (Q + R)) : Process;  // Associativity
+(P + P) : Process => P : Process;  // Idempotence
+(P + 0) : Process => P : Process;  // Identity
 
 // Sequential composition
-((P ; Q) ; R) : Process <=> (P ; (Q ; R)) : Process : Canonical;  // Associativity
-(P ; 0) : Process => P : Process : Canonical;  // Right identity
-(0 ; P) : Process => P : Process : Canonical;  // Left identity
+((P ; Q) ; R) : Process <=> (P ; (Q ; R)) : Process;  // Associativity
+(P ; 0) : Process => P : Process;  // Right identity
+(0 ; P) : Process => P : Process;  // Left identity
 ```
 
 ### Pi-Calculus Reductions
 
 ```
 // Communication reduction
-(x̅⟨v⟩.P | x(y).Q) : PiCalculus => P | Q[v/y] : PiCalculus : Canonical;
+(x̅⟨v⟩.P | x(y).Q) : PiCalculus => P | Q[v/y] : PiCalculus;
 
 // Scope extrusion
-((νx)(P | Q)) : PiCalculus => (P | (νx)Q) : PiCalculus : Canonical if x ∉ free_names(P);
+((νx)(P | Q)) : PiCalculus => (P | (νx)Q) : PiCalculus if x ∉ free_names(P);
 
 // Alpha-conversion
-((νx)P) : PiCalculus <=> ((νy)P[y/x]) : PiCalculus : Canonical if y ∉ free_names(P);
+((νx)P) : PiCalculus <=> ((νy)P[y/x]) : PiCalculus if y ∉ free_names(P);
 
 // Replication
 (!P) : PiCalculus <=> (P | !P) : PiCalculus;
@@ -1037,16 +1037,16 @@ Concurrency and process calculi formalize the behavior of concurrent and communi
 
 ```
 // Hiding distribution
-(P \ a) : CSP => (P \ {a}) : CSP : Canonical;
-((P || Q) \ X) : CSP => ((P \ X) || (Q \ X)) : CSP : Canonical if X only contains internal events;
+(P \ a) : CSP => (P \ {a}) : CSP;
+((P || Q) \ X) : CSP => ((P \ X) || (Q \ X)) : CSP if X only contains internal events;
 
 // Parallel composition laws
-(P [|∅|] Q) : CSP <=> (P ||| Q) : CSP : Canonical;  // No synchronization = interleaving
-(P [|Σ|] Q) : CSP <=> (P || Q) : CSP : Canonical;  // Full synchronization
+(P [|∅|] Q) : CSP <=> (P ||| Q) : CSP;  // No synchronization = interleaving
+(P [|Σ|] Q) : CSP <=> (P || Q) : CSP;  // Full synchronization
 
 // Refinement relations
-(P ⊑_T Q) : CSP => true : Boolean : Canonical if traces(P) ⊇ traces(Q);  // Trace refinement
-(P ⊑_F Q) : CSP => true : Boolean : Canonical if failures(P) ⊇ failures(Q);  // Failures refinement
+(P ⊑_T Q) : CSP => true : Boolean if traces(P) ⊇ traces(Q);  // Trace refinement
+(P ⊑_F Q) : CSP => true : Boolean if failures(P) ⊇ failures(Q);  // Failures refinement
 ```
 
 ### Concurrent Program Optimizations
@@ -1057,18 +1057,18 @@ Concurrency and process calculi formalize the behavior of concurrent and communi
 
 // Lock coarsening
 (lock(m) ; S1 ; unlock(m) ; lock(m) ; S2 ; unlock(m)) : ConcurrentProgram =>
-	(lock(m) ; S1 ; S2 ; unlock(m)) : ConcurrentProgram : Canonical if no_external_access(S1, S2, m);
+	(lock(m) ; S1 ; S2 ; unlock(m)) : ConcurrentProgram if no_external_access(S1, S2, m);
 
 // Lock elimination
-(lock(m) ; S ; unlock(m)) : ConcurrentProgram => S : ConcurrentProgram : Canonical if thread_local(S, m);
+(lock(m) ; S ; unlock(m)) : ConcurrentProgram => S : ConcurrentProgram if thread_local(S, m);
 
 // Read-write lock optimization
 (lock(m) ; read(x) ; unlock(m)) : ConcurrentProgram =>
-	(read_lock(m) ; read(x) ; read_unlock(m)) : ConcurrentProgram : Canonical;
+	(read_lock(m) ; read(x) ; read_unlock(m)) : ConcurrentProgram;
 
 // Parallel loop conversion
 (for(i=0; i<n; i+=1) { S[i] }) : Loop =>
-	(parallel_for(i=0; i<n; i+=1) { S[i] }) : ParallelLoop : Canonical if independent_iterations(S);
+	(parallel_for(i=0; i<n; i+=1) { S[i] }) : ParallelLoop if independent_iterations(S);
 
 // Synchronization primitives
 (barrier(threads) ; barrier(threads)) : ConcurrentProgram => barrier(threads) : ConcurrentProgram if no_side_effects_between_barriers;
@@ -1093,85 +1093,85 @@ Category theory provides a unified framework for functional programming abstract
 
 ```
 // Functor identity law
-(map(id, x)) : Functor => x : Functor : Canonical;
+(map(id, x)) : Functor => x : Functor;
 
 // Functor composition law
 (map(compose(f, g), x)) : Functor => map(f, map(g, x)) : Functor;
-(map(f, map(g, x))) : Functor => map(compose(f, g), x) : Functor : Canonical;
+(map(f, map(g, x))) : Functor => map(compose(f, g), x) : Functor;
 ```
 
 ### Monad Laws
 
 ```
 // Monad left identity
-(bind(return(x), f)) : Monad => f(x) : Monad : Canonical;
+(bind(return(x), f)) : Monad => f(x) : Monad;
 
 // Monad right identity
-(bind(m, return)) : Monad => m : Monad : Canonical;
+(bind(m, return)) : Monad => m : Monad;
 
 // Monad associativity
-(bind(bind(m, f), g)) : Monad => bind(m, λx.bind(f(x), g)) : Monad : Canonical;
+(bind(bind(m, f), g)) : Monad => bind(m, λx.bind(f(x), g)) : Monad;
 
 // Kleisli composition
-(compose_kleisli(f, g)) : Monad => λx.bind(f(x), g) : Monad : Canonical;
+(compose_kleisli(f, g)) : Monad => λx.bind(f(x), g) : Monad;
 ```
 
 ### Applicative Laws
 
 ```
 // Applicative identity
-(ap(pure(id), x)) : Applicative => x : Applicative : Canonical;
+(ap(pure(id), x)) : Applicative => x : Applicative;
 
 // Applicative homomorphism
-(ap(pure(f), pure(x))) : Applicative => pure(f(x)) : Applicative : Canonical;
+(ap(pure(f), pure(x))) : Applicative => pure(f(x)) : Applicative;
 
 // Applicative interchange
-(ap(u, pure(y))) : Applicative => ap(pure(λf.f(y)), u) : Applicative : Canonical;
+(ap(u, pure(y))) : Applicative => ap(pure(λf.f(y)), u) : Applicative;
 
 // Applicative composition
-(ap(ap(ap(pure(compose), u), v), w)) : Applicative => ap(u, ap(v, w)) : Applicative : Canonical;
+(ap(ap(ap(pure(compose), u), v), w)) : Applicative => ap(u, ap(v, w)) : Applicative;
 ```
 
 ### Natural Transformations
 
 ```
 // Natural transformation property
-(α(map(f, x))) : NaturalTransformation => map(f, α(x)) : NaturalTransformation : Canonical;
+(α(map(f, x))) : NaturalTransformation => map(f, α(x)) : NaturalTransformation;
 
 // Vertical composition of natural transformations
-((β ∘ α)(x)) : NaturalTransformation => β(α(x)) : NaturalTransformation : Canonical;
+((β ∘ α)(x)) : NaturalTransformation => β(α(x)) : NaturalTransformation;
 ```
 
 ### F-Algebras and Recursion Schemes
 
 ```
 // Catamorphism (fold) definition
-(cata(alg, Fix(f))) : FAlgebra => alg(map(cata(alg), f)) : Canonical;
+(cata(alg, Fix(f))) : FAlgebra => alg(map(cata(alg), f));
 
 // Anamorphism (unfold) definition
-(ana(coalg, x)) : FCoalgebra => Fix(map(ana(coalg), coalg(x))) : Canonical;
+(ana(coalg, x)) : FCoalgebra => Fix(map(ana(coalg), coalg(x)));
 
 // Hylomorphism (general recursion) fusion
-(cata(alg, ana(coalg, x))) : RecursionScheme => hylo(alg, coalg, x) : RecursionScheme : Canonical;
+(cata(alg, ana(coalg, x))) : RecursionScheme => hylo(alg, coalg, x) : RecursionScheme;
 
 // Paramorphism (primitive recursion with access to original data)
-(para(alg, Fix(f))) : RecursionScheme => alg(map(λx.(para(alg, x), x), f)) : Canonical;
+(para(alg, Fix(f))) : RecursionScheme => alg(map(λx.(para(alg, x), x), f));
 ```
 
 ### Specialized Optimizations
 
 ```
 // List monad optimization
-(map(f, bind(xs, g))) : ListMonad => bind(xs, λx.map(f, g(x))) : ListMonad : Canonical;
-(bind(xs, λx.return(f(x)))) : ListMonad => map(f, xs) : ListMonad : Canonical;
+(map(f, bind(xs, g))) : ListMonad => bind(xs, λx.map(f, g(x))) : ListMonad;
+(bind(xs, λx.return(f(x)))) : ListMonad => map(f, xs) : ListMonad;
 
 // State monad optimization
-(bind(get, λs.bind(get, λ_.k))) : StateMonad => bind(get, λs.k(s,s)) : StateMonad : Canonical;
-(bind(put(s), λ_.bind(get, k))) : StateMonad => bind(put(s), λ_.k(s)) : StateMonad : Canonical;
+(bind(get, λs.bind(get, λ_.k))) : StateMonad => bind(get, λs.k(s,s)) : StateMonad;
+(bind(put(s), λ_.bind(get, k))) : StateMonad => bind(put(s), λ_.k(s)) : StateMonad;
 
 // Reader monad optimization
-(bind(ask, λe.bind(ask, λ_.k))) : ReaderMonad => bind(ask, λe.k(e,e)) : ReaderMonad : Canonical;
-(bind(ask, λe.local(f, m))) : ReaderMonad => local(f, bind(ask, λe.m[f(e)/e])) : ReaderMonad : Canonical;
+(bind(ask, λe.bind(ask, λ_.k))) : ReaderMonad => bind(ask, λe.k(e,e)) : ReaderMonad;
+(bind(ask, λe.local(f, m))) : ReaderMonad => local(f, bind(ask, λe.m[f(e)/e])) : ReaderMonad;
 ```
 
 ## Domain Interconnections
@@ -1182,93 +1182,93 @@ This section explores relationships and transformations between the extended dom
 
 ```
 // Jacobian matrix definition
-(J(f)_{ij}) : DiffLA => ∂f_i/∂x_j : Canonical;
+(J(f)_{ij}) : DiffLA => ∂f_i/∂x_j;
 
 // Gradient as a special case of Jacobian
-(∇f) : DiffLA => J(f)^T : Canonical if f is scalar;
+(∇f) : DiffLA => J(f)^T if f is scalar;
 
 // Hessian matrix
-(H(f)_{ij}) : DiffLA => ∂²f/∂x_i∂x_j : Canonical;
+(H(f)_{ij}) : DiffLA => ∂²f/∂x_i∂x_j;
 ```
 
 ### Differential Calculus and Tensor Calculus
 
 ```
 // Gradient as a (1,0) tensor
-(∇f) : DiffTensor => (∂f/∂x_1, ∂f/∂x_2, ..., ∂f/∂x_n) : Canonical;
+(∇f) : DiffTensor => (∂f/∂x_1, ∂f/∂x_2, ..., ∂f/∂x_n);
 
 // Vector derivative as a (1,1) tensor
-(∇v) : DiffTensor => ∂v_i/∂x_j : Canonical;
+(∇v) : DiffTensor => ∂v_i/∂x_j;
 ```
 
 ### Linear Algebra and Tensors
 
 ```
 // Matrix as a (2,0) tensor
-(A_{ij}) : LATensor => T^{ij} : Canonical;
+(A_{ij}) : LATensor => T^{ij};
 
 // Tensor contraction as matrix multiplication
-(T^{ik}_{jl} δ^j_m δ^l_n) : LATensor => A_{mn} : Canonical where A = matrix_of(T);
+(T^{ik}_{jl} δ^j_m δ^l_n) : LATensor => A_{mn} where A = matrix_of(T);
 ```
 
 ### Linear Algebra and Polynomial Systems
 
 ```
 // Linear system as polynomial system
-(A*x = b) : LAPolynomial => {a_{1,1}*x_1 + ... + a_{1,n}*x_n - b_1, ..., a_{m,1}*x_1 + ... + a_{m,n}*x_n - b_m} : Canonical;
+(A*x = b) : LAPolynomial => {a_{1,1}*x_1 + ... + a_{1,n}*x_n - b_1, ..., a_{m,1}*x_1 + ... + a_{m,n}*x_n - b_m};
 
 // Matrix characteristic polynomial
-(det(A - λI)) : LAPolynomial => p(λ) : Canonical where p is the characteristic polynomial;
+(det(A - λI)) : LAPolynomial => p(λ) where p is the characteristic polynomial;
 ```
 
 ### Interval Arithmetic and Differential Calculus
 
 ```
 // Derivative bound for monotonic function
-(d/dx(f)(x) ∈ [a, b]) : IntervalDiff => ∀x₁,x₂∈[c,d]: (f(x₂) - f(x₁))/(x₂ - x₁) ∈ [a, b] : Canonical if a > 0 || b < 0;
+(d/dx(f)(x) ∈ [a, b]) : IntervalDiff => ∀x₁,x₂∈[c,d]: (f(x₂) - f(x₁))/(x₂ - x₁) ∈ [a, b] if a > 0 || b < 0;
 
 // Mean value theorem application
-(f(y) - f(x)) : IntervalDiff => (y - x) * f'(ξ) : Canonical where ξ ∈ [x, y];
+(f(y) - f(x)) : IntervalDiff => (y - x) * f'(ξ) where ξ ∈ [x, y];
 ```
 
 ### Regular Expressions and Automata
 
 ```
 // Regex to DFA via NFA
-(regex_to_dfa(r)) : RegexAutomaton => determinize(thompson(r)) : RegexAutomaton : Canonical;
+(regex_to_dfa(r)) : RegexAutomaton => determinize(thompson(r)) : RegexAutomaton;
 
 // Language equivalence test
-(equiv(A, r)) : RegexAutomaton => L(A) = L(r) : Boolean : Canonical;
+(equiv(A, r)) : RegexAutomaton => L(A) = L(r) : Boolean;
 ```
 
 ### Loop Transformations and Tensor Operations
 
 ```
 // Matrix multiplication loop optimization
-(matmul(A, B)) : LoopTensor => tiled_matmul(A, B) : LoopTensor : Canonical;
+(matmul(A, B)) : LoopTensor => tiled_matmul(A, B) : LoopTensor;
 
 // Tensor contraction loop optimization
-(contract(T, dims)) : LoopTensor => optimized_contraction(T, dims) : LoopTensor : Canonical;
+(contract(T, dims)) : LoopTensor => optimized_contraction(T, dims) : LoopTensor;
 ```
 
 ### Parser Combinators and Category Theory
 
 ```
 // Parser as applicative functor
-(p ⟨*⟩ q) : ParserCat => ap(map(curry, p), q) : ParserCat : Canonical;
+(p ⟨*⟩ q) : ParserCat => ap(map(curry, p), q) : ParserCat;
 
 // Parser as monad
-(p >>= f) : ParserCat => bind(p, f) : ParserCat : Canonical;
+(p >>= f) : ParserCat => bind(p, f) : ParserCat;
 ```
 
 ### Concurrency and Process Calculi
 
 ```
 // CSP to Pi-calculus translation
-(P || Q) : CSPtoPi => (νc)(P'|Q') : CSPtoPi : Canonical where c contains shared channels;
+(P || Q) : CSPtoPi => (νc)(P'|Q') : CSPtoPi where c contains shared channels;
 
 // Actor model to Pi-calculus
-(actor(A)) : ActorToPi => pi_representation(A) : ActorToPi : Canonical;
+(actor(A)) : ActorToPi => pi_representation(A) : ActorToPi;
 ```
 
 ## Practical Applications
@@ -1479,32 +1479,32 @@ expr = do {
 
 ```
 // Array slice operations
-(slice(A, i:j, k:l)) : ArraySlice => subarray_view(A, i, j, k, l) : Canonical;
+(slice(A, i:j, k:l)) : ArraySlice => subarray_view(A, i, j, k, l);
 
 // Slice fusion for contiguous regions
-(slice(A, i:j, k:l) ∪ slice(A, j:m, k:l)) : ArraySlice => slice(A, i:m, k:l) : Canonical if j_equals_j;
+(slice(A, i:j, k:l) ∪ slice(A, j:m, k:l)) : ArraySlice => slice(A, i:m, k:l) if j_equals_j;
 
 // Slice transposition
-(slice(A, i:j, k:l)^T) : ArraySlice => slice(A^T, k:l, i:j) : Canonical;
+(slice(A, i:j, k:l)^T) : ArraySlice => slice(A^T, k:l, i:j);
 
 // Pure vs. effectful slicing
-(slice(A, i:j, k:l)) : Pure => view_of(A, i, j, k, l) : Pure : Canonical; // No copy
-(copy_slice(A, i:j, k:l)) : Effect => copy_of(A, i, j, k, l) : Effect : Canonical; // Creates copy
+(slice(A, i:j, k:l)) : Pure => view_of(A, i, j, k, l) : Pure; // No copy
+(copy_slice(A, i:j, k:l)) : Effect => copy_of(A, i, j, k, l) : Effect; // Creates copy
 ```
 
 ### In-Place Updates
 
 ```
 // In-place array update
-(update_in_place(A, i, j, v)) : MutableEffect => A_with_update(i, j, v) : MutableEffect : Canonical;
+(update_in_place(A, i, j, v)) : MutableEffect => A_with_update(i, j, v) : MutableEffect;
 
 // Fusion of compatible updates
 (update_in_place(A, i, j, v); update_in_place(A, k, l, w)) : MutableEffect =>
-	batched_update(A, [(i,j,v), (k,l,w)]) : MutableEffect : Canonical if no_overlap(i,j,k,l);
+	batched_update(A, [(i,j,v), (k,l,w)]) : MutableEffect if no_overlap(i,j,k,l);
 
 // Reordering independent updates
 (update_in_place(A, i, j, v); update_in_place(B, k, l, w)) : MutableEffect <=>
-	(update_in_place(B, k, l, w); update_in_place(A, i, j, v)) : MutableEffect : Canonical if A ≠ B;
+	(update_in_place(B, k, l, w); update_in_place(A, i, j, v)) : MutableEffect if A ≠ B;
 ```
 
 ### Layout Transformations
@@ -1517,7 +1517,7 @@ expr = do {
 (array_row_major(A)) : Memory => array_column_major(transpose_internal(A)) : Memory if matches_library_expectations;
 
 // Memory padding for alignment
-(array(data, [n, m])) : Memory => padded_array(data, [n, m], [p₁, p₂]) : Memory : Canonical if improves_alignment(p₁, p₂);
+(array(data, [n, m])) : Memory => padded_array(data, [n, m], [p₁, p₂]) : Memory if improves_alignment(p₁, p₂);
 ```
 
 ## 15. Specialized PDE Operators
@@ -1526,51 +1526,51 @@ expr = do {
 
 ```
 // Laplacian operator (1D)
-(laplacian(u, i)) : PDEStencil => (u[i+1] - 2*u[i] + u[i-1])/h² : Canonical where h is grid spacing;
+(laplacian(u, i)) : PDEStencil => (u[i+1] - 2*u[i] + u[i-1])/h² where h is grid spacing;
 
 // Laplacian operator (2D)
 (laplacian(u, i, j)) : PDEStencil =>
-	(u[i+1,j] + u[i-1,j] + u[i,j+1] + u[i,j-1] - 4*u[i,j])/h² : Canonical where h is grid spacing;
+	(u[i+1,j] + u[i-1,j] + u[i,j+1] + u[i,j-1] - 4*u[i,j])/h² where h is grid spacing;
 
 // Gradient operator (1D)
-(gradient(u, i)) : PDEStencil => (u[i+1] - u[i-1])/(2*h) : Canonical where h is grid spacing;
+(gradient(u, i)) : PDEStencil => (u[i+1] - u[i-1])/(2*h) where h is grid spacing;
 
 // Gradient operator (2D x-component)
-(gradient_x(u, i, j)) : PDEStencil => (u[i+1,j] - u[i-1,j])/(2*h) : Canonical where h is grid spacing;
+(gradient_x(u, i, j)) : PDEStencil => (u[i+1,j] - u[i-1,j])/(2*h) where h is grid spacing;
 
 // Divergence of gradient (alternative Laplacian)
-(div(grad(u, i, j))) : PDEStencil => laplacian(u, i, j) : Canonical;
+(div(grad(u, i, j))) : PDEStencil => laplacian(u, i, j);
 ```
 
 ### Boundary Conditions
 
 ```
 // Dirichlet boundary condition
-(apply_boundary(u, dirichlet(v))) : PDEBoundary => set_boundary_values(u, v) : Canonical;
+(apply_boundary(u, dirichlet(v))) : PDEBoundary => set_boundary_values(u, v);
 
 // Neumann boundary condition
-(apply_boundary(u, neumann(v))) : PDEBoundary => set_boundary_gradients(u, v) : Canonical;
+(apply_boundary(u, neumann(v))) : PDEBoundary => set_boundary_gradients(u, v);
 
 // Periodic boundary condition
-(apply_boundary(u, periodic)) : PDEBoundary => connect_opposite_boundaries(u) : Canonical;
+(apply_boundary(u, periodic)) : PDEBoundary => connect_opposite_boundaries(u);
 
 // Interior vs boundary separation
-(update(u)) : PDEUpdate => (update_interior(u); update_boundary(u)) : PDEUpdate : Canonical;
+(update(u)) : PDEUpdate => (update_interior(u); update_boundary(u)) : PDEUpdate;
 ```
 
 ### Sparsity Patterns
 
 ```
 // Sparse matrix-vector product
-(SpMV(A, v)) : SparseMatrix => sum_over_nonzeros(A, v) : Canonical;
+(SpMV(A, v)) : SparseMatrix => sum_over_nonzeros(A, v);
 
 // Structured sparse matrix optimizations
 (SpMV(tridiagonal(a, b, c), v)) : SparseMatrix =>
-	tridiagonal_matvec(a, b, c, v) : SparseMatrix : Canonical;
+	tridiagonal_matvec(a, b, c, v) : SparseMatrix;
 
 // Block-sparse reductions
 (SpMV(block_diagonal(blocks), v)) : SparseMatrix =>
-	block_diagonal_matvec(blocks, v) : SparseMatrix : Canonical;
+	block_diagonal_matvec(blocks, v) : SparseMatrix;
 ```
 
 ## 16. Numerical Stability and Error Control
@@ -1594,7 +1594,7 @@ expr = do {
 
 ```
 // Double to single precision conversion
-(double(x)) : Precision => float(x) : Precision : Canonical if precision_sufficient(float, x);
+(double(x)) : Precision => float(x) : Precision if precision_sufficient(float, x);
 
 // Mixed precision optimization
 (double(x) * double(y)) : Precision => double(float(x) * float(y)) : Precision
@@ -1602,7 +1602,7 @@ expr = do {
 
 // Adaptive precision selection
 (compute(x)) : Precision =>
-	if_error_bound(compute_double(x), compute_float(x), error_threshold) : Precision : Canonical;
+	if_error_bound(compute_double(x), compute_float(x), error_threshold) : Precision;
 ```
 
 ### Monotonicity Preservation
@@ -1626,16 +1626,16 @@ expr = do {
 
 ```
 // Derivative of Laplacian operator
-(d/du (laplacian(u))) : PDEDiff => laplacian(d/du (u)) : Canonical;
+(d/du (laplacian(u))) : PDEDiff => laplacian(d/du (u));
 
 // Gradient of divergence
-(∇(div(v))) : PDEDiff => laplacian(v) : Canonical if is_smooth(v);
+(∇(div(v))) : PDEDiff => laplacian(v) if is_smooth(v);
 
 // Adjoint of gradient operator
-(adj(grad)) : PDEDiff => -div : Canonical; // Adjoint of gradient is negative divergence
+(adj(grad)) : PDEDiff => -div; // Adjoint of gradient is negative divergence
 
 // Stencil Jacobians
-(J(stencil(u, width))) : PDEDiff => sparse_banded_matrix(width*2 + 1) : Canonical;
+(J(stencil(u, width))) : PDEDiff => sparse_banded_matrix(width*2 + 1);
 ```
 
 ### Checkpointing for Reverse-Mode Differentiation
@@ -1643,15 +1643,15 @@ expr = do {
 ```
 // Reverse-mode AD with checkpointing
 (grad_reverse(f(g(h(x))))) : ADCheckpoint =>
-	compose_adjoints(grad(f), grad(g), grad(h), checkpoint(x)) : Canonical;
+	compose_adjoints(grad(f), grad(g), grad(h), checkpoint(x));
 
 // Optimizing checkpoint intervals
 (reverse_ad_steps(f, n)) : ADCheckpoint =>
-	reverse_with_optimal_checkpoints(f, sqrt(n)) : ADCheckpoint : Canonical;
+	reverse_with_optimal_checkpoints(f, sqrt(n)) : ADCheckpoint;
 
 // Memory-compute tradeoff in AD
 (reverse_ad(f, x)) : ADCheckpoint =>
-	if memory_available then reverse_full(f, x) else reverse_checkpointed(f, x) : Canonical;
+	if memory_available then reverse_full(f, x) else reverse_checkpointed(f, x);
 ```
 
 ### Sensitivity Analysis
@@ -1659,11 +1659,11 @@ expr = do {
 ```
 // PDE parameter sensitivity
 (sensitivity(solution(pde), parameter)) : Sensitivity =>
-	adjoint_method(pde, parameter) : Canonical if is_differentiable(pde);
+	adjoint_method(pde, parameter) if is_differentiable(pde);
 
 // Stochastic sensitivity analysis
 (expected_sensitivity(model, parameter, distribution)) : Sensitivity =>
-	monte_carlo_estimate(model, parameter, distribution, samples) : Canonical;
+	monte_carlo_estimate(model, parameter, distribution, samples);
 ```
 
 ## 18. Advanced Type System for Scientific Computing
@@ -1680,7 +1680,7 @@ expr = do {
 (A : Matrix(m,n) * v : Vector(p)) : DimCheck => error("dimension mismatch") if n != p;
 
 // Dimension inference
-(transpose(A : Matrix(m,n))) : DimInference => transpose(A) : Matrix(n,m) : Canonical;
+(transpose(A : Matrix(m,n))) : DimInference => transpose(A) : Matrix(n,m);
 ```
 
 ### Units of Measurement
@@ -1688,11 +1688,11 @@ expr = do {
 ```
 // Unit-aware computations
 (a : Quantity(v₁, m/s) + b : Quantity(v₂, m/s)) : UnitCheck =>
-	(a + b) : Quantity(v₁ + v₂, m/s) : Canonical;
+	(a + b) : Quantity(v₁ + v₂, m/s);
 
 // Unit conversion
 (a : Quantity(v, km)) : UnitConversion =>
-	a : Quantity(v * 1000, m) : Canonical;
+	a : Quantity(v * 1000, m);
 
 // Dimensional analysis errors
 (a : Quantity(v₁, m) + b : Quantity(v₂, s)) : UnitCheck =>
@@ -1704,15 +1704,15 @@ expr = do {
 ```
 // Grid type checking
 (discretize(f, grid : Grid2D(n,m))) : GridType =>
-	discrete_function(f, grid) : DiscreteFunction2D(n,m) : Canonical;
+	discrete_function(f, grid) : DiscreteFunction2D(n,m);
 
 // Mesh compatibility
 (interpolate(f : DiscreteFunction(mesh₁), mesh₂)) : MeshType =>
-	interpolated_function(f, mesh₁, mesh₂) : DiscreteFunction(mesh₂) : Canonical;
+	interpolated_function(f, mesh₁, mesh₂) : DiscreteFunction(mesh₂);
 
 // Refinement type checking
 (refine(mesh : Mesh(n))) : MeshRefinement =>
-	refined_mesh : Mesh(2*n) : Canonical if uniform_refinement;
+	refined_mesh : Mesh(2*n) if uniform_refinement;
 ```
 
 ## 19. Performance Models and Cost-Driven Search
@@ -1721,16 +1721,16 @@ expr = do {
 
 ```
 // Computational cost estimation
-(matmul(A, B)) : CostModel => matmul(A, B) : Complexity(O(n³)) : Canonical;
+(matmul(A, B)) : CostModel => matmul(A, B) : Complexity(O(n³));
 (matmul(A, B)) : CostModel => strassen(A, B) : Complexity(O(n^2.807)) if large_enough(n);
 
 // Memory access cost
 (access(array_row_major(A), j, i)) : CostModel =>
-	access(A, j, i) : MemoryCost(high) : Canonical; // Column access in row-major is expensive
+	access(A, j, i) : MemoryCost(high); // Column access in row-major is expensive
 
 // Parallel execution cost
 (parallel(tasks, p)) : CostModel =>
-	parallel(tasks, p) : ExecutionTime(max_time(tasks) + communication_overhead(tasks, p)) : Canonical;
+	parallel(tasks, p) : ExecutionTime(max_time(tasks) + communication_overhead(tasks, p));
 ```
 
 ### Heuristic Search
@@ -1738,15 +1738,15 @@ expr = do {
 ```
 // Transformation sequence search
 (optimize(expr, goal)) : Search =>
-	apply_transformations(expr, best_sequence(available_transforms, expr, goal)) : Canonical;
+	apply_transformations(expr, best_sequence(available_transforms, expr, goal));
 
 // Genetic algorithm optimization
 (autotune(kernel, params)) : Search =>
-	kernel(best_params_from_genetic(kernel, params, generations, fitness)) : Canonical;
+	kernel(best_params_from_genetic(kernel, params, generations, fitness));
 
 // Machine learning guided optimization
 (optimize(expr)) : MLGuided =>
-	apply_transforms(expr, predict_best_transforms(expr, ml_model)) : Canonical;
+	apply_transforms(expr, predict_best_transforms(expr, ml_model));
 ```
 
 ### Incremental Optimization
@@ -1754,13 +1754,13 @@ expr = do {
 ```
 // Partial optimization with fallback
 (optimize_with_fallback(expr)) : Incremental =>
-	if is_valid(optimized) then optimized else expr : Canonical
+	if is_valid(optimized) then optimized else expr
 	where optimized = attempt_optimization(expr);
 
 // Progressive optimization levels
 (optimize(expr, level)) : Progressive =>
 	if level == 0 then expr else
-	optimize(apply_safe_transforms(expr), level-1) : Canonical;
+	optimize(apply_safe_transforms(expr), level-1);
 ```
 
 ## 20. Effect Tracking in Programming Languages
@@ -1782,18 +1782,18 @@ Effect tracking is a powerful technique for statically analyzing and optimizing 
 
 ```
 // Effect operation nodes
-(Op(get)) : Effect => effect_node(get, []) : Canonical;
-(Op(put, v)) : Effect => effect_node(put, [v]) : Canonical;
-(Op(throw, e)) : Effect => effect_node(throw, [e]) : Canonical;
-(Op(log, msg)) : Effect => effect_node(log, [msg]) : Canonical;
+(Op(get)) : Effect => effect_node(get, []);
+(Op(put, v)) : Effect => effect_node(put, [v]);
+(Op(throw, e)) : Effect => effect_node(throw, [e]);
+(Op(log, msg)) : Effect => effect_node(log, [msg]);
 
 // Effect domain tagging
-(expr) : State => expr : EffectDomain(State) : Canonical;
-(expr) : IO => expr : EffectDomain(IO) : Canonical;
-(expr) : Exception => expr : EffectDomain(Exception) : Canonical;
+(expr) : State => expr : EffectDomain(State);
+(expr) : IO => expr : EffectDomain(IO);
+(expr) : Exception => expr : EffectDomain(Exception);
 
 // Pure expressions (no effects)
-(expr) : Pure => expr !: EffectDomain : Canonical;
+(expr) : Pure => expr !: EffectDomain;
 ```
 
 ### Effect Domain Hierarchy
@@ -1813,7 +1813,7 @@ EffectDomain(Console) ⊂ EffectDomain(IO);
 
 ```
 // Effect-preserving transformations
-(e₁ + e₂) : Pure => (e₂ + e₁) : Pure : Canonical if is_commutative(+);
+(e₁ + e₂) : Pure => (e₂ + e₁) : Pure if is_commutative(+);
 
 // Effect-order preservation (non-commutative)
 (e₁ ; e₂) : EffectDomain !=> (e₂ ; e₁) : EffectDomain if may_have_side_effects(e₁) && may_have_side_effects(e₂);
@@ -1845,19 +1845,19 @@ EffectDomain(Console) ⊂ EffectDomain(IO);
 	if c : EffectDomain(E₁) && t : EffectDomain(E₂) && f : EffectDomain(E₃);
 
 // Checkpointing effects
-(Op(checkpoint, state)) : CheckpointEffect => checkpoint_node(state) : EffectDomain(IO) : Canonical;
+(Op(checkpoint, state)) : CheckpointEffect => checkpoint_node(state) : EffectDomain(IO);
 
 // Distributed checkpointing optimizations
 (Op(checkpoint, full_state)) : DistributedCheckpoint =>
-	Op(partial_checkpoint, extract_relevant(full_state)) : DistributedCheckpoint : Canonical if can_extract_partial(full_state);
+	Op(partial_checkpoint, extract_relevant(full_state)) : DistributedCheckpoint if can_extract_partial(full_state);
 
 // Commutative logging optimization
 (Op(log, msg₁) ; Op(log, msg₂)) : CommutativeEffect =>
-	Op(batch_log, [msg₁, msg₂]) : CommutativeEffect : Canonical if can_batch_logs;
+	Op(batch_log, [msg₁, msg₂]) : CommutativeEffect if can_batch_logs;
 
 // I/O effect merging
 (Op(write_file, f, data₁) ; Op(write_file, f, data₂)) : IO =>
-	Op(write_file, f, concat(data₁, data₂)) : IO : Canonical if sequential_writes(f);
+	Op(write_file, f, concat(data₁, data₂)) : IO if sequential_writes(f);
 ```
 
 ### Cross-Domain Effect Transformations

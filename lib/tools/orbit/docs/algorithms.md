@@ -225,6 +225,8 @@ fn canonicalize_binary_tree(node) (
 )
 ```
 
+TODO: We should also look at the height of the tree and balance it.
+
 **Example**:
 ```
 // Original tree:    5

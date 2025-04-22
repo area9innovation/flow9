@@ -19,7 +19,7 @@ Beyond academic interest, understanding the group structure of Rubik's Cubes has
 | `Inverse(g)`     | Abstract inverse of group element g            | `Inverse(Turn(X,0,1))`        |
 | `Identity(G)`    | Abstract identity element of group G           | `Identity(RubikGroup_3x3)`    |
 | `Element(d, G)`  | Abstract element `d` in group `G`              | `Element(p, S₈)`              |
-| `g : G`          | Element `g` belongs to domain/group `G`        | `State : Canonical(G₁)`       |
+| `g : G`          | Element `g` belongs to domain/group `G`        | `State :  G₁`       |
 | `G₁ ⊂ G₂`        | Group `G₁` is a subgroup of `G₂`               | `A₈ ⊂ S₈`                     |
 | `H ⋊ G`          | Semi-direct product of H by G                  | `C₃⁷ ⋊ A₈`                    |
 | `G × H`          | Direct product of G and H                      | `S₈ × S₁₂`                    |
@@ -30,7 +30,7 @@ Beyond academic interest, understanding the group structure of Rubik's Cubes has
 | `→`              | Unidirectional rewrite rule                    | `g · Identity(G) → g`         |
 | `↔`              | Bidirectional equivalence rule                 | `Compose(a,b) ↔ Compose(b,a)` |
 | `φ`              | Homomorphism defining group action             | Action in `H ⋊ G`             |
-| `Canonical(G)`   | Annotation for canonical form within group `G` | `State : Canonical(G₀)`       |
+| `Canonical(G)`   | Annotation for canonical form within group `G` | `State :  G₀`       |
 
 ## 2. Cube Components and Coordinate-Based Representation
 
@@ -282,7 +282,7 @@ The solved state is `Identity(RubikGroup_NxN)`. The goal of solving is to find a
 
 ```
 # The identity element is canonical for the whole group
-Identity(RubikGroup_NxN) : Canonical(G₀);
+Identity(RubikGroup_NxN) :  G₀;
 
 # We check for equivalence, not rewrite the state away.
 # If State's eclass merges with Identity's eclass:
@@ -295,9 +295,9 @@ Intermediate canonical forms are defined relative to subgroups. Abstract canonic
 
 ```
 # Abstract rules (implementations external)
-p : Aₙ  →  canonical_even_permutation(p) : Canonical(Aₙ);
-r : Cₙ  →  canonical_rotation(r) : Canonical(Cₙ); # e.g., r mod n
-d : Dₙ  →  canonical_dihedral(d) : Canonical(Dₙ);
+p : Aₙ  →  canonical_even_permutation(p);
+r : Cₙ  →  canonical_rotation(r); # e.g., r mod n
+d : Dₙ  →  canonical_dihedral(d);
 
 # Link state components to abstract groups
 CornerPermutationState(...) : A₈; # Note: A₈ for N≥2
@@ -306,9 +306,9 @@ CornerOrientationState(...) : C₃⁷; # Or component-wise : C₃
 EdgeOrientationState(...)   : C₂¹¹; # Or component-wise : C₂
 
 # Define subgroup canonical properties
-State : EdgesAreOriented      →  State : Canonical(G₁);
-State : CornersAreOriented    →  State : Canonical(OrientationGroup);
-State : PiecesInCorrectOrbits →  State : Canonical(G₃);
+State : EdgesAreOriented      →  State : G₁;
+State : CornersAreOriented    →  State : OrientationGroup;
+State : PiecesInCorrectOrbits →  State : G₃;
 ```
 The rewriting system applies these rules to simplify components of the state representation (e.g., canonicalizing the permutation part using the `Aₙ` rule).
 
@@ -338,13 +338,13 @@ Modeled by rules applying move sequences valid within a subgroup `Gᵢ` to reach
 
 ```
 # Rule applying G₀ moves to reach G₁ canonical form (Edge Orientation)
-State : G₀ → Apply(SolveEdgeOrientationAlg, State) : Canonical(G₁);
+State : G₀ → Apply(SolveEdgeOrientationAlg, State) :  G₁;
 
 # Rule applying G₁ moves to reach G₂ canonical form
-State : Canonical(G₁) → Apply(SolveCornerOrientAndEdgeSliceAlg, State) : Canonical(G₂);
+State :  G₁ → Apply(SolveCornerOrientAndEdgeSliceAlg, State) : G₂;
 
 # ... down to G₄ (Identity)
-State : Canonical(G₃) → Apply(SolveSquareGroupAlg, State) : Canonical(G₄); # Canonical(G₄) is Identity
+State : G₃ → Apply(SolveSquareGroupAlg, State) : G₄; # Canonical(G₄) is Identity
 ```
 
 ## 7. Synergy Across Cube Sizes (`N≥2`)
