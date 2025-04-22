@@ -23,23 +23,24 @@ No current equality-saturation engine offers first-class knowledge of algebraic 
 We propose Orbit, a framework unifying canonical forms and rewriting; its concrete storage layer is the O-graph data structure, an e-graph enriched with domains and group metadata.
 
 1.  **Domain-annotated e-classes**: Multiple domain tags per class enable property inheritance along a user-defined lattice.
-2.  **Group-theoretic canonicalisation**: Orbits under a group action are collapsed by a deterministic representative function.
+2.  **Group-theoretic canonicalisation**: Orbits under a group action are collapsed by selecting a representative via deterministic algorithms.
 3.  **Uniform rewrite language**: A natural syntax with typed patterns, negative domain guards, and bidirectional rewriting rules.
 
 ### A Motivating Example: Commutative Addition
 
-Consider the simple case of integer addition, which is commutative: `3 + 5 = 5 + 3`. Without canonicalization, a system would need to store and match against both forms. With Orbit, we can annotate the addition with the S₂ symmetry group (the group of permutations on 2 elements):
+Consider the simple case of integer addition, which is commutative: `3 + 5 = 5 + 3`. Without canonicalization, a system would need to store and match against both forms. With Orbit, we can annotate the addition with the S₂ symmetry group and provide a canonicalizing rule:
 
 ```orbit
-// Canonicalizing a + b under commutativity (S₂)
-(a + b) : S₂ → a + b : Canonical if a ≤ b;
-(a + b) : S₂ → b + a : Canonical if b < a;
+// Rule intended to produce the canonical form for addition under S₂
+(a + b) : S₂ => a + b : Canonical if a <= b; // Mark rule output as canonical
+(a + b) : S₂ => b + a : Canonical if b < a;  // Mark rule output as canonical
 
-// Applied examples
-(5 + 3) : S₂ → 3 + 5 : Canonical;  // 3 < 5, so swap
+// Applied examples during saturation
+(5 + 3) : S₂ => 3 + 5 : Canonical; // Rewrite to canonical form
+// The merge operation `mergeOGraphNodes(id_of(3+5), id_of(5+3))` makes `3+5` the root.
 ```
 
-This approach automatically collapses the two forms into a single canonical representation (`3 + 5`), reducing storage requirements and improving pattern matching efficiency. For multi-term expressions, the benefits grow exponentially with expression size.
+This approach automatically collapses the two forms into a single representative (`3 + 5`) in the O-Graph, reducing storage and improving matching efficiency. For multi-term expressions, the benefits grow exponentially with expression size.
 
 ### Why canonical forms matter
 
@@ -169,9 +170,9 @@ An e-graph stores e-nodes (operators with e-class children) and e-classes (sets 
 
 ### 3.2 O-graph extensions
 
-1.  **Domain membership**: Each e-class carries a set of domains it belongs to (e.g., `Integer`, `Ring`, `S₂`, `Canonical`). Domains are themselves terms within the o-graph, allowing for relationships like the hierarchy described in §2.3.
-2.  **Group metadata**: Specific group domains (like `S₂`, `C₄`) trigger group-theoretic canonicalization algorithms.
-3.  **Root canonicalisation**: A chosen e-node acts as the class representative for pattern matching. Rewrite rules `lhs → rhs` make the `rhs` the new representative, potentially marked `: Canonical`.
+1.  **Domain membership**: Each e-class carries a set of domains it belongs to (e.g., `Integer`, `Ring`, `S₂`). Domains are terms, enabling hierarchical relations (§2.3).
+2.  **Group metadata**: Group domains (`S₂`, `C₄`) trigger canonicalization algorithms.
+3.  **Root Representative**: Each e-class has a designated **representative (root)** e-node. The `mergeOGraphNodes(root_id, other_id)` operation establishes `root_id` as this representative. Rewrite rules, particularly those marked `: Canonical` to signify their intent, are applied repeatedly during saturation. This process drives the representative node towards the unique canonical form defined by the system's group-theoretic rules and ordering criteria.
 
 Example:
 
@@ -179,7 +180,7 @@ Example:
 eclass42 = {
 	nodes = { (5 + 3), (3 + 5) },
 	belongsTo = { Integer, CommutativeRing, S₂ }, // Domain membership
-	representative = (3 + 5)        // Canonical form based on S₂ ordering
+	representative = (3 + 5)        // Designated root, result of S₂ canonicalization rule
 }
 ```
 
@@ -519,27 +520,25 @@ This runs in O(n) time, dominated by the efficient cyclic canonicalization steps
 
 ## 5. Canonicalisation Strategies
 
-This section details how the core algorithms are applied.
+This section details how the core algorithms are applied, resulting in canonical forms.
 
 ### 5.1 Symmetric Group Canonicalization (Sₙ)
 
-Used for permutation symmetry, typically commutative operations. The canonical form is the sorted sequence of operands.
+Used for permutation symmetry. The canonical form is the sorted sequence of operands.
 
 #### Example: Commutative Operations (S₂)
 
 ```orbit
-// Canonicalizing a + b under commutativity (S₂)
-(a + b) : S₂ → a + b : Canonical if a ≤ b;
-(a + b) : S₂ → b + a : Canonical if b < a;
+// Canonicalizing rule for a + b under S₂
+(a + b) : S₂ => a + b : Canonical if a <= b;
+(a + b) : S₂ => b + a : Canonical if b < a;
 
-// Applied examples
-(5 + 3) : S₂ → 3 + 5 : Canonical;  // 3 < 5, so swap
-(x + y) : S₂ → x + y : Canonical;  // Assuming x ≤ y in the term ordering
+// Saturation ensures the root of the e-class becomes the sorted form.
 ```
 
 #### Exponential Speedup Through Canonicalization
 
-Consider `a + b + c + d`. Without canonicalization, matching a pattern like `x + y` requires checking sub-expressions in potentially O(n!) permutations for n-ary operations. With canonicalization (e.g., sorting operands for Sₙ symmetry), the expression becomes a single form like `a + b + c + d` (assuming alphabetical order). A pattern `x + y` then only needs to be matched against adjacent pairs in the canonical form, drastically reducing matching complexity. For nested expressions with multiple commutative/associative operators, the savings compound exponentially.
+Consider `a + b + c + d`. Without canonicalization, matching a pattern like `x + y` requires checking sub-expressions in potentially O(n!) permutations for n-ary operations. With canonicalization (e.g., sorting operands for Sₙ symmetry), the expression becomes a single form like `a + b + c + d` (assuming alphabetical order). A pattern `x + y` then only needs to be matched against adjacent pairs in the canonical form, drastically reducing matching complexity. For nested expressions with multiple commutative/associative operators, the savings compound exponentially. TODO: In reality, we use the gather operation to collect all operands into a single array, which is then sorted. This allows us to apply the canonicalization rules directly on the array rather than on individual terms.
 
 ### 5.2 Cyclic Group Canonicalization (Cₙ)
 

@@ -6,11 +6,12 @@ This document consolidates terminology, structures, domains, and notation used a
 
 *   **Orbit:** A domain-unified rewriting engine designed for mathematical formalism and practical programming using a functional paradigm.
 *   **Rewriting System:** A system that applies rules to transform expressions or terms into equivalent or simpler forms.
-*   **Domain:** A classification or property associated with an expression (e.g., `Integer`, `Real`, `S₂`, `Polynomial`, `Canonical`, `Pure`, `IO`). Domains can represent types, mathematical structures, effects, semantic states, or symmetry groups.
+*   **Domain:** A classification or property associated with an expression (e.g., `Integer`, `Real`, `S₂`, `Polynomial`, `Pure`, `IO`). Domains can represent types, mathematical structures, effects, semantic states, or symmetry groups.
 *   **Domain Annotation (`: Domain`):** Syntax used to associate an expression with a domain. On the LHS of a rule, it acts as a constraint; on the RHS, it's an assertion.
 *   **Negative Domain Guard (`!: Domain`):** Syntax used in patterns to match expressions that *do not* belong to the specified domain. Useful for preventing infinite loops or applying rules only once.
 *   **Domain Hierarchy (`⊂` or `c=`):** Defines subset relationships between domains (e.g., `Integer ⊂ Real`). Rules defined for parent domains apply to child domains.
-*   **Canonical Form:** A unique, standard representation chosen from a set of equivalent expressions. Essential for equality testing, optimization, and reducing redundancy. Marked with `: Canonical`. TODO: We might not require this, since each oclass is intended to be canonical at saturation.
+*   **Canonical Form:** A unique, standard representation chosen from a set of equivalent expressions based on defined rules (e.g., lexicographical order for Sₙ, minimal rotation for Cₙ). Essential for equality testing, optimization, and reducing redundancy. Within the O-Graph, the designated **representative (root)** node of an e-class converges to this canonical form through rule saturation.
+*   **: `Canonical` Annotation:** Primarily used on the *right-hand side* of a rewrite rule (e.g., `expr => canonical_expr : Canonical`). It serves as a **marker or assertion** indicating that this specific rule is *intended* to produce a canonical form according to some criteria. The actual enforcement of canonical representation within the O-Graph relies on the `mergeOGraphNodes(root_id, other_id)` mechanism (which sets `root_id` as the e-class representative) combined with rule saturation, which drives the representative towards the canonical state defined by the rules. It might also be used with `!:` as a guard to prevent re-applying canonicalization rules. TODO: We might not need this.
 *   **AST (Abstract Syntax Tree):** The tree structure representing code or expressions. Orbit has first-class support for AST manipulation.
 	*   `: ast`: Annotation indicating a function parameter receives an unevaluated AST.
 	*   `quote(e)`: Prevents evaluation, treating `e` as an AST.
@@ -20,11 +21,10 @@ This document consolidates terminology, structures, domains, and notation used a
 	*   `unquote(expr, bindings)`: Traverses `expr`, evaluating only sub-expressions wrapped in `eval()`.
 	*   `prettyOrbit(expr)`: Formats an AST into readable code.
 	*   `astname(expr)`: Returns the type/operator name of the root AST node.
-*   **OGraph / EGraph:** Data structure for efficiently representing sets of equivalent expressions (e-classes) and their relationships. OGraph extends EGraph with domain/group annotations and a designated canonical root per e-class.
+*   **OGraph / EGraph:** Data structure for efficiently representing sets of equivalent expressions (e-classes) and their relationships. OGraph extends EGraph with domain/group annotations and a designated **representative (root)** per e-class, which converges to the canonical form during saturation.
 	*   `e-node`: Represents an operation and its children (which are e-classes).
-	*   `e-class`: Represents a set of equivalent e-nodes.
+	*   `e-class`: Represents a set of equivalent e-nodes, identified by its representative (root) node's ID.
 	*   `makeOGraph`, `addOGraph`, `mergeOGraphNodes`, `addDomainToNode`, `matchOGraphPattern`, etc.: Runtime functions for manipulating OGraphs.
-TODO: We need an efficient mechanism to pattern match from a domain down to the terms in that domain.
 
 ## Rewriting Syntax
 

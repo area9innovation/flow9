@@ -113,13 +113,13 @@ let expr = extractOGraph(g, exprId);
 
 #### O-Graph Canonicalization and Equivalence Classes
 
-When working with O-Graphs, understanding how canonicalization works is critical. When expressions are merged to represent equivalence, one expression is designated as the "canonical representative" or "root" of the equivalence class.
+When working with O-Graphs, understanding how canonicalization works is critical. When expressions are merged to represent equivalence, one expression is designated as the **representative** or "root" of the equivalence class (e-class). This is achieved mechanically using the `mergeOGraphNodes` function.
 
-When you later extract an expression from an eclass, you'll always get the canonical form, not necessarily the exact expression you originally added. This behavior is by design and enables the system to maintain a consistent representation of equivalent expressions.
+When you later extract an expression from an e-class using functions like `extractOGraph`, you'll always get the *current representative* of that class. Crucially, through the process of **equality saturation** (repeatedly applying rewrite rules until no more changes occur), this representative node is driven towards the *true canonical form* as defined by the system's rules (e.g., sorting operands for commutativity, applying specific normal forms). Rules intended to produce such canonical forms might be marked with the `: Canonical` annotation to indicate their purpose.
 
 #### `mergeOGraphNodes(graphName: string, nodeId1: int, nodeId2: int) -> bool`
 
-Merges two nodes to represent that they are equivalent expressions. Returns true if successful.
+Merges two nodes (and their respective e-classes) to represent that they are equivalent expressions. Returns true if successful, false if they were already in the same class.
 
 ```orbit
 // Establish that a + b is equivalent to c - d
@@ -128,19 +128,20 @@ let n2 = addOGraph(g, c - d);
 mergeOGraphNodes(g, n1, n2);
 ```
 
-**IMPORTANT**: The order of nodeIds matters! The first node (`nodeId1`) will become the canonical representative (root) of the merged equivalence class. When extracting expressions later, the canonical form will be used. This is especially important in rewriting systems where you typically want the transformed expression to be canonical.
+**IMPORTANT**: The order of nodeIds matters! The first node (`nodeId1`) becomes the **designated representative (root)** of the merged equivalence class. During equality saturation, rewrite rules (potentially marked with `: Canonical` to indicate their purpose, like `expr => canonical_expr : Canonical`) transform expressions within an e-class. When merging the result of such a canonicalizing rule (`resultId`) with the original node (`eclassId`), using `mergeOGraphNodes(resultId, eclassId)` ensures the *intended* canonical form becomes the designated representative. The saturation process then guarantees that this representative eventually converges to the unique canonical form defined by the system's rules and ordering criteria.
 
 ```orbit
-// Pattern matching and rewriting example
+// Pattern matching and rewriting example demonstrating root selection
 matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
-	// Process the replacement
-	let result = substituteWithBindings(replacement, bindings);
+	// Process the replacement to get the intended canonical result
+	let canonical_result = substituteWithBindings(replacement_template, bindings); // replacement might be marked : Canonical
 
-	// Add the result to the graph
-	let resultId = addOGraph(graph, result);
+	// Add the canonical result to the graph
+	let canonicalId = processDomainAnnotations(graph, canonical_result); // Ensures domains are added
 
-	// Make the result the canonical form by putting its ID first
-	mergeOGraphNodes(graph, resultId, eclassId);
+	// Make the canonical result the representative of the merged class
+	// By putting its ID first, we designate it as the root.
+	mergeOGraphNodes(graph, canonicalId, eclassId);
 ));
 ```
 
@@ -148,7 +149,7 @@ matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
 
 #### `addDomainToNode(graphName: string, nodeId: int, domainId: int) -> bool`
 
-Associates a node with a domain node, which can be any expression in the O-Graph. Returns true if successful.
+Associates a node (specifically, its e-class) with a domain node, which can be any expression in the O-Graph. Returns true if successful. This adds the `domainId` to the `belongsTo` set of the node's e-class.
 
 ```orbit
 // Add the expression a + b
@@ -157,33 +158,17 @@ let exprId = addOGraph(g, a + b);
 // Add the domain expression S_2
 let domainId = addOGraph(g, S_2);
 
-// Associate the expression with the domain
+// Associate the expression's e-class with the domain S_2
 addDomainToNode(g, exprId, domainId);
 ```
 
-This allows associating expressions with arbitrary domain expressions.
-
-#### Using Domain Annotations with `processDomainAnnotations`
-
-A more intuitive way to associate domains with expressions is to use the colon (`:`) syntax together with the `processDomainAnnotations` function:
-
-```orbit
-// Add an expression with domain annotation directly
-let id = processDomainAnnotations(g, (a + b) : Algebra);
-
-// This is equivalent to:
-let exprId = addOGraph(g, a + b);
-let domainId = addOGraph(g, Algebra);
-addDomainToNode(g, exprId, domainId);
-```
-
-Using domain annotations with `processDomainAnnotations` is particularly valuable when working with pattern matching and rewriting systems, as it allows you to directly express that the result of a rewrite belongs to a specific domain.
+This allows associating expressions with arbitrary domain expressions, representing types, properties, or group memberships.
 
 ### Pattern Matching
 
 #### `matchOGraphPattern(graphName: string, pattern: expression, callback: (bindings: ast, eclassId: int) -> void) -> int`
 
-Searches for all occurrences of a pattern in the graph and calls the provided callback for each match, passing a map of variable bindings and the e-class ID of the matched node. Returns the number of matches found.
+Searches for all occurrences of a pattern in the graph and calls the provided callback for each match, passing a map of variable bindings (variable name -> eclass ID) and the e-class ID of the matched node's root. Returns the number of matches found.
 
 **IMPORTANT**: The `bindings` parameter in the callback function must be marked as `ast` to ensure the bindings are not prematurely evaluated. This typing is crucial for proper functionality when using these bindings with functions like `substituteWithBindings`.
 
@@ -195,100 +180,84 @@ addOGraph(g, 5 * 6);
 addOGraph(g, (a + b) * c);
 
 // Find all expressions matching the pattern x + y
-// Note: bindings parameter is explicitly typed as ast to prevent premature evaluation
-let matchCount = matchOGraphPattern(g, x + y, \(bindings : ast, eclassId) -> {
+// Note: bindings parameter is explicitly typed as ast
+let matchCount = matchOGraphPattern(g, quote(x + y), \(bindings : ast, eclassId) -> {
 	// For each match, print the bindings and the e-class ID
-	let xExpr = bindings["x"];
-	let yExpr = bindings["y"];
-	println("Found: " + xExpr + " + " + yExpr + " at e-class " + eclassId);
+	let xId = bindings["x"]; // eclass ID for the expression matched by x
+	let yId = bindings["y"]; // eclass ID for the expression matched by y
+	println("Found match for x + y in e-class " + i2s(eclassId));
+	println("  x matched e-class: " + i2s(xId));
+	println("  y matched e-class: " + i2s(yId));
 
-	// You can use the e-class ID to modify the graph or for further processing
-	// For example, to merge with another node or add domain annotations
+	// Example: Rewrite x + y to y + x (assuming + is commutative)
+	let replacement = quote(y + x);
+	let resultId = addOGraphWithSub(g, replacement, bindings); // Use bindings directly
+
+	// Merge, making the new form the representative
+	mergeOGraphNodes(g, resultId, eclassId);
 });
 
-println("Found " + matchCount + " matches");
+println("Found " + i2s(matchCount) + " matches");
 ```
 
-**Direct Access to Eclass IDs**: The `bindings` map passed to the callback now contains variable name → eclass ID mappings, allowing you to work directly with the graph structure. This is more efficient than the previous implementation which returned OrMath_expr objects.
-
-```orbit
-// Example using eclass IDs directly
-matchOGraphPattern(g, pattern, \(bindings : ast, eclassId) -> {
-	// Get eclass IDs for pattern variables
-	let x_id = bindings["x"];
-	let y_id = bindings["y"];
-
-	// Work directly with the graph structure
-	let result_id = addOGraphWithSub(g, replacement_template, bindings);
-
-	// Make the result the canonical form
-	mergeOGraphNodes(g, result_id, eclassId);
-});
-```
+**Direct Access to Eclass IDs**: The `bindings` map passed to the callback contains variable name → eclass ID mappings, allowing you to work directly with the graph structure efficiently.
 
 #### `substituteWithBindings(expr: expression, bindings: ast) -> expression`
 
-Applies variable substitutions to an expression using the provided bindings, but does not evaluate the result. This is useful for template-based code generation or symbolic manipulation where you want to substitute variables without triggering evaluation.
+Applies variable substitutions to an expression using the provided bindings map (variable name -> AST/eclass ID), but does **not** evaluate the result. This is useful for template-based code generation or symbolic manipulation where you want to substitute variables without triggering evaluation. It performs a direct syntactic substitution.
 
 ```orbit
 // Pattern match to extract components
 let pattern = quote(a + b);
-let expr = quote(5 + 10);
+let expr_to_match = quote(5 + 10);
+// Assuming pattern matching produces:
+let bindings = [ Pair("a", 5), Pair("b", 10) ]; // Simplified binding representation for example
 
-// Manual binding creation
-let bindings = [
-	Pair("a", quote(5)),
-	Pair("b", quote(10))
-];
-
-// Use the bindings to create a new expression
+// Use the bindings to create a new expression from a template
 let template = quote(2 * a - b);
-let result = substituteWithBindings(template, bindings);
-println("Result: " + prettyOrbit(result)); // Result: 2 * 5 - 10
+let result_ast = substituteWithBindings(template, bindings);
+println("Result AST: " + prettyOrbit(result_ast)); // Result AST: 2 * 5 - 10
 ```
 
-This function performs a direct syntactic substitution without evaluating the resulting expression, unlike `evalWithBindings` which also evaluates the expression after substitution. It's particularly useful for rule-based term rewriting systems where you want to control when and how substituted expressions are evaluated.
+**IMPORTANT**: The `bindings` parameter must be marked as `ast`.
 
-**IMPORTANT**: The `bindings` parameter must be marked as `ast` to ensure they are not prematurely evaluated.
+#### `unquote(expr: expression, bindings: ast) -> expression`
 
-Pattern matching is a powerful feature that enables finding and transforming expressions in the graph based on their structure. The pattern can contain concrete values (e.g., `5`, `"hello"`) and pattern variables (e.g., `x`, `y`) that match any expression.
-
-#### Working with Pattern Matching Results
-
-**CRITICAL**: When defining a callback for `matchOGraphPattern`, always explicitly mark the `bindings` parameter as `ast` type. This prevents premature evaluation of the bindings and ensures proper functioning when used with functions like `substituteWithBindings`.
+Traverses an abstract syntax tree (`expr`) and selectively evaluates only the parts wrapped in `eval(...)` calls, using the provided `bindings` for variable lookups during evaluation. It preserves the structure of the rest of the expression. This provides fine-grained control over evaluation, similar to quasiquotation.
 
 ```orbit
-// CORRECT: Explicit ast typing for bindings
-matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
-	// Now you can safely use substituteWithBindings
-	let result = substituteWithBindings(replacement, bindings);
-	// ...
-));
+// Create a template with selective evaluation
+let template = quote(
+	let x = 3 + 4;        // This remains syntax
+	let y = eval(2 * x); // This part gets evaluated using bindings
+	[x, y, eval(x + y), multiplier] // x, y remain syntax, eval(...) gets evaluated
+);
 
-// INCORRECT: Without ast typing, bindings may be prematurely evaluated
-matchOGraphPattern(graph, pattern, \(bindings, eclassId) . (
-	// May cause unexpected behavior
-	let result = substituteWithBindings(replacement, bindings);
-	// ...
-));
+// Bindings for any free variables in the template or evaluated parts
+let bindings = [ Pair("multiplier", 2) ];
+
+// Process the template
+let result = unquote(template, bindings);
+println("Result: " + prettyOrbit(result));
+// Result: { let x = 3 + 4; let y = 14; [x, y, 21, 2] }
+// Note: x inside eval(x+y) also uses the binding if available, otherwise uses the let-bound x.
+// Here, the outer let x = 3+4 doesn't create a binding available to eval(x+y),
+// so it likely uses a globally bound x or fails if x isn't bound in 'bindings'.
+// A clearer example would involve bindings for x and y.
+
+let template2 = quote([eval(varA), varB, eval(varA + varB)]);
+let bindings2 = [ Pair("varA", 10), Pair("varB", 20) ];
+let result2 = unquote(template2, bindings2);
+println("Result 2: " + prettyOrbit(result2)); // Result 2: [10, varB, 30]
 ```
 
 #### Pattern Variables
 
-Pattern variables in patterns are represented as identifiers (e.g., `x`, `y`, `z`) and can match any expression. When a pattern variable appears multiple times in a pattern, all occurrences must match semantically equivalent expressions.
-
-For example, the pattern `x + x` would match expressions like `a + a` or `5 + 5`, but not `a + b` or `5 + 6`.
+Pattern variables (lowercase identifiers like `x`, `y`) match any expression. If a variable appears multiple times (e.g., `x + x`), all occurrences must match *semantically equivalent* expressions (i.e., expressions belonging to the same e-class after canonicalization).
 
 #### Consistency and Semantic Equivalence
 
-When the same pattern variable appears multiple times in a pattern, the system ensures that all occurrences match semantically equivalent expressions, not just syntactically identical ones. Two nodes are considered semantically equivalent if:
-
-1. They refer to the same node ID in the graph
-2. They are variables/identifiers with the same name
-3. They are literals with the same value
-4. They are operations with the same operator and semantically equivalent children
-
-This semantic equivalence checking allows for robust pattern matching even in the presence of shared structure or when expressions have been merged through equivalence relationships.
+The pattern matcher enforces semantic equivalence for repeated variables. Two nodes are semantically equivalent if they belong to the same e-class (i.e., their canonical roots are the same after running `find`). This ensures robust matching even with shared structures or merged classes.
 
 ### File Operations
 
@@ -304,7 +273,6 @@ This semantic equivalence checking allows for robust pattern matching even in th
 
 - **Notes:**
   - Returns an empty string if the file does not exist or cannot be read.
-  - Useful for loading expressions, rules, or other data from files.
 
 #### `setFileContent(path: string, content: string) -> bool`
 
@@ -320,7 +288,6 @@ This semantic equivalence checking allows for robust pattern matching even in th
 - **Notes:**
   - Overwrites the file if it already exists.
   - Creates parent directories if they don't exist.
-  - Useful for saving expressions, serialized graphs, or rule sets.
 
 ### Program Environment & Code Manipulation
 
@@ -471,155 +438,8 @@ When working with pattern matching results, Orbit provides three complementary f
 
 #### Domain Annotations in Pattern Matching and Substitution
 
-When working with domain annotations in pattern matching and rewriting, you typically want to:
+When working with domain annotations in pattern matching and rewriting, ensure they are correctly processed when adding results back to the graph:
 
-1. Match a pattern and create a new expression with domain annotations
-2. Add this expression to the graph while preserving the domain annotations
-
-Here's how to do this effectively:
-
-```orbit
-// Example rewriting with domain annotations
-matchOGraphPattern(g, pattern, \(bindings : ast, eclassId) . (
-	// Create result with domain annotation
-	let result = substituteWithBindings(quote((x + y) : Algebra), bindings);
-
-	// Process the result with domain annotations properly handled
-	let resultId = processDomainAnnotations(g, result);
-
-	// Merge with the original node (optional, depending on use case)
-	mergeOGraphNodes(g, resultId, eclassId);
-));
-```
-
-This approach ensures that domain annotations in the substitution result are properly processed and added to the graph, rather than being treated as plain syntax.
-
-Choosing between these functions depends on your use case:
-
-```orbit
-// Example showing the difference between substitute and eval
-let expr = quote(2 * x + y);
-let bindings = [
-	Pair("x", quote(3 + 4)),  // x is bound to the expression (3 + 4)
-	Pair("y", quote(10))
-];
-
-// Just substitute variables without evaluation
-let substituted = substituteWithBindings(expr, bindings);
-println(prettyOrbit(substituted));  // Output: 2 * (3 + 4) + 10
-
-// Substitute and evaluate
-let evaluated = evalWithBindings(expr, bindings);
-println(prettyOrbit(evaluated));    // Output: 24 (because 2 * 7 + 10 = 24)
-
-// Selective evaluation with unquote
-let template = quote(2 * eval(x) + y);  // Only evaluate the x part
-let selectively = unquote(template, bindings);
-println(prettyOrbit(selectively));  // Output: 2 * 7 + 10 (only x was evaluated)
-```
-
-#### `unquote(expr: expression, bindings: ast) -> expression`
-
-Traverses an abstract syntax tree and selectively evaluates only the parts wrapped in `eval` calls, while preserving the structure of the rest of the expression. This provides fine-grained control over which parts of an expression are evaluated versus which parts remain as syntax.
-
-```orbit
-// Create a template with selective evaluation
-let template = quote(
-	let x = 3 + 4;
-	let y = eval(2 * x);
-	[x, y, eval(x + y), multiplier]
-);
-
-// Bindings for any variables that might be in the template
-let bindings = quote([
-	Pair("multiplier", 2)
-]);
-
-// Process the template, evaluating only the eval parts
-let result = unquote(template, bindings);
-println("Result: " + prettyOrbit(result));
-// Result: { let x = 3 + 4; let y = 14; [x, y, 21, 2] }
-```
-
-The `unquote` function is particularly useful for template metaprogramming where you want most of an expression to remain as syntax (quoted), with only specific parts evaluated. This provides selective evaluation similar to quasiquotation in Lisp/Scheme but with more fine-grained control.
-
-These distinctions are particularly important in rewriting systems where you may want to:
-
-1. **Preserve Structure**: Use `substituteWithBindings` when you want to preserve the structure of expressions for further pattern matching or when building templates.
-
-2. **Compute Results**: Use `evalWithBindings` when you want to compute concrete results or perform simplification.
-
-3. **Selective Evaluation**: Use `unquote` when you need fine-grained control over which parts of an expression to evaluate, especially in template metaprogramming or complex rewriting systems.
-
-Here's a comparison of all three functions with the same input:
-
-```orbit
-// Setup
-let expr = quote(2 * x + y);
-let bindings = [
-	Pair("x", quote(3 + 4)),  // x is bound to the expression (3 + 4)
-	Pair("y", quote(10))
-];
-
-// 1. substituteWithBindings - only replaces variables
-let substituted = substituteWithBindings(expr, bindings);
-println(prettyOrbit(substituted));  // Output: 2 * (3 + 4) + 10
-
-// 2. evalWithBindings - substitutes and evaluates everything
-let evaluated = evalWithBindings(expr, bindings);
-println(prettyOrbit(evaluated));    // Output: 24 (because 2 * 7 + 10 = 24)
-
-// 3. unquote - selective evaluation with 'eval' markers
-let template = quote(2 * x + eval(y + 5));
-let selectively = unquote(template, bindings);
-println(prettyOrbit(selectively));  // Output: 2 * (3 + 4) + 15 (only "y + 5" was evaluated)
-```
-
-For example, in a rule-based rewriting system, you might use `substituteWithBindings` to generate the right-hand side of a rule with bindings from a matched left-hand side, preserving the structure for further transformations.
-
-#### Pattern Matching Use Cases
-
-Pattern matching is fundamental to many O-Graph operations, particularly:
-
-1. **Rule Application**: Finding subexpressions that match the left-hand side of rewrite rules
-2. **Query and Analysis**: Extracting parts of expressions that match certain patterns
-3. **Domain Inference**: Identifying expressions that should be associated with domains
-4. **Optimization**: Recognizing patterns that can be optimized (e.g., `a * 0 => 0`)
-
-The callback-based API allows for flexible processing of matches without building up large intermediate data structures.
-
-### Using the Rewrite Library
-
-A reusable library for rewriting can be imported in Orbit programs:
-
-```orbit
-import lib/rewrite;
-
-// Define rewrite rules
-let rules = [
-	prepareRule(
-		"Addition Identity in Integer Domain",
-		quote(x + 0),
-		quote(x : Integer)
-	),
-	prepareRule(
-		"Multiplication Identity in Real Domain",
-		quote(x * 1),
-		quote(x : Real)
-	)
-];
-
-// Apply rules to an expression
-let expr = quote((a + 0) : Integer);
-let result = applyRules(expr, rules);
-```
-
-The library provides several key functions:
-
-- `applyRules(expr, rules)`: Applies a list of rules to an expression
-- `applyRule(expr, name, pattern, replacement)`: Applies a single rule
-- `applyRulesUntilFixedPoint(expr, rules, maxIterations)`: Applies rules repeatedly until no more matches are found
-- `prepareRule(name, pattern, replacement)`: Creates a rule triple
 
 ### Visualization
 
@@ -629,33 +449,46 @@ Generates a GraphViz DOT format representation of the O-Graph, which can be visu
 
 ```orbit
 let dotCode = ograph2dot(g);
-
-// You can save this to a file and visualize with GraphViz
-// e.g., write to file and then use: dot -Tpng graph.dot -o graph.png
+// Save dotCode to a file (e.g., graph.dot)
+// Visualize using: dot -Tpng graph.dot -o graph.png
 ```
 
 ## Example: Commutative Property
 
-Here's a complete example showing how to use O-Graphs to represent the commutative property of addition (a + b = b + a):
+Here's a complete example showing how to use O-Graphs to represent the commutative property of addition (`a + b = b + a`):
 
 ```orbit
 // Create a new graph
-let g = makeOGraph("commutative");
+let g = makeOGraph("commutative_example");
 
 // Add the expressions a + b and b + a
-let expr1 = addOGraph(g, a + b);
-let expr2 = addOGraph(g, b + a);
+let expr1_node = addOGraph(g, a + b);
+let expr2_node = addOGraph(g, b + a);
 
-// Establish that they are equivalent
-mergeOGraphNodes(g, expr1, expr2);
+// Add domain information: mark the '+' operation as having S₂ symmetry
+// Assuming '+' operator itself can be represented/found
+let plus_op_node = findOGraphId(g, quote(+)); // Need a way to represent operators
+let s2_domain_node = addOGraph(g, quote(S₂));
+if (plus_op_node != -1 && s2_domain_node != -1) {
+	addDomainToNode(g, plus_op_node, s2_domain_node);
+}
 
-// Add domain information
-let algebraDomain = addOGraph(g, Algebra);
-addDomainToNode(g, expr1, algebraDomain);
+// Find the canonical form according to S₂ (sorting) rule
+let canonical_form = if compare(a, b) <= 0 then quote(a + b) else quote(b + a);
+let canonical_id = addOGraph(g, canonical_form);
+
+// Establish that both original expressions are equivalent to the canonical form
+// Make the canonical form the representative root.
+mergeOGraphNodes(g, canonical_id, expr1_node);
+mergeOGraphNodes(g, canonical_id, expr2_node);
+
+// Add a property domain to the canonical class
+let algebra_domain_node = addOGraph(g, quote(Algebra));
+addDomainToNode(g, canonical_id, algebra_domain_node);
 
 // Generate DOT output for visualization
 let dotCode = ograph2dot(g);
-println(dotCode);
+println(dotCode); // Visualize to see expr1 and expr2 merged under canonical_id
 ```
 
 ## Theoretical Foundation: Domains and Symmetry Groups
@@ -664,10 +497,10 @@ At the heart of our system lies the insight that computational domains themselve
 
 By representing domains and structures explicitly within our O-Graph structure, we enable:
 
-1. **Cross-Domain Reasoning**: Values can exist simultaneously in multiple domains through domain annotations.
-2. **Hierarchical Rule Application**: Rules defined for parent domains apply to child domains.
-3. **Canonical Representations**: Each domain can leverage its natural symmetry group for canonicalization.
-4. **Deep Algebraic Structures**: The system automatically discovers and exploits algebraic properties.
+1.  **Cross-Domain Reasoning**: Values can exist simultaneously in multiple domains through domain annotations.
+2.  **Hierarchical Rule Application**: Rules defined for parent domains apply to child domains.
+3.  **Canonical Representations**: Each domain can leverage its natural symmetry group for canonicalization.
+4.  **Deep Algebraic Structures**: The system automatically discovers and exploits algebraic properties.
 
 For example, addition exhibits symmetry group S₂ (the symmetric group of order 2), which captures commutativity. When we encounter expressions like `a + b` in any language associated with a domain where addition is commutative (like `Real` or `Integer`), the system can automatically canonicalize to a standard form based on this algebraic property, thus avoiding redundant representations.
 
@@ -705,13 +538,6 @@ fn orbit(rules : ast, cost : (expr : ast) -> double, expr : ast) : ast = (
 	optimized
 )
 ```
-
-The `orbit` function takes three parameters:
-1. A set of rewrite rules as an AST
-2. A cost function that determines the optimality of expressions
-3. The expression to be optimized
-
-It returns the optimized version of the input expression.
 
 ## Orbit Rewriting System: Operator Semantics
 
