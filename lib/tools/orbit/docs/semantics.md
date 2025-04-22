@@ -421,6 +421,299 @@ The complete workflow for automated complexity analysis in Orbit follows these s
 8. Query final annotation C(e) to obtain precise complexity bounds
 
 This unified approach combines recurrence-based and amortized analysis in one framework, allowing for precise complexity characterization of functional programs.
+
+## Static Single Assignment Form and Rewriting
+
+Static Single Assignment (SSA) form is a fundamental intermediate representation in compilers, where each variable is assigned exactly once and every use refers to a single definition. This section explores how dominator analysis, SSA conversion, and SSA-based optimizations can be expressed through Orbit's rewriting system.
+
+### 1. Dominator Analysis as a Rewrite System
+
+The dominator relationship is a key property for control flow analysis: a node d dominates node n if every path from the program entry to n must pass through d. Computing this relationship is essential for SSA construction.
+
+#### 1.1 Control Flow Graph Domain
+
+```orbit
+// Define domains for CFG elements
+CFGNode ⊂ Term;
+EntryNode ⊂ CFGNode;
+RegularNode ⊂ CFGNode;
+ExitNode ⊂ CFGNode;
+
+// Edge representation
+Edge(from : CFGNode, to : CFGNode) ⊂ Term;
+
+// Dominance relation (node d dominates node n)
+Dominates(d : CFGNode, n : CFGNode) ⊂ Property;
+```
+
+#### 1.2 Dominance Computation Rules
+
+The standard iterative dominance algorithm can be elegantly expressed as a set of rewrite rules:
+
+```orbit
+// Initialization: Every node dominates itself
+n : CFGNode ⊢ Dominates(n, n);
+
+// Entry node dominates all nodes
+entry : EntryNode, n : CFGNode ⊢ Dominates(entry, n);
+
+// Core dominance computation rule:
+// Node d dominates n if it dominates all predecessors of n
+d : CFGNode, n : CFGNode !: EntryNode,
+∀p.(Edge(p, n) ⊢ Dominates(d, p)) ⊢ Dominates(d, n);
+```
+
+These three rules capture the essence of the iterative dominance algorithm, computing the complete dominance relation through repeated application until reaching a fixed point.
+
+#### 1.3 Immediate Dominators
+
+For SSA construction, we need immediate dominators - the closest dominator of each node:
+
+```orbit
+// Immediate dominator relation
+ImmediateDominator(d : CFGNode, n : CFGNode) ⊂ Property;
+
+// A node d is the immediate dominator of n if:
+// 1. d dominates n
+// 2. d ≠ n
+// 3. Any other dominator of n also dominates d
+d : CFGNode, n : CFGNode !: EntryNode,
+Dominates(d, n), d ≠ n,
+∀x.(Dominates(x, n) ∧ x ≠ n ⊢ Dominates(x, d)) ⊢
+ImmediateDominator(d, n);
+```
+
+#### 1.4 Dominance Frontier
+
+The dominance frontier is crucial for inserting φ-functions during SSA construction:
+
+```orbit
+// Dominance frontier relation
+DominanceFrontier(n : CFGNode, f : CFGNode) ⊂ Property;
+
+// Node f is in the dominance frontier of n if:
+// 1. n dominates a predecessor of f
+// 2. n does not strictly dominate f
+n : CFGNode, f : CFGNode, p : CFGNode,
+Edge(p, f), Dominates(n, p), !Dominates(n, f) ⊢
+DominanceFrontier(n, f);
+```
+
+By applying these rewrite rules repeatedly, we build a complete dominance analysis framework within the Orbit system, using its native rewriting capabilities.
+
+### 2. Converting To/From SSA Form
+
+SSA form requires that each variable has exactly one definition, with φ-functions at control flow join points to merge values from different paths.
+
+#### 2.1 SSA Domains
+
+```orbit
+// Define domains for SSA
+SSAVar ⊂ Term;           // SSA variable (with unique version)
+SSADef ⊂ Term;           // Definition of an SSA variable
+SSAPhi ⊂ SSADef;         // Phi function definition
+NonSSA ⊂ Term;           // Non-SSA form expression
+InSSA ⊂ Term;            // Expression converted to SSA form
+```
+
+#### 2.2 Converting to SSA Form
+
+SSA conversion happens in three main phases, each expressed as rewrite rules:
+
+##### Phase 1: Variable Versioning
+
+```orbit
+// Create a unique version for each definition
+assign(x, expr) : NonSSA !: Processed ⊢
+	assign(x_i, expr) : InSSA : Processed;
+
+// Track variable versions
+x_i : SSAVar, DefSite(x_i, loc) ⊢
+	VersionOf(x, i) : Property;
+```
+
+##### Phase 2: Phi Function Insertion
+
+```orbit
+// Insert phi functions at dominance frontier nodes for each variable
+v : Variable, n : CFGNode, f : CFGNode,
+Writes(v, n), DominanceFrontier(n, f),
+ReachingDefs(v, f, defs) where |defs| > 1 ⊢
+	InsertPhi(v, f, defs);
+
+// Create phi node with appropriate arguments
+InsertPhi(v, node, [d1, d2, ...]) ⊢
+	assign(v_new, phi([v_d1, v_d2, ...])) : SSAPhi;
+```
+
+##### Phase 3: Variable Renaming
+
+```orbit
+// Rename variable uses to their reaching definitions
+use(x) : NonSSA, ReachingDef(x, loc, x_i) ⊢
+	use(x_i) : InSSA;
+
+// Update phi function arguments based on control flow
+phi([...]) : SSAPhi, BlockPred(block, pred),
+ReachingDef(v, pred, v_i) ⊢
+	UpdatePhiArg(phi, pred, v_i);
+```
+
+#### 2.3 Converting from SSA Form
+
+Converting out of SSA requires eliminating φ-functions:
+
+```orbit
+// Convert phi function to explicit moves in predecessor blocks
+assign(x_i, phi([v_1, v_2, ...])) : SSAPhi !: Processed ⊢
+	[InsertMove(pred_1, x_i, v_1),
+	 InsertMove(pred_2, x_i, v_2), ...] : Processed;
+
+// Insert actual move operation at end of predecessor block
+InsertMove(block, target, source) ⊢
+	BlockEnd(block, assign(target, source));
+
+// After phi elimination, clean up SSA versions
+x_i : SSAVar !: Cleaned ⊢ x : NonSSA : Cleaned;
+```
+
+This approach handles the elimination of φ-functions by inserting copy operations at the end of predecessor blocks, effectively moving the variable merging from the join point to the incoming paths.
+
+### 3. SSA-Based Optimizations
+
+One of the key advantages of SSA form is how it simplifies many compiler optimizations.
+
+#### 3.1 Constant Propagation
+
+```orbit
+// Simple constant propagation
+assign(x_i, const(c)) : SSADef, use(x_i) : InSSA ⊢
+	use(const(c)) : Optimized;
+
+// Conditional constant folding
+if(const(true), thenBlock, elseBlock) : InSSA ⊢
+	thenBlock : Optimized;
+
+if(const(false), thenBlock, elseBlock) : InSSA ⊢
+	elseBlock : Optimized;
+```
+
+#### 3.2 Value Numbering and Common Subexpression Elimination
+
+```orbit
+// Local value numbering - identify redundant computations
+assign(x_i, expr) : SSADef, assign(y_j, expr) : SSADef,
+!Dominates(y_j, x_i) ⊢
+	assign(x_i, y_j) : Optimized;
+
+// Global value numbering
+assign(x_i, op(args...)) : SSADef, HasValue(args) : ValueNumber(vn) ⊢
+	assign(x_i, VN(vn)) : ValueNumbered;
+
+// Replace expressions with same value number
+use(x_i) : ValueNumbered(vn), use(y_j) : ValueNumbered(vn) ⊢
+	Equivalent(x_i, y_j);
+```
+
+#### 3.3 Dead Code Elimination
+
+```orbit
+// Remove unused definitions without side effects
+assign(x_i, expr) : SSADef !: Used, !HasSideEffects(expr) ⊢
+	noop() : Eliminated;
+
+// Mark live variables recursively
+use(x_i) : InSSA ⊢ Used(x_i);
+assign(x_i, expr), Uses(expr, y_j), Used(x_i) ⊢ Used(y_j);
+```
+
+#### 3.4 Loop Invariant Code Motion
+
+```orbit
+// Move loop-invariant computations outside loops
+assign(x_i, expr) : SSADef, InLoop(x_i, loop),
+∀v.(Uses(expr, v) ⊢ LoopInvariant(v, loop)) ⊢
+	MoveToLoopPreheader(assign(x_i, expr), loop);
+
+// Mark loop invariants (variables defined outside loop)
+assign(x_i, _) : SSADef, !InLoop(assign(x_i, _), loop) ⊢
+	LoopInvariant(x_i, loop);
+
+// Constants are loop invariant
+const(_) : InSSA ⊢ LoopInvariant(const(_), loop);
+```
+
+#### 3.5 Array Bounds Check Elimination
+
+```orbit
+// Static array bounds check elimination
+assign(i, const(c)) : SSADef, arrAccess(arr, i) : InSSA,
+ArrayLength(arr, len), 0 ≤ c < len ⊢
+	arrAccess(arr, i) : BoundsCheckEliminated;
+
+// Inductive bounds check elimination for loops
+i_0 = const(0),
+i_n = phi([i_0, i_m]),
+i_m = i_n + const(1),
+cond(i_n < len),
+arrAccess(arr, i_n) : InSSA,
+ArrayLength(arr, len) ⊢
+	arrAccess(arr, i_n) : BoundsCheckEliminated;
+```
+
+### 4. Example: Optimization Pipeline in SSA Form
+
+To illustrate how these optimizations work together, consider a simple optimization pipeline:
+
+```orbit
+// Original code (conceptual):
+//   x = 10;
+//   y = 20;
+//   z = x + y;
+//   if (cond) {
+//     a = z * 2;
+//   } else {
+//     a = z;
+//   }
+//   b = a + z;
+
+// After SSA conversion:
+assign(x_1, const(10)) : SSADef;
+assign(y_1, const(20)) : SSADef;
+assign(z_1, add(x_1, y_1)) : SSADef;
+if(cond,
+	[assign(a_1, mul(z_1, const(2)))],
+	[assign(a_2, z_1)]
+);
+assign(a_3, phi([a_1, a_2])) : SSAPhi;
+assign(b_1, add(a_3, z_1)) : SSADef;
+
+// After constant propagation:
+assign(x_1, const(10)) : SSADef;
+assign(y_1, const(20)) : SSADef;
+assign(z_1, const(30)) : SSADef; // x_1 + y_1 = 30
+if(cond,
+	[assign(a_1, const(60))],     // z_1 * 2 = 60
+	[assign(a_2, const(30))]      // z_1 = 30
+);
+assign(a_3, phi([const(60), const(30)])) : SSAPhi;
+assign(b_1, add(a_3, const(30))) : SSADef;
+```
+
+Depending on the value of `cond`, further optimizations are possible. If `cond` is a constant (e.g., from previous optimizations), the conditional can be eliminated, completing the constant folding process:
+
+```orbit
+// If cond = true (after conditional elimination):
+assign(a_3, const(60));
+assign(b_1, const(90));  // a_3 + z_1 = 60 + 30 = 90
+
+// If cond = false:
+assign(a_3, const(30));
+assign(b_1, const(60));  // a_3 + z_1 = 30 + 30 = 60
+```
+
+This example demonstrates how SSA form makes optimizations like constant propagation and dead code elimination more effective and straightforward to implement as rewrite rules.
+
 ## Conclusion
 
 By using pattern matching with domain annotations and the entailment operator, Orbit can infer semantic properties of expressions and propagate them appropriately. The ability to bubble up properties from subexpressions is particularly powerful, allowing for compositional reasoning about complex expressions while maintaining precision. This approach enables sophisticated program transformation while preserving semantic guarantees.
