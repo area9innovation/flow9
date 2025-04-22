@@ -46,24 +46,24 @@ TODO: We need an efficient mechanism to pattern match from a domain down to the 
 	*   `GL(n,F)`: General Linear group (invertible n×n matrices over field F).
 	*   `SL(n,F)`: Special Linear group (n×n matrices with determinant 1).
 	*   `O(n)`: Orthogonal group (n×n matrices M where MᵀM = I).
-	*   `Q₈`: Quaternion group. TODO: Add this syntax to Orbit.
-	*   `ℤ/nℤ` or `ℤₙ`: Integers modulo n (isomorphic to Cₙ under addition). TODO: Add this syntax to Orbit.
+	*   `Q₈`: Quaternion group.
+	*   `ℤ/nℤ` or `ℤₙ`: Integers modulo n (isomorphic to Cₙ under addition).
 	*   `(ℤ/nℤ)^*`: Multiplicative group of units modulo n.
 *   **Group Operation Symbols:**
-	*   `·` or `Compose(g,h)`: Abstract group operation. TODO: Add this syntax to Orbit.
+	*   `·` or `Compose(g,h)`: Abstract group operation.
 	*   `×`: Direct Product (independent groups).
 	*   `⋊`: Semi-Direct Product (one group acts on another).
 	*   `≀`: Wreath Product (hierarchical action).
 *   **Group Properties/Concepts:**
-	*   `|G|`: Order (size) of group G. TODO: Add this syntax to Orbit.
+	*   `|G|`: Order (size) of group G.
 	*   `Identity(G)`: Identity element.
 	*   `Inverse(g)`: Inverse of element g.
 	*   `⊂`: Subgroup relation.
-	*   `⊲`: Normal subgroup relation. TODO: Add this syntax to Orbit.
-	*   `≅`: Isomorphism (structurally identical groups). TODO: Add this syntax to Orbit.
+	*   `⊲`: Normal subgroup relation.
+	*   `≅`: Isomorphism (structurally identical groups).
 	*   `Action`: How a group transforms elements of a set.
 	*   `Orbit`: Set of elements reachable from one element via group action.
-	*   `Homomorphism (φ)`: Structure-preserving map between groups. TODO: Add this syntax to Orbit.
+	*   `Homomorphism (φ)`: Structure-preserving map between groups.
 	*   `Automorphism (Aut(G))`: Isomorphism from a group to itself.
 	*   `Kernel`: Elements mapping to identity under homomorphism.
 	*   `Image`: Set of elements reached by homomorphism.
@@ -76,20 +76,89 @@ TODO: We need an efficient mechanism to pattern match from a domain down to the 
 *   **Algebraic Structures:** `Set`, `Magma`, `Semigroup`, `Monoid`, `Group`, `AbelianGroup`, `Ring`, `Field`, `Vector Space`, `BooleanAlgebra`, `Lattice`.
 *   **Numbers:** `Integer`, `Int32`, `Rational`, `Real`, `Double`, `Complex`, `Numeric`.
 *   **Linear Algebra:** `Matrix`, `Vector`, `Transpose (Aᵀ)`, `Inverse (A⁻¹)`, `Determinant (det(A))`, `Trace (tr(A))`, `Dot Product (·)`, `Cross Product (×)`, `Row Echelon Form (rref)`, Matrix Decompositions (`svd`, `eigen`, `qr`, `lu`, `cholesky`), `DiagonalMatrix`, `SymmetricMatrix`, `OrthogonalMatrix`, etc.
-*   **Calculus:** `Differential Calculus`, `Derivative (d/dx)`, `Partial Derivative (∂/∂xᵢ)`, `Gradient (∇)`, `Jacobian (J(f))`, `Hessian (H(f))`, `Integral (∫)`, `Summation (∑)`, `Limit`. TODO: Add this syntax to Orbit.
+*   **Calculus:** `Differential Calculus`, `Derivative (d/dx)`, `Partial Derivative (∂/∂xᵢ)`, `Gradient (∇)`, `Jacobian (J(f))`, `Hessian (H(f))`, `Integral (∫)`, `Summation (∑)`, `Limit`.
 *   **Polynomials:** `Polynomial`, `Monomial`, `Polynomial Ring`, `Ideal (⟨...⟩)`, `Gröbner Basis`, `Leading Term (LT)`, `Normal Form (NF)`, `S-polynomial (S(f,g))`, Monomial Orders (`lex`, `grlex`, `grevlex`).
 *   **Logic:** `Boolean`, Propositional Logic (`&&`/`∧`, `||`/`∨`, `!` /`¬`), Quantifiers (`∀`, `∃`), BDD (`ITE(v,t₀,t₁)`), CNF/DNF.
-*   **Tensors:** Higher-dimensional arrays, Index Notation (`T^{i}_{j}`), Contraction (`C(T)`), Tensor Product (`⊗`), Einstein Summation. TODO: Add this syntax to Orbit.
+*   **Tensors:** Higher-dimensional arrays, Index Notation (`T^{i}_{j}`), Contraction (`C(T)`), Tensor Product (`⊗`), Einstein Summation.
 *   **Interval Arithmetic:** Intervals (`[a,b]`), Interval operations, `inf`, `sup`, `width`, `mid`, Intersection (`∩`), Hull (`∪`).
 *   **Transforms:** `DFT`, `FFT`, `WHT`, `Convolution`.
 *   **Recurrence Relations:** `T(n)`, Master Theorem, Akra-Bazzi, Characteristic Polynomial, Generating Functions.
 
+## Chemistry Domains
+
+*   **Molecular Structure:**
+	*   `MolecularCompound`: Base domain for molecular compounds.
+	*   `MolecularGraph`: Representation of a molecule as a graph (atoms as vertices, bonds as edges).
+	*   `SMILES`: Simplified Molecular Input Line Entry System representation.
+	*   `InChI`: International Chemical Identifier representation.
+*   **Point Groups:** Molecular symmetry classifications.
+	*   `PointGroup`: Base domain for all molecular symmetry groups.
+	*   `C₁`: No symmetry (identity only).
+	*   `Cₙ`: n-fold rotation symmetry (e.g., `C₂`, `C₃`, `C₄`).
+	*   `Cₙᵥ`: n-fold rotation with n vertical mirror planes (e.g., `C₂ᵥ`, `C₃ᵥ`).
+	*   `Dₙ`: n-fold rotation with perpendicular C₂ axes.
+	*   `Dₙₕ`: Dₙ with horizontal mirror plane.
+	*   `Tᵈ`: Tetrahedral symmetry.
+	*   `Oₕ`: Octahedral symmetry.
+*   **Organic Compounds:** Hierarchical classification of organic molecules by functional groups.
+	*   `OrganicCompound`: Base domain for all organic compounds.
+	*   `Hydrocarbon`: Contains only carbon and hydrogen.
+	*   `Alcohol`: Contains -OH functional group.
+	*   `Ether`: Contains C-O-C linkage.
+	*   `Aldehyde`: Contains -CHO group.
+	*   `Ketone`: Contains C=O group.
+	*   `CarboxylicAcid`: Contains -COOH group.
+	*   `Ester`: Contains -COOR group.
+	*   `Amide`: Contains -CONR₂ group.
+	*   `Amine`: Contains -NR₂ group.
+*   **Hydrocarbon Subtypes:**
+	*   `Alkane`: Saturated hydrocarbons.
+	*   `Alkene`: Contains C=C double bonds.
+	*   `Alkyne`: Contains C≡C triple bonds.
+	*   `Arene`: Contains aromatic rings.
+*   **Alcohol Subtypes:**
+	*   `PrimaryAlcohol`: R-CH₂-OH structure.
+	*   `SecondaryAlcohol`: R₂-CH-OH structure.
+	*   `TertiaryAlcohol`: R₃-C-OH structure.
+	*   `Diol`: Contains two -OH groups.
+	*   `Phenol`: Hydroxyl attached to aromatic ring (Alcohol ∩ Arene).
+	*   `Enol`: Hydroxyl attached to alkene C (Alcohol ∩ Alkene).
+*   **Chemical Reactions:**
+	*   `ChemicalReaction`: Base domain for chemical reactions.
+	*   `BalancedReaction`: Reaction with balanced atoms.
+	*   `Esterification`: Reaction forming esters.
+	*   `Oxidation`: Reaction increasing oxygen content.
+	*   `Reduction`: Reaction increasing hydrogen content.
+	*   `Substitution`: Reaction replacing atoms/groups.
+	*   `Addition`: Reaction adding to a molecule without small molecule production.
+	*   `Elimination`: Reaction removing atoms with small molecule production.
+	*   `Hydrolysis`: Reaction with water breaking bonds.
+*   **Reaction Properties:**
+	*   `AtomBalanced`: Conservation of atoms in reaction.
+	*   `ChargeBalanced`: Conservation of charge in reaction.
+	*   `ChiralityPreserving`: Stereochemistry maintained during reaction.
+	*   `Stereoselective`: Producing specific stereoisomer preferentially.
+	*   `Racemization`: Loss of stereoselectivity.
+*   **Stereochemistry:**
+	*   `StereoCenter`: Carbon with four different substituents.
+	*   `R`: Right-handed configuration at stereocenter.
+	*   `S`: Left-handed configuration at stereocenter.
+	*   `E`: Entgegen (opposite) configuration at double bond.
+	*   `Z`: Zusammen (together) configuration at double bond.
+*   **Synthesis and Analysis:**
+	*   `SynthesisPath`: Valid route to synthesize a target molecule.
+	*   `SynthesisTree`: Complete synthesis plan with branches.
+	*   `ReactionPathway`: Series of connected reaction steps.
+	*   `CatalyticCycle`: Cyclic process with catalyst regeneration.
+	*   `EnergyProfile`: Energy changes through reaction steps.
+	*   `RateDetermining`: Step controlling overall reaction rate.
+
 ## Computer Science Domains
 
 *   **Data Structures:** `Array`, `List`, `Set`, `Bag/Multiset`, `Binary Tree`, `Trie`, `Graph`.
-*   **Automata & Formal Languages:** `Finite Automata (DFA, NFA)`, `Regular Expression (Regex)`, `Alphabet (Σ)`, `Language (L(r))`, `ε` (empty string), `∅` (empty set), `State (q)`, `Transition (δ)`. TODO: Add this syntax to Orbit.
+*   **Automata & Formal Languages:** `Finite Automata (DFA, NFA)`, `Regular Expression (Regex)`, `Alphabet (Σ)`, `Language (L(r))`, `ε` (empty string), `∅` (empty set), `State (q)`, `Transition (δ)`.
 *   **Compilers & Languages:** `Parser Combinators` (`⟨*⟩`, `⟨|⟩`), `Grammar`, `Left-recursion`, `Left-factoring`, `First/Follow sets`.
-*   **Concurrency:** `Process Calculus`, Parallel (`∥`), Choice (`+`/`⊕`), Sequence (`;`), Replication (`!`), Restriction (`ν`), Channels (`a↑`/`a↓`), Locks, Barriers, Threads. TODO: Add this syntax to Orbit.
+*   **Concurrency:** `Process Calculus`, Parallel (`∥`), Choice (`+`/`⊕`), Sequence (`;`), Replication (`!`), Restriction (`ν`), Channels (`a↑`/`a↓`), Locks, Barriers, Threads.
 *   **Functional Programming:** `Lambda (λ)`, `map`, `filter`, `fold`, `Functor`, `Monad`, `Applicative`.
 *   **Complexity Analysis:** `O(...)`, `Θ(...)`, `Ω(...)`, `Cost`, `Potential (Φ)`, Amortized Analysis, Average/Worst Case.
 *   **Cryptography:** `Homomorphic Encryption` (`E(m)`, `D(c)`, `⊕`, `⊗`), Modular Arithmetic (`mod n`), `φ(n)`, RSA, Diffie-Hellman.
@@ -102,6 +171,7 @@ TODO: We need an efficient mechanism to pattern match from a domain down to the 
 *   **Canonicalization Algorithms:** Booth's (Cyclic), Nauty (Graphs), Buchberger's (Gröbner Basis).
 *   **Approximation Methods:** Newton-Raphson, Taylor Series, Padé Approximants, Runge-Kutta, Monte Carlo, Finite Differences.
 *   **Sudoku/Rubik's Cube Solvers:** Constraint Propagation, Backtracking, Subgroup Methods (G₀-G₄).
+*   **Chemistry Methods:** Molecular Mechanics, Quantum Chemistry (DFT, HF, MP2), QSAR, Molecular Dynamics.
 
 This consolidated list provides a reference for the key terms and notations used within the Orbit system documentation.
 
@@ -180,6 +250,52 @@ Top (Most General Domain)
  │       ├── DifferentialCalculus
  │       ├── IntegralCalculus
  │       └── TensorCalculus
+ │
+ ├── ChemistryDomain
+ │   ├── MolecularCompound
+ │   │   ├── MolecularGraph
+ │   │   ├── OrganicCompound
+ │   │   │   ├── Hydrocarbon
+ │   │   │   │   ├── Alkane
+ │   │   │   │   ├── Alkene
+ │   │   │   │   ├── Alkyne
+ │   │   │   │   └── Arene
+ │   │   │   ├── Alcohol
+ │   │   │   │   ├── PrimaryAlcohol
+ │   │   │   │   ├── SecondaryAlcohol
+ │   │   │   │   ├── TertiaryAlcohol
+ │   │   │   │   └── Diol
+ │   │   │   ├── Ether
+ │   │   │   ├── Aldehyde
+ │   │   │   ├── Ketone
+ │   │   │   ├── CarboxylicAcid
+ │   │   │   ├── Ester
+ │   │   │   ├── Amide
+ │   │   │   └── Amine
+ │   ├── ChemicalReaction
+ │   │   ├── BalancedReaction
+ │   │   ├── Oxidation
+ │   │   ├── Reduction
+ │   │   ├── Esterification
+ │   │   ├── Hydrolysis
+ │   │   ├── Addition
+ │   │   ├── Elimination
+ │   │   └── Substitution
+ │   ├── PointGroup
+ │   │   ├── C₁
+ │   │   ├── Cₙ
+ │   │   ├── Cₙᵥ
+ │   │   ├── Dₙ
+ │   │   ├── Dₙₕ
+ │   │   ├── Tᵈ
+ │   │   └── Oₕ
+ │   └── Stereochemistry
+ │       ├── StereoCenter
+ │       │   ├── R
+ │       │   └── S
+ │       └── DoubleBond
+ │           ├── E
+ │           └── Z
  │
  ├── ProgrammingConstruct
  │   ├── Type
@@ -269,12 +385,12 @@ To facilitate verification of Orbit transformations by Lean and the potential us
 2.  **Generate Lean Goal:** Orbit outputs a verification goal for Lean:
 
 ```lean
-    import Mathlib.Algebra.Ring.Defs
+	import Mathlib.Algebra.Ring.Defs
 
-    theorem orbit_step_123 {R : Type*} [ring R] (a b c : R) :
-      a * (b + c) = a * b + a * c := by
-      -- Goal: Prove this equality using ring axioms
-      rw [mul_add] -- Apply the distributivity theorem from Mathlib's ring class
+	theorem orbit_step_123 {R : Type*} [ring R] (a b c : R) :
+	  a * (b + c) = a * b + a * c := by
+	  -- Goal: Prove this equality using ring axioms
+	  rw [mul_add] -- Apply the distributivity theorem from Mathlib's ring class
 ```
 3.  **Lean Verification:** Lean attempts to prove the goal using theorems associated with the `ring` type class (like `mul_add`). If successful, the Orbit step is verified.
 4.  **Lean Rule to Orbit:** A Lean theorem `theorem add_comm_nat : ∀ n m : ℕ, n + m = m + n := ...` can be translated into an Orbit rule `n:Nat + m:Nat <=> m:Nat + n:Nat`.

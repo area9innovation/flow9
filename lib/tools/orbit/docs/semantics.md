@@ -518,7 +518,7 @@ InSSA ⊂ Term;            // Expression converted to SSA form
 
 #### 2.2 Converting to SSA Form
 
-SSA conversion happens in three main phases, each expressed as rewrite rules:
+SSA conversion happens in three main phases, each expressible as rewrite rules:
 
 ##### Phase 1: Variable Versioning
 
@@ -546,7 +546,7 @@ InsertPhi(v, node, [d1, d2, ...]) ⊢
 	assign(v_new, phi([v_d1, v_d2, ...])) : SSAPhi;
 ```
 
-##### Phase 3: Variable Renaming
+##### Phase 3: Variable Usage Renaming
 
 ```orbit
 // Rename variable uses to their reaching definitions
@@ -713,6 +713,280 @@ assign(b_1, const(60));  // a_3 + z_1 = 30 + 30 = 60
 ```
 
 This example demonstrates how SSA form makes optimizations like constant propagation and dead code elimination more effective and straightforward to implement as rewrite rules.
+
+## Scope Analysis and Closure Conversion
+
+While SSA form is powerful for representing and optimizing variables with unique definitions, functional languages introduce additional complexities with nested scopes, lexical closures, and variable shadowing. This section explores how to extend Orbit's domain system to handle these concepts, using SSA as a foundation.
+
+### 1. Modeling Lexical Scopes and Environments
+
+To properly handle functional programming constructs, we need domain annotations that capture scope relationships and variable environments.
+
+#### 1.1 Scope and Environment Domains
+
+```orbit
+// Define domains for scopes and environments
+Scope ⊂ Term;              // Lexical scope
+ScopeChain ⊂ Term;        // Chain of nested scopes
+Env ⊂ Term;               // Variable environment
+Closure ⊂ Term;           // Function closure
+
+// Variable classifications
+LocalVar ⊂ SSAVar;         // Variable local to current scope
+CapturedVar ⊂ SSAVar;      // Variable captured from outer scope
+EscapingVar ⊂ SSAVar;      // Variable that escapes its scope (used in inner functions)
+```
+
+#### 1.2 Scope Relationships and Nesting
+
+```orbit
+// Establish parent-child relationships between scopes
+ParentScope(parent : Scope, child : Scope) ⊂ Property;
+
+// Scope contains variable declaration
+Declares(scope : Scope, var : SSAVar) ⊂ Property;
+
+// Track variable access in a specific scope
+Accesses(scope : Scope, var : SSAVar) ⊂ Property;
+
+// Variable is declared in an ancestor scope
+AncestorDeclares(scope : Scope, var : SSAVar) ⊂ Property;
+```
+
+### 2. Analyzing Variable Capture and Shadowing
+
+#### 2.1 Detection Rules for Variable Classification
+
+```orbit
+// Local variables are declared and used in the same scope
+x_i : SSAVar, s : Scope, Declares(s, x_i),
+!(∃ childScope. ParentScope(s, childScope) ∧ Accesses(childScope, x_i)) ⊢
+	x_i : LocalVar;
+
+// Escaping variables are used in child scopes
+x_i : SSAVar, s : Scope, Declares(s, x_i),
+(∃ childScope. ParentScope(s, childScope) ∧ Accesses(childScope, x_i)) ⊢
+	x_i : EscapingVar;
+
+// Captured variables are accessed from a scope where they aren't declared
+x_i : SSAVar, s : Scope, Accesses(s, x_i), !Declares(s, x_i),
+(∃ ancestorScope. AncestorDeclares(ancestorScope, x_i)) ⊢
+	x_i : CapturedVar;
+```
+
+#### 2.2 Shadowing Analysis
+
+```orbit
+// Variables shadow others with the same name in ancestor scopes
+x_i : SSAVar, y_j : SSAVar, BaseName(x_i) = BaseName(y_j),
+s1 : Scope, s2 : Scope, Declares(s1, x_i), Declares(s2, y_j),
+AncestorScope(s2, s1) ⊢ Shadows(x_i, y_j);
+
+// Track which version of a shadowed variable to use at each reference point
+use(x) : NonSSA, ScopeAt(use(x), s),
+VisibleInScope(x_i, s) ⊢ use(x_i) : InSSA;
+```
+
+### 3. Closure Conversion and Environment Building
+
+Once we've identified captured variables, we can perform closure conversion to make the environment explicit:
+
+```orbit
+// For each function that captures variables, create an explicit environment
+f : Function, CapturesVars(f, [v1, v2, ...]) ⊢
+	CreateEnv(f, [v1, v2, ...]);
+
+// Convert function to closure with explicit environment
+fn(params, body) : Function, env : Env ⊢
+	closure(fn(env, params, body'), env) : Closure;
+
+// Transform body to use environment explicitly
+use(x_i) : CapturedVar, MemberOf(x_i, env, idx) ⊢
+	env_access(env, idx) : InSSA;
+```
+
+### 4. Example: Functional Program with Closures and Shadowing
+
+Let's examine a complete example showing how Orbit analyzes and transforms a functional program with nested scopes, shadowing, and closures:
+
+```javascript
+// Original functional program
+function makeCounter(init) {
+	let count = init;          // count_1 in scope_1
+
+	function increment(step) { // scope_2 (parent=scope_1)
+		let newCount = count + step;  // newCount_1 in scope_2, captures count_1
+		count = newCount;             // updates captured count_1
+		return count;
+	}
+
+	function reset() {         // scope_3 (parent=scope_1)
+		let count = 0;           // count_2 in scope_3, shadows count_1
+		return count;            // uses local count_2, not the captured one
+	}
+
+	return { increment, reset };
+}
+```
+
+#### 4.1 Initial Scope and Declaration Analysis
+
+```orbit
+// Establish scope structure
+s1 : Scope; // makeCounter scope
+s2 : Scope; // increment scope
+s3 : Scope; // reset scope
+ParentScope(s1, s2);
+ParentScope(s1, s3);
+
+// Variable declarations in each scope
+Declares(s1, init_1);
+Declares(s1, count_1);
+Declares(s2, step_1);
+Declares(s2, newCount_1);
+Declares(s3, count_2); // Note: different version for shadowed variable
+
+// Analyze variable accesses
+Accesses(s2, count_1);   // increment accesses count from outer scope
+Accesses(s2, step_1);    // increment accesses its parameter
+Accesses(s2, newCount_1); // increment accesses its local variable
+Accesses(s3, count_2);   // reset accesses its local count, not the outer one
+```
+
+#### 4.2 Variable Classification
+
+```orbit
+// Apply classification rules
+init_1 : LocalVar;       // Only used in makeCounter
+step_1 : LocalVar;       // Only used in increment
+newCount_1 : LocalVar;   // Only used in increment
+count_2 : LocalVar;      // Only used in reset, shadows count_1
+
+count_1 : EscapingVar;   // Escapes from makeCounter to increment
+```
+
+#### 4.3 Identify Shadowing
+
+```orbit
+// Shadowing relationship
+count_2 : SSAVar, count_1 : SSAVar,
+BaseName(count_2) = BaseName(count_1),
+Declares(s3, count_2), Declares(s1, count_1),
+AncestorScope(s1, s3) ⊢ Shadows(count_2, count_1);
+```
+
+#### 4.4 Closure Conversion
+
+```orbit
+// First convert increment function
+function increment(step_1) { body } : Function,
+CapturesVars(increment, [count_1]) ⊢
+	CreateEnv(increment, [count_1]);
+
+// Create closure with environment
+fn(step_1, increment_body) : Function, env_1 = { count_1 } ⊢
+	closure(fn(env_1, step_1, increment_body'), env_1) : Closure;
+
+// Transform increment body to use environment
+increment_body is {
+	// Original: let newCount = count + step;
+	// Transformed: let newCount = env.count + step;
+	let newCount_1 = env_access(env_1, 0) + step_1;
+
+	// Original: count = newCount;
+	// Transformed: env.count = newCount;
+	env_update(env_1, 0, newCount_1);
+
+	// Original: return count;
+	// Transformed: return env.count;
+	return env_access(env_1, 0);
+}
+
+// No conversion needed for reset - it doesn't capture variables
+function reset() { body } : Function,
+!CapturesVars(reset) ⊢ reset : Closure; // Simple conversion, no environment needed
+```
+
+#### 4.5 Final SSA-based Representation
+
+After scope analysis and closure conversion, we have a clean representation that clearly identifies:
+
+1. Local variables that can be register-allocated
+2. Captured variables that must be stored in environments
+3. Proper resolution of shadowed variables
+
+```orbit
+// SSA representation after scope analysis and closure conversion
+function makeCounter(init_1) {
+	let count_1 = init_1; // EscapingVar (will be part of a closure environment)
+
+	// Closure for increment with explicit environment reference
+	let env_1 = { count_1 }; // Environment holding captured count_1
+	let increment = closure(
+		function(env, step_1) {
+			let newCount_1 = env_access(env, 0) + step_1; // LocalVar
+			env_update(env, 0, newCount_1);
+			return env_access(env, 0);
+		},
+		env_1
+	);
+
+	// Reset doesn't capture variables, so no environment needed
+	let reset = function() {
+		let count_2 = 0; // LocalVar, shadows count_1
+		return count_2;
+	};
+
+	return { increment, reset };
+}
+```
+
+### 5. Preparing for Register Allocation
+
+With the SSA-based representation and closure conversion complete, we can prepare for register allocation by annotating variables with their storage classes:
+
+```orbit
+// Register allocation domain properties
+AllocateInRegister(var : SSAVar) ⊂ Property;
+AllocateInEnvironment(var : SSAVar, env, idx) ⊂ Property;
+AllocateOnStack(var : SSAVar) ⊂ Property;
+
+// Allocation rules
+v : LocalVar, !LongLived(v) ⊢ AllocateInRegister(v);
+v : CapturedVar, MemberOf(v, env, idx) ⊢ AllocateInEnvironment(v, env, idx);
+v : LocalVar, LongLived(v) ⊢ AllocateOnStack(v);
+```
+
+These allocation annotations guide the backend code generator, providing essential information for efficient register allocation and memory access. Local variables that don't escape their scope can be register allocated, while captured variables must be accessed through environment objects.
+
+### 6. Benefits of Combined SSA and Scope Analysis
+
+The combination of SSA form and lexical scope analysis enables several advanced optimizations for functional languages:
+
+1. **Escape Analysis**: Identifying non-escaping allocations that can be stack-allocated
+2. **Closure Optimization**: Minimizing the size of closure environments by only including captured variables
+3. **Inlining Decisions**: Better information for deciding when to inline functions based on closure size
+4. **Selective Closure Conversion**: Some closures can be transformed into simple function pointers if they don't capture variables
+5. **Environment Sharing**: Multiple closures from the same scope can share environment structures
+
+```orbit
+// Optimizations for closure environments
+
+// Environment sharing between closures from the same scope
+f1 : Function, f2 : Function, SameScope(f1, f2),
+CapturesVars(f1, vars1), CapturesVars(f2, vars2) ⊢
+	ShareEnvironment(f1, f2, Union(vars1, vars2));
+
+// Eliminate environment for non-capturing functions
+f : Function, !CapturesVars(f) ⊢
+	SimplifyToClosure(f, null);
+
+// Flatten nested closures when possible
+closure(fn1, env1), fn1 = closure(fn2, env2) ⊢
+	closure(fn2', MergeEnvs(env1, env2));
+```
+
+By representing these transformations as rewrite rules in Orbit, we obtain a powerful and flexible system for optimizing functional programs while preserving their semantics.
 
 ## Conclusion
 
