@@ -45,13 +45,11 @@ gatherFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_e
                 println("DEBUG: Gathered operands: " + i2s(length(result.second)));
             }
             
-            // Create the result using the template function and collected operands
+            // Create the result using the template function name as operator
+            // and without including the operator as a separate argument
             resultExpr = OrFunction(
-                OrIdentifier(templateName),
-                [
-                    OrString(result.first),  // The operator as a string
-                    OrArray(result.second)   // The array of operands
-                ]
+                OrIdentifier(result.first),  // Use the actual operator (+ or *)
+                [OrArray(result.second)]     // Just the array of operands
             );
             
             // Return the result
@@ -69,6 +67,7 @@ extractFunctionName(template : OrMath_expr) -> string {
                 default: "";
             }
         }
+		OrOperatorSymbol(s): s;
         default: "ops"; // Default if not specified
     }
 }
@@ -158,20 +157,37 @@ scatterFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_
         envArg = interpret(env, args[0]);
         arg = envArg.result;
         
-        // Check if it's an ops/sum structure
+        // Check if it's a gathered structure with operator and array
         switch (arg) {
             OrFunction(fn, fnArgs): {
-                // Verify function name and structure
-                fnName = switch (fn) {
+                // Extract operator from function name
+                op = switch (fn) {
                     OrIdentifier(id): id;
-                    default: "";
+                    default: "+"; // Default to + if not specified
                 };
                 
-                if ((fnName == "ops" || fnName == "sum") && length(fnArgs) == 2) {
+                // Handle both new format and old format
+                if (length(fnArgs) == 1) {
+                    // New format: +([a, b, c])
+                    operands = switch (fnArgs[0]) {
+                        OrArray(items): items;
+                        default: [];
+                    };
+                    
+                    if (length(operands) == 0) {
+                        println("ERROR: Cannot scatter empty operand array");
+                        envArg;
+                    } else {
+                        // Convert the array back to binary operations
+                        result = convertToBinaryOps(op, operands);
+                        OrbEnv(envArg with result = result);
+                    }
+                } else if (length(fnArgs) == 2) {
+                    // Old format: ops("op", [a, b, c])
                     // Extract operator and operands
-                    op = switch (fnArgs[0]) {
+                    oldOp = switch (fnArgs[0]) {
                         OrString(s): s;
-                        default: "+"; // Default to + if not specified
+                        default: op; // Use function name if not a string
                     };
                     
                     operands = switch (fnArgs[1]) {
@@ -184,17 +200,16 @@ scatterFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_
                         envArg;
                     } else {
                         // Convert the array back to binary operations
-                        result = convertToBinaryOps(op, operands);
-                        
+                        result = convertToBinaryOps(oldOp, operands);
                         OrbEnv(envArg with result = result);
                     }
                 } else {
-                    println("ERROR: scatter expects an ops('op', [...]) or sum([...]) structure");
+                    println("ERROR: scatter expects a function with array argument");
                     envArg;
                 }
             }
             default: {
-                println("ERROR: scatter expects an ops/sum function call");
+                println("ERROR: scatter expects a function call with array argument");
                 envArg;
             }
         }
