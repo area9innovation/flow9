@@ -5,6 +5,7 @@
 - Make VS code plugin using Mango
 - Subscripts on operators
 - Explain how we do not have a cost functino anymore, but just canonical forms in each domain
+- Explain the gather approach in the paper for canonical in n log n time, rather than implicit n^2 from binary bubblesort
 - Equivalence between subscripts in unicode and _ and superscripts and ^
 - Figure out how we can do "lazy" rule saturation. If we ask for a CodeSize, JS domain of something, it should transitively find out how to convert Math expression to runnable, short JS code.
 - Hook in evaluation functions to implement interpretation of AST nodes directly in Orbit itself, potentially using rewriting

@@ -30,7 +30,6 @@ Beyond academic interest, understanding the group structure of Rubik's Cubes has
 | `→`              | Unidirectional rewrite rule                    | `g · Identity(G) → g`         |
 | `↔`              | Bidirectional equivalence rule                 | `Compose(a,b) ↔ Compose(b,a)` |
 | `φ`              | Homomorphism defining group action             | Action in `H ⋊ G`             |
-| `Canonical(G)`   | Annotation for canonical form within group `G` | `State :  G₀`       |
 
 ## 2. Cube Components and Coordinate-Based Representation
 
