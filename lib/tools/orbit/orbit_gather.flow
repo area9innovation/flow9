@@ -1,0 +1,243 @@
+import tools/orbit/orbit_types;
+import tools/orbit/orbit_env;
+import ds/tree;
+import string;
+
+export {
+    // Implementation of gather function for binary operations
+    gatherFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv;
+    
+    // Implementation of scatter function for converting array structure back to binary operations
+    scatterFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv;
+}
+
+// Main gather function - collects binary operations into an array structure
+gatherFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 2) {
+        println("ERROR: gather expects exactly 2 arguments: expression and template");
+        env;
+    } else {
+        // Get the expression to gather (evaluate it)
+        envExpr = interpret(env, args[0]);
+        expr = envExpr.result;
+        
+        // Get the template for the result (don't evaluate it yet)
+        template = args[1];
+        
+        // Extract the target function name from template
+        templateName = extractFunctionName(template);
+        
+        if (templateName == "") {
+            println("ERROR: gather template must be a function call with an array argument");
+            envExpr;
+        } else {
+            if (env.tracing) {
+                println("DEBUG: Gathering binary operations with template function: " + templateName);
+            }
+            
+            // Collect the operands and operator from the binary expression
+            nodeCounter = ref 0;
+            visitedNodes = ref makeTree();
+            result = gatherBinaryOps(expr, visitedNodes, nodeCounter, env.tracing);
+            
+            if (env.tracing) {
+                println("DEBUG: Gathered operator: " + result.first);
+                println("DEBUG: Gathered operands: " + i2s(length(result.second)));
+            }
+            
+            // Create the result using the template function and collected operands
+            resultExpr = OrFunction(
+                OrIdentifier(templateName),
+                [
+                    OrString(result.first),  // The operator as a string
+                    OrArray(result.second)   // The array of operands
+                ]
+            );
+            
+            // Return the result
+            OrbEnv(envExpr with result = resultExpr);
+        }
+    }
+}
+
+// Helper function to extract the function name from a template
+extractFunctionName(template : OrMath_expr) -> string {
+    switch (template) {
+        OrFunction(fn, __): {
+            switch (fn) {
+                OrIdentifier(id): id;
+                default: "";
+            }
+        }
+        default: "ops"; // Default if not specified
+    }
+}
+
+// Helper function to recursively gather binary operations
+// Returns a pair of (operator, [operands])
+gatherBinaryOps(expr : OrMath_expr, visitedNodes : ref Tree<int, bool>, nodeCounter : ref int, tracing : bool) -> Pair<string, [OrMath_expr]> {
+    // Use a counter to assign unique IDs to nodes
+    currentId = ^nodeCounter;
+    nodeCounter := currentId + 1;
+    
+    // Check if we've visited this node (using the ID we just assigned)
+    if (lookupTreeDef(^visitedNodes, currentId, false)) {
+        Pair("", [expr]); // Already visited, return as leaf node
+    } else {
+        // Mark this node as visited
+        visitedNodes := setTree(^visitedNodes, currentId, true);
+        
+        switch (expr) {
+            // Handle binary addition
+            OrAdd(left, right): {
+                // Recursively gather operands
+                leftResult = gatherBinaryOps(left, visitedNodes, nodeCounter, tracing);
+                rightResult = gatherBinaryOps(right, visitedNodes, nodeCounter, tracing);
+                
+                if (leftResult.first == "" && rightResult.first == "") {
+                    // Both sides are leaf nodes
+                    Pair("+", [left, right]);
+                } else if (leftResult.first == "+" && rightResult.first == "") {
+                    // Left side is + operation, right is leaf
+                    Pair("+", concat(leftResult.second, [right]));
+                } else if (leftResult.first == "" && rightResult.first == "+") {
+                    // Right side is + operation, left is leaf
+                    Pair("+", concat([left], rightResult.second));
+                } else if (leftResult.first == "+" && rightResult.first == "+") {
+                    // Both sides are + operations
+                    Pair("+", concat(leftResult.second, rightResult.second));
+                } else {
+                    // Mixed operators, treat as leaf
+                    Pair("+", [expr]);
+                }
+            }
+            
+            // Handle binary multiplication
+            OrMultiply(left, right): {
+                leftResult = gatherBinaryOps(left, visitedNodes, nodeCounter, tracing);
+                rightResult = gatherBinaryOps(right, visitedNodes, nodeCounter, tracing);
+                
+                if (leftResult.first == "" && rightResult.first == "") {
+                    Pair("*", [left, right]);
+                } else if (leftResult.first == "*" && rightResult.first == "") {
+                    Pair("*", concat(leftResult.second, [right]));
+                } else if (leftResult.first == "" && rightResult.first == "*") {
+                    Pair("*", concat([left], rightResult.second));
+                } else if (leftResult.first == "*" && rightResult.first == "*") {
+                    Pair("*", concat(leftResult.second, rightResult.second));
+                } else {
+                    Pair("*", [expr]);
+                }
+            }
+            
+            // Handle binary subtraction
+            OrSubtract(left, right): {
+                Pair("-", [left, right]); // Don't flatten subtraction (not associative)
+            }
+            
+            // Handle binary division
+            OrDivide(left, right): {
+                Pair("/", [left, right]); // Don't flatten division (not associative)
+            }
+            
+            // For non-binops, just return the expression as is
+            default: {
+                Pair("", [expr]);
+            }
+        }
+    }
+}
+
+// Implementation of scatter function - converts array structure back to binary operations
+scatterFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 1) {
+        println("ERROR: scatter expects exactly 1 argument: ops/sum expression");
+        env;
+    } else {
+        // Evaluate the argument
+        envArg = interpret(env, args[0]);
+        arg = envArg.result;
+        
+        // Check if it's an ops/sum structure
+        switch (arg) {
+            OrFunction(fn, fnArgs): {
+                // Verify function name and structure
+                fnName = switch (fn) {
+                    OrIdentifier(id): id;
+                    default: "";
+                };
+                
+                if ((fnName == "ops" || fnName == "sum") && length(fnArgs) == 2) {
+                    // Extract operator and operands
+                    op = switch (fnArgs[0]) {
+                        OrString(s): s;
+                        default: "+"; // Default to + if not specified
+                    };
+                    
+                    operands = switch (fnArgs[1]) {
+                        OrArray(items): items;
+                        default: [];
+                    };
+                    
+                    if (length(operands) == 0) {
+                        println("ERROR: Cannot scatter empty operand array");
+                        envArg;
+                    } else {
+                        // Convert the array back to binary operations
+                        result = convertToBinaryOps(op, operands);
+                        
+                        OrbEnv(envArg with result = result);
+                    }
+                } else {
+                    println("ERROR: scatter expects an ops('op', [...]) or sum([...]) structure");
+                    envArg;
+                }
+            }
+            default: {
+                println("ERROR: scatter expects an ops/sum function call");
+                envArg;
+            }
+        }
+    }
+}
+
+// Helper function to convert array of operands back to binary operations
+convertToBinaryOps(op : string, operands : [OrMath_expr]) -> OrMath_expr {
+    if (length(operands) == 1) {
+        operands[0]; // Single operand, just return it
+    } else if (length(operands) == 2) {
+        // Two operands, create the binary operation
+        if (op == "+") OrAdd(operands[0], operands[1])
+        else if (op == "*") OrMultiply(operands[0], operands[1])
+        else if (op == "-") OrSubtract(operands[0], operands[1])
+        else if (op == "/") OrDivide(operands[0], operands[1])
+        else {
+            // For other operators, use function call syntax
+            OrFunction(OrIdentifier(op), [operands[0], operands[1]]);
+        }
+    } else {
+        // Multiple operands, build the tree from left to right
+        if (op == "+") {
+            foldi(tail(operands), operands[0], \i, acc, operand -> 
+                OrAdd(acc, operand)
+            );
+        } else if (op == "*") {
+            foldi(tail(operands), operands[0], \i, acc, operand -> 
+                OrMultiply(acc, operand)
+            );
+        } else if (op == "-") {
+            foldi(tail(operands), operands[0], \i, acc, operand -> 
+                OrSubtract(acc, operand)
+            );
+        } else if (op == "/") {
+            foldi(tail(operands), operands[0], \i, acc, operand -> 
+                OrDivide(acc, operand)
+            );
+        } else {
+            // For other operators, use function call syntax in a fold
+            foldi(tail(operands), operands[0], \i, acc, operand -> 
+                OrFunction(OrIdentifier(op), [acc, operand])
+            );
+        }
+    }
+}
