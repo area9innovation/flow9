@@ -36,8 +36,8 @@ vsce package
 # Move the VSIX file to the orbit directory and rename it
 VSIX_FILE=$(find . -name "*.vsix" | head -n 1)
 if [ -n "$VSIX_FILE" ]; then
-  cp "$VSIX_FILE" "../../orbit.vsix"
-  echo "Copied VSIX file to orbit.vsix in the orbit directory"
+  mv "$VSIX_FILE" "../../orbit.vsix"
+  echo "Moved VSIX file to orbit.vsix in the orbit directory"
 fi
 
 # Return to the orbit directory

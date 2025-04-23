@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Compile the orbit grammar
-flowcpp --batch tools/mango/mango.flow -- grammar=orbit.mango types=2 typeprefix=Or prefix=orbit_ compile=1 vscode=1 vsname="Orbit"
+flowcpp --batch tools/mango/mango.flow -- grammar=orbit.mango types=2 typeprefix=Or prefix=orbit_ compile=1 vscode=1 vsname="Orbit" extension=orb
 
 echo "Compilation complete. Run package-vscode.sh to update VS code plugin."
 
