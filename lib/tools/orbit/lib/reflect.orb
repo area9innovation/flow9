@@ -8,7 +8,6 @@ fn quote(e : ast) = e;
 fn is_number(expr) = (astname(expr) == "Int" || astname(expr) == "Double");
 fn is_var(expr) = (astname(expr) == "UId" || astname(expr) == "Identifier");
 // Check if expression is a generalized linear expression (GLE)
-// Using eval() for selective evaluation of AST subexpressions
 fn is_glex(expr) = (
 	is_var(expr) || is_number(expr) ||
 	expr is (
@@ -37,71 +36,108 @@ fn term_degree(term) = (
     )
 );
 
-// Get variables in a term (as a sorted array of variable names)
-fn term_variables(term) = (
-    if is_number(term) then []
-    else if is_var(term) then [varname(term)]
+// Extract term components as a triple [coefficient, variable, exponent]
+// Returns an array of triples where each triple represents a multiplicative factor
+fn extract_term_triples(term) = (
+    if is_number(term) then [Triple(term, "", 0)]  // Just a constant
+    else if is_var(term) then [Triple(1, varname(term), 1)]  // Just a variable with coef=1, exp=1
     else term is (
-        a * b => term_variables(a) + term_variables(b);
-        a ^ _ => term_variables(a);
+        a * b => (
+            // Combine factors - need to handle multiplication of same variables
+            let triples_a = extract_term_triples(a);
+            let triples_b = extract_term_triples(b);
+            combine_triples(triples_a + triples_b)
+        );
+        a ^ b => (
+            if is_var(a) then [Triple(1, varname(a), extract_number(b))]  // var^exp
+            else if is_number(a) then [Triple(pow(a, extract_number(b)), "", 0)]  // const^exp = const
+            else (
+                // For complex expressions being exponentiated
+                let base_triples = extract_term_triples(a);
+                let exponent = extract_number(b);
+                // Apply exponentiation to each component
+                map(base_triples, \t.t is (Triple(coef, var, exp) => 
+                    Triple(pow(coef, exponent), var, exp * exponent)
+                ))
+            )
+        );
         _ => [] // Default for other cases
     )
 );
 
-// Count occurrences of a variable in a term
-fn var_count(term, var_name : string) = (
-    if is_number(term) then 0
-    else if is_var(term) then (
-        let name = varname(term);
-        if name == var_name then 1 else 0
-    ) else term is (
-        a * b => var_count(a, var_name) + var_count(b, var_name);
-        a ^ b => b is (
-            Int(n) => var_count(a, var_name) * n;
-            _ => var_count(a, var_name) // Default case
+
+// Helper to find a matching triple with same variable and exponent
+fn find_matching_triple(triples, var, exp) = (
+    if length(triples) == 0 then -1
+    else (
+        fn find_index(index) = (
+            if index >= length(triples) then -1
+            else (
+                (triples[index]) is (Triple(_, v, e) => (
+                    if v == var && e == exp then index
+                    else find_index(index + 1)
+                ))
+            )
         );
-        _ => 0 // Default for other cases
+        find_index(0)
+    )
+);
+
+// Helper to set element in a list (since we can't modify in place)
+fn set_list_element(list, index, new_value) = (
+    if index < 0 || index >= length(list) then list
+    else (
+        let before = if index > 0 then subrange(list, 0, index) else [];
+        let after = if index < length(list) - 1 then 
+                    subrange(list, index + 1, length(list) - index - 1) 
+                    else [];
+        before + [new_value] + after
+    )
+);
+
+// Helper function to combine like terms in the list of triples
+fn combine_triples(triples) = (
+    if length(triples) <= 1 then triples
+    else (
+        let result = [];
+        fn process_remaining(remaining, acc) = (
+            if length(remaining) == 0 then acc
+            else (
+                let current = remaining[0];
+                let rest = subrange(remaining, 1, length(remaining) - 1);
+                
+                current is (Triple(coef, var, exp) => (
+                    if var == "" then (
+                        // Handle constants separately
+                        process_remaining(rest, acc + [current])
+                    ) else (
+                        // Try to find a match with the same variable and exponent
+                        let match_index = find_matching_triple(acc, var, exp);
+                        if match_index >= 0 then (
+                            // Combine with existing entry
+                            let match = acc[match_index];
+                            match is (Triple(match_coef, _, _) => (
+                                let new_acc = set_list_element(acc, match_index, 
+                                    Triple(match_coef * coef, var, exp));
+                                process_remaining(rest, new_acc)
+                            ))
+                        ) else (
+                            // Add as new entry
+                            process_remaining(rest, acc + [current])
+                        )
+                    )
+                ))
+            )
+        );
+        
+        process_remaining(triples, [])
     )
 );
 
 // Compare polynomial terms using graded lexicographic ordering
-// Returns -1 if a < b, 0 if a = b, 1 if a > b
-fn compare_terms(a, b) = (
-    // First compare by total degree (in reverse order - higher degree first)
-    let deg_a = term_degree(a);
-    let deg_b = term_degree(b);
-
-    if deg_a > deg_b then 1
-    else if deg_a < deg_b then -1
-    else (
-        // Same degree, compare lexicographically by variables
-        // Get all unique variables from both terms
-		// TODO: This is wrong.
-		// We have to deconstruct the multiplicative term into three parts:
-		// The coefficient, the variable, and the exponent.
-		// and get an array of those three numbers
-        let all_vars = sort(term_variables(a) + term_variables(b));
-        
-        // Helper function to compare variable by variable
-        fn compare_by_vars(vars, index) = (
-            if index >= length(vars) then 0 // Equal if we've checked all variables
-            else (
-                let var = vars[index];
-                let count_a = var_count(a, var);
-                let count_b = var_count(b, var);
-                
-                if count_a > count_b then 1
-                else if count_a < count_b then -1
-                else compare_by_vars(vars, index + 1) // Same count, check next variable
-            )
-        );
-        
-        compare_by_vars(all_vars, 0)
-    )
-);
-
-// Graded lexicographic comparison function for polynomial expressions
-// Can be used with sort function to order polynomial terms
 fn glex_compare(a, b) = (
-    compare_terms(a, b) <= 0
+	// Same degree, extract term triples for comparison
+	let triples_a = extract_term_triples(a);
+	let triples_b = extract_term_triples(b);
+	triples_a <= triples_b
 );

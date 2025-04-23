@@ -178,6 +178,8 @@ This consolidated list provides a reference for the key terms and notations used
 
 To enable a unified system where rules and properties can be inherited and shared, we can structure the identified domains into a conceptual lattice or hierarchy. This hierarchy uses the subset relation (`⊂`) to denote that elements of a subdomain also belong to the superdomain, allowing rules defined for broader categories (like `Ring`) to apply to more specific instances (like `Integer` or `Int32`).
 
+TODO: Compare with Haskell monad hierarchy.
+
 ```
 Top (Most General Domain)
  ├── ComputationalObject
@@ -200,7 +202,7 @@ Top (Most General Domain)
  │       └── MathExpr (Mathematical Notation)
  │
 ├── MathematicalStructure
- │   ├── **Core Algebraic Structures (Single Operation)**
+ │   ├── Algebraic
  │   │   ├── Magma // Type* → Type* → Type* (binary operation)
  │   │   │   └── Semigroup ⊂ Magma // + mul_assoc axiom
  │   │   │       └── Monoid ⊂ Semigroup // + identity element (1, 0) & axioms
