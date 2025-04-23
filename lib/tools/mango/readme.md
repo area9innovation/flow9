@@ -261,6 +261,151 @@ The system leverages Flow9's functional programming principles and includes feat
 	*   Parses the input file using either the interpreted (`mangoParse` via `mango_interpreter`) or compiled grammar (`parseCompiledMango` via `mcode_lib` and the generated parser).
 	*   Outputs result or errors. Saves output AST if `--output` is specified.
 
+## Creating VS Code Extensions with Mango
+
+Mango can automatically generate VS Code extensions that provide syntax highlighting, bracket matching, and custom commands for languages defined in your `.mango` grammars.
+
+### Generating a VS Code Extension
+
+#### Step 1: Create and annotate your grammar
+
+Create your `.mango` grammar file with appropriate annotations for syntax highlighting, bracket matching, etc. (see examples below).
+
+#### Step 2: Compile the grammar with VS Code extension generation
+
+Use the Mango compiler with the `vscode=1` flag to generate a VS Code extension:
+
+```bash
+flowcpp --batch tools/mango/mango.flow -- grammar=your_grammar.mango vscode=1
+```
+
+This generates all necessary extension files in the `extensions/` directory (typically `extensions/area9.your_grammar_name-1.0.0/`).
+
+#### Step 3: Compile your extension (optional)
+
+If you want to package your extension for distribution:
+
+1. Navigate to the generated extension directory:
+   ```bash
+	 cd extensions/area9.your_grammar_name-1.0.0/
+```
+
+2. Install the necessary VS Code Extension development tools if you haven't already:
+   ```bash
+	 npm install -g @vscode/vsce
+```
+
+3. Package your extension:
+   ```bash
+	 vsce package
+```
+
+   This will create a `.vsix` file that can be distributed and installed by other users.
+
+The generated extension includes:
+- Syntax highlighting definitions based on your `@highlight` annotations
+- Bracket matching configuration from your `@bracket` annotations
+- Comment toggling support using your `@linecomment` and `@blockcomment` definitions
+- Custom commands defined by your `@vscommand` annotations
+
+### Annotating Your Grammar for VS Code
+
+To customize the VS Code extension, add annotations to your Mango grammar file:
+
+#### Syntax Highlighting
+
+Use the `@highlight` annotation to specify which grammar rules should be highlighted and how:
+
+```mango
+@include<highlight>
+@highlight<id "variable.parameter">
+@highlight<uid "entity.name.function">
+@highlight<int "constant.numeric">
+@highlight<string "string.quoted.double">
+@highlight<ws "comment.block">
+```
+
+The highlighting class names follow TextMate naming conventions.
+
+#### Bracket Matching
+
+Define matching brackets with the `@bracket` annotation:
+
+```mango
+@bracket<"(" ")">
+@bracket<"[" "]">
+@bracket<"{" "}">
+```
+
+#### Comment Support
+
+Specify line and block comments for your language:
+
+```mango
+@linecomment<"//">
+@blockcomment<"/*" "*/">
+```
+
+#### Custom Commands
+
+Add custom commands that can be triggered from VS Code:
+
+```mango
+@vscommand<"Grammar check" "mango grammar=${relativeFile}" "F7">
+```
+
+This defines a command named "Grammar check" that will execute the command `mango grammar=${relativeFile}` when the F7 key is pressed.
+
+### Installing and Using the Extension
+
+#### Option 1: Install from local directory
+
+1. Copy the generated extension from `extensions/area9.your_grammar_name-1.0.0/` to your VS Code extensions directory:
+   - Windows: `%USERPROFILE%\.vscode\extensions\`
+   - macOS/Linux: `~/.vscode/extensions/`
+
+2. Restart VS Code.
+
+#### Option 2: Install from VSIX file (if you packaged the extension)
+
+1. In VS Code, open the Command Palette (Ctrl+Shift+P or Cmd+Shift+P)
+2. Type "Extensions: Install from VSIX"
+3. Browse to and select your .vsix file
+
+#### Option 3: Install without copying (for development)
+
+For testing during development, you can also directly use the extension without copying:
+
+1. In VS Code, go to the Extensions view (Ctrl+Shift+X)
+2. Click the "..." menu in the top-right of the Extensions view
+3. Select "Install from Location..."
+4. Browse to your extension's directory
+
+#### Using the extension
+
+Once installed, open a file that matches your language extension. VS Code will automatically detect the file type based on the extension configuration and apply the syntax highlighting and other features.
+
+### Example
+
+Here's a complete example that defines syntax highlighting for a Mango grammar:
+
+```mango
+@include<highlight>
+@highlight<id "variable.parameter">
+@highlight<uid "entity.name.function">
+@highlight<int "constant.numeric">
+@highlight<string "string.quoted.double">
+@highlight<stringq "string.quoted.single">
+@highlight<char "constant.character">
+@highlight<ws "comment.block">
+@bracket<"(" ")">
+@linecomment<"//">
+@blockcomment<"/*" "*/">
+@vscommand<"Mango check" "mango grammar=${relativeFile}" "F7">
+```
+
+This will create a VS Code extension with syntax highlighting for identifiers, uppercase identifiers, numeric constants, strings, characters, and comments, along with bracket matching and a custom F7 command.
+
 ## Observations and Notes
 
 *   This is a powerful and complex system integrating parsing, compilation, type inference, and IDE tooling.
