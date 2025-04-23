@@ -37,27 +37,6 @@ export {
     // Type checking for AST nodes (renamed to avoid collision)
     runtimeIsAstType(typeAnnotations : [OrType]) -> bool;
     runtimeIsConstructor(expr : OrMath_expr) -> bool;
-    
-    // Evaluate an expression using bindings from pattern matching
-    evalWithBindings(
-        expr : OrMath_expr,        // Expression to evaluate
-        bindings : Tree<string, OrMath_expr>,  // Variable bindings from pattern matching
-        env : OrbEnv               // Environment context
-    ) -> OrMath_expr;  // Returns the evaluated expression
-    
-    // Substitute variables in an expression using bindings from pattern matching
-    substituteWithBindings(
-        expr : OrMath_expr,        // Expression to substitute variables in
-        bindings : Tree<string, OrMath_expr>,  // Variable bindings from pattern matching
-        env : OrbEnv               // Environment context
-    ) -> OrMath_expr;  // Returns the expression with variables substituted
-    
-    // Process an AST and evaluate only the parts wrapped in eval calls
-    unquote(
-        expr : OrMath_expr,        // AST to process
-        bindings : Tree<string, OrMath_expr>,  // Variable bindings from pattern matching
-        env : OrbEnv               // Environment context
-    ) -> OrMath_expr;  // Returns the processed AST with eval parts evaluated
 }
 
 // Get all command line arguments as an array of strings
@@ -115,6 +94,7 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
         Pair("unquote", OrbitRuntimeFn(2, unquoteFunction)),
         Pair("findOGraphId", OrbitRuntimeFn(2, findOGraphIdFunction)),
         Pair("astname", OrbitRuntimeFn(1, astnameFunction)),
+        Pair("varname", OrbitRuntimeFn(1, varnameFunction)),
         Pair("getFileContent", OrbitRuntimeFn(1, getFileContentFunction)),
         Pair("setFileContent", OrbitRuntimeFn(2, setFileContentFunction)),
         Pair("addOGraphWithSub", OrbitRuntimeFn(3, addExpressionWithSubstitutionFunction)),
@@ -142,8 +122,6 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
         Pair("dfloor", OrbitRuntimeFn(1, dfloorFunction)),
         Pair("dceil", OrbitRuntimeFn(1, dceilFunction)),
         Pair("dround", OrbitRuntimeFn(1, droundFunction)),
-        Pair("max", OrbitRuntimeFn(2, maxFunction)),
-        Pair("min", OrbitRuntimeFn(2, minFunction)),
         Pair("sign", OrbitRuntimeFn(1, signFunction)),
         Pair("isign", OrbitRuntimeFn(1, isignFunction)),
         Pair("even", OrbitRuntimeFn(1, evenFunction)),
@@ -160,581 +138,341 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
         // Core functions ported from RunCore
         // Logical operations
         Pair("&&", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: && expects exactly 2 arguments");
-                env;
-            } else {
-                // Get the first argument and evaluate it
-                envArg1 = interp(env, args[0]);
-                // Short-circuit evaluation for AND
-                if (!getOrbitBool(envArg1.result, "and.left")) {
-                    // If first argument is false, return false without evaluating the second
-                    OrbEnv(envArg1 with result = OrBool(false));
-                } else {
-                    // If first is true, evaluate and return the second
-                    envArg2 = interp(envArg1, args[1]);
-                    OrbEnv(envArg2 with result = orbitAndValue(envArg1.result, envArg2.result));
-                }
-            }
+			// Get the first argument and evaluate it
+			envArg1 = interp(env, args[0]);
+			// Short-circuit evaluation for AND
+			if (!getOrbitBool(envArg1.result, "and.left")) {
+				// If first argument is false, return false without evaluating the second
+				OrbEnv(envArg1 with result = OrBool(false));
+			} else {
+				// If first is true, evaluate and return the second
+				envArg2 = interp(envArg1, args[1]);
+				OrbEnv(envArg2 with result = orbitAndValue(envArg1.result, envArg2.result));
+			}
         })),
         
         Pair("||", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: || expects exactly 2 arguments");
-                env;
-            } else {
-                // Get the first argument and evaluate it
-                envArg1 = interp(env, args[0]);
-                // Short-circuit evaluation for OR
-                if (getOrbitBool(envArg1.result, "or.left")) {
-                    // If first argument is true, return true without evaluating the second
-                    OrbEnv(envArg1 with result = OrBool(true));
-                } else {
-                    // If first is false, evaluate and return the second
-                    envArg2 = interp(envArg1, args[1]);
-                    OrbEnv(envArg2 with result = orbitOrValue(envArg1.result, envArg2.result));
-                }
-            }
+			// Get the first argument and evaluate it
+			envArg1 = interp(env, args[0]);
+			// Short-circuit evaluation for OR
+			if (getOrbitBool(envArg1.result, "or.left")) {
+				// If first argument is true, return true without evaluating the second
+				OrbEnv(envArg1 with result = OrBool(true));
+			} else {
+				// If first is false, evaluate and return the second
+				envArg2 = interp(envArg1, args[1]);
+				OrbEnv(envArg2 with result = orbitOrValue(envArg1.result, envArg2.result));
+			}
         })),
         
         Pair("not", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: not expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitNotValue(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitNotValue(envArg.result));
         })),
         
         // Arithmetic operations
         Pair("+", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: + expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitAddValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitAddValue(envArg1.result, envArg2.result));
         })),
         
         Pair("-", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: - expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitMinusValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitMinusValue(envArg1.result, envArg2.result));
         })),
         
         Pair("*", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: * expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitMulValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitMulValue(envArg1.result, envArg2.result));
         })),
         
         Pair("/", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: / expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitDivideValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitDivideValue(envArg1.result, envArg2.result));
         })),
         
         Pair("%", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: % expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitModValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitModValue(envArg1.result, envArg2.result));
         })),
         
         // Comparison operations
         Pair("<=>", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: <=> expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitCompareValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitCompareValue(envArg1.result, envArg2.result));
         })),
         
         Pair("==", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: == expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitEqValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitEqValue(envArg1.result, envArg2.result));
         })),
         
         Pair("!=", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: != expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitNeqValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitNeqValue(envArg1.result, envArg2.result));
         })),
         
         Pair("<", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: < expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitLtValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitLtValue(envArg1.result, envArg2.result));
         })),
         
         Pair("<=", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: <= expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitLeValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitLeValue(envArg1.result, envArg2.result));
         })),
         
         Pair(">", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: > expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitGtValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitGtValue(envArg1.result, envArg2.result));
         })),
         
         Pair(">=", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: >= expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArg1 = interp(env, args[0]);
-                envArg2 = interp(envArg1, args[1]);
-                OrbEnv(envArg2 with result = orbitGeValue(envArg1.result, envArg2.result));
-            }
+			// Evaluate both arguments
+			envArg1 = interp(env, args[0]);
+			envArg2 = interp(envArg1, args[1]);
+			OrbEnv(envArg2 with result = orbitGeValue(envArg1.result, envArg2.result));
         })),
         
         // Type conversions
         Pair("i2s", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: i2s expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitInt2String(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitInt2String(envArg.result));
         })),
         
         Pair("d2s", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: d2s expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitDouble2String(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitDouble2String(envArg.result));
         })),
         
         Pair("i2b", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: i2b expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitInt2Bool(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitInt2Bool(envArg.result));
         })),
         
         Pair("b2i", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: b2i expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitBool2Int(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitBool2Int(envArg.result));
         })),
         
         Pair("s2i", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: s2i expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitString2Int(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitString2Int(envArg.result));
         })),
         
         Pair("s2d", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: s2d expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitString2Double(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitString2Double(envArg.result));
         })),
         
         // String operations
         Pair("strlen", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: strlen expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitStringLength(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitStringLength(envArg.result));
         })),
         
         Pair("substring", OrbitRuntimeFn(3, \args, env, interp -> {
-            if (length(args) != 3) {
-                println("ERROR: substring expects exactly 3 arguments");
-                env;
-            } else {
-                // Evaluate all arguments
-                envStr = interp(env, args[0]);
-                envStart = interp(envStr, args[1]);
-                envLen = interp(envStart, args[2]);
-                OrbEnv(envLen with result = orbitValueSubstring(envStr.result, envStart.result, envLen.result));
-            }
+			// Evaluate all arguments
+			envStr = interp(env, args[0]);
+			envStart = interp(envStr, args[1]);
+			envLen = interp(envStart, args[2]);
+			OrbEnv(envLen with result = orbitValueSubstring(envStr.result, envStart.result, envLen.result));
         })),
         
         Pair("strIndex", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: strIndex expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envStr = interp(env, args[0]);
-                envIdx = interp(envStr, args[1]);
-                OrbEnv(envIdx with result = orbitStringIndex(envStr.result, envIdx.result));
-            }
+			// Evaluate both arguments
+			envStr = interp(env, args[0]);
+			envIdx = interp(envStr, args[1]);
+			OrbEnv(envIdx with result = orbitStringIndex(envStr.result, envIdx.result));
         })),
         
         Pair("strContainsAt", OrbitRuntimeFn(3, \args, env, interp -> {
-            if (length(args) != 3) {
-                println("ERROR: strContainsAt expects exactly 3 arguments");
-                env;
-            } else {
-                // Evaluate all arguments
-                envStr = interp(env, args[0]);
-                envIdx = interp(envStr, args[1]);
-                envSub = interp(envIdx, args[2]);
-                OrbEnv(envSub with result = orbitStringContainsAt(envStr.result, envIdx.result, envSub.result));
-            }
+			// Evaluate all arguments
+			envStr = interp(env, args[0]);
+			envIdx = interp(envStr, args[1]);
+			envSub = interp(envIdx, args[2]);
+			OrbEnv(envSub with result = orbitStringContainsAt(envStr.result, envIdx.result, envSub.result));
         })),
         
         Pair("parsehex", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: parsehex expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitParsehex(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitParsehex(envArg.result));
         })),
         
         Pair("unescape", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: unescape expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitUnescape(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitUnescape(envArg.result));
         })),
         
         Pair("escape", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: escape expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitEscape(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitEscape(envArg.result));
         })),
         
         // Array operations
         Pair("length", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: length expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitArrayLength(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitArrayLength(envArg.result));
         })),
         
         Pair("index", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: index expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArr = interp(env, args[0]);
-                envIdx = interp(envArr, args[1]);
-                OrbEnv(envIdx with result = orbitArrayIndex(envArr.result, envIdx.result));
-            }
+			// Evaluate both arguments
+			envArr = interp(env, args[0]);
+			envIdx = interp(envArr, args[1]);
+			OrbEnv(envIdx with result = orbitArrayIndex(envArr.result, envIdx.result));
         })),
         
         Pair("subrange", OrbitRuntimeFn(3, \args, env, interp -> {
-            if (length(args) != 3) {
-                println("ERROR: subrange expects exactly 3 arguments");
-                env;
-            } else {
-                // Evaluate all arguments
-                envArr = interp(env, args[0]);
-                envStart = interp(envArr, args[1]);
-                envLen = interp(envStart, args[2]);
-                OrbEnv(envLen with result = orbitArraySubrange(envArr.result, envStart.result, envLen.result));
-            }
+			// Evaluate all arguments
+			envArr = interp(env, args[0]);
+			envStart = interp(envArr, args[1]);
+			envLen = interp(envStart, args[2]);
+			OrbEnv(envLen with result = orbitArraySubrange(envArr.result, envStart.result, envLen.result));
         })),
         
         Pair("reverse", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: reverse expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitArrayReverse(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitArrayReverse(envArg.result));
         })),
         
         // String to/from char array
         Pair("string2ints", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: string2ints expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitString2Ints(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitString2Ints(envArg.result));
         })),
         
         Pair("ints2string", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: ints2string expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitInts2String(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitInts2String(envArg.result));
         })),
         
         // Type checking
         Pair("isBool", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: isBool expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitIsBool(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitIsBool(envArg.result));
         })),
         
         Pair("isInt", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: isInt expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitIsInt(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitIsInt(envArg.result));
         })),
         
         Pair("isDouble", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: isDouble expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitIsDouble(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitIsDouble(envArg.result));
         })),
         
         Pair("isString", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: isString expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitIsString(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitIsString(envArg.result));
         })),
         
         Pair("isArray", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: isArray expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitIsArray(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitIsArray(envArg.result));
         })),
         
         Pair("isConstructor", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: isConstructor expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitIsConstructor(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitIsConstructor(envArg.result));
         })),
         
         Pair("getConstructor", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: getConstructor expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitGetConstructor(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitGetConstructor(envArg.result));
         })),
         
         // Constructor operations
         Pair("getField", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: getField expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envConstr = interp(env, args[0]);
-                envIdx = interp(envConstr, args[1]);
-                OrbEnv(envIdx with result = orbitGetField(envConstr.result, envIdx.result));
-            }
+			// Evaluate both arguments
+			envConstr = interp(env, args[0]);
+			envIdx = interp(envConstr, args[1]);
+			OrbEnv(envIdx with result = orbitGetField(envConstr.result, envIdx.result));
         })),
         
         Pair("setField", OrbitRuntimeFn(3, \args, env, interp -> {
-            if (length(args) != 3) {
-                println("ERROR: setField expects exactly 3 arguments");
-                env;
-            } else {
-                // Evaluate all arguments
-                envConstr = interp(env, args[0]);
-                envIdx = interp(envConstr, args[1]);
-                envVal = interp(envIdx, args[2]);
-                OrbEnv(envVal with result = orbitSetField(envConstr.result, envIdx.result, envVal.result));
-            }
+			// Evaluate all arguments
+			envConstr = interp(env, args[0]);
+			envIdx = interp(envConstr, args[1]);
+			envVal = interp(envIdx, args[2]);
+			OrbEnv(envVal with result = orbitSetField(envConstr.result, envIdx.result, envVal.result));
         })),
         
         // List operations
         Pair("list2array", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: list2array expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitList2Array(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitList2Array(envArg.result));
         })),
         
         // I/O functions
         Pair("println", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: println expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitPrintln(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitPrintln(envArg.result));
         })),
         
         Pair("strGlue", OrbitRuntimeFn(2, \args, env, interp -> {
-            if (length(args) != 2) {
-                println("ERROR: strGlue expects exactly 2 arguments");
-                env;
-            } else {
-                // Evaluate both arguments
-                envArr = interp(env, args[0]);
-                envSep = interp(envArr, args[1]);
-                OrbEnv(envSep with result = orbitStrGlue(envArr.result, envSep.result));
-            }
+			// Evaluate both arguments
+			envArr = interp(env, args[0]);
+			envSep = interp(envArr, args[1]);
+			OrbEnv(envSep with result = orbitStrGlue(envArr.result, envSep.result));
         })),
         
         Pair("capitalize", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: capitalize expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitCapitalize(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitCapitalize(envArg.result));
         })),
         
         Pair("decapitalize", OrbitRuntimeFn(1, \args, env, interp -> {
-            if (length(args) != 1) {
-                println("ERROR: decapitalize expects exactly 1 argument");
-                env;
-            } else {
-                // Evaluate the argument
-                envArg = interp(env, args[0]);
-                OrbEnv(envArg with result = orbitDecapitalize(envArg.result));
-            }
+			// Evaluate the argument
+			envArg = interp(env, args[0]);
+			OrbEnv(envArg with result = orbitDecapitalize(envArg.result));
         })),
     ];
     
@@ -744,394 +482,331 @@ initOrbitRuntime() -> Tree<string, OrbitRuntimeFn> {
 
 // Implementation of getCommandLineArgs function
 getCommandLineArgsFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    // This function takes no arguments
-    if (length(args) != 0) {
-        println("ERROR: getCommandLineArgs expects no arguments");
-        env;
-    } else {
-        // Get the command line arguments
-        commandLineArgs = getCommandLineArgs();
-        
-        // Convert to an OrArray of OrString
-        result = OrArray(map(commandLineArgs, \arg -> OrString(arg)));
-        
-        // Return the result
-        OrbEnv(env with result = result);
-    }
+	// Get the command line arguments
+	commandLineArgs = getCommandLineArgs();
+	
+	// Convert to an OrArray of OrString
+	result = OrArray(map(commandLineArgs, \arg -> OrString(arg)));
+	
+	// Return the result
+	OrbEnv(env with result = result);
 }
 
 // Implementation of parseOrbit function
 parseOrbitFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: parseOrbit expects exactly 1 argument: code string");
-        env;
-    } else {
-        // Evaluate the code argument
-        envCode = interpret(env, args[0]);
-        code = getOString(envCode.result, "parseOrbit.code");
-        
-        // Parse the code
-        parsed = parseOrbit(code);
-        
-        // Debug output if tracing
-        if (env.tracing) {
-            if (parsed.second != "") {
-                println("Parse error: " + parsed.second);
-            } else {
-                println("Successfully parsed: " + prettyOrbit(parsed.first));
-            }
-        }
-        
-        // Return the result as a pair
-        resultPair = OrFunction(
-            OrIdentifier("Pair"), 
-            [
-                parsed.first,
-                OrString(parsed.second)
-            ]
-        );
-        
-        OrbEnv(envCode with result = resultPair);
-    }
+	// Evaluate the code argument
+	envCode = interpret(env, args[0]);
+	code = getOString(envCode.result, "parseOrbit.code");
+	
+	// Parse the code
+	parsed = parseOrbit(code);
+	
+	// Debug output if tracing
+	if (env.tracing) {
+		if (parsed.second != "") {
+			println("Parse error: " + parsed.second);
+		} else {
+			println("Successfully parsed: " + prettyOrbit(parsed.first));
+		}
+	}
+	
+	// Return the result as a pair
+	resultPair = OrFunction(
+		OrIdentifier("Pair"), 
+		[
+			parsed.first,
+			OrString(parsed.second)
+		]
+	);
+	
+	OrbEnv(envCode with result = resultPair);
 }
 
 // Implementation of eval function
 evalFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: eval expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluation of the expression
-        interpret(env, interpret(env, args[0]).result);
-    }
+	// Evaluation of the expression
+	interpret(env, interpret(env, args[0]).result);
 }
 
 // Implementation of prettyOrbit function
 prettyOrbitFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: prettyOrbit expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument first
-        envArg = interpret(env, args[0]);
-        // Then pretty print it
-        pretty = prettyOrbit(envArg.result);
-        OrbEnv(envArg with result = OrString(pretty));
-    }
+	// Evaluate the argument first
+	envArg = interpret(env, args[0]);
+	// Then pretty print it
+	pretty = prettyOrbit(envArg.result);
+	OrbEnv(envArg with result = OrString(pretty));
 }
 
 // Implementation of makeOGraph function
 makeOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: makeOGraph expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the name argument
-        envName = interpret(env, args[0]);
-        name = getOString(envName.result, "makeOGraph");
-        
-        // Create the graph
-        createOGraph(name);
-        
-        // Return the name
-        OrbEnv(envName with result = OrString(name));
-    }
+	// Evaluate the name argument
+	envName = interpret(env, args[0]);
+	name = getOString(envName.result, "makeOGraph");
+	
+	// Create the graph
+	createOGraph(name);
+	
+	// Return the name
+	OrbEnv(envName with result = OrString(name));
 }
 
 // Implementation of addDomainToNode function (node ID version)
 addDomainToNodeFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 3) {
-        println("ERROR: addDomainToNode expects exactly 3 arguments");
-        env;
-    } else {
-        // Evaluate the graph name
-        envName = interpret(env, args[0]);
-        name = getOString(envName.result, "addDomainToNode.name");
-        
-        // Evaluate the node ID
-        envNodeId = interpret(envName, args[1]);
-        nodeId = getOInt(envNodeId.result, "addDomainToNode.nodeId");
-        
-        // Evaluate the domain node ID
-        envDomainId = interpret(envNodeId, args[2]);
-        domainId = getOInt(envDomainId.result, "addDomainToNode.domainId");
-        
-        // Add the domain
-        success = addDomainToNode(name, nodeId, domainId);
-        OrbEnv(envDomainId with result = OrBool(success));
-    }
+	// Evaluate the graph name
+	envName = interpret(env, args[0]);
+	name = getOString(envName.result, "addDomainToNode.name");
+	
+	// Evaluate the node ID
+	envNodeId = interpret(envName, args[1]);
+	nodeId = getOInt(envNodeId.result, "addDomainToNode.nodeId");
+	
+	// Evaluate the domain node ID
+	envDomainId = interpret(envNodeId, args[2]);
+	domainId = getOInt(envDomainId.result, "addDomainToNode.domainId");
+	
+	// Add the domain
+	success = addDomainToNode(name, nodeId, domainId);
+	OrbEnv(envDomainId with result = OrBool(success));
 }
-
-
 
 // Implementation of mergeOGraphNodes function
 mergeOGraphNodesFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 3) {
-        println("ERROR: mergeOGraphNodes expects exactly 3 arguments");
-        env;
-    } else {
-        // Evaluate the graph name
-        envName = interpret(env, args[0]);
-        name = getOString(envName.result, "mergeOGraphNodes.name");
-        
-        // Evaluate the first node ID
-        envId1 = interpret(envName, args[1]);
-        id1 = getOInt(envId1.result, "mergeOGraphNodes.id1");
-        
-        // Evaluate the second node ID
-        envId2 = interpret(envId1, args[2]);
-        id2 = getOInt(envId2.result, "mergeOGraphNodes.id2");
-        
-        // Merge the nodes
-        success = mergeOGraphNodes(name, id1, id2);
-        OrbEnv(envId2 with result = OrBool(success));
-    }
+	// Evaluate the graph name
+	envName = interpret(env, args[0]);
+	name = getOString(envName.result, "mergeOGraphNodes.name");
+	
+	// Evaluate the first node ID
+	envId1 = interpret(envName, args[1]);
+	id1 = getOInt(envId1.result, "mergeOGraphNodes.id1");
+	
+	// Evaluate the second node ID
+	envId2 = interpret(envId1, args[2]);
+	id2 = getOInt(envId2.result, "mergeOGraphNodes.id2");
+	
+	// Merge the nodes
+	success = mergeOGraphNodes(name, id1, id2);
+	OrbEnv(envId2 with result = OrBool(success));
 }
 
 // Implementation of addOGraph function
 addFullExpressionToOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) < 2) {
-        println("ERROR: addOGraph expects at least 2 arguments: graph name and expression");
-        env;
-    } else {
-        // Evaluate the graph name
-        envName = interpret(env, args[0]);
-        name = getOString(envName.result, "addOGraph.name");
-        
-        // Evaluate the expression to get its actual value
-        envExpr = interpret(envName, args[1]);
-        astExpr = envExpr.result;
-        
-        // Debug the AST expression if tracing
-        if (env.tracing) println("Adding full expression to ograph: " + prettyOrbit(astExpr));
-        
-        // Get the graph from the registry
-        switch (lookupTree(^ographRegistry, name)) {
-            Some(ograph): {
-                // Add the full expression recursively
-                nodeId = orbit2OGraph(ograph, astExpr);
-                if (env.tracing) println("Added full expression, root node ID: " + i2s(nodeId));
-                OrbEnv(envExpr with result = OrInt(nodeId));
-            }
-            None(): {
-                println("ERROR: OGraph '" + name + "' not found");
-                OrbEnv(envExpr with result = OrInt(-1));
-            }
-        }
-    }
+	// Evaluate the graph name
+	envName = interpret(env, args[0]);
+	name = getOString(envName.result, "addOGraph.name");
+	
+	// Evaluate the expression to get its actual value
+	envExpr = interpret(envName, args[1]);
+	astExpr = envExpr.result;
+	
+	// Debug the AST expression if tracing
+	if (env.tracing) println("Adding full expression to ograph: " + prettyOrbit(astExpr));
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, name)) {
+		Some(ograph): {
+			// Add the full expression recursively
+			nodeId = orbit2OGraph(ograph, astExpr);
+			if (env.tracing) println("Added full expression, root node ID: " + i2s(nodeId));
+			OrbEnv(envExpr with result = OrInt(nodeId));
+		}
+		None(): {
+			println("ERROR: OGraph '" + name + "' not found");
+			OrbEnv(envExpr with result = OrInt(-1));
+		}
+	}
 }
 
 // Implementation of addExpressionWithSubstitution function
 addExpressionWithSubstitutionFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 3) {
-        println("ERROR: addOGraphWithSub expects exactly 3 arguments: graph name, expression, and variable bindings");
-        env;
-    } else {
-        // Evaluate the graph name
-        envName = interpret(env, args[0]);
-        name = getOString(envName.result, "addOGraphWithSub.name");
-        
-        // Evaluate the expression to get its actual value
-        envExpr = interpret(envName, args[1]);
-        astExpr = envExpr.result;
-        
-        // Evaluate the bindings argument to get a map of variable name -> eclass ID
-        envBindings = interpret(envExpr, args[2]);
-        
-        // Extract the bindings from the result
-        varBindings = switch (envBindings.result) {
-            OrArray(pairs): {
-                // Convert array of Pair(key, value) to a Tree<string, int>
-                fold(pairs, makeTree(), \acc, p -> {
-                    switch (p) {
-                        OrFunction(fn, pargs): {
-                            if (length(pargs) == 2) {
-                                switch (pargs[0]) {
-                                    OrString(key): {
-                                        // Extract the int value for the eclass ID
-                                        eclassId = switch (pargs[1]) {
-                                            OrInt(id): id;
-                                            default: {
-                                                println("ERROR: Variable binding value must be an integer eclass ID");
-                                                -1;
-                                            }
-                                        };
-                                        if (eclassId != -1) {
-                                            setTree(acc, key, eclassId);
-                                        } else acc;
-                                    }
-                                    default: acc;
-                                }
-                            } else acc;
-                        }
-                        default: acc;
-                    }
-                });
-            }
-            default: {
-                println("ERROR: addOGraphWithSub third argument must be an array of Pair(key, value)");
-                makeTree();
-            }
-        };
-        
-        // Debug the AST expression and bindings if tracing
-        if (env.tracing) {
-            println("Adding expression to ograph with substitutions: " + prettyOrbit(astExpr));
-            println("Variable bindings: " + i2s(sizeTree(varBindings)) + " variables");
-            iter(getTreeKeys(varBindings), \key -> {
-                value = lookupTreeDef(varBindings, key, -1);
-                println("  " + key + " = " + i2s(value));
-            });
-        }
-        
-        // Get the graph from the registry
-        switch (lookupTree(^ographRegistry, name)) {
-            Some(ograph): {
-                // Add the expression with substitutions
-                nodeId = orbit2OGraphWithSubstitution(ograph, astExpr, varBindings);
-                if (env.tracing) println("Added expression with substitutions, root node ID: " + i2s(nodeId));
-                OrbEnv(envBindings with result = OrInt(nodeId));
-            }
-            None(): {
-                println("ERROR: OGraph '" + name + "' not found");
-                OrbEnv(envBindings with result = OrInt(-1));
-            }
-        }
-    }
+	// Evaluate the graph name
+	envName = interpret(env, args[0]);
+	name = getOString(envName.result, "addOGraphWithSub.name");
+	
+	// Evaluate the expression to get its actual value
+	envExpr = interpret(envName, args[1]);
+	astExpr = envExpr.result;
+	
+	// Evaluate the bindings argument to get a map of variable name -> eclass ID
+	envBindings = interpret(envExpr, args[2]);
+	
+	// Extract the bindings from the result
+	varBindings = switch (envBindings.result) {
+		OrArray(pairs): {
+			// Convert array of Pair(key, value) to a Tree<string, int>
+			fold(pairs, makeTree(), \acc, p -> {
+				switch (p) {
+					OrFunction(fn, pargs): {
+						if (length(pargs) == 2) {
+							switch (pargs[0]) {
+								OrString(key): {
+									// Extract the int value for the eclass ID
+									eclassId = switch (pargs[1]) {
+										OrInt(id): id;
+										default: {
+											println("ERROR: Variable binding value must be an integer eclass ID");
+											-1;
+										}
+									};
+									if (eclassId != -1) {
+										setTree(acc, key, eclassId);
+									} else acc;
+								}
+								default: acc;
+							}
+						} else acc;
+					}
+					default: acc;
+				}
+			});
+		}
+		default: {
+			println("ERROR: addOGraphWithSub third argument must be an array of Pair(key, value)");
+			makeTree();
+		}
+	};
+	
+	// Debug the AST expression and bindings if tracing
+	if (env.tracing) {
+		println("Adding expression to ograph with substitutions: " + prettyOrbit(astExpr));
+		println("Variable bindings: " + i2s(sizeTree(varBindings)) + " variables");
+		iter(getTreeKeys(varBindings), \key -> {
+			value = lookupTreeDef(varBindings, key, -1);
+			println("  " + key + " = " + i2s(value));
+		});
+	}
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, name)) {
+		Some(ograph): {
+			// Add the expression with substitutions
+			nodeId = orbit2OGraphWithSubstitution(ograph, astExpr, varBindings);
+			if (env.tracing) println("Added expression with substitutions, root node ID: " + i2s(nodeId));
+			OrbEnv(envBindings with result = OrInt(nodeId));
+		}
+		None(): {
+			println("ERROR: OGraph '" + name + "' not found");
+			OrbEnv(envBindings with result = OrInt(-1));
+		}
+	}
 }
 
 // Implementation of extractOGraph function
 extractOGraphFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: extractOGraph expects exactly 2 arguments: graph name and node ID");
-        env;
-    } else {
-        // Evaluate the graph name
-        envName = interpret(env, args[0]);
-        name = getOString(envName.result, "extractOGraph.name");
-        
-        // Evaluate the node ID
-        envNodeId = interpret(envName, args[1]);
-        nodeId = getOInt(envNodeId.result, "extractOGraph.nodeId");
-        
-        // Get the graph from the registry
-        switch (lookupTree(^ographRegistry, name)) {
-            Some(ograph): {
-                // Extract the expression from the graph
-                expr = ograph2Orbit(ograph, nodeId);
-                if (env.tracing) println("Extracted expression from OGraph " + name + ", node " + i2s(nodeId));
-                OrbEnv(envNodeId with result = expr);
-            }
-            None(): {
-                println("ERROR: OGraph '" + name + "' not found");
-                OrbEnv(envNodeId with result = OrInt(-1));
-            }
-        }
-    }
+	// Evaluate the graph name
+	envName = interpret(env, args[0]);
+	name = getOString(envName.result, "extractOGraph.name");
+	
+	// Evaluate the node ID
+	envNodeId = interpret(envName, args[1]);
+	nodeId = getOInt(envNodeId.result, "extractOGraph.nodeId");
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, name)) {
+		Some(ograph): {
+			// Extract the expression from the graph
+			expr = ograph2Orbit(ograph, nodeId);
+			if (env.tracing) println("Extracted expression from OGraph " + name + ", node " + i2s(nodeId));
+			OrbEnv(envNodeId with result = expr);
+		}
+		None(): {
+			println("ERROR: OGraph '" + name + "' not found");
+			OrbEnv(envNodeId with result = OrInt(-1));
+		}
+	}
 }
 
 // Implementation of matchOGraphPattern function
 matchOGraphPatternFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 3) {
-        println("ERROR: matchOGraphPattern expects exactly 3 arguments: graph name, pattern, and callback");
-        env;
-    } else {
-        // Evaluate the graph name
-        envName = interpret(env, args[0]);
-        name = getOString(envName.result, "matchOGraphPattern.name");
-        
-        // Get the pattern	
-        pattern = interpret(env, args[1]).result;
-		
-        if (env.tracing) println("DEBUG: Pattern for matching: " + prettyOrbit(pattern));
-        
-        // Get the callback function
-        callbackEnv = interpret(envName, args[2]);
-        callback = callbackEnv.result;
-        // Debug output if tracing
-        if (env.tracing) {
-            println("Pattern matching in graph '" + name + "'");
-            println("Pattern: " + prettyOrbit(pattern));
-        }
-        
-        // Store the results of pattern matching
-        results = ref [];
-        
-        // Ensure the callback is a function
-        switch (callback) {
-            OrLambda(bnds, params, body): {
-                if (length(params) != 1 && length(params) != 2) {
-                    println("ERROR: matchOGraphPattern callback must take one or two arguments (bindings, [eclassId])");
-                    OrbEnv(callbackEnv with result = OrInt(0));
-                } else {
-                    // Create callback adapter that will be called for each match
-                    // Note: This function MUST return void (not OrbEnv) to match the expected callback type
-                    matchCallback = \bindings, eclassId -> {
-                        // Convert bindings to Orbit-friendly format - array of pairs
-                        bindingsExpr = bindings2OrbitExpr(bindings);
-                        
-                        if (env.tracing) {
-                            println("DEBUG: Found match with " + i2s(sizeTree(bindings)) + " bindings at eclass ID: " + i2s(eclassId));
-                            // Print out each binding for debugging
-                            keys = getTreeKeys(bindings);
-                            iter(keys, \key -> {
-                                value = lookupTreeDef(bindings, key, 0);
-                                println("  " + key + " = " + i2s(value));
-                            });
-                        }
-                        // Interpret the callback with the new environment
-                        callResult = interpret(callbackEnv, OrFunction(callback, [bindingsExpr, OrInt(eclassId)]));
-						if (env.tracing) println("DEBUG: Callback result: " + prettyOrbit(callResult.result));
-                        
-                        // Save the result
-                        results := arrayPush(^results, callResult.result);
-                    };
-                    // Call the pattern matcher with the callback
-                    if (env.tracing) println("DEBUG: Calling matchOGraphPattern with graph " + name);
-                    matchCount = matchOGraphPattern(name, pattern, matchCallback, env.tracing);
-                    if (env.tracing) println("DEBUG: matchOGraphPattern returned " + i2s(matchCount) + " matches");
-                    
-                    // Return the number of matches as the result
-                    OrbEnv(callbackEnv with result = OrInt(matchCount));
-                }
-            }
-            default: {
-                println("ERROR: matchOGraphPattern third argument must be a function");
-                OrbEnv(callbackEnv with result = OrInt(0));
-            }
-        }
-    }
+	// Evaluate the graph name
+	envName = interpret(env, args[0]);
+	name = getOString(envName.result, "matchOGraphPattern.name");
+	
+	// Get the pattern	
+	pattern = interpret(env, args[1]).result;
+	
+	if (env.tracing) println("DEBUG: Pattern for matching: " + prettyOrbit(pattern));
+	
+	// Get the callback function
+	callbackEnv = interpret(envName, args[2]);
+	callback = callbackEnv.result;
+	// Debug output if tracing
+	if (env.tracing) {
+		println("Pattern matching in graph '" + name + "'");
+		println("Pattern: " + prettyOrbit(pattern));
+	}
+	
+	// Store the results of pattern matching
+	results = ref [];
+	
+	// Ensure the callback is a function
+	switch (callback) {
+		OrLambda(bnds, params, body): {
+			if (length(params) != 1 && length(params) != 2) {
+				println("ERROR: matchOGraphPattern callback must take one or two arguments (bindings, [eclassId])");
+				OrbEnv(callbackEnv with result = OrInt(0));
+			} else {
+				// Create callback adapter that will be called for each match
+				// Note: This function MUST return void (not OrbEnv) to match the expected callback type
+				matchCallback = \bindings, eclassId -> {
+					// Convert bindings to Orbit-friendly format - array of pairs
+					bindingsExpr = bindings2OrbitExpr(bindings);
+					
+					if (env.tracing) {
+						println("DEBUG: Found match with " + i2s(sizeTree(bindings)) + " bindings at eclass ID: " + i2s(eclassId));
+						// Print out each binding for debugging
+						keys = getTreeKeys(bindings);
+						iter(keys, \key -> {
+							value = lookupTreeDef(bindings, key, 0);
+							println("  " + key + " = " + i2s(value));
+						});
+					}
+					// Interpret the callback with the new environment
+					callResult = interpret(callbackEnv, OrFunction(callback, [bindingsExpr, OrInt(eclassId)]));
+					if (env.tracing) println("DEBUG: Callback result: " + prettyOrbit(callResult.result));
+					
+					// Save the result
+					results := arrayPush(^results, callResult.result);
+				};
+				// Call the pattern matcher with the callback
+				if (env.tracing) println("DEBUG: Calling matchOGraphPattern with graph " + name);
+				matchCount = matchOGraphPattern(name, pattern, matchCallback, env.tracing);
+				if (env.tracing) println("DEBUG: matchOGraphPattern returned " + i2s(matchCount) + " matches");
+				
+				// Return the number of matches as the result
+				OrbEnv(callbackEnv with result = OrInt(matchCount));
+			}
+		}
+		default: {
+			println("ERROR: matchOGraphPattern third argument must be a function");
+			OrbEnv(callbackEnv with result = OrInt(0));
+		}
+	}
 }
 
 // Implementation of findOGraphId function using the centralized implementation
 findOGraphIdFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-	if (length(args) != 2) {
-		println("ERROR: findOGraphId expects exactly 2 arguments: graph name and expression");
-		env;
-	} else {
-		// Evaluate the graph name
-		envName = interpret(env, args[0]);
-		name = getOString(envName.result, "findOGraphId.name");
+	// Evaluate the graph name
+	envName = interpret(env, args[0]);
+	name = getOString(envName.result, "findOGraphId.name");
 
-		// Evaluate the expression
-		envExpr = interpret(envName, args[1]);
-		astExpr = envExpr.result;
+	// Evaluate the expression
+	envExpr = interpret(envName, args[1]);
+	astExpr = envExpr.result;
 
-		// Print debug info if tracing is enabled
-		if (env.tracing) {
-			println("Searching for: " + prettyOrbit(astExpr) + " in OGraph '" + name + "'");
-		}
-		
-		// Use the standalone findOGraphId function from ograph_find.flow
-		foundId = findOGraphId(name, astExpr);
-		
-		if (env.tracing && foundId != -1) {
-			println("Found matching node with ID: " + i2s(foundId));
-		}
-		
-		// Return the found ID or -1 if not found
-		OrbEnv(envExpr with result = OrInt(foundId));
+	// Print debug info if tracing is enabled
+	if (env.tracing) {
+		println("Searching for: " + prettyOrbit(astExpr) + " in OGraph '" + name + "'");
 	}
+	
+	// Use the standalone findOGraphId function from ograph_find.flow
+	foundId = findOGraphId(name, astExpr);
+	
+	if (env.tracing && foundId != -1) {
+		println("Found matching node with ID: " + i2s(foundId));
+	}
+	
+	// Return the found ID or -1 if not found
+	OrbEnv(envExpr with result = OrInt(foundId));
 }
 
 // Convert variable bindings to an Orbit expression (array of pairs)
@@ -1146,213 +821,175 @@ bindings2OrbitExpr(bindings : Tree<string, int>) -> OrMath_expr {
 
 // Implementation of evalWithBindings function
 evalWithBindingsFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: evalWithBindings expects exactly 2 arguments: expression and bindings");
-        env;
-    } else {
-        // Get the expression to evaluate
-        expr = interpret(env, args[0]).result;
-        
-        // Evaluate the bindings argument to get a map of variable bindings
-        envBindings = interpret(env, args[1]);
-        
-        // Extract the bindings from the result
-        bindings = switch (envBindings.result) {
-            OrArray(pairs): {
-                // Convert array of Pair(key, value) to a Tree
-                fold(pairs, makeTree(), \acc, p -> {
-                    switch (p) {
-                        OrFunction(fn, pargs): {
-                            if (length(pargs) == 2) {
-                                switch (pargs[0]) {
-                                    OrString(key): setTree(acc, key, pargs[1]);
-                                    default: acc;
-                                }
-                            } else acc;
-                        }
-                        default: acc;
-                    }
-                });
-            }
-            default: {
-                println("ERROR: evalWithBindings second argument must be an array of Pair(key, value)");
-                makeTree();
-            }
-        };
-        
-        // Debug output if tracing
-        if (env.tracing) {
-            println("Evaluating expression with bindings:");
-            println("Expression: " + prettyOrbit(expr));
-            println("Bindings: " + i2s(sizeTree(bindings)) + " variables");
-            iter(getTreeKeys(bindings), \key -> {
-                println("  " + key + " = " + prettyOrbit(lookupTreeDef(bindings, key, OrInt(0))));
-            });
-        }
-        
-        // Create a new environment with the original env plus the bindings
-        newEnv = fold(getTreeKeys(bindings), envBindings, \accEnv, key -> {
-            bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
-        });
-        
-        // Now evaluate the expression in the new environment
-        resultEnv = interpret(newEnv, expr);
-        
-        // Return the result
-        resultEnv;
-    }
-}
-
-// Public API for evalWithBindings - used by other modules
-evalWithBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>, env : OrbEnv) -> OrMath_expr {
-    // Create a new environment with the original env plus the bindings
-    newEnv = fold(getTreeKeys(bindings), env, \accEnv, key -> {
-        bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
-    });
-    
-    // The interpreter will need to evaluate this expression with the new environment
-    // For the public API, we just return the expression - the caller must handle evaluation
-    expr;
+	// Get the expression to evaluate
+	expr = interpret(env, args[0]).result;
+	
+	// Evaluate the bindings argument to get a map of variable bindings
+	envBindings = interpret(env, args[1]);
+	
+	// Extract the bindings from the result
+	bindings = switch (envBindings.result) {
+		OrArray(pairs): {
+			// Convert array of Pair(key, value) to a Tree
+			fold(pairs, makeTree(), \acc, p -> {
+				switch (p) {
+					OrFunction(fn, pargs): {
+						if (length(pargs) == 2) {
+							switch (pargs[0]) {
+								OrString(key): setTree(acc, key, pargs[1]);
+								default: acc;
+							}
+						} else acc;
+					}
+					default: acc;
+				}
+			});
+		}
+		default: {
+			println("ERROR: evalWithBindings second argument must be an array of Pair(key, value)");
+			makeTree();
+		}
+	};
+	
+	// Debug output if tracing
+	if (env.tracing) {
+		println("Evaluating expression with bindings:");
+		println("Expression: " + prettyOrbit(expr));
+		println("Bindings: " + i2s(sizeTree(bindings)) + " variables");
+		iter(getTreeKeys(bindings), \key -> {
+			println("  " + key + " = " + prettyOrbit(lookupTreeDef(bindings, key, OrInt(0))));
+		});
+	}
+	
+	// Create a new environment with the original env plus the bindings
+	newEnv = fold(getTreeKeys(bindings), envBindings, \accEnv, key -> {
+		bindVar(accEnv, key, lookupTreeDef(bindings, key, OrInt(0)));
+	});
+	
+	// Now evaluate the expression in the new environment
+	resultEnv = interpret(newEnv, expr);
+	
+	// Return the result
+	resultEnv;
 }
 
 // Implementation of ograph2dot function
 ograph2dotFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: ograph2dot expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the graph name
-        envName = interpret(env, args[0]);
-        name = getOString(envName.result, "ograph2dot.name");
-        
-        // Get the graph from the registry
-        switch (lookupTree(^ographRegistry, name)) {
-            Some(ograph): {
-                // Convert the graph to DOT format
-                dotCode = ograph2dot(ograph);
-                if (env.tracing) println("OGraph '" + name + "' converted to DOT format");
-                OrbEnv(envName with result = OrString(dotCode));
-            }
-            None(): {
-                println("ERROR: OGraph '" + name + "' not found");
-                OrbEnv(envName with result = OrString(""));
-            }
-        }
-    }
+	// Evaluate the graph name
+	envName = interpret(env, args[0]);
+	name = getOString(envName.result, "ograph2dot.name");
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, name)) {
+		Some(ograph): {
+			// Convert the graph to DOT format
+			dotCode = ograph2dot(ograph);
+			if (env.tracing) println("OGraph '" + name + "' converted to DOT format");
+			OrbEnv(envName with result = OrString(dotCode));
+		}
+		None(): {
+			println("ERROR: OGraph '" + name + "' not found");
+			OrbEnv(envName with result = OrString(""));
+		}
+	}
 }
 
 // Implementation of substituteWithBindings function
 substituteWithBindingsFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: substituteWithBindings expects exactly 2 arguments: expression and bindings");
-        env;
-    } else {
-        // Get the expression to substitute variables in
-        expr = interpret(env, args[0]).result;
-        
-        // Evaluate the bindings argument to get a map of variable bindings
-        envBindings = interpret(env, args[1]);
-        
-        // Extract the bindings from the result
-        bindings = switch (envBindings.result) {
-            OrArray(pairs): {
-                // Convert array of Pair(key, value) to a Tree
-                fold(pairs, makeTree(), \acc, p -> {
-                    switch (p) {
-                        OrFunction(fn, pargs): {
-                            if (length(pargs) == 2) {
-                                switch (pargs[0]) {
-                                    OrString(key): setTree(acc, key, pargs[1]);
-                                    default: acc;
-                                }
-                            } else acc;
-                        }
-                        default: acc;
-                    }
-                });
-            }
-            default: {
-                println("ERROR: substituteWithBindings second argument must be an array of Pair(key, value)");
-                makeTree();
-            }
-        };
-        
-        // Debug output if tracing
-        if (env.tracing) {
-            println("Substituting variables in expression with bindings:");
-            println("Expression: " + prettyOrbit(expr));
-            println("Bindings: " + i2s(sizeTree(bindings)) + " variables");
-            iter(getTreeKeys(bindings), \key -> {
-                println("  " + key + " = " + prettyOrbit(lookupTreeDef(bindings, key, OrInt(0))));
-            });
-        }
-        
-        // Apply substitutions using the bindings
-        result = applyBindings(expr, bindings);
-        
-        // Return the result
-        OrbEnv(envBindings with result = result);
-    }
-}
-
-// Public API for substituteWithBindings - used by other modules
-substituteWithBindings(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>, env : OrbEnv) -> OrMath_expr {
-    // Apply the substitutions directly
-    applyBindings(expr, bindings);
+	// Get the expression to substitute variables in
+	expr = interpret(env, args[0]).result;
+	
+	// Evaluate the bindings argument to get a map of variable bindings
+	envBindings = interpret(env, args[1]);
+	
+	// Extract the bindings from the result
+	bindings = switch (envBindings.result) {
+		OrArray(pairs): {
+			// Convert array of Pair(key, value) to a Tree
+			fold(pairs, makeTree(), \acc, p -> {
+				switch (p) {
+					OrFunction(fn, pargs): {
+						if (length(pargs) == 2) {
+							switch (pargs[0]) {
+								OrString(key): setTree(acc, key, pargs[1]);
+								default: acc;
+							}
+						} else acc;
+					}
+					default: acc;
+				}
+			});
+		}
+		default: {
+			println("ERROR: substituteWithBindings second argument must be an array of Pair(key, value)");
+			makeTree();
+		}
+	};
+	
+	// Debug output if tracing
+	if (env.tracing) {
+		println("Substituting variables in expression with bindings:");
+		println("Expression: " + prettyOrbit(expr));
+		println("Bindings: " + i2s(sizeTree(bindings)) + " variables");
+		iter(getTreeKeys(bindings), \key -> {
+			println("  " + key + " = " + prettyOrbit(lookupTreeDef(bindings, key, OrInt(0))));
+		});
+	}
+	
+	// Apply substitutions using the bindings
+	result = applyBindings(expr, bindings);
+	
+	// Return the result
+	OrbEnv(envBindings with result = result);
 }
 
 // Implementation of unquote function
 unquoteFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: unquote expects exactly 2 arguments: expression and bindings");
-        env;
-    } else {
-        // Get the expression to process
-        expr = interpret(env, args[0]).result;
-        
-        // Evaluate the bindings argument to get a map of variable bindings
-        envBindings = interpret(env, args[1]);
-        
-        // Extract the bindings from the result
-        bindings = switch (envBindings.result) {
-            OrArray(pairs): {
-                // Convert array of Pair(key, value) to a Tree
-                fold(pairs, makeTree(), \acc, p -> {
-                    switch (p) {
-                        OrFunction(fn, pargs): {
-                            if (length(pargs) == 2) {
-                                switch (pargs[0]) {
-                                    OrString(key): setTree(acc, key, pargs[1]);
-                                    default: acc;
-                                }
-                            } else acc;
-                        }
-                        default: acc;
-                    }
-                });
-            }
-            default: {
-                println("ERROR: unquote second argument must be an array of Pair(key, value)");
-                makeTree();
-            }
-        };
-        
-        // Debug output if tracing
-        if (env.tracing) {
-            println("Unquoting expression with bindings:");
-            println("Expression: " + prettyOrbit(expr));
-            println("Bindings: " + i2s(sizeTree(bindings)) + " variables");
-            iter(getTreeKeys(bindings), \key -> {
-                println("  " + key + " = " + prettyOrbit(lookupTreeDef(bindings, key, OrInt(0))));
-            });
-        }
-        
-        // Process the expression, evaluating only eval calls
-        result = unquoteRecursive(expr, bindings, envBindings, interpret);
-        
-        // Return the result
-        OrbEnv(envBindings with result = result);
-    }
+	// Get the expression to process
+	expr = interpret(env, args[0]).result;
+	
+	// Evaluate the bindings argument to get a map of variable bindings
+	envBindings = interpret(env, args[1]);
+	
+	// Extract the bindings from the result
+	bindings = switch (envBindings.result) {
+		OrArray(pairs): {
+			// Convert array of Pair(key, value) to a Tree
+			fold(pairs, makeTree(), \acc, p -> {
+				switch (p) {
+					OrFunction(fn, pargs): {
+						if (length(pargs) == 2) {
+							switch (pargs[0]) {
+								OrString(key): setTree(acc, key, pargs[1]);
+								default: acc;
+							}
+						} else acc;
+					}
+					default: acc;
+				}
+			});
+		}
+		default: {
+			println("ERROR: unquote second argument must be an array of Pair(key, value)");
+			makeTree();
+		}
+	};
+	
+	// Debug output if tracing
+	if (env.tracing) {
+		println("Unquoting expression with bindings:");
+		println("Expression: " + prettyOrbit(expr));
+		println("Bindings: " + i2s(sizeTree(bindings)) + " variables");
+		iter(getTreeKeys(bindings), \key -> {
+			println("  " + key + " = " + prettyOrbit(lookupTreeDef(bindings, key, OrInt(0))));
+		});
+	}
+	
+	// Process the expression, evaluating only eval calls
+	result = unquoteRecursive(expr, bindings, envBindings, interpret);
+	
+	// Return the result
+	OrbEnv(envBindings with result = result);
 }
 
 // Helper function for unquote to recursively process the AST
@@ -1437,961 +1074,692 @@ unquoteRecursive(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>, env :
     }
 }
 
-// Public API for unquote - used by other modules
-unquote(expr : OrMath_expr, bindings : Tree<string, OrMath_expr>, env : OrbEnv) -> OrMath_expr {
-    // This is just a wrapper that would typically need the interpreter function
-    // For direct API calls we can't provide this, so this method should typically be used
-    // from the runtime function instead
-    expr;
+// Implementation of astname function
+astnameFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+	// Evaluate the argument first
+	envArg = interpret(env, args[0]);
+	expr = envArg.result;
+	
+	// Use decomposeOrbit to get the canonical operator name
+	decomposed = decomposeOrbit(expr);
+	canonicalName = decomposed.first;
+	
+	// Debug output if tracing is enabled
+	if (env.tracing) {
+		println("AST node type for " + prettyOrbit(expr) + ": " + canonicalName);
+		// Also print the structname for comparison/debugging
+		println("  structname: " + expr.structname);
+	}
+	
+	// Return the canonical name as a string
+	OrbEnv(envArg with result = OrString(canonicalName));
 }
 
 // Implementation of astname function
-astnameFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: astname expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument first
-        envArg = interpret(env, args[0]);
-        expr = envArg.result;
-        
-        // Use decomposeOrbit to get the canonical operator name
-        decomposed = decomposeOrbit(expr);
-        canonicalName = decomposed.first;
-        
-        // Debug output if tracing is enabled
-        if (env.tracing) {
-            println("AST node type for " + prettyOrbit(expr) + ": " + canonicalName);
-            // Also print the structname for comparison/debugging
-            println("  structname: " + expr.structname);
-        }
-        
-        // Return the canonical name as a string
-        OrbEnv(envArg with result = OrString(canonicalName));
-    }
+varnameFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+	// Evaluate the argument first
+	envArg = interpret(env, args[0]);
+	expr = envArg.result;
+	name = switch (expr) {
+		OrIdentifier(id): id;
+		OrUId(id): id;
+		default: "";
+	};
+	OrbEnv(envArg with result = OrString(name));
 }
 
 // Implementation of getFileContent function
 getFileContentFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: getFileContent expects exactly 1 argument: file path");
-        env;
-    } else {
-        // Evaluate the file path argument
-        envPath = interpret(env, args[0]);
-        path = getOString(envPath.result, "getFileContent.path");
-        
-        // Debug output if tracing is enabled
-        if (env.tracing) {
-            println("Reading file: " + path);
-        }
-        
-        // Use the Flow9 getFileContent function to read the file
-        content = getFileContent(path);
-        
-        // Return the file content as a string
-        OrbEnv(envPath with result = OrString(content));
-    }
+	// Evaluate the file path argument
+	envPath = interpret(env, args[0]);
+	path = getOString(envPath.result, "getFileContent.path");
+	
+	// Debug output if tracing is enabled
+	if (env.tracing) {
+		println("Reading file: " + path);
+	}
+	
+	// Use the Flow9 getFileContent function to read the file
+	content = getFileContent(path);
+	
+	// Return the file content as a string
+	OrbEnv(envPath with result = OrString(content));
 }
 
 // Implementation of setFileContent function
 setFileContentFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: setFileContent expects exactly 2 arguments: file path and content");
-        env;
-    } else {
-        // Evaluate the file path argument
-        envPath = interpret(env, args[0]);
-        path = getOString(envPath.result, "setFileContent.path");
-        
-        // Evaluate the content argument
-        envContent = interpret(envPath, args[1]);
-        content = getOString(envContent.result, "setFileContent.content");
-        
-        // Debug output if tracing is enabled
-        if (env.tracing) {
-            println("Writing to file: " + path);
-            println("Content length: " + i2s(strlen(content)) + " bytes");
-        }
-        
-        // Use the Flow9 setFileContent function to write the file
-        success = setFileContent(path, content);
-        
-        // Return the success status as a boolean
-        OrbEnv(envContent with result = OrBool(success));
-    }
+	// Evaluate the file path argument
+	envPath = interpret(env, args[0]);
+	path = getOString(envPath.result, "setFileContent.path");
+	
+	// Evaluate the content argument
+	envContent = interpret(envPath, args[1]);
+	content = getOString(envContent.result, "setFileContent.content");
+	
+	// Debug output if tracing is enabled
+	if (env.tracing) {
+		println("Writing to file: " + path);
+		println("Content length: " + i2s(strlen(content)) + " bytes");
+	}
+	
+	// Use the Flow9 setFileContent function to write the file
+	success = setFileContent(path, content);
+	
+	// Return the success status as a boolean
+	OrbEnv(envContent with result = OrBool(success));
 }
 
 // Implementation of evalVar function
 // Evaluates the argument only if it's a variable reference, otherwise keeps it as is
 evalVarFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: evalVar expects exactly 1 argument");
-        env;
-    } else {
-        // Get the argument without evaluating it
-        expr = args[0];
-        
-        // Check if it's a variable reference
-        switch (expr) {
-            OrUId(id): {
-                // Only evaluate if it's a variable
-                interpret(env, expr);
-            }
-            default: {
-                // Otherwise return it unchanged
-                OrbEnv(env with result = expr);
-            }
-        }
-    }
+	// Get the argument without evaluating it
+	expr = args[0];
+	
+	// Check if it's a variable reference
+	switch (expr) {
+		OrUId(id): {
+			// Only evaluate if it's a variable
+			interpret(env, expr);
+		}
+		OrIdentifier(id): {
+			// Only evaluate if it's a variable
+			interpret(env, expr);
+		}
+		default: {
+			// Otherwise return it unchanged
+			OrbEnv(env with result = expr);
+		}
+	}
 }
 
 // MATH FUNCTION IMPLEMENTATIONS
 
 // Implementation of abs function (absolute value for doubles)
 absFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: abs expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the value using helper function
-        value = getODouble(envArg.result, "abs");
-        
-        // Apply abs function
-        result = abs(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the value using helper function
+	value = getODouble(envArg.result, "abs");
+	
+	// Apply abs function
+	result = abs(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of iabs function (absolute value for integers)
 iabsFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: iabs expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the int value using helper function
-        value = getOInt(envArg.result, "iabs");
-        
-        // Apply iabs function
-        result = iabs(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrInt(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the int value using helper function
+	value = getOInt(envArg.result, "iabs");
+	
+	// Apply iabs function
+	result = iabs(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrInt(result));
 }
 
 // Implementation of sin function
 sinFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: sin expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value using helper function
-        value = getODouble(envArg.result, "sin");
-        
-        // Apply sin function
-        result = sin(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value using helper function
+	value = getODouble(envArg.result, "sin");
+	
+	// Apply sin function
+	result = sin(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of cos function
 cosFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: cos expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value using helper function
-        value = getODouble(envArg.result, "cos");
-        
-        // Apply cos function
-        result = cos(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value using helper function
+	value = getODouble(envArg.result, "cos");
+	
+	// Apply cos function
+	result = cos(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of tan function
 tanFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: tan expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value using helper function
-        value = getODouble(envArg.result, "tan");
-        
-        // Apply tan function
-        result = tan(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value using helper function
+	value = getODouble(envArg.result, "tan");
+	
+	// Apply tan function
+	result = tan(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of asin function
 asinFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: asin expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value using helper function
-        value = getODouble(envArg.result, "asin");
-        
-        // Apply asin function
-        result = asin(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value using helper function
+	value = getODouble(envArg.result, "asin");
+	
+	// Apply asin function
+	result = asin(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of acos function
 acosFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: acos expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value using helper function
-        value = getODouble(envArg.result, "acos");
-        
-        // Apply acos function
-        result = acos(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value using helper function
+	value = getODouble(envArg.result, "acos");
+	
+	// Apply acos function
+	result = acos(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of atan function
 atanFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: atan expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value using helper function
-        value = getODouble(envArg.result, "atan");
-        
-        // Apply atan function
-        result = atan(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value using helper function
+	value = getODouble(envArg.result, "atan");
+	
+	// Apply atan function
+	result = atan(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of atan2 function
 atan2Function(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: atan2 expects exactly 2 arguments");
-        env;
-    } else {
-        // Evaluate the first argument
-        envArg1 = interpret(env, args[0]);
-        
-        // Extract the first double value using helper function
-        value1 = getODouble(envArg1.result, "atan2.y");
-        
-        // Evaluate the second argument
-        envArg2 = interpret(envArg1, args[1]);
-        
-        // Extract the second double value using helper function
-        value2 = getODouble(envArg2.result, "atan2.x");
-        
-        // Apply atan2 function
-        result = atan2(value1, value2);
-        
-        // Return the result
-        OrbEnv(envArg2 with result = OrDouble(result));
-    }
+	// Evaluate the first argument
+	envArg1 = interpret(env, args[0]);
+	
+	// Extract the first double value using helper function
+	value1 = getODouble(envArg1.result, "atan2.y");
+	
+	// Evaluate the second argument
+	envArg2 = interpret(envArg1, args[1]);
+	
+	// Extract the second double value using helper function
+	value2 = getODouble(envArg2.result, "atan2.x");
+	
+	// Apply atan2 function
+	result = atan2(value1, value2);
+	
+	// Return the result
+	OrbEnv(envArg2 with result = OrDouble(result));
 }
 
 // Implementation of sqrt function
 sqrtFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: sqrt expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the value using helper function (handles all types)
-        value = getODouble(envArg.result, "sqrt");
-        
-        // Apply sqrt function
-        result = sqrt(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the value using helper function (handles all types)
+	value = getODouble(envArg.result, "sqrt");
+	
+	// Apply sqrt function
+	result = sqrt(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of exp function
 expFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: exp expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value using helper function
-        value = getODouble(envArg.result, "exp");
-        
-        // Apply exp function
-        result = exp(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value using helper function
+	value = getODouble(envArg.result, "exp");
+	
+	// Apply exp function
+	result = exp(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of log function
 logFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: log expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value using helper function
-        value = getODouble(envArg.result, "log");
-        
-        // Apply log function
-        result = log(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value using helper function
+	value = getODouble(envArg.result, "log");
+	
+	// Apply log function
+	result = log(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of log10 function
 log10Function(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: log10 expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value
-        value = switch (envArg.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: log10 expects a numeric argument");
-                0.0;
-            }
-        }
-        
-        // Apply log10 function (using ln(x)/ln(10))
-        result = log(value) / log(10.0);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value
+	value = switch (envArg.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: log10 expects a numeric argument");
+			0.0;
+		}
+	}
+	
+	// Apply log10 function (using ln(x)/ln(10))
+	result = log(value) / log(10.0);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of floor function
 floorFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: floor expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value
-        value = switch (envArg.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: floor expects a numeric argument");
-                0.0;
-            }
-        }
-        
-        // Apply floor function
-        result = floor(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrInt(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value
+	value = switch (envArg.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: floor expects a numeric argument");
+			0.0;
+		}
+	}
+	
+	// Apply floor function
+	result = floor(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrInt(result));
 }
 
 // Implementation of ceil function
 ceilFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: ceil expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value
-        value = switch (envArg.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: ceil expects a numeric argument");
-                0.0;
-            }
-        }
-        
-        // Apply ceil function
-        result = ceil(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrInt(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value
+	value = switch (envArg.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: ceil expects a numeric argument");
+			0.0;
+		}
+	}
+	
+	// Apply ceil function
+	result = ceil(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrInt(result));
 }
 
 // Implementation of round function
 roundFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: round expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value
-        value = switch (envArg.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: round expects a numeric argument");
-                0.0;
-            }
-        }
-        
-        // Apply round function
-        result = round(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrInt(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value
+	value = switch (envArg.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: round expects a numeric argument");
+			0.0;
+		}
+	}
+	
+	// Apply round function
+	result = round(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrInt(result));
 }
 
 // Implementation of dfloor function
 dfloorFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: dfloor expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value
-        value = switch (envArg.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: dfloor expects a numeric argument");
-                0.0;
-            }
-        }
-        
-        // Apply dfloor function
-        result = dfloor(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value
+	value = switch (envArg.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: dfloor expects a numeric argument");
+			0.0;
+		}
+	}
+	
+	// Apply dfloor function
+	result = dfloor(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of dceil function
 dceilFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: dceil expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value
-        value = switch (envArg.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: dceil expects a numeric argument");
-                0.0;
-            }
-        }
-        
-        // Apply dceil function
-        result = dceil(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value
+	value = switch (envArg.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: dceil expects a numeric argument");
+			0.0;
+		}
+	}
+	
+	// Apply dceil function
+	result = dceil(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of dround function
 droundFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: dround expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value
-        value = switch (envArg.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: dround expects a numeric argument");
-                0.0;
-            }
-        }
-        
-        // Apply dround function
-        result = dround(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
-}
-
-// Implementation of max function
-maxFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: max expects exactly 2 arguments");
-        env;
-    } else {
-        // Evaluate the first argument
-        envArg1 = interpret(env, args[0]);
-        
-        // Evaluate the second argument
-        envArg2 = interpret(envArg1, args[1]);
-        
-        // Determine the type based on inputs
-        result = switch (envArg1.result) {
-            OrInt(v1): {
-                // If first arg is int, check second
-                switch (envArg2.result) {
-                    OrInt(v2): {
-                        // Both ints - return int
-                        if (v1 > v2) OrInt(v1) else OrInt(v2);
-                    }
-                    OrDouble(v2): {
-                        // Mixed - convert and return double
-                        if (i2d(v1) > v2) OrDouble(i2d(v1)) else OrDouble(v2);
-                    }
-                    default: {
-                        println("ERROR: max expects numeric arguments");
-                        OrInt(0);
-                    }
-                }
-            }
-            OrDouble(v1): {
-                // If first arg is double, check second
-                switch (envArg2.result) {
-                    OrInt(v2): {
-                        // Mixed - convert and return double
-                        if (v1 > i2d(v2)) OrDouble(v1) else OrDouble(i2d(v2));
-                    }
-                    OrDouble(v2): {
-                        // Both doubles - return double
-                        if (v1 > v2) OrDouble(v1) else OrDouble(v2);
-                    }
-                    default: {
-                        println("ERROR: max expects numeric arguments");
-                        OrDouble(0.0);
-                    }
-                }
-            }
-            default: {
-                println("ERROR: max expects numeric arguments");
-                OrInt(0);
-            }
-        }
-        
-        // Return the result
-        OrbEnv(envArg2 with result = result);
-    }
-}
-
-// Implementation of min function
-minFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: min expects exactly 2 arguments");
-        env;
-    } else {
-        // Evaluate the first argument
-        envArg1 = interpret(env, args[0]);
-        
-        // Evaluate the second argument
-        envArg2 = interpret(envArg1, args[1]);
-        
-        // Determine the type based on inputs
-        result = switch (envArg1.result) {
-            OrInt(v1): {
-                // If first arg is int, check second
-                switch (envArg2.result) {
-                    OrInt(v2): {
-                        // Both ints - return int
-                        if (v1 < v2) OrInt(v1) else OrInt(v2);
-                    }
-                    OrDouble(v2): {
-                        // Mixed - convert and return double
-                        if (i2d(v1) < v2) OrDouble(i2d(v1)) else OrDouble(v2);
-                    }
-                    default: {
-                        println("ERROR: min expects numeric arguments");
-                        OrInt(0);
-                    }
-                }
-            }
-            OrDouble(v1): {
-                // If first arg is double, check second
-                switch (envArg2.result) {
-                    OrInt(v2): {
-                        // Mixed - convert and return double
-                        if (v1 < i2d(v2)) OrDouble(v1) else OrDouble(i2d(v2));
-                    }
-                    OrDouble(v2): {
-                        // Both doubles - return double
-                        if (v1 < v2) OrDouble(v1) else OrDouble(v2);
-                    }
-                    default: {
-                        println("ERROR: min expects numeric arguments");
-                        OrDouble(0.0);
-                    }
-                }
-            }
-            default: {
-                println("ERROR: min expects numeric arguments");
-                OrInt(0);
-            }
-        }
-        
-        // Return the result
-        OrbEnv(envArg2 with result = result);
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value
+	value = switch (envArg.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: dround expects a numeric argument");
+			0.0;
+		}
+	}
+	
+	// Apply dround function
+	result = dround(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of sign function
 signFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: sign expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the double value
-        value = switch (envArg.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: sign expects a numeric argument");
-                0.0;
-            }
-        }
-        
-        // Apply sign function
-        result = sign(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrDouble(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the double value
+	value = switch (envArg.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: sign expects a numeric argument");
+			0.0;
+		}
+	}
+	
+	// Apply sign function
+	result = sign(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrDouble(result));
 }
 
 // Implementation of isign function
 isignFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: isign expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the int value
-        value = switch (envArg.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: isign expects a numeric argument");
-                0;
-            }
-        }
-        
-        // Apply isign function
-        result = isign(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrInt(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the int value
+	value = switch (envArg.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: isign expects a numeric argument");
+			0;
+		}
+	}
+	
+	// Apply isign function
+	result = isign(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrInt(result));
 }
 
 // Implementation of even function
 evenFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: even expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the int value
-        value = switch (envArg.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: even expects an integer argument");
-                0;
-            }
-        }
-        
-        // Apply even function
-        result = even(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrBool(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the int value
+	value = switch (envArg.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: even expects an integer argument");
+			0;
+		}
+	}
+	
+	// Apply even function
+	result = even(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrBool(result));
 }
 
 // Implementation of odd function
 oddFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: odd expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the int value
-        value = switch (envArg.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: odd expects an integer argument");
-                0;
-            }
-        }
-        
-        // Apply odd function
-        result = odd(value);
-        
-        // Return the result
-        OrbEnv(envArg with result = OrBool(result));
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the int value
+	value = switch (envArg.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: odd expects an integer argument");
+			0;
+		}
+	}
+	
+	// Apply odd function
+	result = odd(value);
+	
+	// Return the result
+	OrbEnv(envArg with result = OrBool(result));
 }
 
 // Implementation of mod function
 modFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: mod expects exactly 2 arguments");
-        env;
-    } else {
-        // Evaluate the first argument
-        envArg1 = interpret(env, args[0]);
-        
-        // Extract the first int value
-        value1 = switch (envArg1.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: mod expects integer arguments");
-                0;
-            }
-        }
-        
-        // Evaluate the second argument
-        envArg2 = interpret(envArg1, args[1]);
-        
-        // Extract the second int value
-        value2 = switch (envArg2.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: mod expects integer arguments");
-                1; // Prevent division by zero
-            }
-        }
-        
-        // Check for division by zero
-        if (value2 == 0) {
-            println("ERROR: mod division by zero");
-            OrbEnv(envArg2 with result = OrInt(0));
-        } else {
-            // Apply mod function
-            result = mod(value1, value2);
-            
-            // Return the result
-            OrbEnv(envArg2 with result = OrInt(result));
-        }
-    }
+	// Evaluate the first argument
+	envArg1 = interpret(env, args[0]);
+	
+	// Extract the first int value
+	value1 = switch (envArg1.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: mod expects integer arguments");
+			0;
+		}
+	}
+	
+	// Evaluate the second argument
+	envArg2 = interpret(envArg1, args[1]);
+	
+	// Extract the second int value
+	value2 = switch (envArg2.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: mod expects integer arguments");
+			1; // Prevent division by zero
+		}
+	}
+	
+	// Check for division by zero
+	if (value2 == 0) {
+		println("ERROR: mod division by zero");
+		OrbEnv(envArg2 with result = OrInt(0));
+	} else {
+		// Apply mod function
+		result = mod(value1, value2);
+		
+		// Return the result
+		OrbEnv(envArg2 with result = OrInt(result));
+	}
 }
 
 // Implementation of dmod function
 dmodFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: dmod expects exactly 2 arguments");
-        env;
-    } else {
-        // Evaluate the first argument
-        envArg1 = interpret(env, args[0]);
-        
-        // Extract the first double value
-        value1 = switch (envArg1.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: dmod expects numeric arguments");
-                0.0;
-            }
-        }
-        
-        // Evaluate the second argument
-        envArg2 = interpret(envArg1, args[1]);
-        
-        // Extract the second double value
-        value2 = switch (envArg2.result) {
-            OrDouble(v): v;
-            OrInt(v): i2d(v);
-            default: {
-                println("ERROR: dmod expects numeric arguments");
-                1.0; // Prevent division by zero
-            }
-        }
-        
-        // Check for division by zero
-        if (value2 == 0.0) {
-            println("ERROR: dmod division by zero");
-            OrbEnv(envArg2 with result = OrDouble(0.0));
-        } else {
-            // Apply dmod function
-            result = dmod(value1, value2);
-            
-            // Return the result
-            OrbEnv(envArg2 with result = OrDouble(result));
-        }
-    }
+	// Evaluate the first argument
+	envArg1 = interpret(env, args[0]);
+	
+	// Extract the first double value
+	value1 = switch (envArg1.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: dmod expects numeric arguments");
+			0.0;
+		}
+	}
+	
+	// Evaluate the second argument
+	envArg2 = interpret(envArg1, args[1]);
+	
+	// Extract the second double value
+	value2 = switch (envArg2.result) {
+		OrDouble(v): v;
+		OrInt(v): i2d(v);
+		default: {
+			println("ERROR: dmod expects numeric arguments");
+			1.0; // Prevent division by zero
+		}
+	}
+	
+	// Check for division by zero
+	if (value2 == 0.0) {
+		println("ERROR: dmod division by zero");
+		OrbEnv(envArg2 with result = OrDouble(0.0));
+	} else {
+		// Apply dmod function
+		result = dmod(value1, value2);
+		
+		// Return the result
+		OrbEnv(envArg2 with result = OrDouble(result));
+	}
 }
 
 // Implementation of factorial function
 factorialFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: factorial expects exactly 1 argument");
-        env;
-    } else {
-        // Evaluate the argument
-        envArg = interpret(env, args[0]);
-        
-        // Extract the int value
-        value = switch (envArg.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: factorial expects an integer argument");
-                0;
-            }
-        }
-        
-        // Check for negative input
-        if (value < 0) {
-            println("ERROR: factorial expects a non-negative integer");
-            OrbEnv(envArg with result = OrInt(0));
-        } else {
-            // Apply factorial function
-            result = factorial(value);
-            
-            // Return the result
-            OrbEnv(envArg with result = OrInt(result));
-        }
-    }
+	// Evaluate the argument
+	envArg = interpret(env, args[0]);
+	
+	// Extract the int value
+	value = switch (envArg.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: factorial expects an integer argument");
+			0;
+		}
+	}
+	
+	// Check for negative input
+	if (value < 0) {
+		println("ERROR: factorial expects a non-negative integer");
+		OrbEnv(envArg with result = OrInt(0));
+	} else {
+		// Apply factorial function
+		result = factorial(value);
+		
+		// Return the result
+		OrbEnv(envArg with result = OrInt(result));
+	}
 }
 
 // Implementation of gcd function
 gcdFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: gcd expects exactly 2 arguments");
-        env;
-    } else {
-        // Evaluate the first argument
-        envArg1 = interpret(env, args[0]);
-        
-        // Extract the first int value
-        value1 = switch (envArg1.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: gcd expects integer arguments");
-                0;
-            }
-        }
-        
-        // Evaluate the second argument
-        envArg2 = interpret(envArg1, args[1]);
-        
-        // Extract the second int value
-        value2 = switch (envArg2.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: gcd expects integer arguments");
-                0;
-            }
-        }
-        
-        // Apply gcd function
-        result = gcd(value1, value2);
-        
-        // Return the result
-        OrbEnv(envArg2 with result = OrInt(result));
-    }
+	// Evaluate the first argument
+	envArg1 = interpret(env, args[0]);
+	
+	// Extract the first int value
+	value1 = switch (envArg1.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: gcd expects integer arguments");
+			0;
+		}
+	}
+	
+	// Evaluate the second argument
+	envArg2 = interpret(envArg1, args[1]);
+	
+	// Extract the second int value
+	value2 = switch (envArg2.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: gcd expects integer arguments");
+			0;
+		}
+	}
+	
+	// Apply gcd function
+	result = gcd(value1, value2);
+	
+	// Return the result
+	OrbEnv(envArg2 with result = OrInt(result));
 }
 
 // Implementation of uid function - generates unique IDs with prefixes
 uidFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 1) {
-        println("ERROR: uid expects exactly 1 argument: prefix string");
-        env;
-    } else {
-        // Evaluate the prefix argument
-        envPrefix = interpret(env, args[0]);
-        prefix = getOString(envPrefix.result, "uid.prefix");
-        
-        // Generate a unique ID with this prefix
-		currentCount = lookupTreeDef(^globalUidCounters, prefix, 0);
-		globalUidCounters := setTree(^globalUidCounters, prefix, currentCount + 1);
-		result = prefix + i2s(currentCount);
+	// Evaluate the prefix argument
+	envPrefix = interpret(env, args[0]);
+	prefix = getOString(envPrefix.result, "uid.prefix");
+	
+	// Generate a unique ID with this prefix
+	currentCount = lookupTreeDef(^globalUidCounters, prefix, 0);
+	globalUidCounters := setTree(^globalUidCounters, prefix, currentCount + 1);
+	result = prefix + i2s(currentCount);
 
-        // Return the result
-        OrbEnv(envPrefix with result = OrString(result));
-    }
+	// Return the result
+	OrbEnv(envPrefix with result = OrString(result));
 }
 
 // Global counter for unique IDs with prefixes
@@ -2399,40 +1767,35 @@ globalUidCounters : ref Tree<string, int> = ref makeTree();
 
 // Implementation of lcm function
 lcmFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
-    if (length(args) != 2) {
-        println("ERROR: lcm expects exactly 2 arguments");
-        env;
-    } else {
-        // Evaluate the first argument
-        envArg1 = interpret(env, args[0]);
-        
-        // Extract the first int value
-        value1 = switch (envArg1.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: lcm expects integer arguments");
-                0;
-            }
-        }
-        
-        // Evaluate the second argument
-        envArg2 = interpret(envArg1, args[1]);
-        
-        // Extract the second int value
-        value2 = switch (envArg2.result) {
-            OrInt(v): v;
-            OrDouble(v): floor(v);
-            default: {
-                println("ERROR: lcm expects integer arguments");
-                0;
-            }
-        }
-        
-        // Apply lcm function
-        result = lcm(value1, value2);
-        
-        // Return the result
-        OrbEnv(envArg2 with result = OrInt(result));
-    }
+	// Evaluate the first argument
+	envArg1 = interpret(env, args[0]);
+	
+	// Extract the first int value
+	value1 = switch (envArg1.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: lcm expects integer arguments");
+			0;
+		}
+	}
+	
+	// Evaluate the second argument
+	envArg2 = interpret(envArg1, args[1]);
+	
+	// Extract the second int value
+	value2 = switch (envArg2.result) {
+		OrInt(v): v;
+		OrDouble(v): floor(v);
+		default: {
+			println("ERROR: lcm expects integer arguments");
+			0;
+		}
+	}
+	
+	// Apply lcm function
+	result = lcm(value1, value2);
+	
+	// Return the result
+	OrbEnv(envArg2 with result = OrInt(result));
 }
