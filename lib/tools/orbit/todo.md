@@ -2,7 +2,6 @@
 - Glex rules for polynomial rings
 - Relational algebra and optimizations of that
 - Support for pattern matching where we visit all the equivalent nodes as well. => vs -> maybe
-- Make VS code plugin using Mango
 - Subscripts on operators
 - Explain how we do not have a cost function anymore, but just canonical forms in each domain
 - Explain the gather approach in the paper for canonical in n log n time, rather than implicit n^2 from binary bubblesort
