@@ -1,5 +1,7 @@
 import lib/rewrite;
 import lib/array;
+import lib/reflect;
+import lib/sort;
 
 /**
  * Canonical Logic Forms: CNF and DNF implementation using gather/scatter
@@ -46,45 +48,78 @@ fn to_normal_form(expr, is_cnf) = (
 
 // Apply gather/scatter operations to normalize and canonicalize expression
 fn apply_canonical_form(expr, is_cnf) = (
+    // First, apply the normal form rewriting rules
+    let normalized = to_normal_form(expr, is_cnf);
+    
     if is_cnf then (
-        // For CNF, gather AND at the top level
-        let and_template = quote(a && b);
-        let gathered = gather(expr, and_template);
+        // For CNF: AND of ORs - process both levels with gather/sort/scatter
         
-        // Process the gathered structure
+        // Process the top-level AND expression
+        let and_template = quote(a && b);
+        let gathered = gather(normalized, and_template);
+        
         gathered is (
-            [clauses] => (
-                // Gather OR within each clause
-                let or_template = quote(a || b);
+            `&&`(clauses_array) => (
+                // Process each clause (OR of literals) - normalize inner clauses first
+                let processed_clauses = map(clauses_array, \clause -> (
+                    // Gather OR terms for this clause
+                    let or_template = quote(a || b);
+                    let clause_gathered = gather(clause, or_template);
+                    
+                    clause_gathered is (
+                        `||`(literals) => (
+                            // Sort and remove duplicates
+                            let sorted_unique = uniq(sort(literals));
+                            
+                            // Recreate the clause with sorted, unique literals
+                            scatter((`||`(sorted_unique)))
+                        );
+                        _ => clause  // Not an OR expression
+                    )
+                ));
                 
-                // Now process the clauses
-                // In a complete implementation, we would also apply S₂ symmetry here
-                // by sorting literals in each clause
+                // Now sort and remove duplicate clauses
+                let sorted_unique_clauses = uniq(sort(processed_clauses));
                 
-                // For now, just scatter to rebuild the expression
-                expr
+                // Reconstruct the CNF expression
+                scatter(quote(`&&`(sorted_unique_clauses)))
             );
-            _ => expr
+            _ => normalized  // Not an AND expression
         )
     ) else (
-        // For DNF, gather OR at the top level
-        let or_template = quote(a || b);
-        let gathered = gather(expr, or_template);
+        // For DNF: OR of ANDs - process both levels with gather/sort/scatter
         
-        // Process the gathered structure
+        // Process the top-level OR expression
+        let or_template = quote(a || b);
+        let gathered = gather(normalized, or_template);
+        
         gathered is (
-            [terms] => (
-                // Gather AND within each term
-                let and_template = quote(a && b);
+            `||`(terms_array) => (
+                // Process each term (AND of literals) - normalize inner terms first
+                let processed_terms = map(terms_array, \term -> (
+                    // Gather AND literals for this term
+                    let and_template = quote(a && b);
+                    let term_gathered = gather(term, and_template);
+                    
+                    term_gathered is (
+                        `&&`(literals) => (
+                            // Sort and remove duplicates
+                            let sorted_unique = uniq(sort(literals));
+                            
+                            // Recreate the term with sorted, unique literals
+                            scatter((`&&`(sorted_unique)))
+                        );
+                        _ => term  // Not an AND expression
+                    )
+                ));
                 
-                // Now process the terms
-                // In a complete implementation, we would also apply S₂ symmetry here
-                // by sorting literals in each term
+                // Now sort and remove duplicate terms
+                let sorted_unique_terms = uniq(sort(processed_terms));
                 
-                // For now, just scatter to rebuild the expression
-                expr
+                // Reconstruct the DNF expression
+                scatter(quote(`||`(sorted_unique_terms)))
             );
-            _ => expr
+            _ => normalized  // Not an OR expression
         )
     )
 );
