@@ -1,5 +1,6 @@
 import tools/orbit/orbit_types;
 import tools/orbit/orbit_env;
+import tools/orbit/orbit_decompose;
 import ds/tree;
 import string;
 
@@ -9,6 +10,9 @@ export {
     
     // Implementation of scatter function for converting array structure back to binary operations
     scatterFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv;
+    
+    // Helper function to determine if an operator is associative
+    isAssociativeOperator(op : string) -> bool;
 }
 
 // Main gather function - collects binary operations into an array structure
@@ -28,7 +32,7 @@ gatherFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_e
         templateName = extractFunctionName(template);
         
         if (templateName == "") {
-            println("ERROR: gather template must be a function call with an array argument");
+            println("ERROR: gather template must be an operator");
             envExpr;
         } else {
             if (env.tracing) {
@@ -38,7 +42,7 @@ gatherFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_e
             // Collect the operands and operator from the binary expression
             nodeCounter = ref 0;
             visitedNodes = ref makeTree();
-            result = gatherBinaryOps(expr, visitedNodes, nodeCounter, env.tracing);
+            result = gatherBinaryOps(expr, templateName, visitedNodes, nodeCounter, env.tracing);
             
             if (env.tracing) {
                 println("DEBUG: Gathered operator: " + result.first);
@@ -48,7 +52,7 @@ gatherFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_e
             // Create the result using the template function name as operator
             // and without including the operator as a separate argument
             resultExpr = OrFunction(
-                OrIdentifier(result.first),  // Use the actual operator (+ or *)
+                OrIdentifier(result.first),  // Use the actual operator
                 [OrArray(result.second)]     // Just the array of operands
             );
             
@@ -67,14 +71,24 @@ extractFunctionName(template : OrMath_expr) -> string {
                 default: "";
             }
         }
-		OrOperatorSymbol(s): s;
-        default: "ops"; // Default if not specified
+        OrOperatorSymbol(s): s;
+        default: {
+            // For other expressions, decompose to get the operator
+            decomposed = decomposeOrbit(template);
+            decomposed.first;
+        }
     }
+}
+
+// Helper function to determine if an operator is associative
+isAssociativeOperator(op : string) -> bool {
+    op == "+" || op == "*" || op == "||" || op == "&&";
 }
 
 // Helper function to recursively gather binary operations
 // Returns a pair of (operator, [operands])
-gatherBinaryOps(expr : OrMath_expr, visitedNodes : ref Tree<int, bool>, nodeCounter : ref int, tracing : bool) -> Pair<string, [OrMath_expr]> {
+gatherBinaryOps(expr : OrMath_expr, targetOp : string, visitedNodes : ref Tree<int, bool>, 
+                nodeCounter : ref int, tracing : bool) -> Pair<string, [OrMath_expr]> {
     // Use a counter to assign unique IDs to nodes
     currentId = ^nodeCounter;
     nodeCounter := currentId + 1;
@@ -86,63 +100,55 @@ gatherBinaryOps(expr : OrMath_expr, visitedNodes : ref Tree<int, bool>, nodeCoun
         // Mark this node as visited
         visitedNodes := setTree(^visitedNodes, currentId, true);
         
-        switch (expr) {
-            // Handle binary addition
-            OrAdd(left, right): {
-                // Recursively gather operands
-                leftResult = gatherBinaryOps(left, visitedNodes, nodeCounter, tracing);
-                rightResult = gatherBinaryOps(right, visitedNodes, nodeCounter, tracing);
+        // Decompose the expression to get its operator and children
+        decomposed = decomposeOrbit(expr);
+        currentOp = decomposed.first;
+        
+        // Check if the current operator matches the target operator
+        if (currentOp == targetOp) {
+            // If this is an associative operator like +, *, ||, &&
+            if (isAssociativeOperator(currentOp)) {
+                // Get the operands (children of the expression)
+                children = decomposed.second.first;
                 
-                if (leftResult.first == "" && rightResult.first == "") {
-                    // Both sides are leaf nodes
-                    Pair("+", [left, right]);
-                } else if (leftResult.first == "+" && rightResult.first == "") {
-                    // Left side is + operation, right is leaf
-                    Pair("+", concat(leftResult.second, [right]));
-                } else if (leftResult.first == "" && rightResult.first == "+") {
-                    // Right side is + operation, left is leaf
-                    Pair("+", concat([left], rightResult.second));
-                } else if (leftResult.first == "+" && rightResult.first == "+") {
-                    // Both sides are + operations
-                    Pair("+", concat(leftResult.second, rightResult.second));
+                if (length(children) == 2) {
+                    // Recursively gather operands
+                    leftResult = gatherBinaryOps(children[0], targetOp, visitedNodes, nodeCounter, tracing);
+                    rightResult = gatherBinaryOps(children[1], targetOp, visitedNodes, nodeCounter, tracing);
+                    
+                    if (leftResult.first == "" && rightResult.first == "") {
+                        // Both sides are leaf nodes
+                        Pair(currentOp, [children[0], children[1]]);
+                    } else if (leftResult.first == targetOp && rightResult.first == "") {
+                        // Left side is target operation, right is leaf
+                        Pair(currentOp, concat(leftResult.second, [children[1]]));
+                    } else if (leftResult.first == "" && rightResult.first == targetOp) {
+                        // Right side is target operation, left is leaf
+                        Pair(currentOp, concat([children[0]], rightResult.second));
+                    } else if (leftResult.first == targetOp && rightResult.first == targetOp) {
+                        // Both sides are target operations
+                        Pair(currentOp, concat(leftResult.second, rightResult.second));
+                    } else {
+                        // Mixed operators, treat as leaf
+                        Pair(currentOp, [expr]);
+                    }
                 } else {
-                    // Mixed operators, treat as leaf
-                    Pair("+", [expr]);
+                    // Not a binary expression
+                    Pair(currentOp, [expr]);
+                }
+            } else {
+                // Non-associative operators just get gathered without recursion
+                // We identify the operator but don't try to flatten its structure
+                children = decomposed.second.first;
+                if (length(children) == 2) {
+                    Pair(currentOp, [children[0], children[1]]);
+                } else {
+                    Pair(currentOp, [expr]);
                 }
             }
-            
-            // Handle binary multiplication
-            OrMultiply(left, right): {
-                leftResult = gatherBinaryOps(left, visitedNodes, nodeCounter, tracing);
-                rightResult = gatherBinaryOps(right, visitedNodes, nodeCounter, tracing);
-                
-                if (leftResult.first == "" && rightResult.first == "") {
-                    Pair("*", [left, right]);
-                } else if (leftResult.first == "*" && rightResult.first == "") {
-                    Pair("*", concat(leftResult.second, [right]));
-                } else if (leftResult.first == "" && rightResult.first == "*") {
-                    Pair("*", concat([left], rightResult.second));
-                } else if (leftResult.first == "*" && rightResult.first == "*") {
-                    Pair("*", concat(leftResult.second, rightResult.second));
-                } else {
-                    Pair("*", [expr]);
-                }
-            }
-            
-            // Handle binary subtraction
-            OrSubtract(left, right): {
-                Pair("-", [left, right]); // Don't flatten subtraction (not associative)
-            }
-            
-            // Handle binary division
-            OrDivide(left, right): {
-                Pair("/", [left, right]); // Don't flatten division (not associative)
-            }
-            
-            // For non-binops, just return the expression as is
-            default: {
-                Pair("", [expr]);
-            }
+        } else {
+            // Operator doesn't match the target, return as leaf node
+            Pair("", [expr]);
         }
     }
 }
@@ -222,37 +228,47 @@ convertToBinaryOps(op : string, operands : [OrMath_expr]) -> OrMath_expr {
         operands[0]; // Single operand, just return it
     } else if (length(operands) == 2) {
         // Two operands, create the binary operation
-        if (op == "+") OrAdd(operands[0], operands[1])
-        else if (op == "*") OrMultiply(operands[0], operands[1])
-        else if (op == "-") OrSubtract(operands[0], operands[1])
-        else if (op == "/") OrDivide(operands[0], operands[1])
-        else {
-            // For other operators, use function call syntax
-            OrFunction(OrIdentifier(op), [operands[0], operands[1]]);
-        }
+        constructBinaryOp(op, operands[0], operands[1]);
     } else {
         // Multiple operands, build the tree from left to right
-        if (op == "+") {
-            foldi(tail(operands), operands[0], \i, acc, operand -> 
-                OrAdd(acc, operand)
-            );
-        } else if (op == "*") {
-            foldi(tail(operands), operands[0], \i, acc, operand -> 
-                OrMultiply(acc, operand)
-            );
-        } else if (op == "-") {
-            foldi(tail(operands), operands[0], \i, acc, operand -> 
-                OrSubtract(acc, operand)
-            );
-        } else if (op == "/") {
-            foldi(tail(operands), operands[0], \i, acc, operand -> 
-                OrDivide(acc, operand)
-            );
-        } else {
-            // For other operators, use function call syntax in a fold
-            foldi(tail(operands), operands[0], \i, acc, operand -> 
-                OrFunction(OrIdentifier(op), [acc, operand])
-            );
-        }
+        foldi(tail(operands), operands[0], \i, acc, operand -> 
+            constructBinaryOp(op, acc, operand)
+        );
+    }
+}
+
+// Helper function to construct a binary operation based on the operator
+constructBinaryOp(op : string, left : OrMath_expr, right : OrMath_expr) -> OrMath_expr {
+    if (op == "+") {
+        OrAdd(left, right);
+    } else if (op == "*") {
+        OrMultiply(left, right);
+    } else if (op == "-") {
+        OrSubtract(left, right);
+    } else if (op == "/") {
+        OrDivide(left, right);
+    } else if (op == "||") {
+        OrLogicalOr(left, right);
+    } else if (op == "&&") {
+        OrLogicalAnd(left, right);
+    } else if (op == "^") {
+        OrExponent(left, right);
+    } else if (op == "=") {
+        OrEquals(left, right);
+    } else if (op == "!=") {
+        OrNotEquals(left, right);
+    } else if (op == ">") {
+        OrGreaterThan(left, right);
+    } else if (op == ">=") {
+        OrGreaterEquals(left, right);
+    } else if (op == "<") {
+        OrLessThan(left, right);
+    } else if (op == "<=") {
+        OrLessEquals(left, right);
+    } else if (op == "%") {
+        OrModulo(left, right);
+    } else {
+        // For other operators, use function call syntax
+        OrFunction(OrIdentifier(op), [left, right]);
     }
 }

@@ -377,6 +377,65 @@ println(is_complex_expr(quote(x^2)));  // Keeps the expression as quoted AST
 ```
 
 This capability allows for powerful hybrid approaches where you can manipulate expressions structurally while selectively evaluating parts of them.
+
+### Using gather() and scatter() for Expression Transformation
+
+Orbit provides special functions for transforming between nested binary operations and array-based representations:
+
+```orbit
+// gather: Converts nested binary operations into a function call with an array of operands
+fn gather(expr : ast, template : ast) -> ast;
+
+// scatter: Converts a function call with an array of operands back into binary operations
+fn scatter(expr : ast) -> ast;
+```
+
+#### gather
+
+`gather` transforms nested binary operations (like addition or multiplication) into a function call with an array of arguments. It "flattens" a chain of associative binary operations into a single function call, normalizing different groupings of the same operation.
+
+For example, both `(a + b) + c` and `a + (b + c)` will be gathered into the same representation: ``+``([a, b, c]). This leverages the associative property of operations like addition and multiplication.
+
+```orbit
+// Gather addition operations
+let expr = quote(a + b + c);
+let gathered = gather(expr, `+`);
+// Result: `+`([a, b, c])
+
+// Different groupings yield the same gathered form
+let expr1 = quote((1 + 2) + 3);
+let expr2 = quote(1 + (2 + 3));
+let gathered1 = gather(expr1, `+`);
+let gathered2 = gather(expr2, `+`);
+// Both result in: `+`([1, 2, 3])
+```
+
+#### scatter
+
+`scatter` is the inverse of `gather`. It transforms a function call with an array of arguments back into a chain of binary operations with a specific grouping (left-to-right by default).
+
+```orbit
+// Converting back to binary operations
+let expr = quote(`+`([a, b, c]));
+let scattered = scatter(expr);
+// Result: (a + b) + c (left-to-right grouping)
+
+// Works with multiplication
+let expr2 = quote(`*`([a, b, c, d]));
+let scattered2 = scatter(expr2);
+// Result: ((a * b) * c) * d (left-to-right grouping)
+
+// Works with other operators too
+let expr3 = quote(`^`([2, x]));
+let scattered3 = scatter(expr3);
+// Result: 2^x
+```
+
+These functions are particularly useful for:
+- Normalizing expressions for comparison
+- Simplifying pattern matching
+- Implementing mathematical algorithms
+- Expression optimization
 </ast_manipulation>
 
 <runtime_functions>
