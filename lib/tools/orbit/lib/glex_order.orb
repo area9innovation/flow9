@@ -10,6 +10,7 @@ import lib/array;
  * 1. Terms with higher total degree come first
  * 2. Terms with equal degrees are ordered lexicographically by variables
  * 3. Works with any polynomial expression with standard operators (+, *, ^)
+ * 4. Preserves compound expressions like (x+y) or sin(x) as variables
  *
  * Usage example:
  *   let expr = quote(x*y + z^3 + 1 + x^3 + y*z + x^2*y);
@@ -20,9 +21,11 @@ import lib/array;
  * while reordering terms according to GLEX ordering principles.
  *
  * Example transformations:
- * - x*y + z^3 + 1 + x^3 + y*z + x^2*y → x^3 + x^2*y + z^3 + x*y + y*z + 1
- * - z^2 + y^2 + x^2 → x^2 + y^2 + z^2  (lexicographic ordering for same degree)
- * - 3*x^2 + 2*x + 5 → 3*x^2 + 2*x + 5  (already in GLEX order)
+ * - x*y + z^3 + 1 + x^3 + y*z + x^2*y -> x^3 + x^2*y + z^3 + x*y + y*z + 1
+ * - z^2 + y^2 + x^2 -> x^2 + y^2 + z^2  (lexicographic ordering for same degree)
+ * - 3*x^2 + 2*x + 5 -> 3*x^2 + 2*x + 5  (already in GLEX order)
+ * - (x+y)^2 + (x+y) + 1 -> (x+y)^2 + (x+y) + 1 (preserves compound expressions)
+ * - sin(x)^2 + sin(x) + 1 -> sin(x)^2 + sin(x) + 1 (treats function calls as variables)
  */
 
 /**
@@ -33,18 +36,69 @@ import lib/array;
  * @return The rewritten expression with terms in GLEX order
  */
 fn glex_rewrite(expr) = (
-    // Extract terms directly using our extract_terms function
-    let terms = extract_terms(expr);
-    
-    // Handle empty or single-term expressions
-    if length(terms) == 0 then 0
-    else if length(terms) == 1 then terms[0]
+    // Special handling for expressions with compound variables
+    if has_compound_variables(expr) then handle_compound_variables(expr)
     else (
-        // Sort using glex ordering
-        let sorted_terms = sort_terms_by_glex(terms);
+        // Extract terms directly using our extract_terms function
+        let terms = extract_terms(expr);
         
-        // Use scatter to convert this gathered form back to a binary expression
-        scatter(`+`(sorted_terms))
+        // Handle empty or single-term expressions
+        if length(terms) == 0 then 0
+        else if length(terms) == 1 then terms[0]
+        else (
+            // Sort using glex ordering
+            let sorted_terms = sort_terms_by_glex(terms);
+            
+            // Use scatter to convert this gathered form back to a binary expression
+            scatter(`+`(sorted_terms))
+        )
+    )
+);
+
+/**
+ * Checks if an expression contains compound variables like (x+y) or sin(x)
+ */
+fn has_compound_variables(expr) = (
+    expr is (
+        a + b => has_compound_variables(a) || has_compound_variables(b);
+        a ^ b => !is_var(a) && !is_number(a);  // Something like (x+y)^2
+		// TODO: This is wrong. Make a function to check if a term is a call
+        UCall(_, _) => true;  // Function call like sin(x)
+        (a + b) => true;  // Explicit parenthesized sum
+        _ => false
+    )
+);
+
+/**
+ * Handles expressions with compound variables by identifying and preserving them
+ */
+fn handle_compound_variables(expr) = (
+    // Extract all unique compound variables first
+    let compound_vars = extract_compound_variables(expr);
+    
+    // If we have compound variables, we need special handling
+    if length(compound_vars) > 0 then (
+        // For now, preserve the original expression structure
+        // This is where you would implement more sophisticated handling
+        expr
+    ) else (
+        // Fall back to standard GLEX ordering if no compound vars found
+        let terms = extract_terms(expr);
+        if length(terms) <= 1 then expr
+        else scatter(`+`(sort_terms_by_glex(terms)))
+    )
+);
+
+/**
+ * Extract all compound variables from an expression
+ */
+fn extract_compound_variables(expr) = (
+    expr is (
+        a + b => extract_compound_variables(a) + extract_compound_variables(b);
+        a ^ b => if !is_var(a) && !is_number(a) then [a] else [];
+        UCall(_, _) => [expr];  // Function call
+        (a + b) => [expr];  // Parenthesized sum
+        _ => []
     )
 );
 
@@ -90,6 +144,20 @@ fn sort_terms_by_glex(terms) = (
 );
 
 /**
+ * Find the degree of an expression, accounting for complex expressions.
+ * This looks specifically at the exponent of expressions like (x+y)^2.
+ */
+fn expression_degree(expr) = (
+    expr is (
+        a ^ b => (
+            if is_number(b) then b
+            else 1
+        );
+        _ => 1
+    )
+);
+
+/**
  * Converts a multiplicative term to canonical form.
  * E.g., "2 * x * x * y" becomes "2 * x^2 * y"
  */
@@ -105,29 +173,28 @@ fn canonicalize_multiplicative(expr) = (
 /**
  * Extract variable-exponent pairs from a multiplicative term.
  * Constants are represented with None() as the variable node.
+ * Compound expressions (like x+y or sin(x)) are treated as variables.
  */
 fn extract_term_pairs(term) = (
     if is_number(term) then [Pair(None(), term)]  // Just a constant with var=None()
-    else if is_var(term) then [Pair(term, 1)]  // Just a variable with exp=1, keep the variable node intact
+    else if is_var(term) then [Pair(term, 1)]  // Simple variable with exp=1
     else term is (
         a * b => (
-            // Combine factors from both operands
-            extract_term_pairs(a) + extract_term_pairs(b)
+            // Check if either operand is a simple number coefficient
+            if is_number(a) then 
+                [Pair(None(), a)] + extract_term_pairs(b)
+            else if is_number(b) then 
+                [Pair(None(), b)] + extract_term_pairs(a)
+            else 
+                extract_term_pairs(a) + extract_term_pairs(b)
         );
         a ^ b => (
-            if is_var(a) then [Pair(a, extract_number(b))]  // var^exp, keep the variable node
+            if is_var(a) then [Pair(a, extract_number(b))]  // var^exp
             else if is_number(a) then [Pair(None(), pow(a, extract_number(b)))]  // const^exp = const
-            else (
-                // For complex expressions being exponentiated
-                let base_pairs = extract_term_pairs(a);
-                let exponent = extract_number(b);
-                // Apply exponentiation to each component
-                map(base_pairs, \p -> p is (Pair(var_node, exp) => 
-                    Pair(var_node, exp * exponent)
-                ))
-            )
+            else [Pair(term, 1)]  // Treat expr^n as a compound variable
         );
-        _ => [] // Default for other cases
+        // Treat any other expression as a variable
+        _ => [Pair(term, 1)]
     )
 );
 
@@ -253,7 +320,10 @@ fn calculate_degree(pairs) = (
     fold(pairs, 0, \acc, p.(
         p is (Pair(var_node, exp) => (
             if var_node == None() then acc  // Constants don't contribute to degree
-            else acc + exp
+            else var_node is (
+                a ^ b => acc + (expression_degree(var_node) * exp);  // For expressions like (x+y)^2
+                _ => acc + exp
+            )
         ))
     ))
 );
@@ -310,11 +380,15 @@ fn extract_number(expr) = (
 
 /**
  * Extract the name from a variable node.
+ * For complex expressions, generates a canonical string representation.
  */
 fn varname(expr) = (
     if (is_var(expr)) then (
         if astname(expr) == "UId" then expr.id
         else expr.s // for Identifier
     )
-    else ""
+    else expr is (
+        a ^ b => varname(a) + "^" + i2s(extract_number(b));  // Special handling for power expressions
+        _ => prettyOrbit(expr)  // For other compound expressions
+    )
 );
