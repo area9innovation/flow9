@@ -1,17 +1,61 @@
 import lib/sort;
 import lib/array;
 
-// Main entry point for glex sorting
-fn glex_sort(expr) = (
-    // Extract terms from the expression
+/**
+ * Graded Lexicographic (GLEX) Ordering for Polynomial Expressions
+ * 
+ * This module provides functionality to rewrite polynomial expressions 
+ * using Graded Lexicographic ordering. The key features are:
+ *
+ * 1. Terms with higher total degree come first
+ * 2. Terms with equal degrees are ordered lexicographically by variables
+ * 3. Works with any polynomial expression with standard operators (+, *, ^)
+ *
+ * Usage example:
+ *   let expr = quote(x*y + z^3 + 1 + x^3 + y*z + x^2*y);
+ *   let ordered_expr = glex_rewrite(expr);
+ *   // Result: x^3 + x^2*y + z^3 + x*y + y*z + 1
+ *
+ * The glex_rewrite function preserves the semantic meaning of the expression
+ * while reordering terms according to GLEX ordering principles.
+ *
+ * Example transformations:
+ * - x*y + z^3 + 1 + x^3 + y*z + x^2*y → x^3 + x^2*y + z^3 + x*y + y*z + 1
+ * - z^2 + y^2 + x^2 → x^2 + y^2 + z^2  (lexicographic ordering for same degree)
+ * - 3*x^2 + 2*x + 5 → 3*x^2 + 2*x + 5  (already in GLEX order)
+ */
+
+/**
+ * Main entry point for GLEX rewriting. Takes any polynomial expression and rewrites
+ * it with terms sorted according to graded lexicographic ordering.
+ * 
+ * @param expr The polynomial expression to rewrite
+ * @return The rewritten expression with terms in GLEX order
+ */
+fn glex_rewrite(expr) = (
+    // Extract terms directly using our extract_terms function
     let terms = extract_terms(expr);
-    // Sort using glex ordering
-    let sorted_terms = sort_terms_by_glex(terms);
-    // Reconstruct the expression (to be implemented in a second step)
-    sorted_terms
+    
+    // Handle empty or single-term expressions
+    if length(terms) == 0 then 0
+    else if length(terms) == 1 then terms[0]
+    else (
+        // Sort using glex ordering
+        let sorted_terms = sort_terms_by_glex(terms);
+        
+        // Create the correct structure for scatter: UCall(UId("+"), terms)
+        let plus_uid = UId("+");
+        let gathered_form = UCall(plus_uid, sorted_terms);
+        
+        // Use scatter to convert this gathered form back to a binary expression
+        scatter(gathered_form)
+    )
 );
 
-// Extract terms from a polynomial expression
+/**
+ * Extract individual terms from a polynomial expression.
+ * E.g., "a + b + c" becomes [a, b, c]
+ */
 fn extract_terms(expr) = (
     expr is (
         a + b => extract_terms(a) + extract_terms(b);
@@ -19,23 +63,26 @@ fn extract_terms(expr) = (
     )
 );
 
-// Sort terms using glex ordering
+/**
+ * Sort terms using graded lexicographic (GLEX) ordering.
+ * First sorts by total degree (highest first), then by lexicographic order of variables.
+ */
 fn sort_terms_by_glex(terms) = (
     // First collect all variables that appear in any term
     let all_vars = collect_all_variables(terms);
     
-    // Convert each term to a canonical form with exponent tuple
-    let canonical_terms = map(terms, \term -> (
+    // Create a list of (term, degree, exponent_tuple) triples for sorting
+    let annotated_terms = map(terms, \term -> (
         let canonical_pairs = canonicalize_multiplicative(term);
         let degree = calculate_degree(canonical_pairs);
         let exponent_tuple = create_exponent_tuple(canonical_pairs, all_vars);
-        Triple(term, degree, exponent_tuple)
+        Pair(term, Pair(degree, exponent_tuple))
     ));
     
     // Sort by degree (first) and then by exponent tuple (lexicographically)
-    let sorted_terms = mergeSort(canonical_terms, \(a, b) -> (
-        a is (Triple(_, deg_a, tuple_a) => 
-            b is (Triple(_, deg_b, tuple_b) => 
+    let sorted = mergeSort(annotated_terms, \(a, b) -> (
+        a is (Pair(_, Pair(deg_a, tuple_a)) => 
+            b is (Pair(_, Pair(deg_b, tuple_b)) => 
                 if deg_a != deg_b then deg_a > deg_b  // Higher degree first
                 else lex_compare_tuples(tuple_a, tuple_b)
             )
@@ -43,15 +90,15 @@ fn sort_terms_by_glex(terms) = (
     ));
     
     // Extract just the original terms in sorted order
-    map(sorted_terms, \t -> t is (Triple(term, _, _) => term))
+    map(sorted, \pair -> pair is (Pair(term, _) => term))
 );
 
-// STAGE 1: Canonicalize multiplicative terms
-
-// A Term is a pair of (variable, exponent)
-// Constants are represented with empty string variable
+/**
+ * Converts a multiplicative term to canonical form.
+ * E.g., "2 * x * x * y" becomes "2 * x^2 * y"
+ */
 fn canonicalize_multiplicative(expr) = (
-    // Extract all (var, exp) pairs from the expression
+    // Extract all (var_node, exp) pairs from the expression
     let pairs = extract_term_pairs(expr);
     // Sort by variable name for easier combining
     let sorted_pairs = sort_by_var(pairs);
@@ -59,25 +106,28 @@ fn canonicalize_multiplicative(expr) = (
     combine_like_terms(sorted_pairs)
 );
 
-// Extract (var, exp) pairs from a term
+/**
+ * Extract variable-exponent pairs from a multiplicative term.
+ * Constants are represented with None() as the variable node.
+ */
 fn extract_term_pairs(term) = (
-    if is_number(term) then [Pair("", term)]  // Just a constant with var=""
-    else if is_var(term) then [Pair(varname(term), 1)]  // Just a variable with exp=1
+    if is_number(term) then [Pair(None(), term)]  // Just a constant with var=None()
+    else if is_var(term) then [Pair(term, 1)]  // Just a variable with exp=1, keep the variable node intact
     else term is (
         a * b => (
             // Combine factors from both operands
             extract_term_pairs(a) + extract_term_pairs(b)
         );
         a ^ b => (
-            if is_var(a) then [Pair(varname(a), extract_number(b))]  // var^exp
-            else if is_number(a) then [Pair("", pow(a, extract_number(b)))]  // const^exp = const
+            if is_var(a) then [Pair(a, extract_number(b))]  // var^exp, keep the variable node
+            else if is_number(a) then [Pair(None(), pow(a, extract_number(b)))]  // const^exp = const
             else (
                 // For complex expressions being exponentiated
                 let base_pairs = extract_term_pairs(a);
                 let exponent = extract_number(b);
                 // Apply exponentiation to each component
-                map(base_pairs, \p -> p is (Pair(var, exp) => 
-                    Pair(var, exp * exponent)
+                map(base_pairs, \p -> p is (Pair(var_node, exp) => 
+                    Pair(var_node, exp * exponent)
                 ))
             )
         );
@@ -85,16 +135,26 @@ fn extract_term_pairs(term) = (
     )
 );
 
-// Sort pairs by variable name
+/**
+ * Sort variable-exponent pairs by variable name.
+ * Constants (None) come first.
+ */
 fn sort_by_var(pairs) = (
     mergeSort(pairs, \(a, b) -> (
-        a is (Pair(var_a, _) => 
-            b is (Pair(var_b, _) => var_a <= var_b)
+        a is (Pair(var_node_a, _) => 
+            b is (Pair(var_node_b, _) => (
+                // Handle cases where one or both might be None()
+                if (var_node_a == None()) then true
+                else if (var_node_b == None()) then false
+                else varname(var_node_a) <= varname(var_node_b)
+            ))
         )
     ))
 );
 
-// Combine like terms (same variable)
+/**
+ * Combine like terms (same variable) by adding their exponents.
+ */
 fn combine_like_terms(sorted_pairs) = (
     if length(sorted_pairs) <= 1 then sorted_pairs
     else (
@@ -104,17 +164,24 @@ fn combine_like_terms(sorted_pairs) = (
                 let current = remaining[0];
                 let rest = subrange(remaining, 1, length(remaining) - 1);
                 
-                current is (Pair(var, exp) => (
+                current is (Pair(var_node, exp) => (
                     if length(result) == 0 then (
                         // First item, just add to result
                         combine_helper(rest, [current])
                     ) else (
                         // Check if we can combine with the last result item
                         let last = result[length(result) - 1];
-                        last is (Pair(last_var, last_exp) => (
-                            if var == last_var then (
+                        last is (Pair(last_var_node, last_exp) => (
+                            // Two variables are the same if both are None() or if they have the same name
+                            let same_var = (
+                                (var_node == None() && last_var_node == None()) ||
+                                (var_node != None() && last_var_node != None() && 
+                                 varname(var_node) == varname(last_var_node))
+                            );
+                            
+                            if same_var then (
                                 // Same variable, combine exponents
-                                let new_last = Pair(var, last_exp + exp);
+                                let new_last = Pair(var_node, last_exp + exp);
                                 let new_result = subrange(result, 0, length(result) - 1) + [new_last];
                                 combine_helper(rest, new_result)
                             ) else (
@@ -127,9 +194,9 @@ fn combine_like_terms(sorted_pairs) = (
             )
         );
         
-        // Special handling for constants (empty variable)
-        let constants = filter(sorted_pairs, \p -> p is (Pair(var, _) => var == ""));
-        let variables = filter(sorted_pairs, \p -> p is (Pair(var, _) => var != ""));
+        // Special handling for constants (None() variable)
+        let constants = filter(sorted_pairs, \p -> p is (Pair(var_node, _) => var_node == None()));
+        let variables = filter(sorted_pairs, \p -> p is (Pair(var_node, _) => var_node != None()));
         
         // Multiply all constants together
         let constant_product = fold(constants, 1, \acc, p.(
@@ -141,18 +208,18 @@ fn combine_like_terms(sorted_pairs) = (
         
         // Only include constant if it's not 1
         if constant_product == 1 then combined_vars
-        else [Pair("", constant_product)] + combined_vars
+        else [Pair(None(), constant_product)] + combined_vars
     )
 );
 
-// STAGE 2: Order additive terms
-
-// Collect all variables that appear in any term
+/**
+ * Collect all unique variables that appear in any term.
+ */
 fn collect_all_variables(terms) = (
     let all_vars_with_duplicates = fold(terms, [], \acc, term.(
         let pairs = canonicalize_multiplicative(term);
-        let vars = map(filter(pairs, \p.p is (Pair(var, _) => var != "")), 
-                      \p.p is (Pair(var, _) => var));
+        let vars = map(filter(pairs, \p.p is (Pair(var_node, _) => var_node != None())), 
+                      \p.p is (Pair(var_node, _) => var_node));
         acc + vars
     ));
     
@@ -160,14 +227,18 @@ fn collect_all_variables(terms) = (
     remove_duplicates_and_sort(all_vars_with_duplicates)
 );
 
-// Remove duplicates and sort
-fn remove_duplicates_and_sort(arr) = (
-    if length(arr) <= 1 then arr
+/**
+ * Remove duplicates and sort a list of variable nodes.
+ */
+fn remove_duplicates_and_sort(var_nodes) = (
+    if length(var_nodes) <= 1 then var_nodes
     else (
-        let sorted = mergeSort(arr, \a, b.a <= b);
+        // Sort by variable name
+        let sorted = mergeSort(var_nodes, \a, b -> varname(a) <= varname(b));
+        
         fn remove_adjacent_duplicates(arr, index, result) = (
             if index >= length(arr) then result
-            else if index > 0 && arr[index] == arr[index-1] then (
+            else if index > 0 && varname(arr[index]) == varname(arr[index-1]) then (
                 // Skip duplicate
                 remove_adjacent_duplicates(arr, index + 1, result)
             ) else (
@@ -179,27 +250,37 @@ fn remove_duplicates_and_sort(arr) = (
     )
 );
 
-// Calculate total degree of a term from its canonical pairs
+/**
+ * Calculate total degree of a term from its canonical pairs.
+ */
 fn calculate_degree(pairs) = (
     fold(pairs, 0, \acc, p.(
-        p is (Pair(var, exp) => (
-            if var == "" then acc  // Constants don't contribute to degree
+        p is (Pair(var_node, exp) => (
+            if var_node == None() then acc  // Constants don't contribute to degree
             else acc + exp
         ))
     ))
 );
 
-// Create an exponent tuple for a term based on the full variable list
+/**
+ * Create an exponent tuple for a term based on the full variable list.
+ * This is used for lexicographic comparison.
+ */
 fn create_exponent_tuple(pairs, all_vars) = (
-    map(all_vars, \var.(
+    map(all_vars, \var_node.(
         // Find exponent for this variable in the pairs, or 0 if not present
-        let matching = filter(pairs, \p.p is (Pair(v, _) => v == var));
+        let matching = filter(pairs, \p.p is (Pair(v, _) => 
+            v != None() && varname(v) == varname(var_node)
+        ));
         if length(matching) == 0 then 0
         else matching[0] is (Pair(_, exp) => exp)
     ))
 );
 
-// Lexicographically compare two tuples
+/**
+ * Lexicographically compare two tuples of exponents.
+ * For GLEX ordering, we compare exponents from left to right.
+ */
 fn lex_compare_tuples(a, b) = (
     if length(a) == 0 && length(b) == 0 then true
     else if length(a) == 0 then true  // Empty tuple is less than any non-empty tuple
@@ -211,29 +292,33 @@ fn lex_compare_tuples(a, b) = (
     )
 );
 
-// Helper functions
+//========== Helper functions ==========//
 
-// Check if expression is a number or variable
+/**
+ * Check if an expression is a number.
+ */
 fn is_number(expr) = (astname(expr) == "Int" || astname(expr) == "Double");
+
+/**
+ * Check if an expression is a variable.
+ */
 fn is_var(expr) = (astname(expr) == "UId" || astname(expr) == "Identifier");
 
-// Extract the value from a number node
+/**
+ * Extract the numeric value from a number node, or 0 if not a number.
+ */
 fn extract_number(expr) = (
     if (is_number(expr)) then expr
     else 0
 );
 
-// Extract the name from a variable node
+/**
+ * Extract the name from a variable node.
+ */
 fn varname(expr) = (
     if (is_var(expr)) then (
         if astname(expr) == "UId" then expr.id
         else expr.s // for Identifier
     )
     else ""
-);
-
-// Helper function to debug: print the canonical pairs of a term
-fn debug_canonical_pairs(term) = (
-    let pairs = canonicalize_multiplicative(term);
-    pairs
 );

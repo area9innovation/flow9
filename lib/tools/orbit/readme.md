@@ -13,7 +13,7 @@ Orbit is a functional programming language that integrates generalized e-graphs 
 You run Orbit like this:
 
 ```
-flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- tests/pattern.orb
+flow9/lib/tools/orbit> orbit tests/pattern.orb
 ```
 
 ### Enabling Tracing
@@ -21,7 +21,7 @@ flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- tests/pattern.orb
 Orbit provides a detailed tracing feature that shows all steps of interpretation, which is useful for debugging and understanding program execution. To enable tracing, use the `trace=1` URL parameter:
 
 ```
-flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- trace=1 tests/pattern.orb
+flow9/lib/tools/orbit> orbit trace=1 tests/pattern.orb
 ```
 
 With tracing enabled, you'll see detailed output for each interpretation step, including:

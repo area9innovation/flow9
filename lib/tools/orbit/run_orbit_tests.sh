@@ -11,6 +11,8 @@ TRACE=0
 VERBOSE=0
 TIMEOUT=10  # Timeout in seconds
 GENERATE_EXPECTED=0  # Flag to generate expected output files
+CLEANUP=0  # Flag to check for and optionally remove obsolete output files
+REMOVE_OBSOLETE=0  # Flag to actually remove obsolete files (requires --cleanup)
 
 # Function to clean up output files by removing timing information and exit codes
 # which cause unnecessary diffs in git
@@ -56,6 +58,15 @@ while [[ $# -gt 0 ]]; do
       GENERATE_EXPECTED=1
       shift
       ;;
+    --cleanup)
+      CLEANUP=1
+      shift
+      ;;
+    --remove-obsolete)
+      CLEANUP=1
+      REMOVE_OBSOLETE=1
+      shift
+      ;;
     --help)
       echo "Orbit Test Suite Runner"
       echo "Usage: $0 [options]"
@@ -66,6 +77,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --trace           Enable detailed tracing of interpretation steps"
       echo "  --verbose         Show detailed output for each test"
       echo "  --generate-expected  Generate expected output files from current outputs"
+      echo "  --cleanup         Check for obsolete output files (test cases that no longer exist)"
+      echo "  --remove-obsolete Check for AND remove obsolete output files"
       echo "  --help            Show this help message"
       exit 0
       ;;
@@ -131,7 +144,7 @@ for TEST_FILE in $TEST_FILES; do
   fi
   
   # Run orbit with the test file and capture the output with timeout
-  OUTPUT=$(timeout --kill-after=2 $TIMEOUT flowcpp --batch orbit.flow -- $TRACE_PARAM "$TEST_FILE" 2>&1)
+  OUTPUT=$(timeout --kill-after=2 $TIMEOUT orbit $TRACE_PARAM "$TEST_FILE" 2>&1 | grep -v "Flow compiler (3rd generation)" | grep -v "Processing 'tools/orbit/orbit' on http server" | sed '/^$/d')
   EXIT_CODE=$?
   
   # Save the output
@@ -225,6 +238,74 @@ fi
 
 # Print summary to console
 cat "$SUMMARY_FILE"
+
+# Check for obsolete output files if requested
+if [ $CLEANUP -eq 1 ]; then
+  echo ""
+  echo "Checking for obsolete output files..."
+  echo "--------------------------------"
+  
+  OBSOLETE_COUNT=0
+  OBSOLETE_FILES=""
+  
+  # Check for obsolete files in OUTPUT_DIR
+  if [ -d "$OUTPUT_DIR" ]; then
+    for OUTPUT_FILE in "$OUTPUT_DIR"/*.output; do
+      if [ -f "$OUTPUT_FILE" ]; then
+        # Extract base name without extension
+        BASE_NAME=$(basename "$OUTPUT_FILE" .output)
+        # Check if corresponding test file exists
+        if [ ! -f "$TEST_DIR/$BASE_NAME.orb" ]; then
+          OBSOLETE_COUNT=$((OBSOLETE_COUNT + 1))
+          OBSOLETE_FILES="$OBSOLETE_FILES\n  $OUTPUT_FILE"
+          if [ $REMOVE_OBSOLETE -eq 1 ]; then
+            echo "Removing obsolete output file: $OUTPUT_FILE"
+            rm "$OUTPUT_FILE"
+          else
+            echo "Obsolete output file: $OUTPUT_FILE"
+          fi
+        fi
+      fi
+    done
+  fi
+  
+  # Check for obsolete files in EXPECTED_DIR
+  if [ -d "$EXPECTED_DIR" ]; then
+    for EXPECTED_FILE in "$EXPECTED_DIR"/*.expected; do
+      if [ -f "$EXPECTED_FILE" ]; then
+        # Extract base name without extension
+        BASE_NAME=$(basename "$EXPECTED_FILE" .expected)
+        # Check if corresponding test file exists
+        if [ ! -f "$TEST_DIR/$BASE_NAME.orb" ]; then
+          OBSOLETE_COUNT=$((OBSOLETE_COUNT + 1))
+          OBSOLETE_FILES="$OBSOLETE_FILES\n  $EXPECTED_FILE"
+          if [ $REMOVE_OBSOLETE -eq 1 ]; then
+            echo "Removing obsolete expected file: $EXPECTED_FILE"
+            rm "$EXPECTED_FILE"
+          else
+            echo "Obsolete expected file: $EXPECTED_FILE"
+          fi
+        fi
+      fi
+    done
+  fi
+  
+  # Add obsolete files count to summary
+  echo "" >> "$SUMMARY_FILE"
+  if [ $OBSOLETE_COUNT -gt 0 ]; then
+    echo "Found $OBSOLETE_COUNT obsolete output file(s)" >> "$SUMMARY_FILE"
+    echo -e "Obsolete files:$OBSOLETE_FILES" >> "$SUMMARY_FILE"
+    echo ""
+    if [ $REMOVE_OBSOLETE -eq 1 ]; then
+      echo "Removed $OBSOLETE_COUNT obsolete file(s)"
+    else
+      echo "Found $OBSOLETE_COUNT obsolete file(s) (use --remove-obsolete to delete them)"
+    fi
+  else
+    echo "No obsolete output files found" >> "$SUMMARY_FILE"
+    echo "No obsolete output files found"
+  fi
+fi
 
 # Return number of failed tests
 exit $FAILED_TESTS
