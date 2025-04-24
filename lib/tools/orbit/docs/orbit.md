@@ -297,6 +297,28 @@ To run a single Orbit program, use the Flow compiler with the orbit.flow file as
 flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- path/to/yourprogram.orb
 ```
 
+### Program Execution Model
+
+Unlike some programming languages, Orbit does not automatically run any main function when a program is loaded. You need to explicitly call any function you want to execute. This makes Orbit more similar to Python and other scripting languages where code at the top level is executed as it's encountered.
+
+For example, if you want a program to do something when it runs, you need to have executable statements at the top level or call your main function explicitly:
+
+```orbit
+// Define a main function
+fn main() = (
+	println("Hello, world!")
+);
+
+// Call it explicitly to execute it
+main();
+
+// Alternatively, have executable statements at the top level
+println("This will execute when the file is loaded");
+
+// The last expression's value becomes the program's return value
+0;  // Return 0 as the program result
+```
+
 ### Tracing Program Execution
 
 Orbit provides a detailed tracing feature that shows all steps of interpretation, which is invaluable for debugging and understanding program execution. To enable tracing, add the `trace=1` parameter:
@@ -431,11 +453,42 @@ let scattered3 = scatter(expr3);
 // Result: 2^x
 ```
 
+#### Extracting Arguments with Pattern Matching
+
+One of the most powerful use cases for `gather` and `scatter` is their ability to work with pattern matching to extract arguments from expressions. This allows you to peel apart and recombine AST nodes easily:
+
+```orbit
+// Define a function that doesn't evaluate its argument
+fn quote(e : ast) = e;
+
+// Extract all arguments from a chained OR expression
+let asCall = gather(quote(a||c||b), `||`);
+println(prettyOrbit(asCall));
+// Output: `||`([a, c, b])
+
+// Pattern match to extract the arguments
+let arguments = asCall is (`||`(args) => args);
+println(prettyOrbit(arguments));
+// Output: [a, c, b]
+
+// Reconstruct the binary expression
+let back = scatter(asCall);
+println(prettyOrbit(back));
+// Output: ((a ∨ c) ∨ b)
+```
+
+This approach makes it easy to:
+- Extract all operands from a chain of operations
+- Process each operand individually 
+- Reconstruct the expression with modified operands
+- Transform between different operator representations
+
 These functions are particularly useful for:
 - Normalizing expressions for comparison
 - Simplifying pattern matching
 - Implementing mathematical algorithms
 - Expression optimization
+- Manipulating and transforming AST structures
 </ast_manipulation>
 
 <runtime_functions>
