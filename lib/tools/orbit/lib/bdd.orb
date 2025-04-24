@@ -1,0 +1,250 @@
+import lib/rewrite;
+import lib/array;
+import lib/logic;
+
+/**
+ * Binary Decision Diagrams (BDDs)
+ * 
+ * This library implements Binary Decision Diagrams (BDDs) for Boolean formulas,
+ * based on Shannon's expansion theorem. BDDs provide a canonical representation
+ * for Boolean functions, which makes equivalence checking efficient.
+ * 
+ * BDDs are represented using the if-then-else (Ite) constructor:
+ * Ite(var, then_branch, else_branch)
+ * 
+ * Where:
+ * - var is a decision variable
+ * - then_branch is the BDD when var is true
+ * - else_branch is the BDD when var is false
+ * - Terminal nodes are true and false
+ */
+
+// ----- VARIABLE ORDERING -----
+
+// Get a numeric value for a variable to determine ordering
+fn var_order(var) = (
+    if is_not(var) then var_order(get_not_arg(var))
+    else var
+);
+
+// Check if an expression is a negation
+fn is_not(expr) = (
+    getConstructor(expr) == "!"
+);
+
+// Get the argument of a negation
+fn get_not_arg(expr) = (
+    expr is (!arg => arg; _ => expr)
+);
+
+// ----- BDD CONSTRUCTION -----
+
+// Convert a Boolean formula to a BDD
+fn to_bdd(expr) = (
+    expr is (
+        // Terminal cases
+        true => true;
+        false => false;
+        
+        // Variable becomes a simple BDD
+        v => if is_var(v) then make_ite(v, true, false) else expr;
+        
+        // Negation
+        !e => negate_bdd(to_bdd(e));
+        
+        // Conjunction (AND)
+        a && b => apply_and(to_bdd(a), to_bdd(b));
+        
+        // Disjunction (OR)
+        a || b => apply_or(to_bdd(a), to_bdd(b));
+        
+        // Already a BDD - ensure consistency
+        Ite(v, t, e) => make_ite(v, to_bdd(t), to_bdd(e));
+        
+        // Any other expression type
+        _ => expr
+    )
+);
+
+// Check if an expression is a variable
+fn is_var(expr) = (
+    let c = getConstructor(expr);
+    c != "Ite" && c != "!" && c != "&&" && c != "||" && 
+    expr != true && expr != false
+);
+
+// Create an Ite node with reduction
+fn make_ite(var, then_case, else_case) = (
+    // Rule 1: If both branches are equal, eliminate the test
+    if then_case == else_case then then_case
+    else Ite(var, then_case, else_case)
+);
+
+// Negate a BDD
+fn negate_bdd(bdd) = (
+    bdd is (
+        true => false;
+        false => true;
+        Ite(v, t, e) => make_ite(v, negate_bdd(t), negate_bdd(e));
+        _ => !bdd  // For variables or unprocessed expressions
+    )
+);
+
+// Apply AND operation to two BDDs
+fn apply_and(bdd1, bdd2) = (
+    // Terminal cases
+    if bdd1 == false || bdd2 == false then false
+    else if bdd1 == true then bdd2
+    else if bdd2 == true then bdd1
+    else bdd1 is (
+        Ite(v1, t1, e1) => (
+            bdd2 is (
+                Ite(v2, t2, e2) => (
+                    // Choose variable to expand based on ordering
+                    let v_order1 = var_order(v1);
+                    let v_order2 = var_order(v2);
+                    
+                    if v_order1 == v_order2 then (
+                        // Same variable - combine results
+                        make_ite(v1, apply_and(t1, t2), apply_and(e1, e2))
+                    ) else if v_order1 < v_order2 then (
+                        // v1 comes first - expand on v1
+                        make_ite(v1, apply_and(t1, bdd2), apply_and(e1, bdd2))
+                    ) else (
+                        // v2 comes first - expand on v2
+                        make_ite(v2, apply_and(bdd1, t2), apply_and(bdd1, e2))
+                    )
+                );
+                // bdd2 is not an Ite node
+                _ => make_ite(v1, apply_and(t1, bdd2), apply_and(e1, bdd2))
+            )
+        );
+        // bdd1 is not an Ite node
+        _ => bdd2 is (
+            Ite(v2, t2, e2) => make_ite(v2, apply_and(bdd1, t2), apply_and(bdd1, e2));
+            _ => bdd1 && bdd2  // Neither is an Ite node
+        )
+    )
+);
+
+// Apply OR operation to two BDDs
+fn apply_or(bdd1, bdd2) = (
+    // Terminal cases
+    if bdd1 == true || bdd2 == true then true
+    else if bdd1 == false then bdd2
+    else if bdd2 == false then bdd1
+    else bdd1 is (
+        Ite(v1, t1, e1) => (
+            bdd2 is (
+                Ite(v2, t2, e2) => (
+                    // Choose variable to expand based on ordering
+                    let v_order1 = var_order(v1);
+                    let v_order2 = var_order(v2);
+                    
+                    if v_order1 == v_order2 then (
+                        // Same variable - combine results
+                        make_ite(v1, apply_or(t1, t2), apply_or(e1, e2))
+                    ) else if v_order1 < v_order2 then (
+                        // v1 comes first - expand on v1
+                        make_ite(v1, apply_or(t1, bdd2), apply_or(e1, bdd2))
+                    ) else (
+                        // v2 comes first - expand on v2
+                        make_ite(v2, apply_or(bdd1, t2), apply_or(bdd1, e2))
+                    )
+                );
+                // bdd2 is not an Ite node
+                _ => make_ite(v1, apply_or(t1, bdd2), apply_or(e1, bdd2))
+            )
+        );
+        // bdd1 is not an Ite node
+        _ => bdd2 is (
+            Ite(v2, t2, e2) => make_ite(v2, apply_or(bdd1, t2), apply_or(bdd1, e2));
+            _ => bdd1 || bdd2  // Neither is an Ite node
+        )
+    )
+);
+
+// ----- BDD TO LOGIC CONVERSION -----
+
+// Convert a BDD back to a standard Boolean formula
+fn from_bdd(bdd) = (
+    bdd is (
+        // Terminal cases
+        true => true;
+        false => false;
+        
+        // BDD node
+        Ite(v, t, e) => (
+            let then_expr = from_bdd(t);
+            let else_expr = from_bdd(e);
+            
+            // Simplify common cases
+            if then_expr == true && else_expr == false then v
+            else if then_expr == false && else_expr == true then !v
+            else if then_expr == true then v || else_expr
+            else if else_expr == false then v && then_expr
+            else if else_expr == true then !v || then_expr
+            else if then_expr == false then !v && else_expr
+            else (v && then_expr) || (!v && else_expr)
+        );
+        
+        // Variable or other expression
+        _ => bdd
+    )
+);
+
+// ----- VARIABLE EXTRACTION -----
+
+// Extract all variables from a logic expression in order
+fn extract_variables(expr) = (
+    expr is (
+        // Terminal cases
+        true => [];
+        false => [];
+        
+        // Variable
+        v => if is_var(v) then [v] else [];
+        
+        // Negation
+        !e => extract_variables(e);
+        
+        // AND/OR - combine variables from both sides
+        a && b => uniq(sort(extract_variables(a) + extract_variables(b)));
+        a || b => uniq(sort(extract_variables(a) + extract_variables(b)));
+        
+        // BDD node
+        Ite(v, t, e) => uniq(sort([v] + extract_variables(t) + extract_variables(e)));
+        
+        // Fallback
+        _ => []
+    )
+);
+
+// ----- UTILITY FUNCTIONS -----
+
+// Evaluate a BDD with a variable assignment
+fn evaluate_bdd(bdd, assignment) = (
+    bdd is (
+        // Terminal cases
+        true => true;
+        false => false;
+        
+        // BDD node - follow appropriate branch based on variable value
+        Ite(v, t, e) => (
+            let value = assignment(v);
+            if value then evaluate_bdd(t, assignment) else evaluate_bdd(e, assignment)
+        );
+        
+        // Variable or unprocessed expression
+        _ => assignment(bdd)
+    )
+);
+
+// ----- EQUIVALENCE CHECKING -----
+
+// Check if two Boolean formulas are equivalent
+fn are_equivalent(expr1, expr2) = (
+    let bdd1 = to_bdd(expr1);
+    let bdd2 = to_bdd(expr2);
+    bdd1 == bdd2
+);
