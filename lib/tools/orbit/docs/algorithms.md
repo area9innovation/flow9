@@ -56,71 +56,57 @@ For cyclic groups, which represent rotational symmetry, we need to find the lexi
 
 ```orbit
 // Booth's lexicographically minimal string rotation algorithm
-fn least_rotation(s) (
-	let n = length(s);
-	let initial_f = map(range(0, 2 * n), \__.(-1));
+fn booth_canonical(arr) = (
+	if length(arr) <= 1 then arr
+	else (
+		let n = length(arr);
 
-	// Process all positions through recursion
-	fn process_j(j, k, f) (
-		if j >= 2 * n then k
-		else (
-			let initial_i = f[j - k - 1];
+		// Create an auxiliary array which is the original array concatenated with itself
+		let double_arr = arr + arr;
 
-			// Process inner while loop recursively
-			fn process_i(i, curr_k) (
-				if i == -1 || s[j % n] == s[(curr_k + i + 1) % n] then
-					Pair(i, curr_k)
+		// Initialize failure function array with -1
+		// (We use -1 instead of conventional 0 to simplify logic)
+		let f = \i. if i < 0 || i >= n then -1 else f(i);
+
+		// Compute the min rotation index in linear time
+		fn compute_min_index() = (
+			// Initialize starting values
+			fn find_min(i, j, k) = (
+				// We're done when we've checked all rotations
+				if i + k >= 2 * n then j
+				else if k >= n then find_min(i + 1, j, 0)
 				else (
-					let new_k = if s[j % n] < s[(curr_k + i + 1) % n] then
-						j - i - 1
+					// Compute the current indices we're comparing
+					let i_idx = (i + k) % (2 * n);
+					let j_idx = (j + k) % (2 * n);
+
+					if double_arr[i_idx] < double_arr[j_idx] then
+						// i rotation is smaller, j becomes i
+						find_min(i, i, k + 1)
+					else if double_arr[i_idx] > double_arr[j_idx] then
+						// j rotation is smaller, i moves forward
+						find_min(i + k + 1, j, 0)
 					else
-						curr_k;
-					process_i(f[i], new_k)
+						// Equal so far, continue comparison
+						find_min(i, j, k + 1)
 				)
 			);
 
-			let result = process_i(initial_i, k);
-			let i = result.first;
-			let new_k = result.second;
+			// Start with first two positions
+			find_min(0, 0, 0)
+		);
 
-			// Update f and continue loop
-			let new_f = if i == -1 && s[j % n] != s[(new_k + i + 1) % n] then (
-				let final_k = if s[j % n] < s[(new_k + i + 1) % n] then j else new_k;
-				// Create new array with updated value at j-final_k
-				update_array(f, j - final_k, -1)
-			) else (
-				// Create new array with updated value at j-new_k
-				update_array(f, j - new_k, i + 1)
-			);
+		let min_start = compute_min_index();
 
-			process_j(j + 1, new_k, new_f)
-		)
-	);
+		// Build the canonical form starting from min_start
+		fn build_result(idx, result) = (
+			if idx >= n then result
+			else build_result(idx + 1, result + [arr[(min_start + idx) % n]])
+		);
 
-	// Start the recursive process
-	process_j(1, 0, initial_f)
-)
-```
-
-A simpler but less efficient O(n²) algorithm for finding the minimum rotation:
-
-```orbit
-fn min_rotation(array) (
-	let n = length(array);
-
-	// Find minimum rotation recursively
-	fn find_min(i, min_so_far) (
-		if i >= n then min_so_far
-		else (
-			let rotation = concat(subarray(array, i, n - i), subarray(array, 0, i));
-			let new_min = if is_less(rotation, min_so_far) then rotation else min_so_far;
-			find_min(i + 1, new_min)
-		)
-	);
-
-	// Start with the original array as minimum
-	find_min(1, array)
-)
+		build_result(0, [])
+	)
+);
 ```
 
 **Example**:

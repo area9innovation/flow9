@@ -262,3 +262,130 @@ fn are_equivalent(expr1, expr2) = (
     let bdd2 = to_bdd(expr2);
     bdd1 == bdd2
 );
+
+// ----- QUANTIFICATION OPERATIONS -----
+
+// Variable restriction: substitute variable with a value
+fn bdd_restrict(node, var, value) = (
+    // Terminal cases are unchanged by restriction
+    if node == true || node == false then node
+    else node is (
+        Ite(v, t, e) => (
+            if v == var then
+                // Direct substitution when we find the variable
+                if value then t else e
+            else (
+                // For other variables, recurse on both branches
+                make_ite(v, bdd_restrict(t, var, value), bdd_restrict(e, var, value))
+            )
+        );
+        // For variables or other expressions
+        _ => if node == var then value else node
+    )
+);
+
+// Existential quantification: ∃v.f
+fn bdd_exists(var, node) = (
+    // Compute f[v→0] ∨ f[v→1]
+    apply_or(
+        bdd_restrict(node, var, false),
+        bdd_restrict(node, var, true)
+    )
+);
+
+// Universal quantification: ∀v.f
+fn bdd_forall(var, node) = (
+    // Compute f[v→0] ∧ f[v→1]
+    apply_and(
+        bdd_restrict(node, var, false),
+        bdd_restrict(node, var, true)
+    )
+);
+
+// Apply existential quantification for multiple variables
+fn bdd_exists_multiple(vars, node) = (
+    if length(vars) == 0 then node
+    else bdd_exists_multiple(
+        tail(vars), 
+        bdd_exists(head(vars), node)
+    )
+);
+
+// Apply universal quantification for multiple variables
+fn bdd_forall_multiple(vars, node) = (
+    if length(vars) == 0 then node
+    else bdd_forall_multiple(
+        tail(vars), 
+        bdd_forall(head(vars), node)
+    )
+);
+
+// ----- MODEL COUNTING -----
+
+// Calculate the number of satisfying assignments for a BDD
+// Simple implementation without using cache
+fn bdd_count_models(node, var_count) = (
+    node is (
+        // No satisfying assignments for false
+        false => 0;
+        
+        // All remaining variable assignments satisfy true
+        true => (
+            // 2^remaining_vars
+            let result = 1;
+            fn calculate_power(base, exponent, acc) = (
+                if exponent <= 0 then acc
+                else calculate_power(base, exponent - 1, acc * base)
+            );
+            calculate_power(2, var_count, 1)
+        );
+        
+        // For BDD nodes, compute recursively
+        Ite(v, t, e) => (
+            // Count satisfying assignments in both branches
+            let low_count = bdd_count_models(e, var_count - 1);
+            let high_count = bdd_count_models(t, var_count - 1);
+            
+            // Sum the counts
+            low_count + high_count
+        );
+        
+        // For variables or other expressions
+        _ => if node then (
+            // 2^var_count
+            let result = 1;
+            fn calculate_power(base, exponent, acc) = (
+                if exponent <= 0 then acc
+                else calculate_power(base, exponent - 1, acc * base)
+            );
+            calculate_power(2, var_count, 1)
+        ) else 0
+    )
+);
+
+// Find one satisfying assignment for a BDD
+fn bdd_find_satisfying_assignment(node) = (
+    if node == false then
+        None()  // No satisfying assignment
+    else if node == true then
+        Some([])  // Empty assignment works
+    else node is (
+        Ite(v, t, e) => (
+            // Try high branch first (v=true)
+            let high_result = bdd_find_satisfying_assignment(t);
+            high_result is (
+                Some(assignment) => Some([Pair(v, true)] + assignment);
+                None() => (
+                    // Try low branch (v=false)
+                    let low_result = bdd_find_satisfying_assignment(e);
+                    low_result is (
+                        Some(assignment) => Some([Pair(v, false)] + assignment);
+                        None() => None()
+                    )
+                )
+            )
+        );
+        // For variables, assign true
+        _ => Some([Pair(node, true)])
+    )
+);
