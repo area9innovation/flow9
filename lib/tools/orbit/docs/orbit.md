@@ -683,3 +683,22 @@ Note: In the type signatures above:
 - `[*]` represents an array of any type
 - The actual behavior of operators may depend on the types of their operands
 </runtime_functions>
+
+<stdlib>
+This document summarizes the standard library modules provided for the Orbit language, located in `orbit/lib`.
+
+*   **`array.orb`:** Provides common functional utilities for arrays like `map`, `filter`, `fold`, `take`, `iter`, `contains`, `uniq`, etc., including versions with index access (`mapi`, `filteri`, `foldi`).
+*   **`bdd.orb`:** Implements Binary Decision Diagrams (BDDs) for representing and manipulating Boolean formulas efficiently. Includes functions for creation (`to_bdd`), logical operations (`apply_and`, `apply_or`, `negate_bdd`), conversion back (`from_bdd`), equivalence checking, quantification, and model counting.
+*   **`booth.orb`:** Contains Booth's algorithm for finding the lexicographically smallest cyclic shift (canonical form) of an array in linear time.
+*   **`combinatorics.orb`:** Offers basic combinatorial functions: `factorial`, `binomial_coefficient`, `permutations`, and functions to generate permutations and combinations of array elements.
+*   **`complex.orb`:** Defines complex number arithmetic, including addition, subtraction, multiplication, division, magnitude, argument, conjugate, exponentiation, logarithm, and power functions. Uses `Complex(real, imag)` representation.
+*   **`glex_order.orb`:** Implements Graded Lexicographic (GLEX) ordering for rewriting polynomial expressions. Sorts terms first by total degree, then lexicographically. Handles basic and compound variables.
+*   **`linalg.orb`:** Basic linear algebra library for vectors (arrays) and matrices (arrays of arrays). Includes vector addition, subtraction, scaling, dot product, norm; matrix creation, element access, addition, scaling, transpose, multiplication, determinant, and inverse.
+*   **`logic.orb`:** Implements conversion of logical expressions to Conjunctive Normal Form (CNF) and Disjunctive Normal Form (DNF) using rewrite rules, and simplification techniques.
+*   **`number_theory.orb`:** Provides number theoretic functions such as primality testing (`is_prime`), Greatest Common Divisor (`gcd`), Least Common Multiple (`lcm`), Extended Euclidean Algorithm (`extended_gcd`), modular inverse (`mod_inverse`), modular exponentiation (`modPow`), and prime factorization (`prime_factorization`).
+*   **`polynomials.orb`:** A library for symbolic manipulation of polynomials using GLEX ordering. Defines internal representations for monomials, terms, and polynomials. Includes addition, subtraction, multiplication, division (`divP`), evaluation (`evalP`), degree finding (`degreeP`), and differentiation (`differentiateP`).
+*   **`reflect.orb`:** Contains reflection utilities for working with Abstract Syntax Trees (ASTs), such as quoting (`quote`), type checks (`is_number`, `is_var`), degree calculation (`term_degree`), and AST construction (`makeFoldedAst`).
+*   **`rewrite.orb`:** A core library for applying rewrite rules to Orbit OGraphs. Provides functions for pattern matching (`matchOGraphPattern`), rule application (`applyRewriteRule`, `applyRules`), and fixed-point iteration (`applyRulesUntilFixedPoint`).
+*   **`sort.orb`:** Implements a stable merge sort (`mergeSort`) algorithm, allowing custom comparison functions. Includes a standard `sort` using default comparison.
+*   **`statistics.orb`:** Offers basic statistical functions like `mean`, `variance`, `standard_deviation`, `median`, approximations for the normal distribution PDF/CDF (`normal_pdf`, `normal_cdf`), and `correlation`.
+</stdlib>
