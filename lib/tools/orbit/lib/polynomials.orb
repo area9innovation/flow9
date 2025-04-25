@@ -1,0 +1,405 @@
+// File: /home/alstrup/area9/flow9/lib/tools/orbit/lib/polynomials.orb
+//
+// Library for symbolic polynomial manipulation in Orbit.
+// Uses graded lexicographic ordering (GLEX). Coefficients are Numbers.
+
+import lib/sort;
+import lib/array;
+
+// --- Data Structures ---
+
+// Monomial: Represents a product of variables raised to powers.
+// Stored as a sorted list of Pair(VariableName: String, Exponent: Int).
+// Example: x^2*y*z -> [Pair("x", 2), Pair("y", 1), Pair("z", 1)]
+// The empty list [] represents the monomial 1 (constant term).
+// Type alias (conceptual): Monomial = [Pair(String, Int)]
+
+// Term: Represents a coefficient multiplied by a monomial.
+// Stored as Pair(Coefficient: Number, Monomial: Monomial).
+// Example: 3*x^2*y*z -> Pair(3, [Pair("x", 2), Pair("y", 1), Pair("z", 1)])
+// Type alias (conceptual): Term = Pair(Number, Monomial)
+
+// Polynomial: Represents a sum of terms.
+// Stored as a list of Terms, sorted in descending GLEX order of monomials.
+// Like terms are combined (no duplicate monomials), zero terms are removed.
+// Example: 3*x^2 + 2*y - 1 -> [
+//   Pair(3, [Pair("x", 2)]),
+//   Pair(2, [Pair("y", 1)]),
+//   Pair(-1, [])
+// ]
+// Type alias (conceptual): Polynomial = [Term]
+
+// --- Monomial Helper Functions ---
+
+// Calculates the total degree of a monomial.
+fn monomialDegree(m) = (
+    fold(m, 0, \acc, pair -> acc + pair.second)
+);
+
+// Compares two monomials using Graded Lexicographic (GLEX) order.
+// Variables are ordered alphabetically.
+// Returns: -1 if m1 < m2, 0 if m1 = m2, 1 if m1 > m2 (descending order favored)
+fn compareMonomialsGlex(m1, m2) = (
+    let deg1 = monomialDegree(m1);
+    let deg2 = monomialDegree(m2);
+
+    if deg1 > deg2 then 1
+    else if deg1 < deg2 then -1
+    else ( // Same total degree, use lexicographic comparison
+        // Find all unique variables involved in either monomial, sorted alphabetically
+        let vars1 = map(m1, \p -> p.first);
+        let vars2 = map(m2, \p -> p.first);
+        let all_vars = removeDuplicates(sort(vars1 + vars2));
+
+        // Compare exponents for each variable in alphabetical order
+        fn compare_vars_lex(vars_list) = (
+            if length(vars_list) == 0 then 0 // Monomials are identical
+            else (
+                let current_var = vars_list[0];
+                let rest_vars = subrange(vars_list, 1, length(vars_list) - 1);
+
+                let exp1 = getMonomialExponent(m1, current_var);
+                let exp2 = getMonomialExponent(m2, current_var);
+
+                if exp1 > exp2 then 1 // m1 is greater lex
+                else if exp1 < exp2 then -1 // m2 is greater lex
+                else compare_vars_lex(rest_vars) // Exponents match, check next variable
+            )
+        );
+        compare_vars_lex(all_vars)
+    )
+);
+
+// Helper to get the exponent of a variable in a monomial (0 if not present).
+fn getMonomialExponent(m, var_name) = (
+    let found = filter(m, \p -> p.first == var_name);
+    if length(found) == 0 then 0
+    else found[0].second
+);
+
+// Helper to sort Monomial variable pairs alphabetically by variable name.
+fn sortMonomial(m) = (
+    mergeSort(m, \p1, p2 -> p1.first <= p2.first)
+);
+
+// Helper to multiply two monomials. Result is sorted.
+fn multiplyMonomials(m1, m2) = (
+    let combined_pairs = m1 + m2;
+    // Get unique variables from both monomials
+    let vars = removeDuplicates(map(combined_pairs, \p -> p.first));
+    let result_pairs = map(vars, \v ->
+        // Sum exponents for each variable
+        Pair(v, getMonomialExponent(m1, v) + getMonomialExponent(m2, v))
+    );
+    // Filter out terms with exponent 0 and sort alphabetically
+    sortMonomial(filter(result_pairs, \p -> p.second != 0))
+);
+
+// Helper to divide monomial m1 by m2. Assumes divisibility (checked by isMonomialDivisible).
+// Returns the resulting monomial m1/m2, sorted.
+fn divideMonomials(m1, m2) = (
+     // Only need variables from m1, as m2 must be a subset for divisibility
+     let vars = removeDuplicates(map(m1, \p -> p.first));
+     let result_pairs = map(vars, \v ->
+         // Subtract exponents
+         Pair(v, getMonomialExponent(m1, v) - getMonomialExponent(m2, v))
+     );
+     // Filter out terms with exponent 0 and sort alphabetically
+     sortMonomial(filter(result_pairs, \p -> p.second != 0))
+);
+
+// Checks if monomial m2 divides monomial m1.
+fn isMonomialDivisible(m1, m2) = (
+    // Every variable in m2 must be in m1 with at least the same exponent.
+    fold(m2, true, \acc, p2 -> ( // p2 is Pair(var, exp) from m2
+        acc && (getMonomialExponent(m1, p2.first) >= p2.second)
+    ))
+);
+
+
+// --- Term Helper Functions ---
+
+// Gets the coefficient of a term.
+fn termCoefficient(t) = t.first;
+
+// Gets the monomial of a term.
+fn termMonomial(t) = t.second;
+
+// Creates a term. Ensures monomial is sorted.
+fn makeTerm(coeff, monomial) = Pair(coeff, sortMonomial(monomial));
+
+// Multiplies two terms.
+fn multiplyTerms(t1, t2) = (
+    let c1 = termCoefficient(t1);
+    let m1 = termMonomial(t1);
+    let c2 = termCoefficient(t2);
+    let m2 = termMonomial(t2);
+    makeTerm(c1 * c2, multiplyMonomials(m1, m2))
+);
+
+// Divides term t1 by t2. Assumes divisibility (checked by isTermDivisible).
+fn divideTerms(t1, t2) = (
+    let c1 = termCoefficient(t1);
+    let m1 = termMonomial(t1);
+    let c2 = termCoefficient(t2);
+    let m2 = termMonomial(t2);
+    // Orbit's '/' handles numeric division (potential Inf/NaN on 0 divisor).
+    makeTerm(c1 / c2, divideMonomials(m1, m2))
+);
+
+// Checks if term t2 divides term t1 (monomially).
+// Coefficient divisibility isn't strictly required for the algorithm,
+// but the divisor term cannot be zero.
+fn isTermDivisible(t1, t2) = (
+    let c2 = termCoefficient(t2);
+    // Check non-zero divisor coefficient and monomial divisibility
+    c2 != 0 && isMonomialDivisible(termMonomial(t1), termMonomial(t2))
+);
+
+// Negates a term.
+fn negateTerm(t) = makeTerm(-termCoefficient(t), termMonomial(t));
+
+// --- Polynomial Core Functions ---
+
+// Normalizes a list of terms into a canonical Polynomial representation.
+// 1. Sorts terms by monomial (GLEX descending) to group like terms.
+// 2. Combines coefficients of like terms.
+// 3. Filters out terms with zero coefficients.
+// 4. Ensures the final list is sorted by GLEX descending.
+fn normalizePolynomialTerms(terms) = (
+    if length(terms) == 0 then [] else (
+        // 1. Sort terms primarily by monomial GLEX descending for grouping
+        let sorted_by_mono = mergeSort(terms, \t1, t2 ->
+            compareMonomialsGlex(termMonomial(t1), termMonomial(t2)) >= 0 // Descending
+        );
+
+        // 2. Combine like terms (adjacent after sorting)
+        fn combine_step(remaining, combined) = (
+            if length(remaining) == 0 then combined
+            else (
+                let current_term = remaining[0];
+                let rest = subrange(remaining, 1, length(remaining)-1);
+                if length(combined) == 0 then combine_step(rest, [current_term])
+                else (
+                     let last_combined = combined[length(combined)-1];
+                     // Check if monomials are identical (GLEX compare == 0)
+                     if compareMonomialsGlex(termMonomial(last_combined), termMonomial(current_term)) == 0 then (
+                         // Like terms, combine coefficients
+                         let new_coeff = termCoefficient(last_combined) + termCoefficient(current_term);
+                         // Replace last term if new coeff is non-zero, else drop both
+                          if new_coeff != 0 then (
+                             let new_term = makeTerm(new_coeff, termMonomial(last_combined));
+                             combine_step(rest, subrange(combined, 0, length(combined)-1) + [new_term])
+                          ) else (
+                             // Sum is zero, drop the term
+                             combine_step(rest, subrange(combined, 0, length(combined)-1))
+                          )
+                     ) else (
+                         // Different monomial, append current term
+                         combine_step(rest, combined + [current_term])
+                     )
+                )
+            )
+        );
+
+        let combined_terms = combine_step(sorted_by_mono, []);
+
+        // 3. Filter terms with zero coefficients (already done during combine)
+        // 4. Final sort (already sorted by combine logic)
+        combined_terms
+    )
+);
+
+// Constructor: Creates a Polynomial from a list of Terms.
+fn polyFromTerms(terms) = normalizePolynomialTerms(terms);
+
+// Represents the zero polynomial.
+fn zeroPolynomial() = [];
+
+// Represents the polynomial '1'.
+fn onePolynomial() = polyFromTerms([makeTerm(1, [])]);
+
+// Adds two polynomials.
+fn addP(p1, p2) = (
+    // Concatenate term lists and normalize
+    normalizePolynomialTerms(p1 + p2)
+);
+
+// Subtracts polynomial p2 from p1.
+fn subP(p1, p2) = (
+    // Negate terms of p2 and add
+    let negated_p2 = map(p2, negateTerm);
+    addP(p1, negated_p2)
+);
+
+// Multiplies two polynomials.
+fn mulP(p1, p2) = (
+    // Multiply each term of p1 by each term of p2
+    let product_terms = fold(p1, [], \acc1, t1 ->
+        acc1 + fold(p2, [], \acc2, t2 ->
+            acc2 + [multiplyTerms(t1, t2)]
+        )
+    );
+    // Normalize the resulting list of terms
+    normalizePolynomialTerms(product_terms)
+);
+
+// Gets the leading term of a non-zero polynomial according to GLEX order.
+// Returns the zero term (0*1) if the polynomial is zero.
+fn leadingTermP(p) = (
+    if length(p) == 0 then makeTerm(0, []) // LT of zero polynomial is zero term
+    else p[0] // Assumes p is already sorted GLEX descending
+);
+
+// Polynomial Division (Long Division Algorithm using GLEX).
+// Returns Pair(Quotient Polynomial, Remainder Polynomial).
+fn divP(dividend, divisor) = (
+    if length(divisor) == 0 then (
+        println("Error: Polynomial division by zero.");
+        // Consider a more robust error mechanism if available
+        Pair(zeroPolynomial(), dividend) // Indicate error, return original dividend as remainder
+    ) else (
+        fn division_step(current_quotient_terms, current_remainder) = (
+            // Loop condition: remainder is non-zero AND LT(divisor) divides LT(remainder)
+            if length(current_remainder) == 0 || !isTermDivisible(leadingTermP(current_remainder), leadingTermP(divisor)) then
+                // Base case: Division stops
+                Pair(current_quotient_terms, current_remainder)
+            else (
+                // Recursive step: Perform one step of division
+                let lt_divisor = leadingTermP(divisor);
+                let lt_remainder = leadingTermP(current_remainder);
+
+                // Calculate the term to add to the quotient: t = LT(remainder) / LT(divisor)
+                let t = divideTerms(lt_remainder, lt_divisor);
+
+                // New quotient terms list
+                let next_quotient_terms = current_quotient_terms + [t];
+
+                // Subtract (t * divisor) from the remainder
+                // Note: mulP expects polynomials (lists of terms)
+                let t_poly = polyFromTerms([t]); // Create a polynomial from the single term t
+                let product = mulP(t_poly, divisor);
+                let next_remainder = subP(current_remainder, product); // subP normalizes the result
+
+                // Recurse
+                division_step(next_quotient_terms, next_remainder)
+            )
+        );
+
+        // Start the recursion with empty quotient and original dividend as remainder
+        let final_pair = division_step([], dividend);
+
+        // Return normalized quotient and remainder
+        // Quotient terms need normalization; remainder is already normalized by subP
+        Pair(normalizePolynomialTerms(final_pair.first), final_pair.second)
+    )
+);
+
+// Evaluates a polynomial given variable bindings.
+// bindings: List of Pair(VariableName: String, Value: Number)
+// Returns the numeric result of the evaluation.
+fn evalP(p, bindings) = (
+    // Helper to evaluate a single monomial
+    let eval_monomial = \m, b -> (
+         fold(m, 1.0, \acc, var_exp_pair -> (
+             let var_name = var_exp_pair.first;
+             let exponent = var_exp_pair.second;
+             // Find value for var_name in bindings list
+             let binding = filter(b, \bind_pair -> bind_pair.first == var_name);
+             if length(binding) == 0 then (
+                 println("Error: Variable '" + var_name + "' not found in bindings for evalP.");
+                 // Return NaN or raise error? Returning NaN contribution.
+                 // Orbit doesn't have NaN literal, division by zero might yield it.
+                 0.0 / 0.0 // Produce NaN
+             ) else (
+                 let value = binding[0].second;
+                 // Ensure value is a number before using dpow
+                 if !isNumber(value) then (
+                    println("Error: Binding for '" + var_name + "' is not a number.");
+                    0.0 / 0.0 // NaN
+                 ) else (
+                    // Use dpow for general exponentiation (handles potential non-integer values/exponents if needed)
+                    acc * dpow(value, exponent)
+                 )
+             )
+         ))
+    );
+
+    // Sum the evaluation of each term
+    fold(p, 0.0, \acc, term -> (
+        let coeff = termCoefficient(term);
+        let monomial = termMonomial(term);
+        acc + coeff * eval_monomial(monomial, bindings)
+    ))
+);
+
+// Finds the degree of a polynomial with respect to a specific variable.
+// Returns the highest exponent of that variable found in any term. Returns 0 if variable not found.
+fn degreeP(p, var) = (
+    if length(p) == 0 then 0 // Degree of zero polynomial
+    else (
+        fold(p, 0, \max_deg, term -> (
+            let deg_in_term = getMonomialExponent(termMonomial(term), var);
+            max(max_deg, deg_in_term)
+        ))
+    )
+);
+
+// Differentiates a polynomial with respect to a specific variable.
+fn differentiateP(p, var) = (
+    // Helper to differentiate a single term
+    let differentiate_term = \t -> (
+        let coeff = termCoefficient(t);
+        let monomial = termMonomial(t);
+        let exponent = getMonomialExponent(monomial, var);
+
+        if exponent == 0 then
+            makeTerm(0, []) // Variable not present or exponent is 0, derivative is zero term
+        else (
+            // Apply power rule: coeff * exponent * var^(exponent-1)
+            let new_coeff = coeff * exponent;
+            // Create new monomial with decremented exponent for 'var'
+            let new_monomial_pairs = map(monomial, \pair ->
+                 if pair.first == var then Pair(var, pair.second - 1)
+                 else pair
+            );
+            // Filter out 'var' if its exponent became 0, then sort the new monomial
+            let filtered_monomial = sortMonomial(filter(new_monomial_pairs, \p -> p.second != 0));
+            makeTerm(new_coeff, filtered_monomial)
+        )
+    );
+
+    // Apply differentiation to each term and normalize the result
+    let differentiated_terms = map(p, differentiate_term);
+    normalizePolynomialTerms(differentiated_terms)
+);
+
+// --- Utility Functions ---
+
+// Basic check if a value is Int or Double
+fn isNumber(x) = (isInt(x) || isDouble(x));
+
+// Basic removeDuplicates for lists where elements support == comparison and sorting.
+fn removeDuplicates(list) = (
+  if length(list) <= 1 then list
+  else (
+    // Sort first to bring duplicates together
+    let sorted_list = sort(list); // Requires a suitable default sort for item types
+    fn build_unique(index, result) = (
+        if index >= length(sorted_list) then result
+        else (
+            let current = sorted_list[index];
+            if length(result) == 0 || current != result[length(result)-1] then
+                build_unique(index + 1, result + [current])
+            else // Skip duplicate
+                build_unique(index + 1, result)
+        )
+    );
+    build_unique(0, [])
+  )
+);
+
+// --- TODO: Advanced Functions ---
+// fn gcdP(p1: Polynomial, p2: Polynomial) -> Polynomial;
+// fn factorP(p: Polynomial) -> [Polynomial];
+// fn groebnerBasis(polys: [Polynomial]) -> [Polynomial];

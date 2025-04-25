@@ -1,6 +1,7 @@
 # Orbit TODO List
 - Glex rules for polynomial rings
 - Relational algebra and optimizations of that
+- Reuse nodes with add
 - Support for pattern matching where we visit all the equivalent nodes as well. => vs -> maybe
 - Subscripts on operators
 - Explain how we do not have a cost function anymore, but just canonical forms in each domain

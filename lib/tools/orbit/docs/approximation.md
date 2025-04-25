@@ -12,6 +12,8 @@ The key insight is that many mathematical operations can be replaced with faster
 
 We extend Orbit's domain annotation system to include precision specifications:
 
+TODO: Use ULP or some of the other notation we invent in this document.
+
 ```orbit
 // Basic precision annotation
 expr : Precision(ε) → approximate_solution : ApproximateCanonical;
