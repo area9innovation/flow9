@@ -371,6 +371,13 @@ fn simplify(expr : ast) = (
 
 // Pretty print an AST
 println(prettyOrbit(expr));
+
+// Programmatically construct AST nodes
+let addExpr = makeAst("+", [a, b]);        // Creates the AST for a + b
+let condition = makeAst("<", [x, 10]);     // Creates the AST for x < 10
+let ifExpr = makeAst("if", [condition,     // Creates a complete if expression
+													makeAst("*", [x, 2]),
+													x]);
 ```
 
 The `ast` annotation indicates that an expression should be treated as syntax rather than being evaluated.
@@ -399,6 +406,59 @@ println(is_complex_expr(quote(x^2)));  // Keeps the expression as quoted AST
 ```
 
 This capability allows for powerful hybrid approaches where you can manipulate expressions structurally while selectively evaluating parts of them.
+
+### Using makeAst() to Construct AST Nodes
+
+Orbit provides a convenient function for programmatically constructing AST nodes:
+
+```orbit
+// Create an AST node with a specific operator and arguments
+makeAst(op : string, args : [*]) -> ast
+```
+
+This function lets you build AST nodes dynamically, which is useful for code generation, transformations, and metaprogramming.
+
+#### Examples
+
+```orbit
+// Create basic arithmetic expressions
+let addExpr = makeAst("+", [x, y]);       // Equivalent to x + y
+let mulExpr = makeAst("*", [a, b]);       // Equivalent to a * b
+
+// Create function calls
+let fnCall = makeAst("call", [fnName, arg1, arg2]);  // Equivalent to fnName(arg1, arg2)
+
+// Create control flow structures
+let condition = makeAst("<", [x, 10]);
+let ifExpr = makeAst("if", [condition, thenBlock, elseBlock]);
+
+// Create arrays
+let arrayExpr = makeAst("Array", [1, 2, 3]);  // Equivalent to [1, 2, 3]
+
+// Chain operations
+let expr = makeAst("+", [
+	makeAst("*", [a, b]),
+	makeAst("/", [c, d])
+]); // Equivalent to (a * b) + (c / d)
+```
+
+#### Supported Operators
+
+The `makeAst` function supports all standard operators in Orbit, including:
+
+- Arithmetic: `"+"`, `"-"`, `"*"`, `"/"`, `"%"`, `"^"`
+- Comparison: `"="`, `"!="`, `"<"`, `"<="`, `">"`, `">="`
+- Logical: `"&&"`, `"||"`, `"!"`
+- Collections: `"Array"`, `"SetLiteral"`
+- Control flow: `"if"`, `"seq"`
+- Function calls: `"call"`
+
+For constructors and identifiers, you can create them directly:
+
+```orbit
+// Create a constructor call: Point(10, 20)
+let point = makeAst("call", [makeAst("Identifier", [], "Point"), 10, 20]);
+```
 
 ### Using gather() and scatter() for Expression Transformation
 
@@ -609,6 +669,7 @@ setField(obj : *, field : int, value : *) -> *  // Set field in constructor by i
 ## AST Manipulation
 ```orbit
 prettyOrbit(expr : ast) -> string   // Format an AST expression as readable code
+makeAst(op : string, args : [*]) -> ast  // Construct an AST node with the given operator and arguments
 ```
 
 ## Input/Output
