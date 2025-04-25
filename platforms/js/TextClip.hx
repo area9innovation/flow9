@@ -2212,17 +2212,45 @@ class TextClip extends NativeWidgetClip {
 	private function getSanitizedText(text : String) : String {
 		if (preventXSS) {
 			// We have to allow simple '<', '>' and tag-like (but without attributes) texts
-			// Regex explanation:
-			// <         : Matches opening bracket
-			// [^>]*     : Matches any chars except closing bracket
-			// [,// ]    : Matches comma, slash or space (attribute separators)
-			// [^<]      : Ensures next char is not another opening bracket
-			// [^>]*     : Matches any chars except closing bracket
-			// >         : Matches closing bracket
-			//
 			// This pattern identifies HTML tags with attributes (potential XSS vectors)
 			// while allowing simple tag-like structures without attributes
-			untyped __js__("text = /<[^>]*[,// ][^<][^>]*>/.test(text) ? DOMPurify.sanitize(text) : text");
+			// 
+			// XSS prevention using a multi-layered approach to balance security with usability:
+			//
+			// 1. Priority treatment for script tags:
+			//    - Immediately sanitizes any content containing <script> tags regardless of context
+			//    - No exceptions for script tags, even if they appear in math-like expressions
+			//
+			// 2. Secondary check for other dangerous elements:
+			//    - Detects other risky tags like iframe, svg, object, etc.
+			//    - Uses word boundaries to ensure complete tag names are matched
+			//
+			// 3. Structure-based detection:
+			//    - Identifies HTML-like structures that contain attributes or separators
+			//    - Catches tags with spaces, quotes, or commas that could contain XSS vectors
+			//    - Preserves simple tag-like structures without attributes (e.g., <test>)
+			//
+			// 4. Mathematical expression preservation:
+			//    - Special pattern excludes content that looks like math expressions
+			//    - Preserves expressions like 'x<y', 'a<=b', 'slider<value'
+			//    - Only applies to non-script content
+			untyped __js__("text = 
+				// Specific check for script tags - sanitize immediately without math check
+				/<\\/?script\\b/i.test(text) ? DOMPurify.sanitize(text) : 
+				
+				// For other cases, apply our standard rules with math check
+				(text && (
+					// Check for other dangerous tags
+					/<\\/?(?:iframe|object|embed|svg|math|link|style)\\b/i.test(text) ||
+					// Check for tag-like structures with attributes or separators
+					(/<(?!\\s|=|\\d)[a-zA-Z][^>]*>/.test(text) && 
+						(/<[^>]*[\\s,'\"]/i.test(text) || /<[a-zA-Z]+[^>]*\\s*,[^>]*>/i.test(text))
+					)
+				) && 
+				// Exclude math expressions (including <=, >=)
+				!/((?:\\w+|[\\d.]+)(?:\\s*)(?:<|<=|>=|>)(?:\\s*)(?:\\w+|[\\d.]+))[,\\s]/i.test(text)) ? 
+					DOMPurify.sanitize(text) : text
+			");
 		}
 		return text;
 	}

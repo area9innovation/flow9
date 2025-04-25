@@ -23,7 +23,7 @@ main() {
 	xssAttackStrings = [
 		// HTML tags with scripts are definitely sanitized
 		XSSTest("<script>alert('XSS')</script>", true, "Basic script tag attack"),
-		
+
 		// HTML tags with JavaScript event handlers are sanitized
 		XSSTest("<img src=\"javascript:alert('XSS')\">", true, "JavaScript in image src"),
 		XSSTest("<img src=x onerror=alert('XSS')>", true, "Event handler in img tag"),
@@ -72,11 +72,84 @@ main() {
 		XSSTest("<test, text>text<test>", true, "Multiple tag-like structures with separators inside"),
 		// Add more XSS attack vectors as needed
 		XSSTest("a<b <test>", false, "Less than and tag-like structure"),
+		XSSTest("a < b <test>", false, "Less than and tag-like structure (with spaces)"),
+		XSSTest("a <= b,c <test>", false, "Less than and tag-like structure (with spaces)"),
+		XSSTest("=oneof(show_blue_box,show_green_box) and oneof(show_blue_box AND slider<value, show_green_box AND 5<slider>)", false, "Less than and tag-like structure (with spaces)"),
 		XSSTest("<test> a>b", false, "Greater than and tag-like structure"),
+		XSSTest("<test> a > b", false, "Greater than and tag-like structure (with spaces)")
 	];
 
 	// Forward declaration for recursive function using correct syntax
 	runTest = ref nop1;
+
+	// Function to calculate aggregated results
+	calculateAggregatedResults = \results -> {
+		totalTests = length(results);
+		passedTests = fold(results, 0, \acc, result -> {
+			testCase = result.first;
+			sanitizedValue = result.second;
+			// Test passes if:
+			// - It should be sanitized AND it was changed
+			// - It should NOT be sanitized AND it wasn't changed
+			wasSanitized = testCase.input != sanitizedValue;
+			passesTest = testCase.shouldSanitize == wasSanitized;
+			if (passesTest) acc + 1 else acc;
+		});
+		passPercentage = if (totalTests > 0) i2d(passedTests * 100) / i2d(totalTests) else 0.0;
+		AggregatedResults(totalTests, passedTests, passPercentage);
+	};
+	
+	// Function to log test results to console as a single text
+	logTestResultsToConsole = \results -> {
+		aggResults = calculateAggregatedResults(results);
+		
+		// Build a complete report as a single string using fold operations
+		outputHeader = "\n===== XSS Prevention Test Results =====\n";
+		
+		// Create test result strings
+		testResultsText = foldi(results, "", \idx, acc, result -> {
+			testCase = result.first;
+			original = testCase.input;
+			sanitized = result.second;
+			description = testCase.description;
+			shouldSanitize = testCase.shouldSanitize;
+
+			wasSanitized = original != sanitized;
+			passesTest = shouldSanitize == wasSanitized;
+		
+			sanitizationResult = if (wasSanitized) "SANITIZED" else "UNCHANGED";
+			expectedResult = if (shouldSanitize) "SHOULD BE SANITIZED" else "SHOULD REMAIN UNCHANGED";
+			testResult = if (passesTest) "PASS" else "FAIL";
+			
+			testOutput = "Test #" + i2s(idx + 1) + ": " + description + "\n" +
+				"  Original: " + original + "\n" +
+				"  Sanitized: " + sanitized + "\n" +
+				"  Result: " + sanitizationResult + " | Expected: " + expectedResult + " | " + testResult + "\n";
+			
+			failedOutput = if (!passesTest) "  TEST FAILED!\n" else "";
+			
+			acc + testOutput + failedOutput + "\n";
+		});
+		
+		// Create summary string
+		totalTests = aggResults.totalTests;
+		passedTests = aggResults.passedTests;
+		passPercentage = aggResults.passPercentage;
+		
+		summaryOutput = "===== SUMMARY =====\n" +
+			"Total tests: " + i2s(totalTests) + "\n" +
+			"Tests passed: " + i2s(passedTests) + " (" + d2s(passPercentage) + "%)\n" +
+			"Tests failed: " + i2s(totalTests - passedTests) + " (" + d2s(100.0 - passPercentage) + "%)\n";
+		
+		resultOutput = if (passPercentage == 100.0) 
+			"ALL TESTS PASSED!\n" 
+			else 
+			"SOME TESTS FAILED!\n";
+		
+		// Combine all sections and print the complete report
+		finalOutput = outputHeader + testResultsText + summaryOutput + resultOutput;
+		println(finalOutput);
+	};
 
 	// Function to run a single test with timers
 	runTest := \testIndex -> {
@@ -107,6 +180,8 @@ main() {
 						^runTest(testIndex + 1);
 					} else {
 						next(testingInProgress, false);
+						// Log results to console when all tests are complete
+						logTestResultsToConsole(getValue(testResults));
 					}
 				});
 			});
@@ -120,23 +195,6 @@ main() {
 		next(testResults, []);
 		next(currentTestIndex, 0);
 		^runTest(0);
-	};
-
-	// Function to calculate aggregated results
-	calculateAggregatedResults = \results -> {
-		totalTests = length(results);
-		passedTests = fold(results, 0, \acc, result -> {
-			testCase = result.first;
-			sanitizedValue = result.second;
-			// Test passes if:
-			// - It should be sanitized AND it was changed
-			// - It should NOT be sanitized AND it wasn't changed
-			wasSanitized = testCase.input != sanitizedValue;
-			passesTest = testCase.shouldSanitize == wasSanitized;
-			if (passesTest) acc + 1 else acc;
-		});
-		passPercentage = if (totalTests > 0) i2d(passedTests * 100) / i2d(totalTests) else 0.0;
-		AggregatedResults(totalTests, passedTests, passPercentage);
 	};
 
 	// Build UI
