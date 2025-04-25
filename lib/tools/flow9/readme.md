@@ -56,6 +56,7 @@ Type inference is per-file, not global.
 - Use of non-exported name just gives error, instead of more precise
 - Calculate more precise type for "default:" by removing those that are matched?
 - Warn if type marked as polymorphic, but the polymorphic type is dead
+- foo() { x: Maybe<?> = None(); } should probably give an compile error. See makeSubTableDataTableMaterialNoDBC
 
 # Plan
 
