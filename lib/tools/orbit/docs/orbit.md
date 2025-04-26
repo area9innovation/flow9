@@ -47,6 +47,8 @@ let message = greeting + " World";
 
 CRITICAL: Unlike some languages, Orbit variables cannot be reassigned. Once a value is bound to a name, that binding cannot be changed.
 
+CRITICAL: Variables are lowercase. We reserve uppercase for constructors and types.
+
 Incorrect (will cause errors):
 ```orbit
 let counter = 0;
