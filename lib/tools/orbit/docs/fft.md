@@ -6,6 +6,14 @@ The Discrete Fourier Transform (DFT) and its fast implementation, the Fast Fouri
 
 The standard DFT has O(N²) complexity, while the FFT achieves O(N log N) when N is a power of 2. This exponential speedup is one of the most important algorithmic improvements in computing history. Rather than treating FFT as a separate algorithm, we show how it emerges naturally through the application of algebraic rewrites to the DFT when certain divisibility conditions are met.
 
+TODO:
+To get this implemented in a general way, we need:
+- Evaluation in the ograph world
+- Managing an enviornment in the graph, so we can lift fn(x) in sums out in specialized forms: dft(x,n) = sum(k, sum(j, x[j]*twiddle(n, j, k))). This has to be rewritten so the index is the single argument of the inner term, so we can spot the sum pattern. I.e. we have to extract a function of the j variable, and then an env with n, k and x. The same with the sum, where we have to lift x & n out to the env.
+- An env requires a binary tree in the ograph space?
+- Extraction rules for isolating a variable and putting the rest in the env
+- Inline back to normal code.
+
 ## Expressing DFT in Orbit
 
 We begin by expressing the DFT in Orbit's domain-specific language:
