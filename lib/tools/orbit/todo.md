@@ -7,6 +7,7 @@
 - Explain how we do not have a cost function anymore, but just canonical forms in each domain
 - Explain the gather approach in the paper for canonical in n log n time, rather than implicit n^2 from binary bubblesort
 - Equivalence between subscripts in unicode and _ and superscripts and ^
+- foo.1 for field access?
 - Figure out how we can do "lazy" rule saturation. If we ask for a CodeSize, JS domain of something, it should transitively find out how to convert Math expression to runnable, short JS code.
 - Hook in evaluation functions to implement interpretation of AST nodes directly in Orbit itself, potentially using rewriting
 - Support for pattern matching within sequences. We look at neighbours
