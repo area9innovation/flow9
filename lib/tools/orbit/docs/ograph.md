@@ -6,7 +6,7 @@ This document describes the O-Graph functionality available in the Orbit languag
 
 O-Graphs (Orbit Graphs) are a data structure that efficiently represents equivalence classes of expressions similar to E-graphs (Equivalence Graphs). They are used in term rewriting systems, theorem provers, and optimizing compilers to efficiently reason about equality between expressions.
 
-O-Graphs are an extension of E-Graphs. The main innovations are that each e-class can belong to other e-classes. The other main difference is that we let the root of an e-class be the representative of that e-class. Also, we allow multiple instances of the same e-node with different e-classes. These innovations combine to allow new capabilities as discussed further below.
+O-Graphs are a relative of E-Graphs. The main innovations are that each e-class can belong to other e-classes. The other main difference is that we let the root of an e-class be the representative of that e-class. These innovations combine to allow new capabilities as discussed further below.
 
 In Orbit, O-Graphs are accessible through a set of runtime functions that allow you to:
 
@@ -14,6 +14,8 @@ In Orbit, O-Graphs are accessible through a set of runtime functions that allow 
 2. Add expressions and establish equivalences
 3. Associate expressions with domains
 4. Extract and visualize the graph structure
+
+These are packaged in a nice rewriting package in the `lib/rewrite.orb` file. TODO: Rewrite only implements =>. Not the other operators yet.
 
 ## Available Runtime Functions
 
@@ -64,7 +66,7 @@ let expr = extractOGraph(g, exprId);
   - Greatly improves efficiency by avoiding conversion between OGraph and OrMath_expr representations.
 
 - **Usage Example:**
-  ```orbit
+```orbit
 	let g = makeOGraph("myGraph");
 
 	// Add base expressions
@@ -99,7 +101,7 @@ let expr = extractOGraph(g, exprId);
   The node ID (as integer) of a node in the graph that is *structurally equal* to `expr`, or -1 if no such node exists. If the term was just added, this will match the inserted node's ID.
 
 - **Usage Example:**
-  ```orbit
+```orbit
 	let g = makeOGraph("myGraph");
 	let x_id = addOGraph(g, quote(foo(bar, 7)));
 	let found = findOGraphId(g, quote(foo(bar, 7)));   // returns x_id
@@ -164,7 +166,7 @@ addOGraph(g, (a + b) * c);
 
 // Find all expressions matching the pattern x + y
 // Note: bindings parameter is explicitly typed as ast
-let matchCount = matchOGraphPattern(g, quote(x + y), \(bindings : ast, eclassId) -> {
+let matchCount = matchOGraphPattern(g, quote(x + y), \(bindings : ast, eclassId) -> (
 	// For each match, print the bindings and the e-class ID
 	let xId = bindings["x"]; // eclass ID for the expression matched by x
 	let yId = bindings["y"]; // eclass ID for the expression matched by y
@@ -178,7 +180,7 @@ let matchCount = matchOGraphPattern(g, quote(x + y), \(bindings : ast, eclassId)
 
 	// Merge, making the new form the representative
 	mergeOGraphNodes(g, resultId, eclassId);
-});
+));
 
 println("Found " + i2s(matchCount) + " matches");
 ```
@@ -188,6 +190,7 @@ println("Found " + i2s(matchCount) + " matches");
 #### `substituteWithBindings(expr: expression, bindings: ast) -> expression`
 
 Applies variable substitutions to an expression using the provided bindings map (variable name -> AST/eclass ID), but does **not** evaluate the result. This is useful for template-based code generation or symbolic manipulation where you want to substitute variables without triggering evaluation. It performs a direct syntactic substitution.
+This is normally not used, since we can use `addOGraphWithSub` to do this in the graph directly.
 
 ```orbit
 // Pattern match to extract components
@@ -201,8 +204,6 @@ let template = quote(2 * a - b);
 let result_ast = substituteWithBindings(template, bindings);
 println("Result AST: " + prettyOrbit(result_ast)); // Result AST: 2 * 5 - 10
 ```
-
-**IMPORTANT**: The `bindings` parameter must be marked as `ast`.
 
 #### `unquote(expr: expression, bindings: ast) -> expression`
 
@@ -222,7 +223,7 @@ let bindings = [ Pair("multiplier", 2) ];
 // Process the template
 let result = unquote(template, bindings);
 println("Result: " + prettyOrbit(result));
-// Result: { let x = 3 + 4; let y = 14; [x, y, 21, 2] }
+// Result: ( let x = 3 + 4; let y = 14; [x, y, 21, 2] )
 // Note: x inside eval(x+y) also uses the binding if available, otherwise uses the let-bound x.
 // Here, the outer let x = 3+4 doesn't create a binding available to eval(x+y),
 // so it likely uses a globally bound x or fails if x isn't bound in 'bindings'.
@@ -246,31 +247,11 @@ The pattern matcher enforces semantic equivalence for repeated variables. Two no
 
 #### `getFileContent(path: string) -> string`
 
-**Reads the entire content of a file as a string.**
-
-- **Parameters:**
-  - `path`: The path to the file to read.
-
-- **Returns:**  
-  The entire content of the file as a string.
-
-- **Notes:**
-  - Returns an empty string if the file does not exist or cannot be read.
+**Reads the entire content of a file as a string.** Returns an empty string if the file does not exist or cannot be read.
 
 #### `setFileContent(path: string, content: string) -> bool`
 
-**Writes content to a file, creating the file if it doesn't exist.**
-
-- **Parameters:**
-  - `path`: The path to the file to write.
-  - `content`: The string content to write to the file.
-
-- **Returns:**  
-  Boolean indicating success (true) or failure (false).
-
-- **Notes:**
-  - Overwrites the file if it already exists.
-  - Creates parent directories if they don't exist.
+**Writes content to a file, creating the file if it doesn't exist.** Boolean indicating success (true) or failure (false). Overwrites the file if it already exists.
 
 ### Program Environment & Code Manipulation
 
@@ -278,13 +259,8 @@ The pattern matcher enforces semantic equivalence for repeated variables. Two no
 
 **Retrieves command line arguments passed to the Orbit program.**
 
-- **Parameters:** None
-
-- **Returns:**  
-  An array of strings containing the command line arguments.
-
 - **Usage Example:**
-  ```orbit
+```orbit
 	// Process command line arguments
 	let args = getCommandLineArgs();
 	println("Command line arguments: " + args);
@@ -293,16 +269,11 @@ The pattern matcher enforces semantic equivalence for repeated variables. Two no
 	let verbose = contains(args, "--verbose");
 	let help = contains(args, "--help");
 
-	if (help) {
+	if (help) then
 		printHelp();
-	} else {
-		// Process remaining arguments
-		for (arg in args) {
-			if (arg != "--verbose" && !startsWith(arg, "--")) {
-				processFile(arg);
-			}
-		}
-	}
+	else (
+		...
+	)
 ```
 
 - **Notes:**
@@ -328,15 +299,15 @@ The pattern matcher enforces semantic equivalence for repeated variables. Two no
   - Reports syntax errors in the error message component of the result.
 
 - **Usage Example:**
-  ```orbit
+```orbit
 	// Parse code dynamically
 	let codeToParse = "1 + 2 * 3";
 	let parseResult = parseOrbit(codeToParse);
 
 	// Check for parsing errors
-	if (parseResult.second != "") {
+	if (parseResult.second != "") then (
 		println("Parse error: " + parseResult.second);
-	} else {
+	) else (
 		// Successfully parsed - now can evaluate, transform, or analyze
 		let ast = parseResult.first;
 		println("AST: " + prettyOrbit(ast));
@@ -344,35 +315,8 @@ The pattern matcher enforces semantic equivalence for repeated variables. Two no
 		// Evaluate the parsed expression
 		let result = eval(ast);
 		println("Result: " + result);  // Prints 7
-	}
+	)
 ```
-
-- **Advanced Example - Dynamic Code Generation:**
-  ```orbit
-	// Generate code dynamically
-	fn generateFunction(name, argNames, body) {
-		let functionCode = "fn " + name + "(" + strJoin(argNames, ", ") + ") = (\n";
-		functionCode = functionCode + "  " + body + "\n)";
-
-		// Parse the generated code
-		let parsed = parseOrbit(functionCode);
-		if (parsed.second != "") {
-			println("Error generating function: " + parsed.second);
-			None();
-		} else {
-			Some(parsed.first);
-		}
-	}
-
-	// Use the generator
-	let squareFn = generateFunction("square", ["x"], "x * x");
-```
-
-- **Notes:**
-  - Enables meta-programming capabilities within Orbit programs.
-  - Useful for code generation, domain-specific languages, and dynamic evaluation.
-  - Can be combined with `eval` to implement interpreters or compilers in Orbit itself.
-  - Makes it possible to load and parse Orbit code at runtime from external sources.
 
 ### AST Introspection and Manipulation
 
@@ -387,7 +331,7 @@ The pattern matcher enforces semantic equivalence for repeated variables. Two no
   A string representing the canonical name of the expression's node type (e.g., "Int", "Variable", "+", "call", etc.).
 
 - **Usage Example:**
-  ```orbit
+```orbit
 	// Check the type of an expression
 	let x = 42;
 	let name = astname(x);  // Returns "Int"
@@ -434,92 +378,6 @@ Generates a GraphViz DOT format representation of the O-Graph, which can be visu
 let dotCode = ograph2dot(g);
 // Save dotCode to a file (e.g., graph.dot)
 // Visualize using: dot -Tpng graph.dot -o graph.png
-```
-
-## Example: Commutative Property
-
-Here's a complete example showing how to use O-Graphs to represent the commutative property of addition (`a + b = b + a`):
-
-```orbit
-// Create a new graph
-let g = makeOGraph("commutative_example");
-
-// Add the expressions a + b and b + a
-let expr1_node = addOGraph(g, a + b);
-let expr2_node = addOGraph(g, b + a);
-
-// Add domain information: mark the '+' operation as having S₂ symmetry
-// Assuming '+' operator itself can be represented/found
-let plus_op_node = findOGraphId(g, quote(+)); // Need a way to represent operators
-let s2_domain_node = addOGraph(g, quote(S₂));
-if (plus_op_node != -1 && s2_domain_node != -1) {
-	addDomainToNode(g, plus_op_node, s2_domain_node);
-}
-
-// Find the canonical form according to S₂ (sorting) rule
-let canonical_form = if compare(a, b) <= 0 then quote(a + b) else quote(b + a);
-let canonical_id = addOGraph(g, canonical_form);
-
-// Establish that both original expressions are equivalent to the canonical form
-// Make the canonical form the representative root.
-mergeOGraphNodes(g, canonical_id, expr1_node);
-mergeOGraphNodes(g, canonical_id, expr2_node);
-
-// Add a property domain to the canonical class
-let algebra_domain_node = addOGraph(g, quote(Algebra));
-addDomainToNode(g, canonical_id, algebra_domain_node);
-
-// Generate DOT output for visualization
-let dotCode = ograph2dot(g);
-println(dotCode); // Visualize to see expr1 and expr2 merged under canonical_id
-```
-
-## Theoretical Foundation: Domains and Symmetry Groups
-
-At the heart of our system lies the insight that computational domains themselves—whether programming languages, algebraic structures, or formal systems—should be first-class citizens in the rewriting process. In the O-Graph, such structures are represented simply as terms within the language. The intention is for users to structure these domain terms into a hierarchy, ideally forming a partial order or lattice (e.g., `Integer ⊂ Real ⊂ Complex`). This hierarchical structure allows the system to apply rewrite rules and reasoning defined at more abstract domain levels (like `Ring`) to expressions belonging to more specific sub-domains (like `Integer`), thereby maintaining the system's expressive power while enabling high-level optimization and transformation strategies.
-
-By representing domains and structures explicitly within our O-Graph structure, we enable:
-
-1.  **Cross-Domain Reasoning**: Values can exist simultaneously in multiple domains through domain annotations.
-2.  **Hierarchical Rule Application**: Rules defined for parent domains apply to child domains.
-3.  **Canonical Representations**: Each domain can leverage its natural symmetry group for canonicalization.
-4.  **Deep Algebraic Structures**: The system automatically discovers and exploits algebraic properties.
-
-For example, addition exhibits symmetry group S₂ (the symmetric group of order 2), which captures commutativity. When we encounter expressions like `a + b` in any language associated with a domain where addition is commutative (like `Real` or `Integer`), the system can automatically canonicalize to a standard form based on this algebraic property, thus avoiding redundant representations.
-
-This approach can be clearly seen in rules that explicitly assign symmetry properties:
-
-```orbit
-// Define symmetry properties using domain annotations
-a : Real + b : Real ⊢ + : S₂;  // The + operation belongs to the S₂ symmetry group
-a : Real * b : Real ⊢ * : S₂;  // The * operation belongs to the S₂ symmetry group
-
-// Rotation operations have cyclic group structure
-rotate : C₄;  // Rotation operation belongs to cyclic group of order 4
-rotate(rotate(rotate(rotate(arr, 1), 1), 1), 1) => arr;  // Four rotations is identity
-```
-
-## Native OGraph Integration
-
-Orbit provides a native interface to the OGraph system, enabling direct manipulation of abstract syntax trees and powerful rewriting capabilities. The core API is centered around the `orbit` function:
-
-```orbit
-// Main function: Takes rewrite rules, cost function, and expression to optimize
-fn orbit(rules : ast, cost : (expr : ast) -> double, expr : ast) : ast = (
-	// Create a new ograph
-	let graph = makeOGraph();
-
-	// Add the expression to optimize to the graph
-	let nodeId = addOGraph(graph, expr);
-
-	// Apply all rewrite rules to saturation
-	let saturated = applyRulesToSaturation(graph, rules);
-
-	// Extract the optimal expression according to the cost function
-	let optimized = extractOptimal(saturated, cost);
-
-	optimized
-)
 ```
 
 ## Orbit Rewriting System: Operator Semantics
@@ -626,63 +484,6 @@ Python.List ⊂ Python.Iterable
 ```
 
 Rules defined at more abstract levels automatically apply to concrete instances. For example, commutativity defined for `AbelianGroup` applies to integers in Python, allowing the system to apply `a + b ⇔ b + a` without explicitly defining this rule for Python integers.
-
-## Example Usage: Algebraic Simplification
-
-Here's how you might use this API to optimize mathematical expressions:
-
-```orbit
-fn quote(e : ast) = e;
-
-// Define some rewrite rules for algebraic simplification
-let algebraRules = quote(
-	// Commutativity with domain constraints
-	a : Real + b : Real <=> b : Real + a : Real;
-
-	// Identity: a + 0 => a
-	a + 0 => a;
-
-	// Identity: a * 1 => a
-	a * 1 => a;
-
-	// Zero: a * 0 => 0
-	a * 0 => 0;
-
-	// Distribution: a * (b + c) => (a * b) + (a * c)
-	a * (b + c) <=> (a * b) + (a * c);
-
-	// Combine like terms: a * c + b * c => (a + b) * c
-	a * c + b * c => (a + b) * c;
-);
-
-// Define a cost function that prefers smaller expressions
-fn expressionCost(expr : ast) -> double = (
-	expr is (
-		a + b => 1.0 + expressionCost(a) + expressionCost(b);
-		a * b => 1.0 + expressionCost(a) + expressionCost(b);
-		a - b => 1.0 + expressionCost(a) + expressionCost(b);
-		a / b => 1.0 + expressionCost(a) + expressionCost(b);
-		a ^ b => 1.0 + expressionCost(a) + expressionCost(b);
-		-a => 1.0 + expressionCost(a);
-		_ => 1.0;  // Base case: literals, variables
-	)
-)
-
-// Optimize an expression
-fn main() = (
-	// Expression: (2 * x + 3 * x) * (y + z) - (0 * w)
-	let expr = quote((2 * x + 3 * x) * (y + z) - (0 * w));
-
-	println("Original: " + prettyOrbit(expr));
-
-	// Apply optimization
-	let optimized = orbit(algebraRules, expressionCost, expr);
-
-	println("Optimized: " + prettyOrbit(optimized));
-
-	// Expected output: 5 * x * (y + z)
-)
-```
 
 ## Example: Polynomial Equation Solving with Group Theory
 
@@ -793,26 +594,6 @@ When this code is executed, it would demonstrate how the Orbit system can solve 
    - Final result: `{1 + sqrt(2), 1 - sqrt(2)}`
 
 The system would use domain annotations throughout this process to track what kinds of mathematical operations are valid and to direct the simplification strategy.
-
-## Example: Cross-Domain Transformations
-
-Domain annotations enable transformations between different languages or domains:
-
-```orbit
-let crossDomainRules = quote(
-	// JavaScript to Python transformation
-	array.map(f).filter(p) : JavaScript => [f(x) for x in array if p(x)] : Python;
-
-	// Math to code transformation
-	sum(i, 0, n, f(i)) : Math => fold(\acc x -> acc + f(x), 0, range(0, n)) : Code;
-
-	// Set theory to list operations
-	union(A, B) : SetTheory => distinct(A + B) : Lists;
-
-	// Domain-specific optimizations
-	a : Real * (b : Real + c : Real) : Distributive => (a : Real * b : Real) + (a : Real * c : Real);
-);
-```
 
 **For detailed information about more examples of group notation, and canonicalization constructs, please refer to the [canonical.md](canonical.md) document**.
 
