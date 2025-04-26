@@ -111,7 +111,67 @@ decomposeOrbit(expr : OrMath_expr) -> Pair<string, Pair<[OrMath_expr], OrbitValu
 		OrSetComprehension(math_exprs, math_expr): Pair("SetComprehension", Pair([math_expr], OrbitString("math_exprs")));
 		OrTensorProduct(math_expr1, math_expr2): Pair("TensorProduct", Pair([math_expr1, math_expr2], OrbitNone()));
 		OrTypeVar(string1): Pair("TypeVar", Pair([], OrbitString(string1)));
-		OrLambda(env_bindings, id_types, math_expr): todo();
+		OrLambda(env_bindings, id_types, math_expr): {
+			// Convert environment bindings to OrMath_expr nodes
+			env_exprs = map(env_bindings, \binding -> 
+				OrFunction(OrIdentifier("EnvBinding"), [OrString(binding.id), binding.math_expr])
+			);
+			
+			// Convert id_types to OrMath_expr using our helper function
+			id_type_exprs = map(id_types, idTypeToMathExpr);
+			
+			// Create Arrays to hold each collection
+			env_array = OrArray(env_exprs);
+			args_array = OrArray(id_type_exprs);
+			
+			// Return the three components as children: environment array, args array, and the body
+			Pair("Lambda", Pair([env_array, args_array, math_expr], OrbitNone()));
+		};
+	}
+}
+
+// Helper function to convert an OrIdType to an OrMath_expr
+idTypeToMathExpr(idType : OrIdType) -> OrMath_expr {
+	// Create a structure that represents the id and type annotations
+	// For now, we'll use an identifier with a special prefix to mark it as an IdType
+	OrFunction(
+		OrIdentifier("IdType"),
+		[
+			OrString(idType.id),
+			// Convert type annotations to an array
+			OrArray(map(idType.type_annotations, \t -> t.math_expr))
+		]
+	);
+}
+
+// Helper function to convert an OrMath_expr to an OrIdType
+mathExprToIdType(expr : OrMath_expr) -> Maybe<OrIdType> {
+	switch (expr) {
+		OrFunction(fn, args): {
+			switch (fn) {
+				OrIdentifier(fnName): {
+					if (fnName == "IdType" && length(args) >= 2) {
+						// Extract the id
+						id = switch (args[0]) {
+							OrString(s): s;
+							default: "unknown";
+						};
+						
+						// Extract type annotations
+						typeAnnotations = switch (args[1]) {
+							OrArray(annotations): map(annotations, \a -> OrType(a));
+							default: [];
+						};
+						
+						Some(OrIdType(id, typeAnnotations));
+					} else {
+						None();
+					}
+				}
+				default: None();
+			}
+		}
+		default: None();
 	}
 }
 
@@ -644,6 +704,51 @@ constructOrbit(op : string, children : [OrMath_expr], value : OrbitValue) -> OrM
 				println("Error: TypeVar requires a string value");
 				OrTypeVar("");
 			}
+		}
+	}
+	else if (op == "Lambda") {
+		if (length(children) >= 3) {
+			// Extract environment bindings from first array
+			env_bindings = switch (children[0]) {
+				OrArray(items): filtermap(items, \item -> {
+					switch (item) {
+						OrFunction(fn, args): {
+							switch (fn) {
+								OrIdentifier(fnName): {
+									if (fnName == "EnvBinding" && length(args) >= 2) {
+										id = switch (args[0]) {
+											OrString(s): s;
+											default: "unknown";
+										};
+										expr = args[1];
+										Some(OrEnvBinding(id, expr));
+									} else {
+										None();
+									}
+								}
+								default: None();
+							}
+						}
+						default: None();
+					}
+				});
+				default: [];
+			};
+			
+			// Extract id_types from second array
+			id_types = switch (children[1]) {
+				OrArray(items): filtermap(items, mathExprToIdType);
+				default: [OrIdType("arg", [])];
+			};
+			
+			// The third child is the lambda body
+			body = children[2];
+			
+			// Construct the Lambda
+			OrLambda(env_bindings, id_types, body);
+		} else {
+			println("Error: Lambda operation requires 3 children: environment, arguments, and body");
+			OrLambda([], [OrIdType("arg", [])], if (length(children) > 0) children[0] else OrInt(0));
 		}
 	}
 	// For unknown operators, return a default value or string representation
