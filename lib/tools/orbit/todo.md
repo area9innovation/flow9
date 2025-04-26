@@ -1,4 +1,5 @@
 # Orbit TODO List
+- Introduce Scheme-like AST syntax for more clean separation between AST and Orbit and pattern matching
 - Glex rules for polynomial rings
 - Relational algebra and optimizations of that
 - Reuse nodes with add
