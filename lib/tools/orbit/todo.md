@@ -1,8 +1,8 @@
 # Orbit TODO List
 - Port the entire thing to run in our scheme
-  - Change ograph to use SExpr
-  - Convert OrMath_expr to/from SExpr
+  ✅ Convert OrMath_expr to/from SExpr
   - Migrate to eval using SExpr
+  - Change ograph to use SExpr
   - Implement SExpr eval using ograph
 
 - Glex rules for polynomial rings
