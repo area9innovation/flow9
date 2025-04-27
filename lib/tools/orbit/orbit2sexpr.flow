@@ -1,0 +1,115 @@
+import tools/orbit/orbit_types;
+import tools/orbit/orbit_decompose;
+import tools/orbit/orbit_gather;
+import tools/orbit/sexpr/sexpr_types;
+import ds/tree;
+import string;
+
+export {
+	// Converts an OrMath_expr to the equivalent Sexpr
+	// Performs associativity collapsing for associative operators
+	orbit2sexpr(expr : OrMath_expr) -> Sexpr;
+}
+
+// Main conversion function
+orbit2sexpr(expr : OrMath_expr) -> Sexpr {
+	// Decompose the expression to get its operator and children
+	decomposed = decomposeOrbit(expr);
+	op = decomposed.first;
+	children = decomposed.second.first;
+	value = decomposed.second.second;
+	
+	// Handle primitives first
+	if (op == "Int") {
+		switch (value) { 
+			OrbitInt(i): SSInt(i);
+			default: SSInt(0);
+		}
+	} else if (op == "Double") {
+		switch (value) {
+			OrbitDouble(d): SSDouble(d);
+			default: SSDouble(0.0);
+		}
+	} else if (op == "String") {
+		switch (value) {
+			OrbitString(s): SSString(s);
+			default: SSString("");
+		}
+	} else if (op == "Bool") {
+		switch (value) {
+			OrbitBool(b): SSBool(b);
+			default: SSBool(false);
+		}
+	} else if (op == "Identifier") {
+		switch (value) {
+			OrbitString(id): SSVariable(id);
+			default: SSVariable("unknown");
+		}
+	} else if (op == "UId") {
+		switch (value) {
+			OrbitString(id): SSVariable(id); // Treat UIDs as variables in Sexpr
+			default: SSVariable("unknown");
+		}
+	} else if (op == "GreekLetter") {
+		switch (value) {
+			OrbitString(letter): SSVariable(letter); // Treat Greek letters as variables
+			default: SSVariable("alpha");
+		}
+	} else if (op == "OperatorSymbol") {
+		switch (value) {
+			OrbitString(symbol): SSOperator(symbol);
+			default: SSOperator("+");
+		}
+	} else if (op == "Array") {
+		// Convert array to list
+		SSList(map(children, orbit2sexpr));
+	} else if (isAssociativeOp(op) && length(children) == 2) {
+		// Special handling for associative operators
+		// We'll flatten them into a list like (op arg1 arg2 arg3...)
+		convertedChildren = gatherAssociativeOp(expr, op);
+		SSList(concat([SSOperator(op)], convertedChildren));
+	} else if (length(children) > 0) {
+		// Handle other expressions with children
+		convertedChildren = map(children, orbit2sexpr);
+		SSList(concat([SSOperator(op)], convertedChildren));
+	} else {
+		// For unknown or unsupported types, just convert to a symbol
+		SSVariable(op);
+	}
+}
+
+// Check if an operator is associative
+isAssociativeOp(op : string) -> bool {
+	op == "+" || op == "*" || op == "&&" || op == "||" || op == ";" || 
+	op == "Seq" || op == "∘" || op == "Compose" || // Composition
+	op == "∪" || op == "Union" || // Set union
+	op == "∩" || op == "Intersection" || // Set intersection
+	op == "×" || op == "DirectProduct" || // Direct product
+	op == "⊗" || op == "TensorProduct"; // Tensor product
+}
+
+// Gather all operands for an associative operation
+gatherAssociativeOp(expr : OrMath_expr, targetOp : string) -> [Sexpr] {
+	// Recursively flatten the tree for this operation
+	gatherAssociativeOpHelper(expr, targetOp, []);
+}
+
+// Helper function to recursively gather operands
+gatherAssociativeOpHelper(expr : OrMath_expr, targetOp : string, acc : [Sexpr]) -> [Sexpr] {
+	decomposed = decomposeOrbit(expr);
+	op = decomposed.first;
+	children = decomposed.second.first;
+	
+	if (op == targetOp && length(children) == 2) {
+		// This is an instance of the target associative operation
+		// Recursively process the left and right children
+		leftAcc = gatherAssociativeOpHelper(children[0], targetOp, acc);
+		// Continue the recursion with the right operand and return its result
+		gatherAssociativeOpHelper(children[1], targetOp, leftAcc);
+	} else {
+		// This is not the target operation or doesn't have 2 children
+		// Convert this expression and add it to the accumulator
+		arrayPush(acc, orbit2sexpr(expr));
+		acc;
+	}
+}
