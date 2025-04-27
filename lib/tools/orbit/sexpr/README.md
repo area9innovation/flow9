@@ -161,10 +161,19 @@ The language includes an extensive set of built-in functions imported from the O
 ### I/O Operations
 
 - Basic I/O: `print`
+- File operations: `getFileContent`, `setFileContent`
 
 ### Logic Operations
 
 - Boolean logic: `not`, `&&` (short-circuit AND), `||` (short-circuit OR)
+
+### Utility Functions
+
+- Reflection: `astname` (returns the type of an expression), `varname` (extracts name from variables/constructors)
+- Formatting: `prettySexpr` (formats S-expressions as readable strings) 
+- Parsing: `parseSexpr` (parses S-expressions from strings)
+- Command line: `getCommandLineArgs` (returns command-line arguments as a list)
+- Unique IDs: `uid` (generates unique IDs with prefixes)
 
 ## Implementation Details
 
