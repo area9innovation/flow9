@@ -195,7 +195,9 @@ These representations are connected through a bidirectional conversion pipeline 
 | `sexpr2orbit(SExpr)` | Convert S-expression to Orbit math AST |
 | `orbit2sexpr(OrbitMath)` | Convert Orbit math AST to S-expression |
 
-This pipeline allows us to provide a natural math-like syntax to users while leveraging the power of S-expressions for pattern matching and term manipulation internally. 
+This pipeline allows us to provide a natural math-like syntax to users while leveraging the power of S-expressions for pattern matching and term manipulation internally,
+
+TODO: Explain how we gather/scatter associative operators in and out of Math notation.
 
 ### 3.3 Syntax Transformation
 
