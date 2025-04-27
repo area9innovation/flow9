@@ -1,5 +1,10 @@
 # Orbit TODO List
-- Introduce Scheme-like AST syntax for more clean separation between AST and Orbit and pattern matching
+- Port the entire thing to run in our scheme
+  - Change ograph to use SExpr
+  - Convert OrMath_expr to/from SExpr
+  - Migrate to eval using SExpr
+  - Implement SExpr eval using ograph
+
 - Glex rules for polynomial rings
 - Relational algebra and optimizations of that
 - Reuse nodes with add
