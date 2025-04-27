@@ -2,7 +2,7 @@
 
 ## Abstract
 
-Canonical forms are indispensable for equality reasoning, pattern matching, and optimisation. We present Orbit, an extension of e-graphs that attaches domain annotations and group-theoretic metadata to e-classes. Exploiting the action of symmetry groups (Sₙ, Cₙ, Dₙ, …) on expressions we derive canonical representatives, transfer rewrite rules across domains, and obtain exponential reductions in search space. The framework unifies canonicalisation strategies from bit-vector algebra to differential calculus within a single mathematical language.
+Canonical forms are indispensable for equality reasoning, pattern matching, and optimisation. We present Orbit, an extension of e-graphs that attaches domain annotations and group-theoretic metadata to e-classes. Exploiting the action of symmetry groups (Sₙ, Cₙ, Dₙ, …) on expressions we derive canonical representatives, transfer rewrite rules across domains, and obtain exponential reductions in search space. The framework unifies canonicalisation strategies from bit-vector algebra to differential calculus within a single mathematical language. Our implementation builds on a minimal Scheme-like foundation, combining natural mathematical syntax with powerful functional programming abstractions.
 
 <!-- TODO: Add a concrete performance improvement or example domain to immediately convey practical benefits -->
 
@@ -45,7 +45,7 @@ This approach automatically collapses the two forms into a single representative
 
 A canonical representative collapses each orbit to one concrete term, so a pattern need be matched once per e-class rather than once per variant. Under Sₙ symmetry the raw permutation count grows as n!, yet canonical sorting yields a single ordered tuple; for nested commutative–associative expressions the savings compound exponentially. Formally, given an expression set E and symmetry group G acting on it, naïve exploration touches O(|E|·|G|) nodes, whereas canonicalisation limits the search to O(|E|).
 
-*See §4.3 for the formal treatment of group actions and §4.4 for correctness proofs and complexity analysis.*
+*See §5.3 for the formal treatment of group actions and §5.4 for correctness proofs and complexity analysis.*
 
 ## 2. Rewriting Rule Syntax and Domain Annotations
 
@@ -134,7 +134,7 @@ A rule defined for a higher-level structure applies automatically to any subdoma
 a + b : AbelianGroup ↔ b + a : AbelianGroup : S₂
 ```
 
-These general rules are then automatically applicable to Integers, Reals, BitVectors, etc., wherever they are declared as subdomains of `Semigroup` or `AbelianGroup`. This hierarchical approach significantly reduces rule duplication. The group-theoretic canonicalization (e.g., `: S₂` for commutativity) ensures consistent representation regardless of the specific domain. Section 6 provides further examples demonstrating this cross-domain rule application.
+These general rules are then automatically applicable to Integers, Reals, BitVectors, etc., wherever they are declared as subdomains of `Semigroup` or `AbelianGroup`. This hierarchical approach significantly reduces rule duplication. The group-theoretic canonicalization (e.g., `: S₂` for commutativity) ensures consistent representation regardless of the specific domain. Section 7 provides further examples demonstrating this cross-domain rule application.
 
 ### 2.4 Negative domain guard (!: D)
 
@@ -159,7 +159,93 @@ a * (b + c) : Ring !: Expanded → (a * b) + (a * c) : Ring : Expanded
 x² + 2*x + 1 : Algebra → (x + 1)² : Factored : Algebra
 ```
 
-## 3. O-graph Data Structure vs. Traditional E-Graphs
+## 3. Implementation Architecture
+
+The implementation of Orbit follows a multi-layered approach with a functional core. This section explains the architectural design and representation choices that underpin the system.
+
+### 3.1 Scheme-based Foundation
+
+Orbit's implementation begins with a minimal Scheme-like language that serves as the system's functional core. This approach provides several key advantages:
+
+1. **Functional foundation**: We leverage the expressive power of a Lisp-like language, including higher-order functions, lexical scope, and recursion.
+2. **Pattern matching**: Native support for symbolic pattern matching forms the basis of our rewrite system.
+3. **Quasiquotation**: We use Scheme's powerful quasiquotation machinery (template expressions with unquoted components) to efficiently construct and manipulate ASTs.
+4. **Minimalism**: The core language is intentionally small, focusing on essential functional programming features.
+
+This Scheme-like layer provides a clean, functional foundation that simplifies the implementation of the rest of the system while naturally supporting symbolic computation patterns central to term rewriting.
+
+### 3.2 Representation Pipeline
+
+Orbit maintains multiple coordinated representations that allow for both natural syntax and efficient computation:
+
+```
+Orbit Math Notation ⟷ S-Expression AST ⟷ O-Graph Structure
+```
+
+These representations are connected through a bidirectional conversion pipeline with the following operations:
+
+| Operation | Description |
+|-----------|-------------|
+| `parseSExpr(string)` | Parse S-expression string to AST |
+| `prettySExpr(SExpr)` | Render AST as S-expression string |
+| `addOGraph(SExpr)` | Add S-expression to O-Graph, returns node ID |
+| `extractOGraph(int)` | Extract S-expression from O-Graph node |
+| `parseOrbit(string)` | Parse Orbit math notation to AST |
+| `prettyOrbit(OrbitMath)` | Render AST as Orbit math notation |
+| `sexpr2orbit(SExpr)` | Convert S-expression to Orbit math AST |
+| `orbit2sexpr(OrbitMath)` | Convert Orbit math AST to S-expression |
+
+This pipeline allows us to provide a natural math-like syntax to users while leveraging the power of S-expressions for pattern matching and term manipulation internally. 
+
+### 3.3 Syntax Transformation
+
+A key insight in our implementation is that Orbit's mathematical notation can be systematically translated to and from S-expressions. For example, the Orbit expression:
+
+```orbit
+(a + b) : S₂ => b + a if b < a
+```
+
+Is internally represented as the S-expression:
+
+```scheme
+(rule
+	(annotate (+ a b) S₂)
+	(+ b a)
+	(< b a))
+```
+
+This translation preserves the semantics while making the expression amenable to manipulation using standard functional programming techniques. The rule application logic can be elegantly expressed using pattern matching on these S-expressions.
+
+### 3.4 Term Rewriting via Pattern Matching
+
+Pattern matching and quasiquotation from the Scheme foundation provide powerful mechanisms for implementing term rewriting. A simple rewrite rule application might look like:
+
+```scheme
+(define (apply-rule expr)
+	(match expr
+	; Pattern for a commutative operation with S₂ symmetry
+	(annotate (+ ?a ?b) S₂) (if (< b a)
+							   `(+ ,b ,a)
+							   expr)
+	; Default case: return unchanged
+	_ expr))
+```
+
+This approach allows complex rewrite rules to be expressed concisely while handling the necessary pattern variables and conditions.
+
+### 3.5 O-Graph Integration
+
+The final layer in our architecture is the O-Graph, which stores the canonicalized terms and their relationships. By first converting Orbit expressions to S-expressions, we can easily integrate with the O-Graph structure:
+
+1. Parse Orbit math notation to an AST
+2. Convert to S-expression representation
+3. Apply the S-expression to the O-Graph
+4. Perform canonicalization based on group-theoretic properties
+5. Extract results and convert back to Orbit notation as needed
+
+This layered approach gives us the best of both worlds: a natural mathematical syntax for human interaction and a powerful, functional core for term manipulation and rewriting.
+
+## 4. O-graph Data Structure vs. Traditional E-Graphs
 
 <!-- TODO: Add a brief illustrative example showing the step-by-step transformation from a traditional e-graph to an O-graph, highlighting what changes and what benefits emerge from domain and group annotations -->
 
@@ -183,7 +269,7 @@ eclass42 = {
 }
 ```
 
-## 4. Group-Theoretic Foundations
+## 5. Group-Theoretic Foundations
 
 ### 4.1 Core Symmetry Groups
 
@@ -273,6 +359,8 @@ In addition to full sequence matching, the array-based representation enables ef
 This pattern matching is particularly powerful for rewrite rules, as substitutions can be applied to precisely the matched subsequence without affecting the rest of the array. The implementation preserves associativity properties while dramatically improving rule application efficiency.
 
 **Example**: A rule matching `x+y+z` where `y` is a constant can efficiently find all such patterns in a large sum without needing to consider all binary partitions of the expression.
+
+This approach combines naturally with the S-expression foundation described in §3.1, as pattern matching on arrays maps directly to pattern matching on S-expression lists.
 
 This meta-algorithm is implemented efficiently using prefix-based pruning for large groups:
 
@@ -517,7 +605,7 @@ fn reverse(array) = (
 ```
 This runs in O(n) time, dominated by the efficient cyclic canonicalization steps.
 
-## 5. Canonicalisation Strategies
+## 6. Canonicalisation Strategies
 
 This section details how the core algorithms are applied, resulting in canonical forms.
 
@@ -610,7 +698,7 @@ transform(x) : D₄ → canonicalise_dihedral(x);
 ```
 Any of the 8 states related by rotation/reflection map to the same canonical form `[1, 2, 4, 3]`.
 
-## 6. Extended Examples
+## 7. Extended Examples
 
 This section illustrates how the core concepts apply across various domains, leveraging the domain hierarchy (§2.3) and group-theoretic canonicalization.
 
@@ -884,7 +972,7 @@ d/dx(f(x)) : Calculus → (f(x+h) - f(x))/h : Numerical : FiniteDifference if is
 ∫(f, a, b) : Calculus → sum(i, 0, n-1, f(a + i*h)*h) : Numerical : RiemannSum where h = (b-a)/n // Riemann sum
 ```
 
-## 7. Evaluation
+## 8. Evaluation
 
 <draft>
 Later: We plan to evaluate Orbit by implementing a representative set of rules from diverse domains (algebra, bitvectors, calculus, logic) and measuring:
@@ -895,7 +983,7 @@ Later: We plan to evaluate Orbit by implementing a representative set of rules f
 This work is in progress.
 </draft>
 
-## 8. Discussion
+## 9. Discussion
 
 ### 8.1 Notation and Terminology
 
@@ -908,7 +996,7 @@ The arrow symbols follow standard rewriting conventions:
 - `↔`: Bidirectional equivalence relation (axioms like commutativity)
 - `⊂`: Subset or subdomain relation (domain hierarchy)
 
-## 9. Conclusion
+## 10. Conclusion
 
 This paper has presented Orbit, a framework extending e-graphs with domain annotations and group-theoretic canonicalization. By formalizing the relationship between symmetry groups, domain hierarchies, and canonical representations, we provide a unified approach to rewriting that spans diverse computational areas. Orbit achieves significant representational compression and accelerates equality saturation by leveraging algebraic structure and symmetry.
 
