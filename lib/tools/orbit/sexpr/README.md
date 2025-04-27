@@ -47,6 +47,18 @@ Conditional expression:
 (if condition then-expr else-expr)
 ```
 
+#### Logical Operators
+
+Short-circuit logical AND and OR operators:
+
+```scheme
+(&& expr1 expr2 ...)  ; Short-circuit AND - evaluates expressions from left to right
+											; until one returns false or all are evaluated
+
+(|| expr1 expr2 ...)  ; Short-circuit OR - evaluates expressions from left to right
+											; until one returns true or all are evaluated
+```
+
 #### Quote
 
 Prevents evaluation of an expression:
@@ -152,7 +164,7 @@ The language includes an extensive set of built-in functions imported from the O
 
 ### Logic Operations
 
-- Boolean logic: `not`
+- Boolean logic: `not`, `&&` (short-circuit AND), `||` (short-circuit OR)
 
 ## Implementation Details
 
