@@ -43,7 +43,7 @@ This approach automatically collapses the two forms into a single representative
 
 ### Why canonical forms matter
 
-A canonical representative collapses each orbit to one concrete term, so a pattern need be matched once per e-class rather than once per variant. Under Sₙ symmetry the raw permutation count grows as n!, yet canonical sorting yields a single ordered tuple; for nested commutative–associative expressions the savings compound exponentially. Formally, given an expression set E and symmetry group G acting on it, naïve exploration touches O(|E|·|G|) nodes, whereas canonicalisation limits the search to O(|E|).
+A canonical representative collapses each orbit to one concrete term, so a pattern need be matched once per e-class rather than once per variant. Under Sₙ symmetry the raw permutation count grows as n!, yet canonical sorting yields a single ordered tuple; for nested commutative–associative expressions the savings compound exponentially. Formally, given an expression set E and symmetry group G acting on it, naïve exploration touches O(|E|·|G|) nodes, whereas canonicalisation limits the search to O(|E|) plus the time required to establish the canonical form, O(|G|log(|G|)) for Sₙ.
 
 *See §5.3 for the formal treatment of group actions and §5.4 for correctness proofs and complexity analysis.*
 
@@ -62,11 +62,11 @@ lhs  → rhs  if  cond        -- conditional rule
 Examples:
 
 ```orbit
-x + 0       → x
-x * 1       → x
-x * 0       → 0
+0 + x       → x
+1 * x       → x
+0 * x       → 0
 x / y       → x * (1/y)      if  y ≠ 0
-x + y       ↔ y + x           : S₂ // Indicate commutativity via S₂
+x + y       ↔ y + x          if y < x : S₂ // Indicate commutativity via S₂
 ```
 
 ### 2.2 Domain annotations (:)
