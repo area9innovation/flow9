@@ -1,0 +1,250 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/sexpr_pattern;
+import tools/orbit/sexpr/sexpr_quasi;
+import tools/orbit/sexpr/sexpr_stdlib;
+import ds/tree;
+import string;
+import math/math;
+
+export {
+	// Main evaluation function - returns updated environment and value
+	evalSexpr(env : Tree<string, Sexpr>, expr : Sexpr) -> SexprResult;
+
+	// Helper to create an empty environment
+	makeEnv() -> Tree<string, Sexpr>;
+}
+
+// Create an empty environment
+makeEnv() -> Tree<string, Sexpr> {
+	makeTree();
+}
+
+// Evaluate a Sexpr in the given environment
+evalSexpr(env : Tree<string, Sexpr>, expr : Sexpr) -> SexprResult {
+	switch (expr) {
+		// Simple values return unchanged environment
+		SSBool(b): SexprResult(env, expr);
+		SSDouble(d): SexprResult(env, expr);
+		SSInt(i): SexprResult(env, expr);
+		SSString(s): SexprResult(env, expr);
+		SSConstructor(name): SexprResult(env, expr);
+		SSOperator(op): SexprResult(env, expr);
+
+		// Lookup variable in environment
+		SSVariable(name): {
+			maybe = lookupTree(env, name);
+			switch (maybe) {
+				Some(value): SexprResult(env, value);
+				None(): {
+					println("Undefined variable: " + name);
+					SexprResult(env, expr);
+				}
+			}
+		};
+
+		// Handle quoted expressions - return as is
+		SSQuote(quoted): SexprResult(env, quoted);
+
+		// Handle quasi-quoted expressions (backtick) with possible unquoting
+		SSQuasiQuote(quoted): {
+			result = evalQuasiQuoteExpr(env, quoted);
+			SexprResult(result.env, result.value);
+		};
+
+		// Evaluate normal expressions
+		SSList(exprs): {
+			if (length(exprs) == 0) {
+				SexprResult(env, expr); // Empty list
+			} else {
+				// Evaluate the function
+				fnResult = evalSexpr(env, exprs[0]);
+				// Evaluate the function call
+				evalCall(fnResult.env, fnResult.value, tailFrom(exprs, 1));
+			}
+		};
+
+		// These shouldn't appear directly - only inside quasiquote
+		SSUnquote(inner): {
+			println("Unquote ($) outside of quasiquote");
+			SexprResult(env, expr);
+		};
+		SSUnquoteSplicing(inner): {
+			println("Unquote-splicing (#) outside of quasiquote");
+			SexprResult(env, expr);
+		};
+	}
+}
+
+// Helper for quasiquote evaluation
+evalQuasiQuoteExpr(env : Tree<string, Sexpr>, expr : Sexpr) -> SexprResult {
+	result = evalQuasiQuote(env, expr, \e, x -> {
+		eval = evalSexpr(e, x);
+		eval.value;
+	});
+	SexprResult(env, result);
+}
+
+// Evaluate a function call
+evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
+	switch (fn) {
+		// Special forms
+		SSVariable(name): {
+			if (name == "define") {
+				if (length(args) >= 2) {
+					varName = switch (args[0]) {
+						SSVariable(n): n;
+						default: {
+							println("Invalid define syntax");
+							"";
+						}
+					};
+					if (varName != "") {
+						valueResult = evalSexpr(env, args[1]);
+						// Return the updated environment and the value
+						newEnv = setTree(valueResult.env, varName, valueResult.value);
+						SexprResult(newEnv, valueResult.value);
+					} else {
+						SexprResult(env, SSList([]));
+					}
+				} else {
+					println("define requires at least 2 arguments");
+					SexprResult(env, SSList([]));
+				}
+			} else if (name == "lambda") {
+				if (length(args) >= 2) {
+					// Extract parameter list
+					paramList = switch (args[0]) {
+						SSList(p): p;
+						default: {
+							println("Lambda params should be a list");
+							[];
+						}
+					};
+					// Get the lambda body
+					lambdaBody = args[1];
+					// Return a lambda constructor
+					SexprResult(env, SSConstructor("Lambda"));
+				} else {
+					println("lambda requires at least 2 arguments");
+					SexprResult(env, SSList([]));
+				}
+			} else if (name == "if") {
+				if (length(args) >= 2) {
+					condResult = evalSexpr(env, args[0]);
+					isTrue = switch (condResult.value) {
+						SSBool(b): b;
+						default: true; // Non-false values are true
+					};
+					if (isTrue) {
+						evalSexpr(condResult.env, args[1]);
+					} else if (length(args) > 2) {
+						evalSexpr(condResult.env, args[2]);
+					} else {
+						SexprResult(condResult.env, SSList([]));
+					}
+				} else {
+					println("if requires at least 2 arguments");
+					SexprResult(env, SSList([]));
+				}
+			} else if (name == "quote") {
+				if (length(args) >= 1) {
+					SexprResult(env, args[0]);
+				} else {
+					SexprResult(env, SSList([]));
+				}
+			} else if (name == "eval") {
+				if (length(args) >= 1) {
+					expResult = evalSexpr(env, args[0]);
+					evalSexpr(expResult.env, expResult.value);
+				} else {
+					SexprResult(env, SSList([]));
+				}
+			} else if (name == "match") {
+				if (length(args) >= 3 && (length(args) % 2) == 1) {
+					// match value pattern1 result1 pattern2 result2...
+					valueResult = evalSexpr(env, args[0]);
+					
+					// Try each pattern in sequence
+					matchIndex = evalMatch(valueResult.env, valueResult.value, tailFrom(args, 1));
+					
+					if (matchIndex != -1) {
+						// Found a matching pattern - evaluate the corresponding result
+						resultIndex = matchIndex * 2 + 1; // pattern at odd indices, results at even
+						evalSexpr(valueResult.env, args[resultIndex]);
+					} else {
+						println("No pattern matched");
+						SexprResult(valueResult.env, SSList([]));
+					}
+				} else {
+					println("match requires value and pattern-result pairs");
+					SexprResult(env, SSList([]));
+				}
+			} else {
+				// Regular function call - try to lookup in environment
+				maybeFunction = lookupTree(env, name);
+				switch (maybeFunction) {
+					Some(function): {
+						// Evaluate arguments and apply the function
+						fnResult = evalArgs(env, args, [], env);
+						applyFunction(fnResult.env, function, fnResult.args);
+					};
+					None(): {
+						fnResult = evalArgs(env, args, [], env);
+						// Built-in primitive functions
+						if (name == "+") {
+							addNumbers(fnResult);
+						} else if (name == "-") {
+							subtractNumbers(fnResult);
+						} else if (name == "*") {
+							multiplyNumbers(fnResult);
+						} else if (name == "/") {
+							divideNumbers(fnResult);
+						} else if (name == "=") {
+							equalsCheck(fnResult);
+						} else if (name == "list") {
+							SexprResult(fnResult.env, SSList(fnResult.args));
+						} else if (name == "car") {
+							carFunction(fnResult);
+						} else if (name == "cdr") {
+							cdrFunction(fnResult);
+						} else if (name == "cons") {
+							consFunction(fnResult);
+						} else if (name == "print") {
+							printFunction(fnResult);
+						} else {
+							println("Unknown function: " + name);
+							SexprResult(env, SSList([]));
+						}
+					};
+				}
+			}
+		};
+		// Custom constructor
+		SSConstructor(name): {
+			// In a real implementation, we'd create a constructor instance with args
+			fnResult = evalArgs(env, args, [], env);
+			SexprResult(fnResult.env, SSList(concat([fn], fnResult.args)));
+		};
+		default: {
+			println("Not a callable expression: " + prettySexpr(fn));
+			SexprResult(env, SSList([]));
+		};
+	}
+}
+
+// Helper to evaluate a list of arguments
+evalArgs(env : Tree<string, Sexpr>, args : [Sexpr], acc : [Sexpr], newEnv : Tree<string, Sexpr>) -> FnArgResult {
+	if (length(args) == 0) {
+		FnArgResult(newEnv, reverseA(acc));
+	} else {
+		argResult = evalSexpr(newEnv, args[0]);
+		evalArgs(env, tailFrom(args, 1), concat([argResult.value], acc), argResult.env);
+	}
+}
+
+// Apply a function to arguments
+applyFunction(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
+	// In a real implementation, this would handle closures and lambda expressions
+	SexprResult(env, SSList([]));
+}

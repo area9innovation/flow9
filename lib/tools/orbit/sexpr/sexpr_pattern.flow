@@ -1,0 +1,210 @@
+import tools/orbit/sexpr/sexpr_types;
+import ds/tree;
+import string;
+import math/math;
+
+export {
+	// Pattern matching against a value
+	// Returns updated environment if match succeeds, None if it fails
+	matchPattern(pattern : Sexpr, value : Sexpr, env : Tree<string, Sexpr>) -> Maybe<Tree<string, Sexpr>>;
+
+	// Pattern matching - returns index of first successful pattern or -1
+	evalMatch(env : Tree<string, Sexpr>, value : Sexpr, patterns : [Sexpr]) -> int;
+	
+	// Compare two Sexpr values for equality
+	sexprEquals(a : Sexpr, b : Sexpr) -> bool;
+}
+
+// Pattern matching - returns index of first successful pattern or -1
+evalMatch(env : Tree<string, Sexpr>, value : Sexpr, patterns : [Sexpr]) -> int {
+	if (length(patterns) == 0) {
+		-1;
+	} else {
+		// Check each pattern sequentially using recursion
+		evalMatchHelper(env, value, patterns, 0);
+	}
+}
+
+// Helper for pattern matching
+evalMatchHelper(env : Tree<string, Sexpr>, value : Sexpr, patterns : [Sexpr], idx : int) -> int {
+	if (idx >= length(patterns)) {
+		-1;
+	} else if (idx % 2 == 0) { // Even indices are patterns
+		pattern = patterns[idx];
+		matchResult = matchPattern(pattern, value, env);
+		switch (matchResult) {
+			Some(newEnv): idx / 2; // Pattern matches - return pattern number
+			None(): evalMatchHelper(env, value, patterns, idx + 1); // Try next pattern
+		}
+	} else {
+		// Skip result expressions
+		evalMatchHelper(env, value, patterns, idx + 1);
+	}
+}
+
+// Pattern matching against a value
+// Returns updated environment if match succeeds, None if it fails
+matchPattern(pattern : Sexpr, value : Sexpr, env : Tree<string, Sexpr>) -> Maybe<Tree<string, Sexpr>> {
+	switch (pattern) {
+		// Variable pattern - binds value to variable
+		SSVariable(name): {
+			if (name == "_") {
+				// Wildcard matches anything
+				Some(env);
+			} else {
+				// Bind value to variable
+				Some(setTree(env, name, value));
+			}
+		};
+
+		// Literal patterns
+		SSBool(b): {
+			switch (value) {
+				SSBool(vb): if (b == vb) Some(env) else None();
+				default: None();
+			}
+		};
+		SSInt(i): {
+			switch (value) {
+				SSInt(vi): if (i == vi) Some(env) else None();
+				default: None();
+			}
+		};
+		SSDouble(d): {
+			switch (value) {
+				SSDouble(vd): if (d == vd) Some(env) else None();
+				default: None();
+			}
+		};
+		SSString(s): {
+			switch (value) {
+				SSString(vs): if (s == vs) Some(env) else None();
+				default: None();
+			}
+		};
+
+		// Constructor pattern
+		SSConstructor(name): {
+			switch (value) {
+				SSConstructor(vname): if (name == vname) Some(env) else None();
+				default: None();
+			}
+		};
+
+		// List pattern
+		SSList(items): {
+			switch (value) {
+				SSList(values): {
+					if (length(items) == length(values)) {
+						// Try to match each item using recursion
+						matchListItems(items, values, env, 0);
+					} else {
+						None(); // Different length lists
+					}
+				};
+				default: None();
+			}
+		};
+		
+		// Other pattern types would be added in a full implementation
+		default: None();
+	}
+}
+
+// Helper to match list items recursively
+matchListItems(patterns : [Sexpr], values : [Sexpr], env : Tree<string, Sexpr>, idx : int) -> Maybe<Tree<string, Sexpr>> {
+	if (idx >= length(patterns)) {
+		// Successfully matched all items
+		Some(env);
+	} else {
+		// Match this item
+		itemMatch = matchPattern(patterns[idx], values[idx], env);
+		switch (itemMatch) {
+			Some(newEnv): {
+				// Continue matching with updated environment
+				matchListItems(patterns, values, newEnv, idx + 1);
+			};
+			None(): None(); // Match failed
+		}
+	}
+}
+
+// Compare two Sexpr values for equality
+sexprEquals(a : Sexpr, b : Sexpr) -> bool {
+	switch (a) {
+		SSBool(ab): {
+			switch (b) {
+				SSBool(bb): ab == bb;
+				default: false;
+			}
+		};
+		SSInt(ai): {
+			switch (b) {
+				SSInt(bi): ai == bi;
+				SSDouble(bd): i2d(ai) == bd;
+				default: false;
+			}
+		};
+		SSDouble(ad): {
+			switch (b) {
+				SSInt(bi): ad == i2d(bi);
+				SSDouble(bd): ad == bd;
+				default: false;
+			}
+		};
+		SSString(as): {
+			switch (b) {
+				SSString(bs): as == bs;
+				default: false;
+			}
+		};
+		SSList(alist): {
+			switch (b) {
+				SSList(blist): {
+					if (length(alist) != length(blist)) {
+						false;
+					} else {
+						sexprListEquals(alist, blist, 0);
+					}
+				};
+				default: false;
+			}
+		};
+		SSConstructor(aname): {
+			switch (b) {
+				SSConstructor(bname): aname == bname;
+				default: false;
+			}
+		};
+		SSVariable(aname): {
+			switch (b) {
+				SSVariable(bname): aname == bname;
+				default: false;
+			}
+		};
+		SSOperator(aop): {
+			switch (b) {
+				SSOperator(bop): aop == bop;
+				default: false;
+			}
+		};
+		default: {
+			// Other cases (SSQuote, etc.) would be handled similarly
+			false;
+		};
+	}
+}
+
+// Recursive list equality check for comparisons
+sexprListEquals(list1 : [Sexpr], list2 : [Sexpr], idx : int) -> bool {
+	if (idx >= length(list1)) {
+		true; // Reached the end of both lists
+	} else {
+		if (sexprEquals(list1[idx], list2[idx])) {
+			// This element matches, check the rest
+			sexprListEquals(list1, list2, idx + 1);
+		} else {
+			false; // Element doesn't match
+		}
+	}
+}

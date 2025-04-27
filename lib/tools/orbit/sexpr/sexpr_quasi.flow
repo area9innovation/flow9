@@ -1,0 +1,59 @@
+import tools/orbit/sexpr/sexpr_types;
+import ds/tree;
+import string;
+
+export {
+	// Handle quasiquote with potential unquoting
+	evalQuasiQuote(env : Tree<string, Sexpr>, expr : Sexpr, evalFn : (Tree<string, Sexpr>, Sexpr) -> Sexpr) -> Sexpr;
+}
+
+// Handle quasiquote with potential unquoting
+evalQuasiQuote(env : Tree<string, Sexpr>, expr : Sexpr, evalFn : (Tree<string, Sexpr>, Sexpr) -> Sexpr) -> Sexpr {
+	switch (expr) {
+		// Handle unquote ($) - evaluate the expression
+		SSUnquote(inner): evalFn(env, inner);
+
+		// Handle unquote-splicing (#) for lists
+		SSUnquoteSplicing(inner): {
+			// This should only appear inside a list
+			// In standalone form, treat it like unquote for simplicity
+			evalFn(env, inner);
+		};
+
+		// For lists, process each element recursively
+		SSList(items): {
+			result = evalQuasiQuoteItems(env, items, [], evalFn);
+			SSList(result);
+		};
+
+		// Everything else is left as is (quoted)
+		default: expr;
+	}
+}
+
+// Process quasiquote list items recursively
+evalQuasiQuoteItems(env : Tree<string, Sexpr>, items : [Sexpr], result : [Sexpr], evalFn : (Tree<string, Sexpr>, Sexpr) -> Sexpr) -> [Sexpr] {
+	if (length(items) == 0) {
+		result;
+	} else {
+		item = items[0];
+		rest = tailFrom(items, 1);
+		
+		switch (item) {
+			SSUnquoteSplicing(inner): {
+				// Evaluate and splice
+				spliceResult = evalFn(env, inner);
+				newResult = switch (spliceResult) {
+					SSList(elements): concat(result, elements);
+					default: arrayPush(result, spliceResult); // Non-list - treat as single element
+				};
+				evalQuasiQuoteItems(env, rest, newResult, evalFn);
+			};
+			default: {
+				// Regular element, recursively process
+				processedItem = evalQuasiQuote(env, item, evalFn);
+				evalQuasiQuoteItems(env, rest, arrayPush(result, processedItem), evalFn);
+			};
+		}
+	}
+}
