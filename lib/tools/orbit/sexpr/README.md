@@ -75,6 +75,16 @@ Defines an anonymous function:
 (lambda (param1 param2) body)
 ```
 
+#### Import
+
+Imports definitions from another SEXP file:
+
+```scheme
+(import "path/to/file")
+```
+
+If no extension is provided, `.sexp` is appended.
+
 #### Eval
 
 Evaluates an expression:

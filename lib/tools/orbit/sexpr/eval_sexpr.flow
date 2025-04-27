@@ -25,6 +25,68 @@ makeEnv() -> Tree<string, Sexpr> {
 	addStandardFns(makeTree());
 }
 
+// Parse a string into a Sexpr
+_parseSexpr(f : string, s : string) -> Maybe<Sexpr> {
+	res : Pair<Sexpr, string> = parseCompiledMango(f, s, sexpr_parse_sexpr_compiled, flow(0));
+	if (res.second != "") {
+		println(f + ": " + res.second);
+		None()
+	} else {
+		Some(res.first);
+	}
+}
+
+// Helper to handle imports - loads a file and evaluates its contents
+importFile(env : Tree<string, Sexpr>, filePath : string) -> SexprResult {
+	// Try to find the file in different locations
+	searchPaths = [
+		filePath, // Direct path
+		pathCombine(getCurrentDirectory(), filePath), // Current directory
+		"/home/alstrup/area9/flow9/lib/tools/orbit/" + filePath, // Absolute path
+	];
+	
+	// Find the first path that exists
+	path = fold(searchPaths, "", \acc, p -> {
+		if (acc != "") acc 
+		else if (fileExists(p)) p
+		else acc;
+	});
+
+	// If we found a valid path, read and evaluate the file
+	if (path != "") {
+		program = getFileContent(path);
+		maybe = _parseSexpr(path, program);
+		
+		switch (maybe) {
+			Some(parsedExpr): {
+				// If it's a list (sequence), evaluate each expression
+				switch (parsedExpr) {
+					SSList(expressions): {
+						// Evaluate each expression and accumulate the environment
+						envResult = fold(expressions, env, \accEnv, expr -> {
+							result = evalSexpr(accEnv, expr);
+							result.env;
+						});
+						
+						SexprResult(envResult, SSList([]));
+					}
+					default: {
+						// Not a sequence, just evaluate it directly
+						evalSexpr(env, parsedExpr);
+					}
+				}
+			}
+			None(): {
+				println("Error parsing imported file: " + path);
+				SexprResult(env, SSList([]));
+			}
+		}
+	} else {
+		println("File not found: " + filePath);
+		SexprResult(env, SSList([]));
+	}
+}
+
 // Evaluate a Sexpr in the given environment
 evalSexpr(env : Tree<string, Sexpr>, expr : Sexpr) -> SexprResult {
 	switch (expr) {
@@ -136,49 +198,8 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 						pathStr + ".sexp";
 					} else pathStr;
 					
-					// Try to find the file in different locations
-					path = if (fileExists(filePath)) {
-						filePath;
-					} else {
-						// Try with lib directory prefix
-						libPath = pathCombine(getCurrentDirectory(), filePath);
-						if (fileExists(libPath)) {
-							libPath;
-						} else {
-							// Try with absolute path to the lib directory
-							flowLibPath = "/home/alstrup/area9/flow9/lib/tools/orbit/" + filePath;
-							if (fileExists(flowLibPath)) {
-								flowLibPath;
-							} else {
-								"";
-							}
-						}
-					};
-					
-					// Check if we found a valid path
-					if (path != "") {
-						// Read file content
-						program = getFileContent(path);
-						
-						// Parse the file using the mango parser
-						maybe = _parseSexpr(path, program);
-						
-						switch (maybe) {
-							Some(parsedExpr): {
-								// Evaluate the imported content in the current environment
-								evalSexpr(pathResult.env, parsedExpr);
-							}
-							None(): {
-								// Parse error
-								println("Error parsing imported file: " + path);
-								SexprResult(pathResult.env, SSList([]));
-							}
-						}
-					} else {
-						// File not found
-						println("Error: File not found: " + filePath + " with cwd " + getCurrentDirectory());
-						SexprResult(pathResult.env, SSList([]));
-					}
+					// Process the import
+					importFile(pathResult.env, filePath);
 				} else {
 					println("import requires 1 argument (path)");
 					SexprResult(env, SSList([]));
@@ -433,17 +454,6 @@ evalArgs(env : Tree<string, Sexpr>, args : [Sexpr], acc : [Sexpr], newEnv : Tree
 	} else {
 		argResult = evalSexpr(newEnv, args[0]);
 		evalArgs(env, tailFrom(args, 1), concat([argResult.value], acc), argResult.env);
-	}
-}
-
-// Internal helper to parse a string into a Sexpr
-_parseSexpr(f : string, s : string) -> Maybe<Sexpr> {
-	res : Pair<Sexpr, string> = parseCompiledMango(f, s, sexpr_parse_sexpr_compiled, flow(0));
-	if (res.second != "") {
-		println(f + ": " + res.second);
-		None()
-	} else {
-		Some(res.first);
 	}
 }
 
