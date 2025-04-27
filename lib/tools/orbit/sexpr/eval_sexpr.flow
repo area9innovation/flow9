@@ -8,6 +8,9 @@ import tools/orbit/sexpr/sexpr_free;
 import ds/tree;
 import string;
 import math/math;
+import fs/filesystem;
+import tools/orbit/sexpr/sexpr_compiled_parser;
+import tools/mango/mcode_lib;
 
 export {
 	// Main evaluation function - returns updated environment and value
@@ -40,7 +43,7 @@ evalSexpr(env : Tree<string, Sexpr>, expr : Sexpr) -> SexprResult {
 				Some(value): SexprResult(env, value);
 				None(): {
 					// Special forms
-					specialForms = ["define", "lambda", "if", "quote", "eval", "match", "_", "&&", "||"];
+					specialForms = ["define", "lambda", "if", "quote", "eval", "match", "_", "&&", "||", "import"];
 					
 					// Check if it's a built-in function from the runtime
 					runtimeFuncs = getRuntimeFunctions();
@@ -121,7 +124,66 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 		};
 		SSVariable(name): {
 			// Handle special forms first
-			if (name == "define") {
+			if (name == "import") {
+				// Import form - load and evaluate a file
+				if (length(args) == 1) {
+					// Get the path as a string
+					pathResult = evalSexpr(env, args[0]);
+					pathStr = getSString(pathResult.value, "import path");
+					
+					// Check if we should add .sexp extension if not present
+					filePath = if (!strContains(pathStr, ".sexp")) {
+						pathStr + ".sexp";
+					} else pathStr;
+					
+					// Try to find the file in different locations
+					path = if (fileExists(filePath)) {
+						filePath;
+					} else {
+						// Try with lib directory prefix
+						libPath = pathCombine(getCurrentDirectory(), filePath);
+						if (fileExists(libPath)) {
+							libPath;
+						} else {
+							// Try with absolute path to the lib directory
+							flowLibPath = "/home/alstrup/area9/flow9/lib/tools/orbit/" + filePath;
+							if (fileExists(flowLibPath)) {
+								flowLibPath;
+							} else {
+								"";
+							}
+						}
+					};
+					
+					// Check if we found a valid path
+					if (path != "") {
+						// Read file content
+						program = getFileContent(path);
+						
+						// Parse the file using the mango parser
+						maybe = _parseSexpr(path, program);
+						
+						switch (maybe) {
+							Some(parsedExpr): {
+								// Evaluate the imported content in the current environment
+								evalSexpr(pathResult.env, parsedExpr);
+							}
+							None(): {
+								// Parse error
+								println("Error parsing imported file: " + path);
+								SexprResult(pathResult.env, SSList([]));
+							}
+						}
+					} else {
+						// File not found
+						println("Error: File not found: " + filePath + " with cwd " + getCurrentDirectory());
+						SexprResult(pathResult.env, SSList([]));
+					}
+				} else {
+					println("import requires 1 argument (path)");
+					SexprResult(env, SSList([]));
+				}
+			} else if (name == "define") {
 				// Define a variable
 				if (length(args) >= 2) {
 					varName = switch (args[0]) {
@@ -371,6 +433,17 @@ evalArgs(env : Tree<string, Sexpr>, args : [Sexpr], acc : [Sexpr], newEnv : Tree
 	} else {
 		argResult = evalSexpr(newEnv, args[0]);
 		evalArgs(env, tailFrom(args, 1), concat([argResult.value], acc), argResult.env);
+	}
+}
+
+// Internal helper to parse a string into a Sexpr
+_parseSexpr(f : string, s : string) -> Maybe<Sexpr> {
+	res : Pair<Sexpr, string> = parseCompiledMango(f, s, sexpr_parse_sexpr_compiled, flow(0));
+	if (res.second != "") {
+		println(f + ": " + res.second);
+		None()
+	} else {
+		Some(res.first);
 	}
 }
 
