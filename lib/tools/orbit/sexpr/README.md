@@ -116,12 +116,64 @@ Examples:
 `(1 #lst 4) ; => (1 2 3 4)
 ```
 
-### Built-in Functions
+## Standard Library
 
-- Arithmetic: `+`, `-`, `*`, `/`
-- Comparison: `=`
-- List operations: `list`, `car`, `cdr`, `cons`
-- I/O: `print`
+The language includes an extensive set of built-in functions imported from the Orbit runtime:
+
+### Arithmetic and Mathematical Functions
+
+- Basic operators: `+`, `-`, `*`, `/`, `=`
+- Mathematical functions: `abs`, `iabs`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
+- More math: `sqrt`, `exp`, `log`, `log10`
+- Rounding: `floor`, `ceil`, `round`, `dfloor`, `dceil`, `dround`
+- Number properties: `sign`, `isign`, `even`, `odd`, `mod`, `dmod`, `factorial`, `gcd`, `lcm`
+
+### List Operations
+
+- Core list functions: `list`, `car`, `cdr`, `cons`
+- Advanced list manipulation: `length`, `index`, `subrange`, `reverse`
+
+### String Operations
+
+- Basic string functions: `strlen`, `substring`, `strIndex`, `strContainsAt`
+- String transformations: `parseHex`, `unescape`, `escape`, `strGlue`, `capitalize`, `decapitalize`
+
+### Type Conversions
+
+- Convert between types: `i2s`, `d2s`, `i2b`, `b2i`, `s2i`, `s2d`
+
+### Type Checking
+
+- Type predicates: `isBool`, `isInt`, `isDouble`, `isString`, `isArray`
+
+### I/O Operations
+
+- Basic I/O: `print`
+
+### Logic Operations
+
+- Boolean logic: `not`
+
+## Implementation Details
+
+### First-Class Functions
+
+All functions in the standard library can be used as first-class values, meaning they can be passed as arguments to other functions.
+
+### Runtime Function Registry
+
+Functions are centrally registered with their arity in a runtime function registry, allowing for:
+- Consistent arity checking
+- Easy extension with new functions
+- Simplified evaluation logic
+
+### Utility Functions
+
+A set of utility functions provide standardized type extraction and conversion:
+- `getSBool`: Extract a boolean value from any S-expression
+- `getSInt`: Extract an integer value from any S-expression
+- `getSDouble`: Extract a double value from any S-expression
+- `getSString`: Extract a string value from any S-expression
 
 ## Extending the Language
 
@@ -132,4 +184,10 @@ This implementation is intentionally minimal but can be extended with:
 - Full lambda support with closures
 - Tail call optimization
 - Macros
-- A standard library
+
+### Adding New Functions
+
+To add a new function to the standard library:
+1. Define the function in `sexpr_stdlib.flow`
+2. Add it to the runtime function registry in `getRuntimeFunctions()`
+3. The centralized arity checking will be applied automatically
