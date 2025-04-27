@@ -3,6 +3,7 @@ import tools/orbit/sexpr/pretty_sexpr;
 import tools/orbit/sexpr/sexpr_pattern;
 import tools/orbit/sexpr/sexpr_quasi;
 import tools/orbit/sexpr/sexpr_stdlib;
+import tools/orbit/sexpr/utils;
 import ds/tree;
 import string;
 import math/math;
@@ -15,9 +16,9 @@ export {
 	makeEnv() -> Tree<string, Sexpr>;
 }
 
-// Create an empty environment
+// Create an empty environment with standard functions
 makeEnv() -> Tree<string, Sexpr> {
-	makeTree();
+	addStandardFns(makeTree());
 }
 
 // Evaluate a Sexpr in the given environment
@@ -37,13 +38,17 @@ evalSexpr(env : Tree<string, Sexpr>, expr : Sexpr) -> SexprResult {
 			switch (maybe) {
 				Some(value): SexprResult(env, value);
 				None(): {
-					if (contains(["define", "lambda", "if", "quote", "eval", "match", "_"], name)) {
-						// Special forms - return as is
+					// Special forms
+					specialForms = ["define", "lambda", "if", "quote", "eval", "match", "_"];
+					
+					// Check if it's a built-in function from the runtime
+					runtimeFuncs = getRuntimeFunctions();
+					
+					if (contains(specialForms, name) || containsKeyTree(runtimeFuncs, name)) {
+						// Return the name as is for first-order functions
 						SexprResult(env, expr);
 					} else {
 						// Error handling for undefined variables
-						// In a real implementation, this would throw an error or return a special value
-						// For now, just print a message and return the original expression
 						println("Undefined variable: " + name);
 						SexprResult(env, expr);
 					}
@@ -96,9 +101,10 @@ evalQuasiQuoteExpr(env : Tree<string, Sexpr>, expr : Sexpr) -> SexprResult {
 // Evaluate a function call
 evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 	switch (fn) {
-		// Special forms
 		SSVariable(name): {
+			// Handle special forms first
 			if (name == "define") {
+				// Define a variable
 				if (length(args) >= 2) {
 					varName = switch (args[0]) {
 						SSVariable(n): n;
@@ -120,6 +126,7 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 					SexprResult(env, SSList([]));
 				}
 			} else if (name == "lambda") {
+				// Create a lambda
 				if (length(args) >= 2) {
 					// Extract parameter list
 					paramList = switch (args[0]) {
@@ -138,6 +145,7 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 					SexprResult(env, SSList([]));
 				}
 			} else if (name == "if") {
+				// Conditional
 				if (length(args) >= 2) {
 					condResult = evalSexpr(env, args[0]);
 					isTrue = switch (condResult.value) {
@@ -156,12 +164,14 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 					SexprResult(env, SSList([]));
 				}
 			} else if (name == "quote") {
+				// Quote expression
 				if (length(args) >= 1) {
 					SexprResult(env, args[0]);
 				} else {
 					SexprResult(env, SSList([]));
 				}
 			} else if (name == "eval") {
+				// Evaluate expression
 				if (length(args) >= 1) {
 					expResult = evalSexpr(env, args[0]);
 					evalSexpr(expResult.env, expResult.value);
@@ -169,6 +179,7 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 					SexprResult(env, SSList([]));
 				}
 			} else if (name == "match") {
+				// Pattern matching
 				if (length(args) >= 3 && (length(args) % 2) == 1) {
 					// match value pattern1 result1 pattern2 result2...
 					valueResult = evalSexpr(env, args[0]);
@@ -196,70 +207,49 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 					SexprResult(env, SSList([]));
 				}
 			} else {
-				// Regular function call - try to lookup in environment
-				maybeFunction = lookupTree(env, name);
-				switch (maybeFunction) {
-					Some(function): {
-						// Evaluate arguments and apply the function
-						fnResult = evalArgs(env, args, [], env);
-						applyFunction(fnResult.env, function, fnResult.args);
-					};
-					None(): {
-						fnResult = evalArgs(env, args, [], env);
-						// Built-in primitive functions
-						if (name == "+") {
-							addNumbers(fnResult);
-						} else if (name == "-") {
-							subtractNumbers(fnResult);
-						} else if (name == "*") {
-							multiplyNumbers(fnResult);
-						} else if (name == "/") {
-							divideNumbers(fnResult);
-						} else if (name == "=") {
-							equalsCheck(fnResult);
-						} else if (name == "list") {
-							SexprResult(fnResult.env, SSList(fnResult.args));
-						} else if (name == "car") {
-							carFunction(fnResult);
-						} else if (name == "cdr") {
-							cdrFunction(fnResult);
-						} else if (name == "cons") {
-							consFunction(fnResult);
-						} else if (name == "print") {
-							printFunction(fnResult);
-						} else {
+				// Regular function call
+				// Evaluate arguments first
+				fnResult = evalArgs(env, args, [], env);
+				
+				// Check if it's a runtime function
+				if (containsKeyTree(getRuntimeFunctions(), name)) {
+					// Invoke the runtime function with arity checking
+					invokeRuntimeFn(name, fnResult);
+				} else {
+					// Custom user-defined function - try to lookup in environment
+					maybeFunction = lookupTree(env, name);
+					switch (maybeFunction) {
+						Some(function): {
+							// Apply the function
+							applyFunction(fnResult.env, function, fnResult.args);
+						};
+						None(): {
 							println("Unknown function: " + name);
 							SexprResult(env, SSList([]));
-						}
-					};
+						};
+					}
 				}
 			}
 		};
-		// Custom constructor
+		
 		SSConstructor(name): {
 			// In a real implementation, we'd create a constructor instance with args
 			fnResult = evalArgs(env, args, [], env);
 			SexprResult(fnResult.env, SSList(concat([fn], fnResult.args)));
 		};
+		
 		SSOperator(name): {
 			// Handle operators like +, -, *, /, etc.
 			fnResult = evalArgs(env, args, [], env);
-			// Built-in primitive functions
-			if (name == "+") {
-				addNumbers(fnResult);
-			} else if (name == "-") {
-				subtractNumbers(fnResult);
-			} else if (name == "*") {
-				multiplyNumbers(fnResult);
-			} else if (name == "/") {
-				divideNumbers(fnResult);
-			} else if (name == "=") {
-				equalsCheck(fnResult);
+			// Invoke the runtime function with arity checking
+			if (containsKeyTree(getRuntimeFunctions(), name)) {
+				invokeRuntimeFn(name, fnResult);
 			} else {
-				println("Not a callable expression: " + prettySexpr(fn));
+				println("Unknown operator: " + name);
 				SexprResult(env, SSList([]));
 			}
-		}
+		};
+		
 		default: {
 			println("Not a callable expression: " + prettySexpr(fn));
 			SexprResult(env, SSList([]));
@@ -276,7 +266,6 @@ evalArgs(env : Tree<string, Sexpr>, args : [Sexpr], acc : [Sexpr], newEnv : Tree
 		evalArgs(env, tailFrom(args, 1), concat([argResult.value], acc), argResult.env);
 	}
 }
-
 
 // Apply a function to arguments
 applyFunction(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
