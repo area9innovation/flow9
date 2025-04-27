@@ -8,10 +8,12 @@ import math/math;
 import net/url_parameter; // For command line args
 import tools/orbit/sexpr/sexpr_compiled_parser;
 import tools/mango/mcode_lib;
+import text/deserialize_string;
 
 export {
 	// Add standard functions/variables to the environment
 	getRuntimeEnv() -> SExpEnv;
+	// Parse a string into a Sexpr
 	parseSexpr(f : string, s : string) -> Maybe<Sexpr>;
 	// Helper for invoking runtime functions with arity checking
 	invokeRuntimeFn(env : SExpEnv, name : string, result : FnArgResult) -> SExpEnv;
@@ -62,13 +64,15 @@ getRuntimeFunctions() -> Tree<string, RuntimeFn> {
 		Pair("*", RuntimeFn(-1, \result -> multiplyNumbers(result))),
 		Pair("/", RuntimeFn(-1, \result -> divideNumbers(result))),
 		Pair("=", RuntimeFn(2, \result -> equalsCheck(result))),
+		// TODO: Add !=, <, >, <=, >= operators
 		
 		// List operations
 		Pair("list", RuntimeFn(-1, \result -> SSList(result.args))),
-		Pair("car", RuntimeFn(1, \result -> carFunction(result))),
-		Pair("cdr", RuntimeFn(1, \result -> cdrFunction(result))),
-		Pair("cons", RuntimeFn(2, \result -> consFunction(result))),
+		Pair("car", RuntimeFn(1, \result -> carFunction(result))), // first element of array
+		Pair("cdr", RuntimeFn(1, \result -> cdrFunction(result))), // tail of array
+		Pair("cons", RuntimeFn(2, \result -> consFunction(result))), // prepend element to array
 		Pair("print", RuntimeFn(-1, \result -> printFunction(result))),
+		Pair("println", RuntimeFn(-1, \result -> printFunction(result))),
 		
 		// Math functions
 		Pair("abs", RuntimeFn(1, \result -> absFunction(result))),
@@ -94,13 +98,13 @@ getRuntimeFunctions() -> Tree<string, RuntimeFn> {
 		Pair("isign", RuntimeFn(1, \result -> isignFunction(result))),
 		Pair("even", RuntimeFn(1, \result -> evenFunction(result))),
 		Pair("odd", RuntimeFn(1, \result -> oddFunction(result))),
-		Pair("mod", RuntimeFn(2, \result -> modFunction(result))),
-		Pair("dmod", RuntimeFn(2, \result -> dmodFunction(result))),
-		Pair("factorial", RuntimeFn(1, \result -> factorialFunction(result))),
 		Pair("gcd", RuntimeFn(2, \result -> gcdFunction(result))),
 		Pair("lcm", RuntimeFn(2, \result -> lcmFunction(result))),
+		// TODO: Should these be %?
+		Pair("mod", RuntimeFn(2, \result -> modFunction(result))),
+		Pair("dmod", RuntimeFn(2, \result -> dmodFunction(result))),
 		
-		// Logic functions
+		// Logic functions - TODO: Should this be !
 		Pair("not", RuntimeFn(1, \result -> notFunction(result))),
 		
 		// String operations
@@ -199,6 +203,12 @@ addNumbers(evalResult : FnArgResult) -> Sexpr {
 					}
 				}
 			};
+			SSString(accString): {
+				switch (arg) {
+					SSString(argString): SSString(accString + argString);
+					default: SSString(accString + prettySexpr(arg));
+				}
+			}
 			default: acc;
 		}
 	});
@@ -374,7 +384,7 @@ divideNumbers(evalResult : FnArgResult) -> Sexpr {
 
 // Equality check
 equalsCheck(evalResult : FnArgResult) -> Sexpr {
-	allEqual = sexprEquals(evalResult.args[0], evalResult.args[1]);
+	allEqual = evalResult.args[0] == evalResult.args[1];
 	SSBool(allEqual);
 }
 
@@ -606,18 +616,6 @@ dmodFunction(evalResult : FnArgResult) -> Sexpr {
 	}
 }
 
-// Factorial function
-factorialFunction(evalResult : FnArgResult) -> Sexpr {
-	value = getSInt(evalResult.args[0], "factorial");
-	
-	if (value < 0) {
-		println("ERROR: factorial requires a non-negative integer");
-		SSInt(0);
-	} else {
-		SSInt(factorial(value));
-	}
-}
-
 // Greatest common divisor function
 gcdFunction(evalResult : FnArgResult) -> Sexpr {
 	value1 = getSInt(evalResult.args[0], "gcd first");
@@ -693,33 +691,20 @@ strContainsAtFunction(evalResult : FnArgResult) -> Sexpr {
 // Parse hexadecimal string
 parseHexFunction(evalResult : FnArgResult) -> Sexpr {
 	hexStr = getSString(evalResult.args[0], "parseHex");
-	// This is a simplified implementation
-	// In a real implementation, we would validate and parse hex
-	result = fold(strSplit(hexStr, ""), 0, \acc, c -> {
-		digit = if (c >= "0" && c <= "9") s2i(c)
-			else if (c >= "a" && c <= "f") s2i(c) - s2i("a") + 10 
-			else if (c >= "A" && c <= "F") s2i(c) - s2i("A") + 10
-			else -1;
-		
-		if (digit == -1) acc else acc * 16 + digit;
-	});
-	SSInt(result);
+	SSInt(parseHex(hexStr));
 }
 
 // Unescape a string
 unescapeFunction(evalResult : FnArgResult) -> Sexpr {
 	str = getSString(evalResult.args[0], "unescape");
-	// Simplified implementation
-	result = strReplace(strReplace(strReplace(strReplace(str, "\\n", "\n"), "\\t", "\t"), "\\\\", "\\"), "\\\"", "\"");
+	result = deserializeString(str).first;
 	SSString(result);
 }
 
 // Escape a string
 escapeFunction(evalResult : FnArgResult) -> Sexpr {
 	str = getSString(evalResult.args[0], "escape");
-	// Simplified implementation
-	result = strReplace(strReplace(strReplace(strReplace(str, "\\", "\\\\"), "\n", "\\n"), "\t", "\\t"), "\"", "\\\"");
-	SSString(result);
+	SSString(toString(str));
 }
 
 // Join array of strings with separator
