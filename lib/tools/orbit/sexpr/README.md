@@ -5,7 +5,7 @@ This is a simple Scheme-like language implemented in Flow9. It provides a minima
 ## Running the Interpreter
 
 ```bash
-flowcpp sexpr_driver.flow
+flowcpp sexpr.flow -- tests/file.sexp
 ```
 
 ## Core Features
