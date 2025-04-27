@@ -4,6 +4,7 @@ import tools/orbit/sexpr/sexpr_pattern;
 import tools/orbit/sexpr/sexpr_quasi;
 import tools/orbit/sexpr/sexpr_stdlib;
 import tools/orbit/sexpr/utils;
+import tools/orbit/sexpr/sexpr_free;
 import ds/tree;
 import string;
 import math/math;
@@ -69,6 +70,10 @@ evalSexpr(env : Tree<string, Sexpr>, expr : Sexpr) -> SexprResult {
 		SSList(exprs): {
 			if (length(exprs) == 0) {
 				SexprResult(env, expr); // Empty list
+			} else if (length(exprs) >= 4 && 
+				(switch (exprs[0]) { SSVariable(fnName): fnName == "closure"; default: false; })) {
+				// This is a closure expression - return as is without evaluation
+				SexprResult(env, expr);
 			} else {
 				// Evaluate the function
 				fnResult = evalSexpr(env, exprs[0]);
@@ -101,6 +106,19 @@ evalQuasiQuoteExpr(env : Tree<string, Sexpr>, expr : Sexpr) -> SexprResult {
 // Evaluate a function call
 evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 	switch (fn) {
+		// Direct handling of closure objects
+		SSList(fnParts): {
+			if (length(fnParts) >= 4 && 
+				(switch (fnParts[0]) { SSVariable(fnName): fnName == "closure"; default: false; })) {
+				// Evaluate arguments first
+				fnResult = evalArgs(env, args, [], env);
+				// Apply the closure directly
+				applyFunction(fnResult.env, fn, fnResult.args);
+			} else {
+				println("Not a callable list: " + prettySexpr(fn));
+				SexprResult(env, SSList([]));
+			}
+		};
 		SSVariable(name): {
 			// Handle special forms first
 			if (name == "define") {
@@ -126,7 +144,7 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 					SexprResult(env, SSList([]));
 				}
 			} else if (name == "lambda") {
-				// Create a lambda
+				// Create a lambda with proper closure capturing free variables
 				if (length(args) >= 2) {
 					// Extract parameter list
 					paramList = switch (args[0]) {
@@ -136,10 +154,42 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 							[];
 						}
 					};
+					// Extract parameter names
+					paramNames = filtermap(paramList, \param -> {
+						switch (param) {
+							SSVariable(pname): Some(pname);
+							default: None();
+						}
+					});
+					
 					// Get the lambda body
 					lambdaBody = args[1];
-					// Return a lambda constructor
-					SexprResult(env, SSConstructor("Lambda"));
+					
+					// Find bound vars (the parameters)
+					boundVars = fold(paramNames, makeSet(), \acc, paramName -> {
+						insertSet(acc, paramName);
+					});
+					
+					// Find free variables in the lambda body
+					freeVars = findFreeSexprVars(lambdaBody, boundVars);
+					
+					// Create bindings for all free variables
+					bindings = createSexprBindings(freeVars, env);
+					
+					// Create a closure as a SSList with special form: (closure bindings params body)
+					bindingsList = SSList(map(bindings, \binding -> {
+						SSList([SSVariable(binding.first), binding.second]);
+					}));
+					
+					// Return the closure as a list: (closure bindings params body)
+					closure = SSList([
+						SSVariable("closure"),
+						bindingsList,
+						args[0],  // Original parameter list
+						lambdaBody
+					]);
+					
+					SexprResult(env, closure);
 				} else {
 					println("lambda requires at least 2 arguments");
 					SexprResult(env, SSList([]));
@@ -220,6 +270,7 @@ evalCall(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
 					maybeFunction = lookupTree(env, name);
 					switch (maybeFunction) {
 						Some(function): {
+							// Found function in environment
 							// Apply the function
 							applyFunction(fnResult.env, function, fnResult.args);
 						};
@@ -269,6 +320,77 @@ evalArgs(env : Tree<string, Sexpr>, args : [Sexpr], acc : [Sexpr], newEnv : Tree
 
 // Apply a function to arguments
 applyFunction(env : Tree<string, Sexpr>, fn : Sexpr, args : [Sexpr]) -> SexprResult {
-	// In a real implementation, this would handle closures and lambda expressions
-	SexprResult(env, SSList([]));
+	switch (fn) {
+		SSList(fnParts): {
+			// Check if this is a closure: (closure bindings params body)
+			if (length(fnParts) >= 4 && 
+				(switch (fnParts[0]) { SSVariable(fnName): fnName == "closure"; default: false; })) {
+				
+				// Extract closure components
+				bindings = switch (fnParts[1]) {
+					SSList(bindingPairs): bindingPairs;
+					default: [];
+				};
+				
+				params = switch (fnParts[2]) {
+					SSList(paramList): paramList;
+					default: [];
+				};
+				
+				body = fnParts[3];
+				
+				// Create new environment with bindings from the closure
+				callEnv = fold(bindings, env, \accEnv, binding -> {
+					switch (binding) {
+						SSList(bindingParts): {
+							if (length(bindingParts) >= 2) {
+								varName = switch (bindingParts[0]) {
+									SSVariable(bindingName): bindingName;
+									default: "";
+								};
+								
+								if (varName != "") {
+									setTree(accEnv, varName, bindingParts[1]);
+								} else {
+									accEnv;
+								}
+							} else {
+								accEnv;
+							}
+						};
+						default: accEnv;
+					}
+				});
+				
+				// Bind arguments to parameters
+				finalEnv = foldi(args, callEnv, \i, accEnv, arg -> {
+					if (i < length(params)) {
+						paramName = switch (params[i]) {
+							SSVariable(pName): pName;
+							default: "";
+						};
+						
+						if (paramName != "") {
+							setTree(accEnv, paramName, arg);
+						} else {
+							accEnv;
+						}
+					} else {
+						accEnv;
+					}
+				});
+				
+				// Evaluate body in the environment with bindings and arguments
+				evalSexpr(finalEnv, body);
+			} else {
+				// Not a recognized function form
+				println("Not a callable function: " + prettySexpr(fn));
+				SexprResult(env, SSList([]));
+			}
+		};
+		default: {
+			println("Not a callable function: " + prettySexpr(fn));
+			SexprResult(env, SSList([]));
+		};
+	}
 }
