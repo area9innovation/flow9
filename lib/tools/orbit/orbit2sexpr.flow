@@ -4,11 +4,17 @@ import tools/orbit/orbit_gather;
 import tools/orbit/sexpr/sexpr_types;
 import ds/tree;
 import string;
+import ds/array;
 
 export {
 	// Converts an OrMath_expr to the equivalent Sexpr
 	// Performs associativity collapsing for associative operators
 	orbit2sexpr(expr : OrMath_expr) -> Sexpr;
+	
+	// Converts a Sexpr to the equivalent OrMath_expr
+	// Expands flattened associative operators to binary operations
+	// using conventional associativity rules for each operator
+	sexpr2orbit(expr : Sexpr) -> OrMath_expr;
 }
 
 // Main conversion function
@@ -88,6 +94,15 @@ isAssociativeOp(op : string) -> bool {
 	op == "⊗" || op == "TensorProduct"; // Tensor product
 }
 
+// Check if an operator is right-associative (standard convention)
+isRightAssociativeOp(op : string) -> bool {
+	op == "^" || // Exponentiation
+	op == "**" || // Alternative exponentiation
+	op == "=" || // Assignment 
+	op == "∘" || op == "Compose" || // Function composition
+	op == "⊗" || op == "TensorProduct"; // Tensor product (conventionally right-associative in some contexts)
+}
+
 // Gather all operands for an associative operation
 gatherAssociativeOp(expr : OrMath_expr, targetOp : string) -> [Sexpr] {
 	// Recursively flatten the tree for this operation
@@ -111,5 +126,142 @@ gatherAssociativeOpHelper(expr : OrMath_expr, targetOp : string, acc : [Sexpr]) 
 		// Convert this expression and add it to the accumulator
 		arrayPush(acc, orbit2sexpr(expr));
 		acc;
+	}
+}
+
+// Convert S-expression to Orbit expression
+sexpr2orbit(expr : Sexpr) -> OrMath_expr {
+	switch (expr) {
+		// Primitive values
+		SSInt(i): OrInt(i);
+		SSDouble(d): OrDouble(d);
+		SSString(s): OrString(s);
+		SSBool(b): OrBool(b);
+		SSVariable(name): OrIdentifier(name);
+		SSConstructor(name): OrUId(name); // Treat constructors as UIDs in Orbit
+		SSOperator(op): OrOperatorSymbol(op);
+		
+		// Quote and other special forms are not directly translated
+		SSQuote(__): OrIdentifier("quote_not_supported");
+		SSQuasiQuote(__): OrIdentifier("quasiquote_not_supported");
+		SSUnquote(__): OrIdentifier("unquote_not_supported");
+		SSUnquoteSplicing(__): OrIdentifier("splicing_not_supported");
+		
+		// Lists - the main structure
+		SSList(items): {
+			if (length(items) == 0) {
+				// Empty list becomes an empty array
+				OrArray([]);
+			} else {
+				// Check if first item is an operator (for associative ops)
+				switch (items[0]) {
+					SSOperator(op): {
+						if (isAssociativeOp(op) && length(items) > 2) {
+							// We have an associative operation with multiple operands
+							// Convert each operand first
+							operands = map(tailFrom(items, 1), \item -> sexpr2orbit(item));
+							
+							// Build the binary tree according to operator's standard associativity
+							if (isRightAssociativeOp(op)) {
+								// Right-associative: a+(b+(c+d)...)
+								buildRightAssociative(operands, op);
+							} else {
+								// Left-associative (default): ((a+b)+c)+d...
+								foldi(tailFrom(operands, 1), operands[0], \i, acc, operand -> 
+									makeBinaryOp(op, acc, operand)
+								);
+							}
+						} else {
+							// Regular operation with expected arity
+							operands = map(tailFrom(items, 1), \item -> sexpr2orbit(item));
+							if (length(operands) == 2) {
+								// Binary operation
+								makeBinaryOp(op, operands[0], operands[1]);
+							} else {
+								// Function call with operator
+								OrFunction(OrOperatorSymbol(op), operands);
+							}
+						}
+					}
+					default: {
+						// First item is not an operator, so this is a function call
+						fn = sexpr2orbit(items[0]);
+						args = map(tailFrom(items, 1), \item -> sexpr2orbit(item));
+						OrFunction(fn, args);
+					}
+				}
+			}
+		}
+	}
+}
+
+// Helper function to build right-associative binary operations
+// e.g., a+(b+(c+d)) for operators like +
+buildRightAssociative(operands : [OrMath_expr], op : string) -> OrMath_expr {
+	if (length(operands) == 0) {
+		// No operands - should not happen
+		OrInt(0);
+	} else if (length(operands) == 1) {
+		// Just one operand, return it
+		operands[0];
+	} else {
+		// Start with the rightmost operand
+		revOperands = reverseA(operands);
+		
+		// Fold from right to left
+		fold(tail(revOperands), revOperands[0], \acc, operand -> {
+			// Build (operand op acc)
+			makeBinaryOp(op, operand, acc);
+		});
+	}
+}
+
+// Helper function to build binary operations from operator symbol and operands
+makeBinaryOp(op : string, left : OrMath_expr, right : OrMath_expr) -> OrMath_expr {
+	if (op == "+") {
+		OrAdd(left, right);
+	} else if (op == "*") {
+		OrMultiply(left, right);
+	} else if (op == "-") {
+		OrSubtract(left, right);
+	} else if (op == "/") {
+		OrDivide(left, right);
+	} else if (op == "%%" || op == "%") {
+		OrModulo(left, right);
+	} else if (op == "^") {
+		OrExponent(left, right);
+	} else if (op == "=") {
+		OrEquals(left, right);
+	} else if (op == "!=") {
+		OrNotEquals(left, right);
+	} else if (op == ">") {
+		OrGreaterThan(left, right);
+	} else if (op == ">=") {
+		OrGreaterEquals(left, right);
+	} else if (op == "<") {
+		OrLessThan(left, right);
+	} else if (op == "<=") {
+		OrLessEquals(left, right);
+	} else if (op == "&&") {
+		OrLogicalAnd(left, right);
+	} else if (op == "||") {
+		OrLogicalOr(left, right);
+	} else if (op == ";") {
+		OrSequence(left, right);
+	} else if (op == "Seq") {
+		OrSequence(left, right);
+	} else if (op == "\u2218" || op == "Compose") { // ∘ (function composition)
+		OrCompose(left, right);
+	} else if (op == "\u222a" || op == "Union") { // ∪ (set union)
+		OrUnion(left, right);
+	} else if (op == "\u2229" || op == "Intersection") { // ∩ (set intersection)
+		OrIntersection(left, right);
+	} else if (op == "\u00d7" || op == "DirectProduct") { // × (direct product)
+		OrDirectProduct(left, right);
+	} else if (op == "\u2297" || op == "TensorProduct") { // ⊗ (tensor product)
+		OrTensorProduct(left, right);
+	} else {
+		// Default to function call for other operators
+		OrFunction(OrOperatorSymbol(op), [left, right]);
 	}
 }
