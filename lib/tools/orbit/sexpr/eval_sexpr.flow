@@ -83,7 +83,7 @@ evalSexpr(env : SExpEnv, expr : Sexpr) -> SExpEnv {
 				Some(value): SExpEnv(env with value = value);
 				None(): {
 					// Special forms
-					specialForms = ["define", "lambda", "if", "eval", "match", "_", "&&", "||", "import"];
+					specialForms = ["define", "lambda", "if", "eval", "match", "and", "or", "import"];
 					
 					// Check if it's a built-in function from the runtime
 					runtimeFuncs = env.runtime;
@@ -99,6 +99,24 @@ evalSexpr(env : SExpEnv, expr : Sexpr) -> SExpEnv {
 				}
 			}
 		};
+		SSSpecialForm(name, exprs): {
+			// Evaluate the function call
+			evalSpecialForm(env, name, exprs);
+		}
+
+		// Evaluate normal expressions
+		SSList(exprs): {
+			if (length(exprs) == 0) {
+				SExpEnv(env with value = expr); // Empty list
+			} else {
+				// Evaluate the function
+				fnResult = evalSexpr(env, exprs[0]);
+				// Evaluate the function call
+				evalCall(env, fnResult.value, tailFrom(exprs, 1));
+			}
+		};
+
+/*		// These shouldn't appear directly - only inside quasiquote
 
 		// Handle quoted expressions - return as is
 		SSQuote(quoted): SExpEnv(env with value = quoted);
@@ -108,24 +126,6 @@ evalSexpr(env : SExpEnv, expr : Sexpr) -> SExpEnv {
 			result = evalQuasiQuoteExpr(env, quoted);
 			SExpEnv(env.runtime, result.env, result.value);
 		};
-
-		// Evaluate normal expressions
-		SSList(exprs): {
-			if (length(exprs) == 0) {
-				SExpEnv(env with value = expr); // Empty list
-			} else if (length(exprs) >= 4 && 
-				(switch (exprs[0]) { SSVariable(fnName): fnName == "closure"; default: false; })) {
-				// This is a closure expression - return as is without evaluation
-				SExpEnv(env with value = expr);
-			} else {
-				// Evaluate the function
-				fnResult = evalSexpr(env, exprs[0]);
-				// Evaluate the function call
-				evalCall(env, fnResult.value, tailFrom(exprs, 1));
-			}
-		};
-
-		// These shouldn't appear directly - only inside quasiquote
 		SSUnquote(inner): {
 			println("Unquote ($) outside of quasiquote");
 			SExpEnv(env with value = expr);
@@ -133,7 +133,7 @@ evalSexpr(env : SExpEnv, expr : Sexpr) -> SExpEnv {
 		SSUnquoteSplicing(inner): {
 			println("Unquote-splicing (#) outside of quasiquote");
 			SExpEnv(env with value = expr);
-		};
+		};*/
 	}
 }
 
@@ -144,6 +144,217 @@ evalQuasiQuoteExpr(env : SExpEnv, expr : Sexpr) -> SExpEnv {
 		eval.value;
 	});
 	SExpEnv(env with value = result);
+}
+
+evalSpecialForm(env : SExpEnv, name : string, args : [Sexpr]) -> SExpEnv {
+	// Handle special forms first
+	if (name == "import") {
+		// Import form - load and evaluate a file
+		if (length(args) == 1) {
+			// Get the path as a string
+			pathResult = evalSexpr(env, args[0]);
+			pathStr = getSString(pathResult.value, "import path");
+			
+			// Check if we should add .sexp extension if not present
+			filePath = if (!strContains(pathStr, ".sexp")) {
+				pathStr + ".sexp";
+			} else pathStr;
+			
+			// Process the import
+			importFile(env, filePath);
+		} else {
+			println("import requires 1 argument (path)");
+			SExpEnv(env with value = SSList([]));
+		}
+	} else if (name == "define") {
+		// Define a variable
+		if (length(args) >= 2) {
+			varName = switch (args[0]) {
+				SSVariable(n): n;
+				default: {
+					println("Invalid define syntax");
+					"";
+				}
+			};
+			if (varName != "") {
+				valueResult = evalSexpr(env, args[1]);
+				// Return the updated environment and the value
+				newEnv = setTree(valueResult.env, varName, valueResult.value);
+				SExpEnv(env.runtime, newEnv, valueResult.value);
+			} else {
+				SExpEnv(env with value = SSList([]));
+			}
+		} else {
+			println("define requires at least 2 arguments");
+			SExpEnv(env with value = SSList([]));
+		}
+	} else if (name == "and") {
+		// Short-circuit AND operator
+		if (length(args) < 2) {
+			println("and requires at least 2 arguments");
+			SExpEnv(env with value = SSBool(true)); // Empty AND is true
+		} else {
+			// Evaluate the first argument
+			firstResult = evalSexpr(env, args[0]);
+			isTrue = getSBool(firstResult.value, "and condition");
+			
+			if (!isTrue) {
+				// Short-circuit: first argument is false, return false without evaluating the rest
+				SExpEnv(env.runtime, firstResult.env, SSBool(false));
+			} else {
+				// First argument is true, evaluate the second argument
+				if (length(args) == 2) {
+					// Only two arguments
+					secondResult = evalSexpr(firstResult, args[1]);
+					isSecondTrue = getSBool(secondResult.value, "and condition");
+					SExpEnv(env.runtime, secondResult.env, SSBool(isSecondTrue));
+				} else {
+					// More than two arguments, recursively evaluate the rest
+					// Create a new && expression with the remaining arguments
+					restExpr = SSSpecialForm("and", tailFrom(args, 1));
+					evalSexpr(firstResult, restExpr);
+				}
+			}
+		}
+	} else if (name == "or") {
+		// Short-circuit OR operator
+		if (length(args) < 2) {
+			println("or requires at least 2 arguments");
+			SExpEnv(env with value = SSBool(false)); // Empty OR is false
+		} else {
+			// Evaluate the first argument
+			firstResult = evalSexpr(env, args[0]);
+			isTrue = getSBool(firstResult.value, "or condition");
+			
+			if (isTrue) {
+				// Short-circuit: first argument is true, return true without evaluating the rest
+				SExpEnv(env.runtime, firstResult.env, SSBool(true));
+			} else {
+				// First argument is false, evaluate the second argument
+				if (length(args) == 2) {
+					// Only two arguments
+					secondResult = evalSexpr(firstResult, args[1]);
+					isSecondTrue = getSBool(secondResult.value, "or condition");
+					SExpEnv(env.runtime, secondResult.env, SSBool(isSecondTrue));
+				} else {
+					// More than two arguments, recursively evaluate the rest
+					// Create a new || expression with the remaining arguments
+					restExpr = SSSpecialForm("or", tailFrom(args, 1));
+					evalSexpr(firstResult, restExpr);
+				}
+			}
+		}
+	} else if (name == "lambda") {
+		// Create a lambda with proper closure capturing free variables
+		if (length(args) >= 2) {
+			// Extract parameter list
+			paramList = switch (args[0]) {
+				SSList(p): p;
+				default: {
+					println("Lambda params should be a list");
+					[];
+				}
+			};
+			// Extract parameter names
+			paramNames = filtermap(paramList, \param -> {
+				switch (param) {
+					SSVariable(pname): Some(pname);
+					default: None();
+				}
+			});
+			
+			// Get the lambda body
+			lambdaBody = args[1];
+			
+			// Find bound vars (the parameters)
+			boundVars = fold(paramNames, makeSet(), \acc, paramName -> {
+				insertSet(acc, paramName);
+			});
+			
+			// Find free variables in the lambda body
+			freeVars = findFreeSexprVars(lambdaBody, boundVars);
+			
+			// Create bindings for all free variables
+			bindings = createSexprBindings(freeVars, env.env);
+			
+			// Create a closure as a SSList with special form: (closure bindings params body)
+			bindingsList = SSList(map(bindings, \binding -> {
+				SSList([SSVariable(binding.first), binding.second]);
+			}));
+			
+			// Return the closure as a list: (closure bindings params body)
+			closure = SSList([
+				SSVariable("closure"),
+				bindingsList,
+				args[0],  // Original parameter list
+				lambdaBody
+			]);
+			
+			SExpEnv(env with value = closure);
+		} else {
+			println("lambda requires at least 2 arguments");
+			SExpEnv(env with value = SSList([]));
+		}
+	} else if (name == "if") {
+		// Conditional
+		if (length(args) >= 2) {
+			condResult = evalSexpr(env, args[0]);
+			isTrue = switch (condResult.value) {
+				SSBool(b): b;
+				default: true; // Non-false values are true
+			};
+			if (isTrue) {
+				evalSexpr(condResult, args[1]);
+			} else if (length(args) > 2) {
+				evalSexpr(condResult, args[2]);
+			} else {
+				SExpEnv(env.runtime, condResult.env, SSList([]));
+			}
+		} else {
+			println("if requires at least 2 arguments");
+			SExpEnv(env with value = SSList([]));
+		}
+	} else if (name == "eval") {
+		// Evaluate expression
+		if (length(args) >= 1) {
+			expResult = evalSexpr(env, args[0]);
+			evalSexpr(expResult, expResult.value);
+		} else {
+			SExpEnv(env with value = SSList([]));
+		}
+	} else if (name == "match") {
+		// Pattern matching
+		if (length(args) >= 3 && (length(args) % 2) == 1) {
+			// match value pattern1 result1 pattern2 result2...
+			valueResult = evalSexpr(env, args[0]);
+			
+			// Pass patterns directly to the matching function without evaluation
+			patternsAndResults = tailFrom(args, 1);
+			
+			// Try each pattern in sequence
+			matchResult = evalMatch(valueResult.env, valueResult.value, patternsAndResults);
+			matchIndex = matchResult.first;
+			updatedEnv = matchResult.second;
+			
+			if (matchIndex != -1) {
+				// Found a matching pattern - evaluate the corresponding result
+				resultIndex = matchIndex * 2 + 1; // pattern at even indices (0, 2), results at odd (1, 3)
+				resultExpr = patternsAndResults[resultIndex];
+				// Use the updated environment with bound variables from the pattern match
+				matchEnv = SExpEnv(env.runtime, updatedEnv, SSList([]));
+				evalSexpr(matchEnv, resultExpr);
+			} else {
+				println("No pattern matched");
+				SExpEnv(env.runtime, valueResult.env, SSList([]));
+			}
+		} else {
+			println("match requires value and pattern-result pairs");
+			SExpEnv(env with value = SSList([]));
+		}
+	} else {
+		println("TODO: Handle special form: " + name);
+		SExpEnv(env with value = SSList([]));
+	}
 }
 
 // Evaluate a function call
@@ -163,234 +374,28 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 			}
 		};
 		SSVariable(name): {
-			// Handle special forms first
-			if (name == "import") {
-				// Import form - load and evaluate a file
-				if (length(args) == 1) {
-					// Get the path as a string
-					pathResult = evalSexpr(env, args[0]);
-					pathStr = getSString(pathResult.value, "import path");
-					
-					// Check if we should add .sexp extension if not present
-					filePath = if (!strContains(pathStr, ".sexp")) {
-						pathStr + ".sexp";
-					} else pathStr;
-					
-					// Process the import
-					importFile(env, filePath);
-				} else {
-					println("import requires 1 argument (path)");
-					SExpEnv(env with value = SSList([]));
-				}
-			} else if (name == "define") {
-				// Define a variable
-				if (length(args) >= 2) {
-					varName = switch (args[0]) {
-						SSVariable(n): n;
-						default: {
-							println("Invalid define syntax");
-							"";
-						}
-					};
-					if (varName != "") {
-						valueResult = evalSexpr(env, args[1]);
-						// Return the updated environment and the value
-						newEnv = setTree(valueResult.env, varName, valueResult.value);
-						SExpEnv(env.runtime, newEnv, valueResult.value);
-					} else {
-						SExpEnv(env with value = SSList([]));
-					}
-				} else {
-					println("define requires at least 2 arguments");
-					SExpEnv(env with value = SSList([]));
-				}
-			} else if (name == "&&") {
-				// Short-circuit AND operator
-				if (length(args) < 2) {
-					println("&& requires at least 2 arguments");
-					SExpEnv(env with value = SSBool(true)); // Empty AND is true
-				} else {
-					// Evaluate the first argument
-					firstResult = evalSexpr(env, args[0]);
-					isTrue = getSBool(firstResult.value, "&& condition");
-					
-					if (!isTrue) {
-						// Short-circuit: first argument is false, return false without evaluating the rest
-						SExpEnv(env.runtime, firstResult.env, SSBool(false));
-					} else {
-						// First argument is true, evaluate the second argument
-						if (length(args) == 2) {
-							// Only two arguments
-							secondResult = evalSexpr(firstResult, args[1]);
-							isSecondTrue = getSBool(secondResult.value, "&& condition");
-							SExpEnv(env.runtime, secondResult.env, SSBool(isSecondTrue));
-						} else {
-							// More than two arguments, recursively evaluate the rest
-							// Create a new && expression with the remaining arguments
-							restExpr = SSList(concat([SSVariable("&&")], tailFrom(args, 1)));
-							evalSexpr(firstResult, restExpr);
-						}
-					}
-				}
-			} else if (name == "||") {
-				// Short-circuit OR operator
-				if (length(args) < 2) {
-					println("||| requires at least 2 arguments");
-					SExpEnv(env with value = SSBool(false)); // Empty OR is false
-				} else {
-					// Evaluate the first argument
-					firstResult = evalSexpr(env, args[0]);
-					isTrue = getSBool(firstResult.value, "|| condition");
-					
-					if (isTrue) {
-						// Short-circuit: first argument is true, return true without evaluating the rest
-						SExpEnv(env.runtime, firstResult.env, SSBool(true));
-					} else {
-						// First argument is false, evaluate the second argument
-						if (length(args) == 2) {
-							// Only two arguments
-							secondResult = evalSexpr(firstResult, args[1]);
-							isSecondTrue = getSBool(secondResult.value, "|| condition");
-							SExpEnv(env.runtime, secondResult.env, SSBool(isSecondTrue));
-						} else {
-							// More than two arguments, recursively evaluate the rest
-							// Create a new || expression with the remaining arguments
-							restExpr = SSList(concat([SSVariable("||")], tailFrom(args, 1)));
-							evalSexpr(firstResult, restExpr);
-						}
-					}
-				}
-			} else if (name == "lambda") {
-				// Create a lambda with proper closure capturing free variables
-				if (length(args) >= 2) {
-					// Extract parameter list
-					paramList = switch (args[0]) {
-						SSList(p): p;
-						default: {
-							println("Lambda params should be a list");
-							[];
-						}
-					};
-					// Extract parameter names
-					paramNames = filtermap(paramList, \param -> {
-						switch (param) {
-							SSVariable(pname): Some(pname);
-							default: None();
-						}
-					});
-					
-					// Get the lambda body
-					lambdaBody = args[1];
-					
-					// Find bound vars (the parameters)
-					boundVars = fold(paramNames, makeSet(), \acc, paramName -> {
-						insertSet(acc, paramName);
-					});
-					
-					// Find free variables in the lambda body
-					freeVars = findFreeSexprVars(lambdaBody, boundVars);
-					
-					// Create bindings for all free variables
-					bindings = createSexprBindings(freeVars, env.env);
-					
-					// Create a closure as a SSList with special form: (closure bindings params body)
-					bindingsList = SSList(map(bindings, \binding -> {
-						SSList([SSVariable(binding.first), binding.second]);
-					}));
-					
-					// Return the closure as a list: (closure bindings params body)
-					closure = SSList([
-						SSVariable("closure"),
-						bindingsList,
-						args[0],  // Original parameter list
-						lambdaBody
-					]);
-					
-					SExpEnv(env with value = closure);
-				} else {
-					println("lambda requires at least 2 arguments");
-					SExpEnv(env with value = SSList([]));
-				}
-			} else if (name == "if") {
-				// Conditional
-				if (length(args) >= 2) {
-					condResult = evalSexpr(env, args[0]);
-					isTrue = switch (condResult.value) {
-						SSBool(b): b;
-						default: true; // Non-false values are true
-					};
-					if (isTrue) {
-						evalSexpr(condResult, args[1]);
-					} else if (length(args) > 2) {
-						evalSexpr(condResult, args[2]);
-					} else {
-						SExpEnv(env.runtime, condResult.env, SSList([]));
-					}
-				} else {
-					println("if requires at least 2 arguments");
-					SExpEnv(env with value = SSList([]));
-				}
-			} else if (name == "eval") {
-				// Evaluate expression
-				if (length(args) >= 1) {
-					expResult = evalSexpr(env, args[0]);
-					evalSexpr(expResult, expResult.value);
-				} else {
-					SExpEnv(env with value = SSList([]));
-				}
-			} else if (name == "match") {
-				// Pattern matching
-				if (length(args) >= 3 && (length(args) % 2) == 1) {
-					// match value pattern1 result1 pattern2 result2...
-					valueResult = evalSexpr(env, args[0]);
-					
-					// Pass patterns directly to the matching function without evaluation
-					patternsAndResults = tailFrom(args, 1);
-					
-					// Try each pattern in sequence
-					matchResult = evalMatch(valueResult.env, valueResult.value, patternsAndResults);
-					matchIndex = matchResult.first;
-					updatedEnv = matchResult.second;
-					
-					if (matchIndex != -1) {
-						// Found a matching pattern - evaluate the corresponding result
-						resultIndex = matchIndex * 2 + 1; // pattern at even indices (0, 2), results at odd (1, 3)
-						resultExpr = patternsAndResults[resultIndex];
-						// Use the updated environment with bound variables from the pattern match
-						matchEnv = SExpEnv(env.runtime, updatedEnv, SSList([]));
-						evalSexpr(matchEnv, resultExpr);
-					} else {
-						println("No pattern matched");
-						SExpEnv(env.runtime, valueResult.env, SSList([]));
-					}
-				} else {
-					println("match requires value and pattern-result pairs");
-					SExpEnv(env with value = SSList([]));
-				}
+			// Regular function call
+			// Evaluate arguments first
+			fnResult = evalArgs(env, args, []);
+			
+			// Check if it's a runtime function
+			if (containsKeyTree(env.runtime, name)) {
+				// Invoke the runtime function with arity checking
+				invokeRuntimeFn(env, name, fnResult);
 			} else {
-				// Regular function call
-				// Evaluate arguments first
-				fnResult = evalArgs(env, args, []);
-				
-				// Check if it's a runtime function
-				if (containsKeyTree(env.runtime, name)) {
-					// Invoke the runtime function with arity checking
-					invokeRuntimeFn(env, name, fnResult);
-				} else {
-					// Custom user-defined function - try to lookup in environment
-					maybeFunction = lookupTree(env.env, name);
-					switch (maybeFunction) {
-						Some(function): {
-							// Found function in environment
-							// Apply the function
-							fnEnv = SExpEnv(env.runtime, fnResult.env, SSList([]));
-							applyFunction(fnEnv, function, fnResult.args);
-						};
-						None(): {
-							println("Unknown function: " + name);
-							SExpEnv(env with value = SSList([]));
-						};
-					}
+				// Custom user-defined function - try to lookup in environment
+				maybeFunction = lookupTree(env.env, name);
+				switch (maybeFunction) {
+					Some(function): {
+						// Found function in environment
+						// Apply the function
+						fnEnv = SExpEnv(env.runtime, fnResult.env, SSList([]));
+						applyFunction(fnEnv, function, fnResult.args);
+					};
+					None(): {
+						println("Unknown function: " + name);
+						SExpEnv(env with value = SSList([]));
+					};
 				}
 			}
 		};
