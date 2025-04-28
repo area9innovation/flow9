@@ -10,6 +10,20 @@ import tools/orbit/orbit_ast;
 import tools/orbit/ograph;
 import tools/orbit/orbit_simple_ograph;
 import tools/orbit/orbit_sexpr_bridge;
+import tools/orbit/orbit2sexpr;
+import tools/orbit/sexpr/pretty_sexpr;
+
+// Recursively finds and prints differences between two strings
+findDifferences(original : string, converted : string, position : int, totalLen : int) -> void {
+	if (position < totalLen) {
+		origChar = if (position < strlen(original)) substring(original, position, 1) else "";
+		convChar = if (position < strlen(converted)) substring(converted, position, 1) else "";
+		
+		if (origChar != convChar) {
+			println("Position " + i2s(position) + ": '" + origChar + "' vs '" + convChar + "'");
+		}
+	}
+}
 
 main() {
 	files = filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
@@ -19,6 +33,7 @@ main() {
 		println("  trace=1 - Enable detailed tracing of interpretation steps");
 		println("  pretty=1 - Only pretty print the parsed result without evaluation");
 		println("  sexpr=1 - Use SExpr interpreter and pretty printer instead of Orbit native ones");
+		println("  roundtrip=1 - Test roundtrip conversion (Orbit → SExpr → Orbit) and compare results");
 	}
 	
 	// Check if tracing is enabled via URL parameter
@@ -39,6 +54,12 @@ main() {
 		println("SExpr mode: Using SExpr interpreter and pretty printer");
 	}
 	
+	// Check if we should test roundtrip conversion
+	testRoundtrip = getUrlParameter("roundtrip") == "1";
+	if (testRoundtrip) {
+		println("Roundtrip test mode: Will compare results of Orbit u2192 SExpr u2192 Orbit conversion");
+	}
+	
 	errors = sum(map(files, \f -> {
 		if (fileExists(f)) {
 			program = getFileContent(f);
@@ -47,8 +68,52 @@ main() {
 				println(f + ": " + res.second);
 				1
 			} else {
-				// Always print the parsed result if pretty print is enabled
-				if (prettyPrintOnly) {
+				// Test roundtrip conversion if enabled
+				if (testRoundtrip) {
+					println("====== ROUNDTRIP TEST ======");
+					println("Original file: " + f);
+					
+					// Step 1: Get pretty-printed original AST
+					println("\nSTEP 1: Pretty-printing original Orbit AST");
+					original = prettyOrbit(res.first);
+					println(original);
+					
+					// Step 2: Convert to SExpr
+					println("\nSTEP 2: Converting to SExpr");
+					sexpr = orbit2sexpr(res.first);
+					if (prettyPrintOnly) {
+						prettyExpr = prettySexpr(sexpr);
+						println("SExpr:");
+						println(prettyExpr);
+					}
+					
+					// Step 3: Convert back to Orbit
+					println("\nSTEP 3: Converting back to Orbit");
+					orbitAgain = sexpr2orbit(sexpr);
+					
+					// Step 4: Pretty-print the converted Orbit and compare
+					println("\nSTEP 4: Pretty-printing converted Orbit AST");
+					converted = prettyOrbit(orbitAgain);
+					println(converted);
+					
+					// Step 5: Compare the results
+					println("\nSTEP 5: Comparing results");
+					if (original == converted) {
+						println("SUCCESS: The roundtrip conversion preserved the structure exactly!");
+					} else {
+						println("WARNING: The roundtrip conversion resulted in differences");
+						
+						// Find and display differences for debugging purposes
+						println("\nDifferences found (original vs converted):");
+						totalLen = max(strlen(original), strlen(converted));
+						
+						// Recursively find and print differences
+						findDifferences(original, converted, 0, totalLen);
+					}
+					
+					println("====== END ROUNDTRIP TEST ======\n");
+					0;
+				} else if (prettyPrintOnly) {
 					println("Parsed AST:");
 					if (useSexpr) {
 						// Convert to SExpr and pretty print using bridge
