@@ -20,13 +20,21 @@ flowcpp sexpr.flow -- tests/file.sexp
 | `(or exp1 exp2 ...)`                                | `(or (= x 0) (= x 1))`   |
 | `(let ((name1 exp1) (name2 exp2) ...) body...)`      | `(let ((x 1) (y 2)) (+ x y))` |
 | `(letrec ((name1 exp1) (name2 exp2) ...) body...)`   | `(letrec ((f (lambda (n) (if (= n 0) 1 (* n (f (- n 1))))))) (f 5))` |
-| `(match value (pattern1 result1) (pattern2 result2) ...)` | `(match x (0 'zero) (1 'one) (else 'other))` |
 | `(quote exp)`                                       | `(quote 1+2)`                  |
 | `(quasiquote exp)`                                  | `(quasiquote +(1 (unquote a)))`   |
 | `(unquote exp)`                                     | `(unquote a)`                  |
 | `(unquote-splicing exp)`                            | `(unquote-splicing ls)`    |
+| `(match value (pattern1 result1) (pattern2 result2) ...)` | `(match x (0 'zero) (1 'one) (else 'other))` |
+
+## Differences from Scheme
+
+We use `//` and `/* ... */` for comments, and not `;`.
+We use words for quotations, and not the shorthand syntax.
+We do not have a sequence at the top level, so you have to wrap with `(begin ...)`.
 
 TODO: Scheme have these as well. Not sure if we need them.
+| Syntax Pattern                                     | Surface Syntax Example |
+|-----------------------------------------------------|-------------------------|
 | `(define name exp)` <br> `(define (name param*) body...)` | `(define x 42)` <br> `(define (f x) (+ x 1))` |
 | `(let* ((name1 exp1) (name2 exp2) ...) body...)`     | `(let* ((x 1) (y (+ x 2))) y)` |
 | `(cond (test exp...) (test exp...) ... [else exp...])` | `(cond [(> x 0) 'pos] [(< x 0) 'neg] [else 'zero])` |
@@ -187,7 +195,7 @@ The language includes an extensive set of built-in functions imported from the O
 
 ### I/O Operations
 
-- Basic I/O: `print`, `println`
+- Basic I/O: `println`
 - File operations: `getFileContent`, `setFileContent`
 
 ### Logic Operations
