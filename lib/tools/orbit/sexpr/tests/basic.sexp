@@ -16,7 +16,7 @@
 	(+ 1 2)
 
 	// Simple expressions
-	(let (x 3)
+	(let ((x 3))
 		(+ x 5)
 	)
 	(if true 1 2)

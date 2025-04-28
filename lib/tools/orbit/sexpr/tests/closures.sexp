@@ -1,5 +1,6 @@
 // Closure tests
 (
+	begin
 	(define y 20)  // Define a variable to capture
 	(define z 30)  // Another variable to capture
 	(define add-y (lambda (x) (+ x y)))  // Create a closure capturing y
