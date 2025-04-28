@@ -45,7 +45,7 @@ let sum = x + 10;
 let message = greeting + " World";
 ```
 
-CRITICAL: Unlike some languages, Orbit variables cannot be reassigned. Once a value is bound to a name, that binding cannot be changed.
+CRITICAL: Unlike some languages, Orbit variables cannot be reassigned. Once a value is bound to a name, that binding cannot be changed. However, you can shadow the original variable by creating a new one with the same name in a different scope.
 
 CRITICAL: Variables are lowercase. We reserve uppercase for constructors and types.
 
