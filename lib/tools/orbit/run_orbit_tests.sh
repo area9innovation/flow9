@@ -8,6 +8,8 @@ TEST_DIR="tests"
 OUTPUT_DIR="test_output"
 EXPECTED_DIR="expected_output"  # Directory for expected outputs
 TRACE=0
+SEXPR=0  # Flag for using the S-expression evaluation engine
+COMPARE_ENGINES=0  # Flag to run each test with both engines and compare results
 VERBOSE=0
 TIMEOUT=10  # Timeout in seconds
 GENERATE_EXPECTED=0  # Flag to generate expected output files
@@ -50,6 +52,14 @@ while [[ $# -gt 0 ]]; do
       TRACE=1
       shift
       ;;
+    --sexpr)
+      SEXPR=1
+      shift
+      ;;
+    --compare-engines)
+      COMPARE_ENGINES=1
+      shift
+      ;;
     --verbose)
       VERBOSE=1
       shift
@@ -75,6 +85,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --output-dir=DIR  Directory to save test outputs (default: 'test_output')"
       echo "  --timeout=SECONDS Maximum time to allow a test to run (default: 10 seconds)"
       echo "  --trace           Enable detailed tracing of interpretation steps"
+      echo "  --sexpr           Use the S-expression evaluation engine (sexpr=1)"
+      echo "  --compare-engines Run each test with both engines and compare results"
       echo "  --verbose         Show detailed output for each test"
       echo "  --generate-expected  Generate expected output files from current outputs"
       echo "  --cleanup         Check for obsolete output files (test cases that no longer exist)"
@@ -134,24 +146,72 @@ for TEST_FILE in $TEST_FILES; do
   # Create output filename
   OUTPUT_FILE="$OUTPUT_DIR/${FILE_NAME%.orb}.output"
   
+  # Also create output filename for sexpr engine if comparing
+  if [ $COMPARE_ENGINES -eq 1 ]; then
+    SEXPR_OUTPUT_FILE="$OUTPUT_DIR/${FILE_NAME%.orb}.sexpr.output"
+  fi
+  
   # Run the test
   echo "Running test: $FILE_NAME"
   
-  # Prepare trace parameter if needed
-  TRACE_PARAM=""
+  # Prepare parameters if needed
+  PARAMS=""
   if [ $TRACE -eq 1 ]; then
-    TRACE_PARAM="trace=1"
+    PARAMS="$PARAMS trace=1"
   fi
   
-  # Run orbit with the test file and capture the output with timeout
-  OUTPUT=$(timeout --kill-after=2 $TIMEOUT orbit $TRACE_PARAM "$TEST_FILE" 2>&1 | grep -v "Flow compiler (3rd generation)" | grep -v "Processing 'tools/orbit/orbit' on http server" | sed '/^$/d')
-  EXIT_CODE=$?
+  if [ $SEXPR -eq 1 ]; then
+    PARAMS="$PARAMS sexpr=1"
+  fi
   
-  # Save the output
-  echo "$OUTPUT" > "$OUTPUT_FILE"
-  
-  # Clean up the output file to remove timing and exit code information
-  clean_output_file "$OUTPUT_FILE"
+  if [ $COMPARE_ENGINES -eq 1 ]; then
+    # Run with default engine
+    echo "  - Running with default engine"
+    DEFAULT_PARAMS="$PARAMS"
+    DEFAULT_PARAMS=${DEFAULT_PARAMS/sexpr=1/}  # Remove sexpr=1 if present
+    OUTPUT=$(timeout --kill-after=2 $TIMEOUT orbit $DEFAULT_PARAMS "$TEST_FILE" 2>&1 | grep -v "Flow compiler (3rd generation)" | grep -v "Processing 'tools/orbit/orbit' on http server" | sed '/^$/d')
+    EXIT_CODE=$?
+    
+    # Save the output
+    echo "$OUTPUT" > "$OUTPUT_FILE"
+    clean_output_file "$OUTPUT_FILE"
+    
+    # Run with sexpr engine
+    echo "  - Running with S-expression engine"
+    SEXPR_PARAMS="$PARAMS sexpr=1"
+    SEXPR_OUTPUT=$(timeout --kill-after=2 $TIMEOUT orbit $SEXPR_PARAMS "$TEST_FILE" 2>&1 | grep -v "Flow compiler (3rd generation)" | grep -v "Processing 'tools/orbit/orbit' on http server" | sed '/^$/d')
+    SEXPR_EXIT_CODE=$?
+    
+    # Save the sexpr output
+    echo "$SEXPR_OUTPUT" > "$SEXPR_OUTPUT_FILE"
+    clean_output_file "$SEXPR_OUTPUT_FILE"
+    
+    # Compare the outputs
+    DIFF_OUTPUT=$(diff -u "$OUTPUT_FILE" "$SEXPR_OUTPUT_FILE")
+    DIFF_EXIT_CODE=$?
+    
+    if [ $DIFF_EXIT_CODE -eq 0 ]; then
+      echo "  ✓ Both engines produced identical output"
+    else
+      echo "  ⚠ Engine outputs differ!"
+      DIFF_SUMMARY_FILE="$OUTPUT_DIR/${FILE_NAME%.orb}.engine_diff"
+      echo "$DIFF_OUTPUT" > "$DIFF_SUMMARY_FILE"
+      echo "  - Differences saved to: $DIFF_SUMMARY_FILE"
+    fi
+    
+    # Use the default engine's exit code for the test result
+    OUTPUT="$OUTPUT"
+  else
+    # Run orbit with the test file and capture the output with timeout
+    OUTPUT=$(timeout --kill-after=2 $TIMEOUT orbit $PARAMS "$TEST_FILE" 2>&1 | grep -v "Flow compiler (3rd generation)" | grep -v "Processing 'tools/orbit/orbit' on http server" | sed '/^$/d')
+    EXIT_CODE=$?
+    
+    # Save the output
+    echo "$OUTPUT" > "$OUTPUT_FILE"
+    
+    # Clean up the output file to remove timing and exit code information
+    clean_output_file "$OUTPUT_FILE"
+  fi
   
   # Update counters
   TOTAL_TESTS=$((TOTAL_TESTS + 1))
@@ -234,6 +294,30 @@ echo "Tests run: $TOTAL_TESTS, Passed: $PASSED_TESTS, Failed: $FAILED_TESTS" >> 
 # Add failing tests if any
 if [ $FAILED_TESTS -gt 0 ]; then
   echo "Failed tests:$FAILURE_LIST" >> "$SUMMARY_FILE"
+fi
+
+# Add engine comparison summary if enabled
+if [ $COMPARE_ENGINES -eq 1 ]; then
+  echo "" >> "$SUMMARY_FILE"
+  echo "Engine Comparison Summary" >> "$SUMMARY_FILE"
+  echo "------------------------" >> "$SUMMARY_FILE"
+  
+  # Count how many tests had differences between engines
+  DIFF_COUNT=$(find "$OUTPUT_DIR" -name "*.engine_diff" | wc -l)
+  
+  if [ $DIFF_COUNT -eq 0 ]; then
+    echo "All tests produced identical results with both engines." >> "$SUMMARY_FILE"
+    echo "\nAll tests produced identical results with both engines."
+  else
+    echo "$DIFF_COUNT test(s) showed differences between engines:" >> "$SUMMARY_FILE"
+    echo "\n$DIFF_COUNT test(s) showed differences between engines:"
+    
+    for DIFF_FILE in $(find "$OUTPUT_DIR" -name "*.engine_diff"); do
+      BASE_NAME=$(basename "$DIFF_FILE" .engine_diff)
+      echo "  - $BASE_NAME" >> "$SUMMARY_FILE"
+      echo "  - $BASE_NAME"
+    done
+  fi
 fi
 
 # Print summary to console
