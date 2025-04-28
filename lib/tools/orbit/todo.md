@@ -2,9 +2,7 @@
 - Port the entire thing to run in our scheme
   ✅ Convert OrMath_expr to/from SExpr
   ✅ Check roundtrip Orbit to SExpr and back
-  - Imports are not resolved, so we do not convert those right
-    - Do preprocessing to resolve imports
-	- Or support importing Orbit in SExpr
+  ✅ Imports are not resolved, so we do not convert those right
   - Migrate to eval using SExpr
   - Change ograph to use SExpr
   - Implement SExpr eval using ograph via rewrites
