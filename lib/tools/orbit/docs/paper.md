@@ -275,6 +275,8 @@ eclass42 = {
 }
 ```
 
+TODO: Explain how we replace the cost function with canonical forms. Different canonical forms represent different cost trade-offs.
+
 ## 5. Group-Theoretic Foundations
 
 ### 4.1 Core Symmetry Groups
@@ -611,11 +613,16 @@ fn reverse(array) = (
 ```
 This runs in O(n) time, dominated by the efficient cyclic canonicalization steps.
 
+
+## 6. Evaluating S-Expressions in the O-graph
+
+TODO: Explain how we do this and why.
+
 ## 6. Canonicalisation Strategies
 
 This section details how the core algorithms are applied, resulting in canonical forms.
 
-### 5.1 Symmetric Group Canonicalization (Sₙ)
+### 6.1 Symmetric Group Canonicalization (Sₙ)
 
 Used for permutation symmetry. The canonical form is the sorted sequence of operands.
 
@@ -623,7 +630,7 @@ Used for permutation symmetry. The canonical form is the sorted sequence of oper
 
 Consider `a + b + c + d`. Without canonicalization, matching a pattern like `x + y` requires checking sub-expressions in potentially O(n!) permutations for n-ary operations. With canonicalization (e.g., sorting operands for Sₙ symmetry), the expression becomes a single form like `a + b + c + d` (assuming alphabetical order). A pattern `x + y` then only needs to be matched against adjacent pairs in the canonical form, drastically reducing matching complexity. For nested expressions with multiple commutative/associative operators, the savings compound exponentially. TODO: In reality, we use the gather operation to collect all operands into a single array, which is then sorted. This allows us to apply the canonicalization rules directly on the array rather than on individual terms.
 
-### 5.2 Cyclic Group Canonicalization (Cₙ)
+### 6.2 Cyclic Group Canonicalization (Cₙ)
 
 Used for rotational symmetry (e.g., bit rotations, modular arithmetic). The canonical form is the lexicographically minimal rotation.
 
@@ -675,7 +682,7 @@ fn normal_form(poly, basis, order) = (
 );
 ```
 
-### 5.3 Dihedral Group Canonicalization (Dₙ)
+### 6.3 Dihedral Group Canonicalization (Dₙ)
 
 Used for combined rotational and reflectional symmetries (e.g., symmetries of a square D₄, bit patterns). The canonical form is the minimum of the minimal rotation and the minimal rotation of the reversed sequence.
 
@@ -708,7 +715,7 @@ Any of the 8 states related by rotation/reflection map to the same canonical for
 
 This section illustrates how the core concepts apply across various domains, leveraging the domain hierarchy (§2.3) and group-theoretic canonicalization.
 
-### 6.1 Polynomial Canonicalization
+### 7.1 Polynomial Canonicalization
 
 Polynomials form a Ring, inheriting rules for `+` (AbelianGroup) and `*` (Monoid, often Commutative).
 
@@ -810,7 +817,7 @@ Applied example: simplifying `3*x*y + 2*y*x + x*(y+z)`
 5.  Apply glex ordering (xy > xz by total degree and lex ordering): `+([6*x*y, x*z])`
     Final Canonical Form: `6*x*y + x*z`
 
-### 6.2 Matrix Expression Optimization
+### 7.2 Matrix Expression Optimization
 
 Matrices (over a Ring/Field T) form a Ring (generally non-commutative).
 
@@ -841,7 +848,7 @@ Applied example: optimizing `((A*B)ᵀ * (C+D))`
 2. Apply distributivity (from Ring): `(Bᵀ * Aᵀ) * C + (Bᵀ * Aᵀ) * D`
 3. (Optional) If matrix multiplication is associative (it is): `Bᵀ * (Aᵀ * C) + Bᵀ * (Aᵀ * D)`
 
-### 6.3 Logic Formula Canonicalization
+### 7.3 Logic Formula Canonicalization
 
 Boolean logic forms a Boolean Algebra (a specific type of Ring and Distributive Lattice).
 
@@ -896,7 +903,7 @@ expr : BDD → to_cnf(expr) : CNF     // Convert BDD to CNF
 ```
 This allows leveraging the best representation for a given task (e.g., BDDs for satisfiability counting, CNF for SAT solving) by rewriting between forms within the O-graph.
 
-### 6.4 List Processing Operations
+### 7.4 List Processing Operations
 
 Functional list operations have algebraic properties often related to Monoids or Functors.
 
@@ -917,7 +924,7 @@ reverse(reverse(xs)) → xs
 length(xs ++ ys) → length(xs) + length(ys)
 ```
 
-### 6.4.1 Type Inference Integration
+### 7.4.1 Type Inference Integration
 
 While Orbit primarily focuses on term rewriting, its domain system can represent types. Type inference and checking can interact with the rewriting process.
 
@@ -965,7 +972,7 @@ typeof({x: Int, y: String}) = typeof({y: String, x: Int})  // By S₂ canonicali
 
 This integration enables more flexible and powerful type systems while maintaining sound semantics, and demonstrates how the Orbit framework provides a unifying approach across seemingly disparate domains like term rewriting and type checking.
 
-### 6.5 Numerical Approximation and Discretization
+### 7.5 Numerical Approximation and Discretization
 
 Rewriting can represent transformations between continuous (Calculus) and discrete (Numerical) domains.
 
