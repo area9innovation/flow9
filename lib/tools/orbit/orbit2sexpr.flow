@@ -1,5 +1,5 @@
 import tools/orbit/orbit_types;
-import tools/orbit/orbit_decompose;
+import tools/orbit/orbit_decompose; // Keep importing for constructOrbit
 import tools/orbit/orbit_gather;
 import tools/orbit/sexpr/sexpr_types;
 import ds/tree;
@@ -19,79 +19,168 @@ export {
 
 // Main conversion function
 orbit2sexpr(expr : OrMath_expr) -> Sexpr {
-	// Decompose the expression to get its operator and children
-	decomposed = decomposeOrbit(expr);
-	op = decomposed.first;
-	children = decomposed.second.first;
-	value = decomposed.second.second;
-	
-	// Handle primitives first
-	if (op == "Int") {
-		switch (value) { 
-			OrbitInt(i): SSInt(i);
-			default: SSInt(0);
+	switch (expr) {
+		// Primitive values
+		OrInt(i): SSInt(i);
+		OrDouble(d): SSDouble(d);
+		OrString(s): SSString(s);
+		OrBool(b): SSBool(b);
+		OrIdentifier(id): SSVariable(id);
+		OrUId(id): SSConstructor(id);
+		OrOperatorSymbol(symbol): SSOperator(symbol);
+		
+		// Collection types
+		OrArray(items): SSList(map(items, orbit2sexpr));
+		
+		// Binary operations - Check for associative operations that should be flattened
+		OrAdd(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, "+");
+			SSList(concat([SSOperator("+")], convertedChildren));
 		}
-	} else if (op == "Double") {
-		switch (value) {
-			OrbitDouble(d): SSDouble(d);
-			default: SSDouble(0.0);
+		OrMultiply(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, "*");
+			SSList(concat([SSOperator("*")], convertedChildren));
 		}
-	} else if (op == "String") {
-		switch (value) {
-			OrbitString(s): SSString(s);
-			default: SSString("");
+		OrLogicalAnd(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, "&&");
+			SSList(concat([SSOperator("&&")], convertedChildren));
 		}
-	} else if (op == "Bool") {
-		switch (value) {
-			OrbitBool(b): SSBool(b);
-			default: SSBool(false);
+		OrLogicalOr(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, "||");
+			SSList(concat([SSOperator("||")], convertedChildren));
 		}
-	} else if (op == "Identifier") {
-		switch (value) {
-			OrbitString(id): SSVariable(id);
-			default: SSVariable("unknown");
+		OrSequence(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, ";");
+			SSList(concat([SSOperator(";")], convertedChildren));
 		}
-	} else if (op == "UId") {
-		switch (value) {
-			OrbitString(id): SSConstructor(id); // Treat UIDs as constructors in Sexpr
-			default: SSConstructor("unknown");
+		OrCompose(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, "∘");
+			SSList(concat([SSOperator("∘")], convertedChildren));
 		}
-	} else if (op == "GreekLetter") {
-		switch (value) {
-			OrbitString(letter): SSVariable(letter); // Treat Greek letters as variables
-			default: SSVariable("alpha");
+		OrUnion(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, "∪");
+			SSList(concat([SSOperator("∪")], convertedChildren));
 		}
-	} else if (op == "OperatorSymbol") {
-		switch (value) {
-			OrbitString(symbol): SSOperator(symbol);
-			default: SSOperator("+");
+		OrIntersection(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, "∩");
+			SSList(concat([SSOperator("∩")], convertedChildren));
 		}
-	} else if (op == "Array") {
-		// Convert array to list
-		SSList(map(children, orbit2sexpr));
-	} else if (isAssociativeOp(op) && length(children) == 2) {
-		// Special handling for associative operators
-		// We'll flatten them into a list like (op arg1 arg2 arg3...)
-		convertedChildren = gatherAssociativeOp(expr, op);
-		SSList(concat([SSOperator(op)], convertedChildren));
-	} else if (length(children) > 0) {
-		// Handle other expressions with children
-		convertedChildren = map(children, orbit2sexpr);
-		SSList(concat([SSOperator(op)], convertedChildren));
-	} else {
-		// For unknown or unsupported types, just convert to a symbol
-		SSVariable(op);
+		OrDirectProduct(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, "×");
+			SSList(concat([SSOperator("×")], convertedChildren));
+		}
+		OrTensorProduct(a, b): {
+			convertedChildren = gatherAssociativeOp(expr, "⊗");
+			SSList(concat([SSOperator("⊗")], convertedChildren));
+		}
+		
+		// Other binary operations (non-associative)
+		OrSubtract(a, b): SSList([SSOperator("-"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrDivide(a, b): SSList([SSOperator("/"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrExponent(a, b): SSList([SSOperator("^"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrEquals(a, b): SSList([SSOperator("="), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrNotEquals(a, b): SSList([SSOperator("!="), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrGreaterThan(a, b): SSList([SSOperator(">"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrGreaterEquals(a, b): SSList([SSOperator(">="), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrLessThan(a, b): SSList([SSOperator("<"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrLessEquals(a, b): SSList([SSOperator("<="), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrModulo(a, b): SSList([SSOperator("%"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrIndex(a, b): SSList([SSConstructor("Index"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrTypeAnnotation(a, b): SSList([SSConstructor("TypeAnnotation"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrNotTypeAnnotation(a, b): SSList([SSConstructor("NotTypeAnnotation"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrSubset(a, b): SSList([SSConstructor("Subset"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrElementOf(a, b): SSList([SSConstructor("ElementOf"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrHomomorphism(a, b): SSList([SSConstructor("Homomorphism"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrIsomorphism(a, b): SSList([SSConstructor("Isomorphism"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrLeftSemiDirectProduct(a, b): SSList([SSOperator("⋉"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrRightSemiDirectProduct(a, b): SSList([SSOperator("⋊"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrNormalSubgroup(a, b): SSList([SSConstructor("NormalSubgroup"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrFunctionType(a, b): SSList([SSConstructor("FunctionType"), orbit2sexpr(a), orbit2sexpr(b)]);
+		
+		// Unary operations
+		OrNegate(a): SSList([SSOperator("-"), orbit2sexpr(a)]);
+		OrLogicalNot(a): SSList([SSOperator("!"), orbit2sexpr(a)]);
+		OrSummation(a): SSList([SSConstructor("Summation"), orbit2sexpr(a)]);
+		OrIntegral(a): SSList([SSConstructor("Integral"), orbit2sexpr(a)]);
+		OrGradient(a): SSList([SSConstructor("Gradient"), orbit2sexpr(a)]);
+		OrGroupOrder(a): SSList([SSConstructor("GroupOrder"), orbit2sexpr(a)]);
+		
+		// Field access and subscripts
+		OrField(e, id): SSList([SSConstructor("Field"), orbit2sexpr(e), SSString(id)]);
+		OrSuperscript(e, sup): SSList([SSConstructor("Superscript"), orbit2sexpr(e), SSString(sup)]);
+		OrSubscript(e, sub): SSList([SSConstructor("Subscript"), orbit2sexpr(e), SSString(sub)]);
+		
+		// Operations with string identifiers
+		OrDerivative(id, e): SSList([SSConstructor("Derivative"), SSString(id), orbit2sexpr(e)]);
+		OrPartialDerivative(id, e): SSList([SSConstructor("PartialDerivative"), SSString(id), orbit2sexpr(e)]);
+		
+		// Special constructs
+		OrSetLiteral(exprs): SSList(concat([SSConstructor("SetLiteral")], map(exprs, orbit2sexpr)));
+		OrFunction(fn, args): SSList(concat([orbit2sexpr(fn)], map(args, orbit2sexpr))); // Call
+		OrIfElse(cond, thenExpr, elseExpr): SSList([SSConstructor("If"), orbit2sexpr(cond), orbit2sexpr(thenExpr), orbit2sexpr(elseExpr)]);
+		OrMatch(expr2, cases): SSList([SSConstructor("Match"), orbit2sexpr(expr2), orbit2sexpr(cases)]);
+		OrLet(idType, evalExpr): SSList([SSVariable("define"), SSVariable(idType.id), orbit2sexpr(evalExpr)]);
+		OrRule(m1, m2, m3, b): SSList([SSConstructor("Rule"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3), SSBool(b)]);
+		OrEntailment(m1, m2, m3): SSList([SSConstructor("Entailment"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3)]);
+		OrEquivalence(m1, m2, m3, b): SSList([SSConstructor("Equivalence"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3), SSBool(b)]);
+		OrTypeSubstitution(m1, m2, m3): SSList([SSConstructor("TypeSubstitution"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3)]);
+		OrTypeVar(s): SSList([SSConstructor("TypeVar"), SSString(s)]);
+		OrImport(path): SSList([SSConstructor("Import"), SSString(path)]);
+		OrEllipsis(): SSConstructor("Ellipsis");
+		
+		// Complex constructs requiring special handling
+		OrFnDef(id, id_types, type_annotations, math_expr): {
+			// Convert id_types to Sexpr
+			id_type_exprs = map(id_types, \idType -> {
+				type_annots = map(idType.type_annotations, \t -> orbit2sexpr(t.math_expr));
+				SSList([SSString(idType.id), SSList(type_annots)]);
+			});
+			
+			// Convert type_annotations to Sexpr
+			type_annot_exprs = map(type_annotations, \t -> orbit2sexpr(t.math_expr));
+			println("TODO: Convert fn def to sexpr");
+			SSList([
+				SSConstructor("FnDef"), 
+				SSString(id),
+				SSList(id_type_exprs),
+				SSList(type_annot_exprs),
+				orbit2sexpr(math_expr)
+			]);
+		}
+		OrLambda(env_bindings, id_types, math_expr): {
+			// Convert environment bindings to Sexpr
+			env_exprs = map(env_bindings, \binding -> 
+				SSList([SSConstructor("EnvBinding"), SSString(binding.id), orbit2sexpr(binding.math_expr)])
+			);
+			
+			// Convert id_types to Sexpr
+			id_type_exprs = map(id_types, \idType -> {
+				type_annots = map(idType.type_annotations, \t -> orbit2sexpr(t.math_expr));
+				SSList([SSString(idType.id), SSList(type_annots)]);
+			});
+			
+			SSList([
+				SSConstructor("Lambda"), 
+				SSList(env_exprs),
+				SSList(id_type_exprs),
+				orbit2sexpr(math_expr)
+			]);
+		}
+		OrForall(math_exprs, math_expr): SSList([SSConstructor("Forall"), SSList(map(math_exprs, orbit2sexpr)), orbit2sexpr(math_expr)]);
+		OrExists(math_exprs, math_expr): SSList([SSConstructor("Exists"), SSList(map(math_exprs, orbit2sexpr)), orbit2sexpr(math_expr)]);
+		OrSetComprehension(math_exprs, math_expr): SSList([SSConstructor("SetComprehension"), SSList(map(math_exprs, orbit2sexpr)), orbit2sexpr(math_expr)]);
 	}
 }
 
 // Check if an operator is associative
 isAssociativeOp(op : string) -> bool {
 	op == "+" || op == "*" || op == "&&" || op == "||" || op == ";" || 
-	op == "Seq" || op == "∘" || op == "Compose" || // Composition
-	op == "∪" || op == "Union" || // Set union
-	op == "∩" || op == "Intersection" || // Set intersection
-	op == "×" || op == "DirectProduct" || // Direct product
-	op == "⊗" || op == "TensorProduct"; // Tensor product
+	op == ";" || 
+	op == "∘" || // Composition
+	op == "∪" || // Set union
+	op == "∩" || // Set intersection
+	op == "×" || // Direct product
+	op == "⊗"; // Tensor product
 }
 
 // Check if an operator is right-associative (standard convention)
@@ -99,8 +188,8 @@ isRightAssociativeOp(op : string) -> bool {
 	op == "^" || // Exponentiation
 	op == "**" || // Alternative exponentiation
 	op == "=" || // Assignment 
-	op == "∘" || op == "Compose" || // Function composition
-	op == "⊗" || op == "TensorProduct"; // Tensor product (conventionally right-associative in some contexts)
+	op == "∘" ||  // Function composition
+	op == "⊗"; // Tensor product (conventionally right-associative in some contexts)
 }
 
 // Gather all operands for an associative operation
@@ -111,21 +200,93 @@ gatherAssociativeOp(expr : OrMath_expr, targetOp : string) -> [Sexpr] {
 
 // Helper function to recursively gather operands
 gatherAssociativeOpHelper(expr : OrMath_expr, targetOp : string, acc : [Sexpr]) -> [Sexpr] {
-	decomposed = decomposeOrbit(expr);
-	op = decomposed.first;
-	children = decomposed.second.first;
-	
-	if (op == targetOp && length(children) == 2) {
-		// This is an instance of the target associative operation
-		// Recursively process the left and right children
-		leftAcc = gatherAssociativeOpHelper(children[0], targetOp, acc);
-		// Continue the recursion with the right operand and return its result
-		gatherAssociativeOpHelper(children[1], targetOp, leftAcc);
-	} else {
-		// This is not the target operation or doesn't have 2 children
-		// Convert this expression and add it to the accumulator
-		arrayPush(acc, orbit2sexpr(expr));
-		acc;
+	// Directly pattern match on the expression type
+	switch (expr) {
+		OrAdd(a, b): {
+			if (targetOp == "+") {
+				// Recursively process left and right children
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		OrMultiply(a, b): {
+			if (targetOp == "*") {
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		OrLogicalAnd(a, b): {
+			if (targetOp == "&&") {
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		OrLogicalOr(a, b): {
+			if (targetOp == "||") {
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		OrSequence(a, b): {
+			if (targetOp == ";") {
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		OrCompose(a, b): {
+			if (targetOp == "∘") {
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		OrUnion(a, b): {
+			if (targetOp == "∪") {
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		OrIntersection(a, b): {
+			if (targetOp == "∩") {
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		OrDirectProduct(a, b): {
+			if (targetOp == "×") {
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		OrTensorProduct(a, b): {
+			if (targetOp == "⊗") {
+				leftAcc = gatherAssociativeOpHelper(a, targetOp, acc);
+				gatherAssociativeOpHelper(b, targetOp, leftAcc);
+			} else {
+				arrayPush(acc, orbit2sexpr(expr));
+			}
+		}
+		default: {
+			// Not the target associative operation - add to accumulator
+			arrayPush(acc, orbit2sexpr(expr));
+		}
 	}
 }
 
@@ -250,15 +411,15 @@ makeBinaryOp(op : string, left : OrMath_expr, right : OrMath_expr) -> OrMath_exp
 		OrSequence(left, right);
 	} else if (op == "Seq") {
 		OrSequence(left, right);
-	} else if (op == "\u2218" || op == "Compose") { // ∘ (function composition)
+	} else if (op == "\u2218" || op == "Compose") { // u2218 (function composition)
 		OrCompose(left, right);
-	} else if (op == "\u222a" || op == "Union") { // ∪ (set union)
+	} else if (op == "\u222a" || op == "Union") { // u222a (set union)
 		OrUnion(left, right);
-	} else if (op == "\u2229" || op == "Intersection") { // ∩ (set intersection)
+	} else if (op == "\u2229" || op == "Intersection") { // u2229 (set intersection)
 		OrIntersection(left, right);
-	} else if (op == "\u00d7" || op == "DirectProduct") { // × (direct product)
+	} else if (op == "\u00d7" || op == "DirectProduct") { // u00d7 (direct product)
 		OrDirectProduct(left, right);
-	} else if (op == "\u2297" || op == "TensorProduct") { // ⊗ (tensor product)
+	} else if (op == "\u2297" || op == "TensorProduct") { // u2297 (tensor product)
 		OrTensorProduct(left, right);
 	} else {
 		// Default to function call for other operators
