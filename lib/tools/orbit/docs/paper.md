@@ -43,7 +43,7 @@ This approach automatically collapses the two forms into a single representative
 
 ### Why canonical forms matter
 
-A canonical representative collapses each orbit to one concrete term, so a pattern need be matched once per e-class rather than once per variant. Under Sₙ symmetry the raw permutation count grows as n!, yet canonical sorting yields a single ordered tuple; for nested commutative–associative expressions the savings compound exponentially. Formally, given an expression set E and symmetry group G acting on it, naïve exploration touches O(|E|·|G|) nodes, whereas canonicalisation limits the search to O(|E|) plus the time required to establish the canonical form, O(|G|log(|G|)) for Sₙ.
+A canonical representative collapses each orbit to one concrete term, so a pattern need be matched once per e-class rather than once per variant. Under Sₙ symmetry the raw permutation count grows as n!, yet canonical sorting yields a single ordered tuple; for nested commutative–associative expressions the savings compound exponentially. Formally, given an expression set E and symmetry group G acting on it, naïve exploration touches O(|E|·|G|) nodes, whereas canonicalisation limits the search to O(|E|) plus the time required to establish the canonical form, O(|G|·log(|G|)) for Sₙ for sorting the terms.
 
 *See §5.3 for the formal treatment of group actions and §5.4 for correctness proofs and complexity analysis.*
 
@@ -74,7 +74,7 @@ x + y       ↔ y + x          if y < x : S₂ // Indicate commutativity via S�
 A term `t : D` states that `t` belongs to domain `D`.
 
 ```orbit
-x + y   : S₂           -- commutative addition (annotation on operator/expression)
+x + y   : S₂             // commutative addition (annotation on operator/expression)
 n       : Integer        // n belongs to the Integer domain
 f(g(x)) : Differentiable // Expression belongs to Differentiable domain
 ```
@@ -100,6 +100,8 @@ This is short for the entailment rule `a : D₁ → a : D₂`, meaning any term 
 To maximize rule reuse and maintainability, Orbit encourages defining domains and rules within a structured hierarchy based on algebraic properties. General rules defined for abstract structures (like Semigroups, Monoids, Rings) are automatically inherited by specific domains (like Integers, Reals, BitVectors, Matrices) that instantiate those structures.
 
 Example hierarchy:
+
+TODO: Check this against the terminology.md system.
 
 ```orbit
 // Core algebraic structures (single operation)
@@ -128,13 +130,15 @@ A rule defined for a higher-level structure applies automatically to any subdoma
 
 ```orbit
 // Associativity defined once for Semigroup
-(a * b) * c : Semigroup ↔ a * (b * c) : Semigroup : A // :A denotes associativity
+(a * b) * c : Semigroup ↔ a * (b * c) : Semigroup
 
 // Commutativity defined once for AbelianGroup using S₂ symmetry
 a + b : AbelianGroup ↔ b + a : AbelianGroup : S₂
 ```
 
 These general rules are then automatically applicable to Integers, Reals, BitVectors, etc., wherever they are declared as subdomains of `Semigroup` or `AbelianGroup`. This hierarchical approach significantly reduces rule duplication. The group-theoretic canonicalization (e.g., `: S₂` for commutativity) ensures consistent representation regardless of the specific domain. Section 7 provides further examples demonstrating this cross-domain rule application.
+
+TODO: Change this, since we do glex for +, * and so on.
 
 ### 2.4 Negative domain guard (!: D)
 
@@ -161,11 +165,11 @@ x² + 2*x + 1 : Algebra → (x + 1)² : Factored : Algebra
 
 ## 3. Implementation Architecture
 
-The implementation of Orbit follows a multi-layered approach with a functional core. This section explains the architectural design and representation choices that underpin the system.
+The implementation of Orbit follows a multi-layered approach with a functional core.
 
 ### 3.1 Scheme-based Foundation
 
-Orbit's implementation begins with a minimal Scheme-like language that serves as the system's functional core. This approach provides several key advantages:
+Orbit's implementation begins with a minimal Scheme-like language that serves as the system's functional core, called S-Expressions.
 
 1. **Functional foundation**: We leverage the expressive power of a Lisp-like language, including higher-order functions, lexical scope, and recursion.
 2. **Pattern matching**: Native support for symbolic pattern matching forms the basis of our rewrite system.
