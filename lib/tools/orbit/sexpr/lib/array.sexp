@@ -22,29 +22,29 @@
 
   // mapi: Map with index
   (define mapi (lambda (arr f)
-    (define mapiHelper (lambda (arr f idx)
+    ((define mapiHelper (lambda (arr f idx)
       (if (= (length arr) 0)
         (list)
         (concat (list (f idx (index arr 0))) (mapiHelper (subrange arr 1 (- (length arr) 1)) f (+ idx 1))))))
-    (mapiHelper arr f 0)))
+    (mapiHelper arr f 0))))
 
   // filteri: Filter with index
   (define filteri (lambda (arr pred)
-    (define filteriHelper (lambda (arr pred idx)
+    ((define filteriHelper (lambda (arr pred idx)
       (if (= (length arr) 0)
         (list)
         (if (pred idx (index arr 0))
           (concat (list (index arr 0)) (filteriHelper (subrange arr 1 (- (length arr) 1)) pred (+ idx 1)))
           (filteriHelper (subrange arr 1 (- (length arr) 1)) pred (+ idx 1))))))
-    (filteriHelper arr pred 0)))
+    (filteriHelper arr pred 0))))
 
   // foldi: Fold with index
   (define foldi (lambda (arr init f)
-    (define foldiHelper (lambda (arr acc f idx)
+    ((define foldiHelper (lambda (arr acc f idx)
       (if (= (length arr) 0)
         acc
         (foldiHelper (subrange arr 1 (- (length arr) 1)) (f idx acc (index arr 0)) f (+ idx 1)))))
-    (foldiHelper arr init f 0)))
+    (foldiHelper arr init f 0))))
 
   // tail: Return all elements except the first one
   (define tail (lambda (arr)
@@ -96,13 +96,13 @@
 
   // Remove first occurrence of an element
   (define removeFirst (lambda (arr element)
-    (define removeFirstHelper (lambda (before after)
+    ((define removeFirstHelper (lambda (before after)
       (if (= (length after) 0)
         before
         (if (= (index after 0) element)
           (concat before (subrange after 1 (- (length after) 1)))
           (removeFirstHelper (concat before (list (index after 0))) (subrange after 1 (- (length after) 1)))))))
-    (removeFirstHelper (list) arr)))
+    (removeFirstHelper (list) arr))))
 
   // Remove an element at specific index
   (define removeIndex (lambda (arr idx)
@@ -114,9 +114,9 @@
 
   // Reverse an array
   (define reverse (lambda (arr)
-    (define reverseHelper (lambda (arr acc)
+    ((define reverseHelper (lambda (arr acc)
       (if (= (length arr) 0)
         acc
         (reverseHelper (tail arr) (concat (list (index arr 0)) acc)))))
-    (reverseHelper arr (list))))
+    (reverseHelper arr (list)))))
 )
