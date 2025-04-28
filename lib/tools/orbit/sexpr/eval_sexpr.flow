@@ -78,13 +78,8 @@ evalSexpr(env : SExpEnv, expr : Sexpr) -> SExpEnv {
 			switch (maybe) {
 				Some(value): SExpEnv(env with value = value);
 				None(): {
-					// Special forms
-					specialForms = ["define", "lambda", "if", "eval", "match", "and", "or", "import"];
-					
 					// Check if it's a built-in function from the runtime
-					runtimeFuncs = env.runtime;
-					
-					if (contains(specialForms, name) || containsKeyTree(runtimeFuncs, name)) {
+					if (containsKeyTree(env.runtime, name)) {
 						// Return the name as is for first-order functions
 						SExpEnv(env with value = expr);
 					} else {
@@ -108,38 +103,10 @@ evalSexpr(env : SExpEnv, expr : Sexpr) -> SExpEnv {
 				// Evaluate the function
 				fnResult = evalSexpr(env, exprs[0]);
 				// Evaluate the function call
-				evalCall(env, fnResult.value, tailFrom(exprs, 1));
+				evalCall(env, fnResult.value, tail(exprs));
 			}
 		};
-
-/*		// These shouldn't appear directly - only inside quasiquote
-
-		// Handle quoted expressions - return as is
-		SSQuote(quoted): SExpEnv(env with value = quoted);
-
-		// Handle quasi-quoted expressions (backtick) with possible unquoting
-		SSQuasiQuote(quoted): {
-			result = evalQuasiQuoteExpr(env, quoted);
-			SExpEnv(env.runtime, result.env, result.value);
-		};
-		SSUnquote(inner): {
-			println("Unquote ($) outside of quasiquote");
-			SExpEnv(env with value = expr);
-		};
-		SSUnquoteSplicing(inner): {
-			println("Unquote-splicing (#) outside of quasiquote");
-			SExpEnv(env with value = expr);
-		};*/
 	}
-}
-
-// Helper for quasiquote evaluation
-evalQuasiQuoteExpr(env : SExpEnv, expr : Sexpr) -> SExpEnv {
-	result = evalQuasiQuote(env, expr, \e, x -> {
-		eval = evalSexpr(e, x);
-		eval.value;
-	});
-	SExpEnv(env with value = result);
 }
 
 evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
@@ -187,7 +154,7 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 		};
 		SDefine(): {
 			// Define a variable
-			if (length(args) >= 2) {
+			if (length(args) == 2) {
 				varName = switch (args[0]) {
 					SSVariable(n): n;
 					default: {
@@ -204,22 +171,23 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 					SExpEnv(env with value = SSList([]));
 				}
 			} else {
-				println("define requires at least 2 arguments");
+				println("define requires 2 arguments");
 				SExpEnv(env with value = SSList([]));
 			}
 		};
 		SEval(): {
 			// Evaluate expression
-			if (length(args) >= 1) {
+			if (length(args) == 1) {
 				expResult = evalSexpr(env, args[0]);
 				evalSexpr(expResult, expResult.value);
 			} else {
+				println("eval requires 1 argument");
 				SExpEnv(env with value = SSList([]));
 			}
 		};
 		SIf(): {
 			// Conditional
-			if (length(args) >= 2) {
+			if (length(args) >= 2 && length(args) <= 3) {
 				condResult = evalSexpr(env, args[0]);
 				isTrue = getSBool(condResult.value, "if condition");
 				if (isTrue) {
@@ -230,7 +198,7 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 					SExpEnv(env.runtime, condResult.env, SSList([]));
 				}
 			} else {
-				println("if requires at least 2 arguments");
+				println("if requires 2 or 3 arguments");
 				SExpEnv(env with value = SSList([]));
 			}
 		};
@@ -258,7 +226,7 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 		};
 		SLambda(): {
 			// Create a lambda with proper closure capturing free variables
-			if (length(args) >= 2) {
+			if (length(args) == 2) {
 				// Extract parameter list
 				paramList = switch (args[0]) {
 					SSList(p): p;
@@ -303,7 +271,7 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 				
 				SExpEnv(env with value = closure);
 			} else {
-				println("lambda requires at least 2 arguments");
+				println("lambda requires 2 arguments");
 				SExpEnv(env with value = SSList([]));
 			}
 		};
@@ -444,8 +412,8 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 			}
 		};
 		SList(): {
-			// Explicitly create a list without evaluating arguments
-			SExpEnv(env with value = SSList(args));
+			fnResult = evalArgs(env, args, []);
+			SExpEnv(env with value = SSList(fnResult.args));
 		};
 		SMatch(): {
 			// Pattern matching
@@ -508,27 +476,30 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 		};
 		SQuasiQuote(): {
 			// Handle quasi-quoted expressions (backtick) with possible unquoting
-			if (length(args) >= 1) {
-				result = evalQuasiQuoteExpr(env, args[0]);
-				SExpEnv(env.runtime, result.env, result.value);
+			if (length(args) == 1) {
+				result = evalQuasiQuote(env, args[0], \e, x -> {
+					eval = evalSexpr(e, x);
+					eval.value;
+				});
+				SExpEnv(env with value = result);
 			} else {
-				println("quasiquote requires at least 1 argument");
+				println("quasiquote requires 1 argument");
 				SExpEnv(env with value = SSList([]));
 			}
 		};
 		SQuote(): {
 			// Handle quoted expressions - return as is without evaluation
-			if (length(args) >= 1) {
+			if (length(args) == 1) {
 				// Simply return the quoted expression without evaluation
 				SExpEnv(env with value = args[0]);
 			} else {
-				println("quote requires at least 1 argument");
+				println("quote requires 1 argument");
 				SExpEnv(env with value = SSList([]));
 			}
 		};
 		SSet(): {
 			// Set! - mutable assignment (usually for globals)
-			if (length(args) >= 2) {
+			if (length(args) == 2) {
 				varName = switch (args[0]) {
 					SSVariable(n): n;
 					default: {
@@ -551,7 +522,7 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 					SExpEnv(env with value = SSList([]));
 				}
 			} else {
-				println("set! requires at least 2 arguments");
+				println("set! requires 2 arguments");
 				SExpEnv(env with value = SSList([]));
 			}
 		};
@@ -612,7 +583,7 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 		};
 		
 		SSConstructor(name): {
-			// In a real implementation, we'd create a constructor instance with args
+			// We'd create a constructor instance with args
 			fnResult = evalArgs(env, args, []);
 			SExpEnv(env.runtime, fnResult.env, SSList(concat([fn], fnResult.args)));
 		};
