@@ -298,7 +298,10 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 		SSString(s): OrString(s);
 		SSBool(b): OrBool(b);
 		SSVariable(name): OrIdentifier(name);
-		SSConstructor(name): OrUId(name); // Treat constructors as UIDs in Orbit
+		SSConstructor(name): {
+			if (name == "Ellipsis") OrEllipsis()
+			else OrUId(name); // Treat constructors as UIDs in Orbit
+		}
 		SSOperator(op): OrOperatorSymbol(op);
 		
 		// Special forms
@@ -717,6 +720,8 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 								makeBinaryOp(op, operands[0], operands[1]);
 							} else if (op == "-" && length(operands) == 1) {
 								OrNegate(operands[0]);
+							} else if (op == "!" && length(operands) == 1) {
+								OrLogicalNot(operands[0]);
 							} else {
 								// Function call with operator
 								OrFunction(OrOperatorSymbol(op), operands);
@@ -725,8 +730,259 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 					}
 					SSBool(bool1): OrArray(map(items, sexpr2orbit));
 					SSConstructor(constructor_atom): {
-						// TODO: FnDef, SetComprehension, Rule, Circle, Rectangle, etc.
-						OrArray(map(items, sexpr2orbit));
+						// Handle specific constructors
+						if (constructor_atom == "FnDef" && length(items) >= 5) {
+							// Extract function id
+							fn_id = switch (items[1]) {
+								SSString(id): id;
+								default: "";
+							};
+							
+							// Extract id_types
+							id_types = switch (items[2]) {
+								SSList(params): map(params, \param -> {
+									switch (param) {
+										SSList(parts): {
+											if (length(parts) >= 2) {
+												id = switch (parts[0]) {
+													SSString(s): s;
+													default: "";
+												};
+												
+												// Extract type annotations
+												type_annots = switch (parts[1]) {
+													SSList(annots): map(annots, \a -> OrType(sexpr2orbit(a)));
+													default: [];
+												};
+												
+												OrIdType(id, type_annots);
+											} else {
+												OrIdType("", []);
+											}
+										}
+										default: OrIdType("", []);
+									}
+								});
+								default: [];
+							};
+							
+							// Extract type annotations
+							type_annotations = switch (items[3]) {
+								SSList(annots): map(annots, \a -> OrType(sexpr2orbit(a)));
+								default: [];
+							};
+							
+							// Extract function body
+							math_expr = sexpr2orbit(items[4]);
+							
+							OrFnDef(fn_id, id_types, type_annotations, math_expr);
+						} else if (constructor_atom == "SetComprehension" && length(items) >= 3) {
+							// Extract element expressions
+							math_exprs = switch (items[1]) {
+								SSList(exprs): map(exprs, sexpr2orbit);
+								default: [];
+							};
+							
+							// Extract condition expression
+							math_expr = sexpr2orbit(items[2]);
+							
+							OrSetComprehension(math_exprs, math_expr);
+						} else if (constructor_atom == "Rule" && length(items) >= 5) {
+							// Extract pattern, replacement, condition, and direction
+							m1 = sexpr2orbit(items[1]);
+							m2 = sexpr2orbit(items[2]);
+							m3 = sexpr2orbit(items[3]);
+							b = switch (items[4]) {
+								SSBool(value): value;
+								default: true;
+							};
+							
+							OrRule(m1, m2, m3, b);
+						} else if (constructor_atom == "Equivalence" && length(items) >= 5) {
+							// Extract expressions and direction
+							m1 = sexpr2orbit(items[1]);
+							m2 = sexpr2orbit(items[2]);
+							m3 = sexpr2orbit(items[3]);
+							b = switch (items[4]) {
+								SSBool(value): value;
+								default: true;
+							};
+							
+							OrEquivalence(m1, m2, m3, b);
+						} else if (constructor_atom == "Entailment" && length(items) >= 4) {
+							// Extract expressions
+							m1 = sexpr2orbit(items[1]);
+							m2 = sexpr2orbit(items[2]);
+							m3 = sexpr2orbit(items[3]);
+							
+							OrEntailment(m1, m2, m3);
+						} else if (constructor_atom == "TypeSubstitution" && length(items) >= 4) {
+							// Extract expressions
+							m1 = sexpr2orbit(items[1]);
+							m2 = sexpr2orbit(items[2]);
+							m3 = sexpr2orbit(items[3]);
+							
+							OrTypeSubstitution(m1, m2, m3);
+						} else if (constructor_atom == "TypeVar" && length(items) >= 2) {
+							// Extract type variable name
+							type_var = switch (items[1]) {
+								SSString(s): s;
+								default: "?";
+							};
+							
+							OrTypeVar(type_var);
+						} else if (constructor_atom == "Forall" && length(items) >= 2) {
+							// Extract universally quantified variables
+							math_exprs = switch (items[1]) {
+								SSList(exprs): map(exprs, sexpr2orbit);
+								default: [];
+							};
+							
+							OrForall(math_exprs);
+						} else if (constructor_atom == "Exists" && length(items) >= 2) {
+							// Extract existentially quantified variables
+							math_exprs = switch (items[1]) {
+								SSList(exprs): map(exprs, sexpr2orbit);
+								default: [];
+							};
+							
+							OrExists(math_exprs);
+						} else if (constructor_atom == "Field" && length(items) >= 3) {
+							// Extract object and field name
+							object = sexpr2orbit(items[1]);
+							field = switch (items[2]) {
+								SSString(s): s;
+								default: "";
+							};
+							
+							OrField(object, field);
+						} else if (constructor_atom == "Superscript" && length(items) >= 3) {
+							// Extract base and superscript
+							base = sexpr2orbit(items[1]);
+							sup = switch (items[2]) {
+								SSString(s): s;
+								default: "";
+							};
+							
+							OrSuperscript(base, sup);
+						} else if (constructor_atom == "Subscript" && length(items) >= 3) {
+							// Extract base and subscript
+							base = sexpr2orbit(items[1]);
+							sub = switch (items[2]) {
+								SSString(s): s;
+								default: "";
+							};
+							
+							OrSubscript(base, sub);
+						} else if (constructor_atom == "Derivative" && length(items) >= 3) {
+							// Extract variable and expression
+							deriv_id = switch (items[1]) {
+								SSString(s): s;
+								default: "x";
+							};
+							deriv_expr = sexpr2orbit(items[2]);
+							
+							OrDerivative(deriv_id, deriv_expr);
+						} else if (constructor_atom == "PartialDerivative" && length(items) >= 3) {
+							// Extract variable and expression
+							pderiv_id = switch (items[1]) {
+								SSString(s): s;
+								default: "x";
+							};
+							pderiv_expr = sexpr2orbit(items[2]);
+							
+							OrPartialDerivative(pderiv_id, pderiv_expr);
+						} else if (constructor_atom == "SetLiteral" && length(items) >= 1) {
+							// Extract set elements
+							elements = map(tailFrom(items, 1), sexpr2orbit);
+							
+							OrSetLiteral(elements);
+						} else if (constructor_atom == "Summation" && length(items) >= 2) {
+							// Extract expression
+							sum_expr = sexpr2orbit(items[1]);
+							
+							OrSummation(sum_expr);
+						} else if (constructor_atom == "Integral" && length(items) >= 2) {
+							// Extract expression
+							integral_expr = sexpr2orbit(items[1]);
+							
+							OrIntegral(integral_expr);
+						} else if (constructor_atom == "Gradient" && length(items) >= 2) {
+							// Extract expression
+							grad_expr = sexpr2orbit(items[1]);
+							
+							OrGradient(grad_expr);
+						} else if (constructor_atom == "GroupOrder" && length(items) >= 2) {
+							// Extract expression
+							go_expr = sexpr2orbit(items[1]);
+							
+							OrGroupOrder(go_expr);
+						} else if (constructor_atom == "Index" && length(items) >= 3) {
+							// Extract array and index
+							array = sexpr2orbit(items[1]);
+							index = sexpr2orbit(items[2]);
+							
+							OrIndex(array, index);
+						} else if (constructor_atom == "TypeAnnotation" && length(items) >= 3) {
+							// Extract expression and type
+							type_annot_expr = sexpr2orbit(items[1]);
+							type_annot_type = sexpr2orbit(items[2]);
+							
+							OrTypeAnnotation(type_annot_expr, type_annot_type);
+						} else if (constructor_atom == "NotTypeAnnotation" && length(items) >= 3) {
+							// Extract expression and type
+							not_type_annot_expr = sexpr2orbit(items[1]);
+							not_type_annot_type = sexpr2orbit(items[2]);
+							
+							OrNotTypeAnnotation(not_type_annot_expr, not_type_annot_type);
+						} else if (constructor_atom == "FunctionType" && length(items) >= 3) {
+							// Extract domain and codomain
+							domain = sexpr2orbit(items[1]);
+							codomain = sexpr2orbit(items[2]);
+							
+							OrFunctionType(domain, codomain);
+						} else if (constructor_atom == "Subset" && length(items) >= 3) {
+							// Extract sets
+							subset = sexpr2orbit(items[1]);
+							superset = sexpr2orbit(items[2]);
+							
+							OrSubset(subset, superset);
+						} else if (constructor_atom == "ElementOf" && length(items) >= 3) {
+							// Extract element and set
+							element = sexpr2orbit(items[1]);
+							set = sexpr2orbit(items[2]);
+							
+							OrElementOf(element, set);
+						} else if (constructor_atom == "Homomorphism" && length(items) >= 3) {
+							// Extract function and argument
+							fn = sexpr2orbit(items[1]);
+							arg = sexpr2orbit(items[2]);
+							
+							OrHomomorphism(fn, arg);
+						} else if (constructor_atom == "Isomorphism" && length(items) >= 3) {
+							// Extract structures
+							structure1 = sexpr2orbit(items[1]);
+							structure2 = sexpr2orbit(items[2]);
+							
+							OrIsomorphism(structure1, structure2);
+						} else if (constructor_atom == "NormalSubgroup" && length(items) >= 3) {
+							// Extract groups
+							subgroup = sexpr2orbit(items[1]);
+							group = sexpr2orbit(items[2]);
+							
+							OrNormalSubgroup(subgroup, group);
+						} else if (constructor_atom == "Ellipsis") {
+							OrEllipsis();
+						} else {
+							// For unknown constructors, either treat them as UIDs or arrays
+							if (length(items) > 1) {
+								// Create a function call with constructor as function name
+								OrFunction(OrUId(constructor_atom), map(tailFrom(items, 1), sexpr2orbit));
+							} else {
+								// Just a constructor with no arguments
+								OrUId(constructor_atom);
+							}
+						}
 					}
 					SSDouble(double1): OrArray(map(items, sexpr2orbit));
 					SSInt(int1): OrArray(map(items, sexpr2orbit));
@@ -796,9 +1052,9 @@ makeBinaryOp(op : string, left : OrMath_expr, right : OrMath_expr) -> OrMath_exp
 		OrLogicalAnd(left, right);
 	} else if (op == "||") {
 		OrLogicalOr(left, right);
+	} else if (op == "mod") {
+		OrModulo(left, right);
 	} else if (op == ";") {
-		OrSequence(left, right);
-	} else if (op == "Seq") {
 		OrSequence(left, right);
 	} else if (op == "\u2218" || op == "Compose") { // u2218 (function composition)
 		OrCompose(left, right);
@@ -808,9 +1064,14 @@ makeBinaryOp(op : string, left : OrMath_expr, right : OrMath_expr) -> OrMath_exp
 		OrIntersection(left, right);
 	} else if (op == "\u00d7" || op == "DirectProduct") { // u00d7 (direct product)
 		OrDirectProduct(left, right);
+	} else if (op == "⋊") {
+		OrRightSemiDirectProduct(left, right);
+	} else if (op == "⋉") {
+		OrLeftSemiDirectProduct(left, right);
 	} else if (op == "\u2297" || op == "TensorProduct") { // u2297 (tensor product)
 		OrTensorProduct(left, right);
 	} else {
+		println(op);
 		// Default to function call for other operators
 		OrFunction(OrOperatorSymbol(op), [left, right]);
 	}
