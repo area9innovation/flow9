@@ -46,15 +46,15 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
 ## OGraph Enhancements
 ✅ Check that inserting into and extraction from ograph works correct
 ✅ lib/tools/orbit/tests/ograph_rewrite_single.orb:
-- Check ograph dot export
+✅ Check ograph dot export
 ✅ Implement attaching Domain on rhs of pattern (in substitution maybe?)
 ✅ Check ograph operations
 ✅ Implement pattern matching in ograph
-- Extract minimal program from ograph via cost function or domain annotation?
+- Extract minimal program from ograph via domain annotation?
 - Implement domain hierarchy relationships (e.g., Integer ⊂ Real)
-- Add cost model for extracting optimal expressions from ograph
-- Add domain-specific canonicalization via symmetry groups
+- Cost model is done using different canonical forms. You can have size, memory, speed as different canonical forms
 - Implement canonical form computation for common groups (Sₙ, Cₙ, Dₙ, Aₙ)
+- Canonical forms of group product, semiproducts
 - Add support for Gröbner basis canonicalization for polynomial rings
 - Integrate matrix group canonicalization (GL, SL, O groups)
 - Implement efficient mechanism to pattern match from a domain down to the terms in that domain
@@ -69,13 +69,6 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
 - Implement group product operations (direct, semi-direct)
 - Add group decomposition functionality
 - Implement group isomorphism testing
-✅ Add syntax support for quaternion group Q₈
-✅ Add syntax support for integers modulo n (ℤ/nℤ or ℤₙ)
-✅ Add syntax support for abstract group operation (· or Compose(g,h))
-✅ Add syntax support for order of group G (|G|)
-✅ Add syntax support for normal subgroup relation (⊲)
-✅ Add syntax support for isomorphism (≅)
-✅ Add syntax support for homomorphism (φ)
 
 ## Algebraic Structure Support
 - Add support for detecting and working with rings, fields, and vector spaces
@@ -92,11 +85,3 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
 - Add language-specific evaluators with environment handling
 - Create pretty printers for each supported language
 - Consider how to handle environment in the ograph for different languages
-
-## Testing
-- ✅ Create comprehensive test suite infrastructure with automated testing (run_orbit_tests.sh)
-- ✅ Add timeout mechanism to prevent infinite loops in tests (default: 10 seconds)
-- ✅ Make test suite output stable by filtering out timing information and exit codes
-- ✅ Add expected output validation to catch incorrect behavior even when exit code is 0
-- ✅ Add `--generate-expected` flag for easy creation of expected output files
-- ✅ Add test cases demonstrating pattern matching with sequences (pattern_matching_fixed_test.orb)
