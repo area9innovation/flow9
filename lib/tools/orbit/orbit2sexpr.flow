@@ -291,7 +291,6 @@ gatherAssociativeOpHelper(expr : OrMath_expr, targetOp : string, acc : [Sexpr]) 
 
 // Convert S-expression to Orbit expression
 sexpr2orbit(expr : Sexpr) -> OrMath_expr {
-
 	switch (expr) {
 		// Primitive values
 		SSInt(i): OrInt(i);
@@ -409,18 +408,280 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 						OrIdentifier("invalid_import");
 					}
 				}
-				SAnd(): todo();
-				SBegin(): todo();
-				SClosure(): todo();
-				SEval(): todo();
-				SLet(): todo();
-				SLetRec(): todo();
-				SOr(): todo();
-				SQuasiQuote(): todo();
-				SQuote(): todo();
-				SSet(): todo();
-				SUnQuote(): todo();
-				SUnQuoteSplicing(): todo();
+				SAnd(): {
+					// Convert AND special form to binary logical AND operations
+					if (length(items) == 0) {
+						OrBool(true); // Empty AND is true by convention
+					} else if (length(items) == 1) {
+						sexpr2orbit(items[0]);
+					} else {
+						// Fold all expressions into binary AND operations (left-associative)
+						// ((a && b) && c) && d...
+						foldi(tailFrom(items, 1), sexpr2orbit(items[0]), \i, acc, item -> 
+							OrLogicalAnd(acc, sexpr2orbit(item))
+						);
+					}
+				}
+				SBegin(): {
+					// Convert BEGIN special form to sequence operations
+					if (length(items) == 0) {
+						OrInt(0); // Empty begin returns 0 by convention
+					} else if (length(items) == 1) {
+						sexpr2orbit(items[0]);
+					} else {
+						// Fold all expressions into binary sequence operations (left-associative)
+						// ((a; b); c); d...
+						foldi(tailFrom(items, 1), sexpr2orbit(items[0]), \i, acc, item -> 
+							OrSequence(acc, sexpr2orbit(item))
+						);
+					}
+				}
+				SClosure(): {
+					// Convert closure to lambda with explicit environment
+					if (length(items) >= 2) {
+						// Extract environment
+						closure_env_bindings = switch (items[0]) {
+							SSList(bindings): map(bindings, \binding -> {
+								switch (binding) {
+									SSList(parts): {
+										if (length(parts) >= 2) {
+											switch (parts[0]) {
+												SSVariable(id): OrEnvBinding(id, sexpr2orbit(parts[1]));
+												default: OrEnvBinding("", OrInt(0)); // Default for invalid
+											}
+										} else {
+											OrEnvBinding("", OrInt(0)); // Default for invalid
+										}
+									}
+									default: OrEnvBinding("", OrInt(0));
+								}
+							});
+							default: [];
+						};
+						
+						// Extract function parameters and body
+						if (length(items) >= 3) {
+							// Extract parameters
+							closure_id_types = switch (items[1]) {
+								SSList(params): map(params, \param -> {
+									switch (param) {
+										SSVariable(id): OrIdType(id, []);
+										SSString(id): OrIdType(id, []);
+										default: OrIdType("", []);
+									}
+								});
+								default: [];
+							};
+							
+							// Create lambda with environment, parameters, and body
+							OrLambda(closure_env_bindings, closure_id_types, sexpr2orbit(items[2]));
+						} else {
+							// No parameters, just body
+							OrLambda(closure_env_bindings, [], sexpr2orbit(items[1]));
+						}
+					} else {
+						OrIdentifier("invalid_closure");
+					}
+				}
+				SEval(): {
+					// Convert eval to function call
+					if (length(items) >= 1) {
+						OrFunction(OrIdentifier("eval"), [sexpr2orbit(items[0])]);
+					} else {
+						OrIdentifier("invalid_eval");
+					}
+				}
+				SLet(): {
+					// Convert let to a sequence of bindings
+					if (length(items) >= 2) {
+						// First item should be a list of bindings
+						let_bindings = switch (items[0]) {
+							SSList(pairs): pairs;
+							default: [];
+						};
+						
+						// Body is the remaining expressions
+						let_body = map(tailFrom(items, 1), sexpr2orbit);
+						
+						// Convert each binding to a let expression
+						// and create a sequence of all bindings followed by the body
+						if (length(let_bindings) == 0) {
+							// No bindings, just return the body
+							if (length(let_body) == 1) {
+								let_body[0];
+							} else if (length(let_body) > 1) {
+								// Create a sequence of body expressions
+								foldi(tailFrom(let_body, 1), let_body[0], \i, acc, item -> 
+									OrSequence(acc, item)
+								);
+							} else {
+								OrInt(0); // Empty body
+							}
+						} else {
+							// Process each binding and build a nested let expression
+							let_result = fold(let_bindings, 
+								// Start with the body
+								if (length(let_body) == 1) {
+									let_body[0];
+								} else if (length(let_body) > 1) {
+									// Create a sequence of body expressions
+									foldi(tailFrom(let_body, 1), let_body[0], \i, acc, item -> 
+										OrSequence(acc, item)
+									);
+								} else {
+									OrInt(0); // Empty body
+								}, 
+								// Add each binding as a let expression wrapping the current result
+								\acc, binding -> {
+									switch (binding) {
+										SSList(parts): {
+											if (length(parts) >= 2) {
+												switch (parts[0]) {
+													SSVariable(id): OrLet(OrIdType(id, []), acc);
+													default: acc;
+												}
+											} else {
+												acc;
+											}
+										}
+										default: acc;
+									}
+								}
+							);
+							
+							let_result;
+						}
+					} else {
+						OrIdentifier("invalid_let");
+					}
+				}
+				SLetRec(): {
+					// Convert letrec to a series of recursive bindings
+					// This is a simplification, as true letrec is more complex
+					if (length(items) >= 2) {
+						// First item should be a list of bindings
+						letrec_bindings = switch (items[0]) {
+							SSList(pairs): pairs;
+							default: [];
+						};
+						
+						// Body is the remaining expressions
+						letrec_body = map(tailFrom(items, 1), sexpr2orbit);
+						
+						// Similar to let, but with recursive semantics
+						// For simplicity, we'll implement it similarly to let
+						if (length(letrec_bindings) == 0) {
+							// No bindings, just return the body
+							if (length(letrec_body) == 1) {
+								letrec_body[0];
+							} else if (length(letrec_body) > 1) {
+								// Create a sequence of body expressions
+								foldi(tailFrom(letrec_body, 1), letrec_body[0], \i, acc, item -> 
+									OrSequence(acc, item)
+								);
+							} else {
+								OrInt(0); // Empty body
+							}
+						} else {
+							// Process each binding and build a nested let expression
+							// Note: This doesn't truly capture letrec semantics, but is a simplification
+							letrec_result = fold(letrec_bindings, 
+								// Start with the body
+								if (length(letrec_body) == 1) {
+									letrec_body[0];
+								} else if (length(letrec_body) > 1) {
+									// Create a sequence of body expressions
+									foldi(tailFrom(letrec_body, 1), letrec_body[0], \i, acc, item -> 
+										OrSequence(acc, item)
+									);
+								} else {
+									OrInt(0); // Empty body
+								}, 
+								// Add each binding as a let expression wrapping the current result
+								\acc, binding -> {
+									switch (binding) {
+										SSList(parts): {
+											if (length(parts) >= 2) {
+												switch (parts[0]) {
+													SSVariable(id): OrLet(OrIdType(id, []), acc);
+													default: acc;
+												}
+											} else {
+												acc;
+											}
+										}
+										default: acc;
+									}
+								}
+							);
+							
+							letrec_result;
+						}
+					} else {
+						OrIdentifier("invalid_letrec");
+					}
+				}
+				SOr(): {
+					// Convert OR special form to binary logical OR operations
+					if (length(items) == 0) {
+						OrBool(false); // Empty OR is false by convention
+					} else if (length(items) == 1) {
+						sexpr2orbit(items[0]);
+					} else {
+						// Fold all expressions into binary OR operations (left-associative)
+						// ((a || b) || c) || d...
+						foldi(tailFrom(items, 1), sexpr2orbit(items[0]), \i, acc, item -> 
+							OrLogicalOr(acc, sexpr2orbit(item))
+						);
+					}
+				}
+				SQuasiQuote(): {
+					// Convert quasi-quote to function call
+					if (length(items) >= 1) {
+						OrFunction(OrIdentifier("quasiquote"), [sexpr2orbit(items[0])]);
+					} else {
+						OrIdentifier("invalid_quasiquote");
+					}
+				}
+				SQuote(): {
+					// Convert quote to function call
+					if (length(items) >= 1) {
+						OrFunction(OrIdentifier("quote"), [sexpr2orbit(items[0])]);
+					} else {
+						OrIdentifier("invalid_quote");
+					}
+				}
+				SSet(): {
+					// Convert set to assignment operation
+					// Note: Orbit is functional, so this is approximation
+					if (length(items) >= 2) {
+						switch (items[0]) {
+							SSVariable(id): {
+								// Create a let binding as approximation of assignment
+								OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+							}
+							default: OrIdentifier("invalid_set");
+						}
+					} else {
+						OrIdentifier("invalid_set");
+					}
+				}
+				SUnQuote(): {
+					// Convert unquote to function call
+					if (length(items) >= 1) {
+						OrFunction(OrIdentifier("unquote"), [sexpr2orbit(items[0])]);
+					} else {
+						OrIdentifier("invalid_unquote");
+					}
+				}
+				SUnQuoteSplicing(): {
+					// Convert unquote-splicing to function call
+					if (length(items) >= 1) {
+						OrFunction(OrIdentifier("unquote-splicing"), [sexpr2orbit(items[0])]);
+					} else {
+						OrIdentifier("invalid_unquote_splicing");
+					}
+				}
 			}
 		}
 		
@@ -454,6 +715,8 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 							if (length(operands) == 2) {
 								// Binary operation
 								makeBinaryOp(op, operands[0], operands[1]);
+							} else if (op == "-" && length(operands) == 1) {
+								OrNegate(operands[0]);
 							} else {
 								// Function call with operator
 								OrFunction(OrOperatorSymbol(op), operands);
@@ -461,14 +724,14 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 						}
 					}
 					SSBool(bool1): OrArray(map(items, sexpr2orbit));
-					SSConstructor(constructor_atom): OrArray(map(items, sexpr2orbit));
+					SSConstructor(constructor_atom): {
+						// TODO: FnDef, SetComprehension, Rule, Circle, Rectangle, etc.
+						OrArray(map(items, sexpr2orbit));
+					}
 					SSDouble(double1): OrArray(map(items, sexpr2orbit));
 					SSInt(int1): OrArray(map(items, sexpr2orbit));
 					SSList(sexprs): OrArray(map(items, sexpr2orbit));
-					SSSpecialForm(special_name, sexprs): {
-						println("TODO: Is this right?");
-						OrArray(map(items, sexpr2orbit));
-					}
+					SSSpecialForm(special_name, sexprs): OrArray(map(items, sexpr2orbit));
 					SSString(string1): OrArray(map(items, sexpr2orbit));
 					SSVariable(variable_atom): {
 						// First item is not an operator, so this is a function call
