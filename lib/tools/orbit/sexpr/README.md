@@ -10,31 +10,28 @@ flowcpp sexpr.flow -- tests/file.sexp
 
 ## Core Features
 
-Retire define in favor of just let and letrec, so we do not have a global env.
-
 | Syntax Pattern                                     | Surface Syntax Example |
 |-----------------------------------------------------|-------------------------|
-| `(quote exp)`                                       | `'exp`                  |
-| `(quasiquote exp)`                                  | `` `exp``               |
-| `(unquote exp)`                                     | `,exp`                  |
-| `(unquote-splicing exp)`                            | `,@exp`                 |
 | `(if test then else)`                               | `(if (> x 0) x (- x))`   |
 | `(lambda (param*) body...)`                         | `(lambda (x) (+ x 1))`   |
-| `(define name exp)` <br> `(define (name param*) body...)` | `(define x 42)` <br> `(define (f x) (+ x 1))` |
 | `(set! name exp)`                                   | `(set! x 10)`            |
-| `(begin exp1 exp2 ...)`                             | `(begin (display "A") (display "B"))` |
+| `(begin exp1 exp2 ...)`                             | `(begin (println "A") (println "B"))` |
 | `(and exp1 exp2 ...)`                               | `(and (> x 0) (< x 10))` |
 | `(or exp1 exp2 ...)`                                | `(or (= x 0) (= x 1))`   |
 | `(let ((name1 exp1) (name2 exp2) ...) body...)`      | `(let ((x 1) (y 2)) (+ x y))` |
 | `(letrec ((name1 exp1) (name2 exp2) ...) body...)`   | `(letrec ((f (lambda (n) (if (= n 0) 1 (* n (f (- n 1))))))) (f 5))` |
 | `(match value (pattern1 result1) (pattern2 result2) ...)` | `(match x (0 'zero) (1 'one) (else 'other))` |
+| `(quote exp)`                                       | `(quote 1+2)`                  |
+| `(quasiquote exp)`                                  | `(quasiquote +(1 (unquote a)))`   |
+| `(unquote exp)`                                     | `(unquote a)`                  |
+| `(unquote-splicing exp)`                            | `(unquote-splicing ls)`    |
 
 TODO: Scheme have these as well. Not sure if we need them.
+| `(define name exp)` <br> `(define (name param*) body...)` | `(define x 42)` <br> `(define (f x) (+ x 1))` |
 | `(let* ((name1 exp1) (name2 exp2) ...) body...)`     | `(let* ((x 1) (y (+ x 2))) y)` |
 | `(cond (test exp...) (test exp...) ... [else exp...])` | `(cond [(> x 0) 'pos] [(< x 0) 'neg] [else 'zero])` |
 | `(case key ((val1 val2 ...) exp...) ... [else exp...])` | `(case x [(1 2) 'small] [(3 4) 'large] [else 'unknown])` |
 | `(do ((var1 init1 step1) (var2 init2 step2) ...) (test expr...) body...)` | `(do ((i 0 (+ i 1))) ((= i 10) 'done) (display i))` |
-
 
 ### Basic Values
 
@@ -60,7 +57,7 @@ Point     ; a constructor (starts with uppercase)
 
 #### Define
 
-Defines a variable in the current environment:
+Defines a variable in the global environment:
 
 ```scheme
 (define x 10)
@@ -79,10 +76,10 @@ Conditional expression:
 Short-circuit logical AND and OR operators:
 
 ```scheme
-(&& expr1 expr2 ...)  ; Short-circuit AND - evaluates expressions from left to right
+(and expr1 expr2 ...)  ; Short-circuit AND - evaluates expressions from left to right
 											; until one returns false or all are evaluated
 
-(|| expr1 expr2 ...)  ; Short-circuit OR - evaluates expressions from left to right
+(or expr1 expr2 ...)  ; Short-circuit OR - evaluates expressions from left to right
 											; until one returns true or all are evaluated
 ```
 
@@ -91,7 +88,7 @@ Short-circuit logical AND and OR operators:
 Prevents evaluation of an expression:
 
 ```scheme
-'(1 2 3)  ; equivalent to (quote (1 2 3))
+(quote (1 2 3))
 ```
 
 #### Lambda
@@ -102,6 +99,10 @@ Defines an anonymous function (closure):
 (lambda (param1 param2) body)
 ```
 This creates a closure, capturing the surrounding environment's free variables.
+
+```scheme
+(closure ((x 2)(y 3)) (lambda () (+ x y))) ; => 5
+```
 
 #### Import
 
@@ -141,24 +142,15 @@ Pattern matching supports:
 
 ### Quasiquotation
 
-Quasiquotation (backtick `\``) allows building templates with parts that are evaluated:
+Quasiquotation allows building templates with parts that are evaluated:
 
 ```scheme
-`(1 2 ,x)       ; Comma (,) is replaced with $ in our implementation
-`(1 2 $x)       ; x is evaluated in the template
-`(1 ,@lst 3)    ; Comma-at (,@) is replaced with # in our implementation
-`(1 #lst 3)     ; lst (if it's a list) is spliced into the template
+(quasiquote 1 2 (unquote x))  ;
+(quasiquote 1 2 (unquote x))       ; x is evaluated in the template
+(quasiquote 1 (unquote-splicing lst) 3)    ; Comma-at (,@) is replaced with # in our implementation
 ```
 
-Examples:
-
-```scheme
-(define x 10)
-`(1 $x 3)   ; => (1 10 3)
-
-(define lst '(2 3))
-`(1 #lst 4) ; => (1 2 3 4)
-```
+TODO: Add examples
 
 ## Standard Library (`sexpr_stdlib.flow`)
 
@@ -168,7 +160,7 @@ The language includes an extensive set of built-in functions imported from the O
 
 ### Arithmetic and Mathematical Functions
 
-- Basic operators: `+`, `-`, `*`, `/`, `=`
+- Basic operators: `+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`
 - Mathematical functions: `abs`, `iabs`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
 - More math: `sqrt`, `exp`, `log`, `log10`
 - Rounding: `floor`, `ceil`, `round`, `dfloor`, `dceil`, `dround`
@@ -200,7 +192,7 @@ The language includes an extensive set of built-in functions imported from the O
 
 ### Logic Operations
 
-- Boolean logic: `not`, `&&` (short-circuit AND), `||` (short-circuit OR)
+- Boolean logic: `not`, `and` (short-circuit AND), `or` (short-circuit OR)
 
 ### Utility Functions
 

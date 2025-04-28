@@ -34,135 +34,331 @@ findFreeSexprVars(sExpr : Sexpr, boundVars : Set<string>) -> Set<string> {
 			});
         };
 		SSSpecialForm(name, exprs): {
-			if (name == "lambda" && length(exprs) >= 2) {
-				// Lambda form: (lambda (param1 param2...) body)
-				paramList = switch (exprs[0]) {
-					SSList(params): params;
-					default: [];
-				};
-				
-				// Extract parameter names
-				paramNames = filtermap(paramList, \param -> {
-					switch (param) {
-						SSVariable(pname): Some(pname);
-						default: None();
-					}
-				});
-				
-				// Add parameter names to bound variables
-				newBoundVars = fold(paramNames, boundVars, \acc, pname -> {
-					insertSet(acc, pname);
-				});
-				
-				// Find free variables in the body (considering parameters as bound)
-				if (length(exprs) > 2) {
-					findFreeSexprVars(exprs[1], newBoundVars);
-				} else {
-					makeSet();
+			switch (name) {
+				SAnd(): {
+					// And form: (and expr1 expr2...)
+					// All expressions can have free variables
+					fold(exprs, makeSet(), \acc, e -> {
+						mergeSets(acc, findFreeSexprVars(e, boundVars));
+					});
 				}
-			} else if (name == "define" && length(exprs) >= 2) {
-				// Define form: (define name value)
-				// Only the value can have free variables
-				findFreeSexprVars(exprs[1], boundVars);
-			} else if (name == "if" && length(exprs) >= 2) {
-				// If form: (if condition then-expr else-expr)
-				mergeSets(
-					findFreeSexprVars(exprs[0], boundVars),
-					mergeSets(
-						findFreeSexprVars(exprs[1], boundVars),
-						if (length(exprs) > 2) findFreeSexprVars(exprs[2], boundVars) else makeSet()
-					)
-				);
-			} else if ((name == "let" || name == "letrec") && length(exprs) >= 2) {
-				// Let form: (let ((var1 val1) (var2 val2)...) body)
-				// First find free vars in the bindings
-				bindingsList = switch (exprs[0]) {
-					SSList(bindings): bindings;
-					default: [];
-				};
-				
-				// Process each binding
-				bindingFreeVars = fold(bindingsList, makeSet(), \acc, binding -> {
-					bindingVars = switch (binding) {
-						SSList(bindingParts): {
-							if (length(bindingParts) >= 2) {
-								findFreeSexprVars(bindingParts[1], boundVars);
-							} else {
-								makeSet();
+				SBegin(): {
+					// Begin form: (begin expr1 expr2...)
+					// All expressions can have free variables
+					fold(exprs, makeSet(), \acc, e -> {
+						mergeSets(acc, findFreeSexprVars(e, boundVars));
+					});
+				}
+				SClosure(): {
+					// Closure form: (closure bindings lambda-expr)
+					// The bindings are already evaluated, so only the lambda expression can have free variables
+					if (length(exprs) >= 2) {
+						findFreeSexprVars(exprs[1], boundVars);
+					} else {
+						makeSet();
+					}
+				}
+				SDefine(): {
+					// Define form: (define name value) or (define (func param...) body...)
+					if (length(exprs) >= 2) {
+						switch (exprs[0]) {
+							SSVariable(__): {
+								// Simple variable definition: (define name value)
+								// Only the value can have free variables
+								findFreeSexprVars(exprs[1], boundVars);
 							}
-						};
-						default: makeSet();
-					};
-					mergeSets(acc, bindingVars);
-				});
-				
-				// Extract binding names to add to bound variables for the body
-				bindingNames = filtermap(bindingsList, \binding -> {
-					switch (binding) {
-						SSList(parts): {
-							if (length(parts) >= 2) {
-								switch (parts[0]) {
-									SSVariable(bname): Some(bname);
-									default: None();
+							SSList(funcParts): {
+								// Function definition: (define (func param...) body...)
+								if (length(funcParts) > 0) {
+									// Extract function name
+									switch (funcParts[0]) {
+										SSVariable(__): {
+											// Extract parameter names
+											paramNames = filtermap(tail(funcParts), \param -> {
+												switch (param) {
+													SSVariable(pname): Some(pname);
+													default: None();
+												}
+											});
+											
+											// Add parameter names to bound variables
+											newBoundVars = fold(paramNames, boundVars, \acc, pname -> {
+												insertSet(acc, pname);
+											});
+											
+											// Find free variables in the body
+											if (length(exprs) > 1) {
+												fold(tail(exprs), makeSet(), \acc, e -> {
+													mergeSets(acc, findFreeSexprVars(e, newBoundVars));
+												});
+											} else {
+												makeSet();
+											}
+										}
+										default: makeSet();
+									}
+								} else {
+									makeSet();
 								}
-							} else {
-								None();
 							}
-						};
-						default: None();
+							default: makeSet();
+						}
+					} else {
+						makeSet();
 					}
-				});
-				
-				// Add binding names to bound variables
-				newBoundVars = fold(bindingNames, boundVars, \acc, bname -> {
-					insertSet(acc, bname);
-				});
-				
-				// Find free variables in the body (considering binding names as bound)
-				if (length(exprs) > 1) {
-					bodyFreeVars = findFreeSexprVars(exprs[1], newBoundVars);
-					mergeSets(bindingFreeVars, bodyFreeVars);
-				} else {
-					bindingFreeVars;
 				}
-			} else if ((name == "quote" || name == "'") && length(exprs) >= 1) {
-				// Quote form: (quote expr) or 'expr
-				// Quoted expressions have no free variables
-				makeSet();
-			} else if (name == "quasiquote" && length(exprs) == 1) {
-				// Quasiquote form: (quasiquote expr)
-				// The inner expression can have free variables
-	            // In quasiquote, only unquoted expressions can have free variables
-    	        findQuasiQuoteFreeVars(exprs[0], boundVars);
-			} else if (name == "unquote" && length(exprs) == 1) {
-				// Unquote form: (unquote expr)
-				 findFreeSexprVars(exprs[0], boundVars);
-			} else if (name == "unquote-splicing" && length(exprs) == 1) {
-				// Unquote-splicing form: (unquote-splicing expr)
-				findFreeSexprVars(exprs[0], boundVars);
-			} else if (name == "match" && length(exprs) >= 2) {
-				// Match form: (match expr pattern1 result1 pattern2 result2...)
-				// The expr and all results can have free variables
-				// Patterns can introduce bindings but we'll simplify by treating them as normal expressions
-				if (length(exprs) > 1) {
-					mergeSets(
-						findFreeSexprVars(exprs[0], boundVars),
-						fold(tail(exprs), makeSet(), \acc, e -> {
-							mergeSets(acc, findFreeSexprVars(e, boundVars));
-						})
-					);
-				} else {
+				SEval(): {
+					// Eval form: (eval expr)
+					// The expression being evaluated can have free variables
+					if (length(exprs) >= 1) {
+						findFreeSexprVars(exprs[0], boundVars);
+					} else {
+						makeSet();
+					}
+				}
+				SIf(): {
+					// If form: (if condition then-expr else-expr)
+					if (length(exprs) >= 2) {
+						mergeSets(
+							findFreeSexprVars(exprs[0], boundVars),
+							mergeSets(
+								findFreeSexprVars(exprs[1], boundVars),
+								if (length(exprs) > 2) findFreeSexprVars(exprs[2], boundVars) else makeSet()
+							)
+						);
+					} else {
+						makeSet();
+					}
+				}
+				SImport(): {
+					// Import form: (import "file")
+					// Import statements don't have free variables
 					makeSet();
 				}
-			} else if (name == "begin") {
-				fold(exprs, makeSet(), \acc, e -> {
-					mergeSets(acc, findFreeSexprVars(e, boundVars));
-				});
-			} else {
-				println("TODO: Find free in special form: " + name);
-				fold(exprs, makeSet(), \acc, e -> {
-					mergeSets(acc, findFreeSexprVars(e, boundVars));
-				});
+				SLambda(): {
+					if (length(exprs) >= 2) {
+						// Lambda form: (lambda (param1 param2...) body)
+						paramList = switch (exprs[0]) {
+							SSList(params): params;
+							default: [];
+						};
+						
+						// Extract parameter names
+						paramNames = filtermap(paramList, \param -> {
+							switch (param) {
+								SSVariable(pname): Some(pname);
+								default: None();
+							}
+						});
+						
+						// Add parameter names to bound variables
+						newBoundVars = fold(paramNames, boundVars, \acc, pname -> {
+							insertSet(acc, pname);
+						});
+						
+						// Find free variables in all body expressions (considering parameters as bound)
+						fold(tail(exprs), makeSet(), \acc, e -> {
+							mergeSets(acc, findFreeSexprVars(e, newBoundVars));
+						});
+					} else {
+						makeSet();
+					}
+				}
+				SLet(): {
+					// Let form: (let ((var1 val1) (var2 val2)...) body...)
+					if (length(exprs) >= 2) {
+						bindingsList = switch (exprs[0]) {
+							SSList(bindings): bindings;
+							default: [];
+						};
+						
+						// Process each binding value for free variables
+						bindingFreeVars = fold(bindingsList, makeSet(), \acc, binding -> {
+							bindingVars = switch (binding) {
+								SSList(bindingParts): {
+									if (length(bindingParts) >= 2) {
+										findFreeSexprVars(bindingParts[1], boundVars);
+									} else {
+										makeSet();
+									}
+								};
+								default: makeSet();
+							};
+							mergeSets(acc, bindingVars);
+						});
+						
+						// Extract binding names to add to bound variables for the body
+						bindingNames = filtermap(bindingsList, \binding -> {
+							switch (binding) {
+								SSList(parts): {
+									if (length(parts) >= 1) {
+										switch (parts[0]) {
+											SSVariable(bname): Some(bname);
+											default: None();
+										}
+									} else {
+										None();
+									}
+								};
+								default: None();
+							}
+						});
+						
+						// Add binding names to bound variables
+						newBoundVars = fold(bindingNames, boundVars, \acc, bname -> {
+							insertSet(acc, bname);
+						});
+						
+						// Find free variables in the body (considering binding names as bound)
+						if (length(exprs) > 1) {
+							bodyFreeVars = fold(tail(exprs), makeSet(), \acc, e -> {
+								mergeSets(acc, findFreeSexprVars(e, newBoundVars));
+							});
+							mergeSets(bindingFreeVars, bodyFreeVars);
+						} else {
+							bindingFreeVars;
+						}
+					} else {
+						makeSet();
+					}
+				}
+				SLetRec(): {
+					// LetRec form: (letrec ((var1 val1) (var2 val2)...) body...)
+					// Similar to let, but binding names are available within all bindings values as well
+					if (length(exprs) >= 2) {
+						bindingsList = switch (exprs[0]) {
+							SSList(bindings): bindings;
+							default: [];
+						};
+						
+						// Extract binding names
+						bindingNames = filtermap(bindingsList, \binding -> {
+							switch (binding) {
+								SSList(parts): {
+									if (length(parts) >= 1) {
+										switch (parts[0]) {
+											SSVariable(bname): Some(bname);
+											default: None();
+										}
+									} else {
+										None();
+									}
+								};
+								default: None();
+							}
+						});
+						
+						// Add binding names to bound variables for both bindings and body
+						newBoundVars = fold(bindingNames, boundVars, \acc, bname -> {
+							insertSet(acc, bname);
+						});
+						
+						// Process each binding value for free variables with the new bound vars
+						bindingFreeVars = fold(bindingsList, makeSet(), \acc, binding -> {
+							bindingVars = switch (binding) {
+								SSList(bindingParts): {
+									if (length(bindingParts) >= 2) {
+										findFreeSexprVars(bindingParts[1], newBoundVars);
+									} else {
+										makeSet();
+									}
+								};
+								default: makeSet();
+							};
+							mergeSets(acc, bindingVars);
+						});
+						
+						// Find free variables in the body (with bindings in scope)
+						if (length(exprs) > 1) {
+							bodyFreeVars = fold(tail(exprs), makeSet(), \acc, e -> {
+								mergeSets(acc, findFreeSexprVars(e, newBoundVars));
+							});
+							mergeSets(bindingFreeVars, bodyFreeVars);
+						} else {
+							bindingFreeVars;
+						}
+					} else {
+						makeSet();
+					}
+				}
+				SList(): {
+					// Process all list expressions
+					fold(exprs, makeSet(), \acc, e -> {
+						mergeSets(acc, findFreeSexprVars(e, boundVars));
+					});
+				}
+				SMatch(): {
+					// Match form: (match expr pattern1 result1 pattern2 result2...)
+					if (length(exprs) >= 1) {
+						// First expression is what we're matching against
+						exprFreeVars = findFreeSexprVars(exprs[0], boundVars);
+						
+						// Process pattern-result pairs (all elements after the first)
+						patternResultVars = if (length(exprs) > 1) {
+							patternResultExprs = tail(exprs);
+							
+							// Just process all remaining expressions directly
+							// This is simpler and still correct since we're just looking for free variables
+							fold(patternResultExprs, makeSet(), \acc, expr -> {
+								mergeSets(acc, findFreeSexprVars(expr, boundVars));
+							});
+						} else {
+							makeSet();
+						};
+						
+						mergeSets(exprFreeVars, patternResultVars);
+					} else {
+						makeSet();
+					}
+				}
+				SOr(): {
+					// Or form: (or expr1 expr2...)
+					// All expressions can have free variables
+					fold(exprs, makeSet(), \acc, e -> {
+						mergeSets(acc, findFreeSexprVars(e, boundVars));
+					});
+				}
+				SQuasiQuote(): {
+					// Quasiquote form: (quasiquote expr)
+					// In quasiquote, only unquoted expressions can have free variables
+					if (length(exprs) >= 1) {
+						findQuasiQuoteFreeVars(exprs[0], boundVars);
+					} else {
+						makeSet();
+					}
+				}
+				SQuote(): {
+					// Quote form: (quote expr) or 'expr
+					// Quoted expressions have no free variables
+					makeSet();
+				}
+				SSet(): {
+					// Set form: (set! var value)
+					// The value can have free variables, var is not free
+					if (length(exprs) >= 2) {
+						findFreeSexprVars(exprs[1], boundVars);
+					} else {
+						makeSet();
+					}
+				}
+				SUnQuote(): {
+					// Unquote form: (unquote expr)
+					// This should not be encountered outside of quasiquote processing
+					if (length(exprs) >= 1) {
+						findFreeSexprVars(exprs[0], boundVars);
+					} else {
+						makeSet();
+					}
+				}
+				SUnQuoteSplicing(): {
+					// Unquote-splicing form: (unquote-splicing expr)
+					// This should not be encountered outside of quasiquote processing
+					if (length(exprs) >= 1) {
+						findFreeSexprVars(exprs[0], boundVars);
+					} else {
+						makeSet();
+					}
+				}
 			}
 		}
     }
@@ -178,14 +374,28 @@ findQuasiQuoteFreeVars(sExpr : Sexpr, boundVars : Set<string>) -> Set<string> {
             });
         };
 		SSSpecialForm(name, exprs): {
-			if (name == "unquote" && length(exprs) == 1) {
-				findFreeSexprVars(exprs[0], boundVars);
-			} else if (name == "unquote-splicing" && length(exprs) == 1) {
-				findFreeSexprVars(exprs[0], boundVars);
-			} else {
-				fold(exprs, makeSet(), \acc, item -> {
-					mergeSets(acc, findQuasiQuoteFreeVars(item, boundVars));
-				});
+			switch (name) {
+				SQuasiQuote(): {
+					// Quasiquote form: (quasiquote expr)
+					// The inner expression can have free variables
+					// In quasiquote, only unquoted expressions can have free variables
+					findQuasiQuoteFreeVars(exprs[0], boundVars);
+				}
+				SUnQuote(): {
+					// Unquote form: (unquote expr)
+					// The inner expression can have free variables
+					findFreeSexprVars(exprs[0], boundVars);
+				}
+				SUnQuoteSplicing(): {
+					// Unquote-splicing form: (unquote-splicing expr)
+					// The inner expression can have free variables
+					findFreeSexprVars(exprs[0], boundVars);
+				}
+				default: {
+					fold(exprs, makeSet(), \acc, item -> {
+						mergeSets(acc, findQuasiQuoteFreeVars(item, boundVars));
+					});
+				}
 			}
 		}
         default: makeSet(); // Other expressions in quasiquote have no free variables
