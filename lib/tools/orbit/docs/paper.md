@@ -985,18 +985,9 @@ Later: We plan to evaluate Orbit by implementing a representative set of rules f
 This work is in progress.
 </draft>
 
-## 9. Discussion
+## 9. Deriving the FFT
 
-### 8.1 Notation and Terminology
-
-Throughout this paper, we use the term "domain" to refer to a set of elements sharing certain properties, often corresponding to algebraic structures (Ring, Field), data types (Integer, List), or symmetry properties (S₂, Cₙ). These domains form a lattice under the subset relationship (`⊂`), enabling rule inheritance and consolidation (§2.3).
-
-Group-theoretic domains (S₂, Cₙ, Dₙ, etc.) signify invariance under specific transformations and trigger specialized canonicalization algorithms.
-
-The arrow symbols follow standard rewriting conventions:
-- `→`: Unidirectional rewrite rule (simplification, canonicalization)
-- `↔`: Bidirectional equivalence relation (axioms like commutativity)
-- `⊂`: Subset or subdomain relation (domain hierarchy)
+TODO: Explain how we derive the FFT from the DFT.
 
 ## 10. Conclusion
 
