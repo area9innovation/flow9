@@ -30,7 +30,7 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		OrOperatorSymbol(symbol): SSOperator(symbol);
 		
 		// Collection types
-		OrArray(items): SSList(concat([SSVariable("list")], map(items, orbit2sexpr)));
+		OrArray(items): SSSpecialForm(SList(), map(items, orbit2sexpr));
 		
 		// Binary operations - Check for associative operations that should be flattened
 		OrAdd(a, b): {
@@ -117,15 +117,15 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		// Special constructs
 		OrSetLiteral(exprs): SSList(concat([SSConstructor("SetLiteral")], map(exprs, orbit2sexpr)));
 		OrFunction(fn, args): SSList(concat([orbit2sexpr(fn)], map(args, orbit2sexpr))); // Call
-		OrIfElse(cond, thenExpr, elseExpr): SSList([SSConstructor("If"), orbit2sexpr(cond), orbit2sexpr(thenExpr), orbit2sexpr(elseExpr)]);
-		OrMatch(expr2, cases): SSList([SSConstructor("Match"), orbit2sexpr(expr2), orbit2sexpr(cases)]);
-		OrLet(idType, evalExpr): SSList([SSVariable("define"), SSVariable(idType.id), orbit2sexpr(evalExpr)]);
+		OrIfElse(cond, thenExpr, elseExpr): SSSpecialForm(SIf(), [orbit2sexpr(cond), orbit2sexpr(thenExpr), orbit2sexpr(elseExpr)]);
+		OrMatch(expr2, cases): SSSpecialForm(SMatch(), [orbit2sexpr(expr2), orbit2sexpr(cases)]);
+		OrLet(idType, evalExpr): SSSpecialForm(SDefine(), [SSVariable(idType.id), orbit2sexpr(evalExpr)]);
 		OrRule(m1, m2, m3, b): SSList([SSConstructor("Rule"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3), SSBool(b)]);
 		OrEntailment(m1, m2, m3): SSList([SSConstructor("Entailment"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3)]);
 		OrEquivalence(m1, m2, m3, b): SSList([SSConstructor("Equivalence"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3), SSBool(b)]);
 		OrTypeSubstitution(m1, m2, m3): SSList([SSConstructor("TypeSubstitution"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3)]);
 		OrTypeVar(s): SSList([SSConstructor("TypeVar"), SSString(s)]);
-		OrImport(path): SSList([SSConstructor("Import"), SSString(path)]);
+		OrImport(path): SSSpecialForm(SImport(), [SSString(path)]);
 		OrEllipsis(): SSConstructor("Ellipsis");
 		
 		// Complex constructs requiring special handling
@@ -138,7 +138,7 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 			
 			// Convert type_annotations to Sexpr
 			type_annot_exprs = map(type_annotations, \t -> orbit2sexpr(t.math_expr));
-			println("TODO: Convert fn def to sexpr");
+			
 			SSList([
 				SSConstructor("FnDef"), 
 				SSString(id),
@@ -159,8 +159,7 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 				SSList([SSString(idType.id), SSList(type_annots)]);
 			});
 			
-			SSList([
-				SSConstructor("Lambda"), 
+			SSSpecialForm(SLambda(), [
 				SSList(env_exprs),
 				SSList(id_type_exprs),
 				orbit2sexpr(math_expr)
@@ -302,11 +301,114 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 		SSConstructor(name): OrUId(name); // Treat constructors as UIDs in Orbit
 		SSOperator(op): OrOperatorSymbol(op);
 		
-		// Quote and other special forms are not directly translated
-		SSQuote(__): OrIdentifier("quote_not_supported");
-		SSQuasiQuote(__): OrIdentifier("quasiquote_not_supported");
-		SSUnquote(__): OrIdentifier("unquote_not_supported");
-		SSUnquoteSplicing(__): OrIdentifier("splicing_not_supported");
+		// Special forms
+		SSSpecialForm(special, items): {
+			switch (special) {
+				SList(): {
+					// Convert list special form to array
+					OrArray(map(items, sexpr2orbit));
+				}
+				SIf(): {
+					if (length(items) >= 3) {
+						OrIfElse(sexpr2orbit(items[0]), sexpr2orbit(items[1]), sexpr2orbit(items[2]));
+					} else {
+						// Handle error case: not enough arguments for if
+						OrIdentifier("invalid_if_expr");
+					}
+				}
+				SLambda(): {
+					if (length(items) >= 3) {
+						// Extract environment bindings
+						env_bindings = switch (items[0]) {
+							SSList(bindings): map(bindings, \binding -> {
+								switch (binding) {
+									SSList(parts): {
+										if (length(parts) >= 3) {
+											switch (parts[1]) {
+												SSString(id): {
+													OrEnvBinding(id, sexpr2orbit(parts[2]));
+												}
+												default: OrEnvBinding("", OrInt(0)); // Default for invalid
+											}
+										} else {
+											OrEnvBinding("", OrInt(0)); // Default for invalid
+										}
+									}
+									default: OrEnvBinding("", OrInt(0));
+								}
+							});
+							default: [];
+						}
+						
+						// Extract id_types
+						id_types = switch (items[1]) {
+							SSList(params): map(params, \param -> {
+								switch (param) {
+									SSList(parts): {
+										if (length(parts) >= 2) {
+											switch (parts[0]) {
+												SSString(id): {
+													// Extract type annotations
+													type_annots = switch (parts[1]) {
+														SSList(annots): map(annots, \a -> OrType(sexpr2orbit(a)));
+														default: [];
+													}
+													OrIdType(id, type_annots);
+												}
+												default: OrIdType("", []); // Default for invalid
+											}
+										} else {
+											OrIdType("", []); // Default for invalid
+										}
+									}
+									default: OrIdType("", []);
+								}
+							});
+							default: [];
+						}
+						
+						// Create lambda
+						OrLambda(env_bindings, id_types, sexpr2orbit(items[2]));
+					} else {
+						// Handle error case: not enough arguments
+						OrIdentifier("invalid_lambda");
+					}
+				}
+				SDefine(): {
+					if (length(items) >= 2) {
+						switch (items[0]) {
+							SSVariable(id): {
+								OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+							}
+							default: OrIdentifier("invalid_define");
+						}
+					} else {
+						OrIdentifier("invalid_define");
+					}
+				}
+				SMatch(): {
+					if (length(items) >= 2) {
+						OrMatch(sexpr2orbit(items[0]), sexpr2orbit(items[1]));
+					} else {
+						OrIdentifier("invalid_match");
+					}
+				}
+				SImport(): {
+					if (length(items) >= 1) {
+						switch (items[0]) {
+							SSString(path): OrImport(path);
+							default: OrIdentifier("invalid_import");
+						}
+					} else {
+						OrIdentifier("invalid_import");
+					}
+				}
+				default: {
+					// Other special forms - convert as generic function call
+					OrIdentifier("unsupported_special_form");
+				}
+			}
+		}
 		
 		// Lists - the main structure
 		SSList(items): {
