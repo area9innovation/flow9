@@ -25,17 +25,17 @@ flowcpp sexpr.flow -- tests/file.sexp
 | `(unquote exp)`                                     | `(unquote a)`                  |
 | `(unquote-splicing exp)`                            | `(unquote-splicing ls)`    |
 | `(match value (pattern1 result1) (pattern2 result2) ...)` | `(match x (0 'zero) (1 'one) (else 'other))` |
+| `(define name exp)` <br> `(define (name param*) body...)` | `(define x 42)` <br> `(define (f x) (+ x 1))` |
 
 ## Differences from Scheme
 
 We use `//` and `/* ... */` for comments, and not `;`.
 We use words for quotations, and not the shorthand syntax.
-We do not have a sequence at the top level, so you have to wrap with `(begin ...)`.
+We do not have a sequence at the top level, so you have to wrap with `(begin ...)` or similar.
 
 TODO: Scheme have these as well. Not sure if we need them.
 | Syntax Pattern                                     | Surface Syntax Example |
 |-----------------------------------------------------|-------------------------|
-| `(define name exp)` <br> `(define (name param*) body...)` | `(define x 42)` <br> `(define (f x) (+ x 1))` |
 | `(let* ((name1 exp1) (name2 exp2) ...) body...)`     | `(let* ((x 1) (y (+ x 2))) y)` |
 | `(cond (test exp...) (test exp...) ... [else exp...])` | `(cond [(> x 0) 'pos] [(< x 0) 'neg] [else 'zero])` |
 | `(case key ((val1 val2 ...) exp...) ... [else exp...])` | `(case x [(1 2) 'small] [(3 4) 'large] [else 'unknown])` |
