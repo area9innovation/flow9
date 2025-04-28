@@ -10,6 +10,32 @@ flowcpp sexpr.flow -- tests/file.sexp
 
 ## Core Features
 
+TODO:
+Clean up the special forms and add closure as a special form.
+Retire define in favor of just let and letrec, so we do not have a global env.
+
+| Syntax Pattern                                     | Surface Syntax Example |
+|-----------------------------------------------------|-------------------------|
+| `(quote exp)`                                       | `'exp`                  |
+| `(quasiquote exp)`                                  | `` `exp``               |
+| `(unquote exp)`                                     | `,exp`                  |
+| `(unquote-splicing exp)`                            | `,@exp`                 |
+| `(if test then else)`                               | `(if (> x 0) x (- x))`   |
+| `(lambda (param*) body...)`                         | `(lambda (x) (+ x 1))`   |
+| `(define name exp)` <br> `(define (name param*) body...)` | `(define x 42)` <br> `(define (f x) (+ x 1))` |
+| `(set! name exp)`                                   | `(set! x 10)`            |
+| `(begin exp1 exp2 ...)`                             | `(begin (display "A") (display "B"))` |
+| `(cond (test exp...) (test exp...) ... [else exp...])` | `(cond [(> x 0) 'pos] [(< x 0) 'neg] [else 'zero])` |
+| `(and exp1 exp2 ...)`                               | `(and (> x 0) (< x 10))` |
+| `(or exp1 exp2 ...)`                                | `(or (= x 0) (= x 1))`   |
+| `(let ((name1 exp1) (name2 exp2) ...) body...)`      | `(let ((x 1) (y 2)) (+ x y))` |
+| `(let* ((name1 exp1) (name2 exp2) ...) body...)`     | `(let* ((x 1) (y (+ x 2))) y)` |
+| `(letrec ((name1 exp1) (name2 exp2) ...) body...)`   | `(letrec ((f (lambda (n) (if (= n 0) 1 (* n (f (- n 1))))))) (f 5))` |
+| `(case key ((val1 val2 ...) exp...) ... [else exp...])` | `(case x [(1 2) 'small] [(3 4) 'large] [else 'unknown])` |
+| `(do ((var1 init1 step1) (var2 init2 step2) ...) (test expr...) body...)` | `(do ((i 0 (+ i 1))) ((= i 10) 'done) (display i))` |
+
+TODO: Find diff to our version.
+
 ### Basic Values
 
 ```scheme
