@@ -2,6 +2,7 @@
 - Port the entire thing to run in our scheme
   ✅ Convert OrMath_expr to/from SExpr
   - Migrate to eval using SExpr
+  - Check roundtrip Orbit to SExpr and back
   - Change ograph to use SExpr
   - Implement SExpr eval using ograph
 
