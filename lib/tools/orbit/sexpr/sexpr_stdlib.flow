@@ -19,6 +19,11 @@ import tools/orbit/sexpr/sexp2ograph_sub;
 import tools/orbit/sexpr/ograph2sexpr;
 import tools/orbit/sexpr/ograph_sexpr_pattern;
 
+// Orbit expression handling
+import tools/orbit/orbit_types;         // For OrMath_expr type
+import tools/orbit/orbit2sexpr;         // For orbit2sexpr and sexpr2orbit converters
+import tools/orbit/prettyprint;         // For prettyOrbit
+
 export {
 	// Add standard functions/variables to the environment
 	getRuntimeEnv() -> SExpEnv;
@@ -75,6 +80,122 @@ getRuntimeFunctions() -> Tree<string, RuntimeFn> {
 		Pair("matchOGraphSexprPattern", RuntimeFn(3, \result -> matchOGraphSexprPatternFunction(result))),
 		Pair("addDomainToNode", RuntimeFn(3, \result -> addDomainToNodeFunction(result))),
 		Pair("mergeOGraphNodes", RuntimeFn(3, \result -> mergeOGraphNodesFunction(result))),
+		
+		// Orbit-SExpr conversion functions
+		Pair("orbit2sexpr", RuntimeFn(1, \result -> orbit2sexprFunction(result))),
+		Pair("sexpr2orbit", RuntimeFn(1, \result -> sexpr2orbitFunction(result))),
+		Pair("prettyOrbit", RuntimeFn(1, \result -> prettyOrbitFunction(result))),
+		
+		// OGraph with Orbit expressions operations
+		Pair("addOrbit2OGraph", RuntimeFn(2, \result -> {
+			// Extract arguments
+			graphName = getSString(result.args[0], "addOrbit2OGraph.name");
+			orbitExpr = sexpr2orbit(result.args[1]);
+			
+			// Call the implementation
+			nodeId = addOrbit2OGraph(graphName, orbitExpr);
+			
+			// Return the node ID
+			SSInt(nodeId);
+		})),
+		Pair("addOrbitWithSub", RuntimeFn(3, \result -> {
+			// Extract arguments
+			graphName = getSString(result.args[0], "addOrbitWithSub.name");
+			orbitExpr = sexpr2orbit(result.args[1]);
+			
+			// Process bindings
+			bindings = switch (result.args[2]) {
+				SSList(pairs): {
+					// Convert the list of pairs to a tree
+					fold(pairs, makeTree(), \acc, pair -> {
+						switch (pair) {
+							SSList(items): {
+								if (length(items) == 2) {
+									// Extract key and value
+									key = getSString(items[0], "addOrbitWithSub.binding.key");
+									value = getSInt(items[1], "addOrbitWithSub.binding.value");
+									
+									// Add to the bindings map
+									setTree(acc, key, value);
+								} else {
+									println("ERROR: Each binding must be a list of exactly 2 elements");
+									acc;
+								}
+							}
+							default: {
+								println("ERROR: Each binding must be a list");
+								acc;
+							}
+						}
+					});
+				}
+				default: {
+					println("ERROR: addOrbitWithSub third argument must be a list of bindings");
+					makeTree();
+				}
+			};
+			
+			// Call the implementation
+			nodeId = addOrbitWithSub(graphName, orbitExpr, bindings);
+			
+			// Return the node ID
+			SSInt(nodeId);
+		})),
+		Pair("extractOGraphOrbit", RuntimeFn(2, \result -> {
+			// Extract arguments
+			graphName = getSString(result.args[0], "extractOGraphOrbit.name");
+			nodeId = getSInt(result.args[1], "extractOGraphOrbit.nodeId");
+			
+			// Call the implementation (with tracing disabled)
+			orbitExpr = extractOGraphOrbit(graphName, nodeId, false);
+			
+			// Convert OrMath_expr back to Sexpr for return
+			orbit2sexpr(orbitExpr);
+		})),
+		Pair("matchOGraphOrbitPattern", RuntimeFn(3, \result -> {
+			// Extract arguments
+			graphName = getSString(result.args[0], "matchOGraphOrbitPattern.name");
+			pattern = sexpr2orbit(result.args[1]);
+			callback = result.args[2];
+			
+			// Check that the callback is a lambda
+			switch (callback) {
+				SSSpecialForm(form, _): {
+					if (form == SLambda()) {
+						// Store the results of pattern matching
+						results = ref [];
+						
+						// Create a callback adapter that will be called for each match
+						matchCallback = \bindings, eclassId -> {
+							// Convert bindings to S-expression friendly format
+							bindingsList = map(getTreeKeys(bindings), \key -> {
+								value = lookupTreeDef(bindings, key, -1);
+								SSList([SSString(key), SSInt(value)]);
+							});
+							
+							// Create the arguments for the callback
+							args = [SSList(bindingsList), SSInt(eclassId)];
+							
+							// Save the binding information
+							results := concat(^results, args);
+						};
+						
+						// Call the pattern matcher (with tracing disabled)
+						matchCount = matchOGraphOrbitPattern(graphName, pattern, matchCallback, false);
+						
+						// Return the number of matches and the results
+						SSList([SSInt(matchCount), SSList(^results)]);
+					} else {
+						println("ERROR: matchOGraphOrbitPattern callback must be a lambda");
+						SSInt(0);
+					}
+				}
+				default: {
+					println("ERROR: matchOGraphOrbitPattern callback must be a lambda");
+					SSInt(0);
+				}
+			}
+		})),
 		
 		// Arithmetic operators
 		Pair("+", RuntimeFn(-1, \result -> addNumbers(result))),
@@ -1431,5 +1552,115 @@ mergeOGraphNodesFunction(evalResult : FnArgResult) -> Sexpr {
 		
 		// Return success status
 		SSBool(success);
+	}
+}
+
+// ------ OrMathExp with OGraph Functions ------
+
+// Add an Orbit math expression to an OGraph (converts to S-expression first)
+addOrbit2OGraph(graphName : string, expr : OrMath_expr) -> int {
+	// Convert the OrMath_expr to Sexpr
+	sexpr = orbit2sexpr(expr);
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, graphName)) {
+		Some(ograph): {
+			// Add the S-expression to the graph
+			sexp2OGraphWithSubstitution(ograph, sexpr, makeTree());
+		}
+		None(): {
+			println("ERROR: OGraph '" + graphName + "' not found");
+			-1;
+		}
+	}
+}
+
+// Add an Orbit math expression to an OGraph with variable substitutions
+addOrbitWithSub(graphName : string, expr : OrMath_expr, bindings : Tree<string, int>) -> int {
+	// Convert the OrMath_expr to Sexpr
+	sexpr = orbit2sexpr(expr);
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, graphName)) {
+		Some(ograph): {
+			// Add the S-expression to the graph with substitutions
+			sexp2OGraphWithSubstitution(ograph, sexpr, bindings);
+		}
+		None(): {
+			println("ERROR: OGraph '" + graphName + "' not found");
+			-1;
+		}
+	}
+}
+
+// Extract an Orbit math expression from an OGraph node (converts from S-expression)
+extractOGraphOrbit(graphName : string, nodeId : int, tracing : bool) -> OrMath_expr {
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, graphName)) {
+		Some(ograph): {
+			// Extract the S-expression from the graph
+			sexpr = extractOGraphSexpr(graphName, nodeId, tracing);
+			
+			// Convert the S-expression to OrMath_expr
+			sexpr2orbit(sexpr);
+		}
+		None(): {
+			println("ERROR: OGraph '" + graphName + "' not found");
+			OrInt(0); // Return a simple zero expression as fallback
+		}
+	}
+}
+
+// Match an Orbit math expression pattern in an OGraph
+matchOGraphOrbitPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<string, int>, int) -> void, tracing : bool) -> int {
+	// Convert the OrMath_expr pattern to Sexpr
+	patternSexpr = orbit2sexpr(pattern);
+	
+	// Use the S-expression pattern matching
+	matchOGraphSexprPattern(graphName, patternSexpr, callback, tracing);
+}
+
+// Implementation of orbit2sexpr function for the runtime environment
+orbit2sexprFunction(evalResult : FnArgResult) -> Sexpr {
+	// Ensure we have exactly 1 argument
+	if (length(evalResult.args) != 1) {
+		println("ERROR: orbit2sexpr expects 1 argument");
+		SSList([]);
+	} else {
+		// Convert the first argument to Orbit expression
+		orbitExpr = sexpr2orbit(evalResult.args[0]);
+		
+		// Convert back to S-expression (normalizing/canonicalizing)
+		orbit2sexpr(orbitExpr);
+	}
+}
+
+// Implementation of sexpr2orbit function for the runtime environment
+sexpr2orbitFunction(evalResult : FnArgResult) -> Sexpr {
+	// Ensure we have exactly 1 argument
+	if (length(evalResult.args) != 1) {
+		println("ERROR: sexpr2orbit expects 1 argument");
+		SSList([]);
+	} else {
+		// Convert the S-expression to Orbit expression
+		orbitExpr = sexpr2orbit(evalResult.args[0]);
+		
+		// Convert back to S-expression for return
+		orbit2sexpr(orbitExpr);
+	}
+}
+
+// Implementation of prettyOrbit function
+prettyOrbitFunction(evalResult : FnArgResult) -> Sexpr {
+	// Ensure we have exactly 1 argument
+	if (length(evalResult.args) != 1) {
+		println("ERROR: prettyOrbit expects 1 argument");
+		SSString("");
+	} else {
+		// Convert the S-expression to Orbit expression
+		orbitExpr = sexpr2orbit(evalResult.args[0]);
+		
+		// Pretty print the Orbit expression
+		SSString(prettyOrbit(orbitExpr));
 	}
 }
