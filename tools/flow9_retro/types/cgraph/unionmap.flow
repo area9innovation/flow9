@@ -1,0 +1,156 @@
+import tools/flow9_retro/types/ugraph/tmap;
+import tools/flow9_retro/types/pretty;
+import tools/flow9_retro/types/ugraph/class;
+import ds/treeutils;
+
+export {
+	// Given this type, construct or find the eclass for it
+	findOrMakeCNodeClass(tmap : TMap, type : TType, reason : ErrorReason) -> int;
+
+	// Given a node, find out what eclass it is, or make a new one
+	findOrMakeCNode(tmap : TMap, cnode : CNode) -> int;
+
+	// Check if these two eclasses are the same
+	isSameEClassInCMap(cmap : CMap, left : int, right : int) -> bool;
+}
+
+findOrMakeCNode(tmap : TMap, node : CNode) -> int {
+	makeNew = \ -> {
+		nclass = makeTNodeClass(tmap);
+		setUnionMapValue(tmap.cmap.cmap, nclass, node);
+		nclass;
+	}
+	switch (node) {
+		CEpsilon(): makeNew();
+		COverload(__, __, __): makeNew();
+		CName(name, __, __): {
+			classes = lookupMultimap(^(tmap.namedClasses), name);
+			eclass = findNodeInClasses(tmap, classes, node);
+			if (eclass == -1) {
+				nclass = makeNew();
+				tmap.namedClasses := insertMultimap(^(tmap.namedClasses), name, nclass);
+				nclass;
+			} else eclass;
+		}
+		CFunction(args, __, __): {
+			arity = length(args);
+			classes = lookupMultimap(^(tmap.functionClasses), arity);
+			eclass = findNodeInClasses(tmap, classes, node);
+			if (eclass == -1) {
+				nclass = makeNew();
+				tmap.functionClasses := insertMultimap(^(tmap.functionClasses), arity, nclass);
+				nclass;
+			} else {
+				eclass;
+			}
+		}
+	}
+}
+
+findNodeInClasses(tmap : TMap, classes : Set<int>, node : CNode) -> int {
+	foldSet(classes, -1, \found, class -> {
+		if (found != -1) found
+		else {
+			cnode = getUnionMapValue(tmap.cmap.cmap, class);
+			if (isSameCNode(tmap.cmap, node, cnode)) class
+			else found;
+		}
+	});
+}
+
+findOrMakeCNodeClass(tmap : TMap, type : TType, reason : ErrorReason) -> int {
+	switch (type) {
+		TTypeEClass(eclass): eclass;
+		default: {
+			node = makeCNode(tmap, type, reason);
+			findOrMakeCNode(tmap, node);
+		}
+	}
+}
+
+// We know this type does not exist in the union map
+makeCNode(tmap : TMap, type : TType, reason : ErrorReason) -> CNode {
+	todo = \ -> {
+		println("TODO: Make cnode for " + prettyTType(type));
+		CEpsilon();
+	}
+	error = \ -> {
+		todo();
+	}
+
+	switch (type) {
+		TTypeName(id, typars): {
+			CName(id,
+				map(typars, \tp -> {
+					findOrMakeCNodeClass(tmap, tp, reason)
+				}),
+				reason
+			);
+		}
+		TTypeEClass(eclass): todo();
+		TTypeFunction(args, returnType): {
+			// A function type
+			CFunction(
+				map(args, \arg -> {
+					findOrMakeCNodeClass(tmap, arg, reason)
+				}),
+				findOrMakeCNodeClass(tmap, returnType, reason),
+				reason
+			);
+		}
+		TTypeOverload(unique, overloads): {
+			children = map(overloads, \overload -> {
+				findOrMakeCNodeClass(tmap, overload, reason)
+			});
+			uid = findOrMakeCNodeClass(tmap, unique, reason);
+			COverload(makeSet1(uid), buildSet(children), reason)
+		}
+	}
+}
+
+isSameCNode(cmap : CMap, left : CNode, right : CNode) -> bool {
+	switch (left) {
+		CEpsilon(): right == left;
+		CName(name, typars, reason): {
+			switch (right) {
+				CName(rname, rtypars, rreason): {
+					name == rname
+					&& areSameEClasses(cmap, typars, rtypars)
+				}
+				default: false;
+			}
+		}
+		CFunction(args, return, reason): {
+			switch (right) {
+				CFunction(rargs, rreturn, rreason): {
+					areSameEClasses(cmap, args, rargs)
+					&& isSameEClassInCMap(cmap, return, rreturn)
+				}
+				default: false;
+			}
+		}
+		COverload(unique, options, reason): {
+			switch (right) {
+				COverload(runique, roptions, rreason): {
+					!isEmptySet(intersectSets(unique, runique))
+				}
+				default: false;
+			}
+		}
+	}
+}
+
+areSameEClasses(cmap : CMap, left : [int], right : [int]) -> bool {
+	length(left) == length(right)
+	&& forall(mapi(left, \i, l -> isSameEClassInCMap(cmap, l, right[i])), idfn)
+}
+
+isSameEClassInCMap(cmap : CMap, left : int, right : int) -> bool {
+	findUnionMapRoot(cmap.cmap, left) == findUnionMapRoot(cmap.cmap, right)
+	|| {
+		// Unfortunately, it seems sometimes "void" gets different eclasses, for unknown reasons
+		ltype = getUnionMapValue(cmap.cmap, left);
+		rtype = getUnionMapValue(cmap.cmap, right);
+		ltype != CEpsilon() && ltype == rtype;
+	}
+}

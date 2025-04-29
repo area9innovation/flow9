@@ -1,0 +1,91 @@
+KeyValue(key : string, value : string);
+
+RequestMethod ::= RequestMethodBase, PUT, PATCH, DELETE;
+RequestMethodBase ::= GET, POST;
+	GET();
+	POST();
+	PUT();
+	PATCH();
+	DELETE();
+
+RequestStyle ::= RequestAsync, RequestEncoding, RequestHeaders, RequestTimeout, RequestData;
+		RequestAsync(async : bool);
+		RequestEncoding(responseEncoding : ResponseEncoding);
+		RequestHeaders(headers : [KeyValue]);
+		RequestTimeout(timeout : int);
+
+	RequestData ::= RequestPayload, RequestParameters;
+		RequestPayload(data : string);
+		RequestParameters(parameters : [KeyValue]);
+
+
+	ResponseEncoding ::= ResponseEncodingAuto, ResponseEncodingUtf8, ResponseEncodingByte;
+		// defined by target (js - ResponseEncodingUtf8(true), cpp - ResponseEncodingUtf8(false);
+		ResponseEncodingAuto();
+		// UTF8 encoding with two realisations:
+		// 	`withSurrogatePairs=true` -  UTF-8 encoding with surrogate pairs (like it works in js target by default);
+		//  `withSurrogatePairs=false` - original UTF-8 encoding with 1, 2, 3 bytes symbol length (in cpp target is a bug - symbol cropped by two bytes);
+		ResponseEncodingUtf8(withSurrogatePairs : bool);
+		// Without encoding - each symbol is a one byte length
+		ResponseEncodingByte();
+
+native fold : (xs : [?], init : ??, fn : (??, ?)->??) -> ?? = Native.fold;
+
+native isSameStructType : (value1 : ?, value2 : ??) -> bool = Native.isSameStructType;
+
+flow(i : ?) -> flow {
+	cast(i : ? -> flow);
+}
+
+extractStruct(a : [?], e : ??) -> ?? {
+	fold(a, e, \acc : ??, el : ? -> if (isSameStructType(acc, el)) {
+		// Funky way to cast. This should not work, but it seems we get away with it
+		t : ?? = cast(flow(el) : flow -> ??);
+		t
+	} else acc);
+}
+
+	Maybe<?> ::= None, Some<?>;
+	None();
+	Some(value : ?);
+
+either(m : Maybe<?>, alternative: ?) -> ? {
+	switch (m : Maybe) {
+		None(): alternative;
+		Some(v): v;
+	}
+}
+
+tryExtractStruct(a : [?], e : ??) -> Maybe<??> {
+	cast(find(a, \el : ? -> isSameStructType(e, el)) : Maybe<?> -> Maybe<??>)
+}
+
+native find : (a : [?], fn : (?) -> bool) -> Maybe<?> = Native.find;
+
+httpCustomRequestStyled(
+	url : string,
+	method : RequestMethod,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+	style : [RequestStyle]
+) -> void {
+	headers = extractStruct(style, RequestHeaders([])).headers;
+	data = either(tryExtractStruct(style, RequestPayload("")), extractStruct(style, RequestParameters([])));
+	async = extractStruct(style, RequestAsync(true)).async;
+	responseEncoding = extractStruct(style, RequestEncoding(ResponseEncodingAuto())).responseEncoding;
+	timeout = extractStruct(style, RequestTimeout(0)).timeout;
+
+	// Timeout 0 means no real timeout - it will wait for the response infinitely.
+	httpCustomRequestBase(url, method, headers, data, onResponse, async, timeout, responseEncoding);
+}
+
+
+httpCustomRequestBase(
+	url : string,
+	method : RequestMethod,
+	headers : [KeyValue],
+	data : RequestData,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+	async : bool,
+	timeout : int,
+	responseEncoding : ResponseEncoding
+) -> void {}

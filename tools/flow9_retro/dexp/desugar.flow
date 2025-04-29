@@ -1,0 +1,741 @@
+import tools/flow9_retro/dexp/dexp;
+import tools/flow9_retro/dexp/desugar_env;
+import tools/flow9_retro/dexp/unique_id;
+import tools/flow9_retro/dexp/vars;
+import tools/flow9_retro/dexp/types;
+import tools/flow9_retro/dexp/unions;
+import tools/flow9_retro/dexp/utils;
+
+import tools/flow9_retro/pexp/pexp;
+import tools/flow9_retro/pexp/values;
+import tools/flow9_retro/pexp/utils;
+
+import ds/set;
+import ds/arrayutils;
+
+/*
+Differences to PExp:
+- It is not a complete Exp type, but has different unions for toplevel, exp, type
+- "Temp" structures such as argtype, case, etc are not in exp
+- Union match in switch is expanded
+- We have constructors resolved to not be calls
+- The top level is indexed like a tree
+- Introduce downcast in switches
+- Extract let-bindings from cases
+- Extract structs and unions
+- Expand |> to a normal call
+- Expand ?? to switch
+- Expand "with" to constructor
+TODO:
+- Collect string includes
+*/
+
+export {
+	// Desugar a module
+	desugarPExp(dd : DDesugar, flowpath : string, fullpath : string, pexp : PExp) -> DModule;
+
+	// Extract the imports only
+	getDImports(p : PExp) -> [DImport];
+}
+
+
+getDImports(p : PExp) -> [DImport] {
+	module = getPModule(p);
+	filtermap(module.toplevels, \tl -> {
+		switch (tl) {
+			PImport(path, pos): Some(DImport(path, pos));
+			default: None();
+		}
+	});
+}
+
+desugarPExp(dd : DDesugar, flowpath : string, fullpath : string, pexp : PExp) -> DModule {
+	module = getPModule(pexp);
+	if (module.pos == -1) dd.onError(pexp.pos, "Expected module");
+
+	if (isTracingStage(dd.tracing, StageParse(), 0)) {
+		println("\nStage: Desugaring " + flowpath);
+	}
+
+	imports = getDImports(pexp);
+	forbids = filtermap(module.toplevels, \tl -> {
+			switch (tl) {
+				PForbid(path, pos): {
+					if (path == "") dd.onError(pos, "Unknown forbid path");
+					Some(DForbid(path, pos));
+				}
+				default: None();
+			}
+		});
+
+	// Find all top-levels (including those in the export section)
+	toplevels = fold(module.toplevels, module.toplevels, \acc, tl -> {
+		switch (tl) {
+			PExport(tls, __): concat(acc, tls);
+			default: acc;
+		}
+	});
+
+	// Extract structs and unions: 
+	// We do this twice. The first time, we pick up the arities.
+
+	// Extract structs & unions in our module, so we can include those in the lookup
+	dd0 = DDesugar(dd with onError = \p, e -> {}); // We ignore errors in the first pass
+	structs0 = fold(toplevels, makeTree(), \acc, tl -> extractDStruct(dd0, acc, tl));
+	unions0 = fold(toplevels, makeTree(), \acc, tl -> extractDUnion(dd0, acc, tl));
+
+	// Set up an environment now we know the initial arities of all names
+	dd1 = DDesugar(dd with 
+		resolveStructName = \name -> {
+			mst = lookupTree(structs0, name);
+			mst ?? Some(mst) : dd.resolveStructName(name);
+		},
+		resolveUnionName = \name -> {
+			mst = lookupTree(unions0, name);
+			mst ?? Some(mst) : dd.resolveUnionName(name);
+		},
+	);
+
+	// Extract structs & unions for real, checking arities
+	structs2 = fold(toplevels, makeTree(), \acc, tl -> extractDStruct(dd1, acc, tl));
+	unions = fold(toplevels, makeTree(), \acc, tl -> extractDUnion(dd1, acc, tl));
+	// Promite any structs that have implicit type parameters from occuring in a union
+	structs = adjustImplicitStructArity(dd, unions, structs2);
+
+	// Make sure our lookup knows about local structs and unions
+	dd2 = DDesugar(dd with 
+		resolveStructName = \name -> {
+			mst = lookupTree(structs, name);
+			mst ?? Some(mst) : dd.resolveStructName(name);
+		},
+		resolveUnionName = \name -> {
+			mst = lookupTree(unions, name);
+			mst ?? Some(mst) : dd.resolveUnionName(name);
+		},
+	);
+
+	// Figure out what names are exported
+	dummyExport = DExport(makeSet(), makeSet(), makeSet(), pexp.pos);
+	exports0 = fold(module.toplevels, dummyExport, \acc, tl : PTopLevel -> {
+		switch (tl) {
+			PExport(tls, p): {
+				if (acc != dummyExport) {
+					dd.onError(p, "Only one export section is allowed");
+				}
+				fold(tls, acc, \acc2, etl -> {
+					switch (etl) {
+						PTypeDef(id, __, __): DExport(acc2 with exportedGlobals = insertSet(acc2.exportedGlobals, id));
+						PGlobal(id, __, __): DExport(acc2 with exportedGlobals = insertSet(acc2.exportedGlobals, id));
+
+						PNative(id, isIo, type, name, pos): DExport(acc2 with exportedGlobals = insertSet(acc2.exportedGlobals, id));
+						PUnion(typename, types, pos): DExport(acc2 with exportedTypes = insertSet(acc2.exportedTypes, typename.id));
+						PStruct(id, structArgs, pos): DExport(acc2 with exportedTypes = insertSet(acc2.exportedTypes, id));
+
+						PStructArg(id, ismutable, type, pos): acc2;
+						PModule(__, pos): acc2;
+						PImport(path, pos): acc2;
+						PForbid(path, pos): acc2;
+						PExport(exports, pos): acc2;
+					}
+				})
+			}
+			default: acc;
+		}
+	});
+
+	typedefs = fold(toplevels, makeTree(), \acc, tl : PTopLevel -> {
+		switch (tl) {
+			PTypeDef(id, type, pos): {
+				typedef = ptype2dtype(dd2, type);
+				if (containsKeyTree(acc, id)) {
+					dd.onError(pos, "Duplicate type def " + id);
+				};
+				setTree(acc, id, typedef);
+			}
+			default: acc;
+		}
+	});
+
+	globalsOrder = fold2(toplevels, makeList(), makeTree(), \ord, acc, tl : PTopLevel -> {
+		switch (tl) {
+			PGlobal(id, value, pos): {
+				// Convert the body
+				dexp = pexp2dexp(dd2, value);
+				// Extract any polymorphism
+				typars0 = extractDTyparsFromDExp(dexp);
+
+				// See if there is a type definition. If so, also extract polymorphism from that
+				mtypedef = lookupTree(typedefs, id);
+				typars = mtypedef ?? {
+					extractDTypars(makeSet(), mtypedef);
+				} : {
+					// OK, check if we have implicit type parameters
+					switch (dexp) {
+						DTyped(tvalue, stype, tpos, __): {
+							typeTypars = extractDTypars(makeSet(), stype);
+							valTypars = extractDTyparsFromDExp(tvalue);
+							undeclared = differenceSets(valTypars, typeTypars);
+							if (!isEmptySet(undeclared)) {
+								dd.onError(tpos, id + ": Implicit polymorphism. Body has " + toString(set2array(valTypars)) + " while type has " + toString(set2array(typeTypars)));
+							}
+						}
+						default: {}
+					}
+					typars0;
+				};
+
+				// If we have a type def, add it
+				dexp1 = mtypedef ?? {
+					DTyped(dexp, mtypedef, pos, -1)
+				} : dexp;
+
+				recursive = containsSet(extractDVars(makeSet(), dexp1), id);
+
+				global = DGlobal(id, set2array(typars), recursive, dexp1, -1, pos);
+
+				if (containsKeyTree(acc, id)) {
+					dd.onError(pos, "Duplicate definition of " + id);
+				};
+
+				Pair(Cons(id, ord), setTree(acc, id, global));
+			}
+			default: Pair(ord, acc);
+		}
+	});
+	globals = globalsOrder.second;
+
+	natives = fold(toplevels, makeTree(), \acc, tl : PTopLevel -> {
+		switch (tl) {
+			PNative(id, isIo, type, name, pos): {
+				dtype = ptype2dtype(dd2, type);
+				nativ = DNative(id, isIo, dtype, name, containsKeyTree(globals, name), pos);
+				if (containsKeyTree(acc, id)) {
+					dd.onError(pos, "Duplicate native def " + id);
+				};
+				
+				setTree(acc, id, nativ);
+			}
+			default: acc;
+		}
+	});
+
+	// Traverse the typenames mentioned in the exported names and put those
+	// in exportedTypeNames if they are not in exportedTypes
+	exportedTypenames = foldSet(exports0.exportedGlobals, makeSet(), \acc, gl -> {
+		mglobal : Maybe<DGlobal> = lookupTree(globals, gl);
+		mglobal ?? {
+			switch (mglobal.value) {
+				DTyped(__, dtype, __, __): {
+					// If there is a declared type, use that
+					extractTypeNamesDType(acc, dtype, structs, unions);
+				}
+				default: acc;
+			};
+		} : {
+			mnative = lookupTree(natives, gl);
+			switch (mnative) {
+				None(): {
+					println("Unknown global " + gl);
+					acc;
+				}
+				Some(nat): {
+					extractTypeNamesDType(acc, nat.type, structs, unions);
+				}
+			}
+		}
+	});
+	// TODO: Should we also traverse exported unions and consider structs in those
+	// as exported typenames?
+
+	exports = DExport(exports0 with 
+		// We do not have to include the exported type names
+		exportedTypeNames = differenceSets(exportedTypenames, exports0.exportedTypes)
+	);
+
+	DModule(
+		flowpath,
+		fullpath,
+		imports,
+		forbids,
+		exports,
+		structs,
+		unions,
+		natives,
+		globals,
+		list2array(globalsOrder.first),
+		pexp.pos,
+	);
+}
+
+extractDStruct(dd : DDesugar, acc : Tree<string, DStruct>, tl : PTopLevel) -> Tree<string, DStruct> {
+	switch (tl) {
+		PStruct(id, structArgs, pos): {
+			sargs = map(structArgs, \sa -> pstructArg2dstructArg(dd, sa));
+
+			// Extract type pars from the args
+			stypars : Set<string> = fold(sargs, makeSet(), \sacc, sa : DStructArg -> {
+				extractDTypars(sacc, sa.type)
+			});
+			dstruct = DStruct(id, false, set2array(stypars), sargs, pos);
+			if (containsKeyTree(acc, id)) {
+				dd.onError(pos, "Duplicate struct def " + id);
+			};
+			setTree(acc, id, dstruct);
+		}
+		default: acc;
+	}
+}
+
+extractDUnion(dd : DDesugar, acc : Tree<string, DUnion>, tl : PTopLevel) -> Tree<string, DUnion> {
+	switch (tl) {
+		PUnion(typename, types, pos): {
+			dtp = ptypename2dtypename(dd, typename);
+			dunion = DUnion(dtp.id, map(dtp.typars, getDTypePar), map(types, \t -> ptypename2dtypename(dd, t)), pos);
+			if (containsKeyTree(acc, dtp.id)) {
+				dd.onError(pos, "Duplicate union def " + dtp.id);
+			};
+			setTree(acc, typename.id, dunion);
+		}
+		default: acc;
+	}
+}
+
+adjustImplicitStructArity(dd : DDesugar, unions : Tree<string, DUnion>, structs : Tree<string, DStruct>) -> Tree<string, DStruct> {
+	foldTree(unions, structs, \un, union : DUnion, acc -> {
+		arity = length(union.typars);
+		fold(union.types, acc, \acc2, tn : DTypeName -> {
+			structArity = typenameArity(dd, tn.id, tn.pos);
+			uArity = length(tn.typars);
+			if (structArity > 0 && structArity != uArity) {
+				dd.onError(union.pos, "Expected " + i2s(structArity) + " type args for " + tn.id + ", got " + i2s(uArity));
+			}
+
+			// OK, we turn off implicit polymorphism
+			if (false && structArity != arity && arity > 0) {
+				// OK, implicit polymorphism
+				mstruct = lookupTree(acc2, tn.id);
+				mstruct ?? {
+					newStruct = DStruct(mstruct with implicitTypars = true, typars = generate(0, arity, \i -> strLeft("??????????", i + 1)));
+					// println("Promoting " + tn.id + " to have " + i2s(arity) + " typars like " + un + " " + toString(newStruct));
+					setTree(acc2, tn.id, newStruct)
+				} : {
+					dd.onError(union.pos, "Can not promote " + tn.id + " to have " + i2s(arity) + " typars as the union " + un + " has " + i2s(structArity));
+					acc2;
+				}
+			} else acc2;
+		});
+	})
+}
+
+pexp2dexp(dd : DDesugar, pexp : PExp) -> DExp {
+	error = \ -> {
+		dd.onError(pexp.pos, "Expected expression, got " + toString(pexp));
+		DVoid(pexp.pos);
+	}
+	rec = \ee -> pexp2dexp(dd, ee);
+	switch (pexp) {
+		PVoid(pos): DVoid(pos);
+		PBool(v, pos): DBool(v, pos);
+		PInt(v, pos): DInt(v, pos);
+		PDouble(v, pos): DDouble(v, pos);
+		PString(v, pos): DString(v, pos);
+		PVar(var, pos): DVar(var, pos, -1);
+		PCallOp(op, args, pos): {
+			if (op == "|>") {
+				// OK, this is special
+				pexp2dexp(dd, PCall(args[1], [args[0]], pos))
+			} else {
+				rargs = map(args, rec);
+				DCall(DVar(op, pos, -1), rargs, pos, -1);
+			}
+		}
+		PStringInclude(path, pos): DStringInclude(path, pos);
+		PLet(var, value, body, pos): DLet(var, rec(value), rec(body), pos, -1);
+		PIf(cond, then, else_, pos): DIf(rec(cond), rec(then), rec(else_), pos, -1);
+		PCall(fn, args, pos): {
+			// Check if this is a struct constructor
+			switch (fn) {
+				PVar(id, __): {
+					mst = dd.resolveStructName(id);
+					mst ?? {
+						DConstruct(mst.id, map(args, rec), fn.pos, -1);
+					} : {
+						DCall(rec(fn), map(args, rec), pos, -1);
+					}
+				}
+				default: DCall(rec(fn), map(args, rec), pos, -1);
+			}
+		}
+		PLambda(args, body, pos): DLambda(map(args, \a -> {
+			DArgType(a.id, ptype2dtype(dd, a.type), a.pos)
+		}), rec(body), pos, -1);
+		PRef(value, pos): DRef(rec(value), pos, -1);
+		PField(value, field, pos): {
+			if (field == "structname") {
+				pexp2dexp(dd, PCallOp("__structname", [value], pos));
+			} else {
+				DField(rec(value), field, pos, -1);
+			}
+		}
+		PSetMutable(lhs, field, value, pos): DSetMutable(rec(lhs), field, rec(value), pos, -1);
+		PArray(exps, pos): DArray(map(exps, rec), pos, -1);
+		PSequence(exps, pos): {
+			dexps = map(exps, rec);
+			if (exps == []) DVoid(pos)
+			else if (length(dexps) == 1) dexps[0]
+			else DSequence(dexps, pos, -1);
+		}
+		PSwitch(value, cases, pos): desugarPSwitch(dd, pexp);
+		PCast(value, target, pos): {
+			fromType = switch (value) {
+				PTyped(val, fromt, __): getPTypeName(fromt).id;
+				default: "";
+			};
+			toType = getPTypeName(target).id;
+			nat = \n -> DCall(DVar(n, pos, -1), [rec(value)], pos, -1);
+			if (fromType == "double" && toType == "int") {
+				nat("trunc")
+			} else if (fromType == "int" && toType == "double") {
+				nat("i2d")
+			} else if (fromType == "int" && toType == "string") {
+				nat("i2s")
+			} else if (fromType == "double" && toType == "string") {
+				nat("d2s")
+			} else {
+				DCast(rec(value), ptype2dtype(dd, target), pos);
+			}
+		}
+		PTyped(value, type, pos): {
+			dtype = ptype2dtype(dd, type);
+			// TODO: If this is dtype is auto, we do not need it
+			DTyped(rec(value), dtype, pos, -1);
+		}
+		PWith(struct, value, fields, pos): desugarPWith(dd, pexp);
+		PMaybe(value, match, otherwise, pos): desugarPMaybe(dd, pexp);
+
+		PModule(toplevels, pos): error();
+		PImport(path, pos): error();
+		PForbid(path, pos): error();
+		PExport(exports, pos): error();
+		PGlobal(id, value, pos): error();
+		PNative(id, isIo, type, name, pos): error();
+		PUnion(typename, types, pos): error();
+		PStruct(id, structArgs, pos): error();
+		PStructArg(id, ismutable, type, pos): error();
+		PTypeDef(id, type, pos): error();
+		PTypePar(id, pos): error();
+		PTypeName(id, typars, pos): error();
+		PTypeFunction(args, returnType, pos): error();
+		PArgType(id, type, pos): error();
+
+		PList(l, pos): error();
+		PFieldAssign(id, value, pos): error();
+		PCase(id, args, body, pos): error();
+	}
+}
+
+ptype2dtype(dd : DDesugar, p : PType) -> DType {
+	switch (p) {
+		PTypePar(id, pos): DTypePar(id, pos);
+		PTypeName(id, typars, pos): ptypename2dtypename(dd, p);
+		PTypeFunction(args, returnType, pos): DTypeFunction(map(args, \at : PArgType -> ptype2dtype(dd, at)), ptype2dtype(dd, returnType), pos);
+		PArgType(id, type, pos): ptype2dtype(dd, type); // We just drop the name
+	}
+}
+
+ptypename2dtypename(dd : DDesugar, p : PTypeName) -> DTypeName {
+	ntypars = typenameArity(dd, p.id, p.pos);
+	n = length(p.typars);
+	typars0 = map(p.typars, \tp -> ptype2dtype(dd, tp));
+	typars = if (n == 0 || n != ntypars) {
+		if (n != 0) {
+			dd.onError(p.pos, "Expected " + i2s(ntypars) + " type parameters for " + p.id + ", but got " + i2s(n));
+		}
+		concat(typars0, generate(n, ntypars, \__ -> DTypeName("auto", [], p.pos)))
+	} else typars0;
+	DTypeName(p.id, typars, p.pos);
+}
+
+typenameArity(dd : DDesugar, id : string, pos : int) -> int {
+	mstruct = dd.resolveStructName(id);
+	mstruct ?? length(mstruct.typars) : {
+		munion = dd.resolveUnionName(id);
+		switch (munion) {
+			None(): {
+				if (id == "array" || id == "ref") 1
+				else {
+					0
+					/*
+					if (contains(["void", "bool", "int", "double", "string", "flow", "auto"], id)) {
+						0
+					} else {
+						dd.onError(pos, id + " unknown ");
+						0
+					}*/
+				}
+			}
+			Some(un): length(un.typars);
+		}
+	};
+}
+
+pstructArg2dstructArg(dd : DDesugar, s : PStructArg) -> DStructArg {
+	DStructArg(s.id, s.ismutable, ptype2dtype(dd, s.type), s.pos)
+}
+
+desugarPSwitch(dd : DDesugar, s : PSwitch) -> DExp {
+	wrap = \ -> {
+		name = makeTempDName(dd);
+		pos = s.value.pos;
+		DLet(
+			name, pexp2dexp(dd, s.value),
+			desugarDSwitchWithVar(dd, s, DVar(name, pos, -1), DTypeName("auto", [], pos)),
+			pos, -1
+		);
+	};
+	switch (s.value) {
+		PVar(n, pos): {
+			desugarDSwitchWithVar(dd, s, DVar(n, pos, -1), DTypeName("auto", [], pos));
+		}
+		PTyped(value, subtype, pos): {
+			stype = ptype2dtype(dd, subtype);
+			switch (value) {
+				PVar(n, pos2): {	
+					desugarDSwitchWithVar(dd, s, DVar(n, pos2, -1), stype);
+				}
+				default: {
+					// We know the type, so OK
+					name = makeTempDName(dd);
+					DLet(
+						name, pexp2dexp(dd, s.value),
+						desugarDSwitchWithVar(dd, s, DVar(name, pos, -1), stype),
+						pos, -1
+					);
+				}
+			}
+		}
+		default: {
+			wrap();
+		}
+	};
+}
+
+// OK, once we know we have a var for the switch, this is how we go
+desugarDSwitchWithVar(dd : DDesugar, s : PSwitch, switchvar : DVar, type : DType) -> DSwitch {
+	defaults = filter(s.cases, \c : PCase -> c.id == "default");
+	def : Maybe<DExp> = if (length(defaults) == 1) Some(pexp2dexp(dd, defaults[0].body))
+		else if (defaults == []) None()
+		else {
+			dd.onError(defaults[0].pos, "Only one default allowed in switch");
+			None();
+		};
+
+	// Collect the struct names we have explicitly named
+	structs : Set<string> = fold(s.cases, makeSet(), \acc, case : PCase -> {
+		mstruct = dd.resolveStructName(case.id);
+		mstruct ?? {
+			if (containsSet(acc, case.id)) {
+				dd.onError(case.pos, "Duplicate case " + case.id);
+			}
+			insertSet(acc, case.id)
+		} : acc;
+	});
+
+	// Expand union cases
+	unions = concatA(map(s.cases, \c : PCase -> {
+		if (containsSet(structs, c.id) || c.id == "default") {
+			// Already a struct, keep it as is
+			[c]
+		} else {
+			// A union - expand to the cases we do not already have
+			casestructs = expandDTypename2structs(dd, c.id);
+			newStructs = filter(casestructs, \ss : DStruct -> {
+				!containsSet(structs, ss.id)
+			});
+			if (newStructs == []) {
+				dd.onError(c.pos, "Union case " + c.id + " is superfluous");
+			}
+			map(newStructs, \str -> {
+				PCase(str.id, map(str.structArgs, \__ -> "__"), c.body, c.pos)
+			})
+		}
+	}));
+
+	// Add downcasts and desugar
+	cases : [DCase] = filtermap(unions, \c : PCase -> {
+		if (c.id == "default") None()
+		else {
+			body0 = pexp2dexp(dd, c.body);
+			mstruct = dd.resolveStructName(c.id);
+			body = switch (mstruct) {
+				None(): {
+					// It might be a union
+					if (c.args != []) {
+						dd.onError(c.pos, c.id + " does not accept arguments in case");
+					}
+					body0;
+				}
+				Some(struct): {
+					if (length(c.args) == length(struct.structArgs)) {
+						vars = extractDVars(makeSet(), body0);
+
+						body1 = foldi(c.args, body0, \i, acc, arg : string -> {
+							if (arg == "__" || !containsSet(vars, arg)) {
+								// If "arg" does not appears in body0, no need to bind
+								acc
+							} else {
+								structArg = struct.structArgs[i];
+								field = DField(switchvar, structArg.id, c.pos, -1);
+								// We can replace ? with auto, and then use the type always
+								value = DTyped(
+										field,
+										instantiateDType(structArg.type),
+										c.pos, -1
+									);
+								DLet(arg, value, acc, c.pos, -1)
+							}
+						});
+						// Check if switchvar occurs in the body.
+						// If not, no need for downcast
+						if (body1 != body0 || containsSet(vars, switchvar.id)) {
+							// Add a downcast
+							typars = map(struct.typars, \__ -> DTypeName("auto", [], c.pos));
+							stype = DTypeName(c.id, typars, c.pos);
+							desugarDowncast(dd, DDowncast(switchvar.id, "", stype, -1, switchvar.eclass,
+								body1, c.pos, -1));
+						} else body1;
+					} else {
+						dd.onError(c.pos, c.id + " expects " + i2s(length(struct.structArgs)) + " args, got " + i2s(length(c.args)));
+						body0;
+					}
+				}
+			}
+			Some(DCase(c.id, body, c.pos));
+		}
+	});
+
+	DSwitch(switchvar, type, cases, def, s.pos, -1)
+}
+
+desugarPWith(dd : DDesugar, w : PWith) -> DExp {
+	mstruct = dd.resolveStructName(w.struct);
+	mstruct ?? {
+		uni = makeTempDName(dd);
+		args = map(mstruct.structArgs, \sa : DStructArg -> {
+			mfield : Maybe<PFieldAssign> = find(w.fields, \f : PFieldAssign -> {
+				f.id == sa.id
+			});
+			var = DVar(uni, w.value.pos, -1);
+			switch (mfield) {
+				None(): DField(var, sa.id, w.pos, -1);
+				Some(field): pexp2dexp(dd, field.value);
+			}
+		});
+		DLet(uni, 
+			pexp2dexp(dd, w.value),
+			DConstruct(w.struct, args, w.pos, -1),
+			w.pos,
+			-1
+		);
+	} : {
+		dd.onError(w.pos, "Unknown struct for with: " + w.struct);
+		pexp2dexp(dd, w.value)
+	}
+}
+
+desugarPMaybe(dd : DDesugar, m : PMaybe) -> DExp {
+	// PMaybe(value, match, otherwise, pos)
+	// should expand to
+	//
+	//  tmp = value;
+	// 	switch (tmp) {
+	//		Some(unique): {
+	//			$replace(match, value, unique);
+	//		}
+	// 		None(): otherwise;
+	// 	}
+
+	un1 = makeTempDName(dd);
+	un2 = makeTempDName(dd);
+	replaced = replacePExp(m.match, m.value, PVar(un2, m.match.pos));
+	pswitch = 
+		PLet(un1, m.value,
+			PSwitch(PVar(un1, m.pos), [
+				PCase("Some", [un2], replaced, m.match.pos),
+				PCase("None", [], m.otherwise, m.otherwise.pos),
+			], m.pos),
+			m.pos
+		);
+	pexp2dexp(dd, pswitch);
+}
+
+
+getDTypePar(d : DType) -> DTypePar {
+	switch (d) {
+		DTypePar(__, __): d;
+		default: DTypePar("", -1);
+	}
+}
+
+desugarDowncast(dd : DDesugar, d : DDowncast) -> DDowncast {
+	newid = d.id + makeTempDName(dd);
+
+	renamed = renameDVar(d.id, DVar(newid, d.pos, -1), d.scope);
+	DDowncast(
+		d with
+		newid = newid, scope = renamed
+	);
+}
+
+renameDVar(old : string, new : DVar, d : DExp) -> DExp {
+	rec = \ee -> renameDVar(old, new, ee);
+	switch (d) {
+		DValue(): d;
+		DStringInclude(path, pos): d;
+		DVar(id, pos, eclass): if (id == old) DVar(new with pos = pos) else d;
+		DLet(id, value, body, pos, eclass): {
+			if (id == old) {
+				// Shadowing.
+				DLet(id, rec(value), body, pos, eclass)
+			} else {
+				DLet(id, rec(value), rec(body), pos, eclass)
+			}
+		}
+		DLambda(args, body, pos, eclass): {
+			if (exists(args, \a -> a.id == old)) {
+				// Shadowing
+				d;
+			} else {
+				DLambda(args, rec(body), pos, eclass)
+			}
+		}
+		DIf(cond, then, else_, pos, eclass): DIf(rec(cond), rec(then), rec(else_), pos, eclass);
+		DCall(fn, args, pos, eclass): DCall(rec(fn), map(args, rec), pos, eclass);
+		DConstruct(structid, args, pos, eclass): DConstruct(structid, map(args, rec), pos, eclass);
+		DRef(value, pos, eclass): DRef(rec(value), pos, eclass);
+		DField(value, field, pos, eclass): DField(rec(value), field, pos, eclass);
+		DSetMutable(lhs, field, value, pos, eclass): DSetMutable(rec(lhs), field, rec(value), pos, eclass);
+		DArray(exps, pos, eclass): DArray(map(exps, rec), pos, eclass);
+		DSequence(exps, pos, eclass): DSequence(map(exps, rec), pos, eclass);
+		DSwitch(value, type, cases, defaultCase, pos, eclass): {
+			rcases = map(cases, \c : DCase -> {
+				DCase(c with body = rec(c.body))
+			});
+			dcase = defaultCase ?? Some(rec(defaultCase)) : None();
+			if (value.id == old) {
+				DSwitch(new, type, rcases, dcase, pos, eclass);
+			} else {
+				DSwitch(value, type, rcases, dcase, pos, eclass);
+			}
+		}
+		DCast(value, target, pos): DCast(rec(value), target, pos);
+		DDowncast(oldid, newid, subtype, subeclass, supereclass, scope, pos, eclass): {
+			if (oldid == old) {
+				DDowncast(new.id, newid, subtype, subeclass, supereclass, rec(scope), pos, eclass);
+			} else {
+				DDowncast(oldid, newid, subtype, subeclass, supereclass, rec(scope), pos, eclass);
+			}
+		}
+		DTyped(value, subtype, pos, eclass): DTyped(rec(value), subtype, pos, eclass);
+	}
+}

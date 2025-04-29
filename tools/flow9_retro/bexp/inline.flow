@@ -1,0 +1,113 @@
+import tools/flow9_retro/bexp/bmodule;
+import ds/tree;
+
+export {
+	inlineBLets(b : BModule) -> BModule;
+}
+
+inlineBLets(b : BModule) -> BModule {
+	BModule(
+		b
+		with 
+		globals = mapTree(b.globals, \g : BGlobal -> {
+			BGlobal(g with value = inlineBLet(makeTree(), g.value))			
+		})
+	)
+}
+
+inlineBLet(inlined : Tree<string, BExp>, e : BExp) -> BExp {
+	rec = \ee -> inlineBLet(inlined, ee);
+	switch (e) {
+		BValue(): e;
+		BVar(id, type): lookupTreeDef(inlined, id, e);
+		BLet(id, value, body, type): {
+			if (id == "t_tmp_31") println(value);
+			inline = \ -> inlineBLet(setTree(inlined, id, value), body);
+			switch (value) {
+				BValue(): inline();
+				BVar(vid, __): inline();
+				BCast(be, ft, tt): {
+					switch (be) {
+						BVar(cid, __): {
+							inlineBLet(setTree(inlined, id, be), body);
+						}
+						default: {
+							BLet(
+								id,
+								rec(value),
+								rec(body),
+								type
+							);							
+						}
+					}
+				}
+				default: {
+					if (countBVar(id, body) <= 1) inline()
+					else BLet(id, rec(value), rec(body), type);
+				}
+			}
+		}
+		BIf(cond, then, else_, type): BIf(rec(cond), rec(then), rec(else_), type);
+		BCall(fn, args, type): BCall(rec(fn), map(args, rec), type);
+		BLambda(args, body, type, capturedVars): {
+			// Remove any shadowing args
+			ninlined = fold(args, inlined, \acc, arg -> {
+				removeFromTree(acc, arg)
+			});
+			BLambda(args, inlineBLet(ninlined, body), type, capturedVars);
+		}
+		BSequence(exps, type): BSequence(map(exps, rec), type);
+		BConstruct(struct, args, type): BConstruct(struct, map(args, rec), type);
+		BField(value, field, type): BField(rec(value), field, type);
+		BSetMutable(left, field, value, type): BSetMutable(rec(left), field, rec(value), type);
+		BSwitch(value, switchType, cases, defaultCase, type): {
+			ivalue = lookupTreeDef(inlined, value.id, value);
+			nvalue = switch (ivalue) {
+				BVar(__, __): ivalue;
+				default: {
+					println("TODO: Find out how to inline switch var to something else");
+					value;
+				}
+			}
+			BSwitch(
+				nvalue, 
+				switchType,
+				map(cases, \c : BCase -> {
+					BCase(c.id, rec(c.body))
+				}),
+				defaultCase ?? Some(rec(defaultCase)) : None(),
+				type
+			)
+		}
+		BArray(args, type): BArray(map(args, rec), type);
+		BCast(value, from, to): BCast(rec(value), from, to);
+		BDupValue(value): BDupValue(rec(value));
+		BDropValue(value): BDropValue(rec(value));
+		BReuseValue(value): BReuseValue(rec(value));
+	}
+}
+
+countBVar(id : string, c : BExp) -> int {
+	rec = \e -> countBVar(id, e);
+	switch (c) {
+		BValue(): 0;
+		BVar(vid, __): if(vid == id) 1 else 0;
+		BLet(lid, value, body, type): if (lid == id) rec(value) else rec(value) + rec(body);
+		BIf(cond, then, else_, type): rec(cond) + rec(then) + rec(else_);
+		BCall(fn, args, type): fold(args, rec(fn), \acc, a -> acc + rec(a));
+		BLambda(args, body, type, capturedVars): if (contains(args, id)) 0 else rec(body);
+		BSequence(exps, type): fold(exps, 0, \acc, e -> acc + rec(e));
+		BConstruct(struct, args, type): fold(args, 0, \acc, a -> acc + rec(a));
+		BField(value, field, type): rec(value);
+		BSetMutable(left, field, value, type): rec(left) + rec(value);
+		BSwitch(value, switchType, cases, defaultCase, type): {
+			fold(cases, rec(value), \acc, cs -> acc + rec(cs.body))
+			+ defaultCase ?? rec(defaultCase) : 0;
+		}
+		BArray(args, type): fold(args, 0, \acc, a -> acc + rec(a));
+		BCast(value, from, to): rec(value);
+		BDupValue(value): rec(value);
+		BDropValue(value): rec(value);
+		BReuseValue(value): rec(value);
+	}
+}

@@ -1,0 +1,197 @@
+import tools/flow9/desugar/dexp;
+import tools/flow9/backend/fiexp;
+import tools/flow9/desugar/pretty;
+import tools/flowc/incremental/fimodule;
+import tools/flow9/type/topo_order;
+
+export {
+	dmodule2fimodule(structsAndUnions : StructsAndUnions, dmodule : DModule) -> FiModule;
+}
+
+// Function to convert a DModule to an FiModule
+dmodule2fimodule(structsAndUnions : StructsAndUnions, dmodule : DModule) -> FiModule {
+	// Create file info
+	fileInfo = FiFileInfo(
+		dmodule.flowpath,
+		dmodule.timestamp,
+		dmodule.fullpath,
+		dmodule.contentHash,
+		0.0,
+		dmodule.timestamp
+	);
+
+	// Convert imports
+	imports = map(dmodule.imports, \imp ->
+		FiImport(imp.path, false, imp.info)
+	);
+
+	// Convert forbids
+	forbids = map(dmodule.forbids, \f ->
+		FiForbid(f.path, f.info)
+	);
+
+	// Convert structs
+	structs = mapTree(dmodule.structs, \s -> {
+		args = map(s.args, \a ->
+			FiStructArg(a.field, dtype2fitype(a.type), a.ismutable)
+		);
+
+		FiTypeStruct(s.uid,
+			map(s.typars, \tp -> FiTypeParameter(tp)),
+			args,
+			s.info
+		)
+	});
+
+	// Convert unions
+	unions = mapTree(dmodule.unions, \u -> {
+		typenames = map(u.types, \t -> {
+			switch (t) {
+				DTypename(uid, typars, __): {
+					FiTypeName(uid, map(typars, dtype2fitype))
+				}
+				default: {
+					println("Expected typename in union");
+					FiTypeName("void", [])
+				}
+			}
+		});
+
+		FiTypeUnion(u.uid,
+			map(u.typars, \tp -> FiTypeParameter(tp)),
+			typenames,
+			u.info
+		)
+	});
+
+	// Convert functions and global variables
+	funGlob = foldTree(dmodule.toplevels, Pair([], []), \name, global, acc -> {
+		funcs = acc.first;
+		globs = acc.second;
+
+		typeSchema = getTypeFromInfo(global.info, dmodule);
+		fiType = htypeschema2fitype(typeSchema);
+
+		mlambda = getLambda(global.value);
+		switch (mlambda) {
+			Some(lambda): {
+				// It's a function
+				fiArgs = map(lambda.args, \a -> {
+					argTypeSchema = getTypeFromInfo(a.info, dmodule);
+					argType = htypeschema2fitype(argTypeSchema);
+					FiFunArg(a.name, argType)
+				});
+				filambda = FiLambda(fiArgs, dexp2fiexp(structsAndUnions, lambda.body, dmodule),
+					switch (fiType) {
+						FiTypeFunction(__, __): fiType;
+						default: FiTypeFunction(fiArgs, FiTypeVoid())
+					},
+					lambda.info
+				)
+
+				// Create function declaration
+				func = FiFunctionDec(
+					global.name,
+					filambda,
+					switch (fiType) {
+						FiTypeFunction(args, rt): {
+							FiTypeFunction(
+								// Grab the names from the declaration
+								mapi(lambda.args, \i, arg -> {
+									FiFunArg(arg.name, args[i].type)
+								}), rt
+							)
+						}
+						default: {
+							println("ERROR: Expected function type for " + global.name + ", got " + prettyDExp(newPrEnv(), global.value));
+							FiTypeFunction([], fiType)
+						}
+					},
+					global.info,
+					global.info
+				);
+				Pair(concat(funcs, [func]), globs)
+
+			}
+			None(): {
+				// println("Global " + global.name + " is " + prettyDExp(newPrEnv(), global.value));
+				// It's a global variable
+				glob = FiGlobalVar(
+					global.name,
+					dexp2fiexp(structsAndUnions, global.value, dmodule),
+					fiType,
+					global.info,
+					global.info
+				);
+
+				Pair(funcs, concat(globs, [glob]))
+			}
+		}
+	});
+	
+	functions = funGlob.first;
+	globals = funGlob.second;
+
+	// Convert natives
+	natives = mapTree(dmodule.natives, \n -> {
+		mfallback : Maybe<FiFunctionDec> = find(functions, \f : FiFunctionDec -> f.name == n.name);
+		FiNativeDec(
+			n.name,
+			n.isIo,
+			dtype2fitype(n.type),
+			n.nativeName,
+			// Default to void for no fallback
+			mfallback ?? mfallback.lambda : FiVoid(0),
+			n.info,
+			n.info
+		)
+	});
+
+	// Convert string includes
+	stringIncludes = map(dmodule.stringincludes, \si -> {
+		FiFileInfo(fileInfo with flowfile = si, fullpath = si)
+	});
+
+	order = getTopLevelInferenceOrder(dmodule);
+
+	// Create the FiModule
+	FiModule(
+		fileInfo,
+		imports,
+		forbids,
+		dmodule.exported,
+		getTreeValues(structs),
+		getTreeValues(unions),
+		functions,
+		globals,
+		getTreeValues(natives),
+		order,
+		stringIncludes,
+		0, 0,  // start, end positions
+		makeSet(),  // allImports
+		false  // incremental
+	)
+}
+
+// Helper to determine if a DExp is a lambda
+getLambda(d : DExp) -> Maybe<DLambda> {
+	switch (d) {
+		DLambda(args, body, info): Some(DLambda(args, body, info));
+		DBuiltin(op, args, __): {
+			switch (op) {
+				DIsSubType(__): {
+					// If we have arguments, check the first one
+					if (length(args) > 0) {
+						// Recursively check if the underlying expression is a lambda
+						getLambda(args[0]);
+					} else {
+						None();
+					}
+				}
+				default: None();
+			}
+		}
+		default: None();
+	}
+}
+

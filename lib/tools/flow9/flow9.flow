@@ -1,0 +1,93 @@
+import tools/mango/mcode_lib;
+import string;
+import net/url_parameter;
+import tools/flow9/parser/flow_compiled_parser;
+import tools/flow9/usage;
+import tools/flow9/parser/flow_types;
+import tools/flow9/desugar/desugar;
+import tools/flow9/desugar/pretty;
+import tools/flow9/desugar/dump;
+import tools/flow9/backend/compile;
+import tools/flow9/driver;
+import tools/flow9/config;
+import fs/filesystem;
+import math/stringmath;
+
+main() {
+	files = filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
+	printHelp = isUrlParameterTrue("help") /*|| files == []*/;
+
+	def = if (files == []) [
+		//getFlowDirectory() + "/tools/flowc/type_helpers.flow",
+		//getFlowDirectory() + "/tools/flowc/flowc.flow",
+		// getFlowDirectory() + "/lib/material/internal/material_icons_list.flow",  
+		//"/home/alstrup/area9/innovation/lib/consonance/concert/eval/concert_lib.flow",
+		"tests/singleunion.flow",
+		//"desugar/pretty.flow",
+		//"tests/transform_programs_fiResolveNatives.flow", 
+		// "type/resolve_types.flow", 
+		//getFlowDirectory() + "/sandbox/hello.flow",
+		//getFlowDirectory() + "/demos/demos.flow",
+		// formats/html/html.flow
+		//"flow9.flow", 
+//		"desugar/dexp.flow",
+		//"desugar/dependencies.flow",
+		//"desugar/dump.flow", 
+	] else files;
+	expanded = fold(def, [], \acc, file -> {
+		path = resolveRelativePath(file);
+		if (isDirectory(path)) {
+			rfiles = readDirectoryRecursively(path);
+			concat(acc, filter(rfiles, \f -> (endsWith(f, ".flow")) && !strContains(f, "/out/")));
+		} else if (fileExists(path)) {
+			arrayPush(acc, path);
+		} else {
+			println("Unknown file " + path + ". Need resolving");
+			arrayPush(acc, path);
+		}
+	});
+
+	starttime = timestamp();
+	println("Flow9 compiling " + strGlue(def, ", "));
+	config = getFlow9Config();
+	includes = CompilerConfig(config with 
+		includes = concat(config.includes, map(expanded, \p -> dirName(p)))
+	);
+	if (printHelp) {
+		printFlow9Usage(includes);
+	}
+	state = makeCompileState(includes, println);
+	endtime = \ -> {
+		d2st((timestamp() - starttime) / 1000.0, 2) + "s" 
+	};
+	compileQueue(state, expanded, \ -> {
+		if (expanded != []) {
+			if (isConfigParameterTrue(state.config.config, "dump")) {
+				iter(def, \file -> {
+					status = parseFlow9(state, file);
+					switch (status) {
+						CompileParsed(m): {
+		//					println(prettyDModule(makePrEnv(m, false), m));
+		//					println(getTreeValues(m.toplevels));
+						}
+						CompileTyped(m): {
+							// println(prettyDModule(makePrEnv(m, true), m));
+							dumpDModule(m);
+		//					println(prettyHTypeEnv(m.typeEnv));
+						}
+						default: println(status);
+					}
+				});
+			}
+
+			compileDProgram(state, expanded[0], \ -> {
+				println(summarizeCompileStatus(state) + " in " + endtime());
+				if (isConfigParameterTrue(state.config.config, "timephases")) {
+					getTimePhases(config.threadId).total := timestamp() - starttime;
+					displayTimePhase(state.config);
+				}
+				quit(0);
+			});
+		} else quit(0);
+	});
+}

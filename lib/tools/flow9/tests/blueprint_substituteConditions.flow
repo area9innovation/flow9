@@ -1,0 +1,180 @@
+// Unions
+List<?> ::= EmptyList, Cons<?>;
+Maybe<?> ::= None, Some<?>;
+Tree<?, ??> ::= TreeNode<?, ??>, TreeEmpty;
+BluePrint ::= BluePrintCondition, BluePrintElse, BluePrintLines;
+
+// Structs
+BluePrintCondition(condition : string, originalLine : string, i : int);
+BluePrintElse(originalLine : string, i : int);
+BluePrintLines(lines : List<string>);
+Cons(head : ?, tail : List<?>);
+EmptyList();
+None();
+Pair(first : ?, second : ??);
+Quadruple(first : ?, second : ??, third : ???, fourth : ????);
+Some(value : ?);
+TreeEmpty();
+TreeNode(key : ?, value : ??, left : Tree<?, ??>, right : Tree<?, ??>, depth : int);
+Triple(first : ?, second : ??, third : ???);
+
+concatList(a0:List<?>, a1:List<?>) -> List<?> {EmptyList()};
+countLineIndentation(a0:string) -> int {0};
+eitherFn(a0:Maybe<?>, a1:(?) -> ??, a2:() -> ??) -> ?? {a2()};
+fold(a0:[?], a1:??, a2:(??, ?) -> ??) -> ?? {a1};
+foldList(a0:List<?>, a1:??, a2:(??, ?) -> ??) -> ?? {a1};
+foldi2(a0:[?], a1:??, a2:???, a3:(int, ??, ???, ?) -> Pair<??, ???>) -> Pair<??, ???> {Pair(a1, a2)};
+foldpList(a0:List<?>, a1:??, a2:(List<?>, ??, ?) -> ??) -> ?? {a1};
+i2s(a0:int) -> string {""};
+indentLine(a0:string, a1:int) -> string {""};
+list2array(a0:List<?>) -> [?] {[]};
+lookupTree(a0:Tree<?, ??>, a1:?) -> Maybe<??> {None()};
+ltrim2(a0:string, a1:string) -> string {""};
+makeList() -> List<?> {EmptyList()};
+makeList1(a0:?) -> List<?> {EmptyList()};
+mapList(a0:List<?>, a1:(?) -> ??) -> List<??> {EmptyList()};
+maybeMap(a0:Maybe<?>, a1:(?) -> ??) -> Maybe<??> {None()};
+println(a0:?) -> void {{}};
+s2b(a0:string) -> bool {false};
+startsWith(a0:string, a1:string) -> bool {false};
+strContains(a0:string, a1:string) -> bool {false};
+tailList(a0:List<?>) -> List<?> {EmptyList()};
+takeBetween(a0:string, a1:string, a2:string, a3:string) -> string {""};
+trim(a0:string) -> string {""};
+unindentLine(a0:string, a1:int) -> string {""};
+unpair(a0:Pair<?, ??>, a1:(?, ??) -> ???) -> ??? {a1(a0.first, a0.second)};
+unquadruple(a0:Quadruple<?, ??, ???, ????>, a1:(?, ??, ???, ????) -> ?????) -> ????? {a1(a0.first, a0.second, a0.third, a0.fourth)};
+untriple(a0:Triple<?, ??, ???>, a1:(?, ??, ???) -> ????) -> ???? {a1(a0.first, a0.second, a0.third)};
+
+substituteConditions(linesA : [string], key2value : Tree<string, string>, require : bool) -> [string] {
+	unpair(
+		foldi2(linesA, makeList(), makeList(), \i, accResultStack, accCurrentLines, line -> {
+			condition = trim(takeBetween(line, "% if ", " %", ""));
+			if (condition != "") {
+				Pair(Cons(BluePrintCondition(condition, line, i), Cons(BluePrintLines(accCurrentLines), accResultStack)), makeList());
+			} else if (strContains(line, "% else %")) {
+				Pair(Cons(BluePrintElse(line, i), Cons(BluePrintLines(accCurrentLines), accResultStack)), makeList());
+			} else if (strContains(line, "% endif %")) {
+				unquadruple(
+					foldpList(
+						Cons(BluePrintLines(accCurrentLines), accResultStack),
+						Quadruple(false, false, makeList(), Triple(makeList(), "", makeList())),
+						\stack, acc, stackItem -> {
+							unquadruple(acc, \foundCondition, foundElse, result, elseBranches -> {
+								if (foundCondition) {
+									acc;
+								} else {
+									switch (stackItem) {
+										BluePrintCondition(conditionStr, ifLine, ifIdx): {
+											negateCondition = startsWith(conditionStr, "!");
+											conditionStr2 = ltrim2(conditionStr, "!");
+											valueM = lookupTree(key2value, conditionStr2);
+											boolValue2M = maybeMap(valueM, \value -> {
+												// convert string value to boolean
+												boolValue = s2b(value);
+												if (negateCondition) !boolValue else boolValue;
+											});
+											untriple(elseBranches, \trueLines, elseLine, falseLines -> {
+												lines = eitherFn(boolValue2M,
+													\boolValue -> {
+														body = if (boolValue) {
+															trueLines;
+														} else {
+															falseLines;
+														}
+														firstLine = foldList(body, ifLine, \accLine, l -> if (l != "") l else accLine);
+														indentDiff = countLineIndentation(ifLine) - countLineIndentation(firstLine);
+														if (indentDiff == 0) {
+															body;
+														} else if (indentDiff < 0) {
+															mapList(body, \l -> unindentLine(l, -indentDiff));
+														} else {
+															mapList(body, \l -> indentLine(l, indentDiff));
+														}
+													},
+													\ -> {
+														if (require) {
+															println("Blueprint error: condition `" + conditionStr + "` can't be resolved, line: " + i2s(ifIdx + 1));
+														}
+														trueLines2 = if (elseLine == "") {
+															trueLines;
+														} else {
+															Cons(elseLine, trueLines);
+														}
+														concatList(
+															concatList(
+																Cons(line, falseLines),
+																trueLines2
+															),
+															makeList1(ifLine)
+														);
+													}
+												);
+												Quadruple(true, true, Cons(BluePrintLines(lines), tailList(stack)), elseBranches);
+											});
+										}
+										BluePrintElse(originalElseLine, lineIdx): {
+											untriple(elseBranches, \trueLines, elseLine, falseLines -> {
+												if (elseLine == "") {
+													Quadruple(false, true, result, Triple(makeList(), originalElseLine, trueLines));
+												} else {
+													println("Blueprint error: double ELSE statement, lines: " + i2s(lineIdx + 1) + ", " + i2s(i + 1));
+													brokenLines = concatList(
+														concatList(
+															Cons(line, falseLines),
+															Cons(elseLine, trueLines)
+														),
+														makeList1(originalElseLine)
+													);
+													Quadruple(true, true, Cons(BluePrintLines(brokenLines), tailList(stack)), elseBranches);
+												}
+											});
+										}
+										BluePrintLines(lines): {
+											elseBranches2 = untriple(elseBranches, \trueLines, elseLine, falseLines -> {
+												Triple(concatList(trueLines, lines), elseLine, falseLines);
+											});
+											Quadruple(false, foundElse, result, elseBranches2);
+										}
+									}
+								}
+							});
+						}
+					),
+					\ifClosed, __, result, __ -> {
+						if (!ifClosed) {
+							println("Blueprint error: ENDIF statement without IF, line: " + i2s(i + 1));
+						}
+						Pair(result, makeList());
+					}
+				);
+			} else {
+				Pair(accResultStack, Cons(line, accCurrentLines));
+			}
+		}),
+		\resultStack, restLines -> {
+			list2array(fold(
+				list2array(Cons(BluePrintLines(restLines), resultStack)),
+				makeList(),
+				\acc, stackItem -> {
+					switch (stackItem) {
+						BluePrintCondition(__, line, i): {
+							println("Blueprint error: IF statement is not closed, line: " + i2s(i + 1));
+							Cons(line, acc);
+						}
+						BluePrintElse(line, i): {
+							println("Blueprint error: ELSE statement is not closed, line: " + i2s(i + 1));
+							Cons(line, acc);
+						}
+						BluePrintLines(lines): {
+							concatList(lines, acc);
+						}
+					}
+				}
+			));
+		}
+	);
+}
+
+BlueReplacement : (start : int, end : int, value : string);
+

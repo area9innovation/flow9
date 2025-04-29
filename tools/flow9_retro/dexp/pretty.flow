@@ -1,0 +1,202 @@
+import tools/flow9_retro/dexp/dexp;
+import tools/flow9_retro/types/typeof;
+import tools/flow9_retro/types/pretty;
+import tools/flow9_retro/types/cgraph/pretty;
+import string;
+import text/blueprint;
+
+export {
+	prettyDModule(env : TTypeEnv, verbose : bool, d : DModule) -> void;
+	prettyDExp(env : TTypeEnv, input : string, i : string, d : DExp) -> void;
+	summarizeDExp(d : DExp) -> string;
+	prettyDStruct(input : string, s : DStruct) -> string;
+	prettyDUnion(input : string, u : DUnion) -> string;
+}
+
+prettyDModule(env : TTypeEnv, verbose : bool, d : DModule) -> void {
+	input = getFileContent(d.fullpath);
+	if (verbose) {
+		println(d.flowpath + " (" + d.fullpath + "):");
+
+		iter(d.imports, \i : DImport -> {
+			println("  import " + i.path);
+		});
+		iter(d.forbids, \f : DForbid -> {
+			println("  forbid " + f.path);
+		});
+	}
+
+	// TODO:
+	//	exported : DExport, 
+	traverseInOrder(d.structs, \sid, s : DStruct -> {
+		if (verbose || isTracingId(env.tracing, StageTypeInference(), 0, s.id)) {
+			println("  struct " + prettyDStruct(input, s));
+		}
+	});
+	//	unions : Tree<string, DUnion>,
+	//	typedefs : Tree<string, DTypeDef>,
+	//	natives : Tree<string, DNative>,
+	iter(d.order, \id -> {
+		if (verbose || isTracingId(env.tracing, StageTypeInference(), 0, id)) {
+			mglobal = lookupTree(d.globals, id);
+			mglobal ?? {
+				println(" " + id + "<" + strGlue(mglobal.typars, ", ") + ">" + "=");
+				prettyDExp(env, input, "  ", mglobal.value);
+			} : {}
+		}
+	});
+}
+
+
+prettyDExp(env : TTypeEnv, input : string, i : string, d : DExp) -> void {
+	rec = \e -> prettyDExp(env, input, i + " ", e);
+	type = \t -> println(i + " " + prettyDType(input, t));
+	pr2 = \s : string, pos : int -> {
+		line = if (pos == -1) "MISSING POS " + d.structname else substring(input, pos, 20);
+		pre = i + s;
+		dtype = dexpType(env, d);
+
+		etype = switch (dtype) {
+			TTypeEClass(eclass): {
+				prettyCEClass(env.tmap.cmap, eclass);
+			}
+			default: "";
+		};
+
+		println(rpad(pre, " ", 45) + /*" " + i2s(pos) +*/ " " + rpad(etype, " ", 40)  + " " + takeBefore(line, "\n", line) + rpad("     (desugar type " + prettyTType(dtype) + ")", " ", 15));
+	}
+	pr = \s : string -> {
+		pr2(s, d.pos);
+	}
+	switch (d : DExp) {
+		DVoid(pos): pr("void");
+		DBool(v, pos): pr("bool");
+		DInt(v, pos): pr("int");
+		DDouble(v, pos): pr("double");
+		DString(v, pos): pr("string");
+		DStringInclude(path, pos): {
+			pr("String include " + path);
+		}
+		DLambda(args, body, pos, eclass): {
+			pr("lambda " + superglue(args, \a : DArgType -> (if (a.id != "") a.id + ":" else "MISSING LAMBDA ARG NAME") + prettyDType(input, a.type), ","));
+			rec(body);
+		}
+		DVar(var, pos, eclass): {
+			pr("'" + var + "'");
+		}
+		DLet(var, value, body, pos, eclass): {
+			pr("let " + var);
+			rec(value);
+			rec(body);
+		}
+		DIf(cond, then, else_, pos, eclass): {
+			pr("if");
+			rec(cond);
+			rec(then);
+			rec(else_);
+		}
+		DCall(fn, args, pos, eclass): {
+			pr("call");
+			rec(fn);
+			iter(args, rec);
+		}
+		DRef(value, pos, eclass): {
+			pr("ref");
+			rec(value);
+		}
+		DField(value, field, pos, eclass): {
+			pr("field ." + field);
+			rec(value);
+		}
+		DSetMutable(lhs, field, value, pos, eclass): {
+			pr("set mutable field" + field);
+			rec(lhs);
+			rec(value);
+		}
+		DArray(exps, pos, eclass): {
+			pr("array");
+			iter(exps, rec);
+		}
+		DSequence(exps, pos, eclass): {
+			pr("sequence");
+			iter(exps, rec);
+		}
+		DSwitch(value, typ, cases, mdef, pos, eclass): {
+			pr("switch");
+			rec(value);
+			type(typ);
+			iter(cases, \case : DCase -> {
+				pr2("  case " + case.id, case.pos);
+				prettyDExp(env, input, i + "    ", case.body);
+			});
+			mdef ?? {
+				pr2("  default:", mdef.pos);
+				rec(mdef)
+			} : {}
+		}
+		DCast(value, target, pos): {
+			pr("cast");
+			rec(value);
+			type(target);
+		}
+		DTyped(value, typ, pos, eclass): {
+			pr("typed : " + prettyDType(input, typ));
+			rec(value);
+		}
+		DConstruct(structid, args, pos, eclass): {
+			pr("construct " + structid);
+			iter(args, rec);
+		}
+		DDowncast(oldid, newid, subtype, subeclass, supereclass, scope, pos, eclass): {
+			pr("downcast " + oldid + ": " + prettyCEClass(env.tmap.cmap, supereclass) + " to " + newid + " : " + prettyDType(input, subtype));
+			rec(scope);
+		}
+	}
+}
+
+prettyDType(input : string, d : DType) -> string {
+	switch (d) {
+		DTypePar(id, pos): id;
+		DTypeName(id, typars, pos): id + (if (typars == []) "" else "<" + superglue(typars, \tt -> prettyDType(input, tt), ", ") + ">");
+		DTypeFunction(args, returnType, pos): "(" + superglue(args, \tt -> prettyDType(input, tt), ", ") + ") -> " + prettyDType(input, returnType);
+	}
+}
+
+prettyDStruct(input : string, s : DStruct) -> string {
+	s.id + (if (length(s.typars) == 0) "" else "<" + strGlue(s.typars, ", ") + ">")
+	+ "(" + superglue(s.structArgs, \sa : DStructArg -> {
+		(if (sa.ismutable) "mutable " else "") 
+		+ sa.id + " : " + prettyDType(input, sa.type)
+	}, ", ") + ")";
+}
+
+prettyDUnion(input : string, u : DUnion) -> string {
+	u.id + (if (length(u.typars) == 0) "" else "<" + superglue(u.typars, \tp -> tp.id, ", ") + ">")
+	+ " ::= " + superglue(u.types, \tp : DTypeName -> prettyDType(input, tp), ", ") + ")";
+}
+
+summarizeDExp(d : DExp) -> string {
+	switch (d) {
+		DVoid(pos): "{}";
+		DBool(v, pos): b2s(v);
+		DInt(v, pos): i2s(v);
+		DDouble(v, pos): d2s(v);
+		DString(v, pos): "string";
+		DStringInclude(path, pos): "string include";
+		DVar(id, pos, eclass): "var " + id;
+		DLet(id, value, body, pos, eclass): "let " + id;
+		DIf(cond, then, else_, pos, eclass): "if";
+		DCall(fn, args, pos, eclass): "call " + summarizeDExp(fn);
+		DConstruct(structid, args, pos, eclass): "construct " + structid;
+		DLambda(args, body, pos, eclass): "lambda";
+		DRef(value, pos, eclass): "ref";
+		DField(value, field, pos, eclass): "field " + field;
+		DSetMutable(lhs, field, value, pos, eclass): "set mutable " + field;
+		DArray(exps, pos, eclass): "array";
+		DSequence(exps, pos, eclass): "seq";
+		DSwitch(value, type, cases, defaultCase, pos, eclass): "switch";
+		DCast(value, target, pos): "cast";
+		DDowncast(oldid, newid, subtype, subeclass, supereclass, scope, pos, eclass): "downcast " + oldid + " to " + newid;
+		DTyped(value, subtype, pos, eclass): "typed";
+	}
+}

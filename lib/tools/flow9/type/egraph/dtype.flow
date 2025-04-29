@@ -1,0 +1,138 @@
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/desugar/dexp;
+
+export {
+	dtype2typenode(env : EGraph, dtype : DType) -> int;
+	typenode2dtype(env : EGraph, nodeId : int) -> DType;
+}
+
+// Convert DType to TypeNode ID in EGraph
+dtype2typenode(env : EGraph, dtype : DType) -> int {
+	ctx = \info -> makeSet1(EContext(info, "type annotation"));
+	switch (dtype) {
+		DArrayType(type, info): {
+			elemId = dtype2typenode(env, type);
+			insertNode(env, Constructor("array", [elemId]), ctx(info));
+		}
+		DAutoType(info): {
+			makeTypeVariable(env, ctx(info));
+		}
+		DBoolType(info): {
+			insertNode(env, Constructor("bool", []), ctx(info));
+		}
+		DDoubleType(info): {
+			insertNode(env, Constructor("double", []), ctx(info));
+		}
+		DFlowType(info): {
+			insertNode(env, Constructor("flow", []), ctx(info));
+		}
+		DFnType(args, returnType, info): {
+			argIds = map(args, \a -> dtype2typenode(env, a));
+			retId = dtype2typenode(env, returnType);
+			insertNode(env, Function(argIds, retId), ctx(info));
+		}
+		DIntType(info): {
+			insertNode(env, Constructor("int", []), ctx(info));
+		}
+		DNativeType(info): {
+			insertNode(env, Constructor("native", []), ctx(info));
+		}
+		DPolyType(id, info): {
+			meclass = lookupTree(env.typars.typars, id);
+			meclass ?? {
+				meclass
+			} : {
+				env.onError(makeSet1(EContext(info, "typar " + id)), "Unknown typar " + id);
+				makeTypeVariable(env, ctx(info));
+			}
+		}
+		DRefType(type, info): {
+			innerId = dtype2typenode(env, type);
+			insertNode(env, Constructor("ref", [innerId]), ctx(info));
+		}
+		DStringType(info): {
+			insertNode(env, Constructor("string", []), ctx(info));
+		}
+		DTypename(uid, typars, info): {
+			// OK, instantiate implicit type parameters
+			mstruct = lookupTree(env.interface.structs, uid);
+			expectedTypars = switch (mstruct) {
+				None(): {
+					munion = lookupTree(env.interface.unions, uid);
+					switch (munion) {
+						None(): {
+							env.onError(makeSet1(EContext(info, uid)), "Unknown type " + uid);
+							[];
+						}
+						Some(ud): ud.typars;
+					}
+				}
+				Some(s): s.typars;
+			}
+			realTypars = if (typars == []) {
+				map(expectedTypars, \__ -> makeTypeVariable(env, ctx(info)));
+			} else {
+				if (length(typars) != length(expectedTypars)) {
+					if (uid != "SubTablePebble") {
+						env.onError(makeSet1(EContext(info, uid)), "Wrong number of type parameters for " + uid + ". Expected " + i2s(length(expectedTypars)) + " but got " + i2s(length(typars)));
+					} else {
+						println("Ignoring type parameter error in SubTablePebble");
+					}
+				}
+				// Check that the type parameters are valid
+				map(typars, \t -> dtype2typenode(env, t));
+			}
+
+			insertNode(env, Constructor(uid, realTypars), ctx(info));
+		}
+		DVoidType(info): {
+			insertNode(env, Constructor("void", []), ctx(info));
+		}
+	}
+}
+
+// Convert TypeNode back to DType
+typenode2dtype(env : EGraph, nodeId : int) -> DType {
+	node = getNodeDef(env, nodeId);
+	infos = getNodeInfos(env, nodeId);
+	info = if (isEmptySet(infos)) -1 else set2array(infos)[0].info;
+	switch (node) {
+		Constructor(name, params): {
+			if (name == "array") {
+				DArrayType(typenode2dtype(env, params[0]), info);
+			} else if (name == "bool") {
+				DBoolType(info);
+			} else if (name == "double") {
+				DDoubleType(info);
+			} else if (name == "flow") {
+				DFlowType(info);
+			} else if (name == "int") {
+				DIntType(info);
+			} else if (name == "native") {
+				DNativeType(info);
+			} else if (name == "string") {
+				DStringType(info);
+			} else if (name == "void") {
+				DVoidType(info);
+			} else if (name == "ref") {
+				DRefType(typenode2dtype(env, params[0]), info);
+			} else {
+				// Must be a typename
+				DTypename(name,
+					map(params, \p -> typenode2dtype(env, p)),
+					info
+				);
+			}
+		}
+		Function(args, ret): {
+			DFnType(
+				map(args, \a -> typenode2dtype(env, a)),
+				typenode2dtype(env, ret),
+				info
+			);
+		}
+		Variable(id): {
+			DPolyType("a" + i2s(id), info);	
+		}
+	}
+}

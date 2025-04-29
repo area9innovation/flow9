@@ -1,0 +1,259 @@
+// /home/alstrup/area9/flow9/lib/tools/orbit/ograph_tests/glex_gather.orb
+// Converts a polynomial expression into a glex-compliant canonical form.
+// Uses gather, sort, scatter, and rewrite rules.
+
+import lib/rewrite;
+import lib/sort; // Using the provided mergeSort
+
+// --- Comparison Functions for Sorting ---
+
+// Helper to get the name of a variable or constructor
+fn getNodeName(node) = (
+    node is (
+        a ^ b => getNodeName(a); // Base name for powers for sorting
+        _ => if isString(node) then node // Assuming variables are strings in AST
+             else if isConstructor(node) then getConstructor(node)
+             else if isInt(node) || isDouble(node) then "_Constant" // Special name, sorts first
+             else "_Unknown" // Sorts after constants
+    )
+);
+
+// Compare two factors within a multiplication term (constants first, then alphabetically)
+fn compareFactors(f1, f2) = (
+    let n1 = getNodeName(f1);
+    let n2 = getNodeName(f2);
+    n1 <=> n2 // Simple alphabetical/structural comparison using node names
+);
+
+// Helper function to calculate the degree of a term
+// Handles simple cases and powers.
+fn getTermDegree(term) = (
+    term is (
+        a * b => getTermDegree(a) + getTermDegree(b);
+        a ^ n => getTermDegree(a) * n if isInt(n); // Degree of power
+        a ^ _ => getTermDegree(a); // If exponent is not an int, treat as degree of base
+        x => 1 if isString(x) || (isConstructor(x) && !(getNodeName(x) == "_Constant")); // Variables/constructors have degree 1
+        c => 0 if isInt(c) || isDouble(c) || getNodeName(c) == "_Constant"; // Constants
+        _ => 0 // Default case
+    )
+);
+
+// Helper function to extract variables from a term for lexicographical comparison
+// Sorts variables alphabetically.
+fn getTermVariables(term) = (
+    let vars = term is (
+        a * b => getTermVariables(a) + getTermVariables(b);
+        a ^ n => getTermVariables(a); // Just consider the base variable's structure
+        x => [x] if isString(x) || (isConstructor(x) && !(getNodeName(x) == "_Constant")); // Variable/constructor node
+        _ => [] // Ignore constants or other structures
+    );
+    // Need a way to sort these AST nodes lexicographically based on name/structure
+    // Using sortBy with compareFactors should work if vars are factors
+    sortBy(vars, compareFactors)
+);
+
+// Compare two AST nodes lexicographically (used for comparing variable lists)
+fn compareASTLex(list1, list2) = (
+    if length(list1) == 0 && length(list2) == 0 then 0
+    else if length(list1) == 0 then -1 // Shorter list first
+    else if length(list2) == 0 then 1
+    else (
+        let cmp = compareFactors(list1[0], list2[0]); // Compare first elements
+        if cmp != 0 then cmp
+        else compareASTLex(subrange(list1, 1, length(list1)-1), subrange(list2, 1, length(list2)-1)) // Recurse
+    )
+);
+
+
+// Compare two additive terms based on Glex order (Degree first, then lexicographical)
+fn compareTerms(t1, t2) = (
+    let deg1 = getTermDegree(t1);
+    let deg2 = getTermDegree(t2);
+
+    if deg1 != deg2 then (deg2 <=> deg1) // Higher degree first (descending)
+    else (
+        // Lexicographical comparison based on sorted variable structure
+        let vars1 = getTermVariables(t1);
+        let vars2 = getTermVariables(t2);
+        compareASTLex(vars1, vars2) // Compare variable lists
+    )
+);
+
+
+// --- Sorting Gathered Expressions ---
+
+// Custom sort function using mergeSort and a comparator
+fn sortBy(arr, comparator) = (
+    // mergeSort requires a default sort order if comparator is not built-in
+    // We need a version of mergeSort that accepts a comparison function.
+    // Assuming mergeSort from lib/sort can be adapted or we redefine it:
+
+    let merge_custom = fn(a, b, comp) = (
+        if length(a) = 0 then b
+        else if length(b) = 0 then a
+        else (
+            // Use the comparator: comp returns <0 if a<b, 0 if a=b, >0 if a>b
+            if comp(a[0], b[0]) <= 0 then
+                [a[0]] + merge_custom(subrange(a, 1, length(a) - 1), b, comp)
+            else
+                [b[0]] + merge_custom(a, subrange(b, 1, length(b) - 1), comp)
+        )
+    );
+
+    fn mergeSort_custom(arr_inner, comp) = (
+         if length(arr_inner) <= 1 then arr_inner
+         else (
+             let mid = length(arr_inner) / 2;
+             // Ensure recursive call uses the same function
+             let left = mergeSort_custom(subrange(arr_inner, 0, mid), comp);
+             let right = mergeSort_custom(subrange(arr_inner, mid, length(arr_inner) - mid), comp);
+             merge_custom(left, right, comp)
+         )
+    );
+
+    mergeSort_custom(arr, comparator)
+);
+
+
+// Recursively sort factors and terms in a gathered expression
+fn sortGatheredExpr(expr) = (
+    expr is (
+        // Sort factors within multiplication (`*`)
+        `*`(factors) => (
+            // Recursively sort components before sorting the list
+            let sortedComponents = map(factors, sortGatheredExpr);
+            let sortedFactors = sortBy(sortedComponents, compareFactors);
+             // If factors list is empty or single, just return it simplified
+            if length(sortedFactors) == 0 then 1 // Identity for multiplication
+            else if length(sortedFactors) == 1 then sortedFactors[0]
+            else `*`(sortedFactors)
+        );
+        // Sort terms within addition (`+`)
+        `+`(terms) => (
+             // Recursively sort components before sorting the list
+            let sortedComponents = map(terms, sortGatheredExpr);
+            let sortedTerms = sortBy(sortedComponents, compareTerms);
+            // If terms list is empty or single, just return it simplified
+            if length(sortedTerms) == 0 then 0 // Identity for addition
+            else if length(sortedTerms) == 1 then sortedTerms[0]
+            else `+`(sortedTerms)
+        );
+        // Recursively apply to other structures if needed (e.g., powers)
+        a ^ b => sortGatheredExpr(a) ^ sortGatheredExpr(b); // Sort base and exponent if needed
+        // Base case: constants, variables, etc.
+        _ => expr
+    )
+);
+
+// --- Rewrite Rules for Simplification ---
+
+// Basic collection rules applied *after* scattering.
+// More effective collection would happen *before* scattering on the sorted list.
+fn makeCollectionRules() = [
+    // Simplifications first
+    prepareRule("Add Zero", a + 0, a, true),
+    prepareRule("Add Zero Rev", 0 + a, a, true),
+    prepareRule("Mul One", a * 1, a, true),
+    prepareRule("Mul One Rev", 1 * a, a, true),
+    prepareRule("Mul Zero", a * 0, 0, true),
+    prepareRule("Mul Zero Rev", 0 * a, 0, true),
+    prepareRule("Pow One", a ^ 1, a, true),
+    prepareRule("Pow Zero", a ^ 0, 1, true),
+
+    // Basic Collection (Adjacent terms after scatter)
+    // These rely on scatter producing a specific associative form (e.g., right-associative)
+    prepareRule("Collect Identical Add", x + x, 2 * x, true), // Only works if terms are identical AST nodes
+
+    // Rule: a * x + b * x -> (a + b) * x (requires matching structure)
+    // This is hard post-scatter. Example structure match:
+    prepareRule(
+        "Collect Coeff Add Rgt",
+         (A + c1 * T) + c2 * T, // Match right-associative structure
+         A + (c1 + c2) * T,
+         isInt(c1) && isInt(c2) // Ensure coefficients are numbers
+    ),
+     prepareRule(
+        "Collect Coeff Add Lft",
+         c1 * T + c2 * T, // Match simple case
+         (c1 + c2) * T,
+         isInt(c1) && isInt(c2)
+    ),
+    // Add more variations if scatter produces different structures
+
+    // Commutativity rules might be needed if sorting isn't perfect
+    // prepareRule("Commute Add", b + a, a + b, compareTerms(a, b) < 0),
+    // prepareRule("Commute Mul", b * a, a * b, compareFactors(a, b) < 0)
+];
+
+// --- Main Normalization Function ---
+
+fn glexNormalize(expr) = (
+    println("Original:  " + prettyOrbit(expr));
+
+    // 1. Gather multiplication and addition terms
+    let gatheredMul = gather(expr, `*`);
+    let gatheredAdd = gather(gatheredMul, `+`);
+    // println("Gathered:  " + prettyOrbit(gatheredAdd)); // Optional: view raw gather
+
+    // 2. Sort the gathered terms using Glex rules recursively
+    let sortedGathered = sortGatheredExpr(gatheredAdd);
+    println("Sorted:    " + prettyOrbit(sortedGathered));
+
+    // 3. Scatter back to binary operations (usually right-associative)
+    let scattered = scatter(sortedGathered);
+    println("Scattered: " + prettyOrbit(scattered));
+
+    // 4. Apply rewrite rules for simplification (collect like terms)
+    let rules = makeCollectionRules();
+    let maxIterations = 15; // Allow more iterations for simplification chain
+    let simplified = applyRulesUntilFixedPoint(scattered, rules, maxIterations);
+    println("Simplified:" + prettyOrbit(simplified));
+
+    simplified
+);
+
+// --- Test Cases ---
+
+fn runTests() = (
+    let poly1 = quote(c + b*2 + a*3); // Simple terms, unsorted
+    let poly2 = quote(x*y*2 + x^2 + 3*x*y + 5*x^2); // Like terms, powers
+    let poly3 = quote(z + y*x + x*y*z); // Different degrees and variables
+    let poly4 = quote(3*x + 2*x + y); // Basic like terms
+    let poly5 = quote(a*b + c*a + b*c); // Check factor sorting within terms
+    let poly6 = quote(x + 0 + 1*y + z*0 + x); // Test simplification rules
+
+    println("--- Test Case 1 ---");
+    glexNormalize(poly1);
+    println("");
+
+    println("--- Test Case 2 ---");
+    glexNormalize(poly2); // Expect x^2 terms and x*y terms grouped
+    println("");
+
+    println("--- Test Case 3 ---");
+    glexNormalize(poly3); // Expect x*y*z term first (degree 3)
+    println("");
+
+    println("--- Test Case 4 ---");
+    glexNormalize(poly4); // Expect 5*x + y
+    println("");
+
+    println("--- Test Case 5 ---");
+    glexNormalize(poly5); // Expect factors sorted: a*b, a*c, b*c
+    println("");
+
+     println("--- Test Case 6 ---");
+    glexNormalize(poly6); // Expect 2*x + y after simplification
+    println("");
+
+    // Note: The collection rules post-scattering are limited.
+    // Collecting `2*x*y + 3*x*y` into `5*x*y` reliably after scattering
+    // requires more sophisticated pattern matching in the rewrite rules
+    // to handle various associative forms produced by scatter, or applying
+    // collection rules *before* scattering on the sorted N-ary list.
+);
+
+// --- Main Execution ---
+println("GLEx Polynomial Normalization Test");
+println("================================");
+runTests();

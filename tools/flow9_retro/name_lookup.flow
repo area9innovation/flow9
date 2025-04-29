@@ -1,0 +1,143 @@
+import tools/flow9_retro/dexp/dexp;
+import tools/flow9_retro/types/typeenv;
+import tools/flow9_retro/flowcache;
+import tools/flow9_retro/bexp/btype2ttype;
+
+export {
+	// This is called for all modules after type checking - also incremental
+	// Update the global, transitive super and sub-types maps
+	// (natives and globals are NOT ready when compiling.)
+	registerModuleTypes(cache : FlowCache, module : BModule) -> void;
+
+	// The following two are only called for desugared modules
+
+	// Before we even start looking at a module, this is called to set up
+	// the method that can look for names through imports
+	updateNameLookupsForImports(cache : FlowCache, dd : DDesugar, env : TTypeEnv, imports : [DImport]) -> TTypeEnv;
+
+	// Before we type inference a module, this is called to set up
+	// name lookup for this module
+	updateNameLookupsForModule(tenv : TTypeEnv, d : DModule) -> TTypeEnv;
+}
+
+registerModuleTypes(cache : FlowCache, module : BModule) -> void {
+	// OK, update the global caches of structs and unions
+	cache.globalStructs := mergeTree(^(cache.globalStructs), module.structs);
+	cache.globalUnions := mergeTree(^(cache.globalUnions), module.unions);
+
+	// Update the global subtypes here by traversing any unions here
+	// and expand them transitively
+	if (!isEmptyTree(module.unions)) {
+		cache.globalSubtypes := addTransitiveDSubtypes(module.unions, ^(cache.globalSubtypes));
+		if (false) {
+			println("Subtypes transitively:");
+			traverseInOrder(^(cache.globalSubtypes), \sup, subs -> {
+				println(sup + ": " + toString(subs));
+			});
+		}
+
+		// Based on this, expand the global supertypes here by traversing
+		// the unions, resolving them to subtypes transivitely, and register them
+		cache.globalSupertypes := addTransitiveDSupertypes(module.unions, ^(cache.globalSupertypes), ^(cache.globalSubtypes));
+		if (false) {
+			println("Supertypes transitively:");
+			traverseInOrder(^(cache.globalSupertypes), \st, supers -> {
+				println(st + ": " + toString(supers));
+			});
+		}
+	}
+}
+
+
+// Given this module, looks up names from imports
+updateNameLookupsForImports(cache : FlowCache, dd : DDesugar, env : TTypeEnv, imports : [DImport]) -> TTypeEnv {
+	TTypeEnv(
+		env with
+		resolveId = \pos, id -> {
+			mbmod : Maybe<BGlobal> = lookupFromImport(cache.modules, cache.globalLookup, imports, id);
+			mbmod ?? {
+				btype2ttype(mbmod.type);
+			} : {
+				mbnat : Maybe<BNative> = lookupFromImport(cache.modules, cache.nativeLookup, imports, id);
+				switch (mbnat) {
+					None(): {
+						dd.onError(pos, "Unknown id " + id);
+						TTypeName("auto", []);
+					}
+					Some(bnat): btype2ttype(bnat.type);
+				}
+			}
+		},
+		resolveField = \id -> {
+			structs : [string] = lookupsFromImport(cache.modules, cache.fieldLookup, imports, id);
+			filtermap(structs, \str -> {
+				dd.resolveStructName(str);
+			})
+		},
+		resolveUnionField = \id -> {
+			buildSet(lookupsFromImport(cache.modules, cache.unionFieldLookup, imports, id));
+		},
+		resolveSupertypes = \id -> {
+			if (true) {
+				// TODO: Filter to those reachable from the module
+				getTreeArrayValue(^(cache.globalSupertypes), id);
+			} else {
+				lookupsFromImport(cache.modules, cache.superTypeLookup, imports, id);
+			}
+		},
+		resolveSubtypes = \id -> {
+			if (true) {
+				// TODO: Filter to those reachable from the module
+				getTreeArrayValue(^(cache.globalSubtypes), id);
+			} else {
+				lookupsFromImport(cache.modules, cache.subTypeLookup, imports, id);
+			}
+		},
+		resolveStructName = \id -> {
+			lookupTree(^(cache.globalStructs), id);
+		},
+		resolveUnionName = \id -> {
+			lookupTree(^(cache.globalUnions), id);
+		}
+	);
+}
+
+updateNameLookupsForModule(tenv : TTypeEnv, d : DModule) -> TTypeEnv {
+	resolveStructName = \name -> {
+			lstruct = lookupTree(d.structs, name);
+			lstruct ?? {
+				Some(lstruct)
+			} : tenv.resolveStructName(name);
+		};
+	fields = makeDFieldMap(d.structs);
+	unionFields = makeDUnionFields(d.unions, d.structs, resolveStructName, tenv.resolveUnionName);
+
+	// Make sure we can find local structs
+	senv = TTypeEnv(tenv with
+		resolveStructName = resolveStructName,
+		resolveUnionName = \name -> {
+			lunion = lookupTree(d.unions, name);
+			lunion ?? {
+				Some(lunion)
+			} : tenv.resolveUnionName(name);
+		},
+		resolveField = \name -> {
+			structs = getTreeArrayValue(fields, name);
+			istructs = filtermap(structs, \str -> {
+				lookupTree(d.structs, str);
+			});
+			others = tenv.resolveField(name);
+			uniq(concat(istructs, others));
+		},
+		resolveUnionField = \name -> {
+			unions = lookupTreeDef(unionFields, name, makeSet());
+			others = tenv.resolveUnionField(name);
+			mergeSets(unions, others);
+		},
+	);
+
+	// The TMap helper needs to know about some of the resolvers
+	TTypeEnv(senv with
+		tmap = setTMapResolvers(senv.tmap, senv.resolveStructName, senv.resolveUnionName, senv.resolveSupertypes, senv.resolveSubtypes)
+	);
+}

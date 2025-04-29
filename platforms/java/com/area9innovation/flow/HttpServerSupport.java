@@ -312,6 +312,42 @@ public class HttpServerSupport extends NativeHost {
 				hasBody = !exchange.getRequestMethod().equals("HEAD");
 			}
 
+			public byte[] utf8String2bytes(String data) throws Exception {
+				final int CHUNK_SIZE = 128 * 1024 * 1024; // 128M
+				final int len = data.length();
+
+				// For small strings, use direct conversion
+				if (len <= CHUNK_SIZE) {
+					try {
+						return data.getBytes("UTF-8");
+					} catch (Exception e) {
+						System.out.println(
+							"Cannot make bytes from a string of length " + len + "."
+							+ " Error: " + e.toString()
+						);
+						throw new RuntimeException("Cannot convert array", e);
+					}
+				} else {
+					// For large strings, split into chunks and process
+					ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+					try {
+						for (int pos = 0; pos < len; pos += CHUNK_SIZE) {
+							int end = Math.min(pos + CHUNK_SIZE, len);
+							String chunk = data.substring(pos, end);
+							byte[] chunkBytes = chunk.getBytes("UTF-8");
+							outputStream.write(chunkBytes);
+						}
+						return outputStream.toByteArray();
+					} catch (Exception e) {
+						System.out.println(
+							"Cannot make bytes from a string of length " + len + "."
+							+ " Chunk position: " + outputStream.size() + ". Error: " + e.toString()
+						);
+						throw new RuntimeException("Cannot convert big array", e);
+					}
+				}
+			}
+
 			public Func1<String, String> makeSendChunk() {
 				return new Func1<String, String>() {
 					public String invoke(String chunk) {
@@ -320,7 +356,7 @@ public class HttpServerSupport extends NativeHost {
 						}
 						try {
 							if (hasBody) {
-								os.write(chunk.getBytes("UTF-8"));
+								os.write(utf8String2bytes(chunk));
 								os.flush();
 								return "";
 							} else {
@@ -328,7 +364,7 @@ public class HttpServerSupport extends NativeHost {
 								Native.printCallstack();
 								return "Do not include a body in the response for HEAD request";
 							}
-						} catch (IOException e) {
+						} catch (Exception e) {
 							return "Sending chunk error: " + e.getMessage();
 						}
 					}
@@ -379,7 +415,7 @@ public class HttpServerSupport extends NativeHost {
 					{
 						try {
 							if (hasBody) {
-								byte[] responseBytes = responseBody.getBytes("UTF-8");
+								byte[] responseBytes = utf8String2bytes(responseBody);
 								exchange.sendResponseHeaders(
 									responseStatusCode,
 									responseBytes.length
@@ -396,7 +432,7 @@ public class HttpServerSupport extends NativeHost {
 									-1
 								);
 							}
-						} catch (IOException e) {
+						} catch (Exception e) {
 							System.out.println("Sending response error: " + e.getMessage());
 							e.printStackTrace(System.out);
 						}

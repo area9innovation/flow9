@@ -1,0 +1,177 @@
+import material/material2tropic;
+import timer;
+import material/material_key;
+import material/material_dialog;
+import material/material_ui;
+import math/math;
+import material/material_graphics;
+
+// Main program that implements a spinning roulette wheel for selecting Chess960 positions
+main() {
+	setRendererType("html");
+	
+    // Create state variables
+    spinning = make(false);
+    number = make(0);  // Current number (0-959)
+    speed = make(1.0);  // Rotation speed factor
+    slowing = make(false);
+    rotationAngle = make(0.0);  // Current rotation angle in degrees
+    spinTimer = ref None();
+
+    // Start or restart spinning
+    startSpinning = \ -> {
+        // Clear any existing timer
+        maybeApply(^spinTimer, \disposer -> disposer());
+        
+        // Reset state
+        next(spinning, true);
+        next(slowing, false);
+        next(speed, 1.0);
+        
+        // Create new spinning interval
+        timerDisposer = setInterval(30, \ -> {
+            // Update rotation angle based on current speed
+            currentAngle = getValue(rotationAngle);
+            currentSpeed = getValue(speed);
+            next(rotationAngle, currentAngle + currentSpeed * 10.0);
+            
+            if (getValue(slowing)) {
+                // Decrease speed gradually
+                newSpeed = max(0.0, currentSpeed - 0.020);
+                next(speed, newSpeed);
+                
+                // Stop when nearly stopped
+                if (newSpeed < 0.01) {
+                    next(spinning, false);
+                    next(speed, 0.0);
+                    // Final random number between 0-959
+                    next(number, round(random() * 959.0));
+                    
+                    // Clear the timer
+                    maybeApply(^spinTimer, \disposer -> disposer());
+                    spinTimer := None();
+                }
+            }
+            
+            // Update number based on rotation position
+            if (getValue(spinning)) {
+                // Convert current angle to a number between 0-959
+                // Use modulo to keep it in range and scale appropriately
+                position = round(((currentAngle % 360.0) / 360.0) * 959.0);
+                next(number, position);
+            }
+        });
+        
+        spinTimer := Some(timerDisposer);
+    }
+
+    // Handle space key press
+    handleKeyPress = \key -> {
+        if (key == " ") {
+            if (getValue(spinning) && !getValue(slowing)) {
+                // Start slowing down if currently spinning at full speed
+                next(slowing, true);
+            } else if (!getValue(spinning)) {
+                // Start spinning if stopped
+                startSpinning();
+            }
+        }
+    };
+    
+    // Create a wheel with segments
+    createWheel = \radius -> {
+        // Create segments for the wheel (12 segments)
+        segments = generate(0, 12, \i -> {
+            startAngle = i * 30 - 15;
+            endAngle = startAngle + 30;
+            isEven = i % 2 == 0;
+            
+            // Create sector for this segment with alternating colors
+            MSector(i2d(startAngle), i2d(endAngle), radius, 
+                [Fill(if (isEven) 0x004e6e else 0x308ba4)]
+            )
+        });
+        
+        // Create numbers to place around the wheel (every 80 positions)
+        numbers = generate(0, 12, \i -> {
+            angle = i2d(i * 30) - 90.0;
+            value = floor((i2d(i) / 12.0) * 960.0);
+            posX = cos(angle * PI / 180.0) * (radius * 0.8);
+            posY = sin(angle * PI / 180.0) * (radius * 0.8);
+            
+            MTranslate(const(Point(radius + posX - 100.0, radius + posY - 10.0)),
+				MCenterIn(
+					MText(i2s(value), [MCustomFont(16.0, "Roboto", 1.0), MWhite()]),
+					MFixed(200.0, 20.0)
+				)
+            )
+        });
+        
+        // Combine segments and numbers, plus add outer circle
+        MGroup([
+            // Base circle (outer rim)
+            MCircle(radius, [StrokeWidth(4.0), Stroke(0x111111)]),
+            // All segments
+            MGroup(segments),
+            // Numbers
+            MGroup(numbers),
+            // Center dot
+            MCircle(radius * 0.1, [Fill(0xffffff)])
+        ])
+    };
+    
+    // Create a pointer (indicator)
+    createPointer = \radius -> {
+        MTranslate(const(Point(radius, -10.0)),
+            MArrow(Point(0.0, 0.0), Point(0.0, radius * 0.2), 10.0, 20.0, 20.0, 
+                [Fill(0xcbb16e)]
+            )
+        )
+    };
+    
+    // Wheel with rotation
+    wheelRadius = 150.0;
+    rotatingWheel = 
+        MGroup([
+            // Rotating wheel
+                MTranslate(const(Point(wheelRadius, wheelRadius)),
+		            MRotate(rotationAngle,
+                MTranslate(const(Point(-wheelRadius, -wheelRadius)),
+                    createWheel(wheelRadius)
+				)
+                )
+            ),
+            // Fixed pointer at the top
+            createPointer(wheelRadius),
+        ]);
+    
+    // Instructions
+    instructions = MText("Press SPACE to start spinning. Press again to stop.", [MBody()]);
+        
+    // Number display
+    numberDisplay = MSelect(number, \n -> {
+        MCenter(
+            MFrame(16.0, 8.0, 
+                [Fill(0x004e6e)], 
+                MText("Position: " + i2s(n), [MCustomFont(32.0, "Roboto", 1.0), MWhite()])
+            )
+        )
+    });
+    
+    // Main UI layout
+    mainUI = MKeyHandler(
+        [Pair(" ", \ -> handleKeyPress(" "))],
+        MLines([
+			MFillY(),
+            // Add the wheel
+            MCenter(rotatingWheel),
+            // Number display
+            numberDisplay,
+            MCenterX(instructions),
+        ])
+    );
+    
+    // Create material manager and render the UI
+    mManager = makeMaterialManager([]);
+    mrender(mManager, true, mainUI);
+}

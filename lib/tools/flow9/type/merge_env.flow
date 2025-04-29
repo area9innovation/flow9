@@ -1,0 +1,83 @@
+import tools/flow9/type/types;
+import tools/flow9/type/pretty;
+import tools/flow9/type/util;
+
+export {
+	// Merges the module interfaces. Does NOT update the supertypes
+	mergeHModuleInterface(base : HModuleInterface, more : HModuleInterface) -> HModuleInterface;
+}
+
+mergeHModuleInterface(e1 : HModuleInterface, e2 : HModuleInterface) -> HModuleInterface {
+	// TODO: We could give errors if we have duplicated names
+
+	// First merge the unions and rawUnions
+	mergedUnions = mergeTree(e1.unions, e2.unions);
+	mergedRawUnions = mergeTree(e1.rawUnions, e2.rawUnions);
+	
+	// We do NOT build the supertypes. That is done in typecheck when we have the full set of unions
+	mergedSupertypes = makeTree();
+	
+	HModuleInterface(
+		mergeEnvs(e1.env, e2.env),
+		mergeTree(e1.structs, e2.structs),
+		mergedUnions,
+		mergedRawUnions,
+		mergedSupertypes,
+	)
+}
+
+mergeEnvs(a : Tree<string, HTypeSchema>, b : Tree<string, HTypeSchema>) -> Tree<string, HTypeSchema> {
+	foldTree(a, b, \akey, avals, acc -> {
+		mbvals : Maybe<HTypeSchema> = lookupTree(b, akey);
+		value = switch (mbvals) {
+			Some(bvals): mergeTypeSchemas(akey, avals, bvals);
+			None(): avals;
+		};
+		setTree(acc, akey, value);
+	});
+}
+
+mergeTypeSchemas(field : string, a : HTypeSchema, b : HTypeSchema) -> HTypeSchema {
+	todo = \ -> {
+		println("TODO: mergeTypeSchemas " + field + ":   " + prettyHTypeSchema(a) + " and " + prettyHTypeSchema(b));
+		a;
+	}
+	if (a == b) a
+	else switch (a) {
+		HTypeAlternatives(atypes): {
+			switch (b) {
+				HTypeAlternatives(btypes): {
+					HTypeAlternatives(uniq(concat(atypes, btypes)));
+				}
+				HTypeForAll(btyvars, btype): {
+					HTypeAlternatives(uniq(concat(atypes, [b])));
+				}
+				HType(): {
+					HTypeAlternatives(uniq(concat(atypes, [b])));
+				}
+			}
+		}
+		HTypeForAll(tyvars, type): {
+			switch (b) {
+				HTypeForAll(btyvars, btype): {
+					HTypeAlternatives(uniq([a, b]));
+				}
+				HTypeAlternatives(btypes): {
+					HTypeAlternatives(uniq(concat([a], btypes)));
+				}
+				HType(): HTypeAlternatives(uniq([a, b]));
+			}
+		}
+		HType(): {
+			switch (b) {
+				HTypeForAll(btyvars, btype): {
+					HTypeAlternatives(uniq([a, b]));
+				}
+				HTypeAlternatives(btypes): {
+					HTypeAlternatives(uniq(concat([a], btypes)));
+				}
+				HType(): HTypeAlternatives(uniq([a, b]));
+			}
+		}
+	}
+}

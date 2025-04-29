@@ -98,7 +98,7 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 			)
 			|> (\f ->
 				if (isSome(state.progress))
-					MCarouselProgress(manager, p, f, state)
+					MCarouselProgress(manager, p, f, state, m2t)
 					|> (\f2 ->
 						eitherMap(
 							state.maximize,
@@ -296,7 +296,8 @@ MCarouselProgressState(
 	bottom : bool,
 	activeColor : MThemeColor,
 	inactiveColor : MThemeColor,
-	spacing : double
+	spacing : double,
+	buttonTitles : [Transform<string>]
 );
 
 makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
@@ -386,7 +387,10 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 					contains(m.style, MProgressAtBottom()),
 					progressColors.active,
 					progressColors.inactive,
-					extractStruct(m.style, MCarouselProgressSpacing(2.0)).spacing
+					extractStruct(m.style, MCarouselProgressSpacing(2.0)).spacing,
+					mapi(m.contents, \i, c -> {
+						extractStruct(c.style, MCarouselProgressTitle(const("Item " + i2s(i)))).title
+					})
 				)
 			)
 		} else None();
@@ -521,30 +525,41 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 	)
 }
 
-MCarouselProgress(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState) -> Tropic {
+MCarouselProgress(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	eitherMap(
 		state.progress, \pr ->
 		TCopySize(
 			content,
 			\tr ->
 				generate(0, state.contentsLength, \i ->
-					TIf(
-						feq(state.activeI, i),
-						TShadowShape(parent, const(4.), TCircle(4., [MThemeFill(parent, pr.activeColor)]), RoundShape())
-						|> (\f -> TAlpha(fif(state.enabled, const(1.), const(0.5)), f)),
+					(\par -> {
+						isActive = feq(state.activeI, i);
 
-						TShadowShape(parent, const(2.), TCircle(4., [MThemeFill(parent, pr.inactiveColor)]), RoundShape())
-						|> (\f ->
-							TIf(state.enabled,
-								mouseDownAround(manager, None(), make(false), make(false), \ -> next(state.activeI, i), f)
-								|> (\f2 -> TCursor(FingerCursor(), f2)),
-								TAlpha(const(0.5), f)
-							)
+						TShadowShape(par,
+							fselectLift(isActive, \act -> if (act) 4. else 2.),
+							TSelect(isActive, \act -> TCircle(4., [MThemeFill(par, if (act) pr.activeColor else pr.inactiveColor)])),
+							RoundShape()
 						)
-					)
-					|> (\f -> TBorder(pr.spacing, 16., pr.spacing, 16., f))
+						|> (\f -> TAlpha(fif(state.enabled, const(1.), const(0.5)), f))
+						|> TBorderLeftRight(pr.spacing)
+					})
+					|> (\f -> MComponent2T(
+						manager,
+						parent,
+						"MCarouselProgressItem",
+						[
+							MHighlightOnFocus(const(true)),
+							MEnabled(state.enabled),
+							MOnClick(\ -> next(state.activeI, i)),
+							MButtonTitle(elementAt(pr.buttonTitles, i, const("Item " + i2s(i)))), 
+							MRippleType(const(MRippleCenter()))
+						],
+						\foc -> f(foc.parent),
+						m2t
+					))
 				)
 				|> TCols
+				|> TBorderTopBottom(16.)
 				|> (\f -> if (pr.bottom) TLines2(TFillY(), f) else f)
 				|> (\f -> TCenterXIn(f, tr)),
 			true
@@ -564,6 +579,10 @@ MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tro
 		otherFocused = if (isLeft) rightFocused else leftFocused;
 
 		buttonEnabled = if (state.disableSideChevrons) {if (isLeft) state.hasPrev else state.hasNext} else const(true);
+		buttonTitleFn = extractStruct(
+			eitherMap(state.chevronsStyle, \cs -> cs.style, []),
+			MCarouselChevronTitle(\l -> const(if (l) "Previous" else "Next"))
+		).titleFn;
 
 		MIconButton2T(
 			manager,
@@ -573,10 +592,10 @@ MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tro
 				onClick,
 				concatA([
 					[state.buttonsColor, MIconSize(state.iconSize), MIconButtonBorder(8.)],
-					eitherMap(state.chevronsStyle, \cs -> cs.style, []),
+					eitherMap(state.chevronsStyle, \cs -> style2MIconButtonStyle(cs.style), []),
 					eitherMap(state.tuneChevrons, \ts -> if (ts.shadows) [MElevation(const(1.))] else [], [])
 				]),
-				[MEnabled(fand(state.enabled, buttonEnabled))]
+				[MEnabled(fand(state.enabled, buttonEnabled)), MButtonTitle(buttonTitleFn(isLeft))]
 				|> (\f ->
 					eitherMap(state.enableArrows, \ea ->
 						concat(f, [

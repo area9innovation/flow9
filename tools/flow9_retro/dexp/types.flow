@@ -1,0 +1,242 @@
+import tools/flow9_retro/dexp/rec;
+import ds/treeutils;
+
+export {
+	extractDTyparsFromDExp(e : DExp) -> Set<string>;
+
+	// Visit all types in this expression
+	foldDTypesInDExp(e : DExp, i : ?, fn : (?, DType) -> ?) -> ?;
+
+	// Find all type-pars in this type
+	extractDTypars(acc : Set<string>, d : DType) -> Set<string>;
+
+	// Build a map from field to structs that have that field
+	makeDFieldMap(structs : Tree<string, DStruct>) -> Tree<string, [string]>;
+
+	// Build a map from a type name to the super types it might have
+	makeDSupers(unions : Tree<string, DUnion>) -> Tree<string, [string]>;
+
+	// Build a map from a type name to the subtypes it might have
+	makeDSubtypes(unions : Tree<string, DUnion>) -> Tree<string, [string]>;
+
+	// Build a map from a type name to the subtype names it might have
+	makeDSubtypeNames(unions : Tree<string, DUnion>) -> Tree<string, [DTypeName]>;
+
+	// Build a map from a type name to the subtypes it might have (including expanding subunions further)
+	addTransitiveDSubtypes(unions : Tree<string, DUnion>, subtypes : Tree<string, [string]>) -> Tree<string, [string]>;
+
+	// Build a map from a typename to the unions it might be part of (transitively)
+	addTransitiveDSupertypes(unions : Tree<string, DUnion>, supertypes : Tree<string, [string]>, subtypes : Tree<string, [string]>) -> Tree<string, [string]>;
+
+	// Build a map from field names to what unions have that field
+	makeDUnionFields(
+		// The unions we should process
+		unions : Tree<string, DUnion>, 
+		// Any local structs
+		structs : Tree<string, DStruct>, 
+		// General structs & unions to resolve
+		resolveStruct : (string) -> Maybe<DStruct>,
+		resolveUnion : (string) -> Maybe<DUnion>,
+	) -> Tree<string, Set<string>>;
+
+	isDTypeAuto(d : DType) -> bool;
+
+	// Clean out the positions so they are comparable
+	cleanDType(d : DType) -> DType;
+}
+
+extractDTyparsFromDExp(e : DExp) -> Set<string> {
+	foldDTypesInDExp(e, makeSet(), extractDTypars);
+}
+
+foldDTypesInDExp(e : DExp, acc : ?, fn : (?, DType) -> ?) -> ? {
+	switch (e) {
+		DLambda(args, body, __, eclass): {
+			nacc = fold(args, acc, \nacc, a -> {
+				fn(nacc, a.type)
+			});
+			foldDTypesInDExp(body, nacc, fn)
+		}
+		DSwitch(value, type, cases, defaultCase, pos, eclass): {
+			acc0 = foldDTypesInDExp(value, fn(acc, type), fn);
+			acc1 = fold(cases, acc0, \cacc, case -> {
+				foldDTypesInDExp(case.body, cacc, fn)
+			});
+			defaultCase ?? {
+				foldDTypesInDExp(defaultCase, acc1, fn)
+			} : acc1;
+		}
+		DDowncast(oldid, newid, subtype, subeclass, supereclass, scope, pos, eclass): {
+			nacc = fn(acc, subtype);
+			foldDTypesInDExp(scope, nacc, fn)
+		}
+		DCast(value, target, pos): {
+			foldDTypesInDExp(value, fn(acc, target), fn);
+		}
+		DTyped(value, subtype, pos, eclass): {
+			foldDTypesInDExp(value, fn(acc, subtype), fn);
+		}
+		default: {
+			ch = getDExpChildren(e);
+			fold(ch, acc, \nacc, ee -> {
+				foldDTypesInDExp(ee, nacc, fn)
+			})
+		}
+	}
+}
+
+extractDTypars(acc : Set<string>, d : DType) -> Set<string> {
+	switch (d) {
+		DTypePar(id, pos): insertSet(acc, id);
+		DTypeName(id, typars, pos): fold(typars, acc, extractDTypars);
+		DTypeFunction(args, returnType, pos): {
+			nacc = fold(args, acc, extractDTypars);
+			extractDTypars(nacc, returnType);
+		}
+	}
+}
+
+makeDFieldMap(structs : Tree<string, DStruct>) -> Tree<string, [string]> {
+	foldTree(structs, makeTree(), \st, stru, acc -> {
+		fold(stru.structArgs, acc, \acc2, sa -> {
+			treePushToArrayValue(acc2, sa.id, st)
+		})
+	});
+}
+
+makeDSupers(unions : Tree<string, DUnion>) -> Tree<string, [string]> {
+	foldTree(unions, makeTree(), \un, uni, acc -> {
+		fold(uni.types, acc, \acc2, tn -> {
+			treePushToArrayValue(acc2, tn.id, un)
+		})
+	});
+}
+
+makeDSubtypes(unions : Tree<string, DUnion>) -> Tree<string, [string]> {
+	mapTree(unions, \uni -> map(uni.types, \tn -> tn.id));
+}
+
+makeDSubtypeNames(unions : Tree<string, DUnion>) -> Tree<string, [DTypeName]> {
+	mapTree(unions, \uni -> uni.types);
+}
+
+addTransitiveDSubtypes(unions : Tree<string, DUnion>, subtypes : Tree<string, [string]>) -> Tree<string, [string]> {
+	// Add the direct subtypes
+	step1 = foldTree(unions, subtypes, \un, uni, acc -> {
+		fold(uni.types, acc, \acc2, tn -> {
+			treePushToArrayValue(acc2, un, tn.id)
+		})
+	});
+	// Add the transitive subtypes
+	foldTree(unions, step1, \un, uni, acc -> {
+		fold(uni.types, acc, \acc2, tn -> {
+			addDSubtype(acc2, un, tn.id)
+		})
+	});
+}
+
+addDSubtype(subtypes : Tree<string, [string]>, super : string, sub : string) -> Tree<string, [string]> {
+	subs = getTreeArrayValue(subtypes, sub);
+	fold(subs, subtypes, \acc, tn -> {
+		acc2 = treePushToArrayValue(acc, super, tn);
+		addDSubtype(acc2, super, tn)
+	})
+}
+
+addTransitiveDSupertypes(unions : Tree<string, DUnion>, supertypes : Tree<string, [string]>, subtypes : Tree<string, [string]>) -> Tree<string, [string]> {
+	foldTree(unions, supertypes, \un, uni, acc -> {
+		fold(uni.types, acc, \acc2, tn -> {
+			acc3 = treePushToArrayValue(acc2, tn.id, un);
+			subs = getTreeArrayValue(subtypes, tn.id);
+			fold(subs, acc3, \acc4, sub -> {
+				treePushToArrayValue(acc4, sub, un);
+			})
+		})
+	})
+}
+
+// Scan these unions to find any union fields
+makeDUnionFields(unions : Tree<string, DUnion>, structs : Tree<string, DStruct>, 
+		resolveStruct : (string) -> Maybe<DStruct>,
+		resolveUnion : (string) -> Maybe<DUnion>,
+	) -> Tree<string, Set<string>> {
+	structFields : (string) -> [Pair<string, DType>] = \st -> {
+		mstruct = resolveStruct(st);
+		mstruct ?? {
+			map(mstruct.structArgs, \sa -> {
+				Pair(sa.id, cleanDType(sa.type))
+			})
+		}: {
+			mstruct2 = lookupTree(structs, st);
+			switch (mstruct2) {
+				None(): {
+					println("Unknown struct " + st);
+					[];
+				}
+				Some(str): {
+					map(str.structArgs, \sa -> {
+						Pair(sa.id, cleanDType(sa.type))
+					})
+				}
+			}
+		}
+	};
+	foldTree(unions, makeTree(), \un, uni, acc -> {
+		if (length(uni.types) == 1) {
+			// Single union structs are not union fieldable
+			acc;
+		} else {
+			fields : Set<Pair<string, DType>> = getDTypenameFields(unions, structFields, resolveUnion, un);
+			foldSet(fields, acc, \acc2, field -> {
+				insertMultimap(acc2, field.first, un)
+			})
+		}
+	});
+}
+
+// Find what fields this typename has? (If union, what all have in common)
+getDTypenameFields(
+	unions : Tree<string, DUnion>, 
+	structFields : (string) -> [Pair<string, DType>],
+	resolveUnion : (string) -> Maybe<DUnion>,
+	typename : string,
+) -> Set<Pair<string, DType>> {
+	process = \u : DUnion -> {
+		foldi(u.types, makeSet(), \i, acc, type -> {
+			fields = getDTypenameFields(unions, structFields, resolveUnion, type.id);
+			if (i == 0) {
+				fields;
+			} else {
+				intersectSets(fields, acc);
+			}
+		});
+	};
+	munion = lookupTree(unions, typename);
+	munion ?? {
+		process(munion);
+	} : {
+		munion2 = resolveUnion(typename);
+		switch (munion2) {
+			None(): {
+				buildSet(structFields(typename));
+			}
+			Some(u2): process(u2);
+		}
+	}
+}
+
+cleanDType(d : DType) -> DType {
+	switch (d) {
+		DTypePar(id, pos): DTypePar(id, 0);
+		DTypeName(id, typars, pos): DTypeName(id, map(typars, cleanDType), 0);
+		DTypeFunction(args, returnType, pos): DTypeFunction(map(args, cleanDType), cleanDType(returnType), 0);
+	}
+}
+
+isDTypeAuto(d : DType) -> bool {
+	switch (d) {
+		DTypeName(id, __, __): id == "auto";
+		DTypePar(__, __): false;
+		DTypeFunction(__, __, __): false;
+	}
+}

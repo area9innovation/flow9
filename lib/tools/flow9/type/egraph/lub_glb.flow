@@ -1,0 +1,175 @@
+import tools/flow9/type/egraph/subtype;
+import tools/flow9/type/egraph/utils;
+
+export {
+	findCommonSupertypes(g : EGraph, types : Set<Constructor>) -> Set<string>;
+
+	findCommonSubtypes(g : EGraph, typeContexts : Set<Pair<Constructor, Set<EContext>>>) -> [string];
+
+	sizeUnion(interface : HModuleInterface, typeName : string) -> int;
+}
+
+findCommonSupertypes(g : EGraph, types : Set<Constructor>) -> Set<string> {
+	if (existsSet(types, \t -> t.name == "flow")) {
+		makeSet1("flow")
+	} else {
+		// Map each type to its set of supertypes (including itself)
+		superSets = mapSet(types, \type -> {
+			// This includes the type itself
+			getAllSupertypes(g.interface, type.name, makeSet());
+		});
+
+		// Handle empty case
+		if (isEmptySet(superSets)) {
+			makeSet()
+		} else {
+			supers = set2array(superSets);
+			// Reduce all sets with intersection operation
+			fold(tail(supers), supers[0], \acc, superSet -> {
+				intersectSets(acc, superSet)
+			})
+		}
+
+	}
+}
+
+// Find the most specific common subtypes with granular context tracking:
+findCommonSubtypes(g : EGraph, typeContexts : Set<Pair<Constructor, Set<EContext>>>) -> [string] {
+	if (isEmptySet(typeContexts)) {
+		[]
+	} else {
+		// Extract types from the pairs for easier processing
+		types = mapSet(typeContexts, \p -> p.first);
+
+		// Create a lookup from constructor name to its contexts for error reporting
+		typeContextMap = foldSet(typeContexts, makeTree(), \acc, pair -> {
+			setTree(acc, pair.first.name, pair.second)
+		});
+
+		// Get context for a type, or empty context if not found
+		getContextForType = \typeName -> {
+			lookupTreeDef(typeContextMap, typeName, makeSet())
+		};
+
+		typeNames0 = set2array(mapSet(types, \t -> t.name));
+		// Sort by size of union type to start with structs
+		typeNames = sortCustom(typeNames0, \n -> sizeUnion(g.interface, n), true);
+
+		if (length(typeNames) == 1) {
+			// If there's only one type, return it as the result
+			[typeNames[0]]
+		} else if (contains(typeNames, "flow")) {
+			// If there's a flow type, return it as the result
+			["flow"]
+		} else {
+			// Store the first problematic pair for better error reporting
+			// Also use this to track if Phase 1 failed (first part non-empty)
+			problemPair = ref Pair("", "");
+
+			// PHASE 1: Try to find a single best subtype through direct comparisons
+			// Start with the first type
+			bestTypeSoFar = fold(tail(typeNames), typeNames[0], \currentBest, typeName -> {
+				// If already failed to find direct relationships, just pass through
+				if (^problemPair.first != "") {
+					currentBest
+				} else if (currentBest == typeName) {
+					currentBest
+				}
+				// If typeName is a subtype of currentBest, use typeName
+				else if (isStrictSupertype(g.interface, typeName, currentBest)) {
+					typeName
+				}
+				// If currentBest is a subtype of typeName, keep currentBest
+				else if (isStrictSupertype(g.interface, currentBest, typeName)) {
+					currentBest
+				}
+				// Try to find path relationships
+				else {
+					path1 = findNameConstructorPath(g, typeName, currentBest);
+					if (path1 != []) {
+						// If there's a path from typeName to currentBest, typeName is more specific
+						typeName
+					} else {
+						path2 = findNameConstructorPath(g, currentBest, typeName);
+						if (path2 != []) {
+							// If there's a path from currentBest to typeName, currentBest is more specific
+							currentBest
+						} else {
+							// No direct relationship found, mark the strategy as failed
+							// Record this problematic pair for potential error reporting
+							problemPair := Pair(currentBest, typeName);
+							currentBest
+						}
+					}
+				}
+			});
+
+			// If Phase 1 was successful (no problematic pair found), return the result
+			if (^problemPair.first == "") {
+				[bestTypeSoFar]
+			} else {
+				// PHASE 2: Find all subtypes of all types and pick the biggest common subtype
+
+				// Get all subtypes for each input type
+				allSubtypeSets = map(typeNames, \typeName -> {
+					getAllSubtypes(g.interface, typeName, makeSet())
+				});
+
+				// Find the intersection of all subtype sets
+				// Start with the first set and intersect with each subsequent set
+				commonSubtypes = fold(tail(allSubtypeSets), allSubtypeSets[0], \acc, subtypeSet -> {
+					intersectSets(acc, subtypeSet)
+				});
+
+				if (!isEmptySet(commonSubtypes)) {
+					set2array(commonSubtypes);
+				} else {
+					// No common subtypes found, report error using the problematic pair
+					problemType1 = ^problemPair.first;
+					problemType2 = ^problemPair.second;
+
+					context1 = getContextForType(problemType1);
+					context2 = getContextForType(problemType2);
+
+					// Report error with specific contexts for the problematic types
+					g.onError(mergeSets(context1, context2),
+						"Cannot find common subtype between '" + problemType1 +
+						"' and '" + problemType2 + "' when looking for most specific among " +
+						superglue(set2array(types), \t -> prettyTypeNode(g, t), ", ")
+					);
+
+					// Just return the first type as a fallback
+					[typeNames[0]]
+				}
+			}
+		}
+	}
+}
+
+// Helper function to get the size of a union type
+sizeUnion(interface : HModuleInterface, typeName : string) -> int {
+	switch (lookupTree(interface.unions, typeName)) {
+		None(): 1; // If a struct, it is just a single one
+		Some(union): length(union.types);
+	}
+}
+
+getAllSubtypes(interface : HModuleInterface, typeName : string, acc : Set<string>) -> Set<string> {
+	acc1 = insertSet(acc, typeName);
+
+	switch (lookupTree(interface.rawUnions, typeName)) {
+		None(): acc1;
+		Some(union): {
+			// For each constructor in this union
+			fold(union.types, acc1, \currentAcc, tc -> {
+				if (containsSet(currentAcc, tc.name)) {
+					// Already processed this branch, skip recursion
+					currentAcc
+				} else {
+					// Add this subtype and recurse
+					getAllSubtypes(interface, tc.name, insertSet(currentAcc, tc.name))
+				}
+			})
+		}
+	}
+}

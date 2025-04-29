@@ -1,0 +1,177 @@
+//
+// REFLECTION FUNCTIONS
+//
+
+fn quote(e : ast) = e;
+
+// Helper functions to check if expression is a number or variable
+fn is_number(expr) = (astname(expr) == "Int" || astname(expr) == "Double");
+fn is_value(expr) = (astname(expr) == "Int" || astname(expr) == "Double" || astname(expr) == "String" || astname(expr) == "Bool");
+fn is_var(expr) = (astname(expr) == "UId" || astname(expr) == "Identifier");
+// Check if expression is a generalized linear expression (GLE)
+fn is_glex(expr) = (
+	is_var(expr) || is_number(expr) ||
+	expr is (
+		a * b => is_glex(a) && is_glex(b);
+		a ^ b => (
+			is_glex(eval(a)) && is_number(b)
+		);
+		a => false
+	)
+);
+
+// Extract the value from a number node
+fn extract_number(expr) = (
+	if (is_number(expr)) then expr
+	else 0
+);
+
+// Calculate the degree of a term in a polynomial
+fn term_degree(term) = (
+    if is_number(term) then 0
+    else if is_var(term) then 1
+    else term is (
+        a * b => term_degree(a) + term_degree(b);
+        a ^ b => term_degree(a) * extract_number(b);
+        _ => 0 // Default for other cases
+    )
+);
+
+// Extract term components as a triple [coefficient, variable, exponent]
+// Returns an array of triples where each triple represents a multiplicative factor
+fn extract_term_triples(term) = (
+    if is_number(term) then [Triple(term, "", 0)]  // Just a constant
+    else if is_var(term) then [Triple(1, varname(term), 1)]  // Just a variable with coef=1, exp=1
+    else term is (
+        a * b => (
+            // Combine factors - need to handle multiplication of same variables
+            let triples_a = extract_term_triples(a);
+            let triples_b = extract_term_triples(b);
+            combine_triples(triples_a + triples_b)
+        );
+        a ^ b => (
+            if is_var(a) then [Triple(1, varname(a), extract_number(b))]  // var^exp
+            else if is_number(a) then [Triple(pow(a, extract_number(b)), "", 0)]  // const^exp = const
+            else (
+                // For complex expressions being exponentiated
+                let base_triples = extract_term_triples(a);
+                let exponent = extract_number(b);
+                // Apply exponentiation to each component
+                map(base_triples, \t.t is (Triple(coef, var, exp) => 
+                    Triple(pow(coef, exponent), var, exp * exponent)
+                ))
+            )
+        );
+        _ => [] // Default for other cases
+    )
+);
+
+
+// Helper to find a matching triple with same variable and exponent
+fn find_matching_triple(triples, var, exp) = (
+    if length(triples) == 0 then -1
+    else (
+        fn find_index(index) = (
+            if index >= length(triples) then -1
+            else (
+                (triples[index]) is (Triple(_, v, e) => (
+                    if v == var && e == exp then index
+                    else find_index(index + 1)
+                ))
+            )
+        );
+        find_index(0)
+    )
+);
+
+// Helper to set element in a list (since we can't modify in place)
+fn set_list_element(list, index, new_value) = (
+    if index < 0 || index >= length(list) then list
+    else (
+        let before = if index > 0 then subrange(list, 0, index) else [];
+        let after = if index < length(list) - 1 then 
+                    subrange(list, index + 1, length(list) - index - 1) 
+                    else [];
+        before + [new_value] + after
+    )
+);
+
+// Helper function to combine like terms in the list of triples
+fn combine_triples(triples) = (
+    if length(triples) <= 1 then triples
+    else (
+        let result = [];
+        fn process_remaining(remaining, acc) = (
+            if length(remaining) == 0 then acc
+            else (
+                let current = remaining[0];
+                let rest = subrange(remaining, 1, length(remaining) - 1);
+                
+                current is (Triple(coef, var, exp) => (
+                    if var == "" then (
+                        // Handle constants separately
+                        process_remaining(rest, acc + [current])
+                    ) else (
+                        // Try to find a match with the same variable and exponent
+                        let match_index = find_matching_triple(acc, var, exp);
+                        if match_index >= 0 then (
+                            // Combine with existing entry
+                            let match = acc[match_index];
+                            match is (Triple(match_coef, _, _) => (
+                                let new_acc = set_list_element(acc, match_index, 
+                                    Triple(match_coef * coef, var, exp));
+                                process_remaining(rest, new_acc)
+                            ))
+                        ) else (
+                            // Add as new entry
+                            process_remaining(rest, acc + [current])
+                        )
+                    )
+                ))
+            )
+        );
+        
+        process_remaining(triples, [])
+    )
+);
+
+// Compare polynomial terms using graded lexicographic ordering
+fn glex_compare(a, b) = (
+	// Same degree, extract term triples for comparison
+	let triples_a = extract_term_triples(a);
+	let triples_b = extract_term_triples(b);
+	triples_a <= triples_b
+);
+
+
+// AST utility functions for Orbit
+
+// Create a properly nested AST node by folding over an array of arguments
+// This function handles arrays of any length, whereas makeAst expects exactly 2 arguments
+fn makeFoldedAst(op, args) = (
+    let len = length(args);
+    
+    if len = 0 then (
+        // Handle empty array case - return an appropriate default value
+        // This depends on the operator, but we'll return a neutral element
+        if op = "&&" then true
+        else if op = "||" then false
+        else args  // Return empty array as fallback
+    ) else if len = 1 then (
+        // For single element, just return it without creating an operation
+        args[0]
+    ) else if len = 2 then (
+        // For exactly two elements, we can use makeAst directly
+        makeAst(op, args)
+    ) else (
+        // For 3+ elements, fold to create a proper binary tree
+        // Start with the first element and fold over the rest
+        let initialAst = args[0];
+        let remainingArgs = subrange(args, 1, len - 1);
+        
+        // Fold over the remaining arguments, combining each with the accumulator
+        fold(remainingArgs, initialAst, \acc, element -> (
+            makeAst(op, [acc, element])
+        ))
+    )
+);

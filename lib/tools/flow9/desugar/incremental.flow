@@ -1,0 +1,388 @@
+import tools/flow9/desugar/dexp;
+import tools/flow9/compile_state;
+import tools/flow9/type/toplevel_env;
+import tools/flow9/type/fieldaccessors;
+import tools/flow9/desugar/pretty;
+import tools/flow9/desugar/changes; // Import for getChangedExports
+import text/binary;
+import sys/system;
+import utctime;
+import tools/flow9/flow_path;
+import tools/flowc/flowc_fileinfo;
+import ds/set;
+
+export {
+	// Save a single module to the incremental cache
+	saveDModuleInIncremental(state : CompileState, module : DModule, verbose : int) -> void;
+
+	// Loads any up-to-date incremental file if available
+	// If outdated, returns None() to indicate we need to recompile
+	preloadDIncrementalModule(state : CompileState, flowfile : string) -> Maybe<DModule>;
+
+	// Loads an incremental module for comparison, ignoring timestamps
+	// Used specifically to find differences between old and new versions
+	loadOldIncrementalModule(state : CompileState, flowfile : string) -> Maybe<DModule>;
+
+	// Delete an incremental module from cache
+	deleteDIncrementalModule(state : CompileState, flowfile : string) -> void;
+
+	getDCacheFilename(state : CompileState, flowfile : string) -> string;
+
+	// Compares old and new modules to find changed identifiers
+	getChangedIdsFromModules(oldModule : Maybe<DModule>, newModule : DModule) -> Set<string>;
+}
+
+// The incremental version for DModules - increment when structure changes
+dIncrementalVersion = 2;
+
+DIncrementalModule(
+	version : int,
+	module : DModule
+);
+
+// Get the path to the cache file for a given flow file
+getDCacheFilename(state : CompileState, flowfile : string) -> string {
+	getCacheFilename(state.config, flowfile) + "9";
+}
+
+// Save multiple modules if needed
+saveDIncrementalModulesIfNeeded(modules : [DModule], state : CompileState) -> void {
+	if (!isConfigParameterFalse(state.config.config, "incremental")) {
+		t = timestamp();
+		// Process each module
+		iter(uniq(modules), \module -> {
+			// Check if this module is already cached
+			cacheFile = getDCacheFilename(state, module.flowpath);
+			if (!fileExists(cacheFile) || (fileModifiedPrecise(cacheFile) < module.timestamp)) {
+				saveDModuleInIncremental(state, module, state.config.verbose);
+			}
+		});
+	}
+}
+
+// Save a single module to the incremental cache
+saveDModuleInIncremental(state : CompileState, module : DModule, verbose : int) -> void {
+	if (!isConfigParameterFalse(state.config.config, "incremental")) {
+		doSaveDModuleInIncremental(state, module, verbose);
+	}
+}
+
+// Internal function to save module
+doSaveDModuleInIncremental(state : CompileState, module : DModule, verbose : int) -> void {
+	fn = getDCacheFilename(state, module.flowpath);
+
+	// Prune the module interface to only contain exported names
+	prunedModule = pruneModuleInterface(module);
+	
+	if (isConfigParameterTrue(state.config.config, "debug-incremental")) {
+		println("Pruned:");
+		printModuleInterface(prunedModule);
+	}
+
+	// Serialize the pruned module
+	s = toBinary(DIncrementalModule(dIncrementalVersion, prunedModule));
+
+	if (!setFileContent(fn, s)) {
+		println("WARNING: Cannot create incremental DModule file " + fn);
+	} else {
+		if (fileModifiedPrecise(module.fullpath) > module.timestamp) {
+			// File has changed during compilation
+			if (verbose >= 1) {
+				println("File '" + module.flowpath + "' has changed during compilation. Incremental file not saved.");
+			}
+			// Delete obsolete incremental file
+			deleteFile(fn);
+			{}
+		}
+	}
+}
+
+// Load an incremental module if it's up-to-date
+preloadDIncrementalModule(state : CompileState, flowfile : string) -> Maybe<DModule> {
+	fn = getDCacheFilename(state, flowfile);
+
+	// Add these debug statements
+	if (state.config.verbose >= 2) {
+		println("Trying to load incremental file for " + flowfile + " from " + fn);
+		println("File exists: " + b2s(fileExists(fn)));
+		if (fileExists(fn)) {
+			println("File size: " + d2s(fileSize(fn)));
+			println("File modified: " + d2s(fileModifiedPrecise(fn)));
+		}
+	}
+
+	// Check if our file is marked for rechecking (it might be dependent on a changed module)
+	fullpath = flowPath2path(state.config.includes, flowfile + ".flow");
+	fileStatus = getCompileStatus(state, fullpath);
+	
+	// If the file is marked for rechecking, don't load from cache
+	switch (fileStatus) {
+		CompileNeedsRecheck(_, __): {
+			println("File " + flowfile + " needs rechecking, not loading from cache");
+			None();
+		}
+		default: {
+			// Continue with normal incremental checking
+			// Check if file exists first to avoid debug spam
+			if (!fileExists(fn)) {
+				None();
+			} else {
+				f = getFileContent(fn);
+
+				// Check version
+				cachedVersion = if (strlen(f) >= 4) s2a(substring(f, 4, 1))[0] else -1;
+				if (cachedVersion != dIncrementalVersion) {
+					if (state.config.verbose >= 1) {
+						println("Incremental DModule for '" + flowfile + "' has wrong format version " +
+							i2s(cachedVersion) + ", current is " + i2s(dIncrementalVersion));
+					}
+					deleteDIncrementalModule(state, flowfile);
+					None();
+				} else {
+					// Deserialize the module
+					fi = deserializeBinary(f, IllegalStruct());
+					if (fi == IllegalStruct()) {
+						println("WARNING: Illegal structure of incremental DModule file for " + flowfile + ". Incremental file deleted.");
+						deleteDIncrementalModule(state, flowfile);
+						None();
+					} else {
+						im : DIncrementalModule = cast(fi : flow -> DIncrementalModule);
+
+						// Check if module needs reloading
+						needToReload = dModuleNeedReloading(im.module, state);
+
+						if ((!isConfigParameterTrue(state.config.config, "incremental-priority") && needToReload) ||
+							isConfigParameterFalse(state.config.config, "incremental")) {
+
+							deleteDIncrementalModule(state, flowfile);
+							None();
+						} else {
+							if (state.config.verbose >= 2) {
+								println("Loaded incremental DModule for " + flowfile);
+							}
+							
+							// If debug-incremental-interface flag is set, print the module interface
+							if (isConfigParameterTrue(state.config.config, "debug-incremental")) {
+								printModuleInterface(im.module);
+							}
+							
+							Some(im.module);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// Load an incremental module for comparison, ignoring timestamps
+// Used specifically to find differences between old and new versions
+loadOldIncrementalModule(state : CompileState, flowfile : string) -> Maybe<DModule> {
+	fn = getDCacheFilename(state, flowfile);
+
+	// Check if file exists first to avoid debug spam
+	if (!fileExists(fn)) {
+		None();
+	} else {
+		f = getFileContent(fn);
+
+		// Check version
+		cachedVersion = if (strlen(f) >= 4) s2a(substring(f, 4, 1))[0] else -1;
+		if (cachedVersion != dIncrementalVersion) {
+			if (state.config.verbose >= 1) {
+				println("Incremental DModule for '" + flowfile + "' has wrong format version " +
+					i2s(cachedVersion) + ", current is " + i2s(dIncrementalVersion));
+			}
+			None();
+		} else {
+			// Deserialize the module
+			fi = deserializeBinary(f, IllegalStruct());
+			if (fi == IllegalStruct()) {
+				println("WARNING: Illegal structure of incremental DModule file for " + flowfile + ". Cannot compare changes.");
+				None();
+			} else {
+				im : DIncrementalModule = cast(fi : flow -> DIncrementalModule);
+				
+				if (state.config.verbose >= 2) {
+					println("Loaded old incremental DModule for comparison: " + flowfile);
+				}
+				
+				Some(im.module);
+			}
+		}
+	}
+}
+
+// Compares old and new modules to find changed identifiers
+getChangedIdsFromModules(oldModule : Maybe<DModule>, newModule : DModule) -> Set<string> {
+	switch (oldModule) {
+		None(): {
+			// If there's no old module, consider all exported identifiers as changed
+			// This will trigger full rechecking of dependent modules
+			makeSet(); // Empty set indicates "all changed"
+		}
+		Some(oldMod): {
+			// First check if the exported names list changed
+			oldExports = buildSet(oldMod.exported);
+			newExports = buildSet(newModule.exported);
+			
+			// Debug output
+			// println(">>> DEBUG Old module exports: " + strGlue(oldMod.exported, ", "));
+			// println(">>> DEBUG New module exports: " + strGlue(newModule.exported, ", "));
+			
+			if (!equalSet(oldExports, newExports)) {
+				// If the set of exported names changed, consider that a significant change
+				// println(">>> DEBUG Exported names changed between modules");
+				
+				// Include all names from both old and new exports
+				mergeSets(oldExports, newExports);
+			} else {
+				// Get changes in exports implementation
+				exportChanges = getChangedExports(oldMod, newModule);
+				// println(">>> DEBUG Changed exports: " + strGlue(exportChanges, ", "));
+				
+				// Build a set from the array of changes
+				changedIds = buildSet(exportChanges);
+				
+				// If the exports are the same, but the content has changed, consider all exports as changed
+				if (isEmptySet(changedIds) && oldMod.contentHash != newModule.contentHash) {
+					// println(">>> DEBUG Content hash changed but no exports detected as changed - marking all exports as changed");
+					oldExports;
+				} else {
+					changedIds;
+				}
+			}
+		}
+	}
+}
+
+// Delete an incremental module from cache
+deleteDIncrementalModule(state : CompileState, flowfile : string) -> void {
+	fn = getDCacheFilename(state, flowfile);
+	if (state.config.verbose >= 1) println("Deleting outdated incremental DModule for '" + flowfile + "', file " + fn);
+
+	e = deleteFile(fn);
+	if (e != "") {
+		if (fileExists(fn)) {
+			println("Could not delete " + fn + ": " + e);
+		}
+	}
+}
+
+// Check if a module needs reloading
+dModuleNeedReloading(module : DModule, state : CompileState) -> bool {
+	// Check if the main file has changed
+	fullpath = module.fullpath;
+
+	if (!fileExists(fullpath)) true
+	else {
+		// Check timestamp
+		if (fileModifiedPrecise(fullpath) > module.timestamp) true
+		else {
+			// Check content hash
+			currentHash = md5(getFileContent(fullpath));
+			currentHash != module.contentHash;
+		}
+	}
+}
+
+// Extract all type names needed for a set of types, including those from union definitions
+// Uses a recursive approach to find a fixpoint where all dependent types are included
+extractAllNeededTypes(env : HModuleInterface, initialTypes : Set<string>) -> Set<string> {
+	expandTypesRecursively(env, initialTypes, makeSet());
+}
+
+// Helper function that recursively expands type dependencies until a fixpoint is reached
+expandTypesRecursively(env : HModuleInterface, currentTypes : Set<string>, previousTypes : Set<string>) -> Set<string> {
+	// If we've reached a fixpoint (no new types added), return the current set
+	if (equalSet(currentTypes, previousTypes)) {
+		currentTypes;
+	} else {
+		// Expand union types to include their member types
+		expandedTypes = expandUnionTypeMembers(env, currentTypes);
+		
+		// Expand struct types to include types from their fields
+		withStructs = foldTree(env.structs, expandedTypes, \name, struct, acc -> {
+			if (containsSet(expandedTypes, name)) {
+				// Process this struct's fields to get all type names used
+				fold(struct.fields, acc, \innerAcc, field -> {
+					getTypeNames(env, innerAcc, field.type);
+				});
+			} else acc;
+		});
+		
+		// Continue recursion with the expanded set
+		expandTypesRecursively(env, withStructs, currentTypes);
+	}
+}
+
+// Prune a module interface to only keep names that are exported
+// by the current module, removing imported names
+pruneModuleInterface(module : DModule) -> DModule {
+	// If there's no typeEnv, return the module unchanged
+	if (module.typeEnv.env == makeTree()) module
+	else {
+		// Extract the exports from the module
+		exportedNames = buildSet(module.exported);
+		
+		// Filter the environment to only keep exported names
+		prunedEnv = buildTreeFromSet(module.typeEnv.env, exportedNames);
+		
+		// Get all type names mentioned in exported functions and values
+		namesMentioned = foldTree(prunedEnv, makeSet(), \n, typeschema, acc -> {
+			mergeSets(acc, getTypeNamesFromSchema(module.typeEnv, typeschema));
+		});
+		
+		// Recursively expand to find all dependent types
+		allTypeNames = extractAllNeededTypes(module.typeEnv, namesMentioned);
+		
+		// Get types defined in this file
+		structsInFile = buildSet(getTreeKeys(module.structs));
+		unionsInFile = buildSet(getTreeKeys(module.unions));
+		typesInFile = mergeSets(structsInFile, unionsInFile);
+		
+		// Intersection: types that are both mentioned (after expansion) and defined in this file
+		// as well as those explicitly exported
+		typesToKeep = mergeSets(intersectSets(typesInFile, allTypeNames), exportedNames);
+		
+		// Filter structures to only keep needed types
+		prunedStructs = buildTreeFromSet(module.typeEnv.structs, typesToKeep);
+		prunedUnions = buildTreeFromSet(module.typeEnv.unions, typesToKeep);
+		prunedRawUnions = buildTreeFromSet(module.typeEnv.rawUnions, typesToKeep);
+		prunedSupertypes = makeTree(); // These will be rebuild from scratch anyways
+		
+		// Build field accessors for the pruned structs and unions
+		// This uses the same approach as in typecheck.flow, where we use the pruned structs and unions
+		// but with allStructs from the original module interface
+		fieldAccessors = buildFieldAccessors(prunedStructs, prunedUnions, module.typeEnv.structs);
+		
+		// Merge the pruned environment with the field accessors
+		prunedEnvWithAccessors = mergeTree(prunedEnv, fieldAccessors);
+		
+		// Create a new pruned interface that only includes exported names, required types, and field accessors
+		prunedInterface = HModuleInterface(module.typeEnv with 
+			env = prunedEnvWithAccessors,
+			structs = prunedStructs,
+			unions = prunedUnions,
+			rawUnions = prunedRawUnions,
+			supertypes = prunedSupertypes
+		);
+		
+		// Return module with pruned interface and mark that it no longer contains the full environment
+		DModule(module with typeEnv = prunedInterface, typeEnvIsFull = false);		
+	}
+}
+
+// Helper function to efficiently build a tree from a subset of keys
+// Rather than filtering a large tree, we iterate through the smaller set
+buildTreeFromSet(originalTree : Tree<?, ??>, keysToKeep : Set<?>) -> Tree<?, ??> {
+	foldSet(keysToKeep, makeTree(), \acc, key -> {
+		lookupResult = lookupTree(originalTree, key);
+		switch (lookupResult) {
+			None(): {
+				acc;
+			}
+			Some(value): setTree(acc, key, value);
+		}
+	});
+}

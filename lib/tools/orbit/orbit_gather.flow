@@ -1,0 +1,301 @@
+import tools/orbit/orbit_types;
+import tools/orbit/orbit_env;
+import tools/orbit/orbit_decompose;
+import ds/tree;
+import string;
+
+export {
+    // Implementation of gather function for binary operations
+    gatherFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv;
+    
+    // Implementation of scatter function for converting array structure back to binary operations
+    scatterFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv;
+    
+    // Helper function to determine if an operator is associative
+    isAssociativeOperator(op : string) -> bool;
+}
+
+// Main gather function - collects binary operations into an array structure
+gatherFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 2) {
+        println("ERROR: gather expects exactly 2 arguments: expression and template");
+        env;
+    } else {
+        // Get the expression to gather (evaluate it)
+        envExpr = interpret(env, args[0]);
+        expr = envExpr.result;
+        
+        // Get the template for the result (don't evaluate it yet)
+        template = args[1];
+        
+        // Extract the target function name from template
+        templateName = extractFunctionName(template);
+        
+        if (templateName == "") {
+            println("ERROR: gather template must be an operator");
+            envExpr;
+        } else {
+            if (env.tracing) {
+                println("DEBUG: Gathering binary operations with template function: " + templateName);
+            }
+            
+            // Collect the operands and operator from the binary expression
+            nodeCounter = ref 0;
+            visitedNodes = ref makeTree();
+            result = gatherBinaryOps(expr, templateName, visitedNodes, nodeCounter, env.tracing);
+            
+            if (env.tracing) {
+                println("DEBUG: Gathered operator: " + result.first);
+                println("DEBUG: Gathered operands: " + i2s(length(result.second)));
+            }
+            
+            // Create the result using the template function name as operator
+            // and without including the operator as a separate argument
+            resultExpr = OrFunction(
+				if (isValidId(result.first)) {
+	                OrIdentifier(result.first) // Use the actual operator
+				} else OrOperatorSymbol(result.first), // Use the operator symbol
+                [OrArray(result.second)]     // Just the array of operands
+            );
+            
+            // Return the result
+            OrbEnv(envExpr with result = resultExpr);
+        }
+    }
+}
+
+isValidId(s : string) -> bool {
+	if (strlen(s) == 0) false
+	else {
+		stringFoldi(s, true, \i, acc, charCode -> {
+			if (!acc) false
+			else {
+				c = getCharAt(s, i);
+				isLetter(c) || isDigit(c) || c == "_"
+			}
+		});
+	}
+}
+
+
+
+// Helper function to extract the function name from a template
+extractFunctionName(template : OrMath_expr) -> string {
+    switch (template) {
+        OrFunction(fn, __): {
+            switch (fn) {
+                OrIdentifier(id): id;
+                default: "";
+            }
+        }
+        OrOperatorSymbol(s): s;
+        default: {
+            // For other expressions, decompose to get the operator
+            decomposed = decomposeOrbit(template);
+            decomposed.first;
+        }
+    }
+}
+
+// Helper function to determine if an operator is associative
+isAssociativeOperator(op : string) -> bool {
+    op == "+" || op == "*" || op == "||" || op == "&&" ||
+    op == "∘" || op == "seq" || // Function composition and sequence
+    op == "∪" || op == "Union" || op == "union" || // Set union (various representations)
+    op == "∩" || op == "Intersection" || op == "intersect" || // Set intersection
+    op == "×" || op == "DirectProduct" || // Direct product 
+    op == "⊗" || op == "TensorProduct"; // Tensor product
+}
+
+// Helper function to recursively gather binary operations
+// Returns a pair of (operator, [operands])
+gatherBinaryOps(expr : OrMath_expr, targetOp : string, visitedNodes : ref Tree<int, bool>, 
+                nodeCounter : ref int, tracing : bool) -> Pair<string, [OrMath_expr]> {
+    // Use a counter to assign unique IDs to nodes
+    currentId = ^nodeCounter;
+    nodeCounter := currentId + 1;
+    
+    // Check if we've visited this node (using the ID we just assigned)
+    if (lookupTreeDef(^visitedNodes, currentId, false)) {
+        Pair("", [expr]); // Already visited, return as leaf node
+    } else {
+        // Mark this node as visited
+        visitedNodes := setTree(^visitedNodes, currentId, true);
+        
+        // Decompose the expression to get its operator and children
+        decomposed = decomposeOrbit(expr);
+        currentOp = decomposed.first;
+        
+        // Check if the current operator matches the target operator
+        if (currentOp == targetOp) {
+            // If this is an associative operator like +, *, ||, &&
+            if (isAssociativeOperator(currentOp)) {
+                // Get the operands (children of the expression)
+                children = decomposed.second.first;
+                
+                if (length(children) == 2) {
+                    // Recursively gather operands
+                    leftResult = gatherBinaryOps(children[0], targetOp, visitedNodes, nodeCounter, tracing);
+                    rightResult = gatherBinaryOps(children[1], targetOp, visitedNodes, nodeCounter, tracing);
+                    
+                    if (leftResult.first == "" && rightResult.first == "") {
+                        // Both sides are leaf nodes
+                        Pair(currentOp, [children[0], children[1]]);
+                    } else if (leftResult.first == targetOp && rightResult.first == "") {
+                        // Left side is target operation, right is leaf
+                        Pair(currentOp, concat(leftResult.second, [children[1]]));
+                    } else if (leftResult.first == "" && rightResult.first == targetOp) {
+                        // Right side is target operation, left is leaf
+                        Pair(currentOp, concat([children[0]], rightResult.second));
+                    } else if (leftResult.first == targetOp && rightResult.first == targetOp) {
+                        // Both sides are target operations
+                        Pair(currentOp, concat(leftResult.second, rightResult.second));
+                    } else {
+                        // Mixed operators, treat as leaf
+                        Pair(currentOp, [expr]);
+                    }
+                } else {
+                    // Not a binary expression
+                    Pair(currentOp, [expr]);
+                }
+            } else {
+                // Non-associative operators just get gathered without recursion
+                // We identify the operator but don't try to flatten its structure
+                children = decomposed.second.first;
+                if (length(children) == 2) {
+                    Pair(currentOp, [children[0], children[1]]);
+                } else {
+                    Pair(currentOp, [expr]);
+                }
+            }
+        } else {
+            // Operator doesn't match the target, return as leaf node
+            Pair("", [expr]);
+        }
+    }
+}
+
+// Implementation of scatter function - converts array structure back to binary operations
+scatterFunction(args : [OrMath_expr], env : OrbEnv, interpret : (OrbEnv, OrMath_expr) -> OrbEnv) -> OrbEnv {
+    if (length(args) != 1) {
+        println("ERROR: scatter expects exactly 1 argument: ops/sum expression");
+        env;
+    } else {
+        // Evaluate the argument
+        envArg = interpret(env, args[0]);
+        arg = envArg.result;
+        
+        // Check if it's a gathered structure with operator and array
+        switch (arg) {
+            OrFunction(fn, fnArgs): {
+                // Extract operator from function name
+                op = switch (fn) {
+                    OrIdentifier(id): id;
+                    OrUId(id): id;
+					OrOperatorSymbol(id): id;
+                    default: {
+						println("ERROR: scatter expects a function call with array argument");
+						"+"; // Default to + if not specified
+					}
+                };
+                
+                // Handle both new format and old format
+                if (length(fnArgs) == 1) {
+                    // New format: +([a, b, c])
+                    operands = switch (fnArgs[0]) {
+                        OrArray(items): items;
+                        default: [];
+                    };
+                    
+                    if (length(operands) == 0) {
+                        println("ERROR: Cannot scatter empty operand array");
+                        envArg;
+                    } else {
+                        // Convert the array back to binary operations
+                        result = convertToBinaryOps(op, operands);
+                        OrbEnv(envArg with result = result);
+                    }
+                } else if (length(fnArgs) == 2) {
+                    // Old format: ops("op", [a, b, c])
+                    // Extract operator and operands
+                    oldOp = switch (fnArgs[0]) {
+                        OrString(s): s;
+                        default: op; // Use function name if not a string
+                    };
+                    
+                    operands = switch (fnArgs[1]) {
+                        OrArray(items): items;
+                        default: [];
+                    };
+                    
+                    if (length(operands) == 0) {
+                        println("ERROR: Cannot scatter empty operand array");
+                        envArg;
+                    } else {
+                        // Convert the array back to binary operations
+                        result = convertToBinaryOps(oldOp, operands);
+                        OrbEnv(envArg with result = result);
+                    }
+                } else {
+                    println("ERROR: scatter expects a function with array argument");
+                    envArg;
+                }
+            }
+            default: {
+                println("ERROR: scatter expects a function call with array argument");
+                envArg;
+            }
+        }
+    }
+}
+
+// Helper function to convert array of operands back to binary operations
+convertToBinaryOps(op : string, operands : [OrMath_expr]) -> OrMath_expr {
+    if (length(operands) == 1) {
+        operands[0]; // Single operand, just return it
+    } else if (length(operands) == 2) {
+        // Two operands, create the binary operation
+        constructBinaryOp(op, operands[0], operands[1]);
+    } else {
+        // Multiple operands, build the tree from left to right
+        foldi(tail(operands), operands[0], \i, acc, operand -> 
+            constructBinaryOp(op, acc, operand)
+        );
+    }
+}
+
+// Helper function to construct a binary operation based on the operator
+constructBinaryOp(op : string, left : OrMath_expr, right : OrMath_expr) -> OrMath_expr {
+    if (op == "+") {
+        OrAdd(left, right);
+    } else if (op == "*") {
+        OrMultiply(left, right);
+    } else if (op == "-") {
+        OrSubtract(left, right);
+    } else if (op == "/") {
+        OrDivide(left, right);
+    } else if (op == "||") {
+        OrLogicalOr(left, right);
+    } else if (op == "&&") {
+        OrLogicalAnd(left, right);
+    } else if (op == "^") {
+        OrExponent(left, right);
+    } else if (op == "=") {
+        OrEquals(left, right);
+    } else if (op == "!=") {
+        OrNotEquals(left, right);
+    } else if (op == ">") {
+        OrGreaterThan(left, right);
+    } else if (op == ">=") {
+        OrGreaterEquals(left, right);
+    } else if (op == "<") {
+        OrLessThan(left, right);
+    } else if (op == "<=") {
+        OrLessEquals(left, right);
+    } else if (op == "%") {
+        OrModulo(left, right);
+    } else {
+        // For other operators, use function call syntax
+        OrFunction(OrIdentifier(op), [left, right]);
+    }
+}

@@ -1,0 +1,69 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/sexpr_compiled_parser;
+import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/eval_sexpr;
+import tools/orbit/sexpr/sexpr_stdlib;
+import tools/mango/mcode_lib;
+import runtime;
+import string;
+import net/url_parameter;
+import fs/filesystem;
+
+main() {
+	files = filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
+	if (files == []) {
+		println("Usage: sexpr <file.sexp>");
+		println("Optional parameters:");
+//		println("  trace=1 - Enable detailed tracing of evaluation steps");
+		println("  pretty=1 - Only pretty print the parsed result without evaluation");
+	}
+	
+	// Check if tracing is enabled via URL parameter
+//	tracingEnabled = getUrlParameter("trace") == "1";
+//	if (tracingEnabled) {
+//		println("Tracing enabled: Will show all evaluation steps");
+//	}
+	
+	// Check if we should only pretty print without evaluation
+	prettyPrintOnly = getUrlParameter("pretty") == "1";
+	if (prettyPrintOnly) {
+		println("Pretty print only: Will only show parsed AST without evaluation");
+	}
+	
+	// Create initial environment
+	env = getRuntimeEnv();
+	
+	// Process files sequentially and maintain environment state
+	result = fold(files, Pair(env, 0), \acc, f -> {
+		if (fileExists(f)) {
+			println("\nProcessing file: " + f);
+			program = getFileContent(f);
+			// Parse the expression
+			parsed = parseSexpr(f, program);
+			switch (parsed) {
+				Some(expr): {
+					// Always print the parsed result if pretty print is enabled
+					if (prettyPrintOnly) {
+						println("Parsed AST:");
+						println(prettySexpr(expr));
+						Pair(acc.first, acc.second);
+					} else {
+						// Evaluate the expression
+						eval_result = evalSexpr(acc.first, expr);
+						println("Result: " + prettySexpr(eval_result.value));
+						Pair(eval_result.env, acc.second);
+					}
+				}
+				None(): {
+					println("Parse error in file: " + f);
+					Pair(acc.first, acc.second + 1);
+				}
+			}
+		} else {
+			println("File not found: " + f + " with cwd " + getCurrentDirectory());
+			Pair(acc.first, acc.second + 1);
+		}
+	});
+	
+	quit(result.second);
+}

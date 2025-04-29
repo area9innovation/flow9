@@ -1,0 +1,113 @@
+import tools/flow9_retro/pexp/parse;
+import tools/flow9_retro/dexp/desugar;
+import tools/flow9_retro/types/typeinference;
+import tools/flow9_retro/bexp/btype2ttype;
+import tools/flow9_retro/bexp/pretty;
+import tools/flow9_retro/lookup;
+
+import tools/flow9_retro/tracing;
+
+import tools/flow9/flow_path;
+import tools/flow9_retro/flowcache;
+
+export {
+	// Parse, desugar and type a file, and all the transitive imports
+	compileFlow(cache : FlowCache, file : string) -> BModule;
+}
+
+compileFlow(cache : FlowCache, file : string) -> BModule {
+	path = flowPath2path(cache.includes, changeFileExt(file, ".flow"));
+	flowpath = path2flowPath(cache.includes, path);
+
+	// TODO: We could add a "stop" flag and cancel compilation in those cases
+	if (hasCachedBModule(cache.modules, flowpath)) {
+		getCachedBModule(cache.modules, flowpath);
+	} else if (^(cache.errorCount) != 0) {
+		// We stop if there are errors
+		println("Stops compilation because of errors: " + flowpath);
+		getDummyBModule();
+	} else if (hasIncrementalBModule(cache.tracing, cache.modules, path, flowpath)) {
+		// OK, we have an incremental module, which we read now
+		bmod = getCachedBModule(cache.modules, flowpath);
+
+		// Then make sure we have all dependents as well
+		sequential(false, map(bmod.imports, \i -> {
+			\ -> compileFlow(cache, i.path)
+		}));
+
+		// After all imported modules are compiled register types
+		registerModuleTypes(cache, bmod);
+		bmod;
+	} else if (containsSet(^(cache.awaiting), flowpath)) {
+		getDummyBModule();
+	} else if (fileExists(path)) {
+		// We should mark this as being processed,
+		// so we do not concurrently do the same file many times
+		cache.awaiting := insertSet(^(cache.awaiting), flowpath);
+
+		// OK, we have to parse this
+		code = getFileContent(path);
+
+		p = parsePExp(code, \e -> cache.onError(path + ":" + e));
+		if (isTracingId(cache.tracing, StageParse(), 0, flowpath)) {
+			println("Parsed '" + file + "' as " + path);
+		}
+
+		// OK, parse all the dependent files
+		imports = getDImports(p);
+
+		// TODO: fix this so that concurrent running of imports compilation 
+		// wouldn't hang
+		sequential(false, map(imports, \i -> {
+			\ -> compileFlow(cache, i.path)
+		}));
+
+		if (^(cache.errorCount) > 0) {
+			println("Stops compilation because of errors: " + flowpath);
+			getDummyBModule();
+		} else {
+			dd = makeDDesugar(cache.tracing, makeOnError(path, cache.onError), cache.nextId, 
+				// resolveStructName
+				\n -> {
+					// OK, scan our imports for this struct
+					lookupFromImport(cache.modules, cache.structLookup, imports, n);
+				}, 
+				// resolveUnionName
+				\n -> {
+					// OK, scan our imports for this union
+					lookupFromImport(cache.modules, cache.unionLookup, imports, n)
+				}
+			);
+
+			dmod = desugarPExp(dd, flowpath, path, p);
+
+			tenv0 = makeTTypeEnv(dd.onError, dmod);
+
+			// Register unions and subtyping relations into the global lookup
+			registerModuleTypes(cache, tenv0.bmodule);
+			tenv1 = updateNameLookupsForImports(cache, dd, tenv0, imports);
+			bmodule = ttypeInference(tenv1, dmod);
+
+			setCachedBModule(cache.modules, flowpath, bmodule);
+
+			if (^(cache.errorCount) != 0) {
+				// OK, there are errors, so remove any incremental
+				deleteBModule(cache.tracing, flowpath)
+			} else {
+				writeBModule(cache.tracing, bmodule);
+			}
+
+			// OK, clear the name lookup cache
+			clearFlowCache(cache);
+
+			if (isTracingId(tenv1.tracing, StageLower(), 1, flowpath)) {
+				println(prettyBModule(bmodule));
+			}
+
+			bmodule;
+		}
+	} else {
+		cache.onError(file + " could not be found");
+		getDummyBModule();
+	}
+}

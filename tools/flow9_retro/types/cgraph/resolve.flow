@@ -1,0 +1,272 @@
+import tools/flow9_retro/types/cgraph/pretty;
+import tools/flow9_retro/types/ugraph/debug;
+import tools/flow9_retro/types/ugraph/tmap;
+import tools/flow9_retro/types/cgraph/constraint;
+import tools/flow9_retro/types/pretty;
+import tools/flow9_retro/bexp/bexp;
+
+export {
+	// At the end, we use this to resolve the eclasses
+	resolveCNodes(tmap : TMap, verbose : bool) -> Tree<int, TType>;
+
+	// Given the resolution map, and a given eclass, find the final type
+	resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BType>;
+}
+
+resolveCNodes(tmap : TMap, verbose : bool) -> Tree<int, TType> {
+	if (verbose) dumpPostponed(tmap, "Starting resolution of " + ^(tmap.topid));
+
+	// Do all subtypes that work
+	remainingSubtypes(tmap, verbose);
+
+	// Do all the unifications that work
+	remainingUnifications(tmap, verbose);
+
+	if (verbose) {
+		dumpPostponed(tmap, "Remaining subs become unifications for " + ^(tmap.topid));
+	}
+
+	// Do all subtypes that work as unification
+	repeatList(tmap.cmap.constraints, \c : TConstraint -> {
+		subok = subtypeCEClass(tmap, c.subtype, c.supertype, true, c.reason);
+		if (subok == UnifyOK()) {
+			ok2 = subtypeCEClass(tmap, c.subtype, c.supertype, false, c.reason);
+			if (verbose && ok2 == UnifyOK()) {
+				println("  " + prettyCEClass(tmap.cmap, c.subtype) + " sub " + prettyCEClass(tmap.cmap, c.supertype) + " worked");
+			}
+			true;
+		} else {
+			ok = unifyCEClass(tmap, c.subtype, c.supertype, true, c.reason);
+			if (ok == UnifyOK()) {
+				// OK, then do it
+				ok2 = unifyCEClass(tmap, c.subtype, c.supertype, false, c.reason);
+				if (verbose && ok2 == UnifyOK()) {
+					println("  " + prettyCEClass(tmap.cmap, c.subtype) + " sub " + prettyCEClass(tmap.cmap, c.supertype) + " worked as unify");
+				}
+				ok2 == UnifyOK();
+			} else false;
+
+		}
+	}, 5);
+
+	// Pick smallest overloads for subtypes
+	iterList(^(tmap.cmap.constraints), \c : TConstraint -> {
+		// OK, let us reduce this one
+		pickSmallestOverload(tmap, c.subtype, None());
+	});
+
+	// Then do the subtypes that work after that
+	remainingSubtypes(tmap, verbose);
+
+	// Do all the unifications that work
+	remainingUnifications(tmap, verbose);
+
+	// Now, resolve any other overloads we might have
+	iterUnionMap(tmap.cmap.cmap, \tp : int, node : CNode -> {
+		// OK, let us reduce this one
+		pickSmallestOverload(tmap, tp, Some(node));
+	});
+	// Then do the subtypes that work after that
+	remainingSubtypes(tmap, verbose);
+
+	// Do all the unifications that work
+	remainingUnifications(tmap, verbose);
+
+	if (verbose) {
+		println("At the end");
+		dumpPostponed(tmap, "Finished resolution " + ^(tmap.topid));
+	}
+
+	doResolveCNodes(tmap);
+}
+
+remainingSubtypes(tmap : TMap, verbose : bool) -> void {
+	repeatList(tmap.cmap.constraints, \c : TConstraint -> {
+		ok = subtypeCEClass(tmap, c.subtype, c.supertype, true, c.reason);
+		if (ok == UnifyOK()) {
+			// OK, then do it
+			ok2 = subtypeCEClass(tmap, c.subtype, c.supertype, false, c.reason);
+			if (verbose && ok2 == UnifyOK()) {
+				println("  " + prettyCEClass(tmap.cmap, c.subtype) + " sub " + prettyCEClass(tmap.cmap, c.supertype) + " worked");
+			}
+			ok2 == UnifyOK();
+		} else false;
+	}, 5);
+}
+
+remainingUnifications(tmap : TMap, verbose : bool) -> void {
+	repeatList(tmap.cmap.unifications, \c : TUnification -> {
+		res = unifyCEClass(tmap, c.left, c.right, true, c.reason);
+		if (res == UnifyOK()) {
+			// OK, then do it
+			res2 = unifyCEClass(tmap, c.left, c.right, false, c.reason);
+			if (verbose && res2 == UnifyOK()) {
+				println("  " + prettyCEClass(tmap.cmap, c.left) + " unify " + prettyCEClass(tmap.cmap, c.right) + " worked");
+			}
+			res2 == UnifyOK();
+		} else false;
+	}, 5);
+}
+
+dumpPostponed(tmap : TMap, stage : string) -> void {
+	constraints = ^(tmap.cmap.constraints);
+	unifications = ^(tmap.cmap.unifications);
+
+	if (!isEmptyList(constraints) || !isEmptyList(unifications)) {
+		println(stage);
+	}
+	if (!isEmptyList(constraints)) {
+		println("Postponed subtypes:");
+		iterList(constraints, \cc -> {
+			println("  " + prettyCEClass(tmap.cmap, cc.subtype) + " sub " + prettyCEClass(tmap.cmap, cc.supertype));
+		});
+		println("");
+	}
+	if (!isEmptyList(unifications)) {
+		println("Postponed unifications:");
+		iterList(unifications, \cc -> {
+			println("  " + prettyCEClass(tmap.cmap, cc.left) + " vs " + prettyCEClass(tmap.cmap, cc.right));
+		});
+		println("");
+	}
+}
+
+repeatList(rlist : ref List<?>, fn : (?) -> bool, iter : int) -> void {
+	if (iter == 0) {}
+	else {
+		workDone = processList(rlist, fn);
+		if (workDone) {
+			repeatList(rlist, fn, iter - 1);
+		}
+	}
+}
+
+// Returns true if we did something
+processList(rlist : ref List<?>, fn : (?) -> bool) -> bool {
+	list = ^rlist;
+	rlist := makeList();
+	newList = foldList(list, makeList(), \acc, e -> {
+		didWork = fn(e);
+		if (didWork) {
+			acc;
+		} else Cons(e, acc);
+	});
+	rlist := concatList(newList, ^rlist);
+	!isEmptyList(^rlist);
+}
+
+pickSmallestOverload(tmap : TMap, eclass : int, mnode : Maybe<CNode>) -> void {
+	node = mnode ?? mnode : getUnionMapValue(tmap.cmap.cmap, eclass);
+	switch (node : CNode) {
+		CEpsilon(): {}
+		CName(name, typars, reason): {}
+		CFunction(args, return, reason): {}
+		COverload(unique, options, reason): {
+			// OK, let us reduce this one
+			smallest : Pair<CNode, int> = foldSet(node.options, Pair(CEpsilon(), intMax), \acc, opt -> {
+				onode = getUnionMapValue(tmap.cmap.cmap, opt);
+				size = countSubtypes(tmap, onode);
+				if (size == intMax || size > acc.second) {
+					acc
+				} else {
+					Pair(onode, size)
+				}
+			});
+			if (smallest.second < intMax) {
+				// println("Reducing overload " + prettyCEClass(tmap.cmap, eclass) + " to " + prettyCNode(tmap.cmap, smallest.first));
+				setUnionMapValue(tmap.cmap.cmap, eclass, smallest.first);
+			}
+		}
+	}
+}
+
+countSubtypes(tmap : TMap, c : CNode) -> int {
+	switch (c) {
+		CEpsilon(): intMax;
+		CName(name, typars, reason): {
+			subs = ^(tmap.resolveSubtypes)(name);
+			if (subs == []) 1
+			else length(subs)
+		}
+		CFunction(args, return, reason): intMax;
+		COverload(unique, options, reason): intMax;
+	}
+}
+
+doResolveCNodes(tmap : TMap) -> Tree<int, TType> {
+	types = ref makeTree();
+	visited : ref Set<int> = ref makeSet();
+
+	verbose = isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid));
+
+	iterUnionMap(tmap.cmap.cmap, \root, node -> {
+		if (node == CEpsilon()) {
+
+		} else {
+			if (verbose) {
+				println(debugCNode(tmap, root));
+			}
+			mtype = resolveCNode(tmap, ^types, /*visited,*/ root);
+			mtype ?? {
+				// println(mtype);
+			} : {
+				// println("Error: Could not resolve e" + i2s(root));
+			}
+		}
+	});
+	^types;
+}
+
+resolveCNode(tmap : TMap, eclasses : Tree<int, TType>, eclass : int) -> Maybe<BType> {
+	root = findUnionMapRoot(tmap.cmap.cmap, eclass);
+	mtype = lookupTree(eclasses, root);
+	mtype ?? {
+		println("TODO: Convert " + prettyTType(mtype) + " to btype");
+		None();
+	} : {
+		val = getUnionMapValue(tmap.cmap.cmap, root);
+		switch (val) {
+			CEpsilon(): {
+				// println("TODO: Empty eclass " + i2s(eclass) + " as btype");
+				None();
+			}
+			CName(name, typars, reason): {
+				btypars = filtermap(typars, \tp -> {
+					resolveCNode(tmap, eclasses, tp);
+				});
+				if (length(btypars) == length(typars)) {
+					Some(BTypeName(name, btypars));
+				} else {
+					// println("Missing type pars for " + name);
+					None();
+				}
+			}
+			CFunction(args, return, reason): {
+				bargs = filtermap(args, \arg -> {
+					resolveCNode(tmap, eclasses, arg);
+				});
+				if (length(bargs) == length(args)) {
+					mbret = resolveCNode(tmap, eclasses, return);
+					mbret ?? {
+						Some(BTypeFunction(bargs, mbret));
+					} : {
+						// println("Unknown return");
+						None();
+					}
+				} else {
+					// println("Missing args for function");
+					None();
+				}
+			}
+			COverload(unique, options, reason): {
+				// We just randomly pick the smallest one
+				mmin = popMinSet(options);
+				mmin ?? {
+					resolveCNode(tmap, eclasses, mmin.value);
+				}: {
+					None();
+				}
+			}
+		}
+	}
+}

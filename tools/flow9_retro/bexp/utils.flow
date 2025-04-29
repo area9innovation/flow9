@@ -1,0 +1,157 @@
+import tools/flow9_retro/bexp/bexp;
+import ds/set;
+
+export {
+	// Find the globals that are used in this expression
+	extractFreeNamesBExp(free : Set<string>, locals : Set<string>, e : BExp) -> Set<string>;
+	// Find the typenames that are used in this expression
+	extractTypeNamesBExp(typename : Set<string>, e : BExp) -> Set<string>;
+}
+
+extractFreeNamesBExp(free : Set<string>, locals : Set<string>, e : BExp) -> Set<string> {
+	switch (e) {
+		BValue(): free;
+		BVar(id, type): {
+			if (containsSet(locals, id)) free
+			else insertSet(free, id);
+		}
+		BLet(id, value, body, type): {
+			nlocals = insertSet(locals, id);
+			free1 = extractFreeNamesBExp(free, nlocals, value);
+			extractFreeNamesBExp(free1, nlocals, body);
+		}
+		BIf(cond, then, else_, type): {
+			free1 = extractFreeNamesBExp(free, locals, cond);
+			free2 = extractFreeNamesBExp(free1, locals, then);
+			extractFreeNamesBExp(free2, locals, else_);
+		}
+		BCall(fn, args, type): {
+			free1 = extractFreeNamesBExp(free, locals, fn);
+			fold(args, free1, \acc, arg -> {
+				extractFreeNamesBExp(acc, locals, arg);
+			});
+		}
+		BLambda(args, body, type, capturedVars): {
+			nlocals = fold(args, locals, insertSet);
+			extractFreeNamesBExp(free, nlocals, body);
+		}
+		BSequence(exps, type): {
+			fold(exps, free, \acc, ex -> {
+				extractFreeNamesBExp(acc, locals, ex);
+			});
+		}
+		BConstruct(struct, args, type): {
+			fold(args, free, \acc, ex -> {
+				extractFreeNamesBExp(acc, locals, ex);
+			});
+		}
+		BField(value, field, type): {
+			extractFreeNamesBExp(free, locals, value);
+		}
+		BSetMutable(left, field, value, type): {
+			free1 = extractFreeNamesBExp(free, locals, left);
+			extractFreeNamesBExp(free1, locals, value);
+		}
+		BSwitch(value, switchType, cases, defaultCase, type): {
+			free1 = extractFreeNamesBExp(free, locals, value);
+			free2 = defaultCase ?? {
+				extractFreeNamesBExp(free1, locals, defaultCase);
+			} : free1;
+			fold(cases, free2, \acc, case -> {
+				extractFreeNamesBExp(acc, locals, case.body);
+			})
+		}
+		BArray(args, type): {
+			fold(args, free, \acc, ex -> {
+				extractFreeNamesBExp(acc, locals, ex);
+			});
+		}
+		BCast(value, from, to) : extractFreeNamesBExp(free, locals, value);
+		BDupValue(value) : extractFreeNamesBExp(free, locals, value);
+		BDropValue(value) : extractFreeNamesBExp(free, locals, value);
+		BReuseValue(value) : extractFreeNamesBExp(free, locals, value);
+	}
+}
+
+extractTypeNamesBExp(acc : Set<string>, e : BExp) -> Set<string> {
+	switch (e) {
+		BValue(): acc;
+		BVar(id, type): {
+			extractTypeNamesBType(acc, type)
+		}
+		BLet(id, value, body, type): {
+			acc1 = extractTypeNamesBExp(acc, value);
+			acc2 = extractTypeNamesBExp(acc1, body);
+			extractTypeNamesBType(acc2, type);
+		}
+		BIf(cond, then, else_, type): {
+			acc1 = extractTypeNamesBExp(acc, cond);
+			acc2 = extractTypeNamesBExp(acc1, then);
+			acc3 = extractTypeNamesBExp(acc2, else_);
+			extractTypeNamesBType(acc3, type);
+		}
+		BCall(fn, args, type): {
+			acc1 = extractTypeNamesBExp(acc, fn);
+			acc2 = fold(args, acc1, extractTypeNamesBExp);
+			extractTypeNamesBType(acc2, type);
+		}
+		BLambda(args, body, type, capturedVars): {
+			acc1 = extractTypeNamesBExp(acc, body);
+			extractTypeNamesBType(acc1, type);
+		}
+		BSequence(exps, type): {
+			acc1 = fold(exps, acc, extractTypeNamesBExp);
+			extractTypeNamesBType(acc1, type);
+		}
+		BConstruct(struct, args, type): {
+			acc1 = insertSet(acc, struct);
+			acc2 = fold(args, acc1, extractTypeNamesBExp);
+			extractTypeNamesBType(acc2, type);
+		}
+		BField(value, field, type): {
+			acc1 = extractTypeNamesBExp(acc, value);
+			extractTypeNamesBType(acc1, type);
+		}
+		BSetMutable(left, field, value, type): {
+			acc1 = extractTypeNamesBExp(acc, left);
+			acc2 = extractTypeNamesBExp(acc1, value);
+			extractTypeNamesBType(acc2, type);
+		}
+		BSwitch(value, switchType, cases, defaultCase, type): {
+			acc1 = extractTypeNamesBExp(acc, value);
+			acc2 = extractTypeNamesBType(acc1, switchType);
+			acc3 = defaultCase ?? {
+				extractTypeNamesBExp(acc2, defaultCase);
+			} : acc2;
+			acc4 = fold(cases, acc3, \acc0, case -> {
+				acc5 = insertSet(acc0, case.id);
+				extractTypeNamesBExp(acc5, case.body);
+			});
+			extractTypeNamesBType(acc4, type);
+		}
+		BArray(args, type): {
+			acc1 = fold(args, acc, extractTypeNamesBExp);
+			extractTypeNamesBType(acc1, type);
+		}
+		BCast(value, from, to) : {
+			acc1 = extractTypeNamesBType(acc, from);
+			extractTypeNamesBType(acc1, to);
+		}
+		BDupValue(value) : extractTypeNamesBExp(acc, value);
+		BDropValue(value) : extractTypeNamesBExp(acc, value);
+		BReuseValue(value) : extractTypeNamesBExp(acc, value);
+	}
+}
+
+extractTypeNamesBType(acc : Set<string>, t : BType) -> Set<string> {
+	switch (t) {
+		BTypePar(id): acc;
+		BTypeName(id, typars): {
+			acc1 = if (startsWith(id, "?")) acc else insertSet(acc, id);
+			fold(typars, acc1, extractTypeNamesBType);
+		}
+		BTypeFunction(args, returnType): {
+			fold(args, extractTypeNamesBType(acc, returnType), extractTypeNamesBType);
+		}
+	}
+}

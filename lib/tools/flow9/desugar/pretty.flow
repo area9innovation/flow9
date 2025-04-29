@@ -1,0 +1,396 @@
+import tools/flow9/desugar/dexp;
+import text/blueprint;
+import ds/treeutils;
+import tools/flow9/type/pretty;
+
+export {
+	newPrEnv() -> PrEnv;
+	makePrEnv(m : DModule, info : bool) -> PrEnv;
+	prettyDModule(env : PrEnv, m : DModule) -> string;
+	prettyDExp(env : PrEnv, e : DExp) -> string;
+	prettyDType(env : PrEnv, t : DType) -> string;
+	prettyDValue(env : PrEnv, v : DValue) -> string;
+
+	summarizeDExp(e : DExp) -> string;
+
+	PrEnv(source : string, info : bool, positions : [int], types : [HTypeSchema]);
+
+	printModuleInterface(module : DModule) -> void;
+}
+
+newPrEnv() -> PrEnv {
+	PrEnv("", false, [], []);
+}
+
+makePrEnv(m : DModule, info : bool) -> PrEnv {
+	PrEnv(getFileContent(m.fullpath), info, m.positions, m.types)
+}
+
+
+prettyDModule(env : PrEnv, m : DModule) -> string {
+	blueprint("
+		// Module: %flowpath%   at    %fullpath%
+		%imports%
+		%forbids%
+		%exported%
+		%structs%
+		%unions%
+		%natives%
+		%toplevels%
+		/* 
+		String includes: %stringincludes%
+		Order: %order%
+		*/
+		",
+		[
+			"flowpath", m.flowpath,
+			"fullpath", m.fullpath,
+			"imports", superglue(m.imports, \i -> prettyDImport(env, i), ";\n"),
+			"forbids", superglue(m.forbids, \f -> prettyDForbid(env, f), ";\n"),
+			"exported", superglue(m.exported, \e -> e, "\n"),
+			"structs", prettyTree(m.structs, \k, v -> prettyDStruct(env, v), "\n"),
+			"unions", prettyTree(m.unions, \k, v -> prettyDUnion(env, v), "\n"),
+			"natives", prettyTree(m.natives, \k, v -> prettyDNative(env, v), "\n"),
+			"toplevels", prettyTree(m.toplevels, \k, v -> prettyDGlobal(env, v), "\n"),
+			"stringincludes", superglue(m.stringincludes, \s -> s, "\n"),
+			"order", superglue(m.order, \o -> o, "\n")
+		]
+	)
+}
+
+prettyDImport(env : PrEnv, i : DImport) -> string {
+	"import " + i.path + prettyPInfo(env, i.info)
+}
+
+prettyDForbid(env : PrEnv, f : DForbid) -> string {
+	"forbid " + f.path + prettyPInfo(env, f.info)
+}
+
+prettyDStruct(env : PrEnv, s : DStruct) -> string {
+	blueprint("%uid%(%args%); // %typars%   %info%",
+		[
+			"uid", s.uid,
+			"typars", superglue(s.typars, \t -> t, ", "),
+			"args", superglue(s.args, \a -> prettyDStructArg(env, a), "\n"),
+			"info", prettyPInfo(env, s.info)
+		]
+	)
+}
+
+prettyDStructArg(env : PrEnv, a : DStructArg) -> string {
+	blueprint("%mutable%%field% : %type%",
+		[
+			"mutable", if (a.ismutable) "mutable " else "",
+			"field", a.field,
+			"type", prettyDType(env, a.type),
+		]
+	)
+}
+
+prettyDUnion(env : PrEnv, u : DUnion) -> string {
+	blueprint("%uid%%typars% ::= %types%;%info%",
+		[
+			"uid", u.uid,
+			"typars", superglue(u.typars, \t -> t, ", "),
+			"types", superglue(u.types, \t -> prettyDTypename(env, t), "\n"),
+			"info", prettyPInfo(env, u.info)
+		]
+	)
+}
+
+prettyDNative(env : PrEnv, n : DNative) -> string {
+	blueprint("native %name% : %isIo%%type% = %nativeName%; // %hasFallback%  %info%",
+		[
+			"name", n.name,
+			"isIo", if(n.isIo) "io " else "",
+			"type", prettyDType(env, n.type),
+			"nativeName", n.nativeName,
+			"hasFallback", if (n.hasFallback) " with fallback" else "",
+			"info", prettyPInfo(env, n.info)
+		]
+	)
+}
+
+prettyDGlobal(env : PrEnv, g : DGlobal) -> string {
+	blueprint("%name% = %value%; // %typars% %recursive% %info%",
+		[
+			"name", g.name,
+			"typars", superglue(g.typars, \t -> t, ", "),
+			"recursive", if (g.recursive) " recursive" else "", 
+			"value", prettyDExp(env, g.value),
+			"info", prettyPInfo(env, g.info)
+		]
+	)
+}
+
+prettyDType(env : PrEnv, t : DType) -> string {
+	switch (t) {
+		DArrayType(type, info): "[" + prettyDType(env, type) + "]" + prettyPInfo(env, info);
+		DAutoType(info): "auto" + prettyPInfo(env, info);
+		DBoolType(info): "bool" + prettyPInfo(env, info);
+		DDoubleType(info): "double" + prettyPInfo(env, info);
+		DFlowType(info): "flow" + prettyPInfo(env, info);
+		DFnType(args, returnType, info): 
+			"(" + superglue(args, \a -> prettyDType(env, a), ", ") + ") -> " + 
+			prettyDType(env, returnType) + prettyPInfo(env, info);
+		DIntType(info): "int" + prettyPInfo(env, info);
+		DNativeType(info): "native" + prettyPInfo(env, info);
+		DPolyType(id, info): id + prettyPInfo(env, info);
+		DRefType(type, info): "ref " + prettyDType(env, type) + prettyPInfo(env, info);
+		DStringType(info): "string" + prettyPInfo(env, info);
+		DTypename(uid, typars, info): 
+			uid + "<" + superglue(typars, \tt -> prettyDType(env, tt), ", ") + ">" + prettyPInfo(env, info);
+		DVoidType(info): "void" + prettyPInfo(env, info);
+	}
+}
+
+prettyDExp(env : PrEnv, e : DExp) -> string {
+	switch (e) {
+		DValue(): prettyDValue(env, e);
+		DVar(name, info): name + prettyPInfo(env, info);
+		DArray(values, info): "[" + superglue(values, \v -> prettyDExp(env, v), ", ") + "]" + prettyPInfo(env, info);
+		DCall(fn, args, info): prettyDExp(env, fn) + "(" + superglue(args, \a -> prettyDExp(env, a), ", ") + ")" + prettyPInfo(env, info);
+		DLet(name, value, body, info): {
+			blueprint("
+				%name% = %value%; %info%
+				%body%",
+				[
+					"name", name,
+					"value", prettyDExp(env, value),
+					"body", prettyDExp(env, body),
+					"info", prettyPInfo(env, info)
+				]
+			)
+		}
+		DIfElse(condition, then, else_, info): {
+			blueprint("
+				if (%condition%) { %info%
+					%then%
+				} else {
+					%else%
+				}",
+				[
+					"condition", prettyDExp(env, condition),
+					"then", prettyDExp(env, then),
+					"else", prettyDExp(env, else_),
+					"info", prettyPInfo(env, info)
+				]
+			)
+		}
+		DMaybe(condition, then, else_, info): {
+			blueprint("
+				%condition% ?? { %info%
+					%then%
+				} : {
+					%else%
+				}",
+				[
+					"condition", prettyDExp(env, condition),
+					"then", prettyDExp(env, then),
+					"else", prettyDExp(env, else_),
+					"info", prettyPInfo(env, info)
+				]
+			)
+		}
+		DSwitch(value, cases, defaultCase, info): {
+			blueprint("
+				switch (%value%) { %info%
+					%cases%%defaultCase%
+				}",
+				[
+					"value", prettyDExp(env, value),
+					"cases", superglue(cases, \c -> prettyDCase(env, c) + ";", "\n"),
+					"defaultCase", switch (defaultCase) {
+						None(): "";
+						Some(d): "\ndefault: " + prettyDExp(env, d) + ";";
+					},
+					"info", prettyPInfo(env, info)
+				]
+			)
+		}
+		DBuiltin(op, args, info): {
+			pargs = map(args, \a -> prettyDExp(env, a));
+			prettyDOp(env, pargs, op) + prettyPInfo(env, info);
+		}
+		DWith(uid, exp1, fieldassigns, info): {
+			blueprint("
+				%uid%(%exp1% with %info%
+					%fieldassigns%
+				)",
+				[
+					"uid", uid,
+					"exp1", prettyDExp(env, exp1),
+					"fieldassigns", superglue(fieldassigns, \f -> prettyDFieldAssign(env, f), ",\n"),
+					"info", prettyPInfo(env, info)
+				]
+			)
+		}
+	}
+}
+
+prettyDValue(env : PrEnv, v : DValue) -> string {
+	switch (v) {
+		DVoid(info): "{}" + prettyPInfo(env, info);
+		DBool(value, info): b2s(value) + prettyPInfo(env, info);
+		DInt(value, info): i2s(value) + prettyPInfo(env, info);
+		DDouble(value, info): d2s(value) + prettyPInfo(env, info);
+		DString(value, info): toString(value) + prettyPInfo(env, info);
+		DLambda(args, body, info): {
+			blueprint("
+				\\%args% -> { %info%
+					%body% 
+				}",
+				[
+					"args", superglue(args, \a -> prettyDArgType(env, a), ", "),
+					"body", prettyDExp(env, body),
+					"info", prettyPInfo(env, info)
+				]
+			)
+		}
+	}
+}
+
+prettyDCase(env : PrEnv, c : DCase) -> string {
+	c.uid + "(" + strGlue(c.ids, ", ") + "): " + prettyDExp(env, c.body) + prettyPInfo(env, c.info);
+}
+
+prettyDOp(env : PrEnv, args : [string], op : DOp) -> string {
+	switch (op) {
+		DCast(toType): "cast(" + args[0] + " : " + prettyDType(env, toType) + ")";
+		DIsSubType(type): args[0] + ":" + prettyDType(env, type);
+		DDeref(): "^" + args[0];
+		DDot(field): args[0] + "." + field;
+		DNegative(): "-" + args[0];
+		DNot(): "!" + args[0];
+		DRef(): "ref " + args[0];
+		DAdd(): args[0] + "+" + args[1];
+		DAnd(): args[0] + "&&" + args[1];
+		DAssign(): args[0] + " := " + args[1];
+		DDiv(): args[0] + "/" + args[1];
+		DEqual(): args[0] + "==" + args[1];
+		DGreater(): args[0] + ">" + args[1];
+		DGreaterEqual(): args[0] + ">=" + args[1];
+		DIndex(): args[0] + "[" + args[1] + "]";
+		DLess(): args[0] + "<" + args[1];
+		DLessEqual(): args[0] + "<=" + args[1];
+		DMod(): args[0] + "%" + args[1];
+		DMul(): args[0] + "*" + args[1];
+		DMutableAssign(field): args[0] + "." + field + " ::= " + args[1];
+		DNotEqual(): args[0] + "!=" + args[1];
+		DOr(): args[0] + "||" + args[1];
+		DPipe(): args[0] + "|>" + args[1];
+		DSequence(): {
+			if (length(args) == 1) {
+				args[0];
+			} else {
+				blueprint("
+					{
+						%args%
+					}
+					",
+					["args", strGlue(args, ";\n")]
+				);
+			}
+		}
+		DSub(): args[0] + "-" + args[1];
+	}
+}
+
+prettyDFieldAssign(env : PrEnv, f : DFieldAssign) -> string {
+	f.field + " = " + prettyDExp(env, f.exp) + prettyPInfo(env, f.info);
+}
+
+prettyDArgType(env : PrEnv, a : DArgType) -> string {
+	a.name + ": " + prettyDType(env, a.type) + prettyPInfo(env, a.info);
+}
+
+prettyDTypename(env : PrEnv, t : DTypename) -> string {
+	t.uid + "<" + superglue(t.typars, \tp -> prettyDType(env, tp), ", ") + ">" + prettyPInfo(env, t.info);
+}
+
+prettyPInfo(p : PrEnv, info : int) -> string {
+	if (p.info) {
+		t = elementAt(p.types, info, HTypeCons("", []));
+	 	" :: " + prettyHTypeSchema(t);
+	} else "";
+}
+
+
+summarizeDExp(e : DExp) -> string {
+	switch (e) {
+		DVoid(info): "{}";
+		DInt(value, info): i2s(value);
+		DDouble(value, info): d2s(value);
+		DBool(value, info): b2s(value);
+		DString(value, info): toString(value);
+		DLambda(args, body, info): {
+			"\\" + superglue(args, \a -> a.name, ", ") + " -> " + summarizeDExp(body);
+		}
+		DVar(name, info): name;
+		DArray(values, info): "[" + superglue(values, \v -> summarizeDExp(v), ", ") + "]";
+		DCall(fn, args, info): summarizeDExp(fn) + "(" + superglue(args, \a -> summarizeDExp(a), ", ") + ")";
+		DLet(name, value, body, info): name + " = " + summarizeDExp(value) + "; " + summarizeDExp(body);
+		DIfElse(condition, then, else_, info): "if (" + summarizeDExp(condition) + ") { " + summarizeDExp(then) + " } else { " + summarizeDExp(else_) + " }";
+		DMaybe(condition, then, else_, info): "maybe (" + summarizeDExp(condition) + ") { " + summarizeDExp(then) + " } else { " + summarizeDExp(else_) + " }";
+		DSwitch(value, cases, defaultCase, info): "switch " + summarizeDExp(value) + " { " + superglue(cases, \c -> c.uid, " ") + " }";
+		DBuiltin(op, args, info): {
+			switch (op) {
+				DCast(toType): "cast " + prettyDType(newPrEnv(), toType);
+				DIsSubType(type): "isSubType " + prettyDType(newPrEnv(), type);
+				DDeref(): "^"; 
+				DDot(field): "." + field;
+				DNegative(): "-";
+				DNot(): "!";
+				DAdd(): "+";
+				DAnd(): "&&";
+				DDiv(): "/";
+				DMod(): "%";
+				DMul(): "*";
+				DOr(): "||";
+				DSub(): "-";
+				DRef(): "ref";
+				DAssign(): ":=";
+				DEqual(): "==";
+				DGreater(): ">";
+				DGreaterEqual(): ">=";
+				DLess(): "<";
+				DLessEqual(): "<="; 
+				DNotEqual(): "!=";
+				DIndex(): summarizeDExp(args[0]) + "[]";
+				DMutableAssign(field): "." + field + "::=";
+				DPipe(): "|>";
+				DSequence(): if (length(args) == 1) "{" + summarizeDExp(args[0]) + "}" else "{ ... }";
+			}
+		}
+		DWith(uid, wexp, fieldassigns, info): "with " + uid + "(" + summarizeDExp(wexp) + ") { " + superglue(fieldassigns, \f -> f.field + " = " + summarizeDExp(f.exp), ", ") + " }";
+	}
+}
+
+
+// Helper function to print module interface details for debugging
+printModuleInterface(module : DModule) -> void {
+	exportedNames = module.exported;
+	typeEnv = module.typeEnv;
+	
+	println("\n==== MODULE INTERFACE: " + module.flowpath + " ====");
+	println("Exported names (" + i2s(length(exportedNames)) + "): " + strGlue(exportedNames, ", "));
+	println("\nEnvironment entries (" + i2s(sizeTree(typeEnv.env)) + "): ");
+			traverseInOrder(typeEnv.env, \name, schema -> {
+		println("  " + name + " : " + prettyHTypeSchema(schema));
+	});
+	if (!isEmptyTree(typeEnv.unions)) {
+		println("\nUnions (" + i2s(sizeTree(typeEnv.unions)) + "):");
+		traverseInOrder(typeEnv.unions, \name, union -> {
+			println("  " + prettyHUnion(union, true));
+		});
+	}
+	
+	if (!isEmptyTree(typeEnv.structs)) {
+		println("\nStructs (" + i2s(sizeTree(typeEnv.structs)) + "):");
+		traverseInOrder(typeEnv.structs, \name, struct -> {
+			println("  " + prettyHStruct(struct, true));
+		});
+	}
+	println("==== END MODULE INTERFACE ====\n");
+}
+

@@ -1,0 +1,279 @@
+// File: /home/alstrup/area9/flow9/lib/tools/orbit/lib/linalg.orb
+//
+// Basic Linear Algebra library for Orbit.
+// Vectors are represented as 1D arrays: [e1, e2, ...]
+// Matrices are represented as 2D arrays (array of rows): [[r1c1, r1c2], [r2c1, r2c2], ...]
+// Assumes numeric elements (Int or Double).
+
+import lib/array; // For map, fold, etc. - though built-ins might suffice
+
+// --- Vector Operations ---
+
+// Adds two vectors element-wise.
+// Precondition: Vectors must have the same length.
+fn addV(v1, v2) = (
+    if length(v1) != length(v2) then (
+        println("Error: Cannot add vectors of different lengths.");
+        [] // Return empty vector on error
+    ) else (
+        // Use recursion for element-wise addition
+        fn add_elements(idx, result) = (
+            if idx >= length(v1) then result
+            else add_elements(idx + 1, result + [v1[idx] + v2[idx]])
+        );
+        add_elements(0, [])
+    )
+);
+
+// Subtracts vector v2 from v1 element-wise.
+// Precondition: Vectors must have the same length.
+fn subV(v1, v2) = (
+    if length(v1) != length(v2) then (
+        println("Error: Cannot subtract vectors of different lengths.");
+        [] // Return empty vector on error
+    ) else (
+        fn sub_elements(idx, result) = (
+            if idx >= length(v1) then result
+            else sub_elements(idx + 1, result + [v1[idx] - v2[idx]])
+        );
+        sub_elements(0, [])
+    )
+);
+
+
+// Scales a vector by a scalar value.
+fn scaleV(scalar, v) = (
+    map(v, \x -> scalar * x)
+);
+
+// Calculates the dot product (inner product) of two vectors.
+// Precondition: Vectors must have the same length.
+fn dotV(v1, v2) = (
+    if length(v1) != length(v2) then (
+        println("Error: Cannot compute dot product of vectors with different lengths.");
+        0.0 / 0.0 // Return NaN on error
+    ) else (
+        // Use recursion to sum products
+        fn sum_products(idx, current_sum) = (
+            if idx >= length(v1) then current_sum
+            else sum_products(idx + 1, current_sum + (v1[idx] * v2[idx]))
+        );
+        sum_products(0, 0.0) // Start sum at 0.0 for Double result
+    )
+);
+
+// Calculates the Euclidean norm (magnitude or length) of a vector.
+fn normV(v) = (
+    sqrt(dotV(v, v)) // norm(v) = sqrt(v . v)
+);
+
+// --- Matrix Helper Functions ---
+
+// Returns the number of rows in a matrix.
+fn matrixRows(m) = length(m);
+
+// Returns the number of columns in a matrix.
+// Assumes a non-empty, rectangular matrix. Returns 0 for empty matrix.
+fn matrixCols(m) = (
+    if matrixRows(m) == 0 then 0
+    else length(m[0]) // Length of the first row
+);
+
+// Gets the element at row r, column c (0-indexed).
+fn getMatrixElement(m, r, c) = (
+    // Basic bounds check (optional but good practice)
+    if r < 0 || r >= matrixRows(m) || c < 0 || c >= matrixCols(m) then (
+       println("Error: Matrix index out of bounds (" + i2s(r) + ", " + i2s(c) + ")");
+       0.0 / 0.0 // NaN
+    ) else (
+       m[r][c]
+    )
+);
+
+// Creates a matrix with specified rows and columns, using an initializer function.
+// initializer_fn(rowIndex, colIndex) should return the value for M[rowIndex][colIndex].
+fn makeMatrix(rows, cols, initializer_fn) = (
+    fn build_rows(r, current_rows) = (
+        if r >= rows then current_rows
+        else (
+            fn build_cols(c, current_col_values) = (
+                if c >= cols then current_col_values
+                else build_cols(c + 1, current_col_values + [initializer_fn(r, c)])
+            );
+            let new_row = build_cols(0, []);
+            build_rows(r + 1, current_rows + [new_row])
+        )
+    );
+    build_rows(0, [])
+);
+
+// Creates an identity matrix of size n x n.
+fn identityMatrix(n) = (
+    makeMatrix(n, n, \r, c -> if r == c then 1.0 else 0.0)
+);
+
+// Extracts a submatrix by removing the specified row and column.
+// Used for determinant and inverse calculations.
+fn submatrix(m, row_to_remove, col_to_remove) = (
+    let rows = matrixRows(m);
+    let cols = matrixCols(m);
+    makeMatrix(rows - 1, cols - 1, \r, c -> (
+        // Adjust row and column indices for the original matrix
+        let original_r = if r < row_to_remove then r else r + 1;
+        let original_c = if c < col_to_remove then c else c + 1;
+        getMatrixElement(m, original_r, original_c)
+    ))
+);
+
+// --- Matrix Operations ---
+
+// Adds two matrices element-wise.
+// Precondition: Matrices must have the same dimensions.
+fn addM(m1, m2) = (
+    let r1 = matrixRows(m1);
+    let c1 = matrixCols(m1);
+    let r2 = matrixRows(m2);
+    let c2 = matrixCols(m2);
+
+    if r1 != r2 || c1 != c2 then (
+        println("Error: Cannot add matrices with different dimensions.");
+        [] // Return empty matrix on error
+    ) else (
+        makeMatrix(r1, c1, \r, c -> getMatrixElement(m1, r, c) + getMatrixElement(m2, r, c))
+    )
+);
+
+// Scales a matrix by a scalar value.
+fn scaleM(scalar, m) = (
+    let rows = matrixRows(m);
+    let cols = matrixCols(m);
+    makeMatrix(rows, cols, \r, c -> scalar * getMatrixElement(m, r, c))
+);
+
+// Transposes a matrix (swaps rows and columns).
+fn transposeM(m) = (
+    let rows = matrixRows(m);
+    let cols = matrixCols(m);
+    // New matrix has dimensions cols x rows
+    makeMatrix(cols, rows, \r, c -> getMatrixElement(m, c, r)) // Note swapped indices r, c
+);
+
+// Multiplies two matrices (m1 * m2).
+// Precondition: Number of columns in m1 must equal number of rows in m2.
+fn mulM(m1, m2) = (
+    let r1 = matrixRows(m1);
+    let c1 = matrixCols(m1);
+    let r2 = matrixRows(m2);
+    let c2 = matrixCols(m2);
+
+    if c1 != r2 then (
+        println("Error: Incompatible dimensions for matrix multiplication (" + i2s(c1) + " != " + i2s(r2) + ").");
+        [] // Return empty matrix on error
+    ) else (
+        // Resulting matrix dimensions are r1 x c2
+        // Helper to get column vector from m2
+        let getCol = \matrix, col_idx -> map(matrix, \row -> row[col_idx]);
+
+        makeMatrix(r1, c2, \r, c -> (
+             // Calculate dot product of row r from m1 and column c from m2
+             let row_vec = m1[r];
+             let col_vec = getCol(m2, c);
+             dotV(row_vec, col_vec)
+        ))
+    )
+);
+
+// Calculates the determinant of a square matrix using Laplace (cofactor) expansion.
+// Precondition: Matrix must be square.
+fn determinantM(m) = (
+    let rows = matrixRows(m);
+    let cols = matrixCols(m);
+
+    if rows != cols then (
+        println("Error: Determinant is only defined for square matrices.");
+        0.0 / 0.0 // NaN
+    ) else if rows == 0 then (
+        1.0 // Determinant of 0x0 matrix is conventionally 1
+    ) else if rows == 1 then (
+        getMatrixElement(m, 0, 0) // Determinant of 1x1 matrix
+    ) else if rows == 2 then (
+        // Determinant of 2x2 matrix: ad - bc
+        (getMatrixElement(m, 0, 0) * getMatrixElement(m, 1, 1)) -
+        (getMatrixElement(m, 0, 1) * getMatrixElement(m, 1, 0))
+    ) else (
+        // Recursive case: Laplace expansion along the first row (row 0)
+        fn sum_cofactors(col_idx, current_sum) = (
+            if col_idx >= cols then current_sum
+            else (
+                let sign = if (col_idx % 2 == 0) then 1.0 else -1.0; // (-1)^(0 + col_idx)
+                let element = getMatrixElement(m, 0, col_idx);
+                let minor_matrix = submatrix(m, 0, col_idx);
+                let cofactor_value = sign * element * determinantM(minor_matrix);
+                sum_cofactors(col_idx + 1, current_sum + cofactor_value)
+            )
+        );
+        sum_cofactors(0, 0.0)
+    )
+);
+
+// Calculates the inverse of an invertible square matrix.
+// Uses the formula: inverse(M) = (1 / det(M)) * adjugate(M)
+// where adjugate(M) is the transpose of the cofactor matrix.
+// Precondition: Matrix must be square and invertible (non-zero determinant).
+fn inverseM(m) = (
+    let rows = matrixRows(m);
+    let cols = matrixCols(m);
+
+    if rows != cols then (
+        println("Error: Inverse is only defined for square matrices.");
+        []
+    ) else if rows == 0 then (
+        [] // Inverse of 0x0 is undefined/empty
+    ) else (
+        let det = determinantM(m);
+
+        if abs(det) < 1e-10 then ( // Check if determinant is close to zero
+            println("Error: Matrix is singular (determinant is zero), cannot compute inverse.");
+            []
+        ) else (
+            // Calculate the cofactor matrix
+            let cofactorMatrix = makeMatrix(rows, cols, \r, c -> (
+                let sign = if ((r + c) % 2 == 0) then 1.0 else -1.0;
+                let minor = submatrix(m, r, c);
+                sign * determinantM(minor)
+            ));
+
+            // Calculate the adjugate matrix (transpose of cofactor matrix)
+            let adjugateMatrix = transposeM(cofactorMatrix);
+
+            // Scale the adjugate matrix by (1 / determinant)
+            scaleM(1.0 / det, adjugateMatrix)
+        )
+    )
+);
+
+
+// --- Example Usage (commented out) ---
+/*
+let v1 = [1.0, 2.0, 3.0];
+let v2 = [4.0, 5.0, 6.0];
+println("v1 + v2 = " + d2s(addV(v1, v2))); // Should use a vector->string function
+println("3 * v1 = " + d2s(scaleV(3.0, v1)));
+println("v1 . v2 = " + d2s(dotV(v1, v2)));
+println("norm(v1) = " + d2s(normV(v1)));
+
+let m1 = [[1.0, 2.0], [3.0, 4.0]];
+let m2 = [[5.0, 6.0], [7.0, 8.0]];
+let m3 = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // 2x3
+
+// Need a matrix->string function for nice printing
+println("m1 + m2 = "); // printMatrix(addM(m1, m2));
+println("2 * m1 = "); // printMatrix(scaleM(2.0, m1));
+println("transpose(m3) = "); // printMatrix(transposeM(m3));
+println("m1 * m2 = "); // printMatrix(mulM(m1, m2)); // 2x2 * 2x2 -> 2x2
+println("mulM(m1, m3) = "); // printMatrix(mulM(m1, m3)); // 2x2 * 2x3 -> 2x3
+
+let sq_m = [[4.0, 7.0], [2.0, 6.0]];
+println("det(sq_m) = " + d2s(determinantM(sq_m))); // 4*6 - 7*2 = 24 - 14 = 10
+println("inverse(sq_m) = "); // printMatrix(inverseM(sq_m)); // Should be [[0.6, -0.7], [-0.2, 0.4]]
+*/

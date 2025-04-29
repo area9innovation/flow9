@@ -1,0 +1,204 @@
+import ds/tree;
+import ds/array;
+
+export {
+	// Core memory structure for serialized AST
+	Memory(
+		ints : [int],
+		doubles : [double],
+		strings : [string],
+		opcodes : [Opcode]
+	);
+
+	// Each node in the opcode tree
+	Opcode(
+		code : int,    // The opcode number
+		child1 : int,  // First child index (or constant value index, -1 if not used)
+		child2 : int,  // Second child index (-1 if not used)
+		child3 : int   // Third child index (-1 if not used)
+	);
+
+	// State maintained during serialization
+	SerializeState(
+		// Tables for tracking unique values
+		intTable : ref Tree<int, int>,
+		doubleTable : ref Tree<double, int>,
+		stringTable : ref Tree<string, int>,
+
+		// Value arrays
+		ints : ref [int],
+		doubles : ref [double],
+		strings : ref [string],
+
+		// Opcode array
+		opcodes : ref [Opcode],
+
+		// Current opcode index counter
+		currentIndex : ref int
+	);
+
+	// Special opcodes for built-ins
+	OP_RESERVED : int; // 0: nothing/error
+	OP_FALSE : int;    // 1: false
+	OP_TRUE : int;     // 2: true
+	OP_INT : int;      // 3: int
+	OP_DOUBLE : int;   // 4: double
+	OP_STRING : int;   // 5: string
+	OP_ARRAY : int;    // 6: array
+	OP_REF : int;      // 7: ref
+	OP_ARRAY_CONS : int; // 8: array cons (element, rest)
+	OP_ARRAY_EMPTY : int; // 9: empty array
+
+	// Create a new serialization state
+	makeSerializeState() -> SerializeState;
+
+	// Register primitive values and get their indices
+	registerInt(state : SerializeState, val : int) -> int;
+	registerDouble(state : SerializeState, val : double) -> int;
+	registerString(state : SerializeState, val : string) -> int;
+
+	// Core serialization for primitive types
+	serializeInt(state : SerializeState, val : int) -> int;
+	serializeDouble(state : SerializeState, val : double) -> int;
+	serializeString(state : SerializeState, val : string) -> int;
+	serializeBool(state : SerializeState, val : bool) -> int;
+	serializeArray(state : SerializeState, arr : [?], elementSerializer : (SerializeState, ?) -> int) -> int;
+
+	// Create the final memory structure from the state
+	finalizeMemory(state : SerializeState) -> Memory;
+}
+
+OP_RESERVED = 0;
+OP_FALSE = 1;
+OP_TRUE = 2;
+OP_INT = 3;
+OP_DOUBLE = 4;
+OP_STRING = 5;
+OP_ARRAY = 6;
+OP_REF = 7;
+OP_ARRAY_CONS = 8;
+OP_ARRAY_EMPTY = 9;
+
+// Initialize a new serialization state
+makeSerializeState() -> SerializeState {
+	SerializeState(
+		ref makeTree(), ref makeTree(), ref makeTree(),
+		ref [], ref [], ref [], ref [], ref 0
+	);
+}
+
+// Register an int value and return its index
+registerInt(state : SerializeState, val : int) -> int {
+	intTable = ^(state.intTable);
+	idx = lookupTreeDef(intTable, val, -1);
+	if (idx == -1) {
+		nidx = length(^(state.ints));
+		state.intTable := setTree(intTable, val, nidx);
+		state.ints := arrayPush(^(state.ints), val);
+		nidx
+	} else idx;
+}
+
+// Register a double value and return its index
+registerDouble(state : SerializeState, val : double) -> int {
+	doubleTable = ^(state.doubleTable);
+	idx = lookupTreeDef(doubleTable, val, -1);
+	if (idx == -1) {
+		nidx = length(^(state.doubles));
+		state.doubleTable := setTree(doubleTable, val, nidx);
+		state.doubles := arrayPush(^(state.doubles), val);
+		nidx;
+	} else idx
+}
+
+// Register a string value and return its index
+registerString(state : SerializeState, val : string) -> int {
+	stringTable = ^(state.stringTable);
+	idx = lookupTreeDef(stringTable, val, -1);
+	if (idx == -1) {
+		nidx = length(^(state.strings));
+		state.stringTable := setTree(stringTable, val, nidx);
+		state.strings := arrayPush(^(state.strings), val);
+		nidx
+	} else idx;
+}
+
+// Serialize an int value and return its opcode index
+serializeInt(state : SerializeState, val : int) -> int {
+	valueIndex = registerInt(state, val);
+	opcode = Opcode(OP_INT, valueIndex, -1, -1);
+	serializeOpcode(state, opcode);
+}
+
+// Serialize a double value and return its opcode index
+serializeDouble(state : SerializeState, val : double) -> int {
+	valueIndex = registerDouble(state, val);
+	opcode = Opcode(OP_DOUBLE, valueIndex, -1, -1);
+	serializeOpcode(state, opcode);
+}
+
+// Serialize a string value and return its opcode index
+serializeString(state : SerializeState, val : string) -> int {
+	valueIndex = registerString(state, val);
+	opcode = Opcode(OP_STRING, valueIndex, -1, -1);
+	serializeOpcode(state, opcode);
+}
+
+// Serialize a boolean value and return its opcode index
+serializeBool(state : SerializeState, val : bool) -> int {
+	opcode = if (val) Opcode(OP_TRUE, -1, -1, -1) else Opcode(OP_FALSE, -1, -1, -1);
+	serializeOpcode(state, opcode);
+}
+
+// Serialize an array and return its opcode index
+serializeArray(state : SerializeState, arr : [?], elementSerializer : (SerializeState, ?) -> int) -> int {
+	if (length(arr) == 0) {
+		// Empty array represented by special opcode
+		opcode = Opcode(OP_ARRAY_EMPTY, -1, -1, -1);
+		serializeOpcode(state, opcode);
+	} else {
+		// For non-empty arrays, build using cons pattern
+		// Start with empty array
+		result = serializeArray(state, [], elementSerializer);
+
+		// Process elements in reverse order (last element first)
+		arri = reverseA(arr);
+		processArrayElements(state, arri, result, 0, elementSerializer);
+		result;
+	}
+}
+// Helper function to process array elements recursively
+processArrayElements(state : SerializeState, arr : [?], currentResult : int, index : int, elementSerializer : (SerializeState, ?) -> int) -> int {
+	if (index >= length(arr)) {
+		// Base case: no more elements to process
+		currentResult;
+	} else {
+		// Serialize element
+		elementIndex = elementSerializer(state, arr[index]);
+
+		// Create cons node (element, rest)
+		opcode = Opcode(OP_ARRAY_CONS, elementIndex, currentResult, -1);
+		nextIndex = serializeOpcode(state, opcode);
+
+		// Recurse with updated result
+		processArrayElements(state, arr, nextIndex, index + 1, elementSerializer);
+	}
+}
+
+serializeOpcode(state : SerializeState, opcode : Opcode) -> int {
+	// Serialize the opcode itself
+	state.opcodes := arrayPush(^(state.opcodes), opcode);
+	opcodeIndex = ^(state.currentIndex);
+	state.currentIndex := opcodeIndex + 1;
+	opcodeIndex;
+}
+
+// Create the final memory structure from the state
+finalizeMemory(state : SerializeState) -> Memory {
+	Memory(
+		^(state.ints), 
+		^(state.doubles), 
+		^(state.strings), 
+		^(state.opcodes)
+	);
+}
