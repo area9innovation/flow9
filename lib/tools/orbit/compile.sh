@@ -13,5 +13,5 @@ fi
 
 # Compile the orbit S-expression grammar
 cd sexpr
-flowcpp --batch tools/mango/mango.flow -- grammar=sexpr.mango types=2 typeprefix=S prefix=sexpr_ compile=1
+flowcpp --batch tools/mango/mango.flow -- grammar=sexpr.mango types=2 typeprefix=S prefix=sexpr_ compile=1 vscode=1 vsname="SExpr" extension=sexpr
 cd ..
