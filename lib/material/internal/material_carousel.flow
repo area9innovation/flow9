@@ -79,40 +79,7 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 				else
 					f
 			)
-			|> (\f ->
-				if (state.enableChevrons)
-					MCarouselChevrons(manager, p, f, state, m2t)
-					|> (\f2 ->
-						eitherMap(
-							state.maximize,
-							\mx ->
-								if (contains(mx.style, MNoChevrons()))
-									TVisible(fnot(mx.maximized), f2)
-								else
-									f2,
-							f2
-						)
-					)
-				else
-					f
-			)
-			|> (\f ->
-				if (isSome(state.progress))
-					MCarouselProgress(manager, p, f, state, m2t)
-					|> (\f2 ->
-						eitherMap(
-							state.maximize,
-							\mx ->
-								if (contains(mx.style, MNoProgress()))
-									TVisible(fnot(mx.maximized), f2)
-								else
-									f2,
-							f2
-						)
-					)
-				else
-					f
-			)
+			|> (\f -> addProgressAndChevrons(f, manager, p, state, m2t))
 			|> (\f ->
 				[
 					(\cz : MCarouselContentZoom, vis0 : bool -> {
@@ -525,50 +492,85 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 	)
 }
 
-MCarouselProgress(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	eitherMap(
-		state.progress, \pr ->
-		TCopySize(
-			content,
-			\tr ->
-				generate(0, state.contentsLength, \i ->
-					(\par -> {
-						isActive = feq(state.activeI, i);
+addProgressAndChevrons(content : Tropic, manager : MaterialManager, parent : MFocusGroup, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	TCopySize(
+		content,
+		\sz -> {
+			chevrons =
+				if (state.enableChevrons) {
+					MCarouselChevrons(manager, parent, state, m2t)
+				} else Pair(TEmpty(), TEmpty());
 
-						TShadowShape(par,
-							fselectLift(isActive, \act -> if (act) 4. else 2.),
-							TSelect(isActive, \act -> TCircle(4., [MThemeFill(par, if (act) pr.activeColor else pr.inactiveColor)])),
-							RoundShape()
-						)
-						|> (\f -> TAlpha(fif(state.enabled, const(1.), const(0.5)), f))
-						|> TBorderLeftRight(pr.spacing)
-					})
-					|> (\f -> MComponent2T(
-						manager,
-						parent,
-						"MCarouselProgressItem",
-						[
-							MHighlightOnFocus(const(true)),
-							MEnabled(state.enabled),
-							MOnClick(\ -> next(state.activeI, i)),
-							MButtonTitle(elementAt(pr.buttonTitles, i, const("Item " + i2s(i)))), 
-							MRippleType(const(MRippleCenter()))
-						],
-						\foc -> f(foc.parent),
-						m2t
-					))
+			wrapForMaximize = \tr, st -> {
+				eitherMap(
+					state.maximize,
+					\mx ->
+						if (contains(mx.style, st))
+							TVisible(fnot(mx.maximized), tr)
+						else
+							tr,
+					tr
 				)
-				|> TCols
-				|> TBorderTopBottom(16.)
-				|> (\f -> if (pr.bottom) TLines2(TFillY(), f) else f)
-				|> (\f -> TCenterXIn(f, tr)),
-			true
-		),
-		content
+			}
+
+			concatA([
+				if (state.enableChevrons) [
+					wrapForMaximize(chevrons.first, MNoChevrons()) |> TAlignStart
+				] else [],
+
+				eitherMap(
+					MCarouselProgress(manager, parent, state, m2t),
+					\progressTr -> [wrapForMaximize(progressTr, MNoProgress()) |> TCenterX],
+					[]
+				),
+
+				if (state.enableChevrons) [
+					wrapForMaximize(chevrons.second, MNoChevrons()) |> TAlignEnd
+				] else []
+			])
+			|> TGroup
+			|> (\t -> TAvailable(t, sz))
+		},
+		true
+	);
+}
+
+MCarouselProgress(manager : MaterialManager, parent : MFocusGroup, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Maybe<Tropic> {
+	maybeMap(state.progress, \pr ->
+		generate(0, state.contentsLength, \i ->
+			(\par -> {
+				isActive = feq(state.activeI, i);
+
+				TShadowShape(par,
+					fselectLift(isActive, \act -> if (act) 4. else 2.),
+					TSelect(isActive, \act -> TCircle(4., [MThemeFill(par, if (act) pr.activeColor else pr.inactiveColor)])),
+					RoundShape()
+				)
+				|> (\f -> TAlpha(fif(state.enabled, const(1.), const(0.5)), f))
+				|> TBorderLeftRight(pr.spacing)
+			})
+			|> (\f -> MComponent2T(
+				manager,
+				parent,
+				"MCarouselProgressItem",
+				[
+					MHighlightOnFocus(const(true)),
+					MEnabled(state.enabled),
+					MOnClick(\ -> next(state.activeI, i)),
+					MButtonTitle(elementAt(pr.buttonTitles, i, const("Item " + i2s(i)))), 
+					MRippleType(const(MRippleCenter()))
+				],
+				\foc -> f(foc.parent),
+				m2t
+			))
+		)
+		|> TCols
+		|> TBorderTopBottom(16.)
+		|> (\f -> if (pr.bottom) TLines2(TFillY(), f) else f),
 	)
 }
 
-MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Pair<Tropic, Tropic> {
 	leftFocused = make(false);
 	rightFocused = make(false);
 
@@ -616,19 +618,7 @@ MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tro
 		|> (\t -> TCenterYIn(t, eitherMap(state.tuneChevrons, \ts -> TFixed(0.0, ts.positionY * 2.), TFillY())))
 	}
 
-	TCols([
-		makeChevron(true),
-		TFillX(),
-		makeChevron(false)
-	])
-	|> (\f ->
-		TCopySize(
-			content,
-			\tr ->
-				TAvailable(f, tr),
-			true
-		)
-	)
+	Pair(makeChevron(true), makeChevron(false))
 }
 
 MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouselContent, i : int, style : [MCarouselStyle], state : MCarouselState,
