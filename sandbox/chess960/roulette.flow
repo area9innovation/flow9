@@ -17,6 +17,125 @@ main() {
     slowing = make(false);
     rotationAngle = make(0.0);  // Current rotation angle in degrees
     spinTimer = ref None();
+    chessPosition = make("");  // Current chess position string
+    showBoard = make(false);  // Toggle between roulette and board view
+
+    // Get a graphic for a chess piece
+    getPieceGraphic = \pieceChar, isWhite -> {
+        pieceSize = 48.0;
+        
+        pieceToCode = \p, w -> {
+            if (p == "K") {
+                if (w) "♔" else "♚"
+            } else if (p == "Q") {
+                if (w) "♕" else "♛"
+            } else if (p == "R") {
+                if (w) "♖" else "♜"
+            } else if (p == "B") {
+                if (w) "♗" else "♝"
+            } else if (p == "N") {
+                if (w) "♘" else "♞"
+            } else if (p == "P") {
+                if (w) "♙" else "♟"
+            } else ""
+        }
+        
+        unicode = pieceToCode(pieceChar, isWhite);
+        
+        MText(
+            unicode,
+            [MCustomFont(pieceSize, "DejaVu Sans", 1.0), if (isWhite) MWhite() else MBlack() ]
+        )
+    };
+
+    // Convert Chess960 number to a position string
+    calculateChessPosition = \n -> {
+        // Convert number to proper position according to Fischer random chess numbering scheme
+        // Step 1: Place bishops on opposite colored squares
+        n2 = n / 4;
+        b1 = n % 4;
+        n3 = n2 / 4;
+        b2 = n2 % 4;
+        
+        // Map bishop positions (light square bishop)
+        lightSquareBishop = [["b"], ["d"], ["f"], ["h"]][b1];
+        
+        // Map bishop positions (dark square bishop)
+        darkSquareBishop = [["a"], ["c"], ["e"], ["g"]][b2];
+        
+        // Step 2: Place queen
+        n4 = n3 / 6;
+        q = n3 % 6;
+        
+        // Step 3: Place knights according to digit
+        knightDigit = n4;
+        
+        // Create 8 empty squares
+        position = ["", "", "", "", "", "", "", ""];
+        
+        // Place bishops first
+        lightIndex = if (b1 == 0) 1 else if (b1 == 1) 3 else if (b1 == 2) 5 else 7;
+        darkIndex = if (b2 == 0) 0 else if (b2 == 1) 2 else if (b2 == 2) 4 else 6;
+        
+        // Update position with bishops
+        position1 = replace(position, lightIndex, "B");
+        position2 = replace(position1, darkIndex, "B");
+        
+        // Track available squares (ones not occupied by bishops)
+        availableSquares1 = filter(generate(0, 8, \i -> i), \i -> i != lightIndex && i != darkIndex);
+        
+        // Place queen
+        queenIndex = availableSquares1[q];
+        position3 = replace(position2, queenIndex, "Q");
+        
+        // Remove queen's position from available squares
+        availableSquares2 = filter(availableSquares1, \i -> i != queenIndex);
+        
+        // Place knights based on knightDigit
+        knightPositions = if (knightDigit == 0) {
+            [0, 1]
+        } else if (knightDigit == 1) {
+            [0, 2]
+        } else if (knightDigit == 2) {
+            [0, 3]
+        } else if (knightDigit == 3) {
+            [0, 4]
+        } else if (knightDigit == 4) {
+            [1, 2]
+        } else if (knightDigit == 5) {
+            [1, 3]
+        } else if (knightDigit == 6) {
+            [1, 4]
+        } else if (knightDigit == 7) {
+            [2, 3]
+        } else if (knightDigit == 8) {
+            [2, 4]
+        } else {
+            [3, 4] // knightDigit == 9
+        }
+        
+        knight1Index = availableSquares2[knightPositions[0]];
+        knight2Index = availableSquares2[knightPositions[1]];
+        
+        // Update position with knights
+        position4 = replace(position3, knight1Index, "N");
+        position5 = replace(position4, knight2Index, "N");
+        
+        // Remove knight positions from available squares
+        availableSquares3 = filter(availableSquares2, \i -> i != knight1Index && i != knight2Index);
+        
+        // The remaining three squares are for the rooks and king
+        // King goes in the middle, rooks on the outside
+        sortedRemaining = sort(availableSquares3);
+        
+        // Update position with rooks and king
+        position6 = replace(position5, sortedRemaining[0], "R");
+        position7 = replace(position6, sortedRemaining[1], "K");
+        position8 = replace(position7, sortedRemaining[2], "R");
+        
+        // Convert array to string
+        strGlue(position8, "");
+    };
 
     // Start or restart spinning
     startSpinning = \ -> {
@@ -45,7 +164,14 @@ main() {
                     next(spinning, false);
                     next(speed, 0.0);
                     // Final random number between 0-959
-                    next(number, round(random() * 959.0));
+                    finalNumber = round(random() * 959.0);
+                    next(number, finalNumber);
+                    
+                    // Calculate and update chess position
+                    next(chessPosition, calculateChessPosition(finalNumber));
+                    
+                    // Switch to board view
+                    next(showBoard, true);
                     
                     // Clear the timer
                     maybeApply(^spinTimer, \disposer -> disposer());
@@ -59,6 +185,7 @@ main() {
                 // Use modulo to keep it in range and scale appropriately
                 position = round(((currentAngle % 360.0) / 360.0) * 959.0);
                 next(number, position);
+                next(chessPosition, calculateChessPosition(position));
             }
         });
         
@@ -68,7 +195,10 @@ main() {
     // Handle space key press
     handleKeyPress = \key -> {
         if (key == " ") {
-            if (getValue(spinning) && !getValue(slowing)) {
+            // If we're in board view mode, switch back to roulette
+            if (getValue(showBoard)) {
+                next(showBoard, false);
+            } else if (getValue(spinning) && !getValue(slowing)) {
                 // Start slowing down if currently spinning at full speed
                 next(slowing, true);
             } else if (!getValue(spinning)) {
@@ -129,16 +259,178 @@ main() {
         )
     };
     
+    // Create a chessboard with pieces
+    createChessboard = \position -> {
+        boardSize = 240.0;
+        squareSize = boardSize / 8.0;
+        
+        // Create the 8x8 grid of squares
+        squares = generate(0, 8, \row -> {
+            generate(0, 8, \col -> {
+                isLight = (row + col) % 2 == 0;
+                MBorder(
+                    i2d(col) * squareSize, i2d(row) * squareSize, 0.0, 0.0,
+                    MRectangle([Fill(if (isLight) 0xf0d9b5 else 0xb58863)], MFixed(squareSize, squareSize))
+                )
+            })
+        });
+        
+        // Flatten the array of arrays
+        allSquares = foldi(squares, [], \i, acc, row -> concat(acc, row));
+        
+        // Add file labels (a-h) on the bottom
+        fileLabels = generate(0, 8, \i -> {
+            MTranslate(
+                const(Point(i2d(i) * squareSize + squareSize / 2.0 - 4.0, boardSize + 15.0)),
+                MText(["a", "b", "c", "d", "e", "f", "g", "h"][i], [MCustomFont(12.0, "Roboto", 1.0)])
+            )
+        });
+        
+        // Add rank labels (1-8) on the left
+        rankLabels = generate(0, 8, \i -> {
+            MTranslate(
+                const(Point(-15.0, (7.0 - i2d(i)) * squareSize + squareSize / 2.0 + 4.0)),
+                MText(i2s(i + 1), [MCustomFont(12.0, "Roboto", 1.0)])
+            )
+        });
+        
+        // Place pieces on the bottom rank according to position string
+        whitePieces = if (strlen(position) == 8) {
+            generate(0, 8, \i -> {
+                pieceChar = substring(position, i, 1);
+                pieceGraphic = getPieceGraphic(pieceChar, true);
+                
+                MTranslate(
+                    const(Point(i2d(i) * squareSize, 7.0 * squareSize)),
+                    MCenterIn(pieceGraphic, MFixed(squareSize, squareSize))
+                )
+            })
+        } else [];
+        
+        // Place black pieces on the top rank (mirror of white position)
+        blackPieces = if (strlen(position) == 8) {
+            generate(0, 8, \i -> {
+                pieceChar = substring(position, i, 1);
+                pieceGraphic = getPieceGraphic(pieceChar, false);
+                
+                MTranslate(
+                    const(Point(i2d(i) * squareSize, 0.0)),
+                    MCenterIn(pieceGraphic, MFixed(squareSize, squareSize))
+                )
+            })
+        } else [];
+        
+        // Combine all elements
+        MGroup([
+            MGroup(allSquares),
+            MGroup(fileLabels),
+            MGroup(rankLabels),
+            MGroup(whitePieces),
+            MGroup(blackPieces)
+        ])
+    };
+    
+    // Full screen chessboard with larger pieces
+    createFullScreenChessboard = \position, boardSize -> {
+        squareSize = boardSize / 8.0;
+        
+        // Create the 8x8 grid of squares
+        squares = generate(0, 8, \row -> {
+            generate(0, 8, \col -> {
+                isLight = (row + col) % 2 == 0;
+                MTranslate(
+                    const(Point(i2d(col) * squareSize, i2d(row) * squareSize)),
+                    MRectangle([Fill(if (isLight) 0x308ba4 else 0x004e6e)], MFixed(squareSize, squareSize))
+                )
+            })
+        });
+        
+        // Flatten the array of arrays
+        allSquares = foldi(squares, [], \i, acc, row -> concat(acc, row));
+        
+        // Add file labels (a-h) on the bottom
+        fileLabels = generate(0, 8, \i -> {
+            MTranslate(
+                const(Point(i2d(i) * squareSize + squareSize / 2.0 - 6.0, boardSize + 25.0)),
+                MText(["a", "b", "c", "d", "e", "f", "g", "h"][i], [MCustomFont(18.0, "Roboto", 1.0)])
+            )
+        });
+        
+        // Add rank labels (1-8) on the left
+        rankLabels = generate(0, 8, \i -> {
+            MTranslate(
+                const(Point(-25.0, (7.0 - i2d(i)) * squareSize + squareSize / 2.0 + 6.0)),
+                MText(i2s(i + 1), [MCustomFont(18.0, "Roboto", 1.0)])
+            )
+        });
+        
+        // Place pieces on the bottom rank according to position string
+        whitePieces = if (strlen(position) == 8) {
+            generate(0, 8, \i -> {
+                pieceChar = substring(position, i, 1);
+                pieceGraphic = getPieceGraphic(pieceChar, true);
+                
+                MTranslate(
+                    const(Point(i2d(i) * squareSize, 7.0 * squareSize)),
+                    MCenterIn(pieceGraphic, MFixed(squareSize, squareSize))
+                )
+            })
+        } else [];
+        
+        // Place black pieces on the top rank (mirror of white position)
+        blackPieces = if (strlen(position) == 8) {
+            generate(0, 8, \i -> {
+                pieceChar = substring(position, i, 1);
+                pieceGraphic = getPieceGraphic(pieceChar, false);
+                
+                MTranslate(
+                    const(Point(i2d(i) * squareSize, 0.0)),
+                    MCenterIn(pieceGraphic, MFixed(squareSize, squareSize))
+                )
+            })
+        } else [];
+        
+        // Combine all elements
+        MGroup([
+            MGroup(allSquares),
+            MGroup(fileLabels),
+            MGroup(rankLabels),
+            MGroup(whitePieces),
+            MGroup(blackPieces)
+        ])
+    };
+    
+    // Chess position display (smaller version for roulette view)
+    chessDisplaySmall = MSelect(chessPosition, \pos -> {
+        MLines([
+            MCenterX(MText("Chess Position: " + pos, [MCustomFont(18.0, "Roboto", 1.0)])),
+            MCenterX(MTranslate(const(Point(0.0, 10.0)), createChessboard(pos)))
+        ])
+    });
+    
+    // Full screen chess display
+    chessDisplayFullScreen = MSelect(chessPosition, \pos -> {
+        boardSize = 500.0;  // Larger board for full screen view
+        
+        MLines([
+            MCenterX(MText("Chess960 Position #" + i2s(getValue(number)), [MCustomFont(28.0, "Roboto", 1.0)])),
+			MFixedY(20.0),
+			MZoom(MSize(MFixed(boardSize, boardSize),
+				createFullScreenChessboard(pos, boardSize)
+			), MFillXY(), true)
+        ])
+    });
+    
     // Wheel with rotation
     wheelRadius = 150.0;
     rotatingWheel = 
         MGroup([
             // Rotating wheel
-                MTranslate(const(Point(wheelRadius, wheelRadius)),
-		            MRotate(rotationAngle,
-                MTranslate(const(Point(-wheelRadius, -wheelRadius)),
-                    createWheel(wheelRadius)
-				)
+			MTranslate(const(Point(wheelRadius, wheelRadius)),
+				MRotate(rotationAngle,
+					MTranslate(const(Point(-wheelRadius, -wheelRadius)),
+						createWheel(wheelRadius)
+					)
                 )
             ),
             // Fixed pointer at the top
@@ -146,7 +438,7 @@ main() {
         ]);
     
     // Instructions
-    instructions = MText("Press SPACE to start spinning. Press again to stop.", [MBody()]);
+    instructions = MText("Press SPACE", [MBody()]);
         
     // Number display
     numberDisplay = MSelect(number, \n -> {
@@ -158,17 +450,28 @@ main() {
         )
     });
     
-    // Main UI layout
+    // Main UI layout - toggles between roulette and board views
     mainUI = MKeyHandler(
         [Pair(" ", \ -> handleKeyPress(" "))],
-        MLines([
-			MFillY(),
-            // Add the wheel
-            MCenter(rotatingWheel),
-            // Number display
-            numberDisplay,
-            MCenterX(instructions),
-        ])
+        MSelect(showBoard, \showBoardView -> {
+            if (showBoardView) {
+                // Show full screen chessboard view
+                chessDisplayFullScreen
+            } else {
+                // Show roulette view
+                MLines([
+                    MFillY(),
+                    // Add the wheel
+                    MCenter(rotatingWheel),
+                    // Number display
+                    numberDisplay,
+                    MCenterX(instructions),
+                    MFixedY(30.0),  // Add a bit of spacing
+                    // Chess position display (small)
+                  //  chessDisplaySmall
+                ])
+            }
+        })
     );
     
     // Create material manager and render the UI

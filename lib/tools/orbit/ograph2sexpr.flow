@@ -1,0 +1,172 @@
+import tools/orbit/ograph;
+import tools/orbit/orbit_types;
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/orbit_simple_ograph;
+
+export {
+    // Convert an OGraph node to an S-expression
+    // Takes the OGraph and the node ID to convert
+    // Returns the corresponding S-expression
+    ograph2Sexpr(graph : OGraph, nodeId : int) -> Sexpr;
+    
+    // Extract an S-expression from an OGraph by name and node ID
+    // Returns the corresponding S-expression or a failure representation
+    extractOGraphSexpr(graphName : string, nodeId : int, tracing : bool) -> Sexpr;
+}
+
+// Convert an OGraph node to an Sexpr
+ograph2Sexpr(graph : OGraph, nodeId : int) -> Sexpr {
+    // Find the root node in case this is part of an equivalence class
+    rootId = findORoot(graph, nodeId);
+    
+    // Look up the node in the graph
+    switch (lookupOClass(graph, rootId)) {
+        Some(oclass): {
+            node = oclass.node;
+            
+            if (node.op == "Int") {
+                switch (node.value) {
+                    OrbitInt(i): SSInt(i);
+                    default: SSInt(0); // Fallback
+                }
+            } else if (node.op == "Double") {
+                switch (node.value) {
+                    OrbitDouble(d): SSDouble(d);
+                    default: SSDouble(0.0); // Fallback
+                }
+            } else if (node.op == "Bool") {
+                switch (node.value) {
+                    OrbitBool(b): SSBool(b);
+                    default: SSBool(false); // Fallback
+                }
+            } else if (node.op == "String") {
+                switch (node.value) {
+                    OrbitString(s): SSString(s);
+                    default: SSString(""); // Fallback
+                }
+            } else if (node.op == "Identifier") {
+                switch (node.value) {
+                    OrbitString(s): SSVariable(s);
+                    default: SSVariable("unknown"); // Fallback
+                }
+            } else if (node.op == "Operator") {
+                switch (node.value) {
+                    OrbitString(s): SSOperator(s);
+                    default: SSOperator("?"); // Fallback
+                }
+            } else if (node.op == "Constructor") {
+                switch (node.value) {
+                    OrbitString(s): SSConstructor(s);
+                    default: SSConstructor("Unknown"); // Fallback
+                }
+            } else if (node.op == "SpecialForm") {
+                // Special forms need special handling
+                specialFormName = switch (node.value) {
+                    OrbitString(s): s;
+                    default: "";
+                };
+                
+                specialForm = getSpecialFormNameFromString(specialFormName);
+                
+                // Process children recursively
+                childExprs = map(node.children, \childId -> {
+                    ograph2Sexpr(graph, childId);
+                });
+                
+                SSSpecialForm(specialForm, childExprs);
+            } else if (node.op == "List") {
+                // Process children recursively for lists
+                childExprs = map(node.children, \childId -> {
+                    ograph2Sexpr(graph, childId);
+                });
+                
+                SSList(childExprs);
+            } else {
+                // For any other node type, treat it as a function application with children
+                childExprs = map(node.children, \childId -> {
+                    ograph2Sexpr(graph, childId);
+                });
+                
+                if (length(childExprs) > 0) {
+                    // If we have children, create a list where the first item is the operator
+                    SSList(concat([SSOperator(node.op)], childExprs));
+                } else {
+					// TODO: Use the parser instead, so we also handle greek and other things correctly
+                    // If no children, treat as an identifier or constructor
+                    if (strlen(node.op) > 0 && getCharAt(node.op, 0) >= "A" && getCharAt(node.op, 0) <= "Z") {
+                        SSConstructor(node.op);
+                    } else {
+                        SSVariable(node.op);
+                    }
+                }
+            }
+        }
+        None(): {
+            // Node not found - return a placeholder
+            SSString("<Node ID " + i2s(nodeId) + " not found>");
+        }
+    }
+}
+
+// Helper to get a Special_name value from a string
+getSpecialFormNameFromString(name : string) -> Special_name {
+    if (name == "define") {
+        SDefine();
+    } else if (name == "lambda") {
+        SLambda();
+    } else if (name == "if") {
+        SIf();
+    } else if (name == "quote") {
+        SQuote();
+    } else if (name == "quasiquote") {
+        SQuasiQuote();
+    } else if (name == "unquote") {
+        SUnQuote();
+    } else if (name == "unquote-splicing") {
+        SUnQuoteSplicing();
+    } else if (name == "match") {
+        SMatch();
+    } else if (name == "let") {
+        SLet();
+    } else if (name == "letrec") {
+        SLetRec();
+    } else if (name == "begin") {
+        SBegin();
+    } else if (name == "and") {
+        SAnd();
+    } else if (name == "or") {
+        SOr();
+    } else if (name == "set!") {
+        SSet();
+    } else if (name == "import") {
+        SImport();
+    } else if (name == "eval") {
+        SEval();
+    } else if (name == "closure") {
+        SClosure();
+    } else if (name == "list") {
+        SList();
+    } else {
+		println("WARNING: Unknown special form '" + name + "' - defaulting to SList");
+        SList(); // Default for unknown special forms
+    }
+}
+
+// Extract an S-expression from an OGraph by name and node ID
+extractOGraphSexpr(graphName : string, nodeId : int, tracing : bool) -> Sexpr {
+    // Get the graph from the registry
+    switch (lookupTree(^ographRegistry, graphName)) {
+        Some(ograph): {
+            // Find the root to ensure we get the canonical representation
+            root = findORoot(ograph, nodeId);
+            
+            // Extract the expression from the graph
+            if (tracing) println("Extracting S-expression from OGraph " + graphName + ", node " + i2s(nodeId));
+            ograph2Sexpr(ograph, nodeId);
+        }
+        None(): {
+            println("ERROR: OGraph '" + graphName + "' not found");
+            SSString("<ERROR: Graph not found>");
+        }
+    }
+}
