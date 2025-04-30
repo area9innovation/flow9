@@ -27,15 +27,16 @@ import tools/orbit/prettyprint;         // For prettyOrbit
 
 export {
 	// Add standard functions/variables to the environment
-	getRuntimeEnv() -> SExpEnv;
+	getRuntimeEnv(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv;
 	// Parse a string into a Sexpr
 	parseSexpr(f : string, s : string) -> Maybe<Sexpr>;
 	// Helper for invoking runtime functions with arity checking
-	invokeRuntimeFn(env : SExpEnv, name : string, result : FnArgResult) -> SExpEnv;
+	invokeRuntimeFn(env : SExpEnv, name : string, result : FnArgResult, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv;
 }
 
-getRuntimeEnv() -> SExpEnv {
-	SExpEnv(getRuntimeFunctions(), addStandardFns(makeTree()), SSList([]));
+getRuntimeEnv(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv {
+	// Store the evaluator somewhere globally so we can access it in evaluateOGraphQuasiquoteFunction
+	SExpEnv(getRuntimeFunctions(evaluator), makeTree(), SSList([]));
 }
 
 // Parse a string into a Sexpr
@@ -50,7 +51,7 @@ parseSexpr(f : string, s : string) -> Maybe<Sexpr> {
 }
 
 // Helper for invoking runtime functions with arity checking
-invokeRuntimeFn(env : SExpEnv, name : string, result : FnArgResult) -> SExpEnv {
+invokeRuntimeFn(env : SExpEnv, name : string, result : FnArgResult, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv {
 	maybe = lookupTree(env.runtime, name);
 	switch (maybe) {
 		Some(runtimeFn): {
@@ -71,7 +72,7 @@ invokeRuntimeFn(env : SExpEnv, name : string, result : FnArgResult) -> SExpEnv {
 }
 
 // Get the runtime functions map
-getRuntimeFunctions() -> Tree<string, RuntimeFn> {
+getRuntimeFunctions(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> Tree<string, RuntimeFn> {
 	functionPairs = [
 		// OGraph operations
 		Pair("makeOGraph", RuntimeFn(1, \result -> makeOGraphSexpr(result))),
@@ -79,10 +80,9 @@ getRuntimeFunctions() -> Tree<string, RuntimeFn> {
 		Pair("addSexprWithSub", RuntimeFn(3, \result -> addSexprWithSubFunction(result))),
 		Pair("extractOGraphSexpr", RuntimeFn(2, \result -> extractOGraphSexprFunction(result))),
 		Pair("matchOGraphSexprPattern", RuntimeFn(3, \result -> matchOGraphSexprPatternFunction(result))),
-		Pair("evaluateOGraphQuasiquote", RuntimeFn(2, \result -> evaluateOGraphQuasiquoteFunction(result))),
+		Pair("evaluateOGraphQuasiquote", RuntimeFn(2, \result -> evaluateOGraphQuasiquoteFunction(evaluator, result))),
 		Pair("addDomainToNode", RuntimeFn(3, \result -> addDomainToNodeSexpr(result))),
 		Pair("mergeOGraphNodes", RuntimeFn(3, \result -> mergeOGraphNodesSexpr(result))),
-		
 		
 		// Orbit-SExpr conversion functions
 		Pair("orbit2sexpr", RuntimeFn(1, \result -> orbit2sexprFunction(result))),
@@ -315,35 +315,6 @@ getRuntimeFunctions() -> Tree<string, RuntimeFn> {
 	];
 	
 	pairs2tree(functionPairs);
-}
-
-// Add standard functions/variables to the environment
-addStandardFns(env : Tree<string, Sexpr>) -> Tree<string, Sexpr> {
-	// Get runtime functions registry
-	runtimeFunctions = getTreeKeys(getRuntimeFunctions());
-	
-	// Add operators as operators
-	env1 = setTree(env, "+", SSOperator("+"));
-	env2 = setTree(env1, "-", SSOperator("-"));
-	env3 = setTree(env2, "*", SSOperator("*"));
-	env4 = setTree(env3, "/", SSOperator("/"));
-	env5 = setTree(env4, "=", SSOperator("="));
-	env6 = setTree(env5, "!=", SSOperator("!="));
-	env7 = setTree(env6, "<", SSOperator("<"));
-	env8 = setTree(env7, ">", SSOperator(">"));
-	env9 = setTree(env8, "<=", SSOperator("<="));
-	env10 = setTree(env9, ">=", SSOperator(">="));
-	
-	// Add other functions as variables
-	fold(runtimeFunctions, env10, \acc, name -> {
-		if (name == "+" || name == "-" || name == "*" || name == "/" || name == "=" ||
-		    name == "!=" || name == "<" || name == ">" || name == "<=" || name == ">=") {
-			// Already added as operators
-			acc;
-		} else {
-			setTree(acc, name, SSVariable(name));
-		}
-	});
 }
 
 // Helper functions for basic operations
@@ -1585,8 +1556,8 @@ mergeOGraphNodesSexpr(evalResult : FnArgResult) -> Sexpr {
 }
 
 // Implementation of evaluateOGraphQuasiquote function
-evaluateOGraphQuasiquoteFunction(evalResult : FnArgResult) -> Sexpr {
-	// Ensure we have exactly 2 arguments
+evaluateOGraphQuasiquoteFunction(evaluator : (SExpEnv, Sexpr) -> SExpEnv, evalResult : FnArgResult) -> Sexpr {
+	// Ensure we have exactly 2 arguments (we'll use the global evaluator)
 	if (length(evalResult.args) != 2) {
 		println("ERROR: evaluateOGraphQuasiquote expects 2 arguments");
 		SSInt(-1);
@@ -1597,62 +1568,17 @@ evaluateOGraphQuasiquoteFunction(evalResult : FnArgResult) -> Sexpr {
 		// Get the node ID
 		nodeId = getSInt(evalResult.args[1], "evaluateOGraphQuasiquote.nodeId");
 		
-		// Get the environment from the standard runtime
-		env = getRuntimeEnv();
-		
-		// Create a custom evaluator function that works directly with standard library functions
-		// Without requiring direct access to evalSexpr
-		evaluator = \environment, expr -> {
-			// Convert environment and expression to a format we can use
-			// This is a simplified evaluator - in a real implementation, we'd handle more cases
+		// Create a wrapper evaluator that converts from SExpEnv to the Pair format
+		wrapperEvaluator = \environment, expr -> {
+			// Call the global evaluator
+			resultEnv = evaluator(environment, expr);
 			
-			// For operators, use the specific functions
-			switch (expr) {
-				SSList(parts): {
-					if (length(parts) > 0) {
-						// First part should be operator
-						switch (parts[0]) {
-							SSOperator(op): {
-								// Parse arguments
-								args = tail(parts);
-								if (op == "+") {
-									// Call our addition function
-									result = addNumbers(FnArgResult(environment.env, args));
-									Pair(environment, result);
-								} else if (op == "-") {
-									// Call our subtraction function
-									result = subtractNumbers(FnArgResult(environment.env, args));
-									Pair(environment, result);
-								} else if (op == "*") {
-									// Call our multiplication function
-									result = multiplyNumbers(FnArgResult(environment.env, args));
-									Pair(environment, result);
-								} else if (op == "/") {
-									// Call our division function
-									result = divideNumbers(FnArgResult(environment.env, args));
-									Pair(environment, result);
-								} else {
-									// Not a simple operator - just return as is
-									Pair(environment, expr);
-								}
-							}
-							default: {
-								// Not a simple operator - just return as is
-								Pair(environment, expr);
-							}
-						}
-					} else {
-						// Empty list
-						Pair(environment, expr);
-					}
-				}
-				// For simple values, return as is
-				default: Pair(environment, expr);
-			}
+			// Return the pair format expected by evaluateOGraphQuasiquote
+			Pair(resultEnv, resultEnv.value);
 		};
-		
+		env = getRuntimeEnv(evaluator);
 		// Call the quasiquote evaluator with tracing disabled
-		result = evaluateOGraphQuasiquote(name, nodeId, env, evaluator, false);
+		result = evaluateOGraphQuasiquote(name, nodeId, env, wrapperEvaluator, false);
 		
 		// Return the resulting node ID
 		SSInt(result.second);
