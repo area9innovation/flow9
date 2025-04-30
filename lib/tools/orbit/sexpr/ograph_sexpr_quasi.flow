@@ -49,8 +49,14 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
             
             if (tracing) println("Evaluating node " + i2s(nodeId) + " with op: " + node.op);
             
+            // First check if this is a Scheme node that we can process
+            if (!isSchemeNode(node)) {
+                if (tracing) println("Not a Scheme node, processing children only");
+                // Not a Scheme node - just process children recursively
+                processNodeChildren(graph, nodeId, node, environment, evaluator, tracing);
+            }
             // Check if this is an unquote operation
-            if (node.op == "unquote" || node.op == "UnQuote") {
+            else if (node.op == "unquote" || node.op == "UnQuote") {
                 // Unquote - evaluate the child directly
                 if (length(node.children) == 1) {
                     if (tracing) println("Found unquote, evaluating child");
@@ -84,7 +90,7 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
                 // Handle unquote-splicing - special case that needs to be handled by parent
                 if (tracing) println("Found unquote-splicing, this should be handled by parent node");
                 Pair(environment, nodeId); // Return unchanged
-            } else if (isOperatorNode(node, environment)) {
+            } else if (isOperatorNode(graph, node, environment)) {
                 // For operator nodes or user-defined functions, consider evaluating
                 evaluateOperatorNode(graph, nodeId, node, environment, evaluator, tracing);
             } else {
@@ -99,14 +105,50 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
     }
 }
 
+// Check if a node represents a Scheme expression that we can potentially evaluate
+isSchemeNode(node : ONode) -> bool {
+    // These node types are created by sexp2OGraphWithSubstitution and represent Scheme expressions
+    schemeNodeTypes = ["List", "SpecialForm", "Int", "Double", "String", "Bool", 
+                      "Identifier", "Constructor", "Operator", "Vector"];
+    
+    contains(schemeNodeTypes, node.op);
+}
+
 // Check if a node represents an operator (like +, -, *, /) or user-defined function that can be evaluated
-isOperatorNode(node : ONode, env : SExpEnv) -> bool {
-    // Check if it's a built-in operator in the runtime environment
-    if (containsKeyTree(env.runtime, node.op)) {
-        true;
+isOperatorNode(graph : OGraph, node : ONode, env : SExpEnv) -> bool {
+    // First check if it's a Scheme node at all
+    if (!isSchemeNode(node)) {
+        false;  // Not a Scheme node, can't be an operator
+    } else if (node.op == "List" && length(node.children) > 0) {
+        // For List nodes, the first child might be an operator or function
+        // Get the first child and check if it's an operator or identifier
+        firstChildId = node.children[0];
+        switch (lookupOClass(graph, firstChildId)) {
+            Some(childClass): {
+                childNode = childClass.node;
+                if (childNode.op == "Operator") {
+                    // It's an operator, check if it's in runtime environment
+                    opName = switch (childNode.value) {
+                        OrbitString(s): s;
+                        default: "";
+                    };
+                    containsKeyTree(env.runtime, opName);
+                } else if (childNode.op == "Identifier") {
+                    // It's an identifier, check if it's a function in user environment
+                    fnName = switch (childNode.value) {
+                        OrbitString(s): s;
+                        default: "";
+                    };
+                    containsKeyTree(env.env, fnName);
+                } else {
+                    false;
+                }
+            }
+            None(): false;
+        }
     } else {
-        // Check if it's a user-defined function in the environment
-        containsKeyTree(env.env, node.op);
+        // Not a list with a function call structure
+        false;
     }
 }
 
