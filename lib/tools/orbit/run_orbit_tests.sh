@@ -186,6 +186,9 @@ for TEST_FILE in $TEST_FILES; do
     echo "$SEXPR_OUTPUT" > "$SEXPR_OUTPUT_FILE"
     clean_output_file "$SEXPR_OUTPUT_FILE"
     
+    # Remove the SExpr mode line which would cause false differences in the diff
+    sed -i '/SExpr mode: Using SExpr interpreter and pretty printer/d' "$SEXPR_OUTPUT_FILE"
+    
     # Compare the outputs
     DIFF_OUTPUT=$(diff -u "$OUTPUT_FILE" "$SEXPR_OUTPUT_FILE")
     DIFF_EXIT_CODE=$?
