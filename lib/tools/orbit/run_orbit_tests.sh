@@ -10,6 +10,7 @@ EXPECTED_DIR="expected_output"  # Directory for expected outputs
 TRACE=0
 SEXPR=0  # Flag for using the S-expression evaluation engine
 COMPARE_ENGINES=0  # Flag to run each test with both engines and compare results
+SEXPR_ROUNDTRIP=0  # Flag to test SExpr->Orbit->SExpr roundtrip during comparison
 VERBOSE=0
 TIMEOUT=10  # Timeout in seconds
 GENERATE_EXPECTED=0  # Flag to generate expected output files
@@ -60,6 +61,15 @@ while [[ $# -gt 0 ]]; do
       COMPARE_ENGINES=1
       shift
       ;;
+    --sexpr-roundtrip)
+      SEXPR_ROUNDTRIP=1
+      shift
+      ;;
+    --compare-with-roundtrip)
+      COMPARE_ENGINES=1
+      SEXPR_ROUNDTRIP=1
+      shift
+      ;;
     --verbose)
       VERBOSE=1
       shift
@@ -86,7 +96,9 @@ while [[ $# -gt 0 ]]; do
       echo "  --timeout=SECONDS Maximum time to allow a test to run (default: 10 seconds)"
       echo "  --trace           Enable detailed tracing of interpretation steps"
       echo "  --sexpr           Use the S-expression evaluation engine (sexpr=1)"
+      echo "  --sexpr-roundtrip Test the SExpr->Orbit->SExpr roundtrip (sexpr-roundtrip=1)"
       echo "  --compare-engines Run each test with both engines and compare results"
+      echo "  --compare-with-roundtrip  Compare native engine vs SExpr including roundtrip test"
       echo "  --verbose         Show detailed output for each test"
       echo "  --generate-expected  Generate expected output files from current outputs"
       echo "  --cleanup         Check for obsolete output files (test cases that no longer exist)"
@@ -164,11 +176,16 @@ for TEST_FILE in $TEST_FILES; do
     PARAMS="$PARAMS sexpr=1"
   fi
   
+  if [ $SEXPR_ROUNDTRIP -eq 1 ]; then
+    PARAMS="$PARAMS sexpr-roundtrip=1"
+  fi
+  
   if [ $COMPARE_ENGINES -eq 1 ]; then
     # Run with default engine
     echo "  - Running with default engine"
     DEFAULT_PARAMS="$PARAMS"
     DEFAULT_PARAMS=${DEFAULT_PARAMS/sexpr=1/}  # Remove sexpr=1 if present
+    DEFAULT_PARAMS=${DEFAULT_PARAMS/sexpr-roundtrip=1/}  # Remove sexpr-roundtrip=1 if present
     OUTPUT=$(timeout --kill-after=2 $TIMEOUT orbit $DEFAULT_PARAMS "$TEST_FILE" 2>&1 | grep -v "Flow compiler (3rd generation)" | grep -v "Processing 'tools/orbit/orbit' on http server" | sed '/^$/d')
     EXIT_CODE=$?
     
@@ -176,25 +193,37 @@ for TEST_FILE in $TEST_FILES; do
     echo "$OUTPUT" > "$OUTPUT_FILE"
     clean_output_file "$OUTPUT_FILE"
     
-    # Run with sexpr engine
-    echo "  - Running with S-expression engine"
-    SEXPR_PARAMS="$PARAMS sexpr=1"
-    SEXPR_OUTPUT=$(timeout --kill-after=2 $TIMEOUT orbit $SEXPR_PARAMS "$TEST_FILE" 2>&1 | grep -v "Flow compiler (3rd generation)" | grep -v "Processing 'tools/orbit/orbit' on http server" | sed '/^$/d')
-    SEXPR_EXIT_CODE=$?
+    # Determine the appropriate comparison mode
+    if [ $SEXPR_ROUNDTRIP -eq 1 ]; then
+      # Run using the SExpr roundtrip test
+      echo "  - Running with SExpr roundtrip test"
+      COMPARISON_PARAMS="$PARAMS sexpr-roundtrip=1"
+      COMPARISON_PARAMS=${COMPARISON_PARAMS/sexpr=1/}  # Remove sexpr=1 if present
+      ENGINE_NAME="SExprRoundtrip"
+    else
+      # Run with regular SExpr engine
+      echo "  - Running with S-expression engine"
+      COMPARISON_PARAMS="$PARAMS sexpr=1"
+      ENGINE_NAME="SExpr"
+    fi
     
-    # Save the sexpr output
-    echo "$SEXPR_OUTPUT" > "$SEXPR_OUTPUT_FILE"
+    COMPARISON_OUTPUT=$(timeout --kill-after=2 $TIMEOUT orbit $COMPARISON_PARAMS "$TEST_FILE" 2>&1 | grep -v "Flow compiler (3rd generation)" | grep -v "Processing 'tools/orbit/orbit' on http server" | sed '/^$/d')
+    COMPARISON_EXIT_CODE=$?
+    
+    # Save the comparison output
+    echo "$COMPARISON_OUTPUT" > "$SEXPR_OUTPUT_FILE"
     clean_output_file "$SEXPR_OUTPUT_FILE"
     
-    # Remove the SExpr mode line which would cause false differences in the diff
+    # Remove mode informational lines which would cause false differences in the diff
     sed -i '/SExpr mode: Using SExpr interpreter and pretty printer/d' "$SEXPR_OUTPUT_FILE"
+    sed -i '/SExpr roundtrip mode: Will verify Orbit->SExpr->Orbit->SExpr gives identical SExpr/d' "$SEXPR_OUTPUT_FILE"
     
     # Compare the outputs
     DIFF_OUTPUT=$(diff -u "$OUTPUT_FILE" "$SEXPR_OUTPUT_FILE")
     DIFF_EXIT_CODE=$?
     
     if [ $DIFF_EXIT_CODE -eq 0 ]; then
-      echo "  ✓ Both engines produced identical output"
+      echo "  ✓ Default and $ENGINE_NAME engines produced identical output"
     else
       echo "  ⚠ Engine outputs differ!"
       DIFF_SUMMARY_FILE="$OUTPUT_DIR/${FILE_NAME%.orb}.engine_diff"
