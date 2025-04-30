@@ -5,7 +5,7 @@
   - Imports are not resolved correctly, so we do not convert those right
   - Migrate to eval using SExpr. 
     - Pattern matching needs to support "if" conditions
-	- Difference in array vs call
+	- Difference in array vs call: Clojure uses [] for vector, and :name for self-evaluating ids
   - Change ograph to use SExpr
   - Implement SExpr eval using ograph via rewrites
 
