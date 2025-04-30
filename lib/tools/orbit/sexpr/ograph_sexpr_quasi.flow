@@ -17,7 +17,7 @@ export {
         graphName : string,   // Name of the OGraph to operate on
         nodeId : int,        // ID of the node to start traversal from
         environment : SExpEnv,     // Environment for evaluation (SExpEnv with runtime functions)
-        evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, // Function to use for evaluation
+        evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, // Function to use for evaluation
         tracing : bool       // Whether to enable detailed tracing
     ) -> Pair<SExpEnv, int>; // Returns updated environment and resulting node ID
 }
@@ -114,7 +114,7 @@ getNodeBoolValue(node : ONode, defaultValue : bool) -> bool {
 }
 
 // Main function to evaluate quasiquotation in an OGraph
-evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
     // Get the graph from the registry
     switch (lookupTree(^ographRegistry, graphName)) {
         Some(graph): {
@@ -133,7 +133,7 @@ evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv
 }
 
 // Evaluate quasiquotation for a specific node in the graph
-evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
     // Lookup the node in the graph
     switch (lookupOClass(graph, nodeId)) {
         Some(oclass): {
@@ -158,11 +158,10 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
                     childSexpr = ograph2Sexpr(graph, childId);
                     
                     // Evaluate the expression using the provided evaluator function
-                    evaluatorResult = evaluator(environment, childSexpr);
+                    newEnvironment = evaluator(environment, childSexpr);
                     
-                    // Extract the new environment and result value
-                    newEnvironment = evaluatorResult.first;
-                    result = evaluatorResult.second;
+                    // Extract the result value from the environment
+                    result = newEnvironment.value;
                     
                     // Convert the result back to OGraph node
                     resultId = sexp2OGraphWithSubstitution(graph, result, makeTree());
@@ -241,7 +240,7 @@ isOperatorNode(graph : OGraph, node : ONode, env : SExpEnv) -> bool {
 
 // Helper function to process children recursively
 processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : SExpEnv, 
-                           evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool, 
+                           evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, 
                            areConstants : bool) -> Pair<Pair<SExpEnv, [int]>, bool> {
     if (startIndex >= length(children)) {
         // Done processing all children
@@ -279,7 +278,7 @@ processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, e
 
 // Helper function to process list children with special handling for unquote-splicing
 processListChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : SExpEnv, 
-                              evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, [int]> {
+                              evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, [int]> {
     if (startIndex >= length(children)) {
         Pair(environment, []); // Done processing all children
     } else {
@@ -297,9 +296,8 @@ processListChildrenRecursively(graph : OGraph, children : [int], startIndex : in
                         splicedSexpr = ograph2Sexpr(graph, splicedChildId);
                         
                         // Evaluate the expression using the provided evaluator function
-                        evaluatorResult = evaluator(environment, splicedSexpr);
-                        newEnvironment = evaluatorResult.first;
-                        result = evaluatorResult.second;
+                        newEnvironment = evaluator(environment, splicedSexpr);
+                        result = newEnvironment.value;
                         
                         // The result should be a list to splice
                         switch (result) {
@@ -363,7 +361,7 @@ processSpliceItems(graph : OGraph, items : [Sexpr], startIndex : int, environmen
 }
 
 // Evaluate an operator node if all children are constants
-evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
     if (tracing) println("Checking if operator " + node.op + " can be evaluated");
     
     // Process all children
@@ -380,11 +378,10 @@ evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : S
         expr = createSexprFromNode(graph, node.op, processedChildren, newEnvironment);
         
         // Evaluate the expression using the provided evaluator function
-        evaluatorResult = evaluator(newEnvironment, expr);
+        finalEnvironment = evaluator(newEnvironment, expr);
         
-        // Extract the new environment and result value
-        finalEnvironment = evaluatorResult.first;
-        result = evaluatorResult.second;
+        // Extract the result value from the environment
+        result = finalEnvironment.value;
         
         if (tracing) println("Evaluated expression, result: " + prettySexpr(result));
         
@@ -411,7 +408,7 @@ evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : S
 }
 
 // Process children of a regular (non-special) node - implementing improvement #3
-processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
+processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
     if (tracing) println("Processing children of node " + i2s(nodeId) + " (" + node.op + ")");
     
     // Special handling for container nodes (List/Vector) that might contain unquote-splicing
@@ -442,7 +439,7 @@ processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SE
 
 // Process List and Vector nodes with consistent handling - implementing improvement #3
 processContainer(graph : OGraph, nodeId : int, node : ONode, containerType : string, 
-                 environment : SExpEnv, evaluator : (SExpEnv, Sexpr) -> Pair<SExpEnv, Sexpr>, 
+                 environment : SExpEnv, evaluator : (SExpEnv, Sexpr) -> SExpEnv, 
                  tracing : bool) -> Pair<SExpEnv, int> {
     if (tracing) println("Processing " + containerType + " node with " + i2s(length(node.children)) + " children");
     
@@ -468,7 +465,7 @@ processContainer(graph : OGraph, nodeId : int, node : ONode, containerType : str
 }
 
 // Special handling for List nodes (now a wrapper around processContainer)
-processListNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
+processListNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
     // Just delegate to our more general container processor
     processContainer(graph, nodeId, node, "List", environment, evaluator, tracing);
 }
