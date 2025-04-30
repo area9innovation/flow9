@@ -24,7 +24,8 @@ flowcpp sexpr.flow -- tests/file.sexp
 | `(quasiquote exp)`                                  | `(quasiquote +(1 (unquote a)))`   |
 | `(unquote exp)`                                     | `(unquote a)`                  |
 | `(unquote-splicing exp)`                            | `(unquote-splicing ls)`    |
-| `(match value (pattern1 result1) (pattern2 result2) ...)` | `(match x (0 'zero) (1 'one) (else 'other))` |
+| `(match value pattern1 result1 pattern2 result2 ...)` | `(match x 0 'zero 1 'one else 'other)` |
+| `(match value ((pattern condition) result) ...)` | `(match x ((n 0 (> n 5)) 'big) n 'small)` |
 | `(define name exp)` <br> `(define (name param*) body...)` | `(define x 42)` <br> `(define (f x) (+ x 1))` |
 
 ## Differences from Scheme
@@ -54,6 +55,10 @@ false     ; false value
 
 ;; Strings
 "hello"   ; a string
+
+;; Arrays
+[1 2 3]   ; an array of numbers
+["a" "b"] ; an array of strings
 
 ;; Symbols
 x         ; a variable
@@ -141,12 +146,93 @@ Performs pattern matching against a value:
 	...)
 ```
 
+Conditional pattern matching is also supported by using a list of three elements where:
+- First element is the pattern to match
+- Second element is ignored (reserved for future use)
+- Third element is a condition to evaluate after binding the variables
+
+```scheme
+(match value
+	;; Pattern with condition: only matches if x > 5 after binding
+	((x 0 (> x 5)) "x is greater than 5")
+	;; Regular pattern without condition
+	x "x is 5 or less")
+```
+
+If a pattern doesn't have a condition (not a list with 3 elements), it's treated as implicitly having a `true` condition.
+
 Pattern matching supports:
 - Variable binding (like `x` which binds to a value)
 - Wildcard patterns (`_` which matches anything without binding)
 - List patterns (like `(x y z)` which matches a list of exactly 3 items)
 - Literal patterns (like numbers, strings, booleans that match only equal values)
 - Constructor patterns (`ConstructorName`)
+- Conditional patterns as described above
+
+### Conditional Pattern Matching
+
+The `match` form supports conditional pattern matching, where a pattern can specify an additional condition that must be satisfied after the pattern successfully matches and variables are bound:
+
+```scheme
+;; Match a value and apply conditions to the bound variables
+(define classify-number
+	(lambda (n)
+		(match n
+			;; Pattern with condition: only matches if n > 100
+			(n (> n 100) "large number")
+			;; Pattern with condition: only matches if n is even
+			(n (even n) "even number")
+			;; Pattern with condition: only matches if n is odd
+			(n (odd n) "odd number")
+			;; Default pattern (no condition needed)
+			(n "other number"))))
+
+(classify-number 120)  ; => "large number"
+(classify-number 42)   ; => "even number"
+(classify-number 7)    ; => "odd number"
+(classify-number -5)   ; => "odd number"
+```
+
+Conditional patterns use the following format: `(pattern condition result)`
+
+With this format:
+1. The first element is the pattern to match against the value
+2. The second element is the condition to evaluate after binding variables
+3. The third element is the result to return if both the pattern matches AND the condition is true
+
+When using conditional patterns:
+- The pattern is first matched against the value, binding any variables
+- If pattern matching succeeds, the condition is evaluated in an environment containing the bound variables
+- If the condition evaluates to `true`, the result is evaluated and returned
+- If the condition evaluates to `false`, evaluation continues with the next pattern
+
+Regular (non-conditional) patterns use the format: `(pattern result)`
+
+You can mix conditional and non-conditional patterns in the same `match` expression:
+
+```scheme
+;; Complex pattern matching with conditions on different types
+(define complex-match
+	(lambda (val)
+		(match val
+			;; Match strings with specific condition
+			(s (and (isString s) (= (strlen s) 5)) "5-letter string")
+			;; Match lists with specific length
+			(lst (and (isArray lst) (= (length lst) 2)) "2-element list")
+			;; Match numbers in specific range
+			(n (and (isInt n) (> n 0) (< n 100)) "positive number < 100")
+			;; Default
+			(x (+ "other: " (astname x))))))
+
+(complex-match "hello")    ; => "5-letter string"
+(complex-match "hi")       ; => "other: String"
+(complex-match (list 1 2)) ; => "2-element list"
+(complex-match 42)         ; => "positive number < 100"
+(complex-match 200)        ; => "other: Int"
+(complex-match true)       ; => "other: Bool"
+```
+
+This feature significantly enhances the expressiveness of pattern matching in SEXP, allowing for more complex conditional logic to be expressed in a concise and readable form.
 
 ### Quasiquotation
 

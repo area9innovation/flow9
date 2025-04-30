@@ -12,6 +12,7 @@ import tools/orbit/orbit_simple_ograph;
 import tools/orbit/orbit_sexpr_bridge;
 import tools/orbit/orbit2sexpr;
 import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/resolve_imports;
 
 // Recursively finds and prints differences between two strings
 findDifferences(original : string, converted : string, position : int, totalLen : int) -> void {
@@ -22,6 +23,9 @@ findDifferences(original : string, converted : string, position : int, totalLen 
 		if (origChar != convChar) {
 			println("Position " + i2s(position) + ": '" + origChar + "' vs '" + convChar + "'");
 		}
+		
+		// Continue recursively to next position
+		findDifferences(original, converted, position + 1, totalLen);
 	}
 }
 
@@ -34,6 +38,7 @@ main() {
 		println("  pretty=1 - Only pretty print the parsed result without evaluation");
 		println("  sexpr=1 - Use SExpr interpreter and pretty printer instead of Orbit native ones");
 		println("  roundtrip=1 - Test roundtrip conversion (Orbit → SExpr → Orbit) and compare results");
+		println("  sexpr-roundtrip=1 - Test if Orbit->SExpr->Orbit->SExpr produces identical SExpr");
 	}
 	
 	// Check if tracing is enabled via URL parameter
@@ -60,6 +65,12 @@ main() {
 		println("Roundtrip test mode: Will compare results of Orbit u2192 SExpr u2192 Orbit conversion");
 	}
 	
+	// Check if we should test the sexp2orbit conversion path by comparing sexpr representations
+	testSexprRoundtrip = getUrlParameter("sexpr-roundtrip") == "1";
+	if (testSexprRoundtrip) {
+		println("SExpr roundtrip mode: Will verify Orbit->SExpr->Orbit->SExpr gives identical SExpr");
+	}
+	
 	errors = sum(map(files, \f -> {
 		if (fileExists(f)) {
 			program = getFileContent(f);
@@ -76,9 +87,10 @@ main() {
 					// Step 1: Get pretty-printed original AST
 					println("\nSTEP 1: Pretty-printing original Orbit AST");
 					original = prettyOrbit(res.first);
-					// Step 2: Convert to SExpr
-					println("\nSTEP 2: Converting to SExpr");
-					sexpr = orbit2sexpr(res.first);
+					// Step 2: First resolve imports, then convert to SExpr
+					println("\nSTEP 2: Resolving imports and converting to SExpr");
+					resolvedImports = resolveOrbitImports(makeSet(), res.first);
+					sexpr = orbit2sexpr(resolvedImports.second);
 					if (prettyPrintOnly) {
 						prettyExpr = prettySexpr(sexpr);
 						println("SExpr:");
@@ -117,21 +129,70 @@ main() {
 				} else if (prettyPrintOnly) {
 					println("Parsed AST:");
 					if (useSexpr) {
+						// First, resolve all imports without evaluation
+						resolvedImports = resolveOrbitImports(makeSet(), res.first);
 						// Convert to SExpr and pretty print using bridge
-						prettyResult = prettySExprFromOrbit(res.first);
+						prettyResult = prettySExprFromOrbit(resolvedImports.second);
 						println(prettyResult);
 					} else {
 						// Use native Orbit pretty printer
 						println(prettyOrbit(res.first));
 					}
 					0;
+				} else if (testSexprRoundtrip) {
+					println("====== SEXPR ROUNDTRIP TEST ======");
+					println("Original file: " + f);
+					
+					// Step 1: Convert the original Orbit AST to SExpr
+					println("\nSTEP 1: Converting original Orbit AST to SExpr");
+					resolvedImports = resolveOrbitImports(makeSet(), res.first);
+					sexpr1 = orbit2sexpr(resolvedImports.second);
+					prettyExpr1 = prettySexpr(sexpr1);
+					println("Original SExpr generated");
+					
+					// Step 2: Convert SExpr back to Orbit
+					println("\nSTEP 2: Converting SExpr back to Orbit via sexp2orbit");
+					orbitAgain = sexpr2orbit(sexpr1);
+					println("Conversion to Orbit completed");
+					
+					// Step 3: Convert the new Orbit AST back to SExpr
+					println("\nSTEP 3: Converting new Orbit AST back to SExpr");
+					sexpr2 = orbit2sexpr(orbitAgain);
+					prettyExpr2 = prettySexpr(sexpr2);
+					println("Roundtripped SExpr generated");
+					
+					// Step 4: Compare the SExpr representations
+					println("\nSTEP 4: Comparing SExpr representations");
+					if (prettyExpr1 == prettyExpr2) {
+					println("SUCCESS: The SExpr->Orbit->SExpr roundtrip produced identical SExpr!");
+				} else {
+					println("WARNING: The SExpr->Orbit->SExpr roundtrip resulted in different SExpr");
+					
+					// Print both representations for debugging
+					println("\nOriginal SExpr:\n" + prettyExpr1);
+					println("\nRoundtripped SExpr:\n" + prettyExpr2);
+					
+					// Show the original and roundtripped Orbit code
+					println("\nOriginal Orbit AST:\n" + prettyOrbit(resolvedImports.second));
+					println("\nRoundtripped Orbit AST:\n" + prettyOrbit(orbitAgain));
+					
+					// Find and display differences for debugging purposes
+					println("\nDifferences found between SExpr representations:");
+					totalLen = max(strlen(prettyExpr1), strlen(prettyExpr2));
+					findDifferences(prettyExpr1, prettyExpr2, 0, totalLen);
+					}
+					
+					println("====== END SEXPR ROUNDTRIP TEST ======\n");
+					0;
 				} else {
 					if (useSexpr) {
+						// First, resolve all imports without evaluation
+						resolvedImports = resolveOrbitImports(makeSet(), res.first);
 						// Convert to SExpr, evaluate with SExpr interpreter using bridge
-						result = evaluateWithSExpr(res.first);
+						result = evaluateWithSExpr(resolvedImports.second);
 						
 						// Print the result
-						println("Result (SExpr): " + result);
+						println("Result: " + result);
 						0;
 					} else {
 						// Use native Orbit interpreter

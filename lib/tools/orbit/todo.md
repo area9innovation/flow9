@@ -2,10 +2,10 @@
 - Port the entire thing to run in our scheme
   ✅ Convert OrMath_expr to/from SExpr
   ✅ Check roundtrip Orbit to SExpr and back
-  - Imports are not resolved, so we do not convert those right
-    - Do preprocessing to resolve imports
-	- Or support importing Orbit in SExpr
-  - Migrate to eval using SExpr
+  - Imports are not resolved correctly, so we do not convert those right
+  - Migrate to eval using SExpr. 
+    ✅ Pattern matching needs to support "if" conditions
+	✅ Difference in array vs call: Clojure uses [] for vector, and :name for self-evaluating ids
   - Change ograph to use SExpr
   - Implement SExpr eval using ograph via rewrites
 
@@ -62,6 +62,7 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
 - Add support for Gröbner basis canonicalization for polynomial rings
 - Integrate matrix group canonicalization (GL, SL, O groups)
 - Implement efficient mechanism to pattern match from a domain down to the terms in that domain
+- https://iclr-blogposts.github.io/2025/blog/sparse-autodiff/
 
 ## Group Theory Implementation
 - Implement core group operations (multiplication, inverses, identity checking)

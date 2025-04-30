@@ -2293,6 +2293,8 @@ class TextClip extends NativeWidgetClip {
 	private function disableSprites() : Void {
 		if (textClip != null && untyped textClip._texture != null) {
 			textClip.destroy({ children: true, texture: true, baseTexture: true });
+			nativeWidget = null;
+			isNativeWidget = false;
 			textClip = null;
 		}
 
@@ -2304,7 +2306,5 @@ class TextClip extends NativeWidgetClip {
 		baselineWidget = null;
 		textBackgroundWidget = null;
 		amiriItalicWorkaroundWidget = null;
-		nativeWidget = null;
-		isNativeWidget = false;
 	}
 }

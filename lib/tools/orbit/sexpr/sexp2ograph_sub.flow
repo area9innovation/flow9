@@ -1,0 +1,132 @@
+import tools/orbit/orbit_types;
+import tools/orbit/ograph;
+import tools/orbit/types;
+import tools/orbit/sexpr/sexpr_types;
+import ds/tree;
+import string;
+
+export {
+    // Add an Sexpr to an OGraph, substituting variables with existing eclasses
+    // and processing type annotations by adding domains to the "belongs to" field
+    // Takes a mapping from variable names to eclass IDs for substitution
+    // Returns the eclass ID of the added expression
+    sexp2OGraphWithSubstitution(graph : OGraph, expr : Sexpr, varToEclass : Tree<string, int>) -> int;
+}
+
+// Add an Sexpr to an OGraph with variable substitution and type annotation handling
+sexp2OGraphWithSubstitution(graph : OGraph, expr : Sexpr, varToEclass : Tree<string, int>) -> int {
+    // Handle specific expression types with strong typing
+    switch (expr) {
+        // Handle type annotation in the form (: expr Domain)
+        SSList(parts): {
+            if (length(parts) == 3 && parts[0] == SSOperator(":")) {
+                // Extract the expression and domain
+                baseExpr = parts[1];
+                domain = parts[2];
+                
+                // Process the domain
+                domainId = sexp2OGraphWithSubstitution(graph, domain, varToEclass);
+                
+                // Process the base expression
+                baseId = sexp2OGraphWithSubstitution(graph, baseExpr, varToEclass);
+                
+                // Add the domain to the "belongs to" field of the base node
+                println("Adding domain " + i2s(domainId) + " to node " + i2s(baseId));
+                addBelongsToONode(graph, baseId, domainId);
+                
+                // Return the base node ID as the canonical form
+                baseId;
+            } else {
+                // For non-annotation lists, process all children
+                childIds = map(parts, \child -> {
+                    sexp2OGraphWithSubstitution(graph, child, varToEclass);
+                });
+                
+                // Create a node with the processed children
+                // Use "List" as the operator for general lists
+                insertONode(graph, ONode("List", childIds, [], OrbitNone()));
+            }
+        }
+        
+        // Variable substitution
+        SSVariable(id): {
+            // Check if we have a mapping for this identifier
+            switch (lookupTree(varToEclass, id)) {
+                Some(eclassId): {
+                    // Use the provided eclass ID directly
+                    eclassId;
+                }
+                None(): {
+                    // No substitution - add as a normal identifier
+                    addValueNode(graph, "Identifier", id);
+                }
+            }
+        }
+        
+        // Constructor handling
+        SSConstructor(name): {
+            addValueNode(graph, "Constructor", name);
+        }
+        
+        // Operator handling
+        SSOperator(op): {
+            addValueNode(graph, "Operator", op);
+        }
+        
+        // Leaf primitives
+        SSInt(i): insertONode(graph, ONode("Int", [], [], OrbitInt(i)));
+        SSDouble(d): insertONode(graph, ONode("Double", [], [], OrbitDouble(d)));
+        SSString(s): addValueNode(graph, "String", s);
+        SSBool(b): insertONode(graph, ONode("Bool", [], [], OrbitBool(b)));
+        
+        // Vector handling - similar to list but with a different name
+        SSVector(parts): {
+            // Process all children
+            childIds = map(parts, \child -> {
+                sexp2OGraphWithSubstitution(graph, child, varToEclass);
+            });
+            
+            // Create a node with the processed children
+            // Use "Vector" as the operator for vectors
+            insertONode(graph, ONode("Vector", childIds, [], OrbitNone()));
+        }
+        
+        // Special forms - handle as a list with the special form as the first element
+        SSSpecialForm(form, parts): {
+            // Process the special form name
+            formName = switch (form) {
+                SDefine(): "define";
+                SLambda(): "lambda";
+                SIf(): "if";
+                SQuote(): "quote";
+                SQuasiQuote(): "quasiquote";
+                SUnQuote(): "unquote";
+                SUnQuoteSplicing(): "unquote-splicing";
+                SMatch(): "match";
+                SLet(): "let";
+                SLetRec(): "letrec";
+                SBegin(): "begin";
+                SAnd(): "and";
+                SOr(): "or";
+                SSet(): "set!";
+                SImport(): "import";
+                SEval(): "eval";
+                SClosure(): "closure";
+                SList(): "list";
+            };
+            
+            // Add the special form name as the first child
+            formId = addValueNode(graph, "Special", formName);
+            
+            // Process all parts of the special form
+            childIds = map(parts, \part -> {
+                sexp2OGraphWithSubstitution(graph, part, varToEclass);
+            });
+            
+            // Create a node with the special form name and all parts
+            allChildren = concat([formId], childIds);
+            insertONode(graph, ONode("SpecialForm", allChildren, [], OrbitNone()));
+        }
+    }
+}
+

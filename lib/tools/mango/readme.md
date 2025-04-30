@@ -318,11 +318,11 @@ Use the `@highlight` annotation to specify which grammar rules should be highlig
 
 ```mango
 @include<highlight>
+@highlight<ws "comment.block">
 @highlight<id "variable.parameter">
 @highlight<uid "entity.name.function">
 @highlight<int "constant.numeric">
 @highlight<string "string.quoted.double">
-@highlight<ws "comment.block">
 ```
 
 The highlighting class names follow TextMate naming conventions.

@@ -8,11 +8,125 @@ import runtime;
 import string;
 import net/url_parameter;
 import fs/filesystem;
+// Orbit related imports - only what we need
+import tools/orbit/orbit_compiled_parser;
+import tools/orbit/orbit_types;
+import tools/orbit/orbit2sexpr;
+
+// Check if a file is an Orbit file by its extension
+isOrbitFile(filename : string) -> bool {
+	getFileExt(filename) == ".orb";
+}
+
+// Process Orbit imports, returning a new expression with imports resolved
+// Unlike the full Orbit interpreter, we only need to parse and resolve the imports
+processOrbitImports(expr : OrMath_expr, baseDir : string, importedFiles : Set<string>) -> OrMath_expr {
+	switch (expr) {
+		OrImport(path): {
+			// Handle import expression
+			filepathOrig = path;
+			
+			// Check if the path has an extension, if not add .orb
+			filepath = if (getFileExt(filepathOrig) == "") {
+				filepathOrig + ".orb";
+			} else filepathOrig;
+			
+			// Resolve relative path if needed
+			fullPath = if (strlen(filepath) > 0 && substring(filepath, 0, 1) != "/" && baseDir != "") {
+				baseDir + "/" + filepath;
+			} else filepath;
+			
+			// Avoid circular imports
+			if (containsSet(importedFiles, fullPath)) {
+				println("Circular import detected: " + fullPath);
+				OrArray([]);
+			} else if (fileExists(fullPath)) {
+				println("Processing import: " + fullPath);
+				
+				// Add to imported files set
+				importedFiles1 = insertSet(importedFiles, fullPath);
+				
+				// Read and parse the imported file
+				program = getFileContent(fullPath);
+				importDir = dirName(fullPath);
+				
+				import_parsed = parseCompiledMango(fullPath, program, orbit_parse_orbit_compiled, flow(0));
+				
+				if (import_parsed.second != "") {
+					println("Error parsing import " + fullPath + ": " + import_parsed.second);
+					OrArray([]);
+				} else {
+					// Recursively process imports in the imported file
+					processOrbitImports(import_parsed.first, importDir, importedFiles1);
+				}
+			} else {
+				println("Import file not found: " + fullPath);
+				OrArray([]);
+			}
+		}
+		OrArray(exprs): {
+			// Process each expression in a block, resolving imports
+			processedExprs = map(exprs, \e -> processOrbitImports(e, baseDir, importedFiles));
+			OrArray(processedExprs);
+		}
+		// For other expression types, recursively process any subexpressions
+		OrIfElse(cond, thn, els): {
+			OrIfElse(
+				processOrbitImports(cond, baseDir, importedFiles),
+				processOrbitImports(thn, baseDir, importedFiles),
+				processOrbitImports(els, baseDir, importedFiles)
+			);
+		}
+		OrEquals(lhs, rhs): {
+			OrEquals(
+				processOrbitImports(lhs, baseDir, importedFiles),
+				processOrbitImports(rhs, baseDir, importedFiles)
+			);
+		}
+		OrAdd(lhs, rhs): {
+			OrAdd(
+				processOrbitImports(lhs, baseDir, importedFiles),
+				processOrbitImports(rhs, baseDir, importedFiles)
+			);
+		}
+		OrMultiply(lhs, rhs): {
+			OrMultiply(
+				processOrbitImports(lhs, baseDir, importedFiles),
+				processOrbitImports(rhs, baseDir, importedFiles)
+			);
+		}
+		OrSubtract(lhs, rhs): {
+			OrSubtract(
+				processOrbitImports(lhs, baseDir, importedFiles),
+				processOrbitImports(rhs, baseDir, importedFiles)
+			);
+		}
+		OrDivide(lhs, rhs): {
+			OrDivide(
+				processOrbitImports(lhs, baseDir, importedFiles),
+				processOrbitImports(rhs, baseDir, importedFiles)
+			);
+		}
+		OrNegate(expr1): {
+			OrNegate(processOrbitImports(expr1, baseDir, importedFiles));
+		}
+		OrFunction(fn, args): {
+			OrFunction(
+				processOrbitImports(fn, baseDir, importedFiles),
+				map(args, \a -> processOrbitImports(a, baseDir, importedFiles))
+			);
+		}
+		// For expressions without subexpressions, return as-is
+		default: expr;
+	}
+}
+
+
 
 main() {
 	files = filtermap(getAllUrlParametersArray(), \a -> if (a[1] == "") Some(a[0]) else None());
 	if (files == []) {
-		println("Usage: sexpr <file.sexp>");
+		println("Usage: sexpr <file.sexp> or <file.orb>");
 		println("Optional parameters:");
 //		println("  trace=1 - Enable detailed tracing of evaluation steps");
 		println("  pretty=1 - Only pretty print the parsed result without evaluation");
@@ -38,13 +152,39 @@ main() {
 		if (fileExists(f)) {
 			println("\nProcessing file: " + f);
 			program = getFileContent(f);
-			// Parse the expression
-			parsed = parseSexpr(f, program);
+			
+			// Determine if this is an Orbit file
+			isOrbit = isOrbitFile(f);
+			
+			// Parse the expression based on file type
+			parsed = if (isOrbit) {
+				// Parse Orbit file and convert to Sexpr
+				orbit_parsed = parseCompiledMango(f, program, orbit_parse_orbit_compiled, flow(0));
+				if (orbit_parsed.second != "") {
+					println("Orbit parse error: " + orbit_parsed.second);
+					None();
+				} else {
+					// Get the directory for the current file to resolve relative imports
+					baseDir = dirName(f);
+					
+					// Process imports in the Orbit AST
+					importedFiles = makeSet();
+					processed = processOrbitImports(orbit_parsed.first, baseDir, importedFiles);
+					
+					// Convert the fully resolved Orbit AST to Sexpr
+					sexpr = orbit2sexpr(processed);
+					Some(sexpr);
+				}
+			} else {
+				// Regular S-expression file
+				parseSexpr(f, program);
+			};
+			
 			switch (parsed) {
 				Some(expr): {
 					// Always print the parsed result if pretty print is enabled
 					if (prettyPrintOnly) {
-						println("Parsed AST:");
+						println("Parsed AST:" + (if (isOrbit) " (converted from Orbit)" else ""));
 						println(prettySexpr(expr));
 						Pair(acc.first, acc.second);
 					} else {

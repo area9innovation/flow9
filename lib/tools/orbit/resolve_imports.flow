@@ -1,0 +1,88 @@
+import tools/orbit/orbit_types;
+import tools/orbit/orbit_ast;
+import tools/orbit/orbit_decompose;
+import tools/orbit/orbit_compiled_parser;
+import ds/set;
+import string;
+import fs/filesystem;
+import tools/mango/mcode_lib;
+import net/url_parameter;
+
+export {
+    // Recursively resolves all imports in an Orbit expression without evaluating it
+    // Returns a pair of the updated set of imported files and the modified expression
+    resolveOrbitImports(imported : Set<string>, e : OrMath_expr) -> Pair<Set<string>, OrMath_expr>;
+}
+
+// Recursively resolves all imports in an Orbit expression without evaluating it
+resolveOrbitImports(imported : Set<string>, e : OrMath_expr) -> Pair<Set<string>, OrMath_expr> {
+    // Handle the import node specifically
+    switch (e) {
+        OrImport(opath): {
+            // Determine the full path for the import
+            path = if (fileExists(opath)) opath 
+                else pathCombine(getUrlParameter("I"), opath);
+            
+            // Check if the file has already been imported
+            if (containsSet(imported, path)) {
+                // Already imported, just return the current state
+                Pair(imported, e);
+            } else {
+                // Mark as imported
+                newImported = insertSet(imported, path);
+                
+                // Build the full file path (add .orb extension if not present)
+                filePath = if (!strContains(path, ".orb")) {
+                    path + ".orb";
+                } else path;
+                
+                if (fileExists(filePath)) {
+                    // Read file content
+                    program = getFileContent(filePath);
+                    
+                    // Parse the file using the mango parser
+                    res = parseCompiledMango(filePath, program, orbit_parse_orbit_compiled, flow(0));
+                    
+                    if (res.second != "") {
+                        // Parse error
+                        println(filePath + ": " + res.second);
+                        Pair(newImported, e);
+                    } else {
+                        // We have the parsed content, now recursively resolve imports in it
+                        resolveOrbitImports(newImported, res.first);
+                    }
+                } else {
+                    // File not found
+                    println("Error: File not found: " + filePath + " with cwd " + getCurrentDirectory());
+                    Pair(newImported, e);
+                }
+            }
+        }
+        default: {
+            // For non-import nodes, process all children recursively
+            // Use decomposeOrbit to extract all children
+            decomposed = decomposeOrbit(e);
+            operator = decomposed.first;
+            children = decomposed.second.first;
+            value = decomposed.second.second;
+            
+            // Process each child with the current set of imports
+            if (length(children) == 0) {
+                // No children, no need to process further
+                Pair(imported, e);
+            } else {
+                // Process each child recursively, threading the imported set through
+                foldi(children, Pair(imported, []), \i, acc, child -> {
+                    // Use the imported set from the previous iteration
+                    childResult = resolveOrbitImports(acc.first, child);
+                    
+                    // Collect processed children
+                    Pair(childResult.first, arrayPush(acc.second, childResult.second));
+                }) |> \result -> {
+                    // Reconstruct the node with the processed children
+                    Pair(result.first, constructOrbit(operator, result.second, value));
+                }
+            }
+        }
+    }
+}
