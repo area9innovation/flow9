@@ -118,7 +118,18 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		OrSetLiteral(exprs): SSList(concat([SSConstructor("SetLiteral")], map(exprs, orbit2sexpr)));
 		OrFunction(fn, args): SSList(concat([orbit2sexpr(fn)], map(args, orbit2sexpr))); // Call
 		OrIfElse(cond, thenExpr, elseExpr): SSSpecialForm(SIf(), [orbit2sexpr(cond), orbit2sexpr(thenExpr), orbit2sexpr(elseExpr)]);
-		OrMatch(expr2, cases): SSSpecialForm(SMatch(), [orbit2sexpr(expr2), orbit2sexpr(cases)]);
+		OrMatch(expr2, cases): {
+			// Special handling for pattern matching
+			// SExpr's match expects a flat array of alternating pattern-result pairs
+			// First, convert the expression that we're matching against
+			convertedExpr = orbit2sexpr(expr2);
+			
+			// Extract all rules recursively
+			patternResultPairs = extractRules(cases);
+			
+			// Create the match special form with the expression and pattern-result pairs
+			SSSpecialForm(SMatch(), concat([convertedExpr], patternResultPairs));
+		}
 		OrLet(idType, evalExpr): SSSpecialForm(SDefine(), [SSVariable(idType.id), orbit2sexpr(evalExpr)]);
 		OrRule(m1, m2, m3, b): SSList([SSConstructor("Rule"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3), SSBool(b)]);
 		OrEntailment(m1, m2, m3): SSList([SSConstructor("Entailment"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3)]);
@@ -990,6 +1001,33 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 					}
 				}
 			}
+		}
+	}
+}
+
+// Helper function to extract all rule pattern-result pairs from a match case expression
+// Handles both direct rules and sequences of rules (as used in 'is' expressions)
+extractRules(node : OrMath_expr) -> [Sexpr] {
+	extractRulesHelper(node, []);
+}
+
+// Helper for extractRules that maintains an accumulator
+extractRulesHelper(node : OrMath_expr, acc : [Sexpr]) -> [Sexpr] {
+	switch (node) {
+		// Handle direct rules
+		OrRule(pattern, result, __, __): {
+			concat(acc, [orbit2sexpr(pattern), orbit2sexpr(result)]);
+		}
+		// Handle sequences recursively
+		OrSequence(left, right): {
+			// First get all rules from the left side
+			leftRules = extractRulesHelper(left, []);
+			// Then get all rules from the right side and combine
+			extractRulesHelper(right, concat(acc, leftRules));
+		}
+		default: {
+			println("Unexpected node in match cases: " + toString(node));
+			acc;
 		}
 	}
 }
