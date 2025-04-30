@@ -430,31 +430,17 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 		};
 		SMatch(): {
 			// Pattern matching
-			if (length(args) >= 3 && (length(args) % 2) == 1) {
-				// match value pattern1 result1 pattern2 result2...
+			if (length(args) >= 2) {
+				// match value [(pattern condition) result] [(pattern) result]...
 				valueResult = evalSexpr(env, args[0]);
 				
-				// Pass patterns directly to the matching function without evaluation
-				patternsAndResults = tail(args);
+				// Process pattern cases - each case is in the form [(pattern condition?) result]
+				patternCases = tail(args);
 				
-				// Try each pattern in sequence
-				matchResult = evalMatch(valueResult.env, valueResult.value, patternsAndResults);
-				matchIndex = matchResult.first;
-				updatedEnv = matchResult.second;
-				
-				if (matchIndex != -1) {
-					// Found a matching pattern - evaluate the corresponding result
-					resultIndex = matchIndex * 2 + 1; // pattern at even indices (0, 2), results at odd (1, 3)
-					resultExpr = patternsAndResults[resultIndex];
-					// Use the updated environment with bound variables from the pattern match
-					matchEnv = SExpEnv(env.runtime, updatedEnv, SSList([]));
-					evalSexpr(matchEnv, resultExpr);
-				} else {
-					println("No pattern matched");
-					SExpEnv(env.runtime, valueResult.env, SSList([]));
-				}
+				// Try each pattern case in sequence
+				tryMatch(env, valueResult, patternCases, 0);
 			} else {
-				println("match requires value and pattern-result pairs");
+				println("match requires value and at least one pattern case");
 				SExpEnv(env with value = SSList([]));
 			}
 		};
@@ -552,6 +538,70 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 	}
 }
 
+// Try matching pattern cases in sequence
+tryMatch(env : SExpEnv, valueResult : SExpEnv, patternCases : [Sexpr], caseIndex : int) -> SExpEnv {
+	if (caseIndex >= length(patternCases)) {
+		// No more pattern cases to try
+		println("No pattern matched");
+		SExpEnv(env.runtime, valueResult.env, SSList([]));
+	} else {
+		// Get the current pattern case
+		currentCase = patternCases[caseIndex];
+		
+		// Extract pattern, condition, and result from the case
+		switch (currentCase) {
+			SSList(caseItems): {
+				if (length(caseItems) >= 2) {
+					// Handle different pattern formats
+					hasCondition = length(caseItems) >= 3;
+					patternPart = caseItems[0];
+					conditionPart = if (hasCondition) caseItems[1] else SSBool(true);
+					resultPart = if (hasCondition) caseItems[2] else caseItems[1];
+					
+					// Try to match the pattern
+					matchResult = matchPattern(patternPart, valueResult.value, valueResult.env);
+					
+					switch (matchResult) {
+						Some(newEnv): {
+							// Pattern matched, now check condition if there is one
+							matchEnv = SExpEnv(env.runtime, newEnv, SSList([]));
+							
+							if (hasCondition) {
+								// Evaluate the condition in the environment with bound variables
+								condResult = evalSexpr(matchEnv, conditionPart);
+								condVal = getSBool(condResult.value, "pattern condition");
+								
+								if (condVal) {
+									// Condition is true, evaluate the result
+									evalSexpr(matchEnv, resultPart);
+								} else {
+									// Condition is false, try the next pattern case
+									tryMatch(env, valueResult, patternCases, caseIndex + 1);
+								}
+							} else {
+								// No condition, just evaluate the result
+								evalSexpr(matchEnv, resultPart);
+							}
+						}
+						None(): {
+							// Pattern didn't match, try the next one
+							tryMatch(env, valueResult, patternCases, caseIndex + 1);
+						}
+					}
+				} else {
+					println("Invalid pattern case, expected (pattern result) or (pattern condition result)");
+					tryMatch(env, valueResult, patternCases, caseIndex + 1);
+				}
+			}
+			default: {
+				// Not a list, invalid pattern case
+				println("Invalid pattern case format: " + prettySexpr(currentCase));
+				tryMatch(env, valueResult, patternCases, caseIndex + 1);
+			}
+		}
+	}
+}
+
 // Evaluate a function call
 evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 	switch (fn) {
@@ -629,6 +679,7 @@ evalArgs(env : SExpEnv, args : [Sexpr], acc : [Sexpr]) -> FnArgResult {
 		evalArgs(env, tail(args), concat([argResult.value], acc));
 	}
 }
+
 
 // Apply a function to arguments
 applyFunction(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
