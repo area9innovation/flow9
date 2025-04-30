@@ -66,6 +66,7 @@ Non-associative operators (like subtraction, division, exponentiation, etc.) wou
 - Integrate matrix group canonicalization (GL, SL, O groups)
 - Implement efficient mechanism to pattern match from a domain down to the terms in that domain
 - https://iclr-blogposts.github.io/2025/blog/sparse-autodiff/
+- https://greydanus.github.io/2023/03/05/ncf-tutorial/
 
 ## Group Theory Implementation
 - Implement core group operations (multiplication, inverses, identity checking)
