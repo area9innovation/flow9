@@ -2,8 +2,10 @@
 - Port the entire thing to run in our scheme
   ✅ Convert OrMath_expr to/from SExpr
   ✅ Check roundtrip Orbit to SExpr and back
-  ✅ Imports are not resolved, so we do not convert those right
-  - Migrate to eval using SExpr
+  - Imports are not resolved correctly, so we do not convert those right
+  - Migrate to eval using SExpr. 
+    - Pattern matching needs to support "if" conditions
+	- Difference in array vs call
   - Change ograph to use SExpr
   - Implement SExpr eval using ograph via rewrites
 
