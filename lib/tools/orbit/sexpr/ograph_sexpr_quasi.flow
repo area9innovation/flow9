@@ -1,0 +1,352 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/ograph;
+import tools/orbit/orbit_simple_ograph;
+import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/sexp2ograph_sub;
+import tools/orbit/sexpr/ograph2sexpr;
+import ds/tree;
+import ds/array;
+
+export {
+    // Traverse an OGraph node and evaluate expressions that can be evaluated
+    // Similar to quasiquotation in Scheme but operating on the OGraph structure
+    // Returns the node ID of the resulting expression after evaluation
+    evaluateOGraphQuasiquote(
+        graphName : string,   // Name of the OGraph to operate on
+        nodeId : int,        // ID of the node to start traversal from
+        environment : ?,     // Environment for evaluation
+        evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, // Function to use for evaluation
+        tracing : bool       // Whether to enable detailed tracing
+    ) -> Pair<?, int>; // Returns updated environment and resulting node ID
+}
+
+// Main function to evaluate quasiquotation in an OGraph
+evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+    // Get the graph from the registry
+    switch (lookupTree(^ographRegistry, graphName)) {
+        Some(graph): {
+            // Find the canonical representative (root) for this node
+            rootId = findORoot(graph, nodeId);
+            
+            // Process the quasiquote starting at this node
+            if (tracing) println("Starting quasiquote evaluation at node ID: " + i2s(rootId));
+            evaluateQuasiquoteNode(graph, rootId, environment, evaluator, tracing);
+        }
+        None(): {
+            println("ERROR: OGraph '" + graphName + "' not found");
+            Pair(environment, -1); // Return -1 to indicate error
+        }
+    }
+}
+
+// Evaluate quasiquotation for a specific node in the graph
+evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+    // Lookup the node in the graph
+    switch (lookupOClass(graph, nodeId)) {
+        Some(oclass): {
+            node = oclass.node;
+            
+            if (tracing) println("Evaluating node " + i2s(nodeId) + " with op: " + node.op);
+            
+            // Check if this is an unquote operation
+            if (node.op == "unquote" || node.op == "UnQuote") {
+                // Unquote - evaluate the child directly
+                if (length(node.children) == 1) {
+                    if (tracing) println("Found unquote, evaluating child");
+                    
+                    // Convert the child node to Sexpr for evaluation
+                    childId = node.children[0];
+                    childSexpr = ograph2Sexpr(graph, childId);
+                    
+                    // Evaluate the expression using the provided evaluator function
+                    evaluatorResult = evaluator(environment, childSexpr);
+                    
+                    // Extract the new environment and result value
+                    newEnvironment = evaluatorResult.first;
+                    result = evaluatorResult.second;
+                    
+                    // Convert the result back to OGraph node
+                    resultId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                    
+                    // Merge the result with the original node's equivalence class
+                    mergeOClasses(graph, nodeId, resultId);
+                    
+                    if (tracing) println("Evaluated unquote, result: " + prettySexpr(result));
+                    
+                    // Return the updated environment and the node ID
+                    Pair(newEnvironment, resultId);
+                } else {
+                    if (tracing) println("Unquote node has wrong number of children: " + i2s(length(node.children)));
+                    Pair(environment, nodeId); // Return unchanged
+                }
+            } else if (node.op == "unquote-splicing" || node.op == "UnQuoteSplicing") {
+                // Handle unquote-splicing - special case that needs to be handled by parent
+                if (tracing) println("Found unquote-splicing, this should be handled by parent node");
+                Pair(environment, nodeId); // Return unchanged
+            } else if (isOperatorNode(node)) {
+                // For operator nodes like +, -, *, /, etc., consider evaluating
+                evaluateOperatorNode(graph, nodeId, node, environment, evaluator, tracing);
+            } else {
+                // Regular node - process children recursively
+                processNodeChildren(graph, nodeId, node, environment, evaluator, tracing);
+            }
+        }
+        None(): {
+            if (tracing) println("Node ID " + i2s(nodeId) + " not found");
+            Pair(environment, nodeId); // Return unchanged
+        }
+    }
+}
+
+// Check if a node represents an operator (like +, -, *, /)
+isOperatorNode(node : ONode) -> bool {
+    // Common operators
+    operators = ["+", "-", "*", "/", "=", "<", ">", "<=", ">=", "!="];
+    contains(operators, node.op);
+}
+
+// Helper function to process children recursively
+processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : ?, 
+                           evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool, 
+                           areConstants : bool) -> Pair<Pair<?, [int]>, bool> {
+    if (startIndex >= length(children)) {
+        // Done processing all children
+        Pair(Pair(environment, []), areConstants);
+    } else {
+        // Process current child
+        childId = children[startIndex];
+        result = evaluateQuasiquoteNode(graph, childId, environment, evaluator, tracing);
+        newEnvironment = result.first;
+        processedChildId = result.second;
+        
+        // Check if child is a constant
+        isConstant = switch (lookupOClass(graph, processedChildId)) {
+            Some(childClass): {
+                childNode = childClass.node;
+                childNode.op == "Int" || childNode.op == "Double" || 
+                childNode.op == "Bool" || childNode.op == "String";
+            }
+            None(): false;
+        };
+        
+        // Process remaining children
+        remainingResult = processChildrenRecursively(graph, children, startIndex + 1, 
+                                                    newEnvironment, evaluator, tracing, 
+                                                    areConstants && isConstant);
+        
+        // Combine results
+        remainingEnvironment = remainingResult.first.first;
+        remainingProcessedChildren = remainingResult.first.second;
+        allConstantsResult = remainingResult.second;
+        
+        // Return combined result
+        Pair(Pair(remainingEnvironment, concat([processedChildId], remainingProcessedChildren)), 
+             allConstantsResult);
+    }
+}
+
+// Helper function to process list children with special handling for unquote-splicing
+processListChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : ?, 
+                              evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, [int]> {
+    if (startIndex >= length(children)) {
+        Pair(environment, []); // Done processing all children
+    } else {
+        childId = children[startIndex];
+        
+        // Check if this child is an unquote-splicing
+        unquoteSplicingResult = switch (lookupOClass(graph, childId)) {
+            Some(childClass): {
+                if (childClass.node.op == "unquote-splicing" || childClass.node.op == "UnQuoteSplicing") {
+                    if (tracing) println("Found unquote-splicing at index " + i2s(startIndex));
+                    
+                    // Handle unquote-splicing - evaluate and splice the result
+                    if (length(childClass.node.children) == 1) {
+                        splicedChildId = childClass.node.children[0];
+                        splicedSexpr = ograph2Sexpr(graph, splicedChildId);
+                        
+                        // Evaluate the expression using the provided evaluator function
+                        evaluatorResult = evaluator(environment, splicedSexpr);
+                        newEnvironment = evaluatorResult.first;
+                        result = evaluatorResult.second;
+                        
+                        // The result should be a list to splice
+                        switch (result) {
+                            SSList(items): {
+                                if (tracing) println("Splicing " + i2s(length(items)) + " items");
+                                
+                                // Process splice items recursively
+                                processSpliceItems(graph, items, 0, newEnvironment, makeTree());
+                            }
+                            default: {
+                                if (tracing) println("Warning: unquote-splicing result is not a list");
+                                // Add as a single item
+                                itemId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                                Pair(newEnvironment, [itemId]);
+                            }
+                        }
+                    } else {
+                        if (tracing) println("unquote-splicing has wrong number of children");
+                        // Just add the original child
+                        Pair(environment, [childId]);
+                    }
+                } else {
+                    // Regular child - evaluate normally
+                    result = evaluateQuasiquoteNode(graph, childId, environment, evaluator, tracing);
+                    Pair(result.first, [result.second]);
+                }
+            }
+            None(): {
+                // Node not found - just add the original ID
+                Pair(environment, [childId]);
+            }
+        };
+        
+        // Process remaining children
+        remainingResult = processListChildrenRecursively(graph, children, startIndex + 1, 
+                                                      unquoteSplicingResult.first, evaluator, tracing);
+        
+        // Combine results
+        remainingEnvironment = remainingResult.first;
+        remainingProcessedChildren = remainingResult.second;
+        
+        // Return combined result
+        Pair(remainingEnvironment, concat(unquoteSplicingResult.second, remainingProcessedChildren));
+    }
+}
+
+// Helper to recursively process splice items
+processSpliceItems(graph : OGraph, items : [Sexpr], startIndex : int, environment : ?, substitutions : Tree<string, int>) -> Pair<?, [int]> {
+    if (startIndex >= length(items)) {
+        Pair(environment, []); // Done processing all items
+    } else {
+        // Convert current item to OGraph node
+        itemId = sexp2OGraphWithSubstitution(graph, items[startIndex], substitutions);
+        
+        // Process remaining items
+        remainingResult = processSpliceItems(graph, items, startIndex + 1, environment, substitutions);
+        
+        // Return combined result
+        Pair(remainingResult.first, concat([itemId], remainingResult.second));
+    }
+}
+
+// Evaluate an operator node if all children are constants
+evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+    if (tracing) println("Checking if operator " + node.op + " can be evaluated");
+    
+    // Process all children
+    processResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, true);
+    newEnvironment = processResult.first.first;
+    processedChildren = processResult.first.second;
+    allConstants = processResult.second;
+    
+    if (allConstants) {
+        // All children are constants, so we can evaluate
+        if (tracing) println("All children are constants, evaluating " + node.op);
+        
+        // Convert the expression to Sexpr for evaluation
+        expr = createSexprFromNode(graph, node.op, processedChildren);
+        
+        // Evaluate the expression using the provided evaluator function
+        evaluatorResult = evaluator(newEnvironment, expr);
+        
+        // Extract the new environment and result value
+        finalEnvironment = evaluatorResult.first;
+        result = evaluatorResult.second;
+        
+        if (tracing) println("Evaluated expression, result: " + prettySexpr(result));
+        
+        // Convert the result back to OGraph node
+        resultId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+        
+        // Merge the result with the original node's equivalence class
+        mergeOClasses(graph, nodeId, resultId);
+        
+        // Return the updated environment and the node ID
+        Pair(finalEnvironment, resultId);
+    } else {
+        // Not all children are constants, so we can't evaluate completely
+        if (tracing) println("Not all children are constants, cannot fully evaluate");
+        
+        // Create a new node with the processed children
+        newNodeId = insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
+        
+        // Merge with the original node
+        mergeOClasses(graph, nodeId, newNodeId);
+        
+        Pair(newEnvironment, newNodeId);
+    }
+}
+
+// Process children of a regular (non-special) node
+processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+    if (tracing) println("Processing children of node " + i2s(nodeId) + " (" + node.op + ")");
+    
+    // Special handling for List nodes that might contain unquote-splicing
+    if (node.op == "List") {
+        processListNode(graph, nodeId, node, environment, evaluator, tracing);
+    } else {
+        // Process all children
+        childrenResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, false);
+        newEnvironment = childrenResult.first.first;
+        processedChildren = childrenResult.first.second;
+        
+        // Check if children were modified (if not, return original node)
+        if (node.children == processedChildren) {
+            if (tracing) println("No changes to children, returning original node");
+            Pair(newEnvironment, nodeId);
+        } else {
+            // Create a new node with the processed children
+            if (tracing) println("Children were modified, creating new node");
+            newNodeId = insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
+            
+            // Merge with the original node
+            mergeOClasses(graph, nodeId, newNodeId);
+            
+            Pair(newEnvironment, newNodeId);
+        }
+    }
+}
+
+// Special handling for List nodes that might contain unquote-splicing
+processListNode(graph : OGraph, nodeId : int, node : ONode, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+    if (tracing) println("Processing List node with " + i2s(length(node.children)) + " children");
+    
+    // Process list children (with special handling for unquote-splicing)
+    listResult = processListChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing);
+    newEnvironment = listResult.first;
+    processedChildren = listResult.second;
+    
+    // Check if children were modified
+    if (node.children == processedChildren) {
+        if (tracing) println("No changes to List node children, returning original");
+        Pair(newEnvironment, nodeId);
+    } else {
+        // Create a new List node with the processed children
+        if (tracing) println("Creating new List node with " + i2s(length(processedChildren)) + " children");
+        newNodeId = insertONode(graph, ONode("List", processedChildren, node.belongsTo, node.value));
+        
+        // Merge with the original node
+        mergeOClasses(graph, nodeId, newNodeId);
+        
+        Pair(newEnvironment, newNodeId);
+    }
+}
+
+// Helper to create a Sexpr from a node for evaluation
+createSexprFromNode(graph : OGraph, op : string, childIds : [int]) -> Sexpr {
+    // Convert all children to Sexpr
+    childExprs = map(childIds, \childId -> {
+        ograph2Sexpr(graph, childId);
+    });
+    
+    // Create the appropriate Sexpr based on the operator
+    if (op == "+" || op == "-" || op == "*" || op == "/" || 
+        op == "=" || op == "<" || op == ">" || op == "<=" || op == ">=" || op == "!=") {
+        // Build an operator expression
+        SSList(concat([SSOperator(op)], childExprs));
+    } else {
+        // For other ops, create a regular list
+        SSList(concat([SSVariable(op)], childExprs));
+    }
+}
