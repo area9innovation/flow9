@@ -4,6 +4,7 @@ import tools/orbit/orbit_simple_ograph;
 import tools/orbit/sexpr/pretty_sexpr;
 import tools/orbit/sexpr/sexp2ograph_sub;
 import tools/orbit/sexpr/ograph2sexpr;
+import tools/orbit/sexpr/env;
 import ds/tree;
 import ds/array;
 
@@ -14,14 +15,14 @@ export {
     evaluateOGraphQuasiquote(
         graphName : string,   // Name of the OGraph to operate on
         nodeId : int,        // ID of the node to start traversal from
-        environment : ?,     // Environment for evaluation
-        evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, // Function to use for evaluation
+        environment : SExpEnv,     // Environment for evaluation (SExpEnv with runtime functions)
+        evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, // Function to use for evaluation
         tracing : bool       // Whether to enable detailed tracing
-    ) -> Pair<?, int>; // Returns updated environment and resulting node ID
+    ) -> Pair<SExpEnv, int>; // Returns updated environment and resulting node ID
 }
 
 // Main function to evaluate quasiquotation in an OGraph
-evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
     // Get the graph from the registry
     switch (lookupTree(^ographRegistry, graphName)) {
         Some(graph): {
@@ -40,7 +41,7 @@ evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : ?, eval
 }
 
 // Evaluate quasiquotation for a specific node in the graph
-evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
     // Lookup the node in the graph
     switch (lookupOClass(graph, nodeId)) {
         Some(oclass): {
@@ -83,8 +84,8 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : ?, evaluator 
                 // Handle unquote-splicing - special case that needs to be handled by parent
                 if (tracing) println("Found unquote-splicing, this should be handled by parent node");
                 Pair(environment, nodeId); // Return unchanged
-            } else if (isOperatorNode(node)) {
-                // For operator nodes like +, -, *, /, etc., consider evaluating
+            } else if (isOperatorNode(node, environment)) {
+                // For operator nodes or user-defined functions, consider evaluating
                 evaluateOperatorNode(graph, nodeId, node, environment, evaluator, tracing);
             } else {
                 // Regular node - process children recursively
@@ -98,17 +99,21 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : ?, evaluator 
     }
 }
 
-// Check if a node represents an operator (like +, -, *, /)
-isOperatorNode(node : ONode) -> bool {
-    // Common operators
-    operators = ["+", "-", "*", "/", "=", "<", ">", "<=", ">=", "!="];
-    contains(operators, node.op);
+// Check if a node represents an operator (like +, -, *, /) or user-defined function that can be evaluated
+isOperatorNode(node : ONode, env : SExpEnv) -> bool {
+    // Check if it's a built-in operator in the runtime environment
+    if (containsKeyTree(env.runtime, node.op)) {
+        true;
+    } else {
+        // Check if it's a user-defined function in the environment
+        containsKeyTree(env.env, node.op);
+    }
 }
 
 // Helper function to process children recursively
-processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : ?, 
-                           evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool, 
-                           areConstants : bool) -> Pair<Pair<?, [int]>, bool> {
+processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : SExpEnv, 
+                           evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool, 
+                           areConstants : bool) -> Pair<Pair<SExpEnv, [int]>, bool> {
     if (startIndex >= length(children)) {
         // Done processing all children
         Pair(Pair(environment, []), areConstants);
@@ -146,8 +151,8 @@ processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, e
 }
 
 // Helper function to process list children with special handling for unquote-splicing
-processListChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : ?, 
-                              evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, [int]> {
+processListChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : SExpEnv, 
+                              evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, [int]> {
     if (startIndex >= length(children)) {
         Pair(environment, []); // Done processing all children
     } else {
@@ -215,7 +220,7 @@ processListChildrenRecursively(graph : OGraph, children : [int], startIndex : in
 }
 
 // Helper to recursively process splice items
-processSpliceItems(graph : OGraph, items : [Sexpr], startIndex : int, environment : ?, substitutions : Tree<string, int>) -> Pair<?, [int]> {
+processSpliceItems(graph : OGraph, items : [Sexpr], startIndex : int, environment : SExpEnv, substitutions : Tree<string, int>) -> Pair<SExpEnv, [int]> {
     if (startIndex >= length(items)) {
         Pair(environment, []); // Done processing all items
     } else {
@@ -231,7 +236,7 @@ processSpliceItems(graph : OGraph, items : [Sexpr], startIndex : int, environmen
 }
 
 // Evaluate an operator node if all children are constants
-evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
     if (tracing) println("Checking if operator " + node.op + " can be evaluated");
     
     // Process all children
@@ -245,7 +250,7 @@ evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : ?
         if (tracing) println("All children are constants, evaluating " + node.op);
         
         // Convert the expression to Sexpr for evaluation
-        expr = createSexprFromNode(graph, node.op, processedChildren);
+        expr = createSexprFromNode(graph, node.op, processedChildren, newEnvironment);
         
         // Evaluate the expression using the provided evaluator function
         evaluatorResult = evaluator(newEnvironment, expr);
@@ -279,7 +284,7 @@ evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : ?
 }
 
 // Process children of a regular (non-special) node
-processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
     if (tracing) println("Processing children of node " + i2s(nodeId) + " (" + node.op + ")");
     
     // Special handling for List nodes that might contain unquote-splicing
@@ -309,7 +314,7 @@ processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : ?,
 }
 
 // Special handling for List nodes that might contain unquote-splicing
-processListNode(graph : OGraph, nodeId : int, node : ONode, environment : ?, evaluator : (env : ?, expr : Sexpr) -> Pair<?, Sexpr>, tracing : bool) -> Pair<?, int> {
+processListNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
     if (tracing) println("Processing List node with " + i2s(length(node.children)) + " children");
     
     // Process list children (with special handling for unquote-splicing)
@@ -334,19 +339,18 @@ processListNode(graph : OGraph, nodeId : int, node : ONode, environment : ?, eva
 }
 
 // Helper to create a Sexpr from a node for evaluation
-createSexprFromNode(graph : OGraph, op : string, childIds : [int]) -> Sexpr {
+createSexprFromNode(graph : OGraph, op : string, childIds : [int], env : SExpEnv) -> Sexpr {
     // Convert all children to Sexpr
     childExprs = map(childIds, \childId -> {
         ograph2Sexpr(graph, childId);
     });
     
-    // Create the appropriate Sexpr based on the operator
-    if (op == "+" || op == "-" || op == "*" || op == "/" || 
-        op == "=" || op == "<" || op == ">" || op == "<=" || op == ">=" || op == "!=") {
-        // Build an operator expression
+    // Determine if it's an operator or function by checking the runtime environment
+    if (containsKeyTree(env.runtime, op)) {
+        // It's a built-in operator/function in the runtime
         SSList(concat([SSOperator(op)], childExprs));
     } else {
-        // For other ops, create a regular list
+        // For user-defined functions or anything else, create a function call
         SSList(concat([SSVariable(op)], childExprs));
     }
 }
