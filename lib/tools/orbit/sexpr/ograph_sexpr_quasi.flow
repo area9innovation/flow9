@@ -7,6 +7,7 @@ import tools/orbit/sexpr/ograph2sexpr;
 import tools/orbit/sexpr/env;
 import ds/tree;
 import ds/array;
+import string;
 
 export {
     // Traverse an OGraph node and evaluate expressions that can be evaluated
@@ -19,6 +20,136 @@ export {
         evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, // Function to use for evaluation
         tracing : bool       // Whether to enable detailed tracing
     ) -> Pair<SExpEnv, int>; // Returns updated environment and resulting node ID
+}
+
+//---------- Helper Functions for Node Manipulation and Analysis ----------//
+
+// 1. Consistent Special Form Handling - Check if a node is a specific kind of special form
+isSpecialFormNode(graph : OGraph, nodeId : int, formName : string) -> bool {
+    switch (lookupOClass(graph, nodeId)) {
+        Some(oclass): {
+            node = oclass.node;
+            if (node.op == "SpecialForm" && length(node.children) > 0) {
+                firstChildId = node.children[0];
+                switch (lookupOClass(graph, firstChildId)) {
+                    Some(childClass): {
+                        childNode = childClass.node;
+                        if (childNode.op == "Special") {
+                            specialName = getNodeStringValue(childNode, "");
+                            specialName == formName;
+                        } else false;
+                    }
+                    None(): false;
+                }
+            } else false;
+        }
+        None(): false;
+    }
+}
+
+// 2. Simplify Constant Value Detection - Check if a node represents a constant value
+isConstantNode(node : ONode) -> bool {
+    constantTypes = ["Int", "Double", "Bool", "String"];
+    contains(constantTypes, node.op);
+}
+
+// 4. Enhanced Special Form Awareness - Get the name of a special form if this is a special form node
+getSpecialFormName(graph : OGraph, nodeId : int) -> Maybe<string> {
+    switch (lookupOClass(graph, nodeId)) {
+        Some(oclass): {
+            if (oclass.node.op == "SpecialForm" && length(oclass.node.children) > 0) {
+                formNodeId = oclass.node.children[0];
+                switch (lookupOClass(graph, formNodeId)) {
+                    Some(formClass): {
+                        if (formClass.node.op == "Special") {
+                            specialName = getNodeStringValue(formClass.node, "");
+                            if (specialName != "") Some(specialName) else None();
+                        } else None();
+                    }
+                    None(): None();
+                }
+            } else None();
+        }
+        None(): None();
+    }
+}
+
+// 5. More Precise Function Call Detection
+// Check if a node represents a function call to an operator or user-defined function
+isFunctionCallNode(graph : OGraph, nodeId : int, env : SExpEnv) -> Pair<bool, Maybe<string>> {
+    switch (lookupOClass(graph, nodeId)) {
+        Some(oclass): {
+            node = oclass.node;
+            if (node.op == "List" && length(node.children) > 0) {
+                firstChildId = node.children[0];
+                // Check if first child is an Operator or Identifier
+                getCallableName(graph, firstChildId, env);
+            } else {
+                Pair(false, None());
+            }
+        }
+        None(): Pair(false, None());
+    }
+}
+
+// Helper for isFunctionCallNode - Get callable name if node represents a callable entity
+getCallableName(graph : OGraph, nodeId : int, env : SExpEnv) -> Pair<bool, Maybe<string>> {
+    switch (lookupOClass(graph, nodeId)) {
+        Some(childClass): {
+            childNode = childClass.node;
+            if (childNode.op == "Operator") {
+                opName = getNodeStringValue(childNode, "");
+                if (opName != "" && containsKeyTree(env.runtime, opName)) {
+                    Pair(true, Some(opName));
+                } else {
+                    Pair(false, None());
+                }
+            } else if (childNode.op == "Identifier") {
+                fnName = getNodeStringValue(childNode, "");
+                if (fnName != "" && containsKeyTree(env.env, fnName)) {
+                    Pair(true, Some(fnName));
+                } else {
+                    Pair(false, None());
+                }
+            } else {
+                Pair(false, None());
+            }
+        }
+        None(): Pair(false, None());
+    }
+}
+
+// 7. Value Extraction Helper Functions
+// Extract a string value from a node
+getNodeStringValue(node : ONode, defaultValue : string) -> string {
+    switch (node.value) {
+        OrbitString(s): s;
+        default: defaultValue;
+    }
+}
+
+// Extract an int value from a node
+getNodeIntValue(node : ONode, defaultValue : int) -> int {
+    switch (node.value) {
+        OrbitInt(i): i;
+        default: defaultValue;
+    }
+}
+
+// Extract a double value from a node
+getNodeDoubleValue(node : ONode, defaultValue : double) -> double {
+    switch (node.value) {
+        OrbitDouble(d): d;
+        default: defaultValue;
+    }
+}
+
+// Extract a boolean value from a node
+getNodeBoolValue(node : ONode, defaultValue : bool) -> bool {
+    switch (node.value) {
+        OrbitBool(b): b;
+        default: defaultValue;
+    }
 }
 
 // Main function to evaluate quasiquotation in an OGraph
@@ -55,7 +186,7 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
                 // Not a Scheme node - just process children recursively
                 processNodeChildren(graph, nodeId, node, environment, evaluator, tracing);
             }
-            // Check if this is an unquote operation
+            // Check if this is an unquote operation using our helper
             else if (node.op == "unquote" || node.op == "UnQuote") {
                 // Unquote - evaluate the child directly
                 if (length(node.children) == 1) {
@@ -115,6 +246,7 @@ isSchemeNode(node : ONode) -> bool {
 }
 
 // Check if a node represents an operator (like +, -, *, /) or user-defined function that can be evaluated
+// Updated for cleaner logic, but without calling isFunctionCallNode directly since we need nodeId
 isOperatorNode(graph : OGraph, node : ONode, env : SExpEnv) -> bool {
     // First check if it's a Scheme node at all
     if (!isSchemeNode(node)) {
@@ -128,17 +260,11 @@ isOperatorNode(graph : OGraph, node : ONode, env : SExpEnv) -> bool {
                 childNode = childClass.node;
                 if (childNode.op == "Operator") {
                     // It's an operator, check if it's in runtime environment
-                    opName = switch (childNode.value) {
-                        OrbitString(s): s;
-                        default: "";
-                    };
+                    opName = getNodeStringValue(childNode, "");
                     containsKeyTree(env.runtime, opName);
                 } else if (childNode.op == "Identifier") {
                     // It's an identifier, check if it's a function in user environment
-                    fnName = switch (childNode.value) {
-                        OrbitString(s): s;
-                        default: "";
-                    };
+                    fnName = getNodeStringValue(childNode, "");
                     containsKeyTree(env.env, fnName);
                 } else {
                     false;
@@ -166,12 +292,10 @@ processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, e
         newEnvironment = result.first;
         processedChildId = result.second;
         
-        // Check if child is a constant
+        // Check if child is a constant using our helper
         isConstant = switch (lookupOClass(graph, processedChildId)) {
             Some(childClass): {
-                childNode = childClass.node;
-                childNode.op == "Int" || childNode.op == "Double" || 
-                childNode.op == "Bool" || childNode.op == "String";
+                isConstantNode(childClass.node);
             }
             None(): false;
         };
@@ -325,13 +449,13 @@ evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : S
     }
 }
 
-// Process children of a regular (non-special) node
+// Process children of a regular (non-special) node - implementing improvement #3
 processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
     if (tracing) println("Processing children of node " + i2s(nodeId) + " (" + node.op + ")");
     
-    // Special handling for List nodes that might contain unquote-splicing
-    if (node.op == "List") {
-        processListNode(graph, nodeId, node, environment, evaluator, tracing);
+    // Special handling for container nodes (List/Vector) that might contain unquote-splicing
+    if (node.op == "List" || node.op == "Vector") {
+        processContainer(graph, nodeId, node, node.op, environment, evaluator, tracing);
     } else {
         // Process all children
         childrenResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, false);
@@ -355,29 +479,37 @@ processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SE
     }
 }
 
-// Special handling for List nodes that might contain unquote-splicing
-processListNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
-    if (tracing) println("Processing List node with " + i2s(length(node.children)) + " children");
+// Process List and Vector nodes with consistent handling - implementing improvement #3
+processContainer(graph : OGraph, nodeId : int, node : ONode, containerType : string, 
+                 environment : SExpEnv, evaluator : (SExpEnv, Sexpr) -> Pair<SExpEnv, Sexpr>, 
+                 tracing : bool) -> Pair<SExpEnv, int> {
+    if (tracing) println("Processing " + containerType + " node with " + i2s(length(node.children)) + " children");
     
-    // Process list children (with special handling for unquote-splicing)
-    listResult = processListChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing);
-    newEnvironment = listResult.first;
-    processedChildren = listResult.second;
+    // Process container children (with special handling for unquote-splicing)
+    result = processListChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing);
+    newEnvironment = result.first;
+    processedChildren = result.second;
     
     // Check if children were modified
     if (node.children == processedChildren) {
-        if (tracing) println("No changes to List node children, returning original");
+        if (tracing) println("No changes to " + containerType + " node children, returning original");
         Pair(newEnvironment, nodeId);
     } else {
-        // Create a new List node with the processed children
-        if (tracing) println("Creating new List node with " + i2s(length(processedChildren)) + " children");
-        newNodeId = insertONode(graph, ONode("List", processedChildren, node.belongsTo, node.value));
+        // Create a new container node with the processed children
+        if (tracing) println("Creating new " + containerType + " node with " + i2s(length(processedChildren)) + " children");
+        newNodeId = insertONode(graph, ONode(containerType, processedChildren, node.belongsTo, node.value));
         
         // Merge with the original node
         mergeOClasses(graph, nodeId, newNodeId);
         
         Pair(newEnvironment, newNodeId);
     }
+}
+
+// Special handling for List nodes (now a wrapper around processContainer)
+processListNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> Pair<SExpEnv, Sexpr>, tracing : bool) -> Pair<SExpEnv, int> {
+    // Just delegate to our more general container processor
+    processContainer(graph, nodeId, node, "List", environment, evaluator, tracing);
 }
 
 // Helper to create a Sexpr from a node for evaluation
