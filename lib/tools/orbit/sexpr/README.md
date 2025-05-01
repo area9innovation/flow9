@@ -2,6 +2,66 @@
 
 This is a simple Scheme-like language implemented in Flow9. It provides a minimal but powerful environment for working with S-expressions, supporting core Scheme features like pattern matching, quasiquotation, and functional programming principles.
 
+## Integration with OGraph
+
+S-expressions can be integrated with OGraph (Orbit Graph) data structures for symbolic computation and optimization. The two main operations are:
+
+1. Converting S-expressions to OGraph nodes (`sexp2OGraphWithSubstitution`)
+2. Converting OGraph nodes back to S-expressions (`ograph2Sexpr`)
+
+### Adding S-expressions to OGraph
+
+The protocol for adding an S-expression to an OGraph is defined in `sexp2OGraphWithSubstitution`:
+
+```flow
+sexp2OGraphWithSubstitution(graph : OGraph, expr : Sexpr, varToEclass : Tree<string, int>) -> int
+```
+
+This function:
+- Takes an OGraph to add the expression to
+- Takes an S-expression to convert
+- Takes a mapping from variable names to existing eclass IDs for substitution
+- Returns the eclass ID of the added expression
+
+#### Type Annotations
+
+The function handles type annotations in the form `(: expr Domain)` by:
+1. Processing the expression and getting its eclass ID
+2. Processing the domain and getting its eclass ID
+3. Adding the domain to the "belongs to" field of the expression's node using `addBelongsToONode`
+
+#### S-expression Type Mapping
+
+Different S-expression types are mapped to different OGraph node types:
+
+| S-expression Type | OGraph Node Type | Notes |
+|-------------------|------------------|-------|
+| SSList (general)  | "List"           | Each child is processed recursively |
+| SSList with ":"  | Special handling | Processed as type annotation |
+| SSVariable        | "Identifier"     | May be substituted based on varToEclass |
+| SSConstructor     | "Constructor"    | Value stored as string |
+| SSOperator        | "Operator"       | Value stored as string |
+| SSInt             | "Int"            | Value stored as OrbitInt |
+| SSDouble          | "Double"         | Value stored as OrbitDouble |
+| SSString          | "String"         | Value stored as OrbitString |
+| SSBool            | "Bool"           | Value stored as OrbitBool |
+| SSVector          | "Vector"         | Each child is processed recursively |
+| SSSpecialForm     | "SpecialForm"    | Form name added as first child |
+
+### Extracting S-expressions from OGraph
+
+To convert an OGraph node back to an S-expression, use:
+
+```flow
+ograph2Sexpr(graph : OGraph, nodeId : int) -> Sexpr
+```
+
+Or to extract from a registered OGraph:
+
+```flow
+extractOGraphSexpr(graphName : string, nodeId : int, tracing : bool) -> Sexpr
+```
+
 ## Running the Interpreter
 
 ```bash
