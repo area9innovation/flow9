@@ -6,8 +6,8 @@
   - Migrate to eval using SExpr. 
     ✅ Pattern matching needs to support "if" conditions
 	✅ Difference in array vs call: Clojure uses [] for vector, and :name for self-evaluating ids
+  - get import of .orb files to work in sexpr world
   - Change ograph to use SExpr
-  - Implement SExpr eval using ograph via rewrites
   - Apply all existing functions in the ograph if they "fit"
   - Extract functions from the Scheme runtime env and insert as code in the ograph
   - Extract functions from the ograph and insert as code in the Scheme runtime env
