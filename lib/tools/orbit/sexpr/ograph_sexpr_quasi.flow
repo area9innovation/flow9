@@ -6,6 +6,7 @@ import tools/orbit/sexpr/pretty_sexpr;
 import tools/orbit/sexpr/sexp2ograph_sub;
 import tools/orbit/sexpr/ograph2sexpr;
 import tools/orbit/sexpr/env;
+import tools/orbit/sexpr/sexpr_free;
 import ds/tree;
 import ds/array;
 import string;
@@ -319,6 +320,102 @@ evaluateBubbleContainer(graph : OGraph, nodeId : int, node : ONode, processedChi
     }
 }
 
+// Evaluate a lambda special form and create a closure
+evaluateLambdaNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    if (length(node.children) < 3) {
+        if (tracing) println("Lambda node has too few children: " + i2s(length(node.children)));
+        Pair(environment, nodeId); // Return unchanged
+    } else {
+        // Get the special form name (first child)
+        specialNodeId = node.children[0];
+        
+        // Get the parameter list (second child)
+        paramsNodeId = node.children[1];
+        
+        // Get the lambda body (third child)
+        bodyNodeId = node.children[2];
+        
+        if (tracing) println("Processing lambda with params at node " + i2s(paramsNodeId) + " and body at node " + i2s(bodyNodeId));
+        
+        // Extract parameter names from the parameter list
+        paramNames = switch (lookupOClass(graph, paramsNodeId)) {
+            Some(paramsClass): {
+                if (paramsClass.node.op == "List") {
+                    // Process each parameter in the list
+                    filtermap(paramsClass.node.children, \childId -> {
+                        switch (lookupOClass(graph, childId)) {
+                            Some(paramClass): {
+                                if (paramClass.node.op == "Identifier") {
+                                    // Extract parameter name
+                                    Some(getNodeStringValue(paramClass.node, ""));
+                                } else None();
+                            }
+                            None(): None();
+                        }
+                    });
+                } else [];
+            }
+            None(): [];
+        };
+        
+        if (tracing) println("Extracted " + i2s(length(paramNames)) + " parameter names");
+        
+        // Create a set of bound variables (parameter names)
+        boundVars = fold(paramNames, makeSet(), \acc, paramName -> {
+            insertSet(acc, paramName);
+        });
+        
+        // Extract the body as Sexpr to find free variables
+        bodySexpr = ograph2Sexpr(graph, bodyNodeId);
+        
+        // Find free variables in the body 
+        freeVars = findFreeSexprVars(bodySexpr, boundVars);
+        
+        if (tracing) println("Found " + i2s(sizeSet(freeVars)) + " free variables in lambda body");
+        
+        // Create bindings for all free variables from the current environment
+        bindings = createSexprBindings(freeVars, environment.env);
+        
+        if (tracing) println("Created " + i2s(length(bindings)) + " bindings for free variables");
+        
+        // Create a list node for the bindings
+        bindingsListItems = map(bindings, \binding -> {
+            // Create a list node for each binding (var-name, value)
+            varNameNodeId = insertONode(graph, ONode("Identifier", [], node.belongsTo, OrbitString(binding.first)));
+            
+            // Convert the bound value back to an OGraph node
+            valueNodeId = sexp2OGraphWithSubstitution(graph, binding.second, makeTree());
+            
+            // Create a list node for the binding pair
+            insertONode(graph, ONode("List", [varNameNodeId, valueNodeId], node.belongsTo, node.value));
+        });
+        bindingsListNodeId = insertONode(graph, ONode("List", bindingsListItems, node.belongsTo, node.value));
+        
+        // Create the closure special form node
+        closureSpecialNodeId = insertONode(graph, ONode("Special", [], node.belongsTo, OrbitString("closure")));
+        closureNodeId = insertONode(graph, ONode("SpecialForm", 
+            [closureSpecialNodeId, bindingsListNodeId, paramsNodeId, bodyNodeId], 
+            node.belongsTo, 
+            node.value
+        ));
+        
+        if (tracing) {
+            println("Created closure with structure:");
+            println("- Special form type: closure");
+            println("- Bindings node ID: " + i2s(bindingsListNodeId));
+            println("- Params node ID: " + i2s(paramsNodeId));
+            println("- Body node ID: " + i2s(bodyNodeId));
+        }
+        
+        // Merge with the original node
+        mergeOClasses(graph, nodeId, closureNodeId);
+        
+        if (tracing) println("Created closure node with ID: " + i2s(closureNodeId));
+        
+        Pair(environment, closureNodeId);
+    }
+}
+
 // Evaluate quasiquotation for a specific node in the graph
 evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // Lookup the node in the graph
@@ -395,6 +492,10 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
                 // Handle define special form to update the environment
                 if (tracing) println("Found define, processing");
                 evaluateDefineNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+            } else if (isSpecialFormNode(graph, nodeId, "lambda")) {
+                // Handle lambda special form to create closures
+                if (tracing) println("Found lambda, creating closure");
+                evaluateLambdaNode(graph, nodeId, node, environment, evaluator, tracing, mode);
             } else if (node.op == "Identifier") {
                 // Try to evaluate identifiers directly
                 evaluateIdentifierNode(graph, nodeId, node, environment, evaluator, tracing, mode);
