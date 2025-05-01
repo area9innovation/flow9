@@ -482,3 +482,73 @@ To add a new *built-in* function (implemented in Flow9):
 2. Add a `Pair` containing the function's SEXP name and a `RuntimeFn` record (specifying arity and the implementation function) to the `functionPairs` list within `getRuntimeFunctions()` in `sexpr_stdlib.flow`.
 3. Add the function name to `addStandardFns` if it should be directly available in the global environment.
 4. The centralized arity checking (`invokeRuntimeFn`) will be applied automatically.
+
+## OGraph Quasiquote Implementation Roadmap
+
+Our current `evaluateOGraphQuasiquote` implementation in `ograph_sexpr_quasi.flow` only provides a partial implementation of quasiquotation. The current features supported are:
+
+- `(unquote ...)` evaluation
+- Constant sub-expression folding in operator calls
+- Basic (non-functional) stubs for `let` and `define`
+- Simple identifier lookups in the existing environment
+
+The following is a structured plan to implement the remaining features needed for full quasiquotation support in the OGraph representation:
+
+### 1. Quasiquote Proper
+- [ ] Implement top-level `(quasiquote ...)` detection
+- [ ] Create a quasiquote depth tracker that increments/decrements appropriately
+- [ ] Only evaluate unquotes at the correct depth (depth=1)
+
+### 2. Unquote-Splicing
+- [ ] Complete the implementation of `(unquote-splicing ...)`
+- [ ] Correctly splice evaluated lists into parent lists/vectors
+- [ ] Handle nested splicing operations
+
+### 3. Quote
+- [ ] Implement `(quote ...)` to prevent evaluation of its contents
+- [ ] Preserve quoted expressions as literal syntax
+
+### 4. Control Flow Special Forms
+- [✅] Implement `evaluateIfNode` with proper condition evaluation and branch selection
+- [✅] Implement `evaluateAndNode` with short-circuit semantics
+- [✅] Implement `evaluateOrNode` with short-circuit semantics
+- [✅] Implement `evaluateBeginNode` to evaluate expressions in sequence
+
+### 5. Local Bindings
+- [ ] Update `evaluateLetNode` to properly extend the environment
+- [ ] Implement `let*` with sequential bindings
+- [ ] Implement `letrec` with mutually recursive bindings
+- [ ] Fix `evaluateDefineNode` to actually update the environment
+
+### 6. Lambda & Closures
+- [ ] Preserve lambda syntax inside quasiquote
+- [ ] Properly handle nested unquotes within lambda bodies
+- [ ] Support closure creation and variable capture
+
+### 7. Pattern Matching
+- [ ] Implement `evaluateMatchNode` to call the real matcher
+- [ ] Convert match expressions to/from Sexpr for evaluation
+- [ ] Handle pattern evaluation and condition testing
+
+### 8. Import & Eval
+- [ ] Implement `evaluateImportNode` to load external files
+- [ ] Implement `evaluateEvalNode` for runtime evaluation
+- [ ] Properly convert between OGraph and Sexpr representations
+
+### 9. Type Annotations
+- [ ] Handle `(: expr Domain)` syntax
+- [ ] Evaluate both the expression and domain
+- [ ] Set up proper `belongsTo` relationships in the OGraph
+
+### 10. User-Defined Functions
+- [ ] Allow evaluation of identifiers that resolve to closures
+- [ ] Support function application of user-defined functions
+- [ ] Handle argument evaluation and environment extension
+
+### 11. Testing & Validation
+- [ ] Create test cases for each special form
+- [ ] Validate against standard Sexpr quasiquote implementation
+- [ ] Add tracing support for debugging complex cases
+- [ ] Document known limitations and edge cases
+
+Implementing these features will provide full quasiquotation capabilities in the OGraph representation, matching the semantics of our standalone S-expression evaluator. Each task should be implemented incrementally, with testing between steps to ensure correct behavior.
