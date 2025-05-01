@@ -719,43 +719,86 @@ evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : S
     processResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, mode, true);
     newEnvironment = processResult.first.first;
     processedChildren = processResult.first.second;
-    allConstants = processResult.second;
     
-    if (allConstants) {
-        // All children are constants, so we can evaluate
-        if (tracing) println("All children are constants, evaluating " + node.op);
+    // Handle direct operator function calls in the form (+ 1 2), etc.
+    // For these, the node.op is "List" and the first child is an Operator node
+    if (node.op == "List" && length(processedChildren) > 0) {
+        // Try to extract operator information from first child
+        maybeOpInfo = if (length(processedChildren) > 0) {
+            switch (lookupOClass(graph, processedChildren[0])) {
+                Some(opClass): if (opClass.node.op == "Operator") {
+                    Some(getNodeStringValue(opClass.node, ""));
+                } else None();
+                None(): None();
+            }
+        } else None();
         
-        // Convert the expression to Sexpr for evaluation
-        expr = createSexprFromNode(graph, node.op, processedChildren, newEnvironment);
-        
-        // Evaluate the expression using the provided evaluator function
-        finalEnvironment = evaluator(newEnvironment, expr);
-        
-        // Extract the result value from the environment
-        result = finalEnvironment.value;
-        
-        if (tracing) println("Evaluated expression, result: " + prettySexpr(result));
-        
-        // Convert the result back to OGraph node
-        resultId = sexp2OGraphWithSubstitution(graph, result, makeTree());
-        
-        // Merge the result with the original node's equivalence class - resultId should be canonical
-        mergeOClasses(graph, resultId, nodeId);
-        
-        // Return the updated environment and the node ID
-        Pair(finalEnvironment, resultId);
+        // Only proceed if we found an operator name
+        switch (maybeOpInfo) {
+            Some(opName): {
+                // Check if all operands (not the operator) are constants
+                if (length(processedChildren) <= 1) {
+                    if (tracing) println("No operands found for operator " + opName);
+                    createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
+                } else {
+                    // Check all actual operands (skip the operator in pos 0)
+                    operandChildren = tailFrom(processedChildren, 1);
+                    
+                    // Check if all operands are constant values
+                    if (forall(operandChildren, \childId -> isConstantNode(graph, childId))) {
+                        if (tracing) println("All operands for " + opName + " are constants, evaluating");
+                        
+                        // Convert operands to Sexpr for evaluation
+                        operandExprs = map(operandChildren, \childId -> {
+                            ograph2Sexpr(graph, childId);
+                        });
+                        
+                        // Create a proper callable expression: (+ 1 2)
+                        exprToEval = SSList(concat([SSOperator(opName)], operandExprs));
+                        
+                        if (tracing) println("Evaluating expression: " + prettySexpr(exprToEval));
+                        
+                        // Evaluate the expression
+                        evalResult = evaluator(newEnvironment, exprToEval);
+                        result = evalResult.value;
+                        
+                        if (tracing) println("Evaluated to: " + prettySexpr(result));
+                        
+                        // Convert result back to OGraph node
+                        resultNodeId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                        
+                        // Make the result the canonical form
+                        mergeOClasses(graph, resultNodeId, nodeId);
+                        
+                        Pair(evalResult, resultNodeId);
+                    } else {
+                        if (tracing) println("Not all operands for " + opName + " are constants, cannot fully evaluate");
+                        createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
+                    }
+                }
+            }
+            None(): {
+                // Not an operator or couldn't identify the operator
+                if (tracing) println("Not an operator or couldn't identify the operator");
+                createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
+            }
+        }
     } else {
-        // Not all children are constants, so we can't evaluate completely
-        if (tracing) println("Not all children are constants, cannot fully evaluate");
-        
-        // Create a new node with the processed children
-        newNodeId = insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
-        
-        // Merge with the original node
-        mergeOClasses(graph, nodeId, newNodeId);
-        
-        Pair(newEnvironment, newNodeId);
+        // Not a List node that could be an operator call
+        if (tracing) println("Not a List node that could be an operator call");
+        createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
     }
+}
+
+// Helper to create a new node and merge it with the original
+createAndMergeNewNode(graph : OGraph, nodeId : int, node : ONode, processedChildren : [int], environment : SExpEnv) -> Pair<SExpEnv, int> {
+    // Create a new node with the processed children
+    newNodeId = insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
+    
+    // Merge with the original node - we keep the original node as canonical since we're not evaluating
+    mergeOClasses(graph, nodeId, newNodeId);
+    
+    Pair(environment, nodeId);
 }
 
 // Process children of a regular (non-special) node - implementing improvement #3
