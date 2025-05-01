@@ -47,10 +47,25 @@ isSpecialFormNode(graph : OGraph, nodeId : int, formName : string) -> bool {
     }
 }
 
-// 2. Simplify Constant Value Detection - Check if a node represents a constant value
-isConstantNode(node : ONode) -> bool {
-    constantTypes = ["Int", "Double", "Bool", "String"];
-    contains(constantTypes, node.op);
+// 2. Enhanced Constant Value Detection - Check if a node represents a constant value
+// Now also considers Lists and Vectors with all constant children as constants
+isConstantNode(graph : OGraph, nodeId : int) -> bool {
+    switch (lookupOClass(graph, nodeId)) {
+        Some(oclass): {
+            node = oclass.node;
+            // Direct constants
+            primitiveTypes = ["Int", "Double", "Bool", "String"];
+            if (contains(primitiveTypes, node.op)) {
+                true;
+            } else if (node.op == "List" || node.op == "Vector") {
+                // Check if all children are constants
+                forall(node.children, \childId -> isConstantNode(graph, childId));
+            } else {
+                false;
+            }
+        }
+        None(): false;
+    }
 }
 
 // Helper for isFunctionCallNode - Get callable name if node represents a callable entity
@@ -132,6 +147,58 @@ evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv
     }
 }
 
+// Evaluate an identifier node that maps to a value in the environment
+evaluateIdentifierNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+    // Extract the identifier name
+    idName = getNodeStringValue(node, "");
+    
+    if (idName != "") {
+        // Check if this identifier exists in the environment
+        switch (lookupTree(environment.env, idName)) {
+            Some(value): {
+                if (tracing) println("Found identifier '" + idName + "' in environment, evaluating");
+                
+                // Convert the value to an OGraph node
+                resultId = sexp2OGraphWithSubstitution(graph, value, makeTree());
+                
+                // Merge with the original node
+                mergeOClasses(graph, nodeId, resultId);
+                
+                if (tracing) println("Evaluated identifier to: " + prettySexpr(value));
+                
+                // Return the environment and result node ID
+                Pair(environment, resultId);
+            }
+            None(): {
+                if (tracing) println("Identifier '" + idName + "' not found in environment");
+                Pair(environment, nodeId); // Return unchanged
+            }
+        }
+    } else {
+        // No valid identifier name
+        Pair(environment, nodeId); // Return unchanged
+    }
+}
+
+// Evaluate a container node (List/Vector) if all children are constants
+evaluateBubbleContainer(graph : OGraph, nodeId : int, node : ONode, processedChildren : [int], environment : SExpEnv, tracing : bool) -> int {
+    // Check if all children are constants
+    if (forall(processedChildren, \childId -> isConstantNode(graph, childId))) {
+        if (tracing) println("All children of " + node.op + " are constants, bubble up as constant");
+        
+        // Keep the container as is with processed children, it's now considered a constant
+        newNodeId = insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
+        
+        // Merge with the original node
+        mergeOClasses(graph, nodeId, newNodeId);
+        newNodeId;
+    } else {
+        // Not all children are constants
+        if (tracing) println("Not all children of " + node.op + " are constants, can't bubble up");
+        insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
+    }
+}
+
 // Evaluate quasiquotation for a specific node in the graph
 evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
     // Lookup the node in the graph
@@ -181,6 +248,9 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
                 // Handle unquote-splicing - special case that needs to be handled by parent
                 if (tracing) println("Found unquote-splicing, this should be handled by parent node");
                 Pair(environment, nodeId); // Return unchanged
+            } else if (node.op == "Identifier") {
+                // Try to evaluate identifiers directly
+                evaluateIdentifierNode(graph, nodeId, node, environment, evaluator, tracing);
             } else if (isOperatorNode(graph, node, environment)) {
                 // For operator nodes or user-defined functions, consider evaluating
                 evaluateOperatorNode(graph, nodeId, node, environment, evaluator, tracing);
@@ -252,13 +322,8 @@ processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, e
         newEnvironment = result.first;
         processedChildId = result.second;
         
-        // Check if child is a constant using our helper
-        isConstant = switch (lookupOClass(graph, processedChildId)) {
-            Some(childClass): {
-                isConstantNode(childClass.node);
-            }
-            None(): false;
-        };
+        // Check if child is a constant using our enhanced helper that handles nested constants
+        isConstant = isConstantNode(graph, processedChildId);
         
         // Process remaining children
         remainingResult = processChildrenRecursively(graph, children, startIndex + 1, 
@@ -439,7 +504,7 @@ processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SE
     }
 }
 
-// Process List and Vector nodes with consistent handling - implementing improvement #3
+// Process List and Vector nodes with consistent handling and bubbling up fully evaluated containers
 processContainer(graph : OGraph, nodeId : int, node : ONode, containerType : string, 
                  environment : SExpEnv, evaluator : (SExpEnv, Sexpr) -> SExpEnv, 
                  tracing : bool) -> Pair<SExpEnv, int> {
@@ -457,10 +522,9 @@ processContainer(graph : OGraph, nodeId : int, node : ONode, containerType : str
     } else {
         // Create a new container node with the processed children
         if (tracing) println("Creating new " + containerType + " node with " + i2s(length(processedChildren)) + " children");
-        newNodeId = insertONode(graph, ONode(containerType, processedChildren, node.belongsTo, node.value));
         
-        // Merge with the original node
-        mergeOClasses(graph, nodeId, newNodeId);
+        // Use our new bubbling function to evaluate if all children are constants
+        newNodeId = evaluateBubbleContainer(graph, nodeId, node, processedChildren, environment, tracing);
         
         Pair(newEnvironment, newNodeId);
     }
