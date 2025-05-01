@@ -11,6 +11,11 @@ import ds/array;
 import string;
 
 export {
+    // Define evaluation modes
+    EvalMode ::= ConservativeMode, OptimisticMode;
+        ConservativeMode(); // Only evaluates expressions that are guaranteed safe
+        OptimisticMode();   // More aggressive evaluation, may evaluate conditionally-guarded expressions
+    
     // Traverse an OGraph node and evaluate expressions that can be evaluated
     // Similar to quasiquotation in Scheme but operating on the OGraph structure
     // Returns the node ID of the resulting expression after evaluation
@@ -19,8 +24,18 @@ export {
         nodeId : int,        // ID of the node to start traversal from
         environment : SExpEnv,     // Environment for evaluation (SExpEnv with runtime functions)
         evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, // Function to use for evaluation
-        tracing : bool       // Whether to enable detailed tracing
+        tracing : bool,      // Whether to enable detailed tracing
+        mode : EvalMode      // Evaluation mode - conservative or optimistic
     ) -> Pair<SExpEnv, int>; // Returns updated environment and resulting node ID
+
+    // Backward compatibility wrapper that uses ConservativeMode by default
+    evaluateOGraphQuasiquoteDefault(
+        graphName : string, 
+        nodeId : int, 
+        environment : SExpEnv, 
+        evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv,
+        tracing : bool
+    ) -> Pair<SExpEnv, int>;
 }
 
 //---------- Helper Functions for Node Manipulation and Analysis ----------//
@@ -130,7 +145,7 @@ getNodeBoolValue(node : ONode, defaultValue : bool) -> bool {
 }
 
 // Main function to evaluate quasiquotation in an OGraph
-evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // Get the graph from the registry
     switch (lookupTree(^ographRegistry, graphName)) {
         Some(graph): {
@@ -138,8 +153,8 @@ evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv
             rootId = findORoot(graph, nodeId);
             
             // Process the quasiquote starting at this node
-            if (tracing) println("Starting quasiquote evaluation at node ID: " + i2s(rootId));
-            evaluateQuasiquoteNode(graph, rootId, environment, evaluator, tracing);
+            if (tracing) println("Starting quasiquote evaluation at node ID: " + i2s(rootId) + " with mode: " + (if (mode == ConservativeMode()) "conservative" else "optimistic"));
+            evaluateQuasiquoteNode(graph, rootId, environment, evaluator, tracing, mode);
         }
         None(): {
             println("ERROR: OGraph '" + graphName + "' not found");
@@ -148,9 +163,14 @@ evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv
     }
 }
 
+// Backward compatibility wrapper that uses ConservativeMode by default
+evaluateOGraphQuasiquoteDefault(graphName : string, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+    evaluateOGraphQuasiquote(graphName, nodeId, environment, evaluator, tracing, ConservativeMode());
+}
+
 // Evaluate a let expression with local variable bindings
 // Simplified version that just evaluates the body without true local environment support
-evaluateLetNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateLetNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // Let special form should have at least 3 children: (special-form-name, bindings-list, body...)
     if (length(node.children) >= 3) {
         // Get the body expressions (third child onward)
@@ -192,7 +212,7 @@ evaluateLetNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEn
 
 // Evaluate a define expression - we'll just evaluate the value but not update the environment
 // This avoids the type issues while still allowing define expressions to be processed
-evaluateDefineNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateDefineNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // Define special form should have at least 3 children (special form name, var name, value)
     if (length(node.children) >= 3) {
         // Get the variable name node (second child)
@@ -248,7 +268,7 @@ evaluateDefineNode(graph : OGraph, nodeId : int, node : ONode, environment : SEx
 }
 
 // Evaluate an identifier node that maps to a value in the environment
-evaluateIdentifierNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateIdentifierNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // Extract the identifier name
     idName = getNodeStringValue(node, "");
     
@@ -300,7 +320,7 @@ evaluateBubbleContainer(graph : OGraph, nodeId : int, node : ONode, processedChi
 }
 
 // Evaluate quasiquotation for a specific node in the graph
-evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // Lookup the node in the graph
     switch (lookupOClass(graph, nodeId)) {
         Some(oclass): {
@@ -312,25 +332,25 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
             if (!isSchemeNode(node)) {
                 if (tracing) println("Not a Scheme node, processing children only");
                 // Not a Scheme node - just process children recursively
-                processNodeChildren(graph, nodeId, node, environment, evaluator, tracing);
+                processNodeChildren(graph, nodeId, node, environment, evaluator, tracing, mode);
             }
             // Control flow special forms
             else if (isSpecialFormNode(graph, nodeId, "if")) {
                 // Handle if special form with condition evaluation and branch selection
                 if (tracing) println("Found if expression, evaluating condition and branches");
-                evaluateIfNode(graph, nodeId, node, environment, evaluator, tracing);
+                evaluateIfNode(graph, nodeId, node, environment, evaluator, tracing, mode);
             } else if (isSpecialFormNode(graph, nodeId, "and")) {
                 // Handle and special form with short-circuit semantics
                 if (tracing) println("Found and expression, evaluating with short-circuit");
-                evaluateAndNode(graph, nodeId, node, environment, evaluator, tracing);
+                evaluateAndNode(graph, nodeId, node, environment, evaluator, tracing, mode);
             } else if (isSpecialFormNode(graph, nodeId, "or")) {
                 // Handle or special form with short-circuit semantics
                 if (tracing) println("Found or expression, evaluating with short-circuit");
-                evaluateOrNode(graph, nodeId, node, environment, evaluator, tracing);
+                evaluateOrNode(graph, nodeId, node, environment, evaluator, tracing, mode);
             } else if (isSpecialFormNode(graph, nodeId, "begin")) {
                 // Handle begin special form with sequential evaluation
                 if (tracing) println("Found begin expression, evaluating expressions in sequence");
-                evaluateBeginNode(graph, nodeId, node, environment, evaluator, tracing);
+                evaluateBeginNode(graph, nodeId, node, environment, evaluator, tracing, mode);
             }
             // Check if this is an unquote operation following the protocol
             else if (isSpecialFormNode(graph, nodeId, "unquote")) {
@@ -342,7 +362,8 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
                     childId = node.children[1]; // Skip the first child which is the special form name
                     childSexpr = ograph2Sexpr(graph, childId);
                     
-                    // Evaluate the expression using the provided evaluator function
+                    // Always evaluate unquote expressions regardless of mode
+                    // Unquote is explicitly requesting evaluation
                     newEnvironment = evaluator(environment, childSexpr);
                     
                     // Extract the result value from the environment
@@ -369,20 +390,20 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
             } else if (isSpecialFormNode(graph, nodeId, "let")) {
                 // Handle let special form with local environment
                 if (tracing) println("Found let expression, processing with local bindings");
-                evaluateLetNode(graph, nodeId, node, environment, evaluator, tracing);
+                evaluateLetNode(graph, nodeId, node, environment, evaluator, tracing, mode);
             } else if (isSpecialFormNode(graph, nodeId, "define")) {
                 // Handle define special form to update the environment
                 if (tracing) println("Found define, processing");
-                evaluateDefineNode(graph, nodeId, node, environment, evaluator, tracing);
+                evaluateDefineNode(graph, nodeId, node, environment, evaluator, tracing, mode);
             } else if (node.op == "Identifier") {
                 // Try to evaluate identifiers directly
-                evaluateIdentifierNode(graph, nodeId, node, environment, evaluator, tracing);
+                evaluateIdentifierNode(graph, nodeId, node, environment, evaluator, tracing, mode);
             } else if (isOperatorNode(graph, node, environment)) {
                 // For operator nodes or user-defined functions, consider evaluating
-                evaluateOperatorNode(graph, nodeId, node, environment, evaluator, tracing);
+                evaluateOperatorNode(graph, nodeId, node, environment, evaluator, tracing, mode);
             } else {
                 // Regular node - process children recursively
-                processNodeChildren(graph, nodeId, node, environment, evaluator, tracing);
+                processNodeChildren(graph, nodeId, node, environment, evaluator, tracing, mode);
             }
         }
         None(): {
@@ -436,7 +457,7 @@ isOperatorNode(graph : OGraph, node : ONode, env : SExpEnv) -> bool {
 
 // Helper function to process children recursively
 processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : SExpEnv, 
-                           evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, 
+                           evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode, 
                            areConstants : bool) -> Pair<Pair<SExpEnv, [int]>, bool> {
     if (startIndex >= length(children)) {
         // Done processing all children
@@ -444,7 +465,7 @@ processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, e
     } else {
         // Process current child
         childId = children[startIndex];
-        result = evaluateQuasiquoteNode(graph, childId, environment, evaluator, tracing);
+        result = evaluateQuasiquoteNode(graph, childId, environment, evaluator, tracing, mode);
         newEnvironment = result.first;
         processedChildId = result.second;
         
@@ -453,7 +474,7 @@ processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, e
         
         // Process remaining children
         remainingResult = processChildrenRecursively(graph, children, startIndex + 1, 
-                                                    newEnvironment, evaluator, tracing, 
+                                                    newEnvironment, evaluator, tracing, mode, 
                                                     areConstants && isConstant);
         
         // Combine results
@@ -469,7 +490,7 @@ processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, e
 
 // Helper function to process list children with special handling for unquote-splicing
 processListChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : SExpEnv, 
-                              evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, [int]> {
+                              evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, [int]> {
     if (startIndex >= length(children)) {
         Pair(environment, []); // Done processing all children
     } else {
@@ -514,7 +535,7 @@ processListChildrenRecursively(graph : OGraph, children : [int], startIndex : in
                     }
                 } else {
                     // Regular child - evaluate normally
-                    result = evaluateQuasiquoteNode(graph, childId, environment, evaluator, tracing);
+                    result = evaluateQuasiquoteNode(graph, childId, environment, evaluator, tracing, mode);
                     Pair(result.first, [result.second]);
                 }
             }
@@ -526,7 +547,7 @@ processListChildrenRecursively(graph : OGraph, children : [int], startIndex : in
         
         // Process remaining children
         remainingResult = processListChildrenRecursively(graph, children, startIndex + 1, 
-                                                      unquoteSplicingResult.first, evaluator, tracing);
+                                                      unquoteSplicingResult.first, evaluator, tracing, mode);
         
         // Combine results
         remainingEnvironment = remainingResult.first;
@@ -554,11 +575,11 @@ processSpliceItems(graph : OGraph, items : [Sexpr], startIndex : int, environmen
 }
 
 // Evaluate an operator node if all children are constants
-evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     if (tracing) println("Checking if operator " + node.op + " can be evaluated");
     
     // Process all children
-    processResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, true);
+    processResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, mode, true);
     newEnvironment = processResult.first.first;
     processedChildren = processResult.first.second;
     allConstants = processResult.second;
@@ -601,15 +622,15 @@ evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : S
 }
 
 // Process children of a regular (non-special) node - implementing improvement #3
-processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     if (tracing) println("Processing children of node " + i2s(nodeId) + " (" + node.op + ")");
     
     // Special handling for container nodes (List/Vector) that might contain unquote-splicing
     if (node.op == "List" || node.op == "Vector") {
-        processContainer(graph, nodeId, node, node.op, environment, evaluator, tracing);
+        processContainer(graph, nodeId, node, node.op, environment, evaluator, tracing, mode);
     } else {
         // Process all children
-        childrenResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, false);
+        childrenResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, mode, false);
         newEnvironment = childrenResult.first.first;
         processedChildren = childrenResult.first.second;
         
@@ -633,11 +654,11 @@ processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SE
 // Process List and Vector nodes with consistent handling and bubbling up fully evaluated containers
 processContainer(graph : OGraph, nodeId : int, node : ONode, containerType : string, 
                  environment : SExpEnv, evaluator : (SExpEnv, Sexpr) -> SExpEnv, 
-                 tracing : bool) -> Pair<SExpEnv, int> {
+                 tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     if (tracing) println("Processing " + containerType + " node with " + i2s(length(node.children)) + " children");
     
     // Process container children (with special handling for unquote-splicing)
-    result = processListChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing);
+    result = processListChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, mode);
     newEnvironment = result.first;
     processedChildren = result.second;
     
@@ -657,9 +678,9 @@ processContainer(graph : OGraph, nodeId : int, node : ONode, containerType : str
 }
 
 // Special handling for List nodes (now a wrapper around processContainer)
-processListNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+processListNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // Just delegate to our more general container processor
-    processContainer(graph, nodeId, node, "List", environment, evaluator, tracing);
+    processContainer(graph, nodeId, node, "List", environment, evaluator, tracing, mode);
 }
 
 // Helper to create a Sexpr from a node for evaluation
@@ -681,7 +702,7 @@ createSexprFromNode(graph : OGraph, op : string, childIds : [int], env : SExpEnv
 
 
 // Handle 'if' special form: (if condition then-expr else-expr)
-evaluateIfNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateIfNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // if special form should have at least 3 children: (special-form-name, condition, then-expr [, else-expr])
     if (length(node.children) < 3) {
         if (tracing) println("If special form has too few children: " + i2s(length(node.children)));
@@ -693,56 +714,110 @@ evaluateIfNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv
         if (tracing) println("Evaluating if condition");
         
         // Evaluate the condition
-        conditionResult = evaluateQuasiquoteNode(graph, conditionNodeId, environment, evaluator, tracing);
+        conditionResult = evaluateQuasiquoteNode(graph, conditionNodeId, environment, evaluator, tracing, mode);
         newEnvironment = conditionResult.first;
         evaluatedConditionId = conditionResult.second;
         
-        // Convert condition to Sexpr to check its boolean value
-        conditionSexpr = ograph2Sexpr(graph, evaluatedConditionId);
-        isTrue = getSBool(conditionSexpr, "if condition");
-        
-        if (tracing) println("If condition evaluated to: " + b2s(isTrue));
-        
-        // Based on condition, evaluate either the then-branch or else-branch
-        if (isTrue) {
-            // Condition is true, evaluate the 'then' expression
-            thenNodeId = node.children[2];
-            if (tracing) println("Evaluating 'then' branch");
-            thenResult = evaluateQuasiquoteNode(graph, thenNodeId, newEnvironment, evaluator, tracing);
-            
-            // Merge with the original node
-            mergeOClasses(graph, nodeId, thenResult.second);
-            
-            // Return the updated environment and result node ID
-            thenResult;
-        } else if (length(node.children) > 3) {
-            // Condition is false, evaluate the 'else' expression if it exists
-            elseNodeId = node.children[3];
-            if (tracing) println("Evaluating 'else' branch");
-            elseResult = evaluateQuasiquoteNode(graph, elseNodeId, newEnvironment, evaluator, tracing);
-            
-            // Merge with the original node
-            mergeOClasses(graph, nodeId, elseResult.second);
-            
-            // Return the updated environment and result node ID
-            elseResult;
-        } else {
-            // No else branch and condition is false, return an empty list
-            if (tracing) println("Condition is false and no else branch");
-            
-            // Create an empty list node as the result
-            emptyListId = insertONode(graph, ONode("List", [], node.belongsTo, node.value));
-            
-            // Merge with the original node
-            mergeOClasses(graph, nodeId, emptyListId);
-            
-            Pair(newEnvironment, emptyListId);
+        // Check if the condition evaluated to a concrete boolean value
+        switch (lookupOClass(graph, evaluatedConditionId)) {
+            Some(conditionClass): {
+                // Only proceed with branch selection if condition evaluated to a concrete boolean
+                if (conditionClass.node.op == "Bool") {
+                    // Extract the boolean value
+                    isTrue = getNodeBoolValue(conditionClass.node, false);
+                    
+                    if (tracing) println("If condition evaluated to concrete boolean: " + b2s(isTrue));
+                    
+                    // Based on condition, evaluate either the then-branch or else-branch
+                    if (isTrue) {
+                        // Condition is true, evaluate the 'then' expression
+                        thenNodeId = node.children[2];
+                        if (tracing) println("Evaluating 'then' branch");
+                        thenResult = evaluateQuasiquoteNode(graph, thenNodeId, newEnvironment, evaluator, tracing, mode);
+                        
+                        // Merge with the original node
+                        mergeOClasses(graph, nodeId, thenResult.second);
+                        
+                        // Return the updated environment and result node ID
+                        thenResult;
+                    } else if (length(node.children) > 3) {
+                        // Condition is false, evaluate the 'else' expression if it exists
+                        elseNodeId = node.children[3];
+                        if (tracing) println("Evaluating 'else' branch");
+                        elseResult = evaluateQuasiquoteNode(graph, elseNodeId, newEnvironment, evaluator, tracing, mode);
+                        
+                        // Merge with the original node
+                        mergeOClasses(graph, nodeId, elseResult.second);
+                        
+                        // Return the updated environment and result node ID
+                        elseResult;
+                    } else {
+                        // No else branch and condition is false, return an empty list
+                        if (tracing) println("Condition is false and no else branch");
+                        
+                        // Create an empty list node as the result
+                        emptyListId = insertONode(graph, ONode("List", [], node.belongsTo, node.value));
+                        
+                        // Merge with the original node
+                        mergeOClasses(graph, nodeId, emptyListId);
+                        
+                        Pair(newEnvironment, emptyListId);
+                    }
+                } else {
+                    // Condition didn't evaluate to a concrete boolean - partial evaluation
+                    if (tracing) println("Condition didn't resolve to a concrete boolean, preserving if-expression structure");
+                    
+                    // Partially evaluate both then and else branches without selecting
+                    thenNodeId = node.children[2];
+                    if (tracing) println("Partially evaluating 'then' branch");
+                    thenResult = evaluateQuasiquoteNode(graph, thenNodeId, newEnvironment, evaluator, tracing, mode);
+                    evaluatedThenId = thenResult.second;
+                    // Update environment after then branch evaluation
+                    thenEnvironment = thenResult.first;
+                    
+                    // Evaluate else branch if it exists
+                    elseResult = if (length(node.children) > 3) {
+                        elseNodeId = node.children[3];
+                        if (tracing) println("Partially evaluating 'else' branch");
+                        evaluateQuasiquoteNode(graph, elseNodeId, thenEnvironment, evaluator, tracing, mode);
+                    } else {
+                        Pair(thenEnvironment, -1);
+                    };
+                    
+                    // Extract results from else evaluation
+                    evaluatedElseId = elseResult.second;
+                    finalEnvironment = elseResult.first;
+                    
+                    // Create a new if node with the evaluated parts
+                    specialFormNodeId = node.children[0]; // Get the special form name node
+                    
+                    // Construct the children array based on whether we have a valid else branch
+                    newChildren = if (length(node.children) > 3 && evaluatedElseId != -1) {
+                        [specialFormNodeId, evaluatedConditionId, evaluatedThenId, evaluatedElseId];
+                    } else {
+                        [specialFormNodeId, evaluatedConditionId, evaluatedThenId];
+                    }
+                    
+                    // Create the new if node
+                    newIfNodeId = insertONode(graph, ONode("SpecialForm", newChildren, node.belongsTo, node.value));
+                    
+                    // Merge with the original node
+                    mergeOClasses(graph, nodeId, newIfNodeId);
+                    
+                    Pair(finalEnvironment, newIfNodeId);
+                }
+            }
+            None(): {
+                // Node not found, return unchanged
+                if (tracing) println("Condition node not found in graph");
+                Pair(newEnvironment, nodeId);
+            }
         }
     }
 }
 
 // Handle 'and' special form: (and expr1 expr2 ...)
-evaluateAndNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateAndNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // and special form should have at least 1 child (special-form-name)
     if (length(node.children) <= 1) {
         if (tracing) println("And special form has too few expressions");
@@ -754,14 +829,14 @@ evaluateAndNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEn
         Pair(environment, trueNodeId);
     } else {
         // Process expressions one by one with short-circuit semantics
-        processAndExpressions(graph, node, node.children, 1, environment, evaluator, tracing);
+        processAndExpressions(graph, node, node.children, 1, environment, evaluator, tracing, mode);
     }
 }
 
 // Process 'and' expressions with short-circuit semantics
 processAndExpressions(graph : OGraph, originalNode : ONode, children : [int], currentIndex : int, 
                      environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, 
-                     tracing : bool) -> Pair<SExpEnv, int> {
+                     tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     if (currentIndex >= length(children)) {
         // All expressions evaluated to true, result is true
         if (tracing) println("All 'and' expressions evaluated to true");
@@ -775,7 +850,7 @@ processAndExpressions(graph : OGraph, originalNode : ONode, children : [int], cu
         exprNodeId = children[currentIndex];
         if (tracing) println("Evaluating 'and' expression " + i2s(currentIndex));
         
-        exprResult = evaluateQuasiquoteNode(graph, exprNodeId, environment, evaluator, tracing);
+        exprResult = evaluateQuasiquoteNode(graph, exprNodeId, environment, evaluator, tracing, mode);
         newEnvironment = exprResult.first;
         evaluatedExprId = exprResult.second;
         
@@ -796,13 +871,13 @@ processAndExpressions(graph : OGraph, originalNode : ONode, children : [int], cu
         } else {
             // Expression is true, evaluate next one
             processAndExpressions(graph, originalNode, children, currentIndex + 1, 
-                                 newEnvironment, evaluator, tracing);
+                                 newEnvironment, evaluator, tracing, mode);
         }
     }
 }
 
 // Handle 'or' special form: (or expr1 expr2 ...)
-evaluateOrNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateOrNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // or special form should have at least 1 child (special-form-name)
     if (length(node.children) <= 1) {
         if (tracing) println("Or special form has too few expressions");
@@ -814,14 +889,14 @@ evaluateOrNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv
         Pair(environment, falseNodeId);
     } else {
         // Process expressions one by one with short-circuit semantics
-        processOrExpressions(graph, node, node.children, 1, environment, evaluator, tracing);
+        processOrExpressions(graph, node, node.children, 1, environment, evaluator, tracing, mode);
     }
 }
 
 // Process 'or' expressions with short-circuit semantics
 processOrExpressions(graph : OGraph, originalNode : ONode, children : [int], currentIndex : int, 
                     environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, 
-                    tracing : bool) -> Pair<SExpEnv, int> {
+                    tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     if (currentIndex >= length(children)) {
         // All expressions evaluated to false, result is false
         if (tracing) println("All 'or' expressions evaluated to false");
@@ -835,7 +910,7 @@ processOrExpressions(graph : OGraph, originalNode : ONode, children : [int], cur
         exprNodeId = children[currentIndex];
         if (tracing) println("Evaluating 'or' expression " + i2s(currentIndex));
         
-        exprResult = evaluateQuasiquoteNode(graph, exprNodeId, environment, evaluator, tracing);
+        exprResult = evaluateQuasiquoteNode(graph, exprNodeId, environment, evaluator, tracing, mode);
         newEnvironment = exprResult.first;
         evaluatedExprId = exprResult.second;
         
@@ -856,13 +931,13 @@ processOrExpressions(graph : OGraph, originalNode : ONode, children : [int], cur
         } else {
             // Expression is false, evaluate next one
             processOrExpressions(graph, originalNode, children, currentIndex + 1, 
-                                newEnvironment, evaluator, tracing);
+                                newEnvironment, evaluator, tracing, mode);
         }
     }
 }
 
 // Handle 'begin' special form: (begin expr1 expr2 ...)
-evaluateBeginNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+evaluateBeginNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     // begin special form should have at least 1 child (special-form-name)
     if (length(node.children) <= 1) {
         if (tracing) println("Begin special form has no expressions");
@@ -874,14 +949,14 @@ evaluateBeginNode(graph : OGraph, nodeId : int, node : ONode, environment : SExp
         Pair(environment, emptyListId);
     } else {
         // Process expressions in sequence, returning the value of the last one
-        processBeginExpressions(graph, node, node.children, 1, environment, evaluator, tracing);
+        processBeginExpressions(graph, node, node.children, 1, environment, evaluator, tracing, mode);
     }
 }
 
 // Process 'begin' expressions in sequence
 processBeginExpressions(graph : OGraph, originalNode : ONode, children : [int], currentIndex : int, 
                        environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, 
-                       tracing : bool) -> Pair<SExpEnv, int> {
+                       tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
     if (currentIndex >= length(children)) {
         // No expressions to evaluate (should never happen due to check in evaluateBeginNode)
         if (tracing) println("No begin expressions to evaluate");
@@ -895,7 +970,7 @@ processBeginExpressions(graph : OGraph, originalNode : ONode, children : [int], 
         exprNodeId = children[currentIndex];
         if (tracing) println("Evaluating 'begin' expression " + i2s(currentIndex));
         
-        exprResult = evaluateQuasiquoteNode(graph, exprNodeId, environment, evaluator, tracing);
+        exprResult = evaluateQuasiquoteNode(graph, exprNodeId, environment, evaluator, tracing, mode);
         newEnvironment = exprResult.first;
         evaluatedExprId = exprResult.second;
         
@@ -910,7 +985,7 @@ processBeginExpressions(graph : OGraph, originalNode : ONode, children : [int], 
         } else {
             // Not the last expression, continue to the next one
             processBeginExpressions(graph, originalNode, children, currentIndex + 1, 
-                                   newEnvironment, evaluator, tracing);
+                                   newEnvironment, evaluator, tracing, mode);
         }
     }
 }
