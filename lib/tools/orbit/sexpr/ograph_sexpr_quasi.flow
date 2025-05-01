@@ -373,10 +373,23 @@ evaluateLambdaNode(graph : OGraph, nodeId : int, node : ONode, environment : SEx
         
         if (tracing) println("Found " + i2s(sizeSet(freeVars)) + " free variables in lambda body");
         
+        // Debug: Print the names of all free variables
+        if (tracing) {
+            freeVarNames = buildSet(map(set2array(freeVars), \v -> v));
+            println("Free variables: " + strGlue(set2array(freeVarNames), ", "));
+        }
+        
         // Create bindings for all free variables from the current environment
         bindings = createSexprBindings(freeVars, environment.env);
         
         if (tracing) println("Created " + i2s(length(bindings)) + " bindings for free variables");
+        
+        // Debug: Print each binding
+        if (tracing) {
+            iter(bindings, \binding -> {
+                println("  Binding: " + binding.first + " -> " + prettySexpr(binding.second));
+            });
+        }
         
         // Create a list node for the bindings
         bindingsListItems = map(bindings, \binding -> {
@@ -393,8 +406,15 @@ evaluateLambdaNode(graph : OGraph, nodeId : int, node : ONode, environment : SEx
         
         // Create the closure special form node
         closureSpecialNodeId = insertONode(graph, ONode("Special", [], node.belongsTo, OrbitString("closure")));
+        
+        // IMPORTANT CHANGE: Use the canonical IDs for params and body
+        // to ensure we're part of the same equivalence classes
+        canonicalParamsNodeId = findORoot(graph, paramsNodeId);
+        canonicalBodyNodeId = findORoot(graph, bodyNodeId);
+        
+        // Create the closure special form node with canonical IDs
         closureNodeId = insertONode(graph, ONode("SpecialForm", 
-            [closureSpecialNodeId, bindingsListNodeId, paramsNodeId, bodyNodeId], 
+            [closureSpecialNodeId, bindingsListNodeId, canonicalParamsNodeId, canonicalBodyNodeId], 
             node.belongsTo, 
             node.value
         ));
@@ -403,14 +423,30 @@ evaluateLambdaNode(graph : OGraph, nodeId : int, node : ONode, environment : SEx
             println("Created closure with structure:");
             println("- Special form type: closure");
             println("- Bindings node ID: " + i2s(bindingsListNodeId));
-            println("- Params node ID: " + i2s(paramsNodeId));
-            println("- Body node ID: " + i2s(bodyNodeId));
+            println("- Params node ID (canonical): " + i2s(canonicalParamsNodeId));
+            println("- Body node ID (canonical): " + i2s(canonicalBodyNodeId));
         }
         
-        // Merge with the original node
-        mergeOClasses(graph, nodeId, closureNodeId);
+        // CRITICAL FIX: We need to make the closure node the canonical form of the lambda
+        // The key is to pass parameters to mergeOClasses in the correct order!
+        // mergeOClasses always makes the first parameter the canonical form
+        if (tracing) {
+            println("Merging nodes - using closureNodeId as canonical (first parameter)");
+        }
         
-        if (tracing) println("Created closure node with ID: " + i2s(closureNodeId));
+        // REVERSED ORDER: closureNodeId first to make it the canonical representative
+        mergeOClasses(graph, closureNodeId, nodeId);
+        
+        // Verify the change took effect
+        newCanonicalId = findORoot(graph, nodeId);
+        if (tracing) {
+            println("Created closure node with ID: " + i2s(closureNodeId));
+            println("New canonical ID for original node: " + i2s(newCanonicalId));
+            
+            // Check what we get when extracting this node
+            extr = ograph2Sexpr(graph, newCanonicalId);
+            println("Extracted form after merge: " + prettySexpr(extr));
+        }
         
         Pair(environment, closureNodeId);
     }
