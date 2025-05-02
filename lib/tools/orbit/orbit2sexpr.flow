@@ -432,8 +432,7 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 						// First item is the expression to match against
 						expression = sexpr2orbit(items[0]);
 						
-						// Remaining items are pattern-action pairs
-						// Extract these pairs and build OrRule structures
+						// Remaining items are pattern-action pairs or pattern-condition-action triples
 						patternPairs = tailFrom(items, 1);
 						
 						// Must have at least one pattern-action pair
@@ -442,12 +441,12 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 							cases = fold(patternPairs, OrBool(true), \acc, pair -> {
 								switch (pair) {
 									SSList(pairItems): {
-										if (length(pairItems) >= 2) {
-											// Extract pattern and result
+										if (length(pairItems) == 2) {
+											// Regular format with 2 elements: (pattern result)
 											pattern = sexpr2orbit(pairItems[0]);
 											result = sexpr2orbit(pairItems[1]);
 											
-											// Create a rule (pattern => result)
+											// Create a rule with default TRUE condition (pattern => result)
 											rule = OrRule(pattern, result, OrBool(true), true);
 											
 											// If this is the first rule, it replaces the acc
@@ -457,13 +456,13 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 												// Otherwise create a sequence of rules
 												OrSequence(acc, rule);
 											}
-										} else if (length(pairItems) >= 3) {
-											// Format with condition: (pattern condition result)
+										} else if (length(pairItems) == 3) {
+											// Conditional format with 3 elements: (pattern condition result)
 											pattern = sexpr2orbit(pairItems[0]);
 											condition = sexpr2orbit(pairItems[1]);
 											result = sexpr2orbit(pairItems[2]);
 											
-											// Create a rule with condition
+											// Create a rule with the specified condition (pattern if condition => result)
 											rule = OrRule(pattern, result, condition, true);
 											
 											// If this is the first rule, it replaces the acc
@@ -474,11 +473,16 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 												OrSequence(acc, rule);
 											}
 										} else {
-											// Invalid pattern-action pair format
+											// Invalid pattern format (neither 2 nor 3 elements)
+											println("Invalid pattern in match: " + toString(pairItems));
 											acc;
 										}
 									}
-									default: acc; // Skip invalid pattern-action pairs
+									default: {
+										// Invalid pattern format (not a list)
+										println("Non-list pattern in match: " + toString(pair));
+										acc;
+									}
 								}
 							});
 							
@@ -1102,7 +1106,7 @@ extractRulesHelper(node : OrMath_expr, acc : [Sexpr]) -> [Sexpr] {
 	switch (node) {
 		// Handle direct rules
 		OrRule(pattern, result, condition, __): {
-			// Check if there's a condition (not just a placeholder)
+			// Check if condition is just a default TRUE or an actual condition
 			isDefaultCondition = switch (condition) {
 				OrBool(b): b; // If true, it's the default condition
 				default: false; // Has an actual non-boolean condition expression
@@ -1114,7 +1118,8 @@ extractRulesHelper(node : OrMath_expr, acc : [Sexpr]) -> [Sexpr] {
 				conditionExpr = orbit2sexpr(condition);
 				resultExpr = orbit2sexpr(result);
 				
-				// Format required by the new pattern matcher: (pattern condition result)
+				// Format for conditional pattern: (pattern condition result)
+				// Create a list containing all three elements
 				patternCase = SSList([patternExpr, conditionExpr, resultExpr]);
 				concat(acc, [patternCase]);
 			} else {
@@ -1122,7 +1127,7 @@ extractRulesHelper(node : OrMath_expr, acc : [Sexpr]) -> [Sexpr] {
 				patternExpr = orbit2sexpr(pattern);
 				resultExpr = orbit2sexpr(result);
 				
-				// Format required by the pattern matcher: (pattern result)
+				// Format for regular pattern: (pattern result)
 				patternCase = SSList([patternExpr, resultExpr]);
 				concat(acc, [patternCase]);
 			}
