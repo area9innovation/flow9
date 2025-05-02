@@ -573,28 +573,45 @@ tryMatch(env : SExpEnv, valueResult : SExpEnv, patternCases : [Sexpr], caseIndex
 					resultPart = if (hasCondition) caseItems[2] else caseItems[1];
 					
 					// Try to match the pattern
-					matchResult = matchPattern(patternPart, valueResult.value, valueResult.env);
+					// matchPattern should only return the new bindings, not the full environment
+					matchResult = matchPattern(patternPart, valueResult.value, makeTree());
 					
 					switch (matchResult) {
-						Some(newEnv): {
+						Some(bindingsEnv): {
 							// Pattern matched, now check condition if there is one
-							matchEnv = SExpEnv(env.runtime, newEnv, SSList([]));
+							
+							// Create a temporary environment for evaluating the condition
+							// Merge the original environment with the new bindings
+							// with new bindings taking precedence
+							tempEnv = fold(getTreeKeys(bindingsEnv), valueResult.env, \acc, key -> {
+								setTree(acc, key, lookupTreeDef(bindingsEnv, key, SSBool(false)));
+							});
+							execEnv = SExpEnv(env.runtime, tempEnv, SSList([]));
 							
 							if (hasCondition) {
-								// Evaluate the condition in the environment with bound variables
-								condResult = evalSexpr(matchEnv, conditionPart);
-								condVal = getSBool(condResult.value, "pattern condition");
+								// Evaluate the condition in the merged environment
+								condResultEnv = evalSexpr(execEnv, conditionPart);
+								condVal = getSBool(condResultEnv.value, "pattern condition");
 								
 								if (condVal) {
-									// Condition is true, evaluate the result
-									evalSexpr(matchEnv, resultPart);
+									// Condition is true, evaluate the result using the environment
+									// returned from condition evaluation (to preserve side effects)
+									resultEnv = evalSexpr(condResultEnv, resultPart);
+									
+									// Return the value, but restore the original environment
+									// to prevent leaking bindings
+									SExpEnv(env.runtime, env.env, resultEnv.value);
 								} else {
 									// Condition is false, try the next pattern case
+									// Pass original env and valueResult to preserve state
 									tryMatch(env, valueResult, patternCases, caseIndex + 1);
 								}
 							} else {
 								// No condition, just evaluate the result
-								evalSexpr(matchEnv, resultPart);
+								resultEnv = evalSexpr(execEnv, resultPart);
+								
+								// Return the value, but restore the original environment
+								SExpEnv(env.runtime, env.env, resultEnv.value);
 							}
 						}
 						None(): {
