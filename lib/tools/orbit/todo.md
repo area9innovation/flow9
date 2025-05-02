@@ -5,40 +5,43 @@
 **Focus:** Ensure the S-expression based interpreter and rewriting engine are functional and validate the core canonicalization mechanism. Retire the old Orbit interpreter.
 
 *   **S-Expression Backend Migration:**
-    *   **Verify Orbit <-> S-Expression Conversion:**
-        *   Run: `./run_orbit_tests.sh --compare-with-roundtrip`
-        *   Goal: Ensure all tests pass, indicating the Orbit -> SExpr -> Orbit -> SExpr conversion within the `orbit sexpr-roundtrip=1` mode is faithful and produces results identical to the native engine. Address any discrepancies found in `.engine_diff` files.
-    *   **Finalize S-Expression `eval`:** Complete migration to `eval` using S-Expression representation. Ensure all language features are supported.
-    *   **Fix Imports:** Ensure Orbit `.orb` file imports work correctly in the S-expression world (resolve import path issues). Test with `tests/import_*.orb` (if they exist) using `--sexpr`.
-    *   **O-Graph S-Expression Integration:** Modify O-Graph internal representation to primarily use S-Expressions or have seamless S-Expression interoperability. Test basic O-Graph operations (add, extract) using `tests/ograph_basic.orb` (if exists) with `--sexpr`.
-    *   **Validate Rewriting Engine:**
+    *   **Verify Orbit <-> S-Expression Conversion Integrity:**
+        *   Run: `./run_orbit_tests.sh --sexpr-roundtrip`
+        *   Goal: Ensure all tests pass the integrity check, meaning the `orbit sexpr-roundtrip=1` mode reports "SUCCESS" for the Orbit -> SExpr -> Orbit -> SExpr conversion process. Investigate any failures reported in the `.sexpr_roundtrip.log` files. This step checks the *conversion mechanism* itself, not the execution results.
+    *   **Verify S-Expression Engine Execution Equivalence:**
         *   Run: `./run_orbit_tests.sh --compare-engines`
-        *   Goal: Ensure core rewriting tests (e.g., `tests/rewrite.orb`, `tests/pattern.orb`, `tests/algebra.orb` - adjust names based on actual files) produce identical results with both engines. Fix any differences reported by the comparison.
-        *   Run specific rewriting tests using `--sexpr`: `./run_orbit_tests.sh --sexpr tests/rewrite.orb`
-    *   **Implement Basic Evaluation:** Implement evaluation for simple conditions (e.g., `<`, `>`, arithmetic) within the S-Expression based O-Graph/rewriting context. Test with rules using `if` conditions (e.g., `tests/conditional_rewrite.orb`).
-    *   **Implement Minimal Environment:** Implement basic environment handling for scoped variables (e.g., function parameters, let bindings, summation indices) within the S-Expression evaluator. Test with `tests/scopes.orb`, `tests/lambda.orb`, or tests involving summations.
+        *   Goal: Ensure all tests produce identical *execution output* between the default engine and the S-expression engine (`sexpr=1`). Address any discrepancies found in the `.engine_diff` files. This confirms the S-expression backend *runs* code equivalently.
+    *   **Finalize S-Expression `eval`:** Complete migration to `eval` using S-Expression representation. Ensure all language features are supported. Verify with `--compare-engines`.
+    *   **Fix Imports:** Ensure Orbit `.orb` file imports work correctly in the S-expression world (resolve import path issues). Test with `tests/import_*.orb` (if they exist) using `--sexpr` and verify results manually or with `--compare-engines` if applicable.
+    *   **O-Graph S-Expression Integration:** Modify O-Graph internal representation to primarily use S-Expressions or have seamless S-Expression interoperability. Test basic O-Graph operations (add, extract) using `tests/ograph_basic.orb` (if exists) with `--sexpr` and check results (or use `--compare-engines`).
+    *   **Validate Rewriting Engine:**
+        *   Run: `./run_orbit_tests.sh --compare-engines` on core rewriting tests (e.g., `tests/rewrite.orb`, `tests/pattern.orb`, `tests/algebra.orb` - adjust names based on actual files).
+        *   Goal: Ensure identical execution results. Fix any differences reported by the comparison.
+        *   Also run specific rewriting tests using only the SExpr engine: `./run_orbit_tests.sh --sexpr tests/rewrite.orb` and verify output.
+    *   **Implement Basic Evaluation:** Implement evaluation for simple conditions (e.g., `<`, `>`, arithmetic) within the S-Expression based O-Graph/rewriting context. Test with rules using `if` conditions (e.g., `tests/conditional_rewrite.orb`), checking results with `--sexpr`.
+    *   **Implement Minimal Environment:** Implement basic environment handling for scoped variables (e.g., function parameters, let bindings, summation indices) within the S-Expression evaluator. Test with `tests/scopes.orb`, `tests/lambda.orb`, or tests involving summations, checking results with `--sexpr`.
 *   **Core O-Graph Rewriting & Canonicalization (using S-Expr backend):**
     *   **Implement & Test `S₂` Canonicalization:**
         *   Run: `./run_orbit_tests.sh --sexpr tests/commutativity.orb` (or similar test).
-        *   Goal: Verify sorting/canonicalization via `mergeOGraphNodes` and `S₂` rules works correctly.
+        *   Goal: Verify sorting/canonicalization via `mergeOGraphNodes` and `S₂` rules works correctly by checking the output.
     *   **Implement & Test `Cₙ` Canonicalization:**
         *   Run: `./run_orbit_tests.sh --sexpr tests/cyclic.orb` (or similar test using `booth_canonical`).
-        *   Goal: Verify Booth's algorithm implementation via rules/functions linked to `: Cₙ`.
+        *   Goal: Verify Booth's algorithm implementation via rules/functions linked to `: Cₙ` by checking the output.
     *   **Verify `addOGraphWithSub` / `matchOGraphPattern`:**
         *   Run: `./run_orbit_tests.sh --sexpr tests/ograph_subst.orb` (or similar).
-        *   Goal: Ensure robust handling of S-Expression bindings and substitutions in pattern matching and rewriting.
+        *   Goal: Ensure robust handling of S-Expression bindings and substitutions in pattern matching and rewriting by checking the output.
     *   **Verify `gather`/`scatter`:**
         *   Run: `./run_orbit_tests.sh --sexpr tests/gather_scatter.orb` (or similar).
-        *   Goal: Ensure array-based representation works correctly with pattern matching for associative ops.
+        *   Goal: Ensure array-based representation works correctly with pattern matching for associative ops by checking the output.
 *   **Simple Derivation Example (using S-Expr backend):**
     *   Implement rewrite rules for Horner's method derivation *OR* initial FFT split rules.
     *   Create a specific test file (e.g., `tests/horner_derivation.orb` or `tests/fft_split.orb`).
     *   Run: `./run_orbit_tests.sh --sexpr tests/your_derivation_test.orb`
-    *   Goal: Verify `applyRulesUntilFixedPoint` successfully transforms the expression using the S-expression backend.
+    *   Goal: Verify `applyRulesUntilFixedPoint` successfully transforms the expression using the S-expression backend by checking the output.
 
 ## 🟡 Priority 2: Expand Core Functionality & Algorithms
 
-**Focus:** Broaden the base of supported canonical forms, group operations, and fundamental algebraic/algorithmic derivations (using S-Expr backend).
+**Focus:** Broaden the base of supported canonical forms, group operations, and fundamental algebraic/algorithmic derivations (using S-Expr backend). All tests below should primarily run with `--sexpr` and output verified, or use `--compare-engines` if a default engine equivalent exists.
 
 *   **O-Graph Enhancements:**
     *   Implement domain hierarchy relationships (`⊂` / `c=`) and rule inheritance. Test with `tests/hierarchy.orb`.
