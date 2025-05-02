@@ -53,7 +53,7 @@ Inspired by Tao's Python code, a primary strategy for verifying multiplicative e
 Rewrite rules are still essential for simplification and managing the overall process.
 
 *   **Simplification:**
-    *   Standard algebraic rules (commutativity, associativity via `gather`/`scatter`, distributivity, exponents) operating on sub-expressions.
+    *   Standard algebraic rules (commutativity, associativity, distributivity, exponents) operating on sub-expressions.
     *   *Tao-specific Simplifications:*
 ```orbit
 		// Rule for A+B ∼ Max(A,B) for positive A,B

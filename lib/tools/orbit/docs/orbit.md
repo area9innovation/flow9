@@ -378,8 +378,8 @@ println(prettyOrbit(expr));
 let addExpr = makeAst("+", [a, b]);        // Creates the AST for a + b
 let condition = makeAst("<", [x, 10]);     // Creates the AST for x < 10
 let ifExpr = makeAst("if", [condition,     // Creates a complete if expression
-													makeAst("*", [x, 2]),
-													x]);
+									makeAst("*", [x, 2]),
+									x]);
 ```
 
 The `ast` annotation indicates that an expression should be treated as syntax rather than being evaluated.
@@ -461,96 +461,6 @@ For constructors and identifiers, you can create them directly:
 // Create a constructor call: Point(10, 20)
 let point = makeAst("call", [makeAst("Identifier", [], "Point"), 10, 20]);
 ```
-
-### Using gather() and scatter() for Expression Transformation
-
-Orbit provides special functions for transforming between nested binary operations and array-based representations:
-
-```orbit
-// gather: Converts nested binary operations into a function call with an array of operands
-fn gather(expr : ast, template : ast) -> ast;
-
-// scatter: Converts a function call with an array of operands back into binary operations
-fn scatter(expr : ast) -> ast;
-```
-
-#### gather
-
-`gather` transforms nested binary operations (like addition or multiplication) into a function call with an array of arguments. It "flattens" a chain of associative binary operations into a single function call, normalizing different groupings of the same operation.
-
-For example, both `(a + b) + c` and `a + (b + c)` will be gathered into the same representation: ``+``([a, b, c]). This leverages the associative property of operations like addition and multiplication.
-
-```orbit
-// Gather addition operations
-let expr = quote(a + b + c);
-let gathered = gather(expr, `+`);
-// Result: `+`([a, b, c])
-
-// Different groupings yield the same gathered form
-let expr1 = quote((1 + 2) + 3);
-let expr2 = quote(1 + (2 + 3));
-let gathered1 = gather(expr1, `+`);
-let gathered2 = gather(expr2, `+`);
-// Both result in: `+`([1, 2, 3])
-```
-
-#### scatter
-
-`scatter` is the inverse of `gather`. It transforms a function call with an array of arguments back into a chain of binary operations with a specific grouping (left-to-right by default).
-
-```orbit
-// Converting back to binary operations
-let expr = quote(`+`([a, b, c]));
-let scattered = scatter(expr);
-// Result: (a + b) + c (left-to-right grouping)
-
-// Works with multiplication
-let expr2 = quote(`*`([a, b, c, d]));
-let scattered2 = scatter(expr2);
-// Result: ((a * b) * c) * d (left-to-right grouping)
-
-// Works with other operators too
-let expr3 = quote(`^`([2, x]));
-let scattered3 = scatter(expr3);
-// Result: 2^x
-```
-
-#### Extracting Arguments with Pattern Matching
-
-One of the most powerful use cases for `gather` and `scatter` is their ability to work with pattern matching to extract arguments from expressions. This allows you to peel apart and recombine AST nodes easily:
-
-```orbit
-// Define a function that doesn't evaluate its argument
-fn quote(e : ast) = e;
-
-// Extract all arguments from a chained OR expression
-let asCall = gather(quote(a||c||b), `||`);
-println(prettyOrbit(asCall));
-// Output: `||`([a, c, b])
-
-// Pattern match to extract the arguments
-let arguments = asCall is (`||`(args) => args);
-println(prettyOrbit(arguments));
-// Output: [a, c, b]
-
-// Reconstruct the binary expression
-let back = scatter(asCall);
-println(prettyOrbit(back));
-// Output: ((a ∨ c) ∨ b)
-```
-
-This approach makes it easy to:
-- Extract all operands from a chain of operations
-- Process each operand individually 
-- Reconstruct the expression with modified operands
-- Transform between different operator representations
-
-These functions are particularly useful for:
-- Normalizing expressions for comparison
-- Simplifying pattern matching
-- Implementing mathematical algorithms
-- Expression optimization
-- Manipulating and transforming AST structures
 </ast_manipulation>
 
 <runtime_functions>
