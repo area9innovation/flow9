@@ -178,9 +178,7 @@ This consolidated list provides a reference for the key terms and notations used
 
 To enable a unified system where rules and properties can be inherited and shared, we can structure the identified domains into a conceptual lattice or hierarchy. This hierarchy uses the subset relation (`⊂`) to denote that elements of a subdomain also belong to the superdomain, allowing rules defined for broader categories (like `Ring`) to apply to more specific instances (like `Integer` or `Int32`).
 
-TODO: Compare with Haskell monad hierarchy.
-
-```
+```orbit
 Top (Most General Domain)
  ├── ComputationalObject
  │   ├── DataStructure
@@ -200,8 +198,14 @@ Top (Most General Domain)
  │   └── Expression / AST (Abstract Syntax Tree)
  │       ├── OrbitExpr (Orbit's own AST)
  │       └── MathExpr (Mathematical Notation)
+ │           ├── ArithmeticExpr // +, *, /, ^ etc.
+ │           ├── ComparisonExpr // <, ≤, >, ≥, =
+ │           ├── MaxExpr / MinExpr / MedianExpr // Includes Max(), Min(), Median() constructors
+ │           ├── NormExpr // Node representing Norm(f, Space)
+ │           ├── SummationExpression // Node representing Sum(...)
+ │           └── IntegralExpression // Node representing Integral(...)
  │
-├── MathematicalStructure
+ ├── MathematicalStructure
  │   ├── Algebraic
  │   │   ├── Magma // Type* → Type* → Type* (binary operation)
  │   │   │   └── Semigroup ⊂ Magma // + mul_assoc axiom
@@ -226,6 +230,7 @@ Top (Most General Domain)
  │   │   │       │   ├── Field ⊂ CommutativeRing // + multiplicative inverse for non-zero
  │   │   │       │   │   ├── Rational (ℚ) ≅ Field // Instance
  │   │   │       │   │   ├── Real (ℝ) ≅ Field // Instance
+ │   │   │       │   │   │   └── PositiveReal ⊂ Real // Specific subset for estimates
  │   │   │       │   │   └── Complex (ℂ) ≅ Field // Instance
  │   │   │       │   ├── Integer (ℤ) ⊂ CommutativeRing // Instance
  │   │   │       │   │   └── Nat (ℕ) ⊂ Integer // Natural numbers (often Monoid/Semiring)
@@ -244,13 +249,31 @@ Top (Most General Domain)
  │   │   ├── PartialOrder
  │   │   │   └── Lattice ⊂ PartialOrder // + has LUB (join ∨) & GLB (meet ∧)
  │   │   │       └── DistributiveLattice ⊂ Lattice // + distributivity laws
- │   ├── **Topological Structures** (Less direct alignment, depends on Orbit's needs)
+ │   ├── **Topological Structures**
  │   │   ├── TopologicalSpace
  │   │   │   └── MetricSpace ⊂ TopologicalSpace
- │   └── **Calculus** (Domains for operations, properties derived from Field structures)
- │       ├── DifferentialCalculus
- │       ├── IntegralCalculus
- │       └── TensorCalculus
+ │   ├── **Calculus** (Conceptual grouping, operations act on Fields mostly)
+ │   │   ├── DifferentialCalculus
+ │   │   ├── IntegralCalculus
+ │   │   └── TensorCalculus
+ │   └── **Function Spaces** (For Advanced Estimates)
+ │       ├── FunctionSpace // Base domain
+ │       │   ├── LpSpace (Lᵖ) ⊂ FunctionSpace
+ │       │   └── SobolevSpace (Hˢ) ⊂ FunctionSpace
+ │
+ ├── VerificationFramework // NEW: For Estimate Verification
+ │   ├── VerificationTask (Verify(...))
+ │   ├── Estimate // Represents a relational statement
+ │   │   ├── ApproxLE (A ≲ B) ⊂ Estimate // Asymptotic LE
+ │   │   ├── ApproxGE (A ≳ B) ⊂ Estimate // Asymptotic GE
+ │   │   ├── ApproxEq (A ∼ B) ⊂ Estimate // Asymptotic EQ
+ │   │   ├── LE (A ≤ B) ⊂ Estimate // Strict LE
+ │   │   ├── GE (A ≥ B) ⊂ Estimate // Strict GE
+ │   │   └── Equal (A = B) ⊂ Estimate // Strict EQ
+ │   ├── Assumption // Contains an Estimate
+ │   └── VerificationResult
+ │       ├── TrueEstimate ⊂ VerificationResult
+ │       └── FalseEstimate ⊂ VerificationResult
  │
  ├── ChemistryDomain
  │   ├── MolecularCompound
@@ -334,9 +357,18 @@ Top (Most General Domain)
  │   │   ├── Precision / ErrorBound
  │   │   ├── Stability
  │   │   └── ConditionNumber
- │   └── VerificationProperty
- │       ├── Correctness
- │       └── Termination
+ │   ├── VerificationProperty // Properties of verification process itself
+ │   │   ├── Correctness
+ │   │   └── Termination
+ │   ├── **DependencyTracking** // NEW: For Estimates
+ │   │   ├── DependsOn(Param) ⊂ DependencyTracking
+ │   │   ├── IndependentOf(Param) ⊂ DependencyTracking
+ │   │   ├── Parameter(Param) ⊂ DependencyTracking // Identifies a parameter
+ │   │   └── AbsoluteConstant ⊂ DependencyTracking // Independent of all parameters
+ │   └── **RewritingControl** // NEW: Meta-properties guiding rewriting
+ │       ├── CaseContext(Assumptions) ⊂ RewritingControl // Current case assumptions
+ │       ├── SufficientlyLarge(Param) ⊂ RewritingControl // Condition for rules
+ │       └── Strategy(Name) ⊂ RewritingControl // e.g., Strategy(LogTransform)
  │
  ├── FormalSystem
  │   ├── LogicSystem (Propositional, Predicate)
@@ -351,7 +383,6 @@ Top (Most General Domain)
 		 ├── Graphics (Transformations, Rendering)
 		 ├── ConstraintSatisfaction (Sudoku, Rubik's Cube)
 		 └── MachineLearning (NeuralNetworkOps)
-``` 
 
 **Explanation and Usage:**
 
@@ -374,10 +405,10 @@ To facilitate verification of Orbit transformations by Lean and the potential us
 2.  **Use `⊂` for Inheritance:** Orbit's subset relation (`⊂`) between domains should mirror Mathlib's type class inheritance (`extends`). For example, since `ring` extends `add_comm_group` and `monoid` in Lean, Orbit should have `Ring ⊂ AbelianGroup` and `Ring ⊂ Monoid`. TODO: Should we use extends as well?
 3.  **Map Concrete Types:** Create Orbit domains for base types corresponding to Lean's types (`Int` for `ℤ`, `Real` for `ℝ`, `Rat` for `ℚ`, `Nat` for `ℕ`, `Bool` for `bool`). The `⊂` relationships should reflect Lean's coercions or instance relationships (e.g., `Int ⊂ Rat ⊂ Real`).
 4.  **Axioms vs. Properties:**
-    *   **Lean:** Defines structures via axioms (e.g., `add_comm : ∀ a b : G, a + b = b + a` within `add_comm_group`). Theorems are proven from these axioms.
-    *   **Orbit:** Can represent these properties using specific domains or annotations on operators. For interoperability:
-        *   Lean theorems (`lhs = rhs`) can translate to Orbit rewrite rules (`lhs <=> rhs` or `lhs => rhs`).
-        *   Orbit transformations (`e1 => e2`) need to generate Lean proof goals (`e1 = e2`) within the appropriate algebraic context (e.g., `variables [ring R] (a b c : R) ... prove (a * (b + c) = a * b + a * c)`).
+	*   **Lean:** Defines structures via axioms (e.g., `add_comm : ∀ a b : G, a + b = b + a` within `add_comm_group`). Theorems are proven from these axioms.
+	*   **Orbit:** Can represent these properties using specific domains or annotations on operators. For interoperability:
+		*   Lean theorems (`lhs = rhs`) can translate to Orbit rewrite rules (`lhs <=> rhs` or `lhs => rhs`).
+		*   Orbit transformations (`e1 => e2`) need to generate Lean proof goals (`e1 = e2`) within the appropriate algebraic context (e.g., `variables [ring R] (a b c : R) ... prove (a * (b + c) = a * b + a * c)`).
 5.  **Symmetry Groups:** Orbit's explicit symmetry groups (`S₂`, `Cₙ`, etc.) used for canonicalization relate to Mathlib's axioms. For instance, if an Orbit domain `MyDomain` inherits from `AbelianGroup`, an Orbit rule like `a:MyDomain + b:MyDomain ⊢ + : S₂` establishes the link. This means Orbit's `S₂` canonicalization rule for `+` is justified by the `add_comm` axiom proven for `AbelianGroup` in Lean.
 
 **Verification Workflow Example:**

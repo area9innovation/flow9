@@ -30,6 +30,8 @@ https://terrytao.wordpress.com/2025/05/01/a-proof-of-concept-tool-to-verify-esti
 *   **`DependsOn(N: symbol)` / `IndependentOf(N: symbol)`:** Track functional dependencies (potential extension beyond Tao's code).
 *   **`CaseContext(assumptions: [ast])`:** A domain attached *during* rewriting to track the current set of case-specific assumptions (e.g., `CaseContext([ApproxGE(a,b), ApproxGE(a,c)])`). This enables conditional rules based on the current case.
 *   **`SufficientlyLarge(N: symbol)`:** Gates rules holding only for large `N`.
+*   **(Advanced) `FunctionSpace(Type)`**: e.g., `FunctionSpace(Lp(p))`, `FunctionSpace(Sobolev(s,p))`.
+*   **(Advanced) `Norm(Function, Space)`**: e.g., `Norm(f, Lp(2))`.
 
 **4. Core Verification Strategy: Log-Transform and Linear Programming**
 
@@ -127,16 +129,78 @@ Essential for simplifying sub-expressions *before* monomial extraction or estima
     *   If it rewrites to `FalseEstimate`, it's refuted.
     *   If it remains unresolved or loops, the system failed.
 
-**8. Addressing Tao's Wishlist & Limitations:**
+**8. Addressing Tao's Wishlist & Basic Limitations:**
 
 *   **Handling `≲`, `∼`:** Addressed via `ApproxLE`, `ApproxEq` rules ignoring constants and the LP strategy.
-*   **Complex Assumptions:** Handled via `Assumption` nodes and rules/context querying them. `Max`/`Min`/`Median` rules are key.
+*   **Complex Assumptions:** Handled via `Assumption` nodes and rules/context querying them. `Max`/`Min`/`Median` rules are key. (See Section 9.3 for more).
 *   **LP Solver:** **Requires integration** of an external LP solver callable from Orbit.
 *   **Case Splitting:** **Implementation remains a key challenge** for a purely declarative system.
-*   **Sums/Integrals/Function Norms:** Significant future work.
 *   **Proof Certificate:** Trace + pretty-printing. Lean export is extra tooling.
 *   **Automation Level:** Orbit automates rule application. Case splitting logic and strategy selection (e.g., when to use LP) might need meta-rules or guidance.
 
-**Conclusion:**
+**9. Future Directions: Handling Advanced Techniques**
 
-This proposal strongly incorporates the log-transform + LP strategy from Tao's code as a central mechanism for verifying multiplicative estimates. Orbit's rewriting and canonicalization handle sub-expression simplification. Key implementation challenges include the robust handling of case splitting across multiple contexts and the integration of an external LP solver. Dependency tracking remains a valuable potential Orbit enhancement. This provides a clearer path toward implementing Tao's proof-of-concept within the Orbit framework.
+This section addresses the more advanced capabilities mentioned by Tao, requiring significant extensions to the basic framework.
+
+**9.1 Functional Estimates (Function Spaces & Norms)**
+
+*   **Concept:** Verify estimates involving unknown functions (`f`, `g`) residing in spaces like `Lᵖ(ℝⁿ)` or Sobolev spaces `Hˢ(ℝⁿ)`. Estimates typically involve norms, e.g., `||fg||_{L^p} ≲ ||f||_{L^q} ||g||_{L^r}`.
+*   **Orbit Representation:**
+    *   Introduce symbols representing functions (`f`, `g`).
+    *   Introduce domains for function spaces: `FunctionSpace(Lp(p))`, `FunctionSpace(Sobolev(s, p))`.
+    *   Introduce constructors for norms: `Norm(function: symbol, space: domain)`, e.g., `Norm(f, Lp(2))`.
+    *   Annotate functions: `f : FunctionSpace(Lp(p))`.
+*   **Orbit Rewriting:**
+    *   Need rules encoding standard functional inequalities (Hölder, Minkowski, Sobolev embedding theorems, interpolation inequalities).
+    *   These rules would transform `ApproxLE(Norm(..., ...), ...)` expressions based on the function space domains.
+        ```orbit
+		// Example: Holder Inequality Rule
+		ApproxLE(Norm(f*g, Lp(p)), C * Norm(f, Lp(q)) * Norm(g, Lp(r))) → TrueEstimate
+		   if f:FunctionSpace(Lp(q)) ∧ g:FunctionSpace(Lp(r)) ∧ (1/p = 1/q + 1/r) ∧ C:AbsoluteConstant
+```
+    *   Dependency tracking becomes more complex (e.g., does the implied constant depend on the dimension `n`?).
+
+**9.2 Sums (∑) and Integrals (∫)**
+
+*   **Concept:** Verify estimates involving symbolic sums or integrals, often infinite or over complex domains.
+*   **Orbit Representation:**
+    *   Introduce constructors: `Sum(expression: ast, index: symbol, lower_bound, upper_bound)`, `Integral(expression: ast, variable: symbol, lower_bound, upper_bound)`.
+*   **Orbit Rewriting:** Requires a significant library of calculus and summation rules:
+    *   Convergence tests (comparison, ratio, integral tests) potentially rewriting `Sum(...)` or `Integral(...)` to `Convergent` or `Divergent` domains.
+    *   Standard summation formulas (geometric series, p-series).
+    *   Integral evaluation rules (FTC, standard integrals).
+    *   Integral/Sum bound rules (comparison properties, integral estimates like `∫f ≤ sup(f) * length(domain)`).
+    *   Techniques like splitting the domain of summation/integration.
+        ```orbit
+		// Example: Splitting an integral
+		Integral(f, x, a, c) → Integral(f, x, a, b) + Integral(f, x, b, c)
+
+		// Example: Geometric Series Estimate
+		Sum(r^k, k, 0, ∞) → ApproxEq(Sum(r^k, k, 0, ∞), 1) if Abs(r) < 1 ∧ r:AbsoluteConstant
+```
+    *   This likely requires integrating with more powerful symbolic calculus engines or libraries.
+
+**9.3 Complex Hypotheses (Definitions)**
+
+*   **Concept:** Handle assumptions where terms are defined complexly, e.g., `Assumption(ApproxEq(Max(N1,N2,N3), N))`.
+*   **Orbit Representation:** Tao's Python uses standard expression objects on both sides. Orbit can do the same.
+*   **Orbit Rewriting:** The challenge is efficiently *using* such assumptions. The `order_simplify` logic in Python handles this by recursively simplifying expression components based on the known orderings derived from assumptions.
+    *   Orbit needs similar simplification rules that can utilize `Assumption` nodes within the current `CaseContext`.
+        ```orbit
+		// Rule using a complex assumption within a context
+		Max(N1,N2,N3) : CaseContext(As) → N if Contains(As, Assumption(ApproxEq(Max(N1,N2,N3), N)))
+```
+    *   The case-splitting mechanism inherently helps by simplifying terms like `Max(N1,N2,N3)` down to one of `N1`, `N2`, or `N3` within a specific case, making the complex assumption easier to apply.
+
+**9.4 Standard Mathematical Toolkit Integration**
+
+*   **Concept:** Allow users to specify a set of allowed high-level mathematical techniques (e.g., "Use Hölder", "Use IBP", "Split integral at x=1").
+*   **Orbit Representation:** Could use specific domains or flags to enable/disable sets of rules corresponding to these techniques.
+    *   `EnableTool(HolderInequality)`, `EnableTool(IntegrationByParts)`.
+*   **Orbit Rewriting:** Rewrite rules corresponding to these techniques would be gated by the presence of these "tool enabling" flags or domains.
+    ```orbit
+	// Rule for Integration by Parts (only applies if enabled)
+	Integral(u * Diff(v, x), x, a, b) → (u*v | from a to b) - Integral(v * Diff(u, x), x, a, b)
+	   if ToolEnabled(IntegrationByParts)
+```
+    *   This allows controlling the search space and verifying if an estimate can be proven *using only* a restricted set of methods.
