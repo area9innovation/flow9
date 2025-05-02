@@ -65,7 +65,6 @@ struct EClass {
 	parent: atomic<u32>,             // Union-find parent pointer
 	size: u32,                       // Size of this equivalence class
 	best_enode_id: u32,              // Best representative node ID
-	cost: u32,                       // Cost of the best representation
 	domains: u32,                    // Bitset of domain annotations
 	region_info: RegionTag           // Memory region information
 };
@@ -130,84 +129,67 @@ fn apply_rule0(eclass_id: u32, bindings: ptr<function, array<u32, MAX_BINDINGS>>
 
 ### 4.2 Pattern Matching Algorithm
 
-The pattern matching process proceeds in four main stages, each implemented as a separate compute shader kernel:
+The pattern matching process proceeds in three main stages, each implemented as a separate compute shader kernel:
 
-1. **Pattern Matching Kernel**: Parallel attempt to match each rule against each e-class
-   ```wgsl
-	 @compute @workgroup_size(256)
-	 fn pattern_match_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
-		 let eclass_id = global_id.x;
-		 if (eclass_id >= active_eclass_count) { return; }
+1.  **Pattern Matching Kernel**: Parallel attempt to match each rule against each e-class
+    ```wgsl
+		 @compute @workgroup_size(256)
+		 fn pattern_match_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
+				 let eclass_id = global_id.x;
+				 if (eclass_id >= active_eclass_count) { return; }
 
-		 var bindings: array<u32, MAX_BINDINGS>;
-		 // Initialize bindings to INVALID_ID
-		 // ...
+				 var bindings: array<u32, MAX_BINDINGS>;
+				 // Initialize bindings to INVALID_ID
+				 // ...
 
-		 // Try all rules on this eclass
-		 if (match_rule0(eclass_id, &bindings)) {
-			 // Record match or directly apply
+				 // Try all rules on this eclass
+				 if (match_rule0(eclass_id, &bindings)) {
+						 // Record match or directly apply
+				 }
+				 if (match_rule1(eclass_id, &bindings)) {
+						 // ...
+				 }
+				 // ... more rules
 		 }
-		 if (match_rule1(eclass_id, &bindings)) {
-			 // ...
-		 }
-		 // ... more rules
-	 }
 ```
 
-2. **Rewrite Application Kernel**: Apply all successful matches in parallel
-   ```wgsl
-	 @compute @workgroup_size(256)
-	 fn apply_rewrites_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
-		 let match_id = global_id.x;
-		 if (match_id >= match_count) { return; }
+2.  **Rewrite Application Kernel**: Apply all successful matches in parallel
+    ```wgsl
+		 @compute @workgroup_size(256)
+		 fn apply_rewrites_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
+				 let match_id = global_id.x;
+				 if (match_id >= match_count) { return; }
 
-		 let match_entry = matches[match_id];
+				 let match_entry = matches[match_id];
 
-		 // Dispatch to appropriate rule application function
-		 switch (match_entry.rule_id) {
-			 case 0u: { apply_rule0(match_entry.eclass_id, &match_entry.bindings); }
-			 case 1u: { apply_rule1(match_entry.eclass_id, &match_entry.bindings); }
-			 // ... more rules
+				 // Dispatch to appropriate rule application function
+				 switch (match_entry.rule_id) {
+						 case 0u: { apply_rule0(match_entry.eclass_id, &match_entry.bindings); }
+						 case 1u: { apply_rule1(match_entry.eclass_id, &match_entry.bindings); }
+						 // ... more rules
+				 }
 		 }
-	 }
 ```
 
-3. **Congruence Closure Kernel**: Rebuild congruence closure after rewrites
-   ```wgsl
-	 @compute @workgroup_size(256)
-	 fn rebuild_congruence_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
-		 let enode_id = global_id.x;
-		 if (enode_id >= enode_count) { return; }
+3.  **Congruence Closure Kernel**: Rebuild congruence closure after rewrites. During this phase, the representative node (`best_enode_id`) for each e-class is updated to reflect the canonical form based on applied rules and ordering criteria.
+    ```wgsl
+		 @compute @workgroup_size(256)
+		 fn rebuild_congruence_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
+				 let enode_id = global_id.x;
+				 if (enode_id >= enode_count) { return; }
 
-		 let enode = enodes[enode_id];
+				 let enode = enodes[enode_id];
 
-		 // Find canonicalized versions of child eclasses
-		 // ...
+				 // Find canonicalized versions of child eclasses
+				 // ...
 
-		 // Find or create a canonical version of this node
-		 // ...
+				 // Find or create a canonical version of this node
+				 // ...
 
-		 // Union the node's eclass with the canonical eclass
-		 // ...
-	 }
-```
-
-4. **Cost Analysis Kernel**: Determine the best representation for each e-class
-   ```wgsl
-	 @compute @workgroup_size(256)
-	 fn cost_analysis_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
-		 let enode_id = global_id.x;
-		 if (enode_id >= enode_count) { return; }
-
-		 let enode = enodes[enode_id];
-		 let eclass_id = find(enode_to_eclass[enode_id]);
-
-		 // Calculate node cost
-		 // ...
-
-		 // Atomically update best node if cost is lower
-		 // ...
-	 }
+				 // Union the node's eclass with the canonical eclass, potentially updating the representative
+				 // The representative IS the canonical form. Update eclasses[find(...)].best_enode_id based on rules/order.
+				 // ...
+		 }
 ```
 
 These kernels execute repeatedly until saturation (no new rewrites possible) or a maximum iteration count is reached.
@@ -441,38 +423,6 @@ fn evaluate_condition(x_eclass: u32, y_eclass: u32) -> bool {
 }
 ```
 
-### 6.4 Cost Model Implementation
-
-The cost analysis uses a customizable cost model to determine the optimal representation:
-
-```wgsl
-fn calculate_cost(enode_id: u32) -> u32 {
-	let enode = enodes[enode_id];
-
-	// Base cost depends on operation type
-	var cost = base_cost(enode.op_code);
-
-	// Add costs of children
-	for (var i = 0u; i < MAX_CHILDREN; i++) {
-		let child_eclass_id = enode.child_eclass_ids[i];
-		if (child_eclass_id == INVALID_ID) { break; }
-
-		let child_eclass = eclasses[find(child_eclass_id)];
-		cost += child_eclass.cost;
-	}
-
-	return cost;
-}
-
-fn base_cost(op_code: u32) -> u32 {
-	switch (op_code) {
-		case OP_VALUE_I32, OP_VALUE_F32, OP_VALUE_BOOL: { return 1u; }
-		case OP_ADD, OP_SUB, OP_MUL, OP_DIV: { return 2u; }
-		case OP_IF, OP_CALL: { return 3u; }
-		default: { return 5u; }
-	}
-}
-```
 
 ## 7. Memory Management with Region-Based Allocation
 
@@ -1112,7 +1062,6 @@ The serialization format for the initial expression and final e-graph state foll
 	parent: u32,
 	size: u32,
 	best_enode_id: u32,
-	cost: u32,
 	domains: u32
 }[eclassCount]
 

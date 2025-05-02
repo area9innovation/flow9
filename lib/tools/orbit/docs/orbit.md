@@ -9,7 +9,7 @@ Orbit is a functional programming language designed as a domain-unified rewritin
 - **No loops or returns**: No `while`, `for`, or `return` keywords (use recursion instead)
 - **Sequence notation**: Uses `()` and `;` as sequence operators instead of `{}`
 - **Pattern matching**: Uses `is` syntax for pattern matching
-- **No static typing**: Dynamic type system
+- **Domain-Based Typing**: Type checking can be implemented using Orbit's domain system
 - **Math-inspired**: Syntax designed to resemble mathematical notation
 - **AST manipulation**: First-class support for abstract syntax trees
 </language_characteristics>

@@ -535,17 +535,17 @@ sum(terms) : HighPrecisionRequired !: Rewritten →
 
 // Kahan summation implementation
 kahan_sum(terms) : NumericallyStable →
-	fn kahan_algo(values, sum, c) {
-		values is {
+	fn kahan_algo(values, sum, c) = (
+		values is (
 			[] => sum;
-			[x|xs] => {
+			[x|xs] => (
 				let y = x - c;        // Corrected next term
 				let t = sum + y;      // New sum
 				let c_new = (t - sum) - y;  // New correction term
 				kahan_algo(xs, t, c_new);
-			}
-		}
-	};
+			)
+		)
+	);
 	kahan_algo(terms, 0.0, 0.0) : ApproximateCanonical;
 ```
 
@@ -560,15 +560,15 @@ product(factors) : FloatPrecision !: Rewritten →
 
 // Implement balanced pairwise multiplication
 pairwise_product(factors) : NumericallyStable →
-	factors is {
+	factors is (
 		[] => 1.0;
 		[x] => x;
-		list => {
+		list => (
 			let mid = length(list) / 2;
 			let (left, right) = split_at(list, mid);
 			pairwise_product(left) * pairwise_product(right);
-		}
-	};
+		)
+	);
 
 // Horner's method for polynomial evaluation
 polynomial_eval(coeffs, x) : FloatPrecision !: Rewritten →
@@ -576,12 +576,12 @@ polynomial_eval(coeffs, x) : FloatPrecision !: Rewritten →
 
 // Horner's method implementation
 horner_method(coeffs, x) : NumericallyStable →
-	fn horner_impl(cs, accum) {
-		cs is {
+	fn horner_impl(cs, accum) (
+		cs is (
 			[] => accum;
 			[c|rest] => horner_impl(rest, accum * x + c);
-		}
-	};
+		)
+	);
 	reversed_coeffs = reverse(coeffs);
 	horner_impl(tail(reversed_coeffs), head(reversed_coeffs)) : ApproximateCanonical;
 ```
@@ -657,7 +657,7 @@ expr : FloatPrecision !: FullyRewritten →
 
 // Recursive precision improvement
 rewrite_for_precision_recursive(expr) : NumericallyStable →
-	expr is {
+	expr is (
 		a + b => rewrite_for_precision_recursive(a) + rewrite_for_precision_recursive(b);
 		a - b => rewrite_for_precision_recursive(a) - rewrite_for_precision_recursive(b);
 		a * b => rewrite_for_precision_recursive(a) * rewrite_for_precision_recursive(b);
@@ -665,7 +665,7 @@ rewrite_for_precision_recursive(expr) : NumericallyStable →
 		sqrt(x² + y) - x => y / (sqrt(x² + y) + x); // Apply catastrophic cancellation rule
 		// Additional pattern transformations
 		_ => expr; // Default case: leave unchanged
-	};
+	);
 ```
 
 ### Automated Precision Analysis
