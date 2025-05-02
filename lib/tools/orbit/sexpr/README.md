@@ -164,10 +164,28 @@ If a pattern doesn't have a condition (not a list with 3 elements), it's treated
 Pattern matching supports:
 - Variable binding (like `x` which binds to a value)
 - Wildcard patterns (`_` which matches anything without binding)
-- List patterns (like `(x y z)` which matches a list of exactly 3 items)
 - Literal patterns (like numbers, strings, booleans that match only equal values)
 - Constructor patterns (`ConstructorName`)
 - Conditional patterns as described above
+- List patterns (like `(x y z)` which matches a list of exactly 3 items)
+  - **Rest patterns:** Within a list pattern, you can use the special variable name `...` followed by another variable name (e.g., `varName`) as the *last two elements*. This will match any remaining elements in the list and bind them as a list to `varName`.
+
+```scheme
+;; Example of rest pattern
+(define process-list
+	(lambda (lst)
+		(match lst
+			;; Match list starting with '+', capture first arg and the rest
+			((+ first ... others)
+			 (quasiquote (sum (unquote first) (unquote-splicing others))))
+			;; Match list starting with '*', capture all arguments after '*'
+			((* ... args)
+			 (quasiquote (product (unquote-splicing args))))
+			;; Match any list and capture all elements
+			((... all)
+			 (quasiquote (elements (unquote-splicing all))))
+			(other other))))
+```
 
 ### Conditional Pattern Matching
 
