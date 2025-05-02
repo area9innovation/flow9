@@ -10,12 +10,12 @@
 (define transform
   (lambda (expr)
     (match expr
-      // Pattern: (+ fixed ... restArgs)  <-- Use variable '...'
+      // Pattern: (+ fixed ... restArgs)  <-- Use literal '...'
       ((+ fixed ... restArgs)
        // Result: Reconstruct as (* fixed restArgs...)
        (quasiquote (* (unquote fixed) (unquote-splicing restArgs))))
 
-      // Pattern: (a ... rest) <-- Use variable '...'
+      // Pattern: (a ... rest) <-- Use literal '...'
        ((a ... rest)
         (quasiquote (list (unquote a) " matched with rest: " (unquote rest))))
 
@@ -41,7 +41,7 @@
 (define transform2
   (lambda (expr)
     (match expr
-      ((... all) // <-- Use variable '...'
+      ((... all) // <-- Use literal '...'
        (quasiquote (all-elements (unquote-splicing all))))
       (other (quasiquote (unmatched (unquote other))))
     )))
