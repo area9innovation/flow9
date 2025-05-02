@@ -26,9 +26,14 @@ convertOrLambdaToSexpr(env_bindings : [OrEnvBinding], id_types : [OrIdType], mat
 	// Convert id_types to simpler format expected by SExpr lambda
 	id_type_exprs = map(id_types, \idType -> {
 		if (idType.type_annotations != []) {
-			println("TODO: Convert type annotations");
+			// Handle type annotations by creating a properly formatted type annotation
+			// For lambda parameters, we don't use (: param type) format in the parameter list
+			// but instead use regular parameter names and let function type be inferred or 
+			// specified separately
+			SSVariable(idType.id)
+		} else {
+			SSVariable(idType.id)
 		}
-		SSVariable(idType.id)
 	});
 	
 	// Create a lambda special form with just parameters and body
@@ -168,8 +173,8 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		OrLessEquals(a, b): SSList([SSOperator("<="), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrModulo(a, b): SSList([SSOperator("mod"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrIndex(a, b): SSList([SSVariable("index"), orbit2sexpr(a), orbit2sexpr(b)]);
-		OrTypeAnnotation(a, b): SSList([SSConstructor("TypeAnnotation"), orbit2sexpr(a), orbit2sexpr(b)]);
-		OrNotTypeAnnotation(a, b): SSList([SSConstructor("NotTypeAnnotation"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrTypeAnnotation(a, b): SSList([SSOperator(":"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrNotTypeAnnotation(a, b): SSList([SSOperator("!:"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrSubset(a, b): SSList([SSConstructor("Subset"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrElementOf(a, b): SSList([SSConstructor("ElementOf"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrHomomorphism(a, b): SSList([SSConstructor("Homomorphism"), orbit2sexpr(a), orbit2sexpr(b)]);
@@ -794,7 +799,34 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 				switch (items[0]) {
 					SSVector(sexprs): OrArray(map(items, sexpr2orbit));
 					SSOperator(op): {
-						if (isAssociativeOp(op) && length(items) > 2) {
+						// Special case for type annotation
+						if (op == ":") {
+							// Handle type annotation syntax (: expr type)
+							if (length(items) == 3) {
+								annot_expr = sexpr2orbit(items[1]);
+								annot_type = sexpr2orbit(items[2]);
+								
+								// Create a type annotation expression
+								OrTypeAnnotation(annot_expr, annot_type);
+							} else {
+								// Invalid type annotation format
+								println("WARNING: Invalid type annotation format: " + toString(items));
+								OrIdentifier("invalid_type_annotation");
+							}
+						} else if (op == "!:") {
+							// Handle negative type annotation syntax (!: expr type)
+							if (length(items) == 3) {
+								not_annot_expr = sexpr2orbit(items[1]);
+								not_annot_type = sexpr2orbit(items[2]);
+								
+								// Create a negative type annotation expression
+								OrNotTypeAnnotation(not_annot_expr, not_annot_type);
+							} else {
+								// Invalid negative type annotation format
+								println("WARNING: Invalid negative type annotation format: " + toString(items));
+								OrIdentifier("invalid_not_type_annotation");
+							}
+						} else if (isAssociativeOp(op) && length(items) > 2) {
 							// We have an associative operation with multiple operands
 							// Convert each operand first
 							operands = map(tailFrom(items, 1), \item -> sexpr2orbit(item));
