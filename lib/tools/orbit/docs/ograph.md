@@ -33,19 +33,24 @@ let g = makeOGraph("myGraph");
 
 #### `addOGraph(graphName: string, expr: expression) -> int`
 
-Recursively adds an entire expression tree to the graph and returns the ID of the root node.
+Recursively adds an entire expression tree to the graph and returns the ID of the root node. **Note:** For associative and commutative operations (like `+`, `*`, `&&`, `||`), the expression is internally converted to an n-ary S-expression representation (e.g., `(+ a b c)` instead of nested binary ops) for efficient canonicalization and pattern matching.
 
 ```orbit
-let exprId = addOGraph(g, (a + b) * (c - d));
+// Adding nested binary associative ops
+let exprId = addOGraph(g, (a + b) + c);
+// Internally represented similar to (+ a b c) in the S-expression backend
+
+// Adding direct n-ary S-expression (if supported by parser/AST)
+let exprIdNary = addOGraph(g, `+`(a, b, c));
 ```
 
-This adds all nodes in the expression tree: *, +, -, a, b, c, d with proper relationships.
+This adds all nodes in the expression tree, potentially flattening A/C operations into their n-ary S-expression form.
 
-The `extractOGraph` allows us to get it back out:
+The `extractOGraph` function retrieves the expression, potentially reconstructing a binary tree structure from the canonical n-ary form for user-facing representation.
 
 ```orbit
 // Now we can extract the expression from the graph
-let expr = extractOGraph(g, exprId);
+let expr = extractOGraph(g, exprId); // Might return (a + b) + c or a + (b + c)
 ```
 
 #### `addOGraphWithSub(graphName: string, expr: expression, bindings: [Pair<string, int>]) -> int`
@@ -62,6 +67,7 @@ let expr = extractOGraph(g, exprId);
 
 - **Behavior:**
   - Any variable in the expression that has a matching name in the bindings will be replaced with the corresponding eclass ID.
+  - Handles flattening of associative/commutative operations appropriately during addition.
   - Domain annotations in the expression (using `:` syntax) are processed automatically during addition.
   - Greatly improves efficiency by avoiding conversion between OGraph and OrMath_expr representations.
 
@@ -74,13 +80,13 @@ let expr = extractOGraph(g, exprId);
 	let y_id = addOGraph(g, 10);
 
 	// Create a template with variables
-	let template = quote(a * b);
+	let template = quote(a * b); // Or potentially `*`(a, b)
 
 	// Add the template with substitutions
 	let bindings = [Pair("a", x_id), Pair("b", y_id)];
 	let result_id = addOGraphWithSub(g, template, bindings);
 
-	// This effectively adds (5 * 10) to the graph
+	// This effectively adds the S-expression (* 5 10) to the graph
 	// The result_id points to the node representing this expression
 ```
 
@@ -98,7 +104,7 @@ let expr = extractOGraph(g, exprId);
   - `expr`: The (possibly quoted) term or expression to look for.
 
 - **Returns:**  
-  The node ID (as integer) of a node in the graph that is *structurally equal* to `expr`, or -1 if no such node exists. If the term was just added, this will match the inserted node's ID.
+  The node ID (as integer) of a node in the graph that is *structurally equal* to `expr` in its canonical internal form (potentially n-ary S-expression), or -1 if no such node exists. If the term was just added, this will match the inserted node's ID.
 
 - **Usage Example:**
 ```orbit
@@ -106,10 +112,15 @@ let expr = extractOGraph(g, exprId);
 	let x_id = addOGraph(g, quote(foo(bar, 7)));
 	let found = findOGraphId(g, quote(foo(bar, 7)));   // returns x_id
 	let not_found = findOGraphId(g, quote(nonexistent())); // returns -1
+
+	// Finding an n-ary form
+	let sum_id = addOGraph(g, a + b + c); // Internally likely `+`(a, b, c)
+	let found_sum = findOGraphId(g, quote(`+`(a, b, c))); // Might find sum_id
+	let found_binary = findOGraphId(g, quote(a + (b + c))); // Also might find sum_id
 ```
 
 - **Notes:**
-  - "Structurally equal" means the term's tree shape and content matches, regardless of canonicalization or node IDs.
+  - "Structurally equal" refers to the canonical internal representation (potentially n-ary S-expression) used within the O-Graph.
 
 ### Establishing Equivalences
 
@@ -117,7 +128,9 @@ let expr = extractOGraph(g, exprId);
 
 When working with O-Graphs, understanding how canonicalization works is critical. When expressions are merged to represent equivalence, one expression is designated as the **representative** or "root" of the equivalence class (e-class). This is achieved mechanically using the `mergeOGraphNodes` function.
 
-When you later extract an expression from an e-class using functions like `extractOGraph`, you'll always get the *current representative* of that class. Crucially, through the process of **equality saturation** (repeatedly applying rewrite rules until no more changes occur), this representative node is driven towards the *true canonical form* as defined by the system's rules (e.g., sorting operands for commutativity, applying specific normal forms).
+For associative/commutative operations represented internally as n-ary S-expressions (e.g., `(+ a b c)`), canonicalization involves sorting the argument list based on a defined order (e.g., lexicographical order of sub-expression IDs). This directly handles `Sₙ` symmetry.
+
+When you later extract an expression from an e-class using functions like `extractOGraph`, you'll always get the *current representative* of that class. Crucially, through the process of **equality saturation** (repeatedly applying rewrite rules until no more changes occur), this representative node is driven towards the *true canonical form* as defined by the system's rules (e.g., sorted argument list for A/C ops, specific normal forms for other structures).
 
 #### `mergeOGraphNodes(graphName: string, nodeId1: int, nodeId2: int) -> bool`
 
@@ -138,12 +151,12 @@ Associates a node (specifically, its e-class) with a domain node, which can be a
 
 ```orbit
 // Add the expression a + b
-let exprId = addOGraph(g, a + b);
+let exprId = addOGraph(g, a + b); // Internally becomes `+`(a, b) if '+' is A/C
 
-// Add the domain expression S_2
-let domainId = addOGraph(g, S_2);
+// Add the domain expression S_n (representing permutation symmetry for n-ary ops)
+let domainId = addOGraph(g, S_n);
 
-// Associate the expression's e-class with the domain S_2
+// Associate the expression's e-class with the domain S_n
 addDomainToNode(g, exprId, domainId);
 ```
 
@@ -153,56 +166,64 @@ This allows associating expressions with arbitrary domain expressions, represent
 
 #### `matchOGraphPattern(graphName: string, pattern: expression, callback: (bindings: ast, eclassId: int) -> void) -> int`
 
-Searches for all occurrences of a pattern in the graph and calls the provided callback for each match, passing a map of variable bindings (variable name -> eclass ID) and the e-class ID of the matched node's root. Returns the number of matches found.
+Searches for all occurrences of a pattern in the graph and calls the provided callback for each match, passing a map of variable bindings (variable name -> eclass ID) and the e-class ID of the matched node's root. Returns the number of matches found. Patterns involving associative/commutative operations should match against the internal n-ary S-expression representation.
 
 **IMPORTANT**: The `bindings` parameter in the callback function must be marked as `ast` to ensure the bindings are not prematurely evaluated. This typing is crucial for proper functionality when using these bindings with functions like `substituteWithBindings`.
 
 ```orbit
 // Create a graph with some expressions
 let g = makeOGraph("myGraph");
-addOGraph(g, a + b);
-addOGraph(g, 5 * 6);
-addOGraph(g, (a + b) * c);
+addOGraph(g, a + b);             // Represents `+`(a, b) internally
+addOGraph(g, 5 * 6);             // Represents `*`(5, 6) internally
+addOGraph(g, (a + b) + c);       // Represents `+`(a, b, c) internally
+addOGraph(g, d + (a + b + c)); // Represents `+`(d, a, b, c) internally
 
-// Find all expressions matching the pattern x + y
+// Find all expressions matching the n-ary pattern `+`(args...)
 // Note: bindings parameter is explicitly typed as ast
-let matchCount = matchOGraphPattern(g, quote(x + y), \(bindings : ast, eclassId) -> (
+let matchCount = matchOGraphPattern(g, quote(`+`(args...)), \(bindings : ast, eclassId) -> (
 	// For each match, print the bindings and the e-class ID
-	let xId = bindings["x"]; // eclass ID for the expression matched by x
-	let yId = bindings["y"]; // eclass ID for the expression matched by y
-	println("Found match for x + y in e-class " + i2s(eclassId));
-	println("  x matched e-class: " + i2s(xId));
-	println("  y matched e-class: " + i2s(yId));
+	let argsIdList = bindings["args"]; // eclass IDs for the arguments matched by args...
+	println("Found match for `+`(args...) in e-class " + i2s(eclassId));
+	println("  args matched e-class list: " + prettyOrbit(argsIdList)); // Requires list printing
 
-	// Example: Rewrite x + y to y + x (assuming + is commutative)
-	let replacement = quote(y + x);
-	let resultId = addOGraphWithSub(g, replacement, bindings); // Use bindings directly
+	// Example: Rewrite `+`(a, b, c) to a canonical sorted form `+`(sorted(a, b, c))
+	// Assuming a 'sortArgsById' function exists
+	let sortedArgs = sortArgsById(graph, argsIdList);
+	let replacement = quote(`+`(sortedArgs)); // Use backticks for operator name
+	let resultId = addOGraphWithSub(g, replacement, []); // No variable substitution needed here
 
-	// Merge, making the new form the representative
+	// Merge, making the new sorted form the representative
 	mergeOGraphNodes(g, resultId, eclassId);
 ));
 
-println("Found " + i2s(matchCount) + " matches");
+// Find matches for a specific binary sub-pattern within an n-ary sum
+// Note: The exact syntax for sub-pattern matching needs clarification
+// Example: Match x + y where x=a, y=b within `+`(d, a, b, c)
+matchOGraphPattern(g, quote(`+`(..., x, y, ...)), \(bindings: ast, eclassId) -> (
+	// ... process bindings where x and y matched adjacent elements ...
+));
+
+
+println("Found " + i2s(matchCount) + " matches for `+`(args...)");
 ```
 
-**Direct Access to Eclass IDs**: The `bindings` map passed to the callback contains variable name → eclass ID mappings, allowing you to work directly with the graph structure efficiently.
+**Direct Access to Eclass IDs**: The `bindings` map passed to the callback contains variable name → eclass ID (or list of IDs for `...` patterns) mappings, allowing you to work directly with the graph structure efficiently.
 
 #### `substituteWithBindings(expr: expression, bindings: ast) -> expression`
 
-Applies variable substitutions to an expression using the provided bindings map (variable name -> AST/eclass ID), but does **not** evaluate the result. This is useful for template-based code generation or symbolic manipulation where you want to substitute variables without triggering evaluation. It performs a direct syntactic substitution.
-This is normally not used, since we can use `addOGraphWithSub` to do this in the graph directly.
+Applies variable substitutions to an expression using the provided bindings map (variable name -> AST/eclass ID), but does **not** evaluate the result. Performs direct syntactic substitution. **Generally superseded by `addOGraphWithSub` for efficiency.**
 
 ```orbit
 // Pattern match to extract components
-let pattern = quote(a + b);
-let expr_to_match = quote(5 + 10);
+let pattern = quote(`+`(a, b)); // Matches n-ary `+` with exactly 2 args
+let expr_to_match = quote(5 + 10); // -> `+`(5, 10)
 // Assuming pattern matching produces:
-let bindings = [ Pair("a", 5), Pair("b", 10) ]; // Simplified binding representation for example
+let bindings = [ Pair("a", 5), Pair("b", 10) ]; // Simplified binding representation
 
 // Use the bindings to create a new expression from a template
-let template = quote(2 * a - b);
+let template = quote(`*`(2, a, b)); // -> `*`(2, 5, 10)
 let result_ast = substituteWithBindings(template, bindings);
-println("Result AST: " + prettyOrbit(result_ast)); // Result AST: 2 * 5 - 10
+println("Result AST: " + prettyOrbit(result_ast)); // Result AST: `*`(2, 5, 10)
 ```
 
 #### `unquote(expr: expression, bindings: ast) -> expression`
@@ -218,7 +239,7 @@ let template = quote(
 );
 
 // Bindings for any free variables in the template or evaluated parts
-let bindings = [ Pair("multiplier", 2) ];
+let bindings = [ Pair("multiplier", 2), Pair("x", 7) ]; // Binding x for eval
 
 // Process the template
 let result = unquote(template, bindings);
@@ -322,38 +343,8 @@ The pattern matcher enforces semantic equivalence for repeated variables. Two no
 
 #### `astname(expr: expression) -> string`
 
-**Returns the canonical name of an AST node, allowing for type checking and introspection.**
+**Returns the canonical name of an AST node, allowing for type checking and introspection.** For n-ary S-expressions, it returns the operator name (e.g., `"+"`, `"*"`).
 
-- **Parameters:**
-  - `expr`: The expression to inspect.
-
-- **Returns:**  
-  A string representing the canonical name of the expression's node type (e.g., "Int", "Variable", "+", "call", etc.).
-
-- **Usage Example:**
-```orbit
-	// Check the type of an expression
-	let x = 42;
-	let name = astname(x);  // Returns "Int"
-
-	// Implement type predicates
-	fn is_number(expr) = (astname(expr) == "Int" || astname(expr) == "Double");
-	fn is_var(expr) = (astname(expr) == "Variable" || astname(expr) == "Identifier");
-
-	// Use in pattern matching
-	fn process(expr) = (
-		expr is (
-			x if is_number(x) => x * 2;
-			x if is_var(x) => lookup(x);
-			_ => expr;
-		)
-	);
-```
-
-- **Notes:**
-  - Particularly useful for implementing type predicates and pattern guards
-  - Returns operator names for operations (e.g., "+", "*", "=")
-  - For function calls, returns "call"
 
 #### Variable Substitution vs. Evaluation
 
@@ -376,7 +367,7 @@ Generates a GraphViz DOT format representation of the O-Graph, which can be visu
 
 ```orbit
 let dotCode = ograph2dot(g);
-// Save dotCode to a file (e.g., graph.dot)
+setFileContent("graph.dot", dotCode); // Save to file
 // Visualize using: dot -Tpng graph.dot -o graph.png
 ```
 
@@ -487,7 +478,7 @@ Rules defined at more abstract levels automatically apply to concrete instances.
 
 ## Example: Polynomial Equation Solving with Group Theory
 
-Here's a more complex example showing how Orbit can use group-theoretic structures and domain annotations to solve quadratic equations:
+(This section's core logic remains, but polynomial representation `a*x^2 + b*x + c` should internally map to S-expressions like `(+ (* a (^ x 2)) (* b x) c)` and canonicalization rules would sort these terms.)
 
 ```orbit
 fn quote(e : ast) = e;
