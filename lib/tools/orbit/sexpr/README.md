@@ -340,7 +340,7 @@ Different S-expression types are mapped to different OGraph node types:
 | SSString          | "String"         | Value stored as OrbitString |
 | SSBool            | "Bool"           | Value stored as OrbitBool |
 | SSVector          | "Vector"         | Each child is processed recursively |
-| SSSpecialForm     | "SpecialForm"    | Form name added as first child |
+| SSSpecialForm     | "SpecialForm"    | Form name stored directly in node's value field (as OrbitString) |
 
 ### Extracting S-expressions from OGraph
 
@@ -521,9 +521,9 @@ The following is a structured plan to implement the remaining features needed fo
 - [ ] Fix `evaluateDefineNode` to actually update the environment
 
 ### 6. Lambda & Closures
-- [ ] Preserve lambda syntax inside quasiquote
+- [✅] Preserve lambda syntax inside quasiquote
 - [ ] Properly handle nested unquotes within lambda bodies
-- [ ] Support closure creation and variable capture
+- [✅] Support closure creation and variable capture
 
 ### 7. Pattern Matching
 - [ ] Implement `evaluateMatchNode` to call the real matcher
@@ -541,9 +541,9 @@ The following is a structured plan to implement the remaining features needed fo
 - [ ] Set up proper `belongsTo` relationships in the OGraph
 
 ### 10. User-Defined Functions
-- [ ] Allow evaluation of identifiers that resolve to closures
-- [ ] Support function application of user-defined functions
-- [ ] Handle argument evaluation and environment extension
+- [✅] Allow evaluation of identifiers that resolve to closures
+- [✅] Support function application of user-defined functions
+- [✅] Handle argument evaluation and environment extension
 
 ### 11. Testing & Validation
 - [ ] Create test cases for each special form
