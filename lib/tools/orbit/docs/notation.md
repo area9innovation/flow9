@@ -22,6 +22,9 @@ This table defines the preferred notation for mathematical concepts and operatio
 | Square Root                   | `sqrt(x)`                      | \\( \\sqrt{x} \\)        | `sqrt x`                      | Square root function. (User Preference `f(x)`)                             |
 | Function Application          | `f(x)`, `f(a, b)`              | \\( f(x) \\)            | `f x`                         | Applying function `f` to arguments. (User Preference `f(x)`)               |
 | Function Composition          | `f ∘ g`                        | \\( f \\circ g \\)       | `f ∘ g`                       | Composition of functions `f` and `g`. (Lean symbol preferred)             |
+| Pi                            | `pi`                           | \\( \\pi \\)          | `Real.pi` or `π`            | Mathematical constant pi (approx 3.14159).                                |
+| Euler's Number                | `e`                            | \\( e \\)             | `Real.exp 1` or `e`       | Base of the natural logarithm (approx 2.71828).                         |
+| Infinity                      | `Infinity`                     | \\( \\infty \\)         | `∞` or `⊤` (context dep.) | Concept of positive infinity.                                               |
 | **Logic & Set Theory**        |                                |                       |                               |                                                                             |
 | Logical AND                   | `a ∧ b` or `a && b`            | \\( a \\land b \\)       | `a ∧ b`                       | Logical conjunction. (Lean symbol preferred)                                |
 | Logical OR                    | `a ∨ b` or `a \|\| b`          | \\( a \\lor b \\)        | `a ∨ b`                       | Logical disjunction. (Lean symbol preferred)                                |
@@ -87,7 +90,6 @@ This table defines the preferred notation for mathematical concepts and operatio
 | Rewrite Rule (Bidir)          | `lhs ↔ rhs`                    | \\( \\leftrightarrow \\)  | `lhs = rhs` (Lean tactic)   | Declares equivalence. (Lean symbol preferred)                               |
 | Entailment                    | `pattern ⊢ property`           | \\( P \\vdash Q \\)      | `P → Q`                       | If `pattern` matches, assert `property`.                                    |
 | Sub-domain                    | `D1 ⊂ D2`                      | \\( D_1 \\subseteq D_2 \\) | `D₁ extends D₂`           | `D1` inherits properties from `D2`. (Symbol preferred)                      |
-| AST Quoting                   | `quote(expr)`                  | \(\\texttt{"expr"}\\)   | -                             | Prevents evaluation, yields AST.                                            |
+| AST Quoting                   | `quote(expr)`                  | \\(\\texttt{"expr"}\\)   | -                             | Prevents evaluation, yields AST.                                            |
 | AST Evaluation                | `eval(expr)`                   | `\\llbracket expr \\rrbracket` | -                             | Evaluates AST `expr`.                                                       |
 | N-ary S-expression Form       | `` `+`(a, b, c) ``               | -                     | -                             | Internal representation for A/C operators.                                  |
-

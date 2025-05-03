@@ -16,11 +16,11 @@ Canonical forms provide unique names for equivalence classes; compilers, compute
 
 No current equality-saturation engine offers first-class knowledge of algebraic symmetry groups; consequently many optimisations and proofs have to be encoded manually.
 
-<!-- TODO: Clarify explicitly how Orbit differs fundamentally from existing approaches (such as standard e-graphs) and highlight the exact novelty compared to other group-aware canonicalization approaches -->
+<!-- TODO: Clarify explicitly how Orbit differs fundamentally from existing approaches (such as standard e-graphs) and highlight the exact novelty compared to other group-aware canonicalisation approaches -->
 
 ### Contribution
 
-We propose Orbit, a framework unifying canonical forms and rewriting; its concrete storage layer is the O-graph data structure, an e-graph enriched with domains and group metadata.
+We propose Orbit, a framework unifying canonical forms and rewriting; its concrete storage layer is the O-Graph data structure, an e-graph enriched with domains and group metadata.
 
 1.  **Domain-annotated e-classes**: Multiple domain tags per class enable property inheritance along a user-defined lattice.
 2.  **Group-theoretic canonicalisation**: Orbits under a group action are collapsed by selecting a representative via deterministic algorithms.
@@ -28,12 +28,12 @@ We propose Orbit, a framework unifying canonical forms and rewriting; its concre
 
 ### A Motivating Example: Commutative Addition
 
-Consider the simple case of integer addition, which is commutative: `3 + 5 = 5 + 3`. Without canonicalization, a system would need to store and match against both forms. With Orbit, we can annotate the addition operator with the Sₙ symmetry group (where n is the number of operands) and provide a canonicalizing rule that sorts the operands. When `3 + 5` is added, it might be internally represented as `(+ 3 5)`. Adding `5 + 3` results in the same internal representation `(+ 3 5)` after sorting, or the two nodes are merged.
+Consider the simple case of integer addition, which is commutative: `3 + 5 = 5 + 3`. Without canonicalisation, a system would need to store and match against both forms. With Orbit, we can annotate the addition operator with the Sₙ symmetry group (where n is the number of operands) and provide a canonicalising rule that sorts the operands. When `3 + 5` is added, it might be internally represented as `(+ 3 5)`. Adding `5 + 3` results in the same internal representation `(+ 3 5)` after sorting, or the two nodes are merged.
 
 ```orbit
-// Canonicalization rule based on sorting arguments for S_n symmetry
+// Canonicalisation rule based on sorting arguments for S_n symmetry
 // This rule would be applied internally during O-Graph operations
-// or triggered by a rule like: `+`(args...) : S_n => `+`(sort(args...));
+// or triggered by a rule like: `+`(args...) : S_n → `+`(sort(args...));
 
 // Applied examples during saturation
 addOGraph(g, 5 + 3); // Internally becomes `+`(3, 5) after sorting
@@ -67,7 +67,7 @@ Examples:
 0 + x       → x             // Additive identity (matches `+`(0, x))
 1 * x       → x             // Multiplicative identity (matches `*`(1, x))
 0 * x       → 0             // Multiplicative zero (matches `*`(0, x))
-x / y       → x * (1/y)      if  y ≠ 0
+x / y       → x * y⁻¹       if  y ≠ 0 // Use inverse explicitly
 x + y       ↔ y + x          if y < x // Rule triggering S_2 sorting manually
 ```
 
@@ -134,7 +134,7 @@ A rule defined for a higher-level structure applies automatically to any subdoma
 `+`(args...) : AbelianGroup → `+`(sort(args...)) : AbelianGroup : Sₙ
 ```
 
-These general rules are then automatically applicable to Integers, Reals, BitVectors, etc., wherever they are declared as subdomains of `AbelianGroup`. This hierarchical approach significantly reduces rule duplication. The group-theoretic canonicalization (e.g., `: Sₙ` for commutativity via sorting) ensures consistent representation regardless of the specific domain. Section 7 provides further examples demonstrating this cross-domain rule application.
+These general rules are then automatically applicable to Integers, Reals, BitVectors, etc., wherever they are declared as subdomains of `AbelianGroup`. This hierarchical approach significantly reduces rule duplication. The group-theoretic canonicalisation (e.g., `: Sₙ` for commutativity via sorting) ensures consistent representation regardless of the specific domain. Section 7 provides further examples demonstrating this cross-domain rule application.
 
 ### 2.4 Negative domain guard (!: D)
 
@@ -156,7 +156,7 @@ This prevents the rule from repeatedly expanding the same expression by marking 
 a * (b + c) : Ring !: Expanded → (a * b) + (a * c) : Ring : Expanded
 
 -- Factor a specific quadratic expression found in Algebra domain
-x² + 2*x + 1 : Algebra → (x + 1)² : Factored : Algebra
+x^2 + 2*x + 1 : Algebra → (x + 1)^2 : Factored : Algebra
 ```
 
 ## 3. Implementation Architecture
@@ -196,7 +196,7 @@ These representations are connected through a bidirectional conversion pipeline 
 | `sexpr2orbit(SExpr)` | Convert S-expression to Orbit math AST |
 | `orbit2sexpr(OrbitMath)` | Convert Orbit math AST to S-expression |
 
-This pipeline allows us to provide a natural math-like syntax to users while leveraging the power of n-ary S-expressions for efficient internal canonicalization and pattern matching.
+This pipeline allows us to provide a natural math-like syntax to users while leveraging the power of n-ary S-expressions for efficient internal canonicalisation and pattern matching.
 
 ### 3.3 Syntax Transformation
 
@@ -215,7 +215,7 @@ Is internally represented as the S-expression:
 A rewrite rule like:
 
 ```orbit
-`+`(args...) : Sₙ => `+`(sort(args...));
+`+`(args...) : Sₙ → `+`(sort(args...));
 ```
 
 Is represented internally as:
@@ -232,10 +232,10 @@ Pattern matching and quasiquotation from the Scheme foundation provide powerful 
 
 ```scheme
 (define (apply-rule expr)
-  (match expr
+	(match expr
 	; Pattern for a commutative n-ary operation with Sₙ symmetry
 	(annotate (?op (?args ...)) Sₙ)
-	  ; Canonicalize by sorting args
+	  ; Canonicalise by sorting args
 	  (let ([sorted-args (sort args)])
 		; Only rewrite if args weren't already sorted
 		(if (not (equal? args sorted-args))
@@ -254,23 +254,23 @@ The final layer in our architecture is the O-Graph, which stores the canonicaliz
 1. Parse Orbit math notation to an AST.
 2. Convert to S-expression representation (flattening associative ops).
 3. Apply the S-expression to the O-Graph.
-4. Perform canonicalization (e.g., sorting argument lists for `Sₙ`) based on group-theoretic properties.
+4. Perform canonicalisation (e.g., sorting argument lists for `Sₙ`) based on group-theoretic properties.
 5. Extract results (potentially reconstructing binary trees for display) and convert back to Orbit notation as needed.
 
 This layered approach gives us the best of both worlds: a natural mathematical syntax for human interaction and a powerful, functional core leveraging n-ary S-expressions for efficient term manipulation and rewriting.
 
-## 4. O-graph Data Structure vs. Traditional E-Graphs
+## 4. O-Graph Data Structure vs. Traditional E-Graphs
 
-<!-- TODO: Add illustrative example comparing e-graph vs O-graph with n-ary forms -->
+<!-- TODO: Add illustrative example comparing e-graph vs O-Graph with n-ary forms -->
 
 ### 4.1 Recap of e-graphs
 
-An e-graph stores e-nodes (operators with e-class children) and e-classes (sets of equivalent e-nodes). Equality saturation repeatedly applies rewrite rules until no new equivalent terms can be added. Congruence Closure ensures that if `a ≡ c` and `b ≡ d`, then `f(a,b) ≡ f(c,d)` for any operator `f`.
+An e-graph stores e-nodes (operators with e-class children) and e-classes (sets of equivalent e-nodes). Equality saturation repeatedly applies rewrite rules until no new equivalent terms can be added. Congruence Closure ensures that if `a = c` and `b = d`, then `f(a,b) = f(c,d)` for any operator `f`.
 
-### 4.2 O-graph extensions
+### 4.2 O-Graph extensions
 
 1.  **Domain membership**: Each e-class carries a set of domains it belongs to (e.g., `Integer`, `Ring`, `Sₙ`). Domains are terms, enabling hierarchical relations (§2.3).
-2.  **Group metadata**: Group domains (`Sₙ`, `C₄`) trigger canonicalization algorithms (e.g., sorting argument lists for `Sₙ`).
+2.  **Group metadata**: Group domains (`Sₙ`, `C₄`) trigger canonicalisation algorithms (e.g., sorting argument lists for `Sₙ`).
 3.  **Root Representative**: Each e-class has a designated **representative (root)** e-node. The `mergeOGraphNodes(root_id, other_id)` operation establishes `root_id` as this representative. Rewrite rules are applied repeatedly during saturation. This process drives the representative node towards the unique canonical form defined by the system's group-theoretic rules and ordering criteria.
 
 Example:
@@ -290,7 +290,7 @@ eclass42 = {
 
 ### 5.1 Core Symmetry Groups
 
-Our system formalizes several key symmetry groups that commonly arise in computation:
+Our system formalises several key symmetry groups that commonly arise in computation:
 
 | Group | Order | Description                     | Canonicalisation strategy (in S-Expr context) | Example Use Case                  |
 |-------|-------|---------------------------------|-----------------------------------------------|-----------------------------------|
@@ -311,25 +311,25 @@ Many computational domains share underlying group structures. For example:
 - D₁ ≅ C₂: The dihedral group of order 2 is isomorphic to the cyclic group C₂
 - D₃ ≅ S₃: The dihedral group D₃ is isomorphic to the symmetric group S₃
 
-These relationships allow us to transfer canonicalization strategies between domains that share the same underlying symmetry group. An operation identified with `C₂` symmetry can reuse the canonicalization logic developed for `S₂`.
+These relationships allow us to transfer canonicalisation strategies between domains that share the same underlying symmetry group. An operation identified with `C₂` symmetry can reuse the canonicalisation logic developed for `S₂`.
 
-### 4.3 Group Actions and Orbits
+### 5.3 Group Actions and Orbits
 
 Canonical forms are derived through group actions on expressions. When a group G acts on a set X, it partitions X into orbits. We select a canonical representative from each orbit using a consistent ordering criterion (e.g., lexicographical minimum):
 
 ```
-Orbit(x) = {g·x | g ∈ G} // The orbit of x under group G's action
+Orbit(x) = {g • x | g ∈ G} // The orbit of x under group G's action
 canon(x) = min(Orbit(x))  // The canonical form is the minimum element in the orbit
 ```
-The o-graph stores only the canonical representative `canon(x)` explicitly, while recognizing that all elements in `Orbit(x)` belong to the same e-class.
+The O-Graph stores only the canonical representative `canon(x)` explicitly, while recognizing that all elements in `Orbit(x)` belong to the same e-class.
 
-### 4.4 Formal Correctness and Complexity
+### 5.4 Formal Correctness and Complexity
 
-The correctness of our canonicalization approach relies on the following theorem:
+The correctness of our canonicalisation approach relies on the following theorem:
 
 **Theorem 1**: *Let G be a finite group acting on a set X, and let ≤ be a total ordering on X. For any x ∈ X, the element min(Orbit(x)) is a unique canonical representative of the orbit of x under G's action.*
 
-Proof sketch: Since G is finite, Orb(x) is finite. The minimum element under a total ordering ≤ is unique, ensuring that the canonical representative is well-defined and consistent. Since all elements in Orb(x) are equivalent under G's action (by definition of an orbit), choosing any consistent representative (such as the minimum) preserves the equivalence relation.
+Proof sketch: Since G is finite, Orbit(x) is finite. The minimum element under a total ordering ≤ is unique, ensuring that the canonical representative is well-defined and consistent. Since all elements in Orbit(x) are equivalent under G's action (by definition of an orbit), choosing any consistent representative (such as the minimum) preserves the equivalence relation.
 
 Example: Consider the internal S-expressions `(+ 5 3)` and `(+ 3 5)`. The orbit under `S₂` action (argument swapping) is {`(+ 5 3)`, `(+ 3 5)`}. With standard argument ordering (based on node IDs or values), `min(Orbit((+ 5 3)))` is uniquely `(+ 3 5)`.
 
@@ -344,15 +344,15 @@ Example: The expression `a + b + c + d` is represented internally as `(+ a b c d
 This n-ary representation allows for:
 1. Direct application of `Sₙ` group actions (sorting) on the argument list.
 2. Efficient pattern matching on the flattened structure.
-3. Single-pass sorting O(n log n) for canonicalization under commutativity.
+3. Single-pass sorting O(n log n) for canonicalisation under commutativity.
 4. Simplified rule application without tree traversal for associativity.
 
 **Meta-Algorithm: Finding Canonical Forms**
 
-Our approach to canonicalization follows a general meta-algorithm pattern:
+Our approach to canonicalisation follows a general meta-algorithm pattern:
 
 1.  **Identification**: Recognize the symmetry group G associated with an expression node `x` (e.g., `Sₙ` for `(+ ...)`).
-2.  **Action**: Understand the group action `g·x` (e.g., permuting arguments for `Sₙ`).
+2.  **Action**: Understand the group action `g • x` (e.g., permuting arguments for `Sₙ`).
 3.  **Selection**: Efficiently compute `canon(x) = min(Orbit(x))` using group-specific algorithms applied directly to the n-ary S-expression structure (e.g., sorting the argument list for `Sₙ`).
 4.  **Optimization**: Use domain-specific algorithms (sorting for Sₙ, Booth's for Cₙ, etc.) to find the minimum efficiently.
 
@@ -402,7 +402,7 @@ fn prefix_dfs(expression, group, prefix) = (
 		let candidates = get_next_candidates(expression, group, prefix);
 
 		// Sort candidates according to the canonical ordering
-		let sorted_candidates = sort(candidates, \a, b.compare(a, b));
+		let sorted_candidates = sort(candidates, λ(a, b).compare(a, b));
 
 		// Try each candidate prefix extension recursively
 		sorted_candidates is (
@@ -451,7 +451,7 @@ For specific groups, we implement optimized versions:
 fn canonicalise_symmetric(elements, comparison_fn) = (
 	// Default comparison if none provided
 	let comparator = if comparison_fn == null then
-		\a, b.(a <=> b) // Assumes a built-in comparison
+		λ(a, b).(a <=> b) // Assumes a built-in comparison operator
 	else
 		comparison_fn;
 
@@ -530,7 +530,7 @@ fn find_min_rotation_index(array) = (
 	let double_array = array + array;  // Concatenate array with itself
 
 	// Initialize failure function
-	let f = map(range(0, 2*n), \_.(-1));
+	let f = map(range(0, 2*n), λ_.(-1));
 
 	// Initialize minimum rotation index
 	let min_rotation = 0;
@@ -615,24 +615,24 @@ fn reverse(array) = (
 	build_reversed(len - 1, [])
 );
 ```
-This runs in O(n) time, dominated by the efficient cyclic canonicalization steps.
+This runs in O(n) time, dominated by the efficient cyclic canonicalisation steps.
 
 
-## 6. Evaluating S-Expressions in the O-graph
+## 6. Evaluating S-Expressions in the O-Graph
 
 (TODO: Explain this section based on the final implementation)
 
 ## 7. Canonicalisation Strategies
 
-### 7.1 Symmetric Group Canonicalization (Sₙ)
+### 7.1 Symmetric Group Canonicalisation (Sₙ)
 
 Used for permutation symmetry. The canonical form is achieved by **sorting the argument list** of the n-ary S-expression representation based on a canonical ordering of the arguments (e.g., by node ID or structural comparison).
 
-#### Exponential Speedup Through Canonicalization
+#### Exponential Speedup Through Canonicalisation
 
-Consider `a + b + c + d`, represented internally as `(+ a b c d)`. Without canonicalization, matching a pattern like `x + y` against all possible binary groupings is complex. With the n-ary form canonicalized by sorting (e.g., `(+ a b c d)` assuming a<b<c<d), matching becomes simpler. A pattern matching `x + y` needs to be adapted to the n-ary structure (e.g., matching adjacent elements `... x y ...` or binding specific arguments). The primary gain is representing the *entire equivalence class* (all permutations and associations) with a single, sorted n-ary node, drastically reducing the size of the O-Graph and the number of nodes rules need to consider.
+Consider `a + b + c + d`, represented internally as `(+ a b c d)`. Without canonicalisation, matching a pattern like `x + y` against all possible binary groupings is complex. With the n-ary form canonicalized by sorting (e.g., `(+ a b c d)` assuming a<b<c<d), matching becomes simpler. A pattern matching `x + y` needs to be adapted to the n-ary structure (e.g., matching adjacent elements `... x y ...` or binding specific arguments). The primary gain is representing the *entire equivalence class* (all permutations and associations) with a single, sorted n-ary node, drastically reducing the size of the O-Graph and the number of nodes rules need to consider.
 
-### 7.2 Cyclic Group Canonicalization (Cₙ)
+### 7.2 Cyclic Group Canonicalisation (Cₙ)
 
 Used for rotational symmetry (e.g., bit rotations, modular arithmetic). The canonical form is the lexicographically minimal rotation.
 
@@ -661,13 +661,13 @@ All byte values reachable via rotation from `11001000` will map to the same cano
 
 #### Polynomial Encoding and Groebner Bases
 
-Cyclic symmetry can sometimes be modeled algebraically. For Cₙ, rotations correspond to multiplication by `x` modulo `xⁿ - 1` in a polynomial ring. Canonicalization can then, in principle, be achieved via Gröbner basis computation relative to the ideal `⟨xⁿ - 1⟩`, although direct algorithms like Booth's are usually far more efficient for the pure cyclic group case. Groebner bases offer a more general tool for canonicalizing polynomial expressions under algebraic constraints beyond simple rotations.
+Cyclic symmetry can sometimes be modeled algebraically. For Cₙ, rotations correspond to multiplication by `x` modulo `xⁿ - 1` in a polynomial ring. Canonicalisation can then, in principle, be achieved via Gröbner basis computation relative to the ideal `⟨xⁿ - 1⟩`, although direct algorithms like Booth's are usually far more efficient for the pure cyclic group case. Groebner bases offer a more general tool for canonicalizing polynomial expressions under algebraic constraints beyond simple rotations.
 
 ```orbit
 // Conceptual Groebner Basis approach for C₄
 // Expression: [a,b,c,d] -> p(x) = a + bx + cx² + dx³
 // Ideal: I = ⟨x⁴ - 1⟩
-// Canonical form: NormalForm(p(x), GroebnerBasis(I))
+// Canonical form: normal_form(p(x), groebner_basis(I))
 // This requires defining polynomial operations and Groebner basis algorithms within Orbit.
 
 // Groebner Basis Algorithm (Conceptual Sketch)
@@ -684,7 +684,7 @@ fn normal_form(poly, basis, order) = (
 );
 ```
 
-### 6.3 Dihedral Group Canonicalization (Dₙ)
+### 7.3 Dihedral Group Canonicalisation (Dₙ)
 
 Used for combined rotational and reflectional symmetries (e.g., symmetries of a square D₄, bit patterns). The canonical form is the minimum of the minimal rotation and the minimal rotation of the reversed sequence.
 
@@ -713,18 +713,18 @@ transform(x) : D₄ → canonicalise_dihedral(x);
 ```
 Any of the 8 states related by rotation/reflection map to the same canonical form `[1, 2, 4, 3]`.
 
-## 7. Extended Examples
+## 8. Extended Examples
 
-This section illustrates how the core concepts apply across various domains, leveraging the domain hierarchy (§2.3) and group-theoretic canonicalization.
+This section illustrates how the core concepts apply across various domains, leveraging the domain hierarchy (§2.3) and group-theoretic canonicalisation.
 
-### 7.1 Polynomial Canonicalization
+### 8.1 Polynomial Canonicalisation
 
 Polynomials form a Ring, inheriting rules for `+` (AbelianGroup) and `*` (Monoid, often Commutative).
 
 ```orbit
 // Inherited Ring Rules:
 a + b : Polynomial ↔ b + a : Polynomial : S₂ // From AbelianGroup (+)
-(a + b) + c : Polynomial ↔ a + (b + c) : Polynomial : A // From AbelianGroup (+)
+(a + b) + c : Polynomial ↔ a + (b + c) : Polynomial // From AbelianGroup (+) - A for Associativity implied by n-ary form
 a * (b + c) : Polynomial → (a * b) + (a * c) : Polynomial // From Ring (Distributivity)
 // ... other Ring rules ...
 
@@ -767,20 +767,6 @@ Applied example: simplifying `3*x*y + 2*y*x + x*(y+z)`
 
 ### 8.2 Matrix Expression Optimization
 
-(Remains similar, A/C operations like matrix addition use n-ary representation internally).
-
-### 8.3 Logic Formula Canonicalization
-
-(Remains similar, `∧` and `∨` use n-ary S-expression representation internally and `Sₙ` canonicalization via sorting).
-
-### 8.4 List Processing Operations
-
-(Remains the same, `++` is associative and uses n-ary form).
-
-### 8.5 Type Inference Integration
-
-(Remains the same).### 7.2 Matrix Expression Optimization
-
 Matrices (over a Ring/Field T) form a Ring (generally non-commutative).
 
 ```orbit
@@ -788,7 +774,7 @@ Matrices (over a Ring/Field T) form a Ring (generally non-commutative).
 
 // Inherited Ring Rules:
 A + B : Matrix ↔ B + A : Matrix : S₂ // Addition is commutative
-(A + B) + C : Matrix ↔ A + (B + C) : Matrix : A
+(A + B) + C : Matrix ↔ A + (B + C) : Matrix // Associativity handled by n-ary form
 A * (B + C) : Matrix → A*B + A*C : Matrix // Distributivity
 // ... etc ...
 
@@ -801,8 +787,8 @@ I * A → A
 
 // Special matrix properties
 // Requires domains like DiagonalMatrix, OrthogonalMatrix(O(n)), SL(n) etc.
-M : O(n) → canonical_orthogonal_form(M) if Mᵀ * M == I
-M : SL(n) → canonical_SL_form(M) if det(M) == 1
+M : O(n) → canonical_orthogonal_form(M) if Mᵀ * M = I
+M : SL(n) → canonical_SL_form(M) if det(M) = 1
 ```
 
 Applied example: optimizing `((A*B)ᵀ * (C+D))`
@@ -810,7 +796,7 @@ Applied example: optimizing `((A*B)ᵀ * (C+D))`
 2. Apply distributivity (from Ring): `(Bᵀ * Aᵀ) * C + (Bᵀ * Aᵀ) * D`
 3. (Optional) If matrix multiplication is associative (it is): `Bᵀ * (Aᵀ * C) + Bᵀ * (Aᵀ * D)`
 
-### 7.3 Logic Formula Canonicalization
+### 8.3 Logic Formula Canonicalisation
 
 Boolean logic forms a Boolean Algebra (a specific type of Ring and Distributive Lattice).
 
@@ -821,8 +807,8 @@ Boolean logic forms a Boolean Algebra (a specific type of Ring and Distributive 
 // Inherited Lattice/Ring Rules:
 p ∨ q : Boolean ↔ q ∨ p : Boolean : S₂ // OR commutativity
 p ∧ q : Boolean ↔ q ∧ p : Boolean : S₂ // AND commutativity
-(p ∨ q) ∨ r : Boolean ↔ p ∨ (q ∨ r) : Boolean : A // OR associativity
-(p ∧ q) ∧ r : Boolean ↔ p ∧ (q ∧ r) : Boolean : A // AND associativity
+(p ∨ q) ∨ r : Boolean ↔ p ∨ (q ∨ r) : Boolean // OR associativity (n-ary)
+(p ∧ q) ∧ r : Boolean ↔ p ∧ (q ∧ r) : Boolean // AND associativity (n-ary)
 p ∨ (q ∧ r) : Boolean ↔ (p ∨ q) ∧ (p ∨ r) : Boolean // Distributivity
 p ∧ (q ∨ r) : Boolean ↔ (p ∧ q) ∨ (p ∧ r) : Boolean // Distributivity
 p ∨ false ↔ p : Boolean // OR identity
@@ -863,30 +849,30 @@ ite(v, t, f) : BDD → ite(v, f, t) : BDD if compare_nodes(f,t) < 0 // Ensure un
 expr : Boolean → to_bdd(expr) : BDD // Convert to BDD representation
 expr : BDD → to_cnf(expr) : CNF     // Convert BDD to CNF
 ```
-This allows leveraging the best representation for a given task (e.g., BDDs for satisfiability counting, CNF for SAT solving) by rewriting between forms within the O-graph.
+This allows leveraging the best representation for a given task (e.g., BDDs for satisfiability counting, CNF for SAT solving) by rewriting between forms within the O-Graph.
 
-### 7.4 List Processing Operations
+### 8.4 List Processing Operations
 
 Functional list operations have algebraic properties often related to Monoids or Functors.
 
 ```orbit
 // Functor Laws (map):
 map(id, xs) → xs
-map(f, map(g, xs)) → map(\x -> f(g(x)), xs) // Map fusion (Associativity of composition)
+map(f, map(g, xs)) → map(λx.(f(g(x))), xs) // Map fusion (Associativity of composition)
 
 // Monoid Laws (append/concat ++):
 xs ++ [] → xs
 [] ++ xs → xs
-(xs ++ ys) ++ zs → xs ++ (ys ++ zs) : A
+(xs ++ ys) ++ zs → xs ++ (ys ++ zs) // Associativity handled by n-ary form
 
 // Other common list rules:
-filter(p, filter(q, xs)) → filter(\x -> p(x) ∧ q(x), xs) // Filter fusion
-fold(op, init, map(f, xs)) → fold(\acc x -> op(acc, f(x)), init, xs) // Fold-map fusion
+filter(p, filter(q, xs)) → filter(λx.(p(x) ∧ q(x)), xs) // Filter fusion
+fold(op, init, map(f, xs)) → fold(λacc x.(op(acc, f(x))), init, xs) // Fold-map fusion
 reverse(reverse(xs)) → xs
 length(xs ++ ys) → length(xs) + length(ys)
 ```
 
-### 7.4.1 Type Inference Integration
+### 8.5 Type Inference Integration
 
 While Orbit primarily focuses on term rewriting, its domain system can represent types. Type inference and checking can interact with the rewriting process.
 
@@ -899,7 +885,7 @@ let type_rules = (
 	// Function application typing
 	apply(f : α → β, x : α) → apply(f, x) : β : Typed;
 
-	// Type unification (via group-theoretic canonicalization)
+	// Type unification (via group-theoretic canonicalisation)
 	unify(t, t) → t;
 	unify(α, t) → subst(α, t) if !occurs_in(α, t);
 	unify(t, α) → subst(α, t) if !occurs_in(α, t);
@@ -914,15 +900,15 @@ The key insight is that we can treat type variables and concrete types as member
 
 ```orbit
 // Type inference example
-let id = \x -> x;               // Identity function
-let f = \x -> x + 1;            // Int -> Int function
+let id = λx.x;               // Identity function
+let f = λx.(x + 1);            // Int -> Int function
 let pair = (id, f);            // Polymorphic pair
 
 // Application inference
-apply(id, 5) : Int;            // Infer id : Int -> Int in this context
-apply(id, "hello") : String;    // Infer id : String -> String in this context
+apply(id, 5) : Int;            // Infer id : Int → Int in this context
+apply(id, "hello") : String;    // Infer id : String → String in this context
 
-// Type inference recognizes that pair has type: (α -> α, Int -> Int)
+// Type inference recognizes that pair has type: (α → α, Int → Int)
 ```
 
 Types that exhibit symmetry properties can be canonicalized using the same group-theoretic machinery. For example, record types in structural typing systems often have field ordering symmetry that can be handled by S₂ canonicalization:
@@ -934,7 +920,7 @@ typeof({x: Int, y: String}) = typeof({y: String, x: Int})  // By S₂ canonicali
 
 This integration enables more flexible and powerful type systems while maintaining sound semantics, and demonstrates how the Orbit framework provides a unifying approach across seemingly disparate domains like term rewriting and type checking.
 
-### 7.5 Numerical Approximation and Discretization
+### 8.6 Numerical Approximation and Discretization
 
 Rewriting can represent transformations between continuous (Calculus) and discrete (Numerical) domains.
 
@@ -943,28 +929,28 @@ Rewriting can represent transformations between continuous (Calculus) and discre
 Calculus ⊂ Field // Calculus operates on Reals/Complex (Fields)
 
 // Rules crossing domains:
-d/dx(f(x)) : Calculus → (f(x+h) - f(x))/h : Numerical : FiniteDifference if is_small(h) // Forward difference
-∫(f, a, b) : Calculus → sum(i, 0, n-1, f(a + i*h)*h) : Numerical : RiemannSum where h = (b-a)/n // Riemann sum
+diff(f, x) : Calculus → (f(x+h) - f(x))/h : Numerical : FiniteDifference if is_small(h) // Forward difference
+integrate(f, x, a, b) : Calculus → summation(λi.(f(a + i*h)*h), i, 0, n-1) : Numerical : RiemannSum where h = (b-a)/n // Riemann sum
 ```
 
-## 8. Evaluation
+## 9. Evaluation
 
 <draft>
 Later: We plan to evaluate Orbit by implementing a representative set of rules from diverse domains (algebra, bitvectors, calculus, logic) and measuring:
-1.  **E-graph Size**: Compare the number of e-classes and e-nodes required with and without group-theoretic canonicalization and domain hierarchies. We expect significant reductions due to collapsing equivalent forms.
-2.  **Rewrite Rule Application Count**: Measure the total number of rule applications needed to reach saturation. Canonicalization should reduce redundant matches.
+1.  **O-Graph Size**: Compare the number of e-classes and e-nodes required with and without group-theoretic canonicalisation and domain hierarchies. We expect significant reductions due to collapsing equivalent forms.
+2.  **Rewrite Rule Application Count**: Measure the total number of rule applications needed to reach saturation. Canonicalisation should reduce redundant matches.
 3.  **Query Time**: Evaluate the time taken for equivalence checks (`find`) between terms. Smaller, canonicalized e-graphs should yield faster queries.
 4.  **Case Studies**: Apply Orbit to specific optimization problems (e.g., simplifying floating-point expressions, optimizing bitvector logic) and compare the results against standard techniques or domain-specific tools.
 This work is in progress.
 </draft>
 
-## 9. Deriving the FFT
+## 10. Deriving the FFT
 
 TODO: Explain how we derive the FFT from the DFT.
 
 ## 11. Conclusion
 
-This paper has presented Orbit, a framework extending e-graphs with domain annotations and group-theoretic canonicalization. By formalizing the relationship between symmetry groups, domain hierarchies, and canonical representations, we provide a unified approach to rewriting that spans diverse computational areas. Orbit achieves significant representational compression and accelerates equality saturation by leveraging algebraic structure and symmetry directly on flattened representations.
+This paper has presented Orbit, a framework extending e-graphs with domain annotations and group-theoretic canonicalisation. By formalizing the relationship between symmetry groups, domain hierarchies, and canonical representations, we provide a unified approach to rewriting that spans diverse computational areas. Orbit achieves significant representational compression and accelerates equality saturation by leveraging algebraic structure and symmetry directly on flattened representations.
 
 The integration of domain hierarchies allows for rule consolidation, while group theory provides efficient, principled methods for selecting canonical forms. Our evaluation plan aims to demonstrate that this unified framework delivers not just theoretical elegance but practical benefits in memory usage, performance, and optimization effectiveness. By bridging mathematical formalism with practical rewriting, Orbit represents a significant step forward in program optimization and symbolic computation.
 
