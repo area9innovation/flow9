@@ -1,0 +1,147 @@
+[
+
+Cpp3RuntimePart("timer",
+"
+void scheduleTimerStart();
+void scheduleTimerStop();
+void scheduleTimerJoin();
+Fun<Void>* scheduleTimerTask(Int delay, Fun<Void>* fn, bool repeat = false, string name = u\"\");",
+"
+namespace {
+	struct Timer {
+		const string name;
+		const Int delay;
+		const bool repeat;
+		Fun<Void>* const fn;
+		Double time;
+	};
+	struct Schedule {
+		void start();
+		void stop();
+		void join();
+		void remove(const string& name);
+		std::vector<Fun<Void>*> ready();
+		Fun<Void>* add(Int delay, Fun<Void>* fn, bool repeat = false, string name = u\"\");
+	private:	
+		bool running = true;
+		std::mutex m;
+		std::map<string, Timer> timers;
+		std::thread thread;
+		Int quantum = 1000;
+	};
+	void Schedule::start() {
+		thread = std::thread([this]{
+			while (running) {
+				std::this_thread::sleep_for(
+					std::chrono::milliseconds(
+						0 < quantum && quantum < 1000 ? quantum : 1000
+					)
+				);
+				if (RuntimeState::isReady()) {
+					m.lock();
+					std::vector<Fun<Void>*> fns = ready();
+					m.unlock();
+					for (Fun<Void>* fn: fns) {
+						fn->callRc1();
+					}
+				}
+			}
+		});
+	}
+	void Schedule::stop() {
+		m.lock();
+		running = false;
+		while (!timers.empty()) {
+			remove(timers.begin()->first);
+		}
+		m.unlock();
+	}
+	void Schedule::join() {
+		thread.join();
+	}
+	void Schedule::remove(const string& name) {
+		if (timers.count(name)) {
+			const Timer& inst = timers.at(name);
+			decRc(inst.fn);
+			timers.erase(name);
+			if (timers.size() == 0) {
+				quantum = 1000;
+				//thread = std::thread();
+			} else {
+				quantum = 0;
+				for (auto& p: timers) {
+					quantum = (quantum == 0) ? p.second.delay : std::gcd(quantum, p.second.delay);
+				}
+			}
+		}
+	}
+	std::vector<Fun<Void>*> Schedule::ready() {
+		std::vector<Fun<Void>*> fns;
+		Double now = timestamp();
+		std::vector<string> to_remove;
+		for (auto& p: timers) {
+			Timer& inst = p.second;
+			if (inst.time <= now) {
+				fns.push_back(inst.fn);
+				if (inst.repeat) {
+					inst.time = now + int2double(inst.delay);
+				} else {
+					to_remove.push_back(inst.name);
+				}
+			}
+		}
+		for (auto& name: to_remove) {
+			remove(name);
+		}
+		return fns;
+	}
+	Fun<Void>* Schedule::add(Int delay, Fun<Void>* fn, bool repeat, string name) {
+		m.lock();
+		if (name.size() == 0) {
+			name = u\"timer_\" + std2string(std::to_string(timers.size()));
+		}
+		quantum = (timers.size() == 0) ? delay : std::gcd(quantum, delay);
+		timers.emplace(name, std::move(Timer{name, delay, repeat, fn, timestamp() + int2double(delay)}));
+		m.unlock();
+		//init();
+		return Fun<Void>::make([this, name]() {
+			m.lock();
+			remove(name);
+			m.unlock();
+			return void_value;
+		});
+	}
+}
+
+Schedule scheduler;
+
+Fun<Void>* scheduleTimerTask(Int delay, Fun<Void>* fn, bool repeat, string name) {
+	if (delay < 0) {
+		fail(\"negative delay for a timer\");
+	}
+	if (delay == 0) {
+		// Instant execution
+		fn->callRc();
+		return Fun<Void>::make([]() { return void_value; });
+	} else {
+		return scheduler.add(delay, fn, repeat, name);
+	}
+}
+void scheduleTimerStart() {
+	scheduler.start();
+}
+void scheduleTimerStop() {
+	scheduler.stop();
+}
+void scheduleTimerJoin() {
+	scheduler.join();
+}
+",
+
+"scheduleTimerStart();",
+"scheduleTimerStop();",
+"scheduleTimerJoin();",
+
+[Cpp3Std(["<numeric>"], [])], false)
+
+]
