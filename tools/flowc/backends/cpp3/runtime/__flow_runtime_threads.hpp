@@ -9,70 +9,47 @@
 #include <deque>
 #include <future>
 #include <iostream>
-#include "__flow_runtime_memory.hpp"
+#include "__flow_runtime_types.hpp"
 
 namespace flow {
 
 class ThreadPool {
 public:
-	ThreadPool(size_t num) : running_(true), thread_joiner_(threads_) {
-		main_thread_id_ = std::this_thread::get_id();
-		MemoryPool::addThread(main_thread_id_, true);
+	enum class Shutdown { Block, Skip };
+	ThreadPool(size_t num, bool register_ = true) : thread_joiner_(threads_) {
+		if (register_) {
+			mutex_.lock();
+			pool_id_ = max_id_++;
+			instances_.emplace(pool_id_, this);
+			mutex_.unlock();
+		}
 		threads_.reserve(num);
 		for (size_t i = 0; i < num; ++i) {
 			threads_.emplace_back(std::bind(&ThreadPool::run, this));
-			MemoryPool::addThread(threads_.back().get_id(), false);
 		}
 	}
 	~ThreadPool() {{
 			std::lock_guard<std::mutex> lock(pool_mutex_);
-			for (const auto& th: threads_) {
-				MemoryPool::removeThread(th.get_id());
-			}
-			MemoryPool::removeThread(main_thread_id_);
 			running_ = false;
 		}
 		not_empty_.notify_all();
-	}
-	enum class Shutdown { Block, Skip };
-	static void init(Int numThreads) {
-		instance_ = std::make_unique<ThreadPool>(numThreads);
-	}
-	static inline void release() {
-		instance_.reset();
-	}
-	template<typename R>
-    static std::future<R> push(Shutdown behavior, std::function<R()> fn) {
-        return instance_->pushTask(behavior, std::move(fn));
-    }
-	static const std::vector<std::thread>& threads() {
-		return instance_->threads_;
-	}
-	static Int size() {
-		return instance_->threads_.size();
-	}
-	static const std::thread& thread(Int i) {
-		auto p = instance_->threads_.begin();
-		while (i-- > 0) ++p;
-		return *p;
-	}
-	static Int currentThread() {
-		if (std::this_thread::get_id() == instance_->main_thread_id_) {
-			return 0;
-		} else {
-			Int i = 1;
-			for (auto& th: instance_->threads_) {
-				if (th.get_id() == std::this_thread::get_id()) {
-					return i;
-				} else {
-					++i;
-				}
-			}
-			return -1;
+		if (pool_id_ != -1) {
+			instances_.erase(pool_id_);
 		}
 	}
-	static void join() {
-		instance_->thread_joiner_.join();
+	static inline void release() {
+		mutex_.lock();
+		while (!instances_.empty()) {
+			delete instances_.begin()->second;
+		}
+		mutex_.unlock();
+	}
+	template<typename R>
+    std::future<R> push(Shutdown behavior, std::function<R()> fn) {
+		return pushTask(behavior, std::move(fn));
+    }
+	Int size() {
+		return threads_.size();
 	}
 private:
 	using Task = std::pair<std::function<void()>, Shutdown>;
@@ -94,9 +71,14 @@ private:
 			Task task(retrieve());
 			// The pool is going to shutdown.
 			if (!task.first) {
-				return;
+				break;
 			}
-			task.first();
+			try {
+				task.first();
+			} catch (std::exception& ex) {
+				std::cerr << ex.what() << std::endl;
+				break;
+			}
 		}
 	}
 
@@ -130,14 +112,17 @@ private:
 		private:
 			std::vector<std::thread>& threads_;
 	};
-	std::thread::id main_thread_id_;
+	Int pool_id_ = -1;
     std::mutex pool_mutex_;
     std::condition_variable not_empty_;
     std::deque<Task> task_queue_;
-    bool running_;
+    bool running_ = true;
     std::vector<std::thread> threads_;
     ThreadsJoiner thread_joiner_;
-	static std::unique_ptr<ThreadPool> instance_;
+
+	static inline std::mutex mutex_;
+	static inline Int max_id_ = 0;
+	static inline std::map<Int, ThreadPool*> instances_;
 };
 
 }

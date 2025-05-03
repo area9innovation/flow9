@@ -6,61 +6,52 @@ Cpp3Native("availableProcessors", true,
 }\n", "", 
 [], []),
 
-Cpp3Native("setThreadPoolSize", true,
-"inline Void $F_1(setThreadPoolSize)(Int threads);\n",
-"inline Void $F_1(setThreadPoolSize)(Int threads) {
-	//thread_pool = std::make_unique<ThreadPool>(threads);
-	ThreadPool::init(threads);
-	return void_value;
+Cpp3Native("newThreadPool", true,
+"inline Native* $F_1(newThreadPool)(Int threadsCount);\n",
+"inline Native* $F_1(newThreadPool)(Int threadsCount) {
+	ThreadPool* thread_pool = new ThreadPool(threadsCount);
+	return Native::make(thread_pool, [thread_pool]() { delete thread_pool; });
 }\n", "", [], []),
 
 Cpp3Native("getThreadId", true,
 "inline String* $F_1(getThreadId)();\n",
 "inline String* $F_1(getThreadId)() {
-	return String::make(int2string(ThreadPool::currentThread()));
-/*
-	static std::mutex m;
-	static std::unordered_map<std::thread::id, Int> thread_ids;
-	static Int counter = 0;
-	std::lock_guard<std::mutex> l(m);
-	auto p = thread_ids.find(std::this_thread::get_id());
-	if (p == thread_ids.end()) {
-		Int thread_id = counter;
-		thread_ids[std::this_thread::get_id()] = counter++;
-		return String::make(int2string(thread_id));
-	} else {
-		return String::make(int2string(p->second));
-	}*/
+	std::stringstream ss;
+	ss << std::this_thread::get_id();
+	return String::make(ss.str());
 }\n", "", [], []),
 
 Cpp3Native("concurrent", true,
-"template<typename T> Vec<T>* $F_1(concurrent)(Bool fine, Vec<Fun<T>*>* tasks);\n",
-"template<typename T> Vec<T>* $F_1(concurrent)(Bool fine, Vec<Fun<T>*>* tasks) {
+"template<typename T> Vec<T>* $F_1(concurrent)(Native* nat, Vec<Fun<T>*>* tasks);\n",
+"template<typename T> Vec<T>* $F_1(concurrent)(Native* nat, Vec<Fun<T>*>* tasks) {
 	std::size_t size = tasks->size();
 	if (size == 0) {
+		decRc(nat);
 		decRc(tasks);
 		return Vec<T>::make();
 	} else if (size == 1) {
+		decRc(nat);
 		Vec<T>* ret = Vec<T>::make(1);
 		ret->pushBack(tasks->get(0)->callRc1());
 		decRc(tasks);
 		return ret;
 	} else {
-		std::vector<T> ret;
-		ret.resize(size);
-		std::vector<std::future<void>> task_jobs;
-		task_jobs.resize(size);
-		for (std::size_t i = 0; i < size; ++i) {
-			Fun<T>* fn = tasks->get(static_cast<Int>(i));
-			task_jobs[i] = std::move(
-				ThreadPool::push<void>(ThreadPool::Shutdown::Block, [i, fn, &ret]() {
-					ret[i] = fn->callRc1();
+		std::vector<std::future<T>> task_jobs;
+		task_jobs.reserve(size);
+		ThreadPool* thread_pool = nat->get<ThreadPool*>();
+		for (Fun<T>* fn: *tasks) {
+			task_jobs.emplace_back(
+				thread_pool->push<T>(ThreadPool::Shutdown::Block, [fn]() {
+					return fn->callRc1();
 				})
 			);
 		}
-		for (std::size_t i = 0; i < size; ++i) {
-			task_jobs.at(i).get();
+		std::vector<T> ret;
+		ret.reserve(size);
+		for (std::future<T>& job: task_jobs) {
+			ret.push_back(job.get());
 		}
+		decRc(nat);
 		decRc(tasks);
 		return Vec<T>::make(std::move(ret));
 	}
@@ -125,10 +116,22 @@ Cpp3Native("synchronizedTernaryFn", true,
 [], ["concurrent"]),
 
 Cpp3Native("concurrentAsyncCallback", true,
-"template<typename T> Void $F_1(concurrentAsyncCallback)(Fun<Void, String*, Fun<Void, T>*>* task, Fun<Void, T>* on_done, Fun<Void, String*>* onFail);\n",
-"template<typename T> Void $F_1(concurrentAsyncCallback)(Fun<Void, String*, Fun<Void, T>*>* task, Fun<Void, T>* on_done, Fun<Void, String*>* onFail) {
-	ThreadPool::push<void>(ThreadPool::Shutdown::Block, [task, on_done]() {
-		task->callRc1($F_1(getThreadId)(), on_done);
+"template<typename T> Void $F_1(concurrentAsyncCallback)(
+	Native* nat,
+	Fun<Void, Fun<Void, T>*, Fun<Void>*>* task,
+	Fun<Void, T>* on_done,
+	Fun<Void, String*>* on_fail
+);\n",
+"template<typename T> Void $F_1(concurrentAsyncCallback)(
+	Native* nat,
+	Fun<Void, Fun<Void, T>*, Fun<Void>*>* task,
+	Fun<Void, T>* on_done,
+	Fun<Void, String*>* on_fail
+) {
+	ThreadPool* thread_pool = nat->get<ThreadPool*>();
+	decRc(fail); // TODO: use fail
+	thread_pool->push<void>(ThreadPool::Shutdown::Block, [task, on_done]() {
+		task->callRc(on_done, Fun<Void>::make([] { return void_value; }));
 	});
 	return void_value;
 }\n", "", 
