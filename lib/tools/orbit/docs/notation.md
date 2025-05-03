@@ -1,6 +1,7 @@
 # Orbit System Notation and Terminology
 
-This table defines the preferred notation for mathematical concepts and operations within the Orbit system, aiming for consistency and alignment with Lean notation where practical, while incorporating specified user preferences and grammar capabilities.
+This table defines the preferred notation for mathematical concepts and operations within the Orbit system, aiming for consistency and alignment with Lean notation where practical, while incorporating specified user preferences and grammar capabilities. In general, we prefer American English spelling and grammar.
+
 
 | Concept/Operation             | Orbit Notation                 | Math Symbol (Unicode) | Lean Notation (if applicable) | Description                                                                 |
 | :---------------------------- | :----------------------------- | :-------------------- | :---------------------------- | :-------------------------------------------------------------------------- |
