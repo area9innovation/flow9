@@ -10,6 +10,7 @@ This table defines the preferred notation for mathematical concepts and operatio
 | Multiplication                | `a * b`                        | \\( a \\cdot b \\) or \\( ab \\) | `a * b`                       | Product of two elements.                                                    |
 | Division                      | `a / b`                        | \\( \\frac{a}{b} \\) or \\( a/b \\) | `a / b`                       | Quotient of two elements.                                                   |
 | Exponentiation                | `a ^ b`                        | \\( a^b \\)             | `a ^ b`                       | `a` raised to the power of `b`. (User Preference)                           |
+| Exponentiation (Unicode)    | `a²`, `a³`, ...                | \\( a^2 \\), \\( a^3 \\)      | `a ^ 2`, `a ^ 3`            | Use Unicode superscripts (², ³) for small fixed integers for readability. |
 | Negation (Additive Inverse)   | `-a`                           | \\( -a \\)              | `-a`                          | Additive inverse.                                                           |
 | Reciprocal (Mult. Inverse)    | `a⁻¹` or `inverse(a)`        | \\( a^{-1} \\) or \\( 1/a \\) | `a⁻¹`                        | Multiplicative inverse. (Lean symbol preferred, function available)                 |
 | Equality                      | `a = b`                        | \\( a = b \\)           | `a = b`                       | Equality test.                                                              |
