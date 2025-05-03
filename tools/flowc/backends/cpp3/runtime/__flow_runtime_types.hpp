@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <stdexcept>
 #include <thread>
+#include <chrono>
 
 namespace flow {
 
@@ -126,5 +127,11 @@ private:
 	static inline std::vector<string> args_vec_;
 	static inline std::map<string, string> args_map_;
 };
+
+inline Double timestamp() {
+	return std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::system_clock::now().time_since_epoch()
+	).count();
+}
 
 }
