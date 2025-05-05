@@ -99,25 +99,31 @@ Turn on tracing for step-by-step execution details:
 
 ## Orbit Documentation Guide
 
-- **[todo.md](todo.md)**: Development roadmap and tasks
+This section provides links to detailed documentation on various aspects of the Orbit system, located in the `docs/` directory.
+
 - **[algorithm_speedups.md](docs/algorithm_speedups.md)**: Discusses optimizing mathematical algorithms using Orbit.
 - **[algorithms.md](docs/algorithms.md)**: Overview of canonicalization algorithms and approaches.
 - **[approximation.md](docs/approximation.md)**: Covers approximation methods and precision control in Orbit.
+- **[autodiff_orbit.md](docs/autodiff_orbit.md)**: Explains automatic differentiation within the Orbit framework.
 - **[canonical.md](docs/canonical.md)**: Details canonical forms and rewriting rules for symmetry groups.
 - **[chemistry.md](docs/chemistry.md)**: Explores applications of Orbit in chemistry, including symmetry and reactions.
+- **[estimates.md](docs/estimates.md)**: Describes the system for handling and verifying mathematical estimates.
 - **[extensions.md](docs/extensions.md)**: Describes extended canonical forms for various mathematical domains.
 - **[fft.md](docs/fft.md)**: Demonstrates automatic derivation of FFT using Orbit's principles.
 - **[group_algorithms.md](docs/group_algorithms.md)**: Algorithms for translating between different representation domains (Group, BDD, Polynomial).
 - **[group_constraints.md](docs/group_constraints.md)**: Discusses modeling with group structures, constraints, and polynomial representations.
+- **[matrix.md](docs/matrix.md)**: Details matrix representations, operations, and algorithms within Orbit.
+- **[notation.md](docs/notation.md)**: Defines the standard mathematical notation used throughout Orbit.
 - **[ograph.md](docs/ograph.md)**: Describes the OGraph library functionality and API.
 - **[orbit.md](docs/orbit.md)**: AI-focused description of the Orbit language.
 - **[paper.md](docs/paper.md)**: Draft research paper discussing Orbit's concepts.
 - **[recurrence.md](docs/recurrence.md)**: Approach for solving recurrence relations within Orbit.
+- **[relational_algebra.md](docs/relational_algebra.md)**: Covers the implementation and use of relational algebra within Orbit.
 - **[research.md](docs/research.md)**: Links to related research in canonicalization and rewriting.
 - **[rubiks.md](docs/rubiks.md)**: Application of group theory and Orbit to Rubik's Cube structures.
 - **[semantics.md](docs/semantics.md)**: Discusses inferring semantic properties as domains.
 - **[sudoku.md](docs/sudoku.md)**: Implementing a Sudoku solver using Orbit's OGraph system.
-- **[terminology.md](docs/terminology.md)**: Consolidated list of terms, structures, domains, and notation.
+- **[terminology.md](docs/terminology.md)**: Consolidates key terms, concepts, domains, and the domain lattice structure used in Orbit. Essential for understanding Orbit's design.
 - **[type_system.md](docs/type_system.md)**: Explains representing type systems as domains in Orbit.
 - **[tutorial.md](docs/tutorial.md)**: Comprehensive introduction to the Orbit language.
 - **[webgpu.md](docs/webgpu.md)**: Specification for WebGPU acceleration of Orbit's rewriting.

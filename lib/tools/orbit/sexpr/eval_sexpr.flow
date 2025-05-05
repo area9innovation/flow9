@@ -476,23 +476,35 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 		SQuasiQuote(): {
 			// Handle quasi-quoted expressions (backtick) with possible unquoting
 			if (length(args) == 1) {
+				// Single argument case
 				result = evalQuasiQuote(env, args[0], \e, x -> {
 					eval = evalSexpr(e, x);
 					eval.value;
 				});
 				SExpEnv(env with value = result);
+			} else if (length(args) > 1) {
+				// Multiple arguments: treat them as a list and evaluate the quasiquote
+				listArgs = SSList(args);
+				result = evalQuasiQuote(env, listArgs, \e, x -> {
+					eval = evalSexpr(e, x);
+					eval.value;
+				});
+				SExpEnv(env with value = result);
 			} else {
-				println("quasiquote requires 1 argument");
+				// No arguments
 				SExpEnv(env with value = SSList([]));
 			}
 		};
 		SQuote(): {
 			// Handle quoted expressions - return as is without evaluation
 			if (length(args) == 1) {
-				// Simply return the quoted expression without evaluation
+				// Single argument: simply return the quoted expression without evaluation
 				SExpEnv(env with value = args[0]);
+			} else if (length(args) > 1) {
+				// Multiple arguments: treat them as a list
+				SExpEnv(env with value = SSList(args));
 			} else {
-				println("quote requires 1 argument");
+				// No arguments
 				SExpEnv(env with value = SSList([]));
 			}
 		};
@@ -528,11 +540,13 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 		SUnQuote(): {
 			// Should not be evaluated directly - only inside quasiquote
 			println("Unquote ($) outside of quasiquote");
+			// Return the unevaluated unquote form with all arguments
 			SExpEnv(env with value = SSSpecialForm(SUnQuote(), args));
 		};
 		SUnQuoteSplicing(): {
 			// Should not be evaluated directly - only inside quasiquote
 			println("Unquote-splicing (#) outside of quasiquote");
+			// Return the unevaluated unquote-splicing form with all arguments
 			SExpEnv(env with value = SSSpecialForm(SUnQuoteSplicing(), args));
 		};
 	}
@@ -559,28 +573,45 @@ tryMatch(env : SExpEnv, valueResult : SExpEnv, patternCases : [Sexpr], caseIndex
 					resultPart = if (hasCondition) caseItems[2] else caseItems[1];
 					
 					// Try to match the pattern
-					matchResult = matchPattern(patternPart, valueResult.value, valueResult.env);
+					// matchPattern should only return the new bindings, not the full environment
+					matchResult = matchPattern(patternPart, valueResult.value, makeTree());
 					
 					switch (matchResult) {
-						Some(newEnv): {
+						Some(bindingsEnv): {
 							// Pattern matched, now check condition if there is one
-							matchEnv = SExpEnv(env.runtime, newEnv, SSList([]));
+							
+							// Create a temporary environment for evaluating the condition
+							// Merge the original environment with the new bindings
+							// with new bindings taking precedence
+							tempEnv = fold(getTreeKeys(bindingsEnv), valueResult.env, \acc, key -> {
+								setTree(acc, key, lookupTreeDef(bindingsEnv, key, SSBool(false)));
+							});
+							execEnv = SExpEnv(env.runtime, tempEnv, SSList([]));
 							
 							if (hasCondition) {
-								// Evaluate the condition in the environment with bound variables
-								condResult = evalSexpr(matchEnv, conditionPart);
-								condVal = getSBool(condResult.value, "pattern condition");
+								// Evaluate the condition in the merged environment
+								condResultEnv = evalSexpr(execEnv, conditionPart);
+								condVal = getSBool(condResultEnv.value, "pattern condition");
 								
 								if (condVal) {
-									// Condition is true, evaluate the result
-									evalSexpr(matchEnv, resultPart);
+									// Condition is true, evaluate the result using the environment
+									// returned from condition evaluation (to preserve side effects)
+									resultEnv = evalSexpr(condResultEnv, resultPart);
+									
+									// Return the value, but restore the original environment
+									// to prevent leaking bindings
+									SExpEnv(env.runtime, env.env, resultEnv.value);
 								} else {
 									// Condition is false, try the next pattern case
+									// Pass original env and valueResult to preserve state
 									tryMatch(env, valueResult, patternCases, caseIndex + 1);
 								}
 							} else {
 								// No condition, just evaluate the result
-								evalSexpr(matchEnv, resultPart);
+								resultEnv = evalSexpr(execEnv, resultPart);
+								
+								// Return the value, but restore the original environment
+								SExpEnv(env.runtime, env.env, resultEnv.value);
 							}
 						}
 						None(): {
@@ -626,7 +657,7 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 			// Check if it's a runtime function
 			if (containsKeyTree(env.runtime, name)) {
 				// Invoke the runtime function with arity checking
-				invokeRuntimeFn(env, name, fnResult);
+				invokeRuntimeFn(env, name, fnResult, evalSexpr);
 			} else {
 				// Custom user-defined function - try to lookup in environment
 				maybeFunction = lookupTree(env.env, name);
@@ -634,8 +665,7 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 					Some(function): {
 						// Found function in environment
 						// Apply the function
-						fnEnv = SExpEnv(env.runtime, fnResult.env, SSList([]));
-						applyFunction(fnEnv, function, fnResult.args);
+						applyFunction(fnResult.env, function, fnResult.args);
 					};
 					None(): {
 						println("Unknown function: " + name);
@@ -648,7 +678,7 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 		SSConstructor(name): {
 			// We'd create a constructor instance with args
 			fnResult = evalArgs(env, args, []);
-			SExpEnv(env.runtime, fnResult.env, SSList(concat([fn], fnResult.args)));
+			SExpEnv(env.runtime, fnResult.env.env, SSList(concat([fn], fnResult.args)));
 		};
 		
 		SSOperator(name): {
@@ -656,7 +686,7 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 			fnResult = evalArgs(env, args, []);
 			// Invoke the runtime function with arity checking
 			if (containsKeyTree(env.runtime, name)) {
-				invokeRuntimeFn(env, name, fnResult);
+				invokeRuntimeFn(env, name, fnResult, evalSexpr);
 			} else {
 				println("Unknown operator: " + name);
 				SExpEnv(env with value = SSList([]));
@@ -673,13 +703,12 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 // Helper to evaluate a list of arguments
 evalArgs(env : SExpEnv, args : [Sexpr], acc : [Sexpr]) -> FnArgResult {
 	if (length(args) == 0) {
-		FnArgResult(env.env, reverseA(acc));
+		FnArgResult(env, acc);
 	} else {
 		argResult = evalSexpr(env, args[0]);
-		evalArgs(env, tail(args), concat([argResult.value], acc));
+		evalArgs(argResult, tail(args), arrayPush(acc, argResult.value));
 	}
 }
-
 
 // Apply a function to arguments
 applyFunction(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {

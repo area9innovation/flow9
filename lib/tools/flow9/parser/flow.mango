@@ -1,13 +1,17 @@
 @include<list>
-flow = '\uFEFF'? ws @array0<import> @array0<forbid> @opt<export> toplevels Module/4 lastLineComment?;
+flow = '\uFEFF'? ws @array0<import> @array0<forbid> toplevelexport toplevels Module/4 lastLineComment?;
 
 toplevels = @array0<toplevel> optsemi;
 
 toplevel = native | union | global | functionOrStruct;
-	semi = #";" ws;
+	semi = ";" ws;
+	semie = #";" ws; // A semi which we never intentionally backtrack over
 	optsemi = (";" ws)?;
 
 import = @pos "import" s path ws semi Import/2;
+
+toplevelexport = @nil (toplevel @drop export @cons @'"Put toplevel declarations AFTER the `export` section"' @error | export @cons | "") @list2array;
+
 export = @pos "export" ws "{" ws toplevels "}" ws Export/2;
 forbid = @pos "forbid" s path ws semi Forbid/2;
 	path = $(bid ('/' bid)*);
@@ -18,7 +22,10 @@ native = @pos "native" s id ':' ws ("io" ws @true | @false) type '=' ws $nativen
 union = @pos typename "::=" ws typenames semi Union/3;
 	typenames = @nil typename @cons ("," ws typename @cons)* @list2array ("," ws)? | @nil @list2array;
 
-global = @pos id opttype "=" ws (brace optsemi | exp semi) Global/4;
+global = @pos id opttype "=" ws (brace optsemi | exp semie) Global/4
+	| "const" kwsep @pos id opttype "=" ws (brace optsemi | exp semi) Global/4 @'"Flow9 omits the `const` keyword in bindings"' @error
+	| "let" kwsep @pos id opttype "=" ws (brace optsemi | exp semi) Global/4 @'"Flow9 omits the `let` keyword in bindings"' @error
+	| "var" kwsep @pos id opttype "=" ws (brace optsemi | exp semi) Global/4 @'"Flow9 omits the `var` keyword in bindings and variables are immutable"' @error;
 
 functionOrStruct = @pos (
 	// Struct - TODO: We could allow 'typars' here to allow more explicit polymorphic syntax
@@ -27,10 +34,10 @@ functionOrStruct = @pos (
 	// Struct - TODO: We could allow 'typars' here to allow more explicit polymorphic syntax
 	| uid ':' ws '(' ws structargs ')' ws semi StructDef/3
 	// Function def
-	| id lambdatype (brace optsemi | exp semi) FnDef/4
-	| id lambdatype semi TypeDef/3
+	| id lambdatype (brace ("}" ws @'"Extra } detected"' @error)? optsemi | exp semi) FnDef/4
+	| id lambdatype semie TypeDef/3
 	// Forward type declarations
-	| id ':' ws type semi TypeDef/3
+	| id ':' ws type semie TypeDef/3
 	);
 
 	// listof(structarg, ",")
@@ -73,9 +80,17 @@ exp =
 		| @pos "if" kwsep "(" ws exp ")" ws exp @pos Void/1 IfElse/4
 		| "(" ws exp ")" ws 
 		| "cast" kwsep '(' ws exp @pos "->" ws type Cast/2 ')' ws UnOp/2
+
+		// Patterns that are not legal in flow9 yet
 		| "while" kwsep @pos '(' ws exp ')' ws exp While/3
 		| "for" kwsep @pos '(' ws id opttype '=' ws exp ';' ws exp ';' ws exp ')' ws exp For/7
 		| "return" kwsep @pos @opt<exp> Return/2
+		| "break" kwsep @pos Break/1
+		| "let" kwsep lid opttype @pos "=" ws exp optsemi expsemi Let/5 @'"Flow9 omits the `let` keyword in bindings"' @error 
+		| "const" kwsep lid opttype @pos "=" ws exp optsemi expsemi Let/5 @'"Flow9 omits the `const` keyword in bindings"' @error 
+		| "var" kwsep lid opttype @pos "=" ws exp optsemi expsemi Let/5 @'"Flow9 omits the `var` keyword in bindings and variables are immutable"' @error 
+		| "try" kwsep brace "catch" kwsep exp @drop @'"Flow9 does not support try/catch"' @error 
+
 		| switch
 		| @pos "[" ws @array<exp ","> "]" ws Array/2
 		| value
@@ -103,7 +118,8 @@ switch = @pos "switch" kwsep '(' ws exp ')' ws
 		'{' ws @nil (case @cons)+ @list2array  #'}' ws Switch/3;
 	case = 
 		@pos "default" kwsep ':' ws exp (';' ws)? DefaultCase/2
-		| @pos uid '(' ws @array<id ","> ')' ws ':' ws exp (';' ws)? StructCase/4;
+		| @pos uid '(' ws @array<id ","> ')' ws ':' ws exp (';' ws)? StructCase/4
+		| @pos exp @'"Flow does not support switch on values or patterns"' @error ':' ws exp @drop (';' ws)? DefaultCase/2;
 
 brace = @pos "{" ws expsemi "}" ws Sequence/2;
 	// The first optsemi here is to have backwards compatibility. Really, it should be semi

@@ -17,6 +17,93 @@ export {
 	sexpr2orbit(expr : Sexpr) -> OrMath_expr;
 }
 
+// Converts an OrLambda expression to a Sexpr
+convertOrLambdaToSexpr(env_bindings : [OrEnvBinding], id_types : [OrIdType], math_expr : OrMath_expr) -> Sexpr {
+	if (env_bindings != []) {
+		println("TODO: Convert to closure");
+	}
+
+	// Convert id_types to simpler format expected by SExpr lambda
+	id_type_exprs = map(id_types, \idType -> {
+		if (idType.type_annotations != []) {
+			// Handle type annotations by creating a properly formatted type annotation
+			// For lambda parameters, we don't use (: param type) format in the parameter list
+			// but instead use regular parameter names and let function type be inferred or 
+			// specified separately
+			SSVariable(idType.id)
+		} else {
+			SSVariable(idType.id)
+		}
+	});
+	
+	// Create a lambda special form with just parameters and body
+	// This matches what the SExpr interpreter expects (just 2 arguments)
+	SSSpecialForm(SLambda(), [
+		SSList(id_type_exprs),
+		orbit2sexpr(math_expr)
+	]);
+}
+
+// Converts a lambda special form to an OrLambda expression
+convertSexprLambdaToOrbit(items : [Sexpr]) -> OrMath_expr {
+	if (length(items) >= 2) {
+		// Extract environment bindings
+		// For a simple lambda with no closure, this will be an empty list
+		env_bindings = [];
+		
+		// Extract id_types from the parameter list (first item)
+		id_types = switch (items[0]) {
+			SSList(params): map(params, \param -> {
+				switch (param) {
+					SSList(parts): {
+						if (length(parts) >= 2) {
+							switch (parts[0]) {
+								SSString(id): {
+									// Extract type annotations
+									type_annots = switch (parts[1]) {
+										SSList(annots): map(annots, \a -> OrType(sexpr2orbit(a)));
+										default: [];
+									};
+									OrIdType(id, type_annots);
+								}
+								default: OrIdType("", []); // Default for invalid
+							}
+						} else {
+							OrIdType("", []); // Default for invalid
+						}
+					}
+					SSVariable(id): OrIdType(id, []);
+					default: OrIdType("", []);
+				}
+			});
+			default: [];
+		};
+		
+		// Body of the lambda - for a lambda, it's the second item (and subsequent items if any)
+		lambdaBody = if (length(items) >= 2) {
+			if (length(items) == 2) {
+				// Single expression body
+				sexpr2orbit(items[1]);
+			} else {
+				// Multiple expressions - wrap in a begin/sequence
+				// Create a sequence of all body expressions
+				foldi(tailFrom(items, 2), sexpr2orbit(items[1]), \i, acc, item -> 
+					OrSequence(acc, sexpr2orbit(item))
+				);
+			}
+		} else {
+			println("Invlid lambda body");
+			OrInt(0); // Default for invalid
+		};
+		
+		// Create lambda
+		OrLambda(env_bindings, id_types, lambdaBody);
+	} else {
+		// Handle error case: not enough arguments
+		OrIdentifier("invalid_lambda");
+	}
+}
+
 // Main conversion function
 orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 	switch (expr) {
@@ -86,8 +173,8 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		OrLessEquals(a, b): SSList([SSOperator("<="), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrModulo(a, b): SSList([SSOperator("mod"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrIndex(a, b): SSList([SSVariable("index"), orbit2sexpr(a), orbit2sexpr(b)]);
-		OrTypeAnnotation(a, b): SSList([SSConstructor("TypeAnnotation"), orbit2sexpr(a), orbit2sexpr(b)]);
-		OrNotTypeAnnotation(a, b): SSList([SSConstructor("NotTypeAnnotation"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrTypeAnnotation(a, b): SSList([SSOperator(":"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrNotTypeAnnotation(a, b): SSList([SSOperator("!:"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrSubset(a, b): SSList([SSConstructor("Subset"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrElementOf(a, b): SSList([SSConstructor("ElementOf"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrHomomorphism(a, b): SSList([SSConstructor("Homomorphism"), orbit2sexpr(a), orbit2sexpr(b)]);
@@ -167,24 +254,7 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 			]);
 		}
 		OrLambda(env_bindings, id_types, math_expr): {
-			if (env_bindings != []) {
-				println("TODO: Convert to closure");
-			}
-
-			// Convert id_types to simpler format expected by SExpr lambda
-			id_type_exprs = map(id_types, \idType -> {
-				if (idType.type_annotations != []) {
-					println("TODO: Convert type annotations");
-				}
-				SSVariable(idType.id)
-			});
-			
-			// Create a lambda special form with just parameters and body
-			// This matches what the SExpr interpreter expects (just 2 arguments)
-			SSSpecialForm(SLambda(), [
-				SSList(id_type_exprs),
-				orbit2sexpr(math_expr)
-			]);
+			convertOrLambdaToSexpr(env_bindings, id_types, math_expr)
 		}
 		OrForall(math_exprs): SSList([SSConstructor("Forall"), SSList(map(math_exprs, orbit2sexpr))]);
 		OrExists(math_exprs): SSList([SSConstructor("Exists"), SSList(map(math_exprs, orbit2sexpr))]);
@@ -348,62 +418,7 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 					}
 				}
 				SLambda(): {
-					if (length(items) >= 3) {
-						// Extract environment bindings
-						env_bindings = switch (items[0]) {
-							SSList(bindings): map(bindings, \binding -> {
-								switch (binding) {
-									SSList(parts): {
-										if (length(parts) >= 3) {
-											switch (parts[1]) {
-												SSString(id): {
-													OrEnvBinding(id, sexpr2orbit(parts[2]));
-												}
-												default: OrEnvBinding("", OrInt(0)); // Default for invalid
-											}
-										} else {
-											OrEnvBinding("", OrInt(0)); // Default for invalid
-										}
-									}
-									default: OrEnvBinding("", OrInt(0));
-								}
-							});
-							default: [];
-						}
-						
-						// Extract id_types
-						id_types = switch (items[1]) {
-							SSList(params): map(params, \param -> {
-								switch (param) {
-									SSList(parts): {
-										if (length(parts) >= 2) {
-											switch (parts[0]) {
-												SSString(id): {
-													// Extract type annotations
-													type_annots = switch (parts[1]) {
-														SSList(annots): map(annots, \a -> OrType(sexpr2orbit(a)));
-														default: [];
-													}
-													OrIdType(id, type_annots);
-												}
-												default: OrIdType("", []); // Default for invalid
-											}
-										} else {
-											OrIdType("", []); // Default for invalid
-										}
-									}
-									default: OrIdType("", []);
-								}
-							});
-							default: [];
-						}
-						
-						// Create lambda
-						OrLambda(env_bindings, id_types, sexpr2orbit(items[2]));
-					} else {
-						// Handle error case: not enough arguments
-						OrIdentifier("invalid_lambda");
-					}
+					convertSexprLambdaToOrbit(items);
 				}
 				SDefine(): {
 					if (length(items) >= 2) {
@@ -422,8 +437,7 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 						// First item is the expression to match against
 						expression = sexpr2orbit(items[0]);
 						
-						// Remaining items are pattern-action pairs
-						// Extract these pairs and build OrRule structures
+						// Remaining items are pattern-action pairs or pattern-condition-action triples
 						patternPairs = tailFrom(items, 1);
 						
 						// Must have at least one pattern-action pair
@@ -432,12 +446,12 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 							cases = fold(patternPairs, OrBool(true), \acc, pair -> {
 								switch (pair) {
 									SSList(pairItems): {
-										if (length(pairItems) >= 2) {
-											// Extract pattern and result
+										if (length(pairItems) == 2) {
+											// Regular format with 2 elements: (pattern result)
 											pattern = sexpr2orbit(pairItems[0]);
 											result = sexpr2orbit(pairItems[1]);
 											
-											// Create a rule (pattern => result)
+											// Create a rule with default TRUE condition (pattern => result)
 											rule = OrRule(pattern, result, OrBool(true), true);
 											
 											// If this is the first rule, it replaces the acc
@@ -447,13 +461,13 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 												// Otherwise create a sequence of rules
 												OrSequence(acc, rule);
 											}
-										} else if (length(pairItems) >= 3) {
-											// Format with condition: (pattern condition result)
+										} else if (length(pairItems) == 3) {
+											// Conditional format with 3 elements: (pattern condition result)
 											pattern = sexpr2orbit(pairItems[0]);
 											condition = sexpr2orbit(pairItems[1]);
 											result = sexpr2orbit(pairItems[2]);
 											
-											// Create a rule with condition
+											// Create a rule with the specified condition (pattern if condition => result)
 											rule = OrRule(pattern, result, condition, true);
 											
 											// If this is the first rule, it replaces the acc
@@ -464,11 +478,16 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 												OrSequence(acc, rule);
 											}
 										} else {
-											// Invalid pattern-action pair format
+											// Invalid pattern format (neither 2 nor 3 elements)
+											println("Invalid pattern in match: " + toString(pairItems));
 											acc;
 										}
 									}
-									default: acc; // Skip invalid pattern-action pairs
+									default: {
+										// Invalid pattern format (not a list)
+										println("Non-list pattern in match: " + toString(pair));
+										acc;
+									}
 								}
 							});
 							
@@ -780,7 +799,34 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 				switch (items[0]) {
 					SSVector(sexprs): OrArray(map(items, sexpr2orbit));
 					SSOperator(op): {
-						if (isAssociativeOp(op) && length(items) > 2) {
+						// Special case for type annotation
+						if (op == ":") {
+							// Handle type annotation syntax (: expr type)
+							if (length(items) == 3) {
+								annot_expr = sexpr2orbit(items[1]);
+								annot_type = sexpr2orbit(items[2]);
+								
+								// Create a type annotation expression
+								OrTypeAnnotation(annot_expr, annot_type);
+							} else {
+								// Invalid type annotation format
+								println("WARNING: Invalid type annotation format: " + toString(items));
+								OrIdentifier("invalid_type_annotation");
+							}
+						} else if (op == "!:") {
+							// Handle negative type annotation syntax (!: expr type)
+							if (length(items) == 3) {
+								not_annot_expr = sexpr2orbit(items[1]);
+								not_annot_type = sexpr2orbit(items[2]);
+								
+								// Create a negative type annotation expression
+								OrNotTypeAnnotation(not_annot_expr, not_annot_type);
+							} else {
+								// Invalid negative type annotation format
+								println("WARNING: Invalid negative type annotation format: " + toString(items));
+								OrIdentifier("invalid_not_type_annotation");
+							}
+						} else if (isAssociativeOp(op) && length(items) > 2) {
 							// We have an associative operation with multiple operands
 							// Convert each operand first
 							operands = map(tailFrom(items, 1), \item -> sexpr2orbit(item));
@@ -1092,7 +1138,7 @@ extractRulesHelper(node : OrMath_expr, acc : [Sexpr]) -> [Sexpr] {
 	switch (node) {
 		// Handle direct rules
 		OrRule(pattern, result, condition, __): {
-			// Check if there's a condition (not just a placeholder)
+			// Check if condition is just a default TRUE or an actual condition
 			isDefaultCondition = switch (condition) {
 				OrBool(b): b; // If true, it's the default condition
 				default: false; // Has an actual non-boolean condition expression
@@ -1104,7 +1150,8 @@ extractRulesHelper(node : OrMath_expr, acc : [Sexpr]) -> [Sexpr] {
 				conditionExpr = orbit2sexpr(condition);
 				resultExpr = orbit2sexpr(result);
 				
-				// Format required by the new pattern matcher: (pattern condition result)
+				// Format for conditional pattern: (pattern condition result)
+				// Create a list containing all three elements
 				patternCase = SSList([patternExpr, conditionExpr, resultExpr]);
 				concat(acc, [patternCase]);
 			} else {
@@ -1112,7 +1159,7 @@ extractRulesHelper(node : OrMath_expr, acc : [Sexpr]) -> [Sexpr] {
 				patternExpr = orbit2sexpr(pattern);
 				resultExpr = orbit2sexpr(result);
 				
-				// Format required by the pattern matcher: (pattern result)
+				// Format for regular pattern: (pattern result)
 				patternCase = SSList([patternExpr, resultExpr]);
 				concat(acc, [patternCase]);
 			}

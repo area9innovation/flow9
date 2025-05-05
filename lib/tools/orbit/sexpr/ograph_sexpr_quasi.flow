@@ -1,0 +1,1293 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/utils;
+import tools/orbit/ograph;
+import tools/orbit/orbit_simple_ograph;
+import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/sexp2ograph_sub;
+import tools/orbit/sexpr/ograph2sexpr;
+import tools/orbit/sexpr/env;
+import tools/orbit/sexpr/sexpr_free;
+import ds/tree;
+import ds/array;
+import string;
+
+export {
+    // Define evaluation modes
+    EvalMode ::= ConservativeMode, OptimisticMode;
+        ConservativeMode(); // Only evaluates expressions that are guaranteed safe
+        OptimisticMode();   // More aggressive evaluation, may evaluate conditionally-guarded expressions
+    
+    // Traverse an OGraph node and evaluate expressions that can be evaluated
+    // Similar to quasiquotation in Scheme but operating on the OGraph structure
+    // Returns the node ID of the resulting expression after evaluation
+    evaluateOGraphQuasiquote(
+        graphName : string,   // Name of the OGraph to operate on
+        nodeId : int,        // ID of the node to start traversal from
+        environment : SExpEnv,     // Environment for evaluation (SExpEnv with runtime functions)
+        evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, // Function to use for evaluation
+        tracing : bool,      // Whether to enable detailed tracing
+        mode : EvalMode      // Evaluation mode - conservative or optimistic
+    ) -> Pair<SExpEnv, int>; // Returns updated environment and resulting node ID
+
+    // Backward compatibility wrapper that uses ConservativeMode by default
+    evaluateOGraphQuasiquoteDefault(
+        graphName : string, 
+        nodeId : int, 
+        environment : SExpEnv, 
+        evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv,
+        tracing : bool
+    ) -> Pair<SExpEnv, int>;
+}
+
+//---------- Helper Functions for Node Manipulation and Analysis ----------//
+
+// 1. Consistent Special Form Handling - Check if a node is a specific kind of special form
+// UPDATED LOGIC: Checks the node's value directly.
+isSpecialFormNode(graph : OGraph, nodeId : int, formName : string) -> bool {
+    switch (lookupOClass(graph, nodeId)) {
+        Some(oclass): {
+            node = oclass.node;
+            // Check if node.op is "SpecialForm"
+            if (node.op == "SpecialForm") {
+                // Extract the form name directly from the node's value
+                nodeFormName = switch (node.value) {
+                    OrbitString(s): s;
+                    default: ""; // Return empty if value is not OrbitString
+                };
+                // Compare the extracted name with the target name
+                nodeFormName == formName;
+            } else {
+                // Not a SpecialForm node
+                false;
+            }
+        }
+        None(): {
+            // Node not found
+            false;
+        }
+    }
+}
+
+// 2. Enhanced Constant Value Detection - Check if a node represents a constant value
+// Now also considers Lists and Vectors with all constant children as constants
+isConstantNode(graph : OGraph, nodeId : int) -> bool {
+    switch (lookupOClass(graph, nodeId)) {
+        Some(oclass): {
+            node = oclass.node;
+            // Direct constants
+            primitiveTypes = ["Int", "Double", "Bool", "String"];
+            if (contains(primitiveTypes, node.op)) {
+                true;
+            } else if (node.op == "List" || node.op == "Vector") {
+                // Check if all children are constants
+                forall(node.children, \childId -> isConstantNode(graph, childId));
+            } else {
+                false;
+            }
+        }
+        None(): false;
+    }
+}
+
+// Helper for isFunctionCallNode - Get callable name if node represents a callable entity
+getCallableName(graph : OGraph, nodeId : int, env : SExpEnv) -> Pair<bool, Maybe<string>> {
+    switch (lookupOClass(graph, nodeId)) {
+        Some(childClass): {
+            childNode = childClass.node;
+            if (childNode.op == "Operator") {
+                opName = getNodeStringValue(childNode, "");
+                if (opName != "" && containsKeyTree(env.runtime, opName)) {
+                    Pair(true, Some(opName));
+                } else {
+                    Pair(false, None());
+                }
+            } else if (childNode.op == "Identifier") {
+                fnName = getNodeStringValue(childNode, "");
+                if (fnName != "" && containsKeyTree(env.env, fnName)) {
+                    Pair(true, Some(fnName));
+                } else {
+                    Pair(false, None());
+                }
+            } else {
+                Pair(false, None());
+            }
+        }
+        None(): Pair(false, None());
+    }
+}
+
+// 7. Value Extraction Helper Functions
+// Extract a string value from a node
+getNodeStringValue(node : ONode, defaultValue : string) -> string {
+    switch (node.value) {
+        OrbitString(s): s;
+        default: defaultValue;
+    }
+}
+
+// Extract an int value from a node
+getNodeIntValue(node : ONode, defaultValue : int) -> int {
+    switch (node.value) {
+        OrbitInt(i): i;
+        default: defaultValue;
+    }
+}
+
+// Extract a double value from a node
+getNodeDoubleValue(node : ONode, defaultValue : double) -> double {
+    switch (node.value) {
+        OrbitDouble(d): d;
+        default: defaultValue;
+    }
+}
+
+// Extract a boolean value from a node
+getNodeBoolValue(node : ONode, defaultValue : bool) -> bool {
+    switch (node.value) {
+        OrbitBool(b): b;
+        default: defaultValue;
+    }
+}
+
+// Main function to evaluate quasiquotation in an OGraph
+evaluateOGraphQuasiquote(graphName : string, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // Get the graph from the registry
+    switch (lookupTree(^ographRegistry, graphName)) {
+        Some(graph): {
+            // Find the canonical representative (root) for this node
+            rootId = findORoot(graph, nodeId);
+            
+            // Process the quasiquote starting at this node
+            if (tracing) println("Starting quasiquote evaluation at node ID: " + i2s(rootId) + " with mode: " + (if (mode == ConservativeMode()) "conservative" else "optimistic"));
+            evaluateQuasiquoteNode(graph, rootId, environment, evaluator, tracing, mode);
+        }
+        None(): {
+            println("ERROR: OGraph '" + graphName + "' not found");
+            Pair(environment, -1); // Return -1 to indicate error
+        }
+    }
+}
+
+// Backward compatibility wrapper that uses ConservativeMode by default
+evaluateOGraphQuasiquoteDefault(graphName : string, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<SExpEnv, int> {
+    evaluateOGraphQuasiquote(graphName, nodeId, environment, evaluator, tracing, ConservativeMode());
+}
+
+// Evaluate a let expression with local variable bindings
+// Simplified version that just evaluates the body without true local environment support
+evaluateLetNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // Let special form should have at least 2 children: (bindings-list, body...)
+    // The name is now in the value field, so children count is 1 less than before.
+    if (length(node.children) >= 2) {
+        // Get the body expressions (second child onward)
+        bodyNodeIds = tailFrom(node.children, 1);
+        
+        if (tracing) println("Processing let expression - simplified implementation");
+        
+        // For now, we'll just evaluate the last body expression without local bindings
+        // This is a simplified implementation to avoid type issues
+        if (length(bodyNodeIds) > 0) {
+            // Just evaluate the last expression in the body
+            lastBodyNodeId = lastElement(bodyNodeIds, bodyNodeIds[0]);
+            bodyExpr = ograph2Sexpr(graph, lastBodyNodeId);
+            
+            if (tracing) println("Evaluating body expression: " + prettySexpr(bodyExpr));
+            
+            // Evaluate in the current environment (no local bindings yet)
+            bodyResult = evaluator(environment, bodyExpr);
+            
+            // Convert result back to OGraph node
+            resultNodeId = sexp2OGraphWithSubstitution(graph, bodyResult.value, makeTree());
+            
+            // Merge with original node - resultNodeId should be canonical
+            mergeOClasses(graph, resultNodeId, nodeId);
+            
+            if (tracing) println("Let evaluation result: " + prettySexpr(bodyResult.value));
+            
+            // Return updated environment and result node ID
+            Pair(bodyResult, resultNodeId);
+        } else {
+            if (tracing) println("Let has no body expressions");
+            Pair(environment, nodeId);
+        }
+    } else {
+        if (tracing) println("Let has too few children: " + i2s(length(node.children)));
+        Pair(environment, nodeId);
+    }
+}
+
+// Evaluate a define expression - we'll just evaluate the value but not update the environment
+// This avoids the type issues while still allowing define expressions to be processed
+evaluateDefineNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // Define special form should have at least 2 children (var name, value)
+    // The special form name is now in the value field.
+    if (length(node.children) >= 2) {
+        // Get the variable name node (first child)
+        varNameNodeId = node.children[0];
+        var_node_info = lookupOClass(graph, varNameNodeId);
+        
+        // Get the value expression (second child)
+        valueNodeId = node.children[1];
+        
+        switch (var_node_info) {
+            Some(var_class): {
+                // Extract the variable name
+                var_name = if (var_class.node.op == "Identifier") {
+                    getNodeStringValue(var_class.node, "");
+                } else {
+                    if (tracing) println("Define first argument is not an identifier: " + var_class.node.op);
+                    "";
+                };
+                
+                if (var_name != "") {
+                    if (tracing) println("Processing define for '" + var_name + "'");
+                    
+                    // Convert value to Sexpr and evaluate it
+                    valueExpr = ograph2Sexpr(graph, valueNodeId);
+                    newEnvironment = evaluator(environment, valueExpr);
+                    result = newEnvironment.value;
+                    
+                    if (tracing) println("Evaluated define value: " + prettySexpr(result));
+                    
+                    // TODO: The proper approach would be to update the environment,
+                    // but this causes type conflicts. For now, we just evaluate the expression.
+                    if (tracing) println("Note: Define detected but environment update is not implemented");
+                    
+                    // Convert the result back to an OGraph node for the right-hand side
+                    resultNodeId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                    
+                    // Return the updated environment and the result node ID
+                    Pair(newEnvironment, resultNodeId);
+                } else {
+                    if (tracing) println("Invalid variable name in define");
+                    Pair(environment, nodeId); // Return unchanged
+                }
+            }
+            None(): {
+                if (tracing) println("Variable name node not found");
+                Pair(environment, nodeId); // Return unchanged
+            }
+        }
+    } else {
+        if (tracing) println("Define has wrong number of children: " + i2s(length(node.children)));
+        Pair(environment, nodeId); // Return unchanged
+    }
+}
+
+// Evaluate an identifier node that maps to a value in the environment
+evaluateIdentifierNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // Extract the identifier name
+    idName = getNodeStringValue(node, "");
+    
+    if (idName != "") {
+        // Check if this identifier exists in the environment
+        switch (lookupTree(environment.env, idName)) {
+            Some(value): {
+                if (tracing) println("Found identifier '" + idName + "' in environment, evaluating");
+                
+                // Convert the value to an OGraph node
+                resultId = sexp2OGraphWithSubstitution(graph, value, makeTree());
+                
+                // Merge with the original node - resultId should be canonical
+                mergeOClasses(graph, resultId, nodeId);
+                
+                if (tracing) println("Evaluated identifier to: " + prettySexpr(value));
+                
+                // Return the environment and result node ID
+                Pair(environment, resultId);
+            }
+            None(): {
+                if (tracing) println("Identifier '" + idName + "' not found in environment");
+                Pair(environment, nodeId); // Return unchanged
+            }
+        }
+    } else {
+        // No valid identifier name
+        Pair(environment, nodeId); // Return unchanged
+    }
+}
+
+// Evaluate a container node (List/Vector) if all children are constants
+evaluateBubbleContainer(graph : OGraph, nodeId : int, node : ONode, processedChildren : [int], environment : SExpEnv, tracing : bool) -> int {
+    // Check if all children are constants
+    if (forall(processedChildren, \childId -> isConstantNode(graph, childId))) {
+        if (tracing) println("All children of " + node.op + " are constants, bubble up as constant");
+        
+        // Keep the container as is with processed children, it's now considered a constant
+        newNodeId = insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
+        
+        // Merge with the original node - newNodeId should be canonical
+        mergeOClasses(graph, newNodeId, nodeId);
+        newNodeId;
+    } else {
+        // Not all children are constants
+        if (tracing) println("Not all children of " + node.op + " are constants, can't bubble up");
+        insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
+    }
+}
+
+// Evaluate a lambda special form and create a closure
+evaluateLambdaNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // Lambda now has 2 children: params list, body
+    if (length(node.children) < 2) {
+        if (tracing) println("Lambda node has too few children: " + i2s(length(node.children)));
+        Pair(environment, nodeId); // Return unchanged
+    } else {
+        // Get the parameter list (first child)
+        paramsNodeId = node.children[0];
+        
+        // Get the lambda body (second child)
+        bodyNodeId = node.children[1];
+        
+        if (tracing) println("Processing lambda with params at node " + i2s(paramsNodeId) + " and body at node " + i2s(bodyNodeId));
+        
+        // Extract parameter names from the parameter list
+        paramNames = switch (lookupOClass(graph, paramsNodeId)) {
+            Some(paramsClass): {
+                if (paramsClass.node.op == "List") {
+                    // Process each parameter in the list
+                    filtermap(paramsClass.node.children, \childId -> {
+                        switch (lookupOClass(graph, childId)) {
+                            Some(paramClass): {
+                                if (paramClass.node.op == "Identifier") {
+                                    // Extract parameter name
+                                    Some(getNodeStringValue(paramClass.node, ""));
+                                } else None();
+                            }
+                            None(): None();
+                        }
+                    });
+                } else [];
+            }
+            None(): [];
+        };
+        
+        if (tracing) println("Extracted " + i2s(length(paramNames)) + " parameter names");
+        
+        // Create a set of bound variables (parameter names)
+        boundVars = fold(paramNames, makeSet(), \acc, paramName -> {
+            insertSet(acc, paramName);
+        });
+        
+        // Extract the body as Sexpr to find free variables
+        bodySexpr = ograph2Sexpr(graph, bodyNodeId);
+        
+        // Find free variables in the body 
+        freeVars = findFreeSexprVars(bodySexpr, boundVars);
+        
+        if (tracing) println("Found " + i2s(sizeSet(freeVars)) + " free variables in lambda body");
+        
+        // Debug: Print the names of all free variables
+        if (tracing) {
+            freeVarNames = buildSet(map(set2array(freeVars), \v -> v));
+            println("Free variables: " + strGlue(set2array(freeVarNames), ", "));
+        }
+        
+        // Create bindings for all free variables from the current environment
+        bindings = createSexprBindings(freeVars, environment.env);
+        
+        if (tracing) println("Created " + i2s(length(bindings)) + " bindings for free variables");
+        
+        // Debug: Print each binding
+        if (tracing) {
+            iter(bindings, \binding -> {
+                println("  Binding: " + binding.first + " -> " + prettySexpr(binding.second));
+            });
+        }
+        
+        // Create a list node for the bindings
+        bindingsListItems = map(bindings, \binding -> {
+            // Create a list node for each binding (var-name, value)
+            varNameNodeId = insertONode(graph, ONode("Identifier", [], node.belongsTo, OrbitString(binding.first)));
+            
+            // Convert the bound value back to an OGraph node
+            valueNodeId = sexp2OGraphWithSubstitution(graph, binding.second, makeTree());
+            
+            // Create a list node for the binding pair
+            insertONode(graph, ONode("List", [varNameNodeId, valueNodeId], node.belongsTo, node.value));
+        });
+        bindingsListNodeId = insertONode(graph, ONode("List", bindingsListItems, node.belongsTo, node.value));
+        
+        // Create the closure special form node
+        closureSpecialName = "closure"; // The name goes in the value field
+        
+        // IMPORTANT CHANGE: Use the canonical IDs for params and body
+        // to ensure we're part of the same equivalence classes
+        canonicalParamsNodeId = findORoot(graph, paramsNodeId);
+        canonicalBodyNodeId = findORoot(graph, bodyNodeId);
+        
+        // Create the closure special form node with canonical IDs
+        // Children are: bindings list, params list, body
+        closureNodeId = insertONode(graph, ONode("SpecialForm", 
+            [bindingsListNodeId, canonicalParamsNodeId, canonicalBodyNodeId], 
+            node.belongsTo, 
+            OrbitString(closureSpecialName)
+        ));
+        
+        if (tracing) {
+            println("Created closure with structure:");
+            println("- Special form type: closure (in value)");
+            println("- Bindings node ID: " + i2s(bindingsListNodeId));
+            println("- Params node ID (canonical): " + i2s(canonicalParamsNodeId));
+            println("- Body node ID (canonical): " + i2s(canonicalBodyNodeId));
+        }
+        
+        // CRITICAL FIX: We need to make the closure node the canonical form of the lambda
+        // The key is to pass parameters to mergeOClasses in the correct order!
+        // mergeOClasses always makes the first parameter the canonical form
+        if (tracing) {
+            println("Merging nodes - using closureNodeId as canonical (first parameter)");
+        }
+        
+        // REVERSED ORDER: closureNodeId first to make it the canonical representative
+        mergeOClasses(graph, closureNodeId, nodeId);
+        
+        // Verify the change took effect
+        newCanonicalId = findORoot(graph, nodeId);
+        if (tracing) {
+            println("Created closure node with ID: " + i2s(closureNodeId));
+            println("New canonical ID for original node: " + i2s(newCanonicalId));
+            
+            // Check what we get when extracting this node
+            extr = ograph2Sexpr(graph, newCanonicalId);
+            println("Extracted form after merge: " + prettySexpr(extr));
+        }
+        
+        Pair(environment, closureNodeId);
+    }
+}
+
+// Evaluate quasiquotation for a specific node in the graph
+evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // Check for invalid node ID
+    switch (lookupOClass(graph, nodeId)) {
+        None(): {
+            if (tracing) println("Node ID " + i2s(nodeId) + " not found");
+            Pair(environment, nodeId); // Return unchanged
+        }
+        Some(oclass): {
+            node = oclass.node;
+            
+            if (tracing) println("Evaluating node " + i2s(nodeId) + " with op: " + node.op);
+            
+            // Check for function call that can be directly evaluated
+            isFunctionCall = checkForDirectFunctionCall(graph, nodeId, node, environment, evaluator, tracing);
+            
+            if (isFunctionCall.first) {
+                // We identified and evaluated a function call, return the result
+                isFunctionCall.second;
+            } else {
+                // Not a direct function call, proceed with normal evaluation
+                if (!isSchemeNode(node)) {
+                    if (tracing) println("Not a Scheme node, processing children only");
+                    processNodeChildren(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else if (isSpecialFormNode(graph, nodeId, "if")) {
+                    if (tracing) println("Found if expression, evaluating condition and branches");
+                    evaluateIfNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else if (isSpecialFormNode(graph, nodeId, "and")) {
+                    if (tracing) println("Found and expression, evaluating with short-circuit");
+                    evaluateAndNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else if (isSpecialFormNode(graph, nodeId, "or")) {
+                    if (tracing) println("Found or expression, evaluating with short-circuit");
+                    evaluateOrNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else if (isSpecialFormNode(graph, nodeId, "begin")) {
+                    if (tracing) println("Found begin expression, evaluating expressions in sequence");
+                    evaluateBeginNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else if (isSpecialFormNode(graph, nodeId, "unquote")) {
+                    // Unquote has 1 child: the expression to evaluate
+                    if (length(node.children) > 0) {
+                        if (tracing) println("Found unquote, evaluating child");
+                        childId = node.children[0];
+                        childSexpr = ograph2Sexpr(graph, childId);
+                        newEnvironment = evaluator(environment, childSexpr);
+                        result = newEnvironment.value;
+                        resultId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                        mergeOClasses(graph, resultId, nodeId);
+                        if (tracing) println("Evaluated unquote, result: " + prettySexpr(result));
+                        Pair(newEnvironment, resultId);
+                    } else {
+                        if (tracing) println("Unquote node has no children");
+                        Pair(environment, nodeId);
+                    }
+                } else if (isSpecialFormNode(graph, nodeId, "unquote-splicing")) {
+                    if (tracing) println("Found unquote-splicing, this should be handled by parent node");
+                    Pair(environment, nodeId);
+                } else if (isSpecialFormNode(graph, nodeId, "let")) {
+                    if (tracing) println("Found let expression, processing with local bindings");
+                    evaluateLetNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else if (isSpecialFormNode(graph, nodeId, "define")) {
+                    if (tracing) println("Found define, processing");
+                    evaluateDefineNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else if (isSpecialFormNode(graph, nodeId, "lambda")) {
+                    if (tracing) println("Found lambda, creating closure");
+                    evaluateLambdaNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else if (node.op == "Identifier") {
+                    evaluateIdentifierNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else if (isOperatorNode(graph, node, environment)) {
+                    evaluateOperatorNode(graph, nodeId, node, environment, evaluator, tracing, mode);
+                } else {
+                    processNodeChildren(graph, nodeId, node, environment, evaluator, tracing, mode);
+                }
+            }
+        }
+    }
+}
+
+// Helper function to check for direct function calls that can be evaluated
+checkForDirectFunctionCall(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, 
+                           evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<bool, Pair<SExpEnv, int>> {
+    
+    // Check if this is a function call (List with first child as identifier in environment)
+    if (node.op == "List" && length(node.children) > 0) {
+        firstChildId = node.children[0];
+        
+        maybeFirstChild = lookupOClass(graph, firstChildId);
+        switch (maybeFirstChild) {
+            Some(firstChildClass): {
+                if (firstChildClass.node.op == "Identifier") {
+                    fnName = getNodeStringValue(firstChildClass.node, "");
+                    if (fnName != "" && containsKeyTree(environment.env, fnName)) {
+                        if (tracing) println("Found function call to '" + fnName + "', evaluating entire expression");
+                        
+                        // Extract and evaluate the entire expression
+                        wholeSexpr = ograph2Sexpr(graph, nodeId);
+                        if (tracing) println("Evaluating as S-expression: " + prettySexpr(wholeSexpr));
+                        
+                        evalResult = evaluator(environment, wholeSexpr);
+                        result = evalResult.value;
+                        
+                        if (tracing) println("Function call evaluated to: " + prettySexpr(result));
+                        
+                        // Convert result back to OGraph and make it canonical
+                        resultNodeId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                        mergeOClasses(graph, resultNodeId, nodeId);
+                        
+                        Pair(true, Pair(evalResult, resultNodeId));
+                    } else {
+                        Pair(false, Pair(environment, nodeId));
+                    }
+                } else {
+                    Pair(false, Pair(environment, nodeId));
+                }
+            }
+            None(): {
+                Pair(false, Pair(environment, nodeId));
+            }
+        }
+    } else {
+        Pair(false, Pair(environment, nodeId));
+    }
+}
+
+// Check if a node represents a Scheme expression that we can potentially evaluate
+isSchemeNode(node : ONode) -> bool {
+    // These node types are created by sexp2OGraphWithSubstitution and represent Scheme expressions
+    schemeNodeTypes = ["List", "SpecialForm", "Int", "Double", "String", "Bool", 
+                      "Identifier", "Constructor", "Operator", "Vector"];
+    
+    contains(schemeNodeTypes, node.op);
+}
+
+// Check if a node represents an operator (like +, -, *, /) or user-defined function that can be evaluated
+// Updated for cleaner logic, but without calling isFunctionCallNode directly since we need nodeId
+isOperatorNode(graph : OGraph, node : ONode, env : SExpEnv) -> bool {
+    // First check if it's a Scheme node at all
+    if (!isSchemeNode(node)) {
+        false;  // Not a Scheme node, can't be an operator
+    } else if (node.op == "List" && length(node.children) > 0) {
+        // For List nodes, the first child might be an operator or function
+        // Get the first child and check if it's an operator or identifier
+        firstChildId = node.children[0];
+        switch (lookupOClass(graph, firstChildId)) {
+            Some(childClass): {
+                childNode = childClass.node;
+                if (childNode.op == "Operator") {
+                    // It's an operator, check if it's in runtime environment
+                    opName = getNodeStringValue(childNode, "");
+                    containsKeyTree(env.runtime, opName);
+                } else if (childNode.op == "Identifier") {
+                    // It's an identifier, check if it's a function in user environment
+                    fnName = getNodeStringValue(childNode, "");
+                    containsKeyTree(env.env, fnName);
+                } else {
+                    false;
+                }
+            }
+            None(): false;
+        }
+    } else {
+        // Not a list with a function call structure
+        false;
+    }
+}
+
+// Helper function to process children recursively
+processChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : SExpEnv, 
+                           evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode, 
+                           areConstants : bool) -> Pair<Pair<SExpEnv, [int]>, bool> {
+    if (startIndex >= length(children)) {
+        // Done processing all children
+        Pair(Pair(environment, []), areConstants);
+    } else {
+        // Process current child
+        childId = children[startIndex];
+        result = evaluateQuasiquoteNode(graph, childId, environment, evaluator, tracing, mode);
+        newEnvironment = result.first;
+        processedChildId = result.second;
+        
+        // Check if child is a constant using our enhanced helper that handles nested constants
+        isConstant = isConstantNode(graph, processedChildId);
+        
+        // Process remaining children
+        remainingResult = processChildrenRecursively(graph, children, startIndex + 1, 
+                                                    newEnvironment, evaluator, tracing, mode, 
+                                                    areConstants && isConstant);
+        
+        // Combine results
+        remainingEnvironment = remainingResult.first.first;
+        remainingProcessedChildren = remainingResult.first.second;
+        allConstantsResult = remainingResult.second;
+        
+        // Return combined result
+        Pair(Pair(remainingEnvironment, concat([processedChildId], remainingProcessedChildren)), 
+             allConstantsResult);
+    }
+}
+
+// Helper function to process list children with special handling for unquote-splicing
+processListChildrenRecursively(graph : OGraph, children : [int], startIndex : int, environment : SExpEnv, 
+                              evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, [int]> {
+    if (startIndex >= length(children)) {
+        Pair(environment, []); // Done processing all children
+    } else {
+        childId = children[startIndex];
+        
+        // Check if this child is an unquote-splicing following the protocol
+        unquoteSplicingResult = switch (lookupOClass(graph, childId)) {
+            Some(childClass): {
+                if (isSpecialFormNode(graph, childId, "unquote-splicing")) {
+                    if (tracing) println("Found unquote-splicing at index " + i2s(startIndex));
+                    
+                    // Handle unquote-splicing - evaluate and splice the result
+                    // In the protocol, the child is the content
+                    if (length(childClass.node.children) > 0) {
+                        // Get actual expression to evaluate
+                        splicedChildId = childClass.node.children[0];
+                        splicedSexpr = ograph2Sexpr(graph, splicedChildId);
+                        
+                        // Evaluate the expression using the provided evaluator function
+                        newEnvironment = evaluator(environment, splicedSexpr);
+                        result = newEnvironment.value;
+                        
+                        // The result should be a list to splice
+                        switch (result) {
+                            SSList(items): {
+                                if (tracing) println("Splicing " + i2s(length(items)) + " items");
+                                
+                                // Process splice items recursively
+                                processSpliceItems(graph, items, 0, newEnvironment, makeTree());
+                            }
+                            default: {
+                                if (tracing) println("Warning: unquote-splicing result is not a list");
+                                // Add as a single item
+                                itemId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                                Pair(newEnvironment, [itemId]);
+                            }
+                        }
+                    } else {
+                        if (tracing) println("unquote-splicing has no children");
+                        // Just add the original child
+                        Pair(environment, [childId]);
+                    }
+                } else {
+                    // Regular child - evaluate normally
+                    result = evaluateQuasiquoteNode(graph, childId, environment, evaluator, tracing, mode);
+                    Pair(result.first, [result.second]);
+                }
+            }
+            None(): {
+                // Node not found - just add the original ID
+                Pair(environment, [childId]);
+            }
+        };
+        
+        // Process remaining children
+        remainingResult = processListChildrenRecursively(graph, children, startIndex + 1, 
+                                                      unquoteSplicingResult.first, evaluator, tracing, mode);
+        
+        // Combine results
+        remainingEnvironment = remainingResult.first;
+        remainingProcessedChildren = remainingResult.second;
+        
+        // Return combined result
+        Pair(remainingEnvironment, concat(unquoteSplicingResult.second, remainingProcessedChildren));
+    }
+}
+
+// Helper to recursively process splice items
+processSpliceItems(graph : OGraph, items : [Sexpr], startIndex : int, environment : SExpEnv, substitutions : Tree<string, int>) -> Pair<SExpEnv, [int]> {
+    if (startIndex >= length(items)) {
+        Pair(environment, []); // Done processing all items
+    } else {
+        // Convert current item to OGraph node
+        itemId = sexp2OGraphWithSubstitution(graph, items[startIndex], substitutions);
+        
+        // Process remaining items
+        remainingResult = processSpliceItems(graph, items, startIndex + 1, environment, substitutions);
+        
+        // Return combined result
+        Pair(remainingResult.first, concat([itemId], remainingResult.second));
+    }
+}
+
+// Evaluate function calls and operator nodes in the OGraph
+evaluateOperatorNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    if (tracing) println("Checking if node can be evaluated as a function call or operator");
+    
+    // Process all children
+    processResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, mode, true);
+    newEnvironment = processResult.first.first;
+    processedChildren = processResult.first.second;
+    
+    // Handle function calls in the form (func arg1 arg2) or operator calls (+ 1 2)
+    // For these, the node.op is "List" and the first child is an Operator or Identifier node
+    if (node.op == "List" && length(processedChildren) > 0) {
+        // First check if the first child is an operator or function identifier
+        maybeOpInfo = if (length(processedChildren) > 0) {
+            switch (lookupOClass(graph, processedChildren[0])) {
+                Some(opClass): {
+                    if (opClass.node.op == "Operator") {
+                        // It's a built-in operator
+                        opName = getNodeStringValue(opClass.node, "");
+                        if (containsKeyTree(environment.runtime, opName)) {
+                            Some(Pair("operator", opName));
+                        } else None();
+                    } else if (opClass.node.op == "Identifier") {
+                        // It's potentially a user-defined function
+                        identifierName = getNodeStringValue(opClass.node, "");
+                        if (identifierName != "" && containsKeyTree(environment.env, identifierName)) {
+                            if (tracing) println("Found identifier '" + identifierName + "' in environment");
+                            Some(Pair("function", identifierName));
+                        } else None();
+                    } else None();
+                }
+                None(): None();
+            }
+        } else None();
+        
+        // Only proceed if we found an operator or function name
+        switch (maybeOpInfo) {
+            Some(callableInfo): {
+                callableType = callableInfo.first;
+                callableName = callableInfo.second;
+                
+                // Check if all operands (not the operator/function) are processed
+                if (length(processedChildren) <= 1) {
+                    if (tracing) println("No arguments found for " + callableType + " '" + callableName + "'");
+                    createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
+                } else {
+                    // Get all actual arguments (skip the operator/function name in pos 0)
+                    argumentChildren = tailFrom(processedChildren, 1);
+                    
+                    // For user-defined functions, we don't require all arguments to be constants
+                    // For operators, we still check if all operands are constants
+                    shouldEvaluate = if (callableType == "operator") {
+                        // Traditional approach: only evaluate operator calls with constant arguments
+                        forall(argumentChildren, \childId -> isConstantNode(graph, childId));
+                    } else {
+                        // New behavior: we evaluate function calls even if arguments aren't constants
+                        true;
+                    };
+                    
+                    if (shouldEvaluate) {
+                        if (tracing) {
+                            if (callableType == "operator") {
+                                println("All operands for operator '" + callableName + "' are constants, evaluating");
+                            } else {
+                                println("Evaluating function call to '" + callableName + "' with " + i2s(length(argumentChildren)) + " arguments");
+                            }
+                        }
+                        
+                        // Convert arguments to Sexpr for evaluation
+                        argumentExprs = map(argumentChildren, \childId -> {
+                            ograph2Sexpr(graph, childId);
+                        });
+                        
+                        // Now we need to properly handle function calls to user-defined functions
+                        exprToEval = if (callableType == "operator") {
+                            // For operators: (+ 1 2) - nothing special
+                            SSList(concat([SSOperator(callableName)], argumentExprs));
+                        } else {
+                            // For user-defined functions: (multiply 6 7)
+                            // We need to create a variable node for the function name
+                            SSList(concat([SSVariable(callableName)], argumentExprs));
+                        };
+                        
+                        if (tracing) println("Evaluating complete expression: " + prettySexpr(exprToEval));
+                        
+                        // Evaluate the ENTIRE expression (not just the identifier)
+                        // This will apply the function to its arguments
+                        evalResult = evaluator(newEnvironment, exprToEval);
+                        result = evalResult.value;
+                        
+                        if (tracing) println("Evaluated to: " + prettySexpr(result));
+                        
+                        // Convert result back to OGraph node
+                        resultNodeId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                        
+                        // Make the result the canonical form by merging
+                        // Order is important - resultNodeId first makes it canonical
+                        mergeOClasses(graph, resultNodeId, nodeId);
+                        
+                        Pair(evalResult, resultNodeId);
+                    } else {
+                        if (tracing) {
+                            if (callableType == "operator") {
+                                println("Not all operands for " + callableName + " are constants, cannot fully evaluate");
+                            }
+                        }
+                        createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
+                    }
+                }
+            }
+            None(): {
+                // Check if this is a direct application of a lambda that's already been evaluated
+                // This handles cases like ((lambda (x) (* x 2)) 5)
+                if (length(processedChildren) > 0) {
+                    firstChildId = processedChildren[0];
+                    switch (lookupOClass(graph, firstChildId)) {
+                        Some(firstClass): {
+                            if (isSpecialFormNode(graph, firstChildId, "closure")) {
+                                // It's a closure!
+                                if (tracing) println("Found direct closure application");
+                                
+                                // Extract the entire function call as an S-expression
+                                completeSExpr = ograph2Sexpr(graph, nodeId);
+                                
+                                if (tracing) println("Evaluating closure application: " + prettySexpr(completeSExpr));
+                                
+                                // Evaluate the entire expression
+                                evalResult = evaluator(newEnvironment, completeSExpr);
+                                result = evalResult.value;
+                                
+                                if (tracing) println("Application evaluated to: " + prettySexpr(result));
+                                
+                                // Convert result back to OGraph node
+                                resultNodeId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                                
+                                // Make the result the canonical form
+                                mergeOClasses(graph, resultNodeId, nodeId);
+                                
+                                Pair(evalResult, resultNodeId);
+                            } else {
+                                // Not a closure
+                                if (tracing) println("Not a closure node");
+                                createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
+                            }
+                        }
+                        None(): {
+                            if (tracing) println("Could not find first child node");
+                            createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
+                        }
+                    }
+                } else {
+                    if (tracing) println("No children to process");
+                    createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
+                }
+            }
+        }
+    } else {
+        // Not a List node that could be an operator/function call
+        if (tracing) println("Not a List node that could be an operator/function call");
+        createAndMergeNewNode(graph, nodeId, node, processedChildren, newEnvironment);
+    }
+}
+
+// Helper to create a new node and merge it with the original
+createAndMergeNewNode(graph : OGraph, nodeId : int, node : ONode, processedChildren : [int], environment : SExpEnv) -> Pair<SExpEnv, int> {
+    // Create a new node with the processed children
+    newNodeId = insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
+    
+    // Merge with the original node - we keep the original node as canonical since we're not evaluating
+    mergeOClasses(graph, nodeId, newNodeId);
+    
+    Pair(environment, nodeId);
+}
+
+// Process children of a regular (non-special) node - implementing improvement #3
+processNodeChildren(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    if (tracing) println("Processing children of node " + i2s(nodeId) + " (" + node.op + ")");
+    
+    // Special handling for container nodes (List/Vector) that might contain unquote-splicing
+    if (node.op == "List" || node.op == "Vector") {
+        processContainer(graph, nodeId, node, node.op, environment, evaluator, tracing, mode);
+    } else {
+        // Process all children
+        childrenResult = processChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, mode, false);
+        newEnvironment = childrenResult.first.first;
+        processedChildren = childrenResult.first.second;
+        
+        // Check if children were modified (if not, return original node)
+        if (node.children == processedChildren) {
+            if (tracing) println("No changes to children, returning original node");
+            Pair(newEnvironment, nodeId);
+        } else {
+            // Create a new node with the processed children
+            if (tracing) println("Children were modified, creating new node");
+            newNodeId = insertONode(graph, ONode(node.op, processedChildren, node.belongsTo, node.value));
+            
+            // Merge with the original node - newNodeId should be canonical
+            mergeOClasses(graph, newNodeId, nodeId);
+            
+            Pair(newEnvironment, newNodeId);
+        }
+    }
+}
+
+// Process List and Vector nodes with consistent handling and bubbling up fully evaluated containers
+processContainer(graph : OGraph, nodeId : int, node : ONode, containerType : string, 
+                 environment : SExpEnv, evaluator : (SExpEnv, Sexpr) -> SExpEnv, 
+                 tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    if (tracing) println("Processing " + containerType + " node with " + i2s(length(node.children)) + " children");
+    
+    // Process container children (with special handling for unquote-splicing)
+    result = processListChildrenRecursively(graph, node.children, 0, environment, evaluator, tracing, mode);
+    newEnvironment = result.first;
+    processedChildren = result.second;
+    
+    // Check if children were modified
+    if (node.children == processedChildren) {
+        if (tracing) println("No changes to " + containerType + " node children, returning original");
+        Pair(newEnvironment, nodeId);
+    } else {
+        // Create a new container node with the processed children
+        if (tracing) println("Creating new " + containerType + " node with " + i2s(length(processedChildren)) + " children");
+        
+        // Use our new bubbling function to evaluate if all children are constants
+        newNodeId = evaluateBubbleContainer(graph, nodeId, node, processedChildren, environment, tracing);
+        
+        Pair(newEnvironment, newNodeId);
+    }
+}
+
+// Special handling for List nodes (now a wrapper around processContainer)
+processListNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // Just delegate to our more general container processor
+    processContainer(graph, nodeId, node, "List", environment, evaluator, tracing, mode);
+}
+
+// Helper to create a Sexpr from a node for evaluation
+createSexprFromNode(graph : OGraph, op : string, childIds : [int], env : SExpEnv) -> Sexpr {
+    // Convert all children to Sexpr
+    childExprs = map(childIds, \childId -> {
+        ograph2Sexpr(graph, childId);
+    });
+    
+    // Determine if it's an operator or function by checking the runtime environment
+    if (containsKeyTree(env.runtime, op)) {
+        // It's a built-in operator/function in the runtime
+        SSList(concat([SSOperator(op)], childExprs));
+    } else {
+        // For user-defined functions or anything else, create a function call
+        SSList(concat([SSVariable(op)], childExprs));
+    }
+}
+
+
+// Handle 'if' special form: (if condition then-expr else-expr)
+evaluateIfNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // if special form should have at least 2 children: (condition, then-expr [, else-expr])
+    if (length(node.children) < 2) {
+        if (tracing) println("If special form has too few children: " + i2s(length(node.children)));
+        Pair(environment, nodeId); // Return unchanged
+    } else {
+        // Get the condition expression (first child)
+        conditionNodeId = node.children[0];
+        
+        if (tracing) println("Evaluating if condition");
+        
+        // Evaluate the condition
+        conditionResult = evaluateQuasiquoteNode(graph, conditionNodeId, environment, evaluator, tracing, mode);
+        newEnvironment = conditionResult.first;
+        evaluatedConditionId = conditionResult.second;
+        
+        // Check if the condition evaluated to a concrete boolean value
+        switch (lookupOClass(graph, evaluatedConditionId)) {
+            Some(conditionClass): {
+                // Only proceed with branch selection if condition evaluated to a concrete boolean
+                if (conditionClass.node.op == "Bool") {
+                    // Extract the boolean value
+                    isTrue = getNodeBoolValue(conditionClass.node, false);
+                    
+                    if (tracing) println("If condition evaluated to concrete boolean: " + b2s(isTrue));
+                    
+                    // Based on condition, evaluate either the then-branch or else-branch
+                    if (isTrue) {
+                        // Condition is true, evaluate the 'then' expression
+                        thenNodeId = node.children[1];
+                        if (tracing) println("Evaluating 'then' branch");
+                        thenResult = evaluateQuasiquoteNode(graph, thenNodeId, newEnvironment, evaluator, tracing, mode);
+                        
+                        // Merge with the original node - thenResult should be canonical
+                        mergeOClasses(graph, thenResult.second, nodeId);
+                        
+                        // Return the updated environment and result node ID
+                        thenResult;
+                    } else if (length(node.children) > 2) {
+                        // Condition is false, evaluate the 'else' expression if it exists
+                        elseNodeId = node.children[2];
+                        if (tracing) println("Evaluating 'else' branch");
+                        elseResult = evaluateQuasiquoteNode(graph, elseNodeId, newEnvironment, evaluator, tracing, mode);
+                        
+                        // Merge with the original node - elseResult should be canonical
+                        mergeOClasses(graph, elseResult.second, nodeId);
+                        
+                        // Return the updated environment and result node ID
+                        elseResult;
+                    } else {
+                        // No else branch and condition is false, return an empty list
+                        if (tracing) println("Condition is false and no else branch");
+                        
+                        // Create an empty list node as the result
+                        emptyListId = insertONode(graph, ONode("List", [], node.belongsTo, node.value));
+                        
+                        // Merge with the original node - emptyListId should be canonical
+                        mergeOClasses(graph, emptyListId, nodeId);
+                        
+                        Pair(newEnvironment, emptyListId);
+                    }
+                } else {
+                    // Condition didn't evaluate to a concrete boolean - partial evaluation
+                    if (tracing) println("Condition didn't resolve to a concrete boolean, preserving if-expression structure");
+                    
+                    // Partially evaluate both then and else branches without selecting
+                    thenNodeId = node.children[1];
+                    if (tracing) println("Partially evaluating 'then' branch");
+                    thenResult = evaluateQuasiquoteNode(graph, thenNodeId, newEnvironment, evaluator, tracing, mode);
+                    evaluatedThenId = thenResult.second;
+                    // Update environment after then branch evaluation
+                    thenEnvironment = thenResult.first;
+                    
+                    // Evaluate else branch if it exists
+                    elseResult = if (length(node.children) > 2) {
+                        elseNodeId = node.children[2];
+                        if (tracing) println("Partially evaluating 'else' branch");
+                        evaluateQuasiquoteNode(graph, elseNodeId, thenEnvironment, evaluator, tracing, mode);
+                    } else {
+                        Pair(thenEnvironment, -1);
+                    };
+                    
+                    // Extract results from else evaluation
+                    evaluatedElseId = elseResult.second;
+                    finalEnvironment = elseResult.first;
+                    
+                    // Create a new if node with the evaluated parts
+                    // Construct the children array based on whether we have a valid else branch
+                    newChildren = if (length(node.children) > 2 && evaluatedElseId != -1) {
+                        [evaluatedConditionId, evaluatedThenId, evaluatedElseId];
+                    } else {
+                        [evaluatedConditionId, evaluatedThenId];
+                    }
+                    
+                    // Create the new if node (name is in the value field)
+                    newIfNodeId = insertONode(graph, ONode("SpecialForm", newChildren, node.belongsTo, node.value));
+                    
+                    // Merge with the original node - newIfNodeId should be canonical
+                    mergeOClasses(graph, newIfNodeId, nodeId);
+                    
+                    Pair(finalEnvironment, newIfNodeId);
+                }
+            }
+            None(): {
+                // Node not found, return unchanged
+                if (tracing) println("Condition node not found in graph");
+                Pair(newEnvironment, nodeId);
+            }
+        }
+    }
+}
+
+// Handle 'and' special form: (and expr1 expr2 ...)
+evaluateAndNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // and special form has 1 or more children (expressions)
+    if (length(node.children) == 0) {
+        if (tracing) println("And special form has no expressions");
+        
+        // Empty 'and' evaluates to true
+        trueNodeId = insertONode(graph, ONode("Bool", [], node.belongsTo, OrbitBool(true)));
+        mergeOClasses(graph, trueNodeId, nodeId);
+        
+        Pair(environment, trueNodeId);
+    } else {
+        // Process expressions one by one with short-circuit semantics
+        // Start from index 0
+        processAndExpressions(graph, node, node.children, 0, environment, evaluator, tracing, mode);
+    }
+}
+
+// Process 'and' expressions with short-circuit semantics
+processAndExpressions(graph : OGraph, originalNode : ONode, children : [int], currentIndex : int, 
+                     environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, 
+                     tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    if (currentIndex >= length(children)) {
+        // All expressions evaluated to true. Result is the value of the LAST expression.
+        if (tracing) println("All 'and' expressions evaluated to true");
+        
+        // The canonical ID of the last expression is the result
+        lastExprId = children[length(children) - 1];
+        canonicalLastId = findORoot(graph, lastExprId);
+        
+        // Merge the original node with the result
+        mergeOClasses(graph, canonicalLastId, findORoot(graph, originalNode.children[0])); // Merge with root
+        
+        Pair(environment, canonicalLastId);
+    } else {
+        // Evaluate current expression
+        exprNodeId = children[currentIndex];
+        if (tracing) println("Evaluating 'and' expression " + i2s(currentIndex));
+        
+        exprResult = evaluateQuasiquoteNode(graph, exprNodeId, environment, evaluator, tracing, mode);
+        newEnvironment = exprResult.first;
+        evaluatedExprId = exprResult.second;
+        
+        // Check if the evaluated expression is concretely false
+        isFalse = switch(lookupOClass(graph, evaluatedExprId)) {
+            Some(exprClass): exprClass.node.op == "Bool" && !getNodeBoolValue(exprClass.node, true);
+            None(): false; // If node lookup fails, assume not false
+        };
+        
+        if (tracing) println("And expression evaluated to node " + i2s(evaluatedExprId) + ", isFalse: " + b2s(isFalse));
+        
+        if (isFalse) {
+            // Short-circuit: expression is false, return false immediately
+            if (tracing) println("Short-circuit 'and': found false expression");
+            
+            falseNodeId = insertONode(graph, ONode("Bool", [], originalNode.belongsTo, OrbitBool(false)));
+            mergeOClasses(graph, falseNodeId, findORoot(graph, originalNode.children[0])); // Merge with root
+            
+            Pair(newEnvironment, falseNodeId);
+        } else {
+            // Expression is true or unknown, evaluate next one
+            processAndExpressions(graph, originalNode, children, currentIndex + 1, 
+                                 newEnvironment, evaluator, tracing, mode);
+        }
+    }
+}
+
+// Handle 'or' special form: (or expr1 expr2 ...)
+evaluateOrNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // or special form has 1 or more children (expressions)
+    if (length(node.children) == 0) {
+        if (tracing) println("Or special form has no expressions");
+        
+        // Empty 'or' evaluates to false
+        falseNodeId = insertONode(graph, ONode("Bool", [], node.belongsTo, OrbitBool(false)));
+        mergeOClasses(graph, falseNodeId, nodeId);
+        
+        Pair(environment, falseNodeId);
+    } else {
+        // Process expressions one by one with short-circuit semantics
+        // Start from index 0
+        processOrExpressions(graph, node, node.children, 0, environment, evaluator, tracing, mode);
+    }
+}
+
+// Process 'or' expressions with short-circuit semantics
+processOrExpressions(graph : OGraph, originalNode : ONode, children : [int], currentIndex : int, 
+                    environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, 
+                    tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    if (currentIndex >= length(children)) {
+        // All expressions evaluated to false. Result is the value of the LAST expression.
+        if (tracing) println("All 'or' expressions evaluated to false");
+        
+        lastExprId = children[length(children) - 1];
+        canonicalLastId = findORoot(graph, lastExprId);
+        
+        mergeOClasses(graph, canonicalLastId, findORoot(graph, originalNode.children[0])); // Merge with root
+        
+        Pair(environment, canonicalLastId);
+    } else {
+        // Evaluate current expression
+        exprNodeId = children[currentIndex];
+        if (tracing) println("Evaluating 'or' expression " + i2s(currentIndex));
+        
+        exprResult = evaluateQuasiquoteNode(graph, exprNodeId, environment, evaluator, tracing, mode);
+        newEnvironment = exprResult.first;
+        evaluatedExprId = exprResult.second;
+        
+        // Check if the evaluated expression is concretely true
+        isTrue = switch(lookupOClass(graph, evaluatedExprId)) {
+            Some(exprClass): exprClass.node.op == "Bool" && getNodeBoolValue(exprClass.node, false);
+            None(): false;
+        };
+        
+        if (tracing) println("Or expression evaluated to node " + i2s(evaluatedExprId) + ", isTrue: " + b2s(isTrue));
+        
+        if (isTrue) {
+            // Short-circuit: expression is true, return its value immediately
+            if (tracing) println("Short-circuit 'or': found true expression");
+            
+            // The result is the canonical ID of the expression that evaluated to true
+            canonicalTrueId = findORoot(graph, evaluatedExprId);
+            mergeOClasses(graph, canonicalTrueId, findORoot(graph, originalNode.children[0])); // Merge with root
+            
+            Pair(newEnvironment, canonicalTrueId);
+        } else {
+            // Expression is false or unknown, evaluate next one
+            processOrExpressions(graph, originalNode, children, currentIndex + 1, 
+                                newEnvironment, evaluator, tracing, mode);
+        }
+    }
+}
+
+// Handle 'begin' special form: (begin expr1 expr2 ...)
+evaluateBeginNode(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    // begin special form has 1 or more children (expressions)
+    if (length(node.children) == 0) {
+        if (tracing) println("Begin special form has no expressions");
+        
+        // Empty begin returns empty list
+        emptyListId = insertONode(graph, ONode("List", [], node.belongsTo, node.value));
+        mergeOClasses(graph, emptyListId, nodeId);
+        
+        Pair(environment, emptyListId);
+    } else {
+        // Process expressions in sequence, returning the value of the last one
+        processBeginExpressions(graph, node, node.children, 0, environment, evaluator, tracing, mode);
+    }
+}
+
+// Process 'begin' expressions in sequence
+processBeginExpressions(graph : OGraph, originalNode : ONode, children : [int], currentIndex : int, 
+                       environment : SExpEnv, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, 
+                       tracing : bool, mode : EvalMode) -> Pair<SExpEnv, int> {
+    if (currentIndex >= length(children)) {
+        // Should not happen due to check in evaluateBeginNode
+        if (tracing) println("Error: No begin expressions evaluated");
+        emptyListId = insertONode(graph, ONode("List", [], originalNode.belongsTo, originalNode.value));
+        mergeOClasses(graph, emptyListId, findORoot(graph, originalNode.children[0]));
+        Pair(environment, emptyListId);
+    } else {
+        // Evaluate current expression
+        exprNodeId = children[currentIndex];
+        if (tracing) println("Evaluating 'begin' expression " + i2s(currentIndex));
+        
+        exprResult = evaluateQuasiquoteNode(graph, exprNodeId, environment, evaluator, tracing, mode);
+        newEnvironment = exprResult.first;
+        evaluatedExprId = exprResult.second;
+        
+        // If this is the last expression, return its value
+        if (currentIndex == length(children) - 1) {
+            if (tracing) println("Last begin expression, returning its value (node ID: " + i2s(evaluatedExprId) + ")");
+            
+            // For the last expression, merge its result with the original begin node
+            mergeOClasses(graph, evaluatedExprId, findORoot(graph, originalNode.children[0]));
+            
+            Pair(newEnvironment, evaluatedExprId);
+        } else {
+            // Not the last expression, continue to the next one
+            processBeginExpressions(graph, originalNode, children, currentIndex + 1, 
+                                   newEnvironment, evaluator, tracing, mode);
+        }
+    }
+}

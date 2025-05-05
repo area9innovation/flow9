@@ -164,10 +164,28 @@ If a pattern doesn't have a condition (not a list with 3 elements), it's treated
 Pattern matching supports:
 - Variable binding (like `x` which binds to a value)
 - Wildcard patterns (`_` which matches anything without binding)
-- List patterns (like `(x y z)` which matches a list of exactly 3 items)
 - Literal patterns (like numbers, strings, booleans that match only equal values)
 - Constructor patterns (`ConstructorName`)
 - Conditional patterns as described above
+- List patterns (like `(x y z)` which matches a list of exactly 3 items)
+  - **Rest patterns:** Within a list pattern, you can use the special variable name `...` followed by another variable name (e.g., `varName`) as the *last two elements*. This will match any remaining elements in the list and bind them as a list to `varName`.
+
+```scheme
+;; Example of rest pattern
+(define process-list
+	(lambda (lst)
+		(match lst
+			;; Match list starting with '+', capture first arg and the rest
+			((+ first ... others)
+			 (quasiquote (sum (unquote first) (unquote-splicing others))))
+			;; Match list starting with '*', capture all arguments after '*'
+			((* ... args)
+			 (quasiquote (product (unquote-splicing args))))
+			;; Match any list and capture all elements
+			((... all)
+			 (quasiquote (elements (unquote-splicing all))))
+			(other other))))
+```
 
 ### Conditional Pattern Matching
 
@@ -296,6 +314,66 @@ The language includes an extensive set of built-in functions imported from the O
 - Command line: `getCommandLineArgs` (returns command-line arguments as a list)
 - Unique IDs: `uid` (generates unique IDs with prefixes)
 
+## Integration with OGraph
+
+S-expressions can be integrated with OGraph (Orbit Graph) data structures for symbolic computation and optimization. The two main operations are:
+
+1. Converting S-expressions to OGraph nodes (`sexp2OGraphWithSubstitution`)
+2. Converting OGraph nodes back to S-expressions (`ograph2Sexpr`)
+
+### Adding S-expressions to OGraph
+
+The protocol for adding an S-expression to an OGraph is defined in `sexp2OGraphWithSubstitution`:
+
+```flow
+sexp2OGraphWithSubstitution(graph : OGraph, expr : Sexpr, varToEclass : Tree<string, int>) -> int
+```
+
+This function:
+- Takes an OGraph to add the expression to
+- Takes an S-expression to convert
+- Takes a mapping from variable names to existing eclass IDs for substitution
+- Returns the eclass ID of the added expression
+
+#### Type Annotations
+
+The function handles type annotations in the form `(: expr Domain)` by:
+1. Processing the expression and getting its eclass ID
+2. Processing the domain and getting its eclass ID
+3. Adding the domain to the "belongs to" field of the expression's node using `addBelongsToONode`
+
+#### S-expression Type Mapping
+
+Different S-expression types are mapped to different OGraph node types:
+
+| S-expression Type | OGraph Node Type | Notes |
+|-------------------|------------------|-------|
+| SSList (general)  | "List"           | Each child is processed recursively |
+| SSList with ":"  | Special handling | Processed as type annotation |
+| SSVariable        | "Identifier"     | May be substituted based on varToEclass |
+| SSConstructor     | "Constructor"    | Value stored as string |
+| SSOperator        | "Operator"       | Value stored as string |
+| SSInt             | "Int"            | Value stored as OrbitInt |
+| SSDouble          | "Double"         | Value stored as OrbitDouble |
+| SSString          | "String"         | Value stored as OrbitString |
+| SSBool            | "Bool"           | Value stored as OrbitBool |
+| SSVector          | "Vector"         | Each child is processed recursively |
+| SSSpecialForm     | "SpecialForm"    | Form name stored directly in node's value field (as OrbitString) |
+
+### Extracting S-expressions from OGraph
+
+To convert an OGraph node back to an S-expression, use:
+
+```flow
+ograph2Sexpr(graph : OGraph, nodeId : int) -> Sexpr
+```
+
+Or to extract from a registered OGraph:
+
+```flow
+extractOGraphSexpr(graphName : string, nodeId : int, tracing : bool) -> Sexpr
+```
+
 ## Architecture and Implementation
 
 This interpreter is built using Flow9 and follows functional programming principles.
@@ -422,3 +500,73 @@ To add a new *built-in* function (implemented in Flow9):
 2. Add a `Pair` containing the function's SEXP name and a `RuntimeFn` record (specifying arity and the implementation function) to the `functionPairs` list within `getRuntimeFunctions()` in `sexpr_stdlib.flow`.
 3. Add the function name to `addStandardFns` if it should be directly available in the global environment.
 4. The centralized arity checking (`invokeRuntimeFn`) will be applied automatically.
+
+## OGraph Quasiquote Implementation Roadmap
+
+Our current `evaluateOGraphQuasiquote` implementation in `ograph_sexpr_quasi.flow` only provides a partial implementation of quasiquotation. The current features supported are:
+
+- `(unquote ...)` evaluation
+- Constant sub-expression folding in operator calls
+- Basic (non-functional) stubs for `let` and `define`
+- Simple identifier lookups in the existing environment
+
+The following is a structured plan to implement the remaining features needed for full quasiquotation support in the OGraph representation:
+
+### 1. Quasiquote Proper
+- [ ] Implement top-level `(quasiquote ...)` detection
+- [ ] Create a quasiquote depth tracker that increments/decrements appropriately
+- [ ] Only evaluate unquotes at the correct depth (depth=1)
+
+### 2. Unquote-Splicing
+- [ ] Complete the implementation of `(unquote-splicing ...)`
+- [ ] Correctly splice evaluated lists into parent lists/vectors
+- [ ] Handle nested splicing operations
+
+### 3. Quote
+- [ ] Implement `(quote ...)` to prevent evaluation of its contents
+- [ ] Preserve quoted expressions as literal syntax
+
+### 4. Control Flow Special Forms
+- [✅] Implement `evaluateIfNode` with proper condition evaluation and branch selection
+- [✅] Implement `evaluateAndNode` with short-circuit semantics
+- [✅] Implement `evaluateOrNode` with short-circuit semantics
+- [✅] Implement `evaluateBeginNode` to evaluate expressions in sequence
+
+### 5. Local Bindings
+- [ ] Update `evaluateLetNode` to properly extend the environment
+- [ ] Implement `let*` with sequential bindings
+- [ ] Implement `letrec` with mutually recursive bindings
+- [ ] Fix `evaluateDefineNode` to actually update the environment
+
+### 6. Lambda & Closures
+- [✅] Preserve lambda syntax inside quasiquote
+- [ ] Properly handle nested unquotes within lambda bodies
+- [✅] Support closure creation and variable capture
+
+### 7. Pattern Matching
+- [ ] Implement `evaluateMatchNode` to call the real matcher
+- [ ] Convert match expressions to/from Sexpr for evaluation
+- [ ] Handle pattern evaluation and condition testing
+
+### 8. Import & Eval
+- [ ] Implement `evaluateImportNode` to load external files
+- [ ] Implement `evaluateEvalNode` for runtime evaluation
+- [ ] Properly convert between OGraph and Sexpr representations
+
+### 9. Type Annotations
+- [ ] Handle `(: expr Domain)` syntax
+- [ ] Evaluate both the expression and domain
+- [ ] Set up proper `belongsTo` relationships in the OGraph
+
+### 10. User-Defined Functions
+- [✅] Allow evaluation of identifiers that resolve to closures
+- [✅] Support function application of user-defined functions
+- [✅] Handle argument evaluation and environment extension
+
+### 11. Testing & Validation
+- [ ] Create test cases for each special form
+- [ ] Validate against standard Sexpr quasiquote implementation
+- [ ] Add tracing support for debugging complex cases
+- [ ] Document known limitations and edge cases
+
+Implementing these features will provide full quasiquotation capabilities in the OGraph representation, matching the semantics of our standalone S-expression evaluator. Each task should be implemented incrementally, with testing between steps to ensure correct behavior.

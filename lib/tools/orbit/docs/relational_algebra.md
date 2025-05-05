@@ -91,21 +91,11 @@ let relationalAlgebraRules = quote(
 	select(Condition, crossProduct(R, S)) <=> join(Condition, R, S);
 );
 
-// Example Cost Function (Conceptual, Logical Level)
-fn logicalQueryCost(plan: ast) -> double = (
-	plan is (
-		select(_, R) => 1.0 + logicalQueryCost(R); // Simplified cost
-		project(_, R) => 1.0 + logicalQueryCost(R);
-		join(_, R, S) => 10.0 + logicalQueryCost(R) + logicalQueryCost(S); // Joins are expensive
-		crossProduct(R, S) => 100.0 + logicalQueryCost(R) + logicalQueryCost(S); // Very expensive
-		tableName => 5.0; // Base cost for accessing table
-		_ => 1.0;
-	)
-);
 
 // Using the orbit function for logical optimization
+// Extraction relies on canonical forms, not an explicit cost function here.
 fn optimizeLogicalQuery(queryPlan: ast) -> ast = (
-	orbit(relationalAlgebraRules, logicalQueryCost, queryPlan)
+	orbit(relationalAlgebraRules, queryPlan)
 );
 ```
 
@@ -209,7 +199,7 @@ let physicalOptimizationRules = quote(
 *   The O-Graph can hold multiple competing physical plan fragments for the same logical operation.
 *   Saturation explores various physical implementations and their combinations by applying both logical-to-physical and physical-to-physical rules.
 *   The cost function becomes critical, evaluating the estimated cost attached via domain annotations (`:Cost(...)`) to each physical node.
-*   `extractOptimal` selects the physical plan tree with the lowest overall estimated cost from the saturated graph.
+*   Extraction uses the canonical form representative, guided by domain annotations.
 
 ### 4.6 Combining Levels
 
@@ -303,7 +293,7 @@ let profileAwareRules = quote(
 );
 ```
 
-This allows the O-Graph to contain multiple specialized plans optimized for different data characteristics or query patterns. The cost function, now profile-aware, selects the best plan for the specific context during extraction.
+This allows the O-Graph to contain multiple specialized plans optimized for different data characteristics or query patterns. Profile data may influence which canonical form is selected as the representative for an e-class, but extraction itself follows the canonical representative.
 
 ## 7. Conclusion
 

@@ -4,7 +4,7 @@
 // AsciiMath-inspired grammar for Orbit mathematical notation
 
 // Main math expression grammar with precedence levels
-math_expr = 
+math_expr =
 	math_expr ";" ws math_expr "" Sequence/2
 	// Rewriting patterns
 	|> math_expr ( ("=>" | "⇒") ws <math_expr ("if" ws math_expr | @true Bool/1) @true Rule/4
@@ -32,14 +32,14 @@ math_expr =
 
 	|> // Element of relation
 	math_expr (("in" | "∈") ws math_expr ElementOf/2)*
-	
+
 	|> // Logical OR
 	math_expr (("||" | "∨") ws math_expr LogicalOr/2)*
 
 	|> // Logical AND
 	math_expr (("&&" | "∧") ws math_expr LogicalAnd/2)*
-	
-	|> // Equality and comparison
+
+	|> // Equality, comparison, and asymptotic relations
 	math_expr (
 		("==" | "=") ws math_expr Equals/2
 		| "!=" ws math_expr NotEquals/2
@@ -47,50 +47,55 @@ math_expr =
 		| "<" ws math_expr LessThan/2
 		| (">=" | "≥") ws math_expr GreaterEquals/2
 		| ">" ws math_expr GreaterThan/2
-	)* 
-	
-	|> // Set operations
+		| "≲" ws math_expr ApproxLessEquals/2
+		| "∼" ws math_expr ApproxEquals/2
+	)*
+
+	|> // Set operations (Union, Intersection, Difference)
 	math_expr (
 		("union" kwsep | "∪") ws math_expr Union/2
 		| ("intersect" kwsep | "∩") ws math_expr Intersection/2
+		| '\' ws math_expr SetDifference/2      // NEW: Set Difference
 	)*
-	
+
 	|> math_expr (("->" | "→") ws math_expr FunctionType/2)*
-	
+
 	|> // Addition and subtraction
 	math_expr (
-		"+" ws math_expr Add/2 
+		"+" ws math_expr Add/2
 		| "-" ws math_expr Subtract/2
 	)*
-	
-	|> // Multiplication and division
+
+	|> // Multiplication, division, group/tensor products, composition, action
 	math_expr (
-		("*" | "·") ws math_expr Multiply/2 
+		("*" | "·") ws math_expr Multiply/2
 		| "/" ws math_expr Divide/2
 		| "%" ws math_expr Modulo/2
 		| "×" ws math_expr DirectProduct/2   // Direct product of groups
 		| "⋊" ws math_expr RightSemiDirectProduct/2  // Right semi-direct product
 		| "⋉" ws math_expr LeftSemiDirectProduct/2   // Left semi-direct product
-		| "∘" ws math_expr Compose/2  // Function composition
-		| "⊗" ws math_expr TensorProduct/2  // Tensor product
+		| "∘" ws math_expr Compose/2          // Function composition
+		| "⊗" ws math_expr TensorProduct/2     // Tensor product
+		| "•" ws math_expr GroupAction/2        // Group Action
 	)*
-	
-	|> // Exponentiation
+
+	|> // Exponentiation (Right associative)
 	math_expr (
 		"^" ws <math_expr Exponent/2
 		| superscript Superscript/2
 	)*
-	
+
 	|> // Unary operators
 	(
 		"-" ws <math_expr Negate/1
 		| ("!" | "¬") ws <math_expr LogicalNot/1
-		| "∫" ws <math_expr Integral/1  // Integral
-		| "∑" ws <math_expr Summation/1  // Summation
-		| "∇" ws <math_expr Gradient/1  // Gradient (nabla)
-		| "d/d" id <math_expr Derivative/2  // Derivative
+		| "∫" ws <math_expr Integral/1          // Integral (TODO: Improve)
+		| "∑" ws <math_expr Summation/1         // Summation (TODO: Improve)
+		| "∇" ws <math_expr Gradient/1          // Gradient (nabla)
+		| "d/d" id <math_expr Derivative/2       // Derivative
 		| "∂/∂" id /*subscript*/ <math_expr PartialDerivative/2 // Partial derivative
-		| "|" ws math_expr "|" ws GroupOrder/1  // Order of a group G (|G|)
+		| "|" ws math_expr "|" ws GroupOrder/1   // Order of a group G (|G|)
+		| "‖" ws math_expr "‖" ws Norm/1         
 	)
 
 	|> // Function calls, index access
@@ -102,31 +107,33 @@ math_expr =
 			| "is" kwsep paren Match/2
 		)*
 
-	|>
+	|> // Annotations and Subscripts/Superscripts
 		math_expr (
 			subscript Subscript/2
 			| ":" ws math_expr TypeAnnotation/2
 			| "!:" ws math_expr NotTypeAnnotation/2
 			| "[" ws math_expr ":=" ws math_expr "]" ws TypeSubstitution/3
 		)*
-	|> (
-		$double ws @s2d Double/1 
+	|> ( // Primary expressions
+		$double ws @s2d Double/1
 		| $signed_int ws @s2i Int/1
 		| string @unescape String/1
 		| "true" kwsep @true Bool/1
 		| "false" kwsep @false Bool/1
 		| "{" ws @array<math_expr ","> "|" ws math_expr "}" ws SetComprehension/2  // Set comprehension
 		| "{" ws @array<math_expr ","> "}" ws SetLiteral/1  // Set literal
+		| "⟨" ws @array<math_expr ","> "⟩" ws Ideal/1       // Ideal Notation
 		| "[" ws @array<math_expr ","> "]" ws Array/1
 		| "∀" ws @array<math_expr ","> Forall/1  // Universal quantifier
 		| "∃" ws @array<math_expr ","> Exists/1  // Existential quantifier
-		| "import" kwsep path Import/1  // Import expression
+		| "import" kwsep path Import/1           // Import expression
 		| paren
-		| variable_atom Identifier/1   // Variable starts with lowercase
-		| constructor_atom UId/1  // Constructor starts with uppercase
+		| variable_atom Identifier/1             // Variable starts with lowercase
+		| constructor_atom UId/1                 // Constructor starts with uppercase
 		| $'?'+ ws TypeVar/1
 		| "`" ws $operator "`" ws OperatorSymbol/1
 		| ('…' | "...") ws Ellipsis/0
+		| "∅" ws EmptySet/0                      
 	);
 
 // Variable atoms (start with lowercase)
@@ -145,16 +152,16 @@ lowercase = 'a'-'z' | "_" | greek_letter_lower;
 atom_rest = 'a'-'z' | 'A'-'Z' | '0'-'9' | "_" | "'" | greek_letter_lower | greek_letter_upper;
 
 // Greek uppercase letters
-greek_letter_upper = 
-	'Α' | 'Β' | 'Γ' | 'Δ' | 'Ε' | 'Ζ' | 'Η' | 'Θ' | 'Ι' | 'Κ' | 'Λ' | 'Μ' | 
+greek_letter_upper =
+	'Α' | 'Β' | 'Γ' | 'Δ' | 'Ε' | 'Ζ' | 'Η' | 'Θ' | 'Ι' | 'Κ' | 'Λ' | 'Μ' |
 	'Ν' | 'Ξ' | 'Ο' | 'Π' | 'Ρ' | 'Σ' | 'Τ' | 'Υ' | 'Φ' | 'Χ' | 'Ψ' | 'Ω' |
 	// Math domains as uppercase symbols
 	'ℤ' | 'ℚ' | 'ℝ' | 'ℂ' | 'ℕ';
 
 // Greek lowercase letters
-greek_letter_lower = 
-	'α' | 'β' | 'γ' | 'δ' | 'ε' | 'ζ' | 'η' | 'θ' | 'ι' | 'κ' | 'λ' | 'μ' | 
-	'ν' | 'ξ' | 'ο' | 'π' | 'ρ' | 'σ' | 'τ' | 'υ' | 'φ' | 'χ' | 'ψ' | 'ω' | 'ς' | 
+greek_letter_lower =
+	'α' | 'β' | 'γ' | 'δ' | 'ε' | 'ζ' | 'η' | 'θ' | 'ι' | 'κ' | 'λ' | 'μ' |
+	'ν' | 'ξ' | 'ο' | 'π' | 'ρ' | 'σ' | 'τ' | 'υ' | 'φ' | 'χ' | 'ψ' | 'ω' | 'ς' |
 	'∇'; // nabla is lowercase
 
 paren = "(" ws math_expr optsemi ")" ws;
@@ -162,13 +169,14 @@ paren = "(" ws math_expr optsemi ")" ws;
 // Path format for imports (e.g., path/to/file)
 path = $((bid ("/" bid)*)) ws;
 
-operator =
-	"+" | "-" | "*" | "·" | "/" | "%" | "×" | "⋊" | "⋉" | "∘" | "^" | "⊗" |
+operator = 
+	"+" | "-" | "*" | "·" | "/" | "%" | "×" | "⋊" | "⋉" | "∘" | "^" | "⊗" | "•" | 
 	"&&" | "∧" | "||" | "∨" | "!" | "¬" |
-	"==" | "=" | "!=" | "<" | ">" | "<=" | "≤" | ">=" | "≥" |
-	"⊂" | "c=" | "∈" | "in" | "∪" | "∩" | "⊲" | "≅" |
+	"==" | "=" | "!=" | "<" | ">" | "<=" | "≤" | ">=" | "≥" | "≲" | "∼" | 
+	"⊂" | "c=" | "∈" | "in" | "∪" | "∩" | 
+	"⊲" | "≅" |
 	"→" | "->" | ":" | "!:" | "⇒" | "=>" | "⇔" | "<=>" | "⊢" | "|-" |
-	";" | "." | "[]" | "∫" | "∑" | "∂" | "|" | "φ" | '\' | "λ"
+	";" | "." | "[]" | "∫" | "∑" | "∂" | "|" | "‖" | "φ" | '\' | "λ" | "⟨" | "⟩" 
 	;
 
 // Environment bindings for closures
@@ -188,7 +196,7 @@ subscript = $("₋"? ("₀" | "₁" | "₂" | "₃" | "₄" | "₅" | "₆" | "�
 // "," | "₊" | "₋" | "₌" | "₍" | "₎" | "ₐ" | "ₑ" | "ₒ" | "ₓ" | "ₔ" | "ₕ" | "ₖ" | "ₗ" | "ₘ" | "ₙ" | "ₚ" | "ₛ" | "ₜ"
 
 // Superscripts for variables (e.g., x², f⁻¹)
-superscript = $("⁻"? ("¹" | "²" | "³" | "⁴" | "⁵" | "⁶" | "⁷" | "⁸" | "⁹" | "⁰")+);
+superscript = $("⁻"? ("¹" | "²" | "³" | "⁴" | "⁵" | "⁶" | "⁷" | "⁸" | "⁹" | "⁰")+ | "ᵀ"); // Allow just ᵀ
  // "⁺" | "⁻" | "⁼" | "⁽" | "⁾" |  "ⁿ"
 
 optsemi = (";" ws)?;
@@ -209,6 +217,9 @@ optsemi = (";" ws)?;
 @bracket<"(" ")">
 @bracket<"[" "]">
 @bracket<"{" "}">
+@bracket<"⟨" "⟩"> 
+@bracket<"|" "|">
+@bracket<"‖" "‖">
 
 // Comments
 @linecomment<"//">

@@ -8,12 +8,9 @@ This document provides a comprehensive set of rewriting rules for common symmetr
 
 Canonical forms provide tremendous practical benefits in computational systems:
 
-- **Storage Efficiency**: By representing equivalent expressions with a single canonical form, memory usage can be dramatically reduced. For example, the expression `a + b + c` has 6 equivalent forms due to commutativity, but only needs to be stored once in canonical form.
-
-- **Computational Efficiency**: Pattern matching on canonical forms is exponentially faster. Without canonicalization, systems would need to check all equivalent variations of a pattern - with n terms under symmetric group Sₙ, that's n! possibilities!
-
+- **Storage Efficiency**: By representing equivalent expressions with a single canonical form, memory usage can be dramatically reduced. For example, the expression `a + b + c` has 6 equivalent forms due to commutativity and associativity if represented as nested binary operations. Using an n-ary representation `(+ a b c)` and sorting the arguments (`(+ a b c)` assuming `a<b<c`) collapses all equivalent forms to one.
+- **Computational Efficiency**: Pattern matching on canonical forms is exponentially faster. Without canonicalization, systems would need to check all equivalent variations of a pattern. For n terms under `Sₙ` symmetry, direct canonicalization (sorting) is `O(n log n)` compared to potentially exploring `O(n!)` permutations.
 - **Optimization Opportunities**: Identifying algebraic patterns becomes much easier with canonical forms, enabling advanced optimizations like algebraic simplification and automatic parallelization.
-
 - **Consistent Representation**: Canonical forms ensure that the same mathematical expression always has the same representation, which is critical for caching, memoization, and equality testing.
 
 ## Notation
@@ -53,7 +50,7 @@ This document uses the following notation for groups, operators, and relations:
 - **⊂** or **c=**: Subset relation (indicates domain hierarchy)
 - **eval()**: Used to evaluate expressions on the right-hand side during rewriting
 
-Throughout this document, rewrite rules are presented in a pattern-matching style where the left side of => describes a pattern to match, and the right side describes the transformation to apply. Conditions after "if" specify when the rule applies.
+Throughout this document, rewrite rules are presented in a pattern-matching style where the left side of => describes a pattern to match, and the right side describes the transformation to apply. A/C operations like `+`, `*`, `∧`, `∨` are often represented using n-ary S-expression syntax like `` `+`(a, b, c) `` to reflect their internal handling.
 
 ### Domain Annotation Syntax
 
@@ -399,21 +396,18 @@ This general pattern applies to cyclic groups (Cₙ) and the rotation subgroup o
 
 #### Symmetric Group (Sₙ)
 
-```
-// S₂ canonicalization (commutative operation)
-(a + b) : S₂ => a + b if a <= b;
-(a + b) : S₂ => b + a if b < a;
+Canonicalization for operations annotated with `Sₙ` (like commutative `+`, `*`, `∧`, `∨`) involves sorting the arguments of their n-ary S-expression representation.
 
-// S₃ canonicalization (3 elements)
-(a * b * c) : S₃ => ordered3(a, b, c);
+```orbit
+// S₂ canonicalization (commutative binary operation) - could be done manually like this
+// (a + b) : S₂ => a + b if a <= b;
+// (a + b) : S₂ => b + a if b < a;
 
-// Helper function for S₃ ordering
-ordered3(a, b, c) => a * b * c if a <= b && b <= c;
-ordered3(a, b, c) => a * c * b if a <= c && c < b;
-ordered3(a, b, c) => b * a * c if b < a && a <= c;
-ordered3(a, b, c) => b * c * a if b <= c && c < a;
-ordered3(a, b, c) => c * a * b if c < a && a <= b;
-ordered3(a, b, c) => c * b * a if c < b && b < a;
+// S_n canonicalization for n-ary associative/commutative operations
+(`op` args...) : Sₙ => (`op` sort(args...)) if !is_sorted(args);
+
+// Example:
+(`+` c a b) : Sₙ => (`+` a b c) // Assuming a < b < c and sorting
 ```
 
 #### Cyclic Group (Cₙ)
@@ -448,6 +442,8 @@ ordered3(a, b, c) => c * b * a if c < b && b < a;
 ```
 
 #### Alternating Groups (Aₙ)
+
+Canonicalization involves selecting a representative from the set of *even* permutations, typically combined with sorting.
 
 ```
 // A₃ canonicalization (even permutations of 3 elements)
@@ -488,15 +484,16 @@ Matrix groups have important applications in mathematics, physics, and computer 
 
 #### Commutative Ring Terms and Gröbner Basis Canonicalization
 
-```
-// Commutative polynomials in ring: normalize via lex order
-(f + g) : PolynomialRing => eval(ordered_sum(f, g));
+Polynomials are represented using n-ary forms for `+` (terms) and `*` (factors within monomials). Canonicalization involves sorting terms by a monomial order and sorting factors within monomials.
 
-// Multivariate monomial canonical form
-(x^a * y^b * z^c) => eval(Monomial(x, y, z, [a, b, c]));
+```orbit
+// Polynomials in Commutative Ring: normalize terms via chosen order (e.g., GLEX)
+// and factors within terms alphabetically.
+`+`(terms...) : PolynomialRing => `+`(sort_terms(terms...)); // Sort terms by GLEX
+`*`(factors...) : Monomial => `*`(sort_factors(factors...)); // Sort factors alphabetically
 
 // Reduction via known ideal (Gröbner-like)
-(p) : Ideal(I) => eval(normal_form(p, I));
+(p) : Ideal(I) => eval(normal_form(p, I)); // Normal form is the canonical rep
 ```
 
 ### Gröbner Basis for Commutative Rings
@@ -715,23 +712,6 @@ int16 ≅ ℤ/65536ℤ ≅ C₆₅₅₃₆;  // 16-bit integer arithmetic
 // Bitwise operations
 xor on (ℤ/2ℤ)ⁿ ≅ (C₂)ⁿ;     // Bitwise XOR on n-bit types forms an abelian group
 ```
-
-## Bidirectional Type Mappings and Rules
-
-This section provides a concise overview of mappings between primitive numeric operations, algebraic structures, and symmetry groups.
-
-### Bidirectional Mapping Table
-
-| Direction | Primitive Operation | Algebraic Structure | Symmetry Group | Example |
-|-----------|---------------------|---------------------|----------------|--------|
-| Forward | a + b (Int) | Addition | Z (integers) | Integer addition forms infinite cyclic group |
-| Backward | group_op(a, b, Z) | a + b | Integer | Group operation maps back to addition |
-| Forward | a + b (mod n) | Modular addition | Cₙ | Modular addition forms cyclic group |
-| Backward | group_op(a, b, Cₙ) | (a + b) % n | Modular arithmetic | Cyclic group maps to modular arithmetic |
-| Forward | a ^ b (bitwise XOR) | Boolean ring | (C₂)ⁿ | XOR forms direct product of C₂ groups |
-| Backward | group_op(a, b, (C₂)ⁿ) | a ^ b | Bitwise XOR | XOR implemented as group operation |
-| Forward | a op b (commutative) | Commutative operation | S₂ | Commutativity detected as S₂ symmetry |
-| Backward | group_op(a, b, S₂) | ordered(a, b) | Canonicalized form | S₂ ensures operand ordering |
 
 ### Type-Based Inference Rules
 
@@ -1052,88 +1032,20 @@ flatMap(f, return(x)) => f(x);  // Right identity
 flatMap(g, flatMap(f, m)) => flatMap(λ(x).flatMap(g, f(x)), m);  // Associativity
 ```
 
-## Cost Functions with Algebraic Structure
-
-Cost functions that respect algebraic structure can dramatically improve optimization by guiding the search toward algebraically meaningful representations.
-
-### Cost Function with Group Properties
-
-```
-fn costWithGroups(expr : ast) -> double (
-	expr is (
-		// Operations with symmetry groups can be reordered for cheaper evaluation
-		a + b : Su2082 => 1.0 + min(costWithGroups(a), costWithGroups(b)) +
-					 max(costWithGroups(a), costWithGroups(b))/2.0;
-		a * b : Su2082 => 1.2 + min(costWithGroups(a), costWithGroups(b)) +
-					 max(costWithGroups(a), costWithGroups(b))/2.0;
-
-		// Nested associative operations
-		(a + b) + c : Associative => 0.8 + costWithGroups(a) +
-									 costWithGroups(b) + costWithGroups(c);
-		a + (b + c) : Associative => 0.8 + costWithGroups(a) +
-									 costWithGroups(b) + costWithGroups(c);
-
-		// Default costing for other expressions
-		_ => 1.0;
-	)
-)
-```
-
-### Structural Costs for Expression Trees
-
-```
-// Cost function for expression optimization
-fn expressionCost(expr : ast) -> double (
-	expr is (
-		// Binary operations have fixed costs plus recursive component
-		a + b => 1.0 + expressionCost(a) + expressionCost(b);
-		a * b => 1.2 + expressionCost(a) + expressionCost(b);
-		a - b => 1.0 + expressionCost(a) + expressionCost(b);
-		a / b => 1.5 + expressionCost(a) + expressionCost(b);
-
-		// Unary operations
-		-a => 0.8 + expressionCost(a);
-		f(a) => 1.2 + expressionCost(a);
-
-		// Base cases
-		n : Constant => 0.5;  // Constants are cheap
-		x : Variable => 0.7;  // Variables are relatively cheap
-
-		// Default for other expressions
-		_ => 1.0;
-	)
-)
-```
 
 ## Optimization Using Group Properties
 
 ### Rewrite Rules Based on Group Structure
 
-```
-// Exploiting commutativity (S₂)
-a + b => b + a : S₂;  // Can reorder operands freely
-
-// Exploiting associativity
-(a + b) + c => a + (b + c) : associative;  // Parentheses can be rearranged
+```orbit
+// Exploiting commutativity (S_n on n-ary forms)
+(`+` args...) : Sₙ => (`+` sort(args...)); // Canonicalization via sorting
 
 // Exploiting group axioms for inverses
 a + (-a) => 0 : group;  // Every element has an inverse
 
 // Exploiting cyclic group properties
 rotate(rotate(x, a), b) => rotate(x, (a + b) % n) : Cₙ;  // Combining rotations
-```
-
-### Canonical Representatives for Equivalence Classes
-
-```
-// Choosing smallest representative under some ordering
-(expr) : g => min_representative(expr, g);  // Choose minimal representative
-
-// Example: For commutative operations, order operands lexicographically
-a * b : S₂ => ordered(a, b);  // Ordered by some canonical ordering
-
-// Example: For rotation groups, always use the base orientation
-rotate(x, k) : Cₙ => x if k == 0;  // Base orientation as canonical form
 ```
 
 ## Inferring Algebraic Structures via Symmetry Groups
@@ -1345,13 +1257,13 @@ This section provides a concise summary of key concepts, canonical forms, and re
 
 ### Key Group Properties
 
-| Group | Order | Structure | Canonical Form | Key Rules |
-|-------|-------|-----------|----------------|-----------|  
-| Sₙ | n! | Permutations | Lexicographically ordered elements | a + b => ordered(a, b) |
-| Cₙ | n | Rotations | Minimum rotation angle/index | rotate(x, k) => rotate(x, k % n) |
-| Dₙ | 2n | Rotations + reflections | Canonical rotation then reflection | transform => rotate(reflect(x)) |
-| Aₙ | n!/2 | Even permutations | Even-permutation ordering | canonical_even_permutation(p) |
-| GL(n,F) | - | Invertible matrices | Row echelon form | rref(M) |
+| Group | Order | Structure | Canonical Form (N-ary Emphasis) | Key Rules |
+|-------|-------|-----------|--------------------------------|-----------|
+| Sₙ | n! | Permutations | Sorted argument list for n-ary op | `op(args...) => op(sort(args...))` |
+| Cₙ | n | Rotations | Minimum rotation (Booth's) | `rotate(x, k) => rotate(x, k % n)` |
+| Dₙ | 2n | Rotations + reflections | Min rotation of sequence or reversed seq | `transform => canonicalise_dihedral(...)` |
+| Aₙ | n!/2 | Even permutations | Sorted even-permutation ordering | `canonical_even_permutation_sort(p)` |
+| GL(n,F)| - | Invertible matrices | Row echelon form | `rref(M)` |
 
 ### Common Decompositions
 
@@ -1388,16 +1300,16 @@ These rules are particularly valuable for optimization in areas such as:
 
 - **Computer graphics**: Where geometric symmetries (rotations, reflections) are fundamental
 - **Cryptography**: Where group-theoretic properties form the mathematical basis
-- **Algebraic simplification**: Where commutativity and associativity enable powerful rewrites
+- **Algebraic simplification**: Where commutativity and associativity (via n-ary forms) enable powerful rewrites
 - **Functional programming**: Where higher-order function composition follows algebraic laws
 - **Machine learning**: Where tensor operations benefit from symmetry optimizations
 - **Parallel computing**: Where associative operations enable efficient distribution
 
 By representing symmetry groups explicitly in our e-graph structure via domain annotations, we achieve several powerful capabilities:
 
-1. **Exponential reduction** in the number of equivalent expressions that need representation
-2. **Automatic discovery** of optimizations that exploit symmetry properties
-3. **Transfer of optimizations** across domains with isomorphic group structures
+1. **Exponential reduction** by representing equivalence classes canonically.
+2. **Automatic discovery** of optimizations by applying algebraic laws.
+3. **Transfer of optimizations** across domains with isomorphic group structures.
 4. **Inference of algebraic properties** that enable non-trivial optimizations
 
 This group-theoretic foundation significantly enhances our ability to perform deep algebraic reasoning and optimization, allowing us to develop more powerful and general program transformation techniques that transcend specific domains and apply across the entire computational landscape.

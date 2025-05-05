@@ -1,10 +1,10 @@
-# WebGPU Acceleration for Orbit: Pattern Matching and E-Graph Rewriting
+# WebGPU Acceleration for Orbit: Pattern Matching and O-Graph Rewriting
 
 ## 1. Introduction
 
-This document specifies a WebGPU-based implementation for accelerating pattern matching and equality saturation in the Orbit rewriting system. Building upon the e-graph foundations established in the Orbit framework, this implementation enables high-performance parallel processing of pattern matching and rewriting operations using GPU compute shaders expressed in WGSL (WebGPU Shading Language).
+This document specifies a WebGPU-based implementation for accelerating pattern matching and equality saturation in the Orbit rewriting system. Building upon the O-Graph foundations established in the Orbit framework (an extension of e-graphs with domain annotations and canonical representatives), this implementation enables high-performance parallel processing of pattern matching and rewriting operations using GPU compute shaders expressed in WGSL (WebGPU Shading Language).
 
-The core innovation is a specialized compiler that translates Orbit's pattern-based rewrite rules into optimized WGSL shader code, embedding both the rules and the initial expression state directly into a self-contained compute shader. This approach enables high-throughput parallel matching and rewriting while addressing the unique constraints of the GPU execution model.
+The core innovation is a specialized compiler that translates Orbit's pattern-based rewrite rules into optimized WGSL shader code, embedding both the rules and the initial expression state directly into a self-contained compute shader. This approach enables high-throughput parallel matching and rewriting while addressing the unique constraints of the GPU execution model. A key goal is to also **implement Orbit's core evaluation logic within WGSL**, allowing rule conditions and right-hand sides to be processed directly on the GPU.
 
 ## 2. System Architecture
 
@@ -12,38 +12,39 @@ The core innovation is a specialized compiler that translates Orbit's pattern-ba
 
 The system consists of three main components:
 
-1. **Orbit-to-WGSL Compiler**: A Flow-based compiler that generates specialized WGSL code from Orbit patterns and expressions
-2. **WebGPU Execution Runtime**: A lightweight TypeScript coordinator that executes the generated WGSL on available GPUs
-3. **E-Graph State Decoder**: A Flow-based component that decodes the resulting e-graph state and extracts optimized expressions
+1.  **Orbit-to-WGSL Compiler**: A Flow-based compiler that generates specialized WGSL code from Orbit patterns, expressions, and evaluation logic.
+2.  **WebGPU Execution Runtime**: A lightweight TypeScript coordinator that executes the generated WGSL on available GPUs.
+3.  **O-Graph State Decoder**: A Flow-based component that decodes the resulting O-Graph state and extracts optimized, canonical expressions.
 
 ```
-┌────────────────┐          ┌────────────────┐          ┌────────────────┐
-│  Orbit Pattern │          │   Generated    │          │ Optimized      │
-│  & Expression  │──────────▶    WGSL with   │──────────▶ Expression     │
-│                │  compile │  Embedded Data │  execute │                │
-└────────────────┘          └────────────────┘          └────────────────┘
+┌────────────────┐          ┌─────────────────────┐          ┌────────────────┐
+│  Orbit Rules   │          │    Generated WGSL   │          │   Canonical    │
+│  & Expression  │──────────▶  with Embedded Data │──────────▶   Expression   │
+│                │  compile │    & Eval Logic     │  execute │                │
+└────────────────┘          └─────────────────────┘          └────────────────┘
 ```
 
 ### 2.2 Data Flow
 
-1. The user provides rewrite rules (patterns) and expressions to optimize
-2. The compiler translates these into a self-contained WGSL file with embedded data
-3. The WebGPU runtime loads and executes this WGSL file on the GPU
-4. The runtime captures the final e-graph state as a binary blob
-5. The decoder reconstructs the optimal expression from this binary state
+1.  The user provides rewrite rules (patterns) and expressions to optimize.
+2.  The compiler translates these into a self-contained WGSL file, embedding initial data and evaluation logic.
+3.  The WebGPU runtime loads and executes this WGSL file on the GPU, performing equality saturation.
+4.  The runtime captures the final O-Graph state as a binary blob.
+5.  The decoder reconstructs the canonical expression from this binary state.
 
 ### 2.3 Key Design Principles
 
-- **Self-contained WGSL**: The generated shader contains both the pattern matching logic and initial expression data
-- **Minimal Memory Transfer**: Only the final optimized state is transferred back from the GPU
-- **Specialized Pattern Matching**: Each rewrite rule is compiled to specialized GPU code
-- **Batch Processing**: Multiple patterns are processed in parallel over all candidate nodes
+-   **Self-contained WGSL**: The generated shader contains pattern matching, rewriting, evaluation logic, and initial data.
+-   **Minimal Memory Transfer**: Only the final optimized state is transferred back from the GPU.
+-   **Specialized Kernels**: Rewrite rules and canonicalization logic are compiled into optimized GPU code.
+-   **Batch Processing**: Multiple patterns are processed in parallel over candidate O-Graph nodes.
+-   **Canonical Form Convergence**: The process drives O-Graph representatives towards their canonical forms.
 
-## 3. E-Graph Representation
+## 3. O-Graph Representation
 
 ### 3.1 Core Data Structures
 
-The e-graph is represented using the following key data structures in WGSL, enhanced with region information for memory management:
+The O-Graph is represented using the following key data structures in WGSL, enhanced with region information for memory management:
 
 ```wgsl
 // Region tag for memory management
@@ -53,24 +54,24 @@ struct RegionTag {
 	persistent: bool         // Must persist across kernel invocations
 };
 
-// Node in the e-graph
+// Node in the O-Graph (represents an operation and children)
 struct ENode {
 	op_code: u32,                     // Operation code
 	child_eclass_ids: array<u32, MAX_CHILDREN>,  // Child e-class IDs
 	domains: u32                     // Bitset of domain annotations
 };
 
-// Equivalence class
+// Equivalence class in the O-Graph
 struct EClass {
 	parent: atomic<u32>,             // Union-find parent pointer
 	size: u32,                       // Size of this equivalence class
-	best_enode_id: u32,              // Best representative node ID
-	cost: u32,                       // Cost of the best representation
+	best_enode_id: u32,              // Representative Node ID (converges to canonical form)
+	// Cost removed, canonical form is the extraction target
 	domains: u32,                    // Bitset of domain annotations
 	region_info: RegionTag           // Memory region information
 };
 
-// Hash table entry
+// Hash table entry for hash consing
 struct HashEntry {
 	enode_id: atomic<u32>            // ENode ID or empty marker
 };
@@ -86,6 +87,7 @@ The WGSL implementation uses the following buffer structure:
 @group(0) @binding(2) var<storage, read_write> hash_table: array<HashEntry>;   // Hash table
 @group(0) @binding(3) var<storage, read_write> i32_values: array<i32>;         // Integer constants
 @group(0) @binding(4) var<storage, read_write> f32_values: array<f32>;         // Float constants
+// Other potential buffers: strings, temporary sort buffers, etc.
 ```
 
 ### 3.3 Initial State Representation
@@ -104,117 +106,122 @@ const initial_i32_values_data: array<i32, <size>> = array<i32, <size>>(...);  //
 
 ### 4.1 Pattern Representation
 
-Orbit patterns are compiled into specialized WGSL functions using a structure that directly mirrors the original pattern tree. Each pattern is translated into both a matching function and an application function:
+Orbit patterns are compiled into specialized WGSL functions. Each pattern translates into a matching function and an application (rewriting) function:
 
 ```wgsl
 // For a pattern like "A + 0 => A"
 
 // Matching function checks if the pattern applies
 fn match_rule0(eclass_id: u32, bindings: ptr<function, array<u32, MAX_BINDINGS>>) -> bool {
-	// Pattern-specific matching logic
-	// 1. Check operation type (OP_ADD)
-	// 2. Bind variable pattern (A)
-	// 3. Check constant pattern (0)
-	// ...
+	// Pattern-specific matching logic derived from "A + 0"
 }
 
-// Application function performs the rewrite
+// Application function performs the rewrite based on "A"
 fn apply_rule0(eclass_id: u32, bindings: ptr<function, array<u32, MAX_BINDINGS>>) {
-	// Pattern-specific rewriting logic
-	// 1. Extract bound variables (A)
-	// 2. Create/find target expression
-	// 3. Merge with original eclass
-	// ...
+	// Pattern-specific rewriting logic to represent "A"
 }
 ```
 
-### 4.2 Pattern Matching Algorithm
+### 4.2 Equality Saturation Algorithm Kernels
 
-The pattern matching process proceeds in four main stages, each implemented as a separate compute shader kernel:
+The equality saturation process proceeds in three main stages, implemented as separate compute shader kernels invoked repeatedly:
 
-1. **Pattern Matching Kernel**: Parallel attempt to match each rule against each e-class
-   ```wgsl
-	 @compute @workgroup_size(256)
-	 fn pattern_match_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
-		 let eclass_id = global_id.x;
-		 if (eclass_id >= active_eclass_count) { return; }
+1.  **Pattern Matching Kernel**: Parallel attempt to match each rule against each e-class representative.
+    ```wgsl
+		 @compute @workgroup_size(256)
+		 fn pattern_match_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
+				 let eclass_id = global_id.x;
+				 if (eclass_id >= active_eclass_count) { return; }
+				 // Match only against the canonical representative's root eclass ID
+				 if (find(eclass_id) != eclass_id) { return; }
 
-		 var bindings: array<u32, MAX_BINDINGS>;
-		 // Initialize bindings to INVALID_ID
-		 // ...
+				 var bindings: array<u32, MAX_BINDINGS>;
+				 // Initialize bindings...
 
-		 // Try all rules on this eclass
-		 if (match_rule0(eclass_id, &bindings)) {
-			 // Record match or directly apply
+				 // Try all compiled rules on this canonical eclass
+				 if (match_rule0(eclass_id, &bindings)) { /* Record match */ }
+				 if (match_rule1(eclass_id, &bindings)) { /* Record match */ }
+				 // ... more rules
 		 }
-		 if (match_rule1(eclass_id, &bindings)) {
-			 // ...
-		 }
-		 // ... more rules
-	 }
 ```
 
-2. **Rewrite Application Kernel**: Apply all successful matches in parallel
-   ```wgsl
-	 @compute @workgroup_size(256)
-	 fn apply_rewrites_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
-		 let match_id = global_id.x;
-		 if (match_id >= match_count) { return; }
+2.  **Rewrite Application Kernel**: Apply all successful matches recorded in the previous step in parallel.
+    ```wgsl
+		 @compute @workgroup_size(256)
+		 fn apply_rewrites_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
+				 let match_id = global_id.x;
+				 if (match_id >= match_count) { return; }
 
-		 let match_entry = matches[match_id];
+				 let match_entry = matches[match_id];
 
-		 // Dispatch to appropriate rule application function
-		 switch (match_entry.rule_id) {
-			 case 0u: { apply_rule0(match_entry.eclass_id, &match_entry.bindings); }
-			 case 1u: { apply_rule1(match_entry.eclass_id, &match_entry.bindings); }
-			 // ... more rules
+				 // Dispatch to appropriate rule application function
+				 switch (match_entry.rule_id) {
+						 case 0u: { apply_rule0(match_entry.eclass_id, &match_entry.bindings); }
+						 case 1u: { apply_rule1(match_entry.eclass_id, &match_entry.bindings); }
+						 // ... more rules
+				 }
 		 }
-	 }
 ```
 
-3. **Congruence Closure Kernel**: Rebuild congruence closure after rewrites
-   ```wgsl
-	 @compute @workgroup_size(256)
-	 fn rebuild_congruence_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
-		 let enode_id = global_id.x;
-		 if (enode_id >= enode_count) { return; }
+3.  **Congruence Closure & Canonicalization Kernel**: Rebuild congruence closure after rewrites. During this phase, the representative node (`best_enode_id`) for each e-class is updated to reflect the canonical form based on applied rules and ordering criteria (e.g., performing extract-sort-rebuild for `Sₙ`).
+    ```wgsl
+		 @compute @workgroup_size(256)
+		 fn rebuild_congruence_and_canonicalize_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
+				 let enode_id = global_id.x;
+				 if (enode_id >= enode_count) { return; }
 
-		 let enode = enodes[enode_id];
+				 let enode = enodes[enode_id];
+				 let current_eclass_id = enode_to_eclass[enode_id]; // Assuming this mapping exists
 
-		 // Find canonicalized versions of child eclasses
-		 // ...
+				 // Find canonicalized versions of child eclasses
+				 var canonical_children: array<u32, MAX_CHILDREN>;
+				 for (var i = 0u; i < MAX_CHILDREN; i++) {
+						 if(enode.child_eclass_ids[i] != INVALID_ID) {
+								canonical_children[i] = find(enode.child_eclass_ids[i]);
+						 } else {
+								canonical_children[i] = INVALID_ID;
+						 }
+				 }
 
-		 // Find or create a canonical version of this node
-		 // ...
+				 // Find or create a canonical version of this node structure via hash consing
+				 let canonical_node_eclass_id = canonicalize_or_add_node(enode.op_code, canonical_children);
 
-		 // Union the node's eclass with the canonical eclass
-		 // ...
-	 }
-```
+				 // Merge the e-class of the current node with the canonical one
+				 if (canonical_node_eclass_id != INVALID_ID) {
+						let merged = merge(current_eclass_id, canonical_node_eclass_id);
+						// Optional: If merged, potentially trigger canonicalization update for the new root
+						if (merged) {
+								update_representative(find(current_eclass_id));
+						}
+				 }
 
-4. **Cost Analysis Kernel**: Determine the best representation for each e-class
-   ```wgsl
-	 @compute @workgroup_size(256)
-	 fn cost_analysis_kernel(@builtin(global_invocation_id) global_id: vec3<u32>) {
-		 let enode_id = global_id.x;
-		 if (enode_id >= enode_count) { return; }
+				 // Separately, apply canonicalization rules based on domain (e.g., Sₙ sort)
+				 // This might involve reading the current representative, extracting data, sorting,
+				 // creating a new canonical node, and merging. This is complex on GPU.
+				 // update_representative(find(current_eclass_id));
+		 }
 
-		 let enode = enodes[enode_id];
-		 let eclass_id = find(enode_to_eclass[enode_id]);
-
-		 // Calculate node cost
-		 // ...
-
-		 // Atomically update best node if cost is lower
-		 // ...
-	 }
+		 // Function to update the representative based on canonicalization rules
+		 fn update_representative(root_eclass_id: u32) {
+				// Check domains (e.g., S_n for commutativity)
+				if (has_domain(root_eclass_id, DOMAIN_S_N)) {
+						// Perform extract-sort-rebuild logic if needed
+						// let current_repr_id = eclasses[root_eclass_id].best_enode_id;
+						// let elements = extract_elements_from_tree(current_repr_id);
+						// let sorted_elements = sort_elements_gpu(elements); // Needs GPU sort
+						// let new_canonical_node_id = rebuild_canonical_tree(sorted_elements);
+						// let new_canonical_eclass_id = canonicalize_or_add_node(...);
+						// eclasses[root_eclass_id].best_enode_id = node_id_from_eclass(new_canonical_eclass_id);
+				}
+				// Add logic for other groups like C_n, D_n
+		 }
 ```
 
 These kernels execute repeatedly until saturation (no new rewrites possible) or a maximum iteration count is reached.
 
 ### 4.3 Union-Find Implementation
 
-The e-graph uses an atomic union-find implementation with path compression:
+The O-Graph uses an atomic union-find implementation with path compression:
 
 ```wgsl
 fn find(id: u32) -> u32 {
@@ -272,16 +279,17 @@ fn merge(id1: u32, id2: u32) -> bool {
 
 ### 5.1 Overall Compilation Process
 
-The compilation pipeline translates Orbit patterns and expressions into a specialized WGSL shader through the following steps:
+The compilation pipeline translates Orbit patterns, expressions, and relevant evaluation logic into a specialized WGSL shader:
 
-1. Parse Orbit rules and expression into AST representations
-2. Analyze patterns to identify variables, constraints, and domain annotations
-3. Perform region-based memory analysis to determine allocation strategy
-4. Generate specialized matching code for each pattern
-5. Generate rewriting code for each rule's right-hand side
-6. Serialize the initial expression into WGSL constant arrays
-7. Assign appropriate memory regions to expressions based on lifetime analysis
-8. Assemble all components into a complete WGSL shader
+1.  Parse Orbit rules and expression into AST representations.
+2.  Analyze patterns to identify variables, constraints, and domain annotations.
+3.  Perform region-based memory analysis.
+4.  Generate specialized WGSL matching code for each pattern.
+5.  Generate WGSL rewriting code for each rule's RHS, potentially including calls to compiled Orbit evaluation logic.
+6.  Generate WGSL code for canonicalization algorithms (e.g., extract-sort-rebuild).
+7.  Serialize the initial expression into WGSL constant arrays.
+8.  Assign appropriate memory regions based on lifetime analysis.
+9.  Assemble all components into a complete WGSL shader.
 
 ### 5.2 Pattern Analysis
 
@@ -294,66 +302,17 @@ For each pattern, the compiler performs the following analysis:
 
 ### 5.3 Code Generation Strategy
 
-The compiler generates the following WGSL code components:
+The compiler generates WGSL code components including:
 
-1. **Operation Code Definitions**: Generate constants for each operation type
-   ```wgsl
-	 const OP_ADD: u32 = 201u;
-	 const OP_MUL: u32 = 202u;
-	 // ...
-```
-
-2. **Initial State**: Convert the input expression into WGSL constant arrays
-   ```wgsl
-	 const initial_enodes_data: array<u32, 9> = array<u32, 9>(
-		 // Flattened representation of expression nodes
-		 // ...
-	 );
-```
-
-3. **Region Information**: Generate initial region tags for expressions
-   ```wgsl
-	 const initial_region_data: array<u32, 3> = array<u32, 3>(
-		 // Packed region flags for each initial node
-		 // Bit 0: stack_local, Bit 1: workgroup_shared, Bit 2: persistent
-		 5u,  // Node 0: persistent and stack_local (101 binary)
-		 4u,  // Node 1: persistent only (100 binary)
-		 4u   // Node 2: persistent only (100 binary)
-	 );
-```
-
-4. **Matching Functions**: Generate specialized pattern matching code
-   ```wgsl
-	 fn match_rule0(eclass_id: u32, bindings: ptr<function, array<u32, MAX_BINDINGS>>) -> bool {
-		 // Pattern-specific matching logic
-	 }
-```
-
-5. **Rewriting Functions**: Generate code to construct the right-hand side expression
-   ```wgsl
-	 fn apply_rule0(eclass_id: u32, bindings: ptr<function, array<u32, MAX_BINDINGS>>) {
-		 // Pattern-specific rewriting logic
-	 }
-```
-
-6. **Memory Management Functions**: Generate code for region-aware allocation
-   ```wgsl
-	 fn allocate_in_region(region_tag: RegionTag) -> u32 {
-		 // Region-specific allocation strategy
-		 if (region_tag.stack_local) {
-			 // Try thread-local allocation first
-		 }
-		 // Fall back to persistent storage if needed
-	 }
-```
-
-7. **Dispatcher Functions**: Generate code to route matches to the right handlers
-   ```wgsl
-	 // In pattern_match_kernel
-	 if (match_rule0(eclass_id, &bindings)) { /* ... */ }
-	 if (match_rule1(eclass_id, &bindings)) { /* ... */ }
-	 // ...
-```
+1.  Operation Code Definitions (`const OP_ADD: u32 = ...;`)
+2.  Initial State Data (`const initial_enodes_data: array<...> = ...;`)
+3.  Region Information (`const initial_region_data: array<...> = ...;`)
+4.  Matching Functions (`fn match_rule0(...) -> bool { ... }`)
+5.  Rewriting Functions (`fn apply_rule0(...) { ... }`)
+6.  **Canonicalization Functions:** (`fn canonicalize_S_n(...) { /* extract-sort-rebuild logic */ }`) - These might be complex to generate effectively.
+7.  **Evaluation Logic:** (Portions of Orbit's interpreter logic compiled to WGSL for evaluating conditions or RHS).
+8.  Memory Management Functions (`fn allocate_in_region(...)`)
+9.  Dispatcher Functions (within kernels)
 
 ### 5.4 Optimization Techniques
 
@@ -414,63 +373,23 @@ if (pattern_requires_domain && !has_domain(eclass_id, required_domain_id)) {
 
 ### 6.3 Conditional Rules
 
-For rules with conditions (e.g., `x + y => y + x if x > y`), the compiler generates additional checking code:
+Conditions are evaluated on the GPU using the compiled evaluation logic:
 
 ```wgsl
-fn match_rule_with_condition(eclass_id: u32, bindings: ptr<function, array<u32, MAX_BINDINGS>>) -> bool {
-	// Standard pattern matching
-	// ...
-
-	// If pattern structure matches, check condition
+fn match_rule_with_condition(...) -> bool {
+	// ... standard pattern matching ...
 	if (basic_match) {
-		// Extract values for condition check
-		let x_eclass = (*bindings)[0u];
-		let y_eclass = (*bindings)[1u];
-
-		// Evaluate condition
-		let condition_result = evaluate_condition(x_eclass, y_eclass);
+		// Evaluate condition using compiled Orbit eval logic
+		let condition_result = evaluate_orbit_condition_wgsl(condition_ast_id, &bindings);
 		return condition_result;
 	}
-
-	return false;
-}
-
-fn evaluate_condition(x_eclass: u32, y_eclass: u32) -> bool {
-	// Condition-specific evaluation logic
 	// ...
 }
-```
 
-### 6.4 Cost Model Implementation
-
-The cost analysis uses a customizable cost model to determine the optimal representation:
-
-```wgsl
-fn calculate_cost(enode_id: u32) -> u32 {
-	let enode = enodes[enode_id];
-
-	// Base cost depends on operation type
-	var cost = base_cost(enode.op_code);
-
-	// Add costs of children
-	for (var i = 0u; i < MAX_CHILDREN; i++) {
-		let child_eclass_id = enode.child_eclass_ids[i];
-		if (child_eclass_id == INVALID_ID) { break; }
-
-		let child_eclass = eclasses[find(child_eclass_id)];
-		cost += child_eclass.cost;
-	}
-
-	return cost;
-}
-
-fn base_cost(op_code: u32) -> u32 {
-	switch (op_code) {
-		case OP_VALUE_I32, OP_VALUE_F32, OP_VALUE_BOOL: { return 1u; }
-		case OP_ADD, OP_SUB, OP_MUL, OP_DIV: { return 2u; }
-		case OP_IF, OP_CALL: { return 3u; }
-		default: { return 5u; }
-	}
+fn evaluate_orbit_condition_wgsl(ast_node_id: u32, bindings: ptr<function, array<u32, MAX_BINDINGS>>) -> bool {
+	// Invoke compiled WGSL interpreter for the condition AST
+	// Needs access to O-Graph state and bindings
+	// ... returns boolean result
 }
 ```
 
@@ -961,27 +880,46 @@ fn propagate_domains(eclass_id: u32, domain: u32) {
 }
 ```
 
-### 9.2 Symmetry Groups
+### 9.2 Symmetry Groups & Canonicalization on GPU
 
-Orbit's symmetry groups (e.g., `S₂` for commutativity) are handled by generating multiple matching variants for applicable patterns:
+Orbit's symmetry groups (e.g., `S₂` for commutativity) are handled via canonicalization during the `rebuild_congruence_and_canonicalize_kernel` phase.
 
 ```wgsl
-// For a commutative pattern like "A + B => B + A"
+// Example S_n canonicalization logic within rebuild_congruence_and_canonicalize_kernel
+// or called from update_representative:
+fn canonicalize_S_n(root_eclass_id: u32) {
+	// 1. Check if the representative node is an S_n operation (e.g., '+')
+	let repr_node_id = eclasses[root_eclass_id].best_enode_id;
+	let repr_node = enodes[repr_node_id];
+	if (repr_node.op_code == OP_ADD /* or other S_n op */) {
+		// 2. Extract elements from the binary tree representation
+		// Requires traversing the tree structure stored in enodes/eclasses
+		var elements: array<u32, MAX_ARGS_FOR_SORT>; // Use temporary buffer
+		let count = extract_elements_from_tree(repr_node_id, &elements);
 
-// First variant checks standard order
-fn match_rule_commutative_1(eclass_id: u32, bindings: ptr<function, array<u32, MAX_BINDINGS>>) -> bool {
-	// Standard matching logic with A as first child, B as second
+		// 3. Sort the extracted element e-class IDs
+		// Requires a GPU sorting implementation (e.g., bitonic sort)
+		sort_eclass_ids_gpu(&elements, count);
+
+		// 4. Rebuild canonical tree structure (e.g., right-associative)
+		let canonical_tree_eclass_id = rebuild_canonical_tree(OP_ADD, &elements, count);
+
+		// 5. Merge the original eclass with the canonical one
+		// (The merge might happen implicitly if canonicalize_or_add_node was used
+		// during rebuild, or explicitly here)
+		merge(root_eclass_id, canonical_tree_eclass_id);
+		// Ensure the representative is updated if merge occurred
+		eclasses[find(root_eclass_id)].best_enode_id = node_id_from_eclass(canonical_tree_eclass_id);
+	}
 }
 
-// Second variant checks reversed order
-fn match_rule_commutative_2(eclass_id: u32, bindings: ptr<function, array<u32, MAX_BINDINGS>>) -> bool {
-	// Reversed matching logic with B as first child, A as second
-}
-
-// Dispatch both in the pattern_match_kernel
-if (match_rule_commutative_1(eclass_id, &bindings)) { /* ... */ }
-if (match_rule_commutative_2(eclass_id, &bindings)) { /* ... */ }
+// Helper functions (need concrete WGSL implementations)
+fn extract_elements_from_tree(node_id: u32, out_elements: ptr<function, array<u32, MAX_ARGS_FOR_SORT>>) -> u32 { /* ... */ }
+fn sort_eclass_ids_gpu(elements: ptr<function, array<u32, MAX_ARGS_FOR_SORT>>, count: u32) { /* ... */ }
+fn rebuild_canonical_tree(op_code: u32, sorted_elements: ptr<function, array<u32, MAX_ARGS_FOR_SORT>>, count: u32) -> u32 { /* ... */ }
+fn node_id_from_eclass(eclass_id: u32) -> u32 { /* ... */ }
 ```
+**Note:** Implementing the extract/sort/rebuild efficiently on the GPU is complex. It might involve temporary buffers, specialized sorting kernels, and careful handling of atomics if done concurrently. Simpler approaches might involve marking nodes for canonicalization and handling it in fewer threads or specific kernel passes.
 
 ### 9.3 Negative Domain Constraints
 
@@ -1104,7 +1042,7 @@ The serialization format for the initial expression and final e-graph state foll
 // ENode format (flattened array)
 {
 	op_code: u32,
-	child_eclass_ids: [u32, u32, u32, ...] (up to MAX_CHILDREN)
+	child_eclass_ids: [u32, ...] // up to MAX_CHILDREN
 }[enodeCount]
 
 // EClass format (flattened array)
@@ -1112,7 +1050,6 @@ The serialization format for the initial expression and final e-graph state foll
 	parent: u32,
 	size: u32,
 	best_enode_id: u32,
-	cost: u32,
 	domains: u32
 }[eclassCount]
 
@@ -1131,35 +1068,28 @@ The serialization format for the initial expression and final e-graph state foll
 
 ### 11.2 Extraction Algorithm
 
-After the WebGPU execution completes, Flow extracts the optimal expression using the following algorithm:
+The extraction algorithm remains the same, using `best_enode_id` to recursively build the canonical expression from the final O-Graph state.
 
 ```flowish
 fn extract(binary_state: [byte], root_eclass_id: int) -> EgExp {
 	// Parse binary state
 	memory = decode_binary_state(binary_state);
 
-	// Find root e-class
+	// Find canonical root e-class ID
 	canonical_root = find(root_eclass_id, memory.eclasses);
 
-	// Recursively extract best expression
+	// Recursively extract the canonical expression starting from the representative node
 	return extract_from_eclass(canonical_root, memory);
 }
 
 fn extract_from_eclass(eclass_id: int, memory: Memory) -> EgExp {
-	// Get canonical representative
+	// Find canonical root for this ID
 	canonical_id = find(eclass_id, memory.eclasses);
-
-	// Get best node in this eclass
 	eclass = memory.eclasses[canonical_id];
+
+	// Use the representative ('best') node ID for extraction
 	best_enode_id = eclass.best_enode_id;
-
-	if (best_enode_id == INVALID_ID) {
-		// This shouldn't happen for a valid e-graph
-		return EgError("Invalid e-class state");
-	}
-
-	// Extract from best node
-	return extract_from_enode(best_enode_id, memory);
+	// ... (rest of extraction logic as before, using best_enode_id) ...
 }
 
 fn extract_from_enode(enode_id: int, memory: Memory) -> EgExp {
@@ -1293,8 +1223,4 @@ Implement strategies for handling very large e-graphs that exceed GPU memory lim
 
 ## 14. Conclusion
 
-This document has specified a WebGPU-based implementation for accelerating pattern matching and equality saturation in the Orbit rewriting system. By compiling Orbit patterns directly to specialized WGSL code and embedding the initial expression state, we achieve high-performance parallel processing on GPUs while handling the constraints of the WebGPU execution model.
-
-The integration of region-based memory management provides a principled approach to handling the restricted memory model of WGSL, enabling more efficient use of various storage classes and improved performance. By statically analyzing expression lifetimes and tracking region information through the compilation pipeline, we can place data optimally and ensure memory safety in the absence of dynamic allocation or garbage collection.
-
-The system enables efficient pattern matching, rewriting, and optimization across various domains supported by the Orbit framework, with a memory-efficient implementation that makes the best use of limited GPU resources.
+This document has specified an updated approach for a WebGPU-based implementation accelerating pattern matching and equality saturation in the Orbit rewriting system. By compiling Orbit patterns and evaluation logic directly to specialized WGSL code and leveraging the O-Graph's canonical representatives, we achieve high-performance parallel processing on GPUs. The system now explicitly addresses the need for GPU-side canonicalization of associative/commutative operations via an extract/sort/rebuild process and incorporates the goal of performing rule condition evaluation directly on the GPU. The integration of region-based memory management addresses WGSL's memory model constraints. This approach enables efficient pattern matching, rewriting, and convergence towards canonical forms across various domains supported by the Orbit framework.

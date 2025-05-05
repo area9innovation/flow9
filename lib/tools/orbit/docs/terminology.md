@@ -9,7 +9,7 @@ This document consolidates terminology, structures, domains, and notation used a
 *   **Domain:** A classification or property associated with an expression (e.g., `Integer`, `Real`, `S₂`, `Polynomial`, `Pure`, `IO`). Domains can represent types, mathematical structures, effects, semantic states, or symmetry groups.
 *   **Domain Annotation (`: Domain`):** Syntax used to associate an expression with a domain. On the LHS of a rule, it acts as a constraint; on the RHS, it's an assertion.
 *   **Negative Domain Guard (`!: Domain`):** Syntax used in patterns to match expressions that *do not* belong to the specified domain. Useful for preventing infinite loops or applying rules only once.
-*   **Domain Hierarchy (`⊂` or `c=`):** Defines subset relationships between domains (e.g., `Integer ⊂ Real`). Rules defined for parent domains apply to child domains.
+*   **Domain Hierarchy (`⊂`):** Defines subset relationships between domains (e.g., `Integer ⊂ Real`). Rules defined for parent domains apply to child domains.
 *   **Canonical Form:** A unique, standard representation chosen from a set of equivalent expressions based on defined rules (e.g., lexicographical order for Sₙ, minimal rotation for Cₙ). Essential for equality testing, optimization, and reducing redundancy. Within the O-Graph, the designated **representative (root)** node of an e-class converges to this canonical form through rule saturation.
 *   **AST (Abstract Syntax Tree):** The tree structure representing code or expressions. Orbit has first-class support for AST manipulation.
 	*   `: ast`: Annotation indicating a function parameter receives an unevaluated AST.
@@ -20,18 +20,17 @@ This document consolidates terminology, structures, domains, and notation used a
 	*   `unquote(expr, bindings)`: Traverses `expr`, evaluating only sub-expressions wrapped in `eval()`.
 	*   `prettyOrbit(expr)`: Formats an AST into readable code.
 	*   `astname(expr)`: Returns the type/operator name of the root AST node.
-*   **OGraph / EGraph:** Data structure for efficiently representing sets of equivalent expressions (e-classes) and their relationships. OGraph extends EGraph with domain/group annotations and a designated **representative (root)** per e-class, which converges to the canonical form during saturation.
+*   **O-Graph / E-Graph:** Data structure for efficiently representing sets of equivalent expressions (e-classes) and their relationships. O-Graph extends E-Graph with domain/group annotations and a designated **representative (root)** per e-class, which converges to the canonical form during saturation.
 	*   `e-node`: Represents an operation and its children (which are e-classes).
 	*   `e-class`: Represents a set of equivalent e-nodes, identified by its representative (root) node's ID.
-	*   `makeOGraph`, `addOGraph`, `mergeOGraphNodes`, `addDomainToNode`, `matchOGraphPattern`, etc.: Runtime functions for manipulating OGraphs.
+	*   `makeOGraph`, `addOGraph`, `mergeOGraphNodes`, `addDomainToNode`, `matchOGraphPattern`, etc.: Runtime functions for manipulating O-Graphs.
 
 ## Rewriting Syntax
 
-*   `lhs => rhs` or `lhs → rhs`: Unidirectional rewrite rule.
-*   `lhs <=> rhs` or `lhs ↔ rhs`: Bidirectional equivalence rule.
+*   `lhs -> rhs` or `lhs → rhs`: Unidirectional rewrite rule.
+*   `lhs <-> rhs` or `lhs ↔ rhs`: Bidirectional equivalence rule.
 *   `if cond`: Conditional application of a rule.
-*   `⊢` or `\|-`: Entailment. Asserts a domain property based on a matched pattern (e.g., `a:Int + b:Int ⊢ + : S₂`).
-*   `discard`: Indicates a branch/rule result should be pruned/ignored.
+*   `⊢` or `|-`: Entailment. Asserts a domain property based on a matched pattern (e.g., `a:Int + b:Int ⊢ + : S₂`).
 *   Pattern Variables: Lowercase identifiers (`a`, `x`) match arbitrary subexpressions. Repeated variables must match equivalent expressions.
 
 ## Group Theory
@@ -49,36 +48,36 @@ This document consolidates terminology, structures, domains, and notation used a
 	*   `ℤ/nℤ` or `ℤₙ`: Integers modulo n (isomorphic to Cₙ under addition).
 	*   `(ℤ/nℤ)^*`: Multiplicative group of units modulo n.
 *   **Group Operation Symbols:**
-	*   `·` or `Compose(g,h)`: Abstract group operation.
-	*   `×`: Direct Product (independent groups).
-	*   `⋊`: Semi-Direct Product (one group acts on another).
+	*   `*` : Abstract group operation (e.g., `g * h`).
+	*   `×`: Direct Product (independent groups, e.g., `G × H`).
+	*   `⋊`: Semi-Direct Product (one group acts on another, e.g., `H ⋊[φ] G`).
 	*   `≀`: Wreath Product (hierarchical action).
 *   **Group Properties/Concepts:**
 	*   `|G|`: Order (size) of group G.
-	*   `Identity(G)`: Identity element.
-	*   `Inverse(g)`: Inverse of element g.
+	*   `1` or `e`: Identity element (context dependent).
+	*   `g⁻¹` or `inverse(g)`: Inverse of element g.
 	*   `⊂`: Subgroup relation.
 	*   `⊲`: Normal subgroup relation.
 	*   `≅`: Isomorphism (structurally identical groups).
-	*   `Action`: How a group transforms elements of a set.
+	*   `Action (•)`: How a group transforms elements of a set (e.g., `g • x`).
 	*   `Orbit`: Set of elements reachable from one element via group action.
 	*   `Homomorphism (φ)`: Structure-preserving map between groups.
 	*   `Automorphism (Aut(G))`: Isomorphism from a group to itself.
 	*   `Kernel`: Elements mapping to identity under homomorphism.
 	*   `Image`: Set of elements reached by homomorphism.
 	*   `Center`: Elements commuting with all group elements.
-	*   `Conjugacy Class`: Orbit under conjugation action (`g h g⁻¹`).
+	*   `Conjugacy Class`: Orbit under conjugation action (`g * h * g⁻¹`).
 	*   `Invariant`: Property unchanged by group action.
 
 ## Mathematical Domains & Structures
 
 *   **Algebraic Structures:** `Set`, `Magma`, `Semigroup`, `Monoid`, `Group`, `AbelianGroup`, `Ring`, `Field`, `Vector Space`, `BooleanAlgebra`, `Lattice`.
 *   **Numbers:** `Integer`, `Int32`, `Rational`, `Real`, `Double`, `Complex`, `Numeric`.
-*   **Linear Algebra:** `Matrix`, `Vector`, `Transpose (Aᵀ)`, `Inverse (A⁻¹)`, `Determinant (det(A))`, `Trace (tr(A))`, `Dot Product (·)`, `Cross Product (×)`, `Row Echelon Form (rref)`, Matrix Decompositions (`svd`, `eigen`, `qr`, `lu`, `cholesky`), `DiagonalMatrix`, `SymmetricMatrix`, `OrthogonalMatrix`, etc.
-*   **Calculus:** `Differential Calculus`, `Derivative (d/dx)`, `Partial Derivative (∂/∂xᵢ)`, `Gradient (∇)`, `Jacobian (J(f))`, `Hessian (H(f))`, `Integral (∫)`, `Summation (∑)`, `Limit`.
-*   **Polynomials:** `Polynomial`, `Monomial`, `Polynomial Ring`, `Ideal (⟨...⟩)`, `Gröbner Basis`, `Leading Term (LT)`, `Normal Form (NF)`, `S-polynomial (S(f,g))`, Monomial Orders (`lex`, `grlex`, `grevlex`).
-*   **Logic:** `Boolean`, Propositional Logic (`&&`/`∧`, `||`/`∨`, `!` /`¬`), Quantifiers (`∀`, `∃`), BDD (`ITE(v,t₀,t₁)`), CNF/DNF.
-*   **Tensors:** Higher-dimensional arrays, Index Notation (`T^{i}_{j}`), Contraction (`C(T)`), Tensor Product (`⊗`), Einstein Summation.
+*   **Linear Algebra:** `Matrix`, `Vector`, Transpose (`Aᵀ`), Inverse (`A⁻¹`), Determinant (`det(A)`), Trace (`tr(A)`), Dot Product (`⋅` or `dot_product`), Cross Product (`×` or `cross_product`), Row Echelon Form (`rref`), Matrix Decompositions (`svd`, `eigen`, `qr`, `lu`, `cholesky`), `DiagonalMatrix`, `SymmetricMatrix`, `OrthogonalMatrix`, etc.
+*   **Calculus:** `Differential Calculus`, Derivative (`diff(f, x)`), Partial Derivative (`∂f/∂xᵢ`), Gradient (`∇f` or `grad(f)`), Jacobian (`J(f)` or `jacobian(f)`), Hessian (`H(f)` or `hessian(f)`), Integral (`integrate(f, x)` or `integrate(f, x, a, b)`), Summation (`summation(f, i, a, b)`), Limit (`limit(f, x, a)`).
+*   **Polynomials:** `Polynomial`, `Monomial`, `Polynomial Ring`, Ideal (`⟨...⟩`), Gröbner Basis (`groebner_basis(...)`), Leading Term (`leading_term(f)`), Normal Form (`normal_form(f, G)`), S-polynomial (`S(f,g)`), Monomial Orders (`lex`, `grlex`, `grevlex`).
+*   **Logic:** `Boolean`, Propositional Logic (`∧`, `∨`, `¬`), Quantifiers (`∀ x: P(x)`, `∃ x: P(x)`), BDD (`ITE(v,t₀,t₁)`), CNF/DNF.
+*   **Tensors:** Higher-dimensional arrays, Index Notation (`T^{i}_{j}`), Contraction (`C(T)`), Tensor Product (`⊗` or `kronecker`), Einstein Summation.
 *   **Interval Arithmetic:** Intervals (`[a,b]`), Interval operations, `inf`, `sup`, `width`, `mid`, Intersection (`∩`), Hull (`∪`).
 *   **Transforms:** `DFT`, `FFT`, `WHT`, `Convolution`.
 *   **Recurrence Relations:** `T(n)`, Master Theorem, Akra-Bazzi, Characteristic Polynomial, Generating Functions.
@@ -167,7 +166,7 @@ This document consolidates terminology, structures, domains, and notation used a
 ## Specific Algorithms / Methods
 
 *   **FFT Algorithms:** Cooley-Tukey, Rader's, Bluestein's.
-*   **Canonicalization Algorithms:** Booth's (Cyclic), Nauty (Graphs), Buchberger's (Gröbner Basis).
+*   **Canonicalisation Algorithms:** Booth's (Cyclic), Nauty (Graphs), Buchberger's (Gröbner Basis).
 *   **Approximation Methods:** Newton-Raphson, Taylor Series, Padé Approximants, Runge-Kutta, Monte Carlo, Finite Differences.
 *   **Sudoku/Rubik's Cube Solvers:** Constraint Propagation, Backtracking, Subgroup Methods (G₀-G₄).
 *   **Chemistry Methods:** Molecular Mechanics, Quantum Chemistry (DFT, HF, MP2), QSAR, Molecular Dynamics.
@@ -178,9 +177,7 @@ This consolidated list provides a reference for the key terms and notations used
 
 To enable a unified system where rules and properties can be inherited and shared, we can structure the identified domains into a conceptual lattice or hierarchy. This hierarchy uses the subset relation (`⊂`) to denote that elements of a subdomain also belong to the superdomain, allowing rules defined for broader categories (like `Ring`) to apply to more specific instances (like `Integer` or `Int32`).
 
-TODO: Compare with Haskell monad hierarchy.
-
-```
+```orbit
 Top (Most General Domain)
  ├── ComputationalObject
  │   ├── DataStructure
@@ -200,8 +197,14 @@ Top (Most General Domain)
  │   └── Expression / AST (Abstract Syntax Tree)
  │       ├── OrbitExpr (Orbit's own AST)
  │       └── MathExpr (Mathematical Notation)
+ │           ├── ArithmeticExpr // +, *, /, ^ etc.
+ │           ├── ComparisonExpr // <, ≤, >, ≥, =
+ │           ├── MaxExpr / MinExpr / MedianExpr // Includes Max(), Min(), Median() constructors
+ │           ├── NormExpr // Node representing Norm(f, Space)
+ │           ├── SummationExpression // Node representing Sum(...)
+ │           └── IntegralExpression // Node representing Integral(...)
  │
-├── MathematicalStructure
+ ├── MathematicalStructure
  │   ├── Algebraic
  │   │   ├── Magma // Type* → Type* → Type* (binary operation)
  │   │   │   └── Semigroup ⊂ Magma // + mul_assoc axiom
@@ -226,6 +229,7 @@ Top (Most General Domain)
  │   │   │       │   ├── Field ⊂ CommutativeRing // + multiplicative inverse for non-zero
  │   │   │       │   │   ├── Rational (ℚ) ≅ Field // Instance
  │   │   │       │   │   ├── Real (ℝ) ≅ Field // Instance
+ │   │   │       │   │   │   └── PositiveReal ⊂ Real // Specific subset for estimates
  │   │   │       │   │   └── Complex (ℂ) ≅ Field // Instance
  │   │   │       │   ├── Integer (ℤ) ⊂ CommutativeRing // Instance
  │   │   │       │   │   └── Nat (ℕ) ⊂ Integer // Natural numbers (often Monoid/Semiring)
@@ -244,13 +248,31 @@ Top (Most General Domain)
  │   │   ├── PartialOrder
  │   │   │   └── Lattice ⊂ PartialOrder // + has LUB (join ∨) & GLB (meet ∧)
  │   │   │       └── DistributiveLattice ⊂ Lattice // + distributivity laws
- │   ├── **Topological Structures** (Less direct alignment, depends on Orbit's needs)
+ │   ├── **Topological Structures**
  │   │   ├── TopologicalSpace
  │   │   │   └── MetricSpace ⊂ TopologicalSpace
- │   └── **Calculus** (Domains for operations, properties derived from Field structures)
- │       ├── DifferentialCalculus
- │       ├── IntegralCalculus
- │       └── TensorCalculus
+ │   ├── **Calculus** (Conceptual grouping, operations act on Fields mostly)
+ │   │   ├── DifferentialCalculus
+ │   │   ├── IntegralCalculus
+ │   │   └── TensorCalculus
+ │   └── **Function Spaces** (For Advanced Estimates)
+ │       ├── FunctionSpace // Base domain
+ │       │   ├── LpSpace (Lᵖ) ⊂ FunctionSpace
+ │       │   └── SobolevSpace (Hˢ) ⊂ FunctionSpace
+ │
+ ├── VerificationFramework // NEW: For Estimate Verification
+ │   ├── VerificationTask (Verify(...))
+ │   ├── Estimate // Represents a relational statement
+ │   │   ├── ApproxLE (A ≲ B) ⊂ Estimate // Asymptotic LE
+ │   │   ├── ApproxGE (A ≳ B) ⊂ Estimate // Asymptotic GE
+ │   │   ├── ApproxEq (A ∼ B) ⊂ Estimate // Asymptotic EQ
+ │   │   ├── LE (A ≤ B) ⊂ Estimate // Strict LE
+ │   │   ├── GE (A ≥ B) ⊂ Estimate // Strict GE
+ │   │   └── Equal (A = B) ⊂ Estimate // Strict EQ
+ │   ├── Assumption // Contains an Estimate
+ │   └── VerificationResult
+ │       ├── TrueEstimate ⊂ VerificationResult
+ │       └── FalseEstimate ⊂ VerificationResult
  │
  ├── ChemistryDomain
  │   ├── MolecularCompound
@@ -334,9 +356,18 @@ Top (Most General Domain)
  │   │   ├── Precision / ErrorBound
  │   │   ├── Stability
  │   │   └── ConditionNumber
- │   └── VerificationProperty
- │       ├── Correctness
- │       └── Termination
+ │   ├── VerificationProperty // Properties of verification process itself
+ │   │   ├── Correctness
+ │   │   └── Termination
+ │   ├── **DependencyTracking** // NEW: For Estimates
+ │   │   ├── DependsOn(Param) ⊂ DependencyTracking
+ │   │   ├── IndependentOf(Param) ⊂ DependencyTracking
+ │   │   ├── Parameter(Param) ⊂ DependencyTracking // Identifies a parameter
+ │   │   └── AbsoluteConstant ⊂ DependencyTracking // Independent of all parameters
+ │   └── **RewritingControl** // NEW: Meta-properties guiding rewriting
+ │       ├── CaseContext(Assumptions) ⊂ RewritingControl // Current case assumptions
+ │       ├── SufficientlyLarge(Param) ⊂ RewritingControl // Condition for rules
+ │       └── Strategy(Name) ⊂ RewritingControl // e.g., Strategy(LogTransform)
  │
  ├── FormalSystem
  │   ├── LogicSystem (Propositional, Predicate)
@@ -351,7 +382,6 @@ Top (Most General Domain)
 		 ├── Graphics (Transformations, Rendering)
 		 ├── ConstraintSatisfaction (Sudoku, Rubik's Cube)
 		 └── MachineLearning (NeuralNetworkOps)
-``` 
 
 **Explanation and Usage:**
 
@@ -374,15 +404,15 @@ To facilitate verification of Orbit transformations by Lean and the potential us
 2.  **Use `⊂` for Inheritance:** Orbit's subset relation (`⊂`) between domains should mirror Mathlib's type class inheritance (`extends`). For example, since `ring` extends `add_comm_group` and `monoid` in Lean, Orbit should have `Ring ⊂ AbelianGroup` and `Ring ⊂ Monoid`. TODO: Should we use extends as well?
 3.  **Map Concrete Types:** Create Orbit domains for base types corresponding to Lean's types (`Int` for `ℤ`, `Real` for `ℝ`, `Rat` for `ℚ`, `Nat` for `ℕ`, `Bool` for `bool`). The `⊂` relationships should reflect Lean's coercions or instance relationships (e.g., `Int ⊂ Rat ⊂ Real`).
 4.  **Axioms vs. Properties:**
-    *   **Lean:** Defines structures via axioms (e.g., `add_comm : ∀ a b : G, a + b = b + a` within `add_comm_group`). Theorems are proven from these axioms.
-    *   **Orbit:** Can represent these properties using specific domains or annotations on operators. For interoperability:
-        *   Lean theorems (`lhs = rhs`) can translate to Orbit rewrite rules (`lhs <=> rhs` or `lhs => rhs`).
-        *   Orbit transformations (`e1 => e2`) need to generate Lean proof goals (`e1 = e2`) within the appropriate algebraic context (e.g., `variables [ring R] (a b c : R) ... prove (a * (b + c) = a * b + a * c)`).
-5.  **Symmetry Groups:** Orbit's explicit symmetry groups (`S₂`, `Cₙ`, etc.) used for canonicalization relate to Mathlib's axioms. For instance, if an Orbit domain `MyDomain` inherits from `AbelianGroup`, an Orbit rule like `a:MyDomain + b:MyDomain ⊢ + : S₂` establishes the link. This means Orbit's `S₂` canonicalization rule for `+` is justified by the `add_comm` axiom proven for `AbelianGroup` in Lean.
+	*   **Lean:** Defines structures via axioms (e.g., `add_comm : ∀ a b : G, a + b = b + a` within `add_comm_group`). Theorems are proven from these axioms.
+	*   **Orbit:** Can represent these properties using specific domains or annotations on operators. For interoperability:
+		*   Lean theorems (`lhs = rhs`) can translate to Orbit rewrite rules (`lhs ↔ rhs`).
+		*   Orbit transformations (`e1 → e2`) need to generate Lean proof goals (`e1 = e2`) within the appropriate algebraic context (e.g., `variables [ring R] (a b c : R) ... prove (a * (b + c) = a * b + a * c)`).
+5.  **Symmetry Groups:** Orbit's explicit symmetry groups (`S₂`, `Cₙ`, etc.) used for canonicalisation relate to Mathlib's axioms. For instance, if an Orbit domain `MyDomain` inherits from `AbelianGroup`, an Orbit rule like `a:MyDomain + b:MyDomain ⊢ + : S₂` establishes the link. This means Orbit's `S₂` canonicalisation rule for `+` is justified by the `add_comm` axiom proven for `AbelianGroup` in Lean.
 
 **Verification Workflow Example:**
 
-1.  **Orbit Transformation:** Orbit applies a rule `a * (b + c) => (a * b) + (a * c)` because the node for the expression has the `Ring` domain.
+1.  **Orbit Transformation:** Orbit applies a rule `a * (b + c) → (a * b) + (a * c)` because the node for the expression has the `Ring` domain.
 2.  **Generate Lean Goal:** Orbit outputs a verification goal for Lean:
 
 ```lean
@@ -394,6 +424,6 @@ To facilitate verification of Orbit transformations by Lean and the potential us
 	  rw [mul_add] -- Apply the distributivity theorem from Mathlib's ring class
 ```
 3.  **Lean Verification:** Lean attempts to prove the goal using theorems associated with the `ring` type class (like `mul_add`). If successful, the Orbit step is verified.
-4.  **Lean Rule to Orbit:** A Lean theorem `theorem add_comm_nat : ∀ n m : ℕ, n + m = m + n := ...` can be translated into an Orbit rule `n:Nat + m:Nat <=> m:Nat + n:Nat`.
+4.  **Lean Rule to Orbit:** A Lean theorem `theorem add_comm_nat : ∀ n m : ℕ, n + m = m + n := ...` can be translated into an Orbit rule `n:Nat + m:Nat ↔ m:Nat + n:Nat`.
 
 This alignment ensures that the core algebraic reasoning in Orbit is grounded in structures that have rigorous definitions and proven properties in Mathlib, enabling a robust bridge for verification and rule exchange.
