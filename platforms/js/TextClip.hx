@@ -2293,8 +2293,10 @@ class TextClip extends NativeWidgetClip {
 	private function disableSprites() : Void {
 		if (textClip != null && untyped textClip._texture != null) {
 			textClip.destroy({ children: true, texture: true, baseTexture: true });
-			nativeWidget = null;
-			isNativeWidget = false;
+			// HOTFIX : Temporarily disabled nativeWidget removing
+			// TODO : Find a way to properly prevent multiple nativeWidget creation
+			// nativeWidget = null;
+			// isNativeWidget = false;
 			textClip = null;
 		}
 
