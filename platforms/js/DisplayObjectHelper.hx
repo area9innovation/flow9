@@ -24,6 +24,7 @@ class DisplayObjectHelper {
 	public static var UseOptimization : Bool = Util.getParameter("remove_listener_optimization") != "0";
 	public static var ScreenreaderDialog : Bool = Util.getParameter("screenreader_dialog") != "0";
 	public static var CheckUniqueClipID : Bool = Util.getParameter("check_unique_clip_id") == "1";
+	public static var MountMaskContainerEnabled : Bool = Util.getParameter("mount_mask_container_enabled") != "0";
 	public static var UniqueClipIds : Array<String> = [];
 
 	private static var InvalidateStage : Bool = true;
@@ -2158,6 +2159,10 @@ class DisplayObjectHelper {
 					var cont = Browser.document.createElement("div");
 					cont.className = 'nativeWidget';
 					untyped clip.nativeWidget.appendChild(cont);
+				} else if (MountMaskContainerEnabled && untyped clip.nativeWidget.contains(childWidget)) {
+					var cont = Browser.document.createElement("div");
+					cont.className = 'nativeWidget';
+					untyped clip.nativeWidget.insertBefore(cont, clip.nativeWidget.firstChild);
 				}
 				try {
 					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
