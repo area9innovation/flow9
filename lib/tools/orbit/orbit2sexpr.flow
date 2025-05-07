@@ -117,7 +117,32 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		OrOperatorSymbol(symbol): SSOperator(symbol);
 		
 		// Collection types
-		OrArray(items): SSVector(map(items, orbit2sexpr));
+		OrArray(items): {
+			// Check for array pattern with ellipsis for tail binding: [a, b, ..., rest]
+			if (length(items) >= 2 && items[length(items) - 2] == OrEllipsis()) {
+				// Extract elements before the ellipsis
+				preElems = subrange(items, 0, length(items) - 2);
+				// Extract the variable that will be bound to the rest of the elements
+				restVar = items[length(items) - 1];
+				
+				// Create a vector pattern with the elements before ellipsis, 
+				// then '... restVar' following SExpr's rest pattern format
+				SSVector(concat(
+					map(preElems, orbit2sexpr),
+					[SSOperator("..."), orbit2sexpr(restVar)]
+				));
+			} else if (length(items) == 2 && items[0] == OrEllipsis()) {
+				// Special case for [..., all] pattern that captures all elements
+				restVar = items[1];
+				SSVector([
+					SSOperator("..."),
+					orbit2sexpr(restVar)
+				]);
+			} else {
+				// Regular array (not a pattern with tail binding)
+				SSVector(map(items, orbit2sexpr));
+			}
+		};
 		
 		// Binary operations - Check for associative operations that should be flattened
 		OrAdd(a, b): {
@@ -211,6 +236,10 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 			} else if (fn == OrIdentifier("quote")) {
 				// Handle missing argument as empty quote
 				SSSpecialForm(SQuote(), [SSList([])]);
+			} else if (isOperatorPattern(fn, args)) {
+				// Handle operator patterns like '*'(terms)
+				// This creates a pattern that the SExpr matcher can use to match n-ary operators
+				convertOperatorPattern(fn, args);
 			} else {
 				// Regular function call
 				SSList(concat([orbit2sexpr(fn)], map(args, orbit2sexpr)));
@@ -1196,6 +1225,37 @@ buildRightAssociative(operands : [OrMath_expr], op : string) -> OrMath_expr {
 			// Build (operand op acc)
 			makeBinaryOp(op, operand, acc);
 		});
+	}
+}
+
+// Check if this is an operator pattern like '*'(terms)
+isOperatorPattern(fn : OrMath_expr, args : [OrMath_expr]) -> bool {
+	switch (fn) {
+		OrString(opName): {
+			// A string literal function name with exactly one argument is our pattern
+			length(args) == 1;
+		}
+		default: false;
+	}
+}
+
+// Convert an operator pattern like `*`(terms) to SExpr pattern format
+convertOperatorPattern(fn : OrMath_expr, args : [OrMath_expr]) -> Sexpr {
+	switch (fn) {
+		OrString(opName): {
+			// Create a pattern that will match against a list with the operator as first element
+			// This format must match what the SExpr pattern matcher expects for rest patterns
+			// The format is: (operator ... varname) to match all elements in a list
+			SSList([
+				SSOperator(opName),      // The specific operator to match
+				SSOperator("..."),      // The literal '...' used in SExpr rest patterns
+				orbit2sexpr(args[0])    // Variable that will be bound to all captured items
+			]);
+		}
+		default: {
+			// This shouldn't happen if isOperatorPattern is called first
+			SSList([]);
+		}
 	}
 }
 
