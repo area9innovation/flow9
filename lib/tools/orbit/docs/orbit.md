@@ -164,6 +164,64 @@ point is (
 	_ => "Not a point"
 )
 ```
+
+### Matching Associative Operators with Multiple Arguments
+
+Orbit allows matching associative operators (like `+`, `*`) with any number of arguments using backtick notation. This is particularly useful for capturing all operands in expressions with varying numbers of terms:
+
+```orbit
+// Match multiplication with any number of terms
+expr is (
+	`*`(terms) => (
+		// 'terms' contains all operands as a list
+		println("Found multiplication with terms: " + prettyOrbit(terms));
+		// Process the terms...
+	);
+	_ => "Not a multiplication"
+)
+
+// Match addition with any number of terms
+expr is (
+	`+`(terms) => (
+		// 'terms' captures all operands
+		println("Found addition with terms: " + prettyOrbit(terms));
+		// Process the terms...
+	);
+	_ => "Not an addition"
+)
+```
+
+The backtick syntax ```(terms)` captures the operator symbol and binds all operands to the `terms` variable, regardless of how many there are. This works with binary operators that are naturally associative, like addition and multiplication.
+
+### Array Deconstruction with Rest Patterns
+
+Orbit supports powerful array pattern matching with rest patterns, which allow you to capture multiple elements in a single variable:
+
+```orbit
+// Matching arrays with rest patterns
+arr is (
+  [first, second, ..., rest] => (
+    // 'first' is the first element
+    // 'second' is the second element
+    // 'rest' contains all remaining elements as an array
+    println("First: " + prettyOrbit(first));
+    println("Second: " + prettyOrbit(second));
+    println("Rest: " + prettyOrbit(rest));
+  );
+  [single, ..., rest] => (
+    // Matches arrays with at least one element
+    println("Single: " + prettyOrbit(single));
+    println("Rest: " + prettyOrbit(rest));
+  );
+  [..., all] => (
+    // Captures all elements in 'all'
+    println("All elements: " + prettyOrbit(all));
+  );
+  _ => "No match"
+)
+```
+
+The `...` syntax indicates a rest pattern, which can match zero or more elements. When used with arrays, it provides a flexible way to extract specific elements while collecting others.
 </pattern_matching>
 
 <data_construction>
