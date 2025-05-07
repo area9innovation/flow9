@@ -37,6 +37,66 @@ export {
 	invokeRuntimeFn(env : SExpEnv, name : string, result : FnArgResult, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv;
 }
 
+// Helper for isUpperCase (used in actualAstname)
+isUpperCase(s : string) -> bool {
+    // Basic check, assumes single char and ASCII. A more robust check might be needed for full Unicode.
+    if (strlen(s) != 1) false
+    else {
+        c = s2a(s)[0]; // Get char code
+        c >= 65 && c <= 90; // ASCII 'A' through 'Z'
+    }
+}
+
+// Helper function to determine the AST name of an Sexpr node
+actualAstname(sexpr_node : Sexpr) -> string {
+	switch (sexpr_node) {
+		SSInt(__): "Int";
+		SSDouble(__): "Double";
+		SSBool(__): "Bool";
+		SSString(__): "String";
+		SSVariable(name): if (strlen(name) > 0 && isUpperCase(substring(name,0,1))) "Constructor" else "Identifier";
+		SSConstructor(name): name; // Or "Constructor" if you prefer generic type over actual name
+		SSOperator(opName): opName; 
+		SSVector(__): "Vector";
+		SSList(items): {
+			if (length(items) > 0) {
+				first_item = items[0];
+				switch (first_item) {
+					SSOperator(opName): opName; 
+					SSVariable(fnName): "Call"; // Could also be fnName
+                    SSConstructor(consName): consName; 
+					default: "List"; 
+				}
+			} else {
+				"EmptyList";
+			}
+		}
+		SSSpecialForm(name, __): {
+			switch (name) {
+				SAnd(): "and"; SBegin(): "begin"; SClosure(): "closure";
+				SDefine(): "define"; SEval(): "eval"; SIf(): "if";
+				SImport(): "import"; SLambda(): "lambda"; SLet(): "let";
+				SLetRec(): "letrec"; SList(): "list"; SMatch(): "match";
+				SOr(): "or"; SQuasiQuote(): "quasiquote"; SQuote(): "quote";
+				SSet(): "set"; SUnQuote(): "unquote"; SUnQuoteSplicing(): "unquote-splicing";
+			}
+		}
+	}
+}
+
+// Runtime Sexpr function for astname
+astnameFunctionSexpr(evalResult : FnArgResult) -> Sexpr {
+	if (length(evalResult.args) != 1) {
+		println("ERROR: astname expects 1 argument");
+		SSString("");
+	} else {
+		expr_to_analyze = evalResult.args[0];
+		typename = actualAstname(expr_to_analyze);
+		SSString(typename);
+	}
+}
+
+
 getRuntimeEnv(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv {
 	// Store the evaluator somewhere globally so we can access it in evaluateOGraphQuasiquoteFunction
 	SExpEnv(getRuntimeFunctions(evaluator), makeTree(), SSList([]));
@@ -308,7 +368,7 @@ getRuntimeFunctions(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> Tre
 		
 		// New functions (ported from orbit)
 		Pair("prettySexpr", RuntimeFn(1, \result -> prettySexprFunction(result))),
-		Pair("astname", RuntimeFn(1, \result -> astnameFunction(result))),
+		Pair("astname", RuntimeFn(1, \result -> astnameFunctionSexpr(result))), // Using new astname
 		Pair("varname", RuntimeFn(1, \result -> varnameFunction(result))),
 		Pair("getFileContent", RuntimeFn(1, \result -> getFileContentFunction(result))),
 		Pair("setFileContent", RuntimeFn(2, \result -> setFileContentFunction(result))),
@@ -1220,55 +1280,6 @@ prettySexprFunction(evalResult : FnArgResult) -> Sexpr {
 	}
 }
 
-// Implementation of astname function to get the type of a Sexpr
-astnameFunction(evalResult : FnArgResult) -> Sexpr {
-	// Ensure we have exactly 1 argument
-	if (length(evalResult.args) != 1) {
-		println("ERROR: astname expects 1 argument");
-		SSString("");
-	} else {
-		// Return the structure name of the Sexpr
-		typename = switch (evalResult.args[0]) {
-			SSInt(__): "Int";
-			SSDouble(__): "Double";
-			SSBool(__): "Bool";
-			SSString(__): "String";
-			SSVariable(__): "Variable";
-			SSConstructor(__): "Constructor";
-			SSOperator(__): "Operator";
-			SSVector(__): "Vector";
-			SSList(__): {
-				// TODO: If the first element is callable, this is a call, not a list
-				println("TODO: Handle callable list");
-				"List";
-			}
-			SSSpecialForm(name, __): {
-				switch (name) {
-					SAnd(): "and";
-					SBegin(): "begin";
-					SClosure(): "closure";
-					SDefine(): "define";
-					SEval(): "eval";
-					SIf(): "if";
-					SImport(): "import";
-					SLambda(): "lambda";
-					SLet(): "let";
-					SLetRec(): "letrec";
-					SList(): "list";
-					SMatch(): "match";
-					SOr(): "or";
-					SQuasiQuote(): "quasiquote";
-					SQuote(): "quote";
-					SSet(): "set";
-					SUnQuote(): "unquote";
-					SUnQuoteSplicing(): "unquote-splicing";
-				}
-			}
-		}
-		SSString(typename);
-	}
-}
-
 // Implementation of varname function
 varnameFunction(evalResult : FnArgResult) -> Sexpr {
 	// Ensure we have exactly 1 argument
@@ -1812,3 +1823,5 @@ prettyOrbitSexp(evalResult : FnArgResult) -> Sexpr {
 		SSString(prettyOrbit(orbitExpr));
 	}
 }
+// The old varnameFunction is removed as it was a duplicate.
+// The actual varnameFunction is defined above in the getRuntimeFunctions list.
