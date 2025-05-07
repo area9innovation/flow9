@@ -85,6 +85,10 @@ class WebClip extends NativeWidgetClip {
 		iframe.allowFullscreen = true;
 		iframe.frameBorder = "no";
 		iframe.callflow = cb; // Store for crossdomain calls
+		
+		if (Util.getParameter("allowautoplay") == "1") {
+			iframe.allow = "autoplay";
+		}
 
 		iframe.id = nativeWidget.id + "_iframe";
 		nativeWidget.appendChild(iframe);
