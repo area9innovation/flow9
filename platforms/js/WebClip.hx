@@ -90,10 +90,6 @@ class WebClip extends NativeWidgetClip {
 			iframe.allow = "autoplay";
 		}
 
-		if (Util.getParameter("allowautoplay_2") == "1") {
-			iframe.setAttribute("allow", "autoplay");
-		}
-
 		iframe.id = nativeWidget.id + "_iframe";
 		nativeWidget.appendChild(iframe);
 
