@@ -1,0 +1,149 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/GLSL/glsl_serializer;
+import tools/orbit/sexpr/GLSL/glsl_representation;
+import string;
+import ds/array;
+import fs/filesystem;
+
+export {
+	// Generate a GLSL file with the serialized AST and constant pool
+	generateProgramGLSL(expr : Sexpr, outputPath : string) -> bool;
+
+	// Helper to format arrays as GLSL
+	formatGLSLArray(name : string, values : [double], isConst : bool) -> string;
+}
+
+// Generate a GLSL file containing the serialized program and constant pool as uniform data
+generateProgramGLSL(expr : Sexpr, outputPath : string) -> bool {
+	// Serialize the expression
+	result = sexprToGLSL(expr);
+	binaryAST = result.first;
+	constantPool = result.second;
+
+	// Create GLSL code with the serialized data
+	glslCode = generateGLSLCode(binaryAST, constantPool);
+
+	// Write the GLSL code to the output file
+	setFileContent(outputPath, glslCode);
+
+	// Return success
+	true;
+}
+
+// Generate the GLSL code with the serialized data
+generateGLSLCode(binaryAST : [double], constantPool : [double]) -> string {
+	// Format the arrays as GLSL
+	constPoolDecl = formatGLSLArray("u_constant_pool", constantPool, true);
+	binaryASTDecl = formatGLSLArray("u_program_ast", binaryAST, true);
+
+	// Create the header with size information
+	header = "// Auto-generated GLSL code for S-expression interpreter\n" +
+		"// AST size: " + i2s(length(binaryAST)) + " elements\n" +
+		"// Constant Pool size: " + i2s(length(constantPool)) + " elements\n\n";
+
+	// Type tag definitions
+	typeTags = "// Type tags for AST nodes\n" +
+		"#define TAG_SSINT " + i2s(TAG_SSINT) + "\n" +
+		"#define TAG_SSDOUBLE " + i2s(TAG_SSDOUBLE) + "\n" +
+		"#define TAG_SSBOOL " + i2s(TAG_SSBOOL) + "\n" +
+		"#define TAG_SSSTRING " + i2s(TAG_SSSTRING) + "\n" +
+		"#define TAG_SSVARIABLE " + i2s(TAG_SSVARIABLE) + "\n" +
+		"#define TAG_SSCONSTRUCTOR " + i2s(TAG_SSCONSTRUCTOR) + "\n" +
+		"#define TAG_SSOPERATOR " + i2s(TAG_SSOPERATOR) + "\n" +
+		"#define TAG_SSLIST " + i2s(TAG_SSLIST) + "\n" +
+		"#define TAG_SSVECTOR " + i2s(TAG_SSVECTOR) + "\n" +
+		"#define TAG_SSSPECIALFORM " + i2s(TAG_SSSPECIALFORM) + "\n" +
+		"#define TAG_CLOSURE " + i2s(TAG_CLOSURE) + "\n" +
+		"#define TAG_ERROR " + i2s(TAG_ERROR) + "\n\n";
+
+	// Special form enum definitions
+	specialForms = "// Special form IDs\n" +
+		"#define SFORM_AND " + i2s(SFORM_AND) + "\n" +
+		"#define SFORM_BEGIN " + i2s(SFORM_BEGIN) + "\n" +
+		"#define SFORM_CLOSURE " + i2s(SFORM_CLOSURE) + "\n" +
+		"#define SFORM_DEFINE " + i2s(SFORM_DEFINE) + "\n" +
+		"#define SFORM_EVAL " + i2s(SFORM_EVAL) + "\n" +
+		"#define SFORM_IF " + i2s(SFORM_IF) + "\n" +
+		"#define SFORM_IMPORT " + i2s(SFORM_IMPORT) + "\n" +
+		"#define SFORM_LAMBDA " + i2s(SFORM_LAMBDA) + "\n" +
+		"#define SFORM_LET " + i2s(SFORM_LET) + "\n" +
+		"#define SFORM_LETREC " + i2s(SFORM_LETREC) + "\n" +
+		"#define SFORM_LIST " + i2s(SFORM_LIST) + "\n" +
+		"#define SFORM_MATCH " + i2s(SFORM_MATCH) + "\n" +
+		"#define SFORM_OR " + i2s(SFORM_OR) + "\n" +
+		"#define SFORM_QUASIQUOTE " + i2s(SFORM_QUASIQUOTE) + "\n" +
+		"#define SFORM_QUOTE " + i2s(SFORM_QUOTE) + "\n" +
+		"#define SFORM_SET " + i2s(SFORM_SET) + "\n" +
+		"#define SFORM_UNQUOTE " + i2s(SFORM_UNQUOTE) + "\n" +
+		"#define SFORM_UNQUOTESPLICING " + i2s(SFORM_UNQUOTESPLICING) + "\n\n";
+
+	// Size definitions
+	sizes = "// Program size information\n" +
+		"#define PROGRAM_AST_SIZE " + i2s(length(binaryAST)) + "\n" +
+		"#define CONSTANT_POOL_SIZE " + i2s(length(constantPool)) + "\n\n";
+
+	// Combine all parts
+	header + typeTags + specialForms + sizes + constPoolDecl + "\n" + binaryASTDecl + "\n";
+}
+
+// Format an array as GLSL code
+formatGLSLArray(name : string, values : [double], isConst : bool) -> string {
+	// Determine the qualifier
+	qualifier = if (isConst) "const" else "uniform";
+
+	// Start the declaration
+	arrayDecl = qualifier + " float " + name + "[" + i2s(length(values)) + "] = float[](
+";
+
+	// Format the values
+	arrayValues = formatArrayValues(values, 4, "");
+
+	// Complete the declaration
+	arrayDecl + arrayValues + "\n);";
+}
+
+// Helper to format array values with proper indentation and line breaks
+formatArrayValues(values : [double], itemsPerLine : int, indent : string) -> string {
+	if (length(values) == 0) {
+		""; // Empty array
+	} else {
+		// Process values in chunks
+		formatChunks(values, itemsPerLine, indent, 0, "");
+	}
+}
+
+// Process array values in chunks for better formatting
+formatChunks(values : [double], itemsPerLine : int, indent : string, lineNum : int, acc : string) -> string {
+	if (length(values) == 0) {
+		// Remove trailing comma if present
+		if (acc != "") {
+			substring(acc, 0, strlen(acc) - 1);
+		} else {
+			"";
+		}
+	} else {
+		// Take the next chunk of values
+		chunkSize = min(itemsPerLine, length(values));
+		chunk = take(values, chunkSize);
+		rest = tailFrom(values, chunkSize);
+
+		// Format this chunk
+		line = indent + "    " + strGlue(map(chunk, \d -> formatGLSLFloat(d)), ", ") + ",\n";
+
+		// Process the rest recursively
+		formatChunks(rest, itemsPerLine, indent, lineNum + 1, acc + line);
+	}
+}
+
+// Format a single float value for GLSL
+formatGLSLFloat(value : double) -> string {
+	// Ensure proper float notation
+	str = d2s(value);
+	if (strContains(str, ".")) {
+		// Already has decimal point
+		str;
+	} else {
+		// Add decimal point to ensure it's recognized as a float
+		str + ".0";
+	}
+}
