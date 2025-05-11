@@ -1,0 +1,216 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/utils;
+import tools/orbit/sexpr/GLSL/glsl_representation;
+import ds/tree;
+import ds/array;
+import string;
+import math/math;
+
+export {
+	// Main serialization function: Converts a Sexpr AST to binary format for GPU
+	// Returns a pair of arrays: (binary_program_ast, constant_pool)
+	sexprToGLSL(expr : Sexpr) -> Pair<[double], [double]>;
+
+	// Generate constant pool as (constants, index_map)
+	generateConstantPool(expr : Sexpr) -> Pair<[string], Tree<string, int>>;
+
+	// Convert string array to float array for GPU
+	constantPoolToFloats(constants : [string]) -> [double];
+
+	// For testing - serialize a single expression to binary format
+	serializeSingleNode(expr : Sexpr, constMap : Tree<string, int>) -> [double];
+}
+
+// Generate a constant pool from all strings in the AST
+generateConstantPool(expr : Sexpr) -> Pair<[string], Tree<string, int>> {
+	// Collect all unique strings recursively
+	stringTree = collectStrings(expr, makeTree());
+	
+	// Get unique strings as an array
+	uniqueStrings = getTreeKeys(stringTree);
+	
+	// Create a map from string to its index in the pool
+	indexMap = foldi(uniqueStrings, makeTree(), \i, acc, str -> {
+		setTree(acc, str, i);
+	});
+	
+	Pair(uniqueStrings, indexMap);
+}
+
+// Recursively collect all strings from the AST
+collectStrings(expr : Sexpr, acc : Tree<string, bool>) -> Tree<string, bool> {
+	switch (expr) {
+		SSString(s): setTree(acc, s, true);
+		SSVariable(name): setTree(acc, name, true);
+		SSConstructor(name): setTree(acc, name, true);
+		SSOperator(op): setTree(acc, op, true);
+		SSList(items): {
+			fold(items, acc, \a, item -> collectStrings(item, a));
+		};
+		SSVector(items): {
+			fold(items, acc, \a, item -> collectStrings(item, a));
+		};
+		SSSpecialForm(__, items): {
+			fold(items, acc, \a, item -> collectStrings(item, a));
+		};
+		default: acc;
+	}
+}
+
+// Convert the constant pool string array to a flat float array
+// Each string is encoded as a sequence of floats:
+// [length, char_code_1, char_code_2, ...]
+constantPoolToFloats(constants : [string]) -> [double] {
+	fold(constants, [], \acc, str -> {
+		// Create an array with the string length followed by each character code
+		stringFloats = concat(
+			[i2d(strlen(str))],  // String length
+			generate(0, strlen(str), \i -> i2d(getCharCodeAt(str, i)))  // Character codes
+		);
+		
+		// Append to the accumulated array
+		concat(acc, stringFloats);
+	});
+}
+
+// Main serialization function
+sexprToGLSL(expr : Sexpr) -> Pair<[double], [double]> {
+	// 1. Generate the constant pool
+	constPoolResult = generateConstantPool(expr);
+	constantPool = constPoolResult.first;
+	constantMap = constPoolResult.second;
+	
+	// 2. Convert the constant pool to a float array
+	constantPoolArray = constantPoolToFloats(constantPool);
+	
+	// 3. Serialize the expression to a binary AST
+	binaryASTInfo = serializeExpr(expr, constantMap, 0);
+	binaryAST = binaryASTInfo.first;
+	
+	// Return the binary AST and constant pool
+	Pair(binaryAST, constantPoolArray);
+}
+
+// Main serialization function
+// Returns (binary_ast, next_offset)
+serializeExpr(expr : Sexpr, constMap : Tree<string, int>, offset : int) -> Pair<[double], int> {
+	switch (expr) {
+		// Simple types
+		SSInt(i): {
+			// [TAG_SSINT, value]
+			nodeData = [i2d(TAG_SSINT), i2d(i)];
+			Pair(nodeData, offset + length(nodeData));
+		};
+		SSDouble(d): {
+			// [TAG_SSDOUBLE, value]
+			nodeData = [i2d(TAG_SSDOUBLE), d];
+			Pair(nodeData, offset + length(nodeData));
+		};
+		SSBool(b): {
+			// [TAG_SSBOOL, value]
+			nodeData = [i2d(TAG_SSBOOL), if (b) 1.0 else 0.0];
+			Pair(nodeData, offset + length(nodeData));
+		};
+		SSString(s): {
+			// [TAG_SSSTRING, pool_index, length]
+			strIndex = lookupTreeDef(constMap, s, -1);
+			nodeData = [i2d(TAG_SSSTRING), i2d(strIndex), i2d(strlen(s))];
+			Pair(nodeData, offset + length(nodeData));
+		};
+		SSVariable(name): {
+			// [TAG_SSVARIABLE, pool_index]
+			strIndex = lookupTreeDef(constMap, name, -1);
+			nodeData = [i2d(TAG_SSVARIABLE), i2d(strIndex)];
+			Pair(nodeData, offset + length(nodeData));
+		};
+		SSConstructor(name): {
+			// [TAG_SSCONSTRUCTOR, pool_index]
+			strIndex = lookupTreeDef(constMap, name, -1);
+			nodeData = [i2d(TAG_SSCONSTRUCTOR), i2d(strIndex)];
+			Pair(nodeData, offset + length(nodeData));
+		};
+		SSOperator(op): {
+			// [TAG_SSOPERATOR, pool_index]
+			strIndex = lookupTreeDef(constMap, op, -1);
+			nodeData = [i2d(TAG_SSOPERATOR), i2d(strIndex)];
+			Pair(nodeData, offset + length(nodeData));
+		};
+		
+		// Compound types
+		SSList(items): serializeCompound(TAG_SSLIST, items, constMap, offset, 3);
+		SSVector(items): serializeCompound(TAG_SSVECTOR, items, constMap, offset, 3);
+		SSSpecialForm(specialName, items): {
+			// Special forms have an extra field for the form ID
+			specialFormId = specialNameToEnumId(specialName);
+			headerSize = 4; // tag, form_id, count, first_child_offset
+			
+			// Serialize the header
+			header = [i2d(TAG_SSSPECIALFORM), i2d(specialFormId)];
+			
+			// Handle childless special forms separately
+			if (length(items) == 0) {
+				headerComplete = concat(header, [0.0, 0.0]); // No children
+				Pair(headerComplete, offset + headerSize);
+			} else {
+				// First child offset comes after the header
+				firstChildOffset = offset + headerSize;
+				
+				// Create the header with child count and offset
+				headerComplete = concat(header, [i2d(length(items)), i2d(firstChildOffset)]);
+				
+				// Serialize all children
+				result = serializeItems(items, constMap, firstChildOffset, []);
+				
+				// Combine the header with all serialized children
+				Pair(concat(headerComplete, result.first), result.second);
+			}
+		};
+	}
+}
+
+// Helper for compound types (list, vector)
+serializeCompound(tag : int, items : [Sexpr], constMap : Tree<string, int>, offset : int, headerSize : int) -> Pair<[double], int> {
+	// Handle empty compounds separately
+	if (length(items) == 0) {
+		// Just return the header with 0 for count and offset
+		header = [i2d(tag), 0.0, 0.0];
+		Pair(header, offset + headerSize);
+	} else {
+		// First child offset comes after the header
+		firstChildOffset = offset + headerSize;
+		
+		// Create the header with child count and offset
+		header = [i2d(tag), i2d(length(items)), i2d(firstChildOffset)];
+		
+		// Serialize all children
+		result = serializeItems(items, constMap, firstChildOffset, []);
+		
+		// Combine the header with all serialized children
+		Pair(concat(header, result.first), result.second);
+	}
+}
+
+// Serializes a list of items and returns (combined_binary_data, next_offset)
+serializeItems(items : [Sexpr], constMap : Tree<string, int>, startOffset : int, acc : [double]) -> Pair<[double], int> {
+	if (length(items) == 0) {
+		// No more items to serialize
+		Pair(acc, startOffset);
+	} else {
+		// Serialize the current item
+		itemResult = serializeExpr(items[0], constMap, startOffset);
+		itemData = itemResult.first;
+		nextOffset = itemResult.second;
+		
+		// Add the serialized item to the accumulated data
+		combinedData = concat(acc, itemData);
+		
+		// Recursively serialize the remaining items
+		serializeItems(tail(items), constMap, nextOffset, combinedData);
+	}
+}
+
+// For testing - serialize a single node without children
+serializeSingleNode(expr : Sexpr, constMap : Tree<string, int>) -> [double] {
+	result = serializeExpr(expr, constMap, 0);
+	result.first;
+}
