@@ -8,6 +8,11 @@
     *   **Verify Orbit <-> S-Expression Conversion Integrity:**
         *   Run: `./run_orbit_tests.sh --sexpr-roundtrip`
         *   Goal: Ensure all tests pass the integrity check, meaning the `orbit sexpr-roundtrip=1` mode reports "SUCCESS" for the Orbit -> SExpr -> Orbit -> SExpr conversion process. Investigate any failures reported in the `.sexpr_roundtrip.log` files. This step checks the *conversion mechanism* itself, not the execution results.
+		  - imports are dropped. Fine
+		  - We use [] instead of (). Fine
+		  - ast annotation is lost. Fine.
+		  - ¬ vs not. Fine.
+		  - x : P(x) is parsed as (x : P)(x) and that gives problems
     *   **Verify S-Expression Engine Execution Equivalence:**
         *   Run: `./run_orbit_tests.sh --compare-engines`
         *   Goal: Ensure all tests produce identical *execution output* between the default engine and the S-expression engine (`sexpr=1`). Address any discrepancies found in the `.engine_diff` files. This confirms the S-expression backend *runs* code equivalently.

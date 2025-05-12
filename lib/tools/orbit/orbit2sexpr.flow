@@ -211,7 +211,7 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		
 		// Unary operations
 		OrNegate(a): SSList([SSOperator("-"), orbit2sexpr(a)]);
-		OrLogicalNot(a): SSList([SSOperator("not"), orbit2sexpr(a)]);
+		OrLogicalNot(a): SSList([SSOperator("!"), orbit2sexpr(a)]);
 		OrSummation(a): SSList([SSConstructor("Summation"), orbit2sexpr(a)]);
 		OrIntegral(a): SSList([SSConstructor("Integral"), orbit2sexpr(a)]);
 		OrGradient(a): SSList([SSConstructor("Gradient"), orbit2sexpr(a)]);
@@ -241,8 +241,22 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 				// This creates a pattern that the SExpr matcher can use to match n-ary operators
 				convertOperatorPattern(fn, args);
 			} else {
-				// Regular function call
-				SSList(concat([orbit2sexpr(fn)], map(args, orbit2sexpr)));
+				// Check for method call (function applied to field access)
+				switch (fn) {
+					OrField(object, methodName): {
+						// This is a method call: object.method(args)
+						// Create a special nested list to represent the method call
+						// Format: ((Field object "method") args...)
+						SSList(concat(
+							[SSList([SSConstructor("Field"), orbit2sexpr(object), SSString(methodName)])],
+							map(args, orbit2sexpr)
+						));
+					}
+					default: {
+						// Regular function call
+						SSList(concat([orbit2sexpr(fn)], map(args, orbit2sexpr)));
+					}
+				}
 			}
 		}
 		OrIfElse(cond, thenExpr, elseExpr): SSSpecialForm(SIf(), [orbit2sexpr(cond), orbit2sexpr(thenExpr), orbit2sexpr(elseExpr)]);
@@ -861,8 +875,37 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 			if (length(items) == 0) {
 				// Empty list becomes an empty array
 				OrArray([]);
+			} else if (length(items) >= 1 && 
+			    switch (items[0]) {
+					SSList(innerItems): {
+						length(innerItems) >= 3 && 
+						switch (innerItems[0]) {
+							SSConstructor(name): name == "Field";
+							default: false;
+						}
+					}
+					default: false;
+			    }
+			) {
+				// This is a method call pattern
+				// Extract field accessor components
+				fieldAccessor = items[0];
+				innerItems = switch (fieldAccessor) { SSList(fieldItems): fieldItems; default: []; };
+				
+				// Extract object and method name
+				object = sexpr2orbit(innerItems[1]);
+				methodName = switch (innerItems[2]) {
+					SSString(s): s;
+					default: "";
+				};
+				
+				// Convert remaining items as arguments
+				args = map(tailFrom(items, 1), sexpr2orbit);
+				
+				// Create a method call (using dot notation and function call)
+				OrFunction(OrField(object, methodName), args);
 			} else {
-				// Check if first item is an operator (for associative ops)
+				// Not a method call, check if first item is an operator (for associative ops)
 				switch (items[0]) {
 					SSVector(sexprs): OrArray(map(items, sexpr2orbit));
 					SSOperator(op): {
@@ -1271,13 +1314,13 @@ isOperatorPattern(fn : OrMath_expr, args : [OrMath_expr]) -> bool {
 	switch (fn) {
 		OrString(opName): {
 			// A string literal function name with exactly one argument is our pattern
-			// Exclude unary operators like "not" and "-" that should not be treated as patterns
-			opName != "not" && opName != "-" && length(args) == 1;
+			// Exclude unary operators like "!" and "-" that should not be treated as patterns
+			opName != "!" && opName != "-" && length(args) == 1;
 		}
 		OrOperatorSymbol(opName): {
 			// This is how backtick-enclosed operators are parsed
 			// Exclude unary operators as special cases
-			opName != "not" && opName != "-" && length(args) == 1;
+			opName != "!" && opName != "-" && length(args) == 1;
 		}
 		default: false;
 	}
