@@ -1,5 +1,6 @@
 import tools/orbit/sexpr/sexpr_types;
 import tools/orbit/sexpr/GLSL/glsl_serializer;
+import tools/orbit/sexpr/GLSL/glsl_representation;
 import string;
 import ds/array;
 import fs/filesystem;
@@ -41,22 +42,22 @@ generateGLSLCode(binaryAST : [double], constantPool : [double]) -> string {
 		"#define CONSTANT_POOL_SIZE " + i2s(length(constantPool)) + "\n\n";
 
 	// Format the arrays as GLSL
-	constPoolDecl = formatGLSLArray("u_constant_pool", constantPool, true);
-	binaryASTDecl = formatGLSLArray("u_program_ast", binaryAST, true);
+	constPoolDecl = formatGLSLArray("u_constant_pool", constantPool, true, "pool");
+	binaryASTDecl = formatGLSLArray("u_program_ast", binaryAST, true, "ast");
 
 	// Combine all parts
 	header + sizes + constPoolDecl + "\n\n" + binaryASTDecl + "\n";
 }
 
 // Format an array as GLSL code
-formatGLSLArray(name : string, values : [double], isConst : bool) -> string {
+formatGLSLArray(name : string, values : [double], isConst : bool, arrayType : string) -> string {
 	qualifier = if (isConst) "const" else "uniform";
     arrayTypeLiteral = "float[]("; // Store this part in a variable
 	arrayDecl = qualifier + " float " + name + "[" + i2s(length(values)) + "] = " + arrayTypeLiteral;
 
 	// Format the values
 	// Ensure no trailing comma is produced by formatArrayValues itself
-	arrayValuesStr = if (length(values) == 0) "" else formatArrayValues(values, 4, "    ");
+	arrayValuesStr = if (length(values) == 0) "" else formatArrayValues(values, 4, "    ", arrayType);
 
 	// Complete the declaration
 	arrayDecl + "\n" + arrayValuesStr + "\n);";
@@ -64,7 +65,7 @@ formatGLSLArray(name : string, values : [double], isConst : bool) -> string {
 
 // Helper to format array values with proper indentation and line breaks
 // This function must ensure it does NOT end with a comma if it's the last value.
-formatArrayValues(values : [double], itemsPerLine : int, indent : string) -> string {
+formatArrayValues(values : [double], itemsPerLine : int, indent : string, arrayType : string) -> string {
     if (length(values) == 0) {
         ""; // Empty array content
     } else {
@@ -74,8 +75,15 @@ formatArrayValues(values : [double], itemsPerLine : int, indent : string) -> str
             start = i * itemsPerLine;
             end = min((i + 1) * itemsPerLine, length(values));
             chunk = subrange(values, start, end - start);
-            chunkStr = strGlue(map(chunk, \d -> formatGLSLFloat(d)), ", ");
-            indent + chunkStr;
+            
+            // Add comments for the AST array to explain what each value means
+            if (arrayType == "ast") {
+                formatChunkWithComments(chunk, start, values);
+            } else {
+                // For constant pool or other arrays, just format the values
+                chunkStr = strGlue(map(chunk, \d -> formatGLSLFloat(d)), ", ");
+                indent + chunkStr;
+            }
         });
         
         // Join lines with ",\n" for all but the last line.
@@ -88,6 +96,104 @@ formatArrayValues(values : [double], itemsPerLine : int, indent : string) -> str
             strGlue(allButLast, ",\n") + ",\n" + lastLine;
         }
     }
+}
+
+// Format a chunk of AST values with explanatory comments
+formatChunkWithComments(chunk : [double], offset : int, fullArray : [double]) -> string {
+    // Check if this chunk starts with a node type tag
+    if (length(chunk) > 0 && offset < length(fullArray)) {
+        nodeType = round(chunk[0]);
+        
+        // Format based on node type
+        if (nodeType == TAG_SSINT && length(chunk) >= 2) {
+            // Integer: [TAG_SSINT, value]
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + 
+                "  // [" + i2s(offset) + "] TAG_SSINT, value=" + i2s(round(chunk[1]));
+        } 
+        else if (nodeType == TAG_SSDOUBLE && length(chunk) >= 2) {
+            // Double: [TAG_SSDOUBLE, value]
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + 
+                "  // [" + i2s(offset) + "] TAG_SSDOUBLE, value=" + d2s(chunk[1]);
+        }
+        else if (nodeType == TAG_SSBOOL && length(chunk) >= 2) {
+            // Boolean: [TAG_SSBOOL, value]
+            boolValue = if (chunk[1] > 0.0) "true" else "false";
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + 
+                "  // [" + i2s(offset) + "] TAG_SSBOOL, value=" + boolValue;
+        }
+        else if (nodeType == TAG_SSSTRING && length(chunk) >= 3) {
+            // String: [TAG_SSSTRING, pool_index, length]
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + ", " + formatGLSLFloat(chunk[2]) + 
+                "  // [" + i2s(offset) + "] TAG_SSSTRING, pool_idx=" + i2s(round(chunk[1])) + ", len=" + i2s(round(chunk[2]));
+        }
+        else if (nodeType == TAG_SSVARIABLE && length(chunk) >= 2) {
+            // Variable: [TAG_SSVARIABLE, pool_index]
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + 
+                "  // [" + i2s(offset) + "] TAG_SSVARIABLE, pool_idx=" + i2s(round(chunk[1]));
+        }
+        else if (nodeType == TAG_SSCONSTRUCTOR && length(chunk) >= 2) {
+            // Constructor: [TAG_SSCONSTRUCTOR, pool_index]
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + 
+                "  // [" + i2s(offset) + "] TAG_SSCONSTRUCTOR, pool_idx=" + i2s(round(chunk[1]));
+        }
+        else if (nodeType == TAG_SSOPERATOR && length(chunk) >= 2) {
+            // Operator: [TAG_SSOPERATOR, pool_index]
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + 
+                "  // [" + i2s(offset) + "] TAG_SSOPERATOR, pool_idx=" + i2s(round(chunk[1]));
+        }
+        else if (nodeType == TAG_SSLIST && length(chunk) >= 3) {
+            // List: [TAG_SSLIST, child_count, first_child_offset]
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + ", " + formatGLSLFloat(chunk[2]) + 
+                "  // [" + i2s(offset) + "] TAG_SSLIST, count=" + i2s(round(chunk[1])) + ", child_offset=" + i2s(round(chunk[2]));
+        }
+        else if (nodeType == TAG_SSVECTOR && length(chunk) >= 3) {
+            // Vector: [TAG_SSVECTOR, child_count, first_child_offset]
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + ", " + formatGLSLFloat(chunk[2]) + 
+                "  // [" + i2s(offset) + "] TAG_SSVECTOR, count=" + i2s(round(chunk[1])) + ", child_offset=" + i2s(round(chunk[2]));
+        }
+        else if (nodeType == TAG_SSSPECIALFORM && length(chunk) >= 4) {
+            // Special Form: [TAG_SSSPECIALFORM, form_id, child_count, first_child_offset]
+            formId = round(chunk[1]);
+            formName = getGLSLSpecialFormName(formId);
+            "    " + formatGLSLFloat(chunk[0]) + ", " + formatGLSLFloat(chunk[1]) + ", " 
+                + formatGLSLFloat(chunk[2]) + ", " + formatGLSLFloat(chunk[3]) + 
+                "  // [" + i2s(offset) + "] TAG_SSSPECIALFORM, form=" + formName + ", count=" 
+                + i2s(round(chunk[2])) + ", child_offset=" + i2s(round(chunk[3]));
+        }
+        else {
+            // Default case for node types that don't match known patterns
+            chunkStr = strGlue(map(chunk, \d -> formatGLSLFloat(d)), ", ");
+            "    " + chunkStr + "  // [" + i2s(offset) + "] Unknown node type: " + i2s(nodeType);
+        }
+    }
+    else {
+        // Default case - just format the values without special comments
+        chunkStr = strGlue(map(chunk, \d -> formatGLSLFloat(d)), ", ");
+        "    " + chunkStr + "  // [" + i2s(offset) + "]";
+    }
+}
+
+// Get a human-readable name for a special form ID
+getGLSLSpecialFormName(formId : int) -> string {
+    if (formId == SFORM_AND) "AND"
+    else if (formId == SFORM_BEGIN) "BEGIN"
+    else if (formId == SFORM_CLOSURE) "CLOSURE"
+    else if (formId == SFORM_DEFINE) "DEFINE"
+    else if (formId == SFORM_EVAL) "EVAL"
+    else if (formId == SFORM_IF) "IF"
+    else if (formId == SFORM_IMPORT) "IMPORT"
+    else if (formId == SFORM_LAMBDA) "LAMBDA"
+    else if (formId == SFORM_LET) "LET"
+    else if (formId == SFORM_LETREC) "LETREC"
+    else if (formId == SFORM_LIST) "LIST"
+    else if (formId == SFORM_MATCH) "MATCH"
+    else if (formId == SFORM_OR) "OR"
+    else if (formId == SFORM_QUASIQUOTE) "QUASIQUOTE"
+    else if (formId == SFORM_QUOTE) "QUOTE"
+    else if (formId == SFORM_SET) "SET"
+    else if (formId == SFORM_UNQUOTE) "UNQUOTE"
+    else if (formId == SFORM_UNQUOTESPLICING) "UNQUOTESPLICING"
+    else "UNKNOWN(" + i2s(formId) + ")";
 }
 
 // Format a single float value for GLSL
