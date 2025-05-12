@@ -453,7 +453,45 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 					if (length(items) >= 2) {
 						switch (items[0]) {
 							SSVariable(id): {
-								OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+								// Check if the value is a lambda, in which case we should create an OrFnDef
+								switch (items[1]) {
+									SSSpecialForm(specialForm, lambdaItems): {
+										// Check if this is a lambda form
+										switch (specialForm) {
+											SLambda(): {
+												if (length(lambdaItems) >= 2) {
+													// Extract parameters from the lambda
+													id_types = switch (lambdaItems[0]) {
+														SSList(params): map(params, \param -> {
+															switch (param) {
+																SSVariable(paramId): OrIdType(paramId, []);
+																default: OrIdType("", []);
+															}
+														});
+														default: [];
+													};
+													
+													// Extract body
+													body = sexpr2orbit(lambdaItems[1]);
+													
+													// Create a function definition instead of a let binding
+													OrFnDef(id, id_types, [], body);
+												} else {
+													// Default to a Let binding if lambda structure is invalid
+													OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+												}
+											}
+											default: {
+												// For other special forms, use a regular Let binding
+												OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+											}
+										}
+									}
+									default: {
+										// For non-lambda values, use a regular Let binding
+										OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+									}
+								}
 							}
 							default: OrIdentifier("invalid_define");
 						}
@@ -1233,11 +1271,13 @@ isOperatorPattern(fn : OrMath_expr, args : [OrMath_expr]) -> bool {
 	switch (fn) {
 		OrString(opName): {
 			// A string literal function name with exactly one argument is our pattern
-			length(args) == 1;
+			// Exclude unary operators like "not" and "-" that should not be treated as patterns
+			opName != "not" && opName != "-" && length(args) == 1;
 		}
 		OrOperatorSymbol(opName): {
 			// This is how backtick-enclosed operators are parsed
-			length(args) == 1;
+			// Exclude unary operators as special cases
+			opName != "not" && opName != "-" && length(args) == 1;
 		}
 		default: false;
 	}
