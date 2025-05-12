@@ -11,7 +11,6 @@
 		  - imports are dropped. Fine
 		  - We use [] instead of (). Fine
 		  - ast annotation is lost. Fine.
-		  - ¬ vs not. Fine.
 		  - x : P(x) is parsed as (x : P)(x) and that gives problems
     *   **Verify S-Expression Engine Execution Equivalence:**
         *   Run: `./run_orbit_tests.sh --compare-engines`
