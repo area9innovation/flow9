@@ -20,12 +20,10 @@
 			- ERROR: matchOGraphSexprPattern callback must be a lambda
 			- dft_test: unquote
 			- evalWithBindings is missing
-			- find_ograph_id_test findOGraphId is missing
+			✓ find_ograph_id_test findOGraphId is missing
 			- fun is strange
 			- fun2: ERROR: addSexprWithSub third argument must be a list of bindings
 			- tree: undefined name key, value...
-    *   **Finalize S-Expression `eval`:** Complete migration to `eval` using S-Expression representation. Ensure all language features are supported. Verify with `--compare-engines`.
-    *   **Fix Imports:** Ensure Orbit `.orb` file imports work correctly in the S-expression world (resolve import path issues). Test with `tests/import_*.orb` (if they exist) using `--sexpr` and verify results manually or with `--compare-engines` if applicable.
     *   **O-Graph S-Expression Integration:** Modify O-Graph internal representation to primarily use S-Expressions or have seamless S-Expression interoperability. Test basic O-Graph operations (add, extract) using `tests/ograph_basic.orb` (if exists) with `--sexpr` and check results (or use `--compare-engines`).
     *   **Validate Rewriting Engine:**
         *   Run: `./run_orbit_tests.sh --compare-engines` on core rewriting tests (e.g., `tests/rewrite.orb`, `tests/pattern.orb`, `tests/algebra.orb` - adjust names based on actual files).
