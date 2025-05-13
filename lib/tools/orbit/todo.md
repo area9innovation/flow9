@@ -19,7 +19,7 @@
 			- `not` instead of ¬
 			- ERROR: matchOGraphSexprPattern callback must be a lambda
 			- dft_test: unquote
-			- evalWithBindings is missing
+			✓ evalWithBindings is missing
 			✓ find_ograph_id_test findOGraphId is missing
 			- fun is strange
 			- fun2: ERROR: addSexprWithSub third argument must be a list of bindings

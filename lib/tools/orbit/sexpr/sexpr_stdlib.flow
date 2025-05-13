@@ -379,6 +379,7 @@ getRuntimeFunctions(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> Tre
 		Pair("getCommandLineArgs", RuntimeFn(0, \result -> getCommandLineArgsFunction(result))),
 		Pair("parseSexpr", RuntimeFn(1, \result -> parseSexprFunction(result))),
 		Pair("uid", RuntimeFn(1, \result -> uidFunction(result))),
+		Pair("evalWithBindings", RuntimeFn(2, \result -> evalWithBindingsFunction(evaluator, result))),
 		Pair("eval", RuntimeFn(1, \result -> { // result is FnArgResult
 			if (length(result.args) == 1) {
 				exprToEvaluate = result.args[0]; // This is the already-evaluated argument to 'eval'
@@ -1900,3 +1901,85 @@ prettyOrbitSexp(evalResult : FnArgResult) -> Sexpr {
 }
 // The old varnameFunction is removed as it was a duplicate.
 // The actual varnameFunction is defined above in the getRuntimeFunctions list.
+
+// Implementation of evalWithBindings function - evaluates an expression with temporary bindings
+evalWithBindingsFunction(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, evalResult : FnArgResult) -> Sexpr {
+	// Ensure we have exactly 2 arguments
+	if (length(evalResult.args) != 2) {
+		println("ERROR: evalWithBindings expects 2 arguments, got " + i2s(length(evalResult.args)));
+		SSList([]);
+	} else {
+		// Get the expression to evaluate
+		exprToEvaluate = evalResult.args[0];
+		
+		// Get the bindings list
+		bindingsList = evalResult.args[1];
+		
+		// Ensure the bindings are in a list
+		switch (bindingsList) {
+			SSList(bindings): {
+				// Create a new local environment based on the current one
+				originalEnv = evalResult.env;
+				tempEnv = SExpEnv(originalEnv.runtime, originalEnv.env, originalEnv.value);
+				
+				// Add each binding to the temporary environment
+				bindingsEnv = fold(bindings, tempEnv, \acc, binding -> {
+					// Handle the binding
+					switch (binding) {
+						SSList(items): {
+							if (length(items) == 2) {
+								name = items[0];
+								value = items[1];
+								
+								// Extract variable name based on the type
+								varName = switch(name) {
+									SSVariable(s): s;
+									SSString(s): s;
+									default: {
+										// Try to get the string representation
+										s = switch(name) {
+											SSConstructor(id): id;
+											SSInt(i): i2s(i);
+											SSDouble(d): d2s(d);
+											SSBool(b): b2s(b);
+											default: "";
+										}
+										
+										if (s != "") s else {
+											println("WARNING: Invalid binding name in evalWithBindings: " + prettySexpr(name));
+											"";
+										}
+									}
+								};
+								
+								// Add the binding to the environment if we have a valid name
+								if (varName != "") {
+									SExpEnv(acc.runtime, setTree(acc.env, varName, value), acc.value);
+								} else {
+									acc; // Skip this binding
+								}
+							} else {
+								println("WARNING: Binding should have 2 elements: " + prettySexpr(binding));
+								acc; // Skip this binding
+							}
+						}
+						default: {
+							println("WARNING: Invalid binding format in evalWithBindings: " + prettySexpr(binding));
+							acc; // Skip this binding
+						}
+					}
+				});
+				
+				// Evaluate the expression in the new environment
+				resultEnv = evaluator(bindingsEnv, exprToEvaluate);
+				
+				// Return the result
+				resultEnv.value;
+			}
+			default: {
+				println("ERROR: evalWithBindings expects a list of bindings as the second argument");
+				SSList([]);
+			}
+		}
+	}
+}
