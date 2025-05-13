@@ -5,7 +5,7 @@
 **Focus:** Ensure the S-expression based interpreter and rewriting engine are functional and validate the core canonicalization mechanism. Retire the old Orbit interpreter.
 
 *   **S-Expression Backend Migration:**
-    *   **Verify Orbit <-> S-Expression Conversion Integrity:**
+    ✓   **Verify Orbit <-> S-Expression Conversion Integrity:**
         *   Run: `./run_orbit_tests.sh --sexpr-roundtrip`
         *   Goal: Ensure all tests pass the integrity check, meaning the `orbit sexpr-roundtrip=1` mode reports "SUCCESS" for the Orbit -> SExpr -> Orbit -> SExpr conversion process. Investigate any failures reported in the `.sexpr_roundtrip.log` files. This step checks the *conversion mechanism* itself, not the execution results.
 		  - imports are dropped. Fine
@@ -15,6 +15,15 @@
     *   **Verify S-Expression Engine Execution Equivalence:**
         *   Run: `./run_orbit_tests.sh --compare-engines`
         *   Goal: Ensure all tests produce identical *execution output* between the default engine and the S-expression engine (`sexpr=1`). Address any discrepancies found in the `.engine_diff` files. This confirms the S-expression backend *runs* code equivalently.
+		    - and, or, not instead of c syntax
+			- `not` instead of ¬
+			- ERROR: matchOGraphSexprPattern callback must be a lambda
+			- dft_test: unquote
+			- evalWithBindings is missing
+			- find_ograph_id_test findOGraphId is missing
+			- fun is strange
+			- fun2: ERROR: addSexprWithSub third argument must be a list of bindings
+			- tree: undefined name key, value...
     *   **Finalize S-Expression `eval`:** Complete migration to `eval` using S-Expression representation. Ensure all language features are supported. Verify with `--compare-engines`.
     *   **Fix Imports:** Ensure Orbit `.orb` file imports work correctly in the S-expression world (resolve import path issues). Test with `tests/import_*.orb` (if they exist) using `--sexpr` and verify results manually or with `--compare-engines` if applicable.
     *   **O-Graph S-Expression Integration:** Modify O-Graph internal representation to primarily use S-Expressions or have seamless S-Expression interoperability. Test basic O-Graph operations (add, extract) using `tests/ograph_basic.orb` (if exists) with `--sexpr` and check results (or use `--compare-engines`).
