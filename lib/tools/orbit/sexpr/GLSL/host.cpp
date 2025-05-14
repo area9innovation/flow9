@@ -92,7 +92,7 @@ int main() {
     vkGetDeviceQueue(device, computeQueueFamilyIndex, 0, &computeQueue);
 
     // Create shader module
-    auto shaderCode = readFile("interpreter_step1.spv"); // SPIR-V file
+    auto shaderCode = readFile("interpreter.spv"); // SPIR-V file
     VkShaderModuleCreateInfo shaderModuleCreateInfo{};
     shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     shaderModuleCreateInfo.codeSize = shaderCode.size();

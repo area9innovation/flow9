@@ -15,7 +15,7 @@ CXXFLAGS += $(VK_CFLAGS)
 LDFLAGS = $(VK_LIBS) -lpthread # Vulkan often needs pthread
 
 # Source Files and Targets
-GLSL_SHADER = interpreter_step1.glsl
+GLSL_SHADER = interpreter.glsl
 SPIRV_SHADER = $(GLSL_SHADER:.glsl=.spv)
 HOST_SRC = host.cpp
 HOST_TARGET = sexpr_vulkan_host
