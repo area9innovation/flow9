@@ -21,12 +21,58 @@ static std::vector<char> readFile(const std::string& filename) {
     return buffer;
 }
 
-// Define your tags as in GLSL
+// Define tags as in GLSL
+const float TAG_SSINT = 1.0f;
+const float TAG_SSDOUBLE = 2.0f;
+const float TAG_SSBOOL = 3.0f;
+const float TAG_SSSTRING = 4.0f;
+const float TAG_SSVARIABLE = 5.0f;
+const float TAG_SSCONSTRUCTOR = 6.0f;
+const float TAG_SSOPERATOR = 7.0f;
+const float TAG_SSLIST = 8.0f;
+const float TAG_SSVECTOR = 9.0f;
+const float TAG_SSSPECIALFORM = 10.0f;
+const float TAG_SSBUILTINOP = 11.0f;
+const float TAG_CLOSURE = 20.0f;
 const float TAG_ERROR_RUNTIME = 21.0f;
-// ... other tags if you have them ...
 
-std::string getErrorMessage(float tag, float value) {
-    if (tag == TAG_ERROR_RUNTIME) {
+std::string formatResult(float tag, float value) {
+    // Format the result based on the tag type
+    if (tag == TAG_SSINT) {
+        return "Integer: " + std::to_string(int(value));
+    } else if (tag == TAG_SSDOUBLE) {
+        return "Double: " + std::to_string(value);
+    } else if (tag == TAG_SSBOOL) {
+        return "Boolean: " + std::string(value > 0.0f ? "true" : "false");
+    } else if (tag == TAG_SSSTRING) {
+        return "String: (String ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSVARIABLE) {
+        return "Variable: (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSCONSTRUCTOR) {
+        return "Constructor: (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSOPERATOR) {
+        return "Operator: (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSBUILTINOP) {
+        std::string opName;
+        switch (int(value)) {
+            case 1: opName = "+"; break;
+            case 2: opName = "-"; break;
+            case 3: opName = "*"; break;
+            case 4: opName = "/"; break;
+            case 5: opName = "="; break;
+            case 6: opName = "<"; break;
+            case 7: opName = ">"; break;
+            case 8: opName = "mod"; break;
+            default: opName = "unknown"; break;
+        }
+        return "Built-in Operator: " + opName + " (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSLIST) {
+        return "List: (Length: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSVECTOR) {
+        return "Vector: (Length: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_CLOSURE) {
+        return "Closure: (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_ERROR_RUNTIME) {
         // Using static to initialize map only once
         static const std::map<float, std::string> errorMessages = {
             {10.0f, "Unhandled special form ID."},
@@ -35,8 +81,6 @@ std::string getErrorMessage(float tag, float value) {
             {13.0f, "Argument error: Incorrect number of arguments for operator/list processing."},
             {14.0f, "Internal error: Unknown control stack frame type."},
             {15.0f, "Execution error: Program ended with an empty operand stack."},
-            // Note: 16.0f was not in your GLSL, but added for completeness if it's a possible error.
-            // If it's not, you can remove it.
             {16.0f, "Execution error: Program ended due to PC reaching end with non-empty control stack."},
             {17.0f, "Execution error: Program ended with multiple values on stack (expected one result, or an error)."},
             {18.0f, "Operator error: Unknown 1-character operator."},
@@ -57,11 +101,10 @@ std::string getErrorMessage(float tag, float value) {
             return "Runtime Error: " + it->second;
         }
         return "Runtime Error: Unknown error value " + std::to_string(value);
+    } else {
+        // Fallback for unknown tags
+        return "Unknown Type (Tag: " + std::to_string(int(tag)) + "): Value = " + std::to_string(value);
     }
-    // Add other tag types if necessary (e.g., TAG_SSINT, TAG_SSBOOL etc. for non-error results)
-    // For now, any non-runtime error tag will just show tag and value
-    // You could expand this to print "Success: Integer" etc.
-    return "Result Tag: " + std::to_string(tag) + ", Value: " + std::to_string(value);
 }
 
 
@@ -340,9 +383,8 @@ int main() {
     void* mappedMemory = nullptr;
     if (vkMapMemory(device, bufferMemory, 0, bufferSize, 0, &mappedMemory) == VK_SUCCESS) { // Added error check
         float* results = static_cast<float*>(mappedMemory);
-        // std::cout << "Result Tag: " << results[0] << std::endl; // Old output
-        // std::cout << "Result Value: " << results[1] << std::endl; // Old output
-        std::cout << getErrorMessage(results[0], results[1]) << std::endl; // New output
+        // Print the formatted result using our new formatResult function
+        std::cout << formatResult(results[0], results[1]) << std::endl;
         vkUnmapMemory(device, bufferMemory);
     } else {
         std::cerr << "Failed to map memory to read results!" << std::endl;
