@@ -1,5 +1,11 @@
 # Flow9 to TypeScript Interoperability Layer Generation Specification
 
+TODO:
+
+We will do it in a different way: We will compile flow in debug mode to avoid mangling, and that makes it much easier to map to TS types. This requires that the final result is mangled by a JS minifier.
+For dbconnector, we do not need to expose refs directly in the types. We can just expose the flow behaviour functions.
+
+
 ## 1. Introduction
 
 This document specifies the requirements and methodology for generating a TypeScript (TS) interoperability layer for Flow9 programs compiled to JavaScript (JS). The goal is to enable TypeScript projects to consume Flow9-generated JS modules with type safety and ergonomic APIs, including the use of natural field names even when interacting with mangled/optimized Flow9 JS output.
