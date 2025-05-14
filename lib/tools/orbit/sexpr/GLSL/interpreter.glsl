@@ -50,13 +50,8 @@ ControlFrame pop_control() {
 }
 
 int get_node_size_from_type(float node_type_val) {
-    if (node_type_val == TAG_SSINT || node_type_val == TAG_SSOPERATOR ||
-        node_type_val == TAG_SSVARIABLE || node_type_val == TAG_SSCONSTRUCTOR || 
-        node_type_val == TAG_SSDOUBLE || node_type_val == TAG_SSBOOL) { return 2; }
-    if (node_type_val == TAG_SSSTRING) return 3; 
-    if (node_type_val == TAG_SSLIST || node_type_val == TAG_SSVECTOR) return 3; 
-    if (node_type_val == TAG_SSSPECIALFORM) return 4;
-    return 1;
+    // All nodes are now uniformly 4 bytes (4 float values)
+    return 4;
 }
 
 #define CONTROL_TYPE_PENDING_LIST 1
@@ -72,7 +67,10 @@ void main() {
         }
         float current_node_type = u_program_ast[pc];
 
-        if (current_node_type == TAG_SSINT) {
+        if (current_node_type == TAG_NOP) {
+            // Skip NOP nodes (although they should only appear as padding)
+            pc += get_node_size_from_type(current_node_type);
+        } else if (current_node_type == TAG_SSINT) {
             push_operand(EvaluatedSexpr(current_node_type, u_program_ast[pc + 1]));
             pc += get_node_size_from_type(current_node_type);
         } else if (current_node_type == TAG_SSOPERATOR) {
@@ -118,7 +116,8 @@ void main() {
                     control_stack[control_sp - 1] = task; 
                     int next_child_pc = task.children_start_idx_in_ast;
                     for (int i = 0; i < task.current_child_to_eval; ++i) {
-                        next_child_pc += get_node_size_from_type(u_program_ast[next_child_pc]);
+                        // Since all nodes are 4 bytes, we increment by 4
+                        next_child_pc += 4;
                     }
                     pc = next_child_pc; task_processed_or_advanced = true; break; 
                 } else {

@@ -14,6 +14,7 @@
 #define TAG_SSSPECIALFORM 10
 #define TAG_CLOSURE 20
 #define TAG_ERROR 21
+#define TAG_NOP 0
 
 // Special form IDs
 #define SFORM_AND 1

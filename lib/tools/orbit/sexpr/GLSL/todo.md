@@ -15,6 +15,9 @@ Components in progress:
 
 ## Streamlined Roadmap
 
+0.
+Change AST representatino to be uniform 4 ints per node.
+
 ### 1. Core Evaluation Engine
 **Goal**: Evaluate basic arithmetic expressions like `(+ 1 2)` and `(- 100 58)`
 
