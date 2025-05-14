@@ -74,7 +74,12 @@ void main() {
             push_operand(EvaluatedSexpr(current_node_type, u_program_ast[pc + 1]));
             pc += get_node_size_from_type(current_node_type);
         } else if (current_node_type == TAG_SSOPERATOR) {
-            push_operand(EvaluatedSexpr(current_node_type, u_program_ast[pc + 1])); // val1 is const_pool_idx
+            // val1 is a const_pool_idx for user-defined operators
+            push_operand(EvaluatedSexpr(current_node_type, u_program_ast[pc + 1]));
+            pc += get_node_size_from_type(current_node_type);
+        } else if (current_node_type == TAG_SSBUILTINOP) {
+            // val1 contains the built-in operator type (OP_ADD, OP_SUB, etc.)
+            push_operand(EvaluatedSexpr(current_node_type, u_program_ast[pc + 1]));
             pc += get_node_size_from_type(current_node_type);
         } else if (current_node_type == TAG_SSSPECIALFORM) {
             float form_id = u_program_ast[pc + 1];
@@ -127,7 +132,39 @@ void main() {
                         // Check for errors from pop_operand, though type checks below are primary for args
                         if (op.tag == TAG_ERROR_RUNTIME || arg1.tag == TAG_ERROR_RUNTIME || arg2.tag == TAG_ERROR_RUNTIME) {
                             push_operand(EvaluatedSexpr(TAG_ERROR_RUNTIME, 25.0f)); running = false; // Error during pop
+                        } else if (op.tag == TAG_SSBUILTINOP && arg1.tag == TAG_SSINT && arg2.tag == TAG_SSINT) {
+                            // Handle built-in operators directly using the operator type
+                            float op_type = op.val1;
+                            
+                            if (op_type == OP_ADD) {
+                                push_operand(EvaluatedSexpr(TAG_SSINT, arg1.val1 + arg2.val1));
+                            } else if (op_type == OP_SUB) {
+                                push_operand(EvaluatedSexpr(TAG_SSINT, arg1.val1 - arg2.val1));
+                            } else if (op_type == OP_MUL) {
+                                push_operand(EvaluatedSexpr(TAG_SSINT, arg1.val1 * arg2.val1));
+                            } else if (op_type == OP_DIV) {
+                                if (arg2.val1 == 0.0f) {
+                                    push_operand(EvaluatedSexpr(TAG_ERROR_RUNTIME, 22.0f)); running = false;
+                                } else {
+                                    push_operand(EvaluatedSexpr(TAG_SSINT, float(int(arg1.val1) / int(arg2.val1))));
+                                }
+                            } else if (op_type == OP_EQ) {
+                                push_operand(EvaluatedSexpr(TAG_SSBOOL, (arg1.val1 == arg2.val1) ? 1.0f : 0.0f));
+                            } else if (op_type == OP_LT) {
+                                push_operand(EvaluatedSexpr(TAG_SSBOOL, (arg1.val1 < arg2.val1) ? 1.0f : 0.0f));
+                            } else if (op_type == OP_GT) {
+                                push_operand(EvaluatedSexpr(TAG_SSBOOL, (arg1.val1 > arg2.val1) ? 1.0f : 0.0f));
+                            } else if (op_type == OP_MOD) {
+                                if (arg2.val1 == 0.0f) {
+                                    push_operand(EvaluatedSexpr(TAG_ERROR_RUNTIME, 23.0f)); running = false;
+                                } else {
+                                    push_operand(EvaluatedSexpr(TAG_SSINT, float(int(arg1.val1) % int(arg2.val1))));
+                                }
+                            } else {
+                                push_operand(EvaluatedSexpr(TAG_ERROR_RUNTIME, 18.0f)); running = false;
+                            }
                         } else if (op.tag == TAG_SSOPERATOR && arg1.tag == TAG_SSINT && arg2.tag == TAG_SSINT) {
+                            // Handle user-defined operators via string pool
                             float operator_pool_idx = op.val1;
                             int str_info_idx = int(operator_pool_idx); 
 

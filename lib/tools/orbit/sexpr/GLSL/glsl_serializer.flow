@@ -22,6 +22,9 @@ export {
 	
 	// Pad node data to ensure uniform size of 4 elements per node
 	padNodeToUniformSize(nodeData : [double]) -> [double];
+	
+	// Map an operator string to its built-in operator type ID, or -1 if not a built-in
+	operatorToBuiltinId(op : string) -> int;
 }
 
 // Generate a constant pool from all strings in the AST
@@ -46,7 +49,14 @@ collectStrings(expr : Sexpr, acc : Tree<string, bool>) -> Tree<string, bool> {
 		SSString(s): setTree(acc, s, true);
 		SSVariable(name): setTree(acc, name, true);
 		SSConstructor(name): setTree(acc, name, true);
-		SSOperator(op): setTree(acc, op, true);
+		SSOperator(op): {
+			// Only add to string pool if it's not a built-in operator
+			if (operatorToBuiltinId(op) == -1) {
+				setTree(acc, op, true);
+			} else {
+				acc;
+			}
+		};
 		SSList(items): {
 			fold(items, acc, \a, item -> collectStrings(item, a));
 		};
@@ -64,7 +74,7 @@ collectStrings(expr : Sexpr, acc : Tree<string, bool>) -> Tree<string, bool> {
 // Each string is encoded as a sequence of floats:
 // [length, char_code_1, char_code_2, ...]
 constantPoolToFloats(constants : [string]) -> [double] {
-	fold(constants, [], \acc, str -> {
+	result = fold(constants, [], \acc, str -> {
 		// Create an array with the string length followed by each character code
 		stringFloats = concat(
 			[i2d(strlen(str))],  // String length
@@ -74,6 +84,13 @@ constantPoolToFloats(constants : [string]) -> [double] {
 		// Append to the accumulated array
 		concat(acc, stringFloats);
 	});
+	
+	// Ensure constant pool is never empty (GLSL requires at least 1 element in an array)
+	if (length(result) == 0) {
+		[0.0]; // Add a dummy value if constant pool is empty
+	} else {
+		result;
+	}
 }
 
 // Main serialization function
@@ -140,9 +157,21 @@ serializeExprWithComments(expr : Sexpr, constMap : Tree<string, int>, offset : i
 			Triple(nodeData, offset + 4, commentsWithCurrent);
 		};
 		SSOperator(op): {
-			// [TAG_SSOPERATOR, pool_index, NOP, NOP]
-			strIndex = lookupTreeDef(constMap, op, -1);
-			nodeData = padNodeToUniformSize([i2d(TAG_SSOPERATOR), i2d(strIndex)]);
+			// Check if this is a built-in operator
+			builtinOpId = operatorToBuiltinId(op);
+			
+			// Create the node data based on whether it's a built-in or not
+			nodeData = if (builtinOpId != -1) {
+				// Use TAG_SSBUILTINOP for built-in operators
+				// [TAG_SSBUILTINOP, op_id, NOP, NOP]
+				padNodeToUniformSize([i2d(TAG_SSBUILTINOP), i2d(builtinOpId)]);
+			} else {
+				// Use TAG_SSOPERATOR for user-defined operators
+				// [TAG_SSOPERATOR, pool_index, NOP, NOP]
+				strIndex = lookupTreeDef(constMap, op, -1);
+				padNodeToUniformSize([i2d(TAG_SSOPERATOR), i2d(strIndex)]);
+			}
+			
 			Triple(nodeData, offset + 4, commentsWithCurrent);
 		};
 		
@@ -217,9 +246,21 @@ serializeExpr(expr : Sexpr, constMap : Tree<string, int>, offset : int) -> Pair<
 			Pair(nodeData, offset + 4);
 		};
 		SSOperator(op): {
-			// [TAG_SSOPERATOR, pool_index, NOP, NOP]
-			strIndex = lookupTreeDef(constMap, op, -1);
-			nodeData = padNodeToUniformSize([i2d(TAG_SSOPERATOR), i2d(strIndex)]);
+			// Check if this is a built-in operator
+			builtinOpId = operatorToBuiltinId(op);
+			
+			// Create the node data based on whether it's a built-in or not
+			nodeData = if (builtinOpId != -1) {
+				// Use TAG_SSBUILTINOP for built-in operators
+				// [TAG_SSBUILTINOP, op_id, NOP, NOP]
+				padNodeToUniformSize([i2d(TAG_SSBUILTINOP), i2d(builtinOpId)]);
+			} else {
+				// Use TAG_SSOPERATOR for user-defined operators
+				// [TAG_SSOPERATOR, pool_index, NOP, NOP]
+				strIndex = lookupTreeDef(constMap, op, -1);
+				padNodeToUniformSize([i2d(TAG_SSOPERATOR), i2d(strIndex)]);
+			}
+			
 			Pair(nodeData, offset + 4);
 		};
 		
@@ -291,7 +332,12 @@ generateComment(expr : Sexpr, offset : int, constMap : Tree<string, int>) -> str
 			"[" + i2s(offset) + "] " + name + " (constructor)";
 		};
 		SSOperator(op): {
-			"[" + i2s(offset) + "] " + op + " (operator)";
+			builtinOpId = operatorToBuiltinId(op);
+			if (builtinOpId != -1) {
+				"[" + i2s(offset) + "] " + op + " (builtin operator, id=" + i2s(builtinOpId) + ")";
+			} else {
+				"[" + i2s(offset) + "] " + op + " (operator)";
+			}
 		};
 		SSList(items): {
 			"[" + i2s(offset) + "] list, count=" + i2s(length(items)) + ", child_offset=" + i2s(offset + 3);
@@ -303,6 +349,19 @@ generateComment(expr : Sexpr, offset : int, constMap : Tree<string, int>) -> str
 			"[" + i2s(offset) + "] " + specialFormToString(specialName) + ", count=" + i2s(length(items)) + ", child_offset=" + i2s(offset + 4);
 		};
 	}
+}
+
+// Map an operator string to its built-in operator type ID, or -1 if not a built-in
+operatorToBuiltinId(op : string) -> int {
+	if (op == "+") OP_ADD
+	else if (op == "-") OP_SUB
+	else if (op == "*") OP_MUL
+	else if (op == "/") OP_DIV
+	else if (op == "=") OP_EQ
+	else if (op == "<") OP_LT
+	else if (op == ">") OP_GT
+	else if (op == "mod") OP_MOD
+	else -1; // Not a built-in operator
 }
 
 // Convert special form to string for comments
