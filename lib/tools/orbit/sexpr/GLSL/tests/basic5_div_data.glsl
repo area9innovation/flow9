@@ -13,12 +13,9 @@ const float u_constant_pool[2] = float[](
 );
 
 const float u_program_ast[13] = float[](
-    // [0] TAG_SSSPECIALFORM, form=BEGIN, count=1, child_offset=4
-    10.0f, 2.0f, 1.0f, 4.0f,
-    // [4] TAG_SSLIST, count=3, child_offset=7
-    8.0f, 3.0f, 7.0f, 7.0f,
-    // [8] Unknown node type: 0
-    0.0f, 1.0f, 85.0f, 1.0f,
-    // [12] Unknown node type: 2
-    2.0f
+    10.0f, 2.0f, 1.0f, 4.0f,  // [0] begin, count=1, child_offset=4
+    8.0f, 3.0f, 7.0f,  // [4] list, count=3, child_offset=7
+    7.0f, 0.0f,  // [7] / (operator)
+    1.0f, 85.0f,  // [9] 85 (int)
+    1.0f, 2.0f  // [11] 2 (int)
 );

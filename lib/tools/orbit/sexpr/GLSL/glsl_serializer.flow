@@ -8,8 +8,8 @@ import math/math;
 
 export {
 	// Main serialization function: Converts a Sexpr AST to binary format for GPU
-	// Returns a pair of arrays: (binary_program_ast, constant_pool)
-	sexprToGLSL(expr : Sexpr) -> Pair<[double], [double]>;
+	// Returns a triple of (binary_program_ast, constant_pool, comments)
+	sexprToGLSL(expr : Sexpr) -> Triple<[double], [double], [string]>;
 
 	// Generate constant pool as (constants, index_map)
 	generateConstantPool(expr : Sexpr) -> Pair<[string], Tree<string, int>>;
@@ -74,7 +74,7 @@ constantPoolToFloats(constants : [string]) -> [double] {
 }
 
 // Main serialization function
-sexprToGLSL(expr : Sexpr) -> Pair<[double], [double]> {
+sexprToGLSL(expr : Sexpr) -> Triple<[double], [double], [string]> {
 	// 1. Generate the constant pool
 	constPoolResult = generateConstantPool(expr);
 	constantPool = constPoolResult.first;
@@ -83,12 +83,96 @@ sexprToGLSL(expr : Sexpr) -> Pair<[double], [double]> {
 	// 2. Convert the constant pool to a float array
 	constantPoolArray = constantPoolToFloats(constantPool);
 	
-	// 3. Serialize the expression to a binary AST
-	binaryASTInfo = serializeExpr(expr, constantMap, 0);
+	// 3. Serialize the expression to a binary AST and generate comments
+	binaryASTInfo = serializeExprWithComments(expr, constantMap, 0, []);
 	binaryAST = binaryASTInfo.first;
+	comments = binaryASTInfo.third;
 	
-	// Return the binary AST and constant pool
-	Pair(binaryAST, constantPoolArray);
+	// Return the binary AST, constant pool, and comments
+	Triple(binaryAST, constantPoolArray, comments);
+}
+
+// Serialization function that also generates comments
+// Returns (binary_ast, next_offset, comments)
+serializeExprWithComments(expr : Sexpr, constMap : Tree<string, int>, offset : int, comments : [string]) -> Triple<[double], int, [string]> {
+	// Initialize a comment for this node
+	currentComment = generateComment(expr, offset, constMap);
+	
+	// Ensure comments array has space for this offset
+	commentsWithCurrent = ensureCommentSpace(comments, offset, currentComment);
+	
+	switch (expr) {
+		// Simple types
+		SSInt(i): {
+			// [TAG_SSINT, value]
+			nodeData = [i2d(TAG_SSINT), i2d(i)];
+			Triple(nodeData, offset + length(nodeData), commentsWithCurrent);
+		};
+		SSDouble(d): {
+			// [TAG_SSDOUBLE, value]
+			nodeData = [i2d(TAG_SSDOUBLE), d];
+			Triple(nodeData, offset + length(nodeData), commentsWithCurrent);
+		};
+		SSBool(b): {
+			// [TAG_SSBOOL, value]
+			nodeData = [i2d(TAG_SSBOOL), if (b) 1.0 else 0.0];
+			Triple(nodeData, offset + length(nodeData), commentsWithCurrent);
+		};
+		SSString(s): {
+			// [TAG_SSSTRING, pool_index, length]
+			strIndex = lookupTreeDef(constMap, s, -1);
+			nodeData = [i2d(TAG_SSSTRING), i2d(strIndex), i2d(strlen(s))];
+			Triple(nodeData, offset + length(nodeData), commentsWithCurrent);
+		};
+		SSVariable(name): {
+			// [TAG_SSVARIABLE, pool_index]
+			strIndex = lookupTreeDef(constMap, name, -1);
+			nodeData = [i2d(TAG_SSVARIABLE), i2d(strIndex)];
+			Triple(nodeData, offset + length(nodeData), commentsWithCurrent);
+		};
+		SSConstructor(name): {
+			// [TAG_SSCONSTRUCTOR, pool_index]
+			strIndex = lookupTreeDef(constMap, name, -1);
+			nodeData = [i2d(TAG_SSCONSTRUCTOR), i2d(strIndex)];
+			Triple(nodeData, offset + length(nodeData), commentsWithCurrent);
+		};
+		SSOperator(op): {
+			// [TAG_SSOPERATOR, pool_index]
+			strIndex = lookupTreeDef(constMap, op, -1);
+			nodeData = [i2d(TAG_SSOPERATOR), i2d(strIndex)];
+			Triple(nodeData, offset + length(nodeData), commentsWithCurrent);
+		};
+		
+		// Compound types
+		SSList(items): serializeCompoundWithComments(TAG_SSLIST, items, constMap, offset, 3, commentsWithCurrent);
+		SSVector(items): serializeCompoundWithComments(TAG_SSVECTOR, items, constMap, offset, 3, commentsWithCurrent);
+		SSSpecialForm(specialName, items): {
+			// Special forms have an extra field for the form ID
+			specialFormId = specialNameToEnumId(specialName);
+			headerSize = 4; // tag, form_id, count, first_child_offset
+			
+			// Serialize the header
+			header = [i2d(TAG_SSSPECIALFORM), i2d(specialFormId)];
+			
+			// Handle childless special forms separately
+			if (length(items) == 0) {
+				headerComplete = concat(header, [0.0, 0.0]); // No children
+				Triple(headerComplete, offset + headerSize, commentsWithCurrent);
+			} else {
+				// First child offset comes after the header
+				firstChildOffset = offset + headerSize;
+				
+				// Create the header with child count and offset
+				headerComplete = concat(header, [i2d(length(items)), i2d(firstChildOffset)]);
+				
+				// Serialize all children with comments
+				result = serializeItemsWithComments(items, constMap, firstChildOffset, [], commentsWithCurrent);
+				
+				// Combine the header with all serialized children
+				Triple(concat(headerComplete, result.first), result.second, result.third);
+			}
+		};
+	}
 }
 
 // Main serialization function
@@ -165,6 +249,124 @@ serializeExpr(expr : Sexpr, constMap : Tree<string, int>, offset : int) -> Pair<
 				Pair(concat(headerComplete, result.first), result.second);
 			}
 		};
+	}
+}
+
+// Ensure the comments array has space for this offset
+ensureCommentSpace(comments : [string], offset : int, comment : string) -> [string] {
+	currentSize = length(comments);
+	if (offset < currentSize) {
+		// Just replace the comment at this offset
+		replace(comments, offset, comment);
+	} else {
+		// Need to extend the array with empty comments
+		emptiesNeeded = offset - currentSize;
+		empties = generate(0, emptiesNeeded, \__ -> "");
+		concat(concat(comments, empties), [comment]);
+	}
+}
+
+// Generate a comment for a node based on its type
+generateComment(expr : Sexpr, offset : int, constMap : Tree<string, int>) -> string {
+	switch (expr) {
+		SSInt(i): {
+			"[" + i2s(offset) + "] " + i2s(i) + " (int)";
+		};
+		SSDouble(d): {
+			"[" + i2s(offset) + "] " + d2s(d) + " (double)";
+		};
+		SSBool(b): {
+			"[" + i2s(offset) + "] " + b2s(b) + " (bool)";
+		};
+		SSString(s): {
+			"[" + i2s(offset) + "] \"" + s + "\" (string)";
+		};
+		SSVariable(name): {
+			"[" + i2s(offset) + "] " + name  + " (variable)";
+		};
+		SSConstructor(name): {
+			"[" + i2s(offset) + "] " + name + " (constructor)";
+		};
+		SSOperator(op): {
+			"[" + i2s(offset) + "] " + op + " (operator)";
+		};
+		SSList(items): {
+			"[" + i2s(offset) + "] list, count=" + i2s(length(items)) + ", child_offset=" + i2s(offset + 3);
+		};
+		SSVector(items): {
+			"[" + i2s(offset) + "] vector, count=" + i2s(length(items)) + ", child_offset=" + i2s(offset + 3);
+		};
+		SSSpecialForm(specialName, items): {
+			"[" + i2s(offset) + "] " + specialFormToString(specialName) + ", count=" + i2s(length(items)) + ", child_offset=" + i2s(offset + 4);
+		};
+	}
+}
+
+// Convert special form to string for comments
+specialFormToString(specialName : Special_name) -> string {
+	switch (specialName) {
+		SAnd(): "and";
+		SBegin(): "begin";
+		SClosure(): "closure";
+		SDefine(): "define";
+		SEval(): "eval";
+		SIf(): "if";
+		SImport(): "import";
+		SLambda(): "lambda";
+		SLet(): "let";
+		SLetRec(): "letrec";
+		SList(): "list";
+		SMatch(): "match";
+		SOr(): "or";
+		SQuasiQuote(): "quasiquote";
+		SQuote(): "quote";
+		SSet(): "set";
+		SUnQuote(): "unquote";
+		SUnQuoteSplicing(): "unquote-splicing";
+	}
+}
+
+// Helper for compound types (list, vector) with comments
+serializeCompoundWithComments(tag : int, items : [Sexpr], constMap : Tree<string, int>, offset : int, 
+                             headerSize : int, comments : [string]) -> Triple<[double], int, [string]> {
+	// Handle empty compounds separately
+	if (length(items) == 0) {
+		// Just return the header with 0 for count and offset
+		header = [i2d(tag), 0.0, 0.0];
+		Triple(header, offset + headerSize, comments);
+	} else {
+		// First child offset comes after the header
+		firstChildOffset = offset + headerSize;
+		
+		// Create the header with child count and offset
+		header = [i2d(tag), i2d(length(items)), i2d(firstChildOffset)];
+		
+		// Serialize all children with comments
+		result = serializeItemsWithComments(items, constMap, firstChildOffset, [], comments);
+		
+		// Combine the header with all serialized children
+		Triple(concat(header, result.first), result.second, result.third);
+	}
+}
+
+// Serializes a list of items with comments
+serializeItemsWithComments(items : [Sexpr], constMap : Tree<string, int>, 
+                          startOffset : int, acc : [double], comments : [string]) -> Triple<[double], int, [string]> {
+	if (length(items) == 0) {
+		// No more items to serialize
+		Triple(acc, startOffset, comments);
+	} else {
+		// Serialize the current item with comments
+		itemResult = serializeExprWithComments(items[0], constMap, startOffset, comments);
+		itemData = itemResult.first;
+		nextOffset = itemResult.second;
+		updatedComments = itemResult.third;
+		
+		// Add the serialized item to the accumulated data
+		combinedData = concat(acc, itemData);
+		
+		// Recursively serialize the remaining items
+		serializeItemsWithComments(tail(items), constMap, nextOffset, combinedData, updatedComments);
 	}
 }
 

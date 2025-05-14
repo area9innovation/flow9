@@ -17,9 +17,10 @@ generateProgramGLSL(expr : Sexpr, outputPath : string) -> bool {
 	result = sexprToGLSL(expr);
 	binaryAST = result.first;
 	constantPool = result.second;
+	nodeComments = result.third;
 
 	// Create GLSL code with the serialized data
-	glslCode = generateGLSLCode(binaryAST, constantPool);
+	glslCode = generateGLSLCode(binaryAST, constantPool, nodeComments);
 
 	// Write the GLSL code to the output file
 	setFileContent(outputPath, glslCode);
@@ -29,7 +30,7 @@ generateProgramGLSL(expr : Sexpr, outputPath : string) -> bool {
 }
 
 // Generate the GLSL code with the serialized data
-generateGLSLCode(binaryAST : [double], constantPool : [double]) -> string {
+generateGLSLCode(binaryAST : [double], constantPool : [double], nodeComments : [string]) -> string {
 	// Header with include guard for definitions
 	header = "// Auto-generated GLSL code for S-expression interpreter\n" +
 		"// AST size: " + i2s(length(binaryAST)) + " elements\n" +
@@ -43,7 +44,7 @@ generateGLSLCode(binaryAST : [double], constantPool : [double]) -> string {
 
 	// Format the arrays as GLSL
 	constPoolDecl = formatGLSLArray("u_constant_pool", constantPool, true, "pool");
-	binaryASTDecl = formatGLSLArray("u_program_ast", binaryAST, true, "ast");
+	binaryASTDecl = formatGLSLArrayWithComments("u_program_ast", binaryAST, nodeComments, true);
 
 	// Combine all parts
 	header + sizes + constPoolDecl + "\n\n" + binaryASTDecl + "\n";
@@ -64,7 +65,94 @@ formatGLSLArray(name : string, values : [double], isConst : bool, arrayType : st
 	};
 
 	// Complete the declaration
+	arrayDecl + "\n" + arrayValuesStr + "\n);"; 
+}
+
+// Format an array with comments for each element
+formatGLSLArrayWithComments(name : string, values : [double], comments : [string], isConst : bool) -> string {
+	qualifier = if (isConst) "const" else "uniform";
+    arrayTypeLiteral = "float[]("; // Store this part in a variable
+	arrayDecl = qualifier + " float " + name + "[" + i2s(length(values)) + "] = " + arrayTypeLiteral;
+
+	// Format the values with comments
+	arrayValuesStr = if (length(values) == 0) {
+		"";
+	} else {
+		// Format directly with the comments
+		formatValuesWithComments(values, comments);
+	};
+
+	// Complete the declaration
 	arrayDecl + "\n" + arrayValuesStr + "\n);";
+}
+
+// Format values with comments, grouped by AST node type
+formatValuesWithComments(values : [double], comments : [string]) -> string {
+	// Generate formatted lines for AST nodes
+	formattedLines = formatASTNodes(values, comments, 0, []);
+	
+	// Join the lines with newlines
+	strGlue(formattedLines, "\n");
+}
+
+// Detect AST node lengths based on tag type
+nodeFieldCount(tag : int) -> int {
+	if (tag == TAG_SSINT || tag == TAG_SSDOUBLE || tag == TAG_SSBOOL || 
+	    tag == TAG_SSVARIABLE || tag == TAG_SSCONSTRUCTOR || tag == TAG_SSOPERATOR) {
+		2; // These nodes have 2 fields [TAG, VALUE/INDEX]
+	} else if (tag == TAG_SSSTRING) {
+		3; // [TAG, POOL_INDEX, LENGTH]
+	} else if (tag == TAG_SSLIST || tag == TAG_SSVECTOR) {
+		3; // [TAG, COUNT, CHILD_OFFSET]
+	} else if (tag == TAG_SSSPECIALFORM) {
+		4; // [TAG, FORM_ID, COUNT, CHILD_OFFSET]
+	} else {
+		1; // Unknown or primitive value, treat as individual
+	}
+}
+
+// Format AST nodes, grouping fields together
+formatASTNodes(values : [double], comments : [string], index : int, acc : [string]) -> [string] {
+	if (index >= length(values)) {
+		// Base case: all values processed
+		acc;
+	} else {
+		// Determine if this is the start of a node by checking for tag value
+		nodeTag = round(values[index]);
+		
+		// Get node length based on tag
+		nodeLen = if (nodeTag >= 1 && nodeTag <= 21) {
+			nodeFieldCount(nodeTag);
+		} else {
+			1; // Unknown tag, treat as individual value
+		};
+		
+		// Ensure we don't go out of bounds
+		actualNodeLen = min(nodeLen, length(values) - index);
+		
+		// Get the values for this node
+		nodeValues = subrange(values, index, actualNodeLen);
+		
+		// Format the values as a comma-separated string
+		valueStr = strGlue(map(nodeValues, \v -> formatGLSLFloat(v)), ", ");
+		
+		// Get comment for this node
+		comment = if (index < length(comments) && comments[index] != "") {
+			"// " + comments[index];
+		} else {
+			"// [" + i2s(index) + "]";
+		};
+		
+		// Check if this is the last node (to handle trailing comma)
+		isLastNode = (index + actualNodeLen >= length(values));
+		
+		// Combine with proper indentation and trailing comma if not the last node
+		formatted = "    " + valueStr + (if (isLastNode) "" else ",") + "  " + comment;
+		
+		// Add to accumulator and recurse for next node
+		newAcc = arrayPush(acc, formatted);
+		formatASTNodes(values, comments, index + actualNodeLen, newAcc);
+	}
 }
 
 // New simplified function to format values for GLSL
