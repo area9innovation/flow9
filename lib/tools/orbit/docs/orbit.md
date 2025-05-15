@@ -191,7 +191,7 @@ expr is (
 )
 ```
 
-The backtick syntax ```(terms)` captures the operator symbol and binds all operands to the `terms` variable, regardless of how many there are. This works with binary operators that are naturally associative, like addition and multiplication.
+The backtick syntax `(terms)` captures the operator symbol and binds all operands to the `terms` variable, regardless of how many there are. This works with binary operators that are naturally associative, like addition and multiplication.
 
 ### Array Deconstruction with Rest Patterns
 
@@ -351,10 +351,10 @@ import lib/sort;
 
 ### Running a Single Orbit Program
 
-To run a single Orbit program, use the Flow compiler with the orbit.flow file as the entry point:
+To run a single Orbit program:
 
 ```bash
-flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- path/to/yourprogram.orb
+orbit path/to/yourprogram.orb
 ```
 
 ### Program Execution Model
@@ -384,7 +384,7 @@ println("This will execute when the file is loaded");
 Orbit provides a detailed tracing feature that shows all steps of interpretation, which is invaluable for debugging and understanding program execution. To enable tracing, add the `trace=1` parameter:
 
 ```bash
-flowcpp --batch orbit.flow -- trace=1 path/to/yourprogram.orb
+orbit trace=1 path/to/yourprogram.orb
 ```
 
 ### Pretty Printing Orbit Programs
@@ -394,7 +394,7 @@ Orbit provides a command-line flag to pretty print the parse tree of a program w
 To pretty print an Orbit program, use the `pretty=1` parameter:
 
 ```bash
-flowcpp --batch orbit.flow -- pretty=1 path/to/yourprogram.orb
+orbit pretty=1 path/to/yourprogram.orb
 ```
 </running_and_debugging>
 
@@ -477,48 +477,6 @@ makeAst(op : string, args : [*]) -> ast
 ```
 
 This function lets you build AST nodes dynamically, which is useful for code generation, transformations, and metaprogramming.
-
-#### Examples
-
-```orbit
-// Create basic arithmetic expressions
-let addExpr = makeAst("+", [x, y]);       // Equivalent to x + y
-let mulExpr = makeAst("*", [a, b]);       // Equivalent to a * b
-
-// Create function calls
-let fnCall = makeAst("call", [fnName, arg1, arg2]);  // Equivalent to fnName(arg1, arg2)
-
-// Create control flow structures
-let condition = makeAst("<", [x, 10]);
-let ifExpr = makeAst("if", [condition, thenBlock, elseBlock]);
-
-// Create arrays
-let arrayExpr = makeAst("Array", [1, 2, 3]);  // Equivalent to [1, 2, 3]
-
-// Chain operations
-let expr = makeAst("+", [
-	makeAst("*", [a, b]),
-	makeAst("/", [c, d])
-]); // Equivalent to (a * b) + (c / d)
-```
-
-#### Supported Operators
-
-The `makeAst` function supports all standard operators in Orbit, including:
-
-- Arithmetic: `"+"`, `"-"`, `"*"`, `"/"`, `"%"`, `"^"`
-- Comparison: `"="`, `"!="`, `"<"`, `"<="`, `">"`, `">="`
-- Logical: `"&&"`, `"||"`, `"!"`
-- Collections: `"Array"`, `"SetLiteral"`
-- Control flow: `"if"`, `"seq"`
-- Function calls: `"call"`
-
-For constructors and identifiers, you can create them directly:
-
-```orbit
-// Create a constructor call: Point(10, 20)
-let point = makeAst("call", [makeAst("Identifier", [], "Point"), 10, 20]);
-```
 </ast_manipulation>
 
 <runtime_functions>
