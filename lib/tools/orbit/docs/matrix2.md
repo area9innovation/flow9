@@ -18,8 +18,9 @@ IdentityMatrix<N> ⊂ DiagonalMatrix<Int, N> // Typically {0, 1} elements
 // Property: I[i,i] == 1, I[i,j] == 0 if i != j
 
 // Rule: Multiplication by Identity is a no-op O(1) conceptually, or O(N*M) if copy needed
-matrix_multiply(I : IdentityMatrix<N>, A : Matrix<T, N, M>) → A;
-
+(I : IdentityMatrix<N>) * (A : Matrix<T, N, M>) → A;
+(A : Matrix<T, N, M>) * (I : IdentityMatrix<M>) → A;
+```
 
 ### Diagonal Matrices
 ```orbit
@@ -29,17 +30,16 @@ DiagonalMatrix<T, N> ⊂ Matrix<T, N, N>
 // Property: M[i,j] == 0 if i != j
 
 // Rule: Multiplication of diagonal matrices is element-wise O(N)
-matrix_multiply(A : DiagonalMatrix, B : DiagonalMatrix) : MatrixMultiply →
+(A : DiagonalMatrix) * (B : DiagonalMatrix) : MatrixMultiply →
 	diag_matrix([A[i,i] * B[i,i] for i = 0 to N-1]) : DiagonalMatrix;
 
 // Rule: Multiplication by a diagonal matrix scales rows or columns O(N*P or N*M)
-matrix_multiply(A : DiagonalMatrix, B : Matrix<T, N, P>) →
+(A : DiagonalMatrix) * (B : Matrix<T, N, P>) →
 	matrix([[A[i,i] * B[i,j] for j=0..P-1] for i=0..N-1]); // Row scaling
-matrix_multiply(A : Matrix<T, N, M>, B : DiagonalMatrix) →
+(A : Matrix<T, N, M>) * (B : DiagonalMatrix) →
 	matrix([[A[i,j] * B[j,j] for j=0..M-1] for i=0..N-1]); // Column scaling
 ```
-matrix_multiply(A : Matrix<T, N, M>, I : IdentityMatrix<M>) → A;
-```
+
 ### Permutation Matrices
 Permutation matrices represent permutations and form a structure isomorphic to the Symmetric Group S_N. They consist of only 0s and 1s, with exactly one '1' per row and column.
 
@@ -50,12 +50,12 @@ PermutationMatrix<N> ⊂ Matrix<Int, N, N>
 // Property: Corresponds to a permutation σ ∈ S_N
 
 // Rule: Multiplication of permutation matrices corresponds to permutation composition O(N)
-matrix_multiply(P1 : PermutationMatrix, P2 : PermutationMatrix) : S_N →
+(P1 : PermutationMatrix) * (P2 : PermutationMatrix) : S_N →
 	permutation_matrix(compose_permutations(permutation(P1), permutation(P2))) : PermutationMatrix;
 
 // Rule: Multiplication by a permutation matrix permutes rows or columns of another matrix O(N*M or N*P)
-matrix_multiply(P : PermutationMatrix, A : Matrix<T, N, M>) → permute_rows(A, permutation(P));
-matrix_multiply(A : Matrix<T, N, M>, P : PermutationMatrix<M>) → permute_columns(A, permutation(P));
+(P : PermutationMatrix) * (A : Matrix<T, N, M>) → permute_rows(A, permutation(P));
+(A : Matrix<T, N, M>) * (P : PermutationMatrix<M>) → permute_columns(A, permutation(P));
 ```
 
 ### Symmetric / Hermitian Matrices
@@ -67,12 +67,12 @@ SymmetricMatrix<T, N> ⊂ Matrix<T, N, N> // For real or general fields (A[i,j] 
 HermitianMatrix<T, N> ⊂ Matrix<T, N, N>   // For T ⊂ Complex (A[i,j] == conjugate(A[j,i]))
 
 // Rule: Preserve symmetry/Hermitian property under certain operations
-add(A : SymmetricMatrix, B : SymmetricMatrix) → add(A, B) : SymmetricMatrix;
-matrix_multiply(transpose(P), matrix_multiply(A : SymmetricMatrix, P)) : SymmetricMatrix;
+(A : SymmetricMatrix) + (B : SymmetricMatrix) → A + B : SymmetricMatrix;
+Pᵀ * ((A : SymmetricMatrix) * P) : SymmetricMatrix;
 // A Hermitian => A is normal (A*Aᴴ = Aᴴ*A)
 
 // Note: Multiplication A*B doesn't preserve symmetry unless A,B commute.
-multiply(A: HermitianMatrix, conjugate_transpose(A)) ↔ multiply(conjugate_transpose(A), A: HermitianMatrix);
+(A: HermitianMatrix) * Aᴴ ↔ Aᴴ * (A: HermitianMatrix);
 
 // Note: Specialized algorithms for eigendecomposition or solving systems (e.g., LDLᵀ) leverage this structure.
 // Orbit might rewrite a general solver call to a specialized one if A : SymmetricMatrix.
@@ -87,7 +87,7 @@ SkewSymmetricMatrix<T, N> ⊂ Matrix<T, N, N> // A[i,j] == -A[j,i], A[i,i] == 0
 SkewHermitianMatrix<T, N> ⊂ Matrix<T, N, N> // A[i,j] == -conjugate(A[j,i]), A[i,i] is purely imaginary or 0
 
 // Rule: Preserve skew property under addition/scaling.
-add(A : SkewSymmetricMatrix, B : SkewSymmetricMatrix) → add(A, B) : SkewSymmetricMatrix;
+(A : SkewSymmetricMatrix) + (B : SkewSymmetricMatrix) → A + B : SkewSymmetricMatrix;
 
 // Note: Eigenvalues are purely imaginary or zero. Used in Lie algebras (see matrix4.md).
 ```
@@ -101,18 +101,18 @@ OrthogonalMatrix<T, N> ⊂ Matrix<T, N, N> // T ⊂ Real, Aᵀ*A = A*Aᵀ = I
 UnitaryMatrix<T, N> ⊂ Matrix<T, N, N>   // T ⊂ Complex, Aᴴ*A = A*Aᴴ = I
 
 // Rule: Product of orthogonal/unitary matrices is orthogonal/unitary (closure under multiplication - forms a group)
-matrix_multiply(A : OrthogonalMatrix, B : OrthogonalMatrix) → matrix_multiply(A, B) : OrthogonalMatrix;
-matrix_multiply(A : UnitaryMatrix, B : UnitaryMatrix) → matrix_multiply(A, B) : UnitaryMatrix;
+(A : OrthogonalMatrix) * (B : OrthogonalMatrix) → A * B : OrthogonalMatrix;
+(A : UnitaryMatrix) * (B : UnitaryMatrix) → A * B : UnitaryMatrix;
 
 // Rule: Multiplication involving inverse simplifies to Identity (O(N²) for explicit I, or no-op)
-matrix_multiply(transpose(A : OrthogonalMatrix), A) → IdentityMatrix<N>;
-matrix_multiply(A, transpose(A : OrthogonalMatrix)) → IdentityMatrix<N>;
-matrix_multiply(conjugate_transpose(A : UnitaryMatrix), A) → IdentityMatrix<N>;
-matrix_multiply(A, conjugate_transpose(A : UnitaryMatrix)) → IdentityMatrix<N>;
+(A : OrthogonalMatrix)ᵀ * A → IdentityMatrix<N>;
+A * (A : OrthogonalMatrix)ᵀ → IdentityMatrix<N>;
+(A : UnitaryMatrix)ᴴ * A → IdentityMatrix<N>;
+A * (A : UnitaryMatrix)ᴴ → IdentityMatrix<N>;
 
 // Rule: Multiplication preserves norm (conceptual rule, useful for symbolic reasoning)
-// norm(matrix_multiply(A : OrthogonalMatrix, x : Vector)) → norm(x);
-
+norm((A : OrthogonalMatrix) * (x : Vector)) → norm(x);
+```
 
 ### Special Orthogonal Group SO(n)
 The Special Orthogonal Group SO(n) consists of all n×n orthogonal matrices with a determinant of +1. These matrices represent orientation-preserving isometries, typically rotations in n-dimensional Euclidean space. SO(n) is a subgroup of O(n).
@@ -126,11 +126,16 @@ SpecialOrthogonalMatrix<T, N> ⊂ OrthogonalMatrix<T, N> // T is typically Real
 // M ∈ SO(n) ⇔ Mᵀ * M = I ∧ det(M) = 1
 
 // Rule: Product of SO(n) matrices is SO(n)
-matrix_multiply(A : SpecialOrthogonalMatrix, B : SpecialOrthogonalMatrix) →
-	matrix_multiply(A, B) : SpecialOrthogonalMatrix;
+(A : SpecialOrthogonalMatrix) * (B : SpecialOrthogonalMatrix) →
+	A * B : SpecialOrthogonalMatrix;
 
 // Rule: Inverse of SO(n) matrix is its transpose and is SO(n)
+(A : SpecialOrthogonalMatrix)⁻¹ → Aᵀ : SpecialOrthogonalMatrix;
 
+```
+**Use Cases:** SO(2) for 2D rotations, SO(3) for 3D rotations (robotics, aerospace, computer graphics).
+norm((A : OrthogonalMatrix) * (x : Vector)) → norm(x);
+```
 
 ### Special Unitary Group SU(n)
 The Special Unitary Group SU(n) consists of all n×n unitary matrices with a determinant of +1. These matrices preserve the complex inner product and are crucial in quantum mechanics. SU(n) is a subgroup of U(n).
@@ -144,20 +149,15 @@ SpecialUnitaryMatrix<T, N> ⊂ UnitaryMatrix<T, N> // T is typically Complex
 // M ∈ SU(n) ⇔ Mᴴ * M = I ∧ det(M) = 1 (where Mᴴ is conjugate transpose)
 
 // Rule: Product of SU(n) matrices is SU(n)
-matrix_multiply(A : SpecialUnitaryMatrix, B : SpecialUnitaryMatrix) →
-	matrix_multiply(A, B) : SpecialUnitaryMatrix;
+(A : SpecialUnitaryMatrix) * (B : SpecialUnitaryMatrix) →
+	A * B : SpecialUnitaryMatrix;
 
 // Rule: Inverse of SU(n) matrix is its conjugate transpose and is SU(n)
-inverse(A : SpecialUnitaryMatrix) → conjugate_transpose(A) : SpecialUnitaryMatrix;
+(A : SpecialUnitaryMatrix)⁻¹ → Aᴴ : SpecialUnitaryMatrix;
 
 ```
 **Use Cases:** SU(2) is related to spin in quantum mechanics (Pauli matrices generate its Lie algebra). SU(3) is used in the Standard Model of particle physics.
-inverse(A : SpecialOrthogonalMatrix) → transpose(A) : SpecialOrthogonalMatrix;
 
-```
-**Use Cases:** SO(2) for 2D rotations, SO(3) for 3D rotations (robotics, aerospace, computer graphics).
-norm(matrix_multiply(A : OrthogonalMatrix, x : Vector)) → norm(x);
-```
 
 ### Triangular Matrices (Upper and Lower)
 Triangular matrices have all zeros above (lower triangular) or below (upper triangular) the main diagonal. They are crucial in linear algebra solvers (e.g., Gaussian elimination results in LU decomposition).
@@ -169,12 +169,12 @@ LowerTriangularMatrix<T, N> ⊂ Matrix<T, N, N> // M[i,j] == 0 if i < j
 
 // Rule: Product of same-type triangular matrices is triangular. Standard O(N³) but with reduced loop bounds.
 // Example for Upper * Upper: C[i, j] = sum(k=i to j, A[i, k] * B[k, j])
-matrix_multiply(A : UpperTriangularMatrix, B : UpperTriangularMatrix) : MatrixMultiply →
+(A : UpperTriangularMatrix) * (B : UpperTriangularMatrix) : MatrixMultiply →
 	compute_triangular_product(A, B, "upper") : UpperTriangularMatrix;
 
 // Rule: Multiplication by a general matrix also has reduced loops.
 // Example for Upper * General: C[i, j] = sum(k=i to N-1, A[i, k] * B[k, j])
-matrix_multiply(A : UpperTriangularMatrix, B : Matrix<T, N, P>) →
+(A : UpperTriangularMatrix) * (B : Matrix<T, N, P>) →
 	compute_triangular_general_product(A, B, "upper");
 
 // Note: Solving Ax=b is O(N²) for triangular A (forward/backward substitution).
@@ -195,7 +195,7 @@ TridiagonalMatrix<T, N> ⊂ BandedMatrix<T, N, 1, 1>
 
 // Rule: Multiplication has reduced loop bounds. Result bandwidth sums up.
 // Complexity can be O(N * L_BW * U_BW') or similar, much better than O(N³).
-matrix_multiply(A : BandedMatrix<_, N, L1, U1>, B : BandedMatrix<_, N, L2, U2>) →
+(A : BandedMatrix<_, N, L1, U1>) * (B : BandedMatrix<_, N, L2, U2>) →
 	compute_banded_product(A, B) : BandedMatrix<_, N, L1+L2, U1+U2>;
 
 // Rule: Specialized O(N) algorithms for solving tridiagonal systems (Thomas algorithm).
@@ -211,17 +211,17 @@ CirculantMatrix<T, N> ⊂ Matrix<T, N, N>
 // Property: C[i, j] = c[(j - i) mod N] (defined by its first row/column)
 
 // Rule: Multiplication is circular convolution of the generating vectors, O(N log N) via FFT if T supports it.
-matrix_multiply(C1 : CirculantMatrix, C2 : CirculantMatrix) : C_N !: ViaFFT →
+(C1 : CirculantMatrix) * (C2 : CirculantMatrix) : C_N !: ViaFFT →
 	circulant_matrix(circular_convolution(first_row_vector(C1), first_row_vector(C2))) : CirculantMatrix;
 
 // Rule: Connect circular convolution to FFT (Fast Fourier Transform)
 circular_convolution(a, b) : Convolution →
-	ifft(elementwise_multiply(fft(a), fft(b))) : ViaFFT // elementwise_multiply is Hadamard product
+	ifft(hadamard_product(fft(a), fft(b))) : ViaFFT // elementwise_multiply is Hadamard product
 	if supports_fft(T);
 
 // Rule: Multiplication of Circulant matrix by vector also via FFT, O(N log N).
-matrix_multiply(C : CirculantMatrix, x : Vector) : C_N !: ViaFFT →
-	ifft(elementwise_multiply(fft(first_row_vector(C)), fft(x))) : Vector : ViaFFT
+(C : CirculantMatrix) * (x : Vector) : C_N !: ViaFFT →
+	ifft(hadamard_product(fft(first_row_vector(C)), fft(x))) : Vector : ViaFFT
 	if supports_fft(T);
 ```
 
@@ -234,11 +234,11 @@ ToeplitzMatrix<T, N> ⊂ Matrix<T, N, N>
 // Property: T[i, j] = t[j - i]
 
 // Rule: Embed Toeplitz into Circulant for multiplication, O(N log N).
-matrix_multiply(T1 : ToeplitzMatrix, T2 : ToeplitzMatrix) : MatrixMultiply !: ViaCirculant →
+(T1 : ToeplitzMatrix) * (T2 : ToeplitzMatrix) : MatrixMultiply !: ViaCirculant →
 	let N_embed = choose_embedding_size_for_toeplitz(N); // e.g., >= 2*N-1, power of 2
 	let C1 = embed_toeplitz_in_circulant(T1, N_embed);
 	let C2 = embed_toeplitz_in_circulant(T2, N_embed);
-	let C_result = matrix_multiply(C1, C2); // Uses Circulant multiplication (FFT)
+	let C_result = C1 * C2; // Uses Circulant multiplication (FFT)
 	extract_toeplitz_from_circulant(C_result, N) : ToeplitzProduct : ViaCirculant;
 ```
 
@@ -252,12 +252,12 @@ HankelMatrix<T, N> ⊂ Matrix<T, N, N>
 
 // Rule: Convert to Toeplitz via permutation matrix J (anti-diagonal 1s).
 // H = J * T_H or H = T'_H * J, where T_H, T'_H are Toeplitz.
-hankel_to_toeplitz(H : HankelMatrix, J : AntiDiagonalIdentity) → matrix_multiply(J, H); // Results in a Toeplitz matrix
+hankel_to_toeplitz(H : HankelMatrix, J : AntiDiagonalIdentity) → J * H; // Results in a Toeplitz matrix
 
 // Rule: Multiplication via conversion to Toeplitz/Circulant/FFT, O(N log N).
-matrix_multiply(H1 : HankelMatrix, H2 : HankelMatrix) : MatrixMultiply !: ViaToeplitz →
+(H1 : HankelMatrix) * (H2 : HankelMatrix) : MatrixMultiply !: ViaToeplitz →
 	let J = anti_diagonal_identity_matrix(N);
-	let T1_equiv = matrix_multiply(J, H1); // T1_equiv is Toeplitz
+	let T1_equiv = J * H1; // T1_equiv is Toeplitz
 	// H1*H2 = J*T1_equiv*H2. For H1*H2, typically H1*J*T2_equiv = T_prod_equiv
 	// This requires careful handling of the permutation J.
 	// A common strategy is: H*x = J*T*x (if H=JT)
@@ -279,10 +279,10 @@ SparseMatrix<T, N, M, Format> ⊂ Matrix<T, N, M>
 // This is more effectively handled by format-specific algorithms.
 
 // Rule: Use format-specific algorithms. Complexity varies, e.g., O(N + M + nnz_result) for A*B.
-matrix_multiply(A : SparseMatrix<CSR>, B : SparseMatrix<CSC>) →
+(A : SparseMatrix<CSR>) * (B : SparseMatrix<CSC>) →
 	sparse_multiply_csr_csc(A, B) : SparseMatrix<ResultFormat>;
 
-matrix_multiply(A : SparseMatrix<COO>, x : Vector) →
+(A : SparseMatrix<COO>) * (x : Vector) →
 	sparse_multiply_coo_vector(A, x) : Vector;
 ```
 
@@ -299,23 +299,23 @@ low_rank_factors(U : Matrix<T, N, K>, V : Matrix<T, M, K>) → M : LowRankMatrix
 
 // Rule: Optimize multiplication using associativity. Avoid forming the full M.
 // (U*Vᵀ)*B = U*(Vᵀ*B). Complexity: M*K*P (for Vᵀ*B) + N*K*P (for U*result). If Vᵀ is K*M.
-matrix_multiply(A : LowRankMatrix<_, N, M, K_A>, B : Matrix<T, M, P>) →
+(A : LowRankMatrix<_, N, M, K_A>) * (B : Matrix<T, M, P>) →
 	let {U_A, V_A} = get_factors(A);
-	matrix_multiply(U_A, matrix_multiply(transpose(V_A), B))
+	U_A * (V_Aᵀ * B)
 	if (K_A*P < N*M); // Heuristic: intermediate V_Aᵀ*B is smaller than forming A
 
 // A*(U*Vᵀ) = (A*U)*Vᵀ. Complexity: N*M*K_B (for A*U_B) + N*K_B*P (for result*V_Bᵀ).
-matrix_multiply(A : Matrix<T, N, M>, B : LowRankMatrix<_, M, P, K_B>) →
+(A : Matrix<T, N, M>) * (B : LowRankMatrix<_, M, P, K_B>) →
 	let {U_B, V_B} = get_factors(B);
-	matrix_multiply(matrix_multiply(A, U_B), transpose(V_B))
+	(A * U_B) * V_Bᵀ
 	if (N*K_B < M*P); // Heuristic: intermediate A*U_B is smaller than forming B
 
 // (U_A*V_Aᵀ)*(U_B*V_Bᵀ) = U_A * (V_Aᵀ*U_B) * V_Bᵀ
-matrix_multiply(A : LowRankMatrix<_, N, M, K_A>, B : LowRankMatrix<_, M, P, K_B>) →
+(A : LowRankMatrix<_, N, M, K_A>) * (B : LowRankMatrix<_, M, P, K_B>) →
 	let {U_A, V_A} = get_factors(A);
 	let {U_B, V_B} = get_factors(B);
-	let Intermediate = matrix_multiply(transpose(V_A), U_B); // K_A x K_B matrix
-	matrix_multiply(U_A, matrix_multiply(Intermediate, transpose(V_B)));
+	let Intermediate = V_Aᵀ * U_B; // K_A x K_B matrix
+	U_A * (Intermediate * V_Bᵀ);
 ```
 
 ### Embedding Matrices & One-Hot Vectors
@@ -327,7 +327,7 @@ EmbeddingMatrix<T, VocabSize, EmbedDim> ⊂ Matrix<T, VocabSize, EmbedDim>
 OneHotVector<N, HotIndex> ⊂ Vector<Int, N> // Vector with one '1' at HotIndex, rest '0'
 
 // Rule: Multiplication is a lookup (effectively O(EmbedDim) to copy the row).
-matrix_multiply(E : EmbeddingMatrix<_, V, D>, x : OneHotVector<V, Idx>) →
+(E : EmbeddingMatrix<_, V, D>) * (x : OneHotVector<V, Idx>) →
 	get_row(E, Idx) : Vector<T, D>;
 ```
 
@@ -343,10 +343,10 @@ DoublyStochasticMatrix<T, N> ⊂ RowStochasticMatrix<T, N, N>, ColStochasticMatr
 // Rule: Simplify sums involving stochastic dimensions.
 // Example: Sum of elements in a row of (A * P) where P is RowStochasticMatrix
 // sum_cols( (A * P)[i, :] ) = sum_cols( A[i, :] )
-sum_over_cols(matrix_multiply(A : Matrix<T, N, M>, P : RowStochasticMatrix<T, M, P>), i_row) →
+sum_over_cols((A : Matrix<T, N, M>) * (P : RowStochasticMatrix<T, M, P>), i_row) →
 	row_sum(A, i_row);
 
-sum_over_rows(matrix_multiply(P : ColStochasticMatrix<T, N, M>, B : Matrix<T, M, P>), j_col) →
+sum_over_rows((P : ColStochasticMatrix<T, N, M>) * (B : Matrix<T, M, P>), j_col) →
 	col_sum(B, j_col);
 ```
 
@@ -377,23 +377,23 @@ Creates a larger matrix `A ⊗ B` from smaller matrices `A` and `B`.
 
 ```orbit
 // Operation definition
-kronecker_product(A : Matrix<T, N, M>, B : Matrix<T, P, Q>) : TensorOp → C : Matrix<T, N*P, M*Q>;
+(A : Matrix<T, N, M>) ⊗ (B : Matrix<T, P, Q>) : TensorOp → C : Matrix<T, N*P, M*Q>;
 
 // Key Property (Mixed Product Property):
 // (A ⊗ B) * (C ⊗ D) = (A * C) ⊗ (B * D)  (if inner dimensions match for A*C and B*D)
-matrix_multiply(kronecker_product(A, B), kronecker_product(C, D)) →
-	kronecker_product(matrix_multiply(A, C), matrix_multiply(B, D))
+(A ⊗ B) * (C ⊗ D) →
+	(A * C) ⊗ (B * D)
 	if can_multiply(A, C) && can_multiply(B, D);
 
 // Other properties that can be rewrite rules:
-// transpose(A ⊗ B) = transpose(A) ⊗ transpose(B)
-// inverse(A ⊗ B) = inverse(A) ⊗ inverse(B) (if A, B invertible)
+(A ⊗ B)ᵀ = Aᵀ ⊗ Bᵀ
+(A ⊗ B)⁻¹ = A⁻¹ ⊗ B⁻¹ (if A, B invertible)
 // trace(A ⊗ B) = trace(A) * trace(B)
 
 // Rule: Vec-trick identity
 // (A ⊗ B) * vec(X) = vec(B * X * Aᵀ) where vec(X) stacks columns of X into a vector.
-matrix_multiply(kronecker_product(A, B), vec(X : Matrix<_,M,Q>)) → // Assuming B is PxQ, A is NxM
-	vec(matrix_multiply(B, matrix_multiply(X, transpose(A))));
+(A ⊗ B) * vec(X : Matrix<_,M,Q>) → // Assuming B is PxQ, A is NxM
+	vec(B * (X * Aᵀ));
 ```
 
 ## Conclusion
