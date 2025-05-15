@@ -75,7 +75,7 @@ Orbit leverages trace properties to infer symmetries and apply canonicalization:
     The property `tr(AB) = tr(BA)` implies `Cₖ` symmetry for the argument list under the trace.
     *   **Orbit Inference:**
         ```orbit
-		tr(matrix_multiply_chain(M₁, M₂, ..., Mₖ)) ⊢ tr_arg_list : Cₖ;
+		tr(M₁ * M₂ * ... * Mₖ) ⊢ tr_arg_list : Cₖ;
 		// tr_arg_list refers to (M₁, ..., Mₖ)
 ```
     *   **Canonical Form:** Apply `canonicalise_cyclic_efficient` (e.g., Booth's algorithm) to the argument list.
@@ -87,7 +87,7 @@ Orbit leverages trace properties to infer symmetries and apply canonicalization:
 2.  **Similarity Transformation Invariance: `tr(P⁻¹ * A * P)`**
     *   **Orbit Simplification:**
         ```orbit
-		tr(matrix_multiply(matrix_multiply(P_inv, A), P))
+		tr(P_inv * A * P)
 			if is_inverse(P_inv, P) && is_invertible(P)
 			→ tr(A) : GL_Conj_Invariant;
 ```
@@ -99,11 +99,11 @@ Orbit leverages trace properties to infer symmetries and apply canonicalization:
     ```orbit
 	// S is a scalar matrix (S = s*I), A is a matrix
 	// The product tr(S*A) exhibits C₂ symmetry for its arguments (S, A).
-	tr(matrix_multiply(S : ScalarMatrix, A))
+	tr(S * A)
 		⊢ tr_arg_list : C₂;
-	// This can be canonicalized, e.g., to tr(matrix_multiply(A, S)) if A < S by canonical order.
+	// This can be canonicalized, e.g., to tr(A*S) if A < S by canonical order.
 	// If S is s*IdentityMatrix, it simplifies further:
-	tr(matrix_multiply(s_identity_matrix(s_val), A)) → s_val * tr(A);
+	tr(s_identity_matrix(s_val) * A) → s_val * tr(A);
 ```
 
 ## Matrix Determinant
@@ -165,11 +165,11 @@ Orbit uses these properties as rewrite rules:
 ```
 3.  **Leveraging Multiplicative Property**:
     ```orbit
-	determinant(matrix_multiply(A, D : DiagonalMatrix)) → determinant(A) * product_of_diagonal_elements(D);
+	determinant(A * D) → determinant(A) * product_of_diagonal_elements(D);
 ```
 4.  **Canonicalization via Similarity Invariance**:
     ```orbit
-	determinant(matrix_multiply(matrix_multiply(P_inv, A), P))
+	determinant(P_inv * A * P)
 		if is_inverse(P_inv, P) && is_invertible(P)
 		→ determinant(A) : GL_Conj_Invariant;
 ```
@@ -183,12 +183,12 @@ For a square `N × N` matrix `A`, a non-zero vector `v` is an **eigenvector** of
 // Conceptual representation in Orbit
 eigen_problem(A : Matrix<T,N,N>) → solution_set : EigenSolutionSet
 	where solution_set contains pairs (λᵢ : Scalar<T>, vᵢ : Vector<T,N>)
-	such that matrix_multiply(A, vᵢ) = scalar_multiply(λᵢ, vᵢ);
+	such that A * vᵢ = λᵢ * vᵢ;
 
-characteristic_poly(A : Matrix<T,N,N>, λ_var : Symbol) → determinant(matrix_subtract(A, scalar_multiply(λ_var, IdentityMatrix<N>)));
+characteristic_poly(A : Matrix<T,N,N>, λ_var : Symbol) → determinant(A - λ_var * IdentityMatrix<N>);
 
 eigenvalues(A : Matrix<T,N,N>) → roots_of(characteristic_poly(A, default_lambda_var));
-eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_subtract(A, scalar_multiply(λ, IdentityMatrix<N>)));
+eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(A - λ * IdentityMatrix<N>);
 ```
 
 ### Deeper Properties and Orbit's Handling
@@ -196,7 +196,7 @@ eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_su
 1.  **Similarity Invariance (Recap & Canonicalization):**
     If `B = P⁻¹AP`, then `A` and `B` have the same eigenvalues. The eigenvectors are related by `v_B = P⁻¹v_A`.
     ```orbit
-	eigenvalues(matrix_multiply(matrix_multiply(P_inv, A), P))
+	eigenvalues(P_inv * A * P)
 		if is_inverse(P_inv, P) && is_invertible(P)
 		→ eigenvalues(A) : GL_Conj_Invariant_Spectrum;
 
@@ -211,7 +211,7 @@ eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_su
 	DiagonalizableMatrix<T,N> ⊂ Matrix<T,N,N>;
 
 	// Rule: If A is diagonalizable, relate it to its diagonal form.
-	A : DiagonalizableMatrix → matrix_multiply(P_eigenvecs(A), matrix_multiply(D_eigenvals(A), P_inv_eigenvecs(A)));
+	A : DiagonalizableMatrix → P_eigenvecs(A) * D_eigenvals(A) * P_inv_eigenvecs(A);
 
 	// Inference: A matrix with N distinct eigenvalues is diagonalizable.
 	A where count(distinct(eigenvalues(A))) = N ⊢ A : DiagonalizableMatrix;
@@ -224,8 +224,8 @@ eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_su
     For real symmetric matrices (`A = Aᵀ`), eigenvalues are real, and eigenvectors corresponding to distinct eigenvalues are orthogonal. Such matrices are always orthogonally diagonalizable: `A = QDQᵀ` where `Q` is an orthogonal matrix.
     For Hermitian matrices (`A = Aᴴ`), eigenvalues are real, and they are unitarily diagonalizable: `A = UDUᴴ` where `U` is a unitary matrix.
     ```orbit
-	A : SymmetricMatrix<Real,N> → matrix_multiply(Q_ortho_eigenvecs(A), matrix_multiply(D_real_eigenvals(A), transpose(Q_ortho_eigenvecs(A))));
-	A : HermitianMatrix<Complex,N> → matrix_multiply(U_unitary_eigenvecs(A), matrix_multiply(D_real_eigenvals(A), conjugate_transpose(U_unitary_eigenvecs(A))));
+	A : SymmetricMatrix<Real,N> → Q_ortho_eigenvecs(A) * D_real_eigenvals(A) * Q_ortho_eigenvecs(A)ᵀ;
+	A : HermitianMatrix<Complex,N> → U_unitary_eigenvecs(A) * D_real_eigenvals(A) * U_unitary_eigenvecs(A)ᴴ;
 ```
     Orbit can use these specific forms when the matrix domain is known.
 
@@ -238,7 +238,7 @@ eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_su
     ```orbit
 	// Rule: A matrix satisfies its characteristic polynomial.
 	// If char_poly_coeffs(A) = [c_n, c_{n-1}, ..., c_1, c_0] (for p(λ)=c_nλⁿ+...+c_1λ+c_0)
-	// Then: c_n*matrix_power(A,n) + ... + c_1*A + c_0*IdentityMatrix = ZeroMatrix
+	// Then: c_n*A^n + ... + c_1*A + c_0*IdentityMatrix = ZeroMatrix
 	evaluate_polynomial_on_matrix(char_poly(A), A) → ZeroMatrix<N,N>;
 ```
     This can be used to simplify higher powers of `A` or express `A⁻¹` as a polynomial in `A`.
@@ -280,7 +280,7 @@ eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_su
 
 1.  **Recognizing Characteristic Equation:**
     ```orbit
-	determinant(matrix_subtract(A, scalar_multiply(λ_var, I))) ⊢ is_characteristic_poly_of(A, λ_var);
+	determinant(A - λ_var * I) ⊢ is_characteristic_poly_of(A, λ_var);
 ```
 2.  **Relating to Trace/Determinant:**
     ```orbit
@@ -295,8 +295,8 @@ eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_su
 ```
 4.  **Simplifying Powers/Inverses based on Eigenvalues:**
     ```orbit
-	eigenvalues_of(matrix_power(A, k)) → map(λ x. x^k, eigenvalues_of(A));
-	eigenvalues_of(matrix_inverse(A)) → map(λ x. 1/x, eigenvalues_of(A)) if A : Invertible;
+	eigenvalues_of(A^k) → map(λ x. x^k, eigenvalues_of(A));
+	eigenvalues_of(A⁻¹) → map(λ x. 1/x, eigenvalues_of(A)) if A : Invertible;
 ```
 5.  **Domain-Specific Eigenvalue Properties:**
     ```orbit
@@ -307,7 +307,7 @@ eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_su
 ```
 6.  **Unifying Eigenvalue Sets via Similarity Invariance:**
     ```orbit
-	eigenvalues(matrix_multiply(matrix_multiply(P_inv, A), P))
+	eigenvalues(P_inv * A * P)
 		if is_inverse(P_inv, P) && is_invertible(P)
 		→ eigenvalues(A) : GL_Conj_Invariant_Spectrum;
 ```
@@ -316,7 +316,7 @@ eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_su
 7.  **Spectral Theorem for Symmetric/Hermitian Matrices:**
     Enables rewriting to orthogonally/unitarily diagonalized forms.
     ```orbit
-	A : SymmetricMatrix<Real,N> → matrix_multiply(Q_ortho_eigenvecs(A), D_real_eigenvals(A), transpose(Q_ortho_eigenvecs(A)));
+	A : SymmetricMatrix<Real,N> → Q_ortho_eigenvecs(A) * D_real_eigenvals(A) * Q_ortho_eigenvecs(A)ᵀ;
 ```
 8.  **Cayley-Hamilton Theorem Application:**
     `p(A) = 0` where `p` is the characteristic polynomial of `A`.
@@ -333,8 +333,7 @@ Applying a scalar function `f(x)` to a square matrix `A` results in a matrix `f(
     If `f(x) = Σ aᵢxⁱ`, then `f(A) = Σ aᵢAⁱ` (where `A⁰ = I`).
     ```orbit
 	// Example: Matrix Exponential
-	matrix_exponential(A : Matrix<T,N,N>) →
-		IdentityMatrix<N> + A + matrix_multiply(A,A)/2! + matrix_multiply(A,matrix_multiply(A,A))/3! + ... : TaylorSeriesExpansion;
+	matrix_exponential(A : Matrix<T,N,N>) → IdentityMatrix<N> + A + A²/2! + A³/3! + ... : TaylorSeriesExpansion;
 	// Orbit would need rules for symbolic series manipulation and convergence criteria.
 ```
 
@@ -343,14 +342,14 @@ Applying a scalar function `f(x)` to a square matrix `A` results in a matrix `f(
     ```orbit
 	// Rule: Apply function via diagonalization
 	f(A : DiagonalizableMatrix) →
-		matrix_multiply(P_eigenvecs(A), matrix_multiply(f_on_diagonal(D_eigenvals(A), f), P_inv_eigenvecs(A)));
+		P_eigenvecs(A) * f_on_diagonal(D_eigenvals(A), f) * P_inv_eigenvecs(A);
 
 	f_on_diagonal(D_diag : DiagonalMatrix, f_scalar_func) →
 		diagonal_matrix(map(f_scalar_func, diagonal_elements_of(D_diag)));
 
 	// Specific example for matrix_power
-	matrix_power(A : DiagonalizableMatrix, k : Integer) →
-		matrix_multiply(P_eigenvecs(A), matrix_multiply(matrix_power_diag(D_eigenvals(A), k), P_inv_eigenvecs(A)));
+	A^k where A : DiagonalizableMatrix →
+		P_eigenvecs(A) * matrix_power_diag(D_eigenvals(A), k) * P_inv_eigenvecs(A);
 	matrix_power_diag(D_diag, k) → diagonal_matrix(map(λx. x^k, diagonal_elements_of(D_diag)));
 ```
     This is often the most effective way for Orbit to handle matrix functions symbolically.
@@ -361,11 +360,11 @@ Applying a scalar function `f(x)` to a square matrix `A` results in a matrix `f(
 4.  **Exponentiation by Squaring for Matrix Powers (`Aᵏ`):**
     This is an algorithmic optimization rather than a matrix function definition, but crucial for computing powers efficiently. Orbit can represent this as a recursive rewrite strategy:
     ```orbit
-	matrix_power(A, k : PositiveInteger) : RequiresMultiplication →
+	A^k : RequiresMultiplication →
 		if k = 0 then IdentityMatrix<N>
 		else if k = 1 then A
-		else if is_even(k) then matrix_power(matrix_multiply(A, A), k/2) // A^k = (A^2)^(k/2)
-		else A * matrix_power(A, k-1); // A^k = A * A^(k-1)
+		else if is_even(k) then (A²)^(k/2) // A^k = (A^2)^(k/2)
+		else A * A^(k-1); // A^k = A * A^(k-1)
 ```
 
 ## Introduction to Matrix Lie Groups and Lie Algebras
@@ -390,7 +389,7 @@ Orbit can define domains for these groups and algebras and use their properties 
     *   **Lie Algebra `gl(n, F)`:** Space of all `n x n` matrices over `F`. The Lie bracket is the matrix commutator: `[X, Y] = XY - YX`.
     ```orbit
 	Matrix<T,N,N> ⊂ gl_algebra<T,N>; // All matrices form the algebra
-	matrix_commutator(X,Y) → matrix_subtract(matrix_multiply(X,Y), matrix_multiply(Y,X));
+	matrix_commutator(X,Y) → (X*Y) - (Y*X);
 ```
 
 2.  **Special Linear Group `SL(n, F)`:** Subgroup of `GL(n, F)` with `det(A) = 1`.
@@ -403,8 +402,8 @@ Orbit can define domains for these groups and algebras and use their properties 
 3.  **Orthogonal Group `O(n)`:** Group of `n x n` real matrices `A` with `AᵀA = I` (or `A⁻¹ = Aᵀ`).
     *   **Lie Algebra `o(n)` or `so(n)`:** Space of `n x n` real skew-symmetric matrices (`Xᵀ = -X`). (Technically `so(n)` is the algebra for `SO(n)` but often used for `O(n)` as well).
     ```orbit
-	A : Matrix<Real,N,N> where matrix_multiply(transpose(A), A) = IdentityMatrix<N> ⊢ A : On_Group;
-	X : Matrix<Real,N,N> where transpose(X) = negate(X) ⊢ X : on_Algebra; // X is skew-symmetric
+	A : Matrix<Real,N,N> where Aᵀ * A = IdentityMatrix<N> ⊢ A : On_Group;
+	X : Matrix<Real,N,N> where Xᵀ = negate(X) ⊢ X : on_Algebra; // X is skew-symmetric
 ```
 
 4.  **Special Orthogonal Group `SO(n)`:** Subgroup of `O(n)` with `det(A) = 1` (rotations).
@@ -413,8 +412,8 @@ Orbit can define domains for these groups and algebras and use their properties 
 5.  **Unitary Group `U(n)`:** Group of `n x n` complex matrices `A` with `AᴴA = I` (or `A⁻¹ = Aᴴ`).
     *   **Lie Algebra `u(n)`:** Space of `n x n` complex skew-Hermitian matrices (`Xᴴ = -X`).
     ```orbit
-	A : Matrix<Complex,N,N> where matrix_multiply(conjugate_transpose(A), A) = IdentityMatrix<N> ⊢ A : Un_Group;
-	X : Matrix<Complex,N,N> where conjugate_transpose(X) = negate(X) ⊢ X : un_Algebra; // X is skew-Hermitian
+	A : Matrix<Complex,N,N> where Aᴴ * A = IdentityMatrix<N> ⊢ A : Un_Group;
+	X : Matrix<Complex,N,N> where Xᴴ = negate(X) ⊢ X : un_Algebra; // X is skew-Hermitian
 ```
 
 6.  **Special Unitary Group `SU(n)`:** Subgroup of `U(n)` with `det(A) = 1`.
@@ -430,7 +429,7 @@ matrix_exponential(X : on_Algebra) : On_Group; // More specifically SO(n) if con
 matrix_exponential(X : un_Algebra) : Un_Group;
 matrix_exponential(X : slnF_Algebra) : SLnF_Group;
 // exp(tX) for scalar t
-matrix_exponential(scalar_multiply(t : Real, X : on_Algebra)) : SO_n_Group; // if X != 0
+matrix_exponential(t * X) : SO_n_Group; // if X != 0 and X : on_Algebra (type of X is implicit from context)
 ```
 This allows Orbit to reason about transformations between these algebraic structures.
 
@@ -438,8 +437,8 @@ This allows Orbit to reason about transformations between these algebraic struct
 
 *   **Simplifying Inverses:**
     ```orbit
-	matrix_inverse(A : On_Group) → transpose(A);
-	matrix_inverse(A : Un_Group) → conjugate_transpose(A);
+	A⁻¹ where A : On_Group → Aᵀ;
+	A⁻¹ where A : Un_Group → Aᴴ;
 ```
 *   **Determinant Properties:**
     ```orbit
@@ -459,11 +458,11 @@ This allows Orbit to reason about transformations between these algebraic struct
 ### The Matrix Exponential Map
 `exp(tX)` maps `X` from a Lie algebra to the Lie group.
 ```orbit
-matrix_exponential(scalar_multiply(t : Real, X : so_n_Algebra)) : SO_n_Group;
+matrix_exponential(t * X) : SO_n_Group;
 ```
 
 ### Rewrite Rules Based on Lie Group/Algebra Properties
-*   **Inverses:** `matrix_inverse(A : On_Group) → transpose(A);`
+*   **Inverses:** `A⁻¹ where A : On_Group → Aᵀ;`
 *   **Determinants:** `determinant(A : SLnF_Group) → 1;`
 *   **Commutator Identities:** Jacobi identity `[X,[Y,Z]] + [Y,[Z,X]] + [Z,[X,Y]] = 0`.
 *   **Baker-Campbell-Hausdorff (BCH) Formula:** For `log(exp(X)exp(Y))`, can simplify products of exponentials.

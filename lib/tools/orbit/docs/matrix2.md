@@ -242,6 +242,8 @@ ToeplitzMatrix<T, N> ⊂ Matrix<T, N, N>
 	extract_toeplitz_from_circulant(C_result, N) : ToeplitzProduct : ViaCirculant;
 ```
 
+Their inversion can also be performed efficiently using specialized algorithms like the Trench algorithm or Gohberg-Semencul formulas.
+
 ### Hankel Matrices
 Matrices with constant skew-diagonals (H[i, j] = h[i + j]). They are related to Toeplitz matrices via permutation.
 
