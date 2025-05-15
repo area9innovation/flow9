@@ -112,6 +112,86 @@ element_type_is_ring(T) → inherits(T, Ring);
 ```
 These rewrites replace the standard 8-multiplication block formula with Strassen's 7-multiplication version, improving complexity to O(N^log₂(7)).
 
+
+## Inferring Commutativity (S₂ Symmetry) for Matrix Multiplication
+
+While matrix multiplication `A * B` is generally non-commutative (i.e., `A * B ≠ B * A`), there are specific, identifiable conditions under which it *does* commute. When Orbit detects these conditions through the domains of the operand matrices, it can infer `S₂` symmetry for that particular `matrix_multiply(A, B)` instance. This allows the system to canonicalize the expression, ensuring that `A * B` and `B * A` are recognized as equivalent and can be represented by a single, ordered form in the O-Graph.
+
+### General Approach
+
+The core idea is to use rules that, upon matching specific patterns of operand domains, assert `S₂` symmetry onto the multiplication operator instance.
+
+```orbit
+// General canonicalization rule for any operation instance marked with S₂
+op(X, Y) : S₂ → op(sort_args(X, Y))
+	if !is_sorted_args(X,Y); // sort_args uses a canonical ordering for X and Y
+```
+This rule applies generally. The key is to correctly tag the `matrix_multiply` instances with `: S₂` using specific entailment rules based on operand domains:
+
+### Specific Conditions and Entailment Rules for S₂ Symmetry
+
+1.  **Identity Matrix:** Multiplication by an identity matrix `I` always commutes.
+    
+    ```orbit
+	A : Matrix * I : IdentityMatrix |> * : S₂;
+	I : IdentityMatrix * A : Matrix |> * : S₂;
+	// This implies: A * I ↔ I * A
+```
+
+2.  **Zero Matrix:** Multiplication by a zero matrix `Z` (a matrix of all zeros) always commutes.
+    
+    ```orbit
+	// Assuming ZeroMatrix<T, N, M> ⊂ Matrix<T, N, M> is defined.
+	A : Matrix * Z : ZeroMatrix |> * : S₂;
+	Z : ZeroMatrix * A : Matrix |> * : S₂;
+	// This implies: A * Z ↔ Z * A
+```
+
+3.  **Matrix with Itself:** A matrix always commutes with itself.
+    
+    ```orbit
+	A : Matrix * A : Matrix |> * : S₂;
+	// This is notationally consistent, A*A = A*A.
+```
+
+4.  **Scalar Matrices:** Any two scalar matrices (of the form `s*I`) commute.
+    
+    ```orbit
+	// Assuming ScalarMatrix<T, N> ⊂ DiagonalMatrix<T, N> is defined.
+	S1 : ScalarMatrix * S2 : ScalarMatrix |> * : S₂;
+```
+
+5.  **Diagonal Matrices:** Any two diagonal matrices of the same dimensions commute.
+    
+    ```orbit
+	D1 : DiagonalMatrix * D2 : DiagonalMatrix |> * : S₂;
+```
+
+6.  **Circulant Matrices:** Any two N×N circulant matrices commute.
+    
+    ```orbit
+	// Assuming CirculantMatrix<T, N> is defined.
+	C1 : CirculantMatrix * C2 : CirculantMatrix |> * : S₂;
+```
+
+7.  **Polynomials in the Same Matrix:** If matrix `B` is a polynomial expression in matrix `A` (e.g., `B = c₂A² + c₁A + c₀I`), then `A` and `B` commute.
+    
+    ```orbit
+	// Assuming a domain PolynomialInMatrix(A) signifies B is such a polynomial in A.
+	A : Matrix * B : PolynomialInMatrix(A) |> * : S₂;
+	B : PolynomialInMatrix(A) * A : Matrix |> * : S₂;
+```
+
+### Benefits in Orbit
+
+Inferring `S₂` symmetry for specific matrix multiplication instances provides significant advantages:
+
+*   **Canonicalization:** `A * B` and `B * A` (where commutative) map to a single O-Graph node.
+*   **Simplified Equivalence:** Makes equivalence checks straightforward.
+*   **Reduced Rule Complexity:** Rewrite rules involving commutative matrix products only need to match one operand order.
+*   **Enhanced Pattern Matching:** Allows patterns to match regardless of operand order in commutative cases.
+
+
 ## Exploiting Basic Matrix Structures
 
 Orbit can automatically apply further optimizations if matrices possess specific structures.
