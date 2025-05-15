@@ -16,7 +16,7 @@ LowerTriangularUnitDiag<T, N> ⊂ LowerTriangularMatrix<T, N> // L[i,i] = 1
 
 // Conceptual decomposition rule
 decompose_lu(A : Matrix<T, N, N>) : Decomposition → { L : LowerTriangularUnitDiag, U : UpperTriangularMatrix }
-	where matrix_multiply(L, U) = A;
+	where L * U = A;
 ```
 
 **Orbit's Role in LU Decomposition:**
@@ -28,14 +28,14 @@ decompose_lu(A : Matrix<T, N, N>) : Decomposition → { L : LowerTriangularUnitD
 	// L_factor would accumulate inverses: L = ... * inv(E_add_row(k,l,m))
 
 	// Rule: If A is reducible to U via E_ops, and L is inv(E_ops_product)
-	A → matrix_multiply(L_from_elimination(A), U_from_elimination(A));
+	A → L_from_elimination(A) * U_from_elimination(A);
 ```
 
 2.  **Pivoting (LUP/PLU Decomposition):** For numerical stability and to handle cases where a zero pivot is encountered, row interchanges (permutations) are used. This leads to `PA = LU` or `A = PLU`, where `P` is a PermutationMatrix.
     ```orbit
 	// Domain for permutation matrix from S_N (see matrix2.md)
 	decompose_lup(A : Matrix<T, N, N>) : Decomposition → { P : PermutationMatrix, L : LowerTriangularUnitDiag, U : UpperTriangularMatrix }
-		where matrix_multiply(P, A) = matrix_multiply(L, U);
+		where P * A = L * U;
 ```
     Orbit can manage the permutation matrix `P` by applying permutation rules and tracking row swaps during symbolic elimination.
 
@@ -50,11 +50,11 @@ decompose_lu(A : Matrix<T, N, N>) : Decomposition → { L : LowerTriangularUnitD
 
 *   **Computing Determinants:**
     ```orbit
-	determinant(A) where A = L*U → determinant(L) * determinant(U);
-	determinant(L : LowerTriangularUnitDiag) → 1;
-	determinant(U : UpperTriangularMatrix) → product_of_diagonal_elements(U);
+	det(A) where A = L*U → det(L) * det(U);
+	det(L : LowerTriangularUnitDiag) → 1;
+	det(U : UpperTriangularMatrix) → product_of_diagonal_elements(U);
 	// If PA=LU, then det(P)det(A) = det(L)det(U) => sgn(P)det(A) = det(U)
-	determinant(A) where P*A = L*U → sign(P) * product_of_diagonal_elements(U);
+	det(A) where P*A = L*U → sign(P) * product_of_diagonal_elements(U);
 ```
 
 *   **Matrix Inversion:**
@@ -70,7 +70,7 @@ PositiveDefiniteMatrix<T,N> ⊂ SymmetricMatrix<T,N>
 
 // Conceptual decomposition rule
 decompose_cholesky(A : PositiveDefiniteMatrix<T, N>) : Decomposition → { L : LowerTriangularMatrix }
-	where matrix_multiply(L, transpose(L)) = A && all(L[i,i] > 0);
+	where L * Lᵀ = A && all(L[i,i] > 0);
 ```
 
 **Orbit's Role in Cholesky Decomposition:**
@@ -97,7 +97,7 @@ QR decomposition factors a matrix `A` into `A = QR`, where `Q` is an orthogonal 
 
 // Conceptual decomposition rule
 decompose_qr(A : Matrix<T, M, N>) : Decomposition → { Q : OrthogonalMatrix<M>, R : UpperTriangularMatrix<M,N> } // if M >= N
-	where matrix_multiply(Q, R) = A;
+	where Q * R = A;
 ```
 
 **Orbit's Role in QR Decomposition:**
@@ -105,7 +105,7 @@ decompose_qr(A : Matrix<T, M, N>) : Decomposition → { Q : OrthogonalMatrix<M>,
 1.  **Symbolic Gram-Schmidt Process:** The classical Gram-Schmidt process (or modified versions for stability) can be represented symbolically in Orbit to orthogonalize the columns of `A` to form `Q`, with `R` capturing the coefficients.
     ```orbit
 	// q_i = (a_i - sum_j<i proj(q_j, a_i)) / ||...||
-	// R[j,i] = q_jᵀ * a_i
+	// R[j,i] = q_j ⋅ a_i
 	// Orbit would apply rules for vector projection, normalization, dot products.
 ```
 2.  **Symbolic Householder Reflections or Givens Rotations:** More stable methods involve applying a sequence of Householder reflections or Givens rotations to `A` to transform it into `R`, while `Q` is the product of these orthogonal transformations.
@@ -137,7 +137,7 @@ SingularValueDiagonalMatrix<T,M,N> ⊂ DiagonalMatrix<T,M,N>
 // Conceptual decomposition rule
 decompose_svd(A : Matrix<T, M, N>) : Decomposition →
 	{ U : OrthogonalMatrix<M>, Sigma : SingularValueDiagonalMatrix<T,M,N>, V : OrthogonalMatrix<N> }
-	where matrix_multiply(U, matrix_multiply(Sigma, transpose(V))) = A;
+	where U * Sigma * Vᵀ = A;
 ```
 
 **Orbit's Role in SVD:**
@@ -147,14 +147,14 @@ decompose_svd(A : Matrix<T, M, N>) : Decomposition →
 	// If A = UΣVᵀ then AᵀA = VΣᵀUᵀUΣVᵀ = VΣᵀΣVᵀ
 	// And AAᵀ = UΣVᵀVΣᵀUᵀ = UΣΣᵀUᵀ
 	// These relate SVD to eigenvalue decomposition of AᵀA and AAᵀ.
-	eigen_problem(matrix_multiply(transpose(A), A)) → {eigenvalues=σᵢ², eigenvectors=cols_of_V };
-	eigen_problem(matrix_multiply(A, transpose(A))) → {eigenvalues=σᵢ², eigenvectors=cols_of_U };
+	eigen_problem(Aᵀ * A) → {eigenvalues=σᵢ², eigenvectors=cols_of_V };
+	eigen_problem(A * Aᵀ) → {eigenvalues=σᵢ², eigenvectors=cols_of_U };
 ```
 2.  **Canonical Form:** The SVD is unique up to choices of signs in columns of `U` and `V` (which must be consistent). The convention of non-negative and sorted singular values in `Σ` makes `Σ` canonical. Orbit can enforce this ordering.
 3.  **Utilizing SVD Properties:** Orbit can use SVD properties for simplification and analysis even if it relies on an external routine for the decomposition itself.
     ```orbit
-	rank(A) where A = U*Sigma*V_T → number_of_non_zero_singular_values(Sigma);
-	condition_number(A) where A = U*Sigma*V_T → max_singular_value(Sigma) / min_non_zero_singular_value(Sigma);
+	rank(A) where A = U*Sigma*Vᵀ → number_of_non_zero_singular_values(Sigma);
+	condition_number(A) where A = U*Sigma*Vᵀ → max_singular_value(Sigma) / min_non_zero_singular_value(Sigma);
 ```
 
 **Applications Derivable in Orbit:**
@@ -163,7 +163,7 @@ decompose_svd(A : Matrix<T, M, N>) : Decomposition →
 *   **Low-Rank Matrix Approximation:** The best rank-`k` approximation of `A` is obtained by keeping the largest `k` singular values in `Σ` and setting others to zero. Orbit could perform this truncation symbolically.
 *   **Computing Pseudo-Inverse (`A⁺`):** `A⁺ = VΣ⁺Uᵀ`, where `Σ⁺` is formed by taking reciprocals of non-zero singular values and transposing.
     ```orbit
-	pseudo_inverse(A) where A=U*Sigma*V_T → V * pseudo_inverse_diag(Sigma) * U_T;
+	pseudo_inverse(A) where A=U*Sigma*Vᵀ → V * Σ⁺ * Uᵀ;
 ```
 *   **Principal Component Analysis (PCA):** SVD of the (centered) data matrix is a common way to perform PCA.
 
