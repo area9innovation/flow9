@@ -25,7 +25,7 @@ ElementwiseOp ⊂ Operation
 Vector<T, N> ⊂ Matrix<T, N, 1> // Vectors are single-column matrices
 
 // Define standard matrix multiplication C = A * B
-matrix_multiply(A : Matrix<T, N, M>, B : Matrix<T, M, P>) : MatrixMultiply → C : Matrix<T, N, P>
+(A : Matrix<T, N, M>) * (B : Matrix<T, M, P>) : MatrixMultiply → C : Matrix<T, N, P>
 	where C[i, j] = sum(k, 0, M-1, A[i, k] * B[k, j]);
 
 // Element access
@@ -58,13 +58,13 @@ assemble_blocks([[M11, M12], [M21, M22]]) → M : Matrix;
 
 // Foundational rewrite: Express multiplication using 2x2 blocks
 // This rewrite holds because matrix blocks themselves satisfy Ring axioms.
-matrix_multiply(A, B) : MatrixMultiply !: Blocked
+A * B : MatrixMultiply !: Blocked
 	if can_split_into_blocks(A, B, 2, 2) →
 		let [[A11, A12], [A21, A22]] = block(A, [N/2], [M/2]);
 		let [[B11, B12], [B21, B22]] = block(B, [M/2], [P/2]);
 		assemble_blocks([
-			[matrix_multiply(A11, B11) + matrix_multiply(A12, B21), matrix_multiply(A11, B12) + matrix_multiply(A12, B22)],
-			[matrix_multiply(A21, B11) + matrix_multiply(A22, B21), matrix_multiply(A21, B12) + matrix_multiply(A22, B22)]
+			[(A11 * B11) + (A12 * B21), (A11 * B12) + (A12 * B22)],
+			[(A21 * B11) + (A22 * B21), (A21 * B12) + (A22 * B22)]
 		]) : Blocked;
 
 // Condition for splitting (e.g., even dimensions)
@@ -99,11 +99,11 @@ assemble_blocks_strassen(M1, M2, M3, M4, M5, M6, M7) : RingOps →
 	]);
 
 // Rule that applies Strassen's decomposition if beneficial
-matrix_multiply(A, B) : Blocked !: StrassenOptimized
+A * B : Blocked !: StrassenOptimized
 	if is_large_enough_for_strassen(A, B) && element_type_is_ring(T) →
 		let [[A11, A12], [A21, A22]] = block(A);
 		let [[B11, B12], [B21, B22]] = block(B);
-		let {M1..M7} = apply_recursive_multiply(define_strassen_intermediates(A11..A22, B11..B22)); // apply_recursive_multiply conceptually calls matrix_multiply on sub-problems
+		let {M1..M7} = apply_recursive_multiply(define_strassen_intermediates(A11..A22, B11..B22)); // apply_recursive_multiply conceptually calls the * operator on sub-problems
 		assemble_blocks_strassen(M1..M7) : StrassenOptimized;
 
 // Predicate to check if Strassen is worthwhile
@@ -115,7 +115,7 @@ These rewrites replace the standard 8-multiplication block formula with Strassen
 
 ## Inferring Commutativity (S₂ Symmetry) for Matrix Multiplication
 
-While matrix multiplication `A * B` is generally non-commutative (i.e., `A * B ≠ B * A`), there are specific, identifiable conditions under which it *does* commute. When Orbit detects these conditions through the domains of the operand matrices, it can infer `S₂` symmetry for that particular `matrix_multiply(A, B)` instance. This allows the system to canonicalize the expression, ensuring that `A * B` and `B * A` are recognized as equivalent and can be represented by a single, ordered form in the O-Graph.
+While matrix multiplication `A * B` is generally non-commutative (i.e., `A * B ≠ B * A`), there are specific, identifiable conditions under which it *does* commute. When Orbit detects these conditions through the domains of the operand matrices, it can infer `S₂` symmetry for that particular `A * B` instance. This allows the system to canonicalize the expression, ensuring that `A * B` and `B * A` are recognized as equivalent and can be represented by a single, ordered form in the O-Graph.
 
 ### General Approach
 
@@ -126,7 +126,7 @@ The core idea is to use rules that, upon matching specific patterns of operand d
 op(X, Y) : S₂ → op(sort_args(X, Y))
 	if !is_sorted_args(X,Y); // sort_args uses a canonical ordering for X and Y
 ```
-This rule applies generally. The key is to correctly tag the `matrix_multiply` instances with `: S₂` using specific entailment rules based on operand domains:
+This rule applies generally. The key is to correctly tag the `A * B` instances with `: S₂` using specific entailment rules based on operand domains:
 
 ### Specific Conditions and Entailment Rules for S₂ Symmetry
 
@@ -203,8 +203,8 @@ The identity matrix acts as the multiplicative identity in the matrix ring.
 IdentityMatrix<N> ⊂ DiagonalMatrix<Int, N>
 
 // Rule: Multiplication by Identity
-matrix_multiply(I : IdentityMatrix<N>, A : Matrix<T, N, M>) → A;
-matrix_multiply(A : Matrix<T, N, M>, I : IdentityMatrix<M>) → A;
+(I : IdentityMatrix<N>) * (A : Matrix<T, N, M>) → A;
+(A : Matrix<T, N, M>) * (I : IdentityMatrix<M>) → A;
 ```
 
 ### Diagonal Matrices
@@ -215,13 +215,13 @@ DiagonalMatrix<T, N> ⊂ Matrix<T, N, N>
 // Property: M[i,j] == 0 if i != j
 
 // Rule: Multiplication of diagonal matrices is element-wise O(N)
-matrix_multiply(A : DiagonalMatrix, B : DiagonalMatrix) : MatrixMultiply →
+(A : DiagonalMatrix) * (B : DiagonalMatrix) : MatrixMultiply →
 	diag_matrix([A[i,i] * B[i,i] for i = 0 to N-1]) : DiagonalMatrix;
 
 // Rule: Multiplication by a diagonal matrix scales rows or columns
-matrix_multiply(A : DiagonalMatrix, B : Matrix<T, N, P>) →
+(A : DiagonalMatrix) * (B : Matrix<T, N, P>) →
 	matrix([[A[i,i] * B[i,j] for j=0..P-1] for i=0..N-1]); // Row scaling
-matrix_multiply(A : Matrix<T, N, M>, B : DiagonalMatrix) →
+(A : Matrix<T, N, M>) * (B : DiagonalMatrix) →
 	matrix([[A[i,j] * B[j,j] for j=0..M-1] for i=0..N-1]); // Column scaling
 ```
 
@@ -255,7 +255,7 @@ Just as Orbit can explore identities in cyclic groups for FFT, it could systemat
 
 ```orbit
 // Conceptual exploration process for block multiplication
-DiscoverMatrixIdentities(matrix_multiply(A, B) : Blocked) : Analysis → {
+DiscoverMatrixIdentities(A * B : Blocked) : Analysis → { // Assuming A*B is the block multiplication
 	// Represent the 8 block multiplications symbolically
 	let standard_ops = [A11*B11, A12*B21, ..., A22*B22]; // 8 symbolic products
 	let target_blocks = [C11, C12, C21, C22]; // Target expressions
