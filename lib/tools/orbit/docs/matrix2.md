@@ -165,11 +165,9 @@ Orbit's domain system allows it to recognize and apply tailored algorithms for v
 
 The identity matrix acts as the multiplicative identity in the matrix ring.
 
-TODO: Add rule that recognizes the identity matrix.
 
 ```orbit
-// Domain definition
-IdentityMatrix<N> ⊂ DiagonalMatrix<Int, N> // Typically {0, 1} elements
+// TODO: Add rule that recognizes the identity matrix.
 // Property: I[i,i] == 1, I[i,j] == 0 if i != j
 
 // Rule: Multiplication by Identity is a no-op O(1) conceptually, or O(N*M) if copy needed
@@ -179,22 +177,20 @@ IdentityMatrix<N> ⊂ DiagonalMatrix<Int, N> // Typically {0, 1} elements
 
 ### Diagonal Matrices
 
-TODO: Add rule that recognizes the identity matrix.
+A diagonal matrix is a square matrix where all off-diagonal entries are zero. Only the main diagonal (entries where i=j) can be nonzero; all other entries must be zero. Diagonal matrices play a central role in linear algebra due to their simplicity and because many classes of matrices (such as the identity, scalar, and orthogonal projectors) are diagonal in special cases. Multiplying by a diagonal matrix corresponds to independent scaling of each coordinate or row/column.
 
 ```orbit
-// Domain definition
-DiagonalMatrix<T, N> ⊂ Matrix<T, N, N>
-
+// TODO: Add rule that recognizes a diagonal matrix.
 // Property: M[i,j] == 0 if i != j
 
 // Rule: Multiplication of diagonal matrices is element-wise O(N)
-(A : DiagonalMatrix) * (B : DiagonalMatrix) : MatrixMultiply →
-	diag_matrix([A[i,i] * B[i,i] for i = 0 to N-1]) : DiagonalMatrix;
+(A : DiagonalMatrix<T, N>) * (B : DiagonalMatrix<T, N>) →
+	diag_matrix([A[i,i] * B[i,i] for i = 0 to N-1]) : DiagonalMatrix<T, N>;
 
 // Rule: Multiplication by a diagonal matrix scales rows or columns O(N*P or N*M)
-(A : DiagonalMatrix) * (B : Matrix<T, N, P>) →
+(A : DiagonalMatrix<T, N>) * (B : Matrix<T, N, P>) →
 	matrix([[A[i,i] * B[i,j] for j=0..P-1] for i=0..N-1]); // Row scaling
-(A : Matrix<T, N, M>) * (B : DiagonalMatrix) →
+(A : Matrix<T, N, M>) * (B : DiagonalMatrix<T, N>) →
 	matrix([[A[i,j] * B[j,j] for j=0..M-1] for i=0..N-1]); // Column scaling
 ```
 
@@ -202,20 +198,19 @@ DiagonalMatrix<T, N> ⊂ Matrix<T, N, N>
 
 Permutation matrices represent permutations and form a structure isomorphic to the Symmetric Group S_N. They consist of only 0s and 1s, with exactly one '1' per row and column.
 
-TODO: Add rule that recognizes a permutation matrix.
-
 ```orbit
 // Domain definition
 PermutationMatrix<N> ⊂ Matrix<Int, N, N>
 
 // Property: Corresponds to a permutation σ ∈ S_N
+// TODO: Add rule that recognizes a permutation matrix.
 
 // Rule: Multiplication of permutation matrices corresponds to permutation composition O(N)
-(P1 : PermutationMatrix) * (P2 : PermutationMatrix) : S_N →
-	permutation_matrix(compose_permutations(permutation(P1), permutation(P2))) : PermutationMatrix;
+(P1 : PermutationMatrix<N>) * (P2 : PermutationMatrix<N>) : S_N →
+	permutation_matrix(compose_permutations(permutation(P1), permutation(P2))) : PermutationMatrix<N>;
 
 // Rule: Multiplication by a permutation matrix permutes rows or columns of another matrix O(N*M or N*P)
-(P : PermutationMatrix) * (A : Matrix<T, N, M>) → permute_rows(A, permutation(P));
+(P : PermutationMatrix<N>) * (A : Matrix<T, N, M>) → permute_rows(A, permutation(P));
 (A : Matrix<T, N, M>) * (P : PermutationMatrix<M>) → permute_columns(A, permutation(P));
 ```
 
@@ -229,18 +224,21 @@ SymmetricMatrix<T, N> ⊂ Matrix<T, N, N> // For real or general fields (A[i,j] 
 HermitianMatrix<T, N> ⊂ Matrix<T, N, N>   // For T ⊂ Complex (A[i,j] == conjugate(A[j,i]))
 
 // Rule: Preserve symmetry/Hermitian property under certain operations
-(A : SymmetricMatrix) + (B : SymmetricMatrix) → A + B : SymmetricMatrix;
-Pᵀ * ((A : SymmetricMatrix) * P) : SymmetricMatrix;
-// A Hermitian => A is normal (A*Aᴴ = Aᴴ*A)
+(A : SymmetricMatrix<T, N>) + (B : SymmetricMatrix<T, N>) → A + B : SymmetricMatrix<T, N>;
 
-// Note: Multiplication A*B doesn't preserve symmetry unless A,B commute.
-(A: HermitianMatrix) * Aᴴ ↔ Aᴴ * (A: HermitianMatrix);
+(P : Matrix<T, N, N>)ᵀ * ((A : SymmetricMatrix<T, N>) * (P : Matrix<T, N, N>)) : Matrix<T, N, N> →
+    (Pᵀ * A * P) : SymmetricMatrix<T, N>;
+// A Hermitian => A is normal (A*Aᴴ = Aᴴ*A)
+(A : HermitianMatrix<T, N>) * (Aᴴ) : Matrix<T, N, N> ↔
+    Aᴴ * (A : HermitianMatrix<T, N>) : Matrix<T, N, N>;
 
 // Note: Specialized algorithms for eigendecomposition or solving systems (e.g., LDLᵀ) leverage this structure.
 // Orbit might rewrite a general solver call to a specialized one if A : SymmetricMatrix.
 ```
 
 ### Skew-Symmetric / Skew-Hermitian Matrices
+
+A **skew-symmetric matrix** (for real fields) is a square matrix satisfying $A[i, j] = -A[j, i]$ and $A[i, i] = 0$. This structure encodes anti-symmetry: flipping indices negates the entry. For complex matrices, the analogous property is called **skew-Hermitian**: $A[i, j] = -\overline{A[j, i]}$, meaning the matrix is the negative of its conjugate transpose and diagonal entries are purely imaginary or zero. Skew-symmetric and skew-Hermitian matrices play a central role in Lie algebra theory (e.g., generating rotations via the Lie algebra SO(n)), have purely imaginary eigenvalues (or zero), and often appear in the study of angular momentum, differential equations, and structure-preserving algorithms.
 
 These matrices have anti-symmetry across the diagonal (`A = -Aᵀ` or `A = -Aᴴ`).
 
@@ -249,33 +247,42 @@ These matrices have anti-symmetry across the diagonal (`A = -Aᵀ` or `A = -Aᴴ
 SkewSymmetricMatrix<T, N> ⊂ Matrix<T, N, N> // A[i,j] == -A[j,i], A[i,i] == 0
 SkewHermitianMatrix<T, N> ⊂ Matrix<T, N, N> // A[i,j] == -conjugate(A[j,i]), A[i,i] is purely imaginary or 0
 
-// Rule: Preserve skew property under addition/scaling.
-(A : SkewSymmetricMatrix) + (B : SkewSymmetricMatrix) → A + B : SkewSymmetricMatrix;
+// Rule: Preserve skew property under addition
+(A : SkewSymmetricMatrix<T, N>) + (B : SkewSymmetricMatrix<T, N>) : Matrix<T, N, N> →
+    (A + B) : SkewSymmetricMatrix<T, N>;
+
+// Rule: Preserve skew property under scalar multiplication
+(c : T) * (A : SkewSymmetricMatrix<T, N>) : Matrix<T, N, N> →
+    (c * A) : SkewSymmetricMatrix<T, N>;
 
 // Note: Eigenvalues are purely imaginary or zero. Used in Lie algebras (see matrix4.md).
 ```
 
 ### Orthogonal / Unitary Matrices
 
-These matrices represent rotations/reflections and preserve vector norms. Their inverse is their transpose (orthogonal) or conjugate transpose (unitary).
+Orthogonal matrices (over the real field) and unitary matrices (over the complex field) are the fundamental building blocks for rotations, reflections, and norm-preserving transformations in linear algebra. Their inverse is their transpose (orthogonal) or conjugate transpose (unitary). They form groups under multiplication and are central to eigendecomposition, QR factorization, and geometric transformations.
 
 ```orbit
 // Domain definitions
 OrthogonalMatrix<T, N> ⊂ Matrix<T, N, N> // T ⊂ Real, Aᵀ*A = A*Aᵀ = I
 UnitaryMatrix<T, N> ⊂ Matrix<T, N, N>   // T ⊂ Complex, Aᴴ*A = A*Aᴴ = I
 
-// Rule: Product of orthogonal/unitary matrices is orthogonal/unitary (closure under multiplication - forms a group)
-(A : OrthogonalMatrix) * (B : OrthogonalMatrix) → A * B : OrthogonalMatrix;
-(A : UnitaryMatrix) * (B : UnitaryMatrix) → A * B : UnitaryMatrix;
+// Rule: Closure under multiplication (group property)
+(A : OrthogonalMatrix<T, N>) * (B : OrthogonalMatrix<T, N>) : Matrix<T, N, N> →
+    (A * B) : OrthogonalMatrix<T, N>;
 
-// Rule: Multiplication involving inverse simplifies to Identity (O(N²) for explicit I, or no-op)
-(A : OrthogonalMatrix)ᵀ * A → IdentityMatrix<N>;
-A * (A : OrthogonalMatrix)ᵀ → IdentityMatrix<N>;
-(A : UnitaryMatrix)ᴴ * A → IdentityMatrix<N>;
-A * (A : UnitaryMatrix)ᴴ → IdentityMatrix<N>;
+(A : UnitaryMatrix<T, N>) * (B : UnitaryMatrix<T, N>) : Matrix<T, N, N> →
+    (A * B) : UnitaryMatrix<T, N>;
 
-// Rule: Multiplication preserves norm (conceptual rule, useful for symbolic reasoning)
-norm((A : OrthogonalMatrix) * (x : Vector)) → norm(x);
+// Rule: Inverse is transpose/conjugate transpose
+(A : OrthogonalMatrix<T, N>)ᵀ * (A : OrthogonalMatrix<T, N>) → IdentityMatrix<T, N>;
+(A : OrthogonalMatrix<T, N>) * (A : OrthogonalMatrix<T, N>)ᵀ → IdentityMatrix<T, N>;
+(A : UnitaryMatrix<T, N>)ᴴ * (A : UnitaryMatrix<T, N>) → IdentityMatrix<T, N>;
+(A : UnitaryMatrix<T, N>) * (A : UnitaryMatrix<T, N>)ᴴ → IdentityMatrix<T, N>;
+
+// Rule: Norm preservation under transformation
+norm((A : OrthogonalMatrix<T, N>) * (x : Vector<T, N>)) → norm(x);
+norm((A : UnitaryMatrix<T, N>) * (x : Vector<T, N>)) → norm(x);
 ```
 
 ### Special Orthogonal Group SO(n)
@@ -296,11 +303,9 @@ SpecialOrthogonalMatrix<T, N> ⊂ OrthogonalMatrix<T, N> // T is typically Real
 
 // Rule: Inverse of SO(n) matrix is its transpose and is SO(n)
 (A : SpecialOrthogonalMatrix)⁻¹ → Aᵀ : SpecialOrthogonalMatrix;
+```
 
-```
 **Use Cases:** SO(2) for 2D rotations, SO(3) for 3D rotations (robotics, aerospace, computer graphics).
-norm((A : OrthogonalMatrix) * (x : Vector)) → norm(x);
-```
 
 ### Special Unitary Group SU(n)
 
@@ -320,8 +325,8 @@ SpecialUnitaryMatrix<T, N> ⊂ UnitaryMatrix<T, N> // T is typically Complex
 
 // Rule: Inverse of SU(n) matrix is its conjugate transpose and is SU(n)
 (A : SpecialUnitaryMatrix)⁻¹ → Aᴴ : SpecialUnitaryMatrix;
-
 ```
+
 **Use Cases:** SU(2) is related to spin in quantum mechanics (Pauli matrices generate its Lie algebra). SU(3) is used in the Standard Model of particle physics.
 
 ### Symplectic Matrix
@@ -346,8 +351,8 @@ SymplecticMatrix<T, N> ⊂ Matrix<T, N, N> // N must be even, N = 2k
 // Note: Determinant of a symplectic matrix is +1.
 determinant(A : SymplecticMatrix) → 1;
 ```
-**Use Cases:** Classical mechanics, quantum information theory.
 
+**Use Cases:** Classical mechanics, quantum information theory.
 
 ### Triangular Matrices (Upper and Lower)
 
@@ -607,6 +612,7 @@ ToeplitzMatrix<T, N> ⊂ Matrix<T, N, N>
 Their inversion can also be performed efficiently using specialized algorithms like the Trench algorithm or Gohberg-Semencul formulas.
 
 ### Hankel Matrices
+
 Matrices with constant skew-diagonals (H[i, j] = h[i + j]). They are related to Toeplitz matrices via permutation.
 
 ```orbit
@@ -631,6 +637,7 @@ hankel_to_toeplitz(H : HankelMatrix, J : AntiDiagonalIdentity) → J * H; // Res
 ```
 
 ### Sparse Matrices
+
 Matrices with a large proportion of zero elements. Operations can skip multiplications/additions involving zero. The best algorithm depends on the sparse format (CSR, CSC, COO, etc.) and the sparsity patterns.
 
 ```orbit
@@ -651,6 +658,7 @@ SparseMatrix<T, N, M, Format> ⊂ Matrix<T, N, M>
 ```
 
 ### Low-Rank Matrices
+
 Matrices that can be represented or approximated as the product of two smaller matrices (`M = U * Vᵀ`), common in machine learning (e.g., embeddings, matrix factorization).
 
 ```orbit
@@ -683,6 +691,7 @@ low_rank_factors(U : Matrix<T, N, K>, V : Matrix<T, M, K>) → M : LowRankMatrix
 ```
 
 ### Embedding Matrices & One-Hot Vectors
+
 A common machine learning operation involves multiplying an embedding matrix (tall, `VocabSize x EmbedDim`) by a one-hot vector (representing a word index), which simplifies to a lookup.
 
 ```orbit
@@ -696,6 +705,7 @@ OneHotVector<N, HotIndex> ⊂ Vector<Int, N> // Vector with one '1' at HotIndex,
 ```
 
 ### Stochastic Matrices
+
 Matrices whose rows or columns sum to 1 (representing probability distributions), common in areas like Markov chains or from softmax operations.
 
 ```orbit
