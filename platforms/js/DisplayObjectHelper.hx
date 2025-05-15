@@ -2157,12 +2157,18 @@ class DisplayObjectHelper {
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");
-					cont.className = 'nativeWidget';
+					cont.classList.add('nativeWidget');
+					cont.classList.add('maskContainer');
 					untyped clip.nativeWidget.appendChild(cont);
-				} else if (MountMaskContainerEnabled && untyped clip.nativeWidget.contains(childWidget)) {
+				} else if (MountMaskContainerEnabled && untyped clip.nativeWidget.contains(childWidget) && !clip.nativeWidget.firstChild.classList.contains('maskContainer')) {
 					var cont = Browser.document.createElement("div");
-					cont.className = 'nativeWidget';
-					untyped clip.nativeWidget.insertBefore(cont, clip.nativeWidget.firstChild);
+					cont.classList.add('nativeWidget');
+					cont.classList.add('maskContainer');
+					try {
+						untyped clip.nativeWidget.insertBefore(cont, clip.nativeWidget.firstChild);
+					} catch (e : Dynamic) {
+						untyped console.warn('Error while appending', cont, 'before', clip.nativeWidget.firstChild);
+					}
 				}
 				try {
 					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);
