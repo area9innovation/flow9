@@ -27,6 +27,7 @@
     *   **O-Graph S-Expression Integration:** Modify O-Graph internal representation to primarily use S-Expressions or have seamless S-Expression interoperability. Test basic O-Graph operations (add, extract) using `tests/ograph_basic.orb` (if exists) with `--sexpr` and check results (or use `--compare-engines`).
 	*  When we extract from the ograph, we loose "belongs to". Maybe we should extract those as well?
 	*  Should we change from List to Call in SExpr? Check how quote and antiquotation would work
+	*  Figure out how we can express quasiquotation and antiquotation in Orbit to have a one-to-one for these as well
     *   **Validate Rewriting Engine:**
         *   Run: `./run_orbit_tests.sh --compare-engines` on core rewriting tests (e.g., `tests/rewrite.orb`, `tests/pattern.orb`, `tests/algebra.orb` - adjust names based on actual files).
         *   Goal: Ensure identical execution results. Fix any differences reported by the comparison.
