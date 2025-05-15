@@ -6,6 +6,137 @@ Matrix decompositions (also known as factorizations) are fundamental tools in li
 
 This document, following from [`matrix1.md`](./matrix1.md) and [`matrix2.md`](./matrix2.md), explores how Orbit's symbolic rewriting capabilities can be used to derive, represent, and utilize common matrix decompositions. Orbit aims not just to call pre-defined decomposition routines but to understand their construction and properties through algebraic manipulation.
 
+
+## Block Matrix Operations and Schur Complements in Orbit
+
+Orbit can reason about matrices partitioned into blocks. Operations on these block matrices can be defined using rewrite rules. We primarily use `assemble_blocks([[A,B],[C,D]])` to denote a 2x2 block matrix constructed from matrix blocks A, B, C, and D, and `block(M, row_splits, col_splits)` to decompose a matrix (as seen in `matrix1.md`).
+
+### Block Matrix Representation
+A 2x2 block matrix `M` composed of blocks `A` (top-left), `B` (top-right), `C` (bottom-left), and `D` (bottom-right) is represented as:
+`M = assemble_blocks([[A, B], [C, D]])`
+
+### Block Matrix Addition
+Addition of two conformingly partitioned block matrices is performed block-wise:
+```orbit
+// Rule for adding two 2x2 block matrices
+assemble_blocks([[A1, B1], [C1, D1]]) + assemble_blocks([[A2, B2], [C2, D2]]) →
+	assemble_blocks([[A1 + A2, B1 + B2], [C1 + C2, D1 + D2]]);
+```
+
+### Block Matrix Multiplication
+Block matrix multiplication is detailed in `matrix1.md`. The rule effectively computes:
+`M1 * M2 → assemble_blocks([[A1*A2_11 + B1*A2_21, ...], ..., ...])`
+(Refer to `matrix1.md` for the explicit `A * B : MatrixMultiply !: Blocked` rule).
+
+### Schur Complement Definition
+The Schur complement is defined as a conditional expression.
+```orbit
+// Schur complement of block A in M = [[A,B],[C,D]]
+define_schur_A(A, B, C, D) : Matrix
+	if is_invertible(A) → D - C * inverse(A) * B;
+
+// Schur complement of block D in M = [[A,B],[C,D]]
+define_schur_D(A, B, C, D) : Matrix
+	if is_invertible(D) → A - B * inverse(D) * C;
+```
+
+### Block Matrix Inversion using Schur Complements
+The inverse of a 2x2 block matrix can be expressed using the Schur complement.
+```orbit
+inverse(assemble_blocks([[A, B], [C, D]])) : Matrix
+	if is_invertible(A) →
+		let S_A = define_schur_A(A, B, C, D);
+		if is_invertible(S_A) →
+			let invA = inverse(A);
+			let invS_A = inverse(S_A);
+			assemble_blocks([
+				[invA + invA * B * invS_A * C * invA,  -(invA * B * invS_A)],
+				[-(invS_A * C * invA),                invS_A]
+			]);
+	// A similar rule can be defined if D is invertible using S_D.
+```
+(Note: `-X` denotes `negate(X)` or direct unary minus if supported for matrices).
+
+### Block LDU Decomposition and Schur Complements
+The Schur complement appears in the block LDU decomposition of a matrix.
+```orbit
+// M = L * D_block * U
+// L and U are unitriangular block matrices, D_block is block diagonal.
+assemble_blocks([[A,B],[C,D]]) : BlockLDUProduct
+  if is_invertible(A) →
+	let invA = inverse(A);
+	let S_A = define_schur_A(A, B, C, D); // Schur Complement of A
+	// L factor: [[I, 0], [C*invA, I]]
+	let L_factor = assemble_blocks([
+		[IdentityMatrix_like(A), ZeroMatrix_like(B)],
+		[C * invA,               IdentityMatrix_like(D)]
+	  ]);
+	// D_block factor (block diagonal): [[A, 0], [0, S_A]]
+	let D_block_factor = assemble_blocks([
+		[A,                  ZeroMatrix_like(B)],
+		[ZeroMatrix_like(C), S_A]
+	  ]);
+	// U factor: [[I, invA*B], [0, I]]
+	let U_factor = assemble_blocks([
+		[IdentityMatrix_like(A), invA * B],
+		[ZeroMatrix_like(C),     IdentityMatrix_like(D)]
+	  ]);
+	L_factor * D_block_factor * U_factor;
+// Assumes IdentityMatrix_like(X) and ZeroMatrix_like(X) generate
+// identity/zero matrices with dimensions compatible with X.
+```
+
+### Properties and Applications as Orbit Rules
+
+1.  **Determinants via Schur Complements:**
+    ```orbit
+	det(assemble_blocks([[A,B],[C,D]])) : Scalar
+	  if is_invertible(A) → det(A) * det(define_schur_A(A,B,C,D));
+
+	det(assemble_blocks([[A,B],[C,D]])) : Scalar
+	  if is_invertible(D) → det(D) * det(define_schur_D(A,B,C,D));
+```
+
+2.  **Solving Linear Systems (Recursive Strategy):**
+    A system `M*x = y` where `M`, `x`, `y` are block-partitioned can be solved by reducing it to a system involving the Schur complement.
+    ```orbit
+	// System: assemble_blocks([[A,B],[C,D]]) * assemble_block_vector([[x1],[x2]]) = assemble_block_vector([[y1],[y2]])
+	// This rule defines a strategy to find x1, x2.
+	solve_block_system(
+		assemble_blocks([[A,B],[C,D]]),
+		assemble_block_vector([[y1],[y2]])
+	  ) : BlockVectorSolution
+	  if is_invertible(A) →
+		let S_A = define_schur_A(A,B,C,D);
+		if is_invertible(S_A) → // S_A must be invertible to solve the reduced system
+		  let invA = inverse(A);
+		  let y2_prime = y2 - C*invA*y1;
+		  let x2_solution = solve_system(S_A, y2_prime); // solve_system is a general solver for non-block system S_A
+		  let x1_solution = invA*(y1 - B*x2_solution);
+		  assemble_block_vector([[x1_solution],[x2_solution]]);
+	// assemble_block_vector is a conceptual constructor for block vectors.
+	// solve_system(Matrix, Vector) is assumed to be a general system solving mechanism.
+```
+
+3.  **Positive Definiteness:**
+    The positive definiteness of a block matrix `M` is related to the positive definiteness of `A` and its Schur complement `S_A`.
+    ```orbit
+	// M = assemble_blocks([[A,B],[C,D]])
+	is_positive_definite(assemble_blocks([[A,B],[C,D]])) : TruthValue ↔
+		is_positive_definite(A) ∧ is_positive_definite(define_schur_A(A,B,C,D));
+	// This relies on the property that if M is PD, then A must be PD (and thus invertible).
+```
+
+Schur complements and block matrix operations provide powerful symbolic and computational tools that Orbit can leverage through these rewrite rules.
+
+
+3.  **Inertia and Positive Definiteness:** The inertia (number of positive, negative, and zero eigenvalues) of `M` is related to the inertia of `A` and `S_A`. Specifically, `M` is positive definite if and only if `A` is positive definite and `S_A` is positive definite.
+
+4.  **Numerical Analysis:** Schur complement methods are widely used in solving large sparse linear systems and in domain decomposition methods for PDEs.
+
+The Schur complement is a fundamental tool in matrix theory and numerical linear algebra, providing a way to break down problems involving large matrices into smaller, more manageable pieces. Orbit can represent the formation of Schur complements and use their properties in simplification and decomposition rules.
+
+
 ## LU Decomposition
 
 LU decomposition factors a square matrix `A` into the product of a lower triangular matrix `L` (often with unit diagonal) and an upper triangular matrix `U`, such that `A = LU`.

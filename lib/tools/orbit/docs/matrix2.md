@@ -2,16 +2,18 @@
 
 ## Introduction
 
-Building upon the foundational concepts outlined in [`matrix1.md`](./matrix1.md), this document delves into how Orbit identifies and optimizes operations for matrices possessing specific, exploitable structures. By annotating matrices with their corresponding domains (e.g., `:SparseMatrix`, `:CirculantMatrix`, `:SymmetricMatrix`), Orbit can apply highly specialized rewrite rules. These rules often lead to significant computational savings compared to general-purpose algorithms, moving from O(N³) or O(N²) complexities to O(N log N), O(N), or even O(1) in some cases.
+Building upon the foundational concepts outlined in [`matrix1.md`](./matrix1.md), this document delves into how Orbit identifies and optimizes operations for matrices possessing specific, exploitable structures. By annotating matrices with their corresponding domains (e.g., `: SparseMatrix`, `: CirculantMatrix`, `: SymmetricMatrix`), Orbit can apply highly specialized rewrite rules. These rules often lead to significant computational savings compared to general-purpose algorithms, moving from O(N³) or O(N²) complexities to O(N log N), O(N), or even O(1) in some cases.
 
 ## Exploiting Special Matrix Structures
 
 Orbit's domain system allows it to recognize and apply tailored algorithms for various matrix types.
 
-
-
 ### Identity Matrix
+
 The identity matrix acts as the multiplicative identity in the matrix ring.
+
+TODO: Add rule that recognizes the identity matrix.
+
 ```orbit
 // Domain definition
 IdentityMatrix<N> ⊂ DiagonalMatrix<Int, N> // Typically {0, 1} elements
@@ -23,6 +25,10 @@ IdentityMatrix<N> ⊂ DiagonalMatrix<Int, N> // Typically {0, 1} elements
 ```
 
 ### Diagonal Matrices
+
+TODO: Add rule that recognizes the identity matrix.
+TODO: Relate to upper and lower triangular matrices.
+
 ```orbit
 // Domain definition
 DiagonalMatrix<T, N> ⊂ Matrix<T, N, N>
@@ -41,7 +47,11 @@ DiagonalMatrix<T, N> ⊂ Matrix<T, N, N>
 ```
 
 ### Permutation Matrices
+
 Permutation matrices represent permutations and form a structure isomorphic to the Symmetric Group S_N. They consist of only 0s and 1s, with exactly one '1' per row and column.
+
+TODO: Add rule that recognizes the identity matrix.
+TODO: Add rule that permutations are Monomial, Orthogonal, Invertible, Sparse, Doubly Stochastic, Unitary (complex), BinaryMatrix, Square.
 
 ```orbit
 // Domain definition
@@ -115,6 +125,7 @@ norm((A : OrthogonalMatrix) * (x : Vector)) → norm(x);
 ```
 
 ### Special Orthogonal Group SO(n)
+
 The Special Orthogonal Group SO(n) consists of all n×n orthogonal matrices with a determinant of +1. These matrices represent orientation-preserving isometries, typically rotations in n-dimensional Euclidean space. SO(n) is a subgroup of O(n).
 
 ```orbit
