@@ -112,6 +112,51 @@ matrix_multiply(A, conjugate_transpose(A : UnitaryMatrix)) → IdentityMatrix<N>
 
 // Rule: Multiplication preserves norm (conceptual rule, useful for symbolic reasoning)
 // norm(matrix_multiply(A : OrthogonalMatrix, x : Vector)) → norm(x);
+
+
+### Special Orthogonal Group SO(n)
+The Special Orthogonal Group SO(n) consists of all n×n orthogonal matrices with a determinant of +1. These matrices represent orientation-preserving isometries, typically rotations in n-dimensional Euclidean space. SO(n) is a subgroup of O(n).
+
+```orbit
+// Domain definition
+SpecialOrthogonalMatrix<T, N> ⊂ OrthogonalMatrix<T, N> // T is typically Real
+// Or: SO<N> ⊂ O<N> (if using shorter group symbols as domains)
+
+// Properties:
+// M ∈ SO(n) ⇔ Mᵀ * M = I ∧ det(M) = 1
+
+// Rule: Product of SO(n) matrices is SO(n)
+matrix_multiply(A : SpecialOrthogonalMatrix, B : SpecialOrthogonalMatrix) →
+	matrix_multiply(A, B) : SpecialOrthogonalMatrix;
+
+// Rule: Inverse of SO(n) matrix is its transpose and is SO(n)
+
+
+### Special Unitary Group SU(n)
+The Special Unitary Group SU(n) consists of all n×n unitary matrices with a determinant of +1. These matrices preserve the complex inner product and are crucial in quantum mechanics. SU(n) is a subgroup of U(n).
+
+```orbit
+// Domain definition
+SpecialUnitaryMatrix<T, N> ⊂ UnitaryMatrix<T, N> // T is typically Complex
+// Or: SU<N> ⊂ U<N>
+
+// Properties:
+// M ∈ SU(n) ⇔ Mᴴ * M = I ∧ det(M) = 1 (where Mᴴ is conjugate transpose)
+
+// Rule: Product of SU(n) matrices is SU(n)
+matrix_multiply(A : SpecialUnitaryMatrix, B : SpecialUnitaryMatrix) →
+	matrix_multiply(A, B) : SpecialUnitaryMatrix;
+
+// Rule: Inverse of SU(n) matrix is its conjugate transpose and is SU(n)
+inverse(A : SpecialUnitaryMatrix) → conjugate_transpose(A) : SpecialUnitaryMatrix;
+
+```
+**Use Cases:** SU(2) is related to spin in quantum mechanics (Pauli matrices generate its Lie algebra). SU(3) is used in the Standard Model of particle physics.
+inverse(A : SpecialOrthogonalMatrix) → transpose(A) : SpecialOrthogonalMatrix;
+
+```
+**Use Cases:** SO(2) for 2D rotations, SO(3) for 3D rotations (robotics, aerospace, computer graphics).
+norm(matrix_multiply(A : OrthogonalMatrix, x : Vector)) → norm(x);
 ```
 
 ### Triangular Matrices (Upper and Lower)
