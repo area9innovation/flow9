@@ -2,7 +2,160 @@
 
 ## Introduction
 
-Building upon the foundational concepts outlined in [`matrix1.md`](./matrix1.md), this document delves into how Orbit identifies and optimizes operations for matrices possessing specific, exploitable structures. By annotating matrices with their corresponding domains (e.g., `: SparseMatrix`, `: CirculantMatrix`, `: SymmetricMatrix`), Orbit can apply highly specialized rewrite rules. These rules often lead to significant computational savings compared to general-purpose algorithms, moving from O(N³) or O(N²) complexities to O(N log N), O(N), or even O(1) in some cases.
+Building upon the foundational concepts outlined in [`matrix1.md`](./matrix1.md), this document delves into how Orbit identifies and optimizes operations for matrices possessing specific, exploitable structures. By annotating matrices with their corresponding domains, Orbit can apply highly specialized rewrite rules. These rules often lead to significant computational savings compared to general-purpose algorithms, moving from O(N³) or O(N²) complexities to O(N log N), O(N), or even O(1) in some cases.
+
+## Comprehensive Matrix Hierarchy
+
+Orbit aims to recognize and leverage a rich hierarchy of matrix types. The following hierarchy, based on common mathematical classifications, guides Orbit's domain-specific rule development. Many of these types imply specific storage schemes, computational shortcuts, or algebraic properties that Orbit can exploit.
+
+```text
+Tensor<T, ...>
+└── Matrix<T, N, M>
+    └── SquareMatrix<T, N> (N = M)
+        ├── DiagonalMatrix<T, N>
+        │   ├── ScalarMatrix<T, N> (all diagonal entries equal)
+        │   ├── IdentityMatrix<T, N> (all diagonal entries = 1)
+        │   ├── IdempotentMatrix<T, N> (diag entries 0 or 1, D^2 = D)
+        │   └── InvolutoryMatrix<T, N> (diag entries ±1, D^2 = I)
+        ├── TriangularMatrix<T, N> (Upper or Lower)
+        │   ├── UpperTriangularMatrix<T, N>
+        │   │   └── DiagonalMatrix<T, N>
+        │   └── LowerTriangularMatrix<T, N>
+        │       └── DiagonalMatrix<T, N>
+        ├── SymmetricMatrix<T, N> (T = Tᵀ)
+        │   └── DiagonalMatrix<T, N> (all diagonal matrices are symmetric)
+        ├── SkewSymmetricMatrix<T, N> (T = -Tᵀ, diag 0)
+        ├── HermitianMatrix<T, N> (complex, T = Tᴴ)
+        ├── SkewHermitianMatrix<T, N> (complex, T = -Tᴴ)
+        ├── OrthogonalMatrix<T, N> (real, QᵀQ = I)
+        │   ├── SpecialOrthogonalMatrix<T, N> (det = 1)
+        │   └── ReflectionMatrix<T, N> (det = –1)
+        ├── UnitaryMatrix<T, N> (complex, UᴴU = I)
+        │   └── SpecialUnitaryMatrix<T, N> (det = 1)
+        ├── NormalMatrix<T, N> (AᴴA = AAᴴ, contains Hermitian, Unitary, etc.)
+        ├── NilpotentMatrix<T, N, k> (A^k = 0)
+        ├── IdempotentMatrix<T, N> (A^2 = A)
+        │   └── OrthogonalProjectorMatrix<T, N> (idempotent & symmetric)
+        ├── InvolutoryMatrix<T, N> (A^2 = I)
+        ├── PermutationMatrix<T, N>
+        │   ├── OrthogonalMatrix<T, N>
+        │   ├── MonomialMatrix<T, N> (all nonzero entries ±1)
+        │   ├── BinaryMatrix<T, N> (entries 0/1)
+        │   ├── DoublyStochasticMatrix<T, N> (rows, cols sum to 1)
+        │   └── SparseMatrix<T, N, N>
+        ├── MonomialMatrix<T, N> (one nonzero per row/col, invertible)
+        ├── SparseMatrix<T, N, M>
+        ├── BandedMatrix<T, N, L, U>
+        │   └── TridiagonalMatrix<T, N>
+        │       └── DiagonalMatrix<T, N>
+        ├── ToeplitzMatrix<T, N>
+        ├── HankelMatrix<T, N>
+        ├── CirculantMatrix<T, N>
+        ├── HadamardMatrix<T, N> (±1, H Hᵀ = nI)
+        ├── VandermondeMatrix<T, N, M>
+        ├── LowRankMatrix<T, N, M, k>
+        │   └── RankOneMatrix<T, N, M>
+        ├── StochasticMatrix<T, N, M> (rows or cols sum to 1)
+        │   └── DoublyStochasticMatrix<T, N>
+        ├── PartialPermutationMatrix<T, N, M> (rectangular, one 1 per row/col)
+        ├── EmbeddingMatrix<T, V, D>
+        └── CompanionMatrix<T, N> (used for polynomials)
+```
+
+The Orbit rules and domain definitions (`DomainA ⊂ DomainB`) throughout this document and related matrix documents should reflect these relationships. For example, `DiagonalMatrix<T, N> ⊂ SquareMatrix<T, N> ⊂ Matrix<T, N, N>`. Orbit uses these subtype relations to infer properties and apply specialized algorithms.
+
+## Orbit Domain Subtype Rules for Matrix Specializations
+
+The following rules define the subtype relationships between different matrix domains within Orbit. These relationships allow Orbit to infer properties and apply more specific rules or algorithms. The type parameter `T` can be further constrained (e.g., `T : Real`, `T : Complex`, `T : Field`) as needed for specific properties.
+
+```orbit
+// General Matrix Structure
+Matrix<T, N, M> ⊂ Tensor<T, [N, M]> // Tensor of rank 2
+SquareMatrix<T, N> ⊂ Matrix<T, N, N> // Matrix with N=M
+
+// Diagonal and Related Matrices
+DiagonalMatrix<T, N> ⊂ SquareMatrix<T, N>
+DiagonalMatrix<T, N> ⊂ UpperTriangularMatrix<T, N>
+DiagonalMatrix<T, N> ⊂ LowerTriangularMatrix<T, N>
+DiagonalMatrix<T, N> ⊂ SymmetricMatrix<T, N>
+DiagonalMatrix<T, N> ⊂ HermitianMatrix<T, N> where T : Complex // Or T : Real, becomes Symmetric
+ScalarMatrix<T, N> ⊂ DiagonalMatrix<T, N>
+IdentityMatrix<T, N> ⊂ ScalarMatrix<T, N>
+
+// Triangular Matrices
+UpperTriangularMatrix<T, N> ⊂ SquareMatrix<T, N>
+LowerTriangularMatrix<T, N> ⊂ SquareMatrix<T, N>
+
+// Symmetric, Hermitian, and Skew Variations
+SymmetricMatrix<T, N> ⊂ SquareMatrix<T, N> // T : Real or general field
+SkewSymmetricMatrix<T, N> ⊂ SquareMatrix<T, N> // T : Real or general field
+HermitianMatrix<T, N> ⊂ SquareMatrix<T, N> where T : Complex
+SkewHermitianMatrix<T, N> ⊂ SquareMatrix<T, N> where T : Complex
+
+// Normal Matrices (Commute with their conjugate transpose)
+NormalMatrix<T, N> ⊂ SquareMatrix<T, N>
+SymmetricMatrix<T, N> ⊂ NormalMatrix<T, N> where T : Real
+HermitianMatrix<T, N> ⊂ NormalMatrix<T, N> where T : Complex
+SkewSymmetricMatrix<T, N> ⊂ NormalMatrix<T, N> where T : Real // (A^T A = -A A = A(-A) = A A^T)
+SkewHermitianMatrix<T, N> ⊂ NormalMatrix<T, N> where T : Complex
+OrthogonalMatrix<T, N> ⊂ NormalMatrix<T, N> where T : Real
+UnitaryMatrix<T, N> ⊂ NormalMatrix<T, N> where T : Complex
+DiagonalMatrix<T, N> ⊂ NormalMatrix<T, N> // Diagonal matrices are inherently normal
+
+// Orthogonal and Unitary Matrices
+OrthogonalMatrix<T, N> ⊂ SquareMatrix<T, N> where T : Real // QᵀQ = I
+UnitaryMatrix<T, N> ⊂ SquareMatrix<T, N> where T : Complex   // UᴴU = I
+SpecialOrthogonalMatrix<T, N> ⊂ OrthogonalMatrix<T, N> where T : Real // det = 1
+SpecialUnitaryMatrix<T, N> ⊂ UnitaryMatrix<T, N> where T : Complex   // det = 1
+ReflectionMatrix<T, N> ⊂ OrthogonalMatrix<T, N> where T : Real     // det = -1
+// Scaled Hadamard implies Orthogonal:
+// HadamardMatrix<T,N> where T: Field implies (1/sqrt(N)) * H : OrthogonalMatrix<FieldWithSqrt, N>
+
+// Permutation Matrices (Elements 0 or 1, one '1' per row/col)
+PermutationMatrix<N> ⊂ SquareMatrix<Int, N> // Typically Int elements 0,1
+PermutationMatrix<N> ⊂ OrthogonalMatrix<Real, N>      // Interpreted as Real for orthogonality
+PermutationMatrix<N> ⊂ MonomialMatrix<Real, N>
+PermutationMatrix<N> ⊂ DoublyStochasticMatrix<Real, N>
+PermutationMatrix<N> ⊂ BinaryMatrix<Int, N>
+PermutationMatrix<N> ⊂ SparseMatrix<Int, N, N>
+PermutationMatrix<N> ⊂ InvertibleMatrix<Field, N> // Interpreted over a Field
+
+// Specialized Algebraic Properties
+NilpotentMatrix<T, N, K_Nilpotency> ⊂ SquareMatrix<T, N> // A^k = 0
+IdempotentMatrix<T, N> ⊂ SquareMatrix<T, N>             // A^2 = A
+InvolutoryMatrix<T, N> ⊂ SquareMatrix<T, N>             // A^2 = I
+OrthogonalProjectorMatrix<T, N> ⊂ IdempotentMatrix<T, N>
+OrthogonalProjectorMatrix<T, N> ⊂ SymmetricMatrix<T, N> where T : Real
+OrthogonalProjectorMatrix<T, N> ⊂ HermitianMatrix<T, N> where T : Complex
+
+// Banded and Sparse Structures
+SparseMatrix<T, N, M, Format> ⊂ Matrix<T, N, M>
+BandedMatrix<T, N, L_BW, U_BW> ⊂ SquareMatrix<T, N>
+TridiagonalMatrix<T, N> ⊂ BandedMatrix<T, N, 1, 1>
+
+// Rank-Based Structures
+LowRankMatrix<T, N, M, K_Rank> ⊂ Matrix<T, N, M>
+RankOneMatrix<T, N, M> ⊂ LowRankMatrix<T, N, M, 1>
+
+// Specific Patterns and Applications
+StochasticMatrix<T, N, M> ⊂ Matrix<T, N, M> // General non-negative with sum constraints
+RowStochasticMatrix<T, N, M> ⊂ StochasticMatrix<T, N, M>
+ColStochasticMatrix<T, N, M> ⊂ StochasticMatrix<T, N, M>
+DoublyStochasticMatrix<T, N> ⊂ RowStochasticMatrix<T, N, N> // Also ColStochastic
+DoublyStochasticMatrix<T, N> ⊂ ColStochasticMatrix<T, N, N>
+
+ToeplitzMatrix<T, N> ⊂ SquareMatrix<T, N>
+HankelMatrix<T, N> ⊂ SquareMatrix<T, N>
+CirculantMatrix<T, N> ⊂ ToeplitzMatrix<T, N> // Also subset of Hankel if symmetric
+
+MonomialMatrix<T, N> ⊂ SquareMatrix<T, N> // One non-zero per row/col
+
+EmbeddingMatrix<T, VocabSize, EmbedDim> ⊂ Matrix<T, VocabSize, EmbedDim>
+CompanionMatrix<T, N> ⊂ SquareMatrix<T, N>
+VandermondeMatrix<T, N, M> ⊂ Matrix<T, N, M>
+HadamardMatrix<N> ⊂ SquareMatrix<Int, N> // Entries +1, -1. H H^T = n I
+// Note: (1/sqrt(N)) * H : OrthogonalMatrix<Real, N> if H : HadamardMatrix<N>
+```
 
 ## Exploiting Special Matrix Structures
 
@@ -27,7 +180,6 @@ IdentityMatrix<N> ⊂ DiagonalMatrix<Int, N> // Typically {0, 1} elements
 ### Diagonal Matrices
 
 TODO: Add rule that recognizes the identity matrix.
-TODO: Relate to upper and lower triangular matrices.
 
 ```orbit
 // Domain definition
@@ -50,8 +202,7 @@ DiagonalMatrix<T, N> ⊂ Matrix<T, N, N>
 
 Permutation matrices represent permutations and form a structure isomorphic to the Symmetric Group S_N. They consist of only 0s and 1s, with exactly one '1' per row and column.
 
-TODO: Add rule that recognizes the identity matrix.
-TODO: Add rule that permutations are Monomial, Orthogonal, Invertible, Sparse, Doubly Stochastic, Unitary (complex), BinaryMatrix, Square.
+TODO: Add rule that recognizes a permutation matrix.
 
 ```orbit
 // Domain definition
@@ -69,6 +220,7 @@ PermutationMatrix<N> ⊂ Matrix<Int, N, N>
 ```
 
 ### Symmetric / Hermitian Matrices
+
 Symmetric matrices (`A = Aᵀ`) and Hermitian matrices (`A = Aᴴ`, for complex entries where Aᴴ is the conjugate transpose) exhibit reflective symmetry across the main diagonal.
 
 ```orbit
@@ -89,6 +241,7 @@ Pᵀ * ((A : SymmetricMatrix) * P) : SymmetricMatrix;
 ```
 
 ### Skew-Symmetric / Skew-Hermitian Matrices
+
 These matrices have anti-symmetry across the diagonal (`A = -Aᵀ` or `A = -Aᴴ`).
 
 ```orbit
@@ -103,6 +256,7 @@ SkewHermitianMatrix<T, N> ⊂ Matrix<T, N, N> // A[i,j] == -conjugate(A[j,i]), A
 ```
 
 ### Orthogonal / Unitary Matrices
+
 These matrices represent rotations/reflections and preserve vector norms. Their inverse is their transpose (orthogonal) or conjugate transpose (unitary).
 
 ```orbit
@@ -149,6 +303,7 @@ norm((A : OrthogonalMatrix) * (x : Vector)) → norm(x);
 ```
 
 ### Special Unitary Group SU(n)
+
 The Special Unitary Group SU(n) consists of all n×n unitary matrices with a determinant of +1. These matrices preserve the complex inner product and are crucial in quantum mechanics. SU(n) is a subgroup of U(n).
 
 ```orbit
@@ -170,6 +325,7 @@ SpecialUnitaryMatrix<T, N> ⊂ UnitaryMatrix<T, N> // T is typically Complex
 **Use Cases:** SU(2) is related to spin in quantum mechanics (Pauli matrices generate its Lie algebra). SU(3) is used in the Standard Model of particle physics.
 
 ### Symplectic Matrix
+
 Symplectic matrices preserve the standard symplectic form. They are essential in Hamiltonian mechanics and symplectic geometry. $Sp(2n, F)$ denotes the symplectic group of $2n \times 2n$ matrices over field $F$.
 
 ```orbit
@@ -194,6 +350,7 @@ determinant(A : SymplecticMatrix) → 1;
 
 
 ### Triangular Matrices (Upper and Lower)
+
 Triangular matrices have all zeros above (lower triangular) or below (upper triangular) the main diagonal. They are crucial in linear algebra solvers (e.g., Gaussian elimination results in LU decomposition).
 
 ```orbit
@@ -217,6 +374,7 @@ LowerTriangularMatrix<T, N> ⊂ Matrix<T, N, N> // M[i,j] == 0 if i < j
 ```
 
 ### Banded Matrices
+
 Non-zero elements are confined to a band around the main diagonal. Tridiagonal and pentadiagonal matrices are common special cases.
 
 ```orbit
@@ -237,6 +395,7 @@ TridiagonalMatrix<T, N> ⊂ BandedMatrix<T, N, 1, 1>
 ```
 
 ### Nilpotent Matrix
+
 A matrix A is nilpotent if Aᵏ = 0 for some positive integer k (the index of nilpotency).
 
 ```orbit
@@ -256,6 +415,7 @@ inverse(IdentityMatrix<N> - (A : NilpotentMatrix<_,N,K>)) → sum(i, 0, K-1, A^i
 **Use Cases:** Lie algebra theory, study of linear operators.
 
 ### Idempotent Matrix (Projection Matrix)
+
 A matrix P is idempotent if P² = P. Such matrices are projections onto some subspace.
 
 ```orbit
@@ -277,6 +437,7 @@ IdempotentMatrix<T, N> ⊂ Matrix<T, N, N>
 **Use Cases:** Statistics (e.g., hat matrix in regression), linear algebra (projections).
 
 ### Involutory Matrix
+
 A matrix A is involutory if A² = I (identity matrix).
 
 ```orbit
@@ -298,6 +459,7 @@ InvolutoryMatrix<T, N> ⊂ Matrix<T, N, N>
 **Use Cases:** Reflection matrices, certain cryptographic algorithms.
 
 ### Orthogonal Projector (Orthogonal Idempotent Matrix)
+
 An orthogonal projector is a projection matrix that is also symmetric (A² = A and A = Aᵀ) or Hermitian (A² = A and A = Aᴴ for complex matrices).
 
 ```orbit
@@ -315,6 +477,7 @@ OrthogonalProjectorMatrix<T, N> ⊂ IdempotentMatrix<T, N>, HermitianMatrix<T, N
 **Use Cases:** Least squares solutions, signal processing, quantum mechanics.
 
 ### Hadamard Matrix
+
 A Hadamard matrix H of order n is an n×n matrix with entries +1 or -1, such that H Hᵀ = n I_n.
 
 ```orbit
@@ -335,6 +498,7 @@ HadamardMatrix<N> ⊂ Matrix<Int, N, N> // Entries are +1 or -1
 **Use Cases:** Error-correcting codes, signal processing, experimental design.
 
 ### Monomial Matrix
+
 A monomial matrix is a square matrix that has exactly one non-zero entry in each row and column. It is a product of a permutation matrix and a non-singular diagonal matrix.
 
 ```orbit
@@ -354,6 +518,7 @@ MonomialMatrix<T, N> ⊂ Matrix<T, N, N>
 **Use Cases:** Group theory, representation theory.
 
 ### Reflection Matrix
+
 A reflection matrix is an orthogonal matrix with a determinant of -1. It represents a reflection across a hyperplane.
 
 ```orbit
@@ -369,6 +534,7 @@ determinant(R : ReflectionMatrix) → -1;
 **Use Cases:** Geometric transformations, computer graphics.
 
 ### Rank-1 Matrix (Dyad)
+
 A rank-1 matrix can be expressed as the outer product of two non-zero vectors: A = u vᵀ.
 
 ```orbit
@@ -395,7 +561,10 @@ outer_product(u : Vector<T,N>, v_transposed : Vector<T,M>) → A : RankOneMatrix
 **Use Cases:** Simplest form of low-rank approximation, update formulas (e.g., Sherman-Morrison).
 
 ### Circulant Matrices
+
 Each row is a cyclic shift of the row above it. They are related to the Cyclic Group C_N and polynomial multiplication modulo x^N - 1. Multiplication is equivalent to circular convolution.
+
+TODO: How does this relate to permutation matrices?
 
 ```orbit
 // Domain definition
@@ -418,6 +587,7 @@ circular_convolution(a, b) : Convolution →
 ```
 
 ### Toeplitz Matrices
+
 Matrices with constant diagonals (T[i, j] = t[j - i]). They can be multiplied efficiently, often by embedding them into larger Circulant matrices.
 
 ```orbit
