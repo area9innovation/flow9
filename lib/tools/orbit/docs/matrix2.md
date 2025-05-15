@@ -8,6 +8,38 @@ Building upon the foundational concepts outlined in [`matrix1.md`](./matrix1.md)
 
 Orbit's domain system allows it to recognize and apply tailored algorithms for various matrix types.
 
+
+
+### Identity Matrix
+The identity matrix acts as the multiplicative identity in the matrix ring.
+```orbit
+// Domain definition
+IdentityMatrix<N> ⊂ DiagonalMatrix<Int, N> // Typically {0, 1} elements
+// Property: I[i,i] == 1, I[i,j] == 0 if i != j
+
+// Rule: Multiplication by Identity is a no-op O(1) conceptually, or O(N*M) if copy needed
+matrix_multiply(I : IdentityMatrix<N>, A : Matrix<T, N, M>) → A;
+
+
+### Diagonal Matrices
+```orbit
+// Domain definition
+DiagonalMatrix<T, N> ⊂ Matrix<T, N, N>
+
+// Property: M[i,j] == 0 if i != j
+
+// Rule: Multiplication of diagonal matrices is element-wise O(N)
+matrix_multiply(A : DiagonalMatrix, B : DiagonalMatrix) : MatrixMultiply →
+	diag_matrix([A[i,i] * B[i,i] for i = 0 to N-1]) : DiagonalMatrix;
+
+// Rule: Multiplication by a diagonal matrix scales rows or columns O(N*P or N*M)
+matrix_multiply(A : DiagonalMatrix, B : Matrix<T, N, P>) →
+	matrix([[A[i,i] * B[i,j] for j=0..P-1] for i=0..N-1]); // Row scaling
+matrix_multiply(A : Matrix<T, N, M>, B : DiagonalMatrix) →
+	matrix([[A[i,j] * B[j,j] for j=0..M-1] for i=0..N-1]); // Column scaling
+```
+matrix_multiply(A : Matrix<T, N, M>, I : IdentityMatrix<M>) → A;
+```
 ### Permutation Matrices
 Permutation matrices represent permutations and form a structure isomorphic to the Symmetric Group S_N. They consist of only 0s and 1s, with exactly one '1' per row and column.
 
@@ -38,6 +70,8 @@ HermitianMatrix<T, N> ⊂ Matrix<T, N, N>   // For T ⊂ Complex (A[i,j] == conj
 add(A : SymmetricMatrix, B : SymmetricMatrix) → add(A, B) : SymmetricMatrix;
 matrix_multiply(transpose(P), matrix_multiply(A : SymmetricMatrix, P)) : SymmetricMatrix;
 // A Hermitian => A is normal (A*Aᴴ = Aᴴ*A)
+
+// Note: Multiplication A*B doesn't preserve symmetry unless A,B commute.
 multiply(A: HermitianMatrix, conjugate_transpose(A)) ↔ multiply(conjugate_transpose(A), A: HermitianMatrix);
 
 // Note: Specialized algorithms for eigendecomposition or solving systems (e.g., LDLᵀ) leverage this structure.

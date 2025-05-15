@@ -93,6 +93,19 @@ Orbit leverages trace properties to infer symmetries and apply canonicalization:
 ```
         This directly reduces complex expressions to the canonical form `tr(A)`.
 
+
+3.  **Scalar Factor Commutation with Scalar Matrices:**
+    If `c` is a scalar, `tr(c*A) = c*tr(A)` is covered by linearity. For a scalar matrix `S = s*I`:
+    ```orbit
+	// S is a scalar matrix (S = s*I), A is a matrix
+	// The product tr(S*A) exhibits C₂ symmetry for its arguments (S, A).
+	tr(matrix_multiply(S : ScalarMatrix, A))
+		⊢ tr_arg_list : C₂;
+	// This can be canonicalized, e.g., to tr(matrix_multiply(A, S)) if A < S by canonical order.
+	// If S is s*IdentityMatrix, it simplifies further:
+	tr(matrix_multiply(s_identity_matrix(s_val), A)) → s_val * tr(A);
+```
+
 ## Matrix Determinant
 
 The **determinant** of a square matrix `M`, denoted `det(M)` or `|M|`, is a scalar value encoding properties of the matrix and its linear transformation.
