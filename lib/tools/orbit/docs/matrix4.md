@@ -4,15 +4,167 @@
 
 This document expands on the foundational matrix concepts discussed in [`matrix1.md`](./matrix1.md), [`matrix2.md`](./matrix2.md), and [`matrix3.md`](./matrix3.md). It delves into more advanced analytical aspects of matrix algebra, focusing on how Orbit can represent, reason about, and optimize:
 
-1.  **Detailed Eigenvalue and Eigenvector Problems:** Building on the initial introduction, exploring deeper properties and computational implications.
-2.  **Matrix Functions:** Applying scalar functions (like exponential, logarithm, powers) to matrix arguments.
-3.  **Introduction to Matrix Lie Groups and Lie Algebras:** Formalizing the connection between certain matrix groups and their associated algebraic structures.
+1.  **Matrix Trace:** Its properties, symmetries, use cases, and canonicalization in Orbit.
+2.  **Matrix Determinant:** Its properties, geometric interpretation, use cases, and canonicalization in Orbit.
+3.  **Detailed Eigenvalue and Eigenvector Problems:** Building on the initial introduction, exploring deeper properties and computational implications.
+4.  **Matrix Functions:** Applying scalar functions (like exponential, logarithm, powers) to matrix arguments.
+5.  **Introduction to Matrix Lie Groups and Lie Algebras:** Formalizing the connection between certain matrix groups and their associated algebraic structures.
 
 Orbit's strength lies in using its symbolic rewriting engine, domain annotations, and group-theoretic canonicalization to manage the complexities inherent in these advanced topics.
 
+## Matrix Trace
+
+The **trace** of a square matrix `M`, denoted `tr(M)`, is the sum of the elements on its main diagonal. It's a fundamental concept in linear algebra with various applications.
+
+```orbit
+// Definition of Trace for an N x N matrix
+trace(M : Matrix<T, N, N>) : Scalar<T> → sum(i, 0, N-1, M[i, i]);
+```
+
+### Key Properties of the Trace
+
+The trace exhibits several important algebraic properties, which can be expressed as rewrite rules in Orbit:
+
+1.  **Linearity:** The trace is a linear map.
+    *   `tr(A + B) → tr(A) + tr(B)`
+    *   `tr(c * A) → c * tr(A)` (where `c` is a scalar)
+
+2.  **Cyclic Property (Invariance under cyclic permutations):**
+    *   `tr(A * B) → tr(B * A)`
+    *   This extends to products of multiple matrices: `tr(A * B * C) → tr(B * C * A) → tr(C * A * B)`.
+    *   This property highlights that the trace is invariant under the action of the Cyclic Group Cₖ (acting on the order of k matrices in a product by cyclic permutation).
+
+3.  **Transpose Invariance:** The trace of a matrix is equal to the trace of its transpose.
+    *   `tr(M) → tr(Mᵀ)`
+
+4.  **Similarity Invariance:** The trace is invariant under similarity transformations.
+    *   If `P` is an invertible matrix, then `tr(P⁻¹ * A * P) → tr(A)`.
+    *   This crucial property implies that the trace is an invariant of a linear transformation, regardless of the basis chosen.
+
+### Symmetries and Use Cases of the Trace
+
+The invariances of the trace connect it to deeper mathematical symmetries and make it a valuable tool:
+
+1.  **Eigenvalue Analysis:**
+    *   `tr(A) = sum(eigenvalues(A))`. This is consistent with similarity invariance, as similar matrices share eigenvalues.
+
+2.  **Character Theory in Group Representations:**
+    *   The trace of a matrix representing a group element is its "character". Characters are constant on conjugacy classes due to trace's similarity invariance.
+
+3.  **Machine Learning and Statistics:**
+    *   **Dimensionality Reduction (PCA):** Trace optimization often appears, e.g., maximizing `tr(XᵀCX)`.
+    *   **Regularization:** The nuclear norm (trace norm), `||A||_* = tr(sqrt(Aᵀ*A))`, is used for low-rank matrix completion.
+    *   **Model Complexity:** `tr(HatMatrix)` gives effective parameters in linear models.
+    *   **Covariance Matrices:** `tr(Σ)` is total variance.
+
+4.  **Numerical Linear Algebra:**
+    *   **Trace Estimation:** For large `f(A)`, `tr(f(A))` can be estimated efficiently using stochastic methods (e.g., Hutchinson's estimator), often relying on the cyclic property.
+
+5.  **Graph Theory:**
+    *   `tr(Adj^k)` counts closed walks of length `k` in a graph.
+
+6.  **Physics:**
+    *   **Quantum Mechanics:** Expectation value `tr(ρO)`; density matrix normalization `tr(ρ) = 1`.
+    *   **Statistical Mechanics:** Partition functions `Z = tr(exp(-βH))`.
+
+### Inferring Group Symmetries for Canonicalization in Orbit (Trace)
+
+Orbit leverages trace properties to infer symmetries and apply canonicalization:
+
+1.  **Cyclic Symmetry in Products: `tr(M₁ * M₂ * ... * Mₖ)`**
+    The property `tr(AB) = tr(BA)` implies `Cₖ` symmetry for the argument list under the trace.
+    *   **Orbit Inference:**
+        ```orbit
+		tr(matrix_multiply_chain(M₁, M₂, ..., Mₖ)) ⊢ tr_arg_list : Cₖ;
+		// tr_arg_list refers to (M₁, ..., Mₖ)
+```
+    *   **Canonical Form:** Apply `canonicalise_cyclic_efficient` (e.g., Booth's algorithm) to the argument list.
+        ```orbit
+		tr(arg_list : Cₖ) → tr(canonicalise_cyclic_efficient(arg_list));
+		// Example: tr(A*B*C) and tr(B*C*A) map to the same canonical form.
+```
+
+2.  **Similarity Transformation Invariance: `tr(P⁻¹ * A * P)`**
+    *   **Orbit Simplification:**
+        ```orbit
+		tr(matrix_multiply(matrix_multiply(P_inv, A), P))
+			if is_inverse(P_inv, P) && is_invertible(P)
+			→ tr(A) : GL_Conj_Invariant;
+```
+        This directly reduces complex expressions to the canonical form `tr(A)`.
+
+## Matrix Determinant
+
+The **determinant** of a square matrix `M`, denoted `det(M)` or `|M|`, is a scalar value encoding properties of the matrix and its linear transformation.
+
+```orbit
+// Conceptual definition
+determinant(M : Matrix<T, N, N>) : Scalar<T> → compute_determinant_value(M);
+```
+
+### Key Properties of the Determinant
+
+Orbit uses these properties as rewrite rules:
+
+1.  **Identity Matrix**: `determinant(I : IdentityMatrix<N>) → 1`
+2.  **Multiplicative Property**: `determinant(A * B) → determinant(A) * determinant(B)`
+    *   This implies `det` is a homomorphism from GL(n,F) to F*.
+3.  **Transpose Invariance**: `determinant(Mᵀ) → determinant(M)`
+4.  **Scalar Multiplication**: `determinant(c * A : Matrix<_,N,N>) → c^N * determinant(A)`
+5.  **Inverse Matrix**: `determinant(A⁻¹) → 1 / determinant(A)` (if `det(A) ≠ 0`)
+6.  **Singular Matrices**:
+    *   If `A` has a zero row/column or identical rows/columns, `determinant(A) → 0`.
+    *   `is_invertible(A) ↔ determinant(A) ≠ 0`.
+    *   `determinant(M : SingularMatrix) → 0;`
+7.  **Triangular Matrices**: `determinant(M : TriangularMatrix) → product_of_diagonal_elements(M)`
+8.  **Effect of Row/Column Operations**:
+    *   Swapping two rows/columns: `determinant(swap_rows(A, r1, r2)) → -determinant(A)` (Alternating property).
+    *   Scaling a row/column by `c`: `determinant(scale_row(A, r, c)) → c * determinant(A)`
+    *   Adding a multiple of one row/column to another: `determinant(add_multiple_to_row(A,...)) → determinant(A)`
+
+### Symmetries, Invariances, and Geometric Interpretation (Determinant)
+
+1.  **Similarity Invariance**: `determinant(P⁻¹ * A * P) → determinant(A)` (if `P` invertible).
+    *   The determinant is a class function on GL(n,F).
+2.  **Volume Scaling Factor**: `abs(determinant(A))` is how `A` scales volumes. Sign indicates orientation preservation/reversal.
+3.  **Alternating Multilinear Form**: The determinant is an alternating multilinear function of matrix columns/rows, connecting it to permutations (Sₙ) and their signs via the Leibniz formula: `det(A) = sum(σ in S_n, sgn(σ) * product(A[i, σ(i)]))`.
+
+### Use Cases of the Determinant
+
+*   Checking invertibility.
+*   Solving linear systems (Cramer's Rule).
+*   Eigenvalue problems (characteristic polynomial `det(A - λI) = 0`).
+*   Change of variables in integration (Jacobian determinant).
+*   Geometric algorithms.
+
+### Inferring Group Symmetries and Properties for Canonicalization in Orbit (Determinant)
+
+1.  **Direct Simplification from Domains**:
+    ```orbit
+	determinant(M : SLnF_Matrix) → 1;
+	determinant(M : OrthogonalMatrix) → result where result * result = 1; // ±1
+	determinant(M : SingularMatrix) → 0;
+	determinant(M : TriangularMatrix) → product_of_diagonal_elements(M);
+```
+2.  **Exploiting Alternating Property (Sₙ Connection)**:
+    ```orbit
+	determinant(permute_rows(A, σ)) → sign(σ) * determinant(A);
+```
+3.  **Leveraging Multiplicative Property**:
+    ```orbit
+	determinant(matrix_multiply(A, D : DiagonalMatrix)) → determinant(A) * product_of_diagonal_elements(D);
+```
+4.  **Canonicalization via Similarity Invariance**:
+    ```orbit
+	determinant(matrix_multiply(matrix_multiply(P_inv, A), P))
+		if is_inverse(P_inv, P) && is_invertible(P)
+		→ determinant(A) : GL_Conj_Invariant;
+```
+5.  **Symbolic Row/Column Reduction**: Orbit can symbolically apply row operations to transform a matrix to triangular form, with the determinant being the product of diagonal elements adjusted by accumulated multipliers/signs. This mirrors Gaussian elimination for determinant computation.
+
 ## Detailed Eigenvalue and Eigenvector Analysis
 
-As introduced in `matrix1.md`, for a square matrix `A`, the eigenvalue equation is `Av = λv`, leading to the characteristic equation `det(A - λI) = 0`. The solutions `λ` are eigenvalues, and the corresponding non-zero vectors `v` are eigenvectors.
+For a square `N × N` matrix `A`, a non-zero vector `v` is an **eigenvector** of `A` if `A v = λ v`, where `λ` is the corresponding **eigenvalue**. This can be rewritten as `(A - λI) v = 0`, which has a non-zero solution for `v` if and only if `det(A - λI) = 0` (the **characteristic equation**).
 
 ```orbit
 // Conceptual representation in Orbit
@@ -78,6 +230,88 @@ eigenvectors(A : Matrix<T,N,N>, λ : Scalar<T>) → null_space_vectors(matrix_su
 ```
     This can be used to simplify higher powers of `A` or express `A⁻¹` as a polynomial in `A`.
 
+### Key Properties of Eigenvalues and Eigenvectors
+
+1.  **Sum and Product:**
+    *   `tr(A) = Σ λᵢ` (sum of eigenvalues).
+    *   `det(A) = Π λᵢ` (product of eigenvalues).
+2.  **Transpose:** `A` and `Aᵀ` have the same eigenvalues.
+3.  **Matrix Powers:** If `λ` is an eigenvalue of `A` (eigenvector `v`):
+    *   `λᵏ` is an eigenvalue of `Aᵏ` (eigenvector `v`).
+    *   `1/λ` is an eigenvalue of `A⁻¹` (if `A` invertible, eigenvector `v`).
+4.  **Scalar Multiplication:** `cλ` is an eigenvalue of `cA`.
+5.  **Shift Property:** `λ - s` is an eigenvalue of `A - sI`.
+6.  **Triangular/Diagonal Matrices:** Eigenvalues are the diagonal entries.
+7.  **Linear Independence:** Eigenvectors for distinct eigenvalues are linearly independent.
+8.  **Symmetric Matrices (Real):**
+    *   Eigenvalues are real.
+    *   Eigenvectors for distinct eigenvalues are orthogonal.
+    *   Always diagonalizable by an orthogonal matrix (`A = QDQᵀ`).
+9.  **Positive Definite Matrices:** Symmetric matrix with all eigenvalues `λᵢ > 0`.
+
+### Symmetries and Invariances Related to Eigen-Problems
+
+*   **Similarity Invariance:** Similar matrices (`B = P⁻¹AP`) have the same characteristic polynomial and thus the same eigenvalues. If `v` is an eigenvector of `A` for `λ`, then `P⁻¹v` is an eigenvector of `B` for `λ`. This is a cornerstone for canonicalization.
+
+### Use Cases of Eigenvalues and Eigenvectors
+
+1.  **Principal Component Analysis (PCA):** Eigenvalues/vectors of covariance matrix guide dimensionality reduction.
+2.  **Quantum Mechanics:** Eigenvalues of Hamiltonians are energy levels; eigenvectors are stationary states.
+3.  **Vibrational Analysis:** Natural frequencies and mode shapes.
+4.  **Stability of Dynamical Systems:** Eigenvalues of system matrix determine stability.
+5.  **Spectral Graph Theory:** Eigenvalues of adjacency/Laplacian matrices reveal graph properties (connectivity, clustering).
+6.  **Google's PageRank:** Principal eigenvector of a modified web graph matrix.
+7.  **Solving Differential Equations.**
+
+### Exploiting Eigen-Properties for Canonicalization and Simplification in Orbit
+
+1.  **Recognizing Characteristic Equation:**
+    ```orbit
+	determinant(matrix_subtract(A, scalar_multiply(λ_var, I))) ⊢ is_characteristic_poly_of(A, λ_var);
+```
+2.  **Relating to Trace/Determinant:**
+    ```orbit
+	tr(A) where eigenvalues_of(A) = {λ₁, ..., λₙ} → sum(λ₁, ..., λₙ);
+	determinant(A) where eigenvalues_of(A) = {λ₁, ..., λₙ} → product(λ₁, ..., λₙ);
+```
+3.  **Canonicalization via Diagonalization (Similarity Invariance):**
+    If `A` is diagonalizable (`A = PDP⁻¹`), `D` (diagonal matrix of eigenvalues) is a canonical form for spectral properties.
+    ```orbit
+	A : DiagonalizableBy P → P * D_eigenvalues(A) * P_inv;
+	eigenvalues(A) where A = P * D_diag * P_inv → diagonal_elements_of(D_diag);
+```
+4.  **Simplifying Powers/Inverses based on Eigenvalues:**
+    ```orbit
+	eigenvalues_of(matrix_power(A, k)) → map(λ x. x^k, eigenvalues_of(A));
+	eigenvalues_of(matrix_inverse(A)) → map(λ x. 1/x, eigenvalues_of(A)) if A : Invertible;
+```
+5.  **Domain-Specific Eigenvalue Properties:**
+    ```orbit
+	A : SymmetricMatrix ⊢ eigenvalues_of(A) : RealNumbersSet;
+	A : PositiveDefiniteMatrix ⊢ eigenvalues_of(A) : PositiveRealNumbersSet;
+	A : OrthogonalMatrix ⊢ map(λ x. abs(x), eigenvalues_of(A)) = {1, ..., 1};
+	A : TriangularMatrix ⊢ eigenvalues_of(A) = diagonal_elements_of(A);
+```
+6.  **Unifying Eigenvalue Sets via Similarity Invariance:**
+    ```orbit
+	eigenvalues(matrix_multiply(matrix_multiply(P_inv, A), P))
+		if is_inverse(P_inv, P) && is_invertible(P)
+		→ eigenvalues(A) : GL_Conj_Invariant_Spectrum;
+```
+    This ensures expressions for eigenvalues of similar matrices canonicalize to the same representation.
+
+7.  **Spectral Theorem for Symmetric/Hermitian Matrices:**
+    Enables rewriting to orthogonally/unitarily diagonalized forms.
+    ```orbit
+	A : SymmetricMatrix<Real,N> → matrix_multiply(Q_ortho_eigenvecs(A), D_real_eigenvals(A), transpose(Q_ortho_eigenvecs(A)));
+```
+8.  **Cayley-Hamilton Theorem Application:**
+    `p(A) = 0` where `p` is the characteristic polynomial of `A`.
+    ```orbit
+	evaluate_polynomial_on_matrix(char_poly(A), A) → ZeroMatrix<N,N>;
+	// This can simplify A^k for k >= N, or A⁻¹
+```
+
 ## Matrix Functions
 
 Applying a scalar function `f(x)` to a square matrix `A` results in a matrix `f(A)`. This is well-defined for analytic functions (those with a convergent Taylor series).
@@ -128,6 +362,16 @@ Certain sets of matrices form continuous groups (Lie groups) under matrix multip
 Orbit can define domains for these groups and algebras and use their properties for rewrites.
 
 ### Common Matrix Lie Groups and Their Algebras
+
+| Group        | Description                             | Lie Algebra `g` | Description of `g`                     |
+|--------------|-----------------------------------------|-----------------|----------------------------------------|
+| `GL(n,F)`    | Invertible `n x n` matrices             | `gl(n,F)`       | All `n x n` matrices                   |
+| `SL(n,F)`    | `det(A)=1`                              | `sl(n,F)`       | `tr(X)=0`                              |
+| `O(n)`       | Real, `AᵀA=I`                           | `so(n)` (`o(n)`) | Real, skew-symmetric (`Xᵀ = -X`)       |
+| `SO(n)`      | `O(n)` and `det(A)=1` (rotations)       | `so(n)`         | Real, skew-symmetric                   |
+| `U(n)`       | Complex, `AᴴA=I`                        | `u(n)`          | Complex, skew-Hermitian (`Xᴴ = -X`)    |
+| `SU(n)`      | `U(n)` and `det(A)=1`                   | `su(n)`         | Complex, skew-Hermitian, `tr(X)=0`     |
+
 
 1.  **General Linear Group `GL(n, F)`:** Group of `n x n` invertible matrices over field `F`.
     *   **Lie Algebra `gl(n, F)`:** Space of all `n x n` matrices over `F`. The Lie bracket is the matrix commutator: `[X, Y] = XY - YX`.
@@ -198,6 +442,18 @@ This allows Orbit to reason about transformations between these algebraic struct
 *   **Baker-Campbell-Hausdorff (BCH) Formula (Advanced):**
     For `X, Y` in a Lie algebra, `log(exp(X)exp(Y)) = X + Y + 1/2[X,Y] + 1/12[X,[X,Y]] - 1/12[Y,[X,Y]] + ...`
     Orbit could store truncated versions of this formula to approximate or simplify products of matrix exponentials, especially when `X` and `Y` nearly commute.
+
+### The Matrix Exponential Map
+`exp(tX)` maps `X` from a Lie algebra to the Lie group.
+```orbit
+matrix_exponential(scalar_multiply(t : Real, X : so_n_Algebra)) : SO_n_Group;
+```
+
+### Rewrite Rules Based on Lie Group/Algebra Properties
+*   **Inverses:** `matrix_inverse(A : On_Group) → transpose(A);`
+*   **Determinants:** `determinant(A : SLnF_Group) → 1;`
+*   **Commutator Identities:** Jacobi identity `[X,[Y,Z]] + [Y,[Z,X]] + [Z,[X,Y]] = 0`.
+*   **Baker-Campbell-Hausdorff (BCH) Formula:** For `log(exp(X)exp(Y))`, can simplify products of exponentials.
 
 ## Conclusion
 
