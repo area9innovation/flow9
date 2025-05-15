@@ -158,6 +158,29 @@ SpecialUnitaryMatrix<T, N> ⊂ UnitaryMatrix<T, N> // T is typically Complex
 ```
 **Use Cases:** SU(2) is related to spin in quantum mechanics (Pauli matrices generate its Lie algebra). SU(3) is used in the Standard Model of particle physics.
 
+### Symplectic Matrix
+Symplectic matrices preserve the standard symplectic form. They are essential in Hamiltonian mechanics and symplectic geometry. $Sp(2n, F)$ denotes the symplectic group of $2n \times 2n$ matrices over field $F$.
+
+```orbit
+// Domain definition
+SymplecticMatrix<T, N> ⊂ Matrix<T, N, N> // N must be even, N = 2k
+
+// Property: Aᵀ * J * A = J
+// where J is the standard symplectic matrix: J = [[0, I_k], [-I_k, 0]]
+// I_k is k x k identity matrix, 0 is k x k zero matrix.
+
+// Rule: Product of symplectic matrices is symplectic (forms a group Sp(2n))
+(A : SymplecticMatrix) * (B : SymplecticMatrix) → A * B : SymplecticMatrix;
+
+// Rule: Inverse of a symplectic matrix
+// A⁻¹ = J⁻¹ * Aᵀ * J  (and J⁻¹ = -J = Jᵀ)
+(A : SymplecticMatrix)⁻¹ → (-J) * Aᵀ * J;
+
+// Note: Determinant of a symplectic matrix is +1.
+determinant(A : SymplecticMatrix) → 1;
+```
+**Use Cases:** Classical mechanics, quantum information theory.
+
 
 ### Triangular Matrices (Upper and Lower)
 Triangular matrices have all zeros above (lower triangular) or below (upper triangular) the main diagonal. They are crucial in linear algebra solvers (e.g., Gaussian elimination results in LU decomposition).
@@ -201,6 +224,164 @@ TridiagonalMatrix<T, N> ⊂ BandedMatrix<T, N, 1, 1>
 // Rule: Specialized O(N) algorithms for solving tridiagonal systems (Thomas algorithm).
 // Orbit can rewrite `solve(A:TridiagonalMatrix, b)` to `thomas_algorithm(A,b)`.
 ```
+
+### Nilpotent Matrix
+A matrix A is nilpotent if Aᵏ = 0 for some positive integer k (the index of nilpotency).
+
+```orbit
+// Domain definition
+NilpotentMatrix<T, N, K_Nilpotency> ⊂ Matrix<T, N, N> // K_Nilpotency is the smallest k such that A^k = 0
+
+// Property: All eigenvalues are 0.
+trace(A : NilpotentMatrix) → 0;
+det(A : NilpotentMatrix) → 0;
+
+// Rule: Powers beyond k are zero
+(A : NilpotentMatrix<_,_,K>)^m → ZeroMatrix<N,N> if m >= K;
+
+// Rule: (I - A) is invertible if A is nilpotent, with (I - A)⁻¹ = I + A + A² + ... + A^(K-1)
+inverse(IdentityMatrix<N> - (A : NilpotentMatrix<_,N,K>)) → sum(i, 0, K-1, A^i);
+```
+**Use Cases:** Lie algebra theory, study of linear operators.
+
+### Idempotent Matrix (Projection Matrix)
+A matrix P is idempotent if P² = P. Such matrices are projections onto some subspace.
+
+```orbit
+// Domain definition
+IdempotentMatrix<T, N> ⊂ Matrix<T, N, N>
+// Alias: ProjectionMatrix<T,N> ⊂ IdempotentMatrix<T,N>
+
+// Property: P² = P
+(P : IdempotentMatrix)^2 → P;
+(P : IdempotentMatrix)^k → P if k >= 1;
+
+// Rule: If P is idempotent, then I - P is also idempotent.
+// (I - P) projects onto the null space of P.
+(IdentityMatrix<N> - (P : IdempotentMatrix)) : IdempotentMatrix;
+
+// Rule: Eigenvalues are 0 or 1.
+// eigenvalues(P : IdempotentMatrix) ⊂ {0, 1};
+```
+**Use Cases:** Statistics (e.g., hat matrix in regression), linear algebra (projections).
+
+### Involutory Matrix
+A matrix A is involutory if A² = I (identity matrix).
+
+```orbit
+// Domain definition
+InvolutoryMatrix<T, N> ⊂ Matrix<T, N, N>
+
+// Property: A² = I
+(A : InvolutoryMatrix)^2 → IdentityMatrix<N>;
+
+// Rule: Inverse is the matrix itself
+(A : InvolutoryMatrix)⁻¹ → A;
+
+// Rule: Powers simplify
+(A : InvolutoryMatrix)^k → IdentityMatrix<N> if is_even(k);
+(A : InvolutoryMatrix)^k → A if is_odd(k);
+
+// Note: Eigenvalues are ±1.
+```
+**Use Cases:** Reflection matrices, certain cryptographic algorithms.
+
+### Orthogonal Projector (Orthogonal Idempotent Matrix)
+An orthogonal projector is a projection matrix that is also symmetric (A² = A and A = Aᵀ) or Hermitian (A² = A and A = Aᴴ for complex matrices).
+
+```orbit
+// Domain definition
+OrthogonalProjectorMatrix<T, N> ⊂ IdempotentMatrix<T, N>, SymmetricMatrix<T, N> // For Real T
+OrthogonalProjectorMatrix<T, N> ⊂ IdempotentMatrix<T, N>, HermitianMatrix<T, N> // For Complex T
+
+// Properties: A²=A, A=Aᵀ (or A=Aᴴ)
+// All eigenvalues are 0 or 1.
+// Projects onto the column space of A, and I-A projects onto its null space.
+
+// Rule: For an orthogonal projector P, norm(P*x) ≤ norm(x)
+// norm((P : OrthogonalProjectorMatrix) * (x : Vector)) ≤ norm(x);
+```
+**Use Cases:** Least squares solutions, signal processing, quantum mechanics.
+
+### Hadamard Matrix
+A Hadamard matrix H of order n is an n×n matrix with entries +1 or -1, such that H Hᵀ = n I_n.
+
+```orbit
+// Domain definition
+HadamardMatrix<N> ⊂ Matrix<Int, N, N> // Entries are +1 or -1
+
+// Property: H * Hᵀ = N * IdentityMatrix<N>
+(H : HadamardMatrix<N>) * Hᵀ → N * IdentityMatrix<N>;
+
+// Rule: Inverse (up to scalar)
+(H : HadamardMatrix<N>)⁻¹ → (1/N) * Hᵀ;
+
+// Note: If a Hadamard matrix of order N exists, N must be 1, 2, or a multiple of 4.
+// Fast multiplication (Fast Walsh-Hadamard Transform, FWHT) O(N log N) if N is power of 2.
+(H : HadamardMatrix<N>) * (x : Vector<_,N>) : ViaFWHT → 
+    fast_walsh_hadamard_transform(H, x) if is_power_of_2(N);
+```
+**Use Cases:** Error-correcting codes, signal processing, experimental design.
+
+### Monomial Matrix
+A monomial matrix is a square matrix that has exactly one non-zero entry in each row and column. It is a product of a permutation matrix and a non-singular diagonal matrix.
+
+```orbit
+// Domain definition
+MonomialMatrix<T, N> ⊂ Matrix<T, N, N>
+// Representation: M = P * D or M = D' * P, where P is PermutationMatrix, D, D' are DiagonalMatrix (invertible)
+
+// Rule: Product of monomial matrices is monomial.
+(M1 : MonomialMatrix) * (M2 : MonomialMatrix) → product_monomial(M1,M2) : MonomialMatrix;
+
+// Rule: Inverse is also monomial.
+(M : MonomialMatrix)⁻¹ : MonomialMatrix;
+// If M = P*D, then M⁻¹ = D⁻¹*P⁻¹ = D⁻¹*Pᵀ.
+
+// Note: Forms a group, the group of monomial matrices.
+```
+**Use Cases:** Group theory, representation theory.
+
+### Reflection Matrix
+A reflection matrix is an orthogonal matrix with a determinant of -1. It represents a reflection across a hyperplane.
+
+```orbit
+// Domain definition
+ReflectionMatrix<T,N> ⊂ OrthogonalMatrix<T,N> // T is typically Real
+
+// Property: determinant(R) = -1
+determinant(R : ReflectionMatrix) → -1;
+
+// Property: Often involutory (R² = I), especially for reflections across hyperplanes through origin.
+// (R : ReflectionMatrix)^2 → IdentityMatrix<N> if is_hyperplane_reflection(R);
+```
+**Use Cases:** Geometric transformations, computer graphics.
+
+### Rank-1 Matrix (Dyad)
+A rank-1 matrix can be expressed as the outer product of two non-zero vectors: A = u vᵀ.
+
+```orbit
+// Domain definition
+RankOneMatrix<T, N, M> ⊂ LowRankMatrix<T, N, M, 1> // Sub-domain of LowRankMatrix with K=1
+// Property: A = u * vᵀ for vectors u (N x 1) and v (M x 1)
+
+// Rule: Explicit representation
+outer_product(u : Vector<T,N>, v_transposed : Vector<T,M>) → A : RankOneMatrix<T,N,M>;
+
+// Rule: Multiplication by vector
+// A * x = (u * vᵀ) * x = u * (vᵀ * x) (scalar vᵀ*x times vector u)
+(A : RankOneMatrix) * (x : Vector) → 
+    let {u, v_transposed} = get_rank_one_factors(A);
+    u * (v_transposed * x); // (v_transposed * x) is a scalar product
+
+// Rule: Product of two rank-1 matrices (results in scaled rank-1 or zero)
+// (u1*v1ᵀ) * (u2*v2ᵀ) = u1 * (v1ᵀ*u2) * v2ᵀ
+(A1 : RankOneMatrix) * (A2 : RankOneMatrix) → 
+    let {u1, v1t} = get_rank_one_factors(A1);
+    let {u2, v2t} = get_rank_one_factors(A2);
+    outer_product(u1, v2t) * (v1t * u2); // (v1t * u2) is a scalar
+```
+**Use Cases:** Simplest form of low-rank approximation, update formulas (e.g., Sherman-Morrison).
 
 ### Circulant Matrices
 Each row is a cyclic shift of the row above it. They are related to the Cyclic Group C_N and polynomial multiplication modulo x^N - 1. Multiplication is equivalent to circular convolution.

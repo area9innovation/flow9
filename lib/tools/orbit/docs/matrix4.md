@@ -367,6 +367,107 @@ Applying a scalar function `f(x)` to a square matrix `A` results in a matrix `f(
 		else A * A^(k-1); // A^k = A * A^(k-1)
 ```
 
+### Normal Matrix
+A complex square matrix A is normal if it commutes with its conjugate transpose: A Aᴴ = Aᴴ A. If A is a real matrix, it is normal if A Aᵀ = Aᵀ A. Normal matrices are precisely those that are unitarily diagonalizable (or orthogonally diagonalizable if real).
+
+```orbit
+// Domain definition
+NormalMatrix<T, N> ⊂ Matrix<T, N, N>
+
+// Property: A * Aᴴ = Aᴴ * A (for T ⊂ Complex)
+// Property: A * Aᵀ = Aᵀ * A (for T ⊂ Real)
+
+// Rule: All Hermitian, Skew-Hermitian, Unitary (and their real counterparts: Symmetric, Skew-Symmetric, Orthogonal) matrices are Normal.
+A : HermitianMatrix ⊢ A : NormalMatrix;
+A : SkewHermitianMatrix ⊢ A : NormalMatrix;
+A : UnitaryMatrix ⊢ A : NormalMatrix;
+A : SymmetricMatrix ⊢ A : NormalMatrix;
+A : SkewSymmetricMatrix ⊢ A : NormalMatrix;
+A : OrthogonalMatrix ⊢ A : NormalMatrix;
+
+// Rule: Normal matrices are unitarily (or orthogonally if real) diagonalizable.
+A : NormalMatrix<Complex,N> → U_unitary_eigenvecs(A) * D_complex_eigenvals(A) * U_unitary_eigenvecs(A)ᴴ;
+A : NormalMatrix<Real,N> → Q_ortho_eigenvecs(A) * D_real_eigenvals(A) * Q_ortho_eigenvecs(A)ᵀ;
+
+// Property: Eigenvectors corresponding to distinct eigenvalues are orthogonal.
+```
+**Use Cases:** This is a broad theoretical class. Its main importance is guaranteeing unitary/orthogonal diagonalizability, simplifying many analyses and computations, especially for matrix functions and spectral theory.
+
+### Unipotent Matrix
+A matrix A is unipotent if all its eigenvalues are 1. Equivalently, the matrix A - I is nilpotent.
+
+```orbit
+// Domain definition
+UnipotentMatrix<T, N> ⊂ Matrix<T, N, N>
+
+// Property: All eigenvalues are 1.
+eigenvalues(A : UnipotentMatrix) → set_of_ones(N);
+
+// Property: A - I is nilpotent.
+(A : UnipotentMatrix) - IdentityMatrix<N> : NilpotentMatrix;
+
+// Rule: Determinant is 1.
+determinant(A : UnipotentMatrix) → 1;
+
+// Rule: Trace is N.
+trace(A : UnipotentMatrix) → N;
+
+// Note: If A is unipotent, then (A-I)^k = 0 for some k <= N.
+// The group of unipotent upper triangular matrices is important in Lie theory (e.g., a Sylow p-subgroup of GL(n, F_p)).
+```
+**Use Cases:** Theory of algebraic groups, Lie groups (e.g., unipotent subgroups), representation theory.
+
+### Companion Matrix
+A companion matrix is a specific sparse matrix whose characteristic polynomial is directly related to its entries. For a monic polynomial p(x) = c₀ + c₁x + ... + c_{n-1}x^{n-1} + xⁿ, the companion matrix is:
+```
+[[0, 0, ..., 0, -c₀],
+ [1, 0, ..., 0, -c₁],
+ [0, 1, ..., 0, -c₂],
+ [..., ..., ..., ..., ...],
+ [0, 0, ..., 1, -c_{n-1}]]
+```
+
+```orbit
+// Domain definition
+CompanionMatrix<T, N> ⊂ Matrix<T, N, N> // For a polynomial of degree N
+
+// Property: The characteristic polynomial of CompanionMatrix(coeffs) is p(x) = sum(coeffs[i]*x^i) + x^N.
+characteristic_poly(C : CompanionMatrix, x) → define_poly_from_coeffs(get_coeffs(C), x);
+
+// Rule: Eigenvalues are the roots of the associated polynomial.
+eigenvalues(C : CompanionMatrix) → roots_of_polynomial(get_coeffs(C));
+
+// Note: Companion matrices are generally not symmetric, but can be useful for finding roots of polynomials via eigenvalue algorithms.
+```
+**Use Cases:** Finding roots of polynomials, control theory (state-space representation).
+
+### Vandermonde Matrix
+A Vandermonde matrix V is defined by a sequence of scalars x₁, ..., x_m. For an n-row Vandermonde matrix (often m=n):
+$V_{ij} = x_i^{j-1}$ (for 0-indexed columns j=0..n-1) or $V_{ij} = x_i^{j}$ (for 1-indexed columns j=1..n).
+Example for n columns, 0-indexed:
+```
+[[1, x₁, x₁², ..., x₁ⁿ⁻¹],
+ [1, x₂, x₂², ..., x₂ⁿ⁻¹],
+ ...
+ [1, x_m, x_m², ..., x_mⁿ⁻¹]]
+```
+
+```orbit
+// Domain definition
+VandermondeMatrix<T, M, N> ⊂ Matrix<T, M, N> // M rows, N columns, based on M points x_i
+
+// Property: If M=N, det(V) = product_{1 ≤ i < k ≤ N} (x_k - x_i).
+// Invertible if and only if all x_i are distinct (when M=N).
+determinant(V : VandermondeMatrix<_,N,N>) → compute_vandermonde_determinant(get_points(V))
+	if N = num_points(V);
+
+// Note: Multiplication by a Vandermonde matrix (or its transpose) evaluates a polynomial at points x_i (or finds coefficients of interpolating polynomial).
+// Fast matrix-vector products (O(M log M) or O(N log N)) are possible using techniques related to FFT for specific choices of x_i (e.g., roots of unity for DFT matrix).
+(V : VandermondeMatrix) * (c : Vector) : ViaFastAlgo →
+	fast_vandermonde_multiply(V, c) if points_allow_fft_like_algo(get_points(V));
+```
+**Use Cases:** Polynomial interpolation, least squares fitting, discrete Fourier transform (DFT matrix is a specific Vandermonde matrix), error-correcting codes.
+
 ## Introduction to Matrix Lie Groups and Lie Algebras
 
 Certain sets of matrices form continuous groups (Lie groups) under matrix multiplication. These are fundamental in physics, geometry, and differential equations. Each Lie group has an associated Lie algebra, which is a vector space capturing the group's infinitesimal structure.
