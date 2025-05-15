@@ -31,6 +31,11 @@ matrix_multiply(A : Matrix<T, N, M>, B : Matrix<T, M, P>) : MatrixMultiply → C
 // Element access
 get_element(M : Matrix<T, N, M>, i, j) → M[i, j] : T;
 
+
+// Row/Column sums (useful for some matrix properties)
+row_sum(M : Matrix<T, N, M>, i) → sum(j, 0, M-1, M[i, j]);
+col_sum(M : Matrix<T, N, M>, j) → sum(i, 0, N-1, M[i, j]);
+
 // Summation definition (inherits properties like associativity/commutativity if T allows)
 sum(k, start, end, expr(k)) : Summation; // Properties depend on '+' for type T
 
@@ -153,13 +158,44 @@ Orbit leverages these structures via domain annotations and targeted rewrite rul
 Orbit can implement a sophisticated strategy to select the best algorithm based on detected domains and heuristics. This involves a priority list where specific, cheaper operations (like identity or sparse multiplication) are checked before more general, expensive ones (like Strassen's or standard multiplication).
 
 ```orbit
-// Conceptual unified matrix multiplication function (simplified)
+// Conceptual unified matrix multiplication function (simplified from matrix.md)
 multiply(A, B) : MatrixMultiply →
 	identity_mult(A, B) : IdentityResult if is_identity(A) || is_identity(B);
-	// ... other checks for specialized structures (see matrix2.md) ...
+	sparse_multiply(A, B) : SparseResult if is_sparse(A) || is_sparse(B); // Assuming is_sparse checks overall sparsity
+	diag_mult(A, B) : DiagResult if is_diag(A) || is_diag(B); // Assuming is_diag checks
+	perm_mult(A, B) : PermResult if is_perm(A) || is_perm(B); // Assuming is_perm checks
+	embed_lookup(A, B) : EmbedResult if is_embed(A) && is_onehot(B); // For ML tasks
+	orthogonal_simplify(A, B) : OrthogonalResult if is_orthogonal(A) || is_orthogonal(B); // e.g. A*A^T = I
+	circulant_fft_multiply(A, B) : CirculantResult if is_circulant(A) && is_circulant(B) && supports_fft(T);
+	toeplitz_fft_multiply(A, B) : ToeplitzResult if is_toeplitz(A) && is_toeplitz(B) && supports_fft(T);
+
+## Automatic Discovery of Algebraic Identities
+
+Just as Orbit can explore identities in cyclic groups for FFT, it could systematically explore algebraic manipulations within the Matrix Ring structure to discover Strassen-like algorithms.
+
+```orbit
+// Conceptual exploration process for block multiplication
+DiscoverMatrixIdentities(matrix_multiply(A, B) : Blocked) : Analysis → {
+	// Represent the 8 block multiplications symbolically
+	let standard_ops = [A11*B11, A12*B21, ..., A22*B22]; // 8 symbolic products
+	let target_blocks = [C11, C12, C21, C22]; // Target expressions
+
+	// Try combinations of sums/differences of A blocks and B blocks
+	// Search for a set of k < 8 products (P1...Pk) such that
+	// each target block Ci,j can be expressed as a linear combination of P1...Pk.
+	find_linear_combinations(input_blocks=[Aij, Bij], target_exprs=[Cij], num_products=7)
+	// This is related to finding the TENSOR RANK of the matrix multiplication tensor.
+};
+```
+While computationally expensive, this suggests how Orbit could potentially *derive* Strassen's identities from first principles by searching for ways to compute the block results using fewer multiplications, guided by the laws of Ring algebra.
+
+	hankel_fft_multiply(A, B) : HankelResult if is_hankel(A) && is_hankel(B) && supports_fft(T);
+	banded_multiply(A, B) : BandedResult if is_banded(A) && is_banded(B);
+	triangular_multiply(A, B) : TriangularResult if is_tri(A) && is_tri(B); // is_tri checks if Upper or Lower
+	low_rank_multiply(A, B) : LowRankResult if is_low_rank(A) || is_low_rank(B);
 	strassen_multiply(A, B) : StrassenResult if use_strassen(A, B) && element_type_is_ring(T);
 	recursive_block_multiply(A, B) : RecursiveResult if use_recursive(A, B);
-	standard_multiply(A, B) : StandardResult;
+	standard_multiply(A, B) : StandardResult; // Fallback
 ```
 The system applies the most specific, efficient rule based on detected matrix properties and configuration.
 
