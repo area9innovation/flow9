@@ -630,7 +630,7 @@ The trace exhibits several important algebraic properties, which can be expresse
 2.  **Cyclic Property (Invariance under cyclic permutations):** This is one of an_EQ_important_EQ_properties.
     *   `tr(A * B) → tr(B * A)`
     *   This extends to products of multiple matrices: `tr(A * B * C) → tr(B * C * A) → tr(C * A * B)`.
-    *   This property highlights that the trace is invariant under the action of the Cyclic Group C<sub>n</sub> (acting on the order of n matrices in a product by cyclic permutation).
+    *   This property highlights that the trace is invariant under the action of the Cyclic Group Cₙ (acting on the order of n matrices in a product by cyclic permutation).
 
 3.  **Transpose Invariance:** The trace of a matrix is equal to the trace of its transpose.
     *   `tr(M) → tr(Mᵀ)`
@@ -669,7 +669,7 @@ The invariances of the trace connect it to deeper mathematical symmetries and ma
 
 The cyclic property `tr(A*B) = tr(B*A)` is especially powerful. It permits the reordering of matrix products under the trace operation, which can lead to significant computational simplifications or enable alternative analytical strategies.
 
-For the Orbit system, these properties can be encoded as rewrite rules. Such rules can simplify expressions involving traces or identify opportunities for optimization when trace operations are part of larger computational graphs. For example, recognizing `tr(P⁻¹ * A * P)` and rewriting it to `tr(A)` simplifies the expression and can avoid potentially costly matrix multiplications and inversions if only the trace value is required. The inherent connection of trace properties to group actions (like C<sub>n</sub> for cyclic permutations in products, and GL(n,F) for similarity transformations) aligns well with Orbit's group-theoretic rewriting capabilities.
+For the Orbit system, these properties can be encoded as rewrite rules. Such rules can simplify expressions involving traces or identify opportunities for optimization when trace operations are part of larger computational graphs. For example, recognizing `tr(P⁻¹ * A * P)` and rewriting it to `tr(A)` simplifies the expression and can avoid potentially costly matrix multiplications and inversions if only the trace value is required. The inherent connection of trace properties to group actions (like Cₙ for cyclic permutations in products, and GL(n,F) for similarity transformations) aligns well with Orbit's group-theoretic rewriting capabilities.
 
 ### Inferring Group Symmetries for Canonicalization in Orbit
 
@@ -682,7 +682,7 @@ The property `tr(AB) = tr(BA)` extends to `tr(M₁M₂...Mₖ) = tr(M_{\sigma(1)
 **Orbit Inference and Canonicalization:**
 
 *   **Rewrite Rule for Cₖ Inference:**
-    ```orbit
+```orbit
 	// Pattern: trace of a product of k matrices
 	tr(matrix_multiply_chain(M₁, M₂, ..., Mₖ)) ⊢ tr_arg_list : Cₖ;
 	// `matrix_multiply_chain` would be an internal representation of sequential multiplications
@@ -692,7 +692,7 @@ The property `tr(AB) = tr(BA)` extends to `tr(M₁M₂...Mₖ) = tr(M_{\sigma(1)
 
 *   **Canonical Form via Cyclic Group Algorithm:**
     Once `Cₖ` symmetry is inferred for the argument list `(M₁, ..., Mₖ)`, Orbit can apply its `canonicalise_cyclic_efficient` algorithm (e.g., Booth's algorithm as described in `paper.md`, Algorithm 2) to find the lexicographically smallest cyclic permutation of this list.
-    ```orbit
+```orbit
 	// Canonicalization rule for trace arguments
 	tr(arg_list : Cₖ) → tr(canonicalise_cyclic_efficient(arg_list));
 ```
@@ -709,7 +709,7 @@ The property `tr(P⁻¹ * A * P) = tr(A)` means the trace is invariant under con
 **Orbit Inference and Canonicalization:**
 
 *   **Rewrite Rule for GL(n,F) Invariance and Simplification:**
-    ```orbit
+```orbit
 	// Pattern: trace of a similarity transform
 	tr(matrix_multiply(matrix_multiply(P_inv, A), P))
 		if is_inverse(P_inv, P) && is_invertible(P)
@@ -733,7 +733,7 @@ While `tr(c*A) = c*tr(A)` is a linearity property, if `c` itself is a matrix (e.
 **Orbit Inference and Canonicalization:**
 
 *   **Rewrite Rule for Scalar Factor Commutation:**
-    ```orbit
+```orbit
 	// c is a scalar, A is a matrix
 	tr(matrix_multiply(c, A)) : ScalarMultiplication → c * tr(A);
 
@@ -757,6 +757,312 @@ By inferring these group symmetries (`Cₖ` for products, `GL(n,F)` invariance f
 5.  **Aid Further Algebraic Reasoning:** The inferred group annotations (`:Cₖ`, `:GL_Conj_Invariant`) can provide hints for downstream processing or for inferring even richer algebraic structures within the Orbit system, as discussed in `canonical.md` under "Inferring Algebraic Structures via Symmetry Groups." For instance, the similarity invariance is key to character theory in group representations.
 
 By actively looking for these trace patterns and annotating them with their corresponding group symmetries, Orbit can more effectively apply its canonicalization machinery, leading to a more robust and efficient system for symbolic computation involving matrices.
+
+### Matrix Determinant
+
+The **determinant** of a square matrix `M`, denoted `det(M)` or sometimes `|M|`, is a scalar value that encodes certain properties of the matrix and the linear transformation it represents. It is a fundamental concept in linear algebra with wide-ranging applications.
+
+```orbit
+// Conceptual definition for an N x N matrix
+// The actual computation method (e.g., cofactor expansion, row reduction) would be encapsulated.
+determinant(M : Matrix<T, N, N>) : Scalar<T> → compute_determinant_value(M);
+
+```
+
+#### Key Properties of the Determinant
+
+The determinant has a rich set of algebraic properties, many of which can be expressed as rewrite rules in Orbit:
+
+1.  **Identity Matrix**: The determinant of the identity matrix is 1.
+    *   `determinant(I : IdentityMatrix<N>) → 1`
+
+2.  **Multiplicative Property**: The determinant of a product of matrices is the product of their determinants.
+    *   `determinant(A * B) → determinant(A) * determinant(B)`
+    *   This implies `det` is a homomorphism from the group of invertible matrices GL(n,F) to the multiplicative group of the field F*.
+
+3.  **Transpose Invariance**: The determinant of a matrix is equal to the determinant of its transpose.
+    *   `determinant(Mᵀ) → determinant(M)`
+
+4.  **Scalar Multiplication**: If a matrix `A` (N×N) is multiplied by a scalar `c`:
+    *   `determinant(c * A) → c^N * determinant(A)`
+
+5.  **Inverse Matrix**: If `A` is invertible:
+    *   `determinant(A⁻¹) → 1 / determinant(A)` (if `determinant(A) ≠ 0`)
+
+6.  **Singular Matrices**:
+    *   If a matrix `A` has a row or column consisting entirely of zeros, `determinant(A) → 0`.
+    *   If a matrix `A` has two identical rows or columns, `determinant(A) → 0`.
+    *   More generally, `A` is invertible if and only if `determinant(A) ≠ 0`.
+```orbit
+		is_invertible(A) ↔ determinant(A) ≠ 0;
+		determinant(M : SingularMatrix) → 0; // If M is known to be singular
+```
+
+7.  **Triangular Matrices**: For an upper or lower triangular matrix, the determinant is the product of its diagonal elements.
+    *   `determinant(M : UpperTriangular) → product_of_diagonal_elements(M)`
+    *   `determinant(M : LowerTriangular) → product_of_diagonal_elements(M)`
+    *   (This implies `determinant(M : DiagonalMatrix) → product_of_diagonal_elements(M)`)
+
+8.  **Effect of Row/Column Operations**:
+    *   Swapping two rows (or columns) multiplies the determinant by -1. This is the **alternating property**.
+        *   `determinant(swap_rows(A, r1, r2)) → -determinant(A)`
+    *   Multiplying a single row (or column) by a scalar `c` multiplies the determinant by `c`.
+        *   `determinant(scale_row(A, r, c)) → c * determinant(A)`
+    *   Adding a multiple of one row (or column) to another row (or column) does not change the determinant.
+        *   `determinant(add_multiple_to_row(A, target_r, source_r, c)) → determinant(A)`
+
+#### Symmetries, Invariances, and Geometric Interpretation
+
+The determinant's properties reveal important symmetries and provide geometric insights:
+
+1.  **Similarity Invariance**: The determinant is invariant under similarity transformations.
+    *   `determinant(P⁻¹ * A * P) → determinant(A)` (if `P` is invertible)
+    *   This means the determinant is a property of the linear transformation represented by `A`, independent of the chosen basis. It is a class function on GL(n,F) under conjugation.
+
+2.  **Volume Scaling Factor**: For a real matrix `A`, `abs(determinant(A))` represents the factor by which the linear transformation `A` scales volumes.
+    *   If `determinant(A) = 0`, the transformation collapses space into a lower dimension.
+    *   The sign of `determinant(A)` indicates whether the transformation preserves or reverses orientation (e.g., in 2D, a reflection has a negative determinant).
+
+3.  **Alternating Multilinear Form**: The determinant can be viewed as an alternating multilinear function of the columns (or rows) of the matrix.
+    *   **Multilinear**: `det(... c*v_j ..., w) = c * det(... v_j ..., w)` and `det(... v_j + v'_j ..., w) = det(... v_j ..., w) + det(... v'_j ..., w)`.
+    *   **Alternating**: If any two columns (or rows) are identical, the determinant is zero. Swapping two columns (or rows) negates the determinant. This property connects the determinant to permutations (Sₙ) and their signs, particularly in the Leibniz formula for the determinant:
+        `det(A) = sum(σ in S_n, sgn(σ) * product(i=1 to N, A[i, σ(i)]))`
+        where `sgn(σ)` is the sign of the permutation `σ`.
+
+#### Use Cases of the Determinant
+
+*   **Checking Invertibility**: `det(A) ≠ 0` is a necessary and sufficient condition for `A` to be invertible.
+*   **Solving Linear Systems (Cramer's Rule)**: Provides an explicit formula for solutions, though often computationally impractical for large systems compared to methods like Gaussian elimination.
+*   **Eigenvalue Problems**: The eigenvalues `λ` of `A` are the roots of the characteristic polynomial `p(λ) = det(A - λI) = 0`.
+*   **Change of Variables in Multidimensional Integration**: The Jacobian determinant is used to account for volume changes when transforming coordinate systems.
+*   **Geometric Algorithms**: Used in computational geometry for orientation tests, volume calculations, etc.
+*   **Matrix Decompositions**: Determinants appear in relation to LU decomposition, QR decomposition, etc. For example, if `A = LU`, then `det(A) = det(L)det(U) = product(diag(L)) * product(diag(U))`.
+
+#### Inferring Group Symmetries and Properties for Canonicalization in Orbit
+
+Orbit can exploit the determinant's properties for simplification, inference, and applying canonical forms:
+
+1.  **Direct Simplification from Group/Structural Domains**:
+    Orbit can have rules that directly evaluate or simplify determinants based on matrix domain annotations.
+```orbit
+	determinant(M : SLnF_Matrix) → 1; // By definition of Special Linear Group
+	determinant(M : OrthogonalMatrix) → result where result * result = 1; // result is +1 or -1
+										// Further rules might determine which one based on context
+										// (e.g. rotations vs. roto-reflections)
+	determinant(M : SingularMatrix) → 0; // If rank < N is known
+	determinant(M : ZeroMatrix) → 0;
+	determinant(M : UpperTriangular) → product_of_diagonal_elements(M);
+	determinant(M : LowerTriangular) → product_of_diagonal_elements(M);
+```
+
+2.  **Exploiting the Alternating Property (Sₙ Connection)**:
+    The alternating nature of the determinant is fundamental. If Orbit encounters an expression `determinant(permute_rows(A, σ))` where `σ` is a permutation, it can rewrite it:
+```orbit
+	// σ is a permutation object/representation
+	determinant(permute_rows(A, σ)) → sign(σ) * determinant(A);
+	determinant(permute_cols(A, σ)) → sign(σ) * determinant(A);
+
+	// Specific case: swapping two rows
+	determinant(A_prime) where A_prime = row_swap(A, r1, r2) → -determinant(A);
+```
+    This allows canonicalizing the input matrix to `determinant` by, for example, sorting rows/columns while accumulating sign changes, although direct computation via row reduction is usually more efficient.
+
+3.  **Leveraging the Multiplicative Property for Decomposition and Simplification**:
+    The rule `determinant(A * B) → determinant(A) * determinant(B)` is powerful.
+```orbit
+	// Example: Product with an easily computed determinant
+	determinant(matrix_multiply(A, D : DiagonalMatrix)) → determinant(A) * product_of_diagonal_elements(D);
+	determinant(matrix_multiply(A, P : PermutationMatrix)) → determinant(A) * sign_of_permutation(P);
+```
+    This can break down a complex determinant into simpler parts or reveal if a determinant is zero if one factor is singular.
+
+4.  **Canonicalization via Similarity Invariance**:
+    The rule `determinant(P⁻¹ * A * P) → determinant(A)` is a key simplification and canonicalization.
+```orbit
+	determinant(matrix_multiply(matrix_multiply(P_inv, A), P))
+		if is_inverse(P_inv, P) && is_invertible(P)
+		→ determinant(A) : GL_Conj_Invariant;
+```
+    This ensures that expressions representing determinants of similar matrices can be unified to the same canonical form `determinant(A)` in the O-Graph.
+
+5.  **Symbolic Row/Column Reduction for Computation**:
+    Orbit can symbolically apply rewrite rules based on the effects of row operations to transform a matrix into an upper triangular form (or REF/RREF). The determinant is then the product of the diagonal elements, adjusted by any scaling factors or sign changes accumulated during the process. This mirrors how Gaussian elimination is used for determinant computation.
+```orbit
+	// Conceptual rewrite sequence:
+	// determinant(M) → det_via_row_reduction(M, 1); // state: (matrix, current_multiplier)
+
+	// det_via_row_reduction(matrix_op_add_row(M_curr), mult) → det_via_row_reduction(M_curr, mult);
+	// det_via_row_reduction(matrix_op_swap_row(M_curr), mult) → det_via_row_reduction(M_curr, -mult);
+	// det_via_row_reduction(matrix_op_scale_row(M_curr, c), mult) → det_via_row_reduction(M_curr, mult * c);
+
+	// Base case when matrix is UpperTriangular
+	// det_via_row_reduction(M_tri : UpperTriangular, mult) → mult * product_of_diagonal_elements(M_tri);
+```
+    This turns the computation of a determinant into a sequence of canonicalizing matrix transformations.
+
+6.  **Impact on O-Graph and Expression Equivalence**:
+    *   Equivalent expressions like `determinant(AB)` and `determinant(A)determinant(B)` would merge in the O-Graph once the rewrite rule is applied.
+    *   `determinant(Aᵀ)` would simplify to `determinant(A)`.
+    *   Complex forms like `determinant(P⁻¹AP)` simplify, reducing representational overhead and aiding equality checks.
+
+By systematically applying these properties, Orbit can simplify determinant expressions, choose efficient computation strategies (e.g., row reduction for general matrices, product of diagonals for triangular ones), and recognize equivalences that might otherwise be obscured by complex formulations. The connection to group theory (GL(n,F) for multiplicative and similarity properties, Sₙ for the alternating property) provides a deep structural understanding that Orbit can exploit.
+
+### Eigenvalues and Eigenvectors
+
+Eigenvalues and eigenvectors are fundamental concepts in linear algebra that reveal intrinsic properties of linear transformations represented by square matrices. They are crucial for understanding matrix behavior, simplifying complex systems, and are widely applied across various scientific and engineering disciplines.
+
+#### Definition and Core Concepts
+
+For a given square `N × N` matrix `A`, a non-zero vector `v` is an **eigenvector** of `A` if the application of `A` to `v` scales `v` by a scalar factor `λ`, known as the **eigenvalue** corresponding to `v`.
+
+Mathematically:
+`A v = λ v`
+
+Where:
+*   `A` is an `N × N` matrix.
+*   `v` is a non-zero `N × 1` column vector (the eigenvector).
+*   `λ` is a scalar (the eigenvalue), which can be real or complex.
+
+This equation can be rewritten as:
+`(A - λI) v = 0`
+
+Where `I` is the `N × N` identity matrix. For this equation to have a non-zero solution for `v`, the matrix `(A - λI)` must be singular. This leads to the **characteristic equation**:
+
+`det(A - λI) = 0`
+
+The solutions `λ` to this polynomial equation are the eigenvalues of `A`. For each eigenvalue `λᵢ`, the corresponding eigenvectors `vᵢ` can be found by solving the system `(A - λᵢI) vᵢ = 0`. The set of all eigenvalues of `A` is called its **spectrum**.
+
+```orbit
+// Conceptual representation in Orbit
+// Define an eigenvalue problem
+eigen_problem(A : Matrix<T,N,N>) → solution_set : EigenSolutionSet
+  where solution_set contains pairs (λᵢ : Scalar<T>, vᵢ : Vector<T,N>)
+  such that matrix_multiply(A, vᵢ) = scalar_multiply(λᵢ, vᵢ)
+  and characteristic_poly(A, λ) = determinant(matrix_subtract(A, scalar_multiply(λ, I<N>)));
+
+// Characteristic polynomial definition
+solve_for_roots(characteristic_poly(A, λ)) → eigenvalues_of(A);
+```
+
+#### Key Properties of Eigenvalues and Eigenvectors
+
+1.  **Sum and Product:**
+	*   The sum of the eigenvalues of `A` is equal to its trace: `tr(A) = Σ λᵢ`.
+	*   The product of the eigenvalues of `A` is equal to its determinant: `det(A) = Π λᵢ`.
+
+2.  **Transpose:** A matrix `A` and its transpose `Aᵀ` have the same eigenvalues, but not necessarily the same eigenvectors.
+
+3.  **Matrix Powers:** If `λ` is an eigenvalue of `A` with eigenvector `v`, then:
+	*   `λᵏ` is an eigenvalue of `Aᵏ` for any positive integer `k`, with the same eigenvector `v`.
+	*   If `A` is invertible, `1/λ` is an eigenvalue of `A⁻¹` with the same eigenvector `v`.
+
+4.  **Scalar Multiplication:** If `λ` is an eigenvalue of `A`, then `cλ` is an eigenvalue of `cA` for any scalar `c`.
+
+5.  **Shift Property:** If `λ` is an eigenvalue of `A`, then `λ - s` is an eigenvalue of `A - sI` for any scalar `s`.
+
+6.  **Triangular and Diagonal Matrices:** The eigenvalues of a triangular matrix (upper or lower) or a diagonal matrix are its diagonal entries.
+
+7.  **Linear Independence:** Eigenvectors corresponding to distinct eigenvalues are linearly independent.
+
+8.  **Symmetric Matrices (Real):** If `A` is a real symmetric matrix (`A = Aᵀ`), then:
+	*   All its eigenvalues `λᵢ` are real.
+	*   Its eigenvectors `vᵢ` corresponding to distinct eigenvalues are orthogonal.
+	*   `A` is always diagonalizable by an orthogonal matrix.
+
+9.  **Positive Definite Matrices:** A symmetric matrix is positive definite if and only if all its eigenvalues are positive (`λᵢ > 0`).
+
+#### Symmetries and Invariances Related to Eigen-Problems
+
+The most crucial invariance property for eigenvalues is:
+
+*   **Similarity Invariance:** Similar matrices have the same characteristic polynomial and thus the same eigenvalues. If `B = P⁻¹AP` for some invertible matrix `P`, then `A` and `B` share the same set of eigenvalues `λᵢ`.
+	*   If `v` is an eigenvector of `A` for eigenvalue `λ`, then `P⁻¹v` is an eigenvector of `B` for the same eigenvalue `λ`.
+	`B(P⁻¹v) = (P⁻¹AP)(P⁻¹v) = P⁻¹A(PP⁻¹)v = P⁻¹Av = P⁻¹(λv) = λ(P⁻¹v)`
+
+This invariance is fundamental because it means eigenvalues are intrinsic properties of the linear transformation represented by the matrix, independent of the basis chosen.
+
+#### Use Cases of Eigenvalues and Eigenvectors
+
+Eigenvalue analysis is a cornerstone of many advanced computational techniques:
+
+1.  **Principal Component Analysis (PCA):** Eigenvalues of the covariance matrix indicate the variance along principal components (eigenvectors), used for dimensionality reduction.
+2.  **Quantum Mechanics:** Eigenvalues of Hamiltonian operators represent energy levels (quantized energies) of a quantum system, and eigenvectors represent the corresponding stationary states.
+3.  **Vibrational Analysis:** Eigenvalues of a system's dynamic matrix correspond to the squares of its natural frequencies of vibration, and eigenvectors describe the mode shapes.
+4.  **Stability Analysis of Dynamical Systems:** Eigenvalues of the system matrix determine the stability of equilibrium points (e.g., in control theory or differential equations).
+5.  **Graph Theory (Spectral Graph Theory):** Eigenvalues of the adjacency matrix or Laplacian matrix of a graph reveal properties like connectivity, bipartiteness, and are used in spectral clustering.
+6.  **Google's PageRank Algorithm:** The PageRank vector is the principal eigenvector of a modified adjacency matrix of the web graph.
+7.  **Differential Equations:** Eigenvalue methods are used to find solutions to systems of linear differential equations.
+8.  **Facial Recognition (Eigenfaces):** Uses PCA and eigenvectors to represent faces in a lower-dimensional space.
+
+#### Exploiting Eigen-Properties for Canonicalization and Simplification in Orbit
+
+Orbit can leverage the properties of eigenvalues and eigenvectors for sophisticated analysis, simplification, and canonicalization:
+
+1.  **Recognizing the Characteristic Equation:**
+	Orbit can identify the pattern `determinant(A - λI)` as the characteristic polynomial of `A`.
+```orbit
+    determinant(matrix_subtract(A, scalar_multiply(λ_var, I))) ⊢ is_characteristic_poly_of(A, λ_var);
+```
+
+2.  **Relating to Trace and Determinant for Verification/Inference:**
+	Rewrite rules can enforce consistency or simplify expressions involving trace, determinant, and eigenvalues.
+```orbit
+    // If eigenvalues are known/symbolic
+    tr(A) where eigenvalues_of(A) = {λ₁, ..., λₙ} → sum(λ₁, ..., λₙ);
+    determinant(A) where eigenvalues_of(A) = {λ₁, ..., λₙ} → product(λ₁, ..., λₙ);
+
+    // Inference rule
+    A : HasEigenvalues {λᵢ...} ⊢ tr(A) = sum(λᵢ...);
+    A : HasEigenvalues {λᵢ...} ⊢ determinant(A) = product(λᵢ...);
+    
+```
+
+3.  **Canonicalization through Diagonalization (Similarity Invariance):**
+	If a matrix `A` is diagonalizable, i.e., `A = PDP⁻¹` where `D` is a diagonal matrix of eigenvalues, Orbit can aim to rewrite `A` or expressions involving `A` using its diagonal form.
+```orbit
+    // If A is known to be diagonalizable with P_inv*A*P = D_eigenvalues
+    A : DiagonalizableBy P → P * D_eigenvalues(A) * P_inv;
+    // Operations on A can then be simplified by operating on D
+    matrix_power(A : DiagonalizableBy P, k) → P * matrix_power(D_eigenvalues(A), k) * P_inv;
+      // where matrix_power(D_diag, k) simply raises diagonal elements to k.
+
+    // Directly state that eigenvalues are those of the diagonal form
+    eigenvalues_of(A) where A = P * D_diag * P_inv → diagonal_elements_of(D_diag);
+    
+```
+	This leverages the similarity invariance: `eigenvalues(A)` are identical to `eigenvalues(D)`, which are simply the diagonal entries of `D`.
+
+4.  **Simplifying Powers and Inverses:**
+	Rules can directly compute eigenvalues of matrix powers or inverses.
+```orbit
+    eigenvalues_of(matrix_power(A, k)) → map(λ x. x^k, eigenvalues_of(A));
+    eigenvalues_of(matrix_inverse(A)) → map(λ x. 1/x, eigenvalues_of(A)) if A : Invertible;
+    
+```
+
+5.  **Domain-Specific Eigenvalue Properties:**
+	For matrices with specific domain annotations, Orbit can infer properties of their eigenvalues.
+```orbit
+    A : SymmetricMatrix ⊢ eigenvalues_of(A) : RealNumbersSet;
+    A : PositiveDefiniteMatrix ⊢ eigenvalues_of(A) : PositiveRealNumbersSet;
+    A : OrthogonalMatrix ⊢ map(λ x. abs(x), eigenvalues_of(A)) = {1, ..., 1}; // Eigenvalues have modulus 1
+    A : UpperTriangular ⊢ eigenvalues_of(A) = diagonal_elements_of(A);
+    A : LowerTriangular ⊢ eigenvalues_of(A) = diagonal_elements_of(A);
+    
+```
+
+6.  **Unifying Eigenvalue Sets:**
+	If `B = P⁻¹AP`, then `eigenvalues_of(A)` and `eigenvalues_of(B)` should unify to the same set in the O-Graph. Orbit can use the similarity invariance to ensure this:
+```orbit
+    eigenvalues_of(matrix_multiply(matrix_multiply(P_inv, A), P))
+        if is_inverse(P_inv, P) && is_invertible(P)
+        → eigenvalues_of(A) : GL_Conj_Invariant_Spectrum;
+    
+```
+	This means even if computed through different symbolic paths, expressions for the eigenvalues of similar matrices would be canonicalized to the same representation.
+
+By encoding these properties as rewrite rules and leveraging domain annotations, Orbit can transform complex eigen-problems into simpler forms, verify consistency across related matrix properties (trace, determinant, eigenvalues), and canonicalize representations based on fundamental invariances. This provides a powerful framework for reasoning about and simplifying linear algebra expressions involving eigenvalues and eigenvectors.
+```
 
 ## Conclusion
 
