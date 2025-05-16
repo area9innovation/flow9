@@ -220,11 +220,18 @@ export {
 	transform2string(s : Transform<?>) -> string;
 
 	// Builtin functions - use the functions above instead
-	FFn<?, ??> ::= FLift<?, ??>, FCompose<?, ??>, FIdentity, FNegate,
+	FFn<?, ??> ::= FLift<?, ??>, FLiftExpensive<?, ??>, FCompose<?, ??>, FIdentity, FNegate,
 			FAddConst, FMulConst, FMaxConst<??>, FMinConst<??>, FEqual<?>, FIf<??>;
 
-		// This is for using any other transform function
+		// This is for using any other transform function. If fn is an expansive (e.g. slow) function, use FLiftExpensive instead.
 		FLift(fn : (?) -> ??);
+		// Use this instead of FLift if fn can be slow, can consume a lot of memory etc.
+		// FLift.fn can be called several times even if all behaviors have not changed.
+		// It happens because of an optimization in fselect2, that avoids creating intermadiate bahaviors and
+		// creates a new function from arguments of fselect2.
+		// An example of such behaviour is in tests/flift_expensive_test.flow
+		// FLiftExpensive.fn is not called twice in this situation.
+		FLiftExpensive(fn : (?) -> ??);
 
 		// f1 o f2 == f1(f2(x))
 		FCompose(f1 : FFn<flow, ??>, f2 : FFn<?, flow>);
@@ -292,45 +299,16 @@ fselect(b : Transform<??>, fn : FFn<??, ?>) -> Transform<?> {
 }
 
 fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Transform<?> {
-	switch (b1 : Transform<??>) {
-		ConstBehaviour(v1): {
-			ifn = instantiateFn2(fn);
-
-			switch (b2 : Transform<???>) {
-				ConstBehaviour(v2): ConstBehaviour(ifn(v1, v2));
-				default: fselect(b2, FLift(\v -> ifn(v1, v)));
+	def1 = \ -> {
+		switch (b2 : Transform<???>) {
+			ConstBehaviour(v2): {
+				ifn = instantiateFn2(fn);
+				fselect(b1, FLift(\v -> ifn(v, v2)));
 			}
-		}
-		FSelect(nb1, nf1, __): {
-			ifn = instantiateFn2(fn);
-
-			switch (b2 : Transform<???>) {
-				FSelect(nb2, nf2, __): {
-					ifn1 = instantiateFn(nf1);
-					ifn2 = instantiateFn(nf2);
-					if (nb1 == nb2) {
-						FSelect(nb1, FLift(\f -> ifn(ifn1(f), ifn2(f))), FDestroyed());
-					} else {
-						FSelect2(nb1, nb2, FLift2(\f, s -> ifn(ifn1(f), ifn2(s))), FDestroyed());
-					}
-				}
-				default: {
-					ifn1 = instantiateFn(nf1);
-					if (nb1 == b2) {
-						FSelect(nb1, FLift(\f -> ifn(ifn1(f), f)), FDestroyed());
-					} else {
-						FSelect2(nb1, b2, FLift2(\f, s -> ifn(ifn1(f), s)), FDestroyed());
-					}
-				}
-			}
-		}
-		default: {
-			switch (b2 : Transform<???>) {
-				ConstBehaviour(v2): {
-					ifn = instantiateFn2(fn);
-					fselect(b1, FLift(\v -> ifn(v, v2)));
-				}
-				FSelect(nb, nf2, __): {
+			FSelect(nb, nf2, __): {
+				if (isExpensiveFFn(nf2)) {
+					FSelect2(b1, b2, fn, FDestroyed());
+				} else {
 					ifn2 = instantiateFn(nf2);
 					if (supportsLazy(fn)) {
 						ifn = instantiateFn2Lazy(fn);
@@ -348,18 +326,64 @@ fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Tran
 						}
 					}
 				}
-				default: {
-					FSelect2(b1, b2, fn, FDestroyed());
+			}
+			default: {
+				FSelect2(b1, b2, fn, FDestroyed());
+			}
+		}
+	}
+	switch (b1 : Transform<??>) {
+		ConstBehaviour(v1): {
+			ifn = instantiateFn2(fn);
+
+			switch (b2 : Transform<???>) {
+				ConstBehaviour(v2): ConstBehaviour(ifn(v1, v2));
+				default: fselect(b2, FLift(\v -> ifn(v1, v)));
+			}
+		}
+		FSelect(nb1, nf1, __): {
+			if (isExpensiveFFn(nf1)) {
+				def1();
+			} else {
+				ifn1 = instantiateFn(nf1);
+				ifn = instantiateFn2(fn);
+				def2 = \ -> {
+					if (nb1 == b2) {
+						FSelect(nb1, FLift(\f -> ifn(ifn1(f), f)), FDestroyed());
+					} else {
+						FSelect2(nb1, b2, FLift2(\f, s -> ifn(ifn1(f), s)), FDestroyed());
+					}
+				}
+				switch (b2 : Transform<???>) {
+					FSelect(nb2, nf2, __): {
+						if (isExpensiveFFn(nf2)) {
+							def2();
+						} else {
+							ifn2 = instantiateFn(nf2);
+							if (nb1 == nb2) {
+								FSelect(nb1, FLift(\f -> ifn(ifn1(f), ifn2(f))), FDestroyed());
+							} else {
+								FSelect2(nb1, nb2, FLift2(\f, s -> ifn(ifn1(f), ifn2(s))), FDestroyed());
+							}
+						}
+					}
+					default: def2();
 				}
 			}
 		}
+		default: def1();
 	}
 }
 
 fsubselect(b : Transform<??>, fn : FFn<??, Transform<?>>) -> Transform<?> {
 	switch (b) {
 		ConstBehaviour(v): {
-			instantiateFn(fn)(v);
+			// Do not run expensive function in constructor, it will be evaluated in fgetValue or on subscribe if needed.
+			if (isExpensiveFFn(fn)) {
+				FSubSelect(b, fn, FDestroyed());
+			} else {
+				instantiateFn(fn)(v);
+			}
 		}
 		FSelect(a, f2, __): {
 			c = fcompose(fn, f2);
@@ -1242,6 +1266,7 @@ transform2string(s : Transform<?>) -> string {
 	}
 }
 
+//Dead code
 transformLength(s : Transform<?>) -> int {
 	switch (s : Transform<?>) {
 		ConstBehaviour(v): {
@@ -2112,10 +2137,18 @@ supportsLazy(fn : FFn2<?, ??, ???>) -> bool {
 	}
 }
 
+isExpensiveFFn(fn : FFn<?, ??>) -> bool {
+	switch (fn) {
+		FLiftExpensive(__): true;
+		default: false;
+	}
+}
+
 instantiateFn(fn : FFn<?, ??>) -> (?) -> ?? {
 	// println(ffn2string(fn));
 	switch (fn : FFn<?, ??>) {
 		FLift(f): f;
+		FLiftExpensive(f): f;
 		FCompose(f1, f2): {
 			// TODO: If f1 or f2 are lifted, we can do better
 			//lf1 : (???) -> ?? = instantiateFn(f1);
@@ -2179,6 +2212,7 @@ instantiateFn2Lazy(fn : FFn2<?, ??, ???>) -> (?, () -> ??) -> ??? {
 ffn2string(fn : FFn<?, ??>) -> string {
 	switch (fn) {
 		FLift(fl): trim2(takeAfter(safeToString(fn), ": ", safeToString(fn)), ")>");
+		FLiftExpensive(fl): "ex#" + trim2(takeAfter(safeToString(fn), ": ", safeToString(fn)), ")>");
 		FCompose(f1, f2): "(" + ffn2string(f1) + ")o(" + ffn2string(f2) + ")";
 		FIdentity(): "id";
 		FNegate(): "~";
@@ -2212,7 +2246,7 @@ safeToString(t : flow) -> string {
 	if (isSameStructType(t, t)) {
 		// OK, it is a struct
 		sname = t.structname;
-		if (sname == "FLift" || sname == "FLift2") {
+		if (sname == "FLift" || sname == "FLiftExpensive" || sname == "FLift2") {
 			toString(extractStructArguments(t)[0])
 		} else if (isSameStructType(t, zero)) {
 			ct : ConstBehaviour<flow> = cast(t : flow -> ConstBehaviour<flow>);
