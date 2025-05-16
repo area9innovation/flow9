@@ -22,7 +22,7 @@
 			- tree: undefined name key, value...
 	*  When we extract from the ograph, we loose "belongs to". Maybe we should extract those as well?
 	*  Should we change from List to Call in SExpr?
-	*  Fix quote to be able to do substitution
+	*  Fix quote to be able to do substitution. Probably add ograph with subst does not work
     *   **Validate Rewriting Engine:**
         *   Run: `./run_orbit_tests.sh --compare-engines` on core rewriting tests (e.g., `tests/rewrite.orb`, `tests/pattern.orb`, `tests/algebra.orb` - adjust names based on actual files).
         *   Goal: Ensure identical execution results. Fix any differences reported by the comparison.
