@@ -187,10 +187,10 @@ let expr3 = quasiquote (f(unquote-splicing args));
 
 These quoting forms align directly with S-expression semantics:
 
-1. `'expr` is equivalent to `(quote expr)` in Lisp/Scheme
-2. `quasiquote expr` is equivalent to the backtick notation in Lisp/Scheme
-3. `unquote` is equivalent to comma in Lisp/Scheme
-4. `unquote-splicing` is equivalent to comma-at in Lisp/Scheme
+1. `'expr` is equivalent to `(quote expr)` in Scheme
+2. \`expr or `quasiquote expr` is equivalent to the quasiquote in Scheme
+3. `$ expr` or `unquote expr` is equivalent to unquote in Scheme
+4. `$* expr` or `unquote-splicing expr` is equivalent to unquote-splicing in Scheme
 
 ### Evaluation
 
