@@ -1,4 +1,5 @@
 import lib/reflect;
+import lib/array;
 
 // Domain-aware rewriting library for OGraph manipulation
 // This library provides functions for pattern matching, rewriting, and
@@ -48,8 +49,13 @@ fn applyRewriteRule(graph, pattern, replacement, condition, ruleName) = (
             let newId = addOGraphWithSub(graph, replacement, bindings);
             // println("Rule '" + ruleName + "' applied. ID: " + i2s(newId) + ": " + prettyOrbit(extractOGraph(graph, newId)) + " was " + prettyOrbit(extractOGraph(graph, eclassId)) + " at " + i2s(eclassId));
 
+            let symbolic = mergeOGraphNodes(graph, newId, eclassId);
+
+			// Do eval in the ograph
+			let quasi = evaluateOGraphQuasiquote(graph, newId);
+
             // Step 3: Merge nodes (result first to make it canonical)
-            let success = mergeOGraphNodes(graph, newId, eclassId);
+            let success = mergeOGraphNodes(graph, quasi, eclassId);
             // setFileContent("merged" + i2s(newId) + ".dot", ograph2dot(graph));
 			success
 
@@ -70,29 +76,23 @@ fn applyRules(expr, rules) = (
     let graph = makeOGraph("transform");
     // Add the expression
     let exprId = addOGraph(graph, expr);
-    
-    // Helper function to apply rules recursively 
-    fn applyRulesRecursive(rules, index, totalMatches) = (
-        if index < length(rules) then (
-            let rule = rules[index];
-            let ruleName = rule[0];
-            let pattern = rule[1];
-            let replacement = rule[2];
-            let condition = if (length(rule) >= 4) then rule[3] else true;
-			println("Applying rule " + i2s(index) + ": " + ruleName + " with condition: " + prettyOrbit(condition) + " on pattern: " + prettyOrbit(pattern) + " and replacement: " + prettyOrbit(replacement));
-            // Apply the rule with condition
-            let matches = applyRewriteRule(graph, pattern, replacement, condition, ruleName);
-            
-            // Apply the next rule
-            applyRulesRecursive(rules, index + 1, totalMatches + matches)
-        ) else (
-            // Return total matches when done
-            totalMatches
-        )
-    );
-    
-    // Apply all rules
-    let totalMatches = applyRulesRecursive(rules, 0, 0);
+
+	iteri(rules, \i, rule -> (
+		let cond = rule is (
+			Rule(name, (p => q)) => (
+				applyRewriteRule(graph, p, q, true, name);
+			);
+			Rule(name, (p => q if cond)) => (
+				applyRewriteRule(graph, p, q, cond, name);
+			);
+			(p => q) => (
+				applyRewriteRule(graph, p, q, true, "Anonymous #" + i2s(i + 1));
+			);
+			(p => q if cond) => (
+				applyRewriteRule(graph, p, q, cond, "Anonymous with condition #" + i2s(i + 1));
+			);
+		);
+	));
     // Return the final transformed expression
     extractOGraph(graph, exprId);
 );
@@ -104,7 +104,7 @@ fn applyRules(expr, rules) = (
 // Prepares a rule with proper domain handling
 // Returns a quadruple of [name, pattern, replacement, condition]
 fn prepareRule(name, patternExpr : ast, replacementExpr : ast, conditionExpr : ast) = (
-	[name, patternExpr, replacementExpr, conditionExpr]
+	Rule(name, patternExpr, replacementExpr, conditionExpr)
 );
 
 // Convenience function for rules without conditions
