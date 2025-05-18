@@ -1,0 +1,165 @@
+import tools/mango/mango_types;
+import ds/set;
+
+// Fixpoint iteration for Nullable calculation
+fixpointNullable(rules: Tree<string, Term>, currentNullable: Tree<string, bool>) -> Tree<string, bool> {
+	changed = ref false;
+	newNullable = foldTree(rules, currentNullable, \rule, term, acc -> {
+		canBeNull = computeNullable(term, acc, rules);
+		if (lookupTreeDef(acc, rule, false) != canBeNull) {
+			changed := true;
+		}
+		setTree(acc, rule, canBeNull);
+	});
+
+	if (! ^changed) {
+		newNullable; // Fixed point reached
+	} else {
+		fixpointNullable(rules, newNullable); // Iterate again
+	}
+}
+
+// Compute if a single term is nullable
+computeNullable(term: Term, nullableSet: Tree<string, bool>, rules: Tree<string, Term>) -> bool {
+	switch (term) {
+		String(s): s == "";
+		Range(__, __): false;
+		Sequence(t1, t2): computeNullable(t1, nullableSet, rules) && computeNullable(t2, nullableSet, rules);
+		Choice(t1, t2): computeNullable(t1, nullableSet, rules) || computeNullable(t2, nullableSet, rules);
+		Optional(__): true;
+		Star(__): true;
+		Plus(t): computeNullable(t, nullableSet, rules);
+		Negate(__): false; // Negation doesn't match empty (conservatively)
+		Variable(id): lookupTreeDef(nullableSet, id, false); // Use current knowledge
+		PushMatch(t): computeNullable(t, nullableSet, rules);
+		Rule(__, t1, t2): computeNullable(t2, nullableSet, rules); // Rules are processed via fixpoint wrapper
+		Construct(__, __): true; // Don't consume input
+		StackOp(__): true;       // Don't consume input
+		Lower(t): computeNullable(t, nullableSet, rules);
+		Error(t): computeNullable(t, nullableSet, rules); // Assume error recovery could match empty
+		GrammarCall(__, __): true; // Assume external calls might be nullable
+		GrammarFn(__, __, __, t3): computeNullable(t3, nullableSet, rules);
+		Precedence(t1, t2): computeNullable(t1, nullableSet, rules) || computeNullable(t2, nullableSet, rules);
+	}
+}
+
+
+// Fixpoint iteration for FirstTokens calculation
+fixpointFirstTokens(rules: Tree<string, Term>, nullableSet: Tree<string, bool>, currentFirstTokens: Tree<string, Set<FirstToken>>) -> Tree<string, Set<FirstToken>> {
+	changed = ref false;
+	newFirstTokens = foldTree(rules, currentFirstTokens, \rule, term, acc -> {
+		tokens = computeFirstTokens(term, acc, nullableSet, rules);
+		if (!equalSet(lookupTreeDef(acc, rule, makeSet()), tokens)) {
+			changed := true;
+		}
+		setTree(acc, rule, tokens);
+	});
+
+	if (! ^changed) {
+		newFirstTokens; // Fixed point reached
+	} else {
+		fixpointFirstTokens(rules, nullableSet, newFirstTokens); // Iterate again
+	}
+}
+
+// Compute the FirstTokens set for a single term
+computeFirstTokens(term: Term, firstTokensMap: Tree<string, Set<FirstToken>>, nullableSet: Tree<string, bool>, rules: Tree<string, Term>) -> Set<FirstToken> {
+	epsilon = makeSet1(EpsilonToken());
+	emptySet = makeSet();
+
+	switch (term) {
+		String(s): if (s == "") epsilon else makeSet1(StringToken(s));
+		Range(c1, c2): makeSet1(RangeToken(c1, c2)); // Represent range directly
+		Sequence(t1, t2): {
+			ft1 = computeFirstTokens(t1, firstTokensMap, nullableSet, rules);
+			if (containsSet(ft1, EpsilonToken())) {
+				ft2 = computeFirstTokens(t2, firstTokensMap, nullableSet, rules);
+				mergeSets(differenceSets(ft1, epsilon), ft2);
+			} else {
+				ft1;
+			}
+		}
+		Choice(t1, t2): {
+			ft1 = computeFirstTokens(t1, firstTokensMap, nullableSet, rules);
+			ft2 = computeFirstTokens(t2, firstTokensMap, nullableSet, rules);
+			mergeSets(ft1, ft2);
+		}
+		Optional(t): mergeSets(computeFirstTokens(t, firstTokensMap, nullableSet, rules), epsilon);
+		Star(t): mergeSets(computeFirstTokens(t, firstTokensMap, nullableSet, rules), epsilon);
+		Plus(t): computeFirstTokens(t, firstTokensMap, nullableSet, rules); // Plus cannot be epsilon unless term can
+		Negate(__): epsilon; // Doesn't contribute positive first tokens
+		Variable(id): lookupTreeDef(firstTokensMap, id, emptySet); // Use current knowledge
+		PushMatch(t): computeFirstTokens(t, firstTokensMap, nullableSet, rules);
+		Rule(__, t1, t2): computeFirstTokens(t2, firstTokensMap, nullableSet, rules); // Processed via fixpoint
+		Construct(__, __): epsilon; // Doesn't consume input
+		StackOp(__): epsilon;       // Don't consume input
+		Lower(t): computeFirstTokens(t, firstTokensMap, nullableSet, rules);
+		Error(t): computeFirstTokens(t, firstTokensMap, nullableSet, rules); // Error recovery might consume tokens
+		GrammarCall(__, __): epsilon; // Assume external calls don't contribute known first tokens
+		GrammarFn(__, __, __, t3): computeFirstTokens(t3, firstTokensMap, nullableSet, rules);
+		Precedence(t1, t2): { // Similar to Choice
+			ft1 = computeFirstTokens(t1, firstTokensMap, nullableSet, rules);
+			ft2 = computeFirstTokens(t2, firstTokensMap, nullableSet, rules);
+			mergeSets(ft1, ft2);
+		}
+	}
+}
+
+
+
+// Represents the first possible concrete tokens a term can match
+FirstToken ::= StringToken, RangeToken, EpsilonToken;
+	StringToken(value: string);
+	RangeToken(start: string, end: string);
+	EpsilonToken();
+
+
+isSequence(t : Term) -> bool {
+	switch (t) {
+		Sequence(__, __): true;
+		default: false;
+	}
+}
+
+// Check if term is a Variable
+isVariable(t : Term) -> bool {
+	switch (t) {
+		Variable(__): true;
+		default: false;
+	}
+}
+
+// Note: getVariableName is imported from util.flow
+
+isNullable(term: Term, nullableSet: Tree<string, bool>, rules: Tree<string, Term>) -> bool { 
+	switch (term) {
+		String(s): s == ""; 
+		Range(__, __): false; 
+		Construct(__, __): true; 
+		StackOp(__): true; 
+		Optional(__): true; 
+		Star(__): true;
+		Sequence(t1, t2): isNullable(t1, nullableSet, rules) && isNullable(t2, nullableSet, rules);
+		Choice(t1, t2): isNullable(t1, nullableSet, rules) || isNullable(t2, nullableSet, rules);
+		Plus(t): isNullable(t, nullableSet, rules); 
+		PushMatch(t): isNullable(t, nullableSet, rules);
+		Lower(t): isNullable(t, nullableSet, rules); 
+		Error(t): isNullable(t, nullableSet, rules);
+		Negate(__): false; 
+		Variable(id): lookupTreeDef(nullableSet, id, false);
+		Rule(__, t1, t2): isNullable(t2, nullableSet, rules); 
+		GrammarCall(__, __): true;
+		GrammarFn(__, __, __, t3): isNullable(t3, nullableSet, rules); 
+		Precedence(t1, t2): isNullable(t1, nullableSet, rules) || isNullable(t2, nullableSet, rules);
+	}
+}
+
+// Helper to parse range bounds (handle hex)
+parseRangeBound(bound: string) -> int {
+	if (startsWith(bound, "0x")) parseHex(bound)
+	else if (strlen(bound) == 1) getCharCodeAt(bound, 0)
+	else {
+		 println("Warning: Unexpected range bound format: " + bound);
+		 -1; // Invalid bound indicator
+	}
+}

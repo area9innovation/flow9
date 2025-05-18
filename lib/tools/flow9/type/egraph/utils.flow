@@ -1,0 +1,147 @@
+import tools/flow9/type/egraph/egraph;
+
+export {
+	isVariableNode(g : EGraph, id : int) -> bool;
+	isTopDecidedNode(g : EGraph, id : int) -> bool;
+	isConstructorNode(g : EGraph, id : int) -> bool;
+	getConstructor(node : TypeNode) -> string;
+	isFlowTypeNode(node : TypeNode) -> bool;
+	isFlowEClass(g : EGraph, eclass : int) -> bool;
+	getNodeConstructorName(g : EGraph, id : int) -> string;
+
+	// Creates a Constructor node for either a union or a struct type
+	createConstructorNode(g : EGraph, typeName : string, infos : Set<EContext>) -> Constructor;
+	createUnionConsNode(g : EGraph, union : HUnion, infos : Set<EContext>) -> int;
+
+	registerAlternativeComponents(g : EGraph, alternativeId : int) -> void;
+	isPartOfUndecidedAlternatives(g : EGraph, eclass : EClass) -> bool;
+
+	// Extracts all type variables mentioned in an eclass node
+	getNodeTyvars(g : EGraph, acc : Set<int>, eclass : int) -> Set<int>;
+}
+
+isVariableNode(g : EGraph, id : int) -> bool {
+	isTypeVar(getNodeDef(g, id))
+}
+
+isTopDecidedNode(g : EGraph, id : int) -> bool {
+	eclass = getEClassDef(g, id);
+	!isTypeVar(eclass.node) 
+	&& isEmptySet(eclass.alternatives)
+}
+
+isConstructorNode(g : EGraph, id : int) -> bool {
+	switch (getNodeDef(g, id)) {
+		Constructor(__, __): true;
+		default: false;
+	}
+}
+
+isFlowTypeNode(node : TypeNode) -> bool {
+	getConstructor(node) == "flow"
+}
+
+isFlowEClass(g : EGraph, eclass : int) -> bool {
+	isFlowTypeNode(getNodeDef(g, eclass))
+}
+
+getConstructor(node : TypeNode) -> string {
+	switch (node) {
+		Constructor(name, __): name;
+		default: "";
+	}
+}
+
+getNodeConstructorName(g : EGraph, id : int) -> string {
+	getConstructor(getNodeDef(g, id)) 
+}
+
+createUnionConsNode(g : EGraph, union : HUnion, infos : Set<EContext>) -> int {
+	params = map(union.typars, \__ -> makeTypeVariable(g, makeSet()));
+	newCons = Constructor(union.name, params);
+	insertNode(g, newCons, infos);
+}
+
+
+// Creates a Constructor node for either a union or a struct type
+createConstructorNode(g : EGraph, typeName : string, infos : Set<EContext>) -> Constructor {
+	// First check if it's a union
+	switch (lookupTree(g.interface.unions, typeName)) {
+		Some(union): Constructor(union.name, map(union.typars, \__ -> makeTypeVariable(g, infos)));
+		None(): {
+			// Check if it's a struct
+			switch (lookupTree(g.interface.structs, typeName)) {
+				Some(struct): {
+					// For structs, create fresh type variables for each field
+					params = map(struct.typars, \__ -> makeTypeVariable(g, infos));
+					Constructor(typeName, params);
+				}
+				None(): {
+					if (typeName == "array" || typeName == "ref") {
+						// Flow type - create a parameterless constructor
+						Constructor(typeName, [makeTypeVariable(g, infos)]);
+					} else {
+						// Neither union nor struct - create a parameterless constructor
+						// println("Invariant violated: " + typeName + " is not a union or struct");
+						Constructor(typeName, []);
+					}
+				}
+			}
+		}
+	}
+}
+
+// Extracts all type variables mentioned in an eclass node
+getNodeTyvars(g : EGraph, acc : Set<int>, eclass : int) -> Set<int> {
+	// Get the node definition for this eclass
+	node = getNodeDef(g, eclass);
+
+	// Process based on node type
+	switch (node) {
+		Variable(id): {
+			// This is a type variable, add its ID to the accumulator
+			insertSet(acc, id)
+		}
+		Constructor(__, params): {
+			// For constructor nodes, recursively collect type variables from all parameters
+			fold(params, acc, \a, param -> getNodeTyvars(g, a, param))
+		}
+		Function(args, ret): {
+			// For function nodes, collect from both arguments and return type
+			argsAcc = fold(args, acc, \a, arg -> getNodeTyvars(g, a, arg));
+			// And then collect from the return type
+			getNodeTyvars(g, argsAcc, ret)
+		}
+	}
+}
+
+// When creating a new alternative set, record dependencies (or remove them)
+registerAlternativeComponents(g : EGraph, alternativeId : int) -> void {
+	mainclass = getEClassDef(g, alternativeId);
+	// Get all type variables mentioned in this eclass
+	tyvars = getNodeTyvars(g, makeSet(), alternativeId);
+
+	// For each type variable found, record the dependency
+	iterSet(tyvars, \componentId -> {
+		componentRoot = findEGraphRoot(g, componentId);
+		eclass = getEClassDef(g, componentRoot);
+		newPart = if (isEmptySet(mainclass.alternatives)) {
+			// If we do not have alternatives, remove the dependencies
+			removeSet(eclass.partOfAlternatives, alternativeId);
+		} else {
+			// This is a type variable, add its ID to the accumulator
+			insertSet(eclass.partOfAlternatives, alternativeId);
+		};
+		newEclass = EClass(eclass with partOfAlternatives = newPart);
+
+		updateEClass(g, componentRoot, newEclass);
+	});
+}
+
+isPartOfUndecidedAlternatives(g : EGraph, eclass : EClass) -> bool {
+	// Check if any of the alternatives are not top decided nodes
+	existsSet(eclass.partOfAlternatives, \alternativeId -> {
+		// Check if this node is NOT a top decided node
+		!isTopDecidedNode(g, alternativeId)
+	})
+}

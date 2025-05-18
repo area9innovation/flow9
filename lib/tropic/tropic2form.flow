@@ -2851,64 +2851,96 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				inside : Maybe<TMouseInside> = tryExtractStruct(ia, TMouseInside(make(false), false));
 				mousexy : Maybe<TMouseXY> = tryExtractStruct(ia, TMouseXY(make(Point(0.0, 0.0))));
 
-				move = if (isSome(inside) && isSome(mousexy)) {
-						xyb = cast(mousexy : Maybe -> Some<TMouseXY>).value.point;
-						ins = cast(inside : Maybe -> Some<TMouseInside>).value;
+				updateInside = \value -> {
+					maybeApply(inside, \ins -> {
+						nextDistinct(ins.inside, value);
+					});
+				}
 
-						[
-							MouseMove2(\handled, mi -> {
-								m = mi();
-								nextDistinct(xyb, Point(m.x, m.y));
-								nextDistinct(ins.inside, !handled && m.inside);
-								handled || (m.inside && ins.handle)
-							})
-						]
-					} else if (isSome(inside)) {
-						ins = cast(inside : Maybe -> Some<TMouseInside>).value;
+				updateMouseXY = \x, y -> {
+					// On touch device, this is useful
+					if (mobile) {
+						maybeApply(mousexy, \mxy -> {
+							nextDistinct(mxy.point, Point(x, y));
+						});
+					}
+				}
 
-						pendingInside : ref Maybe = ref None();
+				handleMouseDown = \mi, down -> {
+					// At this point, we know it was not handled and we are inside.
+					updateInside(true);
+					updateMouseXY(mi.x, mi.y);
+					nextDistinct(down, true);
+				}
 
-						if (ins.handle && (cpp || js || flash) && !mobile)
-							[
-								RollOut(\mouseFn -> pendingInside := Some(false)),
-								RollOver(\mouseFn -> pendingInside := Some(true)),
-								// Mock to block underlaying TMouseInside elements
-								// TODO: Implement a better solution
-								MouseMove2(\handled, __ -> {
-									eitherMap(^pendingInside, \value -> {
-										pendingInside := None();
-										nextDistinct(ins.inside, value && !handled);
+				handleMouseUp = \mi, down -> {
+					nextDistinct(down, false);
 
-										handled || value
-									}, handled || getValue(ins.inside));
-								})
-							]
-						else
+					// If we also monitor inside, be sure to update this
+					m = mi();
+
+					// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
+					updateInside(!mobile && m.inside);
+					updateMouseXY(m.x, m.y);
+					m.inside;
+				}
+
+				move = eitherFn(inside,
+					\ins -> eitherFn(mousexy,
+						\mxy -> {
 							[
 								MouseMove2(\handled, mi -> {
-									if (handled) {
-										// We mark that we are not inside, because something handled this event above us
-										nextDistinct(ins.inside, false);
-										true
-									} else {
-										m = mi();
-										nextDistinct(ins.inside, m.inside);
-										m.inside && ins.handle
-									}
+									m = mi();
+									nextDistinct(mxy.point, Point(m.x, m.y));
+									nextDistinct(ins.inside, !handled && m.inside);
+									handled || (m.inside && ins.handle)
 								})
 							]
-					} else if (isSome(mousexy)) {
-						xyb = cast(mousexy : Maybe -> Some<TMouseXY>).value.point;
+						},
+						\ -> {
+							pendingInside : ref Maybe = ref None();
 
+							if (ins.handle && (cpp || js) && !mobile)
+								[
+									RollOut(\mouseFn -> pendingInside := Some(false)),
+									RollOver(\mouseFn -> pendingInside := Some(true)),
+									// Mock to block underlaying TMouseInside elements
+									// TODO: Implement a better solution
+									MouseMove2(\handled, __ -> {
+										eitherMap(^pendingInside, \value -> {
+											pendingInside := None();
+											nextDistinct(ins.inside, value && !handled);
+
+											handled || value
+										}, handled || getValue(ins.inside));
+									})
+								]
+							else
+								[
+									MouseMove2(\handled, mi -> {
+										if (handled) {
+											// We mark that we are not inside, because something handled this event above us
+											nextDistinct(ins.inside, false);
+											true
+										} else {
+											m = mi();
+											nextDistinct(ins.inside, m.inside);
+											m.inside && ins.handle
+										}
+									})
+								]
+						}),
+					\ -> eitherMap(mousexy, \mxy ->
 						[
 							IgnoreHitTest(MouseMove2(\__, mi -> {
 								m = mi();
-								nextDistinct(xyb, Point(m.x, m.y));
+								nextDistinct(mxy.point, Point(m.x, m.y));
 								false;
 							}))
-						]
-					} else
-						[];
+						],
+						[]
+					)
+				);
 
 				interactives = fold(ia, move, \acc, i : TInteractivity -> {
 					switch (i) {
@@ -2918,39 +2950,12 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 							concat(acc, [
 								MouseDown(\mi -> {
 									if (mi.inside()) {
-										// At this point, we know it was not handled and we are inside.
-										if (isSome(inside)) {
-											inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-											nextDistinct(inb, true);
-										}
-
-										// On touch device, this is useful
-										if (mobile && isSome(mousexy)) {
-											mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-											nextDistinct(mxy.point, Point(mi.x, mi.y));
-										}
-
-										nextDistinct(down, true);
+										handleMouseDown(mi, down);
 									}
 									false
 								}),
 								MouseUp2(\handled, mi -> {
-									nextDistinct(down, false);
-
-									// If we also monitor inside, be sure to update this
-									m = mi();
-									if (isSome(inside)) {
-										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, !mobile && m.inside);
-									}
-
-									// On touch device, this is useful
-									if (mobile && isSome(mousexy)) {
-										mxy = cast(mousexy : Maybe<TMouseXY> -> Some<TMouseXY>).value;
-										nextDistinct(mxy.point, Point(m.x, m.y));
-									}
-
+									handleMouseUp(mi, down);
 									handled
 								})
 							]);
@@ -2958,39 +2963,12 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 							concat(acc, [
 								MouseRightDown(\mi -> {
 									if (mi.inside()) {
-										// At this point, we know it was not handled and we are inside.
-										if (isSome(inside)) {
-											inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-											nextDistinct(inb, true);
-										}
-
-										// On touch device, this is useful
-										if (mobile && isSome(mousexy)) {
-											mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-											nextDistinct(mxy.point, Point(mi.x, mi.y));
-										}
-
-										nextDistinct(down, true);
+										handleMouseDown(mi, down);
 									}
 									false
 								}),
 								MouseRightUp2(\handled, mi -> {
-									nextDistinct(down, false);
-
-									// If we also monitor inside, be sure to update this
-									m = mi();
-									if (isSome(inside)) {
-										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, !mobile && m.inside);
-									}
-
-									// On touch device, this is useful
-									if (mobile && isSome(mousexy)) {
-										mxy = cast(mousexy : Maybe<TMouseXY> -> Some<TMouseXY>).value;
-										nextDistinct(mxy.point, Point(m.x, m.y));
-									}
-
+									handleMouseUp(mi, down);
 									handled
 								})
 							]);
@@ -2998,153 +2976,42 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 							concat(acc, [
 								MouseMiddleDown(\mi -> {
 									if (mi.inside()) {
-										// At this point, we know it was not handled and we are inside.
-										if (isSome(inside)) {
-											inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-											nextDistinct(inb, true);
-										}
-
-										// On touch device, this is useful
-										if (mobile && isSome(mousexy)) {
-											mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-											nextDistinct(mxy.point, Point(mi.x, mi.y));
-										}
-
-										nextDistinct(down, true);
+										handleMouseDown(mi, down);
 									}
 									false
 								}),
 								MouseMiddleUp2(\handled, mi -> {
-									nextDistinct(down, false);
-
-									// If we also monitor inside, be sure to update this
-									m = mi();
-									if (isSome(inside)) {
-										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, !mobile && m.inside);
-									}
-
-									// On touch device, this is useful
-									if (mobile && isSome(mousexy)) {
-										mxy = cast(mousexy : Maybe<TMouseXY> -> Some<TMouseXY>).value;
-										nextDistinct(mxy.point, Point(m.x, m.y));
-									}
-
+									handleMouseUp(mi, down);
 									handled
 								})
 							]);
 						TMouseDown(down): {
 							concat(acc, [
 								MouseClick(\mi -> {
-									// At this point, we know it was not handled and we are inside.
-									if (isSome(inside)) {
-										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-										nextDistinct(inb, true);
-									}
-
-									// On touch device, this is useful
-									if (mobile && isSome(mousexy)) {
-										mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-										nextDistinct(mxy.point, Point(mi.x, mi.y));
-									}
-
-									nextDistinct(down, true);
+									handleMouseDown(mi, down);
 								}),
 								MouseUp2(\handled, mi -> {
-									nextDistinct(down, false);
-
-									// If we also monitor inside, be sure to update this
-									m = mi();
-									if (isSome(inside)) {
-										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, !handled && !mobile && m.inside);
-									}
-
-									// On touch device, this is useful
-									if (mobile && isSome(mousexy)) {
-										mxy = cast(mousexy : Maybe<TMouseXY> -> Some<TMouseXY>).value;
-										nextDistinct(mxy.point, Point(m.x, m.y));
-									}
-
-									handled || m.inside;
-								}),
+									handleMouseUp(mi, down) || handled;
+								})
 							]);
 						}
 						TMouseRightDown(down): {
 							concat(acc, [
 								MouseRightClick(\mi -> {
-									// At this point, we know it was not handled and we are inside.
-									if (isSome(inside)) {
-										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-										nextDistinct(inb, true);
-									}
-
-									// On touch device, this is useful
-									if (mobile && isSome(mousexy)) {
-										mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-										nextDistinct(mxy.point, Point(mi.x, mi.y));
-									}
-
-									nextDistinct(down, true);
+									handleMouseDown(mi, down);
 								}),
 								MouseRightUp2(\handled, mi -> {
-									nextDistinct(down, false);
-
-									// If we also monitor inside, be sure to update this
-									m = mi();
-									if (isSome(inside)) {
-										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, !mobile && m.inside);
-									}
-
-									// On touch device, this is useful
-									if (mobile && isSome(mousexy)) {
-										mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-										nextDistinct(mxy.point, Point(m.x, m.y));
-									}
-
-									handled || m.inside;
-								}),
+									handleMouseUp(mi, down) || handled;
+								})
 							]);
 						}
 						TMouseMiddleDown(down): {
 							concat(acc, [
 								MouseMiddleClick(\mi -> {
-									// At this point, we know it was not handled and we are inside.
-									if (isSome(inside)) {
-										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-										nextDistinct(inb, true);
-									}
-
-									// On touch device, this is useful
-									if (mobile && isSome(mousexy)) {
-										mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-										nextDistinct(mxy.point, Point(mi.x, mi.y));
-									}
-
-									nextDistinct(down, true);
+									handleMouseDown(mi, down);
 								}),
 								MouseMiddleUp2(\handled, mi -> {
-									nextDistinct(down, false);
-
-									// If we also monitor inside, be sure to update this
-									m = mi();
-									if (isSome(inside)) {
-										inb = cast(inside : Maybe -> Some<TMouseInside>).value.inside;
-										// false passed instead of m.inside, because it may lead to stucked hovered state for buttons on mobile.
-										nextDistinct(inb, !mobile && m.inside);
-									}
-
-									// On touch device, this is useful
-									if (mobile && isSome(mousexy)) {
-										mxy = cast(mousexy : Maybe -> Some<TMouseXY>).value;
-										nextDistinct(mxy.point, Point(m.x, m.y));
-									}
-
-									handled || m.inside;
+									handleMouseUp(mi, down) || handled;
 								}),
 							]);
 						}

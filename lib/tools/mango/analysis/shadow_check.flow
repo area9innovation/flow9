@@ -1,0 +1,192 @@
+import tools/mango/rules; // findRules is here
+import tools/mango/analysis/exponential; // flattenChoice
+import tools/mango/mango_interpreter; // For mangoParse
+
+export {
+	detectShadowedChoices(grammar: Term) -> [string];
+	// Check if termA can match the string termB
+	checkTermShadowsAgainstString(termA: Term, stringB: string, context: DetectContext) -> Maybe<string>;
+}
+
+// Context for recursive traversal
+DetectContext(
+	currentRule: Maybe<string>,
+	rules: Tree<string, Term>,
+	warnings: [string]
+);
+
+
+// --- Main Function ---
+
+detectShadowedChoices(grammar: Term) -> [string] {
+	//println("--- Starting Shadow Detection ---");
+	rulesMap = findRules(makeTree(), grammar);
+	initialContext = DetectContext(None(), rulesMap, []);
+	finalContext = traverseForShadowing(grammar, initialContext);
+	iter(finalContext.warnings, println);
+	finalContext.warnings;
+}
+
+// --- Detection Phase ---
+
+// Recursive traversal function
+traverseForShadowing(term: Term, context: DetectContext) -> DetectContext {
+	switch (term) {
+		Choice(t1, t2): {
+			// First, check this choice node itself
+			alternatives = flattenChoice(term); // Gets [A, B, C] from A | (B | C) etc.
+			newWarnings = checkAlternatives(alternatives, context);
+			updatedContext = DetectContext(context with warnings = newWarnings);
+
+			// Then, recurse into children
+			ctx1 = traverseForShadowing(t1, updatedContext);
+			traverseForShadowing(t2, ctx1); // Accumulate warnings
+		}
+		Rule(id, t1, t2): {
+			// Update context with current rule name and recurse
+			ruleContext = DetectContext(context with currentRule = Some(id));
+			ctx1 = traverseForShadowing(t1, ruleContext);
+			traverseForShadowing(t2, ctx1);
+		}
+		// Recurse into structural nodes
+		Sequence(t1, t2): traverseForShadowing(t2, traverseForShadowing(t1, context));
+		Optional(t): traverseForShadowing(t, context);
+		Plus(t): traverseForShadowing(t, context);
+		Star(t): traverseForShadowing(t, context);
+		Negate(t): traverseForShadowing(t, context);
+		PushMatch(t): traverseForShadowing(t, context);
+		Lower(t): traverseForShadowing(t, context);
+		Error(t): traverseForShadowing(t, context);
+		Precedence(t1, t2): {
+			// Pretend it is choice
+			traverseForShadowing(Choice(t1, t2), context)
+		}
+		GrammarFn(__, t1, t2, t3): traverseForShadowing(t3, traverseForShadowing(t2, traverseForShadowing(t1, context)));
+
+		// Base cases: Leaf nodes or nodes without relevant children
+		String(__): context;
+		Range(__, __): context;
+		Variable(__): context;
+		Construct(__, __): context;
+		StackOp(__): context;
+		GrammarCall(__, t): traverseForShadowing(t, context); // Recurse into argument term
+	}
+}
+
+// Check pairs of alternatives within a single choice
+checkAlternatives(alternatives: [Term], context: DetectContext) -> [string] {
+	foldi(alternatives, context.warnings, \i, currentWarnings, alt_A -> {
+		// Compare alt_A with subsequent alternatives alt_B
+		fold(subrange(alternatives, i + 1, length(alternatives) - i - 1), currentWarnings, \innerWarnings, alt_B -> {
+			// Use the more comprehensive shadow pair checking
+			checkTermShadows(alt_A, alt_B, 0, context, innerWarnings);
+		});
+	});
+}
+
+// Check if termA potentially shadows termB and generate a warning message if needed
+checkTermShadows(termA: Term, termB: Term, depth : int, context: DetectContext, warnings: [string]) -> [string] {
+	// Check if termA shadows termB when termB is a string literal
+	// This is common with identifier rules (id) shadowing keywords
+	switch (termB) {
+		String(s): {
+			variableVsStringWarning = checkTermShadowsAgainstString(termA, s, context);
+			switch (variableVsStringWarning) {
+				Some(warningText): arrayPush(warnings, warningText);
+				None(): warnings;
+			}
+		}
+		Choice(a, b): {
+			// Check if termA shadows either alternative
+			warnings2 = checkTermShadows(termA, a, depth, context, warnings);
+			checkTermShadows(termA, b, depth, context, warnings2);
+		}
+		Variable(v): {
+			if (depth < 10) {
+				mdef = lookupTree(context.rules, v);
+				mdef ?? {
+					checkTermShadows(termA, mdef, depth + 1, context, warnings);
+				} : warnings;
+			} else warnings;
+		}
+		Star(tt): {
+			// Check if termA shadows the inner term
+			checkTermShadows(termA, tt, depth + 1, context, warnings);
+		}
+		Plus(tt): {
+			// Check if termA shadows the inner term
+			checkTermShadows(termA, tt, depth + 1, context, warnings);
+		}
+		Optional(tt): {
+			// Check if termA shadows the inner term
+			checkTermShadows(termA, tt, depth + 1, context, warnings);
+		}
+		Lower(tt): {
+			// Check if termA shadows the inner term
+			checkTermShadows(termA, tt, depth + 1, context, warnings);
+		}
+		Rule(id, term1, term2): {
+			checkTermShadows(termA, term2, depth + 1, context, warnings);
+		}
+		default: warnings;
+	}
+}
+
+// Build a term with all rules from the environment embedded
+// This allows a term to be interpreted in isolation with all necessary rules defined
+buildTermWithEnvironment(context: DetectContext, term: Term) -> Term {
+	// Build a nested Term with all rules defined and the input term at the end
+	foldTree(context.rules, term, \ruleName, ruleDef, acc -> {
+		Rule(ruleName, ruleDef, acc);
+	});
+}
+
+// Check if a term shadows a specific string
+checkTermShadowsAgainstString(termA: Term, stringB: string, context: DetectContext) -> Maybe<string> {
+	if (stringB == "") {
+		// Empty strings don't cause shadowing concerns
+		None();
+	} else {
+		// Create a test environment that will be used for parsing
+		env = makeMEnv("", stringB, \e -> e, 0);
+		
+		// Build a self-contained term with all rule definitions
+		augmentedTerm = buildTermWithEnvironment(context, termA);
+		
+		// Manually parse using the augmented Term rather than raw termA
+		resultEnv = parse(env, augmentedTerm);
+		
+		// The parse succeeds if we didn't fail and we consumed all input
+		if (!resultEnv.fail && resultEnv.i == strlen(stringB)) {
+			// Generate warning since termA successfully consumed all of stringB
+			makeWarning(termA, String(stringB), stringB, context);
+		} else {
+			// No shadowing detected
+			None();
+		}
+	}
+}
+
+// Generate warning message for shadowing
+makeWarning(theTermA: Term, theTermB: Term, shadowedString: string, theContext: DetectContext) -> Maybe<string> {
+	ruleCtx = switch (theContext.currentRule) {
+		Some(r): "in rule '" + r + "'";
+		None(): "at top level";
+	};
+	
+	// Determine description based on term type
+	descriptionA = switch (theTermA) {
+		Variable(id): "Identifier rule '" + id + "'";
+		String(__): "String literal";
+		Range(__, __): "Character range";
+		default: "Term";
+	};
+	
+	warningText = "WARNING: " + descriptionA + " shadows string literal " + ruleCtx + ".\n" + 
+		"  Alternative 1 (shadowing): " + summarizeTerm(theTermA) + "\n" + 
+		"  Alternative 2 (shadowed):  " + summarizeTerm(theTermB) + "\n" + 
+		"  Problem: The first alternative will match '" + shadowedString + "' before the second alternative is tried.\n" + 
+		"  Suggestion: Consider reordering the alternatives, or making the rule patterns more specific.";
+		
+	Some(warningText);
+}

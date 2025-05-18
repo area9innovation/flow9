@@ -1,0 +1,93 @@
+import tools/flow9_retro/backends/back_ast;
+import lingo/linecolumn;
+import fs/filesystem;
+import string_utils;
+
+export {
+	// The general info about a backend.
+	BackendSpec(
+		keywords : Set<string>, // A set of target language keywords
+		renamingTypePrefix : string, // For remaining types
+		renamingPrefix : string, // For renaming top-level ids
+		renamingSuffix : string, // For renaming top-level ids
+		natives : Set<string>,  // A set of all supported natives
+		onError : (msg : string) -> void,
+	);
+
+	// Initializes a backend structure
+	makeBackend(
+		name : string,
+		keywords : [string],
+		generators : [BackGen],
+		info : ?,
+	) -> Backend<?>;
+
+	// Makes a default BackendSpec
+	makeBackendSpec(
+		backend : Backend<?>,
+		renamingTypePrefix : string, // For remaining types
+		renamingPrefix : string, // For renaming top-level ids
+		renamingSuffix : string, // For renaming top-level ids
+		natives : [string],
+	) -> BackendSpec;
+
+	// Prepare an error message with position inside a source file.
+	makeErrorMessage(pos : int, file : string, error : string) -> string;
+}
+
+makeBackend(
+		name : string,
+		keywords : [string],
+		generators : [BackGen],
+		info : ?
+) -> Backend<?> {
+	Backend(
+		buildSet(keywords),
+		fold(generators, makeTree(), \acc, gen : BackGen -> {
+			// We expand short form for types
+			fntype = switch (gen.type) {
+				BTypeFunction(args, returnType): gen.type;
+				default: {
+					if (gen.type == bvoidType) bvoidType
+					else BTypeFunction([gen.type, gen.type], gen.type)
+				}
+			};
+			ngen = BackGen(gen with type = fntype);
+			treePushToArrayValue(acc, gen.name, ngen)
+		}),
+		println,
+		ref makeSet(),
+		info
+	)
+}
+
+makeBackendSpec(
+		backend : Backend<?>,
+		renamingTypePrefix : string,
+		renamingPrefix : string, // For renaming top-level ids
+		renamingSuffix : string, // For renaming top-level ids
+		natives : [string],
+	) -> BackendSpec {
+	BackendSpec(
+		backend.keywords,
+		renamingTypePrefix,
+		renamingPrefix,
+		renamingSuffix,
+		buildSet(natives),
+		backend.onError
+	)
+}
+
+makeErrorMessage(pos : int, file : string, error : string) -> string {
+	resolver = makeLineResolver(getFileContent(file));
+	linecol = findLine(resolver, pos);
+
+	indentation = strLeft(linecol.line, linecol.lineIndex - 1);
+	spaced = stringFoldChar(indentation, "", \acc, s -> {
+		acc + if (s == "\t") s else " ";
+	});
+
+	file + ":" + i2s(linecol.lineno) + ":" + i2s(linecol.column) + ": " + error
+	+ "\n" + linecol.line
+	+ "\n" + spaced + "^";
+}

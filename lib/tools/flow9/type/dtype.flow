@@ -1,0 +1,132 @@
+import tools/flow9/type/types;
+import tools/flow9/type/pretty;
+import tools/flow9/type/instantiate;
+import tools/flow9/desugar/dexp;
+
+export {
+	dtype2htype(structs : Tree<string, HStruct>, unions : Tree<string, HUnion>, dtype : DType) -> HType;
+	dstruct2hstruct(env : HModuleInterface, dstruct : DStruct) -> HStruct;
+	dunion2hunionRaw(env : HModuleInterface, dunion : DUnion) -> HUnion;
+	expandHUnion(env : HModuleInterface, onError : (string) -> void, union : HUnion) -> HUnion;
+}
+
+dtype2htype(structs : Tree<string, HStruct>, unions : Tree<string, HUnion>, dtype : DType) -> HType {
+	cons = \name, args -> HTypeCons(name, args);
+	switch (dtype) {
+		DArrayType(type, info): cons("array", [dtype2htype(structs, unions, type)]);
+		DAutoType(info): cons("auto", []);
+		DBoolType(info): cons("bool", []);
+		DDoubleType(info): cons("double", []);
+		DFlowType(info): cons("flow", []);
+		DFnType(args, returnType, info): HTypeFn(map(args, \a -> dtype2htype(structs, unions, a)), dtype2htype(structs, unions, returnType));
+		DIntType(info): cons("int", []);
+		DNativeType(info): cons("native", []);
+		DPolyType(id, info): HTypeVar(id);
+		DRefType(type, info): cons("ref", [dtype2htype(structs, unions, type)]);
+		DStringType(info): cons("string", []);
+		DTypename(uid, typars, info): {
+			// OK, instantiate implicit type parameters
+			realTypars = if (typars == []) {
+				mstruct = lookupTree(structs, uid);
+				switch (mstruct) {
+					None(): {
+						munion = lookupTree(unions, uid);
+						switch (munion) {
+							None(): [];
+							Some(ud): map(ud.typars, \__ -> cons("auto", []));
+						}
+					}
+					Some(s): map(s.typars, \__ -> cons("auto", []));
+				}
+			} else map(typars, \t -> dtype2htype(structs, unions, t));
+			HTypeCons(uid, realTypars);
+		}
+		DVoidType(info): cons("void", []);
+	}
+}
+
+dstruct2hstruct(env : HModuleInterface, dstruct : DStruct) -> HStruct {
+	HStruct(dstruct.uid, dstruct.typars, map(dstruct.args, \arg -> HStructArg(arg.field, arg.ismutable, dtype2htype(env.structs, env.unions, arg.type))));
+}
+
+dunion2hunionRaw(env : HModuleInterface, dunion : DUnion) -> HUnion {
+	HUnion(dunion.uid, dunion.typars, map(dunion.types, \t -> {
+		HTypeCons(t.uid, map(t.typars, \tt -> dtype2htype(env.structs, env.unions, tt)));
+	}));
+}
+
+expandHUnion(env : HModuleInterface, onError : (string) -> void, union : HUnion) -> HUnion {
+    seen : Set<string> = makeSet();
+    expandedTypes = expandUnionTypes(env, onError, union.name, union.typars, seen, HTypeSubst(makeTree()));
+    HUnion(union.name, union.typars, expandedTypes);
+}
+
+expandUnionTypes(
+    env : HModuleInterface,
+	onError : (string) -> void, 
+    unionName : string,
+    parentTypars : [string],
+    seen : Set<string>,
+    parentSubst : HTypeSubst
+) -> [HTypeCons] {
+    if (containsSet(seen, unionName)) {
+        onError("Circular dependency in union " + unionName);
+        [];
+    } else {
+        seen1 = insertSet(seen, unionName);
+        munion = lookupTree(env.rawUnions, unionName);
+        switch (munion) {
+            None(): {
+                onError("Union " + unionName + " not found");
+                [];
+            }
+            Some(union): {
+                // Create type parameter substitution
+                unionTyparSubst = makeTypeParamSubst(union.typars, parentTypars, parentSubst);
+                
+                // Expand each type in the union
+                fold(union.types, [], \acc, type -> {
+                    expanded = applySubst(unionTyparSubst, type);
+                    switch (expanded) {
+                        HTypeCons(name, args): {
+                            if (containsKeyTree(env.structs, name)) {
+                                arrayPush(acc, expanded);
+                            } else if (containsKeyTree(env.rawUnions, name)) {
+                                concat(acc, expandUnionTypes(env, onError, name, union.typars, seen1, unionTyparSubst));
+                            } else {
+                                onError("Type " + name + " in union " + unionName + " not defined as struct nor union, " + prettyHUnion(union, false));
+                                acc;
+                            }
+                        }
+                        default: acc;
+                    }
+                });
+            }
+        }
+    }
+}
+
+// Creates a substitution mapping from union type parameters to their actual types
+// Example: For a union U<A, B> with parent V<X>, if V<int> is instantiated,
+// and U's A maps to V's X, then A -> int in the resulting substitution
+makeTypeParamSubst(
+    unionTypars : [string],      // The type parameters of current union
+    parentTypars : [string],     // The type parameters from parent context
+    parentSubst : HTypeSubst     // The substitution from parent context
+) -> HTypeSubst {
+    // Map each type parameter to either:
+    // - its substitution from parent context if it exists
+    // - or a fresh type variable if not
+    subst = foldi(unionTypars, makeTree(), \i, acc, typar -> {
+        mappedType = if (i < length(parentTypars)) {
+            // Get the type from parent's substitution
+            parentTyvar = parentTypars[i];
+            applySubst(parentSubst, HTypeVar(parentTyvar));
+        } else {
+            // No mapping exists, create fresh type variable
+            HTypeCons("auto", [])
+        }
+        setTree(acc, typar, mappedType)
+    });
+    HTypeSubst(subst)
+}

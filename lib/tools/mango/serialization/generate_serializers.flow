@@ -1,0 +1,314 @@
+import tools/mango/type/types;
+import tools/mango/type/type_eval;  // For type utility functions
+import string;
+import text/blueprint;
+import tools/mango/serialization/serialize_runtime;
+import tools/mango/serialization/util;
+
+export {
+	// Generate serialization code for the given types
+	// Returns the content to be saved to a file
+	generateSerializers(types : [MType], modulePrefix : string) -> string;
+}
+
+// Generate all serialization code for the given types
+generateSerializers(types : [MType], modulePrefix : string) -> string {
+	println("Generating serializers for " + modulePrefix + " with " + i2s(length(types)) + " types");
+	// Find the root type (first union or last type)
+	rootType = fold(types, types[length(types) - 1], \acc, t -> {
+		switch (t) {
+			MTypeUnion(name, __): if (acc == types[length(types) - 1]) t else acc;
+			default: acc;
+		}
+	});
+
+	rootTypeName = typeName2string(rootType);
+
+	// Process all types in a single pass
+	typeResults = processTypeSerializers(types);
+	
+	// Generate imports
+	println("Generating imports with modulePrefix: " + modulePrefix);
+	imports = blueprint(
+		"import tools/mango/serialization/serialize_runtime;
+		import %modulePrefix%_types;
+		import %modulePrefix%_opcodes;\n\n",
+		["modulePrefix", modulePrefix]
+	);
+
+	// Generate exports
+	typeFunctions = strGlue(map(types, \t -> {
+		switch (t) {
+			MTypeUnion(name, __): "serialize" + name;
+			MTypeConstructor(name, __): "serialize" + name;
+			default: "";
+		}
+	}), ", ");
+
+	exports = blueprint(
+		"export {
+			// Top-level serialization function
+			serializeToMemory(ast : %rootTypeName) -> Memory;
+
+			// Individual serialization functions
+			%typeFunctions : (SerializeState, ?) -> int;
+		}\n\n",
+		["rootTypeName", rootTypeName, 
+		 "typeFunctions", typeFunctions]
+	);
+
+	// Generate top-level serializer
+	topLevelSerializer = generateTopLevelSerializer(rootType, types, modulePrefix);
+
+	// Combine everything
+	imports + exports + typeResults.first + typeResults.second + topLevelSerializer;
+}
+
+// Process all types in a single pass
+processTypeSerializers(types : [MType]) -> Pair<string, string> {
+	fold(types, Pair("", ""), \acc, t -> {
+		switch (t) {
+			MTypeConstructor(__, __): Pair(
+				acc.first + generateStructSerializer(t, types) + "\n",
+				acc.second
+			);
+			MTypeUnion(__, __): Pair(
+				acc.first, 
+				acc.second + generateUnionSerializer(t, types) + "\n"
+			);
+			default: acc;
+		}
+	});
+}
+
+// Generate a serializer for a struct type using blueprint
+generateStructSerializer(structType : MTypeConstructor, types : [MType]) -> string {
+	name = structType.name;
+	fields = structType.args;
+	
+	// Generate serialization code for each field
+	fieldSerializers = strGlue(mapi(fields, \i, field -> {
+		"// Serialize field " + i2s(i) + "\n" +
+		"field" + i2s(i) + "Index = " + generateFieldSerializer("val.", field, i) + ";"
+	}), "\n\t");
+
+	// Generate the appropriate opcode handling based on field count
+	opcodeGen = generateOpcodeCode(name, fields);
+
+	// Use blueprint for the entire serializer function
+	blueprint(
+		"// Serializes a %name struct
+		serialize%name(state : SerializeState, val : %name) -> int {
+			%fieldSerializers
+
+			// Create the struct opcode
+			%opcodeGen
+		}",
+		["name", name,
+		 "fieldSerializers", fieldSerializers,
+		 "opcodeGen", opcodeGen]
+	);
+}
+
+// Handles opcode generation based on field count
+generateOpcodeCode(structName : string, fields : [MType]) -> string {
+	if (length(fields) <= 3) {
+		generateDirectOpcode(structName, fields);
+	} else {
+		generateWithContinuations(structName, fields);
+	}
+}
+
+// Generate code for structs with <= 3 fields (direct opcode)
+generateDirectOpcode(structName : string, fields : [MType]) -> string {
+	// Create the appropriate field parameters based on how many fields we have
+	fieldParams = strGlue(
+		concatA([
+			map(enumFromTo(0, min(length(fields) - 1, 2)), \i -> "field" + i2s(i) + "Index"),
+			generate(3 - min(length(fields), 3), 3, \__ -> "-1")
+		]), 
+		", "
+	);
+	
+	blueprint(
+		"opcode = Opcode(OP_%STRUCT_NAME%, %FIELD_PARAMS);
+		index = ^(state.currentIndex);
+		state.opcodes := arrayPush(^(state.opcodes), opcode);
+		state.currentIndex := index + 1;
+		index;",
+		["STRUCT_NAME", toUpperCase(structName),
+		 "FIELD_PARAMS", fieldParams]
+	);
+}
+
+// Generate code for structs with > 3 fields (using continuation opcodes)
+generateWithContinuations(structName : string, fields : [MType]) -> string {
+	// Generate the initial opcode for the first 3 fields
+	baseCode = blueprint(
+		"// This struct has more than 3 fields - create linked opcodes
+		// First opcode with first 3 fields
+		opcode = Opcode(OP_%STRUCT_NAME%, field0Index, field1Index, field2Index);
+
+		// Add the opcode and get its index
+		index = ^(state.currentIndex);
+		state.opcodes := arrayPush(^(state.opcodes), opcode);
+		state.currentIndex := index + 1;",
+		["STRUCT_NAME", toUpperCase(structName)]
+	);
+
+	// Start the recursive processing from index 3
+	continuationCode = processContinuationFields(fields, 3, "");
+
+	// Combine base code with continuations and return
+	finalCode = baseCode + continuationCode + "\n\t\t// Return the index of the main struct opcode\n\t\tindex;";
+	finalCode;
+}
+
+
+// Define a recursive function for processing remaining fields
+processContinuationFields(fields, startIndex, acc) -> string {
+	if (startIndex >= length(fields)) acc
+	else {
+		// Determine how many more fields we have in this batch
+		newCode = if (startIndex + 2 < length(fields)) {
+			// Three more fields
+			blueprint(
+				"// Continuation opcode for more fields
+				opcode = Opcode(OP_CONT, field%i1Index, field%i2Index, field%i3Index);",
+				["i1", i2s(startIndex), "i2", i2s(startIndex+1), "i3", i2s(startIndex+2)]
+			);
+		} else if (startIndex + 1 < length(fields)) {
+			// Two more fields
+			blueprint(
+				"// Continuation opcode for more fields
+				opcode = Opcode(OP_CONT, field%i1Index, field%i2Index, -1);",
+				["i1", i2s(startIndex), "i2", i2s(startIndex+1)]
+			);
+		} else {
+			// One more field
+			blueprint(
+				"// Continuation opcode for more fields
+				opcode = Opcode(OP_CONT, field%i1Index, -1, -1);",
+				["i1", i2s(startIndex)]
+			);
+		};
+		
+		// Add code to record the opcode
+		nextAcc = acc + newCode + 
+			"\n\t\tcontIndex = ^(state.currentIndex);\n" +
+			"\t\tstate.opcodes := arrayPush(^(state.opcodes), opcode);\n" +
+			"\t\tstate.currentIndex := contIndex + 1;\n" +
+			"\t\tindex = contIndex;\n";
+		
+		// Recursively process the next group of fields
+		processContinuationFields(fields, startIndex + 3, nextAcc);
+	}
+};
+
+// Generate code for serializing a field based on its type
+generateFieldSerializer(prefix : string, field : MType, index : int) -> string {
+	switch (field) {
+		MTypeInt(): "serializeInt(state, " + prefix + "int" + i2s(index) + ")";
+		MTypeDouble(): "serializeDouble(state, " + prefix + "double" + i2s(index) + ")";
+		MTypeString(): "serializeString(state, " + prefix + "string" + i2s(index) + ")";
+		MTypeBool(): "serializeBool(state, " + prefix + "bool" + i2s(index) + ")";
+		MTypeStar(innerType): "serializeArray(state, " + prefix + "array" + i2s(index) + ", \\s, elem -> serializeValue(s, elem))";
+		MTypeConstructor(name, __): "serialize" + name + "(state, " + prefix + fieldname(name, index) + ")";
+		MTypeUnion(name, __): "serialize" + name + "(state, " + prefix + fieldname(name, index) + ")";
+		MTypeName(__): "serializeValue(state, " + prefix + "field" + i2s(index) + ")";
+		MTypeField(__, __): "serializeValue(state, " + prefix + "field" + i2s(index) + ")";
+		MTypeNil(): "serializeValue(state, " + prefix + "field" + i2s(index) + ")";
+		MTypeResult(__): "serializeValue(state, " + prefix + "field" + i2s(index) + ")";
+	}
+}
+
+// Generate a serializer for a union type
+generateUnionSerializer(unionType : MTypeUnion, types : [MType]) -> string {
+	name = unionType.name;
+	subtypesOfUnion = unionType.types;
+	
+	// Generate case handling for each subtype
+	cases = strGlue(map(subtypesOfUnion, \subtype -> {
+		typeName = typeName2string(subtype);
+		typeName + "(__): serialize" + typeName + "(state, val);"
+	}), "\n\t\t");
+
+	// Use blueprint for the entire union serializer
+	blueprint(
+		"// Serializes a %name union value
+		serialize%name(state : SerializeState, val : %name) -> int {
+			switch (val) {
+				%cases
+			}
+		}",
+		["name", name,
+		 "cases", cases]
+	);
+}
+
+// Generate an appropriate field name based on type
+fieldname(typeName : string, index : int) -> string {
+	lowerName = toLowerCase(typeName);
+	// Check if typeName has a common pattern
+	if (strContains(typeName, "String")) "string" + i2s(index)
+	else if (strContains(typeName, "Int")) "int" + i2s(index)
+	else if (strContains(typeName, "Double")) "double" + i2s(index)
+	else if (strContains(typeName, "Bool")) "bool" + i2s(index)
+	else if (strContains(typeName, "Array")) "array" + i2s(index)
+	else lowerName + i2s(index);
+}
+
+// Generate the top-level serialization function
+generateTopLevelSerializer(rootType : MType, types : [MType], modulePrefix : string) -> string {
+	rootTypeName = typeName2string(rootType);
+	
+	// Generate type dispatchers for the switch statement
+	typeDispatchers = strGlue(map(types, \t -> {
+		switch (t) {
+			MTypeConstructor(name, __): "v : " + name + ": serialize" + name + "(state, v);";
+			MTypeUnion(name, __): "v : " + name + ": serialize" + name + "(state, v);";
+			MTypeInt(): "";
+			MTypeDouble(): "";
+			MTypeString(): "";
+			MTypeBool(): "";
+			MTypeStar(__): "";
+			MTypeName(__): "";
+			MTypeField(__, __): "";
+			MTypeNil(): "";
+			MTypeResult(__): "";
+		}
+	}), "\n\t\t\t\t");
+	
+	// Create the top-level function with blueprint
+	blueprint(
+		"// Top-level function to initiate serialization
+		serializeToMemory(ast : %rootTypeName) -> Memory {
+			state = makeSerializeState();
+
+			// Serialize the AST and get the root opcode index
+			rootIndex = serialize%rootTypeName(state, ast);
+
+			// Return the complete memory structure
+			finalizeMemory(state);
+		}
+
+		// Generic value serializer dispatching based on type
+		serializeValue(state : SerializeState, val : ?) -> int {
+			switch (val) {
+				v : int: serializeInt(state, v);
+				v : double: serializeDouble(state, v);
+				v : string: serializeString(state, v);
+				v : bool: serializeBool(state, v);
+				v : [?]: serializeArray(state, v, \\s, elem -> serializeValue(s, elem));
+				// Dispatch to appropriate type handler
+				default: {
+					%typeDispatchers
+					// Default case for unknown types
+					serializeInt(state, -1); // Error value
+				}
+			}
+		}",
+		["rootTypeName", rootTypeName,
+		 "typeDispatchers", typeDispatchers]
+	);
+}

@@ -1,0 +1,541 @@
+import tools/flow9/parser/flow_types;
+import tools/flow9/desugar/dexp;
+import tools/flow9/parser/utils;
+import tools/flow9/desugar/pretty;
+import tools/flow9/utils/vars;
+import tools/flow9/utils/typars;
+import tools/flow9/type/builtins;
+import tools/common/config;
+import tools/flow9/flow_path;
+import tools/mango/line;
+import ds/vector;
+import math/md5;
+
+export {
+	/*
+	Converts positions into infos, so we can later attach type information to each node.
+	Resolves string includes into their content.
+	Cleans up the AST to be DModule type and friends.
+	Determines if functions are recursive.
+	Extracts implicit type parameters for structs, unions and toplevels.
+	Checks for local duplicates
+	Convert casts d2i, i2d, i2s, d2s to native calls
+	*/
+	desugarPModule(config : CompilerConfig, onError : (string) -> void, fullpath : string, filecontent : string, pmodule : PModule) -> DModule;
+}
+
+// We do a side-effect desugaring. This structure keeps the results as we process each part of the AST
+DesugarPAcc(
+	// Include path and more
+	config : CompilerConfig,
+	// Here, we push positions so we can convert to info indexes
+	positions : Vector<int>,
+	// Here we collect string include paths that we resolved
+	stringIncludes : ref [string],
+	// What order are globals defined?
+	order : ref [string],
+	structs : ref Tree<string, DStruct>,
+	unions : ref Tree<string, DUnion>,
+	natives : ref Tree<string, DNative>,
+	// Functions also go here
+	toplevels : ref Tree<string, DGlobal>,
+	typedefs : ref Tree<string, DTypeDef>,
+	// Internally here, we actually have positions
+	onError : (int, string) -> void,
+);
+
+position2info(acc : DesugarPAcc, pos : int) -> int {
+	info = sizeVector(acc.positions);
+	pushVector(acc.positions, pos);
+	info;
+}
+
+desugarPModule(config : CompilerConfig, onError : (string) -> void, fullpath : string, filecontent : string, pmodule : PModule) -> DModule {
+	posError = \pos : int, msg : string -> {
+		withline = getLinePos(fullpath, getFileContent(fullpath), msg, pos, 1, 0);
+		onError(withline)
+	};
+
+	acc = DesugarPAcc(config, makeVector(128), ref [], ref [], ref makeTree(), ref makeTree(), ref makeTree(), ref makeTree(), ref makeTree(), posError);
+	p2i = \p -> position2info(acc, p);
+
+	imports = map(pmodule.imports, \i : PImport -> DImport(i.path, p2i(i.pos)));
+	forbids = map(pmodule.forbids, \f : PForbid -> DForbid(f.path, p2i(f.pos)));
+	exports = if (pmodule.toplevelexport == []) [] else map(pmodule.toplevelexport[0].toplevels, getPToplevelName);
+
+	toplevels = concat(if (pmodule.toplevelexport == []) [] else pmodule.toplevelexport[0].toplevels, pmodule.toplevels);
+
+	iter(toplevels, \tl -> desugarToplevels(acc, tl));
+
+	checkUnions(acc);
+
+	flowpath = path2flowPath(config.includes, fullpath);
+
+	contentHash = md5(filecontent);
+
+	// Get current timestamp
+	timestamp = fileModifiedPrecise(fullpath);
+
+    DModule(flowpath, fullpath, timestamp, contentHash, imports, forbids, exports,
+		^(acc.structs),
+		^(acc.unions),
+		^(acc.natives),
+		^(acc.toplevels),
+        ^(acc.stringIncludes),
+		^(acc.order),
+        vector2array(acc.positions),
+		[],
+		HModuleInterface(makeBuiltinTypeEnv(), makeTree(), makeTree(), makeTree(), makeTree()),
+		false // New modules start with typeEnvIsFull = false
+    )
+}
+
+getPToplevelName(t : PToplevel) -> string {
+	switch (t) {
+		PFnDef(pos, id, lambdatype, pexp): id;
+		PStructDef(pos, uid, structargs): uid;
+		PTypeDef(pos, id, ptype): id;
+		PGlobal(pos, id, opttype, pexp): id;
+		PNative(pos, id, bool1, type, string1): id;
+		PUnion(pos, typename, typenames): typename.uid;
+	}
+}
+
+desugarToplevels(acc : DesugarPAcc, t : PToplevel) -> void {
+	switch (t) {
+		PFnDef(pos, id, lambdatype, pexp): {
+			// We require that all arguments have a name
+			args : [PIdType] = filtermapi(lambdatype.argtypes, \i, a : PArgtype -> {
+				switch (a) {
+					PIdType(__, __, __): Some(a);
+					PTypeOnly(tt): {
+						acc.onError(pos, "Function " + id + " argument #" + i2s(i + 1) + " needs to be 'id : Type', since type '" + prettyDType(newPrEnv(), ptype2dtype(acc, tt)) + "' alone is ambigious");
+						None();
+					}
+				}
+			});
+			// And then we can convert the function to a lambda
+			lambda = PLambda(pos, args, lambdatype.ptype, pexp);
+			global = PGlobal(pos, id, lambdatype, lambda);
+			desugarPGlobal(acc, global);
+		}
+		PStructDef(pos, uid, structargs): {
+			if (containsKeyTree(^(acc.structs), uid)) {
+				acc.onError(pos, "Duplicate struct " + uid);
+				// TODO: Also print the second position
+			} else {
+				info = position2info(acc, pos);
+				sargs = map(structargs, \a : PStructArg -> {
+					DStructArg(a.id, a.bool1, ptype2dtype(acc, a.type), position2info(acc, a.pos))
+				});
+				typars = extractPPolyTypess(makeSet(), map(sargs, \s -> s.type));
+				struct = DStruct(uid, set2array(typars), sargs, info);
+				acc.structs := setTree(^(acc.structs), uid, struct);
+			}
+		}
+		PTypeDef(pos, id, ptype): {
+			if (containsKeyTree(^(acc.typedefs), id) && !containsKeyTree(^(acc.natives), id)) {
+				acc.onError(pos, "Duplicate typedef " + id);
+			} else {
+				if (containsKeyTree(^(acc.toplevels), id)) {
+					println("TODO: Wrap typedef on existing " + id);
+				}
+				info = position2info(acc, pos);
+				typedef = DTypeDef(id, ptype2dtype(acc, ptype), info);
+				acc.typedefs := setTree(^(acc.typedefs), id, typedef);
+			}
+		}
+		PGlobal(pos, id, opttype, pexp): {
+			desugarPGlobal(acc, t);
+		}
+		PNative(pos, id, bool1, type, string1): {
+			if (containsKeyTree(^(acc.natives), id)) {
+				acc.onError(pos, "Duplicate native " + id);
+			} else {
+				info = position2info(acc, pos);
+				hasFallback = containsKeyTree(^(acc.toplevels), string1);
+				dtype = ptype2dtype(acc, type);
+				nativ = DNative(id, bool1, dtype, string1, hasFallback, info);
+				// Also register here, so we can capture the type
+				typedef = DTypeDef(id, dtype, info);
+				acc.typedefs := setTree(^(acc.typedefs), id, typedef);
+
+				acc.natives := setTree(^(acc.natives), id, nativ);
+			}
+		}
+		PUnion(pos, typename, typenames): {
+			if (containsKeyTree(^(acc.unions), typename.uid)) {
+				acc.onError(pos, "Duplicate union " + typename.uid);
+			} else {
+				info = position2info(acc, pos);
+				types = map(typenames, \tn -> {
+					DTypename(tn.uid, map(tn.typars, \tt -> ptype2dtype(acc, tt)), position2info(acc, tn.pos))
+				});
+				typars = extractPPolyTypess(makeSet(), types);
+				declaredTypars = fold(typename.typars, makeSet(), \tacc, tp -> {
+					extractPPolyTypes(tacc, ptype2dtype(acc, tp));
+				});
+				if (!equalSet(typars, declaredTypars)) {
+					// TODO: Move this to a later phase when we know the structs and unions, so we can give a better error
+					acc.onError(pos, "Explicit & implicit typars do not match for " + typename.uid);
+				}
+				union = DUnion(typename.uid, set2array(typars), types, info);
+				acc.unions := setTree(^(acc.unions), typename.uid, union);
+			}
+		}
+	}
+}
+
+checkUnions(acc : DesugarPAcc) -> void {
+	unions = ^(acc.unions);
+
+	// Check each union definition
+	traverseInOrder(unions, \name, union -> {
+		pos = getVectorDef(acc.positions, union.info, -1);
+		// 1. Check for duplicate type names on the right side
+		seen = fold(union.types, makeSet(), \acc2 : Set<string>, t -> {
+			if (containsSet(acc2, t.uid)) {
+				acc.onError(pos, "Type " + t.uid + " appears multiple times in union " + name);
+				acc2;
+			} else {
+				insertSet(acc2, t.uid)
+			}
+		});
+
+		// 2. Check for duplicate type parameters on the left side
+		seenTypars = fold(union.typars, makeSet(), \acc2 : Set<string>, tp -> {
+			if (containsSet(acc2, tp)) {
+				acc.onError(pos, "Type parameter " + tp + " appears multiple times in union " + name);
+				acc2;
+			} else {
+				insertSet(acc2, tp)
+			}
+		});
+
+		// 3. Check that mentioned types have correct type parameters
+		iter(union.types, \t -> {
+			mstruct = lookupTree(^(acc.structs), t.uid);
+			munion = lookupTree(unions, t.uid);
+
+			switch (mstruct) {
+				Some(struct): {
+					if (length(t.typars) != length(struct.typars)) {
+						acc.onError(pos, "In union " + union.uid + ", struct " + struct.uid + "<> expects " + i2s(length(struct.typars)) +
+							" type parameters, but got " + i2s(length(t.typars)) );
+					}
+				}
+				None(): {
+					switch (munion) {
+						Some(u): {
+							if (length(t.typars) != length(u.typars)) {
+								acc.onError(pos, "In union " + union.uid + ", union member " + t.uid + "<> expects " + i2s(length(u.typars)) +
+									" type parameters but got " + i2s(length(t.typars)));
+							}
+						}
+						None(): {
+							// Not a struct or union - could be a native type or typedef
+							// We might want to check those as well in a more complete implementation
+						}
+					}
+				}
+			}
+		});
+	});
+}
+
+desugarPGlobal(acc : DesugarPAcc, g : PGlobal) -> void {
+	d = pexp2dexp(acc, g.pexp);
+	if (containsKeyTree(^(acc.toplevels), g.id)) {
+		acc.onError(g.pos, "Duplicate global " + g.id);
+	} else {
+		info = position2info(acc, g.pos);
+		recursive = containsSet(extractDVars(makeSet(), d), g.id);
+		mtypedef = lookupTree(^(acc.typedefs), g.id);
+
+		// Find as specific a type we can
+		type = if (hasPAutoType(g.opttype)) {
+			switch (mtypedef) {
+				None(): ptype2dtype(acc, g.opttype);
+				Some(typedef): {
+					// TODO: We could check if this contains auto-types as well and warn
+					typedef.type;
+				}
+			}
+		} else {
+			ptype2dtype(acc, g.opttype)
+		};
+
+		value0 = switch (d) {
+			DLambda(__, __, __): d; // This was already done elsewhere
+			default: wrapPSubtype(d, type, info);
+		};
+
+		value = switch (mtypedef) {
+			None(): value0;
+			Some(typedef): {
+				wrapPSubtype(value0, typedef.type, typedef.info);
+			}
+		};
+
+		typars = set2array(extractPExpTypars(makeSet(), value));
+		global = DGlobal(g.id, typars, recursive, type, value, info);
+		// println("Global " + g.id + " with typars " + toString(typars) + " and type " + prettyDType(newPrEnv(), type));
+		acc.toplevels := setTree(^(acc.toplevels), g.id, global);
+		acc.order := arrayPush(^(acc.order), g.id);
+		// OK, if there is a native for this, we should mark that it has a fallback
+		mnative = lookupTree(^(acc.natives), g.id);
+		mnative ?? {
+			acc.natives := setTree(^(acc.natives), g.id, DNative(mnative with hasFallback = true));
+		} : {}
+	}
+}
+
+// Does this have any real types inside?
+hasPAutoType(pt : PType) -> bool {
+	switch (pt) {
+		PAutoType(__): true;
+		PFnType(__, args, rt): exists(args, \a -> {
+			switch (a) {
+				PIdType(pos, id, opttype): hasPAutoType(opttype);
+				PTypeOnly(type): hasPAutoType(type);
+			}
+		}) || hasPAutoType(rt);
+		default: false;
+	}
+}
+
+pexp2dexp(acc : DesugarPAcc, p : PExp) -> DExp {
+	p2i = \pos -> position2info(acc, pos);
+	switch (p) {
+		PArray(pos, exps): {
+			args = map(exps, \e -> pexp2dexp(acc, e));
+			DArray(args, p2i(pos));
+		}
+		PBinOp(exp1, pos, exp2, pbinop_1): {
+			left = pexp2dexp(acc, exp1);
+			right = pexp2dexp(acc, exp2);
+			op = switch (pbinop_1) {
+				PAdd(): DAdd();
+				PAnd(): DAnd();
+				PAssign(): DAssign();
+				PDiv(): DDiv();
+				PEqual(): DEqual();
+				PGreater(): DGreater();
+				PGreaterEqual(): DGreaterEqual();
+				PIndex(): DIndex();
+				PLess(): DLess();
+				PLessEqual(): DLessEqual();
+				PMod(): DMod();
+				PMul(): DMul();
+				PMutableAssign(id): DMutableAssign(id);
+				PNotEqual(): DNotEqual();
+				POr(): DOr();
+				PPipe(): DPipe();
+				PSub(): DSub();
+			}
+			DBuiltin(op, [left, right], p2i(pos));
+		}
+		PCall(exp1, pos, exps): {
+			normal = \ -> {
+				// Non-variable call with With - do normal call processing
+				args = map(exps, \e -> pexp2dexp(acc, e));
+				DCall(pexp2dexp(acc, exp1), args, p2i(pos));
+			}
+			// Check for special case of Call with With as first argument
+			if (length(exps) == 1) {
+				switch (exps[0]) {
+					PWith(withExp, withPos, fieldAssigns): {
+						// Check that exp1 is a PVar
+						switch(exp1) {
+							PVar(varPos, uid): {
+								// Convert PCall(PVar(uid), [PWith(exp1, fieldassigns)]) to DWith(uid, exp1, fieldassigns, pos)
+								DWith(uid, pexp2dexp(acc, withExp), map(fieldAssigns, \f -> {
+									DFieldAssign(f.id, pexp2dexp(acc, f.exp1), p2i(f.pos));
+								}), p2i(pos));
+							}
+							default: normal();
+						}
+					}
+					default: normal();
+				}
+			} else {
+				normal();
+			}
+		}
+		PIfElse(pos, exp1, exp2, pexp): {
+			cond = pexp2dexp(acc, exp1);
+			then = pexp2dexp(acc, exp2);
+			els = pexp2dexp(acc, pexp);
+			DIfElse(cond, then, els, p2i(pos));
+		}
+		PLet(lid, opttype, pos, exp1, expsemi): {
+			value = pexp2dexp(acc, exp1);
+			body = pexp2dexp(acc, PSequence(pos, expsemi));
+			type = ptype2dtype(acc, opttype);
+			// If we have a type annotation, put it in there
+			valueType = wrapPSubtype(value, type, value.info);
+			DLet(lid, valueType, body, p2i(pos));
+		}
+		PMaybe(exp1, pos, exp2, exp3): {
+			cond = pexp2dexp(acc, exp1);
+			then = pexp2dexp(acc, exp2);
+			els = pexp2dexp(acc, exp3);
+			DMaybe(cond, then, els, p2i(pos));
+		}
+		PSequence(pos, expsemi): {
+			args = map(expsemi, \e -> pexp2dexp(acc, e));
+			if (args == []) {
+				DVoid(p2i(pos));
+			} else if (length(args) == 1) {
+				args[0]
+			} else {
+				DBuiltin(DSequence(), args, p2i(pos));
+			}
+		}
+		PSwitch(pos, exp1, cases): {
+			value = pexp2dexp(acc, exp1);
+			dcases = filtermap(cases, \c -> {
+				switch (c) {
+					PDefaultCase(__, __): None();
+					PStructCase(spos, uid, ids, sexp): Some(DCase(uid, ids, pexp2dexp(acc, sexp), p2i(spos)));
+				}
+			});
+			defcase = filtermap(cases, \c -> {
+				switch (c) {
+					PDefaultCase(dpos, dexp): Some(pexp2dexp(acc, dexp));
+					PStructCase(__, __, __, __): None();
+				}
+			});
+			def = if (length(defcase) == 1) Some(defcase[0]) 
+				else if (defcase == []) None() 
+				else {
+					acc.onError(pos, "Multiple default cases in switch");
+					None();
+				};
+			DSwitch(value, dcases, def, p2i(pos));
+		}
+		PUnOp(exp1, punop): {
+			exp = [pexp2dexp(acc, exp1)];
+			switch (punop) {
+				PDeref(pos): DBuiltin(DDeref(), exp, p2i(pos));
+				PDot(pos, id): DBuiltin(DDot(id), exp, p2i(pos));
+				PNegative(pos): DBuiltin(DNegative(), exp, p2i(pos));
+				PNot(pos): DBuiltin(DNot(), exp, p2i(pos));
+				PRef(pos): DBuiltin(DRef(), exp, p2i(pos));
+				PCast(pos, type): {
+					from = switch (exp1) {
+						PUnOp(cexp, cop): {
+							switch (cop) {
+								PIsSubType(__, stype): stype;
+								default: PAutoType(pos);
+							}
+						}
+						default: PAutoType(pos);
+					};
+					nat = \n -> DCall(DVar(n, p2i(pos)), exp, p2i(pos));
+					if (isPDoubleType(from) && isPIntType(type)) {
+						nat("__cast__trunc")
+					} else if (isPIntType(from) && isPDoubleType(type)) {
+						nat("__cast__i2d")
+					} else if (isPIntType(from) && isPStringType(type)) {
+						nat("__cast__i2s")
+					} else if (isPDoubleType(from) && isPStringType(type)) {
+						nat("__cast__d2s")
+					} else {
+						DBuiltin(DCast(ptype2dtype(acc, type)), exp, p2i(pos));
+					}
+				}
+				PIsSubType(pos, type): wrapPSubtype(exp[0], ptype2dtype(acc, type), p2i(pos));
+			}
+		}
+		PBool(pos, bool1): DBool(bool1, p2i(pos));
+		PDouble(pos, double1): DDouble(double1, p2i(pos));
+		PInt(pos, int1): DInt(int1, p2i(pos));
+		PLambda(pos, lambdaargs, rettype, exp1): {
+			args = map(lambdaargs, \a : PIdType -> DArgType(a.id, ptype2dtype(acc, a.opttype), p2i(a.pos)));
+			dret = ptype2dtype(acc, rettype);
+			body = pexp2dexp(acc, exp1);
+			DLambda(
+				args,
+				wrapPSubtype(body, dret, body.info),
+				p2i(pos)
+			);
+		}
+		PString(pos, string1): DString(string1, p2i(pos));
+		PStringInclude(pos, path): {
+			fullpath = flowPath2path(acc.config.includes, path);
+			if (fileExists(fullpath)) {
+				value = getFileContent(fullpath);
+				acc.stringIncludes := arrayPush(^(acc.stringIncludes), path);
+				DString(value, p2i(pos));
+			} else {
+				acc.onError(pos, "Could not find include " + path);
+				DString(path, p2i(pos));
+			}
+		}
+		PVoid(pos): DVoid(p2i(pos));
+		PVar(pos, lid): DVar(lid, p2i(pos));
+		PWith(exp1, pos, fieldassigns): {
+			// PWith directly without being an argument to a call is an error
+			acc.onError(pos, "'with' expression must be used as an argument to a function call");
+			// Return a placeholder expression to allow compilation to continue
+			DVoid(p2i(pos));
+		}
+		PFor(pos, id, opttype, exp1, exp2, exp3, exp4): {
+			acc.onError(pos, "Flow9 does not support 'for' loops. Flow is a functional language - use recursion, map, filter, or fold instead.");
+			DVoid(p2i(pos))
+		}
+		PReturn(pos, exps): {
+			acc.onError(pos, "Flow9 does not have a 'return' keyword. The last expression in a block is automatically the return value.");
+			DVoid(p2i(pos))
+		}
+		PWhile(pos, exp1, exp2): {
+			acc.onError(pos, "Flow9 does not support 'while' loops. Flow is a functional language - use recursion instead.");
+			DVoid(p2i(pos))
+		}
+		PAssignOp(exp1, pos, string1, exp2): {
+			acc.onError(pos, "Flow9 does not support '" + string1 + "' assignments. Flow is a functional language - you can not update variables.");
+			DVoid(p2i(pos))
+		}
+		PBreak(pos): {
+			acc.onError(pos, "Flow9 does not support 'break'. Flow is a functional language - use recursion instead.");
+			DVoid(p2i(pos))
+		}
+	}
+}
+
+ptype2dtype(acc : DesugarPAcc, pt : PType) -> DType {
+	p2i = \p -> position2info(acc, p);
+	switch (pt) {
+		PArrayType(pos, type): DArrayType(ptype2dtype(acc, type), p2i(pos));
+		PAutoType(pos): DAutoType(p2i(pos));
+		PBoolType(pos): DBoolType(p2i(pos));
+		PDoubleType(pos): DDoubleType(p2i(pos));
+		PFlowType(pos): DFlowType(p2i(pos));
+		PFnType(pos, argtypes, ptype): {
+			DFnType(map(argtypes, \a : PArgtype -> {
+				switch (a) {
+					PIdType(ipos, id, type): {
+						// TODO: We are throwing away the name here
+						ptype2dtype(acc, type);
+					}
+					PTypeOnly(type): ptype2dtype(acc, type);
+				}
+			}), ptype2dtype(acc, ptype), p2i(pos));
+		}
+		PIntType(pos): DIntType(p2i(pos));
+		PNativeType(pos): DNativeType(p2i(pos));
+		PPolyType(pos, string1): DPolyType(string1, p2i(pos));
+		PRefType(pos, type): DRefType(ptype2dtype(acc, type), p2i(pos));
+		PStringType(pos): DStringType(p2i(pos));
+		PTypename(pos, uid, typars): DTypename(uid, map(typars, \t -> ptype2dtype(acc, t)), p2i(pos));
+		PVoidType(pos): DVoidType(p2i(pos));
+	}
+}
+
+wrapPSubtype(d : DExp, type : DType, info : int) -> DExp {
+	switch (type) {
+		DAutoType(__): d;
+		default: DBuiltin(DIsSubType(type), [d], info);
+	}
+}

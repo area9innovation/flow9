@@ -236,6 +236,7 @@ class FlowSprite extends Sprite {
 	}
 
 	private function disableSprites() : Void {
+		removeTextureFromCache(texture);
 		texture = Texture.EMPTY;
 		RenderSupport.off("disable_sprites", disableSprites);
 	}

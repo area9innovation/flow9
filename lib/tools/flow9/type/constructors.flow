@@ -1,0 +1,40 @@
+import tools/flow9/utils/typars;
+import tools/flow9/type/dtype;
+
+export {
+	buildNativeTypes(env : HModuleInterface, natives : Tree<string, DNative>) -> Tree<string, HTypeSchema>;
+	buildConstructors(structs : Tree<string, HStruct>) -> Tree<string, HTypeSchema>;
+}
+
+buildNativeTypes(env : HModuleInterface, natives : Tree<string, DNative>) -> Tree<string, HTypeSchema> {
+	mapTree(natives, \v -> {
+		// Lift native types to be polymorphic as required
+		typars = extractPPolyTypes(makeSet(), v.type);
+		baseType = dtype2htype(env.structs, env.unions, v.type);
+		if (isEmptySet(typars)) baseType
+		else HTypeForAll(set2array(typars), baseType);
+	});
+}
+
+buildConstructors(structs : Tree<string, HStruct>) -> Tree<string, HTypeSchema> {
+	mapTree(structs, \struct -> {
+		// Get the field types in order
+		fieldTypes = map(struct.fields, \f -> f.type);
+		
+		// Construct the return type - a HTypeCons with the struct name and type parameters
+		returnType = HTypeCons(struct.name, 
+			map(struct.typars, \tp -> HTypeVar(tp))
+		);
+		
+		// Create the function type: fields -> struct
+		fnType = HTypeFn(fieldTypes, returnType);
+		
+		// Always wrap in HTypeForAll, even if there are no type parameters
+		// This ensures consistent handling of type instantiation
+		fn = if (struct.typars != []) HTypeForAll(struct.typars, fnType) else fnType;
+
+		// println("Constructor for " + struct.name + " : " + prettyHTypeSchema(fn));
+
+		fn;
+	});
+}

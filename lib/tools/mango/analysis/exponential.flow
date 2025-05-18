@@ -1,0 +1,432 @@
+import tools/mango/mango_types;
+import tools/mango/mango2string;
+import ds/tree;
+import string;
+import net/url_parameter;
+
+export {
+	// Detects potential exponential behavior in PEG grammar
+	// This happens when multiple choice alternatives have the same first-set
+	// or when Star(*) is used with terms that can match empty strings
+	detectExponentialBehavior(grammar : Term) -> [string];
+	flattenChoice(term : Term) -> [Term];
+}
+
+detectExponentialBehavior(grammar : Term) -> [string] {
+	// Detect choice-based exponential behavior
+	warnings1 = traverseForExponentialBehavior(grammar, None(), []);
+	
+	// Build a map of rule names to their terms for emptiness analysis
+	ruleDefinitions = buildRuleDefinitionsMap(grammar);
+	
+	// First calculate which rules can match empty
+	emptyRules = buildEmptyRulesMap(ruleDefinitions);
+
+	// Detect Star-with-empty infinite loop risks
+	warnings2 = detectInfiniteLoopRisks(grammar, None(), [], emptyRules, ruleDefinitions);
+	
+	concat(warnings1, warnings2);
+}
+
+// Build a map of rule name to its definition to help with rule references
+buildRuleDefinitionsMap(term : Term) -> Tree<string, Term> {
+	switch (term) {
+		Rule(id, term1, term2): {
+			inner = buildRuleDefinitionsMap(term2);
+			setTree(inner, id, term1);
+		}
+		Choice(term1, term2): {
+			mergeTree(buildRuleDefinitionsMap(term1), buildRuleDefinitionsMap(term2));
+		}
+		Sequence(term1, term2): {
+			mergeTree(buildRuleDefinitionsMap(term1), buildRuleDefinitionsMap(term2));
+		}
+		Optional(termInner): buildRuleDefinitionsMap(termInner);
+		Plus(termInner): buildRuleDefinitionsMap(termInner);
+		Star(termInner): buildRuleDefinitionsMap(termInner);
+		Negate(termInner): buildRuleDefinitionsMap(termInner);
+		PushMatch(termInner): buildRuleDefinitionsMap(termInner);
+		Error(termInner): buildRuleDefinitionsMap(termInner);
+		Lower(termInner): buildRuleDefinitionsMap(termInner);
+		Precedence(term1, term2): {
+			mergeTree(buildRuleDefinitionsMap(term1), buildRuleDefinitionsMap(term2));
+		}
+		GrammarCall(__, termInner): buildRuleDefinitionsMap(termInner);
+		GrammarFn(__, term1, term2, term3): {
+			mergeTree(
+				buildRuleDefinitionsMap(term1), 
+				mergeTree(buildRuleDefinitionsMap(term2), buildRuleDefinitionsMap(term3))
+			);
+		}
+		default: makeTree();
+	}
+}
+
+// Context tracks the current rule name being processed
+traverseForExponentialBehavior(term : Term, context : Maybe<string>, warnings : [string]) -> [string] {
+	switch(term) {
+		Choice(term1, term2): {
+			// First analyze this choice
+			alternatives = flattenChoice(term);
+			newWarnings = checkAlternativesExponential(alternatives, context, warnings);
+			
+			// Then continue with both branches
+			traverseForExponentialBehavior(term1, context, 
+				traverseForExponentialBehavior(term2, context, newWarnings));
+		}
+		Rule(id, term1, term2): {
+			// For rules, pass down the rule name as context
+			traverseForExponentialBehavior(term1, Some(id), 
+				traverseForExponentialBehavior(term2, Some(id), warnings));
+		}
+		Sequence(term1, term2): {
+			// Check both terms in the sequence
+			traverseForExponentialBehavior(term1, context, 
+				traverseForExponentialBehavior(term2, context, warnings));
+		}
+		Optional(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Plus(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Star(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Negate(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		PushMatch(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Error(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Lower(termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		Precedence(term1, term2): {
+			traverseForExponentialBehavior(term1, context, 
+				traverseForExponentialBehavior(term2, context, warnings));
+		}
+		GrammarCall(__, termInner): traverseForExponentialBehavior(termInner, context, warnings);
+		GrammarFn(__, term1, term2, term3): {
+			traverseForExponentialBehavior(term1, context, 
+				traverseForExponentialBehavior(term2, context, 
+					traverseForExponentialBehavior(term3, context, warnings)));
+		}
+		default: warnings;
+	}
+}
+
+// Detect potential infinite loops in Star (*) operations where term can match empty string
+detectInfiniteLoopRisks(term : Term, context : Maybe<string>, warnings : [string], 
+                         emptyRules : Tree<string, bool>, ruleDefinitions : Tree<string, Term>) -> [string] {
+	switch(term) {
+		Star(innerTerm): {
+			// Check if the inner term can match empty string
+			if (canMatchEmpty(innerTerm, emptyRules, ruleDefinitions)) {
+				// This is a potential infinite loop risk
+				ruleInfo = switch (context) {
+					Some(ruleName): " in rule '" + ruleName + "'";
+					None(): "";
+				}
+				
+				warning = "WARNING - Potential infinite loop" + ruleInfo + ": " + 
+				         "Star operator (*) applied to term that can match empty string:\n" + 
+				         indent(term2string(innerTerm));
+				
+				// Continue recursively with the inner term
+				detectInfiniteLoopRisks(innerTerm, context, arrayPush(warnings, warning), emptyRules, ruleDefinitions);
+			} else {
+				// No risk here, but continue checking inner term
+				detectInfiniteLoopRisks(innerTerm, context, warnings, emptyRules, ruleDefinitions);
+			}
+		}
+		Rule(id, term1, term2): {
+			// Check both parts of the rule
+			detectInfiniteLoopRisks(term1, Some(id), 
+				detectInfiniteLoopRisks(term2, Some(id), warnings, emptyRules, ruleDefinitions), 
+				emptyRules, ruleDefinitions);
+		}
+		Choice(term1, term2): {
+			// Check both sides of the choice
+			detectInfiniteLoopRisks(term1, context, 
+				detectInfiniteLoopRisks(term2, context, warnings, emptyRules, ruleDefinitions), 
+				emptyRules, ruleDefinitions);
+		}
+		Sequence(term1, term2): {
+			// Check both terms in the sequence
+			detectInfiniteLoopRisks(term1, context, 
+				detectInfiniteLoopRisks(term2, context, warnings, emptyRules, ruleDefinitions), 
+				emptyRules, ruleDefinitions);
+		}
+		Optional(termInner): detectInfiniteLoopRisks(termInner, context, warnings, emptyRules, ruleDefinitions);
+		Plus(termInner): detectInfiniteLoopRisks(termInner, context, warnings, emptyRules, ruleDefinitions);
+		Negate(termInner): detectInfiniteLoopRisks(termInner, context, warnings, emptyRules, ruleDefinitions);
+		PushMatch(termInner): detectInfiniteLoopRisks(termInner, context, warnings, emptyRules, ruleDefinitions);
+		Error(termInner): detectInfiniteLoopRisks(termInner, context, warnings, emptyRules, ruleDefinitions);
+		Lower(termInner): detectInfiniteLoopRisks(termInner, context, warnings, emptyRules, ruleDefinitions);
+		Precedence(term1, term2): {
+			detectInfiniteLoopRisks(term1, context, 
+				detectInfiniteLoopRisks(term2, context, warnings, emptyRules, ruleDefinitions), 
+				emptyRules, ruleDefinitions);
+		}
+		GrammarCall(__, termInner): detectInfiniteLoopRisks(termInner, context, warnings, emptyRules, ruleDefinitions);
+		GrammarFn(__, term1, term2, term3): {
+			detectInfiniteLoopRisks(term1, context, 
+				detectInfiniteLoopRisks(term2, context, 
+					detectInfiniteLoopRisks(term3, context, warnings, emptyRules, ruleDefinitions), 
+					emptyRules, ruleDefinitions), 
+				emptyRules, ruleDefinitions);
+		}
+		default: warnings;
+	}
+}
+
+// Build a map of rule names to whether they can match empty strings
+// Uses fixed-point iteration to handle recursive rule references
+buildEmptyRulesMap(ruleDefinitions : Tree<string, Term>) -> Tree<string, bool> {
+	ruleNames = getTreeKeys(ruleDefinitions);
+	
+	// Start with all rules marked as not-empty
+	emptyMap0 = fold(ruleNames, makeTree(), \acc, ruleName -> {
+		setTree(acc, ruleName, false);
+	});
+	
+	// For debugging
+	// Fixed-point iteration - keep updating until no changes
+	result = iterateFixpoint(emptyMap0, ruleDefinitions, true);
+	
+	// For debugging
+	if (isUrlParameterTrue("verbose")) {
+		println("Rules that can match empty: " + 
+			strGlue(filtermap(ruleNames, \n -> if (lookupTreeDef(result, n, false)) Some(n) else None()), ", "));
+	}
+	
+	result;
+}
+
+// Run the fixpoint algorithm until no changes occur
+iterateFixpoint(currentMap : Tree<string, bool>, ruleDefinitions : Tree<string, Term>, changed : bool) -> Tree<string, bool> {
+	if (!changed) {
+		// If nothing changed in the last iteration, we've reached a fixed point
+		currentMap;
+	} else {
+		// Try another iteration - update each rule's empty status
+		newMap = fold(getTreeKeys(ruleDefinitions), currentMap, \acc, ruleName -> {
+			ruleTerm = lookupTreeDef(ruleDefinitions, ruleName, String(""));
+			
+			// Check if this rule can match empty with current knowledge
+			canMatchEmptyNow = canMatchEmpty(ruleTerm, currentMap, ruleDefinitions);
+			
+			// Get the current value
+			currentValue = lookupTreeDef(acc, ruleName, false);
+			
+			// Only update if this is a change (false->true)
+			if (canMatchEmptyNow && !currentValue) {
+				setTree(acc, ruleName, true);
+			} else {
+				acc;
+			}
+		});
+		
+		// Check if any rule's emptyness changed
+		anyChanged = fold(getTreeKeys(ruleDefinitions), false, \changed2, ruleName -> {
+			oldValue = lookupTreeDef(currentMap, ruleName, false);
+			newValue = lookupTreeDef(newMap, ruleName, false);
+			changed2 || oldValue != newValue;
+		});
+		
+		// For debugging, print the current state
+		emptyRules = filtermap(getTreeKeys(newMap), \ruleName -> {
+			if (lookupTreeDef(newMap, ruleName, false)) Some(ruleName) else None();
+		});
+		
+		// Continue iteration if anything changed
+		iterateFixpoint(newMap, ruleDefinitions, anyChanged);
+	}
+}
+
+// Determines if a term can match an empty string (zero characters)
+// Uses the current emptiness map to handle rule references
+canMatchEmpty(tt : Term, emptyRules : Tree<string, bool>, ruleDefinitions : Tree<string, Term>) -> bool {
+	// For debugging
+	result = switch(tt) {
+		// These constructs can always match empty string
+		Optional(__): {
+			true; // Optional can always match nothing
+		}
+		Star(__): {
+			true;    // Star can always match zero repetitions
+		}
+		String(s): {
+			result = s == "";
+			result; // Empty string matches empty input
+		}
+		StackOp(__): {
+			true; // Stack operations don't consume input
+		}
+		
+		// These constructs depend on their inner terms
+		Choice(term1, term2): {
+			// A choice can match empty if either branch can
+			result1 = canMatchEmpty(term1, emptyRules, ruleDefinitions);
+			result2 = canMatchEmpty(term2, emptyRules, ruleDefinitions);
+			result = result1 || result2;
+			result;
+		}
+		Sequence(term1, term2): {
+			// A sequence can match empty only if both parts can match empty
+			result1 = canMatchEmpty(term1, emptyRules, ruleDefinitions);
+			result2 = canMatchEmpty(term2, emptyRules, ruleDefinitions);
+			result = result1 && result2;
+			result;
+		}
+		PushMatch(innerTerm): {
+			// PushMatch behavior depends on its inner term
+			result = canMatchEmpty(innerTerm, emptyRules, ruleDefinitions);
+			result;
+		}
+		Variable(id): {
+			// Use the current known state for rule references
+			result = lookupTreeDef(emptyRules, id, false);
+			result;
+		}
+		
+		Construct(term, __): {
+			true; // Can always match empty
+		}
+		// Other constructs that generally don't match empty
+		Plus(__): {
+			false;  // Plus needs at least one match
+		}
+		Range(__, __): {
+			false; // Character ranges need at least one char
+		}
+		Negate(innerTerm): {
+			// This is tricky - negating a term that can't match empty might match empty
+			// For safety, we assume Negate doesn't match empty
+			false;
+		}
+		Error(term): canMatchEmpty(term, emptyRules, ruleDefinitions);
+		GrammarCall(id, term): true;
+		GrammarFn(id, term1, term2, term3): canMatchEmpty(term3, emptyRules, ruleDefinitions);
+		Lower(term): canMatchEmpty(term, emptyRules, ruleDefinitions);
+		Precedence(term1, term2): canMatchEmpty(term1, emptyRules, ruleDefinitions) || canMatchEmpty(term2, emptyRules, ruleDefinitions);
+		Rule(id, term1, term2): canMatchEmpty(term2, emptyRules, ruleDefinitions);
+	};
+	result;
+}
+
+flattenChoice(term : Term) -> [Term] {
+	switch(term) {
+		Choice(term1, term2): {
+			concat(flattenChoice(term1), flattenChoice(term2));
+		}
+		default: [term];
+	}
+}
+
+checkAlternativesExponential(alternatives : [Term], context : Maybe<string>, warnings : [string]) -> [string] {
+	if (length(alternatives) <= 1) {
+		warnings;
+	} else {
+		// Group alternatives by their first element
+		groups = fold(alternatives, makeTree(), \acc, alt -> {
+			first = getFirstElement(alt);
+			if (first != "") {
+				existing = lookupTreeDef(acc, first, []);
+				setTree(acc, first, arrayPush(existing, alt));
+			} else {
+				acc;
+			}
+		});
+		
+		// Find groups with multiple alternatives (potential exponential behavior)
+		problematicGroups = filtermap(getTreeKeys(groups), \key -> {
+			group = lookupTreeDef(groups, key, []);
+			if (length(group) > 1) Some(group) else None();
+		});
+		
+		// Generate warnings for each problematic group
+		fold(problematicGroups, warnings, \acc, group -> {
+			first = getFirstElement(group[0]);
+			
+			// Include rule name in the warning if available
+			ruleInfo = switch (context) {
+				Some(ruleName): " in rule '" + ruleName + "'";
+				None(): "";
+			}
+			
+			warning = "Potential exponential behavior" + ruleInfo + ": " + 
+					 i2s(length(group)) + " choices with the same first element '" + 
+					 first + "':\n" + strGlue(map(group, \t -> indent(term2string(t))), ",\n");
+			
+			arrayPush(acc, warning);
+		});
+	}
+}
+
+// Get the first element of a term (the first terminal or rule reference)
+getFirstElement(term : Term) -> string {
+	switch(term) {
+		String(s): "\"" + s + "\""; // Direct terminal
+		Variable(id): id; // Rule reference
+		Range(c1, __): "'" + c1 + "'"; // Character range starts with first char
+		Sequence(term1, term2): {
+			// Skip stack operations and non-terminal first elements in sequence
+			switch (term1) {
+				PushMatch(innerTerm): {
+					// Look inside PushMatch for the actual first element
+					firstInPushMatch = getFirstElement(innerTerm);
+					if (firstInPushMatch != "") {
+						// We found a specific token inside the PushMatch
+						firstInPushMatch;
+					} else {
+						// Move to the next term in the sequence
+						getFirstElement(term2);
+					}
+				}
+				StackOp(__): {
+					// Skip stack op and look at the next term
+					getFirstElement(term2);
+				}
+				default: {
+					// For normal terms, use the first term's first element
+					getFirstElement(term1);
+				}
+			}
+		}
+		PushMatch(innerTerm): {
+			// Look inside PushMatch for the actual first element
+			getFirstElement(innerTerm);
+		}
+		StackOp(__): ""; // No meaningful first element
+		Choice(term1, __): {
+			// For a choice within a choice, just look at the first alternative
+			getFirstElement(term1);
+		}
+		Optional(innerTerm): {
+			// For optional terms, the first element is the same as the inner term
+			// This is a simplification as Optional could also match nothing
+			getFirstElement(innerTerm);
+		}
+		Plus(innerTerm): getFirstElement(innerTerm);
+		Star(innerTerm): getFirstElement(innerTerm); // Simplification
+		Negate(innerTerm): ""; // Simplified
+		// For other terms, we need more sophisticated analysis
+		default: "";
+	}
+}
+
+indent(s : string) -> string {
+	"    " + strReplace(s, "\n", "\n    ");
+}
+
+// Helper function to get the term type as a string for debugging
+getTagName(term : Term) -> string {
+	switch (term) {
+		String(__): "String";
+		Variable(__): "Variable";
+		Range(__, __): "Range";
+		Optional(__): "Optional";
+		Star(__): "Star";
+		Plus(__): "Plus";
+		Negate(__): "Negate";
+		Sequence(__, __): "Sequence";
+		Choice(__, __): "Choice";
+		Rule(__, __, __): "Rule";
+		PushMatch(__): "PushMatch";
+		StackOp(__): "StackOp";
+		Construct(__, __): "Construct";
+		Error(__): "Error";
+		default: "Unknown";
+	}
+}

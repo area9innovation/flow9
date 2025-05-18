@@ -1,0 +1,111 @@
+import tools/flow9_retro/bexp/bmodule;
+import tools/flow9_retro/bexp/utils;
+import tools/flow9_retro/dexp/utils;
+
+export {
+	// All named entities from a program.
+	BNames(
+		structs : Tree<string, DStruct>,
+		unions : Tree<string, DUnion>,
+		natives : Tree<string, BNative>,
+		globals : Tree<string, BGlobal>
+	);
+
+	// Gather all named objects from modules
+	bmodules2BNames(modules : [BModule]) -> BNames;
+
+	// Calculate all names, which are mentioned transitively from the main function.
+	aliveCode(names : BNames) -> Set<string>;
+}
+
+bmodules2BNames(modules : [BModule]) -> BNames {
+	fold(modules, BNames(makeTree(), makeTree(), makeTree(), makeTree()), \acc, m ->
+		BNames(
+			mergeTree(acc.structs, m.structs),
+			mergeTree(acc.unions, m.unions),
+			mergeTree(acc.natives, m.natives),
+			mergeTree(acc.globals, m.globals),
+		)
+	);
+}
+
+UsedCodeAcc(
+	queue : Set<string>, 
+	used : Set<string>
+);
+
+aliveCode(names : BNames) -> Set<string> {
+	findUsed(names, UsedCodeAcc(
+		makeSet1("main"), 
+		buildSet([
+			"bool", "void", "int", "double", "string", 
+			"flow", "ref", "array", "__negate", "__index",
+			"<", "<=", "==", ">", ">=", ":=", "::=", "!=",
+			"+", "-", "*", "/", "%", "&&", "||", "!",
+			"__deref", "__ref", "__not", "__array",
+			"__cast", "auto", "__structname", "native"
+		])
+	)).used;
+}
+
+findUsed(names : BNames, acc : UsedCodeAcc) -> UsedCodeAcc {
+	switch (popMinSet(acc.queue)) {
+		None(): acc;
+		Some(pop): {
+			name = pop.value;
+			findUsed(names, findUsedIn(names, UsedCodeAcc(pop.rest, acc.used), name));
+		}
+	}
+}
+
+findUsedIn(names : BNames, acc : UsedCodeAcc, name : string) -> UsedCodeAcc {
+	proc_glob = \bglob : BGlobal -> {
+		used = insertSet(acc.used, name);
+		referenced = extractTypeNamesBExp(
+			extractFreeNamesBExp(makeSet(), makeSet(), bglob.value),
+			bglob.value
+		);
+		new = differenceSets(referenced, used);
+		UsedCodeAcc(
+			mergeSets(acc.queue, new), 
+			mergeSets(used, new)
+		);
+	}
+	proc_struct = \str -> {
+		used = insertSet(acc.used, name);
+		referenced = extractTypeNamesDStruct(makeSet(), str, names.structs, names.unions);
+		new = differenceSets(referenced, used);
+		UsedCodeAcc(
+			mergeSets(acc.queue, new), 
+			mergeSets(used, new)
+		);
+	}
+	proc_union = \un -> {
+		used = insertSet(acc.used, name);
+		referenced = extractTypeNamesDUnion(makeSet(), un, names.structs, names.unions);
+		new = differenceSets(referenced, used);
+		UsedCodeAcc(
+			mergeSets(acc.queue, new), 
+			mergeSets(used, new)
+		);
+	}
+	switch (lookupTree(names.globals, name)) {
+		Some(glob): proc_glob(glob);
+		None(): {
+			switch (lookupTree(names.structs, name)) {
+				Some(struct): proc_struct(struct);
+				None(): {
+					switch (lookupTree(names.unions, name)) {
+						Some(union): proc_union(union);
+						None(): {
+							if (!startsWith(name, "?") && !containsKeyTree(names.natives, name)) {
+								println("WARNING: Something is wrong with DCE: Could not find '" + name + "'");
+							}
+							acc;
+						}
+					}
+				}
+			}
+		}
+	}
+}

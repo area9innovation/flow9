@@ -1,0 +1,131 @@
+import tools/flow9/desugar/dexp;
+
+export {
+	substituteVariable(expr : DExp, oldVar : string, newVar : string) -> DExp;
+}
+
+substituteVariable(expr : DExp, oldVar : string, newVar : string) -> DExp {
+	switch (expr) {
+		DVar(name, info): {
+			if (name == oldVar) {
+				DVar(newVar, info)
+			} else {
+				expr
+			}
+		}
+		DArray(values, info): {
+			DArray(map(values, \v -> substituteVariable(v, oldVar, newVar)), info)
+		}
+		DCall(fn, args, info): {
+			DCall(
+				substituteVariable(fn, oldVar, newVar),
+				map(args, \a -> substituteVariable(a, oldVar, newVar)),
+				info
+			)
+		}
+		DLet(name, value, body, info): {
+			// If the let variable shadows our target variable, don't substitute in the body
+			if (name == oldVar) {
+				DLet(
+					name,
+					substituteVariable(value, oldVar, newVar),
+					body,
+					info
+				)
+			} else {
+				DLet(
+					name,
+					substituteVariable(value, oldVar, newVar),
+					substituteVariable(body, oldVar, newVar),
+					info
+				)
+			}
+		}
+		DIfElse(condition, then, else_, info): {
+			DIfElse(
+				substituteVariable(condition, oldVar, newVar),
+				substituteVariable(then, oldVar, newVar),
+				substituteVariable(else_, oldVar, newVar),
+				info
+			)
+		}
+		DMaybe(condition, then, else_, info): {
+			DMaybe(
+				substituteVariable(condition, oldVar, newVar),
+				substituteVariable(then, oldVar, newVar),
+				substituteVariable(else_, oldVar, newVar),
+				info
+			)
+		}
+		DSwitch(value, cases, defaultCase, info): {
+			// For switch, we need to check if any case binds our target variable
+			newCases = map(cases, \c -> {
+				if (contains(c.ids, oldVar)) {
+					// This case shadows our variable, don't substitute in the body
+					c
+				} else {
+					DCase(
+						c.uid,
+						c.ids,
+						substituteVariable(c.body, oldVar, newVar),
+						c.info
+					)
+				}
+			});
+
+			newDefault = switch (defaultCase) {
+				None(): None();
+				Some(defExp): Some(substituteVariable(defExp, oldVar, newVar));
+			};
+
+			DSwitch(
+				substituteVariable(value, oldVar, newVar),
+				newCases,
+				newDefault,
+				info
+			)
+		}
+		DBuiltin(op, args, info): {
+			DBuiltin(
+				op,
+				map(args, \a -> substituteVariable(a, oldVar, newVar)),
+				info
+			)
+		}
+		DWith(uid, wexpr, fieldassigns, info): {
+			DWith(
+				uid,
+				substituteVariable(wexpr, oldVar, newVar),
+				map(fieldassigns, \f ->
+					DFieldAssign(
+						f.field,
+						substituteVariable(f.exp, oldVar, newVar),
+						f.info
+					)
+				),
+				info
+			)
+		}
+		DLambda(args, body, info): {
+			// If the lambda argument shadows our target variable, don't substitute in the body
+			if (contains(map(args, \a -> a.name), oldVar)) {
+				DLambda(
+					args,
+					body,
+					info
+				)
+			} else {
+				DLambda(
+					args,
+					substituteVariable(body, oldVar, newVar),
+					info
+				)
+			}
+		}
+		DVoid(info): expr;
+		DInt(value, info): expr;
+		DDouble(value, info): expr;
+		DBool(value, info): expr;
+		DString(value, info): expr;
+	}
+}

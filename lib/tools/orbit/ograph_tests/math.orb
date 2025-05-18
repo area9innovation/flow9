@@ -1,0 +1,200 @@
+// Import necessary libraries (assuming they are accessible)
+import lib/complex;
+import lib/number_theory;
+import lib/rewrite;
+import lib/reflect; // For isInt, isDouble checks in conditions
+
+// Define mathematical constants and the imaginary unit
+let pi = 3.141592653589793;
+let i = Complex(0.0, 1.0); // Imaginary unit
+// Helper for conditions requiring numerical arguments
+fn is_numeric(x) = (isInt(x) || isDouble(x) || isConstructor(x) && getConstructor(x) == "Complex");
+
+// ----- Core Mathematical Identity Rules -----
+
+let math_identity_rules = [
+	// --- Basic Algebra Simplifications ---
+	prepareRule("div_one", quote(a / 1.0), quote(a), is_numeric(a)),
+	prepareRule("div_self", quote(a / a), quote(1.0), eval(a != 0.0)), // Add condition a != 0
+	prepareRule("mul_inverse", quote(a * (1.0 / a)), quote(1.0), eval(a != 0.0 && a != Complex(0.0,0.0))), // Avoid division by zero complex
+	prepareRule("distribute_mul_add", quote(a * (b + c)), quote((a * b) + (a * c)), true),
+	prepareRule("distribute_mul_sub", quote(a * (b - c)), quote((a * b) - (a * c)), true),
+	// Explicit Commutativity/Associativity for demonstration (though canonicalization is preferred)
+	// prepareRule("add_comm", quote(a + b), quote(b + a), true), // Note: Only applies if not canonicalized
+	// prepareRule("mul_comm", quote(a * b), quote(b * a), true), // Note: Only applies if not canonicalized
+	// prepareRule("add_assoc", quote(a + (b + c)), quote((a + b) + c), true),
+	// prepareRule("mul_assoc", quote(a * (b * c)), quote((a * b) * c), true),
+
+	// --- Power and Logarithm Properties ---
+	prepareRule("pow_zero", quote(powC(a, 0.0)), quote(Complex(1.0, 0.0)), is_numeric(a)), // a^0 = 1 (Complex)
+	prepareRule("pow_zero_alt", quote(powC(a, 0)), quote(Complex(1.0, 0.0)), is_numeric(a)), // Handle integer 0 exponent
+	prepareRule("pow_one", quote(powC(a, 1.0)), quote(a), true), // a^1 = a
+	prepareRule("pow_one_alt", quote(powC(a, 1)), quote(a), true), // Handle integer 1 exponent
+	prepareRule("one_pow", quote(powC(1.0, a)), quote(Complex(1.0, 0.0)), true), // 1^a = 1 (Complex)
+	prepareRule("one_pow_complex", quote(powC(Complex(1.0, 0.0), a)), quote(Complex(1.0, 0.0)), true), // Complex 1^a = 1
+	prepareRule("pow_add_exp", quote(powC(a, b + c)), quote(mulC(powC(a, b), powC(a, c))), true), // a^(b+c) = a^b * a^c -> Use mulC
+	prepareRule("pow_mul_exp", quote(powC(a, b * c)), quote(powC(powC(a, b), c)), true), // a^(bc) = (a^b)^c
+	prepareRule("pow_mul_base", quote(powC(a * b, c)), quote(mulC(powC(a, c), powC(b, c))), true), // (ab)^c = a^c * b^c -> Use mulC
+	prepareRule("pow_div_base", quote(powC(a / b, c)), quote(divC(powC(a, c), powC(b, c))), eval(b != 0.0 && b != Complex(0.0,0.0))), // (a/b)^c = a^c / b^c -> Use divC
+	prepareRule("pow_neg_exp", quote(powC(a, -b)), quote(divC(Complex(1.0, 0.0), powC(a, b))), eval(a != 0.0 && a != Complex(0.0, 0.0))), // a^-b = 1 / a^b -> Use divC
+	prepareRule("exp_log_inverse", quote(expC(logC(a))), quote(a), true), // exp(log(a)) = a (Principal value)
+	prepareRule("log_exp_inverse", quote(logC(expC(a))), quote(a), true), // log(exp(a)) = a (Within principal branch +/- 2*pi*i)
+	prepareRule("log_one", quote(logC(1.0)), quote(Complex(0.0, 0.0)), true), // log(1) = 0 (Complex)
+	prepareRule("log_one_complex", quote(logC(Complex(1.0, 0.0))), quote(Complex(0.0, 0.0)), true), // log(1+0i) = 0
+	prepareRule("log_mul", quote(logC(a * b)), quote(addC(logC(a), logC(b))), true), // log(ab) = log(a)+log(b) (Principal values, modulo 2*pi*i) -> Use addC
+	prepareRule("log_div", quote(logC(a / b)), quote(subC(logC(a), logC(b))), eval(b != 0.0 && b != Complex(0.0,0.0))), // log(a/b) = log(a)-log(b) (Principal values, modulo 2*pi*i) -> Use subC
+	prepareRule("log_pow", quote(logC(powC(a, b))), quote(mulC(b, logC(a))), true), // log(a^b) = b*log(a) (Principal values, modulo 2*pi*i) -> Use mulC
+
+	// --- Complex Number Basics ---
+	prepareRule("complex_add", quote(Complex(a, b) + Complex(c, d)), quote(Complex(a + c, b + d)), true),
+	prepareRule("complex_sub", quote(Complex(a, b) - Complex(c, d)), quote(Complex(a - c, b - d)), true),
+	prepareRule("complex_mul", quote(Complex(a, b) * Complex(c, d)), quote(Complex(a*c - b*d, a*d + b*c)), true),
+	// Complex division defined by divC, no simple rule here
+	prepareRule("i_squared", quote(i * i), quote(Complex(-1.0, 0.0)), true), // Explicitly Complex result for i^2 = -1
+	prepareRule("complex_conjugate_def", quote(conjugateC(Complex(a, b))), quote(Complex(a, -b)), true),
+	prepareRule("conjugate_add", quote(conjugateC(a + b)), quote(addC(conjugateC(a), conjugateC(b))), true), // -> Use addC
+	prepareRule("conjugate_mul", quote(conjugateC(a * b)), quote(mulC(conjugateC(a), conjugateC(b))), true), // -> Use mulC
+	prepareRule("conjugate_conjugate", quote(conjugateC(conjugateC(a))), quote(a), true),
+	prepareRule("complex_real_mul", quote(r * Complex(a, b)), quote(Complex(r*a, r*b)), is_numeric(r)), // Scalar multiplication
+	prepareRule("complex_real_add", quote(r + Complex(a, b)), quote(Complex(r+a, b)), is_numeric(r)), // Real + Complex
+	prepareRule("complex_add_real", quote(Complex(a, b) + r), quote(Complex(a+r, b)), is_numeric(r)), // Complex + Real
+	prepareRule("complex_sub_real", quote(Complex(a, b) - r), quote(Complex(a-r, b)), is_numeric(r)), // Complex - Real
+	prepareRule("real_sub_complex", quote(r - Complex(a, b)), quote(Complex(r-a, -b)), is_numeric(r)), // Real - Complex
+	prepareRule("complex_mul_real", quote(Complex(a, b) * r), quote(Complex(a*r, b*r)), is_numeric(r)), // Complex * Real
+	prepareRule("complex_div_real", quote(Complex(a, b) / r), quote(Complex(a/r, b/r)), eval(is_numeric(r) && r != 0.0)), // Complex / Real
+	prepareRule("real_div_complex", quote(r / Complex(a, b)), quote(divC(Complex(r, 0.0), Complex(a, b))), is_numeric(r)), // Real / Complex
+	prepareRule("complex_zero", quote(Complex(0.0, 0.0)), quote(0.0), true), // Simplify complex zero to real zero
+	prepareRule("complex_magnitude_sq", quote(magnitudeC(z)^2), quote(mulC(z, conjugateC(z))), true), // |z|^2 = z * conj(z)
+	prepareRule("complex_real_check", quote(Complex(a, 0.0)), quote(a), true), // Simplify Complex(a, 0) to real 'a'
+
+	// --- Euler's Formula and Connections ---
+	prepareRule("euler_formula", quote(expC(i * theta)), quote(Complex(cos(theta), sin(theta))), true),
+	prepareRule("euler_formula_neg", quote(expC(mulC(Complex(0.0, -1.0), theta))), quote(Complex(cos(theta), -sin(theta))), true), // exp(-i*theta) = cos(theta) - i*sin(theta)
+	prepareRule("cos_from_exp", quote(cos(theta)), quote(divC(addC(expC(mulC(i, theta)), expC(mulC(Complex(0.0, -1.0), theta))), Complex(2.0, 0.0))), true), // -> Use complex arithmetic funcs
+	prepareRule("sin_from_exp", quote(sin(theta)), quote(divC(subC(expC(mulC(i, theta)), expC(mulC(Complex(0.0, -1.0), theta))), mulC(Complex(2.0, 0.0), i))), true), // -> Use complex arithmetic funcs
+	prepareRule("tan_from_exp", quote(tan(theta)), quote(mulC(i, divC(subC(expC(mulC(Complex(0.0, -1.0), theta)), expC(mulC(i, theta))), addC(expC(mulC(i, theta)), expC(mulC(Complex(0.0, -1.0), theta)))))), true),
+
+	// --- Exponential Properties ---
+	prepareRule("exp_zero", quote(expC(0.0)), quote(Complex(1.0, 0.0)), true), // exp(0) = 1 (explicitly complex)
+	prepareRule("exp_zero_complex", quote(expC(Complex(0.0, 0.0))), quote(Complex(1.0, 0.0)), true), // exp(0+0i) = 1
+	prepareRule("exp_add", quote(expC(a + b)), quote(mulC(expC(a), expC(b))), true), // exp(a+b) = exp(a)exp(b) -> Use mulC
+	//prepareRule("exp_integer_mul", quote(expC(n * z)), quote(powC(expC(z), n)), isInt(n)), // exp(nz) = (exp(z))^n - Careful with types
+	prepareRule("exp_periodicity", quote(expC(z + mulC(Complex(2.0 * pi, 0.0), i))), quote(expC(z)), true), // Periodicity of complex exponential -> Use mulC
+	prepareRule("exp_conjugate", quote(conjugateC(expC(z))), quote(expC(conjugateC(z))), true), // conj(exp(z)) = exp(conj(z))
+
+	// --- Trigonometric Properties ---
+	// Definitions
+	prepareRule("tan_def", quote(tan(x)), quote(sin(x) / cos(x)), eval(cos(x) != 0.0)),
+	prepareRule("sec_def", quote(sec(x)), quote(1.0 / cos(x)), eval(cos(x) != 0.0)),
+	// Special values
+	prepareRule("cos_zero", quote(cos(0.0)), quote(1.0), true),
+	prepareRule("sin_zero", quote(sin(0.0)), quote(0.0), true),
+	prepareRule("tan_zero", quote(tan(0.0)), quote(0.0), true),
+	prepareRule("cos_pi", quote(cos(pi)), quote(-1.0), true),
+	// prepareRule("sin_pi", quote(sin(pi)), quote(0.0), true), // Use epsilon comparison due to float precision?
+	prepareRule("tan_pi", quote(tan(pi)), quote(0.0), true), // Use epsilon comparison?
+	// prepareRule("cos_pi_half", quote(cos(pi / 2.0)), quote(0.0), true), // Use epsilon comparison?
+	prepareRule("sin_pi_half", quote(sin(pi / 2.0)), quote(1.0), true),
+	prepareRule("cos_pi_fourth", quote(cos(pi / 4.0)), quote(1.0 / sqrt(2.0)), true),
+	prepareRule("sin_pi_fourth", quote(sin(pi / 4.0)), quote(1.0 / sqrt(2.0)), true),
+	prepareRule("tan_pi_fourth", quote(tan(pi / 4.0)), quote(1.0), true),
+	// Periodicity
+	prepareRule("cos_periodicity", quote(cos(x + 2.0 * pi)), quote(cos(x)), true),
+	prepareRule("sin_periodicity", quote(sin(x + 2.0 * pi)), quote(sin(x)), true),
+	prepareRule("tan_periodicity", quote(tan(x + pi)), quote(tan(x)), true),
+	prepareRule("cos_half_periodicity", quote(cos(x + pi)), quote(0.0 - cos(x)), true), // Use subtraction
+	prepareRule("sin_half_periodicity", quote(sin(x + pi)), quote(0.0 - sin(x)), true), // Use subtraction
+	// Symmetry (Even/Odd)
+	prepareRule("cos_neg_arg", quote(cos(-x)), quote(cos(x)), true),
+	prepareRule("sin_neg_arg", quote(sin(-x)), quote(0.0 - sin(x)), true), // Use subtraction
+	prepareRule("tan_neg_arg", quote(tan(-x)), quote(0.0 - tan(x)), true), // Use subtraction
+	// Pythagorean Identities
+	prepareRule("pythagorean", quote(pow(cos(x), 2.0) + pow(sin(x), 2.0)), quote(1.0), true), // Use pow
+	prepareRule("pythagorean_tan_sec", quote(1.0 + pow(tan(x), 2.0)), quote(pow(sec(x), 2.0)), true), // Use pow
+	// Sum/Difference Formulas
+	prepareRule("cos_add", quote(cos(a + b)), quote(cos(a)*cos(b) - sin(a)*sin(b)), true),
+	prepareRule("cos_sub", quote(cos(a - b)), quote(cos(a)*cos(b) + sin(a)*sin(b)), true),
+	prepareRule("sin_add", quote(sin(a + b)), quote(sin(a)*cos(b) + cos(a)*sin(b)), true),
+	prepareRule("sin_sub", quote(sin(a - b)), quote(sin(a)*cos(b) - cos(a)*sin(b)), true),
+	// Double Angle Formulas
+	prepareRule("cos_double_angle_1", quote(cos(2.0*a)), quote(pow(cos(a), 2.0) - pow(sin(a), 2.0)), true), // Use pow
+	prepareRule("cos_double_angle_2", quote(cos(2.0*a)), quote(2.0*pow(cos(a), 2.0) - 1.0), true), // Use pow
+	prepareRule("cos_double_angle_3", quote(cos(2.0*a)), quote(1.0 - 2.0*pow(sin(a), 2.0)), true), // Use pow
+	prepareRule("sin_double_angle", quote(sin(2.0*a)), quote(2.0*sin(a)*cos(a)), true),
+	// Half Angle Formulas (Expressing in terms of cos(a))
+	prepareRule("cos_half_angle", quote(pow(cos(a/2.0), 2.0)), quote((1.0 + cos(a)) / 2.0), true), // Use pow
+	prepareRule("sin_half_angle", quote(pow(sin(a/2.0), 2.0)), quote((1.0 - cos(a)) / 2.0), true), // Use pow
+	// Product-to-Sum
+	prepareRule("prod_cos_cos", quote(cos(a)*cos(b)), quote(0.5*(cos(a-b) + cos(a+b))), true),
+	prepareRule("prod_sin_sin", quote(sin(a)*sin(b)), quote(0.5*(cos(a-b) - cos(a+b))), true),
+	prepareRule("prod_sin_cos", quote(sin(a)*cos(b)), quote(0.5*(sin(a+b) + sin(a-b))), true),
+	prepareRule("prod_cos_sin", quote(cos(a)*sin(b)), quote(0.5*(sin(a+b) - sin(a-b))), true),
+	// Sum-to-Product
+	prepareRule("sum_cos_cos", quote(cos(a)+cos(b)), quote(2.0*cos((a+b)/2.0)*cos((a-b)/2.0)), true),
+	prepareRule("sum_sin_sin", quote(sin(a)+sin(b)), quote(2.0*sin((a+b)/2.0)*cos((a-b)/2.0)), true),
+	prepareRule("diff_cos_cos", quote(cos(a)-cos(b)), quote(-2.0*sin((a+b)/2.0)*sin((a-b)/2.0)), true),
+	prepareRule("diff_sin_sin", quote(sin(a)-sin(b)), quote(2.0*cos((a+b)/2.0)*sin((a-b)/2.0)), true),
+
+	// --- Hyperbolic Functions ---
+	prepareRule("cosh_def", quote(cosh(z)), quote(divC(addC(expC(z), expC(subC(Complex(0.0,0.0), z))), Complex(2.0,0.0))), true), // Use complex funcs
+	prepareRule("sinh_def", quote(sinh(z)), quote(divC(subC(expC(z), expC(subC(Complex(0.0,0.0), z))), Complex(2.0,0.0))), true), // Use complex funcs
+	prepareRule("tanh_def", quote(tanh(z)), quote(divC(sinh(z), cosh(z))), eval(cosh(z) != Complex(0.0,0.0))), // Use divC
+	prepareRule("cosh_squared_minus_sinh_squared", quote(subC(powC(cosh(z), 2.0), powC(sinh(z), 2.0))), quote(Complex(1.0, 0.0)), true), // Use powC, complex result, subC
+	prepareRule("cosh_neg_arg", quote(cosh(-z)), quote(cosh(z)), true),
+	prepareRule("sinh_neg_arg", quote(sinh(-z)), quote(subC(Complex(0.0,0.0), sinh(z))), true), // Use subC for negation
+	prepareRule("cosh_i", quote(cosh(i*z)), quote(cos(z)), true), // Connection to trig
+	prepareRule("sinh_i", quote(sinh(i*z)), quote(mulC(i, sin(z))), true), // Connection to trig -> Use mulC
+
+	// --- Twiddle Factor Specific Rules (W(N, k) = exp(-i*2*pi*k/N)) ---
+	// Definition
+	prepareRule("twiddle_definition", quote(W(N, k)), quote(expC(mulC(mulC(Complex(0.0, -1.0), Complex(2.0 * pi, 0.0)), k), Complex(1.0/N, 0.0)))), true), // Explicit complex mul/div
+	// Periodicity in k
+	prepareRule("twiddle_periodicity_k", quote(W(N, k + N)), quote(W(N, k)), isInt(N) && eval(N != 0)),
+	// Half-period property (for even N)
+	prepareRule("twiddle_half_period", quote(W(N, k + N / 2)), quote(mulC(Complex(-1.0, 0.0), W(N, k))), eval(isInt(N) && N % 2 == 0)), // Use Complex multiplication
+	// Core FFT Identity 1
+	prepareRule("fft_identity_even", quote(W(N, 2*j*k)), quote(W(N / 2, j*k)), eval(isInt(N) && N % 2 == 0)),
+	// Core FFT Identity 2 (decomposition - relies on W_N^(a+b) rule)
+	prepareRule("fft_identity_odd_term", quote(W(N, (2*j+1)*k)), quote(mulC(W(N, k), W(N / 2, j*k))), eval(isInt(N) && N % 2 == 0)), // Use Complex multiplication
+	// Exponent Manipulation
+	prepareRule("twiddle_sum_exp", quote(W(N, a+b)), quote(mulC(W(N, a), W(N, b))), true), // W_N^(a+b) = W_N^a * W_N^b -> Use mulC
+	// Zero exponent
+	prepareRule("twiddle_zero_k", quote(W(N, 0)), quote(Complex(1.0, 0.0)), true), // W_N^0 = 1 (explicitly complex)
+	// Conjugate property
+	prepareRule("twiddle_conjugate", quote(conjugateC(W(N, k))), quote(W(N, -k)), true), // conj(W_N^k) = W_N^{-k}
+	prepareRule("twiddle_neg_k", quote(W(N, -k)), quote(W(N, N-k)), isInt(N) && eval(N!=0)), // W_N^{-k} = W_N^{N-k}
+	// Symmetry Property
+	prepareRule("twiddle_symmetry", quote(W(N, k*j)), quote(W(N, j*k)), true), // W_N^kj = W_N^jk
+
+	// --- Limit Rules (from algebra.orb ch9) ---
+	// Need a limit operator, e.g., limit(expr, var, tends_to)
+	// Assuming 'k' tends to infinity and var 'infinity' exists
+	prepareRule("limit_const", quote(limit(c, k, infinity)), quote(c), true), // limit of constant
+	prepareRule("limit_one_over_k", quote(limit(1.0/k, k, infinity)), quote(0.0), true),
+	prepareRule("limit_one_over_k_pow", quote(limit(1.0/pow(k, l)), k, infinity)), quote(0.0), isInt(l) && eval(l > 0)),
+	prepareRule("limit_x_pow_k", quote(limit(pow(x, k), k, infinity)), quote(0.0), eval(abs(x) < 1.0)),
+	prepareRule("limit_x_pow_k_one", quote(limit(pow(1.0, k), k, infinity)), quote(1.0), true),
+	prepareRule("limit_sum", quote(limit(a_k + b_k, k, infinity)), quote(limit(a_k, k, infinity) + limit(b_k, k, infinity)), true),
+	prepareRule("limit_product", quote(limit(a_k * b_k, k, infinity)), quote(limit(a_k, k, infinity) * limit(b_k, k, infinity)), true),
+	prepareRule("limit_scalar_mul", quote(limit(c * a_k, k, infinity)), quote(c * limit(a_k, k, infinity)), true),
+	prepareRule("limit_reciprocal", quote(limit(1.0 / a_k, k, infinity)), quote(1.0 / limit(a_k, k, infinity)), eval(limit(a_k, k, infinity) != 0.0))
+];
+
+// ----- Example Usage -----
+
+// Example expression involving twiddle factors and complex math
+let expr_to_simplify = quote(W(8, 2*j*k) + W(8, k + 4));
+
+// Apply the rules until a fixed point is reached
+let simplified_expr = applyRulesUntilFixedPoint(expr_to_simplify, math_identity_rules, 30); // Increase iterations if needed
+
+println("Original: " + prettyOrbit(expr_to_simplify));
+println("Simplified: " + prettyOrbit(simplified_expr)); // Should apply twiddle_half_period and fft_identity_even
+
+// Example showing Pythagorean identity
+let pythag_example = quote(pow(cos(theta), 2.0) + pow(sin(theta), 2.0)); // Using pow
+let simplified_pythag = applyRulesUntilFixedPoint(pythag_example, math_identity_rules, 10);
+println("Original Pythag: " + prettyOrbit(pythag_example));
+println("Simplified Pythag: " + prettyOrbit(simplified_pythag)); // Should simplify to 1.0
+
+"Math Identity Rules Loaded and Expanded"

@@ -191,6 +191,10 @@ void eraseItem(T &container, const V &value) {
 #define FLOW_CHAR_SIZE 2
 typedef uint16_t unicode_char;
 typedef uint32_t ucs4_char;
+
+// Include the char_traits specialization for uint16_t
+#include "char_traits_fix.h"
+
 typedef std::basic_string<unicode_char> unicode_string;
 typedef std::basic_string<ucs4_char> utf32_string;
 typedef std::tuple<size_t, size_t, ucs4_char> ucs4_char_tracer;

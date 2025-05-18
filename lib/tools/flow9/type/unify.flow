@@ -1,0 +1,127 @@
+import tools/flow9/type/types;
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/egraph/subtype;
+import tools/flow9/type/egraph/generalize;
+import tools/flow9/type/egraph/lub_glb; // Added for findCommonSupertypes
+import tools/flow9/type/egraph/utils; // Import for createConstructorNode
+
+export {
+	// Unify these types. Return the subtype
+	unifyWithExpected(env : HTypeEnv, type : string, expected : HTypeExpect, info : int) -> int;
+
+	unify(env : HTypeEnv, eclass : int, expected : HTypeExpect, info : int) -> int;
+
+	// Unifies types represented by pairs of eclass and info
+	// Allows for tracking precise locations for each contributing type
+	unifyLubInfoTypes(env : HTypeEnv, ts : [Pair<int, int>], expected : HTypeExpect, info : int) -> int;
+}
+
+unifyWithExpected(env : HTypeEnv, type : string, expected : HTypeExpect, info : int) -> int {
+	etype = htype2root(env.egraph, HTypeCons(type, []), EContext(info, type));
+	unify(env, etype, expected, info);
+}
+
+unify(env : HTypeEnv, etype : int, expected : HTypeExpect, info : int) -> int {
+	switch (expected) {
+		HTypeNone(): etype;
+		HTypeExpectUnify(context, mode, right): {
+			modeString = switch (mode) {
+				HSubtype(): "<:";
+				HLubtype(): "lub";
+				HExactType(): "==";
+			}
+			if (env.egraph.tracing >= 1) {
+				debugMsg(env.egraph, 1, "Unifying '" + context + "':   " + prettyNode(env.egraph, etype) + "   " + modeString + "   " + prettyNode(env.egraph, right));
+			}
+			contexts = makeSet1(EContext(info, context));
+			switch (mode) {
+				HSubtype(): {
+					subtypeEGraphTypes(env.egraph, etype, right, contexts);
+				}
+				HLubtype(): {
+					upper = makeTypeVariable(env.egraph, contexts);
+					subtypeEGraphTypes(env.egraph, etype, upper, contexts);
+					subtypeEGraphTypes(env.egraph, right, upper, contexts);
+				}
+				HExactType(): {
+					unifyEGraphTypes(env.egraph, etype, right, contexts);
+				}
+			}
+		}
+	}
+}
+
+// Finds or creates a supertype for a set of types
+// Returns an eclass ID representing the supertype
+findOrCreateSupertype(env : HTypeEnv, eclasses : [int], expected : HTypeExpect, info : int) -> int {
+	// Extract constructor nodes from the types (ignore variables and functions)
+	constructorNodes = fold(eclasses, makeSet(), \acc, eclass -> {
+		node = getNodeDef(env.egraph, eclass);
+		switch (node) {
+			Constructor(name, params): insertSet(acc, node);
+			default: acc;
+		}
+	});
+
+	create = \ -> {
+		switch (expected) {
+			HTypeNone(): makeTypeVariable(env.egraph, makeSet1(EContext(info, "lub")));
+			HTypeExpectUnify(context, mode, right): right;
+		}
+	};
+	
+	// If all types are constructors (no type variables)
+	if (sizeSet(constructorNodes) == length(eclasses)) {
+		// Find common supertypes using the function from bounds.flow
+		commonSuperTypes = findCommonSupertypes(env.egraph, constructorNodes);
+		
+		// If we have exactly one common supertype, create and return it
+		if (sizeSet(commonSuperTypes) == 1) {
+			supertypeName = set2array(commonSuperTypes)[0];
+			// Create a constructor node with the supertype name
+			supertype = insertNode(env.egraph, 
+				createConstructorNode(env.egraph, supertypeName, makeSet1(EContext(info, "lub"))), 
+				makeSet1(EContext(info, "lub"))
+			);
+			
+			if (env.egraph.tracing >= 1) {
+				debugMsg(env.egraph, 1, "Found common supertype early: " + prettyNode(env.egraph, supertype));
+			}
+			
+			unify(env, supertype, expected, info);
+		} else {
+			// No unique common supertype, create a type variable
+			create();
+		}
+	} else {
+		// Not all are constructor types, create a fresh type variable
+		create();
+	}
+}
+
+// Unifies types represented by pairs of eclass and info
+// Allows for tracking precise locations for each contributing type
+unifyLubInfoTypes(env : HTypeEnv, ts : [Pair<int, int>], expected : HTypeExpect, info : int) -> int {
+	if (ts == []) {
+		// Create a void type with a default info since we have no types
+		insertNode(env.egraph, Constructor("void", []), makeSet());
+	} else if (length(ts) == 1) {
+		// The lub of a single type is itself
+		ts[0].first;
+	} else {
+		// Get the eclasses for all types
+		eclasses = map(ts, \t -> t.first);
+		
+		// Find or create a supertype
+		supertype = findOrCreateSupertype(env, eclasses, expected, info);
+		
+		// Make each type a subtype of our supertype
+		iter(ts, \t -> {
+			eclass = t.first;
+			subtypeEGraphTypes(env.egraph, eclass, supertype, makeSet1(EContext(t.second, "Merging types")));
+			{}
+		});
+		
+		supertype;
+	}
+}

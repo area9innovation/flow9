@@ -1,5 +1,6 @@
 import tools/flowc/flowc_timephases;
 import tools/flowc/flow_parser;
+import tools/flowc/flow9_parser;
 import tools/flowc/incremental;
 import tools/flowc/flowc_helpers;
 import tools/flowc/desugar;
@@ -105,13 +106,35 @@ parseFlowfile(config : CompilerConfig, fileinfo : FcFileInfo, fromfile : string)
 		errorM = if (st.end != strlen(fileinfo.content)) {
 			// Check if fileinfo.content contains common imperative constructs
 			forPos = strIndexOf(fileinfo.content, "for (");
+	
+			flow9 = \ -> {
+				// Use the Mango parser to get a more detailed error message
+				flow9ParserError("", fileinfo.content) + "\n";
+			}
 
 			if (forPos >= 0) {
-				errorMsg = "Syntax error: Flow9 does not support 'for' loops. Flow is a functional language - use recursion, map, filter, or fold instead.";
-				Some(FcError(errorMsg, [FcPosition(fileinfo.flowfile, forPos, forPos + 5)]));
+				// Find the last newline before the "for"
+				prevText = strLeft(fileinfo.content, forPos);
+				lastNewlinePos = strLastIndexOf(prevText, "\n");
+				// Extract the current line up to the "return"
+				currentLine = if (lastNewlinePos == -1)
+								strLeft(prevText, forPos)
+							else
+								substring(prevText, lastNewlinePos + 1, forPos - lastNewlinePos - 1);
+
+				// Check if there's a "//" in the line before the "return"
+				commentPos = strIndexOf(currentLine, "//");
+				quotePos = strIndexOf(currentLine, "\"");
+				if (commentPos == -1 && quotePos == -1) {
+					errorMsg = "Syntax error: Flow9 does not support 'for' loops. Flow is a functional language - use recursion, map, filter, or fold instead.";
+					Some(FcError(errorMsg, [FcPosition(fileinfo.flowfile, forPos, forPos + 4)]));
+				} else {
+					// Fall back to the generic syntax error message
+					Some(FcError(flow9() + "Syntax error: expected one of " + strGlue(err.expected, ", "), [FcPosition(fileinfo.flowfile, err.pos, err.pos)]));
+				}
 			} else {
 				// Fall back to the generic syntax error message
-				Some(FcError("Syntax error: expected one of " + strGlue(err.expected, ", "), [FcPosition(fileinfo.flowfile, err.pos, err.pos)]));
+				Some(FcError(flow9() + "Syntax error: expected one of " + strGlue(err.expected, ", "), [FcPosition(fileinfo.flowfile, err.pos, err.pos)]));
 			}
 		} else None();
 		Pair(FcParsed(fileinfo, st, extractFcImports(fileinfo, st), extractFcForbids(fileinfo, st), makeTree()), errorM);

@@ -1,0 +1,107 @@
+import tools/flow9_retro/pexp/pexp;
+import ds/array;
+import runtime;
+
+export {
+	replacePExp(p : PExp, fin : PExp, rep : PExp) -> PExp;
+}
+
+isSamePExp(l : PExp, r : PExp) -> bool {
+	if (isSameStructType(l, r)) {
+		lsplit = splitPExp(l);
+		rsplit = splitPExp(r);
+		lsplit.first == rsplit.first
+		&& forall(mapi(lsplit.second, \i, ls -> {
+			isSamePExp(ls, rsplit.second[i])
+		}), idfn)
+	} else false;
+}
+
+// Split a pexp into the main value (with uniform pos) and the children
+// The main value should be directly comparable with == to identify
+// equivalence
+splitPExp(p : PExp) -> Pair<PExp, [PExp]> {
+	todo = \ -> {
+		println("TODO: Split " + toString(p));
+		Pair(p, []);
+	}
+	dummy = PVoid(0);
+	switch (p) {
+		PTopLevel(): Pair(p, []);
+		PType(): Pair(p, []);
+		PVoid(pos): Pair(PVoid(0), []);
+		PBool(v, pos): Pair(PBool(v, 0), []);
+		PInt(v, pos): Pair(PInt(v, 0), []);
+		PDouble(v, pos): Pair(PDouble(v, 0), []);
+		PString(v, pos): Pair(PString(v, 0), []);
+		PStringInclude(path, pos): Pair(PStringInclude(path, 0), []);
+		PVar(var, pos): Pair(PVar(var, 0), []);
+		PLet(var, value, body, pos): Pair(PLet(var, dummy, dummy, 0), [value, body]);
+		PIf(cond, then, else_, pos): Pair(PIf(dummy, dummy, dummy, 0), [cond, then, else_]);
+		PCall(fn, args, pos): Pair(PCall(dummy, [], 0), concat([fn], args));
+		PCallOp(op, args, pos): Pair(PCallOp(op, [], 0), args);
+		PLambda(args, body, pos): Pair(PLambda(args, dummy, 0), [body]);
+		PRef(value, pos): Pair(PRef(dummy, 0), [value]);
+		PSetMutable(lhs, field, value, pos): Pair(PSetMutable(dummy, field, dummy, 0), [lhs, value]);
+		PField(value, field, pos): Pair(PField(dummy, field, 0), [value]);
+		PArray(exps, pos): Pair(PArray([], 0), exps);
+		PSequence(exps, pos): Pair(PSequence([], 0), exps);
+		PSwitch(value, cases, pos): {
+			Pair(
+				PSwitch(dummy, map(cases, \c -> {
+					PCase(c.id, c.args, dummy, 0)
+				}), 0), 
+				concat([value], map(cases, \c -> c.body))
+			);
+		}
+		PCast(value, target, pos): todo(); // The target is potentially a problem
+		PTyped(value, type, pos): todo(); // The type is potentially a problem
+		PWith(struct, value, fields, pos): todo();
+		PMaybe(value, match, otherwise, pos): Pair(
+			PMaybe(dummy, dummy, dummy, 0),
+			[value, match, otherwise]
+		)
+
+		PFieldAssign(id, value, pos): todo();
+		PCase(id, args, body, pos): todo();
+		PList(l, pos): todo();
+	}
+}
+
+replacePExp(p : PExp, fin : PExp, rep : PExp) -> PExp {
+	if (isSamePExp(p, fin)) rep
+	else {
+		rec = \pp -> replacePExp(pp, fin, rep);
+		switch (p) {
+			PValue(): p;
+			PTopLevel(): p;
+			PType(): p;
+
+			PStringInclude(path, pos): p;
+			PVar(var, pos): p;
+			PLet(var, value, body, pos): PLet(var, rec(value), rec(body), pos);
+			PIf(cond, then, else_, pos): PIf(rec(cond), rec(then), rec(else_), pos);
+			PCall(fn, args, pos): PCall(rec(fn), map(args, rec), pos);
+			PCallOp(op, args, pos): PCallOp(op, map(args, rec), pos);
+			PLambda(args, body, pos): PLambda(args, rec(body), pos);
+			PRef(value, pos): PRef(rec(value), pos);
+			PSetMutable(lhs, field, value, pos): PSetMutable(rec(lhs), field, rec(value), pos);
+			PField(value, field, pos): PField(rec(value), field, pos);
+			PArray(exps, pos): PArray(map(exps, rec), pos);
+			PSequence(exps, pos): PSequence(map(exps, rec), pos);
+			PSwitch(value, cases, pos): PSwitch(rec(value), map(cases, \c -> {
+				PCase(c with body = rec(c.body))
+			}), pos);
+			PCase(id, args, body, pos): PCase(id, args, rec(body), pos);
+			PCast(value, target, pos): PCast(rec(value), target, pos);
+			PTyped(value, type, pos): PTyped(rec(value), type, pos);
+			PWith(struct, value, fields, pos): PWith(struct, rec(value), 
+				map(fields, \f -> PFieldAssign(f with value = rec(f.value))),
+				pos);
+			PFieldAssign(id, value, pos): PFieldAssign(id, rec(value), pos);
+			PMaybe(value, match, otherwise, pos): PMaybe(rec(value), rec(match), rec(otherwise), pos);
+
+			PList(l, pos): p;
+		}
+	}
+}

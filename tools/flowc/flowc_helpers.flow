@@ -101,7 +101,7 @@ addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcType
 		onError = \m -> refArrayPush(errors, FcError(m, [
 					FcPosition(f, un.info.start, un.info.end),
 				]));
-		structsInUnion = getStructsInUnion(barestructs, unions, un, onError);
+		structsInUnion = getStructsInUnion(barestructs, unions, un, onError, []);
 		fold(structsInUnion, acc2, \acc3, sn -> {
 			treePushToArrayUnique(acc3, sn, un.name)
 		});
@@ -282,24 +282,29 @@ addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcType
 	FcTypeEnvProgram(tenv2 with acc = nacc, subtypeGraph = subtype)
 }
 
-getStructsInUnion(structs : Tree<string, FcTypeStruct>, unions : Tree<string, FcTypeUnion>, union : FcTypeUnion, onError : (string) -> void) -> [string] {
+getStructsInUnion(structs : Tree<string, FcTypeStruct>, unions : Tree<string, FcTypeUnion>, union : FcTypeUnion, onError : (string) -> void, visitedUnions : [string]) -> [string] {
 	fold(union.typenames, [], \acc, tn -> {
-		concat(acc, getStructsInName(structs, unions, tn.name, onError))
+		concat(acc, getStructsInName(structs, unions, tn.name, onError, visitedUnions))
 	});
 }
 
-getStructsInName(structs : Tree<string, FcTypeStruct>, unions : Tree<string, FcTypeUnion>, name : string, onError : (string) -> void) -> [string] {
+getStructsInName(structs : Tree<string, FcTypeStruct>, unions : Tree<string, FcTypeUnion>, name : string, onError : (string) -> void, visitedUnions : [string]) -> [string] {
 	if (containsKeyTree(structs, name)) {
 		[name]
 	} else {
-		un = lookupTree(unions, name);
-		switch (un) {
-			None(): {
-				onError("Unknown struct/union name " + name);
-				[];
-			}
-			Some(ut): {
-				getStructsInUnion(structs, unions, ut, onError);
+		if (contains(visitedUnions, name)) {
+			onError("Cycle detected in union definitions: " + strGlue(concat(visitedUnions, [name]), " -> "));
+			[];
+		} else {
+			un = lookupTree(unions, name);
+			switch (un) {
+				None(): {
+					onError("Unknown struct/union name " + name);
+					[];
+				}
+				Some(ut): {
+					getStructsInUnion(structs, unions, ut, onError, arrayPush(visitedUnions, name));
+				}
 			}
 		}
 	}

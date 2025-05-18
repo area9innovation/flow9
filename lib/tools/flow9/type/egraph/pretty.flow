@@ -1,0 +1,123 @@
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/types;
+import text/blueprint;
+
+export {
+	debugPrintEGraph(g : EGraph) -> void;
+	prettyNode(e : EGraph, id : int) -> string;
+	prettyNodes(e : EGraph, ids : Set<int>) -> string;
+	prettyTypeNode(g : EGraph, node : TypeNode) -> string;
+	typeNodeToString(g : EGraph, id : int, subs : bool, details : bool) -> string;
+	prettyHTypeExpect(g : EGraph, expect : HTypeExpect) -> string;
+}
+
+prettyHTypeExpect(g : EGraph, expect : HTypeExpect) -> string {
+	switch (expect) {
+		HTypeNone(): "";
+		HTypeExpectUnify(context, mode, right): {
+			"   '" + context + "' expects " 
+			+ (switch (mode) {
+					HSubtype(): "  <:  ";
+					HLubtype(): "  lub  ";
+					HExactType(): "  ==  ";
+				})
+			+ " of  " + prettyNode(g, right);
+		}
+	}
+}
+
+
+prettyNode(e : EGraph, id : int) -> string {
+	typeNodeToString(e, id, false, false)
+}
+
+prettyNodes(e : EGraph, ids : Set<int>) -> string {
+	superglue(set2array(ids), \id -> prettyNode(e, id), ", ")
+}
+
+debugPrintEGraph(g : EGraph) -> void {
+	traverseInOrder(^(g.classes), \id, eclass -> {
+		printEClass(g, id, eclass, "");
+	});
+	{}
+}
+
+printEClass(g : EGraph, id : int, eclass : EClass, indent : string) -> void {
+	println(indent + "α" + i2s(id) + ": " + typeNodeToString(g, id, false, false) +
+		(if (id != eclass.root) " (root: " + i2s(eclass.root) + ")" else ""));
+
+	eq = getEquivClass(g, id);
+	if (!isEmptySet(removeSet(eq, id))) {
+		println(indent + "  ~: " + superglue(set2array(eq), \i -> "α" + i2s(i), ", "));
+	}
+
+	if (!isEmptySet(eclass.subtypes)) {
+		println(indent + "  ≥: " + eclassSet(g, eclass.subtypes));
+	}
+	if (!isEmptySet(eclass.supertypes)) {
+		println(indent + "  ≤: " + eclassSet(g, eclass.supertypes));
+	}
+	if (!isEmptySet(eclass.alternatives)) {
+		println(indent + "  ∈: " + eclassSet(g, eclass.alternatives));
+	}
+	if (!isEmptySet(eclass.partOfAlternatives)) {
+		println(indent + "   part of: " + eclassSet(g, eclass.partOfAlternatives));
+	}
+}
+
+eclassSet(g : EGraph, ids : Set<int>) -> string {
+	"{" + superglue(set2array(ids), \id -> typeNodeToString(g, id, false, false), ", ") + "}";
+}
+
+// Convert a node to a string, recursively resolving all type references
+typeNodeToString(g : EGraph, id : int, includeSubs : bool, details : bool) -> string {
+	eclass = getEClassDef(g, id);
+	node = eclass.node;
+
+	equiv = if (details) {
+		root = findEGraphRoot(g, id);
+		eq = getEquivClass(g, id);
+		if (sizeSet(eq) == 1) {
+			"=" + superglue(set2array(eq), \i -> "α" + i2s(i), ", ") + "";
+		} else " ={" + superglue(set2array(eq), \i -> "α" + i2s(i) + (if (i == root) "*" else ""), ", ") + "}";
+	} else "";
+
+	alts = if (!details || isEmptySet(eclass.alternatives)) "" else
+		" ∈{" + superglue(set2array(eclass.alternatives), \i -> typeNodeToString(g, i, false, false), ", ") + "}";
+
+	subs = if (!includeSubs || isEmptySet(eclass.subtypes)) "" else
+		"{" + superglue(set2array(eclass.subtypes), \i -> typeNodeToString(g, i, false, false), ", ") + "}≤ ";
+
+	supers = if (!includeSubs || isEmptySet(eclass.supertypes)) "" else
+		" ≤{" + superglue(set2array(eclass.supertypes), \i -> typeNodeToString(g, i, false, false), ", ") + "}";
+
+	partOf = if (!details || isEmptySet(eclass.partOfAlternatives)) "" else
+		"  part of {" + superglue(set2array(eclass.partOfAlternatives), \i -> "α" + i2s(i), ", ") + "}";
+
+	nodeText = switch (node) {
+		Variable(vid): "α" + i2s(vid);
+		Constructor(name, params): {
+			(if (length(params) == 0) name
+			else name + "<" + strGlue(map(params, \p -> typeNodeToString(g, p, false, false)), ", ") + ">")
+			+ (if (!details) "=α" + i2s(id) else "");
+		}
+		Function(args, ret): {
+			" (" + strGlue(map(args, \a -> typeNodeToString(g, a, false, false)), ", ") + ") -> " + typeNodeToString(g, ret, false, false) + " ";
+		}
+	};
+	subs + nodeText + supers + equiv + alts + partOf
+}
+
+prettyTypeNode(g : EGraph, node : TypeNode) -> string {
+	switch (node) {
+		Variable(vid): "α" + i2s(vid);
+		Constructor(name, params): {
+			if (name == "") "<>"
+			else if (length(params) == 0) name
+			else (name + "<" + strGlue(map(params, \p -> prettyNode(g, p)), ", ") + ">");
+		}
+		Function(args, ret): {
+			" (" + strGlue(map(args, \a -> prettyNode(g, a)), ", ") + ") -> " + prettyNode(g, ret) + " ";
+		}
+	};
+}

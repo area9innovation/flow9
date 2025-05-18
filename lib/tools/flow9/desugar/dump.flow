@@ -1,0 +1,145 @@
+import tools/flow9/desugar/dexp;
+import tools/flow9/desugar/pretty;
+import text/blueprint;
+import tools/flow9/type/pretty;
+import net/url_parameter;
+
+export {
+	dumpDModule(d : DModule) -> void;
+}
+
+dumpDModule(d : DModule) -> void {
+	//		"imports", superglue(m.imports, \i -> prettyDImport(env, i), ";\n"),
+	//		"forbids", superglue(m.forbids, \f -> prettyDForbid(env, f), ";\n"),
+	//		"exported", superglue(m.exported, \e -> e, "\n"),
+	//		"structs", prettyTree(m.structs, \k, v -> prettyDStruct(env, v), "\n"),
+	//		"unions", prettyTree(m.unions, \k, v -> prettyDUnion(env, v), "\n"),
+	//		"natives", prettyTree(m.natives, \k, v -> prettyDNative(env, v), "\n"),
+	name = getUrlParameter("name");
+	traverseInOrder(d.toplevels, \topname, dglobal -> {
+		if (name == "" || topname == name) {
+			dumpDGlobal(d, dglobal);
+		}
+	});
+}
+
+dumpDGlobal(m : DModule, dglobal : DGlobal) -> void {
+	dumpDInfo(m, "", "toplevel `" + dglobal.name + "` ∀" + strGlue(dglobal.typars, ", "), dglobal.info);
+	dumpDExp(m, "\t", dglobal.value)
+}
+
+dumpDExp(m : DModule, indent : string, dexp : DExp) -> void {
+	nindent = indent + "\t";
+	switch (dexp) {
+		DLambda(args, body, info): {
+			dumpDInfo(m, indent, "Lambda", dexp.info);
+			iter(args, \arg -> {
+				dumpDInfo(m, nindent, arg.name, arg.info);
+				dumpDType(m, nindent + "\t", arg.type);
+			});
+			dumpDExp(m, nindent, body);
+		}
+		DValue(): {
+			dumpDInfo(m, indent, summarizeDExp(dexp), dexp.info);
+		}
+		DVar(name, info): {
+			dumpDInfo(m, indent, "Var `" + name + "`", dexp.info);
+		}
+		DLet(name, value, body, info): {
+			dumpDInfo(m, indent, "Let `" + name + "`", dexp.info);
+			dumpDExp(m, nindent, value);
+			dumpDExp(m, nindent, body);
+		}
+		DBuiltin(op, args, info): {
+			dumpDInfo(m, indent, "Builtin " + op.structname, dexp.info);
+			dumpDOp(m, nindent, op);
+			iter(args, \arg -> {
+				dumpDExp(m, nindent, arg);
+			});
+		}
+		DArray(values, info): {
+			dumpDInfo(m, indent, "Array", dexp.info);
+			iter(values, \value -> {
+				dumpDExp(m, nindent, value);
+			});
+		}
+		DCall(fn, args, info): {
+			dumpDInfo(m, indent, "Call", dexp.info);
+			dumpDExp(m, nindent, fn);
+			iter(args, \arg -> {
+				dumpDExp(m, nindent, arg);
+			});
+		}
+		DIfElse(condition, then, else_, info): {
+			dumpDInfo(m, indent, "IfElse", dexp.info);
+			dumpDExp(m, nindent, condition);
+			dumpDExp(m, nindent, then);
+			dumpDExp(m, nindent, else_);
+		}
+		DMaybe(condition, then, else_, info): {
+			dumpDInfo(m, indent, "Maybe", dexp.info);
+			dumpDExp(m, nindent, condition);
+			dumpDExp(m, nindent, then);
+			dumpDExp(m, nindent, else_);
+		}
+		DSwitch(value, cases, defaultCase, info): {
+			dumpDInfo(m, indent, "Switch", dexp.info);
+			dumpDExp(m, nindent, value);
+			iter(cases, \c -> {
+				dumpDInfo(m, nindent, "Case " + c.uid, c.info);
+				dumpDExp(m, nindent + "\t", c.body);
+			});
+			defaultCase ?? {
+				dumpDInfo(m, nindent, "Default", -1);
+				dumpDExp(m, nindent + "\t", defaultCase);
+			} : {}
+		}
+		DWith(uid, wexp, fieldassigns, info): {
+			dumpDInfo(m, indent, "With " + uid, dexp.info);
+			dumpDExp(m, nindent, wexp);
+			iter(fieldassigns, \fa -> {
+				dumpDInfo(m, nindent, "Field " + fa.field, fa.info);
+				dumpDExp(m, nindent + "\t", fa.exp);
+			});
+		}
+	}
+}
+
+dumpDOp(m : DModule, indent : string, op : DOp) -> void {
+	switch (op) {
+		DCast(toType): dumpDType(m, indent, toType);
+		DIsSubType(type): dumpDType(m, indent, type);
+		DDeref(): {}
+		DDot(field): {}
+		DNegative(): {}
+		DNot(): {}
+		DAdd(): {}
+		DAnd(): {}
+		DDiv(): {}
+		DMod(): {}
+		DMul(): {}
+		DOr(): {}
+		DSub(): {}
+		DRef(): {}
+		DAssign(): {}
+		DEqual(): {}
+		DGreater(): {}
+		DGreaterEqual(): {}
+		DLess(): {}
+		DLessEqual(): {}
+		DNotEqual(): {}
+		DIndex(): {}
+		DMutableAssign(field): {}
+		DPipe(): {}
+		DSequence(): {} 
+	}
+}
+
+dumpDType(m : DModule, indent : string, t : DType) -> void {
+	dumpDInfo(m, indent, prettyDType(newPrEnv(), t), t.info);
+}
+
+dumpDInfo(m : DModule, indent : string, s : string, info : int) -> void {
+	t = elementAt(m.types, info, HTypeCons(i2s(info), []));
+	println(indent + s +	" :: " + prettyHTypeSchema(t));
+}

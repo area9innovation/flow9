@@ -1,0 +1,592 @@
+import material/material_dialog;
+import algorithms;
+
+// Type definitions
+Board : (cells: [[int]]); // 9x9 grid representation
+Difficulty ::= Easy, Medium, Hard;
+	Easy();
+	Medium();
+	Hard();
+
+// Generate a solved Sudoku board (filled with valid numbers)
+generateSolvedBoard() -> Board {
+	// Start with an empty board
+	board = createEmptyBoard();
+
+	// Fill the board using backtracking with some randomness
+	filledBoard = fillBoardRecursively(board);
+
+	// Return the filled board (could be None but highly unlikely)
+	switch (filledBoard) {
+		None(): {
+			println("Warning: Failed to generate a valid solution. Retrying...");
+			generateSolvedBoard(); // Very rare to reach this, but retry if needed
+		}
+		Some(validBoard): validBoard;
+	}
+}
+
+// Helper function to recursively fill the board
+fillBoardRecursively(board : Board) -> Maybe<Board> {
+	// Find an empty cell
+	emptyCell = findEmptyCell(board);
+
+	// If no empty cell, the board is complete
+	switch (emptyCell) {
+		None(): Some(board); // Board is completely filled
+		Some(cell): {
+			row = cell.first;
+			col = cell.second;
+
+			// Get a random order of numbers to try (1-9)
+			numbers = shuffleArray(generate(1, 10, \i -> i));
+
+			// Try each number in the shuffled order using a recursive helper
+			tryNumbers(board, row, col, numbers, 0);
+		}
+	}
+}
+
+// Helper function to try numbers recursively
+tryNumbers(board : Board, row : int, col : int, numbers : [int], index : int) -> Maybe<Board> {
+	// Base case: we've tried all numbers without success
+	if (index >= length(numbers)) {
+		None();
+	} else {
+		// Get the current number to try
+		num = numbers[index];
+
+		// Check if this number is valid in this position
+		if (isValidMove(board, row, col, num)) {
+			// Place the number
+			newBoard = setCell(board, row, col, num);
+
+			// Recursively fill rest of the board
+			result = fillBoardRecursively(newBoard);
+
+			// If successful, return the filled board
+			switch (result) {
+				Some(filledBoard): result;
+				None(): {
+					// Try the next number
+					tryNumbers(board, row, col, numbers, index + 1);
+				}
+			}
+		} else {
+			// Current number not valid, try the next one
+			tryNumbers(board, row, col, numbers, index + 1);
+		}
+	}
+}
+
+// Helper function to set a value in an array (since arrays are immutable)
+setArrayValue(arr : [?], index : int, value : ?) -> [?] {
+	concat(
+		concat(
+			subrange(arr, 0, index),
+			[value]
+		),
+		subrange(arr, index + 1, length(arr) - index - 1)
+	);
+}
+
+// Generate a Sudoku puzzle with the given difficulty
+generateSudoku(difficulty : Difficulty) -> Board {
+	// First, generate a completely solved board
+	solvedBoard = generateSolvedBoard();
+
+	// Then remove cells based on the difficulty level
+	puzzleBoard = removeCellsForDifficulty(solvedBoard, difficulty);
+
+	// Return the puzzle board with appropriate number of cells removed
+	puzzleBoard;
+}
+
+// Helper function to determine how many cells to remove based on difficulty
+getCellsToRemove(difficulty : Difficulty) -> int {
+	switch (difficulty) {
+		Easy(): 30;    // Easy: ~51 filled cells (63%)
+		Medium(): 45;  // Medium: ~36 filled cells (44%)
+		Hard(): 55;    // Hard: ~26 filled cells (32%)
+	}
+}
+
+// Remove cells from a solved board to create a puzzle of specified difficulty
+removeCellsForDifficulty(board : Board, difficulty : Difficulty) -> Board {
+	// Determine how many cells to remove based on difficulty
+	cellsToRemove = getCellsToRemove(difficulty);
+
+	// Create a list of all cell positions (0-80)
+	allCells = generate(0, 81, \i -> i);
+
+	// Shuffle the cells to randomize removal order
+	cellsToTry = shuffleArray(allCells);
+
+	// Return the puzzle with cells removed
+	removeUntil(board, cellsToTry, 0, cellsToRemove, difficulty);
+}
+
+// Helper function to recursively remove cells until we reach the target number
+removeUntil(board : Board, cellsToTry : [int], removedSoFar : int, targetRemoved : int, difficulty : Difficulty) -> Board {
+	if (removedSoFar >= targetRemoved || length(cellsToTry) == 0) {
+		// We've removed enough cells or tried all possible cells
+		board;
+	} else {
+		// Get the next cell to try
+		cellIndex = cellsToTry[0];
+		remainingCells = tail(cellsToTry);
+
+		// Convert 1D index to 2D coordinates
+		row = cellIndex / 9;
+		col = cellIndex % 9;
+
+		// Remember the original value before removal
+		originalValue = board.cells[row][col];
+
+		// Skip if cell is already empty
+		if (originalValue == 0) {
+			removeUntil(board, remainingCells, removedSoFar, targetRemoved, difficulty);
+		} else {
+			// Try to remove this cell (set to 0)
+			boardWithCellRemoved = setCell(board, row, col, 0);
+
+			// For Hard difficulty, we don't always check for uniqueness
+			// to allow for more challenging puzzles with multiple solving techniques
+			if (difficulty == Hard() && random() < 0.7) {
+				removeUntil(boardWithCellRemoved, remainingCells, removedSoFar + 1, targetRemoved, difficulty);
+			} else {
+				// Check if puzzle still has a unique solution
+				if (hasUniqueSolution(boardWithCellRemoved)) {
+					// Cell successfully removed
+					removeUntil(boardWithCellRemoved, remainingCells, removedSoFar + 1, targetRemoved, difficulty);
+				} else {
+					// Removing this cell creates multiple solutions, put it back
+					removeUntil(board, remainingCells, removedSoFar, targetRemoved, difficulty);
+				}
+			}
+		}
+	}
+}
+
+// Helper function to set a cell value in the board (since arrays are immutable)
+setCell(board : Board, row : int, col : int, value : int) -> Board {
+	newRow = concat(
+		concat(
+			subrange(board.cells[row], 0, col),
+			[value]
+		),
+		subrange(board.cells[row], col + 1, length(board.cells[row]) - col - 1)
+	);
+
+	Board(concat(
+		concat(
+			subrange(board.cells, 0, row),
+			[newRow]
+		),
+		subrange(board.cells, row + 1, length(board.cells) - row - 1)
+	));
+}
+
+// Faster method to check for a unique solution
+hasUniqueSolution(board : Board) -> bool {
+	// Find the first solution
+	firstSolution = solveSudoku(board);
+
+	switch (firstSolution) {
+		None(): false; // No solution found
+		Some(solution): {
+			// Try to find a second solution by checking just one empty cell
+			findEmptyAndTestUnique(board, solution, 0, 0);
+		}
+	}
+}
+
+// Helper to find an empty cell and test uniqueness by trying alternate values
+findEmptyAndTestUnique(board : Board, solution : Board, startRow : int, startCol : int) -> bool {
+	if (startRow >= 9) {
+		// We've checked all cells and found no alternate solutions
+		true;
+	} else if (startCol >= 9) {
+		// Move to next row
+		findEmptyAndTestUnique(board, solution, startRow + 1, 0);
+	} else if (board.cells[startRow][startCol] != 0) {
+		// This cell is already filled, check next cell
+		findEmptyAndTestUnique(board, solution, startRow, startCol + 1);
+	} else {
+		// Found an empty cell
+		firstSolutionValue = solution.cells[startRow][startCol];
+
+		// Try each possible value 1-9
+		uniqueAfterTrying = checkUniqueWithValues(board, startRow, startCol, firstSolutionValue, 1);
+
+		// If we've verified uniqueness for this cell, we're done
+		uniqueAfterTrying;
+	}
+}
+
+// Try different values in a cell to see if any lead to alternate solutions
+checkUniqueWithValues(board : Board, row : int, col : int, correctVal : int, currentVal : int) -> bool {
+	if (currentVal > 9) {
+		// Tried all values, no alternate solutions found
+		true;
+	} else if (currentVal == correctVal) {
+		// Skip the correct value (we already know it works)
+		checkUniqueWithValues(board, row, col, correctVal, currentVal + 1);
+	} else if (!isValidMove(board, row, col, currentVal)) {
+		// This value isn't valid here, try next
+		checkUniqueWithValues(board, row, col, correctVal, currentVal + 1);
+	} else {
+		// Try this value and see if it leads to a solution
+		boardWithValue = setCell(board, row, col, currentVal);
+		if (isSolvable(boardWithValue)) {
+			// Found an alternate solution
+			false;
+		} else {
+			// Try next value
+			checkUniqueWithValues(board, row, col, correctVal, currentVal + 1);
+		}
+	}
+}
+
+// Check if a board is solvable (without returning the solution)
+isSolvable(board : Board) -> bool {
+	switch (solveSudoku(board)) {
+		None(): false;
+		Some(__): true;
+	}
+}
+
+// Create an empty 9x9 Sudoku board
+createEmptyBoard() -> Board {
+	Board(
+		generate(0, 9, \row -> {
+			// Each row is an array of 9 zeros
+			generate(0, 9, \col -> 0)
+		})
+	);
+}
+
+// Check if placing a number at a position is valid
+isValidMove(board : Board, row : int, col : int, num : int) -> bool {
+	// Check if the cell is empty (has value 0)
+	if (board.cells[row][col] != 0) {
+		false;
+	} else {
+		// Check row, column and box
+		isRowValid(board, row, num) &&
+		isColValid(board, col, num) &&
+		isBoxValid(board, row - (row % 3), col - (col % 3), num);
+	}
+}
+
+
+// Check if a number can be placed in a row
+isRowValid(board : Board, row : int, num : int) -> bool {
+	// Check if number already exists in the row
+	!contains(board.cells[row], num);
+}
+
+// Check if a number can be placed in a column
+isColValid(board : Board, col : int, num : int) -> bool {
+	// Extract the column and check if the number exists
+	!exists(generate(0, 9, \r -> board.cells[r][col]), \cellValue -> cellValue == num);
+}
+
+// Check if a number can be placed in a 3x3 box
+isBoxValid(board : Board, boxRow : int, boxCol : int, num : int) -> bool {
+	// Check if number already exists in the 3x3 box
+	// boxRow and boxCol are the top-left coordinates of the 3x3 box
+	!exists(
+		enumFromTo(0, 2), \r ->
+			exists(enumFromTo(0, 2), \c ->
+				board.cells[boxRow + r][boxCol + c] == num
+			)
+	);
+}
+
+// Find an empty cell in the board (cell with value 0)
+findEmptyCell(board : Board) -> Maybe<Pair<int, int>> {
+	// Find first empty cell by checking every position
+	findEmptyCellHelper(board, 0, 0);
+}
+
+// Helper for findEmptyCell with explicit row and column tracking
+findEmptyCellHelper(board : Board, row : int, col : int) -> Maybe<Pair<int, int>> {
+	if (row >= 9) {
+		// We've checked all cells and found none empty
+		None();
+	} else if (col >= 9) {
+		// End of row, move to next row
+		findEmptyCellHelper(board, row + 1, 0);
+	} else if (board.cells[row][col] == 0) {
+		// Found an empty cell
+		Some(Pair(row, col));
+	} else {
+		// Check next cell
+		findEmptyCellHelper(board, row, col + 1);
+	}
+}
+
+// Solve a Sudoku puzzle using backtracking algorithm
+solveSudoku(board : Board) -> Maybe<Board> {
+	// Find an empty cell
+	emptyCell = findEmptyCell(board);
+
+	switch (emptyCell) {
+		None(): {
+			// No empty cells, board is complete
+			Some(board);
+		}
+		Some(cell): {
+			row = cell.first;
+			col = cell.second;
+
+			// Try each number 1-9
+			solveWithTrial(board, row, col, 1);
+		}
+	}
+}
+
+// Helper to try numbers 1-9 in a cell
+solveWithTrial(board : Board, row : int, col : int, num : int) -> Maybe<Board> {
+	if (num > 9) {
+		// We've tried all numbers 1-9 without success
+		None();
+	} else if (isValidMove(board, row, col, num)) {
+		// This number is valid, place it and recurse
+		newBoard = setCell(board, row, col, num);
+
+		// Try to solve the rest of the board
+		result = solveSudoku(newBoard);
+
+		// If we found a solution, return it
+		switch (result) {
+			Some(solvedBoard): result;
+			None(): {
+				// This number didn't lead to a solution, try the next one
+				solveWithTrial(board, row, col, num + 1);
+			}
+		}
+	} else {
+		// Current number isn't valid, try the next one
+		solveWithTrial(board, row, col, num + 1);
+	}
+}
+
+// Check if the entire board is valid
+isBoardValid(board : Board) -> bool {
+	// Check all rows, columns, and boxes
+	forall(generate(0, 9, idfn), \i ->
+		isRowContentValid(board, i) &&
+		isColContentValid(board, i) &&
+		isBoxContentValid(board, (i / 3) * 3, (i % 3) * 3)
+	);
+}
+
+// Check if a row has no duplicates (excluding zeros)
+isRowContentValid(board : Board, row : int) -> bool {
+	rowValues = filter(board.cells[row], \val -> val != 0);
+	length(rowValues) == length(uniq(rowValues));
+}
+
+// Check if a column has no duplicates (excluding zeros)
+isColContentValid(board : Board, col : int) -> bool {
+	colValues = filter(enumFromTo(0, 8), \r -> board.cells[r][col] != 0);
+	length(colValues) == length(uniq(colValues));
+}
+
+// Check if a 3x3 box has no duplicates (excluding zeros)
+isBoxContentValid(board : Board, boxRow : int, boxCol : int) -> bool {
+	boxValues = filter(
+		generate(0, 9, \i -> board.cells[boxRow + (i / 3)][boxCol + (i % 3)]),
+		\val -> val != 0
+	);
+	length(boxValues) == length(uniq(boxValues));
+}
+
+// Alternative implementation using map and filter
+countFilledCells(board : Board) -> int {
+	// Sum the count of non-zero cells in each row
+	fold(board.cells, 0, \acc, rowValues -> {
+		// Add the count of non-zero cells in this row
+		acc + length(filter(rowValues, \cellValue -> cellValue != 0))
+	});
+}
+
+// Main function with Material UI
+main() {
+	// Generate a medium difficulty Sudoku puzzle
+	puzzle = generateSudoku(Medium());
+
+	// State to toggle between showing puzzle and solution
+	showingSolution = make(false);
+
+	// Create material manager
+	manager = makeMaterialManager([]);
+
+	// Create UI
+	ui = MLines([
+		// Title
+		MText("Sudoku Generator", [MTitle()]),
+
+		// Display puzzle or solution based on state
+		MSelect(showingSolution, \showing -> {
+			boardToShow = if (showing) {
+				// Get solution when needed
+				solution = solveSudoku(puzzle);
+				switch (solution) {
+					None(): puzzle; // Fall back to puzzle if no solution
+					Some(board): board;
+				}
+			} else {
+				puzzle;
+			};
+
+			// Display the board using MCols and MLines for the grid
+			MLines([
+				MText(if (showing) "Solution:" else "Your Puzzle:", [MSubheading()]),
+				renderSudokuBoard(boardToShow, manager)
+			]);
+		}),
+
+		// Button to toggle solution
+		MSelect(showingSolution, \showing -> {
+			MTextButton(
+				if (showing) "Hide Solution" else "Show Solution",
+				\ -> next(showingSolution, !showing),
+				[], []
+			)
+		}),
+
+		// Statistics
+		MLines([
+			MText("Puzzle Details:", [MSubheading()]),
+			MText("- Difficulty: Medium", []),
+			MText("- Filled cells: " + i2s(countFilledCells(puzzle)) + "/81", []),
+			MText("- Empty cells: " + i2s(81 - countFilledCells(puzzle)), [])
+		])
+	]);
+
+	// Render the UI
+	mrender(manager, true, MScroll(ui, MFillXY(), []));
+}
+
+// Type to represent player's inputs
+PlayerState : (inputs : [[DynamicBehaviour<string>]]);
+
+// Create a new player state with empty inputs
+createPlayerState() -> PlayerState {
+	PlayerState(
+		generate(0, 9, \i ->
+			generate(0, 9, \j -> make(""))
+		)
+	);
+}
+
+// Helper function to render the Sudoku board as Material UI with inputs
+renderSudokuBoard(board : Board, manager : MaterialManager) -> Material {
+	// Create player state for inputs if it doesn't exist
+	playerState = createPlayerState();
+
+	// Create a grid of cells representing the Sudoku board
+	MLines([
+		MText("Sudoku Board Visualization", [MCaption()]),
+		MLines(
+			mapi(board.cells, \i, row -> {
+				MCols(
+					mapi(row, \j, cell -> {
+
+						// Add thicker borders for 3x3 boxes
+						addBorders = \c -> {
+							MFrame(0.0, 0.0, [MFill(MBlack())],
+								MBorder(1.0, 1.0, 1.0, 1.0, c)
+								|> (if (i % 3 == 0) \m -> MBorder(0.0, 3.0, 0.0, 0.0, m) else idfn)
+								|> (if (j % 3 == 0) \m -> MBorder(3.0, 0.0, 0.0, 0.0, m) else idfn)
+								|> (if (i == 8) \m -> MBorder(0.0, 0.0, 0.0, 3.0, m) else idfn)
+								|> (if (j == 8) \m -> MBorder(0.0, 0.0, 3.0, 0.0, m) else idfn)
+							)
+						};
+
+						centerCell = \c -> MCenterIn(c, MFixed(56., 56.));
+
+						if (cell != 0) {
+							// Fixed cells from the original puzzle
+							MFrame(0.0, 0.0, [MFill(MBlue(50))],
+								MText(i2s(cell), [MCustomFont(20.0, "Roboto", 1.0)]) |> centerCell
+							) |> addBorders
+						} else {
+							// Empty cells that the player can fill
+							MFrame(0.0, 0.0, [MFill(MGrey(50))],
+								MTextInput(
+									playerState.inputs[i][j],
+									[
+										TextInputType(NumericType()),
+										MWidth(16.0),
+									],
+									[MInputFilter(\s, __ -> {
+										if (s == "") {
+											s
+										} else {
+											n = getCharAt(s, strlen(s)-1);
+											if (s2i(n) < 1) {
+												"1"
+											} else {
+												n
+											}
+										}
+									})]
+								) |> centerCell
+							) |> addBorders
+						}
+					})
+				)
+			})
+		),
+
+		// Add a Check button to validate the solution
+		MTextButton("Check Solution", \ -> {
+			solution = boardFromPlayerState(board, playerState);
+			closeB = make(false);
+			message = if (isBoardValid(solution) && isBoardComplete(solution)) {
+				"You solved the puzzle correctly!"
+			} else {
+				"Your solution has some errors. Keep trying!"
+			};
+			ShowMDialog(
+				manager,
+				closeB,
+				[
+					MDialogUseFrame(),
+					MDialogClickOutToClose(),
+					MDialogActions([MTextButton("OK", \ -> next(closeB, true), [], [])])
+				],
+				MText(message, [])
+			)
+		}, [], [])
+	]);
+}
+
+// Convert player state inputs to a board
+boardFromPlayerState(originalBoard : Board, playerState : PlayerState) -> Board {
+	Board(
+		mapi(originalBoard.cells, \i, row -> {
+			mapi(row, \j, cell -> {
+				if (cell != 0) {
+					// Keep original fixed cells
+					cell
+				} else {
+					// Convert player input to int
+					playerValue = getValue(playerState.inputs[i][j]);
+					if (playerValue == "") 0 else s2i(playerValue)
+				}
+			})
+		})
+	);
+}
+
+// Check if the board is complete (no empty cells)
+isBoardComplete(board : Board) -> bool {
+	forall(board.cells, \row -> {
+		forall(row, \cell -> cell != 0)
+	});
+}

@@ -1,0 +1,222 @@
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/egraph/lub_glb;
+import tools/flow9/type/egraph/subtype_unify;
+import tools/flow9/type/egraph/unify;
+import tools/flow9/type/equal;
+import ds/union_find;
+
+export {
+	// Run all subtypes in the graph
+	traverseSubtypes(g : EGraph, subtype : bool) -> void;
+
+	// Find pairs of concrete types that should be unified after removing type variables
+	findContractedUnifications(g : EGraph) -> [Pair<int, int>];
+
+	resolveAlternatives(g : EGraph) -> void;
+
+	// We know this eclass has this set of alternatives
+	updateAlternatives(g : EGraph, id : int, filtered : Set<int>) -> bool;
+
+	mergeManyTypesInClass(g : EGraph, types : [int]) -> void;
+}
+
+traverseSubtypes(g : EGraph, subtype : bool) -> void {
+	// Traverse all classes
+	traverseInOrder(^(g.classes), \id, eclass -> {
+		r = findEGraphRoot(g, id);
+		if (r == id) {  // Only process root nodes
+			// Process all subtypes for this class
+			iterSet(eclass.subtypes, \subtypeId -> {
+				if (subtype) {
+					//removeSubtype(g, subtypeId, id);
+					subtypeEGraphTypes(g, subtypeId, id, get2NodeInfos(g, subtypeId, id));
+					{}
+				} else {
+					// Unify type variables with their supertypes
+					subtypeUnifyEGraphTypes(g, subtypeId, id, get2NodeInfos(g, subtypeId, id));
+					{}
+				}
+			});
+		}
+	});
+}
+
+findContractedUnifications(g : EGraph) -> [Pair<int, int>] {
+	// First canonicalize to ensure consistent state
+	canonicalizeEGraph(g);
+
+	// Find all root concrete type nodes
+	concreteNodes = foldTree(^(g.classes), makeTree(), \id, eclass, acc -> {
+		r = findEGraphRoot(g, id);
+		if (r == id && !isTypeVar(eclass.node) 
+			// All work, except for flow, which we should not propagate across
+			&& !isFlowTypeNode(eclass.node)) {
+			setTree(acc, id, eclass)
+		} else acc
+	});
+
+	// For each concrete type, find paths to other concrete types through type variables
+	list2array(fold(getTreeKeys(concreteNodes), makeList(), \acc : List<Pair<int, int>>, fromId -> {
+		fromClass = lookupTreeDef(^(g.classes), fromId, EClass(Variable(-1), -1, makeSet(), makeSet(), makeSet(), makeSet(), makeSet(), makeSet(), makeSet()));
+
+		// Find all concrete types reachable through supertypes
+		supertypes = findReachableTypes(g, fromId, false);
+		concrete = filterSet(supertypes, \tid -> {
+			!isVariableNode(g, tid)
+		});
+		hasFlow = existsSet(concrete, \tid -> {
+			isFlowTypeNode(getNodeDef(g, tid))
+		});
+		if (hasFlow) {
+			// OK, we have to skip this, since any transitive subtype relations are not valid
+			acc;
+		} else {
+			foldSet(concrete, acc, \innerAcc, toId -> {
+				if (!isDirectlyConnected(g, fromId, toId)) {
+					Cons(Pair(fromId, toId), innerAcc)
+				} else innerAcc
+			})
+		}
+	}));
+}
+
+// Recursive helper function
+collectReachableTypes(g : EGraph, id : int, subtype : bool, visited : Set<int>) -> Set<int> {
+	if (containsSet(visited, id)) {
+		visited; // Base case: already visited
+	} else {
+		eclass = getEClassDef(g, id);
+		related = if (subtype) eclass.subtypes else eclass.supertypes;
+
+		// Fold over the related nodes and recursively collect more nodes
+		foldSet(related, insertSet(visited, id), \acc, relatedId -> {
+			collectReachableTypes(g, relatedId, subtype, acc);
+		});
+	}
+}
+
+findReachableTypes(g : EGraph, startId : int, subtype : bool) -> Set<int> {
+	// Start the collection with an empty visited set
+	collectReachableTypes(g, startId, subtype, makeSet())
+}
+
+isDirectlyConnected(g : EGraph, id1 : int, id2 : int) -> bool {
+	// Check if either is directly a subtype of the other
+	isDirectSubtyped(g, id1, id2) || isDirectSubtyped(g, id2, id1);
+}
+
+
+mergeManyTypesInClass(g : EGraph, types : [int]) -> void {
+	if (length(types) > 1) {
+		if (g.tracing > 0) {
+			debugMsg(g, 1, "  Merging tyvars to " + superglue(types, \i -> prettyNode(g, i), ", "));
+		}
+		// Merge all types into one
+		iteri(types, \i, tid -> {
+			if (i != 0) {
+				mergeWithCheck(g, types[0], tid, getNodeInfos(g, tid));
+				{}
+			}
+		})
+	}
+}
+
+resolveAlternatives(g : EGraph) -> void {
+	traverseInOrder(^(g.classes), \id, eclass -> {
+		if (!isEmptySet(eclass.alternatives)) {
+			alts = filterAlternativesAgainstBounds(g, eclass, makeSet(), makeSet());
+			calts = cleanUpAlternatives(g, id, alts, getNodeInfos(g, id));
+			updateAlternatives(g, id, calts);
+			{}
+		}
+	});
+}
+
+// Finds identical alternatives, and consolidates them into one entry
+cleanUpAlternatives(g : EGraph, root : int, alts : Set<int>, infos : Set<EContext>) -> Set<int> {
+	altArray = set2array(alts);
+	n = length(altArray);
+
+	if (n <= 1) alts
+	else {
+		if (g.tracing > 0) {
+			debugMsg(g, 1, "  Unifying alternatives in " + prettyNode(g, root));
+		}
+		// Generate all pair indices and check equivalence
+		// For each outer index, generate and process inner indices
+		iteri(altArray, \i, alt1 -> {
+			// Process all pairs (i,j)
+			fori(i + 1, n - 1, \j -> {
+				alt2 = altArray[j];
+				if (!isSameEClass(g, alt1, alt2) &&
+					areTypesStructurallyEqual(g, alt1, alt2)) {
+
+					if (g.tracing > 1) {
+						debugMsg(g, 1, "    Unifying alternatives: "+ prettyNode(g, alt1) + " and " + prettyNode(g, alt2));
+					}
+					// println("Unifying " + i2s(alt1) + "=" + prettyNode(g, alt1) + " and " + i2s(alt2) + prettyNode(g, alt2));
+					// Union these two elements
+					unifyEGraphTypes(g, alt1, alt2, infos);
+					{}
+				}
+			});
+		});
+
+		mapSet(alts, \altId -> {
+			// Find the root of the alternatives
+			findEGraphRoot(g, altId)
+		})
+	}
+}
+
+updateAlternatives(g : EGraph, id : int, filtered : Set<int>) -> bool {
+	eclass = getEClassDef(g, id);
+	working = sizeSet(filtered);
+	if (working == 0) {
+		if (!isEmptySet(eclass.alternatives)) {
+			// We have alternatives, but none are valid
+			g.onError(getNodeInfos(g, id), "No viable type alternatives for " + typeNodeToString(g, id, false, true));
+		}
+		false
+	} else if (working == 1) {
+		// If we have exactly one alternative left, unify with it
+		alt = set2array(filtered)[0];
+		if (g.tracing > 0) {
+			debugMsg(g, 1, "Decided alternatives in " + typeNodeToString(g, id, false, true) + " as "+ prettyNode(g, alt));
+		}
+		unifyEGraphTypes(g, id, alt, getNodeInfos(g, id));
+		eclass2 = getEClassDef(g, id);
+		newEclass = EClass(eclass2 with alternatives = makeSet());
+		updateEClass(g, id, newEclass);
+
+		// Deregister the alternatives
+		registerAlternativeComponents(g, id);
+
+		true
+	} else if (sizeSet(eclass.alternatives) != working) {
+		// Update alternatives to filtered set
+		updateEClass(g, id, EClass(eclass with alternatives = filtered));
+		false;
+	} else false;
+}
+
+filterAlternativesAgainstBounds(g : EGraph, eclass : EClass, lowerBounds : Set<int>, upperBounds : Set<int>) -> Set<int> {
+	filterSet(eclass.alternatives, \altId -> {
+		// Must be compatible with the eclass's type node (can be both sub and super)
+		okWithNode = if (!isTypeVar(eclass.node)) {
+			areTypesCompatible(g, eclass.root, altId)
+		} else true;
+
+		// Must be supertype of all lower bounds
+		okLower = foldSet(lowerBounds, true, \acc, lowId ->
+			acc && canNodesBeSubtypes(g, lowId, altId)
+		);
+
+		// Must be subtype of all upper bounds
+		okUpper = foldSet(upperBounds, true, \acc, upId ->
+			acc && canNodesBeSubtypes(g, altId, upId)
+		);
+
+		okWithNode && okLower && okUpper
+	})
+}

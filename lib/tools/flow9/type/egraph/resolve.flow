@@ -1,0 +1,120 @@
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/egraph/subtype;
+import tools/flow9/type/egraph/bounds;
+import tools/flow9/type/egraph/unify;
+import tools/flow9/type/egraph/cycles;
+import tools/flow9/type/egraph/contract;
+import tools/flow9/type/egraph/graphviz;
+
+export {
+	resolveEGraph(g : EGraph, name : string) -> void;
+}
+
+resolveEGraph(g : EGraph, name : string) -> void {
+	typars = buildSet(getTreeValues(g.typars.typars));
+	resolveEGraphIteration(g, name, typars, 0);
+
+	// Any final subtypes, we just unify
+	debugMsg(g, 1, "\nFinal unifications");
+	propagateBounds(g, name, 10);
+	traverseSubtypes(g, false);
+	resolveAlternatives(g);
+	
+	// Default any unbound array element types to "flow"
+	defaultUnboundArrayTypes(g);
+	
+	if (g.tracing > 0) {
+		saveEGraph(g, name, "_resolved");
+	}
+
+	traverseInOrder(^(g.classes), \id, eclass -> {
+		if (!isTopDecidedNode(g, id) && !isEmptySet(eclass.alternatives)) {
+			g.onError(getNodeInfos(g, id), "Unresolved type: " + typeNodeToString(g, id, false, true));
+		}
+		{}
+	});
+}
+
+// Find arrays with unbound element types and default them to "flow"
+defaultUnboundArrayTypes(g : EGraph) -> void {
+	debugMsg(g, 1, "\nDefaulting unbound array element types");
+	
+	traverseInOrder(^(g.classes), \id, eclass -> {
+		// We're only interested in array constructor nodes
+		switch (eclass.node) {
+			Constructor(name, args): {
+				if (name == "array" && length(args) > 0) {
+					elementTypeId = args[0];
+					if (isVariableNode(g, elementTypeId)) {
+						debugMsg(g, 2, "Defaulting unbound array element to 'flow' in: " + typeNodeToString(g, id, false, true));
+						// Create our "flow" type node
+						flowTypeId = insertNode(g, Constructor("flow", []), makeSet());
+						// Unify the unbound element type with "flow"
+						unifyEGraphTypes(g, elementTypeId, flowTypeId, getNodeInfos(g, id));
+						{}
+					}
+				}
+			}
+			default: {}
+		}
+	});
+}
+
+resolveEGraphIteration(g : EGraph, name : string, typars : Set<int>, iterations : int) -> void {
+	if (isDecidedEGraph(g, typars)) {
+		if (g.tracing > 0) {
+			debugMsg(g, 1, "Stop at iteration " + i2s(iterations) + " as decided");
+		}
+	} else if (iterations < 3 && isEmptySet(^(g.errors))) {
+		// Canonicalize the graph
+		// canonicalizeEGraph(g);
+		// println(name + " Iteration " + i2s(iterations));
+
+		if (g.tracing > 2) {
+			debugPrintEGraph(g);
+		}
+		if (g.tracing > 1) {
+			saveEGraph(g, name, i2s(iterations) + "_begin");
+		}
+
+		// Detect and merge cycles
+		if (g.tracing > 0) {
+			debugMsg(g, 1, "\nMerging cycles at iteration " + i2s(iterations));
+		}
+		detectAndMergeCycles(g, 3);
+
+		// Find and apply contracted unifications
+		debugMsg(g, 1, "\nDoing contracted unifications");
+		contractedUnifs = findContractedUnifications(g);
+		iter(contractedUnifs, \pair -> {
+//			println("Contracting " + typeNodeToString(g, pair.first, false, true) + " and " + typeNodeToString(g, pair.second, false, true));
+			subtypeEGraphTypes(g, pair.first, pair.second, get2NodeInfos(g, pair.first, pair.second));
+			{}
+		});
+
+		debugMsg(g, 1, "\nDo subtypes");
+		traverseSubtypes(g, true);
+
+		debugMsg(g, 1, "\nDo alternatives");
+		resolveAlternatives(g);
+
+		detectAndMergeCycles(g, 3);
+
+		if (g.tracing > 0) {
+			saveEGraph(g, name, i2s(iterations) + "_bounds");
+		}
+
+		// Propagate bounds
+		debugMsg(g, 1, "\nPropagating ");
+		propagateBounds(g, name, iterations);
+
+//		debugMsg(g, 1, "\nResolving bounds");
+//		resolveBounds(g, iterations > 2);
+
+		if (g.tracing > 0) {
+			saveEGraph(g, name, i2s(iterations) + "_end");
+		}
+
+		resolveEGraphIteration(g, name, typars, iterations + 1);
+	}
+}

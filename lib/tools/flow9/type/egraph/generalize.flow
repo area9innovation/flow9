@@ -1,0 +1,203 @@
+import tools/flow9/type/egraph/egraph;
+
+export {
+	// Generalize the type of the root node of the EGraph, and make sure each typar is in a separate equivalence class
+	generalizeEGraph(g : EGraph, rootId : int, name : string) -> HTypeSchema;
+
+	rootToHTypeSchema(g : EGraph, eclass2typar : Tree<int, string>, rootId : int) -> HTypeSchema;
+
+	rootToHType(g : EGraph, eclass2typar : Tree<int, string>, rootId : int) -> HType;
+
+	// Instantiate a type schema to an eclass
+	htypeSchema2root(g : EGraph, schema : HTypeSchema, info : EContext) -> int;
+
+	// Instantiate a type to an eclass
+	htype2root(g : EGraph, type : HType, info : EContext) -> int;
+
+	reverseETypeParMap(e : EGraph, typarMap : ETypeParMap) -> Tree<int, string>;
+}
+
+generalizeEGraph(g : EGraph, rootId : int, name : string) -> HTypeSchema {
+	if (false) { // Debugging
+		println("\nGeneralizing type for " + name + " with root α" + i2s(rootId));
+	}
+
+	// Ensure each typar is in its own equivalence class
+	separateEClasses(g, buildSet(getTreeValues(g.typars.typars)));
+
+	// We have to build this map AFTER we split the classes
+	eclass2typar = reverseETypeParMap(g, g.typars);
+
+	if (g.tracing > 0) {
+		traverseInOrder(g.typars.typars, \typar, eclass -> {
+			if (g.tracing > 0) {
+				println("Typar " + "α" + i2s(eclass) + " = " + typar);
+			}
+		});
+		traverseInOrder(eclass2typar, \ec, tp -> {
+			println("eclass2typar " + i2s(ec) + " = " + tp);
+		});
+	}
+
+	new = rootToHTypeSchema(g, eclass2typar, rootId);
+	orig = lookupTreeDef(g.interface.env, name, new);
+	backfillAutoTypes(orig, new)
+}
+
+// Convert an eclass to a type schema
+rootToHTypeSchema(g : EGraph, eclass2typar : Tree<int, string>, rootId : int) -> HTypeSchema {
+	usedTypars = ref makeSet();
+	type = eclassToHType(g, eclass2typar, usedTypars, rootId);
+
+	if (!isEmptySet(^usedTypars)) {
+		typars = set2array(^usedTypars);
+		HTypeForAll(typars, type)
+	} else {
+		type
+	}
+}
+
+rootToHType(g : EGraph, eclass2typar : Tree<int, string>, rootId : int) -> HType {
+	usedTypars = ref makeSet();
+	eclassToHType(g, eclass2typar, usedTypars, rootId)
+}
+
+eclassToHType(g : EGraph, eclass2typar : Tree<int, string>, usedTypars : ref Set<string>, id : int) -> HType {
+	root = findEGraphRoot(g, id);
+	switch (lookupTree(eclass2typar, root)) {
+		Some(typar): {
+			usedTypars := insertSet(^usedTypars, typar);
+			HTypeVar(typar)
+		}
+		None(): {
+			node = getNodeDef(g, root);
+
+			switch (node) {
+				Variable(__): HTypeVar("α" + i2s(root))
+				Constructor(name, params): HTypeCons(name, map(params, \p -> eclassToHType(g, eclass2typar, usedTypars, p)));
+				Function(args, ret):
+					HTypeFn(map(args, \a -> eclassToHType(g, eclass2typar, usedTypars, a)),
+						eclassToHType(g, eclass2typar, usedTypars, ret));
+			}
+		}
+	}
+}
+
+htypeSchema2root(g : EGraph, schema : HTypeSchema, info : EContext) -> int {
+	switch (schema) {
+		HTypeForAll(vars, type): {
+            // Create fresh substitutions for each variable
+            subst = fold(vars, makeTree(), \acc, var -> {
+                freshVar = makeTypeVariable(g, insertSet(makeSet1(info), EContext(info.info, "typar " + var)));
+                setTree(acc, var, freshVar);
+            });
+			htype2root(EGraph(g with typars = ETypeParMap(subst)), type, info);
+		}
+		HTypeAlternatives(options): {
+			altIds = buildSet(map(options, \a -> htypeSchema2root(g, a, info)));
+			insertNewEClass(g, altIds, insertSet(makeSet1(info), EContext(info.info, "overload")));
+		}
+		HType(): htype2root(g, schema, info);
+	}
+}
+
+htype2root(g : EGraph, type : HType, info : EContext) -> int {
+	switch (type) {
+		HTypeVar(name): {
+			mdef = lookupTree(g.typars.typars, name);
+			mdef ?? {
+				mdef
+			} : {
+				// Create a new type variable
+				makeTypeVariable(g, makeSet1(info));
+			}
+		}
+		HTypeCons(name, args): {
+			if (name == "auto") {
+				makeTypeVariable(g, makeSet1(info));
+ 			} else {
+				argIds = map(args, \a -> htype2root(g, a, info));
+				insertNode(g, Constructor(name, argIds), makeSet1(info));
+			}
+		}
+		HTypeFn(args, ret): {
+			argIds = map(args, \a -> htype2root(g, a, info));
+			retId = htype2root(g, ret, info);
+			insertNode(g, Function(argIds, retId), makeSet1(info));
+		}
+	}
+}
+
+reverseETypeParMap(e : EGraph, typarMap : ETypeParMap) -> Tree<int, string> {
+	// Reverse the mapping from typar->id to id->typar
+	foldTree(typarMap.typars, makeTree(), \typar, id, acc2 -> {
+		if (e.tracing > 0) {
+			println("Reverse α" + i2s(findEGraphRoot(e, id)) + " -> " + typar);
+		}
+		setTree(acc2, findEGraphRoot(e, id), typar)
+	});
+}
+
+
+backfillAutoTypes(first : HTypeSchema, second : HTypeSchema) -> HTypeSchema {
+	switch (first) {
+		HTypeForAll(vars1, type1): {
+			switch (second) {
+				HTypeForAll(vars2, type2): {
+					// Preserve the type variables from the first schema
+					HTypeForAll(vars1, backfillAutoType(type1, type2))
+				}
+				default: first;
+			}
+		}
+		HTypeAlternatives(options1): first;
+		HType(): {
+			switch (second) {
+				HType(): backfillAutoType(first, second);
+				default: first;
+			}
+		}
+	}
+}
+
+backfillAutoType(first : HType, second : HType) -> HType {
+	switch (first) {
+		HTypeCons(name1, args1): {
+			if (name1 == "auto") {
+				second
+			} else {
+				switch (second) {
+					HTypeCons(name2, args2): {
+						if (length(args1) == length(args2)) {
+							HTypeCons(name1,
+								mapi(args1, \i, arg1 ->
+									backfillAutoType(arg1, args2[i])
+								)
+							)
+						} else first;
+					}
+					default: first;
+				}
+			}
+		}
+		HTypeFn(from1, to1): {
+			switch (second) {
+				HTypeFn(from2, to2): {
+					if (length(from1) == length(from2)) {
+						HTypeFn(
+							mapi(from1, \i, arg1 ->
+								backfillAutoType(arg1, from2[i])
+							),
+							backfillAutoType(to1, to2)
+						)
+					} else first;
+				}
+				default: first;
+			}
+		}
+		HTypeVar(tyvar1): {
+			// Preserve type variables from first schema
+			first
+		}
+	}
+}

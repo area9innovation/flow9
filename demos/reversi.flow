@@ -1,0 +1,315 @@
+import material/material2tropic;
+import material/material_dialog;
+import material/material_graphics;
+import math/math;
+import string;
+import ds/array;
+import ds/tree;
+
+// Constants - renamed to avoid conflicts with basecolors.flow
+boardSize = 8;
+emptyCell = 0;
+blackPiece = 1; // Human player
+whitePiece = 2; // Computer player
+
+// Game state data structures
+GameState(
+	board : [[int]],      // 8x8 grid: 0=empty, 1=black, 2=white
+	currentPlayer : int,  // 1=black, 2=white
+	gameOver : bool,
+	message : string      // Status message
+);
+
+// Directions for checking valid moves (all 8 directions)
+directions = [
+	Pair(-1, -1), Pair(-1, 0), Pair(-1, 1),
+	Pair(0, -1),               Pair(0, 1),
+	Pair(1, -1),  Pair(1, 0),  Pair(1, 1)
+];
+
+// Set a cell in a 2D array (immutably)
+setCell(board : [[int]], row : int, col : int, value : int) -> [[int]] {
+	mapi(board, \r, rowArray ->
+		if (r == row)
+			mapi(rowArray, \c, cell -> if (c == col) value else cell)
+		else
+			rowArray
+	);
+}
+
+// This is a helper function for checking pieces in a direction - moved to top level
+checkDirection(board : [[int]], r : int, c : int, dr : int, dc : int, player : int, opponent : int, acc : [[int]]) -> [[int]] {
+	if (!isValidPosition(r, c)) {
+		[];
+	} else if (board[r][c] == emptyCell) {
+		[];
+	} else if (board[r][c] == opponent) {
+		// Found opponent piece, continue checking
+		nextAcc = arrayPush(acc, [r, c]);
+		checkDirection(board, r + dr, c + dc, dr, dc, player, opponent, nextAcc);
+	} else if (board[r][c] == player) {
+		// Found our piece, this direction is valid
+		acc;
+	} else {
+		[];
+	}
+}
+
+// Initialize a new game
+initGame() -> GameState {
+	// Create empty board
+	emptyBoard = generate(0, boardSize, \i -> generate(0, boardSize, \j -> emptyCell));
+
+	// Set up initial pieces with proper chaining
+	board1 = setCell(emptyBoard, 3, 3, whitePiece);
+	board2 = setCell(board1, 3, 4, blackPiece);
+	board3 = setCell(board2, 4, 3, blackPiece);
+	board4 = setCell(board3, 4, 4, whitePiece);
+
+	GameState(board4, blackPiece, false, "Your turn (Black)");
+}
+
+// Check if position is valid (within board boundaries)
+isValidPosition(row : int, col : int) -> bool {
+	row >= 0 && row < boardSize && col >= 0 && col < boardSize;
+}
+
+// Get pieces that would be flipped in one direction
+getFlippedPiecesInDirection(board : [[int]], row : int, col : int,
+						   dr : int, dc : int, player : int, opponent : int) -> [[int]] {
+	// Start checking one step away from the placed piece
+	initialR = row + dr;
+	initialC = col + dc;
+
+	if (isValidPosition(initialR, initialC) && board[initialR][initialC] == opponent) {
+		checkDirection(board, initialR, initialC, dr, dc, player, opponent, []);
+	} else {
+		[];
+	}
+}
+
+// Check if a move is valid and return the list of pieces that would be flipped
+checkMove(state : GameState, row : int, col : int) -> [[int]] {
+	if (state.board[row][col] != emptyCell) {
+		[];
+	} else {
+		opponent = if (state.currentPlayer == blackPiece) whitePiece else blackPiece;
+
+		// Check in all 8 directions and collect flipped pieces
+		fold(directions, [], \acc, dir -> {
+			flippedInDirection = getFlippedPiecesInDirection(
+				state.board, row, col, dir.first, dir.second,
+				state.currentPlayer, opponent
+			);
+			concat(acc, flippedInDirection);
+		});
+	}
+}
+
+// Find all valid moves for the current player - properly using functional constructs
+findValidMoves(state : GameState) -> [[int]] {
+	allPositions = concatA(generate(0, boardSize, \row ->
+		generate(0, boardSize, \col -> [row, col])
+	));
+
+	filter(allPositions, \pos -> {
+		row = pos[0];
+		col = pos[1];
+		length(checkMove(state, row, col)) > 0;
+	});
+}
+
+// Make a move and return the new game state
+makeMove(state : GameState, row : int, col : int) -> GameState {
+	flippedPieces = checkMove(state, row, col);
+
+	if (length(flippedPieces) == 0) {
+		// Invalid move
+		state;
+	} else {
+		// Create a new board with the piece placed
+		updatedBoard = setCell(state.board, row, col, state.currentPlayer);
+
+		// Flip all captured pieces
+		finalBoard = fold(flippedPieces, updatedBoard, \b, pos -> {
+			setCell(b, pos[0], pos[1], state.currentPlayer);
+		});
+
+		// Switch player
+		nextPlayer = if (state.currentPlayer == blackPiece) whitePiece else blackPiece;
+
+		// Check if next player has valid moves
+		nextState = GameState(finalBoard, nextPlayer, false, "");
+		validMoves = findValidMoves(nextState);
+
+		if (length(validMoves) > 0) {
+			// Next player can move
+			if (nextPlayer == blackPiece) {
+				GameState(finalBoard, nextPlayer, false, "Your turn (Black)");
+			} else {
+				GameState(finalBoard, nextPlayer, false, "Computer's turn (White)");
+			}
+		} else {
+			// Next player has no valid moves, check if current player can move again
+			nextState2 = GameState(finalBoard, state.currentPlayer, false, "");
+			validMoves2 = findValidMoves(nextState2);
+
+			if (length(validMoves2) > 0) {
+				// Current player moves again
+				if (state.currentPlayer == blackPiece) {
+					GameState(finalBoard, state.currentPlayer, false, "No moves for White. Your turn again (Black)");
+				} else {
+					GameState(finalBoard, state.currentPlayer, false, "No moves for Black. Computer's turn again (White)");
+				}
+			} else {
+				// Game over - no valid moves for either player
+				GameState(finalBoard, nextPlayer, true, "Game over!");
+			}
+		}
+	}
+}
+
+// Computer AI (makes a move that flips the most pieces)
+computerMove(state : GameState) -> GameState {
+	validMoves = findValidMoves(state);
+
+	if (length(validMoves) == 0) {
+		state;
+	} else {
+		// Find the move that flips the most pieces
+		bestMove = fold(validMoves, Pair([-1, -1], -1), \acc, move -> {
+			row = move[0];
+			col = move[1];
+			flippedPieces = checkMove(state, row, col);
+
+			if (length(flippedPieces) > acc.second) {
+				Pair(move, length(flippedPieces));
+			} else {
+				acc;
+			}
+		});
+
+		makeMove(state, bestMove.first[0], bestMove.first[1]);
+	}
+}
+
+// Count the number of pieces for each player
+countPieces(board : [[int]]) -> Pair<int, int> {
+	// Replace imperative loop with functional fold
+	foldi(board, Pair(0, 0), \row, acc, rowArr ->
+		foldi(rowArr, acc, \col, innerAcc, cell ->
+			if (cell == blackPiece) {
+				Pair(innerAcc.first + 1, innerAcc.second);
+			} else if (cell == whitePiece) {
+				Pair(innerAcc.first, innerAcc.second + 1);
+			} else {
+				innerAcc;
+			}
+		)
+	);
+}
+
+main() {
+	gameState = make(initGame());
+
+	// Automatically make computer move after a delay
+	makeComputerMove = \-> {
+		state = getValue(gameState);
+		if (state.currentPlayer == whitePiece && !state.gameOver) {
+			timer(500, \ -> {
+				next(gameState, computerMove(getValue(gameState)));
+			});
+		}
+	};
+
+	// Render board cell
+	boardCell = \row, col -> {
+		MClickable(
+			MGroup([
+				// Cell background
+				MRectangle([MFill(MGreen(500)), MStroke(MBlack())], MFixed(50.0, 50.0)),
+
+				// Piece (if any)
+				MSelect(gameState, \state -> {
+					cellValue = state.board[row][col];
+					if (cellValue == emptyCell) {
+						// Show dot if this is a valid move for human player
+						if (state.currentPlayer == blackPiece && !state.gameOver && length(checkMove(state, row, col)) > 0) {
+							MCircle(5.0, [MFill(MBlack()), FillOpacity(0.3)]);
+						} else {
+							MEmpty();
+						}
+					} else {
+						pieceColor = if (cellValue == blackPiece) MBlack() else MWhite();
+						MCircle(20.0, [MFill(pieceColor), MStroke(MBlack())]);
+					}
+				})
+			]),
+			\ -> {
+				state = getValue(gameState);
+				if (state.currentPlayer == blackPiece && !state.gameOver) {
+					flippedPieces = checkMove(state, row, col);
+					if (length(flippedPieces) > 0) {
+						next(gameState, makeMove(state, row, col));
+						makeComputerMove();
+					}
+				}
+			}
+		);
+	};
+
+	// Render complete board
+	board = MCols(
+		generate(0, boardSize, \col ->
+			MLines(
+				generate(0, boardSize, \row ->
+					boardCell(row, col)
+				)
+			)
+		)
+	);
+
+	// Game status area
+	status = MLines([
+		MSelect(gameState, \state -> {
+			counts = countPieces(state.board);
+			MText("Black: " + i2s(counts.first) + "   White: " + i2s(counts.second), [MTitle()]);
+		}),
+
+		MSelect(gameState, \state -> {
+			MText(state.message, [MBody()]);
+		}),
+
+		MSelect(gameState, \state -> {
+			if (state.gameOver) {
+				counts = countPieces(state.board);
+				result = if (counts.first > counts.second) {
+					"You win!";
+				} else if (counts.second > counts.first) {
+					"Computer wins!";
+				} else {
+					"It's a draw!";
+				};
+				MText(result, [MTitle(), if (counts.first > counts.second) MBlue(500) else MRed(500)]);
+			} else {
+				MEmpty();
+			}
+		}),
+
+		MTextButton("New Game", \ -> {
+			next(gameState, initGame());
+		}, [], [])
+	]);
+
+	// Main UI
+	ui = MLines([
+		MCenterX(MText("Reversi", [MTitle()])),
+		MCenterX(board),
+		MCenterX(status)
+	]);
+
+	mrender(makeMaterialManager([]), true, ui);
+
+	// Start the game
+	makeComputerMove();
+}

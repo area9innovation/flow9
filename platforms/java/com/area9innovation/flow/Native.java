@@ -2287,6 +2287,7 @@ public class Native extends NativeHost {
 			return URLDecoder.decode(s, "UTF-8");
 		} catch (UnsupportedEncodingException | IllegalArgumentException e) {
 			System.out.println(e.toString());
+			e.printStackTrace();
 			return "";
 		}
 	}

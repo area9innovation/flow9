@@ -1,0 +1,760 @@
+import tools/flow9_retro/types/cgraph/cmap;
+import tools/flow9_retro/types/cgraph/dtype;
+import tools/flow9_retro/types/cgraph/unionmap;
+import tools/flow9_retro/types/ugraph/tmap;
+import tools/flow9_retro/types/cgraph/subtype;
+import tools/flow9_retro/types/pretty;
+
+export {
+	clearCMap(tmap : TMap) -> void;
+
+	// When we know the type, find or make an eclass for this type
+	resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass;
+
+	// When we have a DType, we use this one as the result. Instantiates polymorphism
+	dtype2CType(tmap : TMap, d : DType, reason : ErrorReason) -> TTypeEClass;
+
+	UnifyResult ::= UnifyFail, UnifyOK, UnifyPostponed;
+		UnifyFail();
+		UnifyOK();
+		UnifyPostponed();
+
+	// We know the result is a unification of these types
+	unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> void;
+	// TODO: Change this to return UnifyResult
+	unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> UnifyResult;
+
+	// We know we have to subtype here - TODO: Figure out what the result is?
+	// checkOnly defines whether we should update our types, or just do a check.
+	// Returns true if this is possible.
+	subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> UnifyResult;
+	subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, reason : ErrorReason) -> UnifyResult;
+}
+
+clearCMap(tmap : TMap) -> void {
+	tmap.cmap.cmap.parents := [];
+	tmap.cmap.cmap.values := [];
+	tmap.namedClasses := makeTree();
+	tmap.functionClasses := makeTree();
+}
+
+
+resultCType(tmap : TMap, t : TType, reason : ErrorReason) -> TTypeEClass {
+	eclass = findOrMakeCNodeClass(tmap, t, reason);
+	if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
+		println("  Set " + prettyCEClass(tmap.cmap, eclass) + " = ttype " + prettyTType(t));
+	}
+	
+	TTypeEClass(eclass);
+}
+
+unifyCType(tmap : TMap, left : TType, right : TType, reason : ErrorReason) -> void {
+	lclass = findOrMakeCNodeClass(tmap, left, reason);
+	rclass = findOrMakeCNodeClass(tmap, right, reason);
+	res = unifyCEClass(tmap, lclass, rclass, false, reason);
+}
+
+cindent = ref "";
+
+// Check if we can unify these. If not, we postpone
+unifyCEClass(tmap : TMap, lclass : int, rclass : int, checkOnly : bool, reason : ErrorReason) -> UnifyResult {
+	left : CNode = getUnionMapValue(tmap.cmap.cmap, lclass);
+	right : CNode = getUnionMapValue(tmap.cmap.cmap, rclass);
+	unifyCENodes(tmap, lclass, left, rclass, right, checkOnly, reason);
+}
+
+unifyCENodes(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNode, checkOnly : bool, reason : ErrorReason) -> UnifyResult {
+	indent = ^cindent;
+	if (isTracingId(tmap.tracing, StageTypeInference(), if (checkOnly) 2 else 1, ^(tmap.topid))) {
+		debugErrorReason(reason, indent + (if (checkOnly) "  Check " else "  Unify ") + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + ". ");
+		cindent := indent + "  ";
+	}
+
+	if (!checkOnly && (lclass == -1 || rclass == -1)) {
+		println("INTERNAL ERROR: We need a real class when unifying " + prettyCNode(tmap.cmap, left) + " with " + prettyCNode(tmap.cmap, right));
+	}
+/*
+	postpone = \ -> {
+		// OK, we postpone it
+		uni = TUnification(lclass, rclass, reason);
+		tmap.cmap.unifications := Cons(uni, ^(tmap.cmap.unifications));
+		UnifyPostponed();
+	}
+*/
+	error = \ -> {
+		if (!checkOnly) {
+			tmap.onError(elaborateReason(reason, "Could not unify " + prettyCEClass(tmap.cmap, lclass) + " with " + prettyCEClass(tmap.cmap, rclass) + "."));
+		}
+		UnifyFail();
+	}
+
+	def = \ -> {
+		if (!checkOnly) {
+			root = unionUnionMap(tmap.cmap.cmap, lclass, rclass);
+			if (isTracingId(tmap.tracing, StageTypeInference(), 2, ^(tmap.topid))) {
+				println(indent + "   to get root " + prettyCEClass(tmap.cmap, root));
+			}
+		}
+		UnifyOK();
+	}
+
+	join = \ -> {
+		if (!checkOnly) {
+			setUnionMapValue(tmap.cmap.cmap, lclass, right);
+		}
+		def();
+	}
+
+	res = switch (left) {
+		CEpsilon(): def();
+		CName(name, typars, lreason): {
+			switch (right) {
+				CEpsilon(): def();
+				CName(rname, rtypars, rreason): {
+					// Check that they are compatible
+					if (name == rname) {
+						if (length(typars) == length(rtypars)) {
+							join();
+							foldi(typars, UnifyOK(),
+								\i, acc, typar -> {
+									if (acc == UnifyFail()) {
+										acc;
+									} else {
+										unifyCEClass(tmap, typar, rtypars[i], checkOnly, elaborateReason(reason, name + " arg#" + i2s(i + 1)));
+									}
+								}
+							);
+						} else error();
+					} else if (isCFlow(left) || isCFlow(right)) {
+						// OK, we do not propgate flow out, so we are done
+						UnifyOK();
+					} else error();
+				}
+				CFunction(args, return, rreason): {
+					if (isCFlow(left)) {
+						UnifyOK();
+					} else {
+						error();
+					}
+				}
+				COverload(unique, options, rreason): {
+					unifyCOverload(tmap, rclass, right, lclass, left, checkOnly);
+				}
+			}
+		}
+		CFunction(args, return, lreason): {
+			switch (right) {
+				CEpsilon(): def();
+				CName(name, typars, rreason): {
+					if (isCFlow(right)) {
+						UnifyOK();
+					} else error();
+				}
+				CFunction(rargs, rreturn, rreason): {
+					if (length(args) == length(rargs)) {
+						join();
+						foldi(args, 
+							unifyCEClass(tmap, return, rreturn, checkOnly, elaborateReason(reason, "call ret")),
+							\i, acc, arg -> {
+								if (acc == UnifyFail()) acc
+								else unifyCEClass(tmap, arg, rargs[i], checkOnly, elaborateReason(reason, "call arg#" + i2s(i + 1)));
+							}
+						)
+					} else error();
+				}
+				COverload(unique, options, rreason): {
+					unifyCOverload(tmap, rclass, right, lclass, left, checkOnly);
+				}
+			}
+		}
+		COverload(unique, options, lreason): {
+			switch (right) {
+				CEpsilon(): def();
+				CName(name, typars, freason): unifyCOverload(tmap, lclass, left, rclass, right, checkOnly);
+				CFunction(args, return, rreason): unifyCOverload(tmap, lclass, left, rclass, right, checkOnly);
+				COverload(runique, roptions, rreason): {
+					unifyCOverload(tmap, lclass, left, rclass, right, checkOnly);
+				}
+			}
+		}
+	};
+
+	if (isTracingId(tmap.tracing, StageTypeInference(), if (checkOnly) 2 else 1, ^(tmap.topid))) {
+		debugErrorReason(reason, indent + (if (checkOnly) "  Check " else "  Unify ") + (unifyResult2string(res)) + ". ");
+	}
+
+	cindent := indent;
+	res;
+}
+
+unifyResult2string(e : UnifyResult) -> string {
+	switch (e) {
+		UnifyOK(): "OK";
+		UnifyPostponed(): "Postponed";
+		UnifyFail(): "Fail";
+	}
+}
+
+unifyCOverload(tmap : TMap, overloadClass : int, overload : COverload, otherClass : int, other : CNode, checkOnly : bool) -> UnifyResult {
+	cmap = tmap.cmap;
+	// The total set of potential overloads
+	options : Set<int> = foldSet(overload.options, makeSet(), \acc, opt -> {
+		extractCNodes(cmap, opt, acc)
+	});
+	// Reduce to those that are alive
+	matches = filterSet(options, \opt -> {
+		onode = getUnionMapValue(cmap.cmap, opt);
+		canUnify(tmap, opt, onode, otherClass, other, overload.reason);
+	});
+
+	set = \node -> {
+		if (!checkOnly) {
+			// println("  Reducing overload " + prettyCEClass(tmap.cmap, overloadClass) + " to " + prettyCNode(tmap.cmap, moverload) + " vs " + prettyCNode(tmap.cmap, other));
+			setUnionMapValue(tmap.cmap.cmap, overloadClass, CEpsilon());
+			unifyCENodes(tmap, overloadClass, node, otherClass, other, checkOnly, overload.reason);
+		} else UnifyOK();
+	}
+
+	postpone = \ -> {
+		uni = TUnification(overloadClass, otherClass, overload.reason);
+		tmap.cmap.unifications := Cons(uni, ^(tmap.cmap.unifications));
+		UnifyPostponed();
+	}
+
+	nmatches = sizeSet(matches);
+	if (false) {
+		println("Review: Result of " + prettyCNode(cmap, overload) + " against " + prettyCNode(cmap, other) + " is");
+		iterSet(matches, \match -> {
+			println("  " + prettyCEClass(cmap, match));
+		});
+		println("with " + i2s(sizeSet(options)) + " options where " + i2s(nmatches) + " match");
+	}
+	cindent := indent;
+
+	if (nmatches == 1) {
+		// We have a unique winner
+		class = set2array(matches)[0];
+		winner = getUnionMapValue(cmap.cmap, class);
+		set(winner);
+	} else if (nmatches != 0 && nmatches != sizeSet(options)) {
+		// OK: This is a reduction, but might not be a solution
+		unifyOverloadTypars(tmap, matches, other, \ -> {
+			postpone();
+		}, overload.reason);
+
+		set(COverload(overload with options = matches));
+	} else {
+		// OK, we postpone it
+		postpone();
+	}
+}
+
+
+canUnify(tmap : TMap, lclass : int, left : CNode, rclass : int, right : CNode, reason : ErrorReason) -> bool {
+	unifyCENodes(tmap, lclass, left, rclass, right, true, reason) == UnifyOK();
+}
+
+// We have a set of potentials with typars that need to be unified against the other side
+unifyOverloadTypars(tmap : TMap, potentials : Set<int>, other : CNode, postpone : () -> UnifyResult, reason : ErrorReason) -> UnifyResult {
+	// OK, find the children typar options
+	mtypars : Maybe<[int]> = getOverloadTypars(tmap, potentials, reason);
+	mtypars ?? {
+		// OK, let us do the typars
+		switch (other) {
+			CEpsilon(): postpone();
+			CName(__, typars, __): {
+				foldi(typars, UnifyOK(), \i, ok : UnifyResult, typar : int -> {
+					if (ok == UnifyFail()) {
+						ok
+					} else {
+						supTypar = mtypars[i];
+						ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+						unifyCEClass(tmap, typar, supTypar, false, ereason);
+					}
+				});
+			}
+			CFunction(args, return, __): {
+				retOk = unifyCEClass(tmap, lastElement(mtypars, return), return, false, elaborateReason(reason, "return"));
+				foldi(args, retOk, \i, ok : UnifyResult, arg -> {
+					if (ok == UnifyFail()) {
+						ok
+					} else {
+						supTypar = mtypars[i];
+						ereason = elaborateReason(reason, "arg #" + i2s(i + 1));
+						unifyCEClass(tmap, supTypar, arg, false, ereason);
+					}
+				});
+			}
+			COverload(unique, options, __): {
+				secondOptions : Maybe<[int]> = getOverloadTypars(tmap, options, reason);
+				switch (secondOptions) {
+					None(): postpone();
+					Some(so): {
+						if (length(so) != length(mtypars)) {
+							postpone();
+						} else {
+							foldi(mtypars, UnifyOK(), \i, ok : UnifyResult, tp -> {
+								if (ok != UnifyOK()) {
+									ok;
+								} else {
+									supTypar = so[i];
+									ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+									unifyCEClass(tmap, supTypar, tp, false, ereason);
+								}
+							})
+						}
+					}
+				}
+			}
+		}
+	} : {
+		postpone();
+	}
+}
+
+
+// Recursively pull out all eclasses this class could be (when overloaded)
+extractCNodes(cmap : CMap, class : int, acc : Set<int>) -> Set<int> {
+	onode = getUnionMapValue(cmap.cmap, class);
+	switch (onode) {
+		CEpsilon(): insertSet(acc, class);
+		CName(__, __, __): insertSet(acc, class);
+		CFunction(__, __, __): insertSet(acc, class);
+		COverload(uniques, options, reason): foldSet(options, acc, \acc2, ee -> extractCNodes(cmap, ee, acc2));
+	}
+}
+
+
+
+
+
+subtypeCType(tmap : TMap, subtype : TType, supertype : TType, checkOnly : bool, reason : ErrorReason) -> UnifyResult {
+	subClass = findOrMakeCNodeClass(tmap, subtype, reason);
+	superClass = findOrMakeCNodeClass(tmap, supertype, reason);
+	orig = prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass);
+	res = subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
+
+	if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid))) {
+		debugErrorReason(reason, "  Subtype " + unifyResult2string(res) + " " + prettyCEClass(tmap.cmap, subClass) + " with super " + prettyCEClass(tmap.cmap, superClass) + ". ");
+	}
+	res;
+}
+
+subtypeCEClass(tmap : TMap, subClass : int, superClass : int, checkOnly : bool, reason : ErrorReason) -> UnifyResult {
+	sub : CNode = getUnionMapValue(tmap.cmap.cmap, subClass);
+	super : CNode = getUnionMapValue(tmap.cmap.cmap, superClass);
+
+	indent = ^cindent;
+	if (isTracingId(tmap.tracing, StageTypeInference(), 1, ^(tmap.topid)) && !checkOnly) {
+		debugErrorReason(reason, indent + "  Subtype " + prettyCEClass(tmap.cmap, subClass) + "\n" + indent + "    with  " + prettyCEClass(tmap.cmap, superClass) + ". ");
+		cindent := indent + "  ";
+	}
+
+	error = \ -> {
+		if (!checkOnly) {
+			tmap.onError(elaborateReason(reason, "Could not subtype " + prettyCNode(tmap.cmap, sub) + " vs "  + prettyCNode(tmap.cmap, super)));
+		}
+		UnifyFail();
+	}
+
+	postpone = \ -> {
+		if (!checkOnly) {
+			constraint = TConstraint(subClass, superClass, reason);
+			tmap.cmap.constraints := Cons(constraint, ^(tmap.cmap.constraints));
+		}
+		UnifyPostponed();
+	}
+
+	// If we have a subtype against an overload. I.e. name or function against overload
+	subVsOverload = \ov : COverload -> {
+		potentials = filterSet(ov.options, \opt : int -> {
+			UnifyFail() != subtypeCEClass(tmap, subClass, opt, true, elaborateReason(reason, " overloads"));
+		});
+		npot = sizeSet(potentials);
+		if (npot == 0) {
+			error();
+		} else if (npot == 1) {
+			// OK, exactly one is possible.
+			if (!checkOnly) {
+				// We resolve the overload
+				cand : int = set2array(potentials)[0];
+				setUnionMapValue(tmap.cmap.cmap, superClass, CEpsilon());
+				root = unionUnionMap(tmap.cmap.cmap, superClass, cand);
+				subtypeCEClass(tmap, subClass, cand, checkOnly, elaborateReason(reason, "resolve overload"));
+			} else UnifyOK();
+		} else {
+			if (sizeSet(ov.options) > npot) {
+				// OK, it is at least reduced
+				if (!checkOnly) {
+					nover = COverload(ov with options = potentials);
+					setUnionMapValue(tmap.cmap.cmap, superClass, nover);
+					subVsOverloadTypars(tmap, sub, potentials, postpone, reason);
+				} else UnifyOK();
+			} else {
+				postpone();
+			}
+		}
+	}
+
+	// overload vs name or function
+	overloadVsSuper = \ov : COverload -> {
+		potentials = filterSet(ov.options, \opt : int -> {
+			UnifyFail() != subtypeCEClass(tmap, opt, superClass, true, reason);
+		});
+		npot = sizeSet(potentials);
+		if (npot == 0) {
+			error();
+		} else if (npot == 1) {
+			// OK, exactly one is possible.
+			if (!checkOnly) {
+				// We resolve the overload
+				cand : int = set2array(potentials)[0];
+				setUnionMapValue(tmap.cmap.cmap, subClass, CEpsilon());
+				root = unionUnionMap(tmap.cmap.cmap, subClass, cand);
+				subtypeCEClass(tmap, cand, superClass, checkOnly, reason);
+			} else UnifyOK();
+		} else {
+			if (npot < sizeSet(ov.options)) {
+				if (!checkOnly) {
+					nover = COverload(ov with options = potentials);
+					setUnionMapValue(tmap.cmap.cmap, subClass, nover);
+					overloadVsSupTypars(tmap, potentials, super, postpone, reason);
+				} else UnifyOK()
+			} else {
+				postpone();
+			}
+		}
+	}
+
+	anyVsEpsilon = \ -> {
+		moverload = makeSupertypeOverload(tmap, subClass, sub, reason);
+		moverload ?? {
+			if (!checkOnly) {
+				setUnionMapValue(tmap.cmap.cmap, superClass, moverload);
+			}
+			UnifyOK();
+		} : {
+			postpone();
+		}
+	};
+
+	end = if (sub == CEpsilon() && super == CEpsilon()) {
+		// OK, postpone
+		postpone();
+	} else {
+		switch (sub) {
+			CEpsilon(): {
+				if (isCFlow(super)) {
+					postpone();
+				} else {
+					// OK, we should find all subtypes of super, and make an overload for those
+					moverload = makeSubtypeOverload(tmap, superClass, super, checkOnly, reason);
+					moverload ?? {
+						if (!checkOnly) {
+							setUnionMapValue(tmap.cmap.cmap, subClass, moverload);
+						}
+						UnifyOK();
+					} : {
+						postpone();
+					}
+				}
+			}
+			CName(name, typars, subreason): {
+				switch (super) {
+					CEpsilon(): anyVsEpsilon();
+					CName(sname, stypars, supreason): {
+						if (name == sname) {
+							if (length(typars) == length(stypars)) {
+								foldi(typars, UnifyOK(), \i, ok : UnifyResult, typar -> {
+									if (ok == UnifyFail()) {
+										ok
+									} else {
+										subtypeCEClass(tmap, typar, stypars[i], checkOnly, elaborateReason(reason, "typar #" + i2s(i + 1)));
+									}
+								});
+							} else {
+								error();
+							}
+						} else if (isCFlow(sub) || isCFlow(super)) {
+							UnifyOK();
+						} else {
+							typar1 = trim2(name, "?");
+							typar2 = trim2(sname, "?");
+							if (typar1 == typar2) {
+								// Typar against typar, even if different, is OK. TODO: Is this really the way to go?
+								// TODO: Check if we are strict
+								// println("Accepting " + name + " == " +sname);
+								UnifyOK();
+							} else {
+								supers = ^(tmap.resolveSupertypes)(name);
+								if (contains(supers, sname)) {
+									// OK, lift the sub to the superworld, and do it there
+									sub2super = makeSupertypeFromSub(tmap, sub, sname);
+									subtypeCEClass(tmap, sub2super, superClass, checkOnly, elaborateReason(reason, "sub vs super"));
+								} else {
+									error();
+								}
+							}
+						}
+					}
+					CFunction(sargs, return, supreason): {
+						if (isCFlow(sub)) {
+							UnifyOK();
+						} else error();
+					}
+					COverload(sunique, options, supreason): subVsOverload(super);
+				}
+			}
+			CFunction(args, return, subreason): {
+				switch (super) {
+					CEpsilon(): anyVsEpsilon();
+					CName(sname, stypars, supreason): {
+						if (isCFlow(super)) {
+							UnifyOK();
+						} else error();
+					}
+					CFunction(sargs, sreturn, supreason): {
+						if (length(args) == length(sargs)) {
+							retok = subtypeCEClass(tmap, return, sreturn, checkOnly, elaborateReason(reason, "fn ret"));
+							foldi(args, retok, \i, ok : UnifyResult, arg -> {
+								if (ok == UnifyFail()) ok
+								else {
+									subtypeCEClass(tmap, sargs[i], arg, checkOnly, elaborateReason(reason, "arg #" + i2s(i + 1)));
+								}
+							});
+						} else {
+							error();
+						}
+					}
+					COverload(sunique, options, supreason): subVsOverload(super);
+				}
+			}
+			COverload(unique, options, subreason): {
+				switch (super) {
+					CEpsilon(): {
+						// TODO: Maybe we can do better here, but probably, it is better to just wait
+						postpone();
+					}
+					CName(__, __, __): overloadVsSuper(sub);
+					CFunction(__, __, __): overloadVsSuper(sub);
+					COverload(sunique, soptions, supreason): {
+						// OK, look for subs that at least have something that works
+						subPotentials = filterSet(options, \opt -> {
+							exists(set2array(mapSet(soptions, \sopt : int -> {
+								UnifyFail() != subtypeCEClass(tmap, opt, sopt, true, reason);
+							})), idfn);
+						});
+
+						// Find the supers that at least have something that works
+						supPotentials = filterSet(soptions, \sopt -> {
+							exists(set2array(mapSet(options, \opt : int -> {
+								UnifyFail() != subtypeCEClass(tmap, opt, sopt, true, reason);
+							})), idfn)
+						});
+
+						subUpdate = updateCOverload(tmap, subClass, sub, subPotentials, "" /*" subtype to " + prettyCEClass(tmap.cmap, superClass)*/, checkOnly);
+						supUpdate = updateCOverload(tmap, superClass, super, supPotentials, "" /*" super type to " + prettyCEClass(tmap.cmap, subClass)*/, checkOnly);
+
+						if (subUpdate || supUpdate) {
+							if (!checkOnly) {
+								subtypeCEClass(tmap, subClass, superClass, checkOnly, reason);
+							} else {
+								UnifyOK();
+							}
+						} else {
+							// OK, nothing was reduced.
+							if (false) {
+								println("\nWe have unproductive overload sub overload");
+								println("  " + prettyCEClass(tmap.cmap, subClass));
+								println("  " + prettyCEClass(tmap.cmap, superClass));
+
+								supPotentials2 = filterSet(soptions, \sopt -> {
+									forall(set2array(mapSet(options, \opt : int -> {
+										UnifyFail() != subtypeCEClass(tmap, opt, sopt, true, reason);
+									})), idfn)
+								});
+
+								iterSet(supPotentials2, \sp -> {
+									println("    " + prettyCEClass(tmap.cmap, sp));
+								});
+							}
+
+							postpone();
+						}
+					}
+				}
+			}
+		}
+	};
+
+	cindent := indent;
+	end;
+}
+
+// Returns true if we have some update. It is the responsibility of the caller to join the classes afterwards
+updateCOverload(tmap : TMap, eclass : int, orig : COverload, newOptions : Set<int>, reason : string, checkOnly : bool) -> bool {
+	if ((sizeSet(newOptions) < sizeSet(orig.options) || sizeSet(newOptions) == 1) && !isEmptySet(newOptions)) {
+		// OK, we have some update
+		resSub = if (sizeSet(newOptions) == 1) {
+			cand = set2array(newOptions)[0];
+			getUnionMapValue(tmap.cmap.cmap, cand);
+		} else {
+			COverload(orig with options = newOptions);
+		};
+		if (false) {
+			println("We reduced " + prettyCNode(tmap.cmap, orig) + " to " + prettyCNode(tmap.cmap, resSub) + " " + reason);
+		}
+		if (!checkOnly) {
+			setUnionMapValue(tmap.cmap.cmap, eclass, resSub);
+		}
+		true;
+	} else false;
+}
+
+// overloadTypars(tmap : TMap)
+
+// We have a sub against a set of potentials. Do the typars if possible, or postpone
+subVsOverloadTypars(tmap : TMap, sub : CNode, potentials : Set<int>, postpone0 : () -> UnifyResult, reason : ErrorReason) -> UnifyResult {
+	postpone = \ -> {
+		println("TODO: Find out we have to postpone sub vs overload");
+		postpone0();
+	}
+	// OK, find the children typar options
+	mtypars : Maybe<[int]> = getOverloadTypars(tmap, potentials, reason);
+	mtypars ?? {
+		// OK, let us do the typars
+		switch (sub) {
+			CEpsilon(): postpone();
+			CName(__, typars, __): {
+				foldi(typars, UnifyOK(), \i, ok : UnifyResult, typar : int -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						supTypar = mtypars[i];
+						ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+						subtypeCEClass(tmap, typar, supTypar, false, ereason);
+					}
+				});
+			}
+			CFunction(args, return, __): {
+				retOk = subtypeCEClass(tmap, lastElement(mtypars, return), return, false, elaborateReason(reason, "return"));
+				foldi(args, retOk, \i, ok : UnifyResult, arg -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						supTypar = mtypars[i];
+						ereason = elaborateReason(reason, "arg #" + i2s(i + 1));
+						subtypeCEClass(tmap, supTypar, arg, false, ereason);
+					}
+				});
+			}
+			COverload(unique, options, __): postpone();
+		}
+	} : {
+		postpone();
+	}
+}
+
+// We have a sub against a set of potentials. Do the typars if possible, or postpone
+overloadVsSupTypars(tmap : TMap, potentials : Set<int>, sup : CNode, postpone0 : () -> UnifyResult, reason : ErrorReason) -> UnifyResult {
+	postpone = \ -> {
+		println("TODO: Find out we have to postpone overload vs super");
+		postpone0();
+	}
+	// OK, find the children typar options
+	mtypars : Maybe<[int]> = getOverloadTypars(tmap, potentials, reason);
+	mtypars ?? {
+		switch (sup) {
+			CEpsilon(): postpone();
+			CName(__, typars, __): {
+				foldi(typars, UnifyOK(), \i, ok : UnifyResult, typar : int -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						subTypar = mtypars[i];
+						ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+						subtypeCEClass(tmap, subTypar, typar, false, ereason);
+					}
+				});
+			}
+			CFunction(args, return, __): {
+				retOk = subtypeCEClass(tmap, return, lastElement(mtypars, return), false, elaborateReason(reason, "return"));
+				foldi(args, retOk, \i, ok : UnifyResult, arg -> {
+					if (ok != UnifyOK()) {
+						ok
+					} else {
+						subTypar = mtypars[i];
+						ereason = elaborateReason(reason, "arg #" + i2s(i + 1));
+						subtypeCEClass(tmap, arg, subTypar, false, ereason);
+					}
+				});
+			}
+			COverload(unique, options, __): postpone();
+		}
+	} : {
+		postpone();
+	}
+}
+
+// Given a set of potentials, extract the (potentially overloaded) typars of these
+getOverloadTypars(tmap : TMap, potentials : Set<int>, reason : ErrorReason) -> Maybe<[int]> {
+	post = ref false;
+	typars = foldSet(potentials, [], \acc : [Set<int>], p : int -> {
+		pot : CNode = getUnionMapValue(tmap.cmap.cmap, p);
+		switch (pot) {
+			CName(name, stypars, __): {
+				if (length(stypars) < length(acc)) {
+					println("TODO: Mismatch in typar arity across options for name " + name);
+				}
+				mapi(stypars, \i, as -> {
+					accI = elementAt(acc, i, makeSet());
+					insertSet(accI, stypars[i])
+				});
+			}
+			CEpsilon(): {
+				post := true;
+				acc;
+			}
+			CFunction(args, return, __): {
+				stypars = arrayPush(args, return);
+				mapi(stypars, \i, as -> {
+					accI = elementAt(acc, i, makeSet());
+					insertSet(accI, stypars[i])
+				});
+			}
+			COverload(__, options, __): {
+				println("TODO: Find children of overloads");
+				post := true;
+				acc;
+			}
+		}
+	});
+	if (^post) {
+		None();
+	} else {
+		// OK, construct a new eclass for each typar
+		Some(
+			mapi(typars, \i : int, tps : Set<int> -> {
+				if (sizeSet(tps) == 1) {
+					set2array(tps)[0];
+				} else {
+					ereason = elaborateReason(reason, "typar #" + i2s(i + 1));
+					noverload = COverload(makeSet1(tmap.mkUnique()), tps, ereason);
+					findOrMakeCNode(tmap, noverload);
+				};
+			})
+		)
+	}
+}
+
+dtype2CType(tmap : TMap, d : DType, reason : ErrorReason) -> TTypeEClass {
+	tt = dtype2CType2(tmap, d);
+	resultCType(tmap, tt, reason);
+}
+
+isCFlow(c : CNode) -> bool {
+	switch (c) {
+		CName(n, tp, __): n == "flow" && tp == [];
+		default: false;
+	}
+}

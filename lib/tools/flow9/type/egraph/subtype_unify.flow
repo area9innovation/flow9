@@ -1,0 +1,127 @@
+import runtime;
+import tools/flow9/type/egraph/types;
+import tools/flow9/type/egraph/utils;
+import tools/flow9/type/egraph/egraph;
+import tools/flow9/type/egraph/subtype;
+import tools/flow9/type/egraph/unify;
+
+export {
+	// Combine subtyping and unification: unify mapped parameters but allow structs to be subtypes
+	subtypeUnifyEGraphTypes(g : EGraph, id1 : int, id2 : int, infos : Set<EContext>) -> int;
+}
+
+subtypeUnifyEGraphTypes(g : EGraph, id1 : int, id2 : int, infos : Set<EContext>) -> int {
+	r1 = findEGraphRoot(g, id1);
+	r2 = findEGraphRoot(g, id2);
+
+	if (r1 == r2) r1
+	else {
+		node1 = getNodeDef(g, r1);
+		node2 = getNodeDef(g, r2);
+
+		if (g.tracing > 1) {
+			debugMsg(g, 1, "SubtypeUnifying " + typeNodeToString(g, r1, false, true) + "   and   " + typeNodeToString(g, r2, false, true));
+		}
+
+		if (isFlowTypeNode(node2) || isFlowTypeNode(node1)) {
+			// Handle flow types using regular unification
+			unifyEGraphTypes(g, r1, r2, infos)
+		} else {
+			switch (node1) {
+				Variable(__): unifyEGraphTypes(g, r1, r2, infos);
+				Constructor(name1, args1): {
+					switch (node2) {
+						Variable(__): unifyEGraphTypes(g, r1, r2, infos);
+						Constructor(name2, args2): {
+							if (name1 == name2) {
+								// Same constructor - unify parameters directly
+								if (length(args1) != length(args2)) {
+									g.onError(infos, "Length mismatch: " + i2s(length(args1)) + " vs " + i2s(length(args2)));
+									r1;
+								} else {
+									// Unify all parameters
+									newArgs = mapi(args1, \i, arg1 -> subtypeUnifyEGraphTypes(g, arg1, args2[i], infos));
+									updateTypeNode(g, r1, Constructor(name1, newArgs), infos);
+									r1;
+								}
+							} else {
+								// Different constructors - need to map parameters through type hierarchy
+								subtypeUnifyConstructors(g, r1, node1, r2, node2, infos)
+							}
+						}
+						Function(__, __): {
+							g.onError(infos, "Cannot mix constructor and function types");
+							r1;
+						}
+					}
+				}
+				Function(args1, ret1): {
+					switch (node2) {
+						Variable(__): unifyEGraphTypes(g, r1, r2, infos);
+						Function(args2, ret2): {
+							// For functions, unify parameters and return type
+							if (length(args1) != length(args2)) {
+								g.onError(infos, "Function argument count mismatch");
+								r1;
+							} else {
+								// Note: For proper function subtyping, args should be contravariant
+								// but since we're unifying, we treat them as invariant
+								newArgs = mapi(args1, \i, arg1 -> subtypeUnifyEGraphTypes(g, arg1, args2[i], infos));
+								newRet = subtypeUnifyEGraphTypes(g, ret1, ret2, infos);
+								updateTypeNode(g, r1, Function(newArgs, newRet), infos);
+								r1;
+							}
+						}
+						Constructor(__, __): {
+							g.onError(infos, "Cannot mix function with constructor");
+							r1;
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// Handle subtyping between different constructors by finding parameter mapping and unifying
+subtypeUnifyConstructors(g : EGraph, id1 : int, node1 : Constructor, id2 : int, node2 : Constructor, infos : Set<EContext>) -> int {
+	raw = \ -> {
+		munions2 = lookupTree(g.interface.rawUnions, node2.name);
+		munions2 ?? {
+			if (exists(munions2.types, \sub : HTypeCons -> sub.name == node1.name)) {
+				// Found direct subtype relationship - get parameter mapping
+				um = instantiateHUnionMember(g, id1, node1.name, node2, munions2);
+				if (g.tracing > 1) {
+					debugMsg(g, 1, "Mapping parameters from " + node1.name + " to " + node2.name +
+						" through " + typeNodeToString(g, um, false, true));
+				}
+				// Instead of making subtypes, unify the mapped parameters
+				subtypeUnifyEGraphTypes(g, id1, um, infos)
+			} else {
+				// Try finding a path through intermediate types
+				subtypeConstructorsThroughPath(g, id1, node1, id2, node2, subtypeUnifyEGraphTypes, infos);
+			}
+		} : {
+			// Try transitive relationship
+			subtypeConstructorsThroughPath(g, id1, node1, id2, node2, subtypeUnifyEGraphTypes, infos);
+		}
+	}
+
+	munions = lookupTree(g.interface.unions, node2.name);
+	munions ?? {
+		if (exists(munions.types, \sub : HTypeCons -> sub.name == node1.name)) {
+			// Direct subtype relationship found in unions
+			um = instantiateHUnionMember(g, id1, node1.name, node2, munions);
+			if (g.tracing > 1) {
+				debugMsg(g, 1, "Mapping parameters from " + node1.name + " to " + node2.name +
+					" through " + typeNodeToString(g, um, false, true));
+			}
+			// Unify with the mapped parameters
+			subtypeUnifyEGraphTypes(g, id1, um, infos)
+		} else {
+			raw();
+		}
+	} : {
+		raw();
+	}
+}

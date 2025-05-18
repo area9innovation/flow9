@@ -1,0 +1,185 @@
+import ds/set;
+import ds/tree;
+import tools/flow9/desugar/dexp;
+
+export {
+	// Find dependencies for all global, native, unions & structs for a module
+	getDModuleDependencies(d : DModule) -> Tree<string, Set<string>>;
+
+	getFreeDVarsFromDExp(bound : Set<string>, free : Set<string>, d : DExp) -> Set<string>;
+}
+
+// Find all free variables in this expression
+getFreeDVarsFromDExp(bound : Set<string>, free : Set<string>, d : DExp) -> Set<string> {
+    switch (d) {
+        DVar(name, __): {
+            if (!containsSet(bound, name)) {
+                insertSet(free, name);
+            } else free
+        }
+        DLambda(args, body, __): {
+            newBound = fold(args, bound, \acc, arg -> insertSet(acc, arg.name));
+			nfree = fold(args, free, \acc, arg -> getFreeDTypesFromDType(bound, acc, arg.type));
+            getFreeDVarsFromDExp(newBound, nfree, body);
+        }
+        DLet(name, value, body, __): {
+            free1 = getFreeDVarsFromDExp(bound, free, value);
+            getFreeDVarsFromDExp(insertSet(bound, name), free1, body);
+        }
+        DCall(fn, args, __): {
+            free1 = getFreeDVarsFromDExp(bound, free, fn);
+            fold(args, free1, \acc, arg -> getFreeDVarsFromDExp(bound, acc, arg));
+        }
+        DIfElse(condition, then, else_, __): {
+            free1 = getFreeDVarsFromDExp(bound, free, condition);
+            free2 = getFreeDVarsFromDExp(bound, free1, then);
+            getFreeDVarsFromDExp(bound, free2, else_);
+        }
+        DSwitch(value, cases, defaultCase, __): {
+            free1 = getFreeDVarsFromDExp(bound, free, value);
+            free2 = fold(cases, free1, \acc, case_ -> {
+				// Add the case name
+				acc2 = if (!containsSet(bound, case_.uid)) {
+					insertSet(acc, case_.uid);
+				} else acc;
+                newBound = fold(case_.ids, bound, \b, id -> insertSet(b, id));
+                getFreeDVarsFromDExp(newBound, acc2, case_.body);
+            });
+            switch (defaultCase) {
+                None(): free2;
+                Some(def): getFreeDVarsFromDExp(bound, free2, def);
+            }
+        }
+        DArray(values, __): {
+            fold(values, free, \acc, val -> getFreeDVarsFromDExp(bound, acc, val));
+        }
+        DBuiltin(op, args, __): {
+			nfree = switch (op) {
+				DCalculation(): free;
+				DComparison(): free;
+				DCast(toType): getFreeDTypesFromDType(bound, free, toType);
+				DIsSubType(type): getFreeDTypesFromDType(bound, free, type);
+				DDeref(): free;
+				DDot(field): {
+					opName = "." + field;
+					insertSet(free, opName);
+				}
+				DRef(): free;
+				DAssign(): free;
+				DIndex(): free;
+				DMutableAssign(field): free;
+				DPipe(): free;
+				DSequence(): free;
+			};
+            fold(args, nfree, \acc, arg -> getFreeDVarsFromDExp(bound, acc, arg));
+        }
+        DWith(uid, wexp, fieldassigns, __): {
+			free0 = if (!containsSet(bound, uid)) {
+				insertSet(free, uid);
+			} else free;
+            free1 = getFreeDVarsFromDExp(bound, free0, wexp);
+            fold(fieldassigns, free1, \acc, fa -> getFreeDVarsFromDExp(bound, acc, fa.exp));
+        }
+		DVoid(info): free;
+		DInt(value, info): free;
+		DDouble(value, info): free;
+		DBool(value, info): free;
+		DString(value, info): free;
+		DMaybe(condition, then, else_, info): {
+			free0 = if (!containsSet(bound, "Maybe")) {
+				insertSet(free, "Maybe");
+			} else free;
+			free1 = getFreeDVarsFromDExp(bound, free0, condition);
+			free2 = getFreeDVarsFromDExp(bound, free1, then);
+			getFreeDVarsFromDExp(bound, free2, else_);
+		}
+    }
+}
+
+// Find all free structs & unions in this type
+getFreeDTypesFromDType(bound : Set<string>, free : Set<string>, d : DType) -> Set<string> {
+    switch (d) {
+        DTypename(uid, typars, __): {
+            nfree = if (!containsSet(bound, uid)) {
+                insertSet(free, uid);
+            } else free;
+            fold(typars, nfree, \acc, typar -> getFreeDTypesFromDType(bound, acc, typar));
+        }
+        DArrayType(type, __): getFreeDTypesFromDType(bound, free, type);
+        DFnType(args, returnType, __): {
+            free1 = fold(args, free, \acc, arg -> getFreeDTypesFromDType(bound, acc, arg));
+            getFreeDTypesFromDType(bound, free1, returnType);
+        }
+        DRefType(type, __): getFreeDTypesFromDType(bound, free, type);
+		DAutoType(info): free;
+		DBoolType(info): free;
+		DDoubleType(info): free;
+		DFlowType(info): free;
+		DIntType(info): free;
+		DNativeType(info): free;
+		DPolyType(id, info): free;
+		DStringType(info): free;
+		DVoidType(info): free;
+    }
+}
+
+getDModuleBindings(d : DModule) -> Set<string> {
+	bound1 = foldTree(d.toplevels, makeSet(), \name, global, acc -> insertSet(acc, name));
+	bound2 = foldTree(d.natives, bound1, \name, native, acc -> insertSet(acc, name));
+	bound3 = foldTree(d.unions, bound2, \name, union, acc -> insertSet(acc, name));
+	foldTree(d.structs, bound3, \name, struct, acc -> insertSet(acc, name));
+}
+
+// Find what names & types these depend on
+getDGlobalDependencies(module : DModule, bound : Set<string>, d : DGlobal) -> Set<string> {
+    free = makeSet();
+    getFreeDVarsFromDExp(bound, free, d.value);
+}
+
+getDNativeDependencies(module : DModule, bound : Set<string>, d : DNative) -> Set<string> {
+    free = makeSet();
+    getFreeDTypesFromDType(bound, free, d.type);
+}
+
+getDUnionDependencies(module : DModule, bound : Set<string>, d : DUnion) -> Set<string> {
+    free = makeSet();
+    fold(d.types, free, \acc, type -> getFreeDTypesFromDType(bound, acc, type));
+}
+
+getDStructDependencies(module : DModule, bound : Set<string>, d : DStruct) -> Set<string> {
+    free = makeSet();
+    fold(d.args, free, \acc, arg -> getFreeDTypesFromDType(bound, acc, arg.type));
+}
+
+// Find dependencies for all global, native, unions & structs for a module
+getDModuleDependencies(d : DModule) -> Tree<string, Set<string>> {
+	// println("Finding dependencies for " + d.flowpath);
+	bindings = getDModuleBindings(d);
+
+    dependencies = makeTree();
+    
+    dependencies1 = foldTree(d.toplevels, dependencies, \name, global, acc -> 
+        setTree(acc, name, getDGlobalDependencies(d, bindings, global))
+    );
+
+    dependencies2 = foldTree(d.natives, dependencies1, \name, native, acc -> {
+		// Overlaps are allowed, since that is a fallback native
+		existing = lookupTreeDef(acc, name, makeSet());
+		extra = getDNativeDependencies(d, bindings, native);
+        setTree(acc, name, mergeSets(existing, extra));
+	});
+
+    dependencies3 = foldTree(d.unions, dependencies2, \name, union, acc -> {
+		if (containsKeyTree(acc, name)) {
+			println("Error: " + name + " already exists as function, global or native");
+		};
+        setTree(acc, name, getDUnionDependencies(d, bindings, union))
+    });
+
+    foldTree(d.structs, dependencies3, \name, struct, acc -> {
+		if (containsKeyTree(acc, name)) {
+			println("Error: " + name + " already exists as function, global, native or union");
+		};
+        setTree(acc, name, getDStructDependencies(d, bindings, struct))
+	});
+}

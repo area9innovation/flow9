@@ -1,0 +1,204 @@
+@include<list>
+flow = '\uFEFF'? ws @array0<import> @array0<forbid> toplevelexport toplevels Module/4 lastLineComment?;
+
+toplevels = @array0<toplevel> optsemi;
+
+toplevel = native | union | global | functionOrStruct;
+	semi = ";" ws;
+	semie = #";" ws; // A semi which we never intentionally backtrack over
+	optsemi = (";" ws)?;
+
+import = @pos "import" s path ws semi Import/2;
+
+toplevelexport = @nil (toplevel @drop export @cons @'"Put toplevel declarations AFTER the `export` section"' @error | export @cons | "") @list2array;
+
+export = @pos "export" ws "{" ws toplevels "}" ws Export/2;
+forbid = @pos "forbid" s path ws semi Forbid/2;
+	path = $(bid ('/' bid)*);
+
+native = @pos "native" s id ':' ws ("io" ws @true | @false) type '=' ws $nativename ws semi Native/5;
+	nativename = bid ('.' bid)*;
+
+union = @pos typename "::=" ws typenames semi Union/3;
+	typenames = @nil typename @cons ("," ws typename @cons)* @list2array ("," ws)? | @nil @list2array;
+
+global = @pos id opttype "=" ws (brace optsemi | exp semie) Global/4
+	| "const" kwsep @pos id opttype "=" ws (brace optsemi | exp semi) Global/4 @'"Flow9 omits the `const` keyword in bindings"' @error
+	| "let" kwsep @pos id opttype "=" ws (brace optsemi | exp semi) Global/4 @'"Flow9 omits the `let` keyword in bindings"' @error
+	| "var" kwsep @pos id opttype "=" ws (brace optsemi | exp semi) Global/4 @'"Flow9 omits the `var` keyword in bindings and variables are immutable"' @error;
+
+functionOrStruct = @pos (
+	// Struct - TODO: We could allow 'typars' here to allow more explicit polymorphic syntax
+	uid '(' ws structargs ')' ws semi StructDef/3
+
+	// Struct - TODO: We could allow 'typars' here to allow more explicit polymorphic syntax
+	| uid ':' ws '(' ws structargs ')' ws semi StructDef/3
+	// Function def
+	| id lambdatype (brace ("}" ws @'"Extra } detected"' @error)? optsemi | exp semi) FnDef/4
+	| id lambdatype semie TypeDef/3
+	// Forward type declarations
+	| id ':' ws type semie TypeDef/3
+	);
+
+	// listof(structarg, ",")
+	structargs = @nil structarg @cons ("," ws structarg @cons)* @list2array ("," ws)? | @nil @list2array ;
+	structarg = @pos ("mutable" kwsep @true | @false)  id ':' ws type StructArg/4;
+
+exp = 
+	// These optsemi should really be semi, but we have too much legacy without
+	lid opttype @pos "=" ws exp optsemi expsemi Let/5
+	|> exp @pos ":=" ws exp Assign/0 BinOp/4
+	|> exp (@pos "|>" ws exp Pipe/0 BinOp/4)+
+	|> exp (@pos $("+=" | "-=" | "*=" | "/=" | "%=") ws exp AssignOp/4)+
+	|> exp (@pos "||" ws exp Or/0 BinOp/4)+
+	|> exp (@pos "&&" ws exp And/0 BinOp/4)+
+	|> exp @pos ("==" ws exp Equal/0 BinOp/4 | "!=" ws exp NotEqual/0 BinOp/4)
+	|> exp @pos ("<=" ws exp LessEqual/0 BinOp/4 |"<" ws exp Less/0 BinOp/4 
+		| ">=" ws exp GreaterEqual/0 BinOp/4 | ">" ws exp Greater/0 BinOp/4)
+	|> exp (@pos "+" ws exp Add/0 BinOp/4 | @pos "-" ws exp Sub/0 BinOp/4)*
+	|> exp (@pos "*" ws exp Mul/0 BinOp/4 | @pos "/" ws exp Div/0 BinOp/4 | @pos "%" ws exp Mod/0 BinOp/4)*
+
+	// To ensure that ?? does not consider the : as part of the type
+	|> exp @pos ":" ws type IsSubType/2 UnOp/2
+
+	|> exp @pos "??" ws <exp ":" ws exp Maybe/4
+	|> exp @pos "with" s @array<fieldassign ","> With/3
+	|>
+		@pos '!' Not/1 ws <exp @swap UnOp/2
+		| @pos "-" Negative/1 ws <exp @swap UnOp/2
+		| exp (
+			@pos "(" ws @array<exp ","> ")" ws Call/3
+			| @pos "." ws id MutableAssign/1 "::=" ws exp @swap BinOp/4 ""
+			| @pos "." ws id Dot/2 UnOp/2
+			| @pos "[" ws exp "]" ws Index/0 BinOp/4
+		)*
+	|> '^' @pos Deref/1 ws exp @swap UnOp/2
+
+	|> 
+		"ref" kwsep @pos Ref/1 exp @swap UnOp/2
+		| @pos "if" kwsep "(" ws exp ")" ws exp "else" ws exp IfElse/4
+		| @pos "if" kwsep "(" ws exp ")" ws exp @pos Void/1 IfElse/4
+		| "(" ws exp ")" ws 
+		| "cast" kwsep '(' ws exp @pos "->" ws type Cast/2 ')' ws UnOp/2
+
+		// Patterns that are not legal in flow9 yet
+		| "while" kwsep @pos '(' ws exp ')' ws exp While/3
+		| "for" kwsep @pos '(' ws id opttype '=' ws exp ';' ws exp ';' ws exp ')' ws exp For/7
+		| "return" kwsep @pos @opt<exp> Return/2
+		| "break" kwsep @pos Break/1
+		| "let" kwsep lid opttype @pos "=" ws exp optsemi expsemi Let/5 @'"Flow9 omits the `let` keyword in bindings"' @error 
+		| "const" kwsep lid opttype @pos "=" ws exp optsemi expsemi Let/5 @'"Flow9 omits the `const` keyword in bindings"' @error 
+		| "var" kwsep lid opttype @pos "=" ws exp optsemi expsemi Let/5 @'"Flow9 omits the `var` keyword in bindings and variables are immutable"' @error 
+		| "try" kwsep brace "catch" kwsep exp @drop @'"Flow9 does not support try/catch"' @error 
+
+		| switch
+		| @pos "[" ws @array<exp ","> "]" ws Array/2
+		| value
+		| @pos lid Var/2
+		| brace
+		| "@" ws id @switch
+	;
+
+value = 
+	@pos "true" kwsep @true Bool/2
+	| @pos "false" kwsep @false Bool/2
+	| @pos "0x" $(hexdigit+) ws @parsehex Int/2
+	| @pos $double ws @s2d Double/2
+	| @pos $int ws @s2i Int/2
+	| @pos '"#inc' "lude" s path '"' ws StringInclude/2
+	| @pos string @unescape String/2
+	| @pos "<<" $(!">>" anychar)* ">>" ws String/2
+	| @pos '\' ws @array<lambdaarg ","> "->" ws (type "->" ws | @pos AutoType/1) exp Lambda/4
+	| @pos "{}" ws Void/1
+	;
+
+opttype = ":" ws type | @pos AutoType/1;
+
+switch = @pos "switch" kwsep '(' ws exp ')' ws
+		'{' ws @nil (case @cons)+ @list2array  #'}' ws Switch/3;
+	case = 
+		@pos "default" kwsep ':' ws exp (';' ws)? DefaultCase/2
+		| @pos uid '(' ws @array<id ","> ')' ws ':' ws exp (';' ws)? StructCase/4
+		| @pos exp @'"Flow does not support switch on values or patterns"' @error ':' ws exp @drop (';' ws)? DefaultCase/2;
+
+brace = @pos "{" ws expsemi "}" ws Sequence/2;
+	// The first optsemi here is to have backwards compatibility. Really, it should be semi
+	expsemi = @nil exp @cons (optsemi exp @cons)* @list2array optsemi
+		| @nil @list2array;
+
+lambdaarg = @pos id opttype IdType/3;
+fieldassign = @pos id '=' ws exp FieldAssign/3;
+
+//
+// Types
+//
+
+type = 	
+	@pos "bool" kwsep BoolType/1
+	| @pos "int" kwsep IntType/1
+	| @pos "double" kwsep DoubleType/1
+	| @pos "string" kwsep StringType/1
+	| @pos "void" kwsep VoidType/1
+	| @pos "auto" kwsep AutoType/1
+	| @pos "native" kwsep NativeType/1
+	| @pos "flow" kwsep FlowType/1
+	| @pos "ref" kwsep type RefType/2
+	| @pos "(" ws @array<argtype ","> ")" ws "->" ws type FnType/3
+	| typename
+	| @pos "[" ws type "]" ws ArrayType/2
+	| @pos $("?"+) ws PolyType/2
+	;
+
+typename = @pos uid typars Typename/3;
+argtype = type TypeOnly/1 | @pos id opttype IdType/3;
+// TODO: We could allow variance annotations here for typars
+typars = @nil ("<" ws type @cons ("," ws type @cons)* ">" ws)? @list2array;
+
+opttype = ":" ws type | @pos AutoType/1;
+
+lambdatype = @pos "(" ws @array<argtype ","> ")" ws ("->" ws type | @pos AutoType/1) FnType/3;
+
+//
+// Lexing
+//
+
+hexdigit = '0'-'9'
+	| 'a'-'f'
+	| 'A'-'F';
+
+kwsep = !alnum ws;
+
+lid = !("if" s | "switch" s) id;
+id = $bid ws;
+uid = $('A'-'Z' (alnum)*) ws;
+
+bid = ('a'-'z' | 'A'-'Z' | '_') (alnum)*;
+
+alnum = 'a'-'z'
+	| 'A'-'Z'
+	| '_'
+	| '0'-'9';
+
+string = $('"' onechar_* '"') ws;
+
+onechar_ = backslash "u" hexdigit hexdigit hexdigit hexdigit
+	| backslash "X" hexdigit hexdigit hexdigit hexdigit
+	| backslash "x" hexdigit hexdigit
+	| backslash escapedchar_
+	| !'"' !backslash anychar;
+
+escapedchar_ = backslash | '"' | "n" | "t" | "r";
+backslash = '\';
+anychar = '0x0000'-'0xffff';
+
+double = int '.' int? | '.' int;
+int = '0'-'9'+;
+
+ws = cs*;
+s = cs+;
+
+cs = " " | "\t" | "\n" | "//" (!"\n" anychar)* "\n" | "/*" (!"*/" anychar)* "*/" | "\r";
+
+lastLineComment = "//" (!"\n" anychar)*;
+
+flow
