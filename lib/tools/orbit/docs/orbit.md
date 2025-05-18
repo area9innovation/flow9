@@ -14,6 +14,14 @@ Orbit is a functional programming language designed as a domain-unified rewritin
 - **AST manipulation**: First-class support for abstract syntax trees
 </language_characteristics>
 
+<running_orbit>
+You run Orbit like this in some folder (normally the Orbit folder itself):
+
+```
+orbit tests/pattern.orb
+```
+</running_orbit>
+
 <basic_syntax>
 Orbit programs use parentheses for grouping statements and semicolons as separators:
 
