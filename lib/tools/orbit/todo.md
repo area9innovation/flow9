@@ -22,6 +22,7 @@
 			- tree: undefined name key, value...
 	*  When we extract from the ograph, we loose "belongs to". Maybe we should extract those as well?
 	*  Should we change from List to Call in SExpr?
+	*  ograph_tests/minimal_test.orb does not work. We instantiate a and b, which we should not.
     *   **Validate Rewriting Engine:**
     *   **Implement Basic Evaluation:** Implement evaluation for simple conditions (e.g., `<`, `>`, arithmetic) within the S-Expression based O-Graph/rewriting context. Test with rules using `if` conditions (e.g., `tests/conditional_rewrite.orb`), checking results with `--sexpr`.
     *   **Implement Minimal Environment:** Implement basic environment handling for scoped variables (e.g., function parameters, let bindings, summation indices) within the S-Expression evaluator. Test with `tests/scopes.orb`, `tests/lambda.orb`, or tests involving summations, checking results with `--sexpr`.
