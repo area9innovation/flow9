@@ -367,12 +367,14 @@ Top (Most General Domain)
  │   ├── ChemicalReaction(Reactants, Products, Conditions)
  │   │   ├── BalancedReaction
  │   │   ├── ReactionType // Oxidation, Reduction, Esterification etc.
- │   ├── PointGroup(Symbol) // E.g. C₁, Cₙ(N), Dₙ(N), Tᵈ, Oₕ
- │   │   ├── C₁(N)
- │   │   ├── Cₙᵥ(N, VPlanes)
- │   │   ├── Dₙₕ(N, HPlane)
- │   │   ├── Tᵈ
- │   │   └── Oₕ
+ │   ├── PointGroup // Base for specific point group symmetries. E.g. C₁, Cₙ(N), Dₙ(N), Tᵈ, Oₕ
+ │   │   ├── C₁ // Represents C₁ symmetry (identity)
+ │   │   ├── Cₙ(N) // Represents Cₙ symmetry (n-fold rotation axis)
+ │   │   ├── Cₙᵥ(N) // Represents Cₙᵥ symmetry (Cₙ axis and N vertical mirror planes)
+ │   │   ├── Dₙ(N) // Represents Dₙ symmetry (Cₙ axis and N C₂ axes perpendicular to Cₙ)
+ │   │   ├── Dₙₕ(N) // Represents Dₙₕ symmetry (Dₙ with a horizontal mirror plane)
+ │   │   ├── Tᵈ // Represents Tᵈ tetrahedral symmetry
+ │   │   └── Oₕ // Represents Oₕ octahedral symmetry
  │   └── StereochemistryDescriptor
  │       ├── StereoCenterConfig(AtomId, Configuration) // Configuration: R_Config, S_Config
  │       └── DoubleBondConfig(BondId, Configuration) // Configuration: E_Config, Z_Config
