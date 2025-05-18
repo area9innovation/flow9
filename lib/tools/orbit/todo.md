@@ -5,7 +5,7 @@
 **Focus:** Ensure the S-expression based interpreter and rewriting engine are functional and validate the core canonicalization mechanism. Retire the old Orbit interpreter.
 
 ✓ Get $(a+b) working in ograph
-- Build graph of domains. Export to graphviz for inspection
+✓ Build graph of domains. Export to graphviz for inspection
 - Extract domain requirements on patterns and conditions
 - Use that to find topologic order of how to apply the rules - most specific first
 - Infer basic stuff about some function, and extract all the domains we get out of it.
