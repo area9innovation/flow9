@@ -835,3 +835,206 @@ fn breakCyclesWithWeights(graph, weightFn) = (
         removeBestEdges(graph, cycles)
     )
 );
+
+// Extract connected components from a graph
+// This finds weakly connected components (ignoring edge directions)
+fn connectedComponents(graph) = (
+    weaklyConnectedComponents(graph)
+);
+
+// Find weakly connected components (ignoring edge directions)
+fn weaklyConnectedComponents(graph) = (
+    // First, make an undirected version of the graph
+    fn makeUndirectedGraph(graph) = (
+        let allEdges = getAllEdges(graph);
+        
+        // Add reverse edges to make it undirected
+        fold(allEdges, graph, \g, edge -> (
+            edge is (
+                Edge(from, to, data) => (
+                    // Add the reverse edge if it doesn't exist already
+                    if (!hasEdge(g, to, from)) then (
+                        addEdge(g, to, from, data)
+                    ) else (
+                        g
+                    )
+                )
+            )
+        ))
+    );
+    
+    // Make the graph undirected for weakly connected components
+    let undirectedGraph = makeUndirectedGraph(graph);
+    let nodes = getAllNodes(undirectedGraph);
+    let visited = makeTree();
+    let components = [];
+    
+    // Process each unvisited node
+    fn processNodes(remainingNodes, visited, components) = (
+        if (length(remainingNodes) == 0) then (
+            // All nodes processed
+            components
+        ) else (
+            // Get the first unvisited node
+            let node = remainingNodes[0];
+            let restNodes = subrange(remainingNodes, 1, length(remainingNodes) - 1);
+            
+            lookup(visited, node) is (
+                Some(_) => (
+                    // Node already visited, skip to next
+                    processNodes(restNodes, visited, components)
+                );
+                None() => (
+                    // Find all nodes reachable from this node (a connected component)
+                    let reachableSet = bfs(undirectedGraph, node);
+                    let reachableNodes = getKeys(reachableSet);
+                    
+                    // Add this component to our list
+                    let newComponents = arrayPush(components, reachableNodes);
+                    
+                    // Mark all nodes in this component as visited
+                    let newVisited = fold(reachableNodes, visited, \vis, n -> (
+                        insertTree(vis, n, true)
+                    ));
+                    
+                    // Continue with remaining nodes
+                    processNodes(restNodes, newVisited, newComponents)
+                )
+            )
+        )
+    );
+    
+    processNodes(nodes, visited, components)
+);
+
+// Find strongly connected components (considering edge directions)
+// Uses Kosaraju's algorithm
+fn stronglyConnectedComponents(graph) = (
+    let nodes = getAllNodes(graph);
+    
+    // Step 1: Perform first DFS and store nodes in order of finishing time
+    fn dfsFirstPass(node, visited, finishOrder) = (
+        // Mark as visited
+        let newVisited = insertTree(visited, node, true);
+        
+        // Visit all unvisited neighbors
+        let neighbors = getNeighbors(graph, node);
+        let result = fold(neighbors, Pair(newVisited, finishOrder), \acc, neighbor -> (
+            acc is (
+                Pair(vis, ord) => (
+                    lookup(vis, neighbor) is (
+                        Some(_) => acc;  // Already visited
+                        None() => dfsFirstPass(neighbor, vis, ord)
+                    )
+                )
+            )
+        ));
+        
+        // Add current node to finish order after all neighbors
+        result is (
+            Pair(finalVisited, order) => (
+                Pair(finalVisited, arrayPush(order, node))
+            )
+        )
+    );
+    
+    // Create transpose of the graph (reverse all edges)
+    fn makeTransposeGraph(graph) = (
+        let g = makeGraph();
+        
+        // Add all nodes first
+        let graphWithNodes = fold(nodes, g, \acc, node -> (
+            addNode(acc, node)
+        ));
+        
+        // Add reversed edges
+        let allEdges = getAllEdges(graph);
+        fold(allEdges, graphWithNodes, \acc, edge -> (
+            edge is (
+                Edge(from, to, data) => (
+                    addEdge(acc, to, from, data)
+                )
+            )
+        ))
+    );
+    
+    // Step 2: Perform second DFS on transpose graph in reverse finishing order
+    fn dfsSecondPass(node, visited, component) = (
+        // Mark as visited
+        let newVisited = insertTree(visited, node, true);
+        // Add to current component
+        let newComponent = arrayPush(component, node);
+        
+        // Visit all unvisited neighbors in transpose graph
+        let neighbors = getNeighbors(transposeGraph, node);
+        fold(neighbors, Pair(newVisited, newComponent), \acc, neighbor -> (
+            acc is (
+                Pair(vis, comp) => (
+                    lookup(vis, neighbor) is (
+                        Some(_) => acc;  // Already visited
+                        None() => (
+                            dfsSecondPass(neighbor, vis, comp) is (
+                                Pair(newVis, newComp) => Pair(newVis, newComp)
+                            )
+                        )
+                    )
+                )
+            )
+        ))
+    );
+    
+    // Perform first DFS to get finish order
+    let finishOrderResult = fold(nodes, Pair(makeTree(), []), \acc, node -> (
+        acc is (
+            Pair(vis, ord) => (
+                lookup(vis, node) is (
+                    Some(_) => acc;  // Already visited
+                    None() => dfsFirstPass(node, vis, ord)
+                )
+            )
+        )
+    ));
+    
+    let finishOrder = finishOrderResult is (Pair(_, order) => order);
+    
+    // Create transpose graph
+    let transposeGraph = makeTransposeGraph(graph);
+    
+    // Perform second DFS to find SCCs
+    fn findComponents(nodes, visited, components) = (
+        if (length(nodes) == 0) then (
+            // All nodes processed
+            components
+        ) else (
+            // Get the last node (last to finish in original DFS)
+            let node = nodes[length(nodes) - 1];
+            let restNodes = subrange(nodes, 0, length(nodes) - 1);
+            
+            lookup(visited, node) is (
+                Some(_) => (
+                    // Already visited, skip to next
+                    findComponents(restNodes, visited, components)
+                );
+                None() => (
+                    // Find SCC starting from this node
+                    let result = dfsSecondPass(node, visited, []);
+                    result is (
+                        Pair(newVisited, component) => (
+                            // Add this component to our list if not empty
+                            let newComponents = if (length(component) > 0) then (
+                                arrayPush(components, component)
+                            ) else (
+                                components
+                            );
+                            
+                            // Continue with remaining nodes
+                            findComponents(restNodes, newVisited, newComponents)
+                        )
+                    )
+                )
+            )
+        )
+    );
+    
+    findComponents(finishOrder, makeTree(), [])
+);
