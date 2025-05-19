@@ -5,6 +5,7 @@ import tools/orbit/orbit_simple_ograph; // For ographRegistry
 import tools/orbit/sexpr/pretty_sexpr; // For pretty printing Sexpr
 import tools/orbit/sexpr/ograph2sexpr; // For ograph2Sexpr
 import tools/orbit/sexpr/sexpr_ograph_utils; // For utility functions
+import string; // For string operations
 
 export {
     // Main pattern matching function for S-expressions
@@ -20,6 +21,10 @@ export {
     OSexprPatternResult ::= OSexprPatternSuccess, OSexprPatternFailure;
         OSexprPatternSuccess(bindings : Tree<string, int>); // Variable name to node ID
         OSexprPatternFailure();
+        
+    // Check if a pattern is a backtick-style operator pattern like `op`(args)
+    // Returns a pair with the operator name and variable name for args if matched
+    isBacktickOperatorPattern(pattern : Sexpr) -> Maybe<Pair<string, string>>;
 }
 
 // Main function for pattern matching in an OGraph using S-expressions
@@ -161,9 +166,65 @@ matchSexprPatternAtNode(graph : OGraph, nodeId : int, pattern : Sexpr, tracing :
     }
 }
 
+// Check if a pattern is a special operator/variable capture pattern
+// Handles patterns like (and args) where 'and' is the operator and 'args' captures the arguments
+isBacktickOperatorPattern(pattern : Sexpr) -> Maybe<Pair<string, string>> {
+    switch (pattern) {
+        SSList(parts): {
+            // Verify pattern structure: list with 2 elements - operator and variable
+            if (length(parts) == 2) {
+                // First element should be an operator or variable
+                firstPart = parts[0];
+                secondPart = parts[1];
+                
+                // Get operator name from first part
+                opName = switch (firstPart) {
+                    SSOperator(op): Some(op);
+                    SSVariable(name): {
+                        // Handle backtick syntax like `&&` if needed
+                        if (strlen(name) >= 3 && startsWith(name, "`") && endsWith(name, "`")) {
+                            Some(substring(name, 1, strlen(name) - 2));
+                        } else {
+                            // Normal variable that might be an operator name (like "and")
+                            Some(name);
+                        }
+                    }
+                    default: None();
+                };
+                
+                // Second part should be a variable name to capture args
+                varName = switch (secondPart) {
+                    SSVariable(name): Some(name);
+                    default: None();
+                };
+                
+                // If we have both parts, return them as a pair
+                switch (opName) {
+                    Some(op): {
+                        switch (varName) {
+                            Some(vName): {
+                                // Pattern like (and args) or (`&&` args)
+                                Some(Pair(op, vName));
+                            }
+                            None(): None();
+                        }
+                    }
+                    None(): None();
+                }
+            } else {
+                None();
+            }
+        }
+        default: None();
+    }
+}
+
 // Match a regular (non-special) pattern
 matchRegularPattern(graph : OGraph, nodeId : int, pattern : Sexpr, patternOp : string, 
                    patternChildren : [Sexpr], patternValue : OrbitValue, tracing : bool) -> OSexprPatternResult {
+    // First, check if this is a backtick operator pattern
+    backtickPattern = isBacktickOperatorPattern(pattern);
+    
     // Get the ONode for this root
     switch (lookupOClass(graph, nodeId)) {
         Some(oclass): {
@@ -171,28 +232,63 @@ matchRegularPattern(graph : OGraph, nodeId : int, pattern : Sexpr, patternOp : s
             nodeOp = node.op;
             nodeChildren = node.children;
             
-            if (tracing) println("DEBUG: Regular pattern match op: " + patternOp + " vs node op: " + nodeOp);
-            
-            // We need exact matches with values
-            if (patternOp == nodeOp && patternValue == node.value) {
-				// Handle regular child matching vs. rest pattern matching
-				if (length(patternChildren) == length(nodeChildren)) {
-					if (tracing) println("DEBUG: Operator and child count match, matching children");
-					// Match all children recursively
-					matchSexprAllChildren(graph, nodeChildren, patternChildren, makeTree(), tracing);
-				} else {
-					if (tracing) println("DEBUG: Child count mismatch: pattern=" + i2s(length(patternChildren)) + ", node=" + i2s(length(nodeChildren)));
-					OSexprPatternFailure();
-				}
-            } else {
-                if (tracing) {
-                    println("DEBUG: Operator mismatch: pattern=" + patternOp + ", node=" + nodeOp);
-                    println(pattern);
-					println(patternOp);
-					println(nodeOp);
-                    printlnONode(node);
+            // Handle backtick operator patterns specially
+            switch(backtickPattern) {
+                Some(opAndVar): {
+                    operatorName = opAndVar.first;
+                    varName = opAndVar.second;
+                    
+                    if (tracing) println("DEBUG: Pattern match for operator '" + operatorName + "' binding '" + varName + "' vs node op: " + nodeOp);
+                    
+                    // Special case: Check if we're matching a SpecialForm node with the given operator name
+                    if (nodeOp == "SpecialForm" && switch(node.value) {
+                            OrbitString(formName): formName == operatorName;
+                            default: false;
+                        }) {
+                        
+                        if (tracing) println("DEBUG: Matched special form: " + operatorName + ", binding children to: " + varName);
+                        
+                        // We found a match - bind all children to the variable
+                        // For pattern like (and args), bind the entire node to args
+                        OSexprPatternSuccess(makeTree1(varName, findORoot(graph, nodeId)));
+                    } 
+                    // Check if we're matching a normal operator node
+                    else if (operatorName == nodeOp) {
+                        if (tracing) println("DEBUG: Matched operator: " + operatorName + ", binding children to: " + varName);
+                        
+                        // Bind the entire node
+                        OSexprPatternSuccess(makeTree1(varName, findORoot(graph, nodeId)));
+                    } else {
+                        if (tracing) println("DEBUG: Operator pattern mismatch: " + operatorName + " vs " + nodeOp);
+                        OSexprPatternFailure();
+                    }
                 }
-                OSexprPatternFailure();
+                None(): {
+                    // Not a backtick pattern, handle normally
+                    if (tracing) println("DEBUG: Regular pattern match op: " + patternOp + " vs node op: " + nodeOp);
+                    
+                    // We need exact matches with values
+                    if (patternOp == nodeOp && patternValue == node.value) {
+                        // Handle regular child matching vs. rest pattern matching
+                        if (length(patternChildren) == length(nodeChildren)) {
+                            if (tracing) println("DEBUG: Operator and child count match, matching children");
+                            // Match all children recursively
+                            matchSexprAllChildren(graph, nodeChildren, patternChildren, makeTree(), tracing);
+                        } else {
+                            if (tracing) println("DEBUG: Child count mismatch: pattern=" + i2s(length(patternChildren)) + ", node=" + i2s(length(nodeChildren)));
+                            OSexprPatternFailure();
+                        }
+                    } else {
+                        if (tracing) {
+                            println("DEBUG: Operator mismatch: pattern=" + patternOp + ", node=" + nodeOp);
+                            println(pattern);
+                            println(patternOp);
+                            println(nodeOp);
+                            printlnONode(node);
+                        }
+                        OSexprPatternFailure();
+                    }
+                }
             }
         }
         None(): {
