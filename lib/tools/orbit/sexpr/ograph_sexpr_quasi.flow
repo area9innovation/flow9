@@ -519,50 +519,69 @@ evaluateQuasiquoteNode(graph : OGraph, nodeId : int, environment : SExpEnv, eval
     }
 }
 
-// Helper function to check for direct function calls that can be evaluated
+// Helper function to check for direct function calls that can be evaluated - using centralized classification
 checkForDirectFunctionCall(graph : OGraph, nodeId : int, node : ONode, environment : SExpEnv, 
                            evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, tracing : bool) -> Pair<bool, Pair<SExpEnv, int>> {
     
-    // Check if this is a function call (List with first child as identifier in environment)
-    if (node.op == "List" && length(node.children) > 0) {
-        firstChildId = node.children[0];
+    // Only process list nodes
+    if (node.op != "List" || length(node.children) == 0) {
+        Pair(false, Pair(environment, nodeId));
+    } else {
+    
+        // Convert the OGraph node to an Sexpr for classification
+        wholeSexpr = ograph2Sexpr(graph, nodeId);
         
-        maybeFirstChild = lookupOClass(graph, firstChildId);
-        switch (maybeFirstChild) {
-            Some(firstChildClass): {
-                if (firstChildClass.node.op == "Identifier") {
-                    fnName = getNodeStringValue(firstChildClass.node, "");
-                    if (fnName != "" && containsKeyTree(environment.env, fnName)) {
-                        if (tracing) println("Found function call to '" + fnName + "', evaluating entire expression");
-                        
-                        // Extract and evaluate the entire expression
-                        wholeSexpr = ograph2Sexpr(graph, nodeId);
-                        if (tracing) println("Evaluating as S-expression: " + prettySexpr(wholeSexpr));
-                        
-                        evalResult = evaluator(environment, wholeSexpr);
-                        result = evalResult.value;
-                        
-                        if (tracing) println("Function call evaluated to: " + prettySexpr(result));
-                        
-                        // Convert result back to OGraph and make it canonical
-                        resultNodeId = sexp2OGraphWithSubstitution(graph, result, makeTree());
-                        mergeOClasses(graph, resultNodeId, nodeId);
-                        
-                        Pair(true, Pair(evalResult, resultNodeId));
-                    } else {
-                        Pair(false, Pair(environment, nodeId));
-                    }
+        // Use our centralized classification function with the environment
+        listType = classifySexprList(wholeSexpr, Some(environment));
+        
+        // Check if it's a variable call to a function in the environment
+        switch (listType) {
+            VariableCall(fnName): {
+                // Only evaluate direct calls to user-defined functions
+                if (containsKeyTree(environment.env, fnName)) {
+                    if (tracing) println("Found function call to '" + fnName + "', evaluating entire expression");
+                    if (tracing) println("Evaluating as S-expression: " + prettySexpr(wholeSexpr));
+                    
+                    // Evaluate the expression
+                    evalResult = evaluator(environment, wholeSexpr);
+                    result = evalResult.value;
+                    
+                    if (tracing) println("Function call evaluated to: " + prettySexpr(result));
+                    
+                    // Convert result back to OGraph and make it canonical
+                    resultNodeId = sexp2OGraphWithSubstitution(graph, result, makeTree());
+                    mergeOClasses(graph, resultNodeId, nodeId);
+                    
+                    Pair(true, Pair(evalResult, resultNodeId));
                 } else {
+                    // Runtime functions are handled elsewhere
                     Pair(false, Pair(environment, nodeId));
                 }
             }
-            None(): {
+            default: {
+                // Not a direct function call to a user-defined function
                 Pair(false, Pair(environment, nodeId));
             }
         }
-    } else {
-        Pair(false, Pair(environment, nodeId));
     }
+}
+
+// Helper to find a node's ID in the graph by comparing its structure
+findNodeIdInGraph(graph : OGraph, targetNode : ONode) -> int {
+    result = ref -1;
+    
+    // This is a simple helper that scans the graph for a matching node
+    // It's not efficient but works for our purpose
+    traverseOGraph(graph, \nodeId, node -> {
+        if (^result == -1 && node.op == targetNode.op && 
+            node.value == targetNode.value && 
+            length(node.children) == length(targetNode.children)) {
+            // Basic match on node properties
+            result := nodeId;
+        }
+    });
+    
+    ^result;
 }
 
 // Check if a node represents a Scheme expression that we can potentially evaluate
@@ -575,35 +594,51 @@ isSchemeNode(node : ONode) -> bool {
 }
 
 // Check if a node represents an operator (like +, -, *, /) or user-defined function that can be evaluated
-// Updated for cleaner logic, but without calling isFunctionCallNode directly since we need nodeId
+// Updated to use the centralized function for more consistent classification
 isOperatorNode(graph : OGraph, node : ONode, env : SExpEnv) -> bool {
     // First check if it's a Scheme node at all
     if (!isSchemeNode(node)) {
         false;  // Not a Scheme node, can't be an operator
-    } else if (node.op == "List" && length(node.children) > 0) {
-        // For List nodes, the first child might be an operator or function
-        // Get the first child and check if it's an operator or identifier
-        firstChildId = node.children[0];
-        switch (lookupOClass(graph, firstChildId)) {
-            Some(childClass): {
-                childNode = childClass.node;
-                if (childNode.op == "Operator") {
-                    // It's an operator, check if it's in runtime environment
-                    opName = getNodeStringValue(childNode, "");
+    } else {
+        // Only lists can be operator nodes
+        if (node.op != "List" || length(node.children) == 0) {
+            false;
+        } else {
+            // Find nodeId's root for the current node by scanning the children
+            // We don't have direct access to the nodeId here, so we use a workaround
+            // This is a compromise since we can't adapt the function signature
+            foundNodeId = findNodeIdInGraph(graph, node);
+            sexpr = if (foundNodeId != -1) {
+                ograph2Sexpr(graph, foundNodeId);
+            } else {
+                // Fallback to creating a basic list structure
+                SSList([]);
+            };
+            
+            // Use our centralized classification function
+            listType = classifySexprList(sexpr, Some(env));
+            
+            // Check if it's an operator call or a variable call to a function
+            switch (listType) {
+                OperatorCall(opName): {
+                    // Operator call is valid if the operator exists in runtime
                     containsKeyTree(env.runtime, opName);
-                } else if (childNode.op == "Identifier") {
-                    // It's an identifier, check if it's a function in user environment
-                    fnName = getNodeStringValue(childNode, "");
-                    containsKeyTree(env.env, fnName);
-                } else {
+                }
+                VariableCall(fnName): {
+                    // Variable call is valid if the function exists in environment
+                    containsKeyTree(env.env, fnName) || containsKeyTree(env.runtime, fnName);
+                }
+                SpecialFormCall(__): {
+                    // Special forms are handled separately
                     false;
                 }
+                ConstructorCall(__): {
+                    // Constructors are handled as data
+                    false;
+                }
+                DataList(): false;
             }
-            None(): false;
         }
-    } else {
-        // Not a list with a function call structure
-        false;
     }
 }
 

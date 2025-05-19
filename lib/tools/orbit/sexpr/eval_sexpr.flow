@@ -640,26 +640,32 @@ tryMatch(env : SExpEnv, valueResult : SExpEnv, patternCases : [Sexpr], caseIndex
 
 // Evaluate a function call
 evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
-	// println("Eval call: " + prettySexpr(fn) + " with args: " + superglue(args, prettySexpr, " "));
-	switch (fn) {
-		// Direct handling of closure objects
-		// Special form for closure
-		SSSpecialForm(name, closureParts): {
-			if (name == SClosure()) {
-				// Evaluate arguments first
-				fnResult = evalArgs(env, args, []);
+	// Evaluate arguments first (all types need this)
+	fnResult = evalArgs(env, args, []);
+	
+	// Classify what kind of callable expression this is
+	listType = classifySexprList(SSList(concat([fn], args)), Some(env));
+	
+	switch (listType) {
+		SpecialFormCall(form): {
+			if (form == SClosure()) {
 				// Apply the closure directly
-				applyFunction(env, fn, fnResult.args);
+				switch (fn) {
+					SSSpecialForm(__, closureParts): {
+						applyFunction(env, fn, fnResult.args);
+					}
+					default: {
+						// Shouldn't happen if classification was correct
+						println("Expected closure, got: " + prettySexpr(fn));
+						SExpEnv(env with value = SSList([]));
+					}
+				}
 			} else {
-				println("Not a callable expression: " + toString(name) + " " +  prettySexpr(fn));
+				println("Special form " + toString(form) + " not directly callable: " + prettySexpr(fn));
 				SExpEnv(env with value = SSList([]));
 			}
 		};
-		SSVariable(name): {
-			// Regular function call
-			// Evaluate arguments first
-			fnResult = evalArgs(env, args, []);
-			
+		VariableCall(name): {
 			// Check if it's a runtime function
 			if (containsKeyTree(env.runtime, name)) {
 				// Invoke the runtime function with arity checking
@@ -680,16 +686,12 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 				}
 			}
 		};
-		
-		SSConstructor(name): {
-			// We'd create a constructor instance with args
-			fnResult = evalArgs(env, args, []);
+		ConstructorCall(name): {
+			// Create a constructor instance with args
 			SExpEnv(env.runtime, fnResult.env.env, SSList(concat([fn], fnResult.args)));
 		};
-		
-		SSOperator(name): {
+		OperatorCall(name): {
 			// Handle operators like +, -, *, /, etc.
-			fnResult = evalArgs(env, args, []);
 			// Invoke the runtime function with arity checking
 			if (containsKeyTree(env.runtime, name)) {
 				invokeRuntimeFn(env, name, fnResult, evalSexpr);
@@ -698,9 +700,8 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 				SExpEnv(env with value = SSList([]));
 			}
 		};
-		
-		default: {
-			println("Not a callable expression: " + toString(fn) + " " + prettySexpr(SSList(concat([fn], args))));
+		DataList(): {
+			println("Not a callable expression: " + prettySexpr(SSList(concat([fn], args))));
 			SExpEnv(env with value = SSList([]));
 		};
 	}

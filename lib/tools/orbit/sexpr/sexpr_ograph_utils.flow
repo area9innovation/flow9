@@ -2,6 +2,7 @@ import tools/orbit/ograph;
 import tools/orbit/orbit_types;
 import tools/orbit/sexpr/sexpr_types;
 import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/utils;
 import tools/orbit/orbit_simple_ograph;
 import ds/tree;
 import string;
@@ -46,26 +47,43 @@ decomposeSexpr(expr : Sexpr) -> Triple<string, [Sexpr], OrbitValue> {
                 // Empty list
                 Triple("List", [], OrbitNone());
             } else if (isTypeAnnotation(expr)) {
-                // Type annotation (: expr Domain)
+                // Type annotation (: expr Domain) requires special handling
                 Triple(":", [parts[1], parts[2]], OrbitNone());
-            } else if (isOperatorExpr(expr)) {
-                // Operator expression (e.g., (+ 1 2))
-                op = switch(parts[0]) { SSOperator(opStr): opStr; default: ""; };
-                Triple(op, tail(parts), OrbitNone());
-            } else if (length(parts) > 0 && switch(parts[0]) { 
-                         SSSpecialForm(__, __): true; 
-                         default: false; 
-                     }) {
-                // Special form as first element of a list
-                specialForm = switch(parts[0]) { 
-                    SSSpecialForm(form, __): form;
-                    default: SList(); // Should not happen
-                };
-                formName = getSpecialFormName(specialForm);
-                Triple(formName, tail(parts), OrbitString(formName));
             } else {
-                // Regular list
-                Triple("List", parts, OrbitNone());
+                // Use the centralized function to classify list type
+                switch(classifySexprList(expr, None())) {
+                    OperatorCall(opName): {
+                        // Operator expression (e.g., (+ 1 2))
+                        Triple(opName, tail(parts), OrbitNone());
+                    }
+                    VariableCall(varName): {
+                        // Function call via variable
+                        Triple("List", parts, OrbitNone());
+                    }
+                    ConstructorCall(consName): {
+                        // Constructor application
+                        Triple("List", parts, OrbitNone());
+                    }
+                    SpecialFormCall(form): {
+                        // Special form 
+                        formName = getSpecialFormName(form);
+                        // Get the actual children - special forms should be handled differently
+                        switch (parts[0]) {
+                            SSSpecialForm(__, children): {
+                                // If the head is actually a special form, extract its children and keep processing
+                                Triple(formName, tail(parts), OrbitString(formName));
+                            }
+                            default: {
+                                // This shouldn't happen if classification is correct
+                                Triple(formName, tail(parts), OrbitString(formName));
+                            }
+                        }
+                    }
+                    DataList(): {
+                        // Regular list
+                        Triple("List", parts, OrbitNone());
+                    }
+                }
             }
         }
         SSInt(i): Triple("Int", [], OrbitInt(i));
