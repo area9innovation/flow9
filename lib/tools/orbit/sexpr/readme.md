@@ -276,16 +276,17 @@ The language includes an extensive set of built-in functions imported from the O
 - Rounding: `floor`, `ceil`, `round`, `dfloor`, `dceil`, `dround`
 - Number properties: `sign`, `isign`, `even`, `odd`, `mod`, `dmod`, `gcd`, `lcm`
 
-### List Operations
+### List and Array Operations
 
-- Core list functions: `list`, `car`, `cdr`, `cons`
-- Advanced list manipulation: `length`, `index`, `subrange`, `reverse`
-- Higher-order functions defined in `lib/array.sexp`: `map`, `filter`, `fold`, `mapi`, `filteri`, `foldi`, `take`, `tail`, `tailFrom`, `contains`, `exists`, `forall`, `arrayPush`, `removeFirst`, `removeIndex`.
+- Core list functions: `list`, `car`, `cdr`, `cons`, `concat`
+- Array operations: `length`, `arrayIndex`, `subrange`, `reverse`
+- Higher-order functions defined in `lib/array.sexp`: `map`, `filter`, `fold`, `mapi`, `filteri`, `foldi`, `take`, `tail`, `tailFrom`, `contains`, `exists`, `forall`, `arrayPush`, `removeFirst`, `removeIndex`
 
 ### String Operations
 
 - Basic string functions: `strlen`, `substring`, `strIndex`, `strContainsAt`
 - String transformations: `parseHex`, `unescape`, `escape`, `strGlue`, `capitalize`, `decapitalize`
+- Character conversions: `string2ints`, `ints2string`
 
 ### Type Conversions
 
@@ -293,24 +294,45 @@ The language includes an extensive set of built-in functions imported from the O
 
 ### Type Checking
 
-- Type predicates: `isBool`, `isInt`, `isDouble`, `isString`, `isArray`
+- Type predicates: `isBool`, `isInt`, `isDouble`, `isString`, `isArray`, `isConstructor`
+- Constructor access: `getConstructor`
 
 ### I/O Operations
 
 - Basic I/O: `println`
 - File operations: `getFileContent`, `setFileContent`
+- Command line: `getCommandLineArgs` (returns command-line arguments as a list)
 
 ### Logic Operations
 
 - Boolean logic: `not`, `and` (short-circuit AND), `or` (short-circuit OR)
 
-### Utility Functions
+### Evaluation and Reflection
 
-- Reflection: `astname` (returns the type of an expression), `varname` (extracts name from variables/constructors)
+- Dynamic evaluation: `eval`, `evalWithBindings` (evaluate an expression with temporary bindings)
+- Type inspection: `astname` (returns the type of an expression)
+- Name extraction: `variableName` (extracts name from variables/constructors)
 - Formatting: `prettySexpr` (formats S-expressions as readable strings)
+- AST construction: `makeAst` (constructs AST nodes with given operator and arguments)
+
+### Utilities
+
 - Parsing: `parseSexpr` (parses S-expressions from strings)
-- Command line: `getCommandLineArgs` (returns command-line arguments as a list)
 - Unique IDs: `uid` (generates unique IDs with prefixes)
+
+### OGraph Integration
+
+- Graph creation: `makeOGraph`
+- Node operations: `addOGraph`, `addOGraphWithSub`, `extractOGraph`, `findOGraphId`, `addDomainToNode`, `mergeOGraphNodes`
+- Visualization: `ograph2dot` (converts an OGraph to DOT format for visualization)
+- Pattern matching: `matchOGraphPattern`
+- Quasiquotation: `evaluateOGraphQuasiquote`
+
+### Orbit Expression Operations
+
+- Conversion: `orbit2sexpr`, `sexpr2orbit`
+- Pretty printing: `prettyOrbit`
+- OGraph integration: `addOrbit2OGraph`, `addOrbitWithSub`, `extractOGraphOrbit`, `matchOGraphOrbitPattern`
 
 ## Integration with OGraph
 
@@ -442,7 +464,7 @@ This interpreter is built using Flow9 and follows functional programming princip
     *   Essential for implementing `lambda`.
     *   `findFreeSexprVars` analyzes an expression (like a lambda body) to determine which variables are "free" (used but not defined locally or as parameters).
     *   `createSexprBindings` creates the necessary bindings to capture the values of these free variables from the environment where the lambda is defined.
-*   **Utilities ([utils.flow](./utils.flow), [pretty_sexpr.flow](./pretty_sexpr.flow)):**
+*   **Utilities:**
     *   [utils.flow](./utils.flow): Provides helper functions (`getSInt`, `getSBool`, etc.) for safely extracting typed values from `Sexpr` nodes during evaluation and in the standard library.
     *   [pretty_sexpr.flow](./pretty_sexpr.flow): Contains `prettySexpr` to convert an `Sexpr` AST back into a human-readable string representation.
 *   **Main Executable ([sexpr.flow](./sexpr.flow)):**
@@ -463,15 +485,15 @@ This interpreter is built using Flow9 and follows functional programming princip
 
 **Entry Point and Execution Flow:**
 
-1.  Execution starts in [sexpr.flow](./sexpr.flow)::main().
+1.  Execution starts in `sexpr.flow`.main().
 2.  Command-line arguments (expected to be `.sexp` file paths) are processed.
-3.  An initial environment is created using [sexpr_stdlib.flow](./sexpr_stdlib.flow).getRuntimeEnv().
+3.  An initial environment is created using `sexpr_stdlib.flow`.getRuntimeEnv().
 4.  For each input file:
     a.  The file content is read
     b.  The content is parsed into an `Sexpr` AST
-    c.  If parsing succeeds, the AST is evaluated using [eval_sexpr.flow](./eval_sexpr.flow).evalSexpr, updating the environment.
-    d.  The result of the evaluation is printed using [pretty_sexpr.flow](./pretty_sexpr.flow).prettySexpr.
-5.  The `import` special form within [eval_sexpr.flow](./eval_sexpr.flow) recursively triggers steps 4a-4c for imported files.
+    c.  If parsing succeeds, the AST is evaluated using `eval_sexpr.flow`.evalSexpr, updating the environment.
+    d.  The result of the evaluation is printed using `pretty_sexpr.flow`.prettySexpr.
+5.  The `import` special form within `eval_sexpr.flow`.evalSexpr recursively triggers steps 4a-4c for imported files.
 
 ### Key Abstractions
 
