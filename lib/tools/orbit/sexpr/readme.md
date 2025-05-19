@@ -499,8 +499,8 @@ This interpreter is built using Flow9 and follows functional programming princip
 
 *   **`Sexpr` ADT:** The fundamental data structure representing code and data uniformly, enabling metaprogramming capabilities (like `eval`).
 *   **`SExpEnv`:** Represents the evaluation context, mapping names to values and holding runtime function definitions. It's passed through and updated during recursive evaluation.
-*   **Closures:** Implemented via `lambda`. When a `lambda` is evaluated, [sexpr_free.flow](./sexpr_free.flow) identifies free variables, and [eval_sexpr.flow](./eval_sexpr.flow) creates a special `SSList` structure `(closure bindings params body)` where `bindings` stores the captured values of free variables. When the closure is called, `applyFunction` in [eval_sexpr.flow](./eval_sexpr.flow) reconstructs the captured environment before evaluating the body.
-*   **Runtime Functions (`RuntimeFn`):** Built-in functions are stored in the environment's `runtime` tree, allowing them to be looked up and called efficiently with arity checking (`invokeRuntimeFn` in [sexpr_stdlib.flow](./sexpr_stdlib.flow)).
+*   **Closures:** Implemented via `lambda`. When a `lambda` is evaluated, `sexpr_free.flow` identifies free variables, and `eval_sexpr.flow` creates a special `SSList` structure `(closure bindings params body)` where `bindings` stores the captured values of free variables. When the closure is called, `applyFunction` in `eval_sexpr.flow` reconstructs the captured environment before evaluating the body.
+*   **Runtime Functions (`RuntimeFn`):** Built-in functions are stored in the environment's `runtime` tree, allowing them to be looked up and called efficiently with arity checking (`invokeRuntimeFn` in `sexpr_stdlib.flow`).
 
 ### Dependencies and Integration Points
 
@@ -533,14 +533,14 @@ This implementation is intentionally minimal but can be extended with:
 ### Adding New Functions
 
 To add a new *built-in* function (implemented in Flow9):
-1. Define the function's implementation logic in [sexpr_stdlib.flow](./sexpr_stdlib.flow), taking `FnArgResult` and returning `Sexpr`.
-2. Add a `Pair` containing the function's SEXP name and a `RuntimeFn` record (specifying arity and the implementation function) to the `functionPairs` list within `getRuntimeFunctions()` in [sexpr_stdlib.flow](./sexpr_stdlib.flow).
+1. Define the function's implementation logic in `sexpr_stdlib.flow`, taking `FnArgResult` and returning `Sexpr`.
+2. Add a `Pair` containing the function's SEXP name and a `RuntimeFn` record (specifying arity and the implementation function) to the `functionPairs` list within `getRuntimeFunctions()` in `sexpr_stdlib.flow`.
 3. Add the function name to `addStandardFns` if it should be directly available in the global environment.
 4. The centralized arity checking (`invokeRuntimeFn`) will be applied automatically.
 
 ## OGraph Quasiquote Implementation Roadmap
 
-Our current `evaluateOGraphQuasiquote` implementation in [ograph_sexpr_quasi.flow](./ograph_sexpr_quasi.flow) only provides a partial implementation of quasiquotation. The current features supported are:
+Our current `evaluateOGraphQuasiquote` implementation in `ograph_sexpr_quasi.flow` only provides a partial implementation of quasiquotation. The current features supported are:
 
 - `(unquote ...)` evaluation
 - Constant sub-expression folding in operator calls
