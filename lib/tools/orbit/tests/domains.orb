@@ -1,0 +1,162 @@
+import lib/graph;
+import lib/domains;
+
+// Extract domain name from an expression (handles both simple names and parametrized domains)
+fn extractDomainName(expr) = (
+    expr is (
+        // Simple domain name (e.g., Integer, Character)
+        name => name if isString(name);
+        
+        // Parametrized domain (e.g., UInt(bw), Int(bw))
+        name(params) => name if isString(name);
+        
+        // Handle other forms - return the entire expression as string
+        _ => getConstructor(expr)
+    )
+);
+
+// Build a smarter domain graph that handles domain hierarchies properly
+fn buildSmartDomainGraph() = (
+    // Initialize an empty graph
+    let graph = makeGraph();
+    
+    // Create a map from domain name to its signature (first occurrence on LHS)
+    // This will help us identify and connect related domains
+    let domainSignatures = makeTree();
+    
+    // First pass: collect domain signatures from first encounter
+    let signatureMap = fold(domains, domainSignatures, \signatures, item -> (
+        item is (
+            (from ⊂ to) => (
+                // Extract domain name from the LHS
+                let domainName = extractDomainName(from);
+                // If we haven't seen this domain name before, store its signature
+                lookup(signatures, domainName) is (
+                    Some(_) => signatures;  // Already have a signature for this domain
+                    None() => insertTree(signatures, domainName, from)  // Store the first occurrence
+                )
+            );
+            _ => signatures  // Skip non-domain definitions
+        )
+    ));
+    
+    // Debug output of our domain signatures
+    println("Domain signatures collected: " + i2s(size(signatureMap)));
+//    println(getKeys(signatureMap));
+//	  println(getValues(signatureMap));
+    // Second pass: build the graph with proper connections
+    let domainGraph = fold(domains, graph, \g, item -> (
+        item is (
+            (from ⊂ to) => (
+                // Get the domain names
+                let fromDomainName = extractDomainName(from);
+                let toDomainName = extractDomainName(to);
+                
+                // Get string representations for graph nodes
+                let fromCanon = lookupDef(signatureMap, fromDomainName, from);
+                let toCanon = lookupDef(signatureMap, toDomainName, to);
+                
+                // If this is a pattern like UInt(bw) ⊂ Int(bw + 1), we need
+                // to connect it to the proper domain signature
+				if (to != toCanon) then (
+					let withEdge = addEdge(g, fromCanon, to, "");
+					addEdge(withEdge, to, toCanon, "");
+				) else addEdge(g, fromCanon, toCanon, "");
+            );
+            _ => (
+				println("Skipping non-domain definition: " + prettyOrbit(item));  // Debug output
+				g  // Skip non-domain definitions
+			)
+        )
+    ));
+    
+    // Remove transitive edges to get a cleaner graph
+    // This is optional but helps visualize the hierarchy better
+    let finalGraph = /*removeTransitiveEdges*/(domainGraph);
+    
+	let order = topologicalSort(finalGraph);
+	println("Topological order of domains: " + prettyOrbit(order));
+
+    finalGraph
+);
+
+// Helper function to remove transitive edges
+fn removeTransitiveEdges(graph) = (
+    let allEdges = getAllEdges(graph);
+    
+    // For each edge a->c, if there exists paths a->b and b->c, remove a->c
+    fold(allEdges, graph, \g, edge -> (
+        edge is (
+            Edge(from, to, _) => (
+                // Get all nodes reachable from 'from' in one step
+                let directNeighbors = getNeighbors(g, from);
+                
+                // For each neighbor, check if 'to' is reachable
+                let hasIndirectPath = fold(directNeighbors, false, \found, neighbor -> (
+                    if (found || neighbor == to) then (
+                        found  // Already found a path or this is the direct edge
+                    ) else (
+                        // Check if 'to' is reachable from this neighbor
+                        isReachable(g, neighbor, to)
+                    )
+                ));
+                
+                // Remove edge only if there's an indirect path and this isn't the only path
+                if (hasIndirectPath && length(directNeighbors) > 1) then (
+                    removeEdge(g, from, to)
+                ) else (
+                    g  // Keep the edge
+                )
+            )
+        )
+    ))
+);
+
+// Function to get the estimated size of a tree (number of entries)
+fn size(tree) = (
+    let entries = getEntries(tree);
+    length(entries)
+);
+
+// Main function - build graph and save to file
+fn main() = (
+    println("Building smart domain relation graph...");
+    
+    // Build the smart domain graph
+    let domainGraph = buildSmartDomainGraph();
+    
+    // Convert to DOT format (directed graph, with node labels)
+    let dotContent = graphToDot(domainGraph, true, true);
+    
+    // Save to file
+    setFileContent("smart_domains.dot", dotContent);
+    
+    println("Smart domain graph saved to smart_domains.dot");
+    
+    // Find connected components to identify domain hierarchies
+    let components = weaklyConnectedComponents(domainGraph);
+    println("Found " + i2s(length(components)) + " domain hierarchies");
+
+	if length(components) > 1 then (
+		// For each component, find the most general domain (sink node)
+		println("Domain hierarchies and their most general domains:");
+		iteri(components, \index, component -> (
+			// Create a subgraph for this component
+			let subgraph = extractSubgraph(domainGraph, component);
+			
+			// Find sink nodes (nodes with no outgoing edges) - these are the most general domains
+			let sinks = findComponentSinks(subgraph, component);
+			
+			println("Hierarchy #" + i2s(index + 1) + " (" + i2s(length(component)) + " domains):");
+			println("  Root domains: " + prettyOrbit(sinks));
+			
+			// Find source nodes (domains with no incoming edges) - these are the most specific domains
+			let sources = findComponentSources(subgraph, component);
+			println("  Leaf domains: " + prettyOrbit(sources));
+			println("");
+		));
+	) else 0
+);
+
+// Run the main function
+main();

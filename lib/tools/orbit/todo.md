@@ -4,20 +4,35 @@
 
 **Focus:** Ensure the S-expression based interpreter and rewriting engine are functional and validate the core canonicalization mechanism. Retire the old Orbit interpreter.
 
+✓ Get $(a+b) working in ograph
+✓ Build graph of domains. Export to graphviz for inspection
+- We can not match of ||(args)
+- Extract domain requirements on patterns and conditions
+- Use that to find topologic order of how to apply the rules - most specific first
+- Infer basic stuff about some function, and extract all the domains we get out of it.
+- With all domains, or only the most specific ones
+- Int(32). UInt(32).
+
 *   **S-Expression Backend Migration:**
-    *   **Verify Orbit <-> S-Expression Conversion Integrity:**
+    ✓   **Verify Orbit <-> S-Expression Conversion Integrity:**
         *   Run: `./run_orbit_tests.sh --sexpr-roundtrip`
         *   Goal: Ensure all tests pass the integrity check, meaning the `orbit sexpr-roundtrip=1` mode reports "SUCCESS" for the Orbit -> SExpr -> Orbit -> SExpr conversion process. Investigate any failures reported in the `.sexpr_roundtrip.log` files. This step checks the *conversion mechanism* itself, not the execution results.
+		  - imports are dropped. Fine
+		  - We use [] instead of (). Fine
+		  - ast annotation is lost. Fine.
+		  - x : P(x) is parsed as (x : P)(x) and that gives problems
     *   **Verify S-Expression Engine Execution Equivalence:**
         *   Run: `./run_orbit_tests.sh --compare-engines`
         *   Goal: Ensure all tests produce identical *execution output* between the default engine and the S-expression engine (`sexpr=1`). Address any discrepancies found in the `.engine_diff` files. This confirms the S-expression backend *runs* code equivalently.
-    *   **Finalize S-Expression `eval`:** Complete migration to `eval` using S-Expression representation. Ensure all language features are supported. Verify with `--compare-engines`.
-    *   **Fix Imports:** Ensure Orbit `.orb` file imports work correctly in the S-expression world (resolve import path issues). Test with `tests/import_*.orb` (if they exist) using `--sexpr` and verify results manually or with `--compare-engines` if applicable.
-    *   **O-Graph S-Expression Integration:** Modify O-Graph internal representation to primarily use S-Expressions or have seamless S-Expression interoperability. Test basic O-Graph operations (add, extract) using `tests/ograph_basic.orb` (if exists) with `--sexpr` and check results (or use `--compare-engines`).
+		    - and, or, not instead of c syntax
+			- `not` instead of ¬
+			- dft_test: unquote
+			- fun is strange
+			- tree: undefined name key, value...
+	*  When we extract from the ograph, we loose "belongs to". Maybe we should extract those as well?
+	*  Should we change from List to Call in SExpr?
+	*  ograph_tests/minimal_test.orb does not work. We instantiate a and b, which we should not.
     *   **Validate Rewriting Engine:**
-        *   Run: `./run_orbit_tests.sh --compare-engines` on core rewriting tests (e.g., `tests/rewrite.orb`, `tests/pattern.orb`, `tests/algebra.orb` - adjust names based on actual files).
-        *   Goal: Ensure identical execution results. Fix any differences reported by the comparison.
-        *   Also run specific rewriting tests using only the SExpr engine: `./run_orbit_tests.sh --sexpr tests/rewrite.orb` and verify output.
     *   **Implement Basic Evaluation:** Implement evaluation for simple conditions (e.g., `<`, `>`, arithmetic) within the S-Expression based O-Graph/rewriting context. Test with rules using `if` conditions (e.g., `tests/conditional_rewrite.orb`), checking results with `--sexpr`.
     *   **Implement Minimal Environment:** Implement basic environment handling for scoped variables (e.g., function parameters, let bindings, summation indices) within the S-Expression evaluator. Test with `tests/scopes.orb`, `tests/lambda.orb`, or tests involving summations, checking results with `--sexpr`.
 *   **Core O-Graph Rewriting & Canonicalization (using S-Expr backend):**

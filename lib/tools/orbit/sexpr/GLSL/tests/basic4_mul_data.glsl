@@ -1,51 +1,21 @@
 // Auto-generated GLSL code for S-expression interpreter
-// AST size: 13 elements
-// Constant Pool size: 2 elements
+// AST size: 20 elements
+// Constant Pool size: 1 elements
 
-// Type tags for AST nodes
-#define TAG_SSINT 1
-#define TAG_SSDOUBLE 2
-#define TAG_SSBOOL 3
-#define TAG_SSSTRING 4
-#define TAG_SSVARIABLE 5
-#define TAG_SSCONSTRUCTOR 6
-#define TAG_SSOPERATOR 7
-#define TAG_SSLIST 8
-#define TAG_SSVECTOR 9
-#define TAG_SSSPECIALFORM 10
-#define TAG_CLOSURE 20
-#define TAG_ERROR 21
-
-// Special form IDs
-#define SFORM_AND 1
-#define SFORM_BEGIN 2
-#define SFORM_CLOSURE 3
-#define SFORM_DEFINE 4
-#define SFORM_EVAL 5
-#define SFORM_IF 6
-#define SFORM_IMPORT 7
-#define SFORM_LAMBDA 8
-#define SFORM_LET 9
-#define SFORM_LETREC 10
-#define SFORM_LIST 11
-#define SFORM_MATCH 12
-#define SFORM_OR 13
-#define SFORM_QUASIQUOTE 14
-#define SFORM_QUOTE 15
-#define SFORM_SET 16
-#define SFORM_UNQUOTE 17
-#define SFORM_UNQUOTESPLICING 18
+#include "glsl_sexpr_defines.h"
 
 // Program size information
-#define PROGRAM_AST_SIZE 13
-#define CONSTANT_POOL_SIZE 2
+#define PROGRAM_AST_SIZE 20
+#define CONSTANT_POOL_SIZE 1
 
-const float u_constant_pool[2] = float[](
-    1.0f, 42.0f
+const float u_constant_pool[1] = float[](
+    0.0f
 );
-const float u_program_ast[13] = float[](
-    10.0f, 2.0f, 1.0f, 4.0f,
-    8.0f, 3.0f, 7.0f, 7.0f,
-    0.0f, 1.0f, 6.0f, 1.0f,
-    7.0f
+
+const float u_program_ast[20] = float[](
+    10.0f, 2.0f, 1.0f, 4.0f,  // [0] begin, count=1, child_offset=4
+    8.0f, 3.0f, 8.0f, 0.0f,  // [4] list, count=3, child_offset=7
+    11.0f, 3.0f, 0.0f, 0.0f,  // [8] * (builtin operator, id=3)
+    1.0f, 6.0f, 0.0f, 0.0f,  // [12] 6 (int)
+    1.0f, 7.0f, 0.0f, 0.0f  // [16] 7 (int)
 );

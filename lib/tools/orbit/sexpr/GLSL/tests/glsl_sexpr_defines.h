@@ -12,8 +12,20 @@
 #define TAG_SSLIST 8
 #define TAG_SSVECTOR 9
 #define TAG_SSSPECIALFORM 10
+#define TAG_SSBUILTINOP 11
 #define TAG_CLOSURE 20
 #define TAG_ERROR 21
+#define TAG_NOP 0
+
+// Built-in operator types - used with TAG_SSBUILTINOP
+#define OP_ADD 1
+#define OP_SUB 2
+#define OP_MUL 3
+#define OP_DIV 4
+#define OP_EQ 5
+#define OP_LT 6
+#define OP_GT 7
+#define OP_MOD 8
 
 // Special form IDs
 #define SFORM_AND 1

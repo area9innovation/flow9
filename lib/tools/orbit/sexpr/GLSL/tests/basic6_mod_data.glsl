@@ -13,8 +13,9 @@ const float u_constant_pool[4] = float[](
 );
 
 const float u_program_ast[13] = float[](
-    10.0f, 2.0f, 1.0f, 4.0f,
-    8.0f, 3.0f, 7.0f, 5.0f,
-    0.0f, 1.0f, 100.0f, 1.0f,
-    58.0f
+    10.0f, 2.0f, 1.0f, 4.0f,  // [0] begin, count=1, child_offset=4
+    8.0f, 3.0f, 7.0f,  // [4] list, count=3, child_offset=7
+    5.0f, 0.0f,  // [7] mod (variable)
+    1.0f, 100.0f,  // [9] 100 (int)
+    1.0f, 58.0f  // [11] 58 (int)
 );

@@ -1,6 +1,6 @@
 # O-Graphs in Orbit
 
-This document describes the O-Graph functionality available in the Orbit language.
+This document describes the O-Graph library available in the Orbit language.
 
 ## Overview
 

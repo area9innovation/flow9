@@ -11,17 +11,12 @@ class SoundSupport {
 	// JoinedAudio : The way to play mp3's on Mobile Safari and others
 	// from any place in the code
 	// (not only the user action handler)
-	private static var AudioStream : Dynamic;
-	private static inline var AudioStreamUrl = "php/mp3stream/stream.php";
-	private static var UseAudioStream : Bool;
 
 	private static var hasSpeechSupport : Bool;
 	//push utterance to global array, so chrome garbage collector won't remove it (https://bugs.chromium.org/p/chromium/issues/detail?id=509488)
 	private static var utterancesArray = [];
 
 	public static function __init__() {
-		UseAudioStream = ("1" == Util.getParameter("mp3stream"));
-		
 		hasSpeechSupport = untyped __js__("'speechSynthesis' in window");
 
 		if(hasSpeechSupport) {
@@ -81,10 +76,6 @@ class SoundSupport {
 	// loadSound : (url : String, onFail : (message : string) -> {}) -> native
 	public static function loadSound(url : String, headers : Array<Array<String>>, onFail : String -> Void, onComplete : Void -> Void) : Dynamic {
 		#if (js && !flow_nodejs)
-			if (UseAudioStream) {
-				haxe.Timer.delay(onComplete, 200);
-				return url;
-			}
 			try {
 				var audio = untyped __js__ ("new Audio()");
 
@@ -172,42 +163,9 @@ class SoundSupport {
 		return null;
 	}
 
-	#if (js && !flow_nodejs)
-	private static function createStreamPlayer() {
-		haxe.Timer.delay( function() {
-			AudioStream  = Browser.document.createElement("AUDIO");
-			AudioStream.setAttribute("controls", "");
-			AudioStream.style.position = "absolute";
-			AudioStream.style.left = AudioStream.style.top = "30px";
-			AudioStream.style.zIndex = 2000;
-			AudioStream.src = AudioStreamUrl;
-			Browser.document.body.appendChild(AudioStream);
-		}, 200);
-	}
-
-	private static function pushSoundToLiveStream(url : String, onDone : Void -> Void) : Void {
-		var loader = new js.html.XMLHttpRequest();
-		loader.open("GET", AudioStreamUrl+ "?pushsnd=" + url, true);
-		untyped loader.addEventListener("load", function(e : Dynamic) {
-			if (loader.responseText != "") {
-				if (AudioStream == null) createStreamPlayer();
-				haxe.Timer.delay(onDone, 1000 * Std.int(Std.parseFloat(loader.responseText)));
-			} else {
-				onDone();
-			}
-		}, false);
-		untyped loader.addEventListener("error", function(e : Dynamic) { onDone(); }, false);
-		loader.send("");
-	}
-	#end
 	//playSound : (native, loop : bool, onDone : () -> void) -> native (SoundChannel)
 	public static function playSound(s : Dynamic, loop : Bool, onDone : Void -> Void) : Dynamic {
 		#if (js && !flow_nodejs)
-			if (UseAudioStream) {
-				pushSoundToLiveStream(s, onDone);
-				return s;
-			}
-
 			var audio = s;
 			var url : String = audio.currentSrc;
 

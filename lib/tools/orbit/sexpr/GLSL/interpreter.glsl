@@ -50,13 +50,8 @@ ControlFrame pop_control() {
 }
 
 int get_node_size_from_type(float node_type_val) {
-    if (node_type_val == TAG_SSINT || node_type_val == TAG_SSOPERATOR ||
-        node_type_val == TAG_SSVARIABLE || node_type_val == TAG_SSCONSTRUCTOR || 
-        node_type_val == TAG_SSDOUBLE || node_type_val == TAG_SSBOOL) { return 2; }
-    if (node_type_val == TAG_SSSTRING) return 3; 
-    if (node_type_val == TAG_SSLIST || node_type_val == TAG_SSVECTOR) return 3; 
-    if (node_type_val == TAG_SSSPECIALFORM) return 4;
-    return 1;
+    // All nodes are now uniformly 4 bytes (4 float values)
+    return 4;
 }
 
 #define CONTROL_TYPE_PENDING_LIST 1
@@ -72,11 +67,19 @@ void main() {
         }
         float current_node_type = u_program_ast[pc];
 
-        if (current_node_type == TAG_SSINT) {
+        if (current_node_type == TAG_NOP) {
+            // Skip NOP nodes (although they should only appear as padding)
+            pc += get_node_size_from_type(current_node_type);
+        } else if (current_node_type == TAG_SSINT) {
             push_operand(EvaluatedSexpr(current_node_type, u_program_ast[pc + 1]));
             pc += get_node_size_from_type(current_node_type);
         } else if (current_node_type == TAG_SSOPERATOR) {
-            push_operand(EvaluatedSexpr(current_node_type, u_program_ast[pc + 1])); // val1 is const_pool_idx
+            // val1 is a const_pool_idx for user-defined operators
+            push_operand(EvaluatedSexpr(current_node_type, u_program_ast[pc + 1]));
+            pc += get_node_size_from_type(current_node_type);
+        } else if (current_node_type == TAG_SSBUILTINOP) {
+            // val1 contains the built-in operator type (OP_ADD, OP_SUB, etc.)
+            push_operand(EvaluatedSexpr(current_node_type, u_program_ast[pc + 1]));
             pc += get_node_size_from_type(current_node_type);
         } else if (current_node_type == TAG_SSSPECIALFORM) {
             float form_id = u_program_ast[pc + 1];
@@ -118,7 +121,8 @@ void main() {
                     control_stack[control_sp - 1] = task; 
                     int next_child_pc = task.children_start_idx_in_ast;
                     for (int i = 0; i < task.current_child_to_eval; ++i) {
-                        next_child_pc += get_node_size_from_type(u_program_ast[next_child_pc]);
+                        // Since all nodes are 4 bytes, we increment by 4
+                        next_child_pc += 4;
                     }
                     pc = next_child_pc; task_processed_or_advanced = true; break; 
                 } else {
@@ -128,7 +132,39 @@ void main() {
                         // Check for errors from pop_operand, though type checks below are primary for args
                         if (op.tag == TAG_ERROR_RUNTIME || arg1.tag == TAG_ERROR_RUNTIME || arg2.tag == TAG_ERROR_RUNTIME) {
                             push_operand(EvaluatedSexpr(TAG_ERROR_RUNTIME, 25.0f)); running = false; // Error during pop
+                        } else if (op.tag == TAG_SSBUILTINOP && arg1.tag == TAG_SSINT && arg2.tag == TAG_SSINT) {
+                            // Handle built-in operators directly using the operator type
+                            float op_type = op.val1;
+                            
+                            if (op_type == OP_ADD) {
+                                push_operand(EvaluatedSexpr(TAG_SSINT, arg1.val1 + arg2.val1));
+                            } else if (op_type == OP_SUB) {
+                                push_operand(EvaluatedSexpr(TAG_SSINT, arg1.val1 - arg2.val1));
+                            } else if (op_type == OP_MUL) {
+                                push_operand(EvaluatedSexpr(TAG_SSINT, arg1.val1 * arg2.val1));
+                            } else if (op_type == OP_DIV) {
+                                if (arg2.val1 == 0.0f) {
+                                    push_operand(EvaluatedSexpr(TAG_ERROR_RUNTIME, 22.0f)); running = false;
+                                } else {
+                                    push_operand(EvaluatedSexpr(TAG_SSINT, float(int(arg1.val1) / int(arg2.val1))));
+                                }
+                            } else if (op_type == OP_EQ) {
+                                push_operand(EvaluatedSexpr(TAG_SSBOOL, (arg1.val1 == arg2.val1) ? 1.0f : 0.0f));
+                            } else if (op_type == OP_LT) {
+                                push_operand(EvaluatedSexpr(TAG_SSBOOL, (arg1.val1 < arg2.val1) ? 1.0f : 0.0f));
+                            } else if (op_type == OP_GT) {
+                                push_operand(EvaluatedSexpr(TAG_SSBOOL, (arg1.val1 > arg2.val1) ? 1.0f : 0.0f));
+                            } else if (op_type == OP_MOD) {
+                                if (arg2.val1 == 0.0f) {
+                                    push_operand(EvaluatedSexpr(TAG_ERROR_RUNTIME, 23.0f)); running = false;
+                                } else {
+                                    push_operand(EvaluatedSexpr(TAG_SSINT, float(int(arg1.val1) % int(arg2.val1))));
+                                }
+                            } else {
+                                push_operand(EvaluatedSexpr(TAG_ERROR_RUNTIME, 18.0f)); running = false;
+                            }
                         } else if (op.tag == TAG_SSOPERATOR && arg1.tag == TAG_SSINT && arg2.tag == TAG_SSINT) {
+                            // Handle user-defined operators via string pool
                             float operator_pool_idx = op.val1;
                             int str_info_idx = int(operator_pool_idx); 
 

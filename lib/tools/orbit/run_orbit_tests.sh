@@ -253,13 +253,13 @@ for TEST_FILE in $TEST_FILES; do
 		ROUNDTRIP_CHECK_OUTPUT=$(timeout --kill-after=2 $TIMEOUT orbit $ROUNDTRIP_CHECK_PARAMS "$TEST_FILE" 2>&1 | grep -v "Flow compiler" | grep -v "Processing 'tools/orbit/orbit'")
 		# ROUNDTRIP_CHECK_EXIT_CODE=$? # Exit code might not be relevant here
 
-		ROUNDTRIP_LOG_FILE="$OUTPUT_DIR/${FILE_NAME%.orb}.sexpr_roundtrip.log"
-		echo "$ROUNDTRIP_CHECK_OUTPUT" > "$ROUNDTRIP_LOG_FILE"
-
 		# Check for success message in the output
 		if echo "$ROUNDTRIP_CHECK_OUTPUT" | grep -q "SUCCESS: The SExpr->Orbit->SExpr roundtrip produced identical SExpr!"; then
 			echo "  ✓ SExpr roundtrip check PASSED"
 		else
+			# Only create log file for failed roundtrip checks
+			ROUNDTRIP_LOG_FILE="$OUTPUT_DIR/${FILE_NAME%.orb}.sexpr_roundtrip.log"
+			echo "$ROUNDTRIP_CHECK_OUTPUT" > "$ROUNDTRIP_LOG_FILE"
 			echo "  ✗ SExpr roundtrip check FAILED (See $ROUNDTRIP_LOG_FILE)"
 			ROUNDTRIP_FAILURES=$((ROUNDTRIP_FAILURES + 1))
 			ROUNDTRIP_FAILURE_LIST="$ROUNDTRIP_FAILURE_LIST $FILE_NAME"

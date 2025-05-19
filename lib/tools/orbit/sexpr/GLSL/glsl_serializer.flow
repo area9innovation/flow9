@@ -8,8 +8,8 @@ import math/math;
 
 export {
 	// Main serialization function: Converts a Sexpr AST to binary format for GPU
-	// Returns a pair of arrays: (binary_program_ast, constant_pool)
-	sexprToGLSL(expr : Sexpr) -> Pair<[double], [double]>;
+	// Returns a triple of (binary_program_ast, constant_pool, comments)
+	sexprToGLSL(expr : Sexpr) -> Triple<[double], [double], [string]>;
 
 	// Generate constant pool as (constants, index_map)
 	generateConstantPool(expr : Sexpr) -> Pair<[string], Tree<string, int>>;
@@ -19,6 +19,12 @@ export {
 
 	// For testing - serialize a single expression to binary format
 	serializeSingleNode(expr : Sexpr, constMap : Tree<string, int>) -> [double];
+	
+	// Pad node data to ensure uniform size of 4 elements per node
+	padNodeToUniformSize(nodeData : [double]) -> [double];
+	
+	// Map an operator string to its built-in operator type ID, or -1 if not a built-in
+	operatorToBuiltinId(op : string) -> int;
 }
 
 // Generate a constant pool from all strings in the AST
@@ -43,7 +49,14 @@ collectStrings(expr : Sexpr, acc : Tree<string, bool>) -> Tree<string, bool> {
 		SSString(s): setTree(acc, s, true);
 		SSVariable(name): setTree(acc, name, true);
 		SSConstructor(name): setTree(acc, name, true);
-		SSOperator(op): setTree(acc, op, true);
+		SSOperator(op): {
+			// Only add to string pool if it's not a built-in operator
+			if (operatorToBuiltinId(op) == -1) {
+				setTree(acc, op, true);
+			} else {
+				acc;
+			}
+		};
 		SSList(items): {
 			fold(items, acc, \a, item -> collectStrings(item, a));
 		};
@@ -61,7 +74,7 @@ collectStrings(expr : Sexpr, acc : Tree<string, bool>) -> Tree<string, bool> {
 // Each string is encoded as a sequence of floats:
 // [length, char_code_1, char_code_2, ...]
 constantPoolToFloats(constants : [string]) -> [double] {
-	fold(constants, [], \acc, str -> {
+	result = fold(constants, [], \acc, str -> {
 		// Create an array with the string length followed by each character code
 		stringFloats = concat(
 			[i2d(strlen(str))],  // String length
@@ -71,10 +84,17 @@ constantPoolToFloats(constants : [string]) -> [double] {
 		// Append to the accumulated array
 		concat(acc, stringFloats);
 	});
+	
+	// Ensure constant pool is never empty (GLSL requires at least 1 element in an array)
+	if (length(result) == 0) {
+		[0.0]; // Add a dummy value if constant pool is empty
+	} else {
+		result;
+	}
 }
 
 // Main serialization function
-sexprToGLSL(expr : Sexpr) -> Pair<[double], [double]> {
+sexprToGLSL(expr : Sexpr) -> Triple<[double], [double], [string]> {
 	// 1. Generate the constant pool
 	constPoolResult = generateConstantPool(expr);
 	constantPool = constPoolResult.first;
@@ -83,12 +103,108 @@ sexprToGLSL(expr : Sexpr) -> Pair<[double], [double]> {
 	// 2. Convert the constant pool to a float array
 	constantPoolArray = constantPoolToFloats(constantPool);
 	
-	// 3. Serialize the expression to a binary AST
-	binaryASTInfo = serializeExpr(expr, constantMap, 0);
+	// 3. Serialize the expression to a binary AST and generate comments
+	binaryASTInfo = serializeExprWithComments(expr, constantMap, 0, []);
 	binaryAST = binaryASTInfo.first;
+	comments = binaryASTInfo.third;
 	
-	// Return the binary AST and constant pool
-	Pair(binaryAST, constantPoolArray);
+	// Return the binary AST, constant pool, and comments
+	Triple(binaryAST, constantPoolArray, comments);
+}
+
+// Serialization function that also generates comments
+// Returns (binary_ast, next_offset, comments)
+serializeExprWithComments(expr : Sexpr, constMap : Tree<string, int>, offset : int, comments : [string]) -> Triple<[double], int, [string]> {
+	// Initialize a comment for this node
+	currentComment = generateComment(expr, offset, constMap);
+	
+	// Ensure comments array has space for this offset
+	commentsWithCurrent = ensureCommentSpace(comments, offset, currentComment);
+	
+	switch (expr) {
+		// Simple types
+		SSInt(i): {
+			// [TAG_SSINT, value, NOP, NOP]
+			nodeData = padNodeToUniformSize([i2d(TAG_SSINT), i2d(i)]);
+			Triple(nodeData, offset + 4, commentsWithCurrent);
+		};
+		SSDouble(d): {
+			// [TAG_SSDOUBLE, value, NOP, NOP]
+			nodeData = padNodeToUniformSize([i2d(TAG_SSDOUBLE), d]);
+			Triple(nodeData, offset + 4, commentsWithCurrent);
+		};
+		SSBool(b): {
+			// [TAG_SSBOOL, value, NOP, NOP]
+			nodeData = padNodeToUniformSize([i2d(TAG_SSBOOL), if (b) 1.0 else 0.0]);
+			Triple(nodeData, offset + 4, commentsWithCurrent);
+		};
+		SSString(s): {
+			// [TAG_SSSTRING, pool_index, length, NOP]
+			strIndex = lookupTreeDef(constMap, s, -1);
+			nodeData = padNodeToUniformSize([i2d(TAG_SSSTRING), i2d(strIndex), i2d(strlen(s))]);
+			Triple(nodeData, offset + 4, commentsWithCurrent);
+		};
+		SSVariable(name): {
+			// [TAG_SSVARIABLE, pool_index, NOP, NOP]
+			strIndex = lookupTreeDef(constMap, name, -1);
+			nodeData = padNodeToUniformSize([i2d(TAG_SSVARIABLE), i2d(strIndex)]);
+			Triple(nodeData, offset + 4, commentsWithCurrent);
+		};
+		SSConstructor(name): {
+			// [TAG_SSCONSTRUCTOR, pool_index, NOP, NOP]
+			strIndex = lookupTreeDef(constMap, name, -1);
+			nodeData = padNodeToUniformSize([i2d(TAG_SSCONSTRUCTOR), i2d(strIndex)]);
+			Triple(nodeData, offset + 4, commentsWithCurrent);
+		};
+		SSOperator(op): {
+			// Check if this is a built-in operator
+			builtinOpId = operatorToBuiltinId(op);
+			
+			// Create the node data based on whether it's a built-in or not
+			nodeData = if (builtinOpId != -1) {
+				// Use TAG_SSBUILTINOP for built-in operators
+				// [TAG_SSBUILTINOP, op_id, NOP, NOP]
+				padNodeToUniformSize([i2d(TAG_SSBUILTINOP), i2d(builtinOpId)]);
+			} else {
+				// Use TAG_SSOPERATOR for user-defined operators
+				// [TAG_SSOPERATOR, pool_index, NOP, NOP]
+				strIndex = lookupTreeDef(constMap, op, -1);
+				padNodeToUniformSize([i2d(TAG_SSOPERATOR), i2d(strIndex)]);
+			}
+			
+			Triple(nodeData, offset + 4, commentsWithCurrent);
+		};
+		
+		// Compound types
+		SSList(items): serializeCompoundWithComments(TAG_SSLIST, items, constMap, offset, 4, commentsWithCurrent);
+		SSVector(items): serializeCompoundWithComments(TAG_SSVECTOR, items, constMap, offset, 4, commentsWithCurrent);
+		SSSpecialForm(specialName, items): {
+			// Special forms have an extra field for the form ID
+			specialFormId = specialNameToEnumId(specialName);
+			headerSize = 4; // Always 4 bytes now
+			
+			// Serialize the header
+			header = [i2d(TAG_SSSPECIALFORM), i2d(specialFormId)];
+			
+			// Handle childless special forms separately
+			if (length(items) == 0) {
+				headerComplete = padNodeToUniformSize(concat(header, [0.0, 0.0])); // No children
+				Triple(headerComplete, offset + headerSize, commentsWithCurrent);
+			} else {
+				// First child offset comes after the header
+				firstChildOffset = offset + headerSize;
+				
+				// Create the header with child count and offset
+				headerComplete = padNodeToUniformSize(concat(header, [i2d(length(items)), i2d(firstChildOffset)]));
+				
+				// Serialize all children with comments
+				result = serializeItemsWithComments(items, constMap, firstChildOffset, [], commentsWithCurrent);
+				
+				// Combine the header with all serialized children
+				Triple(concat(headerComplete, result.first), result.second, result.third);
+			}
+		};
+	}
 }
 
 // Main serialization function
@@ -97,66 +213,78 @@ serializeExpr(expr : Sexpr, constMap : Tree<string, int>, offset : int) -> Pair<
 	switch (expr) {
 		// Simple types
 		SSInt(i): {
-			// [TAG_SSINT, value]
-			nodeData = [i2d(TAG_SSINT), i2d(i)];
-			Pair(nodeData, offset + length(nodeData));
+			// [TAG_SSINT, value, NOP, NOP]
+			nodeData = padNodeToUniformSize([i2d(TAG_SSINT), i2d(i)]);
+			Pair(nodeData, offset + 4); // Always advance by 4
 		};
 		SSDouble(d): {
-			// [TAG_SSDOUBLE, value]
-			nodeData = [i2d(TAG_SSDOUBLE), d];
-			Pair(nodeData, offset + length(nodeData));
+			// [TAG_SSDOUBLE, value, NOP, NOP]
+			nodeData = padNodeToUniformSize([i2d(TAG_SSDOUBLE), d]);
+			Pair(nodeData, offset + 4);
 		};
 		SSBool(b): {
-			// [TAG_SSBOOL, value]
-			nodeData = [i2d(TAG_SSBOOL), if (b) 1.0 else 0.0];
-			Pair(nodeData, offset + length(nodeData));
+			// [TAG_SSBOOL, value, NOP, NOP]
+			nodeData = padNodeToUniformSize([i2d(TAG_SSBOOL), if (b) 1.0 else 0.0]);
+			Pair(nodeData, offset + 4);
 		};
 		SSString(s): {
-			// [TAG_SSSTRING, pool_index, length]
+			// [TAG_SSSTRING, pool_index, length, NOP]
 			strIndex = lookupTreeDef(constMap, s, -1);
-			nodeData = [i2d(TAG_SSSTRING), i2d(strIndex), i2d(strlen(s))];
-			Pair(nodeData, offset + length(nodeData));
+			nodeData = padNodeToUniformSize([i2d(TAG_SSSTRING), i2d(strIndex), i2d(strlen(s))]);
+			Pair(nodeData, offset + 4);
 		};
 		SSVariable(name): {
-			// [TAG_SSVARIABLE, pool_index]
+			// [TAG_SSVARIABLE, pool_index, NOP, NOP]
 			strIndex = lookupTreeDef(constMap, name, -1);
-			nodeData = [i2d(TAG_SSVARIABLE), i2d(strIndex)];
-			Pair(nodeData, offset + length(nodeData));
+			nodeData = padNodeToUniformSize([i2d(TAG_SSVARIABLE), i2d(strIndex)]);
+			Pair(nodeData, offset + 4);
 		};
 		SSConstructor(name): {
-			// [TAG_SSCONSTRUCTOR, pool_index]
+			// [TAG_SSCONSTRUCTOR, pool_index, NOP, NOP]
 			strIndex = lookupTreeDef(constMap, name, -1);
-			nodeData = [i2d(TAG_SSCONSTRUCTOR), i2d(strIndex)];
-			Pair(nodeData, offset + length(nodeData));
+			nodeData = padNodeToUniformSize([i2d(TAG_SSCONSTRUCTOR), i2d(strIndex)]);
+			Pair(nodeData, offset + 4);
 		};
 		SSOperator(op): {
-			// [TAG_SSOPERATOR, pool_index]
-			strIndex = lookupTreeDef(constMap, op, -1);
-			nodeData = [i2d(TAG_SSOPERATOR), i2d(strIndex)];
-			Pair(nodeData, offset + length(nodeData));
+			// Check if this is a built-in operator
+			builtinOpId = operatorToBuiltinId(op);
+			
+			// Create the node data based on whether it's a built-in or not
+			nodeData = if (builtinOpId != -1) {
+				// Use TAG_SSBUILTINOP for built-in operators
+				// [TAG_SSBUILTINOP, op_id, NOP, NOP]
+				padNodeToUniformSize([i2d(TAG_SSBUILTINOP), i2d(builtinOpId)]);
+			} else {
+				// Use TAG_SSOPERATOR for user-defined operators
+				// [TAG_SSOPERATOR, pool_index, NOP, NOP]
+				strIndex = lookupTreeDef(constMap, op, -1);
+				padNodeToUniformSize([i2d(TAG_SSOPERATOR), i2d(strIndex)]);
+			}
+			
+			Pair(nodeData, offset + 4);
 		};
 		
 		// Compound types
-		SSList(items): serializeCompound(TAG_SSLIST, items, constMap, offset, 3);
-		SSVector(items): serializeCompound(TAG_SSVECTOR, items, constMap, offset, 3);
+		SSList(items): serializeCompound(TAG_SSLIST, items, constMap, offset, 4);
+		SSVector(items): serializeCompound(TAG_SSVECTOR, items, constMap, offset, 4);
 		SSSpecialForm(specialName, items): {
 			// Special forms have an extra field for the form ID
 			specialFormId = specialNameToEnumId(specialName);
-			headerSize = 4; // tag, form_id, count, first_child_offset
+			headerSize = 4; // Fixed size for all nodes
 			
 			// Serialize the header
 			header = [i2d(TAG_SSSPECIALFORM), i2d(specialFormId)];
 			
 			// Handle childless special forms separately
 			if (length(items) == 0) {
-				headerComplete = concat(header, [0.0, 0.0]); // No children
+				headerComplete = padNodeToUniformSize(concat(header, [0.0, 0.0])); // No children
 				Pair(headerComplete, offset + headerSize);
 			} else {
 				// First child offset comes after the header
 				firstChildOffset = offset + headerSize;
 				
 				// Create the header with child count and offset
-				headerComplete = concat(header, [i2d(length(items)), i2d(firstChildOffset)]);
+				headerComplete = padNodeToUniformSize(concat(header, [i2d(length(items)), i2d(firstChildOffset)]));
 				
 				// Serialize all children
 				result = serializeItems(items, constMap, firstChildOffset, []);
@@ -168,19 +296,155 @@ serializeExpr(expr : Sexpr, constMap : Tree<string, int>, offset : int) -> Pair<
 	}
 }
 
+// Ensure the comments array has space for this offset
+ensureCommentSpace(comments : [string], offset : int, comment : string) -> [string] {
+	currentSize = length(comments);
+	if (offset < currentSize) {
+		// Just replace the comment at this offset
+		replace(comments, offset, comment);
+	} else {
+		// Need to extend the array with empty comments
+		emptiesNeeded = offset - currentSize;
+		empties = generate(0, emptiesNeeded, \__ -> "");
+		concat(concat(comments, empties), [comment]);
+	}
+}
+
+// Generate a comment for a node based on its type
+generateComment(expr : Sexpr, offset : int, constMap : Tree<string, int>) -> string {
+	switch (expr) {
+		SSInt(i): {
+			"[" + i2s(offset) + "] " + i2s(i) + " (int)";
+		};
+		SSDouble(d): {
+			"[" + i2s(offset) + "] " + d2s(d) + " (double)";
+		};
+		SSBool(b): {
+			"[" + i2s(offset) + "] " + b2s(b) + " (bool)";
+		};
+		SSString(s): {
+			"[" + i2s(offset) + "] \"" + s + "\" (string)";
+		};
+		SSVariable(name): {
+			"[" + i2s(offset) + "] " + name  + " (variable)";
+		};
+		SSConstructor(name): {
+			"[" + i2s(offset) + "] " + name + " (constructor)";
+		};
+		SSOperator(op): {
+			builtinOpId = operatorToBuiltinId(op);
+			if (builtinOpId != -1) {
+				"[" + i2s(offset) + "] " + op + " (builtin operator, id=" + i2s(builtinOpId) + ")";
+			} else {
+				"[" + i2s(offset) + "] " + op + " (operator)";
+			}
+		};
+		SSList(items): {
+			"[" + i2s(offset) + "] list, count=" + i2s(length(items)) + ", child_offset=" + i2s(offset + 3);
+		};
+		SSVector(items): {
+			"[" + i2s(offset) + "] vector, count=" + i2s(length(items)) + ", child_offset=" + i2s(offset + 3);
+		};
+		SSSpecialForm(specialName, items): {
+			"[" + i2s(offset) + "] " + specialFormToString(specialName) + ", count=" + i2s(length(items)) + ", child_offset=" + i2s(offset + 4);
+		};
+	}
+}
+
+// Map an operator string to its built-in operator type ID, or -1 if not a built-in
+operatorToBuiltinId(op : string) -> int {
+	if (op == "+") OP_ADD
+	else if (op == "-") OP_SUB
+	else if (op == "*") OP_MUL
+	else if (op == "/") OP_DIV
+	else if (op == "=") OP_EQ
+	else if (op == "<") OP_LT
+	else if (op == ">") OP_GT
+	else if (op == "mod") OP_MOD
+	else -1; // Not a built-in operator
+}
+
+// Convert special form to string for comments
+specialFormToString(specialName : Special_name) -> string {
+	switch (specialName) {
+		SAnd(): "and";
+		SBegin(): "begin";
+		SClosure(): "closure";
+		SDefine(): "define";
+		SEval(): "eval";
+		SIf(): "if";
+		SImport(): "import";
+		SLambda(): "lambda";
+		SLet(): "let";
+		SLetRec(): "letrec";
+		SList(): "list";
+		SMatch(): "match";
+		SOr(): "or";
+		SQuasiQuote(): "quasiquote";
+		SQuote(): "quote";
+		SSet(): "set";
+		SUnQuote(): "unquote";
+		SUnQuoteSplicing(): "unquote-splicing";
+	}
+}
+
+// Helper for compound types (list, vector) with comments
+serializeCompoundWithComments(tag : int, items : [Sexpr], constMap : Tree<string, int>, offset : int, 
+                             headerSize : int, comments : [string]) -> Triple<[double], int, [string]> {
+	// Handle empty compounds separately
+	if (length(items) == 0) {
+		// Just return the header with 0 for count and offset - padded to 4 elements
+		header = padNodeToUniformSize([i2d(tag), 0.0, 0.0]);
+		Triple(header, offset + headerSize, comments);
+	} else {
+		// First child offset comes after the header
+		firstChildOffset = offset + headerSize;
+		
+		// Create the header with child count and offset - padded to 4 elements
+		header = padNodeToUniformSize([i2d(tag), i2d(length(items)), i2d(firstChildOffset)]);
+		
+		// Serialize all children with comments
+		result = serializeItemsWithComments(items, constMap, firstChildOffset, [], comments);
+		
+		// Combine the header with all serialized children
+		Triple(concat(header, result.first), result.second, result.third);
+	}
+}
+
+// Serializes a list of items with comments
+serializeItemsWithComments(items : [Sexpr], constMap : Tree<string, int>, 
+                          startOffset : int, acc : [double], comments : [string]) -> Triple<[double], int, [string]> {
+	if (length(items) == 0) {
+		// No more items to serialize
+		Triple(acc, startOffset, comments);
+	} else {
+		// Serialize the current item with comments
+		itemResult = serializeExprWithComments(items[0], constMap, startOffset, comments);
+		itemData = itemResult.first;
+		nextOffset = itemResult.second;
+		updatedComments = itemResult.third;
+		
+		// Add the serialized item to the accumulated data
+		combinedData = concat(acc, itemData);
+		
+		// Recursively serialize the remaining items
+		serializeItemsWithComments(tail(items), constMap, nextOffset, combinedData, updatedComments);
+	}
+}
+
 // Helper for compound types (list, vector)
 serializeCompound(tag : int, items : [Sexpr], constMap : Tree<string, int>, offset : int, headerSize : int) -> Pair<[double], int> {
 	// Handle empty compounds separately
 	if (length(items) == 0) {
-		// Just return the header with 0 for count and offset
-		header = [i2d(tag), 0.0, 0.0];
+		// Just return the header with 0 for count and offset - padded to 4 elements
+		header = padNodeToUniformSize([i2d(tag), 0.0, 0.0]);
 		Pair(header, offset + headerSize);
 	} else {
 		// First child offset comes after the header
 		firstChildOffset = offset + headerSize;
 		
-		// Create the header with child count and offset
-		header = [i2d(tag), i2d(length(items)), i2d(firstChildOffset)];
+		// Create the header with child count and offset - padded to 4 elements
+		header = padNodeToUniformSize([i2d(tag), i2d(length(items)), i2d(firstChildOffset)]);
 		
 		// Serialize all children
 		result = serializeItems(items, constMap, firstChildOffset, []);
@@ -212,5 +476,21 @@ serializeItems(items : [Sexpr], constMap : Tree<string, int>, startOffset : int,
 // For testing - serialize a single node without children
 serializeSingleNode(expr : Sexpr, constMap : Tree<string, int>) -> [double] {
 	result = serializeExpr(expr, constMap, 0);
-	result.first;
+	padNodeToUniformSize(result.first);
+}
+
+// Pad a node with NOP values to ensure uniform size of 4 elements
+padNodeToUniformSize(nodeData : [double]) -> [double] {
+	targetSize = 4;
+	currentSize = length(nodeData);
+	
+	if (currentSize >= targetSize) {
+		// If the node is already at least the target size, return it unchanged
+		nodeData;
+	} else {
+		// Add NOP values as padding to reach target size
+		paddingCount = targetSize - currentSize;
+		padding = generate(0, paddingCount, \_ -> i2d(TAG_NOP));
+		concat(nodeData, padding);
+	}
 }

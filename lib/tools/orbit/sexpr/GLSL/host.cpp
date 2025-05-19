@@ -4,6 +4,8 @@
 #include <vector>
 #include <fstream>
 #include <stdexcept> // Required for std::runtime_error
+#include <string>    // Added for std::string
+#include <map>       // Added for std::map
 
 // Helper function to read a SPIR-V file
 static std::vector<char> readFile(const std::string& filename) {
@@ -18,6 +20,93 @@ static std::vector<char> readFile(const std::string& filename) {
     file.close();
     return buffer;
 }
+
+// Define tags as in GLSL
+const float TAG_SSINT = 1.0f;
+const float TAG_SSDOUBLE = 2.0f;
+const float TAG_SSBOOL = 3.0f;
+const float TAG_SSSTRING = 4.0f;
+const float TAG_SSVARIABLE = 5.0f;
+const float TAG_SSCONSTRUCTOR = 6.0f;
+const float TAG_SSOPERATOR = 7.0f;
+const float TAG_SSLIST = 8.0f;
+const float TAG_SSVECTOR = 9.0f;
+const float TAG_SSSPECIALFORM = 10.0f;
+const float TAG_SSBUILTINOP = 11.0f;
+const float TAG_CLOSURE = 20.0f;
+const float TAG_ERROR_RUNTIME = 21.0f;
+
+std::string formatResult(float tag, float value) {
+    // Format the result based on the tag type
+    if (tag == TAG_SSINT) {
+        return "Integer: " + std::to_string(int(value));
+    } else if (tag == TAG_SSDOUBLE) {
+        return "Double: " + std::to_string(value);
+    } else if (tag == TAG_SSBOOL) {
+        return "Boolean: " + std::string(value > 0.0f ? "true" : "false");
+    } else if (tag == TAG_SSSTRING) {
+        return "String: (String ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSVARIABLE) {
+        return "Variable: (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSCONSTRUCTOR) {
+        return "Constructor: (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSOPERATOR) {
+        return "Operator: (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSBUILTINOP) {
+        std::string opName;
+        switch (int(value)) {
+            case 1: opName = "+"; break;
+            case 2: opName = "-"; break;
+            case 3: opName = "*"; break;
+            case 4: opName = "/"; break;
+            case 5: opName = "="; break;
+            case 6: opName = "<"; break;
+            case 7: opName = ">"; break;
+            case 8: opName = "mod"; break;
+            default: opName = "unknown"; break;
+        }
+        return "Built-in Operator: " + opName + " (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSLIST) {
+        return "List: (Length: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_SSVECTOR) {
+        return "Vector: (Length: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_CLOSURE) {
+        return "Closure: (ID: " + std::to_string(int(value)) + ")";
+    } else if (tag == TAG_ERROR_RUNTIME) {
+        // Using static to initialize map only once
+        static const std::map<float, std::string> errorMessages = {
+            {10.0f, "Unhandled special form ID."},
+            {11.0f, "Unhandled AST node type in main interpreter loop."},
+            {12.0f, "Type error: Operator applied to non-integer arguments or mismatched types."},
+            {13.0f, "Argument error: Incorrect number of arguments for operator/list processing."},
+            {14.0f, "Internal error: Unknown control stack frame type."},
+            {15.0f, "Execution error: Program ended with an empty operand stack."},
+            {16.0f, "Execution error: Program ended due to PC reaching end with non-empty control stack."},
+            {17.0f, "Execution error: Program ended with multiple values on stack (expected one result, or an error)."},
+            {18.0f, "Operator error: Unknown 1-character operator."},
+            {19.0f, "Operator error: Unknown multi-character operator (not 1-char and not 'mod')."},
+            {20.0f, "Operator error: Invalid operator constant pool index."},
+            {22.0f, "Arithmetic error: Division by zero."},
+            {23.0f, "Arithmetic error: Modulo by zero."},
+            {24.0f, "Internal error: Constant pool string read out of bounds."},
+            {25.0f, "Stack error: Error during operand pop for operator arguments."},
+            {77.0f, "Execution error: Program Counter (PC) out of bounds."},
+            {80.0f, "Resource error: Operand stack overflow."},
+            {81.0f, "Resource error: Operand stack underflow (pop from empty stack)."},
+            {82.0f, "Resource error: Control stack overflow."},
+            {90.0f, "Execution error: Program finished prematurely with an empty stack (possibly due to an earlier unreported error)."}
+        };
+        auto it = errorMessages.find(value);
+        if (it != errorMessages.end()) {
+            return "Runtime Error: " + it->second;
+        }
+        return "Runtime Error: Unknown error value " + std::to_string(value);
+    } else {
+        // Fallback for unknown tags
+        return "Unknown Type (Tag: " + std::to_string(int(tag)) + "): Value = " + std::to_string(value);
+    }
+}
+
 
 int main() {
     VkApplicationInfo appInfo{};
@@ -92,7 +181,7 @@ int main() {
     vkGetDeviceQueue(device, computeQueueFamilyIndex, 0, &computeQueue);
 
     // Create shader module
-    auto shaderCode = readFile("interpreter_step1.spv"); // SPIR-V file
+    auto shaderCode = readFile("interpreter.spv"); // SPIR-V file
     VkShaderModuleCreateInfo shaderModuleCreateInfo{};
     shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     shaderModuleCreateInfo.codeSize = shaderCode.size();
@@ -241,6 +330,7 @@ int main() {
     if (vkCreateCommandPool(device, &cmdPoolCreateInfo, nullptr, &commandPool) != VK_SUCCESS) {
         std::cerr << "Failed to create command pool!" << std::endl;
         // ... proper cleanup ...
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr); vkFreeMemory(device, bufferMemory, nullptr); vkDestroyBuffer(device, buffer, nullptr); vkDestroyPipeline(device, computePipeline, nullptr); vkDestroyPipelineLayout(device, pipelineLayout, nullptr); vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr); vkDestroyShaderModule(device, computeShaderModule, nullptr); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr);
         return EXIT_FAILURE;
     }
 
@@ -253,6 +343,7 @@ int main() {
     if (vkAllocateCommandBuffers(device, &cmdBufAllocInfo, &commandBuffer) != VK_SUCCESS) { 
         std::cerr << "Failed to allocate command buffer!" << std::endl;
         // ... proper cleanup ...
+        vkDestroyCommandPool(device, commandPool, nullptr); vkDestroyDescriptorPool(device, descriptorPool, nullptr); vkFreeMemory(device, bufferMemory, nullptr); vkDestroyBuffer(device, buffer, nullptr); vkDestroyPipeline(device, computePipeline, nullptr); vkDestroyPipelineLayout(device, pipelineLayout, nullptr); vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr); vkDestroyShaderModule(device, computeShaderModule, nullptr); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr);
         return EXIT_FAILURE;
     }
 
@@ -273,17 +364,32 @@ int main() {
     VkFenceCreateInfo fenceCreateInfo{};
     fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(device, &fenceCreateInfo, nullptr, &fence);
-    vkQueueSubmit(computeQueue, 1, &submitInfo, fence);
+    if (vkCreateFence(device, &fenceCreateInfo, nullptr, &fence) != VK_SUCCESS) { // Added error check
+        std::cerr << "Failed to create fence!" << std::endl;
+        // ... proper cleanup ...
+        vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer); vkDestroyCommandPool(device, commandPool, nullptr); vkDestroyDescriptorPool(device, descriptorPool, nullptr); vkFreeMemory(device, bufferMemory, nullptr); vkDestroyBuffer(device, buffer, nullptr); vkDestroyPipeline(device, computePipeline, nullptr); vkDestroyPipelineLayout(device, pipelineLayout, nullptr); vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr); vkDestroyShaderModule(device, computeShaderModule, nullptr); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr);
+        return EXIT_FAILURE;
+    }
+    
+    if (vkQueueSubmit(computeQueue, 1, &submitInfo, fence) != VK_SUCCESS) { // Added error check
+        std::cerr << "Failed to submit queue!" << std::endl;
+        // ... proper cleanup ...
+        vkDestroyFence(device, fence, nullptr); vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer); vkDestroyCommandPool(device, commandPool, nullptr); vkDestroyDescriptorPool(device, descriptorPool, nullptr); vkFreeMemory(device, bufferMemory, nullptr); vkDestroyBuffer(device, buffer, nullptr); vkDestroyPipeline(device, computePipeline, nullptr); vkDestroyPipelineLayout(device, pipelineLayout, nullptr); vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr); vkDestroyShaderModule(device, computeShaderModule, nullptr); vkDestroyDevice(device, nullptr); vkDestroyInstance(instance, nullptr);
+        return EXIT_FAILURE;
+    }
     vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
 
     // Read back results
     void* mappedMemory = nullptr;
-    vkMapMemory(device, bufferMemory, 0, bufferSize, 0, &mappedMemory);
-    float* results = static_cast<float*>(mappedMemory);
-    std::cout << "Result Tag: " << results[0] << std::endl;
-    std::cout << "Result Value: " << results[1] << std::endl;
-    vkUnmapMemory(device, bufferMemory);
+    if (vkMapMemory(device, bufferMemory, 0, bufferSize, 0, &mappedMemory) == VK_SUCCESS) { // Added error check
+        float* results = static_cast<float*>(mappedMemory);
+        // Print the formatted result using our new formatResult function
+        std::cout << formatResult(results[0], results[1]) << std::endl;
+        vkUnmapMemory(device, bufferMemory);
+    } else {
+        std::cerr << "Failed to map memory to read results!" << std::endl;
+    }
+
 
     // Cleanup
     vkDestroyFence(device, fence, nullptr);
@@ -301,3 +407,4 @@ int main() {
 
     return EXIT_SUCCESS;
 }
+
