@@ -319,6 +319,39 @@ S-expressions can be integrated with OGraph (Orbit Graph) data structures for sy
 1. Converting S-expressions to OGraph nodes (`sexp2OGraphWithSubstitution`)
 2. Converting OGraph nodes back to S-expressions (`ograph2Sexpr`)
 
+### S-Expression Representation in OGraph
+
+S-expressions are represented in OGraph using a structured mapping system defined in `sexpr_ograph_utils.flow`. The representation preserves the hierarchical nature of S-expressions while adapting them to the OGraph structure:
+
+```flow
+OGraph(                           // The overall graph container
+	oclasses : ref Tree<int, OClass>,  // Map from class id to equivalence class
+	classes : ref Tree<int, int>,      // Union-find data structure
+	next_id : ref int                  // Next available id
+);
+
+OClass(                          // An equivalence class
+	root : int,                   // The canonical id of this class
+	node : ONode                  // The node in this class
+);
+
+ONode(                           // A node representing an S-expression
+	op : string,                  // Operator/node type (e.g., "Int", "List", "SpecialForm")
+	children : [int],             // Child nodes (references to other class ids)
+	belongsTo : [int],            // Type domains for type annotations
+	value : OrbitValue            // Primitive value if applicable
+);
+```
+
+The conversion process between S-expressions and OGraph nodes uses two key functions:
+
+1. `decomposeSexpr`: Breaks down an S-expression into components:
+   - `op`: A string indicating the node type
+   - `children`: An array of child S-expressions
+   - `value`: An OrbitValue containing primitive data
+
+2. `constructSexpr`: Reconstructs an S-expression from these components
+
 ### Adding S-expressions to OGraph
 
 The protocol for adding an S-expression to an OGraph is defined in `sexp2OGraphWithSubstitution`:
@@ -342,21 +375,25 @@ The function handles type annotations in the form `(: expr Domain)` by:
 
 #### S-expression Type Mapping
 
-Different S-expression types are mapped to different OGraph node types:
+Different S-expression types are mapped to different OGraph node types based on the `decomposeSexpr` function in `sexpr_ograph_utils.flow`:
 
-| S-expression Type | OGraph Node Type | Notes |
-|-------------------|------------------|-------|
-| SSList (general)  | "List"           | Each child is processed recursively |
-| SSList with ":"  | Special handling | Processed as type annotation |
-| SSVariable        | "Identifier"     | May be substituted based on varToEclass |
-| SSConstructor     | "Constructor"    | Value stored as string |
-| SSOperator        | "Operator"       | Value stored as string |
-| SSInt             | "Int"            | Value stored as OrbitInt |
-| SSDouble          | "Double"         | Value stored as OrbitDouble |
-| SSString          | "String"         | Value stored as OrbitString |
-| SSBool            | "Bool"           | Value stored as OrbitBool |
-| SSVector          | "Vector"         | Each child is processed recursively |
-| SSSpecialForm     | "SpecialForm"    | Form name stored directly in node's value field (as OrbitString) |
+| S-expression Type | OGraph Node Type | OrbitValue | Notes |
+|-------------------|------------------|------------|-------|
+| SSInt(i)          | "Int"            | OrbitInt(i)| Integer literal |
+| SSDouble(d)       | "Double"         | OrbitDouble(d) | Floating point literal |
+| SSBool(b)         | "Bool"           | OrbitBool(b) | Boolean literal |
+| SSString(s)       | "String"         | OrbitString(s) | String literal |
+| SSVariable(id)    | "Identifier"     | OrbitString(id) | May be substituted based on varToEclass |
+| SSConstructor(name) | "Constructor"  | OrbitString(name) | Constructor names (capitalized) |
+| SSOperator(op)    | "Operator"       | OrbitString(op) | Operators like +, -, * |
+| SSList([])        | "List"           | OrbitNone() | Empty list |
+| SSList with ":"  | Special handling | OrbitNone() | Processed as type annotation |
+| SSList with op    | op.name          | OrbitNone() | Operator expressions like (+ 1 2) |
+| SSList (general)  | "List"           | OrbitNone() | General lists - each child processed recursively |
+| SSVector(items)   | "Vector"         | OrbitNone() | Vector literals - each item processed recursively |
+| SSSpecialForm(form, children) | "SpecialForm" | OrbitString(formName) | Special forms like if, lambda, quote, etc. |
+
+This mapping ensures that all semantic information from the original S-expression is preserved in the OGraph representation, while allowing for efficient manipulation and pattern matching on the graph structure.
 
 ### Extracting S-expressions from OGraph
 
