@@ -10,22 +10,22 @@ checkAntipattern(program : FiProgram, env : FcTypeEnvGlobal) -> void {
 	traversePreOrder(program.modules, \modname : string, mo : FiModule -> {
 		src = fcFileSource(env, mo.fileinfo.fullpath);
 		resolver = makeLineResolver(src);
-		iter(mo.functions, \fun -> checkAntipatternRec(mo, resolver, fun.lambda, false));
+		iter(mo.functions, \fun -> checkAntipatternRec(mo, resolver, fun.lambda, None()));
 	});
 }
 
-checkAntipatternRec(module : FiModule, resolver : LineResolver, expr : FiExp, insideFold : bool) -> void {
-	multipleCheck = \args : [FiExp] -> iter(args, \arg -> checkAntipatternRec(module, resolver, arg, insideFold));
+checkAntipatternRec(module : FiModule, resolver : LineResolver, expr : FiExp, insideLoop : Maybe<string>) -> void {
+	multipleCheck = \args : [FiExp] -> iter(args, \arg -> checkAntipatternRec(module, resolver, arg, insideLoop));
 	switch (expr) {
-		FiLambda(__, body, __, __): checkAntipatternRec(module, resolver, body, insideFold);
+		FiLambda(__, body, __, __): checkAntipatternRec(module, resolver, body, insideLoop);
 		FiCall(f, args, type, __): {
 			switch(f) {
 				FiVar(x, __, start) : {
-					if (x == "fold") {
-						checkAntipatternRec(module, resolver, args[2], true)
-					} else if (insideFold && contains(["arrayPush", "concat", "ifArrayPush"], x)) {
+					if (contains(["fold", "fold2"], x)) {
+						checkAntipatternRec(module, resolver, args[2], Some(x))
+					} else if (isSome(insideLoop) && contains(["arrayPush", "concat", "ifArrayPush"], x)) {
 						position = findLine1(resolver, start, 1);
-						println(module.fileinfo.fullpath + ":" + i2s(position.lineno) + ":" + i2s(position.column) + " call " + x + "() inside fold()");
+						println(module.fileinfo.fullpath + ":" + i2s(position.lineno) + ":" + i2s(position.column) + " using " + x + " inside " + either(insideLoop, "loop"));
 					} else {
 						multipleCheck(args)
 					}
@@ -37,7 +37,7 @@ checkAntipatternRec(module : FiModule, resolver : LineResolver, expr : FiExp, in
 		FiLet(__, __, e1, e2, __, __): 	multipleCheck([e1, e2]);
 		FiIf(e1, e2, e3, __, __): 		multipleCheck([e1, e2, e3]);
 		FiSwitch(x, __, cases, __, __): multipleCheck(concat([x], map(cases, \case -> case.body)));
-		FiCast(e, __, __, __, __):      checkAntipatternRec(module, resolver, e, insideFold);
+		FiCast(e, __, __, __, __):      checkAntipatternRec(module, resolver, e, insideLoop);
 		FiSeq(es, __, __):              multipleCheck(es);
 		FiCallPrim(__, es, __, __):     multipleCheck(es);
 		FiString(s, __):                {};
@@ -45,7 +45,7 @@ checkAntipatternRec(module : FiModule, resolver : LineResolver, expr : FiExp, in
 		FiDouble(__, __):               {};
 		FiVoid(__):                     {};
 		FiInt(__, __):                  {};
-		FiRequire(__, e, __, __):       checkAntipatternRec(module, resolver, e, insideFold);
-		FiUnsafe(__, fallback, __, __): checkAntipatternRec(module, resolver, fallback, insideFold);
+		FiRequire(__, e, __, __):       checkAntipatternRec(module, resolver, e, insideLoop);
+		FiUnsafe(__, fallback, __, __): checkAntipatternRec(module, resolver, fallback, insideLoop);
 	}
 }
