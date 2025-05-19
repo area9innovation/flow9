@@ -264,11 +264,9 @@ Quasiquotation allows building templates with parts that are evaluated:
 
 TODO: Add examples
 
-## Standard Library (`sexpr_stdlib.flow`)
+## Standard Library
 
 The language includes an extensive set of built-in functions imported from the Orbit runtime:
-
-@import `sexpr_stdlib.flow`
 
 ### Arithmetic and Mathematical Functions
 
@@ -380,92 +378,75 @@ This interpreter is built using Flow9 and follows functional programming princip
 
 ### Core Components
 
-*   **Parser (`sexpr.mango`, `sexpr_compiled_parser.flow`):**
+*   **Parser ([sexpr.mango](./sexpr.mango)):**
     *   Defines the S-expression grammar using Mango.
-    *   `sexpr.mango`: The human-readable grammar definition.
     *   `sexpr_compiled_parser.flow`: The efficient, compiled Flow9 parser generated from `sexpr.mango`. It parses input text into an `Sexpr` Abstract Syntax Tree (AST). Used by `sexpr_stdlib.parseSexpr`.
-*   **AST Types (`sexpr_types.flow`):**
+*   **AST Types ([sexpr_types.flow](./sexpr_types.flow)):**
     *   Defines the `Sexpr` algebraic data type (ADT) which represents all possible nodes in the S-expression syntax tree (e.g., `SSInt`, `SSList`, `SSVariable`, `SSQuote`). This structure is generated based on the Mango grammar.
-    @exports(/home/alstrup/area9/flow9/lib/tools/orbit/sexpr/sexpr_types.flow)
-*   **Evaluation Environment (`env.flow`):**
+*   **Evaluation Environment ([env.flow](./env.flow)):**
     *   Defines the `SExpEnv` structure used during evaluation. It holds the current variable bindings (`Tree<string, Sexpr>`), a registry of runtime functions (`Tree<string, RuntimeFn>`), and the result of the last evaluation step.
     *   Also defines `RuntimeFn` (arity and implementation of built-ins) and `FnArgResult` (result of evaluating function arguments).
-    @exports(/home/alstrup/area9/flow9/lib/tools/orbit/sexpr/env.flow)
-*   **Evaluator (`eval_sexpr.flow`):**
+*   **Evaluator ([eval_sexpr.flow](./eval_sexpr.flow)):**
     *   The core recursive evaluation logic resides in `evalSexpr`. It traverses the `Sexpr` AST and interprets its meaning based on the current `SExpEnv`.
     *   Handles basic values, variable lookups, special forms (`define`, `if`, `lambda`, `quote`, `eval`, `match`, `import`, `&&`, `||`), and function calls (both built-in and user-defined).
-    @import(/home/alstrup/area9/flow9/lib/tools/orbit/sexpr/eval_sexpr.flow)
-*   **Standard Library (`sexpr_stdlib.flow`):**
+*   **Standard Library ([sexpr_stdlib.flow](./sexpr_stdlib.flow)):**
     *   Implements all the built-in functions (like `+`, `car`, `strlen`, `getFileContent`).
     *   Provides `getRuntimeEnv()` to create the initial environment populated with standard functions.
     *   Includes `invokeRuntimeFn` to handle arity checking and execution of built-ins.
     *   Contains the `parseSexpr` function which utilizes the compiled Mango parser.
-*   **Pattern Matching (`sexpr_pattern.flow`):**
+*   **Pattern Matching ([sexpr_pattern.flow](./sexpr_pattern.flow)):**
     *   Implements the logic for the `match` special form.
     *   `matchPattern` recursively attempts to match a pattern against a value, potentially binding variables to the environment.
     *   `evalMatch` orchestrates the matching process for a `match` expression.
-    @exports(/home/alstrup/area9/flow9/lib/tools/orbit/sexpr/sexpr_pattern.flow)
-*   **Quasiquotation (`sexpr_quasi.flow`):**
+*   **Quasiquotation ([sexpr_quasi.flow](./sexpr_quasi.flow)):**
     *   Implements the logic for quasiquote (`\``), unquote (`$`), and unquote-splicing (`#`).
     *   `evalQuasiQuote` recursively traverses a quasiquoted expression, evaluating unquoted parts using a provided evaluation function.
-    @exports(/home/alstrup/area9/flow9/lib/tools/orbit/sexpr/sexpr_quasi.flow)
-*   **Closure Support (`sexpr_free.flow`):**
+*   **Closure Support ([sexpr_free.flow](./sexpr_free.flow)):**
     *   Essential for implementing `lambda`.
     *   `findFreeSexprVars` analyzes an expression (like a lambda body) to determine which variables are "free" (used but not defined locally or as parameters).
     *   `createSexprBindings` creates the necessary bindings to capture the values of these free variables from the environment where the lambda is defined.
-    @exports(/home/alstrup/area9/flow9/lib/tools/orbit/sexpr/sexpr_free.flow)
-*   **Utilities (`utils.flow`, `pretty_sexpr.flow`):**
-    *   `utils.flow`: Provides helper functions (`getSInt`, `getSBool`, etc.) for safely extracting typed values from `Sexpr` nodes during evaluation and in the standard library.
-    @exports(/home/alstrup/area9/flow9/lib/tools/orbit/sexpr/utils.flow)
-    *   `pretty_sexpr.flow`: Contains `prettySexpr` to convert an `Sexpr` AST back into a human-readable string representation.
-    @exports(/home/alstrup/area9/flow9/lib/tools/orbit/sexpr/pretty_sexpr.flow)
-*   **Main Executable (`sexpr.flow`):**
+*   **Utilities ([utils.flow](./utils.flow), [pretty_sexpr.flow](./pretty_sexpr.flow)):**
+    *   [utils.flow](./utils.flow): Provides helper functions (`getSInt`, `getSBool`, etc.) for safely extracting typed values from `Sexpr` nodes during evaluation and in the standard library.
+    *   [pretty_sexpr.flow](./pretty_sexpr.flow): Contains `prettySexpr` to convert an `Sexpr` AST back into a human-readable string representation.
+*   **Main Executable ([sexpr.flow](./sexpr.flow)):**
     *   The entry point (`main` function).
     *   Parses command-line arguments.
     *   Reads specified `.sexp` files.
     *   Calls `parseSexpr` to get the AST.
     *   Calls `evalSexpr` to evaluate the AST within an environment.
     *   Prints the final result using `prettySexpr`.
-    @import(/home/alstrup/area9/flow9/lib/tools/orbit/sexpr/sexpr.flow)
 
 ### Code Structure
 
 *   `/`: Contains the core Flow9 implementation files (`.flow`, `.mango`).
 *   `lib/`: Contains standard library extensions written in SEXP itself (e.g., `array.sexp`).
 *   `tests/`: Contains example `.sexp` files demonstrating language features.
+*   `GLSL/`: Contains GLSL files for a prototype of evaluating S-expressions on a GPU.
 
-**Important Files:**
-
-*   `sexpr.flow`: Main program entry point.
-*   `sexpr.mango`: Grammar definition.
-*   `sexpr_types.flow`: AST definition.
-*   `eval_sexpr.flow`: Core evaluation logic.
-*   `sexpr_stdlib.flow`: Built-in function implementations.
-*   `env.flow`: Environment structure definition.
 
 **Entry Point and Execution Flow:**
 
-1.  Execution starts in `sexpr.flow::main()`.
+1.  Execution starts in [sexpr.flow](./sexpr.flow)::main().
 2.  Command-line arguments (expected to be `.sexp` file paths) are processed.
-3.  An initial environment is created using `sexpr_stdlib.getRuntimeEnv()`.
+3.  An initial environment is created using [sexpr_stdlib.flow](./sexpr_stdlib.flow).getRuntimeEnv().
 4.  For each input file:
-    a.  The file content is read (`getFileContent`).
-    b.  The content is parsed into an `Sexpr` AST using `sexpr_stdlib.parseSexpr` (which uses `sexpr_compiled_parser.flow`).
-    c.  If parsing succeeds, the AST is evaluated using `eval_sexpr.evalSexpr`, updating the environment.
-    d.  The result of the evaluation is printed using `pretty_sexpr.prettySexpr`.
-5.  The `import` special form within `eval_sexpr.flow` recursively triggers steps 4a-4c for imported files.
+    a.  The file content is read
+    b.  The content is parsed into an `Sexpr` AST
+    c.  If parsing succeeds, the AST is evaluated using [eval_sexpr.flow](./eval_sexpr.flow).evalSexpr, updating the environment.
+    d.  The result of the evaluation is printed using [pretty_sexpr.flow](./pretty_sexpr.flow).prettySexpr.
+5.  The `import` special form within [eval_sexpr.flow](./eval_sexpr.flow) recursively triggers steps 4a-4c for imported files.
 
 ### Key Abstractions
 
 *   **`Sexpr` ADT:** The fundamental data structure representing code and data uniformly, enabling metaprogramming capabilities (like `eval`).
 *   **`SExpEnv`:** Represents the evaluation context, mapping names to values and holding runtime function definitions. It's passed through and updated during recursive evaluation.
-*   **Closures:** Implemented via `lambda`. When a `lambda` is evaluated, `sexpr_free.flow` identifies free variables, and `eval_sexpr.flow` creates a special `SSList` structure `(closure bindings params body)` where `bindings` stores the captured values of free variables. When the closure is called, `applyFunction` in `eval_sexpr.flow` reconstructs the captured environment before evaluating the body.
-*   **Runtime Functions (`RuntimeFn`):** Built-in functions are stored in the environment's `runtime` tree, allowing them to be looked up and called efficiently with arity checking (`invokeRuntimeFn` in `sexpr_stdlib.flow`).
+*   **Closures:** Implemented via `lambda`. When a `lambda` is evaluated, [sexpr_free.flow](./sexpr_free.flow) identifies free variables, and [eval_sexpr.flow](./eval_sexpr.flow) creates a special `SSList` structure `(closure bindings params body)` where `bindings` stores the captured values of free variables. When the closure is called, `applyFunction` in [eval_sexpr.flow](./eval_sexpr.flow) reconstructs the captured environment before evaluating the body.
+*   **Runtime Functions (`RuntimeFn`):** Built-in functions are stored in the environment's `runtime` tree, allowing them to be looked up and called efficiently with arity checking (`invokeRuntimeFn` in [sexpr_stdlib.flow](./sexpr_stdlib.flow)).
 
 ### Dependencies and Integration Points
 
 *   **Flow9 Standard Libraries:** Uses `ds/tree`, `string`, `math/math`, `fs/filesystem`, `text/blueprint`, `net/url_parameter`, `runtime`.
-*   **Mango Parser:** Relies on `tools/mango/mcode_lib` and the compiled parser (`sexpr_compiled_parser.flow`).
+*   **Mango Parser:** Relies on `tools/mango/mcode_lib` and the compiled parser.
 *   **File System:** Interacts via the `import` special form and the `getFileContent`/`setFileContent` standard library functions.
 *   **Command Line:** Reads arguments via `net/url_parameter` in `sexpr.flow` and provides access via `getCommandLineArgs`.
 
@@ -488,22 +469,19 @@ This interpreter is built using Flow9 and follows functional programming princip
 
 This implementation is intentionally minimal but can be extended with:
 
-- More data types (pairs, vectors, etc.)
 - Additional special forms (let, let\*, letrec, cond, etc.)
-- Tail call optimization (TCO) for proper recursive function calls without stack overflow.
-- Macros for compile-time code generation.
 
 ### Adding New Functions
 
 To add a new *built-in* function (implemented in Flow9):
-1. Define the function's implementation logic in `sexpr_stdlib.flow`, taking `FnArgResult` and returning `Sexpr`.
-2. Add a `Pair` containing the function's SEXP name and a `RuntimeFn` record (specifying arity and the implementation function) to the `functionPairs` list within `getRuntimeFunctions()` in `sexpr_stdlib.flow`.
+1. Define the function's implementation logic in [sexpr_stdlib.flow](./sexpr_stdlib.flow), taking `FnArgResult` and returning `Sexpr`.
+2. Add a `Pair` containing the function's SEXP name and a `RuntimeFn` record (specifying arity and the implementation function) to the `functionPairs` list within `getRuntimeFunctions()` in [sexpr_stdlib.flow](./sexpr_stdlib.flow).
 3. Add the function name to `addStandardFns` if it should be directly available in the global environment.
 4. The centralized arity checking (`invokeRuntimeFn`) will be applied automatically.
 
 ## OGraph Quasiquote Implementation Roadmap
 
-Our current `evaluateOGraphQuasiquote` implementation in `ograph_sexpr_quasi.flow` only provides a partial implementation of quasiquotation. The current features supported are:
+Our current `evaluateOGraphQuasiquote` implementation in [ograph_sexpr_quasi.flow](./ograph_sexpr_quasi.flow) only provides a partial implementation of quasiquotation. The current features supported are:
 
 - `(unquote ...)` evaluation
 - Constant sub-expression folding in operator calls
@@ -548,8 +526,7 @@ The following is a structured plan to implement the remaining features needed fo
 - [ ] Convert match expressions to/from Sexpr for evaluation
 - [ ] Handle pattern evaluation and condition testing
 
-### 8. Import & Eval
-- [ ] Implement `evaluateImportNode` to load external files
+### 8. Eval
 - [ ] Implement `evaluateEvalNode` for runtime evaluation
 - [ ] Properly convert between OGraph and Sexpr representations
 
