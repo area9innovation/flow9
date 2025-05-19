@@ -100,3 +100,7 @@ Turn on tracing for step-by-step execution details:
 ## Orbit Documentation Guide
 
 - **[index.md](docs/index.md)**: Lists all the documentation files and their purposes.
+
+## Implementation
+
+We evaluate Orbit by converting it to a Scheme variant `SExpr`. See [sexpr/readme.md](./sexpr/readme.md) for details.
