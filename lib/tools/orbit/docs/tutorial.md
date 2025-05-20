@@ -270,6 +270,9 @@ let merged = mergeOGraphNodes(graph, nodeId1, nodeId2);
 // Add domain annotations
 addDomainToNode(graph, nodeId1, "Commutative");
 
+// Get domains that a node belongs to
+let domains = getONodeBelongsTo(graph, nodeId1);  // Returns [domainId1, domainId2, ...]
+
 // Extract a node
 let expr = extractOGraphNode(graph, nodeId1);
 
@@ -282,6 +285,7 @@ OGraphs allow you to:
 2. Cross domain boundaries (e.g., between mathematical notation and programming language syntax)
 3. Apply rewrite rules across an entire equivalence class
 4. Extract optimal representations based on cost models
+5. Track and query domain memberships to understand semantic properties of nodes
 
 ## 8. Example: Symbolic Differentiation
 
