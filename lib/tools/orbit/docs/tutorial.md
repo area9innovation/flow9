@@ -120,6 +120,15 @@ let existsStatement = ∃ x: x^2 = 2;
 
 // Function composition
 let fog = f ∘ g;
+
+// Domain navigation operators
+// These operators allow working with the domain hierarchy and type paths
+let leafPath = n ⋯ Type;     // Path from leaf type n up to Type domain (n binds to most specific type)
+let upPath = n ⋰ Type;      // Move up from n in domain hierarchy to Type
+let downPath = Type ⋱ n;    // Move down from Type in domain hierarchy to n
+
+// Example: For value 1, the most specific leaf type is Int(32)
+1 : n ⋯ Type;              // n binds to Int(32), which has path to Type via PrimitiveType
 ```
 
 ## 5. Pattern Matching and Rewriting
