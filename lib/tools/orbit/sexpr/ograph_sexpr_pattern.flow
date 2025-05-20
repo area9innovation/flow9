@@ -25,6 +25,12 @@ export {
     // Check if a pattern is a backtick-style operator pattern like `op`(args)
     // Returns a pair with the operator name and variable name for args if matched
     isBacktickOperatorPattern(pattern : Sexpr) -> Maybe<Pair<string, string>>;
+    
+    // Helper function to check if a pattern is a negative domain match (!: expr Domain)
+    isNegativeDomainMatch(pattern : Sexpr) -> bool;
+    
+    // Function to match domain pattern against a node's domains
+    matchDomainPattern(graph : OGraph, nodeId : int, domainPattern : Sexpr, negated : bool, exprBindings : Tree<string, int>, tracing : bool) -> OSexprPatternResult;
 }
 
 // Main function for pattern matching in an OGraph using S-expressions
@@ -79,6 +85,154 @@ matchOGraphSexprPattern(graphName : string, pattern : Sexpr, callback : (Tree<st
     }
 }
 
+// Function already defined in sexpr_ograph_utils.flow
+// This is a reference to how it might be implemented
+/*
+isTypeAnnotation(pattern : Sexpr) -> bool {
+    switch (pattern) {
+        SSList(parts): {
+            if (length(parts) == 3) {
+                parts[0] == SSOperator(":");
+            } else {
+                false;
+            }
+        }
+        default: false;
+    }
+}
+*/
+
+// Check if a pattern is a negative domain match (!: expr Domain)
+isNegativeDomainMatch(pattern : Sexpr) -> bool {
+    switch (pattern) {
+        SSList(parts): {
+            if (length(parts) == 3) {
+                parts[0] == SSOperator("!:");
+            } else {
+                false;
+            }
+        }
+        default: false;
+    }
+}
+
+// Function to match domain pattern against a node's domains
+matchDomainPattern(graph : OGraph, nodeId : int, domainPattern : Sexpr, negated : bool, exprBindings : Tree<string, int>, tracing : bool) -> OSexprPatternResult {
+    nodeClass = lookupOClass(graph, nodeId);
+    
+    switch (nodeClass) {
+        Some(oclass): {
+            // Get list of domains this node belongs to
+            domainIds = oclass.node.belongsTo;
+            
+            if (tracing) {
+                println("DEBUG: Checking domains for node " + i2s(nodeId));
+                println("DEBUG: Node belongs to " + i2s(length(domainIds)) + " domains");
+                if (negated) println("DEBUG: Using NEGATIVE domain matching");
+            }
+            
+            // Special case: If domain pattern is a variable, just bind to all domains
+            if (switch (domainPattern) { SSVariable(__): true; default: false; }) {
+                // Domain pattern is a variable, bind to all domains
+                domainVar = switch (domainPattern) { SSVariable(name): name; default: ""; };
+                
+                if (length(domainIds) > 0) {
+                    // We have at least one domain, bind the variable to the first domain
+                    domainBindings = setTree(exprBindings, domainVar, domainIds[0]);
+                    if (tracing) println("DEBUG: Binding domain variable " + domainVar + " to domain ID " + i2s(domainIds[0]));
+                    OSexprPatternSuccess(domainBindings);
+                } else {
+                    // No domains to bind to
+                    if (tracing) println("DEBUG: No domains to bind to variable " + domainVar);
+                    // For negative match with no domains, this is actually a success
+                    if (negated) {
+                        if (tracing) println("DEBUG: Negative domain match with no domains is a success");
+                        OSexprPatternSuccess(exprBindings);
+                    } else {
+                        OSexprPatternFailure();
+                    }
+                }
+            } else {
+                // Domain pattern is not a variable, check for specific domain match
+                if (length(domainIds) == 0) {
+                    if (tracing) println("DEBUG: Node doesn't belong to any domains");
+                    // For negative match with no domains, this is a success (no domains match the pattern)
+                    if (negated) {
+                        if (tracing) println("DEBUG: Negative domain match with no domains is a success");
+                        OSexprPatternSuccess(exprBindings);
+                    } else {
+                        OSexprPatternFailure();
+                    }
+                } else {
+                    // Try to match each domain ID against our domain pattern
+                    matchFound = exists(domainIds, \domainId -> {
+                        domainSexpr = ograph2Sexpr(graph, domainId);
+                        
+                        if (tracing) {
+                            println("DEBUG: Checking domain ID " + i2s(domainId) + 
+                                    ": " + prettySexpr(domainSexpr) + 
+                                    " against pattern: " + prettySexpr(domainPattern));
+                        }
+                        
+                        // Match based on pattern type
+                        isMatch = switch (domainPattern) {
+                            SSConstructor(patternName): {
+                                // For constructor patterns, check if the domain has the same constructor
+                                constructorMatch = switch (domainSexpr) {
+                                    SSConstructor(actualName): actualName == patternName;
+                                    default: false;
+                                };
+                                
+                                if (tracing && constructorMatch) {
+                                    println("DEBUG: Domain constructor match found: " + patternName);
+                                }
+                                
+                                constructorMatch;
+                            }
+                            default: {
+                                // Direct equality for other types of patterns
+                                exactMatch = domainSexpr == domainPattern;
+                                
+                                if (tracing && exactMatch) {
+                                    println("DEBUG: Domain exact match found");
+                                }
+                                
+                                exactMatch;
+                            }
+                        };
+                        
+                        isMatch;
+                    });
+                    
+                    // For negative matching, we succeed when no domain matches the pattern
+                    if (negated) {
+                        if (!matchFound) {
+                            if (tracing) println("DEBUG: No domains matched the pattern - negative match succeeded");
+                            OSexprPatternSuccess(exprBindings);
+                        } else {
+                            if (tracing) println("DEBUG: At least one domain matched the pattern - negative match failed");
+                            OSexprPatternFailure();
+                        }
+                    } else {
+                        // For positive matching (normal case), we succeed when at least one domain matches
+                        if (matchFound) {
+                            if (tracing) println("DEBUG: At least one domain matched the pattern");
+                            OSexprPatternSuccess(exprBindings);
+                        } else {
+                            if (tracing) println("DEBUG: No matching domain found");
+                            OSexprPatternFailure();
+                        }
+                    }
+                }
+            }
+        }
+        None(): {
+            if (tracing) println("DEBUG: Node not found in graph");
+            OSexprPatternFailure();
+        }
+    }
+}
+
 // Match a Sexpr pattern at a specific node
 matchSexprPatternAtNode(graph : OGraph, nodeId : int, pattern : Sexpr, tracing : bool) -> OSexprPatternResult {
     root = findORoot(graph, nodeId);
@@ -91,9 +245,14 @@ matchSexprPatternAtNode(graph : OGraph, nodeId : int, pattern : Sexpr, tracing :
     
     if (tracing) println("DEBUG: Matching pattern with op: " + patternOp + ", at node: " + i2s(root));
     
-    // Special case for type annotations: (: expr Domain)
-    if (isTypeAnnotation(pattern)) {
-        if (tracing) println("DEBUG: Processing type annotation pattern (: operator)");
+    // Handle domain patterns (both positive and negative)
+    if (isTypeAnnotation(pattern) || isNegativeDomainMatch(pattern)) {
+        // Determine if this is a positive or negative domain match
+        negated = isNegativeDomainMatch(pattern);
+        operator = if (negated) "!:" else ":";
+        
+        if (tracing) println("DEBUG: Processing " + (if (negated) "negative" else "positive") + 
+                           " domain pattern (" + operator + " operator)");
         
         switch (pattern) {
             SSList(parts): {
@@ -104,104 +263,17 @@ matchSexprPatternAtNode(graph : OGraph, nodeId : int, pattern : Sexpr, tracing :
                 // First match the expression part against this node
                 switch (matchSexprPatternAtNode(graph, nodeId, expressionPattern, tracing)) {
                     OSexprPatternSuccess(exprBindings): {
-						// Found a match for the expression part
-						// Now verify domain membership
-						nodeClass = lookupOClass(graph, nodeId);
-						
-						switch (nodeClass) {
-						    Some(oclass): {
-						        // Get list of domains this node belongs to
-						        domainIds = oclass.node.belongsTo;
-						        
-						        if (tracing) {
-						            println("DEBUG: Checking domains for node " + i2s(nodeId));
-						            println("DEBUG: Node belongs to " + i2s(length(domainIds)) + " domains");
-						        }
-						        
-						        // Special case: If domain pattern is a variable, just bind to all domains
-						        if (switch (domainPattern) { SSVariable(__): true; default: false; }) {
-						            // Domain pattern is a variable, bind to all domains
-						            domainVar = switch (domainPattern) { SSVariable(name): name; default: ""; };
-						            
-						            if (length(domainIds) > 0) {
-						                // We have at least one domain, bind the variable to the first domain
-						                domainBindings = setTree(exprBindings, domainVar, domainIds[0]);
-						                if (tracing) println("DEBUG: Binding domain variable " + domainVar + " to domain ID " + i2s(domainIds[0]));
-						                OSexprPatternSuccess(domainBindings);
-						            } else {
-						                // No domains to bind to
-						                if (tracing) println("DEBUG: No domains to bind to variable " + domainVar);
-						                OSexprPatternFailure();
-						            }
-						        } else {
-						            // Domain pattern is not a variable, check for specific domain match
-						            if (length(domainIds) == 0) {
-						                if (tracing) println("DEBUG: Node doesn't belong to any domains");
-						                OSexprPatternFailure();
-						            } else {
-						                // Try to match each domain ID against our domain pattern
-						                matchFound = exists(domainIds, \domainId -> {
-						                    domainSexpr = ograph2Sexpr(graph, domainId);
-						                    
-						                    if (tracing) {
-						                        println("DEBUG: Checking domain ID " + i2s(domainId) + 
-						                                ": " + prettySexpr(domainSexpr) + 
-						                                " against pattern: " + prettySexpr(domainPattern));
-						                    }
-						                    
-						                    // Match based on pattern type
-						                    isMatch = switch (domainPattern) {
-						                        SSConstructor(patternName): {
-						                            // For constructor patterns, check if the domain has the same constructor
-						                            constructorMatch = switch (domainSexpr) {
-						                                SSConstructor(actualName): actualName == patternName;
-						                                default: false;
-						                            };
-						                            
-						                            if (tracing && constructorMatch) {
-						                                println("DEBUG: Domain constructor match found: " + patternName);
-						                            }
-						                            
-						                            constructorMatch;
-						                        }
-						                        default: {
-						                            // Direct equality for other types of patterns
-						                            exactMatch = domainSexpr == domainPattern;
-						                            
-						                            if (tracing && exactMatch) {
-						                                println("DEBUG: Domain exact match found");
-						                            }
-						                            
-						                            exactMatch;
-						                        }
-						                    };
-						                    
-						                    isMatch;
-						                });
-						                
-						                if (matchFound) {
-						                    if (tracing) println("DEBUG: At least one domain matched the pattern");
-						                    OSexprPatternSuccess(exprBindings);  // Return the expression match bindings
-						                } else {
-						                    if (tracing) println("DEBUG: No matching domain found");
-						                    OSexprPatternFailure();
-						                }
-						            }
-						        }
-						    }
-						    None(): {
-						        if (tracing) println("DEBUG: Node not found in graph");
-						        OSexprPatternFailure();
-						    }
-						}
+                        // Found a match for the expression part
+                        // Now verify domain membership using our extracted function
+                        matchDomainPattern(graph, nodeId, domainPattern, negated, exprBindings, tracing);
                     }
                     OSexprPatternFailure(): {
-                        if (tracing) println("DEBUG: Expression part of type annotation pattern didn't match");
+                        if (tracing) println("DEBUG: Expression part of domain pattern didn't match");
                         OSexprPatternFailure();
                     }
                 }
             }
-            default: OSexprPatternFailure(); // Should not happen if isTypeAnnotation is true
+            default: OSexprPatternFailure(); // Should not happen if isTypeAnnotation or isNegativeDomainMatch is true
         }
     } 
     // Special case for pattern variables (SSVariable in pattern context)

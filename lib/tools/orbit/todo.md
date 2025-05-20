@@ -10,8 +10,8 @@
 - Extract domain requirements on patterns and conditions
 - Use that to find topologic order of how to apply the rules - most specific first
 - Infer basic stuff about some function, and extract all the domains we get out of it.
-- With all domains, or only the most specific ones
-- Int(32). UInt(32).
+- Idempotency, mark function as hot, given probability distributions of inputs, then infer the best caching strategy
+- When we have a set of rules, then we extract that below a given domain, for example Type, saturate the rules until fixpoint, and then if there are some nodes connected to our root that are NOT annotated with Type, we have a type error there.
 
 *   **S-Expression Backend Migration:**
     ✓   **Verify Orbit <-> S-Expression Conversion Integrity:**
