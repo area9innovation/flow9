@@ -24,58 +24,76 @@ fBeh2state(fBeh : FBehaviour<?>) -> string {
 	}
 }
 
-createTransforms(useFLiftExpensive : bool) -> [Transform] {
-	createFLift = \fn : (int) -> flow -> if (useFLiftExpensive) FLiftExpensive(fn) else FLift(fn);
+createFLift(fn : (?) -> ??, fnName : string, useFLiftExpensive : bool) -> FFn<?, ??> {
+	fn2 = \v -> {
+		println("  call " + fnName + " with " + toString(v));
+		fn(v);
+	}
+	if (useFLiftExpensive) FLiftExpensive(fn2) else FLift(fn2);
+}
+
+createTransforms(useFLiftExpensive : bool) -> Pair<[Transform<int>], () -> void> {
+	createFLift1 = \fnName -> createFLift(idfn, fnName, useFLiftExpensive);
+	createFLiftT = \fn : (int) -> Transform, fnName -> createFLift(fn, fnName, useFLiftExpensive);
+	createFLiftBool = \fn : (bool) -> int, fnName -> createFLift(fn, fnName, useFLiftExpensive);
 
 	beh1 = make(1);
 	beh2 = make(2);
+	beh3 = make(3);
 
-	trans1 = fselect(beh1, createFLift(\v -> {
-		println("  call fn1");
-		v;
-	}));
-	trans2 = fselect(trans1, createFLift(\v -> {
-		println("  call fn2");
-		v;
-	}));
-	trans3 = fselect(beh2, createFLift(\v -> {
-		println("  call fn3");
-		v;
-	}));
-	trans4 = fselect2Lift(trans2, trans3, \v1, v2 -> {
-		println("  call fn4");
-		v1 + v2;
-	});
+	println("Creating trans1");
+	trans1 = fselect(beh1, createFLift1("fn1"));
+	println("Creating trans2");
+	trans2 = fselect(beh2, createFLift1("fn2"));
+	println("Creating trans3");
+	trans3 = fselect(beh3, createFLift1("fn3"));
+
+	println("Creating eq12");
+	eq12 = fequal(trans1, trans2);	// false
+	println("Creating eq23");
+	eq23 = fequal(trans2, trans3);	// false
+	println("Creating and");
+	andT = fandLazy(eq12, eq23);	// false
+
+	println("Creating trans4");
+	trans4 = fselect(andT, createFLiftBool(b2i, "fn4 (fselect(andT))"));
+	println("Creating trans5");
 	trans5 = fselect2Lift(trans4, trans3, \v1, v2 -> {
 		println("  call fn5");
 		v1 + v2;
 	});
+	println("Creating trans6");
 	trans6 = fselect2Lift(trans5, const(9), \v1, v2 -> {
 		println("  call fn6");
 		v1 + v2;
 	});
-	trans7 = fsubselect(trans6, createFLift(\__ -> {
-		println("  call fn7");
-		trans6;
-	}));
-	trans8 = fsubselect(const(9), createFLift(\__ -> {
-		println("  call fn8");
-		trans7;
-	}));
-	trans9 = fselect(trans8, createFLift(\v -> {
-		println("  call fn9");
-		v;
-	}));
+	println("Creating trans7");
+	trans7 = fsubselect(trans6, createFLiftT(\__ -> beh3, "fn7"));
+	println("Creating trans8");
+	trans8 = fsubselect(const(9), createFLiftT(\__ -> trans7, "fn8"));
+	println("Creating trans9");
+	trans9 = fselect(trans8, createFLift1("fn9"));
+	println("Creating trans10");
 	trans10 = fselect2Lift(trans8, trans9, \v1, v2 -> {
 		println("  call fn10");
 		v1 + v2;
 	});
-	[trans1, trans2, trans3, trans4, trans5, trans6, trans7, trans8, trans9, trans10];
+
+	Pair(
+		[trans1, trans2, trans3, trans4, trans5, trans6, trans7, trans8, trans9, trans10],
+		\ -> {
+			println("\n> Update one of the behaviors");
+			next(beh2, 1);
+		}
+	);
 }
 
 test(useFLiftExpensive : bool, reversSubscribe : bool) -> void {
-	println("Creating transforms");
-	transforms = createTransforms(useFLiftExpensive);
+	println("> Creating transforms");
+	transformsAndUpdFn = createTransforms(useFLiftExpensive);
+	transforms = transformsAndUpdFn.first;
+	updFn = transformsAndUpdFn.second;
+
 	count = length(transforms);
 
 	subscribeTransformIfNotInitialized = \idx -> {
@@ -93,20 +111,22 @@ test(useFLiftExpensive : bool, reversSubscribe : bool) -> void {
 	}
 
 	uns = if (reversSubscribe) {
-		println("Subscribing transforms from last to first");
+		println("\n> Subscribing transforms from last to first");
 		generate(0, count, \i -> {
 			subscribeTransformIfNotInitialized(count - 1 - i);
 		});
 	} else {
-		println("Subscribing transforms from first to last");
+		println("\n> Subscribing transforms from first to last");
 		mapi(transforms, \i, __ -> subscribeTransformIfNotInitialized(i));
 	}
 
-	println("Getting values");
+	println("\n> Getting values");
 	println(map(transforms, \trans -> fgetValue(trans)));
+	updFn();
+
 
 	iter(uns, \u -> applyList(u, apply0));
-	println("Done");
+	println("\n! Done");
 }
 
 main() {
