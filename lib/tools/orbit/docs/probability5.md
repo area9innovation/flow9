@@ -277,6 +277,43 @@ Expected size distributions might influence data structure selection (e.g., duri
 Rule "Data Structure Transformation Hint":
 	program_construct(uses=collection_var)
 		where collection_var : D_current_type, // e.g. LinkedList
+*   **5.3.7. Automatic Caching for Pure, Hot Functions**
+	*   If a function is determined to be `Pure` (no side effects) and "Hot" (frequently executed, based on profiling), Orbit can infer the potential benefits of caching its results. The choice of caching policy depends heavily on the inferred probability distribution of its inputs.
+	*   **Uniform Distribution of Inputs**: If the input values are likely to be uniformly distributed, a simple **Least Recently Used (LRU)** cache is often effective. This is because new, distinct inputs are common, and older, less relevant entries should be evicted.
+```orbit
+        f_pure_hot : Function(InputType) -> OutputType,
+        f_pure_hot : IsPure,
+        f_pure_hot : IsHot(call_frequency_high),
+        InputType : Distribution(Uniform(min, max))
+        ⊢ SuggestCachingPolicy(f_pure_hot, LRUCache(size_heuristic));
+        ```
+	*   **Power-Law / Zipfian Distribution of Inputs**: If inputs follow a power-law or Zipfian distribution (a few inputs are extremely common, while most are rare), a **Least Frequently Used (LFU)** or a **Most Frequently Used (MFU)** cache might be more appropriate. LFU ensures that popular items remain cached even if not recently accessed. MFU can be useful if the most frequent items are the ones most likely to be requested again soon, and older, less frequent items are less important. The choice between LFU and MFU can depend on access patterns and cache size.
+```orbit
+        f_pure_hot : Function(InputType) -> OutputType,
+        f_pure_hot : IsPure,
+        f_pure_hot : IsHot(call_frequency_high),
+        InputType : Distribution(PowerLaw(alpha)) or InputType : Distribution(Zipf(s))
+        ⊢ SuggestCachingPolicy(f_pure_hot, LFUCache(size_heuristic));
+        // or SuggestCachingPolicy(f_pure_hot, MFUCache(size_heuristic));
+        ```
+	*   **Categorical / Small Discrete Set of Inputs**: If the function inputs come from a small, fixed set of discrete values (Categorical distribution with few categories), a **direct lookup table or a simple array/map-based cache** that covers all possible inputs might be optimal. This essentially precomputes and stores all possible results.
+```orbit
+        f_pure_hot : Function(InputType) -> OutputType,
+        f_pure_hot : IsPure,
+        f_pure_hot : IsHot(call_frequency_high),
+        InputType : Distribution(Categorical(probabilities)) where Cardinality(InputType) < small_threshold
+        ⊢ SuggestCachingPolicy(f_pure_hot, FullLookupCache());
+        ```
+	*   **Other Distributions / Complex Cases**: For other distributions or when inputs are complex data structures, more sophisticated caching strategies or adaptive caching might be considered. This could involve analyzing the distribution of specific features of the input data. Orbit might suggest a default (e.g., LRU) or flag it for further analysis.
+```orbit
+        f_pure_hot : Function(InputType) -> OutputType,
+        f_pure_hot : IsPure,
+        f_pure_hot : IsHot(call_frequency_high),
+        InputType : Distribution(OtherComplexDist)
+        ⊢ SuggestCachingPolicy(f_pure_hot, AdaptiveCache(size_heuristic)) or SuggestCachingPolicy(f_pure_hot, DefaultLRUCache(size_heuristic));
+        ```
+	*   The `size_heuristic` for caches would be determined by factors like available memory, the cost of computing the function, and the frequency of calls.
+
 					collection_var : HasSizeDistribution(D_size),
 					Mean(D_size) > array_list_threshold_size, // If list expected to be large
 					PerformanceModel(ArrayList, D_size) > PerformanceModel(LinkedList, D_size)
