@@ -163,6 +163,7 @@ getRuntimeFunctions(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> Tre
 		Pair("addOGraphWithSub", RuntimeFn(3, \result -> addSexprWithSubFunction(result))),
 		Pair("extractOGraph", RuntimeFn(2, \result -> extractOGraphSexprFunction(result))),
 		Pair("matchOGraphPattern", RuntimeFn(3, \result -> matchOGraphSexprPatternFunction(evaluator, result))),
+		Pair("matchSExprNodeOneLevel", RuntimeFn(4, \result -> matchSExprNodeOneLevelFunction(result))),
 		
 		// Orbit-SExpr conversion functions
 		Pair("orbit2sexpr", RuntimeFn(1, \result -> orbit2sexprFunction(result))),
@@ -1899,4 +1900,89 @@ evalWithBindingsSexprFunction(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpE
 			SSList([]);
 		}
 	}
+}
+
+// Implementation of matchSExprNodeOneLevel function
+// This performs one-level pattern matching without domain handling
+matchSExprNodeOneLevelFunction(evalResult : FnArgResult) -> Sexpr {
+    // Extract arguments
+    graphName = getSString(evalResult.args[0], "matchSExprNodeOneLevel.graphName");
+    nodeId = getSInt(evalResult.args[1], "matchSExprNodeOneLevel.nodeId");
+    pattern = evalResult.args[2];
+    
+    // Convert the bindings from SSList/SSVector of pairs to array of Pairs
+    bindings = switch (evalResult.args[3]) {
+        SSList(pairs): {
+            map(pairs, \pair -> {
+                switch (pair) {
+                    SSList(items): {
+                        if (length(items) >= 2) {
+                            varName = getSString(items[length(items) - 2], "matchSExprNodeOneLevel.binding.name");
+                            value = getSInt(items[length(items) - 1], "matchSExprNodeOneLevel.binding.value");
+                            Pair(varName, value);
+                        } else {
+                            println("ERROR: Each binding must be a list of exactly 2 elements");
+                            Pair("", -1); // Invalid binding
+                        }
+                    }
+                    default: {
+                        println("ERROR: Each binding must be a list or vector");
+                        Pair("", -1); // Invalid binding
+                    }
+                }
+            });
+        }
+        SSVector(pairs): {
+            map(pairs, \pair -> {
+                switch (pair) {
+                    SSList(items): {
+                        if (length(items) >= 2) {
+                            varName = getSString(items[length(items) - 2], "matchSExprNodeOneLevel.binding.name");
+                            value = getSInt(items[length(items) - 1], "matchSExprNodeOneLevel.binding.value");
+                            Pair(varName, value);
+                        } else {
+                            println("ERROR: Each binding must be a list of exactly 2 elements");
+                            Pair("", -1); // Invalid binding
+                        }
+                    }
+                    default: {
+                        println("ERROR: Each binding must be a list or vector");
+                        Pair("", -1); // Invalid binding
+                    }
+                }
+            });
+        }
+        default: {
+            println("ERROR: matchSExprNodeOneLevel fourth argument must be a list or vector of bindings");
+            [];
+        }
+    };
+    
+    // Get tracing parameter (optional fifth argument)
+    tracing = if (length(evalResult.args) > 4) {
+        getSBool(evalResult.args[4], "matchSExprNodeOneLevel.tracing");
+    } else false;
+    
+    // Use the OGraph registry to get the graph
+    switch (lookupTree(^ographRegistry, graphName)) {
+        Some(graph): {
+            // Call the one-level matcher
+            result = matchSExprNodeOneLevel(graph, nodeId, pattern, bindings, tracing);
+            
+            // Convert result back to SSList format
+            // Format: [success, [[var1, id1], [var2, id2], ...]]
+            success = result.first;
+            resultBindings = result.second;
+            
+            bindingsList = map(resultBindings, \binding -> {
+				SSList([SSConstructor("Pair"), SSString(binding.first), SSInt(binding.second)]);
+            });
+            
+            SSList([SSBool(success), SSList(bindingsList)]);
+        }
+        None(): {
+            println("ERROR: OGraph '" + graphName + "' not found");
+            SSList([SSBool(false), SSList([])]);
+        }
+    }
 }
