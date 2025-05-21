@@ -1,6 +1,7 @@
 import lib/reflect;
 import lib/array;
 import lib/graph;
+import lib/match;
 
 // Domain-aware rewriting library for OGraph manipulation
 // This library provides functions for pattern matching, rewriting, and
@@ -12,16 +13,22 @@ import lib/graph;
 
 // Apply a single rewrite pattern and replacement to a graph,
 // correctly handling domain annotations and conditions
-fn applyRewriteRule(graph, pattern, replacement, condition, ruleName) = (
+fn applyRewriteRule(graph, root, pattern, replacement, condition, ruleName) = (
     println("\nApplying rule: " + ruleName);
     println("Pattern: " + prettySexpr(pattern));
     println("Replacement: " + prettySexpr(replacement));
     println("Condition: " + prettySexpr(condition));
     
     // Apply the pattern match
-    let matches = matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
+
+	// matchOGraphPattern was the original one.
+
+    let matches = matchPatternTop(graph, root, pattern, \(eclassId, bindings) . (
         //println("Match found at ID: " + i2s(eclassId));
-        //println("Bindings: " + prettyOrbit(bindings));
+		let values = map(bindings, \b -> (
+			Pair(b[1], extractOGraph(graph, b[2]))
+		));
+        println("Bindings: " + prettyOrbit(values));
         // THE CORRECT SEQUENCE FOR DOMAIN-AWARE REWRITING:
         // Step 1: Check if the condition is satisfied
         let shouldApplyRule = if (condition == true) then (
@@ -29,20 +36,13 @@ fn applyRewriteRule(graph, pattern, replacement, condition, ruleName) = (
             true
         ) else (
             // Resolve bindings to values from the graph
-			let values = map(bindings, \b -> (
-				b is (Pair(k, v) => (Pair(k, extractOGraph(graph, v))));
-			));
 			evalWithBindings(condition, values)
         );
-        
         if (shouldApplyRule) then (
             // Step 2: Apply the replacement (only if condition is true)
             // Modern approach using direct eclass ID substitution
             // This is more efficient and works directly with eclass IDs
             let newId = addOGraphWithSub(graph, replacement, bindings);
-			let values = map(bindings, \b -> (
-				b is (Pair(k, v) => (Pair(k, extractOGraph(graph, v))));
-			));
             println("Rule '" + ruleName + "' applied. ID: " + i2s(newId) + ": " + prettyOrbit(extractOGraph(graph, newId)) + " was " + prettyOrbit(extractOGraph(graph, eclassId)) + " at " + i2s(eclassId) + " from replacement " + prettySexpr(replacement) + " and values " + prettySexpr(values));
 
             let symbolic = mergeOGraphNodes(graph, newId, eclassId);
@@ -54,7 +54,6 @@ fn applyRewriteRule(graph, pattern, replacement, condition, ruleName) = (
             let success = mergeOGraphNodes(graph, quasi, eclassId);
             // setFileContent("merged" + i2s(newId) + ".dot", ograph2dot(graph));
 			success
-
         ) else (
             // println("Condition not satisfied, rule not applied");
 			0
@@ -89,7 +88,7 @@ fn applyAndTrackRule(acc, pattern, replacement, condition, ruleName) = (
         let fromExpr = extractOGraph(ograph, exprId);
         
         // Apply the rule
-        let matches = applyRewriteRule(ograph, pattern, replacement, condition, ruleName);
+        let matches = applyRewriteRule(ograph, exprId, pattern, replacement, condition, ruleName);
         
         // If rule was applied, track it in the graph
         if (matches > 0) then (
