@@ -74,6 +74,10 @@
     *   Implement canonical forms for `Dₙ`, `Aₙ`. Test with `tests/dihedral.orb`, `tests/alternating.orb`.
     *   Implement GLEX rules for polynomial rings. Test with `tests/glex.orb`, `tests/polynomials.orb`.
     *   Implement canonical forms for group products. Test with `tests/group_products.orb`.
+
+- Add matrix mult algorithm for  M * M^T from this https://arxiv.org/abs/2505.09814
+- Find the matrix mults deepmind found
+
 *   **Algorithms & Derivations:**
     *   Implement rules for Strassen derivation steps. Test with `tests/strassen.orb`.
     *   Implement rules for Karatsuba derivation steps. Test with `tests/karatsuba.orb`.
