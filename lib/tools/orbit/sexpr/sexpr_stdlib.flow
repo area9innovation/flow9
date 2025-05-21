@@ -163,7 +163,6 @@ getRuntimeFunctions(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> Tre
 		Pair("addOGraph", RuntimeFn(2, \result -> addSexpr2OGraphFunction(result))),
 		Pair("addOGraphWithSub", RuntimeFn(3, \result -> addSexprWithSubFunction(result))),
 		Pair("extractOGraph", RuntimeFn(2, \result -> extractOGraphSexprFunction(result))),
-		Pair("matchOGraphPattern", RuntimeFn(3, \result -> matchOGraphSexprPatternFunction(evaluator, result))),
 		Pair("matchSExprNodeOneLevel", RuntimeFn(4, \result -> matchSExprNodeOneLevelFunction(result))),
 		Pair("decomposeSexpr", RuntimeFn(1, \result -> decomposeSexprFunction(result))),
 		
@@ -237,50 +236,6 @@ getRuntimeFunctions(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> Tre
 			
 			// Convert OrMath_expr back to Sexpr for return
 			orbit2sexpr(orbitExpr);
-		})),
-		Pair("matchOGraphOrbitPattern", RuntimeFn(3, \result -> {
-			// Extract arguments
-			graphName = getSString(result.args[0], "matchOGraphOrbitPattern.name");
-			pattern = sexpr2orbit(result.args[1]);
-			callback = result.args[2];
-			
-			// Check that the callback is a lambda
-			switch (callback) {
-				SSSpecialForm(form, _): {
-					if (form == SLambda()) {
-						// Store the results of pattern matching
-						results = ref [];
-						
-						// Create a callback adapter that will be called for each match
-						matchCallback = \bindings, eclassId -> {
-							// Convert bindings to S-expression friendly format
-							bindingsList = map(getTreeKeys(bindings), \key -> {
-								value = lookupTreeDef(bindings, key, -1);
-								SSList([SSString(key), SSInt(value)]);
-							});
-							
-							// Create the arguments for the callback
-							args = [SSList(bindingsList), SSInt(eclassId)];
-							
-							// Save the binding information
-							results := concat(^results, args);
-						};
-						
-						// Call the pattern matcher (with tracing disabled)
-						matchCount = matchOGraphOrbitPattern(graphName, pattern, matchCallback, false);
-						
-						// Return the number of matches and the results
-						SSList([SSInt(matchCount), SSList(^results)]);
-					} else {
-						println("ERROR: matchOGraphOrbitPattern callback must be a lambda");
-						SSInt(0);
-					}
-				}
-				default: {
-					println("ERROR: matchOGraphOrbitPattern callback must be a lambda");
-					SSInt(0);
-				}
-			}
 		})),
 		
 		// Arithmetic operators
@@ -1592,44 +1547,6 @@ extractOGraphSexprFunction(evalResult : FnArgResult) -> Sexpr {
 	extractOGraphSexpr(name, nodeId, false);
 }
 
-// Implementation of matchOGraphSexprPattern function
-matchOGraphSexprPatternFunction(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, evalResult : FnArgResult) -> Sexpr {
-	// Get the graph name
-	name = getSString(evalResult.args[0], "matchOGraphSexprPattern.name");
-	
-	// Get the pattern
-	pattern = evalResult.args[1];
-	
-	// Get the callback function
-	callback = evalResult.args[2];
-	
-	// Store the results of pattern matching
-	results = ref [];
-	
-	// Create a callback that will be called for each match
-	callbackFn = \bindings, eclassId -> {
-		// Convert bindings to S-expression friendly format
-		bindingsList = map(getTreeKeys(bindings), \key -> {
-			value = lookupTreeDef(bindings, key, -1);
-			SSList([SSConstructor("Pair"), SSString(key), SSInt(value)]);
-		});
-		// Create the arguments for the callback
-		call = SSList([callback, SSVector(bindingsList), SSInt(eclassId)]);
-		res = evaluator(evalResult.env, call);
-
-		// Save the expression in the results
-		results := arrayPush(^results, res.value);
-	};
-	
-	// Call the pattern matcher with our callback
-	// println("DEBUG SExpr: Pattern for matching: " + prettySexpr(pattern));
-	matchCount = matchOGraphSexprPattern(name, pattern, callbackFn, isUrlParameterTrue("trace"));
-	
-	// Return the number of matches and the results including expressions
-	// This is the key fix - we now include the actual expressions in the results
-	SSList([SSInt(matchCount), SSList(^results)]);
-}
-
 // Implementation of addDomainToNode function
 addDomainToNodeSexpr(evalResult : FnArgResult) -> Sexpr {
 	// Get the graph name
@@ -1818,15 +1735,6 @@ extractOGraph(name : string, nodeId : int) -> Sexpr {
 	extractOGraphSexpr(name, nodeId, false);
 }
 
-
-// Match an Orbit math expression pattern in an OGraph
-matchOGraphOrbitPattern(graphName : string, pattern : OrMath_expr, callback : (Tree<string, int>, int) -> void, tracing : bool) -> int {
-	// Convert the OrMath_expr pattern to Sexpr
-	patternSexpr = orbit2sexpr(pattern);
-	
-	// Use the S-expression pattern matching
-	matchOGraphSexprPattern(graphName, patternSexpr, callback, tracing);
-}
 
 // Implementation of orbit2sexpr function for the runtime environment
 orbit2sexprFunction(evalResult : FnArgResult) -> Sexpr {
