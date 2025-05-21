@@ -14,10 +14,10 @@ import lib/match;
 // Apply a single rewrite pattern and replacement to a graph,
 // correctly handling domain annotations and conditions
 fn applyRewriteRule(graph, root, pattern, replacement, condition, ruleName) = (
-    println("\nApplying rule: " + ruleName);
-    println("Pattern: " + prettySexpr(pattern));
-    println("Replacement: " + prettySexpr(replacement));
-    println("Condition: " + prettySexpr(condition));
+    println("\nApplying rule: " + ruleName + " " + prettySexpr(pattern) + " -> " + prettySexpr(replacement) + "   to   " + prettySexpr(extractOGraph(graph, root)));
+    //println("Pattern: " + prettySexpr(pattern));
+    //println("Replacement: " + prettySexpr(replacement));
+    //println("Condition: " + prettySexpr(condition));
     
     // Apply the pattern match
 
@@ -147,6 +147,9 @@ fn applyRulesOneRound(acc, rules) = (
 				(p ⊂ q) => (
 					applyAndTrackRule(acc, `(secret : ($p)), `(secret : ($q)), true, "Domain subset")
 				);
+				[name, pattern, replacement, condition] => (
+					applyAndTrackRule(acc, pattern, replacement, condition, name)
+				);
 				u => (
 					println("Invalid rule format: " + prettySexpr(u));
 					acc
@@ -160,42 +163,48 @@ fn applyRulesOneRound(acc, rules) = (
 fn extractRewriteResult(acc) = (
     acc is (RewriteAcc(ograph, graph, exprId, originalExpr) => (
         let finalExpr = extractOGraph(ograph, exprId);
-        
-        // Find the shortest path from original to final expression
-        let path = shortestPath(graph, originalExpr, finalExpr);
-        path is (
-            Path(found, nodes, _) => (
-                if (found && length(nodes) > 1) then (
-                    println("\nRewrite sequence from original to final expression:");
-                    
-                    // Print each step in the rewrite sequence
-                    iteri(tail(nodes), \_, i -> (
-                        let from = nodes[i];
-                        let to = nodes[i + 1];
-                        
-                        // Get the rule information from the edge
-                        let edges = getEdgesFrom(graph, from);
-                        let edge = filter(edges, \e -> e is (Edge(_, edgeTo, _) => edgeTo == to))[0];
-                        
-                        edge is (
-                            Edge(_, _, Rule(name, _, _, _)) => (
-                                println(i2s(i + 1) + ". " + name + ": " + 
-                                    prettyOrbit(from) + " => " + prettyOrbit(to));
-                                0
-                            );
-                            _ => 0
-                        )
-                    ));
-                ) else if (!found) then (
-                    println("No rewrite path found from original to final expression.");
-                    0
-                ) else (
-                    // Only one node, no changes applied
-                    println("No rewrites applied - original expression unchanged.");
-                    0
-                )
-            )
-        );
+
+		if (finalExpr == originalExpr) then (
+			println("No rewrites applied - original expression unchanged.");
+		) else (
+			// Find the shortest path from original to final expression
+			let path = shortestPath(graph, originalExpr, finalExpr);
+			path is (
+				Path(found, nodes, _) => (
+					if (found && length(nodes) > 1) then (
+						println("\nRewrite sequence from original to final expression:");
+						
+						// Print each step in the rewrite sequence
+						iteri(tail(nodes), \_, i -> (
+							let from = nodes[i];
+							let to = nodes[i + 1];
+							
+							// Get the rule information from the edge
+							let edges = getEdgesFrom(graph, from);
+							let edge = filter(edges, \e -> e is (Edge(_, edgeTo, _) => edgeTo == to))[0];
+							
+							edge is (
+								Edge(_, _, Rule(name, _, _, _)) => (
+									println(i2s(i + 1) + ". " + name + ": " + 
+										prettyOrbit(from) + " => " + prettyOrbit(to));
+									0
+								);
+								_ => 0
+							)
+						));
+					) else if (!found) then (
+						println("No rewrite path found from original to final expression.");
+						println("Original expression: " + prettySexpr(originalExpr));
+						println("Final expression: " + prettySexpr(finalExpr));
+						0
+					) else (
+						// Only one node, no changes applied
+						println("No rewrites applied - original expression unchanged.");
+						0
+					)
+				)
+			)
+		);
         
         // Return the final transformed expression and the rewrite graph
         Triple(finalExpr, ograph, graph)
@@ -216,6 +225,7 @@ fn applyRules(expr, rules) = (
 );
 
 // Apply rules until saturation (fixed point)
+// Returns Triple(finalExpr, ograph, graph)
 fn applyRulesUntilFixedPoint(expr, rules, maxIterations) = (
     // Initialize the rewrite engine
     let acc = initRewriteEngine(expr);
