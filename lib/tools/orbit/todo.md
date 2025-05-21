@@ -7,9 +7,10 @@
 ✓ Get $(a+b) working in ograph
 ✓ Build graph of domains. Export to graphviz for inspection
 ✓ We can not match of ||(args)
-- Extract domain requirements on patterns and conditions
-- Use that to find topologic order of how to apply the rules - most specific first
+- Extract domain requirements on patterns and conditions. See lib/domain_utils.orb.
+- Use that to find topologic order of how to apply the rules - most specific first. See lib/domain_utils.orb.
 - tests/domain_subset.orb does not work yet. We do not do unquoting in the domain substitution yet, like we do for rewrites.
+  - Requires us to do matching in the Orbit side of things. See fun4.orb
 - Infer basic stuff about some function, and extract all the domains we get out of it.
 - Some syntax to allow
     if cond then trueExpr : t ⋯ Type else falseExpr : t ⋯ Type -> (if cond : Bool then trueExpr else falseExpr) : t,
