@@ -1,0 +1,129 @@
+// fun4.orb - OGraph pattern matching in Orbit using the new primitives
+import lib/array;
+
+// Function to quote expressions (prevents evaluation)
+fn quote(a : ast) = a;
+
+// Helper to find a binding in the bindings list
+fn findBinding(bindings, name) = (
+    fold(bindings, -1, \acc, pair -> 
+        if (acc != -1) then acc
+        else if (pair[0] == name) then pair[1]
+        else -1
+    )
+);
+
+// Add a new binding to the list if not already present
+fn addBinding(bindings, name, id) = (
+    let existing = findBinding(bindings, name);
+    if (existing != -1) then bindings  // Already exists
+    else arrayPush(bindings, [name, id])
+);
+
+// Check if a node belongs to a domain
+fn belongsToDomain(graphName, nodeId, domainId) = (
+    // This would need a native function to check, for now we'll simulate
+    // by checking if the domain is in the node's domains list
+    let result = getONodeBelongsTo(graphName, nodeId);
+    exists(result, \d -> d == domainId)
+);
+
+// Function to match a pattern against a node with bindings
+fn matchPattern(graphName, nodeId, pattern, bindings) = (
+    // Get decomposed pattern
+    let patternInfo = decomposeSexpr(pattern);
+    let patternOp = patternInfo[0];
+    let patternChildren = patternInfo[1];
+    
+    // Handle domain patterns
+    if (patternOp == "Call" && length(patternChildren) == 3) then (
+        let callOp = decomposeSexpr(patternChildren[0])[0];
+        
+        if (callOp == ":") then (
+            // Handle positive domain pattern: (: expr domain)
+            let exprPattern = patternChildren[1];
+            let domainPattern = patternChildren[2];
+            
+            // First match the expression
+            let exprResult = matchPattern(graphName, nodeId, exprPattern, bindings);
+            if (!exprResult[0]) then [false, []]
+            else (
+                // Try to add the domain to get its ID
+                let domainId = addOGraph(graphName, domainPattern);
+                
+                // Check if node belongs to domain
+                if (belongsToDomain(graphName, nodeId, domainId)) then exprResult
+                else [false, []]
+            )
+        ) else if (callOp == "!:") then (
+            // Handle negative domain pattern: (!: expr domain)
+            let exprPattern = patternChildren[1];
+            let domainPattern = patternChildren[2];
+            
+            // First match the expression
+            let exprResult = matchPattern(graphName, nodeId, exprPattern, bindings);
+            if (!exprResult[0]) then [false, []]
+            else (
+                // Try to add the domain to get its ID
+                let domainId = addOGraph(graphName, domainPattern);
+                
+                // Check if node does NOT belong to domain
+                if (!belongsToDomain(graphName, nodeId, domainId)) then exprResult
+                else [false, []]
+            )
+        ) else matchSExprNodeOneLevel(graphName, nodeId, pattern, bindings)
+    ) else (
+        // For regular patterns, use our primitive one-level matcher
+        matchSExprNodeOneLevel(graphName, nodeId, pattern, bindings)
+    )
+);
+
+// Test it with a simple example
+let g = makeOGraph("test");
+
+// Add a complex expression
+let expr = quote(2*x + 3*y);
+let exprId = addOGraph(g, expr);
+
+println("Expression added to graph:");
+println(extractOGraph(g, exprId));
+
+// Test matching
+println("\nTest basic variable matching:");
+let pattern1 = quote(2*a);
+println("Pattern: " + prettyOrbit(pattern1));
+let result1 = matchPattern(g, exprId, pattern1, []);
+println("Match result: " + prettyOrbit(result1));
+
+println("\nTest operator pattern matching:");
+let pattern2 = quote(a + b);
+println("Pattern: " + prettyOrbit(pattern2));
+let result2 = matchPattern(g, exprId, pattern2, []);
+println("Match result: " + prettyOrbit(result2));
+
+// Add a domain to part of the expression
+let term1 = addOGraph(g, quote(2*x));
+let numDomain = addOGraph(g, quote(Number));
+addDomainToNode(g, term1, numDomain);
+
+// Test domain matching
+println("\nTest domain matching:");
+let pattern3 = quote(c : Number);
+println("Pattern with domain: " + prettyOrbit(pattern3));
+let result3 = matchPattern(g, term1, pattern3, []);
+println("Domain match result: " + prettyOrbit(result3));
+
+// Test negative domain matching
+println("\nTest negative domain matching:");
+let pattern4 = quote(c !: String);
+println("Pattern with negative domain: " + prettyOrbit(pattern4));
+let result4 = matchPattern(g, term1, pattern4, []);
+println("Negative domain match result: " + prettyOrbit(result4));
+
+// Compare with the native Flow implementation
+println("\nComparing with native Flow implementation:");
+matchOGraphPattern(g, quote(a + b), \bindings, eclass -> (
+    println("Native implementation matched!");
+    println("Bindings: " + prettyOrbit(bindings));
+    println("at eclass: " + i2s(eclass));
+));
