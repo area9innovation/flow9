@@ -358,51 +358,6 @@ printlnONode(node : ONode) -> void {
            i2s(length(node.belongsTo)) + " domains, " + orbitValue2String(node.value) + ")");
 }
 
-// Helper to get domain ID from a pattern
-getSexprDomainId(graph : OGraph, domainPattern : Sexpr, tracing : bool) -> int {
-    // In a real implementation, we would need to find existing domain entries
-    // This is a simplified approach - in a full implementation, we would use sexp2OGraphWithSubstitution
-    domainId = match_Sexpr(domainPattern, graph, tracing);
-    
-    if (tracing) {
-        println("DEBUG: Domain '" + prettySexpr(domainPattern) + "' has ID " + i2s(domainId));
-    }
-    
-    domainId;
-}
-
-// Simplified function to add an S-expression to the graph for pattern matching
-// In a real implementation, we would use sexp2OGraphWithSubstitution
-match_Sexpr(expr : Sexpr, graph : OGraph, tracing : bool) -> int {
-    // Use our enhanced decomposition function to get all components
-    components = decomposeSexpr(expr);
-    nodeType = components.first;
-    children = components.second;
-    nodeValue = components.third;
-    
-    // Process based on the node type and value
-    if (isONodePrimitive(ONode(nodeType, [], [], nodeValue))) {
-        // For primitives, we can directly create and insert the node
-        insertONode(graph, ONode(nodeType, [], [], nodeValue));
-    } else {
-        // For composite nodes, process all children recursively
-        childIds = map(children, \child -> match_Sexpr(child, graph, tracing));
-        
-        if (isTypeAnnotation(expr)) {
-            // Special handling for type annotations
-            baseId = childIds[0];
-            domainId = childIds[1];
-            
-            // Add the domain to the base node
-            addBelongsToONode(graph, baseId, domainId);
-            baseId;
-        } else {
-            // Regular node creation
-            insertONode(graph, ONode(nodeType, childIds, [], nodeValue));
-        }
-    }
-}
-
 // Match all children of an operation
 matchSexprAllChildren(graph : OGraph, childIds : [int], patterns : [Sexpr], 
                       bindings : Tree<string, int>, tracing : bool) -> OSexprPatternResult {
@@ -474,116 +429,66 @@ mergeSexprBindings(graph : OGraph, a : Tree<string, int>, b : Tree<string, int>)
 // Returns a Pair containing success (bool) and updated bindings array
 matchSExprNodeOneLevel(graph : OGraph, nodeId : int, pattern : Sexpr, bindings : [Pair<string, int>], tracing : bool) -> Pair<bool, [Pair<string, int>]> {
     root = findORoot(graph, nodeId);
-    
-    // First handle pattern variables (SSVariable in pattern context)
-    if (switch(pattern) { SSVariable(__): true; default: false; }) {
-        switch(pattern) {
-            SSVariable(varName): {
-                if (varName != "") {
-                    // Check if this variable is already bound
-                    existingBinding = find(bindings, \binding -> binding.first == varName);
-                    
-                    switch (existingBinding) {
-                        Some(binding): {
-                            // Variable is already bound, must be consistent
-                            if (findORoot(graph, binding.second) == root) {
-                                // Matched consistently
-                                if (tracing) println("DEBUG: Consistent binding for " + varName);
-                                Pair(true, bindings);
-                            } else {
-                                // Inconsistent binding
-                                if (tracing) println("DEBUG: Inconsistent binding for " + varName);
-                                Pair(false, []);
-                            }
-                        }
-                        None(): {
-                            // New binding
-                            if (tracing) println("DEBUG: New binding: " + varName + " = " + i2s(root));
-                            newBindings = concat(bindings, [Pair(varName, root)]);
-                            Pair(true, newBindings);
-                        }
-                    }
-                } else {
-                    // Empty variable name is not valid
-                    Pair(false, []);
-                }
-            }
-            default: Pair(false, []); // Should not happen
-        }
-    } else {
-        // Get the ONode for this node
-        switch (lookupOClass(graph, root)) {
-            Some(oclass): {
-                node = oclass.node;
-                
-                // Use our enhanced decomposition function to get all components
-                components = decomposeSexpr(pattern);
-                patternOp = components.first;
-                patternChildren = components.second;
-                patternValue = components.third;
-                
-                // Handle backtick operator patterns
-                backtickPattern = isBacktickOperatorPattern(pattern);
-                
-                switch(backtickPattern) {
-                    Some(opAndVar): {
-                        operatorName = opAndVar.first;
-                        varName = opAndVar.second;
-                        
-                        // Match either SpecialForm or regular operator
-                        matchesSpecialForm = (node.op == "SpecialForm" && 
-                            switch(node.value) {
-                                OrbitString(formName): formName == operatorName;
-                                default: false;
-                        });
-                        
-                        if (matchesSpecialForm || operatorName == node.op) {
-                            // Bind the entire node to the variable
-                            existingBinding = find(bindings, \binding -> binding.first == varName);
-                            
-                            switch (existingBinding) {
-                                Some(binding): {
-                                    // Variable already bound, must be consistent
-                                    if (findORoot(graph, binding.second) == root) {
-                                        Pair(true, bindings);
-                                    } else {
-                                        Pair(false, []);
-                                    }
-                                }
-                                None(): {
-                                    // New binding
-                                    newBindings = concat(bindings, [Pair(varName, root)]);
-                                    Pair(true, newBindings);
-                                }
-                            }
-                        } else {
-                            Pair(false, []);
-                        }
-                    }
-                    None(): {
-                        // Normal pattern matching
-                        nodeOp = node.op;
-                        nodeChildren = node.children;
-                        
-                        if (patternOp == nodeOp && patternValue == node.value) {
-                            // Match all children if counts match
-                            if (length(patternChildren) == length(nodeChildren)) {
-                                matchAllChildrenOneLevel(graph, nodeChildren, patternChildren, bindings, tracing);
-                            } else {
-                                Pair(false, []);
-                            }
-                        } else {
-                            Pair(false, []);
-                        }
-                    }
-                }
-            }
-            None(): {
-                if (tracing) println("DEBUG: Node not found in graph");
-                Pair(false, []);
-            }
-        }
-    }
+	switch (pattern) {
+		SSVariable(varName): {
+			if (varName != "") {
+				// Check if this variable is already bound
+				existingBinding = find(bindings, \binding -> binding.first == varName);
+				
+				switch (existingBinding) {
+					Some(binding): {
+						// Variable is already bound, must be consistent
+						if (findORoot(graph, binding.second) == root) {
+							// Matched consistently
+							if (tracing) println("DEBUG: Consistent binding for " + varName);
+							Pair(true, bindings);
+						} else {
+							// Inconsistent binding
+							if (tracing) println("DEBUG: Inconsistent binding for " + varName);
+							Pair(false, []);
+						}
+					}
+					None(): {
+						// New binding
+						if (tracing) println("DEBUG: New binding: " + varName + " = " + i2s(root));
+						newBindings = concat(bindings, [Pair(varName, root)]);
+						Pair(true, newBindings);
+					}
+				}
+			} else {
+				// Empty variable name is not valid
+				Pair(false, []);
+			}
+		}
+		default: {
+			// Get the ONode for this node
+			switch (lookupOClass(graph, root)) {
+				Some(oclass): {
+					node = oclass.node;
+					
+					// Use our enhanced decomposition function to get all components
+					components = decomposeSexpr(pattern);
+					patternOp = components.first;
+					patternChildren = components.second;
+					patternValue = components.third;
+					// Normal pattern matching
+					nodeOp = node.op;
+					nodeChildren = node.children;
+					
+					if (patternOp == nodeOp && patternValue == node.value) {
+						println("DEBUG: Matching pattern with op: " + patternOp + ", at node: " + i2s(root));
+						Pair(true, []);
+					} else {
+						Pair(false, []);
+					}
+				}
+				None(): {
+					if (tracing) println("DEBUG: Node not found in graph");
+					Pair(false, []);
+				}
+			}
+		}
+	}
 }
 
 // Match all children of an operation
