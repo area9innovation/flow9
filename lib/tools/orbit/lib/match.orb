@@ -66,7 +66,7 @@ fn matchPatternRec(graphName, depth, nodeId, pattern, bindings, matchFn) = (
 		);
 		e => (
 			let dec = decomposeSexpr(pattern);
-			println(i2s(depth) + ": Matching root nodeId " + i2s(nodeId) + " with root of pattern " + prettySexpr(pattern) + " node " + extractOGraph(graphName, nodeId));
+			// println(i2s(depth) + ": Matching root nodeId " + i2s(nodeId) + " with root of pattern " + prettySexpr(pattern) + " node " + extractOGraph(graphName, nodeId));
 			let match = matchSExprNodeOneLevel(graphName, nodeId, pattern, bindings);
 			if (match[0]) then (
 				// println(i2s(depth) + ": Matched root nodeId " + i2s(nodeId) + " with root of pattern " + prettySexpr(pattern) + " and bindings " + prettySexpr(match[1]) + " node " + extractOGraph(graphName, nodeId));
@@ -74,50 +74,63 @@ fn matchPatternRec(graphName, depth, nodeId, pattern, bindings, matchFn) = (
 				// OK, we have to do the children against the children of the pattern
 				let decomposed = decomposeSexpr(pattern);
 				let patternChildren = decomposed[1];
-
-				let ellipsisIndex = findi(patternChildren, \c -> c == '...);
-				let prefix = if (ellipsisIndex == -1) then patternChildren else subrange(patternChildren, 0, ellipsisIndex);
-				let suffix = if (ellipsisIndex == -1) then [] else tailFrom(patternChildren, ellipsisIndex + 1);
-
-				if (ellipsisIndex != -1) then (
-					println("Found ellipsis at index " + i2s(ellipsisIndex));
-					println("Prefix: " + prettySexpr(prefix));
-					println("Suffix: " + prettySexpr(suffix));
-				) else 0;
-
-				let onodeChildren = getONodeChildren(graphName, nodeId);
-				if ((ellipsisIndex == -1 && length(patternChildren) == length(onodeChildren))
-					|| (ellipsisIndex != -1 && length(prefix) + length(suffix) <= length(onodeChildren))) then (
-
-					fn matchIndex(i, acc, childPattern) =  (
-						if (acc[0]) then (
-							let childId = onodeChildren[i];
-							// println("Matching child nodeId " + i2s(childId) + " with child of pattern " + prettySexpr(childPattern) + " and bindings " + prettySexpr(acc[1]) + " node " + extractOGraph(graphName, childId));
-							let childMatch = matchPatternRec(graphName, depth + 1, childId, childPattern, acc[1]);
-							if (childMatch[0]) then (
-								// We have a match, let's add the bindings together
-								[true, mergeUnique(acc[1], childMatch[1], genericCompare)];
-							) else (
-								// println("Child pattern " + prettySexpr(childPattern) + " did not match nodeId " + i2s(childId) + " with pattern " + prettySexpr(pattern) + " node " + extractOGraph(graphName, childId));
-								childMatch;
-							);
-						) else acc
-					);
-
-					// We have the same number of children, or at least enough with a ellipsislet's match them
-					let prefixComplete = foldi(prefix, match, matchIndex);
-					let complete = foldi(suffix, prefixComplete, \i, acc, childPattern -> matchIndex(1 + i + ellipsisIndex, acc, childPattern));
-
-					if (complete[0] && depth == 0) then (
-						matchFn(nodeId, complete[1]);
-						complete
-					) else (
-						complete
-					)
+				if (patternChildren == [] && is_var(pattern)) then (
+					// OK, we match a variable, we can just return the bindings as are
+					match
 				) else (
-					// println("Number of children does not match for nodeId " + i2s(nodeId) + " with pattern " + prettySexpr(pattern) + " node " + extractOGraph(graphName, nodeId));
-					[false, []]
-				);
+					let ellipsisIndex = findi(patternChildren, \c -> c == '...);
+					let prefix = if (ellipsisIndex == -1) then patternChildren else subrange(patternChildren, 0, ellipsisIndex);
+					let suffix = if (ellipsisIndex == -1) then [] else tailFrom(patternChildren, ellipsisIndex + 1);
+
+					//println("Found ellipsis at index " + i2s(ellipsisIndex) + " with depth " + i2s(depth) + " with " + i2s(length(patternChildren)) + " children");
+					// println("Prefix: " + prettySexpr(prefix));
+					// println("Suffix: " + prettySexpr(suffix));
+
+					let onodeChildren = getONodeChildren(graphName, nodeId);
+					if (
+						(ellipsisIndex == -1 && length(patternChildren) == length(onodeChildren))
+						|| (ellipsisIndex != -1 && length(prefix) + length(suffix) <= length(onodeChildren))
+					) then (
+
+						fn matchIndex(i, acc, childPattern) =  (
+							if (acc[0]) then (
+								let childId = onodeChildren[i];
+								// println("Matching child nodeId " + i2s(childId) + " with child of pattern " + prettySexpr(childPattern) + " and bindings " + prettySexpr(acc[1]) + " node " + extractOGraph(graphName, childId));
+								let childMatch = matchPatternRec(graphName, depth + 1, childId, childPattern, acc[1]);
+								if (childMatch[0]) then (
+									// We have a match, let's add the bindings together
+									[true, mergeUnique(acc[1], childMatch[1], genericCompare)];
+								) else (
+									// println("Child pattern " + prettySexpr(childPattern) + " did not match nodeId " + i2s(childId) + " with pattern " + prettySexpr(pattern) + " node " + extractOGraph(graphName, childId));
+									childMatch;
+								);
+							) else acc
+						);
+
+						// We have the same number of children, or at least enough with a ellipsislet's match them
+						let prefixComplete = foldi(prefix, match, matchIndex);
+						let suffixIndex = length(onodeChildren) - length(suffix);
+						// println("Suffix index: " + i2s(suffixIndex));
+						let complete = foldi(suffix, prefixComplete, \i, acc, childPattern -> matchIndex(i + suffixIndex, acc, childPattern));
+						// println("Complete " + prettySexpr(prefixComplete));
+						// println("Complete " + prettySexpr(complete) + " with depth " + i2s(depth));
+
+						if (complete[0] && depth == 0) then (
+							let ellipsisPart = if (ellipsisIndex != -1) then	
+									[Pair("...", subrange(onodeChildren, length(prefix), length(onodeChildren) - length(suffix)))]
+								else [];
+							// TODO: Should we send the ellipsis part to the match function?
+							// println(ellipsisPart);
+							matchFn(nodeId, complete[1]);
+							complete
+						) else (
+							complete
+						)
+					) else (
+						// println("Number of children does not match for nodeId " + i2s(nodeId) + " with pattern " + prettySexpr(pattern) + " node " + extractOGraph(graphName, nodeId));
+						[false, []]
+					);
+				)
 			) else (
 				// println("No match for nodeId " + i2s(nodeId) + " with pattern " + prettySexpr(pattern) + " node " + extractOGraph(graphName, nodeId));
 				[false, []]
