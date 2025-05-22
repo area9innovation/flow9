@@ -11,6 +11,7 @@ function getMarkInstance(querySelectorField) {
 		return null;
 	}
 
+	// TODO: Add a filter for textwidgets we'd like to ignore.
 	const textWidgets = rootElement.querySelectorAll('.textWidget');
 	return new Mark(textWidgets);
 }
