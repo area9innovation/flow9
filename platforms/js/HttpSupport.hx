@@ -570,17 +570,41 @@ class HttpSupport {
 			}
 		};
 
-		// Handle timeout
+		// Create reusable timeout handling functions
 		var timeoutId = null;
-		if (timeout > 0) {
-			timeoutId = haxe.Timer.delay(function() {
-				if (!isCompleted) {
-					isCompleted = true;
-					xhr.abort();
-					onErrorFn("Request timed out after " + timeout + "ms");
-				}
-			}, timeout);
-		}
+
+		// Function to handle timeout expiration
+		var handleTimeout = function() {
+			if (!isCompleted) {
+				isCompleted = true;
+				xhr.abort();
+				onErrorFn("Request timed out after " + timeout + "ms");
+			}
+		};
+
+		// Function to clear the timeout
+		var clearTimeout = function() {
+			if (timeoutId != null) {
+				timeoutId.stop();
+				timeoutId = null;
+			}
+		};
+
+		// Function to set up the timeout
+		var setupTimeout = function() {
+			if (timeout > 0 && !isCompleted) {
+				timeoutId = haxe.Timer.delay(handleTimeout, timeout);
+			}
+		};
+
+		// Function to reset the timeout
+		var resetTimeout = function() {
+			clearTimeout();
+			setupTimeout();
+		};
+
+		// Initial timeout setup
+		setupTimeout();
 
 		// Prepare URL with query parameters for GET requests
 		var finalUrl = url;
@@ -619,6 +643,9 @@ class HttpSupport {
 				try {
 					// Only process if we have new data to handle
 					if (xhr.responseText.length > prevResponseLength) {
+						// Reset the timeout timer since we received new data
+						resetTimeout();
+
 						newData = xhr.responseText.substring(prevResponseLength);
 						prevResponseLength = xhr.responseText.length;
 						accumulatedResponse = xhr.responseText;
@@ -631,9 +658,8 @@ class HttpSupport {
 
 					// If complete, call completion handler
 					if (xhr.readyState == 4) {
-						if (timeoutId != null) {
-							timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
-						}
+						// Clear timeout on completion
+						clearTimeout();
 
 						// Get response headers
 						var responseHeaders = [];
@@ -668,9 +694,8 @@ class HttpSupport {
 				} catch (e : Dynamic) {
 					if (!isCompleted) {
 						isCompleted = true;
-						if (timeoutId != null) {
-							timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
-						}
+						// Clear timeout
+						clearTimeout();
 						onErrorFn("Error processing response: " + Std.string(e));
 					}
 				}
@@ -712,18 +737,43 @@ class HttpSupport {
 		// Node.js implementation
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
 		var isCompleted = false;
+		var req = null;
 
-		// Setup timeout if needed
+		// Create reusable timeout handling functions
 		var timeoutId = null;
-		if (timeout > 0) {
-			timeoutId = haxe.Timer.delay(function() {
-				if (!isCompleted && req != null) {
-					isCompleted = true;
-					req.abort();
-					onErrorFn("Request timed out after " + timeout + "ms");
-				}
-			}, timeout);
-		}
+
+		// Function to handle timeout expiration
+		var handleTimeout = function() {
+			if (!isCompleted && req != null) {
+				isCompleted = true;
+				req.abort();
+				onErrorFn("Request timed out after " + timeout + "ms");
+			}
+		};
+
+		// Function to clear the timeout
+		var clearTimeout = function() {
+			if (timeoutId != null) {
+				timeoutId.stop();
+				timeoutId = null;
+			}
+		};
+
+		// Function to set up the timeout
+		var setupTimeout = function() {
+			if (timeout > 0 && !isCompleted) {
+				timeoutId = haxe.Timer.delay(handleTimeout, timeout);
+			}
+		};
+
+		// Function to reset the timeout
+		var resetTimeout = function() {
+			clearTimeout();
+			setupTimeout();
+		};
+
+		// Initial timeout setup
+		setupTimeout();
 
 		// Configure the request options
 		options.method = method;
@@ -794,6 +844,9 @@ class HttpSupport {
 			// Process data chunks as they arrive
 			response.on('data', function(chunk : String) {
 				if (!isCompleted) {
+					// Reset the timeout timer since we received data
+					resetTimeout();
+
 					responseData += chunk;
 					// Call chunk handler with new data
 					onChunkFn(chunk, responseData.length,
@@ -806,9 +859,8 @@ class HttpSupport {
 			response.on('end', function(_) {
 				if (!isCompleted) {
 					isCompleted = true;
-					if (timeoutId != null) {
-						timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
-					}
+					// Clear timeout on completion
+					clearTimeout();
 					onCompleteFn(response.statusCode, responseData, responseHeaders);
 				}
 			});
@@ -817,9 +869,8 @@ class HttpSupport {
 			response.on('error', function(err) {
 				if (!isCompleted) {
 					isCompleted = true;
-					if (timeoutId != null) {
-						timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
-					}
+					// Clear timeout on error
+					clearTimeout();
 					onErrorFn(Std.string(err));
 				}
 			});
