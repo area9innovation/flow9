@@ -1,0 +1,294 @@
+import tools/orbit/orbit_types;
+import tools/orbit/orbit_decompose;
+import tools/orbit/ograph;
+import tools/orbit/types;
+import tools/orbit/ograph_decompose;
+import tools/orbit/orbit_simple_ograph; // For ographRegistry
+import tools/orbit/orbit2ograph;      // For ograph2Orbit
+import tools/orbit/prettyprint;      // For prettyOrbit
+import ds/array;
+import ds/set;                      // For Set operations
+import maybe;
+
+export {
+    // Compare an OrMath_expr with a node in an OGraph
+    // Returns true if they represent the same expression
+	// A lowercase variable is identical to any node
+    // Also handles domain membership checks for pattern matching
+    compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool;
+    
+    // Helper function to check if a node belongs to a specific domain
+    findDomainMatch(graph : OGraph, nodeId : int, domain : OrMath_expr) -> bool;
+    
+    // Find a node ID in an OGraph that structurally matches the given expression without modifying the graph
+    // Returns the ID if found, or -1 if not found
+    findOGraphId(graphName : string, expr : OrMath_expr) -> int;
+    
+    // Check if two expressions are equivalent (for domain matching)
+    areExpressionsEquivalent(expr1 : OrMath_expr, expr2 : OrMath_expr) -> bool;
+}
+
+// Helper function to check if a node belongs to a domain that matches the given domain expression
+findDomainMatch(graph : OGraph, nodeId : int, domain : OrMath_expr) -> bool {
+    // Get the canonical representation of the node
+    rootId = findORoot(graph, nodeId);
+    
+    // Get all domains this node belongs to
+    domains = getONodeBelongsTo(graph, rootId);
+    
+	// Check if any of the domains structurally match the expected domain
+	exists(domains, \domainId -> {
+		// Compare the domain expression directly with the domain node
+		compareOrbitWithNode(domain, graph, domainId);
+	});
+}
+
+// Helper to check if an expression is a pattern variable (lowercase identifier/variable)
+isPatternVariable(expr : OrMath_expr) -> bool {
+    // Pattern variables are lowercase identifiers or variables
+    // Simple check - lowercase single-letter variables are pattern variables
+    switch (expr) {
+        OrIdentifier(name): true;
+        default: false;
+    }
+}
+
+// Compare an OrMath_expr with a node in an OGraph
+compareOrbitWithNode(expr : OrMath_expr, graph : OGraph, nodeId : int) -> bool {
+    // Check if the expression is a pattern variable that matches anything
+    if (isPatternVariable(expr)) {
+        // Pattern variables match any node
+		// TODO: Arguably, we shold have the binding environment and check against that
+        true;
+    } else {
+    
+		// Handle domain type annotations (special case)
+		isDomainAnnotation = switch (expr) {
+			OrTypeAnnotation(__, __): true;
+			default: false;
+		};
+		
+		if (isDomainAnnotation) {
+			switch (expr) {
+				OrTypeAnnotation(baseExpr, domain): {
+					// First check if the base expression matches
+					baseMatches = compareOrbitWithNode(baseExpr, graph, nodeId);
+					
+					if (!baseMatches) {
+						false;
+					} else {
+						// Use our helper to check domain membership
+						findDomainMatch(graph, nodeId, domain);
+					}
+				}
+				default: false; // Should never happen due to check above
+			}
+		} else {
+			// Regular non-domain comparison
+			// Find the canonical representative for this node
+			rootId = findORoot(graph, nodeId);
+			
+			// Decompose the OrMath_expr
+			decomposedExpr = decomposeOrbit(expr);
+			opExpr = decomposedExpr.first;
+			childrenAndValue = decomposedExpr.second;
+			childrenExpr = childrenAndValue.first;
+			valueExpr = childrenAndValue.second;
+			
+			// Get the node's information from the OGraph
+			switch (lookupOClass(graph, rootId)) {
+				None(): false; // Node doesn't exist
+				Some(oclass): {
+					// Check if operators match
+					if (oclass.node.op != opExpr) {
+						false;
+					} else if (length(oclass.node.children) != length(childrenExpr)) {
+						// Check if number of children match
+						false;
+					} else if (length(childrenExpr) == 0) {
+						oclass.node.value == valueExpr;
+					} else {
+						// For non-leaf nodes, recursively compare all children
+						foldRange(0, length(childrenExpr) - 1, true, \acc, i -> {
+							if (!acc) false  // Short-circuit if we already found mismatch
+							else if (i >= length(oclass.node.children)) false
+							else compareOrbitWithNode(childrenExpr[i], graph, oclass.node.children[i]);
+						});
+					}
+				}
+			}
+		}
+	}
+}
+
+// Implementation of findOGraphId function
+findOGraphId(graphName : string, expr : OrMath_expr) -> int {
+	// Handle special case for domain annotations
+    isDomainAnnotation = switch (expr) {
+        OrTypeAnnotation(baseExpr, domain): true;
+        default: false;
+    };
+    
+    // Special case: Check if this is a function call applied to a domain annotation
+    // Like ((a + b) : Type)("number") which should be treated as (a + b) : Type("number")
+    isComplexDomain = switch (expr) {
+        OrFunction(fnExpr, args): {
+            switch (fnExpr) {
+                OrTypeAnnotation(__, __): true;
+                default: false;
+            }
+        }
+        default: false;
+    };
+    
+    if (isComplexDomain) {
+        // Extract parts from the complex expression
+        switch (expr) {
+            OrFunction(fnExpr, fnArgs): {
+                switch (fnExpr) {
+                    OrTypeAnnotation(baseExpr, domainName): {
+                        // Create a proper domain annotation with the function call
+                        // baseExpr : domainName(fnArgs)
+                        domainNameStr = switch (domainName) {
+                            OrUId(id): id;
+                            OrIdentifier(id): id;
+                            default: "";
+                        };
+                        
+                        // Construct a proper domain function with its arguments
+                        domainFunction = OrFunction(domainName, fnArgs);
+                        
+                        // Create the correct type annotation
+                        fixedExpr = OrTypeAnnotation(baseExpr, domainFunction);
+                        
+                        // Reconstructed the domain annotation with the function call
+                        
+                        // Call findOGraphId with the fixed expression
+                        findOGraphId(graphName, fixedExpr);
+                    }
+                    default: -1;
+                }
+            }
+            default: -1;
+        }
+    } else if (isDomainAnnotation) {
+        // Extract base expression and domain
+        baseExpr = switch (expr) {
+            OrTypeAnnotation(be, __): be;
+            default: expr; // Should never happen
+        };
+        
+        domain = switch (expr) {
+            OrTypeAnnotation(__, dom): dom;
+            default: OrInt(0); // Should never happen
+        };
+        
+        // First, find the base expression
+        baseId = findOGraphId(graphName, baseExpr);
+        if (baseId == -1) {
+            -1; // Base expression not found
+        } else {
+            // Get the ograph from the registry
+            switch (lookupTree(^ographRegistry, graphName)) {
+                Some(ograph): {
+                    rootId = findORoot(ograph, baseId);
+                    
+                    // Try to find the domain node by its expression
+                    // For each node in the graph, check if it matches the domain expression
+                    targetDomainId = ref -1;
+                    traverseOGraph(ograph, \domId, __ -> {
+                        if (^targetDomainId == -1) {
+                            // Extract this domain's expression
+                            domainExpr = ograph2Orbit(ograph, domId);
+                            
+                            // Check if it matches the domain we're looking for
+                            if (areExpressionsEquivalent(domain, domainExpr)) {
+                                targetDomainId := domId;
+                            }
+                        }
+                    });
+                    
+                    if (^targetDomainId == -1) {
+                        -1; // Domain not found in graph
+                    } else {
+                        // Check if node belongs transitively to the target domain
+                        if (belongsTransitivelyToDomain(ograph, rootId, ^targetDomainId)) {
+                            baseId; // Node belongs to domain either directly or transitively
+                        } else {
+                            -1; // Node doesn't belong to domain
+                        }
+                    }
+                }
+                None(): -1;
+            }
+        }
+    } else {
+        // Regular case - non-domain expression
+        // Get the ograph from the registry
+        switch (lookupTree(^ographRegistry, graphName)) {
+            Some(ograph): {
+                // Use direct comparison without modifying the graph
+                foundId = ref -1;
+                
+                // Look through all nodes in the graph for a match
+                traverseOGraph(ograph, \id, __ -> {
+                    if (^foundId == -1) { // Stop searching if we found a match
+                        if (compareOrbitWithNode(expr, ograph, id)) {
+                            foundId := id;
+                        }
+                    }
+                });
+                
+                // Return the found ID or -1 if not found
+                ^foundId;
+            }
+            None(): -1;
+        }
+    }
+}
+
+// Helper function for domain comparison
+
+// Check if a node belongs transitively to a domain
+// This handles cases like "a : Integer : Real : Complex" where a is transitively in Complex domain
+belongsTransitivelyToDomain(graph : OGraph, nodeId : int, targetDomainId : int) -> bool {
+    // Use a reference to track visited nodes to prevent infinite recursion
+    visitedNodes = ref makeSet();
+    
+    belongsTransitivelyToDomainHelper(graph, nodeId, targetDomainId, visitedNodes);
+}
+
+// Helper function that does the actual transitive domain checking
+belongsTransitivelyToDomainHelper(graph : OGraph, nodeId : int, targetDomainId : int, visitedNodes : ref Set<int>) -> bool {
+    // Prevent infinite recursion by tracking visited nodes
+    if (containsSet(^visitedNodes, nodeId)) {
+        false;
+    } else {
+        // Mark this node as visited
+        visitedNodes := insertSet(^visitedNodes, nodeId);
+        
+        if (nodeId == targetDomainId) {
+            // Direct equality - a domain is always a member of itself
+            true;
+        } else if (onodeBelongsTo(graph, nodeId, targetDomainId)) {
+            // Direct domain membership
+            true;
+        } else {
+            // Check transitive membership through the domain hierarchy
+            // Get all domains this node belongs to
+            domains = getONodeBelongsTo(graph, nodeId);
+            
+            // For each domain, check if it transitively belongs to the target domain
+            fold(domains, false, \acc, currentDomainId -> {
+                if (acc) acc  // Short-circuit if already found
+                else belongsTransitivelyToDomainHelper(graph, currentDomainId, targetDomainId, visitedNodes);
+            });
+        }
+    }
+}
+
+// Helper function to check if two expressions are equivalent
+// This function handles special cases like function call expressions that need deeper comparison
+areExpressionsEquivalent(expr1 : OrMath_expr, expr2 : OrMath_expr) -> bool {
+    expr1 == expr2
+}

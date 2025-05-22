@@ -1,0 +1,80 @@
+import tools/orbit/sexpr/env;
+import ds/tree;
+import string;
+
+export {
+	// Handle quasiquote with potential unquoting
+	evalQuasiQuote(env : SExpEnv, expr : Sexpr, evalFn : (SExpEnv, Sexpr) -> Sexpr) -> Sexpr;
+}
+
+// Handle quasiquote with potential unquoting
+evalQuasiQuote(env : SExpEnv, expr : Sexpr, evalFn : (SExpEnv, Sexpr) -> Sexpr) -> Sexpr {
+	switch (expr) {
+		SSSpecialForm(special_name, sexprs): {
+			// Handle special forms
+			switch (special_name) {
+				SUnQuote(): evalFn(env, sexprs[0]);
+				SUnQuoteSplicing(): {
+					println("Unquote splicing not supported in this context");
+					evalFn(env, sexprs[0]);
+				}
+				default: {
+					result = evalQuasiQuoteItems(env, sexprs, [], evalFn);
+					SSSpecialForm(special_name, result);
+				}
+			};
+		}
+		// For lists, process each element recursively
+		SSList(items): {
+			result = evalQuasiQuoteItems(env, items, [], evalFn);
+			SSList(result);
+		};
+		// For vectors, process each element recursively
+		SSVector(items): {
+			result = evalQuasiQuoteItems(env, items, [], evalFn);
+			SSVector(result);
+		};
+		SSConstructor(constructor_atom):  expr;
+		SSDouble(double1):  expr;
+		SSInt(int1):  expr;
+		SSBool(int1):  expr;
+		SSOperator(string1):  expr;
+		SSString(string1):  expr;
+		SSVariable(variable_atom):  expr;
+	}
+}
+
+// Process quasiquote list items recursively
+evalQuasiQuoteItems(env : SExpEnv, items : [Sexpr], result : [Sexpr], evalFn : (SExpEnv, Sexpr) -> Sexpr) -> [Sexpr] {
+	if (length(items) == 0) {
+		result;
+	} else {
+		item = items[0];
+		rest = tail(items);
+		
+		switch (item) {
+			SSSpecialForm(special_name, exprs): {
+				switch (special_name) {
+					SUnQuoteSplicing(): {
+						// Evaluate and splice
+						spliceResult = evalFn(env, exprs[0]);
+						newResult = switch (spliceResult) {
+							SSList(elements): concat(result, elements);
+							default: arrayPush(result, spliceResult); // Non-list - treat as single element
+						};
+						evalQuasiQuoteItems(env, rest, newResult, evalFn);
+					}
+					default: {
+						processedItem = evalQuasiQuote(env, item, evalFn);
+						evalQuasiQuoteItems(env, rest, arrayPush(result, processedItem), evalFn);
+					}
+				}
+			}
+			default: {
+				// Regular element, recursively process
+				processedItem = evalQuasiQuote(env, item, evalFn);
+				evalQuasiQuoteItems(env, rest, arrayPush(result, processedItem), evalFn);
+			};
+		}
+	}
+}

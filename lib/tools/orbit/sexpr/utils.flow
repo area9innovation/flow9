@@ -1,0 +1,191 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/env;
+import math/math;
+import ds/tree;
+
+export {
+    // Type to represent different kinds of callable lists
+    SexprListType ::= DataList, OperatorCall, VariableCall, ConstructorCall, SpecialFormCall;
+        DataList();  // Regular data list
+        OperatorCall(opName: string);  // Operator application like (+, -, *, etc.)
+        VariableCall(varName: string);  // Function call via variable
+        ConstructorCall(consName: string);  // Constructor application
+        SpecialFormCall(form: Special_name);  // Special form like closure
+    
+    // Determine if an SSList represents a function call and what type
+    // Optional env parameter to check if variable names exist as functions
+    classifySexprList(list: Sexpr, env: Maybe<SExpEnv>) -> SexprListType;
+    
+    // Convenience function to check if an SSList is a callable expression
+    isCallableList(list: Sexpr, env: Maybe<SExpEnv>) -> bool;
+    
+    // Utility functions to extract values from S-expressions
+    getSBool(expr : Sexpr, context : string) -> bool;
+    getSInt(expr : Sexpr, context : string) -> int;
+    getSDouble(expr : Sexpr, context : string) -> double;
+    getSString(expr : Sexpr, context : string) -> string;
+    getSVector(expr : Sexpr, context : string) -> [Sexpr];
+    
+    // Create result values
+    makeSBool(b : bool) -> Sexpr;
+    makeSInt(i : int) -> Sexpr;
+    makeSDouble(d : double) -> Sexpr;
+    makeSString(s : string) -> Sexpr;
+    makeSList(items : [Sexpr]) -> Sexpr;
+    makeSVector(items : [Sexpr]) -> Sexpr;
+}
+
+// Extract a boolean value from a Sexpr
+getSBool(expr : Sexpr, context : string) -> bool {
+    switch (expr) {
+        SSBool(b): b;
+        SSInt(i): i != 0;
+        SSDouble(d): d != 0.0;
+        default: {
+            println("ERROR in " + context + ": expected a boolean, got " + prettySexpr(expr));
+            false;
+        }
+    }
+}
+
+// Extract an integer value from a Sexpr
+getSInt(expr : Sexpr, context : string) -> int {
+    switch (expr) {
+        SSInt(i): i;
+        SSDouble(d): floor(d);
+        SSBool(b): if (b) 1 else 0;
+        SSString(s): {
+            // Try to parse the string as an integer
+            i = s2i(s);
+            if (s == i2s(i)) i else {
+                println("ERROR in " + context + ": could not parse string as integer: " + s);
+                0;
+            }
+        }
+        default: {
+            println("ERROR in " + context + ": expected an integer, got " + prettySexpr(expr));
+            0;
+        }
+    }
+}
+
+// Extract a double value from a Sexpr
+getSDouble(expr : Sexpr, context : string) -> double {
+    switch (expr) {
+        SSDouble(d): d;
+        SSInt(i): i2d(i);
+        SSBool(b): if (b) 1.0 else 0.0;
+        SSString(s): {
+            // Try to parse the string as a double
+            d = s2d(s);
+            if (s == d2s(d) || s2i(s) == floor(d)) d else {
+                println("ERROR in " + context + ": could not parse string as double: " + s);
+                0.0;
+            }
+        }
+        default: {
+            println("ERROR in " + context + ": expected a double, got " + prettySexpr(expr));
+            0.0;
+        }
+    }
+}
+
+// Extract a string value from a Sexpr
+getSString(expr : Sexpr, context : string) -> string {
+    switch (expr) {
+        SSString(s): s;
+        SSVariable(v): v;
+        SSConstructor(c): c;
+        SSInt(i): i2s(i);
+        SSDouble(d): d2s(d);
+        SSBool(b): if (b) "true" else "false";
+        default: {
+            println("ERROR in " + context + ": expected a string, got " + prettySexpr(expr));
+            "";
+        }
+    }
+}
+
+// Create S-expression values
+makeSBool(b : bool) -> Sexpr {
+    SSBool(b);
+}
+
+makeSInt(i : int) -> Sexpr {
+    SSInt(i);
+}
+
+makeSDouble(d : double) -> Sexpr {
+    SSDouble(d);
+}
+
+makeSString(s : string) -> Sexpr {
+    SSString(s);
+}
+
+makeSList(items : [Sexpr]) -> Sexpr {
+    SSList(items);
+}
+
+// Create a vector S-expression
+makeSVector(items : [Sexpr]) -> Sexpr {
+    SSVector(items);
+}
+
+// Extract a vector from an S-expression
+// Returns the items array from SSVector directly, or converts SSList to vector items
+// Other types result in an error message and an empty array
+getSVector(expr : Sexpr, context : string) -> [Sexpr] {
+    switch (expr) {
+        SSVector(items): items;
+        SSList(items): items;  // Convert list to vector items
+        default: {
+            println("ERROR in " + context + ": expected a vector or list, got " + prettySexpr(expr));
+            [];
+        }
+    }
+}
+
+// Determine if an SSList represents a function call and what type
+// Optional env parameter to check if variable names exist as functions
+classifySexprList(list: Sexpr, env: Maybe<SExpEnv>) -> SexprListType {
+    switch(list) {
+        SSList(exprs): {
+            if (length(exprs) == 0) {
+                DataList();
+            } else {
+                switch (exprs[0]) {
+                    SSOperator(name): OperatorCall(name);
+                    SSVariable(name): {
+                        // If env is provided, check if variable exists as function
+                        switch (env) {
+                            Some(environment): {
+                                if (containsKeyTree(environment.env, name) || 
+                                    containsKeyTree(environment.runtime, name)) {
+                                    VariableCall(name);
+                                } else {
+                                    DataList();  // Variable not found as function
+                                }
+                            }
+                            None(): VariableCall(name);  // Assume it's a function call without env
+                        }
+                    }
+                    SSConstructor(name): ConstructorCall(name);
+                    SSSpecialForm(form, __): SpecialFormCall(form);
+                    default: DataList();  // Any other head element means data list
+                }
+            }
+        }
+        default: DataList();  // Not an SSList
+    }
+}
+
+// Convenience function to check if an SSList is a callable expression
+isCallableList(list: Sexpr, env: Maybe<SExpEnv>) -> bool {
+    result = classifySexprList(list, env);
+    switch (result) {
+        DataList(): false;
+        default: true;
+    }
+}

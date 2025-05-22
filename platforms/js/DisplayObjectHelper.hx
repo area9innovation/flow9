@@ -24,6 +24,7 @@ class DisplayObjectHelper {
 	public static var UseOptimization : Bool = Util.getParameter("remove_listener_optimization") != "0";
 	public static var ScreenreaderDialog : Bool = Util.getParameter("screenreader_dialog") != "0";
 	public static var CheckUniqueClipID : Bool = Util.getParameter("check_unique_clip_id") == "1";
+	public static var MountMaskContainerEnabled : Bool = Util.getParameter("mount_mask_container_enabled") != "0";
 	public static var UniqueClipIds : Array<String> = [];
 
 	private static var InvalidateStage : Bool = true;
@@ -1455,10 +1456,8 @@ class DisplayObjectHelper {
 		}
 
 		if (nativeWidget != null) {
-			var svgs : Array<Element> = nativeWidget.getElementsByTagName("svg");
-
-			if (svgs.length > 0) {
-				var svg = svgs[0];
+			var svg: Element = nativeWidget.querySelector("svg");
+			if (svg != null) {
 				var elementId = untyped svg.parentNode.getAttribute('id');
 				var clipFilter : Element = nativeWidget.querySelector("#" + elementId + "filter");
 
@@ -2158,8 +2157,18 @@ class DisplayObjectHelper {
 			if (untyped clip.mask != null) {
 				if (untyped clip.nativeWidget.firstChild == null) {
 					var cont = Browser.document.createElement("div");
-					cont.className = 'nativeWidget';
+					cont.classList.add('nativeWidget');
+					cont.classList.add('maskContainer');
 					untyped clip.nativeWidget.appendChild(cont);
+				} else if (MountMaskContainerEnabled && untyped clip.nativeWidget.contains(childWidget) && !clip.nativeWidget.firstChild.classList.contains('maskContainer')) {
+					var cont = Browser.document.createElement("div");
+					cont.classList.add('nativeWidget');
+					cont.classList.add('maskContainer');
+					try {
+						untyped clip.nativeWidget.insertBefore(cont, clip.nativeWidget.firstChild);
+					} catch (e : Dynamic) {
+						untyped console.warn('Error while appending', cont, 'before', clip.nativeWidget.firstChild);
+					}
 				}
 				try {
 					untyped clip.nativeWidget.firstChild.insertBefore(childWidget, nextWidget);

@@ -36,6 +36,7 @@ Type inference is per-file, not global.
 
 ## TODO
 
+- Warn if we have a top-level var or function that is unused and not exported
 - Debug Incremental
   - Fix dependency tracking to make finegrained incremental in typecheck
 - Have warnings and errors. Implicit auto in toplevel is a warning, for example.
@@ -54,26 +55,19 @@ Type inference is per-file, not global.
 - We do not need to do contract alternatives all the time, only when merging eclasses.
 - Use of non-exported name just gives error, instead of more precise
 - Calculate more precise type for "default:" by removing those that are matched?
+- Warn if type marked as polymorphic, but the polymorphic type is dead
+- foo() { x: Maybe<?> = None(); } should probably give an compile error. See makeSubTableDataTableMaterialNoDBC
 
 # Plan
 
-TODO: Send in all unions & structs to compiler backend, so it knows what are unions and how to expand them in switches.
-
-mwigi/mwigi/external_recursives/highlighter.flow:84
-
-Two alternatives, where both would work, but for some reason, we do not pick one.
-
-in this type checker, as a final phase, we do subtype_unification. However, before we do that, we could do the bounds resolution in a speculative mode. The difference is that if we have a unique top-type, then we do not require no tyvars above, but can still resolve with that. Can you implement this change? We have a test case in md2string.flow which currently does not type.
+/home/alstrup/area9/innovation/lib/meta_app_lib/subtable_material.flow:264:80: .m: Expected same number of arguments SubTableCustomNamedButton<α27390>=α27392 and SubTableCustomNamedButton=α34425
 
 - Figure out how to reduce memory usage from incremental use. Share the module interface? Streamline it, to only keep exported for the current module?
+  Build a union-find table for all htypeschemas, and have a table with them. that should reduce memory usage.
 
 - Incremental is wrong somehow. We changed MSortItem to not be polymorphic, but incremental files kept it
 
-unifyLubInfoTypes should take EContext instead of just info?
-
 EContext can contain names of vars we have to lookup and print the type of
-
-material/internal/material_icons_list.flow:  Very slow.
 
 find out why passing many files to compile does not work in our driver. We parse them, but they never reach type checking for some reason.
 

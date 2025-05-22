@@ -1,0 +1,1977 @@
+import tools/orbit/sexpr/env;
+import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/sexpr_pattern;
+import tools/orbit/sexpr/utils;
+import ds/tree;
+import string;
+
+import fs/filesystem;
+import math/math;
+import net/url_parameter; // For command line args
+import tools/orbit/sexpr/sexpr_compiled_parser;
+import tools/mango/mcode_lib;
+import text/deserialize_string;
+
+// OGraph and S-expression handling imports
+import tools/orbit/ograph;
+import tools/orbit/ograph_cache;
+import tools/orbit/orbit_simple_ograph;
+import tools/orbit/orbit_compare; // For findOGraphId
+
+// Use the standard import format for all imports
+import tools/orbit/sexpr/sexp2ograph_sub;
+import tools/orbit/sexpr/ograph2sexpr;
+import tools/orbit/sexpr/ograph_sexpr_pattern;
+import tools/orbit/sexpr/ograph_sexpr_quasi;
+import tools/orbit/sexpr/sexpr_ograph_utils;
+import tools/orbit/ograph2dot;
+
+// Orbit expression handling
+import tools/orbit/orbit_types;         // For OrMath_expr type
+import tools/orbit/orbit2sexpr;         // For orbit2sexpr and sexpr2orbit converters
+import tools/orbit/prettyprint;         // For prettyOrbit
+
+export {
+	// Add standard functions/variables to the environment
+	getRuntimeEnv(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv;
+	// Parse a string into a Sexpr
+	parseSexpr(f : string, s : string) -> Maybe<Sexpr>;
+	// Helper for invoking runtime functions with arity checking
+	invokeRuntimeFn(env : SExpEnv, name : string, result : FnArgResult, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv;
+}
+
+// Helper for isUpperCase (used in actualAstname)
+isUpperCase(s : string) -> bool {
+    // Basic check, assumes single char and ASCII. A more robust check might be needed for full Unicode.
+    if (strlen(s) != 1) false
+    else {
+        c = s2a(s)[0]; // Get char code
+        c >= 65 && c <= 90; // ASCII 'A' through 'Z'
+    }
+}
+
+// Helper function to determine the AST name of an Sexpr node
+actualAstname(sexpr_node : Sexpr) -> string {
+	switch (sexpr_node) {
+		SSInt(__): "Int";
+		SSDouble(__): "Double";
+		SSBool(__): "Bool";
+		SSString(__): "String";
+		SSVariable(name): "Identifier";
+		SSConstructor(name): "Constructor";
+		SSOperator(opName): opName; 
+		SSVector(__): "Vector";
+		SSList(items): {
+			// Use the centralized function to classify the list
+			if (length(items) == 0) {
+				"EmptyList";
+			} else {
+				switch (classifySexprList(sexpr_node, None())) {
+					OperatorCall(opName): opName;
+					VariableCall(__): "Call";
+					ConstructorCall(consName): consName;
+					SpecialFormCall(form): toString(form);
+					DataList(): "List";
+				}
+			}
+		}
+		SSSpecialForm(name, __): {
+			switch (name) {
+				SAnd(): "and"; SBegin(): "begin"; SClosure(): "closure";
+				SDefine(): "define"; SEval(): "eval"; SIf(): "if";
+				SImport(): "import"; SLambda(): "lambda"; SLet(): "let";
+				SLetRec(): "letrec"; SList(): "list"; SMatch(): "match";
+				SOr(): "or"; SQuasiQuote(): "quasiquote"; SQuote(): "quote";
+				SSet(): "set"; SUnQuote(): "unquote"; SUnQuoteSplicing(): "unquote-splicing";
+			}
+		}
+	}
+}
+
+// Runtime Sexpr function for astname
+astnameFunctionSexpr(evalResult : FnArgResult) -> Sexpr {
+	expr_to_analyze = evalResult.args[0];
+	typename = actualAstname(expr_to_analyze);
+	SSString(typename);
+}
+
+makeAstSexprFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the name and arguments
+	op = evalResult.args[0];
+	args = getSVector(evalResult.args[1], "makeAst.args");
+	if (contains([SSOperator("and"), SSOperator("or"), SSOperator("+"), SSOperator("*"),
+		SSOperator("-"), SSOperator("/"), SSOperator("=="), SSOperator("!="), SSOperator("<"),
+		SSOperator(">"), SSOperator("<="), SSOperator(">="), SSOperator("not")
+	], op)) {
+		SSList(concat([op], args));
+	} else {
+		println("TODO: makeAstFunction: " + prettySexpr(op));
+		SSList(concat([op], args));
+	}
+}
+
+getRuntimeEnv(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv {
+	// Store the evaluator somewhere globally so we can access it in evaluateOGraphQuasiquoteFunction
+	SExpEnv(getRuntimeFunctions(evaluator), makeTree(), SSList([]));
+}
+
+// Parse a string into a Sexpr
+parseSexpr(f : string, s : string) -> Maybe<Sexpr> {
+	res : Pair<Sexpr, string> = parseCompiledMango(f, s, sexpr_parse_sexpr_compiled, flow(0));
+	if (res.second != "") {
+		println(f + ": " + res.second);
+		None()
+	} else {
+		Some(res.first);
+	}
+}
+
+// Helper for invoking runtime functions with arity checking
+invokeRuntimeFn(env : SExpEnv, name : string, result : FnArgResult, evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> SExpEnv {
+	maybe = lookupTree(env.runtime, name);
+	switch (maybe) {
+		Some(runtimeFn): {
+			// Check arity if expected value is not -1 (variable arity)
+			if (runtimeFn.arity != -1 && length(result.args) != runtimeFn.arity) {
+				println("ERROR: " + name + " expects " + i2s(runtimeFn.arity) + " arguments, got " + i2s(length(result.args)));
+				SExpEnv(env with value = SSList([]));
+			} else {
+				// Invoke the function implementation
+				SExpEnv(env with value = runtimeFn.fn(result));
+			}
+		}
+		None(): {
+			println("ERROR: Unknown runtime function: " + name);
+			SExpEnv(env with value = SSList([]));
+		}
+	}
+}
+
+// Get the runtime functions map
+getRuntimeFunctions(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv) -> Tree<string, RuntimeFn> {
+	functionPairs = [
+		// OGraph operations
+		Pair("makeOGraph", RuntimeFn(1, \result -> makeOGraphSexpr(result))),
+		Pair("findOGraphId", RuntimeFn(2, \result -> findOGraphIdSexprFunction(result))),
+		Pair("ograph2dot", RuntimeFn(1, \result -> ograph2dotSexpr(result))),
+		Pair("evaluateOGraphQuasiquote", RuntimeFn(-1, \result -> evaluateOGraphQuasiquoteFunction(evaluator, result))),
+		Pair("addDomainToNode", RuntimeFn(3, \result -> addDomainToNodeSexpr(result))),
+		Pair("mergeOGraphNodes", RuntimeFn(3, \result -> mergeOGraphNodesSexpr(result))),
+		Pair("getONodeBelongsTo", RuntimeFn(2, \result -> getONodeBelongsToSexpr(result))),
+		Pair("getONodeChildren", RuntimeFn(2, \result -> getONodeChildrenSexpr(result))),
+		
+		// Direct wrappers for OGraph functions as used in rewrite.orb
+		Pair("addOGraph", RuntimeFn(2, \result -> addSexpr2OGraphFunction(result))),
+		Pair("addOGraphWithSub", RuntimeFn(3, \result -> addSexprWithSubFunction(result))),
+		Pair("extractOGraph", RuntimeFn(2, \result -> extractOGraphSexprFunction(result))),
+		Pair("matchSExprNodeOneLevel", RuntimeFn(4, \result -> matchSExprNodeOneLevelFunction(result))),
+		Pair("decomposeSexpr", RuntimeFn(1, \result -> decomposeSexprFunction(result))),
+		Pair("constructSexpr", RuntimeFn(3, \result -> constructSexprFunction(result))),
+		
+		// Orbit-SExpr conversion functions
+		Pair("orbit2sexpr", RuntimeFn(1, \result -> orbit2sexprFunction(result))),
+		Pair("sexpr2orbit", RuntimeFn(1, \result -> sexpr2orbitFunction(result))),
+		Pair("prettyOrbit", RuntimeFn(1, \result -> prettyOrbitSexp(result))),
+		
+		// OGraph with Orbit expressions operations
+		Pair("addOrbit2OGraph", RuntimeFn(2, \result -> {
+			// Extract arguments
+			graphName = getSString(result.args[0], "addOrbit2OGraph.name");
+			orbitExpr = sexpr2orbit(result.args[1]);
+			
+			// Call the implementation
+			nodeId = addOrbit2OGraph(graphName, orbitExpr);
+			
+			// Return the node ID
+			SSInt(nodeId);
+		})),
+		Pair("addOrbitWithSub", RuntimeFn(3, \result -> {
+			// Extract arguments
+			graphName = getSString(result.args[0], "addOrbitWithSub.name");
+			orbitExpr = sexpr2orbit(result.args[1]);
+			
+			// Process bindings
+			bindings = switch (result.args[2]) {
+				SSList(pairs): {
+					// Convert the list of pairs to a tree
+					fold(pairs, makeTree(), \acc, pair -> {
+						switch (pair) {
+							SSList(items): {
+								if (length(items) >= 2) {
+									// Extract key and value
+									key = getSString(items[length(items) - 2], "addOrbitWithSub.binding.key");
+									value = getSInt(items[length(items) - 1], "addOrbitWithSub.binding.value");
+
+									// Add to the bindings map
+									setTree(acc, key, value);
+								} else {
+									println("ERROR: Each binding must be a list of 2 or 3 elements");
+									acc;
+								}
+							}
+							default: {
+								println("ERROR: Each binding must be a list");
+								acc;
+							}
+						}
+					});
+				}
+				default: {
+					println("ERROR: addOrbitWithSub third argument must be a list of bindings");
+					makeTree();
+				}
+			};
+			
+			// Call the implementation
+			nodeId = addOrbitWithSub(graphName, orbitExpr, bindings);
+			
+			// Return the node ID
+			SSInt(nodeId);
+		})),
+		Pair("extractOGraphOrbit", RuntimeFn(2, \result -> {
+			// Extract arguments
+			graphName = getSString(result.args[0], "extractOGraphOrbit.name");
+			nodeId = getSInt(result.args[1], "extractOGraphOrbit.nodeId");
+			
+			// Call the implementation (with tracing disabled)
+			orbitExpr = extractOGraphOrbit(graphName, nodeId, false);
+			
+			// Convert OrMath_expr back to Sexpr for return
+			orbit2sexpr(orbitExpr);
+		})),
+		
+		// Arithmetic operators
+		Pair("+", RuntimeFn(-1, \result -> addNumbers(result))),
+		Pair("-", RuntimeFn(-1, \result -> subtractNumbers(result))),
+		Pair("*", RuntimeFn(-1, \result -> multiplyNumbers(result))),
+		Pair("/", RuntimeFn(-1, \result -> divideNumbers(result))),
+		Pair("=", RuntimeFn(2, \result -> equalsCheck(result))),
+		Pair("!=", RuntimeFn(2, \result -> notEqualsCheck(result))),
+		Pair("<", RuntimeFn(2, \result -> lessThanCheck(result))),
+		Pair(">", RuntimeFn(2, \result -> greaterThanCheck(result))),
+		Pair("<=", RuntimeFn(2, \result -> lessThanOrEqualCheck(result))),
+		Pair(">=", RuntimeFn(2, \result -> greaterThanOrEqualCheck(result))),
+		
+		// List operations
+		Pair("list", RuntimeFn(-1, \result -> SSList(result.args))),
+		Pair("car", RuntimeFn(1, \result -> carFunction(result))), // first element of array
+		Pair("cdr", RuntimeFn(1, \result -> cdrFunction(result))), // tail of array
+		Pair("cons", RuntimeFn(2, \result -> consFunction(result))), // prepend element to array
+		Pair("concat", RuntimeFn(2, \result -> concatFunction(result))),
+		Pair("println", RuntimeFn(-1, \result -> printFunction(result))),
+		
+		// Math functions
+		Pair("abs", RuntimeFn(1, \result -> absFunction(result))),
+		Pair("iabs", RuntimeFn(1, \result -> iabsFunction(result))),
+		Pair("sin", RuntimeFn(1, \result -> sinFunction(result))),
+		Pair("cos", RuntimeFn(1, \result -> cosFunction(result))),
+		Pair("tan", RuntimeFn(1, \result -> tanFunction(result))),
+		Pair("asin", RuntimeFn(1, \result -> asinFunction(result))),
+		Pair("acos", RuntimeFn(1, \result -> acosFunction(result))),
+		Pair("atan", RuntimeFn(1, \result -> atanFunction(result))),
+		Pair("atan2", RuntimeFn(2, \result -> atan2Function(result))),
+		Pair("sqrt", RuntimeFn(1, \result -> sqrtFunction(result))),
+		Pair("exp", RuntimeFn(1, \result -> expFunction(result))),
+		Pair("log", RuntimeFn(1, \result -> logFunction(result))),
+		Pair("log10", RuntimeFn(1, \result -> log10Function(result))),
+		Pair("floor", RuntimeFn(1, \result -> floorFunction(result))),
+		Pair("ceil", RuntimeFn(1, \result -> ceilFunction(result))),
+		Pair("round", RuntimeFn(1, \result -> roundFunction(result))),
+		Pair("dfloor", RuntimeFn(1, \result -> dfloorFunction(result))),
+		Pair("dceil", RuntimeFn(1, \result -> dceilFunction(result))),
+		Pair("dround", RuntimeFn(1, \result -> droundFunction(result))),
+		Pair("sign", RuntimeFn(1, \result -> signFunction(result))),
+		Pair("isign", RuntimeFn(1, \result -> isignFunction(result))),
+		Pair("even", RuntimeFn(1, \result -> evenFunction(result))),
+		Pair("odd", RuntimeFn(1, \result -> oddFunction(result))),
+		Pair("gcd", RuntimeFn(2, \result -> gcdFunction(result))),
+		Pair("lcm", RuntimeFn(2, \result -> lcmFunction(result))),
+		Pair("mod", RuntimeFn(2, \result -> modFunction(result))),
+		Pair("dmod", RuntimeFn(2, \result -> dmodFunction(result))),
+		
+		// Logic functions
+		Pair("not", RuntimeFn(1, \result -> notFunction(result))),
+		
+		// String operations
+		Pair("strlen", RuntimeFn(1, \result -> strlenFunction(result))),
+		Pair("substring", RuntimeFn(3, \result -> substringFunction(result))),
+		Pair("strIndex", RuntimeFn(2, \result -> strIndexFunction(result))),
+		Pair("strContainsAt", RuntimeFn(3, \result -> strContainsAtFunction(result))),
+		Pair("parseHex", RuntimeFn(1, \result -> parseHexFunction(result))),
+		Pair("unescape", RuntimeFn(1, \result -> unescapeFunction(result))),
+		Pair("escape", RuntimeFn(1, \result -> escapeFunction(result))),
+		Pair("strGlue", RuntimeFn(2, \result -> strGlueFunction(result))),
+		Pair("capitalize", RuntimeFn(1, \result -> capitalizeFunction(result))),
+		Pair("decapitalize", RuntimeFn(1, \result -> decapitalizeFunction(result))),
+		Pair("string2ints", RuntimeFn(1, \result -> {
+			// Convert string to list of character codes
+			str = getSString(result.args[0], "string2ints");
+			SSVector(map(s2a(str), \c -> SSInt(c)));
+		})),
+
+		Pair("ints2string", RuntimeFn(1, \result -> {
+			// Convert list of character codes to string
+			items = getSVector(result.args[0], "ints2string");
+			charCodes = map(items, \item -> getSInt(item, "ints2string.item"));
+			SSString(strGlue(map(charCodes, \code -> fromCharCode(code)), ""));
+		})),		
+		// Type conversions
+		Pair("i2s", RuntimeFn(1, \result -> i2sFunction(result))),
+		Pair("d2s", RuntimeFn(1, \result -> d2sFunction(result))),
+		Pair("i2b", RuntimeFn(1, \result -> i2bFunction(result))),
+		Pair("b2i", RuntimeFn(1, \result -> b2iFunction(result))),
+		Pair("s2i", RuntimeFn(1, \result -> s2iFunction(result))),
+		Pair("s2d", RuntimeFn(1, \result -> s2dFunction(result))),
+		
+		// Type checking
+		Pair("isBool", RuntimeFn(1, \result -> isBoolFunction(result))),
+		Pair("isInt", RuntimeFn(1, \result -> isIntFunction(result))),
+		Pair("isDouble", RuntimeFn(1, \result -> isDoubleFunction(result))),
+		Pair("isString", RuntimeFn(1, \result -> isStringFunction(result))),
+		Pair("isArray", RuntimeFn(1, \result -> isArrayFunction(result))),
+		Pair("isConstructor", RuntimeFn(1, \result -> isConstructorFunction(result))),
+		Pair("getConstructor", RuntimeFn(1, \result -> getConstructorFunction(result))),
+		
+		// Array/list operations
+		Pair("length", RuntimeFn(1, \result -> lengthFunction(result))),
+		Pair("arrayIndex", RuntimeFn(2, \result -> indexFunction(result))),
+		Pair("subrange", RuntimeFn(3, \result -> subrangeFunction(result))),
+		Pair("reverse", RuntimeFn(1, \result -> reverseFunction(result))),
+		
+		// New functions (ported from orbit)
+		Pair("prettySexpr", RuntimeFn(1, \result -> prettySexprFunction(result))),
+		Pair("astname", RuntimeFn(1, \result -> astnameFunctionSexpr(result))), // Using new astname
+		Pair("makeAst", RuntimeFn(2, \result -> makeAstSexprFunction(result))),
+		Pair("variableName", RuntimeFn(1, \result -> varnameFunction(result))),
+		Pair("getFileContent", RuntimeFn(1, \result -> getFileContentFunction(result))),
+		Pair("setFileContent", RuntimeFn(2, \result -> setFileContentFunction(result))),
+		Pair("getCommandLineArgs", RuntimeFn(0, \result -> getCommandLineArgsFunction(result))),
+		Pair("parseSexpr", RuntimeFn(1, \result -> parseSexprFunction(result))),
+		Pair("uid", RuntimeFn(1, \result -> uidFunction(result))),
+		Pair("evalWithBindings", RuntimeFn(2, \result -> evalWithBindingsSexprFunction(evaluator, result))),
+		Pair("eval", RuntimeFn(1, \result -> { // result is FnArgResult
+			if (length(result.args) == 1) {
+				exprToEvaluate = result.args[0]; // This is the already-evaluated argument to 'eval'
+				
+				// The 'evaluator' is the main evalSexpr function.
+				// It takes an SExpEnv and an Sexpr, and returns an SExpEnv.
+				// The actual result of the evaluation is in the .value field of the returned SExpEnv.
+				envAfterEval = evaluator(result.env, exprToEvaluate);
+				envAfterEval.value; // Return the Sexpr result
+			} else {
+				println("ERROR: eval expects 1 argument, got " + i2s(length(result.args)));
+				SSList([]); // Return an empty list or some Sexpr indicating an error
+			}
+		}))
+	];
+	
+	pairs2tree(functionPairs);
+}
+
+// Implementation of getONodeChildren function - gets all child node IDs for a given node
+getONodeChildrenSexpr(evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	name = getSString(evalResult.args[0], "getONodeChildren.name");
+	
+	// Get the node ID
+	nodeId = getSInt(evalResult.args[1], "getONodeChildren.nodeId");
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, name)) {
+		Some(ograph): {
+			// Find the canonical root ID
+			root = findORoot(ograph, nodeId);
+			
+			// Get the node from the graph
+			switch (lookupOClass(ograph, root)) {
+				Some(oclass): {
+					// Return the children IDs as a vector of SSInt
+					SSVector(map(oclass.node.children, \id -> SSInt(id)));
+				}
+				None(): {
+					println("ERROR: Node ID " + i2s(nodeId) + " not found in OGraph '" + name + "'");
+					SSVector([]);
+				}
+			}
+		}
+		None(): {
+			println("ERROR: OGraph '" + name + "' not found");
+			SSVector([]);
+		}
+	}
+}
+
+// Helper functions for basic operations
+
+// Add numbers
+addNumbers(evalResult : FnArgResult) -> Sexpr {
+	if (length(evalResult.args) == 0) {
+		SSInt(0);
+	} else {
+		// Get first arg
+		first = evalResult.args[0];
+		initial = switch (first) {
+			SSInt(i): SSInt(i);
+			SSDouble(d): SSDouble(d);
+			SSString(s): SSString(s);
+			SSList(items): SSVector(items);
+			SSVector(items): SSVector(items);
+			default: {
+				SSString(prettySexpr(first));
+			}
+		};
+		fold(tail(evalResult.args), initial, \acc, arg -> {
+			switch (acc) {
+				SSBool(accBool): {
+					switch (arg) {
+						SSString(argString): {
+							SSString(b2s(accBool) + argString);
+						}
+						default: {
+							println("Cannot add non-number: " + prettySexpr(arg));
+							acc;
+						}
+					}
+				}
+				SSInt(accInt): {
+					switch (arg) {
+						SSInt(argInt): SSInt(accInt + argInt);
+						SSDouble(argDouble): SSDouble(i2d(accInt) + argDouble);
+						SSString(argString): {
+							SSString(i2s(accInt) + argString);
+						}
+						default: {
+							println("Cannot add non-number: " + prettySexpr(arg));
+							acc;
+						}
+					}
+				};
+				SSDouble(accDouble): {
+					switch (arg) {
+						SSInt(argInt): SSDouble(accDouble + i2d(argInt));
+						SSDouble(argDouble): SSDouble(accDouble + argDouble);
+						SSString(argString): {
+							SSString(d2s(accDouble) + argString);
+						}
+						default: {
+							println("Cannot add non-number: " + prettySexpr(arg));
+							acc;
+						}
+					}
+				};
+				SSString(accString): {
+					switch (arg) {
+						SSString(argString): SSString(accString + argString);
+						default: SSString(accString + prettySexpr(arg));
+					}
+				}
+				SSVector(accItems): {
+					switch (arg) {
+						SSVector(argItems): SSVector(concat(accItems, argItems));
+						SSList(argItems): SSVector(concat(accItems, argItems));
+						default: {
+							println("Cannot add non-collection: " + prettySexpr(arg));
+							acc;
+						}
+					}
+				}
+				default: acc;
+			}
+		});
+	}
+}
+
+// Subtract numbers
+subtractNumbers(evalResult : FnArgResult) -> Sexpr {
+	if (length(evalResult.args) == 0) {
+		SSInt(0);
+	} else {
+		// Get first arg
+		first = evalResult.args[0];
+		
+		// If only one argument, negate it
+		if (length(evalResult.args) == 1) {
+			switch (first) {
+				SSInt(i): SSInt(-i);
+				SSDouble(d): SSDouble(-d);
+				default: {
+					println("Cannot negate non-number: " + prettySexpr(first));
+					first;
+				};
+			};
+		} else {
+			// Subtract rest from first
+			rest = tailFrom(evalResult.args, 1);
+			fold(rest, first, \acc, arg -> {
+				switch (acc) {
+					SSInt(accInt): {
+						switch (arg) {
+							SSInt(argInt): SSInt(accInt - argInt);
+							SSDouble(argDouble): SSDouble(i2d(accInt) - argDouble);
+							default: {
+								println("Cannot subtract non-number: " + prettySexpr(arg));
+								acc;
+							}
+						}
+					};
+					SSDouble(accDouble): {
+						switch (arg) {
+							SSInt(argInt): SSDouble(accDouble - i2d(argInt));
+							SSDouble(argDouble): SSDouble(accDouble - argDouble);
+							default: {
+								println("Cannot subtract non-number: " + prettySexpr(arg));
+								acc;
+							}
+						}
+					};
+					default: acc;
+				}
+			});
+		}
+	}
+}
+
+// Multiply numbers
+multiplyNumbers(evalResult : FnArgResult) -> Sexpr {
+	fold(evalResult.args, SSInt(1), \acc, arg -> {
+		switch (acc) {
+			SSInt(accInt): {
+				switch (arg) {
+					SSInt(argInt): SSInt(accInt * argInt);
+					SSDouble(argDouble): SSDouble(i2d(accInt) * argDouble);
+					default: {
+						println("Cannot multiply non-number: " + prettySexpr(arg));
+						acc;
+					}
+				}
+			};
+			SSDouble(accDouble): {
+				switch (arg) {
+					SSInt(argInt): SSDouble(accDouble * i2d(argInt));
+					SSDouble(argDouble): SSDouble(accDouble * argDouble);
+					default: {
+						println("Cannot multiply non-number: " + prettySexpr(arg));
+						acc;
+					}
+				}
+			};
+			default: acc;
+		}
+	});
+}
+
+// Divide numbers
+divideNumbers(evalResult : FnArgResult) -> Sexpr {
+	if (length(evalResult.args) == 0) {
+		SSInt(1);
+	} else {
+		// Get first arg
+		first = evalResult.args[0];
+		
+		// If only one argument, invert it (1/x)
+		if (length(evalResult.args) == 1) {
+			switch (first) {
+				SSInt(i): {
+					if (i != 0) SSDouble(1.0 / i2d(i)) else {
+						println("Division by zero");
+						SSDouble(0.0);
+					}
+				};
+				SSDouble(d): {
+					if (d != 0.0) SSDouble(1.0 / d) else {
+						println("Division by zero");
+						SSDouble(0.0);
+					}
+				};
+				default: {
+					println("Cannot invert non-number: " + prettySexpr(first));
+					first;
+				};
+			};
+		} else {
+			// Divide first by rest
+			rest = tailFrom(evalResult.args, 1);
+			fold(rest, first, \acc, arg -> {
+				switch (acc) {
+					SSInt(accInt): {
+						switch (arg) {
+							SSInt(argInt): {
+								if (argInt != 0) {
+									SSInt(accInt / argInt);
+								} else {
+									println("Division by zero");
+									acc;
+								}
+							};
+							SSDouble(argDouble): {
+								if (argDouble != 0.0) {
+									SSDouble(i2d(accInt) / argDouble);
+								} else {
+									println("Division by zero");
+									acc;
+								}
+							};
+							default: {
+								println("Cannot divide by non-number: " + prettySexpr(arg));
+								acc;
+							};
+						}
+					};
+					SSDouble(accDouble): {
+						switch (arg) {
+							SSInt(argInt): {
+								if (argInt != 0) {
+									SSDouble(accDouble / i2d(argInt));
+								} else {
+									println("Division by zero");
+									acc;
+								}
+							};
+							SSDouble(argDouble): {
+								if (argDouble != 0.0) {
+									SSDouble(accDouble / argDouble);
+								} else {
+									println("Division by zero");
+									acc;
+								}
+							};
+							default: {
+								println("Cannot divide by non-number: " + prettySexpr(arg));
+								acc;
+							};
+						}
+					};
+					default: acc;
+				}
+			});
+		}
+	}
+}
+
+// Equality check
+equalsCheck(evalResult : FnArgResult) -> Sexpr {
+	allEqual = evalResult.args[0] == evalResult.args[1];
+	SSBool(allEqual);
+}
+
+// Not equal check
+notEqualsCheck(evalResult : FnArgResult) -> Sexpr {
+	notEqual = evalResult.args[0] != evalResult.args[1];
+	SSBool(notEqual);
+}
+
+// Less than check
+lessThanCheck(evalResult : FnArgResult) -> Sexpr {
+	compareResult = genericCompare(evalResult.args[0], evalResult.args[1]);
+	SSBool(compareResult < 0);
+}
+
+// Greater than check
+greaterThanCheck(evalResult : FnArgResult) -> Sexpr {
+	compareResult = genericCompare(evalResult.args[0], evalResult.args[1]);
+	SSBool(compareResult > 0);
+}
+
+// Less than or equal check
+lessThanOrEqualCheck(evalResult : FnArgResult) -> Sexpr {
+	compareResult = genericCompare(evalResult.args[0], evalResult.args[1]);
+	SSBool(compareResult <= 0);
+}
+
+// Greater than or equal check
+greaterThanOrEqualCheck(evalResult : FnArgResult) -> Sexpr {
+	compareResult = genericCompare(evalResult.args[0], evalResult.args[1]);
+	SSBool(compareResult >= 0);
+}
+
+// List operations
+
+carFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the collection and preserve its type for error cases
+	arg = evalResult.args[0];
+	items = getSVector(arg, "car collection");
+	
+	// Get the first element or return empty collection of same type
+	if (length(items) > 0) {
+		items[0];
+	} else {
+		println("car: empty collection");
+		switch (arg) {
+			SSVector(__): SSVector([]);
+			default: SSList([]);
+		}
+	}
+}
+
+cdrFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the collection and preserve its type
+	arg = evalResult.args[0];
+	items = getSVector(arg, "cdr collection");
+	
+	// Get the tail elements or return empty collection of same type
+	resultItems = if (length(items) > 0) tailFrom(items, 1) else [];
+	
+	// Return the same type as input
+	switch (arg) {
+		SSVector(__): SSVector(resultItems);
+		default: SSList(resultItems);
+	}
+}
+
+consFunction(evalResult : FnArgResult) -> Sexpr {
+	elem = evalResult.args[0];
+	rest = evalResult.args[1];
+	
+	// If rest is a list or vector, prepend element to it and preserve type
+	if (rest == SSList([]) || rest == SSVector([])) {
+		// Special case for empty lists/vectors
+		switch (rest) {
+			SSVector(__): SSVector([elem]);
+			default: SSList([elem]);
+		}
+	} else {
+		switch (rest) {
+			SSList(items): SSList(concat([elem], items));
+			SSVector(items): SSVector(concat([elem], items));
+			default: {
+				// In Scheme, cons can create pairs, but for simplicity
+				// we'll just create a list
+				SSList([elem, rest]);
+			}
+		}
+	}
+}
+
+concatFunction(evalResult : FnArgResult) -> Sexpr {
+	first = evalResult.args[0];
+	second = evalResult.args[1];
+	
+	// Process according to the types of arguments
+	switch (first) {
+		SSList(items1): {
+			// First arg is a list
+			switch (second) {
+				SSList(items2): {
+					// Both are lists
+					SSList(concat(items1, items2));
+				}
+				SSVector(items2): {
+					// First is list, second is vector
+					SSList(concat(items1, items2));
+				}
+				default: {
+					// First is list, second is not a collection
+					SSList(concat(items1, [second]));
+				}
+			}
+		}
+		SSVector(items1): {
+			// First arg is a vector
+			switch (second) {
+				SSList(items2): {
+					// First is vector, second is list
+					SSVector(concat(items1, items2));
+				}
+				SSVector(items2): {
+					// Both are vectors
+					SSVector(concat(items1, items2));
+				}
+				default: {
+					// First is vector, second is not a collection
+					SSVector(concat(items1, [second]));
+				}
+			}
+		}
+		default: {
+			// First arg is not a collection
+			switch (second) {
+				SSList(items2): {
+					// First is not collection, second is list
+					SSList(concat([first], items2));
+				}
+				SSVector(items2): {
+					// First is not collection, second is vector
+					SSVector(concat([first], items2));
+				}
+				default: {
+					// Neither is a collection
+					SSList([first, second]);
+				}
+			}
+		}
+	}
+}
+
+
+// Print function
+printFunction(evalResult : FnArgResult) -> Sexpr {
+	// Evaluate and print args recursively
+	iter(evalResult.args, \arg -> {
+		switch (arg) {
+			SSString(str): {
+				println(str);
+			}
+			default: println(prettySexpr(arg));
+		}
+	});
+
+	SSInt(0); // Default result
+}
+
+// ----- Functions from orbit_runtime -----
+// Absolute
+// Absolute value for doubles
+absFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "abs");
+	SSDouble(abs(value));
+}
+
+// Absolute value for integers
+iabsFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSInt(evalResult.args[0], "iabs");
+	SSInt(iabs(value));
+}
+
+// Sine function
+sinFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "sin");
+	SSDouble(sin(value));
+}
+
+// Cosine function
+cosFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "cos");
+	SSDouble(cos(value));
+}
+
+// Tangent function
+tanFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "tan");
+	SSDouble(tan(value));
+}
+
+// Arc sine function
+asinFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "asin");
+	SSDouble(asin(value));
+}
+
+// Arc cosine function
+acosFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "acos");
+	SSDouble(acos(value));
+}
+
+// Arc tangent function
+atanFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "atan");
+	SSDouble(atan(value));
+}
+
+// Arc tangent of y/x function
+atan2Function(evalResult : FnArgResult) -> Sexpr {
+	y = getSDouble(evalResult.args[0], "atan2 y");
+	x = getSDouble(evalResult.args[1], "atan2 x");
+	SSDouble(atan2(y, x));
+}
+
+// Square root function
+sqrtFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "sqrt");
+	SSDouble(sqrt(value));
+}
+
+// Exponential function
+expFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "exp");
+	SSDouble(exp(value));
+}
+
+// Natural logarithm function
+logFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "log");
+	SSDouble(log(value));
+}
+
+// Base-10 logarithm function
+log10Function(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "log10");
+	SSDouble(log(value) / log(10.0));
+}
+
+// Floor function (returns integer)
+floorFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "floor");
+	SSInt(floor(value));
+}
+
+// Ceiling function (returns integer)
+ceilFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "ceil");
+	SSInt(ceil(value));
+}
+
+// Round function (returns integer)
+roundFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "round");
+	SSInt(round(value));
+}
+
+// Floor function (returns double)
+dfloorFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "dfloor");
+	SSDouble(dfloor(value));
+}
+
+// Ceiling function (returns double)
+dceilFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "dceil");
+	SSDouble(dceil(value));
+}
+
+// Round function (returns double)
+droundFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "dround");
+	SSDouble(dround(value));
+}
+
+// Sign function (returns double)
+signFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "sign");
+	SSDouble(sign(value));
+}
+
+// Sign function (returns integer)
+isignFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSInt(evalResult.args[0], "isign");
+	SSInt(isign(value));
+}
+
+// Check if number is even
+evenFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSInt(evalResult.args[0], "even");
+	SSBool(even(value));
+}
+
+// Check if number is odd
+oddFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSInt(evalResult.args[0], "odd");
+	SSBool(odd(value));
+}
+
+// Modulo function for integers
+modFunction(evalResult : FnArgResult) -> Sexpr {
+	value1 = getSInt(evalResult.args[0], "mod dividend");
+	value2 = getSInt(evalResult.args[1], "mod divisor");
+	
+	if (value2 == 0) {
+		println("ERROR: mod division by zero");
+		SSInt(0);
+	} else {
+		SSInt(mod(value1, value2));
+	}
+}
+
+// Modulo function for doubles
+dmodFunction(evalResult : FnArgResult) -> Sexpr {
+	value1 = getSDouble(evalResult.args[0], "dmod dividend");
+	value2 = getSDouble(evalResult.args[1], "dmod divisor");
+	
+	if (value2 == 0.0) {
+		println("ERROR: dmod division by zero");
+		SSDouble(0.0);
+	} else {
+		SSDouble(dmod(value1, value2));
+	}
+}
+
+// Greatest common divisor function
+gcdFunction(evalResult : FnArgResult) -> Sexpr {
+	value1 = getSInt(evalResult.args[0], "gcd first");
+	value2 = getSInt(evalResult.args[1], "gcd second");
+	SSInt(gcd(value1, value2));
+}
+
+// Least common multiple function
+lcmFunction(evalResult : FnArgResult) -> Sexpr {
+	value1 = getSInt(evalResult.args[0], "lcm first");
+	value2 = getSInt(evalResult.args[1], "lcm second");
+	SSInt(lcm(value1, value2));
+}
+
+// Logical not function
+notFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSBool(evalResult.args[0], "not");
+	SSBool(!value);
+}
+
+// String length function
+strlenFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "strlen");
+	SSInt(strlen(str));
+}
+
+// Substring function
+substringFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "substring string");
+	start = getSInt(evalResult.args[1], "substring start");
+	length = getSInt(evalResult.args[2], "substring length");
+	
+	if (start < 0 || start >= strlen(str)) {
+		println("ERROR: substring start index out of bounds");
+		SSString("");
+	} else if (length < 0) {
+		println("ERROR: substring length must be non-negative");
+		SSString("");
+	} else {
+		SSString(substring(str, start, length));
+	}
+}
+
+// Get character at index in string
+strIndexFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "strIndex string");
+	idx = getSInt(evalResult.args[1], "strIndex index");
+	
+	if (idx < 0 || idx >= strlen(str)) {
+		println("ERROR: strIndex index out of bounds");
+		SSString("");
+	} else {
+		SSString(substring(str, idx, 1));
+	}
+}
+
+// Check if string contains substring at index
+strContainsAtFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "strContainsAt string");
+	idx = getSInt(evalResult.args[1], "strContainsAt index");
+	sub = getSString(evalResult.args[2], "strContainsAt substring");
+	
+	if (idx < 0 || idx >= strlen(str)) {
+		SSBool(false);
+	} else if (idx + strlen(sub) > strlen(str)) {
+		SSBool(false);
+	} else {
+		check = substring(str, idx, strlen(sub));
+		SSBool(check == sub);
+	}
+}
+
+// Parse hexadecimal string
+parseHexFunction(evalResult : FnArgResult) -> Sexpr {
+	hexStr = getSString(evalResult.args[0], "parseHex");
+	SSInt(parseHex(hexStr));
+}
+
+// Unescape a string
+unescapeFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "unescape");
+	result = deserializeString(str).first;
+	SSString(result);
+}
+
+// Escape a string
+escapeFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "escape");
+	SSString(toString(str));
+}
+
+// Join array of strings with separator
+strGlueFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the items from either list or vector
+	items = getSVector(evalResult.args[0], "strGlue first argument");
+	sep = getSString(evalResult.args[1], "strGlue separator");
+	
+	// Convert all items to strings
+	strs = map(items, \item -> getSString(item, "strGlue item"));
+	SSString(strGlue(strs, sep));
+}
+
+// Capitalize first letter of string
+capitalizeFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "capitalize");
+	if (strlen(str) == 0) {
+		SSString("");
+	} else {
+		first = substring(str, 0, 1);
+		rest = substring(str, 1, strlen(str) - 1);
+		SSString(toUpperCase(first) + rest);
+	}
+}
+
+// Decapitalize first letter of string
+decapitalizeFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "decapitalize");
+	if (strlen(str) == 0) {
+		SSString("");
+	} else {
+		first = substring(str, 0, 1);
+		rest = substring(str, 1, strlen(str) - 1);
+		SSString(toLowerCase(first) + rest);
+	}
+}
+
+// Convert integer to string
+i2sFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSInt(evalResult.args[0], "i2s");
+	SSString(i2s(value));
+}
+
+// Convert double to string
+d2sFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSDouble(evalResult.args[0], "d2s");
+	SSString(d2s(value));
+}
+
+// Convert integer to boolean
+i2bFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSInt(evalResult.args[0], "i2b");
+	SSBool(value != 0);
+}
+
+// Convert boolean to integer
+b2iFunction(evalResult : FnArgResult) -> Sexpr {
+	value = getSBool(evalResult.args[0], "b2i");
+	SSInt(if (value) 1 else 0);
+}
+
+// Convert string to integer
+s2iFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "s2i");
+	SSInt(s2i(str));
+}
+
+// Convert string to double
+s2dFunction(evalResult : FnArgResult) -> Sexpr {
+	str = getSString(evalResult.args[0], "s2d");
+	SSDouble(s2d(str));
+}
+
+// Check if value is a boolean
+isBoolFunction(evalResult : FnArgResult) -> Sexpr {
+	isBool = switch (evalResult.args[0]) {
+		SSBool(__): true;
+		default: false;
+	};
+	SSBool(isBool);
+}
+
+// Check if value is an integer
+isIntFunction(evalResult : FnArgResult) -> Sexpr {
+	isInt = switch (evalResult.args[0]) {
+		SSInt(__): true;
+		default: false;
+	};
+	SSBool(isInt);
+}
+
+// Check if value is a double
+isDoubleFunction(evalResult : FnArgResult) -> Sexpr {
+	isDouble = switch (evalResult.args[0]) {
+		SSDouble(__): true;
+		default: false;
+	};
+	SSBool(isDouble);
+}
+
+// Check if value is a string
+isStringFunction(evalResult : FnArgResult) -> Sexpr {
+	isString = switch (evalResult.args[0]) {
+		SSString(__): true;
+		default: false;
+	};
+	SSBool(isString);
+}
+
+// Check if value is an array/list
+isArrayFunction(evalResult : FnArgResult) -> Sexpr {
+	isArray = switch (evalResult.args[0]) {
+		SSList(__): true;
+		SSVector(__): true;
+		default: false;
+	};
+	SSBool(isArray);
+}
+
+// Check if value is a constructor
+isConstructorFunction(evalResult : FnArgResult) -> Sexpr {
+	isConstructor = switch (evalResult.args[0]) {
+		SSConstructor(__): true;
+		SSList(items): {
+			if (length(items) > 0) {
+				switch (items[0]) {
+					SSConstructor(__): true;
+					default: false;
+				}
+			} else false;
+		}
+		default: false;
+	};
+	SSBool(isConstructor);
+}
+
+// Extract constructor name from a constructor node
+getConstructorFunction(evalResult : FnArgResult) -> Sexpr {
+	// Extract the constructor name if it's a constructor, otherwise return empty string
+	name = switch (evalResult.args[0]) {
+		SSConstructor(id): id;
+		SSOperator(id): id;
+		SSList(items): {
+			if (length(items) > 0) {
+				switch (items[0]) {
+					SSConstructor(id): id;
+					SSOperator(id): id;
+					default: {
+						println("TODO getConstructor: " + items[0].structname + prettySexpr(items[0]));
+						"";
+					};
+				}
+			} else "";
+		}
+		default: {
+			println("TODO getConstructor: " + prettySexpr(evalResult.args[0]));
+			"";
+		}
+	};
+	SSString(name);
+}
+
+// Get length of array/list
+lengthFunction(evalResult : FnArgResult) -> Sexpr {
+	switch (evalResult.args[0]) {
+		SSList(items): {
+			SSInt(length(items));
+		}
+		SSVector(items): {
+			SSInt(length(items));
+		}
+		SSString(s): {
+			// As a convenience, also work on strings
+			SSInt(strlen(s));
+		}
+		default: {
+			println("ERROR: length requires a list, vector, or string argument");
+			SSInt(0);
+		}
+	}
+}
+
+// Get item at index from array/list
+indexFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the collection (both list and vector are supported)
+	arg = evalResult.args[0];
+	items = getSVector(arg, "index collection");
+	idx = getSInt(evalResult.args[1], "index index");
+	
+	if (idx < 0 || idx >= length(items)) {
+		println("ERROR: index out of bounds " + i2s(idx) + " in " + prettySexpr(arg));
+		// Return the same type of empty collection
+		switch (arg) {
+			SSVector(__): SSVector([]);
+			default: SSList([]);
+		}
+	} else {
+		items[idx];
+	}
+}
+
+// Get subrange of array/list
+subrangeFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the collection and preserve its type
+	arg = evalResult.args[0];
+	items = getSVector(arg, "subrange collection");
+	start = getSInt(evalResult.args[1], "subrange start");
+	lengthVal = getSInt(evalResult.args[2], "subrange length");
+	itemsLength = length(items);
+	
+	// Determine if we're returning an empty result or valid subrange
+	resultItems = if (start < 0) {
+		println("ERROR: subrange start index out of bounds " + i2s(start) + " in " + prettySexpr(arg));
+		[];
+	} else if (start >= itemsLength) {
+		[];
+	} else if (lengthVal < 0) {
+		println("ERROR: subrange length must be non-negative");
+		[];
+	} else {
+		subrange(items, start, lengthVal);
+	};
+	
+	// Return the same type as input
+	switch (arg) {
+		SSVector(__): SSVector(resultItems);
+		default: SSList(resultItems);
+	}
+}
+
+// Reverse array/list
+reverseFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the collection and preserve its type
+	arg = evalResult.args[0];
+	items = getSVector(arg, "reverse collection");
+	
+	// Return the same type of collection, but reversed
+	switch (arg) {
+		SSVector(__): SSVector(reverseA(items));
+		default: SSList(reverseA(items));
+	}
+}
+
+// Implementation of prettySexpr function (equivalent to prettyOrbit)
+prettySexprFunction(evalResult : FnArgResult) -> Sexpr {
+	// Use the existing prettySexpr function to format the expression
+	result = prettySexpr(evalResult.args[0]);
+	SSString(result);
+}
+
+// Implementation of varname function
+varnameFunction(evalResult : FnArgResult) -> Sexpr {
+	// Extract the name if it's a variable, otherwise return empty string
+	name = switch (evalResult.args[0]) {
+		SSVariable(id): id;
+		SSConstructor(id): id; // Include constructors as well
+		SSOperator(id): id;    // Include operators too
+		default: "";
+	}
+	SSString(name);
+}
+
+// Implementation of getFileContent function
+getFileContentFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the file path
+	path = getSString(evalResult.args[0], "getFileContent.path");
+	
+	// Read the file content (using the Flow9 getFileContent function)
+	content = getFileContent(path);
+	
+	SSString(content);
+}
+
+// Implementation of setFileContent function
+setFileContentFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the file path and content
+	path = getSString(evalResult.args[0], "setFileContent.path");
+	content = getSString(evalResult.args[1], "setFileContent.content");
+	
+	// Write the content to the file (using the Flow9 setFileContent function)
+	success = setFileContent(path, content);
+	println("Saved file " + resolveRelativePath(path));
+	SSBool(success);
+}
+
+// Implementation of getCommandLineArgs function
+getCommandLineArgsFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get all command line arguments as an array
+	commandLineArgs = filtermap(getAllUrlParametersArray(), \a -> 
+		if (a[1] == "") Some(a[0]) else None()
+	);
+	
+	// Convert to a list of SSString
+	result = SSList(map(commandLineArgs, \arg -> SSString(arg)));
+	result;
+}
+
+// Implementation of parseSexpr function
+parseSexprFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the code string
+	code = getSString(evalResult.args[0], "parseSexpr.code");
+	
+	// Note: We need to assume parseSexpr is implemented elsewhere
+	// For now, let's create a placeholder implementation that
+	// returns a pair with the parsed expression and any error message
+	mcode = parseSexpr("parseSexpr", code);
+	mcode ?? {
+		mcode;
+	} : {
+		SSList([]);
+	}
+}
+
+// Global counter for unique IDs with prefixes
+globalUidCounters : ref Tree<string, int> = ref makeTree();
+
+// Implementation of uid function
+uidFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the prefix
+	prefix = getSString(evalResult.args[0], "uid.prefix");
+	
+	// Generate a unique ID with this prefix
+	currentCount = lookupTreeDef(^globalUidCounters, prefix, 0);
+	globalUidCounters := setTree(^globalUidCounters, prefix, currentCount + 1);
+	result = prefix + i2s(currentCount);
+	
+	SSString(result);
+}
+
+// ------ OGraph Functions ------
+
+// Implementation of makeOGraph function
+makeOGraphSexpr(evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	name = getSString(evalResult.args[0], "makeOGraph.name");
+	
+	// Create the graph
+	createOGraph(name);
+	
+	// Return the name
+	SSString(name);
+}
+
+// Implementation of addSexpr2OGraph function
+addSexpr2OGraphFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	name = getSString(evalResult.args[0], "addSexpr2OGraph.name");
+	
+	// Get the S-expression
+	sexpr = evalResult.args[1];
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, name)) {
+		Some(ograph): {
+			// Add the S-expression to the graph
+			nodeId = sexp2OGraphWithSubstitution(ograph, sexpr, makeTree(), false);
+			
+			// Return the node ID
+			SSInt(nodeId);
+		}
+		None(): {
+			println("ERROR: OGraph '" + name + "' not found");
+			SSInt(-1);
+		}
+	}
+}
+
+// Implementation of addSexprWithSub function
+addSexprWithSubFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	name = getSString(evalResult.args[0], "addSexprWithSub.name");
+	
+	// Get the S-expression
+	sexpr = evalResult.args[1];
+
+	// TODO: Improve parsing of bindings to support more formats and provide better error messages
+	// Get the variable bindings (mapping from variable name to node ID)
+	bindings = switch (evalResult.args[2]) {
+		SSList(pairs): {
+			// Convert the list of pairs to a tree
+			fold(pairs, makeTree(), \acc, pair -> {
+				switch (pair) {
+					SSList(items): {
+						if (length(items) >= 2) {
+							// Extract key and value
+							key = getSString(items[length(items) - 2], "addSexprWithSub.binding.key");
+							value = getSInt(items[length(items) - 1], "addSexprWithSub.binding.value");
+							
+							// Add to the bindings map
+							setTree(acc, key, value);
+						} else {
+							println("ERROR: Each binding must be a list of 2 or 3 elements");
+							acc;
+						}
+					}
+					default: {
+						println("ERROR: Each binding must be a list");
+						acc;
+					}
+				}
+			});
+		}
+		SSVector(items): {
+			if (length(items) == 0) {
+				// Handle empty vector case gracefully
+				makeTree();
+			} else {
+				// Try to convert single binding if it's a vector
+				fold(items, makeTree(), \acc, pair -> {
+					switch (pair) {
+						SSList(subitems): {
+							if (length(subitems) == 3) {
+								key = getSString(subitems[1], "addSexprWithSub.binding.key");
+								value = getSInt(subitems[2], "addSexprWithSub.binding.value");
+								setTree(acc, key, value);
+							} else acc;
+						}
+						default: acc;
+					}
+				});
+			}
+		}
+		default: {
+			// Default to empty bindings if the argument is not in the expected format
+			println("ERROR: addSexprWithSub third argument must be a list of bindings");
+			makeTree();
+		}
+	};
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, name)) {
+		Some(ograph): {
+			// Add the S-expression to the graph with substitutions
+			nodeId = sexp2OGraphWithSubstitution(ograph, sexpr, bindings, false);
+			
+			// Return the node ID
+			SSInt(nodeId);
+		}
+		None(): {
+			println("ERROR: OGraph '" + name + "' not found");
+			SSInt(-1);
+		}
+	}
+}
+
+// Implementation of findOGraphId function
+findOGraphIdSexprFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	graphName = getSString(evalResult.args[0], "findOGraphId.graphName");
+	
+	// Get the expression to search for
+	expr = evalResult.args[1];
+	
+	// Convert the Sexpr to an OrMath_expr (reusing existing pattern)
+	orbitExpr = sexpr2orbit(expr);
+	
+	// Use the findOGraphId function from orbit_compare.flow
+	resultId = findOGraphId(graphName, orbitExpr);
+	
+	// Return the result
+	SSInt(resultId);
+}
+
+// Implementation of extractOGraphSexpr function
+extractOGraphSexprFunction(evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	name = getSString(evalResult.args[0], "extractOGraphSexpr.name");
+	
+	// Get the node ID
+	nodeId = getSInt(evalResult.args[1], "extractOGraphSexpr.nodeId");
+	
+	// Extract the S-expression from the graph
+	extractOGraphSexpr(name, nodeId, false);
+}
+
+// Implementation of addDomainToNode function
+addDomainToNodeSexpr(evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	name = getSString(evalResult.args[0], "addDomainToNode.name");
+	
+	// Get the node ID
+	nodeId = getSInt(evalResult.args[1], "addDomainToNode.nodeId");
+	
+	// Get the domain node ID
+	domainId = getSInt(evalResult.args[2], "addDomainToNode.domainId");
+	
+	// Add the domain to the node
+	success = addDomainToNode(name, nodeId, domainId);
+	
+	// Return success status
+	SSBool(success);
+}
+
+// Implementation of mergeOGraphNodes function
+mergeOGraphNodesSexpr(evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	name = getSString(evalResult.args[0], "mergeOGraphNodes.name");
+	
+	// Get the first node ID
+	nodeId1 = getSInt(evalResult.args[1], "mergeOGraphNodes.nodeId1");
+	
+	// Get the second node ID
+	nodeId2 = getSInt(evalResult.args[2], "mergeOGraphNodes.nodeId2");
+	
+	// Merge the nodes
+	success = mergeOGraphNodes(name, nodeId1, nodeId2);
+	
+	// Return success status
+	SSBool(success);
+}
+
+// Implementation of getONodeBelongsTo function
+getONodeBelongsToSexpr(evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	name = getSString(evalResult.args[0], "getONodeBelongsTo.name");
+	
+	// Get the node ID
+	nodeId = getSInt(evalResult.args[1], "getONodeBelongsTo.nodeId");
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, name)) {
+		Some(ograph): {
+			// Get the domain IDs that the node belongs to
+			domainIds = getONodeBelongsTo(ograph, nodeId);
+			
+			// Convert domain IDs to SSInt values in a vector
+			SSVector(map(domainIds, \id -> SSInt(id)));
+		}
+		None(): {
+			println("ERROR: OGraph '" + name + "' not found");
+			SSVector([]);
+		}
+	}
+}
+
+// Implementation of evaluateOGraphQuasiquote function
+evaluateOGraphQuasiquoteFunction(evaluator : (SExpEnv, Sexpr) -> SExpEnv, evalResult : FnArgResult) -> Sexpr {
+	// Get the graph name
+	name = getSString(evalResult.args[0], "evaluateOGraphQuasiquote.name");
+	
+	// Get the node ID
+	nodeId = getSInt(evalResult.args[1], "evaluateOGraphQuasiquote.nodeId");
+	
+	// Get tracing flag if provided (3rd argument)
+	tracing = if (length(evalResult.args) > 2) {
+		getSBool(evalResult.args[2], "evaluateOGraphQuasiquote.tracing");
+	} else false;
+	
+	if (tracing) println("evaluateOGraphQuasiquote with tracing enabled");
+	
+	// Use the full environment directly from evalResult
+	env = evalResult.env;
+	
+	// Call the quasiquote evaluator with the specified tracing flag
+	result = evaluateOGraphQuasiquote(name, nodeId, env, evaluator, tracing, OptimisticMode());
+	
+	// Return the resulting node ID
+	SSInt(result.second);
+}
+
+// ------ OrMathExp with OGraph Functions ------
+
+// Add an Orbit math expression to an OGraph (converts to S-expression first)
+addOrbit2OGraph(graphName : string, expr : OrMath_expr) -> int {
+	// Convert the OrMath_expr to Sexpr
+	sexpr = orbit2sexpr(expr);
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, graphName)) {
+		Some(ograph): {
+			// Add the S-expression to the graph
+			sexp2OGraphWithSubstitution(ograph, sexpr, makeTree(), false);
+		}
+		None(): {
+			println("ERROR: OGraph '" + graphName + "' not found");
+			-1;
+		}
+	}
+}
+
+// Add an Orbit math expression to an OGraph with variable substitutions
+addOrbitWithSub(graphName : string, expr : OrMath_expr, bindings : Tree<string, int>) -> int {
+	// Convert the OrMath_expr to Sexpr
+	sexpr = orbit2sexpr(expr);
+	
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, graphName)) {
+		Some(ograph): {
+			// Add the S-expression to the graph with substitutions
+			sexp2OGraphWithSubstitution(ograph, sexpr, bindings, false);
+		}
+		None(): {
+			println("ERROR: OGraph '" + graphName + "' not found");
+			-1;
+		}
+	}
+}
+
+// Extract an Orbit math expression from an OGraph node (converts from S-expression)
+extractOGraphOrbit(graphName : string, nodeId : int, tracing : bool) -> OrMath_expr {
+	// Get the graph from the registry
+	switch (lookupTree(^ographRegistry, graphName)) {
+		Some(ograph): {
+			// Extract the S-expression from the graph
+			sexpr = extractOGraphSexpr(graphName, nodeId, tracing);
+			
+			// Convert the S-expression to OrMath_expr
+			sexpr2orbit(sexpr);
+		}
+		None(): {
+			println("ERROR: OGraph '" + graphName + "' not found");
+			OrInt(0); // Return a simple zero expression as fallback
+		}
+	}
+}
+
+
+ograph2dotSexpr(evalResult : FnArgResult) -> Sexpr {
+	graphName = getSString(evalResult.args[0], "ograph2dotSexpr.name");
+	// Convert to DOT format
+	switch (lookupTree(^ographRegistry, graphName)) {
+		Some(ograph): {
+			dotStr = ograph2dot(ograph);
+			SSString(dotStr);
+		}
+		None(): {
+			println("ERROR: OGraph '" + graphName + "' not found");
+			SSString("");
+		}
+	}
+}
+
+// The following functions are low-level graph manipulation functions used directly by rewrite.orb
+
+// Get the OGraph instance from registry by name
+getOGraph(name : string) -> Maybe<OGraph> {
+	lookupTree(^ographRegistry, name);
+}
+
+// Add a node to the graph with variable substitution (direct wrapper)
+addOGraphWithSub(name : string, expr : Sexpr, bindings : Tree<string, int>) -> int {
+	switch (lookupTree(^ographRegistry, name)) {
+		Some(ograph): {
+			// Add the sexpr to the graph with substitutions
+			sexp2OGraphWithSubstitution(ograph, expr, bindings, false);
+		}
+		None(): {
+			println("ERROR: OGraph '" + name + "' not found");
+			-1;
+		}
+	}
+}
+
+// Add a node to the graph (direct wrapper)
+addOGraph(name : string, expr : Sexpr) -> int {
+	addOGraphWithSub(name, expr, makeTree());
+}
+
+// Extract a node from the graph (direct wrapper)
+extractOGraph(name : string, nodeId : int) -> Sexpr {
+	extractOGraphSexpr(name, nodeId, false);
+}
+
+// Implementation of orbit2sexpr function for the runtime environment
+orbit2sexprFunction(evalResult : FnArgResult) -> Sexpr {
+	// Convert the first argument to Orbit expression
+	orbitExpr = sexpr2orbit(evalResult.args[0]);
+	
+	// Convert back to S-expression (normalizing/canonicalizing)
+	orbit2sexpr(orbitExpr);
+}
+
+// Implementation of sexpr2orbit function for the runtime environment
+sexpr2orbitFunction(evalResult : FnArgResult) -> Sexpr {
+	// Convert the S-expression to Orbit expression
+	orbitExpr = sexpr2orbit(evalResult.args[0]);
+	
+	// Convert back to S-expression for return
+	orbit2sexpr(orbitExpr);
+}
+
+// Implementation of prettyOrbit function
+prettyOrbitSexp(evalResult : FnArgResult) -> Sexpr {
+	// Convert the S-expression to Orbit expression
+	orbitExpr = sexpr2orbit(evalResult.args[0]);
+	
+	// Pretty print the Orbit expression
+	SSString(prettyOrbit(orbitExpr));
+}
+// The old varnameFunction is removed as it was a duplicate.
+// The actual varnameFunction is defined above in the getRuntimeFunctions list.
+
+// Implementation of evalWithBindings function - evaluates an expression with temporary bindings
+evalWithBindingsSexprFunction(evaluator : (env : SExpEnv, expr : Sexpr) -> SExpEnv, evalResult : FnArgResult) -> Sexpr {
+	// Get the expression to evaluate
+	exprToEvaluate = evalResult.args[0];
+	
+	// Get the bindings list
+	bindingsList = evalResult.args[1];
+	// Ensure the bindings are in a list
+
+	processFn = \bindings -> {
+		// Create a new local environment based on the current one
+		originalEnv = evalResult.env;
+		tempEnv = SExpEnv(originalEnv.runtime, originalEnv.env, originalEnv.value);
+		
+		// Add each binding to the temporary environment
+		bindingsEnv = fold(bindings, tempEnv, \acc, binding -> {
+			// Handle the binding
+			switch (binding) {
+				SSList(items): {
+					if (length(items) >= 2) {
+						n = length(items);
+						name = items[n - 2];
+						value = items[n - 1];
+						
+						// Extract variable name based on the type
+						varName = switch(name) {
+							SSVariable(s): s;
+							SSString(s): s;
+							default: {
+								// Try to get the string representation
+								s = switch(name) {
+									SSConstructor(id): id;
+									SSInt(i): i2s(i);
+									SSDouble(d): d2s(d);
+									SSBool(b): b2s(b);
+									default: "";
+								}
+								
+								if (s != "") s else {
+									println("WARNING: Invalid binding name in evalWithBindings: " + prettySexpr(name));
+									"";
+								}
+							}
+						};
+						
+						// Add the binding to the environment if we have a valid name
+						if (varName != "") {
+							SExpEnv(acc.runtime, setTree(acc.env, varName, value), acc.value);
+						} else {
+							acc; // Skip this binding
+						}
+					} else {
+						println("WARNING: Binding should have 2 elements: " + prettySexpr(binding));
+						acc; // Skip this binding
+					}
+				}
+				default: {
+					println("WARNING: Invalid binding format in evalWithBindings: " + prettySexpr(binding));
+					acc; // Skip this binding
+				}
+			}
+		});
+		
+		// Evaluate the expression in the new environment
+		resultEnv = evaluator(bindingsEnv, exprToEvaluate);
+		
+		// Return the result
+		resultEnv.value;
+};
+
+	switch (bindingsList) {
+		SSList(bindings): processFn(bindings);
+		SSVector(bindings): processFn(bindings);
+		default: {
+			println("ERROR: evalWithBindings expects a list of bindings as the second argument");
+			SSList([]);
+		}
+	}
+}
+
+// Implementation of decomposeSexpr function
+// Returns a pair of [operator, children, opname] for a given expression
+decomposeSexprFunction(evalResult : FnArgResult) -> Sexpr {
+    // Get the expression to decompose
+    expr = evalResult.args[0];
+    
+    // Call the decomposition function
+    result = decomposeSexpr(expr);
+    
+    // Convert the result to SSList format
+    // Format: [operator, [child1, child2, ...], value]
+    op = result.first;
+    children = result.second;
+    
+	value = switch (result.third : OrbitValue) {
+		OrbitNone(): SSList([]);
+		OrbitInt(value): SSInt(value);
+		OrbitDouble(value): SSDouble(value);
+		OrbitString(value): SSString(value);
+		OrbitBool(value): SSBool(value);
+	};
+
+    SSList([SSString(op), SSVector(children), value]);
+}
+
+// Implementation of constructSexpr function
+// Reconstructs a Sexpr from operator, children, and value components
+constructSexprFunction(evalResult : FnArgResult) -> Sexpr {
+    // Extract the components from arguments
+    op = getSString(evalResult.args[0], "constructSexpr.op");
+    children = getSVector(evalResult.args[1], "constructSexpr.children");
+    
+    // Convert the value component to OrbitValue
+    value = switch (evalResult.args[2]) {
+        SSInt(i): OrbitInt(i);
+        SSDouble(d): OrbitDouble(d);
+        SSString(s): OrbitString(s);
+        SSBool(b): OrbitBool(b);
+        default: OrbitNone();
+    };
+    
+    // Call the construction function
+    constructSexpr(op, children, value);
+}
+
+// Implementation of matchSExprNodeOneLevel function
+// This performs one-level pattern matching without domain handling
+matchSExprNodeOneLevelFunction(evalResult : FnArgResult) -> Sexpr {
+    // Extract arguments
+    graphName = getSString(evalResult.args[0], "matchSExprNodeOneLevel.graphName");
+    nodeId = getSInt(evalResult.args[1], "matchSExprNodeOneLevel.nodeId");
+    pattern = evalResult.args[2];
+    
+    // Convert the bindings from SSList/SSVector of pairs to array of Pairs
+    bindings = switch (evalResult.args[3]) {
+        SSList(pairs): {
+            map(pairs, \pair -> {
+                switch (pair) {
+                    SSList(items): {
+                        if (length(items) >= 2) {
+                            varName = getSString(items[length(items) - 2], "matchSExprNodeOneLevel.binding.name");
+                            value = getSInt(items[length(items) - 1], "matchSExprNodeOneLevel.binding.value");
+                            Pair(varName, value);
+                        } else {
+                            println("ERROR: Each binding must be a list of exactly 2 elements");
+                            Pair("", -1); // Invalid binding
+                        }
+                    }
+                    default: {
+                        println("ERROR: Each binding must be a list or vector");
+                        Pair("", -1); // Invalid binding
+                    }
+                }
+            });
+        }
+        SSVector(pairs): {
+            map(pairs, \pair -> {
+                switch (pair) {
+                    SSList(items): {
+                        if (length(items) >= 2) {
+                            varName = getSString(items[length(items) - 2], "matchSExprNodeOneLevel.binding.name");
+                            value = getSInt(items[length(items) - 1], "matchSExprNodeOneLevel.binding.value");
+                            Pair(varName, value);
+                        } else {
+                            println("ERROR: Each binding must be a list of exactly 2 elements");
+                            Pair("", -1); // Invalid binding
+                        }
+                    }
+                    default: {
+                        println("ERROR: Each binding must be a list or vector");
+                        Pair("", -1); // Invalid binding
+                    }
+                }
+            });
+        }
+        default: {
+            println("ERROR: matchSExprNodeOneLevel fourth argument must be a list or vector of bindings");
+            [];
+        }
+    };
+    
+    // Get tracing parameter (optional fifth argument)
+    tracing = if (length(evalResult.args) > 4) {
+        getSBool(evalResult.args[4], "matchSExprNodeOneLevel.tracing");
+    } else false;
+    
+    // Use the OGraph registry to get the graph
+    switch (lookupTree(^ographRegistry, graphName)) {
+        Some(graph): {
+            // Call the one-level matcher
+            result = matchSExprNodeOneLevel(graph, nodeId, pattern, bindings, tracing);
+            
+            // Convert result back to SSList format
+            // Format: [success, [[var1, id1], [var2, id2], ...]]
+            success = result.first;
+            resultBindings = result.second;
+            
+            bindingsList = map(resultBindings, \binding -> {
+				SSList([SSConstructor("Pair"), SSString(binding.first), SSInt(binding.second)]);
+            });
+            
+            SSList([SSBool(success), SSList(bindingsList)]);
+        }
+        None(): {
+            println("ERROR: OGraph '" + graphName + "' not found");
+            SSList([SSBool(false), SSList([])]);
+        }
+    }
+}

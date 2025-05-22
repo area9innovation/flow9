@@ -9,7 +9,7 @@ contentZoomDef = MCarouselContentZoom(1., 1., 0.);
 
 MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	state = makeMCarouselState(manager, m);
-	swipeEnabled = extractStruct(m.style, MCarouselSwipeEnabled(state.contentsLength > state.itemsSpan)).enabled; 
+	swipeEnabled = extractStruct(m.style, MCarouselSwipeEnabled(state.contentsLength > state.itemsSpan)).enabled;
 
 	if (state.contentsLength > 0)
 		(\p -> {
@@ -79,40 +79,7 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 				else
 					f
 			)
-			|> (\f ->
-				if (state.enableChevrons)
-					MCarouselChevrons(manager, p, f, state, m2t)
-					|> (\f2 ->
-						eitherMap(
-							state.maximize,
-							\mx ->
-								if (contains(mx.style, MNoChevrons()))
-									TVisible(fnot(mx.maximized), f2)
-								else
-									f2,
-							f2
-						)
-					)
-				else
-					f
-			)
-			|> (\f ->
-				if (isSome(state.progress))
-					MCarouselProgress(manager, p, f, state)
-					|> (\f2 ->
-						eitherMap(
-							state.maximize,
-							\mx ->
-								if (contains(mx.style, MNoProgress()))
-									TVisible(fnot(mx.maximized), f2)
-								else
-									f2,
-							f2
-						)
-					)
-				else
-					f
-			)
+			|> (\f -> addProgressAndChevrons(f, manager, p, state, m2t))
 			|> (\f ->
 				[
 					(\cz : MCarouselContentZoom, vis0 : bool -> {
@@ -296,7 +263,8 @@ MCarouselProgressState(
 	bottom : bool,
 	activeColor : MThemeColor,
 	inactiveColor : MThemeColor,
-	spacing : double
+	spacing : double,
+	buttonTitles : [Transform<string>]
 );
 
 makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
@@ -304,7 +272,7 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 	duration = extractStruct(m.style, MDuration(const(0.5))).duration;
 	endlessScroll = contains(m.style, MLoopScroll());
 	contentSideOffset = extractStruct(m.style, MCarouselSidesOffset(0.)).sideOffset;
-	tuneChevrons = tryExtractStruct(m.style, MCarouselChevronTunes(true, 0.0));
+	tuneChevrons = tryExtractStruct(m.style, MCarouselChevronTunes(true, const(0.0)));
 	chevronsStyle = tryExtractStruct(m.style, MCarouselChevronStyle([]));
 
 	// Group carousel items by N elements
@@ -386,7 +354,10 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 					contains(m.style, MProgressAtBottom()),
 					progressColors.active,
 					progressColors.inactive,
-					extractStruct(m.style, MCarouselProgressSpacing(2.0)).spacing
+					extractStruct(m.style, MCarouselProgressSpacing(2.0)).spacing,
+					mapi(m.contents, \i, c -> {
+						extractStruct(c.style, MCarouselProgressTitle(const("Item " + i2s(i)))).title
+					})
 				)
 			)
 		} else None();
@@ -521,39 +492,85 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 	)
 }
 
-MCarouselProgress(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState) -> Tropic {
-	eitherMap(
-		state.progress, \pr ->
-		TCopySize(
-			content,
-			\tr ->
-				generate(0, state.contentsLength, \i ->
-					TIf(
-						feq(state.activeI, i),
-						TShadowShape(parent, const(4.), TCircle(4., [MThemeFill(parent, pr.activeColor)]), RoundShape())
-						|> (\f -> TAlpha(fif(state.enabled, const(1.), const(0.5)), f)),
+addProgressAndChevrons(content : Tropic, manager : MaterialManager, parent : MFocusGroup, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	TCopySize(
+		content,
+		\sz -> {
+			chevrons =
+				if (state.enableChevrons) {
+					MCarouselChevrons(manager, parent, state, m2t)
+				} else Pair(TEmpty(), TEmpty());
 
-						TShadowShape(parent, const(2.), TCircle(4., [MThemeFill(parent, pr.inactiveColor)]), RoundShape())
-						|> (\f ->
-							TIf(state.enabled,
-								mouseDownAround(manager, None(), make(false), make(false), \ -> next(state.activeI, i), f)
-								|> (\f2 -> TCursor(FingerCursor(), f2)),
-								TAlpha(const(0.5), f)
-							)
-						)
-					)
-					|> (\f -> TBorder(pr.spacing, 16., pr.spacing, 16., f))
+			wrapForMaximize = \tr, st -> {
+				eitherMap(
+					state.maximize,
+					\mx ->
+						if (contains(mx.style, st))
+							TVisible(fnot(mx.maximized), tr)
+						else
+							tr,
+					tr
 				)
-				|> TCols
-				|> (\f -> if (pr.bottom) TLines2(TFillY(), f) else f)
-				|> (\f -> TCenterXIn(f, tr)),
-			true
-		),
-		content
+			}
+
+			concatA([
+				if (state.enableChevrons) [
+					wrapForMaximize(chevrons.first, MNoChevrons()) |> TAlignStart
+				] else [],
+
+				eitherMap(
+					MCarouselProgress(manager, parent, state, m2t),
+					\progressTr -> [wrapForMaximize(progressTr, MNoProgress()) |> TCenterX],
+					[]
+				),
+
+				if (state.enableChevrons) [
+					wrapForMaximize(chevrons.second, MNoChevrons()) |> TAlignEnd
+				] else []
+			])
+			|> TGroup
+			|> (\t -> TAvailable(t, sz))
+		},
+		true
+	);
+}
+
+MCarouselProgress(manager : MaterialManager, parent : MFocusGroup, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Maybe<Tropic> {
+	maybeMap(state.progress, \pr ->
+		generate(0, state.contentsLength, \i ->
+			(\par -> {
+				isActive = feq(state.activeI, i);
+
+				TShadowShape(par,
+					fselectLift(isActive, \act -> if (act) 4. else 2.),
+					TSelect(isActive, \act -> TCircle(4., [MThemeFill(par, if (act) pr.activeColor else pr.inactiveColor)])),
+					RoundShape()
+				)
+				|> (\f -> TAlpha(fif(state.enabled, const(1.), const(0.5)), f))
+				|> TBorderLeftRight(pr.spacing)
+			})
+			|> (\f -> MComponent2T(
+				manager,
+				parent,
+				"MCarouselProgressItem",
+				[
+					MHighlightOnFocus(const(true)),
+					MEnabled(state.enabled),
+					MOnClick(\ -> next(state.activeI, i)),
+					MButtonTitle(elementAt(pr.buttonTitles, i, const("Item " + i2s(i)))), 
+					MRippleType(const(MRippleCenter()))
+				],
+				\foc -> f(foc.parent),
+				m2t
+			))
+		)
+		|> TCols
+		|> TBorderTopBottom(16.)
+		|> (\f -> if (pr.bottom) TLines2(TFillY(), f) else f),
 	)
 }
 
-MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Pair<Tropic, Tropic> {
 	leftFocused = make(false);
 	rightFocused = make(false);
 
@@ -564,6 +581,10 @@ MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tro
 		otherFocused = if (isLeft) rightFocused else leftFocused;
 
 		buttonEnabled = if (state.disableSideChevrons) {if (isLeft) state.hasPrev else state.hasNext} else const(true);
+		buttonTitleFn = extractStruct(
+			eitherMap(state.chevronsStyle, \cs -> cs.style, []),
+			MCarouselChevronTitle(\l -> const(if (l) "Previous" else "Next"))
+		).titleFn;
 
 		MIconButton2T(
 			manager,
@@ -573,10 +594,10 @@ MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tro
 				onClick,
 				concatA([
 					[state.buttonsColor, MIconSize(state.iconSize), MIconButtonBorder(8.)],
-					eitherMap(state.chevronsStyle, \cs -> cs.style, []),
+					eitherMap(state.chevronsStyle, \cs -> style2MIconButtonStyle(cs.style), []),
 					eitherMap(state.tuneChevrons, \ts -> if (ts.shadows) [MElevation(const(1.))] else [], [])
 				]),
-				[MEnabled(fand(state.enabled, buttonEnabled))]
+				[MEnabled(fand(state.enabled, buttonEnabled)), MButtonTitle(buttonTitleFn(isLeft))]
 				|> (\f ->
 					eitherMap(state.enableArrows, \ea ->
 						concat(f, [
@@ -594,26 +615,13 @@ MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tro
 			m2t
 		)
 		|> (\f -> TBorder4(8., f))
-		|> (\t -> TCenterYIn(t, eitherMap(state.tuneChevrons, \ts -> TFixed(0.0, ts.positionY * 2.), TFillY())))
+		|> (\t -> TCenterYIn(t, eitherMap(state.tuneChevrons, \ts -> TSizedHeight(0.0, fmultiply(ts.positionY, const(2.))), TFillY())))
 	}
 
-	TCols([
-		makeChevron(true),
-		TFillX(),
-		makeChevron(false)
-	])
-	|> (\f ->
-		TCopySize(
-			content,
-			\tr ->
-				TAvailable(f, tr),
-			true
-		)
-	)
+	Pair(makeChevron(true), makeChevron(false))
 }
 
-MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouselContent, i : int, style : [MCarouselStyle], state : MCarouselState,
-	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouselContent, i : int, style : [MCarouselStyle], state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	textColor = extractStruct(style, MCarouselTextColor(MWhite())).color;
 	contentScaling = !contains(style, MCarouselNoContentScaling());
 	bgStyle = mgraphicsStyle2tgraphicsStyle(parent, extractStruct(style, MBackgroundStyle([MFill(MBackgroundMColor(!getLightBackground(parent)))])).style);
@@ -627,9 +635,24 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 		}
 	};
 
+	isActive = fselectLift(state.activeI, \act -> {
+		pageEndIdx = (act + state.itemsSpan - 1) % state.contentsLength;
+		if (act == pageEndIdx) {
+			act == i
+		} else if (act < pageEndIdx) {
+			act <= i && i <= pageEndIdx
+		} else {
+			act <= i || i <= pageEndIdx
+		}
+	});
+
 	(\p ->
 		(\p2 ->
-			m2t(c.content, p2)
+			MComponentGroup2T(manager, p2, "MCarouselContent", [
+					FAccessAttribute("aria-hidden", fselectLift(fnot(isActive), b2s)),
+					MFocusEnabled(isActive)
+				], \p3 -> m2t(c.content, p3)
+			)
 			|> (\t ->
 				if (contentScaling) // Crop content to the size of the box
 					TTweak([TFillZoom(true)], t, TSizedWidthHeight(state.itemWidth, state.height))

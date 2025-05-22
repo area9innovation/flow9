@@ -1,0 +1,201 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/pretty_sexpr;
+import ds/tree;
+import string;
+import math/math;
+// Import array functions needed
+import ds/array;
+
+
+export {
+	// Pattern matching against a value
+	// Returns updated environment if match succeeds, None if it fails
+	matchPattern(pattern : Sexpr, value : Sexpr, env : Tree<string, Sexpr>) -> Maybe<Tree<string, Sexpr>>;
+
+	// Pattern matching - returns index of first successful pattern and updated environment
+	evalMatch(env : Tree<string, Sexpr>, value : Sexpr, patterns : [Sexpr]) -> Pair<int, Tree<string, Sexpr>>;
+}
+
+// Pattern matching - returns index of first successful pattern or -1
+// Returns the index and the updated environment
+evalMatch(env : Tree<string, Sexpr>, value : Sexpr, patterns : [Sexpr]) -> Pair<int, Tree<string, Sexpr>> {
+	if (length(patterns) == 0) {
+		Pair(-1, env);
+	} else {
+		// Check each pattern sequentially using recursion
+		evalMatchHelper(env, value, patterns, 0);
+	}
+}
+
+// Helper for pattern matching - returns the index of the matched pattern and the updated environment
+evalMatchHelper(env : Tree<string, Sexpr>, value : Sexpr, patterns : [Sexpr], idx : int) -> Pair<int, Tree<string, Sexpr>> {
+	if (idx >= length(patterns)) {
+		Pair(-1, env);
+	} else if (idx % 2 == 0) { // Even indices are patterns
+		pattern = patterns[idx];
+
+		// Extract the effective pattern to match against
+		effectivePattern = extractEffectivePattern(pattern);
+
+		// Match against the effective pattern
+		matchResult = matchPattern(effectivePattern, value, env);
+
+		switch (matchResult) {
+			Some(newEnv): {
+				Pair(idx / 2, newEnv); // Pattern matches - return pattern number and updated env
+			}
+			None(): {
+				evalMatchHelper(env, value, patterns, idx + 2); // Try next pattern (skip result)
+			}
+		}
+	} else {
+		// Skip result expressions
+		evalMatchHelper(env, value, patterns, idx + 1);
+	}
+}
+
+// Extract the effective pattern for matching
+extractEffectivePattern(pattern : Sexpr) -> Sexpr {
+	switch (pattern) {
+		SSList(patternItems): {
+			if (length(patternItems) == 3) {
+				patternItems[0];
+			} else {
+				pattern;
+			}
+		}
+		default: pattern;
+	}
+}
+
+// Pattern matching against a value
+matchPattern(pattern : Sexpr, value : Sexpr, env : Tree<string, Sexpr>) -> Maybe<Tree<string, Sexpr>> {
+	// println("Matching pattern: " + prettySexpr(pattern) + " against value: " + prettySexpr(value)); // DEBUG
+	switch (pattern) {
+		SSVariable(name): {
+			if (name == "_") {
+				Some(env);
+			} else {
+				Some(setTree(env, name, value));
+			}
+		};
+		SSBool(b): if (pattern == value) Some(env) else None();
+		SSInt(i): if (pattern == value) Some(env) else None();
+		SSDouble(d): if (pattern == value) Some(env) else None();
+		SSString(s): if (pattern == value) Some(env) else None();
+		SSConstructor(name): if (pattern == value) Some(env) else None();
+		SSOperator(name): {
+			if (name == "...") {
+				println("ERROR: '...' pattern must be used within a list pattern like '(a ... rest)'");
+				None();
+			} else if (pattern == value) Some(env) else None();
+		}
+		SSList(items): {
+			switch (value) {
+				SSList(values): {
+					matchListItems(items, values, env); // Call the main list matcher
+				};
+				default: None();
+			}
+		};
+		SSVector(items): {
+			switch (value) {
+				SSVector(values): {
+					matchListItems(items, values, env); // Call the main list matcher
+				};
+				SSList(values): {
+					matchListItems(items, values, env); // Allow matching list value
+				}
+				default: None();
+			}
+		};
+		SSSpecialForm(formName, args): {
+			switch (value) {
+				SSSpecialForm(valueFormName, valueArgs): {
+					// Special forms match if their names match and arguments match recursively
+					if (formName == valueFormName && length(args) == length(valueArgs)) {
+						// Match all arguments recursively
+						matchListItems(args, valueArgs, env);
+					} else {
+						None();
+					}
+				}
+				default: None();
+			}
+		}
+	}
+}
+
+// --- Moved recursive logic to a top-level helper ---
+matchListItemsRecursiveHelper(
+	patterns : [Sexpr],
+	values : [Sexpr],
+	pIdx : int,
+	vIdx : int,
+	currentEnv : Tree<string, Sexpr>
+) -> Maybe<Tree<string, Sexpr>> {
+	// Base case: Successfully matched all patterns?
+	if (pIdx >= length(patterns)) {
+		if (vIdx >= length(values)) {
+			Some(currentEnv); // Perfect match
+		} else {
+			None(); // Pattern finished, but values remain
+		}
+	} else {
+		// Check for '... restVar' pattern
+		currentPattern = patterns[pIdx];
+		isEllipsis = switch (currentPattern) {
+			SSOperator(name): name == "...";
+			default: false;
+		};
+
+		if (isEllipsis) {
+			// Ellipsis found! Check requirements
+			if (pIdx + 1 < length(patterns) && pIdx + 2 == length(patterns)) {
+				restVarPattern = patterns[pIdx + 1];
+				switch (restVarPattern) {
+					SSVariable(restVarName): {
+						// Valid '... restVar' found at the end.
+						remainingValues = subrange(values, vIdx, length(values) - vIdx);
+						Some(setTree(currentEnv, restVarName, SSList(remainingValues)));
+					}
+					default: {
+						println("ERROR: '...' must be followed by a variable name. Got: " + prettySexpr(restVarPattern));
+						None();
+					}
+				}
+			} else {
+				println("ERROR: '...' pattern must be followed by one variable and be at the end.");
+				None();
+			}
+		} else {
+			// Regular pattern element
+			if (vIdx >= length(values)) {
+				None(); // No more values to match
+			} else {
+				// Match the current element
+				itemMatchResult = matchPattern(currentPattern, values[vIdx], currentEnv); // NOTE: matchPattern calls matchListItems, which calls this helper - indirect recursion
+				switch (itemMatchResult) {
+					Some(updatedEnv): {
+						// Match succeeded, continue recursively
+						matchListItemsRecursiveHelper(patterns, values, pIdx + 1, vIdx + 1, updatedEnv);
+					}
+					None(): {
+						None(); // Match failed
+					}
+				}
+			}
+		}
+	}
+}
+
+// Helper to match list/vector items recursively, now supporting '... restVar'
+// This function now just sets up the initial call to the recursive helper.
+matchListItems(
+	patterns : [Sexpr],
+	values : [Sexpr],
+	env : Tree<string, Sexpr>
+) -> Maybe<Tree<string, Sexpr>> {
+	// Start the recursive matching by calling the helper function
+	matchListItemsRecursiveHelper(patterns, values, 0, 0, env);
+}

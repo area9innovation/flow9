@@ -1,0 +1,103 @@
+import tools/orbit/types;
+import tools/orbit/ograph;
+import math/math; // For i2s, d2s
+import ds/tree;
+import ds/array;
+import string;
+
+export {
+    // Convert an OGraph to GraphViz DOT format
+    ograph2dot(o : OGraph) -> string;
+}
+
+// Convert an OGraph to GraphViz DOT format
+ograph2dot(o : OGraph) -> string {
+    nodeMap = ref makeTree(); // Map from id to node info
+    nodeStrings = ref [];
+    edgeStrings = ref [];
+    
+    // Collect all nodes
+    traverseOGraphAll(o, \nodeId, node -> {
+        root = findORoot(o, nodeId);
+        isRoot = (nodeId == root);
+        // Create node label
+        finalLabel = makeNodeLabel(o, nodeId, node, root, isRoot);
+        
+        // Store in map for edge generation
+        nodeMap := setTree(^nodeMap, nodeId, Pair(node, isRoot));
+        
+        // Create node DOT syntax
+        fillColor = if (isRoot) "lightblue" else "white";
+        nodeStr = "  node" + i2s(nodeId) + " [label=\"" + finalLabel + "\", shape=box, style=filled, fillcolor=" + fillColor + "]";
+        nodeStrings := arrayPush(^nodeStrings, nodeStr);
+    });
+    
+    // Create edges
+    traverseInOrder(^nodeMap, \nodeId, nodePair -> {
+        node = nodePair.first;
+        
+        // Add edges for children with index to preserve order
+        foldi(node.children, 0, \idx, __, childId -> {
+            childRoot = findORoot(o, childId);
+            // Add child index to edge label to preserve ordering
+            edgeStr = "  node" + i2s(nodeId) + " -> node" + i2s(childRoot) + " [color=black, label=\"" + i2s(idx) + "\"]";
+            edgeStrings := arrayPush(^edgeStrings, edgeStr);
+            idx + 1;
+        });
+        
+        root = findORoot(o, nodeId);
+        if (nodeId != root) {
+            // Add edge for root
+            edgeStr = "  node" + i2s(nodeId) + " -> node" + i2s(root) + " [color=grey, style=dashed label=\"root\"]";
+            edgeStrings := arrayPush(^edgeStrings, edgeStr);
+        }
+
+        // Add edges for belongsTo relationships
+        iter(node.belongsTo, \domainId -> {
+            if (nodeId != domainId) { // Avoid self-loops
+                edgeStr = "  node" + i2s(nodeId) + " -> node" + i2s(domainId) + " [color=blue, style=dotted, label=\"belongs-to\"]";
+                edgeStrings := arrayPush(^edgeStrings, edgeStr);
+            }
+        });
+    });
+    
+    // Build the complete DOT syntax
+    dotHeader = "digraph OGraph {\n";
+    // Add ordering=out to preserve node order in GraphViz
+    dotGraphAttrs = "  graph [ordering=out]\n";
+    dotNodeStyle = "  node [shape=box]\n";
+    dotEdgeStyle = "  edge [color=black]\n\n";
+    
+    // Combine node strings
+    dotNodes = fold(^nodeStrings, "", \acc, s -> acc + s + "\n");
+    
+    // Add separator
+    dotNodeEdgeSep = "\n";
+    
+    // Combine edge strings
+    dotEdges = fold(^edgeStrings, "", \acc, s -> acc + s + "\n");
+    
+    // Add footer
+    dotFooter = "}\n";
+    
+    // Combine all parts
+    dotHeader + dotGraphAttrs + dotNodeStyle + dotEdgeStyle + dotNodes + dotNodeEdgeSep + dotEdges + dotFooter;
+}
+
+// Create a formatted node label with all relevant information
+makeNodeLabel(o : OGraph, nodeId : int, node : ONode, rootId : int, isRoot : bool) -> string {
+    // Basic label with node info
+    baseLabel = node.op +  " (" + i2s(nodeId) + ")";
+    
+    // Add any associated values
+    valueStr = switch (node.value) {
+        OrbitNone(): "";
+        OrbitInt(value): i2s(value);
+        OrbitDouble(value): d2s(value);
+        OrbitString(value): value;
+        OrbitBool(value): b2s(value);
+    };
+    
+    // Combine and escape quotes for DOT syntax
+    strReplace(valueStr + "\n" + baseLabel, "\"", "\\\"");
+}
