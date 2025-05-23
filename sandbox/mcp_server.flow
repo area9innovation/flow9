@@ -1,0 +1,667 @@
+import server/http;
+import formats/json/json;
+import ds/tree;
+import string;
+import ds/tuples;
+import runtime;
+import math/math;
+
+export {
+	// MCP Server
+	createMcpServer(port : int, config : McpServerConfig) -> () -> void;
+	
+	// MCP Server Configuration
+	McpServerConfig(
+		name : string,
+		version : string,
+		tools : [McpTool],
+		resources : [McpResource],
+		prompts : [McpPrompt],
+		capabilities : McpServerCapabilities
+	);
+	
+	// MCP Core Structures
+	McpServerCapabilities(
+		logging : Maybe<McpLoggingCapability>,
+		tools : Maybe<McpToolsCapability>,
+		resources : Maybe<McpResourcesCapability>,
+		prompts : Maybe<McpPromptsCapability>
+	);
+	
+	McpLoggingCapability();
+	McpToolsCapability(listChanged : bool);
+	McpResourcesCapability(subscribe : bool, listChanged : bool);
+	McpPromptsCapability(listChanged : bool);
+	
+	// Tools
+	McpTool(
+		name : string,
+		description : string,
+		inputSchema : Json,
+		handler : (Json) -> McpToolResult
+	);
+	
+	McpToolResult(
+		content : [McpContent],
+		isError : bool
+	);
+	
+	// Resources
+	McpResource(
+		uri : string,
+		name : string,
+		description : string,
+		mimeType : string,
+		handler : () -> McpResourceResult
+	);
+	
+	McpResourceResult(
+		contents : [McpResourceContent]
+	);
+	
+	McpResourceContent(
+		uri : string,
+		mimeType : string,
+		text : Maybe<string>,
+		blob : Maybe<string>
+	);
+	
+	// Prompts
+	McpPrompt(
+		name : string,
+		description : string,
+		arguments : [McpPromptArgument],
+		handler : (Json) -> McpPromptResult
+	);
+	
+	McpPromptArgument(
+		name : string,
+		description : string,
+		required : bool
+	);
+	
+	McpPromptResult(
+		description : string,
+		messages : [McpPromptMessage]
+	);
+	
+	McpPromptMessage(
+		role : McpMessageRole,
+		content : McpContent
+	);
+	
+	McpMessageRole ::= McpRoleUser, McpRoleAssistant, McpRoleSystem;
+		McpRoleUser();
+		McpRoleAssistant();
+		McpRoleSystem();
+	
+	// Content types
+	McpContent ::= McpTextContent, McpImageContent, McpResourceContent;
+		McpTextContent(text : string);
+		McpImageContent(data : string, mimeType : string);
+	
+	// Logging
+	McpLogLevel ::= McpLogDebug, McpLogInfo, McpLogNotice, McpLogWarning, McpLogError, McpLogCritical, McpLogAlert, McpLogEmergency;
+		McpLogDebug();
+		McpLogInfo();
+		McpLogNotice();
+		McpLogWarning();
+		McpLogError();
+		McpLogCritical();
+		McpLogAlert();
+		McpLogEmergency();
+	
+	// Helper functions
+	createMcpTool(name : string, description : string, inputSchema : Json, handler : (Json) -> McpToolResult) -> McpTool;
+	createMcpResource(uri : string, name : string, description : string, mimeType : string, handler : () -> McpResourceResult) -> McpResource;
+	createMcpPrompt(name : string, description : string, arguments : [McpPromptArgument], handler : (Json) -> McpPromptResult) -> McpPrompt;
+	
+	// Default server configuration
+	createDefaultMcpConfig() -> McpServerConfig;
+}
+
+createMcpServer(port : int, config : McpServerConfig) -> () -> void {
+	// Create MCP method handlers
+	handlers = createMcpHandlers(config);
+	
+	onOpen = \ -> {
+		println("MCP Server '" + config.name + "' v" + config.version + " started on port " + i2s(port));
+	};
+	
+	onOpenError = \error -> {
+		println("Failed to start MCP server: " + error);
+	};
+	
+	onMessage = \request : HttpRequest, sendResponse : (HttpResponse) -> void -> {
+		response = processMcpRequest(request, handlers);
+		sendResponse(response);
+	};
+	
+	createHttpServer(port, onOpen, onOpenError, onMessage);
+}
+
+createMcpHandlers(config : McpServerConfig) -> Tree<string, (Json) -> Json> {
+	baseHandlers = fold([
+		// Core MCP methods
+		Pair("initialize", \params -> handleInitialize(config, params)),
+		Pair("notifications/initialized", \params -> handleInitialized(params)),
+		Pair("ping", \params -> handlePing(params)),
+		
+		// Tools
+		Pair("tools/list", \params -> handleToolsList(config.tools)),
+		Pair("tools/call", \params -> handleToolsCall(config.tools, params)),
+		
+		// Resources
+		Pair("resources/list", \params -> handleResourcesList(config.resources)),
+		Pair("resources/read", \params -> handleResourcesRead(config.resources, params)),
+		
+		// Prompts
+		Pair("prompts/list", \params -> handlePromptsList(config.prompts)),
+		Pair("prompts/get", \params -> handlePromptsGet(config.prompts, params)),
+		
+		// Logging
+		Pair("logging/setLevel", \params -> handleLoggingSetLevel(params))
+	], makeTree(), \acc, pair -> setTree(acc, pair.first, pair.second));
+	
+	baseHandlers;
+}
+
+processMcpRequest(request : HttpRequest, handlers : Tree<string, (Json) -> Json>) -> HttpResponse {
+	// Only accept POST requests
+	isPost = switch (request.method) {
+		Some(method): method == Post();
+		None(): false;
+	};
+	
+	if (!isPost) {
+		errorResponse = createMcpErrorResponse(-32600, "Only POST method is allowed", None());
+		HttpResponse(405, json2string(errorResponse), [KeyValue("Content-Type", "application/json")]);
+	} else {
+		// Parse JSON from request body
+		jsonResult = parseJson(request.body);
+		
+		// Check if it's a valid JSON-RPC request
+		maybeRequest = parseMcpRequest(jsonResult);
+		
+		switch (maybeRequest) {
+			None(): {
+				errorResponse = createMcpErrorResponse(-32600, "Invalid JSON-RPC request", None());
+				HttpResponse(400, json2string(errorResponse), [KeyValue("Content-Type", "application/json")]);
+			}
+			Some(mcpRequest): {
+				// Handle the method call
+				responseJson = handleMcpMethodCall(mcpRequest, handlers);
+				
+				// Check if this is a notification (no response expected)
+				isNotification = switch (mcpRequest.id) {
+					None(): true;
+					Some(idValue): switch (idValue) {
+						JsonNull(): true;
+						default: false;
+					};
+				};
+				
+				if (isNotification) {
+					// For notifications, return empty response
+					HttpResponse(200, "", []);
+				} else {
+					HttpResponse(200, json2string(responseJson), [KeyValue("Content-Type", "application/json")]);
+				}
+			}
+		}
+	}
+}
+
+parseMcpRequest(json : Json) -> Maybe<McpJsonRpcRequest> {
+	switch (json) {
+		JsonObject(members): {
+			jsonrpcVersion = getJsonStringField(json, "jsonrpc", "");
+			method = getJsonStringField(json, "method", "");
+			
+			if (jsonrpcVersion != "2.0" || method == "") {
+				None();
+			} else {
+				params = getJsonFieldValueM(json, "params");
+				id = getJsonFieldValueM(json, "id");
+				
+				Some(McpJsonRpcRequest(jsonrpcVersion, method, params, id));
+			}
+		}
+		default: None();
+	}
+}
+
+McpJsonRpcRequest(
+	jsonrpc : string,
+	method : string,
+	params : Maybe<Json>,
+	id : Maybe<Json>
+);
+
+handleMcpMethodCall(request : McpJsonRpcRequest, handlers : Tree<string, (Json) -> Json>) -> Json {
+	methodName = request.method;
+	
+	switch (lookupTree(handlers, methodName)) {
+		None(): {
+			createMcpErrorResponse(-32601, "Method not found: " + methodName, request.id);
+		}
+		Some(handler): {
+			params = either(request.params, JsonNull());
+			result = handler(params);
+			createMcpSuccessResponse(result, request.id);
+		}
+	}
+}
+
+// MCP Method Handlers
+
+handleInitialize(config : McpServerConfig, params : Json) -> Json {
+	protocolVersion = getJsonStringField(params, "protocolVersion", "2024-11-05");
+	capabilities = getJsonObjectField(params, "capabilities");
+	clientInfo = getJsonObjectField(params, "clientInfo");
+	
+	// Build server info response
+	serverInfo = JsonObject([
+		Pair("name", JsonString(config.name)),
+		Pair("version", JsonString(config.version))
+	]);
+	
+	// Build capabilities response
+	capabilitiesJson = mcpCapabilitiesToJson(config.capabilities);
+	
+	JsonObject([
+		Pair("protocolVersion", JsonString("2024-11-05")),
+		Pair("capabilities", capabilitiesJson),
+		Pair("serverInfo", serverInfo)
+	]);
+}
+
+handleInitialized(params : Json) -> Json {
+	// Notification that initialization is complete
+	JsonNull();
+}
+
+handlePing(params : Json) -> Json {
+	JsonObject([]);
+}
+
+handleToolsList(tools : [McpTool]) -> Json {
+	toolsJson = map(tools, mcpToolToJson);
+	JsonObject([
+		Pair("tools", JsonArray(toolsJson))
+	]);
+}
+
+handleToolsCall(tools : [McpTool], params : Json) -> Json {
+	toolName = getJsonStringField(params, "name", "");
+	arguments = getJsonFieldValue(params, "arguments", JsonNull());
+	
+	maybeTool = find(tools, \tool -> tool.name == toolName);
+	switch (maybeTool) {
+		None(): {
+			JsonObject([
+				Pair("content", JsonArray([
+					JsonObject([
+						Pair("type", JsonString("text")),
+						Pair("text", JsonString("Tool not found: " + toolName))
+					])
+				])),
+				Pair("isError", JsonBool(true))
+			]);
+		}
+		Some(tool): {
+			result = tool.handler(arguments);
+			mcpToolResultToJson(result);
+		}
+	}
+}
+
+handleResourcesList(resources : [McpResource]) -> Json {
+	resourcesJson = map(resources, mcpResourceToJson);
+	JsonObject([
+		Pair("resources", JsonArray(resourcesJson))
+	]);
+}
+
+handleResourcesRead(resources : [McpResource], params : Json) -> Json {
+	uri = getJsonStringField(params, "uri", "");
+	
+	maybeResource = find(resources, \resource -> resource.uri == uri);
+	switch (maybeResource) {
+		None(): {
+			JsonObject([
+				Pair("contents", JsonArray([]))
+			]);
+		}
+		Some(resource): {
+			result = resource.handler();
+			mcpResourceResultToJson(result);
+		}
+	}
+}
+
+handlePromptsList(prompts : [McpPrompt]) -> Json {
+	promptsJson = map(prompts, mcpPromptToJson);
+	JsonObject([
+		Pair("prompts", JsonArray(promptsJson))
+	]);
+}
+
+handlePromptsGet(prompts : [McpPrompt], params : Json) -> Json {
+	promptName = getJsonStringField(params, "name", "");
+	arguments = getJsonFieldValue(params, "arguments", JsonObject([]));
+	
+	maybePrompt = find(prompts, \prompt -> prompt.name == promptName);
+	switch (maybePrompt) {
+		None(): {
+			JsonObject([
+				Pair("description", JsonString("Prompt not found")),
+				Pair("messages", JsonArray([]))
+			]);
+		}
+		Some(prompt): {
+			result = prompt.handler(arguments);
+			mcpPromptResultToJson(result);
+		}
+	}
+}
+
+handleLoggingSetLevel(params : Json) -> Json {
+	level = getJsonStringField(params, "level", "info");
+	println("Logging level set to: " + level);
+	JsonObject([]);
+}
+
+// JSON Conversion Functions
+
+mcpCapabilitiesToJson(capabilities : McpServerCapabilities) -> Json {
+	fields = [];
+	
+	withLogging = switch (capabilities.logging) {
+		None(): fields;
+		Some(__): arrayPush(fields, Pair("logging", JsonObject([])));
+	};
+	
+	withTools = switch (capabilities.tools) {
+		None(): withLogging;
+		Some(toolsCap): arrayPush(withLogging, Pair("tools", JsonObject([
+			Pair("listChanged", JsonBool(toolsCap.listChanged))
+		])));
+	};
+	
+	withResources = switch (capabilities.resources) {
+		None(): withTools;
+		Some(resourcesCap): arrayPush(withTools, Pair("resources", JsonObject([
+			Pair("subscribe", JsonBool(resourcesCap.subscribe)),
+			Pair("listChanged", JsonBool(resourcesCap.listChanged))
+		])));
+	};
+	
+	withPrompts = switch (capabilities.prompts) {
+		None(): withResources;
+		Some(promptsCap): arrayPush(withResources, Pair("prompts", JsonObject([
+			Pair("listChanged", JsonBool(promptsCap.listChanged))
+		])));
+	};
+	
+	JsonObject(withPrompts);
+}
+
+mcpToolToJson(tool : McpTool) -> Json {
+	JsonObject([
+		Pair("name", JsonString(tool.name)),
+		Pair("description", JsonString(tool.description)),
+		Pair("inputSchema", tool.inputSchema)
+	]);
+}
+
+mcpToolResultToJson(result : McpToolResult) -> Json {
+	contentJson = map(result.content, mcpContentToJson);
+	JsonObject([
+		Pair("content", JsonArray(contentJson)),
+		Pair("isError", JsonBool(result.isError))
+	]);
+}
+
+mcpResourceToJson(resource : McpResource) -> Json {
+	JsonObject([
+		Pair("uri", JsonString(resource.uri)),
+		Pair("name", JsonString(resource.name)),
+		Pair("description", JsonString(resource.description)),
+		Pair("mimeType", JsonString(resource.mimeType))
+	]);
+}
+
+mcpResourceResultToJson(result : McpResourceResult) -> Json {
+	contentsJson = map(result.contents, mcpResourceContentToJson);
+	JsonObject([
+		Pair("contents", JsonArray(contentsJson))
+	]);
+}
+
+mcpResourceContentToJson(content : McpResourceContent) -> Json {
+	baseFields = [
+		Pair("uri", JsonString(content.uri)),
+		Pair("mimeType", JsonString(content.mimeType))
+	];
+	
+	withText = switch (content.text) {
+		None(): baseFields;
+		Some(text): arrayPush(baseFields, Pair("text", JsonString(text)));
+	};
+	
+	withBlob = switch (content.blob) {
+		None(): withText;
+		Some(blob): arrayPush(withText, Pair("blob", JsonString(blob)));
+	};
+	
+	JsonObject(withBlob);
+}
+
+mcpPromptToJson(prompt : McpPrompt) -> Json {
+	argumentsJson = map(prompt.arguments, \arg -> JsonObject([
+		Pair("name", JsonString(arg.name)),
+		Pair("description", JsonString(arg.description)),
+		Pair("required", JsonBool(arg.required))
+	]));
+	
+	JsonObject([
+		Pair("name", JsonString(prompt.name)),
+		Pair("description", JsonString(prompt.description)),
+		Pair("arguments", JsonArray(argumentsJson))
+	]);
+}
+
+mcpPromptResultToJson(result : McpPromptResult) -> Json {
+	messagesJson = map(result.messages, \message -> JsonObject([
+		Pair("role", JsonString(mcpRoleToString(message.role))),
+		Pair("content", mcpContentToJson(message.content))
+	]));
+	
+	JsonObject([
+		Pair("description", JsonString(result.description)),
+		Pair("messages", JsonArray(messagesJson))
+	]);
+}
+
+mcpContentToJson(content : McpContent) -> Json {
+	switch (content) {
+		McpTextContent(text): JsonObject([
+			Pair("type", JsonString("text")),
+			Pair("text", JsonString(text))
+		]);
+		McpImageContent(data, mimeType): JsonObject([
+			Pair("type", JsonString("image")),
+			Pair("data", JsonString(data)),
+			Pair("mimeType", JsonString(mimeType))
+		]);
+		McpResourceContent(uri, mimeType, text, blob): {
+			baseFields = [
+				Pair("type", JsonString("resource")),
+				Pair("resource", JsonObject([
+					Pair("uri", JsonString(uri)),
+					Pair("mimeType", JsonString(mimeType))
+				]))
+			];
+			
+			withText = switch (text) {
+				None(): baseFields;
+				Some(textValue): arrayPush(baseFields, Pair("text", JsonString(textValue)));
+			};
+			
+			JsonObject(withText);
+		}
+	}
+}
+
+mcpRoleToString(role : McpMessageRole) -> string {
+	switch (role) {
+		McpRoleUser(): "user";
+		McpRoleAssistant(): "assistant";
+		McpRoleSystem(): "system";
+	}
+}
+
+// Helper response functions
+createMcpSuccessResponse(result : Json, id : Maybe<Json>) -> Json {
+	baseFields = [
+		Pair("jsonrpc", JsonString("2.0")),
+		Pair("result", result)
+	];
+	
+	withId = switch (id) {
+		None(): arrayPush(baseFields, Pair("id", JsonNull()));
+		Some(idValue): arrayPush(baseFields, Pair("id", idValue));
+	};
+	
+	JsonObject(withId);
+}
+
+createMcpErrorResponse(code : int, message : string, id : Maybe<Json>) -> Json {
+	error = JsonObject([
+		Pair("code", JsonDouble(i2d(code))),
+		Pair("message", JsonString(message))
+	]);
+	
+	baseFields = [
+		Pair("jsonrpc", JsonString("2.0")),
+		Pair("error", error)
+	];
+	
+	withId = switch (id) {
+		None(): arrayPush(baseFields, Pair("id", JsonNull()));
+		Some(idValue): arrayPush(baseFields, Pair("id", idValue));
+	};
+	
+	JsonObject(withId);
+}
+
+// Helper constructors
+createMcpTool(name : string, description : string, inputSchema : Json, handler : (Json) -> McpToolResult) -> McpTool {
+	McpTool(name, description, inputSchema, handler);
+}
+
+createMcpResource(uri : string, name : string, description : string, mimeType : string, handler : () -> McpResourceResult) -> McpResource {
+	McpResource(uri, name, description, mimeType, handler);
+}
+
+createMcpPrompt(name : string, description : string, arguments : [McpPromptArgument], handler : (Json) -> McpPromptResult) -> McpPrompt {
+	McpPrompt(name, description, arguments, handler);
+}
+
+createDefaultMcpConfig() -> McpServerConfig {
+	// Sample calculator tool
+	calculatorTool = createMcpTool(
+		"calculator",
+		"Perform basic arithmetic operations",
+		JsonObject([
+			Pair("type", JsonString("object")),
+			Pair("properties", JsonObject([
+				Pair("operation", JsonObject([
+					Pair("type", JsonString("string")),
+					Pair("enum", JsonArray([JsonString("add"), JsonString("subtract"), JsonString("multiply"), JsonString("divide")]))
+				])),
+				Pair("a", JsonObject([Pair("type", JsonString("number"))])),
+				Pair("b", JsonObject([Pair("type", JsonString("number"))]))
+			])),
+			Pair("required", JsonArray([JsonString("operation"), JsonString("a"), JsonString("b")]))
+		]),
+		\params -> {
+			operation = getJsonStringField(params, "operation", "");
+			a = getJsonDoubleField(params, "a", 0.0);
+			b = getJsonDoubleField(params, "b", 0.0);
+			
+			result = if (operation == "add") a + b
+				else if (operation == "subtract") a - b
+				else if (operation == "multiply") a * b
+				else if (operation == "divide") {
+					if (b != 0.0) a / b else 0.0;
+				} else 0.0;
+			
+			McpToolResult([McpTextContent("Result: " + d2s(result))], false);
+		}
+	);
+	
+	// Sample resource
+	timeResource = createMcpResource(
+		"time://current",
+		"Current Time",
+		"Get the current server time",
+		"text/plain",
+		\ -> McpResourceResult([
+			McpResourceContent("time://current", "text/plain", Some("Current time: " + d2s(timestamp())), None())
+		])
+	);
+	
+	// Sample prompt
+	greetingPrompt = createMcpPrompt(
+		"greeting",
+		"Generate a personalized greeting",
+		[McpPromptArgument("name", "The name of the person to greet", true)],
+		\params -> {
+			name = getJsonStringField(params, "name", "there");
+			McpPromptResult(
+				"A friendly greeting prompt",
+				[McpPromptMessage(
+					McpRoleSystem(),
+					McpTextContent("You are a friendly assistant. Greet the user warmly.")
+				), McpPromptMessage(
+					McpRoleUser(),
+					McpTextContent("Hello " + name + "! How are you today?")
+				)]
+			);
+		}
+	);
+	
+	capabilities = McpServerCapabilities(
+		Some(McpLoggingCapability()),
+		Some(McpToolsCapability(false)),
+		Some(McpResourcesCapability(false, false)),
+		Some(McpPromptsCapability(false))
+	);
+	
+	McpServerConfig(
+		"Flow9 MCP Server",
+		"1.0.0",
+		[calculatorTool],
+		[timeResource],
+		[greetingPrompt],
+		capabilities
+	);
+}
+
+// Main function
+main() {
+	config = createDefaultMcpConfig();
+	closeServer = createMcpServer(8080, config);
+	
+	println("MCP Server is running on port 8080");
+	println("Available tools: calculator");
+	println("Available resources: time://current");
+	println("Available prompts: greeting");
+	println("");
+	println("Test with MCP client or curl:");
+	println("curl -X POST http://localhost:8080 \\");
+	println("  -H \"Content-Type: application/json\" \\");
+	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}},\"id\":1}'");
+}
