@@ -351,6 +351,21 @@ class FlowGraphics extends Graphics {
 			graphicsBounds.maxY = pen.y + (lineWidth != null ? lineWidth / 2.0 : 0.0);
 		}
 
+		if (isSvg) {
+			if (Math.abs(graphicsBounds.minX) < 0.001) {
+				graphicsBounds.minX = 0;
+			}
+			if (Math.abs(graphicsBounds.minY) < 0.001) {
+				graphicsBounds.minY = 0;
+			}
+			if (Math.abs(graphicsBounds.maxX) < 0.001) {
+				graphicsBounds.maxX = 0;
+			}
+			if (Math.abs(graphicsBounds.maxY) < 0.001) {
+				graphicsBounds.maxY = 0;
+			}
+		}
+
 		if (graphicsBounds.minX > graphicsBounds.maxX) {
 			var temp = graphicsBounds.maxX;
 			graphicsBounds.maxX = graphicsBounds.minX;
