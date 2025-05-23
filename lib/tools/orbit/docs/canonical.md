@@ -8,7 +8,7 @@ This document provides a comprehensive set of rewriting rules for common symmetr
 
 Canonical forms provide tremendous practical benefits in computational systems:
 
-- **Storage Efficiency**: By representing equivalent expressions with a single canonical form, memory usage can be dramatically reduced. For example, the expression `a + b + c` has 6 equivalent forms due to commutativity and associativity if represented as nested binary operations. Using an n-ary representation `(+ a b c)` and sorting the arguments (`(+ a b c)` assuming `a<b<c`) collapses all equivalent forms to one.
+- **Storage Efficiency**: By representing equivalent expressions with a single canonical form, memory usage can be dramatically reduced. For example, the expression `a + b + c` has 6 equivalent forms due to commutativity and associativity if represented as nested binary operations. During Orbit-to-SExpr lowering, nested expressions like `(a + b) + c` are automatically flattened to the n-ary representation `+`(a, b, c), and sorting the arguments creates the canonical form, collapsing all equivalent forms to one.
 - **Computational Efficiency**: Pattern matching on canonical forms is exponentially faster. Without canonicalization, systems would need to check all equivalent variations of a pattern. For n terms under `Sₙ` symmetry, direct canonicalization (sorting) is `O(n log n)` compared to potentially exploring `O(n!)` permutations.
 - **Optimization Opportunities**: Identifying algebraic patterns becomes much easier with canonical forms, enabling advanced optimizations like algebraic simplification and automatic parallelization.
 - **Consistent Representation**: Canonical forms ensure that the same mathematical expression always has the same representation, which is critical for caching, memoization, and equality testing.
@@ -399,15 +399,17 @@ This general pattern applies to cyclic groups (Cₙ) and the rotation subgroup o
 Canonicalization for operations annotated with `Sₙ` (like commutative `+`, `*`, `∧`, `∨`) involves sorting the arguments of their n-ary S-expression representation.
 
 ```orbit
-// S₂ canonicalization (commutative binary operation) - could be done manually like this
-// (a + b) : S₂ => a + b if a <= b;
-// (a + b) : S₂ => b + a if b < a;
+// S₂ canonicalization (commutative binary operation) - now handled automatically
+// During Orbit-to-SExpr lowering: (a + b) automatically becomes `+`(a, b)
+// Then canonical sorting is applied: `+`(a, b) or `+`(b, a) → `+`(a, b) if a <= b
 
 // S_n canonicalization for n-ary associative/commutative operations
+// Automatic flattening during lowering: a+b+c+(d+e)+f → `+`(a,b,c,d,e,f)
 (`op` args...) : Sₙ => (`op` sort(args...)) if !is_sorted(args);
 
 // Example:
-(`+` c a b) : Sₙ => (`+` a b c) // Assuming a < b < c and sorting
+// Original: a + (b + c) + d  →  Lowered: `+`(a, b, c, d)  →  Canonical: `+`(a, b, c, d)
+(`+` c a d b) : Sₙ => (`+` a b c d) // Assuming a < b < c < d after sorting
 ```
 
 #### Cyclic Group (Cₙ)

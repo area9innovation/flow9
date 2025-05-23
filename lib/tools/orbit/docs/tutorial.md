@@ -304,6 +304,9 @@ fn diff(expr : ast, x : ast) -> ast =
 		// Sum rule: d/dx(u + v) = d/dx(u) + d/dx(v)
 		a + b => diff(a, x) + diff(b, x);
 
+		// Sum rule (generalized): d/dx(u + v + w + ...) = d/dx(u) + d/dx(v) + d/dx(w) + ...
+		`+`(terms, ...) => `+`(map(terms, \t -> diff(t, x)), ...);
+
 		// Product rule: d/dx(u * v) = u * d/dx(v) + v * d/dx(u)
 		a * b => a * diff(b, x) + b * diff(a, x);
 
