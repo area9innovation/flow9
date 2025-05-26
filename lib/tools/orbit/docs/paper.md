@@ -33,7 +33,7 @@ Consider the simple case of integer addition, which is commutative: `3 + 5 = 5 +
 ```orbit
 // Canonicalisation rule based on sorting arguments for S_n symmetry
 // This rule would be applied internally during O-Graph operations
-// or triggered by a rule like: 
+// or triggered by a rule like:
 `+`(args) : S_n → `+`(sort(args));
 ```
 
@@ -249,8 +249,8 @@ This approach allows complex rewrite rules operating on n-ary structures to be e
 The final layer in our architecture is the O-Graph, which stores the canonicalized terms and their relationships. By converting Orbit expressions to S-expressions, we can easily integrate with the O-Graph structure:
 
 1. Parse Orbit math notation to an AST.
-2. Convert to S-expression representation (flattening associative ops).
-3. Apply the S-expression to the O-Graph.
+2. **Automatic flattening during lowering**: Convert to S-expression representation where nested associative operations are automatically flattened (e.g., `a+b+c+(d+e)+f` becomes `+`(a,b,c,d,e,f)).
+3. Apply the flattened S-expression to the O-Graph.
 4. Perform canonicalisation (e.g., sorting argument lists for `Sₙ`) based on group-theoretic properties.
 5. Extract results (potentially reconstructing binary trees for display) and convert back to Orbit notation as needed.
 
@@ -729,7 +729,7 @@ TODO: Many of these rules are arguably already handled by some other general gro
 // Matrix<N, T> ⊂ Ring // (Potentially NonCommutativeRing)
 
 // Inherited Ring Rules:
-A + B : Matrix ↔ B + A : Matrix : S₂ // Addition is commutative 
+A + B : Matrix ↔ B + A : Matrix : S₂ // Addition is commutative
 (A + B) + C : Matrix ↔ A + (B + C) : Matrix // Associativity handled by n-ary form
 A * (B + C) : Matrix → A*B + A*C : Matrix // Distributivity
 // ... etc ...

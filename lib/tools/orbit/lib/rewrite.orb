@@ -14,7 +14,7 @@ import lib/match;
 // Apply a single rewrite pattern and replacement to a graph,
 // correctly handling domain annotations and conditions
 fn applyRewriteRule(graph, root, pattern, replacement, condition, ruleName) = (
-    println("\nTrying rule: " + ruleName + ": " + prettySexpr(pattern) + "  =>  " + prettySexpr(replacement) + "   to   " + prettySexpr(extractOGraph(graph, root)));
+    // println("\nTrying rule: " + ruleName + ": " + prettySexpr(pattern) + "  =>  " + prettySexpr(replacement) + "   to   " + prettySexpr(extractOGraph(graph, root)));
     //println("Pattern: " + prettySexpr(pattern));
     //println("Replacement: " + prettySexpr(replacement));
     //println("Condition: " + prettySexpr(condition));
@@ -43,20 +43,25 @@ fn applyRewriteRule(graph, root, pattern, replacement, condition, ruleName) = (
 			let expanded = replaceEllipsis(replacement, map(ellipsis, \e -> extractOGraph(graph, e)));
             // If we have a domain annotation, we have to unquote it
 			let repl = expanded is ((a : d) => (`(($a) : ($evalWithBindings(d, values)))); a => a);
-			// println("Replacement instantiated: " + prettySexpr(repl));
-
+//			println(ellipsis);
+//			println("Expanded: " + prettySexpr(expanded));
+//			let evald = evalWithBindings(repl, values);
+//			println(evald);
             let newId = addOGraphWithSub(graph, repl, bindings);
-            println("Rule '" + ruleName + "' applied. ID: " + i2s(newId) + ": " + prettyOrbit(extractOGraph(graph, newId)) + " was " + prettyOrbit(extractOGraph(graph, eclassId)) + " at " + i2s(eclassId) + " from replacement " + prettySexpr(replacement) + " and values " + prettySexpr(values) + " and ellipsis " + prettySexpr(ellipsis));
+            println("Rule '" + ruleName + "' applied. ID: " + i2s(newId) + ": Now is   " + prettyOrbit(extractOGraph(graph, newId)) + "   was   " + prettyOrbit(extractOGraph(graph, eclassId)) + " at " + i2s(eclassId) + " from replacement " + prettySexpr(replacement) + " and values " + prettySexpr(values) + " and ellipsis " + prettySexpr(ellipsis));
+			//println("Merging " + i2s(newId) + " with " + i2s(eclassId));
+            // let symbolic = mergeOGraphNodes(graph, newId, eclassId);
 
-            let symbolic = mergeOGraphNodes(graph, newId, eclassId);
+			// Do eval in the ograph for quasiquote expressions
+			let quasi = evaluateOGraphQuasiquote(graph, newId, false);
 
-			// Do eval in the ograph
-			let quasi = evaluateOGraphQuasiquote(graph, newId);
+			// println("Evaluated quasiquote. Merging " + i2s(quasi) + " with " + i2s(eclassId));
 
-            // Step 3: Merge nodes (result first to make it canonical)
-            let success = mergeOGraphNodes(graph, quasi, eclassId);
-            // setFileContent("merged" + i2s(newId) + ".dot", ograph2dot(graph));
-			success
+			// Step 3: Merge nodes (result first to make it canonical)
+			let success = mergeOGraphNodes(graph, quasi, eclassId);
+			// setFileContent("merged" + i2s(newId) + ".dot", ograph2dot(graph));
+			quasi
+
         ) else (
             // println("Condition not satisfied, rule not applied");
 			0
@@ -78,10 +83,13 @@ fn replaceEllipsis(e, ellipsis) = (
 		let patternChildren = de[1];
 		let ellipsisIndex = findi(patternChildren, \c -> c == '...);
 		if (ellipsisIndex == -1) then (
-			// No ellipsis found, just return the expression
-			e
+			// No ellipsis found at this level, check children recursively
+			let op = de[0];
+			let children = de[1];
+			let newChildren = map(children, \child -> replaceEllipsis(child, ellipsis));
+			constructSexpr(op, newChildren, de[2])
 		) else (
-			// Replace the ellipsis with the provided expression
+			// Replace the ellipsis at this level with the provided expression
 			let prefix = subrange(patternChildren, 0, ellipsisIndex);
 			let suffix = tailFrom(patternChildren, ellipsisIndex + 1);
 			let newChildren = concat(concat(prefix, ellipsis), suffix);
@@ -111,10 +119,11 @@ fn initRewriteEngine(expr) = (
 fn applyAndTrackRule(acc, pattern, replacement, condition, ruleName) = (
     acc is (RewriteAcc(ograph, graph, exprId, originalExpr) => (
         // Track original expression before applying the rule
+		let root = exprId; // findORoot(ograph, exprId);
+		// println("Applying rule '" + ruleName + "' to expression: " + prettySexpr(originalExpr));
         let fromExpr = extractOGraph(ograph, exprId);
-        
         // Apply the rule
-        let matches = applyRewriteRule(ograph, exprId, pattern, replacement, condition, ruleName);
+        let matches = applyRewriteRule(ograph, root, pattern, replacement, condition, ruleName);
         
         // If rule was applied, track it in the graph
         if (matches > 0) then (
@@ -282,7 +291,8 @@ fn applyRulesUntilFixedPoint(expr, rules, maxIterations) = (
     
     // Run the iteration
     let finalAcc = iterate(acc, 0);
-    println(finalAcc);
+
+	setFileContent("final.dot", ograph2dot(finalAcc[1]));
     // Extract the result
     extractRewriteResult(finalAcc)
 );
