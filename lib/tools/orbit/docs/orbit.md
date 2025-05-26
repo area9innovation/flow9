@@ -70,6 +70,18 @@ let newCounter = counter + 1;  // Create a new binding
 ```
 </variables_and_expressions>
 
+<interpolated_strings>
+Orbit supports interpolated strings for convenient string construction with embedded expressions:
+
+```orbit
+// Basic interpolated string syntax
+let x = 10;
+let y = 20;
+let result = `"The sum of $x and $y is $(x + y)";
+
+The interpolated expressions are evaluated and converted to strings, then concatenated with the literal text. Under the hood, interpolated strings are converted to concatenation expressions like `(+ "Hello " name ", you have " (+ count 1) " items")` in S-expression land.
+</interpolated_strings>
+
 <functions>
 Functions in Orbit are defined using the `fn` keyword, followed by the function name, parameters, and body:
 
@@ -208,24 +220,24 @@ Orbit supports powerful array pattern matching with rest patterns, which allow y
 ```orbit
 // Matching arrays with rest patterns
 arr is (
-  [first, second, ..., rest] => (
-    // 'first' is the first element
-    // 'second' is the second element
-    // 'rest' contains all remaining elements as an array
-    println("First: " + prettyOrbit(first));
-    println("Second: " + prettyOrbit(second));
-    println("Rest: " + prettyOrbit(rest));
-  );
-  [single, ..., rest] => (
-    // Matches arrays with at least one element
-    println("Single: " + prettyOrbit(single));
-    println("Rest: " + prettyOrbit(rest));
-  );
-  [..., all] => (
-    // Captures all elements in 'all'
-    println("All elements: " + prettyOrbit(all));
-  );
-  _ => "No match"
+	[first, second, ..., rest] => (
+		// 'first' is the first element
+		// 'second' is the second element
+		// 'rest' contains all remaining elements as an array
+		println("First: " + prettyOrbit(first));
+		println("Second: " + prettyOrbit(second));
+		println("Rest: " + prettyOrbit(rest));
+	);
+	[single, ..., rest] => (
+		// Matches arrays with at least one element
+		println("Single: " + prettyOrbit(single));
+		println("Rest: " + prettyOrbit(rest));
+	);
+	[..., all] => (
+		// Captures all elements in 'all'
+		println("All elements: " + prettyOrbit(all));
+	);
+	_ => "No match"
 )
 ```
 
