@@ -5,6 +5,7 @@ import ds/tree;
 import tools/flowc/incremental/fiexp;
 import tools/flowc/incremental/fimodule;
 import tools/flowc/incremental/fiprogram;
+import lingo/flow/javascript_keywords;
 
 export {
 	fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOverlayGroup, programCode : string) -> bool;
@@ -36,7 +37,7 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 		fcVerbose(cfg, 1, "Saving output file...");
 		finalCode = if (cfg.namespaceMode) {
 			fcVerbose(cfg, 0, "Applying namespace wrapper...");
-			fiJsWrapInNamespace(programCode, cfg, program)
+			fiJsWrapInNamespace(programCode, cfg, program, ovl)
 		} else {
 			fcVerbose(cfg, 0, "No namespace wrapper (namespaceMode: " + b2s(cfg.namespaceMode) + ")");
 			programCode
@@ -65,7 +66,7 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 				imports = concatStrings(extern_imports);
 				js_file = changeFileExt(outfile, "") + "__1.js";
 				finalCode = if (cfg.namespaceMode) {
-					fiJsWrapInNamespace(programCode, cfg, program)
+					fiJsWrapInNamespace(programCode, cfg, program, ovl)
 				} else {
 					programCode
 				};
@@ -450,12 +451,40 @@ fiStructOrUnions2Ts(types : [FiStructOrUnion]) -> string {
 	ts_structs + (if (ts_unions == "") "" else "\n\n" + ts_unions);
 }
 
-fiJsWrapInNamespace(programCode : string, cfg : FiJsConfig, program : FiProgram) -> string {
+fiJsWrapInNamespace(programCode : string, cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) -> string {
 	// Generate namespace wrapper for TypeScript/JavaScript interop
 	namespaceStart = "export const Flow = (() => {\n";
 	
 	// Extract declarations from the program structure
-	declarations = fiJsExtractDeclarationsFromProgram(program);
+	basicDeclarations = fiJsExtractDeclarationsFromProgram(program);
+	
+	// Automatically add struct constructors for types used by exported functions
+	structConstructors = if (!isEmptySet(cfg.jslibrary)) {
+		fold(set2array(cfg.jslibrary), [], \acc, funcName -> {
+			// Find the function declaration and extract types it uses
+			mdec = lookupTree(program.names.toplevel, funcName);
+			switch (mdec) {
+				None(): acc;
+				Some(dec): {
+					referencedTypes = extractReferencedTypes(dec);
+					fold(referencedTypes, acc, \acc2, typeName -> {
+						structDef = lookupTree(program.names.structs, typeName);
+						switch (structDef) {
+							Some(struct): {
+								// Check if this struct name is not already in the declarations
+								if (!exists(acc2, \d -> d.name == typeName)) {
+									arrayPush(acc2, FiJsNamespaceDeclaration(typeName, "struct", FiTypeName(typeName, [])));
+								} else acc2;
+							}
+							None(): acc2;
+						}
+					});
+				}
+			}
+		});
+	} else [];
+	
+	declarations = concat(basicDeclarations, structConstructors);
 	
 	// Wrap the original code in a function scope
 	wrappedCode = "    // Original Flow code\n" +
@@ -463,7 +492,7 @@ fiJsWrapInNamespace(programCode : string, cfg : FiJsConfig, program : FiProgram)
 	
 	// Generate the return statement with organized namespace structure
 	namespaceReturn = "    return {\n" +
-		fiJsGenerateNamespaceExportsFromProgram(declarations) +
+		fiJsGenerateNamespaceExportsFromProgram(cfg, ovl, declarations) +
 		"    };\n";
 	
 	namespaceEnd = "})();\n";
@@ -525,7 +554,43 @@ fiJsGenerateStructConstructors(declarations : [FiJsNamespaceDeclaration]) -> str
 	"";
 }
 
-fiJsGenerateNamespaceExportsFromProgram(declarations : [FiJsNamespaceDeclaration]) -> string {
+extractReferencedTypes(dec : FiDeclaration) -> [string] {
+	// Extract type names referenced by a declaration
+	switch (dec) {
+		FiFunctionDec(name, lambda, type, declStart, defiStart): {
+			// Extract types from function signature
+			argTypes = map(type.args, \arg -> extractTypeName(arg.type));
+			returnTypes = [extractTypeName(type.returnType)];
+			concat(argTypes, returnTypes);
+		}
+		FiGlobalVar(name, value, type, declStart, defiStart): {
+			[extractTypeName(type)];
+		}
+		FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+			switch (type) {
+				FiTypeFunction(args, returnType): {
+					argTypes = map(args, \arg -> extractTypeName(arg.type));
+					returnTypes = [extractTypeName(returnType)];
+					concat(argTypes, returnTypes);
+				}
+				default: [extractTypeName(type)];
+			}
+		}
+	}
+}
+
+extractTypeName(type : FiType) -> string {
+	// Extract the main type name from a FiType
+	switch (type) {
+		FiTypeName(name, typars): name;
+		FiTypeArray(t): extractTypeName(t);
+		FiTypeRef(t): extractTypeName(t);
+		FiTypeFunction(args, returnType): extractTypeName(returnType);
+		default: ""; // For built-in types like int, string, etc.
+	}
+}
+
+fiJsGenerateNamespaceExportsFromProgram(cfg : FiJsConfig, ovl : FiJsOverlayGroup, declarations : [FiJsNamespaceDeclaration]) -> string {
 	// Generate namespace exports organized by type
 	functions = filter(declarations, \decl -> decl.kind == "function");
 	variables = filter(declarations, \decl -> decl.kind == "variable");
@@ -543,9 +608,23 @@ fiJsGenerateNamespaceExportsFromProgram(declarations : [FiJsNamespaceDeclaration
 		"        " + decl.name + ": A9__" + decl.name + ","
 	);
 	
-	// Skip struct constructors - they're generated by Flow runtime with mangled names
-	// Users should use constructor functions instead (like createPerson)
-	structExports = [];
+	// Export struct constructors so TypeScript can create proper Flow structs with _id field
+	structExports = map(structs, \decl -> {
+		// Look up the struct info to get the constructor name
+		structInfo = lookupTree(ovl.structs, decl.name);
+		switch (structInfo) {
+			Some(sinfo): {
+				if (length(sinfo.struct.args) == 0) {
+					// Singleton struct - export the static instance
+					"        create" + decl.name + ": st_" + (if (cfg.readable) sinfo.struct.name else i2s(sinfo.id)) + ","
+				} else {
+					// Constructor function - export the constructor
+					"        create" + decl.name + ": c$" + formatId(sinfo.id) + ","
+				}
+			}
+			None(): "        // Unknown struct: create" + decl.name + ","
+		}
+	});
 	
 	// Skip union constructors for the same reason  
 	unionExports = [];

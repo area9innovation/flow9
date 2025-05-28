@@ -2,6 +2,9 @@
 
 This project demonstrates how to integrate Flow9 code with TypeScript, including complete type safety, bundling, and minification.
 
+TODO: The constructor also has to be in the ts type.
+- Add the _id field, but renamed to kind
+
 ## Overview
 
 This test case shows:
