@@ -26,15 +26,7 @@ module.exports = {
       type: 'commonjs2'
     }
   },
-  externals: {
-    // Make the Flow JS export available as an external dependency
-    '../flow_export': {
-      commonjs: './flow_export.js',
-      commonjs2: './flow_export.js',
-      amd: './flow_export.js',
-      root: 'FlowExport'
-    }
-  },
+
   optimization: {
     minimize: false, // We'll handle minification separately with terser
   },

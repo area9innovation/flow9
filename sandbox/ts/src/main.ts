@@ -1,10 +1,10 @@
 // TypeScript program that imports and uses the Flow exports
-import * as Flow from '../flow_export.js';
+import { Flow, type Foo } from '../flow_export.js';
 
 // Create some Foo instances using the TypeScript types
-const foo1: Flow.Foo = Flow.createFoo(42);
-const foo2: Flow.Foo = Flow.createFoo(100);
-const foo3: Flow.Foo = Flow.createFoo(-5);
+const foo1: Foo = Flow.createFoo(42);
+const foo2: Foo = Flow.createFoo(100);
+const foo3: Foo = Flow.createFoo(-5);
 
 console.log('Initial state:');
 let currentFoo = Flow.getFoo();
@@ -31,7 +31,7 @@ console.log('\nDemonstrating TypeScript type safety:');
 // const invalidFoo: Foo = { b: "wrong" }; // Error: Object literal may only specify known properties
 
 // This works because we're following the Foo interface
-const validFoo: Flow.Foo = Flow.createFoo(999);
+const validFoo: Foo = Flow.createFoo(999);
 Flow.addFoo(validFoo);
 console.log('Added valid foo:', validFoo);
 
@@ -40,8 +40,8 @@ const finalFoo = Flow.getFoo();
 console.log('Final foo:', finalFoo);
 
 // Export some functionality for potential use by other modules
-export function createAndAddFoo(value: number): Flow.Foo {
-    const newFoo: Flow.Foo = Flow.createFoo(value);
+export function createAndAddFoo(value: number): Foo {
+    const newFoo: Foo = Flow.createFoo(value);
     Flow.addFoo(newFoo);
     return newFoo;
 }
