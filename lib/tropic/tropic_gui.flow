@@ -224,7 +224,10 @@ export {
 	TSelectMaybe(v : Transform<Maybe<?>>, fn : (?) -> Tropic) -> Tropic;
 
 	// TSelect supporting fusion, which can help with managing disposing
-	TFSelect(value : Transform<?>, fn : FFn<?, Tropic>) -> Tropic;
+	TFSelect(value : Transform<?>, fn : FFn<?, Tropic>, instantRender : bool) -> Tropic;
+
+	// TSelect, but first fn call happens at the moment of creation, not at the construction
+	TSelectInstantCreation(value : Transform<?>, fn : (?) -> Tropic) -> Tropic;
 
 	// Shorthand to define a bunch of named tropics
 	TLetMany(items : [Pair<string, Tropic>], scope : Tropic) -> Tropic;
@@ -1552,21 +1555,28 @@ TIfLazy(value : Transform<bool>, f : (bool) -> Tropic) -> Tropic {
 
 	TFSelect(value, FLift(\v -> {
 		onlyOnce(if (v) tTrue else tFalse, \ -> f(v))
-	}))
+	}), false)
 }
 
-TFSelect(value : Transform<?>, fn : FFn<?, Tropic>) -> Tropic {
+TFSelect(value : Transform<?>, fn : FFn<?, Tropic>, instantRender : bool) -> Tropic {
 	t = fselect(value, fn);
 	if (isFConst(t)) {
 		// If we are constant, let's avoid the mutable altogether
 		fgetValue(t)
+	} else if (instantRender) {
+		tr = make(fgetValue(t));
+		TConstruct([makeSubscribe2(t, \v -> nextDistinct(tr, v))], TMutable(tr));
 	} else {
 		TMutable(t);
 	}
 }
 
 TSelect(value : Transform<?>, fn : (?) -> Tropic) -> Tropic {
-	TFSelect(value, FLift(fn));
+	TFSelect(value, FLift(fn), false);
+}
+
+TSelectInstantCreation(value : Transform<?>, fn : (?) -> Tropic) -> Tropic {
+	TFSelect(value, FLift(fn), true);
 }
 
 TSelect2(v1 : Transform<?>, v2 : Transform<??>, fn : (?, ??) -> Tropic) -> Tropic {
@@ -1712,7 +1722,7 @@ TShowLazy(show : Transform<bool>, tr : () -> Tropic) -> Tropic {
 
 	TFSelect(show, FLift(\s -> {
 		if (s) onlyOnce(t, \ -> tr()) else TEmpty()
-	}))
+	}), false)
 }
 
 TRenderOnce(condition : Transform<bool>, content : () -> Tropic) -> Tropic {
