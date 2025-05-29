@@ -326,7 +326,7 @@ function printProfilingResults(path: string, macc: MoParseAcc): void {
         Object.keys(profileMangoPositions).forEach(rule => {
             const posTree = profileMangoPositions[rule];
             
-            if (Object.keys(posTree).length > 0) {
+            if (posTree && Object.keys(posTree).length > 0) {
                 console.log(`\nHotspots for rule '${rule}':`);
                 
                 const posCounts = Object.entries(posTree)
