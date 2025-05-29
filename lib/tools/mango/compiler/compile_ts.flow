@@ -1,0 +1,108 @@
+import tools/mango/compiler/optimize;
+import tools/poppy/compiler/compile;
+import tools/mango/compiler/extract_main;
+import tools/mango/compiler/opcode2ts;
+import tools/mango/compiler/mango2opcode;
+import fs/filesystem;
+
+export {
+	compileMangoTS(file : string, t : Term) -> string;
+}
+
+compileMangoTS(file : string, t : Term) -> string {
+	// Reset the position variable counter for each new compilation
+	resetPositionVarCounter();
+
+	main = getUrlParameterDef("main", changeFileExt(fileNameOnly(file), "")) + "_compiled";
+
+	// Compute rule effects for the entire grammar
+	ruleEffects = analyzeTermGrammarEffects(t);
+
+	opcodes = mango2opcodeWithMain(main, t, ruleEffects);
+	opt = optimizeMOpCode(opcodes);
+	effects = analyzeGrammarEffects(opt);
+	code = mopcode2ts(opt, effects);
+
+	blueprint("
+		// Produced by flowcpp mango/mango.flow -- file=%file% ts=%main%.ts compile=1 main=%main%
+		import { 
+		    MoParseAcc, 
+		    createMoParseAcc, 
+		    parseCompiledMango,
+		    mmatchString,
+		    mmatchRange,
+		    mparseStar,
+		    mparseStarNobacktrackOrStack,
+		    mparseStarBacktrackOnly,
+		    pushMCheckpoint,
+		    discardMCheckpoint,
+		    restoreMCheckpoint,
+		    pushMCheckpointNoStack,
+		    discardMCheckpointNoStack,
+		    restoreMCheckpointNoStack,
+		    moconstruct,
+		    pushPEnv,
+		    popPEnv,
+		    getSinglePEnv,
+		    getAllPEnv,
+		    getResultPEnv,
+		    profileMangoProduction,
+		    profileMangoProductionWithPos,
+		    unescapeString,
+		    pconstruct0,
+		    pconstruct1,
+		    pconstruct2,
+		    pconstruct3,
+		    pconstruct4,
+		    pconstruct5
+		} from './mcode_lib';
+		
+		// Convenience function for parsing strings
+		export function parse%mainCamel%(input: string): { result: any; error: string } {
+		    const acc = createMoParseAcc(input);
+		    return parseCompiledMango('', input, %pf%parse_%main%, null);
+		}
+		
+		%term%"
+		, [
+			"file", file,
+			"term", code,
+			"main", main,
+			"mainRule", extractMainRule(t),
+			"mainCamel", toCamelCase(main),
+			"pf", getUrlParameter("prefix"),
+		]
+	);
+}
+
+// Extract the main rule name from the grammar
+extractMainRule(t : Term) -> string {
+	switch (t) {
+		Sequence(term1, term2): {
+			extractMainRule(term2);
+		}
+		Variable(name): name;
+		Rule(name, __, e): extractMainRule(e); // Return the rule name, not recurse into expression
+		default: {
+			// For simple expressions without explicit rules, use the main function name
+			main = getUrlParameterDef("main", "main");
+			main;
+		}
+	}
+}
+
+// Convert string to camelCase
+toCamelCase(s : string) -> string {
+	words = strSplit(s, "_");
+	if (length(words) <= 1) {
+		s;
+	} else {
+		first = words[0];
+		rest = map(subrange(words, 1, length(words) - 1), \word -> {
+			if (strlen(word) > 0) {
+				toUpperCase(substring(word, 0, 1)) + substring(word, 1, strlen(word) - 1);
+			} else word;
+		});
+		first + strGlue(rest, "");
+	}
+}

@@ -1,0 +1,250 @@
+import tools/mango/compiler/mopcode;
+import tools/mango/compiler/opcode_effects;
+import tools/mango/compiler/opcode2code;
+import tools/mango/compiler/pretty;
+import string;
+import text/blueprint;
+import net/url_parameter;
+import tools/poppy/compiler/compile;
+import ds/tree;
+import math/math;
+import ds/array;
+import algorithms;
+
+export {
+	// Function signature with effects tree parameter for TypeScript generation
+	mopcode2ts(c : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string;
+}
+
+// Helper function to check if code ends with a semicolon
+endsWithSemicolon(code : string) -> bool {
+	trimmed = trim(code);
+	strlen(trimmed) > 0 && strRight(trimmed, strlen(trimmed) - 1) == ";";
+}
+
+mopcode2ts(c : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string {
+	todo = \ -> {
+		println("TODO: Produce TypeScript code for " + toString(c));
+		"/* TODO */";
+	}
+	switch (c) {
+		MoFunction(name, code, body): {
+			prefix = getUrlParameterDef("prefix", "");
+			profileOn = isUrlParameterTrue("profile");
+			profiles = strSplit(getUrlParameter("profile"), ",");
+
+			blueprint("
+				function %id%(acc: MoParseAcc): boolean {
+					%prof%return %term%;
+				}
+
+				%body%
+				", [
+					"id", prefix + "parse_" + name,
+					"prof", if (contains(profiles, name)) {
+						"profileMangoProductionWithPos(acc, " + toString(name) + ");\n\t"
+					} else if (profileOn) {
+						"profileMangoProduction(" + toString(name) + ");\n\t"
+					} else "",
+					"term", mopcode2ts(code, effects),
+					"body", mopcode2ts(body, effects),
+				]
+			)
+		}
+		MoMatchString(s): "mmatchString(acc, " + toString(s) + ")";
+		MoMatchRange(lower, upper): "mmatchRange(acc, " + i2s(lower) + ", " + i2s(upper) + ")";
+		MoIf(cond, then, else_): {
+			// Generate ternary operator for cleaner TypeScript
+			"(" + mopcode2ts(cond, effects) + " ? " + mopcode2ts(then, effects) + " : " + mopcode2ts(else_, effects) + ")";
+		}
+		MoParseStar(term): {
+			// Use the effects map for optimization
+			generateOptimizedParseStarTS(term, effects);
+		}
+		MoCall(id): {
+			prefix = getUrlParameterDef("prefix", "");
+			prefix + "parse_" + id + "(acc)";
+		}
+		MoCaptureI(): "acc.starti = acc.i";
+		MoMatched(): "(() => { pushPEnv(acc.env, acc.input.substring(acc.starti, acc.i)); return true; })()";
+		MoBool(b): b2s(b);
+		MoEvalPoppy(poppy): {
+			if (isPoppyValue(poppy)) {
+				val = compilePoppyValue2TS(poppy);
+				"pushPEnv(acc.env, " + val + ")";
+			} else if (poppy == PoppyWord("error")) {
+				blueprint("(() => {
+					const error = popPEnv(acc.env);
+					acc.errors.set(acc.i, error);
+					return true;
+				})()", []);
+			} else {
+				// Convert Poppy stack operations to TypeScript
+				tsCode = compilePoppy2TS(poppy);
+				"(() => { " + tsCode + "; return true; })()";
+			}
+		}
+		MoPushCheckpoint(mode): {
+			switch (mode) {
+				FullStackMode(): "pushMCheckpoint(acc)";
+				PositionStackMode(): "pushMCheckpointNoStack(acc)";
+				LocalVariableMode(id): "const pos_" + i2s(id) + " = acc.i";
+			}
+		}
+		MoDiscardCheckpoint(mode): {
+			switch (mode) {
+				FullStackMode(): "discardMCheckpoint(acc)";
+				PositionStackMode(): "discardMCheckpointNoStack(acc)";
+				LocalVariableMode(id): "true";  // Return true for success
+			}
+		}
+		MoRestoreCheckpoint(mode): {
+			switch (mode) {
+				FullStackMode(): "restoreMCheckpoint(acc)";
+				PositionStackMode(): "restoreMCheckpointNoStack(acc)";
+				LocalVariableMode(id): {
+					"(() => { acc.i = pos_" + i2s(id) + "; return false; })()"  // Restore position and return false
+				}
+			}
+		}
+		MoSequence(exps): {
+			if (length(exps) == 0) {
+				""  // Empty sequence should generate nothing
+			} else if (length(exps) == 1) {
+				mopcode2ts(exps[0], effects)
+			} else {
+				// Convert each expression to a statement, handling the last one specially
+				statements = mapi(exps, \i, exp -> {
+					code = mopcode2ts(exp, effects);
+					if (i == length(exps) - 1) {
+						// Last expression should return its value
+						"return " + code + ";";
+					} else {
+						// Other expressions should be executed as statements
+						if (endsWithSemicolon(code)) code else code + ";";
+					}
+				});
+				blueprint("
+					(() => {
+						%seq%
+					})()", [
+					"seq", strGlue(statements, "\n\t\t")
+				]);
+			}
+		}
+		MoConstruct(uid, arity): "moconstruct(acc, " + toString(uid) + ", " + i2s(arity) + ")";
+		MoPushPosition(): "pushPEnv(acc.env, acc.i)";
+		MoAnd(left, right): {
+			"(" + superglue([left, right], \o -> {
+				if (needMOpCodeParenthesis(o)) {
+					"(" + mopcode2ts(o, effects) + ")"
+				} else {
+					mopcode2ts(o, effects)
+				}
+			}, " && ") + ")"
+		}
+		MoOr(left, right): {
+			superglue([left, right], \o -> {
+				if (needMOpCodeParenthesis(o)) {
+					"(" + mopcode2ts(o, effects) + ")"
+				} else {
+					mopcode2ts(o, effects)
+				}
+			}, " || ")
+		}
+	}
+}
+
+// Generate optimized TypeScript code for MoParseStar based on analysis with effects map
+generateOptimizedParseStarTS(term : MOpCode, effects : Tree<string, MOpCodeEffects>) -> string {
+	if (!modifiesStackWithEffects(term, effects) && !needsBacktrackingWithEffects(term, effects)) {
+		// Fast path: simple repetition with no backtracking needed
+		blueprint("
+			mparseStarNobacktrackOrStack(acc, () => {
+				return %term%;
+			})", [
+			"term", mopcode2ts(term, effects)
+		]);
+	} else if (!modifiesStackWithEffects(term, effects)) {
+		// Medium path: position-only backtracking
+		blueprint("
+			mparseStarBacktrackOnly(acc, () => {
+				return %term%;
+			})", [
+			"term", mopcode2ts(term, effects)
+		]);
+	} else {
+		// Standard mparseStar with full checkpointing
+		blueprint("
+			mparseStar(acc, () => {
+				return %term%;
+			})", [
+			"term", mopcode2ts(term, effects)
+		]);
+	}
+}
+
+// Convert Poppy values to TypeScript
+compilePoppyValue2TS(poppy : Poppy) -> string {
+	switch (poppy) {
+		PoppyBool(b): b2s(b);
+		PoppyInt(i): i2s(i);
+		PoppyDouble(d): d2s(d);
+		PoppyString(s): toString(s);
+		default: {
+			println("TODO: Convert Poppy value to TypeScript: " + toString(poppy));
+			"null";
+		}
+	}
+}
+
+// Convert Poppy stack operations to TypeScript  
+compilePoppy2TS(poppy : Poppy) -> string {
+	switch (poppy) {
+		PoppyNil(): "pushPEnv(acc.env, [])";
+		PoppyCons(): {
+			"const tail = popPEnv(acc.env); const head = popPEnv(acc.env); pushPEnv(acc.env, [head, ...tail])";
+		}
+		PoppyDrop(): "popPEnv(acc.env)";
+		PoppyDup(): {
+			"const val = popPEnv(acc.env); pushPEnv(acc.env, val); pushPEnv(acc.env, val)";
+		}
+		PoppySwap(): {
+			"const a = popPEnv(acc.env); const b = popPEnv(acc.env); pushPEnv(acc.env, a); pushPEnv(acc.env, b)";
+		}
+		PoppyPrint(): {
+			"const val = popPEnv(acc.env); console.log(val); pushPEnv(acc.env, val)";
+		}
+		PoppyBool(b): "pushPEnv(acc.env, " + b2s(b) + ")";
+		PoppyInt(i): "pushPEnv(acc.env, " + i2s(i) + ")";
+		PoppyDouble(d): "pushPEnv(acc.env, " + d2s(d) + ")";
+		PoppyString(s): "pushPEnv(acc.env, " + toString(s) + ")";
+		PoppyWord(word): {
+			if (word == "s2i") "pushPEnv(acc.env, parseInt(popPEnv(acc.env)))"
+			else if (word == "s2d") "pushPEnv(acc.env, parseFloat(popPEnv(acc.env)))"
+			else if (word == "true") "pushPEnv(acc.env, true)"
+			else if (word == "false") "pushPEnv(acc.env, false)"
+			else if (word == "unescape") "pushPEnv(acc.env, unescapeString(popPEnv(acc.env)))"
+			else if (word == "hex2int") "pushPEnv(acc.env, parseInt(popPEnv(acc.env), 16))"
+			else if (word == "swap") {
+				"const a = popPEnv(acc.env); const b = popPEnv(acc.env); pushPEnv(acc.env, a); pushPEnv(acc.env, b)";
+			} else if (word == "drop") "popPEnv(acc.env)"
+			else if (word == "dup") {
+				"const val = popPEnv(acc.env); pushPEnv(acc.env, val); pushPEnv(acc.env, val)";
+			} else if (word == "nil") "pushPEnv(acc.env, [])"
+			else if (word == "cons") {
+				"const tail = popPEnv(acc.env); const head = popPEnv(acc.env); pushPEnv(acc.env, [head, ...tail])";
+			}
+			else {
+				println("TODO: Convert Poppy word to TypeScript: " + word);
+				"/* TODO: " + word + " */";
+			}
+		}
+		PoppySequence(op1, op2): compilePoppy2TS(op1) + "; " + compilePoppy2TS(op2);
+		PoppyConstructArity(uid, arity): "pconstruct" + i2s(arity) + "(acc.env, " + toString(uid) + ")";
+		default: {
+			println("TODO: Convert Poppy operation to TypeScript: " + toString(poppy));
+			"/* TODO: " + toString(poppy) + " */";
+		}
+	}
+}

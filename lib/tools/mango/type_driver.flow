@@ -2,6 +2,7 @@ import tools/mango/type_inference;
 import tools/mango/gringo_ops;
 import tools/poppy/type/simplify;
 import tools/poppy/type/structs;
+import tools/mango/type/type2ts;
 import fs/filesystem;
 
 export {
@@ -104,12 +105,19 @@ mangoTypeInference(mangoFile : string, grammar : Term) -> MangoTypeResult {
 		debugPTypeEnv(tenv);
 	}
 	types = getUrlParameter("types");
-	if (types == "1" || types == "2") {
-		result = makeTypes(tenv, types == "2", ^(tenv.unions), structs);
+	if (types == "1" || types == "2" || types == "3") {
+		result = if (types == "3") {
+			// Generate TypeScript types
+			makeTypesTS(tenv, ^(tenv.unions), structs);
+		} else {
+			makeTypes(tenv, types == "2", ^(tenv.unions), structs);
+		};
 		filename = if (types == "1") {
 			changeFileExt(mangoFile, "_types.melon");
 		} else if (types == "2") {
 			changeFileExt(mangoFile, "_types.flow");
+		} else if (types == "3") {
+			changeFileExt(mangoFile, "_types.ts");
 		} else types;
 		setFileContent(filename, result);
 		println("Saved '" + filename + "'");
@@ -280,5 +288,79 @@ collectEclassFieldNames(env : PTypeEnv, eclasses : Tree<int, [int]>, eclass : in
 			collectEclassFieldNames(env, eclasses, ec, newSeen, acc2)
 		});
 	}
+}
+
+// Generate TypeScript types from inferred types
+makeTypesTS(env : PTypeEnv, unions : Tree<string, [PType]>, structs : Tree<string, PTypeName>) -> string {
+	header = "// Automatically generated TypeScript types from Mango grammar\n// This file contains AST node definitions using the conventional 'kind' field pattern\n\n";
+
+	// Convert PTypes to MTypes for compatibility with existing type2ts module
+	convertedTypes = foldTree(unions, makeTree(), \name, ptypes, acc -> {
+		mtypes = map(ptypes, \pt -> convertPTypeToMType(env, pt));
+		munion = MTypeUnion(name, mtypes);
+		setTree(acc, name, munion);
+	});
+
+	convertedStructs = foldTree(structs, makeTree(), \name, ptype, acc -> {
+		// Convert struct fields 
+		fields = getStructFields(env, ptype);
+		mfields = map(fields, \field -> convertPTypeToMType(env, field));
+		mstruct = MTypeConstructor(name, mfields);
+		setTree(acc, name, mstruct);
+	});
+
+	generateTSTypes(convertedTypes, convertedStructs);
+}
+
+// Convert PType to MType for compatibility
+convertPTypeToMType(env : PTypeEnv, pt : PType) -> MType {
+	switch (pt) {
+		PTypeName(name, typars): {
+			// Handle basic types
+			if (name == "bool") MTypeBool()
+			else if (name == "int") MTypeInt()
+			else if (name == "double") MTypeDouble()
+			else if (name == "string") MTypeString()
+			else if (name == "array" && length(typars) == 1) {
+				MTypeStar(convertPTypeToMType(env, typars[0]));
+			} else {
+				// Handle constructor types with arguments
+				if (length(typars) > 0) {
+					margs = map(typars, \tp -> convertPTypeToMType(env, tp));
+					MTypeConstructor(name, margs);
+				} else {
+					MTypeName(name);
+				}
+			}
+		}
+		PTypeEClass(eclass): {
+			// Try to resolve the eclass to a concrete type
+			name = getPTypeName(env, pt, "Any");
+			MTypeName(name);
+		}
+		PTypeWord(inputs, outputs): {
+			// Function types - not directly supported in AST generation
+			MTypeName("Function");
+		}
+		PTypeOverload(overloads): {
+			// Pick the first overload for simplicity
+			if (length(overloads) > 0) {
+				convertPTypeToMType(env, overloads[0]);
+			} else {
+				MTypeName("Unknown");
+			}
+		}
+		PTypeEval(): MTypeName("Eval");
+		PTypeCompose(left, right): {
+			// Composition types - not directly supported
+			MTypeName("Compose");
+		}
+	}
+}
+
+// Get struct fields from PTypeName
+getStructFields(env : PTypeEnv, pt : PTypeName) -> [PType] {
+	// For PTypeName, the typars represent the field types for struct constructors
+	pt.typars;
 }
 

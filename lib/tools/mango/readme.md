@@ -147,6 +147,263 @@ With just a few dozen lines of Mango grammar, we've created a complete expressio
 
 Mango's power lies in its expressive grammar syntax and automatic generation of type-safe parsers, making it an excellent choice for creating domain-specific languages in Flow9.
 
+# TypeScript Compilation Target
+
+Mango can compile grammars directly to TypeScript, enabling you to use Mango-generated parsers in Node.js, web browsers, and other TypeScript/JavaScript environments. This provides a powerful alternative to Flow9 parsers when you need to integrate with JavaScript ecosystems.
+
+## Compiling Grammars to TypeScript
+
+To generate a TypeScript parser from your Mango grammar:
+
+```bash
+flowcpp --batch tools/mango/mango.flow -- grammar=your_grammar.mango ts=output_parser.ts types=3
+```
+
+This generates:
+- **TypeScript parser**: `output_parser.ts` - Complete parser implementation
+- **Type definitions**: `your_grammar_types.ts` - AST node interfaces
+- **Runtime library**: `mcode_lib.ts` - Required parsing functions
+
+### Command Options
+
+- `ts=filename.ts`: Generate TypeScript parser with specified filename
+- `types=3`: Generate TypeScript type definitions (use `types=2` for Flow types)
+- `main=parser_name`: Customize the main parser function name (default: grammar filename)
+
+## Using Generated TypeScript Parsers
+
+### Basic Usage
+
+```typescript
+import { parseYourGrammarCompiled } from './your_grammar_parser';
+
+const input = "your input text here";
+const result = parseYourGrammarCompiled(input);
+
+if (result.error === "") {
+	console.log("Parse successful:", result.result);
+	// result.result contains the typed AST
+} else {
+	console.log("Parse error:", result.error);
+}
+```
+
+### Working with Typed ASTs
+
+The generated TypeScript types use discriminated unions with semantic field names:
+
+```typescript
+// Generated types (your_grammar_types.ts)
+export interface Choice {
+	kind: 'Choice';
+	left: Term;
+	right: Term;
+}
+
+export interface Rule {
+	kind: 'Rule';
+	name: string;
+	pattern: Term;
+	body: Term;
+}
+
+export type Term = Choice | Rule | Variable | String | /* ... */;
+
+// Type-safe AST processing
+function processAST(node: Term): void {
+	switch (node.kind) {
+		case 'Choice':
+			// TypeScript knows node.left and node.right exist
+			processAST(node.left);
+			processAST(node.right);
+			break;
+		case 'Rule':
+			// TypeScript knows node.name, node.pattern, node.body exist
+			console.log(`Rule: ${node.name}`);
+			processAST(node.pattern);
+			break;
+		// Handle other cases...
+	}
+}
+```
+
+### Advanced Usage with Error Handling
+
+```typescript
+import { parseYourGrammarCompiled } from './your_grammar_parser';
+import type { Term } from './your_grammar_types';
+
+function parseWithValidation(input: string): Term | null {
+	const result = parseYourGrammarCompiled(input);
+
+	if (result.error !== "") {
+		console.error(`Parse failed: ${result.error}`);
+		return null;
+	}
+
+	// Type-safe result
+	return result.result as Term;
+}
+
+// Usage in larger applications
+const ast = parseWithValidation(userInput);
+if (ast) {
+	processAST(ast);
+}
+```
+
+## Generated Type Features
+
+### Semantic Field Names
+
+The TypeScript generator creates meaningful field names based on context:
+
+- **Binary operators**: `left` and `right` (Choice, Sequence, Precedence)
+- **Unary operators**: `expression` (Star, Plus, Optional, Negate)
+- **Grammar constructs**: `name`, `parameter`, `definition`, `body` (GrammarFn)
+- **Constructs**: `name` and `arity` (Construct)
+
+### Type Safety Features
+
+- **Discriminated unions** with `kind` field for type guards
+- **Full TypeScript compatibility** - no compilation errors
+- **IDE auto-completion** with semantic field names
+- **Type guards** for runtime type checking
+
+```typescript
+// Generated type guard functions
+export function isChoice(node: any): node is Choice {
+	return node && node.kind === 'Choice';
+}
+
+// Usage
+if (isChoice(node)) {
+	// TypeScript knows node is Choice type
+	processChoice(node.left, node.right);
+}
+```
+
+## Runtime Requirements
+
+The generated TypeScript parser requires:
+
+1. **Node.js** 14+ or modern browser environment
+2. **TypeScript** 4.0+ for type checking
+3. **Generated runtime library** (`mcode_lib.ts`) in the same directory
+
+### Installing in a Project
+
+```bash
+# Copy generated files to your project
+cp your_grammar_parser.ts your_project/src/
+cp your_grammar_types.ts your_project/src/
+cp mcode_lib.ts your_project/src/
+
+# Or use relative imports if in the same repository
+```
+
+### Browser Usage
+
+The generated parsers work in browsers without modification:
+
+```html
+<script type="module">
+import { parseYourGrammarCompiled } from './your_grammar_parser.js';
+
+const result = parseYourGrammarCompiled(document.getElementById('input').value);
+// Use result...
+</script>
+```
+
+## Self-Hosting Example
+
+Mango can compile its own grammar to TypeScript, demonstrating the full capability:
+
+```bash
+# Compile Mango's grammar to TypeScript
+flowcpp --batch tools/mango/mango.flow -- grammar=mango.mango ts=mango_self.ts types=3 main=mango_self
+
+# The generated parser can parse Mango grammars in TypeScript environments
+```
+
+## Benefits of TypeScript Target
+
+### vs Flow9 Parsers
+- **Broader ecosystem**: Use in Node.js, browsers, React, Vue, etc.
+- **Better tooling**: VS Code IntelliSense, debugging, refactoring
+- **Smaller runtime**: No Flow9 runtime dependency
+- **Easier deployment**: Standard JavaScript/TypeScript toolchain
+
+### vs Hand-Written Parsers
+- **Automatic generation**: No manual parser maintenance
+- **Type safety**: Generated types prevent AST manipulation errors
+- **Grammar-driven**: Easy to modify by changing the grammar
+- **Optimized**: Generated code includes backtracking optimizations
+
+## Performance Characteristics
+
+Generated TypeScript parsers provide:
+- **Linear time complexity** for most grammar patterns
+- **Efficient backtracking** with checkpoint optimization
+- **Memory efficiency** through stack management
+- **Error recovery** with position tracking
+
+Suitable for parsing files up to ~10MB efficiently.
+
+## Integration Examples
+
+### Express.js API
+
+```typescript
+import express from 'express';
+import { parseYourGrammarCompiled } from './grammar_parser';
+
+app.post('/parse', (req, res) => {
+	const result = parseYourGrammarCompiled(req.body.input);
+
+	if (result.error === "") {
+		res.json({ success: true, ast: result.result });
+	} else {
+		res.status(400).json({ success: false, error: result.error });
+	}
+});
+```
+
+### React Component
+
+```typescript
+import React, { useState } from 'react';
+import { parseYourGrammarCompiled } from './grammar_parser';
+
+function GrammarEditor() {
+	const [input, setInput] = useState('');
+	const [ast, setAST] = useState(null);
+	const [error, setError] = useState('');
+
+	const handleParse = () => {
+		const result = parseYourGrammarCompiled(input);
+		if (result.error === "") {
+			setAST(result.result);
+			setError('');
+		} else {
+			setError(result.error);
+			setAST(null);
+		}
+	};
+
+	return (
+		<div>
+			<textarea value={input} onChange={(e) => setInput(e.target.value)} />
+			<button onClick={handleParse}>Parse</button>
+			{error && <div className="error">{error}</div>}
+			{ast && <pre>{JSON.stringify(ast, null, 2)}</pre>}
+		</div>
+	);
+}
+```
+
+The TypeScript compilation target makes Mango parsers accessible to the vast JavaScript ecosystem while maintaining the type safety and correctness of the original Flow9 implementation.
+
 # Mango Parser Generator
 
 ## Project Overview
