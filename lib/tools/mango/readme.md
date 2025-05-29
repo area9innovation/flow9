@@ -402,6 +402,99 @@ function GrammarEditor() {
 }
 ```
 
+## Using Multiple Parsers in the Same Program
+
+When using multiple Mango-generated parsers in the same TypeScript program, you need to avoid naming conflicts between their generated types. Mango provides the `typeprefix` parameter to namespace each parser's types:
+
+### Generating Parsers with Type Prefixes
+
+```bash
+# Generate first parser with Bool prefix
+flowcpp --batch tools/mango/mango.flow -- grammar=bool_grammar.mango ts=bool_parser.ts types=3 typeprefix=Bool
+
+# Generate second parser with Expr prefix
+flowcpp --batch tools/mango/mango.flow -- grammar=expr_grammar.mango ts=expr_parser.ts types=3 typeprefix=Expr
+```
+
+### Generated Types with Prefixes
+
+Each parser generates completely isolated type namespaces:
+
+```typescript
+// bool_types.ts - Bool parser types
+export interface BoolLiteral {
+	kind: 'BoolLiteral';
+	value: boolean;
+}
+export type BoolASTNode = BoolLiteral;
+export function isBoolBoolLiteral(node: any): node is BoolLiteral;
+
+// expr_types.ts - Expr parser types
+export interface ExprLiteral {
+	kind: 'ExprLiteral';
+	value: number;
+}
+export type ExprASTNode = ExprLiteral;
+export function isExprExprLiteral(node: any): node is ExprLiteral;
+```
+
+### Using Multiple Parsers Together
+
+```typescript
+// Import types from different parsers - no conflicts!
+import type { BoolASTNode } from './bool_types';
+import type { ExprASTNode } from './expr_types';
+import { parseBoolCompiled } from './bool_parser';
+import { parseExprCompiled } from './expr_parser';
+import { isBoolBoolLiteral } from './bool_types';
+import { isExprExprLiteral } from './expr_types';
+
+interface MultiParserApp {
+	boolResult: BoolASTNode | null;
+	exprResult: ExprASTNode | null;
+}
+
+function parseInputs(boolInput: string, exprInput: string): MultiParserApp {
+	const boolResult = parseBoolCompiled(boolInput);
+	const exprResult = parseExprCompiled(exprInput);
+
+	return {
+		boolResult: boolResult.error === "" ? boolResult.result : null,
+		exprResult: exprResult.error === "" ? exprResult.result : null
+	};
+}
+
+// Type-safe processing of each parser's results
+function processBoolResult(node: BoolASTNode): void {
+	if (isBoolBoolLiteral(node)) {
+		console.log(`Boolean: ${node.value}`);
+	}
+}
+
+function processExprResult(node: ExprASTNode): void {
+	if (isExprExprLiteral(node)) {
+		console.log(`Expression: ${node.value}`);
+	}
+}
+```
+
+### Benefits of Type Prefixing
+
+- ✅ **No naming conflicts** between multiple parsers
+- ✅ **Complete type isolation** - each parser has its own namespace  
+- ✅ **Type-safe composition** - combine different languages safely
+- ✅ **IDE support** - auto-completion works correctly for each parser
+- ✅ **Maintainable** - clear separation between different grammar types
+
+### Best Practices for Multiple Parsers
+
+1. **Always use descriptive typeprefixes**: `JSON`, `SQL`, `CSS`, etc.
+2. **Keep parsers in separate files**: `json_parser.ts`, `sql_parser.ts`
+3. **Import types explicitly**: Import only what you need from each parser
+4. **Use distinct file naming**: Include the grammar name in generated files
+
+This approach allows you to build complex applications that parse multiple domain-specific languages while maintaining full type safety and avoiding any naming conflicts.
+
 The TypeScript compilation target makes Mango parsers accessible to the vast JavaScript ecosystem while maintaining the type safety and correctness of the original Flow9 implementation.
 
 # Mango Parser Generator
