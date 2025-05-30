@@ -1,0 +1,120 @@
+import fusion_utils;
+
+// Switch it to check different scenarios
+subscribeToAllTransforms = true;
+richSubscriptionsCase = true;
+
+main() {
+	println("> Creating transforms");
+	transformsAndUpdFn = createTransforms();
+	transforms = transformsAndUpdFn.first;
+	updFn = transformsAndUpdFn.second;
+
+	count = length(transforms);
+
+	subscribeTransformIfNotInitialized = \idx -> {
+		name = i2s(idx + 1);
+		trans = transforms[idx];
+		if (trans2state(trans) == "Initialized") {
+			println("Transform " + name + " is already initialized");
+		} else {
+			println("Subscribing transform " + name);
+		}
+		fsubscribe(trans, \__ -> {
+			println("  Transform " + name + " calculated");
+		});
+	}
+	
+	uns = if (subscribeToAllTransforms) {
+		println("\n> Subscribing Transforms from last to first");
+		generate(0, count, \i -> {
+			subscribeTransformIfNotInitialized(count - 1 - i);
+		});
+	} else {
+		println("\n> Subscribing to the last Transform");
+		subscribeTransformIfNotInitialized(count - 1) |> v2a;
+	}
+
+	println("\n> Getting values");
+	println(map(transforms, \trans -> fgetValue(trans)));
+	
+	updFn();
+
+	iter(uns, \u -> applyList(u, apply0));
+	println("\n! Done");
+
+	quit(0);
+}
+
+createTransforms() -> Pair<[Transform<int>], () -> void> {
+	createFLift1 = \fnName -> createFLift(idfn, fnName);
+	createFLiftBool = \fn : (bool) -> int, fnName -> createFLift(fn, fnName);
+
+	beh1 = make(1);
+	beh2 = make(1);
+	beh3 = make(3);
+
+	println("Creating trans1");
+	trans1 = fselect(beh1, createFLift1("fn1"));
+	println("Creating trans2");
+	trans2 = fselect(beh2, createFLift1("fn2"));
+	println("Creating trans3");
+	trans3 = fselect(beh3, createFLift1("fn3"));
+
+	trans4 =
+		if (richSubscriptionsCase) {
+			println("Creating eq12");
+			eq12 = fequal(trans1, trans2);
+			println("Creating eq23");
+			eq23 = fequal(trans2, trans3);
+			println("Creating andT");
+			andT = fand(eq12, eq23);
+
+			println("Creating andTInt");
+			andTInt = fselect(andT, createFLiftBool(b2i, "andTInt"));
+
+			println("Creating trans4");
+			fselect2Lift(andTInt, trans3, \v1, v2 -> {
+				println("  call fn4 with " + toString(v1) + " and " + toString(v2));
+				v1 + v2;
+			});
+		} else {
+			println("Creating trans4");
+			fselect2Lift(trans2, trans3, \v1, v2 -> {
+				println("  call fn4 with " + toString(v1) + " and " + toString(v2));
+				v1 + v2;
+			});
+		}
+
+	Pair(
+		[trans1, trans2, trans3, trans4],
+		\ -> {
+			println("\n> Update one of the behaviors");
+			next(beh2, 10);
+		}
+	);
+}
+
+trans2state(trans : Transform) -> string {
+	switch (trans) {
+		FSelect(__, __, fBeh): fBeh2state(fBeh);
+		FSelect2(__, __, __, fBeh): fBeh2state(fBeh);
+		FSubSelect(__, __, fBeh): fBeh2state(fBeh);
+		FConstructable(__, __, fBeh): fBeh2state(fBeh);
+		default: "None";
+	}
+}
+
+fBeh2state(fBeh : FBehaviour<?>) -> string {
+	switch (fBeh) {
+		FDestroyed(): "Destroyed";
+		FInitialized(__, __, __): "Initialized";
+	}
+}
+
+createFLift(fn : (?) -> ??, fnName : string) -> FFn<?, ??> {
+	FLift(\v -> {
+		println("  call " + fnName + " with " + toString(v));
+		fn(v);
+	});
+}
