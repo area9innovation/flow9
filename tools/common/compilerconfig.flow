@@ -296,9 +296,12 @@ getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 
 		setCompilerThreadPool(s2i(getUrlParameterDef("threads", "16")));
 
+		workingDir2 = lookupTreeDef(configTree, "working-dir", "");
 		Some(CompilerConfig(
 			flowfile,
 			includes,
+			makeResolvedIncludes(includes, workingDir2),
+			workingDir2,
 			objectFolders,
 			verbose,
 			JSCliParams(
@@ -351,8 +354,7 @@ readConfigFormString(config : CompilerConfig, str : string) -> Maybe<CompilerCon
 		);
 		conf = compilerConfigFromConfig(combineConfigsOverride(new_config, config.config));
 		file = getCompilationFile(new_config, config.verbose);
-		workingDir = getConfigParameterDef(config.config, "working-dir", "");
-		filetrimmed = trimFlowfile(file, conf.includes, workingDir);
+		filetrimmed = trimFlowfile2(file, conf);
 		Some(CompilerConfig(conf with flowfile = filetrimmed))
 	} else None()
 }
@@ -403,11 +405,11 @@ makeRelativePath(file : string) -> string {
 }
 
 getTargetModuleName(config : CompilerConfig) -> string {
-	trimFlowfile(config.flowfile, config.includes, getConfigParameterDef(config.config, "working-dir", ""));
+	trimFlowfile2(config.flowfile, config);
 }
 
 nonDefaultCompilerConfigToString(config : CompilerConfig) -> string {
-	path = findFlowPath(config.flowfile, true, config.includes, getConfigParameterDef(config.config, "working-dir", ""));
+	path = findFlowPath(config.flowfile, true, config.includesRaw, config.workingDir);
 	def_params = switch (getCompilerConfig(fcDirName(path))) {
 		Some(conf): compilerConfigToTree(conf);
 		Fail(): makeTree();
@@ -445,7 +447,7 @@ nonDefaultCompilerConfigToString(config : CompilerConfig) -> string {
 }
 
 updateConfigForFile(def : CompilerConfig, file : string) -> CompilerConfig {
-	cwd_dir = strReplace(resolveRelativePath("."), "\\", "/");
+	workingDir = strReplace(resolveRelativePath("."), "\\", "/");
 	file_dir = dirName(file);
 	conf_dir = findFlowConfigDir(file_dir);
 	update_dirs = \def_dirs, file_dirs -> {
@@ -467,10 +469,13 @@ updateConfigForFile(def : CompilerConfig, file : string) -> CompilerConfig {
 				// collect all includes from those configs, join them, resolve to absolute paths and add to the
 				// includes from the currently used 'flow.config'.
 				extern_includes = fcExternIncludes(lookupTreeDef(conf.config, "include-extern", ""));
+				includesRaw = concat(update_dirs(def.includesRaw, conf.includesRaw), extern_includes);
 				CompilerConfig(conf with
-					includes = concat(update_dirs(def.includes, conf.includes), extern_includes),
+					workingDir = workingDir,
+					includesRaw = includesRaw,
+					includesResolved = makeResolvedIncludes(includesRaw, workingDir),
 					objectFolders = update_dirs(def.objectFolders, conf.objectFolders),
-					config = setTree(combineConfigsOverride(conf.config, def.config), "working-dir", cwd_dir),
+					config = combineConfigsOverride(conf.config, def.config),
 					flowfile = file
 				);
 			}
