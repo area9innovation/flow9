@@ -10,14 +10,25 @@ export {
 }
 
 fi2tsd(p : FiProgram, cfg : FiTsdConfig, callback : () -> void) -> void {
-	folder = if (cfg.outputfolder == "1") "" else cfg.outputfolder;
+	// Check if we're in wrapper mode (tsd=filename) vs directory mode (tsd=1)
+	isWrapperMode = cfg.outputfolder != "1" && !endsWith(cfg.outputfolder, "/");
+	wrapperFile = cfg.outputfolder;
+	folder = if (isWrapperMode) "" else cfg.outputfolder;
 
 	if (isEmptySet(cfg.jslibrary)) {
 		// Generate TypeScript definitions for each module
 		traverseInOrder(p.modules, \path, module : FiModule -> {
-			// Force all modules to export directly (no Flow namespace for any module)
-			// We'll create a separate wrapper file manually
-			isMainModule = false;
+			// In wrapper mode, all modules export directly (no Flow namespace)
+			// In directory mode, use original logic
+			isMainModule = if (isWrapperMode) {
+				false; // Force all modules to export directly in wrapper mode
+			} else if (isEmptySet(cfg.jslibrary)) {
+				// When no jslibrary is specified, treat root-level modules with exports as main modules
+				!strContains(path, "/") && length(module.exports) > 0;
+			} else {
+				// When jslibrary is specified, check if any exports are in the jslibrary set
+				exists(module.exports, \exportName -> containsSet(cfg.jslibrary, exportName));
+			};
 			
 			modul = if (isMainModule) {
 				// Get all exported types for type definitions
@@ -79,13 +90,27 @@ fi2tsd(p : FiProgram, cfg : FiTsdConfig, callback : () -> void) -> void {
 			}
 		});
 		
-		// Generate a main index file that re-exports everything
-		indexContent = generateIndexTsd(p, cfg);
-		indexFile = pathCombine(folder, "index.d.ts");
-		setFileContent(indexFile, indexContent);
-		
-		if (cfg.verbose > 0) {
-			fcPrintln("Generated TypeScript index: " + indexFile, cfg.threadId);
+		if (isWrapperMode) {
+			// Generate wrapper file that imports everything and exports under Flow namespace
+			wrapperContent = generateWrapperTsd(p, cfg);
+			if (fileNameOnly(wrapperFile) != dirName(wrapperFile)) {
+				ensureDirectoryExists(dirName(wrapperFile));
+				{}
+			}
+			if (setFileContent(wrapperFile, wrapperContent)) {
+				fcPrintln("Wrote Flow namespace wrapper to " + wrapperFile, cfg.threadId);
+			} else {
+				fcPrintln("Error writing Flow namespace wrapper to " + wrapperFile, cfg.threadId);
+			}
+		} else {
+			// Generate a main index file that re-exports everything
+			indexContent = generateIndexTsd(p, cfg);
+			indexFile = pathCombine(folder, "index.d.ts");
+			setFileContent(indexFile, indexContent);
+			
+			if (cfg.verbose > 0) {
+				fcPrintln("Generated TypeScript index: " + indexFile, cfg.threadId);
+			}
 		}
 	} else {
 
@@ -171,6 +196,14 @@ fimodule2tsd(p : FiProgram, cfg : FiTsdConfig, m : FiModule) -> string {
 }
 
 generateWrapperTsd(p : FiProgram, cfg : FiTsdConfig) -> string {
+	// Get the wrapper filename without extension
+	wrapperBaseName = fileNameOnly(cfg.outputfolder);
+	wrapperNameWithoutExt = if (endsWith(wrapperBaseName, ".d.ts")) {
+		strLeft(wrapperBaseName, strlen(wrapperBaseName) - 5);
+	} else {
+		wrapperBaseName;
+	};
+	
 	// Collect all exports from all modules
 	allExports = fold(getTreeKeys(p.modules), [], \acc, path -> {
 		module = lookupTree(p.modules, path);
@@ -218,40 +251,36 @@ generateWrapperTsd(p : FiProgram, cfg : FiTsdConfig) -> string {
 		}
 	}, "\n");
 	
-	// Generate type imports - find which module each type comes from
-	typeImports = fold(uniqueTypes, makeTree(), \acc, typeName -> {
-		// Find which module this type comes from
-		moduleForType = fold(getTreeKeys(p.modules), None(), \found, path -> {
-			switch (found) {
-				Some(__): found;
-				None(): {
-					module = lookupTree(p.modules, path);
-					switch (module) {
-						None(): None();
-						Some(m): {
-							if (contains(m.exports, typeName)) {
-								Some(path);
-							} else {
-								None();
-							}
-						}
-					}
-				}
-			}
-		});
+	// Generate type imports using FiGlobalNames - find all structs and unions
+	allStructNames = getTreeKeys(p.names.structs);
+	allUnionNames = getTreeKeys(p.names.unions);
+	allTypeNames = concat(allStructNames, allUnionNames);
+	
+	// Group types by module using the global names mapping
+	typeImports = fold(allTypeNames, makeTree(), \acc, typeName -> {
+		// Check struct2module first, then union2module
+		moduleForType = switch (lookupTree(p.names.struct2module, typeName)) {
+			Some(moduleName): Some(moduleName);
+			None(): lookupTree(p.names.union2module, typeName);
+		};
 		
 		switch (moduleForType) {
 			None(): acc;
-			Some(path): {
-				existing = getTreeArrayValue(acc, path);
-				setTree(acc, path, arrayPush(existing, typeName));
+			Some(moduleName): {
+				// Skip if this is the wrapper module itself
+				if (moduleName == wrapperNameWithoutExt) {
+					acc;
+				} else {
+					existing = getTreeArrayValue(acc, moduleName);
+					setTree(acc, moduleName, arrayPush(existing, typeName));
+				}
 			}
 		}
 	});
 	
-	typeImportLines = foldTree(typeImports, [], \path, types, acc -> {
+	typeImportLines = foldTree(typeImports, [], \moduleName, types, acc -> {
 		if (length(types) > 0) {
-			line = "import type { " + strGlue(types, ", ") + " } from './" + path + ".d.ts';";
+			line = "import type { " + strGlue(types, ", ") + " } from './" + moduleName + ".d.ts';";
 			arrayPush(acc, line);
 		} else {
 			acc;
@@ -274,16 +303,15 @@ generateWrapperTsd(p : FiProgram, cfg : FiTsdConfig) -> string {
 	+ "export declare const Flow: {\n"
 	+ flowNamespaceContent
 	+ "\n};\n"
-	+ "\n// Re-export all types for convenience\n"
-	+ superglue(typeImportLines, \line -> {
-		// Convert import line to export line
-		if (strContains(line, "import type { ") && strContains(line, " } from")) {
-			types = strSubRange(line, 14, strIndexOf(line, " } from") - 14);
-			"export type { " + types + " };";
+	+ "\n// Re-export all types\n"
+	+ superglue(foldTree(typeImports, [], \moduleName, types, acc -> {
+		if (length(types) > 0) {
+			line = "export type { " + strGlue(types, ", ") + " } from './" + moduleName + ".d.ts';";
+			arrayPush(acc, line);
 		} else {
-			"";
+			acc;
 		}
-	}, "\n");
+	}), \line -> line, "\n");
 }
 
 calculateRelativeImportPath(fromModule : string, toModule : string) -> string {
