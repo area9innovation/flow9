@@ -444,6 +444,11 @@ class Native {
 			Reflect.hasField(a, "_name") && a._name == b._name &&
 			HaxeRuntime._structargs_.get(HaxeRuntime._structids_.get(a._name)).length == 0)
 			return true;
+		#elseif (namespace)
+		if (a != null && b != null &&
+			Reflect.hasField(a, "kind") && a.kind == b.kind &&
+			HaxeRuntime._structargs_.get(a.kind).length == 0)
+			return true;
 		#else
 		if (a != null && b != null &&
 			Reflect.hasField(a, "_id") && a._id == b._id &&
@@ -1816,6 +1821,8 @@ class Native {
 			case RTStruct(n):
 			#if (js && readable)
 				var struct_id = HaxeRuntime._structids_.get(value._name);
+			#elseif namespace
+				var struct_id = value.kind;
 			#else
 				var struct_id = value._id;
 			#end
