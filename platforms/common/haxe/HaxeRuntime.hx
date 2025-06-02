@@ -39,6 +39,8 @@ class HaxeRuntime {
 	// Using 'new Function('arg', 'code')' instead
 #if (readable)
 	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') +'){return {name:\"'+ name+'\",' + a + '};}'))($global)}");
+#elseif (namespace)
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') + '){return {kind:'+id.toString()+',' + a + '};}'))($global)}");
 #else
 	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') + '){return {_id:'+id.toString()+',' + a + '};}'))($global)}");
 #end
@@ -53,7 +55,7 @@ class HaxeRuntime {
 	// Modelled after https://github.com/epoberezkin/fast-deep-equal/blob/master/index.js
 #if (js)
 	untyped __js__("
-if (a === b) return true;
+	if (a === b) return true;
 
 	var isArray = Array.isArray;
 	var keyList = Object.keys;
@@ -82,6 +84,15 @@ if (a === b) return true;
 	untyped __js__("
 	if (hasProp.call(a, '_name') && hasProp.call(b, '_name')) {
 		if (a._name !== b._name) {
+			return false;
+		} else {
+			result = true;
+		}
+");
+#elseif (namespace)
+	untyped __js__("
+	if (hasProp.call(a, 'kind') && hasProp.call(b, 'kind')) {
+		if (a.kind !== b.kind) {
 			return false;
 		} else {
 			result = true;
@@ -148,10 +159,21 @@ if (a === b) return true;
 				} else {
 					return 1;
 				}
-			}
+			}");
+#if (namespace)
+			untyped __js__("
+			var i1 = o1.kind;
+			if(i1 !== undefined) {
+				var i2 = o2.kind;
+			");
+#else
+			untyped __js__("
 			var i1 = o1._id;
 			if(i1 !== undefined) {
 				var i2 = o2._id;
+			");
+#end
+			untyped __js__("
 				if(i2 === undefined) {
 					return 1;
 				}
