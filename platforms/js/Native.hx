@@ -722,11 +722,19 @@ class Native {
 			// Check if there is both an _id and a value field of some kind: Then it is some
 			if (fields.length == 2) {
 				for (f in fields) {
+					#if namespace
+					// The ID field of a struct is named _id, so skip that one
+					if (f != "kind") {
+						var val = Reflect.field(maybe, f);
+						result.push(val);
+					}
+					#else
 					// The ID field of a struct is named _id, so skip that one
 					if (f != "_id") {
 						var val = Reflect.field(maybe, f);
 						result.push(val);
 					}
+					#end
 				}
 			}
 		}
