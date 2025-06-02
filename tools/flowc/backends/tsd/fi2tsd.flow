@@ -3,6 +3,7 @@ import tools/flowc/incremental/fiprogram;
 import tools/flowc/incremental/fimodule;
 import text/blueprint;
 import ds/tree;
+import algorithms;
 
 export {
 	fi2tsd(f : FiProgram, cfg : FiTsdConfig, callback : () -> void) -> void;
@@ -238,15 +239,46 @@ generateModuleExports(p : FiProgram, m : FiModule) -> string {
 			Some(struct): {
 				// Generate constructor function export with "create" prefix
 				constructorName = "create" + ex;
+				// Extract type parameters from the struct
+				typeParams = if (struct.typars != []) {
+					"<" + strGlue(map(struct.typars, \tp -> {
+						switch (tp) {
+							FiTypeParameter(name): {
+								// Map Flow's ? and ?? type parameters to proper TypeScript generic names
+								if (name == "?") "T"
+								else if (name == "??") "U" 
+								else if (name == "???") "V"
+								else if (name == "????") "W"
+								else tsReserved(name);
+							}
+							default: "T";
+						}
+					}), ", ") + ">"
+				} else "";
+				returnType = tsReserved(ex) + (if (struct.typars != []) {
+					"<" + strGlue(map(struct.typars, \tp -> {
+						switch (tp) {
+							FiTypeParameter(name): {
+								if (name == "?") "T"
+								else if (name == "??") "U" 
+								else if (name == "???") "V"
+								else if (name == "????") "W"
+								else tsReserved(name);
+							}
+							default: "T";
+						}
+					}), ", ") + ">"
+				} else "");
+				
 				if (length(struct.args) == 0) {
 					// Singleton struct - export as a constant
-					Some("export const " + tsReserved(constructorName) + ": " + tsReserved(ex) + ";");
+					Some("export const " + tsReserved(constructorName) + ": " + returnType + ";");
 				} else {
 					// Constructor function - export as a function that returns the struct type
-					Some("export function " + tsReserved(constructorName) + 
+					Some("export function " + tsReserved(constructorName) + typeParams +
 						"(" + superglue(struct.args, \arg -> {
 							tsReserved(arg.name) + ": " + fitype2ts(arg.type)
-						}, ", ") + "): " + tsReserved(ex) + ";");
+						}, ", ") + "): " + returnType + ";");
 				}
 			}
 			None(): None();
@@ -342,6 +374,50 @@ extractTypesFromFiTypeForTsd(ty : FiType) -> [string] {
 		FiTypeName(name, typeparameters): {
 			concat([name], fold(typeparameters, [], \acc, tp -> concat(acc, extractTypesFromFiTypeForTsd(tp))));
 		}
+	}
+}
+
+extractTypeParametersFromFiType(ty : FiType) -> [string] {
+	switch (ty) {
+		FiTypeVoid(): [];
+		FiTypeArray(t): extractTypeParametersFromFiType(t);
+		FiTypeFunction(args, returnType): {
+			concat(
+				fold(args, [], \acc, arg -> concat(acc, extractTypeParametersFromFiType(arg.type))),
+				extractTypeParametersFromFiType(returnType)
+			);
+		}
+		FiTypeRef(t): extractTypeParametersFromFiType(t);
+		FiTypeParameter(n): [n];
+		FiTypeBool(): [];
+		FiTypeInt(): [];
+		FiTypeDouble(): [];
+		FiTypeString(): [];
+		FiTypeFlow(): [];
+		FiTypeNative(): [];
+		FiTypeName(name, typeparameters): {
+			fold(typeparameters, [], \acc, tp -> concat(acc, extractTypeParametersFromFiType(tp)));
+		}
+	}
+}
+
+typeParametersToTsGeneric(typeParams : [string]) -> string {
+	if (typeParams == []) {
+		""
+	} else {
+		uniqueParams = uniq(typeParams);
+		tsParams = map(uniqueParams, \param -> {
+			// Map Flow's ? and ?? type parameters to proper TypeScript generic names
+			if (param == "?") "T"
+			else if (param == "??") "U" 
+			else if (param == "???") "V"
+			else if (param == "????") "W"
+			else if (param == "?????") "X"
+			else if (param == "??????") "Y"
+			else if (param == "???????") "Z"
+			else tsReserved(param);
+		});
+		"<" + strGlue(tsParams, ", ") + ">";
 	}
 }
 
@@ -519,15 +595,46 @@ finame2tsNamespaceProperty(p : FiProgram, e : string) -> string {
 			switch (structDef) {
 				Some(struct): {
 					constructorName = "create" + e;
+					// Extract type parameters from the struct
+					typeParams = if (struct.typars != []) {
+						"<" + strGlue(map(struct.typars, \tp -> {
+							switch (tp) {
+								FiTypeParameter(name): {
+									// Map Flow's ? and ?? type parameters to proper TypeScript generic names
+									if (name == "?") "T"
+									else if (name == "??") "U" 
+									else if (name == "???") "V"
+									else if (name == "????") "W"
+									else tsReserved(name);
+								}
+								default: "T";
+							}
+						}), ", ") + ">"
+					} else "";
+					returnType = tsReserved(e) + (if (struct.typars != []) {
+						"<" + strGlue(map(struct.typars, \tp -> {
+							switch (tp) {
+								FiTypeParameter(name): {
+									if (name == "?") "T"
+									else if (name == "??") "U" 
+									else if (name == "???") "V"
+									else if (name == "????") "W"
+									else tsReserved(name);
+								}
+								default: "T";
+							}
+						}), ", ") + ">"
+					} else "");
+					
 					if (length(struct.args) == 0) {
 						// Singleton struct - export as a constant
-						tsReserved(constructorName) + ": " + tsReserved(e) + ";";
+						tsReserved(constructorName) + ": " + returnType + ";";
 					} else {
 						// Constructor function - export as a function that returns the struct type
-						tsReserved(constructorName) + ": " + 
+						tsReserved(constructorName) + ": " + typeParams + 
 						"(" + superglue(struct.args, \arg -> {
 							tsReserved(arg.name) + ": " + fitype2ts(arg.type)
-						}, ", ") + ") => " + tsReserved(e) + ";";
+						}, ", ") + ") => " + returnType + ";";
 					}
 				}
 				None(): {
@@ -538,7 +645,11 @@ finame2tsNamespaceProperty(p : FiProgram, e : string) -> string {
 		Some(dec): {
 			switch (dec) {
 				FiFunctionDec(name, lambda, type, declStart, defiStart): {
-					tsReserved(name) + ": " + 
+					// Extract type parameters from the function type
+					typeParams = extractTypeParametersFromFiType(FiTypeFunction(type.args, type.returnType));
+					tsTypeParams = typeParametersToTsGeneric(typeParams);
+					
+					tsReserved(name) + ": " + tsTypeParams + 
 					"(" + superglue(type.args, \arg -> {
 						tsReserved(if (arg.name != "") arg.name else "arg") + ": " + fitype2ts(arg.type)
 					}, ", ") + ") => " + fitype2ts(type.returnType) + ";";
@@ -549,7 +660,11 @@ finame2tsNamespaceProperty(p : FiProgram, e : string) -> string {
 				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
 					switch (type) {
 						FiTypeFunction(args, returnType): {
-							tsReserved(name) + ": " + 
+							// Extract type parameters from the function type
+							typeParams = extractTypeParametersFromFiType(FiTypeFunction(args, returnType));
+							tsTypeParams = typeParametersToTsGeneric(typeParams);
+							
+							tsReserved(name) + ": " + tsTypeParams + 
 							"(" + superglue(args, \arg -> {
 								tsReserved(if (arg.name != "") arg.name else "arg") + ": " + fitype2ts(arg.type)
 							}, ", ") + ") => " + fitype2ts(returnType) + ";";
@@ -573,15 +688,46 @@ finame2tsNamespaceDeclaration(p : FiProgram, e : string) -> string {
 			switch (structDef) {
 				Some(struct): {
 					constructorName = "create" + e;
+					// Extract type parameters from the struct
+					typeParams = if (struct.typars != []) {
+						"<" + strGlue(map(struct.typars, \tp -> {
+							switch (tp) {
+								FiTypeParameter(name): {
+									// Map Flow's ? and ?? type parameters to proper TypeScript generic names
+									if (name == "?") "T"
+									else if (name == "??") "U" 
+									else if (name == "???") "V"
+									else if (name == "????") "W"
+									else tsReserved(name);
+								}
+								default: "T";
+							}
+						}), ", ") + ">"
+					} else "";
+					returnType = tsReserved(e) + (if (struct.typars != []) {
+						"<" + strGlue(map(struct.typars, \tp -> {
+							switch (tp) {
+								FiTypeParameter(name): {
+									if (name == "?") "T"
+									else if (name == "??") "U" 
+									else if (name == "???") "V"
+									else if (name == "????") "W"
+									else tsReserved(name);
+								}
+								default: "T";
+							}
+						}), ", ") + ">"
+					} else "");
+					
 					if (length(struct.args) == 0) {
 						// Singleton struct - export as a constant
-						"const " + tsReserved(constructorName) + ": " + tsReserved(e) + ";";
+						"const " + tsReserved(constructorName) + ": " + returnType + ";";
 					} else {
 						// Constructor function - export as a function that returns the struct type
-						"function " + tsReserved(constructorName) + 
+						"function " + tsReserved(constructorName) + typeParams +
 						"(" + superglue(struct.args, \arg -> {
 							tsReserved(arg.name) + ": " + fitype2ts(arg.type)
-						}, ", ") + "): " + tsReserved(e) + ";";
+						}, ", ") + "): " + returnType + ";";
 					}
 				}
 				None(): {
@@ -592,7 +738,11 @@ finame2tsNamespaceDeclaration(p : FiProgram, e : string) -> string {
 		Some(dec): {
 			switch (dec) {
 				FiFunctionDec(name, lambda, type, declStart, defiStart): {
-					"function " + tsReserved(name) + 
+					// Extract type parameters from the function type
+					typeParams = extractTypeParametersFromFiType(FiTypeFunction(type.args, type.returnType));
+					tsTypeParams = typeParametersToTsGeneric(typeParams);
+					
+					"function " + tsReserved(name) + tsTypeParams +
 					"(" + superglue(type.args, \arg -> {
 						tsReserved(if (arg.name != "") arg.name else "arg") + ": " + fitype2ts(arg.type)
 					}, ", ") + "): " + fitype2ts(type.returnType) + ";";
@@ -603,7 +753,11 @@ finame2tsNamespaceDeclaration(p : FiProgram, e : string) -> string {
 				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
 					switch (type) {
 						FiTypeFunction(args, returnType): {
-							"function " + tsReserved(name) + 
+							// Extract type parameters from the function type
+							typeParams = extractTypeParametersFromFiType(FiTypeFunction(args, returnType));
+							tsTypeParams = typeParametersToTsGeneric(typeParams);
+							
+							"function " + tsReserved(name) + tsTypeParams +
 							"(" + superglue(args, \arg -> {
 								tsReserved(if (arg.name != "") arg.name else "arg") + ": " + fitype2ts(arg.type)
 							}, ", ") + "): " + fitype2ts(returnType) + ";";
@@ -627,7 +781,11 @@ finame2ts(p : FiProgram, e : string) -> string {
 		Some(dec): {
 			switch (dec) {
 				FiFunctionDec(name, lambda, type, declStart, defiStart): {
-					"export function " + tsReserved(name) + 
+					// Extract type parameters from the function type
+					typeParams = extractTypeParametersFromFiType(FiTypeFunction(type.args, type.returnType));
+					tsTypeParams = typeParametersToTsGeneric(typeParams);
+					
+					"export function " + tsReserved(name) + tsTypeParams +
 					"(" + superglue(type.args, \arg -> {
 						tsReserved(if (arg.name != "") arg.name else "arg") + ": " + fitype2ts(arg.type)
 					}, ", ") + "): " + fitype2ts(type.returnType) + ";";
@@ -638,7 +796,11 @@ finame2ts(p : FiProgram, e : string) -> string {
 				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
 					switch (type) {
 						FiTypeFunction(args, returnType): {
-							"export function " + tsReserved(name) + 
+							// Extract type parameters from the function type
+							typeParams = extractTypeParametersFromFiType(FiTypeFunction(args, returnType));
+							tsTypeParams = typeParametersToTsGeneric(typeParams);
+							
+							"export function " + tsReserved(name) + tsTypeParams +
 							"(" + superglue(args, \arg -> {
 								tsReserved(if (arg.name != "") arg.name else "arg") + ": " + fitype2ts(arg.type)
 							}, ", ") + "): " + fitype2ts(returnType) + ";";
