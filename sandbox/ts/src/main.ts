@@ -1,5 +1,5 @@
 // TypeScript program that imports and uses the Flow exports
-import { Flow, type Foo, type Shape, type Result, type Circle, type Rectangle, type Triangle } from '../flow_export.js';
+import { Flow, type Foo, type Shape, type Result, type Circle, type Rectangle, type Triangle } from '../flow_types.js';
 
 console.log('=== Testing Foo struct ===');
 // Create some Foo instances using the TypeScript types
