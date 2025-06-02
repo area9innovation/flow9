@@ -10,25 +10,14 @@ export {
 }
 
 fi2tsd(p : FiProgram, cfg : FiTsdConfig, callback : () -> void) -> void {
-	// Check if we're in wrapper mode (tsd=filename) vs directory mode (tsd=1)
-	isWrapperMode = cfg.outputfolder != "1" && !endsWith(cfg.outputfolder, "/");
-	wrapperFile = cfg.outputfolder;
-	folder = if (isWrapperMode) "" else cfg.outputfolder;
+	folder = if (cfg.outputfolder == "1") "" else cfg.outputfolder;
 
 	if (isEmptySet(cfg.jslibrary)) {
 		// Generate TypeScript definitions for each module
 		traverseInOrder(p.modules, \path, module : FiModule -> {
-			// In wrapper mode, never use Flow namespace for individual modules
-			// In directory mode, use the old logic
-			isMainModule = if (isWrapperMode) {
-				false; // Force all modules to export directly in wrapper mode
-			} else if (isEmptySet(cfg.jslibrary)) {
-				// When no jslibrary is specified, treat root-level modules with exports as main modules
-				!strContains(path, "/") && length(module.exports) > 0;
-			} else {
-				// When jslibrary is specified, check if any exports are in the jslibrary set
-				exists(module.exports, \exportName -> containsSet(cfg.jslibrary, exportName));
-			};
+			// Force all modules to export directly (no Flow namespace for any module)
+			// We'll create a separate wrapper file manually
+			isMainModule = false;
 			
 			modul = if (isMainModule) {
 				// Get all exported types for type definitions
@@ -90,27 +79,13 @@ fi2tsd(p : FiProgram, cfg : FiTsdConfig, callback : () -> void) -> void {
 			}
 		});
 		
-		if (isWrapperMode) {
-			// Generate wrapper file that imports everything and exports under Flow namespace
-			wrapperContent = generateWrapperTsd(p, cfg);
-			if (fileNameOnly(wrapperFile) != dirName(wrapperFile)) {
-				ensureDirectoryExists(dirName(wrapperFile));
-				{}
-			}
-			if (setFileContent(wrapperFile, wrapperContent)) {
-				fcPrintln("Wrote Flow namespace wrapper to " + wrapperFile, cfg.threadId);
-			} else {
-				fcPrintln("Error writing Flow namespace wrapper to " + wrapperFile, cfg.threadId);
-			}
-		} else {
-			// Generate a main index file that re-exports everything
-			indexContent = generateIndexTsd(p, cfg);
-			indexFile = pathCombine(folder, "index.d.ts");
-			setFileContent(indexFile, indexContent);
-			
-			if (cfg.verbose > 0) {
-				fcPrintln("Generated TypeScript index: " + indexFile, cfg.threadId);
-			}
+		// Generate a main index file that re-exports everything
+		indexContent = generateIndexTsd(p, cfg);
+		indexFile = pathCombine(folder, "index.d.ts");
+		setFileContent(indexFile, indexContent);
+		
+		if (cfg.verbose > 0) {
+			fcPrintln("Generated TypeScript index: " + indexFile, cfg.threadId);
 		}
 	} else {
 
