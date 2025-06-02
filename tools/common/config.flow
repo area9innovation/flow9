@@ -1,9 +1,6 @@
 import sys/concurrent;
-import sys/system;
-import fs/filesystem;
-import ds/tree;
 import net/url_parameter;
-import lingo/flow/javascript_cli_params;
+import tools/common/pathutil;
 
 // Use compilerconfig.flow to get a useful, easy-to-use configuration,
 // and then functions here to work with it
@@ -62,18 +59,6 @@ export {
         right : Tree<string, string>,
         combine : (param : string, fromLeft : string, fromRight : string)->string
     )->Tree<string, string>;
-
-    // The structure to contain the configuration for a compiler invocation
-    CompilerConfig(
-        flowfile : string,
-        includes : [string],
-        objectFolders : [string],
-        verbose : int,
-        jsParams : JSCliParams,
-
-        config : Tree<string, string>,
-        threadId : int, // stores the id of a thread, responsible for a task (in parallel mode)
-    );
 
 	// What is the thread pool?
 	getCompilerThreadPool() -> native;
@@ -360,10 +345,14 @@ compilerConfigFromConfig(config) {
 
 	setCompilerThreadPool(getConfigParameterInt(config, "threads", availableProcessors()));
 
+	includesRaw = strSplit(getConfigParameter(config, "include"), ",");
+	workingDir = lookupTreeDef(config, "working-dir", "");
 	CompilerConfig(
 		getConfigParameter(config, "flowfile"),
 		//includes : [string]
-		strSplit(getConfigParameter(config, "include"), ","),
+		includesRaw,
+		makeResolvedIncludes(includesRaw, workingDir),
+		workingDir,
 		//objectFolders : [string]
 		strSplit(getConfigParameter(config, "obj"), ","),
 		//verbose : int
@@ -426,7 +415,8 @@ compilerConfigToTree(config : CompilerConfig) -> Tree<string, string> {
 		),
 		getConstConfig([
 			Pair("flowfile", config.flowfile),
-			Pair("include", strGlue(config.includes, ",")),
+			Pair("include", strGlue(config.includesRaw, ",")),
+			Pair("workingDiw", config.workingDir),
 			Pair("obj", strGlue(config.objectFolders, ",")),
 			Pair("verbose", i2s(config.verbose)),
 			Pair("threadId", i2s(config.threadId)),
@@ -437,7 +427,7 @@ compilerConfigToTree(config : CompilerConfig) -> Tree<string, string> {
 compilerConfigToString(config : CompilerConfig) -> string {
 	"flowfile=" + config.flowfile + ", " +
 	"verbose=" + i2s(config.verbose) + ", " +
-	"includes=[" + strGlue(config.includes, ",") + "], " +
+	"includes=[" + strGlue(config.includesRaw, ",") + "], " +
 	"objectFolders=[" + strGlue(config.objectFolders, ",") + "], " +
 	"threadId=" + i2s(config.threadId) + ", " +
 	strGlue(map(tree2pairs(config.config), \p -> p.first + "=" + p.second), ", ");
@@ -485,10 +475,7 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 		None():   setTree(conf.config, "output-dir", cwd);
 	}
 	// Add a flowfile as a config tree option.
-	conf2 = setTree(conf1, "file", conf.flowfile);
-
-	// Setup the 'working-dir' option
-	conf3 = setTree(conf2, "working-dir", lookupTreeDef(conf2, "working-dir", cwd));
+	conf3 = setTree(conf1, "file", conf.flowfile);
 
 	resolve_fontconfig = \file -> {
 		resolved = resolve_relative_to_conf(file);
@@ -560,16 +547,24 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 
 	// Output the result
 	CompilerConfig(conf with
-		includes = map(conf.includes, resolve_relative_to_conf),
 		config = conf9,
 		jsParams = jsParams
 	);
 }
 
 setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig {
+	includesRaw = if (opt == "I" || opt == "include") strSplit(val, ",") else conf.includesRaw;
+	workingDir = if (opt == "working-dir") val else conf.workingDir;
+	includesResolved = if (includesRaw == conf.includesRaw && workingDir == conf.workingDir) {
+		conf.includesResolved;
+	} else {
+		makeResolvedIncludes(includesRaw, workingDir);
+	}
 	CompilerConfig(conf with
 		flowfile = if (opt == "file" || opt == "flowfile") val else conf.flowfile,
-		includes = if (opt == "I" || opt == "include") strSplit(val, ",") else conf.includes,
+		includesRaw = includesRaw,
+		includesResolved = includesResolved,
+		workingDir = workingDir,
 		objectFolders = if (opt == "obj" || opt == "objectFolders") strSplit(val, ",") else conf.objectFolders,
 		verbose = if (opt == "verbose") s2i(val) else conf.verbose,
 		jsParams = JSCliParams(conf.jsParams with
