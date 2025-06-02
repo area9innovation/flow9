@@ -252,6 +252,10 @@ class HaxeRuntime {
 				var n2 = o2._name;
 				var i1 = _structids_.get(n1);
 				var i2 = _structids_.get(n2);
+			#elseif (js && namespace)
+				if (!Reflect.hasField(o2, "kind")) return 1;
+				var i1 = o1.kind;
+				var i2 = o2.kind;
 			#else
 				if (!Reflect.hasField(o2, "_id")) return 1;
 				var i1 = o1._id;
@@ -278,6 +282,9 @@ class HaxeRuntime {
 		#if (js && readable)
 			if (!Reflect.hasField(value, "_name")) return [];
 			var i = _structids_.get(value._name);
+		#elseif (js && namespace)
+			if (!Reflect.hasField(value, "kind")) return [];
+			var i = value.kind;
 		#else
 			if (!Reflect.hasField(value, "_id")) return [];
 			var i = value._id;
@@ -311,6 +318,11 @@ class HaxeRuntime {
 				Reflect.hasField(o1, "_name") &&
 				Reflect.hasField(o2, "_name") &&
 				o1._name == o2._name;
+		#elseif (js && namespace)
+			return !isArray(o1) && !isArray(o2) &&
+				Reflect.hasField(o1, "kind") &&
+				Reflect.hasField(o2, "kind") &&
+				o1.kind == o2.kind;
 		#else
 			return !isArray(o1) && !isArray(o2) &&
 				Reflect.hasField(o1, "_id") &&
@@ -364,6 +376,10 @@ class HaxeRuntime {
 			var name = value._name;
 			var structname = name;
 			var id = _structids_.get(name);
+		#elseif (js && namespace)
+		if (Reflect.hasField(value, "kind")) {
+			var id = value.kind;
+			var structname = _structnames_.get(id);
 		#else
 		if (Reflect.hasField(value, "_id")) {
 			var id = value._id;
@@ -540,6 +556,8 @@ class HaxeRuntime {
 		var o = {
 		#if readable
 			name : n
+		#elseif namespace
+			kind : sid
 		#else
 			_id : sid
 		#end
@@ -553,6 +571,8 @@ class HaxeRuntime {
 		var o = {
 		#if readable
 			name : n
+		#elseif namespace
+			kind : sid
 		#else
 			_id : sid
 		#end
@@ -572,6 +592,8 @@ class HaxeRuntime {
 	#if (js && readable)
 		var name = _structnames_.get(sid);
 		return { _name : name }
+	#elseif (js && namespace)
+		return { kind: sid };
 	#else
 		return { _id: sid };
 	#end
@@ -605,6 +627,9 @@ class HaxeRuntime {
 			#if (js && readable)
 				if (Reflect.hasField(value, "_name"))
 					return RTStruct(value._name);
+			#elseif (js && namespace)
+				if (Reflect.hasField(value, "kind"))
+					return RTStruct(_structnames_.get(value.kind));
 			#else
 				if (Reflect.hasField(value, "_id"))
 					return RTStruct(_structnames_.get(value._id));
