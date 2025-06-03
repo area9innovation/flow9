@@ -531,7 +531,7 @@ class HttpSupport {
 	public static function httpStreamingRequestNative(
 		url : String, method : String, headers : Array<Array<String>>,
 		params: Array<Array<String>>, data : String, responseEncoding : String,
-		onChunkFn : String -> Float -> Float -> Void,
+		onChunkFn : String -> Float -> Float -> Array<Array<String>> -> Void,
 		onCompleteFn : Int -> String -> Array<Array<String>> -> Void,
 		onErrorFn : String -> Void,
 		async : Bool,
@@ -561,7 +561,8 @@ class HttpSupport {
 
 		var accumulatedResponse = "";
 		var isCompleted = false;
-		var xhr : Dynamic = untyped __js__("new XMLHttpRequest()");
+		var xhr = js.Browser.createXMLHttpRequest();
+		var responseHeaders : Array<Array<String>> = [];
 
 		// Setup abort function
 		var cancelFn = function() {
@@ -637,32 +638,10 @@ class HttpSupport {
 		untyped xhr.onreadystatechange = function() {
 			// readyState 3 = LOADING (data is being received)
 			// readyState 4 = DONE (request complete)
-			if (xhr.readyState >= 3 && !isCompleted) {
-				// Get only the new data from responseText
-				var newData = "";
+			if (xhr.readyState >= 2 && !isCompleted) {
 				try {
-					// Only process if we have new data to handle
-					if (xhr.responseText.length > prevResponseLength) {
-						// Reset the timeout timer since we received new data
-						resetTimeout();
-
-						newData = xhr.responseText.substring(prevResponseLength);
-						prevResponseLength = xhr.responseText.length;
-						accumulatedResponse = xhr.responseText;
-
-						// Call the chunk handler with new data
-						onChunkFn(newData, prevResponseLength,
-							xhr.getResponseHeader("Content-Length") != null ?
-							Std.parseFloat(xhr.getResponseHeader("Content-Length")) : 0);
-					}
-
-					// If complete, call completion handler
-					if (xhr.readyState == 4) {
-						// Clear timeout on completion
-						clearTimeout();
-
-						// Get response headers
-						var responseHeaders = [];
+					// Extract response headers once available (readyState >= 2)
+					if (xhr.readyState >= 2 && responseHeaders.length == 0) {
 						var headerStr = xhr.getAllResponseHeaders();
 						if (headerStr != null) {
 							var headerLines = headerStr.split("\r\n");
@@ -687,6 +666,33 @@ class HttpSupport {
 								}
 							}
 						}
+					}
+
+					// Process data when available (readyState >= 3)
+					if (xhr.readyState >= 3) {
+						// Get only the new data from responseText
+						var newData = "";
+						// Only process if we have new data to handle
+						if (xhr.responseText.length > prevResponseLength) {
+							// Reset the timeout timer since we received new data
+							resetTimeout();
+
+							newData = xhr.responseText.substring(prevResponseLength);
+							prevResponseLength = xhr.responseText.length;
+							accumulatedResponse = xhr.responseText;
+
+							// Call the chunk handler with new data and response headers
+							onChunkFn(newData, prevResponseLength,
+								xhr.getResponseHeader("Content-Length") != null ?
+								Std.parseFloat(xhr.getResponseHeader("Content-Length")) : 0,
+								responseHeaders);
+						}
+					}
+
+					// If complete, call completion handler
+					if (xhr.readyState == 4) {
+						// Clear timeout on completion
+						clearTimeout();
 
 						isCompleted = true;
 						onCompleteFn(xhr.status, accumulatedResponse, responseHeaders);
@@ -848,10 +854,11 @@ class HttpSupport {
 					resetTimeout();
 
 					responseData += chunk;
-					// Call chunk handler with new data
+					// Call chunk handler with new data and response headers
 					onChunkFn(chunk, responseData.length,
 						(Reflect.hasField(headersObj, "content-length") && Reflect.field(headersObj, "content-length") != null) ?
-						Std.parseFloat(Reflect.field(headersObj, "content-length")) : 0);
+						Std.parseFloat(Reflect.field(headersObj, "content-length")) : 0,
+						responseHeaders);
 				}
 			});
 
@@ -922,7 +929,7 @@ class HttpSupport {
 			url, method, headers, params, data, responseEncoding,
 			function(status, response, responseHeaders) {
 				if (response.length > 0) {
-					onChunkFn(response, response.length, response.length);
+					onChunkFn(response, response.length, response.length, responseHeaders);
 				}
 				fullResponse = response;
 				onCompleteFn(status, response, responseHeaders);
