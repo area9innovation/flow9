@@ -171,16 +171,10 @@ export function moconstruct(acc: MoParseAcc, uid: string, arity: number): boolea
 function makeStructValue(uid: string, args: any[]): any {
     const result: any = { kind: uid };
     
-    // Use semantic field names based on common patterns
-    if (args.length === 1) {
-        // For single-argument structs, use "value" as the field name
-        result.value = args[0];
-    } else {
-        // For multi-argument structs, use positional names for now
-        args.forEach((arg, index) => {
-            result[`arg${index}`] = arg;
-        });
-    }
+    // For multi-argument structs, use positional names for now
+    args.forEach((arg, index) => {
+        result[`arg${index}`] = arg;
+    });
     
     return result;
 }

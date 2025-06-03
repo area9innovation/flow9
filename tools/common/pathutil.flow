@@ -1,10 +1,12 @@
 import fs/filesystem;
-import sys/target;
 import sys/system;
+import tools/common/config_type;
 
 export {
 	// Trims the filename to be a flow path, i.e. no .flow suffix, and no lib/ prefix or anything like that
-	trimFlowfile : (flowfile : string, imports : [string], workingDir : string) -> string;
+	trimFlowfile(flowFile : string, config : CompilerConfig) -> string;
+	trimFlowfile2(flowFile : string, includesResolved : [string]) -> string;
+	makeResolvedIncludes(includesRaw : [string], workingDir : string) -> [string];
 
 	// Find the given flow-file, using imports. Returns a full filesystem path
 	findFlowPath(flowfile : string, flowsuffix : bool, imports : [string], workingDir : string) -> string;
@@ -49,35 +51,50 @@ export {
 	findAllFlowPaths(flowpath : string, imports : [string], workingDir : string) -> [string];
 }
 
-trimFlowfile(flowfile : string, imports : [string], workingDir : string) -> string {
-	noflow0 = if (endsWith(flowfile, ".flow")) strsubsmart(flowfile, 0, -5)
-	else flowfile;
+// We need it to speed up slow trimFlowfile -- do not resolve the same includes many times.
+makeResolvedIncludes(includesRaw : [string], workingDir : string) -> [string] {
 	shift = if (workingDir == "") "" else relatingPath(workingDir, resolveRelativePath("."));
 	pathShift = if (shift == "") shift else shift + "/";
-	noflow = strReplace(noflow0, "\\", "/");
-
-	processInculde = \acc, inc -> {
+	resolve = \inc -> {
 		resolved0 = resolveRelativePath(inc);
-		resolved = strReplace(resolved0, "\\", "/");
-		if (startsWith(toLowerCase(acc), toLowerCase(resolved))) {
-			strRight(acc, strlen(resolved))
-		} else if (startsWith(toLowerCase(acc), toLowerCase(inc))) {
-			strRight(acc, strlen(inc))
-		} else acc
-	};
-
-	// Find the path-less path - the flowpath
-	trim2(fold(imports, noflow, \acc, inc0 -> {
-		inc = if (endsWith(inc0, "/")) {
+		toLowerCase(strReplace(resolved0, "\\", "/"));
+	}
+	mapConcat(includesRaw, \inc0 -> {
+		inc = toLowerCase(if (endsWith(inc0, "/")) {
 			inc0;
 		} else {
 			inc0 + "/";
+		});
+
+		if (pathShift != "") [
+			resolve(pathShift + inc),
+			pathShift + inc,
+			resolve(inc),
+			inc
+		] else [
+			resolve(inc),
+			inc
+		];
+	});
+}
+
+trimFlowfile(flowFile : string, config : CompilerConfig) -> string {
+	trimFlowfile2(flowFile, config.includesResolved);
+}
+
+trimFlowfile2(flowFile : string, includesResolved : [string]) -> string {
+	noflow0 = if (endsWith(flowFile, ".flow")) strsubsmart(flowFile, 0, -5) else flowFile;
+	noflow = strReplace(noflow0, "\\", "/");
+	trimmed = fold(includesResolved, noflow, \acc, resolvedInc -> {
+		if (acc != noflow) {
+			acc;
+		} else if (startsWith(acc, resolvedInc)) {
+			strRight(acc, strlen(resolvedInc));
+		} else {
+			acc;
 		}
-		acc1 = if (pathShift != "") {
-			processInculde(acc, pathShift + inc)
-		} else acc;
-		processInculde(acc1, inc);
-	}), "/")
+	});
+	trim2(trimmed, "/");
 }
 
 findFlowPath(flowpath : string, flowsuffix : bool, imports : [string], workingDir : string) -> string {
