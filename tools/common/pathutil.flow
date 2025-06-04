@@ -54,28 +54,31 @@ export {
 // We need it to speed up slow trimFlowfile -- do not resolve the same includes many times.
 makeResolvedIncludes(includesRaw : [string], workingDir : string) -> [string] {
 	shift = if (workingDir == "") "" else relatingPath(workingDir, resolveRelativePath("."));
-	pathShift = if (shift == "") shift else shift + "/";
+	pathShift = toLowerCase(if (shift == "") shift else shift + "/");
 	resolve = \inc -> {
 		resolved0 = resolveRelativePath(inc);
 		toLowerCase(strReplace(resolved0, "\\", "/"));
 	}
-	mapConcat(includesRaw, \inc0 -> {
-		inc = toLowerCase(if (endsWith(inc0, "/")) {
-			inc0;
-		} else {
-			inc0 + "/";
-		});
+	arrayPush(
+		mapConcat(includesRaw, \inc0 -> {
+			inc = toLowerCase(if (endsWith(inc0, "/")) {
+				inc0;
+			} else {
+				inc0 + "/";
+			});
 
-		if (pathShift != "") [
-			resolve(pathShift + inc),
-			pathShift + inc,
-			resolve(inc),
-			inc
-		] else [
-			resolve(inc),
-			inc
-		];
-	});
+			if (pathShift != "") [
+				resolve(pathShift + inc),
+				pathShift + inc,
+				resolve(inc),
+				inc
+			] else [
+				resolve(inc),
+				inc
+			];
+		}),
+		toLowerCase(workingDir)
+	);
 }
 
 trimFlowfile(flowFile : string, config : CompilerConfig) -> string {
@@ -85,11 +88,12 @@ trimFlowfile(flowFile : string, config : CompilerConfig) -> string {
 trimFlowfile2(flowFile : string, includesResolved : [string]) -> string {
 	noflow0 = if (endsWith(flowFile, ".flow")) strsubsmart(flowFile, 0, -5) else flowFile;
 	noflow = strReplace(noflow0, "\\", "/");
+	noflowLC = toLowerCase(noflow);
 	trimmed = fold(includesResolved, noflow, \acc, resolvedInc -> {
 		if (acc != noflow) {
 			acc;
-		} else if (startsWith(acc, resolvedInc)) {
-			strRight(acc, strlen(resolvedInc));
+		} else if (startsWith(noflowLC, resolvedInc)) {
+			strRight(noflow, strlen(resolvedInc));
 		} else {
 			acc;
 		}
@@ -104,7 +108,7 @@ findFlowPath(flowpath : string, flowsuffix : bool, imports : [string], workingDi
 	path = if (fileExists(withFlow)) {
 		resolveRelativePath(withFlow);
 	} else {
-		doFindFlowPath(withFlow, imports, true, pathShift);
+		doFindFlowPath(withFlow, imports, true, pathShift, workingDir);
 	}
 	fcNormalizeWindowsPath(path);
 }
@@ -113,13 +117,18 @@ findFlowRelativePath(flowpath : string, flowsuffix : bool, imports : [string], w
 	withFlow = if (endsWith(flowpath, ".flow") || !flowsuffix) flowpath else flowpath + ".flow";
 	shift = if (workingDir == "") ""  else relatingPath(workingDir, resolveRelativePath("."));
 	pathShift = if (shift == "") shift else shift + "/";
-	doFindFlowPath(withFlow, imports, false, pathShift);
+	doFindFlowPath(withFlow, imports, false, pathShift, workingDir);
 }
 
-doFindFlowPath(withFlow : string, imports : [string], doResolve : bool, pathShift : string) -> string {
-	if (imports == []) withFlow
-	else {
-		head = imports[0];
+doFindFlowPath(withFlow : string, imports : [string], doResolve : bool, pathShift : string, workingDir : string) -> string {
+	doFindFlowPath2(withFlow, arrayPush(imports, workingDir), 0, doResolve, pathShift);
+}
+
+doFindFlowPath2(withFlow : string, imports : [string], idx : int, doResolve : bool, pathShift : string) -> string {
+	if (idx >= length(imports)) {
+		withFlow;
+	} else {
+		head = imports[idx];
 		directPath = head + (if (endsWith(head, "/") || endsWith(head, "\\")) "" else "/") + withFlow;
 		if (fileExists(directPath)) {
 			if (!doResolve) directPath
@@ -130,8 +139,7 @@ doFindFlowPath(withFlow : string, imports : [string], doResolve : bool, pathShif
 				if (!doResolve) shiftedPath
 				else resolveRelativePath(shiftedPath);
 			} else {
-				rest = tail(imports);
-				doFindFlowPath(withFlow, rest, doResolve, pathShift);
+				doFindFlowPath2(withFlow, imports, idx + 1, doResolve, pathShift);
 			}
 		}
 	}
