@@ -198,16 +198,27 @@ createMcpHandlers(config : McpServerConfig) -> Tree<string, (Json) -> Json> {
 }
 
 processMcpRequest(request : HttpRequest, handlers : Tree<string, (Json) -> Json>, config : McpServerConfig) -> HttpResponse {
-	// Only accept POST requests
-	isPost = switch (request.method) {
-		Some(method): method == Post();
-		None(): false;
+	// Check request method
+	methodType = switch (request.method) {
+		Some(method): switch (method) {
+			Post(): "POST";
+			Options(): "OPTIONS";
+			default: "OTHER";
+		};
+		None(): "NONE";
 	};
-	
-	if (!isPost) {
-		errorResponse = createMcpErrorResponse(-32600, "Only POST method is allowed", None());
-		HttpResponse(405, json2string(errorResponse), [KeyValue("Content-Type", "application/json")]);
-	} else {
+
+	defHeaders = [
+		KeyValue("Access-Control-Allow-Origin","*"),
+		KeyValue("Access-Control-Allow-Methods","POST, OPTIONS"),
+		KeyValue("Access-Control-Allow-Headers","*"),
+		KeyValue("Access-Control-Max-Age","86400") // Cache preflight for 24 hours
+	];
+
+	if (methodType == "OPTIONS") {
+		// Handle CORS preflight request
+		HttpResponse(200, "", defHeaders);
+	} else if (methodType == "POST") {
 		// Check authentication if enabled
 		authResult = authenticateRequest(request, config.authentication);
 		
@@ -217,10 +228,10 @@ processMcpRequest(request : HttpRequest, handlers : Tree<string, (Json) -> Json>
 					json2string(JsonObject([
 						Pair("error", JsonString("Authentication failed: " + reason))
 					])), 
-					[
+					concat(defHeaders, [
 						KeyValue("Content-Type", "application/json"),
 						KeyValue("WWW-Authenticate", "Basic realm=\"MCP Server\"")
-					]
+					])
 				);
 			}
 			McpAuthSuccess(userId): {
@@ -234,7 +245,7 @@ processMcpRequest(request : HttpRequest, handlers : Tree<string, (Json) -> Json>
 				switch (maybeRequest) {
 					None(): {
 						errorResponse = createMcpErrorResponse(-32600, "Invalid JSON-RPC request", None());
-						HttpResponse(400, json2string(errorResponse), [KeyValue("Content-Type", "application/json")]);
+						HttpResponse(400, json2string(errorResponse), concat(defHeaders, [KeyValue("Content-Type", "application/json")]));
 					}
 					Some(mcpRequest): {
 						// Handle the method call with user context
@@ -251,14 +262,18 @@ processMcpRequest(request : HttpRequest, handlers : Tree<string, (Json) -> Json>
 						
 						if (isNotification) {
 							// For notifications, return empty response
-							HttpResponse(200, "", []);
+							HttpResponse(200, "", concat(defHeaders, []));
 						} else {
-							HttpResponse(200, json2string(responseJson), [KeyValue("Content-Type", "application/json")]);
+							HttpResponse(200, json2string(responseJson), concat(defHeaders, [KeyValue("Content-Type", "application/json")]));
 						}
 					}
 				}
 			}
 		}
+	} else {
+		// Unsupported HTTP method
+		errorResponse = createMcpErrorResponse(-32600, "Only POST and OPTIONS methods are allowed", None());
+		HttpResponse(405, json2string(errorResponse), concat(defHeaders, [KeyValue("Content-Type", "application/json")]));
 	}
 }
 
@@ -856,7 +871,7 @@ createDefaultMcpConfig() -> McpServerConfig {
 			createBearerAuth(["mcp-token-abc123", "mcp-token-def456"]),
 			createApiKeyAuth(["api-key-xyz789", "api-key-uvw012"], "X-API-Key")
 		],
-		false // Don't require auth (optional authentication)
+		true // Require auth (use false for optional authentication)
 	);
 	
 	McpServerConfig(
@@ -873,9 +888,10 @@ createDefaultMcpConfig() -> McpServerConfig {
 // Main function
 main() {
 	config = createDefaultMcpConfig();
-	closeServer = createMcpServer(8080, config);
+	serverPort = 3000;
+	closeServer = createMcpServer(serverPort, config);
 	
-	println("🚀 MCP Server with Authentication is running on port 8080");
+	println("🚀 MCP Server with Authentication is running on port " + i2s(serverPort));
 	println("");
 	println("📋 Available Features:");
 	println("  • Tools: calculator");
@@ -891,33 +907,34 @@ main() {
 	println("🧪 Test Commands:");
 	println("");
 	println("1. No Authentication:");
-	println("curl -X POST http://localhost:8080 \\");
+	println("curl -X POST http://localhost:" + i2s(serverPort) + " \\");
 	println("  -H \"Content-Type: application/json\" \\");
 	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}},\"id\":1}'");
 	println("");
 	println("2. Basic Authentication:");
-	println("curl -X POST http://localhost:8080 \\");
+	println("curl -X POST http://localhost:" + i2s(serverPort) + " \\");
 	println("  -H \"Content-Type: application/json\" \\");
 	println("  -H \"Authorization: Basic YWRtaW46cGFzc3dvcmQxMjM=\" \\");
 	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{},\"id\":2}'");
 	println("");
 	println("3. Bearer Token:");
-	println("curl -X POST http://localhost:8080 \\");
+	println("curl -X POST http://localhost:" + i2s(serverPort) + " \\");
 	println("  -H \"Content-Type: application/json\" \\");
 	println("  -H \"Authorization: Bearer mcp-token-abc123\" \\");
 	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"calculator\",\"arguments\":{\"operation\":\"add\",\"a\":10,\"b\":5}},\"id\":3}'");
 	println("");
 	println("4. API Key:");
-	println("curl -X POST http://localhost:8080 \\");
+	println("curl -X POST http://localhost:" + i2s(serverPort) + " \\");
 	println("  -H \"Content-Type: application/json\" \\");
 	println("  -H \"X-API-Key: api-key-xyz789\" \\");
 	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"resources/read\",\"params\":{\"uri\":\"time://current\"},\"id\":4}'");
 	println("");
 	println("5. Invalid Authentication (should fail):");
-	println("curl -X POST http://localhost:8080 \\");
+	println("curl -X POST http://localhost:" + i2s(serverPort) + " \\");
 	println("  -H \"Content-Type: application/json\" \\");
 	println("  -H \"Authorization: Bearer invalid-token\" \\");
 	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"params\":{},\"id\":5}'");
 	
-	quit(0);
+	// Keep the server running
+	// quit(0);
 }
