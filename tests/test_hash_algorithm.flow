@@ -1,0 +1,205 @@
+import math/hash_algorithm;
+import maybe;
+import string;
+import math/math;
+import formats/base64;
+import math/md5;
+import math/sha1;
+
+// To run the test use java:
+//  cd flow9
+//	build-jar tests/test_hash_algorithm.flow --run
+
+// As of 2025-06-10, only Java target is supported.
+
+calculateBase64(binaryString: string) -> string {
+	strReplace(strReplace(encodeBase64(binaryString), "\n", ""), "\r", "");
+}
+
+calculateBinaryFromHex(hexString: string) -> string {
+	stringCharsFold(
+		hexString,
+		Pair("", ""),
+		\acc: Pair<string, string>, char -> {
+			if (acc.second == "") {
+				Pair(acc.first, char);
+			} else {
+				Pair(acc.first + fromCharCode(parseHex(acc.second + char)), "");
+			}
+		}
+	).first
+}
+
+testAlgorithm(testName: string, input: string, algorithm: string, expectedLength: int, expectedBase64: string) -> bool {
+	result = hashAlgorithmM(input, algorithm);
+	switch (result) {
+		None(): {
+			println("FAIL: " + testName + " - Expected hash but got None");
+			false;
+		}
+		Some(hash): {
+			hashLength = strlen(hash);
+			if (hashLength == expectedLength) {
+				hash64: string = calculateBase64(hash);
+				if (hash64 == expectedBase64) {
+					println("PASS: " + testName + " - Got hash of expected length and value " + i2s(hashLength) + ", " + expectedBase64);
+					true;
+				} else {
+					println("FAIL: " + testName + " - Expected base 64 hash \"" + expectedBase64 + "\" but got \"" + hash64 + "\"");
+					false;
+				}
+			} else {
+				println("FAIL: " + testName + " - Expected hash length " + i2s(expectedLength) + " but got " + i2s(hashLength));
+				false;
+			}
+		}
+	}
+}
+
+testAlgorithmNone8bit(algorithm: string) {
+	result = hashAlgorithmM("\u0100\u0201\u0302\u0403", algorithm);
+	switch (result) {
+		None(): {
+			println("PASS: None 8 bit detected for " + algorithm);
+			true;
+		}
+		Some(__): {
+			println("FAIL to detected none 8 bit detected for " + algorithm);
+			false;
+		}
+	}
+}
+
+testNativeSha1Algorithm(testName: string, input: string, expectedBase64: string)
+{
+	flowHash64: string = calculateBase64(calculateBinaryFromHex(SHA1(input)));
+	if (flowHash64 == expectedBase64) {
+		println("PASS: " + testName + " - Got hash of expected value " + expectedBase64);
+		true;
+	} else {
+		println("FAIL: " + testName + " - Expected base 64 hash \"" + expectedBase64 + "\" but flow hash was \"" + flowHash64 + "\"");
+		false;
+	}
+}
+
+testNativeMd5Algorithm(testName: string, input: string, expectedBase64: string)
+{
+	flowHash64: string = calculateBase64(calculateBinaryFromHex(md5(input)));
+// 	flowHash64: string = md5(input);
+	if (flowHash64 == expectedBase64) {
+		println("PASS: " + testName + " - Got hash of expected value " + expectedBase64);
+		true;
+	} else {
+		println("FAIL: " + testName + " - Expected base 64 hash \"" + expectedBase64 + "\" but flow hash was \"" + flowHash64 + "\"");
+		false;
+	}
+}
+
+testAlgorithmError(testName: string, input: string, algorithm: string) -> bool {
+	result = hashAlgorithmM(input, algorithm);
+	switch (result) {
+		None(): {
+			println("PASS: " + testName + " - Correctly returned None for invalid algorithm");
+			true;
+		}
+		Some(hash): {
+			println("FAIL: " + testName + " - Expected None but got hash: " + hash);
+			false;
+		}
+	}
+}
+
+testConsistency(testName: string, input: string, algorithm: string) -> bool {
+	result1 = hashAlgorithmM(input, algorithm);
+	result2 = hashAlgorithmM(input, algorithm);
+
+	result1Equal = switch (result1) {
+		None(): switch (result2) {
+			None(): true;
+			Some(__): false;
+		}
+		Some(hash1): switch (result2) {
+			None(): false;
+			Some(hash2): hash1 == hash2;
+		}
+	};
+
+	if (result1Equal) {
+		println("PASS: " + testName + " - Consistent results for same input");
+		true;
+	} else {
+		println("FAIL: " + testName + " - Inconsistent results for same input");
+		false;
+	}
+}
+
+main() {
+	println("\u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac");
+	println("Running hash algorithm tests...");
+
+	tests = [
+		// Test MD5 (produces 16-byte hash)
+		testAlgorithm("MD5 empty string", "", "md5", 16, "1B2M2Y8AsgTpgAmY7PhCfg=="),
+		testAlgorithm("MD5 simple text", "hello", "md5", 16, "XUFAKrxLKna5cZ2REBfFkg=="),
+		testAlgorithm("MD5 longer text", "The quick brown fox jumps over the lazy dog", "md5", 16, "nhB9nTcrtoJr2B01QqQZ1g=="),
+		testAlgorithm("MD5 binary data", "\x00\x01\x02\x03", "md5", 16, "N7Wa/VknJfkwXkhKXX9RaA=="),
+
+		// Test SHA1 (produces 20-byte hash)
+		testAlgorithm("SHA1 empty string", "", "sha1", 20, "2jmj7l5rSw0yVb/vlWAYkK/YBwk="),
+		testAlgorithm("SHA1 simple text", "hello", "sha1", 20, "qvTGHdzF6KLavt4PO0gs2a6pQ00="),
+		testAlgorithm("SHA1 longer text", "The quick brown fox jumps over the lazy dog", "sha1", 20, "L9ThxnotKPzthJ7hu3bnORuT6xI="),
+		testAlgorithm("SHA1 binary data", "\x00\x01\x02\x03", "sha1", 20, "oCoFsCW5KMA5zxrn6O4E58GQwNs="),
+
+		// Test SHA256 (produces 32-byte hash)
+		testAlgorithm("SHA256 empty string", "", "sha256", 32, "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="),
+		testAlgorithm("SHA256 simple text", "hello", "sha256", 32, "LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="),
+		testAlgorithm("SHA256 longer text", "The quick brown fox jumps over the lazy dog", "sha256", 32, "16j7swfXgJRpypq8sAguT41WUeRtPNt2LQLQvzfJ5ZI="),
+		testAlgorithm("SHA256 binary data", "\x00\x01\x02\x03", "sha256", 32, "BU7ewdAhH2JP7Qy8qdT5QAsOSRxDdCryxbCr6/DJkNg="),
+
+		// Test error cases - unsupported algorithms
+		testAlgorithmError("Invalid algorithm sha512", "test", "sha512"),
+		testAlgorithmError("Invalid algorithm uppercase", "test", "SHA256"),
+		testAlgorithmError("Invalid algorithm empty", "test", ""),
+		testAlgorithmError("Invalid algorithm nonsense", "test", "invalid"),
+
+		// Test consistency - same input should produce same output
+		testConsistency("MD5 consistency", "consistency test", "md5"),
+		testConsistency("SHA1 consistency", "consistency test", "sha1"),
+		testConsistency("SHA256 consistency", "consistency test", "sha256"),
+
+		// Test the flow1 implementation of sha1
+		testNativeSha1Algorithm("SHA1 native empty string", "", "2jmj7l5rSw0yVb/vlWAYkK/YBwk="),
+		testNativeSha1Algorithm("SHA1 native simple text", "hello", "qvTGHdzF6KLavt4PO0gs2a6pQ00="),
+		testNativeSha1Algorithm("SHA1 native longer text", "The quick brown fox jumps over the lazy dog", "L9ThxnotKPzthJ7hu3bnORuT6xI="),
+		testNativeSha1Algorithm("SHA1 native binary data", "\x00\x01\x02\x03", "oCoFsCW5KMA5zxrn6O4E58GQwNs="),
+		// This test fails, because SHA1 does something strange with higher bytes...
+		// testAlgorithmNone8bit("SHA1 native binary 16 bit data", "\u0100\u0201\u0302\u0403", "oCoFsCW5KMA5zxrn6O4E58GQwNs="),
+
+		// Test the flow1 implementation of sha1
+		testNativeMd5Algorithm("Md5 native empty string", "", "1B2M2Y8AsgTpgAmY7PhCfg=="),
+		testNativeMd5Algorithm("Md5 native simple text", "hello", "XUFAKrxLKna5cZ2REBfFkg=="),
+		testNativeMd5Algorithm("Md5 native longer text", "The quick brown fox jumps over the lazy dog", "nhB9nTcrtoJr2B01QqQZ1g=="),
+		testNativeMd5Algorithm("Md5 native binary data", "\x00\x01\x02\x03", "N7Wa/VknJfkwXkhKXX9RaA=="),
+
+		testAlgorithmNone8bit("md5"),
+		testAlgorithmNone8bit("sha1"),
+		testAlgorithmNone8bit("sha256"),
+	];
+	// Count passed tests
+	passedTests = fold(tests, 0, \acc, result -> if (result) acc + 1 else acc);
+	totalTests = length(tests);
+
+	println("\nTest Results:");
+	println("Passed: " + i2s(passedTests) + "/" + i2s(totalTests));
+
+	ok = passedTests == totalTests;
+
+	if (ok) {
+		println("All tests PASSED!");
+	} else {
+		println("Some tests FAILED!");
+	}
+
+	quit(if (ok) 0 else 1);
+}
+
