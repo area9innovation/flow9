@@ -630,7 +630,11 @@ class TextClip extends NativeWidgetClip {
 			// Looks like a browser bug, so we need this workaround
 			if (amiriItalicWorkaroundWidget == null) {
 				var txt = 't';
-				var charMetrics = TextMetrics.measureText(txt, style);
+				var useNativeMetrics = Util.getParameter("use_native_measurement") == "1";
+				var charMetrics : Dynamic = null;
+				untyped __js__(
+					"charMetrics = PIXI.TextMetrics.measureText(txt, style, null, null, useNativeMetrics);"
+				);
 				amiriItalicWorkaroundWidget = Browser.document.createElement('span');
 				amiriItalicWorkaroundWidget.classList.add('amiriItalicWorkaroundWidget');
 				amiriItalicWorkaroundWidget.style.position = 'relative';
@@ -877,7 +881,8 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function measureFont() : Void {
-		untyped __js__("this.style.fontProperties = PIXI.TextMetrics.measureFont(this.style.toFontString(), this.style.fontSize);");
+		var useNativeMetrics = Util.getParameter("use_native_measurement") == "1";
+		untyped __js__("this.style.fontProperties = PIXI.TextMetrics.measureFont(this.style.toFontString(), this.style.fontSize, useNativeMetrics);");
 	}
 
 	private function layoutText() : Void {
@@ -1822,14 +1827,21 @@ class TextClip extends NativeWidgetClip {
 
 	private function updateTextMetrics() : Void {
 		if (metrics == null && untyped text != "" && style.fontSize > 1.0) {
+			var useNativeMetrics = Util.getParameter("use_native_measurement") == "1";
 			if (!escapeHTML) {
 				var contentGlyphsModified = untyped __js__("this.contentGlyphs.modified.replace(/<\\/?[^>]+(>|$)/g, '')");
-				metrics = TextMetrics.measureText(contentGlyphsModified, style);
+				// metrics = untyped TextMetrics.measureText(contentGlyphsModified, style, null, null, useNativeMetrics);
+				untyped __js__(
+					"this.metrics = PIXI.TextMetrics.measureText(contentGlyphsModified, this.style, undefined, undefined, useNativeMetrics);"
+				);
 				if (this.isHTMLRenderer()) {
 					measureHTMLWidth();
 				}
 			} else {
-				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
+				// metrics = untyped TextMetrics.measureText(this.contentGlyphs.modified, style, null, null, useNativeMetrics);
+				untyped __js__(
+					"this.metrics = PIXI.TextMetrics.measureText(this.contentGlyphs.modified, this.style, undefined, undefined, useNativeMetrics);"
+				);
 				if (this.isHTMLRenderer()) {
 					if (useHTMLMeasurementJapaneseFont(style)) {
 						measureHTMLSize();
