@@ -613,13 +613,13 @@ class PixiWorkarounds {
 				nativeSetProperty.call(this, propertyName, value, priority);
 			}
 
-			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas, useNativeMetrics)
+			PIXI.TextMetrics.measureText = function(text, style, wordWrap, canvas)
 			{
 				canvas = typeof canvas !== 'undefined' ? canvas : PIXI.TextMetrics._canvas;
 
 				wordWrap = (wordWrap === undefined || wordWrap === null) ? style.wordWrap : wordWrap;
 				const font = style.toFontString();
-				const fontProperties = PIXI.TextMetrics.measureFont(font, useNativeMetrics);
+				const fontProperties = PIXI.TextMetrics.measureFont(font);
 
 				// fallback in case UA disallow canvas data extraction
 				// (toDataURI, getImageData functions)
@@ -711,7 +711,7 @@ class PixiWorkarounds {
 				);
 			}
 
-			PIXI.TextMetrics.measureFont = function(font, fontSize, useNativeMetrics)
+			PIXI.TextMetrics.measureFont = function(font, fontSize)
 			{
 				// as this method is used for preparing assets, don't recalculate things if we don't need to
 				if (PIXI.TextMetrics._fonts[font])
@@ -727,8 +727,7 @@ class PixiWorkarounds {
 				context.font = font;
 
 				const metricsString = PIXI.TextMetrics.METRICS_STRING + PIXI.TextMetrics.BASELINE_SYMBOL;
-				const textMeasurement = context.measureText(metricsString);
-				const width = Math.ceil(textMeasurement.width);
+				const width = Math.ceil(context.measureText(metricsString).width);
 				var baseline = Math.ceil(context.measureText(PIXI.TextMetrics.BASELINE_SYMBOL).width) * 2;
 				const height = 2 * baseline;
 
@@ -779,11 +778,7 @@ class PixiWorkarounds {
 					}
 				}
 
-				if (useNativeMetrics) {
-					properties.ascent = textMeasurement.actualBoundingBoxAscent;
-				} else {
-					properties.ascent = baseline - i;
-				}
+				properties.ascent = baseline - i;
 
 				idx = pixels - line;
 				stop = false;
@@ -810,16 +805,8 @@ class PixiWorkarounds {
 					}
 				}
 
-
-				if (useNativeMetrics) {
-					properties.descent = textMeasurement.actualBoundingBoxDescent;
-				} else {
-					properties.descent = i - baseline;
-				}
-
+				properties.descent = i - baseline;
 				properties.fontSize = properties.ascent + properties.descent;
-
-				console.log('Font metrics for ' + font + ' - ascent: ' + properties.ascent + ', descent: ' + properties.descent + ', fontSize: ' + properties.fontSize);
 
 				PIXI.TextMetrics._fonts[font] = properties;
 
