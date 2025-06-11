@@ -819,6 +819,8 @@ class PixiWorkarounds {
 
 				properties.fontSize = properties.ascent + properties.descent;
 
+				console.log('Font metrics for ' + font + ' - ascent: ' + properties.ascent + ', descent: ' + properties.descent + ', fontSize: ' + properties.fontSize);
+
 				PIXI.TextMetrics._fonts[font] = properties;
 
 				return properties;
