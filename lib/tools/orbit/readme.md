@@ -104,3 +104,6 @@ Turn on tracing for step-by-step execution details:
 ## Implementation
 
 We evaluate Orbit by converting it to a Scheme variant `SExpr`. See [sexpr/readme.md](./sexpr/readme.md) for details.
+
+Check this out for cool multi-stage programming:
+https://tsung-ju.org/icfp25/
