@@ -107,3 +107,6 @@ We evaluate Orbit by converting it to a Scheme variant `SExpr`. See [sexpr/readm
 
 Check this out for cool multi-stage programming:
 https://tsung-ju.org/icfp25/
+
+Check out this paper on array shapes:
+https://dl.acm.org/doi/pdf/10.1145/3736112.3736141
