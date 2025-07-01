@@ -1,0 +1,81 @@
+import tools/orbit/orbit_types;
+import tools/orbit/ograph;
+import tools/orbit/types;
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/sexpr_ograph_utils;
+import tools/orbit/ograph_cache;
+import ds/tree;
+import string;
+
+export {
+    // Add an Sexpr to an OGraph, substituting variables with existing eclasses
+    // and processing type annotations by adding domains to the "belongs to" field
+    // Takes a mapping from variable names to eclass IDs for substitution
+    // Returns the eclass ID of the added expression
+    // The cached flag indicates whether to use the node cache for sharing nodes
+    // - When true, identical nodes are shared across the graph
+    // - When false, every node gets a unique ID even if identical
+    // Domain annotations should typically use cached=true to allow sharing
+    sexp2OGraphWithSubstitution(graph : OGraph, expr : Sexpr, varToEclass : Tree<string, int>, cached : bool) -> int;
+}
+
+// Add an Sexpr to an OGraph with variable substitution and type annotation handling
+sexp2OGraphWithSubstitution(graph : OGraph, expr : Sexpr, varToEclass : Tree<string, int>, cached : bool) -> int {
+    // Use the enhanced decomposeSexpr to get all components at once
+    components = decomposeSexpr(expr);
+    nodeType = components.first;
+    children = components.second;
+    nodeValue = components.third;
+    
+    if (nodeType == ":") {
+        // Special case for type annotation (: expr Domain)
+        // Extract the expression and domain
+        baseExpr = children[0];
+        domain = children[1];
+        
+        // Process the domain - always use caching for domains to allow sharing
+        domainId = sexp2OGraphWithSubstitution(graph, domain, varToEclass, true);
+        
+        // Process the base expression - use the provided cached parameter
+        baseId = sexp2OGraphWithSubstitution(graph, baseExpr, varToEclass, cached);
+        
+        // Add the domain to the "belongs to" field of the base node
+        addBelongsToONode(graph, baseId, domainId);
+        
+        // Return the base node ID as the canonical form
+        baseId;
+    } else if (nodeType == "Identifier") {
+        // Handle variable substitution
+        varName = switch (nodeValue) { OrbitString(s): s; default: ""; };
+        
+        // Check if we have a mapping for this identifier
+        switch (lookupTree(varToEclass, varName)) {
+            Some(eclassId): {
+                // Use the provided eclass ID directly
+                eclassId;
+            }
+            None(): {
+                // No substitution - add as a normal identifier
+                if (cached) {
+                    insertONodeCached(graph, ONode(nodeType, [], [], nodeValue));
+                } else {
+                    insertONode(graph, ONode(nodeType, [], [], nodeValue));
+                }
+            }
+        }
+    } else {
+        // For composite nodes (List, Vector, SpecialForm, or operator expressions)
+        // Process all children recursively
+        childIds = map(children, \child -> {
+            sexp2OGraphWithSubstitution(graph, child, varToEclass, cached);
+        });
+        
+        // Create a node with the processed children
+        if (cached) {
+            insertONodeCached(graph, ONode(nodeType, childIds, [], nodeValue));
+        } else {
+            insertONode(graph, ONode(nodeType, childIds, [], nodeValue));
+        }
+    }
+}

@@ -36,6 +36,7 @@ Type inference is per-file, not global.
 
 ## TODO
 
+- Warn if we have a top-level var or function that is unused and not exported
 - Debug Incremental
   - Fix dependency tracking to make finegrained incremental in typecheck
 - Have warnings and errors. Implicit auto in toplevel is a warning, for example.
@@ -55,6 +56,7 @@ Type inference is per-file, not global.
 - Use of non-exported name just gives error, instead of more precise
 - Calculate more precise type for "default:" by removing those that are matched?
 - Warn if type marked as polymorphic, but the polymorphic type is dead
+- foo() { x: Maybe<?> = None(); } should probably give an compile error. See makeSubTableDataTableMaterialNoDBC
 
 # Plan
 

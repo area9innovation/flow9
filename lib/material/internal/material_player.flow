@@ -18,7 +18,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 	(\p -> eitherFn(
 		getExternalPlayerURL(m.filename),
 		\url -> {
-			enableYoutubeJsApi = isSome(getYouTubeURL(m.filename)) && containsStruct(m.style, MPlayerYoutubeJsApi());
+			enableYoutubeJsApi = isSome(getYouTubeURL(m.filename)) && (!isUrlParameterFalse("youtube_api_enabled") || containsStruct(m.style, MPlayerYoutubeJsApi()));
 			playing = extractStruct(m.style, FVideoPlay(make(false))).play;
 			TConstruct(
 				[
@@ -72,6 +72,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			subtitles = tryExtractStruct(m.style, FVideoSubtitles(const(VideoSubtitle("", []))));
 			animatedSubtitles = tryExtractStruct(m.style, MAnimatedSubtitles(const(VideoSubtitle("", [])), []));
 			externalSubtitles = tryExtractStruct(m.style, MExternalSubtitles("", ""));
+			subtitlesVisible = extractStruct(m.style, MPlayerSubtitlesVisible(make(true))).visible;
 			shortcutsEnabled = !containsStruct(m.style, MPlayerDisableKeyboardShortcuts());
 
 			streamStatus = extractStruct(m.style, StreamStatus(nop1)).fn;
@@ -119,7 +120,6 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 			panelHovered = make(false);
 			playbackRateSelected = make(3);
 			showProgressCircle = make(true);
-			subtitlesVisible = make(true);
 			subtitlesEnabled = fand(enabled.enabled, const(isSome(subtitles) || isSome(animatedSubtitles) || isSome(externalSubtitles)));
 			playingPopup = make(None());
 			volumePopup = make(None());
@@ -643,16 +643,16 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 
 				makeSubtitlesMenu = \subsSelector -> {
 					currentSubtitle = getValue(subsSelector.current);
-					currentSubtitleId = make(findiDef(subsSelector.available, eq(currentSubtitle), 0));
+					currentSubtitleId = make(if (getValue(subtitlesVisible)) findiDef(subsSelector.available, eq(currentSubtitle), 0) else -1);
 					TConstruct(
 						[
 							makeSubscribe(currentSubtitleId, \id -> eitherFn(
 								elementAtM(subsSelector.available, id),
 								\sub -> {
 									nextDistinct(subsSelector.current, sub);
-									next(subtitlesVisible, true);
+									nextDistinct(subtitlesVisible, true);
 								},
-								\ -> next(subtitlesVisible, false)
+								\ -> nextDistinct(subtitlesVisible, false)
 							))
 						],
 						MMenu2T(manager, p2,
@@ -900,11 +900,18 @@ selected2playbackRate(rs : int) -> double {
 }
 
 MVideoPlayer2MRealHTML(url : string, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	style = eitherMap(
-		tryExtractStruct(m.style, MEnabled(const(true))),
-		\en -> [MouseDisabled(fnot(en.enabled))],
-		[]
-	);
+	style =
+		concat(
+			[OnPageLoaded(\ -> {
+				realSizeWH = tryExtractStruct(m.style, FVideoRealSize(makeWH()));
+				maybeApply(realSizeWH, \rsz -> nextDistinct(rsz.size, fgetValue(m.wh)))
+			})],
+			eitherMap(
+				tryExtractStruct(m.style, MEnabled(const(true))),
+				\en -> [MouseDisabled(fnot(en.enabled))],
+				[]
+			)
+		);
 
 	m2t(MRealHTML(url, m.wh, style), parent)
 }
@@ -922,6 +929,7 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 	disableKeyboard = contains(style, MPlayerDisableKeyboardShortcuts());
 	controls = extractStruct(style, MPlayerControls([FullScreenPlayer(), PlaybackRateControl(), VolumeControl()])).controls;
 	timeRangeM = tryExtractStruct(style, FVideoTimeRange(const(0.0), const(0.0)));
+	realSizeWH = extractStruct(style, FVideoRealSize(makeWH())).size;
 
 	urlParams = strSplit(elementAt(strSplit(takeBefore(url, "#", url), "?"), 1, ""), "&");
 	videoId = if (strContains(url, "/embed")) {
@@ -1040,11 +1048,16 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 					)
 				),
 				makeSubscribe2(fselectFromStateM("duration"),
-					\durationM -> maybeApply(durationM, \d -> nextDistinct(lengthB, getJsonDoubleValue(d, 0.0)))
-				),
+					\durationM -> maybeApply(durationM, \d -> {
+						nextDistinct(lengthB, getJsonDoubleValue(d, 0.0));
+						if (getValue(lengthB) > 0.) {
+							nextDistinct(realSizeWH, fgetValue(wh))
+						}
+					})
+				)
 			]
 		),
-		MRealHTML(getAppUrl() + "yt_player.html", wh, [
+		MRealHTML(appendUrl(getAppUrl(), "yt_player.html"), wh, [
 			FlowCallback(flowCallBack),
 			PageHostcallSetter(getHostCall),
 			UpdateCachedContent(true),

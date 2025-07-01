@@ -1,0 +1,772 @@
+import tools/orbit/orbit_env;
+import tools/orbit/utils;
+import tools/orbit/orbit_pattern;
+// Removed RunCore-related imports as they're no longer needed
+import ds/tree;
+import ds/set;
+import math/math;
+import string;
+import fs/filesystem;
+import maybe;
+import tools/orbit/orbit_ast;
+import tools/orbit/orbit_runtime;
+import tools/orbit/prettyprint;  // Re-added for prettyOrbit function
+import tools/mango/mcode_lib;
+import tools/orbit/orbit_compiled_parser;
+import tools/orbit/free;
+
+export {
+	// Main interpreter function
+	interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv;
+	
+	// Initialize orbit runtime functions
+	initOrbitInterpreter() -> void;
+}
+
+
+
+// Global variable to hold the runtime functions tree
+orbRuntimeFunctions : ref Tree<string, OrbitRuntimeFn> = ref makeTree();
+
+// Initialize the runtime functions
+initOrbitRuntimeFunctions() -> void {
+	orbRuntimeFunctions := initOrbitRuntime();
+}
+
+// Check if a function is available in the orbit runtime
+isOrbitRuntimeFunction(id : string) -> bool {
+	containsKeyTree(^orbRuntimeFunctions, id);
+}
+
+// Call a function from the orbit runtime
+callOrbitRuntimeFunction(id : string, args : [OrMath_expr], env : OrbEnv) -> OrbEnv {
+	switch (lookupTree(^orbRuntimeFunctions, id)) {
+		Some(runtimeFn): {
+			// Check if the number of arguments matches the expected arity
+			if (length(args) != runtimeFn.arity) {
+				println("ERROR: " + id + " expects " + i2s(runtimeFn.arity) + 
+					" arguments, but got " + i2s(length(args)));
+				env;
+			} else {
+				// Call the function with the correct number of arguments
+				runtimeFn.fn(args, env, interpretOrbit);
+			}
+		}
+		None(): {
+			println("ERROR: Runtime function not found: " + id);
+			env;
+		}
+	}
+}
+
+// Initialize the interpreter by setting up the runtime functions
+initOrbitInterpreter() -> void {
+	initOrbitRuntimeFunctions();
+}
+
+// No longer needed - Removed CoreLib helper functions and RunCore function calls
+// We now directly use the Orbit native implementations
+
+// Evaluate a function call with the given arguments
+callFunction(env : OrbEnv, fn : OrMath_expr, args : [OrMath_expr]) -> OrbEnv {
+	// First determine if we need to lazily evaluate any arguments
+	paramTypes = switch (fn) {
+		OrLambda(__, params, __): params;
+		default: [];
+	};
+	// Check if this is a special function that doesn't evaluate arguments
+	isSpecialFn = switch(fn) {
+		OrUId(id): isOrbitRuntimeFunction(id);
+		OrIdentifier(id): isOrbitRuntimeFunction(id);
+		default: false;
+	};
+	
+	// Process arguments - either evaluate them or keep as AST
+	evaluatedArgs = foldi(args, [], \i, acc, arg -> {
+		// Use the environment from the previous argument evaluation
+		envArg = if (i == 0) env else OrbEnv(env with vars = acc[i-1].vars);
+		
+		// Check whether we should evaluate this argument
+		paramType = if (i < length(paramTypes)) Some(paramTypes[i]) else None();
+		shouldEval = !isSpecialFn && shouldEvaluateArg(paramType, arg);
+		
+		resEnv = if (shouldEval) {
+			// If it's an eval() call, we need to extract and evaluate the inner argument
+			switch (arg) {
+				OrFunction(funcExpr, innerArgs): {
+					switch(funcExpr) {
+						OrUId(id): {
+							if (id == "eval" && length(innerArgs) > 0) {
+								// Evaluate the first argument of eval()
+								//println("Evaluating ast eval() with argument: " + prettyOrbit(innerArgs[0]));
+								interpretOrbit(envArg, innerArgs[0]);
+							} else {
+								// Normal evaluation
+								interpretOrbit(envArg, arg);
+							}
+						}
+						OrIdentifier(id): {
+							if (id == "eval" && length(innerArgs) > 0) {
+								// Evaluate the first argument of eval()
+								interpretOrbit(envArg, innerArgs[0]);
+							} else {
+								// Normal evaluation
+								interpretOrbit(envArg, arg);
+							}
+						}
+						default: interpretOrbit(envArg, arg);
+					}
+				}
+				default: interpretOrbit(envArg, arg);
+			}
+		} else {
+			// Lazy evaluation - don't evaluate this argument
+			OrbEnv(envArg with result = arg);
+		};
+		
+		arrayPush(acc, resEnv);
+	});
+	// Extract argument values
+	argValues = map(evaluatedArgs, \argEnv -> argEnv.result);
+	
+	// Get the environment after evaluating all arguments
+	finalArgEnv = if (length(evaluatedArgs) > 0) lastElement(evaluatedArgs, env) else env;
+	
+	// Handle the function based on its type
+	switch (fn) {
+		OrUId(id): {
+			// Check if identifier is in environment
+			switch (lookupVar(finalArgEnv, id)) {
+				Some(value): {
+					// Call with the value from environment
+					callFunction(finalArgEnv, value, args);
+				}
+				None(): {
+					// Not in environment
+					println("Cannot call non-function value: " + prettyOrbit(fn));
+					finalArgEnv;
+				}
+			}
+		}
+		
+		OrLambda(env_bindings, params, body): {
+			// Save original environment variables to restore after function call
+			originalVars = finalArgEnv.vars;
+			
+			// Create new environment including the environment bindings
+			callEnv = OrbEnv(finalArgEnv with vars = finalArgEnv.vars);
+			
+			// Add environment bindings to callEnv
+			boundEnv = fold(env_bindings, callEnv, \accEnv, binding -> {
+				bindVar(accEnv, binding.id, binding.math_expr);
+			});
+			
+			// Bind arguments to parameters
+			finalBoundEnv = foldi(args, boundEnv, \i, accEnv, __ -> {
+				if (i < length(params) && i < length(argValues)) {
+					// Get parameter name and argument value
+					paramName = params[i].id;
+					argValue = argValues[i];
+					
+					// Bind parameter to argument value
+					bindVar(accEnv, paramName, argValue);
+				} else {
+					// If we have more or fewer arguments than parameters, just continue
+					accEnv;
+				}
+			});
+			
+			// Evaluate the function body in the new environment
+			resultEnv = interpretOrbit(finalBoundEnv, body);
+			
+			// Return the function result but with the original environment variables
+			// This ensures function parameter bindings don't leak into the outer scope
+			OrbEnv(finalArgEnv with 
+				result = resultEnv.result, 
+				vars = originalVars, 
+				tracing = resultEnv.tracing
+			);
+		}
+		OrOperatorSymbol(id): {
+			// Just construct it
+			OrbEnv(finalArgEnv with result = OrFunction(fn, argValues));
+		}
+		default: {
+			// Not a callable expression
+			println("Cannot call non-function value: " + prettyOrbit(fn));
+			finalArgEnv;
+		}
+	}
+}
+
+// Determines if an argument should be evaluated based on type and shape
+shouldEvaluateArg(paramType : Maybe<OrIdType>, arg : OrMath_expr) -> bool {
+	// Check if this is an "eval()" function call
+	isEvalCall = switch(arg) {
+		OrFunction(funcExpr, innerArgs): {
+			// Check if the function is named "eval" and has exactly one argument
+			switch(funcExpr) {
+				OrUId(id): id == "eval" && length(innerArgs) == 1;
+				OrIdentifier(id): id == "eval" && length(innerArgs) == 1;
+				default: false;
+			}
+		}
+		default: false;
+	};
+	
+	// If it's an AST type but wrapped in eval(), we should evaluate
+	if (isEvalCall) {
+		true;
+	} else {
+		// Otherwise, check if it should be lazily evaluated based on type
+		switch(paramType) {
+			Some(param): !runtimeIsAstType(param.type_annotations);
+			None(): true;  // If we don't know the type, evaluate by default
+		}
+	}
+}
+
+// Main interpreter function
+interpretOrbit(env : OrbEnv, expr : OrMath_expr) -> OrbEnv {
+	todo = \ -> {
+		println("TODO: Interpret " + expr.structname + ": " + prettyOrbit(expr));
+		env
+	};
+	if (env.tracing) println("Interpreting: " + expr.structname + ": " + ellipsis(strReplace(prettyOrbit(expr), "\n", " "), 80));
+	ret = \v -> OrbEnv(env with result = v);
+	// Handle each expression type
+	switch (expr) {
+		OrInt(i): ret(expr);
+		OrInterpolatedString(parts): {
+			// Evaluate interpolated string: concatenate literals and evaluated expressions
+			resultParts = map(parts, \part -> {
+				switch (part) {
+					OrStringInterpolation(interpExpr): {
+						// Evaluate the interpolated expression and convert to string
+						evalEnv = interpretOrbit(env, interpExpr);
+						switch (evalEnv.result) {
+							OrString(s): s;
+							OrInt(i): i2s(i);
+							OrDouble(d): d2s(d);
+							OrBool(b): if (b) "true" else "false";
+							default: "<?>";  // Fallback for complex expressions
+						}
+					}
+					OrStringLiteral(text): text;
+				}
+			});
+			// Concatenate all parts into a single string
+			finalString = strGlue(resultParts, "");
+			ret(OrString(finalString));
+		}
+		OrDouble(d): ret(expr);
+		OrString(s): ret(expr);
+		OrBool(b): ret(expr);
+		OrArray(elements): {
+			// Interpret each element in the array
+			processedElements = map(elements, \e -> (interpretOrbit(env, e)).result);
+			ret(OrArray(processedElements));
+		};
+		OrIndex(a, b): {
+			// Evaluate array expression
+			envA = interpretOrbit(env, a);
+			
+			// Evaluate index expression
+			envB = interpretOrbit(envA, b);
+			
+			// Get the array and index values
+			arrayExpr = envA.result;
+			indexExpr = envB.result;
+			
+			// Check if we have an array
+			switch (arrayExpr) {
+				OrArray(elements): {
+					// Get the index as an integer using the utility function
+					index = getOInt(indexExpr, "array index");
+					
+					// Check if index is in bounds
+					if (index >= 0 && index < length(elements)) {
+						// Return the element at the given index
+						ret(elements[index]);
+					} else {
+						println("ERROR: Array index out of bounds: " + i2s(index) + 
+							" (array length: " + i2s(length(elements)) + ")");
+						ret(OrInt(0));
+					}
+				}
+				default: {
+					println("ERROR: Cannot index non-array value: " + prettyOrbit(arrayExpr));
+					ret(OrInt(0));
+				}
+			}
+		}
+		
+		OrIdentifier(id): {
+			switch (lookupVar(env, id)) {
+				Some(value): ret(value);
+				None(): {
+					// Check if it's a RunCore function name
+					// TODO. Check if it is defined in our runtime, so we can use those are first-order names
+					/*if (isCoreDefined(env.runCore, id)) {
+						// Return a variable with the same name - will be resolved when called
+						ret(OrIdentifier(id));
+					} else */{
+						println("Variable not found: " + id);
+						ret(OrInt(0));
+					}
+				}
+			}
+		}
+		OrUId(uid): {
+			switch (lookupVar(env, uid)) {
+				Some(value): ret(value);
+				None(): {
+					println("Variable not found: " + uid);
+					ret(OrInt(0));
+				}
+			}
+		} 
+		
+		OrAdd(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("+", [a,b], env).result);
+		}
+		OrSubtract(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("-", [a,b], env).result);
+		}		
+		OrMultiply(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("*", [a,b], env).result);
+		}
+		OrDivide(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("/", [a,b], env).result);
+		}
+		OrModulo(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("%", [a,b], env).result);
+		}
+		OrNegate(a): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("*", [OrInt(-1), a], env).result);
+		}
+		
+		OrEquals(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("==", [a,b], env).result);
+		}
+		OrGreaterEquals(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction(">=", [a,b], env).result);
+		}
+		OrGreaterThan(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction(">", [a,b], env).result);
+		}
+		OrLessEquals(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("<=", [a,b], env).result);
+		}
+		OrLessThan(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("<", [a,b], env).result);
+		}
+		OrNotEquals(a, b): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("!=", [a,b], env).result);
+		}
+		OrLogicalAnd(a, b): {
+			envA = interpretOrbit(env, a);
+			if (getOBool(envA.result, "logical and") == false) {
+				// Short-circuit evaluation
+				envA;
+			} else {
+				envB = interpretOrbit(envA, b);
+				OrbEnv(env with result = envB.result);
+			}
+		}
+		OrLogicalOr(a, b): {
+			envA = interpretOrbit(env, a);
+			if (getOBool(envA.result, "logical or") == true) {
+				// Short-circuit evaluation
+				envA;
+			} else {
+				envB = interpretOrbit(envA, b);
+				OrbEnv(env with result = envB.result);
+			}
+		}
+		OrLogicalNot(a): {
+			OrbEnv(env with result = callOrbitRuntimeFunction("not", [a], env).result);
+		}
+
+		OrLet(idType, val): {
+			varName = idType.id;
+			envVal = interpretOrbit(env, val);
+			// Create new environment with the binding
+			bindVar(env, varName, envVal.result);
+		}
+		OrFnDef(id, id_types, type_annotations, math_expr): {
+			// Create a new function definition
+			// Safe to skip bindings for top-level.
+			fnDef = OrLambda([], id_types, math_expr);
+			// Bind the function to the environment
+			bindVar(env, id, fnDef);
+		}
+		
+		OrIfElse(cond, thenExpr, elseExpr): {
+			envCond = interpretOrbit(env, cond);
+			// Use our native getOBool function
+			condValue = getOBool(envCond.result, "if condition");
+			
+			if (condValue) {
+				interpretOrbit(envCond, thenExpr);
+			} else {
+				interpretOrbit(envCond, elseExpr);
+			}
+		}
+		OrSequence(a, b): {
+			switch (a) {
+				OrEquals(__, __): {
+					println("WARNING: Sequence with equals operator. Did you mean 'let' instead?");
+				}
+				default: {}
+			}
+			env1 = interpretOrbit(env, a);
+			// The result of the first expression is discarded
+			interpretOrbit(env1, b);
+		}
+/*		OrComma(a, b): {
+			env1 = interpretOrbit(env, a);
+			// The result of the first expression is discarded
+			interpretOrbit(env1, b);
+		}
+*/		
+		OrFunction(fnExpr, argExprs): {
+			// Check if this is a constructor call
+			if (isConstructor(expr)) {
+				// For constructors, we just evaluate the arguments and keep the constructor as is
+				evaluatedArgs = map(argExprs, \arg -> {
+					interpretOrbit(env, arg).result;
+				});
+				ret(OrFunction(fnExpr, evaluatedArgs));
+			} else {
+				switch (fnExpr) {
+					OrIdentifier(id): {
+						// Check if this is a function in our runtime
+						if (isOrbitRuntimeFunction(id)) {
+							// Call the runtime function directly with raw arguments
+							callOrbitRuntimeFunction(id, argExprs, env);
+						} else {
+							// Not in runtime, pass to callFunction
+							envFn = interpretOrbit(env, fnExpr);
+							callFunction(envFn, envFn.result, argExprs);
+						}
+					}
+					default: {
+						// Evaluate the function expression
+						envFn = interpretOrbit(env, fnExpr);
+						// Call the function with arguments
+						callFunction(envFn, envFn.result, argExprs);
+					}
+				}
+			}
+		}
+		
+		OrLambda(bindings, params, body): {
+			// Find all free variables in the body (excluding the parameter names)
+			boundVars = fold(params, makeSet(), \acc, param -> {
+				insertSet(acc, param.id);
+			});
+			
+			// Get the set of free variables
+			freeVars = findFreeVars(body, boundVars);
+			
+			// Create new environment bindings for free variables
+			newBindings = createEnvBindings(freeVars, env.vars);
+			
+			// Return a new lambda with the environment bindings
+			ret(OrLambda(newBindings, params, body));
+		}
+		OrOperatorSymbol(id): ret(expr);
+		OrCompose(math_expr1, math_expr2): todo();
+		OrDirectProduct(math_expr1, math_expr2): todo();
+		OrLeftSemiDirectProduct(math_expr1, math_expr2): todo();
+		OrRightSemiDirectProduct(math_expr1, math_expr2): todo();
+		OrElementOf(math_expr1, math_expr2): todo();
+		OrEntailment(math_expr1, math_expr2, conditionals): todo();
+		OrEquivalence(math_expr1, math_expr2, conditionals, full): todo();
+		OrExists(math_exprs): todo();
+		OrExponent(a, b): {
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			
+			// Check if both values are integers 
+			aIsInt = switch (envA.result) {
+				OrInt(__): true;
+				default: false;
+			};
+			
+			bIsInt = switch (envB.result) {
+				OrInt(__): true;
+				default: false;
+			};
+			
+			// Handle integer and floating point cases
+			if (aIsInt && bIsInt) {
+				// Extract integer values
+				aInt = getOInt(envA.result, "exponent.base");
+				bInt = getOInt(envB.result, "exponent.power");
+				
+				// Calculate integer power
+				result = pow(aInt, bInt);
+				OrbEnv(env with result = OrInt(result));
+			} else {
+				// Convert to doubles for non-integer cases
+				aDouble = getODouble(envA.result, "exponent.base");
+				bDouble = getODouble(envB.result, "exponent.power");
+				
+				// Calculate floating point power
+				result = dpow(aDouble, bDouble);
+				OrbEnv(env with result = OrDouble(result));
+			}
+		}
+		OrField(math_expr, id): todo();
+		OrForall(math_exprs): todo();
+		OrIntersection(math_expr1, math_expr2): todo();
+		OrMatch(matchExpr, patterns): {
+			// First evaluate the expression to match
+			envMatch = interpretOrbit(env, matchExpr);
+			exprValue = envMatch.result;
+			
+			// Execute pattern matching, passing the interpreter function itself
+			resultEnv = executeMatch(envMatch, exprValue, patterns, interpretOrbit);
+			
+			// Special case for debugging
+			if (env.tracing) {
+				println("Pattern matching result: " + prettyOrbit(resultEnv.result));
+			}
+			
+			// Evaluate the result expression in the updated environment
+			resultEnv;
+		}
+		OrRule(lhs, rhs, conditionals, full): {
+			ret(expr)
+		}
+		OrSetComprehension(math_exprs, math_expr): todo();
+		OrSetLiteral(math_exprs): todo();
+		OrEllipsis(): todo();
+		OrSubscript(math_expr, subscript): todo();
+		OrSubset(math_expr1, math_expr2): todo();
+		OrSuperscript(math_expr, superscript): todo();
+		OrTypeAnnotation(math_expr1, math_expr2): todo();
+		OrNotTypeAnnotation(math_expr1, math_expr2): todo();
+		OrTypeSubstitution(math_expr1, math_expr2, math_expr3): todo();
+		OrTypeVar(string1): todo();
+		OrUnion(math_expr1, math_expr2): todo();
+		OrImport(opath): {
+			path = if (fileExists(opath)) opath
+				else pathCombine(getUrlParameter("I"), opath);
+			// Check if the file has already been imported in the current scope
+			if (containsSet(env.importedFiles, path)) {
+				if (env.tracing) {
+					println("Already imported in current scope: " + path);
+				}
+				// Return the current environment unchanged, since the file is already imported
+				env;
+			} else {
+				// Mark this file as imported in the current scope
+				envWithImport = OrbEnv(env with importedFiles = insertSet(env.importedFiles, path));
+				
+				// Try to get the imported file from cache first
+				switch (lookupTree(^(env.importCache), path)) {
+					Some(content): {
+						// File already parsed, just evaluate it in the current env
+						if (env.tracing) {
+							println("Using cached import for: " + path);
+						}
+						
+						// Interpret the content in the current environment
+						interpretOrbit(envWithImport, content);
+					}
+					None(): {
+						// File not in cache, we need to parse it
+						if (env.tracing) {
+							println("Importing file: " + path);
+						}
+						
+						// Build the full file path (add .orb extension if not present)
+						filePath = if (!strContains(path, ".orb")) {
+							path + ".orb";
+						} else path;
+						
+						// Check if file exists
+						if (fileExists(filePath)) {
+							// Read file content
+							program = getFileContent(filePath);
+							
+							// Parse the file using the mango parser
+							res = parseCompiledMango(filePath, program, orbit_parse_orbit_compiled, flow(0));
+							
+							if (res.second != "") {
+								// Parse error
+								println(filePath + ": " + res.second);
+								ret(OrString("Error parsing imported file: " + filePath + " - " + res.second));
+							} else {
+								// Cache the parsed expression (AST, not the evaluated result)
+								env.importCache := setTree(^(env.importCache), path, res.first);
+								
+								// Interpret the imported content in the current environment
+								interpretOrbit(envWithImport, res.first);
+							}
+						} else {
+							// File not found
+							println("Error: File not found: " + filePath + " with cwd " + getCurrentDirectory());
+							ret(OrString("Error: File not found: " + filePath));
+						}
+					}
+				}
+			}
+		}
+		// Quote-related nodes
+		OrQuote(e): {
+			// Quote prevents evaluation and returns the expression as-is
+			ret(e);
+		}
+		OrQuasiquote(e): {
+			// For basic implementation, we'll handle quasiquote as a quote
+			// In a more complete implementation, we'd recursively process e,
+			// evaluating any unquote expressions inside it
+			ret(e);
+		}
+		OrUnquote(e): {
+			// Unquote normally only makes sense inside a quasiquote
+			// For now, just evaluate the expression
+			interpretOrbit(env, e);
+		}
+		OrUnquoteSplicing(e): {
+			// Unquote-splicing also only makes sense inside a quasiquote
+			// For now, just evaluate the expression
+			interpretOrbit(env, e);
+		}
+
+		// New operators from terminology.md
+		OrDerivative(id, e): {
+			// Placeholder for derivative calculation
+			todo();
+			envE = interpretOrbit(env, e);
+			ret(OrString("d/d" + id + " of " + prettyOrbit(envE.result)));
+		}
+		OrGradient(e): {
+			// Placeholder for gradient calculation
+			todo();
+			envE = interpretOrbit(env, e);
+			ret(OrString("∇ " + prettyOrbit(envE.result)));
+		}
+		OrGroupOrder(e): {
+			// Placeholder for group order calculation
+			todo();
+			envE = interpretOrbit(env, e);
+			ret(OrString("|" + prettyOrbit(envE.result) + "|"));
+		}
+		OrHomomorphism(e1, e2): {
+			// Placeholder for homomorphism
+			todo();
+			envE1 = interpretOrbit(env, e1);
+			envE2 = interpretOrbit(envE1, e2);
+			ret(OrString("φ(" + prettyOrbit(envE1.result) + ", " + prettyOrbit(envE2.result) + ")"));
+		}
+		OrIntegral(e): {
+			// Placeholder for integral calculation
+			todo();
+			envE = interpretOrbit(env, e);
+			ret(OrString("∫ " + prettyOrbit(envE.result)));
+		}
+		OrIsomorphism(e1, e2): {
+			// Placeholder for isomorphism
+			todo();
+			envE1 = interpretOrbit(env, e1);
+			envE2 = interpretOrbit(envE1, e2);
+			ret(OrString(prettyOrbit(envE1.result) + " ≅ " + prettyOrbit(envE2.result)));
+		}
+		OrNormalSubgroup(e1, e2): {
+			// Placeholder for normal subgroup relation
+			todo();
+			envE1 = interpretOrbit(env, e1);
+			envE2 = interpretOrbit(envE1, e2);
+			ret(OrString(prettyOrbit(envE1.result) + " ⊲ " + prettyOrbit(envE2.result)));
+		}
+		OrPartialDerivative(id, e): {
+			// Placeholder for partial derivative calculation
+			todo();
+			envE = interpretOrbit(env, e);
+			ret(OrString("∂/∂" + id + " of " + prettyOrbit(envE.result)));
+		}
+		OrSummation(e): {
+			// Placeholder for summation calculation
+			todo();
+			envE = interpretOrbit(env, e);
+			ret(OrString("∑ " + prettyOrbit(envE.result)));
+		}
+		OrTensorProduct(e1, e2): {
+			// Placeholder for tensor product
+			todo();
+			envE1 = interpretOrbit(env, e1);
+			envE2 = interpretOrbit(envE1, e2);
+			ret(OrString(prettyOrbit(envE1.result) + " ⊗ " + prettyOrbit(envE2.result)));
+		}
+		// Domain navigation operators
+		OrDomainDown(a, b): {
+			// Domain navigation down from a to b
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			ret(OrString(prettyOrbit(envA.result) + " ⋱ " + prettyOrbit(envB.result)));
+		}
+		OrDomainPath(a, b): {
+			// Domain navigation path from a to b
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			ret(OrString(prettyOrbit(envA.result) + " ⋯ " + prettyOrbit(envB.result)));
+		}
+		OrDomainUp(a, b): {
+			// Domain navigation up from a to b
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			ret(OrString(prettyOrbit(envA.result) + " ⋰ " + prettyOrbit(envB.result)));
+		}
+		// Added for new types
+		OrApproxEquals(a, b): {
+			// Handle approximate equality
+			todo();
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			ret(OrString(prettyOrbit(envA.result) + " ≈ " + prettyOrbit(envB.result)));
+		}
+		OrApproxLessEquals(a, b): {
+			// Handle approximately less than or equal
+			todo();
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			ret(OrString(prettyOrbit(envA.result) + " ⪅ " + prettyOrbit(envB.result)));
+		}
+		OrEmptySet(): {
+			// Empty set literal
+			ret(expr);
+		}
+		OrGroupAction(g, s): {
+			// Placeholder for group action
+			todo();
+			envG = interpretOrbit(env, g);
+			envS = interpretOrbit(envG, s);
+			ret(OrString(prettyOrbit(envG.result) + " ⋉ " + prettyOrbit(envS.result)));
+		}
+		OrIdeal(exprs): {
+			// Placeholder for ideal generation
+			todo();
+			// Interpret each generator in the ideal
+			processedExprs = map(exprs, \e -> (interpretOrbit(env, e)).result);
+			ret(OrIdeal(processedExprs));
+		}
+		OrNorm(e): {
+			// Placeholder for norm calculation
+			todo();
+			envE = interpretOrbit(env, e);
+			ret(OrString("‖" + prettyOrbit(envE.result) + "‖"));
+		}
+		OrSetDifference(a, b): {
+			// Placeholder for set difference
+			todo();
+			envA = interpretOrbit(env, a);
+			envB = interpretOrbit(envA, b);
+			ret(OrString(prettyOrbit(envA.result) + " \\setminus " + prettyOrbit(envB.result)));
+		}
+	}
+}

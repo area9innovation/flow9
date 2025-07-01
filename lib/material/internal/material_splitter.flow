@@ -23,7 +23,7 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 	sizeWatcher = extractStruct(m.style, MSplitterSizeWatcher(make(0.0))).size;
 
 	splitterHandle = !contains(m.style, MSplitterDontHandle());
-	splitterSize = extractStruct(m.style, MSplitterSize(0., -1., 0., -1.));
+	splitterLimits = extractStruct(m.style, MSplitterLimits(zero, const(-1.), zero, const(-1.)));
 	splitterWH = tryExtractStruct(m.style, MSplitterWidthHeight(makeWH(), makeWH()));
 	vertical = !contains(m.style, MSplitterHorizontal());
 	enabled = extractStruct(m.style, MEnabled(const(true))).enabled;
@@ -35,33 +35,34 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 	scrollStyle = extractStruct(m.style, MSplitterScrollStyle([])).style;
 
 	minMax =
-		fselect2(stageSize, separatorEnabled, FLift2(\metric, sEn ->
-			if (metric > dividerW) {
-				dividerGap = if (sEn) dividerW / metric / 2. else 0.;
-
-				MSplitterPercentMinMax(
-					max(
-						max(splitterSize.min1 / metric + dividerGap, dividerGap),
-						if (splitterSize.max2 > 0.)
-							max(1. - dividerGap - max(splitterSize.max2, splitterSize.min2) / metric, dividerGap)
-						else
-							dividerGap
-					),
-					min(
-						if (splitterSize.max1 > 0.)
-							min(max(splitterSize.max1, splitterSize.min1) / metric + dividerGap, 1. - dividerGap)
-						else
-							1. - dividerGap,
-						max(1. - dividerGap - max(splitterSize.min2, 0.) / metric, dividerGap),
+		fsubselect2(stageSize, separatorEnabled, \stSize, sEn ->
+			if (stSize > dividerW) {
+				dividerGap = if (sEn) dividerW / stSize / 2. else 0.;
+				fselect4(splitterLimits.min1, splitterLimits.max1, splitterLimits.min2, splitterLimits.max2, \min1, max1, min2, max2 -> {
+					MSplitterPercentMinMax(
+						max(
+							max(min1 / stSize + dividerGap, dividerGap),
+							if (max2 > 0.)
+								max(1. - dividerGap - max(max2, min2) / stSize, dividerGap)
+							else
+								dividerGap
+						),
+						min(
+							if (max1 > 0.)
+								min(max(max1, min1) / stSize + dividerGap, 1. - dividerGap)
+							else
+								1. - dividerGap,
+							max(1. - dividerGap - max(min2, 0.) / stSize, dividerGap),
+						)
 					)
-				)
+				});
 			} else {
-				MSplitterPercentMinMax(doubleMin, doubleMax)
+				const(MSplitterPercentMinMax(doubleMin, doubleMax))
 			}
-		));
+		);
 
-	fillerSizeFn = if (vertical) TFillWY else TFillXH;
-	fixedSizeFn = \sz -> if (vertical) TFixed(sz, 0.) else TFixed(0., sz);
+	sizeByDirection = \sz -> if (vertical) TSizedWidth(sz, 0.) else TSizedHeight(0., sz);
+	fillerSizeByDirection = if (vertical) TFillWYT else TFillXHT;
 	cursor = if (vertical) EWResizeCursor() else NSResizeCursor();
 
 	handle =
@@ -80,9 +81,9 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 
 	splitter =
 		TGroup([
-			TCursor(cursor, TRectangle([MFill(splitterColor), splitterOpacity], fillerSizeFn(dividerW))),
-			TCenterIn(handle, fillerSizeFn(dividerW)),
-			TRectangle(interactiveRectangleStyle, fillerSizeFn(minInteractiveSize))
+			TCursor(cursor, TRectangle([MFill(splitterColor), splitterOpacity], fillerSizeByDirection(const(dividerW)))),
+			TCenterIn(handle, fillerSizeByDirection(const(dividerW))),
+			TRectangle(interactiveRectangleStyle, fillerSizeByDirection(const(minInteractiveSize)))
 			|> (\t2 -> TCursor(cursor, t2))
 			|> (\t2 -> TTranslate(const(Point((dividerW - minInteractiveSize) / 2., 0.)), t2))
 		])
@@ -148,24 +149,31 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 			))
 	};
 
+	minSize = fselect2Lift(splitterLimits.min1, splitterLimits.min2, \min1, min2 ->
+		max(0., min1) + dividerW + max(0., min2)
+	);
+
+	maxSize = fselect4(splitterLimits.min1, splitterLimits.max1, splitterLimits.min2, splitterLimits.max2, \min1, max1, min2, max2 -> {
+		max3(0., min1, max1) + dividerW + max3(0., min2, max2)
+	});
+
 	(\p ->
 		TAttachBox2(
 			TGroup2(
-				fixedSizeFn(max(0., splitterSize.min1) + dividerW + max(0., splitterSize.min2)),
+				sizeByDirection(minSize),
 
-				if (splitterSize.max1 > 0. && splitterSize.max2 > 0.)
-					TAvailable(
-						m2t(m.size, p),
-						fillerSizeFn(max3(0., splitterSize.min1, splitterSize.max1) + dividerW + max3(0., splitterSize.min2, splitterSize.max2))
-					)
-				else
-					m2t(m.size, p)
+				TSelect(fand(fgreater(splitterLimits.max1, zero), fgreater(splitterLimits.max2, zero)), \maxLimitEnabled -> {
+					if (maxLimitEnabled) {
+						TAvailable(m2t(m.size, p), fillerSizeByDirection(maxSize))
+ 					} else {
+						m2t(m.size, p)
+					}
+				})
 			),
 			stageWH,
 			[
 				makeContentBox(p, true),
-				fixedSizeFn(dividerW)
-				|> (\t -> TShow(separatorEnabled, t)),
+				sizeByDirection(fif(separatorEnabled, const(dividerW), zero)),
 				makeContentBox(p, false)
 				|> (\t -> TShow(enabled, t))
 			]

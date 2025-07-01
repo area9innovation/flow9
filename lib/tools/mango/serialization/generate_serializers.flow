@@ -9,19 +9,11 @@ export {
 	// Generate serialization code for the given types
 	// Returns the content to be saved to a file
 	generateSerializers(types : [MType], modulePrefix : string) -> string;
-
-	// Generate a serializer for a specific union type
-	generateUnionSerializer(unionType : MTypeUnion, types : [MType]) -> string;
-
-	// Generate a serializer for a specific struct type
-	generateStructSerializer(structType : MTypeConstructor, types : [MType]) -> string;
-
-	// Generate the top level function that dispatches based on type
-	generateTopLevelSerializer(rootType : MType, types : [MType], modulePrefix : string) -> string;
 }
 
 // Generate all serialization code for the given types
 generateSerializers(types : [MType], modulePrefix : string) -> string {
+	println("Generating serializers for " + modulePrefix + " with " + i2s(length(types)) + " types");
 	// Find the root type (first union or last type)
 	rootType = fold(types, types[length(types) - 1], \acc, t -> {
 		switch (t) {
@@ -36,10 +28,11 @@ generateSerializers(types : [MType], modulePrefix : string) -> string {
 	typeResults = processTypeSerializers(types);
 	
 	// Generate imports
+	println("Generating imports with modulePrefix: " + modulePrefix);
 	imports = blueprint(
 		"import tools/mango/serialization/serialize_runtime;
-		import %modulePrefix_types;
-		import %modulePrefix_opcodes;\n\n",
+		import %modulePrefix%_types;
+		import %modulePrefix%_opcodes;\n\n",
 		["modulePrefix", modulePrefix]
 	);
 
@@ -163,53 +156,54 @@ generateWithContinuations(structName : string, fields : [MType]) -> string {
 		["STRUCT_NAME", toUpperCase(structName)]
 	);
 
-	// Define a recursive function for processing remaining fields
-	processContinuationFields = \process, startIndex, acc -> {
-		if (startIndex >= length(fields)) acc
-		else {
-			// Determine how many more fields we have in this batch
-			newCode = if (startIndex + 2 < length(fields)) {
-				// Three more fields
-				blueprint(
-					"// Continuation opcode for more fields
-					opcode = Opcode(OP_CONT, field%i1Index, field%i2Index, field%i3Index);",
-					["i1", i2s(startIndex), "i2", i2s(startIndex+1), "i3", i2s(startIndex+2)]
-				);
-			} else if (startIndex + 1 < length(fields)) {
-				// Two more fields
-				blueprint(
-					"// Continuation opcode for more fields
-					opcode = Opcode(OP_CONT, field%i1Index, field%i2Index, -1);",
-					["i1", i2s(startIndex), "i2", i2s(startIndex+1)]
-				);
-			} else {
-				// One more field
-				blueprint(
-					"// Continuation opcode for more fields
-					opcode = Opcode(OP_CONT, field%i1Index, -1, -1);",
-					["i1", i2s(startIndex)]
-				);
-			};
-			
-			// Add code to record the opcode
-			nextAcc = acc + newCode + 
-				"\n\t\tcontIndex = ^(state.currentIndex);\n" +
-				"\t\tstate.opcodes := arrayPush(^(state.opcodes), opcode);\n" +
-				"\t\tstate.currentIndex := contIndex + 1;\n" +
-				"\t\tindex = contIndex;\n";
-			
-			// Recursively process the next group of fields
-			process(process, startIndex + 3, nextAcc);
-		}
-	};
-
 	// Start the recursive processing from index 3
-	continuationCode = processContinuationFields(processContinuationFields, 3, "");
+	continuationCode = processContinuationFields(fields, 3, "");
 
 	// Combine base code with continuations and return
 	finalCode = baseCode + continuationCode + "\n\t\t// Return the index of the main struct opcode\n\t\tindex;";
 	finalCode;
 }
+
+
+// Define a recursive function for processing remaining fields
+processContinuationFields(fields, startIndex, acc) -> string {
+	if (startIndex >= length(fields)) acc
+	else {
+		// Determine how many more fields we have in this batch
+		newCode = if (startIndex + 2 < length(fields)) {
+			// Three more fields
+			blueprint(
+				"// Continuation opcode for more fields
+				opcode = Opcode(OP_CONT, field%i1Index, field%i2Index, field%i3Index);",
+				["i1", i2s(startIndex), "i2", i2s(startIndex+1), "i3", i2s(startIndex+2)]
+			);
+		} else if (startIndex + 1 < length(fields)) {
+			// Two more fields
+			blueprint(
+				"// Continuation opcode for more fields
+				opcode = Opcode(OP_CONT, field%i1Index, field%i2Index, -1);",
+				["i1", i2s(startIndex), "i2", i2s(startIndex+1)]
+			);
+		} else {
+			// One more field
+			blueprint(
+				"// Continuation opcode for more fields
+				opcode = Opcode(OP_CONT, field%i1Index, -1, -1);",
+				["i1", i2s(startIndex)]
+			);
+		};
+		
+		// Add code to record the opcode
+		nextAcc = acc + newCode + 
+			"\n\t\tcontIndex = ^(state.currentIndex);\n" +
+			"\t\tstate.opcodes := arrayPush(^(state.opcodes), opcode);\n" +
+			"\t\tstate.currentIndex := contIndex + 1;\n" +
+			"\t\tindex = contIndex;\n";
+		
+		// Recursively process the next group of fields
+		processContinuationFields(fields, startIndex + 3, nextAcc);
+	}
+};
 
 // Generate code for serializing a field based on its type
 generateFieldSerializer(prefix : string, field : MType, index : int) -> string {

@@ -1,0 +1,299 @@
+import material/material2tropic;
+import string;
+import timer;
+
+// Define structs for test data and results
+export {
+	XSSTest(input : string, shouldSanitize : bool, description : string);
+	AggregatedResults(totalTests : int, passedTests : int, passPercentage : double);
+}
+
+main() {
+	mManager = makeMaterialManager([]);
+    setRendererType("html");
+
+	// Create behaviors for our test
+	currentTestString = make("");
+	inputValue = make("");
+	testResults : DynamicBehaviour<[Pair<XSSTest, string>]> = make([]);
+	currentTestIndex = make(0);
+	testingInProgress = make(false);
+
+	// List of XSS attack strings to test with expected behavior
+	xssAttackStrings = [
+		// HTML tags with scripts are definitely sanitized
+		XSSTest("<script>alert('XSS')</script>", true, "Basic script tag attack"),
+
+		// HTML tags with JavaScript event handlers are sanitized
+		XSSTest("<img src=\"javascript:alert('XSS')\">", true, "JavaScript in image src"),
+		XSSTest("<img src=x onerror=alert('XSS')>", true, "Event handler in img tag"),
+		XSSTest("<svg onload=alert('XSS')>", true, "SVG with onload event"),
+		XSSTest("<a href=\"javascript:alert('XSS')\">", true, "JavaScript in anchor href"),
+		XSSTest("<iframe src=\"javascript:alert('XSS')\"></iframe>", true, "JavaScript in iframe src"),
+		XSSTest("<div style=\"width: expression(alert('XSS'));\">", true, "CSS expression attack"),
+		
+		// These standalone JavaScript pieces without HTML tags might not be sanitized
+		XSSTest("javascript:alert('XSS')", false, "JavaScript URI without HTML context"),
+		XSSTest("' onmouseover='alert(\"XSS\")'" , false, "Single quote event handler without HTML tag"),
+		XSSTest("\" onmouseover=\"alert('XSS')\"", false, "Double quote event handler without HTML tag"),
+		XSSTest("onerror=alert('XSS') x=", false, "Unquoted attribute handler without HTML tag"),
+		
+		// Multiple tags test cases
+		XSSTest("<div><script>alert('XSS')</script></div>", true, "Nested script tag inside div"),
+		XSSTest("<p>Hello</p><script>alert('XSS')</script><p>World</p>", true, "Script tag between paragraphs"),
+		XSSTest("<div><img src=\"x\" onerror=\"alert('XSS')\" /></div>", true, "Event handler inside div"),
+		XSSTest("<p>Safe paragraph</p><p>Another safe paragraph</p>", false, "Multiple safe HTML elements"),
+		XSSTest("<b>Bold</b> and <i>italic</i> but <script>alert('XSS')</script>", true, "Mix of safe and unsafe elements"),
+		
+		// Single characters and malformed tags
+		XSSTest("This contains a < character", false, "Single less-than character"),
+		XSSTest("This contains a > character", false, "Single greater-than character"),
+		
+		// HTML comments and entities
+		XSSTest("<!-- <script>alert('XSS')</script> -->", true, "Script in HTML comment"),
+		XSSTest("&lt;script&gt;alert('XSS')&lt;/script&gt;", false, "HTML entity encoded script"),
+		
+		// Encoded attacks
+		XSSTest("<img src=\"x\" on&#101;rror=\"alert('XSS')\">", true, "HTML entity in event handler name"),
+		XSSTest("<img src=\"x\" onfocus=\"alert(\\u0058\\u0053\\u0053)\">", true, "Unicode escape sequence in script"),
+		
+		// Case sensitivity tests
+		XSSTest("<ScRiPt>alert('XSS')</ScRiPt>", true, "Mixed case script tag"),
+		XSSTest("<IMG SRC=\"javascript:alert('XSS')\">", true, "Uppercase img tag"),
+		
+		// Safe strings should remain unchanged
+		XSSTest("Regular text with no XSS", false, "Safe string that should remain unchanged"),
+		XSSTest("<div>Just a regular div</div>", false, "Safe HTML element"),
+		XSSTest("<img src=\"legitimate.jpg\">", false, "Safe img tag"),
+		XSSTest("<img alt=\"Legitimate image\">", false, "Safe img tag with alt attribute"),
+		
+        // Test with separators
+		XSSTest("<test>text,text2<test>", false, "Multiple tag-like structures with separators outside"),
+		XSSTest("<test, text>text<test>", true, "Multiple tag-like structures with separators inside"),
+		// Add more XSS attack vectors as needed
+		XSSTest("a<b <test>", false, "Less than and tag-like structure"),
+		XSSTest("a < b <test>", false, "Less than and tag-like structure (with spaces)"),
+		XSSTest("a <= b,c <test>", false, "Less than and tag-like structure (with spaces)"),
+		XSSTest("=oneof(show_blue_box,show_green_box) and oneof(show_blue_box AND slider<value, show_green_box AND 5<slider>)", false, "Less than and tag-like structure (with spaces)"),
+		XSSTest("<test> a>b", false, "Greater than and tag-like structure"),
+		XSSTest("<test> a > b", false, "Greater than and tag-like structure (with spaces)")
+	];
+
+	// Forward declaration for recursive function using correct syntax
+	runTest = ref nop1;
+
+	// Function to calculate aggregated results
+	calculateAggregatedResults = \results -> {
+		totalTests = length(results);
+		passedTests = fold(results, 0, \acc, result -> {
+			testCase = result.first;
+			sanitizedValue = result.second;
+			// Test passes if:
+			// - It should be sanitized AND it was changed
+			// - It should NOT be sanitized AND it wasn't changed
+			wasSanitized = testCase.input != sanitizedValue;
+			passesTest = testCase.shouldSanitize == wasSanitized;
+			if (passesTest) acc + 1 else acc;
+		});
+		passPercentage = if (totalTests > 0) i2d(passedTests * 100) / i2d(totalTests) else 0.0;
+		AggregatedResults(totalTests, passedTests, passPercentage);
+	};
+	
+	// Function to log test results to console as a single text
+	logTestResultsToConsole = \results -> {
+		aggResults = calculateAggregatedResults(results);
+		
+		// Build a complete report as a single string using fold operations
+		outputHeader = "\n===== XSS Prevention Test Results =====\n";
+		
+		// Create test result strings
+		testResultsText = foldi(results, "", \idx, acc, result -> {
+			testCase = result.first;
+			original = testCase.input;
+			sanitized = result.second;
+			description = testCase.description;
+			shouldSanitize = testCase.shouldSanitize;
+
+			wasSanitized = original != sanitized;
+			passesTest = shouldSanitize == wasSanitized;
+		
+			sanitizationResult = if (wasSanitized) "SANITIZED" else "UNCHANGED";
+			expectedResult = if (shouldSanitize) "SHOULD BE SANITIZED" else "SHOULD REMAIN UNCHANGED";
+			testResult = if (passesTest) "PASS" else "FAIL";
+			
+			testOutput = "Test #" + i2s(idx + 1) + ": " + description + "\n" +
+				"  Original: " + original + "\n" +
+				"  Sanitized: " + sanitized + "\n" +
+				"  Result: " + sanitizationResult + " | Expected: " + expectedResult + " | " + testResult + "\n";
+			
+			failedOutput = if (!passesTest) "  TEST FAILED!\n" else "";
+			
+			acc + testOutput + failedOutput + "\n";
+		});
+		
+		// Create summary string
+		totalTests = aggResults.totalTests;
+		passedTests = aggResults.passedTests;
+		passPercentage = aggResults.passPercentage;
+		
+		summaryOutput = "===== SUMMARY =====\n" +
+			"Total tests: " + i2s(totalTests) + "\n" +
+			"Tests passed: " + i2s(passedTests) + " (" + d2s(passPercentage) + "%)\n" +
+			"Tests failed: " + i2s(totalTests - passedTests) + " (" + d2s(100.0 - passPercentage) + "%)\n";
+		
+		resultOutput = if (passPercentage == 100.0) 
+			"ALL TESTS PASSED!\n" 
+			else 
+			"SOME TESTS FAILED!\n";
+		
+		// Combine all sections and print the complete report
+		finalOutput = outputHeader + testResultsText + summaryOutput + resultOutput;
+		println(finalOutput);
+	};
+
+	// Function to run a single test with timers
+	runTest := \testIndex -> {
+		if (testIndex < length(xssAttackStrings)) {
+			next(testingInProgress, true);
+			testCase = xssAttackStrings[testIndex];
+			testString = testCase.input;
+			next(currentTestString, testString);
+
+			// Set the value to the protected input
+			next(inputValue, testString);
+
+			// Add a timer to wait for the input to process the value
+			timer(300, \ -> {
+				// Now read back the value (which should be sanitized if needed)
+				sanitizedValue = getValue(inputValue);
+
+				// Record the test result with the full test case information
+				testResult : Pair<XSSTest, string> = Pair(testCase, sanitizedValue);
+				next(testResults, concat(getValue(testResults), [testResult]));
+
+				// Move to next test after a short delay
+				timer(400, \ -> {
+					next(currentTestIndex, testIndex + 1);
+					
+					// Continue to the next test
+					if (testIndex + 1 < length(xssAttackStrings)) {
+						^runTest(testIndex + 1);
+					} else {
+						next(testingInProgress, false);
+						// Log results to console when all tests are complete
+						logTestResultsToConsole(getValue(testResults));
+					}
+				});
+			});
+		} else {
+			next(testingInProgress, false);
+		}
+	};
+
+	// Function to run all tests
+	runAllTests = \ -> {
+		next(testResults, []);
+		next(currentTestIndex, 0);
+		^runTest(0);
+	};
+
+	// Build UI
+	ui = MLines([
+		MText("XSS Prevention Test", [MTitle()]),
+
+		// The protected input field
+		MText("Input with XSS Prevention:", []), 
+		MTextInput(inputValue, [MLabel("Test Input")], [MInputPreventFromXSS(true)]), // MInputPreventFromXSS as state not style
+
+		// Test status indicator
+		MSelect(testingInProgress, \inProgress -> {
+			if (inProgress) {
+				MText("Testing in progress...", [MBlue(500)]);
+			} else {
+				MEmpty();
+			}
+		}),
+
+		// Current test information
+		MText("Current Test:", []), 
+		MSelect(currentTestString, \s -> MText(s, [])),
+
+		// Test controls
+		MCols([
+			MSelect(testingInProgress, \inProgress -> {
+				if (!inProgress) {
+					MCols([
+						MTextButton("Run Current Test", \ -> {
+							^runTest(getValue(currentTestIndex));
+						}, [], []),
+
+						MTextButton("Run All Tests", runAllTests, [], [])
+					]);
+				} else {
+					MText("Please wait for tests to complete...", []);
+				}
+			})
+		]),
+
+		// Test results
+		MText("Test Results:", []), 
+		MSelect(testResults, \results -> {
+			MLines([
+				// Individual test results
+				MLines(map(results, \result -> {
+					testCase = result.first;
+					original = testCase.input;
+					sanitized = result.second;
+					description = testCase.description;
+					shouldSanitize = testCase.shouldSanitize;
+
+					wasSanitized = original != sanitized;
+					passesTest = shouldSanitize == wasSanitized;
+
+					sanitizationResult = if (wasSanitized) "SANITIZED" else "UNCHANGED";
+					expectedResult = if (shouldSanitize) "SHOULD BE SANITIZED" else "SHOULD REMAIN UNCHANGED";
+					testResult = if (passesTest) "PASS" else "FAIL";
+					
+					// Colors for visual indicators
+					testResultColor = if (passesTest) MGreen(500) else MRed(500);
+
+					MLines([
+						MText("Test: " + description, [MSubtitle()]),
+						MText("Original: " + original, []),
+						MText("Sanitized: " + sanitized, []),
+						MCols([
+							MText("Result: " + sanitizationResult, []),
+							MText(" | Expected: " + expectedResult, []),
+							MText(" | " + testResult, [testResultColor])
+						]),
+						MText("-------------------", [])
+					]);
+				}))
+                |> MScrollBox,
+				
+				// Aggregated results
+				MSelect(testResults, \r -> {
+					if (length(r) > 0) {
+						aggResults = calculateAggregatedResults(r);
+						totalTests = aggResults.totalTests;
+						passedTests = aggResults.passedTests;
+						passPercentage = aggResults.passPercentage;
+						
+						MLines([
+							MText("===== SUMMARY =====", [MBlue(500)]),
+							MText("Total tests: " + i2s(totalTests), []),
+							MText("Tests passed: " + i2s(passedTests) + " (" + d2s(passPercentage) + "%)", 
+								[if (passPercentage == 100.0) MGreen(500) else MRed(500)]),
+							MText("Tests failed: " + i2s(totalTests - passedTests) + 
+								" (" + d2s(100.0 - passPercentage) + "%)", [])
+						]);
+					} else {
+						MEmpty();
+					}
+				})
+			])
+		})
+	]);
+
+	mrender(mManager, true, ui);
+}

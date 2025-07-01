@@ -65,34 +65,49 @@ deadFiTypes(prog: FiProgram, preserveNames: Set<string>, eliminateNames: Set<str
 	used = foldSet(used_in_code, used_in_code, \acc, nm ->
 		usedFiTypesAddName(nm, acc, prog.names, ^make_struct_types)
 	);
-	dead = ref makeList();
-	remove_dead = \nm -> {
-		dead := Cons(nm, ^dead);
-		[];
-	}
 	// Filter out unused structs/unions
-	optimized = fiMapProgramToplevel(prog, \toplevel,__,__ -> 
-		switch (toplevel) {
-			FiTypeStruct(nm, typars, args,__): {
-				if (containsSet(eliminateNames, nm)) remove_dead(nm) else
-				if (containsSet(used, nm) || containsSet(preserveNames, nm)) [toplevel] else remove_dead(nm);
-			}
-			FiTypeUnion(nm,__,__,__): {
-				if (containsSet(eliminateNames, nm)) remove_dead(nm) else
-				if (containsSet(used, nm) || containsSet(preserveNames, nm)) [toplevel] else remove_dead(nm);
-			}
-			default: [toplevel];
-		},
-		fcParallelOn(prog.config)
-	);
-
-	// Show list of dead items only on verbose=2
-	if (verbose > 1 || isConfigParameterTrue(prog.config.config, "dump-dead-types")) {
+	if (verbose == 0 || !isConfigParameterTrue(prog.config.config, "dump-dead-types")) {
+		// Use optimized, parallel processing of modules.
+		fiMapProgramToplevel(prog, \toplevel,__,__ ->
+			switch (toplevel) {
+				FiTypeStruct(nm, typars, args,__): {
+					if (containsSet(eliminateNames, nm)) [] else
+					if (containsSet(used, nm) || containsSet(preserveNames, nm)) [toplevel] else [];
+				}
+				FiTypeUnion(nm,__,__,__): {
+					if (containsSet(eliminateNames, nm)) [] else
+					if (containsSet(used, nm) || containsSet(preserveNames, nm)) [toplevel] else [];
+				}
+				default: [toplevel];
+			},
+			fcParallelOn(prog.config)
+		);
+	} else {
+		dead = ref makeList();
+		remove_dead = \nm -> {
+			dead := Cons(nm, ^dead);
+			[];
+		}
+		// Use conservative, sequential processing of modules, beacuse we use a common `dead` variable.
+		optimized = fiMapProgramToplevel(prog, \toplevel,__,__ ->
+			switch (toplevel) {
+				FiTypeStruct(nm, typars, args,__): {
+					if (containsSet(eliminateNames, nm)) remove_dead(nm) else
+					if (containsSet(used, nm) || containsSet(preserveNames, nm)) [toplevel] else remove_dead(nm);
+				}
+				FiTypeUnion(nm,__,__,__): {
+					if (containsSet(eliminateNames, nm)) remove_dead(nm) else
+					if (containsSet(used, nm) || containsSet(preserveNames, nm)) [toplevel] else remove_dead(nm);
+				}
+				default: [toplevel];
+			},
+			false // because we use a common mutable data structure `dead` in all threads.
+		);
 		all_dead = splitByNumber(list2array(^dead), 16);
 		show = \arr -> strGlue(map(arr, \x -> strGlue(x, ", ")), ",\n");
 		fcPrintln("Dead types:\n" + show(all_dead) + "\n\n", prog.config.threadId);
+		optimized;
 	}
-	optimized;
 }
 
 usedFiTypesAddName(nm: string, used: Set<string>, names: FiGlobalNames, make_struct: Set<string>) -> Set<string> {

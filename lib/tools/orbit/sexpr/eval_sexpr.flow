@@ -1,0 +1,778 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/sexpr_pattern;
+import tools/orbit/sexpr/sexpr_quasi;
+import tools/orbit/sexpr/sexpr_stdlib;
+import tools/orbit/sexpr/utils;
+import tools/orbit/sexpr/sexpr_free;
+import ds/tree;
+import string;
+import math/math;
+import fs/filesystem;
+
+export {
+	// Main evaluation function - returns updated environment and value
+	evalSexpr(env : SExpEnv, expr : Sexpr) -> SExpEnv;
+}
+
+// Helper to handle imports - loads a file and evaluates its contents
+importFile(env : SExpEnv, filePath : string) -> SExpEnv {
+	// Try to find the file in different locations
+	searchPaths = [
+		filePath, // Direct path
+		pathCombine(getCurrentDirectory(), filePath), // Current directory
+		"/home/alstrup/area9/flow9/lib/tools/orbit/" + filePath, // Absolute path
+	];
+	
+	// Find the first path that exists
+	path = fold(searchPaths, "", \acc, p -> {
+		if (acc != "") acc 
+		else if (fileExists(p)) p
+		else acc;
+	});
+
+	// If we found a valid path, read and evaluate the file
+	if (path != "") {
+		program = getFileContent(path);
+		maybe = parseSexpr(path, program);
+		
+		switch (maybe) {
+			Some(parsedExpr): {
+				// If it's a list (sequence), evaluate each expression
+				switch (parsedExpr) {
+					SSList(expressions): {
+						// Evaluate each expression and accumulate the environment
+						fold(expressions, env, evalSexpr);
+					}
+					default: {
+						// Not a sequence, just evaluate it directly
+						evalSexpr(env, parsedExpr);
+					}
+				}
+			}
+			None(): {
+				println("Error parsing imported file: " + path);
+				SExpEnv(env with value = SSList([]));
+			}
+		}
+	} else {
+		println("File not found: " + filePath);
+		SExpEnv(env with value = SSList([]));
+	}
+}
+
+// Evaluate a Sexpr in the given environment
+evalSexpr(env : SExpEnv, expr : Sexpr) -> SExpEnv {
+	switch (expr) {
+		// Simple values return unchanged environment
+		SSBool(b): SExpEnv(env with value = expr);
+		SSDouble(d): SExpEnv(env with value = expr);
+		SSInt(i): SExpEnv(env with value = expr);
+		SSString(s): SExpEnv(env with value = expr);
+		SSConstructor(name): SExpEnv(env with value = expr);
+		SSOperator(op): SExpEnv(env with value = expr);
+		SSVector(exprs): {
+			// Evaluate all elements of the vector
+			fnResult = evalArgs(env, exprs, []);
+			SExpEnv(env with value = SSVector(fnResult.args));
+		};
+
+		// Lookup variable in environment
+		SSVariable(name): {
+			maybe = lookupTree(env.env, name);
+			switch (maybe) {
+				Some(value): SExpEnv(env with value = value);
+				None(): {
+					// Check if it's a built-in function from the runtime
+					if (containsKeyTree(env.runtime, name)) {
+						// Return the name as is for first-order functions
+						SExpEnv(env with value = expr);
+					} else {
+						// Error handling for undefined variables
+						println("Undefined variable: " + name);
+						SExpEnv(env with value = expr);
+					}
+				}
+			}
+		};
+		SSSpecialForm(name, exprs): {
+			// Evaluate the function call
+			evalSpecialForm(env, name, exprs);
+		}
+
+		// Evaluate normal expressions
+		SSList(exprs): {
+			if (length(exprs) == 0) {
+				SExpEnv(env with value = expr); // Empty list
+			} else {
+				// Evaluate the function
+				fnResult = evalSexpr(env, exprs[0]);
+				// Evaluate the function call
+				evalCall(env, fnResult.value, tail(exprs));
+			}
+		};
+	}
+}
+
+evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
+	switch (name) {
+		SAnd(): {
+			// Short-circuit AND operator
+			if (length(args) == 0) {
+				SExpEnv(env with value = SSBool(true)); // Empty AND is true
+			} else {
+				// Evaluate the first argument
+				firstResult = evalSexpr(env, args[0]);
+				isTrue = getSBool(firstResult.value, "and condition");
+				
+				if (!isTrue) {
+					// Short-circuit: first argument is false, return false without evaluating the rest
+					SExpEnv(env.runtime, firstResult.env, SSBool(false));
+				} else {
+					// More than two arguments, recursively evaluate the rest
+					// Create a new && expression with the remaining arguments
+					restExpr = SSSpecialForm(SAnd(), tail(args));
+					evalSexpr(firstResult, restExpr);
+				}
+			}
+		};
+		SBegin(): {
+			// Evaluate each expression and return the last result
+			fold(args, SExpEnv(env with value = SSList([])), \accEnv, expr -> {
+				evalSexpr(accEnv, expr);
+			});
+		};
+		SClosure(): {
+			// Closure is itself
+			orig = SSSpecialForm(SClosure(), args);
+			SExpEnv(env with value = orig);
+		};
+		SDefine(): {
+			// Define a variable
+			if (length(args) == 2) {
+				varName = switch (args[0]) {
+					SSVariable(n): n;
+					default: {
+						println("Invalid define syntax");
+						"";
+					}
+				};
+				if (containsKeyTree(env.runtime, varName)) {
+					println("Cannot redefine built-in variable: " + varName);
+				}
+				if (varName != "") {
+					valueResult = evalSexpr(env, args[1]);
+					// Return the updated environment and the value
+					newEnv = setTree(valueResult.env, varName, valueResult.value);
+					SExpEnv(env.runtime, newEnv, valueResult.value);
+				} else {
+					SExpEnv(env with value = SSList([]));
+				}
+			} else {
+				println("define requires 2 arguments");
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SEval(): {
+			// Evaluate expression
+			if (length(args) == 1) {
+				expResult = evalSexpr(env, args[0]);
+				evalSexpr(expResult, expResult.value);
+			} else {
+				println("eval requires 1 argument");
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SIf(): {
+			// Conditional
+			if (length(args) >= 2 && length(args) <= 3) {
+				condResult = evalSexpr(env, args[0]);
+				isTrue = getSBool(condResult.value, "if condition");
+				if (isTrue) {
+					evalSexpr(condResult, args[1]);
+				} else if (length(args) > 2) {
+					evalSexpr(condResult, args[2]);
+				} else {
+					SExpEnv(env.runtime, condResult.env, SSList([]));
+				}
+			} else {
+				println("if requires 2 or 3 arguments");
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SImport(): {
+			// Import form - load and evaluate a file
+			if (length(args) == 1) {
+				// Get the path as a string
+				pathResult = evalSexpr(env, args[0]);
+				pathStr = getSString(pathResult.value, "import path");
+				
+				// Check if we should add .sexp extension if not present
+				filePath = if (!strContains(pathStr, ".sexp")) {
+					pathStr + ".sexp";
+				} else pathStr;
+				
+
+				// TODO: Check if we already imported this, and if so, ignore it
+
+				// Process the import
+				importFile(env, filePath);
+			} else {
+				println("import requires 1 argument (path)");
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SLambda(): {
+			// Create a lambda with proper closure capturing free variables
+			if (length(args) == 2) {
+				// Extract parameter list
+				paramList = switch (args[0]) {
+					SSList(p): p;
+					default: {
+						println("Lambda params should be a list");
+						[];
+					}
+				};
+				// Extract parameter names
+				paramNames = filtermap(paramList, \param -> {
+					switch (param) {
+						SSVariable(pname): Some(pname);
+						default: None();
+					}
+				});
+				
+				// Get the lambda body
+				lambdaBody = args[1];
+				
+				// Find bound vars (the parameters)
+				boundVars = fold(paramNames, makeSet(), \acc, paramName -> {
+					insertSet(acc, paramName);
+				});
+				
+				// Find free variables in the lambda body
+				freeVars = findFreeSexprVars(lambdaBody, boundVars);
+				
+				// Create bindings for all free variables
+				bindings = createSexprBindings(freeVars, env.env);
+				
+				// Create a closure as a SSList with special form: (closure bindings params body)
+				bindingsList = SSList(map(bindings, \binding -> {
+					SSList([SSVariable(binding.first), binding.second]);
+				}));
+				
+				// Return the closure: (closure bindings params body)
+				closure = SSSpecialForm(SClosure(), [
+					bindingsList,
+					args[0],  // Original parameter list
+					lambdaBody
+				]);
+				
+				SExpEnv(env with value = closure);
+			} else {
+				println("lambda requires 2 arguments, got " + i2s(length(args)) + ": " + superglue(args, prettySexpr, " "));
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SLet(): {
+			// Let bindings - evaluate all bindings in current environment then evaluate body
+			if (length(args) >= 2) {
+				// First argument should be a list of bindings
+				bindingsList = switch (args[0]) {
+					SSList(bindings): bindings;
+					default: {
+						println("Let bindings should be a list");
+						[];
+					}
+				};
+				
+				// Process each binding
+				newEnv = fold(bindingsList, env.env, \accEnv, binding -> {
+					switch (binding) {
+						SSList(bindingParts): {
+							if (length(bindingParts) >= 2) {
+								// Get variable name
+								varName = switch (bindingParts[0]) {
+									SSVariable(bindingName): bindingName;
+									default: "";
+								};
+								if (containsKeyTree(env.runtime, varName)) {
+									println("Cannot redefine built-in variable: " + varName);
+								}
+								
+								if (varName != "") {
+									// Evaluate the binding expression in the original environment
+									valueResult = evalSexpr(SExpEnv(env.runtime, accEnv, SSList([])), bindingParts[1]);
+									// Add the binding to the environment
+									setTree(accEnv, varName, valueResult.value);
+								} else {
+									accEnv;
+								}
+							} else {
+								accEnv;
+							}
+						};
+						default: {
+							println("Invalid binding syntax");
+							accEnv;
+						}
+					}
+				});
+				
+				// Evaluate the body in the new environment
+				if (length(args) == 2) {
+					bodyEnv = SExpEnv(env.runtime, newEnv, SSList([]));
+					res = evalSexpr(bodyEnv, args[1]);
+					// We revert back to the original environment
+					SExpEnv(env with value = res.value);
+				} else {
+					// Multiple body expressions - wrap in a begin expression
+					bodyEnv = SExpEnv(env.runtime, newEnv, SSList([]));
+					beginExpr = SSSpecialForm(SBegin(), tail(args));
+					res = evalSexpr(bodyEnv, beginExpr);
+					// We revert back to the original environment
+					SExpEnv(env with value = res.value);
+				}
+			} else {
+				println("let requires bindings and body");
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SLetRec(): {
+			// Letrec bindings - for recursive functions
+			if (length(args) >= 2) {
+				// First argument should be a list of bindings
+				bindingsList = switch (args[0]) {
+					SSList(bindings): bindings;
+					default: {
+						println("Letrec bindings should be a list");
+						[];
+					}
+				};
+				
+				// Create environment with placeholders for all variables
+				placeholderEnv = fold(bindingsList, env.env, \accEnv, binding -> {
+					switch (binding) {
+						SSList(bindingParts): {
+							if (length(bindingParts) >= 2) {
+								// Get variable name
+								varName = switch (bindingParts[0]) {
+									SSVariable(bindingName): bindingName;
+									default: "";
+								};
+								
+								if (varName != "") {
+									// Create a placeholder value
+									setTree(accEnv, varName, SSList([]));
+								} else {
+									accEnv;
+								}
+							} else {
+								accEnv;
+							}
+						};
+						default: accEnv;
+					}
+				});
+				
+				// Process each binding in the environment with placeholders
+				newEnv = fold(bindingsList, placeholderEnv, \accEnv, binding -> {
+					switch (binding) {
+						SSList(bindingParts): {
+							if (length(bindingParts) >= 2) {
+								// Get variable name
+								varName = switch (bindingParts[0]) {
+									SSVariable(bindingName): bindingName;
+									default: "";
+								};
+								
+								if (varName != "") {
+									// Evaluate the binding expression in the environment with placeholders
+									valueResult = evalSexpr(SExpEnv(env.runtime, accEnv, SSList([])), bindingParts[1]);
+									// Update the binding in the environment
+									setTree(accEnv, varName, valueResult.value);
+								} else {
+									accEnv;
+								}
+							} else {
+								accEnv;
+							}
+						};
+						default: accEnv;
+					}
+				});
+				
+				// Evaluate the body in the new environment
+				if (length(args) == 2) {
+					bodyEnv = SExpEnv(env.runtime, newEnv, SSList([]));
+					res = evalSexpr(bodyEnv, args[1]);
+					// We revert back to the original environment
+					SExpEnv(env with value = res.value);
+				} else {
+					// Multiple body expressions - wrap in a begin expression
+					bodyEnv = SExpEnv(env.runtime, newEnv, SSList([]));
+					beginExpr = SSSpecialForm(SBegin(), tail(args));
+					res = evalSexpr(bodyEnv, beginExpr);
+					// We revert back to the original environment
+					SExpEnv(env with value = res.value);
+				}
+			} else {
+				println("letrec requires bindings and body");
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SList(): {
+			fnResult = evalArgs(env, args, []);
+			SExpEnv(env with value = SSList(fnResult.args));
+		};
+		SMatch(): {
+			// Pattern matching
+			if (length(args) >= 2) {
+				// match value [(pattern condition) result] [(pattern) result]...
+				valueResult = evalSexpr(env, args[0]);
+				
+				// Process pattern cases - each case is in the form [(pattern condition?) result]
+				patternCases = tail(args);
+				
+				// Try each pattern case in sequence
+				tryMatch(env, valueResult, patternCases, 0);
+			} else {
+				println("match requires value and at least one pattern case");
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SOr(): {
+			// Short-circuit OR operator
+			if (length(args) == 0) {
+				SExpEnv(env with value = SSBool(false)); // Empty OR is false
+			} else {
+				// Evaluate the first argument
+				firstResult = evalSexpr(env, args[0]);
+				isTrue = getSBool(firstResult.value, "or condition");
+				
+				if (isTrue) {
+					// Short-circuit: first argument is true, return true without evaluating the rest
+					SExpEnv(env.runtime, firstResult.env, SSBool(true));
+				} else {
+					// Recursively evaluate the rest
+					// Create a new || expression with the remaining arguments
+					restExpr = SSSpecialForm(SOr(), tail(args));
+					evalSexpr(firstResult, restExpr);
+				}
+			}
+		};
+		SQuasiQuote(): {
+			// Handle quasi-quoted expressions (backtick) with possible unquoting
+			if (length(args) == 1) {
+				// Single argument case
+				result = evalQuasiQuote(env, args[0], \e, x -> {
+					eval = evalSexpr(e, x);
+					eval.value;
+				});
+				SExpEnv(env with value = result);
+			} else if (length(args) > 1) {
+				// Multiple arguments: treat them as a list and evaluate the quasiquote
+				listArgs = SSList(args);
+				result = evalQuasiQuote(env, listArgs, \e, x -> {
+					eval = evalSexpr(e, x);
+					eval.value;
+				});
+				SExpEnv(env with value = result);
+			} else {
+				// No arguments
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SQuote(): {
+			// Handle quoted expressions - return as is without evaluation
+			if (length(args) == 1) {
+				// Single argument: simply return the quoted expression without evaluation
+				SExpEnv(env with value = args[0]);
+			} else if (length(args) > 1) {
+				// Multiple arguments: treat them as a list
+				SExpEnv(env with value = SSList(args));
+			} else {
+				// No arguments
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SSet(): {
+			// Set! - mutable assignment (usually for globals)
+			if (length(args) == 2) {
+				varName = switch (args[0]) {
+					SSVariable(n): n;
+					default: {
+						println("Invalid set! syntax");
+						"";
+					}
+				};
+				if (varName != "") {
+					// Check if the variable exists
+					if (containsKeyTree(env.env, varName)) {
+						valueResult = evalSexpr(env, args[1]);
+						// Return the updated environment and the value
+						newEnv = setTree(valueResult.env, varName, valueResult.value);
+						SExpEnv(env.runtime, newEnv, valueResult.value);
+					} else {
+						println("Cannot set! undefined variable: " + varName);
+						SExpEnv(env with value = SSList([]));
+					}
+				} else {
+					SExpEnv(env with value = SSList([]));
+				}
+			} else {
+				println("set! requires 2 arguments");
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		SUnQuote(): {
+			// Should not be evaluated directly - only inside quasiquote
+			println("Unquote ($) outside of quasiquote");
+			// Return the unevaluated unquote form with all arguments
+			SExpEnv(env with value = SSSpecialForm(SUnQuote(), args));
+		};
+		SUnQuoteSplicing(): {
+			// Should not be evaluated directly - only inside quasiquote
+			println("Unquote-splicing (#) outside of quasiquote");
+			// Return the unevaluated unquote-splicing form with all arguments
+			SExpEnv(env with value = SSSpecialForm(SUnQuoteSplicing(), args));
+		};
+	}
+}
+
+// Try matching pattern cases in sequence
+tryMatch(env : SExpEnv, valueResult : SExpEnv, patternCases : [Sexpr], caseIndex : int) -> SExpEnv {
+	if (caseIndex >= length(patternCases)) {
+		// No more pattern cases to try
+		SExpEnv(env.runtime, valueResult.env, valueResult.value);
+	} else {
+		// Get the current pattern case
+		currentCase = patternCases[caseIndex];
+		
+		// Extract pattern, condition, and result from the case
+		switch (currentCase) {
+			SSList(caseItems): {
+				if (length(caseItems) >= 2) {
+					// Handle different pattern formats
+					hasCondition = length(caseItems) >= 3;
+					patternPart = caseItems[0];
+					conditionPart = if (hasCondition) caseItems[1] else SSBool(true);
+					resultPart = if (hasCondition) caseItems[2] else caseItems[1];
+					
+					// Try to match the pattern
+					// matchPattern should only return the new bindings, not the full environment
+					matchResult = matchPattern(patternPart, valueResult.value, makeTree());
+					
+					switch (matchResult) {
+						Some(bindingsEnv): {
+							// Pattern matched, now check condition if there is one
+							
+							// Create a temporary environment for evaluating the condition
+							// Merge the original environment with the new bindings
+							// with new bindings taking precedence
+							tempEnv = fold(getTreeKeys(bindingsEnv), valueResult.env, \acc, key -> {
+								setTree(acc, key, lookupTreeDef(bindingsEnv, key, SSBool(false)));
+							});
+							execEnv = SExpEnv(env.runtime, tempEnv, SSList([]));
+							
+							if (hasCondition) {
+								// Evaluate the condition in the merged environment
+								condResultEnv = evalSexpr(execEnv, conditionPart);
+								condVal = getSBool(condResultEnv.value, "pattern condition");
+								
+								if (condVal) {
+									// Condition is true, evaluate the result using the environment
+									// returned from condition evaluation (to preserve side effects)
+									resultEnv = evalSexpr(condResultEnv, resultPart);
+									
+									// Return the value, but restore the original environment
+									// to prevent leaking bindings
+									SExpEnv(env.runtime, env.env, resultEnv.value);
+								} else {
+									// Condition is false, try the next pattern case
+									// Pass original env and valueResult to preserve state
+									tryMatch(env, valueResult, patternCases, caseIndex + 1);
+								}
+							} else {
+								// No condition, just evaluate the result
+								resultEnv = evalSexpr(execEnv, resultPart);
+								
+								// Return the value, but restore the original environment
+								SExpEnv(env.runtime, env.env, resultEnv.value);
+							}
+						}
+						None(): {
+							// Pattern didn't match, try the next one
+							tryMatch(env, valueResult, patternCases, caseIndex + 1);
+						}
+					}
+				} else {
+					println("Invalid pattern case, expected (pattern result) or (pattern condition result)");
+					tryMatch(env, valueResult, patternCases, caseIndex + 1);
+				}
+			}
+			default: {
+				// Not a list, invalid pattern case
+				println("Invalid pattern case format: " + prettySexpr(currentCase));
+				tryMatch(env, valueResult, patternCases, caseIndex + 1);
+			}
+		}
+	}
+}
+
+// Evaluate a function call
+evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
+	// Evaluate arguments first (all types need this)
+	fnResult = evalArgs(env, args, []);
+	
+	// Classify what kind of callable expression this is
+	listType = classifySexprList(SSList(concat([fn], args)), Some(env));
+	
+	switch (listType) {
+		SpecialFormCall(form): {
+			if (form == SClosure()) {
+				// Apply the closure directly
+				switch (fn) {
+					SSSpecialForm(__, closureParts): {
+						applyFunction(env, fn, fnResult.args);
+					}
+					default: {
+						// Shouldn't happen if classification was correct
+						println("Expected closure, got: " + prettySexpr(fn));
+						SExpEnv(env with value = SSList([]));
+					}
+				}
+			} else {
+				println("Special form " + toString(form) + " not directly callable: " + prettySexpr(fn));
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		VariableCall(name): {
+			// Check if it's a runtime function
+			if (containsKeyTree(env.runtime, name)) {
+				// Invoke the runtime function with arity checking
+				invokeRuntimeFn(env, name, fnResult, evalSexpr);
+			} else {
+				// Custom user-defined function - try to lookup in environment
+				maybeFunction = lookupTree(env.env, name);
+				switch (maybeFunction) {
+					Some(function): {
+						// Found function in environment
+						// Apply the function
+						applyFunction(fnResult.env, function, fnResult.args);
+					};
+					None(): {
+						println("Unknown function: " + name);
+						SExpEnv(env with value = SSList([]));
+					};
+				}
+			}
+		};
+		ConstructorCall(name): {
+			// Create a constructor instance with args
+			SExpEnv(env.runtime, fnResult.env.env, SSList(concat([fn], fnResult.args)));
+		};
+		OperatorCall(name): {
+			// Handle operators like +, -, *, /, etc.
+			// Invoke the runtime function with arity checking
+			if (containsKeyTree(env.runtime, name)) {
+				invokeRuntimeFn(env, name, fnResult, evalSexpr);
+			} else {
+				println("Unknown operator: " + name);
+				SExpEnv(env with value = SSList([]));
+			}
+		};
+		DataList(): {
+			println("Not a callable expression: " + prettySexpr(SSList(concat([fn], args))));
+			SExpEnv(env with value = SSList([]));
+		};
+	}
+}
+
+// Helper to evaluate a list of arguments
+evalArgs(env : SExpEnv, args : [Sexpr], acc : [Sexpr]) -> FnArgResult {
+	if (length(args) == 0) {
+		FnArgResult(env, acc);
+	} else {
+		argResult = evalSexpr(env, args[0]);
+		evalArgs(argResult, tail(args), arrayPush(acc, argResult.value));
+	}
+}
+
+// Apply a function to arguments
+applyFunction(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
+	switch (fn) {
+		// Handle special form closure
+		SSSpecialForm(name, closureParts): {
+			if (name == SClosure() && length(closureParts) >= 3) {
+				// Extract closure components
+				bindings = switch (closureParts[0]) {
+					SSList(bindingPairs): bindingPairs;
+					default: [];
+				};
+				
+				params = switch (closureParts[1]) {
+					SSList(paramList): paramList;
+					default: [];
+				};
+				
+				body = closureParts[2];
+				
+				// Create new environment with bindings from the closure
+				callEnv = fold(bindings, env.env, \accEnv, binding -> {
+					switch (binding) {
+						SSList(bindingParts): {
+							if (length(bindingParts) >= 2) {
+								varName = switch (bindingParts[0]) {
+									SSVariable(bindingName): bindingName;
+									default: "";
+								};
+								
+								if (varName != "") {
+									setTree(accEnv, varName, bindingParts[1]);
+								} else {
+									accEnv;
+								}
+							} else {
+								accEnv;
+							}
+						};
+						default: accEnv;
+					}
+				});
+				
+				// Bind arguments to parameters
+				finalEnv = foldi(args, callEnv, \i, accEnv, arg -> {
+					if (i < length(params)) {
+						paramName = switch (params[i]) {
+							SSVariable(pName): pName;
+							default: "";
+						};
+						
+						if (paramName != "") {
+							setTree(accEnv, paramName, arg);
+						} else {
+							accEnv;
+						}
+					} else {
+						accEnv;
+					}
+				});
+				
+				// Evaluate body in the environment with bindings and arguments
+				bodyEnv = SExpEnv(env.runtime, finalEnv, SSList([]));
+				res = evalSexpr(bodyEnv, body);
+				// We revert back to the original environment
+				// to avoid side effects in the original environment
+				SExpEnv(env with value = res.value);
+			} else {
+				// Malformed closure
+				println("Malformed closure: " + prettySexpr(fn));
+				SExpEnv(env with value = SSList([]));
+			}
+		}
+		default: {
+			println("Not a callable function: " + prettySexpr(fn));
+			SExpEnv(env with value = SSList([]));
+		};
+	}
+}

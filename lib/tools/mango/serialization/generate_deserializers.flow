@@ -186,7 +186,7 @@ generateStructDeserializer(structType : MTypeConstructor, types : [MType]) -> st
 		}), "\n\t\t\t");
 
 		// Create and return the struct
-		fieldNames = strGlue(map(generate(0, length(fields)), \i -> "field" + i2s(i)), ", ");
+		fieldNames = strGlue(generate(0, length(fields), \i -> "field" + i2s(i)), ", ");
 		
 		blueprint(
 			"// Verify correct opcode type
@@ -208,10 +208,10 @@ generateStructDeserializer(structType : MTypeConstructor, types : [MType]) -> st
 	} else {
 		// More than 3 fields - need to handle continuation opcodes
 		// First get field descriptions and names
-		fieldNames = strGlue(map(generate(0, length(fields)), \i -> "field" + i2s(i)), ", ");
+		fieldNames = strGlue(generate(0, length(fields), \i -> "field" + i2s(i)), ", ");
 		
 		// Process remaining fields using continuation opcodes
-		continuationCode = processRemainingFieldsDeserializers(fields, 3);
+		continuationCode = processRemainingFieldsDeserializers(fields, 3, "");
 		
 		blueprint(
 			"// Verify correct opcode type
@@ -282,48 +282,43 @@ generateDefaultStruct(name : string, fields : [MType]) -> string {
 }
 
 // Helper function to process remaining fields in groups of 3
-processRemainingFieldsDeserializers(fields : [MType], startIndex : int) -> string {
+processRemainingFieldsDeserializers(fields : [MType], index : int, acc : string) -> string {
 	// Define a recursive function for processing remaining fields
-	processFields = \process, index, acc -> {
-		if (index >= length(fields)) {
-			// Base case: no more fields to process
-			acc;
-		} else {
-			contIdx = index / 3;
-			
-			// Build fields for this continuation opcode
-			fieldCode = blueprint(
-				"// Get continuation opcode at index %contIdx%
-			cont%contIdx% = getOpcode(state, opcodeIndex + %contIdx%);
-			if (cont%contIdx%.code != OP_CONT) {
-				print(\"Error: Expected continuation opcode, got \" + i2s(cont%contIdx%.code));
-			}",
-				["contIdx", i2s(contIdx)]
-			);
-			
-			// Add field deserializers in functional style to avoid variable reassignment
-			field1 = if (index < length(fields))
-				"\n\t\t\tfield" + i2s(index) + " = " + 
-				generateFieldDeserializer(fields[index], "cont" + i2s(contIdx) + ".child1") + ";"
-			else "";
-			
-			field2 = if (index + 1 < length(fields))
-				field1 + "\n\t\t\tfield" + i2s(index+1) + " = " + 
-				generateFieldDeserializer(fields[index+1], "cont" + i2s(contIdx) + ".child2") + ";"
-			else field1;
-			
-			fieldDeserializers = if (index + 2 < length(fields))
-				field2 + "\n\t\t\tfield" + i2s(index+2) + " = " + 
-				generateFieldDeserializer(fields[index+2], "cont" + i2s(contIdx) + ".child3") + ";"
-			else field2;
-			
-			// Recursively process the next group
-			process(process, index + 3, acc + (if (acc != "") "\n\n\t\t\t" else "") + fieldCode + fieldDeserializers);
-		}
-	};
-
-	// Start the recursive processing from startIndex
-	processFields(processFields, startIndex, "");
+	if (index >= length(fields)) {
+		// Base case: no more fields to process
+		acc;
+	} else {
+		contIdx = index / 3;
+		
+		// Build fields for this continuation opcode
+		fieldCode = blueprint(
+			"// Get continuation opcode at index %contIdx%
+		cont%contIdx% = getOpcode(state, opcodeIndex + %contIdx%);
+		if (cont%contIdx%.code != OP_CONT) {
+			print(\"Error: Expected continuation opcode, got \" + i2s(cont%contIdx%.code));
+		}",
+			["contIdx", i2s(contIdx)]
+		);
+		
+		// Add field deserializers in functional style to avoid variable reassignment
+		field1 = if (index < length(fields))
+			"\n\t\t\tfield" + i2s(index) + " = " + 
+			generateFieldDeserializer(fields[index], "cont" + i2s(contIdx) + ".child1") + ";"
+		else "";
+		
+		field2 = if (index + 1 < length(fields))
+			field1 + "\n\t\t\tfield" + i2s(index+1) + " = " + 
+			generateFieldDeserializer(fields[index+1], "cont" + i2s(contIdx) + ".child2") + ";"
+		else field1;
+		
+		fieldDeserializers = if (index + 2 < length(fields))
+			field2 + "\n\t\t\tfield" + i2s(index+2) + " = " + 
+			generateFieldDeserializer(fields[index+2], "cont" + i2s(contIdx) + ".child3") + ";"
+		else field2;
+		
+		// Recursively process the next group
+		processRemainingFieldsDeserializers(fields, index + 3, acc + (if (acc != "") "\n\n\t\t\t" else "") + fieldCode + fieldDeserializers);
+	}
 }
 
 // Generate a default value for a type

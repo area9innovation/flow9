@@ -1,0 +1,165 @@
+import tools/mango/type/types;
+import text/blueprint;
+import net/url_parameter;
+
+export {
+	union2ts(structs : Tree<string, MTypeConstructor>, t : MTypeUnion) -> string;
+	type2ts(t : MType) -> string;
+	structArgs2ts(s : MTypeConstructor) -> string;
+	mtype2tsName(m : MType) -> string;
+	generateTSTypes(types : Tree<string, MType>, structs : Tree<string, MTypeConstructor>) -> string;
+}
+
+// Generate TypeScript interface definition for a union type
+union2ts(structs : Tree<string, MTypeConstructor>, t : MTypeUnion) -> string {
+	typeName = t.name;
+	memberTypes = map(t.types, \tt -> {
+		n = mtype2tsName(tt);
+		if (n == "") "never" else n;
+	});
+	
+	blueprint("
+		export type %typeName% = %members%;
+		", [
+			"typeName", typeName,
+			"members", strGlue(memberTypes, " | ")
+		]
+	);
+}
+
+// Convert MType to TypeScript type name
+mtype2tsName(m : MType) -> string {
+	switch (m) {
+		MTypeName(n): n;
+		MTypeConstructor(n, __): n;
+		default: "";
+	}
+}
+
+// Generate TypeScript interface for a struct with conventional "kind" field
+structArgs2ts(s : MTypeConstructor) -> string {
+	structName = s.name;
+	
+	// Generate field definitions with runtime-consistent arg0, arg1, etc. names
+	fieldNames = generateFieldNames(s);
+	fieldDefs = mapi(s.args, \i, st -> {
+		fname = fieldNames[i];
+		ftype = type2ts(st);
+		"  " + fname + ": " + ftype + ";";
+	});
+	
+	blueprint("
+		export interface %structName% {
+		  kind: '%structName%';
+		%fields%
+		}
+		", [
+			"structName", structName,
+			"fields", strGlue(fieldDefs, "\n")
+		]
+	);
+}
+
+// Generate field names for a struct to match runtime field names (arg0, arg1, etc.)
+generateFieldNames(s : MTypeConstructor) -> [string] {
+	argCount = length(s.args);
+	
+	// Always use arg0, arg1, arg2, etc. to match the runtime behavior
+	mapi(s.args, \i, __ -> "arg" + i2s(i));
+}
+
+
+
+// Convert MType to TypeScript type syntax
+type2ts(t : MType) -> string {
+	switch (t) {
+		MTypeResult(rule): "any /* result: " + rule + " */";
+		MTypeNil(): "null";
+		MTypeBool(): "boolean"; 
+		MTypeInt(): "number";
+		MTypeDouble(): "number";
+		MTypeString(): "string";
+		MTypeConstructor(name, args): name;
+		MTypeStar(type): type2ts(type) + "[]";
+		MTypeUnion(name, types): {
+			if (name == "") {
+				"(" + strGlue(map(types, type2ts), " | ") + ")";
+			} else name;
+		}
+		MTypeName(name): name;
+		MTypeField(name, type): type2ts(type);
+	}
+}
+
+// Generate complete TypeScript type definitions file
+generateTSTypes(types : Tree<string, MType>, structs : Tree<string, MTypeConstructor>) -> string {
+	// Generate all struct interfaces
+	structDefs = foldTree(structs, [], \name, struct, acc -> {
+		arrayPush(acc, structArgs2ts(struct));
+	});
+	
+	// Generate all union types
+	unionDefs = foldTree(types, [], \name, mtype, acc -> {
+		switch (mtype) {
+			MTypeUnion(__, __): arrayPush(acc, union2ts(structs, mtype));
+			default: acc;
+		}
+	});
+	
+	// Combine all definitions
+	allDefs = concat(structDefs, unionDefs);
+	
+	typePrefix = getUrlParameterDef("typeprefix", "");
+	unionTypeName = if (typePrefix != "") typePrefix + "ASTNode" else "ASTNode";
+	
+	blueprint("
+		// Generated TypeScript types from Mango grammar
+		// This file contains AST node definitions using the conventional 'kind' field pattern
+		
+		%definitions%
+		
+		// Utility type for all AST nodes
+		export type %unionTypeName% = %allTypes%;
+		
+		// Type guard functions
+		%typeGuards%
+		", [
+			"definitions", strGlue(allDefs, "\n"),
+			"unionTypeName", unionTypeName,
+			"allTypes", generateUnionOfAllTypes(structs),
+			"typeGuards", generateTypeGuards(structs)
+		]
+	);
+}
+
+// Generate union type of all struct types
+generateUnionOfAllTypes(structs : Tree<string, MTypeConstructor>) -> string {
+	typeNames = getTreeKeys(structs);
+	if (length(typeNames) == 0) {
+		"never";
+	} else {
+		strGlue(typeNames, " | ");
+	}
+}
+
+// Generate TypeScript type guard functions
+generateTypeGuards(structs : Tree<string, MTypeConstructor>) -> string {
+	typePrefix = getUrlParameterDef("typeprefix", "");
+	
+	guards = foldTree(structs, [], \name, struct, acc -> {
+		// Use typeprefix for function names to avoid conflicts
+		functionName = if (typePrefix != "") "is" + typePrefix + name else "is" + name;
+		guard = blueprint("
+			export function %functionName%(node: any): node is %name% {
+			  return node && node.kind === '%name%';
+			}
+			", [
+				"functionName", functionName,
+				"name", name
+			]
+		);
+		arrayPush(acc, guard);
+	});
+	
+	strGlue(guards, "\n");
+}

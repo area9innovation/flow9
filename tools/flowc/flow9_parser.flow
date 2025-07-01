@@ -1,0 +1,119 @@
+import tools/flow9/parser/flow_compiled_parser;
+import tools/mango/mcode_lib;
+import tools/flow9/parser/flow_types;
+
+export {
+	flow9ParserError(
+		// The full path to the file to parse
+		fullpath : string,
+		// The program to parse
+		program : string
+	) -> string;
+}
+
+flow9ParserError(fullpath : string, program : string) -> string {
+	res : Pair<PModule, string> = parseCompiledMango(fullpath, program, P_parse_flow_compiled, flow(0));
+	errors = ref "";
+	onError = \pos, msg -> {
+		errors := (^errors) + getLinePos(fullpath, program, msg, pos, 1, 0)
+	};
+	collectFlow9SyntaxErrors(res.first, onError);
+
+	^errors + res.second;
+}
+
+collectFlow9SyntaxErrors(p : PModule, onError : (int, string) -> void) -> void {
+	iter(p.toplevels, \t -> {
+		collectFlow9ToplevelErrors(t, onError);
+	})
+}
+
+collectFlow9ToplevelErrors(p : PToplevel, onError : (int, string) -> void) -> void {
+	switch (p) {
+		PFnDef(pos, id, lambdatype, pexp): collectFlow9ExpErrors(pexp, onError);
+		PStructDef(pos, uid, structargs): {}
+		PTypeDef(pos, id, ptype): {}
+		PGlobal(pos, id, opttype, pexp): collectFlow9ExpErrors(pexp, onError);
+		PNative(pos, id, bool1, type, string1): {}
+		PUnion(pos, typename, typenames): {}
+	}
+}
+
+collectFlow9ExpErrors(p : PExp, onError : (int, string) -> void) -> void {
+	switch (p) {
+		// PArray, PAssignOp, PBinOp, PCall, PFor, PIfElse, PLet, PMaybe, PReturn, PSequence, PSwitch, PUnOp, PValue, PVar, PWhile, PWith
+		PArray(__, exps): iter(exps, \e -> {
+			collectFlow9ExpErrors(e, onError);
+		});
+		PAssignOp(exp1, __, __, exp2): {
+			collectFlow9ExpErrors(exp1, onError);
+			collectFlow9ExpErrors(exp2, onError);
+		}
+		PBinOp(exp1, __, exp2, __): {
+			collectFlow9ExpErrors(exp1, onError);
+			collectFlow9ExpErrors(exp2, onError);
+		}
+		PBreak(pos): {
+			onError(pos, "Flow9 does not support break statements. Use recursion, map, filter, or fold instead.");
+		}
+		PCall(exp1, __, exps): {
+			collectFlow9ExpErrors(exp1, onError);
+			iter(exps, \e -> {
+				collectFlow9ExpErrors(e, onError);
+			});
+		}
+		PFor(pos, __, __, exp1, exp2, exp3, exp4): {
+			collectFlow9ExpErrors(exp1, onError);
+			collectFlow9ExpErrors(exp2, onError);
+			collectFlow9ExpErrors(exp3, onError);
+			onError(pos, "Flow9 does not support for loops. Use recursion, map, filter, or fold instead.");
+			collectFlow9ExpErrors(exp4, onError);
+		}
+		PIfElse(__, exp1, exp2, exp3): {
+			collectFlow9ExpErrors(exp1, onError);
+			collectFlow9ExpErrors(exp2, onError);
+			collectFlow9ExpErrors(exp3, onError);
+		}
+		PLet(__, __, __, exp1, expsemi): {
+			collectFlow9ExpErrors(exp1, onError);
+			iter(expsemi, \e -> {
+				collectFlow9ExpErrors(e, onError);
+			});
+		}
+		PMaybe(exp1, __, exp2, exp3): {
+			collectFlow9ExpErrors(exp1, onError);
+			collectFlow9ExpErrors(exp2, onError);
+			collectFlow9ExpErrors(exp3, onError);
+		}
+		// PReturn, PSequence, PSwitch, PUnOp, PValue, PVar, PWhile, PWith
+		PReturn(pos, __): {
+			onError(pos, "Flow9 does not support return statements. Use recursion, map, filter, or fold instead.");
+		};
+		PSequence(pos, exps): iter(exps, \e -> {
+			collectFlow9ExpErrors(e, onError);
+		});
+		PSwitch(__, exp1, cases): {
+			collectFlow9ExpErrors(exp1, onError);
+			iter(cases, \c -> {
+				switch (c) {
+					PDefaultCase(__, exp2): collectFlow9ExpErrors(exp2, onError);
+					PStructCase(__, __, __, exp2): collectFlow9ExpErrors(exp2, onError);
+				}
+			});
+		}
+		PUnOp(exp1, __): collectFlow9ExpErrors(exp1, onError);
+		PValue(): {};
+		PVar(__, __): {};
+		PWhile(pos, exp1, exp2): {
+			collectFlow9ExpErrors(exp1, onError);
+			collectFlow9ExpErrors(exp2, onError);
+			onError(pos, "Flow9 does not support while loops. Use recursion, map, filter, or fold instead.");
+		}
+		PWith(exp1, __, fa): {
+			collectFlow9ExpErrors(exp1, onError);
+			iter(fa, \f -> {
+				collectFlow9ExpErrors(f.exp1, onError);
+			});
+		}
+	}
+}

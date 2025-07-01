@@ -306,72 +306,6 @@ findTagEnd(s : string, i : int, inQuotes : bool, inApos : bool) -> int {
 	}
 }
 
-doParseXmlFixed(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool) -> void {
-	l = strlen(s);
-	tagStart = strIndexOf(s, "<");
-	if (tagStart == -1) {
-		// OK, the rest is just text
-		if (l != 0) {
-			parseText(s, events);
-		}
-		// Signal the end!
-		next(events, XmlEndEvent());
-	} else if (tagStart == 0) {
-		// We have a tag or comment!
-		if (startsWith(s, "<!--")) {
-			endComment = strIndexOf(substring(s, 4, l - 4), "-->");
-			next(events, XmlCommentEvent(substring(s, 4, endComment)));
-			doParseXmlFixed(strRight(s, endComment + 7), events, parseText, validateNames);
-		} else if (startsWith(s, "<![CDATA[")) {
-			endComment = strIndexOf(substring(s, 9, l - 9), "]]>");
-			next(events, XmlTextEvent(substring(s, 9, endComment)));
-			doParseXmlFixed(strRight(s, endComment + 12), events, parseText, validateNames);
-		} else {
-			// It's a tag
-			endTag = findTagEnd(s, 1, false, false);
-			
-			if (endTag == -1) {
-				// Couldn't find a proper end tag, treat as text
-				parseText(strLeft(s, 1), events);
-				// Recursively handle the rest
-				doParseXmlFixed(substring(s, 1, l - 1), events, parseText, validateNames);
-			} else {
-				tag = strLeft(s, endTag + 1);
-				event = parseTag(tag);
-
-				ok = if (validateNames) {
-					// Do a sanity check on the tag name and attribute names
-					tagValid = isValidXmlName(event.tag);
-					atts = switch (event : XmlTagEvent) {
-						XmlEmptyElement(t, attrs): attrs;
-						XmlElementStart(t, attrs): attrs;
-						XmlProcessingEvent(t, attrs): attrs;
-						default: [];
-					};
-					tagValid && forall(atts, \a : XmlAttribute -> isValidXmlName(a.key));
-				} else true;
-				
-				if (ok) {
-					// Everything looks good, so parse and send that
-					next(events, event);
-					// And then do the rest...
-					doParseXmlFixed(substring(s, endTag + 1, l - endTag - 1), events, parseText, validateNames);
-				} else {
-					// If it does not pass as a valid names, change our mind and treat this like text
-					parseText(strLeft(s, 1), events);
-					// Recursively handle the rest
-					doParseXmlFixed(substring(s, 1, l - 1), events, parseText, validateNames);
-				}
-			}
-		}
-	} else {
-		// Before the tag, there is some text
-		parseText(strLeft(s, tagStart), events);
-		// Recursively handle the rest
-		doParseXmlFixed(substring(s, tagStart, l - tagStart), events, parseText, validateNames);
-	}
-};
-
 doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool) -> void {
 	l = strlen(s);
 	tagStart = strIndexOf(s, "<");
@@ -394,31 +328,40 @@ doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string,
 			doParseXml(strRight(s, endComment + 12), events, parseText, validateNames);
 		} else {
 			// It's a tag
-			endTag = strIndexOf(substring(s, 1, l - 1), ">");
-			tag = strLeft(s, endTag+2);
-			event = parseTag(tag);
-
-			ok = if (validateNames) {
-				// Do a sanity check on the tag name and attribute names
-				tagValid = endTag != -1 && isValidXmlName(event.tag);
-				atts = switch (event : XmlTagEvent) {
-					XmlEmptyElement(t, attrs): attrs;
-					XmlElementStart(t, attrs): attrs;
-					XmlProcessingEvent(t, attrs): attrs;
-					default: [];
-				};
-				tagValid && forall(atts, \a : XmlAttribute -> isValidXmlName(a.key));
-			} else true;
-			if (ok) {
-				// Everything looks good, so parse and send that
-				next(events, event);
-				// And then do the rest...
-				doParseXml(substring(s, endTag + 2, l - endTag), events, parseText, validateNames);
-			} else {
-				// If it does not pass as a valid names, change our mind and treat this like text
+			endTag = findTagEnd(s, 1, false, false);
+			
+			if (endTag == -1) {
+				// Couldn't find a proper end tag, treat as text
 				parseText(strLeft(s, 1), events);
 				// Recursively handle the rest
 				doParseXml(substring(s, 1, l - 1), events, parseText, validateNames);
+			} else {
+				tag = strLeft(s, endTag + 1);
+				event = parseTag(tag);
+
+				ok = if (validateNames) {
+					// Do a sanity check on the tag name and attribute names
+					tagValid = isValidXmlName(event.tag);
+					atts = switch (event : XmlTagEvent) {
+						XmlEmptyElement(t, attrs): attrs;
+						XmlElementStart(t, attrs): attrs;
+						XmlProcessingEvent(t, attrs): attrs;
+						default: [];
+					};
+					tagValid && forall(atts, \a : XmlAttribute -> isValidXmlName(a.key));
+				} else true;
+				
+				if (ok) {
+					// Everything looks good, so parse and send that
+					next(events, event);
+					// And then do the rest...
+					doParseXml(substring(s, endTag + 1, l - endTag - 1), events, parseText, validateNames);
+				} else {
+					// If it does not pass as a valid names, change our mind and treat this like text
+					parseText(strLeft(s, 1), events);
+					// Recursively handle the rest
+					doParseXml(substring(s, 1, l - 1), events, parseText, validateNames);
+				}
 			}
 		}
 	} else {
@@ -427,8 +370,7 @@ doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string,
 		// Recursively handle the rest
 		doParseXml(substring(s, tagStart, l - tagStart), events, parseText, validateNames);
 	}
-}
-
+};
 
 // http://www.w3.org/TR/xml/#NT-NameStartChar
 // A tag has to start with one of these:
@@ -457,12 +399,7 @@ isRestAValidName(t : string, i : int) -> bool {
 }
 
 parseXmlWithStrategy(s, events, strategy) {
-	if (isUrlParameterTrue("new")) {
-		doParseXmlFixed(s, events, makeTextParser(strategy), contains(strategy, XmlValidateNames()))
-	} else {
-		doParseXml(s, events, makeTextParser(strategy), contains(strategy, XmlValidateNames()))
-	}
-	
+	doParseXml(s, events, makeTextParser(strategy), contains(strategy, XmlValidateNames()))
 }
 
 

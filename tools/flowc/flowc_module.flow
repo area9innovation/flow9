@@ -1,5 +1,6 @@
 import tools/flowc/flowc_timephases;
 import tools/flowc/flow_parser;
+import tools/flowc/flow9_parser;
 import tools/flowc/incremental;
 import tools/flowc/flowc_helpers;
 import tools/flowc/desugar;
@@ -50,12 +51,12 @@ parseFlowFileOrLoadCached(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 doParseFlowFileOrLoadCached(
 	config : CompilerConfig,
 	globEnv : FcTypeEnvGlobal,
-	file : string, 
-	fromfile : string, 
+	file : string,
+	fromfile : string,
 	start : int, end : int
 ) -> Pair<FcPreloadedModule, FcError> {
 	fileinfo = getFcFileInfo(file, config);
-	if (fileExists(fileinfo.fullpath)) {
+	if (isAbsolutePath(fileinfo.fullpath) && fileExists(fileinfo.fullpath)) {
 
 		// TODO: Inside this result, we have a list of old exported names, which
 		// we should use for more fine-grained dependency tracking
@@ -85,7 +86,18 @@ doParseFlowFileOrLoadCached(
 		}
 	} else {
 		parsed : FcPreloadedModule = FcParsed(fileinfo, dummySyntaxTree, [], [], makeTree());
-		error = FcError("Import " + file + ": file not found. Check flow.config or use I=<includes>", [FcPosition(fromfile, start, end)]);
+		error = if (config.verbose > 1) {
+			FcError(
+				"Import " + file + ": file not found. Check flow.config or use I=<includes>\n"
+				+ "	FullPath: " + fileinfo.fullpath + "\n"
+				+ "	WorkingDir: " + config.workingDir + "\n"
+				+ "	includes: " + toString(config.includesRaw) + "\n"
+				+ "	includesResolved: " + toString(config.includesResolved),
+				[FcPosition(fromfile, start, end)]
+			);
+		} else {
+			FcError("Import " + file + ": file not found. Check flow.config or use I=<includes>", [FcPosition(fromfile, start, end)]);
+		}
 		Pair(parsed, error);
 	}
 }
@@ -105,7 +117,12 @@ parseFlowfile(config : CompilerConfig, fileinfo : FcFileInfo, fromfile : string)
 		errorM = if (st.end != strlen(fileinfo.content)) {
 			// Check if fileinfo.content contains common imperative constructs
 			forPos = strIndexOf(fileinfo.content, "for (");
-	
+
+			flow9 = \ -> {
+				// Use the Mango parser to get a more detailed error message
+				flow9ParserError("", fileinfo.content) + "\n";
+			}
+
 			if (forPos >= 0) {
 				// Find the last newline before the "for"
 				prevText = strLeft(fileinfo.content, forPos);
@@ -124,11 +141,11 @@ parseFlowfile(config : CompilerConfig, fileinfo : FcFileInfo, fromfile : string)
 					Some(FcError(errorMsg, [FcPosition(fileinfo.flowfile, forPos, forPos + 4)]));
 				} else {
 					// Fall back to the generic syntax error message
-					Some(FcError("Syntax error: expected one of " + strGlue(err.expected, ", "), [FcPosition(fileinfo.flowfile, err.pos, err.pos)]));
+					Some(FcError(flow9() + "Syntax error: expected one of " + strGlue(err.expected, ", "), [FcPosition(fileinfo.flowfile, err.pos, err.pos)]));
 				}
 			} else {
 				// Fall back to the generic syntax error message
-				Some(FcError("Syntax error: expected one of " + strGlue(err.expected, ", "), [FcPosition(fileinfo.flowfile, err.pos, err.pos)]));
+				Some(FcError(flow9() + "Syntax error: expected one of " + strGlue(err.expected, ", "), [FcPosition(fileinfo.flowfile, err.pos, err.pos)]));
 			}
 		} else None();
 		Pair(FcParsed(fileinfo, st, extractFcImports(fileinfo, st), extractFcForbids(fileinfo, st), makeTree()), errorM);

@@ -3,8 +3,10 @@ import tools/mango/type/type_eval;
 import text/blueprint;
 import fs/filesystem;
 import tools/mango/type/type2melon;
+import tools/mango/type/type2ts;
 import tools/mango/type/gringo_ops;
 import tools/mango/type/generate_opcodes;
+import tools/mango/serialization/generate_ast_serialization;
 
 export {
 	produceTypes(mangoFile : string, t : Term) -> Tree<string, MType>;
@@ -17,12 +19,28 @@ produceTypes(mangoFile : string, t : Term) -> Tree<string, MType> {
 	if (true) {
 		// Now we have all the types required
 		types = getUrlParameter("types");
-		if (types == "1" || types == "2") {
-			result = makeTypeDefinitions(types == "2", typeEnv);
+		if (types == "1" || types == "2" || types == "3") {
+			result = if (types == "3") {
+				// Generate TypeScript types
+				makeTypeDefinitionsTS(typeEnv);
+			} else {
+				makeTypeDefinitions(types == "2", typeEnv);
+			};
 			filename = if (types == "1") {
 				changeFileExt(mangoFile, "_types.melon");
 			} else if (types == "2") {
 				changeFileExt(mangoFile, "_types.flow");
+			} else if (types == "3") {
+				// For TypeScript types, prefer the ts path if provided
+				tsFile = getUrlParameter("ts");
+				if (tsFile != "") {
+					// Use the same directory as the TypeScript parser file
+					tsDir = dirName(tsFile);
+					baseName = changeFileExt(fileNameOnly(mangoFile), "");
+					pathCombine(tsDir, baseName + "_types.ts");
+				} else {
+					changeFileExt(mangoFile, "_types.ts");
+				}
 			} else types;
 			setFileContent(filename, result);
 			println("Saved '" + filename + "'");
@@ -46,6 +64,33 @@ produceTypes(mangoFile : string, t : Term) -> Tree<string, MType> {
 			
 			// Generate opcodes starting from 100 (first available after built-ins)
 			generateOpcodes(mangoFile, structTypes, typePrefix, 100);
+		}
+
+		if (isUrlParameterTrue("serialization")) {
+			println("Starting AST serialization generation...");
+			
+			// Extract all types from the type environment
+			allTypes = concat(
+				foldTree(^(typeEnv.constructors), [], \_, constructor, acc -> {
+					arrayPush(acc, constructor)
+				}),
+				foldTree(^(typeEnv.unions), [], \_, union, acc -> {
+					arrayPush(acc, union)
+				})
+			);
+
+			// Get module prefix from filename
+			fileBaseName = fileNameOnly(mangoFile);
+			modulePrefix = changeFileExt(fileBaseName, "");
+
+			println("Generating serialization for module: " + modulePrefix);
+			println("Found " + i2s(length(allTypes)) + " types to serialize");
+
+			// Get output directory (same as mango file)
+			outputDir = dirName(mangoFile);
+			
+			// Generate serialization code with debugging
+			generateSerializationFromTypes(allTypes, modulePrefix, outputDir);
 		}
 
 		if (isUrlParameterTrue("ruletypes")) {
@@ -338,4 +383,24 @@ makeTypeDefinitions(flowFormat : bool, typeEnv : MangoInferredTypes) -> string {
 		}
 	});
 	structMelon + if (flowFormat) "}\n" else "";
+}
+
+// Generate TypeScript type definitions from inferred types
+makeTypeDefinitionsTS(typeEnv : MangoInferredTypes) -> string {
+	// Convert MangoInferredTypes to the format expected by generateTSTypes
+	unions = ^(typeEnv.unions);
+	constructors = ^(typeEnv.constructors);
+	
+	// Convert MTypeUnion to Tree<string, MType> format expected by generateTSTypes
+	convertedTypes = foldTree(unions, makeTree(), \name, union, acc -> {
+		setTree(acc, name, union);
+	});
+	
+	// Convert MTypeConstructor to Tree<string, MTypeConstructor> format
+	convertedStructs = foldTree(constructors, makeTree(), \name, constructor, acc -> {
+		setTree(acc, name, constructor);
+	});
+	
+	// Use the existing TypeScript generation function
+	generateTSTypes(convertedTypes, convertedStructs);
 }

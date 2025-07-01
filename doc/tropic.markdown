@@ -577,6 +577,6 @@ Multiple render roots are also supported, but in this case you have to create se
 
 You will be able to find all flow stuff inside shadow DOM.
 
-Check [html](../www/test/test_flow_builtin.html) + [flow](../lib/material/test/test_flow_builtin.flow) for a tescase.
+Check [html](../www/test/test_flow_builtin.html) + [flow](../lib/material/tests/test_flow_builtin.flow) for a tescase.
 
 Pay attention to the fact that this feature is available for JS target only.

@@ -277,6 +277,7 @@ parallelXP(promises : [Promise<?, ??>], simultaneous : int) -> Promise<[?], ??> 
 	} else {
 		started = ref 0;
 		finished = ref 0;
+		isDoneR = ref false;
 
 		resultsR = ref map(promises, \__ -> None());
 		errorR = ref None();
@@ -286,7 +287,7 @@ parallelXP(promises : [Promise<?, ??>], simultaneous : int) -> Promise<[?], ??> 
 				if (promises == []) {
 					fulfill([])
 				} else {
-					iter(enumFromTo(0, simultaneous - 1), \__ -> startParallelXP(promises, started, finished, resultsR, errorR, fulfill, reject))
+					iter(enumFromTo(0, simultaneous - 1), \__ -> startParallelXP(promises, started, finished, resultsR, errorR, isDoneR, fulfill, reject))
 				}
 			}
 		)
@@ -295,7 +296,7 @@ parallelXP(promises : [Promise<?, ??>], simultaneous : int) -> Promise<[?], ??> 
 
 startParallelXP(
 	promises : [Promise<?, ??>], started : ref int, finished : ref int,
-	resultsR : ref [Maybe<?>], errorR : ref Maybe<??>,
+	resultsR : ref [Maybe<?>], errorR : ref Maybe<??>, isDoneR : ref bool,
 	fulfill : ([?]) -> void, reject : (??) -> void
 ) -> void {
 	if (^started < length(promises)) {
@@ -305,11 +306,11 @@ startParallelXP(
 		doneP(promise,
 			\result : ? -> {
 				resultsR := replace(^resultsR, i, Some(result));
-				onDoneParallerXP(promises, started, finished, resultsR, errorR, fulfill, reject);
+				onDoneParallerXP(promises, started, finished, resultsR, errorR, isDoneR, fulfill, reject);
 			},
 			\error : ?? -> {
 				errorR := Some(error);
-				onDoneParallerXP(promises, started, finished, resultsR, errorR, fulfill, reject);
+				onDoneParallerXP(promises, started, finished, resultsR, errorR, isDoneR, fulfill, reject);
 			}
 		)
 	}
@@ -317,27 +318,31 @@ startParallelXP(
 
 onDoneParallerXP(
 	promises : [Promise<?, ??>], started : ref int, finished : ref int,
-	resultsR : ref [Maybe<?>], errorR : ref Maybe<??>,
+	resultsR : ref [Maybe<?>], errorR : ref Maybe<??>, isDoneR : ref bool,
 	fulfill : ([?]) -> void, reject : (??) -> void
 ) -> void {
-	finished := ^finished + 1;
-	switch (^errorR : Maybe<??>) {
-		Some(error): {
-			// once we encounter an error, we should skip all further promises
-			finished := length(promises);
-			reject(error);
-		};
-		None(): {
-			if (^finished == length(promises)) {
-				// all promises processed without errors (fulfilled)
-				results = ^resultsR;
-				results2 = filtermap(results, idfn);
+	if (!^isDoneR) {
+		finished := ^finished + 1;
+		switch (^errorR : Maybe<??>) {
+			Some(error): {
+				// once we encounter an error, we should skip all further promises
+				isDoneR := true;
+				finished := length(promises);
+				reject(error);
+			};
+			None(): {
+				if (^finished == length(promises)) {
+					// all promises processed without errors (fulfilled)
+					isDoneR := true;
+					results = ^resultsR;
+					results2 = filtermap(results, idfn);
 
-				assert(length(results) == length(results2), "Parallel promises failed."); //  Maybe both fulfilled and rejected was called for some stupid promise
+					assert(length(results) == length(results2), "Parallel promises failed."); //  Maybe both fulfilled and rejected was called for some stupid promise
 
-				fulfill(results2);
-			} else if (^started < length(promises)) {
-				startParallelXP(promises, started, finished, resultsR, errorR, fulfill, reject)
+					fulfill(results2);
+				} else if (^started < length(promises)) {
+					startParallelXP(promises, started, finished, resultsR, errorR, isDoneR, fulfill, reject)
+				}
 			}
 		}
 	}

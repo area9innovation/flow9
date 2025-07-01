@@ -3,10 +3,15 @@ import material/internal/material_typography;
 
 export {
 	MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MTooltip2TExtended(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, externalHover : Maybe<Transform<bool>>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 	makeTooltipId(id : int) -> string;
 }
 
 MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	MTooltip2TExtended(manager, parent, m, None(), m2t)
+}
+
+MTooltip2TExtended(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, externalHover : Maybe<Transform<bool>>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	zorder = getValue(manager.manager.zorder);
 	virtualScreen = tryExtractStruct(m.style, MVirtualScreen(makeWH(), make(zeroPositionScale)));
 	disableOnDragging = contains(m.style, MDisableOnDragging());
@@ -15,9 +20,11 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 
 	tooltipGap = 8.;
 	overlapGap = 4.;
-	hover = make(false);
+	innerHover = make(false);
 	popupHover = make(false);
 	externalFocused = extractStruct(m.style, MTooltipExternalFocused(const(false))).focused;
+	hover = eitherMap(externalHover, \eh -> fOr(eh, innerHover), innerHover);
+	
 	enabled =
 		extractStruct(m.style, MEnabled(const(true))).enabled
 		|> (\en -> if (disableOnDragging) fand(en, feq(manager.manager.dragging, -1)) else en);
@@ -124,7 +131,12 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 						h;
 					}
 				}),
-				TMouseInside(popupHover, blockHover)
+				TMouseInside(popupHover, blockHover),
+				// Intended to trigger rollout event
+				RollOver(nop1),
+				RollOut(\__ -> {
+					nextDistinct(popupHover, false);
+				})
 			];
 
 			showTooltip = fand(fand(enabled, openMenu.opened), const(!isEmptyMaterial(m.tooltip)));
@@ -240,7 +252,7 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 							[]
 						}
 					}),
-					makeSubscribeUns(fand(enabled, fand(fOr(fOr(fOr(hover, popupHover), p.focused), externalFocused), fselect(manager.manager.zorder, FLift(\cz -> cz <= zorder)))), \h -> {
+					makeSubscribeUns(fand(enabled, fand(fOr(fOr(fOr(fselectdelay(hover, \h -> b2i(!h)), popupHover), p.focused), externalFocused), fselect(manager.manager.zorder, FLift(\cz -> cz <= zorder)))), \h -> {
 						if (h) {
 							addMPopupItemId(manager, popupId);
 							blockOtherMPopupItemIds(manager, popupId);
@@ -258,22 +270,24 @@ MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : 
 				],
 				if (!mobile)
 					TInteractive(
-						[TMouseInside(hover, blockHover)],
+						[TMouseInside(innerHover, blockHover)],
 						m2t(mat, p)
 					)
 				else
 					TCopySize(
 						m2t(mat, p),
 						\tr ->
-							TInteractive([
-								if (switchByClick)
-									MouseDown(\mi -> {
-										if (mi.inside()) reverseBehaviour(hover)
-										else nextDistinct(hover, false);
+							TInteractive(
+								if (isSome(externalHover)) []
+								else if (switchByClick)
+									[MouseDown(\mi -> {
+										if (mi.inside()) reverseBehaviour(innerHover)
+										else nextDistinct(innerHover, false);
 										false;
-									})
-								else TMouseDownGhost(hover)
-							], tr),
+									})]
+								else [TMouseDownGhost(innerHover)],
+								tr
+							),
 						true
 					)
 			)
