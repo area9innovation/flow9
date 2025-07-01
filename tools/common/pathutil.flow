@@ -1,8 +1,15 @@
 import fs/filesystem;
 import sys/system;
-import tools/common/config_type;
+import common/config_type;
 
 export {
+	// Make Linux style path
+	normalizePath(path : string) -> string;
+	// Make Linux style path ending with "/"
+	normalizeFolderPath(path : string) -> string;
+
+	splitIncludes(includesStr : string) -> [string];
+
 	// Trims the filename to be a flow path, i.e. no .flow suffix, and no lib/ prefix or anything like that
 	trimFlowfile(flowFile : string, config : CompilerConfig) -> string;
 	trimFlowfile2(flowFile : string, includesResolved : [string]) -> string;
@@ -20,6 +27,7 @@ export {
 	// Convert \ to / and C:-like prefix to c: (lowercase) in path.
 	fcNormalizeWindowsPath(path : string) -> string;
 
+	fcDirName(path : string) -> string;
 
 	// When URI parser parses something like:
 	//	file:///c:/Users/dmitr/area9/flow9/tools/flowc
@@ -53,32 +61,19 @@ export {
 
 // We need it to speed up slow trimFlowfile -- do not resolve the same includes many times.
 makeResolvedIncludes(includesRaw : [string], workingDir : string) -> [string] {
-	shift = if (workingDir == "") "" else relatingPath(workingDir, resolveRelativePath("."));
-	pathShift = toLowerCase(if (shift == "") shift else shift + "/");
-	resolve = \inc -> {
-		resolved0 = resolveRelativePath(inc);
-		toLowerCase(strReplace(resolved0, "\\", "/"));
+	workingDir2 = normalizeFolderPath(workingDir);
+	resolve = \path -> {
+		resolved = resolveRelativePath(path);
+		toLowerCase(normalizePath(resolved));
 	}
-	arrayPush(
-		mapConcat(includesRaw, \inc0 -> {
-			inc = toLowerCase(if (endsWith(inc0, "/")) {
-				inc0;
-			} else {
-				inc0 + "/";
-			});
-
-			if (pathShift != "") [
-				resolve(pathShift + inc),
-				pathShift + inc,
-				resolve(inc),
-				inc
-			] else [
-				resolve(inc),
-				inc
-			];
-		}),
-		toLowerCase(workingDir)
-	);
+	map(includesRaw, \inc0 -> {
+		inc = toLowerCase(inc0);
+		if (isAbsolutePath(inc)) {
+			resolve(inc);
+		} else {
+			resolve(workingDir2 + inc);
+		}
+	});
 }
 
 trimFlowfile(flowFile : string, config : CompilerConfig) -> string {
@@ -87,7 +82,7 @@ trimFlowfile(flowFile : string, config : CompilerConfig) -> string {
 
 trimFlowfile2(flowFile : string, includesResolved : [string]) -> string {
 	noflow0 = if (endsWith(flowFile, ".flow")) strsubsmart(flowFile, 0, -5) else flowFile;
-	noflow = strReplace(noflow0, "\\", "/");
+	noflow = normalizePath(noflow0);
 	noflowLC = toLowerCase(noflow);
 	trimmed = fold(includesResolved, noflow, \acc, resolvedInc -> {
 		if (acc != noflow) {
@@ -103,25 +98,21 @@ trimFlowfile2(flowFile : string, includesResolved : [string]) -> string {
 
 findFlowPath(flowpath : string, flowsuffix : bool, imports : [string], workingDir : string) -> string {
 	withFlow = if (endsWith(flowpath, ".flow") || !flowsuffix) flowpath else flowpath + ".flow";
-	shift = if (workingDir == "") "" else relatingPath(workingDir, resolveRelativePath("."));
-	pathShift = if (shift == "") shift else shift + "/";
-	path = if (fileExists(withFlow)) {
+	path = if (isAbsolutePath(withFlow) && fileExists(withFlow)) {
 		resolveRelativePath(withFlow);
 	} else {
-		doFindFlowPath(withFlow, imports, true, pathShift, workingDir);
+		doFindFlowPath(withFlow, imports, true, workingDir);
 	}
 	fcNormalizeWindowsPath(path);
 }
 
 findFlowRelativePath(flowpath : string, flowsuffix : bool, imports : [string], workingDir : string) -> string {
 	withFlow = if (endsWith(flowpath, ".flow") || !flowsuffix) flowpath else flowpath + ".flow";
-	shift = if (workingDir == "") ""  else relatingPath(workingDir, resolveRelativePath("."));
-	pathShift = if (shift == "") shift else shift + "/";
-	doFindFlowPath(withFlow, imports, false, pathShift, workingDir);
+	doFindFlowPath(withFlow, imports, false, workingDir);
 }
 
-doFindFlowPath(withFlow : string, imports : [string], doResolve : bool, pathShift : string, workingDir : string) -> string {
-	doFindFlowPath2(withFlow, arrayPush(imports, workingDir), 0, doResolve, pathShift);
+doFindFlowPath(withFlow : string, imports : [string], doResolve : bool, workingDir : string) -> string {
+	doFindFlowPath2(withFlow, arrayPush(imports, workingDir), 0, doResolve, normalizeFolderPath(workingDir));
 }
 
 doFindFlowPath2(withFlow : string, imports : [string], idx : int, doResolve : bool, pathShift : string) -> string {
@@ -129,8 +120,8 @@ doFindFlowPath2(withFlow : string, imports : [string], idx : int, doResolve : bo
 		withFlow;
 	} else {
 		head = imports[idx];
-		directPath = head + (if (endsWith(head, "/") || endsWith(head, "\\")) "" else "/") + withFlow;
-		if (fileExists(directPath)) {
+		directPath = normalizeFolderPath(head) + withFlow;
+		if (isAbsolutePath(directPath) && fileExists(directPath)) {
 			if (!doResolve) directPath
 			else resolveRelativePath(directPath);
 		} else {
@@ -150,7 +141,7 @@ fcCurrentWorkingDir() -> string {
 }
 
 fcNormalizeWindowsPath(path : string) -> string {
-	path1 = strReplace(path, "\\", "/");
+	path1 = normalizePath(path);
 	if (hasTargetName("windows")) {
 		drive = getCharAt(path1, 0);
 		// Detect C: windows prefix
@@ -194,9 +185,42 @@ fcPath2uriPath(path : string) -> string {
 				path;
 			}
 		}
-		strReplace(path2, "\\", "/");
+		normalizePath(path2);
 	} else {
 		path;
+	}
+}
+
+normalizePath(path : string) -> string {
+	strReplace(path, "\\", "/");
+}
+
+normalizeFolderPath(path : string) -> string {
+	if (path == "") {
+		path;
+	} else {
+		path2 = normalizePath(path);
+		if (endsWith(path2, "/")) {
+			path2;
+		} else {
+			path2 + "/";
+		}
+	}
+}
+
+splitIncludes(includesStr : string) -> [string] {
+	includesStr2 = trim(includesStr);
+	if (includesStr2 == "") {
+		[];
+	} else {
+		filtermap(strSplit(includesStr2, ","), \s -> {
+			i = normalizeFolderPath(trim(s));
+			if (i != "") {
+				Some(i);
+			} else {
+				None();
+			}
+		});
 	}
 }
 
@@ -206,7 +230,7 @@ copyFileRelative(base : string, from : string, to : string) -> string {
 	} else {
 		name = strRight(from, strlen(base));
 		path_to = pathCombine(to, name);
-		ensureDirectoryExists(dirName(path_to));
+		ensureDirectoryExists(fcDirName(path_to));
 		if (copyFile(from, path_to)) "" else {
 			"error while copying file '" + path_to + "' from '" + from + "' to '" + to + "'";
 		}
@@ -243,4 +267,8 @@ findAllFlowPaths(flowpath : string, imports : [string], workingDir : string) -> 
 		}
 	});
 	uniq(map(concatA([path1, path2, paths1, paths2]), resolveRelativePath));
+}
+
+fcDirName(path : string) -> string {
+	takeBeforeLast(normalizePath(path), "/", "");
 }

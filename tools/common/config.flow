@@ -1,6 +1,5 @@
 import sys/concurrent;
-import net/url_parameter;
-import tools/common/pathutil;
+import common/pathutil;
 
 // Use compilerconfig.flow to get a useful, easy-to-use configuration,
 // and then functions here to work with it
@@ -78,8 +77,6 @@ export {
 	// In case of failure returns "" and doens't report anything.
 	findFlowDir() -> string;
 
-	fcDirName(path : string) -> string;
-
 	setConfigFlowfile(config : CompilerConfig, flowfile : string) -> CompilerConfig;
 
 	patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig;
@@ -138,7 +135,7 @@ findFlowDir() -> string {
 		}
 		// Use the path of the executable
 		flowDirByAppPath = \-> {
-			appPath = strReplace(getApplicationPath(), "\\", "/");
+			appPath = normalizePath(getApplicationPath());
 			if (strContains(appPath, "/platforms/qt")) {
 				takeBefore(appPath, "/platforms/qt", appPath) + "/"
 			} else if (strContains(appPath, "/QtByteRunner-build-release/QtByteRunner")) {
@@ -169,24 +166,14 @@ findFlowDir() -> string {
 			}
 			takeBeforeLast(binDir, "bin", binDir);
 		};
-		d = strReplace(flowdir, "\\", "/");
-		// Make sure we end with /
-		if (endsWith(d, "/")) d else d + "/";
-
-    }
-    onlyOnce(fcFlowDir, init_dir);
+		normalizeFolderPath(flowdir);
+	}
+	onlyOnce(fcFlowDir, init_dir);
 }
 
 findFlowConfig(dir : string) -> string {
 	conf_dir = findFlowConfigDir(dir);
 	if (conf_dir == "") "" else  getFileContent(conf_dir + "/flow.config");
-}
-
-fcDirName(path : string) -> string {
-	path1 = strReplace(path, "\\", "/");
-	if (!strContains(path1, "/")) "" else {
-		strLeft(path1, strLastIndexOf(path1, "/"));
-	}
 }
 
 findFlowConfigDir(d : string) -> string {
@@ -352,7 +339,7 @@ compilerConfigFromConfig(config) {
 
 	setCompilerThreadPool(getConfigParameterInt(config, "threads", availableProcessors()));
 
-	includesRaw = strSplit(getConfigParameter(config, "include"), ",");
+	includesRaw = splitIncludes(getConfigParameter(config, "include"));
 	workingDir = lookupTreeDef(config, "working-dir", "");
 	CompilerConfig(
 		getConfigParameter(config, "flowfile"),
@@ -471,8 +458,8 @@ setConfigFlowfile(conf : CompilerConfig, file : string) -> CompilerConfig {
 }
 
 patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
-	cwd = strReplace(resolveRelativePath("."), "\\", "/");
-	conf_dir = findFlowConfigDir(dirName(resolveRelativePath(changeFileExt(conf.flowfile, ".flow"))));
+	cwd = normalizePath(resolveRelativePath("."));
+	conf_dir = findFlowConfigDir(fcDirName(resolveRelativePath(changeFileExt(conf.flowfile, ".flow"))));
 	resolve_relative_to_conf = \file ->
 		fcFirstExistentFile([file, resolveRelativePath(pathCombine(conf_dir, file))], 0, file);
 
@@ -528,40 +515,19 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 		None(): conf6;
 	}
 
-	conf8 = switch (lookupTree(conf7, "include")) {
-		Some(includes):
-			setTree(conf7, "include",
-				strGlue(filtermap(strSplit(includes, ","), \include ->
-					if (isSpace(include)) None() else {
-						Some(resolve_relative_to_conf(include))
-					}
-				), ",")
-			);
-		None(): conf7;
-	}
-
-	conf9 = switch (lookupTree(conf8, "I")) {
-		Some(includes):
-			setTree(conf8, "I",
-				strGlue(filtermap(strSplit(includes, ","), \include ->
-					if (isSpace(include)) None() else {
-						Some(resolve_relative_to_conf(include));
-					}
-				), ",")
-			);
-		None(): conf8;
-	}
-
 	// Output the result
 	CompilerConfig(conf with
 		includesResolved = makeResolvedIncludes(conf.includesRaw, conf.workingDir),
-		config = conf9,
+		config = conf7,
 		jsParams = jsParams
 	);
 }
 
 setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig {
-	includesRaw = if (opt == "I" || opt == "include") strSplit(val, ",") else conf.includesRaw;
+	isIncludesOpt = opt == "I" || opt == "include";
+	includesRaw = if (isIncludesOpt && val != "") {
+		uniq(concat(conf.includesRaw, splitIncludes(val)));
+	} else conf.includesRaw;
 	workingDir = if (opt == "working-dir") val else conf.workingDir;
 	includesResolved = if (includesRaw == conf.includesRaw && workingDir == conf.workingDir) {
 		conf.includesResolved;
@@ -596,7 +562,7 @@ setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerCo
 			jslibraryObject = if (opt == "jslibraryobject") val else conf.jsParams.jslibraryObject,
 			callMain = if (opt == "js-call-main") s2b(val) else conf.jsParams.callMain,
 		),
-		config = setTree(conf.config, opt, val)
+		config = if (isIncludesOpt) conf.config else setTree(conf.config, opt, val)
 	);
 }
 
