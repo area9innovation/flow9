@@ -1,5 +1,6 @@
 import sys/concurrent;
 import common/pathutil;
+import tools/flowc/flowc_println;
 import tools/common/parse_config;
 
 // Use compilerconfig.flow to get a useful, easy-to-use configuration,
@@ -88,7 +89,7 @@ export {
 
 	// Gather includes from external flow.config's, listed in include_extern as CSV.
 	// When gathering external includes, relative paths are resolved to absolute.
-	fcExternIncludes(include_extern : string) -> [string];
+	fcExternIncludes(parentConfDir : string, includeExtern : [string], globalConfigM : Maybe<CompilerConfig>) -> [string];
 
 	// Tries to run a program with '-version' option, and output the result.
 	// In case a program doesn't exist on path or any other errors return an empty string.
@@ -550,25 +551,27 @@ setConfigOptions(conf : CompilerConfig, opt_pairs : [Pair<string, string>]) -> C
 	fold(opt_pairs, conf, \acc, pair -> setConfigOption(acc, pair.first, pair.second));
 }
 
-fcExternIncludes(include_extern : string) -> [string] {
-	if (include_extern == "") [] else {
-		configs_to_merge = filter(strSplit(include_extern, ","), neq(""));
-		fold(configs_to_merge, [], \acc, conf_file -> {
-			if (!fileExists(conf_file)) {
-				acc;
+fcExternIncludes(parentConfDir : string, includeExtern : [string], globalConfigM : Maybe<CompilerConfig>) -> [string] {
+	if (includeExtern == []) [] else {
+		mapConcat(includeExtern, \confFile -> {
+			if (!fileExists(confFile)) {
+				msg = "WARNING: Could not find external flow.config file: " + confFile + " specified in " + parentConfDir + "/flow.config";
+				eitherFn(
+					globalConfigM,
+					\globalConfig -> if (globalConfig.threadId > 0) fcPrintln(msg, globalConfig.threadId),
+					\ -> println(msg)
+				);
+				[];
 			} else {
-				conf_str = getFileContent(conf_file);
-				conf_dir = fcDirName(conf_file);
-				extern_conf = parseFlowConfig(conf_str, conf_dir);
-				includes_str = lookupTreeDef(extern_conf, "include", "");
-				acc1 = concat(acc, [resolveRelativePath(conf_dir)]);
-				if (includes_str == "") acc1 else {
-					includes = filter(strSplit(includes_str, ","), neq(""));
-					concat(acc1, map(includes, \incl ->
-						if (isAbsolutePath(incl)) incl else
-						resolveRelativePath(pathCombine(fcDirName(conf_file), incl))
-					));
-				}
+				confingText = getFileContent(confFile);
+				confDir2 = fcDirName(confFile);
+				externConf = parseFlowConfig(confingText, confDir2);
+				includesStr = lookupTreeDef(externConf, "include", "");
+				includes = splitIncludes(includesStr);
+				concat([confDir2], map(includes, \incl ->
+					if (isAbsolutePath(incl)) incl else
+					resolveRelativePath(pathCombine(confDir2, incl))
+				));
 			}
 		});
 	}
