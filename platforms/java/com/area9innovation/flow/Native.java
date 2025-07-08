@@ -1068,7 +1068,7 @@ public class Native extends NativeHost {
 			return null;
 		}
 		Object[] trace =  Thread.currentThread().getStackTrace();
-		if (trace.length < index) {
+		if (index < trace.length) {
 			return trace[index];
 		} else {
 			return null;
