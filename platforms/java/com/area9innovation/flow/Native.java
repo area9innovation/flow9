@@ -1064,7 +1064,15 @@ public class Native extends NativeHost {
 		}
 	}
 	public static final Object captureCallstackItem(int index) {
-		return Thread.currentThread().getStackTrace()[index];
+		if (index < 0) {
+			return null;
+		}
+		Object[] trace =  Thread.currentThread().getStackTrace();
+		if (trace.length < index) {
+			return trace[index];
+		} else {
+			return null;
+		}
 	}
 	public static final Object impersonateCallstackItem(Object item, int index) {
 		return null;
