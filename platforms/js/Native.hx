@@ -574,7 +574,7 @@ class Native {
 		return res;
 	}
 
-	public static function list2array(h : Dynamic) : Array<Dynamic> {
+	public static function list2arrayMapi(h : Dynamic, clos : Int -> Dynamic -> Dynamic) : Array<Dynamic> {
 		var cnt = 0;
 		var p: Dynamic = h;
 		while (Reflect.hasField(p, "head")) {
@@ -589,11 +589,20 @@ class Native {
 		p = h;
 		cnt -= 1;
 		while (Reflect.hasField(p, "head")) {
-			result[cnt] = p.head;
+			result[cnt] = clos(cnt, p.head);
 			cnt -= 1;
 			p = p.tail;
 		}
 		return result;
+	}
+
+	public static function list2array(h : Dynamic) : Array<Dynamic> {
+		return list2arrayMapi(
+			h,
+			function(i, li) {
+				return li;
+			}
+		);
 	}
 
 	public static inline function bitXor(a : Int, b : Int) : Int {
