@@ -36,10 +36,13 @@ export {
 		inspectorM : Maybe<ParaElementInspector>,
 		scriptM : Maybe<ParaElementScriptType>,
 		ignoreLetterSpacing : bool,
-		wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+		wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+		isUseContextWordLength : bool
 	) -> TParaWord;
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double, preventNodeCalculation : bool) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
+	getTParaWordTextM(w: TParaWord) -> Maybe<string>;
+	getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalculation : bool) -> FormMetrics;
 
 	isSpaceWord(word : TParaWord) -> bool;
 }
@@ -912,7 +915,8 @@ commonWordConstructor(
 	inspectorM : Maybe<ParaElementInspector>,
 	scriptM : Maybe<ParaElementScriptType>,
 	isLastChild : bool,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	isUseContextWordLength : bool
 ) -> TParaWord {
 	inspector = eitherFn(inspectorM, idfn, dummyInspectorFn);
 	ls = if (isLastChild) 0.0 else extractStruct(style, zeroLetterSpacing).spacing;
@@ -920,15 +924,22 @@ commonWordConstructor(
 
 	inspectFn = \t -> inspectWordView(t, inspector, ls, !isLastChild);
 
+	ghostViewTropic = \ -> if (isUseContextWordLength) {
+		tr
+	} else inspectFn(tr)
+	
 	ghostView = switch(w) {
-		GeneralSpace(__, __, __): TVisible(fnot(inspector.detached), inspectFn(tr));
+		GeneralSpace(__, __, __): TVisible(fnot(inspector.detached), ghostViewTropic());
+		GeneralDynamicSpace(__, __, __): ghostViewTropic();
+		GeneralText(__): ghostViewTropic();
+		GeneralDynamicText(__): ghostViewTropic();
 		default: inspectFn(tr);
 	}
 
 	// if tr is not constant size (in the editorm TText is wrapped by TMutable for example)
 	// then the inspector.size would be not measured after inspectFn call
 	// and we have to estimate it using artificially created TText
-	if (!isStatic && isSome(inspectorM) && getValue(inspector.size) == zeroWH) {
+	if (!isUseContextWordLength && !isStatic && isSome(inspectorM) && getValue(inspector.size) == zeroWH) {
 		inspectText = \txt -> inspectFn(TText(txt, applyAlphabetStyles(detectAlphabet(txt), style))) |> ignore;
 		inspectSpace = \txt, alBef, alAft -> inspectFn(TText(txt, apply2AlphabetsScaling(alBef, alAft, style))) |> ignore;
 		switch (w) {
@@ -983,7 +994,7 @@ inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : d
 	}
 }
 
-inspectWordViewStatic(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> void {
+getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalculation : bool) -> FormMetrics {
 	preventNodeCalculationFontFamily = switch(tr) {
 		TText(__, style0) : {
 			eitherMap(
@@ -996,14 +1007,19 @@ inspectWordViewStatic(tr : Tropic, inspector : ParaElementInspector, letterSpaci
 		};
 		default : false;
 	};
-	tr2 = if (preventNodeCalculation && preventNodeCalculationFontFamily && !isUrlParameterFalse("wigi_width_inspection_fix"))
+	tr2 = if ((preventNodeCalculation && preventNodeCalculationFontFamily && !isUrlParameterFalse("wigi_width_inspection_fix")) || true) {
 		switch(tr) {
 			TText(txt, style0): TText(txt, arrayPush(style0, PreventTextNodeWidthCalculation()));
 			default : tr;
 		}
-		else tr;
+	} else tr;
 	fMetrics = getTropicMetrics(tr2);
-	nextDistinct(inspector.size, WidthHeight(addLetterSpacing(fMetrics.width, letterSpacing), fMetrics.height));
+	FormMetrics(fMetrics with width = addLetterSpacing(fMetrics.width, letterSpacing));
+} 
+
+inspectWordViewStatic(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> void {
+	fMetrics = getWordViewStaticMetrics(tr, letterSpacing, preventNodeCalculation);
+	nextDistinct(inspector.size, WidthHeight(fMetrics.width, fMetrics.height));
 	nextDistinct(inspector.baseline, fMetrics.baseline);
 }
 
@@ -1785,6 +1801,16 @@ getTParaWordText(w: TParaWord) -> string {
 		GeneralText(t): t;
 		GeneralDynamicText(t) : t;
 		default: "";
+	}
+}
+
+getTParaWordTextM(w: TParaWord) -> Maybe<string> {
+	switch(w.word) {
+		GeneralText(t): Some(t);
+		GeneralDynamicText(t) : Some(t);
+		GeneralSpace(str, __, __): Some(str);
+		GeneralDynamicSpace(str, __, __): Some(str);
+		default: None();
 	}
 }
 
