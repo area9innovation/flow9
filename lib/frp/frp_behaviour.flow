@@ -1,27 +1,169 @@
 import behaviour;
 import frp/frp;
 
+export {
+	rbBidiConnect(
+		cell : FrpValue<?>,
+		beh : DynamicBehaviour<??>,
+		valueFn : (?, ??) -> ?,
+		setFn : (?) -> ??,
+	) -> void;
+
+	rbConnectStar2(
+		cell : FrpValue<?>,
+		beh1 : DynamicBehaviour<??>,
+		beh2 : DynamicBehaviour<???>,
+		valueFn : (?, ??, ???) -> ?,
+		setFn1 : (?) -> ??,
+		setFn2 : (?) -> ???,
+	) -> void;
+
+	rbConnectStar3(
+		cell : FrpValue<?>,
+		beh1 : DynamicBehaviour<??>,
+		beh2 : DynamicBehaviour<???>,
+		beh3 : DynamicBehaviour<????>,
+		valueFn : (?, ??, ???, ????) -> ?,
+		setFn1 : (?) -> ??,
+		setFn2 : (?) -> ???,
+		setFn3 : (?) -> ????,
+	) -> void;
+
+	rbConnectStar4(
+		cell : FrpValue<?>,
+		beh1 : DynamicBehaviour<??>,
+		beh2 : DynamicBehaviour<???>,
+		beh3 : DynamicBehaviour<????>,
+		beh4 : DynamicBehaviour<?????>,
+		valueFn : (?, ??, ???, ????, ?????) -> ?,
+		setFn1 : (?) -> ??,
+		setFn2 : (?) -> ???,
+		setFn3 : (?) -> ????,
+		setFn4 : (?) -> ?????,
+	) -> void;
+}
+
+
+rbBidiConnect(
+	cell : FrpValue<?>,
+	beh : DynamicBehaviour<??>,
+	valueFn : (?, ??) -> ?,
+	setFn : (?) -> ??,
+) -> void {
+	rbConnectStarCommon(
+		cell,
+		[
+			Pair(beh, \v-> nextDistinct(beh, setFn(v))),
+		],
+		\currentValue : ? -> valueFn(currentValue, getValue(beh))
+	);
+}
+
+rbConnectStar2(
+	cell : FrpValue<?>,
+	beh1 : DynamicBehaviour<??>,
+	beh2 : DynamicBehaviour<???>,
+	valueFn : (?, ??, ???) -> ?,
+	setFn1 : (?) -> ??,
+	setFn2 : (?) -> ???,
+) -> void {
+	rbConnectStarCommon(
+		cell,
+		[
+			Pair(beh1, \v-> nextDistinct(beh1, setFn1(v))),
+			Pair(beh2, \v-> nextDistinct(beh2, setFn2(v))),
+		],
+		\currentValue : ? -> valueFn(currentValue, getValue(beh1), getValue(beh2))
+	);
+}
+
+rbConnectStar3(
+	cell : FrpValue<?>,
+	beh1 : DynamicBehaviour<??>,
+	beh2 : DynamicBehaviour<???>,
+	beh3 : DynamicBehaviour<????>,
+	valueFn : (?, ??, ???, ????) -> ?,
+	setFn1 : (?) -> ??,
+	setFn2 : (?) -> ???,
+	setFn3 : (?) -> ????,
+) -> void {
+	rbConnectStarCommon(
+		cell,
+		[
+			Pair(beh1, \v-> nextDistinct(beh1, setFn1(v))),
+			Pair(beh2, \v-> nextDistinct(beh2, setFn2(v))),
+			Pair(beh3, \v-> nextDistinct(beh3, setFn3(v))),
+		],
+		\currentValue : ? -> valueFn(currentValue, getValue(beh1), getValue(beh2), getValue(beh3))
+	);
+}
+
+rbConnectStar4(
+	cell : FrpValue<?>,
+	beh1 : DynamicBehaviour<??>,
+	beh2 : DynamicBehaviour<???>,
+	beh3 : DynamicBehaviour<????>,
+	beh4 : DynamicBehaviour<?????>,
+	valueFn : (?, ??, ???, ????, ?????) -> ?,
+	setFn1 : (?) -> ??,
+	setFn2 : (?) -> ???,
+	setFn3 : (?) -> ????,
+	setFn4 : (?) -> ?????,
+) -> void {
+	rbConnectStarCommon(
+		cell,
+		[
+			Pair(beh1, \v-> nextDistinct(beh1, setFn1(v))),
+			Pair(beh2, \v-> nextDistinct(beh2, setFn2(v))),
+			Pair(beh3, \v-> nextDistinct(beh3, setFn3(v))),
+			Pair(beh4, \v-> nextDistinct(beh4, setFn4(v))),
+		],
+		\currentValue : ? -> valueFn(currentValue, getValue(beh1), getValue(beh2), getValue(beh3), getValue(beh4))
+	);
+}
+
+/// utils //////////////////////////////////////////////////////////////
+
 rbConnectStarCommon(
 	cell : FrpValue<?>,
-	behaviours : [DynamicBehaviour<flow>],
-	getFn : () -> ?,
-	setFn : (?) -> void,
+	behaviours : [Pair<DynamicBehaviour<flow>, (?) -> void>],
+	valueFn : (?) -> ?, // get new cell value from old cell value
 ) -> void {
+	updateIndex = ref -2; // -2 - default, -1 - update from the cell, any other - update from behaviours with index
+
 	eventFn = \event : FrpEventType -> {
-		switch(event) {
-			FrpEventSetValue(): {
-				if (rIsUpdated(cell)) setFn(rget(cell));
+		if (^updateIndex < -1) {
+			updateIndex := -1;
+
+			switch(event) {
+				FrpEventSetValue(): {
+					if (rIsUpdated(cell)) {
+						v = rget(cell);
+						iteri(behaviours, \i,b -> if (i != ^updateIndex) b.second(v));
+					}
+					// else wait
+				}
+				FrpEventSetElement(index): {}
+				FrpEventUpdated(): {}
+				FrpEventOutdated(): {}
 			}
-			FrpEventSetElement(index): {}
-			FrpEventUpdated(): {}
-			FrpEventOutdated(): {}
+			updateIndex := -2;
 		}
 	}
 
-	bEventFn = \__-> {
-
+	bEventFn = \index -> {
+		if (^updateIndex < -1) {
+			updateIndex := index;
+			newVal = valueFn(rget(cell));
+			rnext(cell, newVal);
+			updateIndex := -2;
+		}
 	}
-	uns = rAddEventListeners([cell], eventFn); // return?
-	unsArr = map(behaviours, \b -> subscribe(b, bEventFn));
-	rAddDisposer(cell, \-> applyall(unsArr));
+
+	// set initial beheviours values derived from cell current value
+	iteri(behaviours, \i,b -> b.second(rget(cell)));
+
+	uns = rAddEventListeners([cell], eventFn);
+	unsArr = mapi(behaviours, \i,b -> subscribe2(b.first, \__-> bEventFn(i)));
+	rAddDisposer(cell, \-> applyall(arrayPush(unsArr, uns)));
 }
