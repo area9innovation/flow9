@@ -2010,7 +2010,7 @@ class TextClip extends NativeWidgetClip {
 
 		measureElement.style.display = 'none';
 	}
-
+	// TODO: refactor text metrics measurement
 	private function measureHTMLWidth() : Void {
 		measureHTMLWidthAndHeight(false);
 	}
@@ -2025,7 +2025,7 @@ class TextClip extends NativeWidgetClip {
 		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 		var parentNode : Dynamic = nativeWidget.parentNode;
 		var nextSibling : Dynamic = nativeWidget.nextSibling;
-		var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth;
+		var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && nativeWidget.style.fontFeatureSettings == "";
 
 		updateNativeWidgetStyle();
 		var tempDisplay = nativeWidget.style.display;
@@ -2065,6 +2065,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.paddingLeft = '${-textNodeMetrics.x}px';
 		}
 
+		// This block is expected to be never called
 		if (shouldUpdateHeight && textNodeMetrics.height != null && textNodeMetrics.height >= 0 && metrics.lineHeight > 0) {
 			var textNodeLines = Math.round(textNodeMetrics.height / metrics.lineHeight);
 			var currentLines = Math.round(metrics.height / metrics.lineHeight);
