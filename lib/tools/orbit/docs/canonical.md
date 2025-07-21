@@ -579,18 +579,58 @@ Even though the multiplication is more complex, the representation of the elemen
 
 ##### 3. Free Product: `G * H`
 
-Elements of the free product are alternating sequences of elements from `G` and `H`, like `g1 h1 g2 h2 ...`.
+Elements of the free product are alternating sequences of elements from `G` and `H`, like `g1 h1 g2 h2 ...`. The canonical form is a **reduced word** where no element is an identity and adjacent elements are from different groups.
 
-The canonical form is a **reduced word**. A word is reduced if:
-1.  It does not contain the identity element from either group.
-2.  It strictly alternates between elements of `G` and `H`.
+###### Canonicalization Algorithm
 
-To find the canonical form of a word, you repeatedly apply these rules:
-1.  Replace any occurrence of the identity element (e.g., `... g e h ...`) with `... g h ...`.
-2.  If two adjacent elements are from the same group (e.g., `... g1 g2 ...`), replace them with their product in that group (e.g., `... (g1g2) ...`).
-3.  Ensure each element `g_i` and `h_i` in the final reduced word is itself in canonical form, i.e., apply `canon_G` and `canon_H` to each element of the sequence.
+The following pseudocode outlines a linear-time algorithm for finding the canonical reduced word from an input sequence (`word`).
 
-For example, if `g1, g2 ∈ G` and `h ∈ H`, the sequence `g1 h g2` is already reduced in structure. The canonical form is `[canon_G(g1), canon_H(h), canon_G(g2)]`. A sequence like `g1 g2 h` would be reduced to `(g1*g2) h` before canonicalizing the elements.
+```
+function canonicalize_free_product(word, canon_G, canon_H):
+  // word: A list of elements from G or H.
+  // canon_G, canon_H: Functions to canonicalize elements within their own group.
+
+  reduced_word = []
+  for element in word:
+    // First, ensure the element is in its own group's canonical form.
+    element = canon_G(element) if element in G else canon_H(element)
+
+    if is_identity(element):
+      continue // Skip identity elements.
+
+    if is_empty(reduced_word):
+      append(reduced_word, element)
+      continue
+
+    last_element = get_last(reduced_word)
+
+    // If element is from the same group as the last one, combine them.
+    if get_group(element) == get_group(last_element):
+      new_element = multiply(last_element, element)
+      // If the product is the identity, the last element is effectively removed.
+      if is_identity(new_element):
+        pop_last(reduced_word)
+      else:
+        replace_last(reduced_word, new_element)
+    else:
+      // Otherwise, the groups alternate, so just append.
+      append(reduced_word, element)
+
+  return reduced_word
+```
+
+###### Equivalence Testing and Computational Compression
+
+The primary benefit of this canonical form is the massive reduction in computational complexity for equivalence testing. The "compression" is not in the size of the (usually infinite) group, but in the representation of its equivalence classes.
+
+Without a canonical form, determining if two words `w1` and `w2` are equivalent requires searching the vast space of possible transformations to see if `w1` can be converted to `w2`. This search across the word's "orbit" can be combinatorially explosive.
+
+Canonicalization replaces this search with a simple, efficient check:
+
+-   **The Hard Way (Orbit Search)**: Is `w1` in the orbit of `w2`? This is a graph traversal problem that can be exponential in the number of possible reductions.
+-   **The Easy Way (Canonicalization)**: Is `canonicalize(w1) == canonicalize(w2)`? This requires just two linear-time computations and a direct comparison.
+
+This process "compresses" a potentially huge equivalence class into a single representative, transforming an intractable problem into a deterministic and efficient one.
 
 // Example: Dₙ as semi-direct product
 (r : Cₙ ⋊_σ s : C₂) => (r, s) : Dₙ;  // Dihedral group as semi-direct product
