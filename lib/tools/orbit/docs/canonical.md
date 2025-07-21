@@ -737,8 +737,45 @@ D₂ ≅ C₂ × C₂;  // Dihedral group of order 4 is isomorphic to Klein four
 
 // Quaternion group has no elementary decomposition, but subgroup relations:
 Q₈ ⊃ {±1} ≅ C₂  // Center of Q₈ is isomorphic to C₂
+```
 
+## Generalizing Canonicalization: The Knuth-Bendix Algorithm
 
+The Knuth-Bendix algorithm provides a powerful, general method for attempting to create a canonicalizing rewrite system from a set of initial axioms or equations. It formalizes many of the ad-hoc techniques discussed previously.
+
+### The Structure: Presentations
+
+The algorithm operates on an algebraic structure defined by a **presentation**, which consists of:
+1.  **Generators**: A set of symbols (e.g., `f`, `g`, `x`).
+2.  **Relations**: A set of equations the generators must obey (e.g., `f(f(x)) = x`).
+
+This is a very general way to define structures like groups and monoids. The fundamental "word problem" is to determine if two expressions are equivalent given these relations.
+
+### The Goal: A Convergent Rewrite System
+
+The objective of Knuth-Bendix is to convert the set of equations into a **convergent term rewriting system**. A convergent system guarantees that every expression has a unique **normal form** (a state that cannot be rewritten further). This normal form is the canonical form.
+
+A convergent system must have two properties:
+1.  **Termination**: All rewrite sequences are finite (no infinite loops).
+2.  **Confluence**: The final result is independent of the order in which rules are applied.
+
+### The Algorithm at a High Level
+
+The algorithm is a "completion" procedure that works as follows:
+
+1.  **Orient Rules**: Turn equations (like `f(f(x)) = x`) into directed rewrite rules (like `f(f(x)) -> x`). This requires a *term ordering* to ensure each rule makes the term "smaller," guaranteeing termination.
+2.  **Find Critical Pairs**: Systematically find all "critical pairs"—terms where two different rules could apply, creating a potential ambiguity. For example, if we have rules `g(f(x)) -> h(x)` and `f(a) -> b`, the term `g(f(a))` is a critical point. It could rewrite to `h(a)` or `g(b)`.
+3.  **Resolve and Complete**: The algorithm reduces the two results of a critical pair (e.g., `h(a)` and `g(b)`).
+    *   If they reduce to the same form, the ambiguity is resolved.
+    *   If not, a **new rule** is generated from the two different forms (e.g., `h(a) -> g(b)`) and added to the system. This "completes" the system by removing the ambiguity.
+
+This process is repeated until no unresolved critical pairs remain.
+
+### Conclusion
+
+If the Knuth-Bendix algorithm terminates successfully, it produces a complete set of rewrite rules that serves as a canonicalization procedure for the initial set of axioms. It is a powerful method for automatically discovering a system for finding canonical forms.
+
+**Caveat**: The completion process is not guaranteed to terminate. It may run forever, generating an infinite number of new rules.
 
 ## Algebraic Structures in Functional Programming
 
