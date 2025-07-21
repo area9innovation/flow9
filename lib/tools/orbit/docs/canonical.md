@@ -554,6 +554,44 @@ The semi-direct product combines groups where one acts on the other.
 // Semi-direct product with action σ
 (a : g ⋊_σ b : h) => (a, b) : semi_Direct_Product(g, h, σ);
 
+
+#### Group Products
+
+For two groups, `G` and `H`, with canonical form functions `canon_G` and `canon_H` respectively, the canonical forms for their products are defined as follows.
+
+##### 1. Direct Product: `G × H`
+
+The elements of the direct product `G × H` are pairs `(g, h)` where `g ∈ G` and `h ∈ H`. The group operation is performed component-wise.
+
+The canonical form of an element `(g, h)` is the pair of the canonical forms of its components:
+
+`canon(g, h) = (canon_G(g), canon_H(h))`
+
+##### 2. Semidirect Product: `G ⋊ H`
+
+The elements are also pairs `(g, h)`. The group operation involves a homomorphism `φ: H -> Aut(G)`.
+
+The canonical form is again defined in terms of the components:
+
+`canon(g, h) = (canon_G(g), canon_H(h))`
+
+Even though the multiplication is more complex, the representation of the element itself is standard, so we simply canonicalize each part.
+
+##### 3. Free Product: `G * H`
+
+Elements of the free product are alternating sequences of elements from `G` and `H`, like `g1 h1 g2 h2 ...`.
+
+The canonical form is a **reduced word**. A word is reduced if:
+1.  It does not contain the identity element from either group.
+2.  It strictly alternates between elements of `G` and `H`.
+
+To find the canonical form of a word, you repeatedly apply these rules:
+1.  Replace any occurrence of the identity element (e.g., `... g e h ...`) with `... g h ...`.
+2.  If two adjacent elements are from the same group (e.g., `... g1 g2 ...`), replace them with their product in that group (e.g., `... (g1g2) ...`).
+3.  Ensure each element `g_i` and `h_i` in the final reduced word is itself in canonical form, i.e., apply `canon_G` and `canon_H` to each element of the sequence.
+
+For example, if `g1, g2 ∈ G` and `h ∈ H`, the sequence `g1 h g2` is already reduced in structure. The canonical form is `[canon_G(g1), canon_H(h), canon_G(g2)]`. A sequence like `g1 g2 h` would be reduced to `(g1*g2) h` before canonicalizing the elements.
+
 // Example: Dₙ as semi-direct product
 (r : Cₙ ⋊_σ s : C₂) => (r, s) : Dₙ;  // Dihedral group as semi-direct product
 ```
