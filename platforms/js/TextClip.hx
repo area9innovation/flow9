@@ -711,6 +711,9 @@ class TextClip extends NativeWidgetClip {
 			return fontSlope == "italic" ? "Italic" : fontWeight == 700 ? "Bold" : "Book";
 		} else if (StringTools.startsWith(fontFamily, "'Roboto")) {
 			return fontFamily + fontWeightToString(fontWeight) + fontSlope == "normal" ? "" : capitalize(fontSlope);
+		} else if (StringTools.contains(fontFamily, " ") && !StringTools.startsWith(fontFamily, "'")) {
+			// If fontFamily contains space, it is not a valid CSS font-family name, so we need to quote it.
+			return "'" + fontFamily + "'";
 		} else {
 			return fontFamily;
 		}
