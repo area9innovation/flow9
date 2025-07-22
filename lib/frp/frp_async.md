@@ -1,4 +1,4 @@
-# FRP async
+# FRP async library
 
  The library to support Frp nodes graphs, that can work in async manner.
 
@@ -150,6 +150,11 @@ rAsyncFnConnect(idNode, dataNode, FrpAsyncBufferNone(), true,
 );
 
 ```
+## disconnect
+
+```
+rAsyncDisconnect(node : FrpAsyncNode<?>) -> void;
+```
 
 ## Subscribers
 
@@ -167,9 +172,9 @@ rAsyncFnConnect(idNode, dataNode, FrpAsyncBufferNone(), true,
 
 `init` argument force run `fn` on call `rAsyncSubscribe`
 
-# Usage cases
+## Usage cases
 
-## Case 1: engine with async state
+### Case 1: engine with async state
 
 ```
 AState(...); // struct to represent a internal component's state
@@ -223,7 +228,7 @@ Because `src1` and `scr2` are async nodes also, they can change their values bef
 The updates buffer help us resolve an async initialization problem.
 This engine initialization process starts by calling `rAsyncFnConnect2` here, if `src1` or `scr2` changes occur before it is completed, then they will be buffered as delayed updates.
 
-## Case 2: engine with only-once initialized state
+### Case 2: engine with only-once initialized state
 
 ```
 AState(...); // struct to represent a internal component's state

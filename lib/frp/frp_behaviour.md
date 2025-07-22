@@ -1,6 +1,8 @@
-# Main purpose
+# frp_behaviour library
 
-Main purpose of the lib is allow to create an UI engine, that works without glitches and in effective manner.
+## Main purpose
+
+Main purpose of the lib is provide a helpers to to create an UI engine, that works without glitches and in effective manner.
 
 Such an engine should have the following properties:
 1. to work without any glitches (its output must get only correct values)
@@ -14,7 +16,7 @@ Main idea is creating an separated from UI engine using a Frp-cell to keep a sta
 Frp-cell would be responsible to keep an always consistent state value, but `DynamicBehaviours` would be used only to connect the state with UI.
 
 
-# API
+## API
 
 The lib provides functions that allow to connect a Frp-cell to one or more behaviours and works in bidi- manner.
 That means changes are propagated only in one direction: from a Frp-cell to the behaviour or from the behaviour to the Frp-cell.
@@ -44,7 +46,11 @@ The `rbBidiConnect` function allows to create ordinary bidi-link between Frp-cel
 
 The `cellFn` take a current cell value as first argument, thus  we can create a complex behavior like accumulation data and changing logic on some event (after initialization for example).
 
-# An example
+## Disconnector
+
+When we create a connections between `FrpValue` cell and one or more `DynamicBehaviour`s, a disconnector-fn saved inside `FrpValue` cell. Call `rdisconnect` for it to remove any subscribers from both `DynamicBehaviour`s and `FrpValue` cell.
+
+## An example 1
 
 ```
 AViewState(...); // struct to keep an encapsulated state value
@@ -59,7 +65,7 @@ AViewEngine(// an interface to get and update the viewe state
 	...
 );
 
-makeAViewState(...) -> AViewEngine {
+makeAViewEngine(...) -> AViewEngine {
 	stateCell = rmake(AViewState(...));
 	textB = make("");
 	flagB = make(false);
@@ -73,7 +79,7 @@ makeAViewState(...) -> AViewEngine {
 	resetFn = \-> rnext(stateCell, ...);
 	outputCell = rselect(stateCell, \v -> {...}); // AViewState -> AViewOutput
 
-	AViewEngineUIConnectors(outputCell, textB, flagB, resetFn);
+	AViewEngine(outputCell, textB, flagB, resetFn);
 }
 ```
 
@@ -82,3 +88,53 @@ The `stateCell` is encapsulated private variable, that can contain a specific fi
 We also create here an interface to connect engine to `MTextInput`, `MSwitchControl` and a `MTextButton` (or some others suitable to replace).
 
 This is just a template, many of these elements may be missing or some others may be present.
+
+
+## An example 2
+
+```
+AViewState(...);
+AViewOutput(...);
+
+AViewEngine(
+	out : FrpValue<AViewOutput>,
+	userSelectedIdB : DynamicBehaviour<int>,
+);
+
+makeAViewEngine(pebbleIdB : DynamicBehaviour<int>) -> AViewEngine {
+	userSelectedIdB = make(-1);
+	idCell = rmake(-1);
+
+	rbConnectStar2(idCell, pebbleIdB, userSelectedIdB,
+		\__,pebbleId,userSelectedId -> {if (userSelectedId > 0) userSelectedId else pebbleId},
+		\id -> id, // to pebble id
+		\id -> id // to user selector
+	);
+
+	stateCell = FrpAsyncValue(AViewState(...));
+
+	asyncUpdateFn = \id, __, onDone, onError -> {
+		loadADataFromDb(id, ...,
+			\data -> {
+				onDone(AViewState(...));
+			},
+			\err : string -> {
+				onError(err);
+			}
+		);
+	}
+
+	rAsyncFnConnect(
+		wrapFrpAsyncValue(idValueCell), // FrpValue -> FrpAsyncValue
+		stateCell,
+		false,
+		FrpAsyncBufferNone(),
+		asyncUpdateFn, // run on any src value change
+		idfn, //collect error fn
+	);
+
+	outputCell = rselect(stateCell, \v -> AViewOutput(...));
+
+	AViewEngine(outputCell, userSelectedIdB);
+}
+```
