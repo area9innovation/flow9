@@ -441,19 +441,27 @@ TRenderParagraph(
 	executeReflowDeferred = \ -> if (useWigiTextDynamicMetrics) deferredUpdate(getValue(awB), maybeMap(alignWidthBM, getValue), false);
 
 	dynMetricsSubscription = \w, defer -> {
-		apply0(make2Subscribe2(
-			w.inspector.size,
-			w.inspector.baseline,
-			\size, ba -> {
-				// we can't use deferred here - it leads to flickering
-				if ((size.width != 0.0 && size.height != 0.0 && ba != 0.0) || (size.width == 0.0 && size.height == 0.0)) {
-					traceApi.traceAndNest(\-> "dynMetricsSubscription START size = " + toString(size) + ", baseline = " + toString(ba));
-					if (defer) executeReflowDeferred()
-					else executeReflow();
-					traceApi.unnestAndTrace(\-> "dynMetricsSubscription END  size = " + toString(size) + ", baseline = " + toString(ba));
-				}
+		applyChange = \width, height, ba -> {
+			if ((width != 0.0 && height != 0.0 && ba != 0.0) || (width == 0.0 && height == 0.0)) {
+				traceApi.traceAndNest(\-> "dynMetricsSubscription START size = " + toString(fgetValue(w.inspector.size)) + ", baseline = " + toString(ba));
+				if (defer) executeReflowDeferred()
+				else executeReflow();
+				traceApi.unnestAndTrace(\-> "dynMetricsSubscription END  size = " + toString(fgetValue(w.inspector.size)) + ", baseline = " + toString(ba));
 			}
-		))
+		}
+		if (isUrlParameterTrue("new") && !isUrlParameterFalse("wigi_dyn_metrics_width_only")) {
+			apply0(make2Subscribe2(
+				fthrottle(fwidth(w.inspector.size), 20),
+				w.inspector.baseline,
+				\width, ba -> applyChange(width, fgetValue(w.inspector.size).height, ba)
+			))
+		} else {
+			apply0(make2Subscribe2(
+				w.inspector.size,
+				w.inspector.baseline,
+				\size, ba -> applyChange(size.width, size.height, ba)
+			))
+		}
 	}
 
 	nDynWords = countA(words, \w -> {
@@ -940,7 +948,7 @@ commonWordConstructor(
 	ghostViewTropic = \ -> if (isUseContextWordWidth) {
 		tr
 	} else inspectFn(tr)
-	
+
 	ghostView = switch(w) {
 		GeneralSpace(__, __, __): TVisible(fnot(inspector.detached), ghostViewTropic());
 		GeneralDynamicSpace(__, __, __): ghostViewTropic();
@@ -1050,6 +1058,30 @@ inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : d
 	}
 }
 
+getTropicMetrics_cache : ref Tree<string, ref Tree<[TCharacterStyle], FormMetrics>> = ref makeTree();
+getTropicMetrics_cacheAge = ref 0.;
+getTropicMetrics_withCache(tr : Tropic) -> FormMetrics {
+	switch (tr) {
+		TText(txt, style): {
+			currentTime = timestamp();
+			if (^getTropicMetrics_cacheAge > 0. && currentTime - ^getTropicMetrics_cacheAge > 1000.) {
+				getTropicMetrics_cacheAge := currentTime;
+				println("getTropicMetrics_cache: " + i2s(sizeTree(^getTropicMetrics_cache)));
+				getTropicMetrics_cache := makeTree();
+			}
+			lookupTreeSet(
+				lookupTreeSet(getTropicMetrics_cache, txt, \__ -> ref makeTree()),
+				style,
+				\__ -> getTropicMetrics(tr)
+			);
+		}
+		default: getTropicMetrics(tr)
+	}
+}
+
+wigi_width_inspection_fix = !isUrlParameterFalse("wigi_width_inspection_fix");
+wigi_word_metrics_cache = isUrlParameterTrue("new") && !isUrlParameterFalse("wigi_word_metrics_cache");
+
 getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalculation : bool) -> FormMetrics {
 	preventNodeCalculationFontFamily = switch(tr) {
 		TText(__, style0) : {
@@ -1063,15 +1095,15 @@ getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalcula
 		};
 		default : false;
 	};
-	tr2 = if (preventNodeCalculation && preventNodeCalculationFontFamily && !isUrlParameterFalse("wigi_width_inspection_fix")) {
+	tr2 = if (preventNodeCalculation && preventNodeCalculationFontFamily && wigi_width_inspection_fix) {
 		switch(tr) {
 			TText(txt, style0): TText(txt, arrayPush(style0, PreventTextNodeWidthCalculation()));
 			default : tr;
 		}
 	} else tr;
-	fMetrics = getTropicMetrics(tr2);
+	fMetrics = if (wigi_word_metrics_cache) getTropicMetrics_withCache(tr2) else getTropicMetrics(tr2);
 	FormMetrics(fMetrics with width = addLetterSpacing(fMetrics.width, letterSpacing));
-} 
+}
 
 inspectWordViewStatic(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> void {
 	fMetrics = getWordViewStaticMetrics(tr, letterSpacing, preventNodeCalculation);
