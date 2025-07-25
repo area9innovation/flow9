@@ -8,6 +8,7 @@ export {
 	structArgs2ts(s : MTypeConstructor) -> string;
 	mtype2tsName(m : MType) -> string;
 	generateTSTypes(types : Tree<string, MType>, structs : Tree<string, MTypeConstructor>) -> string;
+	generateConstructorFunctions(structs : Tree<string, MTypeConstructor>) -> string;
 }
 
 // Generate TypeScript interface definition for a union type
@@ -123,11 +124,15 @@ generateTSTypes(types : Tree<string, MType>, structs : Tree<string, MTypeConstru
 		
 		// Type guard functions
 		%typeGuards%
+		
+		// Constructor functions
+		%constructors%
 		", [
 			"definitions", strGlue(allDefs, "\n"),
 			"unionTypeName", unionTypeName,
 			"allTypes", generateUnionOfAllTypes(structs),
-			"typeGuards", generateTypeGuards(structs)
+			"typeGuards", generateTypeGuards(structs),
+			"constructors", generateConstructorFunctions(structs)
 		]
 	);
 }
@@ -162,4 +167,46 @@ generateTypeGuards(structs : Tree<string, MTypeConstructor>) -> string {
 	});
 	
 	strGlue(guards, "\n");
+}
+
+// Generate TypeScript constructor functions
+generateConstructorFunctions(structs : Tree<string, MTypeConstructor>) -> string {
+	typePrefix = getUrlParameterDef("typeprefix", "");
+	
+	constructors = foldTree(structs, [], \name, struct, acc -> {
+		// Generate parameter list with typed arguments
+		fieldNames = generateFieldNames(struct);
+		paramDefs = mapi(struct.args, \i, st -> {
+			fname = fieldNames[i];
+			ftype = type2ts(st);
+			fname + ": " + ftype;
+		});
+		
+		// Generate object construction with field assignments
+		fieldAssignments = mapi(struct.args, \i, st -> {
+			fname = fieldNames[i];
+			"  " + fname + ",";
+		});
+		
+		// Constructor function name
+		constructorName = if (typePrefix != "") typePrefix + name else name;
+		
+		constructor = blueprint("
+			export function %constructorName%(%params%): %name% {
+			  return {
+			    kind: '%name%',
+			%assignments%
+			  };
+			}
+			", [
+				"constructorName", constructorName,
+				"params", strGlue(paramDefs, ", "),
+				"name", name,
+				"assignments", strGlue(fieldAssignments, "\n")
+			]
+		);
+		arrayPush(acc, constructor);
+	});
+	
+	strGlue(constructors, "\n");
 }
