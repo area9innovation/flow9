@@ -711,7 +711,13 @@ class TextClip extends NativeWidgetClip {
 			return fontSlope == "italic" ? "Italic" : fontWeight == 700 ? "Bold" : "Book";
 		} else if (StringTools.startsWith(fontFamily, "'Roboto")) {
 			return fontFamily + fontWeightToString(fontWeight) + fontSlope == "normal" ? "" : capitalize(fontSlope);
-		} else if (StringTools.contains(fontFamily, " ") && !StringTools.startsWith(fontFamily, "'")) {
+		} else {
+			return quoteFontFamilyIfSpaces(fontFamily);
+		}
+	}
+
+	private static inline function quoteFontFamilyIfSpaces(fontFamily : String) : String {
+		if (StringTools.contains(fontFamily, " ") && !StringTools.startsWith(fontFamily, "'")) {
 			// If fontFamily contains space, it is not a valid CSS font-family name, so we need to quote it.
 			return "'" + fontFamily + "'";
 		} else {
@@ -1879,7 +1885,7 @@ class TextClip extends NativeWidgetClip {
 			if (!TextClip.onFontLoadedListenerInitialized) {
 				Browser.document.fonts.addEventListener('loadingdone', function(event : Dynamic) {
 					event.fontfaces.forEach(function(fontface, key, set) {
-						var fontFamilySet = TextClip.scheduledForceUpdateTree.get(fontface.family);
+						var fontFamilySet = TextClip.scheduledForceUpdateTree.get(quoteFontFamilyIfSpaces(fontface.family));
 						if (fontFamilySet != null) {
 							fontFamilySet.forEach(function(clip : TextClip, key, set) {
 								clip.forceUpdateTextWidth();
@@ -2210,7 +2216,8 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function isMaterialIconFont() : Bool {
-		return style.fontFamily.startsWith('Material Icons') || style.fontFamily.startsWith('Material Symbols');
+		return style.fontFamily.startsWith('Material Icons') || style.fontFamily.startsWith('Material Symbols')
+			|| style.fontFamily.startsWith("'Material Icons") || style.fontFamily.startsWith("'Material Symbols");
 	}
 
 	private function getSanitizedText(text : String) : String {
