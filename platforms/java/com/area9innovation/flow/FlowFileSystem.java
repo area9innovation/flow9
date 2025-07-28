@@ -113,10 +113,6 @@ public class FlowFileSystem extends NativeHost {
 		return null;
     }
 
-    public static Object saveFileClient(String filename, String data, String type) {
-		return null;
-	}
-
 	public static Object getFileByPath(String path) {
 		return new File(path);
 	}

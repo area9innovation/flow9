@@ -14,6 +14,14 @@ Orbit is a functional programming language designed as a domain-unified rewritin
 - **AST manipulation**: First-class support for abstract syntax trees
 </language_characteristics>
 
+<running_orbit>
+You run Orbit like this in some folder (normally the Orbit folder itself):
+
+```
+orbit tests/pattern.orb
+```
+</running_orbit>
+
 <basic_syntax>
 Orbit programs use parentheses for grouping statements and semicolons as separators:
 
@@ -61,6 +69,18 @@ let counter = 0;
 let newCounter = counter + 1;  // Create a new binding
 ```
 </variables_and_expressions>
+
+<interpolated_strings>
+Orbit supports interpolated strings for convenient string construction with embedded expressions:
+
+```orbit
+// Basic interpolated string syntax
+let x = 10;
+let y = 20;
+let result = `"The sum of $x and $y is $(x + y)";
+
+The interpolated expressions are evaluated and converted to strings, then concatenated with the literal text. Under the hood, interpolated strings are converted to concatenation expressions like `(+ "Hello " name ", you have " (+ count 1) " items")` in S-expression land.
+</interpolated_strings>
 
 <functions>
 Functions in Orbit are defined using the `fn` keyword, followed by the function name, parameters, and body:
@@ -164,6 +184,64 @@ point is (
 	_ => "Not a point"
 )
 ```
+
+### Matching Associative Operators with Multiple Arguments
+
+Orbit allows matching associative operators (like `+`, `*`) with any number of arguments using backtick notation. This is particularly useful for capturing all operands in expressions with varying numbers of terms:
+
+```orbit
+// Match multiplication with any number of terms
+expr is (
+	`*`(terms) => (
+		// 'terms' contains all operands as a list
+		println("Found multiplication with terms: " + prettyOrbit(terms));
+		// Process the terms...
+	);
+	_ => "Not a multiplication"
+)
+
+// Match addition with any number of terms
+expr is (
+	`+`(terms) => (
+		// 'terms' captures all operands
+		println("Found addition with terms: " + prettyOrbit(terms));
+		// Process the terms...
+	);
+	_ => "Not an addition"
+)
+```
+
+The backtick syntax `(terms)` captures the operator symbol and binds all operands to the `terms` variable, regardless of how many there are. This works with binary operators that are naturally associative, like addition and multiplication.
+
+### Array Deconstruction with Rest Patterns
+
+Orbit supports powerful array pattern matching with rest patterns, which allow you to capture multiple elements in a single variable:
+
+```orbit
+// Matching arrays with rest patterns
+arr is (
+	[first, second, ..., rest] => (
+		// 'first' is the first element
+		// 'second' is the second element
+		// 'rest' contains all remaining elements as an array
+		println("First: " + prettyOrbit(first));
+		println("Second: " + prettyOrbit(second));
+		println("Rest: " + prettyOrbit(rest));
+	);
+	[single, ..., rest] => (
+		// Matches arrays with at least one element
+		println("Single: " + prettyOrbit(single));
+		println("Rest: " + prettyOrbit(rest));
+	);
+	[..., all] => (
+		// Captures all elements in 'all'
+		println("All elements: " + prettyOrbit(all));
+	);
+	_ => "No match"
+)
+```
+
+The `...` syntax indicates a rest pattern, which can match zero or more elements. When used with arrays, it provides a flexible way to extract specific elements while collecting others.
 </pattern_matching>
 
 <data_construction>
@@ -293,10 +371,10 @@ import lib/sort;
 
 ### Running a Single Orbit Program
 
-To run a single Orbit program, use the Flow compiler with the orbit.flow file as the entry point:
+To run a single Orbit program:
 
 ```bash
-flow9/lib/tools/orbit> flowcpp --batch orbit.flow -- path/to/yourprogram.orb
+orbit path/to/yourprogram.orb
 ```
 
 ### Program Execution Model
@@ -326,7 +404,7 @@ println("This will execute when the file is loaded");
 Orbit provides a detailed tracing feature that shows all steps of interpretation, which is invaluable for debugging and understanding program execution. To enable tracing, add the `trace=1` parameter:
 
 ```bash
-flowcpp --batch orbit.flow -- trace=1 path/to/yourprogram.orb
+orbit trace=1 path/to/yourprogram.orb
 ```
 
 ### Pretty Printing Orbit Programs
@@ -336,7 +414,7 @@ Orbit provides a command-line flag to pretty print the parse tree of a program w
 To pretty print an Orbit program, use the `pretty=1` parameter:
 
 ```bash
-flowcpp --batch orbit.flow -- pretty=1 path/to/yourprogram.orb
+orbit pretty=1 path/to/yourprogram.orb
 ```
 </running_and_debugging>
 
@@ -419,48 +497,6 @@ makeAst(op : string, args : [*]) -> ast
 ```
 
 This function lets you build AST nodes dynamically, which is useful for code generation, transformations, and metaprogramming.
-
-#### Examples
-
-```orbit
-// Create basic arithmetic expressions
-let addExpr = makeAst("+", [x, y]);       // Equivalent to x + y
-let mulExpr = makeAst("*", [a, b]);       // Equivalent to a * b
-
-// Create function calls
-let fnCall = makeAst("call", [fnName, arg1, arg2]);  // Equivalent to fnName(arg1, arg2)
-
-// Create control flow structures
-let condition = makeAst("<", [x, 10]);
-let ifExpr = makeAst("if", [condition, thenBlock, elseBlock]);
-
-// Create arrays
-let arrayExpr = makeAst("Array", [1, 2, 3]);  // Equivalent to [1, 2, 3]
-
-// Chain operations
-let expr = makeAst("+", [
-	makeAst("*", [a, b]),
-	makeAst("/", [c, d])
-]); // Equivalent to (a * b) + (c / d)
-```
-
-#### Supported Operators
-
-The `makeAst` function supports all standard operators in Orbit, including:
-
-- Arithmetic: `"+"`, `"-"`, `"*"`, `"/"`, `"%"`, `"^"`
-- Comparison: `"="`, `"!="`, `"<"`, `"<="`, `">"`, `">="`
-- Logical: `"&&"`, `"||"`, `"!"`
-- Collections: `"Array"`, `"SetLiteral"`
-- Control flow: `"if"`, `"seq"`
-- Function calls: `"call"`
-
-For constructors and identifiers, you can create them directly:
-
-```orbit
-// Create a constructor call: Point(10, 20)
-let point = makeAst("call", [makeAst("Identifier", [], "Point"), 10, 20]);
-```
 </ast_manipulation>
 
 <runtime_functions>

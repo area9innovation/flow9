@@ -20,7 +20,7 @@ export {
 // Converts an OrLambda expression to a Sexpr
 convertOrLambdaToSexpr(env_bindings : [OrEnvBinding], id_types : [OrIdType], math_expr : OrMath_expr) -> Sexpr {
 	if (env_bindings != []) {
-		println("TODO: Convert to closure");
+		println("TODO: Convert bindings to closure instead of lambda");
 	}
 
 	// Convert id_types to simpler format expected by SExpr lambda
@@ -109,15 +109,62 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 	switch (expr) {
 		// Primitive values
 		OrInt(i): SSInt(i);
+		OrInterpolatedString(parts): {
+			// Convert interpolated string to concatenation: (+ "literal" exp1 "literal2" exp2)
+			// Collect all parts (literals and expressions) in order
+			sexprParts = map(parts, \part -> {
+				switch (part) {
+					OrStringInterpolation(interpExpr): orbit2sexpr(interpExpr);
+					OrStringLiteral(text): SSString(text);
+				}
+			});
+			
+			// If we have parts, create a concatenation expression
+			if (length(sexprParts) == 0) {
+				SSString(""); // Empty interpolated string
+			} else if (length(sexprParts) == 1) {
+				sexprParts[0]; // Single part, no concatenation needed
+			} else {
+				// Multiple parts: create (+ part1 part2 part3 ...)
+				SSList(concat([SSOperator("+")], sexprParts));
+			}
+		}
 		OrDouble(d): SSDouble(d);
 		OrString(s): SSString(s);
 		OrBool(b): SSBool(b);
 		OrIdentifier(id): SSVariable(id);
 		OrUId(id): SSConstructor(id);
-		OrOperatorSymbol(symbol): SSOperator(symbol);
+		OrOperatorSymbol(symbol): {
+			SSOperator(symbol);
+		}
 		
 		// Collection types
-		OrArray(items): SSVector(map(items, orbit2sexpr));
+		OrArray(items): {
+			// Check for array pattern with ellipsis for tail binding: [a, b, ..., rest]
+			if (length(items) >= 2 && items[length(items) - 2] == OrEllipsis()) {
+				// Extract elements before the ellipsis
+				preElems = subrange(items, 0, length(items) - 2);
+				// Extract the variable that will be bound to the rest of the elements
+				restVar = items[length(items) - 1];
+				
+				// Create a vector pattern with the elements before ellipsis, 
+				// then '... restVar' following SExpr's rest pattern format
+				SSVector(concat(
+					map(preElems, orbit2sexpr),
+					[SSOperator("..."), orbit2sexpr(restVar)]
+				));
+			} else if (length(items) == 2 && items[0] == OrEllipsis()) {
+				// Special case for [..., all] pattern that captures all elements
+				restVar = items[1];
+				SSVector([
+					SSOperator("..."),
+					orbit2sexpr(restVar)
+				]);
+			} else {
+				// Regular array (not a pattern with tail binding)
+				SSVector(map(items, orbit2sexpr));
+			}
+		};
 		
 		// Binary operations - Check for associative operations that should be flattened
 		OrAdd(a, b): {
@@ -172,7 +219,7 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		OrLessThan(a, b): SSList([SSOperator("<"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrLessEquals(a, b): SSList([SSOperator("<="), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrModulo(a, b): SSList([SSOperator("mod"), orbit2sexpr(a), orbit2sexpr(b)]);
-		OrIndex(a, b): SSList([SSVariable("index"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrIndex(a, b): SSList([SSVariable("arrayIndex"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrTypeAnnotation(a, b): SSList([SSOperator(":"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrNotTypeAnnotation(a, b): SSList([SSOperator("!:"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrSubset(a, b): SSList([SSConstructor("Subset"), orbit2sexpr(a), orbit2sexpr(b)]);
@@ -182,7 +229,25 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		OrLeftSemiDirectProduct(a, b): SSList([SSOperator("⋉"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrRightSemiDirectProduct(a, b): SSList([SSOperator("⋊"), orbit2sexpr(a), orbit2sexpr(b)]);
 		OrNormalSubgroup(a, b): SSList([SSConstructor("NormalSubgroup"), orbit2sexpr(a), orbit2sexpr(b)]);
-		OrFunctionType(a, b): SSList([SSConstructor("FunctionType"), orbit2sexpr(a), orbit2sexpr(b)]);
+		
+		// Added for new types
+		OrApproxEquals(a, b): SSList([SSOperator("≈"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrApproxLessEquals(a, b): SSList([SSOperator("≲"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrEmptySet(): SSConstructor("EmptySet");
+		OrGroupAction(a, b): SSList([SSOperator("⋉"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrIdeal(exprs): SSList(concat([SSConstructor("Ideal")], map(exprs, orbit2sexpr)));
+		OrNorm(a): SSList([SSConstructor("Norm"), orbit2sexpr(a)]);
+		OrSetDifference(a, b): SSList([SSOperator("\\setminus"), orbit2sexpr(a), orbit2sexpr(b)]);
+		
+		// Quote-related nodes
+		OrQuote(e): SSSpecialForm(SQuote(), [orbit2sexpr(e)]);
+		OrQuasiquote(e): SSSpecialForm(SQuasiQuote(), [orbit2sexpr(e)]);
+		OrUnquote(e): SSSpecialForm(SUnQuote(), [orbit2sexpr(e)]);
+		OrUnquoteSplicing(e): SSSpecialForm(SUnQuoteSplicing(), [orbit2sexpr(e)]);
+		// Domain navigation operators
+		OrDomainDown(a, b): SSList([SSOperator("⋱"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrDomainPath(a, b): SSList([SSOperator("⋯"), orbit2sexpr(a), orbit2sexpr(b)]);
+		OrDomainUp(a, b): SSList([SSOperator("⋰"), orbit2sexpr(a), orbit2sexpr(b)]);
 		
 		// Unary operations
 		OrNegate(a): SSList([SSOperator("-"), orbit2sexpr(a)]);
@@ -212,8 +277,40 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 				// Handle missing argument as empty quote
 				SSSpecialForm(SQuote(), [SSList([])]);
 			} else {
-				// Regular function call
-				SSList(concat([orbit2sexpr(fn)], map(args, orbit2sexpr)));
+				// Check for method call (function applied to field access)
+				switch (fn) {
+					OrField(object, methodName): {
+						// This is a method call: object.method(args)
+						// Create a special nested list to represent the method call
+						// Format: ((Field object "method") args...)
+						SSList(concat(
+							[SSList([SSConstructor("Field"), orbit2sexpr(object), SSString(methodName)])],
+							map(args, orbit2sexpr)
+						));
+					}
+					OrLambda(env_bindings, id_types, body): {
+						// This is a lambda function application: (λy.(y^2))(x)
+						// Convert to a list with the lambda as the first element
+						SSList(concat(
+							[convertOrLambdaToSexpr(env_bindings, id_types, body)],
+							map(args, orbit2sexpr)
+						));
+					}
+					default: {
+						sargs = map(args, orbit2sexpr);
+						// Regular function call
+						if (fn == OrOperatorSymbol("||")) {
+							// Special case for logical OR operator
+							SSSpecialForm(SOr(), sargs)
+						} else if (fn == OrOperatorSymbol("&&")) {
+							// Special case for logical AND operator
+							SSSpecialForm(SAnd(), sargs)
+						} else {
+							// Regular function call
+							SSList(concat([orbit2sexpr(fn)], sargs));
+						};
+					}
+				}
 			}
 		}
 		OrIfElse(cond, thenExpr, elseExpr): SSSpecialForm(SIf(), [orbit2sexpr(cond), orbit2sexpr(thenExpr), orbit2sexpr(elseExpr)]);
@@ -235,7 +332,7 @@ orbit2sexpr(expr : OrMath_expr) -> Sexpr {
 		OrEquivalence(m1, m2, m3, b): SSList([SSConstructor("Equivalence"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3), SSBool(b)]);
 		OrTypeSubstitution(m1, m2, m3): SSList([SSConstructor("TypeSubstitution"), orbit2sexpr(m1), orbit2sexpr(m2), orbit2sexpr(m3)]);
 		OrTypeVar(s): SSList([SSConstructor("TypeVar"), SSString(s)]);
-		OrImport(path): SSSpecialForm(SImport(), [SSString(path)]);
+		OrImport(path): SSList([]); //SSSpecialForm(SImport(), [SSString(path)]);
 		OrEllipsis(): SSConstructor("Ellipsis");
 		
 		// Complex constructs requiring special handling
@@ -424,7 +521,45 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 					if (length(items) >= 2) {
 						switch (items[0]) {
 							SSVariable(id): {
-								OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+								// Check if the value is a lambda, in which case we should create an OrFnDef
+								switch (items[1]) {
+									SSSpecialForm(specialForm, lambdaItems): {
+										// Check if this is a lambda form
+										switch (specialForm) {
+											SLambda(): {
+												if (length(lambdaItems) >= 2) {
+													// Extract parameters from the lambda
+													id_types = switch (lambdaItems[0]) {
+														SSList(params): map(params, \param -> {
+															switch (param) {
+																SSVariable(paramId): OrIdType(paramId, []);
+																default: OrIdType("", []);
+															}
+														});
+														default: [];
+													};
+													
+													// Extract body
+													body = sexpr2orbit(lambdaItems[1]);
+													
+													// Create a function definition instead of a let binding
+													OrFnDef(id, id_types, [], body);
+												} else {
+													// Default to a Let binding if lambda structure is invalid
+													OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+												}
+											}
+											default: {
+												// For other special forms, use a regular Let binding
+												OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+											}
+										}
+									}
+									default: {
+										// For non-lambda values, use a regular Let binding
+										OrLet(OrIdType(id, []), sexpr2orbit(items[1]));
+									}
+								}
 							}
 							default: OrIdentifier("invalid_define");
 						}
@@ -794,8 +929,53 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 			if (length(items) == 0) {
 				// Empty list becomes an empty array
 				OrArray([]);
+			} else if (length(items) >= 1 && 
+			    // Check for lambda function application pattern
+			    switch (items[0]) {
+					SSSpecialForm(form, __): form == SLambda();
+					default: false;
+			    }
+			) {
+				// This is a lambda function application
+				// Convert the lambda to an Orbit expression
+				lamExpr = sexpr2orbit(items[0]);
+				
+				// Convert the arguments
+				args = map(tailFrom(items, 1), sexpr2orbit);
+				
+				// Create a function application
+				OrFunction(lamExpr, args);
+			} else if (length(items) >= 1 && 
+			    switch (items[0]) {
+					SSList(innerItems): {
+						length(innerItems) >= 3 && 
+						switch (innerItems[0]) {
+							SSConstructor(name): name == "Field";
+							default: false;
+						}
+					}
+					default: false;
+			    }
+			) {
+				// This is a method call pattern
+				// Extract field accessor components
+				fieldAccessor = items[0];
+				innerItems = switch (fieldAccessor) { SSList(fieldItems): fieldItems; default: []; };
+				
+				// Extract object and method name
+				object = sexpr2orbit(innerItems[1]);
+				methodName = switch (innerItems[2]) {
+					SSString(s): s;
+					default: "";
+				};
+				
+				// Convert remaining items as arguments
+				args = map(tailFrom(items, 1), sexpr2orbit);
+				
+				// Create a method call (using dot notation and function call)
+				OrFunction(OrField(object, methodName), args);
 			} else {
-				// Check if first item is an operator (for associative ops)
+				// Not a method call, check if first item is an operator (for associative ops)
 				switch (items[0]) {
 					SSVector(sexprs): OrArray(map(items, sexpr2orbit));
 					SSOperator(op): {
@@ -1058,12 +1238,6 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 							not_type_annot_type = sexpr2orbit(items[2]);
 							
 							OrNotTypeAnnotation(not_type_annot_expr, not_type_annot_type);
-						} else if (constructor_atom == "FunctionType" && length(items) >= 3) {
-							// Extract domain and codomain
-							domain = sexpr2orbit(items[1]);
-							codomain = sexpr2orbit(items[2]);
-							
-							OrFunctionType(domain, codomain);
 						} else if (constructor_atom == "Subset" && length(items) >= 3) {
 							// Extract sets
 							subset = sexpr2orbit(items[1]);
@@ -1096,6 +1270,16 @@ sexpr2orbit(expr : Sexpr) -> OrMath_expr {
 							OrNormalSubgroup(subgroup, group);
 						} else if (constructor_atom == "Ellipsis") {
 							OrEllipsis();
+						} else if (constructor_atom == "EmptySet") {
+							OrEmptySet();
+						} else if (constructor_atom == "Norm" && length(items) >= 2) {
+							// Extract expression
+							norm_expr = sexpr2orbit(items[1]);
+							OrNorm(norm_expr);
+						} else if (constructor_atom == "Ideal" && length(items) >= 1) {
+							// Extract generators
+							gens = map(tailFrom(items, 1), sexpr2orbit);
+							OrIdeal(gens);
 						} else {
 							// For unknown constructors, either treat them as UIDs or arrays
 							// Create a function call with constructor as function name
@@ -1199,6 +1383,23 @@ buildRightAssociative(operands : [OrMath_expr], op : string) -> OrMath_expr {
 	}
 }
 
+// Check if this is an operator pattern like `*`(terms)
+isOperatorPattern(fn : OrMath_expr, args : [OrMath_expr]) -> bool {
+	switch (fn) {
+		OrString(opName): {
+			// A string literal function name with exactly one argument is our pattern
+			// Exclude unary operators like "!" and "-" that should not be treated as patterns
+			opName != "not" && opName != "!" && opName != "-" && length(args) == 1;
+		}
+		OrOperatorSymbol(opName): {
+			// This is how backtick-enclosed operators are parsed
+			// Exclude unary operators as special cases
+			opName != "not" && opName != "!" &&opName != "-" && length(args) == 1;
+		}
+		default: false;
+	}
+}
+
 // Helper function to build binary operations from operator symbol and operands
 makeBinaryOp(op : string, left : OrMath_expr, right : OrMath_expr) -> OrMath_expr {
 	if (op == "+") {
@@ -1247,6 +1448,20 @@ makeBinaryOp(op : string, left : OrMath_expr, right : OrMath_expr) -> OrMath_exp
 		OrLeftSemiDirectProduct(left, right);
 	} else if (op == "\u2297" || op == "TensorProduct") { // u2297 (tensor product)
 		OrTensorProduct(left, right);
+	} else if (op == "\u2248") { // ≈ (approximately equal)
+		OrApproxEquals(left, right);
+	} else if (op == "\u2272") { // ≲ (less than or approximately equal to)
+		OrApproxLessEquals(left, right);
+	} else if (op == "\\setminus") { // set difference
+		OrSetDifference(left, right);
+	} else if (op == "\u22c9") { // group action
+		OrGroupAction(left, right);
+	} else if (op == "\u22f1" || op == "⋱") { // domain down
+		OrDomainDown(left, right);
+	} else if (op == "\u22ef" || op == "⋯") { // domain path
+		OrDomainPath(left, right);
+	} else if (op == "\u22f0" || op == "⋰") { // domain up
+		OrDomainUp(left, right);
 	} else {
 		println(op);
 		// Default to function call for other operators

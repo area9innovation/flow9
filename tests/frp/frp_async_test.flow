@@ -1,0 +1,724 @@
+import runtime;
+import string;
+import promise;
+
+import tests/frp/frp_test_utils;
+import frp/frp_async;
+
+
+rAsyncTests = [
+	rAsyncSelect_test,
+	rAsyncSelect2_test,
+	rAsyncSubscribe_test,
+	rAsyncSubscribe2_test,
+	rAsyncSubscribe3_test,
+	rAsyncSubscribe4_test,
+
+	rAsyncFnConnect_test,
+	rAsyncFnConnect_chain_test,
+	rAsyncFnConnect_sync_update_test,
+
+	rAsyncFnConnect_BufferNone_test,
+	rAsyncFnConnect_BufferFirst_test,
+	rAsyncFnConnect_BufferLast_test,
+	rAsyncFnConnect2_test,
+	rAsyncFnConnect2_buffered_test,
+
+	rAsyncFnConnect_init_test,
+	rAsyncFnConnect_init_chain_test,
+	rAsyncFnConnect_init_buffered_test,
+];
+
+/// sync nodes tests /// ////////////////////////////////////////////////////////
+
+rAsyncSelect_test = rAsyncTest("rAsyncSelect", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = rAsyncSelect(cell1, \v -> v + 1000, idfn);
+
+	r1 = checkAsyncV(cell2, 1010, false, []);
+
+	rAsyncSetInProgress(cell1);
+	r2 = checkAsyncV(cell2, 1010, true, []);
+
+	rAsyncSetValue(cell1, 100);
+	r3 = checkAsyncV(cell2, 1100, false, []);
+
+	rAsyncSetValue(cell1, 200);
+	r4 = checkAsyncV(cell2, 1200, false, []);
+
+	rAsyncSetError(cell1, "an error");
+	r5 = checkAsyncV(cell2, 1200, false,  ["an error"]);
+
+	testDone(r1 && r2 && r3 && r4 && r5);
+});
+
+rAsyncSelect2_test = rAsyncTest("rAsyncSelect2", \testDone-> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue("Hello");
+	cell3 = rAsyncSelect2(cell1, cell2,
+		\v1, v2 -> v2 + " " + i2s(v1),
+		idfn
+	);
+
+	r1 = checkAsyncV(cell3, "Hello 10", false, []);
+
+	rAsyncSetInProgress(cell1);
+	r2 = checkAsyncV(cell3, "Hello 10", true, []);
+
+	rAsyncSetValue(cell1, 100);
+	r3 = checkAsyncV(cell3, "Hello 100", false, []);
+
+	rAsyncSetInProgress(cell2);
+	r4 = checkAsyncV(cell3, "Hello 100", true, []);
+
+	rAsyncSetValue(cell2, "xxx");
+	r5 = checkAsyncV(cell3, "xxx 100", false, []);
+
+	rAsyncSetError(cell1, "an error");
+	r6 = checkAsyncV(cell3, "xxx 100", false, ["an error"]);
+
+	rAsyncSetError(cell2, "other error");
+	r7 = checkAsyncV(cell3, "xxx 100", false, ["an error", "other error"]);
+
+	testDone(r1 && r2 && r3 && r4 && r5 && r6 && r7);
+});
+
+
+rAsyncSubscribe_test = rAsyncTest("rAsyncSubscribe", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	val = ref 0;
+	status = ref FrpAsyncReady();
+
+	rAsyncSubscribe(
+		cell1,
+		true,
+		\v,st -> {
+			val := v * 2;
+			status := st;
+		},
+	);
+	r1 = ^val == 20 && ^status == FrpAsyncReady();
+
+	rAsyncNext(cell1, 15);
+	r2 = ^val == 30 && ^status == FrpAsyncReady();
+
+	testDone(r1 && r2);
+});
+
+
+rAsyncSubscribe2_test = rAsyncTest("rAsyncSubscribe2", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue(3);
+	val = ref 0;
+	status = ref FrpAsyncReady();
+
+	// asyncSubsPrint(cell1, "cell1");
+	// asyncSubsPrint(cell2, "cell2");
+
+	rAsyncSubscribe2(cell1, cell2, true,
+		\v1,v2,st -> {
+			val := v1 + v2;
+			status := st;
+		},
+	);
+
+	r1 = checkAccert(13, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncNext(cell1, 15);
+	r2 = checkAccert(18, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncNext(cell2, 4);
+	r3 = checkAccert(19, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncSetInProgress(cell1);
+	r4 = checkAccert(19, FrpAsyncInProgress(), ^val, ^status);
+
+	rAsyncSetValue(cell1, 20);
+	r5 = checkAccert(24, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncSetInProgress(cell2);
+	r6 = checkAccert(24, FrpAsyncInProgress(), ^val, ^status);
+
+	rAsyncSetValue(cell2, 5);
+	r7 = checkAccert(25, FrpAsyncReady(), ^val, ^status);
+
+	testDone(r1 && r2 && r3 && r4 && r5 && r6 && r7);
+});
+
+rAsyncSubscribe3_test = rAsyncTest("rAsyncSubscribe3", \testDone -> {
+	cell1 = makeFrpAsyncValue(2);
+	cell2 = makeFrpAsyncValue(3);
+	cell3 = makeFrpAsyncValue(4);
+	val = ref 0;
+	status = ref FrpAsyncReady();
+
+	// asyncSubsPrint(cell1, "cell1");
+	// asyncSubsPrint(cell2, "cell2");
+	// asyncSubsPrint(cell3, "cell3");
+
+	rAsyncSubscribe3(cell1, cell2, cell3, true,
+		\v1,v2,v3,st -> {
+			val := v1 + v2 + v3;
+			status := st;
+		},
+	);
+
+	r1 = checkAccert(9, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncNext(cell1, 3);
+	r2 = checkAccert(10, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncNext(cell2, 4);
+	r3 = checkAccert(11, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncNext(cell3, 5);
+	r4 = checkAccert(12, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncSetInProgress(cell1);
+	r5 = checkAccert(12, FrpAsyncInProgress(), ^val, ^status);
+
+	rAsyncSetValue(cell1, 4);
+	r6 = checkAccert(13, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncSetInProgress(cell2);
+	r7 = checkAccert(13, FrpAsyncInProgress(), ^val, ^status);
+
+	rAsyncSetValue(cell2, 5);
+	r8 = checkAccert(14, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncSetInProgress(cell3);
+	r9 = checkAccert(14, FrpAsyncInProgress(), ^val, ^status);
+
+	rAsyncSetValue(cell3, 6);
+	r10 = checkAccert(15, FrpAsyncReady(), ^val, ^status);
+
+	testDone(r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10);
+});
+
+
+
+rAsyncSubscribe4_test = rAsyncTest("rAsyncSubscribe4", \testDone -> {
+	cell1 = makeFrpAsyncValue(2);
+	cell2 = makeFrpAsyncValue(3);
+	cell3 = makeFrpAsyncValue(4);
+	cell4 = makeFrpAsyncValue(5);
+
+	val = ref 0;
+	status = ref FrpAsyncReady();
+
+	// asyncSubsPrint(cell1, "cell1");
+	// asyncSubsPrint(cell2, "cell2");
+	// asyncSubsPrint(cell3, "cell3");
+	// asyncSubsPrint(cell4, "cell4");
+
+	rAsyncSubscribe4(cell1, cell2, cell3, cell4, true,
+		\v1,v2,v3,v4,st -> {
+			val := v1 + v2 + v3 + v4;
+			status := st;
+		},
+	);
+
+	r1 = checkAccert(14, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncNext(cell1, 3);
+	r2 = checkAccert(15, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncNext(cell2, 4);
+	r3 = checkAccert(16, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncNext(cell3, 5);
+	r4 = checkAccert(17, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncNext(cell4, 6);
+	r5 = checkAccert(18, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncSetInProgress(cell1);
+	r6 = checkAccert(18, FrpAsyncInProgress(), ^val, ^status);
+
+	rAsyncSetValue(cell1, 4);
+	r7 = checkAccert(19, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncSetInProgress(cell2);
+	r8 = checkAccert(19, FrpAsyncInProgress(), ^val, ^status);
+
+	rAsyncSetValue(cell2, 5);
+	r9 = checkAccert(20, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncSetInProgress(cell3);
+	r10 = checkAccert(20, FrpAsyncInProgress(), ^val, ^status);
+
+	rAsyncSetValue(cell3, 6);
+	r11 = checkAccert(21, FrpAsyncReady(), ^val, ^status);
+
+	rAsyncSetInProgress(cell4);
+	r12 = checkAccert(21, FrpAsyncInProgress(), ^val, ^status);
+
+	rAsyncSetValue(cell4, 7);
+	r13 = checkAccert(22, FrpAsyncReady(), ^val, ^status);
+
+	testDone(r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13);
+});
+
+
+/// rAsyncFnConnect /////////////////////////////////////////////////////////////
+
+rAsyncFnConnect_test = rAsyncTest("rAsyncFnConnect", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue("");
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+
+	asyncWaitUpdates("Seq1", cell2, testDone,
+		[
+			Pair(FrpAsyncInProgress(), ""),
+			Pair(FrpAsyncInProgress(), ",11"),
+			Pair(FrpAsyncReady(), ",11"),
+			Pair(FrpAsyncInProgress(), ",11"),
+			Pair(FrpAsyncInProgress(), ",11,12"),
+			Pair(FrpAsyncReady(), ",11,12"),
+		],
+	);
+
+	rAsyncFnConnect(cell1, cell2, false, FrpAsyncBufferNone(),
+		\srcVal, nodeVal, onDone, onError -> timer(50, \-> onDone(nodeVal + "," + i2s(srcVal))),
+		idfn, //errorFn
+	);
+
+	rAsyncNext(cell1, 11);
+	timer(100, \-> rAsyncNext(cell1, 12));
+});
+
+
+rAsyncFnConnect_chain_test = rAsyncTest("rAsyncFnConnect_chain", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue(100);
+	cell3 = makeFrpAsyncValue(1000);
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+	asyncSubsPrint(cell3, "cell3");
+
+	asyncWaitUpdates("Seq1", cell3, testDone,
+		[
+			Pair(FrpAsyncInProgress(), 1000),
+			Pair(FrpAsyncInProgress(), 222), // (100 + 11) * 2
+			Pair(FrpAsyncReady(), 222),
+			Pair(FrpAsyncInProgress(), 222),
+			Pair(FrpAsyncInProgress(), 246), // (111 + 12) * 2
+			Pair(FrpAsyncReady(), 246),
+		],
+	);
+
+	rAsyncFnConnect(cell1, cell2, false, FrpAsyncBufferNone(),
+		\srcVal, nodeVal, onDone, onError -> {
+			timer(0, \-> onDone(nodeVal + srcVal));
+		},
+		idfn, //errorFn
+	);
+
+	rAsyncFnConnect(cell2, cell3, false, FrpAsyncBufferNone(),
+		\srcVal, nodeVal, onDone, onError -> {
+			timer(0, \-> onDone(srcVal * 2));
+		},
+		idfn, //errorFn
+	);
+
+	rAsyncNext(cell1, 11);
+	timer(100, \-> rAsyncNext(cell1, 12));
+});
+
+rAsyncFnConnect_sync_update_test = rAsyncTest("rAsyncFnConnect_sync_update", \testDone -> {
+	// test case where cell2 update happens synchronously
+	// bufferization is not used in this case
+
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue("");
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+
+	asyncWaitUpdates("rAsyncFnConnect",	cell2, testDone,
+		[
+			Pair(FrpAsyncInProgress(), ""),
+			Pair(FrpAsyncInProgress(), ",11"),
+			Pair(FrpAsyncReady(), ",11"),
+			Pair(FrpAsyncInProgress(), ",11"),
+			Pair(FrpAsyncInProgress(), ",11,12"),
+			Pair(FrpAsyncReady(), ",11,12"),
+			Pair(FrpAsyncInProgress(), ",11,12"),
+			Pair(FrpAsyncInProgress(), ",11,12,13"),
+			Pair(FrpAsyncReady(), ",11,12,13"),
+			Pair(FrpAsyncInProgress(), ",11,12,13"),
+			Pair(FrpAsyncInProgress(), ",11,12,13,14"),
+			Pair(FrpAsyncReady(), ",11,12,13,14"),
+		],
+	);
+
+	rAsyncFnConnect(cell1, cell2, false, FrpAsyncBufferNone(),
+		\srcVal, nodeVal, onDone, onError -> onDone(nodeVal + "," + i2s(srcVal)), // sync update cell2 !
+		idfn, //errorFn
+	);
+
+	// sequential sync updates - buffer is not required
+	rAsyncNext(cell1, 11);
+	rAsyncNext(cell1, 12);
+	rAsyncNext(cell1, 13);
+	rAsyncNext(cell1, 14);
+});
+
+// bufferization tests /////////////////////////////////////////////////////////////////////////
+
+rAsyncFnConnect_BufferNone_test = rAsyncTest("rAsyncFnConnect_BufferNone", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue("");
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+
+	asyncWaitUpdates("rAsyncFnConnect",	cell2, testDone,
+		[
+			Pair(FrpAsyncInProgress(), ""),
+			Pair(FrpAsyncInProgress(), ",11"),
+			Pair(FrpAsyncReady(), ",11"),
+			Pair(FrpAsyncInProgress(), ",11"),
+			Pair(FrpAsyncInProgress(), ",11,14"),
+			Pair(FrpAsyncReady(), ",11,14"),
+		],
+	);
+
+	rAsyncFnConnect(cell1, cell2, false, FrpAsyncBufferNone(),
+		\srcVal, nodeVal, onDone, onError -> {
+			timer(100, \-> onDone(nodeVal + "," + i2s(srcVal))); // long time update
+		},
+		idfn, //errorFn
+	);
+	timer(10, \-> rAsyncNext(cell1, 11));
+	timer(20, \-> rAsyncNext(cell1, 12)); // will be ignored
+	timer(30, \-> rAsyncNext(cell1, 13)); // will be ignored
+	timer(200, \-> rAsyncNext(cell1, 14));
+});
+
+rAsyncFnConnect_BufferFirst_test = rAsyncTest("rAsyncFnConnect_BufferFirst", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue("");
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+
+	asyncWaitUpdates("rAsyncFnConnect",	cell2, testDone,
+		[
+			Pair(FrpAsyncInProgress(), ""),
+			Pair(FrpAsyncInProgress(), ",11"),
+			Pair(FrpAsyncInProgress(), ",11,12"),
+			Pair(FrpAsyncInProgress(), ",11,12,13"),
+			Pair(FrpAsyncReady(), ",11,12,13"),
+			Pair(FrpAsyncInProgress(), ",11,12,13"),
+			Pair(FrpAsyncInProgress(), ",11,12,13,14"),
+			Pair(FrpAsyncReady(), ",11,12,13,14"),
+		],
+	);
+
+	rAsyncFnConnect(cell1, cell2, false, FrpAsyncBufferFirst(2),
+		\srcVal, nodeVal, onDone, onError -> {
+			timer(100, \-> onDone(nodeVal + "," + i2s(srcVal))); // long time update
+		},
+		idfn, //errorFn
+	);
+
+	rAsyncNext(cell1, 11);
+	rAsyncNext(cell1, 12); // will be buffered
+	rAsyncNext(cell1, 13); // will be buffered
+	timer(400, \-> rAsyncNext(cell1, 14)); // all things before consumes about 300ms
+});
+
+
+rAsyncFnConnect_BufferLast_test = rAsyncTest("rAsyncFnConnect_BufferLast", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue("");
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+
+	asyncWaitUpdates("rAsyncFnConnect",	cell2, testDone,
+		[
+			Pair(FrpAsyncInProgress(), ""),
+			Pair(FrpAsyncInProgress(), ",11"),
+			Pair(FrpAsyncInProgress(), ",11,13"),
+			Pair(FrpAsyncInProgress(), ",11,13,14"),
+			Pair(FrpAsyncReady(), ",11,13,14"),
+			Pair(FrpAsyncInProgress(), ",11,13,14"),
+			Pair(FrpAsyncInProgress(), ",11,13,14,15"),
+			Pair(FrpAsyncReady(), ",11,13,14,15"),
+		],
+	);
+
+	rAsyncFnConnect(cell1, cell2, false, FrpAsyncBufferLast(2), // buffer length=2 !
+		\srcVal, nodeVal, onDone, onError -> {
+			timer(100, \-> onDone(nodeVal + "," + i2s(srcVal))); // long time update
+		},
+		idfn, //errorFn
+	);
+	rAsyncNext(cell1, 11);
+	rAsyncNext(cell1, 12); // will be dropped
+	rAsyncNext(cell1, 13); // will be buffered
+	rAsyncNext(cell1, 14); // will be buffered
+	timer(400, \-> rAsyncNext(cell1, 15)); // after all will completed
+});
+
+
+
+/// rAsyncFnConnect2 //////////////////////////////////////////////////////////////////
+
+rAsyncFnConnect2_test = rAsyncTest("rAsyncFnConnect2", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue(2);
+	cell3 = makeFrpAsyncValue(0);
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+
+	asyncWaitUpdates("rAsyncFnConnect",	cell3, testDone,
+		[
+			Pair(FrpAsyncInProgress(), 0),
+			Pair(FrpAsyncInProgress(), 22),
+			Pair(FrpAsyncReady(), 22),
+			Pair(FrpAsyncInProgress(), 22),
+			Pair(FrpAsyncInProgress(), 55),
+			Pair(FrpAsyncReady(), 55),
+		],
+	);
+
+	rAsyncFnConnect2(cell1, cell2, cell3, false, FrpAsyncBufferNone(),
+		\v1, v2, dv, onDone, onError -> {
+			timer(50, \-> onDone(dv + v1 * v2));
+		},
+		idfn, //errorFn
+	);
+	rAsyncNext(cell1, 11);
+	timer(100, \->rAsyncNext(cell2, 3));
+});
+
+
+rAsyncFnConnect2_buffered_test = rAsyncTest("rAsyncFnConnect2_buffered", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue(2);
+	cell3 = makeFrpAsyncValue(0);
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+
+	asyncWaitUpdates("rAsyncFnConnect",	cell3, testDone,
+		[
+			Pair(FrpAsyncInProgress(), 0),
+			Pair(FrpAsyncInProgress(), 22),
+			Pair(FrpAsyncInProgress(), 55), // update from buffer
+			Pair(FrpAsyncReady(), 55),
+		],
+	);
+
+	rAsyncFnConnect2(cell1, cell2, cell3, false, FrpAsyncBufferLast(1),
+		\v1, v2, dv, onDone, onError -> {
+			timer(100, \-> onDone(dv + v1 * v2));
+		},
+		idfn, //errorFn
+	);
+	rAsyncNext(cell1, 11);
+	rAsyncNext(cell2, 3); // will be buffered
+});
+
+
+/// initialization node tests ///
+
+rAsyncFnConnect_init_test = rAsyncTest("rAsyncFnConnect_init", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue(20);
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+
+	asyncWaitUpdates("rAsyncFnConnect",	cell2, testDone,
+		[
+			Pair(FrpAsyncInProgress(), 20),
+			Pair(FrpAsyncInProgress(), 30),
+			Pair(FrpAsyncReady(), 30),
+		],
+	);
+
+	rAsyncFnConnect(cell1, cell2, true, FrpAsyncBufferNone(),
+		\srcVal, nodeVal, onDone, onError -> {
+			timer(0, \-> onDone(nodeVal + srcVal));
+		},
+		idfn, //errorFn
+	);
+});
+
+
+rAsyncFnConnect_init_chain_test = rAsyncTest("rAsyncFnConnect_init_chain", \testDone -> {
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue(100);
+	cell3 = makeFrpAsyncValue(1000);
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+	asyncSubsPrint(cell3, "cell3");
+
+	asyncWaitUpdates("rAsyncFnConnect",	cell3, testDone,
+		[
+			Pair(FrpAsyncInProgress(), 1000),
+			Pair(FrpAsyncInProgress(), 1110),
+			Pair(FrpAsyncReady(), 1110),
+		],
+	);
+
+	// create chain cell2 -> cell3 (without initialization)
+	rAsyncFnConnect(cell2, cell3, false, FrpAsyncBufferNone(),
+		\srcVal, nodeVal, onDone, onError -> {
+			timer(0, \-> onDone(nodeVal + srcVal));
+		},
+		idfn, //errorFn
+	);
+
+	// connect chain cell2 -> cell3 to cell1
+	rAsyncFnConnect(cell1, cell2, true, FrpAsyncBufferNone(),
+		\srcVal, nodeVal, onDone, onError -> {
+			timer(0, \-> onDone(nodeVal + srcVal));
+		},
+		idfn, //errorFn
+	);
+});
+
+
+rAsyncFnConnect_init_buffered_test = rAsyncTest("rAsyncFnConnect_init_buffered", \testDone -> {
+	// the test simulates a change in cell1 before cell2 initialization will be done
+
+	cell1 = makeFrpAsyncValue(10);
+	cell2 = makeFrpAsyncValue(20);
+
+	asyncSubsPrint(cell1, "cell1");
+	asyncSubsPrint(cell2, "cell2");
+
+	asyncWaitUpdates("rAsyncFnConnect",	cell2, testDone,
+		[
+			Pair(FrpAsyncInProgress(), 20),
+			Pair(FrpAsyncInProgress(), 30),
+			Pair(FrpAsyncInProgress(), 50),
+			Pair(FrpAsyncReady(), 50),
+		],
+	);
+
+	rAsyncFnConnect(cell1, cell2, true, FrpAsyncBufferFirst(1), // bufferizate of 1 new event
+		\srcVal, nodeVal, onDone, onError -> {
+			timer(100, \-> onDone(nodeVal + srcVal));
+			// works as fold acc, simulate long time calculation
+		},
+		idfn, //errorFn
+	);
+	rAsyncNext(cell1, 20);
+});
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+checkAsyncV(cell : FrpAsyncValue<?>, val : ?, inProgress : bool, arr : [string]) -> bool {
+	rAsyncGet(cell) == val && rAsyncInProgress(cell) == inProgress && rAsyncErrors(cell) == arr
+}
+
+checkAccert(
+	expectedValue : ?,
+	expectedtStatus : FrpAsyncStatus,
+	realValue : ?,
+	realStatus : FrpAsyncStatus
+) -> bool {
+	res = expectedValue == realValue && expectedtStatus == realStatus;
+	if (!res) {
+		println("checkAccert failed");
+		println("expected: " + toString(expectedtStatus) + ", " + toString(expectedValue));
+		println("real: " + toString(realStatus) + ", " + toString(realValue));
+	};
+	res;
+}
+
+asyncSubsPrint(cell : FrpAsyncValue<?>, label : string) -> () -> void {
+	rAsyncSubscribe(cell, true,
+		\value,status -> {
+			println(label + " value:" + toString(value) + "; status:" + toString(status));
+		}
+	);
+}
+
+asyncWaitUpdates(
+	label : string,
+	cell : FrpAsyncValue<?>,
+	onDone : (bool) -> void,
+	checks : [Pair<FrpAsyncStatus/*status*/, ?/*value*/>],
+) -> void {
+	index = ref 0;
+	uns = ref nop;
+
+	if (checks != []) {
+		uns :=
+			rAsyncSubscribe(
+				cell,
+				false, // NO run on subscribe!
+				\value,status -> {
+					// println("index:" + toString(^index) + " value:" + toString(value) + "; status:" + toString(status));
+					check = checks[^index];
+					res = check.first == status && check.second == value;
+
+					if (res) {
+						if (^index < length(checks) - 1) {// a last element must not contain any command
+							index := ^index + 1;
+						} else {
+							(^uns)();
+							onDone(true);
+						}
+					} else {
+						println("async check failed: " + label + ", index:" + i2s(^index));
+						println("expected: " + toString(check.first) + ", " + toString(check.second));
+						println("real: " + toString(status) + ", " + toString(value));
+						(^uns)();
+						onDone(false);
+					}
+				}
+			);
+	}
+}
+
+rAsyncTest(
+	name : string,
+	testFn : ((bool) -> void) -> void
+) -> Promise<bool, string> {
+	Promise(
+		\ff,rj -> {
+			println("START test: " + name);
+			onDone =\result -> {
+				println("END test: " + name + ": " + if (result) "OK" else "ERROR");
+				ff(result);
+			}
+			testFn(onDone);
+		}
+	)
+}
+
+allAsyncTests(cb : (bool) -> void) -> void {
+	doneP(
+		allP(rAsyncTests),
+		\arr -> {
+			cb(all(arr));
+		},
+		\err -> {
+			println("allAsyncTests error:" + err);
+			cb(false);
+		}
+	);
+}
+
+
+main() {
+	timer(100, //to skip errors on default area9 files loading
+		\-> {
+			println("FRP async tests");
+			allAsyncTests(\result -> println("FRP all tests done:'" + (if (result) "SUCCESS" else "FAILURE")));
+		});
+}

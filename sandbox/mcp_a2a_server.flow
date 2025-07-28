@@ -1,0 +1,1837 @@
+import server/http;
+import formats/json/json;
+import ds/tree;
+import string;
+import ds/tuples;
+import runtime;
+import formats/base64;
+import math/math;
+import ds/set;
+
+export {
+	// Unified MCP + A2A Server
+	createUnifiedServer(port : int, config : UnifiedServerConfig) -> () -> void;
+	
+	// Unified Server Configuration
+	UnifiedServerConfig(
+		// MCP Configuration
+		mcp : McpServerConfig,
+		// A2A Configuration  
+		a2a : A2aServerConfig
+	);
+	
+	// A2A Server Configuration
+	A2aServerConfig(
+		agentCard : A2aAgentCard,
+		capabilities : A2aServerCapabilities,
+		taskHandlers : [A2aTaskHandler],
+		maxTaskHistory : int,
+		enablePushNotifications : bool
+	);
+	
+	// A2A Agent Card (Discovery)
+	A2aAgentCard(
+		name : string,
+		description : string,
+		url : string,
+		provider : Maybe<A2aAgentProvider>,
+		version : string,
+		documentationUrl : Maybe<string>,
+		capabilities : A2aAgentCapabilities,
+		securitySchemes : Tree<string, A2aSecurityScheme>,
+		security : [Tree<string, [string]>],
+		defaultInputModes : [string],
+		defaultOutputModes : [string],
+		skills : [A2aAgentSkill],
+		supportsAuthenticatedExtendedCard : bool
+	);
+	
+	A2aAgentProvider(
+		organization : string,
+		url : string
+	);
+	
+	A2aAgentCapabilities(
+		streaming : bool,
+		pushNotifications : bool,
+		stateTransitionHistory : bool
+	);
+	
+	A2aSecurityScheme ::= A2aApiKeySecurityScheme, A2aHttpAuthSecurityScheme, A2aOAuth2SecurityScheme, A2aOpenIdConnectSecurityScheme;
+		A2aApiKeySecurityScheme(type : string, name : string, in : string);
+		A2aHttpAuthSecurityScheme(type : string, scheme : string);
+		A2aOAuth2SecurityScheme(type : string, flows : Json);
+		A2aOpenIdConnectSecurityScheme(type : string, openIdConnectUrl : string);
+	
+	A2aAgentSkill(
+		id : string,
+		name : string,
+		description : string,
+		tags : [string],
+		examples : [string],
+		inputModes : Maybe<[string]>,
+		outputModes : Maybe<[string]>
+	);
+	
+	// A2A Task Management
+	A2aTask(
+		id : string,
+		contextId : string,
+		status : A2aTaskStatus,
+		artifacts : [A2aArtifact],
+		history : [A2aMessage],
+		metadata : Tree<string, Json>
+	);
+	
+	A2aTaskStatus(
+		state : A2aTaskState,
+		message : Maybe<A2aMessage>,
+		timestamp : string
+	);
+	
+	A2aTaskState ::= A2aTaskSubmitted, A2aTaskWorking, A2aTaskInputRequired, A2aTaskCompleted, A2aTaskCanceled, A2aTaskFailed, A2aTaskRejected, A2aTaskAuthRequired, A2aTaskUnknown;
+		A2aTaskSubmitted();
+		A2aTaskWorking();
+		A2aTaskInputRequired();
+		A2aTaskCompleted();
+		A2aTaskCanceled();
+		A2aTaskFailed();
+		A2aTaskRejected();
+		A2aTaskAuthRequired();
+		A2aTaskUnknown();
+	
+	// A2A Messages and Content
+	A2aMessage(
+		role : A2aMessageRole,
+		parts : [A2aPart],
+		metadata : Tree<string, Json>,
+		referenceTaskIds : [string],
+		messageId : string,
+		taskId : Maybe<string>,
+		contextId : Maybe<string>,
+		kind : string // "message"
+	);
+	
+	A2aMessageRole ::= A2aRoleUser, A2aRoleAgent;
+		A2aRoleUser();
+		A2aRoleAgent();
+	
+	A2aPart ::= A2aTextPart, A2aFilePart, A2aDataPart;
+		A2aTextPart(kind : string, text : string, metadata : Tree<string, Json>);
+		A2aFilePart(kind : string, file : A2aFile, metadata : Tree<string, Json>);
+		A2aDataPart(kind : string, data : Tree<string, Json>, metadata : Tree<string, Json>);
+	
+	A2aFile ::= A2aFileWithBytes, A2aFileWithUri;
+		A2aFileWithBytes(name : string, mimeType : string, data : string); // base64 encoded
+		A2aFileWithUri(name : string, mimeType : string, uri : string);
+	
+	A2aArtifact(
+		id : string,
+		name : string,
+		parts : [A2aPart],
+		metadata : Tree<string, Json>
+	);
+	
+	// A2A Task Handlers
+	A2aTaskHandler(
+		skillId : string,
+		handler : (A2aTaskContext, A2aMessage) -> A2aTaskResult
+	);
+	
+	A2aTaskContext(
+		taskId : string,
+		contextId : string,
+		userId : string,
+		metadata : Tree<string, Json>
+	);
+	
+	A2aTaskResult(
+		newState : A2aTaskState,
+		responseMessage : Maybe<A2aMessage>,
+		artifacts : [A2aArtifact],
+		metadata : Tree<string, Json>
+	);
+	
+	// A2A Server Capabilities
+	A2aServerCapabilities(
+		maxConcurrentTasks : int,
+		maxTaskDuration : int, // seconds
+		supportedInputModes : [string],
+		supportedOutputModes : [string]
+	);
+	
+	// Helper constructors
+	createA2aAgentCard(name : string, description : string, url : string, skills : [A2aAgentSkill]) -> A2aAgentCard;
+	createA2aAgentSkill(id : string, name : string, description : string, tags : [string]) -> A2aAgentSkill;
+	createA2aTaskHandler(skillId : string, handler : (A2aTaskContext, A2aMessage) -> A2aTaskResult) -> A2aTaskHandler;
+	
+	// Default configurations
+	createDefaultA2aConfig() -> A2aServerConfig;
+	createDefaultUnifiedConfig() -> UnifiedServerConfig;
+	
+	// MCP Server (from original file)
+	createMcpServer(port : int, config : McpServerConfig) -> () -> void;
+	
+	// MCP Server Configuration
+	McpServerConfig(
+		name : string,
+		version : string,
+		tools : [McpTool],
+		resources : [McpResource],
+		prompts : [McpPrompt],
+		capabilities : McpServerCapabilities,
+		authentication : McpAuthConfig
+	);
+	
+	// Authentication Configuration (shared between MCP and A2A)
+	McpAuthConfig(
+		enabled : bool,
+		methods : [McpAuthMethod],
+		requireAuth : bool
+	);
+	
+	McpAuthMethod ::= McpBasicAuth, McpBearerAuth, McpApiKeyAuth, McpCustomAuth;
+		McpBasicAuth(credentials : Tree<string, string>);
+		McpBearerAuth(tokens : [string]);
+		McpApiKeyAuth(keys : [string], headerName : string);
+		McpCustomAuth(validator : (HttpRequest) -> McpAuthResult);
+	
+	McpAuthResult ::= McpAuthSuccess, McpAuthFailure;
+		McpAuthSuccess(userId : string);
+		McpAuthFailure(reason : string);
+	
+	// MCP Core Structures
+	McpServerCapabilities(
+		logging : Maybe<McpLoggingCapability>,
+		tools : Maybe<McpToolsCapability>,
+		resources : Maybe<McpResourcesCapability>,
+		prompts : Maybe<McpPromptsCapability>
+	);
+	
+	McpLoggingCapability();
+	McpToolsCapability(listChanged : bool);
+	McpResourcesCapability(subscribe : bool, listChanged : bool);
+	McpPromptsCapability(listChanged : bool);
+	
+	// Tools
+	McpTool(
+		name : string,
+		description : string,
+		inputSchema : Json,
+		handler : (Json) -> McpToolResult
+	);
+	
+	McpToolResult(
+		content : [McpContent],
+		isError : bool
+	);
+	
+	// Resources
+	McpResource(
+		uri : string,
+		name : string,
+		description : string,
+		mimeType : string,
+		handler : () -> McpResourceResult
+	);
+	
+	McpResourceResult(
+		contents : [McpResourceContent]
+	);
+	
+	McpResourceContent(
+		uri : string,
+		mimeType : string,
+		text : Maybe<string>,
+		blob : Maybe<string>
+	);
+	
+	// Prompts
+	McpPrompt(
+		name : string,
+		description : string,
+		arguments : [McpPromptArgument],
+		handler : (Json) -> McpPromptResult
+	);
+	
+	McpPromptArgument(
+		name : string,
+		description : string,
+		required : bool
+	);
+	
+	McpPromptResult(
+		description : string,
+		messages : [McpPromptMessage]
+	);
+	
+	McpPromptMessage(
+		role : McpMessageRole,
+		content : McpContent
+	);
+	
+	McpMessageRole ::= McpRoleUser, McpRoleAssistant, McpRoleSystem;
+		McpRoleUser();
+		McpRoleAssistant();
+		McpRoleSystem();
+	
+	// Content types
+	McpContent ::= McpTextContent, McpImageContent, McpResourceContent;
+		McpTextContent(text : string);
+		McpImageContent(data : string, mimeType : string);
+	
+	// Logging
+	McpLogLevel ::= McpLogDebug, McpLogInfo, McpLogNotice, McpLogWarning, McpLogError, McpLogCritical, McpLogAlert, McpLogEmergency;
+		McpLogDebug();
+		McpLogInfo();
+		McpLogNotice();
+		McpLogWarning();
+		McpLogError();
+		McpLogCritical();
+		McpLogAlert();
+		McpLogEmergency();
+	
+	// Helper functions
+	createMcpTool(name : string, description : string, inputSchema : Json, handler : (Json) -> McpToolResult) -> McpTool;
+	createMcpResource(uri : string, name : string, description : string, mimeType : string, handler : () -> McpResourceResult) -> McpResource;
+	createMcpPrompt(name : string, description : string, arguments : [McpPromptArgument], handler : (Json) -> McpPromptResult) -> McpPrompt;
+	
+	// Default server configuration
+	createDefaultMcpConfig() -> McpServerConfig;
+	
+	// Authentication utilities
+	createBasicAuth(credentials : Tree<string, string>) -> McpAuthMethod;
+	createBearerAuth(tokens : [string]) -> McpAuthMethod;
+	createApiKeyAuth(keys : [string], headerName : string) -> McpAuthMethod;
+	createCustomAuth(validator : (HttpRequest) -> McpAuthResult) -> McpAuthMethod;
+	createAuthConfig(enabled : bool, methods : [McpAuthMethod], requireAuth : bool) -> McpAuthConfig;
+	noAuth() -> McpAuthConfig;
+}
+
+// Global task storage (in production, use proper database)
+taskStorage : ref Tree<string, A2aTask> = ref makeTree();
+contextCounter : ref int = ref 0;
+
+createUnifiedServer(port : int, config : UnifiedServerConfig) -> () -> void {
+	// Create unified MCP + A2A method handlers
+	handlers = createUnifiedHandlers(config);
+	
+	onOpen = \ -> {
+		println("🌟 Unified MCP + A2A Server started on port " + i2s(port));
+		println("   MCP: " + config.mcp.name + " v" + config.mcp.version);
+		println("   A2A: " + config.a2a.agentCard.name + " v" + config.a2a.agentCard.version);
+	};
+	
+	onOpenError = \error -> {
+		println("Failed to start unified server: " + error);
+	};
+	
+	onMessage = \request : HttpRequest, sendResponse : (HttpResponse) -> void -> {
+		response = processUnifiedRequest(request, handlers, config);
+		sendResponse(response);
+	};
+	
+	createHttpServer(port, onOpen, onOpenError, onMessage);
+}
+
+createUnifiedHandlers(config : UnifiedServerConfig) -> Tree<string, (Json) -> Json> {
+	mcpHandlers = createMcpHandlers(config.mcp);
+	a2aHandlers = createA2aHandlers(config.a2a);
+	
+	// Merge both handler sets
+	mergeTree(mcpHandlers, a2aHandlers);
+}
+
+createA2aHandlers(config : A2aServerConfig) -> Tree<string, (Json) -> Json> {
+	fold([
+		// A2A Core Methods
+		Pair("agent/card", \params -> handleA2aAgentCard(config.agentCard, params)),
+		Pair("tasks/create", \params -> handleA2aTasksCreate(config, params)),
+		Pair("tasks/query", \params -> handleA2aTasksQuery(params)),
+		Pair("tasks/cancel", \params -> handleA2aTasksCancel(params)),
+		Pair("message/send", \params -> handleA2aMessageSend(config, params)),
+		Pair("message/stream", \params -> handleA2aMessageStream(config, params)),
+		Pair("tasks/resubscribe", \params -> handleA2aTasksResubscribe(params))
+	], makeTree(), \acc, pair -> setTree(acc, pair.first, pair.second));
+}
+
+processUnifiedRequest(request : HttpRequest, handlers : Tree<string, (Json) -> Json>, config : UnifiedServerConfig) -> HttpResponse {
+	// Check if this is a request for the A2A Agent Card
+	if (request.url == "/.well-known/agent.json" || request.url == "/agent.json") {
+		agentCardJson = a2aAgentCardToJson(config.a2a.agentCard);
+		HttpResponse(200, json2string(agentCardJson), [KeyValue("Content-Type", "application/json")]);
+	} else {
+		// Handle as normal MCP/A2A JSON-RPC request
+		processMcpRequest(request, handlers, config.mcp);
+	}
+}
+
+// A2A Method Handlers
+
+handleA2aAgentCard(agentCard : A2aAgentCard, params : Json) -> Json {
+	a2aAgentCardToJson(agentCard);
+}
+
+handleA2aTasksCreate(config : A2aServerConfig, params : Json) -> Json {
+	// Extract parameters
+	message = parseA2aMessageFromJson(getJsonFieldValue(params, "message", JsonNull()));
+	skillId = getJsonStringField(params, "skillId", "");
+	contextId = getJsonStringField(params, "contextId", "");
+	userId = getJsonStringField(params, "_userId", "anonymous");
+	
+	// Generate new task ID and context if needed
+	taskId = "task_" + d2s(timestamp()) + "_" + i2s(^contextCounter);
+	actualContextId = if (contextId == "") {
+		contextCounter := ^contextCounter + 1;
+		"ctx_" + i2s(^contextCounter);
+	} else contextId;
+	
+	// Create initial task
+	initialStatus = A2aTaskStatus(A2aTaskSubmitted(), None(), getCurrentTimestamp());
+	task = A2aTask(
+		taskId,
+		actualContextId,
+		initialStatus,
+		[],
+		switch (message) { None(): []; Some(msg): [msg]; },
+		makeTree()
+	);
+	
+	// Store task
+	taskStorage := setTree(^taskStorage, taskId, task);
+	
+	// Process the task if we have a handler for the skill
+	processedTask = processA2aTask(config, task, message, skillId, userId);
+	
+	// Update stored task
+	taskStorage := setTree(^taskStorage, taskId, processedTask);
+	
+	// Return task
+	a2aTaskToJson(processedTask);
+}
+
+handleA2aTasksQuery(params : Json) -> Json {
+	taskId = getJsonStringField(params, "taskId", "");
+	historyLength = getJsonIntField(params, "historyLength", 0);
+	
+	switch (lookupTree(^taskStorage, taskId)) {
+		None(): {
+			// Task not found - return unknown state
+			unknownTask = A2aTask(
+				taskId,
+				"unknown",
+				A2aTaskStatus(A2aTaskUnknown(), None(), getCurrentTimestamp()),
+				[],
+				[],
+				makeTree()
+			);
+			a2aTaskToJson(unknownTask);
+		}
+		Some(task): {
+			// Optionally limit history
+			limitedTask = if (historyLength > 0 && length(task.history) > historyLength) {
+				A2aTask(task with history = subrange(task.history, length(task.history) - historyLength, historyLength));
+			} else task;
+			
+			a2aTaskToJson(limitedTask);
+		}
+	}
+}
+
+handleA2aTasksCancel(params : Json) -> Json {
+	taskId = getJsonStringField(params, "taskId", "");
+	
+	switch (lookupTree(^taskStorage, taskId)) {
+		None(): {
+			JsonObject([
+				Pair("success", JsonBool(false)),
+				Pair("error", JsonString("Task not found"))
+			]);
+		}
+		Some(task): {
+			// Update task to canceled state
+			canceledStatus = A2aTaskStatus(A2aTaskCanceled(), None(), getCurrentTimestamp());
+			canceledTask = A2aTask(task with status = canceledStatus);
+			taskStorage := setTree(^taskStorage, taskId, canceledTask);
+			
+			JsonObject([
+				Pair("success", JsonBool(true)),
+				Pair("task", a2aTaskToJson(canceledTask))
+			]);
+		}
+	}
+}
+
+handleA2aMessageSend(config : A2aServerConfig, params : Json) -> Json {
+	taskId = getJsonStringField(params, "taskId", "");
+	message = parseA2aMessageFromJson(getJsonFieldValue(params, "message", JsonNull()));
+	userId = getJsonStringField(params, "_userId", "anonymous");
+	
+	switch (lookupTree(^taskStorage, taskId)) {
+		None(): {
+			JsonObject([
+				Pair("error", JsonString("Task not found")),
+				Pair("code", JsonDouble(-32601.0))
+			]);
+		}
+		Some(task): {
+			// Add message to task history
+			updatedHistory = switch (message) {
+				None(): task.history;
+				Some(msg): concat(task.history, [msg]);
+			};
+			
+			// Process the message (this would trigger the actual agent logic)
+			processedTask = processA2aTask(config, A2aTask(task with history = updatedHistory), message, "", userId);
+			
+			// Update stored task
+			taskStorage := setTree(^taskStorage, taskId, processedTask);
+			
+			a2aTaskToJson(processedTask);
+		}
+	}
+}
+
+handleA2aMessageStream(config : A2aServerConfig, params : Json) -> Json {
+	// For now, return the same as message/send
+	// In a full implementation, this would return SSE stream
+	handleA2aMessageSend(config, params);
+}
+
+handleA2aTasksResubscribe(params : Json) -> Json {
+	taskId = getJsonStringField(params, "taskId", "");
+	
+	switch (lookupTree(^taskStorage, taskId)) {
+		None(): {
+			JsonObject([
+				Pair("error", JsonString("Task not found"))
+			]);
+		}
+		Some(task): {
+			// In a full implementation, this would set up SSE streaming
+			JsonObject([
+				Pair("subscribed", JsonBool(true)),
+				Pair("taskId", JsonString(taskId))
+			]);
+		}
+	}
+}
+
+// A2A Task Processing
+
+processA2aTask(config : A2aServerConfig, task : A2aTask, message : Maybe<A2aMessage>, skillId : string, userId : string) -> A2aTask {
+	// Find appropriate handler
+	handler = if (skillId != "") {
+		find(config.taskHandlers, \h -> h.skillId == skillId);
+	} else {
+		// Use first available handler as default
+		if (length(config.taskHandlers) > 0) Some(config.taskHandlers[0]) else None();
+	};
+	
+	switch (handler) {
+		None(): {
+			// No handler found - mark as failed
+			failedStatus = A2aTaskStatus(
+				A2aTaskFailed(),
+				Some(createA2aTextMessage(A2aRoleAgent(), "No handler available for skill: " + skillId, task.id)),
+				getCurrentTimestamp()
+			);
+			A2aTask(task with status = failedStatus);
+		}
+		Some(taskHandler): {
+			switch (message) {
+				None(): {
+					// No message to process, update to working state
+					workingStatus = A2aTaskStatus(A2aTaskWorking(), None(), getCurrentTimestamp());
+					A2aTask(task with status = workingStatus);
+				}
+				Some(msg): {
+					// Process the message with the handler
+					context = A2aTaskContext(task.id, task.contextId, userId, task.metadata);
+					result = taskHandler.handler(context, msg);
+					
+					// Update task based on result
+					newStatus = A2aTaskStatus(result.newState, result.responseMessage, getCurrentTimestamp());
+					A2aTask(
+						task.id,
+						task.contextId,
+						newStatus,
+						concat(task.artifacts, result.artifacts),
+						task.history,
+						mergeTree(task.metadata, result.metadata)
+					);
+				}
+			}
+		}
+	}
+}
+
+// JSON Conversion Functions for A2A
+
+a2aAgentCardToJson(agentCard : A2aAgentCard) -> Json {
+	baseFields = [
+		Pair("name", JsonString(agentCard.name)),
+		Pair("description", JsonString(agentCard.description)),
+		Pair("url", JsonString(agentCard.url)),
+		Pair("version", JsonString(agentCard.version)),
+		Pair("capabilities", a2aAgentCapabilitiesToJson(agentCard.capabilities)),
+		Pair("defaultInputModes", JsonArray(map(agentCard.defaultInputModes, \s -> JsonString(s)))),
+		Pair("defaultOutputModes", JsonArray(map(agentCard.defaultOutputModes, \s -> JsonString(s)))),
+		Pair("skills", JsonArray(map(agentCard.skills, a2aAgentSkillToJson))),
+		Pair("supportsAuthenticatedExtendedCard", JsonBool(agentCard.supportsAuthenticatedExtendedCard))
+	];
+	
+	withProvider = switch (agentCard.provider) {
+		None(): baseFields;
+		Some(provider): arrayPush(baseFields, Pair("provider", JsonObject([
+			Pair("organization", JsonString(provider.organization)),
+			Pair("url", JsonString(provider.url))
+		])));
+	};
+	
+	withDocUrl = switch (agentCard.documentationUrl) {
+		None(): withProvider;
+		Some(docUrl): arrayPush(withProvider, Pair("documentationUrl", JsonString(docUrl)));
+	};
+	
+	// Add security schemes if any
+	withSecurity = if (!isEmptyTree(agentCard.securitySchemes)) {
+		securitySchemesJson = foldTree(agentCard.securitySchemes, [], \key, scheme, acc -> 
+			arrayPush(acc, Pair(key, a2aSecuritySchemeToJson(scheme)))
+		);
+		arrayPush(withDocUrl, Pair("securitySchemes", JsonObject(securitySchemesJson)));
+	} else withDocUrl;
+	
+	JsonObject(withSecurity);
+}
+
+a2aAgentCapabilitiesToJson(capabilities : A2aAgentCapabilities) -> Json {
+	JsonObject([
+		Pair("streaming", JsonBool(capabilities.streaming)),
+		Pair("pushNotifications", JsonBool(capabilities.pushNotifications)),
+		Pair("stateTransitionHistory", JsonBool(capabilities.stateTransitionHistory))
+	]);
+}
+
+a2aSecuritySchemeToJson(scheme : A2aSecurityScheme) -> Json {
+	switch (scheme) {
+		A2aApiKeySecurityScheme(type, name, in): JsonObject([
+			Pair("type", JsonString(type)),
+			Pair("name", JsonString(name)),
+			Pair("in", JsonString(in))
+		]);
+		A2aHttpAuthSecurityScheme(type, schemeName): JsonObject([
+			Pair("type", JsonString(type)),
+			Pair("scheme", JsonString(schemeName))
+		]);
+		A2aOAuth2SecurityScheme(type, flows): JsonObject([
+			Pair("type", JsonString(type)),
+			Pair("flows", flows)
+		]);
+		A2aOpenIdConnectSecurityScheme(type, openIdConnectUrl): JsonObject([
+			Pair("type", JsonString(type)),
+			Pair("openIdConnectUrl", JsonString(openIdConnectUrl))
+		]);
+	}
+}
+
+a2aAgentSkillToJson(skill : A2aAgentSkill) -> Json {
+	baseFields = [
+		Pair("id", JsonString(skill.id)),
+		Pair("name", JsonString(skill.name)),
+		Pair("description", JsonString(skill.description)),
+		Pair("tags", JsonArray(map(skill.tags, \s -> JsonString(s)))),
+		Pair("examples", JsonArray(map(skill.examples, \s -> JsonString(s))))
+	];
+	
+	withInputModes = switch (skill.inputModes) {
+		None(): baseFields;
+		Some(modes): arrayPush(baseFields, Pair("inputModes", JsonArray(map(modes, \s -> JsonString(s)))));
+	};
+	
+	withOutputModes = switch (skill.outputModes) {
+		None(): withInputModes;
+		Some(modes): arrayPush(withInputModes, Pair("outputModes", JsonArray(map(modes, \s -> JsonString(s)))));
+	};
+	
+	JsonObject(withOutputModes);
+}
+
+a2aTaskToJson(task : A2aTask) -> Json {
+	JsonObject([
+		Pair("id", JsonString(task.id)),
+		Pair("contextId", JsonString(task.contextId)),
+		Pair("status", a2aTaskStatusToJson(task.status)),
+		Pair("artifacts", JsonArray(map(task.artifacts, a2aArtifactToJson))),
+		Pair("history", JsonArray(map(task.history, a2aMessageToJson))),
+		Pair("metadata", treeToJsonObject(task.metadata))
+	]);
+}
+
+a2aTaskStatusToJson(status : A2aTaskStatus) -> Json {
+	baseFields = [
+		Pair("state", JsonString(a2aTaskStateToString(status.state))),
+		Pair("timestamp", JsonString(status.timestamp))
+	];
+	
+	withMessage = switch (status.message) {
+		None(): baseFields;
+		Some(message): arrayPush(baseFields, Pair("message", a2aMessageToJson(message)));
+	};
+	
+	JsonObject(withMessage);
+}
+
+a2aTaskStateToString(state : A2aTaskState) -> string {
+	switch (state) {
+		A2aTaskSubmitted(): "submitted";
+		A2aTaskWorking(): "working";
+		A2aTaskInputRequired(): "input-required";
+		A2aTaskCompleted(): "completed";
+		A2aTaskCanceled(): "canceled";
+		A2aTaskFailed(): "failed";
+		A2aTaskRejected(): "rejected";
+		A2aTaskAuthRequired(): "auth-required";
+		A2aTaskUnknown(): "unknown";
+	}
+}
+
+a2aMessageToJson(message : A2aMessage) -> Json {
+	baseFields = [
+		Pair("role", JsonString(a2aRoleToString(message.role))),
+		Pair("parts", JsonArray(map(message.parts, a2aPartToJson))),
+		Pair("messageId", JsonString(message.messageId)),
+		Pair("kind", JsonString(message.kind))
+	];
+	
+	withMetadata = if (!isEmptyTree(message.metadata)) {
+		arrayPush(baseFields, Pair("metadata", treeToJsonObject(message.metadata)));
+	} else baseFields;
+	
+	withRefTasks = if (length(message.referenceTaskIds) > 0) {
+		arrayPush(withMetadata, Pair("referenceTaskIds", JsonArray(map(message.referenceTaskIds, \s -> JsonString(s)))));
+	} else withMetadata;
+	
+	withTaskId = switch (message.taskId) {
+		None(): withRefTasks;
+		Some(taskId): arrayPush(withRefTasks, Pair("taskId", JsonString(taskId)));
+	};
+	
+	withContextId = switch (message.contextId) {
+		None(): withTaskId;
+		Some(contextId): arrayPush(withTaskId, Pair("contextId", JsonString(contextId)));
+	};
+	
+	JsonObject(withContextId);
+}
+
+a2aRoleToString(role : A2aMessageRole) -> string {
+	switch (role) {
+		A2aRoleUser(): "user";
+		A2aRoleAgent(): "agent";
+	}
+}
+
+a2aPartToJson(part : A2aPart) -> Json {
+	switch (part) {
+		A2aTextPart(kind, text, metadata): {
+			baseFields = [
+				Pair("kind", JsonString(kind)),
+				Pair("text", JsonString(text))
+			];
+			
+			withMetadata = if (!isEmptyTree(metadata)) {
+				arrayPush(baseFields, Pair("metadata", treeToJsonObject(metadata)));
+			} else baseFields;
+			
+			JsonObject(withMetadata);
+		}
+		A2aFilePart(kind, file, metadata): {
+			baseFields = [
+				Pair("kind", JsonString(kind)),
+				Pair("file", a2aFileToJson(file))
+			];
+			
+			withMetadata = if (!isEmptyTree(metadata)) {
+				arrayPush(baseFields, Pair("metadata", treeToJsonObject(metadata)));
+			} else baseFields;
+			
+			JsonObject(withMetadata);
+		}
+		A2aDataPart(kind, data, metadata): {
+			baseFields = [
+				Pair("kind", JsonString(kind)),
+				Pair("data", treeToJsonObject(data))
+			];
+			
+			withMetadata = if (!isEmptyTree(metadata)) {
+				arrayPush(baseFields, Pair("metadata", treeToJsonObject(metadata)));
+			} else baseFields;
+			
+			JsonObject(withMetadata);
+		}
+	}
+}
+
+a2aFileToJson(file : A2aFile) -> Json {
+	switch (file) {
+		A2aFileWithBytes(name, mimeType, data): JsonObject([
+			Pair("name", JsonString(name)),
+			Pair("mimeType", JsonString(mimeType)),
+			Pair("data", JsonString(data))
+		]);
+		A2aFileWithUri(name, mimeType, uri): JsonObject([
+			Pair("name", JsonString(name)),
+			Pair("mimeType", JsonString(mimeType)),
+			Pair("uri", JsonString(uri))
+		]);
+	}
+}
+
+a2aArtifactToJson(artifact : A2aArtifact) -> Json {
+	baseFields = [
+		Pair("id", JsonString(artifact.id)),
+		Pair("name", JsonString(artifact.name)),
+		Pair("parts", JsonArray(map(artifact.parts, a2aPartToJson)))
+	];
+	
+	withMetadata = if (!isEmptyTree(artifact.metadata)) {
+		arrayPush(baseFields, Pair("metadata", treeToJsonObject(artifact.metadata)));
+	} else baseFields;
+	
+	JsonObject(withMetadata);
+}
+
+// Utility Functions
+
+// JSON utility functions are available from the standard library
+
+treeToJsonObject(tree : Tree<string, Json>) -> Json {
+	fields = foldTree(tree, [], \key, value, acc -> arrayPush(acc, Pair(key, value)));
+	JsonObject(fields);
+}
+
+getCurrentTimestamp() -> string {
+	// Convert timestamp to ISO 8601 format
+	// For now, using simple timestamp - in production, use proper ISO format
+	d2s(timestamp()) + "Z";
+}
+
+parseA2aMessageFromJson(json : Json) -> Maybe<A2aMessage> {
+	switch (json) {
+		JsonObject(__): {
+			role = a2aRoleFromString(getJsonStringField(json, "role", ""));
+			parts = parseA2aPartsFromJson(getJsonFieldValue(json, "parts", JsonArray([])));
+			messageId = getJsonStringField(json, "messageId", "msg_" + d2s(timestamp()));
+			taskId = maybeMap(getJsonFieldValueM(json, "taskId"), \j -> getJsonStringValue(j, ""));
+			contextId = maybeMap(getJsonFieldValueM(json, "contextId"), \j -> getJsonStringValue(j, ""));
+			
+			Some(A2aMessage(
+				role,
+				parts,
+				makeTree(), // metadata - parse if needed
+				[], // referenceTaskIds - parse if needed
+				messageId,
+				taskId,
+				contextId,
+				"message"
+			));
+		}
+		default: None();
+	}
+}
+
+parseA2aPartsFromJson(json : Json) -> [A2aPart] {
+	switch (json) {
+		JsonArray(items): map(items, parseA2aPartFromJson);
+		default: [];
+	}
+}
+
+parseA2aPartFromJson(json : Json) -> A2aPart {
+	kind = getJsonStringField(json, "kind", "text");
+	
+	if (kind == "text") {
+		text = getJsonStringField(json, "text", "");
+		A2aTextPart(kind, text, makeTree());
+	} else if (kind == "data") {
+		data = getJsonFieldValue(json, "data", JsonObject([]));
+		A2aDataPart(kind, jsonObjectToTree(data), makeTree());
+	} else {
+		// Default to text
+		A2aTextPart("text", "Invalid part format", makeTree());
+	}
+}
+
+jsonObjectToTree(json : Json) -> Tree<string, Json> {
+	switch (json) {
+		JsonObject(fields): fold(fields, makeTree(), \acc, pair -> setTree(acc, pair.first, pair.second));
+		default: makeTree();
+	}
+}
+
+a2aRoleFromString(roleStr : string) -> A2aMessageRole {
+	if (roleStr == "agent") A2aRoleAgent() else A2aRoleUser();
+}
+
+createA2aTextMessage(role : A2aMessageRole, text : string, taskId : string) -> A2aMessage {
+	A2aMessage(
+		role,
+		[A2aTextPart("text", text, makeTree())],
+		makeTree(),
+		[],
+		"msg_" + d2s(timestamp()),
+		Some(taskId),
+		None(),
+		"message"
+	);
+}
+
+// Helper Constructors
+
+createA2aAgentCard(name : string, description : string, url : string, skills : [A2aAgentSkill]) -> A2aAgentCard {
+	A2aAgentCard(
+		name,
+		description,
+		url,
+		None(), // provider
+		"1.0.0", // version
+		None(), // documentationUrl
+		A2aAgentCapabilities(true, false, false), // capabilities
+		makeTree(), // securitySchemes
+		[], // security
+		["text/plain", "application/json"], // defaultInputModes
+		["text/plain", "application/json"], // defaultOutputModes
+		skills,
+		false // supportsAuthenticatedExtendedCard
+	);
+}
+
+createA2aAgentSkill(id : string, name : string, description : string, tags : [string]) -> A2aAgentSkill {
+	A2aAgentSkill(
+		id,
+		name,
+		description,
+		tags,
+		[], // examples
+		None(), // inputModes
+		None() // outputModes
+	);
+}
+
+createA2aTaskHandler(skillId : string, handler : (A2aTaskContext, A2aMessage) -> A2aTaskResult) -> A2aTaskHandler {
+	A2aTaskHandler(skillId, handler);
+}
+
+// Default Configurations
+
+createDefaultA2aConfig() -> A2aServerConfig {
+	// Sample A2A skills
+	calculatorSkill = createA2aAgentSkill(
+		"calculator",
+		"Calculator",
+		"Perform basic arithmetic operations",
+		["math", "calculator", "arithmetic"]
+	);
+	
+	timeSkill = createA2aAgentSkill(
+		"time",
+		"Time Service",
+		"Get current time information",
+		["time", "datetime", "utility"]
+	);
+	
+	greetingSkill = createA2aAgentSkill(
+		"greeting",
+		"Greeting Service",
+		"Generate personalized greetings",
+		["greeting", "social", "communication"]
+	);
+	
+	// Sample task handlers
+	calculatorHandler = createA2aTaskHandler(
+		"calculator",
+		\context, message -> {
+			// Extract calculation from message
+			if (length(message.parts) > 0) {
+				switch (message.parts[0]) {
+					A2aTextPart(__, text, __): {
+						// Simple calculation parsing (in production, use proper parsing)
+						result = if (strContains(text, "+")) {
+							parts = strSplit(text, "+");
+							if (length(parts) == 2) {
+								a = s2d(trim(parts[0]));
+								b = s2d(trim(parts[1]));
+								d2s(a + b);
+							} else "Invalid format";
+						} else if (strContains(text, "*")) {
+							parts = strSplit(text, "*");
+							if (length(parts) == 2) {
+								a = s2d(trim(parts[0]));
+								b = s2d(trim(parts[1]));
+								d2s(a * b);
+							} else "Invalid format";
+						} else "Unsupported operation";
+						
+						responseMessage = createA2aTextMessage(A2aRoleAgent(), "Calculation result: " + result, context.taskId);
+						artifact = A2aArtifact("calc_result", "Calculation Result", [A2aTextPart("text", result, makeTree())], makeTree());
+						
+						A2aTaskResult(A2aTaskCompleted(), Some(responseMessage), [artifact], makeTree());
+					}
+					default: {
+						errorMessage = createA2aTextMessage(A2aRoleAgent(), "Invalid input format for calculator", context.taskId);
+						A2aTaskResult(A2aTaskFailed(), Some(errorMessage), [], makeTree());
+					}
+				}
+			} else {
+				errorMessage = createA2aTextMessage(A2aRoleAgent(), "No input provided for calculator", context.taskId);
+				A2aTaskResult(A2aTaskFailed(), Some(errorMessage), [], makeTree());
+			}
+		}
+	);
+	
+	timeHandler = createA2aTaskHandler(
+		"time",
+		\context, message -> {
+			currentTime = "Current time: " + d2s(timestamp());
+			responseMessage = createA2aTextMessage(A2aRoleAgent(), currentTime, context.taskId);
+			artifact = A2aArtifact("time_result", "Current Time", [A2aTextPart("text", currentTime, makeTree())], makeTree());
+			
+			A2aTaskResult(A2aTaskCompleted(), Some(responseMessage), [artifact], makeTree());
+		}
+	);
+	
+	greetingHandler = createA2aTaskHandler(
+		"greeting",
+		\context, message -> {
+			// Extract name from message
+			name = if (length(message.parts) > 0) {
+				switch (message.parts[0]) {
+					A2aTextPart(__, text, __): {
+						// Simple name extraction
+						if (strContains(text, "name")) {
+							// Try to extract name after "name" keyword
+							parts = strSplit(text, " ");
+							nameIndex = find(mapi(parts, \i, part -> Pair(i, part)), \pair -> strContains(toLowerCase(pair.second), "name"));
+							switch (nameIndex) {
+								None(): "there";
+								Some(indexPair): {
+									if (indexPair.first + 1 < length(parts)) {
+										parts[indexPair.first + 1];
+									} else "there";
+								}
+							}
+						} else text;
+					}
+					default: "there";
+				}
+			} else "there";
+			
+			greeting = "Hello " + name + "! How can I help you today?";
+			responseMessage = createA2aTextMessage(A2aRoleAgent(), greeting, context.taskId);
+			artifact = A2aArtifact("greeting_result", "Greeting", [A2aTextPart("text", greeting, makeTree())], makeTree());
+			
+			A2aTaskResult(A2aTaskCompleted(), Some(responseMessage), [artifact], makeTree());
+		}
+	);
+	
+	agentCard = createA2aAgentCard(
+		"Flow9 A2A Agent",
+		"A sample A2A agent that provides calculator, time, and greeting services",
+		"https://localhost:8080",
+		[calculatorSkill, timeSkill, greetingSkill]
+	);
+	
+	A2aServerConfig(
+		agentCard,
+		A2aServerCapabilities(10, 3600, ["text/plain", "application/json"], ["text/plain", "application/json"]),
+		[calculatorHandler, timeHandler, greetingHandler],
+		50, // maxTaskHistory
+		false // enablePushNotifications
+	);
+}
+
+createDefaultUnifiedConfig() -> UnifiedServerConfig {
+	mcpConfig = createDefaultMcpConfig();
+	a2aConfig = createDefaultA2aConfig();
+	
+	UnifiedServerConfig(mcpConfig, a2aConfig);
+}
+
+// Include all original MCP functions (keeping original implementation)
+
+createMcpServer(port : int, config : McpServerConfig) -> () -> void {
+	// Create MCP method handlers
+	handlers = createMcpHandlers(config);
+	
+	onOpen = \ -> {
+		println("MCP Server '" + config.name + "' v" + config.version + " started on port " + i2s(port));
+	};
+	
+	onOpenError = \error -> {
+		println("Failed to start MCP server: " + error);
+	};
+	
+	onMessage = \request : HttpRequest, sendResponse : (HttpResponse) -> void -> {
+		response = processMcpRequest(request, handlers, config);
+		sendResponse(response);
+	};
+	
+	createHttpServer(port, onOpen, onOpenError, onMessage);
+}
+
+createMcpHandlers(config : McpServerConfig) -> Tree<string, (Json) -> Json> {
+	fold([
+		// Core MCP methods
+		Pair("initialize", \params -> handleInitialize(config, params)),
+		Pair("notifications/initialized", \params -> handleInitialized(params)),
+		Pair("ping", \params -> handlePing(params)),
+		
+		// Tools
+		Pair("tools/list", \params -> handleToolsList(config.tools)),
+		Pair("tools/call", \params -> handleToolsCall(config.tools, params)),
+		
+		// Resources
+		Pair("resources/list", \params -> handleResourcesList(config.resources)),
+		Pair("resources/read", \params -> handleResourcesRead(config.resources, params)),
+		
+		// Prompts
+		Pair("prompts/list", \params -> handlePromptsList(config.prompts)),
+		Pair("prompts/get", \params -> handlePromptsGet(config.prompts, params)),
+		
+		// Logging
+		Pair("logging/setLevel", \params -> handleLoggingSetLevel(params))
+	], makeTree(), \acc, pair -> setTree(acc, pair.first, pair.second));
+}
+
+processMcpRequest(request : HttpRequest, handlers : Tree<string, (Json) -> Json>, config : McpServerConfig) -> HttpResponse {
+	// Only accept POST requests
+	isPost = switch (request.method) {
+		Some(method): method == Post();
+		None(): false;
+	};
+	
+	if (!isPost) {
+		errorResponse = createMcpErrorResponse(-32600, "Only POST method is allowed", None());
+		HttpResponse(405, json2string(errorResponse), [KeyValue("Content-Type", "application/json")]);
+	} else {
+		// Check authentication if enabled
+		authResult = authenticateRequest(request, config.authentication);
+		
+		switch (authResult) {
+			McpAuthFailure(reason): {
+				HttpResponse(401, 
+					json2string(JsonObject([
+						Pair("error", JsonString("Authentication failed: " + reason))
+					])), 
+					[
+						KeyValue("Content-Type", "application/json"),
+						KeyValue("WWW-Authenticate", "Basic realm=\"MCP Server\"")
+					]
+				);
+			}
+			McpAuthSuccess(userId): {
+				// Authentication successful, proceed with request processing
+				// Parse JSON from request body
+				jsonResult = parseJson(request.body);
+				
+				// Check if it's a valid JSON-RPC request
+				maybeRequest = parseMcpRequest(jsonResult);
+				
+				switch (maybeRequest) {
+					None(): {
+						errorResponse = createMcpErrorResponse(-32600, "Invalid JSON-RPC request", None());
+						HttpResponse(400, json2string(errorResponse), [KeyValue("Content-Type", "application/json")]);
+					}
+					Some(mcpRequest): {
+						// Handle the method call with user context
+						responseJson = handleMcpMethodCallWithAuth(mcpRequest, handlers, userId);
+						
+						// Check if this is a notification (no response expected)
+						isNotification = switch (mcpRequest.id) {
+							None(): true;
+							Some(idValue): switch (idValue) {
+								JsonNull(): true;
+								default: false;
+							};
+						};
+						
+						if (isNotification) {
+							// For notifications, return empty response
+							HttpResponse(200, "", []);
+						} else {
+							HttpResponse(200, json2string(responseJson), [KeyValue("Content-Type", "application/json")]);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+parseMcpRequest(json : Json) -> Maybe<McpJsonRpcRequest> {
+	switch (json) {
+		JsonObject(members): {
+			jsonrpcVersion = getJsonStringField(json, "jsonrpc", "");
+			method = getJsonStringField(json, "method", "");
+			
+			if (jsonrpcVersion != "2.0" || method == "") {
+				None();
+			} else {
+				params = getJsonFieldValueM(json, "params");
+				id = getJsonFieldValueM(json, "id");
+				
+				Some(McpJsonRpcRequest(jsonrpcVersion, method, params, id));
+			}
+		}
+		default: None();
+	}
+}
+
+McpJsonRpcRequest(
+	jsonrpc : string,
+	method : string,
+	params : Maybe<Json>,
+	id : Maybe<Json>
+);
+
+handleMcpMethodCall(request : McpJsonRpcRequest, handlers : Tree<string, (Json) -> Json>) -> Json {
+	handleMcpMethodCallWithAuth(request, handlers, "anonymous");
+}
+
+handleMcpMethodCallWithAuth(request : McpJsonRpcRequest, handlers : Tree<string, (Json) -> Json>, userId : string) -> Json {
+	methodName = request.method;
+	
+	switch (lookupTree(handlers, methodName)) {
+		None(): {
+			createMcpErrorResponse(-32601, "Method not found: " + methodName, request.id);
+		}
+		Some(handler): {
+			params = either(request.params, JsonNull());
+			// Add user context to params for handlers that need it
+			paramsWithAuth = switch (params) {
+				JsonObject(fields): JsonObject(arrayPush(fields, Pair("_userId", JsonString(userId))));
+				default: JsonObject([
+					Pair("originalParams", params),
+					Pair("_userId", JsonString(userId))
+				]);
+			};
+			result = handler(paramsWithAuth);
+			createMcpSuccessResponse(result, request.id);
+		}
+	}
+}
+
+// Authentication Functions
+
+authenticateRequest(request : HttpRequest, authConfig : McpAuthConfig) -> McpAuthResult {
+	if (!authConfig.enabled) {
+		McpAuthSuccess("anonymous");
+	} else if (authConfig.requireAuth) {
+		// Try each authentication method
+		fold(authConfig.methods, McpAuthFailure("No valid authentication found"), \acc, method -> {
+			switch (acc) {
+				McpAuthSuccess(__): acc; // Already authenticated
+				McpAuthFailure(__): {
+					tryAuthMethod(request, method);
+				}
+			}
+		});
+	} else {
+		// Optional auth - try to authenticate but don't fail if no auth provided
+		result = fold(authConfig.methods, McpAuthFailure("No authentication provided"), \acc, method -> {
+			switch (acc) {
+				McpAuthSuccess(__): acc; // Already authenticated
+				McpAuthFailure(__): {
+					tryAuthMethod(request, method);
+				}
+			}
+		});
+		
+		switch (result) {
+			McpAuthSuccess(__): result;
+			McpAuthFailure(__): McpAuthSuccess("anonymous"); // Allow anonymous access
+		}
+	}
+}
+
+tryAuthMethod(request : HttpRequest, method : McpAuthMethod) -> McpAuthResult {
+	switch (method) {
+		McpBasicAuth(credentials): validateBasicAuth(request, credentials);
+		McpBearerAuth(tokens): validateBearerAuth(request, tokens);
+		McpApiKeyAuth(keys, headerName): validateApiKeyAuth(request, keys, headerName);
+		McpCustomAuth(validator): validator(request);
+	}
+}
+
+validateBasicAuth(request : HttpRequest, credentials : Tree<string, string>) -> McpAuthResult {
+	authHeader = getHeaderValue(request.headers, "Authorization");
+	
+	switch (authHeader) {
+		None(): McpAuthFailure("No Authorization header");
+		Some(headerValue): {
+			if (strIndexOf(headerValue, "Basic ") == 0) {
+				encodedCreds = strRight(headerValue, 6); // Remove "Basic "
+				decodedCreds = decodeBase64(encodedCreds);
+				
+				colonIndex = strIndexOf(decodedCreds, ":");
+				if (colonIndex > 0) {
+					username = strLeft(decodedCreds, colonIndex);
+					password = strRight(decodedCreds, colonIndex + 1);
+					
+					switch (lookupTree(credentials, username)) {
+						None(): McpAuthFailure("Invalid username");
+						Some(expectedPassword): {
+							if (password == expectedPassword) {
+								McpAuthSuccess(username);
+							} else {
+								McpAuthFailure("Invalid password");
+							}
+						}
+					}
+				} else {
+					McpAuthFailure("Invalid Basic Auth format");
+				}
+			} else {
+				McpAuthFailure("Not Basic Auth");
+			}
+		}
+	}
+}
+
+validateBearerAuth(request : HttpRequest, tokens : [string]) -> McpAuthResult {
+	authHeader = getHeaderValue(request.headers, "Authorization");
+	
+	switch (authHeader) {
+		None(): McpAuthFailure("No Authorization header");
+		Some(headerValue): {
+			if (strIndexOf(headerValue, "Bearer ") == 0) {
+				token = strRight(headerValue, 7); // Remove "Bearer "
+				
+				if (contains(tokens, token)) {
+					McpAuthSuccess("bearer_user_" + token);
+				} else {
+					McpAuthFailure("Invalid bearer token");
+				}
+			} else {
+				McpAuthFailure("Not Bearer Auth");
+			}
+		}
+	}
+}
+
+validateApiKeyAuth(request : HttpRequest, keys : [string], headerName : string) -> McpAuthResult {
+	keyHeader = getHeaderValue(request.headers, headerName);
+	
+	switch (keyHeader) {
+		None(): McpAuthFailure("No " + headerName + " header");
+		Some(apiKey): {
+			if (contains(keys, apiKey)) {
+				McpAuthSuccess("api_user_" + apiKey);
+			} else {
+				McpAuthFailure("Invalid API key");
+			}
+		}
+	}
+}
+
+getHeaderValue(headers : [KeyValue], name : string) -> Maybe<string> {
+	nameLower = toLowerCase(name);
+	maybeHeader = find(headers, \header -> toLowerCase(header.key) == nameLower);
+	maybeMap(maybeHeader, \header -> header.value);
+}
+
+// Authentication helper constructors
+createBasicAuth(credentials : Tree<string, string>) -> McpAuthMethod {
+	McpBasicAuth(credentials);
+}
+
+createBearerAuth(tokens : [string]) -> McpAuthMethod {
+	McpBearerAuth(tokens);
+}
+
+createApiKeyAuth(keys : [string], headerName : string) -> McpAuthMethod {
+	McpApiKeyAuth(keys, headerName);
+}
+
+createCustomAuth(validator : (HttpRequest) -> McpAuthResult) -> McpAuthMethod {
+	McpCustomAuth(validator);
+}
+
+createAuthConfig(enabled : bool, methods : [McpAuthMethod], requireAuth : bool) -> McpAuthConfig {
+	McpAuthConfig(enabled, methods, requireAuth);
+}
+
+noAuth() -> McpAuthConfig {
+	McpAuthConfig(false, [], false);
+}
+
+// MCP Method Handlers
+
+handleInitialize(config : McpServerConfig, params : Json) -> Json {
+	protocolVersion = getJsonStringField(params, "protocolVersion", "2024-11-05");
+	capabilities = getJsonObjectField(params, "capabilities");
+	clientInfo = getJsonObjectField(params, "clientInfo");
+	
+	// Build server info response
+	serverInfo = JsonObject([
+		Pair("name", JsonString(config.name)),
+		Pair("version", JsonString(config.version))
+	]);
+	
+	// Build capabilities response
+	capabilitiesJson = mcpCapabilitiesToJson(config.capabilities);
+	
+	JsonObject([
+		Pair("protocolVersion", JsonString("2024-11-05")),
+		Pair("capabilities", capabilitiesJson),
+		Pair("serverInfo", serverInfo)
+	]);
+}
+
+handleInitialized(params : Json) -> Json {
+	// Notification that initialization is complete
+	JsonNull();
+}
+
+handlePing(params : Json) -> Json {
+	JsonObject([]);
+}
+
+handleToolsList(tools : [McpTool]) -> Json {
+	toolsJson = map(tools, mcpToolToJson);
+	JsonObject([
+		Pair("tools", JsonArray(toolsJson))
+	]);
+}
+
+handleToolsCall(tools : [McpTool], params : Json) -> Json {
+	toolName = getJsonStringField(params, "name", "");
+	arguments = getJsonFieldValue(params, "arguments", JsonNull());
+	
+	maybeTool = find(tools, \tool -> tool.name == toolName);
+	switch (maybeTool) {
+		None(): {
+			JsonObject([
+				Pair("content", JsonArray([
+					JsonObject([
+						Pair("type", JsonString("text")),
+						Pair("text", JsonString("Tool not found: " + toolName))
+					])
+				])),
+				Pair("isError", JsonBool(true))
+			]);
+		}
+		Some(tool): {
+			result = tool.handler(arguments);
+			mcpToolResultToJson(result);
+		}
+	}
+}
+
+handleResourcesList(resources : [McpResource]) -> Json {
+	resourcesJson = map(resources, mcpResourceToJson);
+	JsonObject([
+		Pair("resources", JsonArray(resourcesJson))
+	]);
+}
+
+handleResourcesRead(resources : [McpResource], params : Json) -> Json {
+	uri = getJsonStringField(params, "uri", "");
+	
+	maybeResource = find(resources, \resource -> resource.uri == uri);
+	switch (maybeResource) {
+		None(): {
+			JsonObject([
+				Pair("contents", JsonArray([]))
+			]);
+		}
+		Some(resource): {
+			result = resource.handler();
+			mcpResourceResultToJson(result);
+		}
+	}
+}
+
+handlePromptsList(prompts : [McpPrompt]) -> Json {
+	promptsJson = map(prompts, mcpPromptToJson);
+	JsonObject([
+		Pair("prompts", JsonArray(promptsJson))
+	]);
+}
+
+handlePromptsGet(prompts : [McpPrompt], params : Json) -> Json {
+	promptName = getJsonStringField(params, "name", "");
+	arguments = getJsonFieldValue(params, "arguments", JsonObject([]));
+	
+	maybePrompt = find(prompts, \prompt -> prompt.name == promptName);
+	switch (maybePrompt) {
+		None(): {
+			JsonObject([
+				Pair("description", JsonString("Prompt not found")),
+				Pair("messages", JsonArray([]))
+			]);
+		}
+		Some(prompt): {
+			result = prompt.handler(arguments);
+			mcpPromptResultToJson(result);
+		}
+	}
+}
+
+handleLoggingSetLevel(params : Json) -> Json {
+	level = getJsonStringField(params, "level", "info");
+	println("Logging level set to: " + level);
+	JsonObject([]);
+}
+
+// JSON Conversion Functions for MCP
+
+mcpCapabilitiesToJson(capabilities : McpServerCapabilities) -> Json {
+	fields = [];
+	
+	withLogging = switch (capabilities.logging) {
+		None(): fields;
+		Some(__): arrayPush(fields, Pair("logging", JsonObject([])));
+	};
+	
+	withTools = switch (capabilities.tools) {
+		None(): withLogging;
+		Some(toolsCap): arrayPush(withLogging, Pair("tools", JsonObject([
+			Pair("listChanged", JsonBool(toolsCap.listChanged))
+		])));
+	};
+	
+	withResources = switch (capabilities.resources) {
+		None(): withTools;
+		Some(resourcesCap): arrayPush(withTools, Pair("resources", JsonObject([
+			Pair("subscribe", JsonBool(resourcesCap.subscribe)),
+			Pair("listChanged", JsonBool(resourcesCap.listChanged))
+		])));
+	};
+	
+	withPrompts = switch (capabilities.prompts) {
+		None(): withResources;
+		Some(promptsCap): arrayPush(withResources, Pair("prompts", JsonObject([
+			Pair("listChanged", JsonBool(promptsCap.listChanged))
+		])));
+	};
+	
+	JsonObject(withPrompts);
+}
+
+mcpToolToJson(tool : McpTool) -> Json {
+	JsonObject([
+		Pair("name", JsonString(tool.name)),
+		Pair("description", JsonString(tool.description)),
+		Pair("inputSchema", tool.inputSchema)
+	]);
+}
+
+mcpToolResultToJson(result : McpToolResult) -> Json {
+	contentJson = map(result.content, mcpContentToJson);
+	JsonObject([
+		Pair("content", JsonArray(contentJson)),
+		Pair("isError", JsonBool(result.isError))
+	]);
+}
+
+mcpResourceToJson(resource : McpResource) -> Json {
+	JsonObject([
+		Pair("uri", JsonString(resource.uri)),
+		Pair("name", JsonString(resource.name)),
+		Pair("description", JsonString(resource.description)),
+		Pair("mimeType", JsonString(resource.mimeType))
+	]);
+}
+
+mcpResourceResultToJson(result : McpResourceResult) -> Json {
+	contentsJson = map(result.contents, mcpResourceContentToJson);
+	JsonObject([
+		Pair("contents", JsonArray(contentsJson))
+	]);
+}
+
+mcpResourceContentToJson(content : McpResourceContent) -> Json {
+	baseFields = [
+		Pair("uri", JsonString(content.uri)),
+		Pair("mimeType", JsonString(content.mimeType))
+	];
+	
+	withText = switch (content.text) {
+		None(): baseFields;
+		Some(text): arrayPush(baseFields, Pair("text", JsonString(text)));
+	};
+	
+	withBlob = switch (content.blob) {
+		None(): withText;
+		Some(blob): arrayPush(withText, Pair("blob", JsonString(blob)));
+	};
+	
+	JsonObject(withBlob);
+}
+
+mcpPromptToJson(prompt : McpPrompt) -> Json {
+	argumentsJson = map(prompt.arguments, \arg -> JsonObject([
+		Pair("name", JsonString(arg.name)),
+		Pair("description", JsonString(arg.description)),
+		Pair("required", JsonBool(arg.required))
+	]));
+	
+	JsonObject([
+		Pair("name", JsonString(prompt.name)),
+		Pair("description", JsonString(prompt.description)),
+		Pair("arguments", JsonArray(argumentsJson))
+	]);
+}
+
+mcpPromptResultToJson(result : McpPromptResult) -> Json {
+	messagesJson = map(result.messages, \message -> JsonObject([
+		Pair("role", JsonString(mcpRoleToString(message.role))),
+		Pair("content", mcpContentToJson(message.content))
+	]));
+	
+	JsonObject([
+		Pair("description", JsonString(result.description)),
+		Pair("messages", JsonArray(messagesJson))
+	]);
+}
+
+mcpContentToJson(content : McpContent) -> Json {
+	switch (content) {
+		McpTextContent(text): JsonObject([
+			Pair("type", JsonString("text")),
+			Pair("text", JsonString(text))
+		]);
+		McpImageContent(data, mimeType): JsonObject([
+			Pair("type", JsonString("image")),
+			Pair("data", JsonString(data)),
+			Pair("mimeType", JsonString(mimeType))
+		]);
+		McpResourceContent(uri, mimeType, text, blob): {
+			baseFields = [
+				Pair("type", JsonString("resource")),
+				Pair("resource", JsonObject([
+					Pair("uri", JsonString(uri)),
+					Pair("mimeType", JsonString(mimeType))
+				]))
+			];
+			
+			withText = switch (text) {
+				None(): baseFields;
+				Some(textValue): arrayPush(baseFields, Pair("text", JsonString(textValue)));
+			};
+			
+			JsonObject(withText);
+		}
+	}
+}
+
+mcpRoleToString(role : McpMessageRole) -> string {
+	switch (role) {
+		McpRoleUser(): "user";
+		McpRoleAssistant(): "assistant";
+		McpRoleSystem(): "system";
+	}
+}
+
+// Helper response functions
+createMcpSuccessResponse(result : Json, id : Maybe<Json>) -> Json {
+	baseFields = [
+		Pair("jsonrpc", JsonString("2.0")),
+		Pair("result", result)
+	];
+	
+	withId = switch (id) {
+		None(): arrayPush(baseFields, Pair("id", JsonNull()));
+		Some(idValue): arrayPush(baseFields, Pair("id", idValue));
+	};
+	
+	JsonObject(withId);
+}
+
+createMcpErrorResponse(code : int, message : string, id : Maybe<Json>) -> Json {
+	error = JsonObject([
+		Pair("code", JsonDouble(i2d(code))),
+		Pair("message", JsonString(message))
+	]);
+	
+	baseFields = [
+		Pair("jsonrpc", JsonString("2.0")),
+		Pair("error", error)
+	];
+	
+	withId = switch (id) {
+		None(): arrayPush(baseFields, Pair("id", JsonNull()));
+		Some(idValue): arrayPush(baseFields, Pair("id", idValue));
+	};
+	
+	JsonObject(withId);
+}
+
+// Helper constructors
+createMcpTool(name : string, description : string, inputSchema : Json, handler : (Json) -> McpToolResult) -> McpTool {
+	McpTool(name, description, inputSchema, handler);
+}
+
+createMcpResource(uri : string, name : string, description : string, mimeType : string, handler : () -> McpResourceResult) -> McpResource {
+	McpResource(uri, name, description, mimeType, handler);
+}
+
+createMcpPrompt(name : string, description : string, arguments : [McpPromptArgument], handler : (Json) -> McpPromptResult) -> McpPrompt {
+	McpPrompt(name, description, arguments, handler);
+}
+
+createDefaultMcpConfig() -> McpServerConfig {
+	// Sample calculator tool
+	calculatorTool = createMcpTool(
+		"calculator",
+		"Perform basic arithmetic operations",
+		JsonObject([
+			Pair("type", JsonString("object")),
+			Pair("properties", JsonObject([
+				Pair("operation", JsonObject([
+					Pair("type", JsonString("string")),
+					Pair("enum", JsonArray([JsonString("add"), JsonString("subtract"), JsonString("multiply"), JsonString("divide")]))
+				])),
+				Pair("a", JsonObject([Pair("type", JsonString("number"))])),
+				Pair("b", JsonObject([Pair("type", JsonString("number"))]))
+			])),
+			Pair("required", JsonArray([JsonString("operation"), JsonString("a"), JsonString("b")]))
+		]),
+		\params -> {
+			operation = getJsonStringField(params, "operation", "");
+			a = getJsonDoubleField(params, "a", 0.0);
+			b = getJsonDoubleField(params, "b", 0.0);
+			
+			result = if (operation == "add") a + b
+				else if (operation == "subtract") a - b
+				else if (operation == "multiply") a * b
+				else if (operation == "divide") {
+					if (b != 0.0) a / b else 0.0;
+				} else 0.0;
+			
+			McpToolResult([McpTextContent("Result: " + d2s(result))], false);
+		}
+	);
+	
+	// Sample resource
+	timeResource = createMcpResource(
+		"time://current",
+		"Current Time",
+		"Get the current server time",
+		"text/plain",
+		\ -> McpResourceResult([
+			McpResourceContent("time://current", "text/plain", Some("Current time: " + d2s(timestamp())), None())
+		])
+	);
+	
+	// Sample prompt
+	greetingPrompt = createMcpPrompt(
+		"greeting",
+		"Generate a personalized greeting",
+		[McpPromptArgument("name", "The name of the person to greet", true)],
+		\params -> {
+			name = getJsonStringField(params, "name", "there");
+			McpPromptResult(
+				"A friendly greeting prompt",
+				[McpPromptMessage(
+					McpRoleSystem(),
+					McpTextContent("You are a friendly assistant. Greet the user warmly.")
+				), McpPromptMessage(
+					McpRoleUser(),
+					McpTextContent("Hello " + name + "! How are you today?")
+				)]
+			);
+		}
+	);
+	
+	capabilities = McpServerCapabilities(
+		Some(McpLoggingCapability()),
+		Some(McpToolsCapability(false)),
+		Some(McpResourcesCapability(false, false)),
+		Some(McpPromptsCapability(false))
+	);
+	
+	// Authentication configuration
+	authConfig = createAuthConfig(
+		true, // Enable authentication
+		[
+			createBasicAuth(setTree(setTree(makeTree(), "admin", "password123"), "user", "secret456")),
+			createBearerAuth(["mcp-token-abc123", "mcp-token-def456"]),
+			createApiKeyAuth(["api-key-xyz789", "api-key-uvw012"], "X-API-Key")
+		],
+		false // Don't require auth (optional authentication)
+	);
+	
+	McpServerConfig(
+		"Flow9 MCP Server",
+		"1.0.0",
+		[calculatorTool],
+		[timeResource],
+		[greetingPrompt],
+		capabilities,
+		authConfig
+	);
+}
+
+// Main function
+main() {
+	config = createDefaultUnifiedConfig();
+	closeServer = createUnifiedServer(8080, config);
+	
+	println("🚀 Unified MCP + A2A Server is running on port 8080");
+	println("");
+	println("📋 MCP Features:");
+	println("  • Tools: calculator");
+	println("  • Resources: time://current");
+	println("  • Prompts: greeting");
+	println("");
+	println("🤖 A2A Features:");
+	println("  • Agent Card: /.well-known/agent.json");
+	println("  • Skills: calculator, time, greeting");
+	println("  • Task Management: create, query, cancel");
+	println("  • Message Exchange: send, stream");
+	println("");
+	println("🔐 Authentication Methods:");
+	println("  • Basic Auth: admin/password123 or user/secret456");
+	println("  • Bearer Token: mcp-token-abc123 or mcp-token-def456");
+	println("  • API Key: api-key-xyz789 or api-key-uvw012 (X-API-Key header)");
+	println("  • No Auth: Anonymous access allowed");
+	println("");
+	println("🧪 MCP Test Commands:");
+	println("");
+	println("1. MCP Initialize:");
+	println("curl -X POST http://localhost:8080 \\");
+	println("  -H \"Content-Type: application/json\" \\");
+	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}},\"id\":1}'");
+	println("");
+	println("2. MCP Calculator Tool:");
+	println("curl -X POST http://localhost:8080 \\");
+	println("  -H \"Content-Type: application/json\" \\");
+	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"calculator\",\"arguments\":{\"operation\":\"add\",\"a\":10,\"b\":5}},\"id\":2}'");
+	println("");
+	println("🤖 A2A Test Commands:");
+	println("");
+	println("3. A2A Agent Card:");
+	println("curl http://localhost:8080/.well-known/agent.json");
+	println("");
+	println("4. A2A Create Task:");
+	println("curl -X POST http://localhost:8080 \\");
+	println("  -H \"Content-Type: application/json\" \\");
+	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"tasks/create\",\"params\":{\"skillId\":\"calculator\",\"message\":{\"role\":\"user\",\"parts\":[{\"kind\":\"text\",\"text\":\"10 + 5\"}],\"messageId\":\"msg1\",\"kind\":\"message\"}},\"id\":3}'");
+	println("");
+	println("5. A2A Query Task (use task ID from step 4):");
+	println("curl -X POST http://localhost:8080 \\");
+	println("  -H \"Content-Type: application/json\" \\");
+	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"tasks/query\",\"params\":{\"taskId\":\"TASK_ID_HERE\"},\"id\":4}'");
+	println("");
+	println("6. A2A Send Message:");
+	println("curl -X POST http://localhost:8080 \\");
+	println("  -H \"Content-Type: application/json\" \\");
+	println("  -d '{\"jsonrpc\":\"2.0\",\"method\":\"message/send\",\"params\":{\"taskId\":\"TASK_ID_HERE\",\"message\":{\"role\":\"user\",\"parts\":[{\"kind\":\"text\",\"text\":\"7 * 8\"}],\"messageId\":\"msg2\",\"kind\":\"message\"}},\"id\":5}'");
+	println("");
+	println("Press Ctrl+C to stop the server");
+	
+	// Keep server running indefinitely
+}

@@ -444,6 +444,11 @@ class Native {
 			Reflect.hasField(a, "_name") && a._name == b._name &&
 			HaxeRuntime._structargs_.get(HaxeRuntime._structids_.get(a._name)).length == 0)
 			return true;
+		#elseif (namespace)
+		if (a != null && b != null &&
+			Reflect.hasField(a, "kind") && a.kind == b.kind &&
+			HaxeRuntime._structargs_.get(a.kind).length == 0)
+			return true;
 		#else
 		if (a != null && b != null &&
 			Reflect.hasField(a, "_id") && a._id == b._id &&
@@ -569,7 +574,7 @@ class Native {
 		return res;
 	}
 
-	public static function list2array(h : Dynamic) : Array<Dynamic> {
+	public static function list2arrayMapi(h : Dynamic, clos : Int -> Dynamic -> Dynamic) : Array<Dynamic> {
 		var cnt = 0;
 		var p: Dynamic = h;
 		while (Reflect.hasField(p, "head")) {
@@ -584,11 +589,20 @@ class Native {
 		p = h;
 		cnt -= 1;
 		while (Reflect.hasField(p, "head")) {
-			result[cnt] = p.head;
+			result[cnt] = clos(cnt, p.head);
 			cnt -= 1;
 			p = p.tail;
 		}
 		return result;
+	}
+
+	public static function list2array(h : Dynamic) : Array<Dynamic> {
+		return list2arrayMapi(
+			h,
+			function(i, li) {
+				return li;
+			}
+		);
 	}
 
 	public static inline function bitXor(a : Int, b : Int) : Int {
@@ -717,11 +731,19 @@ class Native {
 			// Check if there is both an _id and a value field of some kind: Then it is some
 			if (fields.length == 2) {
 				for (f in fields) {
+					#if namespace
+					// The ID field of a struct is named _id, so skip that one
+					if (f != "kind") {
+						var val = Reflect.field(maybe, f);
+						result.push(val);
+					}
+					#else
 					// The ID field of a struct is named _id, so skip that one
 					if (f != "_id") {
 						var val = Reflect.field(maybe, f);
 						result.push(val);
 					}
+					#end
 				}
 			}
 		}
@@ -1816,6 +1838,8 @@ class Native {
 			case RTStruct(n):
 			#if (js && readable)
 				var struct_id = HaxeRuntime._structids_.get(value._name);
+			#elseif namespace
+				var struct_id = value.kind;
 			#else
 				var struct_id = value._id;
 			#end

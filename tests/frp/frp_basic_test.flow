@@ -1,0 +1,618 @@
+import runtime;
+import string;
+
+import frp/frp;
+import tests/frp/frp_test_utils;
+
+export {
+	frpBasicTests = [
+		rselect_chain_test,
+		rselect_fork_test,
+		rconnect_loop_test,
+		connect_to_head_test,
+		rconnect_fork_test,
+		triangle_test,
+		rselect2_test,
+		rselect3_test,
+		rselect2_const_test,
+		diamond_test,
+		diamond_distinct_update_test,
+		diamond_outdated_test,
+		rsubscribe_test,
+		rsubscribe2_test,
+		rBidiConnect_test,
+		rBidiSelect_test,
+		rBidiSelect_connect_test,
+		rBidiConnect_star_test,
+		next2_test,
+		rnextMany_test,
+		rnextManyFlow_test,
+		rdisconnect_test,
+		rdisconnect_chain_test,
+		rdisconnect_2_test,
+		split2_test,
+		splitMany_test,
+		splitManyFlow_test,
+		selectMany_test,
+		rselectGate_test,
+	];
+}
+
+rconnect_fork_test = \-> frpTest("rconnect_fork", \-> {
+	// fork a data stream into 2 new streams
+	cell1 = rmake(123);
+	cell2 = rmake(456);
+	cell3 = rmake(789);
+	rconnect(cell1, cell2, true, \v -> v + 2);
+	rconnect(cell1, cell3, true, \v -> v * 2);
+
+	rnext(cell1, 50);
+	r1  = checkFrp(cell1, 50) && checkFrp(cell2, 52) && checkFrp(cell3, 100);
+	rnext(cell1, 30);
+	r2  = checkFrp(cell1, 30) && checkFrp(cell2, 32) && checkFrp(cell3, 60);
+	r1 && r2;
+});
+
+rselect_chain_test = \-> frpTest("rselect_chain", \-> {
+	// update chain of selects
+	cell1 = rmake(123);
+	cell2 = rselect(cell1, \v -> v * 2);
+	cell3 = rselect(cell2, \v -> v + 3);
+
+	rnext(cell1, 55);
+
+	checkFrp(cell1, 55) &&	checkFrp(cell2, 110) &&	checkFrp(cell3, 113);
+});
+
+rselect_fork_test = \-> frpTest("rselect_fork", \-> {
+	// fork a data stream into 2 streams
+	cell1 = rmake(123);
+	cell2 = rselect(cell1, \v -> v * 2);
+	cell3 = rselect(cell1, \v -> v + 3);
+
+	rnext(cell1, 55);
+
+	checkFrp(cell1, 55) &&	checkFrp(cell2, 110) &&	checkFrp(cell3, 58);
+});
+
+
+rconnect_loop_test = \-> frpTest("rconnect_loop", \-> {
+	// creating a loop in the graph using rconnect
+	cell1 = rmake(123);
+	cell2 = rselect(cell1, \v -> v + 2);
+	rconnect(cell2, cell1, false, \v -> v - 2);
+
+	// println("next 50");
+	rnext(cell1, 50);
+	r1  = checkFrp(cell1, 50) && checkFrp(cell2, 52);
+
+	rnext(cell2, 100);
+	r2  = checkFrp(cell1, 98) && checkFrp(cell2, 100);
+
+	r1 && r2;
+});
+
+triangle_test = \-> frpTest("triangle", \-> {
+	// creating a loop in the graph with 3 nodes (indirect cycle)
+	cell1 = rmake(123);
+	cell2 = rselect(cell1, \v -> v * 2);
+	cell3 = rselect(cell2, \v -> v + 3);
+	rconnect(cell3, cell1, true, \v -> (v - 3) / 2);
+
+	rnext(cell1, 10);
+
+	checkFrp(cell1, 10) &&	checkFrp(cell2, 20) &&	checkFrp(cell3, 23);
+});
+
+rselect2_test = \-> frpTest("rselect2", \-> {
+	// rselect2 basic test
+	cell1 = rmake(100);
+	cell2 = rmake(200);
+	cell3 = rselect2(cell1, cell2, \a,b -> a + b);
+	r1  = checkFrp(cell1, 100) && checkFrp(cell2, 200) && checkFrp(cell3, 300);
+
+	rnext(cell1, 10);
+
+	r2  = checkFrp(cell1, 10) && checkFrp(cell2, 200) && checkFrp(cell3, 210);
+
+	rnext(cell2, 20);
+
+	r3  = checkFrp(cell1, 10) && checkFrp(cell2, 20) && checkFrp(cell3, 30);
+
+	r1 && r2 && r3;
+});
+
+rselect3_test = \-> frpTest("rselect3", \-> {
+	// rselect3 basic test
+	cell1 = rmake(100);
+	cell2 = rmake(200);
+	cell3 = rmake(300);
+	cell4 = rselect3(cell1, cell2, cell3, \a,b,c -> a + b + c);
+
+	r1 = checkFrp(cell1, 100) && checkFrp(cell2, 200) && checkFrp(cell3, 300) && checkFrp(cell4, 600);
+
+	rnext(cell1, 10);
+
+	r2 = checkFrp(cell1, 10) && checkFrp(cell2, 200) && checkFrp(cell3, 300) && checkFrp(cell4, 510);
+
+	rnext(cell2, 20);
+
+	r3 = checkFrp(cell1, 10) && checkFrp(cell2, 20) && checkFrp(cell3, 300) && checkFrp(cell4, 330);
+
+	r1 && r2 && r3;
+});
+
+
+rselect2_const_test = \-> frpTest("rselect2_const", \-> {
+	// using rselect2 when one cell is FrpConst
+ 	cell1 = rconst(100);
+	cell2 = rmake(200);
+	cell3 = rselect2(cell1, cell2, \a,b -> a + b);
+
+	r1  = checkFrp(cell2, 200) && checkFrp(cell3, 300);
+
+	rnext(cell2, 10);
+	r2  = checkFrp(cell2, 10) && checkFrp(cell3, 110);
+
+	r1 && r2;
+});
+
+
+diamond_test = \-> frpTest("diamond", \-> {
+	// a diamond graph - cell2, cell3 depends on cell1 and in turn cell4 depends on cell2, cell3
+	// propogating updates on 2 paths
+	// it is basic test, must have a special test to catch glitches
+	cell1 = rmake(123);
+	cell2 = rselect(cell1, \v -> v * 2);
+	cell3 = rselect(cell1, \v -> v + 3);
+	cell4 = rselect2(cell2, cell3, \a,b -> a + b);
+
+	rnext(cell1, 50);
+	checkFrp(cell1, 50) &&	checkFrp(cell2, 100) && checkFrp(cell3, 53) && checkFrp(cell4, 153);
+});
+
+
+diamond_distinct_update_test = \-> frpTest("diamond_distinct_update_test", \-> {
+	// a diamond graph - cell2, cell3 depends on cell1 and in turn cell4 depends on cell2, cell3
+	// propogating updates on 2 paths when one value is not changed
+
+	cell1 = rmake(15);
+	cell2 = rselect(cell1, \v -> if (v < 0 || v >= 20) 100 else v * 2);
+	cell3 = rselect(cell1, \v -> if (v < 10) 200 else v + 3);
+	cell4 = rselect2(cell2, cell3, \a,b -> a + b);
+
+	r1 = checkFrp(cell1, 15) &&	checkFrp(cell2, 30) && checkFrp(cell3, 18) && checkFrp(cell4, 48);
+
+	rnext(cell1, 20);
+	r2 = checkFrp(cell1, 20) && checkFrp(cell2, 100) && checkFrp(cell3, 23) && checkFrp(cell4, 123);
+
+	rnext(cell1, 21); // cell2 will not be changed, only marked as updated
+	r3 = checkFrp(cell1, 21) && checkFrp(cell2, 100) && checkFrp(cell3, 24) && checkFrp(cell4, 124);
+
+	rnext(cell1, -1);
+	r4 = checkFrp(cell1, -1) && checkFrp(cell2, 100) && checkFrp(cell3, 200) && checkFrp(cell4, 300);
+
+	// repeate it
+	rnext(cell1, -1);
+	r5 = checkFrp(cell1, -1) && checkFrp(cell2, 100) && checkFrp(cell3, 200) && checkFrp(cell4, 300);
+
+	r1 && r2 && r3 && r4 && r5;
+});
+
+
+diamond_outdated_test = \-> frpTest("diamond_outdated", \-> {
+	// testing of propogation of outdated flag through all frp-graph
+	cell1 = rmake(123);
+	cell2 = rselect(cell1, \v -> v * 2);
+	cell3 = rselect(cell1, \v -> v + 3);
+	cell4 = rselect2(cell2, cell3, \a,b -> a + b);
+
+	rnext(cell1, 50);
+	r1 = checkFrp(cell1, 50) &&	checkFrp(cell2, 100) && checkFrp(cell3, 53) && checkFrp(cell4, 153);
+
+	rSetOutdated(cell1);
+	r2 = checkFrp2(cell1, 50, false) && checkFrp2(cell2, 100, false) && checkFrp2(cell3, 53, false) && checkFrp2(cell4, 153, false);
+
+	rnext(cell1, 100);
+	r3 = checkFrp(cell1, 100) && checkFrp(cell2, 200) && checkFrp(cell3, 103) && checkFrp(cell4, 303);
+
+	r1 && r2 && r3;
+});
+
+
+connect_to_head_test = \-> frpTest("connect_to_head", \-> {
+	// check propagation of a value on connecting an existed graph to a node
+
+	// create a diamond-like graph to check propagation on 2 paths
+	cell1 = rmake(123);
+	cell2 = rselect(cell1, \v -> v * 2);
+	cell3 = rselect(cell1, \v -> v + 3);
+	cell4 = rselect2(cell2, cell3, \a,b -> a + b);
+
+	//rsubscribe(cell4, true, \v -> println("cell4:" + i2s(v))); //to view glitches
+
+	rnext(cell1, 50);
+	r1 = checkFrp(cell1, 50) &&	checkFrp(cell2, 100) && checkFrp(cell3, 53) && checkFrp(cell4, 153);
+
+	cell5 = rmake(100);
+	//println("connect");
+	rconnect(cell5, cell1, true, \v -> v * 2);
+	r2 = checkFrp(cell1, 200) && checkFrp(cell2, 400) && checkFrp(cell3, 203) && checkFrp(cell4, 603);
+
+	r1 && r2;
+});
+
+
+rsubscribe_test = \-> frpTest("rsubscribe", \-> {
+	// rsubscribe basic test
+	cell1 = rmake(123);
+	num = ref 0;
+	uns = rsubscribe(cell1, true, \v -> num := v + 2);
+	r1 = ^num == 125;
+
+	//println("num:" + toString(^num));
+	rnext(cell1, 50);
+	r2 = ^num == 52;
+
+	//println("num:" + toString(^num));
+	uns();
+
+	rnext(cell1, 10);
+	r3 = ^num == 52; // not changed
+	//println("num:" + toString(^num));
+
+	r1 && r2 && r3;
+});
+
+rsubscribe2_test = \-> frpTest("rsubscribe2", \-> {
+	// rsubscribe2 basic test
+	cell1 = rmake(11);
+	cell2 = rmake(200);
+	num = ref 0;
+	uns = rsubscribe2(cell1, cell2, true, \v1,v2 -> num := v1 + v2);
+	r1 = ^num == 211;
+
+	rnext(cell2, 300);
+	r2 = ^num == 311;
+
+	rnext(cell1, 22);
+	r3 = ^num == 322;
+
+	uns();
+	rnext(cell1, 0);
+	r4 = ^num == 322; // is not changed
+
+	r1 && r2 && r3 && r4;
+});
+
+
+rBidiConnect_test = \-> frpTest("rBidiConnect", \-> {
+	// rBidiConnect basic test
+	cell1 = rmake(123);
+	cell2 = rmake(456);
+	cell3 = rselect(cell1, \v-> v * 2);
+	cell4 = rselect(cell2, \v-> v * 3);
+
+	rBidiConnect(cell1, cell2, true, \v-> v + 2, \v-> v + 4);
+
+	rnext(cell1, 10);
+	r1 = checkFrp(cell1, 10) &&	checkFrp(cell2, 12) && checkFrp(cell3, 20) && checkFrp(cell4, 36) ;
+
+	rnext(cell2, 20);
+	r2 = checkFrp(cell1, 24) &&	checkFrp(cell2, 20) && checkFrp(cell3, 48) && checkFrp(cell4, 60) ;
+
+	r1 && r2;
+});
+
+
+rBidiSelect_test = \-> frpTest("rBidiSelect", \-> {
+	// rBidiSelect basic test and test of rdisconnect for bidi-pair
+	cell1 = rmake(1);
+	cell2 = rBidiSelect(cell1, \v-> v + 2, \v-> v - 2);
+	cell3 = rselect(cell1, \v-> v * 2);
+	cell4 = rselect(cell2, \v-> v * 3);
+
+	r1 = checkFrp(cell1, 1) &&	checkFrp(cell2, 3) && checkFrp(cell3, 2) && checkFrp(cell4, 9);
+
+	rnext(cell1, 10);
+	r2 = checkFrp(cell1, 10) &&	checkFrp(cell2, 12) && checkFrp(cell3, 20) && checkFrp(cell4, 36);
+
+	rnext(cell2, 20);
+	r3 = checkFrp(cell1, 18) &&	checkFrp(cell2, 20) && checkFrp(cell3, 36) && checkFrp(cell4, 60);
+
+	rdisconnectMany([cell1, cell2]);
+
+	rnext(cell1, 30);
+	r4 = checkFrp(cell1, 30) &&	checkFrp(cell2, 20) && checkFrp(cell3, 60) && checkFrp(cell4, 60);
+
+	rnext(cell2, 40);
+	r5 = checkFrp(cell1, 30) &&	checkFrp(cell2, 40) && checkFrp(cell3, 60) && checkFrp(cell4, 120);
+
+	r1 && r2 && r3 && r4 && r5;
+});
+
+
+rBidiSelect_connect_test = \-> frpTest("rBidiSelect_connect", \-> {
+	// updateing a bidi-pair from other nodes test
+	// in1, in2 - input nodes to update bidi-pair,
+	// out1, out2 - output nodes to watch changes propagation
+
+	bidi1 = rmake(1);
+	bidi2 = rBidiSelect(bidi1, \v-> v + 2, \v-> v - 2);
+	out1 = rselect(bidi1, \v-> v * 2);
+	out2 = rselect(bidi2, \v-> v * 3);
+	in1 = rmake(10);
+	rconnect(in1, bidi1, false, \v -> v + 100);
+	in2 = rmake(20);
+	rconnect(in2, bidi2, false, \v -> v + 1000);
+
+	r0 = checkFrp(in1, 10) && checkFrp(in2, 20) && checkFrp(bidi1, 1) && checkFrp(bidi2, 3) && checkFrp(out1, 2) && checkFrp(out2, 9);
+
+	rnext(in1, 11);
+	r1 = checkFrp(in1, 11) && checkFrp(in2, 20) && checkFrp(bidi1, 111) && checkFrp(bidi2, 113) && checkFrp(out1, 222) && checkFrp(out2, 339);
+
+	rnext(in2, 11);
+	r2 = checkFrp(in1, 11) && checkFrp(in2, 11) && checkFrp(bidi1, 1009) && checkFrp(bidi2, 1011) && checkFrp(out1, 2018) && checkFrp(out2, 3033);
+
+	r0 && r1 && r2
+});
+
+
+rBidiConnect_star_test = \-> frpTest("rBidiConnect_star", \-> {
+	// star-like graph that created from bidi-connections
+	// cell1 is a central cell (a complex state emulation)
+	// cell2, cell3, cell4 are beams (that emulate a simple elements, parts of the complex state)
+
+	cell1 = rmake(1);
+	cell2 = rmake(0);
+	cell3 = rmake(0);
+	cell4 = rmake(0);
+
+	rBidiConnect(cell1, cell2, true, \v-> v + 200, \v-> v - 200);
+	rBidiConnect(cell1, cell3, true, \v-> v + 300, \v-> v - 300);
+	rBidiConnect(cell1, cell4, true, \v-> v + 400, \v-> v - 400);
+
+	rnext(cell1, 10);
+	r1 = checkFrp(cell1, 10) &&	checkFrp(cell2, 210) && checkFrp(cell3, 310) && checkFrp(cell4, 410);
+
+	rnext(cell2, 1000);
+	r2 = checkFrp(cell1, 800) && checkFrp(cell2, 1000) && checkFrp(cell3, 1100) && checkFrp(cell4, 1200);
+
+	rnext(cell3, 1000);
+	r3 = checkFrp(cell1, 700) && checkFrp(cell2, 900) && checkFrp(cell3, 1000) && checkFrp(cell4, 1100);
+
+	rnext(cell4, 1000);
+	r4 = checkFrp(cell1, 600) && checkFrp(cell2, 800) && checkFrp(cell3, 900) && checkFrp(cell4, 1000);
+
+	r1 && r2 && r3;
+});
+
+next2_test = \-> frpTest("next2", \-> {
+	// batch update 2 cells basic test
+	cell1 = rmake(10);
+	cell2 = rmake(100);
+	cell3 = rmake(1000);
+	cell4 = rselect3(cell1, cell2, cell3, \a,b,c -> a + b + c);
+	cell5 = rselect(cell4, \v -> v * 2);
+
+	r1 = checkFrp(cell1, 10) && checkFrp(cell2, 100) && checkFrp(cell3, 1000) && checkFrp(cell4, 1110) && checkFrp(cell5, 2220);
+
+	//println("update");
+	rnext2(cell1, cell2, 20, 3);
+	r2 = checkFrp(cell1, 20) && checkFrp(cell2, 3) && checkFrp(cell3, 1000) && checkFrp(cell4, 1023) && checkFrp(cell5, 2046);
+
+	r1 && r2;
+});
+
+rdisconnect_test = \-> frpTest("rdisconnect", \-> {
+	// rdisconnect basic test
+	// create a fork-like graph, call rdisconnect and check that connection breaks only for specific cell,
+	// but other connections still works
+	cell1 = rmake(10);
+	cell2 = rselect(cell1, \v -> v + 3);
+	cell3 = rselect(cell1, \v -> v + 5);
+
+	r1 = checkFrp(cell1, 10) && checkFrp(cell2, 13) && checkFrp(cell3, 15);
+
+	rnext(cell1, 100);
+	r2 = checkFrp(cell1, 100) && checkFrp(cell2, 103) && checkFrp(cell3, 105);
+
+	rdisconnect(cell2);
+
+	rnext(cell1, 20);
+	r3 = checkFrp(cell1, 20) && checkFrp(cell2, 103) && checkFrp(cell3, 25);
+
+	rdisconnect(cell3);
+
+	rnext(cell1, 30);
+	r4 = checkFrp(cell1, 30) && checkFrp(cell2, 103) && checkFrp(cell3, 25);
+
+	rconnect(cell1, cell2, true, \v -> v * 2);
+	r5 = checkFrp(cell1, 30) && checkFrp(cell2, 60) && checkFrp(cell3, 25);
+
+	rnext(cell1, 40);
+	r6 = checkFrp(cell1, 40) && checkFrp(cell2, 80) && checkFrp(cell3, 25);
+
+	r1 && r2 && r3 && r4 && r5 && r6;
+});
+
+rdisconnect_chain_test = \-> frpTest("rdisconnect_chain", \-> {
+	// call rdisconnect for a middle cell in chain, check both parts of chain still work
+	cell1 = rmake(10);
+	cell2 = rselect(cell1, \v -> v + 3);
+	cell3 = rselect(cell2, \v -> v + 5);
+	cell4 = rselect(cell3, \v -> v * 2);
+
+	r1 = checkFrp(cell1, 10) && checkFrp(cell2, 13) && checkFrp(cell3, 18) && checkFrp(cell4, 36);
+
+	rnext(cell1, 100);
+	r2 = checkFrp(cell1, 100) && checkFrp(cell2, 103) && checkFrp(cell3, 108) && checkFrp(cell4, 216);
+
+	rdisconnect(cell3); // split chain to 2 parts
+
+	rnext(cell1, 20);
+	r3 = checkFrp(cell1, 20) && checkFrp(cell2, 23) && checkFrp(cell3, 108) && checkFrp(cell4, 216);
+
+	rnext(cell3, 30);
+	r4 = checkFrp(cell1, 20) && checkFrp(cell2, 23) && checkFrp(cell3, 30) && checkFrp(cell4, 60);
+
+	r1 && r2 && r3 && r4
+});
+
+rdisconnect_2_test = \-> frpTest("rdisconnect_2", \-> {
+	// check disconnection of rselect2 cells
+	cell1 = rmake(10);
+	cell2 = rmake(100);
+	cell3 = rselect2(cell1, cell2, \v1,v2 -> v1 + v2);
+	cell4 = rselect2(cell1, cell2, \v1,v2 -> v1 + v2);
+
+	r1 = checkFrp(cell1, 10) && checkFrp(cell2, 100) && checkFrp(cell3, 110) && checkFrp(cell4, 110);
+
+	rnext(cell1, 100);
+	r2 = checkFrp(cell1, 100) && checkFrp(cell2, 100) && checkFrp(cell3, 200) && checkFrp(cell4, 200);
+
+	rnext(cell2, 20);
+	r3 = checkFrp(cell1, 100) && checkFrp(cell2, 20) && checkFrp(cell3, 120) && checkFrp(cell4, 120);
+
+	rdisconnect(cell4);
+
+	r4 = checkFrp(cell1, 100) && checkFrp(cell2, 20) && checkFrp(cell3, 120) && checkFrp(cell4, 120);
+
+	rnext(cell1, 1);
+	rnext(cell2, 2);
+
+	r5  = checkFrp(cell1, 1) && checkFrp(cell2, 2) && checkFrp(cell3, 3) && checkFrp(cell4, 120);
+
+	r1 && r2 && r3 && r4 && r5;
+});
+
+
+rnextMany_test = \-> frpTest("rnextMany", \-> {
+	// rnextMany - batch update basic test
+	cell1 = rmake(10);
+	cell2 = rmake(100);
+	cell3 = rmake(1000);
+	cell4 = rselect3(cell1, cell2, cell3, \a,b,c -> a + b + c);
+	cell5 = rselect(cell4, \v -> v * 2);
+
+	r1 = checkFrp(cell1, 10) && checkFrp(cell2, 100) && checkFrp(cell3, 1000) && checkFrp(cell4, 1110) && checkFrp(cell5, 2220);
+
+	//println("update many");
+	rnextMany([Pair(cell1, 20), Pair(cell2, 3)]);
+	r2 = checkFrp(cell1, 20) && checkFrp(cell2, 3) && checkFrp(cell3, 1000) && checkFrp(cell4, 1023) && checkFrp(cell5, 2046);
+
+	r1 && r2;
+});
+
+rnextManyFlow_test = \-> frpTest("rnextManyFlow", \-> {
+	// rnextManyFlow - batch update in a dynamic typed manner
+	cell1 = rmake("xxx");
+	cell2 = rmake(100);
+	cell3 = rmake(1000);
+	cell4 = rselect3(cell1, cell2, cell3, \a,b,c -> a + "-" + i2s(b + c));
+
+	r1 = checkFrp(cell1, "xxx") && checkFrp(cell2, 100) && checkFrp(cell3, 1000) && checkFrp(cell4, "xxx-1100");
+
+	rnextManyFlow([
+		flow(Pair(cell1, "yyy")),
+		flow(Pair(cell2, 3)),
+	]);
+	// or more safely
+	// rnextManyFlow([
+	// 	cast(Pair(cell1, "yyy") : Pair<FrpValue<string>, string> -> Pair<FrpValue<flow>, flow>),
+	// 	cast(Pair(cell2, 3) : Pair<FrpValue<int>, int> -> Pair<FrpValue<flow>, flow>),
+	// ]);
+
+	r2 = checkFrp(cell1, "yyy") && checkFrp(cell2, 3) && checkFrp(cell3, 1000) && checkFrp(cell4, "yyy-1003");
+
+	r1 && r2;
+});
+
+
+split2_test = \-> frpTest("split2", \-> {
+	// split2 basic test
+	cell1 = rmake(123);
+	p = rsplit2(cell1, \v -> v * 2, \v -> v + 3);
+	cell2 = p.first;
+	cell3 = p.second;
+
+	rnext(cell1, 55);
+	checkFrp(cell1, 55) &&	checkFrp(cell2, 110) &&	checkFrp(cell3, 58);
+});
+
+splitMany_test = \-> frpTest("splitMany", \-> {
+	// splitMany basic test
+	cell1 = rmake(123);
+	arr = rsplitMany(cell1, [\v -> v * 2, \v -> v + 3]);
+	cell2 = arr[0];
+	cell3 = arr[1];
+
+	rnext(cell1, 55);
+	checkFrp(cell1, 55) &&	checkFrp(cell2, 110) &&	checkFrp(cell3, 58);
+});
+
+splitManyFlow_test = \-> frpTest("rsplitManyFlow", \-> {
+	// splitManyFlow (dynamic typed) basic test
+
+	cell1 = rmake(123);
+	arr = rsplitManyFlow(
+		cell1,
+		[
+			\v -> flow(v * 2), // int
+			\v -> flow("--" + i2s(v) + "--") // string
+		]
+	);
+	cell2 = arr[0];
+	cell3 = arr[1];
+
+	rnext(cell1, 55);
+	checkFrp(cell1, 55) &&	checkFrp(cell2, 110) &&	checkFrp(cell3, "--55--");
+});
+
+selectMany_test = \-> frpTest("rselectMany", \-> {
+	// selectMany basic test
+	cell1 = rmake(100);
+	cell2 = rmake(200);
+	cell3 = rmake(300);
+	cell4 = rselectMany([cell1, cell2, cell3], \arg -> arg[0] + arg[1] + arg[2]);
+
+	r1 = checkFrp(cell1, 100) && checkFrp(cell2, 200) && checkFrp(cell3, 300) && checkFrp(cell4, 600);
+
+	rnext(cell1, 10);
+	r2 = checkFrp(cell1, 10) && checkFrp(cell2, 200) && checkFrp(cell3, 300) && checkFrp(cell4, 510);
+
+	rnext(cell2, 20);
+	r3 = checkFrp(cell1, 10) && checkFrp(cell2, 20) && checkFrp(cell3, 300) && checkFrp(cell4, 330);
+
+	r1 && r2 && r3;
+});
+
+rselectGate_test = \-> frpTest("rselectGate", \-> {
+	// rselectGate basic test
+	// src is main data stream, gate is gate to switching on/off src data stream
+
+	src = rmake(100);
+	gate = rmake(0);
+	dst = rselectGate(src, gate, \v -> v > 0);
+	r1 = checkFrp(dst, 100);
+
+	rnext(src, 20);
+	r2 = checkFrp(dst, 100);
+
+	rnext(gate, 1);
+	r3 = checkFrp(dst, 20);
+
+	rnext(gate, 0); // close gate
+	r4 = checkFrp(dst, 20); // not changed
+
+	rnext(src, 10);
+	r5 = checkFrp(dst, 20); // not changed
+
+	rnext(gate, 1); // open gate
+	r6 = checkFrp(dst, 10); // changed
+
+	rnext(src, 100);
+	r7 = checkFrp(dst, 100); // changed
+
+	r1 && r2 && r3 && r4 && r5 && r6 && r7;
+});

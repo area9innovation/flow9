@@ -120,6 +120,15 @@ let existsStatement = ∃ x: x^2 = 2;
 
 // Function composition
 let fog = f ∘ g;
+
+// Domain navigation operators
+// These operators allow working with the domain hierarchy and type paths
+let leafPath = n ⋯ Type;     // Path from leaf type n up to Type domain (n binds to most specific type)
+let upPath = n ⋰ Type;      // Move up from n in domain hierarchy to Type
+let downPath = Type ⋱ n;    // Move down from Type in domain hierarchy to n
+
+// Example: For value 1, the most specific leaf type is Int(32)
+1 : n ⋯ Type;              // n binds to Int(32), which has path to Type via PrimitiveType
 ```
 
 ## 5. Pattern Matching and Rewriting
@@ -141,7 +150,7 @@ a + b => b + a;               // Commutativity of addition
 (a * b) * c => a * (b * c);   // Associativity of multiplication
 ```
 
-## 6. AST Manipulation, Evaluation, and Pretty Printing
+## 6. AST Manipulation, Quoting, and Metaprogramming
 
 ### Working with AST
 
@@ -166,14 +175,39 @@ let result = simplify(x * 0);  // Returns 0 regardless of x's value
 
 The `ast` annotation tells Orbit not to evaluate the argument before passing it to the function. This allows functions to operate on the syntactic structure rather than the evaluated value.
 
+### S-Expression Compatible Quoting
+
+Orbit supports S-expression compatible quoting syntax, which provides a powerful way to work with code as data:
+
+```orbit
+// Quote - prevents evaluation, returning the AST as data
+let expr1 = '(x + y * z);
+
+// Quasiquote - like quote but allows selective evaluation via unquote
+let y = 5;
+let expr2 = quasiquote (x + unquote y * z);
+// Results in the AST for (x + 5 * z)
+
+// Unquote-splicing - evaluates to a list and splices the results
+let args = [a, b, c];
+let expr3 = quasiquote (f(unquote-splicing args));
+// Results in the AST for f(a, b, c)
+```
+
+These quoting forms align directly with S-expression semantics:
+
+1. `'expr` is equivalent to `(quote expr)` in Scheme
+2. \`expr or `quasiquote expr` is equivalent to the quasiquote in Scheme
+3. `$ expr` or `unquote expr` is equivalent to unquote in Scheme
+4. `$* expr` or `unquote-splicing expr` is equivalent to unquote-splicing in Scheme
+
 ### Evaluation
 
 Orbit provides an `eval` function to evaluate AST expressions:
 
 ```orbit
-// Create an AST without evaluating
-fn quote(x : ast) = x;
-let expr = quote(2 + 3 * 4);
+// Quote an expression
+let expr = '(2 + 3 * 4);
 
 // Evaluate the expression
 let result = eval(expr);  // Returns 14
@@ -184,19 +218,39 @@ let result = eval(expr);  // Returns 14
 The `prettyOrbit` function displays AST expressions in a readable format, which is invaluable for debugging and displaying results:
 
 ```orbit
-// Create an AST expression
-fn quote(x : ast) = x;
-let expr = quote(a * (b + c));
+// Create an AST expression using quote
+let expr = '(a * (b + c));
 
 // Print the expression
 println("Expression: " + prettyOrbit(expr));
 // Output: "Expression: a * (b + c)"
 ```
 
-These three tools work together to provide a powerful system for symbolic computation:
-1. AST manipulation allows you to transform expressions structurally
-2. Evaluation computes final results when needed
-3. Pretty printing displays expressions in a readable format
+### Metaprogramming Example
+
+```orbit
+// Generate a function that computes the n-th power of x
+fn make_power_function(n : int) -> ast =
+	if (n == 0) '
+		(\x -> 1)
+	else if (n == 1) '
+		(\x -> x)
+	else
+		quasiquote
+			(\x -> x * unquote (make_power_function(n - 1)) (x));
+
+// Create a function that computes x³
+let cube = eval(make_power_function(3));
+
+// Use the generated function
+let result = cube(4);  // Returns 64
+```
+
+These tools work together to provide a powerful system for symbolic computation and metaprogramming:
+1. Quoting allows you to capture code as data
+2. Quasiquoting with unquote enables template-based code generation
+3. Evaluation lets you execute dynamically generated code
+4. Pretty printing displays expressions in a readable format
 
 ## 7. OGraphs: Equivalence Graphs
 
@@ -216,6 +270,9 @@ let merged = mergeOGraphNodes(graph, nodeId1, nodeId2);
 // Add domain annotations
 addDomainToNode(graph, nodeId1, "Commutative");
 
+// Get domains that a node belongs to
+let domains = getONodeBelongsTo(graph, nodeId1);  // Returns [domainId1, domainId2, ...]
+
 // Extract a node
 let expr = extractOGraphNode(graph, nodeId1);
 
@@ -228,6 +285,7 @@ OGraphs allow you to:
 2. Cross domain boundaries (e.g., between mathematical notation and programming language syntax)
 3. Apply rewrite rules across an entire equivalence class
 4. Extract optimal representations based on cost models
+5. Track and query domain memberships to understand semantic properties of nodes
 
 ## 8. Example: Symbolic Differentiation
 
@@ -245,6 +303,9 @@ fn diff(expr : ast, x : ast) -> ast =
 
 		// Sum rule: d/dx(u + v) = d/dx(u) + d/dx(v)
 		a + b => diff(a, x) + diff(b, x);
+
+		// Sum rule (generalized): d/dx(u + v + w + ...) = d/dx(u) + d/dx(v) + d/dx(w) + ...
+		`+`(terms, ...) => `+`(map(terms, \t -> diff(t, x)), ...);
 
 		// Product rule: d/dx(u * v) = u * d/dx(v) + v * d/dx(u)
 		a * b => a * diff(b, x) + b * diff(a, x);

@@ -1,0 +1,1123 @@
+import lib/tree;
+import lib/array;
+
+// Graph data structure for Orbit system
+// Uses Tree to store nodes and edges efficiently
+
+// Graph(nodes: Tree<Node, int>, edges: Tree<Node, [Edge]>, nodeCount: int)
+// Edge(from: Node, to: Node, data: ?)
+
+// Create a new empty graph
+fn makeGraph() = (
+    Graph(makeTree(), makeTree(), 0)
+);
+
+// Check if a node exists in the graph
+fn hasNode(graph, node) = (
+    graph is (
+        Graph(nodes, _, _) => (
+            lookup(nodes, node) is (
+                Some(_) => true;
+                None() => false
+            )
+        )
+    )
+);
+
+// Add a node to the graph if it doesn't already exist
+fn addNode(graph, node) = (
+    graph is (
+        Graph(nodes, edges, count) => (
+            if (hasNode(graph, node)) then (
+                // Node already exists, return graph unchanged
+                graph
+            ) else (
+                // Add new node with next available ID
+                let newNodes = insertTree(nodes, node, count);
+                Graph(newNodes, edges, count + 1)
+            )
+        )
+    )
+);
+
+// Get the ID of a node in the graph
+fn getNodeId(graph, node) = (
+    graph is (
+        Graph(nodes, _, _) => (
+            lookup(nodes, node) is (
+                Some(id) => id;
+                None() => -1  // Return -1 if node doesn't exist
+            )
+        )
+    )
+);
+
+// Check if an edge exists between two nodes
+fn hasEdge(graph, from, to) = (
+    if (hasNode(graph, from) && hasNode(graph, to)) then (
+        graph is (
+            Graph(_, edges, _) => (
+                lookup(edges, from) is (
+                    Some(edgeList) => (
+                        // Check if any edge in the list has 'to' as destination
+                        let matchingEdges = filter(edgeList, \edge -> edge is (
+                            Edge(_, toNode, _) => toNode == to
+                        ));
+                        length(matchingEdges) > 0
+                    );
+                    None() => false
+                )
+            )
+        )
+    ) else (
+        false
+    )
+);
+
+// Add an edge between two nodes
+fn addEdge(graph, from, to, data) = (
+    // Ensure both nodes exist in the graph
+    let graphWithNodes = addNode(addNode(graph, from), to);
+    
+    // If edge already exists, remove it first (to update data)
+    let graphWithoutEdge = if (hasEdge(graphWithNodes, from, to)) then 
+                              removeEdge(graphWithNodes, from, to)
+                           else 
+                              graphWithNodes;
+    
+    graphWithoutEdge is (
+        Graph(nodes, edges, count) => (
+            // Get existing edges for 'from' node or empty list
+            let existingEdges = lookup(edges, from) is (
+                Some(edgeList) => edgeList;
+                None() => []
+            );
+            
+            // Add new edge to list
+            let newEdgeList = arrayPush(existingEdges, Edge(from, to, data));
+            
+            // Update edges tree
+            let newEdges = insertTree(edges, from, newEdgeList);
+            
+            Graph(nodes, newEdges, count)
+        )
+    )
+);
+
+// Get all adjacent nodes (neighbors) of a given node
+fn getNeighbors(graph, node) = (
+    if (hasNode(graph, node)) then (
+        graph is (
+            Graph(_, edges, _) => (
+                lookup(edges, node) is (
+                    Some(edgeList) => map(edgeList, \edge -> edge is (Edge(_, to, _) => to));
+                    None() => []
+                )
+            )
+        )
+    ) else (
+        []
+    )
+);
+
+// Get all edges from a specific node
+fn getEdgesFrom(graph, node) = (
+    if (hasNode(graph, node)) then (
+        graph is (
+            Graph(_, edges, _) => (
+                lookup(edges, node) is (
+                    Some(edgeList) => edgeList;
+                    None() => []
+                )
+            )
+        )
+    ) else (
+        []
+    )
+);
+
+// Helper function to collect all edges from the graph
+fn collectAllEdges(graph) = (
+    graph is (
+        Graph(nodes, edges, _) => (
+            let nodeEntries = getEntries(nodes);
+            fold(nodeEntries, [], \acc, entry -> (
+                entry is (
+                    Pair(node, _) => (
+                        let nodeEdges = getEdgesFrom(graph, node);
+                        acc + nodeEdges
+                    )
+                )
+            ))
+        )
+    )
+);
+
+// Get all edges in the graph
+fn getAllEdges(graph) = (
+    collectAllEdges(graph)
+);
+
+// Get all nodes in the graph
+fn getAllNodes(graph) = (
+    graph is (
+        Graph(nodes, _, _) => getKeys(nodes)
+    )
+);
+
+// Remove an edge from the graph
+fn removeEdge(graph, from, to) = (
+    if (hasEdge(graph, from, to)) then (
+        graph is (
+            Graph(nodes, edges, count) => (
+                lookup(edges, from) is (
+                    Some(edgeList) => (
+                        // Filter out the edge to be removed
+                        let newEdgeList = filter(edgeList, \edge -> edge is (
+                            Edge(_, toNode, _) => toNode != to
+                        ));
+                        
+                        // Update edges tree
+                        let newEdges = insertTree(edges, from, newEdgeList);
+                        
+                        Graph(nodes, newEdges, count)
+                    );
+                    None() => graph  // Should not happen if hasEdge is true
+                )
+            )
+        )
+    ) else (
+        graph
+    )
+);
+
+// Get the number of nodes in the graph
+fn nodeCount(graph) = (
+    graph is (
+        Graph(_, _, count) => count
+    )
+);
+
+// Get the number of edges in the graph
+fn edgeCount(graph) = (
+    length(getAllEdges(graph))
+);
+
+// Check if the graph is empty (has no nodes)
+fn isEmpty(graph) = (
+    nodeCount(graph) == 0
+);
+
+// Create a string representation of the graph for debugging
+fn graphToString(graph) = (
+    let nodes = getAllNodes(graph);
+    let edges = getAllEdges(graph);
+    
+    let nodesStr = fold(nodes, "", \acc, node -> acc + prettyOrbit(node) + " ");
+    let edgesStr = fold(edges, "", \acc, edge -> (
+        edge is (
+            Edge(from, to, data) => (
+                acc + "(" + prettyOrbit(from) + " -> " + prettyOrbit(to) + ": " + prettyOrbit(data) + ") "
+            )
+        )
+    ));
+    
+    "Graph(Nodes: [" + nodesStr + "], Edges: [" + edgesStr + "])"
+);
+
+// ----- FEATURE: Export to Graphviz DOT format -----
+
+fn wrapQuotes(a) = (
+	if (isString(a)) then prettyOrbit(a)
+	else ("\"" + prettyOrbit(a) + "\"")
+);
+
+// Convert graph to Graphviz DOT format for visualization
+fn graphToDot(graph, directed, nodeLabels) = (
+    let nodes = getAllNodes(graph);
+    let edges = getAllEdges(graph);
+    
+    let graphType = if (directed) then "digraph" else "graph";
+    let edgeOp = if (directed) then "->" else "--";
+    
+    let header = graphType + " G {\nrankdir=BT;";
+    
+    // Node definitions
+    let nodesStr = fold(nodes, "", \acc, node -> (
+        let label = if (nodeLabels) then " [label=" + wrapQuotes(node) + "]" else "";
+        acc + "  " + wrapQuotes(node) + "" + label + ";\n"
+    ));
+    
+    // Edge definitions
+    let edgesStr = fold(edges, "", \acc, edge -> (
+        edge is (
+            Edge(from, to, data) => (
+                acc + "  " + wrapQuotes(from) + " " + edgeOp + " " + 
+                wrapQuotes(to) + " [label=" + wrapQuotes(data) + "];\n"
+            )
+        )
+    ));
+    
+    header + nodesStr + edgesStr + "}\n"
+);
+
+
+// Breadth-First Search traversal
+// Returns a Tree of visited nodes, similar to dfs
+fn bfs(graph, startNode) = (
+    // Inner recursive function to perform BFS
+    fn bfsVisit(graph, queue, visited) = (
+        if (length(queue) == 0) then (
+            // Queue is empty, traversal complete
+            visited
+        ) else (
+            // Dequeue the front node
+            let currentNode = queue[0];
+            let restOfQueue = subrange(queue, 1, length(queue) - 1);
+
+            // Check if already visited
+            lookup(visited, currentNode) is (
+                Some(_) => (
+                    // Already visited, process next in queue
+                    bfsVisit(graph, restOfQueue, visited)
+                );
+                None() => (
+                    // Mark current node as visited
+                    let newVisited = insertTree(visited, currentNode, true);
+                    
+                    // Get unvisited neighbors
+                    let neighbors = getNeighbors(graph, currentNode);
+                    let unvisitedNeighbors = filter(neighbors, \neighbor -> (
+                        lookup(newVisited, neighbor) is (
+                            Some(_) => false; // Already in newVisited (or processed from current level)
+                            None() => true
+                        )
+                    ));
+                    
+                    // Add unvisited neighbors to the end of the queue
+                    let newQueue = restOfQueue + unvisitedNeighbors;
+                    
+                    // Continue BFS
+                    bfsVisit(graph, newQueue, newVisited)
+                )
+            )
+        )
+    );
+
+    // If the start node doesn't exist, return empty visited set
+    if (!hasNode(graph, startNode)) then (
+        makeTree()
+    ) else (
+        // Initialize queue with startNode and empty visited set
+        bfsVisit(graph, [startNode], makeTree())
+    )
+);
+
+// Find all nodes reachable from a start node using BFS
+fn findReachableNodesBfs(graph, startNode) = (
+    let visited = bfs(graph, startNode);
+    getKeys(visited)
+);
+
+// Check if a target node is reachable from a start node using BFS
+fn isReachableBfs(graph, startNode, targetNode) = (
+    let visited = bfs(graph, startNode);
+    lookup(visited, targetNode) is (
+        Some(_) => true;
+        None() => false
+    )
+);
+
+
+// ----- FEATURE: Depth-First Search (DFS) -----
+
+// Depth-First Search traversal
+fn dfs(graph, startNode) = (
+    // Inner recursive function to perform DFS
+    fn dfsVisit(graph, node, visited) = (
+        // Mark current node as visited
+        let newVisited = insertTree(visited, node, true);
+        
+        // Get unvisited neighbors
+        let neighbors = getNeighbors(graph, node);
+        let unvisitedNeighbors = filter(neighbors, \neighbor -> (
+            lookup(newVisited, neighbor) is (
+                Some(_) => false;
+                None() => true
+            )
+        ));
+        
+        // Recursively visit unvisited neighbors
+        fold(unvisitedNeighbors, newVisited, \acc, neighbor -> dfsVisit(graph, neighbor, acc))
+    );
+    
+    // If the start node doesn't exist, return empty visited set
+    if (!hasNode(graph, startNode)) then (
+        makeTree()
+    ) else (
+        dfsVisit(graph, startNode, makeTree())
+    )
+);
+
+// Find all nodes reachable from a start node
+fn findReachableNodes(graph, startNode) = (
+    let visited = dfs(graph, startNode);
+    getKeys(visited)
+);
+
+// Check if a target node is reachable from a start node
+fn isReachable(graph, startNode, targetNode) = (
+    let visited = dfs(graph, startNode);
+    lookup(visited, targetNode) is (
+        Some(_) => true;
+        None() => false
+    )
+);
+
+// ----- FEATURE: Shortest Path (Dijkstra's Algorithm) -----
+
+// Result type for shortest path: Path(found, nodes, distance)
+fn shortestPath(graph, startNode, endNode) = (
+    if (!hasNode(graph, startNode) || !hasNode(graph, endNode)) then (
+        // Start or end node doesn't exist
+        Path(false, [], -1)
+    ) else if (startNode == endNode) then (
+        // Start and end are the same
+        Path(true, [startNode], 0)
+    ) else (
+        let nodes = getAllNodes(graph);
+        
+        // Initialize data structures
+        let distances = insertTree(makeTree(), startNode, 0);  // Distances from start
+        let visited = makeTree();  // Visited nodes
+        let previous = makeTree();  // Previous node in optimal path
+        
+        // Find shortest path using Dijkstra's algorithm
+        fn dijkstra(distances, visited, previous) = (
+            // Find unvisited node with minimum distance
+            fn findMinDistanceNode() = (
+                fold(nodes, Pair(None(), 999999), \acc, node -> (
+                    lookup(visited, node) is (
+                        Some(_) => acc;  // Skip visited nodes
+                        None() => (
+                            lookup(distances, node) is (
+                                Some(distance) => (
+                                    acc is (
+                                        Pair(None(), _) => Pair(Some(node), distance);
+                                        Pair(Some(_), minDist) => (
+                                            if (distance < minDist) then (
+                                                Pair(Some(node), distance)
+                                            ) else (
+                                                acc
+                                            )
+                                        )
+                                    )
+                                );
+                                None() => acc  // Skip nodes with no distance
+                            )
+                        )
+                    )
+                ))
+            );
+            
+            // Find next node to process
+            let minPair = findMinDistanceNode();
+            
+            minPair is (
+                Pair(None(), _) => (
+                    // No more nodes to process
+                    Pair(previous, distances)
+                );
+                Pair(Some(current), _) => (
+                    // Mark as visited
+                    let newVisited = insertTree(visited, current, true);
+                    
+                    // If we reached the end node, we're done
+                    if (current == endNode) then (
+                        Pair(previous, distances)
+                    ) else (
+                        // Update distances to neighbors
+                        let edges = getEdgesFrom(graph, current);
+                        let currentDist = lookup(distances, current);
+                        
+                        currentDist is (
+                            Some(dist) => (
+                                // Process each outgoing edge
+                                let result = fold(edges, Pair(previous, distances), \acc, edge -> (
+                                    acc is (
+                                        Pair(prev, dists) => (
+                                            edge is (
+                                                Edge(_, neighbor, data) => (
+                                                    // Calculate potential new distance
+                                                    let newDist = dist + 1;
+                                                    
+                                                    // Update if better than existing
+                                                    lookup(dists, neighbor) is (
+                                                        Some(oldDist) => (
+                                                            if (newDist < oldDist) then (
+                                                                let newDists = insertTree(dists, neighbor, newDist);
+                                                                let newPrev = insertTree(prev, neighbor, current);
+                                                                Pair(newPrev, newDists)
+                                                            ) else (
+                                                                Pair(prev, dists)
+                                                            )
+                                                        );
+                                                        None() => (
+                                                            // First time seeing this node
+                                                            let newDists = insertTree(dists, neighbor, newDist);
+                                                            let newPrev = insertTree(prev, neighbor, current);
+                                                            Pair(newPrev, newDists)
+                                                        )
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    )
+                                ));
+                                
+                                // Continue algorithm
+                                result is (
+                                    Pair(newPrevious, newDistances) => (
+                                        dijkstra(newDistances, newVisited, newPrevious)
+                                    )
+                                )
+                            );
+                            None() => (
+                                // Should not happen
+                                Pair(previous, distances)
+                            )
+                        )
+                    )
+                )
+            )
+        );
+        
+        // Run Dijkstra's algorithm
+        let result = dijkstra(distances, visited, previous);
+        let finalPrevious = result is (Pair(prev, _) => prev);
+        let finalDistances = result is (Pair(_, dist) => dist);
+        // Reconstruct path if end is reachable
+        fn reconstructPath(previous, current, path) = (
+            let newPath = [current] + path;
+            
+            lookup(previous, current) is (
+                Some(prev) => reconstructPath(previous, prev, newPath);
+                None() => newPath
+            )
+        );
+        
+        lookup(finalDistances, endNode) is (
+            Some(dist) => (
+                // Path exists, reconstruct it
+                let pathNodes = reconstructPath(finalPrevious, endNode, []);
+                Path(true, pathNodes, dist)
+            );
+            None() => (
+                // No path exists
+                Path(false, [], -1)
+            )
+        )
+    )
+);
+
+// ----- FEATURE: Cycle Detection -----
+
+// Detect cycles in a graph
+fn hasCycle(graph) = (
+    let nodes = getAllNodes(graph);
+    
+    // Inner function to check for cycles from a node
+    fn dfsCheckCycle(node, visited, inStack) = (
+        // Mark current node as visited and in recursion stack
+        let newVisited = insertTree(visited, node, true);
+        let newInStack = insertTree(inStack, node, true);
+        
+        // Check all neighbors
+        let neighbors = getNeighbors(graph, node);
+        
+        // For each neighbor
+        let result = fold(neighbors, Pair(false, newVisited, newInStack), \acc, neighbor -> (
+            acc is (
+                Pair(true, _, _) => acc;  // Already found a cycle
+                Pair(false, vis, stk) => (
+                    // Check if neighbor is in recursion stack (cycle found)
+                    lookup(stk, neighbor) is (
+                        Some(_) => Pair(true, vis, stk);
+                        None() => (
+                            // Check if neighbor is already visited
+                            lookup(vis, neighbor) is (
+                                Some(_) => acc;  // Already visited, no cycle from here
+                                None() => (
+                                    // Recursively check neighbor
+                                    dfsCheckCycle(neighbor, vis, stk)
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        ));
+        
+        // Remove current node from recursion stack when returning
+        result is (
+            Pair(hasCyc, vis, stk) => (
+                Pair(hasCyc, vis, remove(stk, node))
+            )
+        )
+    );
+    
+    // Check from each unvisited node
+    fold(nodes, Pair(false, makeTree(), makeTree()), \acc, node -> (
+        acc is (
+            Pair(true, _, _) => acc;  // Already found a cycle
+            Pair(false, vis, stk) => (
+                lookup(vis, node) is (
+                    Some(_) => acc;  // Already visited this node
+                    None() => dfsCheckCycle(node, vis, stk)
+                )
+            )
+        )
+    )) is (
+        Pair(hasCyc, _, _) => hasCyc
+    )
+);
+
+// ----- FEATURE: Topological Sort -----
+
+// Topological sort (returns empty array if graph has cycles)
+fn topologicalSort(graph) = (
+    // Check for cycles first
+    if (hasCycle(graph)) then (
+        []  // Can't do topological sort on cyclic graph
+    ) else (
+        let nodes = getAllNodes(graph);
+        
+        // Inner function for DFS-based topological sort
+        fn dfsTopSort(node, visited, sortedList) = (
+            // Mark as visited
+            let newVisited = insertTree(visited, node, true);
+            
+            // Visit all unvisited neighbors first
+            let neighbors = getNeighbors(graph, node);
+            let result = fold(neighbors, Pair(newVisited, sortedList), \acc, neighbor -> (
+                acc is (
+                    Pair(vis, lst) => (
+                        lookup(vis, neighbor) is (
+                            Some(_) => acc;  // Already visited
+                            None() => dfsTopSort(neighbor, vis, lst)
+                        )
+                    )
+                )
+            ));
+            
+            // Add current node to result after all neighbors
+            result is (
+                Pair(finalVisited, sortedNodes) => (
+                    Pair(finalVisited, [node] + sortedNodes)
+                )
+            )
+        );
+        
+        // Visit all nodes
+        fold(nodes, Pair(makeTree(), []), \acc, node -> (
+            acc is (
+                Pair(vis, lst) => (
+                    lookup(vis, node) is (
+                        Some(_) => acc;  // Already visited
+                        None() => dfsTopSort(node, vis, lst)
+                    )
+                )
+            )
+        )) is (
+            Pair(_, sortedList) => sortedList
+        )
+    )
+);
+
+// ----- FEATURE: Cycle Breaking -----
+
+// Find edges that break cycles (back edges in a DFS traversal)
+fn findCycleEdges(graph) = (
+    let nodes = getAllNodes(graph);
+    
+    // Inner function to find cycle edges from a node
+    fn dfsBackEdges(node, visited, inStack, backEdges) = (
+        // Mark current node as visited and in recursion stack
+        let newVisited = insertTree(visited, node, true);
+        let newInStack = insertTree(inStack, node, true);
+        
+        // Check all neighbors
+        let neighbors = getNeighbors(graph, node);
+        
+        // For each neighbor
+        let result = fold(neighbors, Pair(newVisited, newInStack, backEdges), \acc, neighbor -> (
+            acc is (
+                Pair(vis, stk, edges) => (
+                    // Check if neighbor is in recursion stack (cycle found)
+                    lookup(stk, neighbor) is (
+                        Some(_) => (
+                            // This is a back edge, add it to our collection
+                            let edgesWithBackEdge = arrayPush(edges, Pair(node, neighbor));
+                            Pair(vis, stk, edgesWithBackEdge)
+                        );
+                        None() => (
+                            // Check if neighbor is already visited
+                            lookup(vis, neighbor) is (
+                                Some(_) => acc;  // Already visited, no new cycle edges from here
+                                None() => (
+                                    // Recursively check neighbor
+                                    dfsBackEdges(neighbor, vis, stk, edges)
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        ));
+        
+        // Remove current node from recursion stack when returning
+        result is (
+            Pair(vis, stk, edges) => (
+                Pair(vis, remove(stk, node), edges)
+            )
+        )
+    );
+    
+    // Check from each unvisited node
+    fold(nodes, Pair(makeTree(), makeTree(), []), \acc, node -> (
+        acc is (
+            Pair(vis, stk, edges) => (
+                lookup(vis, node) is (
+                    Some(_) => acc;  // Already visited this node
+                    None() => dfsBackEdges(node, vis, stk, edges)
+                )
+            )
+        )
+    )) is (
+        Pair(_, _, backEdges) => backEdges
+    )
+);
+
+// Break cycles in the graph (returns a new graph with no cycles)
+fn breakCycles(graph) = (
+    if (!hasCycle(graph)) then (
+        // Graph already has no cycles
+        graph
+    ) else (
+        // Find all back edges that form cycles
+        let backEdges = findCycleEdges(graph);
+        
+        // Remove each back edge to break cycles
+        fold(backEdges, graph, \g, edge -> (
+            edge is (
+                Pair(from, to) => removeEdge(g, from, to)
+            )
+        ))
+    )
+);
+
+// Alternative version that lets you specify a weight function to decide which edges to remove
+fn breakCyclesWithWeights(graph, weightFn) = (
+    if (!hasCycle(graph)) then (
+        // Graph already has no cycles
+        graph
+    ) else (
+        // Function to find all simple cycles in the graph
+        fn findAllCycles() = (
+            let nodes = getAllNodes(graph);
+            let cycles = [];
+            
+            // Tarjan's algorithm to find all simple cycles
+            fn findCyclesFromNode(node, visited, stack, nodeToPos, currPos) = (
+                // Add node to stack and mark as visited
+                let newStack = arrayPush(stack, node);
+                let newVisited = insertTree(visited, node, true);
+                let newNodeToPos = insertTree(nodeToPos, node, currPos);
+                
+                // Check neighbors
+                let neighbors = getNeighbors(graph, node);
+                let result = fold(neighbors, Pair(newVisited, newNodeToPos, currPos, cycles), \acc, neighbor -> (
+                    acc is (
+                        Pair(vis, n2p, pos, cycs) => (
+                            // Check if neighbor is in stack (found a cycle)
+                            lookup(n2p, neighbor) is (
+                                Some(neighborPos) => (
+                                    // Extract the cycle from the stack
+                                    let cycleNodes = subrange(newStack, neighborPos, pos - neighborPos + 1);
+                                    // Only add cycles that are not already in our list
+                                    let isDuplicate = false;  // Simplified check for brevity
+                                    let newCycles = if (isDuplicate) then cycs else arrayPush(cycs, cycleNodes);
+                                    Pair(vis, n2p, pos, newCycles)
+                                );
+                                None() => (
+                                    // Check if neighbor is already visited
+                                    lookup(vis, neighbor) is (
+                                        Some(_) => acc;  // Already visited, skip
+                                        None() => (
+                                            // Recursively process neighbor
+                                            findCyclesFromNode(neighbor, vis, newStack, n2p, pos + 1)
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                ));
+                
+                // Return updated state (simplified for brevity)
+                result
+            );
+            
+            // Start from each node
+            fold(nodes, [], \allCycles, startNode -> (
+                let result = findCyclesFromNode(startNode, makeTree(), [], makeTree(), 0);
+                result is (
+                    Pair(_, _, _, nodeCycles) => allCycles + nodeCycles
+                )
+            ))
+        );
+        
+        // Get all cycles
+        let cycles = findAllCycles();
+        
+        // For each cycle, find the best edge to remove based on weight
+        fn removeBestEdges(g, remainingCycles) = (
+            if (length(remainingCycles) == 0 || !hasCycle(g)) then (
+                g  // Done removing edges
+            ) else (
+                let cycle = remainingCycles[0];
+                let restCycles = subrange(remainingCycles, 1, length(remainingCycles) - 1);
+                
+                // Find edge in cycle with highest weight to remove
+                let maxWeight = -1;
+                let edgeToRemove = Pair(None(), None());
+                
+                // Orbit doesn't have for loops, use fold instead
+                fn findBestEdge(i, result) = (
+                    if (i >= length(cycle)) then (
+                        result
+                    ) else (
+                        let from = cycle[i];
+                        let to = cycle[(i + 1) % length(cycle)];
+                        let weight = weightFn(from, to);
+                        
+                        result is (
+                            Pair(maxW, edge) => (
+                                if (weight > maxW) then (
+                                    findBestEdge(i + 1, Pair(weight, Pair(Some(from), Some(to))))
+                                ) else (
+                                    findBestEdge(i + 1, result)
+                                )
+                            )
+                        )
+                    )
+                );
+                
+                let bestEdgeResult = findBestEdge(0, Pair(maxWeight, edgeToRemove));
+                let edgeToRemove = bestEdgeResult is (Pair(_, edge) => edge);
+                
+                edgeToRemove is (
+                    Pair(Some(from), Some(to)) => (
+                        // Remove the edge and continue with remaining cycles
+                        let newGraph = removeEdge(g, from, to);
+                        removeBestEdges(newGraph, restCycles)
+                    );
+                    _ => (
+                        // No edge to remove (shouldn't happen with valid cycles)
+                        removeBestEdges(g, restCycles)
+                    )
+                )
+            )
+        );
+        
+        // Remove edges to break cycles
+        removeBestEdges(graph, cycles)
+    )
+);
+
+// Extract connected components from a graph
+// This finds weakly connected components (ignoring edge directions)
+fn connectedComponents(graph) = (
+    weaklyConnectedComponents(graph)
+);
+
+// Find weakly connected components (ignoring edge directions)
+fn weaklyConnectedComponents(graph) = (
+    // First, make an undirected version of the graph
+    fn makeUndirectedGraph(graph) = (
+        let allEdges = getAllEdges(graph);
+        
+        // Add reverse edges to make it undirected
+        fold(allEdges, graph, \g, edge -> (
+            edge is (
+                Edge(from, to, data) => (
+                    // Add the reverse edge if it doesn't exist already
+                    if (!hasEdge(g, to, from)) then (
+                        addEdge(g, to, from, data)
+                    ) else (
+                        g
+                    )
+                )
+            )
+        ))
+    );
+    
+    // Make the graph undirected for weakly connected components
+    let undirectedGraph = makeUndirectedGraph(graph);
+    let nodes = getAllNodes(undirectedGraph);
+    let visited = makeTree();
+    let components = [];
+    
+    // Process each unvisited node
+    fn processNodes(remainingNodes, visited, components) = (
+        if (length(remainingNodes) == 0) then (
+            // All nodes processed
+            components
+        ) else (
+            // Get the first unvisited node
+            let node = remainingNodes[0];
+            let restNodes = subrange(remainingNodes, 1, length(remainingNodes) - 1);
+            
+            lookup(visited, node) is (
+                Some(_) => (
+                    // Node already visited, skip to next
+                    processNodes(restNodes, visited, components)
+                );
+                None() => (
+                    // Find all nodes reachable from this node (a connected component)
+                    let reachableSet = bfs(undirectedGraph, node);
+                    let reachableNodes = getKeys(reachableSet);
+                    
+                    // Add this component to our list
+                    let newComponents = arrayPush(components, reachableNodes);
+                    
+                    // Mark all nodes in this component as visited
+                    let newVisited = fold(reachableNodes, visited, \vis, n -> (
+                        insertTree(vis, n, true)
+                    ));
+                    
+                    // Continue with remaining nodes
+                    processNodes(restNodes, newVisited, newComponents)
+                )
+            )
+        )
+    );
+    
+    processNodes(nodes, visited, components)
+);
+
+// Find strongly connected components (considering edge directions)
+// Uses Kosaraju's algorithm
+fn stronglyConnectedComponents(graph) = (
+    let nodes = getAllNodes(graph);
+    
+    // Step 1: Perform first DFS and store nodes in order of finishing time
+    fn dfsFirstPass(node, visited, finishOrder) = (
+        // Mark as visited
+        let newVisited = insertTree(visited, node, true);
+        
+        // Visit all unvisited neighbors
+        let neighbors = getNeighbors(graph, node);
+        let result = fold(neighbors, Pair(newVisited, finishOrder), \acc, neighbor -> (
+            acc is (
+                Pair(vis, ord) => (
+                    lookup(vis, neighbor) is (
+                        Some(_) => acc;  // Already visited
+                        None() => dfsFirstPass(neighbor, vis, ord)
+                    )
+                )
+            )
+        ));
+        
+        // Add current node to finish order after all neighbors
+        result is (
+            Pair(finalVisited, order) => (
+                Pair(finalVisited, arrayPush(order, node))
+            )
+        )
+    );
+    
+    // Create transpose of the graph (reverse all edges)
+    fn makeTransposeGraph(graph) = (
+        let g = makeGraph();
+        
+        // Add all nodes first
+        let graphWithNodes = fold(nodes, g, \acc, node -> (
+            addNode(acc, node)
+        ));
+        
+        // Add reversed edges
+        let allEdges = getAllEdges(graph);
+        fold(allEdges, graphWithNodes, \acc, edge -> (
+            edge is (
+                Edge(from, to, data) => (
+                    addEdge(acc, to, from, data)
+                )
+            )
+        ))
+    );
+    
+    // Step 2: Perform second DFS on transpose graph in reverse finishing order
+    fn dfsSecondPass(node, visited, component) = (
+        // Mark as visited
+        let newVisited = insertTree(visited, node, true);
+        // Add to current component
+        let newComponent = arrayPush(component, node);
+        
+        // Visit all unvisited neighbors in transpose graph
+        let neighbors = getNeighbors(transposeGraph, node);
+        fold(neighbors, Pair(newVisited, newComponent), \acc, neighbor -> (
+            acc is (
+                Pair(vis, comp) => (
+                    lookup(vis, neighbor) is (
+                        Some(_) => acc;  // Already visited
+                        None() => (
+                            dfsSecondPass(neighbor, vis, comp) is (
+                                Pair(newVis, newComp) => Pair(newVis, newComp)
+                            )
+                        )
+                    )
+                )
+            )
+        ))
+    );
+    
+    // Perform first DFS to get finish order
+    let finishOrderResult = fold(nodes, Pair(makeTree(), []), \acc, node -> (
+        acc is (
+            Pair(vis, ord) => (
+                lookup(vis, node) is (
+                    Some(_) => acc;  // Already visited
+                    None() => dfsFirstPass(node, vis, ord)
+                )
+            )
+        )
+    ));
+    
+    let finishOrder = finishOrderResult is (Pair(_, order) => order);
+    
+    // Create transpose graph
+    let transposeGraph = makeTransposeGraph(graph);
+    
+    // Perform second DFS to find SCCs
+    fn findComponents(nodes, visited, components) = (
+        if (length(nodes) == 0) then (
+            // All nodes processed
+            components
+        ) else (
+            // Get the last node (last to finish in original DFS)
+            let node = nodes[length(nodes) - 1];
+            let restNodes = subrange(nodes, 0, length(nodes) - 1);
+            
+            lookup(visited, node) is (
+                Some(_) => (
+                    // Already visited, skip to next
+                    findComponents(restNodes, visited, components)
+                );
+                None() => (
+                    // Find SCC starting from this node
+                    let result = dfsSecondPass(node, visited, []);
+                    result is (
+                        Pair(newVisited, component) => (
+                            // Add this component to our list if not empty
+                            let newComponents = if (length(component) > 0) then (
+                                arrayPush(components, component)
+                            ) else (
+                                components
+                            );
+                            
+                            // Continue with remaining nodes
+                            findComponents(restNodes, newVisited, newComponents)
+                        )
+                    )
+                )
+            )
+        )
+    );
+    
+    findComponents(finishOrder, makeTree(), [])
+);
+
+// ----- FEATURE: Component Source and Sink Analysis -----
+
+// ComponentAnalysis structure to hold sources and sinks
+// Sources: Nodes with no incoming edges within the component
+// Sinks: Nodes with no outgoing edges within the component
+
+// Find source nodes in a component (nodes with no incoming edges from within the component)
+fn findComponentSources(graph, component) = (
+    // Create a subgraph containing only nodes in the component
+    let subgraph = extractSubgraph(graph, component);
+    
+    // For each node in the component, check if it has any incoming edges in this subgraph
+    filter(component, \node -> (
+        let incomingEdges = getIncomingEdges(subgraph, node);
+        length(incomingEdges) == 0
+    ))
+);
+
+// Find sink nodes in a component (nodes with no outgoing edges within the component)
+fn findComponentSinks(graph, component) = (
+    // Create a subgraph containing only nodes in the component
+    let subgraph = extractSubgraph(graph, component);
+    
+    // For each node in the component, check if it has any outgoing edges in this subgraph
+    filter(component, \node -> (
+        let outgoingEdges = getEdgesFrom(subgraph, node);
+        length(outgoingEdges) == 0
+    ))
+);
+
+// Helper function to get all incoming edges to a node
+fn getIncomingEdges(graph, node) = (
+    if (hasNode(graph, node)) then (
+        let allEdges = getAllEdges(graph);
+        filter(allEdges, \edge -> (
+            edge is (
+                Edge(_, to, _) => to == node
+            )
+        ))
+    ) else (
+        []
+    )
+);
+
+// Helper function to extract a subgraph containing only specified nodes
+fn extractSubgraph(graph, nodes) = (
+    // Create an empty graph
+    let emptyGraph = makeGraph();
+    
+    // Add all specified nodes to the graph
+    let graphWithNodes = fold(nodes, emptyGraph, \acc, node -> (
+        addNode(acc, node)
+    ));
+    
+    // Get all edges from the original graph
+    let allEdges = getAllEdges(graph);
+    
+    // Add only edges where both endpoints are in the specified nodes
+    fold(allEdges, graphWithNodes, \acc, edge -> (
+        edge is (
+            Edge(from, to, data) => (
+                if (contains(nodes, from) && contains(nodes, to)) then (
+                    addEdge(acc, from, to, data)
+                ) else (
+                    acc
+                )
+            )
+        )
+    ))
+);
+
+// Analyze a component to find its sources and sinks
+fn analyzeComponent(graph, component) = (
+    let sources = findComponentSources(graph, component);
+    let sinks = findComponentSinks(graph, component);
+    ComponentAnalysis(component, sources, sinks)
+);
+
+// Analyze all components in a graph
+fn analyzeComponents(graph) = (
+    let components = connectedComponents(graph);
+    map(components, \component -> analyzeComponent(graph, component))
+);

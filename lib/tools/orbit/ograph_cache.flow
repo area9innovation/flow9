@@ -1,0 +1,80 @@
+import tools/orbit/ograph;
+import tools/orbit/types;
+import string;
+import ds/tree;
+
+export {
+    // Insert a node into the graph using the cache
+    // If a node with the same structure (ignoring belongsTo) exists, reuse it
+    insertONodeCached(graph : OGraph, node : ONode) -> int;
+    
+    // Clear the node cache
+    clearOGraphCache(graph : OGraph) -> void;
+    
+    // Create a cache key node from a regular node by clearing the belongsTo field
+    getNodeCacheKeyNode(node : ONode) -> ONode;
+}
+
+// Clear the node cache
+clearOGraphCache(graph : OGraph) -> void {
+    graph.node_cache := makeTree();
+}
+
+// Create a cache key node from a regular node by clearing the belongsTo field
+getNodeCacheKeyNode(node : ONode) -> ONode {
+    // Return a copy of the node with an empty belongsTo list
+    ONode(node.op, node.children, [], node.value);
+}
+
+// Insert a node into the graph using the cache
+// If a node with the same structure (ignoring belongsTo) exists, reuse it
+insertONodeCached(graph : OGraph, node : ONode) -> int {
+    // Generate a cache key for the node (node with empty belongsTo)
+    cacheKeyNode = getNodeCacheKeyNode(node);
+    
+    // Check if the node already exists in the cache
+    switch (lookupTree(^(graph.node_cache), cacheKeyNode)) {
+        None(): {
+            // Node doesn't exist in cache, insert it
+            newId = insertONode(graph, node);
+            
+            // Add to cache
+            graph.node_cache := setTree(^(graph.node_cache), cacheKeyNode, newId);
+            
+            newId;
+        }
+        Some(existingId): {
+            // Resolve to canonical id
+            canonicalId = findORoot(graph, existingId);
+            
+            // Get the existing node
+            switch (lookupOClass(graph, canonicalId)) {
+                None(): {
+                    // This shouldn't happen if the cache is consistent
+                    // Insert new node as fallback
+                    newId = insertONode(graph, node);
+                    graph.node_cache := setTree(^(graph.node_cache), cacheKeyNode, newId);
+                    newId;
+                }
+                Some(oclass): {
+                    // Update the cache with the canonical id
+                    if (existingId != canonicalId) {
+                        graph.node_cache := setTree(^(graph.node_cache), cacheKeyNode, canonicalId);
+                    }
+                    
+                    // For cached nodes, check if we need to update the belongsTo list
+                    if (length(node.belongsTo) > 0) {
+                        // Add any missing domains to the existing node
+                        iter(node.belongsTo, \domainId -> {
+                            if (!contains(oclass.node.belongsTo, domainId)) {
+                                addBelongsToONode(graph, canonicalId, domainId);
+                            }
+                        });
+                    }
+                    
+                    canonicalId;
+                }
+            }
+        }
+    }
+}

@@ -418,9 +418,13 @@ class FlowFileSystem {
 
 	public static function saveFileClient(filename : String, data : Dynamic, type : String) {
 		#if (js && !flow_nodejs)
-			untyped __js__("
-				var file = new Blob(Array.isArray(data) ? data : [data], {type: type});
+			saveNativeFileClient(filename, new js.html.Blob(Std.isOfType(data, Array) ? data : [data], { type: type }));
+		#end
+	}
 
+	public static function saveNativeFileClient(filename : String, file : Dynamic) {
+		#if (js && !flow_nodejs)
+			untyped __js__("
 				if (window.navigator.msSaveOrOpenBlob) {
 					// IE10+
 					window.navigator.msSaveOrOpenBlob(file, filename);

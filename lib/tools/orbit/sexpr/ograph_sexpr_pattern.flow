@@ -1,467 +1,79 @@
 import tools/orbit/ograph;          // For OGraph operations
 import tools/orbit/sexpr/sexpr_types; // For Sexpr types
-import tools/orbit/orbit_simple_ograph; // For ographRegistry
-import tools/orbit/orbit_types;    // For OrbitValue
-import tools/orbit/sexpr/pretty_sexpr; // For pretty printing Sexpr
+import tools/orbit/sexpr/ograph2sexpr; // For ograph2Sexpr
 
 export {
-    // Main pattern matching function for S-expressions
-    // Finds all matches of the pattern in the graph and calls the callback for each
-    matchOGraphSexprPattern(
-        graphName : string,                      // Name of the OGraph to search in
-        pattern : Sexpr,                        // Pattern to match (with variables)
-        callback : (Tree<string, int>, int) -> void,  // Called for each match with bindings and the e-class ID
-        tracing : bool                         // Enable detailed tracing for debugging
-    ) -> int;  // Returns the number of matches found
-    
-    // Internal helpers
-    OSexprPatternResult ::= OSexprPatternSuccess, OSexprPatternFailure;
-        OSexprPatternSuccess(bindings : Tree<string, int>); // Variable name to node ID
-        OSexprPatternFailure();
+    // One-level pattern matcher for SEXpr implementation
+    // Returns a Pair containing success (bool) and updated bindings array
+    matchSExprNodeOneLevel(
+        graph : OGraph,                      // The graph to search in
+        nodeId : int,                        // The node to match against
+        pattern : Sexpr,                     // The pattern to match
+        bindings : [Pair<string, int>],      // Existing variable bindings (variable name → node ID)
+        tracing : bool                       // Enable tracing for debugging
+    ) -> Pair<bool, [Pair<string, int>]>;    // success, updated bindings
 }
 
-// Main function for pattern matching in an OGraph using S-expressions
-matchOGraphSexprPattern(graphName : string, pattern : Sexpr, callback : (Tree<string, int>, int) -> void, tracing : bool) -> int {
-    // Get the graph from the registry
-    matchCount = ref 0;
-    
-    if (tracing) println("Pattern matching in graph '" + graphName + "'");
-    if (tracing) println("Pattern: " + prettySexpr(pattern));
-    
-    switch (lookupTree(^ographRegistry, graphName)) {
-        Some(graph): {
-            if (tracing) println("DEBUG: Calling matchOGraphSexprPattern with graph " + graphName);
-            // Strategy: Try to match the pattern starting at each node in the graph
-            if (tracing) println("DEBUG: Found graph, traversing nodes");
-            traverseOGraph(graph, \nodeIndex, node -> {
-                if (tracing) println("DEBUG: Checking node ID: " + i2s(nodeIndex) + ", op: " + node.op);
-                
-                // Try to match the pattern at this node
-                switch (matchSexprPatternAtNode(graph, nodeIndex, pattern, tracing)) {
-                    OSexprPatternSuccess(bindings): {
-                        if (tracing)  {
-                            println("DEBUG: Found match at node ID: " + i2s(nodeIndex));
-                            println("DEBUG: Found match with " + i2s(sizeTree(bindings)) + " bindings at eclass ID: " + i2s(findORoot(graph, nodeIndex)));
-
-                            // Debug output - log all bindings
-                            iter(getTreeKeys(bindings), \key -> {
-                                value = lookupTreeDef(bindings, key, -1);
-                                println("  " + key + " = " + ograph2SexprPretty(graph, value));
-                            });
-                        }
-                        
-                        // Call the callback directly with the bindings (eclass IDs) and the e-class ID
-                        matchCount := ^matchCount + 1;
-                        rootId = findORoot(graph, nodeIndex);
-                        callback(bindings, rootId);
-                    }
-                    OSexprPatternFailure(): {
-                        // No match at this node, continue searching
-                        if (tracing) println("DEBUG: No match at node ID: " + i2s(nodeIndex));
-                    }
-                }
-            });
-            
-            if (tracing) println("DEBUG: matchOGraphSexprPattern returned " + i2s(^matchCount) + " matches");
-            ^matchCount;
-        }
-        None(): {
-            println("ERROR: OGraph '" + graphName + "' not found");
-            0;
-        }
-    }
-}
-
-// Helper to pretty print a node for debugging (simplified placeholder)
-ograph2SexprPretty(graph : OGraph, nodeId : int) -> string {
-    // We need to convert OGraph node back to Sexpr, which is a bit complex
-    // For now, just use a simplified representation
-    switch (lookupOClass(graph, nodeId)) {
-        Some(oclass): {
-            // Build the string in parts to avoid variable reassignment
-            baseStr = oclass.node.op;
-            valueStr = if (oclass.node.value != OrbitNone()) {
-                ": " + orbitValue2String(oclass.node.value);
-            } else "";
-            childrenStr = if (length(oclass.node.children) > 0) {
-                "(" + i2s(length(oclass.node.children)) + " children)";
-            } else "";
-            
-            // Combine all parts
-            baseStr + valueStr + childrenStr;
-        }
-        None(): i2s(nodeId);
-    }
-}
-
-// Helper to convert OrbitValue to string for debugging
-orbitValue2String(val : OrbitValue) -> string {
-    switch (val) {
-        OrbitNone(): "none";
-        OrbitBool(b): b2s(b);
-        OrbitInt(i): i2s(i);
-        OrbitDouble(d): d2s(d);
-        OrbitString(s): "\"" + s + "\"";
-    }
-}
-
-// Helper to get domain ID from a pattern
-getSexprDomainId(graph : OGraph, domainPattern : Sexpr, tracing : bool) -> int {
-    // In a real implementation, we would need to find existing domain entries
-    // For now, we'll add the domain to the graph if it doesn't exist
-    // This is a simplified approach
-    // TODO: Using simplified approach for now - in a full implementation, we would
-    // use a proper conversion function similar to sexp2OGraphWithSubstitution
-    domainId = match_Sexpr(domainPattern, graph, tracing);
-    
-    if (tracing) {
-        println("DEBUG: Domain '" + prettySexpr(domainPattern) + "' has ID " + i2s(domainId));
-    }
-    
-    domainId;
-}
-
-// Simplified function to add an S-expression to the graph
-// In a real implementation, we would use sexp2OGraphWithSubstitution
-match_Sexpr(expr : Sexpr, graph : OGraph, tracing : bool) -> int {
-    switch (expr) {
-        SSInt(i): insertONode(graph, ONode("Int", [], [], OrbitInt(i)));
-        SSDouble(d): insertONode(graph, ONode("Double", [], [], OrbitDouble(d)));
-        SSString(s): insertONode(graph, ONode("String", [], [], OrbitString(s)));
-        SSBool(b): insertONode(graph, ONode("Bool", [], [], OrbitBool(b)));
-        SSVariable(id): insertONode(graph, ONode("Identifier", [], [], OrbitString(id)));
-        SSConstructor(name): insertONode(graph, ONode("Constructor", [], [], OrbitString(name)));
-        SSOperator(op): insertONode(graph, ONode("Operator", [], [], OrbitString(op)));
-        SSVector(items): {
-            // Process as a vector
-            childIds = map(items, \child -> match_Sexpr(child, graph, tracing));
-            insertONode(graph, ONode("Vector", childIds, [], OrbitNone()));
-        };
-        SSList(parts): {
-            if (length(parts) == 0) {
-                insertONode(graph, ONode("List", [], [], OrbitNone()));
-            } else {
-                // For type annotations in the form (: expr Domain)
-                if (length(parts) == 3 && 
-                    switch(parts[0]) { SSOperator(op): op == ":"; default: false; }) {
-                    // Process base expression and domain separately
-                    baseId = match_Sexpr(parts[1], graph, tracing);
-                    domainId = match_Sexpr(parts[2], graph, tracing);
-                    
-                    // Add the domain to the "belongs to" field
-                    if (tracing) {
-                        println("Adding domain " + i2s(domainId) + " to node " + i2s(baseId));
-                    }
-                    addBelongsToONode(graph, baseId, domainId);
-                    
-                    // Return the base node ID
-                    baseId;
-                } else {
-                    // Process as a regular list
-                    childIds = map(parts, \child -> match_Sexpr(child, graph, tracing));
-                    insertONode(graph, ONode("List", childIds, [], OrbitNone()));
-                }
-            }
-        }
-        SSSpecialForm(form, children): {
-            // Process special forms (simplified for now)
-            childIds = map(children, \child -> match_Sexpr(child, graph, tracing));
-            formName = getSpecialFormName(form);
-            insertONode(graph, ONode("SpecialForm", childIds, [], OrbitString(formName)));
-        }
-    }
-}
-
-// Helper to get the name of a special form
-getSpecialFormName(form : Special_name) -> string {
-    switch (form) {
-        SDefine(): "define";
-        SLambda(): "lambda";
-        SIf(): "if";
-        SQuote(): "quote";
-        SQuasiQuote(): "quasiquote";
-        SUnQuote(): "unquote";
-        SUnQuoteSplicing(): "unquote-splicing";
-        SMatch(): "match";
-        SLet(): "let";
-        SLetRec(): "letrec";
-        SBegin(): "begin";
-        SAnd(): "and";
-        SOr(): "or";
-        SSet(): "set!";
-        SImport(): "import";
-        SEval(): "eval";
-        SClosure(): "closure";
-        SList(): "list";
-    }
-}
-
-// Decompose an S-expression into operator and children
-decomposeSexpr(expr : Sexpr) -> Pair<string, [Sexpr]> {
-    switch (expr) {
-        SSVector(items): {
-            // Vector is handled as its own type
-            Pair("Vector", items);
-        };
-        SSList(parts): {
-            if (length(parts) > 0) {
-                op = switch (parts[0]) {
-                    SSOperator(opStr): opStr;
-                    SSVariable(varName): varName;
-                    SSConstructor(name): name;
-                    SSSpecialForm(form, __): getSpecialFormName(form);
-                    default: "List"; // Default operator for lists with non-operator first elements
-                };
-                
-                // Get the children (all elements after the first)
-                children = if (length(parts) > 1) subrange(parts, 1, length(parts) - 1) else [];
-                
-                Pair(op, children);
-            } else {
-                // Empty list
-                Pair("List", []);
-            }
-        }
-        SSInt(__): Pair("Int", []);
-        SSDouble(__): Pair("Double", []);
-        SSBool(__): Pair("Bool", []);
-        SSString(__): Pair("String", []);
-        SSVariable(name): Pair("Identifier", []);
-        SSConstructor(name): Pair("Constructor", []);
-        SSOperator(op): Pair("Operator", []);
-        SSSpecialForm(form, children): {
-            // Special forms are handled as lists with the special form as the operator
-            Pair(getSpecialFormName(form), children);
-        }
-    }
-}
-
-// Match a Sexpr pattern at a specific node
-matchSexprPatternAtNode(graph : OGraph, nodeId : int, pattern : Sexpr, tracing : bool) -> OSexprPatternResult {
+// One-level pattern matcher for SEXpr implementation
+// Returns a Pair containing success (bool) and updated bindings array
+matchSExprNodeOneLevel(graph : OGraph, nodeId : int, pattern : Sexpr, bindings : [Pair<string, int>], tracing : bool) -> Pair<bool, [Pair<string, int>]> {
     root = findORoot(graph, nodeId);
-    
-    // Decompose the pattern
-    decomposed = decomposeSexpr(pattern);
-    patternOp = decomposed.first;
-    patternChildren = decomposed.second;
-    
-    if (tracing) println("DEBUG: Matching pattern with op: " + patternOp + ", at node: " + i2s(root));
-    
-    // Special case for type annotations: (: expr Domain)
-    switch (pattern) {
-        SSList(parts): {
-            if (length(parts) == 3 && 
-                switch(parts[0]) { SSOperator(op): op == ":"; default: false; }) {
-                
-                if (tracing) println("DEBUG: Processing type annotation pattern (: operator)");
-                
-                // Extract expression and domain from the pattern
-                expressionPattern = parts[1];
-                domainPattern = parts[2];
-                
-                if (tracing) {
-                    println("DEBUG: Type annotation domain pattern: " + prettySexpr(domainPattern));
-                }
-                
-                // First match the expression part against this node
-                switch (matchSexprPatternAtNode(graph, nodeId, expressionPattern, tracing)) {
-                    OSexprPatternSuccess(exprBindings): {
-                        // Found a match for the expression part
-                        // Now verify domain membership
-                        domainNodeId = getSexprDomainId(graph, domainPattern, tracing);
-                        
-                        if (tracing) {
-                            println("DEBUG: getSexprDomainId for " + prettySexpr(domainPattern) + " returned: " + i2s(domainNodeId));
-                        }
-                        
-                        if (domainNodeId == -1) {
-                            if (tracing) println("DEBUG: Could not find domain node for: " + prettySexpr(domainPattern));
-                            OSexprPatternFailure();
-                        } else {
-                            // Check domain membership
-                            belongsToDomain = onodeBelongsTo(graph, nodeId, domainNodeId);
-                            
-                            if (tracing) {
-                                println("DEBUG: Checking if node " + i2s(nodeId) + " belongs to domain " + i2s(domainNodeId));
-                                println("DEBUG: Domain membership result: " + i2s(b2i(belongsToDomain)));
-                            }
-                            
-                            if (belongsToDomain) {
-                                if (tracing) println("DEBUG: Node belongs to required domain, match successful");
-                                OSexprPatternSuccess(exprBindings);  // Return the expression match bindings
-                            } else {
-                                if (tracing) println("DEBUG: Node does not belong to required domain, match failed");
-                                OSexprPatternFailure();
-                            }
-                        }
-                    }
-                    OSexprPatternFailure(): {
-                        if (tracing) println("DEBUG: Expression part of type annotation pattern didn't match");
-                        OSexprPatternFailure();
-                    }
-                }
-            } else {
-                // Regular list pattern
-                // Get the ONode for this root
-                matchRegularPattern(graph, root, pattern, patternOp, patternChildren, tracing);
-            }
-        }
-        // Special case for pattern variables (SSVariable in pattern context)
-        SSVariable(varName): {
-            if (varName != "") {
-                // In pattern matching, variables are treated as pattern variables
-                // that can match any node
-                if (tracing) println("DEBUG: Pattern variable " + varName + " binds to node " + i2s(root));
-                OSexprPatternSuccess(makeTree1(varName, root));
-            } else {
-                // Handle the case when varName is empty
-                OSexprPatternFailure();
-            }
-        }
-        // For all other patterns
-        default: {
-            matchRegularPattern(graph, root, pattern, patternOp, patternChildren, tracing);
-        }
-    }
-}
-
-// Match a regular (non-special) pattern
-matchRegularPattern(graph : OGraph, nodeId : int, pattern : Sexpr, patternOp : string, patternChildren : [Sexpr], tracing : bool) -> OSexprPatternResult {
-    // Get the ONode for this root
-    switch (lookupOClass(graph, nodeId)) {
-        Some(oclass): {
-            node = oclass.node;
-            nodeOp = node.op;
-            nodeChildren = node.children;
-            
-            // For leaf nodes (primitives)
-            if (isLeafPattern(pattern) && isCompatibleLeafNode(pattern, node)) {
-                if (tracing) println("DEBUG: Leaf node matches pattern");
-                OSexprPatternSuccess(makeTree());
-            }
-            // For compound expressions
-            else if (patternOp == nodeOp) {
-                // Basic operator matches, now check children count
-                if (length(patternChildren) == length(nodeChildren)) {
-                    if (tracing) println("DEBUG: Operator and child count match, matching children");
-                    // Match all children recursively
-                    matchSexprAllChildren(graph, nodeChildren, patternChildren, makeTree(), tracing);
-                } else {
-                    if (tracing) println("DEBUG: Child count mismatch: pattern=" + i2s(length(patternChildren)) + ", node=" + i2s(length(nodeChildren)));
-                    OSexprPatternFailure();
-                }
-            } else {
-                if (tracing) println("DEBUG: Operator mismatch: pattern=" + patternOp + ", node=" + nodeOp);
-                OSexprPatternFailure();
-            }
-        }
-        None(): {
-            if (tracing) println("DEBUG: Node not found in graph");
-            OSexprPatternFailure();
-        }
-    }
-}
-
-// Check if an S-expression is a leaf pattern (no children)
-isLeafPattern(pattern : Sexpr) -> bool {
-    switch (pattern) {
-        SSInt(__): true;
-        SSDouble(__): true;
-        SSBool(__): true;
-        SSString(__): true;
-        SSVariable(__): true;
-        SSConstructor(__): true;
-        SSOperator(__): true;
-        SSList(parts): length(parts) == 0;
-        SSVector(items): length(items) == 0;
-        SSSpecialForm(__, children): length(children) == 0;
-    }
-}
-
-// Check if a pattern leaf is compatible with a node
-isCompatibleLeafNode(pattern : Sexpr, node : ONode) -> bool {
-    switch (pattern) {
-        SSInt(i): node.op == "Int" && 
-                 switch (node.value) { OrbitInt(val): val == i; default: false; };
-        SSDouble(d): node.op == "Double" && 
-                    switch (node.value) { OrbitDouble(val): val == d; default: false; };
-        SSBool(b): node.op == "Bool" && 
-                  switch (node.value) { OrbitBool(val): val == b; default: false; };
-        SSString(s): node.op == "String" && 
-                    switch (node.value) { OrbitString(val): val == s; default: false; };
-        SSVariable(v): node.op == "Identifier" && 
-                      switch (node.value) { OrbitString(val): val == v; default: false; };
-        SSConstructor(c): node.op == "Constructor" && 
-                        switch (node.value) { OrbitString(val): val == c; default: false; };
-        SSOperator(o): node.op == "Operator" && 
-                     switch (node.value) { OrbitString(val): val == o; default: false; };
-        default: false;
-    }
-}
-
-// Match all children of an operation
-matchSexprAllChildren(graph : OGraph, childIds : [int], patterns : [Sexpr], 
-                      bindings : Tree<string, int>, tracing : bool) -> OSexprPatternResult {
-    if (length(childIds) == 0 && length(patterns) == 0) {
-        // All children matched successfully
-        OSexprPatternSuccess(bindings);
-    } else if (length(childIds) == 0 || length(patterns) == 0) {
-        // Mismatched number of children
-        OSexprPatternFailure();
-    } else {
-        // Try to match the first child
-        switch (matchSexprPatternAtNode(graph, childIds[0], patterns[0], tracing)) {
-            OSexprPatternSuccess(childBindings): {
-                // Merge bindings, ensuring consistency
-                switch (mergeSexprBindings(graph, bindings, childBindings)) {
-                    OSexprPatternSuccess(mergedBindings): {
-                        // Continue with remaining children
-                        matchSexprAllChildren(graph, tail(childIds), tail(patterns), mergedBindings, tracing);
-                    }
-                    OSexprPatternFailure(): {
-                        OSexprPatternFailure();
-                    }
-                }
-            }
-            OSexprPatternFailure(): {
-                OSexprPatternFailure();
-            }
-        }
-    }
-}
-
-// Merge bindings, ensuring consistency (same variable bound to semantically equivalent nodes)
-mergeSexprBindings(graph : OGraph, a : Tree<string, int>, b : Tree<string, int>) -> OSexprPatternResult {
-    // Helper to check if two nodes are in the same equivalence class
-    areEquivalentNodes = \id1, id2 -> {
-        // If they're already in the same equivalence class, they're equivalent
-        findORoot(graph, id1) == findORoot(graph, id2);
-    };
-
-    result = fold(getTreeKeys(b), OSexprPatternSuccess(a), \acc, key -> {
-        switch (acc) {
-            OSexprPatternSuccess(bindings): {
-                bValue = lookupTreeDef(b, key, -1);
-                switch (lookupTree(bindings, key)) {
-                    Some(aValue): {
-                        // Variable already bound, must be consistent
-                        // This is critical for patterns like (+ x x) where the same variable appears multiple times
-                        if (areEquivalentNodes(aValue, bValue)) { 
-                            // Accept if they're semantically equivalent expressions
-                            OSexprPatternSuccess(bindings);
-                        } else {
-                            OSexprPatternFailure();
-                        }
-                    }
-                    None(): {
-                        // New binding
-                        OSexprPatternSuccess(setTree(bindings, key, bValue));
-                    }
-                }
-            }
-            OSexprPatternFailure(): OSexprPatternFailure();
-        }
-    });
-    
-    result;
+	switch (pattern) {
+		SSVariable(varName): {
+			if (varName != "") {
+				// Check if this variable is already bound
+				existingBinding = find(bindings, \binding -> binding.first == varName);
+				
+				switch (existingBinding) {
+					Some(binding): {
+						// Variable is already bound, must be consistent
+						if (findORoot(graph, binding.second) == root) {
+							// Matched consistently
+							if (tracing) println("DEBUG: Consistent binding for " + varName);
+							Pair(true, bindings);
+						} else {
+							// Inconsistent binding
+							if (tracing) println("DEBUG: Inconsistent binding for " + varName);
+							Pair(false, []);
+						}
+					}
+					None(): {
+						// New binding
+						if (tracing) println("DEBUG: New binding: " + varName + " = " + i2s(root));
+						newBindings = concat(bindings, [Pair(varName, root)]);
+						Pair(true, newBindings);
+					}
+				}
+			} else {
+				// Empty variable name is not valid
+				Pair(false, []);
+			}
+		}
+		default: {
+			// Get the ONode for this node
+			switch (lookupOClass(graph, root)) {
+				Some(oclass): {
+					node = oclass.node;
+					// Use our enhanced decomposition function to get all components
+					components = decomposeSexpr(pattern);
+					patternOp = components.first;
+					patternChildren = components.second;
+					patternValue = components.third;
+					// Normal pattern matching
+					nodeOp = node.op;
+					nodeChildren = node.children;
+					if (patternOp == nodeOp && patternValue == node.value) {
+						if (tracing) println("DEBUG: Matching pattern with op: " + patternOp + ", at node: " + i2s(root));
+						Pair(true, []);
+					} else {
+						Pair(false, []);
+					}
+				}
+				None(): {
+					if (tracing) println("DEBUG: Node not found in graph");
+					Pair(false, []);
+				}
+			}
+		}
+	}
 }

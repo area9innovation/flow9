@@ -1327,6 +1327,114 @@ SIMDVariable(v) ⊢ AllocateSIMDRegister(v);
 
 These extensions allow the register allocator to handle complex codebases, optimizing for both general-purpose and special-purpose registers while respecting ABI conventions and minimizing the performance impact of spills.
 
+
+## Region-Based Memory Inference
+
+Extends the analysis to infer memory region lifetimes for potential stack or arena allocation, reducing reliance on GC.
+
+### 1. Region and Effect Domains
+
+```orbit
+// Represent Regions
+RegionVar(id) ⊂ DomainTerm; // Abstract region variable, e.g., RegionVar(1)
+Region_Global ⊂ DomainTerm; // Predefined global region
+Region_Stack(ScopeId) ⊂ DomainTerm; // Stack region tied to a scope
+
+// Represent Effects
+Effect ⊂ Property; // Base for effects
+AllocatesIn(Region) ⊂ Effect;
+ReadsFrom(Region) ⊂ Effect;
+WritesTo(Region) ⊂ Effect;
+Frees(Region) ⊂ Effect;
+FunctionEffects(Reads : set<Region>, Writes : set<Region>, ...) ⊂ Effect;
+
+// Represent Allocation Decisions
+AllocationStrategy ⊂ Property;
+AllocateOnStack ⊂ AllocationStrategy;
+AllocateInRegion(Region) ⊂ AllocationStrategy;
+AllocateOnHeapGC ⊂ AllocationStrategy; // Fallback
+```
+
+### 2. Constraint Generation via Rewrite Rules (`⊢`)
+
+```orbit
+// Initialization: Literals are in the global region
+e : Literal ⊢ e : Region(Region_Global);
+
+// Allocation: 'cons' allocates in a fresh region bound by its inputs
+(cons x y)
+	where x : Region(Rx), y : Region(Ry)
+	let ρ_new = freshRegionVar()
+	// Assert effects and constraints
+	⊢ (cons x y) : Region(ρ_new) : AllocatesIn(ρ_new),
+	  AddConstraint(Rx ≤ ρ_new), AddConstraint(Ry ≤ ρ_new); // Add constraints to solver
+
+// Variable Reference
+use(x) where x : Region(Rx)
+	⊢ AddConstraint(IsLive(Rx, CurrentPoint)); // Region Rx must be live
+
+// Assignment/Update
+(set-car! p x) where p : Region(Rp), x : Region(Rx)
+	⊢ AddConstraint(Rx ≤ Rp); // Value must live as long as container
+
+// Function Call Effects
+f(arg)
+	where f : FunctionType(..., Effects(Reads=RS, Writes=WS, Allocates=AS, Frees=FS)),
+		  arg : Region(Rarg)
+	let Rresult = freshRegionVar() // Region for the result
+	⊢ f(arg) : Region(Rresult),
+	  AddConstraint(Rarg ≤ RegionOf(f)), // Argument lifetime
+	  // Add constraints based on effects RS, WS, AS, FS relating Rarg, Rresult, and function's regions
+	  // e.g., for R in RS: AddConstraint(R must be live during call)
+	  // e.g., for A in AS: AddConstraint(A ≤ Rresult if result contains allocation)
+	  ... ;
+```
+**Note:** `AddConstraint` is a conceptual action indicating the constraint needs to be added to a global solver system.
+
+### 3. Constraint Solving
+
+*   Requires a separate pass or integrated solver to process the collected `ρ₁ ≤ ρ₂` inequalities.
+*   The solver determines the lifetime relationship between abstract regions (e.g., region `ρ₁` is contained within the lifetime of function scope `S`).
+
+### 4. Allocation Decision Rules (`→`)
+
+Apply after constraint solving.
+
+```orbit
+// Map solved regions to allocation strategies
+v : Region(ρ), SolvedLifetime(ρ, StackScope(S)) ⊢ v : AllocateOnStack;
+v : Region(ρ), SolvedLifetime(ρ, ArenaScope(A)) ⊢ v : AllocateInRegion(Region_Arena(A));
+v : Region(ρ), SolvedLifetime(ρ, Escaping) ⊢ v : AllocateOnHeapGC; // Fallback
+```
+
+### 5. Code Generation Transformation (`→`)
+
+Translate based on allocation annotations.
+
+```orbit
+// Transform 'cons' based on allocation strategy
+(cons x y) : AllocateOnStack
+	→ (scheme_stack_cons x y) // Target Scheme/C call for stack cons
+	⊢ :SchemeCode;
+
+(cons x y) : AllocateInRegion(Region_Arena(A))
+	→ (scheme_arena_cons A x y) // Target call for arena cons
+	⊢ :SchemeCode;
+
+(cons x y) : AllocateOnHeapGC
+	→ (scheme_gc_cons x y) // Target call for GC cons
+	⊢ :SchemeCode;
+
+// Insert region management code
+EnterScope(S) : NeedsStackRegion
+	→ (scheme_enter_stack_region()) // Insert stack allocation setup
+	⊢ :SchemeCode;
+
+ExitScope(S) : HasStackRegion(ρ_stack)
+	→ (scheme_leave_stack_region ρ_stack) // Insert stack deallocation
+	⊢ :SchemeCode;
+```
+
 ## Conclusion
 
 By using pattern matching with domain annotations and the entailment operator, Orbit can infer semantic properties of expressions and propagate them appropriately. The ability to bubble up properties from subexpressions is particularly powerful, allowing for compositional reasoning about complex expressions while maintaining precision. This approach enables sophisticated program transformation while preserving semantic guarantees.

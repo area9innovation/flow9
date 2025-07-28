@@ -1,10 +1,21 @@
 import tools/flowc/backends/javascript/fi2javascript_utils;
 import string_utils;
 import sys/process;
+import ds/tree;
+import tools/flowc/incremental/fiexp;
+import tools/flowc/incremental/fimodule;
+import tools/flowc/incremental/fiprogram;
+import lingo/flow/javascript_keywords;
 
 export {
 	fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOverlayGroup, programCode : string) -> bool;
 }
+
+FiJsNamespaceDeclaration(
+	name : string,
+	kind : string, // "function", "variable", "native", "struct", "union"  
+	type : FiType
+);
 
 fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOverlayGroup, programCode : string) -> bool {
 	hasRequire = ovl.requireList != [];
@@ -24,7 +35,14 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 	if (length(extern_deps) == 0) {
 		// Just save a resulting file.
 		fcVerbose(cfg, 1, "Saving output file...");
-		saveFileContent(outfile, programCode, cfg.threadId);
+		finalCode = if (cfg.namespaceMode) {
+			fcVerbose(cfg, 0, "Applying namespace wrapper...");
+			fiJsWrapInNamespace(programCode, cfg, program, ovl)
+		} else {
+			fcVerbose(cfg, 0, "No namespace wrapper (namespaceMode: " + b2s(cfg.namespaceMode) + ")");
+			programCode
+		};
+		saveFileContent(outfile, finalCode, cfg.threadId);
 		saved_ok();
 	} else {
 		conf_dir = lookupTreeDef(program.config.config, "confdir", "");
@@ -47,7 +65,12 @@ fiLinkExternalJsDependencies(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOv
 			if (^success) {
 				imports = concatStrings(extern_imports);
 				js_file = changeFileExt(outfile, "") + "__1.js";
-				saveFileContent(js_file, imports + programCode, cfg.threadId);
+				finalCode = if (cfg.namespaceMode) {
+					fiJsWrapInNamespace(programCode, cfg, program, ovl)
+				} else {
+					programCode
+				};
+				saveFileContent(js_file, imports + finalCode, cfg.threadId);
 				args0 = ["--bundle", "--outfile=" + outfile,
 					// this option is added to suppress warnings about using 'this' in ECMAScript module
 					"--define:this=undefined",
@@ -121,7 +144,7 @@ ensureNativeHostIsLoaded(program : FiProgram, dep : FiJsDependency, dir : string
 				// Save the *.d.ts - definitions of TypeSctipt types, corresponding to flow types in natives_module.
 				ts_d_file = changeFileExt(dep.package, "-types.d.ts");
 				struct_unions = fiStructOrUnionsInNatives(program, natives_module);
-				if (!setFileContent(ts_d_file, fiStructOrUnions2Ts(struct_unions))) {
+				if (!setFileContent(ts_d_file, fiStructOrUnions2Ts(struct_unions, cfg))) {
 					success := false;
 					fcPrintln(
 						"Failed to save file: '" + ts_d_file + "'\n" +
@@ -333,10 +356,10 @@ fiTypars2Ts(typars : [FiType]) -> string {
 		"<" + superglue(typars, \t -> fiType2TsType(t), ", ") + ">";
 }
 
-fiTypeStruct2Ts(type : FiTypeStruct) -> string {
+fiTypeStruct2Ts(type : FiTypeStruct, cfg : FiJsConfig) -> string {
 	"type " + type.name + fiTypars2Ts(type.typars) + " = {\n" +
 	"\tname: string;\n" +
-	"\t_id: number;\n" +
+	"\t" + (if (cfg.namespaceMode) "kind:" else "_id:") + " number;\n" +
 	concatStrings(map(type.args, \arg -> "\t" + arg.name + ": " + fiType2TsType(arg.type) + ";\n")) +
 	"}\n";
 }
@@ -405,7 +428,7 @@ fiTypenamesInType(acc : Set<string>, tp : FiType, prog : FiProgram) -> Set<strin
 	}
 }
 
-fiStructOrUnions2Ts(types : [FiStructOrUnion]) -> string {
+fiStructOrUnions2Ts(types : [FiStructOrUnion], cfg : FiJsConfig) -> string {
 	structs = filtermap(types, \tp -> switch (tp) {
 		FiTypeStruct(__,__,__,__): Some(tp);
 		FiTypeUnion(__,__,__,__): None();
@@ -415,7 +438,7 @@ fiStructOrUnions2Ts(types : [FiStructOrUnion]) -> string {
 		FiTypeUnion(__,__,__,__): Some(tp);
 	});
 	ts_structs = superglue(structs,
-		\struct -> "export " + fiTypeStruct2Ts(struct),
+		\struct -> "export " + fiTypeStruct2Ts(struct, cfg),
 		"\n"
 	);
 	ts_unions = superglue(unions,
@@ -426,4 +449,197 @@ fiStructOrUnions2Ts(types : [FiStructOrUnion]) -> string {
 	"\t __v: T;\n" +
 	"}\n" +
 	ts_structs + (if (ts_unions == "") "" else "\n\n" + ts_unions);
+}
+
+fiJsWrapInNamespace(programCode : string, cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) -> string {
+	// Generate namespace wrapper for TypeScript/JavaScript interop
+	namespaceStart = "export const Flow = (() => {\n";
+	
+	// Extract declarations from the program structure
+	basicDeclarations = fiJsExtractDeclarationsFromProgram(program);
+	
+	// Automatically add struct constructors for types used by exported functions
+	structConstructors = if (!isEmptySet(cfg.jslibrary)) {
+		fold(set2array(cfg.jslibrary), [], \acc, funcName -> {
+			// Find the function declaration and extract types it uses
+			mdec = lookupTree(program.names.toplevel, funcName);
+			switch (mdec) {
+				None(): acc;
+				Some(dec): {
+					referencedTypes = extractReferencedTypes(dec);
+					fold(referencedTypes, acc, \acc2, typeName -> {
+						structDef = lookupTree(program.names.structs, typeName);
+						switch (structDef) {
+							Some(struct): {
+								// Check if this struct name is not already in the declarations
+								if (!exists(acc2, \d -> d.name == typeName)) {
+									arrayPush(acc2, FiJsNamespaceDeclaration(typeName, "struct", FiTypeName(typeName, [])));
+								} else acc2;
+							}
+							None(): acc2;
+						}
+					});
+				}
+			}
+		});
+	} else [];
+	
+	declarations = concat(basicDeclarations, structConstructors);
+	
+	// Wrap the original code in a function scope
+	wrappedCode = "    // Original Flow code\n" +
+		fiJsIndentCode(programCode, "    ") + "\n";
+	
+	// Generate the return statement with organized namespace structure
+	namespaceReturn = "    return {\n" +
+		fiJsGenerateNamespaceExportsFromProgram(cfg, ovl, declarations) +
+		"    };\n";
+	
+	namespaceEnd = "})();\n";
+	
+	namespaceStart + wrappedCode + namespaceReturn + namespaceEnd;
+}
+
+fiJsExtractDeclarationsFromProgram(program : FiProgram) -> [FiJsNamespaceDeclaration] {
+	// Extract all exportable declarations from the Flow program
+	
+	// Extract functions and global variables from toplevel
+	toplevelDecls = foldTree(program.names.toplevel, [], \name, decl, acc -> {
+		switch (decl) {
+			FiFunctionDec(__, lambda, type, __, __): {
+				arrayPush(acc, FiJsNamespaceDeclaration(name, "function", type));
+			}
+			FiGlobalVar(__, value, type, __, __): {
+				arrayPush(acc, FiJsNamespaceDeclaration(name, "variable", type));
+			}
+			FiNativeDec(__, __, type, nativeName, __, __, __): {
+				arrayPush(acc, FiJsNamespaceDeclaration(name, "native", type));
+			}
+		}
+	});
+	
+	// Extract struct constructors
+	structDecls = foldTree(program.names.structs, [], \name, struct, acc -> {
+		structType = FiTypeName(name, struct.typars);
+		arrayPush(acc, FiJsNamespaceDeclaration(name, "struct", structType));
+	});
+	
+	// Extract union constructors
+	unionDecls = foldTree(program.names.unions, [], \name, union, acc -> {
+		// Add each union case as a constructor
+		fold(union.typenames, acc, \acc2, typeName -> {
+			switch (typeName) {
+				FiTypeName(caseName, typars): {
+					unionType = FiTypeName(caseName, typars);
+					arrayPush(acc2, FiJsNamespaceDeclaration(caseName, "union", unionType));
+				}
+			}
+		});
+	});
+	
+	concat(concat(toplevelDecls, structDecls), unionDecls);
+}
+
+fiJsIndentCode(code : string, indent : string) -> string {
+	lines = strSplit(code, "\n");
+	indentedLines = map(lines, \line -> 
+		if (trim(line) == "") line else indent + line
+	);
+	strGlue(indentedLines, "\n");
+}
+
+fiJsGenerateStructConstructors(declarations : [FiJsNamespaceDeclaration]) -> string {
+	// The Flow compiler generates struct constructors automatically
+	// We don't need to create wrapper functions - just expose them in exports
+	"";
+}
+
+extractReferencedTypes(dec : FiDeclaration) -> [string] {
+	// Extract type names referenced by a declaration
+	switch (dec) {
+		FiFunctionDec(name, lambda, type, declStart, defiStart): {
+			// Extract types from function signature
+			argTypes = map(type.args, \arg -> extractTypeName(arg.type));
+			returnTypes = [extractTypeName(type.returnType)];
+			concat(argTypes, returnTypes);
+		}
+		FiGlobalVar(name, value, type, declStart, defiStart): {
+			[extractTypeName(type)];
+		}
+		FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+			switch (type) {
+				FiTypeFunction(args, returnType): {
+					argTypes = map(args, \arg -> extractTypeName(arg.type));
+					returnTypes = [extractTypeName(returnType)];
+					concat(argTypes, returnTypes);
+				}
+				default: [extractTypeName(type)];
+			}
+		}
+	}
+}
+
+extractTypeName(type : FiType) -> string {
+	// Extract the main type name from a FiType
+	switch (type) {
+		FiTypeName(name, typars): name;
+		FiTypeArray(t): extractTypeName(t);
+		FiTypeRef(t): extractTypeName(t);
+		FiTypeFunction(args, returnType): extractTypeName(returnType);
+		default: ""; // For built-in types like int, string, etc.
+	}
+}
+
+fiJsGenerateNamespaceExportsFromProgram(cfg : FiJsConfig, ovl : FiJsOverlayGroup, declarations : [FiJsNamespaceDeclaration]) -> string {
+	// Generate namespace exports organized by type
+	functions = filter(declarations, \decl -> decl.kind == "function");
+	variables = filter(declarations, \decl -> decl.kind == "variable");
+	structs = filter(declarations, \decl -> decl.kind == "struct");
+	unions = filter(declarations, \decl -> decl.kind == "union");
+	natives = filter(declarations, \decl -> decl.kind == "native");
+	
+	// Export functions
+	functionExports = map(functions, \decl -> 
+		"        " + decl.name + ": A9__" + decl.name + (if (containsSet(ovl.keywords, decl.name) && decl.name != "length") "__" else "") + ","
+	);
+
+	// Export variables  
+	variableExports = map(variables, \decl -> 
+		"        " + decl.name + ": A9__" + decl.name + (if (containsSet(ovl.keywords, decl.name) && decl.name != "length") "__" else "") + ","
+	);
+
+	// Export struct constructors so TypeScript can create proper Flow structs with _id field
+	structExports = map(structs, \decl -> {
+		// Look up the struct info to get the constructor name
+		structInfo = lookupTree(ovl.structs, decl.name);
+		switch (structInfo) {
+			Some(sinfo): {
+				if (length(sinfo.struct.args) == 0) {
+					// Singleton struct - export the static instance
+					"        create" + decl.name + ": st_" + (if (cfg.readable) sinfo.struct.name else i2s(sinfo.id)) + ","
+				} else {
+					// Constructor function - export the constructor
+					"        create" + decl.name + ": c$" + formatId(sinfo.id) + ","
+				}
+			}
+			None(): "        // Unknown struct: create" + decl.name + ","
+		}
+	});
+	
+	// Skip union constructors for the same reason  
+	unionExports = [];
+	
+	// Export natives
+	nativeExports = map(natives, \decl ->
+		"        " + decl.name + ": A9__" + decl.name + (if (containsSet(ovl.keywords, decl.name) && decl.name != "length") "__" else "") + ","
+	);
+	
+	// Combine all exports
+	allExports = concat(concat(concat(concat(functionExports, variableExports), structExports), unionExports), nativeExports);
+	
+	if (length(allExports) > 0) {
+		strGlue(allExports, "\n") + "\n";
+	} else {
+		"        // No Flow declarations to export\n";
+	};
 }

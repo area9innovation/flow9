@@ -1,0 +1,251 @@
+import server/http;
+import formats/json/json;
+import ds/tree;
+import string;
+import ds/tuples;
+import runtime;
+
+export {
+	// JSON-RPC 2.0 Server
+	createJsonRpcServer(port : int, handlers : Tree<string, (Json) -> Json>) -> () -> void;
+	
+	// JSON-RPC structures
+	JsonRpcRequest(
+		jsonrpc : string,
+		method : string,
+		params : Maybe<Json>,
+		id : Maybe<Json>
+	);
+	
+	JsonRpcResponse(
+		jsonrpc : string,
+		result : Maybe<Json>,
+		error : Maybe<JsonRpcError>,
+		id : Maybe<Json>
+	);
+	
+	JsonRpcError(
+		code : int,
+		message : string,
+		data : Maybe<Json>
+	);
+	
+	// Standard JSON-RPC error codes
+	JSON_RPC_PARSE_ERROR : int;
+	JSON_RPC_INVALID_REQUEST : int;
+	JSON_RPC_METHOD_NOT_FOUND : int;
+	JSON_RPC_INVALID_PARAMS : int;
+	JSON_RPC_INTERNAL_ERROR : int;
+	
+	// Helper functions for creating responses
+	createSuccessResponse(result : Json, id : Maybe<Json>) -> JsonRpcResponse;
+	createErrorResponse(code : int, message : string, id : Maybe<Json>) -> JsonRpcResponse;
+	createErrorResponseWithData(code : int, message : string, data : Json, id : Maybe<Json>) -> JsonRpcResponse;
+	
+	// Convert JsonRpc structures to Json
+	jsonRpcResponseToJson(response : JsonRpcResponse) -> Json;
+	jsonRpcErrorToJson(error : JsonRpcError) -> Json;
+	
+	// Parse JsonRpc request from Json
+	parseJsonRpcRequest(json : Json) -> Maybe<JsonRpcRequest>;
+}
+
+// JSON-RPC 2.0 error codes
+JSON_RPC_PARSE_ERROR = -32700;
+JSON_RPC_INVALID_REQUEST = -32600;
+JSON_RPC_METHOD_NOT_FOUND = -32601;
+JSON_RPC_INVALID_PARAMS = -32602;
+JSON_RPC_INTERNAL_ERROR = -32603;
+
+createJsonRpcServer(port : int, handlers : Tree<string, (Json) -> Json>) -> () -> void {
+	onOpen = \ -> {
+		println("JSON-RPC 2.0 server started on port " + i2s(port));
+	};
+	
+	onOpenError = \error -> {
+		println("Failed to start JSON-RPC server: " + error);
+	};
+	
+	onMessage = \request : HttpRequest, sendResponse : (HttpResponse) -> void -> {
+		response = processJsonRpcRequest(request, handlers);
+		sendResponse(response);
+	};
+	
+	createHttpServer(port, onOpen, onOpenError, onMessage);
+}
+
+processJsonRpcRequest(request : HttpRequest, handlers : Tree<string, (Json) -> Json>) -> HttpResponse {
+	// Only accept POST requests
+	isPost = switch (request.method) {
+		Some(method): method == Post();
+		None(): false;
+	};
+	
+	if (!isPost) {
+		errorResponse = createErrorResponse(JSON_RPC_INVALID_REQUEST, "Only POST method is allowed", None());
+		HttpResponse(405, json2string(jsonRpcResponseToJson(errorResponse)), [KeyValue("Content-Type", "application/json")]);
+	} else {
+		// Parse JSON from request body
+		jsonResult = parseJson(request.body);
+		
+		// Check if it's a valid JSON-RPC request
+		maybeRequest = parseJsonRpcRequest(jsonResult);
+		
+		switch (maybeRequest) {
+			None(): {
+				errorResponse = createErrorResponse(JSON_RPC_INVALID_REQUEST, "Invalid JSON-RPC request", None());
+				HttpResponse(200, json2string(jsonRpcResponseToJson(errorResponse)), [KeyValue("Content-Type", "application/json")]);
+			}
+			Some(jsonRpcRequest): {
+				// Check if this is a notification (no id)
+				isNotification = switch (jsonRpcRequest.id) {
+					None(): true;
+					Some(idValue): switch (idValue) {
+						JsonNull(): true;
+						default: false;
+					};
+				};
+				
+				// Handle the method call
+				responseJson = handleMethodCall(jsonRpcRequest, handlers);
+				
+				if (isNotification) {
+					// For notifications, return empty response
+					HttpResponse(200, "", []);
+				} else {
+					HttpResponse(200, json2string(responseJson), [KeyValue("Content-Type", "application/json")]);
+				}
+			}
+		}
+	}
+}
+
+handleMethodCall(request : JsonRpcRequest, handlers : Tree<string, (Json) -> Json>) -> Json {
+	methodName = request.method;
+	
+	switch (lookupTree(handlers, methodName)) {
+		None(): {
+			errorResponse = createErrorResponse(JSON_RPC_METHOD_NOT_FOUND, "Method not found: " + methodName, request.id);
+			jsonRpcResponseToJson(errorResponse);
+		}
+		Some(handler): {
+			// Call the handler
+			params = either(request.params, JsonNull());
+			result = handler(params);
+			successResponse = createSuccessResponse(result, request.id);
+			jsonRpcResponseToJson(successResponse);
+		}
+	}
+}
+
+parseJsonRpcRequest(json : Json) -> Maybe<JsonRpcRequest> {
+	switch (json) {
+		JsonObject(members): {
+			jsonrpcVersion = getJsonStringField(json, "jsonrpc", "");
+			method = getJsonStringField(json, "method", "");
+			
+			if (jsonrpcVersion != "2.0" || method == "") {
+				None();
+			} else {
+				params = getJsonFieldValueM(json, "params");
+				id = getJsonFieldValueM(json, "id");
+				
+				Some(JsonRpcRequest(jsonrpcVersion, method, params, id));
+			}
+		}
+		default: None();
+	}
+}
+
+createSuccessResponse(result : Json, id : Maybe<Json>) -> JsonRpcResponse {
+	JsonRpcResponse("2.0", Some(result), None(), id);
+}
+
+createErrorResponse(code : int, message : string, id : Maybe<Json>) -> JsonRpcResponse {
+	error = JsonRpcError(code, message, None());
+	JsonRpcResponse("2.0", None(), Some(error), id);
+}
+
+createErrorResponseWithData(code : int, message : string, data : Json, id : Maybe<Json>) -> JsonRpcResponse {
+	error = JsonRpcError(code, message, Some(data));
+	JsonRpcResponse("2.0", None(), Some(error), id);
+}
+
+jsonRpcResponseToJson(response : JsonRpcResponse) -> Json {
+	baseFields = [
+		Pair("jsonrpc", JsonString(response.jsonrpc))
+	];
+	
+	withResult = switch (response.result) {
+		None(): baseFields;
+		Some(result): arrayPush(baseFields, Pair("result", result));
+	};
+	
+	withError = switch (response.error) {
+		None(): withResult;
+		Some(error): arrayPush(withResult, Pair("error", jsonRpcErrorToJson(error)));
+	};
+	
+	withId = switch (response.id) {
+		None(): arrayPush(withError, Pair("id", JsonNull()));
+		Some(id): arrayPush(withError, Pair("id", id));
+	};
+	
+	JsonObject(withId);
+}
+
+jsonRpcErrorToJson(error : JsonRpcError) -> Json {
+	baseFields = [
+		Pair("code", JsonDouble(i2d(error.code))),
+		Pair("message", JsonString(error.message))
+	];
+	
+	withData = switch (error.data) {
+		None(): baseFields;
+		Some(data): arrayPush(baseFields, Pair("data", data));
+	};
+	
+	JsonObject(withData);
+}
+
+// Example usage with some sample methods
+main() {
+	// Create handlers for various methods
+	handlers = setTree(
+		setTree(
+			setTree(
+				makeTree(),
+				"add",
+				\params -> {
+					array = getJsonArrayValue(params, []);
+					if (length(array) == 2) {
+						a = getJsonDoubleValue(array[0], 0.0);
+						b = getJsonDoubleValue(array[1], 0.0);
+						JsonDouble(a + b);
+					} else {
+						JsonString("Invalid parameters: expected [number, number]");
+					}
+				}
+			),
+			"subtract", 
+			\params -> {
+				array = getJsonArrayValue(params, []);
+				if (length(array) == 2) {
+					a = getJsonDoubleValue(array[0], 0.0);
+					b = getJsonDoubleValue(array[1], 0.0);
+					JsonDouble(a - b);
+				} else {
+					JsonString("Invalid parameters: expected [number, number]");
+				}
+			}
+		),
+		"echo",
+		\params -> params
+	);
+	
+	// Start the server on port 8080
+	closeServer = createJsonRpcServer(8080, handlers);
+	
+	println("JSON-RPC 2.0 server is running...");
+	println("Test with: curl -X POST http://localhost:8080 -H \"Content-Type: application/json\" -d '{\"jsonrpc\":\"2.0\",\"method\":\"add\",\"params\":[1,2],\"id\":1}'");
+}

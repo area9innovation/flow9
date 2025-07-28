@@ -36,12 +36,28 @@ export {
 		inspectorM : Maybe<ParaElementInspector>,
 		scriptM : Maybe<ParaElementScriptType>,
 		ignoreLetterSpacing : bool,
-		wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+		wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+		isUseContextWordWidth : bool
 	) -> TParaWord;
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double, preventNodeCalculation : bool) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
+	getTParaWordTextM(w: TParaWord) -> Maybe<string>;
+	getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalculation : bool) -> FormMetrics;
 
 	isSpaceWord(word : TParaWord) -> bool;
+
+	TextMeasurementAccumulator(
+		processedWords : List<TParaWord>,
+		accumulatedText : string,
+		accumulatedMetrics : FormMetrics
+	);
+
+	measureWordAndUpdateInspector(
+		currentWord : TParaWord,
+		subAcc : TextMeasurementAccumulator,
+		isLastChild : bool,
+		paragraphRtl : bool
+	) -> Pair<string, FormMetrics>;
 }
 
 useWigiTextDynamicMetrics = !isUrlParameterFalse("wigi_text_dynamic_metrics");
@@ -242,6 +258,11 @@ isSpaceWord(word : TParaWord) -> bool {
 		GeneralText(text): text == nonBreakableSpace;
 		default: false;
 	}
+}
+
+isParaWordDecorated(word : TParaWord) -> bool {
+	// TODO : Add another conditions for decoration
+	containsStruct(word.style, Underlined([]))
 }
 
 fixAvailableWidthForIndent(awB : Transform<double>, indent : double) -> (Tropic) -> Tropic {
@@ -847,7 +868,7 @@ appendOrJoinWord(
 		} else if (acc.lineNumber == lineNumber && either(acc.rtlM, getValue(word.rtl)) == getValue(word.rtl)) {
 			ofs = fselect2Lift(wordOffset, acc.currentOffset, \wo, co -> Point(min(wo.x, co.x), wo.y));
 			// just concat to current string
-			if (isSpace(wordString)) {
+			if (isSpace(wordString) && !isParaWordDecorated(word)) {
 				JoinTextAcc(acc with
 					currentSpaces = wordString + acc.currentSpaces,
 					currentOffset = ofs
@@ -860,7 +881,7 @@ appendOrJoinWord(
 				)
 			}
 		} else {
-			if (isSpace(wordString)) {
+			if (isSpace(wordString) && !isParaWordDecorated(word)) {
 				acc
 			} else {
 				JoinTextAcc(
@@ -907,7 +928,8 @@ commonWordConstructor(
 	inspectorM : Maybe<ParaElementInspector>,
 	scriptM : Maybe<ParaElementScriptType>,
 	isLastChild : bool,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic
+	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	isUseContextWordWidth : bool
 ) -> TParaWord {
 	inspector = eitherFn(inspectorM, idfn, dummyInspectorFn);
 	ls = if (isLastChild) 0.0 else extractStruct(style, zeroLetterSpacing).spacing;
@@ -915,16 +937,30 @@ commonWordConstructor(
 
 	inspectFn = \t -> inspectWordView(t, inspector, ls, !isLastChild);
 
+	ghostViewTropic = \ -> if (isUseContextWordWidth) {
+		tr
+	} else inspectFn(tr)
+	
 	ghostView = switch(w) {
-		GeneralSpace(__, __, __): TVisible(fnot(inspector.detached), inspectFn(tr));
+		GeneralSpace(__, __, __): TVisible(fnot(inspector.detached), ghostViewTropic());
+		GeneralDynamicSpace(__, __, __): ghostViewTropic();
+		GeneralText(__): ghostViewTropic();
+		GeneralDynamicText(__): ghostViewTropic();
 		default: inspectFn(tr);
 	}
 
 	// if tr is not constant size (in the editorm TText is wrapped by TMutable for example)
 	// then the inspector.size would be not measured after inspectFn call
 	// and we have to estimate it using artificially created TText
-	if (!isStatic && isSome(inspectorM) && getValue(inspector.size) == zeroWH) {
-		inspectText = \txt -> inspectFn(TText(txt, applyAlphabetStyles(detectAlphabet(txt), style))) |> ignore;
+	if (!isUseContextWordWidth && !isStatic && isSome(inspectorM) && getValue(inspector.size) == zeroWH) {
+		inspectText = \txt -> inspectFn(
+			TText(txt,
+				replaceStruct(
+					applyAlphabetStyles(detectAlphabet(txt), style),
+					SetRTL(getValue(rtl))
+				)
+			)
+		) |> ignore;
 		inspectSpace = \txt, alBef, alAft -> inspectFn(TText(txt, apply2AlphabetsScaling(alBef, alAft, style))) |> ignore;
 		switch (w) {
 			GeneralText(txt): inspectText(txt);
@@ -947,6 +983,42 @@ commonWordConstructor(
 		wordsViewConstructor,
 		\ -> if (isStatic) inspectWordViewStatic(tr, inspector, ls, !isLastChild),
 		true
+	);
+}
+
+measureWordAndUpdateInspector(
+	currentWord : TParaWord,
+	subAcc : TextMeasurementAccumulator,
+	isLastChild : bool,
+	paragraphRtl : bool
+) -> Pair<string, FormMetrics> {
+	eitherMap(
+		getTParaWordTextM(currentWord),
+		\text -> {
+			combinedText = subAcc.accumulatedText + text;
+			inspector = currentWord.inspector;
+			ls = if (isLastChild) 0.0 else extractStruct(currentWord.style, zeroLetterSpacing).spacing;
+			combinedTextMetrics = getWordViewStaticMetrics(
+				TText(
+					combinedText,
+					replaceStruct(
+						applyAlphabetStyles(detectAlphabet(combinedText), currentWord.style),
+						SetRTL(paragraphRtl)
+					)
+				),
+				ls,
+				!isLastChild
+			);
+			wordDimensions = if (subAcc.accumulatedMetrics.width !=0.) {
+				WidthHeight(combinedTextMetrics.width - subAcc.accumulatedMetrics.width, combinedTextMetrics.height)
+			} else {
+				WidthHeight(combinedTextMetrics.width, combinedTextMetrics.height)
+			};
+			nextDistinct(inspector.size, wordDimensions);
+			nextDistinct(inspector.baseline, combinedTextMetrics.baseline);
+			Pair(combinedText, combinedTextMetrics)
+		},
+		Pair("", zeroMetrics)
 	);
 }
 
@@ -978,7 +1050,7 @@ inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : d
 	}
 }
 
-inspectWordViewStatic(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> void {
+getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalculation : bool) -> FormMetrics {
 	preventNodeCalculationFontFamily = switch(tr) {
 		TText(__, style0) : {
 			eitherMap(
@@ -991,14 +1063,19 @@ inspectWordViewStatic(tr : Tropic, inspector : ParaElementInspector, letterSpaci
 		};
 		default : false;
 	};
-	tr2 = if (preventNodeCalculation && preventNodeCalculationFontFamily && !isUrlParameterFalse("wigi_width_inspection_fix"))
+	tr2 = if (preventNodeCalculation && preventNodeCalculationFontFamily && !isUrlParameterFalse("wigi_width_inspection_fix")) {
 		switch(tr) {
 			TText(txt, style0): TText(txt, arrayPush(style0, PreventTextNodeWidthCalculation()));
 			default : tr;
 		}
-		else tr;
+	} else tr;
 	fMetrics = getTropicMetrics(tr2);
-	nextDistinct(inspector.size, WidthHeight(addLetterSpacing(fMetrics.width, letterSpacing), fMetrics.height));
+	FormMetrics(fMetrics with width = addLetterSpacing(fMetrics.width, letterSpacing));
+} 
+
+inspectWordViewStatic(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> void {
+	fMetrics = getWordViewStaticMetrics(tr, letterSpacing, preventNodeCalculation);
+	nextDistinct(inspector.size, WidthHeight(fMetrics.width, fMetrics.height));
 	nextDistinct(inspector.baseline, fMetrics.baseline);
 }
 
@@ -1165,8 +1242,8 @@ rtrimWords(words : [TParaWord]) -> [TParaWord] {
 			take(words, wordsCount - 1)
 		};
 		switch (lastWord.word : GeneralWrapElement) {
-			GeneralSpace(str, __, __): if (isSpace(str)) spaceCase() else words;
-			GeneralDynamicSpace(str, __, __): if (isSpace(str)) spaceCase() else words;
+			GeneralSpace(str, __, __): if (isSpace(str) && !isParaWordDecorated(lastWord)) spaceCase() else words;
+			GeneralDynamicSpace(str, __, __): if (isSpace(str) && !isParaWordDecorated(lastWord)) spaceCase() else words;
 			default: words
 		}
 	} else words
@@ -1333,7 +1410,7 @@ reflowTParaWordsRec(
 						false,
 						catchOverflow,
 					);
-				} else if (isSpaceWord(word)) {
+				} else if (isSpaceWord(word) && !isParaWordDecorated(word)) {
 					// the line ends with invisible space - we should detach it
 					detachWord(word, true);
 					reflowTParaWordsRec(
@@ -1780,6 +1857,16 @@ getTParaWordText(w: TParaWord) -> string {
 		GeneralText(t): t;
 		GeneralDynamicText(t) : t;
 		default: "";
+	}
+}
+
+getTParaWordTextM(w: TParaWord) -> Maybe<string> {
+	switch(w.word) {
+		GeneralText(t): Some(t);
+		GeneralDynamicText(t) : Some(t);
+		GeneralSpace(str, __, __): Some(str);
+		GeneralDynamicSpace(str, __, __): Some(str);
+		default: None();
 	}
 }
 

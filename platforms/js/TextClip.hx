@@ -712,6 +712,15 @@ class TextClip extends NativeWidgetClip {
 		} else if (StringTools.startsWith(fontFamily, "'Roboto")) {
 			return fontFamily + fontWeightToString(fontWeight) + fontSlope == "normal" ? "" : capitalize(fontSlope);
 		} else {
+			return quoteFontFamilyIfSpaces(fontFamily);
+		}
+	}
+
+	private static inline function quoteFontFamilyIfSpaces(fontFamily : String) : String {
+		if (StringTools.contains(fontFamily, " ") && !StringTools.startsWith(fontFamily, "'")) {
+			// If fontFamily contains space, it is not a valid CSS font-family name, so we need to quote it.
+			return "'" + fontFamily + "'";
+		} else {
 			return fontFamily;
 		}
 	}
@@ -1876,7 +1885,7 @@ class TextClip extends NativeWidgetClip {
 			if (!TextClip.onFontLoadedListenerInitialized) {
 				Browser.document.fonts.addEventListener('loadingdone', function(event : Dynamic) {
 					event.fontfaces.forEach(function(fontface, key, set) {
-						var fontFamilySet = TextClip.scheduledForceUpdateTree.get(fontface.family);
+						var fontFamilySet = TextClip.scheduledForceUpdateTree.get(quoteFontFamilyIfSpaces(fontface.family));
 						if (fontFamilySet != null) {
 							fontFamilySet.forEach(function(clip : TextClip, key, set) {
 								clip.forceUpdateTextWidth();
@@ -2010,7 +2019,7 @@ class TextClip extends NativeWidgetClip {
 
 		measureElement.style.display = 'none';
 	}
-
+	// TODO: refactor text metrics measurement
 	private function measureHTMLWidth() : Void {
 		measureHTMLWidthAndHeight(false);
 	}
@@ -2025,7 +2034,7 @@ class TextClip extends NativeWidgetClip {
 		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 		var parentNode : Dynamic = nativeWidget.parentNode;
 		var nextSibling : Dynamic = nativeWidget.nextSibling;
-		var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth;
+		var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && nativeWidget.style.fontFeatureSettings == "";
 
 		updateNativeWidgetStyle();
 		var tempDisplay = nativeWidget.style.display;
@@ -2065,6 +2074,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.paddingLeft = '${-textNodeMetrics.x}px';
 		}
 
+		// This block is expected to be never called
 		if (shouldUpdateHeight && textNodeMetrics.height != null && textNodeMetrics.height >= 0 && metrics.lineHeight > 0) {
 			var textNodeLines = Math.round(textNodeMetrics.height / metrics.lineHeight);
 			var currentLines = Math.round(metrics.height / metrics.lineHeight);
@@ -2206,7 +2216,8 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function isMaterialIconFont() : Bool {
-		return style.fontFamily.startsWith('Material Icons') || style.fontFamily.startsWith('Material Symbols');
+		return style.fontFamily.startsWith('Material Icons') || style.fontFamily.startsWith('Material Symbols')
+			|| style.fontFamily.startsWith("'Material Icons") || style.fontFamily.startsWith("'Material Symbols");
 	}
 
 	private function getSanitizedText(text : String) : String {
@@ -2293,8 +2304,10 @@ class TextClip extends NativeWidgetClip {
 	private function disableSprites() : Void {
 		if (textClip != null && untyped textClip._texture != null) {
 			textClip.destroy({ children: true, texture: true, baseTexture: true });
-			nativeWidget = null;
-			isNativeWidget = false;
+			// HOTFIX : Temporarily disabled nativeWidget removing
+			// TODO : Find a way to properly prevent multiple nativeWidget creation
+			// nativeWidget = null;
+			// isNativeWidget = false;
 			textClip = null;
 		}
 
