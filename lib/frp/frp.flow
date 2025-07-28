@@ -352,6 +352,13 @@ export {
 
 FrpEventType ::= FrpEventSetValue, FrpEventOutdated, FrpEventUpdated, FrpEventSetElement;
 FrpEventSetValue(); FrpEventOutdated(); FrpEventUpdated(); FrpEventSetElement(index : int);
+/*
+The FrpEventSetElement event is added to support some optimization in typical cases like update one array element.
+Anyway, FrpArray connections must support for FrpEventSetValue event, that must work in any cases but maybe less effective.
+Also, this optimization works only if a cell have only one FrpArray source.
+*/
+
+dummyFrpArray = rmakeA([]);
 
 //// constructors ////
 
@@ -959,29 +966,63 @@ rsplitManyFlow(cell : FrpCell<?>, getters : [(?) -> flow]) -> [FrpValue<flow>] {
 
 //// utils and helpers ////////////////////////////////////////////////////////////////////
 
+rsubscribeInternal(
+	cells : [FrpNode<flow>],
+	init : bool,
+	onValueUpdate : () -> void,
+	onElementUpdate : (int) -> void,
+	onStatusChange : (bool) -> void,
+) -> () -> void {
+	allowElementEvents = countA(cells, \s -> isSameStructType(s, dummyFrpArray)) == 1;
+	// allow to optimize using FrpEventSetElement event if cells have only one FrpArray element
+
+	anySrcUpdated = ref false;
+
+	fn = \event : FrpEventType -> {
+		switch(event) {
+			FrpEventSetValue(): {
+				if (forall(cells, rIsUpdated)) {
+					onValueUpdate();
+				} else {// waiting for update all sources
+					anySrcUpdated := true;
+				}
+			}
+			FrpEventSetElement(inx): {
+				if (forall(cells, rIsUpdated)) {
+					if (allowElementEvents) onElementUpdate(inx) else onValueUpdate();
+				} else {// waiting for update all sources
+					anySrcUpdated := true;
+				}
+			}
+			FrpEventUpdated():  {
+				if (length(cells) <= 1) {// minor optimization
+					onStatusChange(true);
+				} else if (forall(cells, rIsUpdated)) {
+					if (^anySrcUpdated) onValueUpdate() else onStatusChange(true);
+				} // else waiting for update all sources
+			}
+			FrpEventOutdated(): {
+				anySrcUpdated := false;
+				onStatusChange(false);
+			};
+		}
+	};
+
+	if (init) { // run fn on subscribe
+		fn(FrpEventOutdated());
+		fn(FrpEventSetValue());
+	}
+
+	rAddEventListeners(cells, fn);
+}
+
 rsubscribeCommon(
 	cells : [FrpNode<flow>],
 	init : bool,
 	onValueUpdate : () -> void,
 	onElementUpdate : (int) -> void,
 ) -> () -> void {
-	fn = \event : FrpEventType -> {
-		switch(event) {
-			FrpEventSetValue(): {
-				if (forall(cells, rIsUpdated)) onValueUpdate();
-				// run when all sources are updated
-			}
-			FrpEventSetElement(inx): {
-				if (forall(cells, rIsUpdated)) onElementUpdate(inx);
-			}
-			FrpEventUpdated(): {};
-			FrpEventOutdated(): {};
-		}
-	};
-
-	if (init) fn(FrpEventSetValue()); // run fn on subscribe
-
-	rAddEventListeners(cells, fn);
+	rsubscribeInternal(cells, init, onValueUpdate, onElementUpdate, nop1);
 }
 
 rconnectCommon(
@@ -991,45 +1032,8 @@ rconnectCommon(
 	updateValue : () -> void,
 	updateElement : (int) -> void,
 ) -> void {
-	anySrcUpdated = ref false;
-
-	eventFn = \event : FrpEventType -> {
-		switch(event) {
-			FrpEventSetValue(): {
-				if (forall(sources, rIsUpdated)) {
-					updateValue();
-				} else {// waiting for update all sources
-					anySrcUpdated := true;
-				}
-			}
-			FrpEventSetElement(index): {
-				if (forall(sources, rIsUpdated)) {
-					updateElement(index);
-				} else {// waiting for update all sources
-					anySrcUpdated := true;
-				}
-			}
-			FrpEventUpdated(): {
-				if (length(sources) <= 1) {// minor optimization
-					rSetStatus(dst, true);
-				} else if (forall(sources, rIsUpdated)) {
-					if (^anySrcUpdated) updateValue() else rSetStatus(dst, true);
-				} // else waiting for update all sources
-			}
-			FrpEventOutdated(): {// start an update cycle
-				anySrcUpdated := false;
-				rSetStatus(dst, false);
-			}
-		}
-	};
-
-	// set value on connect
-	if (init) {
-		eventFn(FrpEventOutdated());
-		eventFn(FrpEventSetValue());
-	}
-
-	uns = rAddEventListeners(sources, eventFn);
+	updateStatus = \st -> rSetStatus(dst, st);
+	uns = rsubscribeInternal(sources, init, updateValue, updateElement, updateStatus);
 	rAddDisposer(dst, uns);
 }
 
