@@ -8,6 +8,7 @@ export {
 	structArgs2ts(s : MTypeConstructor) -> string;
 	mtype2tsName(m : MType) -> string;
 	generateTSTypes(types : Tree<string, MType>, structs : Tree<string, MTypeConstructor>) -> string;
+	generateConstructorFunctions(structs : Tree<string, MTypeConstructor>) -> string;
 }
 
 // Generate TypeScript interface definition for a union type
@@ -112,6 +113,19 @@ generateTSTypes(types : Tree<string, MType>, structs : Tree<string, MTypeConstru
 	typePrefix = getUrlParameterDef("typeprefix", "");
 	unionTypeName = if (typePrefix != "") typePrefix + "ASTNode" else "ASTNode";
 	
+	// Check if we should generate constructors and discriminators
+	generateConstructors = getUrlParameterDef("generateconstructors", "1") != "0";
+	generateDiscriminators = getUrlParameterDef("generatediscriminators", "1") != "0";
+	
+	// Generate optional sections
+	typeGuardSection = if (generateDiscriminators) {
+		"// Type guard functions\n" + generateTypeGuards(structs) + "\n"
+	} else "";
+	
+	constructorSection = if (generateConstructors) {
+		"// Constructor functions\n" + generateConstructorFunctions(structs) + "\n"
+	} else "";
+	
 	blueprint("
 		// Generated TypeScript types from Mango grammar
 		// This file contains AST node definitions using the conventional 'kind' field pattern
@@ -121,13 +135,14 @@ generateTSTypes(types : Tree<string, MType>, structs : Tree<string, MTypeConstru
 		// Utility type for all AST nodes
 		export type %unionTypeName% = %allTypes%;
 		
-		// Type guard functions
 		%typeGuards%
+		%constructors%
 		", [
 			"definitions", strGlue(allDefs, "\n"),
 			"unionTypeName", unionTypeName,
 			"allTypes", generateUnionOfAllTypes(structs),
-			"typeGuards", generateTypeGuards(structs)
+			"typeGuards", typeGuardSection,
+			"constructors", constructorSection
 		]
 	);
 }
@@ -162,4 +177,56 @@ generateTypeGuards(structs : Tree<string, MTypeConstructor>) -> string {
 	});
 	
 	strGlue(guards, "\n");
+}
+
+// Generate TypeScript constructor functions
+generateConstructorFunctions(structs : Tree<string, MTypeConstructor>) -> string {
+	typePrefix = getUrlParameterDef("typeprefix", "");
+	constructorPrefix = getUrlParameterDef("constructorprefix", "");
+	
+	constructors = foldTree(structs, [], \name, struct, acc -> {
+		// Generate parameter list with typed arguments
+		fieldNames = generateFieldNames(struct);
+		paramDefs = mapi(struct.args, \i, st -> {
+			fname = fieldNames[i];
+			ftype = type2ts(st);
+			fname + ": " + ftype;
+		});
+		
+		// Generate object construction with field assignments
+		fieldAssignments = mapi(struct.args, \i, st -> {
+			fname = fieldNames[i];
+			"  " + fname + ",";
+		});
+		
+		// Constructor function name handling
+		constructorName = if (constructorPrefix != "") {
+			// Use explicit constructor prefix if provided
+			constructorPrefix + name;
+		} else if (typePrefix != "" && startsWith(name, typePrefix)) {
+			// Fall back to old behavior: remove the type prefix from the name
+			strRight(name, strlen(typePrefix));
+		} else {
+			// No prefix handling
+			name;
+		}
+		
+		constructor = blueprint("
+			export function %constructorName%(%params%): %name% {
+			  return {
+			    kind: '%name%',
+			%assignments%
+			  };
+			}
+			", [
+				"constructorName", constructorName,
+				"params", strGlue(paramDefs, ", "),
+				"name", name,
+				"assignments", strGlue(fieldAssignments, "\n")
+			]
+		);
+		arrayPush(acc, constructor);
+	});
+	
+	strGlue(constructors, "\n");
 }
