@@ -1059,7 +1059,7 @@ class HttpSupport {
 		onOpenFn();
 
 		xhr.onload = xhr.onerror = function() {
-			if(xhr.status != 200) { onErrorFn("" + xhr.status); } else { onDataFn(xhr.responseText); }
+			if(xhr.status != 200) { onErrorFn(xhr.status + ": " + xhr.responseText); } else { onDataFn(xhr.responseText); }
 		};
 
 		xhr.upload.onprogress = function(event) {
