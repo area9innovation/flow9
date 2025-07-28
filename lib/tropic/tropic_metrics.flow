@@ -11,6 +11,7 @@ export {
 
 	// A snapshot size of this word, with the associated environment. Used by tparagraph.
 	getTWordMetrics(pt : TWord, env : Tree<string, Tropic>) -> FormMetrics;
+	getTWordMetricsWithCache(pt : TWord, env : Tree<string, Tropic>, useCache : bool) -> FormMetrics;
 
 	// We can word wrap after TLinePart, TSpace, TZeroWidthSpace, but not between other Tropics.
 	TWord ::= Tropic, TLinePart, TSpace, TZeroWidthSpace;
@@ -24,21 +25,79 @@ export {
 
 		// There can be a word wrap before and after this
 		TZeroWidthSpace(style : [TCharacterStyle]);
+		getTWordMetrics_count = ref 0;
 }
 
 getTropicMetrics(t : Tropic) -> FormMetrics {
 	getTWordMetrics(t, makeTree());
 }
 
+getStaticFormSizeReal_TextCache : ref Tree<string, ref Tree<string, FormMetrics>> = ref makeTree();
+getStaticFormSizeReal_TextCacheAge = ref 0.;
+
 getTWordMetrics(pt : TWord, env : Tree<string, Tropic>) -> FormMetrics {
+	getTWordMetricsWithCache(pt, env, false)
+}
+getTWordMetricsWithCache(pt : TWord, env : Tree<string, Tropic>, useCache : bool) -> FormMetrics {
 	switch (pt) {
-		TText(t, s): {
-			getStaticFormSizeReal(
-				Text(t, tcharacterStyle2charStyle(s)),
-				false,
-				maybeMap(tryExtractStruct(s, LangAttribute(const(""))), \la -> fgetValue(la.languageCode)),
-				extractStruct(s, LocalizationEnabled(false)).enabled
-			);
+		TText(txt, styles): {
+			doMeasure = \-> {
+				getTWordMetrics_count := ^getTWordMetrics_count + 1;
+				getStaticFormSizeReal(
+					Text(txt, tcharacterStyle2charStyle(styles)),
+					false,
+					maybeMap(tryExtractStruct(styles, LangAttribute(const(""))), \la -> fgetValue(la.languageCode)),
+					extractStruct(styles, LocalizationEnabled(false)).enabled
+				);
+			}
+			if (useCache) {
+				currentTime = timestamp();
+				if (currentTime - ^getStaticFormSizeReal_TextCacheAge > 3000.) {
+					getStaticFormSizeReal_TextCacheAge := currentTime;
+					println("getStaticFormSizeReal_TextCache CLEANUP: " + i2s(sizeTree(^getStaticFormSizeReal_TextCache)));
+					getStaticFormSizeReal_TextCache := makeTree();
+				}
+
+				stylesAsString = fold(styles, "", \acc, s -> {
+					acc + switch (s) {
+						FontFamily(name): "a"+name;
+						FontSize(size): "b"+d2s(size);
+						LetterSpacing(spacing): "c"+d2s(spacing);
+						WordSpacing(spacing): "d"+d2s(getValue(spacing));
+						FontFeature(settings): "e"+settings;
+						SetRTL(rtl): if(rtl) "f" else "f2";
+						LineHeightPercent(percent): "g"+d2s(percent);
+						NeedBaseline(need): if (need) "h" else "h2";
+						LangAttribute(languageCode): "i" + fgetValue(languageCode);
+						LocalizationEnabled(enabled): if(enabled) "j" else "j2";
+						EscapeHTML(escape): if (escape) "k" else "k2";
+						PreventTextNodeWidthCalculation(): "l";
+
+						Underlined(style): "";
+						Fill(color): "";
+						FillOpacity(opacity): "";
+						BackgroundFill(color): "";
+						BackgroundFillOpacity(opacity): "";
+						Sharpness(sharpness, antiAliasType, gridFitType): "";
+						TextWidthInspector(width): "";
+						SkipOrderCheck(): "";
+						FDynamicColor(color): "";
+						TagName(tagName): "";
+						TStyle(name): "";
+						TStyleWithSelector(name, selector): "";
+					}
+				});
+
+				lookupTreeSet(
+					lookupTreeSet(getStaticFormSizeReal_TextCache, txt, \__ -> ref makeTree()),
+					stylesAsString,
+					\__ -> {
+						doMeasure()
+					}
+				);
+			} else {
+				doMeasure()
+			}
 		}
 		TParagraph(t, s): {
 			getStaticFormSize(Text(fgetValue(t), [])); // TODO:

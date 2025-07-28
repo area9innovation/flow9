@@ -42,7 +42,6 @@ export {
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double, preventNodeCalculation : bool) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
 	getTParaWordTextM(w: TParaWord) -> Maybe<string>;
-	getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalculation : bool) -> FormMetrics;
 
 	isSpaceWord(word : TParaWord) -> bool;
 
@@ -58,6 +57,9 @@ export {
 		isLastChild : bool,
 		paragraphRtl : bool
 	) -> Pair<string, FormMetrics>;
+
+	tRenderParagraphCount = ref 0;
+	tRenderParagraphUpdateCount = ref 0;
 }
 
 useWigiTextDynamicMetrics = !isUrlParameterFalse("wigi_text_dynamic_metrics");
@@ -285,6 +287,8 @@ TRenderParagraph(
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
 	renderInfo : WigiRenderParameters
 ) -> Tropic {
+	tRenderParagraphCount := ^tRenderParagraphCount + 1;
+
 	traceApi = makeWigiTrace_Tropic("TRenderParagraph", words);
 	traceApi.trace(\-> "TRenderParagraph "+toString(maybeMap(alignWidthBM, getValue))+", style: "+toString(s));
 	deferredRender = !renderInfo.inline && !isUrlParameterTrue("twigify_render_inline");
@@ -355,6 +359,7 @@ TRenderParagraph(
 	scaledContent = if (fitLongWords) TScale(scaleB, contentGroup) else contentGroup;
 
 	updateFn = \id, wi_raw, alignWidthM, immediate -> {
+		tRenderParagraphUpdateCount := ^tRenderParagraphUpdateCount + 1;
 		oldWH = getValue(paragraphWHB);
 		wi = roundUIMetricsValue(wi_raw);
 		traceApi.traceAndNest(\-> "updateFn [" + id + "] START wi_raw =  " + toString(wi_raw) + ", wi = " + toString(wi) + ", alignWidthM = " + toString(alignWidthM) + ", paragraphWH: " + toString(oldWH)  + ", linesCount: " + toString(getValue(linesCountB)));
@@ -1058,27 +1063,6 @@ inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : d
 	}
 }
 
-getTropicMetrics_cache : ref Tree<string, ref Tree<[TCharacterStyle], FormMetrics>> = ref makeTree();
-getTropicMetrics_cacheAge = ref 0.;
-getTropicMetrics_withCache(tr : Tropic) -> FormMetrics {
-	switch (tr) {
-		TText(txt, style): {
-			currentTime = timestamp();
-			if (^getTropicMetrics_cacheAge > 0. && currentTime - ^getTropicMetrics_cacheAge > 1000.) {
-				getTropicMetrics_cacheAge := currentTime;
-				println("getTropicMetrics_cache: " + i2s(sizeTree(^getTropicMetrics_cache)));
-				getTropicMetrics_cache := makeTree();
-			}
-			lookupTreeSet(
-				lookupTreeSet(getTropicMetrics_cache, txt, \__ -> ref makeTree()),
-				style,
-				\__ -> getTropicMetrics(tr)
-			);
-		}
-		default: getTropicMetrics(tr)
-	}
-}
-
 wigi_width_inspection_fix = !isUrlParameterFalse("wigi_width_inspection_fix");
 wigi_word_metrics_cache = isUrlParameterTrue("new") && !isUrlParameterFalse("wigi_word_metrics_cache");
 
@@ -1101,7 +1085,7 @@ getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalcula
 			default : tr;
 		}
 	} else tr;
-	fMetrics = if (wigi_word_metrics_cache) getTropicMetrics_withCache(tr2) else getTropicMetrics(tr2);
+	fMetrics = if (wigi_word_metrics_cache) getTWordMetricsWithCache(tr2, makeTree(), true) else getTropicMetrics(tr2);
 	FormMetrics(fMetrics with width = addLetterSpacing(fMetrics.width, letterSpacing));
 }
 
