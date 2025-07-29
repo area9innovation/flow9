@@ -148,17 +148,17 @@ makeAViewEngine(pebbleIdB : DynamicBehaviour<int>) -> AViewEngine {
 
 // (7)
 buildAViewDesktop(engine : AViewEngine) -> Material {
-	// somthing suitable for desktop
+	// do something suitable for desktop
 	MColsA([
 		MDropDown(engine.userSelectedIdB, "", items, []),
-		MSelect(engine.out, \data -> ...)
+		MSelect(rbSelectB(engine.out).first, \data -> ...)
 	]);
 }
 buildAViewMobile(engine : AViewEngine) -> Material {
-	// somthing suitable for mobile
+	// do something suitable for mobile
 	MLinesA([
 		MDropDown(engine.userSelectedIdB, "", items, []),
-		MSelect(engine.out, \data -> ...)
+		MSelect(rbSelectB(engine.out).first, \data -> ...)
 	]);
 }
 
