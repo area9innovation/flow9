@@ -50,7 +50,7 @@ The `cellFn` take a current cell value as first argument, thus  we can create a 
 
 When we create a connections between `FrpValue` cell and one or more `DynamicBehaviour`s, a disconnector-fn saved inside `FrpValue` cell. Call `rdisconnect` for it to remove any subscribers from both `DynamicBehaviour`s and `FrpValue` cell.
 
-## An example 1
+## Example 1
 
 ```
 AViewState(...); // struct to keep an encapsulated state value
@@ -90,7 +90,7 @@ We also create here an interface to connect engine to `MTextInput`, `MSwitchCont
 This is just a template, many of these elements may be missing or some others may be present.
 
 
-## An example 2
+## Example 2
 
 ```
 AViewState(...);
@@ -105,14 +105,17 @@ makeAViewEngine(pebbleIdB : DynamicBehaviour<int>) -> AViewEngine {
 	userSelectedIdB = make(-1);
 	idCell = rmake(-1);
 
+	// (1)
 	rbConnectStar2(idCell, pebbleIdB, userSelectedIdB,
 		\__,pebbleId,userSelectedId -> {if (userSelectedId > 0) userSelectedId else pebbleId},
 		\id -> id, // to pebble id
 		\id -> id // to user selector
 	);
 
+	// (2)
 	stateCell = FrpAsyncValue(AViewState(...));
 
+	// (3)
 	asyncUpdateFn = \id, __, onDone, onError -> {
 		loadADataFromDb(id, ...,
 			\data -> {
@@ -124,6 +127,7 @@ makeAViewEngine(pebbleIdB : DynamicBehaviour<int>) -> AViewEngine {
 		);
 	}
 
+	// (4)
 	rAsyncFnConnect(
 		wrapFrpAsyncValue(idValueCell), // FrpValue -> FrpAsyncValue
 		stateCell,
@@ -133,8 +137,62 @@ makeAViewEngine(pebbleIdB : DynamicBehaviour<int>) -> AViewEngine {
 		idfn, //collect error fn
 	);
 
+	// (5)
 	outputCell = rselect(stateCell, \v -> AViewOutput(...));
 
+	// (6)
 	AViewEngine(outputCell, userSelectedIdB);
 }
+//...
+// use it
+
+// (7)
+buildAViewDesktop(engine : AViewEngine) -> Material {
+	// do something suitable for desktop
+	MColsA([
+		MDropDown(engine.userSelectedIdB, "", items, []),
+		MSelect(rbSelectB(engine.out).first, \data -> ...)
+	]);
+}
+buildAViewMobile(engine : AViewEngine) -> Material {
+	// do something suitable for mobile
+	MLinesA([
+		MDropDown(engine.userSelectedIdB, "", items, []),
+		MSelect(rbSelectB(engine.out).first, \data -> ...)
+	]);
+}
+
+// (8)
+showADialog() -> void {
+	pebbleIdB = make(-1);
+	engine = makeAViewEngine(pebbleIdB);
+
+	view = if (mobile) buildAViewMobile(engine) else buildAViewDesktop(engine);
+	...
+	ShowMDialog(
+		...,
+		MLinkPebbleParameters(
+			pebbleController,
+			[
+				PebbleIntLink(..., pebbleIdB, ...)
+				...
+			],
+			view
+		)
+	);
+}
+
 ```
+In this example, we create a view engine that combines 2 input data streams representing an object identifier is used to load data from the server.
+
+1. 2 input streams are merged using `rbConnectStar2` with a fn that allow resolve any possible conflicts (1), `idCell` keep a always correct current object id
+2. created an async state (2) using `rAsyncFnConnect` that use  `idCell` as input and load a relevant data from a server on any `idCell` change
+3. created a converter from a complex private state value into a more simple value inside `outputCell` that must be used from outside (5)
+4.  `outputCell` and any additional `DynamicBehaviour`s (and maybe `onClick` functions) packed in one engine struct (6)
+5. created 2 different views that both works with the engine (7), and can be used in a dialog (8) depending on a `mobile` flag
+
+Note:
+1. the engine still works even if no view is rendered, it always keep a correct value
+2. the engine code is completely separated from view code, this allow to support easy many different views for one engine
+3. the `FrpNode` struct and frp-operation used to create a reliable state engine, while `DynamicBehaviour`s are just used to connect the engine to an UI
+4. an engine can work in sync or async manner
