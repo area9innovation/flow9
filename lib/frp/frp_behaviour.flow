@@ -3,6 +3,11 @@ import frp/frp;
 import frp/frp_async;
 
 export {
+	// rbBidiConnect, rbConnectStar2 .. family create bidi-connections between a FrpValue cell and one or more DynamicBehaviour-s.
+	// On call fn the DynamicBehaviour-s will be initialized from the cell value using behFn-s.
+	// Updating a DynamicBehaviour leads to update the cell, and then to update all others DynamicBehaviour from the cell value.
+	// DynamicBehaviour-s are updated using nextDistinct
+
 	rbBidiConnect(
 		cell : FrpValue<?>,
 		beh : DynamicBehaviour<??>,
@@ -49,7 +54,7 @@ export {
 		cellFn : (?, [??]) -> ?,
 	) -> void;
 
-	// create DynamicBehaviour from FrpNode
+	// create DynamicBehaviour from FrpNode, return Pair of DynamicBehaviour and unsubscriber 
 	rbSelectB(cell : FrpValue<?>, fn : (?) -> ??) -> Pair<DynamicBehaviour<??>, () -> void>;
 	rbSelectBA(cell : FrpArray<?>, fn : ([?]) -> ??) -> Pair<DynamicBehaviour<??>, () -> void>;
 	rbSelectBAsync(cell : FrpAsyncValue<?>, fn : (?, FrpAsyncStatus) -> ??) -> Pair<DynamicBehaviour<??>, () -> void>;
@@ -175,23 +180,22 @@ rbConnectStarCommon(
 	updateIndex = ref -2; // -2 - default, -1 - update from the cell, any other - update from behaviours with index (0 .. )
 
 	eventFn = \event : FrpEventType -> {
-		if (^updateIndex < -1) {
-			updateIndex := -1;
+		if (^updateIndex == -2) updateIndex := -1;
 
-			switch(event) {
-				FrpEventSetValue(): {
-					if (rIsUpdated(cell)) {
-						v = rget(cell);
-						iteri(behaviours, \i,b -> if (i != ^updateIndex) b.second(v));
-					}
-					// else wait
+		switch(event) {
+			FrpEventSetValue(): {
+				if (rIsUpdated(cell)) {
+					v = rget(cell);
+					iteri(behaviours, \i,b -> if (i != ^updateIndex) b.second(v));
 				}
-				FrpEventSetElement(index): {}
-				FrpEventUpdated(): {}
-				FrpEventOutdated(): {}
+				// else wait
 			}
-			updateIndex := -2;
+			FrpEventSetElement(index): {}
+			FrpEventUpdated(): {}
+			FrpEventOutdated(): {}
 		}
+
+		if (^updateIndex == -1)	updateIndex := -2;
 	}
 
 	bEventFn = \index -> {
@@ -203,7 +207,7 @@ rbConnectStarCommon(
 		}
 	}
 
-	// set initial beheviours values derived from cell current value
+	// set initial behaviours values derived from cell current value
 	iteri(behaviours, \i,b -> b.second(rget(cell)));
 
 	uns = rAddEventListeners([cell], eventFn);
