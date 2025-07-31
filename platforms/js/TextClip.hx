@@ -2123,6 +2123,7 @@ class TextClip extends NativeWidgetClip {
 		if (TextClip.measureSVGTextElement == null) {
 			var svg = Browser.document.createElementNS("http://www.w3.org/2000/svg", "svg");
 			svg.setAttribute('id', 'svgTextMeasureElement');
+			svg.setAttribute('aria-hidden', 'true');
 			TextClip.measureSVGTextElement = Browser.document.createElementNS("http://www.w3.org/2000/svg", "text");
 			svg.appendChild(TextClip.measureSVGTextElement);
 			Browser.document.body.appendChild(svg);
