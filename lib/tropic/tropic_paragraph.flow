@@ -16,7 +16,7 @@ export {
 		words : [TParaWord],
 		s : [ParagraphStyle],
 		alignWidthBM : Maybe<DynamicBehaviour<double>>,
-		joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+		joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 		renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
 		renderInfo : WigiRenderParameters
 	) -> Tropic;
@@ -36,7 +36,7 @@ export {
 		inspectorM : Maybe<ParaElementInspector>,
 		scriptM : Maybe<ParaElementScriptType>,
 		ignoreLetterSpacing : bool,
-		wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+		wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
 		isUseContextWordWidth : bool
 	) -> TParaWord;
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double, preventNodeCalculation : bool) -> Tropic;
@@ -280,7 +280,7 @@ TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
 	alignWidthBM : Maybe<DynamicBehaviour<double>>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
 	renderInfo : WigiRenderParameters
 ) -> Tropic {
@@ -537,7 +537,7 @@ groupAndPositionWords(
 	words : [TParaWord],
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	rtl : bool,
 	ignoreLetterSpacing : bool,
 	join_words : bool
@@ -589,7 +589,7 @@ appendWordToLine(
 	word: TParaWord,
 	genIndent: double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	rtl : bool,
 	ignoreLetterSpacing : bool,
 	join_words : bool
@@ -628,7 +628,7 @@ makeHeadingGroup(
 	tag : string,
 	genIndent: double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	rtl : bool,
 	ignoreLetterSpacing : bool,
 	containsDynamicElement : bool,
@@ -661,20 +661,24 @@ makeHeadingGroup(
 positionInteractiveWords(
 	words: List<TParaWord>,
 	genIndent : double,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>
 ) -> [Tropic] {
-	spaceCase = \word, viewFn, str, alBef, alAft -> {
+	spaceCase = \word, viewFn, str, alBef, alAft, isFirstWordM -> {
 		TShow(fnot(word.inspector.detached),
-			viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style))
+			viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style), isFirstWordM)
 		);
-	}
-	map(
-		list2array(words),
-		\word -> {
-			viewFn = lookupTreeDef(joinedWordsConstructors, getValue(word.id), word.wordsViewConstructor);
+	};
+	wordArr = list2array(words);
+	mapi(
+		wordArr,
+		\idx, word -> {
+			prevWord = elementAt(wordArr, idx -1, dummyTParaWord);
+			wordId = getValue(word.id);
+			isFirstWordM = Some(wordId != getValue(prevWord.id));
+			viewFn = lookupTreeDef(joinedWordsConstructors, wordId, word.wordsViewConstructor);
 			wordView = switch (word.word) {
 				GeneralText(str) : {
-					viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style))
+					viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style), isFirstWordM)
 					|> (\t -> {
 						if (useWigiTextDynamicMetrics) {
 							ls = extractStruct(word.style, zeroLetterSpacing).spacing;
@@ -684,8 +688,8 @@ positionInteractiveWords(
 						}
 					})
 				};
-				GeneralSpace(str, alBef, alAft) : spaceCase(word, viewFn, str, alBef, alAft);
-				GeneralDynamicSpace(str, alBef, alAft) : spaceCase(word, viewFn, str, alBef, alAft);
+				GeneralSpace(str, alBef, alAft) : spaceCase(word, viewFn, str, alBef, alAft, isFirstWordM);
+				GeneralDynamicSpace(str, alBef, alAft) : spaceCase(word, viewFn, str, alBef, alAft, isFirstWordM);
 				default : word.ghostView;
 			};
 			translateWord(TParaWord(word with ghostView = wordView), genIndent)
@@ -701,7 +705,7 @@ joinGroupedWords(
 	words: List<TParaWord>,
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	ignoreLetterSpacing : bool,
 	containsDynamicElement : bool
 ) -> [Tropic] {
@@ -792,7 +796,7 @@ joinTextWords(
 	words : List<TParaWord>,
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
 	ignoreLetterSpacing : bool
 ) -> Tropic {
 	// Here is TSelect that recalculates the view when behaviour is updated.
@@ -822,7 +826,8 @@ joinTextWords(
 						currentOffset = fselectLift(joinResult.currentOffset, \co -> Point(co.x - genIndent, co.y))
 					),
 					wordsViewConstructor,
-					ignoreLetterSpacing
+					ignoreLetterSpacing,
+					Some(true)
 				)) |> reverseA
 			);
 		}
@@ -835,7 +840,7 @@ appendOrJoinWord(
 	acc : JoinTextAcc,
 	word : TParaWord,
 	genIndent : double,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
 	ignoreLetterSpacing : bool
 ) -> JoinTextAcc {
 	makeWordStyle = \-> ifArrayPush(replaceStruct(word.style, SetRTL(getValue(word.rtl))), newJustifyEnabled, WordSpacing(word.inspector.lineWordSpacing));
@@ -900,7 +905,7 @@ appendOrJoinWord(
 					wordOffset,
 					addLastLine(JoinTextAcc(acc with
 						currentOffset = fselectLift(acc.currentOffset, \co -> Point(co.x - genIndent, co.y))
-					), wordsViewConstructor, ignoreLetterSpacing)
+					), wordsViewConstructor, ignoreLetterSpacing, Some(false))
 				)
 			}
 		}
@@ -911,15 +916,17 @@ appendOrJoinWord(
 
 addLastLine(
 	joinResult : JoinTextAcc,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
-	ignoreLetterSpacing : bool
+	wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
+	ignoreLetterSpacing : bool,
+	isLastLineM : Maybe<bool>
 ) -> List<Tropic> {
 	Cons(
 		TTranslate(
 			joinResult.currentOffset,
 			wordsViewConstructor(
 				joinResult.currentSpaces + joinResult.currentString,
-				if (ignoreLetterSpacing) removeAllStructs(joinResult.style, LetterSpacing(0.0)) else joinResult.style
+				if (ignoreLetterSpacing) removeAllStructs(joinResult.style, LetterSpacing(0.0)) else joinResult.style,
+				isLastLineM
 			)
 		),
 		joinResult.acc,
@@ -935,7 +942,7 @@ commonWordConstructor(
 	inspectorM : Maybe<ParaElementInspector>,
 	scriptM : Maybe<ParaElementScriptType>,
 	isLastChild : bool,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
 	isUseContextWordWidth : bool
 ) -> TParaWord {
 	inspector = eitherFn(inspectorM, idfn, dummyInspectorFn);
