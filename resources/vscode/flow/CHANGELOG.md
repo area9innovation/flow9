@@ -219,3 +219,6 @@
 
 ## 0.6.7
  - Highlight binary constants in share key syntax
+
+## 0.6.8
+ - Highlight tags in share key comments
