@@ -1,0 +1,96 @@
+import frp/frp_behaviour;
+import frp/frp_async;
+
+import material/material;
+import material/material_manager;
+import material/material2tropic;
+
+// Create engine, that merge 3 inputs data and run async function to update state.
+// The engine state works as state machine because have a level field, that can be changed sometimes.
+
+AEngineState(
+	level : int,
+	value : bool,
+);
+AEngineOutput(text : string);
+
+AViewEngine(
+	intInput1B : DynamicBehaviour<int>, // input
+	intInput2B : DynamicBehaviour<int>,// input
+	flagB : DynamicBehaviour<bool>, // input
+	out : FrpAsyncValue<AEngineOutput>, // output
+);
+
+makeAViewEngine() -> AViewEngine {
+	stateCell = makeFrpAsyncValue(AEngineState(10, false));
+	intInput1B = make(0);
+	intInput2B = make(0);
+	flagB = make(false);
+	inputCell = rmake(0);
+
+	// combine all inputs and create a consistent value resolving all conflicts
+	rbConnect3(inputCell, intInput1B, intInput2B, flagB,
+		\__, v1, v2, flag -> if (flag) v2 else v1,
+	);
+
+	// convert input into async cell
+	asyncInputCell = rAsyncSelectV(inputCell, idfn, \v -> if (v==19) "19 is error" else "");
+
+	asyncUpdateFn = \inputVal, oldState, onDone, onError -> {
+		println("asyncUpdateFn start");
+		timer(2000, // simulate async request
+			\-> {
+				println("asyncUpdateFn ready");
+				val = inputVal > oldState.level;
+				level = if (inputVal > 10) 5 else if (inputVal < 5) 10 else oldState.level;
+				onDone(AEngineState(level, val));
+			});
+	}
+
+	// connect input async cell with a state cell
+	rAsyncFnConnect(
+		asyncInputCell,
+		stateCell,
+		false,
+		FrpAsyncBufferNone(),
+		asyncUpdateFn, // run on input value change
+		idfn, // collect error fn
+	);
+
+	// create cell to store data that can be used from outside in UI or by another more complex engine
+	// while the state is kept encapsulated
+	outputCell = rAsyncSelect(stateCell, \state -> AEngineOutput(b2s(state.value)), idfn);
+
+	AViewEngine(intInput1B, intInput2B, flagB, outputCell);
+}
+
+
+buildAView(engine : AViewEngine) -> Material {
+	// nneds get a behaviour to use with Material
+	engineData = rbSelectBAsync(engine.out, \v,status -> "value: " + v.text + "    status: " + toString(status));
+
+	MConstruct([
+		\-> engineData.second,
+	],
+		MLinesA([
+			MBaselineColsA([
+				MSwitchControl(engine.flagB, []),
+				MFixedX(48.),
+				MDropDown(engine.intInput1B, "", generate(0, 20, i2s), []),
+				MFixedX(48.),
+				MDropDown(engine.intInput2B, "", generate(0, 20, i2s), []),
+			]) |> MBorderBottom(16.),
+			MSelect(engineData.first, \t -> MText(t, []))
+		])
+	);
+}
+
+
+main () {
+	manager = makeMaterialManager([]);
+
+	engine = makeAViewEngine();
+	form = buildAView(engine);
+
+	mrender(manager, false, MBorder(16., 16., 16., 16., form));
+}
