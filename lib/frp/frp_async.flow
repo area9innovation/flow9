@@ -367,8 +367,13 @@ rAsyncConnect(
 	fn : (?) -> ??,
 	errorFn : ([string]) -> [string],
 ) -> void {
-	rconnect(src.frpNode, dst.frpNode, init, fn);
-	rAsyncConnectStatus([src], dst, errorFn, init);
+	rAsyncConnectStatusesIternal(
+		[src.asyncStatus],
+		dst.asyncStatus,
+		init,
+		\-> rnext(dst.frpNode, fn(rget(src.frpNode))),
+		errorFn
+	);
 }
 
 rAsyncConnect2(
@@ -379,8 +384,13 @@ rAsyncConnect2(
 	fn : (?, ??) -> ???,
 	errorFn : ([string]) -> [string],
 ) -> void {
-	rconnect2(src1.frpNode, src2.frpNode, dst.frpNode, init, fn);
-	rAsyncConnectStatus([src1, src2], dst, errorFn, init);
+	rAsyncConnectStatusesIternal(
+		[src1.asyncStatus, src2.asyncStatus],
+		dst.asyncStatus,
+		init,
+		\-> rnext(dst.frpNode, fn(rget(src1.frpNode), rget(src2.frpNode))),
+		errorFn
+	);
 }
 
 rAsyncConnect3(
@@ -392,8 +402,13 @@ rAsyncConnect3(
 	fn : (?, ??, ???) -> ????,
 	errorFn : ([string]) -> [string],
 ) -> void {
-	rconnect3(src1.frpNode, src2.frpNode, src3.frpNode, dst.frpNode, init, fn);
-	rAsyncConnectStatus([src1, src2, src3], dst, errorFn, init);
+	rAsyncConnectStatusesIternal(
+		[src1.asyncStatus, src2.asyncStatus, src3.asyncStatus],
+		dst.asyncStatus,
+		init,
+		\-> rnext(dst.frpNode, fn(rget(src1.frpNode), rget(src2.frpNode), rget(src3.frpNode))),
+		errorFn
+	);
 }
 
 rAsyncConnect4(
@@ -406,8 +421,13 @@ rAsyncConnect4(
 	fn : (?, ??, ???, ????) -> ?????,
 	errorFn : ([string]) -> [string],
 ) -> void {
-	rconnect4(src1.frpNode, src2.frpNode, src3.frpNode, src4.frpNode, dst.frpNode, init, fn);
-	rAsyncConnectStatus([src1, src2, src3, src4], dst, errorFn, init);
+	rAsyncConnectStatusesIternal(
+		[src1.asyncStatus, src2.asyncStatus, src3.asyncStatus, src4.asyncStatus],
+		dst.asyncStatus,
+		init,
+		\-> rnext(dst.frpNode, fn(rget(src1.frpNode), rget(src2.frpNode), rget(src3.frpNode), rget(src4.frpNode))),
+		errorFn
+	);
 }
 
 rAsyncConnectV(
@@ -579,15 +599,25 @@ rAsyncFnConnect4(
 
 /// select ///
 
+// rAsyncSelect(
+// 	src : FrpAsyncValue<?>,
+// 	fn : (?) -> ??,
+// 	errorFn : ([string]) -> [string]
+// ) -> FrpAsyncValue<??> {
+// 	FrpAsyncValue(
+// 		rselect(src.frpNode, fn),
+// 		rAsyncSelectStatus([src], errorFn)
+// 	);
+// }
+
 rAsyncSelect(
 	src : FrpAsyncValue<?>,
 	fn : (?) -> ??,
 	errorFn : ([string]) -> [string]
 ) -> FrpAsyncValue<??> {
-	FrpAsyncValue(
-		rselect(src.frpNode, fn),
-		rAsyncSelectStatus([src], errorFn)
-	);
+	dst = makeFrpAsyncValue(rAsyncGet(src));
+	rAsyncConnect(src, dst, true, fn, errorFn);
+	dst;
 }
 
 rAsyncSelect2(
@@ -799,17 +829,13 @@ rAsyncSubscrStatuses(
 	};
 
 	updateFn = \v : ? -> {
-		// println("rAsyncSubscrStatuses update:" + toString(v) + " delayed cnt:" + toString(lengthDList(delayedActions)));
 		rnext(dst.frpNode, v);
-		// println("rAsyncSubscrStatuses delayedActions:" + toString(lengthDList(delayedActions)));
 		delayedFnM = popFirstDList(delayedActions);
 
 		eitherFn(
 			delayedFnM,
 			\fn -> {// run delayed update
-				// println("rAsyncSubscrStatuses: start delayed action");
 				fn(rget(dst.frpNode));
-				// status == FrpAsyncInProgress, started == true - don't change them
 			},
 			\-> {
 				rnext(dst.asyncStatus, FrpAsyncReady());
@@ -822,9 +848,6 @@ rAsyncSubscrStatuses(
 		rsubscribeMany(srcStatuses, init,
 			\arr -> {
 				sourcesStatus = rAsyncStatusBind(arr, errorFn);
-				// println("rAsyncSubscrStatuses statuses:" + toString(arr));
-				// println("rAsyncSubscrStatuses started:" + toString(^started));
-				// println("rAsyncSubscrStatuses sourcesStatus:" + toString(sourcesStatus));
 
 				if (!^started) {
 					switch(sourcesStatus) {
@@ -858,8 +881,6 @@ rAsyncSubscrStatuses(
 
 					};
 				} else if (sourcesStatus == FrpAsyncReady())  {// save in the queue as delayed action
-					// println("rAsyncSubscrStatuses: push action into queue");
-					// println("rAsyncSubscrStatuses delayedActions count:" + toString(lengthDList(delayedActions)));
 					switch(bufferPolicy) {
 						FrpAsyncBufferNone(): {};// do nothing
 						FrpAsyncBufferFirst(size): {
@@ -882,6 +903,34 @@ rAsyncSubscrStatuses(
 		);
 
 	rAddDisposer(dst.asyncStatus, uns);
+}
+
+
+rAsyncConnectStatusesIternal(
+	srcStatuses : [FrpValue<FrpAsyncStatus>],
+	dstStatus : FrpValue<FrpAsyncStatus>,
+	init : bool,
+	onReady : () -> void,
+	errorFn : ([string]) -> [string],
+) -> void {
+	subscrFn = \arr -> {
+		sourcesStatus = rAsyncStatusBind(arr, errorFn);
+		switch(sourcesStatus) {
+			FrpAsyncError(errors): {
+				rnext(dstStatus, sourcesStatus);
+			};
+			FrpAsyncInProgress(): {
+				rnext(dstStatus, sourcesStatus);
+			};
+			FrpAsyncReady(): {
+				onReady();
+				rnext(dstStatus, sourcesStatus);
+			};
+		};
+	}
+
+	uns = rsubscribeMany(srcStatuses, init, subscrFn);
+	rAddDisposer(dstStatus, uns);
 }
 
 
