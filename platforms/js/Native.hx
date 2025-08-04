@@ -841,7 +841,7 @@ class Native {
 			return 0;
 		}
 
-		var localOffset = new js.lib.Date().getTimezoneOffset();
+		var localOffset = new js.lib.Date(utcStamp).getTimezoneOffset();
 		return Math.round(Math.round((stamp - utcStamp) / 600) / 100 - localOffset) * 60 * 1000;
 	}
 	#end
