@@ -69,6 +69,7 @@ import android.Manifest.permission;
 
 import dk.area9.flowrunner.FlowRunnerWrapper.HttpResolver;
 import dk.area9.flowrunner.FlowRunnerWrapper.PictureResolver;
+import dk.area9.flowrunner.RootDetectionUtils;
 
 public class FlowRunnerActivity extends FragmentActivity  {
 
@@ -113,6 +114,113 @@ public class FlowRunnerActivity extends FragmentActivity  {
     private DialogFragmentManager dialogFragmentManager = null;
 
     private SoftKeyboardSupport softKeyboardSupport;
+    private Handler rootDetectionHandler;
+    private Runnable rootDetectionRunnable;
+
+    /**
+     * Performs comprehensive root detection and exits app if root is detected
+     */
+    private void performRootDetection() {
+        try {
+            RootDetectionUtils.RootDetectionResult result = RootDetectionUtils.detectRoot(this);
+            
+            if (result.isRooted) {
+                String deviceInfo = RootDetectionUtils.getDeviceInfo();
+                String logMessage = String.format("SECURITY: Root detected via %s - %s - App terminating", 
+                    result.detectionMethod, deviceInfo);
+                
+                Log.w(Utils.LOG_TAG, logMessage);
+                
+                // Show warning message to user
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(FlowRunnerActivity.this, 
+                            "Security Warning: Rooted device detected. App will close for security reasons.", 
+                            Toast.LENGTH_LONG).show();
+                        
+                        // Exit app after showing message
+                        new Handler().postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                System.exit(1);
+                            }
+                        }, 2000); // 2 second delay to show message
+                    }
+                });
+                return;
+            }
+            
+            Log.i(Utils.LOG_TAG, "Root detection passed - Device appears secure");
+            
+        } catch (Exception e) {
+            Log.w(Utils.LOG_TAG, "Root detection exception: " + e.getMessage());
+            // Continue execution on detection errors to avoid false positives
+        }
+    }
+    
+    /**
+     * Starts periodic root detection checks every 30 seconds
+     */
+    private void startPeriodicRootDetection() {
+        if (rootDetectionHandler == null) {
+            rootDetectionHandler = new Handler();
+            rootDetectionRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    // Perform quick root check
+                    try {
+                        RootDetectionUtils.RootDetectionResult result = RootDetectionUtils.quickRootCheck(FlowRunnerActivity.this);
+                        
+                        if (result.isRooted) {
+                            String deviceInfo = RootDetectionUtils.getDeviceInfo();
+                            String logMessage = String.format("SECURITY: Root detected during runtime via %s - %s - App terminating", 
+                                result.detectionMethod, deviceInfo);
+                            
+                            Log.w(Utils.LOG_TAG, logMessage);
+                            
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    Toast.makeText(FlowRunnerActivity.this, 
+                                        "Security Warning: Root detected during runtime. App will close.", 
+                                        Toast.LENGTH_LONG).show();
+                                    
+                                    new Handler().postDelayed(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            System.exit(1);
+                                        }
+                                    }, 2000);
+                                }
+                            });
+                            return;
+                        }
+                        
+                        // Schedule next check
+                        rootDetectionHandler.postDelayed(this, 30000); // 30 seconds
+                        
+                    } catch (Exception e) {
+                        Log.w(Utils.LOG_TAG, "Periodic root detection exception: " + e.getMessage());
+                        // Continue periodic checks even on errors
+                        rootDetectionHandler.postDelayed(this, 30000);
+                    }
+                }
+            };
+        }
+        
+        // Start periodic checks
+        rootDetectionHandler.postDelayed(rootDetectionRunnable, 30000); // First check after 30 seconds
+    }
+    
+    /**
+     * Stops periodic root detection checks
+     */
+    private void stopPeriodicRootDetection() {
+        if (rootDetectionHandler != null && rootDetectionRunnable != null) {
+            rootDetectionHandler.removeCallbacks(rootDetectionRunnable);
+        }
+    }
 
     private void browseUrl(@NonNull final String url) {
         try {
@@ -136,6 +244,9 @@ public class FlowRunnerActivity extends FragmentActivity  {
     
     @Override protected void onCreate(Bundle icicle) {
         super.onCreate(icicle);
+
+        // Root Detection - Security Check
+        performRootDetection();
 
         flowGooglePlayServices = FlowGooglePlayServicesFactory.getFlowGooglePlayServices(this);//new FlowGooglePlayServices(this);
 
@@ -713,6 +824,12 @@ public class FlowRunnerActivity extends FragmentActivity  {
         
         paused = false;
 
+        // Perform root detection check on resume
+        performRootDetection();
+        
+        // Start periodic root detection
+        startPeriodicRootDetection();
+
         if (loader != null)
             loader.start();
         else
@@ -752,6 +869,9 @@ public class FlowRunnerActivity extends FragmentActivity  {
     @Override protected void onDestroy() {
         Log.i(Utils.LOG_TAG, "ACTIVITY ON-DESTROY");
         unregisterReceiver(inetStateReceiver);
+
+        // Stop periodic root detection
+        stopPeriodicRootDetection();
 
         wrapper.onGoogleServicesDisconnected();
         flowGooglePlayServices.disconnectGooglePlayServices();
