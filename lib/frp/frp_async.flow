@@ -126,6 +126,12 @@ export {
 
 	/// connect async fn ///
 
+	// rAsyncFnConnect family run asyncFn when some of sources are updated and all them got the FrpAsyncReady status.
+	// Then the dst node get FrpAsyncInProgress status and wait for ending of asyncFn.
+	// On this stage all src changes will be ignored, but can be buffered (depending on bufferPolicy) to handling later.
+	// The asyncFn  call onDone or onError on work is complete callbacks
+	// and then dst get a new value and FrpAsyncReady status.
+
 	rAsyncFnConnect(
 		src : FrpAsyncValue<?>,
 		dst : FrpAsyncValue<??>,
@@ -141,7 +147,7 @@ export {
 		dst : FrpAsyncValue<???>,
 		init : bool,
 		bufferPolicy : FrpAsyncBufferPolicy,
-		asyncFn : (?, ??, ???, (???) -> void, (string) -> void) -> void,
+		asyncFn : (?, ??, ???/*currentValue*/, (???) -> void/*onDone*/, (string) -> void/*onError*/) -> void,
 		errorFn : ([string]) -> [string],
 	) -> void;
 
@@ -152,7 +158,7 @@ export {
 		dst : FrpAsyncValue<????>,
 		init : bool,
 		bufferPolicy : FrpAsyncBufferPolicy,
-		asyncFn : (?, ??, ???, ????, (????) -> void, (string) -> void) -> void,
+		asyncFn : (?, ??, ???, ????/*currentValue*/, (????) -> void/*onDone*/, (string) -> void/*onError*/) -> void,
 		errorFn : ([string]) -> [string],
 	) -> void;
 
@@ -164,7 +170,7 @@ export {
 		dst : FrpAsyncValue<?????>,
 		init : bool,
 		bufferPolicy : FrpAsyncBufferPolicy,
-		asyncFn : (?, ??, ???, ????, ?????, (?????) -> void, (string) -> void) -> void,
+		asyncFn : (?, ??, ???, ????, ?????/*currentValue*/, (?????) -> void/*onDone*/, (string) -> void/*onError*/) -> void,
 		errorFn : ([string]) -> [string],
 	) -> void;
 
@@ -215,7 +221,6 @@ export {
 		fn : (?,??) -> ???,
 		errorFn : (?, ??) -> string
 	) -> FrpAsyncValue<???>;
-
 
 	rAsyncSelectV3(
 		src1 : FrpValue<?>,
@@ -797,6 +802,12 @@ rAsyncSubscribe4(
 /// utils ///
 
 // internal subscription utils /////////////////////////////////////////////////////////////
+
+// rAsyncFnConnectInternal run asyncFn when some of sources are updated and all them got the FrpAsyncReady status.
+// Then the dst node get FrpAsyncInProgress status and wait for ending of asyncFn.
+// On this stage all src changes will be ignored, but can be buffered (depending on bufferPolicy) to handling later.
+// When asyncFn is completed it call onDone or onError callbacks and then dst get a new value and FrpAsyncReady status.
+
 rAsyncFnConnectInternal(
 	sources : [FrpAsyncValue<flow>],
 	dst : FrpAsyncValue<?>,
@@ -843,10 +854,10 @@ rAsyncFnConnectInternal(
 					rnext(dst.asyncStatus, sourcesStatus);
 				};
 				FrpAsyncReady(): {
-					status = rget(dst.asyncStatus);
+					dstStatus = rget(dst.asyncStatus);
 
 					if (^initialized) {
-						if (status == FrpAsyncInProgress()) {
+						if (dstStatus == FrpAsyncInProgress()) {
 							// to start async process set FrpAsyncInProgress status before
 							if (^anySrcUpdated) {
 								started := true;
@@ -856,13 +867,13 @@ rAsyncFnConnectInternal(
 							}
 						} else  {// wrong case
 							// TODO: error handling
-							println("rAsyncFnConnectInternal, error: wrong node status " + toString(status));
+							println("rAsyncFnConnectInternal, error: wrong node status " + toString(dstStatus));
 							rnext(dst.asyncStatus, FrpAsyncReady());
 						}
 					} else {// initialization
 						initialized := true;
-						rnext(dst.asyncStatus, FrpAsyncInProgress());
 						started := true;
+						rnext(dst.asyncStatus, FrpAsyncInProgress());
 						asyncFn(updateFn, onError)(rget(dst.frpNode));
 					};
 				};
@@ -892,14 +903,15 @@ rAsyncFnConnectInternal(
 		} // else do nothing
 	}
 
-	subscrValueFn = \arr : [flow] -> {
+	subscrValueFn = \__ -> {
 		anySrcUpdated := true; // force update dst value
 	}
 
-	uns1 = rsubscribeMany(map(sources, \s-> s.asyncStatus), init, subscrStatusFn);
-	rAddDisposer(dst.asyncStatus, uns1);
-	uns2 = rsubscribeMany(map(sources, \s-> s.frpNode), init, subscrValueFn);
-	rAddDisposer(dst.frpNode, uns2);
+	unsV = rsubscribeMany(map(sources, \s-> s.frpNode), false, subscrValueFn);
+	rAddDisposer(dst.frpNode, unsV);
+	// this also run subscrStatusFn if init == true and set init value
+	unsStatus = rsubscribeMany(map(sources, \s-> s.asyncStatus), init, subscrStatusFn);
+	rAddDisposer(dst.asyncStatus, unsStatus);
 }
 
 rAsyncConnectIternal(
@@ -927,14 +939,15 @@ rAsyncConnectIternal(
 		};
 		rnext(dst.asyncStatus, sourcesStatus);
 	}
-	subscrValueFn = \arr : [flow] -> {
-		anySrcUpdated := true; // force update dst value
+	subscrValueFn = \__ -> {
+		anySrcUpdated := true; // to  update dst value on FrpAsyncReady
 	}
 
-	uns1 = rsubscribeMany(map(sources, \s-> s.asyncStatus), init, subscrStatusFn);
-	uns2 = rsubscribeMany(map(sources, \s-> s.frpNode), init, subscrValueFn);
-	rAddDisposer(dst.asyncStatus, uns1);
-	rAddDisposer(dst.frpNode, uns2);
+	unsV = rsubscribeMany(map(sources, \s-> s.frpNode), false, subscrValueFn);
+	rAddDisposer(dst.frpNode, unsV);
+	// this also run subscrStatusFn if init == true and set init value
+	unsStatus = rsubscribeMany(map(sources, \s-> s.asyncStatus), init, subscrStatusFn);
+	rAddDisposer(dst.asyncStatus, unsStatus);
 }
 
 
