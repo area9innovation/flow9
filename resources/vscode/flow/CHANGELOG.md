@@ -221,4 +221,7 @@
  - Highlight binary constants in share key syntax
 
 ## 0.6.8
- - Highlight tags in share key comments
+ - Highlight annotations in share key comments
+
+## 0.6.9
+ - Make share key annotations case-insensitive
