@@ -212,16 +212,26 @@ class FlowFileSystem {
 		return d;
 	}
 
-	public static function checkFilesReady(jsFileInput : Dynamic, maxFiles : Int, callback : Array<Dynamic> -> Void, nAttempt : Int) : Void {
+	public static function checkFilesReady(jsFileInput : Dynamic, maxFiles : Int, fileTypes : Array<String>, callback : Array<Dynamic> -> Void, nAttempt : Int) : Void {
 		var files : js.html.FileList = jsFileInput.files;
 		if (files.length == 0 && nAttempt <= 10) {
 			haxe.Timer.delay(function() {
-				checkFilesReady(jsFileInput, maxFiles, callback, nAttempt + 1);
+				checkFilesReady(jsFileInput, maxFiles, fileTypes, callback, nAttempt + 1);
 			}, 100);
 		} else {
 			var fls : Array<js.html.File> = [];
+			var allFilesAllowed : Bool = fileTypes.indexOf(".*") != -1 || fileTypes.indexOf("*.") != -1 || fileTypes.indexOf("*.*") != -1;
+
 			for (idx in 0...Math.floor(Math.min(files.length, maxFiles))) {
-				fls.push(files[idx]);
+				var file = files[idx];
+				var fileName = file.name;
+				var fileExtension = fileName.split('.').pop();
+
+				if (!allFilesAllowed && fileTypes.indexOf("*." + fileExtension) == -1) {
+					trace('Invalid file selected: "' + fileName + '" with type "' + fileExtension + '"');
+				} else {
+					fls.push(files[idx]);
+				}
 			}
 			callback(fls);
 			js.Browser.document.body.removeChild(jsFileInput);
@@ -257,7 +267,6 @@ class FlowFileSystem {
 			jsFileInput.multiple = true;
 		}
 
-
 		var fTypes = "";
 		for (fType in fileTypes) {
 			// Accept property accepts only file extensions (not regular expression)
@@ -266,12 +275,17 @@ class FlowFileSystem {
 			fTypes += fType + ",";
 		}
 
+		// Remove trailing comma
+		if (fTypes.length > 0) {
+			fTypes = fTypes.substr(0, fTypes.length - 1);
+		}
+
 		jsFileInput.accept = fTypes;
 		jsFileInput.value = ""; // force onchange event for the same path
 
 		jsFileInput.onchange = function(e : Dynamic) {
 			jsFileInput.onchange = null;
-			checkFilesReady(jsFileInput, maxFiles, callback, 0);
+			checkFilesReady(jsFileInput, maxFiles, fileTypes, callback, 0);
 		};
 
 		// workaround for case when cancel was pressed and onchange isn't fired
