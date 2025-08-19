@@ -1,10 +1,10 @@
 import tools/common/config;
-import tools/common/pathutil;
+import common/pathutil;
 import lingo/flow/fail;
 
 export {
 	// Reads compiler options from config file (relative to given dir) and url parameters.
-	getCompilerConfig(dir : string) -> Fail<CompilerConfig>;
+	getCompilerConfig(dir : string, globalConfigM : Maybe<CompilerConfig>) -> Fail<CompilerConfig>;
 
 	// Read a compilefile and for each line make a config, combined with a given one.
 	readConfigsFormCompileFile(config : CompilerConfig, compilefile : string) -> [CompilerConfig];
@@ -23,13 +23,13 @@ export {
 	nonDefaultCompilerConfigToString(config : CompilerConfig) -> string;
 
 	// Try to update config fields like 'includes' with info, related to a given file.
-	updateConfigForFile(def : CompilerConfig, file : string) -> CompilerConfig;
+	updateConfigForFile(def : CompilerConfig, file : string, workingDir : string) -> CompilerConfig;
 
 	// Makes a tree from a string like "name1=value1,name2=value2,..."
 	configString2tree(str : string) -> Tree<string, string>;
 }
 
-getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
+getCompilerConfig(dir : string, globalConfigM : Maybe<CompilerConfig>) -> Fail<CompilerConfig> {
 	conf_dir = findFlowConfigDir(dir);
 	configFile0 = if (conf_dir == "") {
 		getAllUrlConfig();
@@ -39,59 +39,41 @@ getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 	};
 
 	// config paths => dir path
-	conf_dir2 = strReplace(conf_dir, "\\", "/") + "/";
-	updatePaths = \paths -> {
-		pathsA = filter(map(strSplit(paths, ","), trim), neq(""));
-		strGlue(map(pathsA, \path -> conf_dir2 + path), ",");
-	}
+	conf_dir2 = normalizeFolderPath(conf_dir);
 
 	// Here we pick up all external 'flow.config' files, which may be attached to the current
 	// 'flow.config' with 'include-extern=<conf1,conf2,...>' option,
 	// collect all includes from those configs, join them, resolve to absolute paths and add to the
 	// includes from the currently used 'flow.config'.
-	extern_includes = strGlue(fcExternIncludes(updatePaths(lookupTreeDef(configFile0, "include-extern", ""))), ",");
-	base_includes = updatePaths(lookupTreeDef(configFile0, "include", ""));
-	all_includes = if (base_includes == "") extern_includes else {
-		if (extern_includes == "") base_includes else {
-			base_includes + "," + extern_includes;
-		}
-	}
-	configFile = if (all_includes == "") configFile0 else {
-		setTree(configFile0, "include", all_includes);
-	}
+	externIncludes = fcExternIncludes(conf_dir2, includes2absolute(lookupTreeDef(configFile0, "include-extern", ""), conf_dir2), globalConfigM);
+	baseIncludes = includes2absolute(lookupTreeDef(configFile0, "include", "") + "," + lookupTreeDef(configFile0, "I", ""), conf_dir2);
+	allIncludes = uniq(concat(baseIncludes, externIncludes));
+	configFile = removeFromTree(removeFromTree(configFile0, "I"), "include");
 
 	v = getUrlParameterDef("verbose", "0");
 	verbose = if (isDigits(v)) s2i(v) else 0;
 	flowDir = getFlowDir();
 	flowLibDir = flowDir + "lib";
-	flowLibMaterialDir = flowLibDir + "/material";
-	innovationDir = resolveRelativePath(flowDir + "../innovation");
-	innovationLibDir = innovationDir + "/lib";
 
 	cliIncludes = getUrlParameter("I");
-
-	configIncludes = lookupTreeDef(configFile, "include", "");
-	includesArray = concat(strSplit(cliIncludes, ","), strSplit(configIncludes, ","));
-	includesNFlowLib = uniq(concat(includesArray, [flowLibDir, flowLibMaterialDir, innovationLibDir]));
-	includesNFlow = uniq(concat(includesNFlowLib, [flowDir, innovationDir]));
-	includesCwd = concat(includesNFlow, ["."]);
-
-	includes = filter(includesCwd, neq(""));
+	includesArray = concat(splitIncludes(cliIncludes), allIncludes);
+	includes = uniq(concat(includesArray, [flowLibDir, conf_dir2]));
 
 	if (verbose > 0) {
 		println("Current dir: " + resolveRelativePath("."));
+		println("Start dir for config search: " + dir);
 		println("Config dir: " + conf_dir);
 		println("Flow path: " + flowDir);
 		if (verbose > 1) {
-			println("Flow library path: " + flowLibDir);
 			println("Flow includes paths: " + toString(includes));
 		}
 	}
 
-	workingDir = getUrlParameterDef("working-dir", "");
+	workingDir = getUrlParameterDef("working-dir", dir);
 	readable = isUrlParameterTrue("readable");
 	afile = getCompilationFile(configFile, verbose);
-	flowfile = trimFlowfile(afile, includes, workingDir);
+	resolvedIncludes = makeResolvedIncludes(includes, workingDir);
+	flowfile = trimFlowfile2(afile, resolvedIncludes);
 
 	// Meaningful only for flowc
 	fcIncremental = !isUrlParameterFalse("incremental");
@@ -99,10 +81,14 @@ getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 	objectFolders = {
 		folders = getUrlParameterDef("obj", if (fcIncremental) flowDir + "/objc" else (if (readable) "objjs" else "obj,objshared"));
 		configFolders = lookupTreeDef(configFile, "obj", "");
-		filter(concat(
-			strSplit(if (folders == "-") "" else folders, ","),
-			strSplit(configFolders, ",")
-		), \e -> e != "")
+		concat(
+			if (folders == "-") {
+				[];
+			} else {
+				splitIncludes(folders);
+			},
+			splitIncludes(configFolders)
+		);
 	}
 
 	htmlMonolithic = getUrlParameter("html");
@@ -203,7 +189,6 @@ getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 		Failed("ERROR: set 'dce-preserved-names' if you want to remove 'main' with 'dce-remove-main'");
 	} else {
 		configTree = combineConfigsOverride(getConstConfig(filtermap([
-			Some(Pair("include", strGlue(includes, ","))),
 			Some(Pair("readable", if (readable) "1" else "")),
 			Some(Pair("flowfile", flowfile)),
 			Some(Pair("confdir", conf_dir2)),
@@ -299,6 +284,8 @@ getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 		Some(CompilerConfig(
 			flowfile,
 			includes,
+			resolvedIncludes,
+			workingDir,
 			objectFolders,
 			verbose,
 			JSCliParams(
@@ -331,6 +318,28 @@ getCompilerConfig(dir : string) -> Fail<CompilerConfig> {
 	}
 }
 
+includes2absolute(includesStr : string, configDir : string) -> [string] {
+	filtermap(
+		strSplit(trim(includesStr), ","),
+		\path0 -> {
+			path = trim(path0);
+			if (path == "") {
+				None();
+			} else {
+				if (isAbsolutePath(path)) {
+					Some(path);
+				} else {
+					if (path == ".") {
+						Some(configDir);
+					} else {
+						Some(configDir + path);
+					}
+				}
+			}
+		}
+	);
+}
+
 readConfigFormString(config : CompilerConfig, str : string) -> Maybe<CompilerConfig> {
 	line = trim(str);
 	// Skip comment and empty lines in flow.config
@@ -351,8 +360,7 @@ readConfigFormString(config : CompilerConfig, str : string) -> Maybe<CompilerCon
 		);
 		conf = compilerConfigFromConfig(combineConfigsOverride(new_config, config.config));
 		file = getCompilationFile(new_config, config.verbose);
-		workingDir = getConfigParameterDef(config.config, "working-dir", "");
-		filetrimmed = trimFlowfile(file, conf.includes, workingDir);
+		filetrimmed = trimFlowfile(file, conf);
 		Some(CompilerConfig(conf with flowfile = filetrimmed))
 	} else None()
 }
@@ -389,26 +397,24 @@ getCompilationFile(config : Tree<string, string>, verbose : int) -> string {
 	file2 = if (file0 == "" && test != "") "tools/flowc/tests/test" + test
 	else if (file0 == "" && error != "") "tools/flowc/tests/errors/error" + error
 	else file0;
-	strReplace(file2, "\\", "/");
+	normalizePath(file2);
 }
 
 makeRelativePath(file : string) -> string {
-	cwd0 = resolveRelativePath(".");
-	cwd1 = strReplace(cwd0, "\\", "/");
-	cwd = if (endsWith(cwd1, "/")) cwd1 else cwd1 + "/";
-	file0 = strReplace(file, "\\", "/");
+	cwd = normalizeFolderPath(resolveRelativePath("."));
+	file0 = normalizePath(file);
 	if (startsWith(toLowerCase(file0), toLowerCase(cwd))) {
 		strRight(file0, strlen(cwd))
 	} else file0;
 }
 
 getTargetModuleName(config : CompilerConfig) -> string {
-	trimFlowfile(config.flowfile, config.includes, getConfigParameterDef(config.config, "working-dir", ""));
+	trimFlowfile(config.flowfile, config);
 }
 
 nonDefaultCompilerConfigToString(config : CompilerConfig) -> string {
-	path = findFlowPath(config.flowfile, true, config.includes, getConfigParameterDef(config.config, "working-dir", ""));
-	def_params = switch (getCompilerConfig(fcDirName(path))) {
+	path = findFlowPath(config.flowfile, true, config.includesRaw, config.workingDir);
+	def_params = switch (getCompilerConfig(fcDirName(path), Some(config))) {
 		Some(conf): compilerConfigToTree(conf);
 		Fail(): makeTree();
 	}
@@ -444,9 +450,8 @@ nonDefaultCompilerConfigToString(config : CompilerConfig) -> string {
 	strGlue(map(non_default, \p -> p.first + "=" + p.second), ", ");
 }
 
-updateConfigForFile(def : CompilerConfig, file : string) -> CompilerConfig {
-	cwd_dir = strReplace(resolveRelativePath("."), "\\", "/");
-	file_dir = dirName(file);
+updateConfigForFile(def : CompilerConfig, file : string, workingDir : string) -> CompilerConfig {
+	file_dir = fcDirName(file);
 	conf_dir = findFlowConfigDir(file_dir);
 	update_dirs = \def_dirs, file_dirs -> {
 		uniq(concat(def_dirs, map(file_dirs, \dir ->
@@ -460,17 +465,10 @@ updateConfigForFile(def : CompilerConfig, file : string) -> CompilerConfig {
 		)));
 	}
 	if (conf_dir == "") def else {
-		switch (getCompilerConfig(file_dir)) {
+		switch (getCompilerConfig(file_dir, Some(def))) {
 			Some(conf): {
-				// Here we pick up all external 'flow.config' files, which may be attached to the current
-				// 'flow.config' with 'include-extern=<conf1,conf2,...>' option,
-				// collect all includes from those configs, join them, resolve to absolute paths and add to the
-				// includes from the currently used 'flow.config'.
-				extern_includes = fcExternIncludes(lookupTreeDef(conf.config, "include-extern", ""));
 				CompilerConfig(conf with
-					includes = concat(update_dirs(def.includes, conf.includes), extern_includes),
-					objectFolders = update_dirs(def.objectFolders, conf.objectFolders),
-					config = setTree(combineConfigsOverride(conf.config, def.config), "working-dir", cwd_dir),
+					workingDir = workingDir,
 					flowfile = file
 				);
 			}

@@ -129,7 +129,7 @@ export {
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
 		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MCustomAnyItem, MChangeOnClick, MInputInspector,
-		MHideBrowseButton, MBrowseDialogStyles, MLazyAutoCompleteDictionary;
+		MHideBrowseButton, MBrowseDialogStyles, MLazyAutoCompleteDictionary, MBrowseButtonTooltip;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -146,6 +146,7 @@ export {
 			MBrowseDialogStyle ::= MDialogStyle, MDynamicListStyle;
 		// We can use MAutoComplete with dynamic dictionary and update the dictionary according to input string
 		MLazyAutoCompleteDictionary(dictionaryT : Transform<[string]>, subscribeInput : (Transform<string>) -> () -> void);
+		MBrowseButtonTooltip(text : Transform<string>);
 
 	MCollapsingBox(
 		content : Material,
@@ -162,11 +163,12 @@ export {
 		state : [MFlippingCardState]
 	) -> Material;
 
-		MFlippingCardState ::= MButtonState, MDuration, MTrigger, FAnimationPercent;
+		MFlippingCardState ::= MButtonState, MDuration, MTrigger, FAnimationPercent, MFlippingCardGetContentText;
 			MTrigger(type : MTriggerType);
 				MTriggerType ::= MTriggerHover, MTriggerClick;
 					MTriggerHover();
 					MTriggerClick();
+			MFlippingCardGetContentText(textFn : (bool) -> string);
 
 	// If available width is enough, renders text with bigger font, otherwise - with smaller one and starts ellipsing if available width is too small.
 	MEllipsisTextTwoFonts(
@@ -1107,6 +1109,7 @@ MDropDownOrAutoComplete(
 			))
 			|> (\st -> if (contains(style, MHideBrowseButton())) st else {
 				browseDialogStyle = extractStruct(style, MBrowseDialogStyles([MListWidth(-1., 700.)])).style;
+				browseButtonTooltipT = extractStruct(style, MBrowseButtonTooltip(const(_("Browse Content")))).text;
 				dialogStyle = filtermap(browseDialogStyle, \bdst ->
 					switch (bdst) {
 						MDialogStyle() : {a : Maybe<MDialogStyle> = Some(bdst); a};
@@ -1221,7 +1224,7 @@ MDropDownOrAutoComplete(
 				};
 				isNotPlain = contains(st, MOutlined()) || contains(st, MFilled());
 				concat(st, [MRightCustomButton(
-					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(if (isNotPlain) 0. else 10.)], [MTooltipText(const(_("Browse Content")))])
+					MIconButton("find_in_page", onClick, [MIconSize(20.), MIconButtonBorder(if (isNotPlain) 0. else 10.)], [MTooltipText(browseButtonTooltipT)])
 					|> MBorderLeftRight(if (isNotPlain) 10. else 0.)
 				), MShowDropDownArrow(false)])
 			})
@@ -1513,6 +1516,7 @@ MFlippingCard(
 	triggerType = extractStruct(state, MTrigger(MTriggerHover())).type;
 	isHoverTrigger = isSameStructType(triggerType, MTriggerHover());
 	buttonTitle = extractStruct(state, MButtonTitle(const(""))).title;
+	getContentTextFn = tryExtractStruct(state, MFlippingCardGetContentText(\__ -> ""));
 	isBackSide = make(false);
 	flipped = make(false);
 
@@ -1528,7 +1532,15 @@ MFlippingCard(
 
 	MComponent([
 		MHighlightOnFocus(const(true)),
-		MButtonTitle(fselect2Lift(buttonTitle, isBackSide, \ttl, isBack -> ttl + ". Flipping card (" + (if (isBack) "back" else "front") + " side) with content inside")),
+		MButtonTitle(fselect2Lift(buttonTitle, isBackSide, \ttl, isBack ->
+			formatString("%1%2Flipping card (%3 side) %4%5", [
+				ttl,
+				if (ttl == "") "" else ". ",
+				if (isBack) "back" else "front",
+				if (isSome(getContentTextFn)) ": " else "",
+				eitherMap(getContentTextFn, \textFn -> textFn.textFn(isBack), "with content inside")
+			])
+		)),
 		MOnClick(\ -> {
 			reverseBehaviour(flipped);
 			maybeApply(tryExtractStruct(state, MOnClick(nop)), \onClick -> onClick.click());

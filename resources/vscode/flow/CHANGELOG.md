@@ -216,3 +216,6 @@
 ## 0.6.6
  - Introduced customizable flowc commands (F1 'Flow9: Execute some of predefined or arbitrary command on flowc server')
  - Fixed default flowc server folder
+
+## 0.6.7
+ - Highlight binary constants in share key syntax

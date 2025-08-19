@@ -1,6 +1,7 @@
 #pragma once
 
 #include "__flow_runtime_union.hpp"
+#include "__flow_runtime_string.hpp"
 
 namespace flow {
 

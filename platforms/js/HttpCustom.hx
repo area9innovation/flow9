@@ -6,6 +6,7 @@ class HttpCustom extends haxe.Http {
 	var availableMethods = ['GET', 'POST', 'DELETE', 'PATCH', 'PUT'];
 	var arrayBufferEncodings = ['wtf8', 'byte'];
 	var defaultEncodings = ['auto', 'utf8'];
+	var loadedLength = 0;
 
 	var responseHeaders2 : Array<Array<String>>;
 
@@ -52,6 +53,10 @@ class HttpCustom extends haxe.Http {
 		}
 
 		var encodedResponse = "";
+
+		var onprogress = function(event) {
+			me.loadedLength = event.loaded;
+		}
 
 		var onreadystatechange = function(v) {
 			if( r.readyState != 4 )
@@ -100,6 +105,9 @@ class HttpCustom extends haxe.Http {
 			#if (haxe_ver >= "4.0.0")
 			if (r.responseType == ARRAYBUFFER) me.responseAsString = encodedResponse;
 			else me.responseAsString = r.responseText;
+			if (me.responseAsString == "" && me.loadedLength != 0) {
+				Native.println("ERROR: JS cannot make string from response of length " + me.loadedLength);
+			}
 			#else
 			if (r.responseType == ARRAYBUFFER) me.responseData = encodedResponse;
 			else me.responseData = r.responseText;
@@ -115,8 +123,10 @@ class HttpCustom extends haxe.Http {
 
 			me.onResponse(s, me.responseData, me.responseHeaders2);
 		};
-		if( async )
+		if( async ) {
 			r.onreadystatechange = onreadystatechange;
+			r.onprogress = onprogress;
+		}
 		var uri = postData;
 		if( uri != null && method == 'GET' )
 			method = 'POST';

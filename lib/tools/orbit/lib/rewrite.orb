@@ -1,4 +1,7 @@
 import lib/reflect;
+import lib/array;
+import lib/graph;
+import lib/match;
 
 // Domain-aware rewriting library for OGraph manipulation
 // This library provides functions for pattern matching, rewriting, and
@@ -10,94 +13,288 @@ import lib/reflect;
 
 // Apply a single rewrite pattern and replacement to a graph,
 // correctly handling domain annotations and conditions
-fn applyRewriteRule(graph, pattern, replacement, condition, ruleName) = (
-//    println("\nApplying rule: " + ruleName);
-//    println("Pattern: " + prettyOrbit(pattern));
-//    println("Replacement: " + prettyOrbit(replacement));
-//    println("Condition: " + prettyOrbit(condition));
+fn applyRewriteRule(graph, root, pattern, replacement, condition, ruleName) = (
+    // println("\nTrying rule: " + ruleName + ": " + prettySexpr(pattern) + "  =>  " + prettySexpr(replacement) + "   to   " + prettySexpr(extractOGraph(graph, root)));
+    //println("Pattern: " + prettySexpr(pattern));
+    //println("Replacement: " + prettySexpr(replacement));
+    //println("Condition: " + prettySexpr(condition));
     
     // Apply the pattern match
-    let matches = matchOGraphPattern(graph, pattern, \(bindings : ast, eclassId) . (
+
+    let matches = matchPattern(graph, root, pattern, \(eclassId, bindings, ellipsis) . (
         //println("Match found at ID: " + i2s(eclassId));
-        //println("Bindings: " + prettyOrbit(bindings));
+		let values = map(bindings, \b -> (
+			Pair(b[1], extractOGraph(graph, b[2]))
+		));
+        // println("Bindings: " + prettyOrbit(values));
         // THE CORRECT SEQUENCE FOR DOMAIN-AWARE REWRITING:
-        
         // Step 1: Check if the condition is satisfied
         let shouldApplyRule = if (condition == true) then (
             // Optimize for the common case of condition=true
             true
         ) else (
-            // Substitute bindings into the condition in the graph
-            let condId = addOGraphWithSub(graph, condition, bindings);
-            
-            // Extract for evaluation
-            let condExpr = extractOGraph(graph, condId);
-            // println("Condition instantiated to: " + prettyOrbit(condExpr));
-
-            // Evaluate the condition
-            let condResult = eval(condExpr);
-            // println("Condition evaluated to: " + prettyOrbit(condResult));
-            
-            condResult
+            // Resolve bindings to values from the graph
+			evalWithBindings(condition, values)
         );
-        
         if (shouldApplyRule) then (
             // Step 2: Apply the replacement (only if condition is true)
-            // Modern approach using direct eclass ID substitution
-            // This is more efficient and works directly with eclass IDs
-            let newId = addOGraphWithSub(graph, replacement, bindings);
-            // println("Rule '" + ruleName + "' applied. ID: " + i2s(newId) + ": " + prettyOrbit(extractOGraph(graph, newId)) + " was " + prettyOrbit(extractOGraph(graph, eclassId)) + " at " + i2s(eclassId));
 
-            // Step 3: Merge nodes (result first to make it canonical)
-            let success = mergeOGraphNodes(graph, newId, eclassId);
-            // setFileContent("merged" + i2s(newId) + ".dot", ograph2dot(graph));
-			success
+			// If ellipsis != [], then we should splice in ellipsis in the replacement expression
+			let expanded = replaceEllipsis(replacement, map(ellipsis, \e -> extractOGraph(graph, e)));
+            // If we have a domain annotation, we have to unquote it
+			let repl = expanded is ((a : d) => (`(($a) : ($evalWithBindings(d, values)))); a => a);
+//			println(ellipsis);
+//			println("Expanded: " + prettySexpr(expanded));
+//			let evald = evalWithBindings(repl, values);
+//			println(evald);
+            let newId = addOGraphWithSub(graph, repl, bindings);
+            println("Rule '" + ruleName + "' applied. ID: " + i2s(newId) + ": Now is   " + prettyOrbit(extractOGraph(graph, newId)) + "   was   " + prettyOrbit(extractOGraph(graph, eclassId)) + " at " + i2s(eclassId) + " from replacement " + prettySexpr(replacement) + " and values " + prettySexpr(values) + " and ellipsis " + prettySexpr(ellipsis));
+			//println("Merging " + i2s(newId) + " with " + i2s(eclassId));
+            // let symbolic = mergeOGraphNodes(graph, newId, eclassId);
+
+			// Do eval in the ograph for quasiquote expressions
+			let quasi = evaluateOGraphQuasiquote(graph, newId, false);
+
+			// println("Evaluated quasiquote. Merging " + i2s(quasi) + " with " + i2s(eclassId));
+
+			// Step 3: Merge nodes (result first to make it canonical)
+			let success = mergeOGraphNodes(graph, quasi, eclassId);
+			// setFileContent("merged" + i2s(newId) + ".dot", ograph2dot(graph));
+			quasi
 
         ) else (
             // println("Condition not satisfied, rule not applied");
 			0
         );
-
-		// TODO: Should we not unquote as well?
     ));
     
 	//  println("Applied " + i2s(matches) + " matches for rule '" + ruleName + "'")
     matches
 );
 
+
+// Replace ... in this expression with the provided array expression
+fn replaceEllipsis(e, ellipsis) = (
+	if (ellipsis == []) then (
+		// No ellipsis, just return the expression
+		e
+	) else (
+		let de = decomposeSexpr(e);
+		let patternChildren = de[1];
+		let ellipsisIndex = findi(patternChildren, \c -> c == '...);
+		if (ellipsisIndex == -1) then (
+			// No ellipsis found at this level, check children recursively
+			let op = de[0];
+			let children = de[1];
+			let newChildren = map(children, \child -> replaceEllipsis(child, ellipsis));
+			constructSexpr(op, newChildren, de[2])
+		) else (
+			// Replace the ellipsis at this level with the provided expression
+			let prefix = subrange(patternChildren, 0, ellipsisIndex);
+			let suffix = tailFrom(patternChildren, ellipsisIndex + 1);
+			let newChildren = concat(concat(prefix, ellipsis), suffix);
+			constructSexpr(de[0], newChildren, de[2])
+		)
+	)
+);
+
+// Initialize the rewrite engine with an expression
+fn initRewriteEngine(expr) = (
+    // Create a new graph for OGraph operations
+    let ograph = makeOGraph("transform");
+    // Add the expression
+    let exprId = addOGraph(ograph, expr);
+    
+    // Create a graph to track rule applications
+    let graph = makeGraph();
+    
+    // Create our accumulator structure and track the original expression
+    let originalExpr = expr;
+    
+    // Return the initialized accumulator
+    RewriteAcc(ograph, graph, exprId, originalExpr)
+);
+
+// Helper function for applying a rule and tracking it in the graph
+fn applyAndTrackRule(acc, pattern, replacement, condition, ruleName) = (
+    acc is (RewriteAcc(ograph, graph, exprId, originalExpr) => (
+        // Track original expression before applying the rule
+		let root = exprId; // findORoot(ograph, exprId);
+		// println("Applying rule '" + ruleName + "' to expression: " + prettySexpr(originalExpr));
+        let fromExpr = extractOGraph(ograph, exprId);
+        // Apply the rule
+        let matches = applyRewriteRule(ograph, root, pattern, replacement, condition, ruleName);
+        
+        // If rule was applied, track it in the graph
+        if (matches > 0) then (
+            // Get the transformed expression
+            let toExpr = extractOGraph(ograph, exprId);
+            
+            // Add nodes for from and to expressions if they don't exist
+            let graphWithNodes = addNode(addNode(graph, fromExpr), toExpr);
+            
+            // Add an edge with the Rule structure as data
+            let graphWithEdge = addEdge(graphWithNodes, fromExpr, toExpr, 
+                Rule(ruleName, pattern, replacement, condition));
+            
+            RewriteAcc(ograph, graphWithEdge, exprId, originalExpr)
+        ) else (
+            // No change, keep the accumulator as is
+            acc
+        )
+    ))
+);
+
+// Apply one round of rewrite rules to the accumulator
+fn applyRulesOneRound(acc, rules) = (
+    // Apply each rule and track in the graph
+    fold(rules, acc, \acc, rule -> (
+        acc is (RewriteAcc(ograph, graph, exprId, originalExpr) => (
+            rule is (
+                Rule(name, (p => q)) => (
+                    applyAndTrackRule(acc, p, q, true, name)
+                );
+                Rule(name, (p => q if cond)) => (
+                    applyAndTrackRule(acc, p, q, cond, name)
+                );
+                (p => q) => (
+                    applyAndTrackRule(acc, p, q, true, "Anonymous")
+                );
+                (p => q if cond) => (
+                    applyAndTrackRule(acc, p, q, cond, "Anonymous with condition")
+                );
+                Rule(name, (p -> q)) => (
+                    applyAndTrackRule(acc, p, q, true, name)
+                );
+                Rule(name, (p -> q if cond)) => (
+                    applyAndTrackRule(acc, p, q, cond, name)
+                );
+                (p -> q) => (
+                    applyAndTrackRule(acc, p, q, true, "Anonymous")
+                );
+                (p -> q if cond) => (
+                    applyAndTrackRule(acc, p, q, cond, "Anonymous with condition")
+                );
+				((p ⊂ q) && cond) => (
+					applyAndTrackRule(acc, `(secret : ($p)), `(secret : ($q)), cond, "Domain subset with condition")
+				);
+				(p ⊂ q) => (
+					applyAndTrackRule(acc, `(secret : ($p)), `(secret : ($q)), true, "Domain subset")
+				);
+				[name, pattern, replacement, condition] => (
+					applyAndTrackRule(acc, pattern, replacement, condition, name)
+				);
+				u => (
+					println("Invalid rule format: " + prettySexpr(u));
+					acc
+				)
+            )
+        ))
+    ))
+);
+
+// Extract the final result and print the rewrite path
+fn extractRewriteResult(acc) = (
+    acc is (RewriteAcc(ograph, graph, exprId, originalExpr) => (
+        let finalExpr = extractOGraph(ograph, exprId);
+
+		if (finalExpr == originalExpr) then (
+			println("No rewrites applied - original expression unchanged.");
+		) else (
+			// Find the shortest path from original to final expression
+			let path = shortestPath(graph, originalExpr, finalExpr);
+			path is (
+				Path(found, nodes, _) => (
+					if (found && length(nodes) > 1) then (
+						println("\nRewrite sequence from original to final expression:");
+						
+						// Print each step in the rewrite sequence
+						iteri(tail(nodes), \i, _ -> (
+							let from = nodes[i];
+							let to = nodes[i + 1];
+							
+							// Get the rule information from the edge
+							let edges = getEdgesFrom(graph, from);
+							let edge = filter(edges, \e -> e is (Edge(_, edgeTo, _) => edgeTo == to))[0];
+							edge is (
+								Edge(_, _, Rule(name, _, _, _)) => (
+									println(i2s(i + 1) + ". " + name + ": " + 
+										prettyOrbit(from) + " => " + prettyOrbit(to));
+									0
+								);
+								_ => 0
+							)
+						));
+					) else if (!found) then (
+						println("No rewrite path found from original to final expression.");
+						println("Original expression: " + prettySexpr(originalExpr));
+						println("Final expression: " + prettySexpr(finalExpr));
+						0
+					) else (
+						// Only one node, no changes applied
+						println("No rewrites applied - original expression unchanged.");
+						0
+					)
+				)
+			)
+		);
+        // Return the final transformed expression and the rewrite graph
+        Triple(finalExpr, ograph, graph)
+    ))
+);
+
 // Apply a list of rewrite rules to an expression
 // Rules are quadruples: [name, pattern, replacement, condition]
 fn applyRules(expr, rules) = (
-    // Create a new graph 
-    let graph = makeOGraph("transform");
+    // Initialize the rewrite engine
+    let acc = initRewriteEngine(expr);
     
-    // Add the expression
-    let exprId = addOGraph(graph, expr);
+    // Apply one round of rules
+    let finalAcc = applyRulesOneRound(acc, rules);
+
+    // Extract and return the result
+    extractRewriteResult(finalAcc);
+);
+
+// Apply rules until saturation (fixed point)
+// Returns Triple(finalExpr, ograph, graph)
+fn applyRulesUntilFixedPoint(expr, rules, maxIterations) = (
+    // Initialize the rewrite engine
+    let acc = initRewriteEngine(expr);
     
-    // Helper function to apply rules recursively 
-    fn applyRulesRecursive(rules, index, totalMatches) = (
-        if index < length(rules) then (
-            let rule = rules[index];
-            let ruleName = rule[0];
-            let pattern = rule[1];
-            let replacement = rule[2];
-            let condition = if (length(rule) >= 4) then rule[3] else true;
-            
-            // Apply the rule with condition
-            let matches = applyRewriteRule(graph, pattern, replacement, condition, ruleName);
-            
-            // Apply the next rule
-            applyRulesRecursive(rules, index + 1, totalMatches + matches)
+    // Function to apply rules until fixed point
+    fn iterate(acc, iteration) = (
+		// println("Iteration " + i2s(iteration) + ": ");
+        if (iteration >= maxIterations) then (
+            println("Reached max iterations (" + i2s(maxIterations) + ")");
+            acc
         ) else (
-            // Return total matches when done
-            totalMatches
+            // Apply one round of rules
+            let newAcc = applyRulesOneRound(acc, rules);
+            
+            // Get expressions to compare if anything changed
+            acc is (RewriteAcc(_, graph1, exprId1, _) => (
+                newAcc is (RewriteAcc(_, graph2, exprId2, _) => (
+                    // Check if we applied any rules
+                    if (graph1 != graph2) then (
+                        // Continue iterating
+                        iterate(newAcc, iteration + 1)
+                    ) else (
+                        // Fixed point reached
+                        println("Fixed point reached after " + i2s(iteration) + " iterations");
+                        newAcc
+                    )
+                ))
+            ))
         )
     );
     
-    // Apply all rules
-    let totalMatches = applyRulesRecursive(rules, 0, 0);
-    // Return the final transformed expression
-    extractOGraph(graph, exprId);
+    // Run the iteration
+    let finalAcc = iterate(acc, 0);
+
+	setFileContent("final.dot", ograph2dot(finalAcc[1]));
+    // Extract the result
+    extractRewriteResult(finalAcc)
 );
 
 //
@@ -107,7 +304,7 @@ fn applyRules(expr, rules) = (
 // Prepares a rule with proper domain handling
 // Returns a quadruple of [name, pattern, replacement, condition]
 fn prepareRule(name, patternExpr : ast, replacementExpr : ast, conditionExpr : ast) = (
-	[name, patternExpr, replacementExpr, conditionExpr]
+	Rule(name, patternExpr, replacementExpr, conditionExpr)
 );
 
 // Convenience function for rules without conditions
@@ -116,62 +313,9 @@ fn prepareSimpleRule(name, patternExpr, replacementExpr) = (
 );
 
 // Apply a single rule to an expression
-fn applyRule(expr, name, pattern, replacement, condition) = (
-    applyRules(expr, [[name, pattern, replacement, condition]])
+fn applyRule(expr, rule) = (
+    applyRules(expr, [rule])
 );
-
-// Apply rules until saturation (fixed point)
-fn applyRulesUntilFixedPoint(expr, rules, maxIterations) = (
-    // Create a graph with the initial expression
-    let graph = makeOGraph("fixed_point");
-    let exprId = addOGraph(graph, expr);
-	// setFileContent("initial.dot", ograph2dot(graph));
-    // Function to apply all rules once and count matches
-    fn applyAllRules(id, rules) = (
-        fn applyHelper(index, totalMatches) = (
-            if index < length(rules) then (
-                let rule = rules[index];
-                let ruleName = rule[0];
-                let pattern = rule[1];
-                let replacement = rule[2];
-                let condition = if (length(rule) >= 4) then rule[3] else true;
-                
-                let matches = applyRewriteRule(graph, pattern, replacement, condition, ruleName);
-                applyHelper(index + 1, totalMatches + matches)
-            ) else totalMatches
-        );
-        
-        applyHelper(0, 0)
-    );
-    
-    // Iterate until fixed point or max iterations
-    fn iterate(iteration) = (
-		// let name = uid("test") + ".dot";
-		//setFileContent(name, ograph2dot(graph));
-		//println("Saved " + name);
-        if iteration >= maxIterations then (
-            println("Reached max iterations (" + i2s(maxIterations) + ")");
-        ) else (
-            let matches = applyAllRules(exprId, rules);
-            //println("Iteration " + i2s(iteration) + ": applied " + i2s(matches) + " rewrites");
-            
-            if matches > 0 then (
-                // Continue iterating
-                iterate(iteration + 1)
-            ) else (
-                // Fixed point reached
-               //  println("Fixed point reached after " + i2s(iteration) + " iterations");
-			   0
-            )
-        )
-    );
-    
-    let res = iterate(1);
-	// setFileContent("test.dot", ograph2dot(graph));
-	// println("Extract final node " + i2s(exprId));
-    extractOGraph(graph, exprId)
-);
-
 
 // Prepare rules of this form:
 // 	let r = rules("Rewrites", [a => b, c => d if e]);

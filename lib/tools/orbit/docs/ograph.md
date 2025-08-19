@@ -1,6 +1,6 @@
 # O-Graphs in Orbit
 
-This document describes the O-Graph functionality available in the Orbit language.
+This document describes the O-Graph library available in the Orbit language.
 
 ## Overview
 
@@ -33,18 +33,22 @@ let g = makeOGraph("myGraph");
 
 #### `addOGraph(graphName: string, expr: expression) -> int`
 
-Recursively adds an entire expression tree to the graph and returns the ID of the root node. **Note:** For associative and commutative operations (like `+`, `*`, `&&`, `||`), the expression is internally converted to an n-ary S-expression representation (e.g., `(+ a b c)` instead of nested binary ops) for efficient canonicalization and pattern matching.
+Recursively adds an entire expression tree to the graph and returns the ID of the root node. **Note:** When lowering to SExpr, associative and commutative operations (like `+`, `*`, `&&`, `||`) are automatically flattened to n-ary S-expression representation for efficient canonicalization and pattern matching.
 
 ```orbit
-// Adding nested binary associative ops
+// Adding nested binary associative ops - automatically flattened during lowering
 let exprId = addOGraph(g, (a + b) + c);
-// Internally represented similar to (+ a b c) in the S-expression backend
+// Automatically converted to `+`(a, b, c) in the S-expression backend
 
-// Adding direct n-ary S-expression (if supported by parser/AST)
+// Adding complex nested expressions - fully flattened automatically
+let complexId = addOGraph(g, a + b + c + (d + e) + f);
+// Automatically converted to `+`(a, b, c, d, e, f) in the S-expression backend
+
+// Direct n-ary S-expression (equivalent)
 let exprIdNary = addOGraph(g, `+`(a, b, c));
 ```
 
-This adds all nodes in the expression tree, potentially flattening A/C operations into their n-ary S-expression form.
+This adds all nodes in the expression tree, automatically flattening all nested A/C operations into their n-ary S-expression form during the Orbit-to-SExpr conversion.
 
 The `extractOGraph` function retrieves the expression, potentially reconstructing a binary tree structure from the canonical n-ary form for user-facing representation.
 
@@ -67,7 +71,7 @@ let expr = extractOGraph(g, exprId); // Might return (a + b) + c or a + (b + c)
 
 - **Behavior:**
   - Any variable in the expression that has a matching name in the bindings will be replaced with the corresponding eclass ID.
-  - Handles flattening of associative/commutative operations appropriately during addition.
+  - Automatically flattens all nested associative operations during Orbit-to-SExpr lowering (e.g., `a+b+c+(d+e)+f` becomes `+`(a,b,c,d,e,f)).
   - Domain annotations in the expression (using `:` syntax) are processed automatically during addition.
   - Greatly improves efficiency by avoiding conversion between OGraph and OrMath_expr representations.
 

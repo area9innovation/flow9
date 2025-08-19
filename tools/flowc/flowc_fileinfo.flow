@@ -36,6 +36,7 @@ export {
 	updateFiFileInfo(fileinfo : FiFileInfo) -> FiFileInfo;
 
 	getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo;
+	getFcFileFullPath(file : string, config : CompilerConfig) -> string;
 
 	// Detects if a file is outdated for some reason. Doesn't check dependencies.
 	fcModuleNeedReloading(fileinfo : FiFileInfo, stringIncludes : [FiFileInfo], config : CompilerConfig) -> bool;
@@ -72,12 +73,11 @@ ensureIncrementalDirectoryExists(config : CompilerConfig) -> void {
 }
 
 getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo {
-	workingDir = getConfigParameterDef(config.config, "working-dir", "");
-	realfile = findFlowPath(file, true, config.includes, workingDir);
+	realfile = getFcFileFullPath(file, config);
 	content = getFileContent(realfile);
 
 	FcFileInfo(
-		trimFlowfile(file, config.includes, workingDir),
+		trimFlowfile(file, config),
 		fileModified(realfile),
 		realfile,
 		if (getConfigParameter(config.config, "use-md5") == "1") md5(content) else dummyFiFileInfo.md5sum,
@@ -87,24 +87,33 @@ getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo {
 	);
 }
 
+getFcFileFullPath(file : string, config : CompilerConfig) -> string {
+	findFlowPath(file, true, config.includesRaw, config.workingDir);
+}
+
 fcModuleNeedReloading(fileinfo : FiFileInfo, stringIncludes : [FiFileInfo], config : CompilerConfig) -> bool {
 	checkMd5 = getConfigParameter(config.config, "use-md5") == "1";
 	// We also have to check that the NEW full path of the file MATCHES
 	// the full path inside the incremental, because if the file is moved
 	// it might register as unchanged, even if it really is.
 	!moduleIsCached(config, fileinfo) || fiFileInfoFileChanged(fileinfo, config) || exists(stringIncludes, \inc -> fiFileInfoFileChanged(inc, config)) || {
-		sourcefileinfo = getFcFileInfo(fileinfo.flowfile, config);
+		sourceFileFullPath = getFcFileFullPath(fileinfo.flowfile, config);
+		res = !isSameFullPath(fileinfo.fullpath, sourceFileFullPath);
 		if (config.verbose > 0) {
-			if (!isSamePath(fileinfo.fullpath, sourcefileinfo.fullpath)) {
-				fcPrintln("Incremental file says original was found at '" + fileinfo.fullpath + "' Source file is found at ''" + sourcefileinfo.fullpath + "'", config.threadId);
+			if (res) {
+				fcPrintln("Incremental file says original was found at '" + fileinfo.fullpath + "' Source file is found at '" + sourceFileFullPath + "'", config.threadId);
 			} else {
 				if (config.verbose > 1) {
 					fcPrintln("  File is found at '" + fileinfo.fullpath + "'", config.threadId);
 				}
 			}
 		}
-		!isSamePath(fileinfo.fullpath, sourcefileinfo.fullpath)
+		res;
 	}
+}
+
+isSameFullPath(p1 : string, p2 : string) -> bool {
+	isAbsolutePath(p1) && isAbsolutePath(p2) && isSamePath(p1, p2);
 }
 
 fiFileInfoFileChanged(fileinfo : FiFileInfo, config : CompilerConfig) -> bool {

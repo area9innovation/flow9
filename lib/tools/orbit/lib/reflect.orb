@@ -1,79 +1,34 @@
 //
 // REFLECTION FUNCTIONS
 //
-
-fn quote(e : ast) = e;
+import lib/array;
 
 // Helper functions to check if expression is a number or variable
 fn is_number(expr) = (astname(expr) == "Int" || astname(expr) == "Double");
-fn is_value(expr) = (astname(expr) == "Int" || astname(expr) == "Double" || astname(expr) == "String" || astname(expr) == "Bool");
-fn is_var(expr) = (astname(expr) == "UId" || astname(expr) == "Identifier");
+fn is_basicvalue(expr) = (astname(expr) == "Int" || astname(expr) == "Double" || astname(expr) == "String" || astname(expr) == "Bool");
+fn is_var(expr) = (astname(expr) == "Identifier");
 
 // Helper for conditions requiring numerical arguments (including Complex)
 fn is_numeric(x) = (
-    isInt(x) || isDouble(x) || (isConstructor(x) && getConstructor(x) == "Complex")
+    isInt(x) || isDouble(x) || (getConstructor(x) == "Complex")
 );
-
-// Helper function (recursive) to check if an expression contains a specific variable AST node
-fn containsVar(expr : ast, var_to_find : ast) = (
-    // Direct comparison first
-    if expr == var_to_find then true
-    else expr is (
-        // Recursively check children of common structures
-        a + b => containsVar(a, var_to_find) || containsVar(b, var_to_find);
-        a - b => containsVar(a, var_to_find) || containsVar(b, var_to_find);
-        a * b => containsVar(a, var_to_find) || containsVar(b, var_to_find);
-        a / b => containsVar(a, var_to_find) || containsVar(b, var_to_find);
-        a ^ b => containsVar(a, var_to_find) || containsVar(b, var_to_find); // Check both base and exponent
-
-        // Handle function calls (check function name and arguments)
-        // Assumes function calls have the form 'Op(fname, args)' or similar in AST
-        Op(fname, args) => (
-            // Check if the function name itself matches (less common unless var_to_find is a function name)
-            containsVar(fname, var_to_find) ||
-            // Check if any argument contains the variable
-            exists(args, \arg -> containsVar(arg, var_to_find))
-        );
-
-        // Handle common built-in functions explicitly if Op pattern doesn't match
-        sin(a) => containsVar(a, var_to_find);
-        cos(a) => containsVar(a, var_to_find);
-        tan(a) => containsVar(a, var_to_find);
-        exp(a) => containsVar(a, var_to_find);
-        log(a) => containsVar(a, var_to_find);
-        sqrt(a) => containsVar(a, var_to_find);
-        // Add other functions as needed...
-
-        // Handle AST node structures if necessary (less common for simple containsVar)
-        // Example: If AST has specific node types like 'VariableNode', 'OperatorNode'
-        // VariableNode(name) => eval(name == extract_var_name(var_to_find)); // Assuming helper extract_var_name
-        // OperatorNode(_, children) => exists(children, \child -> containsVar(child, var_to_find));
-
-        // Default case: does not contain variable if it's a leaf or structure not handled above
-        _ => false
-    )
-);
-
-// Helper to check if an expression is constant with respect to a variable
-fn is_constant(expr, var) = (!containsVar(expr, var));
 
 // Check if expression is a generalized linear expression (GLE)
 // (Note: This definition might need refinement based on exact AST structure)
-fn is_glex(expr) = (
+fn is_glex_term(expr) = (
 	is_var(expr) || is_number(expr) ||
 	expr is (
-		a * b => is_glex(a) && is_glex(b);
+		`*`(args) => forall(args, is_glex_term);
 		a ^ b => (
 			// Base should be a variable or simple expression, exponent must be a number
-			(is_var(a) || is_glex(a)) && is_number(b) // Allow GLE in base only if exp is number
+			is_glex_term(a) && is_number(b) // Allow GLE in base only if exp is number
 		);
 		// Disallow additions within a term being checked for GLEX property itself
-		a + b => false;
+		`+`(args) => false;
         a - b => false;
 		_ => false // Default: Not a standard GLEX term component
 	)
 );
-
 
 // Extract the value from a number node
 fn extract_number(expr) = (
@@ -86,8 +41,15 @@ fn term_degree(term) = (
     if is_number(term) then 0
     else if is_var(term) then 1
     else term is (
-        a * b => term_degree(a) + term_degree(b);
-        a ^ b => term_degree(a) * extract_number(b); // Multiply degree by exponent
+        `*`(args) => fold(args, 0, \acc, arg -> acc + term_degree(arg));
+        a ^ b => (
+			if (is_number(b)) then
+				term_degree(a) * extract_number(b)
+			else (
+				println("TODO: Do not support non-numeric exponents yet in term_degree");
+				term_degree(a) // Fallback to base degree
+			)
+		); // Multiply degree by exponent
         // Handle common functions - typically treat f(x) as having degree related to x's degree?
         // For simplicity, treat function calls as degree 0 unless argument degree known.
         // sin(a) => term_degree(a); // Example: If sin doesn't change degree
@@ -101,15 +63,14 @@ fn term_degree(term) = (
 // This is a simplified conceptual version.
 fn extract_term_triples(term) = (
     if is_number(term) then [Triple(term, "_Constant", 0)]  // Use special var name for constants
-    else if is_var(term) then [Triple(1, varname(term), 1)]  // Just a variable
+    else if is_var(term) then [Triple(1, variableName(term), 1)]  // Just a variable
     else term is (
-        a * b => (
-            let triples_a = extract_term_triples(a);
-            let triples_b = extract_term_triples(b);
-            combine_triples(triples_a + triples_b) // Combine factors
+        `*`(args) => (
+			// TODO: We should sort and combine these
+			map(args, extract_term_triples);
         );
         a ^ b => (
-            if is_var(a) then [Triple(1, varname(a), extract_number(b))]  // var^exp
+            if is_var(a) then [Triple(1, variableName(a), extract_number(b))]  // var^exp
             else if is_number(a) then [Triple(pow(a, extract_number(b)), "_Constant", 0)] // const^exp = const
             else // Treat complex base like (x+y)^n as a single factor
                 [Triple(1, prettyOrbit(a), extract_number(b))] // Use string rep as 'variable'
@@ -118,24 +79,6 @@ fn extract_term_triples(term) = (
         // Op(fname, args) => [Triple(1, astname(Op), 1)]; // Conceptual example
         _ => [Triple(1, prettyOrbit(term), 1)] // Default: Treat unknown expression as a factor
     )
-);
-
-// Helper function to combine like terms in the list of triples
-// Needs careful implementation based on how triples are structured and compared
-fn combine_triples(triples) = (
-    // Placeholder - requires sorting by varname/exponent and merging
-    triples
-);
-
-
-// Extract the name from a variable node.
-fn varname(expr) = (
-    if (is_var(expr)) then (
-        if astname(expr) == "UId" then expr.id
-        else if astname(expr) == "Identifier" then expr.s
-        else "_UnknownVar_" // Fallback
-    )
-    else "_NotAVar_" // Fallback if not a variable node
 );
 
 // Compare polynomial terms using graded lexicographic ordering
@@ -166,15 +109,7 @@ fn makeFoldedAst(op, args) = (
         // For single element, just return it without creating an operation
         args[0]
     ) else (
-        // For 2+ elements, fold to create a proper binary tree (typically right-associative)
-        // Start with the first element and fold over the rest
-        let initialAst = args[0];
-        let remainingArgs = subrange(args, 1, len - 1);
-
-        // Fold over the remaining arguments, combining each with the accumulator
-        fold(remainingArgs, initialAst, \acc, element -> (
-            makeAst(op, [acc, element])
-        ))
+		makeAst(op, args)
     )
 );
 

@@ -7,11 +7,11 @@
 math_expr =
 	math_expr ";" ws math_expr "" Sequence/2
 	// Rewriting patterns
-	|> math_expr ( ("=>" | "⇒") ws <math_expr ("if" ws math_expr | @true Bool/1) @true Rule/4
-		| ("->" | "→") ws <math_expr ("if" ws math_expr | @true Bool/1) @false Rule/4
-		| ("<=>" | "⇔") ws <math_expr ("if" ws math_expr | @true Bool/1) @true Equivalence/4
-		| ("<->" | "↔") ws <math_expr ("if" ws math_expr | @true Bool/1) @false Equivalence/4
-		| ("|-" | "⊢") ws <math_expr ("if" ws math_expr | @true Bool/1) Entailment/3
+	|> math_expr ( ("=>" | "⇒") ws <math_expr ("if" kwsep math_expr | @true Bool/1) @true Rule/4
+		| ("->" | "→") ws <math_expr ("if" kwsep math_expr | @true Bool/1) @false Rule/4
+		| ("<=>" | "⇔") ws <math_expr ("if" kwsep math_expr | @true Bool/1) @true Equivalence/4
+		| ("<->" | "↔") ws <math_expr ("if" kwsep math_expr | @true Bool/1) @false Equivalence/4
+		| ("|-" | "⊢") ws <math_expr ("if" kwsep math_expr | @true Bool/1) Entailment/3
 	)
 
 //	|> math_expr ("," ws math_expr Comma/2)*
@@ -28,6 +28,9 @@ math_expr =
 		("c=" | "⊂") ws math_expr Subset/2
 		| "⊲" ws math_expr NormalSubgroup/2  // Normal subgroup relation
 		| "≅" ws math_expr Isomorphism/2  // Isomorphism
+		| "⋯" ws math_expr DomainPath/2      // Leaf-to-domain path
+		| "⋰" ws math_expr DomainUp/2        // Move up in domain hierarchy
+		| "⋱" ws math_expr DomainDown/2      // Move down in domain hierarchy
 	)*
 
 	|> // Element of relation
@@ -48,17 +51,15 @@ math_expr =
 		| (">=" | "≥") ws math_expr GreaterEquals/2
 		| ">" ws math_expr GreaterThan/2
 		| "≲" ws math_expr ApproxLessEquals/2
-		| "∼" ws math_expr ApproxEquals/2
+		| ("∼" | "≈") ws math_expr ApproxEquals/2
 	)*
 
 	|> // Set operations (Union, Intersection, Difference)
 	math_expr (
 		("union" kwsep | "∪") ws math_expr Union/2
 		| ("intersect" kwsep | "∩") ws math_expr Intersection/2
-		| '\' ws math_expr SetDifference/2      // NEW: Set Difference
+		| ('\' | '∖') ws math_expr SetDifference/2      // NEW: Set Difference
 	)*
-
-	|> math_expr (("->" | "→") ws math_expr FunctionType/2)*
 
 	|> // Addition and subtraction
 	math_expr (
@@ -78,6 +79,12 @@ math_expr =
 		| "⊗" ws math_expr TensorProduct/2     // Tensor product
 		| "•" ws math_expr GroupAction/2        // Group Action
 	)*
+
+	|>
+	   ("quote" kwsep | "'" ws) <math_expr Quote/1
+	   | ("quasiquote" kwsep | "`" !('"') ws) <math_expr Quasiquote/1
+	   | ("unquote-splicing" kwsep | "$*" ws ) <math_expr UnquoteSplicing/1
+	   | ("unquote" kwsep | "$" ws) <math_expr Unquote/1
 
 	|> // Exponentiation (Right associative)
 	math_expr (
@@ -105,13 +112,13 @@ math_expr =
 			| "." ws id Field/2
 			| "φ" ws "(" ws math_expr ")" ws Homomorphism/2  // Homomorphism
 			| "is" kwsep paren Match/2
+			| ":" ws <math_expr TypeAnnotation/2
+			| "!:" ws <math_expr NotTypeAnnotation/2
 		)*
 
 	|> // Annotations and Subscripts/Superscripts
 		math_expr (
 			subscript Subscript/2
-			| ":" ws math_expr TypeAnnotation/2
-			| "!:" ws math_expr NotTypeAnnotation/2
 			| "[" ws math_expr ":=" ws math_expr "]" ws TypeSubstitution/3
 		)*
 	|> ( // Primary expressions
@@ -120,6 +127,7 @@ math_expr =
 		| string @unescape String/1
 		| "true" kwsep @true Bool/1
 		| "false" kwsep @false Bool/1
+		| "if" kwsep math_expr "then" kwsep math_expr "else" kwsep math_expr "" IfElse/3
 		| "{" ws @array<math_expr ","> "|" ws math_expr "}" ws SetComprehension/2  // Set comprehension
 		| "{" ws @array<math_expr ","> "}" ws SetLiteral/1  // Set literal
 		| "⟨" ws @array<math_expr ","> "⟩" ws Ideal/1       // Ideal Notation
@@ -131,7 +139,8 @@ math_expr =
 		| variable_atom Identifier/1             // Variable starts with lowercase
 		| constructor_atom UId/1                 // Constructor starts with uppercase
 		| $'?'+ ws TypeVar/1
-		| "`" ws $operator "`" ws OperatorSymbol/1
+		| interpolated_string InterpolatedString/1 // Interpolated string
+		| "`" !('"') ws $operator "`" ws OperatorSymbol/1
 		| ('…' | "...") ws Ellipsis/0
 		| "∅" ws EmptySet/0                      
 	);
@@ -146,7 +155,7 @@ constructor_atom = $(uppercase atom_rest*) ws;
 uppercase = 'A'-'Z' | greek_letter_upper;
 
 // Lowercase letters, including Greek lowercase letters
-lowercase = 'a'-'z' | "_" | greek_letter_lower;
+lowercase = 'a'-'z' | "_" | greek_letter_lower | '▢' | '❓';
 
 // The rest of the atom can include many characters
 atom_rest = 'a'-'z' | 'A'-'Z' | '0'-'9' | "_" | "'" | greek_letter_lower | greek_letter_upper;
@@ -174,9 +183,9 @@ operator =
 	"&&" | "∧" | "||" | "∨" | "!" | "¬" |
 	"==" | "=" | "!=" | "<" | ">" | "<=" | "≤" | ">=" | "≥" | "≲" | "∼" | 
 	"⊂" | "c=" | "∈" | "in" | "∪" | "∩" | 
-	"⊲" | "≅" |
+	"⊲" | "≅" | "⋯" | "⋰" | "⋱" | 
 	"→" | "->" | ":" | "!:" | "⇒" | "=>" | "⇔" | "<=>" | "⊢" | "|-" |
-	";" | "." | "[]" | "∫" | "∑" | "∂" | "|" | "‖" | "φ" | '\' | "λ" | "⟨" | "⟩" 
+	";" | "." | "[]" | "∫" | "∑" | "∂" | "|" | "‖" | "φ" | '\' | "λ" | "⟨" | "⟩"
 	;
 
 // Environment bindings for closures
@@ -198,6 +207,15 @@ subscript = $("₋"? ("₀" | "₁" | "₂" | "₃" | "₄" | "₅" | "₆" | "�
 // Superscripts for variables (e.g., x², f⁻¹)
 superscript = $("⁻"? ("¹" | "²" | "³" | "⁴" | "⁵" | "⁶" | "⁷" | "⁸" | "⁹" | "⁰")+ | "ᵀ"); // Allow just ᵀ
  // "⁺" | "⁻" | "⁼" | "⁽" | "⁾" |  "ⁿ"
+
+interpolated_string = "`" '"' @array0<istring_part> '"' ws;
+
+istring_part = ("$" "(" ws math_expr ")" | "$" variable_atom Identifier/1) StringInterpolation/1
+	| istring_literal StringLiteral/1;
+
+// String literal part (everything except $ and ending quote)
+istring_literal = $(istring_char+);
+istring_char = !("$" | '"' | '\') anychar | '\' anychar;
 
 optsemi = (";" ws)?;
 

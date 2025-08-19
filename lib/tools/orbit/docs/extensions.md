@@ -143,8 +143,11 @@ Differential calculus is concerned with the computation of derivatives and their
 // Power rule
 (d/dx (x^n)) : Diff => n * x^(n-1) if is_constant(n, x);
 
-// Sum rule
+// Sum rule (binary)
 (d/dx (f + g)) : Diff => (d/dx (f)) + (d/dx (g));
+
+// Sum rule (generalized for any number of terms)
+(d/dx (`+`(terms, ...))) : Diff => `+`(map(terms, \t -> (d/dx (t))), ...);
 
 // Difference rule
 (d/dx (f - g)) : Diff => (d/dx (f)) - (d/dx (g));
@@ -194,8 +197,11 @@ Differential calculus is concerned with the computation of derivatives and their
 (∂/∂xᵢ (xⱼ)) : Diff => 1 if i == j;
 (∂/∂xᵢ (xⱼ)) : Diff => 0 if i != j;
 
-// Partial derivative of a sum
+// Partial derivative of a sum (binary)
 (∂/∂xᵢ (f + g)) : Diff => (∂/∂xᵢ (f)) + (∂/∂xᵢ (g));
+
+// Partial derivative of a sum (generalized for any number of terms)
+(∂/∂xᵢ (`+`(terms, ...))) : Diff => `+`(map(terms, \t -> (∂/∂xᵢ (t))), ...);
 
 // Partial derivative of a product
 (∂/∂xᵢ (f * g)) : Diff => f * (∂/∂xᵢ (g)) + (∂/∂xᵢ (f)) * g;
@@ -212,6 +218,9 @@ Differential calculus is concerned with the computation of derivatives and their
 
 // Higher-order derivative (composite notation simplification)
 (d^n/dx^n (f + g)) : Diff => (d^n/dx^n (f)) + (d^n/dx^n (g));
+
+// Higher-order derivative (generalized for any number of terms)
+(d^n/dx^n (`+`(terms, ...))) : Diff => `+`(map(terms, \t -> (d^n/dx^n (t))), ...);
 (d^n/dx^n (c * f)) : Diff => c * (d^n/dx^n (f)) if is_constant(c, x);
 ```
 
@@ -383,8 +392,11 @@ Polynomial ideals and Gröbner bases provide a powerful framework for solving sy
 ### Polynomial Arithmetic and Division
 
 ```
-// Polynomial addition
+// Polynomial addition (binary)
 (f + g) : Poly => sum_by_like_terms(f, g);
+
+// Polynomial addition (generalized for any number of polynomials)
+(`+`(polys, ...)) : Poly => sum_by_like_terms_variadic(polys);
 
 // Polynomial multiplication
 (f * g) : Poly => sum_of_term_products(f, g);

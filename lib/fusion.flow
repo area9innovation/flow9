@@ -54,7 +54,10 @@ export {
 	// These guys are distinctive, so f will not fire on updating v with the same value.
 	makeSubscribe(v : Transform<?>, f : (?) -> void) -> () -> () -> void;
 	makeSubscribe2(v : Transform<?>, f : (?) -> void) -> () -> () -> void;
+
 	makeSubscribeExt(t : Transform<?>, fn : (?) -> void, updateAtFirst : bool) -> () -> () -> void;
+	// Doesn't call function inside 't' at the moment of subscription, uses initValue instead.
+	makeSubscribe2WithInit(t : Transform<?>, initValue : ?, fn : (?) -> void) -> () -> () -> void;
 
 	make2Subscribe(v1 : Transform<?>, v2 : Transform<??>, f : (?, ??) -> void) -> () -> () -> void;
 	make2Subscribe2(v1 : Transform<?>, v2 : Transform<??>, f : (?, ??) -> void) -> () -> () -> void;
@@ -211,6 +214,8 @@ export {
 	fdelay(v : Transform<?>, ms : int) -> Transform<?>;
 	fstall(v : Transform<?>, ms : int) -> Transform<?>;
 	fBidirectionalLink(v1 : Transform<?>, v2 : Transform<??>, fn1 : (?) -> void, fn2 : (??) -> void) -> () -> void;
+	//fBidirectionalLink2 may cause transforms to become unsynchronized. Use fBidirectionalLink when in doubt.
+	fBidirectionalLink2(v1 : Transform<?>, v2 : Transform<??>, fn1 : (?) -> void, fn2 : (??) -> void) -> () -> void;
 
 	// This instantiates a FFn to a real function, performing fusion
 	instantiateFn(f : FFn<?, ??>) -> (?) -> ??;
@@ -291,7 +296,14 @@ fselect(b : Transform<??>, fn : FFn<??, ?>) -> Transform<?> {
 	}
 }
 
+fselect2OptimizationEnabled = !isUrlParameterFalse("fselect2_optimization");
 fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Transform<?> {
+	fselect2Optimize = \defStructFn -> if (fselect2OptimizationEnabled) {
+		FSelect2(b1, b2, fn, FDestroyed());
+	} else {
+		defStructFn()
+	}
+	
 	switch (b1 : Transform<??>) {
 		ConstBehaviour(v1): {
 			ifn = instantiateFn2(fn);
@@ -311,7 +323,9 @@ fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Tran
 					if (nb1 == nb2) {
 						FSelect(nb1, FLift(\f -> ifn(ifn1(f), ifn2(f))), FDestroyed());
 					} else {
-						FSelect2(nb1, nb2, FLift2(\f, s -> ifn(ifn1(f), ifn2(s))), FDestroyed());
+						fselect2Optimize(\ -> 
+							FSelect2(nb1, nb2, FLift2(\f, s -> ifn(ifn1(f), ifn2(s))), FDestroyed())
+						);
 					}
 				}
 				default: {
@@ -319,7 +333,9 @@ fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Tran
 					if (nb1 == b2) {
 						FSelect(nb1, FLift(\f -> ifn(ifn1(f), f)), FDestroyed());
 					} else {
-						FSelect2(nb1, b2, FLift2(\f, s -> ifn(ifn1(f), s)), FDestroyed());
+						fselect2Optimize(\ -> 
+							FSelect2(nb1, b2, FLift2(\f, s -> ifn(ifn1(f), s)), FDestroyed())
+						);
 					}
 				}
 			}
@@ -344,7 +360,9 @@ fselect2(b1 : Transform<??>, b2 : Transform<???>, fn : FFn2<??, ???, ?>) -> Tran
 						if (b1 == nb) {
 							FSelect(b1, FLift(\f -> ifn(f, ifn2(f))), FDestroyed());
 						} else {
-							FSelect2(b1, nb, FLift2(\f, s -> ifn(f, ifn2(s))), FDestroyed());
+							fselect2Optimize(\ -> 
+								FSelect2(b1, nb, FLift2(\f, s -> ifn(f, ifn2(s))), FDestroyed())
+							);
 						}
 					}
 				}
@@ -563,6 +581,15 @@ makeSubscribeExt(t : Transform<?>, fn : (?) -> void, updateAtFirst : bool) -> ()
 makeSubscribe2(t : Transform<?>, fn : (?) -> void) -> () -> () -> void {
 	\ -> {
 		r = doFuse(t);
+		u = subscribe2(firstOfPair(r), fn);
+		disp = secondOfPair(r);
+		\ -> {u(); disp();}
+	}
+}
+
+makeSubscribe2WithInit(t : Transform<?>, initValue : ?, fn : (?) -> void) -> () -> () -> void {
+	\ -> {
+		r = doFuseDynamicExt(t, Some(initValue));
 		u = subscribe2(firstOfPair(r), fn);
 		disp = secondOfPair(r);
 		\ -> {u(); disp();}
@@ -908,6 +935,10 @@ doFuse(t : Transform<?>) -> Pair<Behaviour<?>, () -> void> {
 	}
 }
 
+doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
+	doFuseDynamicExt(t, None())
+}
+
 useFSubSelectFix = !isUrlParameterFalse("use_fsubselect_fix");
 
 makeDisconnectFSubSelect(bf : Pair<?, () -> void>, u : () -> void) -> () -> void {
@@ -918,7 +949,8 @@ makeDisconnectFSubSelect(bf : Pair<?, () -> void>, u : () -> void) -> () -> void
 	}
 }
 
-doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
+// initValueM is intended for a special case to avoid Transform function calling at the moment of fuse. Not for a general use. If in doubt, use doFuse instead.
+doFuseDynamicExt(t : Transform<?>, initValueM : Maybe<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 	switch (t : Transform<?>) {
 		ConstBehaviour(b): Pair(make(b), nop);
 		DynamicBehaviour(b, s): {
@@ -938,7 +970,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 					switch (b : Transform<flow>) {
 						DynamicBehaviour(dv, __): {
 							subs = ref 1;
-							dyn = make(ifn(^dv));
+							dyn = make(eitherFn(initValueM, idfn, \ -> ifn(^dv)));
 							u = subscribe2(b, \v : flow -> nextDistinct(dyn, ifn(v)));
 							disp = \ -> {subs := ^subs - 1; if (^subs == 0) {u(); t.beh ::= FDestroyed();}};
 
@@ -949,7 +981,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 							cb = doFuseDynamic(b);
 
 							subs = ref 1;
-							dyn = make(ifn(getValue(firstOfPair(cb))));
+							dyn = make(eitherFn(initValueM, idfn, \ -> ifn(getValue(firstOfPair(cb)))));
 							u = subscribe2(firstOfPair(cb), \v : flow -> nextDistinct(dyn, ifn(v)));
 							disp = \ -> {subs := ^subs - 1; if (^subs == 0) {u(); secondOfPair(cb)(); t.beh ::= FDestroyed();}};
 
@@ -973,7 +1005,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 							switch (b2 : Transform<flow>) {
 								DynamicBehaviour(dv2, __): {
 									subs = ref 1;
-									dyn = make(ifn(^dv1, ^dv2));
+									dyn = make(eitherFn(initValueM, idfn, \ -> ifn(^dv1, ^dv2)));
 									disp =
 										if (b1 == b2) {
 											u = subscribe2(b1, \b -> nextDistinct(dyn, ifn(b, flow(b))));
@@ -1012,7 +1044,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 									cb = doFuseDynamic(b2);
 
 									subs = ref 1;
-									dyn = make(ifn(^dv1, getValue(firstOfPair(cb))));
+									dyn = make(eitherFn(initValueM, idfn, \ -> ifn(^dv1, getValue(firstOfPair(cb)))));
 									updating = ref 0;
 									u1 = subscribe2(b1, \b -> {
 										if (^updating == 0) {
@@ -1049,7 +1081,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 									cb = doFuseDynamic(b1);
 
 									subs = ref 1;
-									dyn = make(ifn(getValue(firstOfPair(cb)), ^dv2));
+									dyn = make(eitherFn(initValueM, idfn, \ -> ifn(getValue(firstOfPair(cb)), ^dv2)));
 									updating = ref 0;
 									u1 = subscribe2(firstOfPair(cb), \b -> {
 										if (^updating == 0) {
@@ -1083,8 +1115,10 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 										cb1 = doFuseDynamic(b1);
 
 										subs = ref 1;
-										initValue = getValue(firstOfPair(cb1));
-										dyn = make(ifn(initValue, initValue));
+										dyn = make(eitherFn(initValueM, idfn, \ -> {
+											initValue = getValue(firstOfPair(cb1));
+											ifn(initValue, initValue)
+										}));
 
 										u = subscribe2(firstOfPair(cb1), \b -> nextDistinct(dyn, ifn(b, b)));
 										disp = \ -> {subs := ^subs - 1; if (^subs == 0) {u(); secondOfPair(cb1)(); t.beh ::= FDestroyed();}};
@@ -1096,7 +1130,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 										cb2 = doFuseDynamic(b2);
 
 										subs = ref 1;
-										dyn = make(ifn(getValue(firstOfPair(cb1)), getValue(firstOfPair(cb2))));
+										dyn = make(eitherFn(initValueM, idfn, \ -> ifn(getValue(firstOfPair(cb1)), getValue(firstOfPair(cb2)))));
 
 										updating = ref 0;
 										u1 = subscribe2(firstOfPair(cb1), \b -> {
@@ -2089,8 +2123,16 @@ fstall(v : Transform<?>, ms : int) -> Transform<?> {
 }
 
 fBidirectionalLink(v1 : Transform<?>, v2 : Transform<??>, fn1 : (?) -> void, fn2 : (??) -> void) -> () -> void {
+	fBidirectionalLinkInternal(v1, v2, fn1, fn2, fsubscribe);
+}
+
+fBidirectionalLink2(v1 : Transform<?>, v2 : Transform<??>, fn1 : (?) -> void, fn2 : (??) -> void) -> () -> void {
+	fBidirectionalLinkInternal(v1, v2, fn1, fn2, fsubscribe2);
+}
+
+fBidirectionalLinkInternal(v1 : Transform<?>, v2 : Transform<??>, fn1 : (?) -> void, fn2 : (??) -> void, fnSubscribe1 : (Transform<?>, (?) -> void) -> List<() -> void>) -> () -> void {
 	nested = ref false;
-	u1 = fsubscribe(v1, \v -> if (!^nested) {
+	u1 = fnSubscribe1(v1, \v -> if (!^nested) {
 		nested := true;
 		fn1(v);
 		nested := false;

@@ -28,17 +28,13 @@ We propose Orbit, a framework unifying canonical forms and rewriting; its concre
 
 ### A Motivating Example: Commutative Addition
 
-Consider the simple case of integer addition, which is commutative: `3 + 5 = 5 + 3`. Without canonicalisation, a system would need to store and match against both forms. With Orbit, we can annotate the addition operator with the Sₙ symmetry group (where n is the number of operands) and provide a canonicalising rule that sorts the operands. When `3 + 5` is added, it might be internally represented as `(+ 3 5)`. Adding `5 + 3` results in the same internal representation `(+ 3 5)` after sorting, or the two nodes are merged.
+Consider the simple case of integer addition, which is commutative: `3 + 5 = 5 + 3`. Without canonicalisation, a system would need to store and match against both forms. With Orbit, we can annotate the addition operator with the Sₙ symmetry group (where n is the number of operands) and provide a canonicalising rule that sorts the operands. When `3 + 5` is added, it might be internally represented as `(+ 3 5)`. Adding `5 + 3` results in the same internal representation `(+ 3 5)` after sorting, and the two nodes are merged.
 
 ```orbit
 // Canonicalisation rule based on sorting arguments for S_n symmetry
 // This rule would be applied internally during O-Graph operations
-// or triggered by a rule like: `+`(args...) : S_n → `+`(sort(args...));
-
-// Applied examples during saturation
-addOGraph(g, 5 + 3); // Internally becomes `+`(3, 5) after sorting
-addOGraph(g, 3 + 5); // Also becomes `+`(3, 5) after sorting
-// Both expressions map to the same e-class with `+`(3, 5) as the representative.
+// or triggered by a rule like:
+`+`(args) : S_n → `+`(sort(args));
 ```
 
 This approach automatically collapses equivalent forms into a single representative in the O-Graph, reducing storage and improving matching efficiency. For multi-term expressions like `a + b + c + d` (internally `(+ a b c d)`), sorting handles `S₄` symmetry directly in O(n log n) time.
@@ -46,8 +42,6 @@ This approach automatically collapses equivalent forms into a single representat
 ### Why canonical forms matter
 
 A canonical representative collapses each orbit to one concrete term, so a pattern need be matched once per e-class rather than once per variant. Under Sₙ symmetry the raw permutation count grows as n!, yet canonical sorting yields a single ordered list of arguments; for nested commutative–associative expressions the savings compound exponentially because the n-ary representation avoids nesting issues. Formally, given an expression set E and symmetry group G acting on it, naïve exploration touches O(|E|·|G|) nodes, whereas canonicalisation limits the search to O(|E|) plus the time required to establish the canonical form (e.g., O(n log n) for Sₙ sorting).
-
-*See §5.3 for the formal treatment of group actions and §5.4 for correctness proofs and complexity analysis.*
 
 ## 2. Rewriting Rule Syntax and Domain Annotations
 
@@ -68,7 +62,6 @@ Examples:
 1 * x       → x             // Multiplicative identity (matches `*`(1, x))
 0 * x       → 0             // Multiplicative zero (matches `*`(0, x))
 x / y       → x * y⁻¹       if  y ≠ 0 // Use inverse explicitly
-x + y       ↔ y + x          if y < x // Rule triggering S_2 sorting manually
 ```
 
 ### 2.2 Domain annotations (:)
@@ -77,8 +70,8 @@ A term `t : D` states that `t` belongs to domain `D`.
 
 ```orbit
 `+`(args...) : Sₙ        // commutative n-ary addition (annotation on operator/expression)
-n           : Integer    // n belongs to the Integer domain
-f(g(x))     : Differentiable // Expression belongs to Differentiable domain
+n            : Integer    // n belongs to the Integer domain
+f(g(x))      : Differentiable // Expression belongs to Differentiable domain
 ```
 
 Domain-constrained rule:
@@ -126,12 +119,14 @@ BitVector<N> ⊂ Ring       // Ring Modulo 2^N
 Set ⊂ DistributiveLattice // Set operations form a lattice
 ```
 
+See (Orbit terminology)[terminology.md] for a more complete list of domains and their relationships.
+
 A rule defined for a higher-level structure applies automatically to any subdomain. For example:
 
 ```orbit
 // Associativity is inherent in the n-ary S-expression representation for Semigroup ops like +,*
 // Commutativity defined once for AbelianGroup using Sₙ symmetry
-`+`(args...) : AbelianGroup → `+`(sort(args...)) : AbelianGroup : Sₙ
+`+`(args) : AbelianGroup → `+`(sort(args)) : AbelianGroup : Sₙ
 ```
 
 These general rules are then automatically applicable to Integers, Reals, BitVectors, etc., wherever they are declared as subdomains of `AbelianGroup`. This hierarchical approach significantly reduces rule duplication. The group-theoretic canonicalisation (e.g., `: Sₙ` for commutativity via sorting) ensures consistent representation regardless of the specific domain. Section 7 provides further examples demonstrating this cross-domain rule application.
@@ -156,7 +151,7 @@ This prevents the rule from repeatedly expanding the same expression by marking 
 a * (b + c) : Ring !: Expanded → (a * b) + (a * c) : Ring : Expanded
 
 -- Factor a specific quadratic expression found in Algebra domain
-x^2 + 2*x + 1 : Algebra → (x + 1)^2 : Factored : Algebra
+x^2 + 2*x + 1 : Algebra → (x + 1)^2 : Factored
 ```
 
 ## 3. Implementation Architecture
@@ -230,6 +225,8 @@ This translation preserves the semantics while making the expression amenable to
 
 Pattern matching and quasiquotation from the Scheme foundation provide powerful mechanisms for implementing term rewriting on the S-expression representation.
 
+TODO: This uses wrong syntax.
+
 ```scheme
 (define (apply-rule expr)
 	(match expr
@@ -252,8 +249,8 @@ This approach allows complex rewrite rules operating on n-ary structures to be e
 The final layer in our architecture is the O-Graph, which stores the canonicalized terms and their relationships. By converting Orbit expressions to S-expressions, we can easily integrate with the O-Graph structure:
 
 1. Parse Orbit math notation to an AST.
-2. Convert to S-expression representation (flattening associative ops).
-3. Apply the S-expression to the O-Graph.
+2. **Automatic flattening during lowering**: Convert to S-expression representation where nested associative operations are automatically flattened (e.g., `a+b+c+(d+e)+f` becomes `+`(a,b,c,d,e,f)).
+3. Apply the flattened S-expression to the O-Graph.
 4. Perform canonicalisation (e.g., sorting argument lists for `Sₙ`) based on group-theoretic properties.
 5. Extract results (potentially reconstructing binary trees for display) and convert back to Orbit notation as needed.
 
@@ -363,10 +360,10 @@ The n-ary S-expression representation enables efficient pattern matching within 
 | Pattern Example (Conceptual) | Description | Matches in `(+ a b c d e)` |
 |------------------------------|-------------|--------------------------|
 | `(+ a b c)`                  | Match exact arguments (arity 3) | No |
-| `(+ 1 2 args...)`             | Match prefix | `(+ 1 2 c d e)` (if a=1, b=2) |
+| `(+ 1 2 args...)`            | Match prefix | `(+ 1 2 c d e)` (if a=1, b=2) |
 | `(+ ... x y z)`              | Match suffix | `(+ a b c d e)` (if c=x, d=y, e=z) |
 | `(+ ... x y ...)`            | Match subsequence | `(+ a b c d e)` (e.g., if b=x, c=y) |
-| `(+ args...)`                 | Match all arguments | `(+ a b c d e)` (binds `args` to `(a b c d e)`) |
+| `(+ args...)`                | Match all arguments | `(+ a b c d e)` (binds `args` to `(a b c d e)`) |
 
 This pattern matching is particularly powerful for rewrite rules.
 
@@ -457,22 +454,6 @@ fn canonicalise_symmetric(elements, comparison_fn) = (
 
 	// Sort the elements using the comparator function: O(n log n)
 	sort(elements, comparator)
-);
-
-// Example usage for commutative addition (S₂ implicitly uses sorting on 2 elements)
-fn canonicalize_commutative_sum(expr) = (
-	expr is (
-		a + b => (
-			// Efficient comparison for 2 elements
-			if compare(a, b) <= 0 then a + b // compare(a,b) uses canonical ordering
-			else b + a
-		);
-		// Handle n-ary sum by flattening, sorting (canonicalise_symmetric), and rebuilding
-		(a + b) + c => canonicalize_nary_sum([a, b, c]); // Simplified representation
-
-		// Default case - return unchanged
-		_ => expr
-	)
 );
 ```
 
@@ -580,7 +561,6 @@ fn find_min_rotation_index(array) = (
 );
 ```
 
-
 The naive implementation above has O(n²) time complexity, but we can achieve linear time using Booth's algorithm [Booth, 1980]. Booth's algorithm finds the lexicographically minimal rotation of a string or array in O(n) time by using a variant of the Knuth-Morris-Pratt (KMP) string matching algorithm.
 
 **Algorithm 3: Dihedral Group Canonicalisation (Dₙ)**
@@ -603,20 +583,9 @@ fn canonicalise_dihedral(array) = (
 	else
 		min_reversed_rotation
 );
-
-// Helper function to reverse an array
-fn reverse(array) = (
-	let len = length(array);
-	fn build_reversed(i, result) = (
-		if i < 0 then result
-		else build_reversed(i - 1, result + [array[i]]) // Naive O(n^2), better ways exist
-	);
-	// An O(n) reversal is typically used in practice.
-	build_reversed(len - 1, [])
-);
 ```
-This runs in O(n) time, dominated by the efficient cyclic canonicalisation steps.
 
+This runs in O(n) time, dominated by the efficient cyclic canonicalisation steps.
 
 ## 6. Evaluating S-Expressions in the O-Graph
 
@@ -627,10 +596,6 @@ This runs in O(n) time, dominated by the efficient cyclic canonicalisation steps
 ### 7.1 Symmetric Group Canonicalisation (Sₙ)
 
 Used for permutation symmetry. The canonical form is achieved by **sorting the argument list** of the n-ary S-expression representation based on a canonical ordering of the arguments (e.g., by node ID or structural comparison).
-
-#### Exponential Speedup Through Canonicalisation
-
-Consider `a + b + c + d`, represented internally as `(+ a b c d)`. Without canonicalisation, matching a pattern like `x + y` against all possible binary groupings is complex. With the n-ary form canonicalized by sorting (e.g., `(+ a b c d)` assuming a<b<c<d), matching becomes simpler. A pattern matching `x + y` needs to be adapted to the n-ary structure (e.g., matching adjacent elements `... x y ...` or binding specific arguments). The primary gain is representing the *entire equivalence class* (all permutations and associations) with a single, sorted n-ary node, drastically reducing the size of the O-Graph and the number of nodes rules need to consider.
 
 ### 7.2 Cyclic Group Canonicalisation (Cₙ)
 
@@ -722,32 +687,21 @@ This section illustrates how the core concepts apply across various domains, lev
 Polynomials form a Ring, inheriting rules for `+` (AbelianGroup) and `*` (Monoid, often Commutative).
 
 ```orbit
-// Inherited Ring Rules:
-a + b : Polynomial ↔ b + a : Polynomial : S₂ // From AbelianGroup (+)
-(a + b) + c : Polynomial ↔ a + (b + c) : Polynomial // From AbelianGroup (+) - A for Associativity implied by n-ary form
 a * (b + c) : Polynomial → (a * b) + (a * c) : Polynomial // From Ring (Distributivity)
+
 // ... other Ring rules ...
 
-// Array-based representation for associative operations
-// For addition (terms of a polynomial)
-+([term1, term2, ..., termN]) : Polynomial → +([sorted_terms])
+// GLEX ordering for polynomials
++(terms) : Polynomial → +(sort(terms, glex_ordering)) : GlexPolynomial
 
 // For multiplication (factors in a monomial)
-*([factor1, factor2, ..., factorN]) : Monomial → *([sorted_factors]) : S₂
+*(factors) : Monomial → *(sort(factors, factor_ordering)) : S₂
 
 // Polynomial-Specific Rules:
 // Monomial ordering (e.g., graded lex order) ensures canonical term order
-// x^a * y^b : Monomial → ordered_monomial(x,y, [a,b])
-term1 + term2 : Polynomial → ordered_sum(term1, term2) if compare_terms(term1, term2) <= 0 // Sort terms
-term1 + term2 : Polynomial → ordered_sum(term2, term1) if compare_terms(term1, term2) > 0
+// TODO: Define glex_ordering & factor_ordering
 
-// Graded lexicographic (glex) ordering for monomials using array representation
-*([x^a, y^b, z^c, ...]) : Monomial : GradedLex →
-	glex_ordered_monomial(*([x^a, y^b, z^c, ...]))
-	where total_degree = a + b + c + ...
-
-// Combine like terms (relies on + being AbelianGroup, * being Commutative Monoid)
-coeff1 * term + coeff2 * term : Polynomial → (coeff1 + coeff2) * term
+// TODO: Define function to collect like ternms from GlexPolynomial
 
 // Define Polynomial ⊂ Ring
 Polynomial ⊂ CommutativeRing
@@ -768,6 +722,8 @@ Applied example: simplifying `3*x*y + 2*y*x + x*(y+z)`
 ### 8.2 Matrix Expression Optimization
 
 Matrices (over a Ring/Field T) form a Ring (generally non-commutative).
+
+TODO: Many of these rules are arguably already handled by some other general group structure?
 
 ```orbit
 // Matrix<N, T> ⊂ Ring // (Potentially NonCommutativeRing)
@@ -936,7 +892,7 @@ integrate(f, x, a, b) : Calculus → summation(λi.(f(a + i*h)*h), i, 0, n-1) : 
 ## 9. Evaluation
 
 <draft>
-Later: We plan to evaluate Orbit by implementing a representative set of rules from diverse domains (algebra, bitvectors, calculus, logic) and measuring:
+Later: We plan to evaluate how Orbit performs by implementing a representative set of rules from diverse domains (algebra, bitvectors, calculus, logic) and measuring:
 1.  **O-Graph Size**: Compare the number of e-classes and e-nodes required with and without group-theoretic canonicalisation and domain hierarchies. We expect significant reductions due to collapsing equivalent forms.
 2.  **Rewrite Rule Application Count**: Measure the total number of rule applications needed to reach saturation. Canonicalisation should reduce redundant matches.
 3.  **Query Time**: Evaluate the time taken for equivalence checks (`find`) between terms. Smaller, canonicalized e-graphs should yield faster queries.

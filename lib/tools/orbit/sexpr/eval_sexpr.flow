@@ -118,8 +118,7 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 	switch (name) {
 		SAnd(): {
 			// Short-circuit AND operator
-			if (length(args) < 2) {
-				println("and requires at least 2 arguments");
+			if (length(args) == 0) {
 				SExpEnv(env with value = SSBool(true)); // Empty AND is true
 			} else {
 				// Evaluate the first argument
@@ -130,18 +129,10 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 					// Short-circuit: first argument is false, return false without evaluating the rest
 					SExpEnv(env.runtime, firstResult.env, SSBool(false));
 				} else {
-					// First argument is true, evaluate the second argument
-					if (length(args) == 2) {
-						// Only two arguments
-						secondResult = evalSexpr(firstResult, args[1]);
-						isSecondTrue = getSBool(secondResult.value, "and condition");
-						SExpEnv(env.runtime, secondResult.env, SSBool(isSecondTrue));
-					} else {
-						// More than two arguments, recursively evaluate the rest
-						// Create a new && expression with the remaining arguments
-						restExpr = SSSpecialForm(SAnd(), tail(args));
-						evalSexpr(firstResult, restExpr);
-					}
+					// More than two arguments, recursively evaluate the rest
+					// Create a new && expression with the remaining arguments
+					restExpr = SSSpecialForm(SAnd(), tail(args));
+					evalSexpr(firstResult, restExpr);
 				}
 			}
 		};
@@ -152,10 +143,9 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 			});
 		};
 		SClosure(): {
-			println("TODO: Is eval of closure correct?");
-			// This is already handled in applyFunction
-			// But we could add special handling here if needed
-			SExpEnv(env with value = SSList(args));
+			// Closure is itself
+			orig = SSSpecialForm(SClosure(), args);
+			SExpEnv(env with value = orig);
 		};
 		SDefine(): {
 			// Define a variable
@@ -167,6 +157,9 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 						"";
 					}
 				};
+				if (containsKeyTree(env.runtime, varName)) {
+					println("Cannot redefine built-in variable: " + varName);
+				}
 				if (varName != "") {
 					valueResult = evalSexpr(env, args[1]);
 					// Return the updated environment and the value
@@ -302,6 +295,9 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 									SSVariable(bindingName): bindingName;
 									default: "";
 								};
+								if (containsKeyTree(env.runtime, varName)) {
+									println("Cannot redefine built-in variable: " + varName);
+								}
 								
 								if (varName != "") {
 									// Evaluate the binding expression in the original environment
@@ -446,8 +442,7 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 		};
 		SOr(): {
 			// Short-circuit OR operator
-			if (length(args) < 2) {
-				println("or requires at least 2 arguments");
+			if (length(args) == 0) {
 				SExpEnv(env with value = SSBool(false)); // Empty OR is false
 			} else {
 				// Evaluate the first argument
@@ -458,18 +453,10 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 					// Short-circuit: first argument is true, return true without evaluating the rest
 					SExpEnv(env.runtime, firstResult.env, SSBool(true));
 				} else {
-					// First argument is false, evaluate the second argument
-					if (length(args) == 2) {
-						// Only two arguments
-						secondResult = evalSexpr(firstResult, args[1]);
-						isSecondTrue = getSBool(secondResult.value, "or condition");
-						SExpEnv(env.runtime, secondResult.env, SSBool(isSecondTrue));
-					} else {
-						// More than two arguments, recursively evaluate the rest
-						// Create a new || expression with the remaining arguments
-						restExpr = SSSpecialForm(SOr(), tail(args));
-						evalSexpr(firstResult, restExpr);
-					}
+					// Recursively evaluate the rest
+					// Create a new || expression with the remaining arguments
+					restExpr = SSSpecialForm(SOr(), tail(args));
+					evalSexpr(firstResult, restExpr);
 				}
 			}
 		};
@@ -556,8 +543,7 @@ evalSpecialForm(env : SExpEnv, name : Special_name, args : [Sexpr]) -> SExpEnv {
 tryMatch(env : SExpEnv, valueResult : SExpEnv, patternCases : [Sexpr], caseIndex : int) -> SExpEnv {
 	if (caseIndex >= length(patternCases)) {
 		// No more pattern cases to try
-		println("No pattern matched");
-		SExpEnv(env.runtime, valueResult.env, SSList([]));
+		SExpEnv(env.runtime, valueResult.env, valueResult.value);
 	} else {
 		// Get the current pattern case
 		currentCase = patternCases[caseIndex];
@@ -635,25 +621,32 @@ tryMatch(env : SExpEnv, valueResult : SExpEnv, patternCases : [Sexpr], caseIndex
 
 // Evaluate a function call
 evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
-	switch (fn) {
-		// Direct handling of closure objects
-		// Special form for closure
-		SSSpecialForm(name, closureParts): {
-			if (name == SClosure()) {
-				// Evaluate arguments first
-				fnResult = evalArgs(env, args, []);
+	// Evaluate arguments first (all types need this)
+	fnResult = evalArgs(env, args, []);
+	
+	// Classify what kind of callable expression this is
+	listType = classifySexprList(SSList(concat([fn], args)), Some(env));
+	
+	switch (listType) {
+		SpecialFormCall(form): {
+			if (form == SClosure()) {
 				// Apply the closure directly
-				applyFunction(env, fn, fnResult.args);
+				switch (fn) {
+					SSSpecialForm(__, closureParts): {
+						applyFunction(env, fn, fnResult.args);
+					}
+					default: {
+						// Shouldn't happen if classification was correct
+						println("Expected closure, got: " + prettySexpr(fn));
+						SExpEnv(env with value = SSList([]));
+					}
+				}
 			} else {
-				println("Not a callable expression: " + prettySexpr(fn));
+				println("Special form " + toString(form) + " not directly callable: " + prettySexpr(fn));
 				SExpEnv(env with value = SSList([]));
 			}
 		};
-		SSVariable(name): {
-			// Regular function call
-			// Evaluate arguments first
-			fnResult = evalArgs(env, args, []);
-			
+		VariableCall(name): {
 			// Check if it's a runtime function
 			if (containsKeyTree(env.runtime, name)) {
 				// Invoke the runtime function with arity checking
@@ -674,16 +667,12 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 				}
 			}
 		};
-		
-		SSConstructor(name): {
-			// We'd create a constructor instance with args
-			fnResult = evalArgs(env, args, []);
+		ConstructorCall(name): {
+			// Create a constructor instance with args
 			SExpEnv(env.runtime, fnResult.env.env, SSList(concat([fn], fnResult.args)));
 		};
-		
-		SSOperator(name): {
+		OperatorCall(name): {
 			// Handle operators like +, -, *, /, etc.
-			fnResult = evalArgs(env, args, []);
 			// Invoke the runtime function with arity checking
 			if (containsKeyTree(env.runtime, name)) {
 				invokeRuntimeFn(env, name, fnResult, evalSexpr);
@@ -692,9 +681,8 @@ evalCall(env : SExpEnv, fn : Sexpr, args : [Sexpr]) -> SExpEnv {
 				SExpEnv(env with value = SSList([]));
 			}
 		};
-		
-		default: {
-			println("Not a callable expression: " + prettySexpr(fn));
+		DataList(): {
+			println("Not a callable expression: " + prettySexpr(SSList(concat([fn], args))));
 			SExpEnv(env with value = SSList([]));
 		};
 	}

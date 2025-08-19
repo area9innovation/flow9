@@ -1,0 +1,299 @@
+import tools/orbit/ograph;
+import tools/orbit/orbit_types;
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/utils;
+import tools/orbit/orbit_simple_ograph;
+import ds/tree;
+import string;
+
+export {
+    // ENHANCED UTILITY FUNCTIONS FOR SEXPR <-> OGRAPH CONVERSION
+    
+    // Decomposes a Sexpr into all components needed for OGraph conversion:
+    // - operator/node type
+    // - children expressions
+    // - corresponding OrbitValue
+    // Returns a triple with these components
+    decomposeSexpr(expr : Sexpr) -> Triple<string, [Sexpr], OrbitValue>;
+    
+    // Reconstructs a Sexpr from its components
+    // - operator/node type
+    // - children expressions
+    // - corresponding OrbitValue
+    constructSexpr(op : string, children : [Sexpr], value : OrbitValue) -> Sexpr;
+    
+    // HELPER FUNCTIONS
+    
+    // Checks if a Sexpr is a type annotation (: expr Domain)
+    isTypeAnnotation(expr : Sexpr) -> bool;
+    
+    // Check if an ONode corresponds to a primitive type (Int, Double, Bool, String, etc.)
+    isONodePrimitive(node : ONode) -> bool;
+    
+    // Get a text representation of an OrbitValue for debugging
+    orbitValue2String(val : OrbitValue) -> string;
+}
+
+// Enhanced decompose function that also extracts the OrbitValue
+decomposeSexpr(expr : Sexpr) -> Triple<string, [Sexpr], OrbitValue> {
+    switch (expr) {
+        SSVector(items): {
+            // Vector is handled as its own type
+            Triple("Vector", items, OrbitNone());
+        }
+        SSList(parts): {
+            if (length(parts) == 0) {
+                // Empty list
+                Triple("List", [], OrbitNone());
+            } else if (isTypeAnnotation(expr)) {
+                // Type annotation (: expr Domain) requires special handling
+                Triple(":", [parts[1], parts[2]], OrbitNone());
+            } else {
+                // Use the centralized function to classify list type
+                switch(classifySexprList(expr, None())) {
+                    OperatorCall(opName): {
+                        // Operator expression (e.g., (+ 1 2))
+                        Triple(opName, tail(parts), OrbitNone());
+                    }
+                    VariableCall(varName): {
+                        // Function call via variable
+                        Triple("List", parts, OrbitNone());
+                    }
+                    ConstructorCall(consName): {
+                        // Constructor application
+                        Triple("List", parts, OrbitNone());
+                    }
+                    SpecialFormCall(form): {
+                        // Special form 
+                        formName = getSpecialFormName(form);
+                        // Get the actual children - special forms should be handled differently
+                        switch (parts[0]) {
+                            SSSpecialForm(__, children): {
+                                // If the head is actually a special form, extract its children and keep processing
+                                Triple(formName, tail(parts), OrbitString(formName));
+                            }
+                            default: {
+                                // This shouldn't happen if classification is correct
+                                Triple(formName, tail(parts), OrbitString(formName));
+                            }
+                        }
+                    }
+                    DataList(): {
+                        // Regular list
+                        Triple("List", parts, OrbitNone());
+                    }
+                }
+            }
+        }
+        SSInt(i): Triple("Int", [], OrbitInt(i));
+        SSDouble(d): Triple("Double", [], OrbitDouble(d));
+        SSBool(b): Triple("Bool", [], OrbitBool(b));
+        SSString(s): Triple("String", [], OrbitString(s));
+        SSVariable(id): Triple("Identifier", [], OrbitString(id));
+        SSConstructor(name): Triple("Constructor", [], OrbitString(name));
+        SSOperator(op): Triple("Operator", [], OrbitString(op));
+        SSSpecialForm(form, children): {
+            // Special form
+            formName = getSpecialFormName(form);
+            Triple("SpecialForm", children, OrbitString(formName));
+        }
+    }
+}
+
+// Construct a Sexpr from its components
+constructSexpr(op : string, children : [Sexpr], value : OrbitValue) -> Sexpr {
+    if (op == "Int") {
+        switch (value) {
+            OrbitInt(i): SSInt(i);
+            default: SSInt(0); // Fallback
+        }
+    } else if (op == "Double") {
+        switch (value) {
+            OrbitDouble(d): SSDouble(d);
+            default: SSDouble(0.0); // Fallback
+        }
+    } else if (op == "Bool") {
+        switch (value) {
+            OrbitBool(b): SSBool(b);
+            default: SSBool(false); // Fallback
+        }
+    } else if (op == "String") {
+        switch (value) {
+            OrbitString(s): SSString(s);
+            default: SSString(""); // Fallback
+        }
+    } else if (op == "Identifier") {
+        switch (value) {
+            OrbitString(s): SSVariable(s);
+            default: SSVariable("unknown"); // Fallback
+        }
+    } else if (op == "Constructor") {
+        switch (value) {
+            OrbitString(s): SSConstructor(s);
+            default: SSConstructor("Unknown"); // Fallback
+        }
+    } else if (op == "Operator") {
+        switch (value) {
+            OrbitString(s): SSOperator(s);
+            default: SSOperator("?"); // Fallback
+        }
+    } else if (op == "SpecialForm") {
+        // Special form handling
+        specialFormName = switch (value) {
+            OrbitString(s): s;
+            default: ""; // Fallback to empty string if value is not OrbitString
+        };
+        
+        if (specialFormName == "") {
+            println("ERROR: SpecialForm node has missing or invalid name in value");
+            // Fallback: Process children as a list
+            SSList(children);
+        } else {
+            // Get the Special_name enum value from the string name
+            specialForm = getSpecialFormNameFromString(specialFormName);
+            SSSpecialForm(specialForm, children);
+        }
+    } else if (op == "List") {
+        // Regular list
+        SSList(children);
+    } else if (op == "Vector") {
+        // Vector
+        SSVector(children);
+    } else {
+        // Any other operator - construct as operator expression
+        if (length(children) > 0) {
+            // Create operator expression: (op child1 child2 ...)
+            SSList(concat([SSOperator(op)], children));
+        } else {
+			// TODO: Use the parser instead, so we also handle greek and other things correctly
+
+            // No children - default to variable or constructor based on capitalization
+            if (strlen(op) > 0 && getCharAt(op, 0) >= "A" && getCharAt(op, 0) <= "Z") {
+                SSConstructor(op);
+            } else {
+				println("TODO: Check if " + op + " is a variable or constructor");
+                SSVariable(op);
+            }
+        }
+    }
+}
+
+// Check if a Sexpr is an operator expression
+isOperatorExpr(expr : Sexpr) -> bool {
+    switch (expr) {
+        SSList(parts): {
+            length(parts) > 0 && 
+            switch(parts[0]) { 
+                SSOperator(__): true; 
+                default: false; 
+            };
+        }
+        default: false;
+    }
+}
+
+// Check if a Sexpr is a type annotation
+isTypeAnnotation(expr : Sexpr) -> bool {
+    switch (expr) {
+        SSList(parts): {
+            length(parts) == 3 && 
+            switch(parts[0]) { 
+                SSOperator(op): op == ":"; 
+                default: false; 
+            };
+        }
+        default: false;
+    }
+}
+
+// Convert a Special_name to a string
+getSpecialFormName(form : Special_name) -> string {
+    switch (form) {
+        SDefine(): "define";
+        SLambda(): "lambda";
+        SIf(): "if";
+        SQuote(): "quote";
+        SQuasiQuote(): "quasiquote";
+        SUnQuote(): "unquote";
+        SUnQuoteSplicing(): "unquote-splicing";
+        SMatch(): "match";
+        SLet(): "let";
+        SLetRec(): "letrec";
+        SBegin(): "begin";
+        SAnd(): "and";
+        SOr(): "or";
+        SSet(): "set!";
+        SImport(): "import";
+        SEval(): "eval";
+        SClosure(): "closure";
+        SList(): "list";
+    }
+}
+
+// Convert a string to a Special_name
+getSpecialFormNameFromString(name : string) -> Special_name {
+    if (name == "define") {
+        SDefine();
+    } else if (name == "lambda") {
+        SLambda();
+    } else if (name == "if") {
+        SIf();
+    } else if (name == "quote") {
+        SQuote();
+    } else if (name == "quasiquote") {
+        SQuasiQuote();
+    } else if (name == "unquote") {
+        SUnQuote();
+    } else if (name == "unquote-splicing") {
+        SUnQuoteSplicing();
+    } else if (name == "match") {
+        SMatch();
+    } else if (name == "let") {
+        SLet();
+    } else if (name == "letrec") {
+        SLetRec();
+    } else if (name == "begin") {
+        SBegin();
+    } else if (name == "and") {
+        SAnd();
+    } else if (name == "or") {
+        SOr();
+    } else if (name == "set!") {
+        SSet();
+    } else if (name == "import") {
+        SImport();
+    } else if (name == "eval") {
+        SEval();
+    } else if (name == "closure") {
+        SClosure();
+    } else if (name == "list") {
+        SList();
+    } else {
+        println("WARNING: Unknown special form '" + name + "' - defaulting to SList");
+        SList(); // Default for unknown special forms
+    }
+}
+
+// Check if a node is a primitive value
+isONodePrimitive(node : ONode) -> bool {
+    node.op == "Int" || node.op == "Double" || node.op == "Bool" || 
+    node.op == "String" || node.op == "Identifier" || 
+    node.op == "Operator" || node.op == "Constructor";
+}
+
+// Add a value node to an OGraph (helper that works for identifiers, operators, constructors, and strings)
+addValueNodeToGraph(graph : OGraph, op : string, value : string) -> int {
+    insertONode(graph, ONode(op, [], [], OrbitString(value)));
+}
+
+// Convert OrbitValue to string (for debugging)
+orbitValue2String(val : OrbitValue) -> string {
+    switch (val) {
+        OrbitNone(): "none";
+        OrbitBool(b): b2s(b);
+        OrbitInt(i): i2s(i);
+        OrbitDouble(d): d2s(d);
+        OrbitString(s): "\"" + s + "\"";
+    }
+}

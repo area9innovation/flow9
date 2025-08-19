@@ -45,15 +45,14 @@ preloadedFiFileInfo(preloaded : FcPreloadedModule) -> FiFileInfo {
 }
 
 preloadModules(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, errHandler : (FcError) -> void) -> Tree<string, FcPreloadedModule> {
-	workingDir = getConfigParameterDef(config.config, "working-dir", "");
-	flowfile = trimFlowfile(file, config.includes, workingDir);
+	flowfile = trimFlowfile(file, config);
 	preloadedModulesAndErrors = preloadModulesInParallel(config, globEnv, makeTree1(flowfile, FcImport2(flowfile, "", 0, 0)), Pair(makeTree(), []));
 	all_preloaded = preloadedModulesAndErrors.first;
 	load_errors = preloadedModulesAndErrors.second;
 
 	resolving_errors = if (!(isConfigParameterTrue(config.config, "check-ambig-modules") || isConfigParameterTrue(config.config, "strict"))) {
 		[];
-	} else 
+	} else
 		checkAmbiguityOfModulePathResolving(all_preloaded, config);
 
 	all_errors = concat(load_errors, resolving_errors);
@@ -69,7 +68,7 @@ preloadModules(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string
 
 checkAmbiguityOfModulePathResolving(modules : Tree<string, FcPreloadedModule>, conf : CompilerConfig) -> [FcError] {
 	foldTree(modules, [], \mod_name, preloaded, acc -> {
-		paths = findAllFlowPaths(mod_name, conf.includes, lookupTreeDef(conf.config, "working-dir", ""));
+		paths = findAllFlowPaths(mod_name, conf.includesRaw, conf.workingDir);
 		if (length(paths) == 1) acc else
 		if (length(paths) == 0) {
 			// Impossible branch, since a module was loaded.
@@ -88,11 +87,11 @@ checkAmbiguityOfModulePathResolving(modules : Tree<string, FcPreloadedModule>, c
 preloadModulesInParallel(
 	config : CompilerConfig,
 	globEnv : FcTypeEnvGlobal,
-	files : Tree<string, FcImport2>, 
+	files : Tree<string, FcImport2>,
 	preloadedModulesAndErrors : Pair<Tree<string, FcPreloadedModule>, [FcError]>
 ) -> Pair<Tree<string, FcPreloadedModule>, [FcError]> {
 
-	filesToLoad : [FcImport2] = map(tree2pairs(files), \pr -> pr.second);
+	filesToLoad : [FcImport2] = getTreeValues(files);
 
 	// Load the incremental or parse all the files given in parallel (no recursion)
 	// Triple<flowfile, module, error>
@@ -149,7 +148,7 @@ getFcImport2s(m : FcPreloadedModule, fromfile : string) -> [FcImport2] {
 checkImportCycles(all_preloaded : Tree<string, FcPreloadedModule>) -> [FcError] {
 	imports_map : ref Tree<string, Set<string>> = ref makeTree();
 	visited = ref makeSet();
-	foldTree(all_preloaded, [], 
+	foldTree(all_preloaded, [],
 		\name, preloaded, acc -> {
 			fileinfo = preloadedFiFileInfo(preloaded);
 			all_imports = collectPreloadedImports(preloaded, all_preloaded, imports_map, visited);
@@ -176,7 +175,7 @@ collectPreloadedImports(curr : FcPreloadedModule, all_preloaded : Tree<string, F
 		Some(all_imports): all_imports;
 		None(): {
 			imports = preloadedFcImports(curr);
-			all_imports = fold(imports, buildSet(map(imports, \imp -> imp.flowfile)), 
+			all_imports = fold(imports, buildSet(map(imports, \imp -> imp.flowfile)),
 				\acc, imp -> {
 					imp_preloaded = lookupTreeDef(all_preloaded, imp.flowfile, dummyFcPreloaded);
 					if (containsSet(^visited, preloadedFiFileInfo(imp_preloaded).flowfile)) acc else {
@@ -196,12 +195,12 @@ findPreloadedImportCycle(preloaded : FcPreloadedModule, cyclic_name : string, al
 		acc
 	} else {
 		imports = preloadedFcImports(preloaded);
-		cyclic_import = findmap(imports, 
+		cyclic_import = findmap(imports,
 			\imp -> {
 				imp_preloaded = lookupTreeDef(all_preloaded, imp.flowfile, dummyFcPreloaded);
 				imp_imps = lookupTreeDef(imports_map, preloadedFiFileInfo(imp_preloaded).flowfile, makeSet());
 				if (containsSet(imp_imps, cyclic_name)) {
-					Some(Pair(imp_preloaded, imp)) 
+					Some(Pair(imp_preloaded, imp))
 				} else {
 					None()
 				}
@@ -209,8 +208,8 @@ findPreloadedImportCycle(preloaded : FcPreloadedModule, cyclic_name : string, al
 		);
 		switch (cyclic_import) {
 			Some(imp_preloaded): findPreloadedImportCycle(
-				imp_preloaded.first, 
-				cyclic_name, all_preloaded, imports_map, 
+				imp_preloaded.first,
+				cyclic_name, all_preloaded, imports_map,
 				concat(acc, [Pair(preloaded, imp_preloaded.second)])
 			);
 			None(): acc;
@@ -234,14 +233,12 @@ reparseOutdatedModule(flowfile : string, config : CompilerConfig, env : FcTypeEn
 }
 
 preloadModule(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> FcPreloadedModule {
-	workingDir = getConfigParameterDef(config.config, "working-dir", "");
-	flowfile = trimFlowfile(file, config.includes, workingDir);
+	flowfile = trimFlowfile(file, config);
 	parseFlowFileOrLoadCached(config, globEnv, flowfile, "", 0, 0).first;
 }
 
 loadIncrementalModulesToCache(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> void {
-	workingDir = getConfigParameterDef(config.config, "working-dir", "");
-	flowfile = trimFlowfile(file, config.includes, workingDir);
+	flowfile = trimFlowfile(file, config);
 	doLoadIncrementalModulesToCache(config, globEnv, makeSet1(flowfile), makeSet());
 }
 
@@ -255,7 +252,7 @@ doLoadIncrementalModulesToCache(config : CompilerConfig, globEnv : FcTypeEnvGlob
 				None(): Some(\ -> preloadIncrementalModule(config, globEnv, file).module);
 				Some(__): None();
 			}
-		)), 
+		)),
 		idfn
 	);
 	next_loaded = mergeSets(prev_loaded, buildSet(map(loaded, \l -> l.module.fileinfo.flowfile)));

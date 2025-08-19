@@ -205,11 +205,12 @@ The equality saturation process proceeds in three main stages, implemented as se
 		 fn update_representative(root_eclass_id: u32) {
 				// Check domains (e.g., S_n for commutativity)
 				if (has_domain(root_eclass_id, DOMAIN_S_N)) {
-						// Perform extract-sort-rebuild logic if needed
+						// Perform direct canonicalization on already-flattened n-ary representation
+						// Orbit-to-SExpr lowering already converted a+b+c+(d+e)+f to `+`(a,b,c,d,e,f)
 						// let current_repr_id = eclasses[root_eclass_id].best_enode_id;
-						// let elements = extract_elements_from_tree(current_repr_id);
-						// let sorted_elements = sort_elements_gpu(elements); // Needs GPU sort
-						// let new_canonical_node_id = rebuild_canonical_tree(sorted_elements);
+						// let args = enodes[current_repr_id].args; // Direct access to flattened args
+						// let sorted_args = sort_args_gpu(args); // Sort the already-flat argument list
+						// let new_canonical_node_id = create_n_ary_node(OP_ADD, sorted_args);
 						// let new_canonical_eclass_id = canonicalize_or_add_node(...);
 						// eclasses[root_eclass_id].best_enode_id = node_id_from_eclass(new_canonical_eclass_id);
 				}
@@ -892,32 +893,33 @@ fn canonicalize_S_n(root_eclass_id: u32) {
 	let repr_node_id = eclasses[root_eclass_id].best_enode_id;
 	let repr_node = enodes[repr_node_id];
 	if (repr_node.op_code == OP_ADD /* or other S_n op */) {
-		// 2. Extract elements from the binary tree representation
-		// Requires traversing the tree structure stored in enodes/eclasses
-		var elements: array<u32, MAX_ARGS_FOR_SORT>; // Use temporary buffer
-		let count = extract_elements_from_tree(repr_node_id, &elements);
+		// 2. Access the already-flattened n-ary arguments directly
+		// No tree traversal needed - Orbit-to-SExpr lowering already converted
+		// expressions like a+b+c+(d+e)+f to `+`(a,b,c,d,e,f)
+		let arg_count = repr_node.arity;
+		var arguments: array<u32, MAX_ARGS_FOR_SORT>;
+		for (var i = 0u; i < arg_count; i++) {
+			arguments[i] = repr_node.args[i]; // Direct access to flattened args
+		}
 
-		// 3. Sort the extracted element e-class IDs
+		// 3. Sort the argument e-class IDs
 		// Requires a GPU sorting implementation (e.g., bitonic sort)
-		sort_eclass_ids_gpu(&elements, count);
+		sort_eclass_ids_gpu(&arguments, arg_count);
 
-		// 4. Rebuild canonical tree structure (e.g., right-associative)
-		let canonical_tree_eclass_id = rebuild_canonical_tree(OP_ADD, &elements, count);
+		// 4. Create canonical n-ary node directly
+		// No tree rebuilding needed - just create new n-ary node with sorted args
+		let canonical_node_id = create_n_ary_node(OP_ADD, &arguments, arg_count);
 
 		// 5. Merge the original eclass with the canonical one
-		// (The merge might happen implicitly if canonicalize_or_add_node was used
-		// during rebuild, or explicitly here)
-		merge(root_eclass_id, canonical_tree_eclass_id);
-		// Ensure the representative is updated if merge occurred
-		eclasses[find(root_eclass_id)].best_enode_id = node_id_from_eclass(canonical_tree_eclass_id);
+		let canonical_eclass_id = get_or_create_eclass(canonical_node_id);
+		merge(root_eclass_id, canonical_eclass_id);
 	}
 }
 
-// Helper functions (need concrete WGSL implementations)
-fn extract_elements_from_tree(node_id: u32, out_elements: ptr<function, array<u32, MAX_ARGS_FOR_SORT>>) -> u32 { /* ... */ }
+// Simplified helper functions (no tree traversal/rebuilding needed)
 fn sort_eclass_ids_gpu(elements: ptr<function, array<u32, MAX_ARGS_FOR_SORT>>, count: u32) { /* ... */ }
-fn rebuild_canonical_tree(op_code: u32, sorted_elements: ptr<function, array<u32, MAX_ARGS_FOR_SORT>>, count: u32) -> u32 { /* ... */ }
-fn node_id_from_eclass(eclass_id: u32) -> u32 { /* ... */ }
+fn create_n_ary_node(op_code: u32, sorted_args: ptr<function, array<u32, MAX_ARGS_FOR_SORT>>, count: u32) -> u32 { /* ... */ }
+fn get_or_create_eclass(node_id: u32) -> u32 { /* ... */ }
 ```
 **Note:** Implementing the extract/sort/rebuild efficiently on the GPU is complex. It might involve temporary buffers, specialized sorting kernels, and careful handling of atomics if done concurrently. Simpler approaches might involve marking nodes for canonicalization and handling it in fewer threads or specific kernel passes.
 

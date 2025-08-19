@@ -1,0 +1,306 @@
+import tools/orbit/sexpr/sexpr_types;
+import tools/orbit/sexpr/GLSL/glsl_serializer;
+import tools/orbit/sexpr/GLSL/glsl_representation;
+import string;
+import ds/array;
+import fs/filesystem;
+import math/math;
+
+export {
+	// Generate a GLSL file with the serialized AST and constant pool
+	generateProgramGLSL(expr : Sexpr, outputPath : string) -> bool;
+}
+
+// Generate a GLSL file containing the serialized program and constant pool as uniform data
+generateProgramGLSL(expr : Sexpr, outputPath : string) -> bool {
+	// Serialize the expression
+	result = sexprToGLSL(expr);
+	binaryAST = result.first;
+	constantPool = result.second;
+	nodeComments = result.third;
+
+	// Create GLSL code with the serialized data
+	glslCode = generateGLSLCode(binaryAST, constantPool, nodeComments);
+
+	// Write the GLSL code to the output file
+	setFileContent(outputPath, glslCode);
+
+	// Return success
+	true;
+}
+
+// Generate the GLSL code with the serialized data
+generateGLSLCode(binaryAST : [double], constantPool : [double], nodeComments : [string]) -> string {
+	// Header with include guard for definitions
+	header = "// Auto-generated GLSL code for S-expression interpreter\n" +
+		"// AST size: " + i2s(length(binaryAST)) + " elements\n" +
+		"// Constant Pool size: " + i2s(length(constantPool)) + " elements\n\n" +
+		"#inc" + "lude \"glsl_sexpr_defines.h\"\n\n"; // Include the definitions file
+
+	// Size definitions
+	sizes = "// Program size information\n" +
+		"#define PROGRAM_AST_SIZE " + i2s(length(binaryAST)) + "\n" +
+		"#define CONSTANT_POOL_SIZE " + i2s(length(constantPool)) + "\n\n";
+
+	// Format the arrays as GLSL
+	constPoolDecl = formatGLSLArray("u_constant_pool", constantPool, true, "pool");
+	binaryASTDecl = formatGLSLArrayWithComments("u_program_ast", binaryAST, nodeComments, true);
+
+	// Combine all parts
+	header + sizes + constPoolDecl + "\n\n" + binaryASTDecl + "\n";
+}
+
+// Format an array as GLSL code
+formatGLSLArray(name : string, values : [double], isConst : bool, arrayType : string) -> string {
+	qualifier = if (isConst) "const" else "uniform";
+    arrayTypeLiteral = "float[]("; // Store this part in a variable
+	arrayDecl = qualifier + " float " + name + "[" + i2s(length(values)) + "] = " + arrayTypeLiteral;
+
+	// Format the values with proper handling for GLSL syntax
+	arrayValuesStr = if (length(values) == 0) {
+		"";
+	} else {
+		// Use the simpler formatting function that ensures proper commas
+		formatValuesForGLSL(values, arrayType);
+	};
+
+	// Complete the declaration
+	arrayDecl + "\n" + arrayValuesStr + "\n);"; 
+}
+
+// Format an array with comments for each element
+formatGLSLArrayWithComments(name : string, values : [double], comments : [string], isConst : bool) -> string {
+	qualifier = if (isConst) "const" else "uniform";
+    arrayTypeLiteral = "float[]("; // Store this part in a variable
+	arrayDecl = qualifier + " float " + name + "[" + i2s(length(values)) + "] = " + arrayTypeLiteral;
+
+	// Format the values with comments
+	arrayValuesStr = if (length(values) == 0) {
+		"";
+	} else {
+		// Format directly with the comments
+		formatValuesWithComments(values, comments);
+	};
+
+	// Complete the declaration
+	arrayDecl + "\n" + arrayValuesStr + "\n);";
+}
+
+// Format values with comments, grouped by AST node type
+formatValuesWithComments(values : [double], comments : [string]) -> string {
+	// Generate formatted lines for AST nodes
+	formattedLines = formatASTNodes(values, comments, 0, []);
+	
+	// Join the lines with newlines
+	strGlue(formattedLines, "\n");
+}
+
+// Detect AST node lengths based on tag type
+nodeFieldCount(tag : int) -> int {
+	// With our NOP padding, all nodes are now 4 fields long
+	4;
+}
+
+// Format AST nodes, grouping fields together
+formatASTNodes(values : [double], comments : [string], index : int, acc : [string]) -> [string] {
+	if (index >= length(values)) {
+		// Base case: all values processed
+		acc;
+	} else {
+		// All nodes should be 4 values in our uniform system
+		nodeLen = 4;
+		
+		// Ensure we don't go out of bounds
+		actualNodeLen = min(nodeLen, length(values) - index);
+		
+		// Get the values for this node
+		nodeValues = subrange(values, index, actualNodeLen);
+		
+		// Format the values as a comma-separated string
+		valueStr = strGlue(map(nodeValues, \v -> formatGLSLFloat(v)), ", ");
+		
+		// Get comment for this node
+		comment = if (index < length(comments) && comments[index] != "") {
+			"// " + comments[index];
+		} else {
+			"// [" + i2s(index) + "]";
+		};
+		
+		// Check if this is the last node (to handle trailing comma)
+		isLastNode = (index + actualNodeLen >= length(values));
+		
+		// Combine with proper indentation and trailing comma if not the last node
+		formatted = "    " + valueStr + (if (isLastNode) "" else ",") + "  " + comment;
+		
+		// Add to accumulator and recurse for next node
+		newAcc = arrayPush(acc, formatted);
+		formatASTNodes(values, comments, index + actualNodeLen, newAcc);
+	}
+}
+
+// New simplified function to format values for GLSL
+// This ensures proper comma placement and comments
+formatValuesForGLSL(values : [double], arrayType : string) -> string {
+    // For AST arrays, we want to add comments
+    if (arrayType == "ast") {
+        // Use recursion to build the formatted string with control over comma placement
+        formatASTValues(values, 0, "");
+    } else {
+        // For non-AST arrays (like constant pool), simpler formatting
+        itemsPerLine = 4;
+        numLines = (length(values) + itemsPerLine - 1) / itemsPerLine;
+        
+        lines = generate(0, numLines, \i -> {
+            start = i * itemsPerLine;
+            end = min(start + itemsPerLine, length(values));
+            chunk = subrange(values, start, end - start);
+            
+            // Format this chunk
+            "    " + strGlue(map(chunk, \v -> formatGLSLFloat(v)), ", ");
+        });
+        
+        // Join lines with commas
+        strGlue(lines, ",\n");
+    }
+}
+
+// Recursive function to format AST values with proper comments
+formatASTValues(values : [double], index : int, result : string) -> string {
+    if (index >= length(values)) {
+        // Base case: no more values to process
+        result;
+    } else {
+        // Get up to 4 values for this line
+        lineValues = getLineValues(values, index, [], 0, 4);
+        
+        // Format just the values with proper indentation
+        indent = "    ";
+        valuePart = indent + strGlue(map(lineValues, \v -> formatGLSLFloat(v)), ", ");
+        
+        // Add comma if there are more values after this line
+        hasMoreValues = (index + length(lineValues) < length(values));
+        valueWithComma = if (hasMoreValues) valuePart + "," else valuePart;
+        
+        // Generate comment on its own line below the values
+        commentLine = indent + "// " + getNodeComment(lineValues, index, values);
+        
+        // Add new content to the accumulated result
+        newResult = if (result != "") {
+            result + "\n" + commentLine + "\n" + valueWithComma;
+        } else {
+            commentLine + "\n" + valueWithComma;
+        };
+        
+        // Recurse for the next chunk
+        formatASTValues(values, index + length(lineValues), newResult);
+    }
+}
+
+// Helper function to get values for a line (recursive)
+getLineValues(values : [double], index : int, acc : [double], count : int, maxCount : int) -> [double] {
+    if (count >= maxCount || index + count >= length(values)) {
+        // Base case: reached max count or end of values
+        acc;
+    } else {
+        // Add this value to the accumulator
+        newAcc = arrayPush(acc, values[index + count]);
+        
+        // Recurse for next value
+        getLineValues(values, index, newAcc, count + 1, maxCount);
+    }
+}
+
+
+
+
+
+// Get a comment describing the node, without any values
+getNodeComment(chunk : [double], offset : int, fullArray : [double]) -> string {
+    if (length(chunk) > 0 && offset < length(fullArray)) {
+        nodeType = round(chunk[0]);
+        
+        // Format based on node type
+        if (nodeType == TAG_SSINT && length(chunk) >= 2) {
+            // Integer
+            "[" + i2s(offset) + "] TAG_SSINT, value=" + i2s(round(chunk[1]));
+        } 
+        else if (nodeType == TAG_SSDOUBLE && length(chunk) >= 2) {
+            // Double
+            "[" + i2s(offset) + "] TAG_SSDOUBLE, value=" + d2s(chunk[1]);
+        }
+        else if (nodeType == TAG_SSBOOL && length(chunk) >= 2) {
+            // Boolean
+            boolValue = if (chunk[1] > 0.0) "true" else "false";
+            "[" + i2s(offset) + "] TAG_SSBOOL, value=" + boolValue;
+        }
+        else if (nodeType == TAG_SSSTRING && length(chunk) >= 3) {
+            // String
+            "[" + i2s(offset) + "] TAG_SSSTRING, pool_idx=" + i2s(round(chunk[1])) + ", len=" + i2s(round(chunk[2]));
+        }
+        else if (nodeType == TAG_SSVARIABLE && length(chunk) >= 2) {
+            // Variable
+            "[" + i2s(offset) + "] TAG_SSVARIABLE, pool_idx=" + i2s(round(chunk[1]));
+        }
+        else if (nodeType == TAG_SSCONSTRUCTOR && length(chunk) >= 2) {
+            // Constructor
+            "[" + i2s(offset) + "] TAG_SSCONSTRUCTOR, pool_idx=" + i2s(round(chunk[1]));
+        }
+        else if (nodeType == TAG_SSOPERATOR && length(chunk) >= 2) {
+            // Operator
+            "[" + i2s(offset) + "] TAG_SSOPERATOR, pool_idx=" + i2s(round(chunk[1]));
+        }
+        else if (nodeType == TAG_SSLIST && length(chunk) >= 3) {
+            // List
+            "[" + i2s(offset) + "] TAG_SSLIST, count=" + i2s(round(chunk[1])) + ", child_offset=" + i2s(round(chunk[2]));
+        }
+        else if (nodeType == TAG_SSVECTOR && length(chunk) >= 3) {
+            // Vector
+            "[" + i2s(offset) + "] TAG_SSVECTOR, count=" + i2s(round(chunk[1])) + ", child_offset=" + i2s(round(chunk[2]));
+        }
+        else if (nodeType == TAG_SSSPECIALFORM && length(chunk) >= 4) {
+            // Special Form
+            formId = round(chunk[1]);
+            formName = getGLSLSpecialFormName(formId);
+            "[" + i2s(offset) + "] TAG_SSSPECIALFORM, form=" + formName + ", count=" 
+                + i2s(round(chunk[2])) + ", child_offset=" + i2s(round(chunk[3]));
+        }
+        else {
+            // Default case for node types that don't match known patterns
+            "[" + i2s(offset) + "] Unknown node type: " + i2s(nodeType);
+        }
+    }
+    else {
+        // Default case - just the offset without special comments
+        "[" + i2s(offset) + "]";
+    }
+}
+
+// Get a human-readable name for a special form ID
+getGLSLSpecialFormName(formId : int) -> string {
+    if (formId == SFORM_AND) "AND"
+    else if (formId == SFORM_BEGIN) "BEGIN"
+    else if (formId == SFORM_CLOSURE) "CLOSURE"
+    else if (formId == SFORM_DEFINE) "DEFINE"
+    else if (formId == SFORM_EVAL) "EVAL"
+    else if (formId == SFORM_IF) "IF"
+    else if (formId == SFORM_IMPORT) "IMPORT"
+    else if (formId == SFORM_LAMBDA) "LAMBDA"
+    else if (formId == SFORM_LET) "LET"
+    else if (formId == SFORM_LETREC) "LETREC"
+    else if (formId == SFORM_LIST) "LIST"
+    else if (formId == SFORM_MATCH) "MATCH"
+    else if (formId == SFORM_OR) "OR"
+    else if (formId == SFORM_QUASIQUOTE) "QUASIQUOTE"
+    else if (formId == SFORM_QUOTE) "QUOTE"
+    else if (formId == SFORM_SET) "SET"
+    else if (formId == SFORM_UNQUOTE) "UNQUOTE"
+    else if (formId == SFORM_UNQUOTESPLICING) "UNQUOTESPLICING"
+    else "UNKNOWN(" + i2s(formId) + ")";
+}
+
+// Format a single float value for GLSL
+formatGLSLFloat(value : double) -> string {
+	str = d2s(value);
+	floatStr = if (strContains(str, ".")) str else str + ".0";
+	floatStr + "f";
+}

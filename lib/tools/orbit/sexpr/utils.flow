@@ -1,8 +1,25 @@
 import tools/orbit/sexpr/sexpr_types;
 import tools/orbit/sexpr/pretty_sexpr;
+import tools/orbit/sexpr/env;
 import math/math;
+import ds/tree;
 
 export {
+    // Type to represent different kinds of callable lists
+    SexprListType ::= DataList, OperatorCall, VariableCall, ConstructorCall, SpecialFormCall;
+        DataList();  // Regular data list
+        OperatorCall(opName: string);  // Operator application like (+, -, *, etc.)
+        VariableCall(varName: string);  // Function call via variable
+        ConstructorCall(consName: string);  // Constructor application
+        SpecialFormCall(form: Special_name);  // Special form like closure
+    
+    // Determine if an SSList represents a function call and what type
+    // Optional env parameter to check if variable names exist as functions
+    classifySexprList(list: Sexpr, env: Maybe<SExpEnv>) -> SexprListType;
+    
+    // Convenience function to check if an SSList is a callable expression
+    isCallableList(list: Sexpr, env: Maybe<SExpEnv>) -> bool;
+    
     // Utility functions to extract values from S-expressions
     getSBool(expr : Sexpr, context : string) -> bool;
     getSInt(expr : Sexpr, context : string) -> int;
@@ -127,5 +144,48 @@ getSVector(expr : Sexpr, context : string) -> [Sexpr] {
             println("ERROR in " + context + ": expected a vector or list, got " + prettySexpr(expr));
             [];
         }
+    }
+}
+
+// Determine if an SSList represents a function call and what type
+// Optional env parameter to check if variable names exist as functions
+classifySexprList(list: Sexpr, env: Maybe<SExpEnv>) -> SexprListType {
+    switch(list) {
+        SSList(exprs): {
+            if (length(exprs) == 0) {
+                DataList();
+            } else {
+                switch (exprs[0]) {
+                    SSOperator(name): OperatorCall(name);
+                    SSVariable(name): {
+                        // If env is provided, check if variable exists as function
+                        switch (env) {
+                            Some(environment): {
+                                if (containsKeyTree(environment.env, name) || 
+                                    containsKeyTree(environment.runtime, name)) {
+                                    VariableCall(name);
+                                } else {
+                                    DataList();  // Variable not found as function
+                                }
+                            }
+                            None(): VariableCall(name);  // Assume it's a function call without env
+                        }
+                    }
+                    SSConstructor(name): ConstructorCall(name);
+                    SSSpecialForm(form, __): SpecialFormCall(form);
+                    default: DataList();  // Any other head element means data list
+                }
+            }
+        }
+        default: DataList();  // Not an SSList
+    }
+}
+
+// Convenience function to check if an SSList is a callable expression
+isCallableList(list: Sexpr, env: Maybe<SExpEnv>) -> bool {
+    result = classifySexprList(list, env);
+    switch (result) {
+        DataList(): false;
+        default: true;
     }
 }

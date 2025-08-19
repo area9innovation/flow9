@@ -185,52 +185,49 @@ class NotificationsSupport {
         return 0;
     }
 
+    private static function callbackNotification(payload : Dynamic) : Void {
+        var data : Array<Array<String>> = [];
+        if (payload.data) {
+            var payloadData : Dynamic = payload.data;
+            // Use Reflect to iterate over JavaScript object properties
+            for (key in Reflect.fields(payloadData)) {
+                var value = Reflect.field(payloadData, key);
+                data.push([key, Std.string(value)]);
+            }
+        }
+
+        var title = (payload.notification && payload.notification.title) ? payload.notification.title : (payload.data && payload.data.title ? payload.data.title : "Undefined");
+        var body = (payload.notification && payload.notification.body) ? payload.notification.body : (payload.data && payload.data.body ? payload.data.body : "Undefined");
+
+        for(listener in onNotificationFBListeners) {
+            listener(payload.message_id,
+                title,
+                body,
+                payload.from,
+                Date.now(),
+                data
+            );
+        }
+    }
+
     public static function initializeFBApp(onReady : Void->Void) : Void {
     #if (js && !flow_nodejs)
         if (untyped window.firebase) {
             onReady();
         } else {
-            var appPromise = Util.loadJS("js/firebase/firebase-app.js");
+            var appPromise = Util.loadJS("https://www.gstatic.com/firebasejs/11.9.1/firebase-app-compat.js");
             var configPromise = Util.loadJS("js/firebase/firebase-config.js");
             Promise.all([appPromise, configPromise]).then(function(res) {
                 untyped __js__("firebase.initializeApp(firebaseConfig)");
-                Util.loadJS("js/firebase/firebase-messaging.js").then(function(res) {
-                    messaging = untyped firebase.messaging();
-                    messaging.usePublicVapidKey(untyped vapidKey);
+                Util.loadJS("https://www.gstatic.com/firebasejs/11.9.1/firebase-messaging-compat.js").then(function(res) {
                     if (untyped navigator.serviceWorker) {
                         untyped navigator.serviceWorker.register('js/firebase/firebase-messaging-sw.js').then(function(registration) {
-                            messaging.useServiceWorker(registration);
                             globalFBRegistration = registration;
+                            
+                            messaging = untyped firebase.messaging();
+                            messaging.onMessage(callbackNotification);
 
-                            messaging.onMessage(function(payload) {
-                                var data : Array<Array<String>> = [];
-                                for(key in (Object.keys(payload.data) : Array<String>)) {
-                                    data.push([key, payload.data[key]]);
-                                }
-                                var title = (payload.notification && payload.notification.title) ? payload.notification.title : (payload.data && payload.data.title ? payload.data.title : "Undefined");
-                                var body = (payload.notification && payload.notification.body) ? payload.notification.body : (payload.data && payload.data.body ? payload.data.body : "Undefined");
-
-                                for(listener in onNotificationFBListeners) {
-                                    listener(payload.data["google.c.a.c_id"],
-                                        title,
-                                        body,
-                                        payload.from,
-                                        payload.data["google.c.a.ts"] * 1000,
-                                        data
-                                    );
-                                }
-                            });
-                            messaging.onTokenRefresh(function() {
-                                messaging.getToken().then(function(token){
-                                    for(listener in onTokenResreshFBListeners) {
-                                        listener(token);
-                                    }
-                                }, function(error) {});
-                            });
-
-                            messaging.requestPermission().then(function(){
-                                onReady();
-                            }, function(e) {});
+                            onReady();
                         }, function(e) {});
                     }
                 }, function(e){});
@@ -241,7 +238,7 @@ class NotificationsSupport {
 
     public static function addFBNotificationListener(
         listener : String->String->String->String->Int->Array<Array<String>>->Void
-	) : (Void -> Void) {
+    ) : (Void -> Void) {
         onNotificationFBListeners.push(listener);
         return function(){
             onNotificationFBListeners.remove(listener);
@@ -257,26 +254,45 @@ class NotificationsSupport {
 
     public static function getFBToken(callback : String->Void) : Void {
     #if (js && !flow_nodejs)
-        messaging.getToken().then(callback, function(err){});
+        if (messaging == null || globalFBRegistration == null) {
+            callback("");
+            return;
+        }
+
+        messaging.getToken(untyped { 
+            vapidKey: vapidKey, 
+            serviceWorkerRegistration: globalFBRegistration 
+        }).then(function(token) {
+            if (token != null) {
+                callback(token);
+            } else {
+                callback("");
+            }
+        }, function(err) {
+            trace("FCM Token Error: " + err);
+            callback("");
+        });
     #end
     }
 
     private static function callFirebaseServiceSubscription(doSubscribe : Bool, topic : String) : Void {
     #if (js && !flow_nodejs)
-        untyped messaging.getToken().then(function(token) {
-            HttpSupport.httpRequest("php/firebase/messaging.php", 
-                true,
-                [[]],
-                [
-                    ["doSubscribe", doSubscribe],
-                    ["topic", topic],
-                    ["token", token]
-                ],
-                function(data) {},
-                function(err) {},
-                function(status) {}
-            );
-        }, function(err) {});
+        getFBToken(function(token) {
+            if (token != "") {
+                HttpSupport.httpRequest("php/firebase/messaging.php", 
+                    true,
+                    [[]],
+                    [
+                        ["doSubscribe", doSubscribe ? "true" : "false"],
+                        ["topic", topic],
+                        ["token", token]
+                    ],
+                    function(data) {},
+                    function(err) {},
+                    function(status) {}
+                );
+            }
+        });
     #end
     }
 
@@ -320,15 +336,7 @@ class NotificationsSupport {
                         registerResultEnt = true;
                     } else if (event.data.action == "notification") {
                         if (subscribedOnBackgroundMessage) {
-                            for(listener in onNotificationFBListeners) {
-                                listener(event.data.id,
-                                    event.data.title,
-                                    event.data.body,
-                                    event.data.from,
-                                    event.data.stamp * 1000,
-                                    event.data.data
-                                );
-                            }
+                            callbackNotification(event.data.payload);
                         }
                     } else {
                         trace("Unsupported responce");
