@@ -472,6 +472,10 @@ class Native {
 	}
 	#end
 
+	public static function strSplit(str : String, separator : String) : Array<String> {
+		return str.split(separator);
+	}
+
 	public static inline function strlen(s : String) : Int {
 		return s.length;
 	}
