@@ -137,6 +137,13 @@ export {
 		fn : ([?]) -> ??,
 	) -> void;
 
+	rconnectAMap(
+		src : FrpArray<?>,
+		dst : FrpArray<??>,
+		init : bool,
+		fn : (?) -> ??,
+	) -> void;
+
 	rconnectARangeMap(
 		src : FrpArray<?>,
 		dst : FrpArray<??>,
@@ -174,12 +181,11 @@ export {
 
 	rconnectAZipRange(
 		src1 : FrpArray<?>,
-		start1 : int,
-		count1 : int,
 		src2 : FrpArray<??>,
-		start2 : int,
-		count2 : int,
 		dst : FrpArray<???>,
+		start1 : int,
+		start2 : int,
+		count : int,
 		init : bool,
 		fn : (?, ??) -> ???,
 	) -> void;
@@ -250,6 +256,11 @@ export {
 		fn : ([?]) -> ??
 	) -> FrpValue<??>;
 
+	rselectAMap(
+		src : FrpArray<?>,
+		fn : (?) -> ??
+	) -> FrpArray<??>;
+
 	rselectARangeMap(
 		src : FrpArray<?>,
 		start : int,
@@ -279,14 +290,13 @@ export {
 
 	rselectAZipRange(
 		src1 : FrpArray<?>,
-		start1 : int,
-		count1 : int,
 		src2 : FrpArray<??>,
+		start1 : int,
 		start2 : int,
-		count2 : int,
+		count : int,
 		fn : (?, ??) -> ???
 	) -> FrpArray<???>;
-
+	
 	// splitters
 
 	rsplit2(
@@ -704,9 +714,28 @@ rconnectARangeMap(
 	fn : (?) -> ??,
 ) -> void {
 	updateFn = \updElmIndex : int -> {
-		if (updElmIndex < 0) rRangeMap(src, start, count, dst, fn)
-		else if (updElmIndex >= start && updElmIndex < start + count) rMapElement(src, updElmIndex, updElmIndex - start, dst, fn)
-		else rSetUpdated(dst);
+		if (updElmIndex < 0 || rArrayLength(dst) != count) {
+			rRangeMap(src, start, count, dst, fn)
+		} else if (updElmIndex >= start && updElmIndex < start + count) {
+			rMapElement(src, updElmIndex, dst, updElmIndex - start, fn)
+		} else rSetUpdated(dst);
+	}
+
+	rconnectCommon([src], dst, init, FrpUpdateFnArray(updateFn));
+}
+
+rconnectAMap(
+	src : FrpArray<?>,
+	dst : FrpArray<??>,
+	init : bool,
+	fn : (?) -> ??,
+) -> void {
+	updateFn = \updElmIndex : int -> {
+		if (updElmIndex < 0 || rArrayLength(dst) != rArrayLength(src)) {
+			rRangeMap(src, 0, -1, dst, fn)
+		} else {
+			rMapElement(src, updElmIndex, dst, updElmIndex, fn)
+		}
 	}
 
 	rconnectCommon([src], dst, init, FrpUpdateFnArray(updateFn));
@@ -747,8 +776,8 @@ rconnectARangeMapDynamic(
 		fv = rget(start);
 		cv = rget(count);
 
-		if (inx < 0) rRangeMap(src, rget(start), rget(count), dst, fn)
-		else if (inx >= fv && inx < fv + cv) rMapElement(src, inx, inx - fv, dst, fn)
+		if (inx < 0 || rArrayLength(dst) != cv) rRangeMap(src, fv, cv, dst, fn)
+		else if (inx >= fv && inx < fv + cv) rMapElement(src, inx, dst, inx - fv, fn)
 		else rSetUpdated(dst);
 	}
 
@@ -767,9 +796,11 @@ rconnectAZip(
 		upd2 = find(updateArr, \p -> p.first == 1);
 		inx1 = eitherMap(upd1, secondOfPair, -1);
 		inx2 = eitherMap(upd2, secondOfPair, -1);
+		slen = min(rArrayLength(src1), rArrayLength(src2));
 
 		fullUpd = isSome(upd1) && inx1 < 0 || isSome(upd2) && inx2 < 0
-		|| isSome(upd1) && isSome(upd2) && inx1 != inx2;
+		|| isSome(upd1) && isSome(upd2) && inx1 != inx2
+		|| rArrayLength(dst) != slen;
 
 		if (fullUpd) rZipArrays(src1, src2, dst, fn)
 		else rZipElement(src1, inx1, src2, inx1, dst, inx1, fn); // inx1 == inx2 == dst inx
@@ -781,28 +812,27 @@ rconnectAZip(
 
 rconnectAZipRange(
 	src1 : FrpArray<?>,
-	start1 : int,
-	count1 : int,
 	src2 : FrpArray<??>,
-	start2 : int,
-	count2 : int,
 	dst : FrpArray<???>,
+	start1 : int,
+	start2 : int,
+	count : int,
 	init : bool,
 	fn : (?, ??) -> ???,
 ) -> void {
 	updateFn = \updateArr : [Pair<int,int>] -> {
 		upd1 = find(updateArr, \p -> p.first == 0); // src1
 		upd2 = find(updateArr, \p -> p.first == 1); // src2
-		// inx means whole array is updated
 
 		doUpdate = \inx1,inx2,dstInx -> {
 			if (dstInx >= 0) rZipElement(src1, inx1, src2, inx2, dst, dstInx, fn)
-			else rZipRange(src1, start1, count1, src2, start2, count2, dst, fn);
+			else rZipRange(src1, src2, dst, start1, start2, count, fn);
 		}
 
 		if (isSome(upd1) && isSome(upd2)) {
 			inx1 = eitherMap(upd1, secondOfPair, -1);
 			inx2 = eitherMap(upd2, secondOfPair, -1);
+			// inx1,2 < 0 means whole array is updated
 			dinx1 = if (inx1 >= 0) inx1 - start1 else -1;
 			dinx2 = if (inx2 >= 0) inx2 - start2 else -1;
 			dstInx = if (dinx1 >= 0 && dinx2 >= 0 && dinx1 == dinx2) dinx1 else -1;
@@ -965,6 +995,15 @@ rselectARange(
 	dst;
 }
 
+rselectAMap(
+	src : FrpArray<?>,
+	fn : (?) -> ??
+) -> FrpArray<??> {
+	dst = rmakeA(map(rgetA(src), fn));
+	rconnectAMap(src, dst, false, fn);
+	dst;
+}
+
 rselectARangeMap(
 	src : FrpArray<?>,
 	start : int,
@@ -1004,23 +1043,22 @@ rselectAZip(
 	fn : (?, ??) -> ???
 ) -> FrpArray<???> {
 	dst = rmakeA([]);
-	rZipRangeARef(src1.values, 0, -1, src2.values, 0, -1, dst.values, fn) |> ignore;
+	rZipRangeARef(src1.values, src2.values, dst.values, 0, 0, -1, fn) |> ignore;
 	rconnectAZip(src1, src2, dst, false, fn);
 	dst;
 }
 
 rselectAZipRange(
 	src1 : FrpArray<?>,
-	start1 : int,
-	count1 : int,
 	src2 : FrpArray<??>,
+	start1 : int,
 	start2 : int,
-	count2 : int,
+	count : int,
 	fn : (?, ??) -> ???
 ) -> FrpArray<???> {
 	dst = rmakeA([]);
-	rZipRangeARef(src1.values, start1, count1, src2.values, start2, count2, dst.values, fn) |> ignore;
-	rconnectAZipRange(src1, start1, count1, src2, start2, count2, dst, false, fn);
+	rZipRangeARef(src1.values, src2.values, dst.values, start1, start2, count, fn) |> ignore;
+	rconnectAZipRange(src1, src2, dst, start1, start2, count, false, fn);
 	dst;
 }
 
@@ -1269,21 +1307,20 @@ rZipArrays(
 	dst : FrpArray<???>,
 	fn : (?,??) -> ???
 ) -> void {
-	dstUpdated = rZipRangeARef(src1.values, 0, -1, src2.values, 0, -1, dst.values, fn);
+	dstUpdated = rZipRangeARef(src1.values, src2.values, dst.values, 0, 0, -1, fn);
 	rSetUpdatedAndNotify(dst, dstUpdated);
 }
 
 rZipRange(
 	src1 : FrpArray<?>,
-	start1 : int,
-	count1 : int, // count1 < 0 means use full length
 	src2 : FrpArray<??>,
-	start2 : int,
-	count2 : int, // count2 < 0 means use full length
 	dst : FrpArray<???>,
+	start1 : int,
+	start2 : int,
+	count : int, // count2 < 0 means use full length
 	fn : (?,??) -> ???
 ) -> void {
-	dstUpdated = rZipRangeARef(src1.values, start1, count1, src2.values, start2, count2, dst.values, fn);
+	dstUpdated = rZipRangeARef(src1.values, src2.values, dst.values, start1, start2, count, fn);
 	rSetUpdatedAndNotify(dst, dstUpdated);
 }
 
@@ -1313,9 +1350,8 @@ rZipElement(
 rMapElement(
 	src : FrpArray<?>,
 	srcIndex : int,
-	dstIndex : int,
 	dst : FrpArray<??>,
-	fn : (?) -> ??,
+	dstIndex : int,	fn : (?) -> ??,
 ) -> void {
 	svals = ^(src.values);
 
@@ -1396,13 +1432,13 @@ rArrayValuesSubrange(cell : FrpArray<?>, start : int, count : int) -> [?] {
 rRangeMapARef(
 	src : ref [ref ?],
 	start : int,
-	count : int,
+	count : int, // -1 means from start till end
 	dst : ref [ref ??],
 	fn : (?) -> ??
 ) -> bool {
 	slen = length(^src);
 	dlen = length(^dst);
-	count2 = if (count < 0) slen else min(count, slen - start);
+	count2 = if (count < 0) slen - start else min(count, slen - start);
 
 	updated = ref false;
 
@@ -1430,12 +1466,11 @@ rRangeMapARef(
 
 rZipRangeARef(
 	src1 : ref [ref ?],
-	start1 : int,
-	count1 : int, // count1 < 0 means use full length
 	src2 : ref [ref ??],
-	start2 : int,
-	count2 : int, // count2 < 0 means use full length
 	dst : ref [ref ???],
+	start1 : int,
+	start2 : int,
+	count : int, // count2 < 0 means from start till end
 	fn : (?,??) -> ???
 ) -> bool {
 	updated = ref false;
@@ -1444,20 +1479,20 @@ rZipRangeARef(
 	vals2 = ^src2;
 	len1 = length(vals1);
 	len2 = length(vals2);
-	slen1 = if (count1 < 0) len1 else min(count1, len1 - start1);
-	slen2 = if (count2 < 0) len2 else min(count2, len2 - start2);
+	slen1 = if (count < 0) len1 - start1 else min(count, len1 - start1);
+	slen2 = if (count < 0) len2 - start2 else min(count, len2 - start2);
 
 	dlen = length(^dst);
-	count = min(slen1, slen2);
+	slen = min(slen1, slen2);
 
-	if (count == dlen) {//update in the place
+	if (slen == dlen) {//update in the place
 		iteri(^dst, \i,r -> {
 			oldVal = ^r;
 			r := fn(^(vals1[i + start1]), ^(vals2[i + start2]));
 			if (^r != oldVal) updated := true;// need to update dependencies if any element updated
 		});
 	} else {// re-create dst
-		dst := generate(0, count, \i -> ref fn(^(vals1[i + start1]), ^(vals2[i + start2])));
+		dst := generate(0, slen, \i -> ref fn(^(vals1[i + start1]), ^(vals2[i + start2])));
 		updated := true;
 	}
 
