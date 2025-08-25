@@ -171,6 +171,8 @@ export {
 		fn : (?) -> ??,
 	) -> void;
 
+	// rconnectAZip combine 2 arrays into one dst array using fn
+	// if sources lengths are different then dst get minimum length of both src
 	rconnectAZip(
 		src1 : FrpArray<?>,
 		src2 : FrpArray<??>,
@@ -179,6 +181,10 @@ export {
 		fn : (?, ??) -> ???,
 	) -> void;
 
+	// rconnectAZipRange works similarly to rconnectAZip
+	// but you can specify ranges of elements using start1, start2, count
+	// count < 0 means using full src arrays lengths
+	// if sources lengths are different then dst get minimum length of both src
 	rconnectAZipRange(
 		src1 : FrpArray<?>,
 		src2 : FrpArray<??>,
@@ -296,7 +302,7 @@ export {
 		count : int,
 		fn : (?, ??) -> ???
 	) -> FrpArray<???>;
-	
+
 	// splitters
 
 	rsplit2(
@@ -816,37 +822,46 @@ rconnectAZipRange(
 	dst : FrpArray<???>,
 	start1 : int,
 	start2 : int,
-	count : int,
+	count : int, // -1 means use whole arrays from start1 and start2 indexes to the array end
 	init : bool,
 	fn : (?, ??) -> ???,
 ) -> void {
 	updateFn = \updateArr : [Pair<int,int>] -> {
 		upd1 = find(updateArr, \p -> p.first == 0); // src1
 		upd2 = find(updateArr, \p -> p.first == 1); // src2
+		scount = min(rArrayLength(src1) - start1, rArrayLength(src2) - start2);
 
-		doUpdate = \inx1,inx2,dstInx -> {
-			if (dstInx >= 0) rZipElement(src1, inx1, src2, inx2, dst, dstInx, fn)
-			else rZipRange(src1, src2, dst, start1, start2, count, fn);
-		}
+		if (scount <= 0) {
+			rnextA(dst, []);
+		} else {
+			doUpdate = \inx1,inx2,dstInx -> {
+				if (dstInx >= 0) rZipElement(src1, inx1, src2, inx2, dst, dstInx, fn)
+				else rZipRange(src1, src2, dst, start1, start2, count, fn);
+			}
 
-		if (isSome(upd1) && isSome(upd2)) {
-			inx1 = eitherMap(upd1, secondOfPair, -1);
-			inx2 = eitherMap(upd2, secondOfPair, -1);
-			// inx1,2 < 0 means whole array is updated
-			dinx1 = if (inx1 >= 0) inx1 - start1 else -1;
-			dinx2 = if (inx2 >= 0) inx2 - start2 else -1;
-			dstInx = if (dinx1 >= 0 && dinx2 >= 0 && dinx1 == dinx2) dinx1 else -1;
-			doUpdate(inx1, inx2, dstInx);
-		} else if (isSome(upd1)) {
-			inx1 = eitherMap(upd1, secondOfPair, -1);
-			dstInx = if (inx1 >= 0) inx1 - start1 else -1;
-			inx2 = if (dstInx >= 0) dstInx + start2 else -1;
-			doUpdate(inx1, inx2, dstInx);
-		} else { // isSome(upd2)
-			inx2 = eitherMap(upd2, secondOfPair, -1);
-			dstInx = if (inx2 >= 0) inx2 - start2 else -1;
-			inx1 = if (dstInx >= 0) dstInx + start1 else -1;
-			doUpdate(inx1, inx2, dstInx);
+			slen = if (count < 0) scount else min(count, scount);
+
+			if (rArrayLength(dst) != slen) {
+				doUpdate(-1, -1, -1); // mostly for dst initialization
+			} else if (isSome(upd1) && isSome(upd2)) {
+				inx1 = eitherMap(upd1, secondOfPair, -1);
+				inx2 = eitherMap(upd2, secondOfPair, -1);
+				// inx1,2 < 0 means whole array is updated
+				dinx1 = if (inx1 >= 0) inx1 - start1 else -1;
+				dinx2 = if (inx2 >= 0) inx2 - start2 else -1;
+				dstInx = if (dinx1 >= 0 && dinx2 >= 0 && dinx1 == dinx2) dinx1 else -1;
+				doUpdate(inx1, inx2, dstInx);
+			} else if (isSome(upd1)) {
+				inx1 = eitherMap(upd1, secondOfPair, -1);
+				dstInx = if (inx1 >= 0) inx1 - start1 else -1;
+				inx2 = if (dstInx >= 0) dstInx + start2 else -1;
+				doUpdate(inx1, inx2, dstInx);
+			} else { // isSome(upd2)
+				inx2 = eitherMap(upd2, secondOfPair, -1);
+				dstInx = if (inx2 >= 0) inx2 - start2 else -1;
+				inx1 = if (dstInx >= 0) dstInx + start1 else -1;
+				doUpdate(inx1, inx2, dstInx);
+			}
 		}
 	}
 
