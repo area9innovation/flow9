@@ -42,7 +42,8 @@ export {
 
 		// Enables keys handling by TScroll. False by default
 		// insideOnly - if true, scroll will be enabled only when cursor is inside the content area
-		TScrollKeysEnabled(enabled : Transform<bool>, insideOnly : bool);
+		// priority - if true, scroll instantly handles key event, blocking other scrolls
+		TScrollKeysEnabled(enabled : Transform<bool>, insideOnly : bool, priority : bool);
 		TKeyFilter(fn : (key : KeyEvent) -> bool);
 		TScrollbarsVisible(x : DynamicBehaviour<bool>, y : DynamicBehaviour<bool>);
 
@@ -822,7 +823,7 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 	xEnabled = axisEnabled.x;
 	yEnabled = axisEnabled.y;
 
-	keysEnabled = extractStruct(style, TScrollKeysEnabled(const(false), true));
+	keysEnabled = extractStruct(style, TScrollKeysEnabled(const(false), true, false));
 	keyFilter = extractStruct(style, TKeyFilter(\__ -> true)).fn;
 
 	// Previous point on mouse down
@@ -1007,19 +1008,49 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 	inside = make(false);
 	mouseWheelPos = ref None();
 
+	focusId = getFocusId();
+	isKeyboardFocusValid = \ -> {
+		curKeyboardFocus = currentKeyboardFocusId();
+		curKeyboardFocus == -1 || curKeyboardFocus == focusId
+	}
+
+	releaseKFUnsM = initUnsM();
+	captureKeyboardFocus = \ -> {
+		dispUnsM(releaseKFUnsM);
+		updateKeyboardFocus(focusId);
+		setUnsM(releaseKFUnsM, interruptibleTimer(200, \ -> {releaseKeyboardFocus(); dispUnsM(releaseKFUnsM);}));
+	}
+
+	handleKeyEventWithPriority = \handleFn -> {
+		if (keysEnabled.priority) {
+			handleFn();
+			captureKeyboardFocus();
+			true;
+		} else {
+			timer(0, \ -> if (isKeyboardFocusValid()) {
+				handleFn();
+				captureKeyboardFocus();
+			});
+			false;
+		}
+	}
+
 	changeDirection = \ke -> if (js) ke.shift else ke.alt;
 	handlePageKeys = \ke, xfn, yfn -> {
-		sp = getValue(scrollPosition);
 		if (changeDirection(ke)) {
 			if (fgetValue(xEnabled)) {
-				updateScrollPosition(Point(xfn(sp), sp.y));
-				true
+				handleKeyEventWithPriority(\ -> {
+					sp = getValue(scrollPosition);
+					updateScrollPosition(Point(xfn(sp), sp.y));
+				});
 			} else
 				false
 		} else {
 			if (fgetValue(yEnabled)) {
-				updateScrollPosition(Point(sp.x, yfn(sp)));
-				true
+				handleKeyEventWithPriority(\ -> {
+					sp = getValue(scrollPosition);
+					updateScrollPosition(Point(sp.x, yfn(sp)));
+				});
 			} else
 				false
 		}
@@ -1030,23 +1061,31 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 		[
 			TMouseInside(inside, false),
 			KeyDown2(\handled, ke -> {
-				if (fgetValue(keysEnabled.enabled) && !handled && !hasKeyboardFocus() && (!keysEnabled.insideOnly || getValue(inside)) && keyFilter(ke)) {
+				if (fgetValue(keysEnabled.enabled) && !handled && isKeyboardFocusValid() && (!keysEnabled.insideOnly || getValue(inside)) && keyFilter(ke)) {
 					if (ke.utf == "up" && fgetValue(yEnabled)) {
-						sp = getValue(scrollPosition);
-						updateScrollPosition(Point(sp.x, max(0., sp.y - scrollStepKey)));
-						true
+						handleFn = \ -> {
+							sp = getValue(scrollPosition);
+							updateScrollPosition(Point(sp.x, max(0., sp.y - scrollStepKey)));
+						}
+						handleKeyEventWithPriority(handleFn);
 					} else if (ke.utf == "down" && fgetValue(yEnabled)) {
-						sp = getValue(scrollPosition);
-						updateScrollPosition(Point(sp.x, min(sp.y + scrollStepKey, fgetValue(maxWH).height)));
-						true
+						handleFn = \ -> {
+							sp = getValue(scrollPosition);
+							updateScrollPosition(Point(sp.x, min(sp.y + scrollStepKey, fgetValue(maxWH).height)));
+						}
+						handleKeyEventWithPriority(handleFn);
 					} else if (ke.utf == "left" && fgetValue(xEnabled)) {
-						sp = getValue(scrollPosition);
-						updateScrollPosition(Point(max(0., sp.x - scrollStepKey), sp.y));
-						true
+						handleFn = \ -> {
+							sp = getValue(scrollPosition);
+							updateScrollPosition(Point(max(0., sp.x - scrollStepKey), sp.y));
+						}
+						handleKeyEventWithPriority(handleFn);
 					} else if (ke.utf == "right" && fgetValue(xEnabled)) {
-						sp = getValue(scrollPosition);
-						updateScrollPosition(Point(min(sp.x + scrollStepKey, fgetValue(maxWH).width), sp.y));
-						true
+						handleFn = \ -> {
+							sp = getValue(scrollPosition);
+							updateScrollPosition(Point(min(sp.x + scrollStepKey, fgetValue(maxWH).width), sp.y));
+						}
+						handleKeyEventWithPriority(handleFn);
 					} else if (ke.keycode == KEY_PAGEUP) {
 						handlePageKeys(ke,
 							\sp -> max(0., sp.x - fgetValue(boxWH).width),
