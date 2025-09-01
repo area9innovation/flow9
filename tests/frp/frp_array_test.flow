@@ -7,12 +7,17 @@ import tests/frp/frp_test_utils;
 export {
 	frpArrayTests =
 		[
+			rconnectARangeMap_test,
+			rconnectARangeMap_2_test,
 			rselectA_test,
 			rselectARange_test,
 			rselectARangeMap_test,
 			rselectARangeDynamic_test,
 			rselectARangeMapDynamic_test,
 			rselectAZip_test,
+			rselectAZipRange_test,
+			rselectAZipRange_diamond_test,
+			rselectAZipRange_empty_test,
 		];
 }
 
@@ -82,6 +87,44 @@ rselectARangeMap_test = \-> frpTest("rselectARangeMap", \-> {
 
 	r1 && r2 && r3 && r4 && r5;
 });
+
+rconnectARangeMap_test = \-> frpTest("rconnectARangeMap", \-> {
+	cell1 = rmakeA([2,3,4,5,6]);
+	cell2 = rmakeA([]);
+	rconnectARangeMap(cell1, cell2, 1, 3, true, \v -> v * 2);
+
+	r1  = checkFrpArr(cell2, [6, 8, 10]);
+
+	rnextA(cell1, [10,20,30,40,50]);
+	r2  = checkFrpArr(cell2, [40,60,80]);
+
+	rnextElement(cell1, 4, 100);
+	r3  = checkFrpArr(cell2, [40,60,80]);
+
+	rnextElement(cell1, 2, 100);
+	r4  = checkFrpArr(cell2, [40,200,80]);
+
+	rnextA(cell1, [10]);
+	r5  = checkFrpArr(cell2, []);
+
+	r1 && r2 && r3 && r4 && r5;
+});
+
+
+rconnectARangeMap_2_test = \-> frpTest("rconnectARangeMap_2", \-> {
+	// test of initialization on first rnextElement
+	cell1 = rmakeA([2,3,4,5,6]);
+	cell2 = rmakeA([]);
+	rconnectARangeMap(cell1, cell2, 1, 3, false, \v -> v * 2);
+
+	r1  = checkFrpArr(cell2, []);
+
+	rnextElement(cell1, 2, 100); // cause to init cell2
+	r2  = checkFrpArr(cell2, [6,200,10]);
+
+	r1 && r2
+});
+
 
 rselectARangeDynamic_test = \-> frpTest("rselectARangeDynamic", \-> {
 	cell1 = rmakeA([2,3,4,5,6]);
@@ -157,4 +200,89 @@ rselectAZip_test = \-> frpTest("rselectAZip", \-> {
 	r3 = checkFrpArr(cell3, [102]);
 
 	r1 && r2 && r3
+});
+
+
+rselectAZipRange_test = \-> frpTest("rselectAZipRange", \-> {
+	cell1 = rmakeA([2,3,4,5]);
+	cell2 = rmakeA([10,20,30,40]);
+	cell3 = rselectAZipRange(cell1, cell2, 0, 1, 3, \v1,v2 -> v1 + v2);
+
+	r1 = checkFrpArr(cell3, [22, 33, 44]);
+
+	rnextElement(cell1, 1, 100);
+	r2 = checkFrpArr(cell3, [22, 130, 44]);
+
+	rnextElement(cell2, 1, 100);
+	r3 = checkFrpArr(cell3, [102, 130, 44]);
+
+	rnextA(cell2, [100]);
+	r4 = checkFrpArr(cell3, []);
+
+	rnextA(cell2, [100, 200]);
+	r5 = checkFrpArr(cell3, [202]);
+
+	rnextA(cell1, [1, 2, 3, 4, 5, 6, 7]);
+	r6 = checkFrpArr(cell3, [201]);
+
+	r1 && r2 && r3 && r4 && r5 && r6
+});
+
+
+rselectAZipRange_diamond_test = \-> frpTest("rselectAZipRange_diamond", \-> {
+	cell1 = rmakeA([2,3,4,5]);
+	cell2 = rselectARangeMap(cell1, 0, 3, \v -> v + 1);
+	cell3 = rselectARangeMap(cell1, 1, 3, \v -> v + 2);
+	cell4 = rselectAZipRange(cell2, cell3, 0, 1, 2, \v1,v2 -> v1 + v2);
+
+	r1 = checkFrpArr(cell2, [3,4,5]) && checkFrpArr(cell3, [5,6,7]) && checkFrpArr(cell4, [9,11]);
+
+	rnextElement(cell1, 1, 100); // force to update 1 element of both cell2 and cell3, and 2-pass update of cell4
+	r2 = checkFrpArr(cell2, [3,101,5]) && checkFrpArr(cell3, [102,6,7]) && checkFrpArr(cell4, [9,108]);
+
+	rnextElement(cell1, 0, 10);  // cause to update 1 element of cell2 only, and 1-pass update 1 element of cell4
+	r3 = checkFrpArr(cell2, [11,101,5]) && checkFrpArr(cell3, [102,6,7]) && checkFrpArr(cell4, [17,108]);
+
+	rnextElement(cell1, 3, 20); // cause to update 1 element of cell3 only, and 1-pass update 1 element of cell4
+	r4 = checkFrpArr(cell2, [11,101,5]) && checkFrpArr(cell3, [102,6,22]) && checkFrpArr(cell4, [17,123]);
+
+	rnextA(cell1, [1,2,3,4,5]); // cause to full update of all cells
+	r5 = checkFrpArr(cell2, [2,3,4]) && checkFrpArr(cell3, [4,5,6]) && checkFrpArr(cell4, [7,9]);
+
+	r1 && r2 && r3 && r4 && r5
+});
+
+
+rselectAZipRange_empty_test = \-> frpTest("rselectAZipRange_empty", \-> {
+	// test rselectAZipRange when src is empty or out of range
+
+	cell1 = rmakeA([2,3,4,5]);
+	cell2 = rmakeA([10,20,30,40]);
+	cell3 = rselectAZipRange(cell1, cell2, 0, 1, 3, \v1,v2 -> v1 + v2);
+
+	r1 = checkFrpArr(cell3, [22, 33, 44]);
+
+	rnextA(cell1, []);
+	r2 = checkFrpArr(cell3, []);
+
+	rnextA(cell1, [2,3,4,5]);
+	r3 = checkFrpArr(cell3, [22, 33, 44]);
+
+	rnextA(cell2, [10]); // too short array
+	r4 = checkFrpArr(cell3, []);
+
+	// restore cell1,cell2 initial data
+	rnextA(cell1, [2,3,4,5]);
+	rnextA(cell2, [10,20,30,40]);
+	rnextA(cell3, []); //force to set empty
+	rnextElement(cell1, 1, 100); // update cell1 must cause restore cell3
+	r5 = checkFrpArr(cell3, [22, 130, 44]);
+	rnextA(cell3, []); //force to set empty
+	rnextElement(cell2, 1, 100); // update cell2 must cause restore cell3
+	r6 = checkFrpArr(cell3, [102, 130, 44]);
+	rnextA(cell3, []); //force to set empty
+	rnextElement(cell2, 0, 1000); // update cell2 (index=0 is out of range) must cause restore cell3
+	r7 = checkFrpArr(cell3, [102, 130, 44]);
+
+	r1 && r2 && r3 && r4 && r5 && r6 && r7
 });

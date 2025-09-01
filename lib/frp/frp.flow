@@ -30,6 +30,7 @@ export {
 	rget(cell : FrpCell<?>) -> ?;
 	rgetA(v : FrpArray<?>) -> [?];
 	rgetElement(v : FrpArray<?>, index : int) -> Maybe<?>;
+	rArrayLength(v : FrpArray<?>) -> int;
 
 	// update
 	rnext(cell : FrpValue<?>, value : ?) -> void;
@@ -114,9 +115,10 @@ export {
 	rconnectGate(
 		src : FrpCell<?>,
 		gate : FrpCell<??>,
-		dst : FrpValue<?>,
+		dst : FrpValue<???>,
 		init : bool,
-		fn : (??) -> bool,
+		gateFn : (??) -> bool,
+		valueFn : (?) -> ???
 	) -> void;
 
 	rconnectA(
@@ -133,6 +135,13 @@ export {
 		count : int,
 		init : bool,
 		fn : ([?]) -> ??,
+	) -> void;
+
+	rconnectAMap(
+		src : FrpArray<?>,
+		dst : FrpArray<??>,
+		init : bool,
+		fn : (?) -> ??,
 	) -> void;
 
 	rconnectARangeMap(
@@ -162,10 +171,27 @@ export {
 		fn : (?) -> ??,
 	) -> void;
 
+	// rconnectAZip combine 2 arrays into one dst array using fn
+	// if sources lengths are different then dst get minimum length of both src
 	rconnectAZip(
 		src1 : FrpArray<?>,
 		src2 : FrpArray<??>,
 		dst : FrpArray<???>,
+		init : bool,
+		fn : (?, ??) -> ???,
+	) -> void;
+
+	// rconnectAZipRange works similarly to rconnectAZip
+	// but you can specify ranges of elements using start1, start2, count
+	// count < 0 means using full src arrays lengths
+	// if sources lengths are different then dst get minimum length of both src
+	rconnectAZipRange(
+		src1 : FrpArray<?>,
+		src2 : FrpArray<??>,
+		dst : FrpArray<???>,
+		start1 : int,
+		start2 : int,
+		count : int,
 		init : bool,
 		fn : (?, ??) -> ???,
 	) -> void;
@@ -214,8 +240,9 @@ export {
 	rselectGate(
 		src : FrpCell<?>,
 		gate : FrpCell<??>,
-		fn : (??) -> bool,
-	) -> FrpValue<?>;
+		gateFn : (??) -> bool,
+		valueFn : (?) -> ???,
+	) -> FrpValue<???>;
 
 	rBidiSelect(
 		cell : FrpValue<?>,
@@ -234,6 +261,11 @@ export {
 		count : int,
 		fn : ([?]) -> ??
 	) -> FrpValue<??>;
+
+	rselectAMap(
+		src : FrpArray<?>,
+		fn : (?) -> ??
+	) -> FrpArray<??>;
 
 	rselectARangeMap(
 		src : FrpArray<?>,
@@ -259,6 +291,15 @@ export {
 	rselectAZip(
 		src1 : FrpArray<?>,
 		src2 : FrpArray<??>,
+		fn : (?, ??) -> ???
+	) -> FrpArray<???>;
+
+	rselectAZipRange(
+		src1 : FrpArray<?>,
+		src2 : FrpArray<??>,
+		start1 : int,
+		start2 : int,
+		count : int,
 		fn : (?, ??) -> ???
 	) -> FrpArray<???>;
 
@@ -349,11 +390,10 @@ export {
 	rSetOutdated(cell : FrpNode<flow>) -> void;
 	rAddEventListeners(cells : [FrpNode<flow>], eventFn : (FrpEventType) -> void) -> () -> void;
 
-	rsubscribeCommon(
+	rsubscribeNotify(
 		cells : [FrpNode<flow>],
 		init : bool,
-		onValueUpdate : () -> void,
-		onElementUpdate : (int) -> void,
+		onUpdate : () -> void,
 	) -> () -> void;
 }
 
@@ -416,6 +456,11 @@ rgetElement(v : FrpArray<?>, index : int) -> Maybe<?> {
 	r = ^(v.values);
 	if (index >=0 && index < length(r)) Some(^(r[index])) else None();
 }
+
+rArrayLength(v : FrpArray<?>) -> int {
+	length(^(v.values));
+}
+
 
 //// setters ////
 
@@ -504,7 +549,7 @@ rsubscribe(
 	init : bool,
 	fn : (?) -> void,
 ) -> () -> void {
-	rsubscribeCommon([cell], init, \-> fn(rget(cell)), nop1);
+	rsubscribeCommon([cell], init, FrpUpdateFnSimple(\-> fn(rget(cell))));
 }
 
 rsubscribe2(
@@ -513,7 +558,7 @@ rsubscribe2(
 	init : bool,
 	fn : (?, ??) -> void,
 ) -> () -> void {
-	rsubscribeCommon([cell1, cell2], init, \-> fn(rget(cell1), rget(cell2)), nop1);
+	rsubscribeCommon([cell1, cell2], init, FrpUpdateFnSimple(\-> fn(rget(cell1), rget(cell2))));
 }
 
 rsubscribe3(
@@ -523,7 +568,8 @@ rsubscribe3(
 	init : bool,
 	fn : (?, ??, ???) -> void,
 ) -> () -> void {
-	rsubscribeCommon([cell1, cell2, cell3], init, \-> fn(rget(cell1), rget(cell2), rget(cell3)), nop1);
+	rsubscribeCommon([cell1, cell2, cell3], init,
+		FrpUpdateFnSimple(\-> fn(rget(cell1), rget(cell2), rget(cell3))));
 }
 
 rsubscribe4(
@@ -534,7 +580,8 @@ rsubscribe4(
 	init : bool,
 	fn : (?, ??, ???, ????) -> void,
 ) -> () -> void {
-	rsubscribeCommon([cell1, cell2, cell3, cell4], init, \-> fn(rget(cell1), rget(cell2), rget(cell3), rget(cell4)), nop1);
+	rsubscribeCommon([cell1, cell2, cell3, cell4], init,
+		FrpUpdateFnSimple(\-> fn(rget(cell1), rget(cell2), rget(cell3), rget(cell4))));
 }
 
 rsubscribeMany(
@@ -542,7 +589,7 @@ rsubscribeMany(
 	init : bool,
 	fn : ([?]) -> void,
 ) -> () -> void {
-	rsubscribeCommon(cells, init, \-> fn(map(cells, rget)), nop1);
+	rsubscribeCommon(cells, init, FrpUpdateFnSimple(\-> fn(map(cells, rget))));
 }
 
 rsubscribeA(
@@ -550,9 +597,7 @@ rsubscribeA(
 	init : bool,
 	fn : ([?]) -> void,
 ) -> () -> void {
-	onValue = \-> fn(rgetA(cell));
-	onElement = \__ -> onValue();
-	rsubscribeCommon([cell], init, onValue, onElement);
+	rsubscribeCommon([cell], init, FrpUpdateFnSimple(\-> fn(rgetA(cell))));
 }
 
 rsubscribeARange(
@@ -562,9 +607,11 @@ rsubscribeARange(
 	init : bool,
 	fn : ([?]) -> void,
 ) -> () -> void {
-	onValue = \-> fn(rArrayValuesSubrange(cell, start, count));
-	onElement = \inx -> if (inx >= start && inx < start + count) onValue();
-	rsubscribeCommon([cell], init, onValue, onElement);
+	onUpdate = \inx : int -> {
+		if (inx < 0 || inx >= start && inx < start + count)
+			fn(rArrayValuesSubrange(cell, start, count));
+	}
+	rsubscribeCommon([cell], init, FrpUpdateFnArray(onUpdate));
 }
 
 //// connectors ////
@@ -575,10 +622,7 @@ rconnect(
 	init : bool,
 	fn : (?) -> ??,
 ) -> void {
-	rconnectCommon([src], dst, init,
-		\-> rSetValue(dst, fn(rget(src))),
-		nop1
-	);
+	rconnectCommon([src], dst, init, FrpUpdateFnSimple(\-> rSetValue(dst, fn(rget(src)))));
 }
 
 rconnect2(
@@ -589,9 +633,7 @@ rconnect2(
 	fn : (?, ??) -> ???,
 ) -> void {
 	rconnectCommon([src1, src2], dst, init,
-		\-> rSetValue(dst, fn(rget(src1), rget(src2))),
-		nop1
-	);
+		FrpUpdateFnSimple(\-> rSetValue(dst, fn(rget(src1), rget(src2)))));
 }
 
 rconnect3(
@@ -603,9 +645,7 @@ rconnect3(
 	fn : (?, ??, ???) -> ????,
 ) -> void {
 	rconnectCommon([src1, src2, src3], dst, init,
-		\-> rSetValue(dst, fn(rget(src1), rget(src2), rget(src3))),
-		nop1
-	);
+		FrpUpdateFnSimple(\-> rSetValue(dst, fn(rget(src1), rget(src2), rget(src3)))));
 }
 
 rconnect4(
@@ -618,9 +658,7 @@ rconnect4(
 	fn : (?, ??, ???, ????) -> ?????,
 ) -> void {
 	rconnectCommon([src1, src2, src3, src4], dst, init,
-		\-> rSetValue(dst, fn(rget(src1), rget(src2), rget(src3), rget(src4))),
-		nop1
-	);
+		FrpUpdateFnSimple(\-> rSetValue(dst, fn(rget(src1), rget(src2), rget(src3), rget(src4)))));
 }
 
 rconnectMany(
@@ -630,22 +668,19 @@ rconnectMany(
 	fn : ([?]) -> ??,
 ) -> void {
 	rconnectCommon(sources, dst, init,
-		\-> rSetValue(dst, fn(map(sources, rget))),
-		nop1
-	);
+		FrpUpdateFnSimple(\-> rSetValue(dst, fn(map(sources, rget)))));
 }
 
 rconnectGate(
 	src : FrpCell<?>,
 	gate : FrpCell<??>,
-	dst : FrpValue<?>,
+	dst : FrpValue<???>,
 	init : bool,
-	fn : (??) -> bool,
+	gateFn : (??) -> bool,
+	valueFn : (?) -> ???
 ) -> void {
 	rconnectCommon([src, gate], dst, init,
-		\-> if (fn(rget(gate)))  rSetValue(dst, rget(src)) else rSetUpdated(dst),
-		nop1
-	);
+		FrpUpdateFnSimple(\-> if (gateFn(rget(gate))) rSetValue(dst, valueFn(rget(src))) else rSetUpdated(dst)));
 }
 
 rconnectA(
@@ -654,9 +689,7 @@ rconnectA(
 	init : bool,
 	fn : ([?]) -> ??,
 ) -> void {
-	valueFn = \-> rSetValue(dst, fn(rgetA(src)));
-	elementFn = \__ -> valueFn();
-	rconnectCommon([src], dst, init, valueFn, elementFn);
+	rconnectCommon([src], dst, init, FrpUpdateFnSimple(\-> rSetValue(dst, fn(rgetA(src)))));
 }
 
 rconnectARange(
@@ -667,12 +700,15 @@ rconnectARange(
 	init : bool,
 	fn : ([?]) -> ??,
 ) -> void {
-	valueFn = \-> rSetValue(dst, fn(rArrayValuesSubrange(src, start, count)));
-	elementFn = \inx ->
-		if (inx >= start && inx < start + count) valueFn()
-		else rSetUpdated(dst);
+	updateFn = \updElmIndex : int -> {
+		setVal = \-> rSetValue(dst, fn(rArrayValuesSubrange(src, start, count)));
 
-	rconnectCommon([src], dst, init, valueFn, elementFn);
+		if (updElmIndex < 0) setVal()
+		else if (updElmIndex >= start && updElmIndex < start + count) setVal()
+		else rSetUpdated(dst);
+	}
+
+	rconnectCommon([src], dst, init, FrpUpdateFnArray(updateFn));
 }
 
 rconnectARangeMap(
@@ -683,12 +719,32 @@ rconnectARangeMap(
 	init : bool,
 	fn : (?) -> ??,
 ) -> void {
-	valueFn = \-> rRangeMap(src, start, count, dst, fn);
-	elementFn = \inx ->
-		if (inx >= start && inx < start + count) rMapElement(src, inx, inx - start, dst, fn)
-		else rSetUpdated(dst);
+	updateFn = \updElmIndex : int -> {
+		if (updElmIndex < 0 || rArrayLength(dst) != count) {
+			rRangeMap(src, start, count, dst, fn)
+		} else if (updElmIndex >= start && updElmIndex < start + count) {
+			rMapElement(src, updElmIndex, dst, updElmIndex - start, fn)
+		} else rSetUpdated(dst);
+	}
 
-	rconnectCommon([src], dst, init, valueFn, elementFn);
+	rconnectCommon([src], dst, init, FrpUpdateFnArray(updateFn));
+}
+
+rconnectAMap(
+	src : FrpArray<?>,
+	dst : FrpArray<??>,
+	init : bool,
+	fn : (?) -> ??,
+) -> void {
+	updateFn = \updElmIndex : int -> {
+		if (updElmIndex < 0 || rArrayLength(dst) != rArrayLength(src)) {
+			rRangeMap(src, 0, -1, dst, fn)
+		} else {
+			rMapElement(src, updElmIndex, dst, updElmIndex, fn)
+		}
+	}
+
+	rconnectCommon([src], dst, init, FrpUpdateFnArray(updateFn));
 }
 
 rconnectARangeDynamic(
@@ -699,18 +755,17 @@ rconnectARangeDynamic(
 	init : bool,
 	fn : ([?]) -> ??,
 ) -> void {
-	valueFn = \->
-		rSetValue(dst, fn(rArrayValuesSubrange(src, rget(start), rget(count))));
-
-	elementFn = \inx -> {
+	updateFn = \updateArr : [Pair<int,int>] -> {
+		srcUpdPairM = find(updateArr, \p -> p.first == 0);
+		inx = eitherMap(srcUpdPairM, secondOfPair, -1); // updated element index, -1 means  whole array is updated
 		fv = rget(start);
 		cv = rget(count);
-		if (inx >= fv && inx < fv + cv)
-			rSetValue(dst, fn(rArrayValuesSubrange(src, fv, cv)))
+
+		if (inx < 0 || inx >= fv && inx < fv + cv) rSetValue(dst, fn(rArrayValuesSubrange(src, fv, cv)))
 		else rSetUpdated(dst);
 	}
 
-	rconnectCommon([src, start, count], dst, init, valueFn, elementFn);
+	rconnectCommon([src, start, count], dst, init, FrpUpdateFnEx(updateFn));
 }
 
 rconnectARangeMapDynamic(
@@ -721,20 +776,18 @@ rconnectARangeMapDynamic(
 	init : bool,
 	fn : (?) -> ??,
 ) -> void {
-	valueFn = \->
-		rRangeMap(src, rget(start), rget(count), dst, fn);
-
-	elementFn = \inx -> {
+	updateFn = \updateArr : [Pair<int,int>] -> {
+		srcUpdPairM = find(updateArr, \p -> p.first == 0);
+		inx = eitherMap(srcUpdPairM, secondOfPair, -1); // updated element index, -1 means  whole array is updated
 		fv = rget(start);
 		cv = rget(count);
-		if (inx >= fv && inx < fv + cv) {
-			dstInx = inx - fv;
-			rMapElement(src, inx, dstInx, dst, fn);
-		}
+
+		if (inx < 0 || rArrayLength(dst) != cv) rRangeMap(src, fv, cv, dst, fn)
+		else if (inx >= fv && inx < fv + cv) rMapElement(src, inx, dst, inx - fv, fn)
 		else rSetUpdated(dst);
 	}
 
-	rconnectCommon([src, start, count], dst, init, valueFn, elementFn);
+	rconnectCommon([src, start, count], dst, init, FrpUpdateFnEx(updateFn));
 }
 
 rconnectAZip(
@@ -744,10 +797,75 @@ rconnectAZip(
 	init : bool,
 	fn : (?, ??) -> ???,
 ) -> void {
-	valueFn = \-> rZipArrays(src1, src2, dst, fn);
-	elementFn = \inx -> rZipElement(src1, src2, inx, dst, fn);
+	updateFn = \updateArr : [Pair<int,int>] -> {
+		upd1 = find(updateArr, \p -> p.first == 0);
+		upd2 = find(updateArr, \p -> p.first == 1);
+		inx1 = eitherMap(upd1, secondOfPair, -1);
+		inx2 = eitherMap(upd2, secondOfPair, -1);
+		slen = min(rArrayLength(src1), rArrayLength(src2));
 
-	rconnectCommon([src1, src2], dst, init, valueFn, elementFn);
+		fullUpd = isSome(upd1) && inx1 < 0 || isSome(upd2) && inx2 < 0
+		|| isSome(upd1) && isSome(upd2) && inx1 != inx2
+		|| rArrayLength(dst) != slen;
+
+		if (fullUpd) rZipArrays(src1, src2, dst, fn)
+		else rZipElement(src1, inx1, src2, inx1, dst, inx1, fn); // inx1 == inx2 == dst inx
+	}
+
+	rconnectCommon([src1, src2], dst, init, FrpUpdateFnEx(updateFn));
+}
+
+
+rconnectAZipRange(
+	src1 : FrpArray<?>,
+	src2 : FrpArray<??>,
+	dst : FrpArray<???>,
+	start1 : int,
+	start2 : int,
+	count : int, // -1 means use whole arrays from start1 and start2 indexes to the array end
+	init : bool,
+	fn : (?, ??) -> ???,
+) -> void {
+	updateFn = \updateArr : [Pair<int,int>] -> {
+		upd1 = find(updateArr, \p -> p.first == 0); // src1
+		upd2 = find(updateArr, \p -> p.first == 1); // src2
+		scount = min(rArrayLength(src1) - start1, rArrayLength(src2) - start2);
+
+		if (scount <= 0) {
+			rnextA(dst, []);
+		} else {
+			doUpdate = \inx1,inx2,dstInx -> {
+				if (dstInx >= 0) rZipElement(src1, inx1, src2, inx2, dst, dstInx, fn)
+				else rZipRange(src1, src2, dst, start1, start2, count, fn);
+			}
+
+			slen = if (count < 0) scount else min(count, scount);
+
+			if (rArrayLength(dst) != slen) {
+				doUpdate(-1, -1, -1); // mostly for dst initialization
+			} else if (isSome(upd1) && isSome(upd2)) {
+				inx1 = eitherMap(upd1, secondOfPair, -1);
+				inx2 = eitherMap(upd2, secondOfPair, -1);
+				// inx1,2 < 0 means whole array is updated
+				dinx1 = if (inx1 >= 0) inx1 - start1 else -1;
+				dinx2 = if (inx2 >= 0) inx2 - start2 else -1;
+				dstInx = if (dinx1 >= 0 && dinx2 >= 0 && dinx1 == dinx2) dinx1 else -1;
+				doUpdate(inx1, inx2, dstInx);
+			} else if (isSome(upd1)) {
+				inx1 = eitherMap(upd1, secondOfPair, -1);
+				dstInx = if (inx1 >= 0) inx1 - start1 else -1;
+				inx2 = if (dstInx >= 0) dstInx + start2 else -1;
+				doUpdate(inx1, inx2, dstInx);
+			} else { // isSome(upd2)
+				inx2 = eitherMap(upd2, secondOfPair, -1);
+				dstInx = if (inx2 >= 0) inx2 - start2 else -1;
+				inx1 = if (dstInx >= 0) dstInx + start1 else -1;
+				doUpdate(inx1, inx2, dstInx);
+			}
+		}
+	}
+
+	rconnectCommon([src1, src2], dst, init, FrpUpdateFnEx(updateFn));
 }
 
 
@@ -854,10 +972,11 @@ rselectMany(
 rselectGate(
 	src : FrpCell<?>,
 	gate : FrpCell<??>,
-	fn : (??) -> bool,
-) -> FrpValue<?> {
-	dst = rmake(rget(src));
-	rconnectGate(src, gate, dst, false, fn);
+	gateFn : (??) -> bool,
+	valueFn : (?) -> ???,
+) -> FrpValue<???> {
+	dst = rmake(valueFn(rget(src)));
+	rconnectGate(src, gate, dst, false, gateFn, valueFn);
 	dst;
 }
 
@@ -888,6 +1007,15 @@ rselectARange(
 ) -> FrpValue<??> {
 	dst = rmake(fn(rArrayValuesSubrange(src, start, count)));
 	rconnectARange(src, dst, start, count, false, fn);
+	dst;
+}
+
+rselectAMap(
+	src : FrpArray<?>,
+	fn : (?) -> ??
+) -> FrpArray<??> {
+	dst = rmakeA(map(rgetA(src), fn));
+	rconnectAMap(src, dst, false, fn);
 	dst;
 }
 
@@ -929,8 +1057,23 @@ rselectAZip(
 	src2 : FrpArray<??>,
 	fn : (?, ??) -> ???
 ) -> FrpArray<???> {
-	dst = rmakeA(zipWith(rgetA(src1), rgetA(src2), fn));
+	dst = rmakeA([]);
+	rZipRangeARef(src1.values, src2.values, dst.values, 0, 0, -1, fn) |> ignore;
 	rconnectAZip(src1, src2, dst, false, fn);
+	dst;
+}
+
+rselectAZipRange(
+	src1 : FrpArray<?>,
+	src2 : FrpArray<??>,
+	start1 : int,
+	start2 : int,
+	count : int,
+	fn : (?, ??) -> ???
+) -> FrpArray<???> {
+	dst = rmakeA([]);
+	rZipRangeARef(src1.values, src2.values, dst.values, start1, start2, count, fn) |> ignore;
+	rconnectAZipRange(src1, src2, dst, start1, start2, count, false, fn);
 	dst;
 }
 
@@ -973,74 +1116,105 @@ rsplitManyFlow(cell : FrpCell<?>, getters : [(?) -> flow]) -> [FrpValue<flow>] {
 
 //// utils and helpers ////////////////////////////////////////////////////////////////////
 
+// selecting a simplest fn type, suitable for your case, can help to avoid extra memory allocations
+FrpUpdateFn ::= FrpUpdateFnSimple, FrpUpdateFnCells, FrpUpdateFnArray, FrpUpdateFnEx;
+FrpUpdateFnSimple(fn : () -> void);
+FrpUpdateFnCells(fn : ([int]/*updated cells*/) -> void);
+FrpUpdateFnArray(fn : (index : int) -> void); // index - updated element, -1 means that whole array is updated
+FrpUpdateFnEx(fn : ([Pair<int/*cellInx*/, int/*elementInx*/>]) -> void);
+
 rsubscribeInternal(
 	cells : [FrpNode<flow>],
 	init : bool,
-	onValueUpdate : () -> void,
-	onElementUpdate : (int) -> void,
+	updateFn : FrpUpdateFn,
 	onStatusChange : (bool) -> void,
 ) -> () -> void {
-	allowElementEvents = countA(cells, \s -> isSameStructType(s, dummyFrpArray)) == 1;
-	// allow to optimize using FrpEventSetElement event if cells have only one FrpArray element
+	updatedCells = map(cells, \__ -> ref false);
+	updatedElements = map(cells, \__ -> ref -1);
+	startUpdate = \-> iteri(cells, \i,__ -> {updatedCells[i] := false; updatedElements[i] := -1;});
+	hasUpdates = \-> exists(updatedCells, \r -> ^r);
 
-	anySrcUpdated = ref false;
+	updateValue = rMakeUpdateFn(updatedCells, updatedElements, updateFn);
 
-	fn = \event : FrpEventType -> {
+	fn = \cellInx, event : FrpEventType -> {
 		switch(event) {
 			FrpEventSetValue(): {
-				if (forall(cells, rIsUpdated)) {
-					onValueUpdate();
-				} else {// waiting for update all sources
-					anySrcUpdated := true;
-				}
+				updatedCells[cellInx] := true;
+
+				if (forall(cells, rIsUpdated)) updateValue();
+				// else waite for update all sources
 			}
-			FrpEventSetElement(inx): {
-				if (forall(cells, rIsUpdated)) {
-					if (allowElementEvents) onElementUpdate(inx) else onValueUpdate();
-				} else {// waiting for update all sources
-					anySrcUpdated := true;
-				}
+			FrpEventSetElement(elementInx): {
+				updatedCells[cellInx] := true;
+				updatedElements[cellInx] := elementInx;
+
+				if (forall(cells, rIsUpdated)) updateValue();
+				// else waite for update all sources
 			}
 			FrpEventUpdated():  {
-				if (length(cells) <= 1) {// minor optimization
-					onStatusChange(true);
-				} else if (forall(cells, rIsUpdated)) {
-					if (^anySrcUpdated) onValueUpdate() else onStatusChange(true);
+				if (forall(cells, rIsUpdated)) {
+					if (hasUpdates()) updateValue() else onStatusChange(true);
 				} // else waiting for update all sources
 			}
 			FrpEventOutdated(): {
-				anySrcUpdated := false;
+				startUpdate();
 				onStatusChange(false);
 			};
 		}
 	};
 
 	if (init) { // run fn on subscribe
-		fn(FrpEventOutdated());
-		fn(FrpEventSetValue());
+		onStatusChange(false);
+		if (forall(cells, rIsUpdated)) updateValue();
 	}
 
-	rAddEventListeners(cells, fn);
+	rAddEventListenersEx(mapi(cells, \i,cell -> Pair(cell, \evt -> fn(i, evt))));
 }
+
+rMakeUpdateFn(updatedCells : [ref bool], updatedElements : [ref int], updateFn : FrpUpdateFn) -> () -> void {
+	switch(updateFn) {
+		FrpUpdateFnSimple(fn): fn;
+		FrpUpdateFnCells(fn): {
+			\-> fn(
+				filtermapi(updatedCells,
+					\i,updFlag -> if (^updFlag) Some(i) else None())
+			);
+		}
+		FrpUpdateFnArray(fn): \-> fn(if (length(updatedElements) > 0) ^(updatedElements[0]) else -1);
+		FrpUpdateFnEx(fn): {
+			\-> fn(
+				filtermapi(updatedCells,
+					\i,updFlag -> if (^updFlag) Some(Pair(i, ^(updatedElements[i]))) else None())
+			);
+		}
+	}
+}
+
+rsubscribeNotify(
+	cells : [FrpNode<flow>],
+	init : bool,
+	onUpdate : () -> void,
+) -> () -> void {
+	rsubscribeCommon(cells, init, FrpUpdateFnSimple(onUpdate));
+}
+
 
 rsubscribeCommon(
 	cells : [FrpNode<flow>],
 	init : bool,
-	onValueUpdate : () -> void,
-	onElementUpdate : (int) -> void,
+	onValueUpdate : FrpUpdateFn
 ) -> () -> void {
-	rsubscribeInternal(cells, init, onValueUpdate, onElementUpdate, nop1);
+	rsubscribeInternal(cells, init, onValueUpdate, nop1);
 }
 
 rconnectCommon(
 	sources : [FrpNode<flow>],
 	dst : FrpNode<flow>,
 	init : bool,
-	updateValue : () -> void,
-	updateElement : (int) -> void,
+	updateFn : FrpUpdateFn
 ) -> void {
 	updateStatus = \st -> rSetStatus(dst, st);
-	uns = rsubscribeInternal(sources, init, updateValue, updateElement, updateStatus);
+	uns = rsubscribeInternal(sources, init, updateFn, updateStatus);
 	rAddDisposer(dst, uns);
 }
 
@@ -1148,26 +1322,42 @@ rZipArrays(
 	dst : FrpArray<???>,
 	fn : (?,??) -> ???
 ) -> void {
-	dstUpdated = rZipARef(src1.values, src2.values, dst.values, fn);
+	dstUpdated = rZipRangeARef(src1.values, src2.values, dst.values, 0, 0, -1, fn);
 	rSetUpdatedAndNotify(dst, dstUpdated);
 }
 
-rZipElement(
+rZipRange(
 	src1 : FrpArray<?>,
 	src2 : FrpArray<??>,
-	index : int,
 	dst : FrpArray<???>,
+	start1 : int,
+	start2 : int,
+	count : int, // count2 < 0 means use full length
+	fn : (?,??) -> ???
+) -> void {
+	dstUpdated = rZipRangeARef(src1.values, src2.values, dst.values, start1, start2, count, fn);
+	rSetUpdatedAndNotify(dst, dstUpdated);
+}
+
+
+rZipElement(
+	src1 : FrpArray<?>,
+	srcIndex1 : int,
+	src2 : FrpArray<??>,
+	srcIndex2 : int,
+	dst : FrpArray<???>,
+	dstIndex : int,
 	fn : (?,??) -> ???
 ) -> void {
 	newValM =
-		maybeBind(rgetElement(dst, index),
-			\oldVal -> maybeBind(rgetElement(src1, index),
-				\v1 -> maybeBind(rgetElement(src2, index),
+		maybeBind(rgetElement(dst, dstIndex),
+			\oldVal -> maybeBind(rgetElement(src1, srcIndex1),
+				\v1 -> maybeBind(rgetElement(src2, srcIndex2),
 					\v2 -> Some(fn(v1, v2)))));
 
 	eitherFn(
 		newValM,
-		\v -> rSetElement(dst, index, v),
+		\v -> rSetElement(dst, dstIndex, v),
 		\-> rSetUpdated(dst) // fallback for wrong index
 	);
 }
@@ -1175,9 +1365,8 @@ rZipElement(
 rMapElement(
 	src : FrpArray<?>,
 	srcIndex : int,
-	dstIndex : int,
 	dst : FrpArray<??>,
-	fn : (?) -> ??,
+	dstIndex : int,	fn : (?) -> ??,
 ) -> void {
 	svals = ^(src.values);
 
@@ -1206,6 +1395,12 @@ rAddEventListener(src: FrpNode<flow>, eventFn : (FrpEventType) -> void) -> () ->
 
 rAddEventListeners(cells : [FrpNode<flow>], eventFn : (FrpEventType) -> void) -> () -> void {
 	map(cells,\r -> rAddEventListener(r, eventFn))
+	|> (\arr -> filter(arr, \fn -> fn != nop))
+	|> (\arr -> \-> applyall(arr));
+}
+
+rAddEventListenersEx(listeners : [Pair<FrpNode<flow>, (FrpEventType) -> void>]) -> () -> void {
+	map(listeners, unpairC(\cell, eventFn -> rAddEventListener(cell, eventFn)))
 	|> (\arr -> filter(arr, \fn -> fn != nop))
 	|> (\arr -> \-> applyall(arr));
 }
@@ -1252,13 +1447,13 @@ rArrayValuesSubrange(cell : FrpArray<?>, start : int, count : int) -> [?] {
 rRangeMapARef(
 	src : ref [ref ?],
 	start : int,
-	count : int,
+	count : int, // -1 means from start till end
 	dst : ref [ref ??],
 	fn : (?) -> ??
 ) -> bool {
 	slen = length(^src);
 	dlen = length(^dst);
-	count2 = if (count < 0) slen else min(count, slen - start);
+	count2 = if (count < 0) slen - start else min(count, slen - start);
 
 	updated = ref false;
 
@@ -1283,30 +1478,38 @@ rRangeMapARef(
 	^updated;
 }
 
-rZipARef(
+
+rZipRangeARef(
 	src1 : ref [ref ?],
 	src2 : ref [ref ??],
 	dst : ref [ref ???],
+	start1 : int,
+	start2 : int,
+	count : int, // count2 < 0 means from start till end
 	fn : (?,??) -> ???
 ) -> bool {
-	vals1 = ^src1;
-	vals2 = ^src2;
-	slen1 = length(vals1);
-	slen2 = length(vals2);
-	dlen = length(^dst);
-	count = min(slen1, slen2);
-
 	updated = ref false;
 
-	if (count == dlen) {//update in the place
+	vals1 = ^src1;
+	vals2 = ^src2;
+	len1 = length(vals1);
+	len2 = length(vals2);
+	slen1 = if (count < 0) len1 - start1 else min(count, len1 - start1);
+	slen2 = if (count < 0) len2 - start2 else min(count, len2 - start2);
+
+	dlen = length(^dst);
+	slen = min(slen1, slen2);
+
+	if (slen == dlen) {//update in the place
 		iteri(^dst, \i,r -> {
 			oldVal = ^r;
-			r := fn(^(vals1[i]), ^(vals2[i]));
-			if (^r != oldVal) updated := true;// update depenedecies if any element updated
+			r := fn(^(vals1[i + start1]), ^(vals2[i + start2]));
+			if (^r != oldVal) updated := true;// need to update dependencies if any element updated
 		});
 	} else {// re-create dst
-		dst := zipWith(vals1, vals2, \r1,r2 -> ref fn(^r1, ^r2));
+		dst := generate(0, slen, \i -> ref fn(^(vals1[i + start1]), ^(vals2[i + start2])));
 		updated := true;
 	}
+
 	^updated;
 }
