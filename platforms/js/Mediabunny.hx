@@ -1,4 +1,5 @@
 import js.lib.Promise;
+import js.html.Blob;
 
 class Mediabunny {
 	static var mediabunnyModule : Dynamic = null;
@@ -11,6 +12,7 @@ class Mediabunny {
 			return;
 		};
 
+		// TODO: Remove if nothing in there.
 		var loadUtils = Util.loadJS("js/mediabunny/mediabunny-utils.js");
 
 		loadUtils.then(function(__) {
@@ -41,9 +43,8 @@ class Mediabunny {
 		});
 	}
 
-	public static function getMediaDuration(cb : (duration : Int) -> Void) : Void {
+	public static function getMediaDuration(file : Dynamic, cb : (duration : Int) -> Void) : Void {
 		var duration = 0;
-		var filePath = "./images/material_test/big_buck_bunny.mp4";
 		loadMediabunnyJsLibrary(function (mediabunnyModule) {
 			Errors.print("[Haxe] getMediaDuration Mediabunny library loaded: " + (mediabunnyModule != null ? "Success" : "Failed"));
 			if (mediabunnyModule == null) {
@@ -58,20 +59,13 @@ class Mediabunny {
 						const { Input, BlobSource, ALL_FORMATS } = mediabunnyModule;
 
 						console.log('[Debug] Using classes from stored module');
-						console.log('[Debug] Fetching file from path:', filePath);
 
-						// Fetch the file and convert to Blob
-						const response = await fetch(filePath);
-						if (!response.ok) {
-							throw new Error('Failed to fetch file: ' + response.statusText);
-						}
-
-						const fileBlob = await response.blob();
-						console.log('[Debug] File blob created, size:', fileBlob.size, 'type:', fileBlob.type);
+						var blob = new Blob([file], { type: 'video/mp4' });
+						console.log(blob);
 
 						const input = new Input({
 							formats: ALL_FORMATS, // Supporting all file formats
-							source: new BlobSource(fileBlob), // Now using actual Blob
+							source: new BlobSource(blob), // Now using actual Blob
 						});
 						duration = await input.computeDuration(); // in seconds
 						console.log('[Debug] Duration computed:', duration);
