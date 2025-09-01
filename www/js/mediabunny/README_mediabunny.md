@@ -18,16 +18,23 @@ The MediaBunny functionality is implemented in:
 - `platforms/js/Mediabunny.hx` - Main Haxe implementation
 - Flow bindings for seamless integration
 
-## 🔄 Media Operations
+## 🔄 FFmpeg Operation Mappings
 
-### Supported Operations
+### Current FFmpeg Commands → MediaBunny Methods
+
+| FFmpeg Command | MediaBunny Method | Description |
+|----------------|-------------------|-------------|
+| `ffmpeg -i input -vn -c:a mp3 output` | `extractAudioHighQuality(file)` | Audio extraction to MP3 |
+| `ffmpeg -i input -q:a 0 -map a output` | `extractAudioHighQuality(file)` | High quality audio extraction |
+| `ffmpeg -i input -b:v 1000K output` | `reduceBitrate(file, 1000)` | Video bitrate reduction |
+| `ffmpeg -i input -ar 16000 -ac 1 -c:a pcm_s16le output` | `convertToSpeechFormat(file)` | Speech recognition format |
+| `ffmpeg -ss 30 -i input -frames:v 1 output` | `extractThumbnail(file, 30)` | Video thumbnail extraction |
+| `ffmpeg -f concat -i list.txt -c copy output` | `concatenateVideos(files)` | Video concatenation |
+
+### Additional Operations
 
 | Operation | Flow Function | Description |
 |-----------|---------------|-------------|
-| Audio Extraction | `extractAudioHighQuality` | Extract MP3 from video files |
-| Video Compression | `reduceBitrate` | Reduce video file size |
-| Speech Format | `convertToSpeechFormat` | 16kHz mono WAV for speech recognition |
-| Thumbnail Generation | `extractThumbnail` | Extract video frames as images |
 | Media Info | `getMediaInfo` | Get detailed file information |
 | Media Duration | `getMediaDuration` | Get media duration |
 | Format Conversion | `convertMedia` | General format conversion |
