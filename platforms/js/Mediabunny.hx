@@ -21,28 +21,29 @@ class Mediabunny {
 			untyped __js__("
 				(async function() {
 					try {
-						// Use dynamic import to load the ES6 module
+						// Load the main mediabunny module
+						console.log('[Debug] Loading mediabunny main module...');
 						const module = await import('./js/mediabunny/mediabunny.min.mjs');
 						console.log('[Debug] Mediabunny module loaded:', Object.keys(module));
 
-						// Try to register MP3 encoder if available
+						// Try to load MP3 encoder extension
 						try {
-							// Check if MP3 encoder is available globally
-							if (typeof MediabunnyMp3Encoder !== 'undefined' && MediabunnyMp3Encoder.registerMp3Encoder) {
-								console.log('[Debug] MP3 encoder extension found, registering...');
-								await MediabunnyMp3Encoder.registerMp3Encoder();
-								console.log('[Debug] MP3 encoder registered successfully');
-							} else if (typeof registerMp3Encoder !== 'undefined') {
-								// Alternative check if registerMp3Encoder is available globally
-								console.log('[Debug] MP3 encoder function found, registering...');
-								await registerMp3Encoder();
-								console.log('[Debug] MP3 encoder registered successfully');
+							console.log('[Debug] Loading MP3 encoder extension...');
+							const mp3EncoderModule = await import('./js/mediabunny/mediabunny-mp3-encoder.mjs');
+							console.log('[Debug] MP3 encoder module loaded:', Object.keys(mp3EncoderModule));
+
+							// Register the MP3 encoder
+							if (mp3EncoderModule.registerMp3Encoder) {
+								console.log('[Debug] Registering MP3 encoder...');
+								await mp3EncoderModule.registerMp3Encoder();
+								console.log('[Debug] ✓ MP3 encoder registered successfully');
 							} else {
-								console.log('[Debug] MP3 encoder extension not found - MP3 encoding will fall back to WAV');
+								console.warn('[Warning] MP3 encoder module loaded but registerMp3Encoder function not found');
 							}
 						} catch (mp3Error) {
-							console.warn('[Warning] Failed to register MP3 encoder:', mp3Error);
+							console.warn('[Warning] Failed to load or register MP3 encoder:', mp3Error);
 							console.warn('[Info] MP3 encoding will fall back to WAV format');
+							console.warn('[Info] Make sure mediabunny-mp3-encoder.mjs is in ./js/mediabunny/ directory');
 						}
 
 						// Store the module for later use
