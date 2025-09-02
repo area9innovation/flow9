@@ -219,18 +219,26 @@ class FlowFileSystem {
 				checkFilesReady(jsFileInput, maxFiles, fileTypes, callback, nAttempt + 1);
 			}, 100);
 		} else {
+			fileTypes = fileTypes.map(function(fileType) {
+				if (fileType.indexOf("*.") == 0) {
+					return fileType.substring(2);
+				} else if (fileType.indexOf(".") == 0) {
+					return fileType.substring(1);
+				}
+				return fileType;
+			});
 			var fls : Array<js.html.File> = [];
-			var allFilesAllowed : Bool = fileTypes.indexOf(".*") != -1 || fileTypes.indexOf("*.") != -1 || fileTypes.indexOf("*.*") != -1;
+			var allFilesAllowed : Bool = fileTypes.indexOf("*") != -1 || fileTypes.indexOf("") != -1;
 
 			for (idx in 0...Math.floor(Math.min(files.length, maxFiles))) {
 				var file = files[idx];
 				var fileName = file.name;
 				var fileExtension = fileName.split('.').pop();
 
-				if (!allFilesAllowed && fileTypes.indexOf("*." + fileExtension) == -1) {
-					trace('Invalid file selected: "' + fileName + '" with type "' + fileExtension + '"');
-				} else {
+				if (allFilesAllowed || fileTypes.indexOf(fileExtension) != -1) {
 					fls.push(files[idx]);
+				} else {
+					trace('Invalid file selected: "' + fileName + '" with type "' + fileExtension + '"');
 				}
 			}
 			callback(fls);
