@@ -46,7 +46,7 @@ class Mediabunny {
 	public static function getMediaDuration(file : Dynamic, cb : (duration : Int) -> Void) : Void {
 		var duration = 0;
 		loadMediabunnyJsLibrary(function (mediabunnyModule) {
-			Errors.print("[Haxe] getMediaDuration Mediabunny library loaded: " + (mediabunnyModule != null ? "Success" : "Failed"));
+			Errors.print("[Haxe] mbGetMediaDuration Mediabunny library loaded: " + (mediabunnyModule != null ? "Success" : "Failed"));
 			if (mediabunnyModule == null) {
 				Errors.print("[Error] Mediabunny library not loaded or module not available");
 				cb(0);
