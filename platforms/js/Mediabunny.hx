@@ -108,8 +108,8 @@ class Mediabunny {
 		});
 	}
 
-	public static function extractAudio(file : Dynamic, format : String, sampleRate : Int, cb : (audioData : Dynamic) -> Void, onError : (error : String) -> Void) : Void {
-		withMediabunnyModule("extractAudio", function(mediabunnyModule) {
+	public static function conversion(file : Dynamic, format : String, sampleRate : Int, cb : (outputFile : Dynamic) -> Void, onError : (error : String) -> Void) : Void {
+		withMediabunnyModule("conversion", function(mediabunnyModule) {
 			untyped __js__("
 				(async function() {
 					try {
@@ -122,22 +122,18 @@ class Mediabunny {
 							BufferTarget,
 							WavOutputFormat,
 							Mp3OutputFormat,
+							WebMOutputFormat,
+							Mp4OutputFormat,
 							canEncodeAudio,
 							Conversion,
 						} = mediabunnyModule;
 
-						console.log('[Debug] ExtractAudio - Format:', format, 'SampleRate:', sampleRate);
+						console.log('[Debug] Mediabunny conversion - Format:', format, 'SampleRate:', sampleRate);
 
 						const input = new Input({
 	 						source: new BlobSource(file),
 							formats: ALL_FORMATS,
 						});
-
-						// Check if there are audio tracks available first
-						const audioTrack = await input.getPrimaryAudioTrack();
-						if (!audioTrack) {
-							throw new Error('No audio track found in the input file');
-						}
 
 						let outputFormat;
 						let finalFormat = format;
@@ -161,6 +157,10 @@ class Mediabunny {
 								finalFormat = 'wav';
 								outputFormat = new WavOutputFormat();
 							}
+						} else if (format === 'webm') {
+							outputFormat = new WebMOutputFormat();
+						} else if (format === 'mp4') {
+							outputFormat = new Mp4OutputFormat();
 						} else {
 							throw new Error('Unsupported audio format: ' + format);
 						}
@@ -177,24 +177,28 @@ class Mediabunny {
 
 						// Execute the conversion
 						await conversion.execute();
+
 						let mimeType;
 						if (finalFormat === 'wav') {
 							mimeType = 'audio/wav';
 						} else if (finalFormat === 'mp3') {
 							mimeType = 'audio/mpeg';
+						} else if (finalFormat == 'webm') {
+							mimeType = 'video/webm';
+						} else if (finalFormat == 'mp4') {
+							mimeType = 'video/mp4';
 						} else {
-							mimeType = 'audio/wav'; // fallback
+							throw new Error('Wrong mimeType for extension: ' + finalFormat);
 						}
 
-							// output.target.buffer => ArrayBuffer containing the MP3 file
-						const audioBlob = new Blob([output.target.buffer], { type: mimeType });
-						console.log('[Debug] Created audio blob with MIME type:', mimeType, 'size:', audioBlob.size);
+						const outputFile = new Blob([output.target.buffer], { type: mimeType });
+						console.log('[Debug] Created blob with MIME type:', mimeType, 'size:', outputFile.size);
 
-						cb(audioBlob);
+						cb(outputFile);
 
 					} catch (error) {
-						console.error('[Error] ExtractAudio failed:', error);
-						onError('Audio extraction failed: ' + error.message);
+						console.error('[Error] Mediabunny conversion failed:', error);
+						onError('Mediabunny conversion failed: ' + error.message);
 					}
 				})();
 			");
