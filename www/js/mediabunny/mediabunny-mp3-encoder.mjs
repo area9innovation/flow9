@@ -12,8 +12,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
 
-// packages/mp3-encoder/src/index.ts
-// NOTE: Manual change to fix dynamic import from "mediabunny" to "./mediabunny.min.mjs"
+// NOTE: Manual change to fix dynamic import from "mediabunny" to "./mediabunny.mjs"
 import { CustomAudioEncoder, EncodedPacket, registerEncoder } from "./mediabunny.min.mjs";
 
 // shared/mp3-misc.ts

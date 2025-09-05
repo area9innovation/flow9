@@ -6,7 +6,7 @@ class Mediabunny {
 
 	public function new() {}
 
-	public static function loadMediabunnyJsLibrary(cb : (module : Dynamic) -> Void) : Void {
+	private static function loadMediabunnyJsLibrary(cb : (module : Dynamic) -> Void) : Void {
 		if (mediabunnyModule != null) {
 			cb(mediabunnyModule);
 			return;
@@ -18,25 +18,26 @@ class Mediabunny {
 		loadUtils.then(function(__) {
 			Errors.print("[Haxe] Mediabunny utils loaded, now importing ES6 module");
 
+			// TODO: Maybe load mp3 encoder extension when needed (with the first usage).
 			untyped __js__("
 				(async function() {
 					try {
 						// Load the main mediabunny module
 						console.log('[Debug] Loading mediabunny main module...');
 						const module = await import('./js/mediabunny/mediabunny.min.mjs');
-						console.log('[Debug] Mediabunny module loaded:', Object.keys(module));
+						// console.log('[Debug] Mediabunny module loaded:', Object.keys(module));
 
 						// Try to load MP3 encoder extension
 						try {
 							console.log('[Debug] Loading MP3 encoder extension...');
 							const mp3EncoderModule = await import('./js/mediabunny/mediabunny-mp3-encoder.mjs');
-							console.log('[Debug] MP3 encoder module loaded:', Object.keys(mp3EncoderModule));
+							// console.log('[Debug] MP3 encoder module loaded:', Object.keys(mp3EncoderModule));
 
 							// Register the MP3 encoder
 							if (mp3EncoderModule.registerMp3Encoder) {
 								console.log('[Debug] Registering MP3 encoder...');
 								await mp3EncoderModule.registerMp3Encoder();
-								console.log('[Debug] ✓ MP3 encoder registered successfully');
+								// console.log('[Debug] ✓ MP3 encoder registered successfully');
 							} else {
 								console.warn('[Warning] MP3 encoder module loaded but registerMp3Encoder function not found');
 							}
@@ -64,15 +65,21 @@ class Mediabunny {
 		});
 	}
 
-	public static function getMediaDuration(file : Dynamic, cb : (duration : Int) -> Void) : Void {
-		var duration = 0;
+	private static function withMediabunnyModule<T>(operation : String, onSuccess : (module : Dynamic) -> Void, onFailure : () -> Void) : Void {
 		loadMediabunnyJsLibrary(function (mediabunnyModule) {
-			Errors.print("[Haxe] mbGetMediaDuration Mediabunny library loaded: " + (mediabunnyModule != null ? "Success" : "Failed"));
+			Errors.print("[Haxe] " + operation + " Mediabunny library loaded: " + (mediabunnyModule != null ? "Success" : "Failed"));
 			if (mediabunnyModule == null) {
 				Errors.print("[Error] Mediabunny library not loaded or module not available");
-				cb(0);
+				onFailure();
 				return;
 			}
+			onSuccess(mediabunnyModule);
+		});
+	}
+
+	public static function getMediaDuration(file : Dynamic, cb : (duration : Int) -> Void) : Void {
+		var duration = 0;
+		withMediabunnyModule("getMediaDuration", function(mediabunnyModule) {
 			untyped __js__("
 				(async function() {
 					try {
@@ -81,13 +88,11 @@ class Mediabunny {
 
 						console.log('[Debug] Using classes from stored module');
 
-						var blob = new Blob([file], { type: 'video/mp4' });
-						console.log(blob);
-
 						const input = new Input({
 							formats: ALL_FORMATS, // Supporting all file formats
-							source: new BlobSource(blob), // Now using actual Blob
+							source: new BlobSource(file), // Now using actual Blob
 						});
+
 						duration = await input.computeDuration(); // in seconds
 						console.log('[Debug] Duration computed:', duration);
 						cb(duration);
@@ -98,49 +103,34 @@ class Mediabunny {
 					}
 				})();
 			");
+		}, function() {
+			cb(0);
 		});
 	}
 
-	public static function ExtractAudio(file : Dynamic, format : String, sampleRate : Int, cb : (audioData : Dynamic) -> Void, onError : (error : String) -> Void) : Void {
-		loadMediabunnyJsLibrary(function (mediabunnyModule) {
-			Errors.print("[Haxe] ExtractAudio Mediabunny library loaded: " + (mediabunnyModule != null ? "Success" : "Failed"));
-			if (mediabunnyModule == null) {
-				Errors.print("[Error] Mediabunny library not loaded or module not available");
-				onError("Mediabunny library not loaded");
-				return;
-			}
+	public static function extractAudio(file : Dynamic, format : String, sampleRate : Int, cb : (audioData : Dynamic) -> Void, onError : (error : String) -> Void) : Void {
+		withMediabunnyModule("extractAudio", function(mediabunnyModule) {
 			untyped __js__("
 				(async function() {
 					try {
 						// Use the stored module
 						const {
 							Input,
-							Output,
-							Conversion,
-							BlobSource,
-							BufferTarget,
 							ALL_FORMATS,
+							BlobSource,
+							Output,
+							BufferTarget,
 							WavOutputFormat,
 							Mp3OutputFormat,
-							canEncodeAudio
+							canEncodeAudio,
+							Conversion,
 						} = mediabunnyModule;
-
-						// Debug: Check what's available in the module
-						console.log('[Debug] Available classes:', {
-							WavOutputFormat: !!WavOutputFormat,
-							Mp3OutputFormat: !!Mp3OutputFormat,
-							canEncodeAudio: !!canEncodeAudio
-						});
 
 						console.log('[Debug] ExtractAudio - Format:', format, 'SampleRate:', sampleRate);
 
-						// Create a blob from the file
-						var blob = new Blob([file], { type: 'video/mp4' });
-
-						// Create input from the file
 						const input = new Input({
+	 						source: new BlobSource(file),
 							formats: ALL_FORMATS,
-							source: new BlobSource(blob),
 						});
 
 						// Check if there are audio tracks available first
@@ -149,17 +139,8 @@ class Mediabunny {
 							throw new Error('No audio track found in the input file');
 						}
 
-						console.log('[Debug] Primary audio track found:', audioTrack.numberOfChannels, 'channels,', audioTrack.sampleRate, 'Hz');
-
-						// Check all tracks for debugging
-						const allTracks = await input.getTracks();
-						const audioTracks = allTracks.filter(track => track.type === 'audio');
-						console.log('[Debug] Total tracks:', allTracks.length, 'Audio tracks:', audioTracks.length);
-
-						// Choose the output format based on the format parameter
 						let outputFormat;
-						let finalFormat = format; // Track the actual format we'll use
-
+						let finalFormat = format;
 						if (format === 'wav') {
 							outputFormat = new WavOutputFormat();
 						} else if (format === 'mp3') {
@@ -173,66 +154,29 @@ class Mediabunny {
 								}
 							}
 
-							console.log('[Debug] MP3 encoding supported:', mp3Supported);
-
-							// For MP3, check multiple conditions
-							if (audioTracks.length > 1) {
-								console.warn('[Warning] Multiple audio tracks detected (' + audioTracks.length + '), MP3 requires exactly 1. Falling back to WAV format.');
-								outputFormat = new WavOutputFormat();
-								finalFormat = 'wav';
-							} else if (!mp3Supported) {
-								console.warn('[Warning] MP3 encoding not supported by browser/environment. Falling back to WAV format.');
-								console.warn('[Info] To enable MP3 support, include the @mediabunny/mp3-encoder extension.');
-								outputFormat = new WavOutputFormat();
-								finalFormat = 'wav';
-							} else if (!Mp3OutputFormat) {
-								console.warn('[Warning] Mp3OutputFormat class not available, using WAV instead');
-								outputFormat = new WavOutputFormat();
-								finalFormat = 'wav';
-							} else {
+							if (mp3Supported) {
 								outputFormat = new Mp3OutputFormat();
+							} else {
+								console.log('[Debug] MP3 encoding NOT supported: fallback to wave format');
+								finalFormat = 'wav';
+								outputFormat = new WavOutputFormat();
 							}
 						} else {
 							throw new Error('Unsupported audio format: ' + format);
 						}
 
-						console.log('[Debug] Using format:', finalFormat);
-
-						// Create output to memory buffer
 						const output = new Output({
 							format: outputFormat,
 							target: new BufferTarget(),
 						});
 
-						// Set up conversion with audio resampling
-						const conversionConfig = {
+						const conversion = await Conversion.init({
 							input,
 							output,
-							audio: {
-								sampleRate: sampleRate, // Resample to specified rate
-							},
-						};
-
-						const conversion = await Conversion.init(conversionConfig);
-
-						// Check for discarded tracks (useful for debugging)
-						if (conversion.discardedTracks && conversion.discardedTracks.length > 0) {
-							console.log('[Debug] Discarded tracks:', conversion.discardedTracks.length);
-							conversion.discardedTracks.forEach((track, index) => {
-								console.log('[Debug] Discarded track', index, '- type:', track.type);
-							});
-						}
+						});
 
 						// Execute the conversion
 						await conversion.execute();
-
-						// Get the result buffer
-						const buffer = output.target.buffer; // ArrayBuffer containing the audio file
-
-						console.log('[Debug] Audio extraction completed in', finalFormat, 'format, buffer size:', buffer.byteLength);
-
-						// Create a proper Blob object for the audio data
-						// Determine the MIME type based on the actual format used
 						let mimeType;
 						if (finalFormat === 'wav') {
 							mimeType = 'audio/wav';
@@ -242,18 +186,20 @@ class Mediabunny {
 							mimeType = 'audio/wav'; // fallback
 						}
 
-						const audioBlob = new Blob([buffer], { type: mimeType });
+							// output.target.buffer => ArrayBuffer containing the MP3 file
+						const audioBlob = new Blob([output.target.buffer], { type: mimeType });
 						console.log('[Debug] Created audio blob with MIME type:', mimeType, 'size:', audioBlob.size);
 
 						cb(audioBlob);
 
 					} catch (error) {
 						console.error('[Error] ExtractAudio failed:', error);
-						console.error('[Error] Details:', error.message, error.stack);
 						onError('Audio extraction failed: ' + error.message);
 					}
 				})();
 			");
+		}, function() {
+			onError("Mediabunny library not loaded");
 		});
 	}
 }
