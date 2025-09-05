@@ -1,6 +1,7 @@
 import material/internal/material_typography;
 import material/internal/material_mutable;
 
+import material/material;
 export {
 	MStepper2T(parent : MFocusGroup, m : MStepper, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
@@ -263,6 +264,7 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 	clickableSteps = mapi(editableSteps, \i, es -> if (es) extractStruct(steps[i].type, MClickableStep(const(true))).clickable else const(true));
 	contentBorder = extractStruct(m.style, if (horizontal) MHStepperContentBorder(24.0, 0.0, 24.0, 12.0) else MHStepperContentBorder(24.0, 8.0, 40.0, 16.0));
 	footerBorder = extractStruct(m.style, if (horizontal) MHStepperFooterBorder(24.0, 12.0, 40.0, 12.0) else MHStepperFooterBorder(24.0, 0.0, 40.0, 52.0));
+	contentFrame = tryExtractStruct(m.style, MStepperContentFrame(0.0, 0.0));
 	stepperAddScroll = contains(m.style, MStepperAddScroll());
 	showCancelButton = make(!contains(m.style, MHideCancelButton()));
 	intervalBtwTitles = extractStruct(m.style, MSetIntervalBetweenTitles(0.0)).size;
@@ -327,6 +329,18 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 				MStepperActionContinue(): continueFn();
 				MStepperActionBack(): backFn();
 			}, nop);
+
+	isActiveStep = \id -> fand(feq(selectedId, id), showFirstOnStartB);
+	addStepFrame = \t, id -> {
+		complete = completes[id];
+		frameColor = fif(complete, const(checkCircleIconColor), fif(isActiveStep(id), const(activeIconColor), const(inactiveIconColor)));
+		contentFrame ?? MFrameT(
+			const(contentFrame.margin),
+			const(contentFrame.radius),
+			fselectLift(frameColor, \c -> [MStroke(MThemeColor2MColor(parent, c))]),
+			t
+		): t;
+	}
 
 	buildFooter = \ ->
 		footerLayout(
@@ -488,44 +502,25 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 				isFirstVisibleStepB = make(false);
 				isLastVisibleStepB = make(false);
 
-				(\clickFoc ->
-				TIf(showStepError,
-					warningIcon,
-					TIf(feq(selectedId, id),
-						activeLetterIcon(id),
-						TIf(complete,
-							TIf(fand(clickableSteps[id], const(!stepEditableOnComplete)), editIcon, checkCircleIcon),
-							inactiveLetterIcon(id)
+				stepHeader : Material = TSelect3(showStepError, selectedId, complete, \showErr, selId, isComplete -> {
+					isSelected = selId == id;
+					op =
+						if (showErr) Pair(0.87, 0.87)
+						else if (isSelected) Pair(0.87, 0.87)
+						else if (!isComplete) Pair(0.54, 0.54)
+						else if (stepEditableOnComplete) Pair(0.87, 0.87)
+						else Pair(0.56, 0.54);
+					TLines2A(
+						createTextTitle(step.title, isSelected, showErr, op.first),
+						TIf(
+							if (showErr) fneq(errorMsg, "") else const(false),
+							TSelect(errorMsg, \val -> createTextSubtitle(val, showErr, op.second)),
+							TSelect(optionalMsg, \val -> createTextSubtitle(val, showErr, op.second))
 						)
 					)
-				)
-				|> (\f -> eitherMap(clickFoc, \foc -> if (id == 0) MGetManager(\manager -> MHintMarker(manager, foc, None())(f)) else f, f))
-				|> addConnectorLine
-				|> (\f -> MBorderA(0., 4., 12., 0., f))
-				|> (\f -> MCols2A(
-						f,
-						TSelect3(showStepError, selectedId, complete, \showErr, selId, isComplete -> {
-							isSelected = selId == id;
-							op =
-								if (showErr) Pair(0.87, 0.87)
-								else if (isSelected) Pair(0.87, 0.87)
-								else if (!isComplete) Pair(0.54, 0.54)
-								else if (stepEditableOnComplete) Pair(0.87, 0.87)
-								else Pair(0.56, 0.54);
-
-							TLines2A(
-								createTextTitle(step.title, isSelected, showErr, op.first),
-								TIf(
-									if (showErr) fneq(errorMsg, "") else const(false),
-									TSelect(errorMsg, \val -> createTextSubtitle(val, showErr, op.second)),
-									TSelect(optionalMsg, \val -> createTextSubtitle(val, showErr, op.second))
-								)
-							)
-						})
-						|> (\t -> TCenterYIn(t, TFixed(0.0, 40.0)))
-					)
-				))
-				|> (\fn : (Maybe<MFocus>) -> Material -> {
+				})
+				|> (\t -> TCenterYIn(t, TFixed(0.0, 40.0)));
+				makeClickable : ((Maybe<MFocus>) -> Material) -> Material = \fn -> {
 					isClickable = if (linearStepper) {
 						allowClickOnStartB = fmax(isFirstVisibleStepB, fand(feq(selectedId, id), fnot(showFirstOnStartB)));
 						editable =
@@ -541,8 +536,9 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 							);
 
 						fif(showStepError, const(true), editable);
-					} else
+					} else {
 						fif(complete, clickableSteps[id], const(true));
+					};
 
 					MIf(
 						fOr(isClickable, fnot(extractStruct(getStepContBtnStyle(step).state, MEnabled(const(true))).enabled)),
@@ -555,16 +551,51 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 							], fn(Some(foc)))
 						}),
 						fn(None())
+					);
+				};
+
+				(\clickFoc ->
+				TIf(showStepError,
+					warningIcon,
+					TIf(feq(selectedId, id),
+						activeLetterIcon(id),
+						TIf(complete,
+							TIf(fand(clickableSteps[id], const(!stepEditableOnComplete)), editIcon, checkCircleIcon),
+							inactiveLetterIcon(id)
+						)
 					)
-				})
-				|> (\f -> {
-					isActive = fand(feq(selectedId, id), showFirstOnStartB);
-					MLines2A(
-						f,
-						MIfLazy(fOr(expanded, isActive), \e -> if (e) {
-							MLet("content",
-								MLinesA([
-									MBorderA(contentBorder.left, contentBorder.top, contentBorder.right, contentBorder.bottom,
+				)
+				|> (\f -> eitherMap(clickFoc, \foc -> if (id == 0) MGetManager(\manager -> MHintMarker(manager, foc, None())(f)) else f, f))
+				)
+				|> makeClickable
+				|> (\f0 -> {
+					isActive = isActiveStep(id);
+					emptyStepHeight = 16.0;
+					contentHeight = make(0.0);
+					footerHeight = make(0.0);
+					visibleStepContent = fOr(expanded, isActive);
+					addFrameAndHeader = \stepView, isExpanded -> {
+						view = MLines2A(
+							makeClickable(\__ -> stepHeader),
+							stepView
+						);
+						if (isExpanded) addStepFrame(view, id) else view;
+					}
+					MCols2A(
+						MBorderA(0., 4., 12., 0., MLinesSameWidthA([
+							f0,
+							MCenterX(
+								MAvailableHeight(
+									MSeparator(false),
+									fif(visibleStepContent, fsum([contentHeight, footerHeight]), const(emptyStepHeight))
+							) |> MBorderTop(4.0))
+						])),
+						MIfLazy(visibleStepContent, \e -> if (e) {
+							MLinesA([
+								addFrameAndHeader(MAttachHeight(
+									MBorderA(
+										contentBorder.left - (stepIconSize / 2.0 + 1.0),
+										contentBorder.top, (contentBorder.right / 2.0), (contentBorder.bottom / 2.0),
 										TCopySize(
 											steps[forceRange(id, 0, length(steps) - 1)].content()
 											|> (\f2 -> m2t(f2, parent)),
@@ -582,20 +613,12 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 											true
 										)
 									),
-									MShow(isActive, buildFooter()),
-								]),
-								MCols2A(
-									// Without of MAvailable() the height of MSeparator() will be zero regardless of content height
-									MSeparator(false) |> (\s -> MAvailable(s, TGhost("content"))),
-									TDisplay("content")
-								)
-								|> MBorderStart(stepIconSize / 2.0 + 1.0)
-							)
+									contentHeight
+								), e) |> MBorderBottom(contentBorder.bottom / 2.0) |> MBorderEnd(contentBorder.right / 2.0),
+								MAttachHeight(buildFooter(), footerHeight),
+							])
 						} else {
-							connectorLine(24.0)
-							|> MBorderStart(stepIconSize / 2.0 + 1.0)
-							|> (\m2 -> MGroup2(m2, TFixed(0.0, 24.0)))
-							|> (\m2 -> MShow(fnot(isLastVisibleStepB), m2))
+							addFrameAndHeader(MFixedY(emptyStepHeight), e)
 						})
 					)
 				})
