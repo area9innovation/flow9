@@ -1031,10 +1031,9 @@ void iosGLRenderSupport::doOpenUrl(unicode_string url, unicode_string target)
     } else {
         if ( [ns_url rangeOfString: @":"].location == NSNotFound && [ns_url rangeOfString: @"%3A"].location != NSNotFound ) {
             // A patch for fully encoded URLs
-            [[UIApplication sharedApplication] openURL: [NSURL URLWithString: [ns_url stringByReplacingPercentEscapesUsingEncoding: NSUTF8StringEncoding]]];
+            [[UIApplication sharedApplication] openURL: [NSURL URLWithString: [ns_url stringByRemovingPercentEncoding]] options:@{} completionHandler:^(BOOL success) {}];
         } else {
-            // Do not escape URL string (as in flash target)
-            [[UIApplication sharedApplication] openURL:[NSURL URLWithString: [ns_url stringByReplacingOccurrencesOfString: @" " withString: @"%20"]]];
+            [[UIApplication sharedApplication] openURL:[NSURL URLWithString: [ns_url stringByReplacingOccurrencesOfString: @" " withString: @"%20"]] options:@{} completionHandler:^(BOOL success) {}];
         }
     }
 }
