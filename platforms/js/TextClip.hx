@@ -2246,22 +2246,29 @@ class TextClip extends NativeWidgetClip {
 			//    - Special pattern excludes content that looks like math expressions
 			//    - Preserves expressions like 'x<y', 'a<=b', 'slider<value'
 			//    - Only applies to non-script content
-			untyped __js__("text = 
-				// Specific check for script tags - sanitize immediately without math check
-				/<\\/?script\\b/i.test(text) ? DOMPurify.sanitize(text) : 
-				
-				// For other cases, apply our standard rules with math check
-				(text && (
-					// Check for other dangerous tags
-					/<\\/?(?:iframe|object|embed|svg|math|link|style)\\b/i.test(text) ||
-					// Check for tag-like structures with attributes or separators
-					(/<(?!\\s|=|\\d)[a-zA-Z][^>]*>/.test(text) && 
-						(/<[^>]*[\\s,'\"]/i.test(text) || /<[a-zA-Z]+[^>]*\\s*,[^>]*>/i.test(text))
-					)
-				) && 
-				// Exclude math expressions (including <=, >=)
-				!/((?:\\w+|[\\d.]+)(?:\\s*)(?:<|<=|>=|>)(?:\\s*)(?:\\w+|[\\d.]+))[,\\s]/i.test(text)) ? 
-					DOMPurify.sanitize(text) : text
+			untyped __js__("
+				text = (function() {
+					var termPattern = '(?:\\\\(*\\\\s*)?(?:\\\\w+(?:\\\\([^)]*\\\\))?|[\\\\d.]+)(?:\\\\s*\\\\)*)?';
+					var operatorPattern = '(?:\\\\s*)(?:<|<=|>=|>)(?:\\\\s*)';
+					var mathPattern = new RegExp('(' + termPattern + operatorPattern + termPattern + ')[,\\\\s]', 'i');
+
+					var isXSS =
+						// Specific check for script tags - sanitize immediately without math check
+						/<\\/?script\\b/i.test(text) ||
+						// For other cases, apply our standard rules with math check
+						(text && (
+							// Check for other dangerous tags
+							/<\\/?(?:iframe|object|embed|svg|math|link|style)\\b/i.test(text) ||
+							// Check for tag-like structures with attributes or separators
+							(/<(?!\\s|=|\\d)[a-zA-Z][^>]*>/.test(text) &&
+								(/<[^>]*[\\s,'\"]/i.test(text) || /<[a-zA-Z]+[^>]*\\s*,[^>]*>/i.test(text))
+							)
+						) &&
+						// Exclude math expressions
+						!mathPattern.test(text));
+
+					return isXSS ? DOMPurify.sanitize(text) : text;
+				})();
 			");
 		}
 		return text;
