@@ -12,68 +12,56 @@ class Mediabunny {
 			return;
 		};
 
-		// TODO: Remove if nothing in there.
-		var loadUtils = Util.loadJS("js/mediabunny/mediabunny-utils.js");
+		Errors.print("[Haxe] Importing ES6 module");
 
-		loadUtils.then(function(__) {
-			Errors.print("[Haxe] Mediabunny utils loaded, now importing ES6 module");
+		// TODO: Maybe load mp3 encoder extension when needed (with the first usage).
+		untyped __js__("
+			(async function() {
+				try {
+					// Load the main mediabunny module
+					console.log('[Debug] Loading mediabunny main module...');
+					const module = await import('./js/mediabunny/mediabunny.min.mjs');
 
-			// TODO: Maybe load mp3 encoder extension when needed (with the first usage).
-			untyped __js__("
-				(async function() {
+					// Try to load MP3 encoder extension
 					try {
-						// Load the main mediabunny module
-						console.log('[Debug] Loading mediabunny main module...');
-						const module = await import('./js/mediabunny/mediabunny.min.mjs');
-						// console.log('[Debug] Mediabunny module loaded:', Object.keys(module));
+						console.log('[Debug] Loading MP3 encoder extension...');
+						const mp3EncoderModule = await import('./js/mediabunny/mediabunny-mp3-encoder.mjs');
 
-						// Try to load MP3 encoder extension
-						try {
-							console.log('[Debug] Loading MP3 encoder extension...');
-							const mp3EncoderModule = await import('./js/mediabunny/mediabunny-mp3-encoder.mjs');
-							// console.log('[Debug] MP3 encoder module loaded:', Object.keys(mp3EncoderModule));
-
-							// Register the MP3 encoder
-							if (mp3EncoderModule.registerMp3Encoder) {
-								console.log('[Debug] Registering MP3 encoder...');
-								await mp3EncoderModule.registerMp3Encoder();
-								// console.log('[Debug] ✓ MP3 encoder registered successfully');
-							} else {
-								console.warn('[Warning] MP3 encoder module loaded but registerMp3Encoder function not found');
-							}
-						} catch (mp3Error) {
-							console.warn('[Warning] Failed to load or register MP3 encoder:', mp3Error);
-							console.warn('[Info] MP3 encoding will fall back to WAV format');
-							console.warn('[Info] Make sure mediabunny-mp3-encoder.mjs is in ./js/mediabunny/ directory');
+						// Register the MP3 encoder
+						if (mp3EncoderModule.registerMp3Encoder) {
+							console.log('[Debug] Registering MP3 encoder...');
+							await mp3EncoderModule.registerMp3Encoder();
+							// console.log('[Debug] ✓ MP3 encoder registered successfully');
+						} else {
+							console.warn('[Warning] MP3 encoder module loaded but registerMp3Encoder function not found');
 						}
-
-						// Store the module for later use
-						mediabunnyModule = module;
-
-						Errors.print('[Haxe] Mediabunny ES6 module imported successfully');
-						cb(module);
-					} catch (error) {
-						console.error('[Error] Failed to import Mediabunny module:', error);
-						Errors.print('[Error] Failed to import Mediabunny module: ' + error.message);
-						cb(null);
+					} catch (mp3Error) {
+						console.warn('[Warning] Failed to load or register MP3 encoder:', mp3Error);
+						console.warn('[Info] Make sure mediabunny-mp3-encoder.mjs is in ./js/mediabunny/ directory');
 					}
-				})();
-			");
-		}, function(e) {
-			Errors.print("[Error] Can't load Mediabunny utils: " + e);
-			cb(null);
-		});
+
+					Errors.print('[Haxe] Mediabunny ES6 module imported successfully');
+					cb(module);
+				} catch (error) {
+					console.error('[Error] Failed to import Mediabunny module:', error);
+					Errors.print('[Error] Failed to import Mediabunny module: ' + error.message);
+					cb(null);
+				}
+			})();
+		");
 	}
 
 	private static function withMediabunnyModule<T>(operation : String, onSuccess : (module : Dynamic) -> Void, onFailure : () -> Void) : Void {
-		loadMediabunnyJsLibrary(function (mediabunnyModule) {
-			Errors.print("[Haxe] " + operation + " Mediabunny library loaded: " + (mediabunnyModule != null ? "Success" : "Failed"));
-			if (mediabunnyModule == null) {
+		loadMediabunnyJsLibrary(function (loadedModule) {
+			Errors.print("[Haxe] " + operation + " Mediabunny library loaded: " + (loadedModule != null ? "Success" : "Failed"));
+			if (loadedModule == null) {
 				Errors.print("[Error] Mediabunny library not loaded or module not available");
 				onFailure();
 				return;
 			}
-			onSuccess(mediabunnyModule);
+			// Store the loaded module in the static variable for caching
+			mediabunnyModule = loadedModule;
+			onSuccess(loadedModule);
 		});
 	}
 
