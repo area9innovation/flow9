@@ -35,6 +35,10 @@ makeMobileStepper(parent : MFocusGroup, m : MStepper, type : MobileStepperType, 
 	completes = map(steps, \step -> extractStruct(step.state, MCompleteStatus(make(false))).complete);
 	enabledSteps = map(steps, \step -> extractStruct(step.state, MEnabled(const(true))).enabled);
 	editableSteps = map(steps, \step -> extractStruct(step.type, MEditableStep(false)).editable);
+	contentFrame = tryExtractStruct(m.style, MStepperContentFrame(0.0, 0.0));
+	color = extractMColor(parent, m.style, MPrimaryColor());
+	activeIconColor = extractStruct(m.style, MActiveIconColor(color)).color;
+	checkCircleIconColor = extractStruct(m.style, MCheckCircleIconColor(color)).color;
 	showErrorMessage = make(false);
 	enabledBackButton = make(false);
 	enabledContinueButton = make(true);
@@ -46,6 +50,19 @@ makeMobileStepper(parent : MFocusGroup, m : MStepper, type : MobileStepperType, 
 	if (currentId < 0 || currentId >= length(steps) || !(enabledSteps[currentId] |> fgetValue)) {
 		id = foldi(enabledSteps, -1, \id, def, enabled -> if (def == -1 && (enabled |> fgetValue)) id else def);
 		next(selectedId, id);
+	}
+
+	addStepFrame = \t, id -> {
+		frameColor = {
+			complete = elementAt(completes, id, const(false));
+			fif(complete, const(checkCircleIconColor), const(activeIconColor))
+		};
+		contentFrame ?? MFrameT(
+			const(contentFrame.margin),
+			const(contentFrame.radius),
+			fselectLift(frameColor, \c -> [MStroke(MThemeColor2MColor(parent, c))]),
+			t
+		): t;
 	}
 
 	continueFn = \-> {
@@ -81,13 +98,14 @@ makeMobileStepper(parent : MFocusGroup, m : MStepper, type : MobileStepperType, 
 		m2t(MStepperTextButtonAddEnabled(MTextButton(backButtonStyle.text, backFn, backButtonStyle.style, backButtonStyle.state), enabledBackButton), parent);
 
 	MSelect(selectedId, \id -> {
-		if (id > -1 && id < length(steps))
+		stepView = if (id > -1 && id < length(steps))
 			steps[id].content()
 		else
 			if (^prevSelectedId > -1 && ^prevSelectedId < length(steps))
 				steps[^prevSelectedId].content()
 			else
-				TEmpty()
+				TEmpty();
+		addStepFrame(stepView, id);
 	})
 	|> (\f -> MScroll(f, TFillXY(), []))
 	|> (\f -> m2t(f, parent))
@@ -330,9 +348,11 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 			}, nop);
 
 	isActiveStep = \id -> fand(feq(selectedId, id), showFirstOnStartB);
-	addStepFrame = \t, id -> {
-		complete = completes[id];
-		frameColor = fif(complete, const(checkCircleIconColor), fif(isActiveStep(id), const(activeIconColor), const(inactiveIconColor)));
+	addStepFrame = \t, stepId -> {
+		frameColor = fsubselect(stepId, FLift(\id -> {
+			complete = elementAt(completes, id, const(false));
+			fif(complete, const(checkCircleIconColor), fif(isActiveStep(id), const(activeIconColor), const(inactiveIconColor)))
+		}));
 		contentFrame ?? MFrameT(
 			const(contentFrame.margin),
 			const(contentFrame.radius),
@@ -429,7 +449,8 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 								),
 								true
 							))
-						|> (\t -> TBorderA(contentBorder.left, contentBorder.top, contentBorder.right, contentBorder.bottom, t))
+						|> (\t -> addStepFrame(t, selectedId))
+						|> (\t -> MBorderA(contentBorder.left, contentBorder.top, contentBorder.right, contentBorder.bottom, t))
 						|> MAlignStart,
 						buildFooter()
 					),
@@ -578,7 +599,7 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 							makeClickable(\__ -> stepHeader),
 							stepView
 						);
-						if (isExpanded) addStepFrame(view, id) else view;
+						if (isExpanded) addStepFrame(view, const(id)) else view;
 					}
 					MCols2A(
 						MBorderA(0., 4., 12., 0., MLinesSameWidthA([
