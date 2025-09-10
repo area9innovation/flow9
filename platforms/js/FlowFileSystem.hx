@@ -228,7 +228,7 @@ class FlowFileSystem {
 				return fileType;
 			});
 			var fls : Array<js.html.File> = [];
-			var allFilesAllowed : Bool = fileTypes.indexOf("*") != -1 || fileTypes.indexOf("") != -1;
+			var allFilesAllowed : Bool = fileTypes.length == 0 || fileTypes.indexOf("*") != -1 || fileTypes.indexOf("") != -1;
 
 			for (idx in 0...Math.floor(Math.min(files.length, maxFiles))) {
 				var file = files[idx];
