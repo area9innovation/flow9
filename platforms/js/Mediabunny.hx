@@ -96,8 +96,10 @@ class Mediabunny {
 		});
 	}
 
-	public static function conversion(file : Dynamic, format : String, sampleRate : Int, cb : (outputFile : Dynamic) -> Void, onError : (error : String) -> Void) : Void {
+	public static function conversion(file : Dynamic, format : String, params : Array<Dynamic>, cb : (outputFile : Dynamic) -> Void, onError : (error : String) -> Void) : Void {
 		withMediabunnyModule("conversion", function(mediabunnyModule) {
+			var sampleRate = HaxeRuntime.extractStructArguments(params[0])[0];
+			var crop = HaxeRuntime.extractStructArguments(params[1]);
 			untyped __js__("
 				(async function() {
 					try {
@@ -116,7 +118,7 @@ class Mediabunny {
 							Conversion,
 						} = mediabunnyModule;
 
-						console.log('[Debug] Mediabunny conversion - Format:', format, 'SampleRate:', sampleRate);
+						console.log('[Debug] Mediabunny conversion - Format:', format, 'Params:', params);
 
 						const input = new Input({
 	 						source: new BlobSource(file),
@@ -158,9 +160,20 @@ class Mediabunny {
 							target: new BufferTarget(),
 						});
 
+						var audioOptions = {
+							'sampleRate' : sampleRate
+						}
+						var videoOptions = {}
+						if (crop[0] > 0 && crop[1] > 0 && crop[2] > 0 && crop[3] > 0 ) {
+							videoOptions['crop'] = { left: crop[0], top: crop[1], width: crop[2], height: crop[3] };
+						} else {
+							console.log('[Haxe] Mediabunny conversion: Crop values must be integer greater than 0.');
+						}
 						const conversion = await Conversion.init({
 							input,
 							output,
+							audio : audioOptions,
+							video : videoOptions,
 						});
 
 						// Execute the conversion
