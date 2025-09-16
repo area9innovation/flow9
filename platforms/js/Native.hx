@@ -2457,4 +2457,118 @@ async.parallel(fns, function(err, results) { cb(results) });");
 			js.Browser.document.head.appendChild(tag);
 		#end
 	}
+
+	// Days in month lookup table (index 0 unused, 1-12 for Jan-Dec)
+	// Optimized: Use static array instead of calculations
+	static var daysInMonth: Array<Int> = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+	static inline function isLeapYear(year: Int): Bool {
+		return (year & 3) == 0 && (year % 100 != 0 || year % 400 == 0);
+	}
+
+	// Get days in month with leap year handling - inlined for performance
+	static inline function getDaysInMonth(month: Int, year: Int): Int {
+		if (month == 2 && isLeapYear(year)) return 29;
+		return daysInMonth[month];
+	}
+
+	/**
+	 * Parses datetime strings in formats:
+	 * - "YYYY-MM-DD HH:MM:SS"
+	 * - "YYYY-MM-DDTHH:MM:SS"
+	 * - "YYYY-MM-DD" (defaults to 00:00:00)
+	 *
+	 * Returns nullTime for invalid inputs
+	 */
+	private static var nullTime = null;
+	private static var makeTime = null;
+	public static function db2time(s: String): Dynamic {
+		if (nullTime == null) {
+			var timeSId = HaxeRuntime._structids_.get("Time");
+#if (js)
+			makeTime = HaxeRuntime._structconstruct_.get(timeSId);
+#else
+			var timeArgs = HaxeRuntime._structargs_.get(timeSId);
+			makeTime = function(year: Int, month: Int, day: Int, hour: Int, min: Int, sec: Int): Dynamic {
+				var t = makeEmptyStruct(timeSId);
+				t[timeArgs[0]] = year;
+				t[timeArgs[1]] = month;
+				t[timeArgs[2]] = day;
+				t[timeArgs[3]] = hour;
+				t[timeArgs[4]] = min;
+				t[timeArgs[5]] = sec;
+				return t;
+			}
+#end
+			nullTime = makeTime(0, 0, 0, 0, 0, 0);
+		}
+		if (s == null) return nullTime;
+
+		var len = s.length;
+		var pos = 0;
+		var nextCode = null;
+
+		inline function isDigit(c:Int):Bool return c >= 48 && c <= 57;
+		function readNum():Dynamic {
+			var v = 0;
+			var any = false;
+			var c = null;
+			nextCode = null;
+			while (pos < len) {
+				c = s.charCodeAt(pos); // charCodeAt is faster then charAt
+				pos++;
+				if (!isDigit(c)) {
+					nextCode = c;
+					break;
+				}
+				any = true;
+				v = v * 10 + (c - 48);
+			}
+			return any ? v : null;
+		}
+
+		// Year
+		var year = readNum();
+		if (year == null || year < 1000 || year > 9999) return nullTime;
+		if (pos >= len || nextCode != 45) return nullTime; // '-'
+
+		// Month
+		var month:Int = readNum();
+		if (month == null || month < 1 || month > 12) return nullTime;
+		if (nextCode != 45) return nullTime; // '-'
+
+		// Day
+		var day:Int = readNum();
+		if (day == null || day < 1) return nullTime;
+		var maxDays = getDaysInMonth(month, year);
+		if (day > maxDays) return nullTime;
+
+		// Date only
+		if (pos >= len && nextCode == null) {
+			return makeTime(year, month, day, 0, 0, 0);
+		}
+
+		if (nextCode != 32 && nextCode != 84) return nullTime; // ' ' or 'T'
+
+		// Hour
+		var hour:Int = readNum();
+		if (hour == null) return nullTime;
+		if (pos >= len || nextCode != 58) return nullTime; // ":"
+
+		// Minute
+		var min:Int = readNum();
+		if (min == null) return nullTime;
+		if (pos >= len || nextCode != 58) return nullTime; // ":"
+
+		// Second (greedy: read all digits; ignore any non-digit tail)
+		var sec:Int = readNum();
+		if (sec == null) return nullTime;
+
+		if (hour < 0 || hour >= 24) return nullTime;
+		if (min  < 0 || min  >= 60) return nullTime;
+		if (sec  < 0 || sec  >= 60) return nullTime;
+		if (nextCode == 45 || nextCode == 58) return nullTime;
+
+		return makeTime(year, month, day, hour, min, sec);
+	}
 }

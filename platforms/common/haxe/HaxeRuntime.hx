@@ -24,6 +24,7 @@ class HaxeRuntime {
 	static public var _structids_ : haxe.ds.StringMap<Int>;
 	static public var _structtemplates_ : haxe.ds.IntMap<Dynamic>;
 #if (js)
+	static public var _structconstruct_ : haxe.ds.IntMap<Dynamic> = new haxe.ds.IntMap<Dynamic>(); // Structure id to constructor
 	static var regexCharsToReplaceForString : Dynamic = untyped __js__ ("/[\\\\\\\"\\n\\t]/g");
 	static var regexCharsToReplaceForJson : Dynamic = untyped __js__ ("/[\\\\\\\"\\n\\t\\x00-\\x08\\x0B-\\x1F]/g");
 #end
@@ -37,13 +38,15 @@ class HaxeRuntime {
 
 	// Do not use 'eval' directly here: https://esbuild.github.io/content-types/#direct-eval
 	// Using 'new Function('arg', 'code')' instead
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);var c='c$'+f(id);");
 #if (readable)
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') +'){return {name:\"'+ name+'\",' + a + '};}'))($global)}");
+	untyped __js__ ("(new Function('g', 'g.'+c + '=function(' + args.join(',') +'){return {name:\"'+ name+'\",' + a + '};}'))($global)");
 #elseif (namespace)
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') + '){return {kind:'+id.toString()+',' + a + '};}'))($global)}");
+	untyped __js__ ("(new Function('g', 'g.'+c + '=function(' + args.join(',') + '){return {kind:'+id.toString()+',' + a + '};}'))($global)");
 #else
-	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=(args[i]+':'+args[i]+ ','); a=a.substring(0, a.length -1);(new Function('g', 'g.c$'+f(id) + '=function(' + args.join(',') + '){return {_id:'+id.toString()+',' + a + '};}'))($global)}");
+	untyped __js__ ("(new Function('g', 'g.'+c + '=function(' + args.join(',') + '){return {_id:'+id.toString()+',' + a + '};}'))($global)");
 #end
+	untyped __js__ ("HaxeRuntime._structconstruct_.h[id]=$global[c]}");
 #end
 		_structnames_.set(id, name);
 		_structids_.set(name, id);
