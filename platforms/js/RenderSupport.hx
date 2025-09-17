@@ -75,6 +75,8 @@ class RenderSupport {
 	public static var WebFontsConfig = null;
 	public static var DebugClip = null;
 
+	private static var clearPixiTextureCacheForTextsTaskStarted : Bool = false;
+
 	public static function debugLog(text : String, ?text2 : Dynamic = "") : Void {
 		if (DebugClip != null) {
 			var innertext = DebugClip.innerText;
@@ -786,6 +788,11 @@ class RenderSupport {
 				untyped console.log("onBrowserWindowResizeDelayed error : ");
 				untyped console.log(e);
 			}
+		}
+
+		if (!clearPixiTextureCacheForTextsTaskStarted) {
+			Native.setInterval(5000, clearPixiTextureCacheForTexts);
+			clearPixiTextureCacheForTextsTaskStarted = true;
 		}
 	}
 
@@ -4575,6 +4582,27 @@ class RenderSupport {
 	public static function createMathJaxClip(latex: String) : Dynamic {
 		return new MathJaxClip(latex);
 	};
+
+	/**
+		There is memory leak introduced by PIXI - it caches textures created for Text
+		we fix it partially by calling textClip.destroy in TextClip.disableSprites but for some texts is's not get called for some reason
+		this is a workaround to not waste memory
+	**/
+	public static function clearPixiTextureCacheForTexts() : Void {
+		untyped __js__("
+			for(var key in PIXI.utils.TextureCache) {
+				if (key.startsWith(\"text_\")) {
+					delete PIXI.utils.TextureCache[key];
+				}
+			}
+
+			for(var key in PIXI.utils.BaseTextureCache) {
+				if (key.startsWith(\"text_\")) {
+					delete PIXI.utils.BaseTextureCache[key];
+				}
+			}
+	");
+	}
 }
 
 class FlowInstance {
