@@ -12,40 +12,162 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
 
+// packages/mp3-encoder/src/index.ts
 // NOTE: Manual change to fix dynamic import from "mediabunny" to "./mediabunny.min.mjs"
 import { CustomAudioEncoder, EncodedPacket, registerEncoder } from "./mediabunny.min.mjs";
 
 // shared/mp3-misc.ts
 var FRAME_HEADER_SIZE = 4;
-var MPEG_V1_BITRATES = {
-  // Layer 3
-  1: [-1, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, -1],
-  // Layer 2
-  2: [-1, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, -1],
-  // Layer 1
-  3: [-1, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, -1]
-};
-var MPEG_V2_BITRATES = {
-  // Layer 3
-  1: [-1, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, -1],
-  // Layer 2
-  2: [-1, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, -1],
-  // Layer 1
-  3: [-1, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, -1]
-};
-var SAMPLING_RATES = {
-  // MPEG Version 2.5
-  0: [11025, 12e3, 8e3, -1],
-  // MPEG Version 2 (ISO/IEC 13818-3)
-  2: [22050, 24e3, 16e3, -1],
-  // MPEG Version 1 (ISO/IEC 11172-3)
-  3: [44100, 48e3, 32e3, -1]
-};
-var computeMp3FrameSize = (layer, bitrate, sampleRate, padding) => {
-  if (layer === 3) {
-    return Math.floor((12 * bitrate / sampleRate + padding) * 4);
+var SAMPLING_RATES = [44100, 48e3, 32e3];
+var KILOBIT_RATES = [
+  // lowSamplingFrequency === 0
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  // layer = 0
+  -1,
+  32,
+  40,
+  48,
+  56,
+  64,
+  80,
+  96,
+  112,
+  128,
+  160,
+  192,
+  224,
+  256,
+  320,
+  -1,
+  // layer 1
+  -1,
+  32,
+  48,
+  56,
+  64,
+  80,
+  96,
+  112,
+  128,
+  160,
+  192,
+  224,
+  256,
+  320,
+  384,
+  -1,
+  // layer = 2
+  -1,
+  32,
+  64,
+  96,
+  128,
+  160,
+  192,
+  224,
+  256,
+  288,
+  320,
+  352,
+  384,
+  416,
+  448,
+  -1,
+  // layer = 3
+  // lowSamplingFrequency === 1
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
+  // layer = 0
+  -1,
+  8,
+  16,
+  24,
+  32,
+  40,
+  48,
+  56,
+  64,
+  80,
+  96,
+  112,
+  128,
+  144,
+  160,
+  -1,
+  // layer = 1
+  -1,
+  8,
+  16,
+  24,
+  32,
+  40,
+  48,
+  56,
+  64,
+  80,
+  96,
+  112,
+  128,
+  144,
+  160,
+  -1,
+  // layer = 2
+  -1,
+  32,
+  48,
+  56,
+  64,
+  80,
+  96,
+  112,
+  128,
+  144,
+  160,
+  176,
+  192,
+  224,
+  256,
+  -1
+  // layer = 3
+];
+var computeMp3FrameSize = (lowSamplingFrequency, layer, bitrate, sampleRate, padding) => {
+  if (layer === 0) {
+    return 0;
+  } else if (layer === 1) {
+    return Math.round(144 * bitrate / (sampleRate << lowSamplingFrequency)) + padding;
+  } else if (layer === 2) {
+    return Math.round(144 * bitrate / sampleRate) + padding;
   } else {
-    return Math.floor(144 * bitrate / sampleRate + padding);
+    return (Math.round(12 * bitrate / sampleRate) + padding) * 4;
   }
 };
 var readFrameHeader = (word, remainingBytes) => {
@@ -65,26 +187,31 @@ var readFrameHeader = (word, remainingBytes) => {
   if ((secondByte & 224) !== 224) {
     return { header: null, bytesAdvanced: 1 };
   }
+  let lowSamplingFrequency = 0;
+  let mpeg25 = 0;
+  if (secondByte & 1 << 4) {
+    lowSamplingFrequency = secondByte & 1 << 3 ? 0 : 1;
+  } else {
+    lowSamplingFrequency = 1;
+    mpeg25 = 1;
+  }
   const mpegVersionId = secondByte >> 3 & 3;
   const layer = secondByte >> 1 & 3;
   const bitrateIndex = thirdByte >> 4 & 15;
-  const frequencyIndex = thirdByte >> 2 & 3;
+  const frequencyIndex = (thirdByte >> 2 & 3) % 3;
   const padding = thirdByte >> 1 & 1;
   const channel = fourthByte >> 6 & 3;
   const modeExtension = fourthByte >> 4 & 3;
   const copyright = fourthByte >> 3 & 1;
   const original = fourthByte >> 2 & 1;
   const emphasis = fourthByte & 3;
-  const kilobitRate = mpegVersionId === 3 ? MPEG_V1_BITRATES[layer]?.[bitrateIndex] : MPEG_V2_BITRATES[layer]?.[bitrateIndex];
-  if (!kilobitRate || kilobitRate === -1) {
+  const kilobitRate = KILOBIT_RATES[lowSamplingFrequency * 16 * 4 + layer * 16 + bitrateIndex];
+  if (kilobitRate === -1) {
     return { header: null, bytesAdvanced: 1 };
   }
   const bitrate = kilobitRate * 1e3;
-  const sampleRate = SAMPLING_RATES[mpegVersionId]?.[frequencyIndex];
-  if (!sampleRate || sampleRate === -1) {
-    return { header: null, bytesAdvanced: 1 };
-  }
-  const frameLength = computeMp3FrameSize(layer, bitrate, sampleRate, padding);
+  const sampleRate = SAMPLING_RATES[frequencyIndex] >> lowSamplingFrequency + mpeg25;
+  const frameLength = computeMp3FrameSize(lowSamplingFrequency, layer, bitrate, sampleRate, padding);
   if (remainingBytes !== null && remainingBytes < frameLength) {
     return { header: null, bytesAdvanced: 1 };
   }
@@ -158,7 +285,9 @@ var Mp3Encoder = class extends CustomAudioEncoder {
     this.chunkMetadata = {};
   }
   static supports(codec, config) {
-    return codec === "mp3" && (config.numberOfChannels === 1 || config.numberOfChannels === 2) && Object.values(SAMPLING_RATES).some((x) => x.includes(config.sampleRate));
+    return codec === "mp3" && (config.numberOfChannels === 1 || config.numberOfChannels === 2) && Object.values(SAMPLING_RATES).some(
+      (x) => x === config.sampleRate || x / 2 === config.sampleRate || x / 4 === config.sampleRate
+    );
   }
   async init() {
     this.worker = await Worker2();

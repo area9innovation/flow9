@@ -164,10 +164,9 @@ class Mediabunny {
 							'sampleRate' : sampleRate
 						}
 						var videoOptions = {}
+						// Crop values must be integer greater than 0.
 						if (crop[0] > 0 && crop[1] > 0 && crop[2] > 0 && crop[3] > 0 ) {
 							videoOptions['crop'] = { left: crop[0], top: crop[1], width: crop[2], height: crop[3] };
-						} else {
-							console.log('[Haxe] Mediabunny conversion: Crop values must be integer greater than 0.');
 						}
 						const conversion = await Conversion.init({
 							input,
