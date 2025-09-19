@@ -138,7 +138,7 @@ main() {
 MediaBunny includes a comprehensive automated test suite for verifying all operations and ensuring reliability across different environments and library updates.
 
 ### 📍 Location
-- **Test File**: `sandbox/test_mediabunny.flow`
+- **Test File**: `mediabunny/mediabunny_unittests.flow`
 - **Implementation**: Full unit testing framework with MD5 verification
 - **URL Control**: No code editing required - use URL parameters
 
@@ -160,7 +160,7 @@ MediaBunny includes a comprehensive automated test suite for verifying all opera
 main()
 
 // 2. Generate new baselines (add URL parameter)
-// http://localhost:3000/test_mediabunny.html?generate=true
+// http://localhost:3000/mediabunny_unittests.html?generate=true
 main()
 
 // 3. Run specific test categories
@@ -184,10 +184,10 @@ testDurationOnly() // Quick duration verification
 
 | URL | Mode | Purpose |
 |-----|------|---------|
-| `test_mediabunny.html` | **Verification** | Run tests, compare against baselines |
-| `test_mediabunny.html?generate=true` | **Generate** | Create new baseline checksums |
-| `test_mediabunny.html?generate=false` | **Verification** | Explicitly disable generate mode |
-| `test_mediabunny.html?generate` | **Generate** | Enable generate mode (no value needed) |
+| `mediabunny_unittests.html` | **Verification** | Run tests, compare against baselines |
+| `mediabunny_unittests.html?generate=true` | **Generate** | Create new baseline checksums |
+| `mediabunny_unittests.html?generate=false` | **Verification** | Explicitly disable generate mode |
+| `mediabunny_unittests.html?generate` | **Generate** | Enable generate mode (no value needed) |
 
 ### 📝 Test Results
 
@@ -214,14 +214,14 @@ testDurationOnly() // Quick duration verification
 #### **Initial Setup (One-time)**
 ```bash
 # 1. Generate baseline values
-http://localhost:3000/test_mediabunny.html?generate=true
+http://localhost:3000/mediabunny_unittests.html?generate=true
 
 # 2. Copy console output to getExpectedChecksums() in test file
 🔧 [GENERATE] mp3_default: "e38e8a6e1bdf8d960b32ce20a26aeb3c"
 🔧 [GENERATE] mp4_default: "1234567:video/mp4"
 
 # 3. Run verification tests
-http://localhost:3000/test_mediabunny.html
+http://localhost:3000/mediabunny_unittests.html
 ```
 
 #### **Regular Testing**
@@ -234,7 +234,7 @@ testAudioOnly()  # Should still pass (deterministic)
 testVideoOnly()  # May need baseline regeneration (non-deterministic)
 
 # CI/CD integration
-curl "http://localhost:3000/test_mediabunny.html" | grep "ALL TESTS PASSED"
+curl "http://localhost:3000/mediabunny_unittests.html" | grep "ALL TESTS PASSED"
 ```
 
 ### 🎯 Why Two Verification Methods?
@@ -253,7 +253,7 @@ curl "http://localhost:3000/test_mediabunny.html" | grep "ALL TESTS PASSED"
 ### 🏗️ Framework Architecture
 
 ```
-Flow Test Suite (test_mediabunny.flow)
+Flow Test Suite (mediabunny_unittests.flow)
 					 ↓
 URL Parameter Detection (generate mode?)
 					 ↓
@@ -337,7 +337,7 @@ Use the comprehensive unit test suite to verify the update:
 
 ```bash
 # Run all tests to verify the update
-http://localhost:3000/test_mediabunny.html
+http://localhost:3000/mediabunny_unittests.html
 
 # Expected output for successful update:
 # 🏁 UNIT TEST RESULTS SUMMARY
@@ -429,7 +429,7 @@ MediaBunny requires browsers with WebCodecs support:
 ## 🎉 Getting Started Summary
 
 1. **Basic Usage**: Import `mediabunny` and use `mbConversion()` for format conversion
-2. **Testing**: Use `sandbox/test_mediabunny.flow` with URL parameters for automated testing
+2. **Testing**: Use `mediabunny/mediabunny_unittests.flow` with URL parameters for automated testing
 3. **Development**: Run `?generate=true` to create baselines, then verify with regular tests
 4. **Production**: Comprehensive unit tests ensure reliability across deployments
 5. **Updates**: Test library updates automatically with the included test suite
@@ -437,10 +437,10 @@ MediaBunny requires browsers with WebCodecs support:
 **Quick Commands:**
 ```bash
 # Development testing
-http://localhost:3000/test_mediabunny.html
+http://localhost:3000/mediabunny_unittests.html
 
 # Generate new baselines
-http://localhost:3000/test_mediabunny.html?generate=true
+http://localhost:3000/mediabunny_unittests.html?generate=true
 
 # Run specific tests
 testAudioOnly()    # Audio conversions
