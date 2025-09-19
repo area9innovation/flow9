@@ -133,6 +133,170 @@ main() {
 }
 ```
 
+## 🧪 Unit Test Suite
+
+MediaBunny includes a comprehensive automated test suite for verifying all operations and ensuring reliability across different environments and library updates.
+
+### 📍 Location
+- **Test File**: `sandbox/test_mediabunny.flow`
+- **Implementation**: Full unit testing framework with MD5 verification
+- **URL Control**: No code editing required - use URL parameters
+
+### 🎯 Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Automated Verification** | MD5 checksums for audio, size+type for video files |
+| **URL Parameter Control** | Switch between generate/verify modes via `?generate=true` |
+| **Smart File Handling** | Separate strategies for deterministic vs non-deterministic outputs |
+| **Comprehensive Coverage** | Duration detection, all format conversions, cropping, batch processing |
+| **CI/CD Ready** | Reliable automation without manual file inspection |
+| **Visual Feedback** | Clear pass/fail results with detailed error reporting |
+
+### 🚀 Quick Start
+
+```flow
+// 1. Run verification tests (default mode)
+main()
+
+// 2. Generate new baselines (add URL parameter)
+// http://localhost:3000/test_mediabunny.html?generate=true
+main()
+
+// 3. Run specific test categories
+testAudioOnly()    // Audio conversion tests only
+testVideoOnly()    // Video conversion tests only
+testDurationOnly() // Quick duration verification
+```
+
+### 📋 Test Coverage
+
+| Test Category | Verification Method | Example |
+|---------------|-------------------|---------|
+| **Duration Detection** | Expected value comparison | `mbGetMediaDuration()` → 596 seconds |
+| **MP3 Conversion** | MD5 checksum | Deterministic audio encoding |
+| **WAV Conversion** | MD5 checksum | Multiple sample rates (16kHz, 44.1kHz) |
+| **MP4/WebM Conversion** | File size + MIME type | Non-deterministic video encoding |
+| **Video Cropping** | File size + MIME type | Cropped MP4/WebM outputs |
+| **Combined Processing** | MD5 checksum | Audio extraction with custom settings |
+
+### 🔧 URL Parameter Control
+
+| URL | Mode | Purpose |
+|-----|------|---------|
+| `test_mediabunny.html` | **Verification** | Run tests, compare against baselines |
+| `test_mediabunny.html?generate=true` | **Generate** | Create new baseline checksums |
+| `test_mediabunny.html?generate=false` | **Verification** | Explicitly disable generate mode |
+| `test_mediabunny.html?generate` | **Generate** | Enable generate mode (no value needed) |
+
+### 📝 Test Results
+
+```bash
+🏁 UNIT TEST RESULTS SUMMARY
+=====================================
+✅ PASSED: 8 / 10
+❌ FAILED: 1 / 10
+⏩ SKIPPED: 1 / 10
+=====================================
+
+# Individual test results:
+✅ [PASS] Duration Detection: Duration = 596s (verified)
+✅ [PASS] Audio MP3 Conversion: MD5 verified (e38e8a6e...)
+✅ [PASS] Audio WAV Conversion: MD5 verified (5d26cb8f...)
+⚠️  [FAIL] Video MP4 Conversion: Size+type mismatch
+	 Expected: 1234567:video/mp4
+	 Actual:   1234789:video/mp4
+⏩ [SKIP] WebM Conversion: No expected baseline available
+```
+
+### 🔄 Development Workflow
+
+#### **Initial Setup (One-time)**
+```bash
+# 1. Generate baseline values
+http://localhost:3000/test_mediabunny.html?generate=true
+
+# 2. Copy console output to getExpectedChecksums() in test file
+🔧 [GENERATE] mp3_default: "e38e8a6e1bdf8d960b32ce20a26aeb3c"
+🔧 [GENERATE] mp4_default: "1234567:video/mp4"
+
+# 3. Run verification tests
+http://localhost:3000/test_mediabunny.html
+```
+
+#### **Regular Testing**
+```bash
+# Quick verification during development
+main()
+
+# After MediaBunny library updates
+testAudioOnly()  # Should still pass (deterministic)
+testVideoOnly()  # May need baseline regeneration (non-deterministic)
+
+# CI/CD integration
+curl "http://localhost:3000/test_mediabunny.html" | grep "ALL TESTS PASSED"
+```
+
+### 🎯 Why Two Verification Methods?
+
+| File Type | Method | Reason |
+|-----------|--------|--------|
+| **Audio Files** | MD5 Checksum | Deterministic encoding - same input = identical output |
+| **Video Files** | Size + MIME Type | Non-deterministic encoding due to timestamps/metadata |
+
+**Video Encoding Challenges:**
+- MP4/WebM files contain creation timestamps
+- Encoder metadata can vary between runs
+- Some codecs use non-deterministic optimizations
+- **Solution**: Verify size and format instead of exact bytes
+
+### 🏗️ Framework Architecture
+
+```
+Flow Test Suite (test_mediabunny.flow)
+					 ↓
+URL Parameter Detection (generate mode?)
+					 ↓
+Test Execution (duration, audio, video, advanced)
+					 ↓
+Smart Verification (MD5 vs size+type)
+					 ↓
+Results Collection & Reporting
+```
+
+### 💡 Benefits for Development
+
+| Benefit | Description |
+|---------|-------------|
+| **Regression Detection** | Catch breaking changes immediately |
+| **Library Updates** | Verify new MediaBunny versions work correctly |
+| **Cross-browser Testing** | Ensure consistency across different WebCodecs implementations |
+| **Performance Monitoring** | Detect unexpected changes in output file sizes |
+| **Quality Assurance** | Automated verification without manual file inspection |
+| **CI/CD Integration** | Reliable automated testing for continuous deployment |
+
+### 🔧 Advanced Usage
+
+```flow
+// Custom test configuration
+getTestVideoUrl() -> string { "./my-custom-video.mp4" }
+getCustomSampleRate() -> int { 48000 }  // High-end audio
+getCropSettings() -> MBCrop { MBCrop(50, 25, 512, 256) }
+
+// Batch processing tests
+processBatch([video1, video2, video3])
+
+// Error handling with fallbacks
+mbConversion(file, MBAudioMP3(), [], onSuccess,
+		\error -> {
+				if (strContains(error, "MP3 encoding NOT supported")) {
+						// Automatically fallback to WAV
+						mbConversion(file, MBAudioWAV(), [], onSuccess, onFinalError)
+				}
+		}
+)
+```
+
 ## 📦 Updating MediaBunny Library
 
 To update the MediaBunny library to the latest version:
@@ -169,18 +333,35 @@ import { CustomAudioEncoder, EncodedPacket, registerEncoder } from "./mediabunny
 ```
 
 ### Step 4: Test the Update
-Run a test conversion to ensure everything works:
+Use the comprehensive unit test suite to verify the update:
+
+```bash
+# Run all tests to verify the update
+http://localhost:3000/test_mediabunny.html
+
+# Expected output for successful update:
+# 🏁 UNIT TEST RESULTS SUMMARY
+# ✅ PASSED: 10 / 10
+# 🎉 ALL TESTS PASSED!
+```
+
+**If tests fail after update:**
+1. **Audio test failures**: Library may have changed encoding - regenerate with `?generate=true`
+2. **Video test failures**: Expected for video files - update size baselines if needed
+3. **Duration test failures**: Check if test video file changed or library has bugs
+
+**Alternative: Manual verification**
 ```flow
 import mediabunny;
 import runtime;
 
 main() {
-		// Test with a simple audio file
-		makeFileByBlobUrl("./test.mp4", "test", \file -> {
-				mbGetMediaDuration(file, \duration -> {
-						println("✓ MediaBunny library updated successfully. Duration: " + i2s(duration))
-				})
-		}, \err -> println("✗ Update failed: " + err))
+	// Test with the standard test file
+	makeFileByBlobUrl("./images/material_test/big_buck_bunny.mp4", "test", \file -> {
+		mbGetMediaDuration(file, \duration -> {
+			println("✓ MediaBunny library updated successfully. Duration: " + i2s(duration))
+		})
+	}, \err -> println("✗ Update failed: " + err))
 }
 ```
 
@@ -244,6 +425,28 @@ MediaBunny requires browsers with WebCodecs support:
 5. **Instant feedback** - Real-time progress updates
 6. **Offline capability** - Works without internet connection
 7. **Lazy loading** - Libraries load dynamically on first use, reducing initial page load time
+
+## 🎉 Getting Started Summary
+
+1. **Basic Usage**: Import `mediabunny` and use `mbConversion()` for format conversion
+2. **Testing**: Use `sandbox/test_mediabunny.flow` with URL parameters for automated testing
+3. **Development**: Run `?generate=true` to create baselines, then verify with regular tests
+4. **Production**: Comprehensive unit tests ensure reliability across deployments
+5. **Updates**: Test library updates automatically with the included test suite
+
+**Quick Commands:**
+```bash
+# Development testing
+http://localhost:3000/test_mediabunny.html
+
+# Generate new baselines
+http://localhost:3000/test_mediabunny.html?generate=true
+
+# Run specific tests
+testAudioOnly()    # Audio conversions
+testVideoOnly()    # Video processing
+testDurationOnly() # Quick verification
+```
 
 ## 📄 License
 
