@@ -211,40 +211,6 @@ class Native {
 
 	// TODO : Implement native for performance.measureUserAgentSpecificMemory() as well, when it will be supported by browsers.
 
-	/*
-Sampe session:
-
-// Get help anytime
-Native.memoryLeakHelp();
-
-// Start analysis
-Native.memoryLeakStart();
-// Output: "📸 Initial snapshot completed! Total memory: 150MB"
-
-// [Navigate your app, create UI elements, trigger suspected leaks]
-
-// Analyze growth
-Native.memoryLeakAnalyze();
-// Output: "🚨 MEMORY GROWTH DETECTED: +25MB"
-//         "📈 Top Changed Properties:"
-//         "  1. PIXI.utils.TextureCache: +15MB"
-//         "  2. document.head.children: +8MB"
-
-// Get detailed breakdown
-Native.memoryLeakDetails();
-// Output: "🔥 TOP 10 MEMORY GROWTH LOCATIONS:"
-//         "1. 📍 PATH: PIXI.utils.TextureCache"
-//         "   📈 GROWTH: +15MB (300%)"
-//         "   📝 ARRAY LENGTH: 2,847"
-//         "   🔬 SAMPLE TYPES: object, object, object"
-
-// Optional: Monitor ongoing growth
-Native.memoryLeakMonitor();
-// Output: Monitors top growth paths for 2 minutes
-
-// Reset when done
-Native.memoryLeakReset();
-	*/
 	public static function createWindowSnapshot() : Dynamic {
 		var snapshot = untyped __js__("{
 			timestamp: Date.now(),
@@ -1082,6 +1048,40 @@ Native.memoryLeakReset();
 		}");
 	}
 
+	/*
+Sampe session:
+
+// Get help anytime
+Native.memoryLeakHelp();
+
+// Start analysis
+Native.memoryLeakStart();
+// Output: "📸 Initial snapshot completed! Total memory: 150MB"
+
+// [Navigate your app, create UI elements, trigger suspected leaks]
+
+// Analyze growth
+Native.memoryLeakAnalyze();
+// Output: "🚨 MEMORY GROWTH DETECTED: +25MB"
+//         "📈 Top Changed Properties:"
+//         "  1. PIXI.utils.TextureCache: +15MB"
+//         "  2. document.head.children: +8MB"
+
+// Get detailed breakdown
+Native.memoryLeakDetails();
+// Output: "🔥 TOP 10 MEMORY GROWTH LOCATIONS:"
+//         "1. 📍 PATH: PIXI.utils.TextureCache"
+//         "   📈 GROWTH: +15MB (300%)"
+//         "   📝 ARRAY LENGTH: 2,847"
+//         "   🔬 SAMPLE TYPES: object, object, object"
+
+// Optional: Monitor ongoing growth
+Native.memoryLeakMonitor();
+// Output: Monitors top growth paths for 2 minutes
+
+// Reset when done
+Native.memoryLeakReset();
+	*/
 	// ============================================================================
 	// CONSOLE MEMORY LEAK ANALYSIS - Easy-to-use functions for browser console
 	// ============================================================================
@@ -1148,12 +1148,31 @@ Native.memoryLeakReset();
 				// Calculate accurate growth
 				var actualGrowth = window._memoryLeakAfter.totalSize - window._memoryLeakBefore.totalSize;
 				console.log('');
-				console.log('🚨 MEMORY GROWTH DETECTED: ' + Math.round(actualGrowth / 1024 / 1024) + 'MB');
-				console.log('📊 Growth in bytes: ' + actualGrowth.toLocaleString());
 
-				if (Math.abs(actualGrowth) < 100000) {
-					console.log('ℹ️  Small growth detected. Try performing more operations or longer usage.');
+				if (actualGrowth < 0) {
+					console.log('✅ MEMORY DECREASED: ' + Math.round(Math.abs(actualGrowth) / 1024 / 1024) + 'MB');
+					console.log('🎉 Memory was freed - this is GOOD news, not a leak!');
+					console.log('📊 Freed bytes: ' + Math.abs(actualGrowth).toLocaleString());
+					console.log('');
+					console.log('💡 No analysis needed - memory is being cleaned up properly.');
+					console.log('🔄 Call Native.memoryLeakReset() to start a new analysis.');
 					return;
+				} else if (actualGrowth < 1000000) { // Less than 1MB growth
+					console.log('ℹ️  SMALL GROWTH DETECTED: ' + Math.round(actualGrowth / 1024 / 1024 * 100) / 100 + 'MB');
+					console.log('📊 Growth in bytes: ' + actualGrowth.toLocaleString());
+					console.log('');
+					if (actualGrowth < 100000) { // Less than 100KB
+						console.log('✅ This is very small and likely normal app usage.');
+						console.log('💡 No detailed analysis needed - this is not a significant leak.');
+						console.log('🔄 Call Native.memoryLeakReset() to start fresh if needed.');
+						return;
+					} else {
+						console.log('ℹ️  Growth is small but measurable. Proceeding with light analysis...');
+					}
+				} else {
+					console.log('🚨 SIGNIFICANT MEMORY GROWTH DETECTED: ' + Math.round(actualGrowth / 1024 / 1024) + 'MB');
+					console.log('📊 Growth in bytes: ' + actualGrowth.toLocaleString());
+					console.log('⚠️  This indicates a potential memory leak!');
 				}
 
 				// Compare paths
