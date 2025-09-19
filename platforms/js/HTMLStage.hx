@@ -9,6 +9,8 @@ class HTMLStage extends NativeWidgetClip {
 	public var isHTMLStage = true;
 	private var clips : Map<String, FlowContainer> = new Map<String, FlowContainer>();
 	private var stageRect : Dynamic;
+	private var metricsFn = null;
+	private var metricsBaselineByTop : Bool = true;
 	public var isInteractive : Bool = true;
 	public function new(width : Float, height : Float) {
 		super();
@@ -68,7 +70,18 @@ class HTMLStage extends NativeWidgetClip {
 		nativeWidget.appendChild(child);
 	}
 
+	public function assignClipRoot(clip : DisplayObject) : Void {
+		untyped clip.forceParentNode = nativeWidget;
+		clip.initNativeWidget();
+		this.addChild(clip);
+	}
+	
 	public function assignClip(className : String, clip : DisplayObject) : Void {
+		// untyped console.log('assignClip', className, clip);
+		if (className == 'root') {
+			assignClipRoot(clip);
+			return;
+		}
 		if (clips.get(className) != null) {
 			clips.get(className).removeChildren();
 			this.removeChild(clips.get(className));
@@ -100,5 +113,63 @@ class HTMLStage extends NativeWidgetClip {
 
 	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
 		return;
+	}
+
+	public function setInspectHtmlStage(baselineByTop : Bool, callbackFn : Float -> Float -> Float -> Void) : Void {
+		this.metricsFn = callbackFn;
+		this.metricsBaselineByTop = baselineByTop;
+		updateStageMetrics();
+		// TODO : Get rid of timer
+		Native.timer(100, function () {
+			updateStageMetrics();
+		});
+	}
+
+	private function updateStageMetrics() : Void {
+		// untyped console.log('updateStageMetrics', nativeWidget != null, this.callbackFn != null);
+		if (nativeWidget != null && this.metricsFn != null) {
+			RenderSupport.once("drawframe", function() {
+				if (nativeWidget != null) {
+					var prevH = nativeWidget.style.height;
+					nativeWidget.style.height = null;
+
+					var bRect = nativeWidget.getBoundingClientRect();
+
+					var range = Browser.document.createRange();
+					range.selectNodeContents(nativeWidget);
+					var rects = range.getClientRects();
+
+					var maxWidth = 0.0;
+					for (rect in rects) {
+						maxWidth = Math.max(maxWidth, rect.x + rect.width);
+					}
+
+					var paragraphHeight = bRect.height;
+					var baseline : Float = bRect.height;
+
+					var lastChildren = this.children[this.children.length - 1];
+					if (HaxeRuntime.instanceof(lastChildren, TextClip)) {
+						paragraphHeight -= untyped lastChildren.style.leading;
+						var childBaseline : Float = untyped lastChildren.getTextMetrics()[0];
+						if (metricsBaselineByTop) {
+							baseline = childBaseline;
+						} else if (rects.length > 0) {
+							var lastRect = rects[rects.length - 1];
+							baseline = paragraphHeight + (childBaseline - lastRect.height);
+						}
+					}
+
+					this.metricsFn(maxWidth - bRect.x, paragraphHeight, baseline);
+
+					nativeWidget.style.height = prevH;
+				}
+			});
+		}
+	}
+
+	public override function setWidth(widgetWidth : Float) : Void {
+		// untyped console.log('setWidth', widgetWidth);
+		super.setWidth(widgetWidth);
+		updateStageMetrics();
 	}
 }
