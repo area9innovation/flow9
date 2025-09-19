@@ -210,6 +210,1325 @@ class Native {
 	}
 
 	// TODO : Implement native for performance.measureUserAgentSpecificMemory() as well, when it will be supported by browsers.
+
+	public static function createWindowSnapshot() : Dynamic {
+		var snapshot = untyped __js__("{
+			timestamp: Date.now(),
+			properties: new Map(),
+			objectCounts: {},
+			totalSize: 0
+		}");
+
+		untyped __js__("
+			// Capture all window properties
+			for (var key in window) {
+				try {
+					var value = window[key];
+					var type = typeof value;
+					var size = Native.estimateObjectSize(value, new WeakSet(), 0, 2); // Limit depth to avoid infinite recursion
+
+					snapshot.properties.set(key, {
+						type: type,
+						size: size,
+						constructor: value && value.constructor ? value.constructor.name : 'unknown',
+						isArray: Array.isArray(value),
+						length: value && value.length !== undefined ? value.length : -1
+					});
+
+					snapshot.totalSize += size;
+					snapshot.objectCounts[type] = (snapshot.objectCounts[type] || 0) + 1;
+				} catch (e) {
+					// Some properties might not be accessible
+					snapshot.properties.set(key, { error: e.message });
+				}
+			}
+		");
+
+		return snapshot;
+	}
+
+	public static function estimateObjectSize(obj : Dynamic, visited : Dynamic, currentDepth : Int, maxDepth : Int) : Int {
+		var size = 0;
+		untyped __js__("
+			if (currentDepth > maxDepth || visited.has(obj)) return 0;
+
+			var type = typeof obj;
+
+			if (type === 'boolean') return 4;
+			if (type === 'number') return 8;
+			if (type === 'string') return obj.length * 2;
+			if (obj === null || obj === undefined) return 0;
+
+			if (type === 'object') {
+				visited.add(obj);
+
+				// Count property names
+				for (var key in obj) {
+					size += key.length * 2; // Property name size
+					try {
+						size += Native.estimateObjectSize(obj[key], visited, currentDepth + 1, maxDepth);
+					} catch (e) {
+						// Skip inaccessible properties
+					}
+				}
+			}
+		");
+		return size;
+	}
+
+	public static function compareWindowSnapshots(beforeSnapshot : Dynamic, afterSnapshot : Dynamic) : Dynamic {
+		var diff = untyped __js__("{
+			newProperties: [],
+			changedProperties: [],
+			sizeDifferences: [],
+			totalSizeChange: afterSnapshot.totalSize - beforeSnapshot.totalSize
+		}");
+
+		untyped __js__("
+			// Find new properties and changed properties
+			for (var entry of afterSnapshot.properties) {
+				var key = entry[0];
+				var afterValue = entry[1];
+
+				if (!beforeSnapshot.properties.has(key)) {
+					diff.newProperties.push(Object.assign({ key: key }, afterValue));
+				} else {
+					var beforeValue = beforeSnapshot.properties.get(key);
+					var sizeChange = afterValue.size - beforeValue.size;
+
+					if (sizeChange !== 0) {
+						diff.changedProperties.push({
+							key: key,
+							sizeBefore: beforeValue.size,
+							sizeAfter: afterValue.size,
+							sizeChange: sizeChange,
+							typeBefore: beforeValue.type,
+							typeAfter: afterValue.type
+						});
+					}
+				}
+			}
+
+			// Sort by size change (largest first)
+			diff.changedProperties.sort(function(a, b) { return Math.abs(b.sizeChange) - Math.abs(a.sizeChange); });
+			diff.newProperties.sort(function(a, b) { return b.size - a.size; });
+
+			// Add summary information needed by printMemoryLeakReport
+			diff.summary = {
+				totalSizeChange: diff.totalSizeChange,
+				newPropertiesCount: diff.newProperties.length,
+				changedPropertiesCount: diff.changedProperties.length,
+				significantChanges: diff.changedProperties.filter(function(p) {
+					return Math.abs(p.sizeChange) > 1000; // Changes > 1KB
+				}),
+				topNewProperties: diff.newProperties.slice(0, 10),
+				topChangedProperties: diff.changedProperties.slice(0, 10)
+			};
+		");
+
+		return diff;
+	}
+
+	public static function detectWindowMemoryLeaks() : Dynamic {
+		return untyped __js__("
+			var snapshot1 = Native.createWindowSnapshot();
+
+			return {
+				takeInitialSnapshot: function() {
+					snapshot1 = Native.createWindowSnapshot();
+					return snapshot1;
+				},
+
+				compareCurrent: function() {
+					var snapshot2 = Native.createWindowSnapshot();
+					var diff = Native.compareWindowSnapshots(snapshot1, snapshot2);
+
+					// Add summary information
+					diff.summary = {
+						totalSizeChange: diff.totalSizeChange,
+						newPropertiesCount: diff.newProperties.length,
+						changedPropertiesCount: diff.changedProperties.length,
+						significantChanges: diff.changedProperties.filter(function(p) {
+							return Math.abs(p.sizeChange) > 1000; // Changes > 1KB
+						}),
+						topNewProperties: diff.newProperties.slice(0, 10),
+						topChangedProperties: diff.changedProperties.slice(0, 10)
+					};
+
+					return diff;
+				},
+
+				getFlowSpecificChanges: function() {
+					var snapshot2 = Native.createWindowSnapshot();
+					var flowChanges = [];
+					var flowPatterns = [
+						/^(Flow|Haxe|Material|RenderSupport|Native)/,
+						/Manager$/,
+						/Behaviour$/,
+						/Transform$/,
+						/^M[A-Z]/, // Material components
+						/_struct/,
+						/_id$/
+					];
+
+					for (var entry of snapshot2.properties) {
+						var key = entry[0];
+						var afterValue = entry[1];
+						var isFlowRelated = flowPatterns.some(function(pattern) { return pattern.test(key); });
+
+						if (isFlowRelated) {
+							var beforeValue = snapshot1.properties.get(key);
+							if (!beforeValue) {
+								flowChanges.push(Object.assign({
+									type: 'NEW',
+									key: key
+								}, afterValue));
+							} else if (beforeValue.size !== afterValue.size) {
+								flowChanges.push({
+									type: 'CHANGED',
+									key: key,
+									sizeBefore: beforeValue.size,
+									sizeAfter: afterValue.size,
+									sizeChange: afterValue.size - beforeValue.size
+								});
+							}
+						}
+					}
+
+					return flowChanges.sort(function(a, b) {
+						var aSize = a.sizeChange || a.size || 0;
+						var bSize = b.sizeChange || b.size || 0;
+						return Math.abs(bSize) - Math.abs(aSize);
+					});
+				},
+
+				categorizeWindowObjects: function() {
+					var snapshot = Native.createWindowSnapshot();
+					var categories = {
+						functions: [],
+						objects: [],
+						arrays: [],
+						domElements: [],
+						eventListeners: [],
+						timers: [],
+						flowObjects: [],
+						other: []
+					};
+
+					for (var entry of snapshot.properties) {
+						var key = entry[0];
+						var value = entry[1];
+						var item = { key: key, size: value.size, type: value.type };
+
+						try {
+							var actualValue = window[key];
+							if (typeof actualValue === 'function') {
+								categories.functions.push(item);
+							} else if (actualValue && actualValue.nodeType) {
+								categories.domElements.push(item);
+							} else if (Array.isArray(actualValue)) {
+								categories.arrays.push(Object.assign(item, { length: actualValue.length }));
+							} else if (key.match(/^(Flow|Haxe|RenderSupport|MaterialManager)/)) {
+								categories.flowObjects.push(item);
+							} else if (key.includes('event') || key.includes('listener')) {
+								categories.eventListeners.push(item);
+							} else if (key.includes('timer') || key.includes('interval')) {
+								categories.timers.push(item);
+							} else if (typeof actualValue === 'object' && actualValue !== null) {
+								categories.objects.push(item);
+							} else {
+								categories.other.push(item);
+							}
+						} catch (e) {
+							categories.other.push(item);
+						}
+					}
+
+					// Sort each category by size
+					for (var cat in categories) {
+						categories[cat].sort(function(a, b) { return b.size - a.size; });
+					}
+
+					return categories;
+				}
+			};
+		");
+	}
+
+	public static function printMemoryLeakReport(diff : Dynamic) : Void {
+		untyped __js__("
+			if (!diff || !diff.summary) {
+				console.log('No memory leak data available');
+				return;
+			}
+
+			console.group('🔍 Memory Leak Analysis Report');
+
+			console.log('📊 Summary:');
+			console.log('  Total size change:', Math.round(diff.summary.totalSizeChange / 1024) + 'KB');
+			console.log('  New properties:', diff.summary.newPropertiesCount);
+			console.log('  Changed properties:', diff.summary.changedPropertiesCount);
+			console.log('  Significant changes (>1KB):', diff.summary.significantChanges.length);
+
+			if (diff.summary.topNewProperties.length > 0) {
+				console.group('🆕 Top New Properties:');
+				diff.summary.topNewProperties.forEach(function(prop) {
+					console.log('  ' + prop.key + ':', {
+						type: prop.type,
+						size: Math.round(prop.size / 1024) + 'KB',
+						constructor: prop.constructor
+					});
+				});
+				console.groupEnd();
+			}
+
+			if (diff.summary.topChangedProperties.length > 0) {
+				console.group('📈 Top Changed Properties:');
+				diff.summary.topChangedProperties.forEach(function(prop) {
+					console.log('  ' + prop.key + ':', {
+						change: (prop.sizeChange > 0 ? '+' : '') + Math.round(prop.sizeChange / 1024) + 'KB',
+						before: Math.round(prop.sizeBefore / 1024) + 'KB',
+						after: Math.round(prop.sizeAfter / 1024) + 'KB'
+					});
+				});
+				console.groupEnd();
+			}
+
+			console.groupEnd();
+		");
+	}
+
+	public static function createDeepPathSnapshot(rootObject : Dynamic, maxDepth : Int) : Dynamic {
+		var snapshot = untyped __js__("{
+			timestamp: Date.now(),
+			paths: new Map(), // path -> size
+			totalSize: 0
+		}");
+
+		untyped __js__("
+			function traverseObject(obj, currentPath, depth, visited, globalVisited) {
+				if (!obj) return 0;
+
+				var objType = typeof obj;
+				var currentSize = 0;
+
+				// Base size for primitive types
+				if (objType === 'boolean') return 4;
+				if (objType === 'number') return 8;
+				if (objType === 'string') return obj.length * 2;
+				if (objType !== 'object' || obj === null) return 0;
+
+				// For objects, check if we've seen this exact object before (circular reference)
+				if (globalVisited.has(obj)) {
+					return 0; // Don't double-count, but this object's size was already counted
+				}
+
+				globalVisited.add(obj);
+
+				// Count property names for this object
+				for (var key in obj) {
+					currentSize += key.length * 2; // Property name overhead
+				}
+
+				// If we haven't hit max depth, recurse into properties and track paths
+				if (depth < maxDepth) {
+					for (var key in obj) {
+						try {
+							var childObj = obj[key];
+							var childPath = currentPath ? currentPath + '.' + key : key;
+							var childSize = traverseObject(childObj, childPath, depth + 1, visited, globalVisited);
+							currentSize += childSize;
+
+							// Store significant paths for comparison
+							if (childSize > 1000) {
+								snapshot.paths.set(childPath, childSize);
+							}
+						} catch (e) {
+							// Skip inaccessible properties
+						}
+					}
+				} else {
+					// At max depth - estimate remaining size without recursion (like original evaluateObjectSize)
+					for (var key in obj) {
+						try {
+							var childObj = obj[key];
+							var childType = typeof childObj;
+
+							if (childType === 'boolean') currentSize += 4;
+							else if (childType === 'number') currentSize += 8;
+							else if (childType === 'string') currentSize += childObj.length * 2;
+							else if (childType === 'object' && childObj !== null && !globalVisited.has(childObj)) {
+								// Rough estimate for unexplored objects
+								currentSize += 100; // Base object overhead estimate
+							}
+						} catch (e) {
+							// Skip inaccessible properties
+						}
+					}
+				}
+
+				// Store this path's total size if significant
+				if (currentSize > 1000 && currentPath) {
+					snapshot.paths.set(currentPath, currentSize);
+				}
+
+				return currentSize;
+			}
+
+			// Start traversal - use the same approach as original evaluateObjectSize
+			snapshot.totalSize = traverseObject(rootObject, '', 0, new WeakSet(), new WeakSet());
+		");
+
+		return snapshot;
+	}
+
+	// Alternative: Use original evaluateObjectSize with path tracking
+	public static function createAccuratePathSnapshot(rootObject : Dynamic, maxDepth : Int) : Dynamic {
+		var snapshot = untyped __js__("{
+			timestamp: Date.now(),
+			paths: new Map(),
+			totalSize: 0
+		}");
+
+		untyped __js__("
+			// First get accurate total using the original method
+			snapshot.totalSize = Native.evaluateObjectSize(rootObject);
+
+			// Then do path tracking with limited depth for comparison purposes
+			function trackPaths(obj, currentPath, depth, visited) {
+				if (depth > maxDepth || !obj || typeof obj !== 'object' || obj === null || visited.has(obj)) {
+					return;
+				}
+
+				visited.add(obj);
+
+				// Calculate size of this specific object path using limited recursion
+				var pathSize = Native.estimateObjectSize(obj, new WeakSet(), 0, 2);
+
+				if (pathSize > 1000) {
+					snapshot.paths.set(currentPath || 'root', pathSize);
+				}
+
+				// Recurse into properties
+				for (var key in obj) {
+					try {
+						var childPath = currentPath ? currentPath + '.' + key : key;
+						trackPaths(obj[key], childPath, depth + 1, visited);
+					} catch (e) {
+						// Skip inaccessible properties
+					}
+				}
+			}
+
+			// Track paths for comparison
+			trackPaths(rootObject, '', 0, new WeakSet());
+		");
+
+		return snapshot;
+	}
+
+	public static function compareDeepPathSnapshots(beforeSnapshot : Dynamic, afterSnapshot : Dynamic) : Dynamic {
+		var comparison = untyped __js__("{
+			timestamp: Date.now(),
+			totalSizeChange: afterSnapshot.totalSize - beforeSnapshot.totalSize,
+			pathChanges: [],
+			newPaths: [],
+			removedPaths: []
+		}");
+
+		untyped __js__("
+			// Find all unique paths from both snapshots
+			var allPaths = new Set();
+			beforeSnapshot.paths.forEach((size, path) => allPaths.add(path));
+			afterSnapshot.paths.forEach((size, path) => allPaths.add(path));
+
+			// Compare each path
+			allPaths.forEach(path => {
+				var beforeSize = beforeSnapshot.paths.get(path) || 0;
+				var afterSize = afterSnapshot.paths.get(path) || 0;
+				var sizeChange = afterSize - beforeSize;
+
+				if (beforeSize === 0 && afterSize > 0) {
+					// New path
+					comparison.newPaths.push({
+						path: path,
+						size: afterSize,
+						sizeKB: Math.round(afterSize / 1024)
+					});
+				} else if (afterSize === 0 && beforeSize > 0) {
+					// Removed path
+					comparison.removedPaths.push({
+						path: path,
+						size: beforeSize,
+						sizeKB: Math.round(beforeSize / 1024)
+					});
+				} else if (sizeChange !== 0) {
+					// Changed path
+					comparison.pathChanges.push({
+						path: path,
+						beforeSize: beforeSize,
+						afterSize: afterSize,
+						sizeChange: sizeChange,
+						sizeChangeKB: Math.round(sizeChange / 1024),
+						percentChange: beforeSize > 0 ? Math.round((sizeChange / beforeSize) * 100) : 0
+					});
+				}
+			});
+
+			// Sort by absolute change
+			comparison.pathChanges.sort((a, b) => Math.abs(b.sizeChange) - Math.abs(a.sizeChange));
+			comparison.newPaths.sort((a, b) => b.size - a.size);
+			comparison.removedPaths.sort((a, b) => b.size - a.size);
+		");
+
+		return comparison;
+	}
+
+	public static function printDeepPathComparison(comparison : Dynamic) : Void {
+		untyped __js__("
+			console.group('🔍 Deep Path Memory Analysis');
+
+			console.log('📊 Summary:');
+			console.log('  Total size change: ' + Math.round(comparison.totalSizeChange / 1024) + 'KB');
+			console.log('  Paths with changes: ' + comparison.pathChanges.length);
+			console.log('  New paths: ' + comparison.newPaths.length);
+			console.log('  Removed paths: ' + comparison.removedPaths.length);
+
+			if (comparison.pathChanges.length > 0) {
+				console.group('📈 Top 15 Growing Paths:');
+				comparison.pathChanges.slice(0, 15).forEach((change, i) => {
+					var changeStr = (change.sizeChange > 0 ? '+' : '') + change.sizeChangeKB + 'KB';
+					var percentStr = change.percentChange !== 0 ? ' (' + (change.percentChange > 0 ? '+' : '') + change.percentChange + '%)' : '';
+					console.log((i + 1) + '. ' + change.path);
+					console.log('    ' + changeStr + percentStr + ' [' + Math.round(change.beforeSize/1024) + 'KB → ' + Math.round(change.afterSize/1024) + 'KB]');
+				});
+				console.groupEnd();
+			}
+
+			if (comparison.newPaths.length > 0) {
+				console.group('🆕 Top 10 New Paths:');
+				comparison.newPaths.slice(0, 10).forEach((newPath, i) => {
+					console.log((i + 1) + '. ' + newPath.path + ': ' + newPath.sizeKB + 'KB');
+				});
+				console.groupEnd();
+			}
+
+			if (comparison.removedPaths.length > 0) {
+				console.group('🗑️ Top 10 Removed Paths:');
+				comparison.removedPaths.slice(0, 10).forEach((removedPath, i) => {
+					console.log((i + 1) + '. ' + removedPath.path + ': ' + removedPath.sizeKB + 'KB');
+				});
+				console.groupEnd();
+			}
+
+			console.groupEnd();
+		");
+	}
+
+	public static function analyzeFlowMemoryLeaks(beforeSnapshot : Dynamic, afterSnapshot : Dynamic) : Dynamic {
+		var flowChanges = untyped __js__("[]");
+
+		untyped __js__("
+			var flowPatterns = [
+				/^(Flow|Haxe|Material|RenderSupport|Native)/,
+				/Manager$/,
+				/Behaviour$/,
+				/Transform$/,
+				/^M[A-Z]/, // Material components
+				/_struct/,
+				/_id$/
+			];
+
+			// Check new properties
+			for (var entry of afterSnapshot.properties) {
+				var key = entry[0];
+				var afterValue = entry[1];
+				var isFlowRelated = flowPatterns.some(function(pattern) {
+					return pattern.test(key);
+				});
+
+				if (isFlowRelated) {
+					var beforeValue = beforeSnapshot.properties.get(key);
+					if (!beforeValue) {
+						flowChanges.push({
+							type: 'NEW',
+							key: key,
+							size: afterValue.size,
+							constructor: afterValue.constructor
+						});
+					} else if (beforeValue.size !== afterValue.size) {
+						flowChanges.push({
+							type: 'CHANGED',
+							key: key,
+							sizeChange: afterValue.size - beforeValue.size,
+							sizeBefore: beforeValue.size,
+							sizeAfter: afterValue.size
+						});
+					}
+				}
+			}
+
+			// Sort by impact
+			flowChanges.sort(function(a, b) {
+				var aSize = a.sizeChange || a.size || 0;
+				var bSize = b.sizeChange || b.size || 0;
+				return Math.abs(bSize) - Math.abs(aSize);
+			});
+		");
+
+		return flowChanges;
+	}
+
+	public static function createDeepWindowSnapshot() : Dynamic {
+		var snapshot = untyped __js__("{
+			timestamp: Date.now(),
+			properties: new Map(),
+			objectCounts: {},
+			totalSize: 0
+		}");
+
+		untyped __js__("
+			// Capture all window properties with NO depth limit (like original evaluateObjectSize)
+			for (var key in window) {
+				try {
+					var value = window[key];
+					var type = typeof value;
+					var size = Native.estimateObjectSize(value, new WeakSet(), 0, 20); // Much deeper traversal
+
+					snapshot.properties.set(key, {
+						type: type,
+						size: size,
+						constructor: value && value.constructor ? value.constructor.name : 'unknown',
+						isArray: Array.isArray(value),
+						length: value && value.length !== undefined ? value.length : -1
+					});
+
+					snapshot.totalSize += size;
+					snapshot.objectCounts[type] = (snapshot.objectCounts[type] || 0) + 1;
+				} catch (e) {
+					// Some properties might not be accessible
+					snapshot.properties.set(key, { error: e.message });
+				}
+			}
+		");
+
+		return snapshot;
+	}
+
+	public static function analyzeWindowPropertyGrowth(propertyName : String, beforeSnapshot : Dynamic, afterSnapshot : Dynamic) : Dynamic {
+		var result = untyped __js__("{
+			propertyName: propertyName,
+			beforeSize: 0,
+			afterSize: 0,
+			sizeChange: 0,
+			subProperties: []
+		}");
+
+		untyped __js__("
+			// Get the property size from snapshots
+			var beforeProp = beforeSnapshot.properties.get(propertyName);
+			var afterProp = afterSnapshot.properties.get(propertyName);
+
+			if (!beforeProp || !afterProp) {
+				console.log('❌ Property ' + propertyName + ' not found in snapshots');
+				return result;
+			}
+
+			result.beforeSize = beforeProp.size;
+			result.afterSize = afterProp.size;
+			result.sizeChange = afterProp.size - beforeProp.size;
+
+			// Now analyze the actual object to see what's inside it
+			try {
+				var obj = window[propertyName];
+				if (!obj || typeof obj !== 'object') {
+					console.log('⚠️ Property ' + propertyName + ' is not an object, cannot drill down');
+					return result;
+				}
+
+				console.log('🔍 Analyzing sub-properties of ' + propertyName + ':');
+				console.log('   Total change: ' + Math.round(result.sizeChange / 1024) + 'KB');
+				console.log('');
+
+				// Get top-level properties of this object
+				var subProps = [];
+				for (var key in obj) {
+					try {
+						var subObj = obj[key];
+						var subSize = Native.estimateObjectSize(subObj, new WeakSet(), 0, 3);
+						subProps.push({
+							key: key,
+							size: subSize,
+							type: typeof subObj,
+							constructor: subObj && subObj.constructor ? subObj.constructor.name : 'unknown'
+						});
+					} catch (e) {
+						// Skip inaccessible properties
+					}
+				}
+
+				// Sort by size (largest first)
+				subProps.sort(function(a, b) { return b.size - a.size; });
+
+				// Show top 20 largest sub-properties
+				console.log('📊 Top sub-properties by size:');
+				subProps.slice(0, 20).forEach(function(prop, i) {
+					console.log('  ' + (i+1) + '. ' + prop.key + ': ' +
+							   Math.round(prop.size / 1024) + 'KB (' + prop.type + ', ' + prop.constructor + ')');
+				});
+
+				result.subProperties = subProps;
+
+			} catch (e) {
+				console.error('❌ Error analyzing sub-properties:', e);
+			}
+		");
+
+		return result;
+	}
+
+	public static function findSpecificLeaks() : Dynamic {
+		return untyped __js__("{
+			// Take before and after snapshots and analyze specific known leak sources
+			before: null,
+			after: null,
+
+			takeBeforeSnapshot: function() {
+				this.before = Native.createDeepWindowSnapshot();
+				console.log('📸 Before snapshot taken');
+				return this.before;
+			},
+
+			takeAfterSnapshot: function() {
+				this.after = Native.createDeepWindowSnapshot();
+				console.log('📸 After snapshot taken');
+				return this.after;
+			},
+
+			analyzeLeaks: function() {
+				if (!this.before || !this.after) {
+					console.log('❌ Need both before and after snapshots. Call takeBeforeSnapshot() first, then takeAfterSnapshot()');
+					return;
+				}
+
+				console.log('🔍 Analyzing specific leak sources...');
+				console.log('');
+
+				// Analyze major properties that commonly leak
+				var suspiciousProps = [
+					'RenderSupport', 'PIXI', 'MaterialManager', 'FlowFontsManager',
+					'Native', 'HaxeRuntime', 'Platform', 'Errors', 'document'
+				];
+
+				suspiciousProps.forEach(function(propName) {
+					try {
+						var analysis = Native.analyzeWindowPropertyGrowth(propName, this.before, this.after);
+						if (Math.abs(analysis.sizeChange) > 1000) { // Only show changes > 1KB
+							console.log('');
+							console.log('🎯 ' + propName + ' grew by ' + Math.round(analysis.sizeChange / 1024) + 'KB');
+						}
+					} catch (e) {
+						// Skip properties that don't exist
+					}
+				}.bind(this));
+			},
+
+			// Analyze DOM-specific leaks
+			analyzeDOMLeaks: function() {
+				console.log('🔍 Analyzing DOM-specific leaks...');
+
+				try {
+					var beforeNodes = this.before ? this.before.properties.get('document') : null;
+					var afterNodes = this.after ? this.after.properties.get('document') : null;
+
+					if (beforeNodes && afterNodes) {
+						var domGrowth = afterNodes.size - beforeNodes.size;
+						console.log('📄 DOM size change: ' + Math.round(domGrowth / 1024) + 'KB');
+
+						// Count actual DOM elements
+						var elementCount = document.getElementsByTagName('*').length;
+						console.log('🔢 Current DOM elements: ' + elementCount.toLocaleString());
+
+						// Look for common DOM leak patterns
+						this.analyzeDOMElements();
+					}
+				} catch (e) {
+					console.error('❌ Error analyzing DOM leaks:', e);
+				}
+			},
+
+			analyzeDOMElements: function() {
+				var tagCounts = {};
+				var elements = document.getElementsByTagName('*');
+
+				for (var i = 0; i < elements.length; i++) {
+					var tag = elements[i].tagName.toLowerCase();
+					tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+				}
+
+				// Sort by count
+				var sortedTags = Object.keys(tagCounts)
+					.map(function(tag) { return {tag: tag, count: tagCounts[tag]}; })
+					.sort(function(a, b) { return b.count - a.count; });
+
+				console.log('🏷️ DOM elements by type:');
+				sortedTags.slice(0, 10).forEach(function(item) {
+					console.log('  ' + item.tag + ': ' + item.count.toLocaleString());
+				});
+			},
+
+			// Quick workflow: take both snapshots and analyze
+			quickAnalysis: function() {
+				if (!this.before) {
+					console.log('❌ No before snapshot. Taking one now...');
+					this.takeBeforeSnapshot();
+					console.log('💡 Now perform your operations that cause leaks, then call quickAnalysis() again');
+					return;
+				}
+
+				this.takeAfterSnapshot();
+				this.analyzeLeaks();
+				this.analyzeDOMLeaks();
+			},
+
+			// Drill deeper into specific objects that showed leaks
+			drillDown: function(objectPath) {
+				try {
+					var obj = window;
+					var pathParts = objectPath.split('.');
+
+					for (var i = 0; i < pathParts.length; i++) {
+						obj = obj[pathParts[i]];
+						if (!obj) {
+							console.log('❌ Path not found:', objectPath);
+							return;
+						}
+					}
+
+					console.log('🔍 Drilling down into: ' + objectPath);
+					this.analyzeObjectContents(obj, objectPath, 2);
+
+				} catch (e) {
+					console.error('❌ Error drilling down into', objectPath + ':', e);
+				}
+			},
+
+			analyzeObjectContents: function(obj, path, maxDepth) {
+				if (maxDepth <= 0 || !obj || typeof obj !== 'object') return;
+
+				var props = [];
+				for (var key in obj) {
+					try {
+						var subObj = obj[key];
+						var size = Native.estimateObjectSize(subObj, new WeakSet(), 0, 2);
+						props.push({
+							key: key,
+							size: size,
+							type: typeof subObj,
+							constructor: subObj && subObj.constructor ? subObj.constructor.name : 'unknown',
+							isArray: Array.isArray(subObj),
+							length: Array.isArray(subObj) ? subObj.length : -1
+						});
+					} catch (e) {
+						// Skip inaccessible properties
+					}
+				}
+
+				// Sort by size
+				props.sort(function(a, b) { return b.size - a.size; });
+
+				console.log('📊 Contents of ' + path + ':');
+				props.slice(0, 15).forEach(function(prop, i) {
+					var info = Math.round(prop.size / 1024) + 'KB (' + prop.type;
+					if (prop.isArray) info += ', length: ' + prop.length;
+					info += ')';
+					console.log('  ' + (i+1) + '. ' + prop.key + ': ' + info);
+				});
+			}
+		}");
+	}
+
+	/*
+Sampe session:
+
+// Get help anytime
+Native.memoryLeakHelp();
+
+// Start analysis
+Native.memoryLeakStart();
+// Output: "📸 Initial snapshot completed! Total memory: 150MB"
+
+// [Navigate your app, create UI elements, trigger suspected leaks]
+
+// Analyze growth
+Native.memoryLeakAnalyze();
+// Output: "🚨 MEMORY GROWTH DETECTED: +25MB"
+//         "📈 Top Changed Properties:"
+//         "  1. PIXI.utils.TextureCache: +15MB"
+//         "  2. document.head.children: +8MB"
+
+// Get detailed breakdown
+Native.memoryLeakDetails();
+// Output: "🔥 TOP 10 MEMORY GROWTH LOCATIONS:"
+//         "1. 📍 PATH: PIXI.utils.TextureCache"
+//         "   📈 GROWTH: +15MB (300%)"
+//         "   📝 ARRAY LENGTH: 2,847"
+//         "   🔬 SAMPLE TYPES: object, object, object"
+
+// Optional: Monitor ongoing growth
+Native.memoryLeakMonitor();
+// Output: Monitors top growth paths for 2 minutes
+
+// Reset when done
+Native.memoryLeakReset();
+	*/
+	// ============================================================================
+	// CONSOLE MEMORY LEAK ANALYSIS - Easy-to-use functions for browser console
+	// ============================================================================
+	//
+	// USAGE:
+	// 1. Native.memoryLeakStart()        - Take initial snapshot
+	// 2. [Perform operations that cause leaks in your app]
+	// 3. Native.memoryLeakAnalyze()      - Analyze growth and show results
+	// 4. Native.memoryLeakMonitor()      - Optional: Monitor ongoing growth
+	// 5. Native.memoryLeakHelp()         - Show help and usage instructions
+	//
+	// EXAMPLE:
+	//   Native.memoryLeakStart();
+	//   // ... use your app, navigate, create UI elements ...
+	//   Native.memoryLeakAnalyze();
+	//
+	public static function memoryLeakStart() : Void {
+		untyped __js__("
+			console.log('🔍 MEMORY LEAK ANALYSIS - STARTING');
+			console.log('=' + '='.repeat(35));
+			console.log('📸 Taking initial snapshot...');
+			console.log('⏳ Please wait (this may take 10-20 seconds)...');
+
+			try {
+				// Take accurate snapshot
+				window._memoryLeakBefore = Native.createAccuratePathSnapshot(window, 5);
+
+				console.log('✅ Initial snapshot completed!');
+				console.log('📊 Paths captured:', window._memoryLeakBefore.paths.size);
+				console.log('📏 Total memory size:', Math.round(window._memoryLeakBefore.totalSize / 1024 / 1024) + 'MB');
+				console.log('🕐 Time:', new Date(window._memoryLeakBefore.timestamp).toLocaleTimeString());
+				console.log('');
+				console.log('🎯 NOW PERFORM OPERATIONS THAT CAUSE MEMORY LEAKS');
+				console.log('   Then call: Native.memoryLeakAnalyze()');
+
+			} catch (e) {
+				console.error('❌ Error taking snapshot:', e);
+			}
+		");
+	}
+
+	public static function memoryLeakAnalyze() : Void {
+		untyped __js__("
+			console.log('📈 MEMORY LEAK ANALYSIS - ANALYZING');
+			console.log('=' + '='.repeat(35));
+
+			if (!window._memoryLeakBefore) {
+				console.log('❌ No initial snapshot found!');
+				console.log('💡 First run: Native.memoryLeakStart()');
+				return;
+			}
+
+			console.log('📸 Taking final snapshot and comparing...');
+			console.log('⏳ Please wait...');
+
+			try {
+				// Take after snapshot
+				window._memoryLeakAfter = Native.createAccuratePathSnapshot(window, 5);
+
+				console.log('✅ Final snapshot completed!');
+				console.log('📊 Paths captured:', window._memoryLeakAfter.paths.size);
+				console.log('📏 Total memory size:', Math.round(window._memoryLeakAfter.totalSize / 1024 / 1024) + 'MB');
+
+				// Calculate accurate growth
+				var actualGrowth = window._memoryLeakAfter.totalSize - window._memoryLeakBefore.totalSize;
+				console.log('');
+
+				if (actualGrowth < 0) {
+					console.log('✅ MEMORY DECREASED: ' + Math.round(Math.abs(actualGrowth) / 1024 / 1024) + 'MB');
+					console.log('🎉 Memory was freed - this is GOOD news, not a leak!');
+					console.log('📊 Freed bytes: ' + Math.abs(actualGrowth).toLocaleString());
+					console.log('');
+					console.log('💡 No analysis needed - memory is being cleaned up properly.');
+					console.log('🔄 Call Native.memoryLeakReset() to start a new analysis.');
+					return;
+				} else if (actualGrowth < 1000000) { // Less than 1MB growth
+					console.log('ℹ️  SMALL GROWTH DETECTED: ' + Math.round(actualGrowth / 1024 / 1024 * 100) / 100 + 'MB');
+					console.log('📊 Growth in bytes: ' + actualGrowth.toLocaleString());
+					console.log('');
+					if (actualGrowth < 100000) { // Less than 100KB
+						console.log('✅ This is very small and likely normal app usage.');
+						console.log('💡 No detailed analysis needed - this is not a significant leak.');
+						console.log('🔄 Call Native.memoryLeakReset() to start fresh if needed.');
+						return;
+					} else {
+						console.log('ℹ️  Growth is small but measurable. Proceeding with light analysis...');
+					}
+				} else {
+					console.log('🚨 SIGNIFICANT MEMORY GROWTH DETECTED: ' + Math.round(actualGrowth / 1024 / 1024) + 'MB');
+					console.log('📊 Growth in bytes: ' + actualGrowth.toLocaleString());
+					console.log('⚠️  This indicates a potential memory leak!');
+				}
+
+				// Compare paths
+				var comparison = Native.compareDeepPathSnapshots(window._memoryLeakBefore, window._memoryLeakAfter);
+				comparison.totalSizeChange = actualGrowth;
+				window._memoryLeakComparison = comparison;
+
+				// Print results
+				Native.printDeepPathComparison(comparison);
+
+				console.log('');
+				console.log('🎯 DETAILED PATH ANALYSIS:');
+				console.log('💡 Call Native.memoryLeakDetails() for detailed investigation');
+				console.log('📊 Call Native.memoryLeakMonitor() to monitor ongoing growth');
+
+			} catch (e) {
+				console.error('❌ Error during analysis:', e);
+			}
+		");
+	}
+
+	public static function memoryLeakDetails() : Void {
+		untyped __js__("
+			console.log('🕵️ MEMORY LEAK - DETAILED PATH ANALYSIS');
+			console.log('=' + '='.repeat(40));
+
+			if (!window._memoryLeakComparison) {
+				console.log('❌ No analysis data found!');
+				console.log('💡 Run Native.memoryLeakStart() then Native.memoryLeakAnalyze() first');
+				return;
+			}
+
+			var comparison = window._memoryLeakComparison;
+
+			if (comparison.pathChanges.length > 0) {
+				console.log('🔥 TOP 10 MEMORY GROWTH LOCATIONS:');
+
+				comparison.pathChanges.slice(0, 10).forEach(function(change, i) {
+					console.log('\\n' + (i + 1) + '. 📍 PATH: ' + change.path);
+					console.log('    📈 GROWTH: ' + (change.sizeChangeKB > 0 ? '+' : '') + change.sizeChangeKB + 'KB (' + change.percentChange + '%)');
+					console.log('    📏 SIZE: ' + Math.round(change.beforeSize/1024) + 'KB → ' + Math.round(change.afterSize/1024) + 'KB');
+
+					// Try to inspect the actual object
+					try {
+						var pathParts = change.path.split('.');
+						var obj = window;
+
+						for (var j = 0; j < pathParts.length; j++) {
+							var part = pathParts[j];
+							if (obj && typeof obj === 'object' && part in obj) {
+								obj = obj[part];
+							} else {
+								obj = null;
+								break;
+							}
+						}
+
+						if (obj !== null) {
+							console.log('    🔍 TYPE: ' + typeof obj);
+							if (obj.constructor) console.log('    🏗️  CONSTRUCTOR: ' + obj.constructor.name);
+
+							if (Array.isArray(obj)) {
+								console.log('    📝 ARRAY LENGTH: ' + obj.length.toLocaleString());
+								if (obj.length > 0) {
+									var sampleTypes = obj.slice(0, 3).map(function(x) { return typeof x; });
+									console.log('    🔬 SAMPLE TYPES: ' + sampleTypes.join(', '));
+
+									// Show sample content for small arrays
+									if (obj.length <= 10) {
+										console.log('    📄 CONTENT: ' + obj.slice(0, 5).map(function(x) {
+											return typeof x === 'string' ? '\"' + x.substring(0, 20) + '\"' : String(x).substring(0, 20);
+										}).join(', '));
+									}
+								}
+							} else if (typeof obj === 'object' && obj !== null) {
+								var keys = Object.keys(obj);
+								console.log('    🔑 PROPERTIES: ' + keys.length.toLocaleString());
+								if (keys.length > 0 && keys.length <= 10) {
+									console.log('    🏷️  KEYS: ' + keys.join(', '));
+								} else if (keys.length > 10) {
+									console.log('    🏷️  SAMPLE KEYS: ' + keys.slice(0, 5).join(', ') + ', ...');
+								}
+							} else if (typeof obj === 'string') {
+								console.log('    📄 STRING LENGTH: ' + obj.length.toLocaleString());
+								console.log('    👀 PREVIEW: \"' + obj.substring(0, 100) + (obj.length > 100 ? '...' : '') + '\"');
+							}
+						}
+					} catch (e) {
+						console.log('    ❌ Cannot analyze: ' + e.message);
+					}
+				});
+			}
+
+			if (comparison.newPaths.length > 0) {
+				console.log('\\n🆕 TOP 5 NEW OBJECTS:');
+				comparison.newPaths.slice(0, 5).forEach(function(newPath, i) {
+					console.log((i + 1) + '. ' + newPath.path + ': ' + newPath.sizeKB + 'KB');
+				});
+			}
+
+			console.log('\\n💡 TIPS:');
+			console.log('• Look for arrays that keep growing (length increasing)');
+			console.log('• Check for objects with more properties over time');
+			console.log('• Watch for caches that never get cleared');
+			console.log('• Strings that keep getting longer indicate text accumulation');
+		");
+	}
+
+	public static function memoryLeakMonitor() : Void {
+		untyped __js__("
+			console.log('⏱️ MEMORY LEAK - CONTINUOUS MONITORING');
+			console.log('=' + '='.repeat(40));
+
+			if (!window._memoryLeakComparison || !window._memoryLeakComparison.pathChanges.length) {
+				console.log('❌ No growth paths to monitor!');
+				console.log('💡 Run Native.memoryLeakStart() and Native.memoryLeakAnalyze() first');
+				return;
+			}
+
+			// Get top growing paths to monitor
+			var topPaths = window._memoryLeakComparison.pathChanges.slice(0, 5).map(function(c) { return c.path; });
+
+			console.log('🎯 Monitoring these paths for continued growth:');
+			topPaths.forEach(function(path, i) {
+				console.log((i + 1) + '. ' + path);
+			});
+
+			// Store initial sizes for monitoring
+			var initialSizes = new Map();
+
+			topPaths.forEach(function(path) {
+				try {
+					var pathParts = path.split('.');
+					var obj = window;
+
+					for (var i = 0; i < pathParts.length; i++) {
+						var part = pathParts[i];
+						if (obj && typeof obj === 'object' && part in obj) {
+							obj = obj[part];
+						} else {
+							obj = null;
+							break;
+						}
+					}
+
+					if (obj !== null) {
+						var size = Native.estimateObjectSize(obj, new WeakSet(), 0, 2);
+						initialSizes.set(path, size);
+					}
+				} catch (e) {
+					console.log('Cannot monitor ' + path + ': ' + e.message);
+				}
+			});
+
+			console.log('✅ Monitoring started - checking every 10 seconds');
+			console.log('⏹️  Will stop automatically after 2 minutes');
+			console.log('🛑 Or stop manually with: clearInterval(' + 'window._memoryMonitorId' + ')');
+
+			var checkCount = 0;
+			var maxChecks = 12; // 2 minutes
+
+			window._memoryMonitorId = setInterval(function() {
+				checkCount++;
+				var anyChanges = false;
+
+				console.log('\\n📊 Monitor Check #' + checkCount + ':');
+
+				initialSizes.forEach(function(initialSize, path) {
+					try {
+						var pathParts = path.split('.');
+						var obj = window;
+
+						for (var i = 0; i < pathParts.length; i++) {
+							var part = pathParts[i];
+							if (obj && typeof obj === 'object' && part in obj) {
+								obj = obj[part];
+							} else {
+								obj = null;
+								break;
+							}
+						}
+
+						if (obj !== null) {
+							var currentSize = Native.estimateObjectSize(obj, new WeakSet(), 0, 2);
+							var growth = currentSize - initialSize;
+
+							if (Math.abs(growth) > 10000) { // Report changes > 10KB
+								console.log('  📈 ' + path + ': ' + (growth > 0 ? '+' : '') + Math.round(growth/1024) + 'KB');
+								anyChanges = true;
+
+								// Update initial size for next comparison
+								initialSizes.set(path, currentSize);
+							}
+						}
+					} catch (e) {
+						// Skip errors
+					}
+				});
+
+				if (!anyChanges) {
+					console.log('  ✅ No significant changes detected');
+				}
+
+				if (checkCount >= maxChecks) {
+					clearInterval(window._memoryMonitorId);
+					console.log('\\n⏹️ Monitoring stopped after 2 minutes');
+					delete window._memoryMonitorId;
+				}
+			}, 10000);
+		");
+	}
+
+	public static function memoryLeakReset() : Void {
+		untyped __js__("
+			console.log('🗑️ MEMORY LEAK ANALYSIS - RESET');
+			console.log('=' + '='.repeat(30));
+
+			// Clear stored data
+			delete window._memoryLeakBefore;
+			delete window._memoryLeakAfter;
+			delete window._memoryLeakComparison;
+
+			// Stop monitoring if running
+			if (window._memoryMonitorId) {
+				clearInterval(window._memoryMonitorId);
+				delete window._memoryMonitorId;
+				console.log('⏹️ Stopped monitoring');
+			}
+
+			console.log('✅ Analysis data cleared');
+			console.log('💡 Ready for new analysis - call Native.memoryLeakStart()');
+		");
+	}
+
+	public static function memoryLeakHelp() : Void {
+		untyped __js__("
+			console.log('❓ MEMORY LEAK ANALYSIS - HELP & USAGE');
+			console.log('=' + '='.repeat(40));
+			console.log('');
+			console.log('🎯 BASIC USAGE (4 simple steps):');
+			console.log('  1. Native.memoryLeakStart()     - Take initial snapshot');
+			console.log('  2. [Use your app - navigate, create UI, etc.]');
+			console.log('  3. Native.memoryLeakAnalyze()   - Find what grew');
+			console.log('  4. Native.memoryLeakDetails()   - See detailed analysis');
+			console.log('');
+			console.log('📊 AVAILABLE FUNCTIONS:');
+			console.log('  Native.memoryLeakStart()        - Begin analysis (takes snapshot)');
+			console.log('  Native.memoryLeakAnalyze()      - Compare & find memory growth');
+			console.log('  Native.memoryLeakDetails()      - Detailed breakdown of growth');
+			console.log('  Native.memoryLeakMonitor()      - Monitor ongoing growth (2 min)');
+			console.log('  Native.memoryLeakReset()        - Clear data & start fresh');
+			console.log('  Native.memoryLeakHelp()         - Show this help');
+			console.log('');
+			console.log('💡 EXAMPLE WORKFLOW:');
+			console.log('  > Native.memoryLeakStart()');
+			console.log('  📸 Initial snapshot taken...');
+			console.log('  [Navigate your app, trigger suspected leak]');
+			console.log('  > Native.memoryLeakAnalyze()');
+			console.log('  📈 Shows: \"PIXI.utils.TextureCache grew +45MB\"');
+			console.log('  > Native.memoryLeakDetails()');
+			console.log('  🔍 Shows: \"Array length: 1,234 textures\"');
+			console.log('');
+			console.log('🎯 WHAT TO LOOK FOR:');
+			console.log('  • Arrays that keep getting longer');
+			console.log('  • Objects with more properties over time');
+			console.log('  • Caches that never get cleared');
+			console.log('  • Strings that keep growing');
+			console.log('  • Texture/image data accumulating');
+			console.log('');
+			console.log('⚡ QUICK CHECK - Current memory:');
+			console.log('  Total: ' + Math.round(Native.evaluateObjectSize(window) / 1024 / 1024) + 'MB');
+			console.log('  PIXI textures: ' + Object.keys(PIXI.utils.TextureCache).length);
+			console.log('  DOM elements: ' + document.querySelectorAll('*').length.toLocaleString());
+		");
+	}
+
+	public static function analyzeStyleElementsLeak() : Void {
+		untyped __js__("
+			console.log('🎨 Analyzing Style Elements Leak:');
+			console.log('');
+
+			var styleElements = document.querySelectorAll('style');
+			console.log('📊 Total <style> elements: ' + styleElements.length);
+
+			if (styleElements.length > 20) {
+				console.log('⚠️  WARNING: ' + styleElements.length + ' style elements is excessive!');
+				console.log('   This suggests CSS is being added without cleanup.');
+				console.log('');
+			}
+
+			// Analyze style content
+			var totalStyleContent = 0;
+			var styleSources = {};
+			var duplicateStyles = 0;
+			var seenContent = new Set();
+
+			for (var i = 0; i < Math.min(styleElements.length, 50); i++) {
+				var style = styleElements[i];
+				var content = style.textContent || style.innerHTML || '';
+				var contentLength = content.length;
+				totalStyleContent += contentLength;
+
+				// Check for duplicates
+				if (seenContent.has(content) && content.length > 10) {
+					duplicateStyles++;
+				}
+				seenContent.add(content);
+
+				// Try to identify source
+				var source = 'unknown';
+				if (content.includes('pixi')) source = 'PIXI';
+				else if (content.includes('material') || content.includes('Material')) source = 'Material';
+				else if (content.includes('flow') || content.includes('Flow')) source = 'Flow';
+				else if (content.includes('font')) source = 'Font';
+				else if (content.length < 100) source = 'small';
+				else source = 'large';
+
+				styleSources[source] = (styleSources[source] || 0) + 1;
+
+				// Show first few for inspection
+				if (i < 5) {
+					console.log('Style ' + (i+1) + ': ' + contentLength + ' chars, source: ' + source);
+					if (contentLength < 200) {
+						console.log('   Content: ' + content.substring(0, 100) + (content.length > 100 ? '...' : ''));
+					}
+				}
+			}
+
+			console.log('');
+			console.log('📈 Style Statistics:');
+			console.log('   Total style content: ' + Math.round(totalStyleContent / 1024) + 'KB');
+			console.log('   Duplicate styles: ' + duplicateStyles);
+			console.log('   Average size per style: ' + Math.round(totalStyleContent / styleElements.length) + ' chars');
+
+			console.log('');
+			console.log('🏷️  Style sources:');
+			Object.keys(styleSources).forEach(function(source) {
+				console.log('   ' + source + ': ' + styleSources[source] + ' elements');
+			});
+
+			// Recommendations
+			console.log('');
+			console.log('💡 Recommendations:');
+			if (styleElements.length > 50) {
+				console.log('   🔴 CRITICAL: ' + styleElements.length + ' style elements indicates a severe CSS leak');
+				console.log('   🔧 Check for: CSS being added on every render/update cycle');
+			}
+			if (duplicateStyles > 5) {
+				console.log('   🟡 ' + duplicateStyles + ' duplicate styles - check for redundant CSS insertion');
+			}
+			if (styleSources.PIXI > 10) {
+				console.log('   🎯 PIXI styles: ' + styleSources.PIXI + ' - check PIXI CSS generation');
+			}
+		");
+	}
+
 #end
 
 	private static function copyAction(textArea : Dynamic) {

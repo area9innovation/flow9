@@ -44,6 +44,7 @@ export {
 	///////////////////////////
 	getTextSize(text : string, style : [CharacterStyle]) -> TextSize;
 	getOneCharWidth(fontSize : double) -> double;
+	dontKeepFamilyTextFields(family : string) -> void;
 }
 
 // A helper for the case where the form does not have any specific ascent, descent or leading
@@ -54,8 +55,27 @@ makeMetrics(width : double, height : double) -> FormMetrics {
 // This is common enough to have a specific instance
 zeroMetrics = FormMetrics(0.0, 0.0, 0.0, 0.0);
 
+FamilyTextFieldsEntry(
+	n : native,
+	lastUsedAt : ref double
+);
+
 // For quick lookup of sizes, we keep a cache of textfields for each family
-familyTextFields : ref Tree<string, native> = ref makeTree();
+familyTextFields : ref Tree<string, FamilyTextFieldsEntry> = ref makeTree();
+dontKeepFamilyTextFieldsRef : ref Set<string> = ref makeSet();
+dontKeepFamilyTextFields(family : string) -> void {
+	dontKeepFamilyTextFieldsRef := insertSet(^dontKeepFamilyTextFieldsRef, family);
+}
+
+familyTextFieldsDummy = {
+	setInterval(5000, \-> {
+		t0 = timestamp();
+		familyTextFields := filterTree(^familyTextFields, \key, entry -> {
+			!containsSet(^dontKeepFamilyTextFieldsRef, key) || (t0 - ^(entry.lastUsedAt) <= 5000.)
+		});
+	});
+	true;
+}
 
 getStaticFormSizeReal(form : Form, getExactTopPoint : bool, langAttribute : Maybe<string>, localizationEnabled : bool) -> FormMetrics {
 	switch(form: Form) {
@@ -69,18 +89,14 @@ getStaticFormSizeReal(form : Form, getExactTopPoint : bool, langAttribute : Mayb
 				locaLizedT = if (localizationEnabled) localizeNumbers(t) else t;
 				family = getMappedFontFace(s);
 				family_lang = family + either(langAttribute, "");
-				textField = switch (lookupTree(^familyTextFields, family_lang)) {
-					None(): {
-						tf = makeTextfield(family);
-						maybeApply(langAttribute, \la ->
-							setAccessAttributes(tf, [["lang", la]])
-						);
-						maybeApply(tryExtractStruct(s, WordSpacing(zero)), \ws -> setTextWordSpacing(tf, getValue(ws.spacing)));
-						familyTextFields := setTree(^familyTextFields, family_lang, tf);
-						tf;
-					}
-					Some(tf): tf;
-				}
+				textFieldE = lookupTreeSet(familyTextFields, family_lang, \__ -> {
+					tf = makeTextfield(family);
+					maybeApply(langAttribute, \la -> setAccessAttributes(tf, [["lang", la]]));
+					maybeApply(tryExtractStruct(s, WordSpacing(zero)), \ws -> setTextWordSpacing(tf, getValue(ws.spacing)));
+					FamilyTextFieldsEntry(tf, ref timestamp());
+				});
+				textFieldE.lastUsedAt := timestamp();
+				textField = textFieldE.n;
 				defineTextStyle(textField, locaLizedT, s);
 				setTextPreventCheckTextNodeWidth(textField, contains(s, PreventTextNodeWidthCalculation()));
 				rtl = extractStruct(s, SetRTL(getDefaultRtl())).rtl;
