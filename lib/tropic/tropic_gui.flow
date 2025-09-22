@@ -6,6 +6,7 @@ import ui/fontmapping;
 import fusion_utils;
 import fform/renderfform;
 import tropic/tropic_manager;
+import tropic/print_listeners_utils;
 import fform/renderform3d;
 import fform/fpdf;
 import ui/scrollable;
@@ -3422,9 +3423,7 @@ TPrintTarget(t : Tropic) -> Tropic {
 
 	TConstruct(
 		[
-			\ -> \ -> next(printMode, false),
-			\ -> addEventListener(getStage(), "beforeprint", \ -> next(printMode, true)),
-			\ -> addEventListener(getStage(), "afterprint", \ -> next(printMode, false))
+			\-> fconnect(getGlobalPrintModeState(), printMode)
 		],
 		TFullWindow(printMode, t)
 	)
@@ -3436,12 +3435,10 @@ TPrintPages(t : Transform<[Tropic]>) -> Tropic {
 
 	TConstruct(
 		[
-			\ -> \ -> next(printMode, false),
+			\-> fconnect(getGlobalPrintModeState(), printMode),
 			\ -> addEventListener(getStage(), "beforeprint", \ -> {
 				next(stageWH, WidthHeight(getStageWidth(), getStageHeight()));
-				next(printMode, true);
 			}),
-			\ -> addEventListener(getStage(), "afterprint", \ -> next(printMode, false)),
 			make2SubscribeUns(printMode, TPrintPageSize, \pm, sz -> {
 				eitherMap(sz, \ssz -> if (pm) [setPrintPageSize(ssz.width, ssz.height)] else [], []);
 			})
@@ -3465,40 +3462,8 @@ TPrintPages(t : Transform<[Tropic]>) -> Tropic {
 	)
 }
 
-globalPrintModeB : DynamicBehaviour<bool> = make(false);
-globalPrintListenersRefCount : ref int = ref 0;
-globalPrintListenersDisposer : ref Maybe<() -> void> = ref None();
-setUnsetGlobalPrintListeners() -> () -> void {
-	globalPrintListenersRefCount := ^globalPrintListenersRefCount + 1;
-	if (^globalPrintListenersRefCount == 1) {
-		devtrace("setUnsetGlobalPrintListeners: Setting up global print listeners");
-		disposers = [
-			addEventListener(getStage(), "beforeprint", \ -> next(globalPrintModeB, true)),
-			addEventListener(getStage(), "afterprint", \ -> next(globalPrintModeB, false))
-		];
-
-		globalPrintListenersDisposer := Some(\ -> {
-			devtrace("setUnsetGlobalPrintListeners: Disposing global print listeners");
-			applyall(disposers);
-			globalPrintListenersDisposer := None();
-		});
-	}
-	\ -> {
-		globalPrintListenersRefCount := ^globalPrintListenersRefCount - 1;
-		if (^globalPrintListenersRefCount <= 0) {
-			maybeApply(^globalPrintListenersDisposer, \dispose -> dispose());
-			next(globalPrintModeB, false);
-		}
-	}
-}
-
 TIfPrint(then : Tropic, elset : Tropic) -> Tropic {
-	TConstruct(
-		[
-			setUnsetGlobalPrintListeners
-		],
-		TIf(globalPrintModeB, then, elset)
-	)
+	TIf(getGlobalPrintModeState(), then, elset)
 }
 
 TExtractHTML(t : Tropic, setfn : (fn : () -> string) -> void) -> Tropic {
