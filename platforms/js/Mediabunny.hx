@@ -192,7 +192,10 @@ class Mediabunny {
 						}
 
 						const outputFile = new Blob([output.target.buffer], { type: mimeType });
-						console.log('[Debug] Created blob with MIME type:', mimeType, 'size:', outputFile.size);
+						Object.assign(outputFile, {
+							name: file.name,
+						})
+						console.log('[Debug] Created blob' , outputFile.name, 'with MIME type:', mimeType, 'size:', outputFile.size);
 
 						cb(outputFile);
 
