@@ -3470,18 +3470,41 @@ TIfPrint(then : Tropic, elset : Tropic) -> Tropic {
 	TIfPrintCommon(then, elset, make(false))
 }
 
+globalPrintModeB : DynamicBehaviour<bool> = make(false);
+globalPrintListenersRefCount : ref int = ref 0;
+globalPrintListenersDisposer : ref Maybe<() -> void> = ref None();
+setUnsetGlobalPrintListeners() -> () -> void {
+	globalPrintListenersRefCount := ^globalPrintListenersRefCount + 1;
+	if (^globalPrintListenersRefCount == 1) {
+		devtrace("setUnsetGlobalPrintListeners: Setting up global print listeners");
+		disposers = [
+			addEventListener(getStage(), "beforeprint", \ -> next(globalPrintModeB, true)),
+			addEventListener(getStage(), "afterprint", \ -> next(globalPrintModeB, false))
+		];
+
+		globalPrintListenersDisposer := Some(\ -> {
+			devtrace("setUnsetGlobalPrintListeners: Disposing global print listeners");
+			applyall(disposers);
+			globalPrintListenersDisposer := None();
+		});
+	}
+	\ -> {
+		globalPrintListenersRefCount := ^globalPrintListenersRefCount - 1;
+		if (^globalPrintListenersRefCount <= 0) {
+			maybeApply(^globalPrintListenersDisposer, \dispose -> dispose());
+			next(globalPrintModeB, false);
+		}
+	}
+}
+
 TIfPrintCommon(then : Tropic, elset : Tropic, printMode : DynamicBehaviour<bool>) -> Tropic {
 	TConstruct(
 		[
-			\ -> \ -> next(printMode, false),
-			\ -> addEventListener(getStage(), "beforeprint", \ -> next(printMode, true)),
-			\ -> addEventListener(getStage(), "afterprint", \ -> next(printMode, false))
+			setUnsetGlobalPrintListeners,
+			\-> fconnect(globalPrintModeB, printMode),
+			\ -> \ -> next(printMode, false)
 		],
-		TIf(
-			printMode,
-			then,
-			elset
-		)
+		TIf(printMode, then, elset)
 	)
 }
 
