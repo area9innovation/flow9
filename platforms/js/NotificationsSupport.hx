@@ -230,7 +230,6 @@ class NotificationsSupport {
     }
 
     private static function callbackNotification(payload : Dynamic) : Void {
-		js.Browser.console.log("aaaaaaa");
         var data : Array<Array<String>> = [];
         if (payload.data) {
             var payloadData : Dynamic = payload.data;
