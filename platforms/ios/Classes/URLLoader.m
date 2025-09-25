@@ -107,27 +107,47 @@ static NSMutableArray * queuedRequests;
     [super dealloc];
 }
 
-- (void) checkQueuedRequests {
-    if ([pendingConnections count] == 0 && [queuedRequests count] != 0) {
-        NSUInteger requests_to_start = MIN(MAX_REQUESTS_NUM, [queuedRequests count]);
-        LogI(@"Starting %lu queued HTTP requests...", (unsigned long)requests_to_start);
-        for (int i = 0; i < requests_to_start; ++i) {
-            URLLoader * ldr = [queuedRequests objectAtIndex: 0];
-            [queuedRequests removeObjectAtIndex: 0];
-            [ldr start];
++ (void) checkQueuedRequests {
+    @synchronized(pendingConnections) {
+        @synchronized(queuedRequests) {
+            if ([pendingConnections count] < MAX_REQUESTS_NUM && [queuedRequests count] > 0) {
+                NSUInteger requests_to_start = MIN(MAX_REQUESTS_NUM - [pendingConnections count], [queuedRequests count]);
+                LogI(@"Starting %lu queued HTTP requests...", (unsigned long)requests_to_start);
+                for (int i = 0; i < requests_to_start; ++i) {
+                    if ([queuedRequests count] == 0) break;
+                    
+                    URLLoader * ldr = [queuedRequests objectAtIndex: 0];
+                    if (ldr == nil) {
+                        LogE(@"URLLoader: Found nil object in queuedRequests, removing it");
+                        [queuedRequests removeObjectAtIndex: 0];
+                        continue;
+                    }
+                    
+                    [queuedRequests removeObjectAtIndex: 0];
+                    [ldr start];
+                }
+            }
         }
     }
 }
 
 - (void) removePendingConnection: (NSURLConnection *) conn {
-    [pendingConnections removeObject: conn];
-    [self checkQueuedRequests];
+    @synchronized(pendingConnections) {
+        [pendingConnections removeObject: conn];
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [URLLoader checkQueuedRequests];
+    });
 }
 
 - (void) start {
-    if ([pendingConnections count] > MAX_REQUESTS_NUM) {
-        [queuedRequests addObject: self];
-        return;
+    @synchronized(pendingConnections) {
+        if ([pendingConnections count] >= MAX_REQUESTS_NUM) {
+            @synchronized(queuedRequests) {
+                [queuedRequests addObject: self];
+            }
+            return;
+        }
     }
     
     [[NSFileManager defaultManager] createFileAtPath: tmpFilePath contents: nil attributes: nil];
@@ -136,7 +156,6 @@ static NSMutableArray * queuedRequests;
     if (!cachedFile) {
         LogE(@"Cannot open file at \"%@\" to download \"%@\"", tmpFilePath, self.relativeURL);
         onError();
-        [self autorelease];
         return;
     }
     
@@ -166,9 +185,10 @@ static NSMutableArray * queuedRequests;
     if (connection == nil) {
         LogE(@"Cannot create connection for \"%@\"", self.relativeURL);
         onError();
-        [self autorelease];
     } else {
-        [pendingConnections addObject: connection];
+        @synchronized(pendingConnections) {
+            [pendingConnections addObject: connection];
+        }
         [connection start];
     }
 }
@@ -369,23 +389,33 @@ static NSURL * BaseUrl = [[NSURL alloc] initWithString: DEFAULT_BASE_URL];
 + (void) cancelPendingRequest:(NSString *)relative_url {
     NSURL* url = [NSURL URLWithString: [relative_url stringByAddingPercentEscapesUsingEncoding: NSASCIIStringEncoding] relativeToURL:BaseUrl];
     
-    [self autorelease];
-                  
-    for (NSUInteger i = 0; i < pendingConnections.count; i++) {
-        NSURLRequest* request = [[pendingConnections objectAtIndex:i] currentRequest];
-        
-        if ([request.URL isEqual:url]) {
-            [pendingConnections removeObjectAtIndex:i];
-            return;
+    @synchronized(pendingConnections) {
+        for (NSUInteger i = 0; i < pendingConnections.count; i++) {
+            NSURLConnection* connection = [pendingConnections objectAtIndex:i];
+            NSURLRequest* request = [connection currentRequest];
+            
+            if ([request.URL.absoluteString isEqualToString:url.absoluteString]) {
+                [connection cancel];
+                [pendingConnections removeObjectAtIndex:i];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [URLLoader checkQueuedRequests];
+                });
+                return;
+            }
         }
     }
-                  
-    for (NSUInteger i = 0; i < queuedRequests.count; i++) {
-        URLLoader* loader = [queuedRequests objectAtIndex: i];
-        
-        if ([loader.relativeURL isEqual: relative_url]) {
-            [queuedRequests removeObjectAtIndex:i];
-            return;
+    
+    @synchronized(queuedRequests) {
+        for (NSUInteger i = 0; i < queuedRequests.count; i++) {
+            URLLoader* loader = [queuedRequests objectAtIndex: i];
+            
+            if ([loader.relativeURL isEqualToString: relative_url]) {
+                [queuedRequests removeObjectAtIndex:i];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [URLLoader checkQueuedRequests];
+                });
+                return;
+            }
         }
     }
 }
