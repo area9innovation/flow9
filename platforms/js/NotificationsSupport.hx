@@ -177,18 +177,78 @@ class NotificationsSupport {
         #end
     }
 
-    public static function setBadgerCount(value : Int) : Void {
-        // Not require to be implemented for these targets
+    private static var currentBadgeCount : Int = getBadgerCount();
+
+    private static function hasBadging() : Bool {
+        return untyped navigator.setAppBadge != null && navigator.clearAppBadge != null;
     }
 
-    public static function getBadgerCount() : Int {
+    public static function setBadgerCount(value : Int) : Void {
+        var badgeCount = value < 0 ? 0 : value;
+        currentBadgeCount = badgeCount;
+        saveBadgeCount(badgeCount);
+        #if (js && !flow_nodejs)
+        try {
+            if (hasBadging()) untyped navigator.setAppBadge(badgeCount);
+        } catch (e:Dynamic) {}
+        #end
+    }
+
+    public static function clearBadgeCount() : Void {
+        currentBadgeCount = 0;
+        saveBadgeCount(0);
+        #if (js && !flow_nodejs)
+        try {
+            if (hasBadging()) untyped navigator.clearAppBadge();
+        } catch (e:Dynamic) {}
+        #end
+    }
+
+    public static function incrementBadgeCount() : Void {
+        setBadgerCount(currentBadgeCount + 1);
+    }
+
+    private static function getBadgerCount() : Int {
+        #if js
+        try {
+            var stored = untyped window.localStorage.getItem("flow_badge_count");
+            return stored != null ? Std.parseInt(stored) : 0;
+        } catch (e:Dynamic) {
+            return 0;
+        }
+        #else
         return 0;
+        #end
+    }
+
+    private static function saveBadgeCount(count : Int) : Void {
+        #if js
+        try {
+            untyped window.localStorage.setItem("flow_badge_count", Std.string(count));
+        } catch (e:Dynamic) {}
+        #end
     }
 
     private static function callbackNotification(payload : Dynamic) : Void {
         var data : Array<Array<String>> = [];
         if (payload.data) {
             var payloadData : Dynamic = payload.data;
+
+            // Handle badge property if exists
+            if (Reflect.hasField(payloadData, "badge")) {
+                var badgeValue = Reflect.field(payloadData, "badge");
+                var badgeStr = Std.string(badgeValue);
+
+                if (badgeStr == "inc") {
+                    incrementBadgeCount();
+                } else {
+                    var badgeNum = Std.parseInt(badgeStr);
+                    if (badgeNum != null) {
+                        setBadgerCount(badgeNum);
+                    }
+                }
+            }
+
             // Use Reflect to iterate over JavaScript object properties
             for (key in Reflect.fields(payloadData)) {
                 var value = Reflect.field(payloadData, key);
