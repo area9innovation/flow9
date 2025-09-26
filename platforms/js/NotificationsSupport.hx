@@ -233,6 +233,7 @@ class NotificationsSupport {
         var data : Array<Array<String>> = [];
         if (payload.data) {
             var payloadData : Dynamic = payload.data;
+
             // Handle badge property if exists
             if (Reflect.hasField(payloadData, "badge")) {
                 var badgeValue = Reflect.field(payloadData, "badge");
