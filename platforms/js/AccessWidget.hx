@@ -994,7 +994,7 @@ class AccessWidget extends EventEmitter {
 				case "nodeindex" : nodeindex = parseNodeIndex(attributes.get(key));
 				case "tabindex" : tabindex = Std.parseInt(attributes.get(key));
 				case "autocomplete" : autocomplete = attributes.get(key);
-				case "aria-hidden" : clip.updateIsAriaHidden(attributes.get(key) == "true");
+				case "aria-hidden" : clip.updateIsAriaHidden(attributes.get(key) == "true", true);
 				case "nextWidgetId" : {
 					untyped clip.nextWidgetId = attributes.get(key);
 					RenderSupport.once("stagechanged", function() {
