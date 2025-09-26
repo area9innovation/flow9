@@ -55,7 +55,7 @@ static NSMutableArray * queuedRequests;
     onError = Block_copy(on_error);
     onProgress = Block_copy(on_progress);
     onlyCache = only_cache;
-    requestHeaders = headers;
+    requestHeaders = [headers retain];
     
     self.relativeURL = [relative_url retain];
     
@@ -103,6 +103,7 @@ static NSMutableArray * queuedRequests;
     [lastModifiedResponseHeader release];
     
     [rawRequest release];
+    [requestHeaders release];
     
     [super dealloc];
 }
