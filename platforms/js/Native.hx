@@ -1911,7 +1911,7 @@ Native.memoryLeakReset();
 
 		p = h;
 		cnt -= 1;
-		while (Reflect.hasField(p, "head")) {
+		while (cnt >= 0) {
 			result[cnt] = clos(cnt, p.head);
 			cnt -= 1;
 			p = p.tail;
@@ -1926,6 +1926,21 @@ Native.memoryLeakReset();
 				return li;
 			}
 		);
+	}
+
+	public static function list2arrayByCount(h : Dynamic, count : Int) : Array<Dynamic> {
+		if (count <= 0) {
+		  return untyped Array(0);
+		}
+		var result = untyped Array(count);
+		var cnt = count - 1;
+		var p: Dynamic = h;
+		while (cnt >= 0) {
+			result[cnt] = p.head;
+			cnt -= 1;
+			p = p.tail;
+		}
+		return result;
 	}
 
 	public static inline function bitXor(a : Int, b : Int) : Int {
