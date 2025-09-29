@@ -1911,7 +1911,7 @@ Native.memoryLeakReset();
 
 		p = h;
 		cnt -= 1;
-		while (Reflect.hasField(p, "head")) {
+		while (cnt >= 0) {
 			result[cnt] = clos(cnt, p.head);
 			cnt -= 1;
 			p = p.tail;
@@ -1932,12 +1932,11 @@ Native.memoryLeakReset();
 		if (count <= 0) {
 		  return untyped Array(0);
 		}
-		var cnt = 0;
+		var result = untyped Array(count);
+		var cnt = count - 1;
 		var p: Dynamic = h;
-		var result = untyped Array(cnt);
 
 		p = h;
-		cnt = count - 1;
 		while (cnt >= 0) {
 			result[cnt] = p.head;
 			cnt -= 1;
