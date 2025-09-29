@@ -100,6 +100,7 @@ class Mediabunny {
 		withMediabunnyModule("conversion", function(mediabunnyModule) {
 			var sampleRate = HaxeRuntime.extractStructArguments(params[0])[0];
 			var crop = HaxeRuntime.extractStructArguments(params[1]);
+			var trim = HaxeRuntime.extractStructArguments(params[2]);
 			untyped __js__("
 				(async function() {
 					try {
@@ -163,16 +164,27 @@ class Mediabunny {
 						var audioOptions = {
 							'sampleRate' : sampleRate
 						}
-						var videoOptions = {}
+						var videoOptions = {};
 						// Crop values must be integer greater than 0.
 						if (crop[0] > 0 && crop[1] > 0 && crop[2] > 0 && crop[3] > 0 ) {
 							videoOptions['crop'] = { left: crop[0], top: crop[1], width: crop[2], height: crop[3] };
 						}
+
+						// Trim
+						var trimOption = {};
+						if (trim[0] != 0) Object.assign(trimOption, {
+							start: trim[0],
+						});
+						if (trim[1] != 0) Object.assign(trimOption, {
+							end: trim[1],
+						});
+
 						const conversion = await Conversion.init({
 							input,
 							output,
 							audio : audioOptions,
 							video : videoOptions,
+							trim : trimOption
 						});
 
 						// Execute the conversion
