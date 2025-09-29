@@ -23,6 +23,7 @@ Flow Application → lib/mediabunny.flow → platforms/js/Mediabunny.hx → www/
 |----------|------------|-------------|
 | `mbGetMediaDuration` | `(file: native, cb: (int) -> void)` | Get media duration in seconds |
 | `mbConversion` | `(file: native, format: MBFormat, params: [MBStyle], cb: (native) -> void, onError: (string) -> void)` | Convert media with options |
+| `mbGetVideoInfo` | `(file: native, cb: (width: int, height: int, bitrate: int) -> void)` | Get info about video |
 
 ### Formats (`MBFormat`)
 
@@ -71,6 +72,10 @@ main() {
 				mbConversion(file, MBAudioWAV(), [MBSampleRate(44100)], \outputFile ->
 						saveNativeFileClient("hifi_output", outputFile),
 						\err -> println("Error: " + err));
+
+				// Get video info
+				mbGetVideoInfo(file, \width, height, bitrate ->
+						println("Video info: " + i2s(width) + "x" + i2s(height) + ":" + i2s(bitrate)));
 		}, \err -> println("Load error: " + err))
 }
 ```
@@ -89,6 +94,7 @@ main() {
 - Video conversion (file size + MIME type)
 - Cropping operations
 - Error handling
+- Video info extraction
 
 **Workflow:**
 ```flow

@@ -229,6 +229,57 @@ class Mediabunny {
 		});
 	}
 
+	public static function getVideoInfo(file : Dynamic, callback : (width : Int, height : Int, bitrate : Int) -> Void) : Void {
+		withMediabunnyModule("getVideoInfo", function(mediabunnyModule) {
+			untyped __js__("
+				(async function() {
+					try {
+						// Use the stored module
+						const { Input, BlobSource, ALL_FORMATS } = mediabunnyModule;
+
+						console.log('[Debug] Getting video info for file:', file.name);
+
+						const input = new Input({
+							formats: ALL_FORMATS,
+							source: new BlobSource(file),
+						});
+
+						// Get video track information
+						const videoTrack = await input.getPrimaryVideoTrack();
+
+						let bitrate = 0;
+						let width = 0;
+						let height = 0;
+
+						if (videoTrack) {
+							// Get display dimensions
+							width = videoTrack.displayWidth || 0;
+							height = videoTrack.displayHeight || 0;
+
+							// Compute packet statistics to estimate bitrate
+							try {
+								const stats = await videoTrack.computePacketStats(100);
+								bitrate = Math.round(stats.averageBitrate || 0);
+							} catch (statsError) {
+								console.warn('[Warning] Could not compute packet stats:', statsError);
+								bitrate = 0;
+							}
+						}
+
+						console.log('[Debug] Video info - Width:', width, 'Height:', height, 'Bitrate:', bitrate);
+						callback(width, height, bitrate);
+					} catch (error) {
+						console.error('[Error] getVideoInfo failed:', error);
+						console.error('[Error] Details:', error.message, error.stack);
+						callback(0, 0, 0);
+					}
+				})();
+			");
+		}, function() {
+			callback(0, 0, 0);
+		});
+	}
+
 	public static function getFileInfo(file : Dynamic, callback : (size : Int, type : String, lastModified : Float) -> Void) : Void {
 		untyped __js__("
 			try {

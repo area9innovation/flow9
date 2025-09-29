@@ -26,6 +26,7 @@ isEnableAudioTests() -> bool { true }
 isEnableVideoTests() -> bool { true }
 isEnableAdvancedTests() -> bool { true }
 isEnableTrimmingTests() -> bool { true }
+isEnableVideoInfoTests() -> bool { true }
 isGenerateMode() -> bool {
 	isUrlParameterTrue("generate")  // Use ?generate=true in URL to enable generate mode
 }
@@ -43,6 +44,8 @@ getExpectedChecksums() -> Tree<string, string> {
 
 		// Duration test (expected value in seconds for big_buck_bunny.mp4)
 		Pair("duration_detection", "59.007999999999996"),
+		// Video info test (expected value in width:height:bitrate for big_buck_bunny.mp4)
+		Pair("video_info", "320x180:416289"),
 
 		// Audio conversion
 		Pair("mp3_default", "58ddd3ebd3e581c9e806e68cbac8a9f9"),
@@ -130,6 +133,19 @@ makeFileByBlobUrlP(url : string, fileName : string) -> Promise<native, string> {
 	})
 }
 
+// Promise wrapper for video info extraction
+mbGetVideoInfoP(file : native) -> Promise<Triple<int, int, int>, string> {
+	Promise(\fulfill, reject -> {
+		mbGetVideoInfo(file, \width, height, bitrate -> {
+			if (width <= 0 || height <= 0 || bitrate <= 0) {
+				reject("Invalid video info");
+			} else {
+				fulfill(Triple(width, height, bitrate));
+			}
+		})
+	})
+}
+
 // ==============================================================================
 // UNIT TEST FRAMEWORK
 // ==============================================================================
@@ -140,9 +156,10 @@ TestResult ::= TestPass, TestFail, TestSkip, TestGenerate;
 	TestSkip(testName : string, reason : string);
 	TestGenerate(testName : string, generatedMD5 : string);
 
-TestOutput ::= TestDuration, TestConversion;
+TestOutput ::= TestDuration, TestConversion, TestVideoInfo;
 	TestDuration(duration : int);
 	TestConversion(file : native);
+	TestVideoInfo(width : int, height : int, bitrate : int);
 // Global test results collection (for promise compatibility)
 testResults : ref [TestResult] = ref [];
 
@@ -347,6 +364,45 @@ testTrimmingProcessingP(file : native) -> [Promise] {
 	]
 }
 
+// Test 6: Video Info Unit Tests
+testVideoInfoP(file : native) -> Promise<TestOutput, string> {
+	testName = "Video Info";
+	logProgress(testName);
+
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbGetVideoInfoP(file),
+			\whb -> untriple(whb, \width, height, bitrate -> {
+				expectedChecksums = getExpectedChecksums();
+				expectedVideoInfoStr = lookupTreeDef(expectedChecksums, "video_info", "");
+				actualVideoInfoStr = i2s(width) + "x" + i2s(height) + ":" + i2s(bitrate);
+
+				result = if (isGenerateMode()) {
+					println("🔧 [GENERATE] video_info: \"" + actualVideoInfoStr + "\"");
+					TestGenerate(testName, actualVideoInfoStr);
+				} else if (expectedVideoInfoStr == "") {
+					println("⏩ [SKIP] " + testName + ": No expected video info (Video info: " + actualVideoInfoStr + ")");
+					TestSkip(testName, "No expected video info");
+				} else if (actualVideoInfoStr == expectedVideoInfoStr) {
+					println("✅ [PASS] " + testName + ": Video info = " + actualVideoInfoStr + " (verified)");
+					TestPass(testName, actualVideoInfoStr);
+				} else {
+					println("❌ [FAIL] " + testName + ": Video info mismatch");
+					println("   Expected: " + expectedVideoInfoStr);
+					println("   Actual:   " + actualVideoInfoStr);
+					TestFail(testName, expectedVideoInfoStr, actualVideoInfoStr);
+				};
+				recordTestResult(result);
+				fulfill(TestVideoInfo(width, height, bitrate));
+			}),
+			\error -> {
+				logError(testName, error);
+				reject(error);
+			}
+		)
+	})
+}
+
 // ==============================================================================
 // TEST RESULTS REPORTING
 // ==============================================================================
@@ -419,6 +475,7 @@ main() {
 	enableVideoTests = isEnableVideoTests();
 	enableAdvancedTests = isEnableAdvancedTests();
 	enableTrimmingTests = isEnableTrimmingTests();
+	enableVideoInfoTests = isEnableVideoInfoTests();
 	generateMode = isGenerateMode();
 
 	println("🚀 Starting MediaBunny Unit Test Suite");
@@ -459,6 +516,9 @@ main() {
 						if (enableTrimmingTests)
 							testTrimmingProcessingP(mediaFile)
 						else [],
+						if (enableVideoInfoTests)
+							[testVideoInfoP(mediaFile)]
+						else [],
 					])
 				),
 				\outputs -> {
@@ -487,6 +547,7 @@ main() {
 							switch(output : TestOutput) {
 								TestDuration(__): elementAtMap(^testResults, i, \res -> makeLine(res, None()), defLine(i));
 								TestConversion(file): elementAtMap(^testResults, i, \res -> makeLine(res, Some(file)), defLine(i));
+								TestVideoInfo(width, height, bitrate): elementAtMap(^testResults, i, \res -> makeLine(res, None()), defLine(i));
 							}
 						})
 					))
