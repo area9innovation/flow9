@@ -1935,8 +1935,6 @@ Native.memoryLeakReset();
 		var result = untyped Array(count);
 		var cnt = count - 1;
 		var p: Dynamic = h;
-
-		p = h;
 		while (cnt >= 0) {
 			result[cnt] = p.head;
 			cnt -= 1;
