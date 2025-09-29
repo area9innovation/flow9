@@ -1928,6 +1928,24 @@ Native.memoryLeakReset();
 		);
 	}
 
+	public static function list2arrayByCount(h : Dynamic, count : Int) : Array<Dynamic> {
+		if (count <= 0) {
+		  return untyped Array(0);
+		}
+		var cnt = 0;
+		var p: Dynamic = h;
+		var result = untyped Array(cnt);
+
+		p = h;
+		cnt = count - 1;
+		while (cnt >= 0) {
+			result[cnt] = p.head;
+			cnt -= 1;
+			p = p.tail;
+		}
+		return result;
+	}
+
 	public static inline function bitXor(a : Int, b : Int) : Int {
 		return a ^ b;
 	}
