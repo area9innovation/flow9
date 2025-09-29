@@ -204,8 +204,15 @@ class Mediabunny {
 						}
 
 						const outputFile = new Blob([output.target.buffer], { type: mimeType });
+
+						// Generate output filename with correct extension
+						const originalName = file.name || 'converted_file';
+						const lastDotIndex = originalName.lastIndexOf('.');
+						const baseName = lastDotIndex > 0 ? originalName.substring(0, lastDotIndex) : originalName;
+						const outputFileName = baseName + '.' + finalFormat;
+						
 						Object.assign(outputFile, {
-							name: file.name,
+							name: outputFileName,
 						})
 						console.log('[Debug] Created blob' , outputFile.name, 'with MIME type:', mimeType, 'size:', outputFile.size);
 
