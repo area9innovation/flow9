@@ -101,6 +101,7 @@ class Mediabunny {
 			var sampleRate = HaxeRuntime.extractStructArguments(params[0])[0];
 			var crop = HaxeRuntime.extractStructArguments(params[1]);
 			var trim = HaxeRuntime.extractStructArguments(params[2]);
+			var numberOfChannels = HaxeRuntime.extractStructArguments(params[3])[0];
 			untyped __js__("
 				(async function() {
 					try {
@@ -163,6 +164,11 @@ class Mediabunny {
 
 						var audioOptions = {
 							'sampleRate' : sampleRate
+						}
+						if (numberOfChannels > 0) {
+							Object.assign(audioOptions, {
+								numberOfChannels : numberOfChannels
+							})
 						}
 						var videoOptions = {};
 						// Crop values must be integer greater than 0.
