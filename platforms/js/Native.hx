@@ -3425,6 +3425,7 @@ Native.memoryLeakReset();
 					}
 				};
 
+				mouseMoveIdleFn();
 				Browser.window.addEventListener("pointermove", mouseMoveIdleFn);
 				Browser.window.addEventListener("videoplaying", mouseMoveIdleFn);
 				Browser.window.addEventListener("focus", mouseMoveIdleFn);
