@@ -38,7 +38,7 @@ export {
 		horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, ready : Transform<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
 		enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
 		keysEnabled : Transform<bool>, hintMarkerEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>,
-		theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic;
+		trapFocusEnabled : Transform<bool>, theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic;
 
 	// yield focus to the next/previous focus id. 'gotonext' gives the direction.
 	yieldFocus(manager : MaterialManager, gotonext : bool) -> void;
@@ -337,7 +337,7 @@ addMaterialFocusId(
 ) -> Tropic {
 	next(parent.isInitialized, true);
 	if (importantFocus) {
-		nextDistinct(parent.isImportantChild, true)
+		nextDistinct(parent.extraFeatures.hasImportantChild, true)
 	}
 
 	defaultFocusId = make(-1);
@@ -499,11 +499,11 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 	horizontal : Maybe<bool>, scrollInfo : Maybe<MScrollInfo>, ready : Transform<bool>, focused : DynamicBehaviour<bool>, active : DynamicBehaviour<bool>,
 	enabled : Transform<bool>, focusEnabled : Transform<bool>, behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>,
 	keysEnabled : Transform<bool>, hintMarkerEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>,
-	theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
+	trapFocusEnabled : Transform<bool>, theme : MaterialTheme, rtl : bool, fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
 
 	defaultFocusId = make(-1);
-	isImportantChild = make(false);
-	focusId = fif(isImportantChild, const(0), either(tabOrder, defaultFocusId));
+	hasImportantChild = make(false);
+	focusId = fif(hasImportantChild, const(0), either(tabOrder, defaultFocusId));
 	focusedId = make(-1);
 
 	zorderKeeper = parent == manager.focus || isSome(zorderB);
@@ -566,7 +566,10 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 				pi.transformMatrix,
 				fsubwidthheight(boxWidth, boxHeight),
 				scrollInfo,
-				isImportantChild,
+				MFocusGroupExtraFeatures(
+					hasImportantChild,
+					trapFocusEnabled
+				),
 				rtl,
 				theme,
 				behavioursWithFocusedId,
@@ -640,7 +643,7 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 							f.previousFocusedId ::= foc;
 						}
 					}),
-					makeSubscribe(isImportantChild, \ic -> if (ic) nextDistinct(parent.isImportantChild, ic))
+					makeSubscribe(hasImportantChild, \ic -> if (ic) nextDistinct(parent.extraFeatures.hasImportantChild, ic))
 				]
 				|> (\disps ->
 					if (isIScriptRecording(manager))
@@ -759,10 +762,19 @@ nextFocus(manager : MaterialManager, parent : MFocusGroup, inOrder : bool) -> Ma
 }
 
 yieldFocusVH(manager : MaterialManager, gotonext : bool, vertical : bool) -> void {
-	if (isNone(nextFocusVH(manager, manager.focus, getCurrentFocusedItem(manager), getCurrentFocusedItem(manager), gotonext, vertical))) {
+	curFoc = getCurrentFocusedItem(manager);
+	firstAttempt = nextFocusVH(manager, manager.focus, curFoc, curFoc, gotonext, vertical);
+	if (isNone(firstAttempt)) {
+		curFoc2 = getCurrentFocusedItem(manager);
+		scopeParent = either(maybeBind(curFoc, \cf -> getTrapFocusScope(cf.parent)), manager.focus);
 		resetMFocus(manager);
-		nextFocusVH(manager, manager.focus, None(), None(), gotonext, vertical) |> ignore;
+		nextFocusVH(manager, scopeParent, None(), None(), gotonext, vertical) |> ignore;
 	}
+}
+
+getTrapFocusScope(focusGroup : MFocusGroup) -> Maybe<MFocusGroup> {
+	if (fgetValue(focusGroup.extraFeatures.trapFocusEnabled)) Some(focusGroup)
+	else maybeBind(focusGroup.parent, \p -> getTrapFocusScope(p));
 }
 
 calculateFocusWeight(currentFocus : MFocus, newFocus : MFocus, inOrder : bool, vertical : bool) -> double {
@@ -789,8 +801,8 @@ calculateFocusWeight(currentFocus : MFocus, newFocus : MFocus, inOrder : bool, v
 		dy = newFocusPoint.y - currentFocusPoint.y;
 
 		if (vertical) {
-			if (newFocusPosition.x + newFocusWidthHeight.width < currentFocusPosition.x ||
-				newFocusPosition.x > currentFocusPosition.x + currentFocusWidthHeight.width)
+			if (newFocusPosition.x + newFocusWidthHeight.width <= currentFocusPosition.x ||
+				newFocusPosition.x >= currentFocusPosition.x + currentFocusWidthHeight.width)
 				-doubleMax
 			else if (inOrder && dy >= 0.)
 				dy + abs(dx) * 10.
@@ -799,8 +811,8 @@ calculateFocusWeight(currentFocus : MFocus, newFocus : MFocus, inOrder : bool, v
 			else
 				-doubleMax
 		} else {
-			if (newFocusPosition.y + newFocusWidthHeight.height < currentFocusPosition.y ||
-				newFocusPosition.y > currentFocusPosition.y + currentFocusWidthHeight.height)
+			if (newFocusPosition.y + newFocusWidthHeight.height <= currentFocusPosition.y ||
+				newFocusPosition.y >= currentFocusPosition.y + currentFocusWidthHeight.height)
 				-doubleMax
 			else if (inOrder && dx >= 0.)
 				dx + abs(dy) * 10.
