@@ -823,21 +823,7 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 			result(vs, "double");
 		}
 		FiString(s, __): {
-			vs = stringFold(s, "\"", \acc,code ->
-				acc + if (code < 0x20) {
-					if (code == 0x09) "\\t"
-					else if (code == 0x0a) "\\n"
-					else if (code == 0x0d) "\\r"
-					else "\\u"+lpad(formatHex(code), "0", 4);
-				} else if (code >= 0x80) {
-					"\\u" + lpad(formatHex(code), "0", 4)
-				} else {
-					if (code == 0x22) "\\\""
-					else if (code == 0x5c) "\\\\"
-					else fromCharCode(code);
-				}
-			) + "\"";
-			result(vs, "String");
+			result(makeStringConstant(s), "String");
 		}
 		FiSeq(es, type, __): {
 			if (length(es) == 0) {
@@ -1069,6 +1055,39 @@ emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> s
 		default:
 			"/*TODO*/"
 	}
+}
+
+makeStringConstant(s : string) -> string {
+	limitBytes = 65535; // JVM’s Constant_Utf8 limit: max 65,535 bytes
+	limitChars = limitBytes / 4; // maximum is 4 bytes per char, and
+	l = strlen(s);
+	if (l <= limitChars) {
+		makeStringConstant2(s);
+	} else {
+		strGlue(
+			generate(0, 1 + (l - 1) / limitChars, \i -> {
+				"new String(" + makeStringConstant2(substring(s, i * limitChars, limitChars)) + ")";
+			}),
+			"\n+ "
+		);
+	}
+}
+
+makeStringConstant2(s : string) -> string {
+	stringFold(s, "\"", \acc,code ->
+		acc + if (code < 0x20) {
+			if (code == 0x09) "\\t"
+			else if (code == 0x0a) "\\n"
+			else if (code == 0x0d) "\\r"
+			else "\\u" + lpad(formatHex(code), "0", 4);
+		} else if (code >= 0x80) {
+			"\\u" + lpad(formatHex(code), "0", 4)
+		} else {
+			if (code == 0x22) "\\\""
+			else if (code == 0x5c) "\\\\"
+			else fromCharCode(code);
+		}
+	) + "\"";
 }
 
 emitJavaCompare(ctx : JavaScopeContext, op : string, e1 : FiExp, e2 : FiExp, rtype : string) -> string {
