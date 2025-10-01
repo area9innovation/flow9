@@ -1,0 +1,409 @@
+import text/wildcards;
+import ds/array;
+
+// Comprehensive test suite for wildcards.flow
+// Tests cover:
+// - Basic exact matching and mismatching
+// - Single character wildcard (?) in various positions
+// - Multi-character wildcard (*) in various positions
+// - Consecutive and combined wildcards (**, *?, ?*, etc.)
+// - Character groups [abc] and ranges [a-z]
+// - Negated character groups [!abc] and ranges [!a-z]
+// - Edge cases with brackets (empty [], unclosed [, etc.)
+// - Complex real-world patterns (*.txt, test_*.flow, etc.)
+// - Unicode and special characters
+// - Pathological cases (many wildcards, backtracking, etc.)
+// - Known limitations documented where behavior differs from expectations
+//
+// Known limitations:
+// 1. [!] with empty string matches (negation of empty set)
+// 2. []] cannot match literal ] (closing bracket found immediately)
+//
+// Run with: flowcpp tests/wildcards_test.flow
+
+main() {
+	runIsGlobPatternTests();
+	println("");
+	runMatchesWithGlobPatternTests();
+	quit(0);
+}
+
+runIsGlobPatternTests() {
+	println("Testing isGlobPattern()...\n");
+
+	tests = [
+		TestBool("no wildcards", "hello.txt", false),
+		TestBool("has *", "*.txt", true),
+		TestBool("has ?", "test?.flow", true),
+		TestBool("has [", "test[abc].flow", true),
+		TestBool("has ] but no [", "test].flow", false),
+		TestBool("empty string", "", false),
+		TestBool("", "", false),
+		TestBool("only *", "*", true),
+		TestBool("only ?", "?", true),
+		TestBool("only [", "[", true),
+		TestBool("multiple wildcards", "*test?[abc]*", true),
+		TestBool("path with wildcards", "dir/*/file.txt", true),
+		TestBool("normal path", "dir/subdir/file.txt", false),
+	];
+
+	passedCount = ref 0;
+	failedCount = ref 0;
+
+	iter(tests, \test -> {
+		result = isGlobPattern(test.str);
+		passed = result == test.expected;
+
+		if (passed) {
+			passedCount := ^passedCount + 1;
+			println("✓ PASS: " + test.name);
+		} else {
+			failedCount := ^failedCount + 1;
+			println("✗ FAIL: " + test.name);
+			println("  String: '" + test.str + "'");
+			println("  Expected: " + b2s(test.expected));
+			println("  Got: " + b2s(result));
+		}
+	});
+
+	println("\n" + strRepeat("=", 50));
+	println("isGlobPattern tests: " + i2s(length(tests)));
+	println("Passed: " + i2s(^passedCount));
+	println("Failed: " + i2s(^failedCount));
+
+	if (^failedCount == 0) {
+		println("✓ All isGlobPattern tests passed!");
+	} else {
+		println("✗ Some tests failed.");
+	}
+}
+
+runMatchesWithGlobPatternTests() {
+	println("Testing matchesWithGlobPattern()...\n");
+
+	allTests = [
+		// Basic matching
+		Test("exact match", "hello", "hello", true),
+		Test("exact mismatch", "hello", "world", false),
+		Test("empty string and pattern", "", "", true),
+		Test("empty pattern, non-empty string", "hello", "", false),
+		Test("empty string, non-empty pattern", "", "hello", false),
+
+		// Single character wildcard (?)
+		Test("? matches single char", "a", "?", true),
+		Test("? in middle", "hello", "h?llo", true),
+		Test("? at start", "hello", "?ello", true),
+		Test("? at end", "hello", "hell?", true),
+		Test("multiple ?", "hello", "h?ll?", true),
+		Test("? doesn't match empty", "", "?", false),
+		Test("? doesn't match multiple chars", "ab", "?", false),
+
+		// Wildcard (*)
+		Test("* matches empty", "hello", "hello*", true),
+		Test("* matches single char", "hello", "hell*", true),
+		Test("* matches multiple chars", "hello", "h*", true),
+		Test("* matches everything", "hello", "*", true),
+		Test("* at start", "hello", "*ello", true),
+		Test("* in middle", "hello", "he*lo", true),
+		Test("* multiple times", "hello", "h*l*o", true),
+		Test("empty string with *", "", "*", true),
+
+		// Consecutive wildcards
+		Test("**", "hello", "h**o", true),
+		Test("***", "hello", "***", true),
+		Test("*?", "hello", "*?", true),
+		Test("?*", "hello", "?*", true),
+		Test("*?*", "hello", "*?*", true),
+
+		// Character groups []
+		Test("[abc] matches a", "a", "[abc]", true),
+		Test("[abc] matches b", "b", "[abc]", true),
+		Test("[abc] matches c", "c", "[abc]", true),
+		Test("[abc] doesn't match d", "d", "[abc]", false),
+		Test("[] in middle", "hello", "h[ae]llo", true),
+		Test("[] multiple chars", "hello", "[hi][aeiou]llo", true),
+
+		// Character ranges [a-z]
+		Test("[a-z] matches lowercase", "m", "[a-z]", true),
+		Test("[a-z] at boundaries", "a", "[a-z]", true),
+		Test("[a-z] at boundaries", "z", "[a-z]", true),
+		Test("[0-9] matches digit", "5", "[0-9]", true),
+		Test("[A-Z] matches uppercase", "M", "[A-Z]", true),
+		Test("[a-z] doesn't match uppercase", "M", "[a-z]", false),
+		Test("[0-9] doesn't match letter", "a", "[0-9]", false),
+
+		// Negated character groups [!abc]
+		Test("[!abc] doesn't match a", "a", "[!abc]", false),
+		Test("[!abc] doesn't match b", "b", "[!abc]", false),
+		Test("[!abc] matches d", "d", "[!abc]", true),
+		Test("[!abc] matches x", "x", "[!abc]", true),
+		Test("[!a-z] doesn't match lowercase", "m", "[!a-z]", false),
+		Test("[!a-z] matches uppercase", "M", "[!a-z]", true),
+		Test("[!a-z] matches digit", "5", "[!a-z]", true),
+
+		// Edge cases with brackets
+		Test("empty [] with empty string", "", "[]", true),
+		Test("empty [] with non-empty", "a", "[]", false),
+		// Known limitation: [!] with empty string returns true (negation of empty set matches empty)
+		Test("[!] with empty string (known behavior)", "", "[!]", true),
+		Test("unclosed bracket", "hello", "h[elo", false),
+		// Known limitation: ]] is parsed as empty group followed by ]
+		Test("] in pattern after bracket (limitation)", "]", "[]]", false),
+
+		// Complex patterns
+		Test("*.txt", "file.txt", "*.txt", true),
+		Test("*.txt mismatch", "file.doc", "*.txt", false),
+		Test("test_*.flow", "test_main.flow", "test_*.flow", true),
+		Test("test_?.flow", "test_1.flow", "test_?.flow", true),
+		Test("test_?.flow mismatch", "test_12.flow", "test_?.flow", false),
+		Test("[Tt]est*", "test_file", "[Tt]est*", true),
+		Test("[Tt]est*", "Test_file", "[Tt]est*", true),
+		Test("file[0-9]*.txt", "file1.txt", "file[0-9]*.txt", true),
+		Test("file[0-9]*.txt", "file10.txt", "file[0-9]*.txt", true),
+		Test("file[0-9]*.txt mismatch", "fileA.txt", "file[0-9]*.txt", false),
+
+		// Multiple wildcards and groups
+		Test("*.[ch]", "main.c", "*.[ch]", true),
+		Test("*.[ch]", "main.h", "*.[ch]", true),
+		Test("*.[ch] mismatch", "main.txt", "*.[ch]", false),
+		Test("*test*.flow", "my_test_file.flow", "*test*.flow", true),
+		Test("?[0-9]*", "a123", "?[0-9]*", true),
+		Test("?[0-9]* mismatch", "ab123", "?[0-9]*", false),
+
+		// Special cases
+		Test("- in character group", "-", "[-]", true),
+		Test("pattern longer than string", "hi", "hello", false),
+		Test("string longer than pattern", "hello", "hi", false),
+
+		// Additional edge cases
+		Test("multiple ranges in group", "m", "[a-zA-Z]", true),
+		Test("mixed chars and ranges", "5", "[a-z0-9]", true),
+		Test("range with special chars", "_", "[_-]", true),
+		Test("negated empty [] matches any", "x", "[!]", true),
+		Test("* at start and end", "middle", "*middle*", true),
+		Test("only wildcards **?*?", "anything", "**?*?", true),
+		Test("adjacent character groups", "ab", "[abc][def]", false),
+		Test("adjacent character groups match", "ad", "[abc][def]", true),
+		Test("pattern with only [", "[", "[", false),
+		Test("pattern with only ]", "]", "]", true),
+		Test("single char string vs *?", "x", "*?", true),
+		Test("two char string vs *?", "xy", "*?", true),
+
+		// Real-world patterns
+		Test("*.flow source files", "main.flow", "*.flow", true),
+		Test("test_*.flow", "test_wildcards.flow", "test_*.flow", true),
+		Test("[!.]* hidden files", ".hidden", "[!.]*", false),
+		Test("[!.]* regular files", "visible", "[!.]*", true),
+		Test("temp*", "temp", "temp*", true),
+		Test("temp*", "temporary", "temp*", true),
+		Test("*cache*", "file_cache_tmp", "*cache*", true),
+
+		// Unicode/special characters
+		Test("unicode char", "café", "caf?", true),
+		Test("unicode exact", "café", "café", true),
+		Test("unicode with *", "café", "caf*", true),
+
+		// Stress cases
+		Test("long string *", "a very long string with many words", "*long*many*", true),
+		Test("multiple * greediness", "aaaa", "*a*a*a*a*", true),
+		Test("backtracking case", "aaab", "*a*b", true),
+		Test("complex backtracking", "abcabcabc", "*abc*abc*", true),
+
+		// Pathological cases that could cause issues
+		Test("many * at end", "test", "test*********", true),
+		Test("many ? exact length", "abcd", "????", true),
+		Test("many ? too short", "abc", "????", false),
+		Test("alternating *?", "test", "*?*?", true),
+		Test("* followed by literal at end", "test", "*t", true),
+		Test("* greedy matching", "aaa", "*a", true),
+		Test("no match after *", "abc", "*d", false),
+
+		// Character group edge cases
+		Test("[a] single char group", "a", "[a]", true),
+		Test("[!a] negated single", "b", "[!a]", true),
+		Test("[!a] negated single mismatch", "a", "[!a]", false),
+		Test("[a-a] single char range", "a", "[a-a]", true),
+		Test("[a-c][x-z]", "az", "[a-c][x-z]", true),
+		Test("negated range in path", "M", "[!a-z]", true),
+		Test("multiple non-consecutive ranges", "5", "[0-3a-z5-9]", true),
+
+		// Realistic file patterns
+		Test("backup files", "file.bak", "*.bak", true),
+		Test("temp files prefix", "tmp_12345", "tmp_*", true),
+		Test("version pattern", "file_v1.2.3", "file_v*", true),
+		Test("log files with date", "app_2023-10-01.log", "app_*.log", true),
+		Test("test file pattern", "test_main.flow", "test_*.flow", true),
+		Test("hidden unix files", ".gitignore", ".*", true),
+		Test("not hidden", "visible.txt", "[!.]*", true),
+		Test("c/cpp files", "main.cpp", "*.[ch]*", true),
+
+		// Corner cases with empty parts
+		Test("** collapses", "file", "**file", true),
+		Test("*** collapses", "x", "***x", true),
+		Test("*? order matters", "x", "*?", true),
+		Test("?* vs *?", "ab", "?*", true),
+
+		// More empty string edge cases
+		Test("empty with multiple *", "", "***", true),
+		Test("empty with ?", "", "?", false),
+		Test("empty with []", "", "[abc]", false),
+		Test("empty with *?", "", "*?", false),
+		Test("empty with ?*", "", "?*", false),
+		Test("* matches empty at start", "", "*hello", false),
+		Test("* matches empty at end", "", "hello*", false),
+		Test("only * matches empty", "", "*", true),
+		Test("multiple patterns empty", "", "***?", false),
+		Test("empty with complex", "", "*[abc]?", false),
+
+		// Special and whitespace characters
+		Test("space in string", "hello world", "hello world", true),
+		Test("space with *", "hello world", "hello*world", true),
+		Test("space with ?", "hello world", "hello?world", true),
+		Test("tab character", "hello\tworld", "hello\tworld", true),
+		Test("tab with wildcard", "hello\tworld", "hello*world", true),
+		Test("newline character", "hello\nworld", "hello\nworld", true),
+		Test("newline with *", "hello\nworld", "hello*world", true),
+		Test("multiple spaces", "a  b", "a  b", true),
+		Test("multiple spaces with *", "a  b", "a*b", true),
+		Test("trailing space", "test ", "test ", true),
+		Test("leading space", " test", " test", true),
+		Test("space in pattern", "test", "te st", false),
+
+		// Special characters in patterns
+		Test("digit in pattern", "file123", "file123", true),
+		Test("underscore", "test_file", "test_file", true),
+		Test("hyphen not in range", "test-file", "test-file", true),
+		Test("dot in pattern", "file.txt", "file.txt", true),
+		Test("multiple dots", "file.tar.gz", "file.*.*", true),
+		Test("slash in pattern", "dir/file", "dir/file", true),
+		Test("backslash", "dir\\file", "dir\\file", true),
+		Test("at symbol", "user@host", "user@host", true),
+		Test("hash symbol", "#hashtag", "#hashtag", true),
+		Test("dollar sign", "$var", "$var", true),
+		Test("percent", "100%", "100%", true),
+		Test("ampersand", "A&B", "A&B", true),
+		Test("parentheses", "(test)", "(test)", true),
+		Test("curly braces", "{test}", "{test}", true),
+		Test("plus sign", "a+b", "a+b", true),
+		Test("equals sign", "x=y", "x=y", true),
+		Test("comma", "a,b,c", "a,b,c", true),
+		Test("semicolon", "a;b", "a;b", true),
+		Test("colon", "time:12:30", "time:*:*", true),
+		Test("pipe", "a|b", "a|b", true),
+		Test("tilde", "~user", "~user", true),
+		Test("backtick", "`test`", "`test`", true),
+		Test("single quote", "it's", "it's", true),
+		Test("double quote", "\"test\"", "\"test\"", true),
+
+		// Invalid/malformed pattern cases
+		Test("unclosed [ at start", "test", "[test", false),
+		Test("unclosed [ in middle", "test", "te[st", false),
+		Test("unclosed [ at end", "test", "test[", false),
+		Test("multiple unclosed [", "test", "[[test", false),
+		Test("only [", "x", "[", false),
+		Test("[ followed by ]", "x", "[]", false),
+		Test("multiple consecutive [", "test", "[[abc]]", false),
+		Test("[[ pattern", "test", "[[", false),
+		Test("]] literal chars", "]]", "]]", true),  // Two literal ] characters matching ]]
+		Test("]] doesn't match other", "test", "]]", false),
+
+		// Invalid range patterns
+		Test("reverse range [z-a]", "m", "[z-a]", false),  // Reverse range behavior
+		Test("reverse digit range", "5", "[9-0]", false),
+		Test("incomplete range [a-]", "a", "[a-]", true),  // Treats as literal
+		Test("incomplete range [-z]", "z", "[-z]", true),  // Treats as literal
+		Test("single dash in []", "-", "[-]", true),
+		Test("dash at start [-a-z]", "test-file", "[-a-z]*", true),  // [-a-z] matches dash OR a-z range
+		Test("dash literal matches", "-", "[-a-z]", true),
+
+		// Boundary cases with ranges
+		Test("range boundary before", "m", "[n-z]", false),
+		Test("range boundary after", "m", "[a-l]", false),
+		Test("char before range", "`", "[a-z]", false),  // ` is ASCII 96, a is 97
+		Test("char after range", "{", "[a-z]", false),   // { is ASCII 123, z is 122
+		Test("number vs letter range", "5", "[a-z]", false),
+
+		// Very long patterns and strings
+		Test("long string of same char", strRepeat("a", 100), strRepeat("a", 100), true),
+		Test("long string with *", strRepeat("a", 100), "a*", true),
+		Test("long pattern of ?", strRepeat("a", 50), strRepeat("?", 50), true),
+		Test("long pattern ? too many", strRepeat("a", 50), strRepeat("?", 51), false),
+		Test("long string mismatch", strRepeat("a", 100), strRepeat("b", 100), false),
+
+		// Pathological backtracking scenarios
+		Test("greedy * backtrack 1", "aaaaaaaaab", "*aaaa*aaaa*b", true),
+		Test("greedy * backtrack 2", "abababab", "*ab*ab*ab*", true),
+		Test("greedy * no match", "aaaaaa", "*b", false),
+		Test("many * between chars", "abc", "*a*b*c*", true),
+		Test("many * no match", "abc", "*a*b*d*", false),
+		Test("* matching empty parts", "ac", "*a*b*c*", false),
+
+		// Mixed valid/invalid in character groups
+		Test("[a-z!] with letter", "m", "[a-z!]", true),
+		Test("[a-z!] with !", "!", "[a-z!]", true),
+		// Note: ! at start means negation, so [!a-z0-9] matches chars NOT in a-z or 0-9
+		Test("[!a-z0-9] negated matches special", "_", "[!a-z0-9]", true),
+		Test("[!a-z0-9] negated no match", "5", "[!a-z0-9]", false),
+		Test("[!a-z0-9] negated no match letter", "m", "[!a-z0-9]", false),
+
+		// Empty components
+		Test("pattern just wildcards", "anything", "***???***", true),  // *** matches "anyt", ??? matches "hin", *** matches "g"
+		Test("pattern just * works", "anything", "***", true),
+		Test("just ? needs exact", "abc", "???", true),
+		Test("? requires minimum length", "ab", "???", false),
+
+		// Case sensitivity
+		Test("case sensitive upper", "TEST", "test", false),
+		Test("case sensitive lower", "test", "TEST", false),
+		Test("case sensitive match", "TeSt", "TeSt", true),
+		Test("case in range lower", "A", "[a-z]", false),
+		Test("case in range upper", "a", "[A-Z]", false),
+
+		// Complex real patterns that could fail
+		Test("version semver", "v1.2.3", "v[0-9].[0-9].[0-9]", true),
+		Test("version semver fail", "v1.2.3", "v[0-9].[0-9].[0-9][0-9]", false),
+		Test("email-like", "user@domain.com", "*@*.*", true),
+		Test("url-like", "https://example.com", "http*://*", true),
+		Test("path with wildcards", "dir/subdir/file.txt", "*/*/file.txt", true),
+		Test("path pattern matches multi", "dir/subdir/file.txt", "*/file.txt", true),  // * can match "dir/subdir"
+		Test("path exact match only", "dir/file.txt", "dir/file.txt", true),
+		Test("path wrong depth", "file.txt", "*/file.txt", false),  // No slash in string
+
+		Test("empty string", "empty string", "", false),
+		Test("", "", "", true),
+	];
+
+	passedCount = ref 0;
+	failedCount = ref 0;
+
+	iter(allTests, \test -> {
+		result = matchesWithGlobPattern(test.str, test.pattern);
+		passed = result == test.expected;
+
+		if (passed) {
+			passedCount := ^passedCount + 1;
+			println("✓ PASS: " + test.name);
+		} else {
+			failedCount := ^failedCount + 1;
+			println("✗ FAIL: " + test.name);
+			println("  String: '" + test.str + "'");
+			println("  Pattern: '" + test.pattern + "'");
+			println("  Expected: " + b2s(test.expected));
+			println("  Got: " + b2s(result));
+		}
+	});
+
+	println("\n" + strRepeat("=", 50));
+	println("matchesWithGlobPattern tests: " + i2s(length(allTests)));
+	println("Passed: " + i2s(^passedCount));
+	println("Failed: " + i2s(^failedCount));
+
+	if (^failedCount == 0) {
+		println("✓ All matchesWithGlobPattern tests passed!");
+	} else {
+		println("✗ Some tests failed.");
+	}
+}
+
+Test(name : string, str : string, pattern : string, expected : bool);
+TestBool(name : string, str : string, expected : bool);
