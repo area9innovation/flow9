@@ -67,50 +67,166 @@ isGlobPattern(str : string) -> bool {
 }
 
 matchesWithGlobPattern(str : string, glob : string) -> bool {
-	if (strlen(glob) == 0) {
-		strlen(str) == 0
-	} else {
-		f = strLeft(glob, 1);
-		restGlob = strRight(glob, 1);
+	// Tail-recursive implementation using a work queue
+	// Each work item is a pair (str_position, glob_position)
+	matchesWithGlobPatternTailRec(str, 0, glob, 0, [])
+}
 
-		if (strlen(str) == 0) {
-			if (f == "*") matchesWithGlobPattern(str, restGlob)
-			else if (f == "[") {
-				closeBracket = strFindFirstOf(glob, "]");
-				if (closeBracket >= 0) {
-					_isInRange("", restGlob) && matchesWithGlobPattern("", strRight(glob, closeBracket + 1))
-				} else false
-			} else false
+matchesWithGlobPatternTailRec(str : string, strPos : int, glob : string, globPos : int, workQueue : [Pair<int, int>]) -> bool {
+	strLen = strlen(str);
+	globLen = strlen(glob);
+
+	if (globPos >= globLen) {
+		// Pattern exhausted
+		if (strPos >= strLen) {
+			// Both exhausted - match!
+			true
 		} else {
-			if (f == "*") matchesWithGlobPattern(str, restGlob) || matchesWithGlobPattern(strRight(str, 1), glob)
-			else if (f == "?") matchesWithGlobPattern(strRight(str, 1), restGlob)
-			else if (f == "[") {
-				closeBracket = strFindFirstOf(glob, "]");
+			// Try backtracking from work queue
+			if (length(workQueue) == 0) {
+				false
+			} else {
+				nextWork = workQueue[0];
+				matchesWithGlobPatternTailRec(str, nextWork.first, glob, nextWork.second, tail(workQueue))
+			}
+		}
+	} else {
+		f = getCharAt(glob, globPos);
+
+		if (strPos >= strLen) {
+			// String exhausted, but pattern remains
+			if (f == "*") {
+				// Skip the star and continue
+				matchesWithGlobPatternTailRec(str, strPos, glob, globPos + 1, workQueue)
+			} else if (f == "[") {
+				closeBracket = strFindFirstOf(substring(glob, globPos, globLen - globPos), "]");
 				if (closeBracket >= 0) {
-					_isInRange(strLeft(str, 1), restGlob) && matchesWithGlobPattern(strRight(str, 1), strRight(glob, closeBracket + 1))
-				} else false
-			} else (f == strLeft(str, 1) && matchesWithGlobPattern(strRight(str, 1), restGlob))
+					rangePattern = substring(glob, globPos + 1, closeBracket - 1);
+					if (_isInRangeTailRec("", rangePattern, 0)) {
+						matchesWithGlobPatternTailRec(str, strPos, glob, globPos + closeBracket + 1, workQueue)
+					} else {
+						// Try backtracking
+						if (length(workQueue) == 0) {
+							false
+						} else {
+							nextWork = workQueue[0];
+							matchesWithGlobPatternTailRec(str, nextWork.first, glob, nextWork.second, tail(workQueue))
+						}
+					}
+				} else {
+					// Malformed pattern
+					if (length(workQueue) == 0) {
+						false
+					} else {
+						nextWork = workQueue[0];
+						matchesWithGlobPatternTailRec(str, nextWork.first, glob, nextWork.second, tail(workQueue))
+					}
+				}
+			} else {
+				// Try backtracking
+				if (length(workQueue) == 0) {
+					false
+				} else {
+					nextWork = workQueue[0];
+					matchesWithGlobPatternTailRec(str, nextWork.first, glob, nextWork.second, tail(workQueue))
+				}
+			}
+		} else {
+			// Both string and pattern have characters
+			if (f == "*") {
+				// Star can match zero or more characters
+				// Add backtracking option: try matching star with one more character
+				newWorkQueue = concat(workQueue, [Pair(strPos + 1, globPos)]);
+				// First try: skip the star (match zero characters)
+				matchesWithGlobPatternTailRec(str, strPos, glob, globPos + 1, newWorkQueue)
+			} else if (f == "?") {
+				// Match any single character
+				matchesWithGlobPatternTailRec(str, strPos + 1, glob, globPos + 1, workQueue)
+			} else if (f == "[") {
+				closeBracket = strFindFirstOf(substring(glob, globPos, globLen - globPos), "]");
+				if (closeBracket >= 0) {
+					rangePattern = substring(glob, globPos + 1, closeBracket - 1);
+					currentChar = getCharAt(str, strPos);
+					if (_isInRangeTailRec(currentChar, rangePattern, 0)) {
+						matchesWithGlobPatternTailRec(str, strPos + 1, glob, globPos + closeBracket + 1, workQueue)
+					} else {
+						// Try backtracking
+						if (length(workQueue) == 0) {
+							false
+						} else {
+							nextWork = workQueue[0];
+							matchesWithGlobPatternTailRec(str, nextWork.first, glob, nextWork.second, tail(workQueue))
+						}
+					}
+				} else {
+					// Malformed pattern
+					if (length(workQueue) == 0) {
+						false
+					} else {
+						nextWork = workQueue[0];
+						matchesWithGlobPatternTailRec(str, nextWork.first, glob, nextWork.second, tail(workQueue))
+					}
+				}
+			} else {
+				// Literal character match
+				currentChar = getCharAt(str, strPos);
+				if (f == currentChar) {
+					matchesWithGlobPatternTailRec(str, strPos + 1, glob, globPos + 1, workQueue)
+				} else {
+					// Try backtracking
+					if (length(workQueue) == 0) {
+						false
+					} else {
+						nextWork = workQueue[0];
+						matchesWithGlobPatternTailRec(str, nextWork.first, glob, nextWork.second, tail(workQueue))
+					}
+				}
+			}
 		}
 	}
 }
 
-_isInRange(c : string, glob : string) -> bool {
-	s = firstElement(strSplit(glob, "]"), "");
+_isInRangeTailRec(c : string, glob : string, i : int) -> bool {
+	ch = getCharAt(glob, i);
 
-	w = ref \i -> false;
-	w := \i -> {
-		ch = getCharAt(glob, i);
+	if (ch == "-" && i > 0 && i + 1 < strlen(glob)) {
+		l = getCharCodeAt(glob, i - 1);
+		r = getCharCodeAt(glob, i + 1);
+		f = firstElement(s2a(c), 0);
+		isInRange = l < f && f < r;
 
-		if (ch == "-") {
-			l = getCharCodeAt(glob, i - 1);
-			r = getCharCodeAt(glob, i + 1);
-			f = firstElement(s2a(c), 0);
-			(l < f && f < r) || ^w(i + 1);
-		} else if (ch != "]") {
-			c == ch || ^w(i + 1)
-		} else i == 0 && strlen(c) == 0;
+		// Check if negated
+		isNegated = getCharAt(glob, 0) == "!";
+
+		if (isInRange) {
+			if (isNegated) false else true
+		} else {
+			_isInRangeTailRec(c, glob, i + 1)
+		}
+	} else if (ch != "" && ch != "]") {
+		if (c == ch) {
+			// Check if negated
+			isNegated = getCharAt(glob, 0) == "!";
+			if (isNegated) false else true
+		} else {
+			_isInRangeTailRec(c, glob, i + 1)
+		}
+	} else if (ch == "]" || ch == "") {
+		// Reached end without match
+		if (i == 0 && strlen(c) == 0) {
+			// Empty character matches empty pattern
+			isNegated = getCharAt(glob, 0) == "!";
+			if (isNegated) true else false
+		} else {
+			// No match found
+			isNegated = getCharAt(glob, 0) == "!";
+			if (isNegated) true else false
+		}
+	} else {
+		_isInRangeTailRec(c, glob, i + 1)
 	}
+}
 
-	result = ^w(0);
-	if (getCharAt(s, 0) == "!") !result else result;
+_isInRange(c : string, glob : string) -> bool {
+	_isInRangeTailRec(c, glob, 0)
 }
