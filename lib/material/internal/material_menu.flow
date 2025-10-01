@@ -1580,31 +1580,57 @@ MMenuLines2Material(
 		}
 	}
 
+	confirmFn = extractStruct(style0, MConfirmChange(\cb -> cb(true))).confirm;
+
 	onItemClick = \i, click, isSelected, focused, shouldClose -> \ -> {
-		if (shouldClose()) {
-			nextDistinct(openMenu.opened, false);
-			closeBelow();
+		newIndex = if (i >= shiftGap) i - shiftGap else -1;
+		currentIndex = eitherMap(singleSelection, \ss -> getValue(ss.selected), -1);
+
+		maybeCloseFn = \ -> {
+			if (shouldClose()) {
+				nextDistinct(openMenu.opened, false);
+				closeBelow();
+			}
 		}
 
-		if (i >= shiftGap) {
-			setSelectedFn = \ ->
-				maybeApply(singleSelection, \ss -> {
-					unselectPrevious(ss);
-					if (state.singleSelectionToggle && getValue(ss.selected) == i - shiftGap) {
-						nextFn(ss.selected, -1);
-						nextDistinct(isSelected, false)
-					} else {
-						nextFn(ss.selected, i - shiftGap);
-						nextDistinct(isSelected, true)
-					}
-				});
-			setSelectedFn();
-			if (fgetValue(onListClick.enabled)) onListClick.onClick(i - shiftGap);
+		clickFn = \ -> {
+			if (fgetValue(onListClick.enabled)) onListClick.onClick(newIndex);
 			click(); // action is moved outside delayed code - to solve issue with copying something to clipboard in a firefox.
-		} else if (nonspecAlwaysOnTop && i == 0) maybeApply(singleSelection, \ss -> {
-			unselectPrevious(ss);
-			nextFn(ss.selected, -1)
-		})
+		}
+
+		// Only ask for confirmation if the selection is actually changing
+		if (newIndex != currentIndex || state.singleSelectionToggle) {
+			confirmFn(\isApproved -> {
+				if (isApproved) {
+					maybeCloseFn();
+
+					if (i >= shiftGap) {
+						maybeApply(singleSelection, \ss -> {
+							unselectPrevious(ss);
+							if (state.singleSelectionToggle && currentIndex == newIndex) {
+								nextFn(ss.selected, -1);
+								nextDistinct(isSelected, false)
+							} else {
+								nextFn(ss.selected, newIndex);
+								nextDistinct(isSelected, true)
+							}
+						});
+						clickFn();
+					} else if (nonspecAlwaysOnTop && i == 0) {
+						maybeApply(singleSelection, \ss -> {
+							unselectPrevious(ss);
+							nextFn(ss.selected, -1)
+						})
+					}
+				}
+			})
+		} else {
+			// No change in selection, just execute the click handlers
+			maybeCloseFn();
+			if (i >= shiftGap) {
+				clickFn();
+			}
+		}
 	};
 
 	itemOnTop = \i -> {
