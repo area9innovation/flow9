@@ -24,6 +24,7 @@ Flow Application → lib/mediabunny.flow → platforms/js/Mediabunny.hx → www/
 | `mbGetMediaDuration` | `(file: native, cb: (int) -> void)` | Get media duration in seconds |
 | `mbConversion` | `(file: native, format: MBFormat, params: [MBStyle], cb: (native) -> void, onError: (string) -> void)` | Convert media with options |
 | `mbGetVideoInfo` | `(file: native, cb: (width: int, height: int, bitrate: int) -> void)` | Get info about video |
+| `mbConcatMedia` | `(files: [native], cb: (native) -> void, onError: (string) -> void)` | Concatenate multiple videos into one |
 
 ### Formats (`MBFormat`)
 
@@ -49,8 +50,11 @@ Flow Application → lib/mediabunny.flow → platforms/js/Mediabunny.hx → www/
 | `mbConversion(file, MBAudioWAV(), [MBSampleRate(16000)], cb, onError)` | `ffmpeg -i input -ar 16000 -c:a pcm_s16le output.wav` |
 | `mbConversion(file, MBVideoMP4(), [MBCrop(x,y,w,h)], cb, onError)` | `ffmpeg -i input -filter:v "crop=w:h:x:y" output.mp4` |
 | `mbGetMediaDuration(file, cb)` | `ffprobe -show_entries format=duration input` |
+| `mbConcatMedia([file1, file2, ...], cb, onError)` | `ffmpeg -f concat -i filelist.txt -c copy output.mp4` |
 
-## Usage Example
+## Usage Examples
+
+### Basic Usage
 
 ```flow
 import mediabunny;
@@ -79,6 +83,47 @@ main() {
 		}, \err -> println("Load error: " + err))
 }
 ```
+
+### Media Concatenation
+
+Perfect for joining multiple Amazon Chime recordings or any MP4 videos with consistent encoding:
+
+```flow
+import mediabunny;
+import runtime;
+
+main() {
+	videoUrl = "./images/material_test/big_buck_bunny.mp4";
+
+	makeFileByBlobUrl(videoUrl, "video1", \file1 -> {
+		makeFileByBlobUrl(videoUrl, "video2", \file2 -> {
+			makeFileByBlobUrl(videoUrl, "video3", \file3 -> {
+				// Concatenate videos
+				mbConcatMedia(
+					[file1, file2, file3],
+					\outputFile -> {
+						println("✓ Videos concatenated successfully!");
+						// Save the result
+						saveNativeFileClient("concatenated", outputFile);
+					},
+					\error -> println("✗ Error: " + error)
+				);
+			}, \err -> println("Error loading file3: " + err));
+		}, \err -> println("Error loading file2: " + err));
+	}, \err -> println("Error loading file1: " + err));
+}
+```
+
+**Concatenation Features:**
+- ✅ Preserves video quality (stream copying when possible)
+- ✅ Handles both video and audio tracks
+- ✅ Automatic timestamp adjustment
+- ✅ Client-side processing (no server upload needed)
+
+**Requirements:**
+- All media must be of the same type
+- Recommended: Same resolution and frame rate for best results
+- Media are joined in the order provided in the array
 
 ## Testing
 
