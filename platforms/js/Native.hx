@@ -1928,6 +1928,13 @@ Native.memoryLeakReset();
 		);
 	}
 
+	// WARNING: This function does NOT validate that the list has exactly 'count' elements!
+	// It assumes the list length matches 'count' and will crash or produce undefined
+	// behavior if the list is shorter. The function creates an array of size 'count'
+	// and iterates exactly 'count' times, accessing .head/.tail without checking
+	// for null/EmptyList. ALWAYS ensure your list length equals 'count' parameter!
+	// This is an optimization function - use list2array() for safe conversion when
+	// the exact count is unknown.
 	public static function list2arrayByCount(h : Dynamic, count : Int) : Array<Dynamic> {
 		if (count <= 0) {
 		  return untyped Array(0);
