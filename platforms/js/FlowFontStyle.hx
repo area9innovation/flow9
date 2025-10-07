@@ -14,7 +14,7 @@ class FlowFontStyle {
 		var styles : Dynamic = null;
 
 		for (name in names.split(",")) {
-			var style = fromFlowFont(StringTools.trim(name));
+			var style = fromFlowFont(StringTools.replace(StringTools.trim(name), "'", ""));
 
 			if (style != null) {
 				if (styles == null) {
