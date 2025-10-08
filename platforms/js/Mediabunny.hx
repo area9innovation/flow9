@@ -15,7 +15,7 @@ class Mediabunny {
 						// Use the stored module instead of importing again
 						const { Input, BlobSource, ALL_FORMATS } = mediabunnyModule;
 
-						console.log('[Debug] Using classes from stored module');
+						Mediabunny.devtrace('[Debug Mediabunny] Using classes from stored module');
 
 						const input = new Input({
 							formats: ALL_FORMATS, // Supporting all file formats
@@ -23,7 +23,7 @@ class Mediabunny {
 						});
 
 						duration = await input.computeDuration(); // in seconds
-						console.log('[Debug] Duration computed:', duration);
+						Mediabunny.devtrace('[Debug Mediabunny] Duration computed:', duration);
 						cb(duration);
 					} catch (error) {
 						console.error('[Error] getMediaDuration failed:', error);
@@ -57,7 +57,7 @@ class Mediabunny {
 							Conversion,
 						} = mediabunnyModule;
 
-						console.log('[Debug] Mediabunny conversion - Format:', format, 'Params:', params);
+						Mediabunny.devtrace('[Debug Mediabunny] Mediabunny conversion - Format:', format, 'Params:', params);
 
 						const input = new Input({
 	 						source: new BlobSource(file),
@@ -115,7 +115,7 @@ class Mediabunny {
 						Object.assign(outputFile, {
 							name: outputFileName,
 						});
-						console.log('[Debug] Created blob' , outputFile.name, 'with MIME type:', mimeType, 'size:', outputFile.size);
+						Mediabunny.devtrace('[Debug Mediabunny] Created blob' , outputFile.name, 'with MIME type:', mimeType, 'size:', outputFile.size);
 
 						cb(outputFile);
 
@@ -138,7 +138,7 @@ class Mediabunny {
 						// Use the stored module
 						const { Input, BlobSource, ALL_FORMATS } = mediabunnyModule;
 
-						console.log('[Debug] Getting video info for file:', file.name);
+						Mediabunny.devtrace('[Debug Mediabunny] Getting video info for file:', file.name);
 
 						const input = new Input({
 							formats: ALL_FORMATS,
@@ -167,7 +167,7 @@ class Mediabunny {
 							}
 						}
 
-						console.log('[Debug] Video info - Width:', width, 'Height:', height, 'Bitrate:', bitrate);
+						Mediabunny.devtrace('[Debug Mediabunny] Video info - Width:', width, 'Height:', height, 'Bitrate:', bitrate);
 						callback(width, height, bitrate);
 					} catch (error) {
 						console.error('[Error] getVideoInfo failed:', error);
@@ -188,7 +188,7 @@ class Mediabunny {
 				const type = file.type || 'unknown';
 				const lastModified = file.lastModified || 0;
 
-				console.log('[Debug] File info - Size:', size, 'Type:', type, 'LastModified:', lastModified);
+				Mediabunny.devtrace('[Debug Mediabunny] File info - Size:', size, 'Type:', type, 'LastModified:', lastModified);
 				callback(size, type, lastModified);
 			} catch (error) {
 				console.error('[Error] getFileInfo failed:', error);
@@ -214,14 +214,14 @@ class Mediabunny {
 							EncodedPacketSink
 						} = mediabunnyModule;
 
-						console.log('[Debug] Starting video concatenation for', files.length, 'files');
+						Mediabunny.devtrace('[Debug Mediabunny] Starting video concatenation for', files.length, 'files');
 
 						if (!files || files.length === 0) {
 							throw new Error('No files provided for concatenation');
 						}
 
 						if (files.length === 1) {
-							console.log('[Debug] Only one file provided, returning as-is');
+							Mediabunny.devtrace('[Debug Mediabunny] Only one file provided, returning as-is');
 							cb(files[0]);
 							return;
 						}
@@ -248,7 +248,7 @@ class Mediabunny {
 
 						for (let i = 0; i < files.length; i++) {
 							const file = files[i];
-							console.log('[Debug] Processing file', i + 1, 'of', files.length, ':', file.name);
+							Mediabunny.devtrace('[Debug Mediabunny] Processing file', i + 1, 'of', files.length, ':', file.name);
 
 							const input = new Input({
 								formats: ALL_FORMATS,
@@ -264,7 +264,7 @@ class Mediabunny {
 								const videoCodec = videoInputTrack ? videoInputTrack.codec : null;
 								const audioCodec = audioInputTrack ? audioInputTrack.codec : null;
 
-								console.log('[Debug] Setting up tracks - Video codec:', videoCodec, 'Audio codec:', audioCodec);
+								Mediabunny.devtrace('[Debug Mediabunny] Setting up tracks - Video codec:', videoCodec, 'Audio codec:', audioCodec);
 
 								// Add video track if present
 								if (videoInputTrack && videoCodec) {
@@ -322,6 +322,7 @@ class Mediabunny {
 							// Update total duration for next file
 							const fileDuration = await input.computeDuration();
 							totalDuration += fileDuration;
+							Mediabunny.devtrace('File', i + 1, 'duration:', fileDuration, 's. Total:', totalDuration, 's');
 						}
 
 						// Close tracks
@@ -329,7 +330,7 @@ class Mediabunny {
 						if (audioTrack) audioTrack.close();
 
 						// Finalize output
-						console.log('[Debug] Finalizing concatenated video...');
+						Mediabunny.devtrace('[Debug Mediabunny] Finalizing concatenated video...');
 						await output.finalize();
 
 						const mimeType = Mediabunny.getMimeTypeForFormat(finalFormat);
@@ -342,7 +343,7 @@ class Mediabunny {
 							name: outputFileName,
 						});
 
-						console.log('[Debug] Concatenation complete. Output size:', outputBlob.size, 'bytes');
+						Mediabunny.devtrace('[Debug Mediabunny] Concatenation complete. Output size:', outputBlob.size, 'bytes');
 						cb(outputBlob);
 
 					} catch (error) {
@@ -363,26 +364,26 @@ class Mediabunny {
 			return;
 		};
 
-		Errors.print("[Haxe] Importing ES6 module");
+		Mediabunny.devtrace("[Debug Mediabunny] Importing ES6 module");
 
 		// TODO: Maybe load mp3 encoder extension when needed (with the first usage).
 		untyped __js__("
 			(async function() {
 				try {
 					// Load the main mediabunny module
-					console.log('[Debug] Loading mediabunny main module...');
+					Mediabunny.devtrace('[Debug Mediabunny] Loading mediabunny main module...');
 					const module = await import('./js/mediabunny/mediabunny.min.mjs');
 
 					// Try to load MP3 encoder extension
 					try {
-						console.log('[Debug] Loading MP3 encoder extension...');
+						Mediabunny.devtrace('[Debug Mediabunny] Loading MP3 encoder extension...');
 						const mp3EncoderModule = await import('./js/mediabunny/mediabunny-mp3-encoder.mjs');
 
 						// Register the MP3 encoder
 						if (mp3EncoderModule.registerMp3Encoder) {
-							console.log('[Debug] Registering MP3 encoder...');
+							Mediabunny.devtrace('[Debug Mediabunny] Registering MP3 encoder...');
 							await mp3EncoderModule.registerMp3Encoder();
-							// console.log('[Debug] ✓ MP3 encoder registered successfully');
+							Mediabunny.devtrace('[Debug Mediabunny] ✓ MP3 encoder registered successfully');
 						} else {
 							console.warn('[Warning] MP3 encoder module loaded but registerMp3Encoder function not found');
 						}
@@ -391,11 +392,10 @@ class Mediabunny {
 						console.warn('[Info] Make sure mediabunny-mp3-encoder.mjs is in ./js/mediabunny/ directory');
 					}
 
-					Errors.print('[Haxe] Mediabunny ES6 module imported successfully');
+					Mediabunny.devtrace('[Debug Mediabunny] Mediabunny ES6 module imported successfully');
 					cb(module);
 				} catch (error) {
 					console.error('[Error] Failed to import Mediabunny module:', error);
-					Errors.print('[Error] Failed to import Mediabunny module: ' + error.message);
 					cb(null);
 				}
 			})();
@@ -404,9 +404,9 @@ class Mediabunny {
 
 	private static function withMediabunnyModule<T>(operation : String, onSuccess : (module : Dynamic) -> Void, onFailure : () -> Void) : Void {
 		loadMediabunnyJsLibrary(function (loadedModule) {
-			Errors.print("[Haxe] " + operation + " Mediabunny library loaded: " + (loadedModule != null ? "Success" : "Failed"));
+			Mediabunny.devtrace("[Debug Mediabunny] " + operation + " Mediabunny library loaded: " + (loadedModule != null ? "Success" : "Failed"));
 			if (loadedModule == null) {
-				Errors.print("[Error] Mediabunny library not loaded or module not available");
+				Mediabunny.devtrace("[Error] Mediabunny library not loaded or module not available");
 				onFailure();
 				return;
 			}
@@ -433,7 +433,6 @@ class Mediabunny {
 	}
 
 	private static var outputFormatHelperInitialized : Bool = false;
-
 	private static function initOutputFormatHelper() : Void {
 		if (!outputFormatHelperInitialized) {
 			untyped __js__("
@@ -459,7 +458,7 @@ class Mediabunny {
 						if (mp3Supported) {
 							outputFormat = new Mp3OutputFormat();
 						} else {
-							console.log('[Debug] MP3 encoding NOT supported: fallback to wave format');
+							Mediabunny.devtrace('[Debug Mediabunny] MP3 encoding NOT supported: fallback to wave format');
 							finalFormat = 'wav';
 							outputFormat = new WavOutputFormat();
 						}
@@ -475,6 +474,16 @@ class Mediabunny {
 				};
 			");
 			outputFormatHelperInitialized = true;
+		}
+	}
+
+	private static function devtrace(...data : Any) : Void {
+		if (Util.getParameter("devtrace") == "1") {
+			var str = "";
+			for (d in data) {
+				str += Std.string(d) + " ";
+			}
+			Errors.print(str);
 		}
 	}
 }
