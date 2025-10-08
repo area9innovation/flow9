@@ -3841,8 +3841,11 @@ class RenderSupport {
 		return new BlurBackdropFilter(spread);
 	}
 
+	// DropShadowFilter struct ignores spread. radius is blur.
 	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {
-		return new DropShadowFilter(angle, distance, radius, color, alpha);
+		var filter = new DropShadowFilter(angle, distance, radius, color, alpha);
+		untyped filter.spread = spread;
+		return filter;
 	}
 
 	public static function setUseBoxShadow(dropShadow : DropShadowFilter) : Void {

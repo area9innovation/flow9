@@ -1564,6 +1564,7 @@ class DisplayObjectHelper {
 					${Math.cos(filter.angle) * filter.distance}px
 					${Math.sin(filter.angle) * filter.distance}px
 					${filter.blur}px
+					${untyped filter.spread != null ? (filter.spread+'px') : ''}
 					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
 				';
 
