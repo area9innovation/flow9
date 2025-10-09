@@ -387,6 +387,9 @@ public class HttpServerSupport extends NativeHost {
 									System.out.println("Ending response error: " + err);
 									e.printStackTrace(System.out);
 								}
+							} catch (Exception e) {
+								System.out.println("Ending response error: " + e.getMessage());
+								e.printStackTrace(System.out);
 							}
 						}
 						return null;
