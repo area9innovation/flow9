@@ -1651,22 +1651,33 @@ MMenuLines2Material(
 
 	shouldCloseFn = \def -> \ -> fgetValue(extractStruct(style0, MCloseOnClickEnabled(const(def))).enabled);
 
-	shouldFocus = \fi, i, selectedM ->
+	shouldFocusSelected = extractStruct(style0, MMenuFocusSelectedEnabled(const(true))).enabled;
+	shouldFocus = \fi, i, selectedM -> {
+		sfFn = \def ->
+			if (fgetValue(shouldFocusSelected)) {
+				eitherMap(selectedM, \s -> s || i == 0, def)
+			} else {
+				def
+			}
 		switch (fi) {
-			MMenuFirstItem() : eitherMap(selectedM, \s -> s || i == 0, i == shiftGap);
-			MMenuLastItem() : i == length(items1) - 1;
+			MMenuFirstItem() : sfFn(i == shiftGap);
+			MMenuLastItem() : sfFn(i == length(items1) - 1);
 		}
+	}
 
+	focusUns = initUnsM();
 	focusOnOpen = \i, st, selectedM ->
 		eitherMap(getValue(focusedItem),
 			\fi ->
 				if (shouldFocus(fi, i, selectedM)) {
+					dispUnsM(focusUns);
 					focused = extractStruct(st, MFocused(make(false))).focused;
 					// Delay is to make sure screenreader (NVDA) is ready to react on line is focused.
-					timer(300, \ -> {
+					setUnsM(focusUns, interruptibleTimer(300, \ -> {
 						nextDistinct(focusedItem, None());
 						nextDistinct(focused, true);
-					});
+						dispUnsM(focusUns);
+					}));
 					replaceStruct(st, MFocused(focused))
 				} else st,
 			st
@@ -1933,17 +1944,13 @@ MMenuLines2Material(
 								),
 								makeSubscribe2(items, \__ -> reopenMenu(subOpenMenu)),
 								makeSubscribe(subOpenMenu.opened, \op -> {
-									subMenuSingleSelection = tryExtractStruct(style, MSingleSelection(make(-1)));
-									itms =
-										if (isSome(subMenuSingleSelection)) mapi(fgetValue(items), \j, it -> applySubMenuSingleSelection(it, j, subMenuSingleSelection))
-										else fgetValue(items);
 									if (op)
 										RenderMPopup(
 											state.manager,
 											parent,
 											MMenuLines2MPopup(
 												state.manager,
-												itms,
+												fgetValue(items),
 												MSubMenuStyle2MMenuStyle(
 													replaceStructMany(
 														style,
@@ -2103,7 +2110,10 @@ MMenuLines2MPopup(
 			t
 		);
 
-	itemsWithFocuses = map(items0, MMenuLineAttachToFocused);
+	itemsWithFocuses = map(
+		applyMenuSingleSelection(items0, singleSelection),
+		MMenuLineAttachToFocused
+	);
 	items1 = map(itemsWithFocuses, firstOfPair);
 
 	popupWasClicked = make(false);
@@ -2372,9 +2382,9 @@ FAccessAriaOwns(popupId : string, opened : Transform<bool>) -> FAccessAttribute 
 	FAccessAttribute("aria-owns", if (ios()) const("") else fif(opened, const(popupId), const("")));
 }
 
-applySubMenuSingleSelection(line : MMenuLine, i : int, singleSelection : Maybe<MSingleSelection>) -> MMenuLine {
-	eitherMap(singleSelection,
-		\ss -> {
+applyMenuSingleSelection(lines : [MMenuLine], singleSelection : Maybe<MSingleSelection>) -> [MMenuLine] {
+	eitherMap(singleSelection, \ss -> {
+		mapi(lines, \i, line -> {
 			applyStyles = \style : flow -> {
 				isSelected = fselectLift(ss.selected, \sel -> b2s(sel == i));
 				concat(
@@ -2406,7 +2416,6 @@ applySubMenuSingleSelection(line : MMenuLine, i : int, singleSelection : Maybe<M
 					MSubMenuCustom(line with style = applyStyles(style));
 				};
 			}
-		},
-		line
-	)
+		})
+	}, lines);
 }
