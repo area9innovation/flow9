@@ -14,7 +14,7 @@ class FlowFontStyle {
 		var styles : Dynamic = null;
 
 		for (name in names.split(",")) {
-			var style = fromFlowFont(StringTools.replace(StringTools.trim(name), "'", ""));
+			var style = fromFlowFont(StringTools.trim(name));
 
 			if (style != null) {
 				if (styles == null) {
@@ -43,7 +43,7 @@ class FlowFontStyle {
 			}
 		}
 
-		var style : FontStyle = flowFontStyles.get(name.toLowerCase());
+		var style : FontStyle = flowFontStyles.get(StringTools.replace(name, "'", "").toLowerCase());
 		return (style != null) ? style : {family: name, weight: "", size: 0.0, style: "normal", doNotRemap : false};
 	}
 }
