@@ -2146,7 +2146,8 @@ class TextClip extends NativeWidgetClip {
 		TextClip.measureSVGTextElement.textContent = '';
 
 		var letSp = Std.parseFloat(computedStyle.letterSpacing);
-		textNodeMetrics.width += bbox.width - (Math.isNaN(letSp) ? 0 : letSp);
+		// In Safari, getBBox does not count last letterspacing so we shouldn't withdrow it again
+		textNodeMetrics.width += bbox.width - (Math.isNaN(letSp) || Platform.isSafari ? 0 : letSp);
 		if (textNodeMetrics.updateOffset && (textNode.classList == null || !textNode.classList.contains('baselineWidget'))) {
 			textNodeMetrics.x = bbox.x;
 			textNodeMetrics.updateOffset = false;
