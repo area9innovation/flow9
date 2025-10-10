@@ -558,7 +558,7 @@ class RenderSupport {
 			forceRender();
 			PixiStage.onImagesLoaded(function () {
 				if (forceOnAfterprint) {
-					// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI. 
+					// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI.
 					PixiStage.once("drawframe", function() {
 						emit("afterprint");
 					});
@@ -1372,7 +1372,7 @@ class RenderSupport {
 			} else if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
 				calculateMobileTopHeight();
 
-				// Call viewport metrics recalculation only in case of rotation or screen keyboard hide/show event, not on zoom. 
+				// Call viewport metrics recalculation only in case of rotation or screen keyboard hide/show event, not on zoom.
 				if (oldBrowserZoom == browserZoom) {
 					// Still send whole window size - without reducing by screen kbd
 					// for flow does not resize the stage. The stage will be
@@ -1741,7 +1741,7 @@ class RenderSupport {
 		if (Platform.isMobile) {
 			// Collapse of PWA application requires gesture which initiates touchstart, but never receives touchend
 			// We need to reset MouseUpReceived when application is collapsed for success first click after an application is focused
-			Browser.window.addEventListener("blur", function (e) { MouseUpReceived = true; }); 
+			Browser.window.addEventListener("blur", function (e) { MouseUpReceived = true; });
 		}
 
 		if (root != Browser.document.body) {
@@ -4439,6 +4439,16 @@ class RenderSupport {
 				element.innerHTML = value
 			else
 				element.setAttribute(name, value);
+		}
+	}
+
+	public static function getAttribute(element : Element, name : String) : String {
+		var value = element.getAttribute(name);
+		if (value == null) {
+			Errors.print("[Warning] Null value for attribute: " + name);
+			return "";
+		} else {
+			return element.getAttribute(name);
 		}
 	}
 
