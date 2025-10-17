@@ -668,6 +668,10 @@ class FlowGraphics extends Graphics {
 			nativeWidget.classList.add(this.className);
 		}
 		nativeWidget.setAttribute('role', 'presentation');
+
+		if (Util.getParameter("screenreader_skip_graphics") == "1") {
+			nativeWidget.setAttribute('aria-hidden', 'true');
+		}
 		
 		isNativeWidget = true;
 	}
