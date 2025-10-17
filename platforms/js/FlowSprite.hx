@@ -56,6 +56,7 @@ class FlowSprite extends Sprite {
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
 	private static var requestQueue = new RequestQueue();
+	public static var ORPHANED_IMAGES_FIX_ENABLED = Native.isNew && Util.getParameter("orphaned_images_fix_enabled") != "0";
 
 	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String, headers : Array<Array<String>>) {
 		super();
@@ -248,11 +249,7 @@ class FlowSprite extends Sprite {
 			}
 
 			try {
-				this.invalidateTransform('onLoaded');
-				widgetBoundsChanged = true;
-				calculateWidgetBounds();
-
-				if (widgetBounds.maxX == 0.0) {
+				var onZeroCaseFn = function() {
 					if (parent != null && retries < 10) {
 						retries++;
 						nativeWidget.style.width = null;
@@ -266,6 +263,18 @@ class FlowSprite extends Sprite {
 							onError();
 						}
 					}
+				}
+
+				if (ORPHANED_IMAGES_FIX_ENABLED && (nativeWidget.naturalWidth == 0. || nativeWidget.naturalHeight == 0.)) {
+					onZeroCaseFn();
+				} else {
+
+				this.invalidateTransform('onLoaded');
+				widgetBoundsChanged = true;
+				calculateWidgetBounds();
+
+				if (widgetBounds.maxX == 0.0) {
+					onZeroCaseFn();
 				} else {
 					if (this.isHTMLRenderer()) {
 						if (nativeWidget == null) {
@@ -315,7 +324,7 @@ class FlowSprite extends Sprite {
 					loaded = true;
 					failed = false;
 				}
-			} catch (e : Dynamic) {
+			}} catch (e : Dynamic) {
 				if (parent != null && retries < 2) {
 					loadTexture();
 				} else {
