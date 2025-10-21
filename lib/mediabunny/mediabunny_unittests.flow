@@ -119,6 +119,25 @@ mbGetMediaDurationP(file : native) -> Promise<int, string> {
 	})
 }
 
+// Promise wrapper for media duration
+mbGetMediaDurationBase64P(file : native) -> Promise<int, string> {
+	Promise(\fulfill, reject -> {
+		readFileEncClient(
+			file, "uri", "Win1252",
+			\base64str -> {
+				mbGetMediaDurationFromBase64(base64str, \duration -> {
+					if (duration <= 0) {
+						reject("Invalid duration: " + i2s(duration));
+					} else {
+						fulfill(duration);
+					}
+				})
+			},
+			reject
+		);
+	})
+}
+
 // Promise wrapper for media conversion
 mbConversionP(file : native, format : MBFormat, params : [MBStyle]) -> Promise<native, string> {
 	Promise(\fulfill, reject -> {
@@ -143,6 +162,24 @@ mbGetVideoInfoP(file : native) -> Promise<Triple<int, int, int>, string> {
 				fulfill(Triple(width, height, bitrate));
 			}
 		})
+	})
+}
+
+mbGetVideoInfoBase64P(file : native) -> Promise<Triple<int, int, int>, string> {
+	Promise(\fulfill, reject -> {
+		readFileEncClient(
+			file, "uri", "Win1252",
+			\base64str -> {
+				mbGetVideoInfoFromBase64(base64str, \width, height, bitrate -> {
+					if (width <= 0 || height <= 0 || bitrate <= 0) {
+						reject("Invalid video info");
+					} else {
+						fulfill(Triple(width, height, bitrate));
+					}
+				})
+			},
+			reject
+		);
 	})
 }
 
@@ -298,6 +335,49 @@ testMediaDurationP(file : native) -> Promise<TestOutput, string> {
 	})
 }
 
+// Test 2: Media Duration Detection of base64 coded content
+testMediaDurationBase64P(file : native) -> Promise<TestOutput, string> {
+	testName = "Duration Detection of base64 coded content";
+	logProgress(testName);
+
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbGetMediaDurationBase64P(file),
+			\duration -> {
+				expectedChecksums = getExpectedChecksums();
+				expectedDurationStr = lookupTreeDef(expectedChecksums, "duration_detection", "");
+				actualDurationStr = i2s(duration);
+
+				result = if (isGenerateMode()) {
+					// Generate mode: output duration for updating registry
+					println("🔧 [GENERATE] duration_detection: \"" + actualDurationStr + "\"");
+					TestGenerate(testName, actualDurationStr);
+				} else if (expectedDurationStr == "") {
+					// No expected duration available
+					println("⏩ [SKIP] " + testName + ": No expected duration (Duration: " + actualDurationStr + "s)");
+					TestSkip(testName, "No expected duration");
+				} else if (actualDurationStr == expectedDurationStr) {
+					// Test passed
+					println("✅ [PASS] " + testName + ": Duration = " + actualDurationStr + "s (verified)");
+					TestPass(testName, actualDurationStr);
+				} else {
+					// Test failed
+					println("❌ [FAIL] " + testName + ": Duration mismatch");
+					println("   Expected: " + expectedDurationStr + "s");
+					println("   Actual:   " + actualDurationStr + "s");
+					TestFail(testName, expectedDurationStr, actualDurationStr);
+				};
+				recordTestResult(result);
+				fulfill(TestDuration(duration));
+			},
+			\error -> {
+				logError(testName, error);
+				reject(error);
+			}
+		)
+	})
+}
+
 // Single conversion test with promise
 runConversionTestP(file : native, format : MBFormat, params : [MBStyle], testKey : string, testName : string) -> Promise<TestOutput, string> {
 	logProgress(testName);
@@ -317,7 +397,7 @@ runConversionTestP(file : native, format : MBFormat, params : [MBStyle], testKey
 	})
 }
 
-// Test 2: Audio Conversion Unit Tests
+// Test 3: Audio Conversion Unit Tests
 testAudioConversionsP(file : native) -> [Promise] {
 	customSampleRate = getCustomSampleRate();
 	speechSampleRate = getSpeechSampleRate();
@@ -331,7 +411,7 @@ testAudioConversionsP(file : native) -> [Promise] {
 	]
 }
 
-// Test 3: Video Conversion Unit Tests
+// Test 4: Video Conversion Unit Tests
 testVideoConversionsP(file : native) -> [Promise] {
 	// Run all video tests with promises
 	[
@@ -340,7 +420,7 @@ testVideoConversionsP(file : native) -> [Promise] {
 	]
 }
 
-// Test 4: Advanced Processing Unit Tests
+// Test 5: Advanced Processing Unit Tests
 testAdvancedProcessingP(file : native) -> [Promise] {
 	cropSettings = getCropSettings();
 
@@ -351,7 +431,7 @@ testAdvancedProcessingP(file : native) -> [Promise] {
 	]
 }
 
-// Test 5: Trimming Unit Tests
+// Test 6: Trimming Unit Tests
 testTrimmingProcessingP(file : native) -> [Promise] {
 	trimSettings = getTrimSettings();
 
@@ -364,7 +444,7 @@ testTrimmingProcessingP(file : native) -> [Promise] {
 	]
 }
 
-// Test 6: Video Info Unit Tests
+// Test 7: Video Info Unit Tests
 testVideoInfoP(file : native) -> Promise<TestOutput, string> {
 	testName = "Video Info";
 	logProgress(testName);
@@ -372,6 +452,45 @@ testVideoInfoP(file : native) -> Promise<TestOutput, string> {
 	Promise(\fulfill, reject -> {
 		doneP(
 			mbGetVideoInfoP(file),
+			\whb -> untriple(whb, \width, height, bitrate -> {
+				expectedChecksums = getExpectedChecksums();
+				expectedVideoInfoStr = lookupTreeDef(expectedChecksums, "video_info", "");
+				actualVideoInfoStr = i2s(width) + "x" + i2s(height) + ":" + i2s(bitrate);
+
+				result = if (isGenerateMode()) {
+					println("🔧 [GENERATE] video_info: \"" + actualVideoInfoStr + "\"");
+					TestGenerate(testName, actualVideoInfoStr);
+				} else if (expectedVideoInfoStr == "") {
+					println("⏩ [SKIP] " + testName + ": No expected video info (Video info: " + actualVideoInfoStr + ")");
+					TestSkip(testName, "No expected video info");
+				} else if (actualVideoInfoStr == expectedVideoInfoStr) {
+					println("✅ [PASS] " + testName + ": Video info = " + actualVideoInfoStr + " (verified)");
+					TestPass(testName, actualVideoInfoStr);
+				} else {
+					println("❌ [FAIL] " + testName + ": Video info mismatch");
+					println("   Expected: " + expectedVideoInfoStr);
+					println("   Actual:   " + actualVideoInfoStr);
+					TestFail(testName, expectedVideoInfoStr, actualVideoInfoStr);
+				};
+				recordTestResult(result);
+				fulfill(TestVideoInfo(width, height, bitrate));
+			}),
+			\error -> {
+				logError(testName, error);
+				reject(error);
+			}
+		)
+	})
+}
+
+// Test 8: Video Info of base64 coded content Unit Tests
+testVideoInfoBase64P(file : native) -> Promise<TestOutput, string> {
+	testName = "Video Info of base64 coded content";
+	logProgress(testName);
+
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbGetVideoInfoBase64P(file),
 			\whb -> untriple(whb, \width, height, bitrate -> {
 				expectedChecksums = getExpectedChecksums();
 				expectedVideoInfoStr = lookupTreeDef(expectedChecksums, "video_info", "");
@@ -504,6 +623,9 @@ main() {
 						if (enableDurationTest)
 							[testMediaDurationP(mediaFile)]
 						else [],
+						if (enableDurationTest)
+							[testMediaDurationBase64P(mediaFile)]
+						else [],
 						if (enableAudioTests)
 							testAudioConversionsP(mediaFile)
 						else [],
@@ -518,6 +640,9 @@ main() {
 						else [],
 						if (enableVideoInfoTests)
 							[testVideoInfoP(mediaFile)]
+						else [],
+						if (enableVideoInfoTests)
+							[testVideoInfoBase64P(mediaFile)]
 						else [],
 					])
 				),

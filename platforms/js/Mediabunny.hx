@@ -37,6 +37,16 @@ class Mediabunny {
 		});
 	}
 
+	public static function mbGetMediaDurationFromBase64(base64str : String, cb : (duration : Int) -> Void) : Void {
+		var fileBlob = base64ToBlob(base64str);
+		getMediaDuration(fileBlob, cb);
+	}
+
+	public static function getVideoInfoFromBase64(base64str : String, callback : (width : Int, height : Int, bitrate : Int) -> Void) : Void {
+		var fileBlob = base64ToBlob(base64str);
+		getVideoInfo(fileBlob, callback);
+	}
+
 	public static function conversion(file : Dynamic, format : String, params : Array<Dynamic>, cb : (outputFile : Dynamic) -> Void, onError : (error : String) -> Void) : Void {
 		initOutputFormatHelper();
 		withMediabunnyModule("conversion", function(mediabunnyModule) {
@@ -475,6 +485,40 @@ class Mediabunny {
 			");
 			outputFormatHelperInitialized = true;
 		}
+	}
+
+	// Convert a base64 string or data URL to a Blob with inferred MIME type
+	private static function base64ToBlob(base64str : String) : Blob {
+		if (base64str == null) return null;
+
+		var base64Data : String = base64str;
+		var mime : String = null;
+
+		// If the string contains a comma, treat it as a data URL and extract header
+		var commaIndex = base64str.indexOf(',');
+		if (commaIndex >= 0) {
+			var header = base64str.substring(0, commaIndex); // e.g. data:audio/mpeg;base64
+			base64Data = base64str.substring(commaIndex + 1);
+			// Parse mime from header if present
+			var prefix = "data:";
+			if (StringTools.startsWith(header, prefix)) {
+				var semi = header.indexOf(';');
+				if (semi > prefix.length) {
+					mime = header.substring(prefix.length, semi);
+				}
+			}
+		}
+
+		if (mime == null) mime = 'application/octet-stream';
+
+		// Decode base64 into bytes
+		var decoded = haxe.crypto.Base64.decode(base64Data);
+		var len = decoded.length;
+		var u8 = new js.lib.Uint8Array(len);
+		for (i in 0...len) u8[i] = decoded.get(i);
+
+		var blob = new Blob([u8.buffer], { type: mime });
+		return blob;
 	}
 
 	private static function devtrace(...data : Any) : Void {
