@@ -374,7 +374,7 @@ public class HttpServerSupport extends NativeHost {
 			public Func0<Object> makeEndResponse() {
 				return new Func0<Object>() {
 					public Object invoke() {
-						if (hasBody) {
+						if (hasBody && os != null) {	// hasBody && os == null means that SendHeaders was not called yet, so the response was not started.
 							try {
 								os.close();
 							} catch (IOException e) {
@@ -396,7 +396,6 @@ public class HttpServerSupport extends NativeHost {
 					}
 				};
 			}
-
 
 			public Func1<Object,Integer> makeResponseStatus()
 			{
