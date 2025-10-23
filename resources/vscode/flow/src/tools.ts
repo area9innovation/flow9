@@ -19,7 +19,9 @@ export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (st
 }
 
 export function log(msg: string) {
-	console.log("[flow] " + msg);
+	if (getHttpServerLogsEnabled()) {
+		console.log("[flow] " + msg);
+	}
 }
 
 export function run_cmd_sync(cmd: string, wd: string, args: string[]) {
@@ -104,4 +106,8 @@ export function getActiveFlowDocument(): vscode.TextDocument {
 		log("Not a Flow document is active: " + doc.uri.fsPath);
 		return null;
 	}
+}
+
+export function getHttpServerLogsEnabled(): boolean {
+	return vscode.workspace.getConfiguration("flow").get("httpServerLogs", true);
 }

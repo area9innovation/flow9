@@ -74,8 +74,10 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	editors.forEach(editor => context.subscriptions.push(editor.register(context)));
 
-    flowChannel = vscode.window.createOutputChannel("Flow output");
-	flowChannel.show(true);
+	flowChannel = vscode.window.createOutputChannel("Flow output");
+	if (tools.getHttpServerLogsEnabled()) {
+		flowChannel.show(true);
+	}
 	serverChannel = vscode.window.createOutputChannel("Flow Language Server");
 
 	// Create an LSP client
@@ -174,12 +176,18 @@ function toggleHttpServer() {
 
 function startHttpServer() {
 	if (!httpServerOnline) {
-		serverChannel.show(true);
+		if (tools.getHttpServerLogsEnabled()) {
+			serverChannel.show(true);
+		}
 		httpServer = tools.launchFlowcHttpServer(
 			getFlowCompiler(),
 			showHttpServerOnline,
 			showHttpServerOffline,
-			(msg : any) => serverChannel.appendLine(msg)
+			(msg : any) => {
+				if (tools.getHttpServerLogsEnabled()) {
+					serverChannel.appendLine(msg);
+				}
+			}
 		);
 		httpServerOnline = true;
     }
