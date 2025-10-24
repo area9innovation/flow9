@@ -37,14 +37,40 @@ class Mediabunny {
 		});
 	}
 
-	public static function mbGetMediaDurationFromBase64(base64str : String, cb : (duration : Int) -> Void) : Void {
+	public static function getMediaDurationFromBase64(base64str : String, cb : (duration : Int) -> Void) : Void {
 		var fileBlob = base64ToBlob(base64str);
 		getMediaDuration(fileBlob, cb);
 	}
 
-	public static function getVideoInfoFromBase64(base64str : String, callback : (width : Int, height : Int, bitrate : Int) -> Void) : Void {
-		var fileBlob = base64ToBlob(base64str);
-		getVideoInfo(fileBlob, callback);
+	public static function getMediaDurationFromUrl(mediaUrl : String, cb : (duration : Int) -> Void) : Void {
+		var duration = 0;
+		withMediabunnyModule("getMediaDuration", function(mediabunnyModule) {
+			untyped __js__("
+				(async function() {
+					try {
+						// Use the stored module instead of importing again
+						const { Input, UrlSource, ALL_FORMATS } = mediabunnyModule;
+
+						Mediabunny.devtrace('[Debug Mediabunny] Using UrlSource for URL:', mediaUrl);
+
+						const input = new Input({
+							formats: ALL_FORMATS, // Supporting all file formats
+							source: new UrlSource(mediaUrl), // Using UrlSource for direct URL access
+						});
+
+						duration = await input.computeDuration(); // in seconds
+						Mediabunny.devtrace('[Debug Mediabunny] Duration computed from URL:', duration);
+						cb(duration);
+					} catch (error) {
+						console.error('[Error] getMediaDurationFromUrl failed:', error);
+						console.error('[Error] Details:', error.message, error.stack);
+						cb(0);
+					}
+				})();
+			");
+		}, function() {
+			cb(0);
+		});
 	}
 
 	public static function conversion(file : Dynamic, format : String, params : Array<Dynamic>, cb : (outputFile : Dynamic) -> Void, onError : (error : String) -> Void) : Void {
@@ -181,6 +207,62 @@ class Mediabunny {
 						callback(width, height, bitrate);
 					} catch (error) {
 						console.error('[Error] getVideoInfo failed:', error);
+						console.error('[Error] Details:', error.message, error.stack);
+						callback(0, 0, 0);
+					}
+				})();
+			");
+		}, function() {
+			callback(0, 0, 0);
+		});
+	}
+
+	public static function getVideoInfoFromBase64(base64str : String, callback : (width : Int, height : Int, bitrate : Int) -> Void) : Void {
+		var fileBlob = base64ToBlob(base64str);
+		getVideoInfo(fileBlob, callback);
+	}
+
+	public static function getVideoInfoFromUrl(mediaUrl : String, callback : (width : Int, height : Int, bitrate : Int) -> Void) : Void {
+		withMediabunnyModule("getVideoInfo", function(mediabunnyModule) {
+			untyped __js__("
+				(async function() {
+					try {
+						// Use the stored module
+						const { Input, UrlSource, ALL_FORMATS } = mediabunnyModule;
+
+						Mediabunny.devtrace('[Debug Mediabunny] Getting video info from URL:', mediaUrl);
+
+						const input = new Input({
+							formats: ALL_FORMATS,
+							source: new UrlSource(mediaUrl), // Using UrlSource for direct URL access
+						});
+
+						// Get video track information
+						const videoTrack = await input.getPrimaryVideoTrack();
+
+						let width = 0;
+						let height = 0;
+						let bitrate = 0;
+
+						if (videoTrack) {
+							// Get display dimensions
+							width = videoTrack.displayWidth || 0;
+							height = videoTrack.displayHeight || 0;
+
+							// Compute packet statistics to estimate bitrate
+							try {
+								const stats = await videoTrack.computePacketStats(100);
+								bitrate = Math.round(stats.averageBitrate || 0);
+							} catch (statsError) {
+								console.warn('[Warning] Could not compute packet stats:', statsError);
+								bitrate = 0;
+							}
+						}
+
+						Mediabunny.devtrace('[Debug Mediabunny] Video info from URL - Width:', width, 'Height:', height, 'Bitrate:', bitrate);
+						callback(width, height, bitrate);
+					} catch (error) {
+						console.error('[Error] getVideoInfoFromUrl failed:', error);
 						console.error('[Error] Details:', error.message, error.stack);
 						callback(0, 0, 0);
 					}
