@@ -237,7 +237,11 @@ class FlowGraphics extends Graphics {
 		}
 
 		if (width > 0 && height > 0) {
-			var newGraphics = super.drawRect(x, y, width, height);
+			var newGraphics = if (Util.getParameter("roundedRectMetrics") != "0") {
+				super.drawRect(x, y, DisplayObjectHelper.ceil(width), DisplayObjectHelper.ceil(height));
+			} else {
+				super.drawRect(x, y, width, height);				
+			};
 
 			endFill();
 
