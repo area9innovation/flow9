@@ -45,6 +45,8 @@ class FlowGraphics extends Graphics {
 	public var left = null;
 	public var top = null;
 
+	private static var RoundedRectMetrics : Bool = Util.getParameter("rounded_rect_metrics") != "0";
+
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
 	}
@@ -237,7 +239,7 @@ class FlowGraphics extends Graphics {
 		}
 
 		if (width > 0 && height > 0) {
-			var newGraphics = if (Util.getParameter("roundedRectMetrics") != "0") {
+			var newGraphics = if (RoundedRectMetrics) {
 				super.drawRect(x, y, DisplayObjectHelper.ceil(width), DisplayObjectHelper.ceil(height));
 			} else {
 				super.drawRect(x, y, width, height);				
