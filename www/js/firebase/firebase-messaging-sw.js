@@ -71,6 +71,7 @@ self.addEventListener('notificationclick', function(event) {
 importScripts('https://www.gstatic.com/firebasejs/11.9.1/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/11.9.1/firebase-messaging-compat.js');
 importScripts('firebase-config.js');
+importScripts('../db-helper.js');
 
 // Initialize Firebase using the compat version for service workers
 firebase.initializeApp(firebaseConfig);
@@ -97,6 +98,29 @@ messaging.onBackgroundMessage(function(payload) {
 
   // Send message to client for internal handling
   sendMessageToClient.fn({ action: "notification", payload });
+
+  // Handle badge from payload using IndexedDB
+  if (payload.data && payload.data.badge) {
+    var badgeValue = payload.data.badge;
+
+    if (badgeValue === 'inc') {
+      return incrementBadgeCount()
+        .then(function() {
+          return getBadgeCount();
+        })
+        .catch(function(err) {
+          logMessage('Failed to increment badge', err);
+        });
+    } else {
+      var badgeNum = parseInt(badgeValue, 10);
+      if (!isNaN(badgeNum)) {
+        return setBadgeCount(badgeNum)
+          .catch(function(err) {
+            logMessage('Failed to set badge', err);
+          });
+      }
+    }
+  }
 });
 
 // Enhanced message handling specifically
