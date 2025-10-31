@@ -177,55 +177,83 @@ class NotificationsSupport {
         #end
     }
 
-    private static var currentBadgeCount : Int = getBadgerCount();
+    private static var dbHelperLoaded : Bool = false;
 
-    private static function hasBadging() : Bool {
-        return untyped navigator.setAppBadge != null && navigator.clearAppBadge != null;
+    private static function ensureDbHelper(onReady : Void->Void) : Void {
+        #if (js && !flow_nodejs)
+        if (dbHelperLoaded) {
+            onReady();
+        } else {
+            Util.loadJS("js/db-helper.js").then(function(res) {
+                dbHelperLoaded = true;
+                onReady();
+            }, function(e) {
+                trace("Failed to load db-helper.js: " + e);
+                onReady();
+            });
+        }
+        #else
+        onReady();
+        #end
     }
 
-    public static function setBadgerCount(value : Int) : Void {
-        var badgeCount = value < 0 ? 0 : value;
-        currentBadgeCount = badgeCount;
-        saveBadgeCount(badgeCount);
+    public static function getBadgeCount(callback : Int -> Void) : Void {
         #if (js && !flow_nodejs)
-        try {
-            if (hasBadging()) untyped navigator.setAppBadge(badgeCount);
-        } catch (e:Dynamic) {}
+        ensureDbHelper(function() {
+            try {
+                untyped window.getBadgeCount().then(
+                    function(count) {
+                        callback(count);
+                    },
+                    function(e) {
+                        trace("Error getting badge count: " + e);
+                        callback(0);
+                    }
+                );
+            } catch (e:Dynamic) {
+                trace("Error calling getBadgeCount: " + e);
+                callback(0);
+            }
+        });
+        #else
+        callback(0);
+        #end
+    }
+
+    public static function setBadgeCount(value : Int) : Void {
+        #if (js && !flow_nodejs)
+        ensureDbHelper(function() {
+            var badgeCount = value < 0 ? 0 : value;
+            try {
+                untyped window.setBadgeCount(badgeCount);
+            } catch (e:Dynamic) {
+                trace("Error setting badge count: " + e);
+            }
+        });
         #end
     }
 
     public static function clearBadgeCount() : Void {
-        currentBadgeCount = 0;
-        saveBadgeCount(0);
         #if (js && !flow_nodejs)
-        try {
-            if (hasBadging()) untyped navigator.clearAppBadge();
-        } catch (e:Dynamic) {}
+        ensureDbHelper(function() {
+            try {
+                untyped window.clearBadgeCount();
+            } catch (e:Dynamic) {
+                trace("Error clearing badge count: " + e);
+            }
+        });
         #end
     }
 
     public static function incrementBadgeCount() : Void {
-        setBadgerCount(currentBadgeCount + 1);
-    }
-
-    private static function getBadgerCount() : Int {
-        #if js
-        try {
-            var stored = untyped window.localStorage.getItem("flow_badge_count");
-            return stored != null ? Std.parseInt(stored) : 0;
-        } catch (e:Dynamic) {
-            return 0;
-        }
-        #else
-        return 0;
-        #end
-    }
-
-    private static function saveBadgeCount(count : Int) : Void {
-        #if js
-        try {
-            untyped window.localStorage.setItem("flow_badge_count", Std.string(count));
-        } catch (e:Dynamic) {}
+        #if (js && !flow_nodejs)
+        ensureDbHelper(function() {
+            try {
+                untyped window.incrementBadgeCount();
+            } catch (e:Dynamic) {
+                trace("Error incrementing badge count: " + e);
+            }
+        });
         #end
     }
 
@@ -244,7 +272,7 @@ class NotificationsSupport {
                 } else {
                     var badgeNum = Std.parseInt(badgeStr);
                     if (badgeNum != null) {
-                        setBadgerCount(badgeNum);
+                        setBadgeCount(badgeNum);
                     }
                 }
             }
