@@ -674,7 +674,7 @@ class FlowGraphics extends Graphics {
 			nativeWidget.classList.add(this.className);
 		}
 		nativeWidget.setAttribute('role', 'presentation');
-		nativeWidget.setAttribute('aria-hidden', 'true');
+		this.updateIsAriaHidden(true, true);
 
 		isNativeWidget = true;
 	}
