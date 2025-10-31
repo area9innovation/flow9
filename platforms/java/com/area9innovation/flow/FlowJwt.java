@@ -39,11 +39,9 @@ public class FlowJwt extends NativeHost {
 			DecodedJWT jwtObj = verifier.verify(jwt);
 			return "OK";
 		} catch (JWTVerificationException e){
-			System.out.println(jwt + "/" + e.getMessage());
-			return "Wrong signature or expired";
+			return e.getMessage();
 		} catch (Exception e) {
-			System.out.println(jwt + "/" + e.getMessage());
-			return "Other exception";
+			return e.getMessage();
 		}
 	}
 
@@ -82,8 +80,7 @@ public class FlowJwt extends NativeHost {
 				jti = jwtObj.getClaim("id").asString();
 				impersonatedByUserId = jwtObj.getClaim("iid").asString();
 			} catch (Exception e) {
-				System.out.println(e.getMessage());
-				onError.invoke("Hash problems");
+				onError.invoke(e.getMessage());
 				return null;
 			}
 			callback.invoke(
@@ -309,8 +306,8 @@ public class FlowJwt extends NativeHost {
 
 			// Accepts some seconds of leeway to account for clock skew. (5 minutes is default for OIDC and LTI)
 			long clockSkewSeconds = 300; // 5 minutes
-			
-			JWTVerifier verifier = 
+
+			JWTVerifier verifier =
 				JWT.require(algorithm)
 				.acceptLeeway(clockSkewSeconds)
 				.build();
