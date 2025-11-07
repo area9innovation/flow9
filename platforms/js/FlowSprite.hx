@@ -56,7 +56,7 @@ class FlowSprite extends Sprite {
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
 	private static var requestQueue = new RequestQueue();
-	public static var ORPHANED_IMAGES_FIX_ENABLED = Native.isNew && Util.getParameter("orphaned_images_fix_enabled") != "0";
+	public static var ORPHANED_IMAGES_FIX_ENABLED = Util.getParameter("orphaned_images_fix_enabled") != "0";
 
 	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool, altText : String, headers : Array<Array<String>>) {
 		super();
