@@ -41,6 +41,11 @@ self.addEventListener('notificationclick', function(event) {
                 targetUrlObj.searchParams.forEach((value, key) => {
                   newUrl.searchParams.set(key, value);
                 });
+
+                if (targetUrlObj.hash) {
+                    newUrl.hash = targetUrlObj.hash;
+                }
+
                 targetUrlObj = newUrl;
               }
 
