@@ -21,6 +21,40 @@ export {
 	unifyTypes(env : FEnv, kind : string, outputs : [FType], inputs : [FType], fns : FunifyFns) -> FEnvTypes;
 }
 
+// Helper function: Check if two struct names can be unified (have a common union)
+canUnifyStructNames(env : FEnv, name1 : string, name2 : string) -> bool {
+	// Get union members for both names
+	union1Members = union2typenames(env.env, name1);
+	union2Members = union2typenames(env.env, name2);
+
+	if (union1Members != [] && union2Members != []) {
+		// Both are unions - check if they have overlapping members
+		exists(union1Members, \m1 -> exists(union2Members, \m2 -> m1.name == m2.name))
+	} else if (union1Members != []) {
+		// name1 is a union, name2 is a struct - check if name2 is in name1
+		exists(union1Members, \m -> m.name == name2)
+	} else if (union2Members != []) {
+		// name2 is a union, name1 is a struct - check if name1 is in name2
+		exists(union2Members, \m -> m.name == name1)
+	} else {
+		// Both are plain structs - check if they have a common union
+		commonUnions = names2unions(env.env, [name1, name2], true);
+		commonUnions != []
+	}
+}
+
+// Helper function: Check if a struct name can be added to a list of existing struct names
+canUnifyWithAnyStruct(env : FEnv, existingNames : [string], newName : string) -> bool {
+	if (existingNames == []) {
+		true  // No existing structs, always compatible
+	} else {
+		// Check if newName can unify with any existing struct
+		exists(existingNames, \existingName -> {
+			canUnifyStructNames(env, existingName, newName)
+		})
+	}
+}
+
 // The struct is always left here.
 funifyStruct(env : FEnv, left : FStruct, right : FType, fns : FunifyFns) -> FEnvType {
 	lname = left.name;
@@ -37,25 +71,7 @@ funifyStruct(env : FEnv, left : FStruct, right : FType, fns : FunifyFns) -> FEnv
 				// OK, different structs.
 				if (fns.kind == FGrowRight()) {
 					// Check if the two structs can be unified (have a common union)
-					lUnionMembers = union2typenames(env.env, lname);
-					rUnionMembers = union2typenames(env.env, rname);
-
-					canUnify = if (lUnionMembers != [] && rUnionMembers != []) {
-						// Both are unions, check overlap
-						exists(lUnionMembers, \lm -> exists(rUnionMembers, \rm -> lm.name == rm.name))
-					} else if (lUnionMembers != []) {
-						// left is union, right is struct - check if right is in left
-						exists(lUnionMembers, \lm -> lm.name == rname)
-					} else if (rUnionMembers != []) {
-						// right is union, left is struct - check if left is in right
-						exists(rUnionMembers, \rm -> rm.name == lname)
-					} else {
-						// Both are plain structs - check common union
-						commonUnions = names2unions(env.env, [lname, rname], true);
-						commonUnions != []
-					};
-
-					if (!canUnify) {
+					if (!canUnifyStructNames(env, lname, rname)) {
 						fns.onError("Cannot unify " + lname + " and " + rname + ": no common union type exists");
 						FEnvType(env, left);
 					} else {
@@ -308,30 +324,10 @@ funifyUnionAndStruct(env : FEnv, union : FUnion, struct : FStruct, unionIsLeft :
 					// OK, it was not found in the union.
 					// If we are positive, we "just" have to extend to cover both
 					if (fns.kind == FGrowRight()) {
-						// Check if the struct is compatible with the union by checking if:
-						// 1. There's a union containing both the struct and any member of the current union
-						// 2. OR the struct itself is a union that intersects with the current union
-
+						// Check if the struct is compatible with any member of the union
 						structNames = map(typenames, \tn -> tn.name);
 
-						// First, check if struct is itself a union
-						structUnionMembers = union2typenames(env.env, sname);
-
-						canUnify = if (structUnionMembers != []) {
-							// sname is a union, check if it has any overlap with uname
-							exists(structUnionMembers, \stm -> {
-								exists(typenames, \tn -> tn.name == stm.name)
-							})
-						} else {
-							// sname is a plain struct, check if there's a common union
-							// Try with each struct from the current union
-							exists(structNames, \existingStruct -> {
-								commonUnions = names2unions(env.env, [existingStruct, sname], true);
-								commonUnions != []
-							})
-						};
-
-						if (!canUnify) {
+						if (!canUnifyWithAnyStruct(env, structNames, sname)) {
 							// No common union exists - report error
 							fns.onError("Cannot unify " + uname + " and " + sname + ": no common union type exists");
 							FEnvType(env, union);
@@ -741,27 +737,8 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 							}
 						});
 
-						// Check if rname is itself a union
-						rUnionMembers = union2typenames(env.env, rname);
-
-						canUnify = if (rUnionMembers != []) {
-							// rname is a union, check if it has overlap with any existing struct
-							exists(rUnionMembers, \rm -> {
-								exists(existingStructs, \es -> rm.name == es)
-							});
-						} else if (existingStructs == []) {
-							// No existing structs, allow adding
-							true;
-						} else {
-							// rname is a plain struct, check if there's a common union with any existing struct
-							exists(existingStructs, \es -> {
-								commonUnions = names2unions(env.env, [es, rname], true);
-								commonUnions != []
-							});
-						};
-
-						if (!canUnify) {
-							fns.onError("Cannot add " + rname + " to union: no common union type exists with: " + strGlue(map(utypes, getFTypeName), ", "));
+						if (!canUnifyWithAnyStruct(env, existingStructs, rname)) {
+							fns.onError("Cannot add " + rname + " to union: no common union type exists with existing members");
 							FEnvType(env, unnamed);
 						} else {
 							// anon union+ vs. struct+, both output: join
