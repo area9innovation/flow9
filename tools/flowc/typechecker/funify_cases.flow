@@ -3,9 +3,9 @@ import tools/flowc/typechecker/ftype_bound;
 
 export {
 	FunifyFns(
-		unifyType : (FEnv, FType, FType, kind : FUnification, (string) -> void) -> FEnvType, 
+		unifyType : (FEnv, FType, FType, kind : FUnification, (string) -> void) -> FEnvType,
 		kind : FUnification,
-		onError : (string) -> void, 
+		onError : (string) -> void,
 		rest : () -> FEnvType
 	);
 
@@ -36,12 +36,36 @@ funifyStruct(env : FEnv, left : FStruct, right : FType, fns : FunifyFns) -> FEnv
 			} else {
 				// OK, different structs.
 				if (fns.kind == FGrowRight()) {
-					// We could conceivably try to see if this combination is unique, and if so,
-					// construct a real union instead.
-					FEnvType(
-						env,
-						makeFUnnamedUnion([left, right])
-					);
+					// Check if the two structs can be unified (have a common union)
+					lUnionMembers = union2typenames(env.env, lname);
+					rUnionMembers = union2typenames(env.env, rname);
+
+					canUnify = if (lUnionMembers != [] && rUnionMembers != []) {
+						// Both are unions, check overlap
+						exists(lUnionMembers, \lm -> exists(rUnionMembers, \rm -> lm.name == rm.name))
+					} else if (lUnionMembers != []) {
+						// left is union, right is struct - check if right is in left
+						exists(lUnionMembers, \lm -> lm.name == rname)
+					} else if (rUnionMembers != []) {
+						// right is union, left is struct - check if left is in right
+						exists(rUnionMembers, \rm -> rm.name == lname)
+					} else {
+						// Both are plain structs - check common union
+						commonUnions = names2unions(env.env, [lname, rname], true);
+						commonUnions != []
+					};
+
+					if (!canUnify) {
+						fns.onError("Cannot unify " + lname + " and " + rname + ": no common union type exists");
+						FEnvType(env, left);
+					} else {
+						// We could conceivably try to see if this combination is unique, and if so,
+						// construct a real union instead.
+						FEnvType(
+							env,
+							makeFUnnamedUnion([left, right])
+						);
+					}
 				} else {
 					// Reducing or unify with different names, not possible
 					fns.onError("Expected " + rname + ", got " + lname);
@@ -157,7 +181,7 @@ funifyUnion(env : FEnv, left : FUnion, right : FType, fns : FunifyFns) -> FEnvTy
 					// join the overlap with the extras
 					eenv = overlap.first;
 					missingl = fold(ltypenames, [], \acc, ltn : FcTypeName -> {
-						if (exists(rtypenames, \rtn : FcTypeName -> rtn.name == ltn.name)) acc 
+						if (exists(rtypenames, \rtn : FcTypeName -> rtn.name == ltn.name)) acc
 						else {
 							linst = fcstructname2ftype(env, ltn.name, ltypars);
 							arrayPush(acc, linst)
@@ -165,7 +189,7 @@ funifyUnion(env : FEnv, left : FUnion, right : FType, fns : FunifyFns) -> FEnvTy
 					});
 
 					missingr = fold(rtypenames, [], \acc, rtn : FcTypeName -> {
-						if (exists(ltypenames, \ltn : FcTypeName -> rtn.name == ltn.name)) acc 
+						if (exists(ltypenames, \ltn : FcTypeName -> rtn.name == ltn.name)) acc
 						else {
 							rinst = fcstructname2ftype(eenv, rtn.name, rtypars);
 							arrayPush(acc, rinst)
@@ -173,7 +197,7 @@ funifyUnion(env : FEnv, left : FUnion, right : FType, fns : FunifyFns) -> FEnvTy
 					});
 
 					FEnvType(
-						overlap.first, 
+						overlap.first,
 						if (missingl == []) {
 							// Left ::= S1, S2
 							// Right ::= S1, S2, S3.
@@ -229,7 +253,7 @@ funifyUnion(env : FEnv, left : FUnion, right : FType, fns : FunifyFns) -> FEnvTy
 						}
 					} else {
 						missingl = fold(ltypenames, [], \acc, ltn : FcTypeName -> {
-							if (exists(rtypenames, \rtn : FcTypeName -> rtn.name == ltn.name)) acc 
+							if (exists(rtypenames, \rtn : FcTypeName -> rtn.name == ltn.name)) acc
 							else {
 								linst = fcstructname2ftype(env, ltn.name, ltypars);
 								arrayPush(acc, linst)
@@ -284,24 +308,53 @@ funifyUnionAndStruct(env : FEnv, union : FUnion, struct : FStruct, unionIsLeft :
 					// OK, it was not found in the union.
 					// If we are positive, we "just" have to extend to cover both
 					if (fns.kind == FGrowRight()) {
-						// output vs output: add the new one
-						ltypars = foldi(union.typars, makeTree(), \i, acc, tp -> {
-							setTree(acc, strLeft("????????????????", i + 1), tp)
-						});
+						// Check if the struct is compatible with the union by checking if:
+						// 1. There's a union containing both the struct and any member of the current union
+						// 2. OR the struct itself is a union that intersects with the current union
 
-						// fcPrintln("Expanding " + uname + " with " + superglue(typenames, \tn -> tn.name, ", "));
-						members = arrayPush(
-								map(
-									typenames,
-									\tn -> {
-										fcstructname2ftype(env, tn.name, ltypars);
-									}
-								),
-								struct
-							);
+						structNames = map(typenames, \tn -> tn.name);
 
-						unnamed = makeFUnnamedUnion(members);
-						FEnvType(env, unnamed);
+						// First, check if struct is itself a union
+						structUnionMembers = union2typenames(env.env, sname);
+
+						canUnify = if (structUnionMembers != []) {
+							// sname is a union, check if it has any overlap with uname
+							exists(structUnionMembers, \stm -> {
+								exists(typenames, \tn -> tn.name == stm.name)
+							})
+						} else {
+							// sname is a plain struct, check if there's a common union
+							// Try with each struct from the current union
+							exists(structNames, \existingStruct -> {
+								commonUnions = names2unions(env.env, [existingStruct, sname], true);
+								commonUnions != []
+							})
+						};
+
+						if (!canUnify) {
+							// No common union exists - report error
+							fns.onError("Cannot unify " + uname + " and " + sname + ": no common union type exists");
+							FEnvType(env, union);
+						} else {
+							// output vs output: add the new one
+							ltypars = foldi(union.typars, makeTree(), \i, acc, tp -> {
+								setTree(acc, strLeft("????????????????", i + 1), tp)
+							});
+
+							// fcPrintln("Expanding " + uname + " with " + superglue(typenames, \tn -> tn.name, ", "));
+							members = arrayPush(
+									map(
+										typenames,
+										\tn -> {
+											fcstructname2ftype(env, tn.name, ltypars);
+										}
+									),
+									struct
+								);
+
+							unnamed = makeFUnnamedUnion(members);
+							FEnvType(env, unnamed);
+						}
 					} else {
 						// All unification, this is an error, but not in interesection
 						if (fns.kind != FReduceLeft()) {
@@ -680,11 +733,43 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 				None(): {
 					// No obvious overlap
 					if (fns.kind == FGrowRight()) {
-						// anon union+ vs. struct+, both output: join
-						FEnvType(
-							env,
-							makeFUnnamedUnion(arrayPush(utypes, right))
-						);
+						// Check if the new struct is compatible with existing structs in the union
+						existingStructs = filtermap(utypes, \ut -> {
+							switch (ut) {
+								FStruct(sname, __): Some(sname);
+								default: None();
+							}
+						});
+
+						// Check if rname is itself a union
+						rUnionMembers = union2typenames(env.env, rname);
+
+						canUnify = if (rUnionMembers != []) {
+							// rname is a union, check if it has overlap with any existing struct
+							exists(rUnionMembers, \rm -> {
+								exists(existingStructs, \es -> rm.name == es)
+							});
+						} else if (existingStructs == []) {
+							// No existing structs, allow adding
+							true;
+						} else {
+							// rname is a plain struct, check if there's a common union with any existing struct
+							exists(existingStructs, \es -> {
+								commonUnions = names2unions(env.env, [es, rname], true);
+								commonUnions != []
+							});
+						};
+
+						if (!canUnify) {
+							fns.onError("Cannot add " + rname + " to union: no common union type exists with: " + strGlue(map(utypes, getFTypeName), ", "));
+							FEnvType(env, unnamed);
+						} else {
+							// anon union+ vs. struct+, both output: join
+							FEnvType(
+								env,
+								makeFUnnamedUnion(arrayPush(utypes, right))
+							);
+						}
 					} else {
 						if (nonstructs != []) {
 							// We have some field stuff going on. Maybe that works
@@ -723,7 +808,7 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 						FEnvType(
 							sst.env,
 							if (fns.kind == FUnifyLeft()) {
-								// We can restrict to the 
+								// We can restrict to the
 								makeFBounded(sst.env, sst.type, unnamed, fns.onError)
 							} else {
 								unnamed;
@@ -763,14 +848,14 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 				// output, output: join the overlap with the extras
 				eenv = namedOverlap.env;
 				missingl = fold(utypes, [], \acc, ltn : FType -> {
-					if (exists(rtypenames, \rtn : FcTypeName -> rtn.name == getFTypeName(ltn))) acc 
+					if (exists(rtypenames, \rtn : FcTypeName -> rtn.name == getFTypeName(ltn))) acc
 					else {
 						arrayPush(acc, ltn)
 					}
 				});
 
 				missingr = fold(rtypenames, [], \acc, rtn : FcTypeName -> {
-					if (exists(utypes, \ltn : FType -> rtn.name == getFTypeName(ltn))) acc 
+					if (exists(utypes, \ltn : FType -> rtn.name == getFTypeName(ltn))) acc
 					else {
 						rinst = fcstructname2ftype(eenv, rtn.name, rtypars);
 						arrayPush(acc, rinst)
@@ -858,14 +943,14 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 			rt = if (fns.kind == FGrowRight()) {
 				// output, output: join the overlap with the extras
 				missingl = fold(utypes, [], \acc, ltn : FType -> {
-					if (exists(rtypes, \rtn : FType -> getFTypeName(rtn) == getFTypeName(ltn))) acc 
+					if (exists(rtypes, \rtn : FType -> getFTypeName(rtn) == getFTypeName(ltn))) acc
 					else {
 						arrayPush(acc, ltn)
 					}
 				});
 
 				missingr = fold(rtypes, [], \acc, rtn : FType -> {
-					if (exists(utypes, \ltn : FType -> getFTypeName(rtn) == getFTypeName(ltn))) acc 
+					if (exists(utypes, \ltn : FType -> getFTypeName(rtn) == getFTypeName(ltn))) acc
 					else {
 						arrayPush(acc, rtn)
 					}
