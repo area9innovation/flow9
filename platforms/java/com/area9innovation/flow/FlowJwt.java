@@ -46,17 +46,34 @@ public class FlowJwt extends NativeHost {
 	}
 
 	public static String verifyJwt(String jwt, String key) {
-		JWTVerifier verifier = getVerifier(key);
+		JWTVerifier verifier = getVerifier("HS256", key);
 		return verifyJwt(jwt, verifier);
 	}
 
-	private static JWTVerifier getVerifier(String key) {
-		Algorithm algorithm = Algorithm.HMAC256(key);
-		return JWT.require(algorithm).build();
+	private static JWTVerifier getVerifier(String alg, String key) {
+		if (alg.equals("RS256")) {
+			try {
+				RSAPublicKey publicKey = null;
+				if (key.startsWith("{")) {
+					publicKey = getRSAPublicKeyFromJsonString(key);
+				} else {
+					publicKey = (RSAPublicKey)getPemPublicKeyFromString(key, "RSA");
+				}
+				Algorithm algorithm = Algorithm.RSA256(publicKey, null);
+				return JWT.require(algorithm).build();
+			} catch (Exception e) {
+				System.out.println(e.getMessage());
+				return null;
+			}
+		} else {
+			// Default to HS256
+			Algorithm algorithm = Algorithm.HMAC256(key);
+			return JWT.require(algorithm).build();
+		}
 	}
 
-	public static Object decodeJwt(String jwt, String key, Func8<Object, String, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
-		JWTVerifier verifier = getVerifier(key);
+	public static Object decodeJwt(String jwt, String alg, String key, Func8<Object, String, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
+		JWTVerifier verifier = getVerifier(alg, key);
 		String verify = verifyJwt(jwt, verifier);
 		if (verify == "OK") {
 			String iss;
