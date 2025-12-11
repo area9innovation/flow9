@@ -2,6 +2,7 @@ import material/internal/material_list_util;
 import material/internal/tropic_size_util;
 import formats/email/email;
 import tropic/selecttarray;
+import ds/id_generator;
 
 export {
 	// Set to false for non-native inputs
@@ -173,7 +174,8 @@ export {
 		color : Transform<MThemeColor>,
 		style : Transform<[MTextStyle]>,
 		ok : Maybe<MInputIsOk>,
-		error : DynamicBehaviour<Pair<string, [MTextStyle]>>
+		error : DynamicBehaviour<Pair<string, [MTextStyle]>>,
+		errorId : string
 	);
 
 	MInputHelperState(
@@ -181,7 +183,8 @@ export {
 		persistent : bool,
 		lines : int,
 		height : double,
-		helper : DynamicBehaviour<Pair<string, [MTextStyle]>>
+		helper : DynamicBehaviour<Pair<string, [MTextStyle]>>,
+		helperTextId : string
 	);
 
 	MInputLimitErrorState(
@@ -313,6 +316,7 @@ export {
 }
 
 enablePreventXSSDef = isUrlParameterTrue("new") && !isUrlParameterFalse("input_xss_protection_enabled");
+enableContrastUnfocusedUnderline = !isUrlParameterFalse("input_contrast_unfocused_underline_enabled");
 
 numericFilter(s) {
 	dotB = ref false;
@@ -330,6 +334,8 @@ numericFilter(s) {
 		)
 	);
 }
+
+helperTextIdGenerator = createStringIdGenerator("helperText_id");
 
 makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state : [MTextInputState],
 	mfocus : MFocus, iScriptBehaviours : MTextEditorIScriptBehaviours) -> MInputState {
@@ -564,7 +570,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	inactiveColor = contrastingColor(parent);
 	inactiveOpacity = extractStruct(style, MInactiveOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))).opacity;
 
-	unfocusedUnderline = extractStruct(style, MUnderlineUnfocusedStyle([Fill(inactiveColor), FillOpacity(inactiveOpacity / 4.)])).style;
+	unfocusedUnderline = extractStruct(style, MUnderlineUnfocusedStyle([
+		Fill(inactiveColor),
+		FillOpacity(if (enableContrastUnfocusedUnderline) inactiveOpacity else inactiveOpacity / 4.)
+	])).style;
 
 	mLabelStyle =
 		extractMTextStyleDef(
@@ -648,7 +657,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						ht.persistent,
 						1,
 						16.,
-						make(Pair(if (dynamicSize) "" else " ", []))
+						make(Pair(if (dynamicSize) "" else " ", [])),
+						helperTextIdGenerator.nextId()
 					)
 				),
 			None()
@@ -1330,6 +1340,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	)
 }
 
+inputErrorIdGenerator = createStringIdGenerator("input_error_id");
+
 makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MAutoCompleteStyle],
 	state : [MTextInputState]) -> MTextEditorIScriptBehaviours {
 	dynamicSize = contains(style, MDynamicSize());
@@ -1374,7 +1386,8 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 						inputErrorColor,
 						fselect(inputErrorColor, FLift(\ec : MThemeColor -> [inputErrorFont, ec])),
 						tryExtractStruct(ie.style, MInputIsOk(make(true))),
-						make(Pair(if (dynamicSize) "" else " ", []))
+						make(Pair(if (dynamicSize) "" else " ", [])),
+						inputErrorIdGenerator.nextId()
 					)
 				)
 			},
@@ -2585,7 +2598,13 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 		else fOr(inputState.mfocus.focused, fand(const(inputState.multiline), inputState.mfocus.focusEnabled));
 
 	inputAriaLabel =
-		if (strlen(inputState.label) > 0) const(inputState.label)
+		if (
+			exists(
+				extractStructMany(state, FAccessAttribute("", const(""))),
+				\attr -> attr.name == "aria-labelledby"
+			)
+		) const("")
+		else if (strlen(inputState.label) > 0) const(inputState.label)
 		else fselect(inputState.mfocus.title, FLift(\title -> if (title == "") "Input" else title));
 
 	textInput = \ ->
@@ -2686,24 +2705,33 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 							if (inputState.preventContextMenu) [FPreventContextMenu()] else [],
 							if ((^fAccessibilityEnabled || cpp) && !mobile) {
 								accessProperties = extractStructMany(state, FAccessAttribute("", const("")));
+								commonAttributes = [
+									FAccessZorder(parent.zorder),
+									FAccessAttribute("aria-label", inputAriaLabel),
+									FAccessAttribute("aria-required", const(b2s(eitherMap(inputState.error, \err -> err.requiredField, false)))),
+									FAccessAttribute(
+										"aria-describedby",
+										fselect2Lift(
+											eitherMap(inputState.error, \es -> fselectLift(es.error, \e -> if (e.first == "") "" else es.errorId), const("")),
+											eitherMap(inputState.helperText, \hs -> fselectLift(hs.helper, \h -> if (h.first == "") "" else hs.helperTextId), const("")),
+											\eId, hId -> strGlue([eId, hId], " ")
+										)
+									)
+								];
 
 								if (fgetValue(parent.id) != -2)
-									concat(
+									concat3(
 										accessProperties,
 										[
-											FAccessTabOrder(fselect(parent.tabOrder, FLift(\to -> arrayPush(to, 0)))),
-											FAccessEnabled(inputState.mfocus.focusEnabled),
-											FAccessZorder(parent.zorder),
-											FAccessAttribute("aria-label", inputAriaLabel)
-										]
+											FAccessTabOrder(farrayPush(inputState.mfocus.tabOrder, const(0))),
+											FAccessEnabled(inputState.mfocus.focusEnabled)
+										],
+										commonAttributes
 									)
 								else
 									concat(
 										accessProperties,
-										[
-											FAccessZorder(parent.zorder),
-											FAccessAttribute("aria-label", inputAriaLabel)
-										]
+										commonAttributes
 									);
 							} else {
 								[]

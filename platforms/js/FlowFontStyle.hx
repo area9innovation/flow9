@@ -43,7 +43,7 @@ class FlowFontStyle {
 			}
 		}
 
-		var style : FontStyle = flowFontStyles.get(name.toLowerCase());
+		var style : FontStyle = flowFontStyles.get(StringTools.replace(name, "'", "").toLowerCase());
 		return (style != null) ? style : {family: name, weight: "", size: 0.0, style: "normal", doNotRemap : false};
 	}
 }

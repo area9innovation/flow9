@@ -177,18 +177,106 @@ class NotificationsSupport {
         #end
     }
 
-    public static function setBadgerCount(value : Int) : Void {
-        // Not require to be implemented for these targets
+    private static var dbHelperLoaded : Bool = false;
+
+    private static function ensureDbHelper(onReady : Void->Void) : Void {
+        #if (js && !flow_nodejs)
+        if (dbHelperLoaded) {
+            onReady();
+        } else {
+            Util.loadJS("js/db-helper.js").then(function(res) {
+                dbHelperLoaded = true;
+                onReady();
+            }, function(e) {
+                trace("Failed to load db-helper.js: " + e);
+                onReady();
+            });
+        }
+        #else
+        onReady();
+        #end
     }
 
-    public static function getBadgerCount() : Int {
-        return 0;
+    public static function getBadgeCount(callback : Int -> Void) : Void {
+        #if (js && !flow_nodejs)
+        ensureDbHelper(function() {
+            try {
+                untyped window.getBadgeCount().then(
+                    function(count) {
+                        callback(count);
+                    },
+                    function(e) {
+                        trace("Error getting badge count: " + e);
+                        callback(0);
+                    }
+                );
+            } catch (e:Dynamic) {
+                trace("Error calling getBadgeCount: " + e);
+                callback(0);
+            }
+        });
+        #else
+        callback(0);
+        #end
+    }
+
+    public static function setBadgeCount(value : Int) : Void {
+        #if (js && !flow_nodejs)
+        ensureDbHelper(function() {
+            var badgeCount = value < 0 ? 0 : value;
+            try {
+                untyped window.setBadgeCount(badgeCount);
+            } catch (e:Dynamic) {
+                trace("Error setting badge count: " + e);
+            }
+        });
+        #end
+    }
+
+    public static function clearBadgeCount() : Void {
+        #if (js && !flow_nodejs)
+        ensureDbHelper(function() {
+            try {
+                untyped window.clearBadgeCount();
+            } catch (e:Dynamic) {
+                trace("Error clearing badge count: " + e);
+            }
+        });
+        #end
+    }
+
+    public static function incrementBadgeCount() : Void {
+        #if (js && !flow_nodejs)
+        ensureDbHelper(function() {
+            try {
+                untyped window.incrementBadgeCount();
+            } catch (e:Dynamic) {
+                trace("Error incrementing badge count: " + e);
+            }
+        });
+        #end
     }
 
     private static function callbackNotification(payload : Dynamic) : Void {
         var data : Array<Array<String>> = [];
         if (payload.data) {
             var payloadData : Dynamic = payload.data;
+
+            // Handle badge property if exists
+            if (Reflect.hasField(payloadData, "badge")) {
+                var badgeValue = Reflect.field(payloadData, "badge");
+                var badgeStr = Std.string(badgeValue);
+
+                if (badgeStr == "inc") {
+                    incrementBadgeCount();
+                } else {
+                    var badgeNum = Std.parseInt(badgeStr);
+                    if (badgeNum != null) {
+                        setBadgeCount(badgeNum);
+                    }
+                }
+            }
+
             // Use Reflect to iterate over JavaScript object properties
             for (key in Reflect.fields(payloadData)) {
                 var value = Reflect.field(payloadData, key);

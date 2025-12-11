@@ -30,6 +30,14 @@ export {
 	TDynamicArrayCols(da : DynamicArray<Tropic>) -> Tropic;
 	TDynamicArrayColsA(da : DynamicArray<Tropic>) -> Tropic;
 	TDynamicArrayGroup(da : DynamicArray<Tropic>) -> Tropic;
+
+	setTropicArrayOptimized(optimized : bool) -> void;
+}
+
+tropicArrayOptimized = ref isUrlParameterTrue("tropic_array_optimized");
+
+setTropicArrayOptimized(optimized : bool) -> void {
+	tropicArrayOptimized := optimized;
 }
 
 SelectTLines(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic) -> Tropic {
@@ -68,7 +76,17 @@ SelectTGroup(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, i
 	SelectTropicArray(values, makeTropicFn, TGroupCombiner());
 }
 
-preventNestedUpdates = isUrlParameterTrue("prevent_nested_updates");
+preventNestedUpdates = ^tropicArrayOptimized || isUrlParameterTrue("prevent_nested_updates");
+
+TropicArrayDeferredDisposers(content : Tropic) -> Tropic {
+	TransformTAcc(\t2a, p, s, mo -> {
+		tacc = t2a(content, p, s, mo);
+
+		TAcc(tacc with disposers = [
+			\ -> timer(100 + floor(random() * 100.0), \ -> applyall(tacc.disposers))
+		])
+	});
+}
 
 SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<int>, id : int, ?) -> Tropic, combiner : TCombiner) -> Tropic {
 	stackChanges = make([]);
@@ -78,6 +96,10 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 	update = make(true);
 
 	getNextId = \ -> fold(sort(^ids), -1, \acc, id -> if (id == acc + 1) id else acc) + 1;
+	makeTropicFnOptimized = if (^tropicArrayOptimized)
+		(\index, id, v -> TropicArrayDeferredDisposers(makeTropicFn(index, id, v)))
+	else
+		makeTropicFn;
 
 	TConstruct(
 		[
@@ -99,7 +121,9 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 							indexes := insertArray(removeIndex(^indexes, x), y, index);
 							ids := insertArray(removeIndex(^ids, x), y, id);
 
-							iter(enumFromTo(y, x), \i -> nextDistinct(^indexes[i], i));
+							if (!^tropicArrayOptimized) {
+								iter(enumFromTo(y, x), \i -> nextDistinct(^indexes[i], i));
+							}
 
 							// println(map(^indexes, getValue));
 
@@ -111,7 +135,9 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 							index = make(y);
 							id = getNextId();
 
-							mapi(subrange(^indexes, y, length(^indexes)), \i, t -> next(t, i + y + 1));
+							if (!^tropicArrayOptimized) {
+								iteri(subrange(^indexes, y, length(^indexes)), \i, t -> next(t, i + y + 1));
+							}
 
 							indexes := insertArray(^indexes, y, index);
 							ids := insertArray(^ids, y, id);
@@ -119,7 +145,7 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 							// println(map(^indexes, getValue));
 
 							// fselect to block any changes to index
-							next(stackChanges, arrayPush(getValue(stackChanges), TGroupAdd(makeTropicFn(fselect(index, idfn |> FLift), id, v), y)));
+							next(stackChanges, arrayPush(getValue(stackChanges), TGroupAdd(makeTropicFnOptimized(fselect(index, idfn |> FLift), id, v), y)));
 						}
 						ArrayReplace(x, y, v): {
 							// println("replace " + i2s(x) + " " + i2s(y));
@@ -130,7 +156,7 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 							// println(map(^indexes, getValue));
 
 							// fselect to block any changes to index
-							next(stackChanges, arrayPush(getValue(stackChanges), TGroupReplace(makeTropicFn(fselect(index, idfn |> FLift), id, v), y)));
+							next(stackChanges, arrayPush(getValue(stackChanges), TGroupReplace(makeTropicFnOptimized(fselect(index, idfn |> FLift), id, v), y)));
 						}
 						ArrayRemove(x, y): {
 							// println("remove " + i2s(x) + " " + i2s(y));
@@ -138,7 +164,9 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 							indexes := removeIndex(^indexes, y);
 							ids := removeIndex(^ids, y);
 
-							mapi(subrange(^indexes, y, length(^indexes) - y), \i, t -> next(t, i + y));
+							if (!^tropicArrayOptimized) {
+								iteri(subrange(^indexes, y, length(^indexes) - y), \i, t -> next(t, i + y));
+							}
 
 							// println(map(^indexes, getValue));
 
@@ -146,6 +174,10 @@ SelectTropicArray(values : Transform<[?]>, makeTropicFn : (index :  Transform<in
 						}
 					}
 				);
+
+				if (^tropicArrayOptimized) {
+					iteri(^indexes, \i, v -> nextDistinct(v, i));
+				}
 
 				// println(map(^indexes, getValue));
 				// println(^ids);

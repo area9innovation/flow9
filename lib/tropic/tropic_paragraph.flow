@@ -16,7 +16,7 @@ export {
 		words : [TParaWord],
 		s : [ParagraphStyle],
 		alignWidthBM : Maybe<DynamicBehaviour<double>>,
-		joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+		joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 		renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
 		renderInfo : WigiRenderParameters
 	) -> Tropic;
@@ -36,13 +36,12 @@ export {
 		inspectorM : Maybe<ParaElementInspector>,
 		scriptM : Maybe<ParaElementScriptType>,
 		ignoreLetterSpacing : bool,
-		wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+		wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
 		isUseContextWordWidth : bool
 	) -> TParaWord;
 	inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing: double, preventNodeCalculation : bool) -> Tropic;
 	getTParaWordText(w: TParaWord) -> string;
 	getTParaWordTextM(w: TParaWord) -> Maybe<string>;
-	getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalculation : bool) -> FormMetrics;
 
 	isSpaceWord(word : TParaWord) -> bool;
 
@@ -281,7 +280,7 @@ TRenderParagraph(
 	words : [TParaWord],
 	s : [ParagraphStyle],
 	alignWidthBM : Maybe<DynamicBehaviour<double>>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	renderedLinesInfoM : Maybe<DynamicBehaviour<[RenderedLinesInfo]>>,
 	renderInfo : WigiRenderParameters
 ) -> Tropic {
@@ -445,7 +444,6 @@ TRenderParagraph(
 			w.inspector.size,
 			w.inspector.baseline,
 			\size, ba -> {
-				// we can't use deferred here - it leads to flickering
 				if ((size.width != 0.0 && size.height != 0.0 && ba != 0.0) || (size.width == 0.0 && size.height == 0.0)) {
 					traceApi.traceAndNest(\-> "dynMetricsSubscription START size = " + toString(size) + ", baseline = " + toString(ba));
 					if (defer) executeReflowDeferred()
@@ -465,7 +463,7 @@ TRenderParagraph(
 
 	subscribe2dynWord = \w -> {
 		switch (w.word : GeneralWrapElement) {
-			NonTextElement(__, __) : dynMetricsSubscription(w, tightWidth && nDynWords > 1);
+			NonTextElement(__, __) : dynMetricsSubscription(w, (tightWidth || isUrlParameterTrue("new") && !isUrlParameterFalse("wigi_dyn_metrics_throttle")) && nDynWords > 1);
 			GeneralDynamicText(__): dynMetricsSubscription(w, false);
 			GeneralText(__): dynMetricsSubscription(w, true);
 			default: nop;
@@ -530,7 +528,7 @@ groupAndPositionWords(
 	words : [TParaWord],
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	rtl : bool,
 	ignoreLetterSpacing : bool,
 	join_words : bool
@@ -582,7 +580,7 @@ appendWordToLine(
 	word: TParaWord,
 	genIndent: double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	rtl : bool,
 	ignoreLetterSpacing : bool,
 	join_words : bool
@@ -621,7 +619,7 @@ makeHeadingGroup(
 	tag : string,
 	genIndent: double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	rtl : bool,
 	ignoreLetterSpacing : bool,
 	containsDynamicElement : bool,
@@ -654,20 +652,24 @@ makeHeadingGroup(
 positionInteractiveWords(
 	words: List<TParaWord>,
 	genIndent : double,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>
 ) -> [Tropic] {
-	spaceCase = \word, viewFn, str, alBef, alAft -> {
+	spaceCase = \word, viewFn, str, alBef, alAft, isFirstWordM -> {
 		TShow(fnot(word.inspector.detached),
-			viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style))
+			viewFn(str, apply2AlphabetsScaling(alBef, alAft, word.style), isFirstWordM)
 		);
-	}
-	map(
-		list2array(words),
-		\word -> {
-			viewFn = lookupTreeDef(joinedWordsConstructors, getValue(word.id), word.wordsViewConstructor);
+	};
+	wordArr = list2array(words);
+	mapi(
+		wordArr,
+		\idx, word -> {
+			prevWord = elementAt(wordArr, idx -1, dummyTParaWord);
+			wordId = getValue(word.id);
+			isFirstWordM = Some(wordId != getValue(prevWord.id));
+			viewFn = lookupTreeDef(joinedWordsConstructors, wordId, word.wordsViewConstructor);
 			wordView = switch (word.word) {
 				GeneralText(str) : {
-					viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style))
+					viewFn(str, applyAlphabetStyles(detectAlphabet(str), word.style), isFirstWordM)
 					|> (\t -> {
 						if (useWigiTextDynamicMetrics) {
 							ls = extractStruct(word.style, zeroLetterSpacing).spacing;
@@ -677,8 +679,8 @@ positionInteractiveWords(
 						}
 					})
 				};
-				GeneralSpace(str, alBef, alAft) : spaceCase(word, viewFn, str, alBef, alAft);
-				GeneralDynamicSpace(str, alBef, alAft) : spaceCase(word, viewFn, str, alBef, alAft);
+				GeneralSpace(str, alBef, alAft) : spaceCase(word, viewFn, str, alBef, alAft, isFirstWordM);
+				GeneralDynamicSpace(str, alBef, alAft) : spaceCase(word, viewFn, str, alBef, alAft, isFirstWordM);
 				default : word.ghostView;
 			};
 			translateWord(TParaWord(word with ghostView = wordView), genIndent)
@@ -694,7 +696,7 @@ joinGroupedWords(
 	words: List<TParaWord>,
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	joinedWordsConstructors : Tree<int, (string, [CharacterStyle]) -> Tropic>,
+	joinedWordsConstructors : Tree<int, (string, [CharacterStyle], Maybe<bool>) -> Tropic>,
 	ignoreLetterSpacing : bool,
 	containsDynamicElement : bool
 ) -> [Tropic] {
@@ -785,7 +787,7 @@ joinTextWords(
 	words : List<TParaWord>,
 	genIndent : double,
 	reflowHappened : DynamicBehaviour<bool>,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
 	ignoreLetterSpacing : bool
 ) -> Tropic {
 	// Here is TSelect that recalculates the view when behaviour is updated.
@@ -815,7 +817,8 @@ joinTextWords(
 						currentOffset = fselectLift(joinResult.currentOffset, \co -> Point(co.x - genIndent, co.y))
 					),
 					wordsViewConstructor,
-					ignoreLetterSpacing
+					ignoreLetterSpacing,
+					Some(true)
 				)) |> reverseA
 			);
 		}
@@ -828,7 +831,7 @@ appendOrJoinWord(
 	acc : JoinTextAcc,
 	word : TParaWord,
 	genIndent : double,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
 	ignoreLetterSpacing : bool
 ) -> JoinTextAcc {
 	makeWordStyle = \-> ifArrayPush(replaceStruct(word.style, SetRTL(getValue(word.rtl))), newJustifyEnabled, WordSpacing(word.inspector.lineWordSpacing));
@@ -888,12 +891,12 @@ appendOrJoinWord(
 					wordString,
 					"",
 					makeWordStyle(),
-					None(),
+					Some(getValue(word.rtl)),
 					lineNumber,
 					wordOffset,
 					addLastLine(JoinTextAcc(acc with
 						currentOffset = fselectLift(acc.currentOffset, \co -> Point(co.x - genIndent, co.y))
-					), wordsViewConstructor, ignoreLetterSpacing)
+					), wordsViewConstructor, ignoreLetterSpacing, Some(false))
 				)
 			}
 		}
@@ -904,15 +907,17 @@ appendOrJoinWord(
 
 addLastLine(
 	joinResult : JoinTextAcc,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
-	ignoreLetterSpacing : bool
+	wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
+	ignoreLetterSpacing : bool,
+	isLastLineM : Maybe<bool>
 ) -> List<Tropic> {
 	Cons(
 		TTranslate(
 			joinResult.currentOffset,
 			wordsViewConstructor(
 				joinResult.currentSpaces + joinResult.currentString,
-				if (ignoreLetterSpacing) removeAllStructs(joinResult.style, LetterSpacing(0.0)) else joinResult.style
+				if (ignoreLetterSpacing) removeAllStructs(joinResult.style, LetterSpacing(0.0)) else joinResult.style,
+				isLastLineM
 			)
 		),
 		joinResult.acc,
@@ -928,7 +933,7 @@ commonWordConstructor(
 	inspectorM : Maybe<ParaElementInspector>,
 	scriptM : Maybe<ParaElementScriptType>,
 	isLastChild : bool,
-	wordsViewConstructor : (string, [CharacterStyle]) -> Tropic,
+	wordsViewConstructor : (string, [CharacterStyle], Maybe<bool>) -> Tropic,
 	isUseContextWordWidth : bool
 ) -> TParaWord {
 	inspector = eitherFn(inspectorM, idfn, dummyInspectorFn);
@@ -940,7 +945,7 @@ commonWordConstructor(
 	ghostViewTropic = \ -> if (isUseContextWordWidth) {
 		tr
 	} else inspectFn(tr)
-	
+
 	ghostView = switch(w) {
 		GeneralSpace(__, __, __): TVisible(fnot(inspector.detached), ghostViewTropic());
 		GeneralDynamicSpace(__, __, __): ghostViewTropic();
@@ -1037,7 +1042,8 @@ letterSpacingSuportedSizeInspector(
 	)
 }
 
-inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> Tropic {
+inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing0 : double, preventNodeCalculation : bool) -> Tropic {
+	letterSpacing = if (^userDefinedLetterSpacing != 0.0) ^userDefinedLetterSpacing else letterSpacing0;
 	if (isConstantSizeTropic(tr)) {
 		inspectWordViewStatic(tr, inspector, letterSpacing, preventNodeCalculation);
 		tr;
@@ -1049,6 +1055,9 @@ inspectWordView(tr : Tropic, inspector : ParaElementInspector, letterSpacing : d
 		}
 	}
 }
+
+wigi_width_inspection_fix = !isUrlParameterFalse("wigi_width_inspection_fix");
+wigi_word_metrics_cache = isUrlParameterTrue("new") && !isUrlParameterFalse("wigi_word_metrics_cache");
 
 getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalculation : bool) -> FormMetrics {
 	preventNodeCalculationFontFamily = switch(tr) {
@@ -1063,15 +1072,15 @@ getWordViewStaticMetrics(tr : Tropic, letterSpacing : double, preventNodeCalcula
 		};
 		default : false;
 	};
-	tr2 = if (preventNodeCalculation && preventNodeCalculationFontFamily && !isUrlParameterFalse("wigi_width_inspection_fix")) {
+	tr2 = if (preventNodeCalculation && preventNodeCalculationFontFamily && wigi_width_inspection_fix) {
 		switch(tr) {
 			TText(txt, style0): TText(txt, arrayPush(style0, PreventTextNodeWidthCalculation()));
 			default : tr;
 		}
 	} else tr;
-	fMetrics = getTropicMetrics(tr2);
+	fMetrics = if (wigi_word_metrics_cache) getTWordMetricsWithCache(tr2, makeTree(), true) else getTropicMetrics(tr2);
 	FormMetrics(fMetrics with width = addLetterSpacing(fMetrics.width, letterSpacing));
-} 
+}
 
 inspectWordViewStatic(tr : Tropic, inspector : ParaElementInspector, letterSpacing : double, preventNodeCalculation : bool) -> void {
 	fMetrics = getWordViewStaticMetrics(tr, letterSpacing, preventNodeCalculation);

@@ -8,11 +8,10 @@ self.addEventListener('notificationclick', function(event) {
   // Get the URL to open
   var targetUrl = '/';
   const message = event.notification.data.FCM_MSG;
-  
-  if (message) {
-    if (message.notification.click_action) {
-      targetUrl = message.notification.click_action;
-    }
+  // message.notification.click_action not supported on V1 API
+  // Known issue for iOS 26 and previous version: when the app is in foreground notification click doesn't work correctly
+  if (message && message.data && message.data.click_action) {
+    targetUrl = message.data.click_action;
   }
 
   // Handle action clicks
@@ -31,25 +30,35 @@ self.addEventListener('notificationclick', function(event) {
         for (const client of clientList) {
           try {
             const clientUrl = new URL(client.url);
-            const targetUrlObj = new URL(targetUrl);
+            let targetUrlObj = new URL(targetUrl);
             
             if (clientUrl.origin === targetUrlObj.origin && 'focus' in client) {
               logMessage('Focusing existing client');
-              
+
               // For macOS Safari, try navigation if needed
-              if (clientUrl.pathname !== targetUrlObj.pathname) {
-                if ('navigate' in client) {
-                  return client.navigate(targetUrl).then(() => client.focus());
-                } else {
-                  // Fallback versions without navigate
-                  client.postMessage({
-                    action: 'navigate',
-                    url: targetUrl
-                  });
-                  return client.focus();
+              if (clientUrl.pathname === targetUrlObj.pathname) {
+                let newUrl = new URL(clientUrl.href);
+                targetUrlObj.searchParams.forEach((value, key) => {
+                  newUrl.searchParams.set(key, value);
+                });
+
+                if (targetUrlObj.hash) {
+                    newUrl.hash = targetUrlObj.hash;
                 }
+
+                targetUrlObj = newUrl;
               }
-              
+
+              if (targetUrlObj.href !== clientUrl.href) {
+                if ('navigate' in client) {
+                  return client.navigate(targetUrlObj.href).then(() => client.focus());
+                }
+                client.postMessage({
+                  action: 'navigate',
+                  url: targetUrlObj.href
+                });
+              }
+
               return client.focus();
             }
           } catch (e) {
@@ -71,6 +80,7 @@ self.addEventListener('notificationclick', function(event) {
 importScripts('https://www.gstatic.com/firebasejs/11.9.1/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/11.9.1/firebase-messaging-compat.js');
 importScripts('firebase-config.js');
+importScripts('../db-helper.js');
 
 // Initialize Firebase using the compat version for service workers
 firebase.initializeApp(firebaseConfig);
@@ -97,6 +107,29 @@ messaging.onBackgroundMessage(function(payload) {
 
   // Send message to client for internal handling
   sendMessageToClient.fn({ action: "notification", payload });
+
+  // Handle badge from payload using IndexedDB
+  if (payload.data && payload.data.badge) {
+    var badgeValue = payload.data.badge;
+
+    if (badgeValue === 'inc') {
+      return incrementBadgeCount()
+        .then(function() {
+          return getBadgeCount();
+        })
+        .catch(function(err) {
+          logMessage('Failed to increment badge', err);
+        });
+    } else {
+      var badgeNum = parseInt(badgeValue, 10);
+      if (!isNaN(badgeNum)) {
+        return setBadgeCount(badgeNum)
+          .catch(function(err) {
+            logMessage('Failed to set badge', err);
+          });
+      }
+    }
+  }
 });
 
 // Enhanced message handling specifically

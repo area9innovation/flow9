@@ -1,0 +1,848 @@
+import mediabunny/mediabunny;
+import promise;
+import runtime;
+import net/http;
+import string;
+import net/url_parameter;
+import ds/tree;
+import material/material2tropic;
+import math/md5;
+
+// ==============================================================================
+// MEDIABUNNY UNIT TEST SUITE WITH MD5 VERIFICATION AND PROMISE SUPPORT
+// ==============================================================================
+
+// Configuration - Modify these values to test different scenarios
+getTestVideoUrl() -> string { "./images/material_test/big_buck_bunny.mp4" }
+getTestFileName() -> string { "big_buck_bunny" }
+getCustomSampleRate() -> int { 44100 }  // High quality audio
+getSpeechSampleRate() -> int { 16000 }  // Speech recognition format
+getCropSettings() -> MBCrop { MBCrop(100, 50, 256, 128) }
+getTrimSettings() -> MBTrim { MBTrim(10, 20) }  // Trim from 10s to 20s (10 second clip)
+
+// Test selection
+isEnableDurationTest() -> bool { true }
+isEnableAudioTests() -> bool { true }
+isEnableVideoTests() -> bool { true }
+isEnableAdvancedTests() -> bool { true }
+isEnableTrimmingTests() -> bool { true }
+isEnableVideoInfoTests() -> bool { true }
+isGenerateMode() -> bool {
+	isUrlParameterTrue("generate")  // Use ?generate=true in URL to enable generate mode
+}
+
+// ==============================================================================
+// EXPECTED CHECKSUMS REGISTRY
+// ==============================================================================
+
+// Expected MD5 checksums and values for test outputs
+// NOTE: Update these when you have verified correct outputs
+getExpectedChecksums() -> Tree<string, string> {
+	pairs2tree([
+		// NOTE: Run in generate mode to update MD5 or size:type
+		// Use size:type for non-deterministic codec, like mp4.
+
+		// Duration test (expected value in seconds for big_buck_bunny.mp4)
+		Pair("duration_detection", "59.007999999999996"),
+		// Video info test (expected value in width:height:bitrate for big_buck_bunny.mp4)
+		Pair("video_info", "320x180:416289"),
+		// URL-based tests (expected values for URL-based functions)
+		Pair("duration_url", "59.007999999999996"),
+		Pair("video_info_url", "320x180:416289"),
+
+		// Audio conversion
+		Pair("mp3_default", "58ddd3ebd3e581c9e806e68cbac8a9f9"),
+		Pair("wav_default", "ea634ad042c73c7822074c502fb28cad"),
+		Pair("wav_hifi_44100", "a6d47cd82390526edb3fc2936f31fedc"),
+		Pair("wav_speech_16000", "ea634ad042c73c7822074c502fb28cad"),
+
+		// Video conversion - mixed approach based on format determinism
+		Pair("mp4_default", "6321957:video/mp4"),
+		Pair("webm_default", "2147097:video/webm"),
+		Pair("mp4_cropped", "1547085:video/mp4"),
+		Pair("webm_cropped", "1459162:video/webm"),
+
+		// Trimming tests (10s clip from 10s to 20s)
+		Pair("mp4_trimmed", "364927:video/mp4"),
+		Pair("webm_trimmed", "327832:video/webm"),
+		Pair("mp3_trimmed", "87559c98101e715eea70d59417380a1f"),
+		Pair("wav_trimmed", "36563f1dbdf4273a9d1293a3fa143325"),
+	])
+}
+
+// ==============================================================================
+// MD5 HASHING AND FILE INFO FUNCTIONALITY (PROMISE WRAPPERS)
+// ==============================================================================
+
+calculateMD5(file : native, fn : (string) -> void) -> void {
+	readFileClient(file, "data", \data -> {
+		fn(md5(data))
+	}, \err -> println("Failed to calculate MD5: " + err))
+}
+
+// Native file info extraction for debugging
+native getFileInfo : (file : native, callback : (size : int, type : string, lastModified : double) -> void) -> void = Mediabunny.getFileInfo;
+
+// Promise wrapper for MD5 calculation
+calculateMD5P(file : native) -> Promise<string, string> {
+	Promise(\fulfill, reject -> {
+		calculateMD5(file, \md5 -> {
+			if (md5 == "") {
+				reject("Failed to calculate MD5");
+			} else {
+				fulfill(md5);
+			}
+		})
+	})
+}
+
+// Promise wrapper for file info extraction
+getFileInfoP(file : native) -> Promise<Triple<int, string, double>, string> {
+	Promise(\fulfill, reject -> {
+		getFileInfo(file, \size, type, lastModified -> {
+			if (size <= 0) {
+				reject("Invalid file info");
+			} else {
+				fulfill(Triple(size, type, lastModified));
+			}
+		})
+	})
+}
+
+// Promise wrapper for media duration
+mbGetMediaDurationP(file : native) -> Promise<int, string> {
+	Promise(\fulfill, reject -> {
+		mbGetMediaDuration(file, \duration -> {
+			if (duration <= 0) {
+				reject("Invalid duration: " + i2s(duration));
+			} else {
+				fulfill(duration);
+			}
+		})
+	})
+}
+
+// Promise wrapper for media duration
+mbGetMediaDurationBase64P(file : native) -> Promise<int, string> {
+	Promise(\fulfill, reject -> {
+		readFileEncClient(
+			file, "uri", "Win1252",
+			\base64str -> {
+				mbGetMediaDurationFromBase64(base64str, \duration -> {
+					if (duration <= 0) {
+						reject("Invalid duration: " + i2s(duration));
+					} else {
+						fulfill(duration);
+					}
+				})
+			},
+			reject
+		);
+	})
+}
+
+// Promise wrapper for media conversion
+mbConversionP(file : native, format : MBFormat, params : [MBStyle]) -> Promise<native, string> {
+	Promise(\fulfill, reject -> {
+		mbConversion(file, format, params, fulfill, reject)
+	})
+}
+
+// Promise wrapper for file loading
+makeFileByBlobUrlP(url : string, fileName : string) -> Promise<native, string> {
+	Promise(\fulfill, reject -> {
+		makeFileByBlobUrl(url, fileName, fulfill, reject)
+	})
+}
+
+// Promise wrapper for video info extraction
+mbGetVideoInfoP(file : native) -> Promise<Triple<int, int, int>, string> {
+	Promise(\fulfill, reject -> {
+		mbGetVideoInfo(file, \width, height, bitrate -> {
+			if (width <= 0 || height <= 0 || bitrate <= 0) {
+				reject("Invalid video info");
+			} else {
+				fulfill(Triple(width, height, bitrate));
+			}
+		})
+	})
+}
+
+mbGetVideoInfoBase64P(file : native) -> Promise<Triple<int, int, int>, string> {
+	Promise(\fulfill, reject -> {
+		readFileEncClient(
+			file, "uri", "Win1252",
+			\base64str -> {
+				mbGetVideoInfoFromBase64(base64str, \width, height, bitrate -> {
+					if (width <= 0 || height <= 0 || bitrate <= 0) {
+						reject("Invalid video info");
+					} else {
+						fulfill(Triple(width, height, bitrate));
+					}
+				})
+			},
+			reject
+		);
+	})
+}
+
+// Promise wrapper for media duration from URL
+mbGetMediaDurationUrlP(mediaUrl : string) -> Promise<int, string> {
+	Promise(\fulfill, reject -> {
+		mbGetMediaDurationFromUrl(mediaUrl, \duration -> {
+			if (duration <= 0) {
+				reject("Invalid duration from URL: " + i2s(duration));
+			} else {
+				fulfill(duration);
+			}
+		})
+	})
+}
+
+// Promise wrapper for video info from URL
+mbGetVideoInfoUrlP(mediaUrl : string) -> Promise<Triple<int, int, int>, string> {
+	Promise(\fulfill, reject -> {
+		mbGetVideoInfoFromUrl(mediaUrl, \width, height, bitrate -> {
+			if (width <= 0 || height <= 0 || bitrate <= 0) {
+				reject("Invalid video info from URL");
+			} else {
+				fulfill(Triple(width, height, bitrate));
+			}
+		})
+	})
+}
+
+// ==============================================================================
+// UNIT TEST FRAMEWORK
+// ==============================================================================
+
+TestResult ::= TestPass, TestFail, TestSkip, TestGenerate;
+	TestPass(testName : string, actualMD5 : string);
+	TestFail(testName : string, expectedMD5 : string, actualMD5 : string);
+	TestSkip(testName : string, reason : string);
+	TestGenerate(testName : string, generatedMD5 : string);
+
+TestOutput ::= TestDuration, TestConversion, TestVideoInfo;
+	TestDuration(duration : int);
+	TestConversion(file : native);
+	TestVideoInfo(width : int, height : int, bitrate : int);
+// Global test results collection (for promise compatibility)
+testResults : ref [TestResult] = ref [];
+
+// Add test result to collection
+recordTestResult(result : TestResult) -> void {
+	testResults := arrayPush(^testResults, result)
+}
+
+// Check if a test key represents video format (non-deterministic encoding)
+isNonDeterministicFormat(testKey : string) -> bool {
+	exists(["mp4", "webm"], \ext -> strContains(testKey, ext))
+}
+
+// Verify file output against expected checksum (callback style, simplified)
+verifyOutput(testKey : string, testName : string, outputFile : native, callback : () -> void) -> void {
+	expectedChecksums = getExpectedChecksums();
+	expectedValue = lookupTreeDef(expectedChecksums, testKey, "");
+
+	if (isNonDeterministicFormat(testKey)) {
+		// Video files: use size-based verification
+		verifyNonDeterministicOutput(testKey, testName, outputFile, expectedValue, callback);
+	} else {
+		// Audio files: use MD5 checksum verification
+		verifyChecksumOutput(testKey, testName, outputFile, expectedValue, callback);
+	}
+}
+
+// Verify deterministic file output (audio and WebM) using MD5 checksum
+verifyChecksumOutput(testKey : string, testName : string, outputFile : native, expectedMD5 : string, callback : () -> void) -> void {
+	calculateMD5(outputFile, \actualMD5 -> {
+		result = if (isGenerateMode()) {
+			println("🔧 [GENERATE] " + testKey + ": \"" + actualMD5 + "\"");
+			TestGenerate(testName, actualMD5);
+		} else if (expectedMD5 == "") {
+			println("⏩ [SKIP] " + testName + ": No expected checksum (MD5: " + actualMD5 + ")");
+			TestSkip(testName, "No expected checksum");
+		} else if (actualMD5 == expectedMD5) {
+			println("✅ [PASS] " + testName + ": MD5 verified (" + actualMD5 + ")");
+			TestPass(testName, actualMD5);
+		} else {
+			println("❌ [FAIL] " + testName + ": MD5 mismatch");
+			println("   Expected: " + expectedMD5);
+			println("   Actual:   " + actualMD5);
+			TestFail(testName, expectedMD5, actualMD5);
+		};
+		recordTestResult(result);
+		callback();
+	})
+}
+
+// Verify video file output using size and type
+verifyNonDeterministicOutput(testKey : string, testName : string, outputFile : native, expectedSizeInfo : string, callback : () -> void) -> void {
+	getFileInfo(outputFile, \size, type, lastModified -> {
+		actualSizeInfo = i2s(size) + ":" + type;
+
+		if (isGenerateMode()) {
+			// Show both size info and MD5 for debugging in generate mode
+			calculateMD5(outputFile, \actualMD5 -> {
+				println("🔧 [GENERATE] " + testKey + ": \"" + actualSizeInfo + "\" (MD5: " + actualMD5 + ")");
+				println("   ⚠️  NOTE: " + type +" files use size+type verification due to non-deterministic encoding");
+				recordTestResult(TestGenerate(testName, actualSizeInfo));
+				callback();
+			})
+		} else {
+			result = if (expectedSizeInfo == "") {
+				println("⏩ [SKIP] " + testName + ": No expected size info (Size: " + i2s(size) + " bytes, Type: " + type + ")");
+				TestSkip(testName, "No expected size info");
+			} else if (actualSizeInfo == expectedSizeInfo) {
+				println("✅ [PASS] " + testName + ": Size+type verified (" + actualSizeInfo + ")");
+				TestPass(testName, actualSizeInfo);
+			} else {
+				println("❌ [FAIL] " + testName + ": Size+type mismatch");
+				println("   Expected: " + expectedSizeInfo);
+				println("   Actual:   " + actualSizeInfo);
+				TestFail(testName, expectedSizeInfo, actualSizeInfo);
+			};
+			recordTestResult(result);
+			callback();
+		}
+	})
+}
+
+// ==============================================================================
+// ENHANCED LOGGING FUNCTIONS
+// ==============================================================================
+
+logError(testName : string, error : string) -> void {
+	println("❌ [ERROR] " + testName + ": " + error);
+	recordTestResult(TestSkip(testName, "Error: " + error));
+}
+
+logProgress(testName : string) -> void {
+	println("🔄 [RUNNING] " + testName + "...")
+}
+
+// Test 1: Media Duration Detection
+testMediaDurationP(file : native) -> Promise<TestOutput, string> {
+	testName = "Duration Detection";
+	logProgress(testName);
+
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbGetMediaDurationP(file),
+			\duration -> {
+				expectedChecksums = getExpectedChecksums();
+				expectedDurationStr = lookupTreeDef(expectedChecksums, "duration_detection", "");
+				actualDurationStr = i2s(duration);
+
+				result = if (isGenerateMode()) {
+					// Generate mode: output duration for updating registry
+					println("🔧 [GENERATE] duration_detection: \"" + actualDurationStr + "\"");
+					TestGenerate(testName, actualDurationStr);
+				} else if (expectedDurationStr == "") {
+					// No expected duration available
+					println("⏩ [SKIP] " + testName + ": No expected duration (Duration: " + actualDurationStr + "s)");
+					TestSkip(testName, "No expected duration");
+				} else if (actualDurationStr == expectedDurationStr) {
+					// Test passed
+					println("✅ [PASS] " + testName + ": Duration = " + actualDurationStr + "s (verified)");
+					TestPass(testName, actualDurationStr);
+				} else {
+					// Test failed
+					println("❌ [FAIL] " + testName + ": Duration mismatch");
+					println("   Expected: " + expectedDurationStr + "s");
+					println("   Actual:   " + actualDurationStr + "s");
+					TestFail(testName, expectedDurationStr, actualDurationStr);
+				};
+				recordTestResult(result);
+				fulfill(TestDuration(duration));
+			},
+			\error -> {
+				logError(testName, error);
+				reject(error);
+			}
+		)
+	})
+}
+
+// Test 2: Media Duration Detection of base64 coded content
+testMediaDurationBase64P(file : native) -> Promise<TestOutput, string> {
+	testName = "Duration Detection of base64 coded content";
+	logProgress(testName);
+
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbGetMediaDurationBase64P(file),
+			\duration -> {
+				expectedChecksums = getExpectedChecksums();
+				expectedDurationStr = lookupTreeDef(expectedChecksums, "duration_detection", "");
+				actualDurationStr = i2s(duration);
+
+				result = if (isGenerateMode()) {
+					// Generate mode: output duration for updating registry
+					println("🔧 [GENERATE] duration_detection: \"" + actualDurationStr + "\"");
+					TestGenerate(testName, actualDurationStr);
+				} else if (expectedDurationStr == "") {
+					// No expected duration available
+					println("⏩ [SKIP] " + testName + ": No expected duration (Duration: " + actualDurationStr + "s)");
+					TestSkip(testName, "No expected duration");
+				} else if (actualDurationStr == expectedDurationStr) {
+					// Test passed
+					println("✅ [PASS] " + testName + ": Duration = " + actualDurationStr + "s (verified)");
+					TestPass(testName, actualDurationStr);
+				} else {
+					// Test failed
+					println("❌ [FAIL] " + testName + ": Duration mismatch");
+					println("   Expected: " + expectedDurationStr + "s");
+					println("   Actual:   " + actualDurationStr + "s");
+					TestFail(testName, expectedDurationStr, actualDurationStr);
+				};
+				recordTestResult(result);
+				fulfill(TestDuration(duration));
+			},
+			\error -> {
+				logError(testName, error);
+				reject(error);
+			}
+		)
+	})
+}
+
+// Test 3: Media Duration from URL Unit Tests
+testMediaDurationUrlP(mediaUrl : string) -> Promise<TestOutput, string> {
+	testName = "Duration Detection from URL";
+	logProgress(testName);
+
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbGetMediaDurationUrlP(mediaUrl),
+			\duration -> {
+				expectedChecksums = getExpectedChecksums();
+				expectedDurationStr = lookupTreeDef(expectedChecksums, "duration_url", "");
+				actualDurationStr = i2s(duration);
+
+				result = if (isGenerateMode()) {
+					// Generate mode: output duration for updating registry
+					println("🔧 [GENERATE] duration_url: \"" + actualDurationStr + "\"");
+					TestGenerate(testName, actualDurationStr);
+				} else if (expectedDurationStr == "") {
+					println("⏩ [SKIP] " + testName + ": No expected duration (Duration: " + actualDurationStr + ")");
+					TestSkip(testName, actualDurationStr);
+				} else if (expectedDurationStr == actualDurationStr) {
+					println("✅ [PASS] " + testName + ": Duration matches expected (" + actualDurationStr + "s)");
+					TestPass(testName, actualDurationStr);
+				} else {
+					println("❌ [FAIL] " + testName + ": Expected " + expectedDurationStr + "s, got " + actualDurationStr + "s");
+					TestFail(testName, expectedDurationStr, actualDurationStr);
+				}
+				recordTestResult(result);
+				fulfill(TestDuration(duration));
+			},
+			\error -> {
+				logError(testName, error);
+				reject(error);
+			}
+		)
+	})
+}
+
+// Single conversion test with promise
+runConversionTestP(file : native, format : MBFormat, params : [MBStyle], testKey : string, testName : string) -> Promise<TestOutput, string> {
+	logProgress(testName);
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbConversionP(file, format, params),
+			\outputFile -> {
+				verifyOutput(testKey, testName, outputFile, \-> {
+					fulfill(TestConversion(outputFile));
+				});
+			},
+			\error -> {
+				logError(testName, error);
+				reject(testName + error);
+			}
+		)
+	})
+}
+
+// Test 4: Audio Conversion Unit Tests
+testAudioConversionsP(file : native) -> [Promise] {
+	customSampleRate = getCustomSampleRate();
+	speechSampleRate = getSpeechSampleRate();
+
+	// Run all audio tests with promises
+	[
+		runConversionTestP(file, MBAudioMP3(), [], "mp3_default", "Audio MP3 Conversion"),
+		runConversionTestP(file, MBAudioWAV(), [], "wav_default", "Audio WAV Conversion (Default)"),
+		runConversionTestP(file, MBAudioWAV(), [MBSampleRate(customSampleRate)], "wav_hifi_" + i2s(customSampleRate), "Audio WAV Conversion (HiFi)"),
+		runConversionTestP(file, MBAudioWAV(), [MBSampleRate(speechSampleRate)], "wav_speech_" + i2s(speechSampleRate), "Audio WAV Conversion (Speech)"),
+	]
+}
+
+// Test 5: Video Conversion Unit Tests
+testVideoConversionsP(file : native) -> [Promise] {
+	// Run all video tests with promises
+	[
+		runConversionTestP(file, MBVideoMP4(), [], "mp4_default", "Video MP4 Conversion"),
+		runConversionTestP(file, MBVideoWEBM(), [], "webm_default", "Video WebM Conversion")
+	]
+}
+
+// Test 6: Advanced Processing Unit Tests
+testAdvancedProcessingP(file : native) -> [Promise] {
+	cropSettings = getCropSettings();
+
+	// Run all advanced processing tests with promises
+	[
+		runConversionTestP(file, MBVideoMP4(), [cropSettings], "mp4_cropped", "Video MP4 Cropping"),
+		runConversionTestP(file, MBVideoWEBM(), [cropSettings], "webm_cropped", "Video WebM Cropping"),
+	]
+}
+
+// Test 7: Trimming Unit Tests
+testTrimmingProcessingP(file : native) -> [Promise] {
+	trimSettings = getTrimSettings();
+
+	// Run all trimming tests with promises
+	[
+		runConversionTestP(file, MBAudioMP3(), [trimSettings], "mp3_trimmed", "Audio MP3 Trimming"),
+		runConversionTestP(file, MBAudioWAV(), [trimSettings], "wav_trimmed", "Audio WAV Trimming"),
+		runConversionTestP(file, MBVideoMP4(), [trimSettings], "mp4_trimmed", "Video MP4 Trimming"),
+		runConversionTestP(file, MBVideoWEBM(), [trimSettings], "webm_trimmed", "Video WebM Trimming"),
+	]
+}
+
+// Test 8: Video Info Unit Tests
+testVideoInfoP(file : native) -> Promise<TestOutput, string> {
+	testName = "Video Info";
+	logProgress(testName);
+
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbGetVideoInfoP(file),
+			\whb -> untriple(whb, \width, height, bitrate -> {
+				expectedChecksums = getExpectedChecksums();
+				expectedVideoInfoStr = lookupTreeDef(expectedChecksums, "video_info", "");
+				actualVideoInfoStr = i2s(width) + "x" + i2s(height) + ":" + i2s(bitrate);
+
+				result = if (isGenerateMode()) {
+					println("🔧 [GENERATE] video_info: \"" + actualVideoInfoStr + "\"");
+					TestGenerate(testName, actualVideoInfoStr);
+				} else if (expectedVideoInfoStr == "") {
+					println("⏩ [SKIP] " + testName + ": No expected video info (Video info: " + actualVideoInfoStr + ")");
+					TestSkip(testName, "No expected video info");
+				} else if (actualVideoInfoStr == expectedVideoInfoStr) {
+					println("✅ [PASS] " + testName + ": Video info = " + actualVideoInfoStr + " (verified)");
+					TestPass(testName, actualVideoInfoStr);
+				} else {
+					println("❌ [FAIL] " + testName + ": Video info mismatch");
+					println("   Expected: " + expectedVideoInfoStr);
+					println("   Actual:   " + actualVideoInfoStr);
+					TestFail(testName, expectedVideoInfoStr, actualVideoInfoStr);
+				};
+				recordTestResult(result);
+				fulfill(TestVideoInfo(width, height, bitrate));
+			}),
+			\error -> {
+				logError(testName, error);
+				reject(error);
+			}
+		)
+	})
+}
+
+// Test 9 Video Info of base64 coded content Unit Tests
+testVideoInfoBase64P(file : native) -> Promise<TestOutput, string> {
+	testName = "Video Info of base64 coded content";
+	logProgress(testName);
+
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbGetVideoInfoBase64P(file),
+			\whb -> untriple(whb, \width, height, bitrate -> {
+				expectedChecksums = getExpectedChecksums();
+				expectedVideoInfoStr = lookupTreeDef(expectedChecksums, "video_info", "");
+				actualVideoInfoStr = i2s(width) + "x" + i2s(height) + ":" + i2s(bitrate);
+
+				result = if (isGenerateMode()) {
+					println("🔧 [GENERATE] video_info: \"" + actualVideoInfoStr + "\"");
+					TestGenerate(testName, actualVideoInfoStr);
+				} else if (expectedVideoInfoStr == "") {
+					println("⏩ [SKIP] " + testName + ": No expected video info (Video info: " + actualVideoInfoStr + ")");
+					TestSkip(testName, "No expected video info");
+				} else if (actualVideoInfoStr == expectedVideoInfoStr) {
+					println("✅ [PASS] " + testName + ": Video info = " + actualVideoInfoStr + " (verified)");
+					TestPass(testName, actualVideoInfoStr);
+				} else {
+					println("❌ [FAIL] " + testName + ": Video info mismatch");
+					println("   Expected: " + expectedVideoInfoStr);
+					println("   Actual:   " + actualVideoInfoStr);
+					TestFail(testName, expectedVideoInfoStr, actualVideoInfoStr);
+				};
+				recordTestResult(result);
+				fulfill(TestVideoInfo(width, height, bitrate));
+			}),
+			\error -> {
+				logError(testName, error);
+				reject(error);
+			}
+		)
+	})
+}
+
+// Test 10: Video Info from URL Unit Tests
+testVideoInfoUrlP(mediaUrl : string) -> Promise<TestOutput, string> {
+	testName = "Video Info from URL";
+	logProgress(testName);
+
+	Promise(\fulfill, reject -> {
+		doneP(
+			mbGetVideoInfoUrlP(mediaUrl),
+			\whb -> untriple(whb, \width, height, bitrate -> {
+				expectedChecksums = getExpectedChecksums();
+				expectedVideoInfoStr = lookupTreeDef(expectedChecksums, "video_info_url", "");
+				actualVideoInfoStr = i2s(width) + "x" + i2s(height) + ":" + i2s(bitrate);
+
+				result = if (isGenerateMode()) {
+					println("🔧 [GENERATE] video_info_url: \"" + actualVideoInfoStr + "\"");
+					TestGenerate(testName, actualVideoInfoStr);
+				} else if (expectedVideoInfoStr == "") {
+					println("⏩ [SKIP] " + testName + ": No expected video info (Video info: " + actualVideoInfoStr + ")");
+					TestSkip(testName, actualVideoInfoStr);
+				} else if (expectedVideoInfoStr == actualVideoInfoStr) {
+					println("✅ [PASS] " + testName + ": Video info matches expected (" + actualVideoInfoStr + ")");
+					TestPass(testName, actualVideoInfoStr);
+				} else {
+					println("❌ [FAIL] " + testName + ": Expected " + expectedVideoInfoStr + ", got " + actualVideoInfoStr);
+					TestFail(testName, expectedVideoInfoStr, actualVideoInfoStr);
+				}
+				recordTestResult(result);
+				fulfill(TestVideoInfo(width, height, bitrate));
+			}),
+			\error -> {
+				logError(testName, error);
+				reject(error);
+			}
+		)
+	})
+}
+
+// ==============================================================================
+// TEST RESULTS REPORTING
+// ==============================================================================
+
+generateTestReport() -> void {
+	println("@ generateTestReport");
+	results = ^testResults;
+
+	passes = fold(results, 0, \acc, result -> {
+		switch (result) {
+			TestPass(__, __): acc + 1;
+			default: acc;
+		}
+	});
+
+	failures = fold(results, 0, \acc, result -> {
+		switch (result) {
+			TestFail(__, __, __): acc + 1;
+			default: acc;
+		}
+	});
+
+	skips = fold(results, 0, \acc, result -> {
+		switch (result) {
+			TestSkip(__, __): acc + 1;
+			default: acc;
+		}
+	});
+
+	generates = fold(results, 0, \acc, result -> {
+		switch (result) {
+			TestGenerate(__, __): acc + 1;
+			default: acc;
+		}
+	});
+
+	total = length(results);
+
+	println("=====================================");
+	println("🏁 UNIT TEST RESULTS SUMMARY");
+	println("=====================================");
+
+	if (isGenerateMode()) {
+		println("🔧 GENERATE MODE: " + i2s(generates) + " checksums generated");
+		println("📋 Copy the generated checksums above to update getExpectedChecksums()");
+	} else {
+		println("✅ PASSED: " + i2s(passes) + " / " + i2s(total));
+		println("❌ FAILED: " + i2s(failures) + " / " + i2s(total));
+		println("⏩ SKIPPED: " + i2s(skips) + " / " + i2s(total));
+
+		if (failures == 0 && skips == 0) {
+			println("🎉 ALL TESTS PASSED!");
+		} else if (failures > 0) {
+			println("⚠️  SOME TESTS FAILED - Check output above for details");
+		}
+	}
+
+	println("=====================================");
+}
+
+// ==============================================================================
+// MAIN TEST RUNNER (PROMISE-BASED WITH COORDINATION)
+// ==============================================================================
+
+main() {
+	videoUrl = getTestVideoUrl();
+	fileName = getTestFileName();
+	enableDurationTest = isEnableDurationTest();
+	enableAudioTests = isEnableAudioTests();
+	enableVideoTests = isEnableVideoTests();
+	enableAdvancedTests = isEnableAdvancedTests();
+	enableTrimmingTests = isEnableTrimmingTests();
+	enableVideoInfoTests = isEnableVideoInfoTests();
+	generateMode = isGenerateMode();
+
+	println("🚀 Starting MediaBunny Unit Test Suite");
+	println("📹 Input file: " + videoUrl);
+	if (generateMode) {
+		println("🔧 GENERATE MODE: Will output checksums for updating registry");
+		println("💡 Generate mode enabled by ?generate=true URL parameter");
+	} else {
+		println("🧪 VERIFICATION MODE: Will compare against expected checksums");
+		println("💡 Add ?generate=true to URL to enable generate mode");
+	}
+	println("=====================================");
+
+	// Clear previous results
+	testResults := [];
+
+	viewB = make(MCenter(MLines2A(MProgressCircle([]), MText("Open browser console for details", []))));
+
+	doneP(
+		makeFileByBlobUrlP(videoUrl, fileName),
+		\mediaFile -> {
+			println("📁 File loaded successfully");
+			doneP(
+				allP(
+					concatA([
+						if (enableDurationTest)
+							[testMediaDurationP(mediaFile)]
+						else [],
+						if (enableDurationTest)
+							[testMediaDurationBase64P(mediaFile)]
+						else [],
+						if (enableDurationTest)
+							[testMediaDurationUrlP(videoUrl)]
+						else [],
+						if (enableAudioTests)
+							testAudioConversionsP(mediaFile)
+						else [],
+						if (enableVideoTests)
+							testVideoConversionsP(mediaFile)
+						else [],
+						if (enableAdvancedTests)
+							testAdvancedProcessingP(mediaFile)
+						else [],
+						if (enableTrimmingTests)
+							testTrimmingProcessingP(mediaFile)
+						else [],
+						if (enableVideoInfoTests)
+							[testVideoInfoP(mediaFile)]
+						else [],
+						if (enableVideoInfoTests)
+							[testVideoInfoBase64P(mediaFile)]
+						else [],
+						if (enableVideoInfoTests)
+							[testVideoInfoUrlP(videoUrl)]
+						else [],
+					])
+				),
+				\outputs -> {
+					generateTestReport();
+					makeLine = \res : TestResult, fileM : Maybe<native> -> {
+						MCols2A(
+							switch(res) {
+								TestPass(testName, actualMD5): MText("✅ PASSED: " + testName, []);
+								TestFail(testName, expectedMD5, actualMD5): MText("❌ FAILED: " + testName + ": expected MD5" + expectedMD5 + ", actual " + actualMD5, []);
+								TestSkip(testName, reason): MText("⏩ SKIPPED: " + testName + ": " + reason, []);
+								TestGenerate(testName, generatedMD5): MBaselineCols2A(
+									MText("Validator: " + testName + ": ", []),
+									MTextInput(make(generatedMD5), [MWidth(250.), MCustomTextStyle([MButton1()]), ReadOnly(true)], [])
+								);
+							},
+							fileM ?? {
+								MTextButton("Download", \-> {
+									saveNativeFileClient(fileNameClient(fileM) + "_" + res.testName, fileM)
+								}, [], [])
+							} : MEmpty()
+						)
+					}
+					defLine = \i -> MText("Couldn't find result at index " + i2s(i), []);
+					next(viewB, MLinesA(
+						mapi(outputs, \i, output -> {
+							switch(output : TestOutput) {
+								TestDuration(__): elementAtMap(^testResults, i, \res -> makeLine(res, None()), defLine(i));
+								TestConversion(file): elementAtMap(^testResults, i, \res -> makeLine(res, Some(file)), defLine(i));
+								TestVideoInfo(width, height, bitrate): elementAtMap(^testResults, i, \res -> makeLine(res, None()), defLine(i));
+							}
+						})
+					))
+				},
+				\err -> {
+					println("❌ Test suite failed: " + err);
+				}
+			)
+		},
+		\error -> {
+			println("❌ Test suite failed to load file: " + error);
+		}
+	);
+
+	mrender(makeMaterialManager([]), false, MMutable(viewB))
+}
+
+// ==============================================================================
+// USAGE INSTRUCTIONS
+// ==============================================================================
+
+/*
+
+MEDIABUNNY UNIT TEST SUITE USAGE (Promise-Based):
+
+🎯 QUICK START:
+	 - Normal testing: Just run main()
+	 - Generate mode: Add ?generate=true to URL, then run main()
+	 - No code editing needed!
+
+✨ PROMISE FEATURES:
+	 - Proper async coordination using Flow9 promises
+	 - No more brittle timers - tests complete when actually done
+	 - Better error handling and propagation
+	 - Proper test completion tracking
+	 - Deterministic test completion
+
+1. INITIAL SETUP (First Time):
+	 - Add ?generate=true to your URL (e.g., http://localhost:3000/test?generate=true)
+	 - Copy the generated checksums/values from console output
+	 - Update the getExpectedChecksums() function with the values
+	 - Remove ?generate=true from URL (or use ?generate=false)
+
+2. UNDERSTANDING RESULTS:
+	 - ✅ [PASS] - Output matches expected value (MD5 checksum or duration)
+	 - ❌ [FAIL] - Output differs from expected (shows both values)
+	 - ⏩ [SKIP] - No expected value available or error occurred
+	 - 🔧 [GENERATE] - Generate mode: outputs new checksums/values
+
+3. PROMISE BENEFITS:
+	 - Tests run in proper sequence without race conditions
+	 - Error handling is more robust with promise chains
+	 - No arbitrary timeouts - completion is deterministic
+	 - Better debugging with promise error propagation
+	 - All async operations properly coordinated
+
+4. TROUBLESHOOTING:
+	 - Promise-based tests provide clearer error messages
+	 - Check browser console for detailed MediaBunny errors
+	 - Failed promises will show exact failure points
+	 - No more timing-related test failures
+
+*/

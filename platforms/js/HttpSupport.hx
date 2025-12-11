@@ -828,11 +828,11 @@ class HttpSupport {
 
 				if (redirectUrl != null) {
 					// Follow redirect
-					var cancelFn = httpStreamingRequestNative(
+					httpStreamingRequestNative(
 						redirectUrl, method, headers, params, data, responseEncoding,
 						onChunkFn, onCompleteFn, onErrorFn, async, timeout
 					);
-					return cancelFn;
+					return; // Exit callback early for redirect
 				}
 			}
 

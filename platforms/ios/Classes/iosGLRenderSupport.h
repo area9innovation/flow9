@@ -161,7 +161,7 @@ public:
     
     bool loadAssetData(StaticBuffer *buffer, std::string name, size_t size);
     
-    CGPoint fixIphoneXMousePoint(int x, int y);
+    CGPoint fixIphoneXMousePoint(CGPoint point);
     void mouseMoveEvent(NSArray<NSValue*>* touchPoints);
     void mousePressEvent(NSArray<NSValue*>* touchPoints);
     void mouseReleaseEvent(NSArray<NSValue*>* touchPoints, CGPoint touchPosition);

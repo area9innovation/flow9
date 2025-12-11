@@ -25,6 +25,11 @@ import java.nio.file.Files;
 public class HttpSupport extends NativeHost {
 	public static String defaultResponseEncoding = "utf8";
 
+	public void initialize() {
+		// Enable setting Origin and other system headers
+		System.setProperty("sun.net.http.allowRestrictedHeaders", "true");
+	}
+
 	public static Object httpRequest(
 		String url, boolean post,Object[] headers, Object[] params,
 		Func1<Object, String> onData, Func1<Object, String> onError, Func1<Object, Integer> onStatus

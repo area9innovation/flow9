@@ -82,6 +82,7 @@ export {
 	setConfigFlowfile(config : CompilerConfig, flowfile : string) -> CompilerConfig;
 
 	patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig;
+	resolvePathsInConfig(conf : CompilerConfig) -> CompilerConfig;
 
 	// Set (add or modify) a config field(s) in conf struct.
 	setConfigOption(conf : CompilerConfig, opt : string, val : string) -> CompilerConfig;
@@ -202,7 +203,7 @@ parseFlowConfig(config : string, dir : string) -> Tree<string, string> {
 			if (strFindFirstOf(val2, "/\\") != -1) val2
 			else "resources/" + val2
 		} else val;
-		if (!contains(["fontconfig", "html-splash", "js-extern-lib"], opt)) val1 else {
+		if (!contains(["fontconfig", "js-extern-lib"], opt)) val1 else {
 			fcFirstExistentFile([val1, pathCombine(dir, val1)], 0, val1)
 		}
 	});
@@ -438,11 +439,37 @@ setConfigFlowfile(conf : CompilerConfig, file : string) -> CompilerConfig {
 	CompilerConfig(conf with flowfile = file)
 }
 
-patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
+resolveFileToConfigDir(file : string, configDir : string) -> string {
+	file2 = if (isAbsolutePath(file)) {
+		file;
+	} else {
+		file2 = pathCombine(configDir, file);
+		if (fileExists(file2)) {
+			file2;
+		} else {
+			file;
+		}
+	}
+	resolveRelativePath(file2);
+}
+
+resolveDirToConfigDir(dir : string, configDir : string) -> string {
+	dir2 = if (isAbsolutePath(dir)) {
+		dir;
+	} else {
+		dir2 = pathCombine(configDir, dir);
+		if (isDirectory(dir2)) {
+			dir2;
+		} else {
+			dir;
+		}
+	}
+	resolveRelativePath(dir2);
+}
+
+resolvePathsInConfig(conf : CompilerConfig) -> CompilerConfig {
 	cwd = normalizePath(resolveRelativePath("."));
-	conf_dir = findFlowConfigDir(fcDirName(resolveRelativePath(changeFileExt(conf.flowfile, ".flow"))));
-	resolve_relative_to_conf = \file ->
-		fcFirstExistentFile([file, resolveRelativePath(pathCombine(conf_dir, file))], 0, file);
+	configDir = findFlowConfigDir(fcDirName(resolveRelativePath(changeFileExt(conf.flowfile, ".flow"))));
 
 	// Setup the 'output-dir' in case it is not set explicitly.
 	conf1 = switch (lookupTree(conf.config, "output-dir")) {
@@ -453,7 +480,7 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 	conf3 = setTree(conf1, "file", conf.flowfile);
 
 	resolve_fontconfig = \file -> {
-		resolved = resolve_relative_to_conf(file);
+		resolved = resolveFileToConfigDir(file, configDir);
 		setTree(setTree(conf3, "fontconfig", resolved), "fontconfig-file", resolved);
 	}
 
@@ -468,39 +495,38 @@ patchRemoteConfig(conf : CompilerConfig) -> CompilerConfig {
 		}
 	}
 
-	// Resolve relative path for 'html-splash', because server may run in a different place.
-	conf5 = switch (lookupTree(conf4, "html-splash")) {
-		Some(file): setTree(conf4, "html-splash", resolve_relative_to_conf(file));
-		None(): conf4;
-	}
-
 	// Resolve relative path for 'js-extern-lib', because server may run in a different place.
-	conf6 = switch (lookupTree(conf5, "js-extern-lib")) {
-		Some(file): setTree(conf5, "js-extern-lib", resolve_relative_to_conf(file));
-		None(): conf5;
+	conf6 = switch (lookupTree(conf4, "js-extern-lib")) {
+		Some(file): setTree(conf4, "js-extern-lib", resolveFileToConfigDir(file, configDir));
+		None(): conf4;
 	}
 
 	// Update 'fontconfig' field in JSCliParams
 	fontconfig = lookupTreeDef(conf6, "fontconfig-file", conf.jsParams.fontconfig);
-	jsParams = JSCliParams(conf.jsParams with fontconfig = fontconfig);
+	jsParams = JSCliParams(conf.jsParams with fontconfig = resolveFileToConfigDir(fontconfig, configDir));
 
 	conf7 = switch (lookupTree(conf6, "java-natives")) {
 		Some(natives):
 			setTree(conf6, "java-natives",
 				strGlue(filtermap(strSplit(natives, ","), \nat ->
 					if (isSpace(nat)) None() else {
-						Some(resolve_relative_to_conf(nat))
+						Some(resolveDirToConfigDir(nat, configDir))
 					}
 				), ",")
 			);
 		None(): conf6;
 	}
 
-	// Output the result
 	CompilerConfig(conf with
-		includesResolved = makeResolvedIncludes(conf.includesRaw, conf.workingDir),
 		config = conf7,
 		jsParams = jsParams
+	);
+}
+
+patchRemoteConfig(config : CompilerConfig) -> CompilerConfig {
+	// Output the result
+	CompilerConfig(resolvePathsInConfig(config) with
+		includesResolved = makeResolvedIncludes(config.includesRaw, config.workingDir),
 	);
 }
 

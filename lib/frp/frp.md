@@ -246,3 +246,21 @@ rconnect2(cell4, cell5, bidi2, false, \v1,v2 -> ...);
 ```
 Here `cell1`, `cell2`, `cell3`  work as sources for `bidi1` node, and `cell4`, `cell5`  work as sources for bidi2.
 You can also connect other nodes to get data **from** bidi-nodes using normal `rconnect` or `rselect` functions. 
+
+## Performance issues
+
+
+FrpValue is most flexible FRP type and it is suitable for many cases, because you can use any transformation fn to make connections between cells.
+It can also contain an array value, but updating an array element will require more resources since it will cause the entire array to be reallocated O(n).
+
+From this point of view, it is more advantageous to use type FrpArray, which allows update one element more efficiently using rnextElement O(1).
+If you have got a graph of FrpArray cells it will be also updated in optimal way if it is possible in a specific case.
+
+Comparison of one element update in cases of FrpArray<int> and FrpValue<[int]> shown us that if array length > about 8, updating FrpValue<[int]> requires more time. 
+When array length = 100 this ratio is about 4-7. With more complex content types and more complex transformation functions and more complex graph, this ratio will be even greater.
+
+In other hand, setting a new value to entire FrpArray using rnextA is more expensive then setting a new (maybe array) value to a FrpValue cell.
+It because it sets values to all FrpArray elements one-by-one, but, in turn, this is many times faster than setting the values ​​of all elements of FrpArray using rnextElement.
+
+Therefore, you should choose the cell type depending on whether the cells will be updated individually or the entire array will be updated as a whole and how large the array can be.
+

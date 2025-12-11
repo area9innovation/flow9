@@ -75,6 +75,8 @@ class RenderSupport {
 	public static var WebFontsConfig = null;
 	public static var DebugClip = null;
 
+	private static var clearPixiTextureCacheForTextsTaskStarted : Bool = false;
+
 	public static function debugLog(text : String, ?text2 : Dynamic = "") : Void {
 		if (DebugClip != null) {
 			var innertext = DebugClip.innerText;
@@ -556,7 +558,7 @@ class RenderSupport {
 			forceRender();
 			PixiStage.onImagesLoaded(function () {
 				if (forceOnAfterprint) {
-					// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI. 
+					// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI.
 					PixiStage.once("drawframe", function() {
 						emit("afterprint");
 					});
@@ -786,6 +788,11 @@ class RenderSupport {
 				untyped console.log("onBrowserWindowResizeDelayed error : ");
 				untyped console.log(e);
 			}
+		}
+
+		if (!clearPixiTextureCacheForTextsTaskStarted) {
+			Native.setInterval(5000, clearPixiTextureCacheForTexts);
+			clearPixiTextureCacheForTextsTaskStarted = true;
 		}
 	}
 
@@ -1365,7 +1372,7 @@ class RenderSupport {
 			} else if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
 				calculateMobileTopHeight();
 
-				// Call viewport metrics recalculation only in case of rotation or screen keyboard hide/show event, not on zoom. 
+				// Call viewport metrics recalculation only in case of rotation or screen keyboard hide/show event, not on zoom.
 				if (oldBrowserZoom == browserZoom) {
 					// Still send whole window size - without reducing by screen kbd
 					// for flow does not resize the stage. The stage will be
@@ -1734,7 +1741,7 @@ class RenderSupport {
 		if (Platform.isMobile) {
 			// Collapse of PWA application requires gesture which initiates touchstart, but never receives touchend
 			// We need to reset MouseUpReceived when application is collapsed for success first click after an application is focused
-			Browser.window.addEventListener("blur", function (e) { MouseUpReceived = true; }); 
+			Browser.window.addEventListener("blur", function (e) { MouseUpReceived = true; });
 		}
 
 		if (root != Browser.document.body) {
@@ -3834,8 +3841,11 @@ class RenderSupport {
 		return new BlurBackdropFilter(spread);
 	}
 
+	// DropShadowFilter struct ignores spread. radius is blur.
 	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {
-		return new DropShadowFilter(angle, distance, radius, color, alpha);
+		var filter = new DropShadowFilter(angle, distance, radius, color, alpha);
+		untyped filter.spread = spread;
+		return filter;
 	}
 
 	public static function setUseBoxShadow(dropShadow : DropShadowFilter) : Void {
@@ -4432,6 +4442,16 @@ class RenderSupport {
 		}
 	}
 
+	public static function getAttribute(element : Element, name : String) : String {
+		var value = element.getAttribute(name);
+		if (value == null) {
+			Errors.print("[Warning] Null value for attribute: " + name);
+			return "";
+		} else {
+			return element.getAttribute(name);
+		}
+	}
+
 	public static function removeAttribute(element : Element, name : String) : Void {
 		element.removeAttribute(name);
 	}
@@ -4575,6 +4595,27 @@ class RenderSupport {
 	public static function createMathJaxClip(latex: String) : Dynamic {
 		return new MathJaxClip(latex);
 	};
+
+	/**
+		There is memory leak introduced by PIXI - it caches textures created for Text
+		we fix it partially by calling textClip.destroy in TextClip.disableSprites but for some texts is's not get called for some reason
+		this is a workaround to not waste memory
+	**/
+	public static function clearPixiTextureCacheForTexts() : Void {
+		untyped __js__("
+			for(var key in PIXI.utils.TextureCache) {
+				if (key.startsWith(\"text_\")) {
+					delete PIXI.utils.TextureCache[key];
+				}
+			}
+
+			for(var key in PIXI.utils.BaseTextureCache) {
+				if (key.startsWith(\"text_\")) {
+					delete PIXI.utils.BaseTextureCache[key];
+				}
+			}
+	");
+	}
 }
 
 class FlowInstance {

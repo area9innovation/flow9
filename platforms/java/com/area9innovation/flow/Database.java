@@ -18,8 +18,13 @@ public class Database extends NativeHost {
 			err = "";
 		}
 
-		public final void setError(Exception e, Boolean print) {
-			if (e instanceof SQLException) {
+		public final void setError(Exception e, Boolean printSqlExceptions) {
+			Boolean print = false;
+			if (
+				e instanceof SQLException
+				|| e instanceof com.mysql.cj.jdbc.exceptions.MySQLQueryInterruptedException
+			) {
+				print = printSqlExceptions;
 				err = getSqlErrorMessage((SQLException)e);
 			} else {
 				print = true;
