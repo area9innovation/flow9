@@ -34,57 +34,64 @@ public class FlowJwt extends NativeHost {
 		return df.format(date);
 	}
 
-	public static String verifyJwt(String jwt, JWTVerifier verifier) {
-		try {
-			DecodedJWT jwtObj = verifier.verify(jwt);
-			return "OK";
-		} catch (JWTVerificationException e){
-			return e.getMessage();
-		} catch (Exception e) {
-			return e.getMessage();
-		}
-	}
-
 	public static String verifyJwt(String jwt, String key) {
-		JWTVerifier verifier = getVerifier("HS256", key);
-		return verifyJwt(jwt, verifier);
+		return verifyJwtAlgorithm(jwt, key, "HS256");
 	}
 
-	private static JWTVerifier getVerifier(String alg, String key) {
-		if (alg.equals("RS256")) {
-			try {
-				RSAPublicKey publicKey = null;
-				if (key.startsWith("{")) {
-					publicKey = getRSAPublicKeyFromJsonString(key);
-				} else {
-					publicKey = (RSAPublicKey)getPemPublicKeyFromString(key, "RSA");
-				}
-				Algorithm algorithm = Algorithm.RSA256(publicKey, null);
-				return JWT.require(algorithm).build();
-			} catch (Exception e) {
-				System.out.println(e.getMessage());
-				return null;
+	private static JWTVerifier getVerifier(String alg, String key) throws Exception {
+		Algorithm algorithm = null;
+		// Convert the key string to UTF8 bytes
+		if (alg.equals("HS256")) {
+			algorithm = Algorithm.HMAC256(key);
+		} else if (alg.equals("HS384")) {
+			algorithm = Algorithm.HMAC384(key);
+		} else if (alg.equals("HS512")) {
+			algorithm = Algorithm.HMAC512(key);
+		} else if (alg.equals("RS256") || alg.equals("RS384") || alg.equals("RS512")) {
+			RSAPublicKey publicKey = null;
+			if (key.startsWith("{")) {
+				publicKey = getRSAPublicKeyFromJsonString(key);
+			} else {
+				publicKey = (RSAPublicKey)getPemPublicKeyFromString(key, "RSA");
 			}
-		} else {
-			// Default to HS256
-			Algorithm algorithm = Algorithm.HMAC256(key);
-			return JWT.require(algorithm).build();
+			if (alg.equals("RS256")) {
+				algorithm = Algorithm.RSA256(publicKey, null);
+			} else if (alg.equals("RS384")) {
+				algorithm = Algorithm.RSA384(publicKey, null);
+			} else {
+				algorithm = Algorithm.RSA512(publicKey, null);
+			}
+		} else if (alg.equals("ES256") || alg.equals("ES384") || alg.equals("ES512")) {
+			ECPublicKey publicKey = null;
+			if (key.startsWith("{")) {
+				publicKey = getECPublicKeyFromJsonString(key);
+			} else {
+				publicKey = (ECPublicKey)getPemPublicKeyFromString(key, "EC");
+			}
+			if (alg.equals("ES256")) {
+				algorithm = Algorithm.ECDSA256(publicKey, null);
+			} else if (alg.equals("ES384")) {
+				algorithm = Algorithm.ECDSA384(publicKey, null);
+			} else {
+				algorithm = Algorithm.ECDSA512(publicKey, null);
+			}
 		}
+
+		return (algorithm == null) ? null : JWT.require(algorithm).acceptLeeway(300).build();
 	}
 
 	public static Object decodeJwt(String jwt, String alg, String key, Func8<Object, String, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
-		JWTVerifier verifier = getVerifier(alg, key);
-		String verify = verifyJwt(jwt, verifier);
-		if (verify == "OK") {
-			String iss;
-			String sub;
-			List<String> aud;
-			Date exp;
-			Date nbf;
-			Date iat;
-			String jti;
-			String impersonatedByUserId;
-			try {
+		try {
+			JWTVerifier verifier = getVerifier(alg, key);
+			if (verifier != null) {
+				String iss;
+				String sub;
+				List<String> aud;
+				Date exp;
+				Date nbf;
+				Date iat;
+				String jti;
+				String impersonatedByUserId;
 				DecodedJWT jwtObj = verifier.verify(jwt);
 
 				iss = jwtObj.getIssuer();
@@ -93,25 +100,23 @@ public class FlowJwt extends NativeHost {
 				exp = jwtObj.getExpiresAt();
 				nbf = jwtObj.getNotBefore();
 				iat = jwtObj.getIssuedAt();
-				//jti = jwtObj.getId();
 				jti = jwtObj.getClaim("id").asString();
 				impersonatedByUserId = jwtObj.getClaim("iid").asString();
-			} catch (Exception e) {
-				onError.invoke(e.getMessage());
-				return null;
+				callback.invoke(
+					(iss == null ? "" : iss),
+					(sub == null ? "" : sub),
+					(aud == null ? "" : aud.toString()),
+					(exp == null ? "" : date2formatIso8601(exp)),
+					(nbf == null ? "" : date2formatIso8601(nbf)),
+					(iat == null ? "" : date2formatIso8601(iat)),
+					jti == null ? "" : jti,
+					impersonatedByUserId == null ? "" : impersonatedByUserId
+				);
+			} else {
+				onError.invoke("Algorithm not supported");
 			}
-			callback.invoke(
-				(iss == null ? "" : iss),
-				(sub == null ? "" : sub),
-				(aud == null ? "" : aud.toString()),
-				(exp == null ? "" : date2formatIso8601(exp)),
-				(nbf == null ? "" : date2formatIso8601(nbf)),
-				(iat == null ? "" : date2formatIso8601(iat)),
-				jti == null ? "" : jti,
-				impersonatedByUserId == null ? "" : impersonatedByUserId
-			);
-		} else {
-			onError.invoke(verify);
+		} catch (Exception e) {
+			onError.invoke(e.getMessage());
 		}
 		return null;
 	}
@@ -281,56 +286,14 @@ public class FlowJwt extends NativeHost {
 
 	public static String verifyJwtAlgorithm(String jwtStr, String keyStr, String algorithmStr) {
 		try {
-			Algorithm algorithm = null;
-			// Convert the key string to UTF8 bytes
-			if (algorithmStr.equals("HS256")) {
-				algorithm = Algorithm.HMAC256(keyStr);
-			} else if (algorithmStr.equals("HS384")) {
-				algorithm = Algorithm.HMAC384(keyStr);
-			} else if (algorithmStr.equals("HS512")) {
-				algorithm = Algorithm.HMAC512(keyStr);
-			} else if (algorithmStr.equals("RS256") || algorithmStr.equals("RS384") || algorithmStr.equals("RS512")) {
-				RSAPublicKey publicKey = null;
-				if (keyStr.startsWith("{")) {
-					publicKey = getRSAPublicKeyFromJsonString(keyStr);
-				} else {
-					publicKey = (RSAPublicKey)getPemPublicKeyFromString(keyStr, "RSA");
-				}
-				if (algorithmStr.equals("RS256")) {
-					algorithm = Algorithm.RSA256(publicKey, null);
-				} else if (algorithmStr.equals("RS384")) {
-					algorithm = Algorithm.RSA384(publicKey, null);
-				} else {
-					algorithm = Algorithm.RSA512(publicKey, null);
-				}
-			} else if (algorithmStr.equals("ES256") || algorithmStr.equals("ES384") || algorithmStr.equals("ES512")) {
-				ECPublicKey publicKey = null;
-				if (keyStr.startsWith("{")) {
-					publicKey = getECPublicKeyFromJsonString(keyStr);
-				} else {
-					publicKey = (ECPublicKey)getPemPublicKeyFromString(keyStr, "EC");
-				}
-				if (algorithmStr.equals("ES256")) {
-					algorithm = Algorithm.ECDSA256(publicKey, null);
-				} else if (algorithmStr.equals("ES384")) {
-					algorithm = Algorithm.ECDSA384(publicKey, null);
-				} else {
-					algorithm = Algorithm.ECDSA512(publicKey, null);
-				}
-			} else {
+			JWTVerifier verifier = getVerifier(algorithmStr, keyStr);
+
+			if (verifier == null) {
 				return "Algorithm not supported";
+			} else {
+				verifier.verify(jwtStr);
+				return "OK";
 			}
-
-			// Accepts some seconds of leeway to account for clock skew. (5 minutes is default for OIDC and LTI)
-			long clockSkewSeconds = 300; // 5 minutes
-
-			JWTVerifier verifier =
-				JWT.require(algorithm)
-				.acceptLeeway(clockSkewSeconds)
-				.build();
-
-			verifier.verify(jwtStr);
-			return "OK";
 		} catch (Exception e) {
 			// Some exceptions have a null getMessage value
 			String message = e.getMessage();
