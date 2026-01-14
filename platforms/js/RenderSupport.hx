@@ -2393,6 +2393,10 @@ class RenderSupport {
 		clip.setPreventCheckTextNodeWidth(prevent);
 	}
 
+	public static function setSvgPrecisionEnabled(clip : TextClip, enabled : Bool) : Void {
+		clip.setSvgPrecisionEnabled(enabled);
+	}
+
 	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
 		clip.setEscapeHTML(escapeHTML);
 	}
