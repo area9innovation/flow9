@@ -624,7 +624,7 @@ int main(int argc, char *argv[])
     QtNotificationsSupport NotificationsManager(&FlowRunner, cgi);
     QtGeolocationSupport GeolocationManager(&FlowRunner);
     QWebSocketSupport AbstractWebSocketSupport(&FlowRunner);
-
+    QtNatives qtNatives(&FlowRunner);
     RunParallelHost RunParallel(&FlowRunner);
 
     if (pRenderer)
