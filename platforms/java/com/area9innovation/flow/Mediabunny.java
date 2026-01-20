@@ -471,6 +471,7 @@ public class Mediabunny extends NativeHost {
         AudioInputStream convertedStream;
         if (!sourceFormat.matches(targetFormat)) {
             System.out.println("[Mediabunny] convertToWav: format conversion needed");
+
             // First convert to PCM if needed
             if (sourceFormat.getEncoding() != AudioFormat.Encoding.PCM_SIGNED &&
                 sourceFormat.getEncoding() != AudioFormat.Encoding.PCM_UNSIGNED) {
@@ -484,8 +485,38 @@ public class Mediabunny extends NativeHost {
                     false
                 );
                 audioStream = AudioSystem.getAudioInputStream(pcmFormat, audioStream);
+                sourceFormat = audioStream.getFormat();
             }
-            convertedStream = AudioSystem.getAudioInputStream(targetFormat, audioStream);
+
+            // Check if AudioSystem supports the conversion
+            if (AudioSystem.isConversionSupported(targetFormat, sourceFormat)) {
+                System.out.println("[Mediabunny] convertToWav: AudioSystem conversion supported");
+                convertedStream = AudioSystem.getAudioInputStream(targetFormat, audioStream);
+            } else {
+                // AudioSystem can't do sample rate conversion - keep source format
+                // but try to at least convert channels if needed
+                System.out.println("[Mediabunny] convertToWav: AudioSystem conversion NOT supported, trying partial conversion");
+
+                // Try converting just channels (mono/stereo) at source sample rate
+                AudioFormat partialFormat = new AudioFormat(
+                    AudioFormat.Encoding.PCM_SIGNED,
+                    sourceFormat.getSampleRate(),  // Keep source sample rate
+                    16,
+                    targetChannels,
+                    targetChannels * 2,
+                    sourceFormat.getSampleRate(),
+                    false
+                );
+
+                if (AudioSystem.isConversionSupported(partialFormat, sourceFormat)) {
+                    System.out.println("[Mediabunny] convertToWav: channel conversion supported, keeping sample rate " + sourceFormat.getSampleRate());
+                    convertedStream = AudioSystem.getAudioInputStream(partialFormat, audioStream);
+                } else {
+                    // Can't convert at all - use source as-is
+                    System.out.println("[Mediabunny] convertToWav: no conversion possible, using source format");
+                    convertedStream = audioStream;
+                }
+            }
         } else {
             System.out.println("[Mediabunny] convertToWav: no format conversion needed");
             convertedStream = audioStream;
