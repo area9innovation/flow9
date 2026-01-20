@@ -430,14 +430,21 @@ public class Mediabunny extends NativeHost {
 
     private static String convertToWav(String inputPath, int sampleRate, int[] trim, int numberOfChannels) throws Exception {
         String outputPath = generateOutputPath(inputPath, "wav");
+        System.out.println("[Mediabunny] convertToWav: inputPath=" + inputPath);
+        System.out.println("[Mediabunny] convertToWav: outputPath=" + outputPath);
+        System.out.println("[Mediabunny] convertToWav: extension=" + getFileExtension(inputPath));
+        System.out.println("[Mediabunny] convertToWav: isVideoFile=" + isVideoFile(getFileExtension(inputPath)));
 
         // For video files, extract audio first
         String audioSource = inputPath;
         if (isVideoFile(getFileExtension(inputPath))) {
+            System.out.println("[Mediabunny] convertToWav: extracting audio from video...");
             audioSource = extractAudioFromVideo(inputPath);
+            System.out.println("[Mediabunny] convertToWav: extracted to " + audioSource);
         }
 
         // Read input audio
+        System.out.println("[Mediabunny] convertToWav: reading audio from " + audioSource);
         AudioInputStream audioStream = AudioSystem.getAudioInputStream(new File(audioSource));
         AudioFormat sourceFormat = audioStream.getFormat();
 
@@ -674,32 +681,48 @@ public class Mediabunny extends NativeHost {
     private static String extractAudioFromVideo(String videoPath) throws Exception {
         File videoFile = new File(videoPath);
         String outputPath = generateOutputPath(videoPath, "wav");
+        System.out.println("[Mediabunny] extractAudioFromVideo: videoPath=" + videoPath);
+        System.out.println("[Mediabunny] extractAudioFromVideo: outputPath=" + outputPath);
+        System.out.println("[Mediabunny] extractAudioFromVideo: file exists=" + videoFile.exists() + ", size=" + videoFile.length());
 
         try (SeekableByteChannel channel = NIOUtils.readableChannel(videoFile)) {
+            System.out.println("[Mediabunny] extractAudioFromVideo: creating MP4Demuxer...");
             MP4Demuxer demuxer = MP4Demuxer.createMP4Demuxer(channel);
 
+            System.out.println("[Mediabunny] extractAudioFromVideo: audioTracks=" + demuxer.getAudioTracks().size());
             if (demuxer.getAudioTracks().isEmpty()) {
                 throw new Exception("No audio track found in video file");
             }
 
             DemuxerTrack audioTrack = demuxer.getAudioTracks().get(0);
             DemuxerTrackMeta trackMeta = audioTrack.getMeta();
+            System.out.println("[Mediabunny] extractAudioFromVideo: trackMeta=" + trackMeta);
+            System.out.println("[Mediabunny] extractAudioFromVideo: codec=" + (trackMeta != null ? trackMeta.getCodec() : "null"));
 
             // Get decoder-specific info from track metadata
             ByteBuffer codecPrivate = trackMeta.getCodecPrivate();
+            System.out.println("[Mediabunny] extractAudioFromVideo: codecPrivate=" + (codecPrivate != null ? codecPrivate.remaining() + " bytes" : "null"));
             if (codecPrivate == null) {
                 throw new Exception("No codec private data (decoder config) found in audio track");
             }
 
             // Initialize AAC decoder with codec private data
+            System.out.println("[Mediabunny] extractAudioFromVideo: initializing AACDecoder...");
             AACDecoder decoder = new AACDecoder(codecPrivate.duplicate());
             AudioCodecMeta audioMeta = trackMeta.getAudioCodecMeta();
+            System.out.println("[Mediabunny] extractAudioFromVideo: audioMeta=" + audioMeta);
+            if (audioMeta != null) {
+                System.out.println("[Mediabunny] extractAudioFromVideo: sampleRate=" + audioMeta.getSampleRate() + ", channels=" + audioMeta.getChannelCount());
+            }
 
             // Collect all decoded PCM data
             ByteArrayOutputStream pcmData = new ByteArrayOutputStream();
+            int frameCount = 0;
+            int decodedFrames = 0;
 
             Packet packet;
             while ((packet = audioTrack.nextFrame()) != null) {
+                frameCount++;
                 ByteBuffer frameData = packet.getData();
                 if (frameData == null || frameData.remaining() == 0) {
                     continue;
@@ -711,6 +734,7 @@ public class Mediabunny extends NativeHost {
 
                     AudioBuffer audioBuffer = decoder.decodeFrame(frameData, decodedBuffer);
                     if (audioBuffer != null) {
+                        decodedFrames++;
                         ByteBuffer data = audioBuffer.getData();
                         byte[] pcmBytes = new byte[data.remaining()];
                         data.get(pcmBytes);
@@ -718,9 +742,14 @@ public class Mediabunny extends NativeHost {
                     }
                 } catch (Exception e) {
                     // Skip corrupted frames
-                    System.err.println("[Mediabunny] Skipping audio frame: " + e.getMessage());
+                    if (frameCount <= 5) {
+                        System.err.println("[Mediabunny] Skipping audio frame " + frameCount + ": " + e.getMessage());
+                    }
                 }
             }
+
+            System.out.println("[Mediabunny] extractAudioFromVideo: processed " + frameCount + " frames, decoded " + decodedFrames);
+            System.out.println("[Mediabunny] extractAudioFromVideo: pcmData size=" + pcmData.size() + " bytes");
 
             if (pcmData.size() == 0) {
                 throw new Exception("Failed to decode any audio data from video");
@@ -738,7 +767,9 @@ public class Mediabunny extends NativeHost {
 
             // Write WAV file
             byte[] pcmBytes = pcmData.toByteArray();
+            System.out.println("[Mediabunny] extractAudioFromVideo: writing WAV file: sampleRate=" + sampleRate + ", channels=" + channels + ", size=" + pcmBytes.length);
             writeWavFile(outputPath, pcmBytes, sampleRate, channels, bitsPerSample);
+            System.out.println("[Mediabunny] extractAudioFromVideo: done, output=" + outputPath);
 
             return outputPath;
         }
