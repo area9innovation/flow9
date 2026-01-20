@@ -1,17 +1,38 @@
 # MediaBunny Flow Library
 
-A Flow implementation of [MediaBunny](https://mediabunny.dev/) for browser-native media conversion using hardware-accelerated WebCodecs. Eliminates the need for server-side FFmpeg processing.
+A Flow implementation of [MediaBunny](https://mediabunny.dev/) for media conversion.
+
+## Dual Backend Support
+
+MediaBunny supports two backends:
+
+### 1. JavaScript (Browser) - WebCodecs
+- Hardware-accelerated using WebCodecs API
+- Client-side processing (files stay on client)
+- Best for web applications
+
+### 2. Java (Server) - jcodec
+- Server-side processing using jcodec library
+- Works with file paths instead of blobs
+- Best for backend services and batch processing
+- See `platforms/java/com/area9innovation/flow/MEDIABUNNY_README.md` for details
 
 ## Architecture
 
+### JavaScript Backend
 ```
 Flow Application → lib/mediabunny.flow → platforms/js/Mediabunny.hx → www/js/mediabunny/*.mjs → Browser WebCodecs API
 ```
 
+### Java Backend
+```
+Flow Application → lib/mediabunny.flow → platforms/java/Mediabunny.java → jcodec/javax.sound
+```
+
 **Key Features:**
-- ✅ Client-side processing with hardware acceleration
-- ✅ No server infrastructure required
-- ✅ Better security (files stay on client)
+- ✅ Client-side processing with hardware acceleration (JS)
+- ✅ Server-side processing for batch operations (Java)
+- ✅ No FFmpeg dependency required
 - ✅ FFmpeg-equivalent operations
 - ✅ Lazy loading (libraries load on first use)
 
@@ -51,6 +72,49 @@ Flow Application → lib/mediabunny.flow → platforms/js/Mediabunny.hx → www/
 | `mbConversion(file, MBVideoMP4(), [MBCrop(x,y,w,h)], cb, onError)` | `ffmpeg -i input -filter:v "crop=w:h:x:y" output.mp4` |
 | `mbGetMediaDuration(file, cb)` | `ffprobe -show_entries format=duration input` |
 | `mbConcatMedia([file1, file2, ...], cb, onError)` | `ffmpeg -f concat -i filelist.txt -c copy output.mp4` |
+
+## Java Backend API
+
+For server-side processing, use the Java-specific functions that work with file paths:
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `mbGetMediaDurationJava` | `(filePath: string, cb: (double) -> void)` | Get media duration |
+| `mbGetVideoInfoJava` | `(filePath: string, cb: (int, int, int) -> void)` | Get video width, height, bitrate |
+| `mbConversionJavaPath` | `(inputPath: string, format: MBFormat, params: [MBStyle], cb: (string) -> void, onError: (string) -> void)` | Convert media |
+| `mbConcatMediaJava` | `(inputPaths: [string], outputName: string, cb: (string) -> void, onError: (string) -> void)` | Concatenate media |
+
+### Java Usage Example
+
+```flow
+import mediabunny/mediabunny;
+
+main() {
+    // Get video duration
+    mbGetMediaDurationJava("/path/to/video.mp4", \duration -> {
+        println("Duration: " + d2s(duration) + " seconds");
+    });
+
+    // Convert video with trimming
+    mbConversionJavaPath(
+        "/path/to/input.mp4",
+        MBVideoMP4(),
+        [MBTrim(10, 30)],  // Trim from 10s to 30s
+        \outputPath -> println("Output: " + outputPath),
+        \error -> println("Error: " + error)
+    );
+}
+```
+
+### Java Backend Setup
+
+1. Download jcodec JARs to `flow9/platforms/java/lib/`:
+   ```bash
+   curl -O https://repo1.maven.org/maven2/org/jcodec/jcodec/0.2.5/jcodec-0.2.5.jar
+   curl -O https://repo1.maven.org/maven2/org/jcodec/jcodec-javase/0.2.5/jcodec-javase-0.2.5.jar
+   ```
+
+2. See `platforms/java/com/area9innovation/flow/MEDIABUNNY_README.md` for detailed documentation.
 
 ## Usage Examples
 

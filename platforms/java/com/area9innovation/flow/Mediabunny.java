@@ -1,0 +1,747 @@
+package com.area9innovation.flow;
+
+import org.jcodec.api.FrameGrab;
+import org.jcodec.api.JCodecException;
+import org.jcodec.api.awt.AWTSequenceEncoder;
+import org.jcodec.common.Demuxer;
+import org.jcodec.common.DemuxerTrack;
+import org.jcodec.common.DemuxerTrackMeta;
+import org.jcodec.common.Format;
+import org.jcodec.common.JCodecUtil;
+import org.jcodec.common.io.FileChannelWrapper;
+import org.jcodec.common.io.NIOUtils;
+import org.jcodec.common.io.SeekableByteChannel;
+import org.jcodec.common.model.ColorSpace;
+import org.jcodec.common.model.Picture;
+import org.jcodec.common.model.Rational;
+import org.jcodec.common.model.Size;
+import org.jcodec.containers.mp4.demuxer.MP4Demuxer;
+import org.jcodec.containers.mkv.demuxer.MKVDemuxer;
+import org.jcodec.scale.AWTUtil;
+import org.jcodec.scale.ColorUtil;
+import org.jcodec.scale.Transform;
+
+import javax.sound.sampled.*;
+import java.awt.image.BufferedImage;
+import java.io.*;
+import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.Base64;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * Java implementation of MediaBunny for server-side media processing.
+ * Uses jcodec for video operations and javax.sound for audio operations.
+ *
+ * This provides an alternative to the browser-based WebCodecs implementation
+ * for server-side processing scenarios.
+ *
+ * Dependencies required in pom.xml or build.gradle:
+ *   - org.jcodec:jcodec:0.2.5
+ *   - org.jcodec:jcodec-javase:0.2.5
+ *
+ * For MP3 encoding, additionally add:
+ *   - com.github.trilarion:java-vorbis-support:1.2.1 (for OGG)
+ *   - javazoom:jlayer:1.0.1 (for MP3 decoding)
+ *   - net.sourceforge.lame:lame4j:1.0 (for MP3 encoding, optional)
+ */
+public class Mediabunny extends NativeHost {
+
+    private static final ExecutorService executor = Executors.newFixedThreadPool(4);
+
+    public Mediabunny() {}
+
+    /**
+     * Get media duration from a file path.
+     * @param filePath Path to the media file
+     * @param cb Callback receiving duration in seconds (as double)
+     */
+    public static Object getMediaDuration(String filePath, Func1<Object, Double> cb) {
+        executor.submit(() -> {
+            try {
+                double duration = getMediaDurationSync(filePath);
+                FlowRuntime.invokeDeferred(() -> cb.invoke(duration));
+            } catch (Exception e) {
+                System.err.println("[Mediabunny] getMediaDuration error: " + e.getMessage());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(0.0));
+            }
+        });
+        return null;
+    }
+
+    /**
+     * Get media duration from base64 encoded content.
+     * @param base64str Base64 encoded media data (can include data URL prefix)
+     * @param cb Callback receiving duration in seconds
+     */
+    public static Object getMediaDurationFromBase64(String base64str, Func1<Object, Double> cb) {
+        executor.submit(() -> {
+            Path tempFile = null;
+            try {
+                byte[] data = decodeBase64(base64str);
+                tempFile = Files.createTempFile("mediabunny_", ".tmp");
+                Files.write(tempFile, data);
+                double duration = getMediaDurationSync(tempFile.toString());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(duration));
+            } catch (Exception e) {
+                System.err.println("[Mediabunny] getMediaDurationFromBase64 error: " + e.getMessage());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(0.0));
+            } finally {
+                deleteTempFile(tempFile);
+            }
+        });
+        return null;
+    }
+
+    /**
+     * Get media duration from a URL.
+     * @param mediaUrl URL to the media file
+     * @param cb Callback receiving duration in seconds
+     */
+    public static Object getMediaDurationFromUrl(String mediaUrl, Func1<Object, Double> cb) {
+        executor.submit(() -> {
+            Path tempFile = null;
+            try {
+                tempFile = downloadToTempFile(mediaUrl);
+                double duration = getMediaDurationSync(tempFile.toString());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(duration));
+            } catch (Exception e) {
+                System.err.println("[Mediabunny] getMediaDurationFromUrl error: " + e.getMessage());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(0.0));
+            } finally {
+                deleteTempFile(tempFile);
+            }
+        });
+        return null;
+    }
+
+    /**
+     * Get video information (width, height, bitrate).
+     * @param filePath Path to the video file
+     * @param cb Callback receiving (width, height, bitrate)
+     */
+    public static Object getVideoInfo(String filePath, Func3<Object, Integer, Integer, Integer> cb) {
+        executor.submit(() -> {
+            try {
+                int[] info = getVideoInfoSync(filePath);
+                FlowRuntime.invokeDeferred(() -> cb.invoke(info[0], info[1], info[2]));
+            } catch (Exception e) {
+                System.err.println("[Mediabunny] getVideoInfo error: " + e.getMessage());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(0, 0, 0));
+            }
+        });
+        return null;
+    }
+
+    /**
+     * Get video information from base64 encoded content.
+     */
+    public static Object getVideoInfoFromBase64(String base64str, Func3<Object, Integer, Integer, Integer> cb) {
+        executor.submit(() -> {
+            Path tempFile = null;
+            try {
+                byte[] data = decodeBase64(base64str);
+                tempFile = Files.createTempFile("mediabunny_", ".tmp");
+                Files.write(tempFile, data);
+                int[] info = getVideoInfoSync(tempFile.toString());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(info[0], info[1], info[2]));
+            } catch (Exception e) {
+                System.err.println("[Mediabunny] getVideoInfoFromBase64 error: " + e.getMessage());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(0, 0, 0));
+            } finally {
+                deleteTempFile(tempFile);
+            }
+        });
+        return null;
+    }
+
+    /**
+     * Get video information from a URL.
+     */
+    public static Object getVideoInfoFromUrl(String mediaUrl, Func3<Object, Integer, Integer, Integer> cb) {
+        executor.submit(() -> {
+            Path tempFile = null;
+            try {
+                tempFile = downloadToTempFile(mediaUrl);
+                int[] info = getVideoInfoSync(tempFile.toString());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(info[0], info[1], info[2]));
+            } catch (Exception e) {
+                System.err.println("[Mediabunny] getVideoInfoFromUrl error: " + e.getMessage());
+                FlowRuntime.invokeDeferred(() -> cb.invoke(0, 0, 0));
+            } finally {
+                deleteTempFile(tempFile);
+            }
+        });
+        return null;
+    }
+
+    /**
+     * Convert media to a different format.
+     *
+     * @param inputPath Path to input file
+     * @param format Output format: "mp3", "wav", "mp4", "webm"
+     * @param params Array of MBStyle structs: [MBSampleRate, MBCrop, MBTrim, MBAudioNumberOfChannels]
+     * @param cb Success callback receiving output file path
+     * @param onError Error callback
+     */
+    public static Object conversion(String inputPath, String format, Object[] params,
+                                    Func1<Object, String> cb, Func1<Object, String> onError) {
+        executor.submit(() -> {
+            try {
+                // Extract parameters from MBStyle structs
+                int sampleRate = extractSampleRate(params);
+                int[] crop = extractCrop(params);
+                int[] trim = extractTrim(params);
+                int numberOfChannels = extractNumberOfChannels(params);
+
+                String outputPath = convertMedia(inputPath, format, sampleRate, crop, trim, numberOfChannels);
+                FlowRuntime.invokeDeferred(() -> cb.invoke(outputPath));
+            } catch (Exception e) {
+                String errorMsg = "Conversion failed: " + e.getMessage();
+                System.err.println("[Mediabunny] " + errorMsg);
+                e.printStackTrace();
+                FlowRuntime.invokeDeferred(() -> onError.invoke(errorMsg));
+            }
+        });
+        return null;
+    }
+
+    /**
+     * Concatenate multiple media files.
+     *
+     * @param inputPaths Array of input file paths
+     * @param outputName Base name for output file
+     * @param cb Success callback receiving output file path
+     * @param onError Error callback
+     */
+    public static Object concatMedia(Object[] inputPaths, String outputName,
+                                     Func1<Object, String> cb, Func1<Object, String> onError) {
+        executor.submit(() -> {
+            try {
+                if (inputPaths == null || inputPaths.length == 0) {
+                    FlowRuntime.invokeDeferred(() -> onError.invoke("No files provided for concatenation"));
+                    return;
+                }
+
+                if (inputPaths.length == 1) {
+                    FlowRuntime.invokeDeferred(() -> cb.invoke((String) inputPaths[0]));
+                    return;
+                }
+
+                String[] paths = new String[inputPaths.length];
+                for (int i = 0; i < inputPaths.length; i++) {
+                    paths[i] = (String) inputPaths[i];
+                }
+
+                String outputPath = concatenateMedia(paths, outputName);
+                FlowRuntime.invokeDeferred(() -> cb.invoke(outputPath));
+            } catch (Exception e) {
+                String errorMsg = "Concatenation failed: " + e.getMessage();
+                System.err.println("[Mediabunny] " + errorMsg);
+                e.printStackTrace();
+                FlowRuntime.invokeDeferred(() -> onError.invoke(errorMsg));
+            }
+        });
+        return null;
+    }
+
+    /**
+     * Get file info (size, type, lastModified).
+     */
+    public static Object getFileInfo(String filePath, Func3<Object, Integer, String, Double> cb) {
+        try {
+            File file = new File(filePath);
+            int size = (int) file.length();
+            String type = detectMimeType(filePath);
+            double lastModified = file.lastModified();
+            cb.invoke(size, type, lastModified);
+        } catch (Exception e) {
+            System.err.println("[Mediabunny] getFileInfo error: " + e.getMessage());
+            cb.invoke(0, "error", 0.0);
+        }
+        return null;
+    }
+
+    // ==================== Synchronous Implementation Methods ====================
+
+    private static double getMediaDurationSync(String filePath) throws Exception {
+        File file = new File(filePath);
+        String ext = getFileExtension(filePath).toLowerCase();
+
+        // Try video duration first
+        if (isVideoFile(ext)) {
+            try (SeekableByteChannel channel = NIOUtils.readableChannel(file)) {
+                Demuxer demuxer = createDemuxer(channel, ext);
+                if (demuxer != null) {
+                    DemuxerTrack videoTrack = demuxer.getVideoTracks().isEmpty() ? null : demuxer.getVideoTracks().get(0);
+                    if (videoTrack != null) {
+                        DemuxerTrackMeta meta = videoTrack.getMeta();
+                        if (meta != null && meta.getTotalDuration() > 0) {
+                            return meta.getTotalDuration();
+                        }
+                    }
+                    // Try audio track for duration
+                    DemuxerTrack audioTrack = demuxer.getAudioTracks().isEmpty() ? null : demuxer.getAudioTracks().get(0);
+                    if (audioTrack != null) {
+                        DemuxerTrackMeta meta = audioTrack.getMeta();
+                        if (meta != null && meta.getTotalDuration() > 0) {
+                            return meta.getTotalDuration();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try audio duration for audio files
+        if (isAudioFile(ext)) {
+            return getAudioDuration(filePath);
+        }
+
+        return 0.0;
+    }
+
+    private static int[] getVideoInfoSync(String filePath) throws Exception {
+        File file = new File(filePath);
+        String ext = getFileExtension(filePath).toLowerCase();
+
+        int width = 0, height = 0, bitrate = 0;
+
+        try (SeekableByteChannel channel = NIOUtils.readableChannel(file)) {
+            Demuxer demuxer = createDemuxer(channel, ext);
+            if (demuxer != null && !demuxer.getVideoTracks().isEmpty()) {
+                DemuxerTrack videoTrack = demuxer.getVideoTracks().get(0);
+                DemuxerTrackMeta meta = videoTrack.getMeta();
+                if (meta != null) {
+                    Size dimensions = meta.getDimensions();
+                    if (dimensions != null) {
+                        width = dimensions.getWidth();
+                        height = dimensions.getHeight();
+                    }
+                    // Estimate bitrate from file size and duration
+                    double duration = meta.getTotalDuration();
+                    if (duration > 0) {
+                        bitrate = (int) ((file.length() * 8) / duration);
+                    }
+                }
+            }
+        }
+
+        return new int[]{width, height, bitrate};
+    }
+
+    private static String convertMedia(String inputPath, String format, int sampleRate,
+                                       int[] crop, int[] trim, int numberOfChannels) throws Exception {
+        String ext = format.toLowerCase();
+
+        switch (ext) {
+            case "wav":
+                return convertToWav(inputPath, sampleRate, trim, numberOfChannels);
+            case "mp3":
+                return convertToMp3(inputPath, sampleRate, trim, numberOfChannels);
+            case "mp4":
+                return convertToMp4(inputPath, crop, trim);
+            case "webm":
+                // jcodec doesn't support WebM output natively, fall back to MP4
+                System.err.println("[Mediabunny] WebM output not supported by jcodec, using MP4 instead");
+                return convertToMp4(inputPath, crop, trim);
+            default:
+                throw new UnsupportedOperationException("Unsupported output format: " + format);
+        }
+    }
+
+    private static String convertToWav(String inputPath, int sampleRate, int[] trim, int numberOfChannels) throws Exception {
+        String outputPath = generateOutputPath(inputPath, "wav");
+
+        // For video files, extract audio first
+        String audioSource = inputPath;
+        if (isVideoFile(getFileExtension(inputPath))) {
+            audioSource = extractAudioFromVideo(inputPath);
+        }
+
+        // Read input audio
+        AudioInputStream audioStream = AudioSystem.getAudioInputStream(new File(audioSource));
+        AudioFormat sourceFormat = audioStream.getFormat();
+
+        // Determine target format
+        int targetSampleRate = sampleRate > 0 ? sampleRate : (int) sourceFormat.getSampleRate();
+        int targetChannels = numberOfChannels > 0 ? numberOfChannels : sourceFormat.getChannels();
+
+        AudioFormat targetFormat = new AudioFormat(
+            AudioFormat.Encoding.PCM_SIGNED,
+            targetSampleRate,
+            16,  // 16-bit
+            targetChannels,
+            targetChannels * 2,  // frame size
+            targetSampleRate,
+            false  // little endian
+        );
+
+        // Convert if necessary
+        AudioInputStream convertedStream;
+        if (!sourceFormat.matches(targetFormat)) {
+            // First convert to PCM if needed
+            if (sourceFormat.getEncoding() != AudioFormat.Encoding.PCM_SIGNED &&
+                sourceFormat.getEncoding() != AudioFormat.Encoding.PCM_UNSIGNED) {
+                AudioFormat pcmFormat = new AudioFormat(
+                    AudioFormat.Encoding.PCM_SIGNED,
+                    sourceFormat.getSampleRate(),
+                    16,
+                    sourceFormat.getChannels(),
+                    sourceFormat.getChannels() * 2,
+                    sourceFormat.getSampleRate(),
+                    false
+                );
+                audioStream = AudioSystem.getAudioInputStream(pcmFormat, audioStream);
+            }
+            convertedStream = AudioSystem.getAudioInputStream(targetFormat, audioStream);
+        } else {
+            convertedStream = audioStream;
+        }
+
+        // Apply trimming if specified
+        if (trim[0] > 0 || trim[1] > 0) {
+            convertedStream = trimAudioStream(convertedStream, trim[0], trim[1]);
+        }
+
+        // Write output
+        AudioSystem.write(convertedStream, AudioFileFormat.Type.WAVE, new File(outputPath));
+
+        audioStream.close();
+        if (convertedStream != audioStream) {
+            convertedStream.close();
+        }
+
+        // Cleanup temp file if we extracted audio
+        if (!audioSource.equals(inputPath)) {
+            new File(audioSource).delete();
+        }
+
+        return outputPath;
+    }
+
+    private static String convertToMp3(String inputPath, int sampleRate, int[] trim, int numberOfChannels) throws Exception {
+        // MP3 encoding requires external library (LAME)
+        // For now, convert to WAV and note that MP3 encoding needs additional setup
+        System.err.println("[Mediabunny] MP3 encoding requires LAME library. Converting to WAV instead.");
+        System.err.println("[Mediabunny] To enable MP3: add net.sourceforge.lame:lame4j dependency");
+        return convertToWav(inputPath, sampleRate, trim, numberOfChannels);
+    }
+
+    private static String convertToMp4(String inputPath, int[] crop, int[] trim) throws Exception {
+        String outputPath = generateOutputPath(inputPath, "mp4");
+        File inputFile = new File(inputPath);
+        File outputFile = new File(outputPath);
+
+        // Use jcodec's FrameGrab and AWTSequenceEncoder
+        FrameGrab grab = FrameGrab.createFrameGrab(NIOUtils.readableChannel(inputFile));
+
+        // Get video info
+        int[] info = getVideoInfoSync(inputPath);
+        int width = info[0];
+        int height = info[1];
+
+        // Apply crop if specified
+        int cropLeft = crop[0], cropTop = crop[1], cropWidth = crop[2], cropHeight = crop[3];
+        boolean doCrop = cropWidth > 0 && cropHeight > 0;
+
+        int outputWidth = doCrop ? cropWidth : width;
+        int outputHeight = doCrop ? cropHeight : height;
+
+        // Create encoder
+        AWTSequenceEncoder encoder = AWTSequenceEncoder.createSequenceEncoder(outputFile, 25);
+
+        // Apply trim if specified
+        double startTime = trim[0];
+        double endTime = trim[1];
+        if (startTime > 0) {
+            grab.seekToSecondPrecise(startTime);
+        }
+
+        Picture picture;
+        double currentTime = startTime;
+        double frameDuration = 1.0 / 25.0;  // Assuming 25 fps
+
+        while ((picture = grab.getNativeFrame()) != null) {
+            if (endTime > 0 && currentTime >= endTime) {
+                break;
+            }
+
+            BufferedImage img = AWTUtil.toBufferedImage(picture);
+
+            // Apply crop if needed
+            if (doCrop) {
+                img = img.getSubimage(cropLeft, cropTop, cropWidth, cropHeight);
+            }
+
+            encoder.encodeImage(img);
+            currentTime += frameDuration;
+        }
+
+        encoder.finish();
+        return outputPath;
+    }
+
+    private static String concatenateMedia(String[] inputPaths, String outputName) throws Exception {
+        if (inputPaths.length == 0) {
+            throw new IllegalArgumentException("No input files provided");
+        }
+
+        String ext = getFileExtension(inputPaths[0]).toLowerCase();
+        String outputPath = outputName + "." + ext;
+
+        if (isAudioFile(ext)) {
+            return concatenateAudio(inputPaths, outputPath);
+        } else {
+            return concatenateVideo(inputPaths, outputPath);
+        }
+    }
+
+    private static String concatenateAudio(String[] inputPaths, String outputPath) throws Exception {
+        // Get format from first file
+        AudioInputStream firstStream = AudioSystem.getAudioInputStream(new File(inputPaths[0]));
+        AudioFormat format = firstStream.getFormat();
+        firstStream.close();
+
+        // Concatenate all streams
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+        for (String path : inputPaths) {
+            AudioInputStream stream = AudioSystem.getAudioInputStream(new File(path));
+
+            // Convert to same format if needed
+            if (!stream.getFormat().matches(format)) {
+                stream = AudioSystem.getAudioInputStream(format, stream);
+            }
+
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = stream.read(buffer)) != -1) {
+                baos.write(buffer, 0, bytesRead);
+            }
+            stream.close();
+        }
+
+        // Write combined audio
+        byte[] audioData = baos.toByteArray();
+        ByteArrayInputStream bais = new ByteArrayInputStream(audioData);
+        AudioInputStream combinedStream = new AudioInputStream(bais, format, audioData.length / format.getFrameSize());
+
+        AudioSystem.write(combinedStream, AudioFileFormat.Type.WAVE, new File(outputPath));
+        combinedStream.close();
+
+        return outputPath;
+    }
+
+    private static String concatenateVideo(String[] inputPaths, String outputPath) throws Exception {
+        File outputFile = new File(outputPath);
+        AWTSequenceEncoder encoder = AWTSequenceEncoder.createSequenceEncoder(outputFile, 25);
+
+        for (String inputPath : inputPaths) {
+            File inputFile = new File(inputPath);
+            FrameGrab grab = FrameGrab.createFrameGrab(NIOUtils.readableChannel(inputFile));
+
+            Picture picture;
+            while ((picture = grab.getNativeFrame()) != null) {
+                BufferedImage img = AWTUtil.toBufferedImage(picture);
+                encoder.encodeImage(img);
+            }
+        }
+
+        encoder.finish();
+        return outputPath;
+    }
+
+    // ==================== Helper Methods ====================
+
+    private static Demuxer createDemuxer(SeekableByteChannel channel, String ext) throws Exception {
+        switch (ext) {
+            case "mp4":
+            case "m4v":
+            case "m4a":
+            case "mov":
+                return MP4Demuxer.createMP4Demuxer(channel);
+            case "mkv":
+            case "webm":
+                return MKVDemuxer.createMKVDemuxer(channel);
+            default:
+                // Try to detect format
+                Format format = JCodecUtil.detectFormat(channel);
+                if (format == Format.MOV) {
+                    channel.setPosition(0);
+                    return MP4Demuxer.createMP4Demuxer(channel);
+                } else if (format == Format.MKV) {
+                    channel.setPosition(0);
+                    return MKVDemuxer.createMKVDemuxer(channel);
+                }
+                return null;
+        }
+    }
+
+    private static double getAudioDuration(String filePath) throws Exception {
+        AudioInputStream audioStream = AudioSystem.getAudioInputStream(new File(filePath));
+        AudioFormat format = audioStream.getFormat();
+        long frames = audioStream.getFrameLength();
+        double duration = frames / format.getFrameRate();
+        audioStream.close();
+        return duration;
+    }
+
+    private static String extractAudioFromVideo(String videoPath) throws Exception {
+        // For now, this is a placeholder - jcodec doesn't have great audio extraction
+        // You might want to use FFmpeg for this in production
+        throw new UnsupportedOperationException("Audio extraction from video requires FFmpeg");
+    }
+
+    private static AudioInputStream trimAudioStream(AudioInputStream stream, double startSec, double endSec) throws Exception {
+        AudioFormat format = stream.getFormat();
+        float frameRate = format.getFrameRate();
+        int frameSize = format.getFrameSize();
+
+        long startFrame = (long) (startSec * frameRate);
+        long endFrame = endSec > 0 ? (long) (endSec * frameRate) : stream.getFrameLength();
+        long framesToRead = endFrame - startFrame;
+
+        // Skip to start
+        long bytesToSkip = startFrame * frameSize;
+        stream.skip(bytesToSkip);
+
+        // Read the trimmed portion
+        long bytesToRead = framesToRead * frameSize;
+        byte[] data = new byte[(int) bytesToRead];
+        int bytesRead = 0;
+        int totalRead = 0;
+
+        while (totalRead < bytesToRead && (bytesRead = stream.read(data, totalRead, (int) (bytesToRead - totalRead))) != -1) {
+            totalRead += bytesRead;
+        }
+
+        ByteArrayInputStream bais = new ByteArrayInputStream(data, 0, totalRead);
+        return new AudioInputStream(bais, format, totalRead / frameSize);
+    }
+
+    private static int extractSampleRate(Object[] params) {
+        if (params != null && params.length > 0 && params[0] instanceof Struct) {
+            Object[] fields = ((Struct) params[0]).getFields();
+            if (fields.length > 0 && fields[0] instanceof Integer) {
+                return (Integer) fields[0];
+            }
+        }
+        return 16000; // Default
+    }
+
+    private static int[] extractCrop(Object[] params) {
+        if (params != null && params.length > 1 && params[1] instanceof Struct) {
+            Object[] fields = ((Struct) params[1]).getFields();
+            if (fields.length >= 4) {
+                return new int[]{
+                    fields[0] instanceof Integer ? (Integer) fields[0] : 0,
+                    fields[1] instanceof Integer ? (Integer) fields[1] : 0,
+                    fields[2] instanceof Integer ? (Integer) fields[2] : 0,
+                    fields[3] instanceof Integer ? (Integer) fields[3] : 0
+                };
+            }
+        }
+        return new int[]{0, 0, 0, 0};
+    }
+
+    private static int[] extractTrim(Object[] params) {
+        if (params != null && params.length > 2 && params[2] instanceof Struct) {
+            Object[] fields = ((Struct) params[2]).getFields();
+            if (fields.length >= 2) {
+                return new int[]{
+                    fields[0] instanceof Integer ? (Integer) fields[0] : 0,
+                    fields[1] instanceof Integer ? (Integer) fields[1] : 0
+                };
+            }
+        }
+        return new int[]{0, 0};
+    }
+
+    private static int extractNumberOfChannels(Object[] params) {
+        if (params != null && params.length > 3 && params[3] instanceof Struct) {
+            Object[] fields = ((Struct) params[3]).getFields();
+            if (fields.length > 0 && fields[0] instanceof Integer) {
+                return (Integer) fields[0];
+            }
+        }
+        return 0; // Default: keep original
+    }
+
+    private static byte[] decodeBase64(String base64str) {
+        String data = base64str;
+        // Handle data URL format
+        int commaIndex = base64str.indexOf(',');
+        if (commaIndex >= 0) {
+            data = base64str.substring(commaIndex + 1);
+        }
+        return Base64.getDecoder().decode(data);
+    }
+
+    private static Path downloadToTempFile(String url) throws Exception {
+        Path tempFile = Files.createTempFile("mediabunny_", ".tmp");
+        try (InputStream in = new URL(url).openStream();
+             OutputStream out = Files.newOutputStream(tempFile)) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = in.read(buffer)) != -1) {
+                out.write(buffer, 0, bytesRead);
+            }
+        }
+        return tempFile;
+    }
+
+    private static void deleteTempFile(Path path) {
+        if (path != null) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (Exception e) {
+                // Ignore
+            }
+        }
+    }
+
+    private static String getFileExtension(String path) {
+        int lastDot = path.lastIndexOf('.');
+        return lastDot > 0 ? path.substring(lastDot + 1) : "";
+    }
+
+    private static String generateOutputPath(String inputPath, String newExtension) {
+        int lastDot = inputPath.lastIndexOf('.');
+        String baseName = lastDot > 0 ? inputPath.substring(0, lastDot) : inputPath;
+        return baseName + "_converted." + newExtension;
+    }
+
+    private static boolean isVideoFile(String ext) {
+        return ext.equals("mp4") || ext.equals("m4v") || ext.equals("mov") ||
+               ext.equals("mkv") || ext.equals("webm") || ext.equals("avi");
+    }
+
+    private static boolean isAudioFile(String ext) {
+        return ext.equals("mp3") || ext.equals("wav") || ext.equals("m4a") ||
+               ext.equals("ogg") || ext.equals("flac") || ext.equals("aac");
+    }
+
+    private static String detectMimeType(String path) {
+        String ext = getFileExtension(path).toLowerCase();
+        switch (ext) {
+            case "mp4": return "video/mp4";
+            case "webm": return "video/webm";
+            case "mkv": return "video/x-matroska";
+            case "mov": return "video/quicktime";
+            case "avi": return "video/x-msvideo";
+            case "mp3": return "audio/mpeg";
+            case "wav": return "audio/wav";
+            case "ogg": return "audio/ogg";
+            case "m4a": return "audio/mp4";
+            case "flac": return "audio/flac";
+            default: return "application/octet-stream";
+        }
+    }
+}
