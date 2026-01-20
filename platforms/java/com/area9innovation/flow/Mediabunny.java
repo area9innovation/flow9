@@ -43,6 +43,10 @@ import java.util.concurrent.Executors;
  * This provides an alternative to the browser-based WebCodecs implementation
  * for server-side processing scenarios.
  *
+ * The Java API uses file paths (String) instead of browser blobs (native),
+ * so it has separate native bindings with "Path" suffix:
+ *   - mbGetMediaDurationPath, mbGetVideoInfoPath, mbConversionPath, etc.
+ *
  * Dependencies required in pom.xml or build.gradle:
  *   - org.jcodec:jcodec:0.2.5
  *   - org.jcodec:jcodec-javase:0.2.5
@@ -60,16 +64,18 @@ public class Mediabunny extends NativeHost {
 
     /**
      * Get media duration from a file path.
+     * Native binding: Mediabunny.getMediaDurationPath
+     *
      * @param filePath Path to the media file
      * @param cb Callback receiving duration in seconds (as double)
      */
-    public static Object getMediaDuration(String filePath, Func1<Object, Double> cb) {
+    public static Object getMediaDurationPath(String filePath, Func1<Object, Double> cb) {
         executor.submit(() -> {
             try {
                 double duration = getMediaDurationSync(filePath);
                 FlowRuntime.invokeDeferred(() -> cb.invoke(duration));
             } catch (Exception e) {
-                System.err.println("[Mediabunny] getMediaDuration error: " + e.getMessage());
+                System.err.println("[Mediabunny] getMediaDurationPath error: " + e.getMessage());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(0.0));
             }
         });
@@ -78,10 +84,12 @@ public class Mediabunny extends NativeHost {
 
     /**
      * Get media duration from base64 encoded content.
+     * Native binding: Mediabunny.getMediaDurationFromBase64Path
+     *
      * @param base64str Base64 encoded media data (can include data URL prefix)
      * @param cb Callback receiving duration in seconds
      */
-    public static Object getMediaDurationFromBase64(String base64str, Func1<Object, Double> cb) {
+    public static Object getMediaDurationFromBase64Path(String base64str, Func1<Object, Double> cb) {
         executor.submit(() -> {
             Path tempFile = null;
             try {
@@ -91,7 +99,7 @@ public class Mediabunny extends NativeHost {
                 double duration = getMediaDurationSync(tempFile.toString());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(duration));
             } catch (Exception e) {
-                System.err.println("[Mediabunny] getMediaDurationFromBase64 error: " + e.getMessage());
+                System.err.println("[Mediabunny] getMediaDurationFromBase64Path error: " + e.getMessage());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(0.0));
             } finally {
                 deleteTempFile(tempFile);
@@ -102,10 +110,12 @@ public class Mediabunny extends NativeHost {
 
     /**
      * Get media duration from a URL.
+     * Native binding: Mediabunny.getMediaDurationFromUrlPath
+     *
      * @param mediaUrl URL to the media file
      * @param cb Callback receiving duration in seconds
      */
-    public static Object getMediaDurationFromUrl(String mediaUrl, Func1<Object, Double> cb) {
+    public static Object getMediaDurationFromUrlPath(String mediaUrl, Func1<Object, Double> cb) {
         executor.submit(() -> {
             Path tempFile = null;
             try {
@@ -113,7 +123,7 @@ public class Mediabunny extends NativeHost {
                 double duration = getMediaDurationSync(tempFile.toString());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(duration));
             } catch (Exception e) {
-                System.err.println("[Mediabunny] getMediaDurationFromUrl error: " + e.getMessage());
+                System.err.println("[Mediabunny] getMediaDurationFromUrlPath error: " + e.getMessage());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(0.0));
             } finally {
                 deleteTempFile(tempFile);
@@ -124,16 +134,18 @@ public class Mediabunny extends NativeHost {
 
     /**
      * Get video information (width, height, bitrate).
+     * Native binding: Mediabunny.getVideoInfoPath
+     *
      * @param filePath Path to the video file
      * @param cb Callback receiving (width, height, bitrate)
      */
-    public static Object getVideoInfo(String filePath, Func3<Object, Integer, Integer, Integer> cb) {
+    public static Object getVideoInfoPath(String filePath, Func3<Object, Integer, Integer, Integer> cb) {
         executor.submit(() -> {
             try {
                 int[] info = getVideoInfoSync(filePath);
                 FlowRuntime.invokeDeferred(() -> cb.invoke(info[0], info[1], info[2]));
             } catch (Exception e) {
-                System.err.println("[Mediabunny] getVideoInfo error: " + e.getMessage());
+                System.err.println("[Mediabunny] getVideoInfoPath error: " + e.getMessage());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(0, 0, 0));
             }
         });
@@ -142,8 +154,9 @@ public class Mediabunny extends NativeHost {
 
     /**
      * Get video information from base64 encoded content.
+     * Native binding: Mediabunny.getVideoInfoFromBase64Path
      */
-    public static Object getVideoInfoFromBase64(String base64str, Func3<Object, Integer, Integer, Integer> cb) {
+    public static Object getVideoInfoFromBase64Path(String base64str, Func3<Object, Integer, Integer, Integer> cb) {
         executor.submit(() -> {
             Path tempFile = null;
             try {
@@ -153,7 +166,7 @@ public class Mediabunny extends NativeHost {
                 int[] info = getVideoInfoSync(tempFile.toString());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(info[0], info[1], info[2]));
             } catch (Exception e) {
-                System.err.println("[Mediabunny] getVideoInfoFromBase64 error: " + e.getMessage());
+                System.err.println("[Mediabunny] getVideoInfoFromBase64Path error: " + e.getMessage());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(0, 0, 0));
             } finally {
                 deleteTempFile(tempFile);
@@ -164,8 +177,9 @@ public class Mediabunny extends NativeHost {
 
     /**
      * Get video information from a URL.
+     * Native binding: Mediabunny.getVideoInfoFromUrlPath
      */
-    public static Object getVideoInfoFromUrl(String mediaUrl, Func3<Object, Integer, Integer, Integer> cb) {
+    public static Object getVideoInfoFromUrlPath(String mediaUrl, Func3<Object, Integer, Integer, Integer> cb) {
         executor.submit(() -> {
             Path tempFile = null;
             try {
@@ -173,7 +187,7 @@ public class Mediabunny extends NativeHost {
                 int[] info = getVideoInfoSync(tempFile.toString());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(info[0], info[1], info[2]));
             } catch (Exception e) {
-                System.err.println("[Mediabunny] getVideoInfoFromUrl error: " + e.getMessage());
+                System.err.println("[Mediabunny] getVideoInfoFromUrlPath error: " + e.getMessage());
                 FlowRuntime.invokeDeferred(() -> cb.invoke(0, 0, 0));
             } finally {
                 deleteTempFile(tempFile);
@@ -184,6 +198,7 @@ public class Mediabunny extends NativeHost {
 
     /**
      * Convert media to a different format.
+     * Native binding: Mediabunny.conversionPath
      *
      * @param inputPath Path to input file
      * @param format Output format: "mp3", "wav", "mp4", "webm"
@@ -191,8 +206,8 @@ public class Mediabunny extends NativeHost {
      * @param cb Success callback receiving output file path
      * @param onError Error callback
      */
-    public static Object conversion(String inputPath, String format, Object[] params,
-                                    Func1<Object, String> cb, Func1<Object, String> onError) {
+    public static Object conversionPath(String inputPath, String format, Object[] params,
+                                        Func1<Object, String> cb, Func1<Object, String> onError) {
         executor.submit(() -> {
             try {
                 // Extract parameters from MBStyle structs
@@ -215,14 +230,15 @@ public class Mediabunny extends NativeHost {
 
     /**
      * Concatenate multiple media files.
+     * Native binding: Mediabunny.concatMediaPath
      *
      * @param inputPaths Array of input file paths
      * @param outputName Base name for output file
      * @param cb Success callback receiving output file path
      * @param onError Error callback
      */
-    public static Object concatMedia(Object[] inputPaths, String outputName,
-                                     Func1<Object, String> cb, Func1<Object, String> onError) {
+    public static Object concatMediaPath(Object[] inputPaths, String outputName,
+                                         Func1<Object, String> cb, Func1<Object, String> onError) {
         executor.submit(() -> {
             try {
                 if (inputPaths == null || inputPaths.length == 0) {
@@ -254,8 +270,9 @@ public class Mediabunny extends NativeHost {
 
     /**
      * Get file info (size, type, lastModified).
+     * Native binding: Mediabunny.getFileInfoPath
      */
-    public static Object getFileInfo(String filePath, Func3<Object, Integer, String, Double> cb) {
+    public static Object getFileInfoPath(String filePath, Func3<Object, Integer, String, Double> cb) {
         try {
             File file = new File(filePath);
             int size = (int) file.length();
@@ -263,7 +280,7 @@ public class Mediabunny extends NativeHost {
             double lastModified = file.lastModified();
             cb.invoke(size, type, lastModified);
         } catch (Exception e) {
-            System.err.println("[Mediabunny] getFileInfo error: " + e.getMessage());
+            System.err.println("[Mediabunny] getFileInfoPath error: " + e.getMessage());
             cb.invoke(0, "error", 0.0);
         }
         return null;

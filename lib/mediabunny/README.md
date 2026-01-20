@@ -75,14 +75,17 @@ Flow Application → lib/mediabunny.flow → platforms/java/Mediabunny.java → 
 
 ## Java Backend API
 
-For server-side processing, use the Java-specific functions that work with file paths:
+For server-side processing, use the Java-specific functions that work with file paths.
+These use the `Path` suffix to distinguish from the JS blob-based API:
 
 | Function | Parameters | Description |
 |----------|------------|-------------|
-| `mbGetMediaDurationJava` | `(filePath: string, cb: (double) -> void)` | Get media duration |
-| `mbGetVideoInfoJava` | `(filePath: string, cb: (int, int, int) -> void)` | Get video width, height, bitrate |
-| `mbConversionJavaPath` | `(inputPath: string, format: MBFormat, params: [MBStyle], cb: (string) -> void, onError: (string) -> void)` | Convert media |
-| `mbConcatMediaJava` | `(inputPaths: [string], outputName: string, cb: (string) -> void, onError: (string) -> void)` | Concatenate media |
+| `mbGetMediaDurationPath` | `(filePath: string, cb: (double) -> void)` | Get media duration |
+| `mbGetVideoInfoPath` | `(filePath: string, cb: (int, int, int) -> void)` | Get video width, height, bitrate |
+| `mbConversionPath` | `(inputPath: string, format: string, params: [MBStyle], cb: (string) -> void, onError: (string) -> void)` | Convert media (format as string) |
+| `mbConversionFormatPath` | `(inputPath: string, format: MBFormat, params: [MBStyle], cb: (string) -> void, onError: (string) -> void)` | Convert media (format as MBFormat) |
+| `mbConcatMediaPath` | `(inputPaths: [string], outputName: string, cb: (string) -> void, onError: (string) -> void)` | Concatenate media |
+| `mbGetFileInfoPath` | `(filePath: string, cb: (size: int, mimeType: string, lastModified: double) -> void)` | Get file metadata |
 
 ### Java Usage Example
 
@@ -91,12 +94,12 @@ import mediabunny/mediabunny;
 
 main() {
     // Get video duration
-    mbGetMediaDurationJava("/path/to/video.mp4", \duration -> {
+    mbGetMediaDurationPath("/path/to/video.mp4", \duration -> {
         println("Duration: " + d2s(duration) + " seconds");
     });
 
     // Convert video with trimming
-    mbConversionJavaPath(
+    mbConversionFormatPath(
         "/path/to/input.mp4",
         MBVideoMP4(),
         [MBTrim(10, 30)],  // Trim from 10s to 30s

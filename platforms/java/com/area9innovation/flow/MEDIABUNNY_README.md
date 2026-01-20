@@ -71,24 +71,27 @@ dependencies {
 
 ### Java-Specific Functions (File Path Based)
 
-These functions work with file paths instead of native blobs, making them suitable for server-side processing:
+These functions use the `Path` suffix to distinguish from the JS blob-based API.
+They work with file paths instead of native blobs, making them suitable for server-side processing:
 
 | Function | Parameters | Description |
 |----------|------------|-------------|
-| `mbGetMediaDurationJava` | `(filePath: string, cb: (double) -> void)` | Get media duration in seconds |
-| `mbGetMediaDurationFromBase64Java` | `(base64str: string, cb: (double) -> void)` | Get duration from base64 data |
-| `mbGetMediaDurationFromUrlJava` | `(url: string, cb: (double) -> void)` | Get duration from URL |
-| `mbGetVideoInfoJava` | `(filePath: string, cb: (int, int, int) -> void)` | Get video width, height, bitrate |
-| `mbConversionJava` | `(inputPath: string, format: string, params: [MBStyle], cb: (string) -> void, onError: (string) -> void)` | Convert media |
-| `mbConcatMediaJava` | `(inputPaths: [string], outputName: string, cb: (string) -> void, onError: (string) -> void)` | Concatenate media files |
-| `mbGetFileInfoJava` | `(filePath: string, cb: (int, string, double) -> void)` | Get file size, MIME type, last modified |
+| `mbGetMediaDurationPath` | `(filePath: string, cb: (double) -> void)` | Get media duration in seconds |
+| `mbGetMediaDurationFromBase64Path` | `(base64str: string, cb: (double) -> void)` | Get duration from base64 data |
+| `mbGetMediaDurationFromUrlPath` | `(url: string, cb: (double) -> void)` | Get duration from URL |
+| `mbGetVideoInfoPath` | `(filePath: string, cb: (int, int, int) -> void)` | Get video width, height, bitrate |
+| `mbGetVideoInfoFromBase64Path` | `(base64str: string, cb: (int, int, int) -> void)` | Get video info from base64 |
+| `mbGetVideoInfoFromUrlPath` | `(url: string, cb: (int, int, int) -> void)` | Get video info from URL |
+| `mbConversionPath` | `(inputPath: string, format: string, params: [MBStyle], cb: (string) -> void, onError: (string) -> void)` | Convert media (format as string) |
+| `mbConcatMediaPath` | `(inputPaths: [string], outputName: string, cb: (string) -> void, onError: (string) -> void)` | Concatenate media files |
+| `mbGetFileInfoPath` | `(filePath: string, cb: (int, string, double) -> void)` | Get file size, MIME type, last modified |
 
 ### High-Level Conversion
 
-Use `mbConversionJavaPath` for a convenient wrapper that handles MBFormat:
+Use `mbConversionFormatPath` for a convenient wrapper that handles MBFormat:
 
 ```flow
-mbConversionJavaPath(
+mbConversionFormatPath(
     "/path/to/input.mp4",
     MBVideoMP4(),
     [MBTrim(10, 20), MBCrop(100, 50, 640, 480)],
@@ -116,7 +119,7 @@ mbConversionJavaPath(
 import mediabunny/mediabunny;
 
 main() {
-    mbGetMediaDurationJava("/path/to/video.mp4", \duration -> {
+    mbGetMediaDurationPath("/path/to/video.mp4", \duration -> {
         println("Duration: " + d2s(duration) + " seconds");
     });
 }
@@ -128,7 +131,7 @@ main() {
 import mediabunny/mediabunny;
 
 main() {
-    mbConversionJavaPath(
+    mbConversionFormatPath(
         "/path/to/input.mp4",
         MBVideoMP4(),
         [
@@ -147,7 +150,7 @@ main() {
 import mediabunny/mediabunny;
 
 main() {
-    mbConversionJavaPath(
+    mbConversionFormatPath(
         "/path/to/video.mp4",
         MBAudioWAV(),
         [MBSampleRate(44100), MBAudioNumberOfChannels(2)],
@@ -163,7 +166,7 @@ main() {
 import mediabunny/mediabunny;
 
 main() {
-    mbConcatMediaJava(
+    mbConcatMediaPath(
         ["/path/to/video1.mp4", "/path/to/video2.mp4", "/path/to/video3.mp4"],
         "concatenated_output",
         \outputPath -> println("Concatenated: " + outputPath),
@@ -179,6 +182,7 @@ main() {
 | Environment | Browser | Server |
 | Hardware Acceleration | Yes (GPU) | No (CPU only) |
 | File Handling | Blob/File objects | File paths |
+| API Suffix | (none) | `Path` |
 | MP3 Encoding | Built-in | Requires LAME |
 | WebM Output | Native | Falls back to MP4 |
 | Max File Size | ~256 MB (browser memory) | Limited by disk/heap |
