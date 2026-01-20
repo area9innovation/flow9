@@ -70,13 +70,16 @@ public class Mediabunny extends NativeHost {
      * @param cb Callback receiving duration in seconds (as double)
      */
     public static Object getMediaDurationPath(String filePath, Func1<Object, Double> cb) {
+        Callbacks callbacks = FlowRuntime.getCallbacks();
+        Callbacks.Callback callback = callbacks.make(cb);
+
         executor.submit(() -> {
             try {
                 double duration = getMediaDurationSync(filePath);
-                FlowRuntime.invokeDeferred(() -> cb.invoke(duration));
+                callback.setReady(duration);
             } catch (Exception e) {
                 System.err.println("[Mediabunny] getMediaDurationPath error: " + e.getMessage());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(0.0));
+                callback.setReady(0.0);
             }
         });
         return null;
@@ -90,6 +93,9 @@ public class Mediabunny extends NativeHost {
      * @param cb Callback receiving duration in seconds
      */
     public static Object getMediaDurationFromBase64Path(String base64str, Func1<Object, Double> cb) {
+        Callbacks callbacks = FlowRuntime.getCallbacks();
+        Callbacks.Callback callback = callbacks.make(cb);
+
         executor.submit(() -> {
             Path tempFile = null;
             try {
@@ -97,10 +103,10 @@ public class Mediabunny extends NativeHost {
                 tempFile = Files.createTempFile("mediabunny_", ".tmp");
                 Files.write(tempFile, data);
                 double duration = getMediaDurationSync(tempFile.toString());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(duration));
+                callback.setReady(duration);
             } catch (Exception e) {
                 System.err.println("[Mediabunny] getMediaDurationFromBase64Path error: " + e.getMessage());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(0.0));
+                callback.setReady(0.0);
             } finally {
                 deleteTempFile(tempFile);
             }
@@ -116,15 +122,18 @@ public class Mediabunny extends NativeHost {
      * @param cb Callback receiving duration in seconds
      */
     public static Object getMediaDurationFromUrlPath(String mediaUrl, Func1<Object, Double> cb) {
+        Callbacks callbacks = FlowRuntime.getCallbacks();
+        Callbacks.Callback callback = callbacks.make(cb);
+
         executor.submit(() -> {
             Path tempFile = null;
             try {
                 tempFile = downloadToTempFile(mediaUrl);
                 double duration = getMediaDurationSync(tempFile.toString());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(duration));
+                callback.setReady(duration);
             } catch (Exception e) {
                 System.err.println("[Mediabunny] getMediaDurationFromUrlPath error: " + e.getMessage());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(0.0));
+                callback.setReady(0.0);
             } finally {
                 deleteTempFile(tempFile);
             }
@@ -140,13 +149,21 @@ public class Mediabunny extends NativeHost {
      * @param cb Callback receiving (width, height, bitrate)
      */
     public static Object getVideoInfoPath(String filePath, Func3<Object, Integer, Integer, Integer> cb) {
+        // For Func3, we need a wrapper since Callbacks.make expects Func1
+        Callbacks callbacks = FlowRuntime.getCallbacks();
+        Func1<Object, Object> wrapper = (Object args) -> {
+            int[] arr = (int[]) args;
+            return cb.invoke(arr[0], arr[1], arr[2]);
+        };
+        Callbacks.Callback callback = callbacks.make(wrapper);
+
         executor.submit(() -> {
             try {
                 int[] info = getVideoInfoSync(filePath);
-                FlowRuntime.invokeDeferred(() -> cb.invoke(info[0], info[1], info[2]));
+                callback.setReady(info);
             } catch (Exception e) {
                 System.err.println("[Mediabunny] getVideoInfoPath error: " + e.getMessage());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(0, 0, 0));
+                callback.setReady(new int[]{0, 0, 0});
             }
         });
         return null;
@@ -157,6 +174,13 @@ public class Mediabunny extends NativeHost {
      * Native binding: Mediabunny.getVideoInfoFromBase64Path
      */
     public static Object getVideoInfoFromBase64Path(String base64str, Func3<Object, Integer, Integer, Integer> cb) {
+        Callbacks callbacks = FlowRuntime.getCallbacks();
+        Func1<Object, Object> wrapper = (Object args) -> {
+            int[] arr = (int[]) args;
+            return cb.invoke(arr[0], arr[1], arr[2]);
+        };
+        Callbacks.Callback callback = callbacks.make(wrapper);
+
         executor.submit(() -> {
             Path tempFile = null;
             try {
@@ -164,10 +188,10 @@ public class Mediabunny extends NativeHost {
                 tempFile = Files.createTempFile("mediabunny_", ".tmp");
                 Files.write(tempFile, data);
                 int[] info = getVideoInfoSync(tempFile.toString());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(info[0], info[1], info[2]));
+                callback.setReady(info);
             } catch (Exception e) {
                 System.err.println("[Mediabunny] getVideoInfoFromBase64Path error: " + e.getMessage());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(0, 0, 0));
+                callback.setReady(new int[]{0, 0, 0});
             } finally {
                 deleteTempFile(tempFile);
             }
@@ -180,15 +204,22 @@ public class Mediabunny extends NativeHost {
      * Native binding: Mediabunny.getVideoInfoFromUrlPath
      */
     public static Object getVideoInfoFromUrlPath(String mediaUrl, Func3<Object, Integer, Integer, Integer> cb) {
+        Callbacks callbacks = FlowRuntime.getCallbacks();
+        Func1<Object, Object> wrapper = (Object args) -> {
+            int[] arr = (int[]) args;
+            return cb.invoke(arr[0], arr[1], arr[2]);
+        };
+        Callbacks.Callback callback = callbacks.make(wrapper);
+
         executor.submit(() -> {
             Path tempFile = null;
             try {
                 tempFile = downloadToTempFile(mediaUrl);
                 int[] info = getVideoInfoSync(tempFile.toString());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(info[0], info[1], info[2]));
+                callback.setReady(info);
             } catch (Exception e) {
                 System.err.println("[Mediabunny] getVideoInfoFromUrlPath error: " + e.getMessage());
-                FlowRuntime.invokeDeferred(() -> cb.invoke(0, 0, 0));
+                callback.setReady(new int[]{0, 0, 0});
             } finally {
                 deleteTempFile(tempFile);
             }
@@ -208,6 +239,12 @@ public class Mediabunny extends NativeHost {
      */
     public static Object conversionPath(String inputPath, String format, Object[] params,
                                         Func1<Object, String> cb, Func1<Object, String> onError) {
+        Callbacks callbacks = FlowRuntime.getCallbacks();
+        Callbacks.Callback successCallback = callbacks.make(cb);
+        Callbacks.Callback errorCallback = callbacks.make(onError);
+        successCallback.alternativeCallbackIds = new Integer[]{errorCallback.id};
+        errorCallback.alternativeCallbackIds = new Integer[]{successCallback.id};
+
         executor.submit(() -> {
             try {
                 // Extract parameters from MBStyle structs
@@ -217,12 +254,12 @@ public class Mediabunny extends NativeHost {
                 int numberOfChannels = extractNumberOfChannels(params);
 
                 String outputPath = convertMedia(inputPath, format, sampleRate, crop, trim, numberOfChannels);
-                FlowRuntime.invokeDeferred(() -> cb.invoke(outputPath));
+                successCallback.setReady(outputPath);
             } catch (Exception e) {
                 String errorMsg = "Conversion failed: " + e.getMessage();
                 System.err.println("[Mediabunny] " + errorMsg);
                 e.printStackTrace();
-                FlowRuntime.invokeDeferred(() -> onError.invoke(errorMsg));
+                errorCallback.setReady(errorMsg);
             }
         });
         return null;
@@ -239,15 +276,21 @@ public class Mediabunny extends NativeHost {
      */
     public static Object concatMediaPath(Object[] inputPaths, String outputName,
                                          Func1<Object, String> cb, Func1<Object, String> onError) {
+        Callbacks callbacks = FlowRuntime.getCallbacks();
+        Callbacks.Callback successCallback = callbacks.make(cb);
+        Callbacks.Callback errorCallback = callbacks.make(onError);
+        successCallback.alternativeCallbackIds = new Integer[]{errorCallback.id};
+        errorCallback.alternativeCallbackIds = new Integer[]{successCallback.id};
+
         executor.submit(() -> {
             try {
                 if (inputPaths == null || inputPaths.length == 0) {
-                    FlowRuntime.invokeDeferred(() -> onError.invoke("No files provided for concatenation"));
+                    errorCallback.setReady("No files provided for concatenation");
                     return;
                 }
 
                 if (inputPaths.length == 1) {
-                    FlowRuntime.invokeDeferred(() -> cb.invoke((String) inputPaths[0]));
+                    successCallback.setReady((String) inputPaths[0]);
                     return;
                 }
 
@@ -257,12 +300,12 @@ public class Mediabunny extends NativeHost {
                 }
 
                 String outputPath = concatenateMedia(paths, outputName);
-                FlowRuntime.invokeDeferred(() -> cb.invoke(outputPath));
+                successCallback.setReady(outputPath);
             } catch (Exception e) {
                 String errorMsg = "Concatenation failed: " + e.getMessage();
                 System.err.println("[Mediabunny] " + errorMsg);
                 e.printStackTrace();
-                FlowRuntime.invokeDeferred(() -> onError.invoke(errorMsg));
+                errorCallback.setReady(errorMsg);
             }
         });
         return null;
