@@ -444,13 +444,18 @@ public class Mediabunny extends NativeHost {
         }
 
         // Read input audio
+        File audioSourceFile = new File(audioSource);
         System.out.println("[Mediabunny] convertToWav: reading audio from " + audioSource);
-        AudioInputStream audioStream = AudioSystem.getAudioInputStream(new File(audioSource));
+        System.out.println("[Mediabunny] convertToWav: audioSource exists=" + audioSourceFile.exists() + ", size=" + audioSourceFile.length());
+
+        AudioInputStream audioStream = AudioSystem.getAudioInputStream(audioSourceFile);
         AudioFormat sourceFormat = audioStream.getFormat();
+        System.out.println("[Mediabunny] convertToWav: sourceFormat=" + sourceFormat);
 
         // Determine target format
         int targetSampleRate = sampleRate > 0 ? sampleRate : (int) sourceFormat.getSampleRate();
         int targetChannels = numberOfChannels > 0 ? numberOfChannels : sourceFormat.getChannels();
+        System.out.println("[Mediabunny] convertToWav: targetSampleRate=" + targetSampleRate + ", targetChannels=" + targetChannels);
 
         AudioFormat targetFormat = new AudioFormat(
             AudioFormat.Encoding.PCM_SIGNED,
@@ -465,6 +470,7 @@ public class Mediabunny extends NativeHost {
         // Convert if necessary
         AudioInputStream convertedStream;
         if (!sourceFormat.matches(targetFormat)) {
+            System.out.println("[Mediabunny] convertToWav: format conversion needed");
             // First convert to PCM if needed
             if (sourceFormat.getEncoding() != AudioFormat.Encoding.PCM_SIGNED &&
                 sourceFormat.getEncoding() != AudioFormat.Encoding.PCM_UNSIGNED) {
@@ -481,27 +487,42 @@ public class Mediabunny extends NativeHost {
             }
             convertedStream = AudioSystem.getAudioInputStream(targetFormat, audioStream);
         } else {
+            System.out.println("[Mediabunny] convertToWav: no format conversion needed");
             convertedStream = audioStream;
         }
 
         // Apply trimming if specified
         if (trim[0] > 0 || trim[1] > 0) {
+            System.out.println("[Mediabunny] convertToWav: applying trim [" + trim[0] + ", " + trim[1] + "]");
             convertedStream = trimAudioStream(convertedStream, trim[0], trim[1]);
         }
 
+        // If audioSource is already the target (from extractAudioFromVideo),
+        // and no conversion/trimming needed, just return it
+        if (audioSource.equals(outputPath) && convertedStream == audioStream && trim[0] == 0 && trim[1] == 0) {
+            System.out.println("[Mediabunny] convertToWav: no changes needed, returning " + audioSource);
+            audioStream.close();
+            return audioSource;
+        }
+
         // Write output
-        AudioSystem.write(convertedStream, AudioFileFormat.Type.WAVE, new File(outputPath));
+        System.out.println("[Mediabunny] convertToWav: writing to " + outputPath);
+        long bytesWritten = AudioSystem.write(convertedStream, AudioFileFormat.Type.WAVE, new File(outputPath));
+        System.out.println("[Mediabunny] convertToWav: wrote " + bytesWritten + " bytes");
 
         audioStream.close();
         if (convertedStream != audioStream) {
             convertedStream.close();
         }
 
-        // Cleanup temp file if we extracted audio
-        if (!audioSource.equals(inputPath)) {
+        // Cleanup temp file if we extracted audio and output is different
+        if (!audioSource.equals(inputPath) && !audioSource.equals(outputPath)) {
+            System.out.println("[Mediabunny] convertToWav: cleaning up temp file " + audioSource);
             new File(audioSource).delete();
         }
 
+        File outputFile = new File(outputPath);
+        System.out.println("[Mediabunny] convertToWav: final output exists=" + outputFile.exists() + ", size=" + outputFile.length());
         return outputPath;
     }
 
