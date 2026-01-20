@@ -20,6 +20,10 @@ import org.jcodec.containers.mkv.demuxer.MKVDemuxer;
 import org.jcodec.scale.AWTUtil;
 import org.jcodec.scale.ColorUtil;
 import org.jcodec.scale.Transform;
+import org.jcodec.codecs.aac.AACDecoder;
+import org.jcodec.common.AudioCodecMeta;
+import org.jcodec.common.model.AudioBuffer;
+import org.jcodec.common.model.Packet;
 
 import javax.sound.sampled.*;
 import java.awt.image.BufferedImage;
@@ -663,10 +667,115 @@ public class Mediabunny extends NativeHost {
         return duration;
     }
 
+    /**
+     * Extract audio from video file using jcodec's AAC decoder.
+     * Demuxes MP4, decodes AAC audio frames to PCM, writes as WAV.
+     */
     private static String extractAudioFromVideo(String videoPath) throws Exception {
-        // For now, this is a placeholder - jcodec doesn't have great audio extraction
-        // You might want to use FFmpeg for this in production
-        throw new UnsupportedOperationException("Audio extraction from video requires FFmpeg");
+        File videoFile = new File(videoPath);
+        String outputPath = generateOutputPath(videoPath, "wav");
+
+        try (SeekableByteChannel channel = NIOUtils.readableChannel(videoFile)) {
+            MP4Demuxer demuxer = MP4Demuxer.createMP4Demuxer(channel);
+
+            if (demuxer.getAudioTracks().isEmpty()) {
+                throw new Exception("No audio track found in video file");
+            }
+
+            DemuxerTrack audioTrack = demuxer.getAudioTracks().get(0);
+            DemuxerTrackMeta trackMeta = audioTrack.getMeta();
+
+            // Get decoder-specific info from track metadata
+            ByteBuffer codecPrivate = trackMeta.getCodecPrivate();
+            if (codecPrivate == null) {
+                throw new Exception("No codec private data (decoder config) found in audio track");
+            }
+
+            // Initialize AAC decoder with codec private data
+            AACDecoder decoder = new AACDecoder(codecPrivate.duplicate());
+            AudioCodecMeta audioMeta = trackMeta.getAudioCodecMeta();
+
+            // Collect all decoded PCM data
+            ByteArrayOutputStream pcmData = new ByteArrayOutputStream();
+
+            Packet packet;
+            while ((packet = audioTrack.nextFrame()) != null) {
+                ByteBuffer frameData = packet.getData();
+                if (frameData == null || frameData.remaining() == 0) {
+                    continue;
+                }
+
+                try {
+                    // Allocate buffer for decoded PCM (AAC frame can decode to ~8KB PCM)
+                    ByteBuffer decodedBuffer = ByteBuffer.allocate(1 << 16);
+
+                    AudioBuffer audioBuffer = decoder.decodeFrame(frameData, decodedBuffer);
+                    if (audioBuffer != null) {
+                        ByteBuffer data = audioBuffer.getData();
+                        byte[] pcmBytes = new byte[data.remaining()];
+                        data.get(pcmBytes);
+                        pcmData.write(pcmBytes);
+                    }
+                } catch (Exception e) {
+                    // Skip corrupted frames
+                    System.err.println("[Mediabunny] Skipping audio frame: " + e.getMessage());
+                }
+            }
+
+            if (pcmData.size() == 0) {
+                throw new Exception("Failed to decode any audio data from video");
+            }
+
+            // Get audio format from track metadata or use defaults
+            int sampleRate = 44100;
+            int channels = 2;
+            int bitsPerSample = 16;
+
+            if (audioMeta != null) {
+                sampleRate = audioMeta.getSampleRate();
+                channels = audioMeta.getChannelCount();
+            }
+
+            // Write WAV file
+            byte[] pcmBytes = pcmData.toByteArray();
+            writeWavFile(outputPath, pcmBytes, sampleRate, channels, bitsPerSample);
+
+            return outputPath;
+        }
+    }
+
+    /**
+     * Write PCM data to a WAV file with proper RIFF header.
+     */
+    private static void writeWavFile(String outputPath, byte[] pcmData, int sampleRate, int channels, int bitsPerSample) throws Exception {
+        int byteRate = sampleRate * channels * bitsPerSample / 8;
+        int blockAlign = channels * bitsPerSample / 8;
+        int dataSize = pcmData.length;
+        int chunkSize = 36 + dataSize;
+
+        try (FileOutputStream fos = new FileOutputStream(outputPath);
+             DataOutputStream dos = new DataOutputStream(fos)) {
+
+            // RIFF header
+            dos.writeBytes("RIFF");
+            dos.writeInt(Integer.reverseBytes(chunkSize));
+            dos.writeBytes("WAVE");
+
+            // fmt subchunk
+            dos.writeBytes("fmt ");
+            dos.writeInt(Integer.reverseBytes(16)); // Subchunk1Size for PCM
+            dos.writeShort(Short.reverseBytes((short) 1)); // AudioFormat: PCM = 1
+            dos.writeShort(Short.reverseBytes((short) channels));
+            dos.writeInt(Integer.reverseBytes(sampleRate));
+            dos.writeInt(Integer.reverseBytes(byteRate));
+            dos.writeShort(Short.reverseBytes((short) blockAlign));
+            dos.writeShort(Short.reverseBytes((short) bitsPerSample));
+
+            // data subchunk
+            dos.writeBytes("data");
+            dos.writeInt(Integer.reverseBytes(dataSize));
+            dos.write(pcmData);
+        }
     }
 
     private static AudioInputStream trimAudioStream(AudioInputStream stream, double startSec, double endSec) throws Exception {
