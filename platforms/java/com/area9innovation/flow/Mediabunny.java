@@ -338,7 +338,7 @@ public class Mediabunny extends NativeHost {
         // Try video duration first
         if (isVideoFile(ext)) {
             try (SeekableByteChannel channel = NIOUtils.readableChannel(file)) {
-                Demuxer demuxer = createDemuxer(channel, ext);
+                Demuxer demuxer = createDemuxer(file, channel, ext);
                 if (demuxer != null) {
                     DemuxerTrack videoTrack = demuxer.getVideoTracks().isEmpty() ? null : demuxer.getVideoTracks().get(0);
                     if (videoTrack != null) {
@@ -373,17 +373,25 @@ public class Mediabunny extends NativeHost {
 
         int width = 0, height = 0, bitrate = 0;
 
+        // Use FrameGrab to get video dimensions - more reliable than demuxer metadata
+        try {
+            FrameGrab grab = FrameGrab.createFrameGrab(NIOUtils.readableChannel(file));
+            Picture picture = grab.getNativeFrame();
+            if (picture != null) {
+                width = picture.getWidth();
+                height = picture.getHeight();
+            }
+        } catch (Exception e) {
+            // Fall back to demuxer approach
+        }
+
+        // Get duration for bitrate calculation
         try (SeekableByteChannel channel = NIOUtils.readableChannel(file)) {
-            Demuxer demuxer = createDemuxer(channel, ext);
+            Demuxer demuxer = createDemuxer(file, channel, ext);
             if (demuxer != null && !demuxer.getVideoTracks().isEmpty()) {
                 DemuxerTrack videoTrack = demuxer.getVideoTracks().get(0);
                 DemuxerTrackMeta meta = videoTrack.getMeta();
                 if (meta != null) {
-                    Size dimensions = meta.getDimensions();
-                    if (dimensions != null) {
-                        width = dimensions.getWidth();
-                        height = dimensions.getHeight();
-                    }
                     // Estimate bitrate from file size and duration
                     double duration = meta.getTotalDuration();
                     if (duration > 0) {
@@ -620,7 +628,7 @@ public class Mediabunny extends NativeHost {
 
     // ==================== Helper Methods ====================
 
-    private static Demuxer createDemuxer(SeekableByteChannel channel, String ext) throws Exception {
+    private static Demuxer createDemuxer(File file, SeekableByteChannel channel, String ext) throws Exception {
         switch (ext) {
             case "mp4":
             case "m4v":
@@ -629,16 +637,18 @@ public class Mediabunny extends NativeHost {
                 return MP4Demuxer.createMP4Demuxer(channel);
             case "mkv":
             case "webm":
-                return MKVDemuxer.createMKVDemuxer(channel);
+                // MKVDemuxer needs FileChannelWrapper
+                FileChannelWrapper fcw = NIOUtils.readableChannel(file);
+                return new MKVDemuxer(fcw);
             default:
-                // Try to detect format
-                Format format = JCodecUtil.detectFormat(channel);
+                // Try to detect format using File
+                Format format = JCodecUtil.detectFormat(file);
                 if (format == Format.MOV) {
                     channel.setPosition(0);
                     return MP4Demuxer.createMP4Demuxer(channel);
                 } else if (format == Format.MKV) {
-                    channel.setPosition(0);
-                    return MKVDemuxer.createMKVDemuxer(channel);
+                    FileChannelWrapper fcw2 = NIOUtils.readableChannel(file);
+                    return new MKVDemuxer(fcw2);
                 }
                 return null;
         }
