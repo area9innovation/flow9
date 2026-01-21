@@ -469,12 +469,16 @@ public class Mediabunny extends NativeHost {
 
         // Convert if necessary
         AudioInputStream convertedStream;
+        System.out.println("[Mediabunny] convertToWav: checking if format conversion needed");
+        System.out.println("[Mediabunny] convertToWav: sourceFormat.matches(targetFormat)=" + sourceFormat.matches(targetFormat));
+
         if (!sourceFormat.matches(targetFormat)) {
             System.out.println("[Mediabunny] convertToWav: format conversion needed");
 
             // First convert to PCM if needed
             if (sourceFormat.getEncoding() != AudioFormat.Encoding.PCM_SIGNED &&
                 sourceFormat.getEncoding() != AudioFormat.Encoding.PCM_UNSIGNED) {
+                System.out.println("[Mediabunny] convertToWav: converting encoding to PCM_SIGNED");
                 AudioFormat pcmFormat = new AudioFormat(
                     AudioFormat.Encoding.PCM_SIGNED,
                     sourceFormat.getSampleRate(),
@@ -486,19 +490,29 @@ public class Mediabunny extends NativeHost {
                 );
                 audioStream = AudioSystem.getAudioInputStream(pcmFormat, audioStream);
                 sourceFormat = audioStream.getFormat();
+                System.out.println("[Mediabunny] convertToWav: after PCM conversion, sourceFormat=" + sourceFormat);
             }
 
-            // Check if AudioSystem supports the conversion
-            if (AudioSystem.isConversionSupported(targetFormat, sourceFormat)) {
-                System.out.println("[Mediabunny] convertToWav: AudioSystem conversion supported");
-                convertedStream = AudioSystem.getAudioInputStream(targetFormat, audioStream);
-            } else {
-                // AudioSystem can't do sample rate conversion - keep source format
-                // but try to at least convert channels if needed
-                System.out.println("[Mediabunny] convertToWav: AudioSystem conversion NOT supported, trying partial conversion");
+            // Java's AudioSystem CANNOT do sample rate conversion properly
+            // It claims to support it but produces garbage output
+            // Only do channel conversion, keep original sample rate
+            boolean needsSampleRateChange = (int) sourceFormat.getSampleRate() != targetSampleRate;
+            boolean needsChannelChange = sourceFormat.getChannels() != targetChannels;
 
-                // Try converting just channels (mono/stereo) at source sample rate
-                AudioFormat partialFormat = new AudioFormat(
+            System.out.println("[Mediabunny] convertToWav: needsSampleRateChange=" + needsSampleRateChange +
+                " (" + (int)sourceFormat.getSampleRate() + " vs " + targetSampleRate + ")");
+            System.out.println("[Mediabunny] convertToWav: needsChannelChange=" + needsChannelChange +
+                " (" + sourceFormat.getChannels() + " vs " + targetChannels + ")");
+
+            if (needsSampleRateChange) {
+                System.out.println("[Mediabunny] convertToWav: WARNING - sample rate conversion requested (" +
+                    (int)sourceFormat.getSampleRate() + " -> " + targetSampleRate +
+                    ") but Java AudioSystem cannot resample - keeping original sample rate");
+            }
+
+            if (needsChannelChange) {
+                // Try converting just channels at source sample rate
+                AudioFormat monoFormat = new AudioFormat(
                     AudioFormat.Encoding.PCM_SIGNED,
                     sourceFormat.getSampleRate(),  // Keep source sample rate
                     16,
@@ -508,19 +522,30 @@ public class Mediabunny extends NativeHost {
                     false
                 );
 
-                if (AudioSystem.isConversionSupported(partialFormat, sourceFormat)) {
-                    System.out.println("[Mediabunny] convertToWav: channel conversion supported, keeping sample rate " + sourceFormat.getSampleRate());
-                    convertedStream = AudioSystem.getAudioInputStream(partialFormat, audioStream);
-                } else {
-                    // Can't convert at all - use source as-is
-                    System.out.println("[Mediabunny] convertToWav: no conversion possible, using source format");
+                System.out.println("[Mediabunny] convertToWav: converting channels " +
+                    sourceFormat.getChannels() + " -> " + targetChannels);
+                System.out.println("[Mediabunny] convertToWav: target monoFormat=" + monoFormat);
+
+                try {
+                    convertedStream = AudioSystem.getAudioInputStream(monoFormat, audioStream);
+                    System.out.println("[Mediabunny] convertToWav: channel conversion successful");
+                    System.out.println("[Mediabunny] convertToWav: convertedStream format=" + convertedStream.getFormat());
+                    System.out.println("[Mediabunny] convertToWav: convertedStream frameLength=" + convertedStream.getFrameLength());
+                } catch (Exception e) {
+                    System.out.println("[Mediabunny] convertToWav: channel conversion FAILED: " + e.getMessage());
+                    System.out.println("[Mediabunny] convertToWav: using original stream without conversion");
                     convertedStream = audioStream;
                 }
+            } else {
+                System.out.println("[Mediabunny] convertToWav: no channel conversion needed, using source stream");
+                convertedStream = audioStream;
             }
         } else {
             System.out.println("[Mediabunny] convertToWav: no format conversion needed");
             convertedStream = audioStream;
         }
+
+        System.out.println("[Mediabunny] convertToWav: final convertedStream format=" + convertedStream.getFormat());
 
         // Apply trimming if specified
         if (trim[0] > 0 || trim[1] > 0) {
@@ -549,11 +574,28 @@ public class Mediabunny extends NativeHost {
         // Cleanup temp file if we extracted audio and output is different
         if (!audioSource.equals(inputPath) && !audioSource.equals(outputPath)) {
             System.out.println("[Mediabunny] convertToWav: cleaning up temp file " + audioSource);
-            new File(audioSource).delete();
+            // TODO: REMOVE DEBUG - don't delete for debugging
+            if (!DEBUG_SAVE_FILES) {
+                new File(audioSource).delete();
+            } else {
+                System.out.println("[Mediabunny] DEBUG: keeping temp file for inspection: " + audioSource);
+            }
         }
 
         File outputFile = new File(outputPath);
         System.out.println("[Mediabunny] convertToWav: final output exists=" + outputFile.exists() + ", size=" + outputFile.length());
+
+        // TODO: REMOVE DEBUG - save copy of final converted audio
+        if (DEBUG_SAVE_FILES) {
+            try {
+                String debugPath = DEBUG_OUTPUT_DIR + "2_final_converted.wav";
+                Files.copy(outputFile.toPath(), new File(debugPath).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                System.out.println("[Mediabunny] DEBUG: saved final output to " + debugPath);
+            } catch (Exception e) {
+                System.out.println("[Mediabunny] DEBUG: failed to save debug copy: " + e.getMessage());
+            }
+        }
+
         return outputPath;
     }
 
@@ -726,15 +768,26 @@ public class Mediabunny extends NativeHost {
         return duration;
     }
 
+    // TODO: REMOVE DEBUG FLAG - set to false for production
+    private static final boolean DEBUG_SAVE_FILES = true;
+    private static final String DEBUG_OUTPUT_DIR = "/tmp/mediabunny_debug/";
+
     /**
      * Extract audio from video file using jcodec's AAC decoder.
      * Demuxes MP4, decodes AAC audio frames to PCM, writes as WAV.
      */
     private static String extractAudioFromVideo(String videoPath) throws Exception {
         File videoFile = new File(videoPath);
-        String outputPath = generateOutputPath(videoPath, "wav");
+        // Use _extracted suffix to avoid collision with final _converted output
+        String outputPath = generateOutputPath(videoPath, "extracted.wav");
         System.out.println("[Mediabunny] extractAudioFromVideo: videoPath=" + videoPath);
         System.out.println("[Mediabunny] extractAudioFromVideo: outputPath=" + outputPath);
+
+        // TODO: REMOVE DEBUG - save copy to permanent location
+        if (DEBUG_SAVE_FILES) {
+            new File(DEBUG_OUTPUT_DIR).mkdirs();
+            System.out.println("[Mediabunny] DEBUG: will save copies to " + DEBUG_OUTPUT_DIR);
+        }
         System.out.println("[Mediabunny] extractAudioFromVideo: file exists=" + videoFile.exists() + ", size=" + videoFile.length());
 
         try (SeekableByteChannel channel = NIOUtils.readableChannel(videoFile)) {
@@ -822,6 +875,13 @@ public class Mediabunny extends NativeHost {
             System.out.println("[Mediabunny] extractAudioFromVideo: writing WAV file: sampleRate=" + sampleRate + ", channels=" + channels + ", size=" + pcmBytes.length);
             writeWavFile(outputPath, pcmBytes, sampleRate, channels, bitsPerSample);
             System.out.println("[Mediabunny] extractAudioFromVideo: done, output=" + outputPath);
+
+            // TODO: REMOVE DEBUG - save copy of extracted audio
+            if (DEBUG_SAVE_FILES) {
+                String debugPath = DEBUG_OUTPUT_DIR + "1_extracted_from_video.wav";
+                writeWavFile(debugPath, pcmBytes, sampleRate, channels, bitsPerSample);
+                System.out.println("[Mediabunny] DEBUG: saved extracted audio to " + debugPath);
+            }
 
             return outputPath;
         }
