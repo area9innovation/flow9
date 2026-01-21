@@ -770,7 +770,8 @@ public class Mediabunny extends NativeHost {
 
     // TODO: REMOVE DEBUG FLAG - set to false for production
     private static final boolean DEBUG_SAVE_FILES = true;
-    private static final String DEBUG_OUTPUT_DIR = "/tmp/mediabunny_debug/";
+    // Use Java temp dir which works on both Windows and Linux
+    private static final String DEBUG_OUTPUT_DIR = System.getProperty("java.io.tmpdir") + File.separator + "mediabunny_debug" + File.separator;
 
     /**
      * Extract audio from video file using jcodec's AAC decoder.
@@ -785,8 +786,9 @@ public class Mediabunny extends NativeHost {
 
         // TODO: REMOVE DEBUG - save copy to permanent location
         if (DEBUG_SAVE_FILES) {
-            new File(DEBUG_OUTPUT_DIR).mkdirs();
-            System.out.println("[Mediabunny] DEBUG: will save copies to " + DEBUG_OUTPUT_DIR);
+            File debugDir = new File(DEBUG_OUTPUT_DIR);
+            debugDir.mkdirs();
+            System.out.println("[Mediabunny] DEBUG: will save copies to " + debugDir.getAbsolutePath());
         }
         System.out.println("[Mediabunny] extractAudioFromVideo: file exists=" + videoFile.exists() + ", size=" + videoFile.length());
 
