@@ -11,6 +11,8 @@ Flow Application → lib/mediabunny/mediabunny.flow → platforms/java/Mediabunn
 
 ## Dependencies
 
+JCodec library (https://github.com/jcodec/jcodec)
+
 ### Option 1: Download JARs to flow9/platforms/java/lib/
 
 Download these JARs and place them in `flow9/platforms/java/lib/`:
@@ -175,45 +177,12 @@ main() {
 }
 ```
 
-## Comparison: JS vs Java Implementation
-
-| Feature | JS (WebCodecs) | Java (jcodec) |
-|---------|----------------|---------------|
-| Environment | Browser | Server |
-| Hardware Acceleration | Yes (GPU) | No (CPU only) |
-| File Handling | Blob/File objects | File paths |
-| API Suffix | (none) | `Path` |
-| MP3 Encoding | Built-in | Requires LAME |
-| WebM Output | Native | Falls back to MP4 |
-| Max File Size | ~256 MB (browser memory) | Limited by disk/heap |
-| Concurrency | Single-threaded | Multi-threaded |
-
 ## Limitations
 
 1. **WebM Output**: jcodec doesn't support WebM muxing; falls back to MP4
 2. **MP3 Encoding**: Requires external LAME library
 3. **Audio from Video**: Audio extraction from video containers is limited
 4. **No Hardware Acceleration**: All processing is CPU-based
-
-## For Production Use
-
-For production scenarios requiring full codec support, consider:
-
-1. **FFmpeg via ProcessBuilder**: Most complete solution
-   ```java
-   ProcessBuilder pb = new ProcessBuilder("ffmpeg", "-i", input, "-c:v", "libx264", output);
-   ```
-
-2. **JavaCV (FFmpeg bindings)**: Native FFmpeg with Java API
-   ```xml
-   <dependency>
-       <groupId>org.bytedeco</groupId>
-       <artifactId>javacv-platform</artifactId>
-       <version>1.5.9</version>
-   </dependency>
-   ```
-
-3. **Xuggler**: Older but stable FFmpeg wrapper (deprecated)
 
 ## Thread Safety
 
