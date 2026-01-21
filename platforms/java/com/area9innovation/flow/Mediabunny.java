@@ -561,10 +561,18 @@ public class Mediabunny extends NativeHost {
             return audioSource;
         }
 
-        // Write output
+        // Write output using our own writeWavFile to ensure correct WAV header
+        // (AudioSystem.write can produce corrupted headers in some cases)
         System.out.println("[Mediabunny] convertToWav: writing to " + outputPath);
-        long bytesWritten = AudioSystem.write(convertedStream, AudioFileFormat.Type.WAVE, new File(outputPath));
-        System.out.println("[Mediabunny] convertToWav: wrote " + bytesWritten + " bytes");
+        AudioFormat finalFormat = convertedStream.getFormat();
+        byte[] pcmData = convertedStream.readAllBytes();
+        System.out.println("[Mediabunny] convertToWav: read " + pcmData.length + " bytes from stream");
+        System.out.println("[Mediabunny] convertToWav: finalFormat sampleRate=" + (int)finalFormat.getSampleRate() +
+            ", channels=" + finalFormat.getChannels() + ", bitsPerSample=" + finalFormat.getSampleSizeInBits());
+
+        writeWavFile(outputPath, pcmData, (int)finalFormat.getSampleRate(),
+            finalFormat.getChannels(), finalFormat.getSampleSizeInBits());
+        System.out.println("[Mediabunny] convertToWav: wrote " + pcmData.length + " bytes");
 
         audioStream.close();
         if (convertedStream != audioStream) {
