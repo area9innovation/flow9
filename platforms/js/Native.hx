@@ -3394,6 +3394,8 @@ Native.memoryLeakReset();
 				Browser.window.addEventListener("videoplaying", mouseMoveActiveFn);
 				Browser.window.addEventListener("focus", mouseMoveActiveFn);
 				Browser.window.addEventListener("blur", mouseMoveActiveFn);
+				Browser.window.addEventListener("click", mouseMoveActiveFn);
+				Browser.window.addEventListener("touchstart", mouseMoveActiveFn);
 
 				mouseMoveActiveFn();
 
@@ -3403,6 +3405,8 @@ Native.memoryLeakReset();
 					Browser.window.removeEventListener("videoplaying", mouseMoveActiveFn);
 					Browser.window.removeEventListener("focus", mouseMoveActiveFn);
 					Browser.window.removeEventListener("blur", mouseMoveActiveFn);
+					Browser.window.removeEventListener("click", mouseMoveActiveFn);
+					Browser.window.removeEventListener("touchstart", mouseMoveActiveFn);
 				};
 			} else if (event == "idle") {
 				var timeoutIdleId = -1;
@@ -3437,6 +3441,8 @@ Native.memoryLeakReset();
 				Browser.window.addEventListener("videoplaying", mouseMoveIdleFn);
 				Browser.window.addEventListener("focus", mouseMoveIdleFn);
 				Browser.window.addEventListener("blur", mouseMoveIdleFn);
+				Browser.window.addEventListener("click", mouseMoveIdleFn);
+				Browser.window.addEventListener("touchstart", mouseMoveIdleFn);
 
 				return function() {
 					untyped __js__("clearTimeout(timeoutIdleId)");
@@ -3444,6 +3450,8 @@ Native.memoryLeakReset();
 					Browser.window.removeEventListener("videoplaying", mouseMoveIdleFn);
 					Browser.window.removeEventListener("focus", mouseMoveIdleFn);
 					Browser.window.removeEventListener("blur", mouseMoveIdleFn);
+					Browser.window.removeEventListener("click", mouseMoveIdleFn);
+					Browser.window.removeEventListener("touchstart", mouseMoveIdleFn);
 				};
 			}
 		#end
