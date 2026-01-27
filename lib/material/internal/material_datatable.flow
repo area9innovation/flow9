@@ -12,6 +12,8 @@ export {
 	MSpannableDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MSpannableDataTable<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
 
+pinnedPaginationEnabled = isUrlParameterTrue("new") && !isUrlParameterFalse("datatable_pinned_pagination_enabled");
+
 MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicDataTable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	MDynamicDataTable2TInner(manager, parent, m.columns, m.rows, \row -> map(row, \cell -> MCell(cell, 1, 1)), m.style, false, m2t)
 }
@@ -721,17 +723,23 @@ MDynamicDataTable2TInner(
 											) - b2i(fr);
 
 										pg = getValue(page);
-										if (pg.second != newRowsCount)
+										if (pg.second != newRowsCount) {
 											next(page,
 												Pair(
 													forceRange(
-														pg.first * newRowsCount / max(pg.second, 1),
+														if (pinnedPaginationEnabled) {
+															// When autoPagination is changed, preserve first visible line's page, not page number
+															(pg.first / max(newRowsCount, 1)) * newRowsCount
+														} else {
+															pg.first * newRowsCount / max(pg.second, 1)
+														},
 														0,
 														max(rowsCount - 1, 0)
 													),
 													newRowsCount
 												)
 											);
+										}
 								})()]
 							else
 								[makeSubscribe(rowsCountB, paginationState.updateRowsPerPage)()]
@@ -1343,7 +1351,16 @@ makeMPaginationState(style : [MDataTableStyle], isReorder : bool) -> MPagination
 				rowsCount = fgetValue(rowsCountB);
 				updatePageNumber(forceRange(num * rpp, 0, rowsCount - 1))
 			}),
-			makeSubscribe2(maxPageNumber(rowsCountB), \maxPage -> nextDistinct(pageNumber, min(maxPage, getValue(pageNumber))))
+			makeSubscribe2(
+				if (pinnedPaginationEnabled) {
+					fstall(maxPageNumber(rowsCountB), 0)
+				} else {
+					maxPageNumber(rowsCountB)	
+				},
+				\maxPage -> {
+					nextDistinct(pageNumber, min(maxPage, getValue(pageNumber)))
+				}
+			)
 		]
 		|> (\sbs ->
 			eitherMap(
