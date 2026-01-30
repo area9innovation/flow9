@@ -12,6 +12,7 @@ import pixi.core.display.DisplayObject;
 import FlowFontStyle;
 
 using DisplayObjectHelper;
+using StringTools;
 
 class Text extends PixiCoreText {
 	public var charIdx : Int = 0;
@@ -195,6 +196,7 @@ class TextClip extends NativeWidgetClip {
 	private var preventMouseUpEvent : Bool = false;
 	private var preventEnsureCurrentInputVisible : Bool = false;
 	private var preventCheckTextNodeWidth : Bool = false;
+	private var svgPrecisionEnabled : Bool = Native.isNew;
 
 	private var scheduledForceUpdate : Bool = false;
 	private static var onFontLoadedListenerInitialized : Bool = false;
@@ -880,6 +882,14 @@ class TextClip extends NativeWidgetClip {
 	public function setPreventCheckTextNodeWidth(prevent : Bool) : Void {
 		if (this.preventCheckTextNodeWidth != prevent) {
 			this.preventCheckTextNodeWidth = prevent;
+			updateTextMetrics();
+			this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
+		}
+	}
+
+	public function setSvgPrecisionEnabled(enabled : Bool) : Void {
+		if (this.svgPrecisionEnabled != enabled) {
+			this.svgPrecisionEnabled = enabled;
 			updateTextMetrics();
 			this.emitEvent('textwidthchanged', metrics != null ? metrics.width : 0.0);
 		}
@@ -1843,7 +1853,8 @@ class TextClip extends NativeWidgetClip {
 					if (useHTMLMeasurementJapaneseFont(style)) {
 						measureHTMLSize();
 					} else {
-						if (checkTextNodeWidth && !preventCheckTextNodeWidth && style.fontStyle == 'italic'
+						if (
+							(checkTextNodeWidth && !preventCheckTextNodeWidth && (style.fontStyle == 'italic' || svgPrecisionEnabled))
 							|| (AmiriHTMLMeasurement && style.fontFamily == "Amiri")
 							|| (nativeWidget != null && nativeWidget.style.fontFeatureSettings != "")
 						) {
@@ -1928,8 +1939,8 @@ class TextClip extends NativeWidgetClip {
 	private function updateTextWidth() : Void {
 		if (nativeWidget != null && metrics != null) {
 			var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
-			var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && !wordWrap;
-			var textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck, untyped this.transform);
+			var useSvgWidthMeasurement = checkTextNodeWidth && !preventCheckTextNodeWidth && !wordWrap;
+			var textNodeMetrics = getTextNodeMetrics(nativeWidget, useSvgWidthMeasurement, untyped this.transform);
 			var textNodeWidth0 = textNodeMetrics.width;
 			var textNodeHeight = textNodeMetrics.height;
 			if (textNodeWidth0 != null && textNodeWidth0 > 0 && textNodeHeight != null && textNodeHeight > 0) {
@@ -2034,7 +2045,13 @@ class TextClip extends NativeWidgetClip {
 		var wordWrap = style.wordWrapWidth != null && style.wordWrap && style.wordWrapWidth > 0;
 		var parentNode : Dynamic = nativeWidget.parentNode;
 		var nextSibling : Dynamic = nativeWidget.nextSibling;
-		var useCheck = checkTextNodeWidth && !preventCheckTextNodeWidth && nativeWidget.style.fontFeatureSettings == "";
+		var useSvgWidthMeasurement =
+			checkTextNodeWidth
+			&& !preventCheckTextNodeWidth
+			&& nativeWidget.style.fontFeatureSettings == ""
+			// "–" (en dash) character measurement is not precise in SVG for some fonts
+			// It can cause incorrect text wrapping in wigi 
+			&& (!svgPrecisionEnabled || !text.contains("–"));
 
 		updateNativeWidgetStyle();
 		var tempDisplay = nativeWidget.style.display;
@@ -2050,8 +2067,9 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.style.width = 'max-content';
 		}
 
+		// TODO : optimize adding/removing from DOM
 		Browser.document.body.appendChild(nativeWidget);
-		textNodeMetrics = getTextNodeMetrics(nativeWidget, useCheck);
+		textNodeMetrics = getTextNodeMetrics(nativeWidget, useSvgWidthMeasurement);
 
 		if (parentNode != null) {
 			if (nextSibling == null || nextSibling.parentNode != parentNode) {
@@ -2066,11 +2084,11 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.display = tempDisplay;
 
 		if ((!wordWrap || isJapaneseFont(style)) && textNodeMetrics.width != null && textNodeMetrics.width >= 0) {
-			var textNodeWidth = textNodeMetrics.width;
+			var textNodeWidth = (svgPrecisionEnabled && textNodeMetrics.x < 0) ? textNodeMetrics.width + textNodeMetrics.x : textNodeMetrics.width;
 			metrics.width = textNodeWidth;
 		}
 
-		if (useCheck) {
+		if (useSvgWidthMeasurement && !svgPrecisionEnabled) {
 			nativeWidget.style.paddingLeft = '${-textNodeMetrics.x}px';
 		}
 
@@ -2089,17 +2107,17 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private static function getTextNodeMetrics(nativeWidget, useCheck, ?transform = null) : Dynamic {
+	private static function getTextNodeMetrics(nativeWidget, useSvgWidthMeasurement, ?transform = null) : Dynamic {
 		var textNodeMetrics : Dynamic = {};
 		if (nativeWidget == null || nativeWidget.lastChild == null) {
 			textNodeMetrics.width = 0;
 			textNodeMetrics.height = 0;
 			textNodeMetrics.x = 0;
 		} else {
-			if (useCheck) {
+			if (useSvgWidthMeasurement) {
 				updateTextNodesWidth(untyped nativeWidget.childNodes, textNodeMetrics);
 			}
-			updateTextNodesHeight(nativeWidget, textNodeMetrics, useCheck, transform);
+			updateTextNodesHeight(nativeWidget, textNodeMetrics, useSvgWidthMeasurement, transform);
 		}
 		return textNodeMetrics;
 	}
@@ -2138,9 +2156,9 @@ class TextClip extends NativeWidgetClip {
 		TextClip.measureSVGTextElement.style.letterSpacing = computedStyle.letterSpacing;
 		TextClip.measureSVGTextElement.style.whiteSpace = computedStyle.whiteSpace;
 		TextClip.measureSVGTextElement.style.fontFeatureSettings = computedStyle.fontFeatureSettings;
-
+		
 		TextClip.measureSVGTextElement.textContent = textNode.textContent;
-
+	
 		var bbox = untyped TextClip.measureSVGTextElement.getBBox();
 
 		TextClip.measureSVGTextElement.textContent = '';
@@ -2154,19 +2172,19 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private static function updateTextNodesHeight(nativeWidget, textNodeMetrics, useCheck, transform) {
-		if (useCheck) {
+	private static function updateTextNodesHeight(nativeWidget, textNodeMetrics, useSvgWidthMeasurement, transform) {
+		if (useSvgWidthMeasurement) {
 			textNodeMetrics.height = 0.0;
 			var children = untyped nativeWidget.childNodes;
 			for (i in 0 ... children.length) {
-				updateTextNodeHeight(children[i], textNodeMetrics, useCheck, transform);
+				updateTextNodeHeight(children[i], textNodeMetrics, useSvgWidthMeasurement, transform);
 			}
 		} else {
-			updateTextNodeHeight(nativeWidget, textNodeMetrics, useCheck, transform);
+			updateTextNodeHeight(nativeWidget, textNodeMetrics, useSvgWidthMeasurement, transform);
 		}
 	}
 
-	private static function updateTextNodeHeight(textNode : js.html.Node, textNodeMetrics, useCheck, transform) {
+	private static function updateTextNodeHeight(textNode : js.html.Node, textNodeMetrics, useSvgWidthMeasurement, transform) {
 		if (untyped textNode.classList != null && (
 			textNode.classList.contains("textBackgroundWidget")
 			|| textNode.classList.contains("baselineWidget")
@@ -2183,7 +2201,7 @@ class TextClip extends NativeWidgetClip {
 				if (rect != null) {
 					var viewportScale = RenderSupport.getViewportScale();
 					textNodeMetrics.height += (rect.bottom - rect.top) * viewportScale;
-					if (!useCheck) {
+					if (!useSvgWidthMeasurement) {
 						var computedStyle = Browser.window.getComputedStyle(untyped textNode);
 						var letSp = Std.parseFloat(computedStyle.letterSpacing);
 						var wd0 = rect.right - rect.left;

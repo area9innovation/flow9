@@ -1147,17 +1147,48 @@ class RenderSupport {
 	public static function getSafeArea() : Array<Float> {
 		var viewport = Browser.document.querySelector('meta[name="viewport"]');
 
-		if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit=cover") >= 0) {
-			var l = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sal"));
-			var t = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sat"));
-			var r = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sar"));
-			var b = Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sab"));
+		var area = {
+			left: Std.parseFloat(untyped localStorage.getItem("safe_area_inset_left")),
+			top: Std.parseFloat(untyped localStorage.getItem("safe_area_inset_top")),
+			right: Std.parseFloat(untyped localStorage.getItem("safe_area_inset_right")),
+			bottom: Std.parseFloat(untyped localStorage.getItem("safe_area_inset_bottom"))
+		};
+
+		area.left = Math.isNaN(area.left) ? 0.0 : area.left;
+		area.top = Math.isNaN(area.top) ? 0.0 : area.top;
+		area.right = Math.isNaN(area.right) ? 0.0 : area.right;
+		area.bottom = Math.isNaN(area.bottom) ? 0.0 : area.bottom;
+
+		if (area.left != 0.0 || area.top != 0.0 || area.right != 0.0 || area.bottom != 0.0) {
+			return [
+				area.left,
+				area.top,
+				area.right,
+				area.bottom
+			];
+		} else if (viewport != null && viewport.getAttribute("content").indexOf("viewport-fit=cover") >= 0) {
+			var area = {
+				left: Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sal")),
+				top: Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sat")),
+				right: Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sar")),
+				bottom: Std.parseFloat(Browser.window.getComputedStyle(Browser.document.documentElement).getPropertyValue("--sab"))
+			};
+
+			area.left = Math.isNaN(area.left) ? 0.0 : area.left;
+			area.top = Math.isNaN(area.top) ? 0.0 : area.top;
+			area.right = Math.isNaN(area.right) ? 0.0 : area.right;
+			area.bottom = Math.isNaN(area.bottom) ? 0.0 : area.bottom;
+
+			untyped localStorage.setItem("safe_area_inset_left", area.left);
+			untyped localStorage.setItem("safe_area_inset_top", area.top);
+			untyped localStorage.setItem("safe_area_inset_right", area.right);
+			untyped localStorage.setItem("safe_area_inset_bottom", area.bottom);
 
 			return [
-				Math.isNaN(l) ? 0.0 : l,
-				Math.isNaN(t) ? 0.0 : t,
-				Math.isNaN(r) ? 0.0 : r,
-				Math.isNaN(b) ? 0.0 : b
+				area.left,
+				area.top,
+				area.right,
+				area.bottom
 			];
 		} else {
 			return [0.0, 0.0, 0.0, 0.0];
@@ -2391,6 +2422,10 @@ class RenderSupport {
 
 	public static function setTextPreventCheckTextNodeWidth(clip : TextClip, prevent : Bool) : Void {
 		clip.setPreventCheckTextNodeWidth(prevent);
+	}
+
+	public static function setSvgPrecisionEnabled(clip : TextClip, enabled : Bool) : Void {
+		clip.setSvgPrecisionEnabled(enabled);
 	}
 
 	public static function setEscapeHTML(clip : TextClip, escapeHTML : Bool) : Void {
