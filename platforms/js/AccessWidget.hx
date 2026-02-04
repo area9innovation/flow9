@@ -541,7 +541,7 @@ class AccessWidget extends EventEmitter {
 
 			if (this.element != null) {
 				this.tagName = element.tagName.toLowerCase();
-				if (this.clip != null) {
+				if (this.clip != null && !untyped HaxeRuntime.instanceof(clip, TextClip)) {
 					untyped this.clip.keepNativeWidget = hasTabIndex() || this.tagName == "iframe" || this.role == "iframe";
 					this.clip.updateKeepNativeWidgetChildren();
 				}
@@ -716,7 +716,7 @@ class AccessWidget extends EventEmitter {
 			element.removeAttribute("role");
 		}
 
-		if (this.clip != null) {
+		if (this.clip != null && !untyped HaxeRuntime.instanceof(clip, TextClip)) {
 			untyped this.clip.keepNativeWidget = hasTabIndex() || this.tagName == "iframe" || role == "iframe";
 			this.clip.updateKeepNativeWidgetChildren();
 		}
