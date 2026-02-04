@@ -6,6 +6,7 @@ import haxe.CallStack;
 #if js
 import js.Browser;
 import js.BinaryParser;
+import js.html.Crypto;
 import JSBinflowBuffer;
 import JsMd5;
 #end
@@ -2120,6 +2121,10 @@ Native.memoryLeakReset();
 
 	public static inline function random() : Float {
 		return Math.random();
+	}
+
+	public static inline function makeUuid() : String {
+		return Crypto.randomUUID();
 	}
 
 	public static inline function deleteNative(clip : Dynamic) : Void {
