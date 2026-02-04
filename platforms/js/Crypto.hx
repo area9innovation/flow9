@@ -61,6 +61,11 @@ class Crypto {
 
 	public static function randomUUID() : String {
 		var crypto = untyped __js__("window.crypto");
-		return crypto.randomUUID();
+		try {
+			return crypto.randomUUID();
+		} catch (e : Dynamic) {
+			untyped console.warn("Crypto.randomUUID() not supported : " + e);
+			return "";
+		}
 	}
 }
