@@ -2161,6 +2161,12 @@ class TextClip extends NativeWidgetClip {
 	
 		var bbox = untyped TextClip.measureSVGTextElement.getBBox();
 
+		// getBBox adds 4px to each measurement in Firefox on Mac, so we need to use better method  
+		if (Platform.isFirefox && Platform.isMacintosh) {
+			bbox.width = TextClip.measureSVGTextElement.getComputedTextLength();
+			bbox.x = 0;
+		}
+
 		TextClip.measureSVGTextElement.textContent = '';
 
 		var letSp = Std.parseFloat(computedStyle.letterSpacing);
