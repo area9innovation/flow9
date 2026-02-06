@@ -3738,7 +3738,7 @@ Native.memoryLeakReset();
 	}
 
 	private static var parseJsonFirstCall = true;
-	public static function parseJson(json : String) : Dynamic {
+	private static inline function ensureJsonParserInitialized() : Void {
 		if (parseJsonFirstCall) {
 			Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
 			Native.sidJsonArrayVal = HaxeRuntime._structargs_.get(Native.sidJsonArray)[0];
@@ -3765,6 +3765,9 @@ Native.memoryLeakReset();
 			Native.jsonStringEmpty = HaxeRuntime.makeStructValue("JsonString", [""], null);
 			parseJsonFirstCall = false;
 		}
+	}
+	public static function parseJson(json : String) : Dynamic {
+		ensureJsonParserInitialized();
 		if (json == "") return Native.jsonDoubleZero;
 
 		untyped __js__("
@@ -3785,6 +3788,23 @@ Native.memoryLeakReset();
 			}
 		");
 		return Native.jsonDoubleZero;
+	}
+
+	// Converts a native JS object directly to Flow Json structures without string serialization
+	public static function parseJsonObject(obj : Dynamic) : Dynamic {
+		ensureJsonParserInitialized();
+		if (obj == null) return Native.jsonNull;
+
+		untyped __js__("
+			try {
+				return Platform.isFirefox ?
+				Native.object2JsonStructs_FF(obj) :
+				Native.object2JsonStructs(obj);
+			} catch (e) {
+				return Native.jsonNull;
+			}
+		");
+		return Native.jsonNull;
 	}
 	#end
 

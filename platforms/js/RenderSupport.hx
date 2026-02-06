@@ -2153,6 +2153,15 @@ class RenderSupport {
 		return function() { off("message", handler); };
 	}
 
+	public static function addMessageEventListenerJson(fn : Dynamic -> String -> Void) : Void -> Void {
+		var handler = function(e) {
+			fn(Native.parseJsonObject(e.data), e.origin);
+		};
+
+		on("message", handler);
+		return function() { off("message", handler); };
+	}
+
 	public static function InvalidateLocalStages() {
 		for (child in PixiStage.children) {
 			child.invalidateTransform('InvalidateLocalStages', true);
