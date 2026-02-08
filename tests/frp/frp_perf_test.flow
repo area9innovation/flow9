@@ -1,0 +1,324 @@
+import frp/frp_behaviour;
+import frp/frp;
+
+import material/material;
+import material/material_manager;
+import material/material2tropic;
+
+/// frp graph ///
+
+makeFrpArrayMapChain(cellsCount : int, arrayLength : int) -> [FrpArray<int>] {
+	initArr = generate(0, arrayLength, \__ -> -1);
+
+	cells = generate(0, cellsCount, \__ -> rmakeA([]));
+	iteri(cells, \i,c -> if (i > 0) rconnectAMap(cells[i - 1], c, false, \v -> v + 1));
+	rnextA(cells[0], initArr);
+	cells;
+}
+
+
+makeFrpValueMapChain(cellsCount : int, arrayLength : int) -> [FrpValue<[int]>] {
+	initArr = generate(0, arrayLength, \__ -> -1);
+
+	cells = generate(0, cellsCount, \__ -> rmake([]));
+	iteri(
+		cells,
+		\i,c -> if (i > 0)
+				rconnect(cells[i - 1], c, false, \arr -> map(arr, \v -> v + 1))
+	);
+	rnext(cells[0], initArr);
+	cells;
+}
+
+
+makeArrayOfFrpValueMapChain(cellsCount : int, arrayLength : int) -> [[FrpValue<int>]] {
+	initArr = generate(0, arrayLength, \__ -> 0);
+
+	cells : [[FrpValue<int>]] = generate(0, cellsCount, \__ -> generate(0, arrayLength, \__ -> rmake(-1)));
+	iteri(
+		cells,
+		\i,cellRow -> {
+			if (i > 0) {
+				iteri(
+					cellRow,
+					\j,c -> {
+						rconnect(cells[i - 1][j], c, false, \v -> v + 1);
+					}
+				);
+			}
+		}
+	);
+	iter(cells[0], \c -> rnext(c, 0));
+
+	cells;
+}
+
+/// tests ////////////////////////////////////////////////////////////////////////////
+runFrpArrayUpdateElementTest(inCell : FrpArray<int>, updCount : int) -> double {
+	elementCount = rArrayLength(inCell);
+	setArrElement = \v -> {
+		inx = v % elementCount;
+		rnextElement(inCell, inx, v);
+	}
+
+	t1 = timestamp();
+	fori(0, updCount - 1, \i -> setArrElement(i));
+	t2 = timestamp();
+	t2 - t1;
+}
+
+runFrpArrayUpdateFullTest(inCell : FrpArray<int>, updCount : int) -> double {
+	elementCount = rArrayLength(inCell);
+	arr0 = generate(0, elementCount, \__ -> 0);
+	arr1 = generate(0, elementCount, \__ -> 1234567890);
+	setArrElements = \v -> {
+		rnextA(inCell, arr0);
+		rnextA(inCell, arr1);
+	};
+
+	t1 = timestamp();
+	fori(0, updCount - 1, \i -> setArrElements(i));
+	t2 = timestamp();
+	t2 - t1;
+}
+
+runFrpArrayUpdateFullClearTest(inCell : FrpArray<int>, updCount : int) -> double {
+	elementCount = rArrayLength(inCell);
+	arr1 = generate(0, elementCount, \__ -> 1234567890);
+	setArrElements = \v -> {
+		rnextA(inCell, []);
+		rnextA(inCell, arr1);
+	};
+
+	t1 = timestamp();
+	fori(0, updCount - 1, \i -> setArrElements(i));
+	t2 = timestamp();
+	t2 - t1;
+}
+
+
+runFrpValueUpdateElementTest(inCell : FrpValue<[int]>, updCount : int) -> double {
+	elementCount = length(rget(inCell));
+	setArrElement = \v -> {
+		inx = v % elementCount;
+		rnext(inCell, replace(rget(inCell), inx, v));
+	}
+
+	t1 = timestamp();
+	fori(0, updCount - 1, \i -> setArrElement(i));
+	t2 = timestamp();
+	t2 - t1;
+}
+
+runFrpValueUpdateFullTest(inCell : FrpValue<[int]>, updCount : int) -> double {
+	elementCount = length(rget(inCell));
+	arr0 = generate(0, elementCount, \__ -> 0);
+	arr1 = generate(0, elementCount, \__ -> 1234567890);
+	setArrElements = \v -> {
+		rnext(inCell, arr0);
+		rnext(inCell, arr1);
+	}
+
+	t1 = timestamp();
+	fori(0, updCount - 1, \i -> setArrElements(i));
+	t2 = timestamp();
+	t2 - t1;
+}
+
+
+runFrpValueUpdateFullClearTest(inCell : FrpValue<[int]>, updCount : int) -> double {
+	elementCount = length(rget(inCell));
+	arr1 = generate(0, elementCount, \__ -> 1234567890);
+	setArrElements = \v -> {
+		rnext(inCell, []);
+		rnext(inCell, arr1);
+	}
+
+	t1 = timestamp();
+	fori(0, updCount - 1, \i -> setArrElements(i));
+	t2 = timestamp();
+	t2 - t1;
+}
+
+runArrayOfFrpValueUpdateElementTest(cells : [FrpValue<int>], updCount : int) -> double {
+	elementCount = length(cells);
+	setArrElements = \v -> fori(0, elementCount - 1, \i -> rnext(cells[i], v));
+	setArrElement = \v -> {
+		inx = v % elementCount;
+		rnext(cells[inx], v);
+	}
+
+	t1 = timestamp();
+	fori(0, updCount - 1, \i -> setArrElement(i));
+	t2 = timestamp();
+	t2 - t1;
+}
+
+runArrayOfFrpValueUpdateFullTest(cells : [FrpValue<int>], updCount : int) -> double {
+	elementCount = length(cells);
+
+	setArrElements = \v -> {
+		// simulate tests for FrpValue<[]> and FrpArray
+		iter(cells, \c -> rnext(c, 0));
+		iter(cells, \c -> rnext(c, 1234567890));
+	}
+
+	t1 = timestamp();
+	fori(0, updCount - 1, \i -> setArrElements(i));
+	t2 = timestamp();
+	t2 - t1;
+}
+
+/// views ///////////////////////////////////////////////////////////////////
+
+buildCommonTestView(
+	title : string,
+	testFn : (int/*chain length*/, int/*array length*/, int/*count*/) -> double/*time*/
+) -> Material {
+	resultB = make("Undefined");
+	arrayLengthB = make("1000");
+	chainLengthB = make("100");
+	testCountB = make("10000");
+
+	start = \-> {
+		println(title);
+		nextDistinct(resultB, "testing");
+		deferUntilRender(\-> {
+			tm = testFn(s2i(getValue(chainLengthB)), s2i(getValue(arrayLengthB)), s2i(getValue(testCountB)));
+			println("time:" + toString(tm));
+			nextDistinct(resultB, d2s(tm) + " ms");
+			gc();
+		});
+	}
+	MBaselineColsA([
+		MGroup2(MText(title, []), MFixedX(260.)),
+		MText("chain length:", []) |> MBorderEnd(8.),
+		MTextInput(chainLengthB, [MWidth(60.)], []),
+		MText("array length:", []) |> MBorderStart(32.) |> MBorderEnd(8.),
+		MTextInput(arrayLengthB, [MWidth(60.)], []),
+		MText("test count:", []) |> MBorderStart(32.) |> MBorderEnd(8.),
+		MTextInput(testCountB, [MWidth(60.)], []),
+		MTextButton("run", start, [], [MEnabled(fselectLift(resultB, \v -> v != "testing"))])
+		|> MBorderStart(32.) |> MBorderEnd(8.),
+		MSelect(resultB, \v -> MText(v, [])),
+	]);
+}
+
+buildFrpArrayUpdateElementTestView() -> Material {
+	buildCommonTestView("FrpArray<int> test update elements",
+		\chainLength : int, arrayLength : int, testCount : int -> {
+			cells = makeFrpArrayMapChain(chainLength, arrayLength);
+			tm = runFrpArrayUpdateElementTest(cells[0], testCount);
+			//printFrpArrayArr(cells);
+			tm;
+		});
+}
+
+buildFrpArrayUpdateFullTestView() -> Material {
+	buildCommonTestView("FrpArray<int> test update full",
+		\chainLength : int, arrayLength : int, testCount : int -> {
+			cells = makeFrpArrayMapChain(chainLength, arrayLength);
+			tm = runFrpArrayUpdateFullTest(cells[0], testCount);
+			//printFrpArrayArr(cells);
+			tm;
+		});
+}
+
+buildFrpArrayUpdateFullClearTestView() -> Material {
+	buildCommonTestView("FrpArray<int> clear/set",
+		\chainLength : int, arrayLength : int, testCount : int -> {
+			cells = makeFrpArrayMapChain(chainLength, arrayLength);
+			tm = runFrpArrayUpdateFullClearTest(cells[0], testCount);
+			//printFrpArrayArr(cells);
+			tm;
+		});
+}
+
+
+buildFrpValueUpdateElementTestView() -> Material {
+	buildCommonTestView("FrpValue<[int]> test update elements",
+		\chainLength : int, arrayLength : int, testCount : int -> {
+			cells = makeFrpValueMapChain(chainLength, arrayLength);
+			tm = runFrpValueUpdateElementTest(cells[0], testCount);
+			// printFrpValueArr(cells);
+			tm;
+		});
+}
+
+buildFrpValueUpdateFullTestView() -> Material {
+	buildCommonTestView("FrpValue<[int]> test update full",
+		\chainLength : int, arrayLength : int, testCount : int -> {
+			cells = makeFrpValueMapChain(chainLength, arrayLength);
+			tm = runFrpValueUpdateFullTest(cells[0], testCount);
+			//printFrpValueArr(cells);
+			tm;
+	});
+}
+
+buildFrpValueUpdateFullClearTestView() -> Material {
+	buildCommonTestView("FrpValue<[int]> clear/set",
+		\chainLength : int, arrayLength : int, testCount : int -> {
+			cells = makeFrpValueMapChain(chainLength, arrayLength);
+			tm = runFrpValueUpdateFullClearTest(cells[0], testCount);
+			//printFrpValueArr(cells);
+			tm;
+	});
+}
+
+buildArrayOfFrpValueUpdateElementTestView() -> Material {
+	buildCommonTestView("[FrpValue<int>] test update elements",
+		\chainLength : int, arrayLength : int, testCount : int -> {
+			cells : [[FrpValue<int>]] = makeArrayOfFrpValueMapChain(chainLength, arrayLength);
+			tm = runArrayOfFrpValueUpdateElementTest(cells[0], testCount);
+			//printFrpArrArr(cells);
+			tm;
+	});
+}
+
+buildArrayOfFrpValueUpdateFullTestView() -> Material {
+	buildCommonTestView("[FrpValue<int>] test update many",
+		\chainLength : int, arrayLength : int, testCount : int -> {
+			cells : [[FrpValue<int>]] = makeArrayOfFrpValueMapChain(chainLength, arrayLength);
+			tm = runArrayOfFrpValueUpdateFullTest(cells[0], testCount);
+			//printFrpArrArr(cells);
+			tm;
+	});
+}
+
+buildView() -> Material {
+	MLinesA(
+		[
+			MText("FRP performance tests", [MTitle()]),
+			MText("Update element tests", [MBodyBold()]) |> MBorderTop(8.),
+			buildFrpArrayUpdateElementTestView(),
+			buildFrpValueUpdateElementTestView(),
+			buildArrayOfFrpValueUpdateElementTestView(),
+			MText("Update full array tests", [MBodyBold()]) |> MBorderTop(8.),
+			buildFrpArrayUpdateFullTestView(),
+			buildFrpValueUpdateFullTestView(),
+			buildArrayOfFrpValueUpdateFullTestView(),
+			MText("Clear and set tests", [MBodyBold()]) |> MBorderTop(8.),
+			buildFrpArrayUpdateFullClearTestView(),
+			buildFrpValueUpdateFullClearTestView(),
+		] |> (\arr -> interleave(arr, MFixedY(16.)))
+	)
+}
+
+
+printFrpArrArr(cells : [[FrpValue<flow>]]) -> void {
+	iter(cells, \row -> println(map(row, \c -> rget(c))));
+}
+
+printFrpArrayArr(cells : [FrpArray<flow>]) -> void {
+	iter(cells, \c -> println(rgetA(c)));
+}
+
+printFrpValueArr(cells : [FrpValue<flow>]) -> void {
+	iter(cells, \c -> println(rget(c)));
+}
+
+main() {
+	println("Performance test");
+	manager = makeMaterialManager([]);
+	mrender(manager, false, MBorder(16., 16., 16., 16., buildView()));
+}

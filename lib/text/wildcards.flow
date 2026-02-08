@@ -67,37 +67,117 @@ isGlobPattern(str : string) -> bool {
 }
 
 matchesWithGlobPattern(str : string, glob : string) -> bool {
-	f = strLeft(glob, 1);
-	if (strlen(str) == 0) {
-		if (f == "*") matchesWithGlobPattern(str, strRight(glob, 1))
-		else if (f == "[") _isInRange(strLeft(str, 1), strRight(glob, 1)) && matchesWithGlobPattern(strRight(str, 1), strRight(glob, strFindFirstOf(glob, "]") + 1))
-		else strlen(glob) == 0
+	matchesWithGlobPattern2(str, 0, glob, 0)
+}
+
+matchesWithGlobPattern2(str : string, si : int, glob : string, gi : int) -> bool {
+	strLen = strlen(str);
+	globLen = strlen(glob);
+
+	if (gi >= globLen) {
+		// End of pattern - must be at end of string too
+		si >= strLen
 	} else {
-		if (strlen(f) == 0) false
-		else if (f == "*") matchesWithGlobPattern(str, strRight(glob, 1)) || matchesWithGlobPattern(strRight(str, 1), glob)
-		else if (f == "?") matchesWithGlobPattern(strRight(str, 1), strRight(glob, 1))
-		else if (f == "[") _isInRange(strLeft(str, 1), strRight(glob, 1)) && matchesWithGlobPattern(strRight(str, 1), strRight(glob, strFindFirstOf(glob, "]") + 1))
-		else (strLeft(str, 1) == f && matchesWithGlobPattern(strRight(str, 1), strRight(glob, 1)))
+		ch = getCharAt(glob, gi);
+
+		if (ch == "*") {
+			// Try matching * with 0 or more characters
+			// First, skip the * and try to match the rest
+			if (matchesWithGlobPattern2(str, si, glob, gi + 1)) {
+				true
+			} else if (si < strLen) {
+				// Try consuming one character from str and keep the *
+				matchesWithGlobPattern2(str, si + 1, glob, gi)
+			} else {
+				false
+			}
+		} else if (ch == "?") {
+			// Match any single character - string must not be exhausted
+			if (si < strLen) {
+				matchesWithGlobPattern2(str, si + 1, glob, gi + 1)
+			} else {
+				false
+			}
+		} else if (ch == "[") {
+			// Character class
+			closeBracket = strFindFirstOf(strRight(glob, gi), "]");
+			if (closeBracket >= 0) {
+				// Extract content between [ and ] (closeBracket is the position of ] in the substring)
+				rangePattern = substring(glob, gi + 1, closeBracket - 1);
+				if (si >= strLen) {
+					// Empty string - check if empty character class or negated class matches
+					if (_isInRange("", rangePattern)) {
+						matchesWithGlobPattern2(str, si, glob, gi + closeBracket + 1)
+					} else {
+						false
+					}
+				} else {
+					currentChar = getCharAt(str, si);
+					if (_isInRange(currentChar, rangePattern)) {
+						matchesWithGlobPattern2(str, si + 1, glob, gi + closeBracket + 1)
+					} else {
+						false
+					}
+				}
+			} else {
+				// No closing bracket - invalid pattern, fail the match
+				false
+			}
+		} else {
+			// Literal character match
+			if (si < strLen && getCharAt(str, si) == ch) {
+				matchesWithGlobPattern2(str, si + 1, glob, gi + 1)
+			} else {
+				false
+			}
+		}
 	}
 }
 
-_isInRange(c : string, glob : string) -> bool {
-	s = firstElement(strSplit(glob, "]"), "");
+_isInRange(c : string, rangePattern : string) -> bool {
+	isNegated = startsWith(rangePattern, "!");
+	pattern = if (isNegated) strRight(rangePattern, 1) else rangePattern;
 
-	w = ref \i -> false;
-	w := \i -> {
-		ch = getCharAt(glob, i);
-
-		if (ch == "-") {
-			l = getCharCodeAt(glob, i - 1);
-			r = getCharCodeAt(glob, i + 1);
-			f = firstElement(s2a(c), 0);
-			(l < f && f < r) || ^w(i + 1);
-		} else if (ch != "]") {
-			c == ch || ^w(i + 1)
-		} else i == 0 && strlen(c) == 0;
+	// Handle empty character case
+	if (strlen(c) == 0) {
+		// Empty string matches empty pattern []
+		// Empty string with negated empty pattern [!] also matches (negation of empty set)
+		strlen(pattern) == 0
+	} else {
+		result = _checkCharInRange(c, pattern, 0);
+		if (isNegated) !result else result
 	}
+}
 
-	result = ^w(0);
-	if (getCharAt(s, 0) == "!") !result else result;
+_checkCharInRange(c : string, pattern : string, i : int) -> bool {
+	patternLen = strlen(pattern);
+	if (i >= patternLen) {
+		false
+	} else {
+		ch = getCharAt(pattern, i);
+
+		// Check if this is the start of a range pattern like a-z
+		// A dash creates a range only if: not at position 0, has a char after it, and that char exists
+		if (i + 2 < patternLen && getCharAt(pattern, i + 1) == "-") {
+			// This is a range: pattern[i]-pattern[i+2]
+			rangeStart = getCharCodeAt(pattern, i);
+			rangeEnd = getCharCodeAt(pattern, i + 2);
+			charCode = firstElement(s2a(c), 0);
+
+			// Check if it's a valid range (start <= end) and char is in range
+			if (rangeStart <= rangeEnd && rangeStart <= charCode && charCode <= rangeEnd) {
+				true
+			} else {
+				// Not in this range, skip past it (past the end char) and continue
+				_checkCharInRange(c, pattern, i + 3)
+			}
+		} else {
+			// Single character match (including dash at start or end like "[-" or "-]")
+			if (c == ch) {
+				true
+			} else {
+				_checkCharInRange(c, pattern, i + 1)
+			}
+		}
+	}
 }

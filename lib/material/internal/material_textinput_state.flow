@@ -2,6 +2,7 @@ import material/internal/material_list_util;
 import material/internal/tropic_size_util;
 import formats/email/email;
 import tropic/selecttarray;
+import ds/id_generator;
 
 export {
 	// Set to false for non-native inputs
@@ -24,21 +25,15 @@ export {
 
 	MTextEditorIScriptBehaviours(
 		content : DynamicBehaviour<string>,
-		inputType : InputType,
-		autoCompleteType : Maybe<AutoCompleteType>,
-		label : string,
 		dynamicSize : bool,
 		focus : DynamicBehaviour<bool>,
 		position : DynamicBehaviour<int>,
 		selection : DynamicBehaviour<int>,
 		readOnly : bool,
-		numeric : bool,
-		editIcon : Maybe<DynamicBehaviour<bool>>,
 		filterAction : IScriptBehaviourDisposable1,
 		error : Maybe<MInputErrorState>,
 		iScriptBehaviours : [IScriptBehaviour],
 		useNativeInput : bool,
-		isTextInputInPopup : bool
 	);
 
 	MTextInputSkin ::= MFilled, MOutlined, MTextInputPlain;
@@ -63,6 +58,7 @@ export {
 		label : string,
 		dynamicSize : bool,
 		linesCount : int,
+		minLines : int,
 		underline : Maybe<DynamicBehaviour<Pair<[TGraphicsStyle], double>>>,
 		multiline : bool,
 		wordWrap : bool,
@@ -173,7 +169,8 @@ export {
 		color : Transform<MThemeColor>,
 		style : Transform<[MTextStyle]>,
 		ok : Maybe<MInputIsOk>,
-		error : DynamicBehaviour<Pair<string, [MTextStyle]>>
+		error : DynamicBehaviour<Pair<string, [MTextStyle]>>,
+		errorId : string
 	);
 
 	MInputHelperState(
@@ -181,7 +178,8 @@ export {
 		persistent : bool,
 		lines : int,
 		height : double,
-		helper : DynamicBehaviour<Pair<string, [MTextStyle]>>
+		helper : DynamicBehaviour<Pair<string, [MTextStyle]>>,
+		helperTextId : string
 	);
 
 	MInputLimitErrorState(
@@ -313,6 +311,7 @@ export {
 }
 
 enablePreventXSSDef = isUrlParameterTrue("new") && !isUrlParameterFalse("input_xss_protection_enabled");
+enableContrastUnfocusedUnderline = !isUrlParameterFalse("input_contrast_unfocused_underline_enabled");
 
 numericFilter(s) {
 	dotB = ref false;
@@ -331,23 +330,25 @@ numericFilter(s) {
 	);
 }
 
+helperTextIdGenerator = createStringIdGenerator("helperText_id");
+
 makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state : [MTextInputState],
 	mfocus : MFocus, iScriptBehaviours : MTextEditorIScriptBehaviours) -> MInputState {
 	parent = mfocus.parent;
 	content = iScriptBehaviours.content;
-	inputType = iScriptBehaviours.inputType;
-	autoCompleteType = iScriptBehaviours.autoCompleteType;
+	inputType = extractStruct(style, TextInputType(TextType())).inputType;
+	autoCompleteType = tryExtractStruct(style, AutoCompleteType(ACUserName()));
 	readOnly = iScriptBehaviours.readOnly;
-	numeric = iScriptBehaviours.numeric;
+	numeric = inputType == NumericType();
 	numericStep = if (numeric) tryExtractStruct(style, MNumericStep(const(1.))) else None();
 	noNumericArrows = contains(style, MTextInputNoNumericArrows());
-	editIcon = iScriptBehaviours.editIcon;
 	useNativeInput = iScriptBehaviours.useNativeInput;
-	label = iScriptBehaviours.label;
+	label = extractStruct(style, MLabel("")).label;
 	dynamicSize = iScriptBehaviours.dynamicSize;
 	flAlwaysOnTop = contains(style, MFloatingLabelAlwaysOnTop());
 	hasFloatingLabel = (contains(style, MFloatingLabel()) || flAlwaysOnTop) && label != "";
 	linesCount = extractStruct(style, MMaxLines(1)).lines;
+	minLines = extractStruct(style, MMinLines(1)).lines;
 	showUnderline = extractStruct(style, MShowUnderline(true)).show;
 	multiline = extractStruct(style, Multiline(false)).multiline;
 	wordWrap = multiline && extractStruct(style, WordWrap(true)).wordWrap;
@@ -465,6 +466,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	position = iScriptBehaviours.position;
 	selection = iScriptBehaviours.selection;
 
+	isTextInputInPopup = !contains(style, MTextInputOutOfPopup());
+
 	// Popup
 	popup =
 		if (isPopup && !contains(style, MSuggestionsSameZorderMode()))
@@ -490,7 +493,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			style,
 			if (skin == MFilled() && width > 0.0)
 				MInputBackgroundStyle([Fill(backgroundDefaultColor), FillOpacity(0.06)], [Fill(backgroundDefaultColor), FillOpacity(0.12)])
-			else if (!isPopup || !iScriptBehaviours.isTextInputInPopup)
+			else if (!isPopup || !isTextInputInPopup)
 				MInputBackgroundStyle([], [])
 			else
 				MInputBackgroundStyle([], [MFill(MDialogMColor(getLightBackground(parent)))])
@@ -517,6 +520,14 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			Some(extractStruct(style, leftButtonDef))
 		else
 			tryExtractStruct(style, leftButtonDef);
+
+	// Edit Button
+	showEditIcon = !readOnly && extractStruct(style, MShowEditIcon(false)).enabled;
+	editIcon : Maybe<DynamicBehaviour<bool>> =
+		if (showEditIcon && !readOnly)
+			Some(make(false))
+		else
+			None();
 
 	// Right Button
 	rightButton =
@@ -564,7 +575,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	inactiveColor = contrastingColor(parent);
 	inactiveOpacity = extractStruct(style, MInactiveOpacity(defaultInactiveItemLabelOpacity(MColor2int(color) == black))).opacity;
 
-	unfocusedUnderline = extractStruct(style, MUnderlineUnfocusedStyle([Fill(inactiveColor), FillOpacity(inactiveOpacity / 4.)])).style;
+	unfocusedUnderline = extractStruct(style, MUnderlineUnfocusedStyle([
+		Fill(inactiveColor),
+		FillOpacity(if (enableContrastUnfocusedUnderline) inactiveOpacity else inactiveOpacity / 4.)
+	])).style;
 
 	mLabelStyle =
 		extractMTextStyleDef(
@@ -648,7 +662,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						ht.persistent,
 						1,
 						16.,
-						make(Pair(if (dynamicSize) "" else " ", []))
+						make(Pair(if (dynamicSize) "" else " ", [])),
+						helperTextIdGenerator.nextId()
 					)
 				),
 			None()
@@ -776,7 +791,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					tryExtractStruct(style, MCurrentMatches(nop1)),
 					extractStruct(style, MSuggestionsBackgroundStyle(backgroundFill.focused)).style,
 					setWord,
-					iScriptBehaviours.isTextInputInPopup,
+					isTextInputInPopup,
 					contains(style, MSuggestionsDynamicListMode()),
 					contains(style, MSuggestionsSameZorderMode()),
 					extractStruct(style, MSuggestionsPlacement(MTryBottomFirst())).type,
@@ -1276,6 +1291,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		label,
 		dynamicSize,
 		linesCount,
+		minLines,
 		inputUnderline,
 		multiline,
 		wordWrap,
@@ -1330,10 +1346,11 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	)
 }
 
+inputErrorIdGenerator = createStringIdGenerator("input_error_id");
+
 makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MAutoCompleteStyle],
 	state : [MTextInputState]) -> MTextEditorIScriptBehaviours {
 	dynamicSize = contains(style, MDynamicSize());
-	label = extractStruct(style, MLabel("")).label;
 	focus = extractStruct(state, TTextInputFocus(make(false))).focus;
 	position = extractStruct(state, TTextInputPosition(make(strlen(getValue(content))))).position;
 	selection = extractStruct(state, TTextInputSelection(make(-1))).selection;
@@ -1344,18 +1361,7 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 		"filter_action", ISMiscEvent()
 	);
 	readOnly = extractStruct(style, ReadOnly(false)).readOnly;
-	inputType = extractStruct(style, TextInputType(TextType())).inputType;
-	autoCompleteType = tryExtractStruct(style, AutoCompleteType(ACUserName()));
-	numeric = inputType == NumericType();
-	isTextInputInPopup = !contains(style, MTextInputOutOfPopup());
 	useNativeInput = extractStruct(style, MNativeInput(^nativeInputs && !readOnly)).useNativeInput || mobile || macosx();
-	// Edit Button
-	showEditIcon = !readOnly && extractStruct(style, MShowEditIcon(false)).enabled;
-	editIcon : Maybe<DynamicBehaviour<bool>> =
-		if (showEditIcon && !readOnly)
-			Some(make(false))
-		else
-			None();
 
 	error : Maybe<MInputErrorState> =
 		eitherMap(
@@ -1374,7 +1380,8 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 						inputErrorColor,
 						fselect(inputErrorColor, FLift(\ec : MThemeColor -> [inputErrorFont, ec])),
 						tryExtractStruct(ie.style, MInputIsOk(make(true))),
-						make(Pair(if (dynamicSize) "" else " ", []))
+						make(Pair(if (dynamicSize) "" else " ", [])),
+						inputErrorIdGenerator.nextId()
 					)
 				)
 			},
@@ -1383,16 +1390,11 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 
 	MTextEditorIScriptBehaviours(
 		content,
-		inputType,
-		autoCompleteType,
-		label,
 		dynamicSize,
 		focus,
 		position,
 		selection,
 		readOnly,
-		numeric,
-		editIcon,
 		filterAction,
 		error,
 		[
@@ -1423,8 +1425,7 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 				f2
 			)
 		),
-		useNativeInput,
-		isTextInputInPopup
+		useNativeInput
 	)
 }
 
@@ -2560,7 +2561,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 			if (inputState.fullHeight) {
 				TFillY()
 			} else if (inputState.multiline) {
-				if (inputState.linesCount == 0 || inputState.linesCount == -1) {
+				flexibleWithMaxLimit = if (inputState.linesCount == 0 || inputState.linesCount == -1) {
 					inputFlexibleSize();
 				} else if (inputState.linesCount > 0) {
 					inputFixedSize(inputState.linesCount);
@@ -2569,6 +2570,11 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						inputFlexibleSize(),
 						inputFixedSize(-inputState.linesCount)
 					);
+				};
+				if (inputState.minLines > 1) {
+					TGroup2(inputFixedSize(inputState.minLines), flexibleWithMaxLimit);
+				} else {
+					flexibleWithMaxLimit;
 				}
 			} else {
 				THeight(TSelect2(
@@ -2585,7 +2591,13 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 		else fOr(inputState.mfocus.focused, fand(const(inputState.multiline), inputState.mfocus.focusEnabled));
 
 	inputAriaLabel =
-		if (strlen(inputState.label) > 0) const(inputState.label)
+		if (
+			exists(
+				extractStructMany(state, FAccessAttribute("", const(""))),
+				\attr -> attr.name == "aria-labelledby"
+			)
+		) const("")
+		else if (strlen(inputState.label) > 0) const(inputState.label)
 		else fselect(inputState.mfocus.title, FLift(\title -> if (title == "") "Input" else title));
 
 	textInput = \ ->
@@ -2686,24 +2698,33 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 							if (inputState.preventContextMenu) [FPreventContextMenu()] else [],
 							if ((^fAccessibilityEnabled || cpp) && !mobile) {
 								accessProperties = extractStructMany(state, FAccessAttribute("", const("")));
+								commonAttributes = [
+									FAccessZorder(parent.zorder),
+									FAccessAttribute("aria-label", inputAriaLabel),
+									FAccessAttribute("aria-required", const(b2s(eitherMap(inputState.error, \err -> err.requiredField, false)))),
+									FAccessAttribute(
+										"aria-describedby",
+										fselect2Lift(
+											eitherMap(inputState.error, \es -> fselectLift(es.error, \e -> if (e.first == "") "" else es.errorId), const("")),
+											eitherMap(inputState.helperText, \hs -> fselectLift(hs.helper, \h -> if (h.first == "") "" else hs.helperTextId), const("")),
+											\eId, hId -> strGlue([eId, hId], " ")
+										)
+									)
+								];
 
 								if (fgetValue(parent.id) != -2)
-									concat(
+									concat3(
 										accessProperties,
 										[
-											FAccessTabOrder(fselect(parent.tabOrder, FLift(\to -> arrayPush(to, 0)))),
-											FAccessEnabled(inputState.mfocus.focusEnabled),
-											FAccessZorder(parent.zorder),
-											FAccessAttribute("aria-label", inputAriaLabel)
-										]
+											FAccessTabOrder(farrayPush(inputState.mfocus.tabOrder, const(0))),
+											FAccessEnabled(inputState.mfocus.focusEnabled)
+										],
+										commonAttributes
 									)
 								else
 									concat(
 										accessProperties,
-										[
-											FAccessZorder(parent.zorder),
-											FAccessAttribute("aria-label", inputAriaLabel)
-										]
+										commonAttributes
 									);
 							} else {
 								[]

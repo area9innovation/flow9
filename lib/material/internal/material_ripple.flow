@@ -8,6 +8,8 @@ export {
 	MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, trigger : Transform<bool>, style : [MRippleStyle]) -> Tropic;
 
 	defaultMaterialRippleOpacity = if (isWCAGEnabled) 0.2 else 0.1;
+	defaultMaterialRippleHoverOpacity = 0.4;
+	defaultMaterialRippleFocusOpacity = 0.8;
 }
 
 MRippleOnDownDefault2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, rippleType : Transform<RippleType>) -> Tropic {
@@ -53,23 +55,29 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 	focused = extractStruct(style, MRippleFocused(const(false))).focused;
 	hovered = extractStruct(style, MRippleHovered(const(false))).hovered;
 	selected = extractStruct(style, MRippleSelected(const(false))).selected;
-	triggered = fselectdelay(fmax(extractStruct(style, MRippleTrigger(trigger)).trigger, focused), \tr -> if (tr) 0 else 400);
 
 	if (parent.theme.enableRipple && enabled != const(false) &&
 		(rippleType != const(MNoRipple()) || focused != const(false) || hovered != const(false) || selected != const(false))) {
 		position = tryExtractStruct(style, MRipplePosition(const(zeroPoint)));
 		color = extractStruct(style, MRippleColor(const(contrastingMColor(parent)))).color;
 		opacity = extractStruct(style, MRippleOpacity(const(defaultMaterialRippleOpacity))).opacity;
+		focusOutlineStyle = extractStruct(style, MRippleOutlineStyle([])).style;
+		rippleOutlineEnabled = extractStruct(style, MRippleOutlineEnabled(const(isSome(parent.theme.focusOutlineColor) || focusOutlineStyle != []))).enabled;
+		focusTriggerEnabled = extractStruct(style, MRippleFocusTriggerEnabled(fnot(rippleOutlineEnabled))).enabled;
+		triggered = fselectdelay(fmax(extractStruct(style, MRippleTrigger(trigger)).trigger, fand(focusTriggerEnabled, focused)), \tr -> if (tr) 0 else 400);
+		focusOpacity = extractStruct(style, MRippleFocusOpacity(fif(rippleOutlineEnabled, zero, const(defaultMaterialRippleFocusOpacity)))).opacity;
+		hoverOpacity = extractStruct(style, MRippleHoverOpacity(const(defaultMaterialRippleHoverOpacity))).opacity;
 		shape = extractStruct(style, MRippleShape("")).component;
 		overlay = extractStruct(style, MRippleOverlay(true)).overlay;
-		focusOutlineStyle = extractStruct(style, MRippleOutlineStyle([])).style;
 
-		isCircleCenteredRipple = rippleType == const(MRippleCenter()) &&
-			getShapeByComponentDef(
-				parent,
-				shape,
-				defaultMaterialRoundShape
-			) == defaultMaterialRoundShape;
+		isCircleCenteredRipple =
+			shape == "round" ||
+			(rippleType == const(MRippleCenter()) &&
+				getShapeByComponentDef(
+					parent,
+					shape,
+					defaultMaterialRoundShape
+				) == defaultMaterialRoundShape);
 
 		TransformTAcc2(\t2a -> {
 			b1 = content |> t2a;
@@ -199,7 +207,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 			focusFForm = \focusOutlineColor -> {
 				outlineStyle = replaceStructMany([MThemeStroke(parent, focusOutlineColor), StrokeWidth(2.0)], focusOutlineStyle);
 
-				if (isCircleCenteredRipple) {
+				form = if (isCircleCenteredRipple) {
 					FGraphics(
 						fselect(box, FLift(\b -> [GCircle(b.width / 2.0 - 1.0, b.height / 2.0 - 1.0, max(b.width, b.height) / 2.0 - 1.0)])),
 						const(outlineStyle)
@@ -239,6 +247,16 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 						}
 					)))
 				};
+
+				if (MThemeColor2int(parent, focusOutlineColor) == white) {
+					FFilter([DropShadow([
+						Placement(0.0, 0.),
+						Color(black, 1.0),
+						Radius(0.0),
+						Spread(2.0),
+						UseBoxShadow()
+					])], form)
+				} else form;
 			}
 
 			hoverFForm = \ -> {
@@ -249,7 +267,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 						else
 							[GRect(0.0, 0.0, b.width, b.height)]
 					)),
-					fselect2(color, fmultiply(opacity, fif(fmax(selected, focused), const(0.8), fif(hovered, const(0.4), zero))), FLift2(\c, op ->
+					fselect2(color, fmultiply(opacity, fif(fmax(selected, focused), focusOpacity, fif(hovered, hoverOpacity, zero))), FLift2(\c, op ->
 						[
 							MThemeFill(parent, c),
 							FillOpacity(if (MColor2int(MThemeColor2MColor(parent, c)) == black) op else op * 2.0)
@@ -286,16 +304,17 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 				|> (\f ->
 					FMutable(
 						fselect(
-							extractStruct(style, MRippleOutlineEnabled(const(isSome(parent.theme.focusOutlineColor) || focusOutlineStyle != []))).enabled,
+							rippleOutlineEnabled,
 							FLift(\en -> {
 								if (en) {
-									focusOutlineColor = extractStruct(style, MRippleOutlineColor(const(either(parent.theme.focusOutlineColor, MAccentColor()))));
+									defFocusOutlineColor = either(parent.theme.focusOutlineColor, MAccentColor());
+									focusOutlineColor = extractStruct(style, MRippleOutlineColor(const(defFocusOutlineColor))).color;
 
 									FGroup2(
 										f,
 										FShow(
 											focused,
-											FTranslate(const(1.0), const(1.0), FMutable(fselect(focusOutlineColor.color, focusFForm |> FLift)))
+											FTranslate(const(1.0), const(1.0), FMutable(fselectLift(focusOutlineColor, focusFForm)))
 										),
 										false
 									);
@@ -359,7 +378,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 							)
 						]
 					);
-				} else if (!fgetValue(fmax(focused, trigger))) {
+				} else if (!fgetValue(fmax(fand(focusTriggerEnabled, focused), trigger))) {
 					next(
 						opacityAnimationB,
 						[
@@ -408,7 +427,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 
 								retriggerFn(tr);
 							}),
-							makeSubscribe2(focused, \tr -> {
+							makeSubscribe2(fand(focusTriggerEnabled, focused), \tr -> {
 								if (tr) {
 									nextDistinct(
 										startingPoint,

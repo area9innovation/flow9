@@ -59,6 +59,8 @@ export {
 	// If we found the same headers in the url parameters and in the picture style - we will use them from the picture style.
 	FVideoApplyJwtExtraction(m : FVideo) -> FVideo;
 	FPictureApplyJwtExtraction(m : FPicture) -> FPicture;
+
+	runMonitorUserStyleChanges(checkIsEnabled : () -> bool) -> void;
 }
 
 addChildClip(parent : native, child : native, alive : ref bool) -> void {
@@ -281,7 +283,13 @@ AccessProperties2FAccessProperties(prop : [AccessProperty]) -> [FAccessProperty]
 			AccessFocused(__) : arrayPush(acc, p);
 			AccessEnabled(enabled) : arrayPush(acc, FAccessEnabled(enabled));
 			AccessCallback(__) : arrayPush(acc, p);
-			AccessAttribute(name, value) : arrayPush(acc, FAccessAttribute(name, value));
+			AccessAttribute(name, value) : {
+				if (name == "aria-hidden") {
+					arrayPush(acc, FAccessHiddenT(feq(value, "true")));
+				} else {
+					arrayPush(acc, FAccessAttribute(name, value));
+				}
+			}
 			AccessStyle(name, value) : arrayPush(acc, FAccessStyle(name, value));
 			AccessDescription(__) : arrayPush(acc, p);
 			AccessKbdShortcutString(__) : arrayPush(acc, p);
@@ -401,9 +409,9 @@ FAccessProperties2AccessProperties(prop : [FAccessProperty]) -> Pair<[AccessProp
 			FAccessProtected() : {
 				acc;
 			}
-			FAccessHidden() : {
+			FAccessHiddenT(enabled) : {
 				Pair(
-					arrayPush(firstOfPair(acc), AccessAttribute("aria-hidden", const("true"))),
+					arrayPush(firstOfPair(acc), AccessAttribute("aria-hidden", fselectLift(enabled, b2s))),
 					secondOfPair(acc)
 				)
 			}
@@ -2017,6 +2025,12 @@ addFAccessProperties(properties : [FAccessProperty]) -> (native) -> () -> void {
 						)
 					}
 					FAccessAttribute(name, val): {
+						if (name == "aria-hidden") {
+							println("WARNING! Looks like you are using FAccessAttribute('aria-hidden', ..).
+								\nIt can cause unexpected conflict between different 'aria-hidden' attributes
+								\nConsider using FAccessHiddenT instead.
+							");
+						}
 						uns = makeSubscribe2(val, \v -> setAccessAttributes(clip, [[name, v]]));
 
 						Pair(
@@ -2145,10 +2159,11 @@ addFAccessProperties(properties : [FAccessProperty]) -> (native) -> () -> void {
 
 						acc;
 					}
-					FAccessHidden(): {
+					FAccessHiddenT(enabled): {
+						uns = makeSubscribe2(enabled, \en -> setAccessAttributes(clip, [["aria-hidden", b2s(en)]]));
 						Pair(
-							setTree(acc.first, "aria-hidden", \ -> "true"),
-							acc.second
+							setTree(acc.first, "aria-hidden", \ -> b2s(fgetValue(enabled))),
+							arrayPush(acc.second, uns)
 						)
 					}
 					AccessForceMakeClip(__) : {
@@ -2209,4 +2224,13 @@ FPictureApplyJwtExtraction(f : FPicture) -> FPicture {
 		\style : [PictureStyle], headers : [KeyValue] -> concat(style, [RequestHeaders(headers)]),
 		\url : string, style : [PictureStyle] -> FPicture(url, f.size, style)
 	);
+}
+
+monitorUserStyleChangesRunning : ref Maybe<() -> void> = ref None();
+
+runMonitorUserStyleChanges(checkIsEnabled : () -> bool) -> void {
+	if (isNone(^monitorUserStyleChangesRunning) && checkIsEnabled()) {
+		devtrace("running monitorUserStyleChanges");
+		monitorUserStyleChangesRunning := Some(monitorUserStyleChanges());
+	}
 }

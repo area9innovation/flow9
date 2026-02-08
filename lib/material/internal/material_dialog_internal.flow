@@ -2,13 +2,16 @@ import material/internal/material_ellipsis;
 import material/internal/material_movable;
 import material/internal/material_component;
 import material/internal/tropic_size_util;
+import material/internal/material_announcement;
+import ds/id_generator;
 
 export {
 	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogAccessibleName, MDialogActions, MDialogActionsCondensed, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogScrollStyle,
 		MDialogNoAnimation, MDialogFullScreen, MDialogFullWindow, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable, MMovableOrigin,
 		MDialogResizable, MResizableControlOnStart, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MFocusOnPrevious, MFloatingContent, MDialogCloseButton,
 		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogCustomBackdrop, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign, MAddSafeArea,
-		MPassClicks, MDialogDraggableInitialAlign, MDialogInspectWidth, MDialogInspectHeight, MGrabDelay, MDialogMinSize, MDialogMaxSize, MDialogFrameBorders, MDialogSideBorder, MDialogContentMinWidth;
+		MPassClicks, MDialogDraggableInitialAlign, MDialogInspectWidth, MDialogInspectHeight, MGrabDelay, MDialogMinSize, MDialogMaxSize, MDialogFrameBorders, MDialogSideBorder, MDialogContentMinWidth,
+		MDialogActivateOnStart;
 
 		// These are very commonly recommended
 		MDialogTitle(title : string);
@@ -57,6 +60,10 @@ export {
 		MDialogMaxSize(wh : WidthHeight);
 		MDialogContentMinWidth(minW : double);
 
+		// If present, focus will be set to the first focusable element (even if open by mouse)
+		// If not present, but dialogActivationEnabled (in MaterialTheme) is true and something is focused, focus will be set to the title
+		MDialogActivateOnStart();
+
 		MDialogPopupStyle ::= MDialogPopupCanClose, MDialogPopupSaveEnabled, MDialogPopupNotResize, MDialogPopupOnClose, MDialogPopupClose, MDialogPopupFullScreen;
 			MDialogPopupCanClose(canCloseCheck : () -> bool);
 			MDialogPopupSaveEnabled(enabled : Transform<bool>);
@@ -78,7 +85,10 @@ export {
 	// MTextVisible is for snackbar action, should not be raised (restricted to one action only);
 	MSnackbarStyle ::= MTextButton, MMaxLines, MSnackbarVisible, MWidth, MColor, MSnackbarTextColor, MSnackbarAutoDisappear,
 		MSnackbarAutoDisappearTime, MSnackbarNoButton, MSnackbarAlignLeft, MSnackBarOffset, MSnackbarFadeAnimation, CommonAlignment, MSnackbarOnDisappear, TopAlign,
-		MSnackbarDisableInteractivesBelow;
+		MSnackbarDisableInteractivesBelow, MSnackbarCustomButton;
+
+		// Custom content for snackbar button area, overrides MTextButton and MSnackbarNoButton
+		MSnackbarCustomButton(button : Material);
 		// MSnackbarVisible can be used for getting of current snackbar state and for its closing, but not for showing of snackbar;
 		MSnackbarVisible(visible : DynamicBehaviour<bool>);
 		MSnackbarTextColor(color : MColor);
@@ -95,6 +105,8 @@ export {
 }
 
 isDialogRendering = ref false;
+
+useDialogTitleFix = !isUrlParameterFalse("dialog_title_fix");
 
 fwZorder = make(-1);
 fwAnimated = ref make(false);
@@ -185,6 +197,7 @@ renderMDialog3(
 	zorder = fgetValue(manager.manager.zorder);
 	passClicks = contains(style, MPassClicks());
 	updateMaterialThemeStyle = extractStruct(style, UpdateMaterialTheme(idfn));
+	activateOnStart = contains(style, MDialogActivateOnStart());
 
 	onClose = extractStruct(style, MDialogOnClose(nop)).onClose;
 	name = "MDialog";
@@ -213,6 +226,7 @@ renderMDialog3(
 	point = make(zeroPoint);
 	insideDialogB = make(false);
 	pressedOutsideB = fstall(fand(down, fnot(insideDialogB)), 0);
+	dialogContentFocused = make(false);
 	noAnimation = contains(style, MDialogNoAnimation()) || (!cpp && fullScreen)
 		|| !manager.theme.enableAnimations || noCenter || isSome(draggable);
 	disableBelow = \en -> \f : Tropic -> if (en) f |> disableInteractivesBelow |> disableMouseWheelBelow else f;
@@ -222,6 +236,7 @@ renderMDialog3(
 	actionsW = make(0.);
 	contentW = make(0.);
 	titleW = make(0.);
+	titleMinW = make(0.);
 	titleCloseW = make(0.);
 
 	boxW = extractStruct(style, MDialogInspectWidth(make(0.))).width;
@@ -265,7 +280,7 @@ renderMDialog3(
 								const(ttl.title),
 								[MTitle(), ParagraphMargin(0.0, 0.0), TagName("h2")]
 							)
-							|> (\t -> if (p.theme.dialogActivationEnabled) TAccess([FAccessHidden()], t) else t)
+							|> (\t -> if (p.theme.dialogActivationEnabled && !activateOnStart) TAccess([FAccessHidden()], t) else t)
 							|> (\t ->
 								eitherMap(
 									dialogFrame,
@@ -278,8 +293,10 @@ renderMDialog3(
 					)
 			)
 			|> (\t -> TAttachWidth(t, titleW))
-			|> (\t -> if (p.theme.dialogActivationEnabled) TAccess([
+			|> (\t -> TAttachMinWidth(t, titleMinW))
+			|> (\t -> if (p.theme.dialogActivationEnabled && !activateOnStart) TAccess([
 				AccessRole("heading"),
+				FAccessAttribute("aria-level", const("2")),
 				AccessForceMakeClip(true),
 				ClassName("dialog_title"),
 				FAccessAttribute("aria-label", const(eitherMap(title, \ttl -> ttl.title, "")))
@@ -307,7 +324,11 @@ renderMDialog3(
 						MScroll2T(
 							manager,
 							p,
-							MScroll(m, TFillXY(), arrayPush(scrollStyle.style, MScrollCropByContent())),
+							MScroll(m, TFillXY(), concatA([
+								scrollStyle.style,
+								[MScrollCropByContent()],
+								if (mobile && isUrlParameterTrue("scroll_native_mobile")) [TScrollNative()] else []
+							])),
 							m2t
 						)
 					else
@@ -344,7 +365,7 @@ renderMDialog3(
 					availMinW =
 						fsubtract(
 							faddition(
-								fmax(contentW, faddition(titleW, titleCloseW)),
+								fmax(contentW, faddition(if (useDialogTitleFix) titleMinW else titleW, titleCloseW)),
 								endBorderGap
 							),
 							const(actionsBorderLeft)
@@ -356,8 +377,25 @@ renderMDialog3(
 							const(actionsBorderLeft + eitherMap(dialogFrame, \df -> df.start + df.end, 0.0))
 						);
 
+					dialogActions = map(act.actions, \ac -> {
+						switch (ac) {
+							MTextButton(__, __, __, st) : {
+								if (contains(st, MShortcut("enter"))) {
+									newSt = arrayPush(st, MShortcutFilter(\__, ke ->
+										ke.keycode == KEY_ENTER && getValue(dialogContentFocused)
+											&& eitherMap(fgetValue(manager.latelyFocused), \cfi -> !contains(["MTextInput"], cfi.name), false)
+									));
+									MTextButton(ac with state = newSt)
+								} else {
+									ac
+								}
+							}
+							default : ac;
+						}
+					});
+
 					TFlexibleGrid(
-						const(map(act.actions, \ac -> m2t(MBorderEnd(8.)(ac), p))),
+						const(map(dialogActions, \ac -> m2t(MBorderEnd(8.)(ac), p))),
 						ifArrayPush(
 							[TBaselineAlign(), TFillersSupport(), TAvailableMinMax(availMinW, availMaxW)],
 							!contains(style, MDialogActionsNoEndAlign()),
@@ -668,8 +706,10 @@ renderMDialog3(
 					IScriptBehaviour("animated", animated, ISAppearanceEvent()),
 					updateMaterialThemeStyle,
 					MSetReady(animated),
+					MFocused(dialogContentFocused),
 					MTrapFocus()
 				]
+				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MZorder(const(0)))))
 				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MSetRTL(false))))
 				|> (\arr -> maybeArrayPush(arr, tryExtractStruct(style, MIsReady(make(false))))),
 				t
@@ -712,14 +752,15 @@ renderMDialog3(
 			f;
 		}
 	)
-	|> (\t -> TAccess([
+	|> (\t -> TAccess(concat([
 		AccessRole("dialog"),
 		FAccessAttribute("aria-label", extractStruct(style, MDialogAccessibleName(const(eitherMap(title, \ttl -> ttl.title, "Dialog")))).name),
-		FAccessAttribute("flow-force-focus", const(b2s(
+		FAccessAttribute("flow-force-focus", const(b2s(activateOnStart || (
 			manager.focus.theme.dialogActivationEnabled
 			&& eitherMap(currentFocusedItemOnOpen, \cfi -> !contains(["MDynamicListLine", "MTreeNode", "MTemporarilyFocused"], cfi.name), false)
-		)))
-	], t))
+		))))
+		], extractStructMany(style, FAccessStyle("", const("")))
+	), t))
 	|> (\t ->
 		if (!fullWindow || resizable) {
 			t
@@ -742,6 +783,7 @@ renderMDialog3(
 				TFullWindow(
 					fw,
 					TGroup([
+						TShow(fw, makeAnnouncementBlock(manager)),
 						TShow(fw, keysCapture),
 						TShow(fw, mouseCapture),
 						t,
@@ -839,6 +881,8 @@ renderMSnackbar(manager : MaterialManager, text : string, style : [MSnackbarStyl
 	renderMSnackbarT(manager, const(text), style, m2t, renderFn);
 }
 
+getNextSnackBarIdFn = createStringIdGenerator("snackBarId").nextId;
+
 renderMSnackbarT(manager : MaterialManager, text : Transform<string>, style : [MSnackbarStyle], m2t : (Material, MFocusGroup) -> Tropic, renderFn : (Tropic) -> () -> void) -> void {
 	closeSnackbar = \ -> maybeApply(^snackbarDisp, \__ -> {
 		dispUnsM(snackbarDisp);
@@ -882,17 +926,25 @@ renderMSnackbarT(manager : MaterialManager, text : Transform<string>, style : [M
 	fadeAnimation = extractStruct(style, MSnackbarFadeAnimation(offset.y != 0.)).fade;
 	disableBelow = extractStruct(style, MSnackbarDisableInteractivesBelow(false)).disable;
 
+	customButtonContent = tryExtractStruct(style, MSnackbarCustomButton(TEmpty()));
 	customButton = tryExtractStruct(style, dummyMTextButton);
-	button =
-		either(customButton,
+
+	button = eitherFn(
+		customButtonContent,
+		\cb -> cb.button |> MCenterY |> MBorderLeft(8.0),
+		\ -> either(customButton,
 			if (contains(style, MSnackbarNoButton())) TEmpty()
 			else MIconButton("clear", closeSnackbar, [textColor], [MButtonTitle(const("Close snackbar"))])
 		)
-		|> MCenterY |> MBorderLeft(8.0);
+		|> MCenterY |> MBorderLeft(8.0)
+	);
 
+	snackBarId = getNextSnackBarIdFn();
 	snackBar =
-		MDynamicParagraph(textB, [textColor, MBody()])
-		|> (\m -> MAccess([FAccessHidden()], m))
+		MSelect(manager.forceRender, \__ -> {
+			MDynamicParagraph(textB, [textColor, MBody(), WordSpacing(make(0.0))]) // WordSpacing is used to force paragraph re-render
+		})
+		|> (\m -> MAccess([FAccessHidden(), FAccessAttribute("id", const(snackBarId))], m))
 		|> MBorderTopBottom(16.)
 		|> MCenterY
 		|> (\t -> MGroup2(t, TFixed(minWidth, 0.)))
@@ -925,7 +977,7 @@ renderMSnackbarT(manager : MaterialManager, text : Transform<string>, style : [M
 		|> (\t -> TAccess(concat([
 			AccessRole("alertdialog"),
 			ClassName("snackbar"),
-			FAccessAttribute("aria-label", textB),
+			FAccessAttribute("aria-labelledby", const(snackBarId)),
 			FAccessAttribute("flow-force-focus", const(b2s(manager.focus.theme.dialogActivationEnabled)))
 		], if (isSafariBrowser()) [TagName("div")] else []), t))
 		|> (\t -> if (topAlign) t else TAlignBottom(t))

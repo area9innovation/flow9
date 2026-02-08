@@ -429,9 +429,13 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 			childDisposers : ref [[() -> void]] = ref [[]];
 			childrenClips : ref [[Pair<native, ref bool>]] = ref [[]];
 			childrenCount : ref [int] = ref [];
+			// Track dynamic z-order indices for proper event handling after moves
+			childrenZIndices : ref [DynamicBehaviour<int>] = ref [];
 
 			handleAdd = \form, z -> {
-				childResult = renderFForm(form, farrayPush(zorder, const(z)));
+				// Use dynamic z-index so event handlers get updated on moves
+				zIndexB = make(z);
+				childResult = renderFForm(form, farrayPush(zorder, zIndexB));
 				childClip = map(childResult.clips, \c -> Pair(c, ref false));
 				clipsBefore = foldi(^childrenClips, 0, \i, acc, c -> {
 					if (i < z) {
@@ -444,6 +448,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 
 				childrenClips := insertArray(^childrenClips, z, childClip);
 				childDisposers := insertArray(^childDisposers, z, childResult.disposers);
+				childrenZIndices := insertArray(^childrenZIndices, z, zIndexB);
+				// Update z-indices of elements after the insertion point
+				iteri(tailFrom(^childrenZIndices, z + 1), \i, idx -> nextDistinct(idx, z + 1 + i));
 			};
 
 			handleDelete = \z -> if (existsIndex(^childrenClips, z)) {
@@ -452,6 +459,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 
 				applyall(^childDisposers[z]);
 				childDisposers := removeIndex(^childDisposers, z);
+				childrenZIndices := removeIndex(^childrenZIndices, z);
+				// Update z-indices of elements after the deletion point
+				iteri(tailFrom(^childrenZIndices, z), \i, idx -> nextDistinct(idx, z + i));
 			}
 
 			handleReplace = \form, z -> {
@@ -463,7 +473,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 
 				applyall(^childDisposers[z]);
 
-				childResult = renderFForm(form, farrayPush(zorder, const(z)));
+				// Reuse existing z-index behaviour for the replaced element
+				zIndexB = if (existsIndex(^childrenZIndices, z)) ^childrenZIndices[z] else make(z);
+				childResult = renderFForm(form, farrayPush(zorder, zIndexB));
 				childClip = map(childResult.clips, \c -> Pair(c, ref false));
 
 				iter(
@@ -492,6 +504,9 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 
 				childrenClips := childrenFixedOrder;
 				childDisposers := moveElement(^childDisposers, from, to);
+				childrenZIndices := moveElement(^childrenZIndices, from, to);
+				// Update all z-indices to reflect new positions for proper event handling
+				iteri(^childrenZIndices, \i, idx -> nextDistinct(idx, i));
 			}
 
 			iteri(getValue(currentStack), \i, f -> handleAdd(f, i));
@@ -925,7 +940,7 @@ renderFForm(rform : FForm, zorder : Transform<[int]>) -> FRenderResult {
 									angle = ref 45.0;
 									distance = ref 3.0;
 									radius = ref 3.0;
-									spread = ref 1.0;
+									spread = ref 0.0;
 									color1 = ref 0xffffff;
 									alpha1 = ref 1.0;
 									color2 = ref 0x000000;

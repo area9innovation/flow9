@@ -21,6 +21,10 @@ export {
 
 	getFirstMaterialFocus(parent : MFocusGroup) -> Transform<Maybe<MFocus>>;
 	getLastMaterialFocus(parent : MFocusGroup) -> Transform<Maybe<MFocus>>;
+
+	// Helper to print focus tree structure
+	printFocusTree(focus : MaterialFocus, depth : int) -> void;
+	MFocus2s(focus : MFocus) -> string;
 }
 
 switchMaterialFocus(focus : MaterialFocus, mFocusFn : (MFocus) -> ?, mFocusGroupFn : (MFocusGroup) -> ?) -> ? {
@@ -41,7 +45,7 @@ switchMaterialManagerOrFocus(
 	mFocusGroupFn : (MFocusGroup) -> ?
 ) -> ? {
 	switch (parent : MaterialManagerOrFocus) {
-		MaterialManager(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): managerFn(parent);
+		MaterialManager(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): managerFn(parent);
 		MaterialFocus(): {
 			switchMaterialFocus(parent, mFocusFn, mFocusGroupFn);
 		}
@@ -149,19 +153,63 @@ getMaterialFocus(parent : MFocusGroup, elementAtFn : (int) -> int, recFn : (MFoc
 		activeFids = filterEnabledMaterialFocuses(fids);
 
 		childrenT = fsubfilter(const(getTreeValues(activeFids)), \child -> {
-			switchMaterialFocus(child, \__ -> const(true), \f -> fselectLift(f.focusIds, \ids -> sizeTree(filterEnabledMaterialFocuses(ids)) > 0))
+			switchMaterialFocus(
+				child,
+				\__ -> const(true),
+				\f -> fselectLift(f.focusIds, \ids -> sizeTree(filterEnabledMaterialFocuses(ids)) > 0)
+			)
 		});
 
 		fsubselect(childrenT, FLift(\children -> {
-			searchedItem = elementAtM(children, elementAtFn(length(children)));
-			eitherMap(searchedItem, \it ->
-				switchMaterialFocus(
-					it,
-					\f -> const(Some(f)),
-					\f -> recFn(f)
-				),
-				const(None())
-			)
+			searchMFocusInArray(children, elementAtFn, recFn);
 		}))
 	}));
+}
+
+searchMFocusInArray(children : [MaterialFocus], elementAtFn, recFn : (MFocusGroup) -> Transform<Maybe<MFocus>>) -> Transform<Maybe<MFocus>> {
+	positionToCheck = elementAtFn(length(children));
+
+	eitherMap(elementAtM(children, positionToCheck),
+		\it -> {
+			switchMaterialFocus(
+				it,
+				\f -> const(Some(f)),
+				\f -> {
+					resT = recFn(f);
+					fsubselect(resT, FLift(\resM -> {
+						if (isSome(resM)) {
+							const(resM)
+						} else {
+							// Continue search in siblings / adjacent subtrees
+							searchMFocusInArray(removeIndex(children, positionToCheck), elementAtFn, recFn)
+						}
+					}))
+				}
+			);
+		},
+		const(None())
+	)
+}
+
+// helper function to print a focus tree
+printFocusTree(focus : MaterialFocus, depth : int) -> void {
+	indentStr = strRepeat("  ", depth);
+	switch (focus) {
+		MFocus(id, form, tabOrder, __, name, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+			println(indentStr + "Focus(id: " + i2s(fgetValue(id)) + ", name: " + name + ", full path: " + toString(fgetValue(tabOrder)) + ")");
+		}
+		MFocusGroup(__, __, id, __, tabOrder, __, __, name, __, __, __, __, __, __, focusIds, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+			println(indentStr + "Group(id: " + i2s(fgetValue(id)) + ", name: " + name + ", full path: " + toString(fgetValue(tabOrder)) + ")");
+
+			// Print all child focuses in sorted order by ID
+			focusTree = getValue(focusIds);
+			traverseInOrder(focusTree, \__, child -> {
+				printFocusTree(child, depth + 1);
+			});
+		}
+	}
+}
+
+MFocus2s(focus : MFocus) -> string {
+	"MFocus(id: " + i2s(fgetValue(focus.id)) + ", name: " + focus.name + ")";
 }

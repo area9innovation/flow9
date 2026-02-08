@@ -904,16 +904,27 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static function updateIsAriaHidden(clip : DisplayObject, isAriaHidden : Bool = false) : Void {
+	public static function updateIsAriaHidden(clip : DisplayObject, isAriaHidden : Bool = false, ?isRootItem = false) : Void {
+		var propagate = true;
+
 		if (isNativeWidget(clip)) {
 			if (isAriaHidden) {
 				untyped clip.nativeWidget.setAttribute("aria-hidden", 'true');
-			} else {
+			} else if (isRootItem || untyped !clip.isAriaHidden) {
 				untyped clip.nativeWidget.removeAttribute("aria-hidden");
+			} else {
+				propagate = false;
 			}
 		}
-		for (child in getClipChildren(clip)) {
-			updateIsAriaHidden(child, isAriaHidden);
+		
+		if (isRootItem) {
+			untyped clip.isAriaHidden = isAriaHidden;
+		}
+		
+		if (propagate) {
+			for (child in getClipChildren(clip)) {
+				updateIsAriaHidden(child, isAriaHidden);
+			}
 		}
 	}
 
@@ -1553,6 +1564,7 @@ class DisplayObjectHelper {
 					${Math.cos(filter.angle) * filter.distance}px
 					${Math.sin(filter.angle) * filter.distance}px
 					${filter.blur}px
+					${untyped filter.spread != null ? (filter.spread+'px') : ''}
 					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
 				';
 

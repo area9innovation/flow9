@@ -1,0 +1,106 @@
+import frp/frp_behaviour;
+import frp/frp_async;
+
+import material/material;
+import material/material_manager;
+import material/material2tropic;
+
+// make a complex engine consists of 3 async nodes, which all depend on one parameter
+
+AViewEngine(
+	intInputB : DynamicBehaviour<int>, // input
+	out : FrpAsyncValue<int>, // output
+);
+
+makeAViewEngine() -> AViewEngine {
+	intInputB = make(0);
+	inputCell = rmake(0);
+
+	rbConnect(inputCell, intInputB, \__, v -> v);
+
+	// convert input into async cell
+	asyncInputCell = rAsyncSelectV(inputCell, idfn, \v -> if (v==19) "19 is error" else "");
+
+	asyncCell1 = makeFrpAsyncValue(0);
+
+	// connect input async cell with a state cell
+	rAsyncFnConnect(
+		asyncInputCell,
+		asyncCell1,
+		false,
+		FrpAsyncBufferNone(),
+		\v,__,onDone,onError -> {
+			println("update asyncCell1 start");
+			timer(1000, \-> {
+				println("update asyncCell1 end");
+				onDone(v * 2);
+			});
+		},
+		idfn,
+	);
+
+	asyncCell2 = makeFrpAsyncValue(0);
+
+	// connect input async cell with a state cell
+	rAsyncFnConnect(
+		asyncInputCell,
+		asyncCell2,
+		false,
+		FrpAsyncBufferNone(),
+		\v,__,onDone,onError -> {
+			println("update asyncCell2 start");
+			timer(3000, \-> {
+				println("update asyncCell2 end");
+				onDone(v * 3);
+			});
+		},
+		\__ -> ["cell2 error"], // replace error
+	);
+
+	outputCell = makeFrpAsyncValue(0);
+
+	rAsyncFnConnect2(
+		asyncCell1,
+		asyncCell2,
+		outputCell,
+		true,
+		FrpAsyncBufferFirst(10),
+		\v1,v2,__,onDone,onError -> {
+			println("update outputCell start");
+			timer(1000, \-> {
+				println("update outputCell end");
+				onDone(v1 + v2);
+			});
+		},
+		idfn
+	);
+
+	AViewEngine(intInputB, outputCell);
+}
+
+
+buildAView(engine : AViewEngine) -> Material {
+	// it needs to get a behaviour to use with Material forms
+	engineData = rbSelectBAsync(engine.out, \v,status -> "value: " + i2s(v) + "    status: " + toString(status));
+
+	MConstruct([
+		\-> engineData.second,
+	],
+		MLinesA([
+			MBaselineColsA([
+				MDropDown(engine.intInputB, "", generate(0, 20, i2s), []),
+			]) |> MBorderBottom(16.),
+			MSelect(engineData.first, \t -> MText(t, []))
+		])
+	);
+}
+
+
+main () {
+	manager = makeMaterialManager([]);
+
+	engine = makeAViewEngine();
+	form = buildAView(engine);
+
+	mrender(manager, false, MBorder(16., 16., 16., 16., form));
+}

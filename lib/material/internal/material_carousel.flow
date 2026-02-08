@@ -209,6 +209,9 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 			|> (\f -> TConstruct(state.subs, f))
 		})
 		|> (\f -> MComponentGroup2T(manager, parent, "MCarousel", [
+					FAccessAttribute("aria-label", extractStruct(m.style, MButtonTitle(const(""))).title),
+					AccessRole("group"),
+					FAccessAttribute("aria-roledescription", const("carousel")),
 					// IScriptBehaviour("active", m.activeIdx, MInputValue(generate(0, length(m.contents), idfn))),
 					IScriptBehaviour("tx", state.tx, ISAppearanceEvent()),
 					IScriptBehaviour("scale", state.zoomScale, ISAppearanceEvent())
@@ -261,9 +264,12 @@ MCarouselState(
 
 MCarouselProgressState(
 	bottom : bool,
+	topBorder : double,
+	bottomBorder : double,
 	activeColor : MThemeColor,
 	inactiveColor : MThemeColor,
 	spacing : double,
+	radius : double,
 	buttonTitles : [Transform<string>]
 );
 
@@ -348,13 +354,17 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 
 	progress =
 		if (enableProgress) {
-			progressColors = extractStruct(m.style, MProgressColors(buttonsColor, MGrey(500)));
+			progressStyle = extractStruct(m.style, MCarouselProgressStyle([])).style; 
+			progressColors = extractStruct(progressStyle, MProgressColors(buttonsColor, MGrey(500)));
 			Some(
 				MCarouselProgressState(
-					contains(m.style, MProgressAtBottom()),
+					contains(progressStyle, MProgressAtBottom()),
+					extractStruct(progressStyle, MCarouselProgressTopBorder(16.0)).border,
+					extractStruct(progressStyle, MCarouselProgressBottomBorder(16.0)).border,
 					progressColors.active,
 					progressColors.inactive,
-					extractStruct(m.style, MCarouselProgressSpacing(2.0)).spacing,
+					extractStruct(progressStyle, MCarouselProgressSpacing(2.0)).spacing,
+					extractStruct(progressStyle, MCarouselProgressRadius(4.0)).radius,
 					mapi(m.contents, \i, c -> {
 						extractStruct(c.style, MCarouselProgressTitle(const("Item " + i2s(i)))).title
 					})
@@ -536,38 +546,57 @@ addProgressAndChevrons(content : Tropic, manager : MaterialManager, parent : MFo
 }
 
 MCarouselProgress(manager : MaterialManager, parent : MFocusGroup, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Maybe<Tropic> {
-	maybeMap(state.progress, \pr ->
+	maybeMap(state.progress, \pr -> {
+		focusedIdx = make(-1);
+		focusEnabledIdx = make(0);
+
 		generate(0, state.contentsLength, \i ->
-			(\par -> {
+			(\extState -> (\par -> {
 				isActive = feq(state.activeI, i);
 
 				TShadowShape(par,
 					fselectLift(isActive, \act -> if (act) 4. else 2.),
-					TSelect(isActive, \act -> TCircle(4., [MThemeFill(par, if (act) pr.activeColor else pr.inactiveColor)])),
+					TSelect(isActive, \act -> TCircle(pr.radius, [MThemeFill(par, if (act) pr.activeColor else pr.inactiveColor)])),
 					RoundShape()
 				)
 				|> (\f -> TAlpha(fif(state.enabled, const(1.), const(0.5)), f))
 				|> TBorderLeftRight(pr.spacing)
 			})
-			|> (\f -> MComponent2T(
+			|> (\makeCircle -> MComponent2T(
 				manager,
 				parent,
 				"MCarouselProgressItem",
-				[
+				concat([
 					MHighlightOnFocus(const(true)),
 					MEnabled(state.enabled),
 					MOnClick(\ -> next(state.activeI, i)),
-					MButtonTitle(elementAt(pr.buttonTitles, i, const("Item " + i2s(i)))), 
-					MRippleType(const(MRippleCenter()))
-				],
-				\foc -> f(foc.parent),
+					MButtonTitle(elementAt(pr.buttonTitles, i, const("Item " + i2s(i)))),
+					MRippleType(const(MRippleCenter())),
+					AccessRole("tab"),
+					FAccessAttribute("aria-selected", fselectLift(feq(state.activeI, i), b2s))
+				], extState),
+				\foc -> makeCircle(foc.parent),
 				m2t
-			))
+			)))
+			|> (\makeTab ->
+				MArrowNavigationItem(
+					i,
+					state.contentsLength,
+					makeTab,
+					focusedIdx,
+					focusEnabledIdx,
+					\ -> max(0, fgetValue(state.activeI)),
+					[MArrowNavigationDirection(false)]
+				)
+			)
+			|> (\t -> m2t(t, parent))
 		)
 		|> TCols
-		|> TBorderTopBottom(16.)
-		|> (\f -> if (pr.bottom) TLines2(TFillY(), f) else f),
-	)
+		|> (\t -> TAccess([AccessRole("tablist")], t))
+		|> TBorderTop(pr.topBorder)
+		|> TBorderBottom(pr.bottomBorder)
+		|> (\f -> if (pr.bottom) TLines2(TFillY(), f) else f)
+	})
 }
 
 MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Pair<Tropic, Tropic> {
@@ -649,7 +678,11 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 	(\p ->
 		(\p2 ->
 			MComponentGroup2T(manager, p2, "MCarouselContent", [
-					FAccessAttribute("aria-hidden", fselectLift(fnot(isActive), b2s)),
+					FAccessHiddenT(fnot(isActive)),
+					AccessRole(if (isSome(state.progress)) "tabpanel" else "group"),
+					TagName("div"),
+					FAccessAttribute("aria-roledescription", const("slide")),
+					FAccessAttribute("aria-label", extractStruct(c.style, MButtonTitle(const("Item " + i2s(i)))).title),
 					MFocusEnabled(isActive)
 				], \p3 -> m2t(c.content, p3)
 			)

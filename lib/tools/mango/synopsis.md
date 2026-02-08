@@ -61,6 +61,17 @@ We cover the following:
 
 In total, this describes how to integrate a PEG grammar with a stack language, and how to leverage the type inference system to ensure type-safe parsing and AST manipulations.
 
+## Implementation Note
+
+In the actual implementation, type-related names are prefixed with `P` to distinguish them from other type systems in the codebase:
+- `Type` → `PType`
+- `TypeEnv` → `PTypeEnv`
+- `TypeName` → `PTypeName`
+- `grammarType()` → `mangoType2()`
+- `unifyType()` → `unifyPType()`
+
+Throughout this document, we use the unprefixed names for clarity. When reading the code in `lib/tools/mango/type_inference.flow` and `lib/tools/poppy/type/*.flow`, remember to add the `P` prefix.
+
 ## The Grammar Language Constructs
 
 Here is the grammar language used:
@@ -79,6 +90,8 @@ Here is the grammar language used:
 | `$term`        | Pushes the matching string of a parse on the result stack  | `$id`                      |
 | `Constructor/int` | Pushes a constructor with *n* arguments from the result stack | `$id Id/1`           |
 | `@stackop`     | Performs semantic actions using a stack language on the result stack  | `@nil` or `@'swap s2i'` |
+| `@pos`         | Built-in: Returns current parse position as int                       | `@pos`                  |
+| `@switch`      | Built-in: Special switching operation (string -> Top)                 | `@switch`               |
 
 The grammar written in itself is here. The `|>` and `>` constructs help implement associativity & precedence and allows some forms of left-recursion. It expands into multiple productions using a set of simple rules, so can be ignored for the type inference.
 
@@ -239,6 +252,28 @@ Type ::= TypeName, TypeEClass, TypeWord,  TypeCompose, TypeOverload, TypeEval;
 
 We support polymorphism, overloading, and stack polymorphism.
 
+#### Polymorphism Instantiation
+
+When a polymorphic function (like `cons` or `drop`) is used, the system creates fresh type variables for each use. This is handled by the `instantiatePolymorphism()` function:
+
+**How it works:**
+1. When looking up a word's type from the environment, the stored type may contain type variables (eclasses)
+2. `instantiatePolymorphism()` creates fresh eclasses for each type variable
+3. A cache ensures consistent substitution within a single instantiation
+4. Each call gets completely fresh variables—no sharing across different uses
+
+**Example:**
+```flow
+cons : (List<?>, ?) -> List<?>
+
+// First use:  (List<ε₁>, ε₁) -> List<ε₁>   (where ε₁ is a fresh eclass)
+// Second use: (List<ε₂>, ε₂) -> List<ε₂>   (where ε₂ is a different fresh eclass)
+```
+
+This allows the same polymorphic function to be used with different types in different contexts, with type inference determining the actual types based on usage.
+
+See `lib/tools/poppy/type/instantiate.flow` for the implementation.
+
 ### Type Inference of the Stack language
 
 Based on this type language, the type inference of the stack language is done using this type environment:
@@ -247,10 +282,20 @@ Based on this type language, the type inference of the stack language is done us
 	TypeEnv(
 		// Used to track the types of eclasses using a union-find map indexed by eclass
 		unionFindMap : UnionFindMap<[Type]>,
+		// Suggested names for eclasses (used for generating good field names and union names)
+		eclassNames : ref Tree<int, string>,
 		// What is the type of each word (function)?
 		words : ref Tree<string, Type>,
+		// The unions we have uncovered so far (accumulated during type inference)
+		unions : ref Tree<string, [Type]>,
+		// The constructor names we have encountered
+		structs : ref Set<string>,
 		// For generating unique eclasses
 		unique : ref int,
+		// For debug output formatting (current indentation level)
+		indent : ref string,
+		// Debug verbosity level (0 = quiet, 1-4 = increasingly verbose)
+		verbose : int,
 	);
 ```
 
@@ -394,8 +439,29 @@ composeIfFeasible(env : TypeEnv, a : Type, b : Type) -> Maybe<Type> {
 				TypeEClass(eclass2): Some(makeTypeCompose(a, b));
 			}
 		}
-		...
-
+		TypeWord(inputs1, outputs1): {
+			switch (b) {
+				TypeName(name, typars): {
+					// (inputs -> outputs) ◦ a = (inputs -> outputs) ◦ ( -> a)
+					composeIfFeasible(env, a, TypeWord([], [b]));
+				}
+				TypeEClass(eclass): {
+					// When word has outputs, could potentially peel off outputs as inputs to eclass
+					// For now, defer composition
+					Some(makeTypeCompose(a, b));
+				}
+				TypeWord(inputs2, outputs2): composeWords(env, a, b);
+				TypeOverload(overloads): composeRightOverload(env, a, b);
+				TypeEval(): composeEval(env, inputs1, outputs1);
+				TypeCompose(left, right): {
+					// a ◦ (left ◦ right) = (a ◦ left) ◦ right
+					mfirst = composeIfFeasible(env, a, left);
+					mfirst ?? {
+						composeIfFeasible(env, mfirst, right);
+					} : None();
+				}
+			}
+		}
 		TypeOverload(overloads): {
 			ok = filtermap(overloads, \o -> composeIfFeasible(env, o, b));
 			if (length(ok) == 0) {
@@ -406,6 +472,39 @@ composeIfFeasible(env : TypeEnv, a : Type, b : Type) -> Maybe<Type> {
 			} else {
 				// Keep those that are still compatible
 				Some(TypeOverload(ok));
+			}
+		}
+		TypeCompose(left1, right1): {
+			// When the left side is already a deferred composition, use associativity
+			assoc = \ -> {
+				// (left1 ◦ right1) ◦ b = left1 ◦ (right1 ◦ b)
+				mfirst = composeIfFeasible(env, right1, b);
+				mfirst ?? {
+					// Check if result is still a compose - if so, defer the whole thing
+					if (isPTypeCompose(mfirst)) {
+						Some(makeTypeCompose(a, b));
+					} else {
+						composeIfFeasible(env, left1, mfirst);
+					}
+				} : None();
+			}
+			switch (b) {
+				TypeName(name, typars): assoc();
+				TypeEClass(eclass): Some(makeTypeCompose(a, b));
+				TypeWord(inputs, outputs): assoc();
+				TypeOverload(overloads): assoc();
+				TypeEval(): Some(makeTypeCompose(a, b));
+				TypeCompose(left2, right2): {
+					// (left1 ◦ right1) ◦ (left2 ◦ right2) = left1 ◦ (right1 ◦ left2) ◦ right2
+					middle = composeIfFeasible(env, right1, left2);
+					middle ?? {
+						mthree = composeIfFeasible(env, left1, middle);
+						switch (mthree) {
+							None(): None();
+							Some(three): composeIfFeasible(env, three, right2);
+						}
+					} : None();
+				}
 			}
 		}
 		TypeEval(): Some(makeTypeCompose(a, b));
@@ -452,6 +551,126 @@ composeWords(env : TypeEnv, a : TypeWord, b : TypeWord) -> Maybe<Type> {
 			unifyType(env, false, b1, b2);
 			composeIfFeasible(env, TypeWord(a.inputs, o1), TypeWord(i2, b.outputs));
 		}
+	}
+}
+
+makeTypeWord(inputs : [Type], outputs : [Type]) -> Type {
+	// Simplify ( -> T) to just T
+	if (inputs == [] && length(outputs) == 1) {
+		outputs[0]
+	} else {
+		TypeWord(inputs, outputs)
+	}
+}
+
+composeEval(env : TypeEnv, inputs1 : [Type], outputs1 : [Type]) -> Maybe<Type> {
+	// Compose a word type with eval: (inputs1 -> outputs1) ◦ eval
+	// This is the key to stack polymorphism - eval applies the function on top of stack
+
+	a = TypeWord(inputs1, outputs1);
+	l1 = length(outputs1);
+	fn = outputs1[l1 - 1]; // The last output is the function to eval
+	inputs = take(outputs1, l1 - 1); // Remaining outputs become potential inputs
+
+	switch (fn) {
+		TypeWord(fninputs, fnoutputs): {
+			// ( -> inputs (fninputs -> fnoutputs)) ◦ eval
+			if (fninputs == []) {
+				// (b ( -> a)) ◦ eval = (b a)
+				// Function takes no args, just append its outputs
+				Some(TypeWord(inputs1, concat(inputs, fnoutputs)));
+			} else if (inputs == []) {
+				// ( -> (fninputs -> fnoutputs)) ◦ eval
+				// No values available to pass as arguments - cannot eval
+				None();
+			} else {
+				// ( -> inputs (fninputs -> fnoutputs)) ◦ eval
+				// Try to match available values with required arguments
+				firstInput = inputs[length(inputs) - 1];
+				firstArg = fninputs[length(fninputs) - 1];
+
+				if (unifyType(env, true, firstInput, firstArg)) {
+					// Types match! Unify them and recurse for remaining args
+					unifyType(env, false, firstInput, firstArg);
+					restInput = take(inputs, length(inputs) - 1);
+					restArgs = take(fninputs, length(fninputs) - 1);
+
+					// Build curried function with remaining args
+					// ( -> restInput (restArgs -> fnoutputs)) ◦ eval
+					remaining = TypeWord(inputs1, arrayPush(restInput, TypeWord(restArgs, fnoutputs)));
+					composeIfFeasible(env, remaining, TypeEval());
+				} else {
+					// Types don't match - cannot eval
+					None();
+				}
+			}
+		}
+		TypeName(name, typars): {
+			// ( -> a) ◦ eval -> a  (when inputs1 is empty)
+			if (inputs1 == []) Some(a)
+			else Some(makeTypeCompose(a, TypeEval())); // Defer
+		}
+		TypeEClass(eclass): {
+			// Try to resolve eclass first
+			values = getUnionMapValue(env.unionFindMap, eclass);
+			if (length(values) == 1) {
+				// Resolve and compose
+				resFn = TypeWord(inputs1, replace(outputs1, l1 - 1, values[0]));
+				composeIfFeasible(env, resFn, TypeEval());
+			} else {
+				// Cannot resolve yet - defer
+				Some(makeTypeCompose(a, TypeEval()));
+			}
+		}
+		default: {
+			// Other cases - defer composition
+			Some(makeTypeCompose(a, TypeEval()));
+		}
+	}
+}
+
+composeRightOverload(env : TypeEnv, a : Type, b : TypeOverload) -> Maybe<Type> {
+	// Try to compose with each overload, keep those that work
+	ok = filtermap(b.overloads, \o -> composeIfFeasible(env, a, o));
+	if (length(ok) == 0) {
+		None();
+	} else if (length(ok) == 1) {
+		// Simplified to single type
+		Some(ok[0]);
+	} else {
+		// Multiple overloads still compatible
+		Some(TypeOverload(ok));
+	}
+}
+
+composeWithEClass(env : TypeEnv, a : Type, eclass : int) -> Maybe<Type> {
+	// Compose a type with an equivalence class
+	values = getUnionMapValue(env.unionFindMap, eclass);
+	if (values == []) {
+		// No values yet - defer composition
+		Some(makeTypeCompose(a, TypeEClass(eclass)));
+	} else {
+		// Try to compose with each value in the eclass
+		compat = filtermap(values, \v -> composeIfFeasible(env, a, v));
+		if (length(compat) == 0) {
+			// None compatible
+			None();
+		} else if (length(compat) == 1) {
+			// One compatible
+			Some(compat[0]);
+		} else {
+			// Multiple compatible - create new eclass to hold results
+			newClass = makeTypeEClass(env, "");
+			setUnionMapValue(env.unionFindMap, newClass.eclass, compat);
+			Some(newClass);
+		}
+	}
+}
+
+isPTypeCompose(p : Type) -> bool {
+	switch (p) {
+		TypeCompose(__, __): true;
+		default: false;
 	}
 }
 ```
@@ -701,9 +920,35 @@ Notice we manage to track the types of the `Bool`, `Int`, `Double` constructs af
 
 Since we embed the stack language textually inside the grammar language, we have to do a bit of work to type the combination of the languages. The type inference of the grammar language shares the type language, the type environment and the helpers `composeIfFeasible` and unification with the stack language.
 
-We allow the user to define stack-words using `define` inside the grammar after the user of such words. For that reason, before we can do type inference of the entire grammar, first, we do type inference of all the stack language pieces in the grammar. The result is an updated type environment where we know the type of the defined words.
+We allow the user to define stack-words using `define` inside the grammar after the use of such words. For that reason, the grammar type inference uses a **two-phase algorithm**:
 
-Next, we do type inference of the *grammar* rules in topological order of the rules, setting up an eclass for each rule and then processing them in order.
+**Phase 1 - Setup (firstPass)**:
+The first pass traverses the entire grammar to:
+- Find all `Rule(id, term1, term2)` definitions
+- Create a fresh equivalence class (eclass) for each rule
+- Process all `@stackop` nodes to extract any Poppy `define` statements
+
+This phase doesn't perform full type inference yet—it just sets up the type environment so that rules can reference each other, even with forward references or mutual recursion.
+
+**Phase 2 - Inference (mangoTypesOfRules)**:
+The second pass processes rules in topological dependency order:
+- For each rule in order, call `grammarType()` (implemented as `mangoType2()`) to infer its type
+- Unify the inferred type with the rule's pre-allocated eclass
+- Handle recursive rules specially using named union placeholders
+
+This two-phase approach enables forward references and mutual recursion between rules.
+
+#### Topological Ordering
+
+Before type inference, rules must be processed in the right order to handle dependencies. The `topoRules()` function computes this order:
+
+1. **Build dependency graph**: Extract all `Rule(id, term1, term2)` definitions and analyze which rules reference which others (via `Variable(id)` nodes)
+2. **Topological sort**: Order rules so that each rule is processed before any rule that depends on it (when possible)
+3. **Handle cycles**: For mutually recursive rules, the system detects cycles and processes them specially using named union placeholders
+
+This ensures that when typing rule A that references rule B, we already have an eclass allocated for B (from phase 1), allowing the unification to work correctly.
+
+See `lib/tools/mango/topo.flow` for the implementation of `topoRules()`, `findRules()`, and cycle detection.
 
 ``` flow
 inferMangoTypes(name : string, env : TypeEnv, t : Term) -> Type {
@@ -849,9 +1094,96 @@ grammarType(env : TypeEnv, t : Term) -> [Type] {
 } 	
 ```
 
-### Resolving to unions & structs
+### Post-Inference Processing
 
-As a final step after type inference, we have all the inferred types in the environment. We then iteratively process all of these transitively and extract any structs & implicit unions there. In the real implementation, we have a bit more complexity to keep track of suggested names of all eclasses to help infer good names of fields & implicit unions, but the essence is given above.
+After the initial type inference completes, several post-processing phases refine and finalize the types:
+
+#### Type Elaboration
+The `elaboratePType()` function resolves deferred type constructs:
+- Resolves equivalence classes (eclasses) to their concrete types
+- Filters out recursive eclasses to prevent infinite loops
+- Consolidates duplicate types that have the same name
+- Composes any deferred `TypeCompose` constructs
+- Recursively processes type parameters
+
+See `lib/tools/poppy/type/elaborate.flow` for the implementation.
+
+#### Union Extraction
+The `extractImplicitUnions()` and `unionize()` functions identify and name implicit union types:
+- Traverse all types looking for eclasses with multiple possible types
+- For each such eclass, create a named union type
+- Use suggested names from `eclassNames` to pick good union names (e.g., `Term` rather than `Union_42`)
+- Apply naming heuristics based on capitalization, common prefixes, and alphabetical sorting
+- Avoid self-referential unions by filtering
+
+See `lib/tools/poppy/type/unions.flow` for the implementation.
+
+#### Union Simplification
+The `simplifyPUnions()` function removes redundant unions:
+- Identifies cases where one union is a subset of another
+- Merges or eliminates redundant union definitions
+- Produces cleaner, more readable final types
+
+See `lib/tools/poppy/type/simplify.flow` for the implementation.
+
+#### Field Name Generation
+Struct field names are automatically generated based on type information:
+- For named types: use humpCase of the type name (e.g., `String` → `string1`)
+- For arrays: pluralize the element type (e.g., `[Term]` → `terms`)
+- Collect suggested names from eclass name tracking
+- Handle duplicates by appending numbers (`string1`, `string2`, etc.)
+
+See `lib/tools/mango/type_driver.flow` (function `pfieldName`) for the implementation.
+
+This multi-phase approach produces clean, readable type definitions with meaningful names for unions and struct fields.
+
+## Standard Library Integration
+
+The type system integrates with the RunCore standard library to provide built-in types and operations. When the type environment is initialized via `makePTypeEnv()`, it automatically loads core types from the RunCore library:
+
+```flow
+makePTypeEnv() -> PTypeEnv {
+    coreTypes = getRunCoreTypes();
+    pcore = mapTree(coreTypes, coreType2PType);
+    // Initialize env.words with pcore...
+}
+```
+
+This provides standard types and operations like:
+- Basic types: `bool`, `int`, `double`, `string`, `array`
+- List operations: `cons`, `nil`, conversions
+- String operations: `s2i`, `s2d`, `i2s`, `d2s`, `unescape`
+- Comparison operators: `==`, `!=`, `<`, `<=`, `>`, `>=`, `<=>`
+- Arithmetic operators: `+`, `-`, `*`, `/`, `%` (with overloading for int/double/string)
+- Boolean operators: `&&`, `||`, `not`
+- Type checking: `isBool`, `isInt`, `isDouble`, `isString`, `isArray`, `isConstructor`
+
+See `lib/tools/poppy/type/core.flow` for the `coreType2PType()` conversion and `lib/tools/runcore/runcoretypes.flow` for the RunCore type definitions.
+
+## URL Parameters for Type Generation and Debugging
+
+The implementation supports several URL parameters for controlling type generation and debugging output:
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `types` | `1`, `2`, or `3` | Generate type definitions: `1` = Melon format (.melon), `2` = Flow format (.flow), `3` = TypeScript format (.ts) |
+| `verbose` | `0`-`4` | Control debug output verbosity: `0` = quiet, `1` = basic, `2` = detailed, `3`-`4` = very detailed |
+| `gringoops` | `1` | Generate GringoOps helper functions for AST manipulation |
+| `typeprefix` | string | Prefix to strip from type names when generating field names |
+
+**Examples:**
+```
+# Generate Melon type definitions
+?types=1
+
+# Generate TypeScript definitions with verbose output
+?types=3&verbose=2
+
+# Generate Flow types and GringoOps
+?types=2&gringoops=1
+```
+
+These parameters are processed in `lib/tools/mango/type_driver.flow` after type inference completes.
 
 ## Conclusion
 
@@ -865,5 +1197,6 @@ In the end, we have a practical grammar language that can do the following from 
 2. Provide a standard library of common, reusable grammar constructs
 3. Use a Turing-complete stack language for semantic actions
 4. Automatically infer the type definitions for the corresponding AST
-5. Get an efficient parser for the language that constructs the strongly typed AST
-6. Get a functional VS code plugin for the language as well
+5. Generate type definitions in multiple formats (Melon, Flow, TypeScript)
+6. Get an efficient parser for the language that constructs the strongly typed AST
+7. Get a functional VS Code plugin for the language as well
