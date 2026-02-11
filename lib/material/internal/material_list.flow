@@ -5,6 +5,8 @@ export {
 	MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
 
+useNewRetranslate = !isUrlParameterFalse("material_list_new_retranslate_enabled");
+
 MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	style : [MListStyle] = m.style;
 	mstate : [flow] = m.state;
@@ -513,67 +515,85 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 								prevTranslates = getValue(translates);
 
 								newTranslates =
-									if (lineHeightsChanged)
+									if (lineHeightsChanged) {
+										// Build a map of existing translates by their item ID for efficient lookup
+										prevIdToTranslate = if (useNewRetranslate) {
+											fold(prevTranslates, makeTree(), \acc, tr ->
+												setTree(acc, getTrId(tr), tr)
+											)
+										} else makeTree();
+										
 										foldi(enumFromTo(bottomItem.id, topItem.id - 1), Triple([], 0., 0), \i, acc, id -> {
 											itemTranslation = secondOfTriple(acc) + lineHeight2translate(thirdOfTriple(acc), id);
 											item = MDynamicListItem(id, itemTranslation);
-
-											tr =
+											
+											tr = if (useNewRetranslate) {
+												// Match by item ID instead of array index to avoid destroy/recreate cascade
+												eitherFn(
+													lookupTree(prevIdToTranslate, id),
+													\existingTr -> {
+														nextDistinct(existingTr, item);
+														existingTr
+													},
+													\ -> make(item)
+												);
+											} else {
 												if (i < length(prevTranslates)) {
 													nextDistinct(prevTranslates[i], item);
 													prevTranslates[i]
 												} else
 													make(item);
+											}
 
 											Triple(arrayPush(firstOfTriple(acc), tr), itemTranslation, id)
 										})
 										|> firstOfTriple
 										|> Some
-									else if (bottomItemChanged || itemsCountChanged)
-										prevTranslates
+									} else if (bottomItemChanged || itemsCountChanged)
+											prevTranslates
 										|> (\translatesPrev : [DynamicBehaviour<MDynamicListItem >] ->
-											if (itemsCount.first < length(translatesPrev)) {
-												filter(translatesPrev, \tr : DynamicBehaviour<MDynamicListItem> ->
-													getTrId(tr) < topItem.id && getTrId(tr) >= bottomItem.id
-												)
-												|> uniq;
-											} else
-												translatesPrev
-										)
-										|> (\translatesPrev : [DynamicBehaviour<MDynamicListItem>] ->
-											if (itemsCount.first > length(translatesPrev)) {
-												maxId = either(maxA(map(translatesPrev, getTrId)), -1);
+												if (itemsCount.first < length(translatesPrev)) {
+													filter(translatesPrev, \tr : DynamicBehaviour<MDynamicListItem> ->
+														getTrId(tr) < topItem.id && getTrId(tr) >= bottomItem.id
+													)
+													|> uniq;
+												} else
+													translatesPrev
+											)
+											|> (\translatesPrev : [DynamicBehaviour<MDynamicListItem>] ->
+												if (itemsCount.first > length(translatesPrev)) {
+													maxId = either(maxA(map(translatesPrev, getTrId)), -1);
 
-												concat(translatesPrev, generate(0, itemsCount.first - length(translatesPrev), \i -> {
-													id0 = maxId + i + 1;
-													id = if (id0 > length(itms) - 1) id0 - itemsCount.first else id0;
+													concat(translatesPrev, generate(0, itemsCount.first - length(translatesPrev), \i -> {
+														id0 = maxId + i + 1;
+														id = if (id0 > length(itms) - 1) id0 - itemsCount.first else id0;
 
-													translation = bottomItem.translation + lineHeight2translate(bottomItem.id, id);
+														translation = bottomItem.translation + lineHeight2translate(bottomItem.id, id);
 
-													make(MDynamicListItem(id, translation))
-												}));
-											} else
-												translatesPrev
-										)
-										|> (\translatesPrev : [DynamicBehaviour<MDynamicListItem >] -> {
-											bottomLine = bottomItem.id - bottomItem.id % itemsCount.first + itemsCount.first;
+														make(MDynamicListItem(id, translation))
+													}));
+												} else
+													translatesPrev
+											)
+											|> (\translatesPrev : [DynamicBehaviour<MDynamicListItem >] -> {
+													bottomLine = bottomItem.id - bottomItem.id % itemsCount.first + itemsCount.first;
 
-											iter(translatesPrev, \tr -> {
-												id = getTrId(tr);
+													iter(translatesPrev, \tr -> {
+														id = getTrId(tr);
 
-												if (id < bottomItem.id || id >= topItem.id) {
-													newId =
-														(bottomLine + id % itemsCount.first)
-														|> (\f2 -> if (f2 >= topItem.id) f2 - itemsCount.first else f2);
+														if (id < bottomItem.id || id >= topItem.id) {
+															newId =
+																(bottomLine + id % itemsCount.first)
+																|> (\f2 -> if (f2 >= topItem.id) f2 - itemsCount.first else f2);
 
-													translation = bottomItem.translation + lineHeight2translate(bottomItem.id, newId);
+															translation = bottomItem.translation + lineHeight2translate(bottomItem.id, newId);
 
-													nextDistinct(tr, MDynamicListItem(newId, translation))
-												}
-											});
+															nextDistinct(tr, MDynamicListItem(newId, translation))
+														}
+													});
 
-											Some(translatesPrev)
-										})
+													Some(translatesPrev)
+											})
 									else // if nothing changed
 										None();
 
