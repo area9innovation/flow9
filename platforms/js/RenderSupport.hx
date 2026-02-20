@@ -4432,6 +4432,10 @@ class RenderSupport {
 		stage.assignClip(id, clip);
 	}
 
+	public static function setInspectHtmlStage(stage : HTMLStage, baselineByTop : Bool, callbackFn : Float -> Float -> Float -> Void) : Void {
+		stage.setInspectHtmlStage(baselineByTop, callbackFn);
+	}
+
 	public static function createElement(tagName : String) : Element {
 		return Browser.document.createElementNS(
 				if (tagName.toLowerCase() == "svg" || tagName.toLowerCase() == "path" || tagName.toLowerCase() == "g") {
