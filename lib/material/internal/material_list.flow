@@ -107,6 +107,8 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 	down = make(false);
 	draggingItem = make(-1);
 	draggingXY = make(zeroPoint);
+	draggingPressed = make(false);
+	outerDraggingId = makeTropicTag(manager); // Single id for all items to detect dragging inside dynamiclist.
 
 	changingSize = ref false;
 	metricsLock = ref false;
@@ -302,12 +304,13 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 															MFocusEnabled(const(false)),
 															MClickEnabled(rdr.enabled),
 															THovering(hover),
-															TPressed(rdrdown),
 															MMousePosition(point),
 															MOnTouch(grabDelay, \ -> {
 																if (!getValue(down)) {
 																	nextDistinct(draggingXY, getValue(point));
 																	nextDistinct(draggingItem, fgetValue(lineId));
+																	nextDistinct(manager.manager.dragging, outerDraggingId);
+																	nextDistinct(draggingPressed, true);
 																}
 															}),
 															MCursorShape(const(if (mobile) FingerCursor() else DefaultCursor())),
@@ -331,22 +334,13 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 											concat([
 												make2Subscribe(hover, fif(rdr.enabled, draggingItem, const(-1)), \h, hId -> if (h && hId >= 0) {
 													id = fgetValue(lineId);
-													ordr = getValue(reorderArr);
+														ordr = getValue(reorderArr);
 
-													nextDistinct(
-														reorderArr,
-														insertArray(removeIndex(ordr, findiDef(ordr, eq(hId), -1)), findiDef(ordr, eq(id), -1), hId)
-													);
-												}),
-												makeSubscribe2(fand(rdr.enabled, rdrdown), \d ->
-													if (!d) {
-														nextDistinct(draggingItem, -1);
-														nextDistinct(mainHoverTrigger, false);
-														if (reorderOnEnd) {
-															nextDistinct(rdr.order, getValue(reorderArr));
-														}
-													}
-												)
+														nextDistinct(
+															reorderArr,
+															insertArray(removeIndex(ordr, findiDef(ordr, eq(hId), -1)), findiDef(ordr, eq(id), -1), hId)
+														);
+												})
 											], if (mobile) [
 												makeSubscribe2(hover, \h -> if (h) nextDistinct(mainHoverTrigger, true)),
 												makeSubscribe2(mainHoverTrigger, \mh -> if (!mh) nextDistinct(hover, false))
@@ -514,41 +508,41 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 
 								prevTranslates = getValue(translates);
 
-								newTranslates =
-									if (lineHeightsChanged) {
-										// Build a map of existing translates by their item ID for efficient lookup
-										prevIdToTranslate = if (useNewRetranslate) {
-											fold(prevTranslates, makeTree(), \acc, tr ->
-												setTree(acc, getTrId(tr), tr)
-											)
-										} else makeTree();
-										
-										foldi(enumFromTo(bottomItem.id, topItem.id - 1), Triple([], 0., 0), \i, acc, id -> {
-											itemTranslation = secondOfTriple(acc) + lineHeight2translate(thirdOfTriple(acc), id);
-											item = MDynamicListItem(id, itemTranslation);
-											
-											tr = if (useNewRetranslate) {
-												// Match by item ID instead of array index to avoid destroy/recreate cascade
-												eitherFn(
-													lookupTree(prevIdToTranslate, id),
-													\existingTr -> {
-														nextDistinct(existingTr, item);
-														existingTr
-													},
-													\ -> make(item)
-												);
-											} else {
-												if (i < length(prevTranslates)) {
-													nextDistinct(prevTranslates[i], item);
-													prevTranslates[i]
-												} else
-													make(item);
-											}
+									newTranslates =
+										if (lineHeightsChanged) {
+											// Build a map of existing translates by their item ID for efficient lookup
+											prevIdToTranslate = if (useNewRetranslate) {
+												fold(prevTranslates, makeTree(), \acc, tr ->
+													setTree(acc, getTrId(tr), tr)
+												)
+											} else makeTree();
 
-											Triple(arrayPush(firstOfTriple(acc), tr), itemTranslation, id)
-										})
-										|> firstOfTriple
-										|> Some
+											foldi(enumFromTo(bottomItem.id, topItem.id - 1), Triple([], 0., 0), \i, acc, id -> {
+												itemTranslation = secondOfTriple(acc) + lineHeight2translate(thirdOfTriple(acc), id);
+												item = MDynamicListItem(id, itemTranslation);
+
+												tr = if (useNewRetranslate) {
+													// Match by item ID instead of array index to avoid destroy/recreate cascade
+													eitherFn(
+														lookupTree(prevIdToTranslate, id),
+														\existingTr -> {
+															nextDistinct(existingTr, item);
+															existingTr
+														},
+														\ -> make(item)
+													);
+												} else {
+													if (i < length(prevTranslates)) {
+														nextDistinct(prevTranslates[i], item);
+														prevTranslates[i]
+													} else
+														make(item);
+												}
+
+												Triple(arrayPush(firstOfTriple(acc), tr), itemTranslation, id)
+											})
+											|> firstOfTriple
+											|> Some
 									} else if (bottomItemChanged || itemsCountChanged)
 											prevTranslates
 										|> (\translatesPrev : [DynamicBehaviour<MDynamicListItem >] ->
@@ -597,7 +591,11 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 									else // if nothing changed
 										None();
 
-								maybeApply(newTranslates, \tr -> nextDistinct(translates, tr));
+								maybeApply(newTranslates, \tr -> {
+									if (map(prevTranslates, getTrId) != map(tr, getTrId)) { 
+										nextDistinct(translates, tr)
+									}
+								});
 
 								materialLogFn(
 									\ ->
@@ -711,10 +709,22 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 											fselect(mouseXY, FLift(\xy0 -> Point(xy0.x - getValue(draggingXY).x, xy0.y - getValue(draggingXY).y))),
 											t
 										))
-									|> (\t -> MMonitorMousePosition(manager, mouseXY, t)())
+									|> (\t -> MMonitorMousePosition(manager, draggingPressed, mouseXY, t)())
 								]
 							} else {
 								[]
+							}
+						),
+						makeSubscribe2(fand(rdr.enabled, draggingPressed), \d ->
+							if (!d) {
+								nextDistinct(draggingItem, -1);
+								if (outerDraggingId == getValue(manager.manager.dragging)) {
+									nextDistinct(manager.manager.dragging, -1);
+								}
+								nextDistinct(mainHoverTrigger, false);
+								if (reorderOnEnd) {
+									nextDistinct(rdr.order, getValue(reorderArr));
+								}
 							}
 						)
 					],
