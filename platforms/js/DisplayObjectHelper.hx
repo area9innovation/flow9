@@ -2202,11 +2202,15 @@ class DisplayObjectHelper {
 			if (ScreenreaderDialog && untyped childWidget.tagName == 'DIALOG') {
 				if (childWidget.getAttribute('flow-force-focus') == 'true') {
 					RenderSupport.once("stagechanged", function() {
-						updateDialogElementsAriaHidden(childWidget, true);
+						if (!childWidget.classList.contains("snackbar")) {
+							updateDialogElementsAriaHidden(childWidget, true);
+						}
 						var unhideDialogContent = function() {
-							Native.timer(500, function() {
-								updateDialogElementsAriaHidden(childWidget, false);
-							});
+							if (!childWidget.classList.contains("snackbar")) {
+								Native.timer(500, function() {
+									updateDialogElementsAriaHidden(childWidget, false);
+								});
+							}
 						};
 
 						var dialogTitleArr = untyped Array.from(Browser.document.getElementsByClassName("dialog_title"));
