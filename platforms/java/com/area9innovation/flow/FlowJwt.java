@@ -81,17 +81,20 @@ public class FlowJwt extends NativeHost {
 	}
 
 	public static Object decodeJwt(String jwt, String alg, String key, Func8<Object, String, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
+		boolean isError = true;
+		String errorMessage = "decodeJwt internal error"; // If it happens, it means that the error handling code is broken.
+
+		String iss = null;
+		String sub = null;
+		List<String> aud = null;
+		Date exp = null;
+		Date nbf = null;
+		Date iat = null;
+		String jti = null;
+		String impersonatedByUserId = null;
 		try {
 			JWTVerifier verifier = getVerifier(alg, key);
 			if (verifier != null) {
-				String iss;
-				String sub;
-				List<String> aud;
-				Date exp;
-				Date nbf;
-				Date iat;
-				String jti;
-				String impersonatedByUserId;
 				DecodedJWT jwtObj = verifier.verify(jwt);
 
 				iss = jwtObj.getIssuer();
@@ -102,21 +105,27 @@ public class FlowJwt extends NativeHost {
 				iat = jwtObj.getIssuedAt();
 				jti = jwtObj.getClaim("id").asString();
 				impersonatedByUserId = jwtObj.getClaim("iid").asString();
-				callback.invoke(
-					(iss == null ? "" : iss),
-					(sub == null ? "" : sub),
-					(aud == null ? "" : aud.toString()),
-					(exp == null ? "" : date2formatIso8601(exp)),
-					(nbf == null ? "" : date2formatIso8601(nbf)),
-					(iat == null ? "" : date2formatIso8601(iat)),
-					jti == null ? "" : jti,
-					impersonatedByUserId == null ? "" : impersonatedByUserId
-				);
+				isError = false;
 			} else {
-				onError.invoke("Algorithm not supported");
+				errorMessage = "Algorithm not supported";
 			}
 		} catch (Exception e) {
-			onError.invoke(e.getMessage());
+			errorMessage = e.getMessage();
+		}
+
+		if (isError) {
+			onError.invoke(errorMessage);
+		} else {
+			callback.invoke(
+				(iss == null ? "" : iss),
+				(sub == null ? "" : sub),
+				(aud == null ? "" : aud.toString()),
+				(exp == null ? "" : date2formatIso8601(exp)),
+				(nbf == null ? "" : date2formatIso8601(nbf)),
+				(iat == null ? "" : date2formatIso8601(iat)),
+				jti == null ? "" : jti,
+				impersonatedByUserId == null ? "" : impersonatedByUserId
+			);
 		}
 		return null;
 	}
