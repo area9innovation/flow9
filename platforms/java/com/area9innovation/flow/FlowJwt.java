@@ -28,10 +28,7 @@ public class FlowJwt extends NativeHost {
 	}
 
 	private static String date2formatIso8601(Date date) {
-		TimeZone tz = TimeZone.getTimeZone("UTC");
-		DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm'Z'");
-		df.setTimeZone(tz);
-		return df.format(date);
+		return date.toInstant().toString();
 	}
 
 	public static String verifyJwt(String jwt, String key) {
