@@ -246,8 +246,7 @@ public class FlowJwt extends NativeHost {
 		return kf.generatePublic(new java.security.spec.X509EncodedKeySpec(decodedPublicKey));
 	}
 
-	// NOTE: The PKCS#1 to PKCS#8 conversion below is manual DER wrapping. A more robust alternative
-	// would be to add bcpkix-jdk18on (BouncyCastle PKIX) to lib/ and use:
+	// NOTE: If bcpkix-jdk18on is added to lib/, this entire method can be replaced with:
 	//   PEMParser parser = new PEMParser(new StringReader(privateKeyPEM));
 	//   JcaPEMKeyConverter converter = new JcaPEMKeyConverter();
 	//   return converter.getPrivateKey((PrivateKeyInfo) parser.readObject());
@@ -261,48 +260,25 @@ public class FlowJwt extends NativeHost {
 
         KeyFactory keyFactory = KeyFactory.getInstance("RSA");
         if (isPkcs1) {
-            // PKCS#1 (RSA PRIVATE KEY) format: convert to PKCS#8 by wrapping with AlgorithmIdentifier
-            // The PKCS#8 prefix: SEQUENCE { version INTEGER 0, AlgorithmIdentifier { OID rsaEncryption, NULL }, OCTET STRING { pkcs1key } }
-            byte[] oid = {0x30, 0x0d, 0x06, 0x09, 0x2a, (byte)0x86, 0x48, (byte)0x86, (byte)0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00};
-            byte[] version = {0x02, 0x01, 0x00};
-            byte[] octetTag = wrapDerLength(0x04, keyBytes);
-            byte[] innerBytes = concat(version, oid, octetTag);
-            byte[] pkcs8Bytes = wrapDerLength(0x30, innerBytes);
-            PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(pkcs8Bytes);
+            // PKCS#1 (RSA PRIVATE KEY) format: parse ASN.1 and build RSAPrivateCrtKeySpec
+            org.bouncycastle.asn1.pkcs.RSAPrivateKey rsaKey =
+                org.bouncycastle.asn1.pkcs.RSAPrivateKey.getInstance(keyBytes);
+            RSAPrivateCrtKeySpec keySpec = new RSAPrivateCrtKeySpec(
+                rsaKey.getModulus(),
+                rsaKey.getPublicExponent(),
+                rsaKey.getPrivateExponent(),
+                rsaKey.getPrime1(),
+                rsaKey.getPrime2(),
+                rsaKey.getExponent1(),
+                rsaKey.getExponent2(),
+                rsaKey.getCoefficient()
+            );
             return keyFactory.generatePrivate(keySpec);
         } else {
             // PKCS#8 (PRIVATE KEY) format: use directly
             PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
             return keyFactory.generatePrivate(keySpec);
         }
-	}
-
-	private static byte[] wrapDerLength(int tag, byte[] content) {
-		byte[] lenBytes;
-		if (content.length < 128) {
-			lenBytes = new byte[]{(byte)content.length};
-		} else if (content.length < 256) {
-			lenBytes = new byte[]{(byte)0x81, (byte)content.length};
-		} else {
-			lenBytes = new byte[]{(byte)0x82, (byte)(content.length >> 8), (byte)(content.length & 0xff)};
-		}
-		byte[] result = new byte[1 + lenBytes.length + content.length];
-		result[0] = (byte)tag;
-		System.arraycopy(lenBytes, 0, result, 1, lenBytes.length);
-		System.arraycopy(content, 0, result, 1 + lenBytes.length, content.length);
-		return result;
-	}
-
-	private static byte[] concat(byte[]... arrays) {
-		int totalLen = 0;
-		for (byte[] a : arrays) totalLen += a.length;
-		byte[] result = new byte[totalLen];
-		int pos = 0;
-		for (byte[] a : arrays) {
-			System.arraycopy(a, 0, result, pos, a.length);
-			pos += a.length;
-		}
-		return result;
 	}
 
 	public static RSAPublicKey getRSAPublicKeyFromJsonString(String jsonStr) throws Exception {
