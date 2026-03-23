@@ -310,9 +310,6 @@ class WebWidget extends NativeWidget {
         Log.i(Utils.LOG_TAG, "HTML5 App Cache path to be configured as: " + cache_dir.getPath());
         // files are too sticky with LOAD_DEFAULT
         web_view.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);
-        // but we need appcache 
-        web_view.getSettings().setAppCachePath(cache_dir.getPath());
-        web_view.getSettings().setAppCacheEnabled(true);
     }
     
     private static boolean debuggingEnabled = false;

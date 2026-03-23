@@ -1,6 +1,8 @@
 package dk.area9.flowrunner;
 
 import java.io.File;
+import java.io.IOException;
+
 import android.annotation.TargetApi;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -144,7 +146,7 @@ public class FlowAudioCaptureAPI {
         }
     }
 
-    public void takeAudioRecord() {
+    public void takeAudioRecord() throws IOException {
         stopRecordAudio();
         if (audioFile != null) {
             MediaMetadataRetriever retriever = new MediaMetadataRetriever();
