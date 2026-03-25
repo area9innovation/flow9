@@ -1790,7 +1790,18 @@ StackSlot ByteCodeRunner::fromCharCode(RUNNER_ARGS)
     RUNNER_PopArgs1(charcode);
     RUNNER_CheckTag(TInt, charcode);
 
-    return RUNNER->AllocateString(unicode_string(1, unicode_char(charcode.GetInt())));
+    int code = charcode.GetInt();
+
+    if (code > 0xFFFF) {
+        // Encode as UTF-16 surrogate pair for supplementary plane characters
+        code -= 0x10000;
+        unicode_char hi = (unicode_char)(0xD800 + (code >> 10));
+        unicode_char lo = (unicode_char)(0xDC00 + (code & 0x3FF));
+        unicode_char pair[2] = { hi, lo };
+        return RUNNER->AllocateString(unicode_string(pair, 2));
+    } else {
+        return RUNNER->AllocateString(unicode_string(1, unicode_char(code)));
+    }
 }
 
 StackSlot ByteCodeRunner::getCharCodeAt(RUNNER_ARGS)
