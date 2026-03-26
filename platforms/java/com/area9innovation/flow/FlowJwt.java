@@ -28,10 +28,7 @@ public class FlowJwt extends NativeHost {
 	}
 
 	private static String date2formatIso8601(Date date) {
-		TimeZone tz = TimeZone.getTimeZone("UTC");
-		DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm'Z'");
-		df.setTimeZone(tz);
-		return df.format(date);
+		return date.toInstant().toString();
 	}
 
 	public static String verifyJwt(String jwt, String key) {
@@ -81,17 +78,20 @@ public class FlowJwt extends NativeHost {
 	}
 
 	public static Object decodeJwt(String jwt, String alg, String key, Func8<Object, String, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
+		boolean isError = true;
+		String errorMessage = "decodeJwt internal error"; // If it happens, it means that the error handling code is broken.
+
+		String iss = null;
+		String sub = null;
+		List<String> aud = null;
+		Date exp = null;
+		Date nbf = null;
+		Date iat = null;
+		String jti = null;
+		String impersonatedByUserId = null;
 		try {
 			JWTVerifier verifier = getVerifier(alg, key);
 			if (verifier != null) {
-				String iss;
-				String sub;
-				List<String> aud;
-				Date exp;
-				Date nbf;
-				Date iat;
-				String jti;
-				String impersonatedByUserId;
 				DecodedJWT jwtObj = verifier.verify(jwt);
 
 				iss = jwtObj.getIssuer();
@@ -102,21 +102,27 @@ public class FlowJwt extends NativeHost {
 				iat = jwtObj.getIssuedAt();
 				jti = jwtObj.getClaim("id").asString();
 				impersonatedByUserId = jwtObj.getClaim("iid").asString();
-				callback.invoke(
-					(iss == null ? "" : iss),
-					(sub == null ? "" : sub),
-					(aud == null ? "" : aud.toString()),
-					(exp == null ? "" : date2formatIso8601(exp)),
-					(nbf == null ? "" : date2formatIso8601(nbf)),
-					(iat == null ? "" : date2formatIso8601(iat)),
-					jti == null ? "" : jti,
-					impersonatedByUserId == null ? "" : impersonatedByUserId
-				);
+				isError = false;
 			} else {
-				onError.invoke("Algorithm not supported");
+				errorMessage = "Algorithm not supported";
 			}
 		} catch (Exception e) {
-			onError.invoke(e.getMessage());
+			errorMessage = e.getMessage();
+		}
+
+		if (isError) {
+			onError.invoke(errorMessage);
+		} else {
+			callback.invoke(
+				(iss == null ? "" : iss),
+				(sub == null ? "" : sub),
+				(aud == null ? "" : aud.toString()),
+				(exp == null ? "" : date2formatIso8601(exp)),
+				(nbf == null ? "" : date2formatIso8601(nbf)),
+				(iat == null ? "" : date2formatIso8601(iat)),
+				jti == null ? "" : jti,
+				impersonatedByUserId == null ? "" : impersonatedByUserId
+			);
 		}
 		return null;
 	}
@@ -178,34 +184,34 @@ public class FlowJwt extends NativeHost {
 			Map<String, Object> headerClaims = new HashMap<>();
 			if (algorithm.equals("HS256")) {
 				alg = Algorithm.HMAC256(key);
-				if (kid != "") {
+				if (!kid.isEmpty()) {
 					return "Error: kid is not supported";
 				}
 			} else if (algorithm.equals("HS384")) {
 				alg = Algorithm.HMAC384(key);
-				if (kid != "") {
+				if (!kid.isEmpty()) {
 					return "Error: kid is not supported";
 				}
 			} else if (algorithm.equals("HS512")) {
 				alg = Algorithm.HMAC512(key);
-				if (kid != "") {
+				if (!kid.isEmpty()) {
 					return "Error: kid is not supported";
 				}
 			} else if (algorithm.equals("RS256")) {
 				alg = Algorithm.RSA256(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
-				if (kid != "") {
+				if (!kid.isEmpty()) {
 					headerClaims = new HashMap<>();
 					headerClaims.put("kid", kid);
 				}
 			} else if (algorithm.equals("RS384")) {
 				alg = Algorithm.RSA384(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
-				if (kid != "") {
+				if (!kid.isEmpty()) {
 					headerClaims = new HashMap<>();
 					headerClaims.put("kid", kid);
 				}
 			} else if (algorithm.equals("RS512")) {
 				alg = Algorithm.RSA512(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
-				if (kid != "") {
+				if (!kid.isEmpty()) {
 					headerClaims = new HashMap<>();
 					headerClaims.put("kid", kid);
 				}
@@ -240,18 +246,39 @@ public class FlowJwt extends NativeHost {
 		return kf.generatePublic(new java.security.spec.X509EncodedKeySpec(decodedPublicKey));
 	}
 
+	// NOTE: If bcpkix-jdk18on is added to lib/, this entire method can be replaced with:
+	//   PEMParser parser = new PEMParser(new StringReader(privateKeyPEM));
+	//   JcaPEMKeyConverter converter = new JcaPEMKeyConverter();
+	//   return converter.getPrivateKey((PrivateKeyInfo) parser.readObject());
+	// This handles all PEM formats (PKCS#1, PKCS#8, encrypted keys) automatically.
 	public static PrivateKey getPemRsaPkcs8PrivateKeyFromString(String privateKeyPEM) throws Exception {
-		String key = privateKeyPEM.replace("-----BEGIN PRIVATE KEY-----", "")
-                 .replace("-----END PRIVATE KEY-----", "")
-                 .replaceAll("\\s", "");
+		boolean isPkcs1 = privateKeyPEM.contains("BEGIN RSA PRIVATE KEY");
+		// Strip any PEM header/footer lines (handles both PKCS#8 and PKCS#1 formats)
+		String key = privateKeyPEM.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
         // Decode the Base64 string
         byte[] keyBytes = Base64.getDecoder().decode(key);
 
-		 // Create the key specification
-        PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
-        // Generate the PrivateKey object from the specification
         KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        return keyFactory.generatePrivate(keySpec);
+        if (isPkcs1) {
+            // PKCS#1 (RSA PRIVATE KEY) format: parse ASN.1 and build RSAPrivateCrtKeySpec
+            org.bouncycastle.asn1.pkcs.RSAPrivateKey rsaKey =
+                org.bouncycastle.asn1.pkcs.RSAPrivateKey.getInstance(keyBytes);
+            RSAPrivateCrtKeySpec keySpec = new RSAPrivateCrtKeySpec(
+                rsaKey.getModulus(),
+                rsaKey.getPublicExponent(),
+                rsaKey.getPrivateExponent(),
+                rsaKey.getPrime1(),
+                rsaKey.getPrime2(),
+                rsaKey.getExponent1(),
+                rsaKey.getExponent2(),
+                rsaKey.getCoefficient()
+            );
+            return keyFactory.generatePrivate(keySpec);
+        } else {
+            // PKCS#8 (PRIVATE KEY) format: use directly
+            PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
+            return keyFactory.generatePrivate(keySpec);
+        }
 	}
 
 	public static RSAPublicKey getRSAPublicKeyFromJsonString(String jsonStr) throws Exception {

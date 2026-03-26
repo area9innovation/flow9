@@ -58,4 +58,14 @@ class Crypto {
 		callback("Error: SHA256 not implemented for this platform");
 		#end
 	}
+
+	public static function randomUUID() : String {
+		var crypto = untyped __js__("window.crypto");
+		try {
+			return crypto.randomUUID();
+		} catch (e : Dynamic) {
+			untyped console.warn("Crypto.randomUUID() not supported : " + e);
+			return "";
+		}
+	}
 }

@@ -21,7 +21,7 @@ You can also define what program to run by giving a bytecode filename on the com
 
     flowcpp bytecode_file.bytecode [bytecode_file.debug | --disassemble]
 
-Here, bytecode_file.bytecode is a file with the compiled flow program.  
+Here, bytecode_file.bytecode is a file with the compiled flow program.
 The bytecode_file.debug is a file with debug information.
 
 Example of how to compile a flow program to bytecode with debugging info:
@@ -86,8 +86,8 @@ There is a way to provide a project-specific configuration setting via `flow.con
 Options given in the command line take precedence over `flow.config`.
 
 
-Building (command line)
------------------------
+Building (command line) (Mac/Linux)
+-----------------------------------
 
 On Linux and Mac, you can build the binary using the `build.sh`
 script in this directory.
@@ -179,6 +179,28 @@ Take sure your Working directory is set to %{sourceDir}/bin/mac
 Unchoose flag Add build library search path to DYLD_LIBRARY_PATH and DYLD_FRAMEWORK_PATH.
 
 Enjoy running your project in Qt Creator.
+
+Building (command line) (Win)
+-----------------------------
+
+Prerequisites:
+- Visual Studio 2022 (Community or higher) with C++ desktop workload
+- Qt 5.15.2 for MSVC 2019 64-bit installed (e.g. via `aqtinstall`) to `C:\Qt\5.15.2\msvc2019_64`
+
+Then build:
+
+    cd platforms\qt
+    set QTDIR=C:\Qt\5.15.2\msvc2019_64
+    set Path=
+    "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" QtByteRunner.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /t:Build /m
+
+Note: `set Path=` is required because some systems have both `Path` and
+`PATH` environment variables. MSBuild crashes with "Item has already been
+added" if both exist. This only affects the current cmd session.
+
+After a successful build, copy the binary:
+
+    copy x64\Release\QtByteRunner.exe bin\windows\QtByteRunner.exe
 
 Building (IDE) (Win)
 --------------------

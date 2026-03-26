@@ -1347,7 +1347,11 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     public void cbTakeAudioRecord()
     {
-        flowAudioCaptureAPI.takeAudioRecord();
+        try {
+            flowAudioCaptureAPI.takeAudioRecord();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
     
     public synchronized void NotifyCameraEvent(int code, String message, String additionalInfo, int width, int height)

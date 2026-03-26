@@ -1468,7 +1468,8 @@ class DisplayObjectHelper {
 
 		if (nativeWidget != null) {
 			var svg: Element = nativeWidget.querySelector("svg");
-			if (svg != null) {
+			var forceBoxShadow = Platform.isSafari && Platform.isMacintosh;
+			if (svg != null && !forceBoxShadow) {
 				var elementId = untyped svg.parentNode.getAttribute('id');
 				var clipFilter : Element = nativeWidget.querySelector("#" + elementId + "filter");
 
@@ -1563,7 +1564,7 @@ class DisplayObjectHelper {
 				nativeWidget.style.boxShadow = '
 					${Math.cos(filter.angle) * filter.distance}px
 					${Math.sin(filter.angle) * filter.distance}px
-					${filter.blur}px
+					${filter.blur * (forceBoxShadow ? 2 : 1)}px
 					${untyped filter.spread != null ? (filter.spread+'px') : ''}
 					rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${filter.alpha})
 				';
@@ -2202,11 +2203,15 @@ class DisplayObjectHelper {
 			if (ScreenreaderDialog && untyped childWidget.tagName == 'DIALOG') {
 				if (childWidget.getAttribute('flow-force-focus') == 'true') {
 					RenderSupport.once("stagechanged", function() {
-						updateDialogElementsAriaHidden(childWidget, true);
+						if (!childWidget.classList.contains("snackbar")) {
+							updateDialogElementsAriaHidden(childWidget, true);
+						}
 						var unhideDialogContent = function() {
-							Native.timer(500, function() {
-								updateDialogElementsAriaHidden(childWidget, false);
-							});
+							if (!childWidget.classList.contains("snackbar")) {
+								Native.timer(500, function() {
+									updateDialogElementsAriaHidden(childWidget, false);
+								});
+							}
 						};
 
 						var dialogTitleArr = untyped Array.from(Browser.document.getElementsByClassName("dialog_title"));
