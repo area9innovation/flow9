@@ -107,12 +107,12 @@ main() {
 	}
 	>>;
 
-	haveFailed : ref bool = ref false;
+	haveFailed : ref [string] = ref [];
 
-	verify = \expected, jwt, algorithm, sym, pem, jwk -> {
-		resPem = if (pem == "") "" else verifyJwtAlgorithm(jwt, pem, algorithm);
-		resJwk = if (jwk == "") "" else verifyJwtAlgorithm(jwt, jwk, algorithm);
-		resSym = if (sym == "") "" else verifyJwtAlgorithm(jwt, sym, algorithm);
+	verify = \testName, expected, jwt, algorithm, sym, pem, jwk -> {
+		resPem = if (pem == "") "" else eitherMap(makeJwtKeyM("", pem, algorithm, None()), \key -> verifyJwt(jwt, key), "Can't create JwtKey");
+		resJwk = if (jwk == "") "" else eitherMap(makeJwtKeyM("", jwk, algorithm, None()), \key -> verifyJwt(jwt, key), "Can't create JwtKey");
+		resSym = if (sym == "") "" else eitherMap(makeJwtKeyM(sym, "", algorithm, None()), \key -> verifyJwt(jwt, key), "Can't create JwtKey");
 
 		if (
 			(resPem != "" || resJwk != "" || resSym != "") && 
@@ -122,8 +122,10 @@ main() {
 		) {
 			println("OK");
 		} else {
-			haveFailed := true;
-			println("FAILED");
+			haveFailed := arrayPush(^haveFailed, testName);
+			println("FAILED : " + testName);
+			println(pem);
+			println(jwk);
 		}
 		//println("\t" + algorithm + " JWT: " + jwt);
 		println("\t" + algorithm + " Sym format: " + resSym); // Symmetric key format
@@ -131,8 +133,8 @@ main() {
 		println("\t" + algorithm + " JWK format: " + resJwk);
 	}
 
-	// Test with pre-created JWT's with symmetric key
 	verify(
+		"Test with pre-created JWT's with symmetric key",
 		"OK",
 		"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1M30._Fr8Iq51SDl29-wYUoA8uvVH1MKdNtBEKdJce9Jy93U",
 		"HS256",
@@ -141,11 +143,12 @@ main() {
 		""
 	);
 
-	// Test with new key
 	hs256Key = "someKey";
+	hmacKey = HmacKey(hs256Key, HS256(), None());
 	verify(
+		"Test with new key",
 		"OK",
-		createJwtAlgorithm(hs256Key, "{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"admin\":true,\"iat\":1725605153}", "HS256", ""),
+		createJwt(hmacKey, JwtClaimsJsonObjectString("{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"admin\":true,\"iat\":1725605153}")),
 		"HS256",
 		hs256Key,
 		"",
@@ -155,11 +158,11 @@ main() {
 	nowSeconds: int = floor(timestamp() / 1000.0);
 
 	makeHsJwtIat = \addIat: int -> {
-		createJwtAlgorithm(hs256Key, "{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"admin\":true,\"iat\":" + i2s(nowSeconds + addIat) + "}", "HS256", "");
+		createJwt(hmacKey, JwtClaimsJsonObjectString("{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"admin\":true,\"iat\":" + i2s(nowSeconds + addIat) + "}"));
 	};
 
-	// Verify that the token is valid now 
 	verify(
+		"Verify that the token is valid now",
 		"OK",
 		makeHsJwtIat(0),
 		"HS256",
@@ -168,8 +171,8 @@ main() {
 		""
 	);
 
-	// Verify that the token can't be used before the iat time (We allow 5min time skew, but not 6)
 	verify(
+		"Verify that the token can't be used before the iat time (We allow 5min time skew, but not 6)",
 		"The Token can't be used before",
 		makeHsJwtIat(60*6),
 		"HS256",
@@ -178,8 +181,8 @@ main() {
 		""
 	);
 
-	// Verify that we allow 4min time skew (We should allow 5)
 	verify(
+		"Verify that we allow 4min time skew (We should allow 5)",
 		"OK",
 		makeHsJwtIat(60*4),
 		"HS256",
@@ -188,8 +191,8 @@ main() {
 		""
 	);
 
-	// Make a token with invalid JSON
 	verify(
+		"Make a token with invalid JSON",
 		"The token was expected",
 		"notanjwt",
 		"HS256",
@@ -198,8 +201,8 @@ main() {
 		""
 	);
 
-	// Empty JWT
 	verify(
+		"Empty JWT",
 		"The token was expected",
 		"",
 		"HS256",
@@ -208,10 +211,10 @@ main() {
 		""
 	);
 
-	// JWT created with illegal JSON
 	verify(
+		"JWT created with illegal JSON",
 		"The token was expected",
-		createJwtAlgorithm(hs256Key, "{\"sub\":\"1234567890\"", "HS256", ""),
+		createJwt(hmacKey, JwtClaimsJsonObjectString("{\"sub\":\"1234567890\"")),
 		"HS256",
 		hs256Key,
 		"",
@@ -220,11 +223,11 @@ main() {
 
 	// Make an JWT that is issued 10 minutes hour ago, and expire now + addIat
 	makeHsJwtExp = \addExp: int -> {
-		createJwtAlgorithm(hs256Key, "{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"admin\":true,\"iat\":" + i2s(nowSeconds - 600) + ",\"exp\": " + i2s(nowSeconds + addExp) + "}", "HS256", "");
+		createJwt(hmacKey, JwtClaimsJsonObjectString("{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"admin\":true,\"iat\":" + i2s(nowSeconds - 600) + ",\"exp\": " + i2s(nowSeconds + addExp) + "}"));
 	};
 
-	// Verify that we allow expiration 30 seconds in the future 
 	verify(
+		"Verify that we allow expiration 30 seconds in the future",
 		"OK",
 		makeHsJwtExp(30),
 		"HS256",
@@ -233,8 +236,8 @@ main() {
 		""
 	);
 
-	// Verify that we allow expiration 4 minutes in the past (We allow 5 min time skew)
 	verify(
+		"Verify that we allow expiration 4 minutes in the past (We allow 5 min time skew)",
 		"OK",
 		makeHsJwtExp(-240),
 		"HS256",
@@ -243,8 +246,8 @@ main() {
 		""
 	);
 
-	// Verify that we do not allow expiration 6 minutes in the past (We only allow 5 min time skew)
 	verify(
+		"Verify that we do not allow expiration 6 minutes in the past (We only allow 5 min time skew)",
 		"The Token has expired",
 		makeHsJwtExp(-360),
 		"HS256",
@@ -254,6 +257,7 @@ main() {
 	);
 
 	verify(
+		"The Token has expired RS256",
 		"The Token has expired",
 		"eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1MywiZXhwIjoxNzI3NjA4NzUzfQ.krXFlCT20Yy0Rw20Xjt1RL7_cn_HJC_0lmFhjhv9j7NH2vz4FhOfwnWqImBY6VM6jVyY5g2oLBQsLbmM2woLOFxCB5_SZDBuhBV0UC_zf4G9OOsEd-xf07OaMtDukkR6zZMMrpmvwolsuoeivX6GsMo7KElqJuL8M9GkcsjZl2__3E5GHAffdQ3EcsEt0Oz6-Okxk-1u6CtiZwfTMQeH3AcbygGwRHisKtzSJ_Y5DA7JBTF1QsCjfavGpuwqDQgf8pUaOAmmHTGQOo-kkXQ_pp_f7Y1JOfNPrTXIhVul49tXl_f1f0pxz0dXqRwvwbTcVFSEsAitJLtPKup220zrWw",
 		"RS256",
@@ -262,6 +266,7 @@ main() {
 		keyJwkRSA
 	);
 	verify(
+		"The Token has expired RS384",
 		"The Token has expired",
 		"eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzM4NCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1MywiZXhwIjoxNzI3NjA4NzUzfQ.riDnkkyxZgG5hSvzEomrf4Y7MFHe-97YfH40hJyh9dwr7W7q5yqNQ_ORMzOccC4yTCXx0M0zOAzgZ-tYckQOlGPzBarbyXWErgTWuAatkR6gvZZshOYeEpfNCF4vPJ7A_HNVmfEhlwhUkG8QlaaF1ESdNsHIbzYQ6rpVxDA27UcTznUf_pbvzi72vhv1qEnbiYV5llSwtxSqvXZW5e22arJSwvhhtXi-Z89fB4PQyBM7qWjFlq85KR0S0cDcHANxGULAFnH0zDIKEH4S9Heb1Kz8D7JMysZockA2mmD2vUjOFKCM0RwzYpdrpL6rvtLXOwZY9DSvr2T3yrSJd9_h8Q",
 		"RS384",
@@ -270,6 +275,7 @@ main() {
 		keyJwkRSA
 	);
 	verify(
+		"The Token has expired RS512",
 		"The Token has expired",
 		"eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1MywiZXhwIjoxNzI3NjA4NzUzfQ.LpsksC0Zo5P75B2M98_YdkBze_jlxNi-DQbD-gbsnftlYWSAU_PIIiF9OHTcE7H7RTqt5m_eK5mSA2dWn7UH0I2KlfQ2lMwJOd9ybSkr-wQ30mDzAXR0ZZQQQ3ydpB_dRFnopDJlK7odTfcjvA2a3AXlhp41TyfogbmOATo-VDBw9nvhFsSksmbOI6vmUXOhpPo7uBBerjLbbBiZRlDB9jSA4ylhWiYte_US15oZ0CWkJdEwdiAL0G1R_RN0BBrwoWA4cJK4DtemkhCQ4QHb9pJCzBcsR7PpgJ-N5FhZ-1qcFdnjDj_e9MVs_ggx-xE2N1mEvXxjkuHUtBna4Qmq9w",
 		"RS512",
@@ -278,8 +284,8 @@ main() {
 		keyJwkRSA
 	);
 
-	// Verify RSA with a predefined JWT, that does not expire
 	verify(
+		"Verify RSA with a predefined JWT, that does not expire",
 		"OK",
 		"eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1M30.OaH9DCqCrf1chCXp8TqvanX5RwZqO5VhQCV2x3dsRo0EmPZpJH7OEilWOTCyWr1k12qMxyswr2LKU0OUw7nv0lPdUgsO4VpvEhO6s-Bw0q8aNXYPkLRMT7ML5qnxnJ0F1g_jYdOgEIrvJGvVOQs8bQcDJlfl9RRe0YRadNbGVJdaFtYniIgBykZthBDXVoKNFAhPXzvGWsrtUD-oFVhxxCg507mkxw8lTuTRt5jSLBo2KmJfJrBIg5UyNf8fDaJcSwQ5PyOUetpruV2w51uG43Uvqg35ABvaIVSi64LSIN78DxntOXp9cGIFzt077_UAdf82OWboXvw88H2FSpf5VA",
 		"RS256",
@@ -289,17 +295,17 @@ main() {
 	);
 
 	makeRsJwtIat = \key: string, kid: string, addIat: int -> {
-		jwt = createJwtAlgorithm(key, "{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"admin\":true,\"iat\":" + i2s(nowSeconds + addIat) + "}", "RS256", kid);
+		jwt = createJwt(RsaKeyPair(Some(key), None(), RS256(), Some(kid)), JwtClaimsJsonObjectString("{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"admin\":true,\"iat\":" + i2s(nowSeconds + addIat) + "}"));
 		if (startsWith(jwt, "Error:")) {
-			println("createJwtAlgorithm failed: " + jwt);
+			println("createJwt failed: " + jwt);
 		} else {
 			println("RS jwt: " + jwt);
 		};
 		jwt;
 	};
 
-	// Verify we can create a key with a Private Key
 	verify(
+		"Verify we can create a key with a Private Key",
 		"OK",
 		makeRsJwtIat(keyPrivatePemPkcs8RSAv2, "", 0),
 		"RS256",
@@ -308,8 +314,8 @@ main() {
 		keyJwkRSAv2
 	);
 
-	// Create a key with kid
 	verify(
+		"Create a key with kid",
 		"OK",
 		makeRsJwtIat(keyPrivatePemPkcs8RSAv2, "12345", 0),
 		"RS256",
@@ -318,8 +324,8 @@ main() {
 		keyJwkRSAv2
 	);
 
-	// Issue a jwt in the future
 	verify(
+		"Issue a jwt in the future",
 		"The Token can't be used before",
 		makeRsJwtIat(keyPrivatePemPkcs8RSAv2, "", 360),
 		"RS256",
@@ -328,8 +334,8 @@ main() {
 		keyJwkRSAv2
 	);
 
-	// Test that we get an error, not an exception when the public key JSON is invalid
 	verify(
+		"Test that we get an error, not an exception when the public key JSON is invalid",
 		"ParseException",
 		"eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1M30.OaH9DCqCrf1chCXp8TqvanX5RwZqO5VhQCV2x3dsRo0EmPZpJH7OEilWOTCyWr1k12qMxyswr2LKU0OUw7nv0lPdUgsO4VpvEhO6s-Bw0q8aNXYPkLRMT7ML5qnxnJ0F1g_jYdOgEIrvJGvVOQs8bQcDJlfl9RRe0YRadNbGVJdaFtYniIgBykZthBDXVoKNFAhPXzvGWsrtUD-oFVhxxCg507mkxw8lTuTRt5jSLBo2KmJfJrBIg5UyNf8fDaJcSwQ5PyOUetpruV2w51uG43Uvqg35ABvaIVSi64LSIN78DxntOXp9cGIFzt077_UAdf82OWboXvw88H2FSpf5VA",
 		"RS256",
@@ -339,6 +345,7 @@ main() {
 	);
 
 	verify(
+		"The Token has expired ES256",
 		"The Token has expired",
 		"eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1MywiZXhwIjoxNzI3NjA4NzUzfQ.yeFjg_EB233uGMO0sH0NoImjsD9GzD7qxvZGOo7srJ-mKd-01gY5hBtK5iSQYsIrJnxpfpfe6hg9xGsii-vdLg",
 		"ES256",
@@ -347,6 +354,7 @@ main() {
 		""
 	);
 	verify(
+		"The Token has expired ES384",
 		"The Token has expired",
 		"eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzM4NCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1MywiZXhwIjoxNzI3NjA4NzUzfQ.Qk6K5Zo-6-4LRqjYToertiSwcs8Z6wSRClXOwTFCRn2lCYcZXx4_65oucVzGoWVmPa81U71Jlszk1xenU9voq52sLFKS2TI7m-INcgQlpf4ro15MTU6fm2FFGxCmeK-d",
 		"ES384",
@@ -355,6 +363,7 @@ main() {
 		""
 	);
 	verify(
+		"The Token has expired ES512",
 		"The Token has expired",
 		"eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzUxMiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1MywiZXhwIjoxNzI3NjA4NzUzfQ.AGX8VWl6VBh9M_O5Zps1bfY8k6Vy-yoUSiBL2E_a2z0iopHJOf-W4RmWX31QJGizJoWRx591EhE_ut8drZNqrhlmAddfI3k2DA2rHG-tX3Dmvconx2-VU2Ss5UaQM8Rn5KrY0lV_joMh18RVk4Q03oYUk9wT5NXgU60WqlBdIhp5SO2J",
 		"ES512",
@@ -363,8 +372,9 @@ main() {
 		keyJwkECDSA512
 	);
 
-	quit(if (^haveFailed) {
-		println("Some tests failed");
+	quit(if (^haveFailed != []) {
+		println("Next tests failed:");
+		iter(^haveFailed, println);
 		1;
 	} else {
 		println("All tests passed");
