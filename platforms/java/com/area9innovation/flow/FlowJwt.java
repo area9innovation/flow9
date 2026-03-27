@@ -3,6 +3,7 @@ package com.area9innovation.flow;
 import java.io.*;
 import java.util.*;
 import java.text.*;
+import java.nio.charset.StandardCharsets;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigInteger;
@@ -29,10 +30,6 @@ public class FlowJwt extends NativeHost {
 
 	private static String date2formatIso8601(Date date) {
 		return date.toInstant().toString();
-	}
-
-	public static String verifyJwt(String jwt, String key) {
-		return verifyJwtAlgorithm(jwt, key, "HS256");
 	}
 
 	private static JWTVerifier getVerifier(String alg, String key) throws Exception {
@@ -77,31 +74,92 @@ public class FlowJwt extends NativeHost {
 		return (algorithm == null) ? null : JWT.require(algorithm).acceptLeeway(300).build();
 	}
 
-	public static Object decodeJwt(String jwt, String alg, String key, Func8<Object, String, String, String, String, String, String, String, String> callback, Func1<Object, String> onError) {
+	private static PublicKey getPemPublicKeyFromString(String publicKeyPEM, String keyType) throws Exception {
+		publicKeyPEM = publicKeyPEM.replace("-----BEGIN PUBLIC KEY-----", "");
+		publicKeyPEM = publicKeyPEM.replace("-----END PUBLIC KEY-----", "");
+		publicKeyPEM = publicKeyPEM.replaceAll("\\s", "");
+		byte[] decodedPublicKey = Base64.getDecoder().decode(publicKeyPEM);
+
+		KeyFactory kf = KeyFactory.getInstance(keyType);
+		return kf.generatePublic(new java.security.spec.X509EncodedKeySpec(decodedPublicKey));
+	}
+
+	// NOTE: If bcpkix-jdk18on is added to lib/, this entire method can be replaced with:
+	//   PEMParser parser = new PEMParser(new StringReader(privateKeyPEM));
+	//   JcaPEMKeyConverter converter = new JcaPEMKeyConverter();
+	//   return converter.getPrivateKey((PrivateKeyInfo) parser.readObject());
+	// This handles all PEM formats (PKCS#1, PKCS#8, encrypted keys) automatically.
+	private static PrivateKey getPemRsaPkcs8PrivateKeyFromString(String privateKeyPEM) throws Exception {
+		boolean isPkcs1 = privateKeyPEM.contains("BEGIN RSA PRIVATE KEY");
+		// Strip any PEM header/footer lines (handles both PKCS#8 and PKCS#1 formats)
+		String key = privateKeyPEM.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
+        // Decode the Base64 string
+        byte[] keyBytes = Base64.getDecoder().decode(key);
+
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+        if (isPkcs1) {
+            // PKCS#1 (RSA PRIVATE KEY) format: parse ASN.1 and build RSAPrivateCrtKeySpec
+            org.bouncycastle.asn1.pkcs.RSAPrivateKey rsaKey =
+                org.bouncycastle.asn1.pkcs.RSAPrivateKey.getInstance(keyBytes);
+            RSAPrivateCrtKeySpec keySpec = new RSAPrivateCrtKeySpec(
+                rsaKey.getModulus(),
+                rsaKey.getPublicExponent(),
+                rsaKey.getPrivateExponent(),
+                rsaKey.getPrime1(),
+                rsaKey.getPrime2(),
+                rsaKey.getExponent1(),
+                rsaKey.getExponent2(),
+                rsaKey.getCoefficient()
+            );
+            return keyFactory.generatePrivate(keySpec);
+        } else {
+            // PKCS#8 (PRIVATE KEY) format: use directly
+            PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
+            return keyFactory.generatePrivate(keySpec);
+        }
+	}
+
+	private static RSAPublicKey getRSAPublicKeyFromJsonString(String jsonStr) throws Exception {
+		JSONObject json = (JSONObject) new JSONParser().parse(jsonStr);
+		String n = (String)json.get("n");
+		String e = (String)json.get("e");
+		BigInteger n2 = new BigInteger(1, Base64.getUrlDecoder().decode(n));
+		BigInteger e2 = new BigInteger(1, Base64.getUrlDecoder().decode(e));
+		RSAPublicKeySpec spec = new RSAPublicKeySpec(n2, e2);
+
+		KeyFactory kf = KeyFactory.getInstance("RSA");
+		RSAPublicKey pubKey = (RSAPublicKey) kf.generatePublic(spec);
+		return pubKey;
+	}
+
+	private static ECPublicKey getECPublicKeyFromJsonString(String jsonStr) throws Exception {
+		JSONObject json = (JSONObject) new JSONParser().parse(jsonStr);
+		String x = (String)json.get("x");
+		String y = (String)json.get("y");
+		BigInteger x2 = new BigInteger(1, Base64.getUrlDecoder().decode(x));
+		BigInteger y2 = new BigInteger(1, Base64.getUrlDecoder().decode(y));
+
+		AlgorithmParameters algoParameters = AlgorithmParameters.getInstance("EC", new BouncyCastleProvider());
+		algoParameters.init(new ECGenParameterSpec((String)json.get("crv")));
+		ECParameterSpec parameterSpec = algoParameters.getParameterSpec(ECParameterSpec.class);
+		ECPublicKeySpec spec = new ECPublicKeySpec(new ECPoint(x2, y2), parameterSpec);
+
+		KeyFactory kf = KeyFactory.getInstance("EC");
+		ECPublicKey pubKey = (ECPublicKey) kf.generatePublic(spec);
+		return pubKey;
+	}
+
+	public static Object decodeJwt(String jwt, String alg, String key, Func1<Object, String> callback, Func1<Object, String> onError) {
 		boolean isError = true;
 		String errorMessage = "decodeJwt internal error"; // If it happens, it means that the error handling code is broken.
 
-		String iss = null;
-		String sub = null;
-		List<String> aud = null;
-		Date exp = null;
-		Date nbf = null;
-		Date iat = null;
-		String jti = null;
-		String impersonatedByUserId = null;
+		String payload = null;
 		try {
 			JWTVerifier verifier = getVerifier(alg, key);
 			if (verifier != null) {
 				DecodedJWT jwtObj = verifier.verify(jwt);
 
-				iss = jwtObj.getIssuer();
-				sub = jwtObj.getSubject();
-				aud = jwtObj.getAudience();
-				exp = jwtObj.getExpiresAt();
-				nbf = jwtObj.getNotBefore();
-				iat = jwtObj.getIssuedAt();
-				jti = jwtObj.getClaim("id").asString();
-				impersonatedByUserId = jwtObj.getClaim("iid").asString();
+				payload = new String(Base64.getDecoder().decode(jwtObj.getPayload()), StandardCharsets.UTF_8);
 				isError = false;
 			} else {
 				errorMessage = "Algorithm not supported";
@@ -113,69 +171,9 @@ public class FlowJwt extends NativeHost {
 		if (isError) {
 			onError.invoke(errorMessage);
 		} else {
-			callback.invoke(
-				(iss == null ? "" : iss),
-				(sub == null ? "" : sub),
-				(aud == null ? "" : aud.toString()),
-				(exp == null ? "" : date2formatIso8601(exp)),
-				(nbf == null ? "" : date2formatIso8601(nbf)),
-				(iat == null ? "" : date2formatIso8601(iat)),
-				jti == null ? "" : jti,
-				impersonatedByUserId == null ? "" : impersonatedByUserId
-			);
+			callback.invoke(payload);
 		}
 		return null;
-	}
-
-	public static String createJwt(String key, String issuer, String subject, String audience, String expiration, String notBefore, String issuedAt, String id) {
-		try {
-			Algorithm algorithm = Algorithm.HMAC256(key);
-			JWTCreator.Builder builder = JWT.create();
-			if (!issuer.isEmpty()) {
-				builder = builder.withIssuer(issuer);
-			}
-			if (!subject.isEmpty()) {
-				builder = builder.withSubject(subject);
-			}
-			if (!audience.isEmpty()) {
-				builder = builder.withAudience(audience);
-			}
-			if (!issuedAt.isEmpty()) {
-				builder = builder.withIssuedAt(getDateFromIsoString(issuedAt));
-			} else {
-				builder = builder.withIssuedAt(new Date());
-			}
-			if (!id.isEmpty()) {
-				//builder = builder.withJWTId(id);
-				builder = builder.withClaim("id", id);
-			}
-			if (!expiration.isEmpty()) {
-				builder = builder.withExpiresAt(getDateFromIsoString(expiration));
-			}
-			if (!notBefore.isEmpty()) {
-				builder = builder.withNotBefore(getDateFromIsoString(notBefore));
-			}
-			return builder.sign(algorithm);
-		} catch (NumberFormatException e) {
-			System.out.println(e.getMessage());
-			return "";
-		}
-	}
-
-	public static String createJwtClaims(String jwtKey, Object[] keys, Object[] values) {
-		Algorithm algorithm = Algorithm.HMAC256(jwtKey);
-		JWTCreator.Builder builder = JWT.create();
-		for (int i = 0; i < keys.length; i++) {
-			if (values[i] instanceof Double) {
-				builder = builder.withClaim((String)keys[i], (Double)values[i]);
-			} else if (values[i] instanceof Boolean) {
-				builder = builder.withClaim((String)keys[i], (Boolean)values[i]);
-			} else {
-				// Assume string
-				builder = builder.withClaim((String)keys[i], (String)values[i]);
-			}
-		}
-		return builder.sign(algorithm);
 	}
 
 	public static String createJwtAlgorithm(String key, String jsonClaims, String algorithm, String kid) {
@@ -236,80 +234,6 @@ public class FlowJwt extends NativeHost {
 		}
 	}
 
-	public static PublicKey getPemPublicKeyFromString(String publicKeyPEM, String keyType) throws Exception {
-		publicKeyPEM = publicKeyPEM.replace("-----BEGIN PUBLIC KEY-----", "");
-		publicKeyPEM = publicKeyPEM.replace("-----END PUBLIC KEY-----", "");
-		publicKeyPEM = publicKeyPEM.replaceAll("\\s", "");
-		byte[] decodedPublicKey = Base64.getDecoder().decode(publicKeyPEM);
-
-		KeyFactory kf = KeyFactory.getInstance(keyType);
-		return kf.generatePublic(new java.security.spec.X509EncodedKeySpec(decodedPublicKey));
-	}
-
-	// NOTE: If bcpkix-jdk18on is added to lib/, this entire method can be replaced with:
-	//   PEMParser parser = new PEMParser(new StringReader(privateKeyPEM));
-	//   JcaPEMKeyConverter converter = new JcaPEMKeyConverter();
-	//   return converter.getPrivateKey((PrivateKeyInfo) parser.readObject());
-	// This handles all PEM formats (PKCS#1, PKCS#8, encrypted keys) automatically.
-	public static PrivateKey getPemRsaPkcs8PrivateKeyFromString(String privateKeyPEM) throws Exception {
-		boolean isPkcs1 = privateKeyPEM.contains("BEGIN RSA PRIVATE KEY");
-		// Strip any PEM header/footer lines (handles both PKCS#8 and PKCS#1 formats)
-		String key = privateKeyPEM.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
-        // Decode the Base64 string
-        byte[] keyBytes = Base64.getDecoder().decode(key);
-
-        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        if (isPkcs1) {
-            // PKCS#1 (RSA PRIVATE KEY) format: parse ASN.1 and build RSAPrivateCrtKeySpec
-            org.bouncycastle.asn1.pkcs.RSAPrivateKey rsaKey =
-                org.bouncycastle.asn1.pkcs.RSAPrivateKey.getInstance(keyBytes);
-            RSAPrivateCrtKeySpec keySpec = new RSAPrivateCrtKeySpec(
-                rsaKey.getModulus(),
-                rsaKey.getPublicExponent(),
-                rsaKey.getPrivateExponent(),
-                rsaKey.getPrime1(),
-                rsaKey.getPrime2(),
-                rsaKey.getExponent1(),
-                rsaKey.getExponent2(),
-                rsaKey.getCoefficient()
-            );
-            return keyFactory.generatePrivate(keySpec);
-        } else {
-            // PKCS#8 (PRIVATE KEY) format: use directly
-            PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
-            return keyFactory.generatePrivate(keySpec);
-        }
-	}
-
-	public static RSAPublicKey getRSAPublicKeyFromJsonString(String jsonStr) throws Exception {
-		JSONObject json = (JSONObject) new JSONParser().parse(jsonStr);
-		String n = (String)json.get("n");
-		String e = (String)json.get("e");
-		BigInteger n2 = new BigInteger(1, Base64.getUrlDecoder().decode(n));
-		BigInteger e2 = new BigInteger(1, Base64.getUrlDecoder().decode(e));
-		RSAPublicKeySpec spec = new RSAPublicKeySpec(n2, e2);
-
-		KeyFactory kf = KeyFactory.getInstance("RSA");
-		RSAPublicKey pubKey = (RSAPublicKey) kf.generatePublic(spec);
-		return pubKey;
-	}
-
-	public static ECPublicKey getECPublicKeyFromJsonString(String jsonStr) throws Exception {
-		JSONObject json = (JSONObject) new JSONParser().parse(jsonStr);
-		String x = (String)json.get("x");
-		String y = (String)json.get("y");
-		BigInteger x2 = new BigInteger(1, Base64.getUrlDecoder().decode(x));
-		BigInteger y2 = new BigInteger(1, Base64.getUrlDecoder().decode(y));
-
-		AlgorithmParameters algoParameters = AlgorithmParameters.getInstance("EC", new BouncyCastleProvider());
-		algoParameters.init(new ECGenParameterSpec((String)json.get("crv")));
-		ECParameterSpec parameterSpec = algoParameters.getParameterSpec(ECParameterSpec.class);
-		ECPublicKeySpec spec = new ECPublicKeySpec(new ECPoint(x2, y2), parameterSpec);
-
-		KeyFactory kf = KeyFactory.getInstance("EC");
-		ECPublicKey pubKey = (ECPublicKey) kf.generatePublic(spec);
-		return pubKey;
-	}
 
 	public static String verifyJwtAlgorithm(String jwtStr, String keyStr, String algorithmStr) {
 		try {
