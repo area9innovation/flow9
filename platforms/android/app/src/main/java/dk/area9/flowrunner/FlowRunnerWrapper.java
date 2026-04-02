@@ -1200,20 +1200,48 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     public void cbGetFBToken(int cb_root) {
         try {
-            Class service = Class.forName("com.google.firebase.iid.FirebaseInstanceId");
+            // Use FirebaseMessaging.getInstance().getToken() — replaces removed FirebaseInstanceId
+            Class<?> service = Class.forName("com.google.firebase.messaging.FirebaseMessaging");
 
             try {
                 Method getInstance = service.getMethod("getInstance");
                 Object instance = getInstance.invoke(null);
 
-                Method subscription = service.getMethod("getToken");
-                String token = (String)subscription.invoke(instance);
-                nDeliverFBTokenTo(cPtr(), cb_root, token);
+                Method getToken = service.getMethod("getToken");
+                Object taskObj = getToken.invoke(instance);
+
+                // Task<String>.addOnSuccessListener / addOnFailureListener via reflection
+                Class<?> taskClass = taskObj.getClass();
+
+                // Use OnCompleteListener to get the token asynchronously
+                Class<?> onCompleteListenerClass = Class.forName("com.google.android.gms.tasks.OnCompleteListener");
+                java.lang.reflect.InvocationHandler handler = (proxy, method, args) -> {
+                    if ("onComplete".equals(method.getName())) {
+                        Object task = args[0];
+                        Method isSuccessful = task.getClass().getMethod("isSuccessful");
+                        if ((Boolean) isSuccessful.invoke(task)) {
+                            Method getResult = task.getClass().getMethod("getResult");
+                            String token = (String) getResult.invoke(task);
+                            nDeliverFBTokenTo(cPtr(), cb_root, token);
+                        } else {
+                            Log.e(Utils.LOG_TAG, "Failed to get FCM token");
+                        }
+                    }
+                    return null;
+                };
+                Object listener = java.lang.reflect.Proxy.newProxyInstance(
+                    onCompleteListenerClass.getClassLoader(),
+                    new Class<?>[] { onCompleteListenerClass },
+                    handler
+                );
+
+                Method addOnCompleteListener = taskClass.getMethod("addOnCompleteListener", onCompleteListenerClass);
+                addOnCompleteListener.invoke(taskObj, listener);
             } catch (Exception ex) {
                 ex.printStackTrace();
             }
         } catch (ClassNotFoundException ex) {
-            Log.i(Utils.LOG_TAG, "No Firebase messaging enbled!");
+            Log.i(Utils.LOG_TAG, "No Firebase messaging enabled!");
         }
     }
 
