@@ -1,7 +1,6 @@
 package dk.area9.flowrunner;
 
 import android.location.Location;
-import android.os.Bundle;
 import android.os.Looper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -9,26 +8,24 @@ import android.util.Log;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
-import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationServices;
 
-public class FlowGooglePlayServices implements GoogleApiClient.ConnectionCallbacks,
-        GoogleApiClient.OnConnectionFailedListener, IFlowGooglePlayServices {
+public class FlowGooglePlayServices implements IFlowGooglePlayServices {
 
     private boolean initSuccess = false;
     @Nullable
-    private GoogleApiClient googleApiClient = null;
+    private FusedLocationProviderClient fusedLocationClient = null;
     private FlowGooglePlayServicesLocationListener balancedListener;
     private FlowGooglePlayServicesLocationListener highAccuracyListener;
     private FlowGooglePlayServicesLocationListener balancedWatchListener;
     private FlowGooglePlayServicesLocationListener highAccuracyWatchListener;
 
-    private FlowRunnerActivity activity;
+    private final FlowRunnerActivity activity;
     @Nullable
     private FlowGeolocationAPI flowGeolocationAPI = null;
-    
+
     public FlowGooglePlayServices(FlowRunnerActivity activity) {
-        initSuccess = true;
         this.activity = activity;
 
         int status = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity);
@@ -45,96 +42,93 @@ public class FlowGooglePlayServices implements GoogleApiClient.ConnectionCallbac
         balancedWatchListener = new FlowGooglePlayServicesLocationListener(this, false);
         highAccuracyWatchListener = new FlowGooglePlayServicesLocationListener(this, true);
 
-        googleApiClient = new GoogleApiClient.Builder(activity)
-            .addApi(LocationServices.API)
-            .addConnectionCallbacks(this)
-            .addOnConnectionFailedListener(this)
-            .build();
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(activity);
     }
 
     @Override
     public void connectGooglePlayServices() {
-        if (initSuccess) {
-            googleApiClient.connect();
-        }
-    }
-
-    @Override
-    public void disconnectGooglePlayServices() {
-        if (initSuccess) {
-            googleApiClient.disconnect();
-        }
-    }
-
-    @Override
-    public void requestLocationUpdates(boolean isHighAccuracy) {
-        if (initSuccess) {
-            FlowGooglePlayServicesLocationListener listener = isHighAccuracy ? highAccuracyListener : balancedListener;
-            LocationServices.FusedLocationApi.requestLocationUpdates(googleApiClient, listener.getLocationRequest(), listener, Looper.getMainLooper());
-        }
-    }
-
-    @Override
-    public void requestLocationWatch(boolean isHighAccuracy, int interval) {
-        if (initSuccess) {
-            FlowGooglePlayServicesLocationListener listener = isHighAccuracy ? highAccuracyWatchListener : balancedWatchListener;
-            listener.setInterval(interval);
-            LocationServices.FusedLocationApi.requestLocationUpdates(googleApiClient, listener.getLocationRequest(), listener, Looper.getMainLooper());
-        }
-    }
-
-    @Override
-    public void removeLocationWatch(boolean isHighAccuracy) {
-        if (initSuccess) {
-            FlowGooglePlayServicesLocationListener listener = isHighAccuracy ? highAccuracyWatchListener : balancedWatchListener;
-            LocationServices.FusedLocationApi.removeLocationUpdates(googleApiClient, listener);
-        }
-    }
-
-    @Override
-    public void removeLocationUpdates(boolean isHighAccuracy) {
-        if (initSuccess) {
-            FlowGooglePlayServicesLocationListener listener = isHighAccuracy ? highAccuracyListener : balancedListener;
-            LocationServices.FusedLocationApi.removeLocationUpdates(googleApiClient, listener);
-        }
-    }
-
-    @Nullable
-    @Override
-    public Location getLastLocation() {
-        Location result = null;
-        if (initSuccess) {
-            LocationServices.FusedLocationApi.getLastLocation(googleApiClient);
-        }
-        return result;
-    }
-
-    @Override
-    public void onLocationChanged(Location newLocation, boolean isHighAccuracy) {
-        flowGeolocationAPI.onLocationChanged(newLocation, isHighAccuracy);
-    }
-
-    @Override
-    public void setFlowGeolocationAPI(FlowGeolocationAPI flowGeolocationAPI) {
-        this.flowGeolocationAPI = flowGeolocationAPI;
-    }
-
-    @Override
-    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
-        Log.e(Utils.LOG_TAG, "GoogleApiClient connection failed. ErrorMessage: " + connectionResult.toString());
-    }
-
-    @Override
-    public void onConnected(Bundle bundle) {
+        // FusedLocationProviderClient does not require explicit connect/disconnect.
+        // Notify the activity that services are ready.
         if (initSuccess) {
             activity.onGoogleServicesConnected();
         }
     }
 
     @Override
-    public void onConnectionSuspended(int cause) {
-        if (initSuccess) {
+    public void disconnectGooglePlayServices() {
+        // Remove any active location updates on disconnect
+        if (initSuccess && fusedLocationClient != null) {
+            try {
+                fusedLocationClient.removeLocationUpdates(balancedListener);
+                fusedLocationClient.removeLocationUpdates(highAccuracyListener);
+                fusedLocationClient.removeLocationUpdates(balancedWatchListener);
+                fusedLocationClient.removeLocationUpdates(highAccuracyWatchListener);
+            } catch (SecurityException e) {
+                Log.e(Utils.LOG_TAG, "Security exception removing location updates", e);
+            }
             activity.onGoogleServicesDisconnected();
         }
+    }
+
+    @Override
+    public void requestLocationUpdates(boolean isHighAccuracy) {
+        if (initSuccess && fusedLocationClient != null) {
+            try {
+                FlowGooglePlayServicesLocationListener listener = isHighAccuracy ? highAccuracyListener : balancedListener;
+                fusedLocationClient.requestLocationUpdates(listener.getLocationRequest(), listener, Looper.getMainLooper());
+            } catch (SecurityException e) {
+                Log.e(Utils.LOG_TAG, "Security exception requesting location updates", e);
+            }
+        }
+    }
+
+    @Override
+    public void requestLocationWatch(boolean isHighAccuracy, int interval) {
+        if (initSuccess && fusedLocationClient != null) {
+            try {
+                FlowGooglePlayServicesLocationListener listener = isHighAccuracy ? highAccuracyWatchListener : balancedWatchListener;
+                listener.setInterval(interval);
+                fusedLocationClient.requestLocationUpdates(listener.getLocationRequest(), listener, Looper.getMainLooper());
+            } catch (SecurityException e) {
+                Log.e(Utils.LOG_TAG, "Security exception requesting location watch", e);
+            }
+        }
+    }
+
+    @Override
+    public void removeLocationWatch(boolean isHighAccuracy) {
+        if (initSuccess && fusedLocationClient != null) {
+            FlowGooglePlayServicesLocationListener listener = isHighAccuracy ? highAccuracyWatchListener : balancedWatchListener;
+            fusedLocationClient.removeLocationUpdates(listener);
+        }
+    }
+
+    @Override
+    public void removeLocationUpdates(boolean isHighAccuracy) {
+        if (initSuccess && fusedLocationClient != null) {
+            FlowGooglePlayServicesLocationListener listener = isHighAccuracy ? highAccuracyListener : balancedListener;
+            fusedLocationClient.removeLocationUpdates(listener);
+        }
+    }
+
+    @Nullable
+    @Override
+    public Location getLastLocation() {
+        // Note: getLastLocation() returns a Task<Location> in the new API.
+        // For synchronous callers, return null and let location updates deliver results.
+        // A proper async implementation would use task.addOnSuccessListener().
+        return null;
+    }
+
+    @Override
+    public void onLocationChanged(Location newLocation, boolean isHighAccuracy) {
+        if (flowGeolocationAPI != null) {
+            flowGeolocationAPI.onLocationChanged(newLocation, isHighAccuracy);
+        }
+    }
+
+    @Override
+    public void setFlowGeolocationAPI(FlowGeolocationAPI flowGeolocationAPI) {
+        this.flowGeolocationAPI = flowGeolocationAPI;
     }
 }
