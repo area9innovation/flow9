@@ -1,145 +1,141 @@
 import ds/array;
-import formats/json/json;
+import jwt_types;
 
 export {
-	// Create a JWT signed with HS256 (HmacSHA256).
-	native createJwt : (
-		key : string,
-		issuer : string,
-		subject : string,
-		audience : string,
-		// Dates are expected to be ISO 8601 format
-		expiration : string,
-		notbefore : string,
-		issuedat : string,
-		id : string
-	) -> string = FlowJwt.createJwt;
+	// Creates a JWT token signed with the provided key and claims.
+	//
+	// The key parameter contains:
+	//   - The algorithm (HS256, HS384, HS512, RS256, RS384, RS512, ES256, ES384, ES512)
+	//   - The key material (secret for HMAC, private key for RSA/ECDSA in PEM PKCS8 format)
+	//   - Optional kid (Key ID) which will be added to the JWT header if provided
+	//
+	// The claims parameter can be:
+	//   - JwtClaimsJsonObject: a JsonObject containing the claims
+	//   - JwtClaimsJsonObjectString: a JSON string representation of the claims
+	//
+	// Returns a JWT string on success, or a string beginning with "Error:" on failure.
+	createJwt(key : JwtKey, claims : JwtClaims) -> string;
 
-	// Create a JWT signed with HS256 (HmacSHA256).
-	// Only JsonString and JsonDouble can be used
-	createJwtClaims(
-		key : string,
-		claims : JsonObject
-	) -> string;
+	// Verifies a JWT token using the provided key.
+	//
+	// The key parameter contains:
+	//   - The algorithm (HS256, HS384, HS512, RS256, RS384, RS512, ES256, ES384, ES512)
+	//   - For HMAC (HS*): the shared secret key (converted to UTF8 bytes)
+	//   - For RSA (RS*): the public key in PEM format or JWK format with fields "n" and "e"
+	//   - For ECDSA (ES*): the public key in PEM format or JWK format with fields "x", "y", and "crv"
+	//
+	// See https://datatracker.ietf.org/doc/html/rfc7518 for details on JWK format.
+	//
+	// Returns "OK" if the JWT is valid, otherwise an error message.
+	verifyJwt(jwt : string, key : JwtKey) -> string;
 
-	// Verify JWT's signed with HS256 (HmacSHA256). The key is the base64 encoded secret.
-	// Consider using the verifyJwtAlgorithm function instead.
-	// Return "OK" if the JWT signature is valid.
-	native verifyJwt : (jwt : string, key : string) -> string = FlowJwt.verifyJwt;
-
-	// Decode an JWT.
-	// Consider using the verifyJwtAlgorithm, and decode the payload yourself or use returnJwtDecode.
-	native decodeJwt : (
+	// Decodes and verifies a JWT token, extracting the claims.
+	//
+	// The jwtKey parameter is used to verify the JWT signature (see verifyJwt for details).
+	// On success, calls callback with the decoded claims as a JwtClaimsJsonObject.
+	// On failure, calls onError with an error message.
+	decodeJwt(
 		jwt : string,
-		alg : string,
-		key : string,
-		callback : (issuer : string, subject : string, audience : string, expiration : string, notBefore : string, issuedAt : string, id : string, impersonatedByUserId : string) -> void,
+		jwtKey : JwtKey,
+		callback : (claims : JwtClaimsJsonObject) -> void,
 		onError : (verify : string) -> void
-	) -> void = FlowJwt.decodeJwt;
+	) -> void;
 
-	// Verify JWT's, signed with the symmetric or public/private key algorithms: HMAC, RSA or ECDSA
-	// The algorithm argument must be one of the "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512".
-	// When the algorithm is HS (HMAC), then the key string must be the secret key, it is converted to UTF8 bytes. This means verifyJwtAlgorithm can replace verifyJwt.
-	// When the algorithm is RS (RSA), then the key string must be one of:
-	//   1. The public key in x509 format (PEM)
-	//   2. Json object (JWK format) with two required fields "n" and "e" (the public key modulus and exponent) for example {"n": "6S7asUuzq5Q_3U9rbs-PkDV", "e": "AQAB"}
-	// When the algorithm is ES (ECDSA) then the key string must be one of:
-	//   1. The public key in x509 format (PEM)
-	//   2. Json object (JWK format) with three required fields "x", "y" and "crv" (the point and the curve) for example {"x": "AYeAr-K3BMaS", "y": "AGLdv92aARm6efe_sE", "crv": "P-521"}
-	// See https://datatracker.ietf.org/doc/html/rfc7518 for all the details.
-	// Return "OK" if the JWT is valid, otherwise an error message.
-	native verifyJwtAlgorithm : (jwt : string, key : string, algorithm : string) -> string = FlowJwt.verifyJwtAlgorithm;
-
-	// The algorithm argument must be one of the 
-	// "HS256", "HS384", "HS512", 
-	// "RS256", "RS384", "RS512".
-	// 
-	// KeyFormats for "HS256", "HS384", "HS512":
-	// The Key string is converted to utf8 and interpreted as bytes. (like the createJwt function).
-	//
-	// KeyFormats for "RS256", "RS384", "RS512":
-	// The key is a private key in PEM PCKS8 format. (This means it is base64 with optional newlines and --- headers/footer).
-	//
-	// The claimsJson must be a JSON serialized as a string. 
-	//
-	// The kid can be used for RS256, RS384 and RS512. If none empty then it will be added to the JWT header
-	// 
-	// If the encoding fails, then it returns a string that begins with "Error:".
-	// If it succeeds it is an JWT string.
-	native createJwtAlgorithm : (
-		key: string,
-		claimsJson: string,
-		algorithm: string,
-		kid: string,
-	) -> string = FlowJwt.createJwtAlgorithm;
+	getJwtClaimInt(claims : JwtClaimsJsonObject, claim : string) -> Maybe<int>;
+	getJwtClaimString(claims : JwtClaimsJsonObject, claim : string) -> Maybe<string>;
 }
 
-createJwtClaims(
-	key : string,
-	claims : JsonObject
-) -> string {
-
-	pair = fold(
-		claims.members,
-		Pair([],[]),
-		\acc : Pair<[string], [flow]>, p : Pair<string, Json> -> {
-			switch(p.second) {
-				JsonString(s): Pair(arrayPush(acc.first, p.first), arrayPush(acc.second, s));
-				JsonDouble(d): Pair(arrayPush(acc.first, p.first), arrayPush(acc.second, d));
-				default: acc; // skip
-			}
-		}
-	);
-	createJwtClaimsNative(key, pair.first, pair.second);
+createJwt(key : JwtKey, claims : JwtClaims) -> string {
+	createJwtAlgorithmNative(
+		either(getSigningKeyM(key), ""),
+		switch (claims) {
+			JwtClaimsJsonObject(c): json2string(c);
+			JwtClaimsJsonObjectString(c): c;
+		},
+		jwtAlgorithm2string(key.alg),
+		either(key.kid, "")
+	)
 }
 
-native createJwtClaimsNative : (
-	key : string,
-	keys : [string],
-	values : [flow]
-) -> string = FlowJwt.createJwtClaims;
-
-
-createJwtClaimsNative(
-	key : string,
-	keys : [string],
-	values : [flow]
-) -> string {
-	""; // Not implemented
-}
-
-createJwt(
-	key : string,
-	issuer : string,
-	subject : string,
-	audience : string,
-	// Dates are expected to be ISO 8601 format
-	expiration : string,
-	notbefore : string,
-	issuedat : string,
-	id : string
-) -> string {
-	""; // Not implemented
-}
-
-verifyJwt(jwt : string, key : string) -> string {
-	""; // Not implemented
-}
-
-verifyJwtAlgorithm(jwt : string, key : string, algorithm : string) -> string {
-	"Not implemented";
-}
-
-createJwtAlgorithm(key: string, claimsJson: string, algorithm: string, kid: string) -> string {
-	"Error: Not implemented";
+verifyJwt(jwt : string, key : JwtKey) -> string {
+	verifyJwtAlgorithmNative(
+		jwt,
+		either(getVerifyingKeyM(key), ""),
+		jwtAlgorithm2string(key.alg)
+	)
 }
 
 decodeJwt(
 	jwt : string,
-	alg : string,
-	key : string,
-	callback : (issuer : string, subject : string, audience : string, expiration : string, notBefore : string, issuedAt : string, id : string, impersonatedByUserId : string) -> void,
+	jwtKey : JwtKey,
+	callback : (claims : JwtClaimsJsonObject) -> void,
 	onError : (verify : string) -> void
 ) -> void {
-	onError("decodeJwt is not implemented");
+	eitherFn(
+		getVerifyingKeyM(jwtKey),
+		\key -> decodeJwtNative(
+			jwt,
+			jwtAlgorithm2string(jwtKey.alg),
+			key,
+			\jsonString -> switch (parseJson(jsonString)) {
+				JsonObject(members): callback(JwtClaimsJsonObject(JsonObject(members)));
+				default: onError("Wrong payload format");
+			},
+			onError
+		),
+		\-> onError("Can't get verifying key")
+	)
+}
+
+native createJwtAlgorithmNative : (
+	key: string,
+	claimsJson: string,
+	algorithm: string,
+	kid: string,
+) -> string = FlowJwt.createJwtAlgorithm;
+
+native verifyJwtAlgorithmNative : (jwt : string, key : string, algorithm : string) -> string = FlowJwt.verifyJwtAlgorithm;
+
+native decodeJwtNative : (
+	jwt : string,
+	alg : string,
+	key : string,
+	callback : (string) -> void,
+	onError : (string) -> void
+) -> void = FlowJwt.decodeJwt;
+
+getJwtClaimInt(claims : JwtClaimsJsonObject, claim : string) -> Maybe<int> {
+	getJsonMaybeValue(getJsonFieldValue(claims.claims, claim, JsonNull()), getJsonIntValue, 0)
+}
+
+getJwtClaimString(claims : JwtClaimsJsonObject, claim : string) -> Maybe<string> {
+	getJsonMaybeValue(getJsonFieldValue(claims.claims, claim, JsonNull()), getJsonStringValue, "")
+}
+
+getSigningKeyM(key : JwtKey) -> Maybe<string> {
+	switch (key : JwtKey) {
+		HmacKey(secret, alg, __): Some(secret);
+		RsaKeyPair(privateKey, __, __, __): privateKey;
+		EcKeyPair(privateKey, __, __, __): privateKey;
+	}
+}
+
+getVerifyingKeyM(key : JwtKey) -> Maybe<string> {
+	switch (key : JwtKey) {
+		HmacKey(secret, alg, __): Some(secret);
+		RsaKeyPair(__, publicKey, __, __): maybeMap(publicKey, \pk -> publicKey2string(pk));
+		EcKeyPair(__, publicKey, __, __): maybeMap(publicKey, \pk -> publicKey2string(pk));
+	}
+}
+
+publicKey2string(key : JwtPublicKey) -> string {
+	switch (key) {
+		Pem(k): k;
+		JwkRsa(__, __, __, __, __): jwk2string(key);
+		JwkEc(__, __, __, __, __, __): jwk2string(key);
+	}
+}
+
+jwk2string(jwk : Jwk) -> string {
+	json2string(jwk2json(jwk))
 }
