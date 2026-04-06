@@ -23,6 +23,7 @@ endif
 LOCAL_CFLAGS += -DAVOID_TABLES
 LOCAL_CFLAGS += -O3 -fstrict-aliasing -fprefetch-loop-arrays
 #LOCAL_CFLAGS += -march=armv6j
+LOCAL_LDFLAGS += common-page-size=16384
 
 # enable tile based decode
 LOCAL_CFLAGS += -DANDROID_TILE_BASED_DECODE

@@ -18,6 +18,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE    := librunnercore
 LOCAL_CFLAGS    := -DFLOW_EMBEDDED $(MY_PROF_FLAGS) $(MY_GEN_FLAGS)
 LOCAL_LDLIBS    := -lstdc++ -llog
+LOCAL_LDFLAGS += -Wl,-z,common-page-size=16384
 
 APP_ALLOW_MISSING_DEPS := true
 
@@ -46,6 +47,7 @@ LOCAL_C_INCLUDES := \
 LOCAL_MODULE    := libflowrunner
 LOCAL_CFLAGS    := -DFLOW_EMBEDDED $(MY_PROF_FLAGS) $(MY_GEN_FLAGS)
 LOCAL_LDLIBS    := -lstdc++ -llog -lGLESv2 -lz
+LOCAL_LDFLAGS += -Wl,-z,common-page-size=16384
 
 LOCAL_SRC_FILES := \
     AndroidUtils.cpp \
@@ -87,6 +89,7 @@ LOCAL_SRC_FILES += \
 LOCAL_STATIC_LIBRARIES := librunnercore $(MY_PROF_LIB) $(MY_GEN_LIB)
 
 LOCAL_CFLAGS += -DFLOW_DFIELD_FONTS
+LOCAL_LDFLAGS += -Wl,-z,common-page-size=16384
 
 LOCAL_STATIC_LIBRARIES += libpng libjpeg libft2
 

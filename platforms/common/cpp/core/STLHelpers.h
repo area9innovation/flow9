@@ -199,7 +199,7 @@ typedef std::basic_string<unicode_char> unicode_string;
 typedef std::basic_string<ucs4_char> utf32_string;
 typedef std::tuple<size_t, size_t, ucs4_char> ucs4_char_tracer;
 
-#if !defined(_MSC_VER)
+#if !defined(_MSC_VER) || _MSC_VER >= 1930
 BEGIN_STL_HASH_NAMESPACE
     template <> struct hash<unicode_string> {
         size_t operator() (const unicode_string& x) const {

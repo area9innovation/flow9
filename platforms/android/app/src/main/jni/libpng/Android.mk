@@ -46,6 +46,7 @@ include $(CLEAR_VARS)
 LOCAL_CLANG := true
 LOCAL_SRC_FILES := $(common_SRC_FILES)
 LOCAL_CFLAGS += $(common_CFLAGS) -ftrapv
+LOCAL_LDFLAGS += common-page-size=16384
 LOCAL_CFLAGS_arm += $(my_cflags_arm)
 LOCAL_ASFLAGS += $(common_ASFLAGS)
 LOCAL_SRC_FILES_arm += $(my_src_files_arm)

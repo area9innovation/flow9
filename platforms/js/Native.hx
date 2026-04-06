@@ -2968,8 +2968,12 @@ Native.memoryLeakReset();
 	public static function getUrlBasic(u : String, t : String, ?autoCloseDelay : Int = -1) : Void {
 		#if (js && !flow_nodejs)
 		try {
-			var openedWindow = Browser.window.open(u, t);
-			if (autoCloseDelay >= 0) {
+			// Use noopener,noreferrer for _blank targets to prevent reverse tabnabbing,
+			// but only when we don't need a reference to the opened window (autoCloseDelay).
+			var needsRef = (autoCloseDelay >= 0);
+			var features = (t == "_blank" && !needsRef) ? "noopener,noreferrer" : "";
+			var openedWindow = Browser.window.open(u, t, features);
+			if (needsRef && openedWindow != null) {
 				openedWindow.addEventListener('pageshow', function() {
 					timer(autoCloseDelay, function() { openedWindow.close(); });
 				});
@@ -2984,6 +2988,12 @@ Native.memoryLeakReset();
 	public static function getUrl2(u : String, t : String) : Bool {
 		#if (js && !flow_nodejs)
 		try {
+			// noopener causes window.open to return null even on success,
+			// so for _blank targets we assume success if no exception is thrown.
+			if (t == "_blank") {
+				Browser.window.open(u, t, "noopener,noreferrer");
+				return true;
+			}
 			return Browser.window.open(u, t) != null;
 		} catch (e:Dynamic) {
 			// Catch exception that tells that window wasn't opened after user chose to stay on page
@@ -3738,7 +3748,7 @@ Native.memoryLeakReset();
 	}
 
 	private static var parseJsonFirstCall = true;
-	public static function parseJson(json : String) : Dynamic {
+	private static inline function ensureJsonParserInitialized() : Void {
 		if (parseJsonFirstCall) {
 			Native.sidJsonArray = HaxeRuntime._structids_.get("JsonArray");
 			Native.sidJsonArrayVal = HaxeRuntime._structargs_.get(Native.sidJsonArray)[0];
@@ -3765,6 +3775,9 @@ Native.memoryLeakReset();
 			Native.jsonStringEmpty = HaxeRuntime.makeStructValue("JsonString", [""], null);
 			parseJsonFirstCall = false;
 		}
+	}
+	public static function parseJson(json : String) : Dynamic {
+		ensureJsonParserInitialized();
 		if (json == "") return Native.jsonDoubleZero;
 
 		untyped __js__("
@@ -3785,6 +3798,23 @@ Native.memoryLeakReset();
 			}
 		");
 		return Native.jsonDoubleZero;
+	}
+
+	// Converts a native JS object directly to Flow Json structures without string serialization
+	public static function parseJsonObject(obj : Dynamic) : Dynamic {
+		ensureJsonParserInitialized();
+		if (obj == null) return Native.jsonNull;
+
+		untyped __js__("
+			try {
+				return Platform.isFirefox ?
+				Native.object2JsonStructs_FF(obj) :
+				Native.object2JsonStructs(obj);
+			} catch (e) {
+				return Native.jsonNull;
+			}
+		");
+		return Native.jsonNull;
 	}
 	#end
 

@@ -1,15 +1,18 @@
 package dk.area9.flowrunner;
 
-import com.google.android.gms.location.LocationListener;
-import com.google.android.gms.location.LocationRequest;
-
 import android.location.Location;
+import androidx.annotation.NonNull;
 
-public class FlowGooglePlayServicesLocationListener implements LocationListener {
-    private final static int GEOLOCATION_WATCH_INTERVAL = 30 * 1000; // 30s
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.Priority;
 
-    private FlowGooglePlayServices client;
-    private boolean isHighAccuracy;
+public class FlowGooglePlayServicesLocationListener extends LocationCallback {
+    private static final int GEOLOCATION_WATCH_INTERVAL = 30 * 1000; // 30s
+
+    private final FlowGooglePlayServices client;
+    private final boolean isHighAccuracy;
     private LocationRequest locationRequest;
 
     public FlowGooglePlayServicesLocationListener(FlowGooglePlayServices client, boolean isHighAccuracy) {
@@ -19,13 +22,7 @@ public class FlowGooglePlayServicesLocationListener implements LocationListener 
     public FlowGooglePlayServicesLocationListener(FlowGooglePlayServices client, boolean isHighAccuracy, int interval) {
         this.client = client;
         this.isHighAccuracy = isHighAccuracy;
-
-        locationRequest = new LocationRequest()
-                .setInterval(interval)
-                .setFastestInterval(interval / 2)
-                .setPriority(isHighAccuracy ?
-                        LocationRequest.PRIORITY_HIGH_ACCURACY :
-                        LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY);
+        this.locationRequest = buildLocationRequest(interval, isHighAccuracy);
     }
 
     public LocationRequest getLocationRequest() {
@@ -33,13 +30,23 @@ public class FlowGooglePlayServicesLocationListener implements LocationListener 
     }
 
     public void setInterval(int interval) {
-        locationRequest.setFastestInterval(interval / 2);
-        locationRequest.setInterval(interval);
+        this.locationRequest = buildLocationRequest(interval, isHighAccuracy);
     }
 
     @Override
-    public void onLocationChanged(Location newLocation) {
-        client.onLocationChanged(newLocation, isHighAccuracy);
+    public void onLocationResult(@NonNull LocationResult locationResult) {
+        Location location = locationResult.getLastLocation();
+        if (location != null) {
+            client.onLocationChanged(location, isHighAccuracy);
+        }
     }
 
+    private static LocationRequest buildLocationRequest(int interval, boolean highAccuracy) {
+        return new LocationRequest.Builder(
+                highAccuracy ? Priority.PRIORITY_HIGH_ACCURACY : Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                interval
+        )
+        .setMinUpdateIntervalMillis(interval / 2)
+        .build();
+    }
 }
