@@ -202,6 +202,8 @@ class TextClip extends NativeWidgetClip {
 	private static var onFontLoadedListenerInitialized : Bool = false;
 	private static var scheduledForceUpdateTree : Map<String, Set<TextClip>> = new Map();
 
+	private var isWigiText : Bool; 
+
 	public function new(?worldVisible : Bool = false) {
 		super(worldVisible);
 
@@ -469,6 +471,7 @@ class TextClip extends NativeWidgetClip {
 
 		super.updateNativeWidgetStyle();
 		var alpha = this.getNativeWidgetAlpha();
+		var isWigiText = checkIsWigiText();
 
 		if (isInput) {
 			nativeWidget.setAttribute("inputMode", type == 'number' ? 'numeric' : type);
@@ -534,7 +537,8 @@ class TextClip extends NativeWidgetClip {
 					}
 				}
 
-				nativeWidget.style.whiteSpace = isJapaneseFont(style) && style.wordWrap ? "pre-wrap" : "pre";
+				// TODO : Why not just style.wordWrap?
+				nativeWidget.style.whiteSpace = (isJapaneseFont(style) || isWigiText) && style.wordWrap ? "pre-wrap" : "pre";
 				baselineWidget.style.direction = nativeWidget.style.direction = switch (this.textDirection) {
 					case 'RTL' : 'rtl';
 					case 'rtl' : 'rtl';
@@ -572,7 +576,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontStyle = !this.isHTMLRenderer() || style.fontStyle != 'normal' ? style.fontStyle : null;
 		nativeWidget.style.fontSize = '${style.fontSize}px';
 		var bg = !this.isHTMLRenderer() || backgroundOpacity > 0 ? RenderSupport.makeCSSColor(backgroundColor, backgroundOpacity) : null;
-		if (textBackgroundWidget != null) {
+		if (textBackgroundWidget != null && !isWigiText) {
 			textBackgroundWidget.style.background = bg;
 		} else {
 			nativeWidget.style.background = bg;
@@ -904,7 +908,7 @@ class TextClip extends NativeWidgetClip {
 			if (textClip != null) {
 				textClip.setClipVisible(false);
 			}
-		} else if (textClipChanged) {
+		} else if (textClipChanged && !this.isHTML()) {
 			var modification : TextMappedModification = this.contentGlyphs;
 			var text = modification.modified;
 			var chrIdx: Int = 0;
@@ -1848,7 +1852,7 @@ class TextClip extends NativeWidgetClip {
 					measureHTMLWidth();
 				}
 			} else {
-				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style);
+				metrics = TextMetrics.measureText(this.contentGlyphs.modified, style, checkIsWigiText() ? false : null);
 				if (this.isHTMLRenderer()) {
 					if (useHTMLMeasurementJapaneseFont(style)) {
 						measureHTMLSize();
@@ -2297,6 +2301,10 @@ class TextClip extends NativeWidgetClip {
 			");
 		}
 		return text;
+	}
+
+	private function checkIsWigiText() : Bool {
+		return this.isWigiText || nativeWidget.classList.contains("wigiText");
 	}
 
 	private override function createNativeWidget(?tagName : String = "p") : Void {
