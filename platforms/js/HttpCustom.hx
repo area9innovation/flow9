@@ -7,10 +7,80 @@ class HttpCustom extends haxe.Http {
 	var arrayBufferEncodings = ['wtf8', 'byte'];
 	var defaultEncodings = ['auto', 'utf8'];
 	var loadedLength = 0;
+	var trackId : Int = 0;
 
 	var responseHeaders2 : Array<Array<String>>;
 
 	public var onResponse : Int -> String -> Array<Array<String>> -> Void;
+
+	// Passive connection quality monitoring via global JS objects read by Flow's checking_network.flow.
+	// Zero overhead when disabled: all methods check window.__flowPendingRequests existence first.
+	// Flow enables tracking by initializing globals via hostCall("eval", ...) when monitoring starts.
+	//
+	// __flowPendingRequests: {id: {startTime, url}} — currently in-flight requests.
+	//   Memory/performance safe: each entry ~80 bytes, deleted on completion/error/timeout.
+	//   Typical size 1-5 entries. O(1) operations.
+	//
+	// __flowBwSamples: [{kbps, ms}] — per-request bandwidth and delay samples.
+	//   Sampled at readyState=4 (Content-Length with fallback) and during onprogress (event.loaded).
+	//   Only requests with size >= 2048 bytes and elapsed > 100ms are recorded —
+	//   small responses produce meaningless bandwidth (20 bytes / 200ms = 0.8 kbps on fast network).
+	//   Polled and cleared by Flow every 2s. Median resists outliers. Capped at 20 entries.
+
+	private function trackStart(url : String) : Void {
+		untyped __js__("
+			var p = window.__flowPendingRequests;
+			if (p) {
+				var id = ++window.__flowPendingRequestId;
+				p[id] = {startTime: performance.now(), url: {0}};
+				{1} = id;
+			}
+		", url, trackId);
+	}
+
+	private function trackProgress(loaded : Int) : Void {
+		untyped __js__("
+			var p = window.__flowPendingRequests;
+			if (p) {
+				var r = p[{0}];
+				if (r && {1} >= 2048) {
+					var elapsed = performance.now() - r.startTime;
+					if (elapsed > 100) {
+						var a = window.__flowBwSamples;
+						if (a) { a.push({kbps: {1} * 8 / elapsed, ms: elapsed}); if (a.length > 20) a.shift(); }
+					}
+				}
+			}
+		", trackId, loaded);
+	}
+
+	private function trackEnd() : Void {
+		untyped __js__("
+			var p = window.__flowPendingRequests;
+			if (p && p[{0}]) {
+				var r = p[{0}];
+				var elapsed = performance.now() - r.startTime;
+				try {
+					var x = {1};
+					if (x) {
+						var cl = x.getResponseHeader('Content-Length');
+						var size = cl ? parseInt(cl, 10) : 0;
+						if (!size) {
+							var rt = x.responseType;
+							if (!rt || rt === 'text' || rt === '') size = (x.responseText || '').length;
+							else if (rt === 'arraybuffer' && x.response) size = x.response.byteLength;
+							else if (x.response) size = x.response.length || 0;
+						}
+						if (size >= 2048 && elapsed > 100) {
+							var a = window.__flowBwSamples;
+							if (a) { a.push({kbps: size * 8 / elapsed, ms: elapsed}); if (a.length > 20) a.shift(); }
+						}
+					}
+				} catch(e) {}
+				delete p[{0}];
+			}
+		", trackId, req);
+	}
 
 	public override function new( url : String, method : String ) {
 		super(url);
@@ -33,6 +103,7 @@ class HttpCustom extends haxe.Http {
 			me.responseData = null;
 		#end
 		var r = me.req = js.Browser.createXMLHttpRequest();
+		me.trackStart(url);
 
 		var wtf8Flag = Util.getParameter("use_wtf8");
 		// Url parameter takes precedence.
@@ -56,6 +127,7 @@ class HttpCustom extends haxe.Http {
 
 		var onprogress = function(event) {
 			me.loadedLength = event.loaded;
+			me.trackProgress(event.loaded);
 		}
 
 		var onreadystatechange = function(v) {
@@ -76,6 +148,8 @@ class HttpCustom extends haxe.Http {
 				s = null;
 			if( s != null )
 				me.onStatus(s);
+
+			me.trackEnd();
 			me.req = null;
 
 			if (responseEncoding == "wtf8") {
@@ -151,6 +225,7 @@ class HttpCustom extends haxe.Http {
 			} else
 				r.open("GET",url,async);
 		} catch( e : Dynamic ) {
+			me.trackEnd();
 			me.req = null;
 			me.onError(e.toString());
 			return;
@@ -179,6 +254,7 @@ class HttpCustom extends haxe.Http {
 				try {
 					r.setRequestHeader(h.name,h.value);
 				} catch (e : Dynamic) {
+					me.trackEnd();
 					me.req = null;
 					me.onResponse(0, e.toString(), []);
 					return;
@@ -192,6 +268,7 @@ class HttpCustom extends haxe.Http {
 				try {
 					r.setRequestHeader(h.header,h.value);
 				} catch (e : Dynamic) {
+					me.trackEnd();
 					me.req = null;
 					me.onResponse(0, e.toString(), []);
 					return;
@@ -206,6 +283,7 @@ class HttpCustom extends haxe.Http {
 
 	public override function cancel() {
 		if (this.req != null) {
+			this.trackEnd();
 			this.req.abort();
 			this.req = null;
 		}
