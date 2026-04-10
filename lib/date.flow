@@ -443,21 +443,49 @@ getTimeString(time : Time, dayOfWeekEnabled : bool, monthLong : bool, yearEnable
 // not be so in other TZ.
 // Also storing UTC in database seems like a sane thing to do.
 date2stamp(d : Date) -> double {
-	// string2time on some platforms expects yyyy-mm-dd HH:MM:SS
-	string2timeUtc(dateString2ValidDb(date2string(d)));
+	date2epochMs(d.year, d.month, d.day);
 }
 
 //without utc2local
-date2stamp2(d: Date) -> double {
-	string2time(dateString2ValidDb(date2string(d)));
+date2stamp2(d : Date) -> double {
+	local2utc(date2stamp(d));
 }
 
-time2stamp2(t: Time) -> double {
-	if (t == nullTime) nullTimestamp else string2time(time2db(t));
+// converts local time to UTC timestamp
+time2stamp2(t : Time) -> double {
+	if (t == nullTime) nullTimestamp else local2utc(time2epochMs(t));
 }
 
 time2stamp(t : Time) -> double {
-	if (t == nullTime) nullTimestamp else string2timeUtc(time2db(t)); //utc2local
+	if (t == nullTime) nullTimestamp else time2epochMs(t);
+}
+
+// Compute milliseconds since Unix epoch from Date (midnight UTC).
+// Replicates the behavior of string2time(dateString2ValidDb(date2string(d)))
+// including JS Date constructor quirks for invalid inputs:
+// - Years 0-99: JS new Date() maps year to 1900+year
+// The March-based algorithm naturally normalizes out-of-range month/day values.
+date2epochMs(year : int, m : int, day: int) -> double {
+	// JS new Date() maps years 0-99 to 1900+year
+	y = if (year <= 99) year + 1900 else year;
+	// Adjust so March is month 0 (simplifies leap year handling)
+	adjM = if (m > 2) m - 3 else m + 9;
+	adjY = if (m > 2) y else y - 1;
+	// Days from epoch 1970-01-01
+	daysSinceEpoch =
+		365 * adjY + adjY / 4 - adjY / 100 + adjY / 400
+		+ (adjM * 306 + 5) / 10
+		+ day - 1
+		- 719468;  // offset to align with 1970-01-01
+	i2d(daysSinceEpoch) * msInDay;
+}
+
+// Compute milliseconds since Unix epoch from Time (UTC).
+time2epochMs(t : Time) -> double {
+	date2epochMs(t.year, t.month, t.day)
+		+ i2d(t.hour * 3600000
+		+ t.min * 60000
+		+ t.sec * 1000);
 }
 
 stamp2date(stamp : double) -> Date {
