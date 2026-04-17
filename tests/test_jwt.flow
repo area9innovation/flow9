@@ -4,6 +4,9 @@ import jwt;
 //	build-jar tests/test_jwt.flow --run
 //  or
 //  flowc1 tests/test_jwt.flow jar=test_jwt.flow && java -jar test_jwt.jar
+
+TestJwtVerificationResult(resSym : string, resPem : string, resJwk : string);
+
 main() {
 	// RSA keys that have been used to encode JWT's that are expired
 	keyPemRSA = "
@@ -110,9 +113,40 @@ main() {
 	haveFailed : ref [string] = ref [];
 
 	verify = \testName, expected, jwt, algorithm, sym, pem, jwk -> {
-		resPem = if (pem == "") "" else eitherMap(makeJwtKeyM("", pem, algorithm, None()), \key -> verifyJwt(jwt, key), "Can't create JwtKey");
-		resJwk = if (jwk == "") "" else eitherMap(makeJwtKeyM("", jwk, algorithm, None()), \key -> verifyJwt(jwt, key), "Can't create JwtKey");
-		resSym = if (sym == "") "" else eitherMap(makeJwtKeyM(sym, "", algorithm, None()), \key -> verifyJwt(jwt, key), "Can't create JwtKey");
+		result : TestJwtVerificationResult = eitherMap(
+			string2jwtAlgorithm(algorithm),
+			\alg -> switch (alg) {
+				HmacAlgorithm(): TestJwtVerificationResult(verifyJwt(jwt, HmacKey(sym, alg, None())), "", "");
+				RsaAlgorithm(): TestJwtVerificationResult(
+					"",
+					if (pem == "") "" else verifyJwt(jwt, RsaKeyPair(None(), Some(Pem(pem)), alg, None())),
+					if (jwk == "") "" else eitherMap(
+						string2jwk(jwk),
+						\j -> switch (j) {
+							JwkRsa(__, __, __, __, __): verifyJwt(jwt, RsaKeyPair(None(), Some(j), alg, None()));
+							JwkEc(__, __, __, __, __, __): "Wrong Algorithm";
+						},
+						"Can't parse JWK"
+					)
+				);
+				EcAlgorithm(): TestJwtVerificationResult(
+					"",
+					if (pem == "") "" else verifyJwt(jwt, EcKeyPair(None(), Some(Pem(pem)), alg, None())),
+					if (jwk == "") "" else eitherMap(
+						string2jwk(jwk),
+						\j -> switch (j) {
+							JwkRsa(__, __, __, __, __): "Wrong Algorithm";
+							JwkEc(__, __, __, __, __, __): verifyJwt(jwt, EcKeyPair(None(), Some(j), alg, None()));
+						},
+						"Can't parse JWK"
+					)
+				);
+			},
+			TestJwtVerificationResult("", "", "")
+		)
+		resPem = result.resPem;
+		resJwk = result.resJwk;
+		resSym = result.resSym;
 
 		if (
 			(resPem != "" || resJwk != "" || resSym != "") && 
@@ -326,7 +360,7 @@ main() {
 
 	verify(
 		"Test that we get an error, not an exception when the public key JSON is invalid",
-		"ParseException",
+		"Can't parse JWK",
 		"eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1M30.OaH9DCqCrf1chCXp8TqvanX5RwZqO5VhQCV2x3dsRo0EmPZpJH7OEilWOTCyWr1k12qMxyswr2LKU0OUw7nv0lPdUgsO4VpvEhO6s-Bw0q8aNXYPkLRMT7ML5qnxnJ0F1g_jYdOgEIrvJGvVOQs8bQcDJlfl9RRe0YRadNbGVJdaFtYniIgBykZthBDXVoKNFAhPXzvGWsrtUD-oFVhxxCg507mkxw8lTuTRt5jSLBo2KmJfJrBIg5UyNf8fDaJcSwQ5PyOUetpruV2w51uG43Uvqg35ABvaIVSi64LSIN78DxntOXp9cGIFzt077_UAdf82OWboXvw88H2FSpf5VA",
 		"RS256",
 		"",
@@ -359,6 +393,15 @@ main() {
 		"ES512",
 		"",
 		keyPemECDSA512,
+		keyJwkECDSA512
+	);
+	verify(
+		"The wrong algorithm",
+		"Wrong Algorithm",
+		"eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzUxMiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTcyNTYwNTE1MywiZXhwIjoxNzI3NjA4NzUzfQ.AGX8VWl6VBh9M_O5Zps1bfY8k6Vy-yoUSiBL2E_a2z0iopHJOf-W4RmWX31QJGizJoWRx591EhE_ut8drZNqrhlmAddfI3k2DA2rHG-tX3Dmvconx2-VU2Ss5UaQM8Rn5KrY0lV_joMh18RVk4Q03oYUk9wT5NXgU60WqlBdIhp5SO2J",
+		"RS512",
+		"",
+		"",
 		keyJwkECDSA512
 	);
 

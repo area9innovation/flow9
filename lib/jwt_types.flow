@@ -79,11 +79,8 @@ export {
 		kid : Maybe<string>             // Optional Key ID for JWT header
 	);
 
-	// Creates a JwtKey from string representations of keys and algorithm.
-	// For HMAC algorithms: private parameter is the shared secret, public is ignored.
-	// For RSA/ECDSA: private is the private key in PEM format, public is the public key (PEM or JWK JSON string).
-	// Returns None if the algorithm is invalid or keys are incompatible with the algorithm.
-	makeJwtKeyM(private : string, public : string, alg : string, kid : Maybe<string>) -> Maybe<JwtKey>;
+	// Parses a JWK JSON string into a Jwk structure. Returns None if parsing fails or required fields are missing.
+	string2jwk(jwk : string) -> Maybe<Jwk>;
 
 	// Converts a JwtAlgorithm to its string representation (e.g., HS256() -> "HS256").
 	jwtAlgorithm2string(alg : JwtAlgorithm) -> string;
@@ -93,23 +90,6 @@ export {
 
 	// Converts a JWK (JSON Web Key) to a JsonObject representation.
 	jwk2json(jwk : Jwk) -> JsonObject;
-}
-
-makeJwtKeyM(private : string, public : string, alg : string, kid : Maybe<string>) -> Maybe<JwtKey> {
-	maybeBind(
-		string2jwtAlgorithm(alg),
-		\a -> switch (a) {
-			HS256(): Some(HmacKey(private, a, kid));
-			HS384(): Some(HmacKey(private, a, kid));
-			HS512(): Some(HmacKey(private, a, kid));
-			RS256(): makeRsaKeyPair(Some(private), string2RsaPublicKey(public), a, kid);
-			RS384(): makeRsaKeyPair(Some(private), string2RsaPublicKey(public), a, kid);
-			RS512(): makeRsaKeyPair(Some(private), string2RsaPublicKey(public), a, kid);
-			ES256(): makeEcKeyPair(Some(private), string2EcPublicKey(public), a, kid);
-			ES384(): makeEcKeyPair(Some(private), string2EcPublicKey(public), a, kid);
-			ES512(): makeEcKeyPair(Some(private), string2EcPublicKey(public), a, kid);
-		}
-	)
 }
 
 // Helper to create an RSA key pair. Returns None if both keys are empty.
@@ -194,6 +174,13 @@ jwk2json(jwk : Jwk) -> JsonObject {
 	}
 }
 
+curve2Algorithm(curve : string) -> string {
+	if (curve == "P-256") "ES256"
+	else if (curve == "P-384") "ES384"
+	else if (curve == "P-521") "ES512"
+	else ""
+}
+
 // Parses a JWK JSON string into a Jwk structure. Returns None if parsing fails or required fields are missing.
 string2jwk(jwk : string) -> Maybe<Jwk> {
 	v = parseJson(jwk);
@@ -218,7 +205,7 @@ string2jwk(jwk : string) -> Maybe<Jwk> {
 			)
 		} else if (kty == "EC") {
 			maybeBind(
-				string2jwtAlgorithm(getJsonStringField(v, "alg", "")),
+				string2jwtAlgorithm(getJsonStringField(v, "alg", curve2Algorithm(getJsonStringField(v, "crv", "")))),
 				\alg -> switch (alg) {
 					HmacAlgorithm(): None();
 					RsaAlgorithm(): None();
@@ -235,37 +222,5 @@ string2jwk(jwk : string) -> Maybe<Jwk> {
 				}
 			)
 		} else None()
-	)
-}
-
-// Converts a string to an RSA public key.
-// If the string is empty, returns None.
-// If the string is valid JWK JSON, parses it as JwkRsa.
-// Otherwise, treats it as a PEM-encoded public key.
-string2RsaPublicKey(key : string) -> Maybe<RsaPublicKey> {
-	if (key == "") None()
-	else eitherFn(
-		string2jwk(key),
-		\jwk -> switch(jwk) {
-			JwkRsa(__, __, __, __, __): Some(jwk);
-			JwkEc(__, __, __, __, __, __): None();
-		},
-		\-> Some(Pem(key))
-	)
-}
-
-// Converts a string to an ECDSA public key.
-// If the string is empty, returns None.
-// If the string is valid JWK JSON, parses it as JwkEc.
-// Otherwise, treats it as a PEM-encoded public key.
-string2EcPublicKey(key : string) -> Maybe<EcPublicKey> {
-	if (key == "") None()
-	else eitherFn(
-		string2jwk(key),
-		\jwk -> switch(jwk) {
-			JwkEc(__, __, __, __, __, __): Some(jwk);
-			JwkRsa(__, __, __, __, __): None();
-		},
-		\-> Some(Pem(key))
 	)
 }
