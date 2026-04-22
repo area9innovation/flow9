@@ -10,6 +10,10 @@ import java.math.BigInteger;
 import java.security.*;
 import java.security.interfaces.*;
 import java.security.spec.*;
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import org.bouncycastle.asn1.x9.ECNamedCurveTable;
+import org.bouncycastle.asn1.x9.X9ECParameters;
+import org.bouncycastle.jce.spec.ECNamedCurveSpec;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.json.simple.*;
 import org.json.simple.parser.*;
@@ -82,6 +86,30 @@ public class FlowJwt extends NativeHost {
 
 		KeyFactory kf = KeyFactory.getInstance(keyType);
 		return kf.generatePublic(new java.security.spec.X509EncodedKeySpec(decodedPublicKey));
+	}
+
+	private static PrivateKey getPemEcPkcs8PrivateKeyFromString(String privateKeyPEM) throws Exception {
+		boolean isPkcs1 = privateKeyPEM.contains("BEGIN EC PRIVATE KEY");
+		// Strip any PEM header/footer lines (handles both PKCS#8 and PKCS#1 formats)
+		String key = privateKeyPEM.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
+		// Decode the Base64 string
+		byte[] keyBytes = Base64.getDecoder().decode(key);
+
+		KeyFactory keyFactory = KeyFactory.getInstance("EC");
+		if (isPkcs1) {
+			// PKCS#1 (EC PRIVATE KEY) format: parse ASN.1 and build ECPrivateKeySpec
+			org.bouncycastle.asn1.sec.ECPrivateKey ecKey =
+				org.bouncycastle.asn1.sec.ECPrivateKey.getInstance(keyBytes);
+			ASN1ObjectIdentifier curveOid = ASN1ObjectIdentifier.getInstance(ecKey.getParametersObject());
+			X9ECParameters ecParams = ECNamedCurveTable.getByOID(curveOid);
+			ECParameterSpec parameterSpec = new ECNamedCurveSpec(ECNamedCurveTable.getName(curveOid), ecParams.getCurve(), ecParams.getG(), ecParams.getN(), ecParams.getH(), ecParams.getSeed());
+			ECPrivateKeySpec keySpec = new ECPrivateKeySpec(ecKey.getKey(), parameterSpec);
+			return keyFactory.generatePrivate(keySpec);
+		} else {
+			// PKCS#8 (PRIVATE KEY) format: use directly
+			PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
+			return keyFactory.generatePrivate(keySpec);
+		}
 	}
 
 	// NOTE: If bcpkix-jdk18on is added to lib/, this entire method can be replaced with:
@@ -209,6 +237,24 @@ public class FlowJwt extends NativeHost {
 				}
 			} else if (algorithm.equals("RS512")) {
 				alg = Algorithm.RSA512(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
+				if (!kid.isEmpty()) {
+					headerClaims = new HashMap<>();
+					headerClaims.put("kid", kid);
+				}
+			} else if (algorithm.equals("ES256")) {
+				alg = Algorithm.ECDSA256(null, (ECPrivateKey)getPemEcPkcs8PrivateKeyFromString(key));
+				if (!kid.isEmpty()) {
+					headerClaims = new HashMap<>();
+					headerClaims.put("kid", kid);
+				}
+			} else if (algorithm.equals("ES384")) {
+				alg = Algorithm.ECDSA384(null, (ECPrivateKey)getPemEcPkcs8PrivateKeyFromString(key));
+				if (!kid.isEmpty()) {
+					headerClaims = new HashMap<>();
+					headerClaims.put("kid", kid);
+				}
+			} else if (algorithm.equals("ES512")) {
+				alg = Algorithm.ECDSA512(null, (ECPrivateKey)getPemEcPkcs8PrivateKeyFromString(key));
 				if (!kid.isEmpty()) {
 					headerClaims = new HashMap<>();
 					headerClaims.put("kid", kid);
