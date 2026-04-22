@@ -2968,8 +2968,12 @@ Native.memoryLeakReset();
 	public static function getUrlBasic(u : String, t : String, ?autoCloseDelay : Int = -1) : Void {
 		#if (js && !flow_nodejs)
 		try {
-			var openedWindow = Browser.window.open(u, t);
-			if (autoCloseDelay >= 0) {
+			// Use noopener,noreferrer for _blank targets to prevent reverse tabnabbing,
+			// but only when we don't need a reference to the opened window (autoCloseDelay).
+			var needsRef = (autoCloseDelay >= 0);
+			var features = (t == "_blank" && !needsRef) ? "noopener,noreferrer" : "";
+			var openedWindow = Browser.window.open(u, t, features);
+			if (needsRef && openedWindow != null) {
 				openedWindow.addEventListener('pageshow', function() {
 					timer(autoCloseDelay, function() { openedWindow.close(); });
 				});
@@ -2984,6 +2988,12 @@ Native.memoryLeakReset();
 	public static function getUrl2(u : String, t : String) : Bool {
 		#if (js && !flow_nodejs)
 		try {
+			// noopener causes window.open to return null even on success,
+			// so for _blank targets we assume success if no exception is thrown.
+			if (t == "_blank") {
+				Browser.window.open(u, t, "noopener,noreferrer");
+				return true;
+			}
 			return Browser.window.open(u, t) != null;
 		} catch (e:Dynamic) {
 			// Catch exception that tells that window wasn't opened after user chose to stay on page

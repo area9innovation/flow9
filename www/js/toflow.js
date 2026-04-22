@@ -138,11 +138,14 @@ function registerLinkHandler(home_domains) {
 		if (element.tagName == 'A') {
 			//if link redirects on another domain that not contains in home_domain or by external_browser=1 or external_browser=2 URL parameter of link it should be opened in new tab in browser
 			if (element.search.indexOf("external_browser") >= 0) {
-				if (element.search.indexOf("external_browser=1") >= 0 || element.search.indexOf("external_browser=2") >= 0)
+				if (element.search.indexOf("external_browser=1") >= 0 || element.search.indexOf("external_browser=2") >= 0) {
 					element.target="_blank";
+					element.rel="noopener noreferrer";
+				}
 			}
 			else if (element.hostname != document.domain && (home_domains == undefined ? true : home_domains.indexOf(element.hostname) < 0)) {
 				element.target="_blank";
+				element.rel="noopener noreferrer";
 				if (is_flow_android() || is_flow_ios_native())
 					if (element.search != "")
 						element.search += "&external_browser=2";
