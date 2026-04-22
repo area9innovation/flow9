@@ -444,7 +444,7 @@ class RenderSupport {
 
 	public static function isViewportScaleWorkaroundEnabled() : Bool {
 		try {
-			return Platform.isIOS && Platform.isChrome && isInsideFrame();
+			return Platform.isIOS && (Platform.isChrome && isInsideFrame() || ProgressiveWebTools.isRunningPWA());
 		} catch (e : Dynamic) {
 			untyped console.log("isViewportScaleWorkaroundEnabled error : ");
 			untyped console.log(e);
@@ -783,6 +783,7 @@ class RenderSupport {
 			try {
 				// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep unscaled value for some time after initialization
 				// So let`s recalculate viewport sizes after some delay (10s) with real values
+				// Same behaviour sometimes reproduced for iOS + PWA for some devices
 				onBrowserWindowResizeDelayed({target : Browser.window}, 10000);
 			} catch (e : Dynamic) {
 				untyped console.log("onBrowserWindowResizeDelayed error : ");
@@ -1091,14 +1092,14 @@ class RenderSupport {
 		// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep wrong value after initialization
 		// Dirty trick to fix this wrong innerHeight value
 		var innerHeightCompensation = (
-				viewportScaleWorkaroundEnabled
+				viewportScaleWorkaroundEnabled && !ProgressiveWebTools.isRunningPWA()
 				&& Browser.window.innerHeight == InnerHeightAtRenderTime
 				&& screenSize.height != Browser.window.innerHeight
 				&& (screenSize.height - Browser.window.innerHeight * getViewportScale()) < 100
 			) ? 95.0 / getViewportScale() : 0.0;
 
 		var topHeight = cast(
-			viewportScaleWorkaroundEnabled
+			viewportScaleWorkaroundEnabled && !ProgressiveWebTools.isRunningPWA()
 				? (screenSize.height - Browser.window.innerHeight + innerHeightCompensation)
 				: (screenSize.height - Browser.window.innerHeight * browserZoom)
 		);
