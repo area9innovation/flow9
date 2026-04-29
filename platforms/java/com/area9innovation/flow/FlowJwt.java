@@ -187,7 +187,7 @@ public class FlowJwt extends NativeHost {
 			if (verifier != null) {
 				DecodedJWT jwtObj = verifier.verify(jwt);
 
-				payload = new String(Base64.getDecoder().decode(jwtObj.getPayload()), StandardCharsets.UTF_8);
+				payload = new String(Base64.getUrlDecoder().decode(jwtObj.getPayload()), StandardCharsets.UTF_8);
 				isError = false;
 			} else {
 				errorMessage = "Algorithm not supported";
