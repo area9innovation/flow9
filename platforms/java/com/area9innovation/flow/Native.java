@@ -1919,7 +1919,7 @@ public class Native extends NativeHost {
 			// For some reason it does not help catching exception (e.g. ClassCastException)
 			//setUncaughtExceptionHandler(thread, onFail);
 			CompletableFuture<Object> completableFuture = new CompletableFuture<Object>();
-			String threadId = Long.toString(thread.getId());
+			String threadId = Long.toString(thread.threadId());
 			try {
 				Pair<Func0<Object>, Func0<Object>> loopPair = FlowRuntime.makeInterruptibleEvenLoopPair(true);
 				task.invoke(
@@ -1959,7 +1959,7 @@ public class Native extends NativeHost {
 		.exceptionally(ex -> {
 			ex.printStackTrace();
 			Thread thread = Thread.currentThread();
-			String threadId = Long.toString(thread.getId());
+			String threadId = Long.toString(thread.threadId());
 			return onFail.invoke("E3: Thread #" + threadId + " failed: " + ex.getMessage());
 		})
 		.thenApply(result -> {
