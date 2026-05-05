@@ -766,6 +766,12 @@ class RenderSupport {
 			PixiView.style.top = "0px";
 		}
 
+		// Workaround for top bar background color on iOS PWA.
+		// Safari uses the body background-color for the status bar area instead of manifest background_color.
+		if (Platform.isSafari && ProgressiveWebTools.isRunningPWA() && PixiStage.nativeWidget == Browser.document.body) {
+			applyManifestBackgroundColor();
+		}
+
 		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
 		PixiStage.nativeWidget.insertBefore(PixiView, PixiStage.nativeWidget.firstChild);
 
@@ -867,6 +873,36 @@ class RenderSupport {
 		}
 
 		return new Point(event.pageX - rootPosition.x, event.pageY - rootPosition.y);
+	}
+
+	// Reads background_color from the PWA manifest and applies it to document.body.
+	// This is a workaround for Safari on iOS, which uses the body background-color for the status bar area.
+	private static function applyManifestBackgroundColor() : Void {
+		try {
+			var link = Browser.document.head.querySelector("link[rel='manifest']");
+			if (link != null) {
+				var manifestUrl : String = untyped link.href;
+				if (manifestUrl != null && manifestUrl != "") {
+					var xhr = new js.html.XMLHttpRequest();
+					xhr.open("GET", manifestUrl, true);
+					xhr.onload = function() {
+						try {
+							if (xhr.status == 200) {
+								var manifest = haxe.Json.parse(xhr.responseText);
+								var themeColor : String = manifest.theme_color;
+								var bgColor : String = manifest.background_color;
+								if (themeColor != null && themeColor != "") {
+									Browser.document.body.style.backgroundColor = themeColor;
+								} else if (bgColor != null && bgColor != "") {
+									Browser.document.body.style.backgroundColor = bgColor;
+								}
+							}
+						} catch (e : Dynamic) {}
+					};
+					xhr.send();
+				}
+			}
+		} catch (e : Dynamic) {}
 	}
 
 	private static var webFontsLoadingStartAt : Float;
@@ -1122,10 +1158,15 @@ class RenderSupport {
 			head.removeChild(oldThemeMeta);
 		}
 
+		var cssColor = RenderSupport.makeCSSColor(color, 1.0);
 		var node = Browser.document.createElement('meta');
 		node.setAttribute("name", "theme-color");
-		node.setAttribute("content", RenderSupport.makeCSSColor(color, 1.0));
+		node.setAttribute("content", cssColor);
 		head.appendChild(node);
+
+		if (Platform.isSafari && ProgressiveWebTools.isRunningPWA()) {
+			Browser.document.body.style.backgroundColor = cssColor;
+		}
 	}
 
 	public static function setApplicationLanguage(languageCode : String) {
