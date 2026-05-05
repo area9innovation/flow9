@@ -1,6 +1,7 @@
 package com.area9innovation.flow;
 
 import javax.crypto.Cipher;
+import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.MessageDigest;
@@ -108,6 +109,23 @@ public class FlowCrypto extends NativeHost {
 			
 		} catch (Exception e) {
 			System.out.println("sha256 exception: " + e.getMessage());
+			return "";
+		}
+	}
+
+	public static String hmacSha256(String input, String key) {
+		String algorithm = "HmacSHA256";
+		SecretKeySpec secretKeySpec = new SecretKeySpec(
+			key.getBytes(StandardCharsets.UTF_8), 
+			algorithm
+		);
+		try {
+			Mac mac = Mac.getInstance(algorithm);
+			mac.init(secretKeySpec);
+			byte[] hmacBytes = mac.doFinal(input.getBytes(StandardCharsets.UTF_8));
+			return bytesToHex(hmacBytes);
+		} catch (Exception e) {
+			System.out.println("hmacSha256 exception: " + e.getMessage());
 			return "";
 		}
 	}
