@@ -6,8 +6,8 @@
  * vice-versa.  Must be run from the flow9 root directory AFTER building
  * the JAR:
  *
- *   flowc1 lib/test_crypto_aes.flow jar=test_crypto_aes.jar
- *   php lib/test_crypto_aes_php_cross.php
+ *   flowc1 tests/test_crypto_aes.flow jar=test_crypto_aes.jar
+ *   php tests/test_crypto_aes_php_cross.php
  *
  * Requires:
  *   - PHP with openssl extension

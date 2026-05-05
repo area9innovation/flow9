@@ -72,15 +72,20 @@ public class FlowCrypto extends NativeHost {
 	}
 
 	// Decrypt a token produced by encryptAesGcm (or its PHP counterpart).
-	// Returns the plaintext or "" on failure / authentication error.
+	// Returns the plaintext on success, or "Error in decryptAesGcmNative: <reason>" on any failure.
+	// The Flow wrapper in crypto_aes.flow converts this to None() via startsWith check.
 	public static String decryptAesGcm(String encryptedData, String key) {
 		try {
 			String[] parts = encryptedData.split("-", 3);
-			if (parts.length != 3) return "";
+			if (parts.length != 3) return "Error in decryptAesGcmNative: invalid token format";
 
 			byte[] iv         = hexToBytes(parts[0]);
 			byte[] ciphertext = hexToBytes(parts[1]);
 			byte[] tag        = hexToBytes(parts[2]);
+
+			if (iv.length != GCM_IV_BYTES)  return "Error in decryptAesGcmNative: invalid IV length";
+			if (tag.length != GCM_TAG_BYTES) return "Error in decryptAesGcmNative: invalid tag length";
+
 			byte[] keyBytes   = deriveKey(key);
 
 			// Java GCM expects ciphertext || tag concatenated
@@ -95,7 +100,7 @@ public class FlowCrypto extends NativeHost {
 
 			return new String(cipher.doFinal(ciphertextWithTag), "UTF-8");
 		} catch (Exception e) {
-			return "";
+			return "Error in decryptAesGcmNative: " + e.getMessage();
 		}
 	}
 
