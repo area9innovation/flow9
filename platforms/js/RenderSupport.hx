@@ -1786,8 +1786,9 @@ class RenderSupport {
 				onKeyDownAccessibilityZoom(e);
 			}
 
-			MousePos.x = e.clientX;
-			MousePos.y = e.clientY;
+			// It is not expected from KeyboardEvent to have clientX/Y, but lets keep it here as a safety measure
+			if (e.clientX != null) MousePos.x = e.clientX;
+			if (e.clientY != null) MousePos.y = e.clientY;
 
 			emitKey(stage, "keydown", e);
 		});
@@ -1796,8 +1797,10 @@ class RenderSupport {
 			if (StopKeyEventsPropagation) {
 				e.stopPropagation();
 			}
-			MousePos.x = e.clientX;
-			MousePos.y = e.clientY;
+
+			// It is not expected from KeyboardEvent to have clientX/Y, but lets keep it here as a safety measure
+			if (e.clientX != null) MousePos.x = e.clientX;
+			if (e.clientY != null) MousePos.y = e.clientY;
 
 			emitKey(stage, "keyup", e);
 		});
