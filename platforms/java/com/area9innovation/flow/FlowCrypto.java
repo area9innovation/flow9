@@ -113,7 +113,7 @@ public class FlowCrypto extends NativeHost {
 			return bytesToHex(encodedhash);
 			
 		} catch (Exception e) {
-			System.out.println("sha256 exception: " + e.getMessage());
+			System.err.println("sha256 exception: " + e.getMessage());
 			return "";
 		}
 	}
@@ -130,7 +130,7 @@ public class FlowCrypto extends NativeHost {
 			byte[] hmacBytes = mac.doFinal(input.getBytes(StandardCharsets.UTF_8));
 			return bytesToHex(hmacBytes);
 		} catch (Exception e) {
-			System.out.println("hmacSha256 exception: " + e.getMessage());
+			System.err.println("hmacSha256 exception: " + e.getMessage());
 			return "";
 		}
 	}
