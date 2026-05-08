@@ -21,6 +21,8 @@
 #include <iomanip>
 
 #include "utils/md5.h"
+#include "utils/sha256.h"
+#include "utils/sha256.cpp"
 
 using std::endl;
 using std::stringstream;
@@ -3093,6 +3095,24 @@ StackSlot ByteCodeRunner::md5(RUNNER_ARGS) {
 
     return RUNNER->AllocateString(parseUtf8(::md5(res)));
 
+}
+
+StackSlot ByteCodeRunner::sha256Native(RUNNER_ARGS) {
+    RUNNER_PopArgs1(input_str);
+    RUNNER_CheckTag1(TString, input_str);
+
+    std::string input = encodeUtf8(RUNNER->GetString(input_str));
+    return RUNNER->AllocateString(parseUtf8(::sha256(input)));
+}
+
+StackSlot ByteCodeRunner::hmacSha256Native(RUNNER_ARGS) {
+    RUNNER_PopArgs2(input_str, key_str);
+    RUNNER_CheckTag1(TString, input_str);
+    RUNNER_CheckTag1(TString, key_str);
+
+    std::string input = encodeUtf8(RUNNER->GetString(input_str));
+    std::string key   = encodeUtf8(RUNNER->GetString(key_str));
+    return RUNNER->AllocateString(parseUtf8(::hmacSha256(input, key)));
 }
 
 StackSlot ByteCodeRunner::fileChecksum(RUNNER_ARGS)

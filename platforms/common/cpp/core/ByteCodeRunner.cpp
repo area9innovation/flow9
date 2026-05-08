@@ -3777,6 +3777,12 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, fast_setTree, 3);
 
 #undef NATIVE_NAME_PREFIX
+#define NATIVE_NAME_PREFIX "FlowCrypto."
+
+    TRY_USE_NATIVE_STATIC_NAME(ByteCodeRunner, sha256Native,   "sha256",   1);
+    TRY_USE_NATIVE_STATIC_NAME(ByteCodeRunner, hmacSha256Native, "hmacSha256", 2);
+
+#undef NATIVE_NAME_PREFIX
 #define NATIVE_NAME_PREFIX "HttpSupport."
 
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, preloadMediaUrl, 3);
