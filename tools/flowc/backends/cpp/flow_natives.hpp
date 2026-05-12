@@ -33,6 +33,12 @@
 	#include "md5.cpp"
 #endif
 
+#ifdef FLOWC_RUNTIME_INCLUDE_SHA256
+	// Include path to flow/platforms/common/cpp/utils/
+	#include "sha256.h"
+	#include "sha256.cpp"
+#endif
+
 #ifdef FLOWC_RUNTIME_INCLUDE_FILESYSTEM
 	#include <experimental/filesystem>
 #endif
@@ -651,6 +657,16 @@ flow::string md5(const flow::string& str) {
 	return s2ws(md5(ws2s(str)));
 }
 #endif // FLOWC_RUNTIME_INCLUDE_MD5
+
+#ifdef FLOWC_RUNTIME_INCLUDE_SHA256
+flow::string sha256Native(const flow::string& input) {
+	return s2ws(sha256(ws2s(input)));
+}
+
+flow::string hmacSha256Native(const flow::string& input, const flow::string& key) {
+	return s2ws(hmacSha256(ws2s(input), ws2s(key)));
+}
+#endif // FLOWC_RUNTIME_INCLUDE_SHA256
 
 char **stored_argv;
 int stored_argc;

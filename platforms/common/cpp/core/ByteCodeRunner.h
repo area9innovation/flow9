@@ -1369,6 +1369,8 @@ private:
     static StackSlot addCameraVideoEventListener(ByteCodeRunner*,StackSlot*);
     static StackSlot addTakeAudioEventListener(ByteCodeRunner*,StackSlot*);
     static StackSlot md5(ByteCodeRunner*,StackSlot*);
+    static StackSlot sha256Native(ByteCodeRunner*,StackSlot*);
+    static StackSlot hmacSha256Native(ByteCodeRunner*,StackSlot*);
 	static StackSlot fileChecksum(ByteCodeRunner*,StackSlot*);
 	static StackSlot readBytes(ByteCodeRunner*,StackSlot*);
 	static StackSlot readUntil(ByteCodeRunner*,StackSlot*);
