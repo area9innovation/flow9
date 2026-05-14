@@ -562,6 +562,122 @@ emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, na
 	list2string(^reslist);
 }
 
+// Groups consecutive switch cases that can be merged using Java's case fall-through.
+// Cases are mergeable when all argNames are "__" (no field bindings), the body does not
+// use the switch variable in a type-dependent way (field access / set-mutable, where
+// fiExpType drives struct-specific casts), and bodies are structurally equal.
+groupMergeableSwitchCases(cases : [FiCase], switchVar : string) -> [[FiCase]] {
+	if (length(cases) == 0) []
+	else {
+		foldi(cases, [], \i, acc, case -> {
+			if (i == 0) {
+				[[case]]
+			} else {
+				lastIdx = length(acc) - 1;
+				lastGroup = acc[lastIdx];
+				prevCase = lastElement(lastGroup, case);
+				if (canMergeSwitchCases(prevCase, case, switchVar)) {
+					replace(acc, lastIdx, arrayPush(lastGroup, case))
+				} else {
+					arrayPush(acc, [case])
+				}
+			}
+		});
+	}
+}
+
+canMergeSwitchCases(c1 : FiCase, c2 : FiCase, switchVar : string) -> bool {
+	c1.struct != "default" && c2.struct != "default"
+	&& forall(c1.argNames, \a -> a == "__")
+	&& forall(c2.argNames, \a -> a == "__")
+	&& isSameFiExp(c1.body, c2.body);
+}
+
+// Replaces the type of all free occurrences of a variable in an FiExp.
+// Used for merged switch cases: desugaring narrows the switch variable's type
+// per-case, but in the merged body we use FiTypeFlow() to ensure type-independent
+// code generation (e.g., Field_ accessor interfaces instead of direct field access).
+// Respects shadowing: lambdas, lets, switch argNames, and inner switches on the
+// same variable all prevent recursion into their scope.
+generalizeVarInFiExp(exp : FiExp, varName : string, newType : FiType) -> FiExp {
+	if (!fiExpReferencesVar(exp, varName)) exp
+	else switch (exp) {
+		FiVar(n, __, s): if (n == varName) FiVar(n, newType, s) else exp;
+		FiCall(f, es, t, s): FiCall(
+			generalizeVarInFiExp(f, varName, newType),
+			map(es, \e -> generalizeVarInFiExp(e, varName, newType)),
+			t, s
+		);
+		FiLambda(args, body, t, s):
+			if (exists(args, \a -> a.name == varName)) exp
+			else FiLambda(args, generalizeVarInFiExp(body, varName, newType), t, s);
+		FiLet(x, xt, e1, e2, t, s): FiLet(
+			x, xt,
+			generalizeVarInFiExp(e1, varName, newType),
+			if (x == varName) e2 else generalizeVarInFiExp(e2, varName, newType),
+			t, s
+		);
+		FiIf(c, th, el, t, s): FiIf(
+			generalizeVarInFiExp(c, varName, newType),
+			generalizeVarInFiExp(th, varName, newType),
+			generalizeVarInFiExp(el, varName, newType),
+			t, s
+		);
+		FiSwitch(x, st, cases, t, s): FiSwitch(
+			FiVar(x.name, if (x.name == varName) newType else x.type, x.start),
+			st,
+			// If inner switch is on the same variable, it rebinds it in case bodies —
+			// don't generalize there; the inner codegen handles the rebinding.
+			if (x.name == varName) cases
+			else map(cases, \c ->
+				if (exists(c.argNames, \a -> a == varName)) c
+				else FiCase(c.struct, c.argNames, generalizeVarInFiExp(c.body, varName, newType), c.start)
+			),
+			t, s
+		);
+		FiCast(e, ft, tt, t, s): FiCast(generalizeVarInFiExp(e, varName, newType), ft, tt, t, s);
+		FiSeq(es, t, s): FiSeq(map(es, \e -> generalizeVarInFiExp(e, varName, newType)), t, s);
+		FiCallPrim(op, es, t, s): FiCallPrim(op, map(es, \e -> generalizeVarInFiExp(e, varName, newType)), t, s);
+		FiRequire(flowfile, e, t, s): FiRequire(flowfile, generalizeVarInFiExp(e, varName, newType), t, s);
+		FiUnsafe(nm, e, t, s): FiUnsafe(nm, generalizeVarInFiExp(e, varName, newType), t, s);
+		default: exp;
+	}
+}
+
+// Checks whether a variable name appears free (not shadowed) in an FiExp.
+// Accounts for shadowing by lambdas, lets, switch argNames, and inner switches
+// on the same variable (which rebind it in case bodies).
+fiExpReferencesVar(exp : FiExp, name : string) -> bool {
+	switch (exp) {
+		FiVoid(__): false;
+		FiBool(__, __): false;
+		FiInt(__, __): false;
+		FiDouble(__, __): false;
+		FiString(__, __): false;
+		FiVar(n, __, __): n == name;
+		FiCall(f, es, __, __):
+			fiExpReferencesVar(f, name) || exists(es, \e -> fiExpReferencesVar(e, name));
+		FiLambda(args, body, __, __):
+			!exists(args, \a -> a.name == name) && fiExpReferencesVar(body, name);
+		FiLet(x, __, e1, e2, __, __):
+			fiExpReferencesVar(e1, name) || (x != name && fiExpReferencesVar(e2, name));
+		FiIf(c, t, e, __, __):
+			fiExpReferencesVar(c, name) || fiExpReferencesVar(t, name) || fiExpReferencesVar(e, name);
+		FiSwitch(x, __, cases, __, __):
+			// The switch expression references the var. If the switch is on the same
+			// variable, it rebinds it in case bodies — don't recurse into them.
+			fiExpReferencesVar(x, name)
+			|| (x.name != name && exists(cases, \c ->
+				!exists(c.argNames, \a -> a == name) && fiExpReferencesVar(c.body, name)
+			));
+		FiCast(e, __, __, __, __): fiExpReferencesVar(e, name);
+		FiSeq(es, __, __): exists(es, \e -> fiExpReferencesVar(e, name));
+		FiCallPrim(__, es, __, __): exists(es, \e -> fiExpReferencesVar(e, name));
+		FiRequire(__, e, __, __): fiExpReferencesVar(e, name);
+		FiUnsafe(__, e, __, __): fiExpReferencesVar(e, name);
+	}
+}
+
 emitJavaStatement(ctx0 : JavaScopeContext, code0 : FiExp, retloc : JavaReturnLocation) -> void {
 	unw_code = unfoldJavaStatements(ctx0, code0, true);
 	code : FiExp = unw_code.first;
@@ -587,61 +703,104 @@ emitJavaStatement(ctx0 : JavaScopeContext, code0 : FiExp, retloc : JavaReturnLoc
 			subctx = jctxPushIndent(ctx, "\t");
 			tmpvar2 = javaNewLocalName(ctx.func.next_local_id, "_tmp");
 			inputvar = x.name;
-			has_default = fold(cases, false, \hasdef, case -> {
-				case_ctx_v = if (case.struct == "default") {
+
+			// Group consecutive cases with identical bodies to use Java's case fall-through
+			caseGroups = groupMergeableSwitchCases(cases, inputvar);
+
+			has_default = fold(caseGroups, false, \hasdef, group -> {
+				firstCase = group[0];
+
+				if (firstCase.struct == "default") {
+					// Default case
 					jctxPushStr(ctx, ctx.indent + "default: {\n");
-					Pair(subctx, true);
+					emitJavaStatement(subctx, firstCase.body, retloc);
+					if (!isJavaReturnStmt(retloc))
+						jctxPushStr(ctx, subctx.indent + "break;\n");
+					jctxPushStr(ctx, ctx.indent + "}\n");
+					true;
+				} else if (length(group) > 1) {
+					// Merged group: emit fall-through case labels, body only once.
+					// All argNames are "__" so no struct-specific casts are needed.
+					iter(group, \case -> {
+						switch (lookupTree(ctx.func.gctx.cstructs, case.struct)) {
+							Some(cstruct): {
+								jctxPushStr(ctx, ctx.indent + "case " + i2s(cstruct.id) + "/*" + cstruct.name + "*/:\n");
+							}
+							None(): {
+								fail0("invalid struct in case: " + case.struct);
+							}
+						}
+					});
+					jctxPushStr(ctx, ctx.indent + "{\n");
+					// Generalize the switch variable's type in the body to FiTypeFlow()
+					// so that field accesses use accessor interfaces (Field_xxx) instead
+					// of struct-specific casts, which wouldn't be valid across merged cases.
+					mergedBody = if (inputvar != "") {
+						generalizeVarInFiExp(firstCase.body, inputvar, FiTypeFlow());
+					} else firstCase.body;
+					emitJavaStatement(subctx, mergedBody, retloc);
+					if (!isJavaReturnStmt(retloc))
+						jctxPushStr(ctx, subctx.indent + "break;\n");
+					jctxPushStr(ctx, ctx.indent + "}\n");
+					hasdef;
 				} else {
-					switch (lookupTree(ctx.func.gctx.cstructs, case.struct)) {
-						Some(cstruct): {
-							jctxPushStr(ctx, ctx.indent + "case " + i2s(cstruct.id) + "/*" + cstruct.name + "*/: {\n");
+					// Single case - emit with full variable bindings as before
+					case = firstCase;
+					case_ctx_v = if (case.struct == "default") {
+						jctxPushStr(ctx, ctx.indent + "default: {\n");
+						Pair(subctx, true);
+					} else {
+						switch (lookupTree(ctx.func.gctx.cstructs, case.struct)) {
+							Some(cstruct): {
+								jctxPushStr(ctx, ctx.indent + "case " + i2s(cstruct.id) + "/*" + cstruct.name + "*/: {\n");
 
-							has_args = exists(case.argNames, \a -> a != "__");
+								has_args = exists(case.argNames, \a -> a != "__");
 
-							castctx = if (has_args || (length(cstruct.fields) > 0 && inputvar != "")) {
-								stype = "Struct_" + cstruct.javaName;
-								jctxPushStr(ctx, subctx.indent + "final " + stype + " " + tmpvar2 +
-									" = (" + stype + ")" + tmpvar + ";\n");
+								castctx = if (has_args || (length(cstruct.fields) > 0 && inputvar != "")) {
+									stype = "Struct_" + cstruct.javaName;
+									jctxPushStr(ctx, subctx.indent + "final " + stype + " " + tmpvar2 +
+										" = (" + stype + ")" + tmpvar + ";\n");
 
-								if (inputvar != "")
-									jctxPushLocal(subctx, JavaLocalInfo(inputvar, tmpvar2, stype, true, false))
+									if (inputvar != "")
+										jctxPushLocal(subctx, JavaLocalInfo(inputvar, tmpvar2, stype, true, false))
+									else
+										subctx;
+								}
 								else
 									subctx;
+
+								ectx = if (!has_args)
+									castctx
+								else {
+									foldi(case.argNames, castctx, \i, sctx, arg -> {
+										if (arg == "__")
+											sctx
+										else {
+											aname = javaNewLocalName(ctx.func.next_local_id, arg);
+											ty = type2javaObjType(ctx.func.gctx, cstruct.fields[i].type, true, false, false);
+											jctxPushStr(ctx, subctx.indent + "final " + ty + " " + aname +
+												" = " + tmpvar2 + ".f_" + cstruct.fields[i].name + ";\n");
+
+											jctxPushLocal(sctx, JavaLocalInfo(arg,aname,ty,true,false));
+										}
+									});
+								}
+
+								Pair(ectx, hasdef);
 							}
-							else
-								subctx;
-
-							ectx = if (!has_args)
-								castctx
-							else {
-								foldi(case.argNames, castctx, \i, sctx, arg -> {
-									if (arg == "__")
-										sctx
-									else {
-										aname = javaNewLocalName(ctx.func.next_local_id, arg);
-										ty = type2javaObjType(ctx.func.gctx, cstruct.fields[i].type, true, false, false);
-										jctxPushStr(ctx, subctx.indent + "final " + ty + " " + aname +
-											" = " + tmpvar2 + ".f_" + cstruct.fields[i].name + ";\n");
-
-										jctxPushLocal(sctx, JavaLocalInfo(arg,aname,ty,true,false));
-									}
-								});
-							}
-
-							Pair(ectx, hasdef);
+							None():
+								fail0("invalid struct in case: " + case.struct);
 						}
-						None():
-							fail0("invalid struct in case: " + case.struct);
 					}
+
+					emitJavaStatement(case_ctx_v.first, case.body, retloc);
+
+					if (!isJavaReturnStmt(retloc))
+						jctxPushStr(ctx, subctx.indent + "break;\n");
+					jctxPushStr(ctx, ctx.indent + "}\n");
+
+					case_ctx_v.second;
 				}
-
-				emitJavaStatement(case_ctx_v.first, case.body, retloc);
-
-				if (!isJavaReturnStmt(retloc))
-					jctxPushStr(ctx, subctx.indent + "break;\n");
-				jctxPushStr(ctx, ctx.indent + "}\n");
-
-				case_ctx_v.second;
 			});
 
 			if (!has_default) {
