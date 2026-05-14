@@ -29,16 +29,26 @@ DEFINES += FLOW_COMPACT_STRUCTS
 DEFINES += QT_NO_BEARERMANAGEMENT
 
 CONFIG(use_gui) {
-    QT += gui opengl multimedia multimediawidgets
+    QT += gui opengl openglwidgets multimedia multimediawidgets
 
-    CONFIG += c++11
+    CONFIG += c++17
 
     QT += opengl
     QT += widgets gui
-    QT += webenginewidgets webchannel
+    QT += webchannel
+
+    # Qt6 WebEngine is an optional component; enable only if installed
+    qtHaveModule(webenginewidgets) {
+        QT += webenginewidgets
+    } else {
+        DEFINES += QT_NO_WEBENGINE
+    }
 
     #QMAKE_CXXFLAGS_DEBUG   += -std=c++11
     #QMAKE_CXXFLAGS_RELEASE += -std=c++11
+
+    # Suppress 'register' keyword error from vendored glm (C++17 disallows it)
+    QMAKE_CXXFLAGS += -Wno-register
 
     macx {
         # -O2 is too crashy on Mac; see #34057 - ST 12/17/14, 3/30/15
@@ -126,7 +136,29 @@ win32 {
 }
 
 macx {
-    QMAKE_POST_LINK = macdeployqt $$shell_quote($$shell_path($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}))
+    DEPLOY_APP = $$shell_quote($$shell_path($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}))
+    DEPLOY_FW  = $${DEPLOY_APP}/Contents/Frameworks
+    DEPLOY_BIN = $${DEPLOY_APP}/Contents/MacOS/$${TARGET}
+
+    # Clean stale frameworks/plugins before macdeployqt (prevents "File exists, skip copy")
+    QMAKE_POST_LINK = rm -rf $${DEPLOY_FW} $${DEPLOY_APP}/Contents/PlugIns
+
+    QMAKE_POST_LINK += && $$[QT_INSTALL_BINS]/macdeployqt $${DEPLOY_APP}
+
+    # Bundle third-party libs that macdeployqt doesn't handle and fix install names
+    QMAKE_POST_LINK += && cp -f /usr/local/lib/libjpeg.8.dylib $${DEPLOY_FW}/libjpeg.8.dylib 2>/dev/null || true
+    QMAKE_POST_LINK += && cp -f /usr/local/lib/libfreetype.6.dylib $${DEPLOY_FW}/libfreetype.6.dylib 2>/dev/null || true
+    QMAKE_POST_LINK += && cp -f /usr/local/lib/libpng16.16.dylib $${DEPLOY_FW}/libpng16.16.dylib 2>/dev/null || true
+    QMAKE_POST_LINK += && install_name_tool -id @executable_path/../Frameworks/libjpeg.8.dylib $${DEPLOY_FW}/libjpeg.8.dylib 2>/dev/null || true
+    QMAKE_POST_LINK += && install_name_tool -id @executable_path/../Frameworks/libfreetype.6.dylib $${DEPLOY_FW}/libfreetype.6.dylib 2>/dev/null || true
+    QMAKE_POST_LINK += && install_name_tool -id @executable_path/../Frameworks/libpng16.16.dylib $${DEPLOY_FW}/libpng16.16.dylib 2>/dev/null || true
+    # Fix transitive dep: libfreetype -> libpng
+    QMAKE_POST_LINK += && install_name_tool -change /usr/local/opt/libpng/lib/libpng16.16.dylib @executable_path/../Frameworks/libpng16.16.dylib $${DEPLOY_FW}/libfreetype.6.dylib 2>/dev/null || true
+
+    # Remove SQL driver plugins with unresolvable dependencies (not used)
+    QMAKE_POST_LINK += && rm -f $${DEPLOY_APP}/Contents/PlugIns/sqldrivers/libqsqlodbc.dylib 2>/dev/null || true
+    QMAKE_POST_LINK += && rm -f $${DEPLOY_APP}/Contents/PlugIns/sqldrivers/libqsqlpsql.dylib 2>/dev/null || true
+    QMAKE_POST_LINK += && rm -f $${DEPLOY_APP}/Contents/PlugIns/sqldrivers/libqsqlmimer.dylib 2>/dev/null || true
 }
 
 # Core

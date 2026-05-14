@@ -2,6 +2,9 @@
 #define GL_GLEXT_PROTOTYPES
 #ifdef WIN32
 #include <GL/glew.h>
+#elif defined(__APPLE__)
+#include <OpenGL/gl.h>
+#include <OpenGL/glext.h>
 #else
 #include <GL/gl.h>
 #include <GL/glext.h>
@@ -15,11 +18,7 @@
 #include <map>
 #include <set>
 
-#ifdef _MSC_VER
 #include <memory>
-#else
-#include <tr1/memory>
-#endif
 
 #ifdef QT_GUI_LIB
 #include <glm/glm.hpp>

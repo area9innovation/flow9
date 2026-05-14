@@ -22,7 +22,7 @@ using std::max;
 using std::min;
 using std::cout;
 
-GDBMIStreambuf::GDBMIStreambuf(QMutex &target_lock, ostream &target, std::string tag) :
+GDBMIStreambuf::GDBMIStreambuf(QRecursiveMutex &target_lock, ostream &target, std::string tag) :
     target_lock(target_lock), target(target), tag(tag), buffer(8*1024+2)
 {
     // Leave 2 characters beyond the end
@@ -86,7 +86,7 @@ int GDBMIStreambuf::sync() {
     return 0;
 }
 
-QMutex Debugger::output_lock(QMutex::Recursive);
+QRecursiveMutex Debugger::output_lock;
 Debugger *Debugger::instance = NULL;
 
 Debugger::Debugger(ByteCodeRunner *runner, bool gdbmi) :
@@ -97,7 +97,7 @@ Debugger::Debugger(ByteCodeRunner *runner, bool gdbmi) :
     mibuf_log(output_lock, std::cout, "&"),
     debug_out(runner->flow_out.rdbuf()),
     log_out(runner->flow_out.rdbuf()),
-    debugger_lock(QMutex::NonRecursive)
+    debugger_lock()
 {
     instance = this;
     suspended = false;

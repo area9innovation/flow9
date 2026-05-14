@@ -37,10 +37,8 @@ void QtHttpSupport::doRequest(HttpRequest &rq)
 
     // Replies only. It indicates that the server is redirecting the request to a different URL.
     request.setAttribute(QNetworkRequest::RedirectionTargetAttribute, true);
-    // Indicates whether the Network Access API should automatically follow a HTTP redirect response or not.
-    // Currently redirects that are insecure, that is redirecting from "https" to "http" protocol, are not allowed.
-    // In QT 6 this attribute is removed.
-    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+    // Qt6: FollowRedirectsAttribute removed. Use RedirectPolicy instead.
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
 
     if (getFlowRunner()->NotifyStubs)
         getFlowRunner()->flow_err << "Requesting URL: " << url.toString().toUtf8().data() << std::endl;

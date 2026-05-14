@@ -10,7 +10,9 @@
 #include <QOpenGLWidget>
 #include <QNetworkAccessManager>
 #include <QProgressDialog>
+#ifndef QT_NO_WEBENGINE
 #include <QWebEngineView>
+#endif
 #include <QApplication>
 #include <QVideoWidget>
 #include <QMimeDatabase>
@@ -129,7 +131,7 @@ private slots:
 
     void handleFinished(QNetworkReply* reply);
 
-    void videoStateChanged(QMediaPlayer::State state);
+    void videoStateChanged(QMediaPlayer::PlaybackState state);
     void mediaStatusChanged(QMediaPlayer::MediaStatus status);
     void videoPositionChanged(int64_t position);
     void handleVideoError();
@@ -137,7 +139,9 @@ private slots:
     void bytecodeDownloadProgress(qint64 bytesReceived, qint64 bytesTotal);
     void bytecodeDownloadFinished();
 
+#ifndef QT_NO_WEBENGINE
     void webPageLoaded(bool ok);
+#endif
     void doQuit();
 
 protected:
@@ -172,12 +176,14 @@ protected:
 
     bool doCreateTextWidget(QWidget *&widget, GLTextClip *text_clip);
     bool doCreateVideoWidget(QWidget *&widget, GLVideoClip *video_clip);
+#ifndef QT_NO_WEBENGINE
     bool doCreateWebWidget(QWidget *&widget, GLWebClip *video_clip);
     StackSlot webClipHostCall(GLWebClip * clip, const unicode_string &name, const StackSlot & args);
     StackSlot webClipEvalJS(GLWebClip * clip, const unicode_string &code, StackSlot& cb);
     StackSlot variant2slot(QVariant var);
     void callflow(QWebEngineView * web_view, QVariantList args);
     friend class QWebViewDelegate;
+#endif
 
     void onTextClipStateChanged(GLTextClip* clip);
 
@@ -194,7 +200,8 @@ protected:
 
     static StackSlot removeQuitListener_native(ByteCodeRunner*,StackSlot*,void*);
     static StackSlot removeFullScreenChangeListener_native(ByteCodeRunner*,StackSlot*, void *);
-    static void readFile_native(ByteCodeRunner* runner, StackSlot*, QFile *file, QUrl url, QMimeDatabase *mimeTypes, QMimeType type, QRegExp *mimeRegExp, uint16_t offset);
+    // Commented out: FileReaderAsync and readFile_native are not currently used.
+    // static void readFile_native(ByteCodeRunner* runner, StackSlot*, QFile *file, QUrl url, QMimeDatabase *mimeTypes, QMimeType type, QRegExp *mimeRegExp, uint16_t offset);
 
     void setFocus(GLClip *clip, bool focus);
     void focusInEvent(QFocusEvent *event);

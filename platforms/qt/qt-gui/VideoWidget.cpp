@@ -1,4 +1,4 @@
-#include <QVideoSurfaceFormat>
+#include <QVideoFrameFormat>
 #include "VideoWidget.h"
 #include <QNetworkReply>
 
@@ -37,6 +37,11 @@ VideoSurface *VideoWidget::videoSurface() const
 	return m_videoSurface;
 }
 
+QVideoSink *VideoWidget::videoSink() const
+{
+	return m_videoSurface->sink();
+}
+
 void VideoWidget::setMediaPlayer(QMediaPlayer *mediaPlayer)
 {
     m_mediaObject = mediaPlayer;
@@ -53,13 +58,13 @@ bool VideoWidget::setMediaSource(QString qtStrBase, std::function<QString (QStri
     QUrl rq_url = base.resolved(QUrl(name));
 
     if (QFile::exists(full_path))
-        player->setMedia(QUrl::fromLocalFile(full_path));
+        player->setSource(QUrl::fromLocalFile(full_path));
     else if (QFile::exists(name))
-        player->setMedia(QUrl::fromLocalFile(name));
+        player->setSource(QUrl::fromLocalFile(name));
     else if (video_clip->isHeadersSet()) {
         this->setMediaFromCustomRequest(rq_url, [this](QString errorText){ this->onError(errorText); });
     } else {
-        player->setMedia(rq_url);
+        player->setSource(rq_url);
     }
 
     return true;
@@ -82,16 +87,16 @@ QMediaPlayer *VideoWidget::mediaPlayer() const
 	return m_mediaObject;
 }
 
+// ---- VideoSurface (Qt6 QVideoSink-based) ----
+
 VideoSurface::VideoSurface(QObject *parent)
-	: QAbstractVideoSurface(parent)
-	, m_brightness(0)
-	, m_contrast(0)
-	, m_hue(0)
-	, m_saturation(0)
+	: QObject(parent)
+	, m_sink(new QVideoSink(this))
 	, m_size(ivec2(0, 0))
-	, m_pixelFormat(QVideoFrame::Format_Invalid)
 	, m_ready(false)
+	, m_videoClip(nullptr)
 {
+	connect(m_sink, &QVideoSink::videoFrameChanged, this, &VideoSurface::onVideoFrameChanged);
 }
 
 VideoSurface::~VideoSurface()
@@ -113,104 +118,6 @@ GLVideoClip *VideoSurface::videoClip() const
     return m_videoClip;
 }
 
-QList<QVideoFrame::PixelFormat> VideoSurface::supportedPixelFormats(QAbstractVideoBuffer::HandleType /*handleType*/) const
-{
-    return QList<QVideoFrame::PixelFormat>() << QVideoFrame::Format_ARGB32;//QVideoFrame::Format_ARGB32_Premultiplied;
-
-}
-
-bool VideoSurface::isFormatSupported(const QVideoSurfaceFormat &format) const
-{
-    return supportedPixelFormats().contains(format.pixelFormat());
-}
-
-bool VideoSurface::start(const QVideoSurfaceFormat &format)
-{
-	if (m_videoTextureBitmap)
-        m_videoTextureBitmap->setSwizzleRB(needsSwizzling(format));
-
-	return QAbstractVideoSurface::start(format);
-}
-
-void VideoSurface::stop()
-{
-	QAbstractVideoSurface::stop();
-}
-
-bool VideoSurface::present(const QVideoFrame &frame)
-{
-    // VideoClip detaches earlier than player stops
-    if (!m_videoClip) {
-        return true;
-    }
-
-    if (frame.width() > 0 && frame.height() > 0 && (frame.width() != m_size.x || frame.height() != m_size.y)) {
-        m_size = ivec2(frame.width(), frame.height());
-        m_videoClip->notify(GLVideoClip::SizeChange, m_size.x, m_size.y);
-    }
-
-    QVideoFrame videoFrame(frame);
-
-    if (videoFrame.map(QAbstractVideoBuffer::ReadOnly)) {
-        int realFrameWidth = videoFrame.bytesPerLine() / 4;
-
-        if (m_videoTextureBitmap->getSize() != ivec2(realFrameWidth, frame.height()))
-            m_videoTextureBitmap->resize(ivec2(realFrameWidth, frame.height()));
-
-        int bytes = videoFrame.mappedBytes();
-        int dsize = m_videoTextureBitmap->getDataSize();
-        Q_ASSERT(bytes == dsize);
-
-        memcpy(m_videoTextureBitmap->getDataPtr(), videoFrame.bits(), bytes);
-        m_videoTextureBitmap->invalidate();
-
-        videoFrame.unmap();
-    }
-
-    emit frameUpdate();
-	return true;
-}
-
-int VideoSurface::brightness() const
-{
-	return m_brightness;
-}
-
-void VideoSurface::setBrightness(int brightness)
-{
-	m_brightness = brightness;
-}
-
-int VideoSurface::contrast() const
-{
-	return m_contrast;
-}
-	
-void VideoSurface::setContrast(int contrast)
-{
-	m_contrast = contrast;
-}
-
-int VideoSurface::hue() const
-{
-	return m_hue;
-}
-	
-void VideoSurface::setHue(int hue)
-{
-	m_hue = hue;
-}
-
-int VideoSurface::saturation() const
-{
-	return m_saturation;
-}
-	
-void VideoSurface::setSaturation(int saturation)
-{
-	m_saturation = saturation;
-}
-
 bool VideoSurface::isReady() const
 {
 	return m_ready;
@@ -221,11 +128,41 @@ void VideoSurface::setReady(bool ready)
 	m_ready = ready;
 }
 
-bool VideoSurface::needsSwizzling(const QVideoSurfaceFormat &format) const
+void VideoSurface::onVideoFrameChanged(const QVideoFrame &frame)
 {
-    return format.pixelFormat() == QVideoFrame::Format_RGB32 ||
-    	   format.pixelFormat() == QVideoFrame::Format_ARGB32;
+    // VideoClip detaches earlier than player stops
+    if (!m_videoClip) {
+        return;
+    }
+
+    if (frame.width() > 0 && frame.height() > 0 && (frame.width() != m_size.x || frame.height() != m_size.y)) {
+        m_size = ivec2(frame.width(), frame.height());
+        m_videoClip->notify(GLVideoClip::SizeChange, m_size.x, m_size.y);
+    }
+
+    QVideoFrame videoFrame(frame);
+
+    if (videoFrame.map(QVideoFrame::ReadOnly)) {
+        // In Qt6, bytesPerLine/bits take a plane index
+        int realFrameWidth = videoFrame.bytesPerLine(0) / 4;
+
+        if (m_videoTextureBitmap->getSize() != ivec2(realFrameWidth, frame.height()))
+            m_videoTextureBitmap->resize(ivec2(realFrameWidth, frame.height()));
+
+        int bytes = videoFrame.mappedBytes(0);
+        int dsize = m_videoTextureBitmap->getDataSize();
+        Q_ASSERT(bytes == dsize);
+
+        memcpy(m_videoTextureBitmap->getDataPtr(), videoFrame.bits(0), bytes);
+        m_videoTextureBitmap->invalidate();
+
+        videoFrame.unmap();
+    }
+
+    emit frameUpdate();
 }
+
+// ---- VideoCustomRequest ----
 
 VideoCustomRequest::VideoCustomRequest(QWidget *parent)
 {
@@ -249,7 +186,10 @@ void VideoCustomRequest::setMediaFromCustomRequest(QUrl qUrl, GLVideoClip* video
     connect(manager, &QNetworkAccessManager::finished, this, [this, player, onError](QNetworkReply* reply)
     {
         if (reply->error() == QNetworkReply::NoError) {
-            player->setMedia(QMediaContent(), setMediaBuffer(reply->readAll()));
+            // Qt6: setMedia with QMediaContent removed.
+            // Write to a temp buffer and use setSourceDevice.
+            QBuffer *buf = setMediaBuffer(reply->readAll());
+            player->setSourceDevice(buf);
         } else {
             onError(reply->errorString());
         }

@@ -404,24 +404,24 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
             element = RUNNER->AllocateStruct("DbNullField", 1);
         } else {
             // converting from QT type to Flow type
-            switch (field.type()) {
-            case QVariant::Bool:
+            switch (field.metaType().id()) {
+            case QMetaType::Bool:
                 value = StackSlot::MakeInt(field.value().toBool() ? 1 : 0);
                 break;
-            case QVariant::Int:
+            case QMetaType::Int:
                 value = StackSlot::MakeInt(field.value().toInt());
                 break;
-            case QVariant::Char:    // it's tinyint
+            case QMetaType::Char:    // it's tinyint
                 value = StackSlot::MakeInt(field.value().toInt());
                 break;
-            case QVariant::UInt:
+            case QMetaType::UInt:
                 value = StackSlot::MakeInt(field.value().toUInt());
                 break;
-            case QVariant::Double:
+            case QMetaType::Double:
                 value = StackSlot::MakeDouble(field.value().toDouble());
                 break;
-            case QVariant::Time:
-            case QVariant::DateTime:
+            case QMetaType::QTime:
+            case QMetaType::QDateTime:
                 value = RUNNER->AllocateString(field.value().toDateTime().toString("yyyy-MM-dd'T'HH:mm:ss'Z'"));
                 break;
             default:

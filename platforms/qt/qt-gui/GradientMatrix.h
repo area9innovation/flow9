@@ -3,7 +3,7 @@
 
 #include <QtGui>
 
-class GradientMatrix : public QMatrix
+class GradientMatrix : public QTransform
 {
 public:
     double height, width;

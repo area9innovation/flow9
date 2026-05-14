@@ -12,18 +12,19 @@
 #include <fstream>
 
 #include <QMutex>
+#include <QRecursiveMutex>
 #include <QWaitCondition>
 
 class GDBMIStreambuf : public std::streambuf
 {
 protected:
-    QMutex &target_lock;
+    QRecursiveMutex &target_lock;
     ostream &target;
     std::string tag;
     std::vector<char> buffer;
 
 public:
-    GDBMIStreambuf(QMutex &target_lock, ostream &target, std::string tag);
+    GDBMIStreambuf(QRecursiveMutex &target_lock, ostream &target, std::string tag);
     virtual ~GDBMIStreambuf();
 
 protected:
@@ -63,7 +64,7 @@ private:
     std::ofstream tty_out;
 
     QMutex debugger_lock;
-    static QMutex output_lock;
+    static QRecursiveMutex output_lock;
 
     // These fields are protected by debugger_lock.
     // When suspended is false, runner cannot be accessed by the input thread.

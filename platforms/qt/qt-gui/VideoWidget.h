@@ -2,7 +2,9 @@
 #define VIDEO_SURFACE_H
 
 #include <QMediaPlayer>
-#include <QAbstractVideoSurface>
+#include <QVideoSink>
+#include <QVideoFrame>
+#include <QVideoFrameFormat>
 #include <QWidget>
 #include "gl-gui/GLRenderer.h"
 #include "gl-gui/GLVideoClip.h"
@@ -26,6 +28,9 @@ public:
 
 	VideoSurface *videoSurface() const;
 
+	// Returns the QVideoSink for use with QMediaPlayer::setVideoOutput()
+	QVideoSink *videoSink() const;
+
     void setMediaPlayer(QMediaPlayer *mediaPlayer);
     QMediaPlayer *mediaPlayer() const;
 
@@ -42,7 +47,8 @@ private:
     void setMediaFromCustomRequest(QUrl qUrl, std::function<void (QString)> onError);
 };
 
-class VideoSurface : public QAbstractVideoSurface
+// Qt6 replacement for QAbstractVideoSurface using QVideoSink
+class VideoSurface : public QObject
 {
 	Q_OBJECT
 
@@ -52,27 +58,7 @@ public:
 
 	void setTargetVideoTexture(GLTextureBitmap::Ptr video_texture);
 
-	QList<QVideoFrame::PixelFormat> supportedPixelFormats(
-		QAbstractVideoBuffer::HandleType handleType = QAbstractVideoBuffer::NoHandle) const;
-
-	bool isFormatSupported(const QVideoSurfaceFormat &format) const;
-
-	bool start(const QVideoSurfaceFormat &format);
-	void stop();
-
-	bool present(const QVideoFrame &frame);
-
-	int brightness() const;
-	void setBrightness(int brightness);
-
-	int contrast() const;
-	void setContrast(int contrast);
-
-	int hue() const;
-	void setHue(int hue);
-
-	int saturation() const;
-	void setSaturation(int saturation);
+	QVideoSink *sink() const { return m_sink; }
 
 	bool isReady() const;
 	void setReady(bool ready);
@@ -83,22 +69,14 @@ public:
 Q_SIGNALS:
 	void frameUpdate();
 
-protected:
-	bool needsSwizzling(const QVideoSurfaceFormat &format) const;
+private slots:
+	void onVideoFrameChanged(const QVideoFrame &frame);
 
 private:
 	GLTextureBitmap::Ptr m_videoTextureBitmap;
+	QVideoSink *m_sink;
 
-	int m_brightness;
-	int m_contrast;
-	int m_hue;
-	int m_saturation;
     ivec2 m_size;
-
-	QVideoFrame::PixelFormat m_pixelFormat;
-	QSize m_frameSize;
-	QRect m_sourceRect;
-	bool m_colorsDirty;
 	bool m_ready;
 
 	GLVideoClip *m_videoClip;
