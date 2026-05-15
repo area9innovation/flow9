@@ -173,15 +173,36 @@ fcexp2fi(env : FcTypeEnvLocal, names : FcGlobalNames, onError : (string, FcInfo2
 		FcSeq(s, info): FiSeq(fcexps2fi(env, names, onError, s), mfctype2fi(env, onError, ^(info.type)), info.start);
 		FcCast(ex, tFrom, tTo, info): FiCast(fcexp2fi(env, names, onError, ex), fctype2fi(env, onError, tFrom), fctype2fi(env, onError, tTo), mfctype2fi(env, onError, ^(info.type)), info.start);
 		FcCall(f, args, info): FiCall(fcexp2fi(env, names, onError, f), fcexps2fi(env, names, onError, args), mfctype2fi(env, onError, ^(info.type)), info.start);
-		FcSwitch(x, switchType, cases, info): FiSwitch(fcvar2fi(env, onError, x), fctype2fi(env, onError, switchType), map(cases, \c -> {
-				if (c.struct == "default" || containsKeyTree(names.structs, c.struct)) {
-					FiCase(c.struct, c.argNames, fcexp2fi(env, names, onError, c.body), c.info.start)
-				} else {
-					// Union case: look up the union and expand to struct names
-					structs = fcUnion2structNames(names, c.struct);
-					FiCaseUnion(c.struct, structs, fcexp2fi(env, names, onError, c.body), c.info.start)
-				}
-			}), mfctype2fi(env, onError, ^(info.type)), info.start);
+		FcSwitch(x, switchType, cases, info): {
+			// Collect all explicit struct case names to subtract from union cases.
+			// A switch may have both a union case (e.g. CharacterStyle()) and explicit
+			// struct cases for members of that union (e.g. SetRTL(__)).
+			// The explicit struct cases take priority; union cases cover only the remaining structs.
+			explicitStructNames = buildSet(filtermap(cases, \c -> {
+				if (c.struct == "default" || !containsKeyTree(names.structs, c.struct)) None()
+				else Some(c.struct)
+			}));
+			FiSwitch(fcvar2fi(env, onError, x), fctype2fi(env, onError, switchType),
+				// Use fold to track claimed structs across union cases
+				fold(cases, Pair([], explicitStructNames), \acc : Pair<[FiSwitchCase], Set<string>>, c -> {
+					if (c.struct == "default" || containsKeyTree(names.structs, c.struct)) {
+						Pair(
+							arrayPush(acc.first, FiCase(c.struct, c.argNames, fcexp2fi(env, names, onError, c.body), c.info.start)),
+							acc.second
+						)
+					} else {
+						// Union case: expand to struct names, excluding already-claimed structs
+						allStructs = fcUnion2structNames(names, c.struct);
+						structs = filter(allStructs, \s -> !containsSet(acc.second, s));
+						claimed = fold(structs, acc.second, \s, name -> insertSet(s, name));
+						Pair(
+							arrayPush(acc.first, FiCaseUnion(c.struct, structs, fcexp2fi(env, names, onError, c.body), c.info.start)),
+							claimed
+						)
+					}
+				}).first,
+				mfctype2fi(env, onError, ^(info.type)), info.start);
+		}
 		FcLambda(args, body, info): fclambda2fi(env, names, onError, e);
 		FcLet(name, type, e1, e2, info): FiLet(name, fctype2fi(env, onError, type), fcexp2fi(env, names, onError, e1), fcexp2fi(env, names, onError, e2), mfctype2fi(env, onError, ^(info.type)), info.start);
 		FcIf(e1, e2, e3, info): FiIf(fcexp2fi(env, names, onError, e1), fcexp2fi(env, names, onError, e2), fcexp2fi(env, names, onError, e3), mfctype2fi(env, onError, ^(info.type)), info.start);
