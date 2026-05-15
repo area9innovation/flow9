@@ -159,6 +159,36 @@ export {
 
 	// Split a full native name into a native host and native name: Native.fold to Pair("Native", "fold")
 	fiSplitNativeName(nname: string) -> Pair<string, string>;
+
+	// FiSwitchCase helpers — use these to handle both FiCase and FiCaseUnion uniformly
+
+	// Get the body of a switch case
+	fiSwitchCaseBody(c : FiSwitchCase) -> FiExp;
+
+	// Get the start position of a switch case
+	fiSwitchCaseStart(c : FiSwitchCase) -> int;
+
+	// Get the case name (struct name or union name)
+	fiSwitchCaseName(c : FiSwitchCase) -> string;
+
+	// Get the list of struct names this case covers
+	// For FiCase: [struct] (single element). For FiCaseUnion: structs field.
+	// For "default": []
+	fiSwitchCaseStructs(c : FiSwitchCase) -> [string];
+
+	// Is this a default case?
+	fiSwitchCaseIsDefault(c : FiSwitchCase) -> bool;
+
+	// Get argNames (empty for FiCaseUnion and default)
+	fiSwitchCaseArgNames(c : FiSwitchCase) -> [string];
+
+	// Transform the body of a switch case, preserving case type
+	fiMapSwitchCaseBody(c : FiSwitchCase, fn : (FiExp) -> FiExp) -> FiSwitchCase;
+
+	// Expand FiSwitchCase list: FiCase passes through, FiCaseUnion expands to
+	// one FiCase per struct (all with empty argNames and the shared body).
+	// Useful for backends that need struct-level dispatch.
+	fiExpandSwitchCases(cases : [FiSwitchCase]) -> [FiCase];
 }
 
 fiDeclarationArgNames(decl) {
@@ -393,9 +423,9 @@ isSameFiExp(e1 : FiExp, e2 : FiExp) -> bool {
 					&& length(cs1) == length(cs2)
 					&& foldi(cs1, true,
 						\i, acc, c1 ->
-							acc && c1.struct == cs2[i].struct
-							&& c1.argNames == cs2[i].argNames
-							&& isSameFiExp(c1.body, cs2[i].body)
+							acc && fiSwitchCaseName(c1) == fiSwitchCaseName(cs2[i])
+							&& fiSwitchCaseArgNames(c1) == fiSwitchCaseArgNames(cs2[i])
+							&& isSameFiExp(fiSwitchCaseBody(c1), fiSwitchCaseBody(cs2[i]))
 					)
 				}
 				default: false;
@@ -802,7 +832,7 @@ fiRenameVar(e : FiExp, var: string, new: string) -> FiExp {
 		FiSwitch(v, __,cases,__, __): {
 			FiSwitch(e with
 				x = if (v.name != var) v else FiVar(v with name = new),
-				cases = map(cases, \c -> FiCase(c with body = ren(c.body)))
+				cases = map(cases, \c -> fiMapSwitchCaseBody(c, ren))
 			);
 		}
 		FiCast(ex, __, __, __, __): {
@@ -855,7 +885,7 @@ fiReplaceVar(e : FiExp, var: string, new: FiExp) -> FiExp {
 			);
 		}
 		FiSwitch(v, __,cases,__, __): {
-			sw1 = FiSwitch(e with cases = map(cases, \c -> FiCase(c with body = ren(c.body))));
+			sw1 = FiSwitch(e with cases = map(cases, \c -> fiMapSwitchCaseBody(c, ren)));
 			switch (new) {
 				FiVar(__, new_t,__): if (v.name != var) sw1 else {
 					FiSwitch(sw1 with
@@ -1268,3 +1298,66 @@ fiSplitNativeName(nname: string) -> Pair<string, string> {
 	native_name = parts[1];
 	Pair(native_host, native_name);
 }
+
+// FiSwitchCase helpers
+
+fiSwitchCaseBody(c : FiSwitchCase) -> FiExp {
+	switch (c) {
+		FiCase(__, __, body, __): body;
+		FiCaseUnion(__, __, body, __): body;
+	}
+}
+
+fiSwitchCaseStart(c : FiSwitchCase) -> int {
+	switch (c) {
+		FiCase(__, __, __, start): start;
+		FiCaseUnion(__, __, __, start): start;
+	}
+}
+
+fiSwitchCaseName(c : FiSwitchCase) -> string {
+	switch (c) {
+		FiCase(struct, __, __, __): struct;
+		FiCaseUnion(union, __, __, __): union;
+	}
+}
+
+fiSwitchCaseStructs(c : FiSwitchCase) -> [string] {
+	switch (c) {
+		FiCase(struct, __, __, __): if (struct == "default") [] else [struct];
+		FiCaseUnion(__, structs, __, __): structs;
+	}
+}
+
+fiSwitchCaseIsDefault(c : FiSwitchCase) -> bool {
+	switch (c) {
+		FiCase(struct, __, __, __): struct == "default";
+		FiCaseUnion(__, __, __, __): false;
+	}
+}
+
+fiSwitchCaseArgNames(c : FiSwitchCase) -> [string] {
+	switch (c) {
+		FiCase(__, argNames, __, __): argNames;
+		FiCaseUnion(__, __, __, __): [];
+	}
+}
+
+fiMapSwitchCaseBody(c : FiSwitchCase, fn : (FiExp) -> FiExp) -> FiSwitchCase {
+	switch (c) {
+		FiCase(struct, argNames, body, start): FiCase(struct, argNames, fn(body), start);
+		FiCaseUnion(union, structs, body, start): FiCaseUnion(union, structs, fn(body), start);
+	}
+}
+
+fiExpandSwitchCases(cases : [FiSwitchCase]) -> [FiCase] {
+	concatA(map(cases, \c -> {
+		switch (c) {
+			FiCase(__, __, __, __): [c];
+			FiCaseUnion(__, structs, body, start): {
+				map(structs, \s -> FiCase(s, [], body, start));
+			}
+		}
+	}))
+}
+

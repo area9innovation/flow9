@@ -188,7 +188,7 @@ typecheckFcModule(env0 : FcTypeEnv, module : FcModule) -> FcTypecheckResult {
 	}
 
 
-	fi = fcmodule2fiWithErrorHandler(ret.first.local, module,
+	fi = fcmodule2fiWithErrorHandler(ret.first.local, ret.first.program.acc.names, module,
 		\err, info ->
 			onModuleError(FcError(err, [FcPosition(module.fileinfo.flowfile, info.start, info.end)]))
 	);
@@ -700,7 +700,16 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 											mstruct = lookupTree(acc.program.acc.names.structs, case.struct);
 											switch (mstruct) {
 												None(): {
-													acc2;
+													// Could be a union case
+													munion = lookupTree(acc.program.acc.names.unions, case.struct);
+													switch (munion) {
+														None(): acc2;
+														Some(union): {
+															arrayPush(acc2, FcTypeName(case.struct, generate(0, length(union.typeparameters), \__ -> {
+																makeFcTyVar2(tyvarIdGroup, ci)
+															}), ci));
+														}
+													}
 												}
 												Some(struct): {
 													// TODO: We might be able to do this a bit smarter, since we
@@ -753,20 +762,28 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 
 			// Find the resulting types of all bodies
 			aat = map(cases, \case : FcCase -> {
+				isUnionCase = containsKeyTree(acc.program.acc.names.unions, case.struct);
 				// Be sure to override the type of the case variable to this type of this particular case
 				// As best we can, grab it from the concrete union type we have
-				beststruct : Maybe<FcTypeName> = find(unionStructs, \us -> us.name == case.struct);
-				structdef = switch (beststruct) {
-					None(): {
-						body : FcExp = case.body;
-						if (isConfigParameterTrue(acc.program.acc.config.config, "gtype")) {
-							tn = FcTypeName(case.struct, [], copyFcInfo2(body.info));
-							getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
-						} else {
-							FcTypeName(case.struct, [], copyFcInfo2(body.info));
+				structdef = if (isUnionCase) {
+					// Union case: resolve the union type, don't narrow to struct
+					body0 : FcExp = case.body;
+					tn0 = FcTypeName(case.struct, [], copyFcInfo2(body0.info));
+					getFcNamedTypeError(acc, tyvarIdGroup, tn0, error);
+				} else {
+					beststruct : Maybe<FcTypeName> = find(unionStructs, \us -> us.name == case.struct);
+					switch (beststruct) {
+						None(): {
+							body : FcExp = case.body;
+							if (isConfigParameterTrue(acc.program.acc.config.config, "gtype")) {
+								tn = FcTypeName(case.struct, [], copyFcInfo2(body.info));
+								getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
+							} else {
+								FcTypeName(case.struct, [], copyFcInfo2(body.info));
+							}
 						}
+						Some(tn): getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
 					}
-					Some(tn): getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
 				}
 				acc3 = if (case.struct == "default") acc
 				else {
@@ -776,21 +793,23 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 					setFcType(acc, x.name, Some(structdef));
 				}
 
-				switch (structdef) {
-					FcTypeStruct(__, __, sargs, __): {
-						if (length(case.argNames) != length(structdef.args)) {
-							pt = prettyFcType(FcPretty(false, true, ^(acc3.local.tyvars), ^(acc3.local.typars)), structdef, makeSet());
-							error("Expected " + i2s(length(structdef.args)) + " arguments to " + pt + " in case, got " + i2s(length(case.argNames)));
+				if (!isUnionCase) {
+					switch (structdef) {
+						FcTypeStruct(__, __, sargs, __): {
+							if (length(case.argNames) != length(structdef.args)) {
+								pt = prettyFcType(FcPretty(false, true, ^(acc3.local.tyvars), ^(acc3.local.typars)), structdef, makeSet());
+								error("Expected " + i2s(length(structdef.args)) + " arguments to " + pt + " in case, got " + i2s(length(case.argNames)));
+							}
 						}
+						default: {}
 					}
-					default: {}
 				}
 
 				// Here we pass varinfo because case variables would be added later at 'let' construction
 				ct = typecheckFcExp(acc3, tyvarIdGroup, flowfile, case.body);
 				// Check if the body has "let" bodies with the name of the switch-var,
 				// and then mark that this var is less than the struct case!
-				if (case.struct != "default") {
+				if (case.struct != "default" && !isUnionCase) {
 					checkSwitchBodyVars(acc3, x, xtype, structdef, case.body);
 				}
 				ct;

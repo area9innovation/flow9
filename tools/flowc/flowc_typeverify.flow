@@ -909,7 +909,12 @@ typeverifyFiSwitch(env : TypeVerifyLocalEnv, sw : FiSwitch, onError : (FcError) 
 			)
 		);
 	}
-	switchCaseTypes = fold(sw.cases, makeSet(), \caseTypes, c -> insertSet(caseTypes, c.struct));
+	switchCaseTypes = fold(sw.cases, makeSet(), \caseTypes, c -> {
+		switch (c) {
+			FiCase(struct, __, __, __): insertSet(caseTypes, struct);
+			FiCaseUnion(__, structs, __, __): fold(structs, caseTypes, \acc2, s -> insertSet(acc2, s));
+		}
+	});
 	switchTypeName = switch (sw.switchType) {
 		FiTypeFlow(): "";
 		FiTypeName(name, __): name;
@@ -955,43 +960,50 @@ typeverifyFiSwitch(env : TypeVerifyLocalEnv, sw : FiSwitch, onError : (FcError) 
 	typeverifyFiType(env, sw.switchType, onError, sw.start) && 
 	forall(sw.cases,
 		\c -> {
+			cName = fiSwitchCaseName(c);
+			cArgNames = fiSwitchCaseArgNames(c);
+			cBody = fiSwitchCaseBody(c);
+			cStart = fiSwitchCaseStart(c);
 			newEnv = TypeVerifyLocalEnv(
 				env.moduleEnv,
-				fold(c.argNames, env.varNames, \acc, argname -> insertSet(acc, argname))
+				fold(cArgNames, env.varNames, \acc, argname -> insertSet(acc, argname))
 			);
-			argsNumIsOk = (
-				c.struct == "default" ||
-				isSome(typeverifyName2Union(env, c.struct)) || // This exception is added because unions in switch cases always produce structs with no args
-				typeverifyNumberOfStructArgs(env, c.struct) == length(c.argNames)
-			);
+			argsNumIsOk = switch (c) {
+				FiCase(struct, argNames, __, __): {
+					struct == "default" ||
+					isSome(typeverifyName2Union(env, struct)) || // This exception is added because unions in switch cases always produce structs with no args
+					typeverifyNumberOfStructArgs(env, struct) == length(argNames)
+				}
+				FiCaseUnion(__, __, __, __): true; // Union cases don't bind args
+			};
 			if (!argsNumIsOk) {
-				struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, c.struct));
+				struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, cName));
 				onError(
 					FcError(
-						"Struct '" + c.struct + "' has wrong number of args: " + i2s(length(c.argNames)),
+						"Struct '" + cName + "' has wrong number of args: " + i2s(length(cArgNames)),
 						[
-							FcPosition(env.moduleEnv.module.fileinfo.flowfile, c.start, c.start),
-							FcPosition(moduleWhereNameIsDefined(env.moduleEnv.global.acc.names, c.struct), struct_start, struct_start)
+							FcPosition(env.moduleEnv.module.fileinfo.flowfile, cStart, cStart),
+							FcPosition(moduleWhereNameIsDefined(env.moduleEnv.global.acc.names, cName), struct_start, struct_start)
 						]
 					)
 				);
 			}
-			caseTypeIsOk = isFiSubType(env.moduleEnv.global.acc.names, fiExpType(c.body), sw.type, true, true);
+			caseTypeIsOk = isFiSubType(env.moduleEnv.global.acc.names, fiExpType(cBody), sw.type, true, true);
 			if (!caseTypeIsOk) {
-				struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, c.struct));
+				struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, cName));
 				onError(
 					FcError(
-						"Case '" + c.struct + "' type " + prettyFiType(dummyPretty, fiExpType(c.body), makeSet()) + 
+						"Case '" + cName + "' type " + prettyFiType(dummyPretty, fiExpType(cBody), makeSet()) +
 						" is not a subtype of a switch type " + prettyFiType(dummyPretty, sw.type, makeSet()),
 						[
-							FcPosition(env.moduleEnv.module.fileinfo.flowfile, c.start, c.start),
-							FcPosition(moduleWhereNameIsDefined(env.moduleEnv.global.acc.names, c.struct), struct_start, struct_start)
+							FcPosition(env.moduleEnv.module.fileinfo.flowfile, cStart, cStart),
+							FcPosition(moduleWhereNameIsDefined(env.moduleEnv.global.acc.names, cName), struct_start, struct_start)
 						]
 					)
 				);
 			}
 			argsNumIsOk && caseTypeIsOk &&
-			typeverifyFiExp(newEnv, c.body, onError)
+			typeverifyFiExp(newEnv, cBody, onError)
 		}
 	)
 }

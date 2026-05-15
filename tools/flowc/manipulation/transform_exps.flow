@@ -285,7 +285,8 @@ fiRemoveUnusedVars(e : FiExp, effects : FiEffects) -> FiExp {
 fiExplicitCastInSwitch(e : FiExp, names: FiGlobalNames) -> FiExp {
 	fiMapExp(e, \x,__ -> 
 		switch (x) {
-			FiSwitch(var, vtype, cases, type, start): {
+			FiSwitch(var, vtype, cases0, type, start): {
+				cases : [FiCase] = fiExpandSwitchCases(cases0);
 				do_switch = \case_resolver -> {
 					FiSwitch(x with
 						cases = map(cases, \c -> {
@@ -618,7 +619,7 @@ fiDoExpMakeVarsUnique(e: FiExp, counter: Tree<string, int>, rename: Tree<string,
 		FiSwitch(v, vtype, cases,__,__): {
 			FiSwitch(e with 
 				x = FiVar(v with name = lookupTreeDef(rename, v.name, v.name)),
-				cases = map(cases, \c -> FiCase(c with body = do(c.body)))
+				cases = map(cases, \c -> fiMapSwitchCaseBody(c, do))
 			);
 		}
 		FiIf(e1, e2, e3, __,__): { 
@@ -738,7 +739,7 @@ fiExpMakeCastsExplicit(x: FiExp, t: FiType, names: FiGlobalNames) -> FiExp {
 		}
 		FiSwitch(v, v_type, cases, type,__): {
 			x1 = FiSwitch(x with
-				cases = map(cases, \c -> FiCase(c with body = fiExpMakeCastsExplicit(c.body, t, names))),
+				cases = map(cases, \c -> fiMapSwitchCaseBody(c, \b -> fiExpMakeCastsExplicit(b, t, names))),
 				type = t
 			);
 			make_cast(x1, fiExpType(x1), t);
@@ -1244,7 +1245,7 @@ fiDoExpReturnVars(e: FiExp, returns: bool) -> FiExp {
 		}
 		FiSwitch(v, __,cases,__, __): {
 			FiSwitch(e with 
-				cases = map(cases, \c -> FiCase(c with body = fiDoExpReturnVars(c.body, returns)))
+				cases = map(cases, \c -> fiMapSwitchCaseBody(c, \b -> fiDoExpReturnVars(b, returns)))
 			);
 		}
 		FiCast(ex, __, __, __, __): {
@@ -1481,7 +1482,7 @@ fiDoPushExpsDown(i: int, xs: [FiExp], as: [FiExp], fn: ([FiExp]) -> FiExp, type:
 				FiSwitch(x with
 					type = type,
 					cases = map(cs, \c -> 
-						FiCase(c with body = fiDoPushExpsDown(i + 1, xs, concat(as, [c.body]), fn, type))
+						fiMapSwitchCaseBody(c, \b -> fiDoPushExpsDown(i + 1, xs, concat(as, [b]), fn, type))
 					)
 				);
 			}
@@ -1516,7 +1517,7 @@ fiPushExpDown(x: FiExp) -> FiExp {
 						}
 						FiSwitch(x1, swtype1, cs1, type1, start1): {
 							FiSwitch(x1, swtype1, map(cs1, \c1 ->
-									FiCase(c1 with body = fiPushExpDown(FiLet(v, vtype, c1.body, e2, type, start)))
+									fiMapSwitchCaseBody(c1, \b -> fiPushExpDown(FiLet(v, vtype, b, e2, type, start)))
 								), 
 								type, start1
 							);
@@ -1553,7 +1554,7 @@ fiPushExpDown(x: FiExp) -> FiExp {
 						}
 						FiSwitch(x1, swtype1, cs1, type1, start1): {
 							FiSwitch(x1, swtype1, map(cs1, \c1 ->
-									FiCase(c1 with body = fiPushExpDown(FiIf(c1.body, e2, e3, type, start)))
+									fiMapSwitchCaseBody(c1, \b -> fiPushExpDown(FiIf(b, e2, e3, type, start)))
 								), 
 								type, start1
 							);
@@ -1608,7 +1609,8 @@ fiPushExpsDown(e: FiExp) -> FiExp {
 // In case a switch has only one variant - remove it
 fiExpShortcutTrivialSwitch(x: FiExp, names: FiGlobalNames) -> FiExp {
 	mapFiExp(x, \e -> switch (e) {
-		FiSwitch(v, vtype, cs, type, start): {
+		FiSwitch(v, vtype, cs0, type, start): {
+			cs : [FiCase] = fiExpandSwitchCases(cs0);
 			switch (vtype) {
 				FiTypeName(typename,__): {
 					if (containsKeyTree(names.unions, typename)) {
@@ -2037,7 +2039,7 @@ fiDoWrapGlobalFuncInLambdas(names : FiGlobalNames, ex : FiExp, isArg : bool) -> 
 			FiCall(process(f), map(args, \a -> processA(a)), type, start);
 		FiSwitch(__, __, __, __, __): 
 			FiSwitch(ex with cases = 
-				map(ex.cases, \c -> FiCase(c with body = processA(c.body))));
+				map(ex.cases, \c -> fiMapSwitchCaseBody(c, processA)));
 		FiLambda(args, body, type, start):
 			FiLambda(args, processA(body), type, start); 
 		FiLet(name, type, e1, e2, type2, start): 
@@ -2202,7 +2204,7 @@ fiCorrectCastCaseVarType(e: FiExp, sw: Tree<string, Pair<string, FiType>>) -> Fi
 		}
 		FiSwitch(x, typ, cs, __, __): {
 			FiSwitch(e with 
-				cases = map(cs, \c -> FiCase(c with body = fiCorrectCastCaseVarType(c.body, sw)))
+				cases = map(cs, \c -> fiMapSwitchCaseBody(c, \b -> fiCorrectCastCaseVarType(b, sw)))
 			);
 		}
 		FiCast(e0, tFrom, tTo, __, __): {
