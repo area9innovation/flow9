@@ -803,11 +803,38 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 
 			// Find the named overlaps
 			namedOverlap : FEnvTypes = fold(utypes, FEnvTypes(env, []), \acc : FEnvTypes, utn : FType -> {
+				uname = getFTypeName(utn);
 				rstruct = find(rtypenames, \rtn : FcTypeName -> {
-					getFTypeName(utn) == rtn.name;
+					uname == rtn.name;
 				});
 				switch (rstruct) {
-					None(): acc;
+					None(): {
+						// Check if utn is a sub-union whose leaf structs are all in rtypenames
+						switch (utn) {
+							FUnion(subname, subtps): {
+								subLeafs = union2typenames(env.env, subname);
+								if (subLeafs != [] && forall(subLeafs, \sl -> exists(rtypenames, \rtn -> rtn.name == sl.name))) {
+									// All leaf structs of this sub-union are in the named union.
+									// Unify each leaf struct individually.
+									subtypars = foldi(subtps, makeTree(), \i, a, tp -> {
+										setTree(a, strLeft("????????????????", i + 1), tp)
+									});
+									fold(subLeafs, acc, \acc2 : FEnvTypes, sl : FcTypeName -> {
+										rinst = fcstructname2ftype(acc2.env, sl.name, rtypars);
+										sinst = fcstructname2ftype(acc2.env, sl.name, subtypars);
+										et = fns.unifyType(acc2.env, sinst, rinst, fns.kind, fns.onError);
+										FEnvTypes(
+											et.env,
+											arrayPush(acc2.types, et.type)
+										)
+									});
+								} else {
+									acc;
+								}
+							}
+							default: acc;
+						}
+					}
 					Some(rst): {
 						eenv = acc.env;
 						// The same struct in both unions.
@@ -1030,8 +1057,14 @@ funifyBounded(env : FEnv, range : FBounded, type : FType, boundedLeft : bool, fn
 					etl = unify(etr.env, u1, u2, FReduceLeft());
 
 					if (fns.kind == FUnifyLeft()) {
-						// l1 ... u1  <= l2 ... u2   ->    l1 ... (u1 . reduce_left u2)
-						makeFBoundedEnv(etl.env, l1, etl.type, fns.kind, fns.unifyType, fns.onError);
+						// Use grown lower only for same-name unions to prevent makeFBoundedEnv
+						// from collapsing {Maybe<SubUnion>..Maybe<SuperUnion>} to the narrower
+						// lower bound via FUnifyLeft. Structs keep original to preserve precision.
+						gl1 = switch (l1) {
+							FUnion(ln, __): switch (etr.type) { FUnion(en, __): if (ln == en) etr.type else l1; default: l1; };
+							default: l1;
+						};
+						makeFBoundedEnv(etl.env, gl1, etl.type, fns.kind, fns.unifyType, fns.onError);
 					} else {
 						// l1 ... u1  <= l2 ... u2   ->    (l1  grow_right . l2)  .. u2
 						makeFBoundedEnv(etl.env, etr.type, u2, fns.kind, fns.unifyType, fns.onError);
@@ -1041,8 +1074,11 @@ funifyBounded(env : FEnv, range : FBounded, type : FType, boundedLeft : bool, fn
 					etl = unify(env, u2, u1, FReduceLeft());
 					etr = unify(etl.env, l2, l1, FGrowRight());
 					if (fns.kind == FUnifyLeft()) {
-						// l2 ... u2  <= l1 ... u1   ->    l2 ... (u2 . reduce_left u1)
-						makeFBoundedEnv(etr.env, l2, etl.type, fns.kind, fns.unifyType, fns.onError);
+						gl2 = switch (l2) {
+							FUnion(ln, __): switch (etr.type) { FUnion(en, __): if (ln == en) etr.type else l2; default: l2; };
+							default: l2;
+						};
+						makeFBoundedEnv(etr.env, gl2, etl.type, fns.kind, fns.unifyType, fns.onError);
 					} else {
 						// l2 ... u2  <= l1 ... u1   ->    (l2  grow_right . l1)  .. u1
 						makeFBoundedEnv(etr.env, etr.type, u1, fns.kind, fns.unifyType, fns.onError);
