@@ -1048,6 +1048,9 @@ class RenderSupport {
 		Browser.window.addEventListener('focus', function () { InvalidateLocalStages(); requestAnimationFrame(); }, false);
 		Browser.window.addEventListener("focus", function () {
 			// When page is loaded while browser is minimized, window.outerWidth tend to stuck in wrong state. Have to trigger its recalculation.
+			// Skip entirely during VS Code webview initialisation — resizeBy is a no-op there and
+			// forces a reflow while the viewport is still at the transient 300x150 default size.
+			if (isVSCodeDefaultViewport()) return;
 			var oldBrowserZoom = browserZoom;
 			Browser.window.resizeBy(-1, 0);
 			Browser.window.resizeBy(1, 0);
@@ -1418,8 +1421,16 @@ class RenderSupport {
 		});
 	}
 
+	private static inline function isVSCodeDefaultViewport() : Bool {
+		// VS Code webviews start at Chromium's default 300x150 before the panel lays out.
+		// acquireVsCodeApi is injected exclusively by VS Code into webview contexts.
+		return Browser.window.innerWidth == 300 && Browser.window.innerHeight == 150
+			&& untyped __js__("typeof acquireVsCodeApi !== 'undefined'");
+	}
+
 	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
 		if (printMode) return;
+		if (isVSCodeDefaultViewport()) return;
 
 		var oldBrowserZoom = browserZoom;
 		backingStoreRatio = getBackingStoreRatio();
