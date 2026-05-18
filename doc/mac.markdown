@@ -131,10 +131,10 @@ to pick up the changes.
 No issues to report at the moment.
 
 # Install `JDK`
-Be sure that you have installed JDK 11 or newer in a 64-bit version. That is required by the *flowc* compiler, which is used
+Be sure that you have installed JDK 21 or newer in a 64-bit version. That is required by the *flowc* compiler, which is used
 by default. You may find it here:
 
-	https://www.oracle.com/java/technologies/javase-jdk11-downloads.html
+	https://www.oracle.com/java/technologies/downloads/#java21
 
 OpenJDK is suitable as well.
 

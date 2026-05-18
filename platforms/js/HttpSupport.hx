@@ -37,34 +37,6 @@ class HttpSupport {
 		");
 	}
 
-	// Pending request tracking for passive connection quality monitoring.
-	// Uses a global JS object so Flow code can read it via hostCall("eval", ...).
-	// Memory/performance safe:
-	//   - Each entry is just {startTime, url} (~100 bytes), only in-flight requests are stored.
-	//   - Entries are deleted on completion, error, timeout, or cancel — no accumulation.
-	//   - Typical map size is 1-5 entries. The 20-minute request timeout guarantees cleanup.
-	//   - trackRequestStart/End are O(1) JS property set/delete with negligible overhead.
-	private static var pendingRequestsInitialized : Bool = false;
-	private static function initPendingRequests() {
-		if (!pendingRequestsInitialized) {
-			pendingRequestsInitialized = true;
-			untyped __js__("
-				window.__flowPendingRequests = {};
-				window.__flowPendingRequestId = 0;
-			");
-		}
-	}
-
-	public static function trackRequestStart(url : String) : Int {
-		initPendingRequests();
-		var id : Int = untyped __js__("++window.__flowPendingRequestId");
-		untyped __js__("window.__flowPendingRequests[{0}] = {startTime: performance.now(), url: {1}}", id, url);
-		return id;
-	}
-
-	public static function trackRequestEnd(id : Int) : Void {
-		untyped __js__("delete window.__flowPendingRequests[{0}]", id);
-	}
 
 	private static function isBinflow(url : String) : Bool {
 		var binflow_pos  = url.indexOf(".binflow");
@@ -255,15 +227,7 @@ class HttpSupport {
 		var stopTimer = function () {}
 #end
 
-		// Track pending request for passive connection quality monitoring
-		#if (js && !flow_nodejs)
-		var trackId = trackRequestStart(url);
-		#end
-
 		http.onData = function (res: String) {
-			#if (js && !flow_nodejs)
-			trackRequestEnd(trackId);
-			#end
 			if (!handled) {
 				handled = true;
 				stopTimer();
@@ -281,9 +245,6 @@ class HttpSupport {
 		}
 
 		http.onError = function (err: String) {
-			#if (js && !flow_nodejs)
-			trackRequestEnd(trackId);
-			#end
 			if (!handled) {
 				handled = true;
 				stopTimer();
@@ -473,14 +434,8 @@ class HttpSupport {
 		}
 		#end
 
-		// Track pending request for passive connection quality monitoring
-		#if (js && !flow_nodejs)
-		var trackId = trackRequestStart(url);
-		#end
-
 		#if (js && !nwjs)
 		http.onResponse = function (status: Int, data: String, headers: Array<Array<String>>) {
-			#if !flow_nodejs trackRequestEnd(trackId); #end
 			if (!handled) {
 				handled = true;
 
@@ -610,13 +565,9 @@ class HttpSupport {
 		var xhr = js.Browser.createXMLHttpRequest();
 		var responseHeaders : Array<Array<String>> = [];
 
-		// Track pending request for passive connection quality monitoring
-		var trackId = trackRequestStart(url);
-
 		// Setup abort function
 		var cancelFn = function() {
 			if (!isCompleted) {
-				trackRequestEnd(trackId);
 				xhr.abort();
 			}
 		};
@@ -743,7 +694,6 @@ class HttpSupport {
 					if (xhr.readyState == 4) {
 						// Clear timeout on completion
 						clearTimeout();
-						trackRequestEnd(trackId);
 
 						isCompleted = true;
 						onCompleteFn(xhr.status, accumulatedResponse, responseHeaders);
@@ -753,7 +703,6 @@ class HttpSupport {
 						isCompleted = true;
 						// Clear timeout
 						clearTimeout();
-						trackRequestEnd(trackId);
 						onErrorFn("Error processing response: " + Std.string(e));
 					}
 				}
@@ -764,7 +713,6 @@ class HttpSupport {
 		untyped xhr.onerror = function() {
 			if (!isCompleted) {
 				isCompleted = true;
-				trackRequestEnd(trackId);
 				if (timeoutId != null) {
 					timeoutId.stop(); // Changed from haxe.Timer.clear(timeoutId)
 				}

@@ -140,12 +140,12 @@ function registerLinkHandler(home_domains) {
 			if (element.search.indexOf("external_browser") >= 0) {
 				if (element.search.indexOf("external_browser=1") >= 0 || element.search.indexOf("external_browser=2") >= 0) {
 					element.target="_blank";
-					element.rel="noopener noreferrer";
+					element.rel="noopener";
 				}
 			}
 			else if (element.hostname != document.domain && (home_domains == undefined ? true : home_domains.indexOf(element.hostname) < 0)) {
 				element.target="_blank";
-				element.rel="noopener noreferrer";
+				element.rel="noopener";
 				if (is_flow_android() || is_flow_ios_native())
 					if (element.search != "")
 						element.search += "&external_browser=2";

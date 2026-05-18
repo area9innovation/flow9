@@ -1,0 +1,148 @@
+// AES-256-GCM encryption test suite.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// BUILD & RUN
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Java JAR (primary target – matches the report_server runtime):
+//
+//   flowc1 tests/test_crypto_aes.flow jar=test_crypto_aes.jar
+//   java -jar test_crypto_aes.jar
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// CROSS-PLATFORM TEST (PHP ↔ JAR round-trip)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// To verify that PHP and Java produce mutually compatible tokens, run the
+// helper script after building the JAR:
+//
+//   php tests/test_crypto_aes_php_cross.php
+//
+// It encrypts a known plaintext in PHP, prints the token, then calls the JAR
+// to decrypt it – and vice-versa.  Both directions must produce the original
+// plaintext.  See test_crypto_aes_php_cross.php for details.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import crypto_aes;
+import string;
+import net/url_parameter;
+
+main() {
+	// Sub-command mode used by the PHP cross-test script.
+	// Flow's Java runtime parses CLI args as key=value pairs, so invoke as:
+	//   java -jar test_crypto_aes.jar cmd=encrypt data="<plaintext>" key="<key>"
+	//   java -jar test_crypto_aes.jar cmd=decrypt data="<token>"     key="<key>"
+	// Prints exactly one line (the result) then exits.
+	cmd = getUrlParameter("cmd");
+	if (cmd == "encrypt" || cmd == "decrypt") {
+		data = getUrlParameter("data");
+		key0 = getUrlParameter("key");
+		// Both natives return Maybe<string>; unwrap before printing so the PHP
+		// caller receives the raw token/plaintext, not "Some(...)" or "None()".
+		mResult = if (cmd == "encrypt") encryptAesGcm(data, key0) else decryptAesGcm(data, key0);
+		println(either(mResult, ""));
+		quit(0);
+	};
+
+	passed = ref 0;
+	failed = ref 0;
+
+	check = \name : string, ok : bool -> {
+		if (ok) {
+			println("  PASS  " + name);
+			passed := ^passed + 1;
+		} else {
+			println("  FAIL  " + name);
+			failed := ^failed + 1;
+		}
+	};
+
+	key     = "03b4054771562ad7f25676f6895f1209a11c778552e2606bd512c381478c058a";
+	plain   = "42:7:550e8400-e29b-41d4-a716-446655440000";
+
+	println("\n=== AES-256-GCM: basic round-trip ===");
+
+	tokenIsOk = \tknM, checkFn  -> eitherMap(tknM, checkFn, false);
+
+	tokenM = encryptAesGcm(plain, key);
+	check("encrypt returns non-empty token",          tokenIsOk(tokenM, neq("")));
+	check("token contains two '-' separators",        tokenIsOk(tokenM, \token -> strlen(token) - strlen(strReplace(token, "-", "")) >= 2));
+	check("decrypt recovers plaintext",               tokenIsOk(tokenM, \token -> decryptAesGcm(token, key) == Some(plain)));
+
+	println("\n=== AES-256-GCM: different plaintexts produce different tokens ===");
+
+	token2M = encryptAesGcm(plain, key);
+	// Each call uses a fresh random IV, so tokens must differ even for equal input.
+	check("two encryptions of same plaintext differ", tokenIsOk(tokenM, \token -> tokenIsOk(token2M, \token2 -> token != token2)));
+	check("both tokens decrypt correctly",
+		tokenIsOk(tokenM, \token -> tokenIsOk(token2M, \token2 -> decryptAesGcm(token, key) == Some(plain) && decryptAesGcm(token2, key) == Some(plain)))
+	);
+
+	println("\n=== AES-256-GCM: wrong key is rejected ===");
+
+	check("wrong key returns None()",           !tokenIsOk(tokenM, \token -> isSome(decryptAesGcm(token, "wrong-key"))));
+
+	println("\n=== AES-256-GCM: tampered ciphertext is rejected ===");
+
+	// Flip the last hex digit of the ciphertext segment (middle part).
+	parts  = eitherMap(tokenM, \token -> strSplit(token, "-"), ["", "", ""]);
+	middle = parts[1];
+	lastCh = getCharAt(middle, strlen(middle) - 1);
+	// toggle one nibble: '0'→'1', anything else→'0'
+	flipped = if (lastCh == "0") "1" else "0";
+	tampered = parts[0] + "-" + strLeft(middle, strlen(middle) - 1) + flipped + "-" + parts[2];
+	check("tampered ciphertext returns None()", !tokenIsOk(tokenM, \token -> isSome(decryptAesGcm(tampered, key))));
+
+	println("\n=== AES-256-GCM: tampered auth tag is rejected ===");
+
+	tag      = parts[2];
+	lastT    = getCharAt(tag, strlen(tag) - 1);
+	flippedT = if (lastT == "0") "1" else "0";
+	tamperedTag = parts[0] + "-" + parts[1] + "-" + strLeft(tag, strlen(tag) - 1) + flippedT;
+	check("tampered auth tag returns None()",   !tokenIsOk(tokenM, \token -> isSome(decryptAesGcm(tamperedTag, key))));
+
+	println("\n=== AES-256-GCM: malformed tokens are rejected ===");
+
+	check("empty string input",                       isNone(decryptAesGcm("",          key)));
+	check("single segment (no dashes)",               isNone(decryptAesGcm("deadbeef",  key)));
+	check("two segments only",                        isNone(decryptAesGcm("aabb-ccdd", key)));
+
+	println("\n=== AES-256-GCM: empty plaintext round-trip ===");
+
+	emptyTokenM = encryptAesGcm("", key);
+	check("empty plaintext token is non-empty",       tokenIsOk(emptyTokenM, \emptyToken -> emptyToken != ""));
+	check("empty plaintext round-trip",               tokenIsOk(emptyTokenM, \emptyToken -> decryptAesGcm(emptyToken, key) == Some("")));
+
+	println("\n=== AES-256-GCM: unicode plaintext round-trip ===");
+
+	unicodePlain = "héllo wörld – 你好世界";
+	unicodeTokenM = encryptAesGcm(unicodePlain, key);
+	check("unicode plaintext token is non-empty",     tokenIsOk(unicodeTokenM, \unicodeToken -> unicodeToken != ""));
+	check("unicode plaintext round-trip",             tokenIsOk(unicodeTokenM, \unicodeToken -> decryptAesGcm(unicodeToken, key) == Some(unicodePlain)));
+
+	println("\n=== AES-256-GCM: unsubscribe link payload format ===");
+
+	userId    = 42;
+	groupId   = 7;
+	uuid      = "550e8400-e29b-41d4-a716-446655440000";
+	payload   = i2s(userId) + ":" + i2s(groupId) + ":" + uuid;
+	linkTokenM = encryptAesGcm(payload, key);
+	decoded   = eitherMap(linkTokenM, \linkToken -> either(decryptAesGcm(linkToken, key), "::"), "::");
+	decParts  = strSplit(decoded, ":");
+	check("payload round-trip",                       decoded == payload);
+	check("decoded userId matches",                   decParts[0] == i2s(userId));
+	check("decoded groupId matches",                  decParts[1] == i2s(groupId));
+	// UUID itself contains '-', so the rest is joined back
+	check("decoded uuid matches",                     strGlue(subrange(decParts, 2, length(decParts) - 2), ":") == uuid);
+
+	total = ^passed + ^failed;
+	println("\n─────────────────────────────────────────────────────────────────────────────");
+	println("Result: " + i2s(^passed) + "/" + i2s(total) + " passed" +
+		(if (^failed > 0) " — " + i2s(^failed) + " FAILED" else "")
+	);
+	println("─────────────────────────────────────────────────────────────────────────────\n");
+
+	if (^failed > 0) fail("AES-256-GCM tests failed");
+
+	quit(0);
+}

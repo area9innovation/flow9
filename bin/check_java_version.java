@@ -1,6 +1,6 @@
 class CheckVersion
 {
-	static double JenkinsVersion = 55.0;
+	static double JenkinsVersion = 65.0;
 
 	public static void main (String[] args) throws java.lang.Exception
 	{

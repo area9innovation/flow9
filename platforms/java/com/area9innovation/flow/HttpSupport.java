@@ -353,10 +353,13 @@ public class HttpSupport extends NativeHost {
 			callbackOnDone.setReady(new Object[]{responseCode, response, responseHeaders.toArray()});
 
 		} catch (MalformedURLException|URISyntaxException e) {
+			// Note: These errors will look like they come from the server, but they are generated in the HTTP request (client)
 			callbackOnDone.setReady(new Object[]{400, "Malformed url " + url + " " + e.getMessage(), new Object[0]});
 		} catch (IOException e) {
+			// Note: These errors will look like they come from the server, but they are generated in the HTTP request (client)
 			callbackOnDone.setReady(new Object[]{500, "IO exception " + url + " " + e.getMessage(), new Object[0]});
 		} catch (Exception e) {
+			// Note: These errors will look like they come from the server, but they are generated in the HTTP request (client)
 			callbackOnDone.setReady(new Object[]{500, e.getMessage(), new Object[0]});
 		}});
 		return null;

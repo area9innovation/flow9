@@ -231,7 +231,7 @@ public abstract class FlowRuntime {
 	}
 
 	public static final Long getThreadIdLong() {
-		return Thread.currentThread().getId();
+		return Thread.currentThread().threadId();
 	}
 
 	public static final String getThreadDebugInfo() {

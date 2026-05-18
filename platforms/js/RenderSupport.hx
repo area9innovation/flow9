@@ -444,7 +444,7 @@ class RenderSupport {
 
 	public static function isViewportScaleWorkaroundEnabled() : Bool {
 		try {
-			return Platform.isIOS && Platform.isChrome && isInsideFrame();
+			return Platform.isIOS && (Platform.isChrome && isInsideFrame() || ProgressiveWebTools.isRunningPWA());
 		} catch (e : Dynamic) {
 			untyped console.log("isViewportScaleWorkaroundEnabled error : ");
 			untyped console.log(e);
@@ -766,6 +766,12 @@ class RenderSupport {
 			PixiView.style.top = "0px";
 		}
 
+		// Workaround for top bar background color on iOS PWA.
+		// Safari uses the body background-color for the status bar area instead of manifest background_color.
+		if (Platform.isSafari && ProgressiveWebTools.isRunningPWA() && PixiStage.nativeWidget == Browser.document.body) {
+			applyManifestBackgroundColor();
+		}
+
 		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
 		PixiStage.nativeWidget.insertBefore(PixiView, PixiStage.nativeWidget.firstChild);
 
@@ -783,6 +789,7 @@ class RenderSupport {
 			try {
 				// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep unscaled value for some time after initialization
 				// So let`s recalculate viewport sizes after some delay (10s) with real values
+				// Same behaviour sometimes reproduced for iOS + PWA for some devices
 				onBrowserWindowResizeDelayed({target : Browser.window}, 10000);
 			} catch (e : Dynamic) {
 				untyped console.log("onBrowserWindowResizeDelayed error : ");
@@ -866,6 +873,36 @@ class RenderSupport {
 		}
 
 		return new Point(event.pageX - rootPosition.x, event.pageY - rootPosition.y);
+	}
+
+	// Reads background_color from the PWA manifest and applies it to document.body.
+	// This is a workaround for Safari on iOS, which uses the body background-color for the status bar area.
+	private static function applyManifestBackgroundColor() : Void {
+		try {
+			var link = Browser.document.head.querySelector("link[rel='manifest']");
+			if (link != null) {
+				var manifestUrl : String = untyped link.href;
+				if (manifestUrl != null && manifestUrl != "") {
+					var xhr = new js.html.XMLHttpRequest();
+					xhr.open("GET", manifestUrl, true);
+					xhr.onload = function() {
+						try {
+							if (xhr.status == 200) {
+								var manifest = haxe.Json.parse(xhr.responseText);
+								var themeColor : String = manifest.theme_color;
+								var bgColor : String = manifest.background_color;
+								if (themeColor != null && themeColor != "") {
+									Browser.document.body.style.backgroundColor = themeColor;
+								} else if (bgColor != null && bgColor != "") {
+									Browser.document.body.style.backgroundColor = bgColor;
+								}
+							}
+						} catch (e : Dynamic) {}
+					};
+					xhr.send();
+				}
+			}
+		} catch (e : Dynamic) {}
 	}
 
 	private static var webFontsLoadingStartAt : Float;
@@ -1091,14 +1128,14 @@ class RenderSupport {
 		// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep wrong value after initialization
 		// Dirty trick to fix this wrong innerHeight value
 		var innerHeightCompensation = (
-				viewportScaleWorkaroundEnabled
+				viewportScaleWorkaroundEnabled && !ProgressiveWebTools.isRunningPWA()
 				&& Browser.window.innerHeight == InnerHeightAtRenderTime
 				&& screenSize.height != Browser.window.innerHeight
 				&& (screenSize.height - Browser.window.innerHeight * getViewportScale()) < 100
 			) ? 95.0 / getViewportScale() : 0.0;
 
 		var topHeight = cast(
-			viewportScaleWorkaroundEnabled
+			viewportScaleWorkaroundEnabled && !ProgressiveWebTools.isRunningPWA()
 				? (screenSize.height - Browser.window.innerHeight + innerHeightCompensation)
 				: (screenSize.height - Browser.window.innerHeight * browserZoom)
 		);
@@ -1121,10 +1158,15 @@ class RenderSupport {
 			head.removeChild(oldThemeMeta);
 		}
 
+		var cssColor = RenderSupport.makeCSSColor(color, 1.0);
 		var node = Browser.document.createElement('meta');
 		node.setAttribute("name", "theme-color");
-		node.setAttribute("content", RenderSupport.makeCSSColor(color, 1.0));
+		node.setAttribute("content", cssColor);
 		head.appendChild(node);
+
+		if (Platform.isSafari && ProgressiveWebTools.isRunningPWA()) {
+			Browser.document.body.style.backgroundColor = cssColor;
+		}
 	}
 
 	public static function setApplicationLanguage(languageCode : String) {
@@ -1744,8 +1786,9 @@ class RenderSupport {
 				onKeyDownAccessibilityZoom(e);
 			}
 
-			MousePos.x = e.clientX;
-			MousePos.y = e.clientY;
+			// It is not expected from KeyboardEvent to have clientX/Y, but lets keep it here as a safety measure
+			if (e.clientX != null) MousePos.x = e.clientX;
+			if (e.clientY != null) MousePos.y = e.clientY;
 
 			emitKey(stage, "keydown", e);
 		});
@@ -1754,8 +1797,10 @@ class RenderSupport {
 			if (StopKeyEventsPropagation) {
 				e.stopPropagation();
 			}
-			MousePos.x = e.clientX;
-			MousePos.y = e.clientY;
+
+			// It is not expected from KeyboardEvent to have clientX/Y, but lets keep it here as a safety measure
+			if (e.clientX != null) MousePos.x = e.clientX;
+			if (e.clientY != null) MousePos.y = e.clientY;
 
 			emitKey(stage, "keyup", e);
 		});

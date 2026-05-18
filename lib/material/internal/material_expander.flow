@@ -11,7 +11,8 @@ MExpander2T(manager : MaterialManager, parent : MFocusGroup, m : MExpander, m2t 
 
 	expanderIds = extractStruct(manager.style, MExpanderIds(make(0))).ids;
 	nextDistinct(expanderIds, getValue(expanderIds) + 1);
-	expanderId = "expander_content_" + i2s(getValue(expanderIds));
+	expanderContentId = "expander_content_" + i2s(getValue(expanderIds));
+	expanderHeaderId = "expander_header_" + i2s(getValue(expanderIds));
 
 	hideSeparator = contains(m.style, MExpanderHideSeparator());
 	noDispose = contains(m.style, MNoDispose());
@@ -33,7 +34,7 @@ MExpander2T(manager : MaterialManager, parent : MFocusGroup, m : MExpander, m2t 
 	});
 
 	TCopySize2(
-		MExpanderHeader(manager, parent, m2t(header, parent), expander, m.style, align, mWidth, expanderId, m2t),
+		MExpanderHeader(manager, parent, m2t(header, parent), expander, m.style, align, mWidth, expanderContentId, expanderHeaderId, m2t),
 		\tr, hd ->
 			TLines2A(
 				hd
@@ -72,7 +73,7 @@ MExpander2T(manager : MaterialManager, parent : MFocusGroup, m : MExpander, m2t 
 									TEmpty()
 						)
 				)
-				|> (\t -> TAccess([FAccessAttribute("id", const(expanderId))], t))
+				|> (\t -> TAccess([FAccessAttribute("id", const(expanderContentId))], t))
 			)
 	)
 	|> (\t -> TSurface(parent, t, [backgroundStyle, elevation, shape]))
@@ -82,17 +83,25 @@ MExpander2T(manager : MaterialManager, parent : MFocusGroup, m : MExpander, m2t 
 MExpanderHeader(
 	manager : MaterialManager,
 	parent : MFocusGroup,
-	c : Tropic,
+	cont : Tropic,
 	expander : DynamicBehaviour<bool>,
 	style : [MExpanderStyle],
 	align : CommonAlignment,
 	mWidth : double,
-	expanderId : string,
+	expanderContentId : string,
+	expanderHeaderId : string,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
 	expandByArrowOnly = contains(style, MExpandByArrowOnly());
 	arrowColor = extractMColor(parent, style, MThemedColor(MGrey(600), MWhite()));
 	arrowOpacity = extractStruct(style, FillOpacity(0.54));
+	// Default accessible name strategy: aria-labelledby pointing to the visible header
+	// element. This produces clean VoiceOver output: "<header text>, collapsed, button".
+	//
+	// Fallback for non-text / empty headers: pass MButtonTitle(label) in style.
+	// When present, the toggle button gets aria-label=label + aria-describedby (old
+	// behaviour), which is appropriate when the header content cannot serve as a name.
+	hasExplicitTitle = containsStruct(style, MButtonTitle(const("")));
 	buttonTitle = extractStruct(style, MButtonTitle(fif(expander, const("Hide"), const("Expand"))));
 	enabledState : MEnabled = extractStruct(style, MEnabled(const(true)));
 	narrowHeader = contains(style, MExpanderNarrowHeader());
@@ -112,13 +121,22 @@ MExpanderHeader(
 					[MToggleFalseIcon(icons.openIcon, iconStyle)],
 					ifArrayPush(iconStyle, narrowHeader, MIconButtonBorder(0.))
 				),
-				[
-					MToggleValue(expander),
-					enabledState,
-					MToggleExpanderMode(),
-					FAccessAttribute("aria-controls", const(expanderId)),
-					buttonTitle
-				]
+				concat(
+					[
+						MToggleValue(expander),
+						enabledState,
+						MToggleExpanderMode(),
+						FAccessAttribute("aria-controls", const(expanderContentId)),
+						if (hasExplicitTitle)
+							FAccessAttribute("aria-describedby", const(expanderHeaderId))
+						else
+							FAccessAttribute("aria-labelledby", const(expanderHeaderId)),
+					],
+					// With an explicit title: use aria-label (caller-supplied text) so AT gets
+					// a meaningful name even when the header contains no readable text.
+					// Without: suppress aria-label entirely — the name comes from aria-labelledby.
+					if (hasExplicitTitle) [buttonTitle] else [MButtonTitle(const(""))]
+				)
 			),
 			m2t
 		))
@@ -134,6 +152,7 @@ MExpanderHeader(
 	combinerR = if (isRTL) TAlignLeft else TAlignRight;
 
 	colsFn = extractStruct(style, MExpanderHeaderCustomColsFn(\header, arrow, __ -> TBaselineCols2Dir(header, arrow, isRTL))).fn;
+	c = TAccess([FAccessAttribute("id", const(expanderHeaderId))], cont);
 
 	contents =
 		if (front) {

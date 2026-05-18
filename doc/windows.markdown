@@ -26,7 +26,7 @@ Run
 
 to install the Visual Studio runtime needed for our flow bytecode runner.
 
-# Install Python 3.6.2 or later and Java 11 or later in a 64-bit version
+# Install Python 3.6.2 or later and Java 21 or later in a 64-bit version
 
 This is required to run the flowc compiler.
 
