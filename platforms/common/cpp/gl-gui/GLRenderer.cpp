@@ -86,7 +86,7 @@ bool GLRenderer::Init(GLuint root_fb)
     }
 #endif
 
-    reportGLErrors("GLRenderer::Init");
+    GL_CHECK_ERRORS("GLRenderer::Init");
     invalidateDependents();
 
     init_ok = true;
@@ -181,6 +181,11 @@ void GLRenderer::BeginFrame()
 {
     frame_idx++;
 
+    // Reset cached program state so setProgram() always calls glUseProgram()
+    // on the first draw of each frame. Qt 6 QOpenGLWidget may reset GL state
+    // between paintGL() calls, invalidating the previously bound program.
+    cur_program = ProgLAST;
+
     CleanStaleObjectsPre();
 }
 
@@ -242,7 +247,7 @@ void GLRenderer::makeFramebufferCurrent(FrameBuffer::Ptr buffer, vec2 bias)
 {
     if (buffer == current_framebuffer) return;
 
-    reportGLErrors("GLRenderer::makeFramebufferCurrent start");
+    GL_CHECK_ERRORS("GLRenderer::makeFramebufferCurrent start");
 
     FrameBuffer::Ptr old_buffer = current_framebuffer;
 
@@ -269,7 +274,7 @@ void GLRenderer::makeFramebufferCurrent(FrameBuffer::Ptr buffer, vec2 bias)
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_STENCIL_TEST);
 
-    reportGLErrors("GLRenderer::makeFramebufferCurrent end");
+    GL_CHECK_ERRORS("GLRenderer::makeFramebufferCurrent end");
 }
 
 void GLRenderer::makeFramebufferInput(FrameBuffer::Ptr buffer, vec2 bias, GLenum tex_unit)
@@ -289,7 +294,7 @@ void GLRenderer::makeFramebufferInput(FrameBuffer::Ptr buffer, vec2 bias, GLenum
 
     glBindTexture(GL_TEXTURE_2D, buffer->tex_id);
 
-    reportGLErrors("GLRenderer::makeFramebufferInput end");
+    GL_CHECK_ERRORS("GLRenderer::makeFramebufferInput end");
 }
 
 void GLRenderer::beginDrawSimple(const vec4 &color)
@@ -783,7 +788,7 @@ bool GLRenderer::compileShader(GLuint shader, const std::vector<std::string> &pr
     glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &ll);
 
     if (status != GL_TRUE)
-        reportGLErrors("GLRenderer::compileShader");
+        GL_CHECK_ERRORS("GLRenderer::compileShader");
 
     if (ll > 1) {
         char *buf = new char[ll];
@@ -866,7 +871,7 @@ bool GLRenderer::vdoCompileShaderPair(ProgramId id, const char **vlist, const ch
     info->frag_shader_id = glCreateShader(GL_FRAGMENT_SHADER);
 
     if (!info->program_id || !info->vert_shader_id || !info->frag_shader_id) {
-        reportGLErrors("GLRenderer::compileShaderPair (1)");
+        GL_CHECK_ERRORS("GLRenderer::compileShaderPair (1)");
         cerr << "Couldn't allocate shader program #" << id << endl;
         return false;
     }
@@ -901,7 +906,7 @@ bool GLRenderer::vdoCompileShaderPair(ProgramId id, const char **vlist, const ch
     glGetProgramiv(info->program_id, GL_INFO_LOG_LENGTH, &ll);
 
     if (status != GL_TRUE)
-        reportGLErrors("GLRenderer::compileShaderPair (2)");
+        GL_CHECK_ERRORS("GLRenderer::compileShaderPair (2)");
 
     if (ll > 1) {
         char *buf = new char[ll];
@@ -979,7 +984,7 @@ ivec2 GLRenderer::fitFrameBufferSize(int min_w, int min_h)
 
 GLRenderer::FrameBuffer::Ptr GLRenderer::getFrameBuffer(int min_w, int min_h)
 {
-    reportGLErrors("GLRenderer::getFrameBuffer start");
+    GL_CHECK_ERRORS("GLRenderer::getFrameBuffer start");
 
     ivec2 size = fitFrameBufferSize(min_w, min_h);
 
@@ -1017,7 +1022,7 @@ GLRenderer::FrameBuffer::Ptr GLRenderer::makeFrameBuffer(ivec2 size)
 {
     FrameBuffer::Ptr new_fb(new FrameBuffer(size));
 
-    reportGLErrors("GLRenderer::makeFrameBuffer start");
+    GL_CHECK_ERRORS("GLRenderer::makeFrameBuffer start");
 
     glGenFramebuffers(1, &new_fb->fb_id);
     glGenTextures(1, &new_fb->tex_id);
@@ -1074,7 +1079,7 @@ GLRenderer::FrameBuffer::Ptr GLRenderer::makeFrameBuffer(ivec2 size)
             cerr << "Framebuffer incomplete!" << endl;
         }
 
-        reportGLErrors("GLRenderer::makeFrameBuffer fail");
+        GL_CHECK_ERRORS("GLRenderer::makeFrameBuffer fail");
 
         new_fb->dispose();
 
@@ -1086,7 +1091,7 @@ GLRenderer::FrameBuffer::Ptr GLRenderer::makeFrameBuffer(ivec2 size)
         all_framebuffers[size].push_back(new_fb);
     }
 
-    reportGLErrors("GLRenderer::makeFrameBuffer end");
+    GL_CHECK_ERRORS("GLRenderer::makeFrameBuffer end");
 
     return new_fb;
 }
@@ -1094,7 +1099,7 @@ GLRenderer::FrameBuffer::Ptr GLRenderer::makeFrameBuffer(ivec2 size)
 bool GLRenderer::chooseFramebufferMode() {
     FrameBuffer::Ptr fbp;
 
-    reportGLErrors("chooseFramebufferMode");
+    GL_CHECK_ERRORS("chooseFramebufferMode");
 
     /* Try a couple of configurations to see which one works */
 
@@ -1124,7 +1129,7 @@ bool GLRenderer::chooseFramebufferMode() {
     return (init_ok = false);
 
 found:
-    reportGLErrors("chooseFramebufferMode end");
+    GL_CHECK_ERRORS("chooseFramebufferMode end");
     releaseFrameBuffer(fbp);
     return true;
 }
@@ -1325,7 +1330,7 @@ bool GLDrawSurface::isCurrent()
 
 void GLDrawSurface::makeCurrent()
 {
-    renderer->reportGLErrors("GLDrawSurface::makeCurrent start");
+    GL_CHECK_ERRORS("GLDrawSurface::makeCurrent start");
 
     if (!isInitialized)
         materialize();
@@ -1353,7 +1358,7 @@ void GLDrawSurface::materialize()
 
     renderer->makeFramebufferCurrent(fb, bias);
 
-    renderer->reportGLErrors("GLDrawSurface::materialize pre clear");
+    GL_CHECK_ERRORS("GLDrawSurface::materialize pre clear");
 
     glStencilMask(GLuint(-1));
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1361,7 +1366,7 @@ void GLDrawSurface::materialize()
 
     isInitialized = true;
 
-    renderer->reportGLErrors("GLDrawSurface::materialize end");
+    GL_CHECK_ERRORS("GLDrawSurface::materialize end");
 }
 
 void GLDrawSurface::reset()
@@ -1637,7 +1642,7 @@ void GLTextureImage::bindTo(GLRenderer *nrenderer)
 {
     assert (!renderer || renderer == nrenderer);
 
-    renderer->reportGLErrors("GLTextureImage::bindTo start");
+    GL_CHECK_ERRORS("GLTextureImage::bindTo start");
 
     if (!renderer) {
         nrenderer->allocTexture(this);
@@ -1648,13 +1653,13 @@ void GLTextureImage::bindTo(GLRenderer *nrenderer)
 
     last_used_frame = nrenderer->frame_idx;
 
-    renderer->reportGLErrors("GLTextureImage::bindTo end");
+    GL_CHECK_ERRORS("GLTextureImage::bindTo end");
 }
 
 void GLTextureImage::loadTextureData(GLenum internal_fmt, GLenum data_fmt, GLenum data_type, const void *data)
 {
     glTexImage2D(GL_TEXTURE_2D, 0, internal_fmt, size.x, size.y, 0, data_fmt, data_type, data);
-    renderer->reportGLErrors("GLTextureImage::loadTextureData end");
+    GL_CHECK_ERRORS("GLTextureImage::loadTextureData end");
 }
 
 void GLTextureImage::drawRect(GLRenderer *renderer, vec2 minv, vec2 maxv)

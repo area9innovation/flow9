@@ -1,6 +1,7 @@
 #include <QVideoFrameFormat>
 #include "VideoWidget.h"
 #include <QNetworkReply>
+#include <algorithm>
 
 VideoWidget::VideoWidget(QWidget *parent)
 	: QWidget(parent)
@@ -15,11 +16,15 @@ VideoWidget::~VideoWidget()
         this->previousInFocusChain()->setFocus();
     }
     if (m_mediaObject) {
+        // Disconnect ALL signals before stopping — stop()/delete can emit
+        // positionChanged, mediaStatusChanged etc. during teardown, which
+        // would call back into QGLRenderSupport with stale map entries.
+        m_mediaObject->disconnect();
         m_mediaObject->stop();
         m_mediaObject->deleteLater();
     }
-    m_videoSurface->deleteLater();
     m_videoSurface->setVideoClip(NULL);
+    m_videoSurface->deleteLater();
 }
 
 void VideoWidget::setTargetVideoTexture(GLTextureBitmap::Ptr video_texture)
@@ -87,6 +92,82 @@ QMediaPlayer *VideoWidget::mediaPlayer() const
 	return m_mediaObject;
 }
 
+// ---- Color Format Converters ----
+
+// NV12 → RGBA (ITU-R BT.601 color space)
+// NV12 is a 12-bit format: 8-bit Y plane followed by interleaved 4-bit UV plane (Cb/Cr)
+static void convertNV12toRGBA(const QVideoFrame &frame, uint32_t *dest, int width, int height)
+{
+    const uint8_t *yData = static_cast<const uint8_t*>(frame.bits(0));
+    const uint8_t *uvData = static_cast<const uint8_t*>(frame.bits(1));
+
+    int yPitch = frame.bytesPerLine(0);
+    int uvPitch = frame.bytesPerLine(1);
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            uint8_t Y = yData[y * yPitch + x];
+
+            // UV are interleaved: U at even indices, V at odd indices
+            int uvIdx = (y / 2) * uvPitch + (x / 2) * 2;
+            uint8_t U = uvData[uvIdx];
+            uint8_t V = uvData[uvIdx + 1];
+
+            // BT.601 conversion
+            int C = Y - 16;
+            int D = U - 128;
+            int E = V - 128;
+
+            int R = (298 * C + 409 * E + 128) >> 8;
+            int G = (298 * C - 100 * D - 208 * E + 128) >> 8;
+            int B = (298 * C + 516 * D + 128) >> 8;
+
+            R = (R < 0) ? 0 : (R > 255) ? 255 : R;
+            G = (G < 0) ? 0 : (G > 255) ? 255 : G;
+            B = (B < 0) ? 0 : (B > 255) ? 255 : B;
+
+            dest[y * width + x] = (0xFF << 24) | (B << 16) | (G << 8) | R;
+        }
+    }
+}
+
+// YUV420P → RGBA (ITU-R BT.601 color space)
+// YUV420P has separate Y, U, V planes
+static void convertYUV420PtoRGBA(const QVideoFrame &frame, uint32_t *dest, int width, int height)
+{
+    const uint8_t *yData = static_cast<const uint8_t*>(frame.bits(0));
+    const uint8_t *uData = static_cast<const uint8_t*>(frame.bits(1));
+    const uint8_t *vData = static_cast<const uint8_t*>(frame.bits(2));
+
+    int yPitch = frame.bytesPerLine(0);
+    int uPitch = frame.bytesPerLine(1);
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            uint8_t Y = yData[y * yPitch + x];
+
+            int uvIdx = (y / 2) * uPitch + (x / 2);
+            uint8_t U = uData[uvIdx];
+            uint8_t V = vData[uvIdx];
+
+            // BT.601 conversion
+            int C = Y - 16;
+            int D = U - 128;
+            int E = V - 128;
+
+            int R = (298 * C + 409 * E + 128) >> 8;
+            int G = (298 * C - 100 * D - 208 * E + 128) >> 8;
+            int B = (298 * C + 516 * D + 128) >> 8;
+
+            R = (R < 0) ? 0 : (R > 255) ? 255 : R;
+            G = (G < 0) ? 0 : (G > 255) ? 255 : G;
+            B = (B < 0) ? 0 : (B > 255) ? 255 : B;
+
+            dest[y * width + x] = (0xFF << 24) | (B << 16) | (G << 8) | R;
+        }
+    }
+}
+
 // ---- VideoSurface (Qt6 QVideoSink-based) ----
 
 VideoSurface::VideoSurface(QObject *parent)
@@ -143,19 +224,40 @@ void VideoSurface::onVideoFrameChanged(const QVideoFrame &frame)
     QVideoFrame videoFrame(frame);
 
     if (videoFrame.map(QVideoFrame::ReadOnly)) {
-        // In Qt6, bytesPerLine/bits take a plane index
-        int realFrameWidth = videoFrame.bytesPerLine(0) / 4;
+        int frameWidth = frame.width();
+        int frameHeight = frame.height();
+        QVideoFrameFormat::PixelFormat pixelFormat = frame.pixelFormat();
 
-        if (m_videoTextureBitmap->getSize() != ivec2(realFrameWidth, frame.height()))
-            m_videoTextureBitmap->resize(ivec2(realFrameWidth, frame.height()));
+        // For YUV formats, we convert to RGBA ourselves, so bitmap is frameWidth x frameHeight @ 4bpp.
+        // For RGBA/BGRA formats, the stride may differ from width, so use bytesPerLine.
+        bool isYUV = (pixelFormat == QVideoFrameFormat::Format_NV12 ||
+                      pixelFormat == QVideoFrameFormat::Format_YUV420P);
 
-        int bytes = videoFrame.mappedBytes(0);
-        int dsize = m_videoTextureBitmap->getDataSize();
-        Q_ASSERT(bytes == dsize);
+        int bitmapWidth = isYUV ? frameWidth : (videoFrame.bytesPerLine(0) / 4);
+        int bitmapHeight = frameHeight;
 
-        memcpy(m_videoTextureBitmap->getDataPtr(), videoFrame.bits(0), bytes);
+        if (m_videoTextureBitmap->getSize() != ivec2(bitmapWidth, bitmapHeight))
+            m_videoTextureBitmap->resize(ivec2(bitmapWidth, bitmapHeight));
+
+        uint32_t *destBuffer = reinterpret_cast<uint32_t*>(m_videoTextureBitmap->getDataPtr());
+
+        switch (pixelFormat) {
+            case QVideoFrameFormat::Format_NV12:
+                convertNV12toRGBA(videoFrame, destBuffer, frameWidth, frameHeight);
+                break;
+            case QVideoFrameFormat::Format_YUV420P:
+                convertYUV420PtoRGBA(videoFrame, destBuffer, frameWidth, frameHeight);
+                break;
+            default: {
+                // RGBA, BGRA, or unknown — direct memcpy from plane 0
+                int bytes = videoFrame.mappedBytes(0);
+                int dsize = m_videoTextureBitmap->getDataSize();
+                memcpy(destBuffer, videoFrame.bits(0), std::min(bytes, dsize));
+                break;
+            }
+        }
+
         m_videoTextureBitmap->invalidate();
-
         videoFrame.unmap();
     }
 

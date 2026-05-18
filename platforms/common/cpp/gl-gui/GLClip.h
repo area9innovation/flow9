@@ -360,8 +360,19 @@ public:
         
         // Walk children right-to-left (i.e. z order top to bottom)
         for (int i = children.size() - 1; i >= 0; --i) {
+            // Guard: children vector may have shrunk if a callback
+            // triggered by a sibling's hit test removed clips.
+            if (i >= (int)children.size())
+                continue;
+
             GLClip *child = children[i];
-            
+
+            // Skip destroyed clips — they may still be in the children
+            // vector if flowDestroyObject() was blocked by destroy_lock,
+            // or if the clip tree was mutated during this traversal.
+            if (!child || child->isDestroyed())
+                continue;
+
             if (child->mask_owner)
                 continue;
             

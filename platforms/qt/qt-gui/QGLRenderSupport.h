@@ -6,6 +6,7 @@
 #include "qt-backend/HttpSupport.h"
 
 #include <qmediaplayer.h>
+#include <set>
 
 #include <QOpenGLWidget>
 #include <QNetworkAccessManager>
@@ -73,6 +74,9 @@ class QGLRenderSupport : public QOpenGLWidget, public GLRenderSupport
     // We can't get the QVideoWidget from the QVideoPlayer, so keep track of the mappings
     // QHash<QMediaPlayer*, QVideoWidget*> VideoPlayerMap;
     QHash<QMediaPlayer*, VideoWidget*> VideoPlayerMap;
+
+    // Guard against infinite recursion in mediaStatusChanged → doUpdateVideoPosition → setPosition → mediaStatusChanged
+    std::set<QMediaPlayer*> ProcessingMediaStatusChange;
 
     bool EmulatePanGesture;
 

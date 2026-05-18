@@ -67,7 +67,7 @@ void GLScheduleNode::renderRec(GLRenderer *renderer, const GLBoundingBox &clip_b
     for (unsigned i = 0; i < inputs.size(); i++)
         inputs[i]->renderRec(renderer, output_box);
 
-    renderer->reportGLErrors("GLScheduleNode::renderRec mid");
+    GL_CHECK_ERRORS("GLScheduleNode::renderRec mid");
 
     // Render self
     if (!in_clip) {
@@ -126,7 +126,7 @@ void GLMaskScheduleNode::doRender(GLRenderer *renderer, GLDrawSurface *out)
 
     out->makeCurrent();
     renderer->renderMask(main, mask);
-    renderer->reportGLErrors("GLMaskScheduleNode::doRender end");
+    GL_CHECK_ERRORS("GLMaskScheduleNode::doRender end");
 }
 
 GLFilterScheduleNode::GLFilterScheduleNode(GLClip *owner, Ptr input, GLFilter *filter)

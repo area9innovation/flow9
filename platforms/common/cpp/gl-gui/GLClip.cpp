@@ -470,33 +470,33 @@ void GLClip::render(GLRenderer *renderer, GLDrawSurface *surface, const GLBoundi
     my_clip_box &= clip_box;
     if (my_clip_box.isEmpty) return;
 
-    renderer->reportGLErrors("GLClip::render start");
+    GL_CHECK_ERRORS("GLClip::render start");
     renderer->setCurMatrix(global_transform.forward);
 
     if (schedule_node && !from_node) {
         schedule_node->renderTo(renderer, surface);
-        renderer->reportGLErrors("GLClip::render post effects");
+        GL_CHECK_ERRORS("GLClip::render post effects");
     } else if (scroll_rect) {
         surface->pushCropRect(global_transform, scroll_rect_box);
 
         renderInner(renderer, surface, my_clip_box);
-        renderer->reportGLErrors("GLClip::render post inner");
+        GL_CHECK_ERRORS("GLClip::render post inner");
 
         surface->popCropRect();
     } else {
         renderInner(renderer, surface, my_clip_box);
-        renderer->reportGLErrors("GLClip::render post inner");
+        GL_CHECK_ERRORS("GLClip::render post inner");
     }
 }
 
 void GLClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, const GLBoundingBox &clip_box)
 {
-    renderer->reportGLErrors("GLClip::renderInner start");
+    GL_CHECK_ERRORS("GLClip::renderInner start");
 
     if (graphics && !graphics->isEmpty()) {
         surface->makeCurrent();
         graphics->render(renderer, global_transform, global_alpha);
-        renderer->reportGLErrors("GLClip::renderInner post graphics");
+        GL_CHECK_ERRORS("GLClip::renderInner post graphics");
     }
 
     for (T_Children::iterator it = children.begin(); it != children.end(); ++it) {

@@ -2,6 +2,14 @@
 #define GLRENDERER_H
 
 #include "GLUtils.h"
+
+// Zero-cost GL error checking in release builds.
+// In debug builds, calls reportGLErrors() which does glGetError().
+#ifdef NDEBUG
+    #define GL_CHECK_ERRORS(where) ((void)0)
+#else
+    #define GL_CHECK_ERRORS(where) GLRenderer::reportGLErrors(where)
+#endif
 #include "core/ByteCodeRunner.h"
 #include "core/STLHelpers.h"
 

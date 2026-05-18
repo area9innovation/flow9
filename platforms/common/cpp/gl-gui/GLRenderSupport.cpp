@@ -361,12 +361,12 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
     if (!Renderer->isInitialized())
         return;
 
-    Renderer->reportGLErrors("paintGLContext start");
+    GL_CHECK_ERRORS("paintGLContext start");
 
     GLDrawSurface surface(Renderer, ad_hoc_fb);
 
     Renderer->BeginFrame();
-    Renderer->reportGLErrors("paintGLContext post clean");
+    GL_CHECK_ERRORS("paintGLContext post clean");
 
     // Prepare rendering
     GLScheduleNode::Ptr snode;
@@ -407,11 +407,11 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
         float clear = gl_transparent ? 0.0f : 1.0f;
         glClearColor(clear, clear, clear, clear);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-        Renderer->reportGLErrors("paintGLContext post clear");
+        GL_CHECK_ERRORS("paintGLContext post clear");
 
         if (snode) {
             snode->renderTo(Renderer, &surface);
-            Renderer->reportGLErrors("paintGLContext post renderTo");
+            GL_CHECK_ERRORS("paintGLContext post renderTo");
         }
 
         // In error state, paint a transparent red overlay
@@ -465,7 +465,7 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
         checkNativeWidgets(true);
 
     Renderer->CleanStaleObjectsPost();
-    Renderer->reportGLErrors("paintGLContext end");
+    GL_CHECK_ERRORS("paintGLContext end");
 
 #ifdef LOG_PAINT_TIME
     getFlowRunner()->flow_err << "PAINT: " << (GetCurrentTime() - start_time) << endl;
@@ -618,6 +618,7 @@ struct PredicateFn {
 
 struct ActionFn {
     void operator() (GLClip* clip) {
+        if (clip->isDestroyed()) return;
         if (clip->checkFlag(GLClip::ListensToOverOutEvents) && !clip->checkFlag(GLClip::IsUnderMouseCursor)) {
             clip->setFlags(GLClip::IsUnderMouseCursor);
             clip->invokeEventCallbacks(FlowMouseEnter, 0, NULL);
@@ -627,6 +628,7 @@ struct ActionFn {
 
 struct PredicatableActionFn {
     void operator() (GLClip* clip, GLClip::HitType hit) {
+        if (clip->isDestroyed()) return;
         if (!hit && clip->checkFlag(GLClip::IsUnderMouseCursor) && clip->checkFlag(GLClip::ListensToOverOutEvents)) {
             clip->wipeFlags(GLClip::IsUnderMouseCursor);
             clip->invokeEventCallbacks(FlowMouseLeave, 0, NULL);

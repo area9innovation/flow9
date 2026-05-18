@@ -1,6 +1,7 @@
 #include "QGLRenderSupport.h"
 #include "QGLTextEdit.h"
 #include "QGLLineEdit.h"
+#include <QTimer>
 
 #include "gl-gui/GLRenderer.h"
 #include "gl-gui/GLTextClip.h"
@@ -559,6 +560,11 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
         videoWidget->setTargetVideoTexture(texture_bitmap);
         videoWidget->setVideoClip(video_clip);
 
+        // When a new video frame arrives, request a redraw so it gets displayed.
+        // Without this, needsRendering() may return false and the timer won't
+        // schedule a paint — causing the video to appear black until a mouse click.
+        connect(videoWidget->videoSurface(), &VideoSurface::frameUpdate, this, &QGLRenderSupport::doRequestRedraw);
+
         // Load the video file and start playing the video
         videoWidget->setMediaSource(
                     /* qtStrBase */
@@ -663,17 +669,37 @@ void QGLRenderSupport::mediaStatusChanged(QMediaPlayer::MediaStatus status)
     QMediaPlayer *player = qobject_cast<QMediaPlayer*>(sender());
     if (!player) return;
 
+    // In Qt 6, mediaStatusChanged fires much more frequently than Qt 5.
+    // Operations like setPosition() and play()/pause() can re-trigger this signal
+    // synchronously via: dispatchVideoPlayStatus → notifyEvent → update()
+    //   → doUpdateVideoPosition/doUpdateVideoPlay → player->setPosition()/play()/pause()
+    //   → mediaStatusChanged (re-entrant call).
+    // Guard against this to prevent infinite recursion (stack overflow).
+    if (ProcessingMediaStatusChange.count(player))
+        return;
+
     VideoWidget *videoWidget = VideoPlayerMap[player];
     if (!videoWidget) return;
 
     GLClip *owner = NativeWidgetClips[videoWidget];
     if (!owner) return;
 
+    ProcessingMediaStatusChange.insert(player);
+
     switch (status) {
-        case QMediaPlayer::BufferedMedia:
         case QMediaPlayer::LoadedMedia: {
             dispatchVideoDuration(owner, player->duration());
             dispatchVideoPlayStatus(owner, GLVideoClip::PlayStart);
+            break;
+        }
+        case QMediaPlayer::BufferedMedia: {
+            // In Qt 6, BufferedMedia fires repeatedly during normal playback whenever
+            // buffering state transitions occur. Must be a complete no-op here because:
+            // - dispatchVideoPlayStatus(PlayStart) triggers update() → doUpdateVideoPlay/doUpdateVideoPosition
+            // - dispatchVideoDuration triggers DurationChange → update() → doUpdateVideoPosition
+            // - Both paths call setPosition()/play()/pause() which re-emit BufferingMedia/BufferedMedia
+            //   creating an infinite event loop (non-recursive but unbounded via Qt event queue).
+            // Duration and PlayStart are already dispatched from LoadedMedia.
             break;
         }
         case QMediaPlayer::EndOfMedia: {
@@ -682,6 +708,8 @@ void QGLRenderSupport::mediaStatusChanged(QMediaPlayer::MediaStatus status)
         }
         default: break;
     }
+
+    ProcessingMediaStatusChange.erase(player);
 }
 
 void QGLRenderSupport::videoStateChanged(QMediaPlayer::PlaybackState state)
@@ -847,6 +875,28 @@ void QGLRenderSupport::initializeGL()
         cerr << GLRenderer::getOpenGLInfo() << endl;
         exit(1);
     }
+
+    // Fixed-rate render timer ensures consistent frame scheduling.
+    // QOpenGLWidget::update() relies on compositor scheduling which can
+    // coalesce/delay arbitrarily. This timer guarantees we attempt a paint
+    // at display refresh rate.
+    // Fixed-rate render timer ensures consistent frame scheduling.
+    // On macOS, QOpenGLWidget renders to an internal FBO that the compositor
+    // presents asynchronously — without this timer, update() requests can be
+    // delayed or coalesced, causing stuttery rendering.
+    // On Windows/Linux the timer is less critical but still provides a
+    // reliable rendering heartbeat for video playback and animations.
+    QTimer *renderTimer = new QTimer(this);
+    renderTimer->setTimerType(Qt::PreciseTimer);
+    connect(renderTimer, &QTimer::timeout, this, [this]() {
+        // Repaint when the clip tree has pending changes, OR when any video
+        // player is active (video frame texture updates via invalidate() do
+        // not mark the Stage as changed, so needsRendering() misses them).
+        if (needsRendering() || !VideoPlayerMap.isEmpty()) {
+            update();
+        }
+    });
+    renderTimer->start(16); // ~60 FPS target
 }
 
 void QGLRenderSupport::resizeGL(int w, int h)
