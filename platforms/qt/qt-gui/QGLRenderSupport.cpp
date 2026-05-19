@@ -25,6 +25,7 @@
 #ifndef QT_NO_WEBENGINE
 #include <QWebEngineSettings>
 #include <QWebEngineProfile>
+#include <QWebEngineFindTextResult>
 #endif
 
 #include <sstream>
@@ -798,8 +799,8 @@ void QGLRenderSupport::webPageLoaded(bool ok) {
     GLClip *nester = NativeWidgetClips[web_view];
 
     if (ok) {
-        web_view->findText("404 Not Found", QWebEnginePage::FindFlags(), [this, nester](bool found) {
-            if (found) {
+        web_view->findText("404 Not Found", QWebEnginePage::FindFlags(), [this, nester](const QWebEngineFindTextResult &result) {
+            if (result.numberOfMatches() > 0) {
                 dispatchPageError(nester, "404 Page Not Found");
             } else {
                 dispatchPageLoaded(nester);
@@ -837,7 +838,8 @@ StackSlot QGLRenderSupport::webClipHostCall(GLWebClip * clip, const unicode_stri
         std::stringstream ss;
         getFlowRunner()->PrintData(ss, args);
         QString args_str = QString::fromStdString(ss.str());
-        page->runJavaScript(fn + "(" + args_str.mid(1,args_str.length()-2) + ")", [this](const QVariant &var) {
+        QString js = fn + "(" + args_str.mid(1,args_str.length()-2) + ")";
+        page->runJavaScript(js, [this](const QVariant &var) {
             return variant2slot(var);
         });
     }

@@ -31,6 +31,11 @@
 #include <QScrollArea>
 #include <QScreen>
 
+#ifndef QT_NO_WEBENGINE
+#include <QQuickWindow>
+#include <QSGRendererInterface>
+#endif
+
 #include <qt-gui/mainwindow.h>
 #include <qt-gui/testopengl.h>
 
@@ -445,6 +450,14 @@ int main(int argc, char *argv[])
 
     // Qt6: AA_ShareOpenGLContexts and AA_UseDesktopOpenGL removed;
     // context sharing is the default in Qt6.
+
+#ifndef QT_NO_WEBENGINE
+    // Qt6 QWebEngineView uses QQuickWidget internally, which defaults to
+    // the platform RHI backend (Metal on macOS, D3D11 on Windows).
+    // Our main window uses QOpenGLWidget, so force Qt Quick to use OpenGL
+    // for RHI to avoid "OpenGL is not compatible with this QQuickWidget" errors.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+#endif
 
 #ifdef QT_GUI_LIB
     qInstallMessageHandler(customMessageOutputHandler);
