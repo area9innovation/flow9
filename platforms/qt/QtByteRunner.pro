@@ -48,7 +48,11 @@ CONFIG(use_gui) {
     #QMAKE_CXXFLAGS_RELEASE += -std=c++11
 
     # Suppress 'register' keyword error from vendored glm (C++17 disallows it)
-    QMAKE_CXXFLAGS += -Wno-register
+    win32:msvc {
+        QMAKE_CXXFLAGS += /wd5033
+    } else {
+        QMAKE_CXXFLAGS += -Wno-register
+    }
 
     macx {
         # -O2 is too crashy on Mac; see #34057 - ST 12/17/14, 3/30/15
@@ -63,7 +67,7 @@ CONFIG(use_gui) {
     win32 {
         INCLUDEPATH += win32-libs/include
 
-        contains(QMAKE_TARGET.arch, x86_64) {
+        contains(QMAKE_TARGET.arch, x86_64)|contains(QT_ARCH, x86_64) {
             LIBS += -L$$PWD/win32-libs/lib64
         } else {
             LIBS += -L$$PWD/win32-libs/lib
@@ -77,8 +81,14 @@ CONFIG(use_gui) {
     }
 
     LIBS += -lz
-    INCLUDEPATH += /usr/include/freetype2
-    INCLUDEPATH += /usr/local/include/freetype2
+
+    # Freetype include paths:
+    #   Windows: ft2build.h + freetype/ are in win32-libs/include (already added in win32 block above)
+    #   Linux:   headers live under a freetype2/ subdirectory, so explicit paths are needed
+    unix {
+        INCLUDEPATH += /usr/include/freetype2
+        INCLUDEPATH += /usr/local/include/freetype2
+    }
 
     LIBS += -ljpeg -lpng -lfreetype
 } else {
@@ -97,6 +107,12 @@ PRECOMPILED_HEADER = pcheader.h
 INCLUDEPATH += ../common/cpp ../common/cpp/include qt-gui qt-backend ../common/cpp/asmjit/src
 
 CONFIG          += console
+
+# Keep generated files in a proper subdirectory so qmake
+# doesn't inject stale "-Irelease" / "-I/include" into INCPATH
+MOC_DIR     = $$OUT_PWD/generated
+RCC_DIR     = $$OUT_PWD/generated
+OBJECTS_DIR = $$OUT_PWD/obj
 
 #QMAKE_CXXFLAGS_DEBUG += -fpermissive
 #QMAKE_CXXFLAGS_RELEASE += -fpermissive

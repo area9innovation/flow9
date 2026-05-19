@@ -1,6 +1,7 @@
 #ifdef QT_GUI_LIB
 #define GL_GLEXT_PROTOTYPES
 #ifdef WIN32
+#include <stddef.h>
 #include <GL/glew.h>
 #elif defined(__APPLE__)
 #include <OpenGL/gl.h>

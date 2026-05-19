@@ -1,7 +1,7 @@
 #ifndef _MEMORY_AREA_H_
 #define _MEMORY_AREA_H_
 
-#include <memory.h>
+#include <cstring>
 #include <stdint.h>
 #include "CommonTypes.h"
 

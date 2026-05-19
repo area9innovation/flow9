@@ -13,6 +13,7 @@
   #else
     #define GL_GLEXT_PROTOTYPES
     #ifdef WIN32
+      #include <stddef.h>
       #include <GL/glew.h>
     #else
       #ifdef __APPLE__
