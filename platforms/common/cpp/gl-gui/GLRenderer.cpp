@@ -327,6 +327,21 @@ void GLRenderer::beginDrawFancyExternalTexture(const vec4 &color)
     glActiveTexture(GL_TEXTURE0);
 }
 
+void GLRenderer::beginDrawNV12()
+{
+    // GPU-side NV12→RGBA conversion using ProgNV12 shader
+    // Expects: s_tex (Y plane, GL_LUMINANCE) bound to unit 0
+    //          s_tex_uv (UV plane, GL_LUMINANCE_ALPHA) bound to unit 1
+    setProgram(ProgNV12);
+
+    // Assign texture units for Y and UV samplers
+    if (programs[cur_program].s_tex >= 0)
+        glUniform1i(programs[cur_program].s_tex, 0);
+    if (programs[cur_program].s_tex_uv >= 0)
+        glUniform1i(programs[cur_program].s_tex_uv, 1);
+
+    glActiveTexture(GL_TEXTURE0);
+}
 
 void GLRenderer::beginDrawFont(float radius)
 {
@@ -518,11 +533,14 @@ void GLRenderer::renderBigBlur(GLDrawSurface *input, bool vertical, float base_c
 
     setProgram(ProgGauss);
 
-    float* gauss_coeffs = new float[steps];
+    // Max 16 steps (shader uniform array limit: u_gauss_shifts[16]).
+    // Use stack arrays to avoid heap allocation + leak every blur call.
+    assert(steps <= 16);
+    float gauss_coeffs[16];
     for (int i = 0; i < steps; i++)
         gauss_coeffs[i] = coeffs[i];
 
-    float* v_shifts = new float[2 * steps];
+    float v_shifts[32]; // 2 * 16
     for (int i = 0; i < 2 * steps; i++)
         v_shifts[i] = 0.0;
 
@@ -677,6 +695,14 @@ void GLRenderer::compileShaders()
         compileShaderPair(ProgGauss, SHADER_filter_vert, SHADER_gauss_frag, pfix,
                           1, AttrVertexPos, "a_VertexPos");
     }
+
+    // NV12 video frame shader: Y plane in s_tex, UV plane in s_tex_uv
+    pfix.clear();
+    pfix.push_back("#define DRAW_FANCY\n");
+    compileShaderPair(ProgNV12, SHADER_draw_vert, SHADER_nv12_frag, pfix,
+                      3, AttrVertexPos, "a_VertexPos",
+                      AttrVertexColor, "a_VertexColor",
+                      AttrVertexTexCoord, "a_VertexTexCoord");
 
 #if defined(GL_ES_VERSION_2_0) || defined(GL_ARB_ES2_compatibility)
     glReleaseShaderCompiler();
@@ -1647,9 +1673,18 @@ void GLTextureImage::bindTo(GLRenderer *nrenderer)
     if (!renderer) {
         nrenderer->allocTexture(this);
         loadData();
-    }
-    else
+    } else {
         glBindTexture(target, texture_id);
+
+        // Fast path for video frames: if pixel data was updated (markDirty),
+        // re-upload via glTexSubImage2D without texture re-allocation.
+        if (isBitmap()) {
+            GLTextureBitmap *bmp = static_cast<GLTextureBitmap*>(this);
+            if (bmp->isDataDirty()) {
+                bmp->reuploadData();
+            }
+        }
+    }
 
     last_used_frame = nrenderer->frame_idx;
 
@@ -1692,7 +1727,7 @@ bool GLTextureImage::swizzleRB() const
 }
 
 GLTextureBitmap::GLTextureBitmap(ivec2 size, GLenum format, bool flip, bool use_mipmaps, bool /*swizzleRB*/) :
-    GLTextureImage(size, flip), format(format), use_mipmaps(use_mipmaps)
+    GLTextureImage(size, flip), format(format), use_mipmaps(use_mipmaps), data_dirty(false)
 {
     bytes_per_pixel = getBytesPerPixel(format);
     reallocate(bytes_per_pixel * size.x * size.y);
@@ -1705,8 +1740,10 @@ unsigned GLTextureBitmap::getBytesPerPixel(GLenum format)
         return 0;
     case GL_LUMINANCE:
     case GL_ALPHA:
+    case GL_RED:
         return 1;
     case GL_LUMINANCE_ALPHA:
+    case GL_RG:
         return 2;
     case GL_RGB:
         return 3;
@@ -1742,10 +1779,39 @@ void GLTextureBitmap::loadData()
     }
 }
 
+void GLTextureBitmap::reuploadData()
+{
+    // Fast path: update texture data in-place using glTexSubImage2D.
+    // The texture is already allocated with the correct size — we just
+    // replace the pixel data without glDeleteTextures/glGenTextures.
+    GLenum data_fmt = format;
+    GLenum data_type = GL_UNSIGNED_BYTE;
+
+    if (format == GL_UNSIGNED_SHORT_5_5_5_1) {
+        data_fmt = GL_RGBA;
+        data_type = GL_UNSIGNED_SHORT_5_5_5_1;
+    } else if (format == GL_UNSIGNED_SHORT_5_6_5) {
+        data_fmt = GL_RGB;
+        data_type = GL_UNSIGNED_SHORT_5_6_5;
+    }
+
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, getSize().x, getSize().y,
+                    data_fmt, data_type, data.data());
+
+    if (use_mipmaps && is_pow2(getSize().x) && is_pow2(getSize().y)) {
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+
+    data_dirty = false;
+}
+
 void GLTextureBitmap::resize(ivec2 new_size, bool flip)
 {
-    setSize(new_size, flip);
+    // Size changed — must destroy old texture so bindTo() re-creates at new dimensions.
+    invalidate();
+    data_dirty = false;
 
+    setSize(new_size, flip);
     reallocate(bytes_per_pixel * new_size.x * new_size.y);
 }
 

@@ -228,36 +228,97 @@ void VideoSurface::onVideoFrameChanged(const QVideoFrame &frame)
         int frameHeight = frame.height();
         QVideoFrameFormat::PixelFormat pixelFormat = frame.pixelFormat();
 
-        // For YUV formats, we convert to RGBA ourselves, so bitmap is frameWidth x frameHeight @ 4bpp.
-        // For RGBA/BGRA formats, the stride may differ from width, so use bytesPerLine.
-        bool isYUV = (pixelFormat == QVideoFrameFormat::Format_NV12 ||
-                      pixelFormat == QVideoFrameFormat::Format_YUV420P);
+        // GPU NV12/YUV420P conversion: extract Y and UV planes separately
+        if (pixelFormat == QVideoFrameFormat::Format_NV12 ||
+            pixelFormat == QVideoFrameFormat::Format_YUV420P) {
 
-        int bitmapWidth = isYUV ? frameWidth : (videoFrame.bytesPerLine(0) / 4);
-        int bitmapHeight = frameHeight;
-
-        if (m_videoTextureBitmap->getSize() != ivec2(bitmapWidth, bitmapHeight))
-            m_videoTextureBitmap->resize(ivec2(bitmapWidth, bitmapHeight));
-
-        uint32_t *destBuffer = reinterpret_cast<uint32_t*>(m_videoTextureBitmap->getDataPtr());
-
-        switch (pixelFormat) {
-            case QVideoFrameFormat::Format_NV12:
-                convertNV12toRGBA(videoFrame, destBuffer, frameWidth, frameHeight);
-                break;
-            case QVideoFrameFormat::Format_YUV420P:
-                convertYUV420PtoRGBA(videoFrame, destBuffer, frameWidth, frameHeight);
-                break;
-            default: {
-                // RGBA, BGRA, or unknown — direct memcpy from plane 0
-                int bytes = videoFrame.mappedBytes(0);
-                int dsize = m_videoTextureBitmap->getDataSize();
-                memcpy(destBuffer, videoFrame.bits(0), std::min(bytes, dsize));
-                break;
+            // Y plane: full resolution (frameWidth x frameHeight, GL_RED = 1 byte/pixel)
+            // Use GL_RED (not GL_LUMINANCE) for macOS Core Profile compatibility.
+            ivec2 ySize(frameWidth, frameHeight);
+            if (!m_videoTextureBitmapY || m_videoTextureBitmapY->getSize() != ySize) {
+                m_videoTextureBitmapY = GLTextureBitmap::Ptr(new GLTextureBitmap(ySize, GL_RED));
             }
+            uint8_t *yBuffer = reinterpret_cast<uint8_t*>(m_videoTextureBitmapY->getDataPtr());
+            const uint8_t *ySrc = static_cast<const uint8_t*>(videoFrame.bits(0));
+            int yPitch = videoFrame.bytesPerLine(0);
+            if (yPitch == frameWidth) {
+                memcpy(yBuffer, ySrc, frameWidth * frameHeight);
+            } else {
+                // Stride differs from width — copy row by row
+                for (int row = 0; row < frameHeight; row++)
+                    memcpy(yBuffer + row * frameWidth, ySrc + row * yPitch, frameWidth);
+            }
+            m_videoTextureBitmapY->markDirty();
+
+            // UV plane: half resolution (GL_RG = 2 bytes/pixel)
+            // Use GL_RG (not GL_LUMINANCE_ALPHA) for macOS Core Profile compatibility.
+            // Shader reads U from .r, V from .g.
+            ivec2 uvSize(frameWidth / 2, frameHeight / 2);
+            if (!m_videoTextureBitmapUV || m_videoTextureBitmapUV->getSize() != uvSize) {
+                m_videoTextureBitmapUV = GLTextureBitmap::Ptr(new GLTextureBitmap(uvSize, GL_RG));
+            }
+            uint8_t *uvBuffer = reinterpret_cast<uint8_t*>(m_videoTextureBitmapUV->getDataPtr());
+
+            if (pixelFormat == QVideoFrameFormat::Format_NV12) {
+                // NV12: UV plane is interleaved [U0 V0 U1 V1 ...] in plane 1
+                const uint8_t *uvSrc = static_cast<const uint8_t*>(videoFrame.bits(1));
+                int uvPitch = videoFrame.bytesPerLine(1);
+                int uvRowBytes = (frameWidth / 2) * 2;
+                if (uvPitch == uvRowBytes) {
+                    memcpy(uvBuffer, uvSrc, uvRowBytes * (frameHeight / 2));
+                } else {
+                    for (int row = 0; row < frameHeight / 2; row++)
+                        memcpy(uvBuffer + row * uvRowBytes, uvSrc + row * uvPitch, uvRowBytes);
+                }
+            } else {
+                // YUV420P: separate U (plane 1) and V (plane 2) — interleave into [U V] pairs
+                const uint8_t *uData = static_cast<const uint8_t*>(videoFrame.bits(1));
+                const uint8_t *vData = static_cast<const uint8_t*>(videoFrame.bits(2));
+                int uPitch = videoFrame.bytesPerLine(1);
+                int vPitch = videoFrame.bytesPerLine(2);
+                int uvW = frameWidth / 2;
+                int uvH = frameHeight / 2;
+                for (int row = 0; row < uvH; row++) {
+                    const uint8_t *uRow = uData + row * uPitch;
+                    const uint8_t *vRow = vData + row * vPitch;
+                    uint8_t *dst = uvBuffer + row * uvW * 2;
+                    for (int x = 0; x < uvW; x++) {
+                        dst[x * 2 + 0] = uRow[x];
+                        dst[x * 2 + 1] = vRow[x];
+                    }
+                }
+            }
+            m_videoTextureBitmapUV->markDirty();
+
+            // Activate GPU rendering path (GLTextureBitmap IS-A GLTextureImage)
+            m_videoClip->setVideoTextureImage(m_videoTextureBitmapY);
+            m_videoClip->setVideoTextureImageUV(m_videoTextureBitmapUV);
+            m_videoClip->setYUVGPU(true);
+        }
+        else {
+            // CPU conversion for RGBA, BGRA, or other formats
+            bool isYUV = (pixelFormat == QVideoFrameFormat::Format_NV12 ||
+                          pixelFormat == QVideoFrameFormat::Format_YUV420P);
+
+            int bitmapWidth = isYUV ? frameWidth : (videoFrame.bytesPerLine(0) / 4);
+            int bitmapHeight = frameHeight;
+
+            if (m_videoTextureBitmap->getSize() != ivec2(bitmapWidth, bitmapHeight))
+                m_videoTextureBitmap->resize(ivec2(bitmapWidth, bitmapHeight));
+
+            uint32_t *destBuffer = reinterpret_cast<uint32_t*>(m_videoTextureBitmap->getDataPtr());
+
+            // RGBA, BGRA, or unknown — direct memcpy from plane 0
+            int bytes = videoFrame.mappedBytes(0);
+            int dsize = m_videoTextureBitmap->getDataSize();
+            memcpy(destBuffer, videoFrame.bits(0), std::min(bytes, dsize));
+
+            m_videoTextureBitmap->markDirty();
+
+            // Disable GPU path for non-YUV formats
+            m_videoClip->setYUVGPU(false);
         }
 
-        m_videoTextureBitmap->invalidate();
         videoFrame.unmap();
     }
 

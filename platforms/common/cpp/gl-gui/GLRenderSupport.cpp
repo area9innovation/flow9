@@ -1,4 +1,6 @@
 #include "GLRenderSupport.h"
+#include <chrono>
+#include <cstdio>
 #include "GLRenderer.h"
 #include "GLGraphics.h"
 #include "GLClip.h"
@@ -326,9 +328,40 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
 {
     RedrawPending = false;
 
-//#define LOG_PAINT_TIME
-#ifdef LOG_PAINT_TIME
-    double start_time = GetCurrentTime();
+#ifdef PAINT_PROFILE
+    using hrc = std::chrono::high_resolution_clock;
+    auto prof_start = hrc::now();
+    auto prof_prev = prof_start;
+    static int prof_frame = 0;
+    prof_frame++;
+    struct ProfAcc {
+        double sum[12] = {};
+        double mx[12] = {};
+        int count = 0;
+        const char* names[12] = {};
+        int n = 0;
+        void record(const char* name, double ms) {
+            if (n < 12) { names[n] = name; sum[n] += ms; if (ms > mx[n]) mx[n] = ms; n++; }
+        }
+        void beginFrame() { n = 0; count++; }
+        void dump() {
+            fprintf(stderr, "=== PAINT PROFILE (%d frames) ===\n", count);
+            for (int i = 0; i < n && i < 12; i++)
+                fprintf(stderr, "  %-25s avg=%.3fms  max=%.3fms\n", names[i], sum[i]/count, mx[i]);
+            for (int i=0;i<12;i++) { sum[i]=0; mx[i]=0; }
+            count = 0;
+        }
+    };
+    static ProfAcc prof_acc;
+    prof_acc.beginFrame();
+    #define PROF_CP(label) do { \
+        auto now = hrc::now(); \
+        double ms = std::chrono::duration<double, std::milli>(now - prof_prev).count(); \
+        prof_acc.record(label, ms); \
+        prof_prev = now; \
+    } while(0)
+#else
+    #define PROF_CP(label) ((void)0)
 #endif
 
     if (startRenderTimestamp == 0.0) {
@@ -349,9 +382,20 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
         RUNNER->EvalFunction(RUNNER->LookupRoot(DrawFrameListeners[it]), 1, StackSlot::MakeDouble(rendertime));
     }
 
-    if (DrawFrameListeners.size()) {
+    // Only request the next frame if a listener actually changed something.
+    // The old code unconditionally called doRequestRedraw() whenever any
+    // listener existed, creating a permanent 30 FPS busy-loop even for
+    // completely static scenes (~10 % CPU on macOS doing nothing).
+    // Now we check needsRendering(): if a callback did next()/nextDistinct()
+    // and that modified a clip property, wipeFlags() propagates to Stage
+    // and needsRendering() returns true.  Animations still get their
+    // continuous frame loop because each frame changes the percent value.
+    // Once an animation finishes (and detaches), needsRendering() stays
+    // false and the loop stops.
+    if (DrawFrameListeners.size() && needsRendering()) {
         doRequestRedraw();
     }
+    PROF_CP("1_FrameListeners");
 
     ByteCodeRunnerNativeContext rctx(RUNNER, 100);
 
@@ -367,6 +411,7 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
 
     Renderer->BeginFrame();
     GL_CHECK_ERRORS("paintGLContext post clean");
+    PROF_CP("2_BeginFrame");
 
     // Prepare rendering
     GLScheduleNode::Ptr snode;
@@ -376,6 +421,7 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
 
         if (!RUNNER->isInitializing())
             Stage->prepareRenderTransforms();
+        PROF_CP("3_PrepTransforms");
 
 
         // This breaks QWebEngineView. See below.
@@ -385,6 +431,7 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
 
         snode->invalidateBufferCache();
         Renderer->InvalidateStaleRetainedBuffers();
+        PROF_CP("4_ScheduleNode");
     }
 
     {
@@ -392,6 +439,7 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
 
         if (snode) {
             snode->renderRec(Renderer, surface.getBBox());
+        PROF_CP("5_renderRec");
         }
         // Render the frame
         surface.makeCurrent();
@@ -408,10 +456,12 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
         glClearColor(clear, clear, clear, clear);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         GL_CHECK_ERRORS("paintGLContext post clear");
+        PROF_CP("6_glClear");
 
         if (snode) {
             snode->renderTo(Renderer, &surface);
             GL_CHECK_ERRORS("paintGLContext post renderTo");
+        PROF_CP("7_renderTo");
         }
 
         // In error state, paint a transparent red overlay
@@ -451,6 +501,7 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
             }
 
             RenderDeferredFunctions.clear();
+        PROF_CP("8_DeferredFuncs");
         }
 
         if (getFlowRunner()->IsProfiling())
@@ -463,13 +514,27 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
     // rendering and will invalidate our OpenGL state)
     if (Stage)
         checkNativeWidgets(true);
+    PROF_CP("9_NativeWidgets");
 
     Renderer->CleanStaleObjectsPost();
+    PROF_CP("10_CleanStale");
     GL_CHECK_ERRORS("paintGLContext end");
 
-#ifdef LOG_PAINT_TIME
-    getFlowRunner()->flow_err << "PAINT: " << (GetCurrentTime() - start_time) << endl;
+#ifdef PAINT_PROFILE
+    {
+        double total_ms = std::chrono::duration<double, std::milli>(hrc::now() - prof_start).count();
+        prof_acc.record("TOTAL", total_ms);
+        if (prof_frame % 120 == 0) {
+            prof_acc.dump();
+            static auto last_fps_time = hrc::now();
+            auto now = hrc::now();
+            double elapsed = std::chrono::duration<double>(now - last_fps_time).count();
+            fprintf(stderr, "  FPS: %.1f\n\n", 120.0 / elapsed);
+            last_fps_time = now;
+        }
+    }
 #endif
+    #undef PROF_CP
 }
 
 void GLRenderSupport::updateLastUserAction()

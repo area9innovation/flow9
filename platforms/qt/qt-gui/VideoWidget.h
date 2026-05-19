@@ -73,7 +73,9 @@ private slots:
 	void onVideoFrameChanged(const QVideoFrame &frame);
 
 private:
-	GLTextureBitmap::Ptr m_videoTextureBitmap;
+	GLTextureBitmap::Ptr m_videoTextureBitmap;       // RGBA bitmap for non-YUV formats
+	GLTextureBitmap::Ptr m_videoTextureBitmapY;      // Y plane (GL_LUMINANCE) for GPU NV12/YUV420P
+	GLTextureBitmap::Ptr m_videoTextureBitmapUV;     // UV plane (GL_LUMINANCE_ALPHA) for GPU NV12/YUV420P
 	QVideoSink *m_sink;
 
     ivec2 m_size;

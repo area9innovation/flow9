@@ -16,6 +16,7 @@
 
 #define RENDERER_UNIFORMS \
     UNIFORM(s_tex) \
+    UNIFORM(s_tex_uv) \
     UNIFORM(s_mask) \
     UNIFORM(u_out_pixel_size) \
     UNIFORM(u_out_offset) \
@@ -62,6 +63,7 @@ public:
         ProgFilterBevelBlur,
         ProgGauss3x3,
         ProgGauss,
+        ProgNV12,
         ProgLAST
     };
 
@@ -253,6 +255,7 @@ public:
     void beginDrawSimple(const vec4 &color);
     void beginDrawFancy(const vec4 &color, bool useTexture, bool swizzleRB = false);
     void beginDrawFancyExternalTexture(const vec4 &color);
+    void beginDrawNV12();  // GPU-side NV12→RGBA conversion
 
     void beginDrawFont(float radius);
 
@@ -394,6 +397,7 @@ class GLTextureBitmap : public GLTextureImage {
     GLenum format;
     int bytes_per_pixel;
     bool use_mipmaps;
+    bool data_dirty;
 
     StaticBuffer data;
     void reallocate(size_t bytes);
@@ -421,6 +425,13 @@ public:
     unsigned char *getDataPtr() { return data.writable_data(); }
     unsigned getDataSize() { return data.size(); }
     
+    // Mark pixel data as changed without destroying the GL texture.
+    // Next bindTo() will re-upload via glTexSubImage2D (fast path)
+    // instead of glDeleteTextures + glGenTextures + glTexImage2D.
+    void markDirty() { data_dirty = true; }
+    bool isDataDirty() const { return data_dirty; }
+    void reuploadData();
+
     void compress();
 };
 

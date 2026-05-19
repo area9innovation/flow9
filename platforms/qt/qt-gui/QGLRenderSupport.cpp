@@ -2,6 +2,7 @@
 #include "QGLTextEdit.h"
 #include "QGLLineEdit.h"
 #include <QTimer>
+#include <iostream>
 
 #include "gl-gui/GLRenderer.h"
 #include "gl-gui/GLTextClip.h"
@@ -876,27 +877,12 @@ void QGLRenderSupport::initializeGL()
         exit(1);
     }
 
-    // Fixed-rate render timer ensures consistent frame scheduling.
-    // QOpenGLWidget::update() relies on compositor scheduling which can
-    // coalesce/delay arbitrarily. This timer guarantees we attempt a paint
-    // at display refresh rate.
-    // Fixed-rate render timer ensures consistent frame scheduling.
-    // On macOS, QOpenGLWidget renders to an internal FBO that the compositor
-    // presents asynchronously — without this timer, update() requests can be
-    // delayed or coalesced, causing stuttery rendering.
-    // On Windows/Linux the timer is less critical but still provides a
-    // reliable rendering heartbeat for video playback and animations.
-    QTimer *renderTimer = new QTimer(this);
-    renderTimer->setTimerType(Qt::PreciseTimer);
-    connect(renderTimer, &QTimer::timeout, this, [this]() {
-        // Repaint when the clip tree has pending changes, OR when any video
-        // player is active (video frame texture updates via invalidate() do
-        // not mark the Stage as changed, so needsRendering() misses them).
-        if (needsRendering() || !VideoPlayerMap.isEmpty()) {
-            update();
-        }
-    });
-    renderTimer->start(16); // ~60 FPS target
+    // No fixed-rate render timer.  Rendering is driven by:
+    //   1. Video frame arrival  (VideoSurface::frameUpdate → doRequestRedraw → update())
+    //   2. Flow runtime changes (needsRendering() → doRequestRedraw → update())
+    //   3. Input events         (mouse/keyboard handlers call update())
+    // A fixed 16 ms PreciseTimer starves the macOS compositor and causes
+    // system-wide sluggishness even for tiny videos.
 }
 
 void QGLRenderSupport::resizeGL(int w, int h)

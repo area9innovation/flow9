@@ -19,7 +19,7 @@ GLVideoClip::GLVideoClip(GLRenderSupport *owner, const StackSlot &size_cb, const
 
     use_media_stream = false;
     start = end = duration = 0;
-    failed = looping = loaded = playing = false;
+    failed = looping = loaded = playing = is_yuv_gpu = false;
     subtitle = new GLTextClip(owner);
     addChild(subtitle);
 
@@ -41,6 +41,28 @@ void GLVideoClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, cons
         surface->makeCurrent();
         renderer->beginDrawSimple(vec4(1,0,0,1)*global_alpha);
         renderer->drawRect(vec2(0,0), vec2(size));
+    } else if (is_yuv_gpu && texture_image && texture_image_uv) {
+        // GPU-side NV12/YUV→RGB conversion: Y in texture_image, UV in texture_image_uv
+        surface->makeCurrent();
+        // beginDrawNV12() selects ProgNV12 and assigns s_tex=0, s_tex_uv=1
+        renderer->beginDrawNV12();
+
+        // Bind UV plane to texture unit 1
+        glActiveTexture(GL_TEXTURE1);
+        texture_image_uv->bindTo(renderer);
+
+        // Bind Y plane to texture unit 0 (drawRect calls bindTo internally)
+        glActiveTexture(GL_TEXTURE0);
+
+        glVertexAttrib4f(GLRenderer::AttrVertexColor, global_alpha, global_alpha, global_alpha, global_alpha);
+
+        vec2 draw_size = ((int)local_transform_raw.angle % 180) ? vec2(size.y, size.x) : vec2(size);
+        texture_image->drawRect(renderer, vec2(0,0), draw_size);
+
+        // Unbind UV texture and restore unit 0 as active
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
     } else if (texture_image) {
         surface->makeCurrent();
         if (texture_image->isTexture2D())
@@ -55,7 +77,6 @@ void GLVideoClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, cons
         } else {
             texture_image->drawRect(renderer, vec2(0,0), vec2(size));
         }
-
     }
 
     GLClip::renderInner(renderer, surface, clip_box);
@@ -597,6 +618,10 @@ StackSlot GLVideoClip::setVideoControls(RUNNER_ARGS)
 
 void GLVideoClip::setVideoTextureImage(GLTextureImage::Ptr image) {
     texture_image = image;
+}
+
+void GLVideoClip::setVideoTextureImageUV(GLTextureImage::Ptr image) {
+    texture_image_uv = image;
 }
 
 StackSlot GLVideoClip::setVideoSubtitle(RUNNER_ARGS)

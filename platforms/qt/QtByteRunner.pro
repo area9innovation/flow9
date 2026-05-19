@@ -161,15 +161,9 @@ macx {
 
     QMAKE_POST_LINK += && $$[QT_INSTALL_BINS]/macdeployqt $${DEPLOY_APP}
 
-    # Bundle third-party libs that macdeployqt doesn't handle and fix install names
-    QMAKE_POST_LINK += && cp -f /usr/local/lib/libjpeg.8.dylib $${DEPLOY_FW}/libjpeg.8.dylib 2>/dev/null || true
-    QMAKE_POST_LINK += && cp -f /usr/local/lib/libfreetype.6.dylib $${DEPLOY_FW}/libfreetype.6.dylib 2>/dev/null || true
-    QMAKE_POST_LINK += && cp -f /usr/local/lib/libpng16.16.dylib $${DEPLOY_FW}/libpng16.16.dylib 2>/dev/null || true
-    QMAKE_POST_LINK += && install_name_tool -id @executable_path/../Frameworks/libjpeg.8.dylib $${DEPLOY_FW}/libjpeg.8.dylib 2>/dev/null || true
-    QMAKE_POST_LINK += && install_name_tool -id @executable_path/../Frameworks/libfreetype.6.dylib $${DEPLOY_FW}/libfreetype.6.dylib 2>/dev/null || true
-    QMAKE_POST_LINK += && install_name_tool -id @executable_path/../Frameworks/libpng16.16.dylib $${DEPLOY_FW}/libpng16.16.dylib 2>/dev/null || true
-    # Fix transitive dep: libfreetype -> libpng
-    QMAKE_POST_LINK += && install_name_tool -change /usr/local/opt/libpng/lib/libpng16.16.dylib @executable_path/../Frameworks/libpng16.16.dylib $${DEPLOY_FW}/libfreetype.6.dylib 2>/dev/null || true
+    # macdeployqt bundles libjpeg into Frameworks/ but does not rewrite
+    # the reference in the binary — fix it so the app is self-contained.
+    QMAKE_POST_LINK += && install_name_tool -change /usr/local/opt/jpeg/lib/libjpeg.8.dylib @executable_path/../Frameworks/libjpeg.8.dylib $${DEPLOY_BIN} 2>/dev/null || true
 
     # Remove SQL driver plugins with unresolvable dependencies (not used)
     QMAKE_POST_LINK += && rm -f $${DEPLOY_APP}/Contents/PlugIns/sqldrivers/libqsqlodbc.dylib 2>/dev/null || true
