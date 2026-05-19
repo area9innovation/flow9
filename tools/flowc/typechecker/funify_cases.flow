@@ -354,9 +354,26 @@ funifyUnionAndStruct(env : FEnv, union : FUnion, struct : FStruct, unionIsLeft :
 					} else {
 						// All unification, this is an error, but not in interesection
 						if (fns.kind != FReduceLeft()) {
-							fns.onError("Expected " + sname + " in union " + uname);
+							// Struct not in this union, but they may share a common
+							// parent union (e.g. IsEqualMathsStrict + MathRoundingOption
+							// are both in IsEqualMathsOption). Expand to unnamed union
+							// and let finalization resolve to the correct parent.
+							ltypars = foldi(union.typars, makeTree(), \i, acc, tp -> {
+								setTree(acc, strLeft("????????????????", i + 1), tp)
+							});
+							members = arrayPush(
+								map(typenames, \tn -> fcstructname2ftype(env, tn.name, ltypars)),
+								struct
+							);
+							if (unnamedUnionsShareCommonUnion(env, members, [])) {
+								FEnvType(env, makeFUnnamedUnion(members));
+							} else {
+								fns.onError("Expected " + sname + " in union " + uname);
+								FEnvType(env, union);
+							}
+						} else {
+							FEnvType(env, union);
 						}
-						FEnvType(env, union);
 					}
 				}
 				Some(st): {
@@ -385,17 +402,15 @@ funifyUnionAndStruct(env : FEnv, union : FUnion, struct : FStruct, unionIsLeft :
 					} else if (unionIsLeft) {
 						// union+ <= struct-
 
-						// Unify the struct in the union to capture info
+						// Unify the struct in the union to capture type params
 						et = fns.unifyType(env, inst, struct, fns.kind, fns.onError);
 
-						// The union can only contain l, otherwise we have a problem.
-						if (length(typenames) > 1) {
-							// OK, too many in the union. Something is not right here
-							super = set2array(removeSet(buildSet(map(typenames, \tn -> tn.name)), sname));
-							fns.onError("Expected just " + sname + " here, got union " + uname + ".");
-						}
-						// We are good with the struct, which has been determined
-						et;
+						// The struct is a member of the union. Return the union
+						// to preserve the full range (matching struct+ <= union- behavior).
+						// Narrowing to just the struct would lose type information
+						// in contexts like array construction where type params are
+						// grown to cover multiple members.
+						FEnvType(et.env, union);
 					} else {
 						// struct+ <= union-
 
@@ -752,9 +767,20 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 							// We have some field stuff going on. Maybe that works
 							rec();
 						} else {
-							// In all other cases, we need the overlap to be there
-							fns.onError("Expected " + rname + " in union " + ftype2string(env, unnamed));
-							FEnvType(env, unnamed);
+							// A struct may be compared against an unnamed union that
+							// doesn't contain it yet, but both share a common parent
+							// union. Add the struct and let finalization resolve.
+							existingStructNames = filtermap(utypes, \ut -> {
+								sn = getFTypeName(ut);
+								if (sn == "") None() else Some(sn)
+							});
+							if (rname != "" && existingStructNames != [] && unnamedUnionsShareCommonUnion(env, utypes, [right])) {
+								FEnvType(env, makeFUnnamedUnion(arrayPush(utypes, right)));
+							} else {
+								// In all other cases, we need the overlap to be there
+								fns.onError("Expected " + rname + " in union " + ftype2string(env, unnamed));
+								FEnvType(env, unnamed);
+							}
 						}
 					}
 				}
@@ -889,7 +915,13 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 
 				// OK, check if at least we cover all of the left hand side dudes. We are allowed to drop right hand guys
 				if (length(namedOverlap.types) != length(utypes) && nonstructs == []) {
-					fns.onError("We expect " + ftype2string(env, right)+ " to fully contain " + ftype2string(env, unnamed));
+					// The unnamed union may have members from a parent union
+					// of `right`. E.g. unnamed {IsEqualMathsStrict, MathRoundingAllowTo, ...}
+					// vs MathRoundingOption — all share parent IsEqualMathsOption.
+					// Suppress error when they share a common parent union.
+					if (!unnamedUnionsShareCommonUnion(env, utypes, [])) {
+						fns.onError("We expect " + ftype2string(env, right)+ " to fully contain " + ftype2string(env, unnamed));
+					}
 				}
 				if (length(namedOverlap.types) == length(rtypenames)) {
 					// OK, we cover the entire union, so we can keep it as a union
@@ -911,13 +943,27 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 
 				// OK, check if at least we cover all of the right hand side dudes. We are allowed to drop unnamed members
 				if (length(namedOverlap.types) != length(rtypenames) && nonstructs== []) {
-					fns.onError("We expect " + ftype2string(env, right) + " to be fully contained in " + ftype2string(env, unnamed));
+					// Suppress error when members share a common parent union
+					if (!unnamedUnionsShareCommonUnion(env, utypes, [])) {
+						fns.onError("We expect " + ftype2string(env, right) + " to be fully contained in " + ftype2string(env, unnamed));
+					}
 				}
 
 				if (length(namedOverlap.types) == length(rtypenames)) {
-					// OK, we know the right hand is also the union
-					// FRange(right, FUnion(rname, false, rtps))
-					right
+					if (length(namedOverlap.types) == length(utypes)) {
+						// Exact match between unnamed and named union members
+						right
+					} else {
+						// Named union fully contained, but unnamed has extra members.
+						// Only keep unnamed if extras share a common parent union
+						// with the named union (e.g. IsEqualMathsStrict + MathRoundingOption
+						// both in IsEqualMathsOption). Otherwise narrow as before.
+						if (unnamedUnionsShareCommonUnion(env, utypes, [])) {
+							unnamed
+						} else {
+							right
+						}
+					}
 				} else {
 					// FRange(right, FUnnamedUnion(overlap.second))
 					makeFUnnamedUnion(namedOverlap.types)
@@ -969,20 +1015,47 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 
 				// OK, check if at least we cover all of the left hand side dudes. We are allowed to drop right hand guys
 				if (length(overlap.second) != length(utypes)) {
-					fns.onError("We expect " + ftype2string(env, unnamed) + " to be fully contained in " + ftype2string(env, right));
+					// During array/if-else constraint processing, inner type params of
+					// polymorphic types (e.g. Maybe<?>) can accumulate different subsets
+					// of struct names into partial unnamed unions. These fail the
+					// containment check. If all struct names share a common parent union,
+					// they will resolve to that union during finalization — suppress the
+					// error and merge the unions.
+					if (!unnamedUnionsShareCommonUnion(env, utypes, rtypes)) {
+						fns.onError("We expect " + ftype2string(env, unnamed) + " to be fully contained in " + ftype2string(env, right));
+					}
 				}
 				// FRange(unnamed, FUnnamedUnion(overlap.second, false));
-				unnamed;
+				// When suppressing the error, merge both sides so finalization sees all members
+				if (length(overlap.second) != length(utypes) && unnamedUnionsShareCommonUnion(env, utypes, rtypes)) {
+					makeFUnnamedUnion(concat3(overlap.second,
+						filter(utypes, \ltn -> !exists(rtypes, \rtn -> getFTypeName(rtn) == getFTypeName(ltn))),
+						filter(rtypes, \rtn -> !exists(utypes, \ltn -> getFTypeName(rtn) == getFTypeName(ltn)))
+					));
+				} else {
+					unnamed;
+				}
 			} else {
 				// right+ <= un-
 
 				// OK, check if at least we cover all of the right hand side dudes. We are allowed to drop unnamed members
 				if (length(overlap.second) != length(rtypes)) {
-					fns.onError("We expect " + ftype2string(env, right) + " to be fully contained in " + ftype2string(env, unnamed));
+					// Same as above — suppress error when both unnamed unions
+					// share a common parent union.
+					if (!unnamedUnionsShareCommonUnion(env, utypes, rtypes)) {
+						fns.onError("We expect " + ftype2string(env, right) + " to be fully contained in " + ftype2string(env, unnamed));
+					}
 				}
 
 				// FRange(right, FUnnamedUnion(overlap.second, false))
-				right
+				if (length(overlap.second) != length(rtypes) && unnamedUnionsShareCommonUnion(env, utypes, rtypes)) {
+					makeFUnnamedUnion(concat3(overlap.second,
+						filter(utypes, \ltn -> !exists(rtypes, \rtn -> getFTypeName(rtn) == getFTypeName(ltn))),
+						filter(rtypes, \rtn -> !exists(utypes, \ltn -> getFTypeName(rtn) == getFTypeName(ltn)))
+					));
+				} else {
+					right
+				}
 			}
 			FEnvType(overlap.first, rt);
 		}
@@ -994,6 +1067,29 @@ funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLe
 			funifyBounded(env, right, unnamed, !unnamedLeft, fns);
 		}
 		default: fns.rest();
+	}
+}
+
+// Check if all struct names from two unnamed unions share at least one common parent
+// union. During array/if-else constraint processing, inner type params of polymorphic
+// types (e.g. Maybe<?>) can accumulate different subsets of struct names into partial
+// unnamed unions. If they share a common parent union, finalization will resolve both
+// to that union, so containment errors between them are spurious.
+unnamedUnionsShareCommonUnion(env : FEnv, ltypes : [FType], rtypes : [FType]) -> bool {
+	allNames = filtermap(concat(ltypes, rtypes), \t -> {
+		n = getFTypeName(t);
+		if (n == "") None() else Some(n)
+	});
+	if (length(allNames) < 2) false
+	else {
+		s2u = env.env.program.acc.names.struct2unions;
+		unions : [Set<string>] = map(allNames, \n -> {
+			buildSet(getTreeArrayValue(s2u, n))
+		});
+		shared = fold(tail(unions), unions[0], \acc, c -> {
+			intersectSets(acc, c)
+		});
+		!isEmptySet(shared)
 	}
 }
 
@@ -1030,12 +1126,18 @@ funifyBounded(env : FEnv, range : FBounded, type : FType, boundedLeft : bool, fn
 				if (boundedLeft) {
 					et0 = unify(env, l1, l2, FGrowRight());
 					et1 = unify(et0.env, u1, u2, FGrowRight());
-
 					// Examples like  {Maybe<> .. *}  union  None<>
 					// show that we have to make sure the upper bound respects the lower bound
 					et2 = fns.unifyType(et1.env, et0.type, et1.type, FGrowRight(), fns.onError);
 
-					makeFBoundedEnv(et2.env, et0.type, et2.type, FUnifyLeft(), fns.unifyType, fns.onError);
+					// When BOTH original upper bounds are open (FTopBottom), keep the
+					// result open. This prevents premature bound collapse when growing
+					// two open-bounded types (e.g. {LP .. *} grow {PW .. *} should give
+					// {LP, PW .. *}, not the closed {LP, PW}). When only one side is
+					// open, the concrete upper bound must propagate to resolve type
+					// parameters (e.g. ArrayOperation<?> members need the union's ? param).
+					finalUpper = if (u1 == FTopBottom() && u2 == FTopBottom()) FTopBottom() else et2.type;
+					makeFBoundedEnv(et2.env, et0.type, finalUpper, FUnifyLeft(), fns.unifyType, fns.onError);
 				} else {
 					et0 = unify(env, l2, l1, FGrowRight());
 					et1 = unify(et0.env, u2, u1, FGrowRight());
@@ -1043,7 +1145,9 @@ funifyBounded(env : FEnv, range : FBounded, type : FType, boundedLeft : bool, fn
 					// show that we have to make sure the upper bound respects the lower bound
 					et2 = fns.unifyType(et1.env, et0.type, et1.type, FGrowRight(), fns.onError);
 
-					makeFBoundedEnv(et2.env, et0.type, et2.type, FUnifyLeft(), fns.unifyType, fns.onError);
+					// Same as above: preserve open upper bounds only when both sides are open
+					finalUpper = if (u1 == FTopBottom() && u2 == FTopBottom()) FTopBottom() else et2.type;
+					makeFBoundedEnv(et2.env, et0.type, finalUpper, FUnifyLeft(), fns.unifyType, fns.onError);
 				}
 			}
 		}
