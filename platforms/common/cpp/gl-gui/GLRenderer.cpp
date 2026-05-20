@@ -637,7 +637,9 @@ void GLRenderer::compileShaders()
                       AttrVertexColor, "a_VertexColor",
                       AttrVertexTexCoord, "a_VertexTexCoord");
 
-    if (all_extensions.find("GL_OES_EGL_image_external") != std::string::npos) {
+    // Check for external texture support (ES 2.0 and ES 3.0 use different extension names)
+    if (all_extensions.find("GL_OES_EGL_image_external") != std::string::npos ||
+        all_extensions.find("GL_OES_EGL_image_external_essl3") != std::string::npos) {
         pfix.clear();
         pfix.push_back("#define DRAW_FANCY\n#define EXTERNAL_TEXTURE\n");
         compileShaderPair(ProgDrawFancyExternalTexture, SHADER_draw_vert, SHADER_draw_frag, pfix,
@@ -783,7 +785,10 @@ bool GLRenderer::compileShader(GLuint shader, const std::vector<std::string> &pr
 
     const char **p = 0;
 
-#if defined(WIN32)
+#if defined(FLOW_EMBEDDED) || defined(IOS)
+    // OpenGL ES 3.0: GLSL ES 3.00
+    data.push_back("#version 300 es\n");
+#elif defined(WIN32)
     // version directive must be the first statement, and we only need to
     // specify GLSL v1.40 for some AMD drivers on windows
     // under vmware, version 140 is not supported
@@ -1136,20 +1141,11 @@ bool GLRenderer::chooseFramebufferMode() {
 
     if ((fbp = makeFrameBuffer(ivec2(MIN_FB_SIZE)))->isValid()) goto found;
 
-    // 2: 24-bit depth + 8-bit stencil
-#ifdef FLOW_EMBEDDED
-    if (all_extensions.find("GL_OES_packed_depth_stencil ") != std::string::npos) {
-        fb_stencil_type = GL_DEPTH24_STENCIL8_OES;
-        fb_stencil_attachment2 = GL_DEPTH_ATTACHMENT;
-
-        if ((fbp = makeFrameBuffer(ivec2(MIN_FB_SIZE)))->isValid()) goto found;
-    }
-#else
+    // 2: 24-bit depth + 8-bit stencil (core in ES 3.0+ and desktop GL)
     fb_stencil_type = GL_DEPTH_STENCIL;
     fb_stencil_attachment = GL_DEPTH_STENCIL_ATTACHMENT;
 
     if ((fbp = makeFrameBuffer(ivec2(MIN_FB_SIZE)))->isValid()) goto found;
-#endif
 
     cerr << "Could not find an acceptable framebuffer configuration." << endl;
     return (init_ok = false);
@@ -1769,8 +1765,16 @@ void GLTextureBitmap::loadData()
         loadTextureData(GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1, data.data());
     else if (format == GL_UNSIGNED_SHORT_5_6_5)
         loadTextureData(GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, data.data());
-    else
-        loadTextureData(format, format, GL_UNSIGNED_BYTE, data.data());
+    else {
+        // ES 3.0 requires sized internal formats for single/dual channel textures.
+        // Desktop GL accepts GL_RED/GL_RG as internal format, but ES 3.0 needs GL_R8/GL_RG8.
+        GLenum internal_fmt = format;
+#ifdef GL_ES_VERSION_3_0
+        if (format == GL_RED) internal_fmt = GL_R8;
+        else if (format == GL_RG) internal_fmt = GL_RG8;
+#endif
+        loadTextureData(internal_fmt, format, GL_UNSIGNED_BYTE, data.data());
+    }
 
     if (use_mipmaps && is_pow2(getSize().x) && is_pow2(getSize().y)) {
         glGenerateMipmap(GL_TEXTURE_2D);

@@ -728,7 +728,7 @@ void iosGLRenderSupport::OnRunnerReset(bool inDestructor)
 
 void iosGLRenderSupport::initializeGL()
 {
-    context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+    context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
         
     [EAGLContext setCurrentContext: context];
     

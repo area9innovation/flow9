@@ -341,7 +341,6 @@ class GLTextureImage {
     friend class GLRenderer;
 
     ivec2 size;
-    vec2 pixel_size, tex[2];
     bool flip;
 
     // For GLVIdeoClip, we may have to swizzle the red and blue components
@@ -350,6 +349,7 @@ class GLTextureImage {
     GLRenderer *renderer;
     int last_used_frame;
 protected:
+    vec2 pixel_size, tex[2];
     GLenum target;
     GLuint texture_id;
 
@@ -391,6 +391,14 @@ protected:
     void loadData() {}
 public:
 	GLExternalTextureImage(ivec2 size, GLuint id) : GLTextureImage(size, false) { texture_id = id; target = GL_TEXTURE_EXTERNAL_OES; }
+	// Apply SurfaceTexture transform matrix to adjust UV coordinates.
+	// The 4x4 column-major matrix maps the actual content region within the texture.
+	// Note: Android's SurfaceTexture has negative Y scale (mtx[5] < 0) to flip vertically,
+	// but we need to keep the proper min/max order for tex[0]/tex[1].
+	void setTransformMatrix(const float *mtx) {
+		tex[0] = vec2(mtx[12], mtx[13] + mtx[5]);  // min (accounts for negative scale)
+		tex[1] = vec2(mtx[12] + mtx[0], mtx[13]);  // max
+	}
 };
 
 class GLTextureBitmap : public GLTextureImage {

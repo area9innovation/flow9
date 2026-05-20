@@ -127,6 +127,8 @@ public:
 
     void setFocus(bool focus);
 
+    GLTextureImage::Ptr getTextureImage() { return texture_image; }
+
     DEFINE_FLOW_NATIVE_OBJECT(GLVideoClip, GLClip)
 
 public:

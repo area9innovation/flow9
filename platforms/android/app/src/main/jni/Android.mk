@@ -46,7 +46,7 @@ LOCAL_C_INCLUDES := \
 
 LOCAL_MODULE    := libflowrunner
 LOCAL_CFLAGS    := -DFLOW_EMBEDDED $(MY_PROF_FLAGS) $(MY_GEN_FLAGS)
-LOCAL_LDLIBS    := -lstdc++ -llog -lGLESv2 -lz
+LOCAL_LDLIBS    := -lstdc++ -llog -lGLESv3 -lz
 LOCAL_LDFLAGS += -Wl,-z,common-page-size=16384
 
 LOCAL_SRC_FILES := \
