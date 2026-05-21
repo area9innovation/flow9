@@ -10,6 +10,8 @@ var SHARED_DATA_ENDPOINT = 'share/pwa/data.php';
 var LAST_FAILED_COUNT_LIMIT = 5;
 // Just to prevent jumping offline/online when the browser get resources from disk cache
 var LAST_SUCCESS_COUNT_BACK = 3;
+// Set any new value to reload the service worker on client side
+const RELOAD_SERVICE_WORKER = 'FSDB_RELOAD_01';
 
 // We gonna cache all resources except resources extensions below
 var dynamicResourcesExtensions = [
