@@ -6,7 +6,8 @@ export {
 	// For anonymous unions. Give us all the possible results. Error is only called if there is no solution
 	combineTypenames(env : FcTypeEnv, named : [FcType], onError : (string) -> void) -> [FcType];
 
-	combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType, onError : (string) -> void) -> [FcType];
+	// posPolarity: true = covariant (prefer lower/struct), false = contravariant (prefer upper/union)
+	combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType, posPolarity : bool, onError : (string) -> void) -> [FcType];
 
 	setTyvar(env : FcTypeEnv, tyvarid : int, type : FcType) -> void;
 }
@@ -196,7 +197,7 @@ getFcTypePars(t : FcType) -> [FcType] {
 
 
 
-combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType, onError : (string) -> void) -> [FcType] {
+combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType, posPolarity : bool, onError : (string) -> void) -> [FcType] {
 	if (isSameFcType(env, positive, negative, false)) [positive]
 	else {
 		error = \ -> {
@@ -221,7 +222,7 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 			FcTypeArray(a1, __): {
 				switch (negative) {
 					FcTypeArray(a2, i2): {
-						ats = combinePositiveAndNegative(env, a1, a2, onError);
+						ats = combinePositiveAndNegative(env, a1, a2, posPolarity, onError);
 						map(ats, \at -> FcTypeArray(at, i2));
 					}
 					FcTypeVar(tid2, __): {
@@ -236,14 +237,14 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 			FcTypeFunction(a1, r1, i1): {
 				switch (negative) {
 					FcTypeFunction(a2, r2, __): {
-						rts = combinePositiveAndNegative(env, r1, r2, onError);
+						rts = combinePositiveAndNegative(env, r1, r2, posPolarity, onError);
 						map(rts, \rt -> {
 							// Combine the arguments and so on
 							FcTypeFunction(
 								mapi(a1, \i, arg -> {
 									FcFunArg(
 										arg.name,
-										combinePositiveAndNegative(env, a2[i].type, arg.type, onError)[0],
+										combinePositiveAndNegative(env, a2[i].type, arg.type, !posPolarity, onError)[0],
 									)
 								}),
 								rt,
@@ -264,7 +265,7 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 			FcTypeRef(r1, __): {
 				switch (negative) {
 					FcTypeRef(r2, i2): {
-						rts = combinePositiveAndNegative(env, r1, r2, onError);
+						rts = combinePositiveAndNegative(env, r1, r2, posPolarity, onError);
 						map(rts, \rt -> FcTypeRef(rt, i2));
 					}
 					FcTypeFlow(__): [negative];
@@ -293,7 +294,7 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 					FcTypeStruct(ns, stp, sargs, si): {
 						if (ps == ns && length(ptp) == length(stp)) {
 							pargs_combined = filtermapi(pargs, \i, parg -> {
-								comb = combinePositiveAndNegative(env, parg.type, sargs[i].type, onError);
+								comb = combinePositiveAndNegative(env, parg.type, sargs[i].type, posPolarity, onError);
 								if (comb == []) None() else {
 									Some(FcStructArg(parg.name, comb[0], parg.ismutable))
 								}
@@ -303,7 +304,7 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 									ns,
 									mapi(ptp, \i, pt -> {
 										if (i < length(stp)) {
-											ct = combinePositiveAndNegative(env, pt, stp[i], onError);
+											ct = combinePositiveAndNegative(env, pt, stp[i], posPolarity, onError);
 											if (ct != []) ct[0] else pt
 										} else pt
 									}),
@@ -349,9 +350,11 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 							}
 							Some(st): {
 								// OK, we found it. Check these dudes
-								t = combinePositiveAndNegative(env, positive, st, onError);
-								// Both the struct and union work
-								arrayPush(t, negative);
+								t = combinePositiveAndNegative(env, positive, st, posPolarity, onError);
+								// Polarity: covariant prefers struct (lower), contravariant prefers union (upper)
+								if (posPolarity) arrayPush(t, negative) else concat([negative], t);
+
+
 							}
 						}
 					}
@@ -359,7 +362,7 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 						i = getFcNamedType(env, env.program.acc.tyvarIdGroup, negative);
 						switch (i) {
 							FcTypeName(__, __, __): def();
-							default: combinePositiveAndNegative(env, positive, i, onError);
+							default: combinePositiveAndNegative(env, positive, i, posPolarity, onError);
 						}
 					}
 					FcTypeFlow(__): [negative];
@@ -401,9 +404,11 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 									}
 									Some(st): {
 										// OK, we found it. Check these dudes
-										t = combinePositiveAndNegative(env, st, negative, onError);
-										// TODO: Should we just ignore the result, or do more with it?
-										arrayPush(t, positive);
+										t = combinePositiveAndNegative(env, st, negative, posPolarity, onError);
+										// Polarity: covariant prefers struct (lower), contravariant prefers union (upper)
+										if (posPolarity) arrayPush(t, positive) else concat([positive], t);
+
+
 									}
 								}
 
@@ -414,14 +419,14 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 						i = getFcNamedType(env, env.program.acc.tyvarIdGroup, negative);
 						switch (i) {
 							FcTypeName(__, __, __): def();
-							default: combinePositiveAndNegative(env, positive, i, onError);
+							default: combinePositiveAndNegative(env, positive, i, posPolarity, onError);
 						}
 					}
 					FcTypeUnion(nun, ntp, ntn, ni): {
 						if (pun == nun && pun != "") {
 							tps = mapi(ntp, \i, tp -> {
 								if (i < length(ptp)) {
-									combinePositiveAndNegative(env, ptp[i], tp, onError)[0]
+									combinePositiveAndNegative(env, ptp[i], tp, posPolarity, onError)[0]
 								} else tp
 							});
 							[FcTypeUnion(nun, tps, ntn, pi)];
@@ -467,7 +472,7 @@ combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType
 				i = getFcNamedType(env, env.program.acc.tyvarIdGroup, positive);
 				switch (i) {
 					FcTypeName(__, __, __): def();
-					default: combinePositiveAndNegative(env, i, negative, onError);
+					default: combinePositiveAndNegative(env, i, negative, posPolarity, onError);
 				}
 			}
 			FcTypeVoid(__): {
