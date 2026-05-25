@@ -1,7 +1,7 @@
 #ifndef _BYTE_MEMORY_H_
 #define _BYTE_MEMORY_H_
 
-#include <memory.h>
+#include <cstring>
 #include "CommonTypes.h"
 #include "MemoryArea.h"
 

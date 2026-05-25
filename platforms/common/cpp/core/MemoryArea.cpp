@@ -6,7 +6,7 @@
 #include <sys/types.h>
 
 using std::min;
-#ifdef _MSC_VER
+#ifdef _WIN32
 #include <windows.h>
 #include <io.h>
 #else
@@ -18,7 +18,7 @@ using std::min;
 
 static size_t PageSize()
 {
-#ifdef _MSC_VER
+#ifdef _WIN32
     SYSTEM_INFO info;
     GetSystemInfo(&info);
 
@@ -34,7 +34,7 @@ static size_t PageSize()
 
 static size_t AllocStepSize()
 {
-#ifdef _MSC_VER
+#ifdef _WIN32
     SYSTEM_INFO info;
     GetSystemInfo(&info);
 
@@ -47,7 +47,7 @@ static size_t AllocStepSize()
 #endif
 #endif
 }
-#ifdef _MSC_VER
+#ifdef _WIN32
 #define MAP_FAILURE_RETVAL NULL
 #else
 #define MAP_FAILURE_RETVAL MAP_FAILED
@@ -56,7 +56,7 @@ static size_t AllocStepSize()
 /* Reserve address space without allocating memory if possible */
 static void *ReserveVirtualMemory(size_t size)
 {
-#ifdef _MSC_VER
+#ifdef _WIN32
     return VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_NOACCESS);
 #else
     return mmap(NULL, size, PROT_NONE, MAP_ANON | MAP_PRIVATE, 0, 0);
@@ -66,7 +66,7 @@ static void *ReserveVirtualMemory(size_t size)
 /* Free a mapping produced by ReserveVirtualMemory */
 static void UnmapMemory(void *ptr, size_t size)
 {
-#ifdef _MSC_VER
+#ifdef _WIN32
     VirtualFree(ptr, 0, MEM_RELEASE);
 #else
     munmap(ptr, size);
@@ -82,7 +82,7 @@ static void CommitMemory(void *start, void *end)
     if (saddr >= eaddr)
         return;
 
-#ifdef _MSC_VER
+#ifdef _WIN32
     if (VirtualAlloc((void*)saddr, eaddr-saddr, MEM_COMMIT, PAGE_READWRITE) == NULL)
 #else
     if (mprotect((void*)saddr, eaddr-saddr, PROT_READ | PROT_WRITE) != 0)
@@ -102,7 +102,7 @@ static void DecommitMemory(void *start, void *end)
     if (saddr >= eaddr)
         return;
 
-#ifdef _MSC_VER
+#ifdef _WIN32
     if (!VirtualFree((void*)saddr, eaddr-saddr, MEM_DECOMMIT))
 #else
     // Remap the area to purge all dirty pages
@@ -125,7 +125,7 @@ static void MakeExecutable(void *start, void *end, bool enable)
     if (saddr >= eaddr)
         return;
 
-#ifdef _MSC_VER
+#ifdef _WIN32
     DWORD old;
 
     if (!VirtualProtect((void*)saddr, eaddr-saddr, enable ? PAGE_EXECUTE_READ : PAGE_READWRITE, &old))
@@ -147,7 +147,7 @@ static void MakeReadonly(void *start, void *end, bool enable)
     if (saddr >= eaddr)
         return;
 
-#ifdef _MSC_VER
+#ifdef _WIN32
     DWORD old;
 
     if (!VirtualProtect((void*)saddr, eaddr-saddr, enable ? PAGE_READONLY : PAGE_READWRITE, &old))
@@ -163,7 +163,7 @@ static void MakeReadonly(void *start, void *end, bool enable)
 /* Free a mapping produced by MapFileToMemory */
 static void UnmapFile(void *ptr, size_t size)
 {
-#ifdef _MSC_VER
+#ifdef _WIN32
     UnmapViewOfFile(ptr);
 #else
     UnmapMemory(ptr, size);
@@ -175,7 +175,7 @@ static void *MapFileToMemory(FILE *file, size_t size, bool writable)
 {
     int fd = fileno(file);
 
-#ifdef _MSC_VER
+#ifdef _WIN32
     HANDLE hMapFile = CreateFileMapping(writable ? INVALID_HANDLE_VALUE : (HANDLE)_get_osfhandle(fd),
                                         NULL,
                                         writable ? PAGE_READWRITE : PAGE_READONLY,
@@ -213,7 +213,7 @@ static void *MapFileToMemory(FILE *file, size_t size, bool writable)
 /* Map at a specific address */
 static bool MapFileToMemory(void *where, size_t length, std::string filename, size_t offset, bool writable)
 {
-#ifdef _MSC_VER
+#ifdef _WIN32
     // can't be done
     return false;
 #else

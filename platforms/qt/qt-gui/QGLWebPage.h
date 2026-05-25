@@ -1,6 +1,8 @@
 #ifndef QGLWEBPAGE_H
 #define QGLWEBPAGE_H
 
+#ifndef QT_NO_WEBENGINE
+
 #include <QList>
 #include <QObject>
 #include <QWebEnginePage>
@@ -25,7 +27,7 @@ class QGLWebPage : public QWebEnginePage
 {
     Q_OBJECT
 public:
-    QGLWebPage(QGLRenderSupport *rs, QWebEngineView *parent = Q_NULLPTR);
+    QGLWebPage(QGLRenderSupport *rs, QWebEngineView *parent = nullptr);
 
 private:
     QGLRenderSupport *owner;
@@ -35,5 +37,7 @@ private:
 protected:
     void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString & message, int lineNumber, const QString & sourceID);
 };
+
+#endif // QT_NO_WEBENGINE
 
 #endif // QGLWEBPAGE_H

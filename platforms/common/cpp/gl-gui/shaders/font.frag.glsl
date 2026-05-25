@@ -11,7 +11,7 @@ in frag_highp vec2 v_texCoord;
 uniform lowp float u_font_dist_min;
 uniform mediump float u_font_dist_coeff;
 
-#ifndef GL_ES
+#if !defined(GL_ES) || (__VERSION__ >= 300)
 out frag_highp vec4 fragColor;
 #endif
 

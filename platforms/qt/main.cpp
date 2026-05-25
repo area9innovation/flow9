@@ -29,8 +29,12 @@
 
 #include <QApplication>
 #include <QScrollArea>
-#include <QDesktopWidget>
 #include <QScreen>
+
+#ifndef QT_NO_WEBENGINE
+#include <QQuickWindow>
+#include <QSGRendererInterface>
+#endif
 
 #include <qt-gui/mainwindow.h>
 #include <qt-gui/testopengl.h>
@@ -444,10 +448,16 @@ int main(int argc, char *argv[])
     QSurfaceFormat::setDefaultFormat(format);
 #endif
 
-    // We need to share the OpenGL context for Qt's QVideoWidget (when used)
-    // to work, since otherwise QVideoWidget interferes with our own context
-    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts, true);
-    QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL, true);
+    // Qt6: AA_ShareOpenGLContexts and AA_UseDesktopOpenGL removed;
+    // context sharing is the default in Qt6.
+
+#ifndef QT_NO_WEBENGINE
+    // Qt6 QWebEngineView uses QQuickWidget internally, which defaults to
+    // the platform RHI backend (Metal on macOS, D3D11 on Windows).
+    // Our main window uses QOpenGLWidget, so force Qt Quick to use OpenGL
+    // for RHI to avoid "OpenGL is not compatible with this QQuickWidget" errors.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+#endif
 
 #ifdef QT_GUI_LIB
     qInstallMessageHandler(customMessageOutputHandler);
@@ -588,17 +598,24 @@ int main(int argc, char *argv[])
             // here is a loop while test is not passed
         }
 
+        // Qt6 macOS: Delete the TestOpenGLWidget before creating QGLRenderSupport
+        // to avoid multiple QOpenGLWidget destructions during app exit, which causes
+        // crashes in QThreadStorageData::get() due to thread-local storage being destroyed
+        if (enable_gl_test) {
+            Window->setCentralWidget(NULL);
+        }
+
         pRenderer = new QGLRenderSupport(Window, &FlowRunner, fake_touch, transparent);
         pRenderer->setDPI(fake_dpi);
-        double real_density = QApplication::screens().at(QApplication::desktop()->screenNumber())->logicalDotsPerInch();
+        double real_density = QApplication::primaryScreen()->logicalDotsPerInch();
 
         pRenderer->setDisplayDensity(real_density / fake_dpi);
         pRenderer->no_qglfb = no_qglfb;
         pRenderer->ProfilingInsnCost = gui_prof_cost;
 
-        QDesktopWidget desktop;
-        int desktop_height = desktop.geometry().height();
-        int desktop_width = desktop.geometry().width();
+        QScreen *screen = QApplication::primaryScreen();
+        int desktop_height = screen->geometry().height();
+        int desktop_width = screen->geometry().width();
 
         if (fixed_screen || screen_h > desktop_height || screen_w > desktop_width) {
             QScrollArea * scroll = new QScrollArea();
@@ -907,6 +924,17 @@ int main(int argc, char *argv[])
     	cerr << "FlowRunner.IsErrorReported()";
         rv = 1;
     }
+
+#ifdef QT_GUI_LIB
+    // Qt6: QOpenGLWidget destructor calls makeCurrent() which requires
+    // thread-local storage still alive. Delete GUI objects explicitly
+    // before QApplication to ensure proper OpenGL context teardown order.
+    // This includes TestOpenGLWidget (in MainWindow) and QGLRenderSupport.
+    delete pRenderer;
+    pRenderer = NULL;
+    delete Window;
+    Window = NULL;
+#endif
 
     delete app;
 

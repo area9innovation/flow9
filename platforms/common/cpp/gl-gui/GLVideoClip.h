@@ -37,6 +37,8 @@ public:
 
 protected:
     GLTextureImage::Ptr texture_image;
+    GLTextureImage::Ptr texture_image_uv;  // UV plane for NV12/YUV GPU conversion
+    bool is_yuv_gpu;                       // True when using GPU-side YUV->RGB conversion
 
     ivec2 size;
 
@@ -119,8 +121,13 @@ public:
 
     ivec2 getSize() { return size; }
     void setVideoTextureImage(GLTextureImage::Ptr image);
+    void setVideoTextureImageUV(GLTextureImage::Ptr image);
+    void setYUVGPU(bool enabled) { is_yuv_gpu = enabled; }
+    bool isYUVGPU() const { return is_yuv_gpu; }
 
     void setFocus(bool focus);
+
+    GLTextureImage::Ptr getTextureImage() { return texture_image; }
 
     DEFINE_FLOW_NATIVE_OBJECT(GLVideoClip, GLClip)
 

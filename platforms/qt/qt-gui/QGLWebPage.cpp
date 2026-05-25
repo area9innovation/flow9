@@ -1,5 +1,6 @@
 #include "QGLWebPage.h"
 
+#ifndef QT_NO_WEBENGINE
 
 QGLWebPage::QGLWebPage(QGLRenderSupport *rs, QWebEngineView *parent) : QWebEnginePage(parent), owner(rs)
 {
@@ -23,3 +24,5 @@ void QGLWebPage::javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, c
     QString source = sourceID.isEmpty() ? "?" : sourceID;
     owner->getFlowRunner()->flow_err << "JS " << encodeUtf8(qt2unicode(level_str)) << " " << encodeUtf8(qt2unicode(source)) << ": " << lineNumber << ": " << encodeUtf8(qt2unicode(message)) << std::endl;
 }
+
+#endif // QT_NO_WEBENGINE

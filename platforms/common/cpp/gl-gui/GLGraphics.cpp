@@ -125,7 +125,7 @@ void GLGraphics::render(GLRenderer *renderer, const GLTransform &transform, floa
     for (unsigned j = 0; j < contours.size(); j++)
         contours[j]->render(this, renderer, transform, alpha);
 
-    renderer->reportGLErrors("GLGraphics::render");
+    GL_CHECK_ERRORS("GLGraphics::render");
 }
 
 bool GLGraphics::usesStencil()

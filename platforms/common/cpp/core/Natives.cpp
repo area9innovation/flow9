@@ -1,5 +1,5 @@
 #include "ByteCodeRunner.h"
-#ifndef _MSC_VER
+#ifndef _WIN32
     #include <sys/time.h>
 #else
     #include <Windows.h>
@@ -964,7 +964,7 @@ StackSlot ByteCodeRunner::bitNot(RUNNER_ARGS)
 #undef GetCurrentTime
 double GetCurrentTime()
 {
-#ifdef _MSC_VER
+#ifdef _WIN32
     struct timeb time;
     ftime(&time);
 
@@ -1858,7 +1858,7 @@ StackSlot ByteCodeRunner::string2time(RUNNER_ARGS)
         if (parts.tm_year == 0 && parts.tm_mon == 0 && parts.tm_mday == 0)
             return StackSlot::MakeDouble(0);
 
-#ifdef _MSC_VER
+#ifdef _WIN32
         SYSTEMTIME utcSystemTime, localSystemTime;
         FILETIME utcFileTime;
 
@@ -1932,7 +1932,7 @@ StackSlot ByteCodeRunner::time2string(RUNNER_ARGS)
     char buf[20] = {0};
     int rv;
 
-#ifdef _MSC_VER
+#ifdef _WIN32
     SYSTEMTIME utcSystemTime, localSystemTime;
     FILETIME utcFileTime;
 
@@ -1980,7 +1980,7 @@ StackSlot ByteCodeRunner::utc2local(RUNNER_ARGS)
     RUNNER_PopArgs1(utc);
     RUNNER_CheckTag(TDouble, utc);
 
-#ifdef _MSC_VER
+#ifdef _WIN32
     FILETIME utcFileTime, localFileTime;
     SYSTEMTIME utcSystemTime, localSystemTime;
 
@@ -2012,7 +2012,7 @@ StackSlot ByteCodeRunner::local2utc(RUNNER_ARGS)
     RUNNER_PopArgs1(local);
     RUNNER_CheckTag(TDouble, local);
 
-#ifdef _MSC_VER
+#ifdef _WIN32
     FILETIME utcFileTime, localFileTime;
     SYSTEMTIME utcSystemTime, localSystemTime;
 

@@ -101,7 +101,7 @@ public:
 
 class LigatureUtf32Iter: public Utf32InputIterator {
 protected:
-    typedef struct {
+    struct Shared {
         shared_ptr<Utf32InputIterator> org, end;
 
         // There's way to optimize memory consuming
@@ -112,7 +112,7 @@ protected:
         size_t2size_t reverseMap;
 
         virtual void *data() {return org->data();}
-    } Shared;
+    };
 
     shared_ptr<Utf32InputIterator> cur, nx;
     size_t ligalen;  // input characters decoded count

@@ -160,7 +160,7 @@ void GLPictureClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, co
         }
     }
 
-    renderer->reportGLErrors("GLPictureClip::renderInner post image");
+    GL_CHECK_ERRORS("GLPictureClip::renderInner post image");
 
     GLClip::renderInner(renderer, surface, clip_box);
 }

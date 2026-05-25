@@ -86,7 +86,7 @@ bool GLRenderer::Init(GLuint root_fb)
     }
 #endif
 
-    reportGLErrors("GLRenderer::Init");
+    GL_CHECK_ERRORS("GLRenderer::Init");
     invalidateDependents();
 
     init_ok = true;
@@ -181,6 +181,11 @@ void GLRenderer::BeginFrame()
 {
     frame_idx++;
 
+    // Reset cached program state so setProgram() always calls glUseProgram()
+    // on the first draw of each frame. Qt 6 QOpenGLWidget may reset GL state
+    // between paintGL() calls, invalidating the previously bound program.
+    cur_program = ProgLAST;
+
     CleanStaleObjectsPre();
 }
 
@@ -242,7 +247,7 @@ void GLRenderer::makeFramebufferCurrent(FrameBuffer::Ptr buffer, vec2 bias)
 {
     if (buffer == current_framebuffer) return;
 
-    reportGLErrors("GLRenderer::makeFramebufferCurrent start");
+    GL_CHECK_ERRORS("GLRenderer::makeFramebufferCurrent start");
 
     FrameBuffer::Ptr old_buffer = current_framebuffer;
 
@@ -269,7 +274,7 @@ void GLRenderer::makeFramebufferCurrent(FrameBuffer::Ptr buffer, vec2 bias)
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_STENCIL_TEST);
 
-    reportGLErrors("GLRenderer::makeFramebufferCurrent end");
+    GL_CHECK_ERRORS("GLRenderer::makeFramebufferCurrent end");
 }
 
 void GLRenderer::makeFramebufferInput(FrameBuffer::Ptr buffer, vec2 bias, GLenum tex_unit)
@@ -289,7 +294,7 @@ void GLRenderer::makeFramebufferInput(FrameBuffer::Ptr buffer, vec2 bias, GLenum
 
     glBindTexture(GL_TEXTURE_2D, buffer->tex_id);
 
-    reportGLErrors("GLRenderer::makeFramebufferInput end");
+    GL_CHECK_ERRORS("GLRenderer::makeFramebufferInput end");
 }
 
 void GLRenderer::beginDrawSimple(const vec4 &color)
@@ -322,6 +327,21 @@ void GLRenderer::beginDrawFancyExternalTexture(const vec4 &color)
     glActiveTexture(GL_TEXTURE0);
 }
 
+void GLRenderer::beginDrawNV12()
+{
+    // GPU-side NV12→RGBA conversion using ProgNV12 shader
+    // Expects: s_tex (Y plane, GL_LUMINANCE) bound to unit 0
+    //          s_tex_uv (UV plane, GL_LUMINANCE_ALPHA) bound to unit 1
+    setProgram(ProgNV12);
+
+    // Assign texture units for Y and UV samplers
+    if (programs[cur_program].s_tex >= 0)
+        glUniform1i(programs[cur_program].s_tex, 0);
+    if (programs[cur_program].s_tex_uv >= 0)
+        glUniform1i(programs[cur_program].s_tex_uv, 1);
+
+    glActiveTexture(GL_TEXTURE0);
+}
 
 void GLRenderer::beginDrawFont(float radius)
 {
@@ -513,11 +533,14 @@ void GLRenderer::renderBigBlur(GLDrawSurface *input, bool vertical, float base_c
 
     setProgram(ProgGauss);
 
-    float* gauss_coeffs = new float[steps];
+    // Max 16 steps (shader uniform array limit: u_gauss_shifts[16]).
+    // Use stack arrays to avoid heap allocation + leak every blur call.
+    assert(steps <= 16);
+    float gauss_coeffs[16];
     for (int i = 0; i < steps; i++)
         gauss_coeffs[i] = coeffs[i];
 
-    float* v_shifts = new float[2 * steps];
+    float v_shifts[32]; // 2 * 16
     for (int i = 0; i < 2 * steps; i++)
         v_shifts[i] = 0.0;
 
@@ -614,7 +637,9 @@ void GLRenderer::compileShaders()
                       AttrVertexColor, "a_VertexColor",
                       AttrVertexTexCoord, "a_VertexTexCoord");
 
-    if (all_extensions.find("GL_OES_EGL_image_external") != std::string::npos) {
+    // Check for external texture support (ES 2.0 and ES 3.0 use different extension names)
+    if (all_extensions.find("GL_OES_EGL_image_external") != std::string::npos ||
+        all_extensions.find("GL_OES_EGL_image_external_essl3") != std::string::npos) {
         pfix.clear();
         pfix.push_back("#define DRAW_FANCY\n#define EXTERNAL_TEXTURE\n");
         compileShaderPair(ProgDrawFancyExternalTexture, SHADER_draw_vert, SHADER_draw_frag, pfix,
@@ -672,6 +697,14 @@ void GLRenderer::compileShaders()
         compileShaderPair(ProgGauss, SHADER_filter_vert, SHADER_gauss_frag, pfix,
                           1, AttrVertexPos, "a_VertexPos");
     }
+
+    // NV12 video frame shader: Y plane in s_tex, UV plane in s_tex_uv
+    pfix.clear();
+    pfix.push_back("#define DRAW_FANCY\n");
+    compileShaderPair(ProgNV12, SHADER_draw_vert, SHADER_nv12_frag, pfix,
+                      3, AttrVertexPos, "a_VertexPos",
+                      AttrVertexColor, "a_VertexColor",
+                      AttrVertexTexCoord, "a_VertexTexCoord");
 
 #if defined(GL_ES_VERSION_2_0) || defined(GL_ARB_ES2_compatibility)
     glReleaseShaderCompiler();
@@ -752,7 +785,10 @@ bool GLRenderer::compileShader(GLuint shader, const std::vector<std::string> &pr
 
     const char **p = 0;
 
-#if defined(WIN32)
+#if defined(FLOW_EMBEDDED) || defined(IOS)
+    // OpenGL ES 3.0: GLSL ES 3.00
+    data.push_back("#version 300 es\n");
+#elif defined(WIN32)
     // version directive must be the first statement, and we only need to
     // specify GLSL v1.40 for some AMD drivers on windows
     // under vmware, version 140 is not supported
@@ -783,7 +819,7 @@ bool GLRenderer::compileShader(GLuint shader, const std::vector<std::string> &pr
     glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &ll);
 
     if (status != GL_TRUE)
-        reportGLErrors("GLRenderer::compileShader");
+        GL_CHECK_ERRORS("GLRenderer::compileShader");
 
     if (ll > 1) {
         char *buf = new char[ll];
@@ -866,7 +902,7 @@ bool GLRenderer::vdoCompileShaderPair(ProgramId id, const char **vlist, const ch
     info->frag_shader_id = glCreateShader(GL_FRAGMENT_SHADER);
 
     if (!info->program_id || !info->vert_shader_id || !info->frag_shader_id) {
-        reportGLErrors("GLRenderer::compileShaderPair (1)");
+        GL_CHECK_ERRORS("GLRenderer::compileShaderPair (1)");
         cerr << "Couldn't allocate shader program #" << id << endl;
         return false;
     }
@@ -901,7 +937,7 @@ bool GLRenderer::vdoCompileShaderPair(ProgramId id, const char **vlist, const ch
     glGetProgramiv(info->program_id, GL_INFO_LOG_LENGTH, &ll);
 
     if (status != GL_TRUE)
-        reportGLErrors("GLRenderer::compileShaderPair (2)");
+        GL_CHECK_ERRORS("GLRenderer::compileShaderPair (2)");
 
     if (ll > 1) {
         char *buf = new char[ll];
@@ -979,7 +1015,7 @@ ivec2 GLRenderer::fitFrameBufferSize(int min_w, int min_h)
 
 GLRenderer::FrameBuffer::Ptr GLRenderer::getFrameBuffer(int min_w, int min_h)
 {
-    reportGLErrors("GLRenderer::getFrameBuffer start");
+    GL_CHECK_ERRORS("GLRenderer::getFrameBuffer start");
 
     ivec2 size = fitFrameBufferSize(min_w, min_h);
 
@@ -1017,7 +1053,7 @@ GLRenderer::FrameBuffer::Ptr GLRenderer::makeFrameBuffer(ivec2 size)
 {
     FrameBuffer::Ptr new_fb(new FrameBuffer(size));
 
-    reportGLErrors("GLRenderer::makeFrameBuffer start");
+    GL_CHECK_ERRORS("GLRenderer::makeFrameBuffer start");
 
     glGenFramebuffers(1, &new_fb->fb_id);
     glGenTextures(1, &new_fb->tex_id);
@@ -1074,7 +1110,7 @@ GLRenderer::FrameBuffer::Ptr GLRenderer::makeFrameBuffer(ivec2 size)
             cerr << "Framebuffer incomplete!" << endl;
         }
 
-        reportGLErrors("GLRenderer::makeFrameBuffer fail");
+        GL_CHECK_ERRORS("GLRenderer::makeFrameBuffer fail");
 
         new_fb->dispose();
 
@@ -1086,7 +1122,7 @@ GLRenderer::FrameBuffer::Ptr GLRenderer::makeFrameBuffer(ivec2 size)
         all_framebuffers[size].push_back(new_fb);
     }
 
-    reportGLErrors("GLRenderer::makeFrameBuffer end");
+    GL_CHECK_ERRORS("GLRenderer::makeFrameBuffer end");
 
     return new_fb;
 }
@@ -1094,7 +1130,7 @@ GLRenderer::FrameBuffer::Ptr GLRenderer::makeFrameBuffer(ivec2 size)
 bool GLRenderer::chooseFramebufferMode() {
     FrameBuffer::Ptr fbp;
 
-    reportGLErrors("chooseFramebufferMode");
+    GL_CHECK_ERRORS("chooseFramebufferMode");
 
     /* Try a couple of configurations to see which one works */
 
@@ -1105,26 +1141,17 @@ bool GLRenderer::chooseFramebufferMode() {
 
     if ((fbp = makeFrameBuffer(ivec2(MIN_FB_SIZE)))->isValid()) goto found;
 
-    // 2: 24-bit depth + 8-bit stencil
-#ifdef FLOW_EMBEDDED
-    if (all_extensions.find("GL_OES_packed_depth_stencil ") != std::string::npos) {
-        fb_stencil_type = GL_DEPTH24_STENCIL8_OES;
-        fb_stencil_attachment2 = GL_DEPTH_ATTACHMENT;
-
-        if ((fbp = makeFrameBuffer(ivec2(MIN_FB_SIZE)))->isValid()) goto found;
-    }
-#else
+    // 2: 24-bit depth + 8-bit stencil (core in ES 3.0+ and desktop GL)
     fb_stencil_type = GL_DEPTH_STENCIL;
     fb_stencil_attachment = GL_DEPTH_STENCIL_ATTACHMENT;
 
     if ((fbp = makeFrameBuffer(ivec2(MIN_FB_SIZE)))->isValid()) goto found;
-#endif
 
     cerr << "Could not find an acceptable framebuffer configuration." << endl;
     return (init_ok = false);
 
 found:
-    reportGLErrors("chooseFramebufferMode end");
+    GL_CHECK_ERRORS("chooseFramebufferMode end");
     releaseFrameBuffer(fbp);
     return true;
 }
@@ -1325,7 +1352,7 @@ bool GLDrawSurface::isCurrent()
 
 void GLDrawSurface::makeCurrent()
 {
-    renderer->reportGLErrors("GLDrawSurface::makeCurrent start");
+    GL_CHECK_ERRORS("GLDrawSurface::makeCurrent start");
 
     if (!isInitialized)
         materialize();
@@ -1353,7 +1380,7 @@ void GLDrawSurface::materialize()
 
     renderer->makeFramebufferCurrent(fb, bias);
 
-    renderer->reportGLErrors("GLDrawSurface::materialize pre clear");
+    GL_CHECK_ERRORS("GLDrawSurface::materialize pre clear");
 
     glStencilMask(GLuint(-1));
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1361,7 +1388,7 @@ void GLDrawSurface::materialize()
 
     isInitialized = true;
 
-    renderer->reportGLErrors("GLDrawSurface::materialize end");
+    GL_CHECK_ERRORS("GLDrawSurface::materialize end");
 }
 
 void GLDrawSurface::reset()
@@ -1637,24 +1664,33 @@ void GLTextureImage::bindTo(GLRenderer *nrenderer)
 {
     assert (!renderer || renderer == nrenderer);
 
-    renderer->reportGLErrors("GLTextureImage::bindTo start");
+    GL_CHECK_ERRORS("GLTextureImage::bindTo start");
 
     if (!renderer) {
         nrenderer->allocTexture(this);
         loadData();
-    }
-    else
+    } else {
         glBindTexture(target, texture_id);
+
+        // Fast path for video frames: if pixel data was updated (markDirty),
+        // re-upload via glTexSubImage2D without texture re-allocation.
+        if (isBitmap()) {
+            GLTextureBitmap *bmp = static_cast<GLTextureBitmap*>(this);
+            if (bmp->isDataDirty()) {
+                bmp->reuploadData();
+            }
+        }
+    }
 
     last_used_frame = nrenderer->frame_idx;
 
-    renderer->reportGLErrors("GLTextureImage::bindTo end");
+    GL_CHECK_ERRORS("GLTextureImage::bindTo end");
 }
 
 void GLTextureImage::loadTextureData(GLenum internal_fmt, GLenum data_fmt, GLenum data_type, const void *data)
 {
     glTexImage2D(GL_TEXTURE_2D, 0, internal_fmt, size.x, size.y, 0, data_fmt, data_type, data);
-    renderer->reportGLErrors("GLTextureImage::loadTextureData end");
+    GL_CHECK_ERRORS("GLTextureImage::loadTextureData end");
 }
 
 void GLTextureImage::drawRect(GLRenderer *renderer, vec2 minv, vec2 maxv)
@@ -1687,7 +1723,7 @@ bool GLTextureImage::swizzleRB() const
 }
 
 GLTextureBitmap::GLTextureBitmap(ivec2 size, GLenum format, bool flip, bool use_mipmaps, bool /*swizzleRB*/) :
-    GLTextureImage(size, flip), format(format), use_mipmaps(use_mipmaps)
+    GLTextureImage(size, flip), format(format), use_mipmaps(use_mipmaps), data_dirty(false)
 {
     bytes_per_pixel = getBytesPerPixel(format);
     reallocate(bytes_per_pixel * size.x * size.y);
@@ -1700,8 +1736,10 @@ unsigned GLTextureBitmap::getBytesPerPixel(GLenum format)
         return 0;
     case GL_LUMINANCE:
     case GL_ALPHA:
+    case GL_RED:
         return 1;
     case GL_LUMINANCE_ALPHA:
+    case GL_RG:
         return 2;
     case GL_RGB:
         return 3;
@@ -1727,8 +1765,16 @@ void GLTextureBitmap::loadData()
         loadTextureData(GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1, data.data());
     else if (format == GL_UNSIGNED_SHORT_5_6_5)
         loadTextureData(GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, data.data());
-    else
-        loadTextureData(format, format, GL_UNSIGNED_BYTE, data.data());
+    else {
+        // ES 3.0 requires sized internal formats for single/dual channel textures.
+        // Desktop GL accepts GL_RED/GL_RG as internal format, but ES 3.0 needs GL_R8/GL_RG8.
+        GLenum internal_fmt = format;
+#ifdef GL_ES_VERSION_3_0
+        if (format == GL_RED) internal_fmt = GL_R8;
+        else if (format == GL_RG) internal_fmt = GL_RG8;
+#endif
+        loadTextureData(internal_fmt, format, GL_UNSIGNED_BYTE, data.data());
+    }
 
     if (use_mipmaps && is_pow2(getSize().x) && is_pow2(getSize().y)) {
         glGenerateMipmap(GL_TEXTURE_2D);
@@ -1737,10 +1783,39 @@ void GLTextureBitmap::loadData()
     }
 }
 
+void GLTextureBitmap::reuploadData()
+{
+    // Fast path: update texture data in-place using glTexSubImage2D.
+    // The texture is already allocated with the correct size — we just
+    // replace the pixel data without glDeleteTextures/glGenTextures.
+    GLenum data_fmt = format;
+    GLenum data_type = GL_UNSIGNED_BYTE;
+
+    if (format == GL_UNSIGNED_SHORT_5_5_5_1) {
+        data_fmt = GL_RGBA;
+        data_type = GL_UNSIGNED_SHORT_5_5_5_1;
+    } else if (format == GL_UNSIGNED_SHORT_5_6_5) {
+        data_fmt = GL_RGB;
+        data_type = GL_UNSIGNED_SHORT_5_6_5;
+    }
+
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, getSize().x, getSize().y,
+                    data_fmt, data_type, data.data());
+
+    if (use_mipmaps && is_pow2(getSize().x) && is_pow2(getSize().y)) {
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+
+    data_dirty = false;
+}
+
 void GLTextureBitmap::resize(ivec2 new_size, bool flip)
 {
-    setSize(new_size, flip);
+    // Size changed — must destroy old texture so bindTo() re-creates at new dimensions.
+    invalidate();
+    data_dirty = false;
 
+    setSize(new_size, flip);
     reallocate(bytes_per_pixel * new_size.x * new_size.y);
 }
 

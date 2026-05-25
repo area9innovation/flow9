@@ -240,7 +240,7 @@ public:
 
     _INLINE_FORCE(NativeProgram *getProgram()) { return Program; }
 
-#ifndef _MSC_VER
+#ifndef _WIN32
     static struct tm tzOffsetInfo;
 #endif
     bool isInitializing() {

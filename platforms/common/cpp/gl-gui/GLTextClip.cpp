@@ -123,7 +123,7 @@ void GLTextClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, const
         if (use_crop)
             surface->popCropRect();
 
-        renderer->reportGLErrors("GLPictureClip::renderInner post text");
+        GL_CHECK_ERRORS("GLPictureClip::renderInner post text");
     }
 
     GLClip::renderInner(renderer, surface, clip_box);

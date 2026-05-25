@@ -141,7 +141,7 @@ END_STL_HASH_NAMESPACE
 
 struct ptr_hash {
     size_t operator() (void *p) const {
-        return STL_HASH<unsigned long>()((unsigned long)p);
+        return STL_HASH<size_t>()((size_t)(uintptr_t)p);
     }
 };
 
@@ -355,10 +355,10 @@ inline unicode_string qt2unicode(QString str) {
     return unicode_string(str.utf16(), str.length());
 }
 inline QString unicode2qt(const unicode_string &str) {
-    return QString::fromUtf16(str.data(), (int) str.size());
+    return QString::fromUtf16(reinterpret_cast<const char16_t*>(str.data()), (int) str.size());
 }
 inline QString unicode2qt(const utf32_string &str) {
-    return QString::fromUcs4(str.data(), (int) str.size());
+    return QString::fromUcs4(reinterpret_cast<const char32_t*>(str.data()), (int) str.size());
 }
 #endif
 

@@ -1,5 +1,9 @@
 #ifdef EXTERNAL_TEXTURE
+#ifdef GL_ES
+#extension GL_OES_EGL_image_external_essl3 : require
+#else
 #extension GL_OES_EGL_image_external : require
+#endif
 #endif
 
 uniform lowp vec4 u_mainColor;
@@ -24,7 +28,7 @@ in lowp vec4 v_drawColor;
 in frag_highp vec2 v_texCoord;
 #endif
 
-#ifndef GL_ES
+#if !defined(GL_ES) || (__VERSION__ >= 300)
 out frag_highp vec4 fragColor;
 #endif
 

@@ -4,15 +4,16 @@
 #include "core/CommonTypes.h"
 
 #ifdef IOS
-  #include <OpenGLES/ES2/gl.h>
-  #include <OpenGLES/ES2/glext.h>
+  #include <OpenGLES/ES3/gl.h>
+  #include <OpenGLES/ES3/glext.h>
 #else
   #ifdef FLOW_EMBEDDED
-    #include <GLES2/gl2.h>
-    #include <GLES2/gl2ext.h>
+    #include <GLES3/gl3.h>
+    #include <GLES3/gl3ext.h>
   #else
     #define GL_GLEXT_PROTOTYPES
     #ifdef WIN32
+      #include <stddef.h>
       #include <GL/glew.h>
     #else
       #ifdef __APPLE__
