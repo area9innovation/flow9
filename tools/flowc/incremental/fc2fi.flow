@@ -182,26 +182,30 @@ fcexp2fi(env : FcTypeEnvLocal, names : FcGlobalNames, onError : (string, FcInfo2
 				if (c.struct == "default" || !containsKeyTree(names.structs, c.struct)) None()
 				else Some(c.struct)
 			}));
-			FiSwitch(fcvar2fi(env, onError, x), fctype2fi(env, onError, switchType),
-				// Use fold to track claimed structs across union cases
-				fold(cases, Pair([], explicitStructNames), \acc : Pair<[FiSwitchCase], Set<string>>, c -> {
-					if (c.struct == "default" || containsKeyTree(names.structs, c.struct)) {
-						Pair(
-							arrayPush(acc.first, FiCase(c.struct, c.argNames, fcexp2fi(env, names, onError, c.body), c.info.start)),
-							acc.second
-						)
-					} else {
-						// Union case: expand to struct names, excluding already-claimed structs
-						allStructs = fcUnion2structNames(names, c.struct);
-						structs = filter(allStructs, \s -> !containsSet(acc.second, s));
-						claimed = fold(structs, acc.second, \s, name -> insertSet(s, name));
-						Pair(
-							arrayPush(acc.first, FiCaseUnion(c.struct, structs, fcexp2fi(env, names, onError, c.body), c.info.start)),
-							claimed
-						)
-					}
-				}).first,
-				mfctype2fi(env, onError, ^(info.type)), info.start);
+			result = fold(cases, Pair(makeList(), explicitStructNames), \acc : Pair<List<FiSwitchCase>, Set<string>>, c -> {
+				if (c.struct == "default" || containsKeyTree(names.structs, c.struct)) {
+					Pair(
+						Cons(FiCase(c.struct, c.argNames, fcexp2fi(env, names, onError, c.body), c.info.start), acc.first),
+						acc.second
+					)
+				} else {
+					// Union case: expand to struct names, excluding already-claimed structs
+					allStructs = fcUnion2structNames(names, c.struct);
+					structs = set2array(differenceSets(allStructs, acc.second));
+					claimed = mergeSets(acc.second, allStructs);
+					Pair(
+						Cons(FiCaseUnion(c.struct, structs, fcexp2fi(env, names, onError, c.body), c.info.start), acc.first),
+						claimed
+					)
+				}
+			});
+			FiSwitch(
+				fcvar2fi(env, onError, x),
+				fctype2fi(env, onError, switchType),
+				list2array(result.first),
+				mfctype2fi(env, onError, ^(info.type)),
+				info.start
+			);
 		}
 		FcLambda(args, body, info): fclambda2fi(env, names, onError, e);
 		FcLet(name, type, e1, e2, info): FiLet(name, fctype2fi(env, onError, type), fcexp2fi(env, names, onError, e1), fcexp2fi(env, names, onError, e2), mfctype2fi(env, onError, ^(info.type)), info.start);
@@ -226,13 +230,13 @@ fcexp2fi(env : FcTypeEnvLocal, names : FcGlobalNames, onError : (string, FcInfo2
 }
 
 // Recursively expand a union name to all leaf struct names
-fcUnion2structNames(names : FcGlobalNames, unionName : string) -> [string] {
+fcUnion2structNames(names : FcGlobalNames, unionName : string) -> Set<string> {
 	switch (lookupTree(names.unions, unionName)) {
-		Some(union): concatA(map(union.typenames, \tn -> {
-			if (containsKeyTree(names.structs, tn.name)) [tn.name]
-			else fcUnion2structNames(names, tn.name)
-		}));
-		None(): [];
+		Some(union): fold(union.typenames, makeSet(), \acc, tn -> {
+			if (containsKeyTree(names.structs, tn.name)) insertSet(acc, tn.name)
+			else mergeSets(acc, fcUnion2structNames(names, tn.name))
+		});
+		None(): makeSet();
 	}
 }
 
