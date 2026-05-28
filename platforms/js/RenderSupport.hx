@@ -2020,13 +2020,10 @@ class RenderSupport {
 			var node_name : String = focused_node.nodeName;
 			node_name = node_name.toLowerCase();
 			if (node_name == "input" || node_name == "textarea") {
-				// Use visualViewport.height to get the actual visible area above the keyboard.
-				// Supported on all modern mobile browsers (iOS Safari 13+, Chrome 61+, Firefox 68+).
-				// Falls back to innerHeight when visualViewport is unavailable (desktop/legacy).
-				var vv : Dynamic = untyped Browser.window.visualViewport;
-				var visibleAreaHeight : Float = if (vv != null) vv.height else Browser.window.innerHeight;
+				//ios doesn't update window height when virtual keyboard is shown
+				var visibleAreaHeight = if (Platform.isIOS) Browser.window.innerHeight / 4 else Browser.window.innerHeight;
 				var rect = focused_node.getBoundingClientRect();
-				if (rect.bottom > visibleAreaHeight) { // Overlapped by screen keyboard
+				if (rect.bottom > visibleAreaHeight) { // Overlaped by screen keyboard
 					if (Platform.isIOS) {
 						Browser.window.scrollTo(0, rect.bottom - visibleAreaHeight);
 						var onblur : Dynamic = function () {};
