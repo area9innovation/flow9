@@ -188,7 +188,7 @@ typecheckFcModule(env0 : FcTypeEnv, module : FcModule) -> FcTypecheckResult {
 	}
 
 
-	fi = fcmodule2fiWithErrorHandler(ret.first.local, module,
+	fi = fcmodule2fiWithErrorHandler(ret.first.local, ret.first.program.acc.names, module,
 		\err, info ->
 			onModuleError(FcError(err, [FcPosition(module.fileinfo.flowfile, info.start, info.end)]))
 	);
@@ -626,8 +626,8 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 			});
 
 			// Now check that the x type we get matches the cases we have
-			unionCases = fold(cases, [], \acc2, case -> 
-				if (case.struct == "default") acc2 
+			unionCases = fold(cases, [], \acc2, case ->
+				if (case.struct == "default") acc2
 				else arrayPush(acc2, case.struct)
 			);
 			if (length(unionCases) != length(uniq(unionCases))) {
@@ -684,7 +684,16 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 						}
 						default: {
 							names = filtermap(cases, \c -> if (c.struct == "default") None() else Some(c.struct));
-							unionCandidates = names2unions(acc, names, open);
+							// Expand union names to leaf struct names for names2unions lookup,
+							// since names2unions uses struct2unions which only maps struct names
+							expandedNames = uniq(sort(concatA(map(names, \n -> {
+								if (containsKeyTree(acc.program.acc.names.unions, n)) {
+									map(union2typenames(acc, n), \tn -> tn.name)
+								} else {
+									[n]
+								}
+							}))));
+							unionCandidates = names2unions(acc, expandedNames, open);
 
 							undef = if (length(unionCandidates) == 1) {
 								unname = unionCandidates[0];
@@ -700,7 +709,27 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 											mstruct = lookupTree(acc.program.acc.names.structs, case.struct);
 											switch (mstruct) {
 												None(): {
-													acc2;
+													// Could be a union case
+													munion = lookupTree(acc.program.acc.names.unions, case.struct);
+													switch (munion) {
+														None(): acc2;
+														Some(__): {
+															// Add leaf struct names (not the union name) so type inference
+															// finds the correct containing union
+															leafStructs = union2typenames(acc, case.struct);
+															fold(leafStructs, acc2, \acc3, tn -> {
+																mstruct2 = lookupTree(acc.program.acc.names.structs, tn.name);
+																switch (mstruct2) {
+																	None(): acc3;
+																	Some(struct2): {
+																		arrayPush(acc3, FcTypeName(tn.name, generate(0, length(struct2.typars), \__ -> {
+																			makeFcTyVar2(tyvarIdGroup, ci)
+																		}), ci));
+																	}
+																}
+															});
+														}
+													}
 												}
 												Some(struct): {
 													// TODO: We might be able to do this a bit smarter, since we
@@ -739,6 +768,14 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 									un = FcTypeName(uniondef.name, generate(0, ntv, \__ -> makeFcTyVar2(tyvarIdGroup, ci)), ci);
 									expect = FcLessOrEqual(un, unionType, "cases in switch against " + uniondef.name, ci, e);
 									checkOrRecordTypeExpect(acc, expect);
+									// Also constrain against varType so type parameters are linked.
+									// Without this, union cases like EditDialogAction2<α1> in a switch on Action2<User2>
+									// leave α1 unconstrained (unionType may be FcTypeFlow when unannotated).
+									// Only when the union has type params AND varType is not already a struct
+									// (a struct varType like CompilerConfig is a member of the union, not the union itself).
+									if (ntv > 0) {
+										checkOrRecordTypeExpect(acc, FcLessOrEqual(varType, un, "switch var type params", ci, e));
+									}
 									rs = getFcNamedTypeError(acc, tyvarIdGroup, un, error);
 									switch (rs) {
 										FcTypeUnion(__, __, tns, __): tns;
@@ -753,44 +790,66 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 
 			// Find the resulting types of all bodies
 			aat = map(cases, \case : FcCase -> {
+				isUnionCase = containsKeyTree(acc.program.acc.names.unions, case.struct);
 				// Be sure to override the type of the case variable to this type of this particular case
 				// As best we can, grab it from the concrete union type we have
-				beststruct : Maybe<FcTypeName> = find(unionStructs, \us -> us.name == case.struct);
-				structdef = switch (beststruct) {
-					None(): {
-						body : FcExp = case.body;
-						if (isConfigParameterTrue(acc.program.acc.config.config, "gtype")) {
-							tn = FcTypeName(case.struct, [], copyFcInfo2(body.info));
-							getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
-						} else {
-							FcTypeName(case.struct, [], copyFcInfo2(body.info));
+				structdef = if (isUnionCase) {
+					// Union case: look up in unionStructs first (like struct cases) to get
+					// type params from parent union. Only fall back to fresh tyvars if not found.
+					bestunion : Maybe<FcTypeName> = find(unionStructs, \us -> us.name == case.struct);
+					body0 : FcExp = case.body;
+					switch (bestunion) {
+						Some(tn): getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
+						None(): {
+							tn0 = FcTypeName(case.struct, [], copyFcInfo2(body0.info));
+							getFcNamedTypeError(acc, tyvarIdGroup, tn0, error);
 						}
 					}
-					Some(tn): getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
+				} else {
+					beststruct : Maybe<FcTypeName> = find(unionStructs, \us -> us.name == case.struct);
+					switch (beststruct) {
+						None(): {
+							body : FcExp = case.body;
+							if (isConfigParameterTrue(acc.program.acc.config.config, "gtype")) {
+								tn = FcTypeName(case.struct, [], copyFcInfo2(body.info));
+								getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
+							} else {
+								FcTypeName(case.struct, [], copyFcInfo2(body.info));
+							}
+						}
+						Some(tn): getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
+					}
 				}
 				acc3 = if (case.struct == "default") acc
 				else {
 					// Record that our struct is less than the switch var type!
 					// This causes problems for some reasons.
 					// checkOrRecordTypeExpect(acc, FcLessOrEqual(structdef, varType, "special switch", copyFcInfo2(case.info), case.body));
+
+					// For union cases, connect the structdef's type params to the switch variable's type params
+					if (isUnionCase) {
+						checkOrRecordTypeExpect(acc, FcLessOrEqual(structdef, unionType, "union case in switch", copyFcInfo2(case.info), case.body));
+					}
 					setFcType(acc, x.name, Some(structdef));
 				}
 
-				switch (structdef) {
-					FcTypeStruct(__, __, sargs, __): {
-						if (length(case.argNames) != length(structdef.args)) {
-							pt = prettyFcType(FcPretty(false, true, ^(acc3.local.tyvars), ^(acc3.local.typars)), structdef, makeSet());
-							error("Expected " + i2s(length(structdef.args)) + " arguments to " + pt + " in case, got " + i2s(length(case.argNames)));
+				if (!isUnionCase) {
+					switch (structdef) {
+						FcTypeStruct(__, __, sargs, __): {
+							if (length(case.argNames) != length(structdef.args)) {
+								pt = prettyFcType(FcPretty(false, true, ^(acc3.local.tyvars), ^(acc3.local.typars)), structdef, makeSet());
+								error("Expected " + i2s(length(structdef.args)) + " arguments to " + pt + " in case, got " + i2s(length(case.argNames)));
+							}
 						}
+						default: {}
 					}
-					default: {}
 				}
 
 				// Here we pass varinfo because case variables would be added later at 'let' construction
 				ct = typecheckFcExp(acc3, tyvarIdGroup, flowfile, case.body);
 				// Check if the body has "let" bodies with the name of the switch-var,
 				// and then mark that this var is less than the struct case!
-				if (case.struct != "default") {
+				if (case.struct != "default" && !isUnionCase) {
 					checkSwitchBodyVars(acc3, x, xtype, structdef, case.body);
 				}
 				ct;
@@ -849,6 +908,10 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 				checkOrRecordTypeExpect(acc, FcVerifyType(et, itype, "definition of", ci, e));
 			} else {
 				checkOrRecordTypeExpect(acc1, FcLessOrEqual(et, itype, "definition of", ci, e));
+				// Also record a post-solve annotation check that detects unsafe downcasts.
+				// FcLessOrEqual is needed for type inference (resolving polymorphic types),
+				// but it can silently accept narrowing annotations. FcCheckAnnotation catches these.
+				recordTypeCheck(acc1, FcCheckAnnotation(et, itype, name, ci));
 			}
 
 			// Record this in the type environment when we check the body

@@ -1,5 +1,6 @@
 import tools/flowc/fcexp;
 import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/incremental/fi_helpers;
 
 export {
 	mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp;
@@ -76,6 +77,17 @@ export {
 	fiIterExp(e: FiExp, fn: (FiExp, FiExpTraverseEnv) -> void) -> void;
 
 	fiAddModule2GlobalNames(module: FiModule, names: FiGlobalNames) -> FiGlobalNames;
+
+	// Checks whether a variable name appears free (not shadowed) in an FiExp.
+	// Accounts for shadowing by lambdas, lets, switch argNames, and inner switches
+	// on the same variable (which rebind it in case bodies).
+	fiExpReferencesVar(exp : FiExp, name : string) -> bool;
+
+	// Replaces the type of all free occurrences of a variable in an FiExp tree.
+	// Respects shadowing: lambdas, lets, and switch case argNames that rebind the
+	// variable prevent recursion into their bodies. Inner switches on the same
+	// variable rebind it, so their case bodies are not generalized.
+	generalizeVarType(exp : FiExp, varName : string, newType : FiType) -> FiExp;
 }
 
 mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
@@ -219,8 +231,8 @@ mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
 			}
 		}
 		FiSwitch(v, typ, cs, type, start): {
-			mapped_cs = map(cs, \c -> FiCase(c.struct, c.argNames, mapFiExp(c.body, fn), c.start));
-			if (forall(zipWith(cs, mapped_cs, \c1, c2 -> Pair(c1.body, c2.body)), \p -> isSameObj(p.first, p.second))) {
+			mapped_cs = map(cs, \c -> fiMapSwitchCaseBody(c, \b -> mapFiExp(b, fn)));
+			if (forall(zipWith(cs, mapped_cs, \c1, c2 -> Pair(fiSwitchCaseBody(c1), fiSwitchCaseBody(c2))), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
 				FiSwitch(v, typ, mapped_cs, type, start)
@@ -590,8 +602,8 @@ fiMapExpArgs(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv) -> F
 			x_mapped = fiDoMapExp(x, set_parent(unset_returns(env), 0), fn, argsFirst);
 			switch (x_mapped) {
 				FiVar(__,__,__): {
-					cases_mapped = mapi(cs, \i, c -> FiCase(c with body = fiDoMapExp(c.body, set_parent(env, i + 1), fn, argsFirst)));
-					if (isSameObj(x_mapped, x) && all(mapi(cases_mapped, \i, c_mapped -> isSameObj(c_mapped.body, cs[i].body)))) e else
+					cases_mapped = mapi(cs, \i, c -> fiMapSwitchCaseBody(c, \b -> fiDoMapExp(b, set_parent(env, i + 1), fn, argsFirst)));
+					if (isSameObj(x_mapped, x) && all(mapi(cases_mapped, \i, c_mapped -> isSameObj(fiSwitchCaseBody(c_mapped), fiSwitchCaseBody(cs[i]))))) e else
 					FiSwitch(e with x = x_mapped, cases = cases_mapped);
 				}
 				default: fail0("During switch mapping of expression expected a var in switch, got:\n" + prettyFiExp(dummyPretty, x_mapped));
@@ -742,10 +754,10 @@ fiFoldMapExpArgs(e: FiExp, env: FiExpTraverseEnv, acc: ?, fn: (FiExp, FiExpTrave
 				switch (x_mapped) {
 					FiVar(__,__,__): {
 						p_cs = foldi(cs, Pair([], p_x.second), \i, p_acc, c -> {
-							p_c = fiDoFoldMapExp(c.body, set_parent(env, i + 1), p_acc.second, fn, order);
-							Pair(concat(p_acc.first, [FiCase(c with body = p_c.first)]), p_c.second);
+							p_c = fiDoFoldMapExp(fiSwitchCaseBody(c), set_parent(env, i + 1), p_acc.second, fn, order);
+							Pair(concat(p_acc.first, [fiMapSwitchCaseBody(c, \__ -> p_c.first)]), p_c.second);
 						});
-						e_mapped = if (isSameObj(x_mapped, x) && all(mapi(p_cs.first, \i, c_mapped -> isSameObj(c_mapped.body, cs[i].body)))) e else
+						e_mapped = if (isSameObj(x_mapped, x) && all(mapi(p_cs.first, \i, c_mapped -> isSameObj(fiSwitchCaseBody(c_mapped), fiSwitchCaseBody(cs[i]))))) e else
 						FiSwitch(e with x = x_mapped, cases = p_cs.first);
 						Pair(e_mapped, p_cs.second);
 					}
@@ -753,14 +765,14 @@ fiFoldMapExpArgs(e: FiExp, env: FiExpTraverseEnv, acc: ?, fn: (FiExp, FiExpTrave
 				}
 			} else {
 				p_cs = foldri(cs, Pair([], acc), \i, p_acc, c -> {
-					p_c = fiDoFoldMapExp(c.body, set_parent(env, i + 1), p_acc.second, fn, order);
-					Pair(concat(p_acc.first, [FiCase(c with body = p_c.first)]), p_c.second);
+					p_c = fiDoFoldMapExp(fiSwitchCaseBody(c), set_parent(env, i + 1), p_acc.second, fn, order);
+					Pair(concat(p_acc.first, [fiMapSwitchCaseBody(c, \__ -> p_c.first)]), p_c.second);
 				});
 				p_x = fiDoFoldMapExp(x, set_parent(unset_returns(env), 0), p_cs.second, fn, order);
 				x_mapped = p_x.first;
 				switch (x_mapped) {
 					FiVar(__,__,__): {
-						e_mapped = if (isSameObj(x_mapped, x) && all(mapi(p_cs.first, \i, c_mapped -> isSameObj(c_mapped.body, cs[i].body)))) e else
+						e_mapped = if (isSameObj(x_mapped, x) && all(mapi(p_cs.first, \i, c_mapped -> isSameObj(fiSwitchCaseBody(c_mapped), fiSwitchCaseBody(cs[i]))))) e else
 						FiSwitch(e with x = x_mapped, cases = p_cs.first);
 						Pair(e_mapped, p_x.second);
 					}
@@ -1115,3 +1127,76 @@ fiDoIterExp(e: FiExp, env: FiExpTraverseEnv, fn: (FiExp, FiExpTraverseEnv) -> vo
 	}
 	fn(e, env);
 }
+
+fiExpReferencesVar(exp : FiExp, name : string) -> bool {
+	switch (exp) {
+		FiVoid(__): false;
+		FiBool(__, __): false;
+		FiInt(__, __): false;
+		FiDouble(__, __): false;
+		FiString(__, __): false;
+		FiVar(n, __, __): n == name;
+		FiCall(f, es, __, __):
+			fiExpReferencesVar(f, name) || exists(es, \e -> fiExpReferencesVar(e, name));
+		FiLambda(args, body, __, __):
+			!exists(args, \a -> a.name == name) && fiExpReferencesVar(body, name);
+		FiLet(x, __, e1, e2, __, __):
+			fiExpReferencesVar(e1, name) || (x != name && fiExpReferencesVar(e2, name));
+		FiIf(c, t, e, __, __):
+			fiExpReferencesVar(c, name) || fiExpReferencesVar(t, name) || fiExpReferencesVar(e, name);
+		FiSwitch(x, __, cases, __, __):
+			fiExpReferencesVar(x, name)
+			|| (x.name != name && exists(cases, \c ->
+				!exists(fiSwitchCaseArgNames(c), \a -> a == name) && fiExpReferencesVar(fiSwitchCaseBody(c), name)
+			));
+		FiCast(e, __, __, __, __): fiExpReferencesVar(e, name);
+		FiSeq(es, __, __): exists(es, \e -> fiExpReferencesVar(e, name));
+		FiCallPrim(__, es, __, __): exists(es, \e -> fiExpReferencesVar(e, name));
+		FiRequire(__, e, __, __): fiExpReferencesVar(e, name);
+		FiUnsafe(__, e, __, __): fiExpReferencesVar(e, name);
+	}
+}
+
+generalizeVarType(exp : FiExp, varName : string, newType : FiType) -> FiExp {
+	if (!fiExpReferencesVar(exp, varName)) exp
+	else switch (exp) {
+		FiVar(n, __, s): if (n == varName) FiVar(n, newType, s) else exp;
+		FiCall(f, es, t, s): FiCall(
+			generalizeVarType(f, varName, newType),
+			map(es, \e -> generalizeVarType(e, varName, newType)),
+			t, s
+		);
+		FiLambda(args, body, t, s):
+			if (exists(args, \a -> a.name == varName)) exp
+			else FiLambda(args, generalizeVarType(body, varName, newType), t, s);
+		FiLet(x, xt, e1, e2, t, s): FiLet(
+			x, xt,
+			generalizeVarType(e1, varName, newType),
+			if (x == varName) e2 else generalizeVarType(e2, varName, newType),
+			t, s
+		);
+		FiIf(c, th, el, t, s): FiIf(
+			generalizeVarType(c, varName, newType),
+			generalizeVarType(th, varName, newType),
+			generalizeVarType(el, varName, newType),
+			t, s
+		);
+		FiSwitch(x, st, cases, t, s): FiSwitch(
+			FiVar(x.name, if (x.name == varName) newType else x.type, x.start),
+			st,
+			if (x.name == varName) cases
+			else map(cases, \c ->
+				if (exists(fiSwitchCaseArgNames(c), \a -> a == varName)) c
+				else fiMapSwitchCaseBody(c, \b -> generalizeVarType(b, varName, newType))
+			),
+			t, s
+		);
+		FiCast(e, ft, tt, t, s): FiCast(generalizeVarType(e, varName, newType), ft, tt, t, s);
+		FiSeq(es, t, s): FiSeq(map(es, \e -> generalizeVarType(e, varName, newType)), t, s);
+		FiCallPrim(op, es, t, s): FiCallPrim(op, map(es, \e -> generalizeVarType(e, varName, newType)), t, s);
+		FiRequire(flowfile, e, t, s): FiRequire(flowfile, generalizeVarType(e, varName, newType), t, s);
+		FiUnsafe(nm, e, t, s): FiUnsafe(nm, generalizeVarType(e, varName, newType), t, s);
+		default: exp;
+	}
+}
+

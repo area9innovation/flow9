@@ -275,15 +275,27 @@ fcEval(ex : FiExp, env: FcEvalEnv, locals : HashMap<string, FcEvalLocal>) -> flo
 		FiSwitch(v,__,cs,__,pos): {
 			w = fcEval(v, env, locals);
 			name = fcEvalExtractStructName(w);
-			switch (find(cs, \c -> c.struct == name || c.struct == "default")) {
+			switch (find(cs, \c -> {
+				switch (c) {
+					FiCase(struct, __, __, __): struct == name || struct == "default";
+					FiCaseUnion(__, structs, __, __): contains(structs, name);
+				}
+			})) {
 				Some(case): {
 					args = fcEvalExtractStructArguments(w);
-					if (case.struct != "default") {
-						iteri(case.argNames, \i, arg ->
-							if (arg != "__") setHashMap(locals, arg, FcEvalLocal(args[i]))
-						);
+					switch (case) {
+						FiCase(struct, argNames, body, __): {
+							if (struct != "default") {
+								iteri(argNames, \i, arg ->
+									if (arg != "__") setHashMap(locals, arg, FcEvalLocal(args[i]))
+								);
+							}
+							fcEval(body, env, locals);
+						}
+						FiCaseUnion(__, __, body, __): {
+							fcEval(body, env, locals);
+						}
 					}
-					fcEval(case.body, env, locals);
 				}
 				None(): {
 					make_err("case " + name + " is not found in switch:\n" + prettyFiExp(dummyPretty, ex) +  "\nswitch value: " + toString(w), [pos]);

@@ -27,6 +27,11 @@ ftypeFinalize(name : string, pos : FcPosition, count : int, env : FcTypeEnv, be0
 	onError = \tyvar, m -> {
 		reportErrorOnTyvar(be00, tyvar2infoMap, seenTyvarErrors, name, pos, tyvar, m)
 	};
+
+	// Check annotation constraints before finalization narrows types.
+	// This detects downcasts where annotation type is narrower than expression type.
+	checkAnnotationConstraints(name, pos, env, be00);
+
 	finalizeIteration(name, pos, count, env, be00, funify, onError);
 }
 
@@ -564,4 +569,127 @@ buildFTyvarInfos(env : FcTypeEnvLocal) -> Tree<int, [Pair<string, FcInfo2>]> {
 			}
 		}
 	});
+}
+
+// Check annotation constraints: detect when annotation type is narrower than expression type (downcast).
+// Runs before finalization so expression types are not yet narrowed by FReduceLeft.
+// Uses cross-referencing of annotation types to avoid false positives from annotation contamination:
+// when FcLessOrEqual grows a shared tyvar (e.g., lambda return type) to match one annotation,
+// other annotations on the same expression may appear as downcasts even though they are valid.
+checkAnnotationConstraints(name : string, pos : FcPosition, env : FcTypeEnv, fenv : FEnv) -> void {
+	checks = ^(env.local.checks);
+
+	// First pass: collect all annotation type struct sets to detect contamination.
+	// If the resolved expression type matches an annotation seen elsewhere, the expression
+	// type was likely widened BY that annotation, not by the expression itself.
+	allAnnotStructSets : [Set<string>] = foldList(checks, [], \acc : [Set<string>], check -> {
+		switch (check) {
+			FcCheckAnnotation(__, annotationType, __, __): {
+				annotInner = fcTypeUnwrapArray(annotationType);
+				annotStructs = expandFcTypeName2structs(env, annotInner);
+				if (isEmptySet(annotStructs)) acc
+				else arrayPush(acc, annotStructs);
+			}
+			default: acc;
+		}
+	});
+
+	// Second pass: check each annotation constraint
+	iterList(checks, \check -> {
+		switch (check) {
+			FcCheckAnnotation(exprType, annotationType, desc, info): {
+				checkOneAnnotation(name, pos, env, fenv, exprType, annotationType, desc, info, allAnnotStructSets);
+			}
+			default: {}
+		}
+	});
+}
+
+checkOneAnnotation(name : string, pos : FcPosition, env : FcTypeEnv, fenv : FEnv,
+	exprType : FcType, annotationType : FcType, desc : string, info : FcInfo2,
+	allAnnotStructSets : [Set<string>]) -> void {
+	// Convert exprType (usually FcTypeVar) to FType via the solver's tyvar map
+	exprFType = fctype2ftype(env, fenv.tyvarIdGroup, exprType);
+	// Convert back to FcType using ftype2fctype which resolves tyvars and finds named unions
+	errIgnore = \__ -> {};
+	exprFcTypes = ftype2fctype(fenv, exprFType, makeSet(), errIgnore);
+
+	if (exprFcTypes != []) {
+		exprFcType = exprFcTypes[0];
+		// Extract the inner type from arrays for comparison: [ExprType] vs [AnnotType]
+		exprInner = fcTypeUnwrapArray(exprFcType);
+		annotInner = fcTypeUnwrapArray(annotationType);
+		// Get struct sets for both
+		exprStructs = expandFcTypeName2structs(env, exprInner);
+		annotStructs = expandFcTypeName2structs(env, annotInner);
+		// Only check when both sides have known struct sets
+		if (!isEmptySet(exprStructs) && !isEmptySet(annotStructs)) {
+			// If expression struct set is NOT a subset of annotation struct set, it's a downcast candidate
+			if (!forallSet(exprStructs, \s -> containsSet(annotStructs, s))) {
+				// Check for contamination: if the expression's struct set matches an annotation
+				// type seen in another constraint, the expression type was likely widened BY that
+				// other annotation (via FcLessOrEqual on a shared tyvar), not by the expression itself.
+				isContaminated = exists(allAnnotStructSets, \otherAnnotStructs -> {
+					// The other annotation must be different from this one (same annotation = self)
+					// and must match the expression type exactly
+					!equalSet(otherAnnotStructs, annotStructs)
+						&& equalSet(otherAnnotStructs, exprStructs)
+				});
+
+				if (!isContaminated) {
+					pt = \t -> prettyFcType(FcPretty(false, true, ^(env.local.tyvars), ^(env.local.typars)), t, makeSet());
+					poss = FcPosition(pos.file, info.start, info.end);
+					addFcTypeError(env.program, FcError(
+						name + ": Type annotation '" + desc + " : " + pt(annotationType) + "' is incompatible with expression type " + pt(exprFcType),
+						[poss]
+					));
+				}
+			}
+		}
+	}
+}
+
+// Unwrap array type: [T] -> T, otherwise identity
+fcTypeUnwrapArray(t : FcType) -> FcType {
+	switch (t) {
+		FcTypeArray(at, __): at;
+		default: t;
+	}
+}
+
+// Get the name from an FcType (union or struct name)
+fcTypeGetName(t : FcType) -> string {
+	switch (t) {
+		FcTypeName(n, __, __): n;
+		FcTypeUnion(n, __, __, __): n;
+		FcTypeStruct(n, __, __, __): n;
+		default: "";
+	}
+}
+
+// Expand an FcType to its set of leaf struct names.
+// For a struct, returns {structName}. For a union, recursively expands to all leaf structs.
+expandFcTypeName2structs(env : FcTypeEnv, t : FcType) -> Set<string> {
+	tname = fcTypeGetName(t);
+	if (tname == "") makeSet()
+	else {
+		// Check if it's a union
+		munion = lookupTree(env.program.acc.names.unions, tname);
+		switch (munion) {
+			None(): {
+				// Check if it's a struct
+				mstruct = lookupTree(env.program.acc.names.structs, tname);
+				switch (mstruct) {
+					None(): makeSet();
+					Some(__): makeSet1(tname);
+				}
+			}
+			Some(udef): {
+				// Recursively expand union members
+				fold(udef.typenames, makeSet(), \acc, tn -> {
+					mergeSets(acc, expandFcTypeName2structs(env, tn))
+				});
+			}
+		}
+	}
 }
