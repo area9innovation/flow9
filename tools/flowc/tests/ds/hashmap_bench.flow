@@ -16,7 +16,8 @@ random_int() -> int {
 }
 
 Sample(
-	pairs : [Pair<?, ?>],
+	toCreate : [Pair<?, ?>],
+	toAdd :    [Pair<?, ?>],
 	toRemove : [?],
 	toLookup : [?]
 );
@@ -27,34 +28,42 @@ benchmarkPass(size : int, iters : int, random_gen : () -> ?, hash : (?) -> int) 
 	
 	testSet = mapRange(iters,
 		\__ -> {
-			sample = mapRange(size, \__ -> Pair(random_gen(), random_gen()));
+			toCreate = mapRange(size / 2, \__ -> Pair(random_gen(), random_gen()));
+			toAdd = mapRange(size / 2, \__ -> Pair(random_gen(), random_gen()));
 			toRemove = mapRange(size / 3, \__ -> random_gen());
 			toLookup = mapRange(size, \__ -> random_gen());
-			Sample(sample, toRemove, toLookup)
+			Sample(toCreate, toAdd, toRemove, toLookup)
 		}
 	);
 	
 	tree_time_start1 = timestamp();
-	fori(0, iters - 1, 
-		\i -> {pairs2tree(testSet[i].pairs); {} }
+	trees0 = mapRange(iters,
+		\i -> pairs2tree(testSet[i].toCreate)
 	);
 	tree_time1 = (timestamp() - tree_time_start1) / 1000.0;
 	
 	loadFactor = 0.75;
 	hash_time_start1 = timestamp();
-	fori(0, iters - 1, 
-		\i -> {pairs2hashMapWithLoadFactor(testSet[i].pairs, hash, loadFactor); {} }
+	hashMaps = mapRange(iters,
+		\i -> pairs2hashMapLoad(testSet[i].toCreate, hash, loadFactor)
 	);
 	hash_time1 = (timestamp() - hash_time_start1) / 1000.0;
 	
 	println("HASH CREATION IS FASTER: " + d2st(tree_time1 / hash_time1, 2) + " TIMES");
 	
 	tree_time_start11 = timestamp();
-	trees = mapRange(iters, \i -> pairs2tree(testSet[i].pairs));
+	trees = mapi(trees0, \i, t ->
+		fold(testSet[i].toAdd, t, \acc, p ->
+			setTree(acc, p.first, p.second)
+		)
+	);
 	tree_time11 = (timestamp() - tree_time_start11) / 1000.0;
 
 	hash_time_start11 = timestamp();
-	hashMaps = mapRange(iters, \i -> pairs2hashMapWithLoadFactor(testSet[i].pairs, hash, loadFactor));
+	iteri(hashMaps, \i, hm ->
+		iter(testSet[i].toAdd, \p ->
+			setHashMap(hm, p.first, p.second))
+		);
 	hash_time11 = (timestamp() - hash_time_start11) / 1000.0;
 	println("HASH ADDING IS FASTER: " + d2st(tree_time11 / hash_time11, 2) + " TIMES");
 	
@@ -66,9 +75,9 @@ benchmarkPass(size : int, iters : int, random_gen : () -> ?, hash : (?) -> int) 
 	tree_time2 = (timestamp() - tree_time_start2) / 1000.0;
 	
 	hash_time_start2 = timestamp();
-	hashMap1 = mapi(
+	iteri(
 		hashMaps,
-		\i, hashMap -> fold(testSet[i].toRemove, hashMap, \acc, toRemove -> removeFromHashMap(acc, toRemove))
+		\i, hashMap -> iter(testSet[i].toRemove, \toRemove -> removeFromHashMap(hashMap, toRemove))
 	);
 	hash_time2 = (timestamp() - hash_time_start2) / 1000.0;
 
