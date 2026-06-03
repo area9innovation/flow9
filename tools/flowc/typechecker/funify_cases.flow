@@ -399,151 +399,16 @@ funifyUnionAndStruct(env : FEnv, union : FUnion, struct : FStruct, unionIsLeft :
 					rightt = if (unionIsLeft) struct else inst;
 
 					if (fns.kind == FGrowRight()) {
-						// Fresh tyvar approach: create fresh tyvars for the result union,
-						// add constraints from both the struct's concrete params and the
-						// union's existing params. This avoids directly mutating the union's
-						// shared tyvars via FGrowRight side effects.
-						// See typechecker_improvements.md for rationale.
-
-						if (env.verbose >= 2) {
-							fcPrintln("UNIFY funifyUnionAndStruct GrowRight: struct=" + ftype2string(env, struct)
-								+ " union=" + ftype2string(env, union)
-								+ " unionIsLeft=" + b2s(unionIsLeft),
-								env.env.program.acc.config.threadId);
-						}
-
-						// Build a map from struct's type param names to the concrete types
-						// from the actual struct (not the instantiated one)
-						msdef = lookupTree(env.env.program.acc.names.structs, sname);
-						structTyparMap = switch (msdef) {
-							None(): makeTree();
-							Some(sdef): {
-								foldi(sdef.typars, makeTree(), \i, acc, typar -> {
-									switch (typar) {
-										FcTypeParameter(tp, __): {
-											if (i < length(struct.typars)) {
-												setTree(acc, tp, struct.typars[i])
-											} else acc;
-										}
-										default: acc;
-									}
-								});
-							}
-						};
-
-						// For each union type param position, create a fresh tyvar
-						// and add constraints from both inputs.
-						// The fresh tyvar is the JOIN target — FGrowRight on it is safe
-						// since it's not shared. We use FGrowRight to properly compute
-						// the join (e.g. MFocus + MFocusGroup → MaterialFocus).
-						// IMPORTANT: We cannot do FGrowRight(unionTp, fresh) directly
-						// because growRightTyvar mutates BOTH sides when both are tyvars.
-						// Instead, we resolve unionTp's current value and grow fresh
-						// with the resolved (concrete) value only.
-						freshResult = foldi(union.typars, FEnvTypes(env, []), \i, acc : FEnvTypes, unionTp -> {
-							fresh = makeFTyvar(acc.env);
-							// Find the union's i-th type param name
-							uparamName = strLeft("????????????????", i + 1);
-							// Look up if the struct has a concrete type for this param
-							mstructTp = lookupTree(structTyparMap, uparamName);
-
-							// Constraint 1: grow fresh to accommodate struct's concrete type
-							env1r = switch (mstructTp) {
-								None(): FEnvType(acc.env, fresh);
-								Some(stp): {
-									fns.unifyType(acc.env, stp, fresh, FGrowRight(), fns.onError);
-								}
-							};
-
-							// Constraint 2: grow fresh to accommodate union's existing type param.
-							// Resolve the tyvar to its current value to avoid mutating it.
-							resolvedUnionTp = switch (unionTp) {
-								FTypeVar(uid): {
-									switch (lookupTree(env1r.env.tyvars, uid)) {
-										None(): unionTp;  // unbound — keep as tyvar
-										Some(resolved): resolved;
-									}
-								}
-								default: unionTp;
-							};
-							env2r = if (resolvedUnionTp == FTopBottom() || resolvedUnionTp == unionTp) {
-								// Union's param is unbound or unresolved — just link via FUnifyLeft
-								// (fresh must be at least whatever unionTp eventually becomes)
-								fns.unifyType(env1r.env, unionTp, fresh, FUnifyLeft(), fns.onError);
-							} else {
-								// Union's param has a concrete value — grow fresh with it
-								fns.unifyType(env1r.env, resolvedUnionTp, fresh, FGrowRight(), fns.onError);
-							};
-
-							FEnvTypes(env2r.env, arrayPush(acc.types, fresh));
-						});
-
-						result = FUnion(uname, freshResult.types);
-
-						if (env.verbose >= 2) {
-							fcPrintln("UNIFY funifyUnionAndStruct GrowRight result: " + ftype2string(freshResult.env, result),
-								freshResult.env.env.program.acc.config.threadId);
-						}
-
-						FEnvType(freshResult.env, result);
+						// Any type parameter matches should have happened
+						et = fns.unifyType(env, leftt, rightt, FGrowRight(), fns.onError);
+						FEnvType(
+							et.env,
+							union
+						);
 					} else if (fns.kind == FReduceLeft()) {
-						// Fresh tyvar approach for reduce_left (meet/GLB).
-						// Same principle as FGrowRight fresh tyvars: avoid mutating
-						// the union's shared tyvars. For reduce_left, the fresh tyvar
-						// must be ≤ both inputs (meet, not join).
-						// See typechecker_improvements.md item 3.
-
-						if (env.verbose >= 2) {
-							fcPrintln("UNIFY funifyUnionAndStruct ReduceLeft: struct=" + ftype2string(env, struct)
-								+ " union=" + ftype2string(env, union)
-								+ " unionIsLeft=" + b2s(unionIsLeft),
-								env.env.program.acc.config.threadId);
-						}
-
-						msdef2 = lookupTree(env.env.program.acc.names.structs, sname);
-						structTyparMap2 = switch (msdef2) {
-							None(): makeTree();
-							Some(sdef): {
-								foldi(sdef.typars, makeTree(), \i, acc, typar -> {
-									switch (typar) {
-										FcTypeParameter(tp, __): {
-											if (i < length(struct.typars)) {
-												setTree(acc, tp, struct.typars[i])
-											} else acc;
-										}
-										default: acc;
-									}
-								});
-							}
-						};
-
-						freshResult2 = foldi(union.typars, FEnvTypes(env, []), \i, acc : FEnvTypes, unionTp -> {
-							fresh = makeFTyvar(acc.env);
-							uparamName = strLeft("????????????????", i + 1);
-							mstructTp = lookupTree(structTyparMap2, uparamName);
-
-							// Constraint 1: fresh ≤ struct's concrete type
-							env1r = switch (mstructTp) {
-								None(): FEnvType(acc.env, fresh);
-								Some(stp): {
-									fns.unifyType(acc.env, fresh, stp, FUnifyLeft(), fns.onError);
-								}
-							};
-
-							// Constraint 2: fresh ≤ union's existing type param
-							env2r = fns.unifyType(env1r.env, fresh, unionTp, FUnifyLeft(), fns.onError);
-
-							FEnvTypes(env2r.env, arrayPush(acc.types, fresh));
-						});
-
-						result2 = FStruct(sname, freshResult2.types);
-
-						if (env.verbose >= 2) {
-							fcPrintln("UNIFY funifyUnionAndStruct ReduceLeft result: " + ftype2string(freshResult2.env, result2),
-								freshResult2.env.env.program.acc.config.threadId);
-						}
-
-						FEnvType(freshResult2.env, result2);
+						// Intersection: We take the struct
+						et = fns.unifyType(env, leftt, rightt, FReduceLeft(), fns.onError);
+						et;
 					} else if (unionIsLeft) {
 						// union+ <= struct-
 
@@ -1354,3 +1219,5 @@ unifyTypes(env : FEnv, kind : string, outputs : [FType], inputs : [FType], fns :
 		} else acc;
 	});
 }
+
+
