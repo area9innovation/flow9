@@ -103,7 +103,7 @@ ftypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		tyvarIdGroup, 
 		if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else env.program.acc.config.verbose, 
 		typars, makeTree(), makeTree(),
-		makeSet()
+		makeTree()
 	);
 
 	if (be.verbose >= 2)  {
@@ -179,7 +179,10 @@ ftypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		}
 		re;
 	});
-	be2;
+
+	// Collect per-tyvar polarity from constraint positions
+	polarity = collectTyvarPolarity(expects, env);
+	FEnv(be2 with tyvarPolarity = polarity);
 }
 
 unifyType(env : FEnv, output : FType, input : FType, kind : FUnification, onError : (string) -> void) -> FEnvType {
@@ -205,13 +208,13 @@ unifyType(env : FEnv, output : FType, input : FType, kind : FUnification, onErro
 				}
 				// debugTydeps(env);
 
-				env2 = FEnv(env.env, env.tyvarIdGroup, env.verbose, env.tyvars, seen, env.tyvarDeps, env.autoGrownUpperBounds);
+				env2 = FEnv(env.env, env.tyvarIdGroup, env.verbose, env.tyvars, seen, env.tyvarDeps, env.tyvarPolarity);
 
 				rt : FEnvType = if (output == input) FEnvType(env2, output) else unifyAndRecurse(env2, output, input, kind, onError);
 
 				// Now, set the real type in the cache
 				seen2 = setTree(rt.env.seen, tr, rt.type);
-				env3 = FEnv(rt.env.env, rt.env.tyvarIdGroup, rt.env.verbose, rt.env.tyvars, seen2, rt.env.tyvarDeps, rt.env.autoGrownUpperBounds);
+				env3 = FEnv(rt.env.env, rt.env.tyvarIdGroup, rt.env.verbose, rt.env.tyvars, seen2, rt.env.tyvarDeps, rt.env.tyvarPolarity);
 
 				if (env.verbose >= 3)  {
 					printDedent(env.env, "Gave " + ftype2string(env3, rt.type));
@@ -668,17 +671,7 @@ growRightTyvar(env : FEnv, id : int, type : FType, left : bool, recordDep : bool
 			righty = if (left) type else FTypeVar(id);
 
 			nenv0 = setFTypeVar(resenv, id, restype);
-			// FGrowRight creates upper bounds from auto-growth (struct → parent union).
-			// Mark these so setFTyvar prefers the lower (actual) bound, not the grown upper.
-			nenv0b = switch (restype) {
-				FBounded(__, upper): {
-					if (upper != FTopBottom()) {
-						FEnv(nenv0 with autoGrownUpperBounds = insertSet(nenv0.autoGrownUpperBounds, id))
-					} else nenv0;
-				}
-				default: nenv0;
-			};
-			nenv = if (recordDep) addTyvarDependency(nenv0b, lefty, kind, righty) else nenv0b;
+			nenv = if (recordDep) addTyvarDependency(nenv0, lefty, kind, righty) else nenv0;
 			FEnvType(
 				nenv,
 				righty
@@ -771,7 +764,106 @@ addTyvarDependency(env : FEnv, left : FType, kind : FUnification, right : FType)
 			env.tyvars,
 			env.seen,
 			setTree(env.tyvarDeps, left, arrayPush(deps, ut)),
-			env.autoGrownUpperBounds
+			env.tyvarPolarity
 		);
+	}
+}
+
+// Collect per-tyvar polarity from the constraint positions.
+// Walks all FcLessOrEqual/FcGrowToFit constraints:
+//   output position → covariant (+1)
+//   input position  → contravariant (-1)
+// Function arg positions flip polarity. Ref positions make invariant (0).
+// If a tyvar appears in both covariant and contravariant positions, it becomes invariant (0).
+collectTyvarPolarity(expects : List<FcTypeExpect>, env : FcTypeEnv) -> Tree<int, int> {
+	foldList(expects, makeTree(), \acc, e -> {
+		switch (e : FcTypeExpect) {
+			FcLessOrEqual(output, input, __, __, __): {
+				re1 = getResolvedFcType(env.local, output);
+				re2 = getResolvedFcType(env.local, input);
+				acc1 = collectFcTypePolarity(re1, 1, acc);  // output = covariant
+				collectFcTypePolarity(re2, -1, acc1);         // input = contravariant
+			}
+			FcGrowToFit(output, input, __, __, __): {
+				re1 = getResolvedFcType(env.local, output);
+				re2 = getResolvedFcType(env.local, input);
+				acc1 = collectFcTypePolarity(re1, 1, acc);
+				collectFcTypePolarity(re2, -1, acc1);
+			}
+			FcVerifyType(e1, e2, __, __, __): {
+				// Verify uses both directions, so both are invariant
+				re1 = getResolvedFcType(env.local, e1);
+				re2 = getResolvedFcType(env.local, e2);
+				acc1 = collectFcTypePolarity(re1, 0, acc);
+				collectFcTypePolarity(re2, 0, acc1);
+			}
+			FcExpectField(__, fieldType, t, __, __): {
+				// Field access: t is covariant, fieldType is covariant
+				rt = getResolvedFcType(env.local, t);
+				rf = getResolvedFcType(env.local, fieldType);
+				acc1 = collectFcTypePolarity(rt, 1, acc);
+				collectFcTypePolarity(rf, 1, acc1);
+			}
+			FcSetMutableField(struct, __, ftype, __): {
+				// Mutable set: struct covariant, ftype contravariant
+				rs = getResolvedFcType(env.local, struct);
+				rf = getResolvedFcType(env.local, ftype);
+				acc1 = collectFcTypePolarity(rs, 1, acc);
+				collectFcTypePolarity(rf, -1, acc1);
+			}
+		}
+	});
+}
+
+// Walk an FcType, collecting tyvar polarities.
+// polarity: +1 = covariant, -1 = contravariant, 0 = invariant
+collectFcTypePolarity(type : FcType, polarity : int, acc : Tree<int, int>) -> Tree<int, int> {
+	switch (type) {
+		FcTypeVar(id, __): mergeTyvarPolarity(acc, id, polarity);
+		FcTypeArray(t, __): collectFcTypePolarity(t, polarity, acc);
+		FcTypeFunction(args, returnType, __): {
+			// Args are contravariant (flip polarity), return is covariant (keep)
+			acc1 = fold(args, acc, \a, arg -> collectFcTypePolarity(arg.type, -polarity, a));
+			collectFcTypePolarity(returnType, polarity, acc1);
+		}
+		FcTypeRef(t, __): {
+			// Refs are both read and written, so invariant
+			collectFcTypePolarity(t, 0, acc);
+		}
+		FcTypeName(__, typeparameters, __): {
+			fold(typeparameters, acc, \a, tp -> collectFcTypePolarity(tp, polarity, a));
+		}
+		FcTypeStruct(__, typars, args, __): {
+			acc1 = fold(typars, acc, \a, tp -> collectFcTypePolarity(tp, polarity, a));
+			fold(args, acc1, \a, arg -> {
+				if (arg.ismutable) collectFcTypePolarity(arg.type, 0, a)
+				else collectFcTypePolarity(arg.type, polarity, a)
+			});
+		}
+		FcTypeUnion(__, typeparameters, __, __): {
+			fold(typeparameters, acc, \a, tp -> collectFcTypePolarity(tp, polarity, a));
+		}
+		FcTypeParameter(__, __): acc;
+		// Base types have no tyvars
+		FcTypeVoid(__): acc;
+		FcTypeBool(__): acc;
+		FcTypeInt(__): acc;
+		FcTypeDouble(__): acc;
+		FcTypeString(__): acc;
+		FcTypeNative(__): acc;
+		FcTypeFlow(__): acc;
+	}
+}
+
+// Merge a polarity observation for a tyvar.
+// If the tyvar already has the same polarity, keep it.
+// If it has the opposite polarity (or either is 0), set to 0 (invariant).
+mergeTyvarPolarity(acc : Tree<int, int>, id : int, polarity : int) -> Tree<int, int> {
+	switch (lookupTree(acc, id)) {
+		None(): setTree(acc, id, polarity);
+		Some(existing): {
+			if (existing == polarity) acc
+			else setTree(acc, id, 0);  // conflicting or invariant → invariant
+		}
 	}
 }
