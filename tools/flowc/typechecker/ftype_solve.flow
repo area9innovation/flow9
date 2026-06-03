@@ -102,7 +102,8 @@ ftypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		env, 
 		tyvarIdGroup, 
 		if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else env.program.acc.config.verbose, 
-		typars, makeTree(), makeTree()
+		typars, makeTree(), makeTree(),
+		makeSet()
 	);
 
 	if (be.verbose >= 2)  {
@@ -204,13 +205,13 @@ unifyType(env : FEnv, output : FType, input : FType, kind : FUnification, onErro
 				}
 				// debugTydeps(env);
 
-				env2 = FEnv(env.env, env.tyvarIdGroup, env.verbose, env.tyvars, seen, env.tyvarDeps);
+				env2 = FEnv(env.env, env.tyvarIdGroup, env.verbose, env.tyvars, seen, env.tyvarDeps, env.autoGrownUpperBounds);
 
 				rt : FEnvType = if (output == input) FEnvType(env2, output) else unifyAndRecurse(env2, output, input, kind, onError);
 
 				// Now, set the real type in the cache
 				seen2 = setTree(rt.env.seen, tr, rt.type);
-				env3 = FEnv(rt.env.env, rt.env.tyvarIdGroup, rt.env.verbose, rt.env.tyvars, seen2, rt.env.tyvarDeps);
+				env3 = FEnv(rt.env.env, rt.env.tyvarIdGroup, rt.env.verbose, rt.env.tyvars, seen2, rt.env.tyvarDeps, rt.env.autoGrownUpperBounds);
 
 				if (env.verbose >= 3)  {
 					printDedent(env.env, "Gave " + ftype2string(env3, rt.type));
@@ -667,7 +668,17 @@ growRightTyvar(env : FEnv, id : int, type : FType, left : bool, recordDep : bool
 			righty = if (left) type else FTypeVar(id);
 
 			nenv0 = setFTypeVar(resenv, id, restype);
-			nenv = if (recordDep) addTyvarDependency(nenv0, lefty, kind, righty) else nenv0;
+			// FGrowRight creates upper bounds from auto-growth (struct → parent union).
+			// Mark these so setFTyvar prefers the lower (actual) bound, not the grown upper.
+			nenv0b = switch (restype) {
+				FBounded(__, upper): {
+					if (upper != FTopBottom()) {
+						FEnv(nenv0 with autoGrownUpperBounds = insertSet(nenv0.autoGrownUpperBounds, id))
+					} else nenv0;
+				}
+				default: nenv0;
+			};
+			nenv = if (recordDep) addTyvarDependency(nenv0b, lefty, kind, righty) else nenv0b;
 			FEnvType(
 				nenv,
 				righty
@@ -759,7 +770,8 @@ addTyvarDependency(env : FEnv, left : FType, kind : FUnification, right : FType)
 			env.verbose,
 			env.tyvars,
 			env.seen,
-			setTree(env.tyvarDeps, left, arrayPush(deps, ut))
+			setTree(env.tyvarDeps, left, arrayPush(deps, ut)),
+			env.autoGrownUpperBounds
 		);
 	}
 }
