@@ -204,6 +204,7 @@ clearSeen(env : FEnv) -> FEnv {
 		env.tyvars,
 		makeTree(),
 		env.tyvarDeps,
+		env.tyvarPolarity,
 	);
 }
 
@@ -233,6 +234,25 @@ resolveAllTypes(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string)
 }
 
 
+// Check if any tyvar referenced in the FType has a different value in `current` vs `orig`.
+// Used to detect when a tyvar was modified earlier in the current rerunDeps pass.
+ftypeHasChangedTyvars(orig : FEnv, current : FEnv, type : FType) -> bool {
+	switch (type) {
+		FTypeVar(id): {
+			lookupTree(orig.tyvars, id) != lookupTree(current.tyvars, id);
+		}
+		FArray(at): ftypeHasChangedTyvars(orig, current, at);
+		FStruct(__, tps): exists(tps, \tp -> ftypeHasChangedTyvars(orig, current, tp));
+		FUnion(__, tps): exists(tps, \tp -> ftypeHasChangedTyvars(orig, current, tp));
+		FFunction(args, rt): ftypeHasChangedTyvars(orig, current, rt) || exists(args, \a -> ftypeHasChangedTyvars(orig, current, a));
+		FRef(r, w): ftypeHasChangedTyvars(orig, current, r) || ftypeHasChangedTyvars(orig, current, w);
+		FBounded(l, u): ftypeHasChangedTyvars(orig, current, l) || ftypeHasChangedTyvars(orig, current, u);
+		FUnnamedUnion(tps): exists(tps, \tp -> ftypeHasChangedTyvars(orig, current, tp));
+		FFields(fields, __, __): exists(fields, \f : FField -> ftypeHasChangedTyvars(orig, current, f.type));
+		default: false; // FBasicType, FFlow, FTypePar, FTopBottom
+	}
+}
+
 rerunDeps(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError) -> FEnv {
 	if (env.verbose >= 2)  {
 		printIndent(env.env, "\nRerunning unification");
@@ -240,12 +260,39 @@ rerunDeps(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -> vo
 	rt = foldTree(env.tyvarDeps, env, \from : FType, tos : [FUnifyType], acc : FEnv -> {
 		fold(tos, acc, \acc2 : FEnv, to : FUnifyType -> {
 			if (isFDetermined(acc2, from, makeList()) && isFDetermined(acc2, to.type, makeList())) {
-				// TODO: Figure this out. There is a weakness that unbound tyvars, which are really 
-				// typars are not resolved, so we will keep resolving those
-
-				// See error 29: Just because both are determined, we have to check them anyways.
-				// That is an example where it does not work because we don't do that.
-				acc2;
+				// Both sides determined. For c= constraints (FUnifyLeft/FUnifyRight),
+				// re-unify when relevant tyvars changed — this propagates widened types
+				// through linked tyvars (e.g. filtermap's ?? growing from FontFamily
+				// to WigiTextStyle). GrowRight/ReduceLeft constraints are always skipped
+				// to prevent over-widening side effects.
+				isSubtype = switch (to.kind) {
+					FUnifyLeft(): true;
+					FUnifyRight(): true;
+					default: false;
+				};
+				if (isSubtype && (ftypeHasChangedTyvars(env, acc2, from) || ftypeHasChangedTyvars(env, acc2, to.type))) {
+					if (env.verbose >= 2)  {
+						printIndent(env.env, "Re-unifying changed " + ftype2string(acc2, from) + fkind2string(to.kind) + ftype2string(acc2, to.type));
+					}
+					et = funify(acc2, from, to.type, to.kind, \e -> {
+						tyvar1 = switch (from) {
+							FTypeVar(id): id;
+							default: 10000000;
+						}
+						tyvar2 = switch (to.type) {
+							FTypeVar(id): id;
+							default: 10000000;
+						}
+						tyvar = min(tyvar1, tyvar2);
+						onError(tyvar, e)
+					});
+					if (env.verbose >= 2)  {
+						printDedent(env.env, "Unified " + ftype2string(et.env, from) + fkind2string(to.kind) + ftype2string(et.env, to.type) + "\n");
+					}
+					et.env;
+				} else {
+					acc2;
+				}
 			} else {
 				if (env.verbose >= 2)  {
 					printIndent(env.env, "Unifying " + ftype2string(acc2, from) + fkind2string(to.kind) + ftype2string(acc2, to.type));
@@ -526,6 +573,7 @@ updateFTyvar(env : FEnv, tyvar : int, type : FType, explain : () -> string) -> F
 			nt,
 			env.seen,
 			env.tyvarDeps,
+			env.tyvarPolarity,
 		)
 	}
 }
