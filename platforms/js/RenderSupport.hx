@@ -1134,10 +1134,7 @@ class RenderSupport {
 		// For the viewport workaround, use body height instead of innerHeight.
 		// On iOS PWA, innerHeight can be shrunk by the virtual keyboard,
 		// but body (height:100%) always reflects the full layout viewport.
-		var innerHeight : Float = if (viewportScaleWorkaroundEnabled)
-			Browser.document.body.getBoundingClientRect().height
-		else
-			Browser.window.innerHeight;
+		var innerHeight : Float = Browser.document.body.getBoundingClientRect().height;
 
 		// On iOS + Chrome inside iframe Browser.window.innerHeight tends to keep wrong value after initialization
 		// Dirty trick to fix this wrong innerHeight value
