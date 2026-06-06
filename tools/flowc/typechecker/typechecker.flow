@@ -616,6 +616,14 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 				}
 			}
 
+			// Phase 1 DEFERRED: Directional return type constraint (FcLessOrEqual)
+			// causes premature widening of polymorphic type parameters via FBounded
+			// wrapping (fi2wise, test155, test159). Even FcVerifyType (bidirectional)
+			// changes constraint graph topology enough to cause regressions
+			// (flow_wise_tailcall either). The committed growRightTyvar/rerunDeps
+			// fixes already handle the wigi if-else branch join bug.
+			// Future: consider solver/finalizer-level approach instead of
+			// constraint-level indirection.
 			set(rt);
 		}
 		FcSwitch(x, xtype, cases, i): {
@@ -903,15 +911,13 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 			ci = copyFcInfo2(i);
 			recordTypeCheck(acc1, FcNotVoid(et, ci));
 
-			if (isFcTypeVar(itype)) {
-				// There were no type declaration, so we go full on
-				checkOrRecordTypeExpect(acc, FcVerifyType(et, itype, "definition of", ci, e));
-			} else {
+			if (!isFcTypeVar(itype)) {
+				// Annotated let binding: one-directional constraint.
 				checkOrRecordTypeExpect(acc1, FcLessOrEqual(et, itype, "definition of", ci, e));
-				// Also record a post-solve annotation check that detects unsafe downcasts.
-				// FcLessOrEqual is needed for type inference (resolving polymorphic types),
-				// but it can silently accept narrowing annotations. FcCheckAnnotation catches these.
 				recordTypeCheck(acc1, FcCheckAnnotation(et, itype, name, ci));
+			} else {
+				// Unannotated let binding: bidirectional constraint.
+				checkOrRecordTypeExpect(acc1, FcVerifyType(et, itype, "definition of", ci, e));
 			}
 
 			// Record this in the type environment when we check the body

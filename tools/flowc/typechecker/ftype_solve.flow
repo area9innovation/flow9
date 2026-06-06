@@ -103,7 +103,8 @@ ftypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		tyvarIdGroup, 
 		if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else env.program.acc.config.verbose, 
 		typars, makeTree(), makeTree(),
-		makeTree()
+		makeTree(),
+		^(env.local.letTyvars)
 	);
 
 	if (be.verbose >= 2)  {
@@ -126,7 +127,7 @@ ftypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 	// Collect per-tyvar polarity from constraint positions BEFORE solving
 	// so the kind-flip in unifyTyvar can use it during constraint resolution
 	polarity = collectTyvarPolarity(expects, env);
-	bePol = FEnv(be.env, be.tyvarIdGroup, be.verbose, be.tyvars, be.seen, be.tyvarDeps, polarity);
+	bePol = FEnv(be.env, be.tyvarIdGroup, be.verbose, be.tyvars, be.seen, be.tyvarDeps, polarity, be.letTyvars);
 
 	be2 = foldList(expects, bePol, \acc, e -> {
 		// If verbose is on, we keep track of what expects to debug
@@ -206,13 +207,13 @@ unifyType(env : FEnv, output : FType, input : FType, kind : FUnification, onErro
 				}
 				// debugTydeps(env);
 
-				env2 = FEnv(env.env, env.tyvarIdGroup, env.verbose, env.tyvars, seen, env.tyvarDeps, env.tyvarPolarity);
+				env2 = FEnv(env.env, env.tyvarIdGroup, env.verbose, env.tyvars, seen, env.tyvarDeps, env.tyvarPolarity, env.letTyvars);
 
 				rt : FEnvType = if (output == input) FEnvType(env2, output) else unifyAndRecurse(env2, output, input, kind, onError);
 
 				// Now, set the real type in the cache
 				seen2 = setTree(rt.env.seen, tr, rt.type);
-				env3 = FEnv(rt.env.env, rt.env.tyvarIdGroup, rt.env.verbose, rt.env.tyvars, seen2, rt.env.tyvarDeps, rt.env.tyvarPolarity);
+				env3 = FEnv(rt.env.env, rt.env.tyvarIdGroup, rt.env.verbose, rt.env.tyvars, seen2, rt.env.tyvarDeps, rt.env.tyvarPolarity, rt.env.letTyvars);
 
 				if (env.verbose >= 3)  {
 					printDedent(env.env, "Gave " + ftype2string(env3, rt.type));
@@ -625,7 +626,16 @@ unifyUnboundTyvar(env : FEnv, id : int, type : FType, left : bool, recordDep : b
 			);
 		}
 		FUnion(__, __): def();
-		FStruct(__, __): def();
+		FStruct(__, __): {
+			// For let-binding tyvars: a concrete struct IS the type.
+			// Assign directly instead of creating FBounded, which would
+			// cause inner field widening through solver bound merging.
+			if (!left && containsSet(env.letTyvars, id)) {
+				FEnvType(env, type);
+			} else {
+				def();
+			}
+		}
 		FUnnamedUnion(__): def();
 		FFields(__, __, __): def();
 	}
@@ -765,7 +775,8 @@ addTyvarDependency(env : FEnv, left : FType, kind : FUnification, right : FType)
 			env.tyvars,
 			env.seen,
 			setTree(env.tyvarDeps, left, arrayPush(deps, ut)),
-			env.tyvarPolarity
+			env.tyvarPolarity,
+			env.letTyvars
 		);
 	}
 }
