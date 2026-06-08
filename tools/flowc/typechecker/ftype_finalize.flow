@@ -204,7 +204,6 @@ clearSeen(env : FEnv) -> FEnv {
 		env.tyvars,
 		makeTree(),
 		env.tyvarDeps,
-		env.letTyvars,
 	);
 }
 
@@ -513,27 +512,6 @@ resolveKisses(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -
 
 // Dereference tyvar indirections in the FEnv to find the concrete type.
 // Only follows plain tyvar→value mappings. Does NOT chase through FBounded
-// lower bounds, because intermediate bounds may have been widened by the solver.
-resolveLetLowerBound(env : FEnv, type : FType) -> FType {
-	switch (type) {
-		FTypeVar(id): {
-			switch (lookupTree(env.tyvars, id)) {
-				Some(resolved): {
-					switch (resolved) {
-						// If the tyvar points to another tyvar, keep chasing
-						FTypeVar(id2): if (id2 != id) resolveLetLowerBound(env, resolved) else type;
-						// If the tyvar is resolved to a concrete type, use it
-						// But DON'T chase through FBounded — those inner bounds may be widened
-						default: resolved;
-					}
-				}
-				None(): type;
-			}
-		}
-		default: type;
-	}
-}
-
 resolveBounds(env : FEnv, heuristic : int, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError) -> FEnv {
 	if (env.verbose >= 2)  {
 		if (heuristic == 0) {
@@ -551,42 +529,7 @@ resolveBounds(env : FEnv, heuristic : int, funify : (FEnv, FType, FType, FUnific
 			printIndent(env.env, "Unifying " + ftype2string(env, FTypeVar(tyvar)));
 		}
 
-		// For let-binding tyvars, prefer the lower bound (definition type) over
-		// upper bound (usage type) to prevent backward widening.
-		// Only apply at heuristic >= 1 when we have FBounded with a concrete lower bound.
-		letResolved = if (heuristic >= 1 && containsSet(acc.letTyvars, tyvar)) {
-			switch (rt) {
-				FBounded(lower, upper): {
-					// Resolve both bounds through plain tyvar indirections.
-					resolvedLower = resolveLetLowerBound(acc, lower);
-					resolvedUpper = resolveLetLowerBound(acc, upper);
-					// Prefer lower bound only when lower and upper are the same struct
-					// (e.g. Tree<string, FiTypeParameter> vs Tree<string, FiType>).
-					// This prevents inner type parameter widening while avoiding
-					// field widening when struct is in a wider union (tparagraph case).
-					switch (resolvedLower) {
-						FStruct(lname, __): {
-							switch (resolvedUpper) {
-								FStruct(uname, __): {
-									if (lname == uname) Some(FEnvType(acc, resolvedLower))
-									else None();
-								}
-								default: None();
-							}
-						}
-						default: None();
-					}
-				}
-				default: None();
-			}
-		} else {
-			None();
-		}
-
-		mt = switch (letResolved) {
-			Some(resolved): resolved;
-			None(): mergeFRange(acc, rt, heuristic, funify, \e -> onError(tyvar, e));
-		}
+		mt = mergeFRange(acc, rt, heuristic, funify, \e -> onError(tyvar, e));
 
 		if (env.verbose >= 2)  {
 			printDedent(env.env, "Unified " + ftype2string(env, FTypeVar(tyvar)) + " to " + ftype2string(mt.env, mt.type));
@@ -691,7 +634,6 @@ updateFTyvar(env : FEnv, tyvar : int, type : FType, explain : () -> string) -> F
 			nt,
 			env.seen,
 			env.tyvarDeps,
-			env.letTyvars,
 		)
 	}
 }
