@@ -17,14 +17,20 @@ class HttpCustom extends haxe.Http {
 	// Zero overhead when disabled: all methods check window.__flowPendingRequests existence first.
 	// Flow enables tracking by initializing globals via hostCall("eval", ...) when monitoring starts.
 	//
-	// __flowPendingRequests: {id: {startTime, url}} — currently in-flight requests.
+	// __flowPendingRequests: {id: {startTime, firstByteTime, url}} — currently in-flight requests.
 	//   Memory/performance safe: each entry ~80 bytes, deleted on completion/error/timeout.
 	//   Typical size 1-5 entries. O(1) operations.
 	//
-	// __flowBwSamples: [{kbps, ms}] — per-request bandwidth and delay samples.
-	//   Sampled at readyState=4 (Content-Length with fallback) and during onprogress (event.loaded).
-	//   Only requests with size >= 2048 bytes and elapsed > 100ms are recorded —
-	//   small responses produce meaningless bandwidth (20 bytes / 200ms = 0.8 kbps on fast network).
+	// __flowBwSamples: [{kbps, ms}] — per-request bandwidth and delay samples, recorded once on
+	//   completion (readyState=4). kbps is measured over the TRANSFER PHASE only: from the first
+	//   progress event (≈ responseStart, first body byte) to completion. This excludes DNS/TCP/TLS,
+	//   server processing, and most main-thread jank — none of which are bandwidth, and all of which
+	//   made fast links read as slow when the whole request lifetime was used. Size from
+	//   Content-Length (compressed wire bytes) with fallback to responseText.length/byteLength.
+	//   ms is the DELAY (time-to-first-byte: start → first progress event), NOT the transfer time —
+	//   Flow judges ms as latency, so using transfer time would flag large healthy downloads as slow.
+	//   Only large transfers (>= 64KB) with a transfer phase > 100ms are recorded — small responses
+	//   are latency-bound and produce meaningless bandwidth; aborted requests are skipped entirely.
 	//   Polled and cleared by Flow every 2s. Median resists outliers. Capped at 20 entries.
 
 	private function trackStart(url : String) : Void {
@@ -32,54 +38,60 @@ class HttpCustom extends haxe.Http {
 			var p = window.__flowPendingRequests;
 			if (p) {
 				var id = ++window.__flowPendingRequestId;
-				p[id] = {startTime: performance.now(), url: {0}};
+				p[id] = {startTime: performance.now(), firstByteTime: 0, url: {0}};
 				{1} = id;
 			}
 		", url, trackId);
 	}
 
-	private function trackProgress(loaded : Int) : Void {
+	private function trackProgress() : Void {
 		untyped __js__("
 			var p = window.__flowPendingRequests;
 			if (p) {
 				var r = p[{0}];
-				if (r && {1} >= 2048) {
-					var elapsed = performance.now() - r.startTime;
-					if (elapsed > 100) {
-						var a = window.__flowBwSamples;
-						if (a) { a.push({kbps: {1} * 8 / elapsed, ms: elapsed}); if (a.length > 20) a.shift(); }
-					}
-				}
+				// Stamp the first-byte time (first body chunk, approx responseStart). trackEnd measures
+				// the transfer phase from here, excluding TTFB and server processing.
+				if (r && !r.firstByteTime) r.firstByteTime = performance.now();
 			}
-		", trackId, loaded);
+		", trackId);
 	}
 
-	private function trackEnd() : Void {
+	private function trackEnd(aborted : Bool) : Void {
 		untyped __js__("
 			var p = window.__flowPendingRequests;
 			if (p && p[{0}]) {
 				var r = p[{0}];
-				var elapsed = performance.now() - r.startTime;
-				try {
-					var x = {1};
-					if (x) {
-						var cl = x.getResponseHeader('Content-Length');
-						var size = cl ? parseInt(cl, 10) : 0;
-						if (!size) {
-							var rt = x.responseType;
-							if (!rt || rt === 'text' || rt === '') size = (x.responseText || '').length;
-							else if (rt === 'arraybuffer' && x.response) size = x.response.byteLength;
-							else if (x.response) size = x.response.length || 0;
+				// Transfer phase: first byte to completion. Falls back to full request time when no
+				// progress event fired (tiny/instant responses), which the size gate excludes anyway.
+				var transferMs = r.firstByteTime ? (performance.now() - r.firstByteTime) : (performance.now() - r.startTime);
+				// Latency (delay) is time-to-first-byte, NOT transfer time — Flow's isBadResults judges
+				// the 'ms' field as delay. Using transferMs here would flag any large healthy download
+				// as slow (delay > 2000ms). Falls back to transferMs only when first-byte is unknown.
+				var ttfbMs = r.firstByteTime ? (r.firstByteTime - r.startTime) : transferMs;
+				if (!{2}) {
+					try {
+						var x = {1};
+						if (x) {
+							var cl = x.getResponseHeader('Content-Length');
+							var size = cl ? parseInt(cl, 10) : 0;
+							if (!size) {
+								var rt = x.responseType;
+								if (!rt || rt === 'text' || rt === '') size = (x.responseText || '').length;
+								else if (rt === 'arraybuffer' && x.response) size = x.response.byteLength;
+								else if (x.response) size = x.response.length || 0;
+							}
+							// Only large transfers yield meaningful bandwidth — small responses are
+							// latency-bound. 64KB over a >100ms transfer phase is the floor.
+							if (size >= 65536 && transferMs > 100) {
+								var a = window.__flowBwSamples;
+								if (a) { a.push({kbps: size * 8 / transferMs, ms: ttfbMs}); if (a.length > 20) a.shift(); }
+							}
 						}
-						if (size >= 2048 && elapsed > 100) {
-							var a = window.__flowBwSamples;
-							if (a) { a.push({kbps: size * 8 / elapsed, ms: elapsed}); if (a.length > 20) a.shift(); }
-						}
-					}
-				} catch(e) {}
+					} catch(e) {}
+				}
 				delete p[{0}];
 			}
-		", trackId, req);
+		", trackId, req, aborted);
 	}
 
 	public override function new( url : String, method : String ) {
@@ -127,7 +139,7 @@ class HttpCustom extends haxe.Http {
 
 		var onprogress = function(event) {
 			me.loadedLength = event.loaded;
-			me.trackProgress(event.loaded);
+			me.trackProgress();
 		}
 
 		var onreadystatechange = function(v) {
@@ -149,7 +161,7 @@ class HttpCustom extends haxe.Http {
 			if( s != null )
 				me.onStatus(s);
 
-			me.trackEnd();
+			me.trackEnd(false);
 			me.req = null;
 
 			if (responseEncoding == "wtf8") {
@@ -225,7 +237,7 @@ class HttpCustom extends haxe.Http {
 			} else
 				r.open("GET",url,async);
 		} catch( e : Dynamic ) {
-			me.trackEnd();
+			me.trackEnd(true);
 			me.req = null;
 			me.onError(e.toString());
 			return;
@@ -254,7 +266,7 @@ class HttpCustom extends haxe.Http {
 				try {
 					r.setRequestHeader(h.name,h.value);
 				} catch (e : Dynamic) {
-					me.trackEnd();
+					me.trackEnd(true);
 					me.req = null;
 					me.onResponse(0, e.toString(), []);
 					return;
@@ -268,7 +280,7 @@ class HttpCustom extends haxe.Http {
 				try {
 					r.setRequestHeader(h.header,h.value);
 				} catch (e : Dynamic) {
-					me.trackEnd();
+					me.trackEnd(true);
 					me.req = null;
 					me.onResponse(0, e.toString(), []);
 					return;
@@ -283,7 +295,7 @@ class HttpCustom extends haxe.Http {
 
 	public override function cancel() {
 		if (this.req != null) {
-			this.trackEnd();
+			this.trackEnd(true);
 			this.req.abort();
 			this.req = null;
 		}
