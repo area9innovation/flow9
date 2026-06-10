@@ -697,7 +697,27 @@ reduceLeftTyvar(env : FEnv, id : int, type : FType, left : bool, recordDep : boo
 
 			lefty = if (left) FTypeVar(id) else type;
 			righty = if (left) type else FTypeVar(id);
-			nenv0 = setFTypeVar(resenv, id, restype);
+			nenv0 = if (left) {
+				setFTypeVar(resenv, id, restype);
+			} else {
+				// When the tyvar is on the right of reduce_left (T reduce_left α=ftype),
+				// restype is the narrowed LEFT side. Skip the update only when it would
+				// widen a concrete type back to bounded — causing oscillation
+				// (e.g., α=Transform<bool> → {DynBeh..Transform} → Transform → ...).
+				// When ftype is itself bounded or unresolved, allow the update —
+				// bounded-to-bounded propagation is needed for resolving nested
+				// type parameters (e.g., ShareRule<α> → ShareRule<string>).
+				switch (restype) {
+					FBounded(__, __): {
+						switch (ftype) {
+							FBounded(__, __): setFTypeVar(resenv, id, restype);
+							FTypeVar(__): setFTypeVar(resenv, id, restype);
+							default: resenv;
+						}
+					}
+					default: setFTypeVar(resenv, id, restype);
+				}
+			};
 			nenv = if (recordDep) addTyvarDependency(nenv0, lefty, kind, righty) else nenv0;
 			FEnvType(
 				nenv,
