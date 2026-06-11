@@ -233,6 +233,65 @@ resolveAllTypes(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string)
 }
 
 
+// Check if any tyvar referenced in the FType has a different value in `current` vs `orig`.
+// Used to detect when a tyvar was modified earlier in the current rerunDeps pass.
+ftypeHasChangedTyvars(orig : FEnv, current : FEnv, type : FType) -> bool {
+	switch (type) {
+		FTypeVar(id): {
+			lookupTree(orig.tyvars, id) != lookupTree(current.tyvars, id);
+		}
+		FArray(at): ftypeHasChangedTyvars(orig, current, at);
+		FStruct(__, tps): exists(tps, \tp -> ftypeHasChangedTyvars(orig, current, tp));
+		FUnion(__, tps): exists(tps, \tp -> ftypeHasChangedTyvars(orig, current, tp));
+		FFunction(args, rt): ftypeHasChangedTyvars(orig, current, rt) || exists(args, \a -> ftypeHasChangedTyvars(orig, current, a));
+		FRef(r, w): ftypeHasChangedTyvars(orig, current, r) || ftypeHasChangedTyvars(orig, current, w);
+		FBounded(l, u): ftypeHasChangedTyvars(orig, current, l) || ftypeHasChangedTyvars(orig, current, u);
+		FUnnamedUnion(tps): exists(tps, \tp -> ftypeHasChangedTyvars(orig, current, tp));
+		FFields(fields, __, __): exists(fields, \f : FField -> ftypeHasChangedTyvars(orig, current, f.type));
+		default: false; // FBasicType, FFlow, FTypePar, FTopBottom
+	}
+}
+// Check if origType is a struct/union that's already a subtype of newType's union.
+// Used to detect when a re-unification would widen a struct to its parent union
+// (e.g. SValue → SSql), meaning the original subtype constraint was already satisfied.
+isStructInUnion(env : FEnv, origType : FType, newType : FType) -> bool {
+	switch (origType) {
+		FStruct(origName, __): {
+			switch (newType) {
+				FUnion(unionName, __): {
+					switch (lookupTree(env.env.program.acc.names.unions, unionName)) {
+						None(): false;
+						Some(ud): exists(ud.typenames, \tn -> tn.name == origName);
+					}
+				}
+				FUnnamedUnion(types): {
+					exists(types, \t -> {
+						switch (t) {
+							FStruct(n, __): n == origName;
+							default: false;
+						}
+					});
+				}
+				default: false;
+			}
+		}
+		FUnion(origUnion, __): {
+			switch (newType) {
+				FUnion(newUnion, __): {
+					origUnion != newUnion && switch (lookupTree(env.env.program.acc.names.unions, newUnion)) {
+						None(): false;
+						Some(ud): exists(ud.typenames, \tn -> tn.name == origUnion);
+					}
+				}
+				default: false;
+			}
+		}
+		default: false;
+	}
+}
+
+
+
 rerunDeps(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError) -> FEnv {
 	if (env.verbose >= 2)  {
 		printIndent(env.env, "\nRerunning unification");
@@ -240,12 +299,59 @@ rerunDeps(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -> vo
 	rt = foldTree(env.tyvarDeps, env, \from : FType, tos : [FUnifyType], acc : FEnv -> {
 		fold(tos, acc, \acc2 : FEnv, to : FUnifyType -> {
 			if (isFDetermined(acc2, from, makeList()) && isFDetermined(acc2, to.type, makeList())) {
-				// TODO: Figure this out. There is a weakness that unbound tyvars, which are really 
-				// typars are not resolved, so we will keep resolving those
-
-				// See error 29: Just because both are determined, we have to check them anyways.
-				// That is an example where it does not work because we don't do that.
-				acc2;
+				// Both sides determined. For c= constraints (FUnifyLeft/FUnifyRight),
+				// re-unify when relevant tyvars changed — this propagates widened types
+				// through linked tyvars (e.g. filtermap's ?? growing from FontFamily
+				// to WigiTextStyle). GrowRight/ReduceLeft constraints are always skipped
+				// to prevent over-widening side effects.
+				isSubtype = switch (to.kind) {
+					FUnifyLeft(): true;
+					FUnifyRight(): true;
+					default: false;
+				};
+				if (isSubtype && (ftypeHasChangedTyvars(env, acc2, from) || ftypeHasChangedTyvars(env, acc2, to.type))) {
+					if (env.verbose >= 2)  {
+						printIndent(env.env, "Re-unifying changed " + ftype2string(acc2, from) + fkind2string(to.kind) + ftype2string(acc2, to.type));
+					}
+					// Suppress errors during re-unification of determined constraints.
+					// The purpose is to propagate widened types to the `to` side, not to widen
+					// the `from` side. Save the from tyvar's value and restore it after
+					// re-unification when the original value was already a subtype of the
+					// result (preventing backward widening like SValue → SSql).
+					savedFrom : Maybe<Pair<int, Maybe<FType>>> = switch (from) {
+						FTypeVar(id): Some(Pair(id, lookupTree(acc2.tyvars, id)));
+						default: None();
+					};
+					et = funify(acc2, from, to.type, to.kind, nop1);
+					// Restore the from tyvar only when the original was a struct that
+					// is already a member of the result union — the constraint was satisfied
+					// and the widening is spurious.
+					restoredEnv = switch (savedFrom) {
+						Some(p): {
+							switch (p.second) {
+								Some(origType): {
+									newType = lookupTree(et.env.tyvars, p.first);
+									shouldRestore = switch (newType) {
+										Some(nt): {
+											isStructInUnion(et.env, origType, nt);
+										}
+										None(): false;
+									};
+									if (shouldRestore) setFTypeVar(et.env, p.first, origType)
+									else et.env;
+								}
+								None(): et.env;
+							}
+						}
+						None(): et.env;
+					};
+					if (env.verbose >= 2)  {
+						printDedent(env.env, "Unified " + ftype2string(restoredEnv, from) + fkind2string(to.kind) + ftype2string(restoredEnv, to.type) + "\n");
+					}
+					restoredEnv;
+				} else {
+					acc2;
+				}
 			} else {
 				if (env.verbose >= 2)  {
 					printIndent(env.env, "Unifying " + ftype2string(acc2, from) + fkind2string(to.kind) + ftype2string(acc2, to.type));
@@ -404,6 +510,8 @@ resolveKisses(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -
 	});
 }
 
+// Dereference tyvar indirections in the FEnv to find the concrete type.
+// Only follows plain tyvar→value mappings. Does NOT chase through FBounded
 resolveBounds(env : FEnv, heuristic : int, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError) -> FEnv {
 	if (env.verbose >= 2)  {
 		if (heuristic == 0) {
