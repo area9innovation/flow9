@@ -157,9 +157,9 @@ class FlowRunnerView extends GLSurfaceView {
     private static class ContextFactory implements GLSurfaceView.EGLContextFactory {
         private static int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
         public EGLContext createContext(@NonNull EGL10 egl, EGLDisplay display, EGLConfig eglConfig) {
-            Log.w(Utils.LOG_TAG, "creating OpenGL ES 2.0 context");
+            Log.w(Utils.LOG_TAG, "creating OpenGL ES 3.0 context");
             checkEglError("Before eglCreateContext", egl);
-            int[] attrib_list = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL10.EGL_NONE };
+            int[] attrib_list = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL10.EGL_NONE };
             EGLContext context = egl.eglCreateContext(display, eglConfig, EGL10.EGL_NO_CONTEXT, attrib_list);
             checkEglError("After eglCreateContext", egl);
             return context;
@@ -199,18 +199,18 @@ class FlowRunnerView extends GLSurfaceView {
             mStencilSize = stencil;
         }
 
-        /* This EGL config specification is used to specify 2.0 rendering.
+        /* This EGL config specification is used to specify 3.0 rendering.
          * We use a minimum size of 4 bits for red/green/blue, but will
          * perform actual matching in chooseConfig() below.
          */
-        private static int EGL_OPENGL_ES2_BIT = 4;
+        private static int EGL_OPENGL_ES3_BIT = 0x40;
         @NonNull
         private static int[] s_configAttribs2 =
         {
             EGL10.EGL_RED_SIZE, 4,
             EGL10.EGL_GREEN_SIZE, 4,
             EGL10.EGL_BLUE_SIZE, 4,
-            EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+            EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
             EGL10.EGL_NONE
         };
 

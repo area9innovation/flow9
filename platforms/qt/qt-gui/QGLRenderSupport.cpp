@@ -1,6 +1,8 @@
 #include "QGLRenderSupport.h"
 #include "QGLTextEdit.h"
 #include "QGLLineEdit.h"
+#include <QTimer>
+#include <iostream>
 
 #include "gl-gui/GLRenderer.h"
 #include "gl-gui/GLTextClip.h"
@@ -17,15 +19,20 @@
 
 #include <QApplication>
 #include <QMessageBox>
-#include <QGLFramebufferObject>
+#include <QOpenGLFramebufferObject>
+#include <QAudioOutput>
 #include <QLabel>
+#ifndef QT_NO_WEBENGINE
 #include <QWebEngineSettings>
 #include <QWebEngineProfile>
-#include <QVideoSurfaceFormat>
+#include <QWebEngineFindTextResult>
+#endif
 
 #include <sstream>
 
+#ifndef QT_NO_WEBENGINE
 #include "QGLWebPage.h"
+#endif
 
 #include "core/RunnerMacros.h"
 #include "utils/flowfilestruct.h"
@@ -292,7 +299,7 @@ void QGLRenderSupport::OnRunnerReset(bool inDestructor)
     GLRenderSupport::OnRunnerReset(inDestructor);
 
     for (std::map<GLClip*,QWidget*>::iterator it = NativeWidgets.begin(); it != NativeWidgets.end(); ++it)
-        if (it->second != Q_NULLPTR)
+        if (it->second != nullptr)
             it->second->deleteLater();
 
     NativeWidgets.clear();
@@ -355,8 +362,11 @@ bool QGLRenderSupport::doCreateNativeWidget(GLClip* clip, bool neww)
         ok = doCreateTextWidget(widget, text_clip);
     else if (GLVideoClip* video_clip = flow_native_cast<GLVideoClip>(clip)) {
         ok = doCreateVideoWidget(widget, video_clip);
-    } else if (GLWebClip* web_clip = flow_native_cast<GLWebClip>(clip))
+    }
+#ifndef QT_NO_WEBENGINE
+    else if (GLWebClip* web_clip = flow_native_cast<GLWebClip>(clip))
         ok = doCreateWebWidget(widget, web_clip);
+#endif
 
     if (widget) {
         NativeWidgetClips[widget] = clip;
@@ -527,18 +537,15 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
     } else {
         // Media player does the video decoding and hands us new frames
         QMediaPlayer* player;
-        if (video_clip->isHeadersSet())
-            player = new QMediaPlayer(nullptr, QMediaPlayer::StreamPlayback);
-        else
-            player = new QMediaPlayer(nullptr, QMediaPlayer::VideoSurface);
+        player = new QMediaPlayer(nullptr);
 
         widget = videoWidget = new VideoWidget(this);
         VideoPlayerMap[player] = videoWidget;
 
-        connect(player, &QMediaPlayer::stateChanged, this, &QGLRenderSupport::videoStateChanged);
+        connect(player, &QMediaPlayer::playbackStateChanged, this, &QGLRenderSupport::videoStateChanged);
         connect(player, &QMediaPlayer::mediaStatusChanged, this, &QGLRenderSupport::mediaStatusChanged);
         connect(player, &QMediaPlayer::positionChanged, this, &QGLRenderSupport::videoPositionChanged);
-        connect(player, SIGNAL(error(QMediaPlayer::Error)), this, SLOT(handleVideoError()));
+        connect(player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString&) { handleVideoError(); });
         connect(videoWidget, &VideoWidget::onError, this, [this, video_clip](QString errorText){
             WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
             getFlowRunner()->flow_err << "Video error: " << encodeUtf8(qt2unicode(errorText)) << endl;
@@ -546,8 +553,7 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
         });
 
         videoWidget->hide();
-        player->setVideoOutput(videoWidget->videoSurface());
-        player->setNotifyInterval(10);
+        player->setVideoOutput(videoWidget->videoSink());
         videoWidget->setMediaPlayer(player);
 
         // We pass the frames from Qt to our OpenGL video renderer through a texture
@@ -555,6 +561,11 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
         video_clip->setVideoTextureImage(texture_bitmap);
         videoWidget->setTargetVideoTexture(texture_bitmap);
         videoWidget->setVideoClip(video_clip);
+
+        // When a new video frame arrives, request a redraw so it gets displayed.
+        // Without this, needsRendering() may return false and the timer won't
+        // schedule a paint — causing the video to appear black until a mouse click.
+        connect(videoWidget->videoSurface(), &VideoSurface::frameUpdate, this, &QGLRenderSupport::doRequestRedraw);
 
         // Load the video file and start playing the video
         videoWidget->setMediaSource(
@@ -618,7 +629,13 @@ void QGLRenderSupport::doUpdateVideoVolume(GLVideoClip *video_clip)
     QMediaPlayer *player = videoWidget->mediaPlayer();
     if (!player) return;
 
-    player->setVolume(video_clip->getVolume() * 100);
+    // Qt6: volume is set via QAudioOutput (float 0.0-1.0)
+    QAudioOutput *audioOutput = player->audioOutput();
+    if (!audioOutput) {
+        audioOutput = new QAudioOutput(player);
+        player->setAudioOutput(audioOutput);
+    }
+    audioOutput->setVolume(video_clip->getVolume());
 }
 
 void QGLRenderSupport::doUpdateVideoPlaybackRate(GLVideoClip *video_clip)
@@ -654,17 +671,37 @@ void QGLRenderSupport::mediaStatusChanged(QMediaPlayer::MediaStatus status)
     QMediaPlayer *player = qobject_cast<QMediaPlayer*>(sender());
     if (!player) return;
 
+    // In Qt 6, mediaStatusChanged fires much more frequently than Qt 5.
+    // Operations like setPosition() and play()/pause() can re-trigger this signal
+    // synchronously via: dispatchVideoPlayStatus → notifyEvent → update()
+    //   → doUpdateVideoPosition/doUpdateVideoPlay → player->setPosition()/play()/pause()
+    //   → mediaStatusChanged (re-entrant call).
+    // Guard against this to prevent infinite recursion (stack overflow).
+    if (ProcessingMediaStatusChange.count(player))
+        return;
+
     VideoWidget *videoWidget = VideoPlayerMap[player];
     if (!videoWidget) return;
 
     GLClip *owner = NativeWidgetClips[videoWidget];
     if (!owner) return;
 
+    ProcessingMediaStatusChange.insert(player);
+
     switch (status) {
-        case QMediaPlayer::BufferedMedia:
         case QMediaPlayer::LoadedMedia: {
             dispatchVideoDuration(owner, player->duration());
             dispatchVideoPlayStatus(owner, GLVideoClip::PlayStart);
+            break;
+        }
+        case QMediaPlayer::BufferedMedia: {
+            // In Qt 6, BufferedMedia fires repeatedly during normal playback whenever
+            // buffering state transitions occur. Must be a complete no-op here because:
+            // - dispatchVideoPlayStatus(PlayStart) triggers update() → doUpdateVideoPlay/doUpdateVideoPosition
+            // - dispatchVideoDuration triggers DurationChange → update() → doUpdateVideoPosition
+            // - Both paths call setPosition()/play()/pause() which re-emit BufferingMedia/BufferedMedia
+            //   creating an infinite event loop (non-recursive but unbounded via Qt event queue).
+            // Duration and PlayStart are already dispatched from LoadedMedia.
             break;
         }
         case QMediaPlayer::EndOfMedia: {
@@ -673,9 +710,11 @@ void QGLRenderSupport::mediaStatusChanged(QMediaPlayer::MediaStatus status)
         }
         default: break;
     }
+
+    ProcessingMediaStatusChange.erase(player);
 }
 
-void QGLRenderSupport::videoStateChanged(QMediaPlayer::State state)
+void QGLRenderSupport::videoStateChanged(QMediaPlayer::PlaybackState state)
 {
     QMediaPlayer *player = qobject_cast<QMediaPlayer*>(sender());
     if (!player) return;
@@ -719,6 +758,7 @@ void QGLRenderSupport::videoPositionChanged(int64_t position)
     dispatchVideoPosition(owner, position);
 }
 
+#ifndef QT_NO_WEBENGINE
 bool QGLRenderSupport::doCreateWebWidget(QWidget *&widget, GLWebClip *web_clip) {
     QWebEngineView *web_view = qobject_cast<QWebEngineView*>(widget);
     if (!web_view) {
@@ -759,8 +799,8 @@ void QGLRenderSupport::webPageLoaded(bool ok) {
     GLClip *nester = NativeWidgetClips[web_view];
 
     if (ok) {
-        web_view->findText("404 Not Found", QWebEnginePage::FindFlags(), [this, nester](bool found) {
-            if (found) {
+        web_view->findText("404 Not Found", QWebEnginePage::FindFlags(), [this, nester](const QWebEngineFindTextResult &result) {
+            if (result.numberOfMatches() > 0) {
                 dispatchPageError(nester, "404 Page Not Found");
             } else {
                 dispatchPageLoaded(nester);
@@ -798,7 +838,8 @@ StackSlot QGLRenderSupport::webClipHostCall(GLWebClip * clip, const unicode_stri
         std::stringstream ss;
         getFlowRunner()->PrintData(ss, args);
         QString args_str = QString::fromStdString(ss.str());
-        page->runJavaScript(fn + "(" + args_str.mid(1,args_str.length()-2) + ")", [this](const QVariant &var) {
+        QString js = fn + "(" + args_str.mid(1,args_str.length()-2) + ")";
+        page->runJavaScript(js, [this](const QVariant &var) {
             return variant2slot(var);
         });
     }
@@ -827,6 +868,7 @@ StackSlot QGLRenderSupport::webClipEvalJS(GLWebClip * clip, const unicode_string
 StackSlot QGLRenderSupport::variant2slot(QVariant var) {
     return getFlowRunner()->AllocateString(var.toString());
 }
+#endif // QT_NO_WEBENGINE
 
 void QGLRenderSupport::initializeGL()
 {
@@ -836,6 +878,13 @@ void QGLRenderSupport::initializeGL()
         cerr << GLRenderer::getOpenGLInfo() << endl;
         exit(1);
     }
+
+    // No fixed-rate render timer.  Rendering is driven by:
+    //   1. Video frame arrival  (VideoSurface::frameUpdate → doRequestRedraw → update())
+    //   2. Flow runtime changes (needsRendering() → doRequestRedraw → update())
+    //   3. Input events         (mouse/keyboard handlers call update())
+    // A fixed 16 ms PreciseTimer starves the macOS compositor and causes
+    // system-wide sluggishness even for tiny videos.
 }
 
 void QGLRenderSupport::resizeGL(int w, int h)
@@ -987,7 +1036,7 @@ void QGLRenderSupport::dispatchMouseEventFromWidget(QWidget *widget, FlowEvent e
 void QGLRenderSupport::mouseMoveEvent(QMouseEvent *event)
 {
     if (EmulatePanGesture && (event->buttons() & Qt::LeftButton))
-        dispatchGestureEvent(FlowPanEvent, FlowGestureStateProgress, event->x(), event->y(), event->x() - MouseX, event->y() - MouseY);
+        dispatchGestureEvent(FlowPanEvent, FlowGestureStateProgress, event->position().x(), event->position().y(), event->position().x() - MouseX, event->position().y() - MouseY);
 
     // No mouse tracking in fake touch mode
     if (NoHoverMouse && !event->buttons())
@@ -995,33 +1044,33 @@ void QGLRenderSupport::mouseMoveEvent(QMouseEvent *event)
 
     updateLastUserAction();
 
-    dispatchMouseEvent(FlowMouseMove, event->x(), event->y());
+    dispatchMouseEvent(FlowMouseMove, event->position().x(), event->position().y());
 }
 
 void QGLRenderSupport::mousePressEvent(QMouseEvent *event)
 {
     if (EmulatePanGesture)
-        dispatchGestureEvent(FlowPanEvent, FlowGestureStateBegin, event->x(), event->y(), 0.0f, 0.0f);
+        dispatchGestureEvent(FlowPanEvent, FlowGestureStateBegin, event->position().x(), event->position().y(), 0.0f, 0.0f);
 
     if (event->button() == Qt::LeftButton)
-        dispatchMouseEvent(FlowMouseDown, event->x(), event->y());
+        dispatchMouseEvent(FlowMouseDown, event->position().x(), event->position().y());
     else if (event->button() == Qt::RightButton)
-        dispatchMouseEvent(FlowMouseRightDown, event->x(), event->y());
+        dispatchMouseEvent(FlowMouseRightDown, event->position().x(), event->position().y());
     else if (event->button() == Qt::MiddleButton)
-        dispatchMouseEvent(FlowMouseMiddleDown, event->x(), event->y());
+        dispatchMouseEvent(FlowMouseMiddleDown, event->position().x(), event->position().y());
 }
 
 void QGLRenderSupport::mouseReleaseEvent(QMouseEvent *event)
 {
     if (EmulatePanGesture)
-        dispatchGestureEvent(FlowPanEvent, FlowGestureStateEnd, event->x(), event->y(), event->x() - MouseX, event->y() - MouseY);
+        dispatchGestureEvent(FlowPanEvent, FlowGestureStateEnd, event->position().x(), event->position().y(), event->position().x() - MouseX, event->position().y() - MouseY);
 
     if (event->button() == Qt::LeftButton)
-        dispatchMouseEvent(FlowMouseUp, event->x(), event->y());
+        dispatchMouseEvent(FlowMouseUp, event->position().x(), event->position().y());
     else if (event->button() == Qt::RightButton)
-        dispatchMouseEvent(FlowMouseRightUp, event->x(), event->y());
+        dispatchMouseEvent(FlowMouseRightUp, event->position().x(), event->position().y());
     else if (event->button() == Qt::MiddleButton)
-        dispatchMouseEvent(FlowMouseMiddleUp, event->x(), event->y());
+        dispatchMouseEvent(FlowMouseMiddleUp, event->position().x(), event->position().y());
 }
 
 // On OSX, we have pixelDelta (and angleDelta seems to be in
@@ -1470,7 +1519,7 @@ void QGLRenderSupport::dragMoveEvent(QDragMoveEvent *event)
         GLBoundingBox box = clip->getGlobalBBox();
         vec2 pos = box.min_pt;
         vec2 size = box.size();
-        vec2 mpos = vec2(event->pos().x() - pos.x, event->pos().y() - pos.y);
+        vec2 mpos = vec2(event->position().x() - pos.x, event->position().y() - pos.y);
         if (mpos.x >= 0 && mpos.y >= 0 && mpos.x <= size.x && mpos.y <= size.y)
         {
             draggingOver = clip;
@@ -1564,7 +1613,7 @@ void QGLRenderSupport::dropEvent(QDropEvent *event)
         if (data->hasUrls()) {
             QList<QUrl> urlList = data->urls();
 
-            int filesLimit = min(draggingOver->getFilesCountDroppable(), urlList.length());
+            int filesLimit = min(draggingOver->getFilesCountDroppable(), (int)urlList.length());
 
             if (filesLimit < 0)
                 filesLimit = urlList.length();

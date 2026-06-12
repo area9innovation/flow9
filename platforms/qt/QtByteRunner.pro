@@ -29,16 +29,30 @@ DEFINES += FLOW_COMPACT_STRUCTS
 DEFINES += QT_NO_BEARERMANAGEMENT
 
 CONFIG(use_gui) {
-    QT += gui opengl multimedia multimediawidgets
+    QT += gui opengl openglwidgets multimedia multimediawidgets
 
-    CONFIG += c++11
+    CONFIG += c++17
 
     QT += opengl
     QT += widgets gui
-    QT += webenginewidgets webchannel
+    QT += webchannel
+
+    # Qt6 WebEngine is an optional component; enable only if installed
+    qtHaveModule(webenginewidgets) {
+        QT += webenginewidgets
+    } else {
+        DEFINES += QT_NO_WEBENGINE
+    }
 
     #QMAKE_CXXFLAGS_DEBUG   += -std=c++11
     #QMAKE_CXXFLAGS_RELEASE += -std=c++11
+
+    # Suppress 'register' keyword error from vendored glm (C++17 disallows it)
+    win32:msvc {
+        QMAKE_CXXFLAGS += /wd5033
+    } else {
+        QMAKE_CXXFLAGS += -Wno-register
+    }
 
     macx {
         # -O2 is too crashy on Mac; see #34057 - ST 12/17/14, 3/30/15
@@ -53,7 +67,7 @@ CONFIG(use_gui) {
     win32 {
         INCLUDEPATH += win32-libs/include
 
-        contains(QMAKE_TARGET.arch, x86_64) {
+        contains(QMAKE_TARGET.arch, x86_64)|contains(QT_ARCH, x86_64) {
             LIBS += -L$$PWD/win32-libs/lib64
         } else {
             LIBS += -L$$PWD/win32-libs/lib
@@ -67,8 +81,14 @@ CONFIG(use_gui) {
     }
 
     LIBS += -lz
-    INCLUDEPATH += /usr/include/freetype2
-    INCLUDEPATH += /usr/local/include/freetype2
+
+    # Freetype include paths:
+    #   Windows: ft2build.h + freetype/ are in win32-libs/include (already added in win32 block above)
+    #   Linux:   headers live under a freetype2/ subdirectory, so explicit paths are needed
+    unix {
+        INCLUDEPATH += /usr/include/freetype2
+        INCLUDEPATH += /usr/local/include/freetype2
+    }
 
     LIBS += -ljpeg -lpng -lfreetype
 } else {
@@ -87,6 +107,12 @@ PRECOMPILED_HEADER = pcheader.h
 INCLUDEPATH += ../common/cpp ../common/cpp/include qt-gui qt-backend ../common/cpp/asmjit/src
 
 CONFIG          += console
+
+# Keep generated files in a proper subdirectory so qmake
+# doesn't inject stale "-Irelease" / "-I/include" into INCPATH
+MOC_DIR     = $$OUT_PWD/generated
+RCC_DIR     = $$OUT_PWD/generated
+OBJECTS_DIR = $$OUT_PWD/obj
 
 #QMAKE_CXXFLAGS_DEBUG += -fpermissive
 #QMAKE_CXXFLAGS_RELEASE += -fpermissive
@@ -126,7 +152,23 @@ win32 {
 }
 
 macx {
-    QMAKE_POST_LINK = macdeployqt $$shell_quote($$shell_path($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}))
+    DEPLOY_APP = $$shell_quote($$shell_path($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}))
+    DEPLOY_FW  = $${DEPLOY_APP}/Contents/Frameworks
+    DEPLOY_BIN = $${DEPLOY_APP}/Contents/MacOS/$${TARGET}
+
+    # Clean stale frameworks/plugins before macdeployqt (prevents "File exists, skip copy")
+    QMAKE_POST_LINK = rm -rf $${DEPLOY_FW} $${DEPLOY_APP}/Contents/PlugIns
+
+    QMAKE_POST_LINK += && $$[QT_INSTALL_BINS]/macdeployqt $${DEPLOY_APP}
+
+    # macdeployqt bundles libjpeg into Frameworks/ but does not rewrite
+    # the reference in the binary — fix it so the app is self-contained.
+    QMAKE_POST_LINK += && install_name_tool -change /usr/local/opt/jpeg/lib/libjpeg.8.dylib @executable_path/../Frameworks/libjpeg.8.dylib $${DEPLOY_BIN} 2>/dev/null || true
+
+    # Remove SQL driver plugins with unresolvable dependencies (not used)
+    QMAKE_POST_LINK += && rm -f $${DEPLOY_APP}/Contents/PlugIns/sqldrivers/libqsqlodbc.dylib 2>/dev/null || true
+    QMAKE_POST_LINK += && rm -f $${DEPLOY_APP}/Contents/PlugIns/sqldrivers/libqsqlpsql.dylib 2>/dev/null || true
+    QMAKE_POST_LINK += && rm -f $${DEPLOY_APP}/Contents/PlugIns/sqldrivers/libqsqlmimer.dylib 2>/dev/null || true
 }
 
 # Core

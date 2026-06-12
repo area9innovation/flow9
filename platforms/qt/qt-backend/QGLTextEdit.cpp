@@ -1,5 +1,6 @@
 #include "QGLTextEdit.h"
 #include <QKeyEvent>
+#include <QPainter>
 #include <qscrollbar.h>
 #include <QTextBlock>
 #include <qtimer.h>

@@ -2,12 +2,21 @@
 #define GLRENDERER_H
 
 #include "GLUtils.h"
+
+// Zero-cost GL error checking in release builds.
+// In debug builds, calls reportGLErrors() which does glGetError().
+#ifdef NDEBUG
+    #define GL_CHECK_ERRORS(where) ((void)0)
+#else
+    #define GL_CHECK_ERRORS(where) GLRenderer::reportGLErrors(where)
+#endif
 #include "core/ByteCodeRunner.h"
 #include "core/STLHelpers.h"
 
 
 #define RENDERER_UNIFORMS \
     UNIFORM(s_tex) \
+    UNIFORM(s_tex_uv) \
     UNIFORM(s_mask) \
     UNIFORM(u_out_pixel_size) \
     UNIFORM(u_out_offset) \
@@ -54,6 +63,7 @@ public:
         ProgFilterBevelBlur,
         ProgGauss3x3,
         ProgGauss,
+        ProgNV12,
         ProgLAST
     };
 
@@ -245,6 +255,7 @@ public:
     void beginDrawSimple(const vec4 &color);
     void beginDrawFancy(const vec4 &color, bool useTexture, bool swizzleRB = false);
     void beginDrawFancyExternalTexture(const vec4 &color);
+    void beginDrawNV12();  // GPU-side NV12→RGBA conversion
 
     void beginDrawFont(float radius);
 
@@ -330,7 +341,6 @@ class GLTextureImage {
     friend class GLRenderer;
 
     ivec2 size;
-    vec2 pixel_size, tex[2];
     bool flip;
 
     // For GLVIdeoClip, we may have to swizzle the red and blue components
@@ -339,6 +349,7 @@ class GLTextureImage {
     GLRenderer *renderer;
     int last_used_frame;
 protected:
+    vec2 pixel_size, tex[2];
     GLenum target;
     GLuint texture_id;
 
@@ -380,12 +391,21 @@ protected:
     void loadData() {}
 public:
 	GLExternalTextureImage(ivec2 size, GLuint id) : GLTextureImage(size, false) { texture_id = id; target = GL_TEXTURE_EXTERNAL_OES; }
+	// Apply SurfaceTexture transform matrix to adjust UV coordinates.
+	// The 4x4 column-major matrix maps the actual content region within the texture.
+	// Note: Android's SurfaceTexture has negative Y scale (mtx[5] < 0) to flip vertically,
+	// but we need to keep the proper min/max order for tex[0]/tex[1].
+	void setTransformMatrix(const float *mtx) {
+		tex[0] = vec2(mtx[12], mtx[13] + mtx[5]);  // min (accounts for negative scale)
+		tex[1] = vec2(mtx[12] + mtx[0], mtx[13]);  // max
+	}
 };
 
 class GLTextureBitmap : public GLTextureImage {
     GLenum format;
     int bytes_per_pixel;
     bool use_mipmaps;
+    bool data_dirty;
 
     StaticBuffer data;
     void reallocate(size_t bytes);
@@ -413,6 +433,13 @@ public:
     unsigned char *getDataPtr() { return data.writable_data(); }
     unsigned getDataSize() { return data.size(); }
     
+    // Mark pixel data as changed without destroying the GL texture.
+    // Next bindTo() will re-upload via glTexSubImage2D (fast path)
+    // instead of glDeleteTextures + glGenTextures + glTexImage2D.
+    void markDirty() { data_dirty = true; }
+    bool isDataDirty() const { return data_dirty; }
+    void reuploadData();
+
     void compress();
 };
 

@@ -51,7 +51,7 @@ uniform lowp vec4 u_bevel_color2;
 
 #endif
 
-#ifndef GL_ES
+#if !defined(GL_ES) || (__VERSION__ >= 300)
 out frag_highp vec4 fragColor;
 #endif
 

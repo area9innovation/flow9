@@ -27,6 +27,11 @@ ftypeFinalize(name : string, pos : FcPosition, count : int, env : FcTypeEnv, be0
 	onError = \tyvar, m -> {
 		reportErrorOnTyvar(be00, tyvar2infoMap, seenTyvarErrors, name, pos, tyvar, m)
 	};
+
+	// Check annotation constraints before finalization narrows types.
+	// This detects downcasts where annotation type is narrower than expression type.
+	checkAnnotationConstraints(name, pos, env, be00);
+
 	finalizeIteration(name, pos, count, env, be00, funify, onError);
 }
 
@@ -228,6 +233,65 @@ resolveAllTypes(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string)
 }
 
 
+// Check if any tyvar referenced in the FType has a different value in `current` vs `orig`.
+// Used to detect when a tyvar was modified earlier in the current rerunDeps pass.
+ftypeHasChangedTyvars(orig : FEnv, current : FEnv, type : FType) -> bool {
+	switch (type) {
+		FTypeVar(id): {
+			lookupTree(orig.tyvars, id) != lookupTree(current.tyvars, id);
+		}
+		FArray(at): ftypeHasChangedTyvars(orig, current, at);
+		FStruct(__, tps): exists(tps, \tp -> ftypeHasChangedTyvars(orig, current, tp));
+		FUnion(__, tps): exists(tps, \tp -> ftypeHasChangedTyvars(orig, current, tp));
+		FFunction(args, rt): ftypeHasChangedTyvars(orig, current, rt) || exists(args, \a -> ftypeHasChangedTyvars(orig, current, a));
+		FRef(r, w): ftypeHasChangedTyvars(orig, current, r) || ftypeHasChangedTyvars(orig, current, w);
+		FBounded(l, u): ftypeHasChangedTyvars(orig, current, l) || ftypeHasChangedTyvars(orig, current, u);
+		FUnnamedUnion(tps): exists(tps, \tp -> ftypeHasChangedTyvars(orig, current, tp));
+		FFields(fields, __, __): exists(fields, \f : FField -> ftypeHasChangedTyvars(orig, current, f.type));
+		default: false; // FBasicType, FFlow, FTypePar, FTopBottom
+	}
+}
+// Check if origType is a struct/union that's already a subtype of newType's union.
+// Used to detect when a re-unification would widen a struct to its parent union
+// (e.g. SValue → SSql), meaning the original subtype constraint was already satisfied.
+isStructInUnion(env : FEnv, origType : FType, newType : FType) -> bool {
+	switch (origType) {
+		FStruct(origName, __): {
+			switch (newType) {
+				FUnion(unionName, __): {
+					switch (lookupTree(env.env.program.acc.names.unions, unionName)) {
+						None(): false;
+						Some(ud): exists(ud.typenames, \tn -> tn.name == origName);
+					}
+				}
+				FUnnamedUnion(types): {
+					exists(types, \t -> {
+						switch (t) {
+							FStruct(n, __): n == origName;
+							default: false;
+						}
+					});
+				}
+				default: false;
+			}
+		}
+		FUnion(origUnion, __): {
+			switch (newType) {
+				FUnion(newUnion, __): {
+					origUnion != newUnion && switch (lookupTree(env.env.program.acc.names.unions, newUnion)) {
+						None(): false;
+						Some(ud): exists(ud.typenames, \tn -> tn.name == origUnion);
+					}
+				}
+				default: false;
+			}
+		}
+		default: false;
+	}
+}
+
+
+
 rerunDeps(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError) -> FEnv {
 	if (env.verbose >= 2)  {
 		printIndent(env.env, "\nRerunning unification");
@@ -235,12 +299,59 @@ rerunDeps(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -> vo
 	rt = foldTree(env.tyvarDeps, env, \from : FType, tos : [FUnifyType], acc : FEnv -> {
 		fold(tos, acc, \acc2 : FEnv, to : FUnifyType -> {
 			if (isFDetermined(acc2, from, makeList()) && isFDetermined(acc2, to.type, makeList())) {
-				// TODO: Figure this out. There is a weakness that unbound tyvars, which are really 
-				// typars are not resolved, so we will keep resolving those
-
-				// See error 29: Just because both are determined, we have to check them anyways.
-				// That is an example where it does not work because we don't do that.
-				acc2;
+				// Both sides determined. For c= constraints (FUnifyLeft/FUnifyRight),
+				// re-unify when relevant tyvars changed — this propagates widened types
+				// through linked tyvars (e.g. filtermap's ?? growing from FontFamily
+				// to WigiTextStyle). GrowRight/ReduceLeft constraints are always skipped
+				// to prevent over-widening side effects.
+				isSubtype = switch (to.kind) {
+					FUnifyLeft(): true;
+					FUnifyRight(): true;
+					default: false;
+				};
+				if (isSubtype && (ftypeHasChangedTyvars(env, acc2, from) || ftypeHasChangedTyvars(env, acc2, to.type))) {
+					if (env.verbose >= 2)  {
+						printIndent(env.env, "Re-unifying changed " + ftype2string(acc2, from) + fkind2string(to.kind) + ftype2string(acc2, to.type));
+					}
+					// Suppress errors during re-unification of determined constraints.
+					// The purpose is to propagate widened types to the `to` side, not to widen
+					// the `from` side. Save the from tyvar's value and restore it after
+					// re-unification when the original value was already a subtype of the
+					// result (preventing backward widening like SValue → SSql).
+					savedFrom : Maybe<Pair<int, Maybe<FType>>> = switch (from) {
+						FTypeVar(id): Some(Pair(id, lookupTree(acc2.tyvars, id)));
+						default: None();
+					};
+					et = funify(acc2, from, to.type, to.kind, nop1);
+					// Restore the from tyvar only when the original was a struct that
+					// is already a member of the result union — the constraint was satisfied
+					// and the widening is spurious.
+					restoredEnv = switch (savedFrom) {
+						Some(p): {
+							switch (p.second) {
+								Some(origType): {
+									newType = lookupTree(et.env.tyvars, p.first);
+									shouldRestore = switch (newType) {
+										Some(nt): {
+											isStructInUnion(et.env, origType, nt);
+										}
+										None(): false;
+									};
+									if (shouldRestore) setFTypeVar(et.env, p.first, origType)
+									else et.env;
+								}
+								None(): et.env;
+							}
+						}
+						None(): et.env;
+					};
+					if (env.verbose >= 2)  {
+						printDedent(env.env, "Unified " + ftype2string(restoredEnv, from) + fkind2string(to.kind) + ftype2string(restoredEnv, to.type) + "\n");
+					}
+					restoredEnv;
+				} else {
+					acc2;
+				}
 			} else {
 				if (env.verbose >= 2)  {
 					printIndent(env.env, "Unifying " + ftype2string(acc2, from) + fkind2string(to.kind) + ftype2string(acc2, to.type));
@@ -399,6 +510,8 @@ resolveKisses(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -
 	});
 }
 
+// Dereference tyvar indirections in the FEnv to find the concrete type.
+// Only follows plain tyvar→value mappings. Does NOT chase through FBounded
 resolveBounds(env : FEnv, heuristic : int, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError) -> FEnv {
 	if (env.verbose >= 2)  {
 		if (heuristic == 0) {
@@ -564,4 +677,127 @@ buildFTyvarInfos(env : FcTypeEnvLocal) -> Tree<int, [Pair<string, FcInfo2>]> {
 			}
 		}
 	});
+}
+
+// Check annotation constraints: detect when annotation type is narrower than expression type (downcast).
+// Runs before finalization so expression types are not yet narrowed by FReduceLeft.
+// Uses cross-referencing of annotation types to avoid false positives from annotation contamination:
+// when FcLessOrEqual grows a shared tyvar (e.g., lambda return type) to match one annotation,
+// other annotations on the same expression may appear as downcasts even though they are valid.
+checkAnnotationConstraints(name : string, pos : FcPosition, env : FcTypeEnv, fenv : FEnv) -> void {
+	checks = ^(env.local.checks);
+
+	// First pass: collect all annotation type struct sets to detect contamination.
+	// If the resolved expression type matches an annotation seen elsewhere, the expression
+	// type was likely widened BY that annotation, not by the expression itself.
+	allAnnotStructSets : [Set<string>] = foldList(checks, [], \acc : [Set<string>], check -> {
+		switch (check) {
+			FcCheckAnnotation(__, annotationType, __, __): {
+				annotInner = fcTypeUnwrapArray(annotationType);
+				annotStructs = expandFcTypeName2structs(env, annotInner);
+				if (isEmptySet(annotStructs)) acc
+				else arrayPush(acc, annotStructs);
+			}
+			default: acc;
+		}
+	});
+
+	// Second pass: check each annotation constraint
+	iterList(checks, \check -> {
+		switch (check) {
+			FcCheckAnnotation(exprType, annotationType, desc, info): {
+				checkOneAnnotation(name, pos, env, fenv, exprType, annotationType, desc, info, allAnnotStructSets);
+			}
+			default: {}
+		}
+	});
+}
+
+checkOneAnnotation(name : string, pos : FcPosition, env : FcTypeEnv, fenv : FEnv,
+	exprType : FcType, annotationType : FcType, desc : string, info : FcInfo2,
+	allAnnotStructSets : [Set<string>]) -> void {
+	// Convert exprType (usually FcTypeVar) to FType via the solver's tyvar map
+	exprFType = fctype2ftype(env, fenv.tyvarIdGroup, exprType);
+	// Convert back to FcType using ftype2fctype which resolves tyvars and finds named unions
+	errIgnore = \__ -> {};
+	exprFcTypes = ftype2fctype(fenv, exprFType, makeSet(), errIgnore);
+
+	if (exprFcTypes != []) {
+		exprFcType = exprFcTypes[0];
+		// Extract the inner type from arrays for comparison: [ExprType] vs [AnnotType]
+		exprInner = fcTypeUnwrapArray(exprFcType);
+		annotInner = fcTypeUnwrapArray(annotationType);
+		// Get struct sets for both
+		exprStructs = expandFcTypeName2structs(env, exprInner);
+		annotStructs = expandFcTypeName2structs(env, annotInner);
+		// Only check when both sides have known struct sets
+		if (!isEmptySet(exprStructs) && !isEmptySet(annotStructs)) {
+			// If expression struct set is NOT a subset of annotation struct set, it's a downcast candidate
+			if (!forallSet(exprStructs, \s -> containsSet(annotStructs, s))) {
+				// Check for contamination: if the expression's struct set matches an annotation
+				// type seen in another constraint, the expression type was likely widened BY that
+				// other annotation (via FcLessOrEqual on a shared tyvar), not by the expression itself.
+				isContaminated = exists(allAnnotStructSets, \otherAnnotStructs -> {
+					// The other annotation must be different from this one (same annotation = self)
+					// and must match the expression type exactly
+					!equalSet(otherAnnotStructs, annotStructs)
+						&& equalSet(otherAnnotStructs, exprStructs)
+				});
+
+				if (!isContaminated) {
+					pt = \t -> prettyFcType(FcPretty(false, true, ^(env.local.tyvars), ^(env.local.typars)), t, makeSet());
+					poss = FcPosition(pos.file, info.start, info.end);
+					addFcTypeError(env.program, FcError(
+						name + ": Type annotation '" + desc + " : " + pt(annotationType) + "' is incompatible with expression type " + pt(exprFcType),
+						[poss]
+					));
+				}
+			}
+		}
+	}
+}
+
+// Unwrap array type: [T] -> T, otherwise identity
+fcTypeUnwrapArray(t : FcType) -> FcType {
+	switch (t) {
+		FcTypeArray(at, __): at;
+		default: t;
+	}
+}
+
+// Get the name from an FcType (union or struct name)
+fcTypeGetName(t : FcType) -> string {
+	switch (t) {
+		FcTypeName(n, __, __): n;
+		FcTypeUnion(n, __, __, __): n;
+		FcTypeStruct(n, __, __, __): n;
+		default: "";
+	}
+}
+
+// Expand an FcType to its set of leaf struct names.
+// For a struct, returns {structName}. For a union, recursively expands to all leaf structs.
+expandFcTypeName2structs(env : FcTypeEnv, t : FcType) -> Set<string> {
+	tname = fcTypeGetName(t);
+	if (tname == "") makeSet()
+	else {
+		// Check if it's a union
+		munion = lookupTree(env.program.acc.names.unions, tname);
+		switch (munion) {
+			None(): {
+				// Check if it's a struct
+				mstruct = lookupTree(env.program.acc.names.structs, tname);
+				switch (mstruct) {
+					None(): makeSet();
+					Some(__): makeSet1(tname);
+				}
+			}
+			Some(udef): {
+				// Recursively expand union members
+				fold(udef.typenames, makeSet(), \acc, tn -> {
+					mergeSets(acc, expandFcTypeName2structs(env, tn))
+				});
+			}
+		}
+	}
 }

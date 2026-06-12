@@ -957,6 +957,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     private native void nSetVideoExternalTextureId(long ptr, long id, int texture_id);
     
+    public synchronized void updateVideoTransformMatrix(long id, float[] matrix) {
+        nUpdateVideoTransformMatrix(cPtr(), id, matrix);
+    }
+
+    private native void nUpdateVideoTransformMatrix(long ptr, long id, float[] matrix);
+
     public synchronized void deliverCameraError(long id) {
         nDeliverCameraError(cPtr(), id);
     }

@@ -1,5 +1,7 @@
 import math/hash;
 import tools/flowc/backends/common;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/common;
 import tools/flowc/backends/java/fi2java_defines;
 
 export {
@@ -587,61 +589,95 @@ emitJavaStatement(ctx0 : JavaScopeContext, code0 : FiExp, retloc : JavaReturnLoc
 			subctx = jctxPushIndent(ctx, "\t");
 			tmpvar2 = javaNewLocalName(ctx.func.next_local_id, "_tmp");
 			inputvar = x.name;
-			has_default = fold(cases, false, \hasdef, case -> {
-				case_ctx_v = if (case.struct == "default") {
-					jctxPushStr(ctx, ctx.indent + "default: {\n");
-					Pair(subctx, true);
-				} else {
-					switch (lookupTree(ctx.func.gctx.cstructs, case.struct)) {
-						Some(cstruct): {
-							jctxPushStr(ctx, ctx.indent + "case " + i2s(cstruct.id) + "/*" + cstruct.name + "*/: {\n");
 
-							has_args = exists(case.argNames, \a -> a != "__");
-
-							castctx = if (has_args || (length(cstruct.fields) > 0 && inputvar != "")) {
-								stype = "Struct_" + cstruct.javaName;
-								jctxPushStr(ctx, subctx.indent + "final " + stype + " " + tmpvar2 +
-									" = (" + stype + ")" + tmpvar + ";\n");
-
-								if (inputvar != "")
-									jctxPushLocal(subctx, JavaLocalInfo(inputvar, tmpvar2, stype, true, false))
-								else
-									subctx;
+			has_default = fold(cases, false, \hasdef, scase -> {
+				switch (scase) {
+					FiCaseUnion(__, structs, body, __): {
+						// Union case: emit fall-through case labels for each struct
+						iter(structs, \sname -> {
+							switch (lookupTree(ctx.func.gctx.cstructs, sname)) {
+								Some(cstruct): {
+									jctxPushStr(ctx, ctx.indent + "case " + i2s(cstruct.id) + "/*" + cstruct.name + "*/:\n");
+								}
+								None(): {
+									fail0("invalid struct in union case: " + sname);
+								}
 							}
-							else
-								subctx;
+						});
+						jctxPushStr(ctx, ctx.indent + "{\n");
+						// Generalize the switch variable's type to FiTypeFlow()
+						// so that field accesses use accessor interfaces (Field_xxx)
+						// instead of struct-specific casts.
+						mergedBody = if (inputvar != "") {
+							generalizeVarType(body, inputvar, FiTypeFlow());
+						} else body;
+						emitJavaStatement(subctx, mergedBody, retloc);
+						if (!isJavaReturnStmt(retloc))
+							jctxPushStr(ctx, subctx.indent + "break;\n");
+						jctxPushStr(ctx, ctx.indent + "}\n");
+						hasdef;
+					}
+					FiCase(struct, argNames, body, __): {
+						if (struct == "default") {
+							// Default case
+							jctxPushStr(ctx, ctx.indent + "default: {\n");
+							emitJavaStatement(subctx, body, retloc);
+							if (!isJavaReturnStmt(retloc))
+								jctxPushStr(ctx, subctx.indent + "break;\n");
+							jctxPushStr(ctx, ctx.indent + "}\n");
+							true;
+						} else {
+							// Single struct case with full variable bindings
+							switch (lookupTree(ctx.func.gctx.cstructs, struct)) {
+								Some(cstruct): {
+									jctxPushStr(ctx, ctx.indent + "case " + i2s(cstruct.id) + "/*" + cstruct.name + "*/: {\n");
 
-							ectx = if (!has_args)
-								castctx
-							else {
-								foldi(case.argNames, castctx, \i, sctx, arg -> {
-									if (arg == "__")
-										sctx
-									else {
-										aname = javaNewLocalName(ctx.func.next_local_id, arg);
-										ty = type2javaObjType(ctx.func.gctx, cstruct.fields[i].type, true, false, false);
-										jctxPushStr(ctx, subctx.indent + "final " + ty + " " + aname +
-											" = " + tmpvar2 + ".f_" + cstruct.fields[i].name + ";\n");
+									has_args = exists(argNames, \a -> a != "__");
 
-										jctxPushLocal(sctx, JavaLocalInfo(arg,aname,ty,true,false));
+									castctx = if (has_args || (length(cstruct.fields) > 0 && inputvar != "")) {
+										stype = "Struct_" + cstruct.javaName;
+										jctxPushStr(ctx, subctx.indent + "final " + stype + " " + tmpvar2 +
+											" = (" + stype + ")" + tmpvar + ";\n");
+
+										if (inputvar != "")
+											jctxPushLocal(subctx, JavaLocalInfo(inputvar, tmpvar2, stype, true, false))
+										else
+											subctx;
 									}
-								});
-							}
+									else
+										subctx;
 
-							Pair(ectx, hasdef);
+									ectx = if (!has_args)
+										castctx
+									else {
+										foldi(argNames, castctx, \i, sctx, arg -> {
+											if (arg == "__")
+												sctx
+											else {
+												aname = javaNewLocalName(ctx.func.next_local_id, arg);
+												ty = type2javaObjType(ctx.func.gctx, cstruct.fields[i].type, true, false, false);
+												jctxPushStr(ctx, subctx.indent + "final " + ty + " " + aname +
+													" = " + tmpvar2 + ".f_" + cstruct.fields[i].name + ";\n");
+
+												jctxPushLocal(sctx, JavaLocalInfo(arg,aname,ty,true,false));
+											}
+										});
+									}
+
+									emitJavaStatement(ectx, body, retloc);
+
+									if (!isJavaReturnStmt(retloc))
+										jctxPushStr(ctx, subctx.indent + "break;\n");
+									jctxPushStr(ctx, ctx.indent + "}\n");
+
+									hasdef;
+								}
+								None():
+									fail0("invalid struct in case: " + struct);
+							}
 						}
-						None():
-							fail0("invalid struct in case: " + case.struct);
 					}
 				}
-
-				emitJavaStatement(case_ctx_v.first, case.body, retloc);
-
-				if (!isJavaReturnStmt(retloc))
-					jctxPushStr(ctx, subctx.indent + "break;\n");
-				jctxPushStr(ctx, ctx.indent + "}\n");
-
-				case_ctx_v.second;
 			});
 
 			if (!has_default) {
@@ -1564,7 +1600,7 @@ addJavaExpressionWrappers(gctx : JavaGlobalContext, expcode : FiExp) -> void {
 		}
 		FiSwitch(x, __, cases, __,__): {
 			addJavaExpressionWrappers(gctx, x);
-			iter(cases, \c -> addJavaExpressionWrappers(gctx, c.body));
+			iter(cases, \c -> addJavaExpressionWrappers(gctx, fiSwitchCaseBody(c)));
 		}
 		FiRequire(__, e, __,__):
 			addJavaExpressionWrappers(gctx, e);

@@ -1148,42 +1148,19 @@ desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
 										x;
 									}
 									Some(uf): {
-										// First, expand "local" unions
-										unionstructs = uniq(expandDesugarUnion2structs(dacc, uf));
-
-										// Also see if there are any local union
-										filtermap(unionstructs, \ts : FcTypeStruct -> {
-											if (exists(cases, \cs -> {
-												// We want to skip those that already have a case
-													cstruct = if (cs.choice == 0) {
-														"default"
-													} else {
-														grabSTText(get_flow_id(cs), info.content);
-													}
-													ts.name == cstruct
-												})) None()
-											else {
-												// TODO: We do not handle unions inside unions.
-												structDef = lookupDesugarTypename(dacc, FcTypeName(ts.name, [], FcInfo2(c.start, c.end)));
-												switch (structDef) {
-													FcTypeStruct(__, __, sargs, __): {
-														dacc2 = DesugarAcc(dacc with
-															switchVarTypes = setTree(dacc.switchVarTypes, varname, Pair(structDef, uf))
-														);
-														body = desugarFcExp(dacc2, bexp);
-
-														// OK, construct dummy arguments for this dude
-														newCase = FcCase(ts.name, map(sargs, \__ -> "__"), body, FcInfo(body.info.type, c.start, c.end));
-														Some(newCase);
-													}
-													default: {
-														fcPrintln("TODO: Does not handle unknown types or unions", dacc.env.program.acc.config.threadId);
-														None();
-													}
-												}
-
-											}
-										});
+									// Keep the union case as a single case instead of expanding to N struct cases.
+									// The body is desugared once with the variable typed as the union.
+									// Instantiate type parameters to fresh tyvars (same as struct cases do).
+									iuf0 = instantiateTypeTyPars(dacc.env.local, dacc.tyvarIdGroup, typars, uf);
+									iuf = switch (iuf0) {
+										FcTypeUnion(__, __, __, __): iuf0;
+										default: uf; // Should never happen
+									};
+									dacc2 = DesugarAcc(dacc with
+										switchVarTypes = setTree(dacc.switchVarTypes, varname, Pair(iuf, iuf))
+									);
+									body = desugarFcExp(dacc2, bexp);
+									[FcCase(struct, [], body, FcInfo(body.info.type, c.start, c.end))];
 									}
 								}
 							}

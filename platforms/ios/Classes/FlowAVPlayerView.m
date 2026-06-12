@@ -248,7 +248,7 @@ static BOOL UseOpenGLVideo = NO;
                 
                 RUN_IN_MAIN_THREAD(^void() {
                     if (UseOpenGLVideo && [[blockSelf.playerItem outputs] count] == 0) {
-                        NSDictionary* settings = @{ (id)kCVPixelBufferPixelFormatTypeKey : [NSNumber numberWithInt:kCVPixelFormatType_32RGBA] };
+                        NSDictionary* settings = @{ (id)kCVPixelBufferPixelFormatTypeKey : [NSNumber numberWithInt:kCVPixelFormatType_32BGRA] };
                     
                         [blockSelf.playerItem addOutput: [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:settings]];
                     }
@@ -290,24 +290,62 @@ static BOOL UseOpenGLVideo = NO;
 - (void) renderFrame: (CMTime) cur_time {
     if ([self.playerItem.outputs count] != 1 ||
         self.playerItem.outputs[0] == nil ||
-        RenderingContext == nil) return;
-    
-    // TO DO : can be optimised with CVOpenGLESTextureCache
-    @autoreleasepool {
-        AVPlayerItemVideoOutput * output = (AVPlayerItemVideoOutput*)self.playerItem.outputs[0];
-        CVPixelBufferRef buffer = [output copyPixelBufferForItemTime: cur_time itemTimeForDisplay: nil];
-        
-        if (buffer != nil) {
-            CGRect rect = {{0,0},{(CGFloat)CVPixelBufferGetWidth(buffer), (CGFloat)CVPixelBufferGetHeight(buffer)}};
-            CIImage * cii = [CIImage imageWithCVPixelBuffer: buffer]; // NOTE: Not supported on simulator
-            CGImageRef cgi = [CoreImageContext createCGImage: cii fromRect: rect];
-            if (cgi != nil) {
-                [self renderFrameImage:cgi];
-                CGImageRelease(cgi);
+        !VideoTextureBitmap) return;
+
+    AVPlayerItemVideoOutput * output = (AVPlayerItemVideoOutput*)self.playerItem.outputs[0];
+    CVPixelBufferRef buffer = [output copyPixelBufferForItemTime: cur_time itemTimeForDisplay: nil];
+
+    if (buffer != nil) {
+        size_t width = CVPixelBufferGetWidth(buffer);
+        size_t height = CVPixelBufferGetHeight(buffer);
+        ivec2 bmpSize = VideoTextureBitmap->getSize();
+
+        // Fast path: copy pixel data directly if the buffer is BGRA/RGBA 4 bytes/pixel
+        // and CPU-accessible. Otherwise fall back to CIImage rendering.
+        OSType pixelFormat = CVPixelBufferGetPixelFormatType(buffer);
+        bool is32bpp = (pixelFormat == kCVPixelFormatType_32BGRA ||
+                        pixelFormat == kCVPixelFormatType_32RGBA);
+
+        CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+        uint8_t *src = (uint8_t *)CVPixelBufferGetBaseAddress(buffer);
+
+        if (src != nil && is32bpp) {
+            // Resize bitmap if frame dimensions changed
+            if ((int)width != bmpSize.x || (int)height != bmpSize.y) {
+                VideoTextureBitmap->resize(ivec2((int)width, (int)height));
             }
-            
-            CVBufferRelease(buffer);
+
+            uint8_t *dst = (uint8_t *)VideoTextureBitmap->getDataPtr();
+            size_t srcStride = CVPixelBufferGetBytesPerRow(buffer);
+            size_t dstStride = width * 4;
+
+            if (srcStride == dstStride) {
+                memcpy(dst, src, dstStride * height);
+            } else {
+                for (size_t row = 0; row < height; row++) {
+                    memcpy(dst + row * dstStride, src + row * srcStride, dstStride);
+                }
+            }
+
+            CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+            // BGRA source needs R↔B swizzle in shader
+            VideoTextureBitmap->setSwizzleRB(pixelFormat == kCVPixelFormatType_32BGRA);
+            VideoTextureBitmap->markDirty();
+        } else {
+            CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+            // Fall back to CIImage rendering for non-32bpp or GPU-only buffers
+            if (RenderingContext != nil) {
+                CGRect rect = CGRectMake(0, 0, (CGFloat)width, (CGFloat)height);
+                CIImage *cii = [CIImage imageWithCVPixelBuffer: buffer];
+                CGImageRef cgi = [CoreImageContext createCGImage: cii fromRect: rect];
+                if (cgi != nil) {
+                    [self renderFrameImage:cgi];
+                    CGImageRelease(cgi);
+                }
+            }
         }
+
+        CVBufferRelease(buffer);
     }
 }
 @end

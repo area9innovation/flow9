@@ -20,7 +20,7 @@ uniform mediump int u_gauss_steps;
 uniform mediump float u_gauss_base_coeff;
 uniform mediump float u_gauss_shift_coeff[32];
 
-#ifndef GL_ES
+#if !defined(GL_ES) || (__VERSION__ >= 300)
 out frag_highp vec4 fragColor;
 #endif
 

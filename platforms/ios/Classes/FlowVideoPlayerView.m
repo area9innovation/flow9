@@ -42,7 +42,7 @@
         return;
     CGRect text_rect = CGRectMake(0, 0, CGBitmapContextGetWidth(RenderingContext), CGBitmapContextGetHeight(RenderingContext));
     CGContextDrawImage(RenderingContext, text_rect, cgi);
-    VideoTextureBitmap->invalidate();
+    VideoTextureBitmap->markDirty();  // Mark for re-upload, don't delete texture
 }
 
 - (void) setTargetVideoTexture: (GLTextureBitmap::Ptr) video_texture {
@@ -56,7 +56,7 @@
     CGContextSetRGBFillColor(RenderingContext, 0, 0, 0, 1);
     CGContextFillRect(RenderingContext, CGRectMake(0, 0, size.x, size.y));
     
-    VideoTextureBitmap->invalidate();
+    VideoTextureBitmap->markDirty();  // Mark for re-upload, don't delete texture
 }
 @end
 

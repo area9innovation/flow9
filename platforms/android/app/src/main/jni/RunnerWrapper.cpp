@@ -4,7 +4,7 @@
 
 #include "AndroidUtils.h"
 
-#include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -656,6 +656,12 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nSetVideoExternalTexture
   (JNIEnv *env, jobject obj, jlong ptr, jlong id, jint texture_id)
 {
     WRAPPER(getRenderer()->setVideoExternalTextureId(id, texture_id));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nUpdateVideoTransformMatrix
+  (JNIEnv *env, jobject obj, jlong ptr, jlong id, jfloatArray matrix)
+{
+    WRAPPER(getRenderer()->updateVideoTransformMatrix(id, matrix, env));
 }
 
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverCameraError
@@ -1485,6 +1491,18 @@ void AndroidRenderSupport::setVideoExternalTextureId(jlong clip_id, jint texture
 	GLVideoClip * clip = (GLVideoClip*)clip_id;
 	GLExternalTextureImage::Ptr texture_image = GLExternalTextureImage::Ptr(new GLExternalTextureImage(clip->getSize(), texture_id));
 	clip->setVideoTextureImage(texture_image);
+}
+
+void AndroidRenderSupport::updateVideoTransformMatrix(jlong clip_id, jfloatArray matrix, JNIEnv *env)
+{
+	GLVideoClip * clip = (GLVideoClip*)clip_id;
+	GLTextureImage::Ptr img = clip->getTextureImage();
+	GLExternalTextureImage *ext = dynamic_cast<GLExternalTextureImage*>(img.get());
+	if (ext) {
+		jfloat *mtx = env->GetFloatArrayElements(matrix, NULL);
+		ext->setTransformMatrix(mtx);
+		env->ReleaseFloatArrayElements(matrix, mtx, 0);
+	}
 }
 
 void AndroidRenderSupport::deliverCameraError(jlong clip_id)

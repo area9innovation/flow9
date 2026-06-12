@@ -1,5 +1,6 @@
 import tools/flowc/backends/common;
 import tools/flowc/incremental/fimodule;
+import tools/flowc/incremental/fi_helpers;
 import ds/tree;
 import lingo/flow/javascript_keywords;
 import tools/flowc/backends/javascript/fi2javascript_defines;
@@ -251,14 +252,33 @@ fiJsCompileToplevel(cfg : FiJsConfig, ctx : FiJsToplevelContext, decl : FiDeclar
 fiJsLambdaLevel : ref int = ref 0;
 
 fiGetStructId(ctx : FiJsToplevelContext, item : FiCase) {
-	switch (lookupTree(ctx.ovl.structs, item.struct)) {
+	fiGetStructIdByName(ctx, item.struct);
+}
+
+fiGetStructIdByName(ctx : FiJsToplevelContext, name : string) -> int {
+	switch (lookupTree(ctx.ovl.structs, name)) {
 		Some(info): info.id;
-		None(): fail0("Unknown struct " + item.struct);
+		None(): fail0("Unknown struct " + name);
 	}
 }
 
 fiGetItemId(ctx : FiJsToplevelContext, item, readable) {
 	if (readable) "'" + item.struct + "'" else i2s(fiGetStructId(ctx, item));
+}
+
+// Generate JS case label(s) for a FiSwitchCase. FiCaseUnion emits fall-through labels.
+fiJsSwitchCaseLabels(ctx : FiJsToplevelContext, c : FiSwitchCase, rdbl : bool, indent : string, cfg : FiJsConfig) -> string {
+	switch (c) {
+		FiCase(struct, __, __, __): {
+			if (struct == "default") "default"
+			else if (rdbl) "case '" + struct + "'" else "case " + i2s(fiGetStructIdByName(ctx, struct));
+		}
+		FiCaseUnion(__, structs, __, __): {
+			superglue(structs, \sn -> {
+				if (rdbl) "case '" + sn + "'" else "case " + i2s(fiGetStructIdByName(ctx, sn))
+			}, ":" + finl(cfg) + indent);
+		}
+	}
 }
 
 fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, indent : string, tailcall : bool, needPars : bool, unusedVars : Set<string>) -> string {
@@ -416,8 +436,11 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 			fiJsCompileToExpr(cfg, ctx, e3, subindent, false, true, unusedVars) + ")";
 		}
 
-		FiSwitch(e0, e0type, cs, __, __): {
-			isIf = length(cs) == 2;
+		FiSwitch(e0, e0type, cs0, __, __): {
+			// Use isIf optimization only when all cases are FiCase (not FiCaseUnion)
+			allFiCase = forall(cs0, \c -> switch(c) { FiCase(__,__,__,__): true; FiCaseUnion(__,__,__,__): false; });
+			cs : [FiCase] = if (allFiCase) fiExpandSwitchCases(cs0) else [];
+			isIf = allFiCase && length(cs) == 2;
 			rdbl = cfg.readable;
 			es6 = cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE;
 			switchexp0 = fiJsCompileToExpr(cfg, ctx, e0, indent, false, false, unusedVars);
@@ -444,14 +467,10 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 			inner = if (isIf)
 					innerIf
 				else
-					fold(cs, Cons(header, EmptyList()), \acc, item -> {
-						choice = if (item.struct == "default") {
-								"default"
-							} else {
-								if (rdbl) "case '" + item.struct + "'"  else "case "+i2s(fiGetStructId(ctx, item));
-							};
-						unused = findUnusedLocalsExpSet(item.body, makeSet(), false, unusedVars);
-						body = fiJsCompileToExpr(cfg, ctx, item.body, indent+ctx.indent4, false, false, unused);
+					fold(cs0, Cons(header, EmptyList()), \acc, item -> {
+						choice = fiJsSwitchCaseLabels(ctx, item, rdbl, indent, cfg);
+						unused = findUnusedLocalsExpSet(fiSwitchCaseBody(item), makeSet(), false, unusedVars);
+						body = fiJsCompileToExpr(cfg, ctx, fiSwitchCaseBody(item), indent+ctx.indent4, false, false, unused);
 						// TODO: If the body ends in a "return", we do not need this "break;" here
 						Cons(";break;}"+ finl(cfg)+indent, Cons(body, Cons(choice+":{s$=", acc)));
 					});
@@ -732,56 +751,36 @@ fiJsCompileToReturn(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, i
 			fiJsCompileToReturn(cfg, ctx, e3, subindent, unusedVars) + "}";
 		}
 
-		FiSwitch(e0, e0type, cs, __, __): {
+		FiSwitch(e0, e0type, cs0, __, __): {
+			// Count total struct cases for the >=50 heuristic
+			totalStructCases = fold(cs0, 0, \acc, c -> acc + length(fiSwitchCaseStructs(c)));
 			/*
 			There is a problem, that when we have function, which last statement is very large switch operator,
-			execution stack may be exhausted:
-
-			fn() {
-				...
-				switch(e) {
-					....
-				}
-			}
-
+			execution stack may be exhausted.
 			To solve that we wrap that switch into separate scope using (function() {...})() in JS.
 			But this breaks tail call optimization and we use this heuristic only for really large
 			switches. To be practical, we optimize only switches with more than 50 cases.
 			*/
-			if (length(cs) >= 50) {
+			if (totalStructCases >= 50) {
 				"return " + fiJsCompileToExpr(cfg, ctx, expr, indent, false, false, unusedVars) + ";"
 			} else {
-				isIf = length(cs) == 2;
+				// Use isIf optimization only when all cases are FiCase (not FiCaseUnion)
+				allFiCase = forall(cs0, \c -> switch(c) { FiCase(__,__,__,__): true; FiCaseUnion(__,__,__,__): false; });
+				cs : [FiCase] = if (allFiCase) fiExpandSwitchCases(cs0) else [];
+				isIf = allFiCase && length(cs) == 2;
 
 				rdbl = cfg.readable;
 				aVar = "(" + fiJsCompileToExpr(cfg, ctx, e0, indent, false, false, unusedVars) + ")." + (if (rdbl) "_name" else if (cfg.namespaceMode) "kind" else "_id");
 
 				header = "switch(" + aVar + "){" + finl(cfg) + indent;
 				// TODO: TS processing
-				/*
-				getNextParams = \item -> {
-					changeTSProcessing(params, TypeScriptProcessing(
-						if (!ctx.ovl.typescript || item.tag == "default") ""
-						else resolveTSType(item.tag, ["", "?"][b2i(params.modules != "")]) +
-						if (lookupTreeDef(^genericTypes, item.tag, 0) == 0) ""
-						// Alternative: resolveTSTypes(ctx.ovl.typescript, ns, tSubst, e0.info.derived, 2, false, 0, "%1")
-						else "<" + strGlue(generate(0, lookupTreeDef(^genericTypes, item.tag, 0), \__ -> "any"), ",") + ">",
-						params.tsProcess.voidReturn,
-						params.tsProcess.antiTS
-					));
-				}
-				*/
 				ifText = if (isIf) {
 						// See comment above in jsCompileToExpr.
 						isFirstBranchDefault = cs[0].struct == "default";
 						ifSelector  = fiGetItemId(ctx, cs[if (isFirstBranchDefault) 1 else 0], rdbl);
-						// TODO: TS processing
-						// paramsTrue  = getNextParams(cs[0]);
 						s1 = findUnusedLocalsExpSet(cs[0].body, makeSet(), false, unusedVars);
 						s2 = findUnusedLocalsExpSet(cs[1].body, makeSet(), false, unusedVars);
 						trueBody    = fiJsCompileToReturn(cfg, ctx, cs[0].body, indent+ctx.indent4, s1);
-						// TODO: TS processing
-						// paramsFalse = getNextParams(cs[1]);
 						falseBody   = fiJsCompileToReturn(cfg, ctx, cs[1].body, indent+ctx.indent4, s2);
 						"if(" + aVar + (if (isFirstBranchDefault) "!=" else "==") + ifSelector + "){" + trueBody + "}else{" + falseBody;
 					} else "";
@@ -791,17 +790,10 @@ fiJsCompileToReturn(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, i
 				inner = if (isIf)
 						innerIf
 					else
-						fold(cs, Cons(header, EmptyList()), \acc, item -> {
-							choice = if (item.struct == "default") {
-									"default"
-								} else {
-									if (rdbl) "case '" + item.struct + "'" else "case "+i2s(fiGetStructId(ctx, item));
-								};
-							// TODO if this has a sense
-							// TODO: TS processing
-							// paramsNext = getNextParams(item);
-							unused = findUnusedLocalsExpSet(item.body, makeSet(), false, unusedVars);
-							body = fiJsCompileToReturn(cfg, ctx, item.body, subindent, unused);
+						fold(cs0, Cons(header, EmptyList()), \acc, item -> {
+							choice = fiJsSwitchCaseLabels(ctx, item, rdbl, indent, cfg);
+							unused = findUnusedLocalsExpSet(fiSwitchCaseBody(item), makeSet(), false, unusedVars);
+							body = fiJsCompileToReturn(cfg, ctx, fiSwitchCaseBody(item), subindent, unused);
 							// Maybe TODO : remove "break;" if unreachable due to "return"
 							Cons("}" + finl(cfg) + subindent+"break;" + finl(cfg) + indent, Cons(body, Cons(choice+":{", acc)));
 						});

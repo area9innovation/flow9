@@ -101,6 +101,7 @@ public:
     void deliverVideoPosition(jlong clip, jlong length);
     void deliverVideoPlayStatus(jlong clip, jint event);
     void setVideoExternalTextureId(jlong clip, jint id);
+    void updateVideoTransformMatrix(jlong clip, jfloatArray matrix, JNIEnv *env);
 
     void deliverCameraError(jlong clip_id);
     void deliverCameraStatus(jlong clip, jint event);

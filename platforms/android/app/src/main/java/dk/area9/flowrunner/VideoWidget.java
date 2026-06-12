@@ -619,6 +619,8 @@ class VideoWidget extends NativeWidget {
         }
     }
 
+    private float[] transformMatrix = new float[16];
+
     @NonNull
     private Runnable renderVideoImage = new Runnable() {
         @Override
@@ -626,6 +628,8 @@ class VideoWidget extends NativeWidget {
             try {
                 if (isValidGLESFramebuffer()) {
                     surfaceTexture.updateTexImage();
+                    surfaceTexture.getTransformMatrix(transformMatrix);
+                    group.getWrapper().updateVideoTransformMatrix(id, transformMatrix);
                     group.getFlowRunnerView().requestRender();
                 }
             } catch (Exception e) {

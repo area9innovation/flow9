@@ -15,7 +15,7 @@
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
-#ifndef _MSC_VER
+#if !defined(_MSC_VER) && !defined(__MINGW32__)
 #include <alloca.h>
 #endif
 
@@ -23,7 +23,7 @@
 #include <sstream>
 
 #ifdef FLOW_MMAP_HEAP
-#ifdef _MSC_VER
+#ifdef _WIN32
 #include "win_mman.h"
 #else
 #include <sys/mman.h>
@@ -108,7 +108,7 @@ ByteCodeRunner::ByteCodeRunner(std::string bytecode_file) :
     Init(bytecode_file);
 }
 
-#ifndef _MSC_VER
+#ifndef _WIN32
 struct tm ByteCodeRunner::tzOffsetInfo;
 #endif
 
@@ -146,7 +146,7 @@ void ByteCodeRunner::initStructures() {
     MapAreaBase = MakeFlowPtr(MAX_HEAP_SIZE);
 #endif
 
-#ifndef _MSC_VER
+#ifndef _WIN32
     time_t now = time(NULL);
     localtime_r(&now, &ByteCodeRunner::tzOffsetInfo);
 #endif

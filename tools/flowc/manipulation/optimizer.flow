@@ -7,6 +7,7 @@ import tools/flowc/incremental/fi2fc;
 import tools/flowc/incremental/fiprettyprint;
 import tools/flowc/manipulation/common;
 import tools/flowc/manipulation/effects;
+import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/dupstrings;
 import tools/flowc/manipulation/livestructs;
 import tools/flowc/manipulation/dump;
@@ -322,30 +323,29 @@ optimizeIf(e1 : FiExp, e2 : FiExp, e3 : FiExp, type : FiType, s : int, envExp : 
 	}
 }
 
-optimizeSwitch(v : FiVar, typ : FiType, cs : [FiCase], type : FiType, s : int, envExp : OptEnvExp) -> FiSwitch {
+optimizeSwitch(v : FiVar, typ : FiType, cs0 : [FiSwitchCase], type : FiType, s : int, envExp : OptEnvExp) -> FiSwitch {
+	cs = fiExpandSwitchCases(cs0);
 	live_cs = if (envExp.env.doLiveStructs) filter(cs, \c -> {
 		containsSet(envExp.livestructs, c.struct) || c.struct == "default";
 	}) else cs;
 	// TODO: If the value of v is given in the environment, we could simplify this
-	FiSwitch(v, typ,
-		map(live_cs,
-			\c -> {
-				opt_body = optimizeExp(c.body,
-					addLocals(envExp,
-						pairs2tree(map(c.argNames,
-							\arg -> {
-								e : FiExp = FiVar(arg, FiTypeVoid(), -1);
-								Pair(arg, e)
-							})
-						)
+	opt_cs : [FiSwitchCase] = map(live_cs,
+		\c -> {
+			opt_body = optimizeExp(c.body,
+				addLocals(envExp,
+					pairs2tree(map(c.argNames,
+						\arg -> {
+							e : FiExp = FiVar(arg, FiTypeVoid(), -1);
+							Pair(arg, e)
+						})
 					)
-				);
-				opt_args = map(c.argNames, \var -> if (fiVarIsUsed(var, opt_body)) var else "__");
-				FiCase(c.struct, opt_args, opt_body, c.start)
-			}
-		),
-		type, s
+				)
+			);
+			opt_args = map(c.argNames, \var -> if (fiVarIsUsed(var, opt_body)) var else "__");
+			FiCase(c.struct, opt_args, opt_body, c.start)
+		}
 	);
+	FiSwitch(v, typ, opt_cs, type, s);
 }
 
 optimizeVar(x : string, envExp : OptEnvExp, def_val : FiExp) -> FiExp {
@@ -942,7 +942,7 @@ instantiateTyPars2Exp(expr : FiExp, sub : Tree<string, FiType>) -> FiExp {
 				FiVar(e.name, applyTypeSubstitution2Type(e.type, sub), e.start),
 				applyTypeSubstitution2Type(st, sub),
 				map(cs, \c -> 
-					FiCase(c.struct, c.argNames, instantiateTyPars2Exp(c.body, sub), c.start)
+					fiMapSwitchCaseBody(c, \b -> instantiateTyPars2Exp(b, sub))
 				),
 				applyTypeSubstitution2Type(t, sub), s
 			);
@@ -1202,16 +1202,16 @@ makeSwitchVarsSafeForSubstitution(expr : FiExp, vars : Set<string>) -> FiExp {
 			vars_with_v = mergeSets(vars, makeSet1(v.name));
 			safe_cs = map(cs, 
 				\c -> {
-					vars_with_cs = mergeSets(vars_with_v, fold(c.argNames, makeSet(), \acc, a -> mergeSets(acc, makeSet1(a))));
-					safe_c_body = makeSwitchVarsSafeForSubstitution(c.body, vars_with_cs);
-					if (isSameObj(c.body, safe_c_body)) {
+					vars_with_cs = mergeSets(vars_with_v, fold(fiSwitchCaseArgNames(c), makeSet(), \acc, a -> mergeSets(acc, makeSet1(a))));
+					safe_c_body = makeSwitchVarsSafeForSubstitution(fiSwitchCaseBody(c), vars_with_cs);
+					if (isSameObj(fiSwitchCaseBody(c), safe_c_body)) {
 						c
 					} else {
-						FiCase(c.struct, c.argNames, safe_c_body, c.start)
+						fiMapSwitchCaseBody(c, \__ -> safe_c_body)
 					}
 				}
 			);
-			safe_switch : FiSwitch = if (forall(zipWith(cs, safe_cs, \c1, c2 -> Pair(c1.body, c2.body)), \p -> isSameObj(p.first, p.second))) {
+			safe_switch : FiSwitch = if (forall(zipWith(cs, safe_cs, \c1, c2 -> Pair(fiSwitchCaseBody(c1), fiSwitchCaseBody(c2))), \p -> isSameObj(p.first, p.second))) {
 				expr
 			} else {
 				FiSwitch(v, typ, safe_cs, type, start)
@@ -1225,14 +1225,14 @@ makeSwitchVarsSafeForSubstitution(expr : FiExp, vars : Set<string>) -> FiExp {
 					FiSwitch(
 						FiVar(tmp_var, type, 0), typ,
 						map(safe_switch.cases, 
-							\c -> FiCase(c.struct, c.argNames, mapFiExp(c.body, 
+							\c -> fiMapSwitchCaseBody(c, \b -> mapFiExp(b,
 								\e -> {
 									switch (e) {
 										FiVar(x, t, s): if (x == v.name) FiVar(tmp_var, t, s) else e;
 										default: e;
 									}
 								}
-							), c.start)
+							))
 						), 
 						type, start
 					), 

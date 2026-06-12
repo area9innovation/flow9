@@ -47,7 +47,7 @@ void QFileSystemInterface::selectAccepted()
     RUNNER_DefSlots1(flowFilesArray);
 
     QStringList filePaths = currentDialog->selectedFiles();
-    int length = std::min(filePaths.length(), maxSelectFiles);
+    int length = std::min((int)filePaths.length(), maxSelectFiles);
 
     flowFilesArray = RUNNER->AllocateArray(length);
 
