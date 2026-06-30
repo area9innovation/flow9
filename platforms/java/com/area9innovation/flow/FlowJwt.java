@@ -18,13 +18,16 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.json.simple.*;
 import org.json.simple.parser.*;
 
-import com.auth0.jwt.JWTVerifier.*;
-import com.auth0.jwt.interfaces.*;
-import com.auth0.jwt.exceptions.*;
-import com.auth0.jwt.algorithms.*;
-import com.auth0.jwt.JWT;
-import com.auth0.jwt.JWTCreator;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.JwtBuilder;
+import io.jsonwebtoken.JwtParser;
+import io.jsonwebtoken.JwtParserBuilder;
 
+// JWT handling was migrated from com.auth0:java-jwt (which pulled in FasterXML/Jackson) to
+// io.jsonwebtoken:jjwt with the Gson backend, so Jackson is no longer a dependency.
+// Behavioural note: JJWT enforces the RFC 7518 minimum HMAC key sizes (>= 256/384/512 bits for
+// HS256/HS384/HS512); auth0 accepted any length. Shorter HMAC secrets now fail with a
+// WeakKeyException instead of silently signing/verifying.
 public class FlowJwt extends NativeHost {
 	// value parameter - supposed to be a string representation of ISO date without milliseconds,
 	// so we need to multiply the parsed value to 1000
@@ -36,46 +39,50 @@ public class FlowJwt extends NativeHost {
 		return date.toInstant().toString();
 	}
 
-	private static JWTVerifier getVerifier(String alg, String key) throws Exception {
-		Algorithm algorithm = null;
-		// Convert the key string to UTF8 bytes
-		if (alg.equals("HS256")) {
-			algorithm = Algorithm.HMAC256(key);
-		} else if (alg.equals("HS384")) {
-			algorithm = Algorithm.HMAC384(key);
-		} else if (alg.equals("HS512")) {
-			algorithm = Algorithm.HMAC512(key);
-		} else if (alg.equals("RS256") || alg.equals("RS384") || alg.equals("RS512")) {
-			RSAPublicKey publicKey = null;
-			if (key.startsWith("{")) {
-				publicKey = getRSAPublicKeyFromJsonString(key);
-			} else {
-				publicKey = (RSAPublicKey)getPemPublicKeyFromString(key, "RSA");
-			}
-			if (alg.equals("RS256")) {
-				algorithm = Algorithm.RSA256(publicKey, null);
-			} else if (alg.equals("RS384")) {
-				algorithm = Algorithm.RSA384(publicKey, null);
-			} else {
-				algorithm = Algorithm.RSA512(publicKey, null);
-			}
-		} else if (alg.equals("ES256") || alg.equals("ES384") || alg.equals("ES512")) {
-			ECPublicKey publicKey = null;
-			if (key.startsWith("{")) {
-				publicKey = getECPublicKeyFromJsonString(key);
-			} else {
-				publicKey = (ECPublicKey)getPemPublicKeyFromString(key, "EC");
-			}
-			if (alg.equals("ES256")) {
-				algorithm = Algorithm.ECDSA256(publicKey, null);
-			} else if (alg.equals("ES384")) {
-				algorithm = Algorithm.ECDSA384(publicKey, null);
-			} else {
-				algorithm = Algorithm.ECDSA512(publicKey, null);
-			}
+	// auth0's Algorithm.HMACxxx used the raw UTF-8 bytes of the key string directly with no
+	// length restriction. We reject too-short secrets explicitly (RFC 7518, Section 3.2 requires
+	// an HMAC key of at least the hash output size) so the failure is the same and is clearly
+	// reported on both the signing and verification paths, rather than relying on JJWT's
+	// internal check firing later. See also the migration note in the class header.
+	private static SecretKey getHmacKey(String alg, String key) {
+		byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+		int requiredBits = Integer.parseInt(alg.substring(2)); // HS256 -> 256, HS384 -> 384, HS512 -> 512
+		if (keyBytes.length * 8 < requiredBits) {
+			throw new io.jsonwebtoken.security.WeakKeyException(
+				"The HMAC key for " + alg + " must be at least " + requiredBits + " bits ("
+				+ (requiredBits / 8) + " bytes), but the provided key is only " + (keyBytes.length * 8)
+				+ " bits (" + keyBytes.length + " bytes). See RFC 7518, Section 3.2.");
 		}
+		return new SecretKeySpec(keyBytes, "HmacSHA" + alg.substring(2));
+	}
 
-		return (algorithm == null) ? null : JWT.require(algorithm).acceptLeeway(300).build();
+	// Resolves the key used to verify a token for the given algorithm.
+	// Returns null if the algorithm is not supported.
+	private static Key getVerificationKey(String alg, String key) throws Exception {
+		if (alg.equals("HS256") || alg.equals("HS384") || alg.equals("HS512")) {
+			return getHmacKey(alg, key);
+		} else if (alg.equals("RS256") || alg.equals("RS384") || alg.equals("RS512")) {
+			return key.startsWith("{")
+				? getRSAPublicKeyFromJsonString(key)
+				: (RSAPublicKey)getPemPublicKeyFromString(key, "RSA");
+		} else if (alg.equals("ES256") || alg.equals("ES384") || alg.equals("ES512")) {
+			return key.startsWith("{")
+				? getECPublicKeyFromJsonString(key)
+				: (ECPublicKey)getPemPublicKeyFromString(key, "EC");
+		}
+		return null;
+	}
+
+	// Builds a parser that verifies the signature and the temporal claims (exp/nbf/iat).
+	// The 300s clock skew matches the previous auth0 acceptLeeway(300) behaviour.
+	private static JwtParser buildParser(Key verificationKey) {
+		JwtParserBuilder builder = Jwts.parser().clockSkewSeconds(300);
+		if (verificationKey instanceof SecretKey) {
+			builder = builder.verifyWith((SecretKey)verificationKey);
+		} else {
+			builder = builder.verifyWith((PublicKey)verificationKey);
+		}
+		return builder.build();
 	}
 
 	private static PublicKey getPemPublicKeyFromString(String publicKeyPEM, String keyType) throws Exception {
@@ -183,11 +190,14 @@ public class FlowJwt extends NativeHost {
 
 		String payload = null;
 		try {
-			JWTVerifier verifier = getVerifier(alg, key);
-			if (verifier != null) {
-				DecodedJWT jwtObj = verifier.verify(jwt);
+			Key verificationKey = getVerificationKey(alg, key);
+			if (verificationKey != null) {
+				// Verifies the signature and the temporal claims (exp/nbf/iat) with leeway.
+				buildParser(verificationKey).parseSignedClaims(jwt);
 
-				payload = new String(Base64.getUrlDecoder().decode(jwtObj.getPayload()), StandardCharsets.UTF_8);
+				// The signature is verified, so return the raw payload exactly as in the token.
+				String[] parts = jwt.split("\\.");
+				payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
 				isError = false;
 			} else {
 				errorMessage = "Algorithm not supported";
@@ -206,64 +216,39 @@ public class FlowJwt extends NativeHost {
 
 	public static String createJwtAlgorithm(String key, String jsonClaims, String algorithm, String kid) {
 		try {
-			Algorithm alg = null;
-			Map<String, Object> headerClaims = new HashMap<>();
-			if (algorithm.equals("HS256")) {
-				alg = Algorithm.HMAC256(key);
-				if (!kid.isEmpty()) {
-					return "Error: kid is not supported";
-				}
-			} else if (algorithm.equals("HS384")) {
-				alg = Algorithm.HMAC384(key);
-				if (!kid.isEmpty()) {
-					return "Error: kid is not supported";
-				}
-			} else if (algorithm.equals("HS512")) {
-				alg = Algorithm.HMAC512(key);
-				if (!kid.isEmpty()) {
-					return "Error: kid is not supported";
-				}
-			} else if (algorithm.equals("RS256")) {
-				alg = Algorithm.RSA256(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
-				if (!kid.isEmpty()) {
-					headerClaims = new HashMap<>();
-					headerClaims.put("kid", kid);
-				}
-			} else if (algorithm.equals("RS384")) {
-				alg = Algorithm.RSA384(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
-				if (!kid.isEmpty()) {
-					headerClaims = new HashMap<>();
-					headerClaims.put("kid", kid);
-				}
-			} else if (algorithm.equals("RS512")) {
-				alg = Algorithm.RSA512(null, (RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key));
-				if (!kid.isEmpty()) {
-					headerClaims = new HashMap<>();
-					headerClaims.put("kid", kid);
-				}
-			} else if (algorithm.equals("ES256")) {
-				alg = Algorithm.ECDSA256(null, (ECPrivateKey)getPemEcPkcs8PrivateKeyFromString(key));
-				if (!kid.isEmpty()) {
-					headerClaims = new HashMap<>();
-					headerClaims.put("kid", kid);
-				}
-			} else if (algorithm.equals("ES384")) {
-				alg = Algorithm.ECDSA384(null, (ECPrivateKey)getPemEcPkcs8PrivateKeyFromString(key));
-				if (!kid.isEmpty()) {
-					headerClaims = new HashMap<>();
-					headerClaims.put("kid", kid);
-				}
-			} else if (algorithm.equals("ES512")) {
-				alg = Algorithm.ECDSA512(null, (ECPrivateKey)getPemEcPkcs8PrivateKeyFromString(key));
-				if (!kid.isEmpty()) {
-					headerClaims = new HashMap<>();
-					headerClaims.put("kid", kid);
-				}
-			} else {
-				return "Error: Algorithm not supported";
+			boolean isHmac = algorithm.equals("HS256") || algorithm.equals("HS384") || algorithm.equals("HS512");
+			if (isHmac && !kid.isEmpty()) {
+				return "Error: kid is not supported";
 			}
-			JWTCreator.Builder builder = (headerClaims == null ? JWT.create() : JWT.create()).withHeader(headerClaims).withPayload(jsonClaims);
-			return builder.sign(alg);
+
+			// Parse the claims JSON into a map. json-simple keeps integers as Long and decimals
+			// as Double, so numeric claims (exp, iat, ...) keep their original JSON number type.
+			Object parsedClaims = new JSONParser().parse(jsonClaims);
+			if (!(parsedClaims instanceof Map)) {
+				return "Error: Claims must be a JSON object";
+			}
+			@SuppressWarnings("unchecked")
+			Map<String, Object> claims = (Map<String, Object>)parsedClaims;
+
+			JwtBuilder builder = Jwts.builder();
+			if (!kid.isEmpty()) {
+				builder.header().keyId(kid).and();
+			}
+			builder.claims(claims);
+
+			switch (algorithm) {
+				case "HS256": builder.signWith(getHmacKey(algorithm, key), Jwts.SIG.HS256); break;
+				case "HS384": builder.signWith(getHmacKey(algorithm, key), Jwts.SIG.HS384); break;
+				case "HS512": builder.signWith(getHmacKey(algorithm, key), Jwts.SIG.HS512); break;
+				case "RS256": builder.signWith((RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key), Jwts.SIG.RS256); break;
+				case "RS384": builder.signWith((RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key), Jwts.SIG.RS384); break;
+				case "RS512": builder.signWith((RSAPrivateKey)getPemRsaPkcs8PrivateKeyFromString(key), Jwts.SIG.RS512); break;
+				case "ES256": builder.signWith((ECPrivateKey)getPemEcPkcs8PrivateKeyFromString(key), Jwts.SIG.ES256); break;
+				case "ES384": builder.signWith((ECPrivateKey)getPemEcPkcs8PrivateKeyFromString(key), Jwts.SIG.ES384); break;
+				case "ES512": builder.signWith((ECPrivateKey)getPemEcPkcs8PrivateKeyFromString(key), Jwts.SIG.ES512); break;
+				default: return "Error: Algorithm not supported";
+			}
+			return builder.compact();
 		} catch (Exception e) {
 			// Some exceptions have a null getMessage value
 			String message = e.getMessage();
@@ -283,12 +268,12 @@ public class FlowJwt extends NativeHost {
 
 	public static String verifyJwtAlgorithm(String jwtStr, String keyStr, String algorithmStr) {
 		try {
-			JWTVerifier verifier = getVerifier(algorithmStr, keyStr);
+			Key verificationKey = getVerificationKey(algorithmStr, keyStr);
 
-			if (verifier == null) {
+			if (verificationKey == null) {
 				return "Algorithm not supported";
 			} else {
-				verifier.verify(jwtStr);
+				buildParser(verificationKey).parseSignedClaims(jwtStr);
 				return "OK";
 			}
 		} catch (Exception e) {
