@@ -156,6 +156,17 @@ function loadExternalResources() {
 	loadCSSFileInternal("flowjspixi.css?25");
 }
 
+function sendXMLHttpRequest(method, url, onSuccess) {
+	var xmlhttp = new XMLHttpRequest();
+	xmlhttp.onreadystatechange = function () {
+		if (this.readyState == 4 && this.status == 200) {
+			onSuccess(this.responseText);
+		}
+	}
+	xmlhttp.open(method, url, true);
+	xmlhttp.send();
+}
+
 var overlayLoadTimestamp = "";
 function loadJSOverlay(name) {
 	loadJSFileInternal(name + ".js" + overlayLoadTimestamp);
@@ -197,42 +208,32 @@ if (typeof htmlBundle == "undefined") {
 			loadJSFileInternal(scriptName + ".js?" + slave);
 			loadExternalResources();
 		} else {
-			var xmlhttp = new XMLHttpRequest();
-			xmlhttp.onreadystatechange = function () {
-				if (this.readyState == 4 && this.status == 200) {
-					try {
-						var timestamp = this.responseText;
-						overlayLoadTimestamp = "?" + timestamp;
-						loadFavicon("icons/" + scriptName + ".ico");
-						loadJSFileInternal(scriptName + ".js?" + timestamp);
-						loadExternalResources();
-					}
-					catch(exception) {
-						document.body.appendChild(document.createTextNode(exception.message));
-					}
+			sendXMLHttpRequest("GET", "php/stamp.php?t=" + Date.now() + "&file=" + scriptName + ".js", function (responseText) {
+				try {
+					var timestamp = responseText;
+					overlayLoadTimestamp = "?" + timestamp;
+					loadFavicon("icons/" + scriptName + ".ico");
+					loadJSFileInternal(scriptName + ".js?" + timestamp);
+					loadExternalResources();
 				}
-			}
-			xmlhttp.open("GET", "php/stamp.php?t=" + Date.now() + "&file=" + scriptName + ".js", true);
-			xmlhttp.send();
+				catch(exception) {
+					document.body.appendChild(document.createTextNode(exception.message));
+				}
+			});
 		}
 	} else if (typeof starterScriptName == "undefined") {
 		document.body.appendChild(document.createTextNode("Use 'name' URI parameter to run corresponding flow app"));
 	}
 } else if (typeof localStorage !== 'undefined') {
 	var filename = location.pathname.split("/").slice(-1)[0];
-	var xmlhttp = new XMLHttpRequest();
-	xmlhttp.onreadystatechange = function () {
-		if (this.readyState == 4 && this.status == 200) {
-			var newTimestamp = this.responseText;
-			var oldTimestamp = localStorage.getItem(filename);
-			if (newTimestamp != "0" && oldTimestamp != newTimestamp) {
-				localStorage.setItem(filename, newTimestamp);
-				window.location.reload(true);
-			}
+	sendXMLHttpRequest("GET", "php/stamp.php?file=" + filename, function (responseText) {
+		var newTimestamp = responseText;
+		var oldTimestamp = localStorage.getItem(filename);
+		if (newTimestamp != "0" && oldTimestamp != newTimestamp) {
+			localStorage.setItem(filename, newTimestamp);
+			window.location.reload(true);
 		}
-	}
-	xmlhttp.open("GET", "php/stamp.php?file=" + filename, true);
-	xmlhttp.send();
+	});
 }
 
 var leaveWarningText = undefined;
