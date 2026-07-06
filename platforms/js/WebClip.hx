@@ -315,19 +315,7 @@ class WebClip extends NativeWidgetClip {
 	}
 
 	public function setSandBox(value : String) : Void {
-		var alreadyApplied = iframe.getAttribute("sandbox") == value;
 		iframe.sandbox = value;
-		// WebKit/Safari only evaluates the sandbox attribute at navigation time. Since the
-		// iframe src is assigned in the constructor (before this style is processed), the
-		// attribute would otherwise never take effect on Safari, letting embedded players
-		// (e.g. Vimeo) call window.top.location. Re-trigger navigation so the sandbox applies.
-		if (!alreadyApplied && Platform.isSafari && untyped iframe.src != null && iframe.src != "") {
-			// Save and clear the onload handler to prevent ondone() being called twice
-			var savedOnLoad = iframe.onload;
-			iframe.onload = null;
-			untyped iframe.src = iframe.src;  // Re-trigger navigation with sandbox now set
-			iframe.onload = savedOnLoad;       // Restore for any subsequent reloads
-		}
 	}
 
 	public function evalJS(code : String) : Void {
