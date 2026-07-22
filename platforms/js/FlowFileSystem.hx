@@ -220,12 +220,13 @@ class FlowFileSystem {
 			}, 100);
 		} else {
 			fileTypes = fileTypes.map(function(fileType) {
-				if (fileType.indexOf("*.") == 0) {
-					return fileType.substring(2);
-				} else if (fileType.indexOf(".") == 0) {
-					return fileType.substring(1);
+				var normalized = fileType;
+				if (StringTools.startsWith(normalized, "*.")) {
+					normalized = normalized.substring(2);
+				} else if (StringTools.startsWith(normalized, ".")) {
+					normalized = normalized.substring(1);
 				}
-				return fileType;
+				return normalized.toLowerCase();
 			});
 			var fls : Array<js.html.File> = [];
 			var allFilesAllowed : Bool = fileTypes.length == 0 || fileTypes.indexOf("*") != -1 || fileTypes.indexOf("") != -1;
@@ -233,7 +234,7 @@ class FlowFileSystem {
 			for (idx in 0...Math.floor(Math.min(files.length, maxFiles))) {
 				var file = files[idx];
 				var fileName = file.name;
-				var fileExtension = fileName.split('.').pop();
+				var fileExtension = fileName.split('.').pop().toLowerCase();
 
 				if (allFilesAllowed || fileTypes.indexOf(fileExtension) != -1) {
 					fls.push(files[idx]);
