@@ -156,20 +156,8 @@ function registerLinkHandler(home_domains) {
 	});
 }
 
-function receiveMessageTest(e) {
-	if (!e.data) return;
-	try {
-		var v = JSON.parse(e.data);
-		if ((typeof(v) == "object") && (typeof(v.changeURL) == "object") && (typeof(v.changeURL.url) == "string")) {
-			console.info("got command to change url : " + v.changeURL.url);
-			document.location.href = v.changeURL.url;
-		}
-	} catch (e) {}
-}
-
 //to define if iframe.contentWindow.callflow was setted up correctly
 window.addEventListener('load', define_cross_domain_once);
-window.addEventListener('message', receiveMessageTest);
 var toFlowInterval = setInterval(function(){ clearInterval(toFlowInterval); postToFlow({toFlowLoaded: {src: document.location.href}}) }, 300);
 
 
