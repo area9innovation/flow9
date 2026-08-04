@@ -3031,6 +3031,7 @@ Native.memoryLeakReset();
 			openedWindows.set(id, w);
 			return id;
 		} catch (e:Dynamic) {
+			// Catch exception that tells that window wasn't opened after user chose to stay on page
 			if (e != null && e.number != -2147467259) throw e;
 			return 0;
 		}
@@ -3057,6 +3058,7 @@ Native.memoryLeakReset();
 				return false;
 			}
 		} catch (e:Dynamic) {
+			// Catch exception that tells that window wasn't opened after user chose to stay on page
 			if (e != null && e.number != -2147467259) throw e;
 			return false;
 		}
@@ -3074,6 +3076,7 @@ Native.memoryLeakReset();
 			if (w != null && !w.closed) w.close();
 			openedWindows.remove(id);
 		} catch (e:Dynamic) {
+			// Catch exception that tells that window wasn't opened after user chose to stay on page
 			if (e != null && e.number != -2147467259) throw e;
 		}
 		#end
