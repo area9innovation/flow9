@@ -62,6 +62,32 @@ Flow Application → lib/mediabunny.flow → platforms/java/Mediabunny.java → 
 |--------|-------------|-------------|
 | Sample Rate | `MBSampleRate(sampleRate: int)` | Audio sample rate (default: 16000) |
 | Video Crop | `MBCrop(left: int, top: int, width: int, height: int)` | Crop video rectangle |
+| Trim | `MBTrim(start: int, end: int)` | Keep only the given time range, in seconds |
+| Audio Channels | `MBAudioNumberOfChannels(n: int)` | Up/downmix to `n` channels (1 mono, 2 stereo) |
+| Video Bitrate | `MBVideoBitrate(bitrate: int)` | Target bitrate in bits per second when re-encoding |
+
+### Video Bitrate
+
+`MBVideoBitrate` only applies when the video is actually re-encoded — converting an
+AVC source to WebM, or any conversion that crops. Where the source can be stream
+copied (AVC into MP4), it is ignored and the original quality is preserved.
+
+```flow
+// Re-encode to WebM at 300 kbps
+mbConversion(file, MBVideoWEBM(), [MBVideoBitrate(300000)], cb, onError);
+```
+
+Omitting it selects mediabunny's `high` quality resolved to a bitrate, which is the
+default v1.17.3 used: `3_000_000 × (width×height / 1920×1080)^0.95 × codecFactor × 2`,
+where `codecFactor` is 1 for AVC, 0.6 for VP9/HEVC, 1.2 for VP8 and 0.4 for AV1. For
+320×180 VP9 that works out to 120 kbps.
+
+This default has to be passed explicitly because v1.53.0 encodes at a constant
+quantizer unless a bitrate is requested, which produced roughly 3.5x larger WebM
+files. Note that any explicit quality forces a re-encode, so the binding only applies
+it when the video cannot be stream copied.
+
+`MBVideoBitrate` is JS-only; the Java backend ignores it.
 
 ## FFmpeg Equivalents
 
@@ -208,6 +234,48 @@ main() {
 - Error handling
 - Video info extraction
 
+### When Checksum Tests Fail
+
+The baselines are recorded from one machine (mediabunny v1.53.0, Chrome 151 on
+Linux). Encoded output is produced by the browser's own WebCodecs encoders, so a
+MD5 or size mismatch does **not** by itself mean the conversion is broken — a
+different browser, a different Chrome version, or a mediabunny update is enough
+to shift the bytes. WAV is the exception: it is uncompressed PCM and stays
+byte-identical.
+
+When a test fails, verify the output is *semantically* correct instead of
+chasing the checksum. Load mediabunny directly from the devtools console of the
+test page and probe the produced file:
+
+```javascript
+const mb = await import('./js/mediabunny/mediabunny.min.mjs');
+const input = new mb.Input({formats: mb.ALL_FORMATS, source: new mb.BlobSource(outputBlob)});
+const videoTrack = await input.getPrimaryVideoTrack();
+const audioTrack = await input.getPrimaryAudioTrack();
+console.log({
+    duration: await input.computeDuration(),
+    video: videoTrack && {codec: videoTrack.codec, w: videoTrack.displayWidth, h: videoTrack.displayHeight},
+    audio: audioTrack && {codec: audioTrack.codec, ch: audioTrack.numberOfChannels, sr: audioTrack.sampleRate},
+});
+```
+
+Check that duration matches the source (or the requested trim), that dimensions
+match the crop, that the sample rate matches `MBSampleRate`, and that both
+tracks are present. If those hold, the conversion is fine and the baseline is
+simply stale — regenerate it with `?generate=true`. Run generate mode twice and
+compare before trusting a new value; if it differs between runs, that output is
+genuinely non-deterministic on your machine and cannot be baselined at all.
+
+### Concatenation Tests
+
+`mbConcatMedia` is not covered by the unit test suite:
+
+- `mediabunny/test_concatenate_verify.flow` — asserts the concatenated duration and
+  video dimensions for MP4, WAV and the single-file passthrough. Results are printed
+  to the console; no downloads.
+- `mediabunny/test_concatenate_videos.flow` — downloads the concatenated output for
+  manual inspection.
+
 **Workflow:**
 ```flow
 // 1. Generate baselines (first time)
@@ -241,16 +309,24 @@ testDurationOnly() // Quick duration check
 
 ## Updating Library
 
+Currently bundled: **v1.53.0**.
+
 1. Download latest `mediabunny.min.mjs` and `mediabunny-mp3-encoder.mjs` from [releases](https://github.com/Vanilagy/mediabunny/releases)
 2. Replace files in `flow9/www/js/mediabunny/`
-3. Fix import in `mediabunny-mp3-encoder.mjs`:
+3. Fix the bare import in `mediabunny-mp3-encoder.mjs` (the named imports vary by version, only the module specifier needs changing):
 	 ```javascript
 	 // Change this:
-	 import { CustomAudioEncoder, EncodedPacket, registerEncoder } from "mediabunny";
+	 import { CustomAudioEncoder, EncodedPacket, Logging, registerEncoder } from "mediabunny";
 	 // To this:
-	 import { CustomAudioEncoder, EncodedPacket, registerEncoder } from "./mediabunny.min.mjs";
+	 import { CustomAudioEncoder, EncodedPacket, Logging, registerEncoder } from "./mediabunny.min.mjs";
 	 ```
 4. Test with unit tests: `http://localhost:3000/mediabunny_unittests.html`
+
+Note: default video encoding quality is chosen by mediabunny and changes between
+releases, so re-encoded output (WebM) can differ in size after an update even
+though the conversion itself is correct. Verify duration/dimensions/codecs rather
+than checksums, and regenerate baselines with `?generate=true` when needed. See
+[Video Bitrate](#video-bitrate) for how the default target bitrate is pinned.
 
 ## License
 
