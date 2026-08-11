@@ -62,6 +62,32 @@ Flow Application → lib/mediabunny.flow → platforms/java/Mediabunny.java → 
 |--------|-------------|-------------|
 | Sample Rate | `MBSampleRate(sampleRate: int)` | Audio sample rate (default: 16000) |
 | Video Crop | `MBCrop(left: int, top: int, width: int, height: int)` | Crop video rectangle |
+| Trim | `MBTrim(start: int, end: int)` | Keep only the given time range, in seconds |
+| Audio Channels | `MBAudioNumberOfChannels(n: int)` | Up/downmix to `n` channels (1 mono, 2 stereo) |
+| Video Bitrate | `MBVideoBitrate(bitrate: int)` | Target bitrate in bits per second when re-encoding |
+
+### Video Bitrate
+
+`MBVideoBitrate` only applies when the video is actually re-encoded — converting an
+AVC source to WebM, or any conversion that crops. Where the source can be stream
+copied (AVC into MP4), it is ignored and the original quality is preserved.
+
+```flow
+// Re-encode to WebM at 300 kbps
+mbConversion(file, MBVideoWEBM(), [MBVideoBitrate(300000)], cb, onError);
+```
+
+Omitting it selects mediabunny's `high` quality resolved to a bitrate, which is the
+default v1.17.3 used: `3_000_000 × (width×height / 1920×1080)^0.95 × codecFactor × 2`,
+where `codecFactor` is 1 for AVC, 0.6 for VP9/HEVC, 1.2 for VP8 and 0.4 for AV1. For
+320×180 VP9 that works out to 120 kbps.
+
+This default has to be passed explicitly because v1.53.0 encodes at a constant
+quantizer unless a bitrate is requested, which produced roughly 3.5x larger WebM
+files. Note that any explicit quality forces a re-encode, so the binding only applies
+it when the video cannot be stream copied.
+
+`MBVideoBitrate` is JS-only; the Java backend ignores it.
 
 ## FFmpeg Equivalents
 
@@ -299,7 +325,8 @@ Currently bundled: **v1.53.0**.
 Note: default video encoding quality is chosen by mediabunny and changes between
 releases, so re-encoded output (WebM) can differ in size after an update even
 though the conversion itself is correct. Verify duration/dimensions/codecs rather
-than checksums, and regenerate baselines with `?generate=true` when needed.
+than checksums, and regenerate baselines with `?generate=true` when needed. See
+[Video Bitrate](#video-bitrate) for how the default target bitrate is pinned.
 
 ## License
 
