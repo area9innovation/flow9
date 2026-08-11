@@ -208,6 +208,16 @@ main() {
 - Error handling
 - Video info extraction
 
+### Concatenation Tests
+
+`mbConcatMedia` is not covered by the unit test suite:
+
+- `mediabunny/test_concatenate_verify.flow` — asserts the concatenated duration and
+  video dimensions for MP4, WAV and the single-file passthrough. Results are printed
+  to the console; no downloads.
+- `mediabunny/test_concatenate_videos.flow` — downloads the concatenated output for
+  manual inspection.
+
 **Workflow:**
 ```flow
 // 1. Generate baselines (first time)
