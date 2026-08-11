@@ -208,6 +208,38 @@ main() {
 - Error handling
 - Video info extraction
 
+### When Checksum Tests Fail
+
+The baselines are recorded from one machine (mediabunny v1.53.0, Chrome 151 on
+Linux). Encoded output is produced by the browser's own WebCodecs encoders, so a
+MD5 or size mismatch does **not** by itself mean the conversion is broken — a
+different browser, a different Chrome version, or a mediabunny update is enough
+to shift the bytes. WAV is the exception: it is uncompressed PCM and stays
+byte-identical.
+
+When a test fails, verify the output is *semantically* correct instead of
+chasing the checksum. Load mediabunny directly from the devtools console of the
+test page and probe the produced file:
+
+```javascript
+const mb = await import('./js/mediabunny/mediabunny.min.mjs');
+const input = new mb.Input({formats: mb.ALL_FORMATS, source: new mb.BlobSource(outputBlob)});
+const videoTrack = await input.getPrimaryVideoTrack();
+const audioTrack = await input.getPrimaryAudioTrack();
+console.log({
+    duration: await input.computeDuration(),
+    video: videoTrack && {codec: videoTrack.codec, w: videoTrack.displayWidth, h: videoTrack.displayHeight},
+    audio: audioTrack && {codec: audioTrack.codec, ch: audioTrack.numberOfChannels, sr: audioTrack.sampleRate},
+});
+```
+
+Check that duration matches the source (or the requested trim), that dimensions
+match the crop, that the sample rate matches `MBSampleRate`, and that both
+tracks are present. If those hold, the conversion is fine and the baseline is
+simply stale — regenerate it with `?generate=true`. Run generate mode twice and
+compare before trusting a new value; if it differs between runs, that output is
+genuinely non-deterministic on your machine and cannot be baselined at all.
+
 ### Concatenation Tests
 
 `mbConcatMedia` is not covered by the unit test suite:
