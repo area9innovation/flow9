@@ -241,16 +241,23 @@ testDurationOnly() // Quick duration check
 
 ## Updating Library
 
+Currently bundled: **v1.53.0**.
+
 1. Download latest `mediabunny.min.mjs` and `mediabunny-mp3-encoder.mjs` from [releases](https://github.com/Vanilagy/mediabunny/releases)
 2. Replace files in `flow9/www/js/mediabunny/`
-3. Fix import in `mediabunny-mp3-encoder.mjs`:
+3. Fix the bare import in `mediabunny-mp3-encoder.mjs` (the named imports vary by version, only the module specifier needs changing):
 	 ```javascript
 	 // Change this:
-	 import { CustomAudioEncoder, EncodedPacket, registerEncoder } from "mediabunny";
+	 import { CustomAudioEncoder, EncodedPacket, Logging, registerEncoder } from "mediabunny";
 	 // To this:
-	 import { CustomAudioEncoder, EncodedPacket, registerEncoder } from "./mediabunny.min.mjs";
+	 import { CustomAudioEncoder, EncodedPacket, Logging, registerEncoder } from "./mediabunny.min.mjs";
 	 ```
 4. Test with unit tests: `http://localhost:3000/mediabunny_unittests.html`
+
+Note: default video encoding quality is chosen by mediabunny and changes between
+releases, so re-encoded output (WebM) can differ in size after an update even
+though the conversion itself is correct. Verify duration/dimensions/codecs rather
+than checksums, and regenerate baselines with `?generate=true` when needed.
 
 ## License
 
