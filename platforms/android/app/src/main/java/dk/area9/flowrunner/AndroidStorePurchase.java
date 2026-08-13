@@ -17,6 +17,7 @@ import com.android.billingclient.api.ConsumeParams;
 import com.android.billingclient.api.ProductDetails;
 import com.android.billingclient.api.Purchase;
 import com.android.billingclient.api.PurchasesUpdatedListener;
+import com.android.billingclient.api.PendingPurchasesParams;
 import com.android.billingclient.api.QueryProductDetailsParams;
 import com.android.billingclient.api.QueryPurchasesParams;
 
@@ -43,7 +44,14 @@ public class AndroidStorePurchase implements PurchasesUpdatedListener {
 
         billingClient = BillingClient.newBuilder(activity)
                 .setListener(this)
-                .enablePendingPurchases()
+                // PBL 8: the no-arg enablePendingPurchases() was removed. This explicit
+                // form is functionally equivalent to the old default (one-time products).
+                .enablePendingPurchases(
+                        PendingPurchasesParams.newBuilder()
+                                .enableOneTimeProducts()
+                                .build())
+                // PBL 8: opt-in to automatic service reconnection.
+                .enableAutoServiceReconnection()
                 .build();
 
         billingClient.startConnection(new BillingClientStateListener() {
@@ -139,7 +147,9 @@ public class AndroidStorePurchase implements PurchasesUpdatedListener {
                 .setProductList(productList)
                 .build();
 
-        billingClient.queryProductDetailsAsync(params, (billingResult, productDetailsList) -> {
+        billingClient.queryProductDetailsAsync(params, (billingResult, queryResult) -> {
+            // PBL 8: the callback now delivers a QueryProductDetailsResult; extract the fetched list.
+            List<ProductDetails> productDetailsList = queryResult.getProductDetailsList();
             if (billingResult.getResponseCode() == BillingClient.BillingResponseCode.OK && productDetailsList != null) {
                 Log.i(Utils.LOG_TAG, "Count of product details: " + productDetailsList.size());
                 for (ProductDetails details : productDetailsList) {
@@ -189,7 +199,9 @@ public class AndroidStorePurchase implements PurchasesUpdatedListener {
                     .setProductList(productList)
                     .build();
 
-            billingClient.queryProductDetailsAsync(params, (billingResult, productDetailsList) -> {
+            billingClient.queryProductDetailsAsync(params, (billingResult, queryResult) -> {
+                // PBL 8: the callback now delivers a QueryProductDetailsResult; extract the fetched list.
+                List<ProductDetails> productDetailsList = queryResult.getProductDetailsList();
                 if (billingResult.getResponseCode() != BillingClient.BillingResponseCode.OK
                         || productDetailsList == null || productDetailsList.isEmpty()) {
                     runnerWrapper.CallbackPurchasePayment(id, "Error",
