@@ -1,0 +1,302 @@
+#!/bin/bash
+#
+# setup-linux - get a fresh flow9 checkout building and running on Linux.
+#
+# Installs the required packages for your distribution, initialises the asmjit
+# submodule, builds the C++ runner (QtByteRunner) against Qt 6, and runs a
+# hello world to prove it works.
+#
+# The runner is built out of source into QtByteRunner-build-release/ at the
+# root of the checkout. bin/flowcpp prefers that binary over the one committed
+# in platforms/qt/bin/linux, so your build is picked up automatically and the
+# committed binary is left untouched.
+#
+# See doc/linux.markdown for what this does and how to do it by hand.
+
+set -euo pipefail
+
+SCRIPT_DIR=$( cd "$( dirname "$0" )" && pwd -P )
+BASE_DIR=$( cd "$( dirname "$SCRIPT_DIR" )" && pwd -P )
+
+BUILD_DIR="$BASE_DIR/QtByteRunner-build-release"
+
+DRY_RUN=0
+ASSUME_YES=0
+SKIP_DEPS=0
+SKIP_BUILD=0
+SKIP_LFS=0
+
+usage() {
+	cat <<EOF
+Usage: bin/setup-linux [options]
+
+Installs dependencies, builds the flow9 C++ runner and runs a hello world.
+
+Options:
+  -n, --dry-run     Show every command that would run, change nothing
+  -y, --yes         Do not ask before installing packages
+      --skip-deps   Do not install packages, only build
+      --skip-build  Only install packages, do not build
+      --skip-lfs    Do not fetch the Git LFS content (the prebuilt binaries)
+  -h, --help        Show this help
+
+Supported package managers: pacman (Arch, Omarchy, Manjaro, EndeavourOS),
+apt (Debian, Ubuntu, Mint, Pop!_OS) and dnf (Fedora, RHEL). On any other
+distribution the script lists what you need and stops.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-n|--dry-run)    DRY_RUN=1 ;;
+		-y|--yes)        ASSUME_YES=1 ;;
+		--skip-deps)     SKIP_DEPS=1 ;;
+		--skip-build)    SKIP_BUILD=1 ;;
+		--skip-lfs)      SKIP_LFS=1 ;;
+		-h|--help)       usage; exit 0 ;;
+		*) echo "Unknown option: $1" >&2; echo >&2; usage >&2; exit 2 ;;
+	esac
+	shift
+done
+
+say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+note() { printf '  %s\n' "$*"; }
+warn() { printf '\033[33mWarning:\033[0m %s\n' "$*" >&2; }
+die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Echo a command, then run it - unless --dry-run, in which case only echo.
+run() {
+	printf '  \033[36m$\033[0m %s\n' "$*"
+	if [ "$DRY_RUN" -eq 0 ]; then
+		"$@"
+	fi
+}
+
+confirm() {
+	[ "$ASSUME_YES" -eq 1 ] && return 0
+	[ "$DRY_RUN" -eq 1 ] && return 0
+	local reply
+	read -r -p "$1 [y/N] " reply
+	case "$reply" in
+		[yY]|[yY][eE][sS]) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+# ----------------------------------------------------------------------------
+# Work out which distribution family we are on
+# ----------------------------------------------------------------------------
+
+DISTRO_NAME="unknown"
+FAMILY=""
+
+if [ -r /etc/os-release ]; then
+	# shellcheck disable=SC1091
+	. /etc/os-release
+	DISTRO_NAME="${PRETTY_NAME:-${NAME:-unknown}}"
+	for id in ${ID:-} ${ID_LIKE:-}; do
+		case "$id" in
+			arch|archlinux)          FAMILY=arch;   break ;;
+			debian|ubuntu)           FAMILY=debian; break ;;
+			fedora|rhel|centos)      FAMILY=fedora; break ;;
+		esac
+	done
+fi
+
+# Fall back to whichever package manager is actually present
+if [ -z "$FAMILY" ]; then
+	if command -v pacman > /dev/null 2>&1; then FAMILY=arch
+	elif command -v apt-get > /dev/null 2>&1; then FAMILY=debian
+	elif command -v dnf > /dev/null 2>&1; then FAMILY=fedora
+	fi
+fi
+
+# Package names verified against Arch (current), Ubuntu 24.04 and Fedora 42.
+# The Qt 6 modules match what platforms/qt/QtByteRunner.pro asks for: base,
+# multimedia, websockets, webchannel and the optional webengine (which needs
+# declarative and positioning).
+case "$FAMILY" in
+	arch)
+		PACKAGES=(base-devel git git-lfs perl python jdk21-openjdk rlwrap
+			qt6-base qt6-declarative qt6-multimedia qt6-multimedia-ffmpeg
+			qt6-webchannel qt6-websockets qt6-webengine qt6-positioning
+			glu zlib libjpeg-turbo libpng freetype2)
+		INSTALL_CMD=(pacman -S --needed --noconfirm)
+		;;
+	debian)
+		PACKAGES=(build-essential git git-lfs perl python3 openjdk-21-jdk rlwrap
+			qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-multimedia-dev
+			qt6-webchannel-dev qt6-websockets-dev qt6-webengine-dev qt6-positioning-dev
+			libgl-dev libglu1-mesa-dev zlib1g-dev libjpeg-dev libpng-dev libfreetype-dev)
+		INSTALL_CMD=(apt-get install -y)
+		;;
+	fedora)
+		PACKAGES=(gcc-c++ make git git-lfs perl python3 java-latest-openjdk-devel rlwrap
+			qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel
+			qt6-qtwebchannel-devel qt6-qtwebsockets-devel qt6-qtwebengine-devel
+			qt6-qtpositioning-devel
+			mesa-libGLU-devel zlib-ng-compat-devel libjpeg-turbo-devel
+			libpng-devel freetype-devel)
+		INSTALL_CMD=(dnf install -y)
+		;;
+	*)
+		cat >&2 <<EOF
+Could not recognise this distribution ($DISTRO_NAME).
+
+Install the equivalents of these yourself, then re-run with --skip-deps:
+
+  A C++ toolchain, git, perl, python3 and a JDK 21 or newer
+  Qt 6: base, declarative, multimedia, websockets, webchannel, webengine,
+        positioning (webengine is optional - the build works without it)
+  Development files for: GLU, zlib, libjpeg, libpng, freetype
+
+See doc/linux.markdown for details.
+EOF
+		exit 1
+		;;
+esac
+
+say "flow9 setup"
+note "Checkout:     $BASE_DIR"
+note "Distribution: $DISTRO_NAME (using the $FAMILY package set)"
+[ "$DRY_RUN" -eq 1 ] && note "Dry run - nothing will be changed"
+
+# ----------------------------------------------------------------------------
+# Install packages
+# ----------------------------------------------------------------------------
+
+if [ "$SKIP_DEPS" -eq 1 ]; then
+	say "Skipping package installation (--skip-deps)"
+else
+	SUDO=()
+	if [ "$(id -u)" -ne 0 ]; then
+		command -v sudo > /dev/null 2>&1 || die "This needs root to install packages. Install sudo, or run as root, or use --skip-deps."
+		SUDO=(sudo)
+	fi
+
+	say "Packages to install"
+	printf '  %s\n' "${PACKAGES[*]}"
+	echo
+	if confirm "Install these with ${INSTALL_CMD[0]}?"; then
+		run "${SUDO[@]}" "${INSTALL_CMD[@]}" "${PACKAGES[@]}"
+	else
+		echo "Skipped. Re-run with --skip-deps once you have installed them yourself."
+		exit 1
+	fi
+fi
+
+# ----------------------------------------------------------------------------
+# Check Java. flowc.jar is built for class file version 65, so it needs JDK 21+.
+# ----------------------------------------------------------------------------
+
+say "Checking Java"
+if command -v java > /dev/null 2>&1; then
+	java_version=$(java -version 2>&1 | head -1 | sed -n 's/.*version "\([0-9]*\).*/\1/p')
+	if [ -n "$java_version" ] && [ "$java_version" -ge 21 ] 2>/dev/null; then
+		note "Java $java_version - ok"
+	else
+		warn "Java $java_version found, but flowc needs 21 or newer. Compiling flow code will fail."
+	fi
+elif [ "$DRY_RUN" -eq 0 ]; then
+	warn "No java on PATH. flowc needs a JDK 21 or newer."
+fi
+
+# ----------------------------------------------------------------------------
+# Repository content
+# ----------------------------------------------------------------------------
+
+say "Fetching repository content"
+
+if [ -f "$BASE_DIR/.gitmodules" ]; then
+	# asmjit is needed by the JIT in the C++ runner
+	run git -C "$BASE_DIR" submodule update --init platforms/common/cpp/asmjit
+fi
+
+# Git LFS holds the prebuilt runners for each platform. None of it is needed to
+# build our own runner below, so a failure here is a warning, not an error.
+if [ "$SKIP_LFS" -eq 1 ]; then
+	note "Skipping the Git LFS content (--skip-lfs)"
+elif git lfs version > /dev/null 2>&1; then
+	run git -C "$BASE_DIR" lfs install --local || warn "git lfs install failed."
+	run git -C "$BASE_DIR" lfs pull || warn "git lfs pull failed - the prebuilt binaries stay as pointer files."
+else
+	warn "git-lfs is not installed, so the prebuilt binaries are still pointer files."
+	warn "That is fine on Linux - we build the runner from source below."
+fi
+
+# ----------------------------------------------------------------------------
+# Build the runner
+# ----------------------------------------------------------------------------
+
+if [ "$SKIP_BUILD" -eq 1 ]; then
+	say "Skipping the build (--skip-build)"
+else
+	say "Building QtByteRunner"
+
+	# Arch and friends only ship the Qt 6 qmake as qmake6
+	QMAKE="${QMAKE:-}"
+	if [ -z "$QMAKE" ]; then
+		if command -v qmake6 > /dev/null 2>&1; then QMAKE=qmake6
+		elif command -v qmake > /dev/null 2>&1; then QMAKE=qmake
+		elif [ "$DRY_RUN" -eq 1 ]; then QMAKE=qmake6
+		else die "Neither qmake6 nor qmake is on PATH. Did the package installation succeed?"
+		fi
+	fi
+	note "Using $QMAKE"
+
+	# The shader sources are packed into a generated include file. pack.pl reads
+	# and writes relative to the current directory, so run it from there.
+	note "\$ (cd platforms/common/cpp/gl-gui/shaders && ./pack.pl)"
+	if [ "$DRY_RUN" -eq 0 ]; then
+		( cd "$BASE_DIR/platforms/common/cpp/gl-gui/shaders" && ./pack.pl )
+	fi
+
+	run mkdir -p "$BUILD_DIR"
+	if [ "$DRY_RUN" -eq 0 ]; then
+		cd "$BUILD_DIR"
+	fi
+	run "$QMAKE" -r -spec linux-g++ CONFIG+=release "$BASE_DIR/platforms/qt/QtByteRunner.pro"
+	run make -j"$(nproc)"
+	cd "$BASE_DIR"
+
+	if [ "$DRY_RUN" -eq 0 ] && [ ! -x "$BUILD_DIR/QtByteRunner" ]; then
+		die "The build finished but $BUILD_DIR/QtByteRunner is missing."
+	fi
+fi
+
+# ----------------------------------------------------------------------------
+# Smoke test
+# ----------------------------------------------------------------------------
+
+if [ "$DRY_RUN" -eq 0 ] && [ "$SKIP_BUILD" -eq 0 ]; then
+	say "Running hello world"
+	note "\$ bin/flowcpp --batch sandbox/hello_console.flow"
+	cd "$BASE_DIR"
+
+	# The runner shells out to flowc1 to compile, so bin has to be on PATH
+	export PATH="$BASE_DIR/bin:$PATH"
+
+	# hello_console.flow ends in quit(1), so look at the output, not the exit code
+	output=$("$BASE_DIR/bin/flowcpp" --batch sandbox/hello_console.flow 2>&1 || true)
+	printf '%s\n' "$output"
+	if printf '%s' "$output" | grep -q "Hello console only"; then
+		printf '\n\033[32mflow9 is ready.\033[0m\n'
+	else
+		die "Hello world did not print what we expected. See the output above."
+	fi
+fi
+
+# ----------------------------------------------------------------------------
+
+say "Add flow9 to your shell"
+cat <<EOF
+  Put this in your ~/.profile (and ~/.bashrc, or ~/.zshrc if you use zsh):
+
+      export FLOW=$BASE_DIR
+      export PATH=\$FLOW/bin:\$PATH
+
+  Then, from anywhere:
+
+      flowcpp $BASE_DIR/demos/demos.flow
+
+EOF

@@ -250,7 +250,7 @@ void QGLTextEdit::filterText(QString text)
             for (QChar c : temptext) {
                 if (c.isDigit()) {
                     text += c;
-                } else if (i > 0 && c == ".") {
+                } else if (i > 0 && c == QLatin1Char('.')) {
                     i = -temptext.length();
                     text += c;
                 }
