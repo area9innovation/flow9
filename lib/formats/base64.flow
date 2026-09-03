@@ -12,6 +12,11 @@ export {
 
 	// Convert binary (using lower 8 bits of each character) to base-64 encoded string
 	encodeBase64(b : string) -> string;
+
+	// No linefeeds version. Doesn't affect decoding as \r and \n are not in
+	// dictionary and thus just skipped but might complicate things when it
+	// comes to transmission via network.
+	encodeBase64Pure(b : string) -> string;
 }
 
 
@@ -136,6 +141,59 @@ encodeBase64(binary : string) -> string {
 			EmptyList(): ^result;
 			Cons(r, _tail): Cons(
 				strLeft(r, strlen(r) - strlen(linefeed) - padding) + strLeft("===", padding) + linefeed,
+				_tail
+			);
+		}
+	};
+
+	list2string(entirety)
+}
+
+encodeBase64Pure(binary : string) -> string {
+	charsPerChunk = 576;
+
+	l = strlen(binary);
+	words = (l + 2) / 3; // Rounded up
+	padding = (3 - (l % 3)) % 3; // 0->0, 1->2, 2->1
+
+	getCh = \i -> if (i < l) bitAnd(getCharCodeAt(binary, i), 0xff) else 0;
+
+	en = \i -> getCharAt(base64codes, i);
+
+	result = ref makeList();
+	chunk = ref makeList();
+	chunkLen = ref 0;
+	fori(0, words-1, \i -> {
+		x = getCh(3*i + 0);
+		y = getCh(3*i + 1);
+		z = getCh(3*i + 2);
+
+		n = bitOr(bitOr(bitShl(x, 16), bitShl(y, 8)), z);
+		a = bitAnd(bitUshr(n, 18), 0x3f);
+		b = bitAnd(bitUshr(n, 12), 0x3f);
+		c = bitAnd(bitUshr(n, 6), 0x3f);
+		d = bitAnd(n, 0x3f);
+
+		t = en(a) + en(b) + en(c) + en(d);
+
+		chunk := Cons(t, ^chunk);
+		chunkLen := ^chunkLen + 4;
+		if (^chunkLen >= charsPerChunk) {
+			result := Cons(list2string(^chunk), ^result);
+			chunk := makeList();
+			chunkLen := 0;
+		}
+	});
+
+	// don't forget last chunk
+	result := Cons(list2string(^chunk), ^result);
+	
+	// append padding to last chunk
+	entirety = {
+		switch (^result : List) {
+			EmptyList(): ^result;
+			Cons(r, _tail): Cons(
+				strLeft(r, strlen(r) - padding) + strLeft("===", padding),
 				_tail
 			);
 		}
