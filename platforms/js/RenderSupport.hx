@@ -1616,12 +1616,23 @@ class RenderSupport {
 		}
 	}
 
+	// Position of a tap postponed by the iOS-inside-iframe workaround in onpointerdown, null when there is none.
+	// VoiceOver activation of the focused button dispatches synthesized touchstart/touchend (with wrong coordinates inside iframe)
+	// followed, unless they were default-prevented, by a simulated click with detail == 0 on that button. A real tap on the stage
+	// while a button keeps focus (e.g. on a dropdown option) is indistinguishable at pointerdown, so it is postponed until release
+	// and replayed only if no simulated click has arrived. VoiceOver never moves the synthesized touch, so a move emits the mousedown at once.
+	private static var FrameTapPos : Point = null;
+	public static var AccessClickReceived : Bool = false;
+
 	public static var PreventDefault : Bool = true;
 	public static function onpointerdown(e : Dynamic, stage : FlowContainer) {
 		try {
 			// In case of using VoiceOver when inside frame, Safari tends to return wrong pageY value. We have to create an workaround and pass event
-			// to button's onclick handler.
+			// to button's onclick handler. The tap is postponed, see FrameTapPos.
 			if (Platform.isIOS && isInsideFrame() && Browser.document.activeElement != null && Browser.document.activeElement.tagName.toLowerCase() == 'button') {
+				var rootPos = getRenderRootPos(stage);
+				FrameTapPos = e.touches == null ? getMouseEventPosition(e, rootPos) : e.touches.length == 1 ? getMouseEventPosition(e.touches[0], rootPos) : null;
+				AccessClickReceived = false;
 				return;
 			}
 			// Prevent default drop focus on canvas
@@ -1673,6 +1684,18 @@ class RenderSupport {
 
 	public static function onpointerup(e : Dynamic, stage : FlowContainer) {
 		try {
+			if (FrameTapPos != null && (e.touches == null || e.touches.length == 0)) {
+				var pos = FrameTapPos;
+				FrameTapPos = null;
+				// The simulated click of VoiceOver is dispatched synchronously right after the synthesized touchend, so it has already arrived when the timeout fires
+				Browser.window.setTimeout(function() {
+					if (AccessClickReceived) return;
+					setMousePosition(pos);
+					if (MouseUpReceived) stage.emit("mousedown");
+					if (!MouseUpReceived) stage.emit("mouseup");
+				}, 0);
+			}
+
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
 
@@ -1704,6 +1727,13 @@ class RenderSupport {
 
 	public static function onpointermove(e : Dynamic, stage : FlowContainer) {
 		try {
+			if (FrameTapPos != null) {
+				// A moving touch is a real gesture, not a VoiceOver activation: emit the postponed mousedown so drags keep working
+				setMousePosition(FrameTapPos);
+				FrameTapPos = null;
+				if (MouseUpReceived) stage.emit("mousedown");
+			}
+
 			var rootPos = getRenderRootPos(stage);
 			var mousePos = getMouseEventPosition(e, rootPos);
 
@@ -1832,6 +1862,11 @@ class RenderSupport {
 
 		on("mousedown", function (e) { hadUserInteracted = true; MouseUpReceived = false; });
 		on("mouseup", function (e) { MouseUpReceived = true; });
+
+		if (Platform.isIOS) {
+			// Simulated click of VoiceOver has detail == 0, see FrameTapPos
+			Browser.document.addEventListener("click", function(e : Dynamic) { if (e.detail == 0) AccessClickReceived = true; }, true);
+		}
 
 		if (Platform.isMobile) {
 			// Collapse of PWA application requires gesture which initiates touchstart, but never receives touchend
