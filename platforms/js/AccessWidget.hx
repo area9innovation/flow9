@@ -746,7 +746,7 @@ class AccessWidget extends EventEmitter {
 		if (accessRoleMap.get(role) == "button") {
 			element.onclick = function(e : Dynamic) {
 				if (e.target == element && (e.detail == 0 || e.detail == 1 && RenderSupport.IsFullScreen)) {
-					RenderSupport.AccessClickReceived = true;
+					if (Platform.isIOS) RenderSupport.AccessClickReceived = true;
 					if (untyped clip.accessCallback != null) {
 						untyped clip.accessCallback();
 					}
