@@ -113,6 +113,19 @@ function postToFlow(panel, avoidStringify) {
 	}
 }
 
+// *_player.html wrappers: posts the fields of state that differ from lastSent, returns the new lastSent
+function postPlayerStateChanges(state, lastSent) {
+	var changed = {}, n = 0;
+	for (var field in state) {
+		if (!(field in lastSent) || state[field] !== lastSent[field]) {
+			changed[field] = state[field];
+			n++;
+		}
+	}
+	if (n > 0) postToFlow({playerState : changed});
+	return n > 0 ? state : lastSent;
+}
+
 function openVideo(v1, v2) {
 	console.log("openVideo: " + v1 + "; " + v2);
 	callflow_platform(["openVideo"].concat([v1, v2]));

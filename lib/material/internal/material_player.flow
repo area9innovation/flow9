@@ -18,7 +18,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 	(\p -> eitherFn(
 		getExternalPlayerURL(m.filename),
 		\url -> {
-			enableYoutubeJsApi = isSome(getYouTubeURL(m.filename)) && !isUrlParameterFalse("youtube_api_enabled");
+			useApiPlayer = hasExternalPlayerApi(m.filename);
 			playing = extractStruct(m.style, FVideoPlay(make(false))).play;
 			TConstruct(
 				[
@@ -29,7 +29,7 @@ MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer
 						\videoRunning -> if (!videoRunning) next(playing, false)
 					),
 				],
-				if (enableYoutubeJsApi) m2t(MVideoYoutubePlayer(m.filename, m.wh, m.style), p)
+				if (useApiPlayer) m2t(MVideoExternalApiPlayer(m.filename, m.wh, m.style), p)
 				else MVideoPlayer2MRealHTML(url, p, m, m2t)
 			)
 		},
@@ -923,19 +923,10 @@ MVideoPlayer2MRealHTML(url : string, parent : MFocusGroup, m : MVideoPlayer, m2t
 }
 
 MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
-	YT_PLAY = "PLAYING";
-	YT_BUFFERING = "BUFFERING";
-	YT_PAUSE = "PAUSED";
-
-	playB = extractStruct(style, FVideoPlay(make(false))).play;
-	lengthB = extractStruct(style, FVideoLength(make(0.0))).length;
-	positionB = extractStruct(style, FVideoPosition(make(0.0))).position;
 	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
-	volumeB = extractStruct(style, FVideoVolume(make(1.0))).volume;
 	disableKeyboard = contains(style, MPlayerDisableKeyboardShortcuts());
 	controls = extractStruct(style, MPlayerControls([FullScreenPlayer(), PlaybackRateControl(), VolumeControl()])).controls;
 	timeRangeM = tryExtractStruct(style, FVideoTimeRange(const(0.0), const(0.0)));
-	realSizeWH = extractStruct(style, FVideoRealSize(makeWH())).size;
 
 	urlParams = strSplit(elementAt(strSplit(takeBefore(url, "#", url), "?"), 1, ""), "&");
 	videoId = if (strContains(url, "/embed")) {
@@ -984,6 +975,40 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 		contains(controls, FullScreenPlayer()) |> b2i |> i2s
 	);
 
+	makeExternalApiPlayer("yt_player.html", wh, style, false, \ -> JsonObject([
+		Pair("videoId", JsonString(videoId)),
+		Pair("params", JsonObject(concatA([
+			if (startParam == "") [] else [Pair("start", JsonString(startParam))],
+			if (endParam == "" || s2i(startParam) >= s2i(endParam)) [] else [Pair("end", JsonString(endParam))],
+			if (disableKeyboard) [Pair("disablekb", JsonString("1"))] else [],
+			[
+				Pair("nocookie", JsonBool(true)),
+				Pair("controls", JsonString(controlsParam)),
+				Pair("mute", JsonString(muteParam)),
+				Pair("autoplay", JsonString(autoplayParam)),
+				Pair("rel", JsonString(relatedParam)),
+				Pair("loop", JsonString(loopParam)),
+				Pair("fs", JsonString(fsParam)),
+				// for other params see https://developers.google.com/youtube/player_parameters#Parameters
+			]
+		]))),
+	]))
+}
+
+// Same-origin wrapper page (yt_player.html & co) hosting the provider JS API; the page mirrors the player state
+// to flow via {playerState : {status, volume, duration, currentTime, ready}} and takes {loadVideo}/{playerState}.
+// honourRealHtmlStyles: apply MEnabled / MVideoPlayerRealHtmlStyle to the wrapper like MVideoPlayer2MRealHTML does.
+makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle], honourRealHtmlStyles : bool, loadMessage : () -> Json) -> Material {
+	STATUS_PLAYING = "PLAYING";
+	STATUS_BUFFERING = "BUFFERING";
+	STATUS_PAUSED = "PAUSED";
+
+	playB = extractStruct(style, FVideoPlay(make(false))).play;
+	lengthB = extractStruct(style, FVideoLength(make(0.0))).length;
+	positionB = extractStruct(style, FVideoPosition(make(0.0))).position;
+	volumeB = extractStruct(style, FVideoVolume(make(1.0))).volume;
+	realSizeWH = extractStruct(style, FVideoRealSize(makeWH())).size;
+
 	sendB = make("");
 	receiveB = make("");
 
@@ -994,26 +1019,7 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 		v = getJsonFieldValueCustom(parseJson(r), "playerState." + name, JsonNull(), [JsonFieldTreatAsPath(".")]);
 		if (v == JsonNull()) None() else Some(v)
 	});
-	onLoaded = \ -> next(sendB,
-		JsonObject([Pair("loadVideo", JsonObject([
-			Pair("videoId", JsonString(videoId)),
-			Pair("params", JsonObject(concatA([
-				if (startParam == "") [] else [Pair("start", JsonString(startParam))],
-				if (endParam == "" || s2i(startParam) >= s2i(endParam)) [] else [Pair("end", JsonString(endParam))],
-				if (disableKeyboard) [Pair("disablekb", JsonString("1"))] else [],
-				[
-					Pair("nocookie", JsonBool(true)),
-					Pair("controls", JsonString(controlsParam)),
-					Pair("mute", JsonString(muteParam)),
-					Pair("autoplay", JsonString(autoplayParam)),
-					Pair("rel", JsonString(relatedParam)),
-					Pair("loop", JsonString(loopParam)),
-					Pair("fs", JsonString(fsParam)),
-					// for other params see https://developers.google.com/youtube/player_parameters#Parameters
-				]
-			]))),
-		]))]) |> json2string
-	);
+	onLoaded = \ -> next(sendB, JsonObject([Pair("loadVideo", loadMessage())]) |> json2string);
 
 	sendToJS = ref nop1;
 	getHostCall = \hc -> {
@@ -1027,17 +1033,17 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 	MConstruct(
 		concat(
 			if (isUrlParameterTrue("dev")) [
-				makeSubscribe2(sendB, \s -> println("to YT -> " + s)),
-				makeSubscribe2(receiveB, \s -> println("from YT -> " + s)),
+				makeSubscribe2(sendB, \s -> println("to " + page + " -> " + s)),
+				makeSubscribe2(receiveB, \s -> println("from " + page + " -> " + s)),
 			] else [],
 			[
 				makeSubscribe(sendB, \m -> ^sendToJS(m)),
 				\ -> fBidirectionalLink(playB, fselectFromStateM("status"),
-					\external -> sendState([Pair("status", JsonString(if (external) YT_PLAY else YT_PAUSE))]),
+					\external -> sendState([Pair("status", JsonString(if (external) STATUS_PLAYING else STATUS_PAUSED))]),
 					\internalM -> maybeApply(internalM,
 						\internal -> {
 							v = getJsonStringValue(internal, "");
-							nextDistinct(playB, v == YT_PLAY || v == YT_BUFFERING)
+							nextDistinct(playB, v == STATUS_PLAYING || v == STATUS_BUFFERING)
 						}
 					)
 				),
@@ -1060,20 +1066,53 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 							nextDistinct(realSizeWH, fgetValue(wh))
 						}
 					})
+				),
+				// `ready` comes even when the provider SDK failed to load, so the consumer's spinner does not hang
+				makeSubscribe2(fselectFromStateM("ready"),
+					\readyM -> maybeApply(readyM, \r -> if (getJsonBoolValue(r, false)) nextDistinct(realSizeWH, fgetValue(wh)))
 				)
 			]
 		),
-		MRealHTML(appendUrl(getAppUrl(), "yt_player.html"), wh, [
-			FlowCallback(flowCallBack),
-			PageHostcallSetter(getHostCall),
-			UpdateCachedContent(true),
-			OnPageLoaded(onLoaded),
-			ZoomEnabled(const(false)),
-			NoScroll()
-		])
+		MRealHTML(appendUrl(getAppUrl(), page), wh, concatA([
+			[
+				FlowCallback(flowCallBack),
+				PageHostcallSetter(getHostCall),
+				UpdateCachedContent(true),
+				OnPageLoaded(onLoaded),
+				ZoomEnabled(const(false)),
+				NoScroll()
+			],
+			if (honourRealHtmlStyles) concat(
+				eitherMap(tryExtractStruct(style, MEnabled(const(true))), \en -> [MouseDisabled(fnot(en.enabled))], []),
+				eitherMap(tryExtractStruct(style, MVideoPlayerRealHtmlStyle([])), \rhs -> rhs.style, [])
+			) else []
+		]))
 	)
 }
 
+MVideoExternalApiPlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
+	if (isSome(getYouTubeURL(url))) MVideoYoutubePlayer(url, wh, style)
+	else if (isSome(getVimeoURL(url))) MVideoVimeoPlayer(url, wh, style)
+	else MVideoBrightcovePlayer(url, wh, style)
+}
+
+// Vimeo and Brightcove wrappers take the embed URL as is (autoplay, muted, controls, start stay URL parameters)
+MVideoVimeoPlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
+	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
+	makeExternalApiPlayer("vimeo_player.html", wh, style, true, \ -> externalApiLoadMessage(either(getVimeoURL(url), url), fgetValue(loopB)))
+}
+
+MVideoBrightcovePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
+	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
+	makeExternalApiPlayer("brightcove_player.html", wh, style, true, \ -> externalApiLoadMessage(url, fgetValue(loopB)))
+}
+
+externalApiLoadMessage(url : string, loop : bool) -> Json {
+	JsonObject([
+		Pair("url", JsonString(url)),
+		Pair("params", JsonObject([Pair("loop", JsonBool(loop))]))
+	])
+}
 
 MPlayerControls2PlayerControls(mPlayerControls : [MPlayerControl]) -> [PlayerControl] {
 	filtermap(mPlayerControls, \cntr : MPlayerControl ->
