@@ -996,7 +996,7 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 }
 
 // Same-origin wrapper page (yt_player.html & co) hosting the provider JS API; the page mirrors the player state
-// to flow via {playerState : {status, volume, duration, currentTime, ready}} and takes {loadVideo}/{playerState}.
+// to flow via {playerState : {status, volume, duration, currentTime}} (vimeo_player.html adds ready) and takes {loadVideo}/{playerState}.
 // honourRealHtmlStyles: apply MEnabled / MVideoPlayerRealHtmlStyle to the wrapper like MVideoPlayer2MRealHTML does.
 makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle], honourRealHtmlStyles : bool, loadMessage : () -> Json) -> Material {
 	STATUS_PLAYING = "PLAYING";
@@ -1019,7 +1019,14 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 		v = getJsonFieldValueCustom(parseJson(r), "playerState." + name, JsonNull(), [JsonFieldTreatAsPath(".")]);
 		if (v == JsonNull()) None() else Some(v)
 	});
-	onLoaded = \ -> next(sendB, JsonObject([Pair("loadVideo", loadMessage())]) |> json2string);
+	onLoaded = \ -> {
+		next(sendB, JsonObject([Pair("loadVideo", loadMessage())]) |> json2string);
+		// a state sent before the page was (re)loaded is lost, repeat it (yt_player is left as it was)
+		if (honourRealHtmlStyles) sendState([
+			Pair("status", JsonString(if (getValue(playB)) STATUS_PLAYING else STATUS_PAUSED)),
+			Pair("volume", JsonDouble(getValue(volumeB) * 100.0))
+		]);
+	}
 
 	sendToJS = ref nop1;
 	getHostCall = \hc -> {
@@ -1090,21 +1097,16 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	)
 }
 
+// Providers with an API wrapper, see hasExternalPlayerApi
 MVideoExternalApiPlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
 	if (isSome(getYouTubeURL(url))) MVideoYoutubePlayer(url, wh, style)
-	else if (isSome(getVimeoURL(url))) MVideoVimeoPlayer(url, wh, style)
-	else MVideoBrightcovePlayer(url, wh, style)
+	else MVideoVimeoPlayer(url, wh, style)
 }
 
-// Vimeo and Brightcove wrappers take the embed URL as is (autoplay, muted, controls, start stay URL parameters)
+// The Vimeo wrapper takes the embed URL as is (autoplay, muted, controls, start stay URL parameters)
 MVideoVimeoPlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
 	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
 	makeExternalApiPlayer("vimeo_player.html", wh, style, true, \ -> externalApiLoadMessage(either(getVimeoURL(url), url), fgetValue(loopB)))
-}
-
-MVideoBrightcovePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
-	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
-	makeExternalApiPlayer("brightcove_player.html", wh, style, true, \ -> externalApiLoadMessage(url, fgetValue(loopB)))
 }
 
 externalApiLoadMessage(url : string, loop : bool) -> Json {
