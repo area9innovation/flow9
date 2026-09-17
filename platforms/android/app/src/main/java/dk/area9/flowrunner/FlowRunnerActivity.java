@@ -1222,7 +1222,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @NonNull Intent data) {
         // In-app purchase results are now delivered via PurchasesUpdatedListener
-        // in AndroidStorePurchase (Google Billing Library v6), not via onActivityResult.
+        // in AndroidStorePurchase (Google Play Billing Library v8), not via onActivityResult.
 
         if (loader == null) {
             safeOnActivityResult(requestCode, resultCode, data);
