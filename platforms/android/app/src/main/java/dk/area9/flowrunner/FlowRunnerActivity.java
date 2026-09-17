@@ -338,15 +338,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         wrapper.setAssets(getAssets());
         wrapper.setLocalNotificationsEnabled(Utils.getAppMetadataBoolean(this, "reliable_local_notifications"));
         
-        boolean inAppEnabled = Utils.getAppMetadataBoolean(this, "FLOW_INAPP_PURCHASE");
-        wrapper.setStorePurchaseEnabled(inAppEnabled);
-        
-        if (inAppEnabled) {
-            Log.i(Utils.LOG_TAG, "Found IN APP BILLING key. Trying to establish connection to Google Play Services.");
-            AndroidStorePurchase inAppBillingService = new AndroidStorePurchase(this, wrapper);
-            
-            wrapper.setStorePurchaseAPI(inAppBillingService);
-        }
+        wrapper.setStorePurchaseEnabled(false);
        
         // Loading DFONTs
         try {
