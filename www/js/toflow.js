@@ -113,7 +113,7 @@ function postToFlow(panel, avoidStringify) {
 	}
 }
 
-// vimeo_player.html: posts the fields of state that differ from lastSent, returns the new lastSent
+// vimeo_player.html: post the state fields that differ from lastSent
 function postPlayerStateChanges(state, lastSent) {
 	var changed = {}, n = 0;
 	for (var field in state) {

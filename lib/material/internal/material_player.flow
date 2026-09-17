@@ -995,9 +995,7 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 	]))
 }
 
-// Same-origin wrapper page (yt_player.html & co) hosting the provider JS API; the page mirrors the player state
-// to flow via {playerState : {status, volume, duration, currentTime}} (vimeo_player.html adds ready) and takes {loadVideo}/{playerState}.
-// honourRealHtmlStyles: apply MEnabled / MVideoPlayerRealHtmlStyle to the wrapper like MVideoPlayer2MRealHTML does.
+// Same-origin wrapper page hosting the provider JS API: takes {loadVideo}/{playerState}, mirrors the player state back as {playerState}
 makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle], honourRealHtmlStyles : bool, loadMessage : () -> Json) -> Material {
 	STATUS_PLAYING = "PLAYING";
 	STATUS_BUFFERING = "BUFFERING";
@@ -1021,8 +1019,7 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	});
 	onLoaded = \ -> {
 		next(sendB, JsonObject([Pair("loadVideo", loadMessage())]) |> json2string);
-		// a state sent before the page was (re)loaded is lost, repeat it (yt_player is left as it was);
-		// only a mute is repeated, a volume would unmute a player the url muted
+		// a state sent before the page (re)loaded is lost, repeat it; volume only as a mute, it would unmute a url-muted player
 		if (honourRealHtmlStyles) sendState(concat(
 			[Pair("status", JsonString(if (getValue(playB)) STATUS_PLAYING else STATUS_PAUSED))],
 			if (getValue(volumeB) == 0.0) [Pair("volume", JsonDouble(0.0))] else []
@@ -1075,7 +1072,7 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 						}
 					})
 				),
-				// `ready` comes even when the provider SDK failed to load, so the consumer's spinner does not hang
+				// ready comes even without the SDK, so the consumer's spinner does not hang
 				makeSubscribe2(fselectFromStateM("ready"),
 					\readyM -> maybeApply(readyM, \r -> if (getJsonBoolValue(r, false)) nextDistinct(realSizeWH, fgetValue(wh)))
 				)
@@ -1098,23 +1095,18 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	)
 }
 
-// Providers with an API wrapper, see hasExternalPlayerApi
 MVideoExternalApiPlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
 	if (isSome(getYouTubeURL(url))) MVideoYoutubePlayer(url, wh, style)
 	else MVideoVimeoPlayer(url, wh, style)
 }
 
-// The Vimeo wrapper takes the embed URL as is (autoplay, muted, controls, start stay URL parameters)
+// unlike yt_player, the embed url with its parameters (autoplay, muted, controls, start) goes to the page as is
 MVideoVimeoPlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
 	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
-	makeExternalApiPlayer("vimeo_player.html", wh, style, true, \ -> externalApiLoadMessage(either(getVimeoURL(url), url), fgetValue(loopB)))
-}
-
-externalApiLoadMessage(url : string, loop : bool) -> Json {
-	JsonObject([
-		Pair("url", JsonString(url)),
-		Pair("params", JsonObject([Pair("loop", JsonBool(loop))]))
-	])
+	makeExternalApiPlayer("vimeo_player.html", wh, style, true, \ -> JsonObject([
+		Pair("url", JsonString(either(getVimeoURL(url), url))),
+		Pair("params", JsonObject([Pair("loop", JsonBool(fgetValue(loopB)))]))
+	]))
 }
 
 MPlayerControls2PlayerControls(mPlayerControls : [MPlayerControl]) -> [PlayerControl] {
