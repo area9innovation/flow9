@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<style lang="css">
+			html, body, iframe {
+				display: block;
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				padding: 0;
+				border: 0;
+				background: transparent;
+			}
+		</style>
+		<script src="js/toflow.js?2"></script>
+		<script src="https://player.vimeo.com/api/player.js" onerror="window.vimeoSdkFailed = true;"></script>
+	</head>
+<body>
+	<!-- Vimeo wrapper for MVideoVimeoPlayer, same {loadVideo}/{playerState} protocol as yt_player.html.
+	     Without the SDK the video is shown as a plain iframe (no state reporting). -->
+	<script>
+		var player = null, iframe = null, sender = null, lastSent = {}, current = null, pendingState = null, sdkWaits = 0;
+		var loaded = null;
+
+		function statusOf() {
+			if (current.ended) return "ENDED";
+			if (current.buffering && !current.paused) return "BUFFERING";
+			return current.paused ? "PAUSED" : "PLAYING";
+		}
+
+		function sendChanges() {
+			if (!current) return;
+			lastSent = postPlayerStateChanges({
+				status: statusOf(),
+				volume: Math.round(current.volume * 100),
+				duration: current.duration,
+				currentTime: current.currentTime
+			}, lastSent);
+		}
+
+		function refresh() {
+			if (!player) return;
+			var p = player;
+			Promise.all([p.getPaused(), p.getEnded(), p.getCurrentTime(), p.getDuration(), p.getVolume()])
+				.then(function (r) {
+					if (p !== player || !current) return;
+					current.paused = r[0]; current.ended = r[1]; current.currentTime = r[2]; current.duration = r[3]; current.volume = r[4];
+					sendChanges();
+				})
+				.catch(function () {});
+		}
+
+		// Vimeo may reload the iframe (forcereload=drm) and drop the listeners: re-attach on `loaded`, poll as a backup
+		function attach() {
+			var events = {
+				play: function () { current.paused = false; current.ended = false; current.buffering = false; sendChanges(); },
+				pause: function () { current.paused = true; sendChanges(); },
+				ended: function () { current.ended = true; current.paused = true; sendChanges(); },
+				bufferstart: function () { current.buffering = true; sendChanges(); },
+				bufferend: function () { current.buffering = false; sendChanges(); },
+				timeupdate: function (d) { current.currentTime = d.seconds; current.duration = d.duration; sendChanges(); },
+				volumechange: function (d) { current.volume = d.volume; sendChanges(); }
+			};
+			for (var name in events) {
+				player.off(name);
+				player.on(name, events[name]);
+			}
+		}
+
+		function dropPlayer() {
+			if (sender) { clearInterval(sender); sender = null; }
+			if (player) { try { player.destroy(); } catch (e) {} player = null; }
+			if (iframe && iframe.parentNode) iframe.parentNode.removeChild(iframe);
+			iframe = null;
+			current = null;
+			lastSent = {};
+		}
+
+		// `ready` tells flow the player is in place: on load (a live video never reports a duration), without the SDK or on error
+		function sendReady() {
+			postToFlow({playerState: {ready: true}});
+		}
+
+		// The URL arrives over postMessage: only the Vimeo player itself may be framed here
+		function isVimeoPlayerURL(url) {
+			try {
+				var u = new URL(url, window.location.href);
+				return u.protocol === "https:" && u.hostname === "player.vimeo.com";
+			} catch (err) {
+				return false;
+			}
+		}
+
+		function createIframe(url, params, onload) {
+			var src = url;
+			if (params && params.loop && src.indexOf("loop=") < 0) src += (src.indexOf("?") < 0 ? "?" : "&") + "loop=1";
+			iframe = document.createElement("iframe");
+			iframe.setAttribute("allow", "autoplay; fullscreen; picture-in-picture; encrypted-media");
+			iframe.setAttribute("allowfullscreen", "");
+			iframe.setAttribute("frameborder", "0");
+			iframe.onload = onload;
+			iframe.src = src;
+			document.body.appendChild(iframe);
+		}
+
+		function createPlayer(url, params) {
+			if (!isVimeoPlayerURL(url)) { sendReady(); return; }
+			var key = JSON.stringify([url, params]);
+			if (key === loaded && iframe) return;
+			loaded = key;
+			if (typeof Vimeo === "undefined" && !window.vimeoSdkFailed && sdkWaits < 300) {
+				sdkWaits++;
+				setTimeout(createPlayer, 10, url, params);
+				return;
+			}
+			dropPlayer();
+			var hasSdk = typeof Vimeo !== "undefined";
+			createIframe(url, params, hasSdk ? null : sendReady);
+			if (!hasSdk) return; // SDK unavailable: plain iframe, no state reporting
+
+			current = {paused: true, ended: false, buffering: false, currentTime: 0, duration: 0, volume: 1};
+			player = new Vimeo.Player(iframe);
+			var announced = false; // Vimeo fires `loaded` again on its own reloads
+			player.on("loaded", function () {
+				if (!announced) { announced = true; sendReady(); }
+				attach(); refresh(); applyPending();
+			});
+			player.on("error", sendReady);
+			attach();
+			player.ready().then(function () { refresh(); applyPending(); }).catch(sendReady);
+			sender = setInterval(refresh, 250);
+		}
+
+		function applyPending() {
+			if (!pendingState || !player) return;
+			var s = pendingState;
+			pendingState = null;
+			applyState(s);
+		}
+
+		function applyState(s) {
+			if ("status" in s) {
+				if (s.status === "PLAYING") player.play().catch(function () {});
+				else if (s.status === "PAUSED") player.pause().catch(function () {});
+				lastSent.status = s.status;
+			}
+			if ("volume" in s) {
+				player.setVolume(s.volume / 100).catch(function () {});
+				lastSent.volume = s.volume;
+			}
+			if ("loop" in s) player.setLoop(!!s.loop).catch(function () {});
+			if ("currentTime" in s) {
+				player.setCurrentTime(s.currentTime).catch(function () {});
+				lastSent.currentTime = s.currentTime;
+			}
+		}
+
+		window.addEventListener("message", function (e) {
+			// only the flow page that embeds this wrapper may drive it
+			if (e.source !== window.parent || e.origin !== window.location.origin) return;
+			try {
+				var data = JSON.parse(e.data);
+				if ("loadVideo" in data) {
+					try { sessionStorage.setItem(savedKey, JSON.stringify(data.loadVideo)); } catch (err) {}
+					createPlayer(data.loadVideo.url, data.loadVideo.params || {});
+				}
+				if ("playerState" in data) {
+					if (player) applyState(data.playerState);
+					else pendingState = Object.assign(pendingState || {}, data.playerState);
+				}
+			} catch (err) {}
+		});
+		// flow reloads the iframe whenever it moves it in the DOM, so the last loadVideo is kept per frame and replayed
+		var savedKey = "flowPlayer:" + (window.frameElement ? window.frameElement.id : "");
+		try { var saved = sessionStorage.getItem(savedKey); if (saved) { saved = JSON.parse(saved); createPlayer(saved.url, saved.params || {}); } } catch (err) {}
+	</script>
+</body>
+</html>
