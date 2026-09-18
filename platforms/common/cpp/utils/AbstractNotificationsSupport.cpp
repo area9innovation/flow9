@@ -221,7 +221,20 @@ void AbstractNotificationsSupport::deliverFBToken(unicode_string token)
 void AbstractNotificationsSupport::deliverFBTokenTo(int cb_root, unicode_string token)
 {
     RUNNER_VAR = getFlowRunner();
-    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, RUNNER->AllocateString(token.c_str()));
+    RUNNER_DefSlots1(_token);
+
+    _token = RUNNER->AllocateString(token.c_str());
+
+    // Match deliverFBMessage/deliverFBToken: hold the deferred-action lock across
+    // EvalFunction so deferred callbacks run only after this delivery completes.
+    // NOTE: this is NOT a thread mutex (see ByteCodeRunner::LockDeferred — it only
+    // increments DeferredQueueLockCount). Cross-thread serialization of runner
+    // access is the responsibility of the Java caller, which must invoke this via a
+    // method synchronized on the FlowRunnerWrapper monitor (see
+    // FlowRunnerWrapper.deliverFBTokenTo).
+    WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, _token);
     RUNNER->ReleaseRoot(cb_root);
 }
 
