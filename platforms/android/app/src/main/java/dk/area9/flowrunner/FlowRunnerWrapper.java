@@ -460,7 +460,10 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             headers_map.put(headers[i * 2], headers[ i * 2 + 1 ]);
         }
         if (picture_loader == null) {
-            nResolvePictureError(cPtr(), url, "PictureLoader not set");
+            // Route through the synchronized wrapper (not the raw native) so this
+            // runner re-entry is serialized on the FlowRunnerWrapper monitor like
+            // every other entry point. See deliverFBTokenTo for the rationale.
+            resolvePictureError(url, "PictureLoader not set");
             return;
         }
 
@@ -482,7 +485,8 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
             picture_loader.load(url, headers_map, cache, cb);
         } catch (IOException e) {
-            nResolvePictureError(cPtr(), url, "I/O error: " + e.getMessage());
+            // Route through the synchronized wrapper (see above).
+            resolvePictureError(url, "I/O error: " + e.getMessage());
         }
     }
 
@@ -1646,7 +1650,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     private native void nGetMediaDevices(long ptr, int id, String[] ids, String[] names);
 
-    private void getMediaDevices(int cb, Map<String, String> devices) {
+    private synchronized void getMediaDevices(int cb, Map<String, String> devices) {
+        // synchronized so the native runner re-entry is serialized on the
+        // FlowRunnerWrapper monitor. The current callers (cbGetAudioDevices/
+        // cbGetVideoDevices) already hold it; the monitor is reentrant so this is
+        // safe and also protects against future non-synchronized callers.
+        if (!isValid()) return;
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> names = new ArrayList<>();
         for (Entry<String, String> item : devices.entrySet()) {
