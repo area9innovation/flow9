@@ -89,13 +89,9 @@
 				bufferstart: function () { if (!live()) return; current.buffering = true; sendChanges(); },
 				bufferend: function () { if (!live()) return; current.buffering = false; sendChanges(); },
 				timeupdate: function (d) { if (!live()) return; if (!holding("currentTime")) current.currentTime = d.seconds; current.duration = d.duration; sendChanges(); },
-				// only the seek that was actually asked for last: the ones a scrub-bar drag passed through are not it
-				seeked: function (d) {
-					if (!live()) return;
-					if (Math.abs(d.seconds - seekTarget) < 0.5) release("currentTime");
-					if (!holding("currentTime")) { current.currentTime = d.seconds; sendChanges(); }
-				},
-				volumechange: function (d) { if (!live()) return; release("volume"); current.volume = d.volume; sendChanges(); }
+				seeked: function (d) { if (!live()) return; if (!holding("currentTime")) { current.currentTime = d.seconds; sendChanges(); } },
+				// the muted state is not in the event, and it is what decides the volume: let the poll read both
+				volumechange: function () { if (!live()) return; release("volume"); }
 			};
 			for (var name in events) {
 				player.off(name);
@@ -201,10 +197,16 @@
 		function applyState(s) {
 			if (!player || !current) return;
 			if ("status" in s) {
-				if (s.status === "PLAYING") { current.paused = false; current.ended = false; player.play().catch(function () {}); }
-				else if (s.status === "PAUSED") { current.paused = true; player.pause().catch(function () {}); }
+				if (s.status === "PLAYING" && current.paused) {
+					current.paused = false; current.ended = false;
+					player.play().catch(function () {});
+					hold("status");
+				} else if (s.status === "PAUSED" && !current.paused) {
+					current.paused = true;
+					player.pause().catch(function () {});
+					hold("status");
+				}
 				lastSent.status = s.status;
-				hold("status");
 			}
 			if ("volume" in s) {
 				current.volume = s.volume / 100;
@@ -218,10 +220,13 @@
 			if ("currentTime" in s) {
 				current.currentTime = s.currentTime;
 				lastSent.currentTime = s.currentTime;
-				// a drag re-holds on every step, so the whole run reports nothing and only its last seek is confirmed
-				seekTarget = s.currentTime;
+				// the seek releases its own hold, and only if it is still the one flow last asked for: a drag walks
+				// through many, and a rejected one (a live video, a frame not loaded yet) must release just the same
+				var target = s.currentTime;
+				seekTarget = target;
 				hold("currentTime");
-				player.setCurrentTime(s.currentTime).catch(function () {});
+				var seeked = function () { if (seekTarget === target) release("currentTime"); };
+				player.setCurrentTime(target).then(seeked, seeked);
 			}
 		}
 
