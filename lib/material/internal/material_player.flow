@@ -1003,6 +1003,7 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	STATUS_PAUSED = "PAUSED";
 
 	playB = extractStruct(style, FVideoPlay(make(false))).play;
+	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
 	lengthB = extractStruct(style, FVideoLength(make(0.0))).length;
 	positionB = extractStruct(style, FVideoPosition(make(0.0))).position;
 	volumeB = extractStruct(style, FVideoVolume(make(1.0))).volume;
@@ -1025,10 +1026,11 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 		reloaded = getValue(receiveB) != "";
 		if (restoreStateOnReload) sendState(concatA([
 			if (reloaded || getValue(playB)) [Pair("status", JsonString(if (getValue(playB)) STATUS_PLAYING else STATUS_PAUSED))] else [],
-			// the page restarts at 0 and reports that back, so without this the position is lost on every reload
-			if (getValue(positionB) > 0.0) [Pair("currentTime", JsonDouble(getValue(positionB)))] else [],
-			// the reloaded player is back at its own default: any volume the app set, not just a mute, has to be restored
-			if (reloaded && getValue(volumeB) != 1.0) [Pair("volume", JsonDouble(getValue(volumeB) * 100.0))] else []
+			// the page restarts at 0 and reports that back, so without this the position is lost on every reload.
+			// Only on a reload: on a first load the position still holds whatever the previous video reached.
+			if (reloaded && getValue(positionB) > 0.0) [Pair("currentTime", JsonDouble(getValue(positionB)))] else [],
+			// the reloaded player is back at its own default, so the volume goes back as it is, mute and unmute alike
+			if (reloaded) [Pair("volume", JsonDouble(getValue(volumeB) * 100.0))] else []
 		]));
 	}
 
@@ -1070,6 +1072,8 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 						\internal -> nextDistinct(volumeB, getJsonDoubleValue(internal, 0.0) * 0.01)
 					)
 				),
+				// the loop was baked into loadVideo and never sent again, so flipping FVideoLoop at runtime did nothing
+				makeSubscribe2(loopB, \l -> sendState([Pair("loop", JsonBool(l))])),
 				makeSubscribe2(fselectFromStateM("duration"),
 					\durationM -> maybeApply(durationM, \d -> {
 						nextDistinct(lengthB, getJsonDoubleValue(d, 0.0));

@@ -23,7 +23,8 @@
 		var player = null, iframe = null, sender = null, lastSent = {}, current = null, pendingState = null;
 		var loaded = null, announced = false, readyTimer = null;
 		var seeking = false, seekTarget = 0, seekSeq = 0, seekPending = 0, stateSeq = 0;
-		var READY_TIMEOUT = 10000, SEEK_TIMEOUT = 5000, MAX_SAVED = 20;
+		var statusHold = false, statusSeq = 0;
+		var READY_TIMEOUT = 10000, SEEK_TIMEOUT = 5000, STATUS_TIMEOUT = 2000, MAX_SAVED = 20;
 
 		function statusOf() {
 			if (current.ended) return "ENDED";
@@ -54,7 +55,8 @@
 				.then(function (r) {
 					// a poll issued before applyState would otherwise report the state flow has just asked us to leave
 					if (p !== player || !current || gen !== stateSeq) return;
-					current.paused = r[0]; current.ended = r[1]; current.duration = r[3];
+					if (!statusHold) { current.paused = r[0]; current.ended = r[1]; } // both lag a requested play/pause
+					current.duration = r[3];
 					current.volume = r[5] ? 0 : r[4]; // a muted player is silent whatever its volume says
 					if (!seeking) current.currentTime = r[2]; // the old position is still reported until the seek lands
 					sendChanges();
@@ -64,16 +66,18 @@
 
 		// Vimeo may reload the iframe (forcereload=drm) and drop the listeners: re-attach on `loaded`, poll as a backup
 		function attach() {
+			// a destroyed player can still dispatch what it had queued, and `current` belongs to the next video by then
+			var p = player, live = function () { return p === player && !!current; };
 			var events = {
-				play: function () { current.paused = false; current.ended = false; current.buffering = false; sendChanges(); },
-				pause: function () { current.paused = true; sendChanges(); },
-				ended: function () { current.ended = true; current.paused = true; sendChanges(); },
-				bufferstart: function () { current.buffering = true; sendChanges(); },
-				bufferend: function () { current.buffering = false; sendChanges(); },
-				timeupdate: function (d) { if (!seeking) current.currentTime = d.seconds; current.duration = d.duration; sendChanges(); },
+				play: function () { if (!live()) return; statusHold = false; current.paused = false; current.ended = false; current.buffering = false; sendChanges(); },
+				pause: function () { if (!live()) return; statusHold = false; current.paused = true; sendChanges(); },
+				ended: function () { if (!live()) return; statusHold = false; current.ended = true; current.paused = true; sendChanges(); },
+				bufferstart: function () { if (!live()) return; current.buffering = true; sendChanges(); },
+				bufferend: function () { if (!live()) return; current.buffering = false; sendChanges(); },
+				timeupdate: function (d) { if (!live()) return; if (!seeking) current.currentTime = d.seconds; current.duration = d.duration; sendChanges(); },
 				// a backstop for the setCurrentTime promise, but only for the seek that is actually the last one requested
-				seeked: function (d) { if (seeking && seekPending <= 1 && Math.abs(d.seconds - seekTarget) < 0.5) { seeking = false; current.currentTime = d.seconds; sendChanges(); } },
-				volumechange: function (d) { current.volume = d.volume; sendChanges(); }
+				seeked: function (d) { if (!live()) return; if (seeking && seekPending <= 1 && Math.abs(d.seconds - seekTarget) < 0.5) { seeking = false; current.currentTime = d.seconds; sendChanges(); } },
+				volumechange: function (d) { if (!live()) return; current.volume = d.volume; sendChanges(); }
 			};
 			for (var name in events) {
 				player.off(name);
@@ -89,6 +93,7 @@
 			iframe = null;
 			current = null;
 			lastSent = {};
+			statusHold = false;
 			pendingState = null; // state queued for this video must not be applied to the next one
 			seeking = false;
 			seekSeq++; // a seek still in flight must not land on the next video's state
@@ -117,7 +122,11 @@
 
 		function createIframe(url, params, onload) {
 			var src = url;
-			if (params && params.loop && src.indexOf("loop=") < 0) src += (src.indexOf("?") < 0 ? "?" : "&") + "loop=1";
+			try {
+				var u = new URL(url);
+				if (params && "loop" in params) u.searchParams.set("loop", params.loop ? "1" : "0");
+				src = u.href;
+			} catch (err) {}
 			iframe = document.createElement("iframe");
 			iframe.setAttribute("allow", "autoplay; fullscreen; picture-in-picture; encrypted-media");
 			iframe.setAttribute("allowfullscreen", "");
@@ -181,6 +190,10 @@
 				if (s.status === "PLAYING") { current.paused = false; current.ended = false; player.play().catch(function () {}); }
 				else if (s.status === "PAUSED") { current.paused = true; player.pause().catch(function () {}); }
 				lastSent.status = s.status;
+				// the poll keeps reporting the status we are leaving until the play/pause event arrives
+				statusHold = true;
+				var st = ++statusSeq;
+				setTimeout(function () { if (st === statusSeq) statusHold = false; }, STATUS_TIMEOUT);
 			}
 			if ("volume" in s) {
 				current.volume = s.volume / 100;
