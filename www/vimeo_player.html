@@ -22,9 +22,23 @@
 	<script>
 		var player = null, iframe = null, sender = null, lastSent = {}, current = null, pendingState = null;
 		var loaded = null, announced = false, readyTimer = null;
-		var seeking = false, seekTarget = 0, seekSeq = 0, seekPending = 0, stateSeq = 0;
-		var statusHold = false, statusSeq = 0;
-		var READY_TIMEOUT = 10000, SEEK_TIMEOUT = 5000, STATUS_TIMEOUT = 2000, MAX_SAVED = 20;
+		// What flow asked for and the player has not confirmed yet. play/pause/setCurrentTime/setVolume all take
+		// effect later, so until the matching event arrives anything read back for that field is the value we are
+		// leaving, and reporting it would send flow's own request back at it. The deadline is the release for a
+		// confirmation that never comes: a held field would otherwise stay frozen for the life of the player.
+		var held = {}, seekTarget = 0;
+		var HOLD_MS = {status: 2000, currentTime: 5000, volume: 2000};
+		var READY_TIMEOUT = 10000, MAX_SAVED = 20;
+
+		function hold(field) { held[field] = Date.now() + HOLD_MS[field]; }
+		function release(field) { delete held[field]; }
+		function holding(field) {
+			var until = held[field];
+			if (until === undefined) return false;
+			if (Date.now() < until) return true;
+			delete held[field];
+			return false;
+		}
 
 		function statusOf() {
 			if (current.ended) return "ENDED";
@@ -46,19 +60,18 @@
 
 		function refresh() {
 			if (!player) return;
-			var p = player, gen = stateSeq, vol = current ? current.volume : null;
+			var p = player, vol = current ? current.volume : null;
 			// getVolume/getMuted are not supported on iOS, and Promise.all is all-or-nothing: one rejection there
 			// would otherwise take the whole poll down
 			Promise.all([p.getPaused(), p.getEnded(), p.getCurrentTime(), p.getDuration(),
 				p.getVolume().catch(function () { return vol; }),
 				p.getMuted().catch(function () { return false; })])
 				.then(function (r) {
-					// a poll issued before applyState would otherwise report the state flow has just asked us to leave
-					if (p !== player || !current || gen !== stateSeq) return;
-					if (!statusHold) { current.paused = r[0]; current.ended = r[1]; } // both lag a requested play/pause
+					if (p !== player || !current) return;
 					current.duration = r[3];
-					current.volume = r[5] ? 0 : r[4]; // a muted player is silent whatever its volume says
-					if (!seeking) current.currentTime = r[2]; // the old position is still reported until the seek lands
+					if (!holding("status")) { current.paused = r[0]; current.ended = r[1]; }
+					if (!holding("currentTime")) current.currentTime = r[2];
+					if (!holding("volume")) current.volume = r[5] ? 0 : r[4]; // a muted player is silent whatever its volume says
 					sendChanges();
 				})
 				.catch(function () {});
@@ -69,15 +82,20 @@
 			// a destroyed player can still dispatch what it had queued, and `current` belongs to the next video by then
 			var p = player, live = function () { return p === player && !!current; };
 			var events = {
-				play: function () { if (!live()) return; statusHold = false; current.paused = false; current.ended = false; current.buffering = false; sendChanges(); },
-				pause: function () { if (!live()) return; statusHold = false; current.paused = true; sendChanges(); },
-				ended: function () { if (!live()) return; statusHold = false; current.ended = true; current.paused = true; sendChanges(); },
+				// each of these is the player confirming what was asked of it, so it releases the matching hold
+				play: function () { if (!live()) return; release("status"); current.paused = false; current.ended = false; current.buffering = false; sendChanges(); },
+				pause: function () { if (!live()) return; release("status"); current.paused = true; sendChanges(); },
+				ended: function () { if (!live()) return; release("status"); current.ended = true; current.paused = true; sendChanges(); },
 				bufferstart: function () { if (!live()) return; current.buffering = true; sendChanges(); },
 				bufferend: function () { if (!live()) return; current.buffering = false; sendChanges(); },
-				timeupdate: function (d) { if (!live()) return; if (!seeking) current.currentTime = d.seconds; current.duration = d.duration; sendChanges(); },
-				// a backstop for the setCurrentTime promise, but only for the seek that is actually the last one requested
-				seeked: function (d) { if (!live()) return; if (seeking && seekPending <= 1 && Math.abs(d.seconds - seekTarget) < 0.5) { seeking = false; current.currentTime = d.seconds; sendChanges(); } },
-				volumechange: function (d) { if (!live()) return; current.volume = d.volume; sendChanges(); }
+				timeupdate: function (d) { if (!live()) return; if (!holding("currentTime")) current.currentTime = d.seconds; current.duration = d.duration; sendChanges(); },
+				// only the seek that was actually asked for last: the ones a scrub-bar drag passed through are not it
+				seeked: function (d) {
+					if (!live()) return;
+					if (Math.abs(d.seconds - seekTarget) < 0.5) release("currentTime");
+					if (!holding("currentTime")) { current.currentTime = d.seconds; sendChanges(); }
+				},
+				volumechange: function (d) { if (!live()) return; release("volume"); current.volume = d.volume; sendChanges(); }
 			};
 			for (var name in events) {
 				player.off(name);
@@ -93,10 +111,8 @@
 			iframe = null;
 			current = null;
 			lastSent = {};
-			statusHold = false;
+			held = {};
 			pendingState = null; // state queued for this video must not be applied to the next one
-			seeking = false;
-			seekSeq++; // a seek still in flight must not land on the next video's state
 		}
 
 		// `ready` tells flow the player is in place: on load (a live video never reports a duration), without the SDK or on error
@@ -181,19 +197,14 @@
 			applyState(s);
 		}
 
-		// play/pause/seek/setVolume are async: the request is recorded as the current state too, or the next
-		// sendChanges reads the value it is about to replace and posts it back to flow
+		// each request is recorded as the current state and held until the player confirms it
 		function applyState(s) {
 			if (!player || !current) return;
-			stateSeq++;
 			if ("status" in s) {
 				if (s.status === "PLAYING") { current.paused = false; current.ended = false; player.play().catch(function () {}); }
 				else if (s.status === "PAUSED") { current.paused = true; player.pause().catch(function () {}); }
 				lastSent.status = s.status;
-				// the poll keeps reporting the status we are leaving until the play/pause event arrives
-				statusHold = true;
-				var st = ++statusSeq;
-				setTimeout(function () { if (st === statusSeq) statusHold = false; }, STATUS_TIMEOUT);
+				hold("status");
 			}
 			if ("volume" in s) {
 				current.volume = s.volume / 100;
@@ -201,31 +212,16 @@
 				// a muted=1 embed stays silent at any volume until this is cleared
 				player.setMuted(current.volume <= 0).catch(function () {});
 				lastSent.volume = s.volume;
+				hold("volume");
 			}
 			if ("loop" in s) player.setLoop(!!s.loop).catch(function () {});
 			if ("currentTime" in s) {
 				current.currentTime = s.currentTime;
 				lastSent.currentTime = s.currentTime;
-				// while a seek is in flight the player still reports the old position: hold it back, and while the user
-				// drags the scrub bar hold it back for the whole drag, so only the last seek of a run is reported
-				seeking = true;
+				// a drag re-holds on every step, so the whole run reports nothing and only its last seek is confirmed
 				seekTarget = s.currentTime;
-				var seek = ++seekSeq, settled = false;
-				seekPending++;
-				// counted down exactly once however the seek ends: a leak here would disable the `seeked` backstop for good
-				var settle = function () { if (!settled) { settled = true; seekPending--; } };
-				// the SDK leaves the promise unsettled when the frame never becomes ready: without this the position
-				// would stay held back for the life of the player
-				setTimeout(function () { settle(); if (seek === seekSeq) seeking = false; }, SEEK_TIMEOUT);
-				player.setCurrentTime(s.currentTime)
-					.then(function (t) {
-						settle();
-						if (seek !== seekSeq || !current) return; // superseded by a newer seek, or by another video
-						seeking = false;
-						current.currentTime = t;
-						sendChanges();
-					})
-					.catch(function () { settle(); if (seek === seekSeq) seeking = false; });
+				hold("currentTime");
+				player.setCurrentTime(s.currentTime).catch(function () {});
 			}
 		}
 
