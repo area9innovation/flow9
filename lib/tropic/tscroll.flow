@@ -10,7 +10,7 @@ export {
 	TScrollStyle ::= TScrollSetPosition, TScrollBound, TScrollInspectVisible, TScrollEnabled, TScrollDontHandle, TScrollPersistent,
 		TScrollDisableMouseWheel, TReverseMouseWheel, TScrollDisableOutOfBounds, TScrollKeysEnabled, TScrollbarsVisible,
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarStart, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
-		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition, TScrollStep,
+		TOnScrolledToBottom, TOnScrolledToSide, TKeyFilter, TScrollFadeContent, TScrollFadeContentT, TScrollMouseEnabled, TScrollPosition, TScrollStep,
 		TCurrentInteractive, TMouseXY, TScrollMoving, TScrollXMoving, TScrollYMoving, TScrollInspectShowScrolling, TSetRTL, TScrollPercent,
 		TScrollbarsAdditionalBox, TScrollbarOverlapContentExt, TScrollAxisEnabled, TScrollResizeBeforePrint, TScrollCropEnabled, TScrollSkipInteractivityOnHold,
 		TScrollThrottleContentMetrics, TScrollNative, DomRender, TOnScroll;
@@ -134,6 +134,8 @@ export {
 		TOnScroll(fn: (scrollPosition: Point, contentWH : WidthHeight, boxWH : WidthHeight) -> Point);
 
 		TScrollFadeContent(color : int, width : double, start : bool, end : bool, enabled : Transform<bool>);
+		// As TScrollFadeContent, for content whose background changes while the scroll stays put.
+		TScrollFadeContentT(color : Transform<int>, width : double, start : bool, end : bool, enabled : Transform<bool>);
 
 		TScrollMouseEnabled(enabled : Transform<bool>);
 		TScrollPosition(position : DynamicBehaviour<Point>);
@@ -216,7 +218,15 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 		if (overlapContent0.overlap) const(WidthHeight(0., 0.))
 		else fwh(scrollBarStyles.y.thickness, scrollBarStyles.x.thickness)
 	)).box;
-	scrollFadeContent = tryExtractStruct(style, TScrollFadeContent(0, 0.0, false, false, const(false)));
+	// Both forms are normalised to the transform-valued one, so the rendering below has a single shape.
+	scrollFadeContent = eitherMap(
+		tryExtractStruct(style, TScrollFadeContentT(const(0), 0.0, false, false, const(false))),
+		\sfc -> Some(sfc),
+		maybeMap(
+			tryExtractStruct(style, TScrollFadeContent(0, 0.0, false, false, const(false))),
+			\sfc -> TScrollFadeContentT(const(sfc.color), sfc.width, sfc.start, sfc.end, sfc.enabled)
+		)
+	);
 	scrollResizeBeforePrint = extractStruct(style, TScrollResizeBeforePrint(true)).resize;
 
 	onScrolledToBottom = tryExtractStruct(style, TOnScrolledToBottom(nop));
@@ -567,17 +577,22 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 				eitherMap(
 					scrollFadeContent,
 					\sfc -> {
-						gradientPointsStart = [GradientPoint(sfc.color, 1.0, 0.0), GradientPoint(sfc.color, 0.0, 1.0)];
-						gradientPointsEnd = [GradientPoint(sfc.color, 0.0, 0.0), GradientPoint(sfc.color, 1.0, 1.0)];
+						// The colour can change under a scroll that stays put, so only the gradient is rebuilt for it.
+						makeGradientPoints = \atStart -> fselect(sfc.color, FLift(\color ->
+							if (atStart) [GradientPoint(color, 1.0, 0.0), GradientPoint(color, 0.0, 1.0)]
+							else [GradientPoint(color, 0.0, 0.0), GradientPoint(color, 1.0, 1.0)]
+						));
 
 						makeGradientBorder = \vertical -> {
-							gradientBlock = \offset, gradientPoints ->
-								TFrame(
-									0.0,
-									0.0,
-									[GradientFill(if (vertical) 90.0 else 0.0, gradientPoints)],
-									if (vertical) TFillXH(sfc.width) else TFillWY(sfc.width)
-								)
+							gradientBlock = \offset, atStart ->
+								TMutable(fselect(makeGradientPoints(atStart), FLift(\gradientPoints ->
+									TFrame(
+										0.0,
+										0.0,
+										[GradientFill(if (vertical) 90.0 else 0.0, gradientPoints)],
+										if (vertical) TFillXH(sfc.width) else TFillWY(sfc.width)
+									)
+								)))
 								|> (\t -> TAlpha(fmin(fdivide(offset, const(sfc.width)), const(1.)), t));
 
 							concatA([
@@ -585,7 +600,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 									[gradientBlock(
 										if (vertical) fpointY(scrollPosition)
 										else fpointX(scrollPosition),
-										gradientPointsStart
+										true
 									)]
 								else [],
 
@@ -595,7 +610,7 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 									[gradientBlock(
 										if (vertical) fsubtract(fheight(maxWH), fpointY(scrollPosition))
 										else fsubtract(fwidth(maxWH), fpointX(scrollPosition)),
-										gradientPointsEnd
+										false
 									)]
 								else []
 							])
