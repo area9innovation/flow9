@@ -1019,11 +1019,16 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	});
 	onLoaded = \ -> {
 		next(sendB, JsonObject([Pair("loadVideo", loadMessage())]) |> json2string);
-		// a state sent before the page (re)loaded is lost, repeat it; volume only as a mute, it would unmute a url-muted player
-		if (honourRealHtmlStyles) sendState(concat(
-			[Pair("status", JsonString(if (getValue(playB)) STATUS_PLAYING else STATUS_PAUSED))],
-			if (getValue(volumeB) == 0.0) [Pair("volume", JsonDouble(0.0))] else []
-		));
+		// a state sent before the page (re)loaded is lost, repeat it. The page has reported nothing yet on the very
+		// first load, and there the url's own autoplay/muted parameters rule: only an explicit play is worth sending
+		reloaded = getValue(receiveB) != "";
+		if (honourRealHtmlStyles) sendState(concatA([
+			if (reloaded || getValue(playB)) [Pair("status", JsonString(if (getValue(playB)) STATUS_PLAYING else STATUS_PAUSED))] else [],
+			// the page restarts at 0 and reports that back, so without this the position is lost on every reload
+			if (getValue(positionB) > 0.0) [Pair("currentTime", JsonDouble(getValue(positionB)))] else [],
+			// the reloaded player is back at its own default: any volume the app set, not just a mute, has to be restored
+			if (reloaded && getValue(volumeB) != 1.0) [Pair("volume", JsonDouble(getValue(volumeB) * 100.0))] else []
+		]));
 	}
 
 	sendToJS = ref nop1;
@@ -1089,7 +1094,15 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 			],
 			if (honourRealHtmlStyles) concat(
 				eitherMap(tryExtractStruct(style, MEnabled(const(true))), \en -> [MouseDisabled(fnot(en.enabled))], []),
-				eitherMap(tryExtractStruct(style, MVideoPlayerRealHtmlStyle([])), \rhs -> rhs.style, [])
+				// the style array is applied last-wins, so the structs carrying the {loadVideo}/{playerState}
+				// protocol are kept: an app entry would replace them and silently break the player
+				eitherMap(tryExtractStruct(style, MVideoPlayerRealHtmlStyle([])), \rhs -> filter(rhs.style, \s -> switch (s : RealHTMLStyle) {
+					FlowCallback(__): false;
+					PageHostcallSetter(__): false;
+					OnPageLoaded(__): false;
+					OverridePageDomain(__): false; // it makes the page cross-origin for hostCall, so nothing reaches it
+					default: true;
+				}), [])
 			) else []
 		]))
 	)
