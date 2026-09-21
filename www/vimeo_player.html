@@ -26,7 +26,7 @@
 		// effect later, so until the matching event arrives anything read back for that field is the value we are
 		// leaving, and reporting it would send flow's own request back at it. The deadline is the release for a
 		// confirmation that never comes: a held field would otherwise stay frozen for the life of the player.
-		var held = {}, seekTarget = 0;
+		var held = {}, seekSeq = 0, statusWanted = null, ready = false;
 		var HOLD_MS = {status: 2000, currentTime: 5000, volume: 2000};
 		var READY_TIMEOUT = 10000, MAX_SAVED = 20;
 
@@ -69,6 +69,8 @@
 				.then(function (r) {
 					if (p !== player || !current) return;
 					current.duration = r[3];
+					// the player may already be in the state we asked for, and then no play/pause event is coming
+					if (statusWanted === (r[0] ? "PAUSED" : "PLAYING")) release("status");
 					if (!holding("status")) { current.paused = r[0]; current.ended = r[1]; }
 					if (!holding("currentTime")) current.currentTime = r[2];
 					if (!holding("volume")) current.volume = r[5] ? 0 : r[4]; // a muted player is silent whatever its volume says
@@ -108,6 +110,9 @@
 			current = null;
 			lastSent = {};
 			held = {};
+			statusWanted = null;
+			ready = false;
+			seekSeq++; // a seek outstanding on the dropped player must not release the next one's hold
 			pendingState = null; // state queued for this video must not be applied to the next one
 		}
 
@@ -173,10 +178,10 @@
 			current = {paused: true, ended: false, buffering: false, currentTime: 0, duration: 0, volume: null};
 			try {
 				player = new Vimeo.Player(iframe);
-				player.on("loaded", function () { sendReady(); attach(); refresh(); applyPending(); });
+				player.on("loaded", function () { ready = true; sendReady(); attach(); refresh(); applyPending(); });
 				player.on("error", sendReady);
 				attach();
-				player.ready().then(function () { refresh(); applyPending(); }).catch(sendReady);
+				player.ready().then(function () { ready = true; refresh(); applyPending(); }).catch(sendReady);
 				sender = setInterval(refresh, 250);
 			} catch (err) {
 				console.error("vimeo_player: cannot attach the API player", err);
@@ -187,7 +192,7 @@
 		}
 
 		function applyPending() {
-			if (!pendingState || !player) return;
+			if (!pendingState || !player || !ready) return;
 			var s = pendingState;
 			pendingState = null;
 			applyState(s);
@@ -197,16 +202,11 @@
 		function applyState(s) {
 			if (!player || !current) return;
 			if ("status" in s) {
-				if (s.status === "PLAYING" && current.paused) {
-					current.paused = false; current.ended = false;
-					player.play().catch(function () {});
-					hold("status");
-				} else if (s.status === "PAUSED" && !current.paused) {
-					current.paused = true;
-					player.pause().catch(function () {});
-					hold("status");
-				}
+				if (s.status === "PLAYING") { current.paused = false; current.ended = false; player.play().catch(function () {}); }
+				else if (s.status === "PAUSED") { current.paused = true; player.pause().catch(function () {}); }
 				lastSent.status = s.status;
+				statusWanted = s.status;
+				hold("status");
 			}
 			if ("volume" in s) {
 				current.volume = s.volume / 100;
@@ -220,13 +220,12 @@
 			if ("currentTime" in s) {
 				current.currentTime = s.currentTime;
 				lastSent.currentTime = s.currentTime;
-				// the seek releases its own hold, and only if it is still the one flow last asked for: a drag walks
+				// the seek releases its own hold, and only while it is still the one flow last asked for: a drag walks
 				// through many, and a rejected one (a live video, a frame not loaded yet) must release just the same
-				var target = s.currentTime;
-				seekTarget = target;
 				hold("currentTime");
-				var seeked = function () { if (seekTarget === target) release("currentTime"); };
-				player.setCurrentTime(target).then(seeked, seeked);
+				var seek = ++seekSeq;
+				var settled = function () { if (seek === seekSeq) release("currentTime"); };
+				player.setCurrentTime(s.currentTime).then(settled, settled);
 			}
 		}
 
@@ -281,7 +280,9 @@
 					createPlayer(data.loadVideo.url, data.loadVideo.params || {});
 				}
 				if ("playerState" in data) {
-					if (player) applyState(data.playerState);
+					// `player` exists as soon as it is constructed, but it cannot act until it is ready: a seek sent
+					// before that is rejected and lost, and the reload restore is sent exactly then
+					if (ready) applyState(data.playerState);
 					else pendingState = Object.assign(pendingState || {}, data.playerState);
 				}
 			} catch (err) {
