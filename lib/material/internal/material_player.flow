@@ -975,7 +975,7 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 		contains(controls, FullScreenPlayer()) |> b2i |> i2s
 	);
 
-	makeExternalApiPlayer("yt_player.html", wh, style, false, \ -> JsonObject([
+	makeExternalApiPlayer("yt_player.html", wh, style, false, false, \ -> JsonObject([
 		Pair("videoId", JsonString(videoId)),
 		Pair("params", JsonObject(concatA([
 			if (startParam == "") [] else [Pair("start", JsonString(startParam))],
@@ -995,8 +995,9 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 	]))
 }
 
-// Same-origin wrapper page hosting the provider JS API: takes {loadVideo}/{playerState}, mirrors the player state back as {playerState}
-makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle], honourRealHtmlStyles : bool, loadMessage : () -> Json) -> Material {
+// The wrapper page hosting the provider JS API: takes {loadVideo}/{playerState}, mirrors the player state back as {playerState}.
+// restoreStateOnReload needs a page that queues a state arriving before its player is ready.
+makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle], honourRealHtmlStyles : bool, restoreStateOnReload : bool, loadMessage : () -> Json) -> Material {
 	STATUS_PLAYING = "PLAYING";
 	STATUS_BUFFERING = "BUFFERING";
 	STATUS_PAUSED = "PAUSED";
@@ -1022,7 +1023,7 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 		// a state sent before the page (re)loaded is lost, repeat it. The page has reported nothing yet on the very
 		// first load, and there the url's own autoplay/muted parameters rule: only an explicit play is worth sending
 		reloaded = getValue(receiveB) != "";
-		if (honourRealHtmlStyles) sendState(concatA([
+		if (restoreStateOnReload) sendState(concatA([
 			if (reloaded || getValue(playB)) [Pair("status", JsonString(if (getValue(playB)) STATUS_PLAYING else STATUS_PAUSED))] else [],
 			// the page restarts at 0 and reports that back, so without this the position is lost on every reload
 			if (getValue(positionB) > 0.0) [Pair("currentTime", JsonDouble(getValue(positionB)))] else [],
@@ -1101,6 +1102,8 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 					PageHostcallSetter(__): false;
 					OnPageLoaded(__): false;
 					OverridePageDomain(__): false; // it makes the page cross-origin for hostCall, so nothing reaches it
+					SandBoxJS(__): false; // a sandbox without allow-same-origin/allow-scripts disables hostCall and storage
+					WhitelistDomains(__): false; // it can block the player's own navigation
 					default: true;
 				}), [])
 			) else []
@@ -1116,7 +1119,7 @@ MVideoExternalApiPlayer(url : string, wh : Transform<WidthHeight>, style : [MVid
 // unlike yt_player, the embed url with its parameters (autoplay, muted, controls, start) goes to the page as is
 MVideoVimeoPlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
 	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
-	makeExternalApiPlayer("vimeo_player.html", wh, style, true, \ -> JsonObject([
+	makeExternalApiPlayer("vimeo_player.html", wh, style, true, true, \ -> JsonObject([
 		Pair("url", JsonString(either(getVimeoURL(url), url))),
 		Pair("params", JsonObject([Pair("loop", JsonBool(fgetValue(loopB)))]))
 	]))

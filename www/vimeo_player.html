@@ -13,17 +13,17 @@
 			}
 		</style>
 		<script src="js/toflow.js?2"></script>
-		<script src="https://player.vimeo.com/api/player.js" onload="if (window.onVimeoSdk) window.onVimeoSdk();" onerror="window.vimeoSdkFailed = true;"></script>
+		<!-- parser-blocking on purpose: the body script below relies on `Vimeo` being settled by the time it runs -->
+		<script src="https://player.vimeo.com/api/player.js"></script>
 	</head>
 <body>
 	<!-- Vimeo wrapper for MVideoVimeoPlayer, same {loadVideo}/{playerState} protocol as yt_player.html.
 	     Without the SDK the video is shown as a plain iframe (no state reporting). -->
 	<script>
 		var player = null, iframe = null, sender = null, lastSent = {}, current = null, pendingState = null;
-		var loaded = null, loadedWithSdk = false, wanted = null, announced = false, readyTimer = null;
+		var loaded = null, announced = false, readyTimer = null;
 		var seeking = false, seekTarget = 0, seekSeq = 0, seekPending = 0, stateSeq = 0;
-		var SDK_WAITS = 300, READY_TIMEOUT = 10000, SEEK_TIMEOUT = 5000, UPGRADE_WINDOW = 30000, MAX_SAVED = 20;
-		var fallbackAt = 0;
+		var READY_TIMEOUT = 10000, SEEK_TIMEOUT = 5000, MAX_SAVED = 20;
 
 		function statusOf() {
 			if (current.ended) return "ENDED";
@@ -46,13 +46,16 @@
 		function refresh() {
 			if (!player) return;
 			var p = player, gen = stateSeq, vol = current ? current.volume : null;
-			// getVolume is not supported on iOS, and Promise.all is all-or-nothing: without this the whole poll dies there
+			// getVolume/getMuted are not supported on iOS, and Promise.all is all-or-nothing: one rejection there
+			// would otherwise take the whole poll down
 			Promise.all([p.getPaused(), p.getEnded(), p.getCurrentTime(), p.getDuration(),
-				p.getVolume().catch(function () { return vol; })])
+				p.getVolume().catch(function () { return vol; }),
+				p.getMuted().catch(function () { return false; })])
 				.then(function (r) {
 					// a poll issued before applyState would otherwise report the state flow has just asked us to leave
 					if (p !== player || !current || gen !== stateSeq) return;
-					current.paused = r[0]; current.ended = r[1]; current.duration = r[3]; current.volume = r[4];
+					current.paused = r[0]; current.ended = r[1]; current.duration = r[3];
+					current.volume = r[5] ? 0 : r[4]; // a muted player is silent whatever its volume says
 					if (!seeking) current.currentTime = r[2]; // the old position is still reported until the seek lands
 					sendChanges();
 				})
@@ -99,13 +102,16 @@
 			postToFlow({playerState: {ready: true}});
 		}
 
-		// The URL arrives over postMessage: only the Vimeo player itself may be framed here
-		function isVimeoPlayerURL(url) {
+		// The URL arrives over postMessage: only the Vimeo player itself may be framed here. An http url is
+		// content as stored, not another player, so it is served over https rather than refused.
+		function vimeoPlayerURL(url) {
 			try {
 				var u = new URL(url, window.location.href);
-				return u.protocol === "https:" && u.hostname === "player.vimeo.com";
+				if (u.hostname !== "player.vimeo.com") return null;
+				if (u.protocol === "http:") u.protocol = "https:";
+				return u.protocol === "https:" ? u.href : null;
 			} catch (err) {
-				return false;
+				return null;
 			}
 		}
 
@@ -121,29 +127,18 @@
 			document.body.appendChild(iframe);
 		}
 
-		function createPlayer(url, params, waits) {
-			var key = JSON.stringify([url, params]);
-			// the same request is a no-op, unless we fell back to a plain iframe and the SDK has arrived since
-			if (key === loaded && iframe && (loadedWithSdk || typeof Vimeo === "undefined")) return;
-
-			if (!isVimeoPlayerURL(url)) {
+		function createPlayer(rawUrl, params) {
+			var url = vimeoPlayerURL(rawUrl);
+			if (url === null) {
 				// the previous video would otherwise keep playing and keep reporting as if it were the new one
 				dropPlayer();
 				loaded = null;
-				wanted = null;
 				announced = false;
 				sendReady();
 				return;
 			}
-
-			// the budget is per load: a slow first video must not spend the grace period of the next one
-			waits = waits || 0;
-			if (waits > 0 && key !== wanted) return; // a newer loadVideo arrived while we waited for the SDK
-			wanted = key;
-			if (typeof Vimeo === "undefined" && !window.vimeoSdkFailed && waits < SDK_WAITS) {
-				setTimeout(createPlayer, 10, url, params, waits + 1);
-				return;
-			}
+			var key = JSON.stringify([url, params]);
+			if (key === loaded && iframe) return;
 
 			dropPlayer();
 			announced = false;
@@ -152,8 +147,7 @@
 			// `onload`, `loaded` and `error` can all stay silent when the frame itself is blocked: flow must not wait forever
 			readyTimer = setTimeout(sendReady, READY_TIMEOUT);
 			loaded = key;
-			loadedWithSdk = hasSdk;
-			if (!hasSdk) { fallbackAt = Date.now(); return; } // SDK unavailable: plain iframe, no state reporting
+			if (!hasSdk) return; // SDK unavailable: plain iframe, no state reporting
 
 			current = {paused: true, ended: false, buffering: false, currentTime: 0, duration: 0, volume: null};
 			try {
@@ -167,7 +161,6 @@
 				console.error("vimeo_player: cannot attach the API player", err);
 				dropPlayer(); // the half-built player would keep a live `current` and an orphan iframe
 				loaded = null; // let the same URL be retried
-				loadedWithSdk = false;
 				sendReady();
 			}
 		}
@@ -192,6 +185,8 @@
 			if ("volume" in s) {
 				current.volume = s.volume / 100;
 				player.setVolume(current.volume).catch(function () {});
+				// a muted=1 embed stays silent at any volume until this is cleared
+				player.setMuted(current.volume <= 0).catch(function () {});
 				lastSent.volume = s.volume;
 			}
 			if ("loop" in s) player.setLoop(!!s.loop).catch(function () {});
@@ -221,12 +216,17 @@
 			}
 		}
 
-		// flow reloads the iframe whenever it moves it in the DOM, so the last loadVideo is kept per frame and replayed
-		// without a frame id there is nothing stable to key on: a per-instance key loses the replay, but two players
-		// on one page would otherwise share a slot and come back as each other's video
-		var savedKey = "flowPlayer:" + (window.frameElement && window.frameElement.id
-			? window.frameElement.id
-			: "anon" + Math.random().toString(36).slice(2));
+		// flow reloads the iframe whenever it moves it in the DOM, so the last loadVideo is kept per frame and replayed.
+		// Reading frameElement throws when the embedding document is cross-origin, and without a frame id there is
+		// nothing stable to key on: a per-instance key loses the replay, but two players on one page would otherwise
+		// share a slot and come back as each other's video.
+		function frameKey() {
+			try {
+				if (window.frameElement && window.frameElement.id) return window.frameElement.id;
+			} catch (err) {}
+			return "anon" + Math.random().toString(36).slice(2);
+		}
+		var savedKey = "flowPlayer:" + frameKey();
 
 		// the clip id is random per widget, so the entries would pile up for the whole session: keep the newest ones only
 		function pruneSaved(keep) {
@@ -256,19 +256,10 @@
 			}
 		}
 
-		// the SDK can arrive after the wait budget ran out and the plain iframe was put up: upgrade that to the API player
-		window.onVimeoSdk = function () {
-			// rebuilding restarts the video, so only right after the fallback went up, never under a watching user
-			if (!loaded || loadedWithSdk || Date.now() - fallbackAt > UPGRADE_WINDOW) return;
-			try {
-				var key = JSON.parse(loaded);
-				createPlayer(key[0], key[1]);
-			} catch (err) {}
-		};
-
 		window.addEventListener("message", function (e) {
-			// only the flow page that embeds this wrapper may drive it
-			if (e.source !== window.parent || e.origin !== window.location.origin) return;
+			// only the flow page that embeds this wrapper may drive it. The origin is not compared: the page is
+			// served from getAppUrl(), which toflow.js supports being on another domain.
+			if (e.source !== window.parent) return;
 			try {
 				var data = JSON.parse(e.data);
 				if ("loadVideo" in data) {
