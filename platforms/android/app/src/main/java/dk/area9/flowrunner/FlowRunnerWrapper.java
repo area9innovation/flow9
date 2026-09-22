@@ -460,7 +460,10 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             headers_map.put(headers[i * 2], headers[ i * 2 + 1 ]);
         }
         if (picture_loader == null) {
-            nResolvePictureError(cPtr(), url, "PictureLoader not set");
+            // Route through the synchronized wrapper (not the raw native) so this
+            // runner re-entry is serialized on the FlowRunnerWrapper monitor like
+            // every other entry point. See deliverFBTokenTo for the rationale.
+            resolvePictureError(url, "PictureLoader not set");
             return;
         }
 
@@ -482,7 +485,8 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
             picture_loader.load(url, headers_map, cache, cb);
         } catch (IOException e) {
-            nResolvePictureError(cPtr(), url, "I/O error: " + e.getMessage());
+            // Route through the synchronized wrapper (see above).
+            resolvePictureError(url, "I/O error: " + e.getMessage());
         }
     }
 
@@ -1204,6 +1208,26 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         }
     }
 
+    // Deliver an FCM token (or the empty string on failure, so the native side
+    // always releases the registered GC root cb_root) into the Flow runner.
+    //
+    // CRITICAL: the C++ bytecode runner has NO internal mutex. Concurrent access
+    // is prevented solely by synchronizing every runner entry point on this
+    // FlowRunnerWrapper monitor (see deliverHttpResponse, deliverTimer,
+    // DeliverFBMessage, resolvePicture*, etc. — all `synchronized`). Firebase
+    // invokes the getToken() completion on one of its own executor threads, which
+    // runs the interpreter concurrently with e.g. HTTP-response delivery on the
+    // Utils HTTP worker thread. That heap race corrupts interpreter state
+    // (surfacing as random `struct_ref (struct expected, X found)` tag errors and
+    // a JNI cross-thread abort). Holding this monitor serializes FB-token delivery
+    // against all other runner entry points, which is the actual fix — the thread
+    // the callback runs on is irrelevant as long as the monitor is held.
+    private synchronized void deliverFBTokenTo(int cb_root, String token) {
+        if (isValid()) {
+            nDeliverFBTokenTo(cPtr(), cb_root, token);
+        }
+    }
+
     public void cbGetFBToken(int cb_root) {
         try {
             // Use FirebaseMessaging.getInstance().getToken() — replaces removed FirebaseInstanceId
@@ -1216,10 +1240,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
                 Method getToken = service.getMethod("getToken");
                 Object taskObj = getToken.invoke(instance);
 
-                // Task<String>.addOnSuccessListener / addOnFailureListener via reflection
                 Class<?> taskClass = taskObj.getClass();
 
-                // Use OnCompleteListener to get the token asynchronously
+                // Register an OnCompleteListener to receive the token asynchronously.
+                // The completion may run on any Firebase executor thread; that is safe
+                // because deliverFBTokenTo() is synchronized on this wrapper's monitor,
+                // which serializes it against every other runner entry point.
                 Class<?> onCompleteListenerClass = Class.forName("com.google.android.gms.tasks.OnCompleteListener");
                 java.lang.reflect.InvocationHandler handler = (proxy, method, args) -> {
                     if ("onComplete".equals(method.getName())) {
@@ -1228,9 +1254,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
                         if ((Boolean) isSuccessful.invoke(task)) {
                             Method getResult = task.getClass().getMethod("getResult");
                             String token = (String) getResult.invoke(task);
-                            nDeliverFBTokenTo(cPtr(), cb_root, token);
+                            deliverFBTokenTo(cb_root, token);
                         } else {
                             Log.e(Utils.LOG_TAG, "Failed to get FCM token");
+                            // Deliver an empty token so the native side still releases
+                            // the registered GC root (cb_root) instead of leaking it.
+                            deliverFBTokenTo(cb_root, "");
                         }
                     }
                     return null;
@@ -1241,7 +1270,8 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
                     handler
                 );
 
-                Method addOnCompleteListener = taskClass.getMethod("addOnCompleteListener", onCompleteListenerClass);
+                Method addOnCompleteListener = taskClass.getMethod(
+                    "addOnCompleteListener", onCompleteListenerClass);
                 addOnCompleteListener.invoke(taskObj, listener);
             } catch (Exception ex) {
                 ex.printStackTrace();
@@ -1620,7 +1650,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     private native void nGetMediaDevices(long ptr, int id, String[] ids, String[] names);
 
-    private void getMediaDevices(int cb, Map<String, String> devices) {
+    private synchronized void getMediaDevices(int cb, Map<String, String> devices) {
+        // synchronized so the native runner re-entry is serialized on the
+        // FlowRunnerWrapper monitor. The current callers (cbGetAudioDevices/
+        // cbGetVideoDevices) already hold it; the monitor is reentrant so this is
+        // safe and also protects against future non-synchronized callers.
+        if (!isValid()) return;
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> names = new ArrayList<>();
         for (Entry<String, String> item : devices.entrySet()) {
