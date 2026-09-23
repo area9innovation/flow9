@@ -3009,6 +3009,79 @@ Native.memoryLeakReset();
 		#end
 	}
 
+	// Registry of windows opened via openBlankWindow, keyed by an integer handle.
+	// Lets Flow keep an opaque reference to a window across an async boundary
+	// (e.g. open a tab in the user-gesture stack, then navigate it from an HTTP
+	// callback) without exposing the JS window object to the Flow type system.
+	#if (js && !flow_nodejs)
+	static var openedWindows : Map<Int, Dynamic> = new Map();
+	static var openedWindowsNextId : Int = 1;
+	#end
+
+	// Opens a blank new tab synchronously (must be called in a user-gesture stack
+	// to avoid popup blocking) and returns an integer handle for later navigation.
+	// Returns 0 if the window could not be opened (popup blocked / not js).
+	public static function openBlankWindow() : Int {
+		#if (js && !flow_nodejs)
+		try {
+			// No "noopener": we must retain the reference to navigate it later.
+			var w = Browser.window.open("about:blank", "_blank");
+			if (w == null) return 0;
+			var id = openedWindowsNextId++;
+			openedWindows.set(id, w);
+			return id;
+		} catch (e:Dynamic) {
+			// Catch exception that tells that window wasn't opened after user chose to stay on page
+			if (e != null && e.number != -2147467259) throw e;
+			return 0;
+		}
+		#else
+		return 0;
+		#end
+	}
+
+	// Navigates a window previously opened with openBlankWindow to the given url.
+	// Returns true on success. If the handle is unknown or the window was closed,
+	// falls back to opening the url in a new tab so the user still gets the content.
+	public static function setWindowUrlById(id : Int, url : String) : Bool {
+		#if (js && !flow_nodejs)
+		try {
+			var w = openedWindows.get(id);
+			if (w != null && !w.closed) {
+				w.location.href = url;
+				openedWindows.remove(id);
+				return true;
+			} else {
+				// Window missing/closed: fall back to a normal open (may be blocked).
+				openedWindows.remove(id);
+				Browser.window.open(url, "_blank", "noopener");
+				return false;
+			}
+		} catch (e:Dynamic) {
+			// Catch exception that tells that window wasn't opened after user chose to stay on page
+			if (e != null && e.number != -2147467259) throw e;
+			return false;
+		}
+		#else
+		return false;
+		#end
+	}
+
+	// Closes a window previously opened with openBlankWindow (e.g. to clean up
+	// the blank tab if token minting failed). Safe to call with an unknown handle.
+	public static function closeWindowById(id : Int) : Void {
+		#if (js && !flow_nodejs)
+		try {
+			var w = openedWindows.get(id);
+			if (w != null && !w.closed) w.close();
+			openedWindows.remove(id);
+		} catch (e:Dynamic) {
+			// Catch exception that tells that window wasn't opened after user chose to stay on page
+			if (e != null && e.number != -2147467259) throw e;
+		}
+		#end
+	}
+
 	public static inline function getCharCodeAt(s : String, i : Int) : Int {
 		return (s.charCodeAt((i)));
 	}

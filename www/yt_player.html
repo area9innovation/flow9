@@ -20,7 +20,17 @@
 		tag.src = "https://www.youtube.com/iframe_api";
 		firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-		var player, sender, apiReady = false;
+		var player, sender, apiReady = false, pendingState = null, announced = false, activeParams = null;
+		var READY_TIMEOUT = 10000;
+
+		// a live video reports no duration, and a blocked iframe_api reports nothing at all: either way flow
+		// sizes the player off `ready`, so it has to arrive
+		function sendReady() {
+			if (announced) return;
+			announced = true;
+			postToFlow({playerState: {ready: true}});
+		}
+		setTimeout(sendReady, READY_TIMEOUT);
 		function onYouTubeIframeAPIReady() {
 			apiReady = true;
 		}
@@ -29,6 +39,7 @@
 			if (apiReady) {
 				var autoplay = params.autoplay == 1;
 				params.enablejsapi = 1;
+				activeParams = params; // onStateChange loops off this, so a runtime FVideoLoop has to reach it
 
 				if (!('origin' in params)) params.origin = window.location.host;
 				if (!('start' in params)) params.start = 0;
@@ -50,6 +61,12 @@
 							}
 							player.lastSended = {};
 							sender = setInterval(sendChanges, 33);
+							sendReady();
+							if (pendingState) {
+								var queued = pendingState;
+								pendingState = null;
+								applyPlayerState(queued);
+							}
 						},
 						onStateChange: (e) => {
 							var currentState = e.data,
@@ -127,7 +144,52 @@
 				}
 			}
 		}
+		function applyPlayerState(playerState) {
+			clearInterval(sender);
+			try {
+				applyPlayerStateInternal(playerState);
+			} finally {
+				// whatever went wrong above, losing the poll would freeze the reported state for the life of the page
+				sender = setInterval(sendChanges, 33);
+			}
+		}
+
+		function applyPlayerStateInternal(playerState) {
+			var currentState = getPlayerState();
+
+			if ('status' in playerState && currentState.status !== playerState.status) {
+				switch (playerState.status) {
+					case "PLAYING":
+						player.playVideo();
+						break;
+					case "PAUSED":
+						player.pauseVideo();
+						break;
+					default:
+				}
+				player.lastSended.status = playerState.status;
+			}
+			if ('volume' in playerState && currentState.volume !== playerState.volume) {
+				player.setVolume(playerState.volume);
+				if (playerState.volume > 0) {
+					player.unMute();
+				}
+				player.lastSended.volume = playerState.volume;
+			}
+			if ('loop' in playerState) {
+				if (activeParams) activeParams.loop = playerState.loop ? 1 : 0;
+				player.setLoop(playerState.loop); // only playlists, but harmless
+				player.lastSended.loop = playerState.loop;
+			}
+			if ('currentTime' in playerState && currentState.currentTime !== playerState.currentTime) {
+				player.seekTo(playerState.currentTime);
+				player.lastSended.currentTime = playerState.currentTime;
+			}
+		}
+
 		window.addEventListener("message", function (e) {
+			// only the flow page that embeds this wrapper may drive it, and anything else is not ours to log
+			if (e.source !== window.parent) return;
 			try {
 				var data = JSON.parse(e.data);
 
@@ -136,40 +198,18 @@
 				}
 
 				if ('playerState' in data) {
-					clearInterval(sender);
-					var currentState = getPlayerState();
-
-					if ('status' in data.playerState && currentState.status !== data.playerState.status) {
-						switch (data.playerState.status) {
-							case "PLAYING":
-								player.playVideo();
-								break;
-							case "PAUSED":
-								player.pauseVideo();
-								break;
-							default:
-						}
-						player.lastSended.status = data.playerState.status;
+					// reading the state of a player that is not ready throws, and the poll would stay cleared for good.
+					// The state is kept for onReady instead of dropped, or flow's own state stays ahead of the player.
+					if (!player || !player.ready) {
+						pendingState = Object.assign(pendingState || {}, data.playerState);
+					} else {
+						applyPlayerState(data.playerState);
 					}
-					if ('volume' in data.playerState && currentState.volume !== data.playerState.volume) {
-						player.setVolume(data.playerState.volume);
-						if (data.playerState.volume > 0) {
-							player.unMute();
-						}
-						player.lastSended.volume = data.playerState.volume;
-					}
-					if ('loop' in data.playerState) {
-						player.setLoop(data.playerState.loop);
-						player.lastSended.loop = data.playerState.loop;
-					}
-					if ('currentTime' in data.playerState && currentState.currentTime !== data.playerState.currentTime) {
-						player.seekTo(data.playerState.currentTime);
-						player.lastSended.currentTime = data.playerState.currentTime;
-					}
-					sender = setInterval(sendChanges, 33);
 				}
 
-			} catch (e) {}
+			} catch (err) {
+				console.error("yt_player: cannot handle the message from flow", err);
+			}
 		});
 	</script>
 </body>

@@ -6,18 +6,117 @@ SCRIPT_DIR=$( cd "$( dirname "$0" )" && pwd -P )
 
 BASE_DIR=$( cd "$( dirname "$SCRIPT_DIR" )" && pwd -P )
 
+# QtByteRunner works out where the flow9 root is by walking up from its own
+# location, which only works when it sits in platforms/qt/bin/<platform>. We
+# know the root here, so tell it directly and let a locally built runner work
+# from wherever it was built. Only bin/setup-linux produces such a build, so
+# the fallback below is Linux only.
+export FLOW="${FLOW:-$BASE_DIR}"
+
 try_path() {
     if [ -f "$1" ]; then
         EXE_PATH="$1"
     fi
 }
 
-if [ `uname` == Darwin ]; then
-    EXE_PATH="$BASE_DIR/platforms/qt/bin/mac/QtByteRunner.app/Contents/MacOS/QtByteRunner"
-else
-    EXE_PATH="$BASE_DIR/platforms/qt/bin/linux/QtByteRunner"
+UNAME=`uname`
 
-    try_path "$BASE_DIR/QtByteRunner-build-release/QtByteRunner"
-fi
+# The native Windows runner takes Windows paths, so POSIX ones have to be
+# converted. Cygwin never does this for us, and MSYS2 does it only for a single
+# path, mangling the comma separated list that -I accepts, so convert here and
+# leave the shell with nothing left to rewrite.
+# -I is the one option whose value is such a list, so it converts element by
+# element; anything else is a single path.
+to_windows_paths() {
+	local converted= element win
+	local IFS=,
+
+	set -f          # the field split must not also expand globs
+	for element in $1; do
+		# A stray empty field, from a trailing comma say, has no path to convert.
+		if [ -n "$element" ]; then
+			# -- so that an element starting with - is not read as an option.
+			win=`cygpath -m -- "$element"` || return 1
+			converted="$converted,$win"
+		fi
+	done
+	set +f
+
+	echo "${converted#,}"
+}
+
+case "$UNAME" in
+	Darwin)
+		EXE_PATH="$BASE_DIR/platforms/qt/bin/mac/QtByteRunner.app/Contents/MacOS/QtByteRunner"
+		;;
+	MINGW*|MSYS*|CYGWIN*)
+		EXE_PATH="$BASE_DIR/platforms/qt/bin/windows/QtByteRunner.exe"
+
+		# We convert every path below, so stop MSYS2 rewriting arguments on its
+		# own: it mangles the comma separated list -I takes, and it cannot tell a
+		# path from a plain value after the -- sentinel.
+		export MSYS2_ARG_CONV_EXCL='*'
+
+		# Assign before exporting: export would mask a conversion failure from
+		# set -e and leave FLOW empty, which the runner reads as a real setting
+		# and so skips the walk-up fallback it would otherwise use.
+		FLOW_WIN=`cygpath -m -- "$FLOW"`
+		export FLOW="$FLOW_WIN"
+		;;
+	*)
+		EXE_PATH="$BASE_DIR/platforms/qt/bin/linux/QtByteRunner"
+
+		try_path "$BASE_DIR/QtByteRunner-build-release/QtByteRunner"
+		;;
+esac
+
+# Everything after -- is input for the flow program itself. Wrappers such as
+# bin/flowc forward the user's file arguments and path valued settings there, so
+# absolute paths still have to be converted; this mirrors what MSYS2 used to do
+# for us, except that I= is treated as the comma separated list it is.
+case "$UNAME" in
+	MINGW*|MSYS*|CYGWIN*)
+		ARGS=()
+		while [ $# -gt 0 ]; do
+			case "$1" in
+				--)	ARGS+=("$1")
+					shift
+					while [ $# -gt 0 ]; do
+						case "$1" in
+							I=*)	ARG_WIN=`to_windows_paths "${1#I=}"`
+								ARGS+=("I=$ARG_WIN")
+								;;
+							/*)	ARG_WIN=`cygpath -m -- "$1"`
+								ARGS+=("$ARG_WIN")
+								;;
+							*=/*)	ARG_WIN=`cygpath -m -- "${1#*=}"`
+								ARGS+=("${1%%=*}=$ARG_WIN")
+								;;
+							*)	ARGS+=("$1")
+								;;
+						esac
+						shift
+					done
+					break
+					;;
+				-I)	ARGS+=("$1")
+					if [ $# -gt 1 ]; then
+						shift
+						# Assign first so set -e sees a conversion failure.
+						ARG_WIN=`to_windows_paths "$1"`
+						ARGS+=("$ARG_WIN")
+					fi
+					;;
+				/*)	ARG_WIN=`cygpath -m -- "$1"`
+					ARGS+=("$ARG_WIN")
+					;;
+				*)	ARGS+=("$1")
+					;;
+			esac
+			shift
+		done
+		set -- "${ARGS[@]}"
+		;;
+esac
 
 exec "$EXE_PATH" "$@"

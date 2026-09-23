@@ -29,7 +29,9 @@ class PDF {
 		try {
 			var promise : Promise<Dynamic> = pdfjsLib.getDocument({ url: url, httpHeaders: Object.fromEntries(headers), withCredentials: true }).promise;
 			promise.then(onOK).catchError((e) -> onError(e.name + "\n" + e.message + "\n" + e.stack));
-		} catch (e : Dynamic) {}
+		} catch (e : Dynamic) {
+			onError(Std.string(e));
+		}
 	}
 
 	public static function getPdfDocumentNumPages(document : Dynamic) {
