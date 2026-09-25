@@ -80,6 +80,7 @@ class Mediabunny {
 			var crop = HaxeRuntime.extractStructArguments(params[1]);
 			var trim = HaxeRuntime.extractStructArguments(params[2]);
 			var numberOfChannels = HaxeRuntime.extractStructArguments(params[3])[0];
+			var videoBitrate = HaxeRuntime.extractStructArguments(params[4])[0];
 			untyped __js__("
 				(async function() {
 					try {
@@ -91,6 +92,7 @@ class Mediabunny {
 							Output,
 							BufferTarget,
 							Conversion,
+							Quality,
 						} = mediabunnyModule;
 
 						Mediabunny.devtrace('[Debug Mediabunny] Mediabunny conversion - Format:', format, 'Params:', params);
@@ -117,8 +119,22 @@ class Mediabunny {
 						}
 						var videoOptions = {};
 						// Crop values must be integer greater than 0.
-						if (crop[0] > 0 && crop[1] > 0 && crop[2] > 0 && crop[3] > 0 ) {
+						var cropped = crop[0] > 0 && crop[1] > 0 && crop[2] > 0 && crop[3] > 0;
+						if (cropped) {
 							videoOptions['crop'] = { left: crop[0], top: crop[1], width: crop[2], height: crop[3] };
+						}
+
+						if (videoBitrate > 0) {
+							videoOptions['quality'] = new Quality({ bitrate: videoBitrate });
+						} else {
+							// Any explicit quality forces a re-encode, so only restore the pre-1.53 default
+							// where the video cannot be stream copied anyway.
+							const videoInputTrack = await input.getPrimaryVideoTrack();
+							if (videoInputTrack && (cropped || !outputFormat.getSupportedCodecs().includes(videoInputTrack.codec))) {
+								// Without preferBitrate mediabunny encodes at a constant quantizer and ignores
+								// the quality-derived bitrate, which is what made WebM output grow.
+								videoOptions['quality'] = new Quality({ quality: 'high', preferBitrate: true });
+							}
 						}
 
 						// Trim

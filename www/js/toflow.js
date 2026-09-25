@@ -113,6 +113,19 @@ function postToFlow(panel, avoidStringify) {
 	}
 }
 
+// vimeo_player.html: post the state fields that differ from lastSent
+function postPlayerStateChanges(state, lastSent) {
+	var changed = {}, n = 0;
+	for (var field in state) {
+		if (!(field in lastSent) || state[field] !== lastSent[field]) {
+			changed[field] = state[field];
+			n++;
+		}
+	}
+	if (n > 0) postToFlow({playerState : changed});
+	return n > 0 ? state : lastSent;
+}
+
 function openVideo(v1, v2) {
 	console.log("openVideo: " + v1 + "; " + v2);
 	callflow_platform(["openVideo"].concat([v1, v2]));
@@ -156,20 +169,8 @@ function registerLinkHandler(home_domains) {
 	});
 }
 
-function receiveMessageTest(e) {
-	if (!e.data) return;
-	try {
-		var v = JSON.parse(e.data);
-		if ((typeof(v) == "object") && (typeof(v.changeURL) == "object") && (typeof(v.changeURL.url) == "string")) {
-			console.info("got command to change url : " + v.changeURL.url);
-			document.location.href = v.changeURL.url;
-		}
-	} catch (e) {}
-}
-
 //to define if iframe.contentWindow.callflow was setted up correctly
 window.addEventListener('load', define_cross_domain_once);
-window.addEventListener('message', receiveMessageTest);
 var toFlowInterval = setInterval(function(){ clearInterval(toFlowInterval); postToFlow({toFlowLoaded: {src: document.location.href}}) }, 300);
 
 

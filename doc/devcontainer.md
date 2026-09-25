@@ -34,6 +34,8 @@ When the DevContainer is active, the lower right corner of VS Code will display 
 
 In the DevContainer you now have an environment with your git checkout and the required java, qt, haxe and haxelib installed. 
 
+The first time the container is created it also builds the C++ runner (QtByteRunner) from source, which takes a few minutes. This is necessary because the runner committed in `platforms/qt/bin/linux` is still a Qt 5 build, while the container ships Qt 6. The build is done by `bin/setup-linux --skip-deps --skip-lfs -y` and lands in `QtByteRunner-build-release/`, which `bin/flowcpp` picks up automatically. 
+
 If you open a terminal in VS Code you should have a prompt that looks something like this: 
 
 	vscode ➜ /workspaces/flow9 (master) $ 
