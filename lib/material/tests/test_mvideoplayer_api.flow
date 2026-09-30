@@ -1,0 +1,87 @@
+import material/material2tropic;
+import material/material_ui;
+
+// One page for the whole external player API surface: Vimeo and YouTube side by side, with every bound
+// behaviour both readable and writable, so a value the page posts back wrongly is visible immediately.
+// Vimeo needs ?external_player_log_by_fact=1 in the page url, YouTube is on unless youtube_api_enabled=0.
+// Add ?dev=1 to print every message in both directions.
+
+VIMEO_PLAIN = "https://player.vimeo.com/video/76979871";
+VIMEO_MUTED = "https://player.vimeo.com/video/76979871?autoplay=1&muted=1";
+VIMEO_OTHER = "https://player.vimeo.com/video/347119375";
+VIMEO_HTTP = "http://player.vimeo.com/video/76979871"; // served over https by the wrapper, must still play
+VIMEO_BAD = "https://example.com/video/76979871"; // not the Vimeo player: rejected by the wrapper's host check
+YT_URL = "https://www.youtube.com/watch?v=9xmLpHZG5gI&rel=0&controls=2";
+
+makePlayerPane(title : string, urlB : DynamicBehaviour<string>, urls : [Pair<string, string>]) -> Material {
+	availWH = makeWH();
+	playB = make(false);
+	lengthB = make(0.0);
+	positionB = make(0.0);
+	volumeB = make(1.0);
+	movedB = make(false);
+
+	state = fselect4(playB, positionB, volumeB, lengthB, \p, pos, v, len ->
+		(if (p) "PLAYING" else "PAUSED") + "  pos " + d2st(pos, 1) + " / " + d2st(len, 1) + "  vol " + d2st(v, 2)
+	);
+
+	player = MSelect(urlB, \url ->
+		MVideoPlayer(url, availWH, [
+			FVideoPlay(playB),
+			FVideoPosition(positionB),
+			FVideoLoop(make(false)),
+			FVideoVolume(volumeB),
+			FVideoLength(lengthB),
+			FVideoControls([FullScreenPlayer()]),
+		])
+	)
+	// a dynamic translate moves the native widget without rebuilding it, which is what makes the page reload
+	|> (\m -> MTranslate(fselect(movedB, FLift(\mv -> if (mv) Point(24.0, 0.0) else zeroPoint)), m))
+	|> (\m -> MAttachAvailable(m, availWH))
+	|> (\m -> MFrame(8., 0., [MStroke(MGrey(500))], m));
+
+	controls = MLines(concat(
+		[
+			MText(title, [MSubheading()]) |> MBorderBottom(4.0),
+			MSelect(state, \s -> MText(s, [MBody()])) |> MBorderBottom(8.0),
+			MIf(playB,
+				MTextButton("PAUSE", \ -> next(playB, false), [], []),
+				MTextButton("PLAY", \ -> next(playB, true), [], [])
+			),
+			MTextButton("MUTE / UNMUTE", \ -> next(volumeB, if (getValue(volumeB) == 0.0) 1.0 else 0.0), [], []),
+			MTextButton("MOVE IN DOM", \ -> next(movedB, !getValue(movedB)), [], []) |> MBorderBottom(8.0),
+			MText("volume", [MCaption()]),
+			MSlider(volumeB, [MSliderRange(0.0, 1.0), MSliderStep(0.05)]) |> MBorderBottom(8.0),
+			MText("position — drag it, it must not jump back", [MCaption()]),
+			MSelect(lengthB, \len ->
+				MSlider(positionB, [MSliderRange(0.0, max(len, 1.0)), MSliderStep(0.1)])
+			) |> MBorderBottom(8.0),
+		],
+		map(urls, \u -> MTextButton(u.first, \ -> next(urlB, u.second), [], []))
+	));
+
+	MCols2(player, controls |> (\m -> MAvailable(m, TFixed(320., 520.))) |> (\m -> MBorder4(8.0, m)))
+}
+
+main() {
+	setWindowTitle("External player API tester");
+	setRendererType("html");
+	setAppUrl("./");
+	manager = makeMaterialManager([]);
+
+	vimeoUrlB = make(VIMEO_PLAIN);
+	ytUrlB = make(YT_URL);
+
+	content = MLines2(
+		makePlayerPane("Vimeo", vimeoUrlB, [
+			Pair("plain", VIMEO_PLAIN),
+			Pair("autoplay + muted", VIMEO_MUTED),
+			Pair("another video", VIMEO_OTHER),
+			Pair("http url (must still play)", VIMEO_HTTP),
+			Pair("rejected url (must stop the video)", VIMEO_BAD),
+		]),
+		makePlayerPane("YouTube", ytUrlB, [Pair("reload", YT_URL)])
+	);
+
+	mrender(manager, true, content);
+}

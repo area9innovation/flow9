@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<style lang="css">
+			html, body, iframe {
+				display: block;
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				padding: 0;
+				border: 0;
+				background: transparent;
+			}
+		</style>
+		<script src="js/toflow.js?2"></script>
+		<!-- parser-blocking on purpose: the body script below relies on `Vimeo` being settled by the time it runs -->
+		<script src="https://player.vimeo.com/api/player.js"></script>
+	</head>
+<body>
+	<!-- Vimeo wrapper for MVideoVimeoPlayer, same {loadVideo}/{playerState} protocol as yt_player.html.
+	     Without the SDK the video is shown as a plain iframe (no state reporting). -->
+	<script>
+		var player = null, iframe = null, sender = null, lastSent = {}, current = null, pendingState = null;
+		var loaded = null, announced = false, readyTimer = null;
+		// What flow asked for and the player has not confirmed yet. play/pause/setCurrentTime/setVolume all take
+		// effect later, so until the matching event arrives anything read back for that field is the value we are
+		// leaving, and reporting it would send flow's own request back at it. The deadline is the release for a
+		// confirmation that never comes: a held field would otherwise stay frozen for the life of the player.
+		var held = {}, seekSeq = 0, statusWanted = null, ready = false;
+		var HOLD_MS = {status: 2000, currentTime: 5000, volume: 2000};
+		var READY_TIMEOUT = 10000, MAX_SAVED = 20;
+
+		function hold(field) { held[field] = Date.now() + HOLD_MS[field]; }
+		function release(field) { delete held[field]; }
+		function holding(field) {
+			var until = held[field];
+			if (until === undefined) return false;
+			if (Date.now() < until) return true;
+			delete held[field];
+			return false;
+		}
+
+		function statusOf() {
+			if (current.ended) return "ENDED";
+			if (current.buffering && !current.paused) return "BUFFERING";
+			return current.paused ? "PAUSED" : "PLAYING";
+		}
+
+		function sendChanges() {
+			if (!current) return;
+			var state = {
+				status: statusOf(),
+				duration: current.duration,
+				currentTime: current.currentTime
+			};
+			// the volume is unknown until the first real read: a `muted=1` embed must not be reported as 100
+			if (current.volume !== null) state.volume = Math.round(current.volume * 100);
+			lastSent = postPlayerStateChanges(state, lastSent);
+		}
+
+		function refresh() {
+			if (!player) return;
+			var p = player, vol = current ? current.volume : null;
+			// getVolume/getMuted are not supported on iOS, and Promise.all is all-or-nothing: one rejection there
+			// would otherwise take the whole poll down
+			Promise.all([p.getPaused(), p.getEnded(), p.getCurrentTime(), p.getDuration(),
+				p.getVolume().catch(function () { return vol; }),
+				p.getMuted().catch(function () { return false; })])
+				.then(function (r) {
+					if (p !== player || !current) return;
+					current.duration = r[3];
+					// the player may already be in the state we asked for, and then no play/pause event is coming
+					if (statusWanted === (r[0] ? "PAUSED" : "PLAYING")) release("status");
+					if (!holding("status")) { current.paused = r[0]; current.ended = r[1]; }
+					if (!holding("currentTime")) current.currentTime = r[2];
+					if (!holding("volume")) current.volume = r[5] ? 0 : r[4]; // a muted player is silent whatever its volume says
+					sendChanges();
+				})
+				.catch(function () {});
+		}
+
+		// Vimeo may reload the iframe (forcereload=drm) and drop the listeners: re-attach on `loaded`, poll as a backup
+		function attach() {
+			// a destroyed player can still dispatch what it had queued, and `current` belongs to the next video by then
+			var p = player, live = function () { return p === player && !!current; };
+			var events = {
+				// each of these is the player confirming what was asked of it, so it releases the matching hold
+				play: function () { if (!live()) return; release("status"); current.paused = false; current.ended = false; current.buffering = false; sendChanges(); },
+				pause: function () { if (!live()) return; release("status"); current.paused = true; sendChanges(); },
+				ended: function () { if (!live()) return; release("status"); current.ended = true; current.paused = true; sendChanges(); },
+				bufferstart: function () { if (!live()) return; current.buffering = true; sendChanges(); },
+				bufferend: function () { if (!live()) return; current.buffering = false; sendChanges(); },
+				timeupdate: function (d) { if (!live()) return; if (!holding("currentTime")) current.currentTime = d.seconds; current.duration = d.duration; sendChanges(); },
+				seeked: function (d) { if (!live()) return; if (!holding("currentTime")) { current.currentTime = d.seconds; sendChanges(); } },
+				// the muted state is not in the event, and it is what decides the volume: let the poll read both
+				volumechange: function () { if (!live()) return; release("volume"); }
+			};
+			for (var name in events) {
+				player.off(name);
+				player.on(name, events[name]);
+			}
+		}
+
+		function dropPlayer() {
+			if (sender) { clearInterval(sender); sender = null; }
+			if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+			if (player) { try { player.destroy(); } catch (e) {} player = null; }
+			if (iframe && iframe.parentNode) iframe.parentNode.removeChild(iframe);
+			iframe = null;
+			current = null;
+			lastSent = {};
+			held = {};
+			statusWanted = null;
+			ready = false;
+			seekSeq++; // a seek outstanding on the dropped player must not release the next one's hold
+			pendingState = null; // state queued for this video must not be applied to the next one
+		}
+
+		// `ready` tells flow the player is in place: on load (a live video never reports a duration), without the SDK or on error
+		function sendReady() {
+			if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+			if (announced) return; // `loaded` fires again on Vimeo's own reloads
+			announced = true;
+			postToFlow({playerState: {ready: true}});
+		}
+
+		// The URL arrives over postMessage: only the Vimeo player itself may be framed here. An http url is
+		// content as stored, not another player, so it is served over https rather than refused.
+		function vimeoPlayerURL(url) {
+			try {
+				var u = new URL(url, window.location.href);
+				if (u.hostname !== "player.vimeo.com") return null;
+				if (u.protocol === "http:") u.protocol = "https:";
+				return u.protocol === "https:" ? u.href : null;
+			} catch (err) {
+				return null;
+			}
+		}
+
+		function createIframe(url, params, onload) {
+			var src = url;
+			try {
+				var u = new URL(url);
+				if (params && "loop" in params) u.searchParams.set("loop", params.loop ? "1" : "0");
+				src = u.href;
+			} catch (err) {}
+			iframe = document.createElement("iframe");
+			iframe.setAttribute("allow", "autoplay; fullscreen; picture-in-picture; encrypted-media");
+			iframe.setAttribute("allowfullscreen", "");
+			iframe.setAttribute("frameborder", "0");
+			iframe.onload = onload;
+			iframe.src = src;
+			document.body.appendChild(iframe);
+		}
+
+		function createPlayer(rawUrl, params) {
+			var url = vimeoPlayerURL(rawUrl);
+			if (url === null) {
+				// the previous video would otherwise keep playing and keep reporting as if it were the new one
+				dropPlayer();
+				loaded = null;
+				announced = false;
+				sendReady();
+				return;
+			}
+			var key = JSON.stringify([url, params]);
+			if (key === loaded && iframe) return;
+
+			dropPlayer();
+			announced = false;
+			var hasSdk = typeof Vimeo !== "undefined";
+			createIframe(url, params, hasSdk ? null : sendReady);
+			// `onload`, `loaded` and `error` can all stay silent when the frame itself is blocked: flow must not wait forever
+			readyTimer = setTimeout(sendReady, READY_TIMEOUT);
+			loaded = key;
+			if (!hasSdk) return; // SDK unavailable: plain iframe, no state reporting
+
+			current = {paused: true, ended: false, buffering: false, currentTime: 0, duration: 0, volume: null};
+			try {
+				player = new Vimeo.Player(iframe);
+				player.on("loaded", function () { ready = true; sendReady(); attach(); refresh(); applyPending(); });
+				player.on("error", sendReady);
+				attach();
+				player.ready().then(function () { ready = true; refresh(); applyPending(); }).catch(sendReady);
+				sender = setInterval(refresh, 250);
+			} catch (err) {
+				console.error("vimeo_player: cannot attach the API player", err);
+				dropPlayer(); // the half-built player would keep a live `current` and an orphan iframe
+				loaded = null; // let the same URL be retried
+				sendReady();
+			}
+		}
+
+		function applyPending() {
+			if (!pendingState || !player || !ready) return;
+			var s = pendingState;
+			pendingState = null;
+			applyState(s);
+		}
+
+		// each request is recorded as the current state and held until the player confirms it
+		function applyState(s) {
+			if (!player || !current) return;
+			if ("status" in s) {
+				if (s.status === "PLAYING") { current.paused = false; current.ended = false; player.play().catch(function () {}); }
+				else if (s.status === "PAUSED") { current.paused = true; player.pause().catch(function () {}); }
+				lastSent.status = s.status;
+				statusWanted = s.status;
+				hold("status");
+			}
+			if ("volume" in s) {
+				current.volume = s.volume / 100;
+				player.setVolume(current.volume).catch(function () {});
+				// a muted=1 embed stays silent at any volume until this is cleared
+				player.setMuted(current.volume <= 0).catch(function () {});
+				lastSent.volume = s.volume;
+				hold("volume");
+			}
+			if ("loop" in s) player.setLoop(!!s.loop).catch(function () {});
+			if ("currentTime" in s) {
+				current.currentTime = s.currentTime;
+				lastSent.currentTime = s.currentTime;
+				// the seek releases its own hold, and only while it is still the one flow last asked for: a drag walks
+				// through many, and a rejected one (a live video, a frame not loaded yet) must release just the same
+				hold("currentTime");
+				var seek = ++seekSeq;
+				var settled = function () { if (seek === seekSeq) release("currentTime"); };
+				player.setCurrentTime(s.currentTime).then(settled, settled);
+			}
+		}
+
+		// flow reloads the iframe whenever it moves it in the DOM, so the last loadVideo is kept per frame and replayed.
+		// Reading frameElement throws when the embedding document is cross-origin, and without a frame id there is
+		// nothing stable to key on: a per-instance key loses the replay, but two players on one page would otherwise
+		// share a slot and come back as each other's video.
+		function frameKey() {
+			try {
+				if (window.frameElement && window.frameElement.id) return window.frameElement.id;
+			} catch (err) {}
+			return "anon" + Math.random().toString(36).slice(2);
+		}
+		var savedKey = "flowPlayer:" + frameKey();
+
+		// the clip id is random per widget, so the entries would pile up for the whole session: keep the newest ones only
+		function pruneSaved(keep) {
+			try {
+				var entries = [];
+				for (var i = 0; i < sessionStorage.length; i++) {
+					var k = sessionStorage.key(i);
+					if (k && k.indexOf("flowPlayer:") === 0 && k !== savedKey) {
+						var at = 0;
+						try { at = JSON.parse(sessionStorage.getItem(k)).at || 0; } catch (e) {}
+						entries.push({key: k, at: at});
+					}
+				}
+				entries.sort(function (a, b) { return b.at - a.at; });
+				for (var j = keep; j < entries.length; j++) sessionStorage.removeItem(entries[j].key);
+			} catch (err) {}
+		}
+
+		function saveLoad(load) {
+			var entry = JSON.stringify({at: Date.now(), load: load});
+			try {
+				sessionStorage.setItem(savedKey, entry);
+			} catch (err) {
+				// out of quota: without the prune the replay this mechanism exists for would silently stop working
+				pruneSaved(5); // keep a few recent ones: the other live frames replay from theirs too
+				try { sessionStorage.setItem(savedKey, entry); } catch (e) {}
+			}
+		}
+
+		window.addEventListener("message", function (e) {
+			// only the flow page that embeds this wrapper may drive it. The origin is not compared: the page is
+			// served from getAppUrl(), which toflow.js supports being on another domain.
+			if (e.source !== window.parent) return;
+			try {
+				var data = JSON.parse(e.data);
+				if ("loadVideo" in data) {
+					saveLoad(data.loadVideo);
+					createPlayer(data.loadVideo.url, data.loadVideo.params || {});
+				}
+				if ("playerState" in data) {
+					// `player` exists as soon as it is constructed, but it cannot act until it is ready: a seek sent
+					// before that is rejected and lost, and the reload restore is sent exactly then
+					if (ready) applyState(data.playerState);
+					else pendingState = Object.assign(pendingState || {}, data.playerState);
+				}
+			} catch (err) {
+				console.error("vimeo_player: cannot handle the message from flow", err);
+			}
+		});
+
+		try {
+			var saved = sessionStorage.getItem(savedKey);
+			if (saved) {
+				saved = JSON.parse(saved);
+				var load = saved.load || saved; // an entry saved before the timestamp was added
+				if (load && load.url) { saveLoad(load); createPlayer(load.url, load.params || {}); } // a replayed entry is live, not stale
+			}
+		} catch (err) {}
+		pruneSaved(MAX_SAVED);
+	</script>
+</body>
+</html>

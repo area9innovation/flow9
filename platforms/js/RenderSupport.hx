@@ -1391,6 +1391,9 @@ class RenderSupport {
 		}
 
 		var content_win = e.source;
+
+		if (content_win == null) return;
+
 		var all_iframes = Browser.document.getElementsByTagName("iframe");
 
 		try {
@@ -1404,7 +1407,9 @@ class RenderSupport {
 		for (i in 0...all_iframes.length) {
 			var f : js.html.Node = all_iframes[i];
 			if (hasNestedWindow(f, content_win)) {
-				untyped f.callflow(["postMessage", e.data]);
+				// Pass e.origin through so consumers can apply origin validation. Not silently
+				// compatible: flowCallBack must accept `length(args) >= 2` or it drops every message.
+				untyped f.callflow(["postMessage", e.data, e.origin]);
 				return;
 			}
 		}
