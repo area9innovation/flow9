@@ -1,0 +1,161 @@
+[
+Cpp3RuntimePart("mysql",
+"
+
+struct MysqlDbCon {
+	std::shared_ptr<daotk::mysql::connection> con;
+	std::string err;
+	std::string date_time_format = \"%Y-%m-%d %H:%M:%S\"; //DateFormat dateFormat = new SimpleDateFormat(\"yyyy-MM-dd'T'HH:mm:ss'Z'\");
+	std::set<std::string> int_overflow_fields;
+
+	MysqlDbCon(const std::string& host, const std::string& user, const std::string& pwd, const std::string& database, Int port) {
+		try {
+			daotk::mysql::connect_options opts(
+				host, user, pwd, database,
+				0, // timeout
+				false, // reconnect
+				\"\", // init command
+				\"\", // charset
+				port
+			);
+			con = std::make_shared<daotk::mysql::connection>();
+			con->open(opts);
+		} catch (std::exception& e) {
+			err = e.what();
+		}
+	}
+	void close() {
+		if (con) {
+			try {
+				con->close();
+			} catch (std::exception& e) {
+				if (err != \"\") err += \"\\n\";
+				err += e.what();
+			}
+		}
+	}
+	void checkIntOverflow() {
+		if (!int_overflow_fields.empty()) {
+			// Hope it will never happen with id fields,
+			// otherwise we should support long integer in the rule interpreter
+			std::string fields = \"\";
+			bool first = true;
+			for (auto& field : int_overflow_fields) {
+				if (!first) fields += \", \";
+				fields += field;
+				first = false;
+			}
+			std::cout << \"Warning! These fields: [\" << fields << \"] contains values that are out of 32-bit integers\" << std::endl;
+			int_overflow_fields.clear();
+		}
+	}
+};
+
+typedef Union* (*FieldFactory)(const daotk::mysql::field&, const std::string&, const std::string&, std::set<std::string>&);
+
+struct MysqlDbRes {
+	MysqlDbRes(Native* n) : nat(n) { }
+	virtual ~ MysqlDbRes() { decRc(nat); }
+	virtual Vec<Union*>* nextResult(FieldFactory) = 0;
+	virtual Bool hasNext() const = 0;
+	inline MysqlDbCon* db() { return nat->get<MysqlDbCon*>(); }
+	Native* nat;
+	std::string err;
+};
+
+struct MysqlDbResDirect : public MysqlDbRes {
+	MysqlDbResDirect(Native* n, const std::string& q):
+		MysqlDbRes(n), has_next_(false) {
+		if (db()->con) {
+			try {
+				result = db()->con->query(q);
+				fields = result.fields();
+				has_next_ = !result.eof();
+			} catch (std::exception& e) {
+				err = e.what();
+			}
+		} else {
+			err = \"Connection is down\";
+		}
+	}
+	Vec<Union*>* nextResult(FieldFactory field_factory) override {
+		Vec<Union*>* ret = Vec<Union*>::make(result.fields().size());
+		if (!has_next_) {
+			for (auto& f : fields) f.type = MYSQL_TYPE_NULL;
+		}
+		for (Int i = 0; i < fields.size(); ++ i) {
+			ret->pushBack((*field_factory)(
+				fields.at(i), result.get_field(i),
+				db()->date_time_format,
+				db()->int_overflow_fields
+			));
+		}
+		db()->checkIntOverflow();
+		result.next();
+		has_next_ = !result.eof();
+		return ret;
+	}
+	Bool hasNext() const override {
+		return has_next_;
+	}
+
+	Bool has_next_;
+	daotk::mysql::result result;
+	std::vector<daotk::mysql::field> fields;
+};
+
+struct MysqlDbResPrep : public MysqlDbRes {
+	MysqlDbResPrep(Native* n, const std::string& q, const std::vector<std::string>& ps) : MysqlDbRes(n), has_next_(false) {
+		for (auto p : ps) params.push_back(p);
+		stmt = std::make_unique<daotk::mysql::prepared_stmt>(*db()->con, q);
+		stmt->bind_param<std::string>(params);
+		if (!stmt->execute()) {
+			err = std::string(\"failed to execute prepared statement: '\") + q + \"' with parameters: \";
+			bool first = true;
+			for (auto p : params) {
+				if (!first) err += \", \";
+				err += p;
+			}
+		} else {
+			fields = stmt->fields();
+			result.resize(fields.size());
+			stmt->bind_result<std::string>(result);
+			has_next_ = stmt->fetch();
+		}
+	}
+
+	Vec<Union*>* nextResult(FieldFactory field_factory) override {
+		if (!has_next_) {
+			for (auto& f : fields) f.type = MYSQL_TYPE_NULL;
+		}
+		Vec<Union*>* ret = Vec<Union*>::make(fields.size());
+		for (Int i = 0; i < fields.size(); ++ i) {
+			ret->pushBack((*field_factory)(
+				fields.at(i), result.at(i),
+				db()->date_time_format,
+				db()->int_overflow_fields
+			));
+		}
+		db()->checkIntOverflow();
+		has_next_ = stmt->fetch();
+		return ret;
+	}
+	Bool hasNext() const override {
+		return has_next_;
+	}
+
+	Bool has_next_;
+	std::vector<std::string> params;
+	std::vector<std::string> result;
+	std::unique_ptr<daotk::mysql::prepared_stmt> stmt;
+	std::vector<daotk::mysql::field> fields;
+};
+
+",
+"",
+"",
+"",
+"",
+[Cpp3Std(["<mysql+++/mysql+++.h>", "<set>"], ["-lmysqlclient"])], false
+)
+]
