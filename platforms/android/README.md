@@ -96,7 +96,7 @@ Project-level configuration checked into VCS. Key settings:
 ```properties
 PACKAGE_ID=dk.area9.flowrunner     # Application ID and namespace
 MIN_SDK_VERSION=21                 # Minimum Android API level
-TARGET_SDK_VERSION=35              # Target Android API level
+TARGET_SDK_VERSION=36              # Target Android API level
 ```
 
 ### Optional flags
