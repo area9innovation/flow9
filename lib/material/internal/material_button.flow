@@ -303,36 +303,49 @@ MTextClickable2T(manager : MaterialManager, parent : MFocusGroup, m : MTextClick
 addLeftRightIcons(parent : MFocusGroup, t : Tropic, style : [flow], textColor : MColor, disabled : bool) {
 	leftIcon = tryExtractStruct(style, MLeftIcon("", []));
 	rightIcon = tryExtractStruct(style, MRightIcon("", []));
+	ignoreIconHeight = contains(style, MIconIgnoreHeight());
 
 	eitherMap(
 		leftIcon,
-		\li -> addButtonIcon(parent, t, li.icon, li.style, textColor, disabled, true),
+		\li -> addButtonIcon(parent, t, li.icon, li.style, textColor, disabled, true, ignoreIconHeight),
 		t
 	)
 	|> (\f ->
 		eitherMap(
 			rightIcon,
-			\ri -> addButtonIcon(parent, f, ri.icon, ri.style, textColor, disabled, false),
+			\ri -> addButtonIcon(parent, f, ri.icon, ri.style, textColor, disabled, false, ignoreIconHeight),
 			f
 		)
 	)
 }
 
-addButtonIcon(parent : MFocusGroup, text : Tropic, iconStr : string, style : [MIconStyle], textColor : MColor, disabled : bool, isLeft : bool) -> Tropic {
+addButtonIcon(parent : MFocusGroup, text : Tropic, iconStr : string, style : [MIconStyle], textColor : MColor, disabled : bool, isLeft : bool, ignoreIconHeight : bool) -> Tropic {
 	rtl = parent.rtl == isLeft;
+	iconWidth = make(0.);
 	iconHeight = make(0.);
 	textHeight = make(0.);
 	textBaseline = make(0.);
-	baseline = faddition(textBaseline, fmax(fdivide(fsubtract(iconHeight, textHeight), const(2.)), zero));
-	heightBox = TSizedHeight(0., fmax(iconHeight, textHeight));
+	// With MIconIgnoreHeight the icon is still drawn at its own size, but only the text decides how
+	// tall the button is, so it stays level with a button that has no icon. The icon then overflows the
+	// box evenly above and below, and the baseline stays on the text instead of being pushed down.
+	iconExcessT = if (ignoreIconHeight) zero else fmax(fdivide(fsubtract(iconHeight, textHeight), const(2.)), zero);
+	baseline = faddition(textBaseline, iconExcessT);
+	heightBox = TSizedHeight(0., if (ignoreIconHeight) textHeight else fmax(iconHeight, textHeight));
 
 	icon = MIcon2T(parent, iconStr, arrayPush(style, if (disabled) MIconDisabled() else textColor)) |> TBorderEnd(8., rtl);
 
+	iconT = TInspect([IWidth(iconWidth), IHeight(iconHeight)], icon);
+	textT = TInspect([IHeight(textHeight), IBaseline(textBaseline)], text);
+
 	TColsDir(
-		map([
-			TInspect([IHeight(iconHeight)], icon),
-			TInspect([IHeight(textHeight), IBaseline(textBaseline)], text)
-		], \t -> TCenterYIn(t, heightBox)),
+		[
+			// Boxed to the text height rather than centred within it: centring keeps whichever is taller, so
+			// the icon would go on deciding the height. The box is the icon's own width by the text height,
+			// which leaves the glyph overflowing evenly above and below without disturbing the label.
+			if (ignoreIconHeight) TCenterInFixSize(iconT, TSized(fwidthheight(iconWidth, textHeight)))
+			else TCenterYIn(iconT, heightBox),
+			TCenterYIn(textT, heightBox)
+		],
 		rtl
 	)
 	|> (\t -> TBaseline(baseline, t))
