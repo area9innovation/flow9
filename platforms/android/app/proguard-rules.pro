@@ -143,8 +143,15 @@
 # dk.area9.light_reader). Keep R classes (app runtime package is per-app under
 # dk.area9.*, namespace is dk.area9.flowrunner) as real classes with fields.
 # -----------------------------------------------------------------------------
--keep class dk.area9.**.R { *; }
--keep class dk.area9.**.R$* { *; }
+# The R class is generated into the app's `namespace`, which this build sets to
+# PACKAGE_ID (app/build.gradle: `namespace = PACKAGE_ID`). That is a PER-APP id,
+# e.g. uk.harpercollins.collinshub or dk.area9.light_reader -- NOT dk.area9.**.
+# getPackageName() returns that same id, so the reflection resolves
+# "<PACKAGE_ID>.R$layout". A package-scoped rule such as `dk.area9.**.R$*` only
+# matches the library R class and silently misses the real one. Keep R classes
+# in EVERY package so the rules work for any PACKAGE_ID the runner is built with.
+-keep class **.R { *; }
+-keep class **.R$* { *; }
 
 # -----------------------------------------------------------------------------
 # WebView JavaScript bridge. WebWidget registers FlowJSInterface via
