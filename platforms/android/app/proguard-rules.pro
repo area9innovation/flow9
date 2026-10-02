@@ -27,19 +27,20 @@
 #   * reads the `c_ptr` long field (GetFieldID)
 #   * invokes all cb* callback methods (GetMethodID)
 #   * calls its native methods
-# Keep the class, the c_ptr field, and every cb* callback (including private ones).
+#
+# Keep the ENTIRE class (`*;`). Do NOT try to enumerate members by return type:
+# an earlier version of this file listed `void/boolean/int/long/String/Object`
+# cb* overloads and silently missed `byte[] cbLoadAssetData`, `int[]`, `float`
+# and `WebSocketClient` returning callbacks. R8 renamed those, and the app died
+# at startup with:
+#   java.lang.NoSuchMethodError: no non-static method
+#   "Ldk/area9/flowrunner/FlowRunnerWrapper;.cbLoadAssetData(Ljava/lang/String;)[B"
+#       at dk.area9.flowrunner.FlowRunnerWrapper.initLibrary(Native Method)
+# Because every member here is reachable only from C++, R8 can never prove
+# reachability itself -- keeping the whole class is the only safe option.
 # -----------------------------------------------------------------------------
 -keep class dk.area9.flowrunner.FlowRunnerWrapper {
-    long c_ptr;
-    private void cb*(...);
-    void cb*(...);
-    boolean cb*(...);
-    int cb*(...);
-    long cb*(...);
-    java.lang.String cb*(...);
-    java.lang.Object cb*(...);
-    <init>(...);
-    native <methods>;
+    *;
 }
 
 # -----------------------------------------------------------------------------
@@ -50,27 +51,19 @@
 
 # Constructed from native via FindClass + <init> (Ljava/lang/String;Ljava/lang/String;IIII)V
 -keep class dk.area9.flowrunner.FlowAccessibleClip {
-    <init>(...);
-    <fields>;
-    <methods>;
+    *;
 }
 
 # Nested object classes referenced from native (FindClass on the $-mangled name).
 # Their fields are read/written directly by C++, so keep all members.
 -keep class dk.area9.flowrunner.FlowMediaStreamSupport$FlowMediaStreamObject {
-    <fields>;
-    <methods>;
-    <init>(...);
+    *;
 }
 -keep class dk.area9.flowrunner.FlowMediaRecorderSupport$FlowMediaRecorderObject {
-    <fields>;
-    <methods>;
-    <init>(...);
+    *;
 }
 -keep class dk.area9.flowrunner.FlowWebRTCSupport$FlowMediaSenderObject {
-    <fields>;
-    <methods>;
-    <init>(...);
+    *;
 }
 
 # Keep the enclosing support classes (they hold the nested JNI object types and
