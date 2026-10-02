@@ -130,3 +130,51 @@
 
 # org.json is provided by the Android platform (excluded from socket.io dep)
 -dontwarn org.json.**
+
+# -----------------------------------------------------------------------------
+# Resource lookup via reflection. The runner resolves app resources by name:
+#   Class.forName(getPackageName() + ".R$layout").getDeclaredField("debugview")
+#   Class.forName(getPackageName() + ".R$id").getField("log_view") ...
+# (FlowRunnerActivity.createContentView / showPopupMenu, LauncherActivity.onCreate)
+# R8 full mode inlines and REMOVES R classes because this code holds no static
+# references to them. Class.forName then throws ClassNotFoundException inside
+# createContentView, whose catch block swallows it -> mView stays null ->
+# NullPointerException at mView.addView(menu_anchor) in onCreate (Play crash on
+# dk.area9.light_reader). Keep R classes (app runtime package is per-app under
+# dk.area9.*, namespace is dk.area9.flowrunner) as real classes with fields.
+# -----------------------------------------------------------------------------
+-keep class dk.area9.**.R { *; }
+-keep class dk.area9.**.R$* { *; }
+
+# -----------------------------------------------------------------------------
+# WebView JavaScript bridge. WebWidget registers FlowJSInterface via
+# addJavascriptInterface(..., "flow"); JS calls flow.callflow(...). The method
+# is invoked by NAME from JavaScript, so R8 must not rename it. The default
+# proguard-android-optimize.txt does NOT cover @JavascriptInterface.
+# -----------------------------------------------------------------------------
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class dk.area9.flowrunner.FlowJSInterface { *; }
+
+# -----------------------------------------------------------------------------
+# androidx @Keep support. The default proguard-android-optimize.txt only honors
+# the legacy android.support.annotation.Keep, not androidx.annotation.Keep.
+# -----------------------------------------------------------------------------
+-keep class androidx.annotation.Keep
+-keep @androidx.annotation.Keep class * { *; }
+-keepclassmembers class * {
+    @androidx.annotation.Keep <methods>;
+    @androidx.annotation.Keep <fields>;
+    @androidx.annotation.Keep <init>(...);
+}
+
+# -----------------------------------------------------------------------------
+# Application class + optional Localytics, loaded reflectively by name from
+# FlowRunnerApp/FlowRunnerActivity (localytics.jar is a plain jar linked only
+# when LINK_LOCALYTICS=true, so it ships no consumer rules). The reflection is
+# wrapped in try/catch, but keep the names so it works when the jar IS linked.
+# -----------------------------------------------------------------------------
+-keep class dk.area9.flowrunner.FlowRunnerApp { *; }
+-keep class com.localytics.android.** { *; }
+-dontwarn com.localytics.android.**
