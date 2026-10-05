@@ -1,0 +1,113 @@
+import sys/target;
+import text/utf8;
+import math/math;
+
+// Tests of decodeUtf8 / expandUtf8 (lib/text/utf8.flow).
+// The performance test checks that decoding scales linearly with the input size.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(s2a(expected)));
+		println("  actual:   " + toString(s2a(actual)));
+	}
+}
+
+codes2s(codes : [int]) -> string {
+	concatStrings(map(codes, fromCharCode));
+}
+
+testAscii() -> void {
+	check("decode empty", decodeUtf8(""), "");
+	check("decode 'hello'", decodeUtf8("hello"), "hello");
+	allAscii = codes2s(enumFromTo(0, 127));
+	check("decode all ASCII", decodeUtf8(allAscii), allAscii);
+}
+
+testMultiByte() -> void {
+	check("decode 2 bytes 'é'", decodeUtf8("Ã©"), "é");
+	check("decode 3 bytes '€'", decodeUtf8("â\u0082¬"), "€");
+	check("decode 4 bytes '😀'", decodeUtf8("ð\u009f\u0098\u0080"), "😀");
+	check("decode mixed", decodeUtf8("aÃ©bâ\u0082¬cð\u009f\u0098\u0080d"), "aéb€c😀d");
+	// The first and the last 4-byte code points
+	check("decode 4 bytes U+10000", decodeUtf8("ð\u0090\u0080\u0080"), fromCharCode(0x10000));
+	check("decode 4 bytes U+10FFFF", decodeUtf8("ô\u008f¿¿"), fromCharCode(0x10FFFF));
+}
+
+testRoundTrips() -> void {
+	iter(["aé€😀z", "Hello, мир! 你好 😀", "ÿ\u0080߿ࠀ￿", fromCharCode(0x10000), fromCharCode(0x10FFFF)], \s -> {
+		check("round trip of '" + s + "'", decodeUtf8(expandUtf8(s)), s);
+	});
+}
+
+testAllBmp() -> void {
+	// Surrogates are skipped: alone they are not valid UTF-16
+	allBmp = codes2s(concat(enumFromTo(0, 0xD7FF), enumFromTo(0xE000, 0xFFFF)));
+	check("round trip of all BMP code points", decodeUtf8(expandUtf8(allBmp)), allBmp);
+}
+
+testEdgeCases() -> void {
+	// Bytes 0x80-0xBF without a lead byte are kept as single chars
+	check("lone 0x80", decodeUtf8("\u0080"), "\u0080");
+	check("lone 0xBF", decodeUtf8("a¿b"), "a¿b");
+	// Bytes past the end are read as 0, so a truncated sequence gives one wrong char
+	check("truncated 2 bytes", decodeUtf8("abÃ"), codes2s([97, 98, 64]));
+	check("truncated 3 bytes", decodeUtf8("abâ\u0082"), codes2s([97, 98, 8192]));
+	check("truncated 4 bytes", decodeUtf8("abð\u009f\u0098"), codes2s([97, 98, 55357, 56704]));
+	// 5/6-byte lead bytes are not supported: decoding stops there
+	check("lead byte 0xF8", decodeUtf8("abø\u0080\u0080\u0080\u0080cd"), "ab");
+	check("lead byte 0xFF", decodeUtf8("abÿcd"), "ab");
+}
+
+// UTF-8 bytes of n chars, 6 bytes for each 3 chars
+makeUtf8(n : int) -> string {
+	expandUtf8(concatStrings(generate(0, n / 6, \i -> "aé€")));
+}
+
+// Returns the decoding time in ms
+measureDecode(n : int) -> double {
+	b = makeUtf8(n);
+	start = timestamp();
+	decoded = decodeUtf8(b);
+	time = timestamp() - start;
+	check("round trip of " + i2s(n) + " bytes", expandUtf8(decoded), b);
+	println("  decode " + i2s(strlen(b)) + " chars: " + d2s(time) + " ms");
+	time;
+}
+
+testPerformance() -> void {
+	println("Performance:");
+	measureDecode(12000); // warm-up
+	// Big enough sizes, so the quadratic part is not hidden by the fixed cost
+	small = 50000;
+	large = 500000;
+	tSmall = measureDecode(small);
+	tLarge = measureDecode(large);
+	// Linear decoding gives a ratio of about 10, quadratic - about 100
+	ratio = tLarge / max(tSmall, 1.0);
+	println("  time ratio for " + i2s(large / small) + "x input: " + d2s(roundTo(ratio, 0.1)));
+	if (ratio > 40.0) {
+		failures := ^failures + 1;
+		println("FAIL: decodeUtf8 is not linear: " + d2s(roundTo(ratio, 0.1)) + "x slower for " + i2s(large / small) + "x input");
+	}
+}
+
+main() {
+	testAscii();
+	testMultiByte();
+	testRoundTrips();
+	testAllBmp();
+	testEdgeCases();
+	testPerformance();
+
+	if (^failures == 0) {
+		println("UTF-8 decode tests are OK in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " UTF-8 decode test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
