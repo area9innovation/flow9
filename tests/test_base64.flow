@@ -1,0 +1,108 @@
+import sys/target;
+import formats/base64;
+import math/math;
+
+// Tests of decodeBase64 / encodeBase64 (lib/formats/base64.flow).
+// The performance test checks that decoding scales linearly with the input size.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(s2a(expected)));
+		println("  actual:   " + toString(s2a(actual)));
+	}
+}
+
+// Binary string with all byte values, in a pseudo-random order
+makeBinary(n : int) -> string {
+	concatStrings(generate(0, n, \i -> fromCharCode((i * 7919 + i / 256) % 256)));
+}
+
+testKnownVectors() -> void {
+	// RFC 4648, section 10
+	vectors = [
+		Pair("", ""),
+		Pair("f", "Zg=="),
+		Pair("fo", "Zm8="),
+		Pair("foo", "Zm9v"),
+		Pair("foob", "Zm9vYg=="),
+		Pair("fooba", "Zm9vYmE="),
+		Pair("foobar", "Zm9vYmFy"),
+	];
+	iter(vectors, \v -> check("decode '" + v.second + "'", decodeBase64(v.second), v.first));
+}
+
+testWithoutPadding() -> void {
+	check("decode without padding 'Zg'", decodeBase64("Zg"), "f");
+	check("decode without padding 'Zm8'", decodeBase64("Zm8"), "fo");
+	check("decode without padding 'Zm9vYmE'", decodeBase64("Zm9vYmE"), "fooba");
+}
+
+testIgnoredCharacters() -> void {
+	// Characters outside the alphabet (line breaks, spaces, padding) are skipped
+	check("decode with CRLF", decodeBase64("Zm9v\u000d\nYmFy"), "foobar");
+	check("decode with spaces", decodeBase64(" Zm 9v Ym Fy "), "foobar");
+	check("decode with garbage", decodeBase64("Zm9v*YmFy!"), "foobar");
+}
+
+testAllBytes() -> void {
+	allBytes = concatStrings(generate(0, 256, fromCharCode));
+	check("round trip of all byte values", decodeBase64(encodeBase64(allBytes)), allBytes);
+	check("known encoding of \\u0000\\u00ff", decodeBase64("AP8="), "\u0000ÿ");
+}
+
+testRoundTrips() -> void {
+	// All lengths around the 3-byte groups and the 72-char lines of encodeBase64
+	iter(concat(enumFromTo(0, 120), [215, 216, 217, 1000, 1001, 1002]), \n -> {
+		b = makeBinary(n);
+		check("round trip of length " + i2s(n), decodeBase64(encodeBase64(b)), b);
+	});
+}
+
+// Returns the decoding time in ms
+measureDecode(n : int) -> double {
+	b = makeBinary(n);
+	encoded = encodeBase64(b);
+	start = timestamp();
+	decoded = decodeBase64(encoded);
+	time = timestamp() - start;
+	check("round trip of " + i2s(n) + " bytes", decoded, b);
+	println("  decode " + i2s(strlen(encoded)) + " chars: " + d2s(time) + " ms");
+	time;
+}
+
+testPerformance() -> void {
+	println("Performance:");
+	measureDecode(10000); // warm-up
+	small = 20000;
+	large = 200000;
+	tSmall = measureDecode(small);
+	tLarge = measureDecode(large);
+	// Linear decoding gives a ratio of about 10, quadratic - about 100
+	ratio = tLarge / max(tSmall, 1.0);
+	println("  time ratio for " + i2s(large / small) + "x input: " + d2s(roundTo(ratio, 0.1)));
+	if (ratio > 40.0) {
+		failures := ^failures + 1;
+		println("FAIL: decodeBase64 is not linear: " + d2s(roundTo(ratio, 0.1)) + "x slower for " + i2s(large / small) + "x input");
+	}
+}
+
+main() {
+	testKnownVectors();
+	testWithoutPadding();
+	testIgnoredCharacters();
+	testAllBytes();
+	testRoundTrips();
+	testPerformance();
+
+	if (^failures == 0) {
+		println("Base64 tests are OK in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " base64 test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
