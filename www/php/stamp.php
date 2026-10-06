@@ -40,15 +40,19 @@ if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
 	$root = dirname($pi['dirname']);
 }
 
-$file = getParameter('file') ?? '';
-$absoluteFile = $root . '/' . trim($file, '/');
+$file = getParameter('file');
+$file = is_string($file) ? trim($file, '/') : '';
+$absoluteFile = $root . '/' . $file;
+// ".." would escape $root
+$isSafePath = strpos($file, '..') === false;
+// md5 and size of a server-side file (php, config) would let a client confirm guesses about its content
+$isStaticAsset = in_array(strtolower(pathinfo($file, PATHINFO_EXTENSION)), ['js', 'css', 'html', 'htm', 'wasm']);
 
 $timestamp = 0;
 
 // supress warnings in file_exists because we may be probed with bogus paths
 // and php complains in that case
-if (strpos($file, '..') === false && @file_exists($absoluteFile)) {
-	// just to be safe let's ignore paths with returns
+if ($isSafePath && @file_exists($absoluteFile)) {
 	$timestamp = filemtime($absoluteFile);
 }
 
@@ -59,9 +63,9 @@ if ($isJson) {
 	$data = array();
 	$data['timestamp'] = $timestamp;
 	$data['date'] = $hrts;
-	if (is_file($absoluteFile)) {
+	if ($isSafePath && is_file($absoluteFile)) {
 		$data['file'] = true;
-		if (getParameter('json') == 'true') {
+		if (getParameter('json') == 'true' && $isStaticAsset) {
 			$data['md5'] = md5_file($absoluteFile);
 			$data['size'] = filesize($absoluteFile);
 		}
