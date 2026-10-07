@@ -657,7 +657,38 @@ public class FlowRunnerActivity extends FragmentActivity  {
 
             updateContentViewMinHeight();
         } catch (Exception e) {
-            Log.e(Utils.LOG_TAG, "Cannot create content view");
+            // Log the cause: this block used to swallow it silently, which turned R8-stripped
+            // R classes (ClassNotFoundException/NoSuchFieldException from the reflective lookups
+            // above) into a confusing NullPointerException on mView hundreds of lines later.
+            Log.e(Utils.LOG_TAG, "Cannot create content view", e);
+        }
+
+        if (mView == null) {
+            // The debug console layout could not be inflated. Fall back to a plain content view
+            // so the app still runs instead of NPE-ing on mView further up in onCreate().
+            Log.e(Utils.LOG_TAG, "Falling back to a content view without the debug console");
+            ConsoleView = null;
+            ConsoleTextView = null;
+
+            mView = new FlowWidgetGroup(this, wrapper, new Handler());
+            mView.setLayoutParams(new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1.0f));
+
+            ContentView = new LinearLayout(this);
+            ContentView.setOrientation(LinearLayout.VERTICAL);
+            ContentView.addView(mView);
+
+            ScrollView fallback = new ScrollView(this);
+            fallback.setFillViewport(true);
+            fallback.setOnTouchListener(new View.OnTouchListener() {
+                @Override
+                public boolean onTouch(View v, MotionEvent event) {
+                    return false;
+                }
+            });
+            fallback.addView(ContentView);
+            setContentView(fallback);
+
+            updateContentViewMinHeight();
         }
     }
 
@@ -730,6 +761,8 @@ public class FlowRunnerActivity extends FragmentActivity  {
     }
     
     private void setConsoleViewWeight(float weight) {
+        // ConsoleView is null when the debug console layout could not be inflated.
+        if (ConsoleView == null) return;
         LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams)ConsoleView.getLayoutParams();
         lp.weight = weight;
         ConsoleView.setLayoutParams(lp);
@@ -752,6 +785,8 @@ public class FlowRunnerActivity extends FragmentActivity  {
     }
     
     private void updateLogCatOutput() {
+        // ConsoleTextView is null when the debug console layout could not be inflated.
+        if (ConsoleTextView == null) return;
         Process logcat;
         final StringBuilder log = new StringBuilder();
         try {
