@@ -286,8 +286,28 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 	stepperAddScroll = contains(m.style, MStepperAddScroll());
 	showCancelButton = make(!contains(m.style, MHideCancelButton()));
 	intervalBtwTitles = extractStruct(m.style, MSetIntervalBetweenTitles(0.0)).size;
-	showFirstOnStartB = !contains(m.style, MHideFirstStepOnStart()) |> make;
+	hideFirstStepOnStart = contains(m.style, MHideFirstStepOnStart());
+	hideFirstStepOnBackM = if (hideFirstStepOnStart) maybeMap(tryExtractStruct(m.style, MHideFirstStepOnBack(make(false))), \s -> s.shown) else None();
+	showFirstOnStartB = eitherFn(
+		hideFirstStepOnBackM,
+		\shown -> {
+			nextDistinct(shown, false);
+			shown
+		},
+		\ -> make(!hideFirstStepOnStart)
+	);
+	// Got from MExpanded once: the default of extractStruct is a new behaviour every time
+	expandedSteps = map(steps, \step -> extractStruct(step.state, MExpanded(make(false))).expanded);
 	enabledBackButton = make(false);
+	// BACK on the first visible step collapses it (MHideFirstStepOnBack)
+	hideFirstStepOnBackT = eitherMap(
+		hideFirstStepOnBackM,
+		\shown -> fselect3(selectedId, stepsEnabledArr, shown, \id, enabledArr, isShown ->
+			isShown && id >= 0 && id == elemIndex(enabledArr, true, -1)
+		),
+		const(false)
+	);
+	backButtonShownT = fOr(enabledBackButton, hideFirstStepOnBackT);
 	enabledCancelButton = make(false);
 	enabledContinueButton = make(true);
 	showErrorMessage = make(false);
@@ -300,7 +320,7 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 				items = if (horizontal) {
 					[p, TFillX(), c, gap, n]
 				} else {
-					[n, gap, p, TShow(enabledBackButton, gap), c]
+					[n, gap, p, TShow(backButtonShownT, gap), c]
 				}
 				b(MIfFitsWidth(MColsA(items), MLinesA(items)))
 			})
@@ -337,8 +357,12 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 
 	backFn = \-> {
 		next(^(mwTestSupport.support.actionHandler), Some(MStepperActionBack()));
-		id = max(min(getValue(selectedId), length(steps) - 1), 0);
-		next(selectedId, getPrevSelectedId(id, linearStepper, enabledSteps, editableSteps, completes, steps, stepEditableOnComplete));
+		if (fgetValue(hideFirstStepOnBackT)) {
+			nextDistinct(showFirstOnStartB, false);
+		} else {
+			id = max(min(getValue(selectedId), length(steps) - 1), 0);
+			next(selectedId, getPrevSelectedId(id, linearStepper, enabledSteps, editableSteps, completes, steps, stepEditableOnComplete));
+		}
 	}
 
 	mwTestSupport.support.actionRunner := \ma : flow ->
@@ -369,14 +393,14 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 					TEmpty()
 				} else {
 					extractStruct(steps[id].state, backButtonStyle)
-					|> (\f -> MStepperTextButtonAddEnabled(MTextButton(f.text, backFn, f.style, f.state), enabledBackButton))
+					|> (\f -> MStepperTextButtonAddEnabled(MTextButton(f.text, backFn, f.style, f.state), backButtonShownT))
 				}
 			)
 			|> (\f ->
 				if (horizontal)
 					f
 				else
-					MShow(enabledBackButton, f)
+					MShow(backButtonShownT, f)
 			),
 			MSelect(selectedId, \id ->
 				if (id == length(steps)) {
@@ -391,7 +415,7 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 					if (horizontal)
 						showCancelButton
 					else
-						fand(showCancelButton, fOr(enabledCancelButton, fnot(enabledBackButton))),
+						fand(showCancelButton, fOr(enabledCancelButton, fnot(backButtonShownT))),
 					f
 				)
 			),
@@ -520,7 +544,7 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 				errorMsg = extractStruct(step.state, MultilineErrorState(make(""))).text;
 				showStepError = make(false);
 				enabled = extractStruct(step.state, MEnabled(const(true))).enabled;
-				expanded = extractStruct(step.state, MExpanded(make(false))).expanded;
+				expanded = expandedSteps[id];
 				isFirstVisibleStepB = make(false);
 				isLastVisibleStepB = make(false);
 
@@ -694,14 +718,20 @@ makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Mate
 			|> (\f -> m2t(f, parent))
 		}
 	)
-	|> (\t -> TConstruct([
-			makeSubscribe(selectedId, \id -> {
-				nextDistinct(enabledBackButton, checkEnabledBackButton(id, linearStepper, completes, editableSteps, enabledSteps, stepEditableOnComplete));
-				if (id >= 0 && id < length(steps))
-					nextDistinct(enabledCancelButton, !(cancelFns[id] == nop));
-				nextDistinct(enabledContinueButton, id < length(steps));
-			})
-		], t))
+	|> (\t -> TConstruct(arrayPushMaybe(
+			[
+				makeSubscribe(selectedId, \id -> {
+					nextDistinct(enabledBackButton, checkEnabledBackButton(id, linearStepper, completes, editableSteps, enabledSteps, stepEditableOnComplete));
+					if (id >= 0 && id < length(steps))
+						nextDistinct(enabledCancelButton, !(cancelFns[id] == nop));
+					nextDistinct(enabledContinueButton, id < length(steps));
+				})
+			],
+			// A collapsed step is not expanded: the selected step got expanded when it was selected (BACK from the next step)
+			maybeMap(hideFirstStepOnBackM, \shown -> makeSubscribe2(shown, \isShown -> if (!isShown) {
+				maybeApply(elementAtM(expandedSteps, getValue(selectedId)), \expanded -> nextDistinct(expanded, false))
+			}))
+		), t))
 }
 
 createHeader(parent : MFocusGroup, steps, completes, clickableSteps, editableSteps, showFirstOnStartB, selectedId, alternativeLabel,
