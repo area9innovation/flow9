@@ -2259,7 +2259,8 @@ class TextClip extends NativeWidgetClip {
 			//    - an attribute with a value (onerror=..., href=javascript:..., etc.)
 			//    - a known element
 			//    - an unknown element with an attribute value (e.g. <test onclick=...>)
-			//    Comments, unknown tags and empty attributes ('<test>', 'x<y, a>b', '<br E | F |') are harmless.
+			//    - a comment with markup inside
+			//    Plain comments, unknown tags and empty attributes ('<test>', 'x<y, a>b', '<br E | F |') are harmless.
 			//
 			// Texts can be huge, so only unique tokens are checked and short tokens found safe are cached:
 			// usually a keystroke checks only the tag being edited.
@@ -2328,7 +2329,13 @@ class TextClip extends NativeWidgetClip {
 						}
 
 						var element = removed.element;
-						// Comments are not executed. BODY is the DOMPurify wrapper, removed only by its mXSS heuristics on plain text
+						// Comments are not executed, but markup inside them may break out of raw text containers
+						// (<!--</textarea><img onerror=...>-->), so such comments are sanitized like DOMPurify does
+						if (element.nodeType == 8) {
+							return /<[\\/\\w!]/.test(element.data);
+						}
+
+						// BODY is the DOMPurify wrapper, removed only by its mXSS heuristics on plain text
 						if (element.nodeType != 1 || element.nodeName == 'BODY') {
 							return false;
 						}
