@@ -122,6 +122,7 @@ class UnicodeTranslation {
 }
 
 class TextClip extends NativeWidgetClip {
+	private static var safeHtmlTokens : Dynamic = untyped __js__("new Set()");
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") == "1";
 	public static var AmiriHTMLMeasurement = Util.getParameter("amiri_html_measurement") != "0";
@@ -2253,14 +2254,19 @@ class TextClip extends NativeWidgetClip {
 			// e.g. while erasing '>' of '<br>' the unclosed '<br' swallows the rest of the text.
 			//
 			// 1. Dangerous tags (script, iframe, style, meta, ...) are always sanitized.
-			//    Some of them are moved to <head> by the parser and are not reported in DOMPurify.removed.
-			// 2. Otherwise we ask DOMPurify what it would remove. The text is dangerous if DOMPurify removes:
+			// 2. Otherwise we split the text into HTML tokens (tags, comments, raw text elements) and ask DOMPurify
+			//    what it would remove from them. The text is dangerous if DOMPurify removes:
 			//    - an attribute with a value (onerror=..., href=javascript:..., etc.)
-			//    - a known element (e.g. <object>) or any non-element node
+			//    - a known element
 			//    - an unknown element with an attribute value (e.g. <test onclick=...>)
-			//    Unknown tags and empty attributes ('<test>', 'x<y, a>b', '<br E | F |') are harmless and kept as is.
+			//    Comments, unknown tags and empty attributes ('<test>', 'x<y, a>b', '<br E | F |') are harmless.
+			//
+			// Texts can be huge, so only unique tokens are checked and tokens found safe are cached:
+			// usually a keystroke checks only the tag being edited.
+			// Tags which depend on the parser context (td, select, body, ...) are checked as <div>,
+			// DOMPurify checks attributes the same way for any element.
 			untyped __js__("
-				text = (function() {
+				text = (function(safeTokens) {
 					if (!/<[a-zA-Z!\\/?]/.test(text)) {
 						return text;
 					}
@@ -2269,7 +2275,37 @@ class TextClip extends NativeWidgetClip {
 						return DOMPurify.sanitize(text);
 					}
 
-					var sanitizedText = DOMPurify.sanitize(text);
+					var space = '[\\\\t\\\\n\\\\f\\\\r ]';
+					var tagEnd = '(?=[\\\\t\\\\n\\\\f\\\\r \\\\/>]|$)';
+					var attributes =
+						'(?:[\\\\t\\\\n\\\\f\\\\r \\\\/]+|[^\\\\t\\\\n\\\\f\\\\r \\\\/>][^\\\\t\\\\n\\\\f\\\\r \\\\/>=]*(?:' + space + '*=' + space + '*(?:\"[^\"]*\"|\\'[^\\']*\\'|[^\\\\t\\\\n\\\\f\\\\r >]*))?)*';
+					var rawTextTag = function(name) {
+						return '<' + name + tagEnd + attributes + '(?:>[^]*?(?:<\\\\/' + name + tagEnd + attributes + '>?|$))?';
+					};
+					var tokenPattern = new RegExp(
+						[
+							'<!--(?:-?>|[^]*?(?:--!?>|$))',
+							'<(?:!|\\\\?|\\\\/(?![a-zA-Z]))[^>]*>?',
+							'<plaintext' + tagEnd + '[^]*'
+						]
+						.concat(['textarea', 'title', 'xmp', 'noembed', 'noframes'].map(rawTextTag))
+						.concat(['<\\\\/?[a-zA-Z][^\\\\t\\\\n\\\\f\\\\r \\\\/>]*' + attributes + '>?'])
+						.join('|'),
+						'gi'
+					);
+					var contextTagPattern = /^(<\\/?)(?:html|head|body|table|caption|colgroup|col|tbody|thead|tfoot|tr|td|th|select|option|optgroup|form)(?=[\\t\\n\\f\\r \\/>]|$)/i;
+
+					var newTokens = [];
+					(text.match(tokenPattern) || []).forEach(function(token) {
+						if (!safeTokens.has(token)) {
+							safeTokens.add(token);
+							newTokens.push(token);
+						}
+					});
+
+					if (newTokens.length == 0) {
+						return text;
+					}
 
 					var hasAttributeValue = function(attributes) {
 						for (var i = 0; i < attributes.length; i++) {
@@ -2281,14 +2317,17 @@ class TextClip extends NativeWidgetClip {
 						return false;
 					};
 
+					DOMPurify.sanitize(newTokens.map(function(token) { return token.replace(contextTagPattern, '$1div'); }).join(''), { FORCE_BODY: true });
+
 					var isXSS = DOMPurify.removed.some(function(removed) {
 						if (removed.attribute) {
 							return removed.attribute.value != '';
 						}
 
 						var element = removed.element;
-						if (element.nodeType != 1) {
-							return true;
+						// Comments are not executed. BODY is the DOMPurify wrapper, removed only by its mXSS heuristics on plain text
+						if (element.nodeType != 1 || element.nodeName == 'BODY') {
+							return false;
 						}
 
 						var isUnknownElement =
@@ -2298,9 +2337,21 @@ class TextClip extends NativeWidgetClip {
 						return !isUnknownElement || hasAttributeValue(element.attributes);
 					});
 
-					return isXSS ? sanitizedText : text;
-				})();
-			");
+					if (isXSS) {
+						newTokens.forEach(function(token) {
+							safeTokens.delete(token);
+						});
+
+						return DOMPurify.sanitize(text);
+					}
+
+					if (safeTokens.size > 100000) {
+						safeTokens.clear();
+					}
+
+					return text;
+				})({0});
+			", safeHtmlTokens);
 		}
 		return text;
 	}
