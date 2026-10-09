@@ -122,7 +122,7 @@ class UnicodeTranslation {
 }
 
 class TextClip extends NativeWidgetClip {
-	private static var safeHtmlTokens : Dynamic = untyped __js__("new Set()");
+	private static var safeHtmlTokens : Dynamic = untyped __js__("{ tokens: new Set(), length: 0 }");
 	public static var KeepTextClips = Util.getParameter("wcag") == "1";
 	public static var EnsureInputIOS = Util.getParameter("ensure_input_ios") == "1";
 	public static var AmiriHTMLMeasurement = Util.getParameter("amiri_html_measurement") != "0";
@@ -2261,12 +2261,14 @@ class TextClip extends NativeWidgetClip {
 			//    - an unknown element with an attribute value (e.g. <test onclick=...>)
 			//    Comments, unknown tags and empty attributes ('<test>', 'x<y, a>b', '<br E | F |') are harmless.
 			//
-			// Texts can be huge, so only unique tokens are checked and tokens found safe are cached:
+			// Texts can be huge, so only unique tokens are checked and short tokens found safe are cached:
 			// usually a keystroke checks only the tag being edited.
 			// Tags which depend on the parser context (td, select, body, ...) are checked as <div>,
 			// DOMPurify checks attributes the same way for any element.
 			untyped __js__("
-				text = (function(safeTokens) {
+				text = (function(cache) {
+					var safeTokens = cache.tokens;
+
 					if (!/<[a-zA-Z!\\/?]/.test(text)) {
 						return text;
 					}
@@ -2342,12 +2344,21 @@ class TextClip extends NativeWidgetClip {
 						return DOMPurify.sanitize(text);
 					}
 
-					if (safeTokens.size > 100000) {
+					// Long tokens (unclosed comments, textarea, etc.) change with every keystroke, so they are not cached
+					newTokens = newTokens.filter(function(token) {
+						return token.length <= 256;
+					});
+
+					if (cache.length > 1000000) {
 						safeTokens.clear();
+						cache.length = 0;
 					}
 
 					newTokens.forEach(function(token) {
-						safeTokens.add(token);
+						// Copy the token: a substring may keep the whole text alive in memory
+						var copy = token.split('').join('');
+						safeTokens.add(copy);
+						cache.length += copy.length;
 					});
 
 					return text;
