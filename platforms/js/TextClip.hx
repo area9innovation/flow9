@@ -2260,6 +2260,7 @@ class TextClip extends NativeWidgetClip {
 			//    - a known element
 			//    - an unknown element with an attribute value (e.g. <test onclick=...>)
 			//    - a comment with markup inside
+			//    The text is also dangerous if textarea or title contains markup.
 			//    Plain comments, unknown tags and empty attributes ('<test>', 'x<y, a>b', '<br E | F |') are harmless.
 			//
 			// Texts can be huge, so only unique tokens are checked and short tokens found safe are cached:
@@ -2321,9 +2322,20 @@ class TextClip extends NativeWidgetClip {
 						return false;
 					};
 
-					DOMPurify.sanitize(newTokens.map(function(token) { return token.replace(contextTagPattern, '$1div'); }).join(''), { FORCE_BODY: true });
+					var body = DOMPurify.sanitize(
+						newTokens.map(function(token) { return token.replace(contextTagPattern, '$1div'); }).join(''),
+						{ FORCE_BODY: true, RETURN_DOM: true }
+					);
 
-					var isXSS = DOMPurify.removed.some(function(removed) {
+					// Textarea and title keep markup as text, but it becomes markup again in other contexts
+					// (e.g. inside <svg>), so such texts are sanitized and DOMPurify escapes the markup
+					var hasMarkupInText = !!body && !!body.getElementsByTagName && ['textarea', 'title'].some(function(tagName) {
+						return Array.prototype.some.call(body.getElementsByTagName(tagName), function(element) {
+							return /<[\\/\\w!]/.test(element.textContent);
+						});
+					});
+
+					var isXSS = hasMarkupInText || DOMPurify.removed.some(function(removed) {
 						if (removed.attribute) {
 							return removed.attribute.value != '';
 						}
