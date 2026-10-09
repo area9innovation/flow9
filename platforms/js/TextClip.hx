@@ -2295,13 +2295,14 @@ class TextClip extends NativeWidgetClip {
 					);
 					var contextTagPattern = /^(<\\/?)(?:html|head|body|table|caption|colgroup|col|tbody|thead|tfoot|tr|td|th|select|option|optgroup|form)(?=[\\t\\n\\f\\r \\/>]|$)/i;
 
-					var newTokens = [];
+					// Tokens are cached as safe only after the check, so an exception can't leave them unchecked
+					var newTokens = new Set();
 					(text.match(tokenPattern) || []).forEach(function(token) {
 						if (!safeTokens.has(token)) {
-							safeTokens.add(token);
-							newTokens.push(token);
+							newTokens.add(token);
 						}
 					});
+					newTokens = Array.from(newTokens);
 
 					if (newTokens.length == 0) {
 						return text;
@@ -2338,16 +2339,16 @@ class TextClip extends NativeWidgetClip {
 					});
 
 					if (isXSS) {
-						newTokens.forEach(function(token) {
-							safeTokens.delete(token);
-						});
-
 						return DOMPurify.sanitize(text);
 					}
 
 					if (safeTokens.size > 100000) {
 						safeTokens.clear();
 					}
+
+					newTokens.forEach(function(token) {
+						safeTokens.add(token);
+					});
 
 					return text;
 				})({0});
