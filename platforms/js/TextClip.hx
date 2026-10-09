@@ -2248,51 +2248,57 @@ class TextClip extends NativeWidgetClip {
 
 	private function getSanitizedText(text : String) : String {
 		if (preventXSS) {
-			// We have to allow simple '<', '>' and tag-like (but without attributes) texts
-			// This pattern identifies HTML tags with attributes (potential XSS vectors)
-			// while allowing simple tag-like structures without attributes
-			// 
-			// XSS prevention using a multi-layered approach to balance security with usability:
+			// The input value itself is not rendered as HTML, so we change the text only when it really contains
+			// something dangerous. Otherwise sanitizing would destroy harmless text the user is typing:
+			// e.g. while erasing '>' of '<br>' the unclosed '<br' swallows the rest of the text.
 			//
-			// 1. Priority treatment for script tags:
-			//    - Immediately sanitizes any content containing <script> tags regardless of context
-			//    - No exceptions for script tags, even if they appear in math-like expressions
-			//
-			// 2. Secondary check for other dangerous elements:
-			//    - Detects other risky tags like iframe, svg, object, etc.
-			//    - Uses word boundaries to ensure complete tag names are matched
-			//
-			// 3. Structure-based detection:
-			//    - Identifies HTML-like structures that contain attributes or separators
-			//    - Catches tags with spaces, quotes, or commas that could contain XSS vectors
-			//    - Preserves simple tag-like structures without attributes (e.g., <test>)
-			//
-			// 4. Mathematical expression preservation:
-			//    - Special pattern excludes content that looks like math expressions
-			//    - Preserves expressions like 'x<y', 'a<=b', 'slider<value'
-			//    - Only applies to non-script content
+			// 1. Dangerous tags (script, iframe, style, meta, ...) are always sanitized.
+			//    Some of them are moved to <head> by the parser and are not reported in DOMPurify.removed.
+			// 2. Otherwise we ask DOMPurify what it would remove. The text is dangerous if DOMPurify removes:
+			//    - an attribute with a value (onerror=..., href=javascript:..., etc.)
+			//    - a known element (e.g. <object>) or any non-element node
+			//    - an unknown element with an attribute value (e.g. <test onclick=...>)
+			//    Unknown tags and empty attributes ('<test>', 'x<y, a>b', '<br E | F |') are harmless and kept as is.
 			untyped __js__("
 				text = (function() {
-					var termPattern = '(?:\\\\(*\\\\s*)?(?:\\\\w+(?:\\\\([^)]*\\\\))?|[\\\\d.]+)(?:\\\\s*\\\\)*)?';
-					var operatorPattern = '(?:\\\\s*)(?:<|<=|>=|>)(?:\\\\s*)';
-					var mathPattern = new RegExp('(' + termPattern + operatorPattern + termPattern + ')[,\\\\s]', 'i');
+					if (!/<[a-zA-Z!\\/?]/.test(text)) {
+						return text;
+					}
 
-					var isXSS =
-						// Specific check for script tags - sanitize immediately without math check
-						/<\\/?script\\b/i.test(text) ||
-						// For other cases, apply our standard rules with math check
-						(text && (
-							// Check for other dangerous tags
-							/<\\/?(?:iframe|object|embed|svg|math|link|style)\\b/i.test(text) ||
-							// Check for tag-like structures with attributes or separators
-							(/<(?!\\s|=|\\d)[a-zA-Z][^>]*>/.test(text) &&
-								(/<[^>]*[\\s,'\"]/i.test(text) || /<[a-zA-Z]+[^>]*\\s*,[^>]*>/i.test(text))
-							)
-						) &&
-						// Exclude math expressions
-						!mathPattern.test(text));
+					if (/<\\/?(?:script|iframe|frame|frameset|object|embed|applet|svg|math|link|style|meta|base|noscript|template)(?=[\\s\\/>]|$)/i.test(text)) {
+						return DOMPurify.sanitize(text);
+					}
 
-					return isXSS ? DOMPurify.sanitize(text) : text;
+					var sanitizedText = DOMPurify.sanitize(text);
+
+					var hasAttributeValue = function(attributes) {
+						for (var i = 0; i < attributes.length; i++) {
+							if (attributes[i].value != '') {
+								return true;
+							}
+						}
+
+						return false;
+					};
+
+					var isXSS = DOMPurify.removed.some(function(removed) {
+						if (removed.attribute) {
+							return removed.attribute.value != '';
+						}
+
+						var element = removed.element;
+						if (element.nodeType != 1) {
+							return true;
+						}
+
+						var isUnknownElement =
+							Object.prototype.toString.call(element) == '[object HTMLUnknownElement]'
+							|| element.nodeName.indexOf('-') > 0;
+
+						return !isUnknownElement || hasAttributeValue(element.attributes);
+					});
+
+					return isXSS ? sanitizedText : text;
 				})();
 			");
 		}
