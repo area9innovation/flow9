@@ -2230,6 +2230,11 @@ Native.memoryLeakReset();
 			untyped __js__("setTimeout(fn, 0);");
 		}
 	}
+
+	// True when no timer(0) callback (see interruptibleTimer) is waiting in the defer queue.
+	public static function isDeferQueueIdle() : Bool {
+		return !deferActive && DeferQueue.length == 0;
+	}
 	#end
 
 	public static function setInterval(ms : Int, cb : Void -> Void) : Void -> Void {

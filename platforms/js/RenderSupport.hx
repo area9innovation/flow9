@@ -59,6 +59,8 @@ class RenderSupport {
 	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0" && isViewportScaleWorkaroundEnabled();
 	// Don't wait for fonts to load
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
+	// Wait for pending timer(0) layout before window.print(). Disable with defer_queue_print=0.
+	public static var PrintWaitsForDeferQueue : Bool = Util.getParameter("defer_queue_print") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
 	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
 	public static var PinchToScaleEnabled : Bool = true;
@@ -555,16 +557,29 @@ class RenderSupport {
 		emit("beforeprint");
 
 		var openPrintDialog = function () {
-			forceRender();
-			PixiStage.onImagesLoaded(function () {
-				if (forceOnAfterprint) {
-					// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI.
-					PixiStage.once("drawframe", function() {
-						emit("afterprint");
-					});
+			// Content mounted for printing may still have layout pending in timer(0) callbacks
+			// window.print() blocks the page, so those would only run after the snapshot.
+			// Wait for the defer queue to drain, bounded in case something keeps rescheduling timer(0) forever.
+			var settleDeadline = NativeTime.timestamp() + 2000.0;
+			var printWhenSettled : Void -> Void = null;
+			printWhenSettled = function () {
+				forceRender();
+				if (PrintWaitsForDeferQueue && !Native.isDeferQueueIdle() && NativeTime.timestamp() < settleDeadline) {
+					Browser.window.setTimeout(printWhenSettled, 10);
+					return;
 				}
-				Browser.window.print();
-			});
+
+				PixiStage.onImagesLoaded(function () {
+					if (forceOnAfterprint) {
+						// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI.
+						PixiStage.once("drawframe", function() {
+							emit("afterprint");
+						});
+					}
+					Browser.window.print();
+				});
+			};
+			printWhenSettled();
 		};
 
 		PixiStage.once("drawframe", openPrintDialog);
