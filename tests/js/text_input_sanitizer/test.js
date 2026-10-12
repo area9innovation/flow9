@@ -1,4 +1,5 @@
 // Tests of platforms/js/TextInputSanitizer.hx with the DOMPurify bundled in www/js.
+// The sanitizer relies on what DOMPurify removes, so run them after every update of www/js/purify.
 // Run: npm install && npm test
 
 const test = require('node:test');
@@ -22,20 +23,54 @@ const sanitizerSource = (function() {
 	});
 })();
 
+// Internal function of the sanitizer, the code between its declaration and the next one
+const getTagClosing = (function() {
+	const start = sanitizerSource.indexOf('var getTagClosing');
+	const end = sanitizerSource.indexOf('var hasAttributeValue');
+	assert.ok(start >= 0 && end > start, 'getTagClosing is not found in TextInputSanitizer.hx');
+	return new Function(sanitizerSource.substring(start, end) + 'return getTagClosing;')();
+})();
+
 // Every sanitizer has its own cache of safe tokens
 const createSanitizer = function(purify) {
 	return new Function('DOMPurify', 'return ' + sanitizerSource.trim())(purify || DOMPurify);
 };
 
-// The input value is not rendered, the danger is a consumer rendering it as HTML in any context
+// The input value is not rendered, the danger is a consumer rendering it as HTML in any context.
+// All dangerous texts call alert, so other handlers and urls (e.g. onerror=</p from '<img onerror=' + '</p>')
+// come from the consumer markup and are not under control of the user.
+// DOMParser has scripting disabled, so <noscript> isn't raw text here, <xmp> and <noembed> check raw text contexts.
+const parser = new window.DOMParser();
+const liveXSSResults = new Map();
 const findLiveXSS = function(html) {
-	return ['', '<svg>', '<math>', '<table>', '<select>', '<textarea>', '<title>', '<noscript>'].some(function(context) {
-		const document = new JSDOM('<!doctype html><body>' + context + html).window.document;
-		return Array.prototype.some.call(document.querySelectorAll('*'), function(element) {
-			return element.nodeName.toLowerCase() == 'script'
-				|| Array.prototype.some.call(element.attributes, function(attribute) {
-					return (/^on/i.test(attribute.name) && attribute.value.trim() != '') || /^\s*(javascript|data):/i.test(attribute.value);
-				});
+	if (!liveXSSResults.has(html)) {
+		liveXSSResults.set(html, findLiveXSSUncached(html));
+	}
+
+	return liveXSSResults.get(html);
+};
+const contexts = [
+	'', '<svg>', '<math>', '<svg><foreignObject>', '<math><mi>', '<table>', '<select>',
+	'<textarea>', '<title>', '<xmp>', '<noembed>', '<style>', '<noscript>',
+];
+const isLiveElement = function(element) {
+	const name = element.nodeName.toLowerCase();
+	return name == 'script'
+		|| (name == 'base' && element.hasAttribute('href'))
+		|| (name == 'meta' && /refresh/i.test(element.getAttribute('http-equiv') || ''))
+		|| (name == 'template' && Array.prototype.some.call(element.content.querySelectorAll('*'), isLiveElement))
+		|| Array.prototype.some.call(element.attributes, function(attribute) {
+			// Browsers ignore control chars and spaces in urls: ' jav\tascript:'
+			const url = attribute.value.replace(/[\u0000-\u0020]/g, '');
+			return /alert/.test(attribute.value)
+				&& (/^on/i.test(attribute.name) || /^(javascript|vbscript|data):/i.test(url) || attribute.name.toLowerCase() == 'srcdoc');
+		});
+};
+const findLiveXSSUncached = function(html) {
+	return contexts.some(function(before) {
+		return ['', '</p><b class="x">x</b>', "</p><b class='x'>x</b>"].some(function(after) {
+			const document = parser.parseFromString('<!doctype html><body>' + before + html + after, 'text/html');
+			return Array.prototype.some.call(document.querySelectorAll('*'), isLiveElement);
 		});
 	});
 };
@@ -64,6 +99,38 @@ const harmlessTexts = [
 	'<textarea>plain</textarea> <title>T</title>',
 	'<textarea>&lt;b&gt;</textarea>',
 	'<td>cell</td> <option>one</option>',
+	'<a href="https://example.com"',
+	'<a href=https://example.com',
+	'<xmp>plain</xmp> <noembed>x > y</noembed> <noframes>no frames</noframes>',
+	// case, whitespace and self-closing tags
+	'<B>bold</B> <BR> <Br/> <test/>',
+	'<a\nhref="https://example.com"\n>x</a> <a\thref=\'https://example.com\'>y</a>',
+	// things that only look like tags
+	'<>', '</>', '< b>', '<1>', '<<>>', '<a <b>', 'a<b>c',
+	'<john@example.com> <https://example.com>',
+	'C<T> List<int> Map<K, V>',
+	'<scripting> <svgfoo> <stylesheet> <iframes>',
+	'&lt;script&gt;alert(1)&lt;/script&gt;',
+	'<!doctype html> <?xml version="1.0"?>',
+	'</textarea> </title> </xmp>',
+	// attribute values
+	'<a title="a > b">x</a> <a title=\'a "b" c\'>y</a>',
+	'<a href="https://example.com/?a=1&b=2#c">x</a> <a href="mailto:a@b.c">y</a> <a href="#">z</a>',
+	'<img src="https://example.com/a.png">',
+	'<a href="https://example.com>link</a> forgot the quote',
+	// unknown attributes with values safe as a link
+	'<a ref="https://example.com/page">x</a> <b foo=bar data-x=1 hrf=#top>y</b>',
+	'<ahref="https://example.com/page" title="The page">x</a>',
+	// unicode
+	'😀 <b>жирный</b> 😀 <ü>',
+	// long unclosed tokens
+	'<!-- ' + 'x'.repeat(1000),
+	'<textarea>' + 'x'.repeat(1000),
+	'<a title="' + 'x'.repeat(1000),
+	// harmless markup inside comments and raw text elements
+	'<!-- <b>note</b> --> <!<b> <!-- <!-- nested --> -->',
+	'<title>A<B</title> <textarea><b>x</b></textarea>',
+	'<!--</textarea><b>x</b>-->',
 ];
 
 const dangerousTexts = [
@@ -90,7 +157,7 @@ const dangerousTexts = [
 	'<table><img src=x onerror=alert(1)>',
 	'<!--</textarea><img src=x onerror=alert(1)>-->',
 	'<!--</title><img src=x onerror=alert(1)>-->',
-	'<!--</noembed><img src=x>-->',
+	'<!--</noembed><img src=x onerror=alert(1)>-->',
 	'<!--><img src=x onerror=alert(1)>-->',
 	'<a title="</textarea><img src=x onerror=alert(1)>">x</a>',
 	'<a title=\'</textarea><img src=x onerror=alert(1)>\'>x</a>',
@@ -100,6 +167,73 @@ const dangerousTexts = [
 	'<title><img src=x onerror=alert(1)></title>',
 	'<noembed><img title="</noembed><img src onerror=alert(1)>"></noembed>',
 	'<xmp><img src=x onerror=alert(1)></xmp>',
+	'<xmp title=x>plain</xmp>',
+	'<noframes><img src=x onerror=alert(1)></noframes>',
+	'<img src=x onerror=alert(1)',
+	'text <img src=x onerror=alert(1) more text',
+	'<a href=javascript:alert(1)',
+	'<textarea autofocus onfocus=alert(1)',
+	// unclosed quotes are closed by the consumer markup
+	'<img src=x onerror="alert(1)//',
+	'<img src=x onerror=\'alert(1)//',
+	'<img src=x onerror=alert(1) x="',
+	'<img src=x onerror="alert(1)// <b>bold</b>',
+	'<a href="javascript:alert(1)//',
+	// case
+	'<ScRiPt>alert(1)</sCrIpT>',
+	'<IMG SRC=x ONERROR=alert(1)>',
+	'<a href="JaVaScRiPt:alert(1)">x</a>',
+	// separators
+	'<img\nsrc=x\nonerror=alert(1)>',
+	'<img\tsrc=x\tonerror=alert(1)>',
+	'<img/onerror=alert(1)/src=x>',
+	'<svg/onload=alert(1)>',
+	'<img src="x"onerror="alert(1)">',
+	'<img src=x onerror\n=\nalert(1)>',
+	'<img src=x onerror = "alert(1)">',
+	'<img src=x onerror=alert(1)/>',
+	'<img src=x onerror="a>b;alert(1)">',
+	'<a title="x" <img src=x onerror=alert(1)>',
+	// encoded urls and handlers
+	'<img src=x onerror=&#97;lert(1)>',
+	'<img src=x onerror=`alert(1)`>',
+	'<a href="&#106;avascript:alert(1)">x</a>',
+	'<a href="javascript&colon;alert(1)">x</a>',
+	'<a href="java\nscript:alert(1)">x</a>',
+	'<a href=" javascript:alert(1)">x</a>',
+	// elements handled by context
+	'<body onload=alert(1)>',
+	'<html onmouseover=alert(1)>',
+	'<td><img src=x onerror=alert(1)></td>',
+	'<option><img src=x onerror=alert(1)>',
+	'<frameset onload=alert(1)>',
+	// other elements and handlers
+	'<input autofocus onfocus=alert(1)>',
+	'<video><source onerror=alert(1)>',
+	'<audio src=x onerror=alert(1)>',
+	'<marquee onstart=alert(1)>',
+	'<x-foo is=x onclick=alert(1)>',
+	'<embed src=javascript:alert(1)>',
+	'<form><input formaction=javascript:alert(1) type=submit>',
+	// declarations, processing instructions and CDATA
+	'<!doctype html><img src=x onerror=alert(1)>',
+	'<?xml?><img src=x onerror=alert(1)>',
+	'<![CDATA[<img src=x onerror=alert(1)>]]>',
+	'<a title="</title><img src=x onerror=alert(1)>">',
+	'<a title="--><img src=x onerror=alert(1)>">',
+	// unknown attributes executable or with markup
+	'<button formaction=javascript:alert(1)>x</button>',
+	'<a hraf="javascript:alert(1)">x</a>',
+	'<b foo="</title><img src=x onerror=alert(1)>">x</b>',
+	'<b foo="--><img src=x onerror=alert(1)>">x</b>',
+	'<set attributename=onmouseover to=alert(1)>',
+	'<ahref="x" onclick=alert(1)>x</a>',
+	'<ahref="x" title="javascript:alert(1)">x</a>',
+	// dangerous markup nested in comments and raw text elements
+	'<!-- <!-- </textarea><img src=x onerror=alert(1)> -->',
+	'<title><b><img src=x onerror=alert(1)></b></title>',
+	'<textarea><!--</textarea><img src=x onerror=alert(1)>--></textarea>',
+	'<!' + '<!--'.repeat(10) + '<img src=x onerror=alert(1)>',
 ];
 
 test('harmless texts are kept', function() {
@@ -115,6 +249,14 @@ test('dangerous texts are sanitized by DOMPurify', function() {
 		const result = sanitize(text);
 		assert.notStrictEqual(result, text, text);
 		assert.strictEqual(result, DOMPurify.sanitize(text), text);
+	});
+});
+
+// Mentioned tags which change parsing of the text after them are sanitized like dangerous ones
+test('texts mentioning dangerous tags are sanitized by DOMPurify', function() {
+	const sanitize = createSanitizer();
+	['Use <style> for CSS', 'e.g. <svg> icons', '<math> formula', '<template> literal', '<noscript> fallback'].forEach(function(text) {
+		assert.strictEqual(sanitize(text), DOMPurify.sanitize(text), text);
 	});
 });
 
@@ -147,6 +289,106 @@ test('typing a text char by char', function() {
 	assert.notStrictEqual(sanitize(dangerous), dangerous);
 });
 
+// Every prefix and every text with one char erased, as while typing and erasing
+const edits = function(text) {
+	const result = [];
+	for (let i = 0; i <= text.length; i++) {
+		result.push(text.substring(0, i));
+		if (i < text.length) {
+			result.push(text.substring(0, i) + text.substring(i + 1));
+		}
+	}
+
+	return result;
+};
+
+test('erasing a char of harmless text keeps it', function() {
+	const sanitize = createSanitizer();
+	[
+		'<br><br> **D** <br> E | F |',
+		'See <b>it</b> is <i>fine</i>, x<y. <!-- note -->',
+		// Erasing a char of 'https:' makes an unknown scheme, which DOMPurify doesn't allow in links
+		'See <a href="/page" title="The page">the page</a>.',
+	].forEach(function(text) {
+		edits(text).forEach(function(edit) {
+			assert.strictEqual(sanitize(edit), edit);
+		});
+	});
+});
+
+test('typing and erasing dangerous texts never leaves live XSS', function() {
+	const sanitize = createSanitizer();
+	dangerousTexts.forEach(function(text) {
+		edits(text).forEach(function(edit) {
+			assert.ok(!findLiveXSS(sanitize(edit)), JSON.stringify(edit));
+		});
+	});
+});
+
+test('sanitizing a result again keeps it', function() {
+	harmlessTexts.concat(dangerousTexts).forEach(function(text) {
+		const result = createSanitizer()(text);
+		assert.strictEqual(createSanitizer()(result), result, text);
+	});
+});
+
+test('cache does not change results', function() {
+	const texts = harmlessTexts.concat(dangerousTexts);
+	const expected = texts.map(function(text) { return createSanitizer()(text); });
+	const sanitize = createSanitizer();
+	[texts, texts.slice().reverse(), texts].forEach(function(order) {
+		order.forEach(function(text) {
+			assert.strictEqual(sanitize(text), expected[texts.indexOf(text)], text);
+		});
+	});
+
+	// Overflow the cache bound with unique safe tokens
+	for (let i = 0; i < 20; i++) {
+		sanitize(Array.from({ length: 5000 }, function(_, j) { return '<a id="' + i + '-' + j + '">'; }).join(''));
+	}
+
+	texts.forEach(function(text, i) {
+		assert.strictEqual(sanitize(text), expected[i], text);
+	});
+});
+
+// Tokens are checked joined, but cached one by one, so safe tokens must stay safe next to any others
+test('cached tokens of texts do not change results of joined texts', function() {
+	const texts = harmlessTexts.filter(function(text) { return text.length < 100; });
+	texts.forEach(function(a) {
+		const sanitize = createSanitizer();
+		texts.forEach(function(b) { sanitize(b); });
+		texts.forEach(function(b) {
+			assert.strictEqual(sanitize(a + b), createSanitizer()(a + b), a + b);
+		});
+	});
+});
+
+// Tags of all combinations of the chars which change the tokenizer state, closed if the marker after them stays text
+test('closing of the end tag follows the HTML tokenizer', function() {
+	const chars = ['a', '=', '"', "'", ' ', '\t', '/', '>'];
+	const isClosed = function(html) {
+		return parser.parseFromString('<!doctype html><body>' + html + 'Z', 'text/html').body.textContent.indexOf('Z') >= 0;
+	};
+
+	const check = function(suffix, depth) {
+		['<x', '</x'].forEach(function(prefix) {
+			const tag = prefix + suffix;
+			const closing = getTagClosing(tag);
+			assert.ok(isClosed(tag + closing), JSON.stringify(tag) + ' + ' + JSON.stringify(closing));
+		});
+
+		if (depth > 0) {
+			chars.forEach(function(char) { check(suffix + char, depth - 1); });
+		}
+	};
+
+	check('', 5);
+	['<textarea>x</textarea', '<textarea>x</textarea a="', '<title>a</b>c</title b=\'', '<xmp a=">">x</xmp '].forEach(function(token) {
+		assert.ok(isClosed(token + getTagClosing(token)), token);
+	});
+});
+
 test('tokens are not cached as safe when the check fails', function() {
 	let fail = true;
 	const failingPurify = {
@@ -159,6 +401,9 @@ test('tokens are not cached as safe when the check fails', function() {
 		},
 		get removed() {
 			return DOMPurify.removed;
+		},
+		isValidAttribute: function(tag, attribute, value) {
+			return DOMPurify.isValidAttribute(tag, attribute, value);
 		}
 	};
 
@@ -183,6 +428,8 @@ test('huge texts are fast', function() {
 		'textarea ends': '<textarea>' + '</textarea '.repeat(n),
 		'comments': '<!--'.repeat(n),
 		'unclosed tags': '<a '.repeat(n),
+		'unclosed quote': '<a title="' + '<b>x</b> '.repeat(n),
+		'unclosed quotes': '<a title="x" b=\''.repeat(n),
 	};
 
 	Object.keys(texts).forEach(function(name) {
