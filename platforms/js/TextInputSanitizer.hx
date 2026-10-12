@@ -4,24 +4,29 @@
 // something dangerous. Otherwise sanitizing would destroy harmless text the user is typing:
 // e.g. while erasing '>' of '<br>' the unclosed '<br' swallows the rest of the text.
 //
-// 1. Dangerous tags (script, iframe, style, meta, ...) are always sanitized, even when only mentioned ('Use <style>'):
-//    some of them change parsing of all the text after them (svg, math, noscript, template, style, ...).
+// 1. Texts with dangerous tags (script, iframe, style, meta, ...) are passed to DOMPurify, even when the tags are only
+//    mentioned ('Use <style>'): some of them change parsing of all the text after them (svg, math, noscript, style, ...).
+//    DOMPurify may keep such tags (<svg></svg>), so such texts stay sanitized by DOMPurify on every change.
 // 2. Otherwise we split the text into HTML tokens (tags, comments, raw text elements) and ask DOMPurify
 //    what it would remove from them. The text is dangerous if DOMPurify removes:
 //    - an attribute with a value (onerror=..., href=javascript:..., etc.), except unknown attributes
 //      with values safe as a link (e.g. 'ref' while editing 'href')
-//    - a known element, except xmp, noembed and noframes without dangerous text inside and attribute values
-//    - an unknown element with an attribute value (e.g. <test onclick=...>)
+//    - a known element, except xmp, noembed and noframes without attribute values
+//    - an unknown element with an attribute value (e.g. <test onclick=...>), except names which can't be elements
+//      in any context ('<ahref="..."' while erasing a space), checked like unknown attributes
 //    - a comment with dangerous text inside
-//    The text is also dangerous if textarea or title contains dangerous text.
+//    DOMPurify also removes id and name values clobbering DOM properties (<a name=action>), so such texts are sanitized.
+//    The text is also dangerous if:
+//    - textarea, title, xmp, noembed or noframes contains dangerous text: it becomes markup in other contexts
+//      (inside <svg>), like texts of comments after '</textarea>' in a comment
+//    - an attribute value closes a comment or a raw text element ('-->', '</textarea'): the parser drops attributes
+//      of end tags and repeated attributes, so DOMPurify doesn't see them, but they break out of consumer containers
 //    Plain comments, unknown tags and empty attributes ('<test>', 'x<y, a>b', '<br E | F |') are harmless.
 //    A tag unclosed at the end of the text (e.g. by an unclosed quote) is checked closed by '>', '">' or "'>":
 //    the parser drops it, but '>' or a quote rendered by a consumer after the text closes it.
-//    Texts inside comments, textarea, title and other raw text elements become markup in other contexts
-//    (after '</textarea>' in a comment, inside <svg>), so they are checked by the same rules.
 //
 // Texts can be huge, so only unique tokens are checked and short tokens found safe are cached:
-// usually a keystroke checks only the tag being edited.
+// usually a keystroke checks only the tag being edited. Long tokens are kept only for the next text.
 // The cache assumes the global DOMPurify config and hooks don't change after the first check.
 // Tags which depend on the parser context (td, select, body, ...) are checked as <div>,
 // DOMPurify checks attributes the same way for any element.
@@ -31,6 +36,9 @@ class TextInputSanitizer {
 		(function() {
 			var safeTokens = new Set();
 			var safeTokensLength = 0;
+			// Long tokens aren't cached as they change while edited, so only the long tokens of the last text are kept.
+			// They are substrings of the last text and keep only it in memory.
+			var lastLongSafeTokens = new Set();
 
 			var dangerousTagPattern = /<\\/?(?:script|iframe|frame|frameset|object|embed|applet|svg|math|link|style|meta|base|noscript|template)(?=[\\s\\/>]|$)/i;
 			var space = '[\\\\t\\\\n\\\\f\\\\r ]';
@@ -54,10 +62,11 @@ class TextInputSanitizer {
 				'gi'
 			);
 			var tagPattern = /^<\\/?[a-zA-Z]/;
+			var rawTextTagPattern = /^<(textarea|title|xmp|noembed|noframes)(?=[\\t\\n\\f\\r \\/>]|$)/i;
 			var contextTagPattern = /^(<\\/?)(?:html|head|body|table|caption|colgroup|col|tbody|thead|tfoot|tr|td|th|select|option|optgroup|form)(?=[\\t\\n\\f\\r \\/>]|$)/i;
 			var markupPattern = /<[\\/\\w!]/;
-			// Tokens are prefixed by '<', so a checked end tag is cached with '>' prefix
-			var endTagPrefix = '>';
+			// Values closing comments and raw text elements, which DOMPurify removes from attributes
+			var closingValuePattern = /((--!?|])>)|<\\/(style|script|title|xmp|textarea|noscript|iframe|noembed|noframes)/i;
 			// DOMPurify removes these raw text elements together with their text
 			var removedRawTextElements = ['XMP', 'NOEMBED', 'NOFRAMES'];
 
@@ -69,26 +78,43 @@ class TextInputSanitizer {
 					&& !markupPattern.test(attribute.value);
 			};
 
-			// Returns what closes a tag token unclosed at the end of the text: '>', '\">', \"'>\" or '' if it is closed.
-			// Follows the states of the HTML tokenizer: the tag is closed by '>' outside of attribute values.
-			var getTagClosing = function(token) {
+			// Scans the tag starting at the index, following the states of the HTML tokenizer. Returns:
+			// - end: the index of '>' closing the tag outside of attribute values, or -1
+			// - closing: what closes the tag if it is unclosed: '>', '\">' or \"'>\"
+			// - hasClosingValue: if an attribute value closes a comment or a raw text element ('-->', '</textarea').
+			//   The parser drops attributes of end tags and repeated ones, so DOMPurify can't remove such values,
+			//   but they break out of comments and raw text elements of a consumer.
+			var scanTag = function(text, start) {
 				var state = 'tagName';
-				for (var i = token.charAt(1) == '/' ? 2 : 1; i < token.length; i++) {
-					var char = token.charAt(i);
+				var valueStart = -1;
+				var hasClosingValue = false;
+				var endValue = function(end) {
+					hasClosingValue = hasClosingValue || valueStart >= 0 && closingValuePattern.test(text.substring(valueStart, end));
+					valueStart = -1;
+				};
+
+				for (var i = start + (text.charAt(start + 1) == '/' ? 2 : 1); i < text.length; i++) {
+					var char = text.charAt(i);
 					var isSpace = ' \\t\\n\\f\\r'.indexOf(char) >= 0;
 
 					if (state == 'doubleQuoted' || state == 'singleQuoted') {
 						if (char == (state == 'doubleQuoted' ? '\"' : \"'\")) {
+							endValue(i);
 							state = 'afterQuoted';
 						}
 					} else if (char == '>') {
-						// Raw text elements (<textarea>...</textarea) end with their closing tag, if there is one
-						var closingTagStart = token.lastIndexOf('</');
-						return i == token.length - 1 || closingTagStart <= i ? '' : getTagClosing(token.substring(closingTagStart));
+						endValue(i);
+						return { end: i, closing: '', hasClosingValue: hasClosingValue };
 					} else if (state == 'beforeValue') {
-						state = isSpace ? state : char == '\"' ? 'doubleQuoted' : char == \"'\" ? 'singleQuoted' : 'unquoted';
+						if (!isSpace) {
+							state = char == '\"' ? 'doubleQuoted' : char == \"'\" ? 'singleQuoted' : 'unquoted';
+							valueStart = state == 'unquoted' ? i : i + 1;
+						}
 					} else if (state == 'unquoted') {
-						state = isSpace ? 'beforeName' : state;
+						if (isSpace) {
+							endValue(i);
+							state = 'beforeName';
+						}
 					} else if (isSpace) {
 						state = state == 'attributeName' || state == 'afterName' ? 'afterName' : 'beforeName';
 					} else if (char == '/') {
@@ -100,7 +126,37 @@ class TextInputSanitizer {
 					}
 				}
 
-				return state == 'doubleQuoted' ? '\">' : state == 'singleQuoted' ? \"'>\" : '>';
+				endValue(text.length);
+				return {
+					end: -1,
+					closing: state == 'doubleQuoted' ? '\">' : state == 'singleQuoted' ? \"'>\" : '>',
+					hasClosingValue: hasClosingValue
+				};
+			};
+
+			// Scans a tag token, raw text elements (<textarea>...</textarea>) with their text and closing tag.
+			// Returns the closing of the token, if an attribute value closes a container, and the raw text.
+			var scanTagToken = function(token) {
+				var startTag = scanTag(token, 0);
+				var rawTextTag = startTag.end >= 0 ? rawTextTagPattern.exec(token) : null;
+				if (rawTextTag == null) {
+					return { closing: startTag.closing, hasClosingValue: startTag.hasClosingValue, text: null };
+				}
+
+				// The first closing tag ends the raw text, like in the token pattern
+				var closingTagPattern = new RegExp('<\\\\/' + rawTextTag[1] + '(?=[\\\\t\\\\n\\\\f\\\\r \\\\/>]|$)', 'gi');
+				closingTagPattern.lastIndex = startTag.end + 1;
+				var closingTagMatch = closingTagPattern.exec(token);
+				if (closingTagMatch == null) {
+					return { closing: '', hasClosingValue: startTag.hasClosingValue, text: token.substring(startTag.end + 1) };
+				}
+
+				var closingTag = scanTag(token, closingTagMatch.index);
+				return {
+					closing: closingTag.closing,
+					hasClosingValue: startTag.hasClosingValue || closingTag.hasClosingValue,
+					text: token.substring(startTag.end + 1, closingTagMatch.index)
+				};
 			};
 
 			var hasAttributeValue = function(attributes, isHarmless) {
@@ -142,36 +198,43 @@ class TextInputSanitizer {
 				// Recursive checks call DOMPurify again, which resets DOMPurify.removed
 				var removedNodes = DOMPurify.removed;
 
-				// Textarea and title keep markup as text, but it becomes markup again in other contexts
-				// (e.g. inside <svg>), so such texts are sanitized when they are dangerous
-				var hasDangerousText = !!body && !!body.getElementsByTagName && ['textarea', 'title'].some(function(tagName) {
-					return Array.prototype.some.call(body.getElementsByTagName(tagName), function(element) {
-						return isDangerousText(element.textContent);
-					});
-				});
+				// DOMPurify ignores the config after DOMPurify.setConfig, so its results can't be trusted
+				if (!body || body.nodeType != 1) {
+					return true;
+				}
 
-				return hasDangerousText || removedNodes.some(function(removed) {
-					if (removed.attribute) {
+				return removedNodes.some(function(removed) {
+					if ('attribute' in removed) {
+						// DOMPurify failed to get the attribute node
+						if (!removed.attribute) {
+							return true;
+						}
+
 						var isUnknownAttribute = !!removed.from
 							&& !DOMPurify.isValidAttribute(removed.from.nodeName.toLowerCase(), removed.attribute.name, 'x');
 						return removed.attribute.value != '' && !(isUnknownAttribute && isHarmlessUnknownAttribute(removed.attribute));
 					}
 
 					var element = removed.element;
+					if (!element) {
+						return true;
+					}
+
 					// Comments are not executed, but markup inside them may break out of raw text containers
 					// (<!--</textarea><img onerror=...>-->), so comments with dangerous text are sanitized
 					if (element.nodeType == 8) {
 						return isDangerousText(element.data);
 					}
 
-					// BODY is the DOMPurify wrapper, removed only by its mXSS heuristics on plain text
+					// BODY is the DOMPurify wrapper, removed only by its mXSS heuristics on plain text.
+					// FORCE_BODY adds an empty <remove> element, which is harmless as an unknown element without attributes.
 					if (element.nodeType != 1 || element.nodeName == 'BODY') {
 						return false;
 					}
 
-					// Raw text is harmless unless it becomes markup in other contexts, like in textarea and title
+					// Their raw text is checked with the tokens
 					if (removedRawTextElements.indexOf(element.nodeName) >= 0) {
-						return hasAttributeValue(element.attributes) || isDangerousText(element.textContent);
+						return hasAttributeValue(element.attributes);
 					}
 
 					var isUnknownElement =
@@ -196,35 +259,38 @@ class TextInputSanitizer {
 
 				// Tokens are cached as safe only after the check, so an exception can't leave them unchecked
 				var tokens = text.match(tokenPattern) || [];
+				var longSafeTokens = new Set();
 				var newTokens = Array.from(new Set(tokens)).filter(function(token) {
+					if (lastLongSafeTokens.has(token)) {
+						longSafeTokens.add(token);
+						return false;
+					}
+
 					return !safeTokens.has(token);
 				});
 
-				// The parser drops a tag unclosed at the end of the text, but a consumer may render '>' or a quote after it
-				// ('<img src=x onerror=\"alert(1)//' + '</p><b class=\"x\">'), so such a tag is checked closed.
-				// It is cached separately: a token found safe elsewhere in a text isn't checked closed.
-				var lastToken = tokens[tokens.length - 1];
-				var endTagClosing = !!lastToken && tagPattern.test(lastToken) && text.slice(-lastToken.length) == lastToken
-					? getTagClosing(lastToken) : '';
-				var endTag = endTagClosing != '' && !safeTokens.has(endTagPrefix + lastToken) ? lastToken : null;
+				var isXSS = false;
+				var checkedTokens = newTokens.map(function(token) {
+					if (!tagPattern.test(token)) {
+						return token;
+					}
 
-				if (newTokens.length == 0 && endTag == null) {
-					return text;
-				}
+					var tagToken = scanTagToken(token);
+					// Textarea, title and other raw text elements keep markup as text, but it becomes markup again
+					// in other contexts (e.g. inside <svg>). The text is checked before entities are decoded:
+					// '&lt;' never becomes markup.
+					isXSS = isXSS || tagToken.hasClosingValue || tagToken.text != null && isDangerousText(tagToken.text);
 
-				// The closed end tag doesn't swallow the tokens after it, so it is checked together with them
-				var checkedTokens = endTag == null ? newTokens : newTokens.filter(function(token) {
-					return token != endTag;
-				}).concat([endTag + endTagClosing]);
+					// The parser drops a tag unclosed at the end of the text, but '>' or a quote rendered by a consumer
+					// after the text closes it ('<img src=x onerror=\"alert(1)//' + '</p><b class=\"x\">'), so it is checked closed.
+					// Only the last token can be unclosed, it runs to the end of the text, so it can be cached as checked closed.
+					return token + tagToken.closing;
+				});
 
-				var isXSS = hasDangerousTokens(checkedTokens);
+				isXSS = isXSS || newTokens.length > 0 && hasDangerousTokens(checkedTokens);
 
 				if (isXSS) {
 					return DOMPurify.sanitize(text);
-				}
-
-				if (endTag != null) {
-					newTokens.push(endTagPrefix + endTag);
 				}
 
 				if (safeTokensLength > 1000000) {
@@ -233,8 +299,9 @@ class TextInputSanitizer {
 				}
 
 				newTokens.forEach(function(token) {
-					// Long tokens (unclosed comments, textarea, etc.) change with every keystroke, so they are not cached
+					// Long tokens (unclosed comments, textarea, etc.) change while edited, so they are kept only for the next text
 					if (token.length > 256) {
+						longSafeTokens.add(token);
 						return;
 					}
 
@@ -244,6 +311,11 @@ class TextInputSanitizer {
 					safeTokens.add(copy);
 					safeTokensLength += copy.length;
 				});
+
+				// Texts checked inside other texts don't replace the long tokens of the text
+				if (textDepth == 0) {
+					lastLongSafeTokens = longSafeTokens;
+				}
 
 				return text;
 			};

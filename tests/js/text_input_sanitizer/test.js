@@ -23,12 +23,12 @@ const sanitizerSource = (function() {
 	});
 })();
 
-// Internal function of the sanitizer, the code between its declaration and the next one
-const getTagClosing = (function() {
-	const start = sanitizerSource.indexOf('var getTagClosing');
+// Internal function of the sanitizer with the patterns it uses, the code from the patterns to the next function
+const scanTagToken = (function() {
+	const start = sanitizerSource.indexOf('var tagPattern');
 	const end = sanitizerSource.indexOf('var hasAttributeValue');
-	assert.ok(start >= 0 && end > start, 'getTagClosing is not found in TextInputSanitizer.hx');
-	return new Function(sanitizerSource.substring(start, end) + 'return getTagClosing;')();
+	assert.ok(start >= 0 && end > start && sanitizerSource.indexOf('var scanTagToken') > start, 'scanTagToken is not found');
+	return new Function(sanitizerSource.substring(start, end) + 'return scanTagToken;')();
 })();
 
 // Every sanitizer has its own cache of safe tokens
@@ -50,9 +50,14 @@ const findLiveXSS = function(html) {
 	return liveXSSResults.get(html);
 };
 const contexts = [
-	'', '<svg>', '<math>', '<svg><foreignObject>', '<math><mi>', '<table>', '<select>',
-	'<textarea>', '<title>', '<xmp>', '<noembed>', '<style>', '<noscript>',
+	'', '<svg>', '<math>', '<svg><foreignObject>', '<math><mi>', '<table>', '<select>', '<noscript>',
+	'<textarea>', '<title>', '<xmp>', '<noembed>', '<noframes>', '<iframe>', '<style>', '<!--',
 ];
+// Only its closing makes markup of the html in a raw text context or a comment, so other contexts are skipped
+const contextClosings = {
+	'<textarea>': /<\/textarea/i, '<title>': /<\/title/i, '<xmp>': /<\/xmp/i, '<noembed>': /<\/noembed/i,
+	'<noframes>': /<\/noframes/i, '<iframe>': /<\/iframe/i, '<style>': /<\/style/i, '<!--': /--!?>/,
+};
 const isLiveElement = function(element) {
 	const name = element.nodeName.toLowerCase();
 	return name == 'script'
@@ -68,6 +73,10 @@ const isLiveElement = function(element) {
 };
 const findLiveXSSUncached = function(html) {
 	return contexts.some(function(before) {
+		if (contextClosings[before] && !contextClosings[before].test(html)) {
+			return false;
+		}
+
 		return ['', '</p><b class="x">x</b>', "</p><b class='x'>x</b>"].some(function(after) {
 			const document = parser.parseFromString('<!doctype html><body>' + before + html + after, 'text/html');
 			return Array.prototype.some.call(document.querySelectorAll('*'), isLiveElement);
@@ -98,6 +107,7 @@ const harmlessTexts = [
 	'Use the <title> tag for page titles. More text here.',
 	'<textarea>plain</textarea> <title>T</title>',
 	'<textarea>&lt;b&gt;</textarea>',
+	'x<y & a>b <textarea>&lt;a onclick=x&gt;</textarea> <title>&lt;img onerror=x&gt;</title> 5 > 3 <br',
 	'<td>cell</td> <option>one</option>',
 	'<a href="https://example.com"',
 	'<a href=https://example.com',
@@ -234,6 +244,13 @@ const dangerousTexts = [
 	'<title><b><img src=x onerror=alert(1)></b></title>',
 	'<textarea><!--</textarea><img src=x onerror=alert(1)>--></textarea>',
 	'<!' + '<!--'.repeat(10) + '<img src=x onerror=alert(1)>',
+	// values closing containers in attributes dropped by the parser: of end tags and repeated ones
+	'</x title="</textarea><img src=x onerror=alert(1)>">',
+	'</x title="</title><img src=x onerror=alert(1)>">',
+	'</x title="--><img src=x onerror=alert(1)>">',
+	'<b a=1 a="</textarea><img src=x onerror=alert(1)>">x</b>',
+	'<b title=x title="</textarea><img src=x onerror=alert(1)>">x</b>',
+	'<textarea>x</textarea title="</textarea><img src=x onerror=alert(1)>">',
 ];
 
 test('harmless texts are kept', function() {
@@ -257,6 +274,20 @@ test('texts mentioning dangerous tags are sanitized by DOMPurify', function() {
 	const sanitize = createSanitizer();
 	['Use <style> for CSS', 'e.g. <svg> icons', '<math> formula', '<template> literal', '<noscript> fallback'].forEach(function(text) {
 		assert.strictEqual(sanitize(text), DOMPurify.sanitize(text), text);
+	});
+});
+
+// Texts sanitized by DOMPurify must not stay sanitized on every change: '&lt;' in textarea is harmless
+test('typing after a sanitized text keeps the typed text', function() {
+	const sanitize = createSanitizer();
+	dangerousTexts.forEach(function(text) {
+		const result = sanitize(text);
+		// Texts with dangerous tags are sanitized on every change by design
+		if (/<\/?(?:script|iframe|frame|frameset|object|embed|applet|svg|math|link|style|meta|base|noscript|template)\b/i.test(result)) {
+			return;
+		}
+
+		assert.strictEqual(sanitize(result + ' x<y <br'), result + ' x<y <br', text);
 	});
 });
 
@@ -343,8 +374,8 @@ test('cache does not change results', function() {
 	});
 
 	// Overflow the cache bound with unique safe tokens
-	for (let i = 0; i < 20; i++) {
-		sanitize(Array.from({ length: 5000 }, function(_, j) { return '<a id="' + i + '-' + j + '">'; }).join(''));
+	for (let i = 0; i < 2; i++) {
+		sanitize(Array.from({ length: 2100 }, function(_, j) { return '<a id="' + i + '-' + j + '-' + 'x'.repeat(220) + '">'; }).join(''));
 	}
 
 	texts.forEach(function(text, i) {
@@ -355,37 +386,80 @@ test('cache does not change results', function() {
 // Tokens are checked joined, but cached one by one, so safe tokens must stay safe next to any others
 test('cached tokens of texts do not change results of joined texts', function() {
 	const texts = harmlessTexts.filter(function(text) { return text.length < 100; });
+	const others = texts.concat(dangerousTexts.slice(0, 20));
 	texts.forEach(function(a) {
 		const sanitize = createSanitizer();
-		texts.forEach(function(b) { sanitize(b); });
-		texts.forEach(function(b) {
+		others.forEach(function(b) { sanitize(b); });
+		others.forEach(function(b) {
 			assert.strictEqual(sanitize(a + b), createSanitizer()(a + b), a + b);
 		});
 	});
 });
 
-// Tags of all combinations of the chars which change the tokenizer state, closed if the marker after them stays text
-test('closing of the end tag follows the HTML tokenizer', function() {
-	const chars = ['a', '=', '"', "'", ' ', '\t', '/', '>'];
+// Tags of all combinations of the chars which change the tokenizer state are closed
+// if the marker after them is text outside of attributes and raw text elements
+test('closing of the last tag follows the HTML tokenizer', function() {
 	const isClosed = function(html) {
-		return parser.parseFromString('<!doctype html><body>' + html + 'Z', 'text/html').body.textContent.indexOf('Z') >= 0;
+		const body = parser.parseFromString('<!doctype html><body>' + html + 'Z', 'text/html').body;
+		const walker = body.ownerDocument.createTreeWalker(body, 4);
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+			if (node.data.endsWith('Z')) {
+				return !/^(TEXTAREA|TITLE|XMP|NOEMBED|NOFRAMES)$/.test(node.parentNode.nodeName);
+			}
+		}
+
+		return false;
 	};
 
-	const check = function(suffix, depth) {
+	const check = function(chars, suffix, depth) {
 		['<x', '</x'].forEach(function(prefix) {
 			const tag = prefix + suffix;
-			const closing = getTagClosing(tag);
+			const closing = scanTagToken(tag).closing;
 			assert.ok(isClosed(tag + closing), JSON.stringify(tag) + ' + ' + JSON.stringify(closing));
 		});
 
 		if (depth > 0) {
-			chars.forEach(function(char) { check(suffix + char, depth - 1); });
+			chars.forEach(function(char) { check(chars, suffix + char, depth - 1); });
 		}
 	};
 
-	check('', 5);
-	['<textarea>x</textarea', '<textarea>x</textarea a="', '<title>a</b>c</title b=\'', '<xmp a=">">x</xmp '].forEach(function(token) {
-		assert.ok(isClosed(token + getTagClosing(token)), token);
+	check(['a', '=', '"', "'", ' ', '/', '>'], '', 5);
+	check(['a', '=', '"', '\t', '\n', '>'], '', 3);
+	[
+		'<textarea>x</textarea', '<textarea>x</textarea a="', '<title>a</b>c</title b=\'', '<xmp a=">">x</xmp ',
+		'<textarea>x</textarea a="</b', '<xmp>x</xmp a="</b c=\'', '<TEXTAREA>x</textarea a=\'',
+	].forEach(function(token) {
+		assert.ok(isClosed(token + scanTagToken(token).closing), token);
+	});
+});
+
+test('safe tokens are checked once', function() {
+	let checkedLength = 0;
+	const countingPurify = {
+		sanitize: function(text, config) {
+			checkedLength += text.length;
+			return DOMPurify.sanitize(text, config);
+		},
+		get removed() {
+			return DOMPurify.removed;
+		},
+		isValidAttribute: function(tag, attribute, value) {
+			return DOMPurify.isValidAttribute(tag, attribute, value);
+		}
+	};
+
+	const sanitize = createSanitizer(countingPurify);
+	[
+		// Unique tags: the same tags in a text are checked once anyway
+		Array.from({ length: 2000 }, function(_, i) { return '<p>Lorem <a href="https://example.com/' + i + '">dolor</a>.</p>\n'; }).join(''),
+		// Long tokens are not cached, but kept for the next text
+		Array.from({ length: 200 }, function(_, i) { return '<!-- ' + i + ' ' + 'x'.repeat(300) + ' --> <b>' + i + '</b> '; }).join(''),
+		Array.from({ length: 200 }, function(_, i) { return '<textarea>' + i + ' ' + 'x'.repeat(300) + '</textarea> '; }).join(''),
+	].forEach(function(text) {
+		assert.strictEqual(sanitize(text), text);
+		checkedLength = 0;
+		assert.strictEqual(sanitize(text + ' x<y <b>'), text + ' x<y <b>');
+		assert.ok(checkedLength < 100, String(checkedLength));
 	});
 });
 
