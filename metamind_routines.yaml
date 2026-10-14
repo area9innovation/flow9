@@ -1,0 +1,273 @@
+# AI-driven maintenance this repository asks a Dev Box to perform.
+#
+# Read from the reviewed default branch and never from a working tree, so a
+# branch cannot change what an unattended agent is told to do. A box runs none
+# of these until an account arms them in the Web Agent.
+#
+# This repository is PUBLIC, and every routine here is written for that:
+# nothing internal in a commit, a pull request or a comment; a finding that
+# cannot be fixed safely in the open stays on the box (`wt routine say`) and is
+# never written into the repository; no binary is ever committed unattended;
+# no routine runs on other people's branches.
+#
+# `claude-opus-5` is the floor for every routine: these agents work unattended,
+# and a cheaper model that misreads a compile error or a decoder costs a
+# person's afternoon. `effort` is the dial instead: `medium` here, `high` for
+# the sweep, where telling a real bound check from a cosmetic one is judgment.
+#
+# Format: Studio's docs/prd-scheduled-repo-routines.md.
+version: 1
+routines:
+  - id: compile-check
+    title: Keep the compiler and the standard library compiling
+    cadence: { every: 24h, at: '06:10' }
+    branch: routine/compile-check
+    base: master
+    prTitle: 'fix: compile errors'
+    engine: { cli: claude-code, model: claude-opus-5, effort: medium }
+    verify: bin/flowc1 tools/flowc/flowc.flow && bin/flowc1 lib/material/material.flow
+    limits: { runMinutes: 120, spendUsd: 8 }
+    prompt: |
+      This repository is PUBLIC. Nothing you commit, write in a pull request or
+      say in a comment names an internal host, a path on this machine, an
+      account, a customer or an internal URL. What cannot be said in public goes
+      to the box instead: `wt routine say` (one line under 4,000 characters;
+      several for a list) lands in a run log only the people this routine is
+      shared with can read.
+
+      Compile with `bin/flowc1 <file>` (Java only: nothing native, no LFS):
+
+        tools/flowc/flowc.flow          the compiler
+        lib/material/material.flow      the UI library, which pulls in most of lib/
+        every .flow file changed in {{sinceSha}}..{{headSha}} (recent history
+        when that reads empty), outside tools/flowc/tests/
+
+      `flowc1` exits 1 on any error. Do not use `unittests=1`: it writes
+      tools/flowc/tests/out/ into the tree and exits 0 whatever it finds. Do not
+      compile the fixtures under tools/flowc/tests/: some are meant to fail.
+
+      If everything compiles, report `nothing-to-do` and stop. That is a good
+      outcome, not a failure to find work.
+
+      Otherwise, for each failure, find the commit that made it fail. Start with
+      {{sinceSha}}..{{headSha}}, the {{commitCount}} commits since this routine
+      last ran; `git log` on the file usually suffices, and a `git bisect` probes
+      with the one failing file, never everything, and ends with `git bisect
+      reset` before you edit anything. Then read that commit's pull request (the
+      `#NNNN` in its message, or `gh pr list --search <sha> --state merged`), or
+      its message when it has none. The ground truth is neither the error nor
+      the code: it is what that pull request set out to do.
+
+      - If it meant to change this, the caller is outdated. Update the caller,
+        and in the pull request body name the commit and quote the sentence
+        that intended the change.
+      - If it did not, the change regressed. Fix it without undoing what that
+        pull request set out to do.
+      - If you cannot fix it without undoing it, the two contradict. Touch
+        neither and report it: the file, the commit and both readings. A person
+        decides which is wrong; you do not.
+      - If no commit makes it fail (a toolchain or box change), report it the
+        same way.
+
+      Never make a failure pass by deleting a module, commenting out an import
+      or weakening a type, except under the first bullet with the quote in the
+      body. Never commit tools/flowc/flowc.jar: you fix the compiler's sources,
+      and a person rebuilds the jar with bin/build-flowc.
+
+      More than ten failing files is not one run's work: take ten and list the
+      rest in the body under "Needs a person", so the next run continues.
+
+      A report goes in the pull request body under "Needs a person", beside
+      what you fixed. With nothing fixed there is no pull request to carry it;
+      report `cannot-resolve` with the list instead. `failed` is for a run that
+      could not do its work: the compiler would not start, or the verify did
+      not pass.
+
+      Fix what is broken and nothing else. A green compile with an unrelated
+      refactor in the diff is a worse pull request than a green compile alone.
+
+  - id: security-review
+    title: Daily security review
+    cadence: { every: 24h, at: '07:10' }
+    branch: routine/security-review
+    base: master
+    prTitle: 'fix: hardening'
+    engine: { cli: claude-code, model: claude-opus-5, effort: medium }
+    verify: bin/flowc1 tools/flowc/flowc.flow && bin/flowc1 lib/material/material.flow
+    limits: { runMinutes: 120, spendUsd: 10 }
+    prompt: |
+      This repository is PUBLIC. Nothing you commit, write in a pull request or
+      say in a comment names an internal host, a path on this machine, an
+      account, a customer or an internal URL, and nothing describes a defect in
+      a way that hands someone an attack. What cannot be said in public goes to
+      the box instead: `wt routine say` (one line under 4,000 characters;
+      several for a list) lands in a run log only the people this routine is
+      shared with can read.
+
+      Review everything committed since this routine last ran
+      ({{sinceSha}}..{{headSha}}, {{commitCount}} commits; recent history when
+      that reads empty) for security defects. Follow the /security-review skill.
+
+      A defect in flow9 is a defect in every product built on it. Give specific
+      attention to changes in:
+
+        - decoders and parsers fed by the network or a document: fromBinary in
+          lib/text/binary.flow, the base64, UTF-8 and JSON natives in
+          platforms/common/cpp, platforms/java and platforms/js, lib/formats/**
+          (unchecked lengths, quadratic time on attacker-sized input: the base64
+          and UTF-8 decoders were made linear recently, and that class recurs);
+        - the native runtime, platforms/common/cpp/**: the bytecode loader, the
+          x64 JIT, gl-gui and font (indices and lengths read from the bytecode
+          or a file, integer overflow on sizes);
+        - the browser runtime, platforms/js/**: HTML sanitising through DOMPurify,
+          postMessage origin checks, eval in Native, RenderSupport and WebClip,
+          URL and cookie handling;
+        - server natives and libraries: platforms/java (HttpServerSupport,
+          WebSocketServerSupport, Database.java and escapeDb, FlowJwt,
+          FlowCrypto, FlowPassword), the Node natives in platforms/js,
+          lib/server/**, lib/net/**, lib/sys/process.flow, lib/fs/**,
+          lib/jwt.flow, lib/crypto_aes.flow, lib/webauthn;
+        - the PHP files under www/ and the compile server
+          (tools/flowc/flowc_server.flow, server-mode=http).
+
+      Two kinds of finding, and only the first becomes a pull request here:
+
+        1. Hardening with no practical exploit path: a missing bound, a
+           quadratic decoder, a check made consistent with its siblings. Fix it
+           at the root, verify, push, and describe the behaviour change in the
+           body, never the input that triggers it.
+        2. A defect exploitable against a product built on this runtime. DO NOT
+           PUSH. This repository is public, and a fix pushed here is a
+           disclosure before anyone deploying flow9 has the fix. Say the finding
+           to the box (file, line, the class of defect, worded for a maintainer)
+           and report `cannot-resolve`. A person takes it through private
+           vulnerability reporting.
+
+      If you are not sure which kind a finding is, it is the second.
+
+      A run that pushed hardening and also holds a finding of the second kind
+      reports `review-ready` for the pull request once checks are green, and
+      says the finding; the say line is what the person reads.
+
+      If the commits contain nothing security-relevant, report `nothing-to-do`.
+
+  - id: dependency-audit
+    title: Weekly dependency audit
+    cadence: { every: 7d, at: '08:10' }
+    branch: routine/dependency-audit
+    base: master
+    prTitle: 'chore(deps): weekly audit'
+    engine: { cli: claude-code, model: claude-opus-5, effort: medium }
+    # An advisory arrives without anyone committing, so a quiet week is when
+    # this matters most.
+    idle: run
+    limits: { runMinutes: 90, spendUsd: 6 }
+    prompt: |
+      This repository is PUBLIC. Nothing you commit, write in a pull request or
+      say in a comment names an internal host, a path on this machine, an
+      account, a customer or an internal URL. What cannot be said in public goes
+      to the box instead: `wt routine say` (one line under 4,000 characters;
+      several for a list) lands in a run log only the people this routine is
+      shared with can read.
+
+      Audit this repository's dependencies: weekly, over everything, not only
+      what changed. The risk here arrives by sitting still.
+
+      Dependabot is active and owns the npm manifests: platforms/capacitor,
+      resources/vscode/flow, resources/webfonts, sandbox/ts, platforms/ts/wabt,
+      lib/tools/*/extensions/*, resources/atom/*, www_source/webfontloader. Do
+      not bump anything there, and never run `npm install` or `npm audit fix`:
+      both execute package install scripts, which is third-party code nobody
+      reviewed, on a box with credentials. Run `npm audit --omit=dev` in each
+      folder that has a lockfile, read-only, only to list what Dependabot has
+      not opened a pull request for (`gh pr list --author app/dependabot`).
+
+      What Dependabot cannot see is yours, and all of it is REPORT ONLY:
+
+        - platforms/java/lib/*.jar, declared in flow.config `java-dependencies`:
+          committed binaries. For each, the version in the tree, the latest on
+          Maven Central, and open advisories by id. Never download or commit a
+          jar: a binary nobody built from reviewed source does not enter a
+          public repository unattended.
+        - www/js/** vendored browser libraries (DOMPurify, jQuery, pixi,
+          three.js, pdf.js, socket.io, mediabunny, …): the version in each
+          file's header, the latest release, advisories by id.
+        - platforms/android/*.gradle: declared versions, latest, advisories.
+        - a new install script on a package that did not have one; a dependency
+          nothing references any more.
+
+      The report is one line per package: where it is declared, the version,
+      the latest, advisory ids. Advisory ids only. Never say how an advisory
+      applies to this runtime: that is a map, and this repository is public.
+      The report goes to the box with `wt routine say`, newest advisory first,
+      and the run ends `nothing-to-do` with the counts. Expect that to be the
+      usual week: this routine opens a pull request only when a manifest it may
+      edit has a safe in-range change, which today is none of them.
+
+  - id: runtime-security-sweep
+    title: Weekly runtime security sweep
+    cadence: { every: 7d, at: '09:10' }
+    branch: routine/runtime-security-sweep
+    base: master
+    prTitle: 'docs: security sweep coverage'
+    # `high`: a real bound check and a cosmetic one read the same, and a low
+    # band drowns the box in false positives.
+    engine: { cli: claude-code, model: claude-opus-5, effort: high }
+    # The daily review reads only new commits; this grinds the standing
+    # surface, so a quiet week is exactly when it earns its keep.
+    idle: run
+    limits: { runMinutes: 180, spendUsd: 12 }
+    prompt: |
+      This repository is PUBLIC. Nothing you commit, write in a pull request or
+      say in a comment names an internal host, a path on this machine, an
+      account, a customer or an internal URL, and nothing describes a defect in
+      a way that hands someone an attack. What cannot be said in public goes to
+      the box instead: `wt routine say` (one line under 4,000 characters;
+      several for a list) lands in a run log only the people this routine is
+      shared with can read.
+
+      The daily review reads only new commits. This sweep reads the standing
+      code where a defect in flow9 is a defect in every product built on it, a
+      bounded slice a week, so that over months the surface is covered once and
+      then kept.
+
+      The surface, highest exposure first:
+
+        1. input fed by the network or a document: fromBinary in
+           lib/text/binary.flow; the base64, UTF-8 and JSON decoders in
+           platforms/common/cpp, platforms/java and platforms/js;
+           lib/formats/**; image and font loaders under
+           platforms/common/cpp/font and gl-gui;
+        2. the bytecode loader and the JIT, platforms/common/cpp/core/** and the
+           asmjit-backed x64 backend: everything that reads a length or an index
+           out of the bytecode;
+        3. the browser runtime, platforms/js/**: DOMPurify use, postMessage,
+           eval, URL and cookie handling, WebClip;
+        4. server natives and libraries: platforms/java http, websocket,
+           Database.java, FlowJwt, FlowCrypto, FlowPassword; the Node natives in
+           platforms/js; lib/server/**, lib/net/**, lib/sys/process.flow,
+           lib/fs/**, lib/jwt.flow, lib/crypto_aes.flow, lib/password.flow,
+           lib/webauthn;
+        5. the PHP files under www/, the compile server and the LSP.
+
+      This is an AUDIT, not an edit. Take up to 25 files this cycle that you
+      have not audited before: docs/security-sweep-coverage.md records which
+      paths were covered and when (create it on the first cycle), and it holds
+      paths and dates ONLY, never a finding. For each file look for unchecked
+      lengths and indices, integer overflow on sizes, quadratic work on
+      attacker-sized input, injection (SQL, shell, HTML, header), origin and
+      authentication checks, and secrets handling.
+
+      Findings never enter the repository. A committed list of suspected
+      defects with file and line is a map, and this repository is public. Each
+      finding goes to the box with `wt routine say`, one per line: file, line,
+      the class of defect and the input shape, worded for a maintainer and not
+      for an attacker. Never change product code in this branch; a fix waits
+      for a person's decision, in its own pull request.
+
+      The only file you change is docs/security-sweep-coverage.md: append this
+      cycle's paths and the date. Commit, push, and keep the one pull request
+      updated; its body says only how many files were covered and how many
+      remain. Report `review-ready` when it is pushed. If the slice surfaces
+      nothing, still record the paths and say so: a clean slice is a good
+      outcome, not a failure to find work.
