@@ -30,31 +30,44 @@ export {
 substituteCompileTimeValues(program: FiProgram, on_err: (FcError) -> void) -> FiProgram {
 	env_opt = getConfigParameter(program.config.config, "env");
 	if (env_opt == "") program else {
-		cp_vars = configString2tree(env_opt);
+		env_vars = configString2tree(env_opt);
+		// Only global names may be replaced. A name from `env` which is not declared at
+		// the toplevel can only ever match a local variable, and replacing those silently
+		// changes what the program computes - so such names are ignored here.
+		cp_vars = filterTree(env_vars, \name,__ -> containsKeyTree(program.names.toplevel, name));
 		if (program.config.verbose > 0) {
 			fcPrintln("Substituting compile-time constants from config:\n" +
 				strGlue(map(tree2pairs(cp_vars), \p -> "\t" + p.first + " = " + p.second), "\n"),
 				program.config.threadId
 			);
+			ignored = filterTree(env_vars, \name,__ -> !containsKeyTree(program.names.toplevel, name));
+			if (!isEmptyTree(ignored)) {
+				fcPrintln("Compile-time constants without a global definition (ignored): " +
+					strGlue(getTreeKeys(ignored), ", "),
+					program.config.threadId
+				);
+			}
 		}
-		fiMapProgramExp(program, \e, decl, module,__ -> {
-			module_err = \msg, pos -> on_err(FcError(msg, [FcPosition(module.fileinfo.flowfile, pos, pos)]));
-			mapFiExp(e,
-				\x -> switch (x) {
-					FiVar(name, type, start): {
-						switch (lookupTree(cp_vars, name)) {
-							Some(val):
-								switch (compileTimeValue(val, type, start, module_err)) {
-									Some(c): c;
+		if (isEmptyTree(cp_vars)) program else {
+			fiMapProgramExp(program, \e, decl, module,__ -> {
+				module_err = \msg, pos -> on_err(FcError(msg, [FcPosition(module.fileinfo.flowfile, pos, pos)]));
+				// `fiMapExp` tracks the locally bound names in `trav_env.locals` - lambda
+				// arguments and `let`s. A local of the same name as a compile-time constant
+				// denotes its own value, not the constant, and must be left alone.
+				fiMapExp(e, \x, trav_env -> switch (x) {
+						FiVar(name, type, start): {
+							if (containsKeyTree(trav_env.locals, name)) x else {
+								switch (lookupTree(cp_vars, name)) {
+									Some(val): either(compileTimeValue(val, type, start, module_err), x);
 									None(): x;
 								}
-							None(): x;
+							}
 						}
-					}
-					default: x;
-				}
-			);
-		}, fcParallelOn(program.config));
+						default: x;
+					}, true
+				);
+			}, fcParallelOn(program.config));
+		}
 	}
 }
 
