@@ -12,19 +12,14 @@ import org.webrtc.RtpReceiver;
 import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
 
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.X509TrustManager;
-
 import io.socket.client.IO;
 import io.socket.client.Socket;
 import okhttp3.OkHttpClient;
-import okhttp3.internal.platform.Platform;
 
 class FlowWebRTCSupport {
 
@@ -33,18 +28,10 @@ class FlowWebRTCSupport {
     FlowWebRTCSupport(FlowRunnerWrapper wrp) {
         wrapper = wrp;
 
-        try {
-            SSLContext sslContext = SSLContext.getDefault();
-            X509TrustManager trustManager = Platform.get().trustManager(sslContext.getSocketFactory());
-            OkHttpClient okHttpClient = new OkHttpClient.Builder()
-                    .sslSocketFactory(sslContext.getSocketFactory(), trustManager)
-                    .build();
-
-            IO.setDefaultOkHttpWebSocketFactory(okHttpClient);
-            IO.setDefaultOkHttpCallFactory(okHttpClient);
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-        }
+        // OkHttp's defaults are the platform's TLS context and trust store.
+        OkHttpClient okHttpClient = new OkHttpClient();
+        IO.setDefaultOkHttpWebSocketFactory(okHttpClient);
+        IO.setDefaultOkHttpCallFactory(okHttpClient);
     }
 
     void makeMediaSender(String serverUrl, String roomId, String[] stunUrls, String[][] turnServers,

@@ -263,7 +263,7 @@ https://developer.android.com/studio/run/emulator-networking
 |---|---|
 | `com.android.billingclient:billing:6.2.1` | Google Play Billing Library v6 |
 | `io.getstream:stream-webrtc-android:1.3.10` | WebRTC (pre-compiled native + Java) |
-| `io.socket:socket.io-client:1.0.0` | Socket.IO client |
+| `io.socket:socket.io-client:2.1.2` | Socket.IO client |
 | `org.java-websocket:Java-WebSocket:1.6.0` | WebSocket client |
 | `androidx.legacy:legacy-support-v4:1.0.0` | AndroidX legacy support |
 | `androidx.annotation:annotation:1.7.0` | AndroidX annotations |
