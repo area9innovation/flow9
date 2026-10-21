@@ -2,6 +2,10 @@
 # Launches Claude Code in this checkout. The Metamind Web Agent runs routines
 # through this script, so it must stay at the repo root under this name.
 
+# bin/flowc1 needs Java 21+. Where no Java runs, as on a box whose mise sets no
+# global version, take mise's Temurin 21; it must be set before mise activates.
+java -version >/dev/null 2>&1 || export MISE_JAVA_VERSION=temurin-21
+
 # Activate mise when present, so a box-managed toolchain is on PATH.
 if command -v mise &>/dev/null; then
   eval "$(mise activate bash)"
