@@ -19,7 +19,6 @@ import java.util.Map;
 
 import io.socket.client.IO;
 import io.socket.client.Socket;
-import okhttp3.OkHttpClient;
 
 class FlowWebRTCSupport {
 
@@ -27,11 +26,6 @@ class FlowWebRTCSupport {
 
     FlowWebRTCSupport(FlowRunnerWrapper wrp) {
         wrapper = wrp;
-
-        // OkHttp's defaults are the platform's TLS context and trust store.
-        OkHttpClient okHttpClient = new OkHttpClient();
-        IO.setDefaultOkHttpWebSocketFactory(okHttpClient);
-        IO.setDefaultOkHttpCallFactory(okHttpClient);
     }
 
     void makeMediaSender(String serverUrl, String roomId, String[] stunUrls, String[][] turnServers,
