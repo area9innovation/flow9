@@ -1,27 +1,27 @@
 package dk.area9.flowrunner;
 
+import android.os.Build;
+
 import androidx.annotation.NonNull;
 
-import org.java_websocket.client.DefaultSSLWebSocketClientFactory;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 
 import java.net.URI;
-import java.security.NoSuchAlgorithmException;
 
-import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 
+// A wss connection uses the platform's default SSLSocketFactory.
 public class FlowWebSocketClient extends WebSocketClient {
     FlowWebSocketClient(@NonNull URI serverURI) {
         super(serverURI);
-        if (serverURI.getScheme().equals("wss")) {
-            try {
-                SSLContext sslContext = SSLContext.getDefault();
-                setWebSocketFactory(new DefaultSSLWebSocketClientFactory(sslContext));
-            } catch (NoSuchAlgorithmException e) {
-                e.printStackTrace();
-            }
-        }
+    }
+
+    // The library checks the certificate's host name; that needs API 24 (Android 7).
+    @Override
+    protected void onSetSSLParameters(SSLParameters sslParameters) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+            super.onSetSSLParameters(sslParameters);
     }
 
     @Override
