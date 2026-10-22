@@ -261,9 +261,34 @@ https://developer.android.com/studio/run/emulator-networking
 
 | Dependency | Purpose |
 |---|---|
-| `com.android.billingclient:billing:6.2.1` | Google Play Billing Library v6 |
+| `com.android.billingclient:billing:9.1.0` | Google Play Billing Library v9 |
 | `io.getstream:stream-webrtc-android:1.3.10` | WebRTC (pre-compiled native + Java) |
 | `io.socket:socket.io-client:2.1.2` | Socket.IO client |
 | `org.java-websocket:Java-WebSocket:1.6.0` | WebSocket client |
 | `androidx.legacy:legacy-support-v4:1.0.0` | AndroidX legacy support |
 | `androidx.annotation:annotation:1.7.0` | AndroidX annotations |
+
+#### Pinned transitive dependencies
+
+`app/build.gradle` forces `com.squareup.okio:okio:1.17.6`. socket.io-client 2.1.2
+resolves okio 1.15.0, which is affected by CVE-2023-3635 (`GzipSource` denial of
+service on a malformed gzip buffer). 1.17.6 is the fix on the 1.x line and stays
+binary compatible with okhttp 3.12.12.
+
+#### Accepted risk: okhttp 3.12.12
+
+socket.io-client 2.1.2 depends on engine.io-client 2.1.0, which pins okhttp
+3.12.12. Both are the newest published releases, so the okhttp floor cannot be
+raised by upgrading socket.io. okhttp 3.12.x is end-of-life and carries
+CVE-2021-0341 (hostname verification accepts a certificate for the wrong domain),
+fixed only in 4.9.2+.
+
+Exploiting it requires an attacker able to present a crafted certificate on the
+WebRTC signalling connection; the impact is scoped to that socket. Forcing okhttp
+4.x is a major-version jump onto the Kotlin rewrite that would change the
+deprecated statics engine.io-client calls (`HttpUrl.parse`, `MediaType.parse`,
+`RequestBody.create`) and add the Kotlin stdlib. Because R8 full mode obfuscates
+okhttp, a binary incompatibility would surface as a `NoSuchMethodError` in release
+builds only. The upgrade therefore needs its own ticket with a release-build smoke
+test of `FlowWebRTCSupport.makeMediaSender`, rather than being bundled into a
+dependency bump.
