@@ -7,8 +7,9 @@
 # This repository is PUBLIC, and every routine here is written for that:
 # nothing internal in a commit, a pull request or a comment; a finding that
 # cannot be fixed safely in the open stays on the box (`wt routine say`) and is
-# never written into the repository; no binary is ever committed unattended;
-# no routine runs on other people's branches.
+# never written into the repository; a binary enters only a pull request a
+# person merges, and only with a verified upstream signature; no routine runs
+# on other people's branches.
 #
 # `claude-opus-5` is the floor for every routine: these agents work unattended,
 # and a cheaper model that misreads a compile error or a decoder costs a
@@ -152,16 +153,17 @@ routines:
       If the commits contain nothing security-relevant, report `nothing-to-do`.
 
   - id: dependency-audit
-    title: Weekly dependency audit
+    title: Weekly dependency audit and fixes
     cadence: { every: 7d, at: '08:10' }
     branch: routine/dependency-audit
     base: master
-    prTitle: 'chore(deps): weekly audit'
+    prTitle: 'fix(deps): weekly dependency fixes'
     engine: { cli: claude-code, model: claude-opus-5, effort: medium }
     # An advisory arrives without anyone committing, so a quiet week is when
     # this matters most.
     idle: run
-    limits: { runMinutes: 90, spendUsd: 6 }
+    verify: bin/flowc1 tools/flowc/flowc.flow && bin/flowc1 lib/material/material.flow
+    limits: { runMinutes: 150, spendUsd: 10 }
     prompt: |
       This repository is PUBLIC. Nothing you commit, write in a pull request or
       say in a comment names an internal host, a path on this machine, an
@@ -170,39 +172,79 @@ routines:
       several for a list) lands in a run log only the people this routine is
       shared with can read.
 
-      Audit this repository's dependencies: weekly, over everything, not only
-      what changed. The risk here arrives by sitting still.
+      Audit this repository's dependencies and fix what can be fixed safely, in
+      one pull request: weekly, over everything, not only what changed. The
+      risk here arrives by sitting still.
 
-      Dependabot is active and owns the npm manifests: platforms/capacitor,
-      resources/vscode/flow, resources/webfonts, sandbox/ts, platforms/ts/wabt,
-      lib/tools/*/extensions/*, resources/atom/*, www_source/webfontloader. Do
-      not bump anything there, and never run `npm install` or `npm audit fix`:
-      both execute package install scripts, which is third-party code nobody
-      reviewed, on a box with credentials. Run `npm audit --omit=dev` in each
-      folder that has a lockfile, read-only, only to list what Dependabot has
-      not opened a pull request for (`gh pr list --author app/dependabot`).
+      Dependabot is enabled. It alerts within hours on every manifest GitHub's
+      dependency graph reads (here the npm and Ruby lockfiles) and opens its own
+      fix pull requests. It is the first line, not you: never touch a package
+      it has an open pull request for.
 
-      What Dependabot cannot see is yours, and all of it is REPORT ONLY:
+      1. Dependabot's leftovers. List its open alerts and its open pull requests:
 
-        - platforms/java/lib/*.jar, declared in flow.config `java-dependencies`:
-          committed binaries. For each, the version in the tree, the latest on
-          Maven Central, and open advisories by id. Never download or commit a
-          jar: a binary nobody built from reviewed source does not enter a
-          public repository unattended.
-        - www/js/** vendored browser libraries (DOMPurify, jQuery, pixi,
-          three.js, pdf.js, socket.io, mediabunny, …): the version in each
-          file's header, the latest release, advisories by id.
-        - platforms/android/*.gradle: declared versions, latest, advisories.
-        - a new install script on a package that did not have one; a dependency
-          nothing references any more.
+           gh api 'repos/{owner}/{repo}/dependabot/alerts?state=open' --paginate
+           gh pr list --author app/dependabot --state open
 
-      The report is one line per package: where it is declared, the version,
-      the latest, advisory ids. Advisory ids only. Never say how an advisory
-      applies to this runtime: that is a map, and this repository is public.
-      The report goes to the box with `wt routine say`, newest advisory first,
-      and the run ends `nothing-to-do` with the counts. Expect that to be the
-      usual week: this routine opens a pull request only when a manifest it may
-      edit has a safe in-range change, which today is none of them.
+         An alert with a Dependabot pull request is counted, nothing more. For
+         each alert without one, find why, and whether shipped code loads the
+         package or only a dev or build tool does. Fix it here when a patched
+         version is reachable without crossing a major: inside the declared
+         range, or as an `overrides` entry for a transitive package. If the
+         alerts API refuses this account, say so and fall back to
+         `npm audit --omit=dev`, read-only, in each folder with a lockfile.
+
+      2. What Dependabot cannot see:
+         - platforms/java/lib/*.jar, declared in flow.config `java-dependencies`;
+         - www/js/** vendored browser libraries (the version is in each file's
+           header);
+         - platforms/android/*.gradle declarations;
+         - a new install script on a package that did not have one, and a
+           dependency nothing references any more (both listed, not changed).
+         For each: the version in the tree, the latest, open advisories by id.
+         Fix the ones with an advisory.
+
+      How a fix is made:
+        - Same major only. A newer major, a changed licence, or a release that
+          removes an API this repository uses is not bumped. Where the upstream
+          fix is a small, self-contained commit, backport it into the vendored
+          file instead and say so; otherwise list the package for a person.
+        - Every artifact is verified before it is committed. A jar: Maven
+          Central's checksum, and a good PGP signature from the same key that
+          signed the jar it replaces (verify that jar's own .asc too), checked
+          in a throwaway GNUPGHOME with the key fetched over HTTPS from
+          https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x<key id>
+          (`gpg --recv-keys` fails intermittently). A vendored
+          file: the npm registry's sha512 integrity of the package it comes
+          from, and the same file of that package (minified for minified). A
+          check that fails, or cannot run on this box, means the package is
+          listed and not bumped.
+        - Never let package code run: no `npm install`, `npm ci` or
+          `npm audit fix` without `--ignore-scripts`, and nothing else installs.
+        - ONE COMMIT PER PACKAGE, with every reference updated (flow.config,
+          README tables, build files) and the message
+          `fix(deps): bump <package> from <old> to <new>`, its body naming the
+          advisory ids and how the artifact was verified.
+        - After each jar commit, compile platforms/java/com/area9innovation/flow
+          against platforms/java/lib: the list of javac errors must be the same
+          as on master (some sources need jars this repository does not ship).
+          After each vendored-file commit, find every place that loads it and
+          check the names it reads still exist. An Android bump that needs a
+          code change is listed, not made: this box cannot build Android.
+        - A package you cannot get through these checks comes out of the
+          branch and is listed.
+        - tools/flowc/flowc.jar, tools/flowc_lsp/flowc_lsp.jar and
+          lib/tools/flow9/flow9.jar bundle the java-dependencies jars. Never
+          rebuild them; say in the body which bumped libraries they still carry.
+
+      The pull request body lists each fixed package on one line: package,
+      from and to, advisory ids, how it was verified, and for an Android bump
+      "not built". Advisory ids only: never say how an advisory applies to this
+      runtime. What is not fixed (majors, failed checks, licence changes, dead
+      dependencies) goes to the box with `wt routine say`, newest advisory
+      first, never into the pull request. Report `review-ready` once verify
+      passes. With nothing fixed there is no pull request: report
+      `nothing-to-do` with the counts.
 
   - id: runtime-security-sweep
     title: Weekly runtime security sweep
