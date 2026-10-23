@@ -15,6 +15,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.net.URI;
+import java.util.Arrays;
 
 class FlowMediaRecorderSupport {
     private FlowRunnerWrapper wrapper;
@@ -164,21 +165,14 @@ class FlowMediaRecorderSupport {
         WebSocketClient client = new FlowWebSocketClient(uri) {
             @Override
             public void onOpen(ServerHandshake serverHandshake) {
-                InputStream inputStream = null;
-                try {
-                    inputStream = new FileInputStream(file);
+                try (InputStream inputStream = new FileInputStream(file)) {
                     byte[] buffer = new byte[1024 * 1024];
-                    while (inputStream.read(buffer) > 0) {
-                        send(buffer);
+                    int read;
+                    while ((read = inputStream.read(buffer)) > 0) {
+                        send(Arrays.copyOf(buffer, read));
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
-                } finally {
-                    try {
-                        inputStream.close();
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
                 }
                 close();
             }

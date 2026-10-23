@@ -2,7 +2,6 @@ package dk.area9.flowrunner;
 
 import androidx.annotation.NonNull;
 
-import org.java_websocket.WebSocket;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 
@@ -43,7 +42,7 @@ class FlowWebSocketSupport {
     }
 
     boolean send(@NonNull WebSocketClient webSocketClient, String message) {
-        boolean isConnected = webSocketClient.getReadyState() == WebSocket.READYSTATE.OPEN;
+        boolean isConnected = webSocketClient.isOpen();
         if (isConnected)
             webSocketClient.send(message);
         return isConnected;
