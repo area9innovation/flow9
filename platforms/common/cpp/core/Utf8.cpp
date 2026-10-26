@@ -114,14 +114,21 @@ static unsigned encode(uint16_t c, uint16_t next_c, uint8_t *out, int &cnt)
     return usedSymbolsCount;
 }
 
+// How many bytes the decoder below takes for a sequence starting with this byte.
+static int utf8SequenceLength(unsigned char c)
+{
+    if (c <= 0x7F) return 1;
+    if (c <= 0xDF) return 2;
+    if (c <= 0xEF) return 3;
+    if (c <= 0xF7) return 4;
+    return 1;
+}
+
 /* String processing */
 /* Parse UTF8 string to UTF16 (internal format) */
 template<class C>
 struct Utf8Parser
 {
-    uint32_t w;
-    int bytes;
-
     unicode_string parse(const C &str, unsigned size);
     void parse_range(unicode_string &out, const C &str, unsigned size);
 };
@@ -130,12 +137,7 @@ template<class C>
 unicode_string Utf8Parser<C>::parse(const C &str, unsigned size)
 {
     unicode_string out;
-    w = 0;
-    bytes = 0;
-    uint32_t err = L'?';
     parse_range(out, str, size);
-    if (bytes)
-        out.push_back(err);
     return out;
 }
 
@@ -150,7 +152,6 @@ unicode_string Utf8Parser<C>::parse(const C &str, unsigned size)
 template<class C>
 void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size)
 {
-    int bytes = 0;
     uint16_t decode_error = (uint16_t)0xFFFD;
 
     auto to_utf16 = [&out](uint64_t w)
@@ -222,44 +223,36 @@ void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size
     for (size_t i = 0; i < size; i++)
     {
         unsigned char c = (unsigned char) str[i];
+        int bytes = utf8SequenceLength(c);
 
         if (c <= 0x7F)  // 1 byte sequence, 0x7F = 0111 1111
         {
             out.push_back((uint32_t) c);
         }
-        else if (c <= 0xDF) //2 bytes sequence, 0xDF = 1101 1111
-        {
-            bytes = 2;
-            push_sequence(0x1F, c, i, bytes); // 0x1F = 0001 1111
-            i += bytes - 1;
-        }
-        else if (c <= 0xEF) // 3 bytes sequence, 0xEF = 1110 1111
-        {
-            bytes = 3;
-            push_sequence(0x0F, c, i, bytes); // 0x0F = 0000 1111
-            i += bytes - 1;
-        }
-        else if (c <= 0xF7) // 4 bytes sequence, 0xF7 = 1111 0111
-        {
-            bytes = 4;
-            push_sequence(0x07, c, i, bytes); // 0x07 = 0000 0111
-            i += bytes - 1;
-        }
-        else //error, UTF-8 accept only max 4 octets
+        else if (c > 0xF7) //error, UTF-8 accept only max 4 octets
         {
             out.push_back(decode_error);
+        }
+        else // the lead byte keeps 7 - bytes bits: 0x1F, 0x0F or 0x07
+        {
+            push_sequence(0xFF >> (bytes + 1), c, i, bytes);
+            i += bytes - 1;
         }
     }
 }
 
 void IncrementalUtf8Parser::parse(unicode_string &out, const char *data, unsigned size)
 {
-    Utf8Parser<const char*> worker;
-    worker.w = w;
-    worker.bytes = bytes;
-    worker.parse_range(out, data, size);
-    w = worker.w;
-    bytes = worker.bytes;
+    pending.append(data, size);
+    size_t complete = 0;
+    while (complete < pending.size()) {
+        size_t next = complete + utf8SequenceLength((unsigned char) pending[complete]);
+        if (next > pending.size())
+            break;
+        complete = next;
+    }
+    Utf8Parser<const char*>().parse_range(out, pending.data(), complete);
+    pending.erase(0, complete);
 }
 
 unicode_string parseUtf8(const std::string &str) {
@@ -319,11 +312,15 @@ unicode_string readFileAsUnicodeString(std::string filename, bool *ok)
     FILE *file = fopen(filename.c_str(), "rb");
     if (file) {
         fseek(file, 0, SEEK_END);
-        size_t size = ftell(file);
+        long end = ftell(file);
         rewind(file);
+        if (end < 0) {
+            fclose(file);
+            return unicode_string();
+        }
 
-        // Initialize a pointer for reading file data
-        void* data = malloc(size);
+        std::vector<char> data(end);
+        size_t size = data.size();
 
         // Pick first 2 bytes to check whether it starts from BOM bytes
         static const uint8_t bom_bytes[] = { 0xFF, 0xFE };
@@ -339,7 +336,7 @@ unicode_string readFileAsUnicodeString(std::string filename, bool *ok)
         // Read file content
         size_t pos = 0;
         while (pos < size) {
-            size_t delta = fread(data, 1, size-pos, file);
+            size_t delta = fread(data.data() + pos, 1, size-pos, file);
             if (!delta) {
                 break;
             } else {
@@ -352,9 +349,9 @@ unicode_string readFileAsUnicodeString(std::string filename, bool *ok)
 
         // Interpret a file content as UTF-16 or UTF-8
         if (isUtf16String) {
-            return unicode_string((uint16_t*)data, pos / 2);
+            return unicode_string((uint16_t*)data.data(), pos / 2);
         } else {
-            return parseUtf8(std::string((char*)data, pos));
+            return parseUtf8(std::string(data.data(), pos));
         }
     }
 
@@ -456,11 +453,15 @@ std::string stl_vsprintf(const char *fmt, va_list args) {
     std::vector<char> buf;
     buf.resize(4096);
     for (;;) {
-        int rsz = vsnprintf(&buf[0], buf.size(), fmt, args);
+        // vsnprintf consumes the list it is given, so every attempt gets its own copy.
+        va_list attempt;
+        va_copy(attempt, args);
+        int rsz = vsnprintf(&buf[0], buf.size(), fmt, attempt);
+        va_end(attempt);
 
         if (rsz < 0)
             buf.resize(buf.size()*2);
-        else if (unsigned(rsz) > buf.size())
+        else if (unsigned(rsz) >= buf.size())
             buf.resize(rsz+1);
         else
             return std::string(&buf[0], rsz);

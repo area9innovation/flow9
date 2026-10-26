@@ -1,7 +1,7 @@
 #include "TextFont.h"
 
 bool TextFont::operator== (const TextFont &tf2) const {
-    return STL_HASH<TextFont>()(*this) == STL_HASH<TextFont>()(tf2);
+    return family == tf2.family && weight == tf2.weight && style == tf2.style;
 }
 
 std::size_t STL_HASH<TextFont>::operator()(const TextFont& tf) const {
@@ -49,7 +49,8 @@ bool endsWith(std::string const& text, std::string const& suffix) {
 }
 
 TextStyle TextFont::textStyleByName(std::string slope) {
-    slope[0] = (char)toupper(slope[0]);
+    if (!slope.empty())
+        slope[0] = (char)toupper((unsigned char)slope[0]);
     if (!slope.compare("Italic")) {
         return TextStyle::Italic;
     } else if (!slope.compare("Oblique")) {
@@ -91,12 +92,12 @@ TextFont TextFont::makeWithParameters(std::string fontfamily, int weight, std::s
         } else if (endsWith(fontfamily, "SemiBold")) {
             font.weight = TextWeight::SemiBold;
             chopSize = 8;
-        } else if (endsWith(fontfamily, "Bold")) {
-            font.weight = TextWeight::Bold;
-            chopSize = 4;
         } else if (endsWith(fontfamily, "ExtraBold")) {
             font.weight = TextWeight::ExtraBold;
             chopSize = 9;
+        } else if (endsWith(fontfamily, "Bold")) {
+            font.weight = TextWeight::Bold;
+            chopSize = 4;
         } else if (endsWith(fontfamily, "Black")) {
             font.weight = TextWeight::Black;
             chopSize = 5;
