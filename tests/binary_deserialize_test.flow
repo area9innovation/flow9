@@ -1,0 +1,201 @@
+import text/binary;
+import math/bits;
+import math/math;
+import sys/target;
+
+// Tests of deserializeBinary (lib/text/binary.flow): values built by toBinary round-trip
+// unchanged, and input that is cut short, declares too many elements, nests too deep or
+// has a footer offset outside the input yields the default value quickly.
+// The damaged inputs are checked only where the flow fallback deserialises.
+
+// A native that returns its input is not implemented, so deserializeBinary runs the flow fallback
+native nativeFromBinary : (s : string, default_ : flow, fixups : (string) -> Maybe<([flow]) -> flow>) -> flow = Native.fromBinary;
+
+BinTestDefault();
+BinTestLeaf(id : int, name : string, weight : double, flag : bool);
+BinTestNode(label : string, items : [flow], link : ref flow);
+
+failures : ref int = ref 0;
+defaultValue = flow(BinTestDefault());
+
+check(name : string, actual : flow, expected : flow) -> void {
+	if (toString(actual) != toString(expected)) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + strLeft(toString(expected), 200));
+		println("  actual:   " + strLeft(toString(actual), 200));
+	}
+}
+
+checkRoundTrip(name : string, value : flow) -> void {
+	check("round trip of " + name, deserializeBinary(toBinary(value), defaultValue), value);
+}
+
+checkDamaged(name : string, input : string) -> void {
+	check("damaged " + name, deserializeBinary(input, defaultValue), defaultValue);
+}
+
+usesFlowFallback() -> bool {
+	sample = toBinary(flow([1, 2, 3]));
+	nativeFromBinary(sample, defaultValue, \__ -> None()) == flow(sample);
+}
+
+words2s(words : [int]) -> string {
+	concatStrings(map(words, fromCharCode));
+}
+
+// The two header words hold the footer offset the way toBinary writes it
+header(footerOffset : int) -> string {
+	words2s([bitAnd(footerOffset, 0xFFFF), bitUshr(footerOffset, 16)]);
+}
+
+footerOffsetOf(b : string) -> int {
+	stringbytes2int(strLeft(b, 2));
+}
+
+bodyOf(b : string) -> string {
+	substring(b, 2, footerOffsetOf(b) - 2);
+}
+
+footerOf(b : string) -> string {
+	strRight(b, footerOffsetOf(b));
+}
+
+assemble(body : string, footer : string) -> string {
+	header(strlen(body) + 2) + body + footer;
+}
+
+setWord(b : string, index : int, word : int) -> string {
+	strLeft(b, index) + fromCharCode(word) + strRight(b, index + 1);
+}
+
+setInt(b : string, index : int, value : int) -> string {
+	setWord(setWord(b, index, bitAnd(value, 0xFFFF)), index + 1, bitUshr(value, 16));
+}
+
+nestedArrays(depth : int, inner : flow) -> flow {
+	fold(enumFromTo(1, depth), inner, \acc, __ -> flow([acc]));
+}
+
+// Each node adds two levels: the struct and its items array
+nestedNodes(count : int, inner : flow) -> flow {
+	fold(enumFromTo(1, count), inner, \acc, __ -> flow(BinTestNode("n", [acc], ref flow(0))));
+}
+
+sampleLeaf = flow(BinTestLeaf(2, "alpha", 1.5, false));
+sampleNode = flow(BinTestNode("root", [sampleLeaf, flow([flow(1), flow("beta")])], ref flow(7)));
+
+testRoundTrips() -> void {
+	emptyArray : [int] = [];
+	checkRoundTrip("int", flow(42));
+	checkRoundTrip("negative int", flow(-7));
+	checkRoundTrip("big int", flow(123456789));
+	checkRoundTrip("double", flow(3.25));
+	checkRoundTrip("true", flow(true));
+	checkRoundTrip("false", flow(false));
+	checkRoundTrip("string", flow("héllo, wörld"));
+	checkRoundTrip("empty string", flow(""));
+	checkRoundTrip("long string", flow(strRepeat("x", 70000)));
+	checkRoundTrip("empty array", flow(emptyArray));
+	checkRoundTrip("array", flow([1, 2, 3]));
+	checkRoundTrip("long array", flow(generate(0, 70000, \i -> i)));
+	checkRoundTrip("ref", flow(ref 5));
+	checkRoundTrip("struct", sampleLeaf);
+	checkRoundTrip("nested value", sampleNode);
+	checkRoundTrip("arrays nested to the depth limit", nestedArrays(1024, flow(1)));
+	checkRoundTrip("structs nested below the depth limit", nestedNodes(500, flow(1)));
+}
+
+testMoreElementsThanInput() -> void {
+	// The count word follows the array tag
+	b = toBinary(flow([1, 2, 3]));
+	checkDamaged("array count past the end", setWord(b, strIndexOf(b, fromCharCode(0xFFF8)) + 1, 60000));
+	l = toBinary(flow(generate(0, 70000, \i -> i)));
+	checkDamaged("long array count past the end", setInt(l, strIndexOf(l, fromCharCode(0xFFF9)) + 1, 1000000));
+	// The footer holds [[arity, name]] for each struct, the arity is its third word
+	s = toBinary(sampleLeaf);
+	checkDamaged("struct arity past the end", assemble(bodyOf(s), setWord(footerOf(s), 4, 50)));
+}
+
+testTruncated() -> void {
+	b = toBinary(sampleNode);
+	body = bodyOf(b);
+	footer = footerOf(b);
+	iter(enumFromTo(0, strlen(body) - 1), \n -> {
+		checkDamaged("body cut to " + i2s(n) + " words", assemble(strLeft(body, n), footer));
+	});
+	iter([1, 2, 5, strlen(b) / 2, strlen(b) - 1], \n -> {
+		checkDamaged("input cut to " + i2s(n) + " words", strLeft(b, n));
+	});
+}
+
+testTooDeep() -> void {
+	checkDamaged("arrays nested past the depth limit", toBinary(nestedArrays(1025, flow(1))));
+	checkDamaged("structs nested past the depth limit", toBinary(nestedNodes(600, flow(1))));
+	// 0xFFF6 is a ref tag, 0xFFF7 an empty footer
+	refs = words2s(generate(0, 5000, \__ -> 0xFFF6)) + fromCharCode(1);
+	checkDamaged("refs nested past the depth limit", assemble(refs, fromCharCode(0xFFF7)));
+}
+
+testFooterOffset() -> void {
+	b = toBinary(flow([1, 2, 3]));
+	rest = strRight(b, 2);
+	n = strlen(b);
+	checkDamaged("footer offset 0", header(0) + rest);
+	checkDamaged("footer offset at the body start", header(2) + rest);
+	checkDamaged("footer offset at the end", header(n) + rest);
+	checkDamaged("footer offset past the end", header(n + 10) + rest);
+	checkDamaged("footer offset far past the end", header(0x7FFFFFFF) + rest);
+	checkDamaged("negative footer offset", header(-5) + rest);
+	// A first int of 1 means the offset is split over the next two ints
+	checkDamaged("six word header with offset 0", header(1) + header(0) + header(0) + rest);
+	checkDamaged("six word header cut short", header(1) + fromCharCode(0));
+	checkDamaged("empty input", "");
+	checkDamaged("one word input", fromCharCode(0xFFF7));
+}
+
+testStructIndex() -> void {
+	// The struct index word follows the struct tag; only one struct is defined
+	b = toBinary(flow([flow(true), sampleLeaf, flow(false)]));
+	checkDamaged("struct index out of range", setWord(b, strIndexOf(b, fromCharCode(0xFFF4)) + 1, 7));
+}
+
+testNegativeCounts() -> void {
+	s = toBinary(flow(strRepeat("x", 70000)));
+	checkDamaged("negative long string length", setInt(s, strIndexOf(s, fromCharCode(0xFFFB)) + 1, -1));
+	l = toBinary(flow(generate(0, 70000, \i -> i)));
+	checkDamaged("negative long array count", setInt(l, strIndexOf(l, fromCharCode(0xFFF9)) + 1, -1));
+}
+
+testDamagedInputs() -> void {
+	start = timestamp();
+	testMoreElementsThanInput();
+	testTruncated();
+	testTooDeep();
+	testFooterOffset();
+	testStructIndex();
+	testNegativeCounts();
+	elapsed = timestamp() - start;
+	println("  damaged inputs handled in " + d2s(roundTo(elapsed, 0.1)) + " ms");
+	if (elapsed > 5000.0) {
+		failures := ^failures + 1;
+		println("FAIL: damaged inputs took " + d2s(roundTo(elapsed, 0.1)) + " ms");
+	}
+}
+
+main() {
+	testRoundTrips();
+	if (usesFlowFallback()) {
+		testDamagedInputs();
+	} else {
+		println("  damaged inputs are not checked: " + getTargetName() + " deserialises natively");
+	}
+
+	if (^failures == 0) {
+		println("Binary deserialize tests are OK in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " binary deserialize test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
