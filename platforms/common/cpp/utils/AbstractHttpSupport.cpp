@@ -128,8 +128,12 @@ void AbstractHttpSupport::deliverPartialData(int id, const void *buffer, unsigne
             return;
         }
 
-        if (rq->is_utf && !rq->tmp_parser.is_complete())
-            fwrite("?\0", 1, 2, rq->tmp_file);
+        if (rq->is_utf && rq->response_enc != ResponseEncodingByte)
+        {
+            unicode_string tail;
+            rq->tmp_parser.finish(tail);
+            fwrite(tail.data(), sizeof(unicode_char), tail.size(), rq->tmp_file);
+        }
 
         fclose(rq->tmp_file);
         rq->tmp_file = NULL;
