@@ -1,0 +1,94 @@
+import formats/xml;
+import sys/target;
+import math/math;
+
+// Tests of xmlUnescape (lib/formats/xml.flow): one pass, each reference decoded once.
+// The performance test checks that many distinct references decode in linear time.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected) + " " + toString(s2a(expected)));
+		println("  actual:   " + toString(actual) + " " + toString(s2a(actual)));
+	}
+}
+
+testNamedEntities() -> void {
+	check("quot", xmlUnescape("&quot;"), "\"");
+	check("apos", xmlUnescape("&apos;"), "'");
+	check("gt", xmlUnescape("&gt;"), ">");
+	check("lt", xmlUnescape("&lt;"), "<");
+	check("amp", xmlUnescape("&amp;"), "&");
+	check("named in text", xmlUnescape("a&lt;b&gt;c&amp;d&quot;e&apos;f"), "a<b>c&d\"e'f");
+	check("adjacent named", xmlUnescape("&lt;&lt;&gt;&gt;"), "<<>>");
+	check("plain text", xmlUnescape("no references here"), "no references here");
+	check("empty", xmlUnescape(""), "");
+}
+
+testNumericReferences() -> void {
+	check("decimal", xmlUnescape("&#65;"), "A");
+	check("decimal with leading zeros", xmlUnescape("&#0065;"), "A");
+	check("hex", xmlUnescape("&#x42;"), "B");
+	check("hex digits in both cases", xmlUnescape("&#xFF;&#xff;"), "ÿÿ");
+	check("numeric in text", xmlUnescape("x&#65;y&#x42;z"), "xAyBz");
+	check("decimal above 0xFFFF", xmlUnescape("&#128512;"), fromCharCode(128512));
+	check("hex above 0xFFFF", xmlUnescape("&#x1F600;"), fromCharCode(0x1F600));
+	check("named and numeric", xmlUnescape("&lt;&#60;"), "<<");
+}
+
+testDecodedOnce() -> void {
+	check("&amp;lt; stays &lt;", xmlUnescape("&amp;lt;"), "&lt;");
+	check("&amp;#60; stays &#60;", xmlUnescape("&amp;#60;"), "&#60;");
+	check("&amp;amp; stays &amp;", xmlUnescape("&amp;amp;"), "&amp;");
+	check("&#38;lt; stays &lt;", xmlUnescape("&#38;lt;"), "&lt;");
+	check("&&#97;mp; is &amp;", xmlUnescape("&&#97;mp;"), "&amp;");
+}
+
+testIncompleteReferences() -> void {
+	iter(["&", "& ", "&foo", "a & b", "&lt", "&amp", "&#12", "&#x12", "&#;", "&#x;", "&#xZZ;", "&#1a;", "&#-5;", "&#X41;", "&#12 and; more"], \s -> {
+		check("kept as written: " + s, xmlUnescape(s), s);
+	});
+	check("kept before a valid reference", xmlUnescape("&#12&#65;"), "&#12A");
+}
+
+testRoundTrip() -> void {
+	sample = "a<b>c&d\"e'f &amp; &#65; &lt;x&gt; 😀 ÿ";
+	check("xmlUnescape(xmlEscape(s)) == s", xmlUnescape(xmlEscape(sample)), sample);
+	check("xmlUnescape(xmlEscapeText(s)) == s", xmlUnescape(xmlEscapeText(sample)), sample);
+}
+
+testPerformance() -> void {
+	n = 50000;
+	// Distinct code points from 256 up: all inside the BMP and below the surrogate range
+	codes = enumFromTo(256, 256 + n - 1);
+	encoded = concatStrings(map(codes, \c -> "&#" + i2s(c) + ";"));
+	start = timestamp();
+	decoded = xmlUnescape(encoded);
+	time = timestamp() - start;
+	check("decode of " + i2s(n) + " distinct references", decoded, concatStrings(map(codes, fromCharCode)));
+	println("  decode " + i2s(strlen(encoded)) + " chars with " + i2s(n) + " references: " + d2s(time) + " ms");
+	if (time > 1000.0) {
+		failures := ^failures + 1;
+		println("FAIL: decoding " + i2s(n) + " references took " + d2s(time) + " ms");
+	}
+}
+
+main() {
+	testNamedEntities();
+	testNumericReferences();
+	testDecodedOnce();
+	testIncompleteReferences();
+	testRoundTrip();
+	testPerformance();
+
+	if (^failures == 0) {
+		println("xmlUnescape tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " xmlUnescape test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}

@@ -200,47 +200,61 @@ xmlEscapeText(s : string) -> string {
 	s2;
 }
 
-// TODO add all HTML entities and rewrite the function,
-// hence sequential replaces are errorprone: &&#97;mp; will generate «&», while should «&amp;».
+// Decodes &quot; &apos; &gt; &lt; &amp;, &#NNN; and &#xHHH; in one pass, each reference once.
+// An "&" that starts no complete reference, or a numeric reference with no valid code, stays as written.
+// https://www.w3.org/TR/REC-xml/#sec-references
 xmlUnescape(s : string) -> string {
-	s0 = strReplace(s, "&quot;", "\"");
-	s1 = strReplace(s0, "&apos;", "'");
-	s2 = strReplace(s1, "&gt;", ">");
-	s3 = strReplace(s2, "&lt;", "<");
-	s4 = strReplace(s3, "&amp;", "&");
-	xmlUnescapeHelp(s4);
+	list2string(xmlUnescapeFrom(s, 0, strlen(s), makeList()));
 }
 
-// https://www.w3.org/TR/REC-xml/#sec-references
-xmlUnescapeHelp(s : string) -> string {
-	unescapeHex = \onNotFound -> {
-		eitherFn(
-			findMatchingPairM(s, "&#x", ";"),
-			\pair -> {
-				encodedValue = strSubRange(s, pair.first, pair.second);
-				hex = strSubRange(encodedValue, 3, strlen(encodedValue) - 1);
-				xmlUnescapeHelp(strReplace(s, encodedValue, fromCharCode(s2i(strHex2dec(hex)))));
-			},
-			onNotFound
-		);
-	};
+xmlNamedEntities = [
+	Pair("&quot;", "\""), Pair("&apos;", "'"), Pair("&gt;", ">"), Pair("&lt;", "<"), Pair("&amp;", "&")
+];
 
-	unescapeUCS2 = \onNotFound -> {
-		eitherFn(
-			findMatchingPairM(s, "&#", ";"),
-			\pair -> {
-				encodedValue = strSubRange(s, pair.first, pair.second);
-				charCode = s2i(strSubRange(encodedValue, 2, strlen(encodedValue) - 1));
-				if (charCode < 0) {
-					println("ERROR. Enexpected char code: " + encodedValue);
-				};
-				xmlUnescapeHelp(strReplace(s, encodedValue, fromCharCode(charCode)));
-			},
-			onNotFound
-		);
-	};
+xmlUnescapeFrom(s : string, start : int, len : int, acc : List<string>) -> List<string> {
+	amp = strRangeIndexOf(s, "&", start, len);
+	if (amp < 0) {
+		Cons(substring(s, start, len - start), acc);
+	} else {
+		plain = substring(s, start, amp - start);
+		decoded = xmlDecodeReference(s, amp, len);
+		xmlUnescapeFrom(s, decoded.second, len, Cons(decoded.first, Cons(plain, acc)));
+	}
+}
 
-	unescapeHex(\ -> unescapeUCS2(\ -> s));
+// Decodes the reference at the "&" at amp: Pair(text, position after it)
+xmlDecodeReference(s : string, amp : int, len : int) -> Pair<string, int> {
+	keepAmp = Pair("&", amp + 1);
+	if (xmlCharCodeAt(s, amp + 1, len) == 0x23) { // #
+		isHex = xmlCharCodeAt(s, amp + 2, len) == 0x78; // x
+		digitsStart = amp + 2 + b2i(isHex);
+		digitsEnd = xmlScanDigits(s, digitsStart, len, isHex);
+		if (digitsEnd > digitsStart && xmlCharCodeAt(s, digitsEnd, len) == 0x3B) { // ;
+			digits = substring(s, digitsStart, digitsEnd - digitsStart);
+			code = if (isHex) s2i(strHex2dec(digits)) else s2i(digits);
+			if (code < 0) keepAmp else Pair(fromCharCode(code), digitsEnd + 1);
+		} else {
+			keepAmp;
+		}
+	} else {
+		eitherMap(
+			find(xmlNamedEntities, \e -> strContainsAt(s, amp, e.first)),
+			\e -> Pair(e.second, amp + strlen(e.first)),
+			keepAmp
+		);
+	}
+}
+
+// The char code at i, or -1 past the end
+xmlCharCodeAt(s : string, i : int, len : int) -> int {
+	if (i < len) getCharCodeAt(s, i) else -1;
+}
+
+// The index of the first char at or after i that is not a decimal (or hex) digit
+xmlScanDigits(s : string, i : int, len : int, isHex : bool) -> int {
+	c = xmlCharCodeAt(s, i, len);
+	digit = (0x30 <= c && c <= 0x39) || (isHex && ((0x41 <= c && c <= 0x46) || (0x61 <= c && c <= 0x66)));
+	if (digit) xmlScanDigits(s, i + 1, len, isHex) else i;
 }
 
 
