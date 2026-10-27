@@ -142,12 +142,15 @@ static size_t decodeUtf8(unicode_string &out, const C &str, size_t size, bool fi
             continue;
         }
 
-        // Lead bytes C0, C1 and F5-FF only start overlong or out-of-range code points;
+        // Lead bytes C1 and F5-FF only start overlong or out-of-range code points, and C0
+        // only C0 80, the NUL of Java's modified UTF-8 (JNI strings on Android);
         // E0, F0 and F4 narrow the second byte for the same reason.
         size_t length;
         uint32_t w;
         unsigned char low = 0x80, high = 0xBF;
-        if (c >= 0xC2 && c <= 0xDF) {
+        if (c == 0xC0) {
+            length = 2; w = 0; high = 0x80;
+        } else if (c >= 0xC2 && c <= 0xDF) {
             length = 2; w = c & 0x1F;
         } else if (c >= 0xE0 && c <= 0xEF) {
             length = 3; w = c & 0x0F;

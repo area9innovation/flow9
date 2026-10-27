@@ -73,22 +73,19 @@ struct FamilySuffix {
     TextStyle style;
 };
 
+// Only names that weightSuffix() and styleSuffix() give back, because family + suffix()
+// is the font's asset path and its key: an alias such as ExtraLight would lose the name.
 static const FamilySuffix familySuffixes[] = {
     { "Thin", false, TextWeight::Thin, TextStyle::Normal },
-    { "ExtraLight", false, TextWeight::UltraLight, TextStyle::Normal },
     { "UltraLight", false, TextWeight::UltraLight, TextStyle::Normal },
-    { "SemiLight", false, TextWeight::Light, TextStyle::Normal },
     { "Light", false, TextWeight::Light, TextStyle::Normal },
     { "Regular", false, TextWeight::Regular, TextStyle::Normal },
     { "Normal", false, TextWeight::Regular, TextStyle::Normal },
     { "Medium", false, TextWeight::Medium, TextStyle::Normal },
     { "SemiBold", false, TextWeight::SemiBold, TextStyle::Normal },
-    { "DemiBold", false, TextWeight::SemiBold, TextStyle::Normal },
     { "Bold", false, TextWeight::Bold, TextStyle::Normal },
     { "ExtraBold", false, TextWeight::ExtraBold, TextStyle::Normal },
-    { "UltraBold", false, TextWeight::ExtraBold, TextStyle::Normal },
     { "Black", false, TextWeight::Black, TextStyle::Normal },
-    { "ExtraBlack", false, TextWeight::Black, TextStyle::Normal },
     { "Italic", true, TextWeight::Regular, TextStyle::Italic },
     { "Oblique", true, TextWeight::Regular, TextStyle::Oblique },
 };

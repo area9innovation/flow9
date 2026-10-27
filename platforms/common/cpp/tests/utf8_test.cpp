@@ -60,6 +60,7 @@ static void testDecoder() {
     check("lead byte F7", parseUtf8(std::string("\xF7\xBF\xBF\xBF")), {R, R, R, R});
     check("above U+10FFFF", parseUtf8(std::string("\xF4\x90\x80\x80")), {R, R, R, R});
     check("overlong '/'", parseUtf8(std::string("\xC0\xAF")), {R, R});
+    check("NUL in Java's modified UTF-8", parseUtf8(std::string("A\xC0\x80" "B")), {'A', 0, 'B'});
     check("overlong 3 bytes", parseUtf8(std::string("\xE0\x80\xAF")), {R, R, R});
     check("overlong 4 bytes", parseUtf8(std::string("\xF0\x80\x80\xAF")), {R, R, R, R});
     check("truncated at the end", parseUtf8(std::string("A\xF0\x9F\x98")), {'A', R});
@@ -78,6 +79,7 @@ static void testChunkedDecoder() {
         "cut at the end \xE2\x82",
         "\xF0\x9F\x98",
         "\xE2\xE2\x82\xAC\xC3",
+        "nul \xC0\x80 and overlong \xC0\xAF end \xC0",
     };
     for (const std::string &sample : samples) {
         for (size_t step = 1; step <= sample.size(); step++) {
@@ -119,17 +121,25 @@ static void testFontNames() {
         { "RobotoBold", TextWeight::Bold, "Roboto", Normal },
         { "RobotoExtraBold", TextWeight::ExtraBold, "Roboto", Normal },
         { "RobotoBoldItalic", TextWeight::Bold, "Roboto", Italic },
-        { "SourceSansProExtraLight", TextWeight::UltraLight, "SourceSansPro", Normal },
-        { "FooSemiLight", TextWeight::Light, "Foo", Normal },
-        { "FooDemiBold", TextWeight::SemiBold, "Foo", Normal },
-        { "FooUltraBold", TextWeight::ExtraBold, "Foo", Normal },
-        { "FooExtraBlack", TextWeight::Black, "Foo", Normal },
+        { "RobotoUltraLight", TextWeight::UltraLight, "Roboto", Normal },
+        { "RobotoSemiBold", TextWeight::SemiBold, "Roboto", Normal },
     };
     for (const auto &c : cases) {
         TextFont font = TextFont::makeWithParameters(c.name, TextWeight::Regular, "");
         if (font.family != c.family || font.weight != c.weight || font.style != c.style)
             fail(std::string("font name ") + c.name + " parsed as " + font.family + " " +
                  std::to_string(font.weight) + " " + std::to_string(font.style));
+    }
+
+    // family + suffix() is the asset path and the font key, so every name must come back whole
+    const char *names[] = {
+        "RobotoBold", "RobotoExtraBold", "RobotoBoldItalic", "SourceSansProExtraLight",
+        "FooSemiLight", "FooLight", "FooDemiBold", "FooUltraBold", "FooExtraBlack", "FooBlack",
+    };
+    for (const char *name : names) {
+        TextFont font = TextFont::makeWithParameters(name, TextWeight::Regular, "");
+        if (font.family + font.suffix() != name)
+            fail(std::string("font name ") + name + " comes back as " + font.family + font.suffix());
     }
 }
 
