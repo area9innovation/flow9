@@ -105,10 +105,12 @@ what the next step does.
 
 ### 3. Build the C++ runner
 
-The `QtByteRunner` binary committed in `platforms/qt/bin/linux` is a Qt 6 build
-made on Ubuntu 24.04. It needs glibc 2.38 or newer and the Qt 6.4 (or newer)
-runtime libraries, WebEngine included. On another distribution, or to run your
-own changes to the runner, build it yourself.
+**Linux users currently need to build the runner themselves.** The
+`QtByteRunner` binary committed in `platforms/qt/bin/linux` predates the Qt 5 to
+Qt 6 migration, so it still links against `libQt5Core.so.5`,
+`libQt5WebEngineWidgets.so.5` and friends. Several distributions - Arch among
+them - have dropped Qt 5 WebEngine, WebSockets and WebChannel from their
+repositories, so that binary will not start there.
 
 Build out of source, into a directory at the root of the checkout:
 
@@ -218,9 +220,9 @@ The committed binary is a Git LFS pointer that was never fetched. Either
 install `git-lfs` and run `git lfs pull`, or build the runner yourself as
 described above.
 
-**`error while loading shared libraries: libQt6...so.6`, or `GLIBC_2.38 not found`.**
-The committed binary needs the Qt 6 runtime libraries (WebEngine included) and
-glibc 2.38 or newer. Install them, or build the runner from source.
+**`error while loading shared libraries: libQt5Core.so.5`.**
+You are running the committed Qt 5 binary on a system that no longer ships
+Qt 5. Build the runner from source.
 
 **`Project ERROR: Unknown module(s) in QT: websockets`** from qmake.
 The Qt WebSockets development package is missing - `qt6-websockets` on Arch,
