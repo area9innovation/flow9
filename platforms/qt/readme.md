@@ -155,6 +155,10 @@ Copy to the distribution folder:
 Building (command line) (Linux)
 -------------------------------
 
+To build against your distribution's Qt instead, see
+[doc/linux.markdown](../../doc/linux.markdown); to build without a toolchain
+on the host, see [docker/readme.md](docker/readme.md).
+
 ### Prerequisites
 
 1. **Qt 6.11.1**

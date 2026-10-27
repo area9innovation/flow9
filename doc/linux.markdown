@@ -126,6 +126,11 @@ back to the committed binary, so your build is picked up automatically. That
 directory is in `.gitignore`, so the LFS-tracked binary stays clean in
 `git status`.
 
+If you would rather not have qmake and a compiler on the host, run
+`mise run flowcpp:docker-build` instead. It builds into the same directory
+inside an Ubuntu 24.04 container; the host still needs the Qt 6 runtime
+packages. See [platforms/qt/docker/readme.md](../platforms/qt/docker/readme.md).
+
 Alternatively, `platforms/qt/build.sh` builds in place, straight into
 `platforms/qt/bin/linux` - convenient, but it overwrites the committed binary.
 
