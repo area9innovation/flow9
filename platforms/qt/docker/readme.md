@@ -1,5 +1,5 @@
-Container images for building the Qt byte runner. They are not published to any
-registry and are meant to be built locally when needed. Both docker and podman
+A container image for building the Qt byte runner. It is not published to any
+registry and is meant to be built locally when needed. Both docker and podman
 (through its docker shim) work.
 
 # runner-build
@@ -33,7 +33,10 @@ whatever their Qt. Without the Qt 6 runtime libraries `bin/flowcpp` fails to
 start, because it prefers the build over the committed binary. Remove
 `QtByteRunner-build-release/` to go back to the committed one.
 
-# qt
+# Qt from qt.io
 
-Rotten, do not use. Qt 5.12.11 via aqtinstall plus a custom MySQL driver, both
-superseded by the distribution packages. See [qt/readme.md](qt/readme.md).
+There used to be an image here that installed Qt 5.12 from qt.io with
+[aqtinstall](https://github.com/miurahr/aqtinstall), plus a custom-built MySQL
+driver. Distribution packages made both unnecessary. Should a Qt version the
+distributions do not ship ever be needed, aqtinstall is the scriptable way to
+get one; the old image is in the Git history.
