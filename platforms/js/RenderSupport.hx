@@ -1973,6 +1973,12 @@ class RenderSupport {
 				}
 			}
 
+			// Claimed zoom keeps the gesture's sign and size: a mouse notch is about 100 px, one spin
+			if (mouseWheelZoomGesture) {
+				if (pX != 0.0 && sX == 0.0) { sX = pX / 100.0; }
+				if (pY != 0.0 && sY == 0.0) { sY = pY / 100.0; }
+			}
+
 			// Fall-back if spin cannot be determined
 			if (!ScrollCatcherEnabled) {
 				if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
