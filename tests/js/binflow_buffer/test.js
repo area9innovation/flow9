@@ -1,8 +1,10 @@
 // Tests of platforms/js/JSBinflowBuffer.hx: values built by Native.toBinary round-trip unchanged,
-// and input that is cut short, declares too many elements, nests too deep or has a footer offset
-// outside the input yields the default value quickly. Needs the haxe CLI on PATH. Run: npm test
+// nesting of any depth decodes, and input that is cut short, declares too many elements, has a footer
+// of the wrong shape or a footer offset outside the input yields the default value quickly.
+// Needs the haxe CLI on PATH. Run: npm test
 
 const test = require('node:test');
+const { after } = test;
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -10,10 +12,10 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const root = path.join(__dirname, '..', '..', '..');
+const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'binflow-buffer-'));
 
 // Compiles the class with the runtime it imports, the same sources flowc gives to haxe
 const runtime = (function() {
-	const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'binflow-buffer-'));
 	const outFile = path.join(outDir, 'binflow_buffer.js');
 	execFileSync('haxe', [
 		'-cp', __dirname, '-cp', path.join(root, 'platforms', 'js'), '-cp', path.join(root, 'platforms', 'common', 'haxe'),
@@ -28,6 +30,14 @@ const runtime = (function() {
 	return require(outFile);
 })();
 const { JSBinflowBuffer, Native, HaxeRuntime, RuntimeType, FlowRefObject } = runtime;
+
+after(function() {
+	fs.rmSync(outDir, { recursive: true, force: true });
+	delete globalThis.window;
+	delete globalThis.navigator;
+	delete globalThis.location;
+	delete globalThis.matchMedia;
+});
 
 // Structs as the flow runtime registers them; None is the answer of a fixups function without a fixup
 const NONE_ID = 1, SOME_ID = 2, LEAF_ID = 3, NODE_ID = 4;
@@ -73,6 +83,8 @@ const withWord = function(words, index, word) {
 	return copy;
 };
 const withInt = function(words, index, value) { return withWord(withWord(words, index, value & 0xFFFF), index + 1, value >>> 16); };
+// The words of a string value shorter than 65536 characters
+const stringWords = function(s) { return [0xFFFA, s.length].concat(wordsOf(s)); };
 
 const nestedArrays = function(depth, inner) {
 	let value = inner;
@@ -129,8 +141,8 @@ checkRoundTrip('ref', ref(5.5));
 checkRoundTrip('struct with small int', sampleLeaf);
 checkRoundTrip('struct with big int', leaf(123456789, 'big', 0.5, true));
 checkRoundTrip('nested value', sampleNode);
-checkRoundTrip('arrays nested to the depth limit', nestedArrays(1024, 1.5));
-checkRoundTrip('structs nested below the depth limit', nestedNodes(500, 1.5));
+checkRoundTrip('arrays nested 1024 deep', nestedArrays(1024, 1.5));
+checkRoundTrip('nodes nested 500 deep', nestedNodes(500, 1.5));
 
 test('a negative int', function() {
 	// 0xFFF5 holds a 32-bit int as two words, low first; 0xFFF7 is an empty footer
@@ -146,6 +158,43 @@ test('a fixup builds the struct value', function() {
 		return name == 'Leaf' ? { _id: SOME_ID, value: function(args) { return { fixed: args }; } } : { _id: NONE_ID };
 	};
 	assert.deepStrictEqual(bufferOf(encode(sampleLeaf), true).deserialise(DEFAULT, fixups), { fixed: [2, 'alpha', 1.5, false] });
+});
+
+test('a second call with other fixups does not reuse the first', function() {
+	const words = encode(sampleLeaf);
+	const fixups = function(name) {
+		return name == 'Leaf' ? { _id: SOME_ID, value: function(args) { return { fixed: args }; } } : { _id: NONE_ID };
+	};
+	const buffer = bufferOf(words, true);
+	assert.deepStrictEqual(buffer.deserialise(DEFAULT, fixups), { fixed: [2, 'alpha', 1.5, false] });
+	assert.deepStrictEqual(buffer.deserialise(DEFAULT, noFixups), sampleLeaf);
+});
+
+// The deep inputs are built by hand and walked with a loop: 0xFFF8 1 opens an array of one element,
+// 0xFFF6 a ref, 0xFFF7 is an empty footer
+const deep = 100000;
+test('arrays nested ' + deep + ' deep', function() {
+	const body = [];
+	for (let i = 0; i < deep; i++) body.push(0xFFF8, 1);
+	let value = deserialise(assemble(body.concat([5]), [0xFFF7]));
+	let levels = 0;
+	while (Array.isArray(value) && value.length == 1) {
+		value = value[0];
+		levels++;
+	}
+	assert.strictEqual(levels, deep);
+	assert.strictEqual(value, 5);
+});
+
+test('refs nested ' + deep + ' deep', function() {
+	let value = deserialise(assemble(new Array(deep).fill(0xFFF6).concat([5]), [0xFFF7]));
+	let levels = 0;
+	while (value instanceof FlowRefObject) {
+		value = value.__v;
+		levels++;
+	}
+	assert.strictEqual(levels, deep);
+	assert.strictEqual(value, 5);
 });
 
 (function() {
@@ -171,11 +220,6 @@ test('a fixup builds the struct value', function() {
 	});
 })();
 
-checkDamaged('arrays nested past the depth limit', encode(nestedArrays(1025, 1.5)));
-checkDamaged('structs nested past the depth limit', encode(nestedNodes(600, 1.5)));
-// 0xFFF6 is a ref tag, 0xFFF7 an empty footer
-checkDamaged('refs nested past the depth limit', assemble(new Array(5000).fill(0xFFF6).concat([1]), [0xFFF7]));
-
 (function() {
 	const b = encode([1.5, 2.5, 3.5]);
 	const rest = b.slice(2);
@@ -191,6 +235,26 @@ checkDamaged('refs nested past the depth limit', assemble(new Array(5000).fill(0
 	checkDamaged('six word header cut short', header(1).concat([0]));
 	checkDamaged('empty input', []);
 	checkDamaged('one word input', [0xFFF7]);
+})();
+
+(function() {
+	// A footer entry is [arity, name]: an array of exactly an int and a string
+	const body = bodyOf(encode(sampleLeaf));
+	const name = stringWords('Leaf');
+	const footer = function(entry) { return [0xFFF8, 1].concat(entry); };
+	checkDamaged('footer entry of one element', assemble(body, footer([0xFFF8, 1, 4])));
+	checkDamaged('footer entry of three elements', assemble(body, footer([0xFFF8, 3, 4].concat(name, [0]))));
+	checkDamaged('footer entry that is an int', assemble(body, footer([4])));
+	checkDamaged('footer arity that is a string', assemble(body, footer([0xFFF8, 2].concat(stringWords('4'), name))));
+	checkDamaged('footer arity that is a double', assemble(body, footer([0xFFF8, 2].concat(bodyOf(encode(4.5)), name))));
+	checkDamaged('negative footer arity', assemble(body, footer([0xFFF8, 2, 0xFFF5, 0xFFFF, 0xFFFF].concat(name))));
+	checkDamaged('footer name that is an int', assemble(body, footer([0xFFF8, 2, 4, 7])));
+	checkDamaged('footer name cut short', assemble(body, footer([0xFFF8, 2, 4, 0xFFFA, 4, 0x4C])));
+	checkDamaged('footer that is an int', assemble(body, [4]));
+	test('a footer entry the body does not use', function() {
+		const unused = [0xFFF8, 2, 0].concat(stringWords('None'));
+		assert.deepStrictEqual(deserialise(assemble(body, [0xFFF8, 2, 0xFFF8, 2, 4].concat(name, unused))), sampleLeaf);
+	});
 })();
 
 (function() {

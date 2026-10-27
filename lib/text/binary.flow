@@ -31,17 +31,27 @@ deserializeBinary(s, default_) {
 deserializeBinary2(s, structFixups, default_) {
 	rv = fromBinary(s, default_, \name -> lookupTree(structFixups, name));
 	if (rv == flow(s)) { // Not implemented
-		deserializeBinary_flow(s, structFixups, default_);
+		deserializeBinaryFlow(s, structFixups, default_);
 	} else {
 		rv;
 	}
 }
 
-// Nesting deeper than this is treated as damaged input. It bounds the recursion of doBinary.
-maxBinaryNestingDepth = 1024;
+// The input up to the end of the value being read, and the struct definitions its footer declares
+BinaryInput(s : string, endIndex : int, structDefs : [BinaryStructDef]);
+BinaryStructDef(arity : int, name : string, fixup : Maybe<([flow]) -> flow>);
+
+// A value still being read around the current one
+BinaryFrame ::= BinaryArrayFrame, BinaryStructFrame, BinaryRefFrame;
+	// Elements still to read, and those read so far with the last one first
+	BinaryArrayFrame(remaining : int, elements : List<flow>);
+	BinaryStructFrame(def : BinaryStructDef, remaining : int, elements : List<flow>);
+	BinaryRefFrame();
 
 // A result index below zero marks damaged input: the whole value becomes the default
 damagedBinaryIndex = -1;
+damagedBinaryInt = Pair(0, damagedBinaryIndex);
+damagedBinaryString = Pair("", damagedBinaryIndex);
 
 damagedBinary(default_ : flow) -> Pair<flow, int> {
 	Pair(default_, damagedBinaryIndex);
@@ -49,14 +59,6 @@ damagedBinary(default_ : flow) -> Pair<flow, int> {
 
 isDamagedBinary(r : Pair<?, int>) -> bool {
 	r.second < 0;
-}
-
-// Words that follow a tag before any character or element data
-binaryTagHeaderWords(word : int) -> int {
-	if (word == 0xFFF4 || word == 0xFFFA || word == 0xFFF8) 1
-	else if (word == 0xFFF5 || word == 0xFFFB || word == 0xFFF9) 2
-	else if (word == 0xFFFC || word == 0xFFF3) 4
-	else 0;
 }
 
 getFooterOffset(s : string) -> Pair<int, int> {
@@ -67,9 +69,9 @@ getFooterOffset(s : string) -> Pair<int, int> {
 	if (strlen(s) < 2) {
 		Pair(0, 2)
 	} else {
-		footer_offset = stringbytes2int(strLeft(s, 2));
-		if (footer_offset != 1) {
-			Pair(footer_offset, 2)
+		footerOffset = stringbytes2int(strLeft(s, 2));
+		if (footerOffset != 1) {
+			Pair(footerOffset, 2)
 		} else if (strlen(s) < 6) {
 			Pair(0, 6)
 		} else {
@@ -78,133 +80,209 @@ getFooterOffset(s : string) -> Pair<int, int> {
 	}
 }
 
-deserializeBinary_flow(s : string, structFixups : Tree<string, ([flow]) -> flow>, default_ : flow) -> flow {
+deserializeBinaryFlow(s : string, structFixups : Tree<string, ([flow]) -> flow>, default_ : flow) -> flow {
 	footer = getFooterOffset(s);
 	footerOffset = footer.first;
 	bodyStart = footer.second;
-	default2 : [[flow]] = [];
 	// The footer lies after the header words and holds at least one word
 	defs = if (bodyStart < footerOffset && footerOffset < strlen(s)) {
-		doBinary(s, footerOffset, strlen(s), structFixups, default2, [], 0);
+		readBinaryFooter(BinaryInput(s, strlen(s), []), footerOffset, structFixups);
 	} else {
-		damagedBinary(default2);
+		None();
 	}
-	if (!isDamagedBinary(defs) && isArray(defs.first)) {
-		structDefs : [[flow]] = cast(defs.first : flow -> [[flow]]);
-
-		r = doBinary(s, bodyStart, footerOffset, structFixups, default_, structDefs, 0);
-		if (isDamagedBinary(r)) {
-			println("Binary file damaged!");
-			default_;
-		} else {
-			if (r.second < footerOffset) {
-				println("Did not understand all!");
-			}
-			r.first;
-		}
-	} else {
+	r = switch (defs) {
+		Some(structDefs): readBinary(BinaryInput(s, footerOffset, structDefs), bodyStart, makeList(), None(), default_);
+		None(): damagedBinary(default_);
+	}
+	if (isDamagedBinary(r)) {
 		println("Binary file damaged!");
 		default_;
-	}
-}
-
-doBinary(s : string, index : int, endIndex : int, structFixups : Tree<string, (args : [flow]) -> flow>, default_ : flow, structDefs : [[flow]], depth : int) -> Pair<flow, int> {
-	if (index >= endIndex || depth > maxBinaryNestingDepth) {
-		damagedBinary(default_);
 	} else {
-		word = getCharCodeAt(s, index);
-		if (index + 1 + binaryTagHeaderWords(word) > endIndex) {
-			damagedBinary(default_);
-		} else {
-			r = doBinaryValue(s, word, index + 1, endIndex, structFixups, default_, structDefs, depth);
-			// A damaged element damages its value, and every value ends inside the input
-			if (isDamagedBinary(r) || r.second > endIndex) damagedBinary(default_) else r;
+		if (r.second < footerOffset) {
+			println("Did not understand all!");
 		}
+		r.first;
 	}
 }
 
-doBinaryValue(s : string, word : int, ni : int, endIndex : int, structFixups : Tree<string, (args : [flow]) -> flow>, default_ : flow, structDefs : [[flow]], depth : int) -> Pair<flow, int> {
-	if (word == 0xFFF4) {
-		// struct
-		struct_ind = getCharCodeAt(s, ni);
-		if (struct_ind < length(structDefs)) {
-			def : [flow] = structDefs[struct_ind];
-			nargs : int = flow2i(def[0]);
-			name = flow2s(def[1]);
-			args = appendBinaryList(s, ni + 1, endIndex, structFixups, default_, nargs, makeList(), structDefs, depth + 1);
-			if (isDamagedBinary(args)) {
-				damagedBinary(default_);
-			} else {
-				fixup = lookupTree(structFixups, name);
-				Pair(switch (fixup : Maybe) {
-						Some(v): v(list2array(args.first));
-						None(): {
-							makeStructValue(name, list2array(args.first), IllegalStruct());
-						}
-					}, args.second);
-			}
-		} else {
-			damagedBinary(default_);
-		}
-	} else if (word == 0xFFF6) {
-		// ref
-		v = doBinary(s, ni, endIndex, structFixups, default_, structDefs, depth + 1);
-		Pair(flow(ref v.first), v.second);
-	} else if (word == 0xFFFA) {
-		// string, < 65536 length
-		binaryString(s, ni + 1, getCharCodeAt(s, ni), endIndex, default_);
+// Bounded reads: each checks that its words lie before endIndex and yields the value and the index after it
+readBinaryWord(input : BinaryInput, index : int) -> Pair<int, int> {
+	if (index >= input.endIndex) damagedBinaryInt
+	else Pair(getCharCodeAt(input.s, index), index + 1);
+}
+
+readBinaryInt(input : BinaryInput, index : int) -> Pair<int, int> {
+	if (input.endIndex - index < 2) damagedBinaryInt
+	else Pair(stringbytes2int(substring(input.s, index, 2)), index + 2);
+}
+
+readBinaryDouble(input : BinaryInput, index : int) -> Pair<double, int> {
+	if (input.endIndex - index < 4) Pair(0.0, damagedBinaryIndex)
+	else Pair(stringbytes2double(substring(input.s, index, 4)), index + 4);
+}
+
+// A run of l characters; a negative length is damaged too
+readBinaryChars(input : BinaryInput, index : int, l : int) -> Pair<string, int> {
+	if (l < 0 || l > input.endIndex - index) damagedBinaryString
+	else Pair(substring(input.s, index, l), index + l);
+}
+
+// An int at index: a small word, or a tagged 32-bit int in one of its two forms
+readBinaryIntValue(input : BinaryInput, index : int) -> Pair<int, int> {
+	tag = readBinaryWord(input, index);
+	if (isDamagedBinary(tag)) tag
+	else if (tag.first < 0xFFF3) tag
+	else if (tag.first == 0xFFF5) readBinaryInt(input, tag.second)
+	else if (tag.first == 0xFFF3) {
+		// Two ints, value & 0xF0F0F0F0 and value & 0x0F0F0F0F, so that no word is a UTF-16 surrogate
+		high = readBinaryInt(input, tag.second);
+		low = if (isDamagedBinary(high)) high else readBinaryInt(input, high.second);
+		if (isDamagedBinary(low)) low else Pair(bitOr(high.first, low.first), low.second);
+	} else damagedBinaryInt;
+}
+
+// A string at index: its length in a word or an int after the tag, then its characters
+readBinaryStringValue(input : BinaryInput, index : int) -> Pair<string, int> {
+	tag = readBinaryWord(input, index);
+	l = if (isDamagedBinary(tag)) tag
+		else if (tag.first == 0xFFFA) readBinaryWord(input, tag.second)
+		else if (tag.first == 0xFFFB) readBinaryInt(input, tag.second)
+		else damagedBinaryInt;
+	if (isDamagedBinary(l)) damagedBinaryString else readBinaryChars(input, l.second, l.first);
+}
+
+// An array head at index: its element count, which fits the words that remain, and where its elements start
+readBinaryCount(input : BinaryInput, index : int) -> Pair<int, int> {
+	tag = readBinaryWord(input, index);
+	count = if (isDamagedBinary(tag)) tag
+		else if (tag.first == 0xFFF7) Pair(0, tag.second)
+		else if (tag.first == 0xFFF8) readBinaryWord(input, tag.second)
+		else if (tag.first == 0xFFF9) readBinaryInt(input, tag.second)
+		else damagedBinaryInt;
+	// Each element takes at least one word
+	if (isDamagedBinary(count) || count.first < 0 || count.first > input.endIndex - count.second) damagedBinaryInt
+	else count;
+}
+
+// A value with no elements of its own, read with its tag at index
+readBinaryLeaf(input : BinaryInput, index : int) -> Pair<flow, int> {
+	word = getCharCodeAt(input.s, index);
+	ni = index + 1;
+	if (word == 0xFFF3 || word == 0xFFF5) {
+		i = readBinaryIntValue(input, index);
+		Pair(flow(i.first), i.second);
+	} else if (word == 0xFFFA || word == 0xFFFB) {
+		str = readBinaryStringValue(input, index);
+		Pair(flow(str.first), str.second);
 	} else if (word == 0xFFFC) {
-		// double
-		d : double = stringbytes2double(substring(s, ni, 4));
-		Pair(flow(d), ni + 4);
-	} else if (word == 0xFFF5) {
-		// int, long
-		i = stringbytes2int(substring(s, ni, 2));
-		Pair(flow(i), ni + 2);
-	} else if (word < 0xFFF3) { // Special case, since ints are common.
-		Pair(flow(word), ni);
-	} else if (word == 0xFFF3) {
-		// special case for ints in range to avoid issues with UCS-2/UTF16 encoding in JS
-		// they are stored as two long integers: value & 0xF0F0F0F0 and value & 0x0F0F0F0F
-		Pair(flow(bitOr(stringbytes2int(substring(s, ni, 2)), stringbytes2int(substring(s, ni + 2, 2)))), ni + 4);
+		d = readBinaryDouble(input, ni);
+		Pair(flow(d.first), d.second);
 	} else if (word == 0xFFFD) Pair(flow(false), ni)
 	else if (word == 0xFFFE) Pair(flow(true), ni)
-	else if (word == 0xFFF8) {
-		// array, < 65536 length
-		l = getCharCodeAt(s, ni);
-		result = appendBinaryList(s, ni + 1, endIndex, structFixups, default_, l, makeList(), structDefs, depth + 1);
-		Pair(flow(list2array(result.first)), result.second);
-	} else if (word == 0xFFF7) {
-		// empty array
-		arr : [flow] = [];
-		Pair(flow(arr), ni)
-	} else if (word == 0xFFFB) {
-		// string, >= 65536 length
-		binaryString(s, ni + 2, stringbytes2int(substring(s, ni, 2)), endIndex, default_);
-	} else if (word == 0xFFF9) {
-		// array, >= 65536 length
-		l = stringbytes2int(substring(s, ni, 2));
-		result = appendBinaryList(s, ni + 2, endIndex, structFixups, default_, l, makeList(), structDefs, depth + 1);
-		Pair(flow(list2array(result.first)), result.second);
-	} else if (word == 0xFFFF) Pair(flow(0), ni)		// It is not possible to construct a void value
-	// int
-	else Pair(flow(word), ni);
+	else Pair(flow(0), ni); // 0xFFFF is void, which no flow value can hold
 }
 
-// The characters of a string must end inside the input
-binaryString(s : string, start : int, l : int, endIndex : int, default_ : flow) -> Pair<flow, int> {
-	if (l < 0 || start + l > endIndex) damagedBinary(default_)
-	else Pair(flow(substring(s, start, l)), start + l);
+// The footer is [[arity, name], ...]: an array of entries, each an array of exactly an int and a string
+readBinaryFooter(input : BinaryInput, index : int, structFixups : Tree<string, ([flow]) -> flow>) -> Maybe<[BinaryStructDef]> {
+	count = readBinaryCount(input, index);
+	if (isDamagedBinary(count)) None()
+	else readBinaryStructDefs(input, count.second, structFixups, count.first, makeList());
 }
 
-appendBinaryList(s : string, index : int, endIndex : int, structFixups : Tree<string, (args : [flow]) -> flow>,
-			default_ : flow, n : int, l : List<flow>, structDefs : [[flow]], depth : int) -> Pair<List<flow>, int> {
-	if (n < 0) Pair(l, damagedBinaryIndex)
-	else if (n == 0) Pair(l, index)
+readBinaryStructDefs(input : BinaryInput, index : int, structFixups : Tree<string, ([flow]) -> flow>, remaining : int,
+	defs : List<BinaryStructDef>) -> Maybe<[BinaryStructDef]> {
+	if (remaining == 0) Some(list2array(defs))
 	else {
-		v = doBinary(s, index, endIndex, structFixups, default_, structDefs, depth);
-		if (isDamagedBinary(v)) Pair(l, damagedBinaryIndex)
-		else appendBinaryList(s, v.second, endIndex, structFixups, default_, n - 1, Cons(v.first, l), structDefs, depth);
+		size = readBinaryCount(input, index);
+		arity = if (isDamagedBinary(size) || size.first != 2) damagedBinaryInt else readBinaryIntValue(input, size.second);
+		name = if (isDamagedBinary(arity) || arity.first < 0) damagedBinaryString else readBinaryStringValue(input, arity.second);
+		if (isDamagedBinary(name)) None()
+		else {
+			def = BinaryStructDef(arity.first, name.first, lookupTree(structFixups, name.first));
+			readBinaryStructDefs(input, name.second, structFixups, remaining - 1, Cons(def, defs));
+		}
+	}
+}
+
+makeBinaryStruct(def : BinaryStructDef, args : [flow]) -> flow {
+	switch (def.fixup) {
+		Some(fixup): fixup(args);
+		None(): makeStructValue(def.name, args, IllegalStruct());
+	}
+}
+
+// Reads the value at index inside the open frames around it, the innermost first. A value just
+// completed, in done, closes the frames it completes; a damaged value damages the whole input
+readBinary(input : BinaryInput, index : int, frames : List<BinaryFrame>, done : Maybe<flow>, default_ : flow) -> Pair<flow, int> {
+	switch (done) {
+		Some(value): {
+			switch (frames) {
+				EmptyList(): Pair(value, index);
+				Cons(frame, rest): {
+					switch (frame) {
+						BinaryRefFrame(): readBinary(input, index, rest, Some(flow(ref value)), default_);
+						BinaryArrayFrame(remaining, elements): {
+							read = Cons(value, elements);
+							if (remaining > 1) {
+								readBinary(input, index, Cons(BinaryArrayFrame(remaining - 1, read), rest), None(), default_);
+							} else {
+								readBinary(input, index, rest, Some(flow(list2array(read))), default_);
+							}
+						}
+						BinaryStructFrame(def, remaining, elements): {
+							read = Cons(value, elements);
+							if (remaining > 1) {
+								readBinary(input, index, Cons(BinaryStructFrame(def, remaining - 1, read), rest), None(), default_);
+							} else {
+								readBinary(input, index, rest, Some(makeBinaryStruct(def, list2array(read))), default_);
+							}
+						}
+					}
+				}
+			}
+		}
+		None(): {
+			if (index >= input.endIndex) {
+				damagedBinary(default_);
+			} else {
+				word = getCharCodeAt(input.s, index);
+				if (word < 0xFFF3) {
+					// Small ints are the most common value
+					readBinary(input, index + 1, frames, Some(flow(word)), default_);
+				} else if (word == 0xFFF4) {
+					structIndex = readBinaryWord(input, index + 1);
+					if (isDamagedBinary(structIndex) || structIndex.first >= length(input.structDefs)) {
+						damagedBinary(default_);
+					} else {
+						def = input.structDefs[structIndex.first];
+						// Each field takes at least one word
+						if (def.arity > input.endIndex - structIndex.second) {
+							damagedBinary(default_);
+						} else if (def.arity == 0) {
+							readBinary(input, structIndex.second, frames, Some(makeBinaryStruct(def, [])), default_);
+						} else {
+							readBinary(input, structIndex.second, Cons(BinaryStructFrame(def, def.arity, makeList()), frames), None(), default_);
+						}
+					}
+				} else if (word == 0xFFF6) {
+					readBinary(input, index + 1, Cons(BinaryRefFrame(), frames), None(), default_);
+				} else if (word == 0xFFF7 || word == 0xFFF8 || word == 0xFFF9) {
+					count = readBinaryCount(input, index);
+					if (isDamagedBinary(count)) {
+						damagedBinary(default_);
+					} else if (count.first == 0) {
+						empty : [flow] = [];
+						readBinary(input, count.second, frames, Some(flow(empty)), default_);
+					} else {
+						readBinary(input, count.second, Cons(BinaryArrayFrame(count.first, makeList()), frames), None(), default_);
+					}
+				} else {
+					leaf = readBinaryLeaf(input, index);
+					if (isDamagedBinary(leaf)) damagedBinary(default_)
+					else readBinary(input, leaf.second, frames, Some(leaf.first), default_);
+				}
+			}
+		}
 	}
 }
 

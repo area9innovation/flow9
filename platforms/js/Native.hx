@@ -3337,6 +3337,7 @@ Native.memoryLeakReset();
 			try {
 				return string.deserialise(defvalue, fixups);
 			} catch (e : Dynamic) {
+				Errors.print("Binary deserialisation failed: " + Std.string(e));
 				return defvalue;
 			}
 		} else
