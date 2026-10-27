@@ -2,8 +2,8 @@ import formats/xml;
 import sys/target;
 import math/math;
 
-// Tests of xmlUnescape (lib/formats/xml.flow): one pass, each reference decoded once.
-// The performance test checks that many distinct references decode in linear time.
+// Tests of xmlUnescape (lib/formats/xml.flow): one pass, each reference decoded once,
+// only XML characters decoded. The performance test checks that decoding scales linearly.
 
 failures : ref int = ref 0;
 
@@ -37,6 +37,29 @@ testNumericReferences() -> void {
 	check("decimal above 0xFFFF", xmlUnescape("&#128512;"), fromCharCode(128512));
 	check("hex above 0xFFFF", xmlUnescape("&#x1F600;"), fromCharCode(0x1F600));
 	check("named and numeric", xmlUnescape("&lt;&#60;"), "<<");
+	check("many leading zeros", xmlUnescape("&#x00000041;&#0000000065;"), "AA");
+}
+
+testXmlCharEdges() -> void {
+	check("tab newline return", xmlUnescape("&#9;&#xA;&#xD;"), "\t\n\r");
+	check("space", xmlUnescape("&#x20;"), " ");
+	check("last before surrogates", xmlUnescape("&#xD7FF;"), fromCharCode(0xD7FF));
+	check("first after surrogates", xmlUnescape("&#xE000;"), fromCharCode(0xE000));
+	check("last of the BMP", xmlUnescape("&#xFFFD;"), fromCharCode(0xFFFD));
+	check("last code point", xmlUnescape("&#x10FFFF;"), fromCharCode(0x10FFFF));
+	check("last code point, decimal", xmlUnescape("&#1114111;"), fromCharCode(0x10FFFF));
+}
+
+testCodesOutsideXmlChar() -> void {
+	iter([
+		"&#0;", "&#x0;", "&#8;", "&#x1F;", "&#11;", "&#12;",
+		"&#xD800;", "&#xDFFF;", "&#55296;", "&#xFFFE;", "&#xFFFF;",
+		"&#x110000;", "&#1114112;", "&#4294967356;", "&#x10000003C;", "&#99999999999999999999;",
+		"&#x" + strRepeat("f", 4000) + ";", "&#" + strRepeat("9", 4000) + ";"
+	], \s -> {
+		check("kept as written: " + strLeft(s, 20), xmlUnescape(s), s);
+	});
+	check("kept in text", xmlUnescape("a&#0;b&#xD800;c"), "a&#0;b&#xD800;c");
 }
 
 testDecodedOnce() -> void {
@@ -60,8 +83,8 @@ testRoundTrip() -> void {
 	check("xmlUnescape(xmlEscapeText(s)) == s", xmlUnescape(xmlEscapeText(sample)), sample);
 }
 
-testPerformance() -> void {
-	n = 50000;
+// Decodes n distinct references and returns the time taken
+timeDecode(n : int) -> double {
 	// Distinct code points from 256 up: all inside the BMP and below the surrogate range
 	codes = enumFromTo(256, 256 + n - 1);
 	encoded = concatStrings(map(codes, \c -> "&#" + i2s(c) + ";"));
@@ -70,15 +93,28 @@ testPerformance() -> void {
 	time = timestamp() - start;
 	check("decode of " + i2s(n) + " distinct references", decoded, concatStrings(map(codes, fromCharCode)));
 	println("  decode " + i2s(strlen(encoded)) + " chars with " + i2s(n) + " references: " + d2s(time) + " ms");
-	if (time > 1000.0) {
+	time;
+}
+
+testPerformance() -> void {
+	small = 5000;
+	large = 50000;
+	tSmall = timeDecode(small);
+	tLarge = timeDecode(large);
+	// Linear decoding gives a ratio of about 10, quadratic - about 100
+	ratio = tLarge / max(tSmall, 1.0);
+	println("  time ratio for " + i2s(large / small) + "x input: " + d2s(roundTo(ratio, 0.1)));
+	if (ratio > 40.0) {
 		failures := ^failures + 1;
-		println("FAIL: decoding " + i2s(n) + " references took " + d2s(time) + " ms");
+		println("FAIL: decoding does not scale linearly, ratio " + d2s(roundTo(ratio, 0.1)));
 	}
 }
 
 main() {
 	testNamedEntities();
 	testNumericReferences();
+	testXmlCharEdges();
+	testCodesOutsideXmlChar();
 	testDecodedOnce();
 	testIncompleteReferences();
 	testRoundTrip();
