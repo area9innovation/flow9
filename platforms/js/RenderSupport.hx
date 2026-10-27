@@ -1988,6 +1988,8 @@ class RenderSupport {
 				listener(new Point(-sX, -sY));
 			}
 
+			mouseWheelZoomGesture = false;
+
 			return false;
 		};
 
