@@ -5,7 +5,6 @@ import behaviour;
 import ds/list;
 import math/math;
 import net/url_parameter;
-import math/uint64;
 
 // A SAX-style and a DOM-style XML parser.
 
@@ -200,47 +199,82 @@ xmlEscapeText(s : string) -> string {
 	s2;
 }
 
-// TODO add all HTML entities and rewrite the function,
-// hence sequential replaces are errorprone: &&#97;mp; will generate «&», while should «&amp;».
+// Decodes &quot; &apos; &gt; &lt; &amp;, &#NNN; and &#xHHH; in one pass, each reference once.
+// A reference that is incomplete, or that names no XML character, stays as written.
+// https://www.w3.org/TR/REC-xml/#sec-references
 xmlUnescape(s : string) -> string {
-	s0 = strReplace(s, "&quot;", "\"");
-	s1 = strReplace(s0, "&apos;", "'");
-	s2 = strReplace(s1, "&gt;", ">");
-	s3 = strReplace(s2, "&lt;", "<");
-	s4 = strReplace(s3, "&amp;", "&");
-	xmlUnescapeHelp(s4);
+	if (strIndexOf(s, "&") < 0) s
+	else list2string(xmlUnescapeFrom(s, 0, makeList()));
 }
 
-// https://www.w3.org/TR/REC-xml/#sec-references
-xmlUnescapeHelp(s : string) -> string {
-	unescapeHex = \onNotFound -> {
-		eitherFn(
-			findMatchingPairM(s, "&#x", ";"),
-			\pair -> {
-				encodedValue = strSubRange(s, pair.first, pair.second);
-				hex = strSubRange(encodedValue, 3, strlen(encodedValue) - 1);
-				xmlUnescapeHelp(strReplace(s, encodedValue, fromCharCode(s2i(strHex2dec(hex)))));
-			},
-			onNotFound
-		);
-	};
+xmlNamedEntities = [
+	Pair("&quot;", "\""), Pair("&apos;", "'"), Pair("&gt;", ">"), Pair("&lt;", "<"), Pair("&amp;", "&")
+];
 
-	unescapeUCS2 = \onNotFound -> {
-		eitherFn(
-			findMatchingPairM(s, "&#", ";"),
-			\pair -> {
-				encodedValue = strSubRange(s, pair.first, pair.second);
-				charCode = s2i(strSubRange(encodedValue, 2, strlen(encodedValue) - 1));
-				if (charCode < 0) {
-					println("ERROR. Enexpected char code: " + encodedValue);
-				};
-				xmlUnescapeHelp(strReplace(s, encodedValue, fromCharCode(charCode)));
-			},
-			onNotFound
-		);
-	};
+xmlUnescapeFrom(s : string, start : int, acc : List<string>) -> List<string> {
+	amp = strRangeIndexOf(s, "&", start, strlen(s));
+	if (amp < 0) {
+		Cons(strRight(s, start), acc);
+	} else {
+		plain = substring(s, start, amp - start);
+		decoded = xmlDecodeReference(s, amp);
+		xmlUnescapeFrom(s, decoded.second, Cons(decoded.first, Cons(plain, acc)));
+	}
+}
 
-	unescapeHex(\ -> unescapeUCS2(\ -> s));
+// Decodes the reference at the "&" at amp: Pair(text, position after it)
+xmlDecodeReference(s : string, amp : int) -> Pair<string, int> {
+	keepAmp = Pair("&", amp + 1);
+	if (xmlCharCodeAt(s, amp + 1) == 0x23) { // #
+		isHex = xmlCharCodeAt(s, amp + 2) == 0x78; // x
+		digitsStart = amp + 2 + b2i(isHex);
+		digitsEnd = xmlScanDigits(s, digitsStart, isHex);
+		if (digitsEnd > digitsStart && xmlCharCodeAt(s, digitsEnd) == 0x3B) { // ;
+			code = xmlReferenceCode(s, xmlSkipZeros(s, digitsStart, digitsEnd), digitsEnd, isHex);
+			if (isXmlChar(code)) Pair(fromCharCode(code), digitsEnd + 1) else keepAmp;
+		} else {
+			keepAmp;
+		}
+	} else {
+		eitherMap(
+			find(xmlNamedEntities, \e -> strContainsAt(s, amp, e.first)),
+			\e -> Pair(e.second, amp + strlen(e.first)),
+			keepAmp
+		);
+	}
+}
+
+// The char code at i, or -1 past the end
+xmlCharCodeAt(s : string, i : int) -> int {
+	if (i < strlen(s)) getCharCodeAt(s, i) else -1;
+}
+
+// The index of the first char at or after i that is not a decimal (or hex) digit
+xmlScanDigits(s : string, i : int, isHex : bool) -> int {
+	c = xmlCharCodeAt(s, i);
+	digit = (0x30 <= c && c <= 0x39) || (isHex && ((0x41 <= c && c <= 0x46) || (0x61 <= c && c <= 0x66)));
+	if (digit) xmlScanDigits(s, i + 1, isHex) else i;
+}
+
+// The first digit in [i, end) that is not a leading zero; the last digit always counts
+xmlSkipZeros(s : string, i : int, end : int) -> int {
+	if (i + 1 < end && getCharCodeAt(s, i) == 0x30) xmlSkipZeros(s, i + 1, end) else i;
+}
+
+// The code the digits in [start, end) name, or -1 when they are more than any XML character needs
+xmlReferenceCode(s : string, start : int, end : int, isHex : bool) -> int {
+	digits = substring(s, start, end - start);
+	if (strlen(digits) > (if (isHex) 6 else 7)) -1
+	else if (isHex) parseHex(digits)
+	else s2i(digits);
+}
+
+// The Char production of XML 1.0: no controls but tab, newline and return, no surrogates, no U+FFFE or U+FFFF
+isXmlChar(code : int) -> bool {
+	code == 0x9 || code == 0xA || code == 0xD
+	|| (0x20 <= code && code <= 0xD7FF)
+	|| (0xE000 <= code && code <= 0xFFFD)
+	|| (0x10000 <= code && code <= 0x10FFFF);
 }
 
 
