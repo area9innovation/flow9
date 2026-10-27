@@ -1,0 +1,159 @@
+import sys/target;
+import text/binary;
+import dynamic;
+import ds/array;
+import ds/tree;
+import string;
+
+// Tests of the binary format decoder (lib/text/binary.flow): round trips through
+// toBinary, hand-built inputs that are cut short or out of range, and very deep nesting.
+// The damaged and deep inputs are only checked where the C++ runner decodes them.
+
+Point(x : double, y : double);
+Node(name : string, children : [Node], tag : Maybe<int>);
+
+failures : ref int = ref 0;
+
+check(name : string, ok : bool) -> void {
+	if (!ok) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+	}
+}
+
+defaultValue = flow("default");
+
+decode(s : string) -> flow {
+	deserializeBinary(s, defaultValue);
+}
+
+roundTrip(name : string, v : flow) -> void {
+	check("round trip of " + name, decode(toBinary(v)) == v);
+}
+
+testRoundTrips() -> void {
+	iter([0, 1, -1, 0x7FFF, 0x8000, 0xD800, 0x7FFFFFFF, -0x7FFFFFFF - 1, -536936448], \i -> {
+		roundTrip("int " + i2s(i), flow(i));
+	});
+	iter([0.0, 1.5, -2.25, 1.0 / 3.0, 123456789.0 * 1000000000.0], \d -> {
+		roundTrip("double " + d2s(d), flow(d));
+	});
+	roundTrip("true", flow(true));
+	roundTrip("false", flow(false));
+	iter(["", "hello", "Hello, мир! 你好 😀", strRepeat("ab", 40000)], \s -> {
+		roundTrip("string of " + i2s(strlen(s)) + " chars", flow(s));
+	});
+	empty : [int] = [];
+	roundTrip("empty array", flow(empty));
+	roundTrip("array", flow([1, 2, 3]));
+	roundTrip("nested arrays", flow([[flow(1)], [flow(2), flow([3])], []]));
+	roundTrip("array of 70000", flow(generate(0, 70000, \i -> i)));
+	roundTrip("struct", flow(Point(1.5, -2.5)));
+	roundTrip("empty struct", flow(None()));
+	roundTrip("nested structs", flow(Node("root", [Node("a", [], None()), Node("b", [Node("c", [], Some(3))], None())], Some(1))));
+	roundTrip("mixed array", flow([flow(1), flow("two"), flow(3.0), flow(true), flow(Point(0.0, 0.0)), flow(empty)]));
+}
+
+// A ref is compared through its serialization, since refs have no structural equality
+testRefs() -> void {
+	iter([toBinary(ref 42), toBinary(ref Point(1.0, 2.0)), toBinary([flow(ref 1), flow(ref "a")]), toBinary(ref ref 7)], \s -> {
+		check("ref round trip of " + toString(s2a(s)), toBinary(decode(s)) == s);
+	});
+}
+
+testFixups() -> void {
+	// A fixup replaces each Point by a Pair while the input is read
+	fixups = makeTree1("Point", \args : [flow] -> flow(Pair(args[0], args[1])));
+	check("fixup of a struct", deserializeBinary2(toBinary(Point(1.0, 2.0)), fixups, defaultValue) == flow(Pair(1.0, 2.0)));
+	check("fixup inside an array", deserializeBinary2(toBinary([Point(1.0, 2.0), Point(3.0, 4.0)]), fixups, defaultValue) == flow([Pair(1.0, 2.0), Pair(3.0, 4.0)]));
+}
+
+chars(codes : [int]) -> string {
+	concatStrings(map(codes, fromCharCode));
+}
+
+// A binary string: the footer offset, the value and the footer of struct definitions
+binary(value : string, footer : string) -> string {
+	offset = 2 + strlen(value);
+	chars([offset % 65536, offset / 65536]) + value + footer;
+}
+
+noStructs = chars([0xFFF7]);
+// [[2, "Point"]]
+pointFooter = chars([0xFFF8, 1, 0xFFF8, 2, 2, 0xFFFA, 5]) + "Point";
+
+testHandBuilt() -> void {
+	check("hand-built array", decode(binary(chars([0xFFF8, 3, 1, 2, 3]), noStructs)) == flow([1, 2, 3]));
+	check("hand-built struct", decode(binary(chars([0xFFF4, 0, 0xFFFC, 0, 0, 0, 0x3FF0, 0xFFFC, 0, 0, 0, 0x4000]), pointFooter)) == flow(Point(1.0, 2.0)));
+	// 0x12345678 as the two halves 0x10305070 and 0x02040608 that keep clear of the surrogate range
+	check("hand-built int in two halves", decode(binary(chars([0xFFF3, 0x5070, 0x1030, 0x0608, 0x0204]), noStructs)) == flow(305419896));
+}
+
+testDamaged() -> void {
+	damaged = [
+		Pair("int cut short", binary(chars([0xFFF5, 1]), noStructs)),
+		Pair("int in two halves cut short", binary(chars([0xFFF3, 0x5070, 0x1030, 0x0608]), noStructs)),
+		Pair("string cut short", binary(chars([0xFFFA, 3, 97]), noStructs)),
+		Pair("ref without a value", binary(chars([0xFFF6]), noStructs)),
+		Pair("array that declares more elements than it holds", binary(chars([0xFFF8, 5, 1, 2]), noStructs)),
+		Pair("array with a huge element count", binary(chars([0xFFF9, 0xFFFF, 0x7FFF]), noStructs)),
+		Pair("footer offset past the end", chars([100, 0, 0xFFF8, 1, 7, 0xFFF7])),
+		Pair("footer offset inside the header", chars([0, 0, 7, 0xFFF7])),
+		Pair("struct index past the footer", binary(chars([0xFFF8, 2, 1, 0xFFF4, 5]), pointFooter)),
+		Pair("struct cut short", binary(chars([0xFFF4, 0, 0xFFFC, 0, 0, 0, 0x3FF0]), pointFooter)),
+		Pair("footer that declares more definitions than it holds", binary(chars([7]), chars([0xFFF8, 1000]))),
+		Pair("unknown tag", binary(chars([0xFFF0]), noStructs)),
+	];
+	iter(damaged, \p -> check(p.first + " gives the default", decode(p.second) == defaultValue));
+}
+
+// The depth of a chain of one-element arrays and the value at its end.
+// A self tail call, so the walk itself does not recurse deeply.
+arrayChain(v : flow, depth : int) -> Pair<int, flow> {
+	if (isArray(v)) {
+		a : [flow] = cast(v : flow -> [flow]);
+		if (length(a) == 1) arrayChain(a[0], depth + 1) else Pair(depth, v);
+	} else {
+		Pair(depth, v);
+	}
+}
+
+refChain(v : flow, depth : int) -> Pair<int, flow> {
+	if (getDataTagForValue(v) == reference_data_tag) {
+		r : ref flow = cast(v : flow -> ref flow);
+		refChain(^r, depth + 1);
+	} else {
+		Pair(depth, v);
+	}
+}
+
+// toBinary recurses, so the deep inputs are built by hand
+testDeep() -> void {
+	n = 100000;
+	arrays = arrayChain(decode(binary(strRepeat(chars([0xFFF8, 1]), n) + chars([7]), noStructs)), 0);
+	check("arrays nested " + i2s(n) + " deep", arrays == Pair(n, flow(7)));
+	refs = refChain(decode(binary(strRepeat(chars([0xFFF6]), n) + chars([7]), noStructs)), 0);
+	check("refs nested " + i2s(n) + " deep", refs == Pair(n, flow(7)));
+}
+
+main() {
+	println("Binary decoder tests in " + getTargetName());
+	testRoundTrips();
+	testRefs();
+	testFixups();
+	testHandBuilt();
+	if (cpp) {
+		testDamaged();
+		testDeep();
+	} else {
+		println("Damaged and deep inputs are skipped: only the C++ runner is checked for them here");
+	}
+
+	if (^failures == 0) {
+		println("Binary decoder tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " binary decoder test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
