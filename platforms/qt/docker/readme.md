@@ -33,6 +33,53 @@ whatever their Qt. Without the Qt 6 runtime libraries `bin/flowcpp` fails to
 start, because it prefers the build over the committed binary. Remove
 `QtByteRunner-build-release/` to go back to the committed one.
 
+# Getting the result to run on more hosts
+
+Neither of these is done; they are notes from trying.
+
+## Static libjpeg
+
+`libjpeg.so.8` is the only non-Qt library whose soname differs between
+distributions; libpng, freetype, zlib and GLU match everywhere. Ubuntu's
+`libjpeg-turbo8-dev` ships `libjpeg.a`, so on Linux `-ljpeg` in
+`QtByteRunner.pro` could become `-l:libjpeg.a` (its licences allow static
+linking). Fedora and Debian 13 meet the other requirements, so that alone
+would let the result start there. Debian 12 would still be out, because of its
+glibc and libstdc++. Not built or tested.
+
+## Bundling Qt with an rpath
+
+The binary can carry an rpath to a `lib/` next to it, through the qmake
+arguments `build.sh` passes on:
+
+```bash
+mise run flowcpp:docker-build 'QMAKE_RPATHDIR+=$ORIGIN/lib' QMAKE_LFLAGS+=-Wl,--disable-new-dtags
+```
+
+Copying the libraries `ldd` lists from the build image into `lib/` gave a
+runner that ran a `--batch` program on a host with Qt 6.12, using the bundled
+Qt 6.4 instead. Things learned on the way:
+
+- The single quotes keep `$ORIGIN` literal; qmake escapes it for make itself.
+- `--disable-new-dtags` makes the linker write RPATH instead of RUNPATH. The
+  loader ignores the executable's RUNPATH when it looks for the dependencies of
+  other libraries, so the bundled Qt could not find the bundled ICU. The
+  alternative is setting an rpath on every bundled library with `patchelf`,
+  which is what linuxdeploy does.
+- Qt has to be bundled complete. Qt modules use each other's private API, which
+  is versioned per build, so a single bundled module fails against the host's
+  other modules.
+- Not only Qt: ICU and two WebEngine dependencies whose sonames had moved on
+  on that host (`libvpx.so.9`, `libxml2.so.2`). Another distribution will miss
+  different ones, so a real bundle should take everything except glibc, GL and
+  the X/Wayland libraries, as AppImage's exclude list does.
+- That came to 24 libraries and 228 MB, most of it WebEngine. A working
+  `no_gui` build would need only Core, Network, Sql, WebSockets and ICU.
+- The bundled libraries still need Ubuntu 24.04's glibc.
+- GUI mode is untested. It also needs the platform plugins, a `qt.conf`, and
+  `QtWebEngineProcess` with its resources. linuxdeploy's Qt plugin automates
+  that part.
+
 # Qt from qt.io
 
 There used to be an image here that installed Qt 5.12 from qt.io with
