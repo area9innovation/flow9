@@ -122,13 +122,13 @@ parseJson(json : string) -> Json {
 
 parseJsonUntilError(json : string) -> JsonParseResult {
 	len = strlen(json);
-	v = doParseJson(json, len, 0);
+	v = doParseJson(json, len, 0, 0);
 	success = v.start != v.finish && v.finish == len;
 	JsonParseResult(v.data, if (success) -1 else v.finish, if (success) -1 else v.processed);
 }
 
 parseJsonSafe(json : string) -> Json {
-	v = doParseJson(json, strlen(json), 0);
+	v = doParseJson(json, strlen(json), 0, 0);
 	if (v.start == v.finish) JsonDouble(0.0) else v.data;
 }
 
@@ -233,16 +233,25 @@ getJsonIntValueM(json : Json) -> Maybe<int> {
 	}
 }
 
-doParseJson(json : string, jsonLength : int, start : int) -> ParsingAcc<Json> {
+// Arrays and objects nested deeper than this do not parse: the parser recurses once per level
+jsonMaxNestingDepth = 512;
+
+// depth is the number of arrays and objects open around the value at start
+doParseJson(json : string, jsonLength : int, start : int, depth : int) -> ParsingAcc<Json> {
 	charCode = getCharCodeAt(json, start);
 	if (charCode == 32 || charCode == 9 || charCode == 10 || charCode == 13) { // " " || "\t" || "\n" || "\r"
 		// Eat white space
-		doParseJson(json, jsonLength, start + 1);
+		doParseJson(json, jsonLength, start + 1, depth);
 	} else {
-		if (charCode == 91) {				// "["
-			parseJsonArray2(json, jsonLength, start + 1, makeList());
-		} else if (charCode == 123) {		// "{"
-			parseJsonObject2(json, jsonLength, start + 1, makeList());
+		if (charCode == 91 || charCode == 123) {	// "[" or "{"
+			if (depth >= jsonMaxNestingDepth) {
+				// Too deep: no progress, as for any value that does not parse
+				ParsingAcc(JsonDouble(0.0), start, start, start);
+			} else if (charCode == 91) {
+				parseJsonArray2(json, jsonLength, start + 1, depth + 1, makeList());
+			} else {
+				parseJsonObject2(json, jsonLength, start + 1, depth + 1, makeList());
+			}
 		} else if (charCode == 34) {		// "\""
 			v = deserializeRestOfString2(json, start + 1);
 			ParsingAcc(JsonString(v.first), start + 1, v.second, v.second);
@@ -260,10 +269,10 @@ doParseJson(json : string, jsonLength : int, start : int) -> ParsingAcc<Json> {
 }
 
 parseJsonObject(json : string, start : int, acc : List<Pair<string, Json>>) -> ParsingAcc<Json> {
-	parseJsonObject2(json, strlen(json), start, acc)
+	parseJsonObject2(json, strlen(json), start, 1, acc)
 }
 
-parseJsonObject2(json : string, jsonLength : int, start : int, acc : List<Pair<string, Json>>) -> ParsingAcc<Json> {
+parseJsonObject2(json : string, jsonLength : int, start : int, depth : int, acc : List<Pair<string, Json>>) -> ParsingAcc<Json> {
 	fin = skipJson2(json, jsonLength, start, " ").second;
 	head = switch (acc) {
 		EmptyList(): Pair(fin, fin);
@@ -284,13 +293,13 @@ parseJsonObject2(json : string, jsonLength : int, start : int, acc : List<Pair<s
 				Pair("", head.second + 1);
 
 		afterColon = skipJson2(json, jsonLength, key.second, ":");
-		value = doParseJson(json, jsonLength, afterColon.second);
+		value = doParseJson(json, jsonLength, afterColon.second, depth);
 		nacc = Cons(Pair(key.first, value.data), acc);
 		if (key.second == head.second + 1 || afterColon.first < 0 || value.start == value.finish) {
 			// Some problem - just give what we have so far, to allow partial parsing
 			ParsingAcc(JsonObject(list2array(nacc)), start, start, value.finish)
 		} else {
-			parseJsonObject2(json, jsonLength, value.finish, nacc);
+			parseJsonObject2(json, jsonLength, value.finish, depth, nacc);
 		}
 	}
 }
@@ -299,27 +308,31 @@ skipJson(json : string, start : int, char : string) -> int {
 	skipJson2(json, strlen(json), start, char).second;
 }
 
+// The position of char after the white space from start, or -1; and the position after char and the white space behind it
 skipJson2(json : string, jsonLength : int, start : int, char : string) -> Pair<int, int> {
-	if (start >= jsonLength) {
-		Pair(-1, start);
+	at = skipJsonSpaces(json, jsonLength, start);
+	if (at < jsonLength && fromCharCode(getCharCodeAt(json, at)) == char) {
+		Pair(at, skipJsonSpaces(json, jsonLength, at + 1));
 	} else {
-		headCharCode = getCharCodeAt(json, start);
-		if (fromCharCode(headCharCode) == char) {
-			v = skipJson2(json, jsonLength, start + 1, " ");
-			Pair(start, v.second);
-		} else if (headCharCode == 32 || headCharCode == 9 || headCharCode == 10 || headCharCode == 13) {
-			skipJson2(json, jsonLength, start + 1, char);
-		} else {
-			Pair(-1, start);
-		}
+		Pair(-1, at);
+	}
+}
+
+// The first position from start that holds no white space, in constant stack whatever the run length
+skipJsonSpaces(json : string, jsonLength : int, start : int) -> int {
+	if (start >= jsonLength) {
+		start;
+	} else {
+		charCode = getCharCodeAt(json, start);
+		if (charCode == 32 || charCode == 9 || charCode == 10 || charCode == 13) skipJsonSpaces(json, jsonLength, start + 1) else start;
 	}
 }
 
 parseJsonArray(json : string, start : int, acc : List<Json>) -> ParsingAcc<Json> {
-	parseJsonArray2(json, strlen(json), start, acc);
+	parseJsonArray2(json, strlen(json), start, 1, acc);
 }
 
-parseJsonArray2(json : string, jsonLength : int, start : int, acc : List<Json>) -> ParsingAcc<Json> {
+parseJsonArray2(json : string, jsonLength : int, start : int, depth : int, acc : List<Json>) -> ParsingAcc<Json> {
 	fin = skipJson2(json, jsonLength, start, " ").second;
 	head = switch (acc) {
 		EmptyList(): Pair(fin, fin);
@@ -331,12 +344,12 @@ parseJsonArray2(json : string, jsonLength : int, start : int, acc : List<Json>) 
  		// No comma nor bracket - just give what we have so far, to allow partial parsing
 		ParsingAcc(JsonArray(list2array(acc)), start, start, fin)
 	} else {
-		value = doParseJson(json, jsonLength, head.second);
+		value = doParseJson(json, jsonLength, head.second, depth);
 		if (value.start == value.finish) {
 			// No progress, so we have some problem - just give what we have so far, to allow partial parsing
 			ParsingAcc(JsonArray(list2array(acc)), start, start, value.finish)
 		} else {
-			parseJsonArray2(json, jsonLength, value.finish, Cons(value.data, acc));
+			parseJsonArray2(json, jsonLength, value.finish, depth, Cons(value.data, acc));
 		}
 	}
 }

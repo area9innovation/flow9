@@ -1,0 +1,132 @@
+import formats/json/json;
+import sys/target;
+import string;
+
+// Tests of the nesting-depth limit of the flow JSON parser (lib/formats/json/json.flow).
+// parseJsonSafe and parseJsonUntilError always run the flow parser, also where parseJson is native.
+
+// Mirrors jsonMaxNestingDepth in lib/formats/json/json.flow
+depthLimit = 512;
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + expected);
+		println("  actual:   " + actual);
+	}
+}
+
+// Value, error position and last processed position in one line
+result2s(r : JsonParseResult) -> string {
+	json2string(r.value) + " @" + i2s(r.errorPosition) + "/" + i2s(r.lastProcessedPosition);
+}
+
+// Arrays nested n levels deep: [[[]]]
+nestedArrays(n : int) -> string {
+	strRepeat("[", n) + strRepeat("]", n);
+}
+
+// Objects nested n levels deep: {"a":{"a":{"a":null}}}
+nestedObjects(n : int) -> string {
+	strRepeat("{\"a\":", n) + "null" + strRepeat("}", n);
+}
+
+// Arrays and objects in turn, n levels deep: [{"a":[{"a":1}]}]
+nestedMixed(n : int) -> string {
+	opens = generate(0, n, \i -> if (i % 2 == 0) "[" else "{\"a\":");
+	closes = generate(0, n, \i -> if ((n - 1 - i) % 2 == 0) "]" else "}");
+	concatStrings(opens) + "1" + concatStrings(closes);
+}
+
+// A document in canonical form parses back to itself
+checkRoundTrip(name : string, doc : string) -> void {
+	check(name + ": parseJsonSafe", json2string(parseJsonSafe(doc)), doc);
+	check(name + ": parseJsonUntilError", result2s(parseJsonUntilError(doc)), doc + " @-1/-1");
+}
+
+testOrdinaryDocuments() -> void {
+	checkRoundTrip("object with nested values", "{\"name\":\"flow\",\"version\":9,\"tags\":[\"json\",\"parser\"],\"nested\":{\"deep\":{\"deeper\":[1,2,3]}}}");
+	checkRoundTrip("scalars in an array", "[0,1,-2.5,100000,0.25,true,false,null,\"s\"]");
+	checkRoundTrip("string escapes", "[\"a\\\"b\\\\c\\nd\\teé/f\",\"\"]");
+	checkRoundTrip("empty containers", "[[],{},[[]],{\"a\":[],\"b\":{}}]");
+	checkRoundTrip("50 nested arrays", nestedArrays(50));
+	checkRoundTrip("50 nested objects", nestedObjects(50));
+	checkRoundTrip("50 mixed levels", nestedMixed(50));
+
+	check("escaped unicode", json2string(parseJsonSafe("\"\\u00e9\\u0001\"")), "\"é\\u0001\"");
+	check("white space between tokens", json2string(parseJsonSafe(" \t{\n\"a\" : [ 1\u0020, 2 ]\u0020,\r\n\"b\" : { } }\n ")), "{\"a\":[1,2],\"b\":{}}");
+	check("trailing content is kept out of the value", json2string(parseJsonSafe("[1,2] trailing")), "[1,2]");
+	check("trailing content is an error position", result2s(parseJsonUntilError("[1,2] trailing")), "[1,2] @5/5");
+	check("truncated input keeps the partial value", result2s(parseJsonUntilError("{\"x\":[1,2")), "{\"x\":[1,2]} @1/9");
+	check("truncated input in parseJsonSafe", json2string(parseJsonSafe("{\"x\":[1,2")), json2string(parseJsonSafe("[")));
+	check("value that does not parse", result2s(parseJsonUntilError("[x]")), "[] @1/1");
+}
+
+testAtLimit() -> void {
+	checkRoundTrip("arrays at the limit", nestedArrays(depthLimit));
+	checkRoundTrip("objects at the limit", nestedObjects(depthLimit));
+	checkRoundTrip("mixed levels at the limit", nestedMixed(depthLimit));
+}
+
+checkPastLimit(name : string, doc : string) -> void {
+	r = parseJsonUntilError(doc);
+	check(name + ": error position is reported", b2s(r.errorPosition >= 0), "true");
+	check(name + ": last processed position is reported", b2s(r.lastProcessedPosition >= 0), "true");
+	check(name + ": parseJsonSafe gives the failed-parse value", json2string(parseJsonSafe(doc)), json2string(parseJsonSafe("[")));
+}
+
+testPastLimit() -> void {
+	checkPastLimit("arrays past the limit", nestedArrays(depthLimit + 1));
+	checkPastLimit("objects past the limit", nestedObjects(depthLimit + 1));
+	checkPastLimit("mixed levels past the limit", nestedMixed(depthLimit + 1));
+	checkPastLimit("arrays past the limit inside an object", "{\"a\":" + nestedArrays(depthLimit) + "}");
+}
+
+// A run of white space inside a container is skipped in constant stack; one frame per space used to overflow it
+testLongWhiteSpace() -> void {
+	spaces = strRepeat(" ", 1000000);
+	mixed = strRepeat(" \t\r\n", 250000);
+	everywhere = "[" + spaces + "1" + spaces + "," + spaces + "{" + spaces + "\"a\"" + spaces + ":" + spaces + "2" + spaces + "}" + spaces + "]";
+	check("1000000 spaces after [", json2string(parseJsonSafe("[" + spaces + "1]")), "[1]");
+	check("1000000 spaces around every token", result2s(parseJsonUntilError(everywhere)), "[1,{\"a\":2}] @-1/-1");
+	check("1000000 mixed white space characters after ,", json2string(parseJsonSafe("[1," + mixed + "2]")), "[1,2]");
+	check("white space then nothing, as before", result2s(parseJsonUntilError("[1," + spaces)), "[1] @2/2");
+}
+
+// Returns the parse time in ms
+measureVeryDeep(name : string, doc : string) -> double {
+	start = timestamp();
+	checkPastLimit(name, doc);
+	time = timestamp() - start;
+	println("  " + name + " (" + i2s(strlen(doc)) + " chars): " + d2s(time) + " ms");
+	time;
+}
+
+testVeryDeep() -> void {
+	println("Very deep nesting:");
+	depth = 1000000;
+	time = measureVeryDeep("1000000 nested arrays", nestedArrays(depth)) + measureVeryDeep("1000000 nested objects", nestedObjects(depth));
+	if (time > 2000.0) {
+		failures := ^failures + 1;
+		println("FAIL: very deep nesting takes " + d2s(time) + " ms");
+	}
+}
+
+main() {
+	testOrdinaryDocuments();
+	testAtLimit();
+	testPastLimit();
+	testLongWhiteSpace();
+	testVeryDeep();
+
+	if (^failures == 0) {
+		println("JSON parse depth tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " JSON parse depth test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
