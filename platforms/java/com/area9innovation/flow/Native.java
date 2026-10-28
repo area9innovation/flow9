@@ -136,7 +136,7 @@ public class Native extends NativeHost {
 		List<Struct> structDefs = new ArrayList<Struct>();
 
 		StringBuilder buf = new StringBuilder();
-		writeBinaryValue(value, buf, structIdxs, structDefs);
+		writeBinaryValue(value, buf, structIdxs, structDefs, Collections.newSetFromMap(new IdentityHashMap<Reference<?>, Boolean>()));
 		StringBuilder buf2 = new StringBuilder();
 		writeBinaryInt32(buf.length() + 2, buf2);
 
@@ -178,7 +178,7 @@ public class Native extends NativeHost {
 		writeCharValue(high, buf);
 	}
 
-	final static void writeBinaryValue(Object value, StringBuilder buf, Map<Integer, Integer> structIdxs, List<Struct> structDefs) {
+	final static void writeBinaryValue(Object value, StringBuilder buf, Map<Integer, Integer> structIdxs, List<Struct> structDefs, Set<Reference<?>> openRefs) {
 		if (value == null) {
 			writeCharValue(0xffff, buf);
 		} else if (value instanceof String) {
@@ -209,12 +209,19 @@ public class Native extends NativeHost {
 					writeCharValue(l, buf);
 				}
 				for (int i = 0; i < arr.length; i++) {
-					writeBinaryValue(arr[i], buf, structIdxs, structDefs);
+					writeBinaryValue(arr[i], buf, structIdxs, structDefs, openRefs);
 				}
 			}
 		} else if (value instanceof Reference) {
+			Reference<?> ref = (Reference<?>) value;
 			writeCharValue(0xFFF6, buf);
-			writeBinaryValue(((Reference<?>) value).value, buf, structIdxs, structDefs);
+			if (openRefs.add(ref)) {
+				writeBinaryValue(ref.value, buf, structIdxs, structDefs, openRefs);
+				openRefs.remove(ref);
+			} else {
+				// The format has no back-references, so a ref inside its own value cannot be written
+				writeUnserializable("a ref that contains itself", buf);
+			}
 		} else if (value instanceof Double) {
 			writeCharValue(0xFFFC, buf);
 
@@ -255,12 +262,17 @@ public class Native extends NativeHost {
 			writeCharValue(struct_idx, buf);
 
 			for (int i=0; i < fields_count; ++i)  {
-				writeBinaryValue(struct_fields[i], buf, structIdxs, structDefs);
+				writeBinaryValue(struct_fields[i], buf, structIdxs, structDefs, openRefs);
 			}
 		} else {
-			// Writing nothing would leave a struct with fewer values than its arity
-			throw new RuntimeException("Cannot serialize " + value);
+			writeUnserializable(value.getClass().getName(), buf);
 		}
+	}
+
+	// Void keeps the value count of an enclosing struct equal to its arity, so the output stays readable
+	private static void writeUnserializable(String what, StringBuilder buf) {
+		System.out.println("toBinary cannot serialize " + what + ", written as void");
+		writeCharValue(0xffff, buf);
 	}
 
 	public static final double stringbytes2double(String s) {

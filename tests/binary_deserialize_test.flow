@@ -2,6 +2,7 @@ import text/binary;
 import math/bits;
 import math/math;
 import sys/target;
+import dynamic;
 
 // Tests of deserializeBinary (lib/text/binary.flow): values built by toBinary round-trip unchanged,
 // nesting of any depth decodes, and input that is cut short, declares too many elements, has a
@@ -15,6 +16,7 @@ BinTestDefault();
 BinTestLeaf(id : int, name : string, weight : double, flag : bool);
 BinTestNode(label : string, items : [flow], link : ref flow);
 BinTestChain(items : List<int>);
+BinTestHandler(label : string, onEvent : () -> int, count : int);
 
 failures : ref int = ref 0;
 defaultValue = flow(BinTestDefault());
@@ -252,9 +254,27 @@ testDamagedInputs() -> void {
 	println("  damaged inputs handled in " + d2s(roundTo(timestamp() - start, 0.1)) + " ms");
 }
 
+// Java's toBinary writes void for a value it cannot serialise, so the values after it stay in place;
+// the struct that held it decodes as IllegalStruct. JS throws and C++ reports an error, so Java only.
+testUnserializableValues() -> void {
+	handler = flow(BinTestHandler("h", \ -> 1, 3));
+	check("a struct with a function field leaves its neighbours whole",
+		deserializeBinary(toBinary(flow([handler, flow("after")])), defaultValue),
+		flow([flow(IllegalStruct()), flow("after")])
+	);
+
+	loop = BinTestNode("loop", [], ref flow(0));
+	loop.link := flow(loop);
+	decodedLoop = extractStructArguments(deserializeBinary(toBinary(flow(loop)), defaultValue));
+	check("a ref that contains itself is written once", flow(take(decodedLoop, 1)), flow([flow("loop")]));
+}
+
 main() {
 	testRoundTrips();
 	testChainDecoding();
+	if (java) {
+		testUnserializableValues();
+	}
 	if (usesFlowFallback()) {
 		testDeepNesting();
 		testDamagedInputs();
