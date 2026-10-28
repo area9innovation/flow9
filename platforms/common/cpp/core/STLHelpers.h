@@ -212,14 +212,14 @@ END_STL_HASH_NAMESPACE
 inline bool isualpha(unicode_char c) { return (c < 256 && isalpha(c)); }
 inline bool isuspace(unicode_char c) { return (c < 256 && isspace(c)); }
 
+// Decodes UTF-8 that arrives in chunks: a sequence cut at the end of one chunk
+// is kept and completed by the next. finish() decodes it like parseUtf8 would.
 class IncrementalUtf8Parser
 {
-    uint32_t w;
-    int bytes;
+    std::string pending;
 public:
-    IncrementalUtf8Parser() : w(0), bytes(0) {}
     void parse(unicode_string &out, const char *data, unsigned size);
-    bool is_complete() { return bytes == 0; }
+    void finish(unicode_string &out);
 };
 
 // We store here compiler flag about which logic of utf8 decode we should use:

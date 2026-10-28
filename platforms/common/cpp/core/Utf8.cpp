@@ -12,6 +12,7 @@
 
 #include <sstream>
 #include <cstring>
+#include <new>
 
 #ifdef IOS
 #import <UIKit/UIKit.h>
@@ -114,164 +115,114 @@ static unsigned encode(uint16_t c, uint16_t next_c, uint8_t *out, int &cnt)
     return usedSymbolsCount;
 }
 
-/* String processing */
-/* Parse UTF8 string to UTF16 (internal format) */
-template<class C>
-struct Utf8Parser
+static void appendUtf16(unicode_string &out, uint32_t w)
 {
-    uint32_t w;
-    int bytes;
-
-    unicode_string parse(const C &str, unsigned size);
-    void parse_range(unicode_string &out, const C &str, unsigned size);
-};
-
-template<class C>
-unicode_string Utf8Parser<C>::parse(const C &str, unsigned size)
-{
-    unicode_string out;
-    w = 0;
-    bytes = 0;
-    uint32_t err = L'?';
-    parse_range(out, str, size);
-    if (bytes)
-        out.push_back(err);
-    return out;
+    if (w < 0x10000) {
+        out.push_back((unicode_char) w);
+    } else {
+        w -= 0x10000;
+        out.push_back((unicode_char) ((w >> 10) + 0xD800));
+        out.push_back((unicode_char) ((w & 0x3FF) + 0xDC00));
+    }
 }
 
-/*
- * | Symbol octets | Binary representation               | First octet max value | Second octet max value |
- * |------------------------------------------------------------------------------------------------------|
- * | 1 octet       | 0xxxxxxx                            | 0000007F              | --                     |
- * | 2 octets      | 110xxxxx 10xxxxxx                   | 000000DF              | 000000BF               |
- * | 3 octets      | 1110xxxx 10xxxxxx 10xxxxxx          | 000000EF              | 000000BF               |
- * | 4 octets      | 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx | 000000F7              | 000000BF               |
-*/
+/* Decodes UTF-8 into UTF-16 and returns how many bytes it used. Each malformed part
+ * becomes one U+FFFD (Unicode "maximal subpart"); surrogates still decode, to read WTF-8.
+ * With final == false it stops before a sequence that the next chunk can complete. */
 template<class C>
-void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size)
+static size_t decodeUtf8(unicode_string &out, const C &str, size_t size, bool final)
 {
-    int bytes = 0;
-    uint16_t decode_error = (uint16_t)0xFFFD;
-
-    auto to_utf16 = [&out](uint64_t w)
-    {
-        if (w < 0x10000 /* 2 bytes or less */)
-        {
-            out.push_back((uint32_t) w);
-        }
-        else
-        {
-            w = w - 0x10000;
-            out.push_back((uint32_t) ((w >> 10) + 0xD800));
-            out.push_back((uint32_t) ((w & 0x3FF) + 0xDC00));
-        }
-    };
-
-    // Before decode the symbol from bytes chain we should check, does the chain is correct.
-    // Each byte after the first should contains signature that it is a part of chain.
-    //  second/third/fourth bytes should starts with 10xxxxxx
-    auto is_sequence_correct = [str, size](size_t i, int bytes)
-    {
-        bool is_correct = true;
-        if (size - i >= bytes)
-        {
-            unsigned char mask = 0xC0; // xx000000
-            unsigned char next_octet_mask = 0x80; // 10xxxxxx
-
-            for (size_t j = 1; j < bytes; j++)
-            {
-                unsigned char c = (unsigned char) str[i + j];
-                is_correct = is_correct && ((c&mask) == next_octet_mask);
-            }
-        }
-        else
-        {
-            is_correct = false;
-        }
-
-        return is_correct;
-    };
-
-    // Decode the chain of bytes into one symbol.
-    auto push_sequence = [&out, str, decode_error, is_sequence_correct, to_utf16](unsigned char mask, unsigned char c, size_t i, int bytes)
-    {
-        if (is_sequence_correct(i, bytes))
-        {
-            uint64_t w = (c & mask);
-
-            // second/third/fourth bytes
-            for (size_t j = 1; j < bytes; j++)
-            {
-                c = (unsigned char) str[i + j];
-                w = ((w << 6)|(c & 0x3F)); // 0x3F = 0011 1111
-            }
-
-            to_utf16(w);
-        }
-        else
-        {
-            out.push_back(decode_error);
-        }
-
-        return;
-    };
-
-    // Here we check signature of first byte - how much bytes in the chain (to read one utf8 symbol).
-    // If one byte chain - we push it at the end of the our decoded string.
-    // Otherwise (more that one byte) - we read the sequence and decode it into one symbol.
-    for (size_t i = 0; i < size; i++)
-    {
+    static const unicode_char decode_error = 0xFFFD;
+    size_t i = 0;
+    while (i < size) {
         unsigned char c = (unsigned char) str[i];
+        if (c <= 0x7F) {
+            out.push_back(c);
+            i++;
+            continue;
+        }
 
-        if (c <= 0x7F)  // 1 byte sequence, 0x7F = 0111 1111
-        {
-            out.push_back((uint32_t) c);
-        }
-        else if (c <= 0xDF) //2 bytes sequence, 0xDF = 1101 1111
-        {
-            bytes = 2;
-            push_sequence(0x1F, c, i, bytes); // 0x1F = 0001 1111
-            i += bytes - 1;
-        }
-        else if (c <= 0xEF) // 3 bytes sequence, 0xEF = 1110 1111
-        {
-            bytes = 3;
-            push_sequence(0x0F, c, i, bytes); // 0x0F = 0000 1111
-            i += bytes - 1;
-        }
-        else if (c <= 0xF7) // 4 bytes sequence, 0xF7 = 1111 0111
-        {
-            bytes = 4;
-            push_sequence(0x07, c, i, bytes); // 0x07 = 0000 0111
-            i += bytes - 1;
-        }
-        else //error, UTF-8 accept only max 4 octets
-        {
+        // Lead bytes C1 and F5-FF only start overlong or out-of-range code points, and C0
+        // only C0 80, the NUL of Java's modified UTF-8 (JNI strings on Android);
+        // E0, F0 and F4 narrow the second byte for the same reason.
+        size_t length;
+        uint32_t w;
+        unsigned char low = 0x80, high = 0xBF;
+        if (c == 0xC0) {
+            length = 2; w = 0; high = 0x80;
+        } else if (c >= 0xC2 && c <= 0xDF) {
+            length = 2; w = c & 0x1F;
+        } else if (c >= 0xE0 && c <= 0xEF) {
+            length = 3; w = c & 0x0F;
+            if (c == 0xE0) low = 0xA0;
+        } else if (c >= 0xF0 && c <= 0xF4) {
+            length = 4; w = c & 0x07;
+            if (c == 0xF0) low = 0x90;
+            if (c == 0xF4) high = 0x8F;
+        } else {
             out.push_back(decode_error);
+            i++;
+            continue;
         }
+
+        size_t j = 1;
+        for (; j < length && i + j < size; j++) {
+            unsigned char next = (unsigned char) str[i + j];
+            if (next < low || next > high)
+                break;
+            w = (w << 6) | (next & 0x3F);
+            low = 0x80;
+            high = 0xBF;
+        }
+
+        if (j == length)
+            appendUtf16(out, w);
+        else if (i + j == size && !final)
+            break;
+        else
+            out.push_back(decode_error);
+        i += j;
     }
+    return i;
 }
 
 void IncrementalUtf8Parser::parse(unicode_string &out, const char *data, unsigned size)
 {
-    Utf8Parser<const char*> worker;
-    worker.w = w;
-    worker.bytes = bytes;
-    worker.parse_range(out, data, size);
-    w = worker.w;
-    bytes = worker.bytes;
+    size_t from = 0;
+    if (!pending.empty()) {
+        // A sequence is at most 4 bytes, so this many settle the one the last chunk cut.
+        std::string head = pending + std::string(data, std::min<size_t>(size, 4 - pending.size()));
+        size_t used = decodeUtf8(out, head.data(), head.size(), false);
+        if (used < pending.size()) {
+            pending = head.substr(used);
+            return;
+        }
+        from = used - pending.size();
+    }
+    size_t used = decodeUtf8(out, data + from, size - from, false);
+    pending.assign(data + from + used, size - from - used);
+}
+
+void IncrementalUtf8Parser::finish(unicode_string &out)
+{
+    decodeUtf8(out, pending.data(), pending.size(), true);
+    pending.clear();
 }
 
 unicode_string parseUtf8(const std::string &str) {
-    return Utf8Parser<const char*>().parse(str.data(), str.size());
+    return parseUtf8(str.data(), str.size());
 }
 
 unicode_string parseUtf8(const char *str, unsigned size) {
-    return Utf8Parser<const char*>().parse(str, size);
+    unicode_string out;
+    decodeUtf8(out, str, size, true);
+    return out;
 }
 
 unicode_string parseUtf8u(const unicode_string &str) {
-    return Utf8Parser<const unicode_char*>().parse(str.data(), str.size());
+    unicode_string out;
+    decodeUtf8(out, str.data(), str.size(), true);
+    return out;
 }
 
 template<class C, class I>
@@ -312,88 +263,83 @@ unicode_string encodeUtf8u(const unicode_string &str)
 
 /* Random utilities from STLHelpers.h not specific to Flow runner */
 
+// The file's size, or -1 when it cannot be read whole: ftell gives -1 for a pipe, and
+// a directory opens on Linux (ftell may say LONG_MAX) but fails its first read.
+static long readableFileSize(FILE *file)
+{
+    if (fseek(file, 0, SEEK_END) != 0)
+        return -1;
+    long size = ftell(file);
+    rewind(file);
+    char probe;
+    if (size < 0 || (fread(&probe, 1, 1, file) == 0 && ferror(file)))
+        return -1;
+    rewind(file);
+    return size;
+}
+
+// Reads up to size bytes and returns how many it got.
+static size_t readUpTo(FILE *file, void *dest, size_t size)
+{
+    size_t pos = 0;
+    while (pos < size) {
+        size_t delta = fread((char*)dest + pos, 1, size - pos, file);
+        if (!delta)
+            break;
+        pos += delta;
+    }
+    return pos;
+}
+
 unicode_string readFileAsUnicodeString(std::string filename, bool *ok)
 {
     if (ok) *ok = false;
 
     FILE *file = fopen(filename.c_str(), "rb");
-    if (file) {
-        fseek(file, 0, SEEK_END);
-        size_t size = ftell(file);
-        rewind(file);
+    if (!file)
+        return unicode_string();
 
-        // Initialize a pointer for reading file data
-        void* data = malloc(size);
-
-        // Pick first 2 bytes to check whether it starts from BOM bytes
-        static const uint8_t bom_bytes[] = { 0xFF, 0xFE };
-        uint8_t leading_buffer[] = { '\0', '\0' };
-        size_t delta = fread(&leading_buffer, 1, 2, file);
-
-        // If so it means that is an UTF-16 string
-        bool isUtf16String = delta == 2 && memcmp(bom_bytes, leading_buffer, 2) == 0;
-
-        if (!isUtf16String)
-            rewind(file);
-
-        // Read file content
-        size_t pos = 0;
-        while (pos < size) {
-            size_t delta = fread(data, 1, size-pos, file);
-            if (!delta) {
-                break;
-            } else {
-                pos += delta;
-            }
-        }
-
+    long size = readableFileSize(file);
+    std::unique_ptr<char[]> data(size < 0 ? nullptr : new (std::nothrow) char[size]);
+    if (!data) {
         fclose(file);
-        if (ok) *ok = true;
-
-        // Interpret a file content as UTF-16 or UTF-8
-        if (isUtf16String) {
-            return unicode_string((uint16_t*)data, pos / 2);
-        } else {
-            return parseUtf8(std::string((char*)data, pos));
-        }
+        return unicode_string();
     }
+    size_t pos = readUpTo(file, data.get(), size);
+    fclose(file);
+    if (ok) *ok = true;
 
-    return unicode_string();
+    // A file that starts with the bytes FF FE (BOM) is UTF-16, otherwise it is UTF-8
+    if (pos >= 2 && (uint8_t)data[0] == 0xFF && (uint8_t)data[1] == 0xFE) {
+        return unicode_string((uint16_t*)(data.get() + 2), (pos - 2) / 2);
+    } else {
+        return parseUtf8(data.get(), pos);
+    }
 }
 
 bool readFileToVector(std::vector<uint8_t> *buffer, std::string name, bool auto_size)
 {
     FILE *file = fopen(name.c_str(), "rb");
+    if (!file)
+        return false;
 
-    if (file) {
-        size_t size = buffer->size();
-
-        if (auto_size) {
-            fseek(file, 0, SEEK_END);
-            size = ftell(file);
-            rewind(file);
-
-            buffer->resize(size);
+    if (auto_size) {
+        long size = readableFileSize(file);
+        if (size < 0) {
+            fclose(file);
+            return false;
         }
-
-        for (size_t pos = 0; pos < size; ) {
-            size_t delta = fread(&(*buffer)[pos], 1, size-pos, file);
-            if (!delta) {
-                if (auto_size)
-                    buffer->resize(pos);
-                else
-                    memset(&(*buffer)[pos], 0, size-pos);
-                break;
-            } else {
-                pos += delta;
-            }
-        }
-
-        fclose(file);
-        return true;
+        buffer->resize(size);
     }
 
-    return false;
+    size_t pos = readUpTo(file, buffer->data(), buffer->size());
+    if (auto_size)
+        buffer->resize(pos);
+    else
+        memset(buffer->data() + pos, 0, buffer->size() - pos);
+
+    fclose(file);
+    return true;
 }
 
 #ifdef QT_CORE_LIB
@@ -452,15 +398,25 @@ std::string stl_sprintf(const char *fmt, ...) {
     return rv;
 }
 
+// A pre-C99 vsnprintf returns -1 when the buffer is too small, a C99 one when the
+// output cannot be encoded; growing the buffer stops here so the second never loops.
+static const size_t STL_VSPRINTF_MAX_BUFFER = 64 * 1024 * 1024;
+
 std::string stl_vsprintf(const char *fmt, va_list args) {
     std::vector<char> buf;
     buf.resize(4096);
     for (;;) {
-        int rsz = vsnprintf(&buf[0], buf.size(), fmt, args);
+        // vsnprintf consumes the list it is given, so every attempt gets its own copy.
+        va_list attempt;
+        va_copy(attempt, args);
+        int rsz = vsnprintf(&buf[0], buf.size(), fmt, attempt);
+        va_end(attempt);
 
-        if (rsz < 0)
+        if (rsz < 0 && buf.size() >= STL_VSPRINTF_MAX_BUFFER)
+            return std::string();
+        else if (rsz < 0)
             buf.resize(buf.size()*2);
-        else if (unsigned(rsz) > buf.size())
+        else if (unsigned(rsz) >= buf.size())
             buf.resize(rsz+1);
         else
             return std::string(&buf[0], rsz);
