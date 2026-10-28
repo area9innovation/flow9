@@ -1,5 +1,6 @@
 import runtime;
 import string;
+import ds/list;
 
 export {
 	// An .ini file. Uses "" for quoting " in value. Without " in values, whitespace is trimmed
@@ -12,78 +13,107 @@ export {
 }
 
 parseIniFile(v : string) -> IniFile {
-	IniFile(doParseIniFile(v, []));
+	IniFile(list2array(doParseIniFile(v, 0, -1, makeList())));
 }
 
-doParseIniFile(v : string, acc : [IniSection]) -> [IniSection] {
-	sb = takeAfter(v, "[", "");
-	if (sb == "") {
+// The keys of one section, the position where they stop and the line end found last
+IniKeys(keys : List<KeyValue>, next : int, lineEnd : int);
+
+// The text is scanned by position; only section names, keys and values are copied out
+doParseIniFile(v : string, start : int, lineEnd : int, acc : List<IniSection>) -> List<IniSection> {
+	n = strlen(v);
+	lb = strRangeIndexOf(v, "[", start, n);
+	if (lb == -1 || lb + 1 >= n) {
 		acc
 	} else {
-		section = strSplitNext(sb, "]");
-		sectionName = section.first;
-		rest = takeAfter(section.second, "\n", section.second);
-		keys = doParseInitKeys(rest, []);
-		sect = IniSection(sectionName, keys.first);
-		nacc = arrayPush(acc, sect);
-		doParseIniFile(keys.second, nacc);
+		nameStart = lb + 1;
+		rb = strRangeIndexOf(v, "]", nameStart, n);
+		if (rb == -1) {
+			Cons(IniSection(strRight(v, nameStart), []), acc)
+		} else {
+			name = substring(v, nameStart, rb - nameStart);
+			headerEnd = iniLineEnd(v, rb + 1, lineEnd);
+			keys = doParseIniKeys(v, iniNextLine(rb + 1, headerEnd, n), headerEnd, makeList());
+			doParseIniFile(v, keys.next, keys.lineEnd, Cons(IniSection(name, list2array(keys.keys)), acc));
+		}
 	}
 }
 
-doParseInitKeys(v : string, acc : [KeyValue]) -> Pair<[KeyValue], string> {
-	se = strIndexOf(v, "=");
-	sb = strIndexOf(v, "[");
-	ss = strIndexOf(v, ";");
-
-	if (ss != -1 && (ss < se || se == -1) && (ss < sb || sb == -1)) {
-		semi = strRight(v, ss + 1);
-		nl = strIndexOf(semi, "\n");
-		el = strRight(semi, nl +1);
-		doParseInitKeys(el, acc);
-	} else if (se != -1 && (se < sb || sb == -1)) {
-		key = strLeft(v, se);
-		rest = strRight(v, se + 1);
-
-		le = strIndexOf(rest, "\n");
-		qu = strIndexOf(rest, "\"");
-		value : Pair<string, string> = if (qu != -1 && (qu < le || le == -1)) {
-			// A quoted value
-			grabIniQuoted(strRight(rest, qu + 1),"");
-		} else {
-			if (le == -1) {
-				Pair(trim(rest), "")
-			} else {
-				Pair(trim2(strLeft(rest, le), " \u000d"), strRight(rest, le + 1))
-			}
-		}
-		kv = KeyValue(trim2(key, "\n \u000d\t"), value.first);
-		nacc = arrayPush(acc, kv);
-		doParseInitKeys(value.second, nacc);
-	} else Pair(acc, v);
-}
-
-// Parse a quoted string after the first quote
-grabIniQuoted(s : string, acc : string) -> Pair<string, string> {
-	nq = strSplitNext(s, "\"");
-	if (nq.second == "") {
-		Pair(acc + nq.first, nq.second)
+// Keys up to the next "["; a ";" before the "=" starts a comment
+doParseIniKeys(v : string, start : int, lineEnd : int, acc : List<KeyValue>) -> IniKeys {
+	n = strlen(v);
+	special = iniFindAny(v, start, n, "=[;");
+	found = if (special == n) "" else getCharAt(v, special);
+	if (found == "=") {
+		key = trim2(substring(v, start, special - start), "\n \u000d\t");
+		valueEnd = iniLineEnd(v, special + 1, lineEnd);
+		value = parseIniValue(v, special + 1, valueEnd);
+		doParseIniKeys(v, value.second, valueEnd, Cons(KeyValue(key, value.first), acc));
+	} else if (found == ";") {
+		commentEnd = iniLineEnd(v, special + 1, lineEnd);
+		doParseIniKeys(v, iniNextLine(special + 1, commentEnd, n), commentEnd, acc);
 	} else {
-		if (getCharAt(nq.second, 0) == "\"") {
-			// Double quote
-			grabIniQuoted(strRight(nq.second, 1), acc + nq.first + "\"")
+		IniKeys(acc, special, lineEnd)
+	}
+}
+
+// The value after "=": quoted when a quote comes before the line end, else the line trimmed
+parseIniValue(v : string, start : int, lineEnd : int) -> Pair<string, int> {
+	qu = strRangeIndexOf(v, "\"", start, lineEnd);
+	if (qu != -1) {
+		grabIniQuoted(v, qu + 1, makeList())
+	} else {
+		text = substring(v, start, lineEnd - start);
+		if (lineEnd == strlen(v)) Pair(trim(text), lineEnd)
+		else Pair(trim2(text, " \u000d"), lineEnd + 1)
+	}
+}
+
+// Collects the quoted text after the opening quote; a doubled quote stands for one quote
+grabIniQuoted(v : string, start : int, acc : List<string>) -> Pair<string, int> {
+	n = strlen(v);
+	closing = strRangeIndexOf(v, "\"", start, n);
+	if (closing == -1) {
+		Pair(list2string(Cons(strRight(v, start), acc)), n)
+	} else {
+		piece = substring(v, start, closing - start);
+		if (closing + 1 < n && getCharAt(v, closing + 1) == "\"") {
+			grabIniQuoted(v, closing + 2, Cons("\"", Cons(piece, acc)))
 		} else {
-			Pair(acc + nq.first, nq.second)
+			Pair(list2string(Cons(piece, acc)), closing + 1)
 		}
 	}
 }
 
-iniFile2string(v : IniFile) {
-	fold(v.sections, "", \acc, s -> {
-		acc + "[" + escapeIni(s.name) + "]\n" +
-			fold(s.keys, "", \acc2, kv -> {
-				acc2 + kv.key + "=" + escapeIni(kv.value) + "\n"
-			}) + "\n"
-	});
+// Position of the first char from chars in [start, end), or end when there is none
+iniFindAny(v : string, start : int, end : int, chars : string) -> int {
+	if (start >= end) end
+	else if (strIndexOf(chars, getCharAt(v, start)) != -1) start
+	else iniFindAny(v, start + 1, end, chars);
+}
+
+// The first "\n" at or after pos, or the text length when there is none. known is an earlier
+// answer, still valid while pos has not passed it, so no stretch of text is searched twice
+iniLineEnd(v : string, pos : int, known : int) -> int {
+	if (pos <= known) {
+		known
+	} else {
+		nl = strRangeIndexOf(v, "\n", pos, strlen(v));
+		if (nl == -1) strlen(v) else nl
+	}
+}
+
+// The start of the line after lineEnd; a last line without "\n" is read from pos itself
+iniNextLine(pos : int, lineEnd : int, n : int) -> int {
+	if (lineEnd == n) pos else lineEnd + 1
+}
+
+iniFile2string(v : IniFile) -> string {
+	list2string(fold(v.sections, makeList(), \acc, s -> {
+		header = Cons("[" + escapeIni(s.name) + "]\n", acc);
+		keys = fold(s.keys, header, \acc2, kv -> Cons(kv.key + "=" + escapeIni(kv.value) + "\n", acc2));
+		Cons("\n", keys)
+	}));
 }
 
 escapeIni(s : string) -> string {	

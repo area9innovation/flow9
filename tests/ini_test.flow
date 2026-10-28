@@ -1,0 +1,200 @@
+import formats/ini;
+import sys/target;
+import math/math;
+
+// Tests of parseIniFile / iniFile2string (lib/formats/ini.flow).
+// The timing tests check that parsing and printing stay fast for many keys and many sections.
+
+failures : ref int = ref 0;
+
+// Parsing and printing one generated file must each finish within this budget
+timeBudgetMs = 1000.0;
+
+check(name : string, actual : ?, expected : ?) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+checkTime(name : string, ms : double) -> void {
+	if (ms > timeBudgetMs) {
+		failures := ^failures + 1;
+		println("FAIL: " + name + " took " + d2s(ms) + " ms, budget " + d2s(timeBudgetMs) + " ms");
+	}
+}
+
+sample = strGlue([
+	"; a comment before the first section is skipped",
+	"[owner]",
+	"name=John Doe",
+	"organization = Acme Widgets Inc.",
+	"\ttabbed\t=indented value",
+	"[database]",
+	"; a comment with key=value inside is skipped",
+	"server=192.0.2.62     ",
+	"port=143",
+	"file = \"payroll.dat\"",
+	"quoted=\"\"",
+	"quote=\"say \"\"hi\"\" twice\"",
+	"multiline=\"first line",
+	"second \"\"line\"\"\"",
+	"padded=\"  spaces kept  \"",
+	"empty=",
+	"blank=   ",
+	"[empty section]",
+	"[last]",
+	"tail=end"
+], "\n");
+
+expectedSample = IniFile([
+	IniSection("owner", [
+		KeyValue("name", "John Doe"),
+		KeyValue("organization", "Acme Widgets Inc."),
+		KeyValue("tabbed", "indented value")
+	]),
+	IniSection("database", [
+		KeyValue("server", "192.0.2.62"),
+		KeyValue("port", "143"),
+		KeyValue("file", "payroll.dat"),
+		KeyValue("quoted", ""),
+		KeyValue("quote", "say \"hi\" twice"),
+		KeyValue("multiline", "first line\nsecond \"line\""),
+		KeyValue("padded", "  spaces kept  "),
+		KeyValue("empty", ""),
+		KeyValue("blank", "")
+	]),
+	IniSection("empty section", []),
+	IniSection("last", [KeyValue("tail", "end")])
+]);
+
+expectedPrinted = strGlue([
+	"[owner]",
+	"name=John Doe",
+	"organization=Acme Widgets Inc.",
+	"tabbed=indented value",
+	"",
+	"[database]",
+	"server=192.0.2.62",
+	"port=143",
+	"file=payroll.dat",
+	"quoted=",
+	"quote=\"say \"\"hi\"\" twice\"",
+	"multiline=\"first line",
+	"second \"\"line\"\"\"",
+	"padded=\"  spaces kept  \"",
+	"empty=",
+	"blank=",
+	"",
+	"[empty section]",
+	"",
+	"[last]",
+	"tail=end",
+	"",
+	""
+], "\n");
+
+testParse() -> void {
+	check("parse sample", parseIniFile(sample), expectedSample);
+	check("parse empty text", parseIniFile(""), IniFile([]));
+	check("keys before the first section are skipped", parseIniFile("key=value\n"), IniFile([]));
+	check("CRLF line ends", parseIniFile("[s]\u000d\nkey=value\u000d\nother = x \u000d\n"),
+		IniFile([IniSection("s", [KeyValue("key", "value"), KeyValue("other", "x")])]));
+	check("value keeps = and ; after the first =", parseIniFile("[s]\nurl=a=b;c\n"),
+		IniFile([IniSection("s", [KeyValue("url", "a=b;c")])]));
+	check("quoted value ignores spaces before the quote", parseIniFile("[s]\nk =   \"v\"\n"),
+		IniFile([IniSection("s", [KeyValue("k", "v")])]));
+}
+
+// Current behaviour at the edges of the format, kept as is
+testEdgeCases() -> void {
+	check("trailing comment with = and no final newline is read as a key", parseIniFile("[s]\nk=v\n; note=1"),
+		IniFile([IniSection("s", [KeyValue("k", "v"), KeyValue("note", "1")])]));
+	check("text after a closing quote joins the next key", parseIniFile("[s]\na=\"x\" tail\nb=2\n"),
+		IniFile([IniSection("s", [KeyValue("a", "x"), KeyValue("tail\nb", "2")])]));
+	check("CR is trimmed before a newline but kept on the last line", parseIniFile("[s]\na=1\u000d\nb=2\u000d"),
+		IniFile([IniSection("s", [KeyValue("a", "1"), KeyValue("b", "2\u000d")])]));
+	check("a [ at the very end starts no section", parseIniFile("[s]\nk=v\n["),
+		IniFile([IniSection("s", [KeyValue("k", "v")])]));
+	check("a header without ] takes the rest as its name", parseIniFile("[s]\n[tail"),
+		IniFile([IniSection("s", []), IniSection("tail", [])]));
+	check("an unterminated quote takes the rest as the value", parseIniFile("[s]\nk=\"open\nmore"),
+		IniFile([IniSection("s", [KeyValue("k", "open\nmore")])]));
+}
+
+testPrint() -> void {
+	check("print sample", iniFile2string(parseIniFile(sample)), expectedPrinted);
+	check("print empty file", iniFile2string(IniFile([])), "");
+	check("print quotes a value with surrounding spaces", iniFile2string(IniFile([IniSection("s", [KeyValue("k", " v ")])])), "[s]\nk=\" v \"\n\n");
+}
+
+testRoundTrip() -> void {
+	check("round trip of sample", parseIniFile(iniFile2string(parseIniFile(sample))), parseIniFile(sample));
+	check("round trip of printed sample", iniFile2string(parseIniFile(expectedPrinted)), expectedPrinted);
+}
+
+makeIni(sections : int, keysPerSection : int) -> string {
+	concatStrings(generate(0, sections, \i -> {
+		"[section" + i2s(i) + "]\n"
+		+ concatStrings(generate(0, keysPerSection, \j -> "key" + i2s(j) + "=value" + i2s(j) + "\n"))
+		+ "\n"
+	}));
+}
+
+measure(sections : int, keysPerSection : int) -> void {
+	text = makeIni(sections, keysPerSection);
+	name = i2s(sections) + " sections x " + i2s(keysPerSection) + " keys";
+	parseStart = timestamp();
+	parsed = parseIniFile(text);
+	parseMs = timestamp() - parseStart;
+	printStart = timestamp();
+	printed = iniFile2string(parsed);
+	printMs = timestamp() - printStart;
+	println("  " + name + ": parse " + d2s(parseMs) + " ms, print " + d2s(printMs) + " ms");
+	check(name + ": section count", length(parsed.sections), sections);
+	check(name + ": key count", fold(parsed.sections, 0, \acc, s -> acc + length(s.keys)), sections * keysPerSection);
+	check(name + ": print gives the input back", printed, text);
+	checkTime(name + ": parse", parseMs);
+	checkTime(name + ": print", printMs);
+}
+
+// Text with no line end after some point must parse just as fast
+measureParse(name : string, text : string, sections : int, keys : int) -> void {
+	parseStart = timestamp();
+	parsed = parseIniFile(text);
+	parseMs = timestamp() - parseStart;
+	println("  " + name + ": parse " + d2s(parseMs) + " ms");
+	check(name + ": section count", length(parsed.sections), sections);
+	check(name + ": key count", fold(parsed.sections, 0, \acc, s -> acc + length(s.keys)), keys);
+	checkTime(name + ": parse", parseMs);
+}
+
+testPerformance() -> void {
+	println("Performance:");
+	small = makeIni(10, 10);
+	check("warm-up round trip", iniFile2string(parseIniFile(small)), small);
+	measure(200, 100);
+	measure(1, 20000);
+	measure(20000, 1);
+	measureParse("20000 headers on one line", concatStrings(generate(0, 20000, \i -> "[s" + i2s(i) + "]")), 20000, 0);
+	measureParse("20000 comment marks after the last line end", "[s]\n" + strRepeat(";x", 20000), 1, 0);
+	measureParse("20000 quoted values on one line", "[s]\n" + strRepeat("k=\"v\" ", 20000), 1, 20000);
+}
+
+main() {
+	testParse();
+	testEdgeCases();
+	testPrint();
+	testRoundTrip();
+	testPerformance();
+
+	if (^failures == 0) {
+		println("all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " INI test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
