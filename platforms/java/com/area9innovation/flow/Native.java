@@ -136,7 +136,7 @@ public class Native extends NativeHost {
 		List<Struct> structDefs = new ArrayList<Struct>();
 
 		StringBuilder buf = new StringBuilder();
-		writeBinaryValue(value, buf, structIdxs, structDefs, Collections.newSetFromMap(new IdentityHashMap<Reference<?>, Boolean>()));
+		writeBinaryValue(value, buf, structIdxs, structDefs, null);
 		StringBuilder buf2 = new StringBuilder();
 		writeBinaryInt32(buf.length() + 2, buf2);
 
@@ -214,14 +214,14 @@ public class Native extends NativeHost {
 			}
 		} else if (value instanceof Reference) {
 			Reference<?> ref = (Reference<?>) value;
+			if (openRefs == null)
+				openRefs = Collections.newSetFromMap(new IdentityHashMap<Reference<?>, Boolean>());
+			// The format has no back-references, so a ref inside its own value cannot be written
+			if (!openRefs.add(ref))
+				throw new RuntimeException("Cannot serialize a ref that contains itself");
 			writeCharValue(0xFFF6, buf);
-			if (openRefs.add(ref)) {
-				writeBinaryValue(ref.value, buf, structIdxs, structDefs, openRefs);
-				openRefs.remove(ref);
-			} else {
-				// The format has no back-references, so a ref inside its own value cannot be written
-				writeUnserializable("a ref that contains itself", buf);
-			}
+			writeBinaryValue(ref.value, buf, structIdxs, structDefs, openRefs);
+			openRefs.remove(ref);
 		} else if (value instanceof Double) {
 			writeCharValue(0xFFFC, buf);
 
@@ -265,14 +265,9 @@ public class Native extends NativeHost {
 				writeBinaryValue(struct_fields[i], buf, structIdxs, structDefs, openRefs);
 			}
 		} else {
-			writeUnserializable(value.getClass().getName(), buf);
+			// Writing nothing would leave a struct with fewer values than its arity; JS and C++ fail here too
+			throw new RuntimeException("Cannot serialize " + value.getClass().getName());
 		}
-	}
-
-	// Void keeps the value count of an enclosing struct equal to its arity, so the output stays readable
-	private static void writeUnserializable(String what, StringBuilder buf) {
-		System.out.println("toBinary cannot serialize " + what + ", written as void");
-		writeCharValue(0xffff, buf);
 	}
 
 	public static final double stringbytes2double(String s) {
