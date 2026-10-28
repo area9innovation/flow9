@@ -2883,6 +2883,10 @@ StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlo
     mapped = false;
 #endif
 
+    // An empty input is a missing file, not a damaged one: the default, and no message
+    if (ssize == 0)
+        return defval;
+
     RUNNER_RegisterNativeRoot(std::vector<StackSlot>, structFixups);
     RUNNER_RegisterNativeRoot(std::vector<StackSlot>, openSlots);
 
