@@ -65,6 +65,10 @@ class RenderSupport {
 	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
 	public static var PinchToScaleEnabled : Bool = true;
 	public static var StopKeyEventsPropagation : Bool = Util.getParameter("stop_key_events_propagation") != "0";
+	// When enabled, ctrl/cmd + mouse wheel zooms the whole document (accessibility zoom) on Windows.
+	// Apps that handle ctrl/cmd + wheel themselves disable this so the
+	// wheel event reaches the Flow wheel system instead of being consumed by the browser-style zoom.
+	public static var AccessibilityZoomOnWheelEnabled : Bool = Util.getParameter("accessibility_zoom_on_wheel") != "0";
 
 	// In fact that is needed for android to have dimensions without screen keyboard
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
@@ -314,6 +318,13 @@ class RenderSupport {
 		}
 
 		if (Platform.isMacintosh ? e.metaKey == true : e.ctrlKey == true) {
+			if (!AccessibilityZoomOnWheelEnabled) {
+				// The app handles cmd/ctrl + wheel itself. Still block the
+				// user-agent document zoom, but return false so the event reaches the Flow wheel system.
+				e.preventDefault();
+				return false;
+			}
+
 			if (dy > 0) {
 				e.preventDefault();
 
@@ -2307,6 +2318,16 @@ class RenderSupport {
 
 	public static function setAccessibilityEnabled(enabled : Bool) : Void {
 		AccessibilityEnabled = enabled && Platform.AccessiblityAllowed;
+	}
+
+	// Disable the built-in ctrl/cmd + wheel document zoom (Windows) so an app-level
+	// wheel handler receives the event instead.
+	public static function setAccessibilityZoomOnWheelEnabled(enabled : Bool) : Void {
+		AccessibilityZoomOnWheelEnabled = enabled;
+	}
+
+	public static function getAccessibilityZoomOnWheelEnabled() : Bool {
+		return AccessibilityZoomOnWheelEnabled;
 	}
 
 	public static function setEnableFocusFrame(show : Bool) : Void {
