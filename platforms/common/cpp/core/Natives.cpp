@@ -2338,7 +2338,22 @@ class BinaryDeserializer
 
     void readStructIndex(const StackSlot &fixups);
 
+    // A container whose values are still being read; its slot is in openSlots
+    struct OpenValue {
+        enum Kind { ARRAY, STRUCT, REF } kind;
+        unsigned size, remaining, struct_idx;
+    };
+    std::vector<OpenValue> openValues;
+    std::vector<StackSlot> openSlots;
+
+    bool openValue(OpenValue::Kind kind, unsigned size, unsigned struct_idx, StackSlot &value);
+    void storeValue(const OpenValue &frame, const StackSlot &value);
+    StackSlot closeValue();
+    StackSlot closeStruct(unsigned idx, const StackSlot &fields, unsigned size);
+    bool readNextValue(StackSlot &value);
     StackSlot readValue();
+
+    StackSlot damagedInput();
 
 public:
     BinaryDeserializer(RUNNER_VAR) : RUNNER(RUNNER) {
@@ -2590,6 +2605,13 @@ void BinaryDeserializer::readStructIndex(const StackSlot &fixups)
 
     int isize = readArraySize();
 
+    // Each definition takes at least one char, so a count past the end is out of range
+    if (error || isize < 0 || unsigned(isize) > ssize - char_idx)
+    {
+        error = true;
+        return;
+    }
+
     structIndex.resize(isize);
     structSize.resize(isize);
     structFixups.resize(isize, StackSlot::MakeVoid());
@@ -2630,44 +2652,143 @@ void BinaryDeserializer::readStructIndex(const StackSlot &fixups)
     ssize = offset;
 }
 
-StackSlot BinaryDeserializer::readValue()
+// Allocates a container and makes it the innermost open value.
+// An empty one is complete at once and comes back as `value`.
+bool BinaryDeserializer::openValue(OpenValue::Kind kind, unsigned size, unsigned struct_idx, StackSlot &value)
+{
+    StackSlot slot;
+    switch (kind)
+    {
+    case OpenValue::REF:
+        slot = NewRef();
+        break;
+#ifdef FLOW_COMPACT_STRUCTS
+    case OpenValue::STRUCT:
+        slot = NewArray(size, false);
+        break;
+#endif
+    default:
+        slot = NewArray(size);
+    }
+    if (error)
+        return false;
+
+    OpenValue frame = { kind, size, size, struct_idx };
+    openValues.push_back(frame);
+    openSlots.push_back(slot);
+
+    if (size > 0)
+        return false;
+    value = closeValue();
+    return !error;
+}
+
+// Puts a finished value into the next free slot of the innermost open container
+void BinaryDeserializer::storeValue(const OpenValue &frame, const StackSlot &value)
+{
+    const StackSlot &container = openSlots.back();
+    unsigned index = frame.size - frame.remaining;
+
+    switch (frame.kind)
+    {
+    case OpenValue::REF:
+        SetRefTarget(container, value);
+        break;
+#ifdef FLOW_COMPACT_STRUCTS
+    case OpenValue::STRUCT:
+        RUNNER->SetArraySlot(container, index, value);
+        break;
+#endif
+    default:
+        SetSlot(container, index, value);
+    }
+}
+
+// Closes the innermost open container and returns it as a value
+StackSlot BinaryDeserializer::closeValue()
+{
+    const OpenValue &frame = openValues.back();
+    StackSlot rv = openSlots.back();
+
+    if (frame.kind == OpenValue::STRUCT)
+        rv = closeStruct(frame.struct_idx, openSlots.back(), frame.size);
+
+    openValues.pop_back();
+    openSlots.pop_back();
+    return rv;
+}
+
+StackSlot BinaryDeserializer::closeStruct(unsigned idx, const StackSlot &fields, unsigned size)
+{
+    // Apply fixup if any
+    if (!structFixups[idx].IsVoid())
+        return RUNNER->EvalFunction(structFixups[idx], 1, fields);
+
+    if (!RUNNER->VerifyStruct(fields, structIndex[idx])) {
+        const StructDef &def = RUNNER->GetStructDef(structIndex[idx]);
+        cout << "struct name" << def.Name;
+        RUNNER->PrintData(RUNNER->flow_out, fields);
+
+        return RUNNER->MakeStruct("IllegalStruct", 0, NULL);
+    }
+
+#ifdef FLOW_COMPACT_STRUCTS
+    const StructDef &def = RUNNER->GetStructDef(structIndex[idx]);
+    if (size == 0)
+        return StackSlot::MakeStruct(def.EmptyPtr, def.StructId);
+
+    StackSlot tmp = StackSlot::MakeStruct(NewBuffer(def.ByteSize), def.StructId);
+    RUNNER->Memory.SetInt32(tmp.GetRawStructPtr(), def.StructId);
+    RUNNER->StructSlotPack(tmp, RUNNER->GetArraySlotPtr(fields, size), 0, size);
+    return tmp;
+#else
+    StackSlot rv = fields;
+    rv.Type = TStruct;
+    rv.IntValue2 = structIndex[idx];
+    return rv;
+#endif
+}
+
+// Reads the next value into `value`, or opens a container whose values follow
+bool BinaryDeserializer::readNextValue(StackSlot &value)
 {
     const unicode_char *pdata = readChars(1);
     if (error)
-        return *pdefault;
+        return false;
 
     switch (*pdata)
     {
     case 0xFFFF:
-        return StackSlot::MakeVoid();
+        value = StackSlot::MakeVoid();
+        return true;
     case 0xFFFC:
+    {
         pdata = readChars(4);
         if (!pdata)
-            return *pdefault;
+            return false;
 #ifdef FLOW_EMBEDDED
         // workaraund for ARMv7 alignment problem (both iOS and Android)
         FlowDouble d;
         memcpy(&d, pdata, sizeof(FlowDouble));
-        return StackSlot::MakeDouble(d);
+        value = StackSlot::MakeDouble(d);
 #else
-        return StackSlot::MakeDouble(*(FlowDouble*)pdata);
+        value = StackSlot::MakeDouble(*(FlowDouble*)pdata);
 #endif
+        return true;
+    }
     case 0xFFFD:
-        return StackSlot::MakeBool(false);
+        value = StackSlot::MakeBool(false);
+        return true;
     case 0xFFFE:
-        return StackSlot::MakeBool(true);
+        value = StackSlot::MakeBool(true);
+        return true;
     case 0xFFFA:
     case 0xFFFB:
         char_idx--;
-        return readString();
+        value = readString();
+        return !error;
     case 0xFFF6:
-    {
-        RUNNER_DefSlots1(ref);
-        ref = NewRef();
-        if (error) return *pdefault;
-        SetRefTarget(ref, readValue());
-        return ref;
-    }
+        return openValue(OpenValue::REF, 1, 0, value);
     case 0xFFF4:
     {
         unsigned idx = readChar();
@@ -2675,53 +2796,10 @@ StackSlot BinaryDeserializer::readValue()
         if (error || idx >= structIndex.size())
         {
             error = true;
-            return *pdefault;
+            return false;
         }
 
-        unsigned size = structSize[idx];
-
-        RUNNER_DefSlots1(arr);
-#ifdef FLOW_COMPACT_STRUCTS
-        arr = NewArray(size, false);
-        if (error) return *pdefault;
-        for (unsigned i = 0; i < size; i++)
-            RUNNER->SetArraySlot(arr, i, readValue());
-#else
-        arr = NewArray(size);
-        if (error) return *pdefault;
-        for (unsigned i = 0; i < size; i++)
-            SetSlot(arr, i, readValue());
-#endif
-
-        // Apply fixup if any
-        if (!structFixups[idx].IsVoid())
-            return RUNNER->EvalFunction(structFixups[idx], 1, arr);
-
-        if (!RUNNER->VerifyStruct(arr, structIndex[idx])) {
-            const StructDef &def = RUNNER->GetStructDef(structIndex[idx]);
-            cout << "struct name" << def.Name;
-            RUNNER->PrintData(RUNNER->flow_out, arr);
-
-            return RUNNER->MakeStruct("IllegalStruct", 0, NULL);
-        }
-
-#ifdef FLOW_COMPACT_STRUCTS
-        const StructDef &def = RUNNER->GetStructDef(structIndex[idx]);
-        if (size == 0)
-            arr = StackSlot::MakeStruct(def.EmptyPtr, def.StructId);
-        else
-        {
-            StackSlot tmp = StackSlot::MakeStruct(NewBuffer(def.ByteSize), def.StructId);
-            RUNNER->Memory.SetInt32(tmp.GetRawStructPtr(), def.StructId);
-            RUNNER->StructSlotPack(tmp, RUNNER->GetArraySlotPtr(arr, size), 0, size);
-            arr = tmp;
-        }
-#else
-        arr.Type = TStruct;
-        arr.IntValue2 = structIndex[idx];
-#endif
-
-        return arr;
+        return openValue(OpenValue::STRUCT, structSize[idx], idx, value);
     }
     case 0xFFF7:
     case 0xFFF8:
@@ -2730,25 +2808,67 @@ StackSlot BinaryDeserializer::readValue()
         char_idx--;
         unsigned size = readArraySize();
         if (error)
-            return *pdefault;
+            return false;
 
-        RUNNER_DefSlots1(arr);
-        arr = NewArray(size);
-        if (error) return *pdefault;
-        for (unsigned i = 0; i < size; i++)
-            SetSlot(arr, i, readValue());
-        return arr;
+        return openValue(OpenValue::ARRAY, size, 0, value);
     }
     case 0xFFF5:
-        return StackSlot::MakeInt(readInt32());
+        value = StackSlot::MakeInt(readInt32());
+        return !error;
     case 0xFFF3:
-        return StackSlot::MakeInt(readInt32() | readInt32());
+        value = StackSlot::MakeInt(readInt32() | readInt32());
+        return !error;
     default:
         if (*pdata <= 0x7FFF)
-            return StackSlot::MakeInt(*pdata);
+        {
+            value = StackSlot::MakeInt(*pdata);
+            return true;
+        }
         error = true;
-        return *pdefault;
+        return false;
     }
+}
+
+// Nesting is kept on openValues, not the call stack, so depth is bounded only by memory
+StackSlot BinaryDeserializer::readValue()
+{
+    openValues.clear();
+    openSlots.clear();
+
+    RUNNER_DefSlots1(value);
+
+    for (;;)
+    {
+        if (!readNextValue(value))
+        {
+            if (error)
+                return *pdefault;
+            continue;
+        }
+
+        // The value fills the innermost open container; close every container it completes
+        while (!openValues.empty())
+        {
+            OpenValue &top = openValues.back();
+            storeValue(top, value);
+            if (--top.remaining > 0)
+                break;
+
+            value = closeValue();
+            if (error)
+                return *pdefault;
+        }
+
+        if (openValues.empty())
+            return value;
+    }
+}
+
+// The input is not one complete, well-formed value: say so and give the default back
+StackSlot BinaryDeserializer::damagedInput()
+{
+    RUNNER->flow_out << "Binary file damaged!" << endl;
+    return *pdefault;
 }
 
 StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlot &defval, const StackSlot &fixups)
@@ -2763,11 +2883,18 @@ StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlo
     mapped = false;
 #endif
 
+    // An empty input is a missing file, not a damaged one: the default, and no message
+    if (ssize == 0)
+        return defval;
+
     RUNNER_RegisterNativeRoot(std::vector<StackSlot>, structFixups);
+    RUNNER_RegisterNativeRoot(std::vector<StackSlot>, openSlots);
 
     readStructIndex(fixups);
-    if (error || RUNNER->IsErrorReported())
+    if (RUNNER->IsErrorReported())
         return defval;
+    if (error)
+        return damagedInput();
 
     slot_budget = ssize + 1000;
 
@@ -2792,7 +2919,13 @@ StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlo
     StackSlot rv = readValue();
 
 #ifdef FLOW_MMAP_HEAP
-    if (mapped)
+    if (mapped && error)
+    {
+        // Nothing refers to what was built, so the area is released instead of registered
+        if (area->start < hplimit)
+            MEMORY->DecommitRange(area->start, hplimit);
+    }
+    else if (mapped)
     {
         RUNNER->MapAreaBase = hp = FlowPtrAlignUp(hp, MEMORY->PageSize());
         area->length = hp - area->start;
@@ -2802,6 +2935,8 @@ StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlo
     }
 #endif
 
+    if (error)
+        return damagedInput();
     if (char_idx < ssize)
         RUNNER->flow_out << "Did not understand all!";
     return rv;
