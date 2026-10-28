@@ -16,7 +16,6 @@ import java.time.*;
 import java.time.format.*;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.function.Function;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
@@ -213,8 +212,9 @@ public class Native extends NativeHost {
 					writeBinaryValue(arr[i], buf, structIdxs, structDefs);
 				}
 			}
-		} else if (value instanceof Function) {
-			System.out.println("Not implemented: toBinary of " + value);
+		} else if (value instanceof Reference) {
+			writeCharValue(0xFFF6, buf);
+			writeBinaryValue(((Reference<?>) value).value, buf, structIdxs, structDefs);
 		} else if (value instanceof Double) {
 			writeCharValue(0xFFFC, buf);
 
@@ -258,7 +258,8 @@ public class Native extends NativeHost {
 				writeBinaryValue(struct_fields[i], buf, structIdxs, structDefs);
 			}
 		} else {
-			System.out.println("Not implemented: toBinary of " + value);
+			// Writing nothing would leave a struct with fewer values than its arity
+			throw new RuntimeException("Cannot serialize " + value);
 		}
 	}
 
