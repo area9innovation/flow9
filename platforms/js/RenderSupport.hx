@@ -306,6 +306,26 @@ class RenderSupport {
 		}
 	}
 
+	private static var mouseWheelZoomClaims : Int = 0;
+	private static var mouseWheelZoomGesture : Bool = false;
+
+	// While claimed, Ctrl+wheel (Cmd+wheel or trackpad pinch on macOS) goes to flow wheel handlers instead of zooming the page
+	public static function claimMouseWheelZoom() : Void -> Void {
+		mouseWheelZoomClaims++;
+		var released = false;
+
+		return function() {
+			if (!released) {
+				released = true;
+				mouseWheelZoomClaims--;
+			}
+		};
+	}
+
+	public static function isMouseWheelZoomGesture() : Bool {
+		return mouseWheelZoomGesture;
+	}
+
 	private static var onMouseWheelAccessibilityZoomEnabled = true;
 
 	public static function onMouseWheelAccessibilityZoom(e : Dynamic, dx : Float, dy : Float) : Bool {
@@ -1915,8 +1935,10 @@ class RenderSupport {
 			var sX = 0.0, sY = 0.0,	// spinX, spinY
 				pX = 0.0, pY = 0.0;	// pixelX, pixelY
 
+			mouseWheelZoomGesture = mouseWheelZoomClaims > 0 && (event.ctrlKey == true || Platform.isMacintosh && event.metaKey == true);
+
 			// prevents swipe back for Safari
-			if (isRenderRoot || Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+			if (isRenderRoot || mouseWheelZoomGesture || Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
 				event.preventDefault();
 			}
 			if (isRenderRoot) {
@@ -1951,6 +1973,12 @@ class RenderSupport {
 				}
 			}
 
+			// Claimed zoom keeps the gesture's sign and size: a mouse notch is about 100 px, one spin
+			if (mouseWheelZoomGesture) {
+				if (pX != 0.0 && sX == 0.0) { sX = pX / 100.0; }
+				if (pY != 0.0 && sY == 0.0) { sY = pY / 100.0; }
+			}
+
 			// Fall-back if spin cannot be determined
 			if (!ScrollCatcherEnabled) {
 				if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
@@ -1962,9 +1990,11 @@ class RenderSupport {
 				sY = 0.0;
 			}
 
-			if (RendererType != "html" || !onMouseWheelAccessibilityZoom(event, -sX, -sY)) {
+			if (mouseWheelZoomGesture || RendererType != "html" || !onMouseWheelAccessibilityZoom(event, -sX, -sY)) {
 				listener(new Point(-sX, -sY));
 			}
+
+			mouseWheelZoomGesture = false;
 
 			return false;
 		};
