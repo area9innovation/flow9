@@ -16,7 +16,6 @@ import java.time.*;
 import java.time.format.*;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.function.Function;
 
 public class Native extends NativeHost {
 	private static final int NTHREDS = 16;
@@ -137,7 +136,7 @@ public class Native extends NativeHost {
 		List<Struct> structDefs = new ArrayList<Struct>();
 
 		StringBuilder buf = new StringBuilder();
-		writeBinaryValue(value, buf, structIdxs, structDefs);
+		writeBinaryValue(value, buf, structIdxs, structDefs, null);
 		StringBuilder buf2 = new StringBuilder();
 		writeBinaryInt32(buf.length() + 2, buf2);
 
@@ -179,7 +178,7 @@ public class Native extends NativeHost {
 		writeCharValue(high, buf);
 	}
 
-	final static void writeBinaryValue(Object value, StringBuilder buf, Map<Integer, Integer> structIdxs, List<Struct> structDefs) {
+	final static void writeBinaryValue(Object value, StringBuilder buf, Map<Integer, Integer> structIdxs, List<Struct> structDefs, Set<Reference<?>> openRefs) {
 		if (value == null) {
 			writeCharValue(0xffff, buf);
 		} else if (value instanceof String) {
@@ -210,11 +209,19 @@ public class Native extends NativeHost {
 					writeCharValue(l, buf);
 				}
 				for (int i = 0; i < arr.length; i++) {
-					writeBinaryValue(arr[i], buf, structIdxs, structDefs);
+					writeBinaryValue(arr[i], buf, structIdxs, structDefs, openRefs);
 				}
 			}
-		} else if (value instanceof Function) {
-			System.out.println("Not implemented: toBinary of " + value);
+		} else if (value instanceof Reference) {
+			Reference<?> ref = (Reference<?>) value;
+			if (openRefs == null)
+				openRefs = Collections.newSetFromMap(new IdentityHashMap<Reference<?>, Boolean>());
+			// The format has no back-references, so a ref inside its own value cannot be written
+			if (!openRefs.add(ref))
+				throw new RuntimeException("Cannot serialize a ref that contains itself");
+			writeCharValue(0xFFF6, buf);
+			writeBinaryValue(ref.value, buf, structIdxs, structDefs, openRefs);
+			openRefs.remove(ref);
 		} else if (value instanceof Double) {
 			writeCharValue(0xFFFC, buf);
 
@@ -255,10 +262,11 @@ public class Native extends NativeHost {
 			writeCharValue(struct_idx, buf);
 
 			for (int i=0; i < fields_count; ++i)  {
-				writeBinaryValue(struct_fields[i], buf, structIdxs, structDefs);
+				writeBinaryValue(struct_fields[i], buf, structIdxs, structDefs, openRefs);
 			}
 		} else {
-			System.out.println("Not implemented: toBinary of " + value);
+			// Writing nothing would leave a struct with fewer values than its arity; JS and C++ fail here too
+			throw new RuntimeException("Cannot serialize " + value.getClass().getName());
 		}
 	}
 
