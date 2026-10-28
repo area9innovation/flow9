@@ -270,9 +270,9 @@ test('refs nested ' + deep + ' deep', function() {
 	checkDamaged('double cut by the footer', assemble(bodyOf(d).slice(0, 1), footerOf(d)));
 })();
 
-test('fromBinary answers the default value when deserialising throws', function() {
+test('fromBinary lets a throwing fixup reach the caller', function() {
 	const throwing = function() { throw new Error('fixup lookup failed'); };
-	assert.strictEqual(Native.fromBinary(bufferOf(encode(sampleLeaf), true), DEFAULT, throwing), DEFAULT);
+	assert.throws(function() { Native.fromBinary(bufferOf(encode(sampleLeaf), true), DEFAULT, throwing); }, /fixup lookup failed/);
 });
 
 test('fromBinary returns a plain string unchanged', function() {

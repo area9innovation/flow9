@@ -3334,12 +3334,7 @@ Native.memoryLeakReset();
 	public static function fromBinary(string : Dynamic, defvalue : Dynamic, fixups : Dynamic) : Dynamic {
 		#if js
 		if (Type.getClass(string) == JSBinflowBuffer) {
-			try {
-				return string.deserialise(defvalue, fixups);
-			} catch (e : Dynamic) {
-				Errors.print("Binary deserialisation failed: " + Std.string(e));
-				return defvalue;
-			}
+			return string.deserialise(defvalue, fixups);
 		} else
 		#end
 		{
