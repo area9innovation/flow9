@@ -2,6 +2,8 @@
 #include <sstream>
 
 #include "GLRenderer.h"
+#include <stdexcept>
+#include <new>
 
 #ifndef FLOW_EMBEDDED
   #ifdef __APPLE__
@@ -1722,11 +1724,29 @@ bool GLTextureImage::swizzleRB() const
     return swizzle_rb;
 }
 
+// A bitmap that needs data but is past the size limit cannot be built
+static size_t checkedBytes(ivec2 size, GLenum format)
+{
+    size_t bytes = GLTextureBitmap::bitmapBytes(size, format);
+    if (bytes == 0 && format != GL_FALSE && size.x > 0 && size.y > 0)
+        throw std::length_error("GLTextureBitmap: image size out of range");
+    return bytes;
+}
+
 GLTextureBitmap::GLTextureBitmap(ivec2 size, GLenum format, bool flip, bool use_mipmaps, bool /*swizzleRB*/) :
     GLTextureImage(size, flip), format(format), use_mipmaps(use_mipmaps), data_dirty(false)
 {
     bytes_per_pixel = getBytesPerPixel(format);
-    reallocate(bytes_per_pixel * size.x * size.y);
+    reallocate(checkedBytes(size, format));
+}
+
+size_t GLTextureBitmap::bitmapBytes(ivec2 size, GLenum format)
+{
+    if (size.x <= 0 || size.y <= 0)
+        return 0;
+    if (size_t(size.y) > MAX_PIXELS / size_t(size.x))
+        return 0;
+    return size_t(size.x) * size_t(size.y) * getBytesPerPixel(format);
 }
 
 unsigned GLTextureBitmap::getBytesPerPixel(GLenum format)
@@ -1811,12 +1831,14 @@ void GLTextureBitmap::reuploadData()
 
 void GLTextureBitmap::resize(ivec2 new_size, bool flip)
 {
+    // Allocated first, so that a refused or failed size leaves the bitmap as it was
+    reallocate(checkedBytes(new_size, format));
+
     // Size changed — must destroy old texture so bindTo() re-creates at new dimensions.
     invalidate();
     data_dirty = false;
 
     setSize(new_size, flip);
-    reallocate(bytes_per_pixel * new_size.x * new_size.y);
 }
 
 void GLTextureBitmap::share(GLTextureBitmap::Ptr other)
@@ -1832,22 +1854,25 @@ void GLTextureBitmap::share(GLTextureBitmap::Ptr other)
     data = other->data;
 }
 
+// Nothing is written before the new storage exists, so a failure leaves the bitmap as it was
 void GLTextureBitmap::reallocate(size_t bytes)
 {
     size_t old_bytes = data.size();
     if (bytes == old_bytes)
         return;
 
-    StaticBuffer old = data;
+    StaticBuffer fresh;
+    if (!fresh.allocate(bytes, bytes > 64*1024))
+        throw std::bad_alloc();
 
-    data.allocate(bytes, bytes > 64*1024);
-
-    if (old_bytes > 0 || bytes > 0)
+    if (bytes > 0)
     {
-        memcpy(data.writable_data(), old.data(), std::min(old_bytes, bytes));
+        memcpy(fresh.writable_data(), data.data(), std::min(old_bytes, bytes));
         if (bytes > old_bytes)
-            memset(data.writable_data() + old_bytes, 0, bytes-old_bytes);
+            memset(fresh.writable_data() + old_bytes, 0, bytes-old_bytes);
     }
+
+    data = fresh;
 }
 
 void GLTextureBitmap::compress()
