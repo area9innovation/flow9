@@ -1830,12 +1830,15 @@ void GLTextureBitmap::reuploadData()
 
 void GLTextureBitmap::resize(ivec2 new_size, bool flip)
 {
+    // Checked first, so that a refused size leaves the bitmap as it was
+    size_t bytes = checkedBytes(new_size, format);
+
     // Size changed — must destroy old texture so bindTo() re-creates at new dimensions.
     invalidate();
     data_dirty = false;
 
     setSize(new_size, flip);
-    reallocate(checkedBytes(new_size, format));
+    reallocate(bytes);
 }
 
 void GLTextureBitmap::share(GLTextureBitmap::Ptr other)
