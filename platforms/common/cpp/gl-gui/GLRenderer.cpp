@@ -2,6 +2,7 @@
 #include <sstream>
 
 #include "GLRenderer.h"
+#include <stdexcept>
 
 #ifndef FLOW_EMBEDDED
   #ifdef __APPLE__
@@ -1722,11 +1723,29 @@ bool GLTextureImage::swizzleRB() const
     return swizzle_rb;
 }
 
+// A bitmap that needs data but is past the size limit cannot be built
+static size_t checkedBytes(ivec2 size, GLenum format)
+{
+    size_t bytes = GLTextureBitmap::bitmapBytes(size, format);
+    if (bytes == 0 && format != GL_FALSE && size.x > 0 && size.y > 0)
+        throw std::length_error("GLTextureBitmap: image size out of range");
+    return bytes;
+}
+
 GLTextureBitmap::GLTextureBitmap(ivec2 size, GLenum format, bool flip, bool use_mipmaps, bool /*swizzleRB*/) :
     GLTextureImage(size, flip), format(format), use_mipmaps(use_mipmaps), data_dirty(false)
 {
     bytes_per_pixel = getBytesPerPixel(format);
-    reallocate(bytes_per_pixel * size.x * size.y);
+    reallocate(checkedBytes(size, format));
+}
+
+size_t GLTextureBitmap::bitmapBytes(ivec2 size, GLenum format)
+{
+    if (size.x <= 0 || size.y <= 0)
+        return 0;
+    if (size_t(size.y) > MAX_PIXELS / size_t(size.x))
+        return 0;
+    return size_t(size.x) * size_t(size.y) * getBytesPerPixel(format);
 }
 
 unsigned GLTextureBitmap::getBytesPerPixel(GLenum format)
@@ -1816,7 +1835,7 @@ void GLTextureBitmap::resize(ivec2 new_size, bool flip)
     data_dirty = false;
 
     setSize(new_size, flip);
-    reallocate(bytes_per_pixel * new_size.x * new_size.y);
+    reallocate(checkedBytes(new_size, format));
 }
 
 void GLTextureBitmap::share(GLTextureBitmap::Ptr other)

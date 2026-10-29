@@ -17,6 +17,22 @@ extern "C" {
 
 #include <png.h>
 #include <zlib.h>
+#include <exception>
+
+namespace {
+    // The most bytes a compressed SWF may declare for its contents; a picture SWF is far below it
+    const uint32_t MAX_SWF_BYTES = 64u * 1024 * 1024;
+
+    // A decoder rejects an image whose declared size no bitmap may hold, before it allocates
+    bool imageSizeFits(unsigned width, unsigned height)
+    {
+        if (GLTextureBitmap::bitmapBytes(ivec2(width, height), GL_RGBA) == 0) {
+            cerr << "Image size out of range: " << width << "x" << height << endl;
+            return false;
+        }
+        return true;
+    }
+}
 
 /****************************
  *          COMMON          *
@@ -49,6 +65,9 @@ static boolean fill_input_buffer(j_decompress_ptr cinfo)
 static void skip_input_data(j_decompress_ptr cinfo, long num_bytes)
 {
     struct jpeg_source_mgr *src = cinfo->src;
+
+    if (num_bytes <= 0)
+        return;
 
     if(num_bytes >= (long)src->bytes_in_buffer) {
         fill_input_buffer(cinfo);
@@ -148,10 +167,13 @@ static GLTextureBitmap::Ptr decodeJPEG(JPEGDecoder &cinfo, size_t max_load_size)
         cinfo->out_color_space = JCS_RGB;
     }
 
+    if (!imageSizeFits(cinfo->image_width, cinfo->image_height))
+        throw DecodeError();
+
     ivec2 size(cinfo->image_width, cinfo->image_height);
 
     // Lazy load: bail out here if too big
-    if (size_t(size.x * size.y) > max_load_size)
+    if (size_t(size.x) * size_t(size.y) > max_load_size)
         return GLTextureBitmap::Ptr(new GLTextureBitmap(size, GL_FALSE));
 
     jpeg_start_decompress(cinfo);
@@ -196,6 +218,9 @@ GLTextureBitmap::Ptr loadJPEG(std::string filename, size_t max_load_size)
         return decodeJPEG(decoder, max_load_size);
     } catch (DecodeError&) {
         return GLTextureBitmap::Ptr();
+    } catch (std::exception &e) {
+        cerr << "JPEG decoding failed: " << e.what() << endl;
+        return GLTextureBitmap::Ptr();
     }
 }
 
@@ -212,6 +237,9 @@ GLTextureBitmap::Ptr loadJPEG(const uint8_t *data, unsigned size, size_t max_loa
 
         return decodeJPEG(decoder, max_load_size);
     } catch (DecodeError&) {
+        return GLTextureBitmap::Ptr();
+    } catch (std::exception &e) {
+        cerr << "JPEG decoding failed: " << e.what() << endl;
         return GLTextureBitmap::Ptr();
     }
 }
@@ -316,8 +344,11 @@ static GLTextureBitmap::Ptr decodePNG(PNGDecoder &decoder, size_t max_load_size)
     png_get_IHDR(decoder.png, decoder.info, &width, &height, &bit_depth, &color_type,
                  &interlace_type, NULL, NULL);
 
+    if (!imageSizeFits(width, height))
+        throw DecodeError();
+
     // Lazy load: bail out here if too big
-    if (size_t(width * height) > max_load_size)
+    if (size_t(width) * size_t(height) > max_load_size)
         return GLTextureBitmap::Ptr(new GLTextureBitmap(ivec2(width, height), GL_FALSE));
 
     GLenum format;
@@ -406,6 +437,9 @@ GLTextureBitmap::Ptr loadPNG(std::string filename, size_t max_load_size)
         return decodePNG(decoder, max_load_size);
     } catch (DecodeError&) {
         return GLTextureBitmap::Ptr();
+    } catch (std::exception &e) {
+        cerr << "PNG decoding failed: " << e.what() << endl;
+        return GLTextureBitmap::Ptr();
     }
 }
 
@@ -424,6 +458,9 @@ GLTextureBitmap::Ptr loadPNG(const uint8_t *data, unsigned size, size_t max_load
 
         return decodePNG(decoder, max_load_size);
     } catch (DecodeError&) {
+        return GLTextureBitmap::Ptr();
+    } catch (std::exception &e) {
+        cerr << "PNG decoding failed: " << e.what() << endl;
         return GLTextureBitmap::Ptr();
     }
 }
@@ -514,7 +551,7 @@ static GLTextureBitmap::Ptr loadSWFJpeg(const uint8_t *data, const uint8_t *alph
         ivec2 bsize = bmp->getSize();
 
         // Decompress alpha data
-        std::vector<uint8_t> alpha_data(bsize.x * bsize.y);
+        std::vector<uint8_t> alpha_data(size_t(bsize.x) * size_t(bsize.y));
 
         uLongf len = alpha_data.size();
         if (uncompress(&alpha_data[0], &len, alpha, end-alpha) != Z_OK || len != alpha_data.size()) {
@@ -565,6 +602,8 @@ static GLTextureBitmap::Ptr decodeSWFTag(uint16_t tag, const uint8_t *data, cons
     case DefineBitsJpeg3:
         skipItem(data, end, sizeof(uint16_t));
         getItem(&offset, data, end);
+        if (offset > size_t(end - data))
+            throw SWFError();
         return loadSWFJpeg(data, data+offset, end, max_load_size);
 
     default:
@@ -645,6 +684,11 @@ GLTextureBitmap::Ptr loadSWF(const uint8_t *data, unsigned size, size_t max_load
         std::vector<uint8_t> uncompressed_data;
 
         if (header->Signature[0] == 'C') {
+            // The declared length covers the header too, and bounds what the contents may expand to
+            if (header->FileLength < hdr_size || header->FileLength - hdr_size > MAX_SWF_BYTES) {
+                cerr << "SWF length out of range: " << header->FileLength << endl;
+                return GLTextureBitmap::Ptr();
+            }
             uncompressed_data.resize(header->FileLength-hdr_size);
 
             uint8_t *uc_dptr = uncompressed_data.data();
@@ -662,6 +706,9 @@ GLTextureBitmap::Ptr loadSWF(const uint8_t *data, unsigned size, size_t max_load
         return decodeSWF(dptr, dptr+size, max_load_size);
     } catch (DecodeError&) {
         cerr << "SWF decoding failed" << endl;
+        return GLTextureBitmap::Ptr();
+    } catch (std::exception &e) {
+        cerr << "SWF decoding failed: " << e.what() << endl;
         return GLTextureBitmap::Ptr();
     }
 }
