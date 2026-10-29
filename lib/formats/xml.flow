@@ -317,25 +317,28 @@ makeTextParser(parameters : [XmlParsingOption]) -> (string, DynamicBehaviour<Xml
 
 // Function to find the proper end of an XML tag, accounting for attribute values that might contain angle brackets
 // <span data-mathml="<span>data-mathml-internal-span</span>">
-findTagEnd(s : string, i : int, inQuotes : bool, inApos : bool) -> int {
+// quote is the quote of the attribute value open at i, or "" outside values. A value ends only at its
+// own kind of quote, as parseAttributes reads it, so title="it's" ends at the second "
+findTagEnd(s : string, i : int, quote : string) -> int {
 	l = strlen(s);
 	if (i >= l) {
 		-1; // Base case - reached end of string without finding closing bracket
 	} else {
 		ch = getCharAt(s, i);
-		
-		if (ch == "\"" && (i == 0 || getCharAt(s, i-1) != "\\")) {
-			// Toggle quote state (if not escaped)
-			findTagEnd(s, i + 1, !inQuotes, inApos);
-		} else if (ch == "'" && (i == 0 || getCharAt(s, i-1) != "\\")) {
-			// Toggle apostrophe state (if not escaped)
-			findTagEnd(s, i + 1, inQuotes, !inApos);
-		} else if (ch == ">" && !inQuotes && !inApos) {
+		escaped = i > 0 && getCharAt(s, i - 1) == "\\";
+
+		if (quote == "" && (ch == "\"" || ch == "'") && !escaped) {
+			// A quoted value starts (if not escaped)
+			findTagEnd(s, i + 1, ch);
+		} else if (quote != "" && ch == quote && !escaped) {
+			// The value ends (if not escaped)
+			findTagEnd(s, i + 1, "");
+		} else if (ch == ">" && quote == "") {
 			// Found the end of the tag, but only if not inside quotes
 			i;
 		} else {
 			// Keep searching
-			findTagEnd(s, i + 1, inQuotes, inApos);
+			findTagEnd(s, i + 1, quote);
 		}
 	}
 }
@@ -352,17 +355,28 @@ doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string,
 		next(events, XmlEndEvent());
 	} else if (tagStart == 0) {
 		// We have a tag or comment!
+		// A comment or CDATA section that is never closed takes the rest of the input
 		if (startsWith(s, "<!--")) {
 			endComment = strIndexOf(substring(s, 4, l - 4), "-->");
-			next(events, XmlCommentEvent(substring(s, 4, endComment)));
-			doParseXml(strRight(s, endComment + 7), events, parseText, validateNames);
+			if (endComment == -1) {
+				next(events, XmlCommentEvent(strRight(s, 4)));
+				next(events, XmlEndEvent());
+			} else {
+				next(events, XmlCommentEvent(substring(s, 4, endComment)));
+				doParseXml(strRight(s, endComment + 7), events, parseText, validateNames);
+			}
 		} else if (startsWith(s, "<![CDATA[")) {
 			endComment = strIndexOf(substring(s, 9, l - 9), "]]>");
-			next(events, XmlTextEvent(substring(s, 9, endComment)));
-			doParseXml(strRight(s, endComment + 12), events, parseText, validateNames);
+			if (endComment == -1) {
+				next(events, XmlTextEvent(strRight(s, 9)));
+				next(events, XmlEndEvent());
+			} else {
+				next(events, XmlTextEvent(substring(s, 9, endComment)));
+				doParseXml(strRight(s, endComment + 12), events, parseText, validateNames);
+			}
 		} else {
 			// It's a tag
-			endTag = findTagEnd(s, 1, false, false);
+			endTag = findTagEnd(s, 1, "");
 			
 			if (endTag == -1) {
 				// Couldn't find a proper end tag, treat as text
