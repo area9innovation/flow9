@@ -126,5 +126,15 @@ See https://code.visualstudio.com/docs/extensions/example-hello-world .
 1. Make sure Node.js, NPM is installed and all packages are installed (`npm install`)
 2. Run `build.cmd` or `build.sh` to update the `flow.vsix` package
 
+## Dependency security checks
+Run `npm ci`, `npm run test:security`, and `npm audit` from this directory.
+The security tests exercise the packaging tool's transitive dependencies without
+network access or Azure credentials, including Azure Identity compatibility.
+
+The scoped override forces `@azure/identity` to use MSAL Node patched for
+GHSA-xcx6-jx8p-x3h5. Remove it once the version of Azure Identity resolved by
+`@vscode/vsce` requires MSAL Node 7.1.0 or newer itself. These dependencies are
+development-only and are not included in the extension's runtime package.
+
 ## Release Notes
 See [Changelog](https://github.com/area9innovation/flow9/blob/master/resources/vscode/flow/CHANGELOG.md).
