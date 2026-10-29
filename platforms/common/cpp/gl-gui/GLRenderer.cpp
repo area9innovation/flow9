@@ -3,6 +3,7 @@
 
 #include "GLRenderer.h"
 #include <stdexcept>
+#include <new>
 
 #ifndef FLOW_EMBEDDED
   #ifdef __APPLE__
@@ -1830,15 +1831,14 @@ void GLTextureBitmap::reuploadData()
 
 void GLTextureBitmap::resize(ivec2 new_size, bool flip)
 {
-    // Checked first, so that a refused size leaves the bitmap as it was
-    size_t bytes = checkedBytes(new_size, format);
+    // Allocated first, so that a refused or failed size leaves the bitmap as it was
+    reallocate(checkedBytes(new_size, format));
 
     // Size changed — must destroy old texture so bindTo() re-creates at new dimensions.
     invalidate();
     data_dirty = false;
 
     setSize(new_size, flip);
-    reallocate(bytes);
 }
 
 void GLTextureBitmap::share(GLTextureBitmap::Ptr other)
@@ -1854,22 +1854,25 @@ void GLTextureBitmap::share(GLTextureBitmap::Ptr other)
     data = other->data;
 }
 
+// Nothing is written before the new storage exists, so a failure leaves the bitmap as it was
 void GLTextureBitmap::reallocate(size_t bytes)
 {
     size_t old_bytes = data.size();
     if (bytes == old_bytes)
         return;
 
-    StaticBuffer old = data;
+    StaticBuffer fresh;
+    if (!fresh.allocate(bytes, bytes > 64*1024))
+        throw std::bad_alloc();
 
-    data.allocate(bytes, bytes > 64*1024);
-
-    if (old_bytes > 0 || bytes > 0)
+    if (bytes > 0)
     {
-        memcpy(data.writable_data(), old.data(), std::min(old_bytes, bytes));
+        memcpy(fresh.writable_data(), data.data(), std::min(old_bytes, bytes));
         if (bytes > old_bytes)
-            memset(data.writable_data() + old_bytes, 0, bytes-old_bytes);
+            memset(fresh.writable_data() + old_bytes, 0, bytes-old_bytes);
     }
+
+    data = fresh;
 }
 
 void GLTextureBitmap::compress()

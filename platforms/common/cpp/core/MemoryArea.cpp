@@ -470,7 +470,11 @@ bool StaticBuffer::allocate(size_t size, bool use_tmpfile)
         }
     }
 
-    p = shared_ptr<Data>(new Data((uint8_t*)malloc(size), size, false));
+    uint8_t *mem = (uint8_t*)malloc(size);
+    if (!mem && size > 0)
+        return false;
+
+    p = shared_ptr<Data>(new Data(mem, size, false));
 
 #ifdef DEBUG_FLOW
     cerr << "StaticBuffer alloc; total " << total_mem << " heap, " << total_maps << " mmap." << endl;
