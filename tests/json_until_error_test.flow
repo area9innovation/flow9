@@ -1,0 +1,103 @@
+import formats/json/json;
+import formats/json/json_parse;
+import sys/target;
+
+// Tests of how parseJsonUntilError (lib/formats/json/json.flow) reports a value cut short at the end of
+// the input, as "abc or 12e: an error at the end, where parseJsonSafe still gives the value. Also how
+// parseJsonSafer (lib/formats/json/json_parse.flow) refuses what is not valid JSON.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + expected);
+		println("  actual:   " + actual);
+	}
+}
+
+// Value, error position and last processed position in one line
+result2s(r : JsonParseResult) -> string {
+	json2string(r.value) + " @" + i2s(r.errorPosition) + "/" + i2s(r.lastProcessedPosition);
+}
+
+checkComplete(doc : string, value : string) -> void {
+	check(toString(doc) + " is read to its end", result2s(parseJsonUntilError(doc)), value + " @-1/-1");
+}
+
+// A value cut short is an error at the end of the input, and parseJsonSafe gives it all the same
+checkCutShort(doc : string, value : string) -> void {
+	end = i2s(strlen(doc));
+	check(toString(doc) + " is cut short", result2s(parseJsonUntilError(doc)), value + " @" + end + "/" + end);
+	check(toString(doc) + " in parseJsonSafe", json2string(parseJsonSafe(doc)), value);
+}
+
+testComplete() -> void {
+	checkComplete("{\"a\":1}", "{\"a\":1}");
+	checkComplete("[1,\"b\"]", "[1,\"b\"]");
+	checkComplete("\"abc\"", "\"abc\"");
+	checkComplete("\"\"", "\"\"");
+	checkComplete("\"a\\\"\"", "\"a\\\"\"");
+	checkComplete("\"a\\\\\"", "\"a\\\\\"");
+	checkComplete("\"é\"", "\"é\"");
+	checkComplete("0", "0");
+	checkComplete("-0", "0");
+	checkComplete("12", "12");
+	checkComplete("-2.5", "-2.5");
+	checkComplete("1e5", "100000");
+	checkComplete("1E+5", "100000");
+	checkComplete("25e-1", "2.5");
+	checkComplete("true", "true");
+	checkComplete("false", "false");
+	checkComplete("null", "null");
+	checkComplete(" \n[1]", "[1]");
+}
+
+testCutShort() -> void {
+	checkCutShort("\"abc", "\"abc\"");
+	checkCutShort("\"a\\\"", "\"a\\\"\"");
+	checkCutShort("\"a\\", "\"a\\\\\"");
+	checkCutShort("12e", "12");
+	checkCutShort("12E", "12");
+	checkCutShort("1e+", "1");
+	checkCutShort("1e-", "1");
+	checkCutShort("1.", "1");
+	checkCutShort("-", "0");
+}
+
+// As before: inside an array or object a value cut short leaves the bracket unclosed, and what does not
+// read at all, or what follows the value, is an error where it starts
+testOtherErrors() -> void {
+	check("string cut short in an array", result2s(parseJsonUntilError("[\"ab")), "[\"ab\"] @4/4");
+	check("number cut short in an object", result2s(parseJsonUntilError("{\"a\":12e")), "{\"a\":12} @8/8");
+	check("a lone quote", result2s(parseJsonUntilError("\"")), "\"\" @1/1");
+	check("trailing content", result2s(parseJsonUntilError("\"a\" b")), "\"a\" @3/3");
+	check("a second value", result2s(parseJsonUntilError("1 2")), "1 @1/1");
+	check("nothing that reads", result2s(parseJsonUntilError("tru")), "0 @0/0");
+	check("empty input", result2s(parseJsonUntilError("")), "0 @0/0");
+}
+
+testParseJsonSafer() -> void {
+	iter(["{\"a\":[1,2.5e3,\"x\",true,null]}", "\"abc\"", "0", " [] "], \doc ->
+		check(toString(doc) + " is valid", b2s(isSome(parseJsonSafer(doc))), "true")
+	);
+	iter(["\"abc", "12e", "{\"a\":1", "{\"a\":1} b", "1 2", "[1,]", "{\"a\":1,}", "+1", "1.2.3", "tru", ""], \doc ->
+		check(toString(doc) + " is not valid", b2s(isSome(parseJsonSafer(doc))), "false")
+	);
+}
+
+main() {
+	testComplete();
+	testCutShort();
+	testOtherErrors();
+	testParseJsonSafer();
+
+	if (^failures == 0) {
+		println("parseJsonUntilError tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " parseJsonUntilError test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
