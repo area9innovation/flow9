@@ -433,7 +433,6 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     ClassKitSupport = new iosClassKitSupport(Runner);
 #ifdef FLOW_MEDIASTREAM
     MediaStream = new iosMediaStreamSupport(Runner);
-    WebRTC = new iosWebRTCSupport(Runner);
     MediaRecorder = new iosMediaRecorderSupport(Runner, WebSocketSupport);
 #endif
     Printing = new iosPrintingSupport(Runner);
@@ -559,7 +558,6 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
 #endif
 #ifdef FLOW_MEDIASTREAM
     delete MediaStream; MediaStream = NULL;
-    delete WebRTC; WebRTC = NULL;
     delete MediaRecorder; MediaRecorder = NULL;
 #endif
 }
