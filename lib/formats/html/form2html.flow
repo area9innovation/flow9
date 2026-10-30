@@ -8,7 +8,9 @@ import formats/xml;
 import form/graphics2html;
 
 export {
-	// Converts font name as used in Form to a HTML font style attribute value string
+	// Converts font name as used in Form to a HTML font style attribute value string.
+	// The result is escaped for a double-quoted attribute in HTML text (" as &quot;),
+	// so it is not for the DOM: setAttribute("style", ...) would keep a literal &quot;.
 	fontName2css(font : string) -> string;
 	// Converts a form to HTML (where texts are not HTML escaped)
 	staticForm2html(form : Form) -> string;
@@ -43,13 +45,32 @@ fontName2css(name : string) -> string {
 	fontFace2css = \font : FontFace -> {
 		// font-style can't be empty string
 		fontStyle = if (font.slope == FONT_SLOPE_NORMAL) "normal" else font.slope;
+		// Each family goes into a '...' CSS string, and the whole result into a style="..." attribute
+		families = fontFace2familiesString(FontFace(font with families = map(font.families, escapeCssSingleQuoted)));
 		formatString(
 			"font-family:%1;font-style:%2;font-weight:%3;",
-			[fontFace2familiesString(font), fontStyle, i2s(font.weight)]
-		);
+			[families, fontStyle, i2s(font.weight)]
+		) |> escapeDoubleQuotedAttribute;
 	}
 
 	fontFace2css(fontName2fontFace(name));
+}
+
+// For a value inside "...": & " < > as &amp; &quot; &lt; &gt;
+escapeDoubleQuotedAttribute(s : string) -> string {
+	s0 = strReplace(s, "&", "&amp;");
+	s1 = strReplace(s0, "\"", "&quot;");
+	s2 = strReplace(s1, "<", "&lt;");
+	strReplace(s2, ">", "&gt;");
+}
+
+// For text inside a '...' CSS string: a backslash, the quote and line breaks would end it
+escapeCssSingleQuoted(s : string) -> string {
+	s0 = strReplace(s, "\\", "\\\\");
+	s1 = strReplace(s0, "'", "\\'");
+	s2 = strReplace(s1, "\n", "\\a ");
+	s3 = strReplace(s2, "\x0d", "\\d ");
+	strReplace(s3, "\x0c", "\\c ");
 }
 
 makeHtml(headers, body) {
@@ -94,8 +115,8 @@ makeHtml2(basePath, headers, body) {
 
 makeHtmlBasePath(url, frame) {
 	if (url != "" || frame != "") {
-		href = if (url != "") " href=\"" + url + "\"" else "";
-		target = if (frame != "") " target=\"" + frame + "\"" else "";
+		href = if (url != "") " href=\"" + escapeDoubleQuotedAttribute(url) + "\"" else "";
+		target = if (frame != "") " target=\"" + escapeDoubleQuotedAttribute(frame) + "\"" else "";
 		"<base" + href + target + "/>"
 	} else {
 		""
@@ -117,7 +138,7 @@ makeShowSaveAsPdfOnLoaded() {
 
 
 includeStyleSheet(url) {
-	"<link href=\"" + url + "\" rel=\"stylesheet\" type=\"text/css\">"
+	"<link href=\"" + escapeDoubleQuotedAttribute(url) + "\" rel=\"stylesheet\" type=\"text/css\">"
 }
 
 text2htmlEx(textForm : Text, safe : bool) -> string {
@@ -265,7 +286,7 @@ text2htmlUnsafe(textform) {
 
 picture2html(picture) {
 	// TODO: Do something about the style
-	"<img src=\"" + picture.url + "\"/>";
+	"<img src=\"" + escapeDoubleQuotedAttribute(picture.url) + "\"/>";
 }
 
 makeHtmlLeftTopStyle(left, top) {
