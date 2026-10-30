@@ -173,9 +173,19 @@ Following types of compile-time constants are supported:
 	boolean, integer, double and string
 
 LIMITATIONS:
- - spaces, tabs, etc. are not allowed in string values (i.e. are ignored)
  - commas are not allowed in string values
  - booleans are of the form: 1, 0, true, false, TRUE, FALSE
+ - only global names are substituted. A name from `env` which is not defined at the toplevel
+   of the program is ignored (`verbose=1` lists those). A local variable, a function or lambda
+   argument sharing a name with a compile-time variable keeps its own value.
+
+Substitution happens after the incremental (.module) files have been written, so changing an
+`env` value does not invalidate them: the same sources recompile to the same .module files
+whatever the values are. That makes `env` the right way to pass build metadata - a version
+stamp, a build number, a git hash - which would otherwise enter through a string #include of
+a generated file and invalidate every module that transitively imports it.
+
+See tools/flowc/tests/compile_time_env/ for a regression test of all of this.
 
 
 Notes about incremental compilation
