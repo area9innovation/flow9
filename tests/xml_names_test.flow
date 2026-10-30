@@ -1,0 +1,241 @@
+import formats/xml;
+import formats/comap;
+import sys/target;
+
+// Tests of the names xml2string, xmlNode2String and tree2comap (lib/formats/xml.flow, lib/formats/comap.flow)
+// write into their output. Valid XML names come out as before. An attribute or comap feature
+// with an invalid name is left out, and an element with an invalid tag is written as its content only.
+// The !DOCTYPE element the parser makes of <!DOCTYPE ...> is written as before, with all its attributes.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+validNames() -> [string] {
+	[
+		"a", "Z", "_", ":", "ns:tag", "a-b", "a.b", "a_b", "h1", "x2.3-4",
+		"é", "Ünïcødé", "имя", "日本語",
+		"a·b",                          // U+00B7 may follow the first char
+		"e\u0301",                      // a combining mark may follow the first char
+		"a‿b",                          // U+203F may follow the first char
+		fromCharCode(0x10000) + "x",    // a char above U+FFFF may start a name
+	]
+}
+
+invalidNames() -> [string] {
+	[
+		"", " ", "a b", "a=\"1\" b", "x><y", "a>", "a/b", "a\"b", "a'b", "a&b", "a\tb", "a\nb",
+		"1a", "9", "-a", ".a",
+		"·a",                           // U+00B7 can not start a name
+		"\u0301a",                      // nor can a combining mark
+		"@click", "[a]", "!ELEMENT", "!DOCTYPE html",
+		"a×b", "a÷b",                   // U+00D7 and U+00F7 are not name chars
+		fromCharCode(0xF0000) + "a",    // above U+EFFFF
+		"a" + fromCharCode(0xD800),     // a lone surrogate
+	]
+}
+
+attributeIn(name : string) -> XmlElement {
+	XmlElement("a", [XmlAttribute(name, "1")], [])
+}
+
+tagged(name : string) -> XmlElement {
+	XmlElement(name, [XmlAttribute("k", "v")], [XmlText("t"), XmlElement("b", [], [])])
+}
+
+attributeIn2(name : string) -> XmlElement2 {
+	XmlElement2("a", [XmlAttribute(name, "1")], [])
+}
+
+tagged2(name : string) -> XmlElement2 {
+	XmlElement2(name, [XmlAttribute("k", "v")], [XmlText("t"), XmlComment("c"), XmlElement2("b", [], [])])
+}
+
+// The comap text of one leaf node with these attributes
+comapLeaf(attributes : string, text : string) -> string {
+	"<mindmap escape=\"false\">\n  <metadata>\n    <collaborators/>\n    <watchers/>\n  </metadata>\n"
+	+ "  <node" + attributes + "><text><![CDATA[" + text + "]]></text></node>\n"
+	+ "</mindmap>"
+}
+
+featureIn(name : string) -> string {
+	tree2comap(TopicTree("t", [Pair(name, "1"), Pair("priority", "2")], []))
+}
+
+testValidNames() -> void {
+	iter(validNames(), \n -> {
+		check("xml2string attribute " + n, xml2string(attributeIn(n)), "<a " + n + "=\"1\"></a>");
+		check("xml2string tag " + n, xml2string(tagged(n)), "<" + n + " k=\"v\">t<b></b></" + n + ">");
+		check("xmlNode2String attribute " + n, xmlNode2String(attributeIn2(n)), "<a " + n + "=\"1\"></a>");
+		check("xmlNode2String tag " + n, xmlNode2String(tagged2(n)), "<" + n + " k=\"v\">t<b></b></" + n + ">");
+		check("tree2comap feature " + n, featureIn(n), comapLeaf(" " + n + "=\"1\" priority=\"2\"", "t"));
+	});
+}
+
+testInvalidNames() -> void {
+	iter(invalidNames(), \n -> {
+		check("xml2string attribute " + n, xml2string(attributeIn(n)), "<a></a>");
+		check("xml2string tag " + n, xml2string(tagged(n)), "t<b></b>");
+		check("xmlNode2String attribute " + n, xmlNode2String(attributeIn2(n)), "<a></a>");
+		check("xmlNode2String tag " + n, xmlNode2String(tagged2(n)), "t<b></b>");
+		check("tree2comap feature " + n, featureIn(n), comapLeaf(" priority=\"2\"", "t"));
+	});
+}
+
+testMixed() -> void {
+	atts = [XmlAttribute("id", "1"), XmlAttribute("a=\"1\" b", "2"), XmlAttribute("x-y", "3<\"&"), XmlAttribute("", "4")];
+	check("only the invalid attributes go",
+		xml2string(XmlElement("p", atts, [XmlText("a<b")])),
+		"<p id=\"1\" x-y=\"3&lt;&quot;&amp;\">a&lt;b</p>"
+	);
+	check("only the invalid attributes go, XmlNode2",
+		xmlNode2String(XmlElement2("p", atts, [XmlText("a<b")])),
+		"<p id=\"1\" x-y=\"3&lt;&quot;&amp;\">a&lt;b</p>"
+	);
+	check("an invalid tag inside a valid one",
+		xml2string(XmlElement("p", [], [XmlText("a"), XmlElement("x><y", [], [XmlElement("i", [], [XmlText("b")])]), XmlText("c")])),
+		"<p>a<i>b</i>c</p>"
+	);
+	check("an invalid tag inside an invalid one",
+		xml2string(XmlElement("1", [], [XmlElement("2", [], [XmlText("t")])])),
+		"t"
+	);
+	check("the output parses back to the valid part",
+		toString(parseXml3(xml2string(XmlElement("a", [XmlAttribute("a=\"1\" b", "v"), XmlAttribute("c", "d")], [])))),
+		toString([XmlElement("a", [XmlAttribute("c", "d")], [])])
+	);
+}
+
+testLongNames() -> void {
+	long = "a" + strRepeat("b", 100000);
+	check("a long name",
+		xml2string(XmlElement(long, [XmlAttribute(long, "v"), XmlAttribute(long + " x", "w")], [])),
+		"<" + long + " " + long + "=\"v\"></" + long + ">"
+	);
+}
+
+doctypeOutput(name : string, input : string, expected2 : string, expected3 : string) -> void {
+	check("doctype " + name + ", xml2string", xml2string(parseXml2(input)), expected2);
+	check("doctype " + name + ", xmlNode2String",
+		concatStrings(map(parseXml3WithStrategy(input, [StandardEscaping(), XmlParseLeadingSpaces(true, true)]), xmlNode2String)),
+		expected3
+	);
+}
+
+testDoctype() -> void {
+	// What the old code wrote for these, byte for byte
+	doctypeOutput("html",
+		"<!DOCTYPE html>\n<html><p>x</p></html>",
+		"<!DOCTYPE html=\"\"><html><p>x</p></html></!DOCTYPE>",
+		"<!DOCTYPE html=\"\">\n<html><p>x</p></html></!DOCTYPE>"
+	);
+	doctypeOutput("lower case",
+		"<!doctype html>\n<html><p>x</p></html>",
+		"<!doctype html=\"\"><html><p>x</p></html></!doctype>",
+		"<!doctype html=\"\">\n<html><p>x</p></html></!doctype>"
+	);
+	doctypeOutput("mixed case",
+		"<!DocType html><html><p>x</p></html>",
+		"<!DocType html=\"\"><html><p>x</p></html></!DocType>",
+		"<!DocType html=\"\"><html><p>x</p></html></!DocType>"
+	);
+	doctypeOutput("XHTML 1.0 Strict",
+		"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n"
+		+ "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>t</title></head><body><p>x</p></body></html>",
+		"<!DOCTYPE html=\"\" PUBLIC=\"\" \"-//W3C//DTD=\"\" XHTML=\"\" 1.0=\"\" Strict//EN\"=\"\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\"=\"\">"
+		+ "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>t</title></head><body><p>x</p></body></html></!DOCTYPE>",
+		"<!DOCTYPE html=\"\" PUBLIC=\"\" \"-//W3C//DTD=\"\" XHTML=\"\" 1.0=\"\" Strict//EN\"=\"\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\"=\"\">\n"
+		+ "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>t</title></head><body><p>x</p></body></html></!DOCTYPE>"
+	);
+	doctypeOutput("after an XML declaration",
+		"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html><p>x</p></html>",
+		"<!DOCTYPE html=\"\"><html><p>x</p></html></!DOCTYPE>",
+		"<!DOCTYPE html=\"\">\n<html><p>x</p></html></!DOCTYPE>"
+	);
+	doctypeOutput("SYSTEM",
+		"<!DOCTYPE html SYSTEM \"about:legacy-compat\"><html></html>",
+		"<!DOCTYPE html=\"\" SYSTEM=\"\" \"about:legacy-compat\"=\"\"><html></html></!DOCTYPE>",
+		"<!DOCTYPE html=\"\" SYSTEM=\"\" \"about:legacy-compat\"=\"\"><html></html></!DOCTYPE>"
+	);
+	doctypeOutput("alone",
+		"<!DOCTYPE html>",
+		"<!DOCTYPE html=\"\"></!DOCTYPE>",
+		"<!DOCTYPE html=\"\"></!DOCTYPE>"
+	);
+
+	// Names inside it are still checked
+	doctypeOutput("with an invalid attribute inside",
+		"<!DOCTYPE html>\n<html><p @click=\"x\" a=\"1\">y</p></html>",
+		"<!DOCTYPE html=\"\"><html><p a=\"1\">y</p></html></!DOCTYPE>",
+		"<!DOCTYPE html=\"\">\n<html><p a=\"1\">y</p></html></!DOCTYPE>"
+	);
+	built = XmlElement("!DOCTYPE", [XmlAttribute("html", ""), XmlAttribute("\"-//W3C//DTD", "")], [
+		XmlElement("p", [XmlAttribute("a b", "1"), XmlAttribute("c", "2")], [XmlElement("x><y", [], [XmlText("t")])])
+	]);
+	check("doctype built in code",
+		xml2string(built),
+		"<!DOCTYPE html=\"\" \"-//W3C//DTD=\"\"><p c=\"2\">t</p></!DOCTYPE>"
+	);
+	check("doctype built in code, XmlNode2",
+		xmlNode2String(XmlElement2(built.tag, built.attributes, [
+			XmlElement2("p", [XmlAttribute("a b", "1"), XmlAttribute("c", "2")], [XmlElement2("x><y", [], [XmlText("t")])])
+		])),
+		"<!DOCTYPE html=\"\" \"-//W3C//DTD=\"\"><p c=\"2\">t</p></!DOCTYPE>"
+	);
+	check("doctype is not a name for an attribute",
+		xml2string(XmlElement("a", [XmlAttribute("!DOCTYPE", "1")], [])),
+		"<a></a>"
+	);
+	check("doctype is not a name for a comap feature",
+		featureIn("!DOCTYPE"),
+		comapLeaf(" priority=\"2\"", "t")
+	);
+}
+
+testComapSpecials() -> void {
+	specials = [Pair("priority", "1<2"), Pair("id", "n\"7"), Pair("completion", "50&")];
+	check("priority, id and completion",
+		tree2comap(TopicTree("t", specials, [])),
+		comapLeaf(" priority=\"1&lt;2\" id=\"n&quot;7\" taskCompletion=\"50&amp;\"", "t")
+	);
+	check("priority, id and completion around invalid names",
+		tree2comap(TopicTree("t", [Pair("x><y", "1"), specials[0], Pair("", "2"), specials[1], Pair("a b", "3"), specials[2]], [])),
+		comapLeaf(" priority=\"1&lt;2\" id=\"n&quot;7\" taskCompletion=\"50&amp;\"", "t")
+	);
+	tree = TopicTree("t", concat(specials, [Pair("note", "n"), Pair("1x", "4"), Pair("icon", "i")]), [TopicTree("c", [Pair("-a", "5")], [])]);
+	check("a node with subtopics, a note and an icon",
+		tree2comap(tree),
+		"<mindmap escape=\"false\">\n  <metadata>\n    <collaborators/>\n    <watchers/>\n  </metadata>\n"
+		+ "  <node priority=\"1&lt;2\" id=\"n&quot;7\" taskCompletion=\"50&amp;\" note=\"n\" icon=\"i\">\n"
+		+ "    <text><![CDATA[t]]></text>\n"
+		+ " <note><![CDATA[n]]></note>\n"
+		+ " <icon name=\"i\"/>\n"
+		+ "    <node><text><![CDATA[c]]></text></node>\n"
+		+ "  </node>\n"
+		+ "</mindmap>"
+	);
+}
+
+main() {
+	testValidNames();
+	testInvalidNames();
+	testMixed();
+	testLongNames();
+	testDoctype();
+	testComapSpecials();
+
+	if (^failures == 0) {
+		println("XML name tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " XML name test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
