@@ -133,8 +133,13 @@ export {
 
 	getFirstXmlTextContents(children : [XmlNode]) -> string;
 
+	// An attribute whose key is not a valid XML name is left out.
+	// An element whose tag is not a valid XML name is written as its content only.
+	// The parser reads <!DOCTYPE ...> as an element !DOCTYPE; that element is written as before, with all its attributes.
 	xml2string(xml : XmlNode) -> string;
 	xmlNode2String(xhml : XmlNode2) -> string;
+	// The Name production of XML 1.0
+	isXmlName(s : string) -> bool;
 
 	// Preserve attributes; omit text escaping, so might fuck up quoting
 	poorXml2text(xml : XmlNode) -> string;
@@ -275,6 +280,39 @@ isXmlChar(code : int) -> bool {
 	|| (0x20 <= code && code <= 0xD7FF)
 	|| (0xE000 <= code && code <= 0xFFFD)
 	|| (0x10000 <= code && code <= 0x10FFFF);
+}
+
+// The Name production of XML 1.0: a NameStartChar, then any NameChars
+isXmlName(s : string) -> bool {
+	s != "" && isXmlNameFrom(s, 0);
+}
+
+isXmlNameFrom(s : string, i : int) -> bool {
+	c = xmlCharCodeAt(s, i);
+	if (c == -1) true
+	else if (0xD800 <= c && c <= 0xDB7F) {
+		// A surrogate pair: a char in [#x10000-#xEFFFF], which may start a name
+		low = xmlCharCodeAt(s, i + 1);
+		if (0xDC00 <= low && low <= 0xDFFF) isXmlNameFrom(s, i + 2) else false;
+	} else if (isXmlNameStartChar(c) || (i > 0 && isXmlNameRestChar(c))) {
+		isXmlNameFrom(s, i + 1);
+	} else {
+		false;
+	}
+}
+
+isXmlNameStartChar(c : int) -> bool {
+	c == 0x3A || (0x41 <= c && c <= 0x5A) || c == 0x5F || (0x61 <= c && c <= 0x7A)
+	|| (0xC0 <= c && c <= 0xD6) || (0xD8 <= c && c <= 0xF6) || (0xF8 <= c && c <= 0x2FF)
+	|| (0x370 <= c && c <= 0x37D) || (0x37F <= c && c <= 0x1FFF) || (0x200C <= c && c <= 0x200D)
+	|| (0x2070 <= c && c <= 0x218F) || (0x2C00 <= c && c <= 0x2FEF) || (0x3001 <= c && c <= 0xD7FF)
+	|| (0xF900 <= c && c <= 0xFDCF) || (0xFDF0 <= c && c <= 0xFFFD);
+}
+
+// NameChar without NameStartChar
+isXmlNameRestChar(c : int) -> bool {
+	c == 0x2D || c == 0x2E || (0x30 <= c && c <= 0x39) || c == 0xB7
+	|| (0x300 <= c && c <= 0x36F) || (0x203F <= c && c <= 0x2040);
 }
 
 
@@ -958,11 +996,13 @@ poorXml2text(xml : XmlNode) -> string {
 xml2string(xml : XmlNode) -> string {
 	switch (xml) {
 		XmlElement(tag, attributes, children): {
-			atts = fold(attributes, "", \acc, a -> 
-				acc + " " + a.key + "=\"" + xmlEscape(a.value) + "\""
-			);
-			// fold(children, "<" + tag + atts + ">", \acc, c -> acc + poorXml2text(c)) + "</" + tag + ">";
-			("<" + tag + atts + ">") + concatStrings(map(children, \c -> xml2string(c))) + ("</" + tag + ">");
+			content = concatStrings(map(children, \c -> xml2string(c)));
+			doctype = isXmlDoctypeTag(tag);
+			if (doctype || isXmlName(tag)) {
+				("<" + tag + xmlAttributes2string(attributes, !doctype) + ">") + content + ("</" + tag + ">");
+			} else {
+				content;
+			}
 		}
 		XmlText(text): {
 			xmlEscapeText(text);
@@ -970,15 +1010,30 @@ xml2string(xml : XmlNode) -> string {
 	}
 }
 
+// The element the parser makes of <!DOCTYPE ...>, in the case it was written in
+isXmlDoctypeTag(tag : string) -> bool {
+	toLowerCase(tag) == "!doctype";
+}
+
+// Each attribute as ` key="value"`. With checkNames, those whose key is not a valid XML name are left out
+xmlAttributes2string(attributes : [XmlAttribute], checkNames : bool) -> string {
+	fold(attributes, "", \acc, a ->
+		if (!checkNames || isXmlName(a.key)) acc + " " + a.key + "=\"" + xmlEscape(a.value) + "\"" else acc
+	);
+}
+
 xmlNode2String(xhml : XmlNode2) -> string {
 	switch(xhml) {
 		XmlElement2(tag, attributes, children): {
-				atts = fold(attributes, "", \acc, a -> 
-					acc + " " + a.key + "=\"" + xmlEscape(a.value) + "\""
-				);
-				("<" + tag + atts + ">")
-				+ concatStrings(map(children, xmlNode2String))
-				+ ("</" + tag + ">");
+				content = concatStrings(map(children, xmlNode2String));
+				doctype = isXmlDoctypeTag(tag);
+				if (doctype || isXmlName(tag)) {
+					("<" + tag + xmlAttributes2string(attributes, !doctype) + ">")
+					+ content
+					+ ("</" + tag + ">");
+				} else {
+					content;
+				}
 		};
 		XmlText(text): {
 			xmlEscapeText(text);
