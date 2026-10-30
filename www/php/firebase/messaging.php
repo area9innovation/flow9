@@ -1,6 +1,6 @@
 <?php
     $server_key = "";
-    $doSubscribe = $_POST["doSubscribe"];
+    $doSubscribe = $_POST["doSubscribe"] === "true";
     $topic = $_POST["topic"];
     $iid_token = $_POST["token"];
 
@@ -10,7 +10,7 @@
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
     curl_setopt($ch, CURLOPT_HTTPHEADER, array(
         "Authorization:key=".$server_key,
-        "Content-Type:apllication/json"
+        "Content-Type:application/json"
     ));
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(array(
