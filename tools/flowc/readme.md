@@ -173,8 +173,9 @@ Following types of compile-time constants are supported:
 	boolean, integer, double and string
 
 LIMITATIONS:
- - spaces, tabs, etc. are not allowed in string values (i.e. are ignored)
  - commas are not allowed in string values
+ - spaces and tabs in a string value reach the compiler only if the whole option is quoted for
+   the shell. bin/flowc1 passes its arguments unquoted, so there the value is split at the space
  - booleans are of the form: 1, 0, true, false, TRUE, FALSE
  - only global names are substituted. A name from `env` which is not defined at the toplevel
    of the program is ignored (`verbose=1` lists those). A local variable, a function or lambda
