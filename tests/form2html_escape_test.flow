@@ -1,0 +1,106 @@
+import formats/html/form2html;
+import sys/target;
+
+// Tests of how lib/formats/html/form2html.flow writes values into double-quoted HTML attributes:
+// a font face from <font face> or FontFamily goes into style="font-family:'...';" with the
+// characters that would end the CSS string or the attribute escaped; picture urls, the base path
+// and stylesheet urls are escaped for the attribute; ordinary names and urls come out as before.
+// Most faces below write a quote as &quot; or &apos;, which the XML parser decodes.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+// The span text2html puts around every text, for the default font
+outerSpan = "<span style=\"font-family:'Roboto';font-style:normal;font-weight:400;font-size:11px;\">";
+
+// What text2html gives for <font face=...>t</font>, where family is the expected font-family value
+withFace(family : string) -> string {
+	outerSpan + "<span style=\"font-family:" + family + ";font-style:normal;font-weight:400;font-size:11px;\">t</span></span>";
+}
+
+face(value : string) -> string {
+	text2html(Text("<font face=\"" + value + "\">t</font>", []));
+}
+
+testFontFace() -> void {
+	check("plain text", text2html(Text("t", [])), outerSpan + "t</span>");
+	check("normal face", face("Arial"), withFace("'Arial'"));
+	check("face with a space", face("Proxima Nova"), withFace("'Proxima Nova'"));
+	check("face from the font list", face("RobotoBold"),
+		outerSpan + "<span style=\"font-family:'Roboto';font-style:normal;font-weight:700;font-size:11px;\">t</span></span>");
+	check("double quote in the face", text2html(Text("<font face='x\" title=\"y'>t</font>", [])),
+		withFace("'x&quot; title=&quot;y'"));
+	check("double quote in the face, unsafe text", text2htmlUnsafe(Text("<font face=\"x&quot; y\">t</font>", [])),
+		withFace("'x&quot; y'"));
+	check("apostrophe in the face", face("O&apos;Brien"), withFace("'O\\'Brien'"));
+	check("apostrophe, then ; and }", face("x&apos;;color:red;}"), withFace("'x\\';color:red;}'"));
+	check("; stays inside the CSS string", face("a;b"), withFace("'a;b'"));
+	check("} stays inside the CSS string", face("a}b"), withFace("'a}b'"));
+	check("< and > in the face", face("a<b>c"), withFace("'a&lt;b&gt;c'"));
+	check("& in the face", face("a&amp;b"), withFace("'a&amp;b'"));
+	check("&quot; in the face", face("x&quot;y"), withFace("'x&quot;y'"));
+	check("backslash in the face", face("a\\b"), withFace("'a\\\\b'"));
+	check("FontFamily with a double quote", text2html(Text("t", [FontFamily("x\"y")])),
+		"<span style=\"font-family:'x&quot;y';font-style:normal;font-weight:400;font-size:11px;\">t</span>");
+	check("FontFamily with a line break", text2html(Text("t", [FontFamily("a\nb")])),
+		"<span style=\"font-family:'a\\a b';font-style:normal;font-weight:400;font-size:11px;\">t</span>");
+	check("FontFamily mapped to Material Icons", text2html(Text("t", [FontFamily("MaterialIcons")])),
+		"<span style=\"font-family:'Material Icons';font-style:normal;font-weight:400;font-size:11px;\">t</span>");
+	check("fontName2css, normal names", fontName2css("Proxima Semi-Bold, sans-serif"),
+		"font-family:'Proxima Semi-Bold','sans-serif';font-style:normal;font-weight:400;");
+	check("fontName2css, double quote and apostrophe", fontName2css("a\"b'c"),
+		"font-family:'a&quot;b\\'c';font-style:normal;font-weight:400;");
+}
+
+testPicture() -> void {
+	check("normal url", picture2html(Picture("images/a.png", [])), "<img src=\"images/a.png\"/>");
+	check("url with an apostrophe", picture2html(Picture("it's.png", [])), "<img src=\"it's.png\"/>");
+	check("url with a double quote", picture2html(Picture("a\" title=\"b", [])),
+		"<img src=\"a&quot; title=&quot;b\"/>");
+	check("url with &", picture2html(Picture("a.png?x=1&y=2", [])), "<img src=\"a.png?x=1&amp;y=2\"/>");
+	check("url with < and >", picture2html(Picture("a<b>.png", [])), "<img src=\"a&lt;b&gt;.png\"/>");
+	check("staticForm2html, normal url", staticForm2html(Picture("images/a.png", [])), "<div><img src=\"images/a.png\"/></div>");
+	check("staticForm2html, double quote", staticForm2html(Picture("a\".png", [])), "<div><img src=\"a&quot;.png\"/></div>");
+	check("staticForm2html, .swf turned into .png", staticForm2html(Picture("images/x\".swf", [])),
+		"<div><img src=\"images/x&quot;.png\"/></div>");
+	check("staticForm2html, text", staticForm2html(Text("a", [])), "<div>" + outerSpan + "a</span></div>");
+	check("staticForm2html, double quote in the face", staticForm2html(Text("<font face=\"x&quot; y\">t</font>", [])),
+		"<div>" + withFace("'x&quot; y'") + "</div>");
+}
+
+testHead() -> void {
+	check("base path", makeHtmlBasePath("http://example.com/app/", ""), "<base href=\"http://example.com/app/\"/>");
+	check("base target", makeHtmlBasePath("", "_top"), "<base target=\"_top\"/>");
+	check("base path and target", makeHtmlBasePath("app/", "_blank"), "<base href=\"app/\" target=\"_blank\"/>");
+	check("no base", makeHtmlBasePath("", ""), "");
+	check("base path with a double quote", makeHtmlBasePath("a\" title=\"x", ""), "<base href=\"a&quot; title=&quot;x\"/>");
+	check("base target with a double quote", makeHtmlBasePath("u", "f\"g"), "<base href=\"u\" target=\"f&quot;g\"/>");
+	check("base path with &", makeHtmlBasePath("a?x=1&y=2", ""), "<base href=\"a?x=1&amp;y=2\"/>");
+	check("stylesheet", includeStyleSheet("css/flow.css"), "<link href=\"css/flow.css\" rel=\"stylesheet\" type=\"text/css\">");
+	check("stylesheet with a double quote", includeStyleSheet("a\"><b>x</b>"),
+		"<link href=\"a&quot;&gt;&lt;b&gt;x&lt;/b&gt;\" rel=\"stylesheet\" type=\"text/css\">");
+	check("stylesheet with &", includeStyleSheet("https://example.com/css?family=Roboto&lang=en"),
+		"<link href=\"https://example.com/css?family=Roboto&amp;lang=en\" rel=\"stylesheet\" type=\"text/css\">");
+}
+
+main() {
+	testFontFace();
+	testPicture();
+	testHead();
+
+	if (^failures == 0) {
+		println("form2html escape tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " form2html escape test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
