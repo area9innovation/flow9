@@ -1,0 +1,68 @@
+import string;
+import formats/csv;
+import sys/target;
+
+// Two checks of the hardening in lib/string.flow and lib/formats/csv.flow:
+//
+//  - ltrim/rtrim count the run of spaces once and cut once, instead of recursing a
+//    character at a time over a fresh copy of the rest of the string. The results must
+//    be exactly what they were: a space (32) and a non-breaking space (160) are trimmed,
+//    nothing else is, and a long run is handled in linear time rather than quadratic.
+//  - escapeCell quotes a cell holding a carriage return, as it already quotes one holding
+//    a line feed. Both end a record for a reader, so both must be quoted (RFC 4180, 2.6).
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+nbsp = fromCharCode(160);
+cr = fromCharCode(13);
+
+testTrim() -> void {
+	check("ltrim strips leading spaces", ltrim("   abc"), "abc");
+	check("rtrim strips trailing spaces", rtrim("abc   "), "abc");
+	check("trim strips both ends", trim("  abc  "), "abc");
+	check("trim strips a non-breaking space", trim(nbsp + "abc" + nbsp), "abc");
+	check("trim mixes the two", trim(" " + nbsp + " abc " + nbsp), "abc");
+	check("trim keeps inner spaces", trim("  a b  "), "a b");
+	check("trim keeps a tab", trim("\tabc\t"), "\tabc\t");
+	check("trim keeps a newline", trim("\nabc\n"), "\nabc\n");
+	check("trim of the empty string", trim(""), "");
+	check("trim of only spaces", trim("     "), "");
+	check("trim of only non-breaking spaces", trim(nbsp + nbsp), "");
+	check("trim of a string with nothing to strip", trim("abc"), "abc");
+	// A long run: quadratic copying made this take minutes, linear counting is immediate.
+	check("trim of a long run of spaces", trim(strRepeat(" ", 200000) + "x" + strRepeat(" ", 200000)), "x");
+	check("ltrim of a long run of spaces", ltrim(strRepeat(" ", 200000) + "x"), "x");
+	check("rtrim of a long run of spaces", rtrim("x" + strRepeat(" ", 200000)), "x");
+}
+
+testEscapeCell() -> void {
+	check("a carriage return is quoted", makeCsv([["a" + cr + "b", "z"]]), "\"a" + cr + "b\",z");
+	check("a line feed is quoted", makeCsv([["a\nb", "z"]]), "\"a\nb\",z");
+	check("a CRLF is quoted", makeCsv([["a" + cr + "\nb", "z"]]), "\"a" + cr + "\nb\",z");
+	check("a separator is quoted", makeCsv([["a,b", "z"]]), "\"a,b\",z");
+	check("a double quote is quoted and doubled", makeCsv([["a\"b", "z"]]), "\"a\"\"b\",z");
+	check("a plain cell is left alone", makeCsv([["ab", "z"]]), "ab,z");
+	check("a carriage return is quoted with another separator", makeCsvSep([["a" + cr + "b", "z"]], "|"), "\"a" + cr + "b\"|z");
+}
+
+main() {
+	testTrim();
+	testEscapeCell();
+
+	if (^failures == 0) {
+		println("trim and CSV escape tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " trim and CSV escape test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
