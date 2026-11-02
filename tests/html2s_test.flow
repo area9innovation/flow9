@@ -1,0 +1,140 @@
+import formats/html/html_parse;
+import sys/target;
+
+// Tests of html2s (lib/formats/html/html_node.flow), the inverse of parseHtml: what parseHtml gives
+// is written back so that it parses to the same nodes, and texts, attribute values and comments
+// built in code are written so that no part of them is read as markup.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : flow, expected : flow) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+// Parses the source, writes it back, and parses the result again
+roundTrip(name : string, source : string, expected : string) -> void {
+	nodes = parseHtml(source);
+	check(name + ": parses", nodes.second, "");
+	out = html2s(nodes.first);
+	check(name, out, expected);
+	check(name + ": parsed again", parseHtml(out), Pair(nodes.first, ""));
+}
+
+// Writes nodes built in code, and parses the result. What is parsed is written back the same.
+written(name : string, nodes : [HtmlNode], expected : string, parsed : [HtmlNode]) -> void {
+	out = html2s(nodes);
+	check(name, out, expected);
+	check(name + ": parsed", parseHtml(out), Pair(parsed, ""));
+	check(name + ": written again", html2s(parseHtml(out).first), out);
+}
+
+testDocuments() -> void {
+	roundTrip("tags and attributes", "<div class='a' id=\"b\"><span>x</span> <i>y</i></div>",
+		"<div class='a' id='b'><span>x</span> <i>y</i></div>");
+	roundTrip("list", "<ul><li>a</li><li>b</li></ul>", "<ul><li>a</li><li>b</li></ul>");
+	roundTrip("table", "<table><tr><td>1</td><td>2</td></tr></table>", "<table><tr><td>1</td><td>2</td></tr></table>");
+	roundTrip("paragraphs", "<p>Hello <b>world</b>!</p>", "<p/>Hello <b>world</b>!");
+	roundTrip("< and & that are text", "a < b > c & d", "a < b > c & d");
+	roundTrip("< before a tag", "x <<b>y</b>", "x <<b>y</b>");
+	roundTrip("< with a space inside a text", "a < b> c </ d> e", "a < b> c </ d> e");
+	roundTrip("< with a space where a text starts", "<i>y</i>< Back", "<i>y</i>< Back");
+	roundTrip("tag with a space after <", "< b>x", "<b>x</b>");
+	roundTrip("script", "<script>if (a<b && c) { x = '</div>'; }</script><p>t</p>",
+		"<script>if (a<b && c) { x = '</div>'; }</script><p/>t");
+	roundTrip("comment", "<!-- see a/b -- c -->x", "<!-- see a/b -- c -->x");
+}
+
+testEntities() -> void {
+	roundTrip("entities in a text", "x &amp; y &#65; &#x41; &nbsp; z", "x &amp; y &#65; &#x41; &nbsp; z");
+	roundTrip("entities without ;", "&#65;&#x41;&nbsp;&amp", "&#65;&#x41;&nbsp;&amp;");
+	roundTrip("tag right after an entity", "&amp;< b>x", "&amp;<b>x</b>");
+	written("entity nodes", [HtmlText("a"), HtmlEntity("&", "lt"), HtmlText("b")], "a&lt;b",
+		[HtmlText("a"), HtmlEntity("&", "lt"), HtmlText("b")]);
+}
+
+testTags() -> void {
+	roundTrip("void and empty tags", "<br/><img src='i.png'/><div></div>", "<br/><img src='i.png'/><div/>");
+	roundTrip("tag without a value", "<input disabled>", "<input disabled='1'/>");
+	roundTrip("empty tags inside a tag", "<div><div/><br></div>", "<div><div/><br/></div>");
+	written("empty tag", [HtmlTag("br", [], [])], "<br/>", [HtmlTag("br", [], [])]);
+	check("tag in the parse error message", htmlNode2s(HtmlTag("html", [], [])), "<html/>");
+}
+
+testAttributeValues() -> void {
+	roundTrip("' inside double quotes", "<a title=\"it's\">x</a>", "<a title=\"it's\">x</a>");
+	roundTrip("\" inside single quotes", "<a t='say \"hi\"'>x</a>", "<a t='say \"hi\"'>x</a>");
+	roundTrip("both quotes in a value without quotes", "<a t=x'y\"z>q</a>", "<a t=x'y\"z>q</a>");
+	roundTrip("& and < in values", "<a href='a?x=1&amp;y=2' t=\"a<b>c\">q</a>", "<a href='a?x=1&amp;y=2' t='a<b>c'>q</a>");
+
+	written("value with '", [HtmlTag("a", [HtmlAttrib("t", "it's")], [HtmlText("x")])],
+		"<a t=\"it's\">x</a>", [HtmlTag("a", [HtmlAttrib("t", "it's")], [HtmlText("x")])]);
+	written("value with \"", [HtmlTag("a", [HtmlAttrib("t", "say \"hi\"")], [HtmlText("x")])],
+		"<a t='say \"hi\"'>x</a>", [HtmlTag("a", [HtmlAttrib("t", "say \"hi\"")], [HtmlText("x")])]);
+	written("value with both quotes and no space", [HtmlTag("a", [HtmlAttrib("t", "x'y\"z")], [HtmlText("x")])],
+		"<a t=x'y\"z>x</a>", [HtmlTag("a", [HtmlAttrib("t", "x'y\"z")], [HtmlText("x")])]);
+	// parseHtml gives the source text of a value, so the &#39; stays in the value
+	written("value with both quotes and a space", [HtmlTag("a", [HtmlAttrib("t", "it's \"x\""), HtmlAttrib("u", "v")], [HtmlText("x")])],
+		"<a t='it&#39;s \"x\"' u='v'>x</a>", [HtmlTag("a", [HtmlAttrib("t", "it&#39;s \"x\""), HtmlAttrib("u", "v")], [HtmlText("x")])]);
+	written("value with & and <", [HtmlTag("a", [HtmlAttrib("t", "a&b<c>")], [HtmlText("x")])],
+		"<a t='a&b<c>'>x</a>", [HtmlTag("a", [HtmlAttrib("t", "a&b<c>")], [HtmlText("x")])]);
+}
+
+testTexts() -> void {
+	written("text with <", [HtmlText("a<b & c")], "a&lt;b & c",
+		[HtmlText("a"), HtmlEntity("&", "lt"), HtmlText("b & c")]);
+	written("text with a closing tag", [HtmlText("a</b>c")], "a&lt;/b>c",
+		[HtmlText("a"), HtmlEntity("&", "lt"), HtmlText("/b>c")]);
+	written("text with a comment", [HtmlText("<!-- x -->")], "&lt;!-- x -->",
+		[HtmlEntity("&", "lt"), HtmlText("!-- x -->")]);
+	written("text with &", [HtmlText("AT&T")], "AT&amp;T",
+		[HtmlText("AT"), HtmlEntity("&", "amp"), HtmlText("T")]);
+	written("text with an entity in it", [HtmlText("&lt;")], "&amp;lt;",
+		[HtmlEntity("&", "amp"), HtmlText("lt;")]);
+	written("text with & at the end", [HtmlText("a &")], "a &amp;",
+		[HtmlText("a "), HtmlEntity("&", "amp")]);
+	written("text with & before a space", [HtmlText("x & y")], "x & y", [HtmlText("x & y")]);
+	written("text with < before a digit", [HtmlText("1 <2")], "1 <2", [HtmlText("1 <2")]);
+	written("texts next to each other", [HtmlText("a <"), HtmlText("b>c")], "a &lt;b>c",
+		[HtmlText("a "), HtmlEntity("&", "lt"), HtmlText("b>c")]);
+	written("tag with a space after < at the start of a text", [HtmlTag("i", [], [HtmlText("y")]), HtmlText("< b>x")], "<i>y</i>&lt; b>x",
+		[HtmlTag("i", [], [HtmlText("y")]), HtmlEntity("&", "lt"), HtmlText(" b>x")]);
+	written("tag with a space after < after an &", [HtmlText("a&< b>")], "a&amp;&lt; b>",
+		[HtmlText("a"), HtmlEntity("&", "amp"), HtmlEntity("&", "lt"), HtmlText(" b>")]);
+	written("< with a space at the start of a text", [HtmlText("< Back")], "< Back", [HtmlText("< Back")]);
+	written("script text", [HtmlTag("div", [], [HtmlTag("script", [], [HtmlText("a<b && c")]), HtmlText("1<b")])],
+		"<div><script>a<b && c</script>1&lt;b</div>",
+		[HtmlTag("div", [], [HtmlTag("script", [], [HtmlText("a<b && c")]), HtmlText("1"), HtmlEntity("&", "lt"), HtmlText("b")])]);
+}
+
+testComments() -> void {
+	// parseHtml gives the source text of a comment, so the &gt; stays in it
+	written("comment with -->", [HtmlComment(" see a/b --> <b>x</b> "), HtmlText("y")], "<!-- see a/b --&gt; <b>x</b> -->y",
+		[HtmlComment(" see a/b --&gt; <b>x</b> "), HtmlText("y")]);
+	roundTrip("comment with --!>", "<!-- a/b --!> c -->x", "<!-- a/b --!> c -->x");
+	written("comment with --", [HtmlComment(" a/b -- c ")], "<!-- a/b -- c -->", [HtmlComment(" a/b -- c ")]);
+	written("comment ending in -", [HtmlComment("a/b -"), HtmlText("y")], "<!--a/b --->y", [HtmlComment("a/b -"), HtmlText("y")]);
+	written("comment starting with >", [HtmlComment(">a/b")], "<!--&gt;a/b-->", [HtmlComment("&gt;a/b")]);
+	written("comment starting with ->", [HtmlComment("->a/b")], "<!---&gt;a/b-->", [HtmlComment("-&gt;a/b")]);
+}
+
+main() {
+	testDocuments();
+	testEntities();
+	testTags();
+	testAttributeValues();
+	testTexts();
+	testComments();
+
+	if (^failures == 0) {
+		println("html2s tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " html2s test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}

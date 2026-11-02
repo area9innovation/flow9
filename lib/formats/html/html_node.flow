@@ -17,7 +17,13 @@ export {
 			body : string    // codes:    8828,         22A4       forall
 		);
 
-	// Converts the HTML nodes back to a string (inverse function to `parseHtml`);
+	// Converts the HTML nodes back to a string (inverse function to `parseHtml`).
+	// Texts, comments and attribute values hold source text, as `parseHtml` gives them, so "&amp;" stays "&amp;".
+	// Only what would be read as markup is escaped, so the nodes that `parseHtml` gives are written as they were read:
+	// - in a text, a "<" that would start a tag or a comment is written as &lt;, a "&" that would start an entity as &amp;;
+	// - in a comment, the ">" of a "-->" that would end it early is written as &gt;;
+	// - an attribute value is put in quotes that it does not hold.
+	// The text of a script is written as it is.
 	html2s(html : [HtmlNode]) -> string;
 	htmlNode2s(elem : HtmlNode) -> string;
 
@@ -27,7 +33,17 @@ export {
 
 
 html2s(html : [HtmlNode]) -> string {
-	concatStrings(map(html, htmlNode2s));
+	// Neighbouring texts are escaped as one text: a "<" at the end of one can start a tag with the next
+	parts = fold(html, Pair(makeList(), ""), \acc, node -> {
+		writeNode = \-> Pair(Cons(htmlNode2s(node), Cons(htmlText2s(acc.second), acc.first)), "");
+		switch (node) {
+			HtmlText(text): Pair(acc.first, acc.second + text);
+			HtmlTag(__, __, __): writeNode();
+			HtmlEntity(__, __): writeNode();
+			HtmlComment(__): writeNode();
+		}
+	});
+	list2string(Cons(htmlText2s(parts.second), parts.first));
 }
 
 htmlNode2s(elem : HtmlNode) -> string {
@@ -35,21 +51,127 @@ htmlNode2s(elem : HtmlNode) -> string {
 		HtmlTag(tag, attribs, body): {
 			attribs_s = concatStrings(
 				mapi(attribs, \i, attr -> 
-					attr.key + "='" + attr.val + "'" + if (i + 1 != length(attribs)) " " else ""
+					attr.key + "=" + htmlAttribValue2s(attr.val) + if (i + 1 != length(attribs)) " " else ""
 				)
 			);
 			if (length(body) > 0) {
 				open_tag = "<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + ">";
 				close_tag = "</" + tag + ">";
-				open_tag + html2s(body) + close_tag;
+				open_tag + htmlTagBody2s(tag, body) + close_tag;
 			} else {
 				"<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + "/>"
 			}
 		}
-		HtmlText(text):       text;
-		HtmlComment(text):    "<!--" + text + "-->";
+		HtmlText(text):       htmlText2s(text);
+		HtmlComment(text):    "<!--" + htmlComment2s(text) + "-->";
 		HtmlEntity(prefix, body): prefix + body + ";";
 	}
+}
+
+// parseHtml keeps the text of a script as it is, so it is written as it is
+htmlTagBody2s(tag : string, body : [HtmlNode]) -> string {
+	if (tag == "script") {
+		concatStrings(map(body, \node -> switch (node) {
+			HtmlText(text): text;
+			HtmlTag(__, __, __): htmlNode2s(node);
+			HtmlEntity(__, __): htmlNode2s(node);
+			HtmlComment(__): htmlNode2s(node);
+		}));
+	} else {
+		html2s(body);
+	}
+}
+
+// A value is written in single quotes, or in double quotes when it holds a single quote.
+// A value with both is written without quotes, as parseHtml reads it, when it can be:
+// with no white space, ">", "/" or "=", and no quote at its start. Else its single quotes are written as &#39;
+htmlAttribValue2s(val : string) -> string {
+	if (!strContains(val, "'")) "'" + val + "'"
+	else if (!strContains(val, "\"")) "\"" + val + "\""
+	else if (!startsWith(val, "'") && !startsWith(val, "\"") && strFindFirstOf(val, " \t\n\r>/=") == -1) val
+	else "'" + strReplace(val, "'", "&#39;") + "'";
+}
+
+// In a text, a "<" that parseHtml reads as the start of a tag or a comment is written as &lt;,
+// and a "&" that is not before white space, which it reads as the start of an entity, as &amp;.
+// parseHtml never gives these in a text, so a text that it gives is written as it is.
+htmlText2s(text : string) -> string {
+	if (!strContains(text, "<") && !strContains(text, "&")) text
+	else concatStrings(generate(0, strlen(text), \i -> {
+		c = getCharAt(text, i);
+		if (c == "<" && isHtmlTagStart(text, i)) "&lt;"
+		else if (c == "&" && !isHtmlSpace(getCharAt(text, i + 1))) "&amp;"
+		else c;
+	}));
+}
+
+// In a text, parseHtml reads a "<" before a letter or "!", or before "/" and a letter or "!", as markup.
+// Where a node starts (at the start of the text, and after a "&" written as &amp;), it also reads
+// a tag with white space after "<" or "</": "< b>" is a tag there, "< Back" is a text.
+isHtmlTagStart(s : string, i : int) -> bool {
+	next = getCharAt(s, i + 1);
+	isHtmlTagLetter(next) || (next == "/" && isHtmlTagLetter(getCharAt(s, i + 2)))
+	|| ((i == 0 || getCharAt(s, i - 1) == "&") && isHtmlTagAt(s, i));
+}
+
+// Whether parseHtml reads a script or a tag at i, by the rules `script` and `tag` of
+// lib/formats/html/parser/html.gringo: "<" or "</", white space, a name, attributes, then ">" or "/>"
+isHtmlTagAt(s : string, i : int) -> bool {
+	closing = strContainsAt(s, i, "</");
+	name = skipHtmlSpaces(s, i + (if (closing) 2 else 1));
+	if (!closing && strContainsAt(s, name, "script") && strContainsAt(s, htmlAttribsEnd(s, skipHtmlSpaces(s, name + 6)), ">")) true
+	else if (!isHtmlTagLetter(getCharAt(s, name))) false
+	else {
+		end = htmlAttribsEnd(s, skipHtmlSpaces(s, htmlCharsEnd(s, name + 1, " \t\n\r>/")));
+		strContainsAt(s, end, ">") || strContainsAt(s, end, "/>");
+	}
+}
+
+htmlAttribsEnd(s : string, i : int) -> int {
+	keyEnd = htmlCharsEnd(s, i, " \t\n\r=>/");
+	if (keyEnd == i) i
+	else {
+		afterKey = skipHtmlSpaces(s, keyEnd);
+		htmlAttribsEnd(s, skipHtmlSpaces(s, if (getCharAt(s, afterKey) == "=") htmlAttribValueEnd(s, afterKey) else afterKey));
+	}
+}
+
+// The end of the value after the "=" at i; i when there is no value
+htmlAttribValueEnd(s : string, i : int) -> int {
+	start = skipHtmlSpaces(s, i + 1);
+	quote = getCharAt(s, start);
+	close = if (quote == "'" || quote == "\"") strRangeIndexOf(s, quote, start + 1, strlen(s)) else -1;
+	if (close >= 0) close + 1
+	else {
+		end = htmlCharsEnd(s, start, " \t\n\r>/=");
+		if (end > start) end else i;
+	}
+}
+
+// The index of the first char from i that is one of chars, or the length of s
+htmlCharsEnd(s : string, i : int, chars : string) -> int {
+	countUntil(i, strlen(s), \j -> strContains(chars, getCharAt(s, j)));
+}
+
+skipHtmlSpaces(s : string, i : int) -> int {
+	countUntil(i, strlen(s), \j -> !isHtmlSpace(getCharAt(s, j)));
+}
+
+isHtmlTagLetter(c : string) -> bool {
+	c == "!" || ("a" <= c && c <= "z") || ("A" <= c && c <= "Z");
+}
+
+isHtmlSpace(c : string) -> bool {
+	c == " " || c == "\t" || c == "\n" || c == "\r";
+}
+
+// A comment ends at "-->", and in a browser also at a ">" or "->" right after "<!--".
+// The ">" there is written as &gt;, so that the comment keeps all of its text.
+htmlComment2s(text : string) -> string {
+	escaped = strReplace(text, "-->", "--&gt;");
+	if (startsWith(escaped, ">")) "&gt;" + strRight(escaped, 1)
+	else if (startsWith(escaped, "->")) "-&gt;" + strRight(escaped, 2)
+	else escaped;
 }
 
 unescapeHtmlEntity(entity : HtmlEntity) -> string {
