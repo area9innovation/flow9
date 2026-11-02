@@ -8,6 +8,12 @@ export {
 	native parseJson : (json : string) -> Json = Native.parseJson;
 	// Dummy way to skip js native implementation and use safer flow one which is capable to recover broken json.
 	// It is not recommended use it since it is slower than native but can help to debug.
+	// It is lenient: anything after the first value is ignored, a top-level string without its closing
+	// quote, as "abc, still gives the string, and input it cannot read gives JsonDouble(0.0), the same
+	// as "0". That includes an array or object without its closing bracket, as ["ab, and a lone quote.
+	// parseJsonUntilError tells whether the input was read to its end. parseJsonSafer from
+	// formats/json/json_parse is a stricter check against the JSON grammar, but it still accepts some
+	// input that is not JSON, as 01, 5. or "\q"
 	parseJsonSafe(json : string) -> Json;
 	getJsonObjectValue(json : Json, def : [Pair<string, Json>]) -> [Pair<string, Json>];
 	getJsonFieldValue(json : Json, field : string, def : Json) -> Json;
@@ -108,6 +114,11 @@ export {
 	// The setter to the nested field, dual to getJsonNestedField
 	setJsonNestedField(json: Json, fields: [string], value : Json) -> Json;
 
+	// Reads one value as parseJsonSafe does and tells where reading stopped. errorPosition is -1 when
+	// the input is one value read to its end, and not cut short there, as "abc or 12e are. White space
+	// before and after the value is skipped, as in JSON. The reading is as lenient as in parseJsonSafe,
+	// so -1 does not mean the input is valid JSON. parseJsonSafer from formats/json/json_parse is a
+	// stricter check against the JSON grammar
 	parseJsonUntilError(json : string) -> JsonParseResult;
 		JsonParseResult(
 			value : Json,
@@ -123,8 +134,27 @@ parseJson(json : string) -> Json {
 parseJsonUntilError(json : string) -> JsonParseResult {
 	len = strlen(json);
 	v = doParseJson(json, len, 0, 0);
-	success = v.start != v.finish && v.finish == len;
+	success = v.start != v.finish && skipJsonSpaces(json, len, v.finish) == len && isJsonValueComplete(json, v);
 	JsonParseResult(v.data, if (success) -1 else v.finish, if (success) -1 else v.processed);
+}
+
+// Whether a value with nothing but white space after it in json is complete, not cut short. A string
+// or a number is read as far as it goes, so "abc and 12e give a value; an array or object without its
+// closing bracket does not parse at all
+isJsonValueComplete(json : string, v : ParsingAcc<Json>) -> bool {
+	switch (v.data) {
+		JsonString(__): {
+			// A string without its closing quote runs to the end. Read again with a character added there,
+			// a closed string ends where it did, and one that is not closed takes that character too
+			deserializeRestOfString2(json + " ", v.start).second == v.finish;
+		}
+		JsonDouble(__): {
+			// A number ends with a digit: 12e, 1e+, 1. and - stop before their digits
+			last = getCharCodeAt(json, v.finish - 1);
+			48 <= last && last <= 57; // "0" to "9"
+		}
+		default: true;
+	}
 }
 
 parseJsonSafe(json : string) -> Json {
