@@ -1,0 +1,106 @@
+import formats/html/html_parse;
+import formats/html/html2md;
+import sys/target;
+
+// Tests that the Markdown from ruHtml2md (lib/formats/html/html2md.flow) shows the same text and
+// links as the HTML did: characters from entities are not read as markup, the text and url of a
+// link or image keep their ends, and only http(s) links and http(s) or data:image/ images are kept.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : flow, expected : flow) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+md(html : string) -> string {
+	ruHtml2md(parseHtml(html).first);
+}
+
+testEntities() -> void {
+	check("tag written with entities", md("&lt;b&gt;bold&lt;/b&gt;"), "&lt;b>bold&lt;/b>");
+	check("numeric entities for a tag", md("&#60;i&#62; and &#x3C;i&#x3E;"), "&lt;i> and &lt;i>");
+	check("&amp; before a name and ;", md("&amp;copy;"), "&amp;copy;");
+	check("&amp; before a number and ;", md("&amp;#39; and &amp;#x41;"), "&amp;#39; and &amp;#x41;");
+	check("&amp; before an entity for #", md("&amp;&#35;39;"), "&amp;#39;");
+	check("&amp; before amp;", md("&amp;amp;"), "&amp;amp;");
+	check("&amp; before &lt;", md("&amp;&lt;"), "&&lt;");
+	check("&amp; between words", md("Tom &amp; Jerry"), "Tom & Jerry");
+	check("&amp; before a name without ;", md("Q&amp;A and R&amp;D"), "Q&A and R&D");
+	check("&amp; at the end of an element", md("<span>&amp;</span>copy;"), "&amp;copy;");
+	check("&amp; and a name at the end of an element", md("<li>R&amp;D</li>"), "\nR&D");
+	check("other entities", md("&copy; &mdash; &quot;q&quot; &#39;s -&gt;"), "© — \"q\" 's ->");
+	check("< in the text itself", md("a < b"), "a < b");
+	check("entities in code", md("<code>&lt;div&gt; &amp;copy;</code>"), "`<div> &copy;`");
+	check("entities in pre and code", md("<pre><code>a &lt; b</code></pre>"), "``a < b``");
+	check("entity in a heading", md("<h1>&lt;T&gt;</h1>"), "\n# &lt;T>\n");
+	check("entity in a table", md("<table><tr><td>&lt;a&gt;</td></tr></table>"), "\n| &lt;a> |");
+}
+
+testLinks() -> void {
+	check("] in the text, url a)b", md("<a href=\"https://e.com/a)b\">x]y</a>"), "[x&#93;y](https://e.com/a%29b)");
+	check("[ and ] in the text", md("<a href=\"https://e.com\">[1]</a>"), "[&#91;1&#93;](https://e.com)");
+	check("entities in the text", md("<a href=\"https://e.com\">a &lt;b&gt; &#93; &amp;copy;</a>"), "[a &lt;b> &#93; &amp;copy;](https://e.com)");
+	check("space in the url", md("<a href=\"https://e.com/a b\">t</a>"), "[t](https://e.com/a%20b)");
+	check("url with (a", md("<a href=\"https://e.com/(a\">t</a>"), "[t](https://e.com/%28a)");
+	check("url with (x)", md("<a href=\"https://en.wikipedia.org/wiki/flow_(x)\">w</a>"), "[w](https://en.wikipedia.org/wiki/flow_(x))");
+	check("spaces around the url", md("<a href=\" https://e.com/ \">t</a>"), "[t](https://e.com/)");
+	check("line break in the url", md("<a href=\"https://e.com/a\nb\">t</a>"), "[t](https://e.com/ab)");
+	check("httpx: is not a web link", md("<a href=\"httpx://e.com\">t</a>"), "t");
+	check("javascript: is not a web link", md("<a href=\"javascript:alert(1)\">t</a>"), "t");
+	check("scheme in capitals", ruHtml2md([HtmlTag("a", [HtmlAttrib("href", "HTTPS://E.com/A")], [HtmlText("t")])]), "[t](HTTPS://E.com/A)");
+	check("plain link", md("<a href=\"https://example.com/page?id=1\">the page</a>"), "[the page](https://example.com/page?id=1)");
+	check("http link", md("<a href=\"http://e.com/x\">Plain http</a>"), "[Plain http](http://e.com/x)");
+	check("local link", md("<a href=\"/local\">local</a>"), "local");
+	check("local link with [ and ]", md("<a href=\"#fn1\">[1]</a>"), "[1]");
+}
+
+testImages() -> void {
+	check("image", md("<img src=\"https://e.com/a.png\" alt=\"A cat\">"), "![a cat](https://e.com/a.png)");
+	check("image without alt", md("<img src=\"http://e.com/a.png\">"), "![Image](http://e.com/a.png)");
+	check("] in alt, space in src", md("<img src=\"https://e.com/a b.png\" alt=\"x]y\">"), "![x&#93;y](https://e.com/a%20b.png)");
+	check("data:image/", md("<img src=\"data:image/png;base64,abc=\" alt=\"Dot\">"), "![dot](data:image/png;base64,abc=)");
+	check("data:image/ in capitals", ruHtml2md([HtmlTag("img", [HtmlAttrib("src", "DATA:image/png;base64,iVBOR=")], [])]), "![Image](DATA:image/png;base64,iVBOR=)");
+	check("other data: gives alt", md("<img src=\"data:text/html,x\" alt=\"x\">"), "x");
+	check("javascript: gives alt", md("<img src=\"javascript:alert(1)\" alt=\"x\">"), "x");
+	check("local image gives alt", md("<img src=\"/logo.png\" alt=\"[logo]\">"), "&#91;logo&#93;");
+	check("< in alt", md("<img src=\"/a.png\" alt=\"<b>x\">"), "&lt;b>x");
+	check("entity in alt is kept", md("<img src=\"https://e.com/a.png\" alt=\"a &amp; b\">"), "![a &amp; b](https://e.com/a.png)");
+	check("local image without alt", md("<img src=\"/logo.png\">"), "");
+	check("image without src", md("<img alt=\"no src\">"), "no src");
+	check("image in a link", md("<a href=\"https://e.com\"><img src=\"https://e.com/a.png\" alt=\"A cat\"></a>"), "[![a cat](https://e.com/a.png)](https://e.com)");
+}
+
+testOrdinary() -> void {
+	check("headings and styles", md("<h1>Title</h1><h2>Sub title</h2><p>Some <b>bold</b>, <i>italic</i> and <em>em</em> text.</p>"),
+		"\n# Title\n\n## Sub title\n\nSome **bold**, *italic* and *em* text.");
+	check("lists", md("<ul><li>One</li><li>Two <b>b</b></li></ul><ol><li>First</li><li>Second</li></ol>"), "\n* One\n* Two **b**\n\n1. First\n2. Second");
+	check("table", md("<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr><tr><td>x &amp; y</td><td>[z]</td></tr></table>"),
+		"\n| A     | B   |\n---------------\n| 1     | 2   |\n---------------\n| x & y | [z] |");
+	check("code", md("<p>Inline <code>x = 1</code> code</p><pre><code>line1\nline2</code></pre>"), "\nInline `x = 1` code````\nline1\nline2\n````");
+	check("quote", md("<blockquote>Quote<br>line two</blockquote>"), "> Quote\n> line two");
+	check("text with links", md("<p>See <a href=\"https://example.com/page?id=1&amp;b=2\">the page</a> and <a href=\"/local\">local</a>.</p>"),
+		"\nSee [the page](https://example.com/page?id=1&amp;b=2) and local.");
+	check("page", md("<html><head><title>T</title></head><body><section><p>Para</p></section></body></html>"), "Para\n");
+	check("text", md("<p>Tom &amp; Jerry &quot;q&quot; &copy; x&nbsp;y, a < b and [1] and *star*</p>"), "\nTom & Jerry \"q\" © x\u00a0y, a < b and [1] and *star*");
+	check("spans, sup and sub", md("<p><span>a</span> <span> b </span>c x<sup>2</sup> H<sub>2</sub>O</p>"), "\na b c x^2^ H~2~O");
+}
+
+main() {
+	testEntities();
+	testLinks();
+	testImages();
+	testOrdinary();
+
+	if (^failures == 0) {
+		println("HTML to Markdown escape tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " HTML to Markdown escape test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}

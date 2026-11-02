@@ -28,13 +28,20 @@ ruHtml2md(html : [HtmlNode]) -> string {
 }
 
 ruDoHtml2md(html : [HtmlNode], indent : string) -> string {
-	concatStrings(map(html, \elem -> ruHtmlNode2md(elem, indent)))
+	parts = map(html, \elem -> ruHtmlNode2md(elem, indent));
+	concatStrings(mapi(parts, \i, part -> switch (html[i]) {
+		// A & from an entity is written as &amp; if it could make a new entity with the text after it, as in &amp;copy;
+		HtmlEntity(__, __): if (part == "&" && ruMayStartEntity(parts, i + 1, "")) "&amp;" else part;
+		HtmlTag(__, __, __): part;
+		HtmlText(__): part;
+		HtmlComment(__): part;
+	}))
 }
 
 ruHtmlNode2md(html : HtmlNode, indent : string) -> string {
 	switch (html) {
 		HtmlTag(tag, attribs, body): {
-			contents = ruDoHtml2md(body, indent);
+			contents = ruDoHtml2md(ruHtmlBody2md(tag, attribs, body), indent);
 			if (strlen(tag) == 2 && getCharAt(tag, 0) == "h") {
 				ruHtmlHeading2md(s2i(getCharAt(tag, 1)), contents);
 			} else if (tag == "p" || tag == "div" || tag == "body" || tag == "section" || tag == "html") {
@@ -63,9 +70,9 @@ ruHtmlNode2md(html : HtmlNode, indent : string) -> string {
 				trimmed = trim2(contents, " \n\t\r");
 				if (trimmed != contents) trimmed + " " else trimmed
 			} else if (tag == "a") {
-				href = fold(attribs, "", \acc, attrib -> if (attrib.key == "href") attrib.val else acc);
-				if (startsWith(href, "http")) {
-					"[" + trim2(contents, " \n\t\r") + "](" + href + ")";
+				href = ruHtmlUrl(attribs, "href");
+				if (ruIsWebUrl(href)) {
+					"[" + trim2(contents, " \n\t\r") + "](" + ruEscapeMdUrl(href) + ")";
 				} else {
 					// Internal link. Ignore
 					trim2(contents, " \n\t\r");
@@ -78,9 +85,14 @@ ruHtmlNode2md(html : HtmlNode, indent : string) -> string {
 				"";
 			} else if (tag == "img") {
 				// ![Image](http://example.com/image.png)
-				src = fold(attribs, "", \acc, attrib -> if (attrib.key == "src") attrib.val else acc);
-				alt = fold(attribs, "Image", \acc, attrib -> if (attrib.key == "alt") attrib.val else acc);
-				"![" + alt + "](" + src + ")"
+				src = ruHtmlUrl(attribs, "src");
+				alt = fold(attribs, None(), \acc, attrib -> if (attrib.key == "alt") Some(attrib.val) else acc);
+				if (ruIsWebUrl(src) || startsWith(toLowerCase(strLeft(src, 11)), "data:image/")) {
+					"![" + ruEscapeMdAlt(either(alt, "Image")) + "](" + ruEscapeMdUrl(src) + ")"
+				} else {
+					// Markdown can not show this image, so only its text is kept
+					ruEscapeMdAlt(either(alt, ""));
+				}
 			} else if (tag == "code") {
 				if (strContains(contents, "\n")) {
 					"```\n" + contents + "\n```";
@@ -96,7 +108,98 @@ ruHtmlNode2md(html : HtmlNode, indent : string) -> string {
 		}
 		HtmlText(text): text;
 		HtmlComment(text): "";
-		HtmlEntity(prefix, body): unescapeHtmlEntity(html);
+		HtmlEntity(prefix, body): {
+			text = unescapeHtmlEntity(html);
+			// A < from an entity is written as &lt;, so that it does not start a tag
+			if (text == "<") "&lt;" else text;
+		}
+	}
+}
+
+// Markdown shows code as it is written, so entities in code become their characters.
+// In the text of a link, [ and ] are written as entities, as a ] would end the text.
+ruHtmlBody2md(tag : string, attribs : [HtmlAttrib], body : [HtmlNode]) -> [HtmlNode] {
+	if (tag == "code" || tag == "pre" || tag == "tt") {
+		ruHtmlCodeText(body);
+	} else if (tag == "a" && ruIsWebUrl(ruHtmlUrl(attribs, "href"))) {
+		ruHtmlLinkText(body);
+	} else {
+		body;
+	}
+}
+
+ruHtmlCodeText(body : [HtmlNode]) -> [HtmlNode] {
+	map(body, \node -> switch (node) {
+		HtmlTag(tag, attribs, children): HtmlTag(tag, attribs, ruHtmlCodeText(children));
+		HtmlEntity(__, __): HtmlText(unescapeHtmlEntity(node));
+		HtmlText(__): node;
+		HtmlComment(__): node;
+	});
+}
+
+ruHtmlLinkText(body : [HtmlNode]) -> [HtmlNode] {
+	map(body, \node -> switch (node) {
+		HtmlTag(tag, attribs, children): {
+			if (tag == "code" || tag == "pre" || tag == "tt") node else HtmlTag(tag, attribs, ruHtmlLinkText(children));
+		}
+		HtmlText(text): HtmlText(ruEscapeMdBrackets(text));
+		HtmlEntity(__, __): {
+			text = unescapeHtmlEntity(node);
+			if (text == "[" || text == "]") HtmlText(ruEscapeMdBrackets(text)) else node;
+		}
+		HtmlComment(__): node;
+	});
+}
+
+// Whether a & before these parts starts an entity in Markdown: a name or #number, then ;.
+// At the end of an element the text after it is not known here, so a & there counts as one.
+ruMayStartEntity(parts : [string], i : int, after : string) -> bool {
+	end = ruEntityNameEnd(after);
+	if (end < strlen(after)) {
+		end > b2i(startsWith(after, "#")) && getCharAt(after, end) == ";";
+	} else if (i < length(parts)) {
+		ruMayStartEntity(parts, i + 1, after + parts[i]);
+	} else {
+		after == "";
+	}
+}
+
+ruEntityNameEnd(s : string) -> int {
+	countUntil(b2i(startsWith(s, "#")), strlen(s), \i -> {
+		c = getCharCodeAt(s, i);
+		!(c >= 0x30 && c <= 0x39 || c >= 0x41 && c <= 0x5A || c >= 0x61 && c <= 0x7A);
+	});
+}
+
+// Browsers drop tabs and line breaks from a url, and spaces around it
+ruHtmlUrl(attribs : [HtmlAttrib], key : string) -> string {
+	url = fold(attribs, "", \acc, attrib -> if (attrib.key == key) attrib.val else acc);
+	trim2(strReplaces(url, ["\t", "", "\n", "", "\r", ""]), " ");
+}
+
+ruIsWebUrl(url : string) -> bool {
+	scheme = toLowerCase(strLeft(url, 8));
+	startsWith(scheme, "http://") || startsWith(scheme, "https://");
+}
+
+ruEscapeMdBrackets(text : string) -> string {
+	strReplaces(text, ["[", "&#91;", "]", "&#93;"]);
+}
+
+// Entities in an attribute value are not decoded, so they are kept. A < is written as &lt;
+ruEscapeMdAlt(alt : string) -> string {
+	ruEscapeMdBrackets(strReplace(alt, "<", "&lt;"));
+}
+
+// A space or control character ends the url in Markdown, and so does a round bracket without its pair,
+// so these are written as %XX
+ruEscapeMdUrl(url : string) -> string {
+	depth = stringFold(url, 0, \d, c -> if (d < 0) d else if (c == 0x28) d + 1 else if (c == 0x29) d - 1 else d);
+	escape = \c -> c <= 0x20 || c == 0x7F || depth != 0 && (c == 0x28 || c == 0x29);
+	if (stringFold(url, false, \acc, c -> acc || escape(c))) {
+		concatStrings(map(s2a(url), \c -> if (escape(c)) "%" + lpad(formatHex(c), "0", 2) else fromCharCode(c)));
+	} else {
+		url;
 	}
 }
 
