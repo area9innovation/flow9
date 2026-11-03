@@ -975,7 +975,7 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 		contains(controls, FullScreenPlayer()) |> b2i |> i2s
 	);
 
-	makeExternalApiPlayer("yt_player.html", wh, style, false, false, \ -> JsonObject([
+	makeExternalApiPlayer("yt_player.html", wh, style, false, false, false, \ -> JsonObject([
 		Pair("videoId", JsonString(videoId)),
 		Pair("params", JsonObject(concatA([
 			if (startParam == "") [] else [Pair("start", JsonString(startParam))],
@@ -997,7 +997,8 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 
 // The wrapper page hosting the provider JS API: takes {loadVideo}/{playerState}, mirrors the player state back as {playerState}.
 // restoreStateOnReload needs a page that queues a state arriving before its player is ready.
-makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle], honourRealHtmlStyles : bool, restoreStateOnReload : bool, loadMessage : () -> Json) -> Material {
+// useIntrinsicSize enables Vimeo's intrinsic-size protocol and one-shot fallback; other players keep legacy sizing.
+makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle], honourRealHtmlStyles : bool, restoreStateOnReload : bool, useIntrinsicSize : bool, loadMessage : () -> Json) -> Material {
 	STATUS_PLAYING = "PLAYING";
 	STATUS_BUFFERING = "BUFFERING";
 	STATUS_PAUSED = "PAUSED";
@@ -1008,6 +1009,25 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	positionB = extractStruct(style, FVideoPosition(make(0.0))).position;
 	volumeB = extractStruct(style, FVideoVolume(make(1.0))).volume;
 	realSizeWH = extractStruct(style, FVideoRealSize(makeWH())).size;
+	sizeInitialized = ref false;
+	fallbackRequested = ref false;
+	// A caller may compute wh from FVideoRealSize (including its own control bar).
+	// Feeding wh back on every duration/ready message repeatedly scales that size.
+	// Vimeo without intrinsic dimensions gets one fallback, retained across iframe reloads.
+	// The video URL is fixed for this material; switching videos creates a new instance.
+	initializeSize = \ -> {
+		if (!useIntrinsicSize) {
+			// Preserve the other providers' existing per-message layout-size reporting.
+			nextDistinct(realSizeWH, fgetValue(wh));
+		} else if (!^sizeInitialized) {
+			fallbackRequested := true;
+			size = fgetValue(wh);
+			if (size.width > 0.0 && size.height > 0.0) {
+				sizeInitialized := true;
+				nextDistinct(realSizeWH, size);
+			}
+		}
+	};
 
 	sendB = make("");
 	receiveB = make("");
@@ -1047,7 +1067,7 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	}
 
 	MConstruct(
-		concat(
+		concatA([
 			if (isUrlParameterTrue("dev")) [
 				makeSubscribe2(sendB, \s -> println("to " + page + " -> " + s)),
 				makeSubscribe2(receiveB, \s -> println("from " + page + " -> " + s)),
@@ -1080,20 +1100,35 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 				),
 				// the loop was baked into loadVideo and never sent again, so flipping FVideoLoop at runtime did nothing
 				makeSubscribe2(loopB, \l -> sendState([Pair("loop", JsonBool(l))])),
+			],
+			if (useIntrinsicSize) [
+				makeSubscribe2(fselectFromStateM("videoSize"),
+					\sizeM -> maybeApply(sizeM, \size -> {
+						width = getJsonDoubleField(size, "width", 0.0);
+						height = getJsonDoubleField(size, "height", 0.0);
+						if (width > 0.0 && height > 0.0) {
+							sizeInitialized := true;
+							nextDistinct(realSizeWH, WidthHeight(width, height));
+						}
+					})
+				),
+				// Ready may precede a usable layout. Wait for its first positive size without
+				// feeding later layout changes back into intrinsic size or affecting YouTube.
+				makeSubscribe2(wh, \__ -> if (^fallbackRequested && !^sizeInitialized) initializeSize())
+			] else [],
+			[
 				makeSubscribe2(fselectFromStateM("duration"),
 					\durationM -> maybeApply(durationM, \d -> {
 						nextDistinct(lengthB, getJsonDoubleValue(d, 0.0));
-						if (getValue(lengthB) > 0.) {
-							nextDistinct(realSizeWH, fgetValue(wh))
-						}
+						if (getValue(lengthB) > 0.0) initializeSize();
 					})
 				),
 				// ready comes even without the SDK, so the consumer's spinner does not hang
 				makeSubscribe2(fselectFromStateM("ready"),
-					\readyM -> maybeApply(readyM, \r -> if (getJsonBoolValue(r, false)) nextDistinct(realSizeWH, fgetValue(wh)))
+					\readyM -> maybeApply(readyM, \r -> if (getJsonBoolValue(r, false)) initializeSize())
 				)
 			]
-		),
+		]),
 		MRealHTML(appendUrl(getAppUrl(), page), wh, concatA([
 			[
 				FlowCallback(flowCallBack),
@@ -1129,7 +1164,7 @@ MVideoExternalApiPlayer(url : string, wh : Transform<WidthHeight>, style : [MVid
 // unlike yt_player, the embed url with its parameters (autoplay, muted, controls, start) goes to the page as is
 MVideoVimeoPlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
 	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
-	makeExternalApiPlayer("vimeo_player.html", wh, style, true, true, \ -> JsonObject([
+	makeExternalApiPlayer("vimeo_player.html", wh, style, true, true, true, \ -> JsonObject([
 		Pair("url", JsonString(either(getVimeoURL(url), url))),
 		Pair("params", JsonObject([Pair("loop", JsonBool(fgetValue(loopB)))]))
 	]))
