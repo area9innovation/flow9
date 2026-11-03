@@ -86,6 +86,43 @@ test('readiness timeout releases fallback and buffered state if metadata never s
 	assert.equal(w.messages[1].playerState.duration, 30);
 });
 
+test('readiness does not publish default playback values before the first poll completes', async () => {
+	const w = wrapper();
+	w.context.createPlayer('https://player.vimeo.com/video/1?autoplay=1#t=12s', {});
+	let resolvePaused;
+	w.players[0].getPaused = () => new Promise(resolve => { resolvePaused = resolve; });
+	w.players[0].getCurrentTime = () => Promise.resolve(12);
+	w.players[0].getDuration = () => Promise.resolve(60);
+	await flush();
+	assert.ok(w.messages.some(m => m.playerState.ready === true));
+	assert.ok(w.messages.every(m => !('status' in m.playerState) && !('currentTime' in m.playerState) && !('duration' in m.playerState)));
+	resolvePaused(false);
+	await flush();
+	assert.deepEqual(w.messages.at(-1).playerState, { status: 'PLAYING', duration: 60, currentTime: 12, volume: 100 });
+});
+
+test('readiness flushes partial observed state without inventing an unobserved status', async () => {
+	const w = wrapper();
+	w.context.createPlayer('https://player.vimeo.com/video/1', {});
+	w.players[0].getPaused = () => new Promise(() => {});
+	w.players[0].emit('timeupdate', { seconds: 12, duration: 60 });
+	await flush();
+	assert.deepEqual(w.messages.at(-1).playerState, { duration: 60, currentTime: 12 });
+	w.players[0].emit('seeked', { seconds: 14 });
+	assert.deepEqual(w.messages.at(-1).playerState, { currentTime: 14 });
+});
+
+test('readiness timeout does not manufacture playback state when both reads are pending', async () => {
+	const w = wrapper();
+	w.context.createPlayer('https://player.vimeo.com/video/1', {});
+	w.players[0].getPaused = () => new Promise(() => {});
+	w.players[0].getVideoWidth = () => new Promise(() => {});
+	w.players[0].getVideoHeight = () => new Promise(() => {});
+	await flush();
+	w.timers.get(w.context.readyTimer)();
+	assert.deepEqual(w.messages, [{ playerState: { ready: true } }]);
+});
+
 test('reports intrinsic dimensions independently of the iframe layout', async () => {
 	const w = wrapper();
 	w.context.createPlayer('https://player.vimeo.com/video/1', {});
@@ -108,6 +145,46 @@ test('updates dimensions when the intrinsic media size changes', async () => {
 	await flush();
 	dimensions = [1080, 1920];
 	w.players[0].emit('resize');
+	await flush();
+	assert.deepEqual(w.sizes().at(-1), { width: 1080, height: 1920 });
+});
+
+test('retries rejected or invalid resize metadata even with a previously cached size', async () => {
+	for (const invalid of [null, [0, 0]]) {
+		let dimensions = [1920, 1080];
+		const w = wrapper({ dimensions: () => {
+			if (!dimensions) throw new Error('resize metadata not ready');
+			return dimensions;
+		} });
+		w.context.createPlayer('https://player.vimeo.com/video/1', {});
+		await flush();
+		dimensions = invalid;
+		w.players[0].emit('resize');
+		await flush();
+		assert.deepEqual(w.sizes(), [{ width: 1920, height: 1080 }]);
+		dimensions = [1080, 1920];
+		w.context.refresh();
+		await flush();
+		assert.deepEqual(w.sizes().at(-1), { width: 1080, height: 1920 });
+	}
+});
+
+test('a resize during a pending metadata read is retried and its obsolete result is ignored', async () => {
+	const w = wrapper();
+	w.context.createPlayer('https://player.vimeo.com/video/1', {});
+	await flush();
+	let resolveWidth, resolveHeight;
+	w.players[0].getVideoWidth = () => new Promise(resolve => { resolveWidth = resolve; });
+	w.players[0].getVideoHeight = () => new Promise(resolve => { resolveHeight = resolve; });
+	w.players[0].emit('resize');
+	w.players[0].emit('resize');
+	resolveWidth(640);
+	resolveHeight(360);
+	await flush();
+	assert.deepEqual(w.sizes(), [{ width: 1920, height: 1080 }]);
+	w.players[0].getVideoWidth = () => Promise.resolve(1080);
+	w.players[0].getVideoHeight = () => Promise.resolve(1920);
+	w.context.refresh();
 	await flush();
 	assert.deepEqual(w.sizes().at(-1), { width: 1080, height: 1920 });
 });

@@ -50,11 +50,12 @@
 			// A duration message also initializes flow's size fallback. Hold state until the first
 			// metadata attempt finishes, so known intrinsic dimensions always reach flow first.
 			if (!current || !announced) return;
-			var state = {
-				status: statusOf(),
-				duration: current.duration,
-				currentTime: current.currentTime
-			};
+			// Readiness is independent of the playback poll. Only flush fields that have been
+			// observed in SDK events/reads or set by an explicit flow request, never placeholders.
+			var state = {};
+			if (current.paused !== null) state.status = statusOf();
+			if (current.duration !== null) state.duration = current.duration;
+			if (current.currentTime !== null) state.currentTime = current.currentTime;
 			// the volume is unknown until the first real read: a `muted=1` embed must not be reported as 100
 			if (current.volume !== null) state.volume = Math.round(current.volume * 100);
 			lastSent = postPlayerStateChanges(state, lastSent);
@@ -63,7 +64,7 @@
 		function refresh() {
 			if (!player) return;
 			// Metadata may be unavailable at ready/loaded, including on live streams with no duration.
-			if (ready && current && !current.videoSize) reportVideoSize();
+			if (ready && current && current.sizeDirty) reportVideoSize();
 			var p = player, vol = current ? current.volume : null;
 			// getVolume/getMuted are not supported on iOS, and Promise.all is all-or-nothing: one rejection there
 			// would otherwise take the whole poll down
@@ -85,14 +86,20 @@
 
 		// Report the media's intrinsic size, never the iframe's displayed size: flow callers use it
 		// to calculate their layout, so returning that layout would create a sizing feedback loop.
-		function reportVideoSize() {
+		function reportVideoSize(changed) {
 			var p = player, state = current;
-			if (!p || !state || state.sizePending) return;
+			if (!p || !state) return;
+			// Record a resize even while a read is pending. Older results must not clear this
+			// request or overwrite the new size; a failed/invalid read stays dirty for refresh.
+			if (changed) { state.sizeVersion++; state.sizeDirty = true; }
+			if (state.sizePending) return;
+			var version = state.sizeVersion;
 			state.sizePending = true;
 			Promise.all([p.getVideoWidth(), p.getVideoHeight()]).then(function (size) {
 				state.sizePending = false;
-				if (p !== player || state !== current) return;
+				if (p !== player || state !== current || version !== state.sizeVersion) return;
 				if (Number.isFinite(size[0]) && Number.isFinite(size[1]) && size[0] > 0 && size[1] > 0) {
+					state.sizeDirty = false;
 					if (!state.videoSize || state.videoSize.width !== size[0] || state.videoSize.height !== size[1]) {
 						state.videoSize = {width: size[0], height: size[1]};
 						postToFlow({playerState: {videoSize: state.videoSize}});
@@ -121,7 +128,7 @@
 				seeked: function (d) { if (!live()) return; if (!holding("currentTime")) { current.currentTime = d.seconds; sendChanges(); } },
 				// the muted state is not in the event, and it is what decides the volume: let the poll read both
 				volumechange: function () { if (!live()) return; release("volume"); },
-				resize: function () { if (live()) reportVideoSize(); }
+				resize: function () { if (live()) reportVideoSize(true); }
 			};
 			for (var name in events) {
 				player.off(name);
@@ -204,7 +211,10 @@
 			loaded = key;
 			if (!hasSdk) return; // SDK unavailable: plain iframe, no state reporting
 
-			current = {paused: true, ended: false, buffering: false, currentTime: 0, duration: 0, volume: null, videoSize: null, sizePending: false};
+			current = {
+				paused: null, ended: false, buffering: false, currentTime: null, duration: null, volume: null,
+				videoSize: null, sizePending: false, sizeDirty: true, sizeVersion: 0
+			};
 			try {
 				player = new Vimeo.Player(iframe);
 				player.on("loaded", function () { ready = true; attach(); reportVideoSize(); refresh(); applyPending(); });
