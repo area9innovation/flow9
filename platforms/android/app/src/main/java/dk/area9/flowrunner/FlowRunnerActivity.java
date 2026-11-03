@@ -467,8 +467,6 @@ public class FlowRunnerActivity extends FragmentActivity  {
 
         FlowMediaStreamSupport flowMediaStreamSupport = new FlowMediaStreamSupport(this, wrapper);
         wrapper.setFlowMediaStreamSupport(flowMediaStreamSupport);
-        FlowWebRTCSupport flowWebRTCSupport = new FlowWebRTCSupport(wrapper);
-        wrapper.setFlowWebRTCSupport(flowWebRTCSupport);
         FlowFileSystemInterface flowFileSystemInterface = new FlowFileSystemInterface(this, wrapper);
         wrapper.setFlowFileSystemInterface(flowFileSystemInterface);
         if (Utils.isMediaRecorderSupported) {

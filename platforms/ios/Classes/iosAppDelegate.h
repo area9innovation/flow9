@@ -13,7 +13,6 @@
 #import "iosWebSocketSupport.h"
 #import "iosClassKitSupport.h"
 #import "iosMediaStreamSupport.h"
-#import "iosWebRTCSupport.h"
 #import "iosMediaRecorderSupport.h"
 #import "iosPrintingSupport.h"
 #ifdef BYTECODE_FILE
@@ -45,7 +44,6 @@ class iosFileSystemInterface;
     iosClassKitSupport * ClassKitSupport;
 #ifdef FLOW_MEDIASTREAM
     iosMediaStreamSupport * MediaStream;
-    iosWebRTCSupport * WebRTC;
     iosMediaRecorderSupport * MediaRecorder;
 #endif
     iosPrintingSupport * Printing;
