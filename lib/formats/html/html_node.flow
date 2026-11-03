@@ -33,21 +33,32 @@ export {
 
 
 html2s(html : [HtmlNode]) -> string {
-	// Neighbouring texts are escaped as one text: a "<" at the end of one can start a tag with the next
-	parts = fold(html, Pair(makeList(), ""), \acc, node -> {
-		writeNode = \-> Pair(Cons(htmlNode2s(node), Cons(htmlText2s(acc.second), acc.first)), "");
-		switch (node) {
-			HtmlText(text): Pair(acc.first, acc.second + text);
-			HtmlTag(__, __, __): writeNode();
-			HtmlEntity(__, __): writeNode();
-			HtmlComment(__): writeNode();
-		}
-	});
-	list2string(Cons(htmlText2s(parts.second), parts.first));
+	out = writeHtmlTexts(fold(html, Html2sOutput(makeList(), 0, makeList(), makeList()), writeHtmlNode));
+	s = list2string(out.parts);
+	// Where a node starts, parseHtml also reads a "<" with white space after it as a tag, as in "< b>",
+	// and the ">" that ends such a tag can be in the output after the text. So each such "<" is checked
+	// in the whole output. Writing one as &lt; does not change how the others are read.
+	attribsEnds : ref Tree<int, int> = ref makeTree();
+	tags = filter(list2array(out.tagStarts), \i -> isHtmlTagAt(s, i, attribsEnds));
+	if (tags == []) s
+	else {
+		rest = fold(tags, Pair(makeList(), 0), \acc, i ->
+			Pair(Cons("&lt;", Cons(substring(s, acc.second, i - acc.second), acc.first)), i + 1)
+		);
+		list2string(Cons(strRight(s, rest.second), rest.first));
+	}
 }
 
 htmlNode2s(elem : HtmlNode) -> string {
-	switch (elem) {
+	html2s([elem]);
+}
+
+// The output so far, last part first, and its length; the texts not written yet, last first;
+// and where a "<" starts a node in the written texts, last first
+Html2sOutput(parts : List<string>, length : int, texts : List<string>, tagStarts : List<int>);
+
+writeHtmlNode(out : Html2sOutput, node : HtmlNode) -> Html2sOutput {
+	switch (node) {
 		HtmlTag(tag, attribs, body): {
 			attribs_s = concatStrings(
 				mapi(attribs, \i, attr -> 
@@ -57,29 +68,53 @@ htmlNode2s(elem : HtmlNode) -> string {
 			if (length(body) > 0) {
 				open_tag = "<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + ">";
 				close_tag = "</" + tag + ">";
-				open_tag + htmlTagBody2s(tag, body) + close_tag;
+				addHtml2s(writeHtmlTagBody(addHtml2s(out, open_tag), tag, body), close_tag);
 			} else {
-				"<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + "/>"
+				addHtml2s(out, "<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + "/>");
 			}
 		}
-		HtmlText(text):       htmlText2s(text);
-		HtmlComment(text):    "<!--" + htmlComment2s(text) + "-->";
-		HtmlEntity(prefix, body): prefix + body + ";";
+		// Neighbouring texts are escaped as one text: a "<" at the end of one can start a tag with the next
+		HtmlText(text):       Html2sOutput(out.parts, out.length, Cons(text, out.texts), out.tagStarts);
+		HtmlComment(text):    addHtml2s(out, "<!--" + htmlComment2s(text) + "-->");
+		HtmlEntity(prefix, body): addHtml2s(out, prefix + body + ";");
 	}
 }
 
 // parseHtml keeps the text of a script as it is, so it is written as it is
-htmlTagBody2s(tag : string, body : [HtmlNode]) -> string {
+writeHtmlTagBody(out : Html2sOutput, tag : string, body : [HtmlNode]) -> Html2sOutput {
 	if (tag == "script") {
-		concatStrings(map(body, \node -> switch (node) {
-			HtmlText(text): text;
-			HtmlTag(__, __, __): htmlNode2s(node);
-			HtmlEntity(__, __): htmlNode2s(node);
-			HtmlComment(__): htmlNode2s(node);
-		}));
+		fold(body, out, \acc, node -> switch (node) {
+			HtmlText(text): addHtml2s(acc, text);
+			HtmlTag(__, __, __): writeHtmlNode(acc, node);
+			HtmlEntity(__, __): writeHtmlNode(acc, node);
+			HtmlComment(__): writeHtmlNode(acc, node);
+		});
 	} else {
-		html2s(body);
+		fold(body, out, writeHtmlNode);
 	}
+}
+
+// Writes the texts not written yet, then s
+addHtml2s(out : Html2sOutput, s : string) -> Html2sOutput {
+	written = writeHtmlTexts(out);
+	Html2sOutput(Cons(s, written.parts), written.length + strlen(s), written.texts, written.tagStarts);
+}
+
+writeHtmlTexts(out : Html2sOutput) -> Html2sOutput {
+	if (isEmptyList(out.texts)) out
+	else {
+		text = htmlText2s(list2string(out.texts));
+		starts = htmlTagStarts(text, out.length, 0, if (startsWith(text, "<")) Cons(out.length, out.tagStarts) else out.tagStarts);
+		Html2sOutput(Cons(text, out.parts), out.length + strlen(text), makeList(), starts);
+	}
+}
+
+// The places in a written text, from index from, of a "<" right after a "&" written as &amp;.
+// A node starts there, as it does at the start of the text.
+htmlTagStarts(text : string, offset : int, from : int, acc : List<int>) -> List<int> {
+	i = strRangeIndexOf(text, "&amp;<", from, strlen(text));
+	if (i < 0) acc
+	else htmlTagStarts(text, offset, i + 6, Cons(offset + i + 5, acc));
 }
 
 // A value is written in single quotes, or in double quotes when it holds a single quote.
@@ -92,47 +127,46 @@ htmlAttribValue2s(val : string) -> string {
 	else "'" + strReplace(val, "'", "&#39;") + "'";
 }
 
-// In a text, a "<" that parseHtml reads as the start of a tag or a comment is written as &lt;,
-// and a "&" that is not before white space, which it reads as the start of an entity, as &amp;.
-// parseHtml never gives these in a text, so a text that it gives is written as it is.
+// In a text, parseHtml reads a "<" before a letter or "!", or before "/" and a letter or "!", as markup,
+// so it is written as &lt;. A "&" that is not before white space, which it reads as the start of an entity,
+// is written as &amp;. parseHtml never gives these in a text, so a text that it gives is written as it is.
 htmlText2s(text : string) -> string {
 	if (!strContains(text, "<") && !strContains(text, "&")) text
 	else concatStrings(generate(0, strlen(text), \i -> {
 		c = getCharAt(text, i);
-		if (c == "<" && isHtmlTagStart(text, i)) "&lt;"
-		else if (c == "&" && !isHtmlSpace(getCharAt(text, i + 1))) "&amp;"
+		next = getCharAt(text, i + 1);
+		if (c == "<" && (isHtmlTagLetter(next) || (next == "/" && isHtmlTagLetter(getCharAt(text, i + 2))))) "&lt;"
+		else if (c == "&" && !isHtmlSpace(next)) "&amp;"
 		else c;
 	}));
 }
 
-// In a text, parseHtml reads a "<" before a letter or "!", or before "/" and a letter or "!", as markup.
-// Where a node starts (at the start of the text, and after a "&" written as &amp;), it also reads
-// a tag with white space after "<" or "</": "< b>" is a tag there, "< Back" is a text.
-isHtmlTagStart(s : string, i : int) -> bool {
-	next = getCharAt(s, i + 1);
-	isHtmlTagLetter(next) || (next == "/" && isHtmlTagLetter(getCharAt(s, i + 2)))
-	|| ((i == 0 || getCharAt(s, i - 1) == "&") && isHtmlTagAt(s, i));
-}
-
 // Whether parseHtml reads a script or a tag at i, by the rules `script` and `tag` of
 // lib/formats/html/parser/html.gringo: "<" or "</", white space, a name, attributes, then ">" or "/>"
-isHtmlTagAt(s : string, i : int) -> bool {
+isHtmlTagAt(s : string, i : int, attribsEnds : ref Tree<int, int>) -> bool {
 	closing = strContainsAt(s, i, "</");
 	name = skipHtmlSpaces(s, i + (if (closing) 2 else 1));
-	if (!closing && strContainsAt(s, name, "script") && strContainsAt(s, htmlAttribsEnd(s, skipHtmlSpaces(s, name + 6)), ">")) true
+	if (!closing && strContainsAt(s, name, "script") && strContainsAt(s, htmlAttribsEnd(s, skipHtmlSpaces(s, name + 6), attribsEnds, makeList()), ">")) true
 	else if (!isHtmlTagLetter(getCharAt(s, name))) false
 	else {
-		end = htmlAttribsEnd(s, skipHtmlSpaces(s, htmlCharsEnd(s, name + 1, " \t\n\r>/")));
+		end = htmlAttribsEnd(s, skipHtmlSpaces(s, htmlCharsEnd(s, name + 1, " \t\n\r>/")), attribsEnds, makeList());
 		strContainsAt(s, end, ">") || strContainsAt(s, end, "/>");
 	}
 }
 
-htmlAttribsEnd(s : string, i : int) -> int {
-	keyEnd = htmlCharsEnd(s, i, " \t\n\r=>/");
-	if (keyEnd == i) i
-	else {
+// The end of the attributes from i. The end is kept in ends for each attribute on the way,
+// so a later "<" whose attributes reach one of them stops there.
+htmlAttribsEnd(s : string, i : int, ends : ref Tree<int, int>, starts : List<int>) -> int {
+	known = lookupTreeDef(^ends, i, -1);
+	keyEnd = if (known < 0) htmlCharsEnd(s, i, " \t\n\r=>/") else i;
+	if (keyEnd > i) {
 		afterKey = skipHtmlSpaces(s, keyEnd);
-		htmlAttribsEnd(s, skipHtmlSpaces(s, if (getCharAt(s, afterKey) == "=") htmlAttribValueEnd(s, afterKey) else afterKey));
+		next = skipHtmlSpaces(s, if (getCharAt(s, afterKey) == "=") htmlAttribValueEnd(s, afterKey) else afterKey);
+		htmlAttribsEnd(s, next, ends, Cons(i, starts));
+	} else {
+		end = if (known < 0) i else known;
+		iterList(starts, \start -> ends := setTree(^ends, start, end));
+		end;
 	}
 }
 
