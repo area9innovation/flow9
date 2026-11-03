@@ -29,6 +29,8 @@
 		var held = {}, seekSeq = 0, statusWanted = null, ready = false;
 		var HOLD_MS = {status: 2000, currentTime: 5000, volume: 2000};
 		var READY_TIMEOUT = 10000, MAX_SAVED = 20;
+		// At the 250 ms refresh cadence, allow roughly ten seconds of metadata retries per load/resize.
+		var MAX_SIZE_READS = 40;
 
 		function hold(field) { held[field] = Date.now() + HOLD_MS[field]; }
 		function release(field) { delete held[field]; }
@@ -47,8 +49,8 @@
 		}
 
 		function sendChanges() {
-			// A duration message also initializes flow's size fallback. Hold state until the first
-			// metadata attempt finishes, so known intrinsic dimensions always reach flow first.
+			// Hold status, duration, position and volume until the first metadata attempt finishes.
+			// A duration message initializes flow's size fallback, so intrinsic dimensions must arrive first.
 			if (!current || !announced) return;
 			// Readiness is independent of the playback poll. Only flush fields that have been
 			// observed in SDK events/reads or set by an explicit flow request, never placeholders.
@@ -64,7 +66,7 @@
 		function refresh() {
 			if (!player) return;
 			// Metadata may be unavailable at ready/loaded, including on live streams with no duration.
-			if (ready && current && current.sizeDirty) reportVideoSize();
+			if (ready && current && current.sizeDirty && current.sizeAttempts < MAX_SIZE_READS) reportVideoSize();
 			var p = player, vol = current ? current.volume : null;
 			// getVolume/getMuted are not supported on iOS, and Promise.all is all-or-nothing: one rejection there
 			// would otherwise take the whole poll down
@@ -91,11 +93,16 @@
 			if (!p || !state) return;
 			// Record a resize even while a read is pending. Older results must not clear this
 			// request or overwrite the new size; a failed/invalid read stays dirty for refresh.
-			if (changed) { state.sizeVersion++; state.sizeDirty = true; }
-			if (state.sizePending) return;
+			if (changed) { state.sizeVersion++; state.sizeDirty = true; state.sizeAttempts = 0; }
+			if (state.sizePending || state.sizeAttempts >= MAX_SIZE_READS) return;
 			var version = state.sizeVersion;
 			state.sizePending = true;
-			Promise.all([p.getVideoWidth(), p.getVideoHeight()]).then(function (size) {
+			state.sizeAttempts++;
+			// Missing getters and synchronous SDK throws must use the same cleanup as rejected reads.
+			Promise.all([
+				Promise.resolve().then(function () { return p.getVideoWidth(); }),
+				Promise.resolve().then(function () { return p.getVideoHeight(); })
+			]).then(function (size) {
 				state.sizePending = false;
 				if (p !== player || state !== current || version !== state.sizeVersion) return;
 				if (Number.isFinite(size[0]) && Number.isFinite(size[1]) && size[0] > 0 && size[1] > 0) {
@@ -105,11 +112,11 @@
 						postToFlow({playerState: {videoSize: state.videoSize}});
 					}
 				}
-			}).catch(function () { state.sizePending = false; }) // retry metadata on a later refresh
+			}).catch(function () { state.sizePending = false; }) // retry within the remaining budget
 				.then(function () {
 					// Both ready() and loaded can start this read; an in-flight read serves both.
 					// Failure still releases ready, and READY_TIMEOUT covers a read that never settles.
-					if (p === player && state === current) sendReady();
+					if (p === player && state === current && version === state.sizeVersion) sendReady();
 				});
 		}
 
@@ -128,6 +135,7 @@
 				seeked: function (d) { if (!live()) return; if (!holding("currentTime")) { current.currentTime = d.seconds; sendChanges(); } },
 				// the muted state is not in the event, and it is what decides the volume: let the poll read both
 				volumechange: function () { if (!live()) return; release("volume"); },
+				// SDK docs: https://github.com/vimeo/player.js#resize (intrinsic media dimensions, not DOM size).
 				resize: function () { if (live()) reportVideoSize(true); }
 			};
 			for (var name in events) {
@@ -213,11 +221,11 @@
 
 			current = {
 				paused: null, ended: false, buffering: false, currentTime: null, duration: null, volume: null,
-				videoSize: null, sizePending: false, sizeDirty: true, sizeVersion: 0
+				videoSize: null, sizePending: false, sizeDirty: true, sizeVersion: 0, sizeAttempts: 0
 			};
 			try {
 				player = new Vimeo.Player(iframe);
-				player.on("loaded", function () { ready = true; attach(); reportVideoSize(); refresh(); applyPending(); });
+				player.on("loaded", function () { ready = true; attach(); reportVideoSize(true); refresh(); applyPending(); });
 				player.on("error", sendReady);
 				attach();
 				player.ready().then(function () { ready = true; reportVideoSize(); refresh(); applyPending(); }).catch(sendReady);

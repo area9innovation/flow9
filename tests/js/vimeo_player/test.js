@@ -8,7 +8,9 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '../../..');
 const html = fs.readFileSync(path.join(root, 'www/vimeo_player.html'), 'utf8');
-const source = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1];
+const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+assert.equal(scripts.length, 1, 'the wrapper must have exactly one inline script');
+const source = scripts[0][1];
 const bridge = fs.readFileSync(path.join(root, 'www/js/toflow.js'), 'utf8');
 const reporterStart = bridge.indexOf('function postPlayerStateChanges(');
 const reporterEnd = bridge.indexOf('\nfunction openVideo(', reporterStart);
@@ -84,6 +86,26 @@ test('readiness timeout releases fallback and buffered state if metadata never s
 	w.timers.get(w.context.readyTimer)();
 	assert.deepEqual(w.messages[0], { playerState: { ready: true } });
 	assert.equal(w.messages[1].playerState.duration, 30);
+});
+
+test('a load invalidating the initial metadata read waits for a current result before readiness', async () => {
+	const w = wrapper();
+	w.context.createPlayer('https://player.vimeo.com/video/1', {});
+	let resolveWidth, resolveHeight;
+	w.players[0].getVideoWidth = () => new Promise(resolve => { resolveWidth = resolve; });
+	w.players[0].getVideoHeight = () => new Promise(resolve => { resolveHeight = resolve; });
+	await flush();
+	w.players[0].emit('loaded');
+	resolveWidth(1920);
+	resolveHeight(1080);
+	await flush();
+	assert.deepEqual(w.messages, [], 'an obsolete read must not release ready or playback state');
+	w.players[0].getVideoWidth = () => Promise.resolve(1080);
+	w.players[0].getVideoHeight = () => Promise.resolve(1920);
+	w.context.refresh();
+	await flush();
+	assert.deepEqual(w.messages[0], { playerState: { videoSize: { width: 1080, height: 1920 } } });
+	assert.deepEqual(w.messages[1], { playerState: { ready: true } });
 });
 
 test('readiness does not publish default playback values before the first poll completes', async () => {
@@ -177,6 +199,7 @@ test('a resize during a pending metadata read is retried and its obsolete result
 	w.players[0].getVideoWidth = () => new Promise(resolve => { resolveWidth = resolve; });
 	w.players[0].getVideoHeight = () => new Promise(resolve => { resolveHeight = resolve; });
 	w.players[0].emit('resize');
+	await flush();
 	w.players[0].emit('resize');
 	resolveWidth(640);
 	resolveHeight(360);
@@ -229,6 +252,72 @@ test('metadata failure does not prevent the ready notification', async () => {
 	await flush();
 	assert.deepEqual(w.sizes(), []);
 	assert.ok(w.messages.some(m => m.playerState.ready === true));
+});
+
+test('missing or synchronously throwing metadata getters release readiness and do not abort playback setup', async () => {
+	for (const getter of ['getVideoWidth', 'getVideoHeight']) {
+		for (const missing of [true, false]) {
+			const w = wrapper();
+			w.context.createPlayer('https://player.vimeo.com/video/1', {});
+			w.players[0][getter] = missing ? undefined : () => { throw new Error('SDK getter threw'); };
+			let plays = 0;
+			w.players[0].play = () => { plays++; return Promise.resolve(); };
+			w.context.pendingState = { status: 'PLAYING' };
+			assert.doesNotThrow(() => w.players[0].emit('loaded'));
+			await flush();
+			assert.equal(w.context.current.sizePending, false);
+			assert.ok(w.messages.some(m => m.playerState.ready === true));
+			assert.equal(plays, 1, 'pending playback request must still be applied');
+			w.players[0].getVideoWidth = () => Promise.resolve(1920);
+			w.players[0].getVideoHeight = () => Promise.resolve(1080);
+			w.context.refresh();
+			await flush();
+			assert.deepEqual(w.sizes().at(-1), { width: 1920, height: 1080 });
+		}
+	}
+});
+
+test('permanently unavailable metadata stops after 40 attempts while playback polling continues', async () => {
+	for (const dimensions of [[0, 0], null]) {
+		const w = wrapper({ dimensions: () => {
+			if (!dimensions) throw new Error('metadata unavailable');
+			return dimensions;
+		} });
+		w.context.createPlayer('https://player.vimeo.com/video/1', {});
+		await flush();
+		for (let i = 0; i < 80; i++) {
+			w.context.refresh();
+			await flush();
+		}
+		assert.equal(w.players[0].sizeReads, 40);
+		w.players[0].getCurrentTime = () => Promise.resolve(17);
+		for (let i = 0; i < 10; i++) {
+			w.context.refresh();
+			await flush();
+		}
+		assert.equal(w.players[0].sizeReads, 40, 'no further metadata RPCs after exhaustion');
+		assert.equal(w.context.current.currentTime, 17, 'playback state must keep updating');
+		assert.equal(w.context.current.duration, 30);
+	}
+});
+
+test('resize or loaded events allow a fresh metadata attempt after the retry budget is exhausted', async () => {
+	for (const event of ['resize', 'loaded']) {
+		let dimensions = [0, 0];
+		const w = wrapper({ dimensions: () => dimensions });
+		w.context.createPlayer('https://player.vimeo.com/video/1', {});
+		await flush();
+		for (let i = 0; i < 80; i++) {
+			w.context.refresh();
+			await flush();
+		}
+		assert.equal(w.players[0].sizeReads, 40);
+		dimensions = [1080, 1920];
+		w.players[0].emit(event);
+		await flush();
+		assert.equal(w.players[0].sizeReads, 41);
+		assert.deepEqual(w.sizes().at(-1), { width: 1080, height: 1920 });
+	}
 });
 
 test('retries late metadata after zero dimensions or rejection, then stops polling it', async () => {
@@ -297,7 +386,10 @@ test('resets cached dimensions and retry state when switching videos', async () 
 test('plain iframe fallback still becomes ready without the SDK', () => {
 	const w = wrapper({ sdk: false });
 	w.context.createPlayer('https://player.vimeo.com/video/1', {});
+	assert.equal(w.players.length, 0);
+	assert.equal(w.context.iframe.src, 'https://player.vimeo.com/video/1');
 	w.context.iframe.onload();
-	assert.deepEqual(w.sizes(), []);
-	assert.ok(w.messages.some(m => m.playerState.ready === true));
+	w.context.iframe.onload();
+	assert.deepEqual(w.messages, [{ playerState: { ready: true } }]);
+	assert.equal(w.timers.size, 0, 'iframe load cancels the readiness timeout');
 });
