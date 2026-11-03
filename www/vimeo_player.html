@@ -109,6 +109,7 @@
 					state.sizeDirty = false;
 					if (!state.videoSize || state.videoSize.width !== size[0] || state.videoSize.height !== size[1]) {
 						state.videoSize = {width: size[0], height: size[1]};
+						// Dimensions have their own cache; playback-state diffing must not own this field.
 						postToFlow({playerState: {videoSize: state.videoSize}});
 					}
 				}
@@ -131,8 +132,16 @@
 				ended: function () { if (!live()) return; release("status"); current.ended = true; current.paused = true; sendChanges(); },
 				bufferstart: function () { if (!live()) return; current.buffering = true; sendChanges(); },
 				bufferend: function () { if (!live()) return; current.buffering = false; sendChanges(); },
-				timeupdate: function (d) { if (!live()) return; if (!holding("currentTime")) current.currentTime = d.seconds; current.duration = d.duration; sendChanges(); },
-				seeked: function (d) { if (!live()) return; if (!holding("currentTime")) { current.currentTime = d.seconds; sendChanges(); } },
+				timeupdate: function (d) {
+					if (!live()) return;
+					if (!holding("currentTime") && Number.isFinite(d.seconds)) current.currentTime = d.seconds;
+					if (Number.isFinite(d.duration)) current.duration = d.duration;
+					sendChanges();
+				},
+				seeked: function (d) {
+					if (!live()) return;
+					if (!holding("currentTime") && Number.isFinite(d.seconds)) { current.currentTime = d.seconds; sendChanges(); }
+				},
 				// the muted state is not in the event, and it is what decides the volume: let the poll read both
 				volumechange: function () { if (!live()) return; release("volume"); },
 				// SDK docs: https://github.com/vimeo/player.js#resize (intrinsic media dimensions, not DOM size).
@@ -164,6 +173,7 @@
 			if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
 			if (announced) return; // `loaded` fires again on Vimeo's own reloads
 			announced = true;
+			// Readiness is a one-shot notification, separate from playback-state diffing.
 			postToFlow({playerState: {ready: true}});
 			sendChanges(); // flush playback state collected while metadata was pending
 		}

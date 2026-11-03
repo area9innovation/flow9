@@ -1010,6 +1010,7 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	volumeB = extractStruct(style, FVideoVolume(make(1.0))).volume;
 	realSizeWH = extractStruct(style, FVideoRealSize(makeWH())).size;
 	sizeInitialized = ref false;
+	fallbackRequested = ref false;
 	// A caller may compute wh from FVideoRealSize (including its own control bar).
 	// Feeding wh back on every duration/ready message repeatedly scales that size.
 	// Vimeo without intrinsic dimensions gets one fallback, retained across iframe reloads.
@@ -1019,6 +1020,7 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 			// Preserve the other providers' existing per-message layout-size reporting.
 			nextDistinct(realSizeWH, fgetValue(wh));
 		} else if (!^sizeInitialized) {
+			fallbackRequested := true;
 			size = fgetValue(wh);
 			if (size.width > 0.0 && size.height > 0.0) {
 				sizeInitialized := true;
@@ -1065,7 +1067,7 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	}
 
 	MConstruct(
-		concat(
+		concatA([
 			if (isUrlParameterTrue("dev")) [
 				makeSubscribe2(sendB, \s -> println("to " + page + " -> " + s)),
 				makeSubscribe2(receiveB, \s -> println("from " + page + " -> " + s)),
@@ -1098,7 +1100,9 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 				),
 				// the loop was baked into loadVideo and never sent again, so flipping FVideoLoop at runtime did nothing
 				makeSubscribe2(loopB, \l -> sendState([Pair("loop", JsonBool(l))])),
-				if (useIntrinsicSize) makeSubscribe2(fselectFromStateM("videoSize"),
+			],
+			if (useIntrinsicSize) [
+				makeSubscribe2(fselectFromStateM("videoSize"),
 					\sizeM -> maybeApply(sizeM, \size -> {
 						width = getJsonDoubleField(size, "width", 0.0);
 						height = getJsonDoubleField(size, "height", 0.0);
@@ -1107,7 +1111,12 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 							nextDistinct(realSizeWH, WidthHeight(width, height));
 						}
 					})
-				) else \ -> nop,
+				),
+				// Ready may precede a usable layout. Wait for its first positive size without
+				// feeding later layout changes back into intrinsic size or affecting YouTube.
+				makeSubscribe2(wh, \__ -> if (^fallbackRequested && !^sizeInitialized) initializeSize())
+			] else [],
+			[
 				makeSubscribe2(fselectFromStateM("duration"),
 					\durationM -> maybeApply(durationM, \d -> {
 						nextDistinct(lengthB, getJsonDoubleValue(d, 0.0));
@@ -1119,7 +1128,7 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 					\readyM -> maybeApply(readyM, \r -> if (getJsonBoolValue(r, false)) initializeSize())
 				)
 			]
-		),
+		]),
 		MRealHTML(appendUrl(getAppUrl(), page), wh, concatA([
 			[
 				FlowCallback(flowCallBack),

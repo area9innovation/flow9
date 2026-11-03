@@ -14,7 +14,8 @@ const source = scripts[0][1];
 const bridge = fs.readFileSync(path.join(root, 'www/js/toflow.js'), 'utf8');
 const reporterStart = bridge.indexOf('function postPlayerStateChanges(');
 const reporterEnd = bridge.indexOf('\nfunction openVideo(', reporterStart);
-assert.ok(reporterStart >= 0 && reporterEnd > reporterStart);
+assert.ok(reporterStart >= 0 && reporterEnd > reporterStart,
+	'Cannot locate postPlayerStateChanges in toflow.js; update the test extraction markers if the bridge was reorganized');
 const reporter = bridge.slice(reporterStart, reporterEnd);
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
@@ -132,6 +133,23 @@ test('readiness flushes partial observed state without inventing an unobserved s
 	assert.deepEqual(w.messages.at(-1).playerState, { duration: 60, currentTime: 12 });
 	w.players[0].emit('seeked', { seconds: 14 });
 	assert.deepEqual(w.messages.at(-1).playerState, { currentTime: 14 });
+});
+
+test('partial or non-finite SDK events retain already observed position and duration', async () => {
+	const w = wrapper();
+	w.context.createPlayer('https://player.vimeo.com/video/1', {});
+	w.players[0].getPaused = () => new Promise(() => {});
+	w.players[0].emit('timeupdate', { seconds: 12, duration: 60 });
+	await flush();
+	w.players[0].emit('timeupdate', { seconds: 14 });
+	assert.equal(w.context.current.duration, 60, 'a missing duration must not erase an observed value');
+	assert.deepEqual(w.messages.at(-1).playerState, { currentTime: 14 });
+	const count = w.messages.length;
+	w.players[0].emit('timeupdate', { seconds: NaN, duration: Infinity });
+	w.players[0].emit('seeked', {});
+	assert.equal(w.context.current.currentTime, 14);
+	assert.equal(w.context.current.duration, 60);
+	assert.equal(w.messages.length, count, 'invalid fields must not produce empty or malformed state reports');
 });
 
 test('readiness timeout does not manufacture playback state when both reads are pending', async () => {

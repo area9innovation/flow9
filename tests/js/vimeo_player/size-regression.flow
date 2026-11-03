@@ -1,0 +1,132 @@
+// Appended to material_player.flow by flow-size.test.js; run with npm run test:flow.
+// This drives the real player subscriptions without a browser or renderer.
+SizeTestPlayer(send : (string) -> void, reload : () -> void, close : () -> void, duration : DynamicBehaviour<double>);
+
+makeSizeTestPlayer(vimeo : bool, wh : DynamicBehaviour<WidthHeight>, natural : DynamicBehaviour<WidthHeight>) -> SizeTestPlayer {
+	duration = make(0.0);
+	style : [MVideoPlayerStyle] = [FVideoRealSize(natural), FVideoLength(duration)];
+	material = if (vimeo) MVideoVimeoPlayer("https://player.vimeo.com/video/1", wh, style)
+		else MVideoYoutubePlayer("https://www.youtube.com/watch?v=test", wh, style);
+	switch (material : Material) {
+		MConstruct(constructors, child): {
+			disposers = map(constructors, \constructor -> constructor());
+			switch (child) {
+				MRealHTML(__, __, styles): {
+					callback = extractStruct(styles, FlowCallback(\__ -> "")).fn;
+					SizeTestPlayer(
+						\json -> callback(["postMessage", json]) |> ignore,
+						extractStruct(styles, OnPageLoaded(nop)).fn,
+						\ -> iter(disposers, \dispose -> dispose()),
+						duration
+					)
+				}
+				default: {
+					assert(false, "Expected MRealHTML");
+					SizeTestPlayer(nop1, nop, nop, duration)
+				}
+			}
+		}
+		default: {
+			assert(false, "Expected MConstruct");
+			SizeTestPlayer(nop1, nop, nop, duration)
+		}
+	}
+}
+
+testVimeoSizing() -> void {
+	wh = make(WidthHeight(800.0, 450.0));
+	natural = makeWH();
+	p = makeSizeTestPlayer(true, wh, natural);
+	// Reproduce the caller's scaling/control-bar feedback, not a fixed-size iframe.
+	uns = subscribe(natural, \size -> {
+		if (size.width > 0.0 && size.height > 0.0) {
+			k = min(800.0 / size.width, (450.0 - 64.0) / size.height);
+			nextDistinct(wh, WidthHeight(size.width * k, size.height * k + 64.0));
+		}
+	});
+	p.send("{\"playerState\":{\"ready\":true}}");
+	fallback = getValue(natural);
+	generate(0, 16, \i -> {
+		p.reload();
+		p.send("{\"playerState\":{\"duration\":" + i2s(i + 1) + "}}");
+		p.send("{\"playerState\":{\"ready\":true}}");
+	}) |> ignore;
+	assert(getValue(natural) == fallback, "Vimeo must not rescale the fallback across ready/duration/reload");
+	assert(getValue(p.duration) == 16.0, "Playback duration must still update");
+	p.send("{\"playerState\":{\"videoSize\":{\"width\":1920,\"height\":1080}}}");
+	assert(getValue(natural) == WidthHeight(1920.0, 1080.0), "Intrinsic dimensions replace the fallback");
+	next(wh, WidthHeight(320.0, 450.0));
+	p.reload();
+	p.send("{\"playerState\":{\"ready\":true,\"duration\":17}}");
+	assert(getValue(natural) == WidthHeight(1920.0, 1080.0), "Layout/reload must not overwrite intrinsic dimensions");
+	p.send("{\"playerState\":{\"videoSize\":{\"width\":0,\"height\":1080}}}");
+	assert(getValue(natural) == WidthHeight(1920.0, 1080.0), "Invalid dimensions must be ignored");
+	p.send("{\"playerState\":{\"videoSize\":{\"width\":1080,\"height\":1920}}}");
+	assert(getValue(natural) == WidthHeight(1080.0, 1920.0), "A genuine intrinsic size change must update");
+	uns();
+	p.close();
+}
+
+testLateVimeoLayout() -> void {
+	wh = makeWH();
+	natural = makeWH();
+	p = makeSizeTestPlayer(true, wh, natural);
+	p.send("{\"playerState\":{\"ready\":true}}");
+	assert(getValue(natural) == zeroWH, "A zero layout must not initialize the fallback");
+	next(wh, WidthHeight(640.0, 0.0));
+	assert(getValue(natural) == zeroWH, "A partially available layout must not initialize the fallback");
+	next(wh, WidthHeight(640.0, 360.0));
+	assert(getValue(natural) == WidthHeight(640.0, 360.0), "Late layout must initialize without another ready/duration message");
+	next(wh, WidthHeight(320.0, 180.0));
+	p.reload();
+	p.send("{\"playerState\":{\"ready\":true}}");
+	assert(getValue(natural) == WidthHeight(640.0, 360.0), "Late fallback is still one-shot across layout/reload");
+	p.close();
+}
+
+testMetadataBeforeLayout() -> void {
+	wh = makeWH();
+	natural = makeWH();
+	p = makeSizeTestPlayer(true, wh, natural);
+	next(wh, WidthHeight(640.0, 360.0));
+	assert(getValue(natural) == zeroWH, "Layout alone must not announce readiness");
+	p.send("{\"playerState\":{\"videoSize\":{\"width\":1080,\"height\":1920}}}");
+	p.send("{\"playerState\":{\"ready\":true}}");
+	next(wh, WidthHeight(320.0, 180.0));
+	assert(getValue(natural) == WidthHeight(1080.0, 1920.0), "Known intrinsic dimensions must win over layout changes");
+	p.close();
+}
+
+testYoutubeLegacySizing() -> void {
+	wh = makeWH();
+	natural = makeWH();
+	p = makeSizeTestPlayer(false, wh, natural);
+	p.send("{\"playerState\":{\"ready\":true}}");
+	assert(getValue(natural) == zeroWH, "YouTube preserves zero initial layout");
+	next(wh, WidthHeight(640.0, 360.0));
+	assert(getValue(natural) == zeroWH, "YouTube must not gain Vimeo's layout subscription");
+	p.send("{\"playerState\":{\"duration\":30}}");
+	assert(getValue(natural) == WidthHeight(640.0, 360.0), "YouTube still picks up layout on duration");
+	next(wh, WidthHeight(800.0, 450.0));
+	p.send("{\"playerState\":{\"duration\":31}}");
+	assert(getValue(natural) == WidthHeight(800.0, 450.0), "YouTube retains repeated duration sizing");
+	next(wh, WidthHeight(320.0, 180.0));
+	p.send("{\"playerState\":{\"ready\":true}}");
+	assert(getValue(natural) == WidthHeight(320.0, 180.0), "YouTube retains repeated ready sizing");
+	p.send("{\"playerState\":{\"videoSize\":{\"width\":1920,\"height\":1080}}}");
+	assert(getValue(natural) == WidthHeight(320.0, 180.0), "Intrinsic protocol must remain Vimeo-only");
+	next(wh, zeroWH);
+	p.send("{\"playerState\":{\"ready\":true}}");
+	assert(getValue(natural) == zeroWH, "YouTube retains zero layout updates");
+	p.close();
+}
+
+main() {
+	setAppUrl("https://example.test/");
+	testVimeoSizing();
+	testLateVimeoLayout();
+	testMetadataBeforeLayout();
+	testYoutubeLegacySizing();
+	println("PASS: Vimeo feedback/reload/late layout/intrinsic metadata and YouTube parity");
+	quit(0);
+}
