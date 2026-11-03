@@ -47,7 +47,9 @@
 		}
 
 		function sendChanges() {
-			if (!current) return;
+			// A duration message also initializes flow's size fallback. Hold state until the first
+			// metadata attempt finishes, so known intrinsic dimensions always reach flow first.
+			if (!current || !announced) return;
 			var state = {
 				status: statusOf(),
 				duration: current.duration,
@@ -60,6 +62,8 @@
 
 		function refresh() {
 			if (!player) return;
+			// Metadata may be unavailable at ready/loaded, including on live streams with no duration.
+			if (ready && current && !current.videoSize) reportVideoSize();
 			var p = player, vol = current ? current.volume : null;
 			// getVolume/getMuted are not supported on iOS, and Promise.all is all-or-nothing: one rejection there
 			// would otherwise take the whole poll down
@@ -79,6 +83,29 @@
 				.catch(function () {});
 		}
 
+		// Report the media's intrinsic size, never the iframe's displayed size: flow callers use it
+		// to calculate their layout, so returning that layout would create a sizing feedback loop.
+		function reportVideoSize() {
+			var p = player, state = current;
+			if (!p || !state || state.sizePending) return;
+			state.sizePending = true;
+			Promise.all([p.getVideoWidth(), p.getVideoHeight()]).then(function (size) {
+				state.sizePending = false;
+				if (p !== player || state !== current) return;
+				if (Number.isFinite(size[0]) && Number.isFinite(size[1]) && size[0] > 0 && size[1] > 0) {
+					if (!state.videoSize || state.videoSize.width !== size[0] || state.videoSize.height !== size[1]) {
+						state.videoSize = {width: size[0], height: size[1]};
+						postToFlow({playerState: {videoSize: state.videoSize}});
+					}
+				}
+			}).catch(function () { state.sizePending = false; }) // retry metadata on a later refresh
+				.then(function () {
+					// Both ready() and loaded can start this read; an in-flight read serves both.
+					// Failure still releases ready, and READY_TIMEOUT covers a read that never settles.
+					if (p === player && state === current) sendReady();
+				});
+		}
+
 		// Vimeo may reload the iframe (forcereload=drm) and drop the listeners: re-attach on `loaded`, poll as a backup
 		function attach() {
 			// a destroyed player can still dispatch what it had queued, and `current` belongs to the next video by then
@@ -93,7 +120,8 @@
 				timeupdate: function (d) { if (!live()) return; if (!holding("currentTime")) current.currentTime = d.seconds; current.duration = d.duration; sendChanges(); },
 				seeked: function (d) { if (!live()) return; if (!holding("currentTime")) { current.currentTime = d.seconds; sendChanges(); } },
 				// the muted state is not in the event, and it is what decides the volume: let the poll read both
-				volumechange: function () { if (!live()) return; release("volume"); }
+				volumechange: function () { if (!live()) return; release("volume"); },
+				resize: function () { if (live()) reportVideoSize(); }
 			};
 			for (var name in events) {
 				player.off(name);
@@ -122,6 +150,7 @@
 			if (announced) return; // `loaded` fires again on Vimeo's own reloads
 			announced = true;
 			postToFlow({playerState: {ready: true}});
+			sendChanges(); // flush playback state collected while metadata was pending
 		}
 
 		// The URL arrives over postMessage: only the Vimeo player itself may be framed here. An http url is
@@ -175,13 +204,13 @@
 			loaded = key;
 			if (!hasSdk) return; // SDK unavailable: plain iframe, no state reporting
 
-			current = {paused: true, ended: false, buffering: false, currentTime: 0, duration: 0, volume: null};
+			current = {paused: true, ended: false, buffering: false, currentTime: 0, duration: 0, volume: null, videoSize: null, sizePending: false};
 			try {
 				player = new Vimeo.Player(iframe);
-				player.on("loaded", function () { ready = true; sendReady(); attach(); refresh(); applyPending(); });
+				player.on("loaded", function () { ready = true; attach(); reportVideoSize(); refresh(); applyPending(); });
 				player.on("error", sendReady);
 				attach();
-				player.ready().then(function () { ready = true; refresh(); applyPending(); }).catch(sendReady);
+				player.ready().then(function () { ready = true; reportVideoSize(); refresh(); applyPending(); }).catch(sendReady);
 				sender = setInterval(refresh, 250);
 			} catch (err) {
 				console.error("vimeo_player: cannot attach the API player", err);
