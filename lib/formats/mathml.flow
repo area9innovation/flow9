@@ -1,3 +1,5 @@
+import string;
+
 export {
 	// mml abbrevation means MathML - math markup language
 
@@ -5,6 +7,10 @@ export {
 	mmlHeader () -> string;
 
 	// encloses expression into the tag
+	// The number, identifier, operator and text builders escape < > and & in their argument,
+	// but keep a character reference such as &#x3B1; or &lt; as written.
+	// makeMmlFenced escapes left and right the same way, and " too.
+	// The other arguments are MathML markup and are not escaped.
 	makeMmlExpression(expression : string) -> string;
 	makeMmlNumber(number : string) -> string;
 	makeMmlIdentifier(identifier : string) -> string;
@@ -33,9 +39,9 @@ export {
 }
 
 mmlHeader() {
-	// http://www.mathjax.org/download/mathjax-cdn-terms-of-service/
 	// MathJax checks if browser supports MathMl and converts source to Html+Css if necessary
-	"<script type=\"text/javascript\" src=\"http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML\"></script>"
+	// cdn.mathjax.org was retired in 2017: https://www.mathjax.org/cdn-shutting-down/
+	"<script type=\"text/javascript\" src=\"https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML\"></script>"
 }
 
 makeMmlExpression(expression) {
@@ -45,19 +51,19 @@ makeMmlExpression(expression) {
 }
 
 makeMmlNumber(number) {
-	"<mn>" + number + "</mn>"
+	"<mn>" + escapeMmlText(number) + "</mn>"
 }
 
 makeMmlIdentifier(identifier) {
-	"<mi>"  + identifier + "</mi>"
+	"<mi>" + escapeMmlText(identifier) + "</mi>"
 }
 
 makeMmlOperator(operator) {
-	"<mo>" + operator + "</mo>"
+	"<mo>" + escapeMmlText(operator) + "</mo>"
 }
 
 makeMmlText(text) {
-    "<mtext>" + text + "</mtext>"
+	"<mtext>" + escapeMmlText(text) + "</mtext>"
 }
 
 makeMmlRow(text) {
@@ -96,7 +102,7 @@ makeMmlDefineteControl(signt, to, from, body) {
 }
 
 makeMmlFenced(ob, cb, body) {
-	"<mfenced" + " open=\"" + ob + "\"" + " close=\"" + cb + "\"" + ">" + body + "</mfenced>"
+	"<mfenced" + " open=\"" + escapeMmlAttribute(ob) + "\"" + " close=\"" + escapeMmlAttribute(cb) + "\"" + ">" + body + "</mfenced>"
 }
 
 getMmlRepresentation(text, type) {
@@ -106,4 +112,65 @@ getMmlRepresentation(text, type) {
 		MathMlText() : makeMmlText;
 		MathMlNumber() : makeMmlNumber;
 	}
+}
+
+escapeMmlText(s : string) -> string {
+	escapeMmlAmpersands(strReplace(strReplace(s, "<", "&lt;"), ">", "&gt;"));
+}
+
+escapeMmlAttribute(s : string) -> string {
+	strReplace(escapeMmlText(s), "\"", "&quot;");
+}
+
+// Each & that does not start a reference becomes &amp;
+escapeMmlAmpersands(s : string) -> string {
+	if (strIndexOf(s, "&") < 0) s
+	else list2string(escapeMmlAmpersandsFrom(s, 0, makeList()));
+}
+
+escapeMmlAmpersandsFrom(s : string, start : int, acc : List<string>) -> List<string> {
+	amp = strRangeIndexOf(s, "&", start, strlen(s));
+	if (amp < 0) {
+		Cons(strRight(s, start), acc);
+	} else {
+		upToAmp = substring(s, start, amp + 1 - start);
+		escaped = if (isMmlReferenceAt(s, amp)) upToAmp else upToAmp + "amp;";
+		escapeMmlAmpersandsFrom(s, amp + 1, Cons(escaped, acc));
+	}
+}
+
+// Whether the & at amp starts &name; &#digits; or &#xhex;
+isMmlReferenceAt(s : string, amp : int) -> bool {
+	if (mmlCodeAt(s, amp + 1) == 0x23) { // #
+		x = mmlCodeAt(s, amp + 2);
+		isHex = x == 0x78 || x == 0x58; // x X
+		digitsStart = if (isHex) amp + 3 else amp + 2;
+		digitsEnd = mmlSkip(s, digitsStart, if (isHex) isMmlHexDigit else isMmlDigit);
+		digitsEnd > digitsStart && mmlCodeAt(s, digitsEnd) == 0x3B; // ;
+	} else {
+		nameEnd = mmlSkip(s, amp + 1, \c -> isMmlLetter(c) || isMmlDigit(c));
+		isMmlLetter(mmlCodeAt(s, amp + 1)) && mmlCodeAt(s, nameEnd) == 0x3B;
+	}
+}
+
+// The char code at i, or -1 past the end
+mmlCodeAt(s : string, i : int) -> int {
+	if (i < strlen(s)) getCharCodeAt(s, i) else -1;
+}
+
+// The index of the first char at or after i that fails ok
+mmlSkip(s : string, i : int, ok : (int) -> bool) -> int {
+	if (ok(mmlCodeAt(s, i))) mmlSkip(s, i + 1, ok) else i;
+}
+
+isMmlDigit(c : int) -> bool {
+	0x30 <= c && c <= 0x39;
+}
+
+isMmlHexDigit(c : int) -> bool {
+	isMmlDigit(c) || (0x41 <= c && c <= 0x46) || (0x61 <= c && c <= 0x66);
+}
+
+isMmlLetter(c : int) -> bool {
+	(0x41 <= c && c <= 0x5A) || (0x61 <= c && c <= 0x7A);
 }
