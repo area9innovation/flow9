@@ -1,0 +1,130 @@
+import formats/json/json_utils;
+import formats/svg/svg;
+import sys/target;
+
+// Two checks of number conversions that could overflow an int:
+//
+//  - json2intM gives None for a number outside the int range, NaN and infinity.
+//    Before, round() of such a number gave a different int on each target: 3e9 gave
+//    2147483647 in Java, -2147483648 in the C++ runner and -1294967296 in JS.
+//  - svgColor2Int reads rgb()/rgba() with 3 or 4 components and #hex with 3, 4, 6 or 8
+//    digits. It drops the alpha and clamps each rgb() component to 0..255. Any other
+//    form gives black, as an unknown colour name does. Before, every component and
+//    every hex digit was shifted into the int, so an alpha or a long value gave a wrong colour.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+checkInt(name : string, j : Json, expected : Maybe<int>) -> void {
+	check(name, toString(json2intM(j)), toString(expected));
+}
+
+testJson2int() -> void {
+	inf = 1.0 / 0.0;
+	nan = inf * 0.0;
+
+	// Ordinary input gives the same as before
+	checkInt("an integer", JsonDouble(42.0), Some(42));
+	checkInt("rounds down", JsonDouble(42.4), Some(42));
+	checkInt("rounds a half up", JsonDouble(42.5), Some(43));
+	checkInt("rounds a negative half up", JsonDouble(-42.5), Some(-42));
+	checkInt("rounds a negative number", JsonDouble(-42.6), Some(-43));
+	checkInt("zero", JsonDouble(0.0), Some(0));
+	checkInt("a number in a string", JsonString("42.6"), Some(43));
+	checkInt("a string that is not a number", JsonString("abc"), None());
+	checkInt("true", JsonBool(true), Some(1));
+	checkInt("false", JsonBool(false), Some(0));
+	checkInt("null", JsonNull(), None());
+	checkInt("the largest int", JsonDouble(2147483647.0), Some(2147483647));
+	checkInt("just under the largest int", JsonDouble(2147483647.4), Some(2147483647));
+	checkInt("the smallest int", JsonDouble(-2147483648.0), Some(intMin));
+	checkInt("just over the smallest int", JsonDouble(-2147483648.4), Some(intMin));
+	checkInt("the largest int in a string", JsonString("2147483647"), Some(2147483647));
+
+	// Out of range
+	checkInt("rounds above the largest int", JsonDouble(2147483647.5), None());
+	checkInt("3e9", JsonDouble(3000000000.0), None());
+	checkInt("2^32 + 1", JsonDouble(4294967297.0), None());
+	checkInt("at the tie below the smallest int", JsonDouble(-2147483648.5), None());
+	checkInt("below the smallest int", JsonDouble(-2147483649.0), None());
+	checkInt("1e300", JsonDouble(s2d("1e300")), None());
+	checkInt("-1e300", JsonDouble(s2d("-1e300")), None());
+	checkInt("NaN", JsonDouble(nan), None());
+	checkInt("infinity", JsonDouble(inf), None());
+	checkInt("minus infinity", JsonDouble(-inf), None());
+	checkInt("3e9 in a string", JsonString("3000000000"), None());
+	checkInt("1e300 in a string", JsonString("1e300"), None());
+	checkInt("parsed 1e300", parseJson("1e300"), None());
+	checkInt("parsed 3e9", parseJson("3000000000"), None());
+	check("json2int of 3e9 gives its default", i2s(json2int(JsonDouble(3000000000.0))), "0");
+}
+
+fillOf(colour : string) -> string {
+	form = svgNode2Form(XmlElement("circle", [XmlAttribute("fill", colour)], []), []);
+	switch (form) {
+		Graphics(__, style): formatColor(extractStruct(style, Fill(-1)).color);
+		default: "not a Graphics";
+	}
+}
+
+checkFill(colour : string, expected : string) -> void {
+	check("fill " + colour, fillOf(colour), expected);
+}
+
+testSvgColor() -> void {
+	// Ordinary input gives the same as before
+	checkFill("#f00", "FF0000");
+	checkFill("#FF0000", "FF0000");
+	checkFill("#0080ff", "0080FF");
+	checkFill("#FF0000 ", "FF0000");
+	checkFill("rgb(255,0,0)", "FF0000");
+	checkFill("rgb(255, 128, 0)", "FF8000");
+	checkFill("rgb(100%,50%,0%)", "FF7F00");
+	checkFill("rgb(10.7,0,0)", "0A0000");
+	checkFill("red", "FF0000");
+	checkFill("nosuch", "000000");
+	checkFill("#", "000000");
+
+	// The alpha is dropped
+	checkFill("#ff000080", "FF0000");
+	checkFill("#f008", "FF0000");
+	checkFill("rgba(255,255,255,1)", "FFFFFF");
+	checkFill("rgba(255,0,0,0.5)", "FF0000");
+
+	// Components are clamped to 0..255
+	checkFill("rgb(300,0,0)", "FF0000");
+	checkFill("rgb(0,-5,255)", "0000FF");
+	checkFill("rgb(1e300,0,0)", "FF0000");
+	checkFill("rgb(150%,0,0)", "FF0000");
+
+	// Other forms give black
+	checkFill("rgb(1,2,3,4,5)", "000000");
+	checkFill("rgb(1,2,3,4,5,6,7,8,9)", "000000");
+	checkFill("rgb(255)", "000000");
+	checkFill("rgb(255,0)", "000000");
+	checkFill("#12345", "000000");
+	checkFill("#1", "000000");
+	checkFill("#123456789", "000000");
+	checkFill("#ff00zz", "000000");
+}
+
+main() {
+	testJson2int();
+	testSvgColor();
+
+	if (^failures == 0) {
+		println("json2intM and svg colour tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " json2intM and svg colour test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
