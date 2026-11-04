@@ -16,6 +16,9 @@ export {
 	// You have to use httpRequest to retrieve it (and not downloadfile), and the BOM marker from
 	// the server will make our end understand that it is UCS-2 (camouflaged as UTF-16).
 	deserializeBinary(value : string, default_ : flow) -> flow;
+	// Fixups receive the original fields, including older schemas. On Java and JS, an
+	// exception thrown by a fixup makes the whole decode yield default_. Other runtimes
+	// retain their normal runtime-error handling. Fixup results are not schema-checked.
 	deserializeBinary2(value : string, structFixups : Tree<string, (args : [flow]) -> flow>, default_ : flow) -> flow;
 	native toBinary : (value : flow) -> string = Native.toBinary;
 	native stringbytes2double : (str : string) -> double = Native.stringbytes2double;
@@ -23,6 +26,12 @@ export {
 }
 
 native fromBinary : (s : string, default_ : flow, fixups : (string)->Maybe<([flow])->flow>) -> flow = Native.fromBinary;
+
+// Java and JS can contain callback exceptions; Flow itself has no exception handler.
+native callBinaryFixup : (fixup : ([flow]) -> flow, args : [flow]) -> Maybe<flow> = Native.callBinaryFixup;
+callBinaryFixup(fixup, args) {
+	Some(fixup(args));
+}
 
 deserializeBinary(s, default_) {
 	deserializeBinary2(s, makeTree(), default_);
@@ -182,10 +191,10 @@ readBinaryStructDefs(input : BinaryInput, index : int, structFixups : Tree<strin
 	}
 }
 
-makeBinaryStruct(def : BinaryStructDef, args : [flow]) -> flow {
+makeBinaryStruct(def : BinaryStructDef, args : [flow]) -> Maybe<flow> {
 	switch (def.fixup) {
-		Some(fixup): fixup(args);
-		None(): makeStructValue(def.name, args, IllegalStruct());
+		Some(fixup): callBinaryFixup(fixup, args);
+		None(): Some(makeStructValue(def.name, args, IllegalStruct()));
 	}
 }
 
@@ -212,7 +221,10 @@ readBinary(input : BinaryInput, index : int, frames : BinaryFrame, remaining : i
 				if (remaining > 1) {
 					readBinary(input, index, frames, remaining - 1, read, false, default_, default_);
 				} else {
-					readBinary(input, index, outer, outerRemaining, outerElements, true, makeBinaryStruct(def, list2array(read)), default_);
+					switch (makeBinaryStruct(def, list2array(read))) {
+						Some(structValue): readBinary(input, index, outer, outerRemaining, outerElements, true, structValue, default_);
+						None(): damagedBinary(default_);
+					}
 				}
 			}
 		}
@@ -239,7 +251,10 @@ readBinary(input : BinaryInput, index : int, frames : BinaryFrame, remaining : i
 					if (def.arity > end - (ni + 1)) {
 						damagedBinary(default_);
 					} else if (def.arity == 0) {
-						readBinary(input, ni + 1, frames, remaining, elements, true, makeBinaryStruct(def, []), default_);
+						switch (makeBinaryStruct(def, [])) {
+							Some(structValue): readBinary(input, ni + 1, frames, remaining, elements, true, structValue, default_);
+							None(): damagedBinary(default_);
+						}
 					} else {
 						frame = BinaryStructFrame(def, remaining, elements, frames);
 						readBinary(input, ni + 1, frame, def.arity, makeList(), false, default_, default_);

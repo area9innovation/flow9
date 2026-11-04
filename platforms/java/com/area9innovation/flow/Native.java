@@ -300,6 +300,16 @@ public class Native extends NativeHost {
 		return s;
 	}
 
+	public static final Struct callBinaryFixup(Func1<Object, Object[]> fixup, Object[] args) {
+		Object value;
+		try {
+			value = fixup.invoke(args);
+		} catch (RuntimeException e) {
+			return FlowRuntime.makeStructValue("None", new Object[0], null);
+		}
+		return FlowRuntime.makeStructValue("Some", new Object[] { value }, null);
+	}
+
 	public static final Object gc() {
 		System.gc();
 		return null;

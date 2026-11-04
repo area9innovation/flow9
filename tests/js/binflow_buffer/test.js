@@ -160,6 +160,38 @@ test('a fixup builds the struct value', function() {
 	assert.deepStrictEqual(bufferOf(encode(sampleLeaf), true).deserialise(DEFAULT, fixups), { fixed: [2, 'alpha', 1.5, false] });
 });
 
+test('a fixup receives an older schema with different field count and types', function() {
+	const words = assemble([0xFFF4, 0].concat(stringWords('old')), [0xFFF8, 1, 0xFFF8, 2, 1].concat(stringWords('Leaf')));
+	const fixups = function() {
+		return { _id: SOME_ID, value: function(args) {
+			assert.deepStrictEqual(args, ['old']);
+			return leaf(7, args[0], 0.5, true);
+		} };
+	};
+	assert.deepStrictEqual(bufferOf(words, true).deserialise(DEFAULT, fixups), leaf(7, 'old', 0.5, true));
+});
+
+test('a throwing fixup gives the whole default, including inside containers', function() {
+	const fixups = function() { return { _id: SOME_ID, value: function() { throw new Error('callback failed'); } }; };
+	[sampleLeaf, [sampleLeaf], ref(sampleLeaf), { _id: NONE_ID }].forEach(function(value) {
+		assert.strictEqual(Native.fromBinary(bufferOf(encode(value), true), DEFAULT, fixups), DEFAULT);
+	});
+});
+
+test('a buffer can be decoded again after a fixup exception', function() {
+	const buffer = bufferOf(encode(sampleLeaf), true);
+	const fixups = function() { return { _id: SOME_ID, value: function() { throw 'callback failed'; } }; };
+	assert.strictEqual(buffer.deserialise(DEFAULT, fixups), DEFAULT);
+	assert.deepStrictEqual(buffer.deserialise(DEFAULT, noFixups), sampleLeaf);
+});
+
+test('the string-reader callback helper distinguishes results from exceptions', function() {
+	[DEFAULT, null, 42, { _id: LEAF_ID }].forEach(function(value) {
+		assert.deepStrictEqual(Native.callBinaryFixup(function(args) { assert.deepStrictEqual(args, ['old']); return value; }, ['old']), { _id: SOME_ID, value });
+	});
+	assert.deepStrictEqual(Native.callBinaryFixup(function() { throw new Error('callback failed'); }, []), { _id: NONE_ID });
+});
+
 test('a second call with other fixups does not reuse the first', function() {
 	const words = encode(sampleLeaf);
 	const fixups = function(name) {
@@ -270,7 +302,7 @@ test('refs nested ' + deep + ' deep', function() {
 	checkDamaged('double cut by the footer', assemble(bodyOf(d).slice(0, 1), footerOf(d)));
 })();
 
-test('fromBinary lets a throwing fixup reach the caller', function() {
+test('fromBinary lets a throwing fixup lookup reach the caller', function() {
 	const throwing = function() { throw new Error('fixup lookup failed'); };
 	assert.throws(function() { Native.fromBinary(bufferOf(encode(sampleLeaf), true), DEFAULT, throwing); }, /fixup lookup failed/);
 });

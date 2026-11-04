@@ -3331,6 +3331,16 @@ Native.memoryLeakReset();
 		return ret;
 	}
 
+	public static function callBinaryFixup(fixup : Array<Dynamic> -> Dynamic, args : Array<Dynamic>) : Dynamic {
+		var value : Dynamic;
+		try {
+			value = fixup(args);
+		} catch (e : Dynamic) {
+			return HaxeRuntime.makeStructValue("None", [], null);
+		}
+		return HaxeRuntime.makeStructValue("Some", [value], null);
+	}
+
 	public static function fromBinary(string : Dynamic, defvalue : Dynamic, fixups : Dynamic) : Dynamic {
 		#if js
 		if (Type.getClass(string) == JSBinflowBuffer) {

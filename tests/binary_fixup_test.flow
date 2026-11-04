@@ -1,0 +1,51 @@
+import text/binary;
+import sys/target;
+
+FixupRecord(number : int, text : string);
+FixupEmpty();
+FixupDefault();
+
+failures = ref 0;
+defaultValue = flow(FixupDefault());
+
+check(name : string, actual : flow, expected : flow) -> void {
+	if (toString(actual) != toString(expected)) {
+		println("FAIL: " + name + ": " + toString(actual));
+		failures := ^failures + 1;
+	}
+}
+
+words(values : [int]) -> string {
+	concatStrings(map(values, fromCharCode));
+}
+
+// An older form of FixupRecord had just one field, and that field was a string.
+oldRecord = words([7, 0, 0xFFF4, 0, 0xFFFA, 1, 120, 0xFFF8, 1, 0xFFF8, 2, 1, 0xFFFA, 11]) + "FixupRecord";
+
+// Calling a non-function gives a host exception on both Java and JS. Keep this
+// deliberately invalid cast inside the callback, not in the decoder itself.
+throwingFixup(args : [flow]) -> flow {
+	fn : () -> flow = cast(args[0] : flow -> () -> flow);
+	fn();
+}
+
+main() {
+	migrate = makeTree1("FixupRecord", \args : [flow] -> {
+		if (length(args) == 1) flow(FixupRecord(7, cast(args[0] : flow -> string)))
+		else flow(FixupRecord(cast(args[0] : flow -> int), cast(args[1] : flow -> string)));
+	});
+	check("old field count and type reach the fixup", deserializeBinary2(oldRecord, migrate, defaultValue), flow(FixupRecord(7, "x")));
+	check("current fields reach the fixup", deserializeBinary2(toBinary(FixupRecord(8, "new")), migrate, defaultValue), flow(FixupRecord(8, "new")));
+	check("fixups may return non-struct values", deserializeBinary2(oldRecord, makeTree1("FixupRecord", \__ : [flow] -> flow(42)), defaultValue), flow(42));
+	check("a default-valued result is not a failure", deserializeBinary2(oldRecord, makeTree1("FixupRecord", \__ : [flow] -> defaultValue), defaultValue), defaultValue);
+	if (java || js) {
+		failing = makeTree1("FixupRecord", throwingFixup);
+		check("throwing fixup gives default", deserializeBinary2(oldRecord, failing, defaultValue), defaultValue);
+		check("nested throwing fixup gives whole default", deserializeBinary2(toBinary([FixupRecord(1, "x")]), failing, defaultValue), defaultValue);
+		check("empty struct throwing fixup gives default", deserializeBinary2(toBinary(FixupEmpty()), makeTree1("FixupEmpty", \__ : [flow] -> throwingFixup([flow(1)])), defaultValue), defaultValue);
+	} else {
+		println("Callback exceptions retain the runtime's normal error handling on this target");
+	}
+	if (^failures == 0) println("Binary fixup tests passed") else println("Binary fixup tests failed");
+	quit(^failures);
+}
