@@ -160,6 +160,82 @@ testRoundTrip() -> void {
 	check("round trip of section names", parseIniFile(iniFile2string(names)), names);
 }
 
+testLegacyNames() -> void {
+	text = strGlue([
+		"[\"Section\"]",
+		"\"Key\"=\"value\"",
+		"'single'=plain",
+		"a\"\"b=double",
+		"C:\\new\\tab=\\n\\r\\t",
+		"[  Mixed Case \t]",
+		"  Mixed Key \t=value",
+		"[\"\"\"quoted\"\"\"]",
+		"\"\"=empty quotes",
+		"[C:\\new\\tab]",
+		"key=path"
+	], "\n");
+	names = IniFile([
+		IniSection("\"Section\"", [KeyValue("\"Key\"", "value"), KeyValue("'single'", "plain"),
+			KeyValue("a\"\"b", "double"), KeyValue("C:\\new\\tab", "\\n\\r\\t")]),
+		IniSection("  Mixed Case \t", [KeyValue("Mixed Key", "value")]),
+		IniSection("\"\"\"quoted\"\"\"", [KeyValue("\"\"", "empty quotes")]),
+		IniSection("C:\\new\\tab", [KeyValue("key", "path")])
+	]);
+	check("unmarked names keep quotes, case, whitespace and backslashes", parseIniFile(text), names);
+	check("legacy quoted names round trip without reinterpretation", parseIniFile(iniFile2string(names)), names);
+	check("legacy names do not enable the extension", strLeft(iniFile2string(names), 1), "[");
+	// Only the exact first line is reserved; ordinary comments and later lookalikes stay comments.
+	iter(["; flow9-ini: quoted-names-v1 \n", "; before\n; flow9-ini: quoted-names-v1\n", "; flow9-ini: quoted-names-v2\n"], \prefix -> {
+		check("marker lookalike keeps legacy names", parseIniFile(prefix + "[\"s\"]\n\"k\"=v\n"),
+			IniFile([IniSection("\"s\"", [KeyValue("\"k\"", "v")])]));
+	});
+}
+
+testQuotedNames() -> void {
+	marker = "; flow9-ini: quoted-names-v1\n";
+	file = IniFile([
+		IniSection("a]b", [KeyValue("a=b;[c]", "v"), KeyValue("\"legacy\"", "\\n\\t")]),
+		IniSection("\"literal\"", [KeyValue("safe", "\"quoted\"")])
+	]);
+	printed = marker + "[\"a]b\"]\n\"a=b;[c]\"=v\n\"\"\"legacy\"\"\"=\\n\\t\n\n"
+		+ "[\"\"\"literal\"\"\"]\n\"safe\"=\"\"\"quoted\"\"\"\n\n";
+	check("unrepresentable names select marked, fully quoted output", iniFile2string(file), printed);
+	check("marked output reads back", parseIniFile(printed), file);
+	check("marked output is stable", iniFile2string(parseIniFile(printed)), printed);
+	check("CRLF marker", parseIniFile(strReplace(printed, "\n", "\u000d\n")), file);
+	check("marked input may mix plain and quoted names", parseIniFile(marker + "[plain]\n\"a=b\"=x\nraw=y\n[\"q]s\"]\n\"\"=z\n"),
+		IniFile([IniSection("plain", [KeyValue("a=b", "x"), KeyValue("raw", "y")]), IniSection("q]s", [KeyValue("", "z")])]));
+	check("multiline names do not introduce keys or sections", parseIniFile(marker + "[\"a\n[b]=c;d\"]\n\"a\n[b]=c;d\"=v\n\"next\"=kept\n"),
+		IniFile([IniSection("a\n[b]=c;d", [KeyValue("a\n[b]=c;d", "v"), KeyValue("next", "kept")])]));
+	check("unterminated quoted key consumes the rest", parseIniFile(marker + "[\"s\"]\n\"a=[other]\nk=v"), IniFile([IniSection("s", [])]));
+	check("quoted key requires adjacent =", parseIniFile(marker + "[\"s\"]\n\"a\" tail=x\n[other]\nk=v"), IniFile([IniSection("s", [])]));
+	check("quoted section requires adjacent ]", parseIniFile(marker + "[\"s\" tail]\nk=v"), IniFile([IniSection("s", [])]));
+	check("unterminated quoted section consumes the rest", parseIniFile(marker + "[\"a\n[other]\nk=v"),
+		IniFile([IniSection("a\n[other]\nk=v", [])]));
+	check("whitespace before a quoted key is outside its name", parseIniFile(marker + "[\"s\"]\n; comment\n\t \" padded \"=v\n"),
+		IniFile([IniSection("s", [KeyValue(" padded ", "v")])]));
+	check("marker is omitted when parsed names need no extension", iniFile2string(parseIniFile(marker + "[\"s\"]\n\"k\"=v\n")), "[s]\nk=v\n\n");
+	check("empty marked document", parseIniFile(marker), IniFile([]));
+
+	parts = ["", "normal", "Mixed Case", "=", "[", "]", ";", "a=b;[c]", "\"", "\"\"", "\"quoted\"", "'single'",
+		" ", " leading", "trailing ", "\t", "\tleading", "trailing\t", "\n", "\u000d", "\u000d\n",
+		"a\nb", "a\u000db", "a\u000d\nb", "\n[other]\nk=v\n;comment", "\\", "\\n\\r\\t", "\\\"", "\"\\", "C:\\new\\tab", "æøå 😀"];
+	iter(parts, \name -> {
+		one = IniFile([IniSection(name, map(parts, \key -> KeyValue(key, name))), IniSection("tail", [KeyValue("next", "kept")])]);
+		check("name and value matrix: " + toString(name), parseIniFile(iniFile2string(one)), one);
+		// Safe names and empty names also work without forcing the marked path via another key.
+		single = IniFile([IniSection(name, [KeyValue(name, name)])]);
+		check("single name and value: " + toString(name), parseIniFile(iniFile2string(single)), single);
+	});
+	// Combine characters around quotes and delimiters, rather than only checking them in isolation.
+	atoms = ["", "a", "=", "[", "]", ";", "\"", "\\", " ", "\t", "\n", "\u000d"];
+	combinations = mapConcat(atoms, \a -> map(atoms, \b -> a + b));
+	combined = IniFile(map(combinations, \name -> IniSection(name, [KeyValue(name, name)])));
+	check("combined name and value characters", parseIniFile(iniFile2string(combined)), combined);
+	duplicates = IniFile([IniSection("s]", [KeyValue("k=", "1"), KeyValue("k=", "2")]), IniSection("s]", []), IniSection("", [])]);
+	check("marked duplicate names and empty sections keep their order", parseIniFile(iniFile2string(duplicates)), duplicates);
+}
+
 makeIni(sections : int, keysPerSection : int) -> string {
 	concatStrings(generate(0, sections, \i -> {
 		"[section" + i2s(i) + "]\n"
@@ -206,6 +282,9 @@ testPerformance() -> void {
 	measureParse("20000 headers on one line", concatStrings(generate(0, 20000, \i -> "[s" + i2s(i) + "]")), 20000, 0);
 	measureParse("20000 comment marks after the last line end", "[s]\n" + strRepeat(";x", 20000), 1, 0);
 	measureParse("20000 quoted values on one line", "[s]\n" + strRepeat("k=\"v\" ", 20000), 1, 20000);
+	marker = "; flow9-ini: quoted-names-v1\n";
+	measureParse("20000 quoted names on one line", marker + "[\"s\"]\n" + strRepeat("\"k=[;\"=\"v\" ", 20000), 1, 20000);
+	measureParse("20000 quoted headers on one line", marker + strRepeat("[\"s]\"]", 20000), 20000, 0);
 }
 
 main() {
@@ -213,6 +292,8 @@ main() {
 	testEdgeCases();
 	testPrint();
 	testRoundTrip();
+	testLegacyNames();
+	testQuotedNames();
 	testPerformance();
 
 	if (^failures == 0) {
