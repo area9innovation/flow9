@@ -1,0 +1,103 @@
+import formats/uri3/uri3;
+import sys/target;
+
+// Checks of how lib/formats/uri3/uri3.flow parses and prints urls:
+//
+//  - The host is what comes after the last @ in the authority. The part before it is the
+//    userinfo, so "https://a.com@b.com/" has the host b.com, as in a browser.
+//    The userinfo stays in the href, but it is not part of the host or the origin.
+//  - For http, https, ftp, ws, wss, file and relative urls a backslash before the search is
+//    read as a slash, as the browsers do. "https://b.com\a.com/" has the host b.com.
+//  - An absolute path cannot go above the root, so "/a/../../b" is "/b", not "/../b".
+//  - The hash encodes %, &, = and space in its keys and values, so a value holding & or =
+//    comes back as one parameter when the href is parsed again.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+hrefOf(s : string) -> string { uri3GetHref(uri3(s)); }
+
+hashOf(hash : [KeyValue]) -> string {
+	empty = makeUri3();
+	uri3GetHash(Uri3(empty with hash = hash));
+}
+
+reparsedHash(hash : [KeyValue]) -> string { toString(uri3("#" + hashOf(hash)).hash); }
+
+testUserinfo() -> void {
+	check("the host is after the @", uri3("https://a.com@b.com/").hostname, "b.com");
+	check("the origin leaves out the userinfo", uri3GetOrigin(uri3("https://a.com@b.com/")), "https://b.com");
+	check("the host with a port leaves out the userinfo", uri3GetHost(uri3("https://user:pw@b.com:8080/a")), "b.com:8080");
+	check("the port is read after the userinfo", i2s(uri3("https://user:pw@b.com:8080/a").port), "8080");
+	check("the href keeps the userinfo", hrefOf("https://user:pw@b.com:8080/a?b=1#c"), "https://user:pw@b.com:8080/a?b=1#c");
+	check("the host is after the last @", uri3("http://a@b@c.com/").hostname, "c.com");
+	check("an empty userinfo", uri3("http://@h.com/").hostname, "h.com");
+	check("a protocol relative url with userinfo", uri3GetOrigin(uri3("//u@h.com/x")), "//h.com");
+	withUser = uri3("https://u@a.com/x");
+	check("a new hostname keeps the userinfo", uri3GetHref(Uri3(withUser with hostname = "b.com")), "https://u@b.com/x");
+	check("an @ in the path is not userinfo", uri3("https://h.com/a@b").hostname, "h.com");
+	check("an @ in the search is not userinfo", uri3("https://h.com/?u=a@b.com").hostname, "h.com");
+	check("an @ in the search is kept", hrefOf("https://h.com/?u=a@b.com"), "https://h.com/?u=a%40b.com");
+	check("a url without userinfo is unchanged", hrefOf("https://h.com:81/a/b?c=1#d"), "https://h.com:81/a/b?c=1#d");
+}
+
+testBackslash() -> void {
+	check("a backslash before an @ ends the host", uri3("https://a.com\\@b.com/").hostname, "a.com");
+	check("a backslash after the host ends the host", uri3("https://b.com\\a.com/x").hostname, "b.com");
+	check("backslashes after the protocol", hrefOf("https:\\\\b.com\\x"), "https://b.com/x");
+	check("a relative url starting with a slash and a backslash", uri3("/\\b.com/x").hostname, "b.com");
+	check("a relative url starting with two backslashes", uri3GetOrigin(uri3("\\\\b.com:81\\x")), "//b.com:81");
+	check("a backslash in a relative path", hrefOf("a\\b"), "a/b");
+	check("a backslash in the search is kept", toString(uri3("https://h.com/?a=b\\c").search), toString([KeyValue("a", "b\\c")]));
+	check("a backslash in the hash is kept", toString(uri3("https://h.com/#b\\c").hash), toString([KeyValue("", "b\\c")]));
+	check("a backslash in another protocol is kept", toString(uri3("custom://h/p\\q").path), toString(["p\\q"]));
+}
+
+testDotDot() -> void {
+	check("an absolute path does not go above the root", hrefOf("/a/../../b"), "/b");
+	check("an absolute path starting with ..", hrefOf("/../../etc/x"), "/etc/x");
+	check("a path after a host does not go above the root", hrefOf("http://h.com/a/../../b"), "http://h.com/b");
+	check("a path after a host starting with ..", hrefOf("http://h.com/../b"), "http://h.com/b");
+	check("a relative path keeps a leading ..", hrefOf("a/../../b"), "../b");
+	check("a relative path keeps two leading ..", hrefOf("../../x"), "../../x");
+	check("a .. does not cancel a leading ..", hrefOf("a/b/../../../../x"), "../../x");
+	check("a .. inside the path", hrefOf("/a/b/../c"), "/a/c");
+}
+
+testHash() -> void {
+	check("an & and an = in a hash value are encoded", hashOf([KeyValue("next", "a&admin=1")]), "next=a%26admin%3D1");
+	check("an & and an = in a hash value survive parsing", reparsedHash([KeyValue("next", "a&admin=1")]), toString([KeyValue("next", "a&admin=1")]));
+	check("an = in a hash key survives parsing", reparsedHash([KeyValue("k=x", "v w")]), toString([KeyValue("k=x", "v w")]));
+	check("an & in a hash value without a key survives parsing", reparsedHash([KeyValue("", "a&b")]), toString([KeyValue("", "a&b")]));
+	check("a % in a hash value is encoded", hashOf([KeyValue("p", "100%")]), "p=100%25");
+	check("a % in a hash value survives parsing", reparsedHash([KeyValue("p", "100%20")]), toString([KeyValue("p", "100%20")]));
+	check("a space in a hash value is encoded", hashOf([KeyValue("tag", "value 2")]), "tag=value%202");
+	check("a slash in a hash value is kept", hashOf([KeyValue("", "home/items"), KeyValue("id", "5")]), "home/items&id=5");
+	check("an @ and a : in a hash value are kept", hashOf([KeyValue("login", "a@b.com"), KeyValue("url", "https://x")]), "login=a@b.com&url=https://x");
+	empty = makeUri3();
+	check("the search encodes the same value", uri3GetSearch(Uri3(empty with search = [KeyValue("next", "a&admin=1")])), "next=a%26admin%3D1");
+	check("the href of a hash with an &", hrefOf("https://h.com/#next=a%26admin%3D1"), "https://h.com/#next=a%26admin%3D1");
+}
+
+main() {
+	testUserinfo();
+	testBackslash();
+	testDotDot();
+	testHash();
+
+	if (^failures == 0) {
+		println("uri3 parse tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " uri3 parse test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
