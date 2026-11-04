@@ -1,0 +1,100 @@
+import formats/xml;
+import sys/target;
+
+failures = ref 0;
+
+check(name : string, actual : flow, expected : flow) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+	}
+}
+
+descend(node : XmlNode2, count : int) -> XmlNode2 {
+	if (count == 0) node else descend(getXmlChildren2(node)[0], count - 1);
+}
+
+testDepth(depth : int) -> void {
+	start = strRepeat("<a>", depth);
+	end = strRepeat("</a>", depth);
+	source = start + "x&amp;y" + end;
+	strategy = [StandardEscaping(), XmlValidateNames()];
+	check("single root " + i2s(depth), xml2string(parseXml2WithStrategy(source, strategy)), source);
+	roots = parseXml3WithStrategy(source, strategy);
+	check("multiple-root variant " + i2s(depth), length(roots), 1);
+	check("node2 printer " + i2s(depth), xmlNode2String(roots[0]), source);
+	check("comment stripping " + i2s(depth), xml2string(stripXmlComments(roots)[0]), source);
+	commented = start + "<!--kept--><b/>" + end;
+	withComments = parseXml3WithStrategy(commented, [XmlKeepComments()]);
+	printed = start + "<b></b>" + end;
+	check("retained deep children " + i2s(depth), getXmlChildren2(descend(withComments[0], depth - 1)), [XmlComment("kept"), XmlElement2("b", [], [])]);
+	check("deep retained comment " + i2s(depth), xmlNode2String(withComments[0]), printed);
+	check("strip deep retained comment " + i2s(depth), xml2string(stripXmlComments(withComments)[0]), printed);
+	check("single-root comment strategy " + i2s(depth), xml2string(parseXml2WithStrategy(commented, [XmlKeepComments()])), printed);
+	check("unclosed elements " + i2s(depth), xml2string(parseXml2(start + "x")), start + "x" + end);
+	check("deep implicit closing " + i2s(depth), xml2string(parseXml2(start + "<b>x" + end)), start + "<b>x</b>" + end);
+	check("deep stray end " + i2s(depth), xml2string(parseXml2(start + "x</q>y" + end)), start + "xy" + end);
+	check("parseXml3 wrapper " + i2s(depth), xml2string(parseXml3(start + "x" + end)[0]), start + "x" + end);
+	branch = start + "x" + end;
+	check("deep sibling branches " + i2s(depth), xml2string(parseXml2("<root>" + branch + branch + "</root>")), "<root>" + branch + branch + "</root>");
+}
+
+testPrinting() -> void {
+	// Exercise the helpers independently of parsing, with a deep tree built in a fold.
+	node = fold(enumFromTo(1, 12000), XmlText("<&"), \child : XmlNode, __ -> XmlElement("a", [XmlAttribute("v", "\"")], [child]));
+	node2 = fold(enumFromTo(1, 12000), XmlText("<&"), \child : XmlNode2, __ -> XmlElement2("a", [XmlAttribute("v", "\"")], [XmlComment("ignored"), child]));
+	expected = strRepeat("<a v=\"&quot;\">", 12000) + "&lt;&amp;" + strRepeat("</a>", 12000);
+	check("constructed deep node", xml2string(node), expected);
+	check("constructed deep node2", xmlNode2String(node2), expected);
+	check("constructed deep stripping", xml2string(stripXmlComments([node2])[0]), expected);
+}
+
+testRecovery() -> void {
+	check("implicit closing", xml2string(parseXml2("<a><b>x</a>")), "<a><b>x</b></a>");
+	check("stray end ignored when close follows", xml2string(parseXml2("<a>x</b>y</a>")), "<a>xy</a>");
+	check("leading text before root", xml2string(parseXml2("text<a/>tail")), "<a></a>");
+	check("trailing text group", map(parseXml3("<a/>tail"), xml2string), ["<a></a>", "tail"]);
+	check("comment output unchanged", xmlNode2String(XmlComment("not printed")), "");
+	check("siblings and comments", map(stripXmlComments([XmlText("x"), XmlComment("c"), XmlElement2("b", [], []), XmlText("y")]), xml2string), ["x", "<b></b>", "y"]);
+}
+
+// Print shallow deterministic trees for an exact comparison with the base implementation.
+testCorpus() -> void {
+	parts = ["<a>", "</a>", "<b>", "</b>", "<c/>", "x", " ", "<!--c-->", "<?p?>", "<![CDATA[t]]>", "<", "&amp;"];
+	seed = ref 971;
+	iter(enumFromTo(1, 2000), \i -> {
+		s = concatStrings(map(enumFromTo(1, 1 + i % 30), \__ -> {
+			seed := bitAnd(^seed * 1664525 + 1013904223, 0x7fffffff);
+			parts[^seed % length(parts)];
+		}));
+		iter([[], [XmlKeepComments()], [StandardEscaping(), XmlParseLeadingSpaces(true, true)], [XmlValidateNames()]], \strategy -> {
+			single = parseXml2WithStrategy("<root>" + s + "</root>", strategy);
+			multiple = parseXml3WithStrategy(s, strategy);
+			if (isUrlParameterTrue("corpus")) {
+				println(toString(Pair(single, multiple)));
+				println(toString(Pair(xml2string(single), map(multiple, xmlNode2String))));
+			}
+		});
+	});
+	iter([198, 199, 200, 201], \n -> {
+		s = "<a><b>x</q>" + strRepeat("<c/>", n) + "</b></a>";
+		children = concatStrings(["x", strRepeat("<c></c>", n)]);
+		expected = if (n < 199) ["<a><b>" + children + "</b></a>"]
+			else ["<a><b>x</b></a>", strRepeat("<c></c>", n)];
+		// After implicit closure, each empty element is a separate top-level group.
+		printed = map(parseXml3(s), xml2string);
+		check("close lookahead " + i2s(n), concatStrings(printed), concatStrings(expected));
+		if (isUrlParameterTrue("corpus")) println(toString(parseXml3WithStrategy(s, [])));
+	});
+}
+
+main() {
+	testRecovery();
+	if (!isUrlParameterTrue("corpus")) {
+		iter([1, 511, 512, 513, 4096], testDepth);
+		testPrinting();
+	}
+	testCorpus();
+	println("XML depth tests: " + i2s(^failures) + " failures in " + getTargetName());
+	quit(b2i(^failures != 0));
+}
