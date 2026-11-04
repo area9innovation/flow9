@@ -1,0 +1,106 @@
+import formats/csv;
+import sys/target;
+
+failures : ref int = ref 0;
+
+check(name : string, actual : [[string]], expected : [[string]]) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+checkLine(name : string, data : string, sep : string, expected : [string]) -> void {
+	check(name, [parseCsvLineWithQuotedSeparators(data, sep)], [expected]);
+}
+
+testRoundTrips() -> void {
+	rows = [["name", "description", "value"],
+		["LF", "first\nsecond", "1"],
+		["CR", "first\rsecond", "2"],
+		["CRLF", "first\r\nsecond", "3"],
+		["quotes", "a\"b\" and " + ", separator", ""],
+		["breaks", "\n\r\n\r", "end"],
+		["", "", ""]];
+	check("makeCsv round trip", parseCsvFile(makeCsv(rows), false), rows);
+	check("rectangular makeCsv round trip", parseCsvFile(makeCsv(rows), true), rows);
+	iter([",", ";", "\t"], \sep -> {
+		check("detected " + toString(sep), parseCsvFile(makeCsvSep(rows, sep), true), rows);
+	});
+	iter(["\n", "\r", "\r\n"], \ending -> {
+		data = "a,b" + ending + "\"first\n\r\nsecond\",\"a\"\"b,c\"" + ending + "z," + ending;
+		check("record ending " + toString(ending), parseCsvFile(data, true),
+			[["a", "b"], ["first\n\r\nsecond", "a\"b,c"], ["z", ""]]);
+	});
+	check("one multiline record is not transposed", parseCsvFile(makeCsv([["a\nb", "c"]]), true), [["a\nb", "c"]]);
+	// The physical lines inside this quoted field must not vote for semicolon.
+	check("separator detection uses logical records", parseCsvFile("a,b\n\"x;y\nu;v\np;q\",z", true),
+		[["a", "b"], ["x;y\nu;v\np;q", "z"]]);
+}
+
+testCompatibility() -> void {
+	check("empty file", parseCsvFile("", false), [[""]]);
+	check("empty file rectangular", parseCsvFile("", true), [[]]);
+	check("single record remains a column", parseCsvFile("a,b,", false), [["a"], ["b"], [""]]);
+	check("single record rectangular remains rejected", parseCsvFile("a,b", true), [[]]);
+	check("trim record ends before single-record compatibility", parseCsvFile("\na,b\r\n", false), [["a"], ["b"]]);
+	check("skip empty records, not empty cells", parseCsvFile("\r\na,b\n\n\r\n,\r\nz,\r\n", true),
+		[["a", "b"], ["", ""], ["z", ""]]);
+	check("whitespace convention", parseCsvFile(" a " + ", \" b \" \n\" c \", d ", true), [["a", " b "], ["c", "d"]]);
+	check("ragged rows", parseCsvFile("a,b\nc,d,e", false), [["a", "b"], ["c", "d", "e"]]);
+	check("reject ragged rows", parseCsvFile("a,b\nc,d,e", true), [[]]);
+	checkLine("empty line", "", ",", [""]);
+	checkLine("empty and trailing cells", ",a,,", ",", ["", "a", "", ""]);
+	checkLine("simple surrounding quotes removed", "\"a,b\",\"z\"", ",", ["a,b", "z"]);
+	checkLine("line API leaves doubled quotes escaped", "\"a\"\"b,c\",\"\"", ",", ["\"a\"\"b,c\"", ""]);
+	checkLine("line API preserves whitespace", " \" a \" " + ",\" b \"", ",", [" \" a \" ", " b "]);
+	checkLine("unmatched opening quote stays literal", "\"a,b,c", ",", ["\"a", "b", "c"]);
+	checkLine("unmatched quote after text", "a\"b,c", ",", ["a\"b", "c"]);
+	checkLine("unmatched last field", "\"a\",\"b,c", ",", ["a", "\"b", "c"]);
+	checkLine("quotes within unquoted text", "a\"b,c\"d,e", ",", ["a\"b,c\"d", "e"]);
+	checkLine("legacy suffix after closing quote", "\"a\"x", ",", ["a"]);
+	checkLine("line API keeps line breaks", "a\nb,c\rd", ",", ["a\nb", "c\rd"]);
+	checkLine("empty separator terminates", "abc", "", ["abc"]);
+	// Keep the six literal characters distinct from an actual double quote.
+	iter(["::", "aba", "\\u0022"], \sep -> {
+		checkLine("multi-character " + sep, "a" + sep + "\"b" + sep + "c\"" + sep, sep, ["a", "b" + sep + "c", ""]);
+	});
+	checkLine("overlapping separator consumes a full match", "ababa", "aba", ["", "ba"]);
+	// The line API historically permits actual quotes in a separator too.
+	checkLine("quote separator", "a\"b\"c", "\"", ["a", "b", "c"]);
+	checkLine("separator at closing quote", "\"a\"b\"c\"", "\"b", ["\"a", "c"]);
+	checkLine("separator ending with quote", "xa\"y", "a\"", ["x", "y"]);
+	// Detection still samples only the first 2000 characters and defaults to comma
+	// when the sample provides no separator evidence.
+	longCell = strRepeat("x", 2000);
+	check("separator sample stays bounded", parseCsvFile(longCell + ";b\nc;d", false), [[longCell + ";b"], ["c;d"]]);
+}
+
+testLargeRecords() -> void {
+	// Increasing sizes guard results and stack usage, not machine-dependent timing.
+	iter([1000, 2000, 4000, 8000], \size -> {
+		wide = generate(0, size, \i -> "v" + i2s(i) + ",\"quoted\"\nnext");
+		rows = [wide, wide];
+		check("wide quoted round trip " + i2s(size), parseCsvFile(makeCsv(rows), false), rows);
+		plain = generate(0, size, \i -> i2s(i));
+		checkLine("wide plain record " + i2s(size), strGlue(plain, ","), ",", plain);
+	});
+	cell = strRepeat("a\"b,c\r\nd\n", 20000);
+	rows = [["large", cell], ["end", ""]];
+	check("large quoted cell round trip", parseCsvFile(makeCsv(rows), false), rows);
+}
+
+main() {
+	testRoundTrips();
+	testCompatibility();
+	testLargeRecords();
+	if (^failures == 0) {
+		println("CSV quoted record tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " CSV quoted record test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
