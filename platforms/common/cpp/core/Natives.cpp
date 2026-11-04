@@ -2346,6 +2346,10 @@ class BinaryDeserializer
     std::vector<OpenValue> openValues;
     std::vector<StackSlot> openSlots;
 
+    // Keep in sync with lib/text/binary.flow and JSBinflowBuffer.
+    // Count every array, struct and ref, including empty containers, but not scalar leaves or the footer.
+    static const unsigned maxNestingDepth = 512;
+
     bool openValue(OpenValue::Kind kind, unsigned size, unsigned struct_idx, StackSlot &value);
     void storeValue(const OpenValue &frame, const StackSlot &value);
     StackSlot closeValue();
@@ -2656,6 +2660,12 @@ void BinaryDeserializer::readStructIndex(const StackSlot &fixups)
 // An empty one is complete at once and comes back as `value`.
 bool BinaryDeserializer::openValue(OpenValue::Kind kind, unsigned size, unsigned struct_idx, StackSlot &value)
 {
+    if (openValues.size() >= maxNestingDepth)
+    {
+        error = true;
+        return false;
+    }
+
     StackSlot slot;
     switch (kind)
     {
@@ -2825,7 +2835,7 @@ bool BinaryDeserializer::readNextValue(StackSlot &value)
     }
 }
 
-// Nesting is kept on openValues, not the call stack, so depth is bounded only by memory
+// Nesting is kept on openValues, not the call stack; openValue also bounds the decoded value's depth
 StackSlot BinaryDeserializer::readValue()
 {
     openValues.clear();
