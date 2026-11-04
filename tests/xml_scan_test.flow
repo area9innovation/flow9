@@ -1,0 +1,87 @@
+import formats/xml;
+import sys/target;
+
+// Event boundaries, including recovery text fragments, are part of the legacy API.
+// Run with benchmark=1 to report scaling; timings are not pass/fail assertions.
+failures = ref 0;
+
+check(name : string, actual : flow, expected : flow) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name + ": " + strLeft(toString(actual), 500) + " != " + strLeft(toString(expected), 500));
+	}
+}
+
+events(s : string, strategy : [XmlParsingOption]) -> [XmlEvent] {
+	acc = ref makeList();
+	b : DynamicBehaviour<XmlEvent> = make(XmlEndEvent());
+	u = subscribe2(b, \e -> acc := Cons(e, ^acc));
+	parseXmlWithStrategy(s, b, strategy);
+	u();
+	list2array(^acc);
+}
+
+testRecovery() -> void {
+	check("fresh quotes after recovery", events("<a '<b/>tail", []),
+		[XmlTextEvent("<"), XmlTextEvent("a '"), XmlEmptyElement("b", []), XmlTextEvent("tail"), XmlEndEvent()]);
+	check("escaped quote after recovery", events("<a '\\'<b/>tail", []),
+		[XmlTextEvent("<"), XmlTextEvent("a '\\'"), XmlEmptyElement("b", []), XmlTextEvent("tail"), XmlEndEvent()]);
+	check("invalid name before markup", events("<0 <b/>tail", [XmlValidateNames()]),
+		[XmlTextEvent("<"), XmlTextEvent("0 "), XmlEmptyElement("b", []), XmlTextEvent("tail"), XmlEndEvent()]);
+	check("invalid attribute before markup", events("<a 0='x'><b/>", [XmlValidateNames()]),
+		[XmlTextEvent("<"), XmlTextEvent("a 0='x'>"), XmlEmptyElement("b", []), XmlEndEvent()]);
+	check("leading space remains invalid", events("< a>", [XmlValidateNames()]),
+		[XmlTextEvent("<"), XmlTextEvent("a>"), XmlEndEvent()]);
+}
+
+testLarge() -> void {
+	plain = strRepeat("plain & text ", 20000);
+	check("large plain text", events(plain, []), [XmlTextEvent(plain), XmlEndEvent()]);
+	n = 10000;
+	check("many small tags", events(strRepeat("x<a/>", n), []),
+		arrayPush(mapi(enumFromTo(1, 2 * n), \i, __ -> if (i % 2 == 0) XmlTextEvent("x") else XmlEmptyElement("a", [])), XmlEndEvent()));
+	check("many incomplete tags", events(strRepeat("<", n), []),
+		arrayPush(map(enumFromTo(1, n), \__ -> XmlTextEvent("<")), XmlEndEvent()));
+	check("many invalid names", events(strRepeat("<", n) + ">", [XmlValidateNames()]),
+		concat(map(enumFromTo(1, n), \__ -> XmlTextEvent("<")), [XmlTextEvent(">"), XmlEndEvent()]));
+	check("many comments", events(strRepeat("<!---->", n), []),
+		arrayPush(map(enumFromTo(1, n), \__ -> XmlCommentEvent("")), XmlEndEvent()));
+}
+
+// A deterministic corpus for comparison with earlier implementations. Print complete
+// event streams on request, rather than a hash which could hide a changed event.
+testCorpus() -> void {
+	parts = ["<", ">", "a", "0", " ", "'", "\"", "\\", "/", "?", "=", "<!-->", "<!--->", "-->", "<![CDATA[", "]]>", "<b/>", "&amp;", "\r\n", "\u00a0"];
+	seed = ref 173;
+	iter(enumFromTo(1, 2000), \i -> {
+		s = concatStrings(map(enumFromTo(1, 1 + i % 20), \__ -> {
+			seed := bitAnd(^seed * 1664525 + 1013904223, 0x7fffffff);
+			parts[^seed % length(parts)];
+		}));
+		iter([[], [XmlValidateNames()], [StandardEscaping(), XmlParseLeadingSpaces(true, true)]], \strategy -> {
+			result = events(s, strategy);
+			check("corpus has one terminal event", length(filter(result, \e -> e == XmlEndEvent())), 1);
+			if (isUrlParameterTrue("corpus")) println(toString(result));
+		});
+	});
+}
+
+benchmark() -> void {
+	iter([2000, 8000, 32000], \n -> {
+		iter([Pair("plain", strRepeat("plain text ", n)), Pair("markup", strRepeat("x<a/>", n)), Pair("incomplete", strRepeat("<", n)), Pair("invalid", strRepeat("<", n) + ">"), Pair("comments", strRepeat("<!-->", n))], \sample -> {
+			b : DynamicBehaviour<XmlEvent> = make(XmlEndEvent());
+			start = timestamp();
+			parseXmlWithStrategy(sample.second, b, [XmlValidateNames()]);
+			println(sample.first + " " + i2s(n) + ": " + d2s(timestamp() - start) + " ms");
+		});
+	});
+}
+
+main() {
+	testRecovery();
+	if (!isUrlParameterTrue("corpus")) testLarge();
+	testCorpus();
+	if (isUrlParameterTrue("benchmark")) benchmark();
+	println("XML scan tests: " + i2s(^failures) + " failures in " + getTargetName());
+	quit(b2i(^failures != 0));
+}

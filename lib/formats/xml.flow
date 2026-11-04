@@ -340,54 +340,109 @@ findTagEnd(s : string, i : int, quote : string) -> int {
 	}
 }
 
+// On recovery, later '<' characters start with fresh quote state. Cache all three states
+// once, backwards, rather than scanning the same suffix again for each candidate tag.
+XmlTagEnds(outside : int, single : int, quoted : int);
+
+cacheXmlTagEnds(s : string, i : int, nextEnds : XmlTagEnds, acc : List<XmlTagEnds>) -> [XmlTagEnds] {
+	if (i >= 0) {
+		ch = getCharAt(s, i);
+		quote = (i == 0 || getCharAt(s, i - 1) != "\\");
+		single = ch == "'" && quote;
+		quoted = ch == "\"" && quote;
+		ends = XmlTagEnds(
+			if (single) nextEnds.single else if (quoted) nextEnds.quoted else if (ch == ">") i else nextEnds.outside,
+			if (single) nextEnds.outside else nextEnds.single,
+			if (quoted) nextEnds.outside else nextEnds.quoted
+		);
+		cacheXmlTagEnds(s, i - 1, ends, Cons(ends, acc));
+	} else list2array(acc);
+}
+
+prepareXmlRecovery(s : string, ends : ref [XmlTagEnds]) -> void {
+	if (length(^ends) == 0) {
+		base = XmlTagEnds(-1, -1, -1);
+		ends := cacheXmlTagEnds(s, strlen(s) - 1, base, Cons(base, makeList()));
+	}
+}
+
+// Reject a bad tag name before copying/parsing a possibly long overlapping candidate.
+// The boundaries match parseTag, including its treatment of processing and empty tags.
+xmlTagNameValid(s : string, start : int, end : int) -> bool {
+	first = getCharAt(s, start + 1);
+	last = getCharAt(s, end - 1);
+	processing = first == "?" && last == "?";
+	nameStart = start + 1 + b2i(first == "/" || processing);
+	nameEnd = end - b2i(last == "/" || processing);
+	xmlTagNameValidFrom(s, nameStart, nameEnd, true);
+}
+
+xmlTagNameValidFrom(s : string, i : int, end : int, first : bool) -> bool {
+	if (i >= end) !first
+	else {
+		ch = getCharAt(s, i);
+		if (strContains(" \r\n\t", ch)) !first
+		// parseTag's trim also removes non-breaking spaces; leave that case to it.
+		else if (ch == "\u00a0") true
+		else if (isLetter(ch) || ch == ":" || ch == "_" || ch >= "À" || (!first && (isDigit(ch) || ch == "-" || ch == "."))) {
+			xmlTagNameValidFrom(s, i + 1, end, false);
+		} else false;
+	}
+}
+
 doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool) -> void {
+	doParseXmlFrom(s, 0, events, parseText, validateNames, ref [], false);
+}
+
+doParseXmlFrom(s : string, start : int, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool, tagEnds : ref [XmlTagEnds], noCommentEnd : bool) -> void {
 	l = strlen(s);
-	tagStart = strIndexOf(s, "<");
+	tagStart = strRangeIndexOf(s, "<", start, l);
 	if (tagStart == -1) {
 		// OK, the rest is just text
-		if (l != 0) {
-			parseText(s, events);
+		if (start < l) {
+			parseText(substring(s, start, l - start), events);
 		}
 		// Signal the end!
 		next(events, XmlEndEvent());
-	} else if (tagStart == 0) {
+	} else if (tagStart == start) {
 		// We have a tag or comment!
 		// A comment or CDATA section that is never closed takes the rest of the input, except <!--> and <!--->
-		if (startsWith(s, "<!--")) {
-			endComment = strIndexOf(substring(s, 4, l - 4), "-->");
+		if (strContainsAt(s, start, "<!--")) {
+			endComment = if (noCommentEnd) -1 else strRangeIndexOf(s, "-->", start + 4, l);
 			if (endComment == -1) {
-				if (startsWith(s, "<!-->") || startsWith(s, "<!--->")) {
+				if (strContainsAt(s, start, "<!-->") || strContainsAt(s, start, "<!--->")) {
 					// With no --> at all, <!--> and <!---> are an empty comment, as in HTML5
 					next(events, XmlCommentEvent(""));
-					doParseXml(strRight(s, if (startsWith(s, "<!-->")) 5 else 6), events, parseText, validateNames);
+					doParseXmlFrom(s, start + (if (strContainsAt(s, start, "<!-->")) 5 else 6), events, parseText, validateNames, tagEnds, true);
 				} else {
-					next(events, XmlCommentEvent(strRight(s, 4)));
+					next(events, XmlCommentEvent(strRight(s, start + 4)));
 					next(events, XmlEndEvent());
 				}
 			} else {
-				next(events, XmlCommentEvent(substring(s, 4, endComment)));
-				doParseXml(strRight(s, endComment + 7), events, parseText, validateNames);
+				next(events, XmlCommentEvent(substring(s, start + 4, endComment - start - 4)));
+				doParseXmlFrom(s, endComment + 3, events, parseText, validateNames, tagEnds, noCommentEnd);
 			}
-		} else if (startsWith(s, "<![CDATA[")) {
-			endComment = strIndexOf(substring(s, 9, l - 9), "]]>");
+		} else if (strContainsAt(s, start, "<![CDATA[")) {
+			endComment = strRangeIndexOf(s, "]]>", start + 9, l);
 			if (endComment == -1) {
-				next(events, XmlTextEvent(strRight(s, 9)));
+				next(events, XmlTextEvent(strRight(s, start + 9)));
 				next(events, XmlEndEvent());
 			} else {
-				next(events, XmlTextEvent(substring(s, 9, endComment)));
-				doParseXml(strRight(s, endComment + 12), events, parseText, validateNames);
+				next(events, XmlTextEvent(substring(s, start + 9, endComment - start - 9)));
+				doParseXmlFrom(s, endComment + 3, events, parseText, validateNames, tagEnds, noCommentEnd);
 			}
 		} else {
 			// It's a tag
-			endTag = findTagEnd(s, 1, "");
+			endTag = if (length(^tagEnds) == 0) findTagEnd(s, start + 1, "") else (^tagEnds)[l - start - 1].outside;
 			
-			if (endTag == -1) {
+			if (endTag == -1 || (validateNames && !xmlTagNameValid(s, start, endTag))) {
 				// Couldn't find a proper end tag, treat as text
-				parseText(strLeft(s, 1), events);
+				parseText("<", events);
+				prepareXmlRecovery(s, tagEnds);
 				// Recursively handle the rest
-				doParseXml(substring(s, 1, l - 1), events, parseText, validateNames);
+				doParseXmlFrom(s, start + 1, events, parseText, validateNames, tagEnds, noCommentEnd);
 			} else {
-				tag = strLeft(s, endTag + 1);
+				tag = substring(s, start, endTag - start + 1);
 				event = parseTag(tag);
 
 				ok = if (validateNames) {
@@ -406,20 +461,21 @@ doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string,
 					// Everything looks good, so parse and send that
 					next(events, event);
 					// And then do the rest...
-					doParseXml(substring(s, endTag + 1, l - endTag - 1), events, parseText, validateNames);
+					doParseXmlFrom(s, endTag + 1, events, parseText, validateNames, tagEnds, noCommentEnd);
 				} else {
 					// If it does not pass as a valid names, change our mind and treat this like text
-					parseText(strLeft(s, 1), events);
+					parseText("<", events);
+					prepareXmlRecovery(s, tagEnds);
 					// Recursively handle the rest
-					doParseXml(substring(s, 1, l - 1), events, parseText, validateNames);
+					doParseXmlFrom(s, start + 1, events, parseText, validateNames, tagEnds, noCommentEnd);
 				}
 			}
 		}
 	} else {
 		// Before the tag, there is some text
-		parseText(strLeft(s, tagStart), events);
+		parseText(substring(s, start, tagStart - start), events);
 		// Recursively handle the rest
-		doParseXml(substring(s, tagStart, l - tagStart), events, parseText, validateNames);
+		doParseXmlFrom(s, tagStart, events, parseText, validateNames, tagEnds, noCommentEnd);
 	}
 };
 
