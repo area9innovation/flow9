@@ -32,7 +32,8 @@ ruDoHtml2md(html : [HtmlNode], indent : string, code : bool) -> string {
 	ruJoinHtml2md(html, map(html, \elem -> ruHtmlNode2md(elem, indent, code)), code);
 }
 
-// A & from an entity is written as &amp; if it could make a new entity with the text after it, as in &amp;copy;.
+// A & from an entity is written as &amp; if it makes a new entity with the text after it, as in &amp;copy;.
+// If the name after it runs to the end of the element, the text after the element is read too.
 // A \ right before an entity written here, a link or an image would make it plain text, so it is written as &#92;.
 ruJoinHtml2md(html : [HtmlNode], parts : [string], code : bool) -> string {
 	if (code) {
@@ -40,8 +41,8 @@ ruJoinHtml2md(html : [HtmlNode], parts : [string], code : bool) -> string {
 	} else {
 		list2string(foldi(parts, makeList(), \i, acc, part -> {
 			md = switch (html[i]) {
-				HtmlEntity(__, __): if (part == "&" && ruMayStartEntity(parts, i + 1, 0, false)) "&amp;" else part;
-				HtmlTag(__, __, __): part;
+				HtmlEntity(__, __): ruEscapeMdAmpEnd(parts, i);
+				HtmlTag(__, __, __): ruEscapeMdAmpEnd(parts, i);
 				HtmlText(__): part;
 				HtmlComment(__): part;
 			};
@@ -52,9 +53,8 @@ ruJoinHtml2md(html : [HtmlNode], parts : [string], code : bool) -> string {
 
 ruIsMdEscapeStart(node : HtmlNode, md : string) -> bool {
 	switch (node) {
-		HtmlTag(tag, __, __): {
-			tag == "a" && startsWith(md, "[") || tag == "img" && startsWith(md, "![") || ruStartsWithMdEntity(md);
-		}
+		// The link or image can also be inside the element
+		HtmlTag(__, __, __): startsWith(md, "[") || startsWith(md, "![") || ruStartsWithMdEntity(md);
 		HtmlEntity(__, __): ruStartsWithMdEntity(md);
 		HtmlText(__): ruStartsWithMdEntity(md);
 		HtmlComment(__): false;
@@ -161,25 +161,50 @@ ruHtmlLinkText(body : [HtmlNode]) -> [HtmlNode] {
 	});
 }
 
+// Writes the & in part i as &amp; if it makes an entity with the parts after it. Part i is a & from
+// an entity, or the Markdown of an element that ends in a & and the start of a name.
+ruEscapeMdAmpEnd(parts : [string], i : int) -> string {
+	part = parts[i];
+	amp = ruMdAmpAtEnd(part);
+	hash = amp != -1 && getCharAt(part, amp + 1) == "#";
+	if (amp != -1 && ruMayStartEntity(parts, i + 1, strlen(part) - amp - 1 - b2i(hash), hash)) {
+		ruEscapeMdEnd(strLeft(part, amp)) + "&amp;" + strRight(part, amp + 1);
+	} else {
+		part;
+	}
+}
+
+// Where the & is if only a name or # and a number follow it up to the end of the text, or -1.
+// Entity names have at most 31 characters, so only the end of the text is read.
+ruMdAmpAtEnd(text : string) -> int {
+	n = strlen(text);
+	j = countUntilDown(n - 1, max(n - 33, -1), \k -> !ruIsAsciiAlnum(getCharCodeAt(text, k)));
+	if (j >= 0 && getCharAt(text, j) == "&") j
+	else if (j >= 1 && getCharAt(text, j) == "#" && getCharAt(text, j - 1) == "&") j - 1
+	else -1;
+}
+
+ruIsAsciiAlnum(c : int) -> bool {
+	c >= 0x30 && c <= 0x39 || c >= 0x41 && c <= 0x5A || c >= 0x61 && c <= 0x7A;
+}
+
 // Whether a & before the parts from i on starts an entity in Markdown: a name or #number, then ;.
-// At the end of an element the text after it is not known here, so a & there counts as one.
+// If the name runs to the end of the parts, the & is at the end of the Markdown of this element,
+// and ruEscapeMdAmpEnd checks it again with the text after the element.
 // name is the length of the name in the parts before i, hash tells if it starts with #.
 // The parts are read only up to the end of the name, so a long name is not read again and again.
 ruMayStartEntity(parts : [string], i : int, name : int, hash : bool) -> bool {
 	if (i < length(parts)) {
 		part = parts[i];
 		start = b2i(name == 0 && !hash && startsWith(part, "#"));
-		end = countUntil(start, strlen(part), \j -> {
-			c = getCharCodeAt(part, j);
-			!(c >= 0x30 && c <= 0x39 || c >= 0x41 && c <= 0x5A || c >= 0x61 && c <= 0x7A);
-		});
+		end = countUntil(start, strlen(part), \j -> !ruIsAsciiAlnum(getCharCodeAt(part, j)));
 		if (end < strlen(part)) {
 			name + end - start > 0 && getCharAt(part, end) == ";";
 		} else {
 			ruMayStartEntity(parts, i + 1, name + end - start, hash || start == 1);
 		}
 	} else {
-		name == 0 && !hash;
+		false;
 	}
 }
 
