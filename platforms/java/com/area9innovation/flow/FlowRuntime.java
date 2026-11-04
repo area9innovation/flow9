@@ -498,7 +498,15 @@ public abstract class FlowRuntime {
 
 	public static final Struct makeStructValue(int id, Object[] fields, Struct default_value) {
 		try {
-			Struct copy = struct_prototypes[id].clone();
+			Struct prototype = struct_prototypes[id];
+			RuntimeType[] types = prototype.getFieldTypes();
+			if (fields.length != types.length) return default_value;
+			FieldType[] descriptors = prototype.getFieldTypeDescriptors();
+			for (int i = 0; i < fields.length; i++) {
+				FieldType type = descriptors == null ? FieldType.of(types[i]) : descriptors[i];
+				if (!type.accepts(fields[i])) return default_value;
+			}
+			Struct copy = prototype.clone();
 			copy.setFields(fields);
 			return copy;
 		} catch (Exception e) {
