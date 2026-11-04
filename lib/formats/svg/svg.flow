@@ -77,7 +77,10 @@ attributes2GraphicsStyle(atts : [XmlAttribute], tint : Maybe<SvgTint>, ss : Styl
 	if ( containsStruct(gs, Fill(0)) || containsStruct(gs, Stroke(0)) || ^none_fill ) gs else arrayPush(gs, Fill( tintOrColor(0x000000) ) ); 
 }
 
-doSvgNode2Form(node : XmlNode, style : [SvgStyle], ss : Stylesheet) -> Form {
+// Elements nested deeper than this are left out, so a deeply nested file cannot exhaust the stack
+svgMaxNestingDepth = 256;
+
+doSvgNode2Form(node : XmlNode, style : [SvgStyle], ss : Stylesheet, depth : int) -> Form {
 	bgcolor = extractStruct(style, SvgBgColor(0xFFFFFF)).color;
 	tint = tryExtractStruct(style, SvgTint(0x000000));
 
@@ -93,8 +96,10 @@ doSvgNode2Form(node : XmlNode, style : [SvgStyle], ss : Stylesheet) -> Form {
 				Translate(const(getFloatAttr(atts, "x")), const(getFloatAttr(atts, "y")),
 					Rectangle(getFloatAttr(atts, "width"), getFloatAttr(atts, "height"), attributes2GraphicsStyle(atts, tint, ss))
 				)
+			} else if (depth < svgMaxNestingDepth) {
+				Group( map(childs, \c -> doSvgNode2Form(c, style, ss, depth + 1) ) )
 			} else {
-				Group( map(childs, \c -> doSvgNode2Form(c, style, ss) ) )
+				Empty()
 			}
 		}
 		default: Empty();
@@ -104,14 +109,16 @@ doSvgNode2Form(node : XmlNode, style : [SvgStyle], ss : Stylesheet) -> Form {
 // Collect embedded CSSs from the document
 // Adobe Illustrator embeds CSS with style tags
 // Loading of external CSS is not supported
-fetchStylesheet(node : XmlNode) -> Stylesheet {
+fetchStylesheet(node : XmlNode, depth : int) -> Stylesheet {
 	switch (node) {
 		XmlElement(t, atts, childs): {
 			if (t == "style") {
 				css = xmlUnescape( xml2text(node) );
 				parseCss(css);
+			} else if (depth < svgMaxNestingDepth) {
+				fold( childs, emptyStylesheet, \acc : Stylesheet, c : XmlNode -> Stylesheet( mergeTree(acc.styles, fetchStylesheet(c, depth + 1).styles ) ) );
 			} else {
-				fold( childs, emptyStylesheet, \acc : Stylesheet, c : XmlNode -> Stylesheet( mergeTree(acc.styles, fetchStylesheet(c).styles ) ) );
+				emptyStylesheet;
 			}
 		}
 		default: emptyStylesheet;
@@ -119,11 +126,14 @@ fetchStylesheet(node : XmlNode) -> Stylesheet {
 }
 
 svgNode2Form(node : XmlNode, style : [SvgStyle]) -> Form {
-	ss = fetchStylesheet(node);
-	doSvgNode2Form(node, style, ss);
+	ss = fetchStylesheet(node, 1);
+	doSvgNode2Form(node, style, ss, 1);
 }
 
+// The cache keeps at most this many files. When it is full, it is emptied.
+svgGlobalCacheMaxSize = 100;
 svgGlobalCache : ref Tree<string, Form> = ref makeTree();
+svgGlobalCacheSize : ref int = ref 0;
 
 svgString2Form(s : string, style : [SvgStyle]) -> Form {
 	//t0 = timestamp();
@@ -132,7 +142,12 @@ svgString2Form(s : string, style : [SvgStyle]) -> Form {
 	switch (cached) {
 		None(): {
 			r = svgNode2Form(parseXml2(s), style);
+			if (^svgGlobalCacheSize >= svgGlobalCacheMaxSize) {
+				svgGlobalCache := makeTree();
+				svgGlobalCacheSize := 0;
+			}
 			svgGlobalCache := setTree(^svgGlobalCache, s, r);
+			svgGlobalCacheSize := ^svgGlobalCacheSize + 1;
 			//println( toString(timestamp() - t0) +  " ms" );
 
 			r
