@@ -1,0 +1,66 @@
+import formats/uri/uri;
+import sys/target;
+
+// parseQueryString and parseQueryStringDecoded in lib/formats/uri/uri.flow.
+//
+//  - parseQueryString splits each pair at its first '=', so "a=b=c" gives
+//    the value "b=c". It used to keep only "b". Keys and values are still
+//    not decoded, and the last of a repeated key still wins.
+//  - parseQueryStringDecoded does the same and then decodes keys and values
+//    with urlDecode2: %XX gives the character, and '+' gives a space.
+//
+// tests/uri2_query_string_test.flow checks the same in lib/formats/uri2/uri2.flow.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+// Writes the pairs in key order as [key|value]
+showPairs(t : Tree<string, string>) -> string {
+	concatStrings(map(tree2pairs(t), \p -> "[" + p.first + "|" + p.second + "]"));
+}
+
+testParseQueryString() -> void {
+	check("plain pairs", showPairs(parseQueryString("a=1&b=2")), "[a|1][b|2]");
+	check("split at the first '='", showPairs(parseQueryString("a=b=c")), "[a|b=c]");
+	check("base64 padding is kept", showPairs(parseQueryString("sig=YWJj==&x=1")), "[sig|YWJj==][x|1]");
+	check("empty value after '='", showPairs(parseQueryString("a=&b=2")), "[a|][b|2]");
+	check("key without '='", showPairs(parseQueryString("flag&b=2")), "[b|2][flag|]");
+	check("empty key", showPairs(parseQueryString("=z")), "[|z]");
+	check("the last of a repeated key wins", showPairs(parseQueryString("x=1&x=2")), "[x|2]");
+	check("not decoded", showPairs(parseQueryString("k%20y=%41+B%2B")), "[k%20y|%41+B%2B]");
+	check("a lone '%' is kept", showPairs(parseQueryString("f=100%")), "[f|100%]");
+}
+
+testParseQueryStringDecoded() -> void {
+	check("decoded: plain pairs", showPairs(parseQueryStringDecoded("a=1&b=2")), "[a|1][b|2]");
+	check("decoded: percent escapes", showPairs(parseQueryStringDecoded("x=%41%20B")), "[x|A B]");
+	check("decoded: '+' is a space", showPairs(parseQueryStringDecoded("q=a+b")), "[q|a b]");
+	check("decoded: %2B is a '+'", showPairs(parseQueryStringDecoded("p=1%2B1")), "[p|1+1]");
+	check("decoded: keys too", showPairs(parseQueryStringDecoded("k%20y=v")), "[k y|v]");
+	check("decoded: escaped '&' and '='", showPairs(parseQueryStringDecoded("%26=%3D&b=c%26d")), "[&|=][b|c&d]");
+	check("decoded: split at the first '='", showPairs(parseQueryStringDecoded("a=b=c")), "[a|b=c]");
+	check("decoded: key without '='", showPairs(parseQueryStringDecoded("flag")), "[flag|]");
+	check("decoded: the last of a repeated key wins", showPairs(parseQueryStringDecoded("x=1&x=%32")), "[x|2]");
+	check("decoded: UTF-8", lookupTreeDef(parseQueryStringDecoded("n=caf%C3%A9"), "n", ""), "caf" + fromCharCode(0xE9));
+}
+
+main() {
+	testParseQueryString();
+	testParseQueryStringDecoded();
+
+	if (^failures == 0) {
+		println("uri query string tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " uri query string test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
