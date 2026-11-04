@@ -1,0 +1,95 @@
+import formats/css/parse_css;
+import lingo/pegcode/parsic;
+import sys/target;
+
+// Checks that the CSS parser handles nested function calls and arrays in a
+// declaration value, such as f(f(f(1))) or [[[1]]], in time that grows with the
+// input, and that the parse result is the same as before.
+//
+// Without caching of aterm in css.lingo, every level of nesting was parsed
+// several times over, so the time doubled or more with each level: a depth of 12
+// took tens of seconds. The other checks are parses that must stay the same; they
+// run first, because against the old parser the depth 30 checks do not finish.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+parseTerms(css : string) -> string {
+	toString(parsic2(pegOps4Css, css, defaultPegActions));
+}
+
+declaration(property : string, value : string) -> string {
+	"CssStylesheet([CssRulesetSimple([CssSelectorSequence([CssRuleName(\"a\")])], [CssDeclaration(\"" + property + "\", " + value + ")])])";
+}
+
+repeat(s : string, n : int) -> string {
+	concatStrings(generate(0, n, \__ -> s));
+}
+
+nestedStruct(n : int) -> string {
+	if (n == 0) "CssInt(1)" else "CssStruct(\"f\", [" + nestedStruct(n - 1) + "])";
+}
+
+nestedArray(n : int) -> string {
+	if (n == 0) "CssInt(1)" else "CssArray([" + nestedArray(n - 1) + "])";
+}
+
+testNested() -> void {
+	depth = 30;
+	check("nested function calls",
+		parseTerms("a{b:" + repeat("f(", depth) + "1" + repeat(")", depth) + "}"),
+		declaration("b", nestedStruct(depth))
+	);
+	check("nested arrays",
+		parseTerms("a{b:" + repeat("[", depth) + "1" + repeat("]", depth) + "}"),
+		declaration("b", nestedArray(depth))
+	);
+	check("nested function calls without the last closing bracket",
+		parseTerms("a{b:" + repeat("f(", depth) + "1" + repeat(")", depth - 1) + "}"),
+		"CssStylesheet([])"
+	);
+}
+
+testUnchanged() -> void {
+	check("color",
+		parseTerms("a{color:red}"),
+		declaration("color", "CssName(\"red\")")
+	);
+	check("function with two arguments and an array",
+		parseTerms("a{b:f(g(1, 2), [3, 4])}"),
+		declaration("b", "CssStruct(\"f\", [CssList([CssStruct(\"g\", [CssList([CssInt(1), CssInt(2)])]), CssArray([CssList([CssInt(3), CssInt(4)])])])])")
+	);
+	check("list of terms",
+		parseTerms("a{b:1 2 3}"),
+		declaration("b", "CssList([CssInt(1), CssInt(2), CssInt(3)])")
+	);
+	check("comma list",
+		parseTerms("a{b:x, y}"),
+		declaration("b", "CssList([CssName(\"x\"), CssName(\"y\")])")
+	);
+	check("negative number",
+		parseTerms("a{b:-3}"),
+		declaration("b", "CssNegate(CssInt(3))")
+	);
+}
+
+main() {
+	testUnchanged();
+	testNested();
+
+	if (^failures == 0) {
+		println("css nested terms tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " css nested terms test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
