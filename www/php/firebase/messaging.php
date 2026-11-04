@@ -1,23 +1,18 @@
 <?php
-    $server_key = "";
-    $doSubscribe = $_POST["doSubscribe"] === "true";
-    $topic = $_POST["topic"];
-    $iid_token = $_POST["token"];
 
-    $curlUrl = "https://iid.googleapis.com/iid/v1:batch" . ($doSubscribe ? "Add" : "Remove");
+require_once __DIR__ . '/messaging_handler.php';
 
-    $ch = curl_init($curlUrl);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-        "Authorization:key=".$server_key,
-        "Content-Type:application/json"
-    ));
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(array(
-        "to" => $topic,
-        "registration_tokens" => [$iid_token]
-    )));
-    
-    curl_exec($ch);
-    curl_close($ch);
-?>
+$response = \FlowFirebaseMessaging\handleRequest(
+    $_SERVER['REQUEST_METHOD'] ?? '',
+    $_POST,
+    'FlowFirebaseMessaging\\loadConfiguration',
+    'FlowFirebaseMessaging\\sendRequest'
+);
+
+http_response_code($response['status']);
+header('Content-Type: application/json');
+header('Cache-Control: no-store');
+if ($response['status'] === 405) {
+    header('Allow: POST');
+}
+echo json_encode($response['body']);
