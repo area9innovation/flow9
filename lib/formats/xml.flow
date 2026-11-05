@@ -3,6 +3,7 @@
 import string;
 import behaviour;
 import ds/list;
+import ds/set;
 import math/math;
 import net/url_parameter;
 
@@ -343,14 +344,15 @@ findTagEnd(s : string, i : int, quote : string) -> int {
 // After a '<' turns out to be text, every later '<' is tried as a tag, and their candidate
 // tags overlap. This state keeps that from scanning the same input once per '<'.
 XmlRecovery(
-	// The tag end findTagEnd gives for each '<' after the first recovery, in input order.
+	mutable recovered : bool,
+	// From the second recovery on, the tag end findTagEnd gives for each later '<', in input order.
 	// Entries behind the scan are dropped, so this holds at most one per '<' still ahead.
-	mutable cached : bool,
-	mutable tagEnds : List<XmlTagEnd>,
-	// The attribute positions, ascending, that the last candidate rejected for an attribute name
-	// read in s[.., rejectedEnd). Reading on from any of them in the same range fails the same way.
-	mutable rejectedAttrs : List<int>,
-	mutable rejectedEnd : int
+	// One recovery alone does not need it, since only failed candidates are scanned twice.
+	mutable tagEnds : Maybe<List<XmlTagEnd>>,
+	// From the first recovery on, when validating, each attribute position read with the end of
+	// the range it was read in. A walk that comes back to one is a candidate after a failed one,
+	// since a tag that parses moves the scan past its range, so it fails the same way.
+	mutable attrsRead : Set<Pair<int, int>>
 );
 
 XmlTagEnd(lt : int, end : int);
@@ -360,7 +362,7 @@ XmlTagEnd(lt : int, end : int);
 cacheXmlTagEnds(s : string, i : int, from : int, outside : int, single : int, quoted : int, acc : List<XmlTagEnd>) -> List<XmlTagEnd> {
 	if (i < from) acc
 	else {
-		c = getCharCodeAt(s, i);
+		c = xmlCharCodeAt(s, i);
 		unescaped = i == 0 || getCharCodeAt(s, i - 1) != 0x5C; // \
 		singleQuote = c == 0x27 && unescaped; // '
 		doubleQuote = c == 0x22 && unescaped; // "
@@ -373,35 +375,45 @@ cacheXmlTagEnds(s : string, i : int, from : int, outside : int, single : int, qu
 	}
 }
 
-// The scan only moves on, so the cache covers the '<' characters after start
-prepareXmlRecovery(s : string, start : int, rec : XmlRecovery) -> void {
-	if (!rec.cached) {
-		rec.cached ::= true;
-		rec.tagEnds ::= cacheXmlTagEnds(s, strlen(s) - 1, start + 2, -1, -1, -1, makeList());
+// The '<' at start is text. The scan only moves on, so the cache covers the '<' characters after it.
+recoverXml(s : string, start : int, rec : XmlRecovery) -> void {
+	if (!rec.recovered) {
+		rec.recovered ::= true;
+	} else if (isNone(rec.tagEnds)) {
+		rec.tagEnds ::= Some(cacheXmlTagEnds(s, strlen(s), start + 2, -1, -1, -1, makeList()));
 	}
 }
 
-// findTagEnd(s, start + 1, "") for the '<' at start, from the cache
-xmlCachedTagEnd(s : string, start : int, rec : XmlRecovery) -> int {
+// findTagEnd(s, start + 1, "") for the '<' at start
+xmlTagEnd(s : string, start : int, rec : XmlRecovery) -> int {
 	switch (rec.tagEnds) {
+		Some(ends): xmlCachedTagEnd(ends, start, rec);
+		None(): findTagEnd(s, start + 1, "");
+	}
+}
+
+// The cache has an entry for every '<' after it was made, so the first one not behind start is start's
+xmlCachedTagEnd(ends : List<XmlTagEnd>, start : int, rec : XmlRecovery) -> int {
+	switch (ends) {
 		Cons(e, rest): {
-			if (e.lt < start) {
-				rec.tagEnds ::= rest;
-				xmlCachedTagEnd(s, start, rec);
-			} else if (e.lt == start) {
-				rec.tagEnds ::= rest;
+			if (e.lt < start) xmlCachedTagEnd(rest, start, rec)
+			else {
+				rec.tagEnds ::= Some(rest);
 				e.end;
-			} else findTagEnd(s, start + 1, "");
+			}
 		}
-		EmptyList(): findTagEnd(s, start + 1, "");
+		EmptyList(): -1;
 	}
 }
 
 doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool) -> void {
-	doParseXmlFrom(s, 0, events, parseText, validateNames, XmlRecovery(false, makeList(), makeList(), -1));
+	doParseXmlFrom(s, 0, events, parseText, validateNames, XmlRecovery(false, None(), makeSet()));
 }
 
-doParseXmlFrom(s : string, start : int, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool, rec : XmlRecovery) -> void {
+doParseXmlFrom(
+	s : string, start : int, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void,
+	validateNames : bool, rec : XmlRecovery
+) -> void {
 	l = strlen(s);
 	tagStart = strRangeIndexOf(s, "<", start, l);
 	if (tagStart == -1) {
@@ -441,7 +453,7 @@ doParseXmlFrom(s : string, start : int, events : DynamicBehaviour<XmlEvent>, par
 			}
 		} else {
 			// It's a tag
-			endTag = if (rec.cached) xmlCachedTagEnd(s, start, rec) else findTagEnd(s, start + 1, "");
+			endTag = xmlTagEnd(s, start, rec);
 			event = if (endTag == -1) None() else parseTag(s, start, endTag, validateNames, rec);
 			switch (event) {
 				Some(e): {
@@ -452,7 +464,7 @@ doParseXmlFrom(s : string, start : int, events : DynamicBehaviour<XmlEvent>, par
 				None(): {
 					// No end, or names that are not valid: treat the '<' as text
 					parseText("<", events);
-					prepareXmlRecovery(s, start, rec);
+					recoverXml(s, start, rec);
 					doParseXmlFrom(s, start + 1, events, parseText, validateNames, rec);
 				}
 			}
@@ -537,12 +549,7 @@ parseTag(s : string, start : int, end : int, validate : bool, rec : XmlRecovery)
 			else if (endTag && !emptyElement) Some(XmlElementEnd(tag))
 			else {
 				attrs = if (sep == bodyEnd) Some(makeList())
-				else {
-					// The scan only moves on, so no later candidate reads before start
-					rec.rejectedAttrs ::= xmlDropBelow(rec.rejectedAttrs, start);
-					known = if (rec.rejectedEnd == bodyEnd) rec.rejectedAttrs else makeList();
-					xmlAttributes(XmlAttrRange(s, bodyEnd, validate, rec), sep + 1, known, makeList(), makeList());
-				}
+				else xmlAttributes(XmlAttrRange(s, bodyEnd, validate, validate && rec.recovered, rec), sep + 1, makeList());
 				maybeMap(attrs, \as -> {
 					a = list2array(as);
 					if (emptyElement) XmlEmptyElement(tag, a)
@@ -554,14 +561,14 @@ parseTag(s : string, start : int, end : int, validate : bool, rec : XmlRecovery)
 	}
 }
 
-// The first space in s[i, end), or end. When validating, -1 at a character no name can have:
-// before the first space, the trims in parseTag take only spaces and U+00A0 at the ends.
+// The first space in s[i, end), or end. When validating, -1 at a character no name can have, other
+// than one the trims in parseTag may take. isValidXmlName still checks the trimmed name.
 xmlTagNameEnd(s : string, i : int, end : int, validate : bool) -> int {
 	if (i >= end) end
 	else {
 		c = getCharCodeAt(s, i);
 		if (isXmlSpace(c)) i
-		else if (validate && c != 0xA0 && !isXmlNameChar(c)) -1
+		else if (validate && !isTrimSpace(c) && !isXmlNameChar(c)) -1
 		else xmlTagNameEnd(s, i + 1, end, validate);
 	}
 }
@@ -582,91 +589,81 @@ isXmlSpace(c : int) -> bool {
 	c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D;
 }
 
-// The first index in [i, end) that is not a space or U+00A0, or end
+// The first index in [i, end) that ltrim would keep, or end
 xmlSkipSpaces(s : string, i : int, end : int) -> int {
-	if (i < end && (getCharCodeAt(s, i) == 0x20 || getCharCodeAt(s, i) == 0xA0)) xmlSkipSpaces(s, i + 1, end) else i;
+	if (i < end && isTrimSpace(getCharCodeAt(s, i))) xmlSkipSpaces(s, i + 1, end) else i;
 }
 
-// e, less the spaces and U+00A0 just before it, but not below from
+// e, less what rtrim would take just before it, but not below from
 xmlBackSpaces(s : string, e : int, from : int) -> int {
-	if (e > from && (getCharCodeAt(s, e - 1) == 0x20 || getCharCodeAt(s, e - 1) == 0xA0)) xmlBackSpaces(s, e - 1, from) else e;
+	if (e > from && isTrimSpace(getCharCodeAt(s, e - 1))) xmlBackSpaces(s, e - 1, from) else e;
 }
 
-xmlDropBelow(l : List<int>, i : int) -> List<int> {
-	switch (l) {
-		Cons(h, t): if (h < i) xmlDropBelow(t, i) else l;
-		EmptyList(): l;
-	}
-}
+// The attributes of a tag are read from s up to end. When remember is set, each position read is
+// added to rec.attrsRead, and coming back to one fails.
+XmlAttrRange(s : string, end : int, validate : bool, remember : bool, rec : XmlRecovery);
 
-// The attributes of a tag are read from s up to end
-XmlAttrRange(s : string, end : int, validate : bool, rec : XmlRecovery);
-
-// The attributes in s[i, end), reversed onto acc. When validating, None for a name that is not valid,
-// or at a position in known, where the last candidate rejected for a name read on in the same range.
-// The positions read are kept in visited, to be known for the next candidate.
-xmlAttributes(r : XmlAttrRange, i : int, known : List<int>, visited : List<int>, acc : List<XmlAttribute>) -> Maybe<List<XmlAttribute>> {
+// The attributes in s[i, end), reversed onto acc. When validating, None for a name that is not valid.
+xmlAttributes(r : XmlAttrRange, i : int, acc : List<XmlAttribute>) -> Maybe<List<XmlAttribute>> {
 	s = r.s;
 	end = r.end;
 	if (i >= end) {
 		Some(acc);
 	} else if (isXmlSpace(getCharCodeAt(s, i))) {
 		// Whitespace to be eaten first
-		xmlAttributes(r, i + 1, known, visited, acc);
+		xmlAttributes(r, i + 1, acc);
+	} else if (r.remember && xmlAttrRead(r, i)) {
+		// An earlier candidate failed from here in the same range
+		None();
 	} else {
-		ahead = if (r.validate) xmlDropBelow(known, i) else known;
-		if (r.validate && xmlListStartsWith(ahead, i)) {
+		// The name runs to the first = or space
+		j = xmlNameStop(s, i, end);
+		name = substring(s, i, j - i);
+		if (r.validate && !isValidXmlName(name)) {
 			None();
+		} else if (j == end) {
+			// "abc"
+			Some(Cons(XmlAttribute(name, ""), acc));
+		} else if (getCharCodeAt(s, j) != 0x3D || (j + 1 < end && isXmlSpace(getCharCodeAt(s, j + 1)))) { // =
+			// "abcd rest=something" or "abc= rest=something"
+			xmlAttributes(r, j + 1 + b2i(getCharCodeAt(s, j) == 0x3D), Cons(XmlAttribute(name, ""), acc));
 		} else {
-			seen = if (r.validate) Cons(i, visited) else visited;
-			// The name runs to the first = or space
-			j = xmlNameStop(s, i, end);
-			name = substring(s, i, j - i);
-			if (r.validate && !isValidXmlName(name)) {
-				rec = r.rec;
-				rec.rejectedAttrs ::= reverseList(seen);
-				rec.rejectedEnd ::= end;
-				None();
-			} else if (j == end) {
-				// "abc"
-				Some(Cons(XmlAttribute(name, ""), acc));
-			} else if (getCharCodeAt(s, j) != 0x3D || (j + 1 < end && isXmlSpace(getCharCodeAt(s, j + 1)))) { // =
-				// "abcd rest=something" or "abc= rest=something"
-				xmlAttributes(r, j + 1 + b2i(getCharCodeAt(s, j) == 0x3D), ahead, seen, Cons(XmlAttribute(name, ""), acc));
-			} else {
-				// "abc=def something"
-				v = j + 1;
-				q = if (v < end) getCharCodeAt(s, v) else -1;
-				if (q == 0x22 || q == 0x27) { // " '
-					quote = fromCharCode(q);
-					endQuote = xmlEndQuote(s, v + 1, end, quote);
-					if (endQuote == -1) {
-						// Missing end quote, so we take the lot
-						Some(Cons(XmlAttribute(name, substring(s, v, end - v)), acc));
-					} else {
-						value = strReplace(substring(s, v + 1, endQuote - v - 1), "\\" + quote, quote) |> xmlUnescape;
-						xmlAttributes(r, endQuote + 1, ahead, seen, Cons(XmlAttribute(name, value), acc));
-					}
+			// "abc=def something"
+			v = j + 1;
+			q = if (v < end) getCharCodeAt(s, v) else -1;
+			if (q == 0x22 || q == 0x27) { // " '
+				quote = fromCharCode(q);
+				endQuote = xmlEndQuote(s, v + 1, end, quote);
+				if (endQuote == -1) {
+					// Missing end quote, so we take the lot
+					Some(Cons(XmlAttribute(name, substring(s, v, end - v)), acc));
 				} else {
-					// Unquoted
-					nextSpace = xmlValueStop(s, v, end);
-					value = substring(s, v, nextSpace - v);
-					if (nextSpace == end) {
-						// No more stuff, so we take the lot
-						Some(Cons(XmlAttribute(name, value), acc));
-					} else {
-						xmlAttributes(r, nextSpace + 1, ahead, seen, Cons(XmlAttribute(name, value), acc));
-					}
+					value = strReplace(substring(s, v + 1, endQuote - v - 1), "\\" + quote, quote) |> xmlUnescape;
+					xmlAttributes(r, endQuote + 1, Cons(XmlAttribute(name, value), acc));
+				}
+			} else {
+				// Unquoted
+				nextSpace = xmlValueStop(s, v, end);
+				value = substring(s, v, nextSpace - v);
+				if (nextSpace == end) {
+					// No more stuff, so we take the lot
+					Some(Cons(XmlAttribute(name, value), acc));
+				} else {
+					xmlAttributes(r, nextSpace + 1, Cons(XmlAttribute(name, value), acc));
 				}
 			}
 		}
 	}
 }
 
-xmlListStartsWith(l : List<int>, i : int) -> bool {
-	switch (l) {
-		Cons(h, __): h == i;
-		EmptyList(): false;
+// Whether the position i was read before in a range with the same end, and remembers it if not
+xmlAttrRead(r : XmlAttrRange, i : int) -> bool {
+	key = Pair(i, r.end);
+	rec = r.rec;
+	if (containsSet(rec.attrsRead, key)) true
+	else {
+		rec.attrsRead ::= insertSet(rec.attrsRead, key);
+		false;
 	}
 }
 
