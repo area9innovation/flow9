@@ -207,8 +207,12 @@ test('catchDecodeError gives the result, or onError of the error text', function
 test('catchDecodeError lets a fail() through', function() {
 	const onError = function() { return DEFAULT; };
 	assert.throws(function() { Native.catchDecodeError(function() { Native.failWithError('corrupt save'); }, onError); }, /Runtime failure: corrupt save/);
-	const fixups = function() { return { _id: SOME_ID, value: function() { Native.failWithError('corrupt save'); } }; };
-	assert.throws(function() { guardedFromBinary(bufferOf(encode(sampleLeaf), true), fixups); }, /corrupt save/);
+	const failingFixup = function() { Native.failWithError('corrupt save'); };
+	const fixups = function() { return { _id: SOME_ID, value: failingFixup }; };
+	assert.throws(function() { guardedFromBinary(bufferOf(encode(sampleLeaf), true), fixups); }, function(error) {
+		// The stack is the one of the fail(), not of the rethrow
+		return /corrupt save/.test(String(error)) && /failingFixup/.test(error.stack);
+	});
 });
 
 test('a second call with other fixups does not reuse the first', function() {
