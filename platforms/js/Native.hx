@@ -3331,20 +3331,22 @@ Native.memoryLeakReset();
 		return ret;
 	}
 
-	public static function callBinaryFixup(fixup : Array<Dynamic> -> Dynamic, args : Array<Dynamic>) : Dynamic {
-		var value : Dynamic;
+	public static function catchDecodeError(fn : Void -> Dynamic, onError : String -> Dynamic) : Dynamic {
 		try {
-			value = fixup(args);
+			return fn();
 		} catch (e : Dynamic) {
-			return HaxeRuntime.makeStructValue("None", [], null);
+			return onError(Std.string(e));
 		}
-		return HaxeRuntime.makeStructValue("Some", [value], null);
 	}
 
 	public static function fromBinary(string : Dynamic, defvalue : Dynamic, fixups : Dynamic) : Dynamic {
 		#if js
 		if (Type.getClass(string) == JSBinflowBuffer) {
-			return string.deserialise(defvalue, fixups);
+			// A runtime error in a fixup or the reader makes the whole decode yield the default, as on the flow path
+			return catchDecodeError(function() { return string.deserialise(defvalue, fixups); }, function(error) {
+				Errors.print("Binary decode failed: " + error);
+				return defvalue;
+			});
 		} else
 		#end
 		{

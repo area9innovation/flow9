@@ -181,15 +181,22 @@ test('a throwing fixup gives the whole default, including inside containers', fu
 test('a buffer can be decoded again after a fixup exception', function() {
 	const buffer = bufferOf(encode(sampleLeaf), true);
 	const fixups = function() { return { _id: SOME_ID, value: function() { throw 'callback failed'; } }; };
-	assert.strictEqual(buffer.deserialise(DEFAULT, fixups), DEFAULT);
-	assert.deepStrictEqual(buffer.deserialise(DEFAULT, noFixups), sampleLeaf);
+	assert.strictEqual(Native.fromBinary(buffer, DEFAULT, fixups), DEFAULT);
+	assert.deepStrictEqual(Native.fromBinary(buffer, DEFAULT, noFixups), sampleLeaf);
 });
 
-test('the string-reader callback helper distinguishes results from exceptions', function() {
+test('a fixup that overflows the stack gives the default', function() {
+	const recurse = function(n) { return n == 0 ? 0 : 1 + recurse(n - 1); };
+	const fixups = function() { return { _id: SOME_ID, value: function() { return recurse(1e8); } }; };
+	assert.strictEqual(Native.fromBinary(bufferOf(encode(sampleLeaf), true), DEFAULT, fixups), DEFAULT);
+});
+
+test('catchDecodeError gives the result, or onError of the error text', function() {
+	const onError = function(error) { return { error: error }; };
 	[DEFAULT, null, 42, { _id: LEAF_ID }].forEach(function(value) {
-		assert.deepStrictEqual(Native.callBinaryFixup(function(args) { assert.deepStrictEqual(args, ['old']); return value; }, ['old']), { _id: SOME_ID, value });
+		assert.strictEqual(Native.catchDecodeError(function() { return value; }, onError), value);
 	});
-	assert.deepStrictEqual(Native.callBinaryFixup(function() { throw new Error('callback failed'); }, []), { _id: NONE_ID });
+	assert.deepStrictEqual(Native.catchDecodeError(function() { throw new Error('callback failed'); }, onError), { error: 'Error: callback failed' });
 });
 
 test('a second call with other fixups does not reuse the first', function() {
@@ -302,9 +309,9 @@ test('refs nested ' + deep + ' deep', function() {
 	checkDamaged('double cut by the footer', assemble(bodyOf(d).slice(0, 1), footerOf(d)));
 })();
 
-test('fromBinary lets a throwing fixup lookup reach the caller', function() {
+test('a throwing fixup lookup gives the default too', function() {
 	const throwing = function() { throw new Error('fixup lookup failed'); };
-	assert.throws(function() { Native.fromBinary(bufferOf(encode(sampleLeaf), true), DEFAULT, throwing); }, /fixup lookup failed/);
+	assert.strictEqual(Native.fromBinary(bufferOf(encode(sampleLeaf), true), DEFAULT, throwing), DEFAULT);
 });
 
 test('fromBinary returns a plain string unchanged', function() {

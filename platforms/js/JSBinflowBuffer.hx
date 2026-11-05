@@ -191,18 +191,9 @@ class JSBinflowBuffer {
 		return defs;
 	}
 
-	private var fixupFailed : Bool = false;
-
 	private function makeStruct(name : String, args : Array<Dynamic>) : Dynamic {
 		var fixup = getFixup(name);
-		if (fixup == null) return Native.makeStructValue(name, args, FlowIllegalStruct);
-		// Only the callback is protected: errors in lookup or the reader still propagate.
-		try {
-			return fixup(args);
-		} catch (e : Dynamic) {
-			fixupFailed = true;
-			return DefValue;
-		}
+		return fixup == null ? Native.makeStructValue(name, args, FlowIllegalStruct) : fixup(args);
 	}
 
 	// Reads the value at index; frames hold the values still open around the current one, the innermost last
@@ -230,7 +221,6 @@ class JSBinflowBuffer {
 					continue;
 				}
 				value = makeStruct(def[1], []);
-				if (fixupFailed) return damaged();
 			} else if (word == 0xFFF6) {
 				frames.push({ kind: refFrame, count: 1, elements: null, name: null });
 				i++;
@@ -262,7 +252,6 @@ class JSBinflowBuffer {
 					if (frame.elements.length < frame.count) break;
 					frames.pop();
 					value = frame.kind == arrayFrame ? frame.elements : makeStruct(frame.name, frame.elements);
-					if (fixupFailed) return damaged();
 				}
 			}
 		}
@@ -279,7 +268,6 @@ class JSBinflowBuffer {
 		// Another call may bring other fixups and another footer
 		StructDefs = [];
 		StructFixupCache = new Map();
-		fixupFailed = false;
 
 		var footer = getFooterOffset();
 		var footerOffset : Int = footer[0];
