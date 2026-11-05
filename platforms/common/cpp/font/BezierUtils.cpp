@@ -59,6 +59,10 @@ static std::vector<vec2> toBezierForm(vec2 p, const std::vector<vec2> &v)
        product of B(t)-P and B'(t), constructing the result as a Bezier
        curve of order 2n-1, where n is the degree of B(t). */
 
+    // The tables of coefficients below are for quadratic and cubic curves only
+    if (v.size() != 3 && v.size() != 4)
+        return std::vector<vec2>();
+
     unsigned n = v.size()-1;
 
     std::vector<vec2> c(n+1);
@@ -219,6 +223,12 @@ static void subdivide(const std::vector<vec2> &_c, float _t, std::vector<vec2> *
     /* subdivide( _c:Array, _t:float, _left:Array, _right:Array )
        deCasteljau subdivision of an arbitrary-order Bezier curve */
 
+    if (_c.empty()) {
+        _left->clear();
+        _right->clear();
+        return;
+    }
+
     unsigned degree = _c.size()-1;
     unsigned n      = degree+1;
     float    t1     = 1.0 - _t;
@@ -257,6 +267,11 @@ static void subdivide(const std::vector<vec2> &_c, float _t, std::vector<vec2> *
 static void findRoots(std::vector<float> *t, const std::vector<vec2> &_w, unsigned _degree, unsigned _depth)
 {
     // return roots in [0,1] of a polynomial in Bernstein-Bezier form
+
+    // The helpers below read _w[0] to _w[_degree]
+    if (_degree >= _w.size())
+        return;
+
     switch (crossingCount(_w, _degree))
     {
     case 0:
