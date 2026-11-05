@@ -1,5 +1,6 @@
 import formats/html/html;
 import formats/html/html_node;
+import formats/html/html_parse;
 import sys/target;
 
 // Checks of urlDecode, urlDecode2 and the numeric character references in
@@ -14,6 +15,7 @@ import sys/target;
 //    targets, instead of "" and a stack trace for a bad escape.
 //  - &#...; and &#x...; give U+FFFD for 0, a surrogate or a value past U+10FFFF, and stay
 //    as they are when there are no digits.
+//  - unescapeHtmlEntity does not add a ';' that the parser dropped: it&#8217s gives it’s.
 //  - A long input is decoded in linear time; the check here is only that it works.
 
 failures : ref int = ref 0;
@@ -28,6 +30,20 @@ check(name : string, actual : string, expected : string) -> void {
 }
 
 bad = fromCharCode(0xFFFD);
+
+// The text of parsed HTML, with entities decoded as html2md does
+parseAndUnescape(html : string) -> string {
+	parsedHtmlText(parseHtml(html).first);
+}
+
+parsedHtmlText(nodes : [HtmlNode]) -> string {
+	concatStrings(map(nodes, \node -> switch (node) {
+		HtmlTag(__, __, children): parsedHtmlText(children);
+		HtmlText(text): text;
+		HtmlEntity(__, __): unescapeHtmlEntity(node);
+		HtmlComment(__): "";
+	}));
+}
 
 testUrlDecode() -> void {
 	check("an ASCII escape", urlDecode("a%41b"), "aAb");
@@ -118,7 +134,24 @@ testNumericReferences() -> void {
 	check("an entity node past U+10FFFF", unescapeHtmlEntity(HtmlEntity("&#", "1114112")), bad);
 	check("a hex entity node past U+10FFFF", unescapeHtmlEntity(HtmlEntity("&#x", "110000")), bad);
 	check("an entity node of zero", unescapeHtmlEntity(HtmlEntity("&#", "0")), bad);
-	check("an entity node with a minus sign", unescapeHtmlEntity(HtmlEntity("&#", "-1")), "&#-1;");
+	check("a hex entity node of a surrogate", unescapeHtmlEntity(HtmlEntity("&#x", "D800")), bad);
+	check("a four-byte entity node", unescapeHtmlEntity(HtmlEntity("&#x", "1F600")), fromCharCode(0x1F600));
+	check("an entity node with a capital X", unescapeHtmlEntity(HtmlEntity("&#", "X41")), "A");
+	check("an entity node with a minus sign", unescapeHtmlEntity(HtmlEntity("&#", "-1")), "&#-1");
+	// The parser drops the ';', so a node does not say if there was one, and none is added
+	check("an entity node with a letter after the digits", unescapeHtmlEntity(HtmlEntity("&#", "8217s")), fromCharCode(0x2019) + "s");
+	check("a hex entity node with a letter after the digits", unescapeHtmlEntity(HtmlEntity("&#x", "41g")), "Ag");
+	check("an entity node with no digits", unescapeHtmlEntity(HtmlEntity("&#", "abc")), "&#abc");
+	check("an entity node of a semicolon", unescapeHtmlEntity(HtmlEntity("&#", "59")), ";");
+	check("a hex entity node of a semicolon", unescapeHtmlEntity(HtmlEntity("&#x", "3B")), ";");
+	check("an entity node of a semicolon and letters", unescapeHtmlEntity(HtmlEntity("&#", "59abc")), ";abc");
+	check("parsed text with no semicolon after a reference", parseAndUnescape("<p>it&#8217s nice</p>"), "it" + fromCharCode(0x2019) + "s nice");
+	check("parsed text with a semicolon after a reference", parseAndUnescape("<p>it&#8217;s nice</p>"), "it" + fromCharCode(0x2019) + "s nice");
+	check("parsed hex reference with a letter after it", parseAndUnescape("<p>&#x41g</p>"), "Ag");
+	check("parsed reference with no digits", parseAndUnescape("<p>a &#abc b</p>"), "a &#abc b");
+	check("parsed semicolon reference", parseAndUnescape("<p>a &#59 b</p>"), "a ; b");
+	check("unescapeHtml2 keeps the semicolon after the letters", unescapeHtml2("&#8217s;"), fromCharCode(0x2019) + "s;");
+	check("unescapeHtml2 of a semicolon reference", unescapeHtml2("a&#59;b&#x3B;c"), "a;b;c");
 
 	check("a long input", unescapeHtml2(strRepeat("x&amp;", 100000)), strRepeat("x&", 100000));
 }
