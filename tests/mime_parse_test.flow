@@ -1,0 +1,121 @@
+import formats/mime/mime_types;
+import sys/target;
+
+// Checks of how lib/formats/mime/mime_types.flow reads a message/rfc822 value:
+//
+//  - The header: field names, MIME types and encoding names match in any letter case of
+//    their ASCII letters, whatever the system locale is. The first of a repeated field
+//    counts, a folded field (a line that starts with a space or a tab) is read as one
+//    field, and MIME-Version is only looked for in the header, not in the content.
+//  - Quoted-printable content (RFC 2045, 6.7): =XX gives the byte XX, = at the end of a
+//    line (LF or CRLF) or of the text is a soft line break and is removed, and any other
+//    = is kept as it is, with the character after it.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + shorten(toString(expected)));
+		println("  actual:   " + shorten(toString(actual)));
+	}
+}
+
+shorten(s : string) -> string {
+	if (strlen(s) > 200) strLeft(s, 200) + "... (" + i2s(strlen(s)) + " characters)" else s;
+}
+
+cr = fromCharCode(13);
+
+// The MIME type of the parsed value and its content, as "type|content".
+parsed(message : string) -> string {
+	switch (mimeString2value("message/rfc822", message)) {
+		MimeMessageRfc822(values): {
+			if (length(values) == 1) {
+				mimeValue2mimeType(values[0]) + "|" + mimeValue2string(values[0]);
+			} else {
+				"not one value";
+			}
+		}
+		default: "not message/rfc822";
+	}
+}
+
+// The content of a quoted-printable message, decoded.
+qp(body : string) -> string {
+	parsed("MIME-Version: 1.0\nContent-Transfer-Encoding: quoted-printable\n\n" + body);
+}
+
+testHeader() -> void {
+	check("a plain header", parsed("MIME-Version: 1.0\nContent-Type: text/html\n\n<b>x</b>"), "text/html|<b>x</b>");
+	check("a header with CRLF line ends", parsed("MIME-Version: 1.0" + cr + "\nContent-Type: text/html" + cr + "\n" + cr + "\n<b>x</b>"), "text/html|<b>x</b>");
+	check("content type parameters are dropped", parsed("MIME-Version: 1.0\nContent-Type: text/html; charset=utf-8\n\nx"), "text/html|x");
+	check("a space before the parameters", parsed("MIME-Version: 1.0\nContent-Type: text/html ; charset=utf-8\n\nx"), "text/html|x");
+	check("other fields are ignored", parsed("From: a@b.c\nMIME-Version: 1.0\nSubject: s\nContent-Type: text/html\n\nx"), "text/html|x");
+	check("no MIME-Version gives the whole text", parsed("Subject: s\nContent-Type: text/html\n\nx"), "text/plain|Subject: s\nContent-Type: text/html\n\nx");
+	check("a base64 body", parsed("MIME-Version: 1.0\nContent-Type: text/html\nContent-Transfer-Encoding: base64\n\nPGI+eDwvYj4="), "text/html|<b>x</b>");
+	check("the content starts after the first empty line", parsed("MIME-Version: 1.0\n\nContent-Type: text/html\n\nx"), "text/plain|Content-Type: text/html\n\nx");
+
+	check("lower-case field names", parsed("mime-version: 1.0\ncontent-type: text/html\n\nx"), "text/html|x");
+	check("upper-case field names", parsed("MIME-VERSION: 1.0\nCONTENT-TYPE: text/html\n\nx"), "text/html|x");
+	check("Mime-Version", parsed("Mime-Version: 1.0\nContent-Type: text/html\n\nx"), "text/html|x");
+	check("an upper-case encoding name", parsed("MIME-Version: 1.0\ncontent-transfer-encoding: BASE64\n\neA=="), "text/plain|x");
+	check("an upper-case content type", parsed("MIME-Version: 1.0\nContent-Type: Text/HTML\n\nx"), "text/html|x");
+
+	// With some locales, toLowerCase does not turn I into i (in Turkish it is a dotless i),
+	// so these names and types with I and i in them must parse the same in every locale.
+	check("mixed-case field names", parsed("mIME-vERSION: 1.0\ncONTENT-tYPE: text/html\n\nx"), "text/html|x");
+	check("an upper-case content type with I", parsed("MIME-Version: 1.0\nContent-TYPE: IMAGE/GIF\n\nx"), "image/gif|x");
+	check("an upper-case quoted-printable", parsed("MIME-VERSION: 1.0\nCONTENT-TRANSFER-ENCODING: QUOTED-PRINTABLE\n\na=3Db"), "text/plain|a=b");
+
+	check("the first Content-Type counts", parsed("MIME-Version: 1.0\nContent-Type: text/html\nContent-Type: text/plain\n\nx"), "text/html|x");
+	check("the first Content-Type counts, any case", parsed("MIME-Version: 1.0\nContent-Type: text/html\ncontent-type: text/plain\n\nx"), "text/html|x");
+	check("the first Content-Transfer-Encoding counts", parsed("MIME-Version: 1.0\nContent-Transfer-Encoding: base64\nContent-Transfer-Encoding: 7bit\n\neA=="), "text/plain|x");
+
+	check("a folded Content-Type", parsed("MIME-Version: 1.0\nContent-Type:\n text/html\n\nx"), "text/html|x");
+	check("a folded Content-Type with a tab", parsed("MIME-Version: 1.0\nContent-Type:\n\ttext/html\n\nx"), "text/html|x");
+	check("folded parameters", parsed("MIME-Version: 1.0\nContent-Type: text/html;\n charset=utf-8\n\nx"), "text/html|x");
+	check("a folded field with CRLF", parsed("MIME-Version: 1.0" + cr + "\nContent-Type:" + cr + "\n text/html" + cr + "\n" + cr + "\nx"), "text/html|x");
+	check("a folded Subject", parsed("MIME-Version: 1.0\nSubject: a\n Content-Type: text/plain\nContent-Type: text/html\n\nx"), "text/html|x");
+
+	inContent = "Subject: s\n\nMIME-Version: 1.0\nContent-Type: text/html\n\nx";
+	check("MIME-Version in the content is not read", parsed(inContent), "text/plain|" + inContent);
+	inField = "Subject: MIME-Version: 1.0\nContent-Type: text/html\n\nx";
+	check("MIME-Version in another field is not read", parsed(inField), "text/plain|" + inField);
+	check("a header without content", parsed("MIME-Version: 1.0\nContent-Type: text/html"), "text/html|");
+}
+
+testQuotedPrintable() -> void {
+	check("plain text", qp("abc"), "text/plain|abc");
+	check("=3D", qp("a=3Db"), "text/plain|a=b");
+	check("=E9", qp("caf=E9"), "text/plain|caf" + fromCharCode(0xE9));
+	check("lower-case hex", qp("caf=e9"), "text/plain|caf" + fromCharCode(0xE9));
+	check("a soft line break with CRLF", qp("ab=" + cr + "\ncd"), "text/plain|abcd");
+	check("a hard line break is kept", qp("ab" + cr + "\ncd\nef"), "text/plain|ab" + cr + "\ncd\nef");
+
+	check("a soft line break with LF", qp("ab=\ncd"), "text/plain|abcd");
+	check("= at the end", qp("abc="), "text/plain|abc");
+	check("= with one hex digit at the end", qp("a=A"), "text/plain|a=A");
+	check("= with no hex digits", qp("a=ZZb"), "text/plain|a=ZZb");
+	check("= with one hex digit", qp("a=4Zb"), "text/plain|a=4Zb");
+	check("= with a space", qp("1 = 1"), "text/plain|1 = 1");
+	check("== before hex digits", qp("a==41"), "text/plain|a==41");
+
+	// A long body: a smoke test that the result is right and the stack is not exhausted.
+	// It does not time the call, so it does not guard against a return to quadratic cost.
+	check("a long body", qp(strRepeat("a=3D", 50000) + "=\n" + strRepeat("b", 100000)), "text/plain|" + strRepeat("a=", 50000) + strRepeat("b", 100000));
+}
+
+main() {
+	testHeader();
+	testQuotedPrintable();
+
+	if (^failures == 0) {
+		println("MIME parse tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " MIME parse test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
