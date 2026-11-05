@@ -32,6 +32,23 @@ testRecovery() -> void {
 		[XmlTextEvent("<"), XmlTextEvent("a 0='x'>"), XmlEmptyElement("b", []), XmlEndEvent()]);
 	check("leading space remains invalid", events("< a>", [XmlValidateNames()]),
 		[XmlTextEvent("<"), XmlTextEvent("a>"), XmlEndEvent()]);
+	nb = fromCharCode(0xA0);
+	check("trimmed name", events("<" + nb + "a b='1'>", [XmlValidateNames()]),
+		[XmlElementStart("a", [XmlAttribute("b", "1")]), XmlEndEvent()]);
+	check("tab in unquoted value", events("<a x=1\ty=2>", [XmlValidateNames()]),
+		[XmlElementStart("a", [XmlAttribute("x", "1\ty=2")]), XmlEndEvent()]);
+	check("escaped quote in value", events("<a t='it\\'s' u=\"v\"/>", [XmlValidateNames()]),
+		[XmlEmptyElement("a", [XmlAttribute("t", "it's"), XmlAttribute("u", "v")]), XmlEndEvent()]);
+	check("bad attribute after recovery", events("<a 0 <a x=1 <b/>", [XmlValidateNames()]),
+		[XmlTextEvent("<"), XmlTextEvent("a 0 "), XmlTextEvent("<"), XmlTextEvent("a x=1 "), XmlEmptyElement("b", []), XmlEndEvent()]);
+}
+
+// n copies of unit after a '<' that is text, the last followed by rest
+recovered(unit : string, n : int, rest : string) -> [XmlEvent] {
+	concat(
+		concatA(map(enumFromTo(1, n - 1), \__ -> [XmlTextEvent("<"), XmlTextEvent(unit)])),
+		[XmlTextEvent("<"), XmlTextEvent(unit + rest), XmlEndEvent()]
+	);
 }
 
 testLarge() -> void {
@@ -46,13 +63,25 @@ testLarge() -> void {
 		concat(map(enumFromTo(1, n), \__ -> XmlTextEvent("<")), [XmlTextEvent(">"), XmlEndEvent()]));
 	check("many comments", events(strRepeat("<!---->", n), []),
 		arrayPush(map(enumFromTo(1, n), \__ -> XmlCommentEvent("")), XmlEndEvent()));
+	// Each '<' below starts a candidate that runs to the last '>', so they must not be read again for each '<'
+	check("many invalid attribute names", events(strRepeat("<a 0 ", n) + ">", [XmlValidateNames()]), recovered("a 0 ", n, ">"));
+	check("many attributes before an invalid one", events(strRepeat("<a x=", n) + " 0>", [XmlValidateNames()]), recovered("a x=", n, " 0>"));
+	// Only the last of these is a tag: the others have attribute names with '<' in them
+	check("many trimmed names", events(strRepeat("<" + fromCharCode(0xA0) + "a b ", n) + ">", [XmlValidateNames()]),
+		concat(
+			concatA(map(enumFromTo(1, n - 1), \__ -> [XmlTextEvent("<"), XmlTextEvent(fromCharCode(0xA0) + "a b ")])),
+			[XmlElementStart("a", [XmlAttribute("b", "")]), XmlEndEvent()]
+		));
+	check("many attributes", length(events("<a " + strRepeat("x=1 ", n) + ">", [XmlValidateNames()])), 2);
 }
 
-// A deterministic corpus for comparison with earlier implementations. Print complete
-// event streams on request, rather than a hash which could hide a changed event.
+// A deterministic corpus for comparison with earlier implementations. The hash covers every field
+// of every event, and the expected value comes from the parser before the input cursor. Run with
+// corpus=1 to print the complete event streams, to find the input behind a changed hash.
 testCorpus() -> void {
-	parts = ["<", ">", "a", "0", " ", "'", "\"", "\\", "/", "?", "=", "<!-->", "<!--->", "-->", "<![CDATA[", "]]>", "<b/>", "&amp;", "\r\n", "\u00a0"];
+	parts = ["<", ">", "a", "0", " ", "'", "\"", "\\", "/", "?", "=", "<!-->", "<!--->", "-->", "<![CDATA[", "]]>", "<b/>", "&amp;", "\r\n", fromCharCode(0xA0), "x=", "\t"];
 	seed = ref 173;
+	hash = ref 0;
 	iter(enumFromTo(1, 2000), \i -> {
 		s = concatStrings(map(enumFromTo(1, 1 + i % 20), \__ -> {
 			seed := bitAnd(^seed * 1664525 + 1013904223, 0x7fffffff);
@@ -60,15 +89,44 @@ testCorpus() -> void {
 		}));
 		iter([[], [XmlValidateNames()], [StandardEscaping(), XmlParseLeadingSpaces(true, true)]], \strategy -> {
 			result = events(s, strategy);
-			check("corpus has one terminal event", length(filter(result, \e -> e == XmlEndEvent())), 1);
-			if (isUrlParameterTrue("corpus")) println(toString(result));
+			iter(result, \e -> hash := hashString(^hash, eventKey(e)));
+			if (isUrlParameterTrue("corpus")) println(toString(s) + " => " + toString(result));
 		});
 	});
+	check("corpus hash", ^hash, corpusHash);
+}
+
+corpusHash = 601620810;
+
+hashString(h : int, s : string) -> int {
+	stringFold(s + "\n", h, \acc, c -> bitAnd(acc * 31 + c, 0x7fffffff));
+}
+
+eventKey(e : XmlEvent) -> string {
+	attrs = \as : [XmlAttribute] -> concatStrings(map(as, \a -> "|" + a.key + "=" + a.value));
+	switch (e) {
+		XmlEmptyElement(tag, as): "E" + tag + attrs(as);
+		XmlElementStart(tag, as): "S" + tag + attrs(as);
+		XmlElementEnd(tag): "/" + tag;
+		XmlProcessingEvent(tag, as): "?" + tag + attrs(as);
+		XmlTextEvent(text): "T" + text;
+		XmlCommentEvent(comment): "C" + comment;
+		XmlEndEvent(): ".";
+	}
 }
 
 benchmark() -> void {
 	iter([2000, 8000, 32000], \n -> {
-		iter([Pair("plain", strRepeat("plain text ", n)), Pair("markup", strRepeat("x<a/>", n)), Pair("incomplete", strRepeat("<", n)), Pair("invalid", strRepeat("<", n) + ">"), Pair("comments", strRepeat("<!-->", n))], \sample -> {
+		iter([
+			Pair("plain", strRepeat("plain text ", n)),
+			Pair("markup", strRepeat("x<a b='c'/>", n)),
+			Pair("incomplete", strRepeat("<", n)),
+			Pair("invalid", strRepeat("<", n) + ">"),
+			Pair("comments", strRepeat("<!---->", n)),
+			Pair("invalid attributes", strRepeat("<a 0 ", n) + ">"),
+			Pair("attributes before invalid", strRepeat("<a x=", n) + " 0>"),
+			Pair("stray <", "a < b" + strRepeat("<p q='1'>x</p>", n)),
+		], \sample -> {
 			b : DynamicBehaviour<XmlEvent> = make(XmlEndEvent());
 			start = timestamp();
 			parseXmlWithStrategy(sample.second, b, [XmlValidateNames()]);
