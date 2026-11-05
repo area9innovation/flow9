@@ -2725,10 +2725,6 @@ StackSlot BinaryDeserializer::closeStruct(unsigned idx, const StackSlot &fields,
         return RUNNER->EvalFunction(structFixups[idx], 1, fields);
 
     if (!RUNNER->VerifyStruct(fields, structIndex[idx])) {
-        const StructDef &def = RUNNER->GetStructDef(structIndex[idx]);
-        cout << "struct name" << def.Name;
-        RUNNER->PrintData(RUNNER->flow_out, fields);
-
         return RUNNER->MakeStruct("IllegalStruct", 0, NULL);
     }
 
