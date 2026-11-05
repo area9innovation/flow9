@@ -134,13 +134,16 @@ regionContains(r : Quadruple<double, double, double, double>, r1 : Quadruple<dou
 	r.first < r1.first && r.second < r1.second && r.third > r1.third && r.fourth > r1.fourth
 }
 
-// Above this many subpaths, holes are not looked for and all subpaths are drawn as one layer
-svgMaxLayeredSubpaths = 2000;
+// Above this many subpaths with points, holes are not looked for and all subpaths are drawn as one layer.
+// Empty subpaths, which a space between "z" and the next "m" gives, are not counted.
+svgMaxLayeredSubpaths = 5000;
 
 // Topological sort with layers, the deepest layer first.
 // A subpath is in layer 0 if no other subpath contains it, else one layer below the deepest subpath that contains it.
 getLayers2(group : [Pair<[StaticGraphicOp], Quadruple<double, double, double, double>>]) ->  [[Pair<[StaticGraphicOp], Quadruple<double, double, double, double>>]] {
-	if (length(group) > svgMaxLayeredSubpaths) {
+	// An empty subpath has the region getGraphicsRegion starts from
+	empty = Quadruple(doubleMax, doubleMax, doubleMin, doubleMin);
+	if (countA(group, \g -> g.second != empty) > svgMaxLayeredSubpaths) {
 		[group]
 	} else {
 		regions = map(group, \g -> g.second);
@@ -159,14 +162,15 @@ getLayers2(group : [Pair<[StaticGraphicOp], Quadruple<double, double, double, do
 			Cons(i, stillOpen)
 		});
 		// The rest are empty subpaths and regions with NaN, which cannot be compared. None of them contains a regular subpath.
-		// An empty subpath has the region getGraphicsRegion starts from. All empty subpaths are in the same layer.
+		// All empty subpaths are in the same layer.
 		containerDepth = \i -> fold(regular, -1, \acc, j -> deeper(i, acc, j)) + 1;
 		rest = filter(indexes, \i -> !isRegular(regions[i]));
-		empty = Quadruple(doubleMax, doubleMax, doubleMin, doubleMin);
 		emptyDepth = eitherMap(find(rest, \i -> regions[i] == empty), containerDepth, 0);
 		iter(rest, \i -> depths[i] := if (regions[i] == empty) emptyDepth else containerDepth(i));
 		deepest = fold(depths, -1, \acc, d -> max(acc, ^d));
-		generate(0, deepest + 1, \k -> filtermapi(group, \i, g -> if (^(depths[i]) == deepest - k) Some(g) else None()));
+		layers = generate(0, deepest + 1, \__ -> ref makeList());
+		iteri(group, \i, g -> rlistPush(layers[deepest - ^(depths[i])], g));
+		map(layers, \l -> list2array(^l));
 	}
 }
 
