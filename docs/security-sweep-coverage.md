@@ -81,11 +81,46 @@ counted as covered — a later slice takes them whole:
 `platforms/common/cpp/core/Natives.cpp`,
 `lib/formats/html/html2form.flow`, `lib/net/url.flow`.
 
+### 2026-11-05 — slice 3: area 2, the bytecode loader, the JIT and the core runtime
+
+The whole of `platforms/common/cpp/core/`, taken as one slice because the
+loader, the interpreter, the allocator, the collector and the JIT read the
+same lengths and indices and only make sense read together.
+
+- `platforms/common/cpp/core/ByteCodeRunner.cpp`
+- `platforms/common/cpp/core/ByteCodeRunner.h`
+- `platforms/common/cpp/core/ByteMemory.cpp`
+- `platforms/common/cpp/core/ByteMemory.h`
+- `platforms/common/cpp/core/char_traits_fix.h`
+- `platforms/common/cpp/core/CodeMemory.cpp`
+- `platforms/common/cpp/core/CodeMemory.h`
+- `platforms/common/cpp/core/CommonTypes.h`
+- `platforms/common/cpp/core/GarbageCollector.cpp`
+- `platforms/common/cpp/core/GarbageCollector.h`
+- `platforms/common/cpp/core/HeapWalker.cpp`
+- `platforms/common/cpp/core/HeapWalker.h`
+- `platforms/common/cpp/core/JitProgram.cpp`
+- `platforms/common/cpp/core/JitProgram.h`
+- `platforms/common/cpp/core/MemoryArea.cpp`
+- `platforms/common/cpp/core/MemoryArea.h`
+- `platforms/common/cpp/core/nativefunction.h`
+- `platforms/common/cpp/core/Natives.cpp`
+- `platforms/common/cpp/core/NativeProgram.h`
+- `platforms/common/cpp/core/opcodes.h`
+- `platforms/common/cpp/core/RunnerMacros.h`
+- `platforms/common/cpp/core/STLHelpers.h`
+- `platforms/common/cpp/core/Utf32.cpp`
+- `platforms/common/cpp/core/win_mman.c`
+- `platforms/common/cpp/core/win_mman.h`
+
+`platforms/common/cpp/core/Utf8.cpp` was covered in slice 1; parts of it were
+read again here where this slice led into them, and it stays covered.
+
 ## Next
 
-41 of roughly 350 files in the listed surface are covered.
+66 of roughly 350 files in the listed surface are covered. Area 2 is done.
 
 Remaining in area 1: the rest of `lib/formats/**` (the latex, wasm, dom and
-php sub-trees, `lsp.flow`, `uri2`/`uri3` parser tables), `lib/formats/html/html2form.flow`,
-and the UTF-8 and binary decoders in `platforms/java` and
-`platforms/common/cpp/core`. Then area 2, the bytecode loader and the JIT.
+php sub-trees, `lsp.flow`, the `uri2` parser tables), `lib/formats/html/html2form.flow`,
+`lib/formats/unicode/unidecode.flow`, and the UTF-8 and binary decoders in
+`platforms/java`. Then area 3, the browser runtime under `platforms/js/**`.
