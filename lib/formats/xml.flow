@@ -349,10 +349,11 @@ XmlRecovery(
 	// Entries behind the scan are dropped, so this holds at most one per '<' still ahead.
 	// One recovery alone does not need it, since only failed candidates are scanned twice.
 	mutable tagEnds : Maybe<List<XmlTagEnd>>,
-	// From the first recovery on, when validating, each attribute position read with the end of
-	// the range it was read in. A walk that comes back to one is a candidate after a failed one,
-	// since a tag that parses moves the scan past its range, so it fails the same way.
-	mutable attrsRead : Set<Pair<int, int>>
+	// From the first recovery on, when validating: by the end of the range, the attribute positions
+	// read by candidates that failed. Reading on from one of them in the same range fails the same way.
+	// A candidate that parses moves the scan past its range, so its positions are never read again
+	// and are not kept. Ranges that end behind the scan are dropped.
+	mutable failedAttrs : Tree<int, Set<int>>
 );
 
 XmlTagEnd(lt : int, end : int);
@@ -387,27 +388,45 @@ recoverXml(s : string, start : int, rec : XmlRecovery) -> void {
 // findTagEnd(s, start + 1, "") for the '<' at start
 xmlTagEnd(s : string, start : int, rec : XmlRecovery) -> int {
 	switch (rec.tagEnds) {
-		Some(ends): xmlCachedTagEnd(ends, start, rec);
+		Some(ends): xmlCachedTagEnd(s, ends, start, rec);
 		None(): findTagEnd(s, start + 1, "");
 	}
 }
 
-// The cache has an entry for every '<' after it was made, so the first one not behind start is start's
-xmlCachedTagEnd(ends : List<XmlTagEnd>, start : int, rec : XmlRecovery) -> int {
+// The cache has an entry for every '<' after it was made. Should start have none, its end is
+// scanned for, rather than taken from the next '<'.
+xmlCachedTagEnd(s : string, ends : List<XmlTagEnd>, start : int, rec : XmlRecovery) -> int {
 	switch (ends) {
 		Cons(e, rest): {
-			if (e.lt < start) xmlCachedTagEnd(rest, start, rec)
-			else {
+			if (e.lt < start) xmlCachedTagEnd(s, rest, start, rec)
+			else if (e.lt == start) {
 				rec.tagEnds ::= Some(rest);
 				e.end;
+			} else {
+				rec.tagEnds ::= Some(ends);
+				findTagEnd(s, start + 1, "");
 			}
 		}
-		EmptyList(): -1;
+		EmptyList(): {
+			rec.tagEnds ::= Some(ends);
+			findTagEnd(s, start + 1, "");
+		}
+	}
+}
+
+// Drops the failed attribute positions of ranges that end before start
+xmlDropFailedAttrs(rec : XmlRecovery, start : int) -> void {
+	switch (popmin(rec.failedAttrs)) {
+		PopResult(end, __, rest): if (end < start) {
+			rec.failedAttrs ::= rest;
+			xmlDropFailedAttrs(rec, start);
+		}
+		EmptyPopResult(): {}
 	}
 }
 
 doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool) -> void {
-	doParseXmlFrom(s, 0, events, parseText, validateNames, XmlRecovery(false, None(), makeSet()));
+	doParseXmlFrom(s, 0, events, parseText, validateNames, XmlRecovery(false, None(), makeTree()));
 }
 
 doParseXmlFrom(
@@ -549,7 +568,12 @@ parseTag(s : string, start : int, end : int, validate : bool, rec : XmlRecovery)
 			else if (endTag && !emptyElement) Some(XmlElementEnd(tag))
 			else {
 				attrs = if (sep == bodyEnd) Some(makeList())
-				else xmlAttributes(XmlAttrRange(s, bodyEnd, validate, validate && rec.recovered, rec), sep + 1, makeList());
+				else if (validate && rec.recovered) {
+					// The scan only moves on, so no later candidate ends before start
+					xmlDropFailedAttrs(rec, start);
+					failed = lookupTreeDef(rec.failedAttrs, bodyEnd, makeSet());
+					xmlAttributes(XmlAttrRange(s, bodyEnd, validate, Some(failed), rec), sep + 1, makeList(), makeList());
+				} else xmlAttributes(XmlAttrRange(s, bodyEnd, validate, None(), rec), sep + 1, makeList(), makeList());
 				maybeMap(attrs, \as -> {
 					a = list2array(as);
 					if (emptyElement) XmlEmptyElement(tag, a)
@@ -568,7 +592,7 @@ xmlTagNameEnd(s : string, i : int, end : int, validate : bool) -> int {
 	else {
 		c = getCharCodeAt(s, i);
 		if (isXmlSpace(c)) i
-		else if (validate && !isTrimSpace(c) && !isXmlNameChar(c)) -1
+		else if (validate && !isXmlTrimSpace(c) && !isXmlNameChar(c)) -1
 		else xmlTagNameEnd(s, i + 1, end, validate);
 	}
 }
@@ -589,44 +613,51 @@ isXmlSpace(c : int) -> bool {
 	c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D;
 }
 
+// What trim, ltrim and rtrim take: space and U+00A0
+isXmlTrimSpace(c : int) -> bool {
+	c == 0x20 || c == 0xA0;
+}
+
 // The first index in [i, end) that ltrim would keep, or end
 xmlSkipSpaces(s : string, i : int, end : int) -> int {
-	if (i < end && isTrimSpace(getCharCodeAt(s, i))) xmlSkipSpaces(s, i + 1, end) else i;
+	if (i < end && isXmlTrimSpace(getCharCodeAt(s, i))) xmlSkipSpaces(s, i + 1, end) else i;
 }
 
 // e, less what rtrim would take just before it, but not below from
 xmlBackSpaces(s : string, e : int, from : int) -> int {
-	if (e > from && isTrimSpace(getCharCodeAt(s, e - 1))) xmlBackSpaces(s, e - 1, from) else e;
+	if (e > from && isXmlTrimSpace(getCharCodeAt(s, e - 1))) xmlBackSpaces(s, e - 1, from) else e;
 }
 
-// The attributes of a tag are read from s up to end. When remember is set, each position read is
-// added to rec.attrsRead, and coming back to one fails.
-XmlAttrRange(s : string, end : int, validate : bool, remember : bool, rec : XmlRecovery);
+// The attributes of a tag are read from s up to end. With failed, the positions read by earlier
+// candidates that failed in this range: reading on from one fails, and a walk that fails adds its own.
+XmlAttrRange(s : string, end : int, validate : bool, failed : Maybe<Set<int>>, rec : XmlRecovery);
 
 // The attributes in s[i, end), reversed onto acc. When validating, None for a name that is not valid.
-xmlAttributes(r : XmlAttrRange, i : int, acc : List<XmlAttribute>) -> Maybe<List<XmlAttribute>> {
+// read has the positions read so far, when failed is given.
+xmlAttributes(r : XmlAttrRange, i : int, read : List<int>, acc : List<XmlAttribute>) -> Maybe<List<XmlAttribute>> {
 	s = r.s;
 	end = r.end;
 	if (i >= end) {
 		Some(acc);
 	} else if (isXmlSpace(getCharCodeAt(s, i))) {
 		// Whitespace to be eaten first
-		xmlAttributes(r, i + 1, acc);
-	} else if (r.remember && xmlAttrRead(r, i)) {
+		xmlAttributes(r, i + 1, read, acc);
+	} else if (eitherMap(r.failed, \f -> containsSet(f, i), false)) {
 		// An earlier candidate failed from here in the same range
-		None();
+		xmlAttributesFailed(r, read);
 	} else {
 		// The name runs to the first = or space
 		j = xmlNameStop(s, i, end);
 		name = substring(s, i, j - i);
+		read2 = if (isSome(r.failed)) Cons(i, read) else read;
 		if (r.validate && !isValidXmlName(name)) {
-			None();
+			xmlAttributesFailed(r, read2);
 		} else if (j == end) {
 			// "abc"
 			Some(Cons(XmlAttribute(name, ""), acc));
 		} else if (getCharCodeAt(s, j) != 0x3D || (j + 1 < end && isXmlSpace(getCharCodeAt(s, j + 1)))) { // =
 			// "abcd rest=something" or "abc= rest=something"
-			xmlAttributes(r, j + 1 + b2i(getCharCodeAt(s, j) == 0x3D), Cons(XmlAttribute(name, ""), acc));
+			xmlAttributes(r, j + 1 + b2i(getCharCodeAt(s, j) == 0x3D), read2, Cons(XmlAttribute(name, ""), acc));
 		} else {
 			// "abc=def something"
 			v = j + 1;
@@ -639,7 +670,7 @@ xmlAttributes(r : XmlAttrRange, i : int, acc : List<XmlAttribute>) -> Maybe<List
 					Some(Cons(XmlAttribute(name, substring(s, v, end - v)), acc));
 				} else {
 					value = strReplace(substring(s, v + 1, endQuote - v - 1), "\\" + quote, quote) |> xmlUnescape;
-					xmlAttributes(r, endQuote + 1, Cons(XmlAttribute(name, value), acc));
+					xmlAttributes(r, endQuote + 1, read2, Cons(XmlAttribute(name, value), acc));
 				}
 			} else {
 				// Unquoted
@@ -649,22 +680,23 @@ xmlAttributes(r : XmlAttrRange, i : int, acc : List<XmlAttribute>) -> Maybe<List
 					// No more stuff, so we take the lot
 					Some(Cons(XmlAttribute(name, value), acc));
 				} else {
-					xmlAttributes(r, nextSpace + 1, Cons(XmlAttribute(name, value), acc));
+					xmlAttributes(r, nextSpace + 1, read2, Cons(XmlAttribute(name, value), acc));
 				}
 			}
 		}
 	}
 }
 
-// Whether the position i was read before in a range with the same end, and remembers it if not
-xmlAttrRead(r : XmlAttrRange, i : int) -> bool {
-	key = Pair(i, r.end);
-	rec = r.rec;
-	if (containsSet(rec.attrsRead, key)) true
-	else {
-		rec.attrsRead ::= insertSet(rec.attrsRead, key);
-		false;
+// The candidate fails: keep the positions it read, for the candidates after it in the same range
+xmlAttributesFailed(r : XmlAttrRange, read : List<int>) -> Maybe<List<XmlAttribute>> {
+	switch (r.failed) {
+		Some(failed): {
+			rec = r.rec;
+			rec.failedAttrs ::= setTree(rec.failedAttrs, r.end, foldList(read, failed, insertSet));
+		}
+		None(): {}
 	}
+	None();
 }
 
 // The first = or space in s[i, end), or end
