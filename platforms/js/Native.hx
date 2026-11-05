@@ -2764,8 +2764,10 @@ Native.memoryLeakReset();
 		// stub
 	}
 
+	static inline var failurePrefix = "Runtime failure: ";
+
 	public static function failWithError(e : String) : Void {
-		throw ("Runtime failure: " + e);
+		throw (failurePrefix + e);
 	}
 
 	public static inline function makeStructValue(name : String, args : Array<Dynamic>, default_value : Dynamic) : Dynamic {
@@ -3331,10 +3333,12 @@ Native.memoryLeakReset();
 		return ret;
 	}
 
+	// A fail() is thrown on, as it stops the program on Java too
 	public static function catchDecodeError(fn : Void -> Dynamic, onError : String -> Dynamic) : Dynamic {
 		try {
 			return fn();
 		} catch (e : Dynamic) {
+			if (Std.isOfType(e, String) && StringTools.startsWith(e, failurePrefix)) throw e;
 			return onError(Std.string(e));
 		}
 	}
@@ -3342,11 +3346,7 @@ Native.memoryLeakReset();
 	public static function fromBinary(string : Dynamic, defvalue : Dynamic, fixups : Dynamic) : Dynamic {
 		#if js
 		if (Type.getClass(string) == JSBinflowBuffer) {
-			// A runtime error in a fixup or the reader makes the whole decode yield the default, as on the flow path
-			return catchDecodeError(function() { return string.deserialise(defvalue, fixups); }, function(error) {
-				Errors.print("Binary decode failed: " + error);
-				return defvalue;
-			});
+			return string.deserialise(defvalue, fixups);
 		} else
 		#end
 		{
