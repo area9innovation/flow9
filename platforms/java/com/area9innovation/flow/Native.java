@@ -300,6 +300,15 @@ public class Native extends NativeHost {
 		return s;
 	}
 
+	// A stack overflow is caught as well, as JS does; other Errors, such as running out of memory, are not
+	public static final Object catchDecodeError(Func0<Object> fn, Func1<Object, String> onError) {
+		try {
+			return fn.invoke();
+		} catch (RuntimeException | StackOverflowError e) {
+			return onError.invoke(e.toString());
+		}
+	}
+
 	public static final Object gc() {
 		System.gc();
 		return null;

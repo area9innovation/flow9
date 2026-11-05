@@ -15,7 +15,14 @@ export {
 	// Also, make sure that when you save a binary file using flow, use setFileContentUTF16.
 	// You have to use httpRequest to retrieve it (and not downloadfile), and the BOM marker from
 	// the server will make our end understand that it is UCS-2 (camouflaged as UTF-16).
+	// Runtime errors during the decode are handled as in deserializeBinary2.
 	deserializeBinary(value : string, default_ : flow) -> flow;
+	// Fixups receive the original fields, including older schemas, so check their count and
+	// types before a cast. Fixup results are not schema-checked. On Java and JS, a runtime
+	// error during the decode, in a fixup or elsewhere, is printed and the whole decode
+	// yields default_; a fail() is not caught. Java catches exceptions and stack
+	// overflow only, not other JVM errors such as running out of memory. Other runtimes
+	// retain their normal runtime-error handling.
 	deserializeBinary2(value : string, structFixups : Tree<string, (args : [flow]) -> flow>, default_ : flow) -> flow;
 	native toBinary : (value : flow) -> string = Native.toBinary;
 	native stringbytes2double : (str : string) -> double = Native.stringbytes2double;
@@ -24,17 +31,30 @@ export {
 
 native fromBinary : (s : string, default_ : flow, fixups : (string)->Maybe<([flow])->flow>) -> flow = Native.fromBinary;
 
+// fn's result, or onError's result with the error's text if fn raised a runtime error.
+// Only Java and JS can catch one; flow itself has no exception handler. A fail() is not caught.
+native catchDecodeError : io (fn : () -> ?, onError : (string) -> ?) -> ? = Native.catchDecodeError;
+catchDecodeError(fn, __) {
+	fn();
+}
+
 deserializeBinary(s, default_) {
 	deserializeBinary2(s, makeTree(), default_);
 }
 
 deserializeBinary2(s, structFixups, default_) {
-	rv = fromBinary(s, default_, \name -> lookupTree(structFixups, name));
-	if (rv == flow(s)) { // Not implemented
-		deserializeBinaryFlow(s, structFixups, default_);
-	} else {
-		rv;
-	}
+	// One guard for the native decoder and the flow one
+	catchDecodeError(\ -> {
+		rv = fromBinary(s, default_, \name -> lookupTree(structFixups, name));
+		if (rv == flow(s)) { // Not implemented
+			deserializeBinaryFlow(s, structFixups, default_);
+		} else {
+			rv;
+		}
+	}, \error -> {
+		println("Binary decode failed: " + error);
+		default_;
+	});
 }
 
 // The input up to the end of the value being read, and the struct definitions its footer declares

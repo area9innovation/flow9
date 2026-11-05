@@ -160,6 +160,61 @@ test('a fixup builds the struct value', function() {
 	assert.deepStrictEqual(bufferOf(encode(sampleLeaf), true).deserialise(DEFAULT, fixups), { fixed: [2, 'alpha', 1.5, false] });
 });
 
+test('a fixup receives an older schema with different field count and types', function() {
+	const words = assemble([0xFFF4, 0].concat(stringWords('old')), [0xFFF8, 1, 0xFFF8, 2, 1].concat(stringWords('Leaf')));
+	const fixups = function() {
+		return { _id: SOME_ID, value: function(args) {
+			assert.deepStrictEqual(args, ['old']);
+			return leaf(7, args[0], 0.5, true);
+		} };
+	};
+	assert.deepStrictEqual(bufferOf(words, true).deserialise(DEFAULT, fixups), leaf(7, 'old', 0.5, true));
+});
+
+// fromBinary under the guard deserializeBinary2 puts around it
+const guardedFromBinary = function(buffer, fixups) {
+	return Native.catchDecodeError(function() { return Native.fromBinary(buffer, DEFAULT, fixups); }, function() { return DEFAULT; });
+};
+
+test('a throwing fixup gives the whole default, including inside containers', function() {
+	const fixups = function() { return { _id: SOME_ID, value: function() { throw new Error('callback failed'); } }; };
+	[sampleLeaf, [sampleLeaf], ref(sampleLeaf), { _id: NONE_ID }].forEach(function(value) {
+		assert.strictEqual(guardedFromBinary(bufferOf(encode(value), true), fixups), DEFAULT);
+	});
+});
+
+test('a buffer can be decoded again after a fixup exception', function() {
+	const buffer = bufferOf(encode(sampleLeaf), true);
+	const fixups = function() { return { _id: SOME_ID, value: function() { throw 'callback failed'; } }; };
+	assert.strictEqual(guardedFromBinary(buffer, fixups), DEFAULT);
+	assert.deepStrictEqual(Native.fromBinary(buffer, DEFAULT, noFixups), sampleLeaf);
+});
+
+test('a fixup that overflows the stack gives the default', function() {
+	const recurse = function(n) { return n == 0 ? 0 : 1 + recurse(n - 1); };
+	const fixups = function() { return { _id: SOME_ID, value: function() { return recurse(1e8); } }; };
+	assert.strictEqual(guardedFromBinary(bufferOf(encode(sampleLeaf), true), fixups), DEFAULT);
+});
+
+test('catchDecodeError gives the result, or onError of the error text', function() {
+	const onError = function(error) { return { error: error }; };
+	[DEFAULT, null, 42, { _id: LEAF_ID }].forEach(function(value) {
+		assert.strictEqual(Native.catchDecodeError(function() { return value; }, onError), value);
+	});
+	assert.deepStrictEqual(Native.catchDecodeError(function() { throw new Error('callback failed'); }, onError), { error: 'Error: callback failed' });
+});
+
+test('catchDecodeError lets a fail() through', function() {
+	const onError = function() { return DEFAULT; };
+	assert.throws(function() { Native.catchDecodeError(function() { Native.failWithError('corrupt save'); }, onError); }, /Runtime failure: corrupt save/);
+	const failingFixup = function() { Native.failWithError('corrupt save'); };
+	const fixups = function() { return { _id: SOME_ID, value: failingFixup }; };
+	assert.throws(function() { guardedFromBinary(bufferOf(encode(sampleLeaf), true), fixups); }, function(error) {
+		// The stack is the one of the fail(), not of the rethrow
+		return /corrupt save/.test(String(error)) && /failingFixup/.test(error.stack);
+	});
+});
+
 test('a second call with other fixups does not reuse the first', function() {
 	const words = encode(sampleLeaf);
 	const fixups = function(name) {
@@ -270,7 +325,7 @@ test('refs nested ' + deep + ' deep', function() {
 	checkDamaged('double cut by the footer', assemble(bodyOf(d).slice(0, 1), footerOf(d)));
 })();
 
-test('fromBinary lets a throwing fixup reach the caller', function() {
+test('fromBinary lets a throwing fixup lookup reach the caller', function() {
 	const throwing = function() { throw new Error('fixup lookup failed'); };
 	assert.throws(function() { Native.fromBinary(bufferOf(encode(sampleLeaf), true), DEFAULT, throwing); }, /fixup lookup failed/);
 });

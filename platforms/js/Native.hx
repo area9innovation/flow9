@@ -2764,8 +2764,10 @@ Native.memoryLeakReset();
 		// stub
 	}
 
+	static inline var failurePrefix = "Runtime failure: ";
+
 	public static function failWithError(e : String) : Void {
-		throw ("Runtime failure: " + e);
+		throw (failurePrefix + e);
 	}
 
 	public static inline function makeStructValue(name : String, args : Array<Dynamic>, default_value : Dynamic) : Dynamic {
@@ -3329,6 +3331,17 @@ Native.memoryLeakReset();
 			str + struct_defs_buf.toString();
 
 		return ret;
+	}
+
+	// A fail() is thrown on, as it stops the program on Java too. It is rethrown as caught, so its stack still shows where it failed
+	public static function catchDecodeError(fn : Void -> Dynamic, onError : String -> Dynamic) : Dynamic {
+		try {
+			return fn();
+		} catch (e : haxe.Exception) {
+			var value : Dynamic = Std.isOfType(e, haxe.ValueException) ? (cast e : haxe.ValueException).value : e.native;
+			if (Std.isOfType(value, String) && StringTools.startsWith(value, failurePrefix)) throw e;
+			return onError(Std.string(value));
+		}
 	}
 
 	public static function fromBinary(string : Dynamic, defvalue : Dynamic, fixups : Dynamic) : Dynamic {
