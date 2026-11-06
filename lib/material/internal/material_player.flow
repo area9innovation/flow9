@@ -1031,18 +1031,26 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 
 	sendB = make("");
 	receiveB = make("");
+	wrapperLoaded = ref false;
+	pendingState : ref Tree<string, Json> = ref TreeEmpty();
 	// the page leaves the volume out until it has read a real one (iOS has no getVolume), and volumeB is its
 	// default until then: restoring that default would unmute a url-muted player
 	volumeSeen = ref false;
 
-	sendState = \s -> next(sendB,
-		JsonObject([Pair("playerState", JsonObject(s))]) |> json2string
-	);
+	sendState = \s -> {
+		if (^wrapperLoaded) {
+			next(sendB, JsonObject([Pair("playerState", JsonObject(s))]) |> json2string);
+		} else {
+			// Keep the latest command per field while the wrapper cannot receive messages.
+			pendingState := fold(s, ^pendingState, \acc, field -> setTree(acc, field.first, field.second));
+		}
+	};
 	fselectFromStateM = \name -> fselectLift(receiveB, \r -> {
 		v = getJsonFieldValueCustom(parseJson(r), "playerState." + name, JsonNull(), [JsonFieldTreatAsPath(".")]);
 		if (v == JsonNull()) None() else Some(v)
 	});
 	onLoaded = \ -> {
+		wrapperLoaded := true;
 		next(sendB, JsonObject([Pair("loadVideo", loadMessage())]) |> json2string);
 		// a state sent before the page (re)loaded is lost, repeat it. The page has reported nothing yet on the very
 		// first load, and there the url's own autoplay/muted parameters rule: only an explicit play is worth sending
@@ -1055,10 +1063,16 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 			// the reloaded player is back at its own default, so the volume goes back as it is, mute and unmute alike
 			if (reloaded && ^volumeSeen) [Pair("volume", JsonDouble(getValue(volumeB) * 100.0))] else []
 		]));
+		// Explicit changes made during loading take precedence over restored/default state.
+		queued = convertTreeToArray(^pendingState, \name, value -> Pair(name, value));
+		pendingState := TreeEmpty();
+		if (queued != []) sendState(queued);
 	}
 
 	sendToJS = ref nop1;
 	getHostCall = \hc -> {
+		// A replacement clip has its own load lifecycle, even for the same material.
+		wrapperLoaded := false;
 		sendToJS := \msg -> hc("postMessage", [msg, "*"]) |> ignore;
 	}
 	flowCallBack = \args -> {
@@ -1073,8 +1087,15 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 				makeSubscribe2(receiveB, \s -> println("from " + page + " -> " + s)),
 			] else [],
 			[
-				makeSubscribe(sendB, \m -> ^sendToJS(m)),
-				\ -> fBidirectionalLink(playB, fselectFromStateM("status"),
+				// Commands are events: identical loadVideo messages must reach a reloaded iframe.
+				\ -> subscribe2(sendB, \m -> if (^wrapperLoaded) ^sendToJS(m)),
+				\ -> \ -> {
+					wrapperLoaded := false;
+					sendToJS := nop1;
+					pendingState := TreeEmpty();
+				},
+				// Subscribe to changes only: initial defaults must not override URL autoplay/mute/start.
+				\ -> fBidirectionalLink2(playB, fselectFromStateM("status"),
 					\external -> sendState([Pair("status", JsonString(if (external) STATUS_PLAYING else STATUS_PAUSED))]),
 					\internalM -> maybeApply(internalM,
 						\internal -> {
@@ -1083,13 +1104,13 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 						}
 					)
 				),
-				\ -> fBidirectionalLink(positionB, fselectFromStateM("currentTime"),
+				\ -> fBidirectionalLink2(positionB, fselectFromStateM("currentTime"),
 					\external -> sendState([Pair("currentTime", JsonDouble(external))]),
 					\internalM -> maybeApply(internalM,
 						\internal -> nextDistinct(positionB, getJsonDoubleValue(internal, 0.0))
 					)
 				),
-				\ -> fBidirectionalLink(volumeB, fselectFromStateM("volume"),
+				\ -> fBidirectionalLink2(volumeB, fselectFromStateM("volume"),
 					\external -> sendState([Pair("volume", JsonDouble(external * 100.0))]),
 					\internalM -> maybeApply(internalM,
 						\internal -> {
