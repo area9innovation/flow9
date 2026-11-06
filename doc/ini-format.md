@@ -40,17 +40,22 @@ extension.
 
 In marked documents:
 
-- A name starting with `"` is quoted. For a section the opening quote follows
-  `[` immediately; for a key, leading spaces, tabs, CR, and LF may precede it.
+- A name starting with `"` is quoted. For a section, spaces and tabs may come
+  between `[` and the opening quote; for a key, leading spaces, tabs, CR, and LF
+  may precede it.
 - The closing quote must be followed by `]` for sections or `=` for keys, with
   only spaces or tabs between, as in `"key" = value`. Embedded quotes are
   doubled. Empty names, literal line breaks, and delimiters are allowed inside
   quoted names. Backslashes remain literal.
 - Names not starting with a quote use the legacy rules. Values are unchanged.
-- Incomplete quoted names stop parsing the remaining text, rather than reading
-  their contents again as keys or sections. An incomplete section is retained
-  with its collected name and no keys; an incomplete key is not retained.
-  `parseIniFile` does not report syntax errors.
+- A quoted name whose closing quote is not followed by its delimiter is skipped
+  with the rest of its line, and parsing goes on with the next line. Such a
+  section header is dropped together with its keys; such a key is dropped.
+- A quoted name whose closing quote never comes, or that reaches the end of the
+  input before its delimiter, stops parsing rather than reading its contents
+  again as keys or sections. Such a section is retained with its collected name
+  and no keys; such a key is not retained.
+- `parseIniFile` does not report syntax errors.
 
 ## Serializer policy and interoperability
 
