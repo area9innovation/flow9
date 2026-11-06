@@ -24,10 +24,11 @@ the meaning of existing documents.
 ## Quoted-name extension
 
 An exact first line of `; flow9-ini: quoted-names-v1`, followed by LF or CRLF,
-enables quoted names. This first line is reserved for the extension; a legacy
-document that used this exact comment must change or remove it to retain legacy
-quote interpretation. Similar comments, comments later in a document, and other
-version numbers do not enable the extension.
+enables quoted names. A byte order mark before it is allowed. This first line is
+reserved for the extension; a legacy document that used this exact comment must
+change or remove it to retain legacy quote interpretation. Similar comments,
+comments later in a document, and other version numbers do not enable the
+extension.
 
 ```ini
 ; flow9-ini: quoted-names-v1
@@ -41,9 +42,10 @@ In marked documents:
 
 - A name starting with `"` is quoted. For a section the opening quote follows
   `[` immediately; for a key, leading spaces, tabs, CR, and LF may precede it.
-- The closing quote must be followed immediately by `]` for sections or `=` for
-  keys. Embedded quotes are doubled. Empty names, literal line breaks, and
-  delimiters are allowed inside quoted names. Backslashes remain literal.
+- The closing quote must be followed by `]` for sections or `=` for keys, with
+  only spaces or tabs between, as in `"key" = value`. Embedded quotes are
+  doubled. Empty names, literal line breaks, and delimiters are allowed inside
+  quoted names. Backslashes remain literal.
 - Names not starting with a quote use the legacy rules. Values are unchanged.
 - Incomplete quoted names stop parsing the remaining text, rather than reading
   their contents again as keys or sections. An incomplete section is retained

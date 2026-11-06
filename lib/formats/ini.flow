@@ -6,7 +6,8 @@ export {
 	// An .ini file. Uses "" for quoting " in values; unquoted values are trimmed.
 	// Use ; for comments at the start of lines. Backslashes are always literal.
 	// Name quoting is enabled only by an exact first line of "; flow9-ini: quoted-names-v1"
-	// (LF or CRLF). Without that marker, quotes in keys and section names stay literal.
+	// (LF or CRLF), after a byte order mark if there is one. Without that marker, quotes in
+	// keys and section names stay literal.
 	parseIniFile(v : string) -> IniFile;
 
 	// Values are quoted as needed to read back the same. Legacy name spelling is kept unless a
@@ -21,12 +22,17 @@ export {
 
 iniQuotedNamesMarker = "; flow9-ini: quoted-names-v1";
 
+// Trimmed from the ends of unquoted keys; a key with any of these at an end is printed quoted
+iniKeySpace = "\n \u000d\t";
+
 parseIniFile(v : string) -> IniFile {
+	// Editors on Windows often save with a byte order mark
+	bom = if (strLeft(v, 1) == "\uFEFF") 1 else 0;
 	markerLength = strlen(iniQuotedNamesMarker);
-	start = if (strLeft(v, markerLength + 1) == iniQuotedNamesMarker + "\n") markerLength + 1
-		else if (strLeft(v, markerLength + 2) == iniQuotedNamesMarker + "\u000d\n") markerLength + 2
-		else 0;
-	IniFile(list2array(doParseIniFile(v, start, -1, start != 0, makeList())));
+	markerEnd = if (substring(v, bom, markerLength + 1) == iniQuotedNamesMarker + "\n") bom + markerLength + 1
+		else if (substring(v, bom, markerLength + 2) == iniQuotedNamesMarker + "\u000d\n") bom + markerLength + 2
+		else -1;
+	IniFile(list2array(doParseIniFile(v, max(markerEnd, bom), -1, markerEnd != -1, makeList())));
 }
 
 // The keys of one section, the position where they stop and the line end found last
@@ -59,7 +65,7 @@ doParseIniFile(v : string, start : int, lineEnd : int, quotedNames : bool, acc :
 // Keys up to the next "["; a ";" before the "=" starts a comment, except inside a quoted name
 doParseIniKeys(v : string, start : int, lineEnd : int, quotedNames : bool, acc : List<KeyValue>) -> IniKeys {
 	n = strlen(v);
-	keyStart = if (quotedNames) iniSkipKeySpace(v, start, n) else start;
+	keyStart = if (quotedNames) iniSkipAny(v, start, n, iniKeySpace) else start;
 	quoted = quotedNames && keyStart < n && getCharAt(v, keyStart) == "\"";
 	name = if (quoted) grabIniQuotedName(v, keyStart, "=") else Pair("", -1);
 	// A malformed quoted name consumes the remaining input, as an unterminated quoted value
@@ -68,7 +74,7 @@ doParseIniKeys(v : string, start : int, lineEnd : int, quotedNames : bool, acc :
 		else iniFindAny(v, start, n, "=[;");
 	found = if (special == n) "" else getCharAt(v, special);
 	if (found == "=") {
-		key = if (quoted) name.first else trim2(substring(v, start, special - start), "\n \u000d\t");
+		key = if (quoted) name.first else trim2(substring(v, start, special - start), iniKeySpace);
 		valueEnd = iniLineEnd(v, special + 1, lineEnd);
 		value = parseIniValue(v, special + 1, valueEnd);
 		doParseIniKeys(v, value.second, valueEnd, quotedNames, Cons(KeyValue(key, value.first), acc));
@@ -80,14 +86,18 @@ doParseIniKeys(v : string, start : int, lineEnd : int, quotedNames : bool, acc :
 	}
 }
 
-// A quoted name must be followed immediately by its delimiter. -1 means incomplete syntax.
+// A quoted name must be followed by its delimiter, with only spaces or tabs between, as in
+// "key" = value. The position of the delimiter, or -1 for incomplete syntax.
 grabIniQuotedName(v : string, start : int, delimiter : string) -> Pair<string, int> {
+	n = strlen(v);
 	name = grabIniQuoted(v, start + 1, makeList());
-	Pair(name.first, if (name.second < strlen(v) && getCharAt(v, name.second) == delimiter) name.second else -1);
+	after = iniSkipAny(v, name.second, n, " \t");
+	Pair(name.first, if (after < n && getCharAt(v, after) == delimiter) after else -1);
 }
 
-iniSkipKeySpace(v : string, start : int, n : int) -> int {
-	if (start < n && strIndexOf("\n \u000d\t", getCharAt(v, start)) != -1) iniSkipKeySpace(v, start + 1, n)
+// Position of the first char not in chars in [start, end), or end when there is none
+iniSkipAny(v : string, start : int, end : int, chars : string) -> int {
+	if (start < end && strIndexOf(chars, getCharAt(v, start)) != -1) iniSkipAny(v, start + 1, end, chars)
 	else start;
 }
 
@@ -144,7 +154,7 @@ iniNextLine(pos : int, lineEnd : int, n : int) -> int {
 
 iniFile2string(v : IniFile) -> string {
 	quotedNames = exists(v.sections, \s -> strFindFirstOf(s.name, "]\n\u000d") != -1
-		|| exists(s.keys, \kv -> strFindFirstOf(kv.key, "=[;\n\u000d") != -1 || trim2(kv.key, "\n \u000d\t") != kv.key));
+		|| exists(s.keys, \kv -> strFindFirstOf(kv.key, "=[;\n\u000d") != -1 || trim2(kv.key, iniKeySpace) != kv.key));
 	initial = if (quotedNames) Cons(iniQuotedNamesMarker + "\n", makeList()) else makeList();
 	list2string(fold(v.sections, initial, \acc, s -> {
 		header = Cons("[" + (if (quotedNames) quoteIni(s.name) else s.name) + "]\n", acc);
