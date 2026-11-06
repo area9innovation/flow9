@@ -207,7 +207,16 @@ testQuotedNames() -> void {
 		IniFile([IniSection("plain", [KeyValue("a=b", "x"), KeyValue("raw", "y")]), IniSection("q]s", [KeyValue("", "z")])]));
 	check("multiline names do not introduce keys or sections", parseIniFile(marker + "[\"a\n[b]=c;d\"]\n\"a\n[b]=c;d\"=v\n\"next\"=kept\n"),
 		IniFile([IniSection("a\n[b]=c;d", [KeyValue("a\n[b]=c;d", "v"), KeyValue("next", "kept")])]));
-	check("unterminated quoted key consumes the rest", parseIniFile(marker + "[\"s\"]\n\"a=[other]\nk=v"), IniFile([IniSection("s", [])]));
+	check("an unterminated quoted key skips only its line", parseIniFile(marker + "[\"s\"]\n\"a=[other]\nk=v\n[\"t\"]\nj=1"),
+		IniFile([IniSection("s", [KeyValue("k", "v")]), IniSection("t", [KeyValue("j", "1")])]));
+	check("a stray quote in a key does not pair with a later header", parseIniFile(marker + "[\"a\"]\n\"note\n[\"sec\"]\nk=v\n"),
+		IniFile([IniSection("a", []), IniSection("sec", [KeyValue("k", "v")])]));
+	check("a stray quote in a header does not pair with the next header", parseIniFile(marker + "[\"abc]\nlost=1\n[\"real\"]\nk=v\n"),
+		IniFile([IniSection("real", [KeyValue("k", "v")])]));
+	check("a stray quote in a comment header does not take the first section", parseIniFile(marker + "; use [\"odd names\n[\"real\"]\nk=v"),
+		IniFile([IniSection("real", [KeyValue("k", "v")])]));
+	check("a multiline quoted name without = skips its first line", parseIniFile(marker + "[\"s\"]\n\"a\nb\" x\n\"c\"=1\n"),
+		IniFile([IniSection("s", [KeyValue("c", "1")])]));
 	check("quoted key without adjacent = skips its line", parseIniFile(marker + "[\"s\"]\n\"a\" tail=x\n[other]\nk=v"),
 		IniFile([IniSection("s", []), IniSection("other", [KeyValue("k", "v")])]));
 	check("quoted section without adjacent ] is dropped with its keys", parseIniFile(marker + "[\"s\" tail]\nk=v\n\"q\"=[x]\n[\"other\"]\nk2=v2"),
@@ -232,8 +241,8 @@ testQuotedNames() -> void {
 		IniFile([IniSection("s", [KeyValue("k", "v"), KeyValue("a=b", "1")])]));
 	check("a stray CRLF line is skipped", parseIniFile(marker + "[\"s\"]\u000d\nstray\u000d\nk=v\u000d\n"),
 		IniFile([IniSection("s", [KeyValue("k", "v")])]));
-	check("an unterminated quote after doubled quotes consumes the rest", parseIniFile(marker + "[\"s\"]\nk=v\n\"a\"\"=1\n[\"t\"]\n"),
-		IniFile([IniSection("s", [KeyValue("k", "v")])]));
+	check("a quote left open after doubled quotes skips only its line", parseIniFile(marker + "[\"s\"]\nk=v\n\"a\"\"=1\n[\"t\"]\n"),
+		IniFile([IniSection("s", [KeyValue("k", "v")]), IniSection("t", [])]));
 	check("spaces and tabs may precede a quoted section name", parseIniFile(marker + "[ \t\"a]b\" ]\nk=v\n[ plain ]\n"),
 		IniFile([IniSection("a]b", [KeyValue("k", "v")]), IniSection(" plain ", [])]));
 	check("spaces and tabs may follow a quoted name", parseIniFile(marker + "[\"s\" \t]\n\"timeout\" = 30\n\"k=\"\t=\"v\"\n[\"t\" ]\nk=v\n"),
@@ -244,8 +253,10 @@ testQuotedNames() -> void {
 	check("marker after a byte order mark", parseIniFile(bom + printed), file);
 	check("unmarked text after a byte order mark", parseIniFile(bom + "[\"s\"]\n\"k\"=v\n"),
 		IniFile([IniSection("\"s\"", [KeyValue("\"k\"", "v")])]));
-	check("unterminated quoted section consumes the rest", parseIniFile(marker + "[\"a\n[other]\nk=v"),
-		IniFile([IniSection("a\n[other]\nk=v", [])]));
+	check("an unterminated quoted section skips only its line", parseIniFile(marker + "[\"a\n[other]\nk=v"),
+		IniFile([IniSection("other", [KeyValue("k", "v")])]));
+	check("an unterminated quote at the end of input", parseIniFile(marker + "[\"s\"]\nk=v\n\"open"),
+		IniFile([IniSection("s", [KeyValue("k", "v")])]));
 	check("whitespace before a quoted key is outside its name", parseIniFile(marker + "[\"s\"]\n; comment\n\t \" padded \"=v\n"),
 		IniFile([IniSection("s", [KeyValue(" padded ", "v")])]));
 	check("marker is omitted when parsed names need no extension", iniFile2string(parseIniFile(marker + "[\"s\"]\n\"k\"=v\n")), "[s]\nk=v\n\n");
@@ -319,6 +330,8 @@ testPerformance() -> void {
 	marker = "; flow9-ini: quoted-names-v1\n";
 	measureParse("20000 quoted names on one line", marker + "[\"s\"]\n" + strRepeat("\"k=[;\"=\"v\" ", 20000), 1, 20000);
 	measureParse("20000 quoted headers on one line", marker + strRepeat("[\"s]\"]", 20000), 20000, 0);
+	measureParse("20000 lines with a stray quote", marker + "[\"s\"]\n" + strRepeat("\"x\n", 20000) + "k=v\n", 1, 1);
+	measureParse("20000 headers with a stray quote", marker + strRepeat("[\"x\n", 20000) + "[\"s\"]\nk=v\n", 1, 1);
 }
 
 main() {

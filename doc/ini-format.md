@@ -54,9 +54,10 @@ In marked documents:
   malformed. A malformed key is dropped with the rest of its line, unless a `[`
   on that line starts a section. A malformed section header is dropped together
   with its keys. This holds at the end of the input too.
-- A quoted name whose closing quote never comes stops parsing rather than
-  reading its contents again as keys or sections. Such a section is retained
-  with its collected name and no keys; such a key is not retained.
+- When a malformed name's closing quote is on a later line, or never comes, its
+  opening quote is taken as a stray one: only the rest of the line it starts on
+  is skipped, and parsing goes on with the next line. A quote on a later line
+  therefore cannot pair with it and take valid keys or sections along.
 - `parseIniFile` does not report syntax errors.
 
 ## Serializer policy and interoperability
