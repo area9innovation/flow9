@@ -9,6 +9,8 @@ import java.util.*;
 public abstract class FlowRuntime {
 	public static Struct[] struct_prototypes;
 	public static ConcurrentHashMap<String, Integer> struct_ids = new ConcurrentHashMap<String, Integer>();
+	// Struct names of each union a struct field names, for FieldType.named.
+	public static ConcurrentHashMap<String, String[]> union_members = new ConcurrentHashMap<String, String[]>();
 	public static String[] program_args;
 	private static ConcurrentHashMap<Class, NativeHost> hosts = new ConcurrentHashMap<Class, NativeHost>();
 	public static Integer quitCode = null;
@@ -497,6 +499,33 @@ public abstract class FlowRuntime {
 	}
 
 	public static final Struct makeStructValue(int id, Object[] fields, Struct default_value) {
+		try {
+			Struct prototype = struct_prototypes[id];
+			RuntimeType[] types = prototype.getFieldTypes();
+			if (fields.length != types.length) return default_value;
+			FieldType[] descriptors = prototype.getFieldTypeDescriptors();
+			for (int i = 0; i < fields.length; i++) {
+				FieldType type = descriptors == null ? FieldType.of(types[i]) : descriptors[i];
+				if (!type.accepts(fields[i])) return default_value;
+			}
+			Struct copy = prototype.clone();
+			copy.setFields(fields);
+			return copy;
+		} catch (Exception e) {
+			return default_value;
+		}
+	}
+
+	// For runtime code that builds fields of the right types itself: skips the checks.
+	public static final Struct makeStructValueUnchecked(String name, Object[] fields, Struct default_value) {
+		Integer id = struct_ids.get(name);
+		if (id == null)
+			return default_value;
+
+		return makeStructValueUnchecked(id, fields, default_value);
+	}
+
+	public static final Struct makeStructValueUnchecked(int id, Object[] fields, Struct default_value) {
 		try {
 			Struct copy = struct_prototypes[id].clone();
 			copy.setFields(fields);

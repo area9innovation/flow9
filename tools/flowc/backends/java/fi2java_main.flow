@@ -251,9 +251,32 @@ generateJavaStructs(gctx : JavaGlobalContext) -> void {
 	pushstr("\t\tfor (int i = 0; i < FlowRuntime.struct_prototypes.length; i++) {\n");
 	pushstr("\t\t\tFlowRuntime.struct_ids.put(FlowRuntime.struct_prototypes[i].getTypeName(), i);\n");
 	pushstr("\t\t}\n");
+	union_chunks = javaUnionChunks(javaFieldUnions(gctx));
+	iteri(union_chunks, \i, __ -> pushstr("\t\tunions_" + i2s(i) + "();\n"));
 	pushstr("\t}\n");
+	iteri(union_chunks, \i, chunk -> {
+		pushstr("\n\tprivate static void unions_" + i2s(i) + "() {\n");
+		iter(chunk, \union -> pushstr(
+			"\t\tFlowRuntime.union_members.put(\"" + union.first + "\", new String[] {" +
+			strGlue(map(union.second, \s -> "\"" + s + "\""), ", ") + "});\n"
+		));
+		pushstr("\t}\n");
+	});
 	fname = pathCombine(gctx.package_path, "Structs.java");
 	writeJavaSource(gctx, fname, javaList2String(code, "}\n"));
+}
+
+// Groups unions so that each generated method stays well under the JVM's 64 KB code limit.
+javaUnionChunks(unions : [Pair<string, [string]>]) -> [[Pair<string, [string]>]] {
+	acc = fold(unions, Triple([], [], 0), \acc, union -> {
+		size = length(union.second) + 1;
+		if (acc.third > 0 && acc.third + size > 2000) {
+			Triple(arrayPush(acc.first, acc.second), [union], size);
+		} else {
+			Triple(acc.first, arrayPush(acc.second, union), acc.third + size);
+		}
+	});
+	if (acc.second == []) acc.first else arrayPush(acc.first, acc.second);
 }
 
 generateJavaStructsChunk(gctx : JavaGlobalContext, chunk : [string], i : int) -> void {

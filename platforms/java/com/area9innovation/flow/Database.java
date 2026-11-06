@@ -342,7 +342,7 @@ public class Database extends NativeHost {
         int columnCount = fieldNames.length;
         Struct[] values = new Struct[columnCount];
         for (int i = 0; i < columnCount; i++) {
-            values[i] = FlowRuntime.makeStructValue("DbNullField", new Object[]{fieldNames[i]}, illegal);
+            values[i] = FlowRuntime.makeStructValueUnchecked("DbNullField", new Object[]{fieldNames[i]}, illegal);
         }
         return values;
     }
@@ -364,7 +364,7 @@ public class Database extends NativeHost {
                 case (Types.TINYINT):
                 case (Types.SMALLINT):
                     Integer ivalue = rs.getInt(i + 1);
-                    value = rs.wasNull() ? anull : FlowRuntime.makeStructValue("DbIntField", new Object[]{name, ivalue}, illegal);
+                    value = rs.wasNull() ? anull : FlowRuntime.makeStructValueUnchecked("DbIntField", new Object[]{name, ivalue}, illegal);
                     break;
                 case (Types.BIGINT):
                     long lvalue = rs.getLong(i + 1);
@@ -374,16 +374,16 @@ public class Database extends NativeHost {
                         ivalue = (int)lvalue;
                         if ((long)ivalue == lvalue) {
                             // use int type if the value fits in 32 bit integer
-                            value = FlowRuntime.makeStructValue("DbIntField", new Object[]{name, ivalue}, illegal);
+                            value = FlowRuntime.makeStructValueUnchecked("DbIntField", new Object[]{name, ivalue}, illegal);
                         } else {
                             if ((lvalue & 0xFFFF000000000000L) == 0L) {
                                 // if the value fits in double type
                                 // in double 52 bits are used for the mantissa (15-16 decimal digits)
                                 // We support 48 bit non-negative integers as double (14 decimal digits)
-                                value = FlowRuntime.makeStructValue("DbDoubleField", new Object[]{name, (double)lvalue}, illegal);
+                                value = FlowRuntime.makeStructValueUnchecked("DbDoubleField", new Object[]{name, (double)lvalue}, illegal);
                             } else {
                                 // otherwise use string
-                                value = FlowRuntime.makeStructValue("DbStringField", new Object[]{name, Long.toString(lvalue)}, illegal);
+                                value = FlowRuntime.makeStructValueUnchecked("DbStringField", new Object[]{name, Long.toString(lvalue)}, illegal);
                             }
                             dbObj.intOverflowFields.add(name);
                         }
@@ -395,7 +395,7 @@ public class Database extends NativeHost {
                 case (Types.FLOAT):
                 case (Types.NUMERIC):
                     Double dvalue = rs.getDouble(i + 1);
-                    value = rs.wasNull() ? anull : FlowRuntime.makeStructValue("DbDoubleField", new Object[]{name, dvalue}, illegal);
+                    value = rs.wasNull() ? anull : FlowRuntime.makeStructValueUnchecked("DbDoubleField", new Object[]{name, dvalue}, illegal);
                     break;
                 case (Types.TIMESTAMP):
                     Timestamp t = rs.getTimestamp(i + 1, calendar);
@@ -403,12 +403,12 @@ public class Database extends NativeHost {
                         value = anull;
                     } else {
                         String svalue = dbObj.dateFormat.format(t);
-                        value = FlowRuntime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
+                        value = FlowRuntime.makeStructValueUnchecked("DbStringField", new Object[]{name, svalue}, illegal);
                     }
                     break;
                 default:
                     String svalue = rs.getString(i + 1);
-                    value = rs.wasNull() ? anull : FlowRuntime.makeStructValue("DbStringField", new Object[]{name, svalue}, illegal);
+                    value = rs.wasNull() ? anull : FlowRuntime.makeStructValueUnchecked("DbStringField", new Object[]{name, svalue}, illegal);
             }
 
             values[i] = value;
