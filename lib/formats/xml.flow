@@ -776,138 +776,95 @@ parseXml3(xml : string) -> [XmlNode] {
 }
 
 stripXmlComments(xml : [XmlNode2]) -> [XmlNode] {
-	fold(xml, makeList(), \acc : List<XmlNode>, c -> {
-		switch (c : XmlNode2) {
-			XmlElement2(tag, atts, children): {
-				Cons(XmlElement(tag, atts, stripXmlComments(children)), acc)
-			}
-			XmlText(t): Cons(c, acc);
-			XmlComment(t): acc;
-		}
-	}) |> list2array;
+	stripXmlCommentsFrom(xml, 0, makeList(), makeList());
 }
 
-buildXml(tokens : [XmlEvent], index : int, keepComments : bool) -> Pair<XmlNode2, int> {
-	if (index >= length(tokens)) {
-		// Something is wrong
-		Pair(XmlText(""), index);
-	} else {
-		token = tokens[index];
-		switch (token : XmlEvent) {
-			XmlEmptyElement(tag, attributes): { 
-				xe : XmlNode2 = XmlElement2(tag, attributes, []); 
-				Pair(xe, index + 1);
-			}
-			XmlElementStart(tag, attributes): {
-				childrenList = ref makeList();
-				nextPos = buildUntilEndTag(tokens, index + 1, tag, keepComments, childrenList);
-				// Here, we could get rid of white-space only elements are the start and end of the children
+// Traversal state lives on the heap, not on the call stack. Deep trees are kept intact.
+XmlStripFrame(tag : string, attributes : [XmlAttribute], siblings : [XmlNode2], index : int, nodes : List<XmlNode>);
 
-				Pair(XmlElement2(tag, attributes, list2array(^childrenList)), nextPos);
-			}
-			XmlElementEnd(tag): {
-				// Hm, not supposed to happen - skip ahead
-				buildXml(tokens, index + 1, keepComments);
-			}
-			XmlTextEvent(text):
-				if (index + 1 == length(tokens)) {
-					// This is all we have, so that is it
-					Pair(XmlText(text), index + 1);
-				} else {
-					// Skip ahead!
-					r = buildXml(tokens, index + 1, keepComments);
-					n = switch (r.first : XmlNode2) {
-						XmlText(t): XmlText(text + t);
-						XmlElement2(tag, attributes, children): {
-							nws = trim2(text, " \n");
-							if (nws != "") {
-								//println("Xml parsing failed: Ignoring text: '" + text + "'");
-							}
-							r.first;
-						}
-						XmlComment(t): r.first;
-					}
-					Pair(n, r.second);
-				}
-			XmlEndEvent(): // Not supposed to happen
-				Pair(XmlText(""), index + 1);
-			XmlCommentEvent(c): {
-				if (keepComments) {
-					Pair(XmlComment(c), index + 1);
-				} else {
-					// Skip ahead
-					buildXml(tokens, index + 1, keepComments);
-				}
-			}
-			XmlProcessingEvent(c, a):
-				buildXml(tokens, index + 1, keepComments);
+stripXmlCommentsFrom(xml : [XmlNode2], index : int, nodes : List<XmlNode>, parents : List<XmlStripFrame>) -> [XmlNode] {
+	if (index >= length(xml)) {
+		children = list2array(nodes);
+		switch (parents) {
+			EmptyList(): children;
+			Cons(parent, rest): stripXmlCommentsFrom(parent.siblings, parent.index,
+				Cons(XmlElement(parent.tag, parent.attributes, children), parent.nodes), rest);
+		}
+	} else {
+		switch (xml[index] : XmlNode2) {
+			XmlElement2(tag, attributes, children): stripXmlCommentsFrom(children, 0, makeList(),
+				Cons(XmlStripFrame(tag, attributes, xml, index + 1, nodes), parents));
+			XmlText(t): stripXmlCommentsFrom(xml, index + 1, Cons(XmlText(t), nodes), parents);
+			XmlComment(__): stripXmlCommentsFrom(xml, index + 1, nodes, parents);
 		}
 	}
 }
 
-// returns position to continue parsing from
-buildUntilEndTag(tokens : [XmlEvent], index : int, endtag : string, keepComments : bool, resultNodes : ref List<XmlNode2>) -> int {
-	if (index >= length(tokens)) {
-		index;
-	} else {
-		token = tokens[index];
-		switch (token : XmlEvent) {
-			XmlElementEnd(tag): {
-				if (tag == endtag) {
-					index + 1;
-				} else {
-					// Not supposed to happen.
+buildXml(tokens : [XmlEvent], index : int, keepComments : bool) -> Pair<XmlNode2, int> {
+	buildXmlRoot(tokens, index, keepComments, makeList());
+}
 
-					// Let's see if it comes shortly
-					e = min(index + 200, length(tokens));
-					c = countUntil(index + 1, e, \i -> {
-						switch (tokens[i] : XmlEvent) {
-							XmlElementEnd(t): t == endtag;
-							// To make this more robust against things like
-							// <p> <br>  <br>   <br/>
-							// we should look for starts and empty elements
-							// here as well
-							//XmlElementStart(t, att): t == endtag;
-							//XmlEmptyElement(t, att): t == endtag;
-							default: false;
-						}
-					});
-					if (c == e) {
-						// The end tag never comes, so let's just pretend it was here
-						// println("Expected </" + endtag + "> but got <" + tag + ">");
-						index;
-					} else {
-						// OK, we judge it to be a stray element and just ignore it
-						// println("Ignoring <" + tag + ">");
-						buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
-					}
-				}
+// Leading text is returned only if no element (or retained comment) follows it.
+buildXmlRoot(tokens : [XmlEvent], index : int, keepComments : bool, text : List<string>) -> Pair<XmlNode2, int> {
+	if (index >= length(tokens)) {
+		Pair(XmlText(list2string(text)), index);
+	} else {
+		switch (tokens[index] : XmlEvent) {
+			XmlEmptyElement(tag, attributes): Pair(XmlElement2(tag, attributes, []), index + 1);
+			XmlElementStart(tag, attributes): buildXmlTree(tokens, index + 1, keepComments,
+				XmlBuildFrame(tag, attributes, makeList()), makeList());
+			XmlTextEvent(t): buildXmlRoot(tokens, index + 1, keepComments, Cons(t, text));
+			XmlEndEvent(): Pair(XmlText(list2string(text)), index + 1);
+			XmlCommentEvent(c): if (keepComments) Pair(XmlComment(c), index + 1)
+				else buildXmlRoot(tokens, index + 1, keepComments, text);
+			default: buildXmlRoot(tokens, index + 1, keepComments, text);
+		}
+	}
+}
+
+XmlBuildFrame(tag : string, attributes : [XmlAttribute], nodes : List<XmlNode2>);
+
+// Preserve the legacy 200-event lookahead for a mismatched closing tag.
+xmlClosePosition(tokens : [XmlEvent], index : int, endtag : string) -> int {
+	if (index >= length(tokens)) index
+	else switch (tokens[index] : XmlEvent) {
+		XmlEndEvent(): index + 1;
+		XmlElementEnd(tag): {
+			if (tag == endtag) index + 1
+			else {
+				e = min(index + 200, length(tokens));
+				c = countUntil(index + 1, e, \i -> switch (tokens[i] : XmlEvent) {
+					XmlElementEnd(t): t == endtag;
+					default: false;
+				});
+				// No matching end shortly: close implicitly without consuming this token.
+				if (c == e) index else -1;
 			}
-			XmlEndEvent(): {
-				index + 1;
-			}
-			XmlCommentEvent(c): {
-				if (keepComments) {
-					head = XmlComment(c);
-					resultNodes := Cons(head, ^resultNodes);
-					buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
-				} else {
-					// Ignore this guy and proceed
-					buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
-				}
-			}
-			XmlProcessingEvent(c, a): // Ignore this guy and proceed
-				buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
-			XmlTextEvent(text): {
-				head = XmlText(text);
-				resultNodes := Cons(head, ^resultNodes);
-				buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
-			}
-			default: {
-				head = buildXml(tokens, index, keepComments);
-				resultNodes := Cons(head.first, ^resultNodes);
-				buildUntilEndTag(tokens, head.second, endtag, keepComments, resultNodes);
-			}
+		}
+		default: -1;
+	}
+}
+
+buildXmlTree(tokens : [XmlEvent], index : int, keepComments : bool, frame : XmlBuildFrame, parents : List<XmlBuildFrame>) -> Pair<XmlNode2, int> {
+	close = xmlClosePosition(tokens, index, frame.tag);
+	if (close >= 0) {
+		node : XmlNode2 = XmlElement2(frame.tag, frame.attributes, list2array(frame.nodes));
+		switch (parents) {
+			EmptyList(): Pair(node, close);
+			Cons(parent, rest): buildXmlTree(tokens, close, keepComments,
+				XmlBuildFrame(parent.tag, parent.attributes, Cons(node, parent.nodes)), rest);
+		}
+	} else {
+		switch (tokens[index] : XmlEvent) {
+			XmlElementStart(tag, attributes): buildXmlTree(tokens, index + 1, keepComments,
+				XmlBuildFrame(tag, attributes, makeList()), Cons(frame, parents));
+			XmlEmptyElement(tag, attributes): buildXmlTree(tokens, index + 1, keepComments,
+				XmlBuildFrame(frame.tag, frame.attributes, Cons(XmlElement2(tag, attributes, []), frame.nodes)), parents);
+			XmlTextEvent(text): buildXmlTree(tokens, index + 1, keepComments,
+				XmlBuildFrame(frame.tag, frame.attributes, Cons(XmlText(text), frame.nodes)), parents);
+			XmlCommentEvent(c): buildXmlTree(tokens, index + 1, keepComments,
+				XmlBuildFrame(frame.tag, frame.attributes, if (keepComments) Cons(XmlComment(c), frame.nodes) else frame.nodes), parents);
+			default: buildXmlTree(tokens, index + 1, keepComments, frame, parents);
 		}
 	}
 }
@@ -1105,37 +1062,56 @@ poorXml2text(xml : XmlNode) -> string {
 }
 
 xml2string(xml : XmlNode) -> string {
-	switch (xml) {
-		XmlElement(tag, attributes, children): {
-			atts = fold(attributes, "", \acc, a -> 
-				acc + " " + a.key + "=\"" + xmlEscape(a.value) + "\""
-			);
-			// fold(children, "<" + tag + atts + ">", \acc, c -> acc + poorXml2text(c)) + "</" + tag + ">";
-			("<" + tag + atts + ">") + concatStrings(map(children, \c -> xml2string(c))) + ("</" + tag + ">");
-		}
-		XmlText(text): {
-			xmlEscapeText(text);
-		}
-	}
+	xmlPrintNext(Cons(XmlPrintNodes([xml], 0), makeList()), makeList());
 }
 
 xmlNode2String(xhml : XmlNode2) -> string {
-	switch(xhml) {
-		XmlElement2(tag, attributes, children): {
-				atts = fold(attributes, "", \acc, a -> 
-					acc + " " + a.key + "=\"" + xmlEscape(a.value) + "\""
-				);
-				("<" + tag + atts + ">")
-				+ concatStrings(map(children, xmlNode2String))
-				+ ("</" + tag + ">");
-		};
-		XmlText(text): {
-			xmlEscapeText(text);
-		};
-		XmlComment(comment): {
-			""
-		};
-	};
+	xmlPrintNext(Cons(XmlPrintNodes2([xhml], 0), makeList()), makeList());
+}
+
+XmlPrintTask ::= XmlPrintNodes, XmlPrintNodes2, XmlPrintEnd;
+XmlPrintNodes(nodes : [XmlNode], index : int);
+XmlPrintNodes2(nodes : [XmlNode2], index : int);
+XmlPrintEnd(tag : string);
+
+xmlPrintStart(tag : string, attributes : [XmlAttribute]) -> string {
+	atts = fold(attributes, "", \acc, a -> acc + " " + a.key + "=\"" + xmlEscape(a.value) + "\"");
+	"<" + tag + atts + ">";
+}
+
+// Tail-recursive traversal; join output fragments once instead of copying subtrees repeatedly.
+xmlPrintNext(tasks : List<XmlPrintTask>, output : List<string>) -> string {
+	switch (tasks) {
+		EmptyList(): list2string(output);
+		Cons(task, rest): switch (task) {
+			XmlPrintEnd(tag): xmlPrintNext(rest, Cons("</" + tag + ">", output));
+			XmlPrintNodes(nodes, index): {
+				if (index >= length(nodes)) xmlPrintNext(rest, output)
+				else {
+					siblings = Cons(XmlPrintNodes(nodes, index + 1), rest);
+					switch (nodes[index] : XmlNode) {
+						XmlText(text): xmlPrintNext(siblings, Cons(xmlEscapeText(text), output));
+						XmlElement(tag, attributes, children): xmlPrintNext(
+							Cons(XmlPrintNodes(children, 0), Cons(XmlPrintEnd(tag), siblings)),
+							Cons(xmlPrintStart(tag, attributes), output));
+					}
+				}
+			}
+			XmlPrintNodes2(nodes, index): {
+				if (index >= length(nodes)) xmlPrintNext(rest, output)
+				else {
+					siblings = Cons(XmlPrintNodes2(nodes, index + 1), rest);
+					switch (nodes[index] : XmlNode2) {
+						XmlText(text): xmlPrintNext(siblings, Cons(xmlEscapeText(text), output));
+						XmlComment(__): xmlPrintNext(siblings, output);
+						XmlElement2(tag, attributes, children): xmlPrintNext(
+							Cons(XmlPrintNodes2(children, 0), Cons(XmlPrintEnd(tag), siblings)),
+							Cons(xmlPrintStart(tag, attributes), output));
+					}
+				}
+			}
+		}
+	}
 }
 
 xml2text(xml : XmlNode) -> string {
