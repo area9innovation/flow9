@@ -14,7 +14,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const root = path.join(__dirname, '..', '..', '..');
-const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sec-depth-binflow-buffer-'));
+const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'binflow-buffer-'));
 
 // Compiles the class with the runtime it imports, the same sources flowc gives to haxe
 const runtime = (function() {
