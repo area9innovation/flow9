@@ -39,9 +39,14 @@ parseIniFile(v : string) -> IniFile {
 // The keys of one section, the position where they stop and the line end found last
 IniKeys(keys : List<KeyValue>, next : int, lineEnd : int);
 
-// A name and the position of its delimiter. When the delimiter is missing, delimiter is -1 and
-// next is where parsing goes on: the line after the name, or -1 when the input ends first.
-IniName(name : string, delimiter : int, next : int);
+// A section name or key read up to its delimiter
+IniName ::= IniNameFound, IniNameMalformed, IniNameOpen;
+	// The name and the position of its delimiter
+	IniNameFound(name : string, delimiter : int);
+	// A quoted name closed without its delimiter; after is the position after its closing quote
+	IniNameMalformed(after : int);
+	// A name that runs to the end of the input: a quote that never closes, or a header without ]
+	IniNameOpen();
 
 // The text is scanned by position; only section names, keys and values are copied out
 doParseIniFile(v : string, start : int, lineEnd : int, quotedNames : bool, acc : List<IniSection>) -> List<IniSection> {
@@ -52,70 +57,88 @@ doParseIniFile(v : string, start : int, lineEnd : int, quotedNames : bool, acc :
 	} else {
 		nameStart = lb + 1;
 		quoteStart = if (quotedNames) iniSkipAny(v, nameStart, n, " \t") else nameStart;
-		name = if (quotedNames && quoteStart < n && getCharAt(v, quoteStart) == "\"") {
+		quoted = quotedNames && quoteStart < n && getCharAt(v, quoteStart) == "\"";
+		name = if (quoted) {
 			grabIniQuotedName(v, quoteStart, "]")
 		} else {
 			rb = strRangeIndexOf(v, "]", nameStart, n);
-			IniName(if (rb == -1) strRight(v, nameStart) else substring(v, nameStart, rb - nameStart), rb, -1);
+			if (rb == -1) IniNameOpen() else IniNameFound(substring(v, nameStart, rb - nameStart), rb);
 		};
-		if (name.delimiter != -1) {
-			headerEnd = iniLineEnd(v, name.delimiter + 1, lineEnd);
-			keys = doParseIniKeys(v, iniNextLine(name.delimiter + 1, headerEnd, n), headerEnd, quotedNames, makeList());
-			doParseIniFile(v, keys.next, keys.lineEnd, quotedNames, Cons(IniSection(name.name, list2array(keys.keys)), acc));
-		} else if (name.next == -1) {
-			Cons(IniSection(name.name, []), acc)
-		} else {
-			// A malformed header is dropped with its keys, which are still read to find the next header
-			keys = doParseIniKeys(v, name.next, lineEnd, quotedNames, makeList());
-			doParseIniFile(v, keys.next, keys.lineEnd, quotedNames, acc);
+		switch (name) {
+			IniNameFound(title, rb): {
+				headerEnd = iniLineEnd(v, rb + 1, lineEnd);
+				keys = doParseIniKeys(v, iniNextLine(rb + 1, headerEnd, n), headerEnd, quotedNames, makeList());
+				doParseIniFile(v, keys.next, keys.lineEnd, quotedNames, Cons(IniSection(title, list2array(keys.keys)), acc));
+			}
+			IniNameMalformed(after): {
+				// The header is dropped with its keys, which are still read to find the next header
+				keys = doParseIniKeys(v, after, lineEnd, quotedNames, makeList());
+				doParseIniFile(v, keys.next, keys.lineEnd, quotedNames, acc);
+			}
+			IniNameOpen(): {
+				title = if (quoted) grabIniQuoted(v, quoteStart + 1, makeList()).first else strRight(v, nameStart);
+				Cons(IniSection(title, []), acc);
+			}
 		}
 	}
 }
 
-// Keys up to the next "["; a ";" before the "=" starts a comment, except inside a quoted name
+// Keys up to the next "["; a ";" before the "=" starts a comment, except inside a quoted name.
+// In marked documents a key ends at its line: a line without "=" is skipped.
 doParseIniKeys(v : string, start : int, lineEnd : int, quotedNames : bool, acc : List<KeyValue>) -> IniKeys {
 	n = strlen(v);
 	keyStart = if (quotedNames) iniSkipAny(v, start, n, iniKeySpace) else start;
 	quoted = quotedNames && keyStart < n && getCharAt(v, keyStart) == "\"";
-	name = if (quoted) grabIniQuotedName(v, keyStart, "=") else iniNoName;
-	// An unterminated quoted name consumes the remaining input, as an unterminated quoted value
-	// does. Its contents are not rescanned as raw keys or headers.
-	special = if (!quoted) iniFindAny(v, keyStart, n, "=[;")
-		else if (name.delimiter != -1) name.delimiter
-		else n;
+	name = if (quoted) grabIniQuotedName(v, keyStart, "=") else IniNameOpen();
+	special = if (!quoted) iniFindAny(v, keyStart, n, if (quotedNames) "=[;\n" else "=[;")
+		else switch (name) {
+			IniNameFound(__, eqPos): eqPos;
+			// The rest of the line is skipped, unless a section starts on it
+			IniNameMalformed(after): iniFindAny(v, after, n, "[\n");
+			// An unterminated quoted name consumes the remaining input, as an unterminated quoted
+			// value does. Its contents are not rescanned as raw keys or headers.
+			IniNameOpen(): n;
+		};
 	found = if (special == n) "" else getCharAt(v, special);
 	if (found == "=") {
-		key = if (quoted) name.name else trim2(substring(v, keyStart, special - keyStart), iniKeySpace);
+		key = switch (name) {
+			IniNameFound(text, __): text;
+			IniNameMalformed(__): "";
+			IniNameOpen(): trim2(substring(v, keyStart, special - keyStart), iniKeySpace);
+		};
 		valueEnd = iniLineEnd(v, special + 1, lineEnd);
 		value = parseIniValue(v, special + 1, valueEnd);
 		doParseIniKeys(v, value.second, valueEnd, quotedNames, Cons(KeyValue(key, value.first), acc));
 	} else if (found == ";") {
 		commentEnd = iniLineEnd(v, special + 1, lineEnd);
 		doParseIniKeys(v, iniNextLine(special + 1, commentEnd, n), commentEnd, quotedNames, acc);
-	} else if (name.next != -1) {
-		// A quoted name without "=" is skipped with the rest of its line
-		doParseIniKeys(v, name.next, lineEnd, quotedNames, acc);
+	} else if (found == "\n") {
+		doParseIniKeys(v, special + 1, lineEnd, quotedNames, acc);
 	} else {
 		IniKeys(acc, special, lineEnd)
 	}
 }
 
-iniNoName = IniName("", -1, -1);
-
 // A quoted name must be followed by its delimiter, with only spaces or tabs between, as in
-// "key" = value
+// "key" = value. The name is copied out only when the delimiter is there.
 grabIniQuotedName(v : string, start : int, delimiter : string) -> IniName {
 	n = strlen(v);
-	name = grabIniQuoted(v, start + 1, makeList());
-	after = iniSkipAny(v, name.second, n, " \t");
-	if (after < n && getCharAt(v, after) == delimiter) {
-		IniName(name.first, after, -1)
-	} else if (after == n) {
-		IniName(name.first, -1, -1)
+	closed = iniQuotedEnd(v, start + 1, n);
+	if (closed == -1) {
+		IniNameOpen()
 	} else {
-		nl = strRangeIndexOf(v, "\n", after, n);
-		IniName(name.first, -1, if (nl == -1) n else nl + 1)
+		after = iniSkipAny(v, closed, n, " \t");
+		if (after < n && getCharAt(v, after) == delimiter) IniNameFound(grabIniQuoted(v, start + 1, makeList()).first, after)
+		else IniNameMalformed(closed);
 	}
+}
+
+// The position after the quote that closes quoted text starting at start, or -1 when none does
+iniQuotedEnd(v : string, start : int, n : int) -> int {
+	closing = strRangeIndexOf(v, "\"", start, n);
+	if (closing == -1) -1
+	else if (closing + 1 < n && getCharAt(v, closing + 1) == "\"") iniQuotedEnd(v, closing + 2, n)
+	else closing + 1;
 }
 
 // Position of the first char not in chars in [start, end), or end when there is none

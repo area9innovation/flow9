@@ -47,14 +47,16 @@ In marked documents:
   only spaces or tabs between, as in `"key" = value`. Embedded quotes are
   doubled. Empty names, literal line breaks, and delimiters are allowed inside
   quoted names. Backslashes remain literal.
-- Names not starting with a quote use the legacy rules. Values are unchanged.
-- A quoted name whose closing quote is not followed by its delimiter is skipped
-  with the rest of its line, and parsing goes on with the next line. Such a
-  section header is dropped together with its keys; such a key is dropped.
-- A quoted name whose closing quote never comes, or that is followed only by
-  spaces or tabs up to the end of the input, stops parsing rather than reading
-  its contents again as keys or sections. Such a section is retained with its
-  collected name and no keys; such a key is not retained.
+- Names not starting with a quote use the legacy rules, except that an unquoted
+  key ends at its line: a line with no `=` before its end is skipped, rather
+  than joined to the next line. Values are unchanged.
+- A quoted name whose closing quote is not followed by its delimiter is
+  malformed. A malformed key is dropped with the rest of its line, unless a `[`
+  on that line starts a section. A malformed section header is dropped together
+  with its keys. This holds at the end of the input too.
+- A quoted name whose closing quote never comes stops parsing rather than
+  reading its contents again as keys or sections. Such a section is retained
+  with its collected name and no keys; such a key is not retained.
 - `parseIniFile` does not report syntax errors.
 
 ## Serializer policy and interoperability
